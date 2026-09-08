@@ -64,6 +64,15 @@ export interface WebhookNoiseStats {
   suppressedTotal: number;
   /** 上次聚合上报以来压掉的数量 */
   suppressedSinceFlush: number;
+  /**
+   * 压掉的这些请求仍然消耗的 master 时间累计（毫秒，进程启动以来）。
+   *
+   * 廉价 ack 不写 HTTP 日志，于是它们从「按日志统计 webhook 耗时」的口径里整个消失。
+   * 只看那个口径，改后必然显示大幅下降——但一部分下降只是因为不再观测（签名校验、
+   * 读 body、路由这些活照做）。所以这里在内存里如实记账，度量尺拿它对齐口径
+   * （Codex PR #1516 四轮 P2）。
+   */
+  suppressedDurationMs: number;
   byEvent: Record<string, number>;
   lastFlushAt: string | null;
 }
@@ -73,6 +82,8 @@ const DEFAULT_FLUSH_INTERVAL_MS = 10 * 60 * 1000;
 export class WebhookNoiseCounter {
   private total = 0;
   private sinceFlush = 0;
+  private totalDurationMs = 0;
+  private durationSinceFlush = 0;
   private byEvent = new Map<string, number>();
   private lastFlushAt: number | null = null;
 
@@ -81,7 +92,7 @@ export class WebhookNoiseCounter {
       now?: () => number;
       flushIntervalMs?: number;
       /** 聚合上报出口；不接则只计数 */
-      report?: (summary: { suppressed: number; byEvent: Record<string, number> }) => void;
+      report?: (summary: { suppressed: number; durationMs: number; byEvent: Record<string, number> }) => void;
     } = {},
   ) {}
 
@@ -89,10 +100,16 @@ export class WebhookNoiseCounter {
     return this.opts.now ? this.opts.now() : Date.now();
   }
 
-  /** 记一条噪声；到点就把这段时间的聚合吐给 report（至多一条）。 */
-  note(eventName: string, action?: string): void {
+  /**
+   * 记一条噪声；到点就把这段时间的聚合吐给 report（至多一条）。
+   * `durationMs` 是这条请求在 master 里实际花掉的时间，不传按 0 记。
+   */
+  note(eventName: string, action?: string, durationMs = 0): void {
     this.total += 1;
     this.sinceFlush += 1;
+    const spent = Number.isFinite(durationMs) && durationMs > 0 ? durationMs : 0;
+    this.totalDurationMs += spent;
+    this.durationSinceFlush += spent;
     const key = action ? `${eventName}.${action}` : eventName;
     this.byEvent.set(key, (this.byEvent.get(key) || 0) + 1);
     const interval = this.opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
@@ -110,10 +127,12 @@ export class WebhookNoiseCounter {
     const byEvent: Record<string, number> = {};
     for (const [k, v] of this.byEvent) byEvent[k] = v;
     const suppressed = this.sinceFlush;
+    const durationMs = Math.round(this.durationSinceFlush);
     this.sinceFlush = 0;
+    this.durationSinceFlush = 0;
     this.byEvent.clear();
     this.lastFlushAt = this.now();
-    this.opts.report?.({ suppressed, byEvent });
+    this.opts.report?.({ suppressed, durationMs, byEvent });
   }
 
   stats(): WebhookNoiseStats {
@@ -122,6 +141,7 @@ export class WebhookNoiseCounter {
     return {
       suppressedTotal: this.total,
       suppressedSinceFlush: this.sinceFlush,
+      suppressedDurationMs: Math.round(this.totalDurationMs),
       byEvent,
       lastFlushAt: this.lastFlushAt === null ? null : new Date(this.lastFlushAt).toISOString(),
     };

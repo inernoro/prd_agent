@@ -2836,6 +2836,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha?: string | null;
       versionId?: string | null;
       hasOneShotOptions?: boolean;
+      /** 本次部署将要落地的有效配置指纹，用于同 commit 并入判定。 */
+      configHash?: string | null;
       source: string;
       reason?: string | null;
       sse?: boolean;
@@ -2857,6 +2859,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: input.commitSha || null,
       versionId: input.versionId || null,
       hasOneShotOptions: input.hasOneShotOptions || false,
+      configHash: input.configHash || null,
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
@@ -12578,6 +12581,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
       // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
       hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
+      // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
+      // （有效 profiles + 合并后的 env）。中间改过 env 或构建配置就不并入。
+      configHash: deploymentConfigHash || null,
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,

@@ -225,14 +225,16 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     : undefined;
 
   const noiseCounter = new WebhookNoiseCounter({
-    report: ({ suppressed, byEvent }) => {
+    report: ({ suppressed, durationMs, byEvent }) => {
       serverEventLogStore?.record({
         category: 'system',
         severity: 'info',
         source: 'github-webhook',
         action: 'github.webhook.noise-suppressed',
-        message: `已廉价 ack ${suppressed} 条 CI 噪声投递（不落投递日志 / 不写事件 / 不记 HTTP 日志）`,
-        details: { suppressed, byEvent },
+        // 带上这批仍然花掉的 master 时间：廉价 ack 不写 HTTP 日志，
+        // 光看日志口径会把「不再观测」误读成「不再耗时」。
+        message: `已廉价 ack ${suppressed} 条 CI 噪声投递（不落投递日志 / 不写事件 / 不记 HTTP 日志），这批仍占用 master ${Math.round(durationMs)} ms`,
+        details: { suppressed, durationMs, byEvent },
       });
     },
   });
@@ -382,7 +384,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       // 2026-09-08：噪声只计数，不落任何一层日志（此前每条都 state 全量 save +
       // 服务器事件 + 离机审计 + HTTP 日志，8678 条/12h 占 master 一成时间）。
       outcome.cheapAck = true;
-      noiseCounter.note(eventName);
+      noiseCounter.note(eventName, undefined, Date.now() - startedAt);
       res.locals.cdsSkipHttpLog = true;
       res.setHeader('X-CDS-Suppress-Activity', '1');
       res.json({
@@ -437,7 +439,7 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
       outcome.dispatchAction = 'ignored';
       outcome.dispatchReason = noiseVerdict.reason || 'noise';
       outcome.cheapAck = true;
-      noiseCounter.note(eventName, String((payload as { action?: unknown })?.action || ''));
+      noiseCounter.note(eventName, String((payload as { action?: unknown })?.action || ''), Date.now() - startedAt);
       res.locals.cdsSkipHttpLog = true;
       res.setHeader('X-CDS-Suppress-Activity', '1');
       res.json({

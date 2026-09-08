@@ -68,7 +68,10 @@ def main() -> None:
         cg = pressure.get("workloadCgroup", {})
         rows.append(("托管容器 cgroup 权重接管", f"{cg.get('weightManaged')}（driver={cg.get('driver')}）"))
         noise = pressure.get("webhookNoise") or {}
-        rows.append(("webhook 噪声已压掉（进程启动以来）", str(noise.get("suppressedTotal"))))
+        rows.append((
+            "webhook 噪声已压掉（进程启动以来）/ 这批仍占用 master",
+            f"{noise.get('suppressedTotal')} 条 / {round((noise.get('suppressedDurationMs') or 0) / 1000, 1)} s",
+        ))
         audit = pressure.get("offhostAudit") or {}
         rows.append(("离机审计熔断", f"open={audit.get('open')} 连续失败={audit.get('consecutiveFailures')} 跳过={audit.get('skippedWhileOpen')}"))
         rows.append(("控制面告警", "；".join(w["code"] for w in pressure.get("warnings", [])) or "无"))
@@ -96,9 +99,13 @@ def main() -> None:
     for l in logs:
         seen[l["_id"]] = l
     logs = list(seen.values())
+    # 口径警告：改后被廉价 ack 的噪声不写 HTTP 日志，不在这一行里。只看这行会把
+    # 「不再观测」读成「不再耗时」，于是对比虚高（Codex 四轮 P2）。上面那行
+    # 「webhook 噪声已压掉 / 这批仍占用 master」是内存里如实记的账，两行合起来看才是
+    # 真实的改前改后：改前 = 本行；改后 = 本行 + 被压掉那行。
     wh = [l for l in logs if l["path"].startswith("/api/github/webhook")]
     wh_ms = sum(l["durationMs"] for l in wh)
-    rows.append((f"webhook 投递数（{args.hours}h 内已采样）/ 占用 master 时间", f"{len(wh)} / {round(wh_ms / 1000)} s"))
+    rows.append((f"webhook 投递数（{args.hours}h 采样，仅记录在案的）/ 占用 master 时间", f"{len(wh)} / {round(wh_ms / 1000)} s"))
     deploys = sorted(l["durationMs"] for l in logs if l["method"] == "POST" and l["path"].rstrip("/").endswith("/deploy"))
     rows.append(("部署请求 p50 / p95 / max", f"{pct(deploys, .5) // 1000} / {pct(deploys, .95) // 1000} / {(deploys[-1] // 1000) if deploys else 0} s（n={len(deploys)}）"))
     deletes = sorted(l["durationMs"] for l in logs if l["method"] == "DELETE" and "/api/branches/" in l["path"])

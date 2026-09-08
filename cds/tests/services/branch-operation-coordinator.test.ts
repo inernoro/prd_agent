@@ -167,6 +167,7 @@ describe('BranchOperationCoordinator', () => {
       kind: 'deploy',
       trigger: 'webhook',
       commitSha: 'abc1234',
+      configHash: 'cfg-1',
     });
     const manual = coordinator.begin({
       branchId: 'combo-gift-preview',
@@ -174,6 +175,7 @@ describe('BranchOperationCoordinator', () => {
       trigger: 'manual',
       actor: 'cdscli',
       commitSha: 'abc1234',
+      configHash: 'cfg-1',
     });
     expect(active.status).toBe('started');
     expect(manual.status).toBe('joined');
@@ -188,12 +190,46 @@ describe('BranchOperationCoordinator', () => {
 
   it('joins a late webhook push for the commit that a manual deploy is already deploying', () => {
     const coordinator = new BranchOperationCoordinator();
-    const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'deadbee' });
-    const hook = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'deadbee' });
+    const active = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'deadbee', configHash: 'cfg-1' });
+    const hook = coordinator.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'deadbee', configHash: 'cfg-1' });
     expect(hook.status).toBe('joined');
     expect(hook.activeOperationId).toBe(active.operationId);
     // 完成后没有 pending 重放——否则同一 sha 会被部署第二遍。
     expect(coordinator.complete(active.lease!, 'completed')).toBeNull();
+  });
+
+  // Codex 四轮 P1：同一个 commit 未必落同一份配置。两次部署之间改了项目/分支 env
+  // 或构建配置，有效配置指纹就变了；并入等于用旧配置代替新请求，且不留 pending 重放,
+  // 用户改的东西既不生效也不排队。
+  it('does not join when the effective config changed between the two same-commit deploys', () => {
+    // 在途 manual + 迟到 webhook：webhook 压不过 manual，不并入就只能排 pending。
+    // 若按 sha 无脑并入，用户刚改的 env 既不生效也不排队，就此消失。
+    const c1 = new BranchOperationCoordinator();
+    const activeManual = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-before' });
+    const lateHook = c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', configHash: 'cfg-after' });
+    expect(lateHook.status).toBe('merged');
+    expect(c1.complete(activeManual.lease!, 'completed')?.request.configHash).toBe('cfg-after');
+
+    // manual 撞 manual 同理（同优先级，压不过）
+    const c2 = new BranchOperationCoordinator();
+    const a2 = c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-before' });
+    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-after' }).status).toBe('merged');
+    expect(c2.complete(a2.lease!, 'completed')?.request.configHash).toBe('cfg-after');
+
+    // 配置没变才并入
+    const c3 = new BranchOperationCoordinator();
+    c3.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-same' });
+    expect(c3.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', configHash: 'cfg-same' }).status).toBe('joined');
+  });
+
+  it('does not join when either side has no config fingerprint', () => {
+    const c1 = new BranchOperationCoordinator();
+    c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234' });
+    expect(c1.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234', configHash: 'cfg-1' }).status).toBe('merged');
+
+    const c2 = new BranchOperationCoordinator();
+    c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'manual', commitSha: 'abc1234', configHash: 'cfg-1' });
+    expect(c2.begin({ branchId: 'b', kind: 'deploy', trigger: 'webhook', commitSha: 'abc1234' }).status).toBe('merged');
   });
 
   it('does not join a webhook onto an in-flight versioned or one-shot manual deploy; it queues as pending instead', () => {

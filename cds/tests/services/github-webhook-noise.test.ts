@@ -41,26 +41,44 @@ describe('classifyWebhookNoise', () => {
 describe('WebhookNoiseCounter 聚合上报', () => {
   it('首条只起表；到达间隔后一次性上报这段时间的分布，之后归零', () => {
     let now = 1_000_000;
-    const reports: Array<{ suppressed: number; byEvent: Record<string, number> }> = [];
+    const reports: Array<{ suppressed: number; durationMs: number; byEvent: Record<string, number> }> = [];
     const counter = new WebhookNoiseCounter({
       now: () => now,
       flushIntervalMs: 60_000,
       report: (r) => reports.push(r),
     });
-    counter.note('workflow_job');
-    counter.note('check_run', 'created');
-    counter.note('check_run', 'created');
+    counter.note('workflow_job', undefined, 5);
+    counter.note('check_run', 'created', 3);
+    counter.note('check_run', 'created', 4);
     expect(reports).toHaveLength(0);
     expect(counter.stats()).toMatchObject({ suppressedTotal: 3, suppressedSinceFlush: 3 });
 
     now += 61_000;
-    counter.note('check_suite');
+    counter.note('check_suite', undefined, 2);
     expect(reports).toHaveLength(1);
     expect(reports[0]).toEqual({
       suppressed: 4,
+      durationMs: 14,
       byEvent: { workflow_job: 1, 'check_run.created': 2, check_suite: 1 },
     });
     expect(counter.stats()).toMatchObject({ suppressedTotal: 4, suppressedSinceFlush: 0 });
+  });
+
+  /**
+   * Codex 四轮 P2：廉价 ack 不写 HTTP 日志，于是这些请求从「按日志统计 webhook 耗时」
+   * 的口径里整个消失。若不另记一笔，改前改后对比会把「不再观测」读成「不再耗时」。
+   * 这些请求仍然做了签名校验、读 body、路由，时间是真花掉的。
+   */
+  it('如实累计被压掉那些请求仍然花掉的 master 时间', () => {
+    const counter = new WebhookNoiseCounter();
+    counter.note('workflow_job', undefined, 7);
+    counter.note('check_run', 'created', 11);
+    counter.note('status', undefined, 0);
+    // 负数 / NaN（时钟回拨之类）按 0 记，不污染账本
+    counter.note('status', undefined, -5);
+    counter.note('status', undefined, Number.NaN);
+    expect(counter.stats().suppressedDurationMs).toBe(18);
+    expect(counter.stats().suppressedTotal).toBe(5);
   });
 
   it('flush 没有积累时不上报', () => {

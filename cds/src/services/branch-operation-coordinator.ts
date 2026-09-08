@@ -46,6 +46,13 @@ export interface BranchOperationRequest {
    * （Codex P2「Reject manual deploy merges with one-shot options」）。
    */
   hasOneShotOptions?: boolean;
+  /**
+   * 本次部署将要落地的有效配置指纹（有效 profiles + 合并后的 env）。
+   * 只用于「同 commit 并入在途部署」的判定：同一个 commit 也可能因为中间改了
+   * 项目/分支环境变量或构建配置而要落不同的东西，仅比 commitSha 会把这次真实的
+   * 配置变更悄悄吞掉——既不生效也不排队（Codex PR #1516 四轮 P1）。
+   */
+  configHash?: string | null;
   source?: string | null;
   reason?: string | null;
   continueWith?: 'deploy' | 'deploy-profile' | null;
@@ -159,6 +166,12 @@ function isSameCommitDeployInFlight(incoming: BranchOperationRequest, active: Ac
   // 强制豁免，与 webhook 要的「当前配置」不是同一件事，并入会让后者悄悄丢失
   // （Codex PR #1516 二轮 P2）。这种情况维持原语义：webhook 合并为 pending 排到其后重放。
   if (active.request.versionId || active.request.hasOneShotOptions) return false;
+  // 同一个 commit 未必落同一份配置：两次部署之间改了项目/分支 env 或构建配置，
+  // 有效配置指纹就会变。并入等于用旧配置代替新请求，且不留 pending 重放——
+  // 用户改的东西既不生效也不排队。故要求两边指纹都在且相等；缺指纹一律不并入，
+  // 回落既有语义（合并为 pending，在其后重放）（Codex 四轮 P1）。
+  if (!incoming.configHash || !active.request.configHash) return false;
+  if (incoming.configHash !== active.request.configHash) return false;
   if (incoming.trigger === 'webhook') return true;
   return isMergeableManualDeploy(incoming);
 }
