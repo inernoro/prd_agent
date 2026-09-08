@@ -16247,9 +16247,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 服务都不在全局表里，裸 id 全局查会拿到别的项目那条）。
         const baselineEntry = stateService.getEffectiveProfilesForBranch(entry)
           .find((p) => p.id === item.serviceId)?.webEntry;
-        const effectiveEntry = scope === 'project'
-          ? baselineEntry
-          : (entry.profileOverrides?.[item.serviceId]?.webEntry ?? baselineEntry);
+        // primary 是项目档（compose 的 cds.web-entry-primary）声明的元数据，分支档从不
+        // 编辑它——所以两个档位都只从 baseline 继承，**不看**分支现有覆盖。此前分支档
+        // 从自己的覆盖里取：隐藏占位（空名 webEntry）不带 primary，「隐藏 → 重新启用」
+        // 就把它冲掉，主入口被静默换成别的服务（issue #1463）；而修复上线前已经走过这条
+        // 路径的分支，覆盖里留着「有名字、没 primary」的坏数据，只挑占位回落救不了它
+        // （Codex review P1）。一律回 baseline 取，每次保存都顺手把存量坏覆盖修回来。
+        const effectiveEntry = baselineEntry;
         const buildEntry = (primary?: boolean) => (
           item.name ? { name: item.name, path: item.path, ...(primary ? { primary: true } : {}) } : undefined
         );
@@ -17235,8 +17239,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
     }
 
     try {
+      // #1448: the command string must reach the container's `sh` untouched.
+      // JSON.stringify produced a double-quoted shell word, so the CDS host
+      // shell expanded `$VAR` / `$(...)` BEFORE docker exec — `printenv`-style
+      // commands returned the cds-master process environment (GitHub App
+      // private key included), and `$(cmd)` ran as the CDS main process.
+      // Single-quote it; the container shell does the expansion.
       const result = await shell.exec(
-        `docker exec ${svc.containerName} sh -c ${JSON.stringify(command)}`,
+        `docker exec ${svc.containerName} sh -c ${shellQuote(command)}`,
         { timeout: 30_000 },
       );
       // F15 (HIGH severity, 2026-05-02): docker exec output is the #1 leak
