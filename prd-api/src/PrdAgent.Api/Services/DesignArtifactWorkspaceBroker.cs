@@ -955,21 +955,8 @@ public static class DesignArtifactWorkspaceContract
     }
 
     public static string ComputePublicArtifactRevision(IEnumerable<DesignArtifactManifestFile> files)
-    {
-        var canonical = new StringBuilder();
-        foreach (var file in files.OrderBy(file => file.Path, StringComparer.Ordinal))
-        {
-            foreach (var value in new[]
-                     {
-                         file.Path,
-                         file.Sha256,
-                         file.Size.ToString(System.Globalization.CultureInfo.InvariantCulture),
-                         file.MediaType,
-                     })
-                canonical.Append(Encoding.UTF8.GetByteCount(value)).Append(':').Append(value);
-        }
-        return HashBytes(Encoding.UTF8.GetBytes(canonical.ToString()));
-    }
+        => DesignArtifactPublicRevision.Compute(files.Select(file =>
+            new DesignArtifactPublicRevisionFile(file.Path, file.Sha256, file.Size, file.MediaType)));
 
     private static bool TryNormalizeResultPath(string? path, out string normalized)
     {

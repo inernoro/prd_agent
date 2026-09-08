@@ -1,5 +1,6 @@
+using System.Security.Cryptography;
 using System.Text;
-using System.Text.Json;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -8,14 +9,26 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 跨设计 adapter 的公共生命周期账本。它不解析模型输出，也不接收 LLMGW 地址、模型或凭证。
+/// 跨设计 adapter 的公共生命周期账本。Mongo 单文档同时保存状态和脱敏事件，
+/// Redis 只保留旧消费者需要的尽力投影。
 /// </summary>
 public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleService
 {
-    private static readonly TimeSpan EventTtl = TimeSpan.FromHours(24);
+    private static readonly TimeSpan RedisProjectionTtl = TimeSpan.FromHours(24);
+    private static readonly HashSet<string> AdapterEventTypes = new(StringComparer.Ordinal)
+    {
+        DesignArtifactLifecycleEventTypes.Phase,
+    };
+    private static readonly HashSet<string> WindowsReservedNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    };
     private const int MaxManifestFiles = 256;
-    private const long MaxManifestFileBytes = 100 * 1024 * 1024;
-    private const int MaxEventPayloadBytes = 64 * 1024;
+    private const int MaxAdapterEvents = 1000;
+    private const long MaxManifestFileBytes = 100L * 1024 * 1024;
+    private const long MaxManifestTotalBytes = 100L * 1024 * 1024;
 
     private readonly MongoDbContext _db;
     private readonly IRunEventStore _events;
@@ -32,19 +45,35 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
     {
         var runId = Required(request.RunId, "runId", 128);
         var userId = Required(request.UserId, "userId", 128);
-        var artifactType = Required(request.ArtifactType, "artifactType", 64);
-        if (artifactType is not (DesignArtifactTypes.WebPage or DesignArtifactTypes.HtmlPpt))
-            throw Invalid("不支持的产物类型");
-        var operation = Required(request.Operation, "operation", 64);
-        if (operation is not (DesignArtifactOperations.Plan
-            or DesignArtifactOperations.Generate
-            or DesignArtifactOperations.Edit))
-            throw Invalid("不支持的设计操作");
-        var sourceSurface = Required(request.SourceSurface, "sourceSurface", 64);
-        var runtime = Required(request.Runtime, "runtime", 64);
-        var workspace = NormalizeWorkspace(request.WorkspaceRef, artifactType);
+        var artifactType = SafeToken(request.ArtifactType, "artifactType", 64);
+        var operation = SafeToken(request.Operation, "operation", 64);
+        var sourceSurface = SafeToken(request.SourceSurface, "sourceSurface", 64);
+        var runtime = SafeToken(request.Runtime, "runtime", 64);
+        var capability = NormalizeCapability(request.Capability);
+        var workspace = NormalizeWorkspace(request.WorkspaceRef);
+        ValidateCapability(capability, artifactType, operation, sourceSurface, runtime, workspace);
         var boundary = NormalizeBoundary(request.VersionBoundary);
+        var parentPlanRunId = Optional(request.ParentPlanRunId, 128);
+        var parentPlanContentHash = OptionalHash(request.ParentPlanContentHash);
+        if ((parentPlanRunId == null) != (parentPlanContentHash == null))
+            throw Invalid("父规划任务标识与内容哈希必须同时提供");
+        if (operation == DesignArtifactOperations.Generate && parentPlanRunId != null)
+            await ValidateParentPlanAsync(parentPlanRunId, parentPlanContentHash!, userId);
+        else if (parentPlanRunId != null)
+            throw Invalid("只有生成任务可以绑定父规划结果");
+
         var now = DateTime.UtcNow;
+        var runEvent = new DesignArtifactEventEnvelope
+        {
+            RunId = runId,
+            ArtifactType = artifactType,
+            Sequence = 1,
+            Type = DesignArtifactLifecycleEventTypes.Run,
+            Phase = "设计任务已开始",
+            Progress = 0,
+            OccurredAt = now,
+            Authoritative = true,
+        };
         var run = new DesignArtifactRun
         {
             Id = runId,
@@ -57,10 +86,15 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             Title = Optional(request.Title, 200),
             ContractVersion = DesignArtifactContractVersions.Current,
             LifecycleVersion = 1,
+            LifecycleEventSequence = 1,
+            LifecycleEvents = [runEvent],
             WorkspaceRef = workspace,
+            Capability = capability,
             VersionBoundary = boundary,
+            ParentPlanRunId = parentPlanRunId,
+            ParentPlanContentHash = parentPlanContentHash,
             Progress = 0,
-            Phase = "设计任务已开始",
+            Phase = runEvent.Phase!,
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -74,19 +108,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             throw Conflict();
         }
 
-        await _events.SetRunAsync(
-            RunKinds.DesignArtifact,
-            new RunMeta
-            {
-                RunId = run.Id,
-                Kind = RunKinds.DesignArtifact,
-                Status = run.Status,
-                CreatedByUserId = run.UserId,
-                CreatedAt = run.CreatedAt,
-                StartedAt = run.CreatedAt,
-            },
-            EventTtl,
-            CancellationToken.None);
+        await ProjectRunMetaBestEffortAsync(run);
         return run;
     }
 
@@ -94,41 +116,87 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         AppendDesignArtifactEventRequest request,
         CancellationToken ct = default)
     {
-        var run = await GetOwnedV2Async(request.RunId, request.UserId);
         var type = SafeToken(request.Type, "type", 64);
-        var phase = Optional(request.Phase, 200);
-        if (request.Progress is < 0 or > 100)
-            throw Invalid("事件进度必须介于 0 到 100");
+        if (!AdapterEventTypes.Contains(type))
+            throw Invalid("adapter 只能追加非权威阶段事件");
+        var phase = Required(request.Phase, "phase", 200);
+        if (request.Progress is < 0 or > 99)
+            throw Invalid("adapter 事件进度必须介于 0 到 99");
 
-        Dictionary<string, object?>? payload = null;
-        if (request.Payload is { Count: > 0 })
+        for (var attempt = 0; attempt < 12; attempt++)
         {
-            payload = request.Payload.ToDictionary(item => item.Key, item => item.Value, StringComparer.Ordinal);
-            var payloadBytes = Encoding.UTF8.GetByteCount(JsonSerializer.Serialize(payload));
-            if (payloadBytes > MaxEventPayloadBytes)
-                throw Invalid("事件 payload 超过 64KB 限制");
+            var current = await GetOwnedV2Async(request.RunId, request.UserId);
+            if (request.Expected != null)
+                ValidateExpectation(current, request.Expected);
+            if (current.Status is not (RunStatuses.Running or RunStatuses.Committing))
+                throw Conflict();
+            if (current.LifecycleEvents.Count(item => !item.Authoritative) >= MaxAdapterEvents)
+                throw Invalid("adapter 阶段事件已达到生命周期保留上限");
+            if (request.Progress.HasValue && request.Progress.Value < current.Progress)
+                throw Invalid("事件进度不能倒退");
+
+            var now = DateTime.UtcNow;
+            var updates = new BsonDocument
+            {
+                { nameof(DesignArtifactRun.Phase), phase },
+                { nameof(DesignArtifactRun.UpdatedAt), now },
+            };
+            if (request.Progress.HasValue)
+                updates[nameof(DesignArtifactRun.Progress)] = request.Progress.Value;
+            var eventFilter = Builders<DesignArtifactRun>.Filter.And(
+                    OwnedV2Filter(current.Id, current.UserId),
+                    Builders<DesignArtifactRun>.Filter.Eq(item => item.LifecycleEventSequence, current.LifecycleEventSequence),
+                    Builders<DesignArtifactRun>.Filter.In(item => item.Status, [RunStatuses.Running, RunStatuses.Committing]));
+            if (request.Expected != null)
+                eventFilter = Builders<DesignArtifactRun>.Filter.And(
+                    eventFilter,
+                    LeaseAuthorityFilter(request.Expected));
+            var updated = await AtomicUpdateWithEventAsync(
+                eventFilter,
+                current,
+                updates,
+                type,
+                phase,
+                request.Progress,
+                false,
+                incrementLifecycle: false);
+            if (updated != null)
+                return updated.LifecycleEvents[^1];
         }
+        throw Conflict();
+    }
 
-        var occurredAt = DateTime.UtcNow;
-        var storedEnvelope = new DesignArtifactEventEnvelope
-        {
-            RunId = run.Id,
-            ArtifactType = run.ArtifactType,
-            Type = type,
-            Phase = phase,
-            Progress = request.Progress,
-            Payload = payload,
-            OccurredAt = occurredAt,
-        };
-        var sequence = await _events.AppendEventAsync(
-            RunKinds.DesignArtifact,
-            run.Id,
-            type,
-            storedEnvelope,
-            EventTtl,
-            CancellationToken.None);
-        storedEnvelope.Sequence = sequence;
-        return storedEnvelope;
+    public async Task<DesignArtifactRun> StartAsync(
+        StartDesignArtifactSessionRequest request,
+        CancellationToken ct = default)
+    {
+        var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
+        if (current.Status != RunStatuses.Queued)
+            throw Conflict();
+        var leaseOwner = SafeToken(request.LeaseOwnerId, "leaseOwnerId", 256);
+        var now = DateTime.UtcNow;
+        if (request.LeaseExpiresAt <= now || request.LeaseExpiresAt > now.AddHours(1))
+            throw Invalid("执行租约期限无效");
+
+        var updated = await AtomicUpdateWithEventAsync(
+            CasFilter(current, request.Expected, RunStatuses.Queued),
+            current,
+            new BsonDocument
+            {
+                { nameof(DesignArtifactRun.Status), RunStatuses.Running },
+                { nameof(DesignArtifactRun.LeaseOwnerId), leaseOwner },
+                { nameof(DesignArtifactRun.LeaseExpiresAt), request.LeaseExpiresAt },
+                { nameof(DesignArtifactRun.HeartbeatAt), now },
+                { nameof(DesignArtifactRun.Phase), "设计任务执行中" },
+                { nameof(DesignArtifactRun.UpdatedAt), now },
+            },
+            DesignArtifactLifecycleEventTypes.Phase,
+            "设计任务执行中",
+            current.Progress,
+            true);
+        if (updated == null) throw Conflict();
+        await ProjectRunMetaBestEffortAsync(updated);
+        return updated;
     }
 
     public async Task<DesignArtifactRun> CommitManifestAsync(
@@ -136,37 +204,46 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         CancellationToken ct = default)
     {
         var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
-        if (current.Status != RunStatuses.Running)
+        if (current.Status != RunStatuses.Running || current.Operation == DesignArtifactOperations.Plan)
             throw Conflict();
-        if (current.Operation == DesignArtifactOperations.Plan)
-            throw Invalid("规划任务不提交产物 manifest");
-
-        var manifest = NormalizeManifest(request.Manifest, current.ArtifactType);
-        var entry = manifest.Files.Single(item => item.Path == manifest.EntryFile);
-        var boundary = NormalizeBoundary(current.VersionBoundary
-            ?? throw Invalid("设计任务缺少版本边界"));
-        if (boundary.OutputContentHash != null
-            && !string.Equals(boundary.OutputContentHash, entry.Sha256, StringComparison.Ordinal))
+        var manifest = NormalizeManifest(request.Manifest, current);
+        var hashes = ComputeManifestHashes(manifest);
+        var receipt = NormalizeValidationReceipt(request.ValidationReceipt, current, hashes);
+        await ValidateTrustedManifestReceiptAsync(current, receipt, hashes);
+        var boundary = NormalizeBoundary(current.VersionBoundary);
+        if (boundary.EntryContentHash != null && !FixedHashEquals(boundary.EntryContentHash, hashes.EntryContentHash))
             throw Conflict();
-        boundary.OutputContentHash = entry.Sha256;
+        if (boundary.CanonicalManifestHash != null && !FixedHashEquals(boundary.CanonicalManifestHash, hashes.CanonicalManifestHash))
+            throw Conflict();
+        if (boundary.PackageHash != null && !FixedHashEquals(boundary.PackageHash, hashes.PackageHash))
+            throw Conflict();
+        if (boundary.OutputContentHash != null && !FixedHashEquals(boundary.OutputContentHash, hashes.PackageHash))
+            throw Conflict();
+        boundary.EntryContentHash = hashes.EntryContentHash;
+        boundary.CanonicalManifestHash = hashes.CanonicalManifestHash;
+        boundary.PackageHash = hashes.PackageHash;
+        boundary.OutputContentHash = hashes.PackageHash;
 
         var now = DateTime.UtcNow;
-        var updated = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+        var updated = await AtomicUpdateWithEventAsync(
             CasFilter(current, request.Expected, RunStatuses.Running),
-            Builders<DesignArtifactRun>.Update
-                .Set(item => item.Manifest, manifest)
-                .Set(item => item.VersionBoundary, boundary)
-                .Set(item => item.Status, RunStatuses.Committing)
-                .Set(item => item.Phase, "产物清单已提交")
-                .Set(item => item.UpdatedAt, now)
-                .Inc(item => item.LifecycleVersion, 1),
-            new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
+            current,
+            new BsonDocument
             {
-                ReturnDocument = ReturnDocument.After,
+                { nameof(DesignArtifactRun.Manifest), manifest.ToBsonDocument() },
+                { nameof(DesignArtifactRun.ManifestValidation), receipt.ToBsonDocument() },
+                { nameof(DesignArtifactRun.VersionBoundary), boundary.ToBsonDocument() },
+                { nameof(DesignArtifactRun.Status), RunStatuses.Committing },
+                { nameof(DesignArtifactRun.Phase), "产物清单已提交" },
+                { nameof(DesignArtifactRun.Progress), Math.Max(current.Progress, 95) },
+                { nameof(DesignArtifactRun.UpdatedAt), now },
             },
-            CancellationToken.None);
+            DesignArtifactLifecycleEventTypes.Manifest,
+            "产物清单已提交",
+            Math.Max(current.Progress, 95),
+            true);
         if (updated == null) throw Conflict();
-        await UpdateRunMetaAsync(updated);
+        await ProjectRunMetaBestEffortAsync(updated);
         return updated;
     }
 
@@ -177,26 +254,38 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
         var isPlanning = current.Operation == DesignArtifactOperations.Plan;
         var expectedStatus = isPlanning ? RunStatuses.Running : RunStatuses.Committing;
-        if (current.Status != expectedStatus || (!isPlanning && current.Manifest == null))
+        if (current.Status != expectedStatus)
+            throw Conflict();
+        DesignArtifactPlanReceipt? planReceipt = null;
+        if (isPlanning)
+        {
+            planReceipt = NormalizePlanReceipt(request.PlanReceipt);
+            await ValidateTrustedPlanReceiptAsync(current, planReceipt);
+        }
+        else if (request.PlanReceipt != null || current.Manifest == null || current.ManifestValidation == null)
             throw Conflict();
 
         var now = DateTime.UtcNow;
-        var updated = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+        var updates = new BsonDocument
+        {
+            { nameof(DesignArtifactRun.Status), RunStatuses.Done },
+            { nameof(DesignArtifactRun.Progress), 100 },
+            { nameof(DesignArtifactRun.Phase), isPlanning ? "设计规划已完成" : "设计产物已完成" },
+            { nameof(DesignArtifactRun.CompletedAt), now },
+            { nameof(DesignArtifactRun.UpdatedAt), now },
+        };
+        if (planReceipt != null)
+            updates[nameof(DesignArtifactRun.PlanReceipt)] = planReceipt.ToBsonDocument();
+        var updated = await AtomicUpdateWithEventAsync(
             CasFilter(current, request.Expected, expectedStatus),
-            Builders<DesignArtifactRun>.Update
-                .Set(item => item.Status, RunStatuses.Done)
-                .Set(item => item.Progress, 100)
-                .Set(item => item.Phase, isPlanning ? "设计规划已完成" : "设计产物已完成")
-                .Set(item => item.CompletedAt, now)
-                .Set(item => item.UpdatedAt, now)
-                .Inc(item => item.LifecycleVersion, 1),
-            new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
-            {
-                ReturnDocument = ReturnDocument.After,
-            },
-            CancellationToken.None);
+            current,
+            updates,
+            DesignArtifactLifecycleEventTypes.Done,
+            isPlanning ? "设计规划已完成" : "设计产物已完成",
+            100,
+            true);
         if (updated == null) throw Conflict();
-        await UpdateRunMetaAsync(updated);
+        await ProjectRunMetaBestEffortAsync(updated);
         return updated;
     }
 
@@ -207,25 +296,25 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
         if (current.Status is not (RunStatuses.Running or RunStatuses.Committing))
             throw Conflict();
-        var failureCode = SafeFailureCode(request.FailureCode);
-
+        var failureCode = SafeToken(request.FailureCode, "failureCode", 64);
         var now = DateTime.UtcNow;
-        var updated = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+        var updated = await AtomicUpdateWithEventAsync(
             CasFilter(current, request.Expected, current.Status),
-            Builders<DesignArtifactRun>.Update
-                .Set(item => item.Status, RunStatuses.Error)
-                .Set(item => item.LifecycleFailureCode, failureCode)
-                .Set(item => item.Phase, "设计任务未完成")
-                .Set(item => item.CompletedAt, now)
-                .Set(item => item.UpdatedAt, now)
-                .Inc(item => item.LifecycleVersion, 1),
-            new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
+            current,
+            new BsonDocument
             {
-                ReturnDocument = ReturnDocument.After,
+                { nameof(DesignArtifactRun.Status), RunStatuses.Error },
+                { nameof(DesignArtifactRun.LifecycleFailureCode), failureCode },
+                { nameof(DesignArtifactRun.Phase), "设计任务未完成" },
+                { nameof(DesignArtifactRun.CompletedAt), now },
+                { nameof(DesignArtifactRun.UpdatedAt), now },
             },
-            CancellationToken.None);
+            DesignArtifactLifecycleEventTypes.Error,
+            "设计任务未完成",
+            current.Progress,
+            true);
         if (updated == null) throw Conflict();
-        await UpdateRunMetaAsync(updated);
+        await ProjectRunMetaBestEffortAsync(updated);
         return updated;
     }
 
@@ -233,36 +322,245 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         BindPublishedDesignArtifactRequest request,
         CancellationToken ct = default)
     {
-        var current = await GetExpectedAsync(request.RunId, request.UserId, request.Expected);
-        if (current.Status != RunStatuses.Done || current.Operation == DesignArtifactOperations.Plan)
-            throw Conflict();
+        var runId = Required(request.RunId, "runId", 128);
+        var userId = Required(request.UserId, "userId", 128);
+        var operationId = SafeToken(request.OperationId, "operationId", 128);
         var artifactId = Required(request.ArtifactId, "artifactId", 128);
         var versionId = Required(request.VersionId, "versionId", 128);
-        if (!string.IsNullOrWhiteSpace(current.ArtifactSiteId)
-            || !string.IsNullOrWhiteSpace(current.ArtifactRevisionId))
+        var artifactHash = RequiredHash(request.ArtifactHash);
+        var fingerprint = Sha256Hex($"{artifactId}\n{versionId}\n{artifactHash}");
+
+        var current = await GetOwnedV2Async(runId, userId);
+        if (current.PublishBindingOperationId != null)
         {
-            if (current.ArtifactSiteId == artifactId && current.ArtifactRevisionId == versionId)
+            if (current.PublishBindingOperationId == operationId
+                && FixedHashEquals(current.PublishBindingFingerprint, fingerprint))
                 return current;
             throw Conflict();
         }
+        if (current.Status != RunStatuses.Done || current.Operation == DesignArtifactOperations.Plan)
+            throw Conflict();
+        await ValidatePublishedReceiptAsync(current, artifactId, versionId, artifactHash);
+        ValidateExpectation(current, request.Expected);
 
-        var updated = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
-            Builders<DesignArtifactRun>.Filter.And(
-                CasFilter(current, request.Expected, RunStatuses.Done),
-                Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactSiteId, null),
-                Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactRevisionId, null)),
-            Builders<DesignArtifactRun>.Update
-                .Set(item => item.ArtifactSiteId, artifactId)
-                .Set(item => item.ArtifactRevisionId, versionId)
-                .Set(item => item.UpdatedAt, DateTime.UtcNow)
-                .Inc(item => item.LifecycleVersion, 1),
+        var now = DateTime.UtcNow;
+        var filter = Builders<DesignArtifactRun>.Filter.And(
+            CasFilter(current, request.Expected, RunStatuses.Done),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.PublishBindingOperationId, null),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactSiteId, null),
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.ArtifactRevisionId, null));
+        var updated = await AtomicUpdateWithEventAsync(
+            filter,
+            current,
+            new BsonDocument
+            {
+                { nameof(DesignArtifactRun.ArtifactSiteId), artifactId },
+                { nameof(DesignArtifactRun.ArtifactRevisionId), versionId },
+                { nameof(DesignArtifactRun.PublishBindingOperationId), operationId },
+                { nameof(DesignArtifactRun.PublishBindingFingerprint), fingerprint },
+                { nameof(DesignArtifactRun.UpdatedAt), now },
+            },
+            DesignArtifactLifecycleEventTypes.Published,
+            "设计产物已绑定发布版本",
+            100,
+            true);
+        if (updated != null) return updated;
+
+        var winner = await GetOwnedV2Async(runId, userId);
+        if (winner.PublishBindingOperationId == operationId
+            && FixedHashEquals(winner.PublishBindingFingerprint, fingerprint))
+            return winner;
+        throw Conflict();
+    }
+
+    internal static DesignArtifactManifestHashes ComputeManifestHashes(DesignArtifactContractManifest manifest)
+    {
+        var packageHash = DesignArtifactPublicRevision.Compute(manifest.Files.Select(file =>
+            new DesignArtifactPublicRevisionFile(file.Path, file.Sha256, file.ByteLength, file.MediaType)));
+        var manifestCanonical = new StringBuilder();
+        AppendCanonical(
+            manifestCanonical,
+            manifest.SchemaVersion,
+            manifest.ArtifactType,
+            manifest.EntryFile,
+            manifest.SecurityProfile,
+            packageHash);
+        var entryHash = manifest.Files.Single(file => file.Path == manifest.EntryFile).Sha256;
+        return new DesignArtifactManifestHashes(
+            entryHash,
+            Sha256Hex(manifestCanonical.ToString()),
+            packageHash,
+            manifest.Files.Sum(file => file.ByteLength));
+    }
+
+    private async Task<DesignArtifactRun?> AtomicUpdateWithEventAsync(
+        FilterDefinition<DesignArtifactRun> filter,
+        DesignArtifactRun current,
+        BsonDocument updates,
+        string eventType,
+        string? phase,
+        int? progress,
+        bool authoritative,
+        bool incrementLifecycle = true)
+    {
+        var nextSequence = new BsonDocument("$add", new BsonArray
+        {
+            new BsonDocument("$ifNull", new BsonArray { $"${nameof(DesignArtifactRun.LifecycleEventSequence)}", 0 }),
+            1,
+        });
+        var eventDocument = new BsonDocument
+        {
+            { nameof(DesignArtifactEventEnvelope.RunId), current.Id },
+            { nameof(DesignArtifactEventEnvelope.ArtifactType), current.ArtifactType },
+            { nameof(DesignArtifactEventEnvelope.Sequence), nextSequence },
+            { nameof(DesignArtifactEventEnvelope.Type), eventType },
+            { nameof(DesignArtifactEventEnvelope.Phase), phase == null ? BsonNull.Value : phase },
+            { nameof(DesignArtifactEventEnvelope.Progress), progress.HasValue ? progress.Value : BsonNull.Value },
+            { nameof(DesignArtifactEventEnvelope.OccurredAt), DateTime.UtcNow },
+            { nameof(DesignArtifactEventEnvelope.Authoritative), authoritative },
+        };
+        updates[nameof(DesignArtifactRun.LifecycleEventSequence)] = nextSequence;
+        updates[nameof(DesignArtifactRun.LifecycleEvents)] = new BsonDocument("$concatArrays", new BsonArray
+        {
+            new BsonDocument("$ifNull", new BsonArray { $"${nameof(DesignArtifactRun.LifecycleEvents)}", new BsonArray() }),
+            new BsonArray { eventDocument },
+        });
+        if (incrementLifecycle)
+        {
+            updates[nameof(DesignArtifactRun.LifecycleVersion)] = new BsonDocument("$add", new BsonArray
+            {
+                $"${nameof(DesignArtifactRun.LifecycleVersion)}",
+                1,
+            });
+        }
+        return await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
+            filter,
+            Builders<DesignArtifactRun>.Update.Pipeline(
+                new BsonDocument[] { new("$set", updates) }),
             new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
             {
                 ReturnDocument = ReturnDocument.After,
             },
             CancellationToken.None);
-        if (updated == null) throw Conflict();
-        return updated;
+    }
+
+    private async Task ValidateParentPlanAsync(string planRunId, string planHash, string userId)
+    {
+        var plan = await _db.DesignArtifactRuns.Find(item => item.Id == planRunId && item.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (plan == null
+            || plan.ContractVersion != DesignArtifactContractVersions.Current
+            || plan.Operation != DesignArtifactOperations.Plan
+            || plan.Status != RunStatuses.Done
+            || plan.PlanReceipt == null
+            || !FixedHashEquals(plan.PlanReceipt.ContentHash, planHash))
+            throw Invalid("父规划结果不存在、未完成或哈希不一致");
+    }
+
+    private async Task ValidateTrustedManifestReceiptAsync(
+        DesignArtifactRun run,
+        DesignArtifactManifestValidationReceipt receipt,
+        DesignArtifactManifestHashes hashes)
+    {
+        if (receipt.Validator != run.Capability?.Adapter)
+            throw Invalid("manifest 校验器与执行能力不一致");
+        if (run.WorkspaceRef?.Kind == DesignArtifactWorkspaceKinds.RemotePackage)
+        {
+            if (string.IsNullOrWhiteSpace(run.WorkspaceResultAssetKey)
+                || !FixedHashEquals(run.WorkspaceResultSha256, receipt.SourcePackageHash)
+                || !FixedHashEquals(run.WorkspaceManifestSha256, receipt.SourceManifestHash))
+                throw Invalid("远程工作区尚无受信提交事实或回执不一致");
+            return;
+        }
+
+        if (run.ArtifactType == DesignArtifactTypes.HtmlPpt
+            && run.WorkspaceRef?.Kind == DesignArtifactWorkspaceKinds.AdapterOwned)
+        {
+            var source = await _db.MdToPptRuns.Find(item => item.Id == run.Id
+                                                            && item.UserId == run.UserId
+                                                            && item.Status == "done"
+                                                            && item.ArtifactContractVersion == DesignArtifactContractVersions.Current)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            var bytes = Encoding.UTF8.GetBytes(source?.Html ?? string.Empty);
+            if (source == null
+                || bytes.LongLength != hashes.TotalBytes
+                || !FixedHashEquals(source.HtmlHash, hashes.EntryContentHash)
+                || !FixedHashEquals(Sha256Hex(bytes), hashes.EntryContentHash))
+                throw Invalid("HTML PPT manifest 与权威完成态字节不一致");
+            return;
+        }
+        throw Invalid("当前工作区类型没有受信 manifest 校验来源");
+    }
+
+    private async Task ValidateTrustedPlanReceiptAsync(
+        DesignArtifactRun run,
+        DesignArtifactPlanReceipt receipt)
+    {
+        if (run.ArtifactType != DesignArtifactTypes.HtmlPpt
+            || run.WorkspaceRef?.Kind != DesignArtifactWorkspaceKinds.AdapterOwned)
+            return;
+        var source = await _db.MdToPptRuns.Find(item => item.Id == run.Id
+                                                        && item.UserId == run.UserId
+                                                        && item.Status == "done"
+                                                        && item.Op == "outline"
+                                                        && item.ArtifactContractVersion == DesignArtifactContractVersions.Current)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (source == null
+            || !FixedHashEquals(source.OutlineHash, receipt.ContentHash)
+            || !FixedHashEquals(source.UserSuppliedContentHash, receipt.InputHash))
+            throw Invalid("规划回执与权威 HTML PPT 大纲不一致");
+    }
+
+    private async Task ValidatePublishedReceiptAsync(
+        DesignArtifactRun run,
+        string siteId,
+        string versionId,
+        string artifactHash)
+    {
+        var site = await _db.HostedSites.Find(item => item.Id == siteId && item.OwnerUserId == run.UserId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (site == null) throw Invalid("发布站点不存在或不属于当前用户");
+
+        var revision = await _db.HostedSiteRevisions
+            .Find(item => item.Id == versionId
+                          && item.SiteId == siteId
+                          && item.CreatedByUserId == run.UserId
+                          && item.Status == HostedSiteRevisionStatuses.Published)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (revision != null)
+        {
+            if (revision.VerifiedFiles is { Count: > 0 })
+            {
+                var packageHash = DesignArtifactPublicRevision.Compute(revision.VerifiedFiles.Select(file =>
+                    new DesignArtifactPublicRevisionFile(
+                        file.Path,
+                        RequiredHash(file.Sha256),
+                        file.Content.LongLength,
+                        StrictMediaType(file.MimeType))));
+                if (!FixedHashEquals(packageHash, artifactHash)
+                    || !FixedHashEquals(run.VersionBoundary?.PackageHash, artifactHash))
+                    throw Invalid("发布版本整包哈希与设计产物不一致");
+                return;
+            }
+            var htmlHash = Sha256Hex(Encoding.UTF8.GetBytes(revision.Html ?? string.Empty));
+            if (!FixedHashEquals(htmlHash, artifactHash)
+                || !FixedHashEquals(run.VersionBoundary?.EntryContentHash, artifactHash))
+                throw Invalid("发布版本入口哈希与设计产物不一致");
+            return;
+        }
+
+        var source = await _db.MdToPptRuns.Find(item => item.Id == run.Id
+                                                        && item.UserId == run.UserId
+                                                        && item.PublishedSiteId == siteId
+                                                        && item.PublishedVersionId == versionId
+                                                        && item.Status == "done")
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (source == null
+            || !string.Equals(BuildHostedVersionId(site), versionId, StringComparison.Ordinal)
+            || !FixedHashEquals(source.PublishedHtmlHash, artifactHash)
+            || !FixedHashEquals(source.HtmlHash, artifactHash)
+            || !FixedHashEquals(run.VersionBoundary?.EntryContentHash, artifactHash))
+            throw Invalid("HTML PPT 发布回执与设计产物不一致");
     }
 
     private async Task<DesignArtifactRun> GetOwnedV2Async(string runId, string userId)
@@ -277,7 +575,9 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                 DesignArtifactLifecycleErrorCodes.NotFound,
                 "设计任务不存在");
         if (run.ContractVersion != DesignArtifactContractVersions.Current)
-            throw Conflict();
+            throw new DesignArtifactLifecycleException(
+                DesignArtifactLifecycleErrorCodes.UnsupportedVersion,
+                "不支持该设计任务合同版本");
         return run;
     }
 
@@ -286,14 +586,31 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         string userId,
         DesignArtifactLifecycleExpectation expected)
     {
+        var current = await GetOwnedV2Async(runId, userId);
+        ValidateExpectation(current, expected);
+        return current;
+    }
+
+    private static void ValidateExpectation(
+        DesignArtifactRun current,
+        DesignArtifactLifecycleExpectation expected)
+    {
         if (expected == null || expected.LifecycleVersion < 1)
             throw Invalid("缺少有效的生命周期版本");
-        var current = await GetOwnedV2Async(runId, userId);
         if (current.LifecycleVersion != expected.LifecycleVersion
             || !string.Equals(current.WorkspaceRef?.BaseRevision, Optional(expected.BaseRevision, 200), StringComparison.Ordinal)
             || !string.Equals(current.VersionBoundary?.BaseContentHash, OptionalHash(expected.BaseContentHash), StringComparison.Ordinal))
             throw Conflict();
-        return current;
+        ValidateLeaseAuthority(current, expected);
+    }
+
+    private static FilterDefinition<DesignArtifactRun> OwnedV2Filter(string runId, string userId)
+    {
+        var filter = Builders<DesignArtifactRun>.Filter;
+        return filter.And(
+            filter.Eq(item => item.Id, runId),
+            filter.Eq(item => item.UserId, userId),
+            filter.Eq(item => item.ContractVersion, DesignArtifactContractVersions.Current));
     }
 
     private static FilterDefinition<DesignArtifactRun> CasFilter(
@@ -303,42 +620,83 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
     {
         var filter = Builders<DesignArtifactRun>.Filter;
         return filter.And(
-            filter.Eq(item => item.Id, current.Id),
-            filter.Eq(item => item.UserId, current.UserId),
-            filter.Eq(item => item.ContractVersion, DesignArtifactContractVersions.Current),
+            OwnedV2Filter(current.Id, current.UserId),
             filter.Eq(item => item.LifecycleVersion, expected.LifecycleVersion),
             filter.Eq(item => item.Status, status),
             filter.Eq(item => item.WorkspaceRef!.BaseRevision, Optional(expected.BaseRevision, 200)),
-            filter.Eq(item => item.VersionBoundary!.BaseContentHash, OptionalHash(expected.BaseContentHash)));
+            filter.Eq(item => item.VersionBoundary!.BaseContentHash, OptionalHash(expected.BaseContentHash)),
+            LeaseAuthorityFilter(expected));
     }
 
-    private async Task UpdateRunMetaAsync(DesignArtifactRun run)
+    private static void ValidateLeaseAuthority(
+        DesignArtifactRun current,
+        DesignArtifactLifecycleExpectation expected)
     {
-        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, run.Id, CancellationToken.None)
-                   ?? new RunMeta
-                   {
-                       RunId = run.Id,
-                       Kind = RunKinds.DesignArtifact,
-                       CreatedByUserId = run.UserId,
-                       CreatedAt = run.CreatedAt,
-                   };
-        meta.Status = run.Status;
-        meta.StartedAt ??= run.CreatedAt;
-        meta.EndedAt = run.CompletedAt;
-        meta.ErrorCode = run.LifecycleFailureCode;
-        await _events.SetRunAsync(RunKinds.DesignArtifact, meta, EventTtl, CancellationToken.None);
+        if (string.IsNullOrWhiteSpace(expected.LeaseOwnerId)) return;
+        var owner = SafeToken(expected.LeaseOwnerId, "leaseOwnerId", 256);
+        if (!string.Equals(current.LeaseOwnerId, owner, StringComparison.Ordinal))
+            throw Conflict();
+        if (expected.Recovery)
+        {
+            if (!expected.ObservedLeaseExpiresAt.HasValue
+                || current.LeaseExpiresAt != expected.ObservedLeaseExpiresAt
+                || current.LeaseExpiresAt > DateTime.UtcNow)
+                throw Conflict();
+            return;
+        }
+        if (current.LeaseExpiresAt <= DateTime.UtcNow)
+            throw Conflict();
     }
 
-    private static DesignArtifactWorkspaceRef NormalizeWorkspace(
-        DesignArtifactWorkspaceRef? value,
-        string artifactType)
+    private static FilterDefinition<DesignArtifactRun> LeaseAuthorityFilter(
+        DesignArtifactLifecycleExpectation expected)
+    {
+        var filter = Builders<DesignArtifactRun>.Filter;
+        if (string.IsNullOrWhiteSpace(expected.LeaseOwnerId))
+            return filter.Empty;
+        var owner = SafeToken(expected.LeaseOwnerId, "leaseOwnerId", 256);
+        return expected.Recovery
+            ? filter.And(
+                filter.Eq(item => item.LeaseOwnerId, owner),
+                filter.Eq(item => item.LeaseExpiresAt, expected.ObservedLeaseExpiresAt),
+                filter.Lte(item => item.LeaseExpiresAt, DateTime.UtcNow))
+            : filter.And(
+                filter.Eq(item => item.LeaseOwnerId, owner),
+                filter.Gt(item => item.LeaseExpiresAt, DateTime.UtcNow));
+    }
+
+    private async Task ProjectRunMetaBestEffortAsync(DesignArtifactRun run)
+    {
+        try
+        {
+            await _events.SetRunAsync(
+                RunKinds.DesignArtifact,
+                new RunMeta
+                {
+                    RunId = run.Id,
+                    Kind = RunKinds.DesignArtifact,
+                    Status = run.Status,
+                    CreatedByUserId = run.UserId,
+                    CreatedAt = run.CreatedAt,
+                    StartedAt = run.CreatedAt,
+                    EndedAt = run.CompletedAt,
+                    ErrorCode = run.LifecycleFailureCode,
+                },
+                RedisProjectionTtl,
+                CancellationToken.None);
+        }
+        catch
+        {
+            // Mongo 已经是权威事实源；兼容投影失败不得回滚或阻断重试。
+        }
+    }
+
+    private static DesignArtifactWorkspaceRef NormalizeWorkspace(DesignArtifactWorkspaceRef? value)
     {
         if (value == null) throw Invalid("缺少工作区引用");
-        var kind = Required(value.Kind, "workspace.kind", 64);
+        var kind = SafeToken(value.Kind, "workspace.kind", 64);
         if (kind is not (DesignArtifactWorkspaceKinds.RemotePackage or DesignArtifactWorkspaceKinds.AdapterOwned))
             throw Invalid("不支持的工作区类型");
-        if (artifactType == DesignArtifactTypes.HtmlPpt && kind != DesignArtifactWorkspaceKinds.AdapterOwned)
-            throw Invalid("HTML PPT 必须使用 adapter-owned 工作区");
         return new DesignArtifactWorkspaceRef
         {
             WorkspaceId = SafeToken(value.WorkspaceId, "workspace.workspaceId", 128),
@@ -346,6 +704,51 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             BaseRevision = Optional(value.BaseRevision, 200),
             Adapter = SafeToken(value.Adapter, "workspace.adapter", 64),
         };
+    }
+
+    private static DesignArtifactCapabilitySnapshot NormalizeCapability(DesignArtifactCapabilitySnapshot? value)
+    {
+        if (value == null) throw Invalid("缺少执行能力快照");
+        return new DesignArtifactCapabilitySnapshot
+        {
+            CapabilityId = SafeToken(value.CapabilityId, "capability.id", 128),
+            ArtifactType = SafeToken(value.ArtifactType, "capability.artifactType", 64),
+            Runtime = SafeToken(value.Runtime, "capability.runtime", 64),
+            Adapter = SafeToken(value.Adapter, "capability.adapter", 64),
+            WorkspaceKind = SafeToken(value.WorkspaceKind, "capability.workspaceKind", 64),
+            SecurityProfile = SafeToken(value.SecurityProfile, "capability.securityProfile", 64),
+            Operations = NormalizeTokens(value.Operations, "capability.operations"),
+            SourceSurfaces = NormalizeTokens(value.SourceSurfaces, "capability.sourceSurfaces"),
+        };
+    }
+
+    private static List<string> NormalizeTokens(IEnumerable<string>? values, string name)
+    {
+        if (values == null) throw Invalid($"缺少 {name}");
+        var normalized = values.Select(value => SafeToken(value, name, 64))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(value => value, StringComparer.Ordinal)
+            .ToList();
+        if (normalized.Count == 0 || normalized.Count > 32)
+            throw Invalid($"{name} 数量无效");
+        return normalized;
+    }
+
+    private static void ValidateCapability(
+        DesignArtifactCapabilitySnapshot capability,
+        string artifactType,
+        string operation,
+        string sourceSurface,
+        string runtime,
+        DesignArtifactWorkspaceRef workspace)
+    {
+        if (capability.ArtifactType != artifactType
+            || capability.Runtime != runtime
+            || capability.Adapter != workspace.Adapter
+            || capability.WorkspaceKind != workspace.Kind
+            || !capability.Operations.Contains(operation, StringComparer.Ordinal)
+            || !capability.SourceSurfaces.Contains(sourceSurface, StringComparer.Ordinal))
+            throw Invalid("执行能力与任务组合不一致");
     }
 
     private static DesignArtifactVersionBoundary NormalizeBoundary(DesignArtifactVersionBoundary? value)
@@ -356,73 +759,146 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             BaseArtifactId = Optional(value.BaseArtifactId, 128),
             BaseVersion = Optional(value.BaseVersion, 200),
             BaseContentHash = OptionalHash(value.BaseContentHash),
+            EntryContentHash = OptionalHash(value.EntryContentHash),
+            CanonicalManifestHash = OptionalHash(value.CanonicalManifestHash),
+            PackageHash = OptionalHash(value.PackageHash),
             OutputContentHash = OptionalHash(value.OutputContentHash),
         };
     }
 
-    private static DesignArtifactContractManifest NormalizeManifest(DesignArtifactContractManifest? value, string artifactType)
+    private static DesignArtifactContractManifest NormalizeManifest(
+        DesignArtifactContractManifest? value,
+        DesignArtifactRun run)
     {
         if (value == null) throw Invalid("缺少产物清单");
         if (value.SchemaVersion != DesignArtifactContractVersions.ManifestV1)
             throw Invalid("不支持的 manifest 版本");
-        if (!string.Equals(value.ArtifactType, artifactType, StringComparison.Ordinal))
+        if (!string.Equals(value.ArtifactType, run.ArtifactType, StringComparison.Ordinal))
             throw Invalid("manifest 产物类型与任务不一致");
         if (value.Files is not { Count: > 0 } || value.Files.Count > MaxManifestFiles)
             throw Invalid($"manifest 文件数必须介于 1 到 {MaxManifestFiles}");
+        var securityProfile = SafeToken(value.SecurityProfile, "manifest.securityProfile", 64);
+        if (run.Capability == null || securityProfile != run.Capability.SecurityProfile)
+            throw Invalid("manifest 安全配置与执行能力不一致");
 
-        var securityProfile = Required(value.SecurityProfile, "manifest.securityProfile", 64);
-        var expectedProfile = artifactType switch
-        {
-            DesignArtifactTypes.WebPage => DesignArtifactSecurityProfiles.WebPageRestricted,
-            DesignArtifactTypes.HtmlPpt => DesignArtifactSecurityProfiles.HtmlPptInteractive,
-            _ => throw Invalid("不支持的产物类型"),
-        };
-        if (securityProfile != expectedProfile)
-            throw Invalid("manifest 安全配置与产物类型不一致");
-
-        var entryFile = NormalizeRelativePath(value.EntryFile);
+        var entryFile = StrictRelativePath(value.EntryFile);
         var paths = new HashSet<string>(StringComparer.Ordinal);
         var files = new List<DesignArtifactContractManifestFile>(value.Files.Count);
+        long totalBytes = 0;
         foreach (var item in value.Files)
         {
             if (item == null) throw Invalid("manifest 文件不能为空");
-            var path = NormalizeRelativePath(item.Path);
+            var path = StrictRelativePath(item.Path);
             if (!paths.Add(path)) throw Invalid("manifest 不能包含重复文件路径");
             if (item.ByteLength < 0 || item.ByteLength > MaxManifestFileBytes)
                 throw Invalid("manifest 文件大小超出限制");
+            if (long.MaxValue - totalBytes < item.ByteLength)
+                throw Invalid("manifest 总大小溢出");
+            totalBytes += item.ByteLength;
+            if (totalBytes > MaxManifestTotalBytes)
+                throw Invalid("manifest 总大小超出限制");
             files.Add(new DesignArtifactContractManifestFile
             {
                 Path = path,
                 ByteLength = item.ByteLength,
                 Sha256 = RequiredHash(item.Sha256),
+                MediaType = StrictMediaType(item.MediaType),
             });
         }
-        if (!paths.Contains(entryFile))
-            throw Invalid("manifest 入口文件不存在");
-
+        var entry = files.SingleOrDefault(file => file.Path == entryFile);
+        if (entry == null) throw Invalid("manifest 入口文件不存在");
+        if (entry.ByteLength == 0) throw Invalid("manifest 入口文件不能为空");
         return new DesignArtifactContractManifest
         {
             SchemaVersion = value.SchemaVersion,
-            ArtifactType = artifactType,
+            ArtifactType = run.ArtifactType,
             EntryFile = entryFile,
             SecurityProfile = securityProfile,
             Files = files,
         };
     }
 
-    private static string NormalizeRelativePath(string? value)
+    private static DesignArtifactManifestValidationReceipt NormalizeValidationReceipt(
+        DesignArtifactManifestValidationReceipt? value,
+        DesignArtifactRun run,
+        DesignArtifactManifestHashes hashes)
     {
-        var path = Required(value, "manifest.path", 240);
-        if (path.StartsWith("/", StringComparison.Ordinal)
-            || path.Contains('\\')
-            || path.Split('/').Any(segment => segment is "" or "." or ".."))
-            throw Invalid("manifest 只允许规范化相对路径");
-        return path;
+        if (value == null) throw Invalid("缺少受信 manifest 校验回执");
+        var receipt = new DesignArtifactManifestValidationReceipt
+        {
+            Validator = SafeToken(value.Validator, "validation.validator", 128),
+            WorkspaceId = SafeToken(value.WorkspaceId, "validation.workspaceId", 128),
+            SecurityPolicyVersion = SafeToken(value.SecurityPolicyVersion, "validation.securityPolicyVersion", 128),
+            EntryContentHash = RequiredHash(value.EntryContentHash),
+            CanonicalManifestHash = RequiredHash(value.CanonicalManifestHash),
+            PackageHash = RequiredHash(value.PackageHash),
+            SourcePackageHash = OptionalHash(value.SourcePackageHash),
+            SourceManifestHash = OptionalHash(value.SourceManifestHash),
+            TotalBytes = value.TotalBytes,
+            ValidatedAt = value.ValidatedAt.ToUniversalTime(),
+        };
+        if (receipt.WorkspaceId != run.WorkspaceRef?.WorkspaceId
+            || receipt.TotalBytes != hashes.TotalBytes
+            || receipt.ValidatedAt == default
+            || receipt.ValidatedAt > DateTime.UtcNow.AddMinutes(5)
+            || !FixedHashEquals(receipt.EntryContentHash, hashes.EntryContentHash)
+            || !FixedHashEquals(receipt.CanonicalManifestHash, hashes.CanonicalManifestHash)
+            || !FixedHashEquals(receipt.PackageHash, hashes.PackageHash))
+            throw Invalid("manifest 校验回执与工作区事实不一致");
+        return receipt;
     }
 
-    private static string SafeFailureCode(string? value)
+    private static DesignArtifactPlanReceipt NormalizePlanReceipt(DesignArtifactPlanReceipt? value)
     {
-        return SafeToken(value, "failureCode", 64);
+        if (value == null) throw Invalid("规划任务缺少持久输出摘要");
+        return new DesignArtifactPlanReceipt
+        {
+            StorageReference = SafeToken(value.StorageReference, "plan.storageReference", 256),
+            ContentHash = RequiredHash(value.ContentHash),
+            InputHash = RequiredHash(value.InputHash),
+        };
+    }
+
+    private static string StrictRelativePath(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 240 || value != value.Trim())
+            throw Invalid("manifest 路径必须是精确的规范化相对路径");
+        if (!value.IsNormalized(NormalizationForm.FormC)
+            || value.StartsWith("/", StringComparison.Ordinal)
+            || value.Contains('\\')
+            || value.Contains('?')
+            || value.Contains('#')
+            || value.Contains('%')
+            || value.Contains(':')
+            || value.Any(char.IsControl))
+            throw Invalid("manifest 路径包含不安全字符");
+        foreach (var segment in value.Split('/'))
+        {
+            if (segment is "" or "." or ".." || segment.EndsWith(' ') || segment.EndsWith('.'))
+                throw Invalid("manifest 路径包含不安全片段");
+            var basename = segment.Split('.')[0];
+            if (WindowsReservedNames.Contains(basename))
+                throw Invalid("manifest 路径包含系统保留名称");
+        }
+        return value;
+    }
+
+    private static string StrictMediaType(string? value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length > 128 || value != value.Trim()
+            || value.Any(char.IsControl) || !value.Contains('/'))
+            throw Invalid("manifest mediaType 无效");
+        return value.ToLowerInvariant();
+    }
+
+    private static string BuildHostedVersionId(HostedSite site) =>
+        $"hosted-content-{site.ContentVersion.ToUniversalTime().Ticks:x}";
+
+    private static void AppendCanonical(StringBuilder builder, params string[] values)
+    {
+        foreach (var value in values)
+            builder.Append(value.Length).Append(':').Append(value).Append(';');
+        builder.Append('\n');
     }
 
     private static string SafeToken(string? value, string name, int maxLength)
@@ -456,9 +932,30 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         return normalized;
     }
 
+    private static bool FixedHashEquals(string? left, string? right)
+    {
+        var normalizedLeft = OptionalHash(left);
+        var normalizedRight = OptionalHash(right);
+        if (normalizedLeft == null || normalizedRight == null) return false;
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.ASCII.GetBytes(normalizedLeft),
+            Encoding.ASCII.GetBytes(normalizedRight));
+    }
+
+    private static string Sha256Hex(string value) => Sha256Hex(Encoding.UTF8.GetBytes(value));
+
+    private static string Sha256Hex(byte[] value) =>
+        Convert.ToHexString(SHA256.HashData(value)).ToLowerInvariant();
+
     private static DesignArtifactLifecycleException Invalid(string message)
         => new(DesignArtifactLifecycleErrorCodes.InvalidContract, message);
 
     private static DesignArtifactLifecycleException Conflict()
         => new(DesignArtifactLifecycleErrorCodes.Conflict, "设计任务已变化，请刷新后重试");
 }
+
+internal sealed record DesignArtifactManifestHashes(
+    string EntryContentHash,
+    string CanonicalManifestHash,
+    string PackageHash,
+    long TotalBytes);

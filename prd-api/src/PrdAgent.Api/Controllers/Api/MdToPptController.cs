@@ -48,6 +48,7 @@ public class MdToPptController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly IInfraAgentRuntimeProfileService _runtimeProfiles;
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
+    private readonly IHtmlPptDesignArtifactAdapter _designArtifactAdapter;
     private readonly IConfiguration _configuration;
     private readonly ILogger<MdToPptController> _logger;
 
@@ -327,6 +328,7 @@ public class MdToPptController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         IInfraAgentRuntimeProfileService runtimeProfiles,
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
+        IHtmlPptDesignArtifactAdapter designArtifactAdapter,
         IConfiguration configuration,
         ILogger<MdToPptController> logger)
     {
@@ -336,6 +338,7 @@ public class MdToPptController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _runtimeProfiles = runtimeProfiles;
         _knowledgeSnapshots = knowledgeSnapshots;
+        _designArtifactAdapter = designArtifactAdapter;
         _configuration = configuration;
         _logger = logger;
     }
@@ -527,6 +530,14 @@ public class MdToPptController : ControllerBase
                 item => item.Id == outlineRun.Id,
                 outlineRun,
                 cancellationToken: CancellationToken.None);
+            try
+            {
+                await _designArtifactAdapter.CompletePlanAsync(outlineRun, CancellationToken.None);
+            }
+            catch (DesignArtifactLifecycleException ex)
+            {
+                _logger.LogWarning(ex, "[MdToPpt-Outline] public lifecycle completion pending runId={RunId}", outlineRun.Id);
+            }
             return Ok(normalized);
         }
         catch (JsonException)
@@ -723,15 +734,18 @@ public class MdToPptController : ControllerBase
                     ["clarify"] = metaObj?["clarify"]?.DeepClone(),
                     ["outline"] = outline,
                 };
-                var update = Builders<MdToPptRun>.Update
-                    .Set(x => x.Status, "done")
-                    .Set(x => x.OutlineJson, payload.ToJsonString())
-                    .Set(x => x.OutlineHash, ComputeOutlineHash(
-                        payload["outline"]?.Deserialize<List<MdToPptOutlinePageDto>>(
-                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }),
-                        payload["summary"]?.GetValue<string>()))
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow);
-                await _db.MdToPptRuns.UpdateOneAsync(x => x.Id == run.Id, update, cancellationToken: CancellationToken.None);
+                run.Status = "done";
+                run.OutlineJson = payload.ToJsonString();
+                run.OutlineHash = ComputeOutlineHash(
+                    payload["outline"]?.Deserialize<List<MdToPptOutlinePageDto>>(
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true }),
+                    payload["summary"]?.GetValue<string>());
+                run.UpdatedAt = DateTime.UtcNow;
+                await _db.MdToPptRuns.ReplaceOneAsync(
+                    x => x.Id == run.Id,
+                    run,
+                    cancellationToken: CancellationToken.None);
+                await _designArtifactAdapter.CompletePlanAsync(run, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -993,17 +1007,19 @@ public class MdToPptController : ControllerBase
         var count = await _db.MdToPptTemplates.CountDocumentsAsync(x => x.UserId == userId);
         if (count >= 20) return BadRequest(new { error = "自定义模板已达 20 个上限，请先删除不用的" });
 
+        var auditRunId = Guid.NewGuid().ToString("N");
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: Guid.NewGuid().ToString("N"),
             GroupId: null,
-            SessionId: null,
+            SessionId: auditRunId,
             UserId: userId,
             ViewRole: null,
             DocumentChars: null,
             DocumentHash: null,
             SystemPromptRedacted: "[MdToPpt-TemplateExtract]",
             RequestType: "vision",
-            AppCallerCode: AppCallerRegistry.MdToPptAgent.Template.Extract));
+            AppCallerCode: AppCallerRegistry.MdToPptAgent.Template.Extract,
+            RunId: auditRunId));
 
         var systemPrompt =
             "你是资深视觉设计师。分析用户上传的设计参考图，输出一份可供 AI 生成 reveal.js PPT 时严格执行的风格规范。\n" +
@@ -1575,6 +1591,7 @@ public class MdToPptController : ControllerBase
                 : DesignArtifactSourceSurfaces.HtmlPpt,
             knowledgeReferences.ToList(),
             parentOutlineRunId: parentOutlineRun?.Id,
+            parentPlanContentHash: parentOutlineRun?.OutlineHash,
             userSuppliedContentHash: ComputeTextHash(userSuppliedContent));
         await WriteEventAsync("run", new { runId = run.Id });
 
@@ -1819,12 +1836,74 @@ public class MdToPptController : ControllerBase
                     ApiResponse<object>.Fail("ppt_normalize_failed", "历史版本运行时固化失败，原版本仍然保留，请重试"));
             }
             normalizedRunId = normalizedRun.Id;
+            sourceRun = normalizedRun;
             authoritativeHtml = normalizedRun.Html;
         }
 
         var publishedHtmlHash = ComputeHtmlHash(authoritativeHtml);
         var title = string.IsNullOrWhiteSpace(req.Title) ? "PPT 幻灯片" : req.Title.Trim();
         var htmlBytes = Encoding.UTF8.GetBytes(authoritativeHtml);
+
+        // 发布重试优先复用专用 Run 已持久化的托管版本。源 manifest 的 HTML 哈希与
+        // 托管版本 ID 分开保存，不能把内容哈希冒充网页托管版本。
+        if (!string.IsNullOrWhiteSpace(sourceRun.PublishedSiteId))
+        {
+            var existingSite = await _db.HostedSites
+                .Find(site => site.Id == sourceRun.PublishedSiteId && site.OwnerUserId == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (existingSite == null
+                || !string.Equals(sourceRun.PublishedHtmlHash, publishedHtmlHash, StringComparison.OrdinalIgnoreCase))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    "ppt_published_version_mismatch",
+                    "已发布版本与当前完成态不一致，请从演示稿历史重新发起发布"));
+            }
+
+            var existingVersionId = string.IsNullOrWhiteSpace(sourceRun.PublishedVersionId)
+                ? HtmlPptDesignArtifactAdapter.BuildHostedVersionId(existingSite)
+                : sourceRun.PublishedVersionId;
+            if (string.IsNullOrWhiteSpace(sourceRun.PublishedVersionId))
+            {
+                sourceRun.PublishedVersionId = existingVersionId;
+                sourceRun.ArtifactContractSynchronizedAt = null;
+                sourceRun.UpdatedAt = DateTime.UtcNow;
+                await _db.MdToPptRuns.ReplaceOneAsync(
+                    run => run.Id == sourceRun.Id && run.UserId == userId,
+                    sourceRun,
+                    cancellationToken: CancellationToken.None);
+            }
+
+            try
+            {
+                if (sourceRun.ArtifactContractVersion == DesignArtifactContractVersions.Current)
+                {
+                    await _designArtifactAdapter.BindPublishedAsync(
+                        sourceRun,
+                        existingSite.Id,
+                        existingVersionId,
+                        CancellationToken.None);
+                }
+            }
+            catch (DesignArtifactLifecycleException ex)
+            {
+                _logger.LogWarning(ex, "[MdToPpt] existing publish binding pending runId={RunId}", sourceRun.Id);
+                return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                    ApiResponse<object>.Fail(
+                        "ppt_publish_binding_pending",
+                        "网页已经保留，版本绑定正在恢复，请稍后重试"));
+            }
+
+            return Ok(new
+            {
+                runId = sourceRun.Id,
+                siteId = existingSite.Id,
+                title = existingSite.Title,
+                siteUrl = existingSite.SiteUrl,
+                html = authoritativeHtml,
+                contentHash = publishedHtmlHash,
+                versionId = existingVersionId,
+            });
+        }
 
         var siteService = HttpContext.RequestServices.GetRequiredService<IHostedSiteService>();
         var site = await siteService.CreateFromHtmlAsync(
@@ -1842,6 +1921,8 @@ public class MdToPptController : ControllerBase
             await siteService.SetSharedTeamsAsync(site.Id, userId, req.TeamIds, CancellationToken.None);
         }
 
+        var hostedVersionId = HtmlPptDesignArtifactAdapter.BuildHostedVersionId(site);
+
         var runFilter = Builders<MdToPptRun>.Filter.And(
             Builders<MdToPptRun>.Filter.Eq(x => x.Id, normalizedRunId),
             Builders<MdToPptRun>.Filter.Eq(x => x.UserId, userId));
@@ -1850,14 +1931,33 @@ public class MdToPptController : ControllerBase
             Builders<MdToPptRun>.Update
                 .Set(x => x.PublishedSiteId, site.Id)
                 .Set(x => x.PublishedHtmlHash, publishedHtmlHash)
+                .Set(x => x.PublishedVersionId, hostedVersionId)
+                .Set(x => x.ArtifactContractSynchronizedAt, null)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
-        await _db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == normalizedRunId && x.UserId == userId,
-            Builders<DesignArtifactRun>.Update
-                .Set(x => x.ArtifactSiteId, site.Id)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
+        sourceRun.PublishedSiteId = site.Id;
+        sourceRun.PublishedHtmlHash = publishedHtmlHash;
+        sourceRun.PublishedVersionId = hostedVersionId;
+        sourceRun.ArtifactContractSynchronizedAt = null;
+        try
+        {
+            if (sourceRun.ArtifactContractVersion == DesignArtifactContractVersions.Current)
+            {
+                await _designArtifactAdapter.BindPublishedAsync(
+                    sourceRun,
+                    site.Id,
+                    hostedVersionId,
+                    CancellationToken.None);
+            }
+        }
+        catch (DesignArtifactLifecycleException ex)
+        {
+            _logger.LogWarning(ex, "[MdToPpt] publish binding pending runId={RunId}", sourceRun.Id);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(
+                    "ppt_publish_binding_pending",
+                    "网页已经保留，版本绑定正在恢复，请稍后重试"));
+        }
 
         return Ok(new
         {
@@ -1867,6 +1967,7 @@ public class MdToPptController : ControllerBase
             siteUrl = site.SiteUrl,
             html = authoritativeHtml,
             contentHash = publishedHtmlHash,
+            versionId = hostedVersionId,
         });
     }
 
@@ -2034,6 +2135,7 @@ public class MdToPptController : ControllerBase
         string? parentRunId = null,
         string? parentHtmlHash = null,
         string? parentOutlineRunId = null,
+        string? parentPlanContentHash = null,
         string? userSuppliedContentHash = null)
     {
         var run = new MdToPptRun
@@ -2043,11 +2145,13 @@ public class MdToPptController : ControllerBase
             Engine = engine,
             Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
             Provider = "open-design-html-ppt",
+            ArtifactContractVersion = DesignArtifactContractVersions.Current,
             Theme = theme ?? string.Empty,
             Op = op,
             ParentRunId = string.IsNullOrWhiteSpace(parentRunId) ? null : parentRunId.Trim(),
             ParentHtmlHash = string.IsNullOrWhiteSpace(parentHtmlHash) ? null : parentHtmlHash.Trim(),
             ParentOutlineRunId = string.IsNullOrWhiteSpace(parentOutlineRunId) ? null : parentOutlineRunId.Trim(),
+            ParentPlanContentHash = string.IsNullOrWhiteSpace(parentPlanContentHash) ? null : parentPlanContentHash.Trim(),
             Title = DeriveTitle(content, op),
             ContentPreview = (content ?? string.Empty).Trim() is { Length: > 0 } cp
                 ? (cp.Length > 200 ? cp[..200] : cp)
@@ -2062,32 +2166,7 @@ public class MdToPptController : ControllerBase
             UserSuppliedContentHash = userSuppliedContentHash,
         };
         await _db.MdToPptRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
-        if (op is "convert" or "patch" or "manual-edit" or "normalize")
-        {
-            var isGenerate = op == "convert";
-            var isSavedEdit = op is "manual-edit" or "normalize";
-            await _db.DesignArtifactRuns.InsertOneAsync(new DesignArtifactRun
-            {
-                Id = run.Id,
-                UserId = userId,
-                Status = RunStatuses.Running,
-                ArtifactType = DesignArtifactTypes.HtmlPpt,
-                Operation = isGenerate ? DesignArtifactOperations.Generate : DesignArtifactOperations.Edit,
-                SourceSurface = run.SourceSurface,
-                Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
-                // 完整正文已经由 MdToPptRun 持有；通用运行记录只保留可检索摘要，避免重复放大 Mongo 文档。
-                Instruction = (content ?? string.Empty).Length > 4_000
-                    ? (content ?? string.Empty)[..4_000]
-                    : content ?? string.Empty,
-                Title = run.Title,
-                InputAuthority = run.InputAuthority,
-                UserSuppliedContentHash = run.UserSuppliedContentHash,
-                LinkedRunId = run.Id,
-                KnowledgeReferences = run.KnowledgeReferences,
-                Progress = isSavedEdit ? 90 : 5,
-                Phase = op == "normalize" ? "HTML PPT 历史版本正在兼容固化" : op == "manual-edit" ? "HTML PPT 编辑版本正在保存" : isGenerate ? "HTML PPT 正在生成" : "HTML PPT 正在精修",
-            }, cancellationToken: CancellationToken.None);
-        }
+        await _designArtifactAdapter.BeginAsync(run, CancellationToken.None);
         return run;
     }
 
@@ -2133,24 +2212,26 @@ public class MdToPptController : ControllerBase
                 run.ResolvedPlatforms.Add(platform.Trim());
             run.Degraded = degraded;
             run.Total = total;
+            run.ArtifactContractSynchronizedAt = null;
             run.UpdatedAt = DateTime.UtcNow;
             await _db.MdToPptRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: CancellationToken.None);
-            await _db.DesignArtifactRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
-                Builders<DesignArtifactRun>.Update
-                    .Set(x => x.Status, RunStatuses.Done)
-                    .Set(x => x.Progress, 100)
-                    .Set(x => x.Phase, run.Op == "normalize" ? "HTML PPT 历史版本已兼容固化" : run.Op == "manual-edit" ? "HTML PPT 编辑版本已保存" : run.Op == "patch" ? "HTML PPT 已精修" : "HTML PPT 已生成")
-                    .Set(x => x.CompletedAt, DateTime.UtcNow)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
-            return true;
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "[MdToPpt] persist run done failed runId={Id}", run.Id);
             return false;
         }
+
+        try
+        {
+            await _designArtifactAdapter.CommitAndCompleteAsync(run, CancellationToken.None);
+        }
+        catch (DesignArtifactLifecycleException ex)
+        {
+            // 专用完成态已经持久化；公共账本由恢复器枚举收敛，不能把已保存版本误报为丢失。
+            _logger.LogWarning(ex, "[MdToPpt] public lifecycle completion pending runId={Id}", run.Id);
+        }
+        return true;
     }
 
     internal static string ComputeHtmlHash(string html)
@@ -2203,17 +2284,13 @@ public class MdToPptController : ControllerBase
         {
             run.Status = "error";
             run.Error = error;
+            run.ArtifactContractSynchronizedAt = null;
             run.UpdatedAt = DateTime.UtcNow;
             await _db.MdToPptRuns.ReplaceOneAsync(x => x.Id == run.Id, run, cancellationToken: CancellationToken.None);
-            await _db.DesignArtifactRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
-                Builders<DesignArtifactRun>.Update
-                    .Set(x => x.Status, RunStatuses.Error)
-                    .Set(x => x.Error, error)
-                    .Set(x => x.Phase, error)
-                    .Set(x => x.CompletedAt, DateTime.UtcNow)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: CancellationToken.None);
+            await _designArtifactAdapter.FailAsync(
+                run,
+                HtmlPptDesignArtifactAdapter.GenerationFailureCode,
+                CancellationToken.None);
         }
         catch (Exception ex) { _logger.LogError(ex, "[MdToPpt] persist run error failed runId={Id}", run.Id); }
     }

@@ -688,7 +688,8 @@ public sealed class HostedSiteEditsControllerTests
         IDesignKnowledgeSnapshotResolver? knowledgeSnapshots = null,
         IRunQueue? queue = null,
         IHostedSiteRevisionService? revisions = null,
-        IRunEventStore? events = null)
+        IRunEventStore? events = null,
+        IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null)
     {
         var controller = new HostedSiteEditsController(
             sites ?? Mock.Of<IHostedSiteService>(),
@@ -698,7 +699,8 @@ public sealed class HostedSiteEditsControllerTests
             db,
             NullLogger<HostedSiteEditsController>.Instance,
             providers ?? Mock.Of<IDesignArtifactProviderCatalog>(),
-            knowledgeSnapshots ?? Mock.Of<IDesignKnowledgeSnapshotResolver>());
+            knowledgeSnapshots ?? Mock.Of<IDesignKnowledgeSnapshotResolver>(),
+            publicLifecycle ?? Mock.Of<IWebPageDesignArtifactLifecycleAdapter>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

@@ -4816,12 +4816,17 @@ export function MdToPptAgentPage() {
             || (artifactPhase === 'patching' && patchingSlide != null)) && generatedHtml && (
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
               {/* Toolbar */}
-              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-token-subtle flex-wrap">
-                <div className="flex items-center gap-1.5">
+              <div
+                data-testid="ppt-preview-toolbar"
+                className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-token-subtle flex-wrap [&_button]:min-h-11 [&_button]:min-w-11 [&_button]:focus-visible:outline-none [&_button]:focus-visible:ring-2 [&_button]:focus-visible:ring-purple-400/80 [&_button]:focus-visible:ring-offset-2 [&_button]:focus-visible:ring-offset-[var(--bg-base)]"
+              >
+                <div className="flex items-center gap-2">
                   <button
+                    type="button"
                     onClick={() => deckNav('prev')}
                     title="上一页"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
+                    aria-label="上一页"
+                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <ChevronLeft size={14} />
                   </button>
@@ -4832,20 +4837,23 @@ export function MdToPptAgentPage() {
                     {slidePos ? `${slidePos.cur} / ${slidePos.total}` : '- / -'}
                   </span>
                   <button
+                    type="button"
                     onClick={() => deckNav('next')}
                     title="下一页"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
+                    aria-label="下一页"
+                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <ChevronRight size={14} />
                   </button>
 
                   <div className="relative ml-2 pl-2.5 border-l border-token-subtle" data-testid="theme-menu">
                     <button
+                      type="button"
                       onClick={() => setStylePanelOpen((v) => !v)}
                       disabled={isStreaming}
                       title="换风格：展开后选择模板，确认后 AI 会整体重绘"
                       className={[
-                        'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                        'flex min-h-11 min-w-11 items-center gap-1.5 px-3 py-1 rounded-md text-[11px] border disabled:opacity-40',
                         stylePanelOpen
                           ? 'bg-purple-500/20 text-purple-200 border-purple-400/35'
                           : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
@@ -4866,9 +4874,11 @@ export function MdToPptAgentPage() {
                             <div className="mt-0.5 text-[10px] text-[var(--text-tertiary)]">会按新风格整体重绘，内容与页数保持不变</div>
                           </div>
                           <button
+                            type="button"
                             onClick={() => setStylePanelOpen(false)}
-                            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover-bg-soft hover:text-[var(--text-primary)]"
+                            className="flex h-11 w-11 items-center justify-center rounded-md text-[var(--text-tertiary)] hover-bg-soft hover:text-[var(--text-primary)]"
                             title="关闭"
+                            aria-label="关闭风格选择"
                           >
                             <X size={12} />
                           </button>
@@ -4879,13 +4889,14 @@ export function MdToPptAgentPage() {
                             const active = templateId == null && theme === opt.value;
                             return (
                               <button
+                                type="button"
                                 key={opt.value}
                                 onClick={() => {
                                   switchTheme(opt.value);
                                   setStylePanelOpen(false);
                                 }}
                                 className={[
-                                  'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                                  'min-h-11 min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
                                   active
                                     ? 'border-purple-400/50 bg-purple-500/14'
                                     : 'border-token-subtle bg-token-nested hover-bg-soft/[0.06]',
@@ -4912,13 +4923,14 @@ export function MdToPptAgentPage() {
                                 const active = templateId === t.id;
                                 return (
                                   <button
+                                    type="button"
                                     key={t.id}
                                     onClick={() => {
                                       selectCustomTemplate(t);
                                       setStylePanelOpen(false);
                                     }}
                                     className={[
-                                      'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
+                                      'min-h-11 min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
                                       active
                                         ? 'border-purple-400/50 bg-purple-500/14'
                                         : 'border-token-subtle bg-token-nested hover-bg-soft/[0.06]',
@@ -4942,7 +4954,7 @@ export function MdToPptAgentPage() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-2">
                   {/* 模型 chip：只读展示本次生成实际使用的模型与运行路径 */}
                   {modelInfo && (
                     <span
@@ -4954,11 +4966,12 @@ export function MdToPptAgentPage() {
                     </span>
                   )}
                   <button
+                    type="button"
                     onClick={() => setFeedbackMode((v) => !v)}
                     disabled={isStreaming || editMode}
                     title="圈选反馈：拖框圈出要修改的区域，写一句要求，自动组装成精修指令"
                     className={[
-                      'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                      'flex min-h-11 min-w-11 items-center gap-1 px-3 py-1 rounded-md text-[11px] border disabled:opacity-40',
                       feedbackMode
                         ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
                         : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
@@ -4968,11 +4981,12 @@ export function MdToPptAgentPage() {
                     圈选反馈
                   </button>
                   <button
+                    type="button"
                     onClick={toggleEditMode}
                     disabled={isStreaming || isSavingEdit}
                     title={editMode ? '完成编辑并保存修改' : '直接编辑：点击幻灯片文字修改内容、调整字号'}
                     className={[
-                      'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
+                      'flex min-h-11 min-w-11 items-center gap-1 px-3 py-1 rounded-md text-[11px] border disabled:opacity-40',
                       editMode
                         ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
                         : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
@@ -4982,26 +4996,31 @@ export function MdToPptAgentPage() {
                     {isSavingEdit ? '保存中' : editMode ? '完成编辑' : '编辑内容'}
                   </button>
                   <button
+                    type="button"
                     onClick={redrawCurrentPage}
                     disabled={isStreaming || editMode || !slidePos}
                     data-testid="redraw-page-button"
                     title="对当前页整页重绘：修复溢出、挤压、排版问题，内容保持不变，其余页不动"
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle disabled:opacity-40"
+                    className="flex min-h-11 min-w-11 items-center gap-1 px-3 py-1 rounded-md text-[11px] border bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle disabled:opacity-40"
                   >
                     <Sparkles size={11} />
                     重绘本页
                   </button>
                   <button
+                    type="button"
                     onClick={handleDownload}
                     title="下载独立 HTML（含当前主题样式，双击即可演示）"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
+                    aria-label="下载独立 HTML"
+                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <Download size={13} />
                   </button>
                   <button
+                    type="button"
                     onClick={handleFullscreen}
                     title="全屏演示"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
+                    aria-label="全屏演示"
+                    className="flex h-11 w-11 items-center justify-center rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <Maximize2 size={13} />
                   </button>

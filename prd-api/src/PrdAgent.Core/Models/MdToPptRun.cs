@@ -23,6 +23,18 @@ public class MdToPptRun
     /// <summary>设计实现适配器身份；用于区分未来可替换的设计插件。</summary>
     public string Provider { get; set; } = "open-design-html-ppt";
 
+    /// <summary>
+    /// 与公共 DesignArtifact 生命周期合同绑定的版本。0 表示历史专用 Run；
+    /// 当前新建 Run 固定写 v2，恢复器只枚举显式标记过的记录，禁止猜测升级历史数据。
+    /// </summary>
+    public int ArtifactContractVersion { get; set; }
+
+    /// <summary>
+    /// 专用 Run 当前事实已投影到公共账本的时间。生成新事实时先清空，投影完成后再写入，
+    /// 使进程中断后的半完成状态可被数据库枚举恢复。
+    /// </summary>
+    public DateTime? ArtifactContractSynchronizedAt { get; set; }
+
     public string Theme { get; set; } = string.Empty;
 
     /// <summary>convert | patch | manual-edit | outline</summary>
@@ -33,6 +45,9 @@ public class MdToPptRun
 
     /// <summary>最终生成所依据的大纲 Run；用于把人工确认的大纲绑定到同一组知识哈希。</summary>
     public string? ParentOutlineRunId { get; set; }
+
+    /// <summary>公共规划任务完成时冻结的原始大纲哈希；生成任务据此校验父规划输出。</summary>
+    public string? ParentPlanContentHash { get; set; }
 
     /// <summary>区分客户端输入与服务端知识快照，禁止把混合输入整体标成知识权威。</summary>
     public string InputAuthority { get; set; } = DesignArtifactInputAuthorities.UserSupplied;
@@ -96,6 +111,9 @@ public class MdToPptRun
 
     /// <summary>发布到网页托管后的站点 ID。</summary>
     public string? PublishedSiteId { get; set; }
+
+    /// <summary>网页托管侧的稳定版本标识；与源 manifest 哈希分开保存。</summary>
+    public string? PublishedVersionId { get; set; }
 
     /// <summary>实际发布内容的 SHA-256，必须与当前完成态 HTML 一致。</summary>
     public string? PublishedHtmlHash { get; set; }

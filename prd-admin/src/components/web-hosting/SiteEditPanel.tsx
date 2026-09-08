@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, WandSparkles, X } from 'lucide-react';
+import { AlertTriangle, BookOpen, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, ShieldCheck, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import { listRecentDocumentEntries } from '@/services/real/documentStore';
@@ -1060,6 +1060,50 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 </div>
               )}
             </div>
+
+            {generating && !previewHtml && (
+              <div
+                data-testid="safe-preview-placeholder"
+                role="status"
+                aria-live="polite"
+                className="mt-3 overflow-hidden rounded-lg border border-blue-500/25 bg-token-nested"
+              >
+                <div className="flex min-h-12 items-center justify-between gap-3 border-b border-token-subtle px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-blue-500/10 text-blue-500">
+                      <ShieldCheck size={16} aria-hidden="true" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-semibold text-token-primary">正在验证页面结构</div>
+                      <div className="mt-0.5 truncate text-[10px] text-token-muted">验证完成后显示真实页面</div>
+                    </div>
+                  </div>
+                  <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-[10px] text-blue-500">
+                    <MapSpinner size={11} />
+                    {GENERATION_STAGES[generationStageIndex]?.label || '准备'}
+                  </span>
+                </div>
+                <div className="relative aspect-[16/9] min-h-44 overflow-hidden bg-token-card p-4" aria-hidden="true">
+                  <div className="flex h-full flex-col overflow-hidden rounded-lg border border-token-subtle bg-token-nested opacity-80">
+                    <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-token-subtle px-2.5">
+                      <span className="h-1.5 w-1.5 rounded-full bg-token-muted/40" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-token-muted/30" />
+                      <span className="h-1.5 w-1.5 rounded-full bg-token-muted/20" />
+                    </div>
+                    <div className="grid flex-1 grid-cols-[minmax(0,1fr)_28%] gap-3 p-3">
+                      <div className="flex flex-col gap-2">
+                        <div className="h-3 w-2/3 animate-pulse rounded bg-blue-500/20 motion-reduce:animate-none" />
+                        <div className="h-2 w-full rounded bg-token-muted/15" />
+                        <div className="h-2 w-5/6 rounded bg-token-muted/15" />
+                        <div className="mt-auto h-7 w-24 rounded-md bg-blue-500/15" />
+                      </div>
+                      <div className="animate-pulse rounded-md border border-blue-500/15 bg-blue-500/5 motion-reduce:animate-none" />
+                    </div>
+                  </div>
+                  <div className="pointer-events-none absolute inset-x-4 bottom-4 h-px animate-pulse bg-gradient-to-r from-transparent via-blue-500/70 to-transparent motion-reduce:animate-none" />
+                </div>
+              </div>
+            )}
 
             {previewHtml ? (
               <div className="mt-3 overflow-hidden rounded-lg border border-token-subtle">

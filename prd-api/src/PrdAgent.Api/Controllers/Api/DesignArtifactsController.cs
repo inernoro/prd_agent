@@ -9,7 +9,6 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
-using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -18,7 +17,6 @@ namespace PrdAgent.Api.Controllers.Api;
 [ApiController]
 [Route("api/design-artifacts")]
 [Authorize]
-[AdminController("web-pages", AdminPermissionCatalog.WebPagesRead, WritePermission = AdminPermissionCatalog.WebPagesWrite)]
 public sealed class DesignArtifactsController : ControllerBase
 {
     private static readonly TimeSpan RunTtl = TimeSpan.FromHours(24);
@@ -205,6 +203,7 @@ public sealed class DesignArtifactsController : ControllerBase
             Progress = 2,
             Phase = "网页生成任务已进入队列",
         };
+        WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, currentHtml: null);
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
 
         var meta = new RunMeta
@@ -253,6 +252,10 @@ public sealed class DesignArtifactsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
 
         var contractVersion = run.ContractVersion ?? DesignArtifactContractVersions.Legacy;
+        if (contractVersion is not (DesignArtifactContractVersions.Legacy or DesignArtifactContractVersions.Current))
+            return Conflict(ApiResponse<object>.Fail(
+                DesignArtifactLifecycleErrorCodes.UnsupportedVersion,
+                "不支持该设计任务合同版本"));
         var isCurrentContract = contractVersion == DesignArtifactContractVersions.Current;
         object? manifest = isCurrentContract && run.Manifest != null
             ? new
@@ -266,6 +269,7 @@ public sealed class DesignArtifactsController : ControllerBase
                     file.Path,
                     file.ByteLength,
                     file.Sha256,
+                    file.MediaType,
                 }),
             }
             : null;
@@ -293,13 +297,30 @@ public sealed class DesignArtifactsController : ControllerBase
                     run.VersionBoundary.BaseArtifactId,
                     run.VersionBoundary.BaseVersion,
                     run.VersionBoundary.BaseContentHash,
+                    run.VersionBoundary.EntryContentHash,
+                    run.VersionBoundary.CanonicalManifestHash,
+                    run.VersionBoundary.PackageHash,
                     run.VersionBoundary.OutputContentHash,
                 }
                 : null,
+            capability = isCurrentContract ? run.Capability : null,
             manifest,
-            manifestComplete = isCurrentContract && manifest != null,
+            manifestPresent = isCurrentContract && manifest != null,
+            manifestValidated = isCurrentContract && run.ManifestValidation != null,
+            artifactReady = isCurrentContract
+                            && run.Status == RunStatuses.Done
+                            && run.Operation != DesignArtifactOperations.Plan
+                            && manifest != null
+                            && run.ManifestValidation != null,
+            planReceipt = isCurrentContract && run.Operation == DesignArtifactOperations.Plan
+                ? run.PlanReceipt
+                : null,
+            run.ParentPlanRunId,
+            run.ParentPlanContentHash,
             run.ArtifactSiteId,
             run.ArtifactRevisionId,
+            producedArtifactSiteId = isCurrentContract ? run.ProducedArtifactSiteId : null,
+            producedArtifactRevisionId = isCurrentContract ? run.ProducedArtifactRevisionId : null,
             failureCode = isCurrentContract ? run.LifecycleFailureCode : null,
             run.CreatedAt,
             run.UpdatedAt,
@@ -316,21 +337,28 @@ public sealed class DesignArtifactsController : ControllerBase
     {
         var run = await _db.DesignArtifactRuns
             .Find(item => item.Id == runId && item.UserId == this.GetRequiredUserId())
-            .Project(item => new { item.Id, item.ArtifactType })
             .FirstOrDefaultAsync(CancellationToken.None);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
+        if (run.ContractVersion != DesignArtifactContractVersions.Current)
+            return Conflict(ApiResponse<object>.Fail(
+                DesignArtifactLifecycleErrorCodes.UnsupportedVersion,
+                "公共事件接口只支持 v2 合同"));
 
-        var records = await _events.GetEventsAsync(
-            RunKinds.DesignArtifact,
-            run.Id,
-            Math.Max(0, afterSeq),
-            Math.Clamp(limit, 1, 100),
-            CancellationToken.None);
+        var safeAfter = Math.Max(0, afterSeq);
+        var records = run.LifecycleEvents
+            .Where(item => item.Sequence > safeAfter)
+            .OrderBy(item => item.Sequence)
+            .Take(Math.Clamp(limit, 1, 100))
+            .ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
-            items = records.Select(record => ToPublicContractEvent(record, run.Id, run.ArtifactType)),
-            nextSeq = records.LastOrDefault()?.Seq ?? Math.Max(0, afterSeq),
+            items = records.Select(ToPublicContractEvent),
+            nextSeq = records.LastOrDefault()?.Sequence ?? safeAfter,
+            retentionPolicy = "lifecycle",
+            truncated = false,
+            firstAvailableSeq = run.LifecycleEvents.OrderBy(item => item.Sequence).FirstOrDefault()?.Sequence,
+            lastAvailableSeq = run.LifecycleEventSequence,
         }));
     }
 
@@ -488,13 +516,25 @@ public sealed class DesignArtifactsController : ControllerBase
         Response.Headers.CacheControl = "no-cache, no-transform";
         Response.Headers["X-Accel-Buffering"] = "no";
 
-        var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct);
-        if (meta == null || meta.CreatedByUserId != this.GetRequiredUserId())
+        var userId = this.GetRequiredUserId();
+        var initial = await _db.DesignArtifactRuns
+            .Find(item => item.Id == runId && item.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (initial == null)
         {
             await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
             {
                 code = ErrorCodes.NOT_FOUND,
                 message = "设计任务不存在",
+            }), ct);
+            return;
+        }
+        if (initial.ContractVersion != DesignArtifactContractVersions.Current)
+        {
+            await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
+            {
+                code = DesignArtifactLifecycleErrorCodes.UnsupportedVersion,
+                message = "公共事件流只支持 v2 合同",
             }), ct);
             return;
         }
@@ -505,11 +545,23 @@ public sealed class DesignArtifactsController : ControllerBase
         {
             while (!ct.IsCancellationRequested)
             {
-                var batch = await _events.GetEventsAsync(RunKinds.DesignArtifact, runId, cursor, 100, ct);
+                var snapshot = await _db.DesignArtifactRuns
+                    .Find(item => item.Id == runId && item.UserId == userId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (snapshot == null) return;
+                var batch = snapshot.LifecycleEvents
+                    .Where(item => item.Sequence > cursor)
+                    .OrderBy(item => item.Sequence)
+                    .Take(100)
+                    .ToList();
                 foreach (var item in batch)
                 {
-                    await WriteEventAsync(item.Seq, item.EventName, item.PayloadJson, ct);
-                    cursor = item.Seq;
+                    await WriteEventAsync(
+                        item.Sequence,
+                        item.Type,
+                        JsonSerializer.Serialize(ToPublicContractEvent(item)),
+                        ct);
+                    cursor = item.Sequence;
                 }
                 if (batch.Count > 0)
                 {
@@ -517,8 +569,7 @@ public sealed class DesignArtifactsController : ControllerBase
                     continue;
                 }
 
-                meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct);
-                if (meta == null || meta.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
+                if (snapshot.Status is RunStatuses.Done or RunStatuses.Error or RunStatuses.Cancelled)
                     return;
 
                 idleRounds++;
@@ -573,37 +624,15 @@ public sealed class DesignArtifactsController : ControllerBase
         run.CompletedAt,
     };
 
-    private static DesignArtifactPublicEvent ToPublicContractEvent(
-        RunEventRecord record,
-        string runId,
-        string artifactType)
-    {
-        int? progress = null;
-        DateTime? occurredAt = null;
-        try
-        {
-            using var payload = JsonDocument.Parse(record.PayloadJson);
-            if (payload.RootElement.TryGetProperty("progress", out var progressElement)
-                && progressElement.TryGetInt32(out var parsedProgress))
-                progress = Math.Clamp(parsedProgress, 0, 100);
-            if (payload.RootElement.TryGetProperty("occurredAt", out var occurredAtElement)
-                && occurredAtElement.ValueKind == JsonValueKind.String
-                && occurredAtElement.TryGetDateTime(out var parsedOccurredAt))
-                occurredAt = parsedOccurredAt;
-        }
-        catch (JsonException)
-        {
-            // 历史坏事件只返回信封元数据，不暴露原始 payload 或解析错误。
-        }
-
-        return new DesignArtifactPublicEvent(
-            runId,
-            artifactType,
-            record.Seq,
-            record.EventName,
-            progress,
-            occurredAt ?? record.CreatedAt);
-    }
+    private static DesignArtifactPublicEvent ToPublicContractEvent(DesignArtifactEventEnvelope record) => new(
+        record.RunId,
+        record.ArtifactType,
+        record.Sequence,
+        record.Type,
+        record.Phase,
+        record.Progress,
+        record.OccurredAt,
+        record.Authoritative);
 
     private static string? TrimOptional(string? value, int maxLength)
     {
@@ -736,5 +765,7 @@ public sealed record DesignArtifactPublicEvent(
     string ArtifactType,
     long Sequence,
     string Type,
+    string? Phase,
     int? Progress,
-    DateTime OccurredAt);
+    DateTime OccurredAt,
+    bool Authoritative);

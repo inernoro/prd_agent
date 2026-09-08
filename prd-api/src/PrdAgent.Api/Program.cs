@@ -410,6 +410,11 @@ builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolve
     PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService,
     PrdAgent.Infrastructure.Services.DesignArtifactLifecycleService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IWebPageDesignArtifactLifecycleAdapter,
+    PrdAgent.Api.Services.WebPageDesignArtifactLifecycleAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptDesignArtifactAdapter,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactAdapter>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactRecoveryWorker>();
 builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
 {
     client.Timeout = Timeout.InfiniteTimeSpan;

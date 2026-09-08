@@ -87,6 +87,17 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('motion-reduce:transition-none');
   });
 
+  it('等待期只展示结构进度与安全占位，验证完成后才展示真实页面', () => {
+    expect(source).toContain('data-testid="safe-preview-placeholder"');
+    expect(source).toContain('{generating && !previewHtml && (');
+    expect(source).toContain('正在验证页面结构');
+    expect(source).toContain('验证完成后显示真实页面');
+    expect(source).toContain('aria-live="polite"');
+    expect(source).toContain('motion-reduce:animate-none');
+    expect(source).toContain('{previewHtml ? (');
+    expect(source).toContain('srcDoc={previewHtml}');
+  });
+
   it('明确表达草稿到发布的版本心智，并区分预览中的真实版本', () => {
     expect(source).toContain('aria-label="版本发布流程"');
     expect(source).toContain("['1', '生成草稿', '线上不变']");

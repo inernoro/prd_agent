@@ -12,6 +12,10 @@ public interface IDesignArtifactLifecycleService
         AppendDesignArtifactEventRequest request,
         CancellationToken ct = default);
 
+    Task<DesignArtifactRun> StartAsync(
+        StartDesignArtifactSessionRequest request,
+        CancellationToken ct = default);
+
     Task<DesignArtifactRun> CommitManifestAsync(
         CommitDesignArtifactManifestRequest request,
         CancellationToken ct = default);
@@ -38,7 +42,10 @@ public sealed record CreateDesignArtifactSessionRequest(
     string Runtime,
     DesignArtifactWorkspaceRef WorkspaceRef,
     DesignArtifactVersionBoundary VersionBoundary,
-    string? Title = null);
+    DesignArtifactCapabilitySnapshot Capability,
+    string? Title = null,
+    string? ParentPlanRunId = null,
+    string? ParentPlanContentHash = null);
 
 public sealed record AppendDesignArtifactEventRequest(
     string RunId,
@@ -46,23 +53,35 @@ public sealed record AppendDesignArtifactEventRequest(
     string Type,
     string? Phase = null,
     int? Progress = null,
-    IReadOnlyDictionary<string, object?>? Payload = null);
+    DesignArtifactLifecycleExpectation? Expected = null);
+
+public sealed record StartDesignArtifactSessionRequest(
+    string RunId,
+    string UserId,
+    DesignArtifactLifecycleExpectation Expected,
+    string LeaseOwnerId,
+    DateTime LeaseExpiresAt);
 
 public sealed record DesignArtifactLifecycleExpectation(
     int LifecycleVersion,
     string? BaseRevision,
-    string? BaseContentHash);
+    string? BaseContentHash,
+    string? LeaseOwnerId = null,
+    DateTime? ObservedLeaseExpiresAt = null,
+    bool Recovery = false);
 
 public sealed record CommitDesignArtifactManifestRequest(
     string RunId,
     string UserId,
     DesignArtifactLifecycleExpectation Expected,
-    DesignArtifactContractManifest Manifest);
+    DesignArtifactContractManifest Manifest,
+    DesignArtifactManifestValidationReceipt ValidationReceipt);
 
 public sealed record DesignArtifactLifecycleMutationRequest(
     string RunId,
     string UserId,
-    DesignArtifactLifecycleExpectation Expected);
+    DesignArtifactLifecycleExpectation Expected,
+    DesignArtifactPlanReceipt? PlanReceipt = null);
 
 public sealed record FailDesignArtifactSessionRequest(
     string RunId,
@@ -75,7 +94,9 @@ public sealed record BindPublishedDesignArtifactRequest(
     string UserId,
     DesignArtifactLifecycleExpectation Expected,
     string ArtifactId,
-    string VersionId);
+    string VersionId,
+    string OperationId,
+    string ArtifactHash);
 
 public sealed class DesignArtifactLifecycleException : Exception
 {
@@ -93,4 +114,5 @@ public static class DesignArtifactLifecycleErrorCodes
     public const string InvalidContract = "DESIGN_ARTIFACT_CONTRACT_INVALID";
     public const string Conflict = "DESIGN_ARTIFACT_LIFECYCLE_CONFLICT";
     public const string NotFound = "DESIGN_ARTIFACT_NOT_FOUND";
+    public const string UnsupportedVersion = "DESIGN_ARTIFACT_CONTRACT_VERSION_UNSUPPORTED";
 }

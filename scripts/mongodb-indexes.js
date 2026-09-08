@@ -1416,6 +1416,13 @@ ensureCatalogIndex("design_artifact_runs",
   }]
 )
 
+// HTML PPT 专用 Run 与公共账本的中断恢复。合同版本和同步标记先做等值过滤，
+// UpdatedAt 直接提供最旧优先顺序，避免恢复 worker 周期性全表扫描。
+ensureCatalogIndex("md_to_ppt_runs",
+  { "ArtifactContractVersion": 1, "ArtifactContractSynchronizedAt": 1, "UpdatedAt": 1 },
+  { name: "idx_md_to_ppt_runs_contract_recovery" }
+)
+
 // collection: document_entry_versions
 // (EntryId, VersionNumber) 唯一 — 同一文档版本号不重复，并发重复分配被 unique 索引拦截
 db.document_entry_versions.createIndex(
@@ -1620,6 +1627,11 @@ verifyCatalogIndex(
       "PublishedActivityProjectionCompletedAt": null
     }
   }
+)
+verifyCatalogIndex(
+  "md_to_ppt_runs",
+  "idx_md_to_ppt_runs_contract_recovery",
+  { "ArtifactContractVersion": 1, "ArtifactContractSynchronizedAt": 1, "UpdatedAt": 1 }
 )
 
 if (tightenedUniqueIndexMigrationFailures.length > 0) {

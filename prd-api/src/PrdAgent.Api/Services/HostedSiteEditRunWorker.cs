@@ -75,8 +75,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var publicLifecycle = scope.ServiceProvider.GetRequiredService<IWebPageDesignArtifactLifecycleAdapter>();
+        var lifecycle = scope.ServiceProvider.GetRequiredService<IDesignArtifactLifecycleService>();
         var leaseOwner = $"{_instanceId}:{Guid.NewGuid():N}";
-        var run = await TryClaimAsync(db, runId, leaseOwner, DateTime.UtcNow, LeaseDuration, ct);
+        var run = await TryClaimWithLifecycleAsync(
+            db,
+            lifecycle,
+            runId,
+            leaseOwner,
+            DateTime.UtcNow,
+            LeaseDuration,
+            ct);
         if (run == null) return;
 
         var meta = await _events.GetRunAsync(RunKinds.DesignArtifact, runId, ct) ?? new RunMeta
@@ -95,7 +104,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         meta.Status = RunStatuses.Running;
         meta.StartedAt ??= DateTime.UtcNow;
         await _events.SetRunAsync(RunKinds.DesignArtifact, meta, RunTtl, ct: CancellationToken.None);
-        await UpdatePhaseAsync(db, run, leaseOwner, 8,
+        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 8,
             run.Operation == DesignArtifactOperations.Edit ? "正在读取当前页面" : "正在整理知识与页面目标");
 
         var sites = scope.ServiceProvider.GetRequiredService<IHostedSiteService>();
@@ -140,7 +149,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             if ((editable?.Html.Length ?? 0) + knowledgeChars > MaxModelInputChars)
                 throw new InvalidOperationException("页面与知识正文过长，首版最多支持约 24 万字符，请减少引用或精简内容");
 
-            await UpdatePhaseAsync(db, run, leaseOwner, 18,
+            await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 18,
                 run.Operation == DesignArtifactOperations.Edit ? "正在理解页面结构与修改要求" : "正在规划页面结构与视觉层级");
 
             var output = new StringBuilder();
@@ -167,7 +176,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     if (!sawFirstText)
                     {
                         sawFirstText = true;
-                        await UpdatePhaseAsync(db, run, leaseOwner, 36, "页面已经开始生成");
+                        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 36, "页面已经开始生成");
                     }
                     await _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
@@ -195,8 +204,19 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var qualityEvidence = BuildQualityEvidence(run, editable);
             HostedSiteRevisionRules.ValidateGeneratedContentQuality(html, qualityEvidence);
-            await UpdatePhaseAsync(db, run, leaseOwner, 88,
+            await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, 88,
                 run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页");
+
+            if (run.ContractVersion == DesignArtifactContractVersions.Current)
+            {
+                if (verifiedFiles == null)
+                    throw new InvalidOperationException("OpenDesign 没有提交受信产物文件包，请重新生成");
+                await publicLifecycle.CommitManifestAsync(
+                    run.Id,
+                    verifiedFiles,
+                    new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                    CancellationToken.None);
+            }
 
             var persisted = await PersistArtifactWithLeaseAsync(
                 db,
@@ -213,6 +233,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 verifiedFiles);
             run.ArtifactSiteId = persisted.SiteId;
             run.ArtifactRevisionId = persisted.RevisionId;
+            if (run.ContractVersion == DesignArtifactContractVersions.Current
+                && !await RecordProducedArtifactAsync(
+                    db,
+                    run.Id,
+                    leaseOwner,
+                    persisted.SiteId,
+                    persisted.RevisionId,
+                    CancellationToken.None))
+            {
+                throw new DesignArtifactRunLeaseLostException(run.Id);
+            }
             object donePayload = run.Operation == DesignArtifactOperations.Edit
                 ? new { revisionId = persisted.RevisionId, siteId = persisted.SiteId, status = persisted.RevisionStatus }
                 : new { siteId = persisted.SiteId, siteUrl = persisted.SiteUrl, title = persisted.Title, revisionId = persisted.RevisionId };
@@ -222,17 +253,44 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             run.Phase = run.Operation == DesignArtifactOperations.Edit ? "草稿已生成" : "网页已生成并保存";
             run.CompletedAt = DateTime.UtcNow;
             run.UpdatedAt = DateTime.UtcNow;
-            if (!await CompleteRunOrCompensateArtifactAsync(
-                    db,
-                    run,
-                    leaseOwner,
-                    persisted,
-                    sites,
-                    revisions,
-                    run.Phase,
-                    run.CompletedAt.Value,
-                    CancellationToken.None))
+            if (run.ContractVersion == DesignArtifactContractVersions.Current)
+            {
+                try
+                {
+                    await publicLifecycle.CompleteAsync(
+                        run.Id,
+                        new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                        CancellationToken.None);
+                    if (run.Operation == DesignArtifactOperations.Generate)
+                    {
+                        await publicLifecycle.BindPublishedAsync(
+                            run.Id,
+                            persisted.SiteId,
+                            persisted.RevisionId,
+                            CancellationToken.None);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 产物已形成且有 SourceRunId/ProducedArtifact 围栏，不能把瞬时账本失败改写为失败并删除。
+                    // 保留 committing/done，恢复器会继续 complete 或 published 绑定。
+                    _logger.LogWarning(ex, "OpenDesign 网页公共生命周期待恢复 runId={RunId}", run.Id);
+                    throw new DesignArtifactRunLeaseLostException(run.Id);
+                }
+            }
+            else if (!await CompleteRunOrCompensateArtifactAsync(
+                         db,
+                         run,
+                         leaseOwner,
+                         persisted,
+                         sites,
+                         revisions,
+                         run.Phase,
+                         run.CompletedAt.Value,
+                         CancellationToken.None))
+            {
                 throw new DesignArtifactRunLeaseLostException(run.Id);
+            }
 
             if (run.Operation == DesignArtifactOperations.Generate)
             {
@@ -347,6 +405,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         MongoDbContext db,
         DesignArtifactRun run,
         string leaseOwner,
+        IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
         int progress,
         string message)
     {
@@ -354,15 +413,26 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         run.Phase = message;
         run.Status = RunStatuses.Running;
         run.UpdatedAt = DateTime.UtcNow;
-        if (!await PersistPhaseAsync(
-                db,
+        if (run.ContractVersion == DesignArtifactContractVersions.Current)
+        {
+            await publicLifecycle.AppendPhaseAsync(
                 run.Id,
-                leaseOwner,
+                new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
                 progress,
                 message,
-                run.UpdatedAt,
-                CancellationToken.None))
+                CancellationToken.None);
+        }
+        else if (!await PersistPhaseAsync(
+                     db,
+                     run.Id,
+                     leaseOwner,
+                     progress,
+                     message,
+                     run.UpdatedAt,
+                     CancellationToken.None))
+        {
             throw new DesignArtifactRunLeaseLostException(run.Id);
+        }
         await _events.AppendEventAsync(
             RunKinds.DesignArtifact,
             run.Id,
@@ -400,6 +470,25 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var current = await db.DesignArtifactRuns.Find(x => x.Id == runId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var usesPublicLifecycle = current?.ContractVersion == DesignArtifactContractVersions.Current
+                                  && current.Runtime == DesignArtifactRuntimes.OpenDesign;
+        if (usesPublicLifecycle)
+        {
+            var publicLifecycle = scope.ServiceProvider.GetRequiredService<IWebPageDesignArtifactLifecycleAdapter>();
+            var stableCode = errorCode == null
+                ? "open_design_run_cancelled"
+                : WebPageDesignArtifactLifecycleAdapter.ExecutionFailureCode;
+            await publicLifecycle.FailAsync(
+                runId,
+                stableCode,
+                new DesignArtifactLifecycleLeaseAuthority(leaseOwner),
+                CancellationToken.None);
+            status = RunStatuses.Error;
+            eventName = "error";
+            errorCode = stableCode;
+        }
         var update = Builders<DesignArtifactRun>.Update
             .Set(x => x.Status, status)
             .Set(x => x.Error, errorCode == null ? null : message)
@@ -409,7 +498,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             .Set(x => x.LeaseExpiresAt, null);
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.Id == runId
-                 && (x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
+                 && (usesPublicLifecycle
+                     ? x.Status == RunStatuses.Error
+                     : x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
                  && x.LeaseOwnerId == leaseOwner,
             update,
             cancellationToken: CancellationToken.None);
@@ -513,6 +604,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        var publicLifecycle = scope.ServiceProvider.GetRequiredService<IWebPageDesignArtifactLifecycleAdapter>();
+        await publicLifecycle.RecoverPendingAsync(100, CancellationToken.None);
         await RecoverInterruptedRunsAsync(
             db,
             _queue,
@@ -522,7 +615,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             scope.ServiceProvider.GetRequiredService<IHostedSiteService>(),
             scope.ServiceProvider.GetRequiredService<IHostedSiteRevisionService>(),
             scope.ServiceProvider.GetRequiredService<IAssetStorage>(),
-            scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>());
+            scope.ServiceProvider.GetRequiredService<IActivityActionRecorder>(),
+            publicLifecycle);
     }
 
     internal static async Task<PersistedDesignArtifact> PersistArtifactWithLeaseAsync(
@@ -815,7 +909,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
             x => x.Id == runId
-                 && x.Status == RunStatuses.Running
+                 && (x.Status == RunStatuses.Running
+                     || x.ContractVersion == DesignArtifactContractVersions.Current
+                     && x.Status == RunStatuses.Committing)
                  && x.LeaseOwnerId == leaseOwner
                  && x.LeaseExpiresAt > now,
             Builders<DesignArtifactRun>.Update
@@ -847,6 +943,41 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Set(x => x.UpdatedAt, now),
             new FindOneAndUpdateOptions<DesignArtifactRun> { ReturnDocument = ReturnDocument.After },
             ct);
+    }
+
+    internal static async Task<DesignArtifactRun?> TryClaimWithLifecycleAsync(
+        MongoDbContext db,
+        IDesignArtifactLifecycleService lifecycle,
+        string runId,
+        string leaseOwner,
+        DateTime now,
+        TimeSpan leaseDuration,
+        CancellationToken ct)
+    {
+        var candidate = await db.DesignArtifactRuns.Find(run => run.Id == runId)
+            .FirstOrDefaultAsync(ct);
+        if (candidate?.ContractVersion != DesignArtifactContractVersions.Current)
+            return await TryClaimAsync(db, runId, leaseOwner, now, leaseDuration, ct);
+        if (candidate.Status != RunStatuses.Queued) return null;
+        try
+        {
+            return await lifecycle.StartAsync(
+                new StartDesignArtifactSessionRequest(
+                    candidate.Id,
+                    candidate.UserId,
+                    new DesignArtifactLifecycleExpectation(
+                        candidate.LifecycleVersion,
+                        candidate.WorkspaceRef?.BaseRevision,
+                        candidate.VersionBoundary?.BaseContentHash),
+                    leaseOwner,
+                    now + leaseDuration),
+                CancellationToken.None);
+        }
+        catch (DesignArtifactLifecycleException ex)
+            when (ex.Code == DesignArtifactLifecycleErrorCodes.Conflict)
+        {
+            return null;
+        }
     }
 
     internal static async Task<bool> RenewLeaseAsync(
@@ -925,6 +1056,28 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         return write.ModifiedCount == 1;
     }
 
+    internal static async Task<bool> RecordProducedArtifactAsync(
+        MongoDbContext db,
+        string runId,
+        string leaseOwner,
+        string siteId,
+        string revisionId,
+        CancellationToken ct)
+    {
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            run => run.Id == runId
+                   && run.ContractVersion == DesignArtifactContractVersions.Current
+                   && run.Status == RunStatuses.Committing
+                   && run.LeaseOwnerId == leaseOwner
+                   && run.LeaseExpiresAt > DateTime.UtcNow,
+            Builders<DesignArtifactRun>.Update
+                .Set(run => run.ProducedArtifactSiteId, siteId)
+                .Set(run => run.ProducedArtifactRevisionId, revisionId)
+                .Set(run => run.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
+    }
+
     internal static async Task RecoverInterruptedRunsAsync(
         MongoDbContext db,
         IRunQueue queue,
@@ -934,7 +1087,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteService? sites = null,
         IHostedSiteRevisionService? revisions = null,
         IAssetStorage? workspaceStorage = null,
-        IActivityActionRecorder? activityRecorder = null)
+        IActivityActionRecorder? activityRecorder = null,
+        IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null)
     {
         if (workspaceStorage != null)
             await RecoverRejectedWorkspaceResultsAsync(db, workspaceStorage, now, ct);
@@ -956,9 +1110,33 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         foreach (var candidate in staleRunning)
         {
             var interruptedMessage = "服务重启中断了本次设计任务，请重新发起";
+            var usesPublicLifecycle = publicLifecycle != null
+                                      && candidate.ContractVersion == DesignArtifactContractVersions.Current
+                                      && candidate.Runtime == DesignArtifactRuntimes.OpenDesign
+                                      && !string.IsNullOrWhiteSpace(candidate.LeaseOwnerId)
+                                      && candidate.LeaseExpiresAt.HasValue;
+            if (usesPublicLifecycle)
+            {
+                try
+                {
+                    await publicLifecycle!.FailAsync(
+                        candidate.Id,
+                        WebPageDesignArtifactLifecycleAdapter.InterruptedFailureCode,
+                        new DesignArtifactLifecycleLeaseAuthority(
+                            candidate.LeaseOwnerId!,
+                            candidate.LeaseExpiresAt,
+                            Recovery: true),
+                        CancellationToken.None);
+                }
+                catch (DesignArtifactLifecycleException ex)
+                    when (ex.Code == DesignArtifactLifecycleErrorCodes.Conflict)
+                {
+                    continue;
+                }
+            }
             var write = await db.DesignArtifactRuns.UpdateOneAsync(
                 x => x.Id == candidate.Id
-                     && x.Status == candidate.Status
+                     && x.Status == (usesPublicLifecycle ? RunStatuses.Error : candidate.Status)
                      && x.LeaseOwnerId == candidate.LeaseOwnerId
                      && x.LeaseExpiresAt == candidate.LeaseExpiresAt,
                 Builders<DesignArtifactRun>.Update

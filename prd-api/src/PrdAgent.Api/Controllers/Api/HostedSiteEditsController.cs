@@ -30,6 +30,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly ILogger<HostedSiteEditsController> _logger;
     private readonly IDesignArtifactProviderCatalog _providers;
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
+    private readonly IWebPageDesignArtifactLifecycleAdapter _publicLifecycle;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -39,7 +40,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         MongoDbContext db,
         ILogger<HostedSiteEditsController> logger,
         IDesignArtifactProviderCatalog providers,
-        IDesignKnowledgeSnapshotResolver knowledgeSnapshots)
+        IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
+        IWebPageDesignArtifactLifecycleAdapter publicLifecycle)
     {
         _sites = sites;
         _revisions = revisions;
@@ -49,6 +51,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         _logger = logger;
         _providers = providers;
         _knowledgeSnapshots = knowledgeSnapshots;
+        _publicLifecycle = publicLifecycle;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -179,6 +182,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
             }
         }
+        WebPageDesignArtifactLifecycleAdapter.InitializeNewRun(run, capability, editable.Html);
         await _db.DesignArtifactRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
         var input = JsonSerializer.Serialize(new { SiteId = siteId });
         var meta = new RunMeta
@@ -429,6 +433,31 @@ public sealed class HostedSiteEditsController : ControllerBase
                     revisionId,
                     this.GetRequiredUserId(),
                     CancellationToken.None);
+            if (idempotencyKey == null
+                && string.Equals(
+                    result.Revision.Runtime,
+                    DesignArtifactRuntimes.OpenDesign,
+                    StringComparison.Ordinal)
+                && !string.IsNullOrWhiteSpace(result.Revision.SourceRunId))
+            {
+                try
+                {
+                    await _publicLifecycle.BindPublishedAsync(
+                        result.Revision.SourceRunId,
+                        result.Revision.SiteId,
+                        result.Revision.Id,
+                        CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    // 发布本身已经成功，公共审计绑定由恢复器继续补记，不能把成功响应伪装成失败。
+                    _logger.LogWarning(
+                        ex,
+                        "OpenDesign 草稿发布后公共生命周期绑定待恢复 runId={RunId} revisionId={RevisionId}",
+                        result.Revision.SourceRunId,
+                        result.Revision.Id);
+                }
+            }
             if (!result.Changed)
                 PrdAgent.Api.Filters.ActivityLogActionFilter.Suppress(HttpContext);
             return Ok(ApiResponse<object>.Ok(new
@@ -481,8 +510,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.Title,
         run.Progress,
         run.Phase,
-        run.ArtifactSiteId,
-        run.ArtifactRevisionId,
+        artifactSiteId = run.ArtifactSiteId ?? run.ProducedArtifactSiteId,
+        artifactRevisionId = run.ArtifactRevisionId ?? run.ProducedArtifactRevisionId,
         run.LinkedRunId,
         run.Error,
         run.CreatedAt,

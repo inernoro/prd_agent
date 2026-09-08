@@ -2,7 +2,7 @@ namespace PrdAgent.Core.Models;
 
 /// <summary>
 /// 跨网页托管、知识库与 HTML PPT 的统一设计任务。
-/// 事件流保存在 Redis；此记录保存可恢复、可审计的业务事实与知识快照。
+/// v2 权威生命周期事件与状态保存在同一 Mongo 文档；Redis 仅服务历史流程和兼容投影。
 /// </summary>
 public class DesignArtifactRun
 {
@@ -27,14 +27,41 @@ public class DesignArtifactRun
     /// <summary>公共生命周期 CAS 版本；只有 lifecycle service 可以推进。</summary>
     public int LifecycleVersion { get; set; }
 
+    /// <summary>Mongo 权威事件序号；与公开 SSE id 使用同一数值。</summary>
+    public long LifecycleEventSequence { get; set; }
+
+    /// <summary>长期保留的脱敏生命周期事件；不存模型正文或任意 payload。</summary>
+    public List<DesignArtifactEventEnvelope> LifecycleEvents { get; set; } = new();
+
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactWorkspaceRef? WorkspaceRef { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactCapabilitySnapshot? Capability { get; set; }
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactVersionBoundary? VersionBoundary { get; set; }
 
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactContractManifest? Manifest { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactManifestValidationReceipt? ManifestValidation { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactPlanReceipt? PlanReceipt { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? ParentPlanRunId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? ParentPlanContentHash { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? PublishBindingOperationId { get; set; }
+
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? PublishBindingFingerprint { get; set; }
 
     /// <summary>公共生命周期只保存稳定失败码，不保存 provider 异常或请求正文。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
@@ -64,6 +91,12 @@ public class DesignArtifactRun
     public string? ArtifactSiteId { get; set; }
 
     public string? ArtifactRevisionId { get; set; }
+
+    /// <summary>已持久化但尚未发布绑定的站点；编辑任务在草稿完成后写入。</summary>
+    public string? ProducedArtifactSiteId { get; set; }
+
+    /// <summary>已持久化的草稿或基线版本；不等同于 published 生命周期绑定。</summary>
+    public string? ProducedArtifactRevisionId { get; set; }
 
     public string? LinkedRunId { get; set; }
 
