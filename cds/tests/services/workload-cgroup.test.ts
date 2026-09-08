@@ -105,6 +105,29 @@ describe('workload-cgroup 托管容器归属', () => {
     expect(workloadCgroupArgv()).toEqual(['--cgroup-parent', 'my-workloads.slice']);
   });
 
+  /**
+   * Codex 九轮 P2：只把容器归进低权重 slice 不构成保护——1000:100 这个比要成立，
+   * 控制面进程自己也得跑在带 CPUWeight 的 systemd 单元里。executor 是 `nohup node`
+   * 起的，没有那份单元；此时报 weightManaged 就是谎报，healthz 会说「已接管」而
+   * 实际上 executor API 仍是默认权重。归组保留，状态如实。
+   */
+  it('控制面进程未被提权时（executor 用 nohup 起）：容器仍归组，但 weightManaged 为假', () => {
+    const s = planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'systemd', { controlPlanePrioritized: false });
+    expect(s).toMatchObject({ enabled: true, parent: DEFAULT_WORKLOAD_SLICE, weightManaged: false });
+    expect(s.reason).toContain('控制面未受保护');
+    __setWorkloadCgroupForTest(s);
+    // 归组照旧下发，只是别再宣称有权重保护
+    expect(workloadCgroupFlags()).toEqual([`--cgroup-parent '${DEFAULT_WORKLOAD_SLICE}'`]);
+  });
+
+  it('CDS_MODE=executor 时探测结果如实报未提权', async () => {
+    const shell = new MockShellExecutor();
+    shell.addResponsePattern(/docker info/, () => ({ stdout: 'systemd\n', stderr: '', exitCode: 0 }));
+    const s = await resolveWorkloadCgroup(shell, { CDS_MODE: 'executor' });
+    expect(s).toMatchObject({ enabled: true, weightManaged: false });
+    expect(s.reason).toContain('控制面未受保护');
+  });
+
   it('driver 未知 / 关闭 / 预览实例 一律不追加', () => {
     expect(planWorkloadCgroup(DEFAULT_WORKLOAD_SLICE, 'unknown').enabled).toBe(false);
     expect(planWorkloadCgroup(null, 'systemd').enabled).toBe(false);

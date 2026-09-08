@@ -77,7 +77,7 @@ function shellQuote(value: string): string {
 export function planWorkloadCgroup(
   configured: string | null,
   driver: DockerCgroupDriver,
-  opts: { previewInstance?: boolean } = {},
+  opts: { previewInstance?: boolean; controlPlanePrioritized?: boolean } = {},
 ): WorkloadCgroupStatus {
   if (opts.previewInstance) {
     return { enabled: false, parent: null, driver, weightManaged: false, reason: '预览实例不接管宿主 cgroup' };
@@ -96,6 +96,17 @@ export function planWorkloadCgroup(
       return {
         enabled: false, parent: null, driver, weightManaged: false,
         reason: `systemd cgroup driver 要求 --cgroup-parent 是 .slice 名，当前值「${configured}」不合法，已跳过`,
+      };
+    }
+    // 只把容器归进低权重 slice 还不够：1000:100 这个保护比要成立，控制面进程自己
+    // 也得跑在带 CPUWeight/IOWeight 的 systemd 单元里。executor 是 `nohup node`
+    // 起的，没有那份单元，于是容器归了组、API 仍是默认权重——此时报 weightManaged
+    // 就是谎报（Codex PR #1516 九轮 P2）。归组仍然保留（容器彼此归到一起，运维
+    // 给该宿主装上单元或手动设权重后即刻生效），但状态如实说没保护。
+    if (opts.controlPlanePrioritized === false) {
+      return {
+        enabled: true, parent: configured, driver, weightManaged: false,
+        reason: `托管容器已挂到 ${configured}，但本进程不是 systemd 单元启动（executor 用 nohup 起），没有 CPUWeight/IOWeight 提权：容器已归组，控制面未受保护`,
       };
     }
     return { enabled: true, parent: configured, driver, weightManaged: true, reason: `托管容器挂到 ${configured}（systemd 接管权重）` };
@@ -131,7 +142,10 @@ export async function resolveWorkloadCgroup(
   } catch {
     driver = 'unknown';
   }
-  current = planWorkloadCgroup(configured, driver);
+  // executor 由 `nohup node dist/index.js` 启动（exec_cds.sh 的 connect 流程），
+  // 不走 cds-master.service，因此拿不到那份单元的 CPUWeight/IOWeight/Nice。
+  const controlPlanePrioritized = (env.CDS_MODE || '').trim().toLowerCase() !== 'executor';
+  current = planWorkloadCgroup(configured, driver, { controlPlanePrioritized });
   return current;
 }
 

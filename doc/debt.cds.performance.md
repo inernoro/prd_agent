@@ -142,6 +142,10 @@ slice + 控制面 systemd 权重、同 commit 部署并入、webhook 噪声廉�
   按前缀并入等于可能把请求并进「碰巧前缀相同」的那次部署。判据收敛为「两边都是 40 位全长且完全相等」，
   要吃并入收益就传完整 SHA。真要支持短 SHA，得在判定前把两边都解析成完整提交 ID——那要在部署热路径上
   加一次 git 解析，与本批「治过载」的目标相悖，不在本批范围。
+- P2 executor 宿主上只有容器归组、控制面没有提权：executor 是接入时以后台进程直接拉起的，不走
+  控制面那份 systemd 单元，拿不到里面的 CPU/IO 权重与优先级，所以「控制面 1000、容器 100」这个
+  保护比在那些机器上不成立。现在健康状态如实报「已归组、未受保护」并说明原因，真要保护得让
+  executor 也跑在带优先级的单元里——那要改接入流程与装机步骤，不在本批范围。
 - P2 并入判据复用的 `DeploymentVersionService.computeConfigHash()` 不覆盖全部运行时字段：
   `cacheMounts` / `fallbackImage` 这类会影响挂载与选像的字段不进哈希，所以只改了它们的同 sha
   部署仍可能被并入（改动既不生效也不排队）。改哈希算法会让所有存量不可变版本的 configHash 失效、
@@ -200,3 +204,5 @@ SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作�
 |------|------|------|
 | 相关 | `cds/src/services/janitor.ts` | 本次首步落地 |
 | 度量 | `cds/scripts/control-plane-baseline.py` | 控制面过载治理的改前改后度量尺（同一口径出 Markdown 表） |
+| 归属 | `cds/src/services/workload-cgroup.ts` | 托管容器挂哪个低权重 slice、权重有没有真被接管 |
+| 提权 | `cds/systemd/` | 控制面单元的 CPU/IO 权重与低权重 slice 单元；executor 接入路径不经过这里 |
