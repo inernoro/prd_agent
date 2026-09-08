@@ -137,6 +137,7 @@ import {
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
+import { DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
 import { classifyDeploymentFailure } from '../services/deployment-failure-classifier.js';
@@ -2794,6 +2795,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  /**
+   * 找「在途那次部署」的 run。首选按协调器给的 activeOperationId 精确匹配——
+   * 部署一拿到租约就把 operationId 写进了 run。
+   *
+   * 不拿 commitSha 当判据：run.commitSha 会在部署过程中被改写成解析后的真实 SHA
+   * （请求里写 `4444…`、落库可能是 `abc1234`），拿它比对必然静默漏配；何况
+   * 「是不是同一个提交」协调器已经判过了，这里再判一遍就是第二份会漂的判据。
+   *
+   * 匹配不上时只在「排除自己后恰好只剩一条非终态 run」的情况下兜底；有歧义就返回
+   * null，让调用方摘掉响应头退回分支状态轮询，而不是指一条可能错的 run。
+   */
+  function findLiveDeploymentRunId(branchId: string, activeOperationId: string | null, excludeRunId: string | null): string | null {
+    if (!deploymentRunService) return null;
+    const live = deploymentRunService.list({ branchId })
+      .filter((run) => run.id !== excludeRunId && !DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status));
+    if (activeOperationId) {
+      const exact = live.find((run) => run.operationId === activeOperationId);
+      if (exact) return exact.id;
+    }
+    return live.length === 1 ? live[0].id : null;
+  }
+
   function beginBranchOperation(
     req: Request,
     res: Response,
@@ -2808,6 +2831,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       reason?: string | null;
       sse?: boolean;
       continueWith?: 'deploy' | 'deploy-profile' | null;
+      /** 外层在拿租约前就建好的占位 run；并入在途部署时用来排除自己。 */
+      deploymentRunId?: string | null;
     },
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
@@ -2832,6 +2857,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // merged / joined 都是「已受理、不新开操作」：merged 排到当前操作之后重放，
     // joined 直接并入在途的同 commit 部署（2026-09-08，治 push 后紧跟手动 deploy 拆两遍容器）。
     const accepted = decision.status === 'merged' || decision.status === 'joined';
+
+    // 并入在途部署时，调用方必须拿到一条**真的会跑完**的 run 来追踪。
+    // 外层 deploy handler 在取租约之前就 begin 了占位 run 并把它写进
+    // X-CDS-Deployment-Run-Id，而并入之后那条占位 run 会被取消；cdscli 只认这个头、
+    // 见 cancelled 即判「部署失败」——本 PR 要治的正是「push 后紧跟 deploy」这条路径，
+    // 头指错了等于治了个寂寞（Codex 三轮 P1）。所以这里把头改指向在途那次部署的 run；
+    // 实在找不到就把头摘掉，让 CLI 退回分支状态轮询，而不是盯着一条注定被取消的记录。
+    const joinedRunId = decision.status === 'joined'
+      ? findLiveDeploymentRunId(entry.id, decision.activeOperationId || null, input.deploymentRunId || null)
+      : null;
+    if (decision.status === 'joined' && !res.headersSent) {
+      if (joinedRunId) res.setHeader('X-CDS-Deployment-Run-Id', joinedRunId);
+      else res.removeHeader('X-CDS-Deployment-Run-Id');
+    }
+    (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId = joinedRunId || undefined;
+
     const payload = {
       ok: true,
       operationStatus: decision.status,
@@ -2839,6 +2880,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeOperationId: decision.activeOperationId,
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
+      deploymentRunId: joinedRunId || undefined,
       message: decision.status === 'joined'
         ? `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`
         : decision.status === 'merged'
@@ -12487,9 +12529,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
+      deploymentRunId: deploymentRun?.id || null,
     });
     if (branchOperationCoordinator && !branchOperationLease) {
-      cancelDeploymentRun(deploymentRun?.id, '部署请求未取得分支操作租约');
+      // 并入在途部署时占位 run 照样取消（它确实什么都没做），但要写清去向：
+      // 调用方已被改指向 joinedRunId，运行记录里也能看出这次为什么没自己跑。
+      const joinedRunId = (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId as string | undefined;
+      cancelDeploymentRun(
+        deploymentRun?.id,
+        joinedRunId ? `已并入在途部署 ${joinedRunId}，本次不重复拆装容器` : '部署请求未取得分支操作租约',
+      );
       return;
     }
 

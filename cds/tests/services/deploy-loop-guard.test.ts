@@ -199,8 +199,10 @@ describe('接线守卫：deploy 端点真的在用这条判定', () => {
     expect(leaseAt, '找不到租约获取').toBeGreaterThan(-1);
     expect(recordAt, '找不到 recordBuild').toBeGreaterThan(-1);
     expect(recordAt).toBeGreaterThan(leaseAt);
-    // 还要在「没拿到租约就 return」那道闸之后，否则等于没挪
-    const bailAt = slice.indexOf('cancelDeploymentRun(deploymentRun?.id, \'部署请求未取得分支操作租约\')');
+    // 还要在「没拿到租约就 return」那道闸之后，否则等于没挪。
+    // 锚点只取调用本身，不含取消文案——文案会随并入语义变（joined 时写「已并入在途部署」），
+    // 把它写进判据等于要求某段实现字面存在，改文案的人会莫名其妙地被判红。
+    const bailAt = slice.indexOf('cancelDeploymentRun(');
     expect(bailAt, '找不到未取得租约的提前返回').toBeGreaterThan(-1);
     expect(recordAt).toBeGreaterThan(bailAt);
   });

@@ -785,6 +785,9 @@ export class ContainerService {
         'docker create',
         `--name ${this.shellQuote(builderName)}`,
         `--network ${this.shellQuote(network)}`,
+        // managed 构建是本机最吃 CPU 的一段（装依赖 + 打包），必须和其它托管
+        // 负载一样挂低权重 slice，否则构建期间照旧和控制面同权抢 CPU（Codex 三轮 P2）。
+        ...workloadCgroupFlags(),
         '--entrypoint=""',
         '-w /app',
         `--env-file ${this.shellQuote(envFilePath)}`,
