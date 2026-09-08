@@ -191,7 +191,7 @@ const MAX_COMMIT_RESPONSE_BYTES = 1024 * 1024;
 const MAX_RUNTIME_DIAGNOSTIC_BYTES = 2 * 1024;
 // A real design run commonly exposes a different deterministic violation after each
 // repair (for example: unsupported facts, then broken fragments, then inert buttons).
-// Keep the loop bounded by both this cap and the MAP-owned 72-call budget, while
+// Keep the repair loop bounded by this cap and the execution deadline, while
 // allowing OpenDesign enough passes to converge instead of failing a valid task after
 // only two repairs.
 const MAX_QUALITY_REPAIR_ATTEMPTS = 4;

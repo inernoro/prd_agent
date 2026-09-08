@@ -527,7 +527,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
               </div>
               {thinking && generating && <p className="mt-2 line-clamp-2 text-[11px] text-token-muted">{thinking}</p>}
             </div>
-            <div className="relative min-h-0 flex-1 bg-white">
+            <div className="relative min-h-0 flex-1">
               {previewHtml ? (
                 <iframe
                   srcDoc={previewHtml}
@@ -537,7 +537,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
                   className="h-full w-full bg-white"
                 />
               ) : (
-                <div className="flex h-full items-center justify-center bg-token-card">
+                <div className="surface-reading flex h-full items-center justify-center text-crisp">
                   <MapSectionLoader text={generating ? '页面结构出现后会立即在这里生长' : '生成前，这里会展示实时网页'} />
                 </div>
               )}

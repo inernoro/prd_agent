@@ -400,7 +400,6 @@ public sealed class DesignArtifactRunRecoveryTests
             "input-key",
             "input-sha",
             "base-revision",
-            24,
             now.AddMinutes(20),
             now.AddSeconds(10),
             CancellationToken.None));
@@ -420,7 +419,6 @@ public sealed class DesignArtifactRunRecoveryTests
             "late-key",
             "late-sha",
             "late-revision",
-            36,
             now.AddMinutes(25),
             now.AddSeconds(20),
             CancellationToken.None));
@@ -459,7 +457,6 @@ public sealed class DesignArtifactRunRecoveryTests
             "late-input",
             "late-sha",
             "late-base",
-            36,
             now.AddMinutes(20),
             afterExpiry,
             CancellationToken.None));

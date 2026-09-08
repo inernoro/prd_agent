@@ -6,10 +6,14 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Interfaces.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
@@ -19,26 +23,140 @@ namespace PrdAgent.Api.Tests;
 public sealed class DesignArtifactWorkspaceContractTests
 {
     [Theory]
-    [InlineData(null, 72)]
-    [InlineData("0", 1)]
-    [InlineData("72", 72)]
-    [InlineData("200", 96)]
-    public void ModelCallBudgetCoversBuildReviewAndOneRepairWithinHardLimit(
-        string? configured,
-        int expected)
+    [InlineData(DesignArtifactOperations.Generate, " gpt-4.1 ", "gpt-4.1")]
+    [InlineData(DesignArtifactOperations.Edit, " gpt-4.1 ", "gpt-4.1")]
+    [InlineData(DesignArtifactOperations.Generate, null, null)]
+    [InlineData(DesignArtifactOperations.Edit, null, null)]
+    [InlineData(DesignArtifactOperations.Generate, "  ", null)]
+    public async Task MapAndOpenDesignUseTheSameConfiguredModelOrAuto(
+        string operation, string? configuredModel, string? expectedModel)
     {
-        var values = new Dictionary<string, string?>();
-        if (configured != null)
-            values["DesignArtifactRuntime:MaxModelCalls"] = configured;
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:Model"] = configuredModel,
+            ["DesignArtifactRuntime:ModelPoolId"] = " ",
+            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
+            ["LlmGwServe:ApiKey"] = "gateway-secret",
+        }).Build();
+        var run = BuildRun();
+        run.Operation = operation;
+        run.Status = RunStatuses.Running;
+        var caller = operation == DesignArtifactOperations.Edit
+            ? AppCallerRegistry.Admin.WebHosting.EditHtml
+            : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
+        var temperature = operation == DesignArtifactOperations.Edit ? 0.25 : 0.45;
+        var client = new Mock<ILLMClient>(MockBehavior.Strict);
+        client.Setup(item => item.StreamGenerateAsync(
+                It.IsAny<string>(), It.IsAny<List<LLMMessage>>(), It.IsAny<CancellationToken>()))
+            .Returns(DesignResponse());
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        gateway.Setup(item => item.CreateClient(caller, ModelTypes.Chat, 4096, temperature, true, expectedModel, null, null))
+            .Returns(client.Object);
+        var context = new Mock<ILLMRequestContextAccessor>(MockBehavior.Strict);
+        context.Setup(item => item.BeginScope(It.Is<LlmRequestContext>(value => value.RunId == run.Id)))
+            .Returns(Mock.Of<IDisposable>());
+        var executor = new MapGatewayDesignArtifactExecutor(gateway.Object, context.Object, configuration);
+        var chunks = new List<DesignArtifactExecutorChunk>();
+        await foreach (var chunk in executor.ExecuteAsync(run, null, CancellationToken.None)) chunks.Add(chunk);
+        Assert.Equal("<html>synthetic</html>", Assert.Single(chunks).Content);
+        gateway.Verify(item => item.CreateClient(caller, ModelTypes.Chat, 4096, temperature, true, expectedModel, null, null), Times.Once);
+        client.Verify(item => item.StreamGenerateAsync(
+            It.IsAny<string>(), It.IsAny<List<LLMMessage>>(), It.IsAny<CancellationToken>()), Times.Once);
+        gateway.VerifyNoOtherCalls();
 
-        Assert.Equal(expected, DesignArtifactWorkspaceBroker.ResolveModelCallLimit(configuration));
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(item => item.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(run);
+        var handler = new CapturingHandler();
+        var proxy = new DesignArtifactRuntimeController(
+            broker.Object, new SingleClientFactory(handler), configuration,
+            NullLogger<DesignArtifactRuntimeController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        var request = Encoding.UTF8.GetBytes("{\"model\":\"untrusted-model\",\"model_pool_id\":\"untrusted-pool\",\"modelPoolId\":\"untrusted-pool\",\"model_policy\":\"pool\",\"modelPolicy\":\"pool\",\"messages\":[]}");
+        proxy.Request.Body = new MemoryStream(request);
+        proxy.Request.ContentLength = request.Length;
+        proxy.Request.Headers.Authorization = "Bearer model-ticket";
+        proxy.Response.Body = new MemoryStream();
+        await proxy.ProxyChatCompletions(run.Id, CancellationToken.None);
+
+        Assert.Equal(StatusCodes.Status200OK, proxy.Response.StatusCode);
+        Assert.NotNull(handler.Body);
+        Assert.Equal(expectedModel, handler.Body!["model"]?.GetValue<string>());
+        Assert.Equal(expectedModel != null, handler.Body.ContainsKey("model"));
+        foreach (var key in new[] { "model_pool_id", "modelPoolId", "model_policy", "modelPolicy" })
+            Assert.False(handler.Body.ContainsKey(key));
+        Assert.Equal(caller, handler.Header("X-Gateway-App-Caller"));
+        Assert.Equal(run.Id, handler.Header("X-Gateway-Run-Id"));
+        broker.VerifyAll();
     }
 
     [Fact]
-    public void NewRunUsesTheSameDefaultModelCallBudget()
+    public async Task MapConfiguredPoolFailsBeforeCreatingAnyModelClient()
     {
-        Assert.Equal(72, new DesignArtifactRun().RuntimeModelCallLimit);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:ModelPoolId"] = "pool-chat-premium",
+            ["DesignArtifactRuntime:Model"] = "gpt-4.1",
+        }).Build();
+        var gateway = new Mock<ILlmGateway>(MockBehavior.Strict);
+        var context = new Mock<ILLMRequestContextAccessor>(MockBehavior.Strict);
+        var executor = new MapGatewayDesignArtifactExecutor(gateway.Object, context.Object, configuration);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(async () =>
+        {
+            await foreach (var _ in executor.ExecuteAsync(BuildRun(), null, CancellationToken.None)) { }
+        });
+
+        Assert.Contains("当前执行器暂不支持已配置的模型选择方式", error.Message, StringComparison.Ordinal);
+        gateway.Verify(item => item.CreateClient(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<double>(), It.IsAny<bool>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>()), Times.Never);
+        gateway.VerifyNoOtherCalls();
+        context.VerifyNoOtherCalls();
+    }
+
+    private static async IAsyncEnumerable<LLMStreamChunk> DesignResponse()
+    {
+        await Task.CompletedTask;
+        yield return new LLMStreamChunk { Type = "delta", Content = "<html>synthetic</html>" };
+    }
+
+    [Theory]
+    [InlineData(36)]
+    [InlineData(72)]
+    [InlineData(96)]
+    public void LegacyModelCallLimitIsIgnoredWhileAuditCountSurvives(int legacyLimit)
+    {
+        var legacy = new DesignArtifactRun { RuntimeModelCallCount = 120 }.ToBsonDocument();
+        legacy["RuntimeModelCallLimit"] = legacyLimit;
+
+        var restored = BsonSerializer.Deserialize<DesignArtifactRun>(legacy);
+
+        Assert.Equal(120, restored.RuntimeModelCallCount);
+        Assert.False(restored.ToBsonDocument().Contains("RuntimeModelCallLimit"));
+        Assert.DoesNotContain("runtimeModelCallLimit",
+            JsonSerializer.Serialize(restored, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ModelCallAdmissionRetainsRunLeaseAndTicketFencesWithoutACountGate()
+    {
+        var now = DateTime.UtcNow;
+        var filter = DesignArtifactWorkspaceBroker.BuildActiveWorkspaceFilter("run-active", "worker-owner", now);
+        var rendered = filter.Render(new RenderArgs<DesignArtifactRun>(
+            BsonSerializer.LookupSerializer<DesignArtifactRun>(), BsonSerializer.SerializerRegistry));
+
+        Assert.Equal("run-active", rendered["_id"].AsString);
+        Assert.Equal(RunStatuses.Running, rendered["Status"].AsString);
+        Assert.Equal("worker-owner", rendered["LeaseOwnerId"].AsString);
+        Assert.Equal(new BsonDateTime(now), rendered["LeaseExpiresAt"]["$gt"]);
+        Assert.Equal(new BsonDateTime(now), rendered["RuntimeTicketExpiresAt"]["$gt"]);
+        Assert.Equal(5, rendered.ElementCount);
+        Assert.False(rendered.Contains("RuntimeModelCallCount"));
+        Assert.False(rendered.Contains("RuntimeModelCallLimit"));
     }
 
     [Theory]

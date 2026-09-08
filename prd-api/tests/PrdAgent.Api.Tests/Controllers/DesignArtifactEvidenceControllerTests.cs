@@ -16,6 +16,30 @@ namespace PrdAgent.Api.Tests.Controllers;
 
 public sealed class DesignArtifactEvidenceControllerTests
 {
+    [Theory]
+    [InlineData("workspace_output_validation_failed", true)]
+    [InlineData("workspace_output_validation_failed token=secret", false)]
+    [InlineData("EACCES: permission denied /private/output", false)]
+    public void OutputValidationFailureExportUsesAnExactStableCode(string code, bool expected)
+    {
+        var predicate = typeof(DesignArtifactsController).GetMethod(
+            "IsSafeFailureCode", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(predicate);
+        Assert.Equal(expected, Assert.IsType<bool>(predicate!.Invoke(null, [code])));
+    }
+
+    [Fact]
+    public void RunResponseKeepsAuditCountWithoutAnObsoleteCallLimit()
+    {
+        var projection = typeof(DesignArtifactsController).GetMethod(
+            "ToDto", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(projection);
+        var response = projection!.Invoke(null, [new DesignArtifactRun { RuntimeModelCallCount = 120 }]);
+        var dto = JsonSerializer.SerializeToElement(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal(120, dto.GetProperty("runtimeModelCallCount").GetInt32());
+        Assert.False(dto.TryGetProperty("runtimeModelCallLimit", out _));
+    }
+
     [Fact]
     [Trait("Category", TestCategories.Integration)]
     public async Task EvidenceExport_ShouldCorrelateConcurrentSessionsAndRejectCrossUserAccess()
@@ -142,6 +166,7 @@ public sealed class DesignArtifactEvidenceControllerTests
             (RunId: "crash-run", Code: "open_design_execution_failed"),
             (RunId: "generic-runtime-run", Code: "open_design_run_failed"),
             (RunId: "invalid-output-run", Code: "design_output_invalid"),
+            (RunId: "output-validation-run", Code: "workspace_output_validation_failed"),
             (RunId: "unauthorized-run", Code: "workspace_transfer_invalid"),
         };
         var createdAt = DateTime.UtcNow.AddMinutes(-1);
@@ -168,6 +193,7 @@ public sealed class DesignArtifactEvidenceControllerTests
             var evidence = Data(Assert.IsType<OkObjectResult>(results[index]));
             Assert.Equal(cases[index].Code,
                 evidence.GetProperty("runtimeFailure").GetProperty("code").GetString());
+            Assert.True(evidence.GetProperty("runtimeFailure").GetProperty("runFailed").GetBoolean());
         }
         var serialized = JsonSerializer.Serialize(results, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.DoesNotContain("must-not-be-exported", serialized, StringComparison.Ordinal);

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { InfraService } from '../../src/types.js';
 import {
   markRotationRecoveryArtifactsForCleanup,
@@ -30,6 +30,76 @@ function service(runtime: 'mongodb' | 'redis', secret: string): InfraService {
 }
 
 describe('MongoDB 与 Redis 本地隔离恢复门禁', () => {
+  it.each(['before-delete', 'deleting'] as const)(
+    'TTL 与人工接管按同一副本串行：%s',
+    async (phase) => {
+      const recoveryDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cds-rotation-race-'));
+      const root = path.join(recoveryDir, 'rotation-a1b2c3');
+      const cleanupMarker = path.join(root, '.cleanup.json');
+      const manualMarker = path.join(root, '.manual-review.json');
+      const readFile = fs.promises.readFile;
+      const rm = fs.promises.rm;
+      let entered!: () => void;
+      const atBoundary = new Promise<void>((resolve) => { entered = resolve; });
+      let release!: () => void;
+      const boundaryGate = new Promise<void>((resolve) => { release = resolve; });
+      let pruning: Promise<void> | undefined;
+      let reviewing: Promise<void> | undefined;
+      const releasedEntries = vi.spyOn(Map.prototype, 'delete');
+      try {
+        await fs.promises.mkdir(root, { mode: 0o700 });
+        await fs.promises.writeFile(cleanupMarker, JSON.stringify({ expiresAt: '2020-01-01T00:00:00.000Z' }));
+        vi.spyOn(fs.promises, 'readFile').mockImplementation(async (...args) => {
+          const bytes = await readFile(...args);
+          if (phase === 'before-delete' && String(args[0]) === cleanupMarker) {
+            entered();
+            await boundaryGate;
+          }
+          return bytes;
+        });
+        vi.spyOn(fs.promises, 'rm').mockImplementation(async (...args) => {
+          if (phase === 'deleting' && String(args[0]) === root) {
+            entered();
+            await boundaryGate;
+          }
+          return rm(...args);
+        });
+        pruning = pruneExpiredRotationRecoveryArtifacts(recoveryDir);
+        await atBoundary;
+        reviewing = markRotationRecoveryArtifactsForManualReview({
+          recoveryDir,
+          backupIds: ['local:project-a:mongodb:rotation-a1b2c3:1111111111111111'],
+          operationId: 'icr-race',
+          reason: 'rollback-completed',
+        });
+        const reviewResult = phase === 'deleting'
+          ? expect(reviewing).rejects.toThrow('recovery.backup_missing')
+          : expect(reviewing).resolves.toBeUndefined();
+        release();
+        await Promise.all([pruning, reviewResult]);
+        expect(fs.existsSync(root)).toBe(phase === 'before-delete');
+        expect(fs.existsSync(manualMarker)).toBe(phase === 'before-delete');
+        expect(fs.existsSync(cleanupMarker)).toBe(false);
+        const releasedMaps = new Set(releasedEntries.mock.calls.flatMap(([key], index) =>
+          key === root ? [releasedEntries.mock.contexts[index]] : []));
+        expect(releasedMaps.size).toBe(2);
+        for (const map of releasedMaps) expect(map.has(root)).toBe(false);
+        // 再次清理不能删除已成功接管的副本；失败轨道的 pending/锁也必须已释放。
+        if (phase === 'deleting') {
+          await fs.promises.mkdir(root);
+          await fs.promises.writeFile(cleanupMarker, JSON.stringify({ expiresAt: '2020-01-01T00:00:00.000Z' }));
+        }
+        await pruneExpiredRotationRecoveryArtifacts(recoveryDir);
+        expect(fs.existsSync(root)).toBe(phase === 'before-delete');
+      } finally {
+        release();
+        await Promise.allSettled([pruning, reviewing]);
+        vi.restoreAllMocks();
+        await rm(recoveryDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it('Mongo 密码只走 stdin，恢复容器无网络且可恢复副本受控保留', async () => {
     const secret = 'mongo-secret-only-stdin';
     const calls: Array<{ args: readonly string[]; stdin?: string | Buffer }> = [];

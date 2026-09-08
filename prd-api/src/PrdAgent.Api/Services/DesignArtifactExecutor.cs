@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Interfaces.LlmGateway;
@@ -26,16 +27,59 @@ public interface IDesignArtifactExecutor
         CancellationToken ct);
 }
 
+/// <summary>MAP 持有的设计选模策略；执行器只消费同一配置，不接受远端自报的选择。</summary>
+internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string? Model)
+{
+    internal static DesignArtifactModelSelection Resolve(IConfiguration configuration)
+    {
+        static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        return new(
+            Normalize(configuration["DesignArtifactRuntime:ModelPoolId"]),
+            Normalize(configuration["DesignArtifactRuntime:Model"]));
+    }
+
+    internal string? ForMapClient()
+    {
+        // CreateClient 的 expectedModel 不携带 model_policy/model_pool_id，不能假扮严格池路由。
+        if (ModelPoolId != null)
+            throw new InvalidOperationException("当前执行器暂不支持已配置的模型选择方式，请切换 OpenDesign，或联系管理员调整设计模型配置");
+        return Model;
+    }
+
+    internal void ApplyToOpenAiRequest(JsonObject body)
+    {
+        body.Remove("model");
+        body.Remove("model_pool_id");
+        body.Remove("modelPoolId");
+        body.Remove("model_policy");
+        body.Remove("modelPolicy");
+        if (ModelPoolId != null)
+        {
+            body["model_pool_id"] = ModelPoolId;
+            body["model_policy"] = "pool";
+        }
+        else if (Model != null)
+        {
+            body["model"] = Model;
+        }
+    }
+}
+
 /// <summary>首个生产实现：通过 MAP LLM Gateway 生成或微调完整 HTML。</summary>
 public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
 {
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmContext;
+    private readonly IConfiguration _configuration;
 
-    public MapGatewayDesignArtifactExecutor(ILlmGateway gateway, ILLMRequestContextAccessor llmContext)
+    public MapGatewayDesignArtifactExecutor(
+        ILlmGateway gateway,
+        ILLMRequestContextAccessor llmContext,
+        IConfiguration configuration)
     {
         _gateway = gateway;
         _llmContext = llmContext;
+        _configuration = configuration;
     }
 
     public string Runtime => DesignArtifactRuntimes.MapGateway;
@@ -49,6 +93,7 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
         string? currentHtml,
         [EnumeratorCancellation] CancellationToken ct)
     {
+        var expectedModel = DesignArtifactModelSelection.Resolve(_configuration).ForMapClient();
         var knowledgeChars = run.KnowledgeReferences.Sum(x => x.Content.Length);
         var caller = run.Operation == DesignArtifactOperations.Edit
             ? AppCallerRegistry.Admin.WebHosting.EditHtml
@@ -75,7 +120,8 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
             // 更长网页由模型配置升级或后续分段生成解决，不能在业务层假定 16K 输出能力。
             maxTokens: 4_096,
             temperature: run.Operation == DesignArtifactOperations.Edit ? 0.25 : 0.45,
-            includeThinking: true);
+            includeThinking: true,
+            expectedModel: expectedModel);
         var messages = new List<LLMMessage>
         {
             new() { Role = "user", Content = DesignArtifactPromptBuilder.BuildUserPrompt(run, currentHtml) },

@@ -92,7 +92,12 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     principal: readPositiveIntegerEnv('CDS_AGENT_SESSION_PRINCIPAL_LIMIT', 4),
   };
   const agentWorkspaceSessionRuntime = deps.agentWorkspaceSessionRuntime
-    ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell) : undefined);
+    ?? (deps.shell ? new AgentWorkspaceSessionRuntime(deps.shell, {
+      // systemd PrivateTmp 下的 /tmp 只对 CDS 可见，不能作为宿主 Docker 的 bind 源。
+      // 复用构建缓存所在的数据根，保持宿主路径一致且不依赖启动工作目录。
+      rootDir: process.env.CDS_AGENT_WORKSPACE_ROOT
+        || path.join(path.dirname(deps.stateService.getCacheBase()), 'agent-workspaces'),
+    }) : undefined);
   const persistedRecoverableReservations = deps.stateService.listAgentSessionReservations()
     .filter((reservation) => reservation.item.status !== 'stopped' && reservation.item.status !== 'failed');
   // One process owns one recovery promise. Creation, replay convergence and exact stop all

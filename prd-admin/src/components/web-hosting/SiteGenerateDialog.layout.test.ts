@@ -24,6 +24,12 @@ describe('SiteGenerateDialog responsive layout contract', () => {
     expect(source).toContain("generating || previewHtml || completedSite ? 'flex' : 'hidden lg:flex'");
   });
 
+  it('uses an opaque themed surface for waiting while preserving the generated page canvas', () => {
+    expect(source).toContain('className="surface-reading flex h-full items-center justify-center text-crisp"');
+    expect(source).toContain('className="h-full w-full bg-white"');
+    expect(source).not.toContain('className="relative min-h-0 flex-1 bg-white"');
+  });
+
   it('submits only knowledge identities and never truncates or uploads browser-fetched content', () => {
     expect(source).not.toContain('getDocumentContent');
     expect(source).not.toContain('.slice(0, 20_000)');

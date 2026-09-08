@@ -20,6 +20,21 @@ export type LocalDrillCommandRunner = (
 const CLEANUP_MARKER = '.cleanup.json';
 const MANUAL_REVIEW_MARKER = '.manual-review.json';
 
+// CDS 单进程内的 TTL/人工接管临界区；跨进程恢复仍以持久 marker 为准。
+// 人工接管在等待锁前登记意图，已开始删除的调用则必须先结束，不能假报接管成功。
+const artifactMutations = new Map<string, Promise<void>>();
+const pendingManualReviews = new Map<string, number>();
+
+async function withArtifactMutation(root: string, action: () => Promise<void>): Promise<void> {
+  const pending = (artifactMutations.get(root) || Promise.resolve()).catch(() => undefined).then(action);
+  artifactMutations.set(root, pending);
+  try {
+    await pending;
+  } finally {
+    if (artifactMutations.get(root) === pending) artifactMutations.delete(root);
+  }
+}
+
 function backupRootFromId(recoveryDir: string, backupId: string): string | null {
   const match = /^local:[^:]+:[^:]+:(rotation-[0-9a-f]+):[0-9a-f]{16}$/i.exec(backupId);
   if (!match) return null;
@@ -34,24 +49,27 @@ export async function pruneExpiredRotationRecoveryArtifacts(
   const entries = await fs.promises.readdir(recoveryDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
     if (!entry.isDirectory() || !/^rotation-[0-9a-f]+$/i.test(entry.name)) continue;
-    const root = path.join(recoveryDir, entry.name);
-    const marker = path.join(root, CLEANUP_MARKER);
-    // 人工处置优先于任何 TTL。即使进程恰好崩在“写 manual-review、删 cleanup”
-    // 两步之间，重启清理器也只能保留副本，不能按旧 cleanup marker 误删。
-    const manualReview = await fs.promises.stat(path.join(root, MANUAL_REVIEW_MARKER)).catch(() => null);
-    if (manualReview?.isFile()) {
-      await fs.promises.unlink(marker).catch(() => { /* 保留优先；删不掉也绝不继续 prune */ });
-      continue;
-    }
-    try {
-      const parsed = JSON.parse(await fs.promises.readFile(marker, 'utf8')) as { expiresAt?: unknown };
-      const expiresAt = typeof parsed.expiresAt === 'string' ? Date.parse(parsed.expiresAt) : Number.NaN;
-      if (Number.isFinite(expiresAt) && expiresAt <= now.getTime()) {
-        await fs.promises.rm(root, { recursive: true, force: true });
+    const root = path.resolve(recoveryDir, entry.name);
+    await withArtifactMutation(root, async () => {
+      const marker = path.join(root, CLEANUP_MARKER);
+      // 人工处置优先于任何 TTL。即使进程恰好崩在“写 manual-review、删 cleanup”
+      // 两步之间，重启清理器也只能保留副本，不能按旧 cleanup marker 误删。
+      const manualReview = await fs.promises.stat(path.join(root, MANUAL_REVIEW_MARKER)).catch(() => null);
+      if (manualReview?.isFile()) {
+        await fs.promises.unlink(marker).catch(() => { /* 保留优先；删不掉也绝不继续 prune */ });
+        return;
       }
-    } catch {
-      // 无 marker 或 marker 损坏均 fail-closed 保留，禁止误删恢复证据。
-    }
+      try {
+        const parsed = JSON.parse(await fs.promises.readFile(marker, 'utf8')) as { expiresAt?: unknown };
+        const expiresAt = typeof parsed.expiresAt === 'string' ? Date.parse(parsed.expiresAt) : Number.NaN;
+        if (Number.isFinite(expiresAt) && expiresAt <= now.getTime()) {
+          if (pendingManualReviews.has(root)) return;
+          await fs.promises.rm(root, { recursive: true, force: true });
+        }
+      } catch {
+        // 无 marker 或 marker 损坏均 fail-closed 保留，禁止误删恢复证据。
+      }
+    });
   }
 }
 
@@ -99,26 +117,35 @@ export async function markRotationRecoveryArtifactsForManualReview(opts: {
   for (const backupId of [...new Set(opts.backupIds)]) {
     const root = backupRootFromId(opts.recoveryDir, backupId);
     if (!root) throw new Error('recovery.backup_id_invalid');
-    const stat = await fs.promises.stat(root).catch(() => null);
-    if (!stat?.isDirectory()) throw new Error('recovery.backup_missing');
-    const marker = path.join(root, MANUAL_REVIEW_MARKER);
-    const payload = `${JSON.stringify({
-      backupId,
-      operationId: opts.operationId,
-      disposition: 'manual-review-required',
-      reason: opts.reason,
-      markedAt,
-    })}\n`;
-    await fs.promises.writeFile(marker, payload, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
-      .catch(async (error: NodeJS.ErrnoException) => {
-        if (error.code !== 'EEXIST') throw error;
-        await fs.promises.chmod(marker, 0o600);
+    pendingManualReviews.set(root, (pendingManualReviews.get(root) || 0) + 1);
+    try {
+      await withArtifactMutation(root, async () => {
+        const stat = await fs.promises.stat(root).catch(() => null);
+        if (!stat?.isDirectory()) throw new Error('recovery.backup_missing');
+        const marker = path.join(root, MANUAL_REVIEW_MARKER);
+        const payload = `${JSON.stringify({
+          backupId,
+          operationId: opts.operationId,
+          disposition: 'manual-review-required',
+          reason: opts.reason,
+          markedAt,
+        })}\n`;
+        await fs.promises.writeFile(marker, payload, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+          .catch(async (error: NodeJS.ErrnoException) => {
+            if (error.code !== 'EEXIST') throw error;
+            await fs.promises.chmod(marker, 0o600);
+          });
+        // 先让人工处置 marker 原子可见，再撤销旧 TTL。反向排序会留下一个“两个 marker
+        // 都没有”的崩溃窗口，清理策略与人工接管状态都无法辨认。
+        await fs.promises.unlink(path.join(root, CLEANUP_MARKER)).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== 'ENOENT') throw error;
+        });
       });
-    // 先让人工处置 marker 原子可见，再撤销旧 TTL。反向排序会留下一个“两个 marker
-    // 都没有”的崩溃窗口，清理策略与人工接管状态都无法辨认。
-    await fs.promises.unlink(path.join(root, CLEANUP_MARKER)).catch((error: NodeJS.ErrnoException) => {
-      if (error.code !== 'ENOENT') throw error;
-    });
+    } finally {
+      const remaining = (pendingManualReviews.get(root) || 1) - 1;
+      if (remaining > 0) pendingManualReviews.set(root, remaining);
+      else pendingManualReviews.delete(root);
+    }
   }
 }
 

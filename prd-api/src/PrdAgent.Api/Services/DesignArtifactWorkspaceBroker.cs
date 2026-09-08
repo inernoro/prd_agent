@@ -112,7 +112,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             extensionHint: ".json")
             ?? throw new InvalidOperationException("当前对象存储无法预演远程设计输入路径，请联系管理员检查存储配置");
 
-        var modelCallLimit = ResolveModelCallLimit(_configuration);
         var updatedAt = DateTime.UtcNow;
         if (!await PersistPreparedWorkspaceAsync(
                 _db,
@@ -121,7 +120,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 inputAssetKey,
                 inputSha256,
                 package.BaseRevision,
-                modelCallLimit,
                 expiresAt,
                 updatedAt,
                 CancellationToken.None))
@@ -156,7 +154,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         run.WorkspaceRejectedResultCleanupAttemptedAt = null;
         run.WorkspaceRejectedResultCleanupError = null;
         run.RuntimeModelCallCount = 0;
-        run.RuntimeModelCallLimit = modelCallLimit;
         run.RuntimeTicketExpiresAt = expiresAt;
         run.UpdatedAt = updatedAt;
 
@@ -176,11 +173,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             MaxOutputBytes,
             AllowedOutputPaths);
     }
-
-    internal static int ResolveModelCallLimit(IConfiguration configuration) => Math.Clamp(
-        configuration.GetValue<int?>("DesignArtifactRuntime:MaxModelCalls") ?? 72,
-        1,
-        96);
 
     public async Task<byte[]> ReadInputPackageAsync(string runId, string token, CancellationToken ct)
     {
@@ -406,13 +398,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             ?? throw new KeyNotFoundException("设计任务不存在");
         EnsureActiveWorkspaceWindow(current);
         var now = DateTime.UtcNow;
-        var filter = Builders<DesignArtifactRun>.Filter.And(
-            Builders<DesignArtifactRun>.Filter.Eq(item => item.Id, runId),
-            Builders<DesignArtifactRun>.Filter.Eq(item => item.Status, RunStatuses.Running),
-            Builders<DesignArtifactRun>.Filter.Eq(item => item.LeaseOwnerId, current.LeaseOwnerId),
-            Builders<DesignArtifactRun>.Filter.Gt(item => item.LeaseExpiresAt, now),
-            Builders<DesignArtifactRun>.Filter.Gt(item => item.RuntimeTicketExpiresAt, now),
-            Builders<DesignArtifactRun>.Filter.Lt(item => item.RuntimeModelCallCount, current.RuntimeModelCallLimit));
+        // 只按凭证与任务租约准入；计数用于审计，不再承担额外次数预算门禁。
+        var filter = BuildActiveWorkspaceFilter(runId, current.LeaseOwnerId, now);
         var run = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
             filter,
             Builders<DesignArtifactRun>.Update
@@ -420,7 +407,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 .Set(item => item.UpdatedAt, now),
             new FindOneAndUpdateOptions<DesignArtifactRun> { ReturnDocument = ReturnDocument.After },
             CancellationToken.None);
-        return run ?? throw new InvalidOperationException("本次远程设计的模型调用额度已用完或任务已结束，请重新发起任务");
+        return run ?? throw new UnauthorizedAccessException("远程设计凭证对应的任务已结束，请重新发起任务");
     }
 
     public async Task<DesignArtifactRun> ValidateModelTicketAsync(string runId, string token, CancellationToken ct)
@@ -439,7 +426,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         string inputAssetKey,
         string inputSha256,
         string baseRevision,
-        int modelCallLimit,
         DateTime ticketExpiresAt,
         DateTime updatedAt,
         CancellationToken ct)
@@ -468,7 +454,6 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
                 .Set(item => item.WorkspaceRejectedResultCleanupAttemptedAt, null)
                 .Set(item => item.WorkspaceRejectedResultCleanupError, null)
                 .Set(item => item.RuntimeModelCallCount, 0)
-                .Set(item => item.RuntimeModelCallLimit, modelCallLimit)
                 .Set(item => item.RuntimeTicketExpiresAt, ticketExpiresAt)
                 .Max(item => item.UpdatedAt, updatedAt),
             cancellationToken: ct);
@@ -520,7 +505,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         && run.LeaseExpiresAt > now
         && run.RuntimeTicketExpiresAt > now;
 
-    private static FilterDefinition<DesignArtifactRun> BuildActiveWorkspaceFilter(
+    internal static FilterDefinition<DesignArtifactRun> BuildActiveWorkspaceFilter(
         string runId,
         string? leaseOwner,
         DateTime now) => Builders<DesignArtifactRun>.Filter.And(

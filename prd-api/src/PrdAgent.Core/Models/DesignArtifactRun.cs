@@ -4,6 +4,7 @@ namespace PrdAgent.Core.Models;
 /// 跨网页托管、知识库与 HTML PPT 的统一设计任务。
 /// v2 权威生命周期事件与状态保存在同一 Mongo 文档；Redis 仅服务历史流程和兼容投影。
 /// </summary>
+[MongoDB.Bson.Serialization.Attributes.BsonIgnoreExtraElements]
 public class DesignArtifactRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
@@ -205,8 +206,6 @@ public class DesignArtifactRun
 
     /// <summary>本次远程运行已通过 MAP 代理进入 LLMGW 的真实请求数。</summary>
     public int RuntimeModelCallCount { get; set; }
-
-    public int RuntimeModelCallLimit { get; set; } = 72;
 
     public DateTime? RuntimeTicketExpiresAt { get; set; }
 

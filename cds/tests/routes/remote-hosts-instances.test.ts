@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import crypto from 'node:crypto';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ import {
 } from '../../src/services/agent-workspace-session-runtime.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import { StateService } from '../../src/services/state.js';
+import { computeCdsInstanceId } from '../../src/services/orphan-container-reaper.js';
 import type { BuildProfile, ExecResult, IShellExecutor, Project } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
@@ -158,7 +160,46 @@ describe('Remote hosts project instances route', () => {
     runtimeServer = undefined;
     if (tmpDir) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     for (const key of previewEnvKeys) delete process.env[key];
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
+
+  it.each(['data-root', 'explicit-root'] as const)(
+    'constructs the production workspace runtime under the host-visible %s and preserves sibling isolation',
+    async (rootSource) => {
+      tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-workspace-root-'));
+      const dataRoot = path.join(tmpDir, 'shared-data');
+      const explicitRoot = path.join(tmpDir, 'explicit-workspaces');
+      vi.stubEnv('CDS_CACHE_BASE', path.join(dataRoot, 'cache'));
+      vi.stubEnv('CDS_REPO_ROOT', tmpDir);
+      vi.stubEnv('CDS_AGENT_WORKSPACE_ROOT', rootSource === 'explicit-root' ? explicitRoot : '');
+      stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+      const expectedRoot = rootSource === 'explicit-root' ? explicitRoot : path.join(dataRoot, 'agent-workspaces');
+      const instanceScope = crypto.createHash('sha256').update(computeCdsInstanceId(tmpDir)).digest('hex').slice(0, 8);
+      const staleSession = path.join(expectedRoot, instanceScope, 'stale-session');
+      const siblingSession = path.join(expectedRoot, 'other-instance', 'live-session');
+      fs.mkdirSync(staleSession, { recursive: true, mode: 0o700 });
+      fs.mkdirSync(siblingSession, { recursive: true, mode: 0o700 });
+      const bootstrap = vi.spyOn(AgentWorkspaceSessionRuntime.prototype, 'bootstrapAndVerify');
+      // Only orphan listings succeed. No real Docker process, image pull, or model request is allowed.
+      const shell: IShellExecutor = {
+        exec: async (command) => ({
+          exitCode: /^docker (ps -aq|network ls -q|volume ls -q) /.test(command) ? 0 : 1,
+          stdout: '',
+          stderr: '',
+        }),
+      };
+
+      createRemoteHostsRouter({ stateService, shell });
+      expect(bootstrap).toHaveBeenCalledOnce();
+      await bootstrap.mock.results[0].value;
+
+      // Exercise the real constructor and filesystem recovery, not a mocked path resolver.
+      expect(fs.existsSync(staleSession)).toBe(false);
+      expect(fs.existsSync(siblingSession)).toBe(true);
+      expect(fs.existsSync(dataRoot)).toBe(rootSource === 'data-root');
+    },
+  );
 
   async function startServer(routerOverrides: Partial<Parameters<typeof createRemoteHostsRouter>[0]> = {}) {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-instances-route-'));

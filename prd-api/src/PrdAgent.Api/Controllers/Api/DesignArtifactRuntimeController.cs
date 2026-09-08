@@ -109,26 +109,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 throw new InvalidOperationException("模型请求缺少对话内容，请重新发起任务");
 
             var run = await _broker.ReserveModelCallAsync(runId, ReadBearerToken(), ct);
-            var configuredPool = _configuration["DesignArtifactRuntime:ModelPoolId"]?.Trim();
-            var configuredModel = _configuration["DesignArtifactRuntime:Model"]?.Trim();
-            body.Remove("model_pool_id");
-            body.Remove("modelPoolId");
-            body.Remove("model_policy");
-            body.Remove("modelPolicy");
-            if (!string.IsNullOrWhiteSpace(configuredPool))
-            {
-                body.Remove("model");
-                body["model_pool_id"] = configuredPool;
-                body["model_policy"] = "pool";
-            }
-            else if (!string.IsNullOrWhiteSpace(configuredModel))
-            {
-                body["model"] = configuredModel;
-            }
-            else
-            {
-                body.Remove("model");
-            }
+            DesignArtifactModelSelection.Resolve(_configuration).ApplyToOpenAiRequest(body);
             var maxCompletionTokens = Math.Clamp(
                 _configuration.GetValue<int?>("DesignArtifactRuntime:MaxCompletionTokens")
                 ?? DefaultMaxCompletionTokens,

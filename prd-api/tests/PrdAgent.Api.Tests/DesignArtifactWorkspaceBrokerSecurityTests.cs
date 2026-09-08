@@ -472,30 +472,29 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         Assert.Equal(0, persisted.RuntimeModelCallCount);
     }
 
-    [Fact]
+    [Theory]
+    [InlineData(36)]
+    [InlineData(72)]
+    [InlineData(96)]
     [Trait("Category", TestCategories.Integration)]
-    public async Task DefaultBudgetAllowsSeventyTwoAtomicReservationsAndRejectsTheNext()
+    public async Task LegacyCallLimitDoesNotBlockAtomicAuditCounting(int legacyLimit)
     {
         await using var fixture = await BrokerFixture.CreateAsync();
-        const string runId = "run-default-model-budget";
+        const string runId = "run-model-audit-count";
         var workspace = await fixture.PrepareAsync(runId);
+        // 真实旧文档仍可能留有已取消的上限；不迁移业务数据，也不能让它继续拦截请求。
+        var raw = fixture.Db.DesignArtifactRuns.Database.GetCollection<BsonDocument>("design_artifact_runs");
+        await raw.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", runId),
+            Builders<BsonDocument>.Update
+                .Set("RuntimeModelCallLimit", legacyLimit)
+                .Set("RuntimeModelCallCount", 120));
+        var reservations = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
+            fixture.Broker.ReserveModelCallAsync(runId, workspace.ModelToken, CancellationToken.None)));
 
-        for (var index = 0; index < 72; index++)
-        {
-            var reserved = await fixture.Broker.ReserveModelCallAsync(
-                runId,
-                workspace.ModelToken,
-                CancellationToken.None);
-            Assert.Equal(index + 1, reserved.RuntimeModelCallCount);
-            Assert.Equal(72, reserved.RuntimeModelCallLimit);
-        }
-
-        var rejected = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            fixture.Broker.ReserveModelCallAsync(runId, workspace.ModelToken, CancellationToken.None));
-
-        Assert.Contains("额度已用完", rejected.Message, StringComparison.Ordinal);
+        Assert.Equal(Enumerable.Range(121, 8), reservations.Select(run => run.RuntimeModelCallCount).OrderBy(count => count));
         var persisted = await fixture.Db.DesignArtifactRuns.Find(run => run.Id == runId).FirstAsync();
-        Assert.Equal(72, persisted.RuntimeModelCallCount);
+        Assert.Equal(128, persisted.RuntimeModelCallCount);
     }
 
     private static byte[] BuildResult(string runId, string baseRevision, string body)
