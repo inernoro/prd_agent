@@ -12214,16 +12214,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
     let profiles = selectedDeploymentVersion
       ? deploymentVersionService!.materializeProfiles(selectedDeploymentVersion, currentProfiles)
       : currentProfiles;
-    if (agentPrebuiltGated && gateProject) {
-      const violations = findNonPrebuiltProfiles(profiles, entry);
-      if (violations.length > 0) {
-        res.status(409).json(buildPrebuiltGateRejection(gateProject, profiles, violations, {
-          branchId: entry.id,
-          operation: 'deploy',
-        }));
-        return;
-      }
-    }
     const effectiveProfilesForHash = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
     let deploymentConfigHash = selectedDeploymentVersion?.configHash
       || deploymentVersionService?.computeConfigHash(
@@ -12432,6 +12422,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? req.body.commitSha
         : undefined
     );
+    if (agentPrebuiltGated && gateProject) {
+      // 没点名版本时，下方还有一次按 requestCommitSha + deploymentConfigHash 的自动复用（findReusable）：
+      // 命中就跑不可变产物、不编译源码。门禁在这里用同一组输入先探一次，命中就按物化清单判——否则
+      // managed 配置明明有可复用版本，点名 versionId 放行、同一 commit 自动复用却被拦（Codex 第八轮 P2）。
+      let gateProfiles = profiles;
+      let gateVersion = selectedDeploymentVersion;
+      if (!gateVersion && requestCommitSha && deploymentVersionService && deploymentConfigHash) {
+        const reusableForGate = deploymentVersionService.findReusable({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: requestCommitSha,
+          configHash: deploymentConfigHash,
+        });
+        if (reusableForGate) {
+          try {
+            gateProfiles = deploymentVersionService.materializeProfiles(reusableForGate, currentProfiles);
+            gateVersion = reusableForGate;
+          } catch {
+            /* 物化失败（版本所需配置已不在）：下方复用同样会失败，按当前清单判 */
+          }
+        }
+      }
+      // 版本物化后的清单在执行时不再套分支覆盖（运行循环里 selectedDeploymentVersion ? profile : resolve…），
+      // 判定也不能套：分支此刻若选了显式 prebuilt: false 的模式，重放合规版本会被误拦（Codex 第八轮 P2）。
+      const violations = findNonPrebuiltProfiles(gateProfiles, gateVersion ? undefined : entry);
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(gateProject, gateProfiles, violations, {
+          branchId: entry.id,
+          operation: 'deploy',
+        }));
+        return;
+      }
+    }
     // 空转部署熔断（2026-08-29）：同一分支反复部署**同一个 commit** 是「部署环」的
     // 特征，正常连推每次都是新 SHA、永远不命中。判据与阈值见
     // build-activity-tracker.ts 的 assessDeployLoop 注释（含事故经过）。

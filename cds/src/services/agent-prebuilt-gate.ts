@@ -156,8 +156,12 @@ export function findNonPrebuiltDefaultModes(
   return out;
 }
 
-/** Agent 在门禁下不得改动的 profile 字段：它们定义了「什么算极速版」，改了就能把源码模式标成 prebuilt。 */
-export const PREBUILT_DEFINITION_FIELDS = ['deployModes', 'prebuiltImage'] as const;
+/**
+ * Agent 在门禁下不得改动的 profile 字段：它们定义了「什么算极速版」，改了就能把源码模式标成 prebuilt。
+ * managedBuild 也在内：它让 runService 先在宿主上跑 install / build 再起容器，机器凭据给极速版配置
+ * 加上它，直接部署虽被 isPrebuiltMode 拦下，随后的 push 走豁免的 webhook 派发照样在宿主编译（Codex 第八轮 P1）。
+ */
+export const PREBUILT_DEFINITION_FIELDS = ['deployModes', 'prebuiltImage', 'managedBuild'] as const;
 
 export interface PrebuiltGateRejection {
   error: typeof AGENT_PREBUILT_ONLY_ERROR;

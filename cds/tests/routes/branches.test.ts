@@ -644,6 +644,47 @@ describe('Branch Routes', () => {
       const replay = await request(server, 'POST', '/api/branches/b1/deploy', { versionId: version.id }, { 'X-Test-Key': 'A' });
       expect(replay.status).not.toBe(409);
       expect((replay.body as any)?.error).not.toBe('agent_prebuilt_only');
+      // 分支此刻选了显式 prebuilt: false 的模式：版本重放执行时不套分支覆盖，判定也不能套（Codex 第八轮 P2）
+      profile.deployModes!.legacy = { label: '源码', prebuilt: false, command: 'pnpm dev' };
+      stateService.getBranch('b1')!.profileOverrides = { api: { activeDeployMode: 'legacy' } } as any;
+      const overridden = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(overridden.status).toBe(409);
+      const replayOverridden = await request(server, 'POST', '/api/branches/b1/deploy', { versionId: version.id }, { 'X-Test-Key': 'A' });
+      expect(replayOverridden.status).not.toBe(409);
+      expect((replayOverridden.body as any)?.error).not.toBe('agent_prebuilt_only');
+    });
+
+    it('同一 commit 自动复用可复用版本时按物化清单判：managed 配置有产物版本就放行，没有就 409（Codex 第八轮 P2）', async () => {
+      seedGateProject(true);
+      const commitSha = 'abcdef1234567890abcdef1234567890abcdef12';
+      const profile = stateService.getBuildProfile('api')!;
+      profile.dockerImage = 'cds-managed/api:sha-abcdef1234567890abcdef1234567890abcdef12';
+      profile.managedBuild = { stack: 'node', installCommand: 'pnpm i', buildCommand: 'pnpm build', startCommand: 'node server.js', artifactImage: 'cds-managed/api' };
+      // 真人先部署一次，拿到路由为当前配置算出的 configHash（版本能否自动复用就看它）
+      const human = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha });
+      const runId = String(human.headers['x-cds-deployment-run-id'] || '');
+      expect(runId).toMatch(/^run_|^dr_|./);
+      const configHash = deploymentRunService.get(runId)?.configHash;
+      expect(configHash).toBeTruthy();
+      const branch = stateService.getBranch('b1')!;
+      const version = deploymentVersionService.create({
+        projectId: 'proj-a',
+        branchId: 'b1',
+        commitSha,
+        configHash: configHash!,
+        profiles: [stateService.getBuildProfile('api')!],
+        branch: { ...branch, services: {} },
+        createdByRunId: runId,
+      });
+      expect(version.profiles[0]).toMatchObject({ reusable: true, artifactKind: 'managed-image' });
+      const noSha = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(noSha.status).toBe(409);
+      expect((noSha.body as any).error).toBe('agent_prebuilt_only');
+      const otherSha = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha: '1111111111111111111111111111111111111111' }, { 'X-Test-Key': 'A' });
+      expect(otherSha.status).toBe(409);
+      const reuse = await request(server, 'POST', '/api/branches/b1/deploy', { commitSha }, { 'X-Test-Key': 'A' });
+      expect(reuse.status).not.toBe(409);
+      expect((reuse.body as any)?.error).not.toBe('agent_prebuilt_only');
     });
 
     it('bulk-set-modes 批量改写模式定义在门禁下拒绝机器凭据，真人照常（Codex 第二轮 P1）', async () => {
@@ -735,6 +776,13 @@ describe('Branch Routes', () => {
       expect((redefine.body as any).message).toContain('deployModes');
       const flag = await request(server, 'PUT', '/api/build-profiles/api', { prebuiltImage: true }, { 'X-Test-Key': 'A' });
       expect(flag.status).toBe(409);
+      // managedBuild 让宿主先跑 install / build 再起容器：机器凭据不得给极速版配置加上它（Codex 第八轮 P1）
+      const managed = await request(server, 'PUT', '/api/build-profiles/api', {
+        managedBuild: { stack: 'node', installCommand: 'pnpm i', buildCommand: 'pnpm build', startCommand: 'node server.js', artifactImage: 'cds-managed/api' },
+      }, { 'X-Test-Key': 'A' });
+      expect(managed.status).toBe(409);
+      expect((managed.body as any).message).toContain('managedBuild');
+      expect(stateService.getBuildProfile('api')!.managedBuild).toBeUndefined();
       expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('static');
       expect(stateService.getBuildProfile('api')!.deployModes!.dev.prebuilt).toBeUndefined();
 
