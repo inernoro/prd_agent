@@ -50,9 +50,21 @@ function applyAllow(file: string, text: string): string {
 describe('整站 85%：尺寸用 rem，px 只留给细线', () => {
   const css = fs.readFileSync(path.join(SRC, 'index.css'), 'utf-8');
 
-  it('根字号是 85%，并留有 100% 逃生阀', () => {
+  it('根字号默认 85%，三档 80 / 85 / 100 由 data-ui-scale 切换，首帧前落地', () => {
     expect(css).toMatch(/html\s*\{\s*font-size:\s*85%;/);
+    expect(css).toMatch(/html\[data-ui-scale='80'\]\s*\{\s*font-size:\s*80%;/);
     expect(css).toMatch(/html\[data-ui-scale='100'\]\s*\{\s*font-size:\s*100%;/);
+    const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf-8');
+    expect(html, '预加载脚本要在首帧前把 cds_ui_scale 落到 <html>，否则切档的用户每次打开都闪一下').toContain("localStorage.getItem('cds_ui_scale')");
+    const shell = fs.readFileSync(path.join(SRC, 'components/layout/AppShell.tsx'), 'utf-8');
+    expect(shell, '账号浮层里要有「界面尺度」三档入口').toContain('aria-label="界面尺度"');
+    expect(shell).toContain('UI_SCALE_PRESETS.map(');
+  });
+
+  it('分支卡网格：列宽下限是 rem token，1600px 起封顶五列', () => {
+    expect(css).toMatch(/\.cds-branch-card-grid\s*\{[^}]*--cds-branch-card-min:\s*[\d.]+rem;[^}]*minmax\(min\(100%, var\(--cds-branch-card-min\)\), 1fr\)/);
+    expect(css).toMatch(/@media \(min-width: 1600px\)\s*\{\s*\.cds-branch-card-grid\s*\{\s*grid-template-columns:\s*repeat\(5, minmax\(0, 1fr\)\);/);
+    expect(css, '列数不许靠 zoom 凑').not.toMatch(/\.cds-branch-card-grid\s*\{[^}]*zoom:/);
   });
 
   it('index.css 里没有新的 >3px 字面量', () => {

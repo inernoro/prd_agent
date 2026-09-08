@@ -40,9 +40,14 @@
      Radix 浮层定位偏移一百多像素。根字号缩放要求全站尺寸用 rem——本次已把 ≥4px 的
      字面量全部转成 rem，1–3px 的细线 / 竖条保留 px 以保证像素级清晰；
      媒体查询与 Tailwind 断点同步乘 0.85，让「多少内容触发几栏」和浏览器缩放一致。
-     逃生阀：html[data-ui-scale='100'] 回到 16px 基准（预留给密度设置）。 */
+     三档由账号浮层「界面尺度」切换（lib/uiScale.ts）：80 紧凑 / 85 标准（默认，不写属性）/
+     100 宽松。改档只动这一个数，全站跟着走——这就是「全局设计尺度」，不逐处微调。 */
   html {
     font-size: 85%;
+  }
+
+  html[data-ui-scale='80'] {
+    font-size: 80%;
   }
 
   html[data-ui-scale='100'] {
@@ -437,11 +442,22 @@
     gap: 1.25rem;
   }
 
+  /* 分支卡网格的列数契约（2026-09-08 用户拍板「一排五个」）：
+     列宽下限是布局 token（rem，跟着界面尺度走），列数由它推导；
+     1600px 及以上封顶五列——再宽也不多排，卡片随之变宽，而不是变成七八列的碎片。
+     不用 zoom 凑五列：Chromium 实测子树 zoom 会让 Radix 菜单飘到别的卡上。 */
   .cds-branch-card-grid {
+    --cds-branch-card-min: 20.5rem;
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 26.25rem), 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--cds-branch-card-min)), 1fr));
     align-items: start;
     gap: 1rem;
+  }
+
+  @media (min-width: 1600px) {
+    .cds-branch-card-grid {
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+    }
   }
 
   /* 2026-07-09 性能：离屏卡片跳过 layout/paint（大列表不引虚拟化库的轻量替代，
@@ -2872,6 +2888,11 @@
     padding: 0.625rem;
     border-top: 1px solid hsl(var(--hairline));
     border-bottom: 1px solid hsl(var(--hairline));
+  }
+
+  /* 尺度块紧接主题块：去掉自己的上边线，两块之间只留一条。 */
+  .cds-account-scale {
+    border-top: 0;
   }
 
   .cds-account-theme-button {

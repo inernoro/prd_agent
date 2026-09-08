@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Check, CircleAlert, Clock, Contrast, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Search, Settings, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
+import { Activity, Check, CircleAlert, Clock, Contrast, Expand, FileText, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Scaling, Search, Settings, Shrink, SlidersHorizontal, SquareTerminal, Sun, Upload, UserRound, X, Waypoints } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
@@ -14,6 +14,7 @@ import {
 } from '@/lib/agent-onboarding';
 import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
+import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
 
 /*
@@ -648,6 +649,7 @@ function UserAccountMenu({
   user,
 }: Omit<RailNavProps, 'active' | 'onAgentAccess' | 'onBugReport'> & { onNavigate?: () => void }): JSX.Element {
   const { mode, setTheme } = useTheme();
+  const { scale, setScale } = useUiScale();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ bottom: number; left: number }>({ bottom: 12, left: 80 });
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -748,6 +750,32 @@ function UserAccountMenu({
                     },
                   );
                 }}
+              >
+                <Icon />
+                <span>{item.label}</span>
+                {active ? <Check className="cds-account-theme-check" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {/* 界面尺度（2026-09-08）：全站唯一的大小杠杆，三档对应根字号 80 / 85 / 100%。
+          和主题并列放在这里：都是「我的浏览器偏好」，都存 localStorage、首帧前落地。 */}
+      <div className="cds-account-theme cds-account-scale" aria-label="界面尺度">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">界面尺度</div>
+        <div className="grid grid-cols-3 gap-1">
+          {UI_SCALE_PRESETS.map((item) => {
+            const Icon = item.value === '80' ? Shrink : item.value === '100' ? Expand : Scaling;
+            const active = scale === item.value;
+            return (
+              <button
+                key={item.value}
+                type="button"
+                className="cds-account-theme-button"
+                data-active={active ? 'true' : 'false'}
+                data-ui-scale-option={item.value}
+                title={item.hint}
+                onClick={() => setScale(item.value)}
               >
                 <Icon />
                 <span>{item.label}</span>
