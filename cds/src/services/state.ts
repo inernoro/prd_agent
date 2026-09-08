@@ -1880,13 +1880,14 @@ export class StateService {
     routingRules: string[];
     projectGrants: string[];
     dbLedgerEntries: string[];
+    uptimeMonitors: string[];
   } {
     if (!this.state.projects) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
     const project = this.state.projects.find((p) => p.id === id);
     if (!project) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
@@ -1919,6 +1920,12 @@ export class StateService {
     const dbLedgerToRemove = (this.state.dbLedger || [])
       .filter((e) => e.projectId === id)
       .map((e) => e.id);
+    // 挂在这个项目名下的自定义监控一起删：留下来会带着一个不存在的 projectId
+    // 继续每轮往外发探测，而且没有任何项目级凭据能再管它（Codex PR #1514 第五轮 P2）。
+    // 系统级（projectId 为空）的不动。
+    const uptimeMonitorsToRemove = Object.values(this.state.uptimeMonitors || {})
+      .filter((m) => m.projectId === id)
+      .map((m) => m.id);
 
     // ── Cascade mutate ──
     for (const bid of branchesToRemove) {
@@ -1952,11 +1959,13 @@ export class StateService {
     if (this.state.dbLedger) {
       this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
     }
+    for (const mid of uptimeMonitorsToRemove) delete this.state.uptimeMonitors?.[mid];
 
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
 
     return {
+      uptimeMonitors: uptimeMonitorsToRemove,
       branches: branchesToRemove,
       buildProfiles: buildProfilesToRemove,
       infraServices: infraServicesToRemove,

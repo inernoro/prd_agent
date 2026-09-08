@@ -141,11 +141,12 @@ export function StatusPage(): JSX.Element {
     return groups.filter((g) => g.branches.some((b) => {
       const q = filter.query.trim().toLowerCase();
       const hit = !q || b.branchName.toLowerCase().includes(q) || b.projectName.toLowerCase().includes(q);
+      // 「待确认」= 实测但还没判定的分支，加上只按容器状态判定的未实测分支——两者都还不能算绿。
       const st = filter.status === 'all' ? true
         : filter.status === 'down' ? b.tone === 'bad'
           : filter.status === 'up' ? b.tone === 'ok'
             : filter.status === 'paused' ? b.bucket === 'idle'
-              : b.bucket === 'unmeasured';
+              : b.unconfirmed || b.bucket === 'unmeasured';
       return hit && st;
     }));
   }, [targets, filter, now]);

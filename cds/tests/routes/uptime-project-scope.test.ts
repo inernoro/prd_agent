@@ -20,10 +20,10 @@ function fakeMonitor() {
     getSummary: () => ({ overall: { total: 2, up: 1, down: 1, paused: 0, unknown: 0, excluded: 0, unmeasured: 0, ok: false }, targets }),
     getCoverage: (projectId?: string) => ({ total: projectId ? 1 : 2, covered: projectId ? 1 : 2, uncovered: [], byReason: [], scope: 'all' }),
     getTargetProjectId: (id: string) => targets.find((t) => t.id === id)?.projectId,
-    getIncidents: () => [
+    getIncidents: (_limit?: number, projectId?: string | null) => [
       { projectId: 'proj-a', targetName: 'main / api', cause: 'a-cause' },
       { projectId: 'proj-b', targetName: 'main / api', cause: 'b-cause' },
-    ],
+    ].filter((i) => !projectId || i.projectId === projectId),
     getRecord: (id: string) => targets.find((t) => t.id === id),
     getHistory: () => ({ points: [] }),
   } as unknown as Parameters<typeof createUptimeRouter>[0]['monitor'];

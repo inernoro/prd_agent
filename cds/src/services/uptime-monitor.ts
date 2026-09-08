@@ -1124,8 +1124,9 @@ export class UptimeMonitorService {
     if (this.cycleRunning) return;
     this.cycleRunning = true;
     let customLane: Promise<number> = Promise.resolve(0);
+    const cycleStartedAt = this.now();
     try {
-      const now = this.now();
+      const now = cycleStartedAt;
       const targets = this.selectTargets();
       const liveIds = new Set(targets.map((t) => t.id));
 
@@ -1204,7 +1205,10 @@ export class UptimeMonitorService {
       // 分支 / 生产这条主通道一结束就解锁；自定义通道慢也拖不住下一轮主通道。
       this.cycleRunning = false;
     }
-    this.lastCycleProbed += await customLane;
+    // 自定义通道比主通道慢时，下一轮可能已经把健康快照换掉了：只给仍属于本轮的
+    // 快照记数，否则旧通道的完成数会算到新一轮头上（第五轮 P2）。
+    const customProbed = await customLane;
+    if (this.lastCycleAt === cycleStartedAt) this.lastCycleProbed += customProbed;
   }
 
   /** 暂停 / 排除的目标：不产采样，把仍开着的故障就地收尾。轮次、立即探测、改定义共用。 */
@@ -1755,10 +1759,15 @@ export class UptimeMonitorService {
   }
 
   /** 全局故障事件时间线，最近的在前。 */
-  getIncidents(limit = 50): UptimeIncidentView[] {
+  /**
+   * 故障时间线。projectId 给了就先按项目过滤再截断——上限 200 是全实例的，
+   * 别的项目有 200 条更新的故障时，项目级调用者会一条都拿不到（Codex PR #1514 第五轮 P2）。
+   */
+  getIncidents(limit = 50, projectId?: string | null): UptimeIncidentView[] {
     const now = this.now();
     const rows: UptimeIncidentView[] = [];
     for (const record of this.records.values()) {
+      if (projectId && record.projectId !== projectId) continue;
       for (const incident of record.incidents) {
         rows.push({
           ...incident,

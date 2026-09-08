@@ -585,3 +585,82 @@ describe('第四轮 P2 PUT 停用即时转 paused', () => {
     }
   });
 });
+
+describe('第五轮 P2 项目级故障时间线在截断前过滤', () => {
+  it('别的项目有 200 条更新的故障时，项目级 Key 仍拿得到自己的', async () => {
+    let now = 0;
+    const branches = [branch(), ...Array.from({ length: 70 }, (_, i) => branch({ id: `other-${i}`, projectId: 'other', branch: `o${i}` }))];
+    // proj 先故障一次并恢复；随后 other 的 70 条分支各故障 3 次（210 条故障，全比 proj 的新）。
+    let phase: 'proj-down' | 'up' | 'other-flap' = 'proj-down';
+    let flapDown = false;
+    const probe: ProbeFn = async (t) => {
+      if (phase === 'proj-down') return t.projectId === 'proj' ? { up: false, ms: 1, err: 'x' } : { up: true, ms: 1 };
+      if (phase === 'up') return { up: true, ms: 1 };
+      return t.projectId === 'other' && flapDown ? { up: false, ms: 1, err: 'y' } : { up: true, ms: 1 };
+    };
+    const svc = makeMonitor({ branches, probe, now: () => now, config: { userViewEnabled: false, failureThreshold: 1 } });
+    now += MIN; await svc.runCycle();
+    phase = 'up'; now += MIN; await svc.runCycle();
+    phase = 'other-flap';
+    for (let i = 0; i < 3; i += 1) {
+      flapDown = true; now += MIN; await svc.runCycle();
+      flapDown = false; now += MIN; await svc.runCycle();
+    }
+    expect(svc.getIncidents(1000).length).toBe(200);
+    expect(svc.getIncidents(50, 'proj')).toHaveLength(1);
+    const app = await serve(svc);
+    try {
+      const r = await app.call('GET', '/api/uptime/incidents?limit=10', { scope: 'proj' });
+      expect(r.json.incidents).toHaveLength(1);
+      expect(r.json.incidents[0].projectId).toBe('proj');
+    } finally {
+      await app.close();
+    }
+  });
+});
+
+describe('第五轮 P2 删项目级联删自定义监控', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  });
+
+  it('项目名下的自定义监控随项目删除，系统级的保留', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-uptime-r1514-rm-'));
+    dirs.push(dir);
+    const state = new StateService(path.join(dir, 'state.json'));
+    state.load();
+    state.addProject({ id: 'p-del', name: '待删', kind: 'git' } as never);
+    state.upsertUptimeMonitor(customMonitor({ id: 'mon-p', projectId: 'p-del' }));
+    state.upsertUptimeMonitor(customMonitor({ id: 'mon-sys', projectId: null }));
+    const summary = state.removeProject('p-del');
+    expect(summary.uptimeMonitors).toEqual(['mon-p']);
+    expect(state.getUptimeMonitor('mon-p')).toBeUndefined();
+    expect(state.getUptimeMonitor('mon-sys')).toBeDefined();
+  });
+});
+
+describe('第五轮 P2 自定义通道完成数只记本轮', () => {
+  it('上一轮的自定义通道在新一轮开始后才结束：不把完成数记到新一轮头上', async () => {
+    let now = MIN;
+    let release: () => void = () => undefined;
+    let first = true;
+    const hang = new Promise<{ up: boolean; ms: number }>((resolve) => { release = () => resolve({ up: true, ms: 1 }); });
+    const probe: ProbeFn = async (target) => {
+      if (target.source !== 'custom') return { up: true, ms: 5, code: 200 };
+      if (first) { first = false; return hang; }
+      return { up: true, ms: 1 };
+    };
+    const svc = makeMonitor({ branches: [branch()], monitors: [customMonitor()], probe, userViewProbe: async () => ({ up: true, ms: 1 }), now: () => now });
+    const c1 = svc.runCycle();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    now += MIN;
+    await svc.runCycle(); // 第二轮：自定义通道被跳过，完成数 1/2
+    expect(svc.getSummary(10).prober).toMatchObject({ lastCycleAt: 2 * MIN, lastCycleProbed: 1 });
+    release();
+    await c1;
+    // 第一轮的自定义通道回来了，但快照已是第二轮的：不能加到第二轮头上
+    expect(svc.getSummary(10).prober).toMatchObject({ lastCycleAt: 2 * MIN, lastCycleProbed: 1 });
+  });
+});
