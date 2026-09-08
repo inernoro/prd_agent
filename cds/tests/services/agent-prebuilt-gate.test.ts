@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   AGENT_PREBUILT_ONLY_ERROR,
   buildPrebuiltGateRejection,
+  findNonPrebuiltDefaultModes,
   findNonPrebuiltProfiles,
   isAgentGatedRequest,
   isAgentPrebuiltOnly,
   isPrebuiltMode,
   listPrebuiltModeIds,
+  withoutSourceFallback,
 } from '../../src/services/agent-prebuilt-gate.js';
 import type { BranchEntry, BuildProfile, Project } from '../../src/types.js';
 
@@ -99,5 +101,23 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(gap.message).toContain('该服务没有极速版模式');
     expect(gap.message).toContain('项目默认只能由真人在项目设置页修改');
     expect(gap.hint).toContain('还没接 CI 预构建');
+  });
+
+  it('withoutSourceFallback 摘掉源码回退 profile，其余字段原样；没挂回退时返回同一对象', () => {
+    const resolved = { ...profile({ prebuiltImage: true }), sourceFallbackProfile: profile({ activeDeployMode: 'static' }) };
+    const stripped = withoutSourceFallback(resolved);
+    expect(stripped.sourceFallbackProfile).toBeUndefined();
+    expect(stripped.prebuiltImage).toBe(true);
+    expect(stripped.id).toBe('api');
+    const plain = profile();
+    expect(withoutSourceFallback(plain)).toBe(plain);
+  });
+
+  it('findNonPrebuiltDefaultModes：项目默认里写成源码模式的项被点名，空串按基线判，未知 profile 忽略', () => {
+    const p = profile({ activeDeployMode: 'static' });
+    expect(findNonPrebuiltDefaultModes([p], { api: 'express' })).toEqual([]);
+    expect(findNonPrebuiltDefaultModes([p], { api: 'dev' })).toMatchObject([{ profileId: 'api', modeId: 'dev' }]);
+    expect(findNonPrebuiltDefaultModes([p], { api: '' })).toMatchObject([{ profileId: 'api', modeId: 'static' }]);
+    expect(findNonPrebuiltDefaultModes([p], { ghost: 'dev' })).toEqual([]);
   });
 });

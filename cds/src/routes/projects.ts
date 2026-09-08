@@ -42,6 +42,12 @@ import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
 import { resolveProjectScope } from '../services/project-scope.js';
 import { isMachineCaller } from '../services/machine-caller.js';
+import {
+  buildPrebuiltGateRejection,
+  findNonPrebuiltDefaultModes,
+  isAgentGatedRequest,
+  isAgentPrebuiltOnly,
+} from '../services/agent-prebuilt-gate.js';
 import { summarizeRepoSharing, type RepoSharingSummary } from '../services/repo-sharing.js';
 import { inferProjectScope, inferProfileScope, declaredScopeSources } from '../services/build-scope-inference.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
@@ -3380,6 +3386,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
         }
         next[profileId] = mode;
       }
+      // Agent 极速版门禁：项目默认会在建分支时拷贝进覆盖、align-deploy-modes 会刷进全部分支，
+      // 之后豁免的 webhook 部署就会在宿主上编译——机器凭据不得把它写成非极速版（Codex PR #1513 P1）。
+      if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
+        const violations = findNonPrebuiltDefaultModes(projectProfiles, next);
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(project, projectProfiles, violations, { operation: 'project-default' }));
+          return;
+        }
+      }
       patch.defaultDeployModes = next;
     }
     // 自动切发布版保留为项目级单值；autoStopAfterMinutes 仅兼容旧 API，
@@ -3463,6 +3478,15 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       return;
     }
     const profiles = stateService.getBuildProfilesForProject(project.id);
+    // Agent 极速版门禁：对齐会把项目默认刷进全部分支，默认里有源码模式就等于让 Agent 把
+    // 整个项目的分支都切成源码编译，拒绝（真人在页面上对齐不受限）。
+    if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
+      const violations = findNonPrebuiltDefaultModes(profiles, defaults);
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(project, profiles, violations, { operation: 'project-default' }));
+        return;
+      }
+    }
     const branches = stateService.getBranchesForProject(project.id);
     const aligned: Array<{ branchId: string; modes: Record<string, string> }> = [];
     for (const branch of branches) {

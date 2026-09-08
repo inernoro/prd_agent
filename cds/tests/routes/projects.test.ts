@@ -774,6 +774,34 @@ describe('Projects router (P4 Part 2)', () => {
       expect(other.status).toBe(200);
     });
 
+    it('门禁下机器凭据写 defaultDeployModes：源码模式 409、极速版放行；对齐端点同样受闸（Codex P1）', async () => {
+      stateService.addBuildProfile({
+        id: 'gate-api', projectId: 'default', name: 'API', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5000,
+        deployModes: { dev: { label: '开发' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' } },
+      });
+      await request(server, 'PUT', '/api/projects/default', { agentPrebuiltOnly: true });
+      const machine = { 'x-ai-access-key': 'agent-key' };
+
+      const dev = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'dev' } }, machine);
+      expect(dev.status).toBe(409);
+      expect(dev.body.error).toBe('agent_prebuilt_only');
+      expect(dev.body.message).toContain('defaultDeployModes');
+      expect(stateService.getProject('default')!.defaultDeployModes).toBeUndefined();
+
+      const express = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express' } }, machine);
+      expect(express.status).toBe(200);
+      expect(express.body.project.defaultDeployModes).toEqual({ 'gate-api': 'express' });
+
+      // 真人把默认改回 dev 不受限；随后机器来对齐会被拒（否则源码模式刷进全部分支）
+      const human = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'dev' } });
+      expect(human.status).toBe(200);
+      const align = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {}, machine);
+      expect(align.status).toBe(409);
+      expect(align.body.error).toBe('agent_prebuilt_only');
+      const humanAlign = await request(server, 'POST', '/api/projects/default/align-deploy-modes', {});
+      expect(humanAlign.status).toBe(200);
+    });
+
     it('round-trips the CDS global variable inheritance opt-in', async () => {
       const enabled = await request(server, 'PUT', '/api/projects/default', { inheritGlobalEnv: true });
       expect(enabled.status).toBe(200);

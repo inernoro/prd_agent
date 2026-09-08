@@ -576,11 +576,11 @@ describe('Branch Routes', () => {
       const now = new Date().toISOString();
       stateService.addProject({ id: 'proj-a', slug: 'a', name: 'A', kind: 'git', createdAt: now, updatedAt: now, agentPrebuiltOnly });
       stateService.addBuildProfile({
-        id: 'api', projectId: 'proj-a', name: 'API', dockerImage: 'node:20', workDir: '.', containerPort: 5000,
+        id: 'api', projectId: 'proj-a', name: 'API', dockerImage: 'node:20', command: 'pnpm build && node server.js', workDir: '.', containerPort: 5000,
         activeDeployMode: 'static',
         deployModes: {
-          dev: { label: '开发模式' },
-          static: { label: '静态部署' },
+          dev: { label: '开发模式', command: 'pnpm dev' },
+          static: { label: '静态部署', command: 'pnpm build && node server.js' },
           express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' },
         },
       });
@@ -648,6 +648,68 @@ describe('Branch Routes', () => {
       const res = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'dev' });
       expect(res.status).toBe(200);
       expect(stateService.getBranchProfileOverride('b1', 'api')?.activeDeployMode).toBe('dev');
+    });
+
+    it('单服务部署端点走同一道闸：source 模式 409，express 放行（Codex P1）', async () => {
+      seedGateProject(true);
+      const bad = await request(server, 'POST', '/api/branches/b1/deploy/api', {}, { 'X-Test-Key': 'A' });
+      expect(bad.status).toBe(409);
+      expect((bad.body as any).error).toBe('agent_prebuilt_only');
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      const ok = await request(server, 'POST', '/api/branches/b1/deploy/api', {}, { 'X-Test-Key': 'A' });
+      expect(ok.status).not.toBe(409);
+    });
+
+    it('通用 PUT /build-profiles/:id 同样受闸：写 activeDeployMode=dev 409、动 deployModes / prebuiltImage 409、改名放行（Codex P1）', async () => {
+      seedGateProject(true);
+      const dev = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: 'dev' }, { 'X-Test-Key': 'A' });
+      expect(dev.status).toBe(409);
+      expect((dev.body as any).error).toBe('agent_prebuilt_only');
+      const redefine = await request(server, 'PUT', '/api/build-profiles/api', {
+        deployModes: { dev: { label: '假极速', prebuilt: true } },
+      }, { 'X-Test-Key': 'A' });
+      expect(redefine.status).toBe(409);
+      expect((redefine.body as any).message).toContain('deployModes');
+      const flag = await request(server, 'PUT', '/api/build-profiles/api', { prebuiltImage: true }, { 'X-Test-Key': 'A' });
+      expect(flag.status).toBe(409);
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('static');
+      expect(stateService.getBuildProfile('api')!.deployModes!.dev.prebuilt).toBeUndefined();
+
+      const rename = await request(server, 'PUT', '/api/build-profiles/api', { name: 'API 服务' }, { 'X-Test-Key': 'A' });
+      expect(rename.status).toBe(200);
+      const express = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: 'express' }, { 'X-Test-Key': 'A' });
+      expect(express.status).toBe(200);
+      expect(stateService.getBuildProfile('api')!.activeDeployMode).toBe('express');
+      // 真人改回 dev、改模式定义都不受限
+      const human = await request(server, 'PUT', '/api/build-profiles/api', { activeDeployMode: 'dev', deployModes: { dev: { label: '开发' } } });
+      expect(human.status).toBe(200);
+    });
+
+    /*
+     * 极速版镜像拉不到时 runService 会按 sourceFallbackProfile 在宿主上编译源码——
+     * 正是门禁要禁的事。差分断言：同一条 express 分支、同样拉不到镜像，内部派发的部署
+     * 回退源码并起了带源码命令的容器；Agent 的部署不回退，分支以失败收场。
+     */
+    it('门禁下镜像拉不到不回退源码编译：Agent 部署失败等 CI，内部派发仍回退（Codex P1）', async () => {
+      seedGateProject(true);
+      stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
+      stateService.save();
+      mock.addResponsePatternFirst(/docker pull/, () => ({ stdout: '', stderr: 'manifest unknown', exitCode: 1 }));
+      mock.addResponsePattern(/docker ps -a --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      const sourceRuns = () => mock.commands.filter((c) => c.includes('docker run') && c.includes('pnpm build')).length;
+
+      const exempt = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A', 'X-CDS-Trigger': 'webhook' });
+      expect(exempt.status).toBe(200);
+      expect(String(exempt.body)).toContain('自动回退源码编译');
+      expect(sourceRuns()).toBe(1);
+
+      const gated = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(gated.status).toBe(200);
+      expect(String(gated.body)).toContain('极速版门禁：镜像缺失不回退源码编译');
+      expect(String(gated.body)).not.toContain('自动回退源码编译');
+      expect(sourceRuns()).toBe(1);
+      expect(stateService.getBranch('b1')?.status).toBe('error');
     });
 
     it('机器凭据改项目默认部署模式：express 放行，static 与清空拒绝', async () => {

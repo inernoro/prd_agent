@@ -102,6 +102,44 @@ export function listPrebuiltModeIds(profile: BuildProfile): string[] {
     .map(([id]) => id);
 }
 
+/**
+ * 门禁下的部署不许回退源码编译。resolveEffectiveProfile 会给极速版 profile 挂一个
+ * sourceFallbackProfile，runService 在镜像拉不到时据此**在宿主上编译**——恰是门禁要禁的事
+ * （Codex PR #1513 P1）。受门禁约束的部署把它摘掉：镜像拉不到就失败、等 CI，不偷偷编译。
+ */
+export function withoutSourceFallback<T extends { sourceFallbackProfile?: unknown }>(profile: T): T {
+  if (profile.sourceFallbackProfile === undefined) return profile;
+  return { ...profile, sourceFallbackProfile: undefined };
+}
+
+/**
+ * 项目默认 defaultDeployModes（建分支时拷贝进覆盖、align-deploy-modes 会刷进全部分支）
+ * 里有哪些写成了非极速版。空串 = 不设默认（回到 profile 基线），按基线判。
+ */
+export function findNonPrebuiltDefaultModes(
+  profiles: BuildProfile[],
+  defaults: Record<string, string>,
+): PrebuiltGateViolation[] {
+  const byId = new Map(profiles.map((p) => [p.id, p]));
+  const out: PrebuiltGateViolation[] = [];
+  for (const [profileId, rawMode] of Object.entries(defaults)) {
+    const profile = byId.get(profileId);
+    if (!profile) continue;
+    const modeId = (rawMode || '').trim() || profile.activeDeployMode || undefined;
+    if (isPrebuiltMode(profile, modeId)) continue;
+    out.push({
+      profileId,
+      profileName: profile.name || profile.id,
+      modeId: modeId || '',
+      modeLabel: modeLabel(profile, modeId),
+    });
+  }
+  return out;
+}
+
+/** Agent 在门禁下不得改动的 profile 字段：它们定义了「什么算极速版」，改了就能把源码模式标成 prebuilt。 */
+export const PREBUILT_DEFINITION_FIELDS = ['deployModes', 'prebuiltImage'] as const;
+
 export interface PrebuiltGateRejection {
   error: typeof AGENT_PREBUILT_ONLY_ERROR;
   message: string;
@@ -115,7 +153,7 @@ export function buildPrebuiltGateRejection(
   project: Project,
   profiles: BuildProfile[],
   violations: PrebuiltGateViolation[],
-  context: { branchId?: string; operation: 'deploy' | 'branch-override' | 'profile-default' },
+  context: { branchId?: string; operation: 'deploy' | 'branch-override' | 'profile-default' | 'project-default' },
 ): PrebuiltGateRejection {
   const byId = new Map(profiles.map((p) => [p.id, p]));
   const detailed = violations.map((v) => ({
@@ -130,8 +168,10 @@ export function buildPrebuiltGateRejection(
     ? '部署被拦截'
     : context.operation === 'branch-override'
       ? '分支部署模式覆盖被拒绝'
-      : '项目默认部署模式修改被拒绝';
-  const fix = context.operation === 'profile-default'
+      : context.operation === 'project-default'
+        ? '项目默认运行模式（defaultDeployModes）写入被拒绝'
+        : '项目默认部署模式修改被拒绝';
+  const fix = context.operation === 'profile-default' || context.operation === 'project-default'
     ? '项目默认只能由真人在项目设置页修改；Agent 请用 cdscli branch set-mode <branchId> <profileId> <极速版模式> 只改自己的分支。'
     : context.branchId
       ? `请对每个服务运行 cdscli branch set-mode ${context.branchId} <profileId> <极速版模式> 后重新部署。`
