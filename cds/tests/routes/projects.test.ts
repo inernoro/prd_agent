@@ -792,6 +792,20 @@ describe('Projects router (P4 Part 2)', () => {
       expect(express.status).toBe(200);
       expect(express.body.project.defaultDeployModes).toEqual({ 'gate-api': 'express' });
 
+      // 整表替换：空表 / 漏掉基线是源码的 profile 都会让新分支落回源码基线，拒绝（Codex 第二轮 P1）
+      const empty = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: {} }, machine);
+      expect(empty.status).toBe(409);
+      expect(stateService.getProject('default')!.defaultDeployModes).toEqual({ 'gate-api': 'express' });
+      stateService.addBuildProfile({
+        id: 'gate-web', projectId: 'default', name: 'Web', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 8080,
+        deployModes: { static: { label: '静态' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/web:sha-${CDS_COMMIT_SHA}' } },
+      });
+      const partial = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express' } }, machine);
+      expect(partial.status).toBe(409);
+      expect(partial.body.violations).toMatchObject([{ profileId: 'gate-web' }]);
+      const full = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'express', 'gate-web': 'express' } }, machine);
+      expect(full.status).toBe(200);
+
       // 真人把默认改回 dev 不受限；随后机器来对齐会被拒（否则源码模式刷进全部分支）
       const human = await request(server, 'PUT', '/api/projects/default', { defaultDeployModes: { 'gate-api': 'dev' } });
       expect(human.status).toBe(200);

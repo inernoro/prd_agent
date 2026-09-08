@@ -45,24 +45,26 @@ export function isAgentPrebuiltOnly(project: Project | undefined | null): boolea
 }
 
 /**
- * 这个请求是否受门禁约束：机器凭据发起、且不是内部系统派发。
- * X-CDS-Trigger 是 webhook / 调度器 / 自动生命周期的自标（actor-resolver 解成 system:*），
- * 它们代人跑、不是 Agent 在试错，放行。
+ * 这个请求是否受门禁约束：机器凭据发起。
+ *
+ * 不看 X-CDS-Trigger：那是调用方自己写的 header，项目 Agent Key 随手加一个就能绕过全部门禁
+ * （Codex PR #1513 第二轮 P1）。也不需要豁免——CDS 内部自调（webhook 派发、pending 重发、
+ * auto-lifecycle、项目暂停停容器）走的是 X-CDS-Internal + loopback 的鉴权旁路，**不带机器凭据**，
+ * isMachineCaller 本来就判假；真人走 cookie 会话同样判假。
  */
 export function isAgentGatedRequest(req: unknown): boolean {
-  if (!isMachineCaller(req)) return false;
-  const headers = (req as { headers?: Record<string, unknown> })?.headers || {};
-  const trigger = headers['x-cds-trigger'];
-  if (typeof trigger === 'string' && trigger) return false;
-  if (Array.isArray(trigger) && trigger[0]) return false;
-  return true;
+  return isMachineCaller(req);
 }
 
-/** 某个模式 id 在该 profile 上是不是极速版。空模式 = 基线源码构建，只有镜像站点才算过。 */
+/**
+ * 某个模式 id 在该 profile 上是不是极速版。口径与 container.ts resolveProfileWithMode 一致：
+ * 模式自己声明的 prebuilt 优先（`override.prebuilt ?? profile.prebuiltImage`），所以镜像站点上
+ * 显式 `prebuilt: false` 的源码模式仍算源码；没选模式（基线）只看 prebuiltImage。
+ */
 export function isPrebuiltMode(profile: BuildProfile, modeId: string | undefined): boolean {
-  if (profile.prebuiltImage === true) return true;
-  if (!modeId) return false;
-  return profile.deployModes?.[modeId]?.prebuilt === true;
+  const mode = modeId ? profile.deployModes?.[modeId] : undefined;
+  if (mode && mode.prebuilt !== undefined) return mode.prebuilt === true;
+  return profile.prebuiltImage === true;
 }
 
 function modeLabel(profile: BuildProfile, modeId: string | undefined): string {
@@ -114,17 +116,24 @@ export function withoutSourceFallback<T extends { sourceFallbackProfile?: unknow
 
 /**
  * 项目默认 defaultDeployModes（建分支时拷贝进覆盖、align-deploy-modes 会刷进全部分支）
- * 里有哪些写成了非极速版。空串 = 不设默认（回到 profile 基线），按基线判。
+ * 生效后有哪些 profile 会落到非极速版。空串 / 缺项 = 不设默认（回到 profile 基线），按基线判。
+ *
+ * `coverAllProfiles`：PUT 是**整体替换**这张表，所以要按项目全部 profile 判——只判表里有的项，
+ * 机器凭据传一张空表就能把 `{api: express}` 换掉，新分支落回源码基线（Codex 第二轮 P1）。
+ * align 只刷表里有的 profile，按条目判即可。
  */
 export function findNonPrebuiltDefaultModes(
   profiles: BuildProfile[],
   defaults: Record<string, string>,
+  options: { coverAllProfiles?: boolean } = {},
 ): PrebuiltGateViolation[] {
-  const byId = new Map(profiles.map((p) => [p.id, p]));
   const out: PrebuiltGateViolation[] = [];
-  for (const [profileId, rawMode] of Object.entries(defaults)) {
-    const profile = byId.get(profileId);
-    if (!profile) continue;
+  const targets = options.coverAllProfiles
+    ? profiles
+    : profiles.filter((p) => Object.prototype.hasOwnProperty.call(defaults, p.id));
+  for (const profile of targets) {
+    const profileId = profile.id;
+    const rawMode = defaults[profileId];
     const modeId = (rawMode || '').trim() || profile.activeDeployMode || undefined;
     if (isPrebuiltMode(profile, modeId)) continue;
     out.push({

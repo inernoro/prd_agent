@@ -46,14 +46,16 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(isAgentPrebuiltOnly(project)).toBe(true);
   });
 
-  it('只有机器凭据受门禁约束，内部系统派发（X-CDS-Trigger）豁免，真人 cookie 不受限', () => {
+  it('只有机器凭据受门禁约束；调用方自己写的 X-CDS-Trigger 不能换来豁免；真人 cookie 与内部 loopback 旁路都不带机器凭据', () => {
     expect(isAgentGatedRequest({ headers: { 'x-ai-access-key': 'k' } })).toBe(true);
     expect(isAgentGatedRequest({ headers: {}, cdsProjectKey: { projectId: 'proj-a', keyId: 'k' } })).toBe(true);
-    expect(isAgentGatedRequest({ headers: { 'x-ai-access-key': 'k', 'x-cds-trigger': 'webhook' } })).toBe(false);
+    // Codex 第二轮 P1：header 是调用方可控的，加上它照样受闸
+    expect(isAgentGatedRequest({ headers: { 'x-ai-access-key': 'k', 'x-cds-trigger': 'webhook' } })).toBe(true);
     expect(isAgentGatedRequest({ headers: { cookie: 'session=1' } })).toBe(false);
+    expect(isAgentGatedRequest({ headers: { 'x-cds-internal': '1', 'x-cds-trigger': 'webhook' } })).toBe(false);
   });
 
-  it('极速版判据是 prebuilt 标志，不是模式名；镜像站点整体算过', () => {
+  it('极速版判据是 prebuilt 标志，不是模式名；模式自己的 prebuilt 优先于 profile 级 prebuiltImage', () => {
     const p = profile();
     expect(isPrebuiltMode(p, 'express')).toBe(true);
     expect(isPrebuiltMode(p, 'static')).toBe(false);
@@ -61,6 +63,10 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(isPrebuiltMode(p, undefined)).toBe(false);
     expect(isPrebuiltMode(profile({ deployModes: { express: { label: '假极速' } } }), 'express')).toBe(false);
     expect(isPrebuiltMode(profile({ prebuiltImage: true, deployModes: undefined }), undefined)).toBe(true);
+    // 镜像站点上显式 prebuilt:false 的源码模式仍是源码（resolveProfileWithMode 口径：override.prebuilt ?? prebuiltImage）
+    const imageSite = profile({ prebuiltImage: true, deployModes: { source: { label: '源码', prebuilt: false, command: 'pnpm build' }, plain: { label: '沿用' } } });
+    expect(isPrebuiltMode(imageSite, 'source')).toBe(false);
+    expect(isPrebuiltMode(imageSite, 'plain')).toBe(true);
     expect(listPrebuiltModeIds(p)).toEqual(['express']);
   });
 
@@ -119,5 +125,13 @@ describe('agent-prebuilt-gate 判据', () => {
     expect(findNonPrebuiltDefaultModes([p], { api: 'dev' })).toMatchObject([{ profileId: 'api', modeId: 'dev' }]);
     expect(findNonPrebuiltDefaultModes([p], { api: '' })).toMatchObject([{ profileId: 'api', modeId: 'static' }]);
     expect(findNonPrebuiltDefaultModes([p], { ghost: 'dev' })).toEqual([]);
+  });
+
+  it('coverAllProfiles：整表替换时表里没有的 profile 也按基线判，空表不能把安全默认换掉', () => {
+    const api = profile({ activeDeployMode: 'static' });
+    const web = profile({ id: 'web', name: 'Web', activeDeployMode: 'express' });
+    expect(findNonPrebuiltDefaultModes([api, web], {})).toEqual([]);
+    expect(findNonPrebuiltDefaultModes([api, web], {}, { coverAllProfiles: true })).toMatchObject([{ profileId: 'api', modeId: 'static' }]);
+    expect(findNonPrebuiltDefaultModes([api, web], { api: 'express' }, { coverAllProfiles: true })).toEqual([]);
   });
 });

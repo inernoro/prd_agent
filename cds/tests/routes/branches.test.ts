@@ -601,10 +601,39 @@ describe('Branch Routes', () => {
       expect(body.violations).toMatchObject([{ profileId: 'api', modeId: 'static', prebuiltModes: ['express'] }]);
     });
 
-    it('内部系统派发（X-CDS-Trigger）不受门禁约束，不会被 409', async () => {
+    it('内部系统派发不带机器凭据（X-CDS-Internal 走 loopback 旁路），不受门禁；机器凭据自己加 X-CDS-Trigger 换不来豁免', async () => {
       seedGateProject(true);
-      const res = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A', 'X-CDS-Trigger': 'webhook' });
-      expect(res.status).not.toBe(409);
+      const internal = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-CDS-Internal': '1', 'X-CDS-Trigger': 'webhook' });
+      expect(internal.status).not.toBe(409);
+      const spoofed = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A', 'X-CDS-Trigger': 'webhook' });
+      expect(spoofed.status).toBe(409);
+    });
+
+    it('没存 projectId 的老分支归 default 项目，default 开了门禁同样拦（Codex 第二轮 P1）', async () => {
+      const now = new Date().toISOString();
+      const def = stateService.getProject('default');
+      if (def) def.agentPrebuiltOnly = true;
+      else stateService.addProject({ id: 'default', slug: 'default', name: 'default', kind: 'git', createdAt: now, updatedAt: now, agentPrebuiltOnly: true });
+      stateService.addBuildProfile({
+        id: 'legacy-api', projectId: 'default', name: 'Legacy API', dockerImage: 'node:20', command: 'pnpm build', workDir: '.', containerPort: 5000,
+        deployModes: { static: { label: '静态' }, express: { label: '极速版', prebuilt: true, dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}' } },
+      });
+      stateService.addBranch({ id: 'legacy-b', branch: 'legacy', worktreePath: '/tmp/wt/legacy-b', services: {}, status: 'idle', createdAt: now } as any);
+      const res = await request(server, 'POST', '/api/branches/legacy-b/deploy', {}, { 'x-ai-access-key': 'agent-key' });
+      expect(res.status).toBe(409);
+      expect((res.body as any).error).toBe('agent_prebuilt_only');
+    });
+
+    it('bulk-set-modes 批量改写模式定义在门禁下拒绝机器凭据，真人照常（Codex 第二轮 P1）', async () => {
+      seedGateProject(true);
+      const body = { profileIds: ['api'], strategy: 'replace', modes: { dev: { label: '开发', command: 'pnpm dev' } } };
+      const machine = await request(server, 'POST', '/api/build-profiles/bulk-set-modes', body, { 'X-Test-Key': 'A' });
+      expect(machine.status).toBe(409);
+      expect((machine.body as any).error).toBe('agent_prebuilt_only');
+      expect(stateService.getBuildProfile('api')!.deployModes!.express.prebuilt).toBe(true);
+      const human = await request(server, 'POST', '/api/build-profiles/bulk-set-modes', body);
+      expect(human.status).toBe(200);
+      expect(stateService.getBuildProfile('api')!.deployModes!.express).toBeUndefined();
     });
 
     it('开关关闭（缺省）时机器凭据部署源码模式分支不被门禁拦', async () => {
@@ -690,7 +719,7 @@ describe('Branch Routes', () => {
      * 正是门禁要禁的事。差分断言：同一条 express 分支、同样拉不到镜像，内部派发的部署
      * 回退源码并起了带源码命令的容器；Agent 的部署不回退，分支以失败收场。
      */
-    it('门禁下镜像拉不到不回退源码编译：Agent 部署失败等 CI，内部派发仍回退（Codex P1）', async () => {
+    it('门禁下镜像拉不到不回退源码编译：Agent 部署失败等 CI，内部派发（不带机器凭据）仍回退（Codex P1）', async () => {
       seedGateProject(true);
       stateService.setBranchProfileOverride('b1', 'api', { activeDeployMode: 'express' });
       stateService.save();
@@ -699,7 +728,7 @@ describe('Branch Routes', () => {
       mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       const sourceRuns = () => mock.commands.filter((c) => c.includes('docker run') && c.includes('pnpm build')).length;
 
-      const exempt = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A', 'X-CDS-Trigger': 'webhook' });
+      const exempt = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-CDS-Internal': '1', 'X-CDS-Trigger': 'webhook' });
       expect(exempt.status).toBe(200);
       expect(String(exempt.body)).toContain('自动回退源码编译');
       expect(sourceRuns()).toBe(1);

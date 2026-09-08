@@ -3389,7 +3389,7 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       // Agent 极速版门禁：项目默认会在建分支时拷贝进覆盖、align-deploy-modes 会刷进全部分支，
       // 之后豁免的 webhook 部署就会在宿主上编译——机器凭据不得把它写成非极速版（Codex PR #1513 P1）。
       if (isAgentPrebuiltOnly(project) && isAgentGatedRequest(req)) {
-        const violations = findNonPrebuiltDefaultModes(projectProfiles, next);
+        const violations = findNonPrebuiltDefaultModes(projectProfiles, next, { coverAllProfiles: true });
         if (violations.length > 0) {
           res.status(409).json(buildPrebuiltGateRejection(project, projectProfiles, violations, { operation: 'project-default' }));
           return;

@@ -12184,12 +12184,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
     // Agent 极速版门禁（2026-09-08）：项目开了 agentPrebuiltOnly，机器凭据发起的部署只要有一个
     // 服务会走源码编译就拒绝——CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
-    // 判定与响应都在 agent-prebuilt-gate.ts（唯一判定处）；内部系统派发（X-CDS-Trigger）豁免。
-    const agentPrebuiltGated = Boolean(deployProject && isAgentPrebuiltOnly(deployProject) && isAgentGatedRequest(req));
-    if (agentPrebuiltGated && deployProject) {
+    // 判定与响应都在 agent-prebuilt-gate.ts（唯一判定处）。项目按 `entry.projectId || 'default'`
+    // 取：没存 projectId 的老分支归 default 项目，不能因 deployProject 为空就漏判（Codex 第二轮 P1）。
+    const gateProject = stateService.getProject(entry.projectId || 'default');
+    const agentPrebuiltGated = Boolean(gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req));
+    if (agentPrebuiltGated && gateProject) {
       const violations = findNonPrebuiltProfiles(currentProfiles, entry);
       if (violations.length > 0) {
-        res.status(409).json(buildPrebuiltGateRejection(deployProject, currentProfiles, violations, {
+        res.status(409).json(buildPrebuiltGateRejection(gateProject, currentProfiles, violations, {
           branchId: entry.id,
           operation: 'deploy',
         }));
@@ -17982,6 +17984,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const [k, v] of Object.entries(modes)) {
         if (!v || typeof v !== 'object' || !v.label || !v.command) {
           res.status(400).json({ error: `mode "${k}" 缺少 label 或 command` });
+          return;
+        }
+      }
+
+      // Agent 极速版门禁：本端点整体替换 / 合并 deployModes（模式定义），机器凭据在开了门禁的
+      // 项目里一律不得动（改了就能抹掉 prebuilt 标记，Codex 第二轮 P1）。只要有一个受影响的
+      // profile 属于开门禁的项目就整体拒绝，不做半截写入。
+      if (isAgentGatedRequest(req)) {
+        const gatedProjectIds = new Set(
+          stateService.getBuildProfiles()
+            .filter((p) => (Array.isArray(profileIds) && profileIds.length > 0) ? profileIds.includes(p.id) : true)
+            .map((p) => p.projectId || 'default')
+            .filter((pid) => isAgentPrebuiltOnly(stateService.getProject(pid))),
+        );
+        if (gatedProjectIds.size > 0) {
+          res.status(409).json({
+            error: 'agent_prebuilt_only',
+            message: `项目 ${[...gatedProjectIds].join('、')} 要求 Agent 只使用极速版（CI 预构建）部署：批量改写 deployModes（模式定义）会改变什么算极速版，Agent 不得执行，请由真人在项目设置页调整。`,
+            projectId: [...gatedProjectIds][0],
+            violations: [],
+            hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+          });
           return;
         }
       }
