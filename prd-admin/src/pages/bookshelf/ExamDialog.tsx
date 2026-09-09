@@ -68,10 +68,10 @@ export function ExamDialog({
           : `共 ${questions.length} 题，答对 ${Math.ceil(questions.length * PASS_RATE)} 题及格。考的是判断，不是记忆。`
       }
       content={
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-3.5">
           {submitted && (
             <div
-              className="flex items-center gap-4 rounded-2xl p-4"
+              className="flex items-center gap-3 rounded-[7px] p-3.5"
               style={{
                 background: passed ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
                 border: `1px solid ${passed ? 'var(--accent-fg-emerald)' : 'var(--border-default)'}`,
@@ -82,10 +82,10 @@ export function ExamDialog({
                 style={{ color: passed ? 'var(--accent-fg-emerald)' : 'var(--text-muted)' }}
               />
               <div className="min-w-0">
-                <div className="text-[20px] font-bold" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>
                   {correctCount} / {questions.length} 题 —— {passed ? '通过' : '未通过'}
                 </div>
-                <div className="text-[13px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>
+                <div className="text-[12.5px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>
                   {passed
                     ? '这一卷的判断题你已经站得住。往下一卷走。'
                     : '下面每题都有解析，看完再来一次。错的地方正是这一卷要治的。'}
@@ -100,17 +100,17 @@ export function ExamDialog({
             return (
               <div
                 key={q.id}
-                className="rounded-2xl p-4"
+                className="rounded-[7px] p-3.5"
                 style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-secondary)' }}
               >
-                <div className="flex items-start gap-2 mb-3">
+                <div className="flex items-start gap-2 mb-2.5">
                   <span
                     className="shrink-0 text-[12px] font-bold px-2 py-0.5 rounded-md"
                     style={{ background: 'var(--bg-tertiary)', color: 'var(--text-secondary)' }}
                   >
                     {qi + 1}
                   </span>
-                  <p className="text-[15px] font-semibold leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                  <p className="text-[14px] font-medium leading-[1.7]" style={{ color: 'var(--text-primary)' }}>
                     {q.stem}
                   </p>
                 </div>
@@ -128,7 +128,7 @@ export function ExamDialog({
                         type="button"
                         disabled={submitted}
                         onClick={() => setPicked((p) => ({ ...p, [q.id]: oi }))}
-                        className="flex items-start gap-2.5 text-left px-3 py-2.5 rounded-xl transition-all duration-200"
+                        className="flex items-start gap-2.5 text-left px-3 py-2 rounded-[6px] transition-colors duration-[120ms]"
                         style={{
                           background: showRight
                             ? 'var(--bg-tertiary)'
@@ -148,7 +148,7 @@ export function ExamDialog({
                         }}
                       >
                         <span
-                          className="shrink-0 text-[12px] font-bold mt-0.5 w-5 h-5 rounded-full grid place-items-center"
+                          className="shrink-0 text-[12px] font-bold mt-0.5 w-[18px] h-[18px] rounded-[4px] grid place-items-center"
                           style={{
                             background: isChosen || showRight ? 'var(--bg-card-hover)' : 'transparent',
                             border: '1px solid var(--border-subtle)',
@@ -157,7 +157,7 @@ export function ExamDialog({
                         >
                           {'ABCD'[oi]}
                         </span>
-                        <span className="text-[14px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+                        <span className="text-[13px] leading-[1.7]" style={{ color: 'var(--text-primary)' }}>
                           {opt}
                         </span>
                         {showRight && (
@@ -173,7 +173,7 @@ export function ExamDialog({
 
                 {submitted && (
                   <div
-                    className="mt-3 px-3 py-2.5 rounded-xl text-[13px] leading-relaxed"
+                    className="mt-3 px-3 py-2 rounded-[6px] text-[12.5px] leading-[1.72]"
                     style={{
                       background: 'var(--bg-nested)',
                       borderLeft: `3px solid ${right ? 'var(--accent-fg-emerald)' : 'var(--accent-fg-amber)'}`,
@@ -197,7 +197,7 @@ export function ExamDialog({
             <button
               type="button"
               onClick={reset}
-              className="flex items-center gap-1.5 px-4 h-9 rounded-xl text-[13px] font-semibold transition-colors"
+              className="flex items-center gap-1.5 px-3.5 h-[30px] rounded-[6px] text-[12.5px] font-medium transition-colors"
               style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
             >
               <RotateCcw size={14} /> 再考一次
@@ -205,7 +205,7 @@ export function ExamDialog({
             <button
               type="button"
               onClick={() => handleClose(false)}
-              className="px-4 h-9 rounded-xl text-[13px] font-semibold"
+              className="px-3.5 h-[30px] rounded-[6px] text-[12.5px] font-medium"
               style={{ background: 'var(--gold-gradient)', color: 'var(--accent-on-gold)' }}
             >
               完成
@@ -213,14 +213,14 @@ export function ExamDialog({
           </div>
         ) : (
           <div className="flex items-center gap-3 justify-between w-full">
-            <span className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+            <span className="text-[12.5px]" style={{ color: 'var(--text-muted)' }}>
               已答 {answeredCount} / {questions.length}
               {answeredCount < questions.length && ` —— 还剩 ${questions.length - answeredCount} 题`}
             </span>
             <button
               type="button"
               onClick={handleSubmit}
-              className="px-5 h-9 rounded-xl text-[13px] font-semibold transition-transform hover:-translate-y-0.5"
+              className="px-4 h-[30px] rounded-[6px] text-[12.5px] font-medium transition-opacity duration-[120ms] hover:opacity-90"
               style={{ background: 'var(--gold-gradient)', color: 'var(--accent-on-gold)' }}
             >
               交卷
