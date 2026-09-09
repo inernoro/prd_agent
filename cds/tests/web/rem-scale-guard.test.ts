@@ -25,6 +25,8 @@ const PX = /(?<![A-Za-z0-9.])(\d*\.?\d+)px(?![A-Za-z0-9])/g;
 const ALLOW: Array<{ file: string; needle: string; why: string }> = [
   { file: 'index.css', needle: 'max(10px, 0.6875rem)', why: '左栏两字标签的可读性下限：9.5px 已糊，保底 10 物理像素' },
   { file: 'pages/StatusPage.tsx', needle: "'(max-width: 767px)'", why: '媒体查询字符串：断点读不到根字号，和 CSS 断点一样保持 px' },
+  { file: 'pages/HomePage.tsx', needle: "rootMargin: '0px 0px -40px 0px'", why: 'IntersectionObserver 的 rootMargin 是 JS API 参数不是 CSS，规范只接受 px 与 %，写 rem 会直接抛构造异常' },
+  { file: 'components/BranchDetailDrawer.tsx', needle: "'-9999px'", why: '把 textarea 挪出视口以便 execCommand(copy) 的哨兵常量，不是设计尺寸，不该跟根字号缩' },
 ];
 
 /** 整个文件按画布单位工作的组件：几何是 px 常量或量出来的容器宽度，内容也必须是同一套单位，
@@ -114,6 +116,23 @@ describe('整站 85%：尺寸用 rem，px 只留给细线', () => {
       if (hits.length) offenders.push(`${path.relative(WEB, file)}: ${hits.slice(0, 5).join(', ')}`);
     }
     expect(offenders, `以下 style 里的数字长度不会随界面尺度缩放（请写成 'Nrem' 字符串）：\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  /* 2026-09-09 线上首页死机的根因：px→rem 批量转换把 IntersectionObserver 的 rootMargin
+   * 一起转了。rootMargin 是 JS API 参数不是 CSS，规范只接受 px 与 %，传 rem 会让构造函数
+   * 直接抛异常 —— 组件挂载即崩、错误边界反复重挂，浏览器主线程被 React #185 无限重渲染吃满。
+   * 上面那两条「没有 >3px 字面量」的守卫恰恰相反地要求把 px 转走，所以这里必须有一条反向断言，
+   * 否则下一次批量转换会再犯，而全量测试照样绿（没有任何用例真的构造过这个 observer）。 */
+  it('IntersectionObserver 的 rootMargin 只许 px 与 %，写 rem 会直接抛构造异常', () => {
+    const offenders: string[] = [];
+    for (const file of walk(SRC)) {
+      for (const m of stripTs(fs.readFileSync(file, 'utf-8')).matchAll(/rootMargin\s*:\s*(['"`])([^'"`]*)\1/g)) {
+        const value = m[2];
+        const bad = value.split(/\s+/).filter((part) => part && !/^-?\d*\.?\d+(px|%)$/.test(part));
+        if (bad.length) offenders.push(`${path.relative(WEB, file)}: rootMargin: '${value}'（非法单位 ${bad.join(', ')}）`);
+      }
+    }
+    expect(offenders, `rootMargin 只接受 px 与 %，下列写法会让 new IntersectionObserver 抛异常、页面白屏或死循环：\n${offenders.join('\n')}`).toEqual([]);
   });
 
   it('Tailwind 断点与 CSS 媒体查询保持原始 px，不按某一档尺度缩', () => {
