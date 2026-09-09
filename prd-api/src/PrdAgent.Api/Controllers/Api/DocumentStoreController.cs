@@ -5054,6 +5054,12 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
 
+        // GitHub 目录同步产出的子文件由父目录条目统一拉（见 DocumentSyncSchedule.IsGithubChildEntry）。
+        // 这里不拦的话，标了「同步中」却永远没人认领，用户看到的是一个卡死的转圈。
+        if (DocumentSyncSchedule.IsGithubChildEntry(entry))
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT, "该文档由 GitHub 目录订阅统一同步，请对所属目录条目触发同步"));
+
         // 暂停状态下不允许手动触发
         if (entry.IsPaused)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "订阅已暂停，请先恢复"));

@@ -6,3 +6,4 @@
 | docs | doc | 新增 design.knowledge-base.github-sync 设计文档，已知边界记入 debt.knowledge-base K-10 |
 | polish | prd-admin | GitHub 同步向导的目录树默认折叠，只展开通往已勾选目录的链路，几百个目录不再一次摊平 |
 | fix | prd-api | 仓库目录扫描上限 600 提到 1500，本仓库 666 个候选目录不再一进来就是截断态 |
+| fix | prd-api | GitHub 目录同步的子文件不再被当普通 URL 订阅单独重拉，私有仓不会每天刷出一批假的同步失败 |
