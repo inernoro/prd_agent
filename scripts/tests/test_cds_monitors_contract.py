@@ -120,6 +120,19 @@ def main() -> int:
                 f"通知会落进没有归属分区的黑洞"
             )
 
+    # plannedMonitors 是「想监控但端点还没有」的暂存区。允许它存在（意图有价值），
+    # 但每条必须写明卡在哪——否则它会变成一个没人清理的许愿池，
+    # 而「声明了就以为在监控」正是这套规则最想防的错觉。
+    for entry in doc.get("plannedMonitors") or []:
+        pid = entry.get("id", "<无 id>")
+        if not entry.get("blockedBy"):
+            errors.append(f"{pid}: plannedMonitors 每条都要写 blockedBy，说清缺什么才能生效")
+        if "intervalSeconds" in entry or "notify" in entry:
+            errors.append(
+                f"{pid}: 待生效项不要带 intervalSeconds / notify——"
+                f"看着像已配好的监控，容易被误当成在跑"
+            )
+
     if errors:
         print("cds monitors contract failed:")
         for e in errors:
@@ -127,9 +140,10 @@ def main() -> int:
         return 1
 
     light = sum(1 for m in monitors if m["probe"] == "light")
+    planned = len(doc.get("plannedMonitors") or [])
     print(
-        f"cds monitors contract passed: {len(monitors)} 条声明，"
-        f"{light} 条 6 小时常设轻探针，枚举与通知来源均已对齐"
+        f"cds monitors contract passed: {len(monitors)} 条生效声明"
+        f"（{light} 条 6 小时常设轻探针），{planned} 条待端点，枚举与通知来源均已对齐"
     )
     return 0
 

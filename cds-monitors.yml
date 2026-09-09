@@ -15,9 +15,11 @@
 #     [已通] health-json 探针 —— CDS 的 uptime-custom-monitor 已支持这种 kind，
 #            结构化判据（field/op/value）、check 不存在判失败、真实 HTTP 探测均有用例。
 #     [已通] 告警外发 —— uptime 状态翻转会投递 MAP 站内通知（source=uptime-alert）。
+#     [已通] serving 深度自检端点 —— GET /gw/v1/healthz/deep 回 health+json，
+#            免鉴权（CDS 探针刻意不带密钥），只含计数与窗口、不含异常文本。
 #     [未通] **本文件的自动导入** —— CDS 还不会读这份声明去建监控。
 #
-#   所以现在的实际情况是：能力齐了，但这三条监控项还得手动在监控中心添加才会跑。
+#   所以现在的实际情况是：链路已经能跑通，但那条监控项还得手动在监控中心添加一次。
 #   在自动导入接上之前，不要把本文件的存在当成「已经在监控了」的证据
 #   （predicate-and-wiring-discipline 形状 8：把不成立的证据当成证据）。
 #   自动导入落地后把本行改为 wired 并记录接线提交。
@@ -87,32 +89,11 @@ x-cds-monitor-auth:
 #   expect.op     比较运算：eq / ne / lt / lte / gt / gte
 #   expect.value  期望值（lt/lte/gt/gte 按数值比，eq/ne 按规范化字符串比）
 monitors:
-  - id: llmgw.intent-draft.roundtrip
-    name: "用途码推导是否走的模型（而不是本地关键词降级）"
-    kind: health-json
-    url: "{llmgw_console}/healthz/deep?check=intent-draft"
-    componentId: intent-draft.roundtrip
-    # 直接对「走了降级」这个症状告警，而不是对某个具体根因告警——
-    # 下一个让它降级的原因还没被想到，症状判据照样能抓住。
-    expect:
-      field: observedValue
-      op: eq
-      value: model
-    probe: light
-    intervalSeconds: 21600      # 6h
-    failuresToAlarm: 2
-    severity: P1
-    notify:
-      source: uptime-alert
-      section: admin
-    rationale: >
-      2026-09-09 事故：serving 在鉴权路径 500，前端退回本地关键词判定，
-      页面完整、码照出，全部验收判绿。降级本身没错，没有铃才是错。
-
   - id: llmgw.serving.unhandled-exceptions
     name: "网关 serving 近期未处理异常数"
     kind: health-json
-    url: "{llmgw_serving}/healthz/deep?check=unhandled-exceptions"
+    # 真实端点，免鉴权（CDS 探针刻意不带密钥），只回计数与窗口、不含异常文本
+    url: "{llmgw_serving}/gw/v1/healthz/deep"
     componentId: serving.unhandled-exceptions
     expect:
       field: observedValue
@@ -120,7 +101,7 @@ monitors:
       value: 0
     observedUnit: count
     probe: light
-    intervalSeconds: 21600      # 6h
+    intervalSeconds: 21600      # 6h；serving 侧的统计窗口必须 >= 这个值，否则探针恒读 0
     failuresToAlarm: 1          # 未处理异常不去抖：出现一次就是一次
     severity: P0
     notify:
@@ -129,22 +110,22 @@ monitors:
     rationale: >
       这套东西里最值钱的一条：不需要为每个功能单独写判据，
       「页面看着好、后台在炸」的同类错误全部一次落网。
+      2026-09-09 那次 500 就是这么躺在容器日志里没人读的。
+
+# ── 还没有对应自检端点的监控项 ──
+#
+# 它们**不在** monitors 段里，因为声明一条打不通的监控只会一直红——
+# 假故障比没有监控更糟，还会把真告警淹掉。等端点落地再搬上去。
+plannedMonitors:
+  - id: llmgw.intent-draft.roundtrip
+    name: "用途码推导是否走的模型（而不是本地关键词降级）"
+    blockedBy: "console-api 尚未暴露 intent-draft 的自检 check"
+    intent: >
+      直接对「走了降级」这个症状告警。降级本身是对的，没有铃才是错的——
+      这正是 2026-09-09 用户看到那条红字时，全部验收都判绿的原因。
+    note: "真调一次推导会烧额度，6 小时一次可接受；实现时注意用系统 appCaller，别记进用户账"
 
   - id: map.api.unhandled-exceptions
     name: "MAP 后端近期未处理异常数"
-    kind: health-json
-    url: "{map_api}/healthz/deep?check=unhandled-exceptions"
-    componentId: api.unhandled-exceptions
-    expect:
-      field: observedValue
-      op: eq
-      value: 0
-    observedUnit: count
-    probe: light
-    intervalSeconds: 21600      # 6h
-    failuresToAlarm: 1
-    severity: P0
-    notify:
-      source: uptime-alert
-      section: admin
-    rationale: "与上一条同理，覆盖 MAP 侧。"
+    blockedBy: "prd-api 尚未挂 ServingFaultTracker 同款计数与自检端点"
+    intent: "与 serving 那条同理，覆盖 MAP 侧"
