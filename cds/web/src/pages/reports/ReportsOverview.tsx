@@ -356,9 +356,9 @@ function DefectPills({ counts }: { counts: Record<string, number> }): JSX.Elemen
   const p0 = counts.p0 ?? 0; const p1 = counts.p1 ?? 0; const p2 = counts.p2 ?? 0; const p3 = counts.p3 ?? 0;
   if (!p0 && !p1 && !p2 && !p3) return null;
   const cell = (label: string, n: number, blocking: boolean): JSX.Element => (
-    <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${n === 0 ? 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' : blocking ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--warn-soft))] text-warn'}`}>{label} {n}</span>
+    <span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] ${n === 0 ? 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' : blocking ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--warn-soft))] text-warn'}`}>{label} {n}</span>
   );
-  return <span className="inline-flex gap-1">{cell('P0', p0, true)}{cell('P1', p1, true)}{cell('P2', p2, false)}{p3 ? cell('P3', p3, false) : null}</span>;
+  return <span className="inline-flex flex-wrap gap-1">{cell('P0', p0, true)}{cell('P1', p1, true)}{cell('P2', p2, false)}{p3 ? cell('P3', p3, false) : null}</span>;
 }
 
 /** 未通过与待决：同根因合并成一行；口径冲突走信息色（记录打架，不是产品坏了）。 */
@@ -392,7 +392,6 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
             <th className="px-3 py-2.5 font-medium">结论</th>
             <th className="px-3 py-2.5 font-medium">验收项</th>
             <th className="px-3 py-2.5 font-medium">缺陷</th>
-            <th className="px-3 py-2.5 font-medium">下一步</th>
             <th className="px-3 py-2.5 text-right font-medium">证据</th>
           </tr>
         </thead>
@@ -412,9 +411,12 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
                   >
                     {c.kinds.join(' · ')} · 最近 {fmtMonthDay(c.latestCreatedAt)}{c.projectId ? ` · ${projectName(c.projectId)}` : ' · CDS 自身'}
                   </div>
+                  <div className="mt-1.5 flex items-baseline gap-1.5 text-[12.5px] leading-relaxed text-[hsl(var(--foreground-muted))]">
+                    <span className="shrink-0 text-[11px] text-muted-foreground">下一步</span>
+                    <span className="min-w-0">{nextStep(c)}</span>
+                  </div>
                 </td>
-                <td className="w-[150px] px-3 py-3"><DefectPills counts={c.defectCounts} /></td>
-                <td className="px-3 py-3 text-[12.5px] leading-relaxed text-[hsl(var(--foreground-muted))]">{nextStep(c)}</td>
+                <td className="w-[190px] px-3 py-3 align-top"><DefectPills counts={c.defectCounts} /></td>
                 <td className="w-[96px] px-3 py-3 text-right">
                   <button type="button" className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenCluster(c)}>{c.count} 份</button>
                 </td>
