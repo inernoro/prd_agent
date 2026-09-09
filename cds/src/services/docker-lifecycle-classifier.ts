@@ -231,7 +231,8 @@ export function classifyDockerLifecycleEvent(
     nextServiceStatus: 'stopped',
     nextBranchStatus: 'idle',
     reason: `${subject}被 Docker 删除（destroy/remove 事件），CDS 这边没有匹配到对应的删除意图。`
-      + `这通常是重建或清理流程的收尾动作；若这会儿并没有人在部署或清理，就要查宿主上是谁删的。`
+      + `这通常是重建或清理流程的收尾动作，多数情况无需处理。`
+      + `下一步：若这会儿并没有人在部署或清理，就去查宿主上是谁删的。`
       + technicalTail([name, exitText, oom]),
     stopClass: 'docker-destroy-remove',
     unexpected: false,

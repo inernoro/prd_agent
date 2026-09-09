@@ -324,6 +324,42 @@ describe('infra 停止意图的接线', () => {
 // 分类结论必须出现在展示用的 message 上。infra 容器不带 branch/profile label，
 // 分支状态同步那条会提前 return，所以 docker-events 这一条是它唯一的出口；
 // 结论只写进 details 的话，删掉这段接线不会有任何测试变红（形状 2）。
+describe('人话段自足', () => {
+  // 展示面拿的是「技术细节：」之前那一段。八条路径每一条都得在这一段里把话说完：
+  // 要么给出结论（无需处理 / 不是崩溃 / 需要处理），要么给出下一步去查什么。
+  // 只剩症状（「某容器停了」）就等于没说，那正是本 PR 要消灭的写法。
+  const selfContained = (reason: string) => {
+    const lead = reason.split('技术细节：')[0];
+    return /无需处理|不是崩溃|需要处理|下一步|重启前先看|不会自动重建|等新容器/.test(lead);
+  };
+
+  const samples: Array<[string, Parameters<typeof classifyDockerLifecycleEvent>[0]]> = [
+    ['oom', { ...base, action: 'die', exitCode: 137, oomKilled: true }],
+    ['exit-0', { ...base, action: 'die', exitCode: 0 }],
+    ['sigterm', { ...base, action: 'die', exitCode: 143 }],
+    ['crash', { ...base, action: 'die', exitCode: 2 }],
+    ['sigkill', { ...base, action: 'die', exitCode: 137, attrs: { signal: '9' } }],
+    ['docker-kill', { ...base, action: 'kill', exitCode: 137 }],
+    ['destroy', { ...base, action: 'destroy' }],
+    ['cds-intent', {
+      ...base,
+      action: 'die',
+      lifecycleIntent: {
+        containerName: base.containerName,
+        kind: 'cds-pre-run-replace',
+        reason: '部署前替换同名旧容器',
+        requestedAt: new Date().toISOString(),
+        actor: 'ai',
+        trigger: 'manual',
+      },
+    }],
+  ];
+
+  it.each(samples)('%s 的人话段自己就能读懂，不只剩症状', (_name, event) => {
+    expect(selfContained(classifyDockerLifecycleEvent(event).reason)).toBe(true);
+  });
+});
+
 describe('分类结论进展示面的接线', () => {
   it('docker-events 事件的 message 用分类结论，而不是只带 kind 的通用串', () => {
     const source = fs.readFileSync(
@@ -332,6 +368,10 @@ describe('分类结论进展示面的接线', () => {
     );
     // 认准 docker-events 那一条：message 由 classification 起头，并取用 classification.reason。
     // 只搜文件里有没有 'classification' 的话，details 里那份就能把守卫哄绿。
-    expect(source).toMatch(/message:\s*classification[\s\S]{0,400}classification\.reason/);
+    expect(source).toMatch(/message:\s*classification[\s\S]{0,600}classification\.reason/);
+    // 必须按「技术细节：」切人话段。按第一个句号切会丢掉 OOM / 正常退出 / destroy
+    // 那几条放在后面句子里的结论与下一步（Codex 第六轮 P2）。
+    expect(source).toContain("classification.reason.split('技术细节：')[0]");
+    expect(source).not.toContain("classification.reason.split('。')[0]");
   });
 });
