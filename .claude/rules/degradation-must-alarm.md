@@ -96,7 +96,8 @@ CDS 消费。禁止 CDS 侧硬编码某个项目的探测细节：CDS 不该知�
 | `name` | 中文名 | 通知正文直接用，人读 |
 | `kind` | `health-json` / `http` / `keyword` / `tcp` | 前三种判内容，`tcp` 只判端口通 |
 | `url` | 打哪里 | 深链到自检端点，不是根路径 |
-| `assert` | **定量断言** | 必须是数字或枚举比较，禁止「看起来正常」这类不可判的话 |
+| `componentId` | 断言哪一条 check | health-json 专用；指向不存在的 check 判**失败**，那是接线断了 |
+| `expect` | **结构化判据** | `field`(status/observedValue) + `op`(eq/ne/lt/lte/gt/gte) + `value`。刻意不做可解析表达式：自由文本判据一开口，下一轮就会被要求加同义词和嵌套语法（CLAUDE.md 5.5 熔断条件） |
 | `probe` | `light` / `heavy` | `light` 才进 6 小时常设监控（一次请求、只读、无副作用） |
 | `intervalSeconds` | 频率 | 常设轻探针默认 `21600`（6h） |
 | `failuresToAlarm` | 连续失败几次才响 | 去抖，默认 2 |

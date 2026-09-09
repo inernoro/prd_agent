@@ -10,10 +10,17 @@
 #   告警取向 = Google SRE 的 symptom-based alerting（对症状告警，不对原因告警）
 #
 # 【当前状态】declared-not-wired
-#   本文件已按协议写好，但 CDS 侧的消费逻辑（health-json 探针 kind、声明导入、
-#   告警外发到 MAP 通知）尚未实现。在它接线之前，这里的每一行都还没有在跑——
-#   不要把本文件的存在当成「已经在监控了」的证据（predicate-and-wiring-discipline
-#   形状 8：把不成立的证据当成证据）。接线完成后把本行改为 wired 并记录接线提交。
+#
+#   三块拼图的进度，逐块说清，不含糊：
+#     [已通] health-json 探针 —— CDS 的 uptime-custom-monitor 已支持这种 kind，
+#            结构化判据（field/op/value）、check 不存在判失败、真实 HTTP 探测均有用例。
+#     [已通] 告警外发 —— uptime 状态翻转会投递 MAP 站内通知（source=uptime-alert）。
+#     [未通] **本文件的自动导入** —— CDS 还不会读这份声明去建监控。
+#
+#   所以现在的实际情况是：能力齐了，但这三条监控项还得手动在监控中心添加才会跑。
+#   在自动导入接上之前，不要把本文件的存在当成「已经在监控了」的证据
+#   （predicate-and-wiring-discipline 形状 8：把不成立的证据当成证据）。
+#   自动导入落地后把本行改为 wired 并记录接线提交。
 
 x-cds-monitors-version: 1
 x-cds-monitors-status: declared-not-wired
@@ -74,7 +81,11 @@ x-cds-monitor-auth:
 # probe: light  → 一次请求、只读、无副作用，进 6 小时常设监控
 # probe: heavy  → 有写入或需截图，只在 48 小时稳定冒烟里跑，不进常设
 #
-# assert 必须是定量断言（数字或枚举比较）。「看起来正常」这类不可判的话一律不收。
+# 判据是**结构化字段**，不是可解析的表达式：自由文本判据一旦开口，下一轮就会被要求
+# 加同义词和嵌套语法（CLAUDE.md 5.5 的熔断条件之一）。
+#   expect.field  观测哪个字段：status / observedValue
+#   expect.op     比较运算：eq / ne / lt / lte / gt / gte
+#   expect.value  期望值（lt/lte/gt/gte 按数值比，eq/ne 按规范化字符串比）
 monitors:
   - id: llmgw.intent-draft.roundtrip
     name: "用途码推导是否走的模型（而不是本地关键词降级）"
@@ -83,7 +94,10 @@ monitors:
     componentId: intent-draft.roundtrip
     # 直接对「走了降级」这个症状告警，而不是对某个具体根因告警——
     # 下一个让它降级的原因还没被想到，症状判据照样能抓住。
-    assert: "observedValue == 'model'"
+    expect:
+      field: observedValue
+      op: eq
+      value: model
     probe: light
     intervalSeconds: 21600      # 6h
     failuresToAlarm: 2
@@ -100,7 +114,10 @@ monitors:
     kind: health-json
     url: "{llmgw_serving}/healthz/deep?check=unhandled-exceptions"
     componentId: serving.unhandled-exceptions
-    assert: "observedValue == 0"
+    expect:
+      field: observedValue
+      op: eq
+      value: 0
     observedUnit: count
     probe: light
     intervalSeconds: 21600      # 6h
@@ -118,7 +135,10 @@ monitors:
     kind: health-json
     url: "{map_api}/healthz/deep?check=unhandled-exceptions"
     componentId: api.unhandled-exceptions
-    assert: "observedValue == 0"
+    expect:
+      field: observedValue
+      op: eq
+      value: 0
     observedUnit: count
     probe: light
     intervalSeconds: 21600      # 6h

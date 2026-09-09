@@ -1520,7 +1520,7 @@ export interface ReleaseStrategy {
  * 只存定义，不存采样：采样与故障台账仍由 uptime-monitor 统一记在自己的落盘文件里，
  * 定义删掉后该目标的台账会在下一轮探测被清理。
  */
-export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp';
+export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json';
 
 export interface UptimeCustomMonitor {
   id: string;
@@ -1538,6 +1538,25 @@ export interface UptimeCustomMonitor {
   expectedStatus?: string;
   /** keyword：响应体必须包含的文本（区分大小写） */
   keyword?: string;
+  /**
+   * health-json：要断言哪一条 check。
+   *
+   * 对应 IETF draft-inadarei-api-health-check 的 checks——它既可能是
+   * `{"comp:measure": [{componentId, observedValue, status}]}`，也可能被实现简化成
+   * 一个数组。匹配时先认 componentId 字段，再退回用 checks 的键名。
+   */
+  healthComponentId?: string;
+  /** health-json：断言取该 check 的哪个字段 */
+  healthField?: 'status' | 'observedValue';
+  /**
+   * health-json：比较运算。
+   *
+   * 刻意是**有限枚举**而不是一句可解析的表达式：自由文本判据一旦开口，
+   * 下一轮就会被要求加同义词和嵌套语法（CLAUDE.md 5.5 的熔断条件之一）。
+   */
+  healthOp?: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+  /** health-json：期望值。lt/lte/gt/gte 按数值比较，eq/ne 按规范化后的字符串比较 */
+  healthValue?: string;
   /** tcp：主机 */
   host?: string;
   /** tcp：端口 */

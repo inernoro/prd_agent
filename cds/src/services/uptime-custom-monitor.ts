@@ -40,7 +40,15 @@ const KEYWORD_BODY_LIMIT_BYTES = 512 * 1024;
 const MAX_NAME_LENGTH = 80;
 const MAX_TAGS = 10;
 
-export const MONITOR_KINDS: ReadonlyArray<UptimeCustomMonitorKind> = ['http', 'keyword', 'tcp'];
+export const MONITOR_KINDS: ReadonlyArray<UptimeCustomMonitorKind> = ['http', 'keyword', 'tcp', 'health-json'];
+
+/** health-json 断言可取的字段与运算，都是有限枚举（见 types.ts 上的理由）。 */
+export const HEALTH_FIELDS = ['status', 'observedValue'] as const;
+export const HEALTH_OPS = ['eq', 'ne', 'lt', 'lte', 'gt', 'gte'] as const;
+export type HealthAssertField = (typeof HEALTH_FIELDS)[number];
+export type HealthAssertOp = (typeof HEALTH_OPS)[number];
+/** health+json 是结构化小文档，512KB 足够；上限本身也是防无限流的闸。 */
+const HEALTH_BODY_LIMIT_BYTES = 512 * 1024;
 
 /** 用户可提交的原始输入（全部可选，由 normalize 决定哪些必填）。 */
 export interface UptimeMonitorInput {
@@ -58,6 +66,10 @@ export interface UptimeMonitorInput {
   projectId?: unknown;
   tags?: unknown;
   enabled?: unknown;
+  healthComponentId?: unknown;
+  healthField?: unknown;
+  healthOp?: unknown;
+  healthValue?: unknown;
 }
 
 export type NormalizeResult =
@@ -137,7 +149,7 @@ export function normalizeUptimeMonitorInput(
 ): NormalizeResult {
   const kind = str(input.kind || options.existing?.kind) as UptimeCustomMonitorKind;
   if (!MONITOR_KINDS.includes(kind)) {
-    return { ok: false, error: '探测方式必须是 http（状态码）、keyword（关键字）或 tcp（端口）之一', field: 'kind' };
+    return { ok: false, error: '探测方式必须是 http（状态码）、keyword（关键字）、health-json（自检端点判据）或 tcp（端口）之一', field: 'kind' };
   }
 
   const monitor: UptimeCustomMonitor = {
@@ -171,9 +183,15 @@ export function normalizeUptimeMonitorInput(
     if (method !== 'GET' && method !== 'HEAD') {
       return { ok: false, error: '请求方法只支持 GET 或 HEAD', field: 'method' };
     }
-    // 关键字要读响应体，HEAD 没有响应体——写了也是永远失败，直接拒掉。
-    if (kind === 'keyword' && method === 'HEAD') {
-      return { ok: false, error: '关键字探测需要读取响应体，请求方法只能用 GET', field: 'method' };
+    // 关键字与 health-json 都要读响应体，HEAD 没有响应体——写了也是永远失败，直接拒掉。
+    if ((kind === 'keyword' || kind === 'health-json') && method === 'HEAD') {
+      return {
+        ok: false,
+        error: kind === 'keyword'
+          ? '关键字探测需要读取响应体，请求方法只能用 GET'
+          : 'health-json 探测需要读取响应体，请求方法只能用 GET',
+        field: 'method',
+      };
     }
     monitor.method = method;
     // 状态码规则三种输入：没传 = 沿用旧值；传 null = 清掉自定义、回到默认；传字符串 = 用它。
@@ -190,6 +208,39 @@ export function normalizeUptimeMonitorInput(
       if (!keyword.trim()) return { ok: false, error: '关键字探测必须填写要匹配的文本', field: 'keyword' };
       if (keyword.length > 200) return { ok: false, error: '关键字不能超过 200 个字符', field: 'keyword' };
       monitor.keyword = keyword;
+    }
+    if (kind === 'health-json') {
+      const componentId = str(input.healthComponentId) || options.existing?.healthComponentId || '';
+      if (!componentId) {
+        return { ok: false, error: 'health-json 探测必须指定要断言的 componentId', field: 'healthComponentId' };
+      }
+      if (componentId.length > 200) {
+        return { ok: false, error: 'componentId 不能超过 200 个字符', field: 'healthComponentId' };
+      }
+      const field = (str(input.healthField) || options.existing?.healthField || 'observedValue') as HealthAssertField;
+      if (!HEALTH_FIELDS.includes(field)) {
+        return { ok: false, error: `断言字段只能是 ${HEALTH_FIELDS.join(' / ')}`, field: 'healthField' };
+      }
+      const op = (str(input.healthOp) || options.existing?.healthOp || 'eq') as HealthAssertOp;
+      if (!HEALTH_OPS.includes(op)) {
+        return { ok: false, error: `比较运算只能是 ${HEALTH_OPS.join(' / ')}`, field: 'healthOp' };
+      }
+      // 期望值允许是 "0"，所以判空要看 undefined/空串，不能用真值判断——
+      // 「未处理异常数 == 0」正是最该被监控的那一条，用真值判断会把它拒掉。
+      const rawValue = input.healthValue === undefined || input.healthValue === null
+        ? options.existing?.healthValue
+        : String(input.healthValue);
+      const value = (rawValue ?? '').trim();
+      if (value === '') {
+        return { ok: false, error: 'health-json 探测必须填写期望值', field: 'healthValue' };
+      }
+      if (value.length > 200) {
+        return { ok: false, error: '期望值不能超过 200 个字符', field: 'healthValue' };
+      }
+      monitor.healthComponentId = componentId;
+      monitor.healthField = field;
+      monitor.healthOp = op;
+      monitor.healthValue = value;
     }
   }
 
@@ -244,11 +295,104 @@ export function normalizeUptimeMonitorInput(
 }
 
 /** 一句人话描述探测方式，列表与详情页直接展示。 */
-export function describeMonitorProbe(monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'host' | 'port'>): string {
+/**
+ * 从 health+json 文档里找出目标 check。
+ *
+ * IETF draft-inadarei-api-health-check 的 checks 是
+ * `{"组件:度量": [{componentId, observedValue, status, ...}]}`；实现里也常见
+ * 简化成数组或单对象。这三种都认，匹配顺序是「先认 componentId 字段，再认键名」——
+ * 键名带 `:度量` 后缀，所以只在没有 componentId 时才退回它。
+ *
+ * 找不到返回 undefined，**调用方必须把这当失败**：判据指向一条不存在的 check，
+ * 说明自检端点和监控声明已经对不上了，那是接线断了，不是「没问题」。
+ */
+export function findHealthCheck(doc: unknown, componentId: string): Record<string, unknown> | undefined {
+  if (!doc || typeof doc !== 'object') return undefined;
+  const checks = (doc as Record<string, unknown>).checks;
+  if (!checks || typeof checks !== 'object') return undefined;
+
+  const entries: Array<[string, unknown]> = Array.isArray(checks)
+    ? checks.map((item, i) => [String(i), item])
+    : Object.entries(checks as Record<string, unknown>);
+
+  const items: Array<[string, Record<string, unknown>]> = [];
+  for (const [key, value] of entries) {
+    const list = Array.isArray(value) ? value : [value];
+    for (const item of list) {
+      if (item && typeof item === 'object') items.push([key, item as Record<string, unknown>]);
+    }
+  }
+  const byComponentId = items.find(([, item]) => item.componentId === componentId);
+  if (byComponentId) return byComponentId[1];
+  const byKey = items.find(([key]) => key === componentId);
+  return byKey?.[1];
+}
+
+export interface HealthCheckEvaluation {
+  ok: boolean;
+  /** 实际读到的值，失败信息里要带上它，否则排障还得自己再打一次端点 */
+  observed?: string;
+  err?: string;
+}
+
+/**
+ * 按结构化判据评估一条 check。
+ *
+ * 只有有限的字段与运算（见 HEALTH_FIELDS / HEALTH_OPS）——不解析表达式。
+ * 大小比较强制两边都是数字，字符串比较则先把数字规范化，
+ * 免得 `0` 与 `"0"` 被判成不等这种纯粹由类型引起的假故障。
+ */
+export function evaluateHealthJson(
+  raw: string,
+  componentId: string,
+  field: HealthAssertField,
+  op: HealthAssertOp,
+  expected: string,
+): HealthCheckEvaluation {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(raw);
+  } catch {
+    return { ok: false, err: '响应不是合法 JSON（health-json 探测要求 application/health+json）' };
+  }
+  const check = findHealthCheck(doc, componentId);
+  if (!check) {
+    return { ok: false, err: `响应里没有 componentId 为「${componentId}」的 check——自检端点与监控声明已经对不上` };
+  }
+  const rawValue = check[field];
+  if (rawValue === undefined || rawValue === null) {
+    return { ok: false, err: `check「${componentId}」没有 ${field} 字段` };
+  }
+  const observed = String(rawValue);
+
+  if (op === 'lt' || op === 'lte' || op === 'gt' || op === 'gte') {
+    const a = Number(observed);
+    const b = Number(expected);
+    if (!Number.isFinite(a) || !Number.isFinite(b)) {
+      return { ok: false, observed, err: `${field}=${observed} 或期望值 ${expected} 不是数字，无法做大小比较` };
+    }
+    const ok = op === 'lt' ? a < b : op === 'lte' ? a <= b : op === 'gt' ? a > b : a >= b;
+    return ok ? { ok: true, observed } : { ok: false, observed, err: `${field}=${observed}，期望 ${op} ${expected}` };
+  }
+
+  // eq / ne：数字先规范化再比，避免 0 与 "0"、1.0 与 "1" 这种假故障
+  const normalize = (v: string): string => (Number.isFinite(Number(v)) && v.trim() !== '' ? String(Number(v)) : v);
+  const same = normalize(observed) === normalize(expected);
+  const ok = op === 'eq' ? same : !same;
+  return ok
+    ? { ok: true, observed }
+    : { ok: false, observed, err: `${field}=${observed}，期望 ${op === 'eq' ? '等于' : '不等于'} ${expected}` };
+}
+
+export function describeMonitorProbe(monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'host' | 'port'>): string {
   if (monitor.kind === 'tcp') return `TCP 连接 ${monitor.host}:${monitor.port}`;
   const method = monitor.method || 'GET';
   const status = monitor.expectedStatus || DEFAULT_EXPECTED_STATUS;
   if (monitor.kind === 'keyword') return `${method} ${monitor.url} · 状态 ${status} 且响应含「${monitor.keyword}」`;
+  if (monitor.kind === 'health-json') {
+    return `${method} ${monitor.url} · 状态 ${status} 且 check「${monitor.healthComponentId}」的 `
+      + `${monitor.healthField} ${monitor.healthOp} ${monitor.healthValue}`;
+  }
   return `${method} ${monitor.url} · 状态 ${status}`;
 }
 
@@ -294,7 +438,7 @@ async function readBodyPrefix(res: Response, limitBytes: number): Promise<string
 }
 
 async function httpProbe(
-  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword'>,
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   const startedAt = Date.now();
@@ -319,6 +463,19 @@ async function httpProbe(
       if (!body.includes(monitor.keyword || '')) {
         return { up: false, ms: Date.now() - startedAt, code, err: `响应中未找到关键字「${monitor.keyword}」` };
       }
+    } else if (monitor.kind === 'health-json') {
+      const body = await readBodyPrefix(res, HEALTH_BODY_LIMIT_BYTES);
+      const verdict = evaluateHealthJson(
+        body,
+        monitor.healthComponentId || '',
+        monitor.healthField || 'observedValue',
+        monitor.healthOp || 'eq',
+        monitor.healthValue || '',
+      );
+      if (!verdict.ok) {
+        // 判据不成立时 HTTP 往往仍是 200——「接口通但结论是坏的」正是这类探测的存在意义。
+        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err };
+      }
     } else {
       await res.body?.cancel().catch(() => undefined);
     }
@@ -337,7 +494,7 @@ async function httpProbe(
 
 /** 按监控定义发一次探测。timeoutMs 由调用方结算（监控自身 > 全局）。 */
 export async function probeCustomMonitor(
-  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'host' | 'port'>,
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'host' | 'port'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   if (monitor.kind === 'tcp') {
