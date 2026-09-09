@@ -151,9 +151,14 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
   const max = Math.max(1, ...head.map((c) => c.count));
   const totalFail = clusters.reduce((n, c) => n + c.failCount, 0);
   const totalCond = clusters.reduce((n, c) => n + c.conditionalCount, 0);
-  const topShare = head[0] && totalFail + totalCond > 0
-    ? Math.round((head[0].count / (totalFail + totalCond)) * 100)
-    : null;
+  // 分母必须跟头条那句判断一致：头条说的是「N 份未通过里有 M 份」，
+  // 所以这里也按未通过算，绝不换成「全部待办」——一块里出现两个分母就是口径冲突。
+  const top = head[0] ?? null;
+  const topShare = top && top.failCount > 0 && totalFail > 0
+    ? { hit: top.failCount, base: totalFail, pct: Math.round((top.failCount / totalFail) * 100), word: '未通过' }
+    : top && totalCond > 0
+      ? { hit: top.conditionalCount, base: totalCond, pct: Math.round((top.conditionalCount / totalCond) * 100), word: '有条件' }
+      : null;
 
   return (
     <div className="flex flex-col gap-2.5 border-t border-[hsl(var(--hairline))] pt-4">
@@ -167,9 +172,11 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
       </div>
       <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
         {head.map((c) => {
-          const m = VERDICT_META[c.verdict === 'conflict' ? 'fail' : c.verdict];
-          const label = c.verdict === 'conflict' ? '口径冲突' : m.label;
-          const labelColor = c.verdict === 'conflict' ? 'hsl(var(--info))' : m.color;
+          const conflict = c.verdict === 'conflict';
+          const m = VERDICT_META[conflict ? 'fail' : (c.verdict as ReportVerdict)];
+          const label = conflict ? '口径冲突' : m.label;
+          const labelColor = conflict ? 'hsl(var(--info))' : m.color;
+          const RowIcon = conflict ? CircleAlert : m.Icon;
           const pct = (n: number) => `${(n / max) * 100}%`;
           return (
             <li key={c.id}>
@@ -195,7 +202,7 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
                 </span>
                 <span className="w-[34px] shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-foreground">{c.count}</span>
                 <span className="inline-flex w-[72px] shrink-0 items-center gap-1 whitespace-nowrap text-[11.5px] font-semibold" style={{ color: labelColor }}>
-                  <m.Icon className="h-3 w-3 shrink-0" />{label}
+                  <RowIcon className="h-3 w-3 shrink-0" />{label}
                 </span>
               </button>
             </li>
@@ -203,7 +210,7 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
         })}
       </ul>
       <div className="text-[11.5px] leading-relaxed text-muted-foreground">
-        {topShare != null && head[0] ? <>最长那根是「{head[0].target}」，占全部待办的 {topShare}%。</> : null}
+        {topShare && top ? <>最长那根是「{top.target}」，{topShare.base} 份{topShare.word}里有 {topShare.hit} 份在它身上（{topShare.pct}%）。</> : null}
         {rest.length ? <>其余 {rest.length} 个对象合计 {restCount} 份，</> : null}
         条形按对象合并、不按份数堆；点任意一根跳到它的全部报告。
       </div>
@@ -440,7 +447,13 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
   return (
     <div className="flex flex-col gap-5">
       {/* ① 结论头条 + 发布闸 + 分布 */}
-      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+      {/*
+        lg:items-stretch —— 左列有了集中度条形图后通常更高，右列会在下方露出一段底色。
+        让右列拉齐并把「结论分布」卡设为 flex-1 + justify-between，空间分给内容而不是留白
+        （content-fills-canvas）。反向（右列更高）时左列只是底部多一点余量，不会再出现
+        之前那种「首屏被右列拉高、左卡中间一大块空」的老问题。
+      */}
+      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
         <div className="relative flex flex-col gap-4 overflow-hidden rounded-[10px] border bg-card p-5" style={{ borderColor: `color-mix(in srgb, ${statusMeta.color} 35%, hsl(var(--hairline)))` }}>
           <div className="absolute bottom-0 left-0 top-0 w-1" style={{ background: statusMeta.color }} />
           <div className="flex flex-wrap items-center justify-between gap-3">
@@ -474,7 +487,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
               <button type="button" className="inline-flex w-fit items-center gap-1 text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenReport(releaseGate.latest!.id)}>打开那份报告 <ExternalLink className="h-3 w-3" /></button>
             ) : null}
           </div>
-          <div className="flex flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
+          <div className="flex flex-1 flex-col justify-between gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
             <Eyebrow>结论分布 · 本窗 {totals.counted} 份 / 上窗 {totals.previous.counted} 份</Eyebrow>
             <VerdictBars overview={overview} />
             <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-[hsl(var(--hairline))] pt-3">
