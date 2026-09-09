@@ -345,7 +345,9 @@ export interface ReportsOverview {
 /** 验收主页聚合；days 为时间窗天数，时区偏移取浏览器本地。 */
 /** 验收流水线总览（跨项目，一行一个项目）。首页给老板 / 观察者 / 架构师看的那一屏。 */
 export type ChangeStage = 'created' | 'deployed' | 'accepted' | 'merged';
-export type LeakKind = 'deployed-not-accepted' | 'merged-not-accepted' | 'merged-while-failing' | 'orphan-report';
+export type LeakKind =
+  | 'deployed-not-accepted' | 'merged-not-accepted' | 'merged-while-failing'
+  | 'report-missing-change-key';
 
 export interface PipelineFunnel {
   changes: number;
@@ -372,6 +374,8 @@ export interface PipelineProjectRow {
   funnel: PipelineFunnel;
   leaks: Record<LeakKind, number>;
   missingKinds: ReportKind[];
+  /** 记了标识却挂不到现存改动的报告数：它验的分支已被回收，无从核对——是背景说明，不是漏。 */
+  staleReports: number;
   inFlight: number;
   lastActivityAt: string | null;
   githubLinked: boolean;
@@ -383,6 +387,7 @@ export interface PipelineOverview {
   total: PipelineFunnel;
   totalLeaks: Record<LeakKind, number>;
   projects: PipelineProjectRow[];
+  staleReports: number;
   leaks: PipelineLeak[];
 }
 

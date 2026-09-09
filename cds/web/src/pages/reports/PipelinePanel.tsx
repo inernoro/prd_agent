@@ -24,7 +24,7 @@ const LEAK_META: Record<LeakKind, { label: string; hint: string; tone: 'bad' | '
   'merged-not-accepted': { label: '合并了，从来没验过', hint: '进了主干却没有任何验收报告——最危险的一种漏', tone: 'bad' },
   'merged-while-failing': { label: '验了没过，还是合并了', hint: '最新结论是未通过，分支仍然合进了主干', tone: 'bad' },
   'deployed-not-accepted': { label: '部署了，没人验', hint: '预览起来了但一份报告都没有，验收没跟上开发', tone: 'warn' },
-  'orphan-report': { label: '报告对不上分支', hint: '报告里的分支 / PR / commit 挂不到任何已知改动，证据悬空', tone: 'info' },
+  'report-missing-change-key': { label: '报告没记它验的是谁', hint: '分支 / PR / commit 三样全空，这份报告永远挂不到任何改动上——归档流程的缺口', tone: 'warn' },
 };
 
 const TONE = {
@@ -38,7 +38,7 @@ function Eyebrow({ children }: { children: React.ReactNode }): JSX.Element {
 }
 
 /**
- * 漏斗：五环横排，环与环之间的缝里标掉下去多少。
+ * 漏斗：四环横排，环与环之间的缝里标掉下去多少。
  * 环用等宽块而不是按数值缩放——数值差距常常是几十倍，缩放会把后面几环压成看不见的线。
  * 数量靠数字表达，位置靠顺序表达，缝里的红字才是要读的东西。
  */
@@ -49,10 +49,12 @@ function Funnel({ funnel }: { funnel: PipelineFunnel }): JSX.Element {
     { key: 'accepted', label: '跑过验收', value: funnel.accepted, hint: '至少有一份对得上的报告' },
     { key: 'merged', label: '合并主干', value: funnel.merged, hint: 'GitHub 合并事件留下的记录' },
   ];
+  // 每个缝一条，下标对齐左边那一环。第三个缝（验收 → 合并）不画：
+  // 「验了还没合并」是在途的正常状态，不是漏；那一段真正的漏是「合并了没验 / 验了没过还合并」，
+  // 它们是跨过环去的，画在下面的漏点卡里。
   const drops = [
-    { from: 0, n: funnel.changes - funnel.deployed, text: '没部署', tone: 'info' as const },
-    { from: 1, n: funnel.deployed - funnel.accepted, text: '部署了没验', tone: 'warn' as const },
-    { from: 2, n: 0, text: '', tone: 'info' as const },
+    { n: funnel.changes - funnel.deployed, text: '没部署', tone: 'info' as const },
+    { n: funnel.deployed - funnel.accepted, text: '部署了没验', tone: 'warn' as const },
   ];
   return (
     <div className="flex flex-col gap-3">
@@ -111,7 +113,11 @@ function MiniFunnel({ f }: { f: PipelineFunnel }): JSX.Element {
 }
 
 export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): JSX.Element {
-  const leakOrder: LeakKind[] = ['merged-not-accepted', 'merged-while-failing', 'deployed-not-accepted', 'orphan-report'];
+  // 顺序必须与后端 acceptance-pipeline.ts 的 severity 表一致，守卫见 tests/web/pipeline-leak-order.test.ts
+  const leakOrder: LeakKind[] = [
+    'merged-not-accepted', 'merged-while-failing', 'deployed-not-accepted',
+    'report-missing-change-key',
+  ];
   const activeLeaks = leakOrder.filter((k) => pipeline.totalLeaks[k] > 0);
   const leakSubjects = useMemo(() => {
     const m = new Map<LeakKind, string[]>();
@@ -175,6 +181,11 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
             })}
           </div>
         )}
+        {pipeline.staleReports > 0 ? (
+          <div className="text-[12px] leading-relaxed text-muted-foreground">
+            另有 {pipeline.staleReports} 份报告，它验的分支已经被 CDS 回收，现在无从核对。这不算漏——CDS 不保留几个月前的分支，对不上是常态。
+          </div>
+        ) : null}
       </section>
 
       <section className="overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
@@ -222,6 +233,11 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
                       {leakTotal === 0
                         ? <span className="text-muted-foreground">无</span>
                         : <span className="font-mono text-[15px] font-semibold" style={{ color: p.leaks['merged-not-accepted'] || p.leaks['merged-while-failing'] ? 'hsl(var(--bad))' : 'hsl(var(--warn))' }}>{leakTotal}</span>}
+                      {p.staleReports > 0 ? (
+                        <div className="mt-0.5 font-mono text-[11px] text-muted-foreground" title="这些报告验的分支已被 CDS 回收，无从核对，所以不计进漏">
+                          另有 {p.staleReports} 份无从核对
+                        </div>
+                      ) : null}
                     </td>
                     <td className="px-3 py-3">
                       {p.missingKinds.length === 0

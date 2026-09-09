@@ -10,7 +10,12 @@
  *   - 部署了没人验          → 验收没跟上开发
  *   - 合并了从来没验过      → 最危险的一种漏
  *   - 验了没过还是合并了    → 门形同虚设
- *   - 报告对不上任何分支    → 证据挂空，谁也不知道它证明了什么
+ *   - 报告没记它验的是谁    → 证据永远挂不上，归档流程的缺口
+ *
+ * 曾经还有第五种「报告对不上任何分支」，已删除：拿主实例真实数据核过，
+ * 153 份对不上的报告里 152 份点名的分支根本已经不在 CDS 上（现存只有 71 条分支）。
+ * CDS 不保留几个月前的分支，对不上是常态而非异常——把它当漏点名，等于首页
+ * 喊一次狼，以后真的漏出现时没人再信。它现在只作背景数 staleReports。
  *
  * 「全局」的粒度是项目：一行一个项目，跨项目汇总在最上面。
  *
@@ -53,11 +58,12 @@ export type LeakKind =
   | 'deployed-not-accepted'
   | 'merged-not-accepted'
   | 'merged-while-failing'
-  | 'orphan-report';
+  /** 报告根本没记 branch / commit / PR，注定挂不上任何改动——归档流程的真缺口。 */
+  | 'report-missing-change-key';
 
 export interface PipelineLeak {
   kind: LeakKind;
-  /** 命中的改动单元分支名；orphan-report 时是报告标题。 */
+  /** 命中的改动单元分支名；report-missing-change-key 时是报告标题。 */
   subject: string;
   projectId: string;
   reportIds: string[];
@@ -84,6 +90,13 @@ export interface PipelineProjectRow {
   leaks: Record<LeakKind, number>;
   /** 一次都没跑过的验收类型（九类前缀里缺哪些）。 */
   missingKinds: ReportKind[];
+  /**
+   * 记了标识、却挂不到任何现存改动的报告数——它验的分支已被 CDS 回收。
+   *
+   * 这**不是漏**，是常态：主实例上 153 份这样的报告里，152 份点名的分支根本
+   * 不在现存的 71 条分支里。首页把它当漏点名 = 喊一次狼，以后没人再信。
+   */
+  staleReports: number;
   /** 在途改动数（还挂在 CDS 上的分支）。 */
   inFlight: number;
   /** 最近一次有动静的时间（部署 / 归档 / 合并里最晚的一个）。 */
@@ -99,6 +112,8 @@ export interface PipelineOverview {
   total: PipelineFunnel;
   totalLeaks: Record<LeakKind, number>;
   projects: PipelineProjectRow[];
+  /** 对应改动已回收、无法核对的报告总数；是背景说明，不是漏。 */
+  staleReports: number;
   /** 全局漏点明细，按严重度排序，供第一屏点名。 */
   leaks: PipelineLeak[];
 }
@@ -110,7 +125,15 @@ function emptyFunnel(): PipelineFunnel {
 }
 
 function emptyLeaks(): Record<LeakKind, number> {
-  return { 'deployed-not-accepted': 0, 'merged-not-accepted': 0, 'merged-while-failing': 0, 'orphan-report': 0 };
+  return {
+    'deployed-not-accepted': 0, 'merged-not-accepted': 0, 'merged-while-failing': 0,
+    'report-missing-change-key': 0,
+  };
+}
+
+/** 报告有没有记下它验的是哪个改动。三样全空就是没记。 */
+function hasChangeKey(r: OverviewReportRef): boolean {
+  return Boolean(r.branch || r.commitSha || r.prNumber != null);
 }
 
 /** 分支是否真的部署过：有服务实例，或有过一次部署完成时间。 */
@@ -248,12 +271,19 @@ export function buildPipelineOverview(
       }
     }
 
-    // 对不上：这个项目里有报告，却挂不到任何已知改动单元上。
+    // 挂不上任何已知改动单元的报告分两种，只有第一种算漏：
+    //   1. 三个标识全空   → 归档流程真缺口，这份报告永远挂不上任何改动
+    //   2. 记了标识但对不上 → 它验的分支已被 CDS 回收，无从核对，只作背景数
+    let staleReports = 0;
     for (const r of projectRefs) {
       if (claimedReportIds.has(r.id)) continue;
-      leaks['orphan-report'] += 1;
-      allLeaks.push({ kind: 'orphan-report', subject: r.title, projectId: pid, reportIds: [r.id] });
-      touch(r.createdAt);
+      if (!hasChangeKey(r)) {
+        leaks['report-missing-change-key'] += 1;
+        allLeaks.push({ kind: 'report-missing-change-key', subject: r.title, projectId: pid, reportIds: [r.id] });
+        touch(r.createdAt);
+        continue;
+      }
+      staleReports += 1;
     }
 
     const seenKinds = new Set(projectRefs.map((r) => parseReportTitle(r.title).kind));
@@ -268,15 +298,17 @@ export function buildPipelineOverview(
       funnel,
       leaks,
       missingKinds: [...missingKinds],
+      staleReports,
       inFlight: [...changes.values()].filter((c) => c.inFlight).length,
       lastActivityAt,
       githubLinked: Boolean(project.githubRepoFullName),
     });
   }
 
-  // 漏点按严重度排：合并了没验 > 验了没过还合并 > 部署了没验 > 报告对不上。
+  // 漏点按严重度排：合并了没验 > 验了没过还合并 > 部署了没验 > 报告没记标识。
   const severity: Record<LeakKind, number> = {
-    'merged-not-accepted': 0, 'merged-while-failing': 1, 'deployed-not-accepted': 2, 'orphan-report': 3,
+    'merged-not-accepted': 0, 'merged-while-failing': 1, 'deployed-not-accepted': 2,
+    'report-missing-change-key': 3,
   };
   allLeaks.sort((a, b) => severity[a.kind] - severity[b.kind] || a.subject.localeCompare(b.subject));
 
@@ -292,6 +324,7 @@ export function buildPipelineOverview(
     total,
     totalLeaks,
     projects: rows,
+    staleReports: rows.reduce((n, r) => n + r.staleReports, 0),
     leaks: allLeaks,
   };
 }

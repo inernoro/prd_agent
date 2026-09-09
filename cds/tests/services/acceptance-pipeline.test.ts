@@ -3,10 +3,10 @@
  *
  * 每条断言对应一条需求：
  *  - 改动单元 = 在途分支 ∪ 最近撤下的分支，同名以在途为准
- *  - 环与环之间的落差就是「漏」，四种漏各自的判定
+ *  - 环与环之间的落差就是「漏」，四种漏各自的判定（含「报告没记它验的是谁」）
  *  - 没接 GitHub 的项目查不到合并记录，不能算成漏
  *  - 报告先折叠再计数，重复归档不许把「验过」这一环撑大
- *  - 报告对不上任何分支时单列一档，绝不硬猜
+ *  - 报告没记标识是真缺口；记了标识却对不上只是分支被回收，不许当漏喊
  */
 import { describe, it, expect } from 'vitest';
 import type { AcceptanceReportMeta, BranchEntry, BranchTombstone, Project } from '../../src/types.js';
@@ -54,7 +54,7 @@ describe('buildPipelineOverview', () => {
     expect(o.total.merged).toBe(2);
   });
 
-  it('四种漏各自成立，且严重度排序是「合并了没验」最前', () => {
+  it('流转类的三种漏各自成立，且严重度排序是「合并了没验」最前', () => {
     const o = buildPipelineOverview(
       [project('p1', { githubRepoFullName: 'x/y' } as Partial<Project>)],
       [branch('p1', 'feat/deployed-only', { lastDeployAt: '2026-09-08T00:00:00Z' })],
@@ -72,10 +72,12 @@ describe('buildPipelineOverview', () => {
       'deployed-not-accepted': 1,
       'merged-not-accepted': 1,
       'merged-while-failing': 1,
-      'orphan-report': 1,
+      'report-missing-change-key': 0,
     });
+    // 那份「谁也不认识」的报告记了 branch，只是分支已回收——是背景数，不是漏
+    expect(o.staleReports).toBe(1);
     expect(o.leaks.map((l) => l.kind)).toEqual([
-      'merged-not-accepted', 'merged-while-failing', 'deployed-not-accepted', 'orphan-report',
+      'merged-not-accepted', 'merged-while-failing', 'deployed-not-accepted',
     ]);
   });
 
@@ -104,8 +106,53 @@ describe('buildPipelineOverview', () => {
       { now: NOW },
     );
     expect(o.total.accepted).toBe(0);
-    expect(o.totalLeaks['orphan-report']).toBe(1);
+    // 不硬挂 = 这份报告不算「验过」；但它也不是漏，只是它验的分支不在了
+    expect(o.staleReports).toBe(1);
     expect(o.totalLeaks['deployed-not-accepted']).toBe(1);
+  });
+
+  // 下面三条守同一件事：「对不上」不许一股脑喊成漏。
+  // 主实例真实数据核过：153 份对不上的报告里 152 份点名的分支根本不在现存的 71 条分支里，
+  // 全报成漏 = 首页喊一次狼，以后真的漏出现时没人再信。
+  it('记了标识却对不上：它验的分支已被回收，算背景数不算漏', () => {
+    const o = buildPipelineOverview(
+      [project('p1')],
+      [branch('p1', 'feat/live', { createdAt: '2026-09-05T00:00:00Z', lastDeployAt: '2026-09-08T00:00:00Z' })],
+      [],
+      [report({ title: '功能验收 · 半年前那条 · 2026-03-01', createdAt: '2026-03-01T00:00:00Z', verdict: 'pass', branch: 'feat/long-gone' })],
+      { now: NOW },
+    );
+    expect(Object.values(o.totalLeaks).reduce((n, v) => n + v, 0)).toBe(1); // 只剩「部署了没人验」
+    expect(o.staleReports).toBe(1);
+    expect(o.projects[0].staleReports).toBe(1);
+  });
+
+  it('三个标识全空的报告是归档流程的真缺口，单独一档点名，不混进「对不上」', () => {
+    const o = buildPipelineOverview(
+      [project('p1')],
+      [branch('p1', 'feat/live', { createdAt: '2026-09-05T00:00:00Z', lastDeployAt: '2026-09-08T00:00:00Z' })],
+      [],
+      [report({ title: '功能验收 · 没记标识 · 2026-03-01', createdAt: '2026-03-01T00:00:00Z', verdict: 'pass' })],
+      { now: NOW },
+    );
+    // 没标识是流程缺口，不是「分支被回收」能解释的，照样点名
+    expect(o.totalLeaks['report-missing-change-key']).toBe(1);
+    expect(o.staleReports).toBe(0);
+  });
+
+  it('项目一条改动都没有时，整批报告全是背景数，不许喊成漏', () => {
+    const o = buildPipelineOverview(
+      [project('p1')],
+      [],
+      [],
+      [
+        report({ title: '功能验收 · 甲 · 2026-09-08', createdAt: '2026-09-08T01:00:00Z', verdict: 'pass', branch: 'feat/a' }),
+        report({ title: '功能验收 · 乙 · 2026-09-08', createdAt: '2026-09-08T02:00:00Z', verdict: 'pass', branch: 'feat/b' }),
+      ],
+      { now: NOW },
+    );
+    expect(Object.values(o.totalLeaks).reduce((n, v) => n + v, 0)).toBe(0);
+    expect(o.staleReports).toBe(2);
   });
 
   it('recentDays 只筛「最近完成」，不影响在途改动', () => {
