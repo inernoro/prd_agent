@@ -227,6 +227,33 @@ export function createUptimeRouter(deps: {
     res.json({ monitors: scope ? store.listUptimeMonitors(scope) : store.listUptimeMonitors() });
   });
 
+  /**
+   * 一条功能监控的历史观测证据（详情页画廊与判据逐条）。
+   *
+   * 与摘要分开拉：摘要只带最新一条的精简版，完整证据（判据逐条、请求体）在这里。
+   * 一个 20 条证据 × N 个监控的列表接口会被撑得又慢又肥，而列表根本不展示它们。
+   */
+  router.get('/uptime/monitors/:id/observations', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const monitor = store.getUptimeMonitor(req.params.id);
+    if (!monitor) {
+      res.status(404).json({ error: '监控不存在', id: req.params.id });
+      return;
+    }
+    const scope = projectScopeOf(req);
+    // 与 denyForeignTarget 同款：不用 404 区分「不存在」与「别人的」，那是枚举 oracle。
+    if (scope && monitor.projectId !== scope) {
+      res.status(403).json({ error: '该监控不属于当前项目 Key 的作用域' });
+      return;
+    }
+    res.json({
+      monitorId: monitor.id,
+      name: monitor.name,
+      description: describeMonitorProbe(monitor),
+      observations: monitor.observations || [],
+    });
+  });
+
   /** 试探一次：只回结果，不落库。与轮次同一套探测实现，不另写一份判定。 */
   router.post('/uptime/monitors/test', async (req, res) => {
     const normalized = normalizeUptimeMonitorInput((req.body || {}) as UptimeMonitorInput);

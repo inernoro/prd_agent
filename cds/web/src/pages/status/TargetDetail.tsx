@@ -45,6 +45,7 @@ import {
   type UptimeTargetSummary,
 } from '@/lib/monitorCenter';
 import { LatencyChart } from './LatencyChart';
+import { FunctionalEvidence } from './FunctionalEvidence';
 import { AvailabilityBar, SegmentedControl, SourceBadge, Stat, StatusPill } from './primitives';
 
 type HistoryState =
@@ -252,6 +253,15 @@ export function TargetDetail({
             <Stat label="故障次数" value={String(target.incidentCount)} tone={target.incidentCount > 0 ? 'warn' : 'default'} hint="台账内累计" />
             <Stat label="探测间隔" value={`${target.intervalSeconds} 秒`} hint={`超时 ${Math.round(target.timeoutMs / 1000)} 秒`} />
           </div>
+
+          {/*
+            功能监控把证据排在时序图之前：它问的是「返回的东西对不对」，
+            打开详情第一个要回答的问题是「这次到底生成出了什么」，
+            而不是过去 24 小时的可用率曲线。存活监控没有这一段，顺序不变。
+          */}
+          {target.functional && target.monitorId ? (
+            <FunctionalEvidence monitorId={target.monitorId} />
+          ) : null}
 
           <section className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2">

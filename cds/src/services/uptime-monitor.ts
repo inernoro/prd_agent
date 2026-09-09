@@ -940,6 +940,23 @@ export interface UptimeTargetSummary {
     origin: 'manual' | 'agent-api';
     boundBranchId?: string;
   };
+  /** 这条是不是功能监控（列表按它分组：功能监控与存活监控问的不是同一个问题）。 */
+  functional?: boolean;
+  /**
+   * 最新一次观测的精简摘要，列表直接用。
+   *
+   * 刻意只带摘要：完整证据（判据逐条、请求体）随详情单独拉，
+   * 否则一个 20 条证据 × N 个监控的列表接口会被撑得又慢又肥。
+   */
+  lastObservation?: {
+    at: string;
+    ok: boolean;
+    /** 产物缩略图直接用它——「这次生成出来长什么样」是这类监控的主体信息 */
+    artifactUrl?: string;
+    passed: number;
+    total: number;
+    err?: string;
+  };
   /** 自定义监控是否启用（source=custom 时有） */
   enabled?: boolean;
   /**
@@ -1857,8 +1874,9 @@ export class UptimeMonitorService {
   }
 
   /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
-  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy'> {
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation'> {
     const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
+    const latest = monitor?.observations?.[0];
     return {
       monitorId,
       tags: monitor?.tags || [],
@@ -1871,6 +1889,19 @@ export class UptimeMonitorService {
               kind: monitor.createdByKind || 'human',
               origin: monitor.origin || 'manual',
               ...(monitor.boundBranchId ? { boundBranchId: monitor.boundBranchId } : {}),
+            },
+          }
+        : {}),
+      ...(monitor?.kind === 'functional' ? { functional: true } : {}),
+      ...(latest
+        ? {
+            lastObservation: {
+              at: latest.at,
+              ok: latest.ok,
+              ...(latest.artifactUrl ? { artifactUrl: latest.artifactUrl } : {}),
+              passed: latest.results.filter((r) => r.ok).length,
+              total: latest.results.length,
+              ...(latest.err ? { err: latest.err } : {}),
             },
           }
         : {}),

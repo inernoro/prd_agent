@@ -54,6 +54,32 @@ function TargetRow({ target, selected, onSelect }: {
             : target.measured === false ? '未实测' : formatPercent(target.availability24h)}
         </span>
       </div>
+      {target.functional && target.lastObservation ? (
+        <div className="flex items-center gap-2">
+          {target.lastObservation.artifactUrl ? (
+            // 产物本身就是这类监控的主体信息：一眼看到「这次生成出来长什么样」，
+            // 比任何状态文案都直接。加载不出来时退回判据摘要，不留破图。
+            <img
+              src={target.lastObservation.artifactUrl}
+              alt=""
+              loading="lazy"
+              className="h-8 w-8 shrink-0 rounded border border-[hsl(var(--hairline))] object-cover"
+              onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+            />
+          ) : null}
+          <span
+            className={cn(
+              'min-w-0 flex-1 truncate font-mono text-[0.6875rem]',
+              target.lastObservation.ok ? 'text-muted-foreground' : 'text-destructive',
+            )}
+            title={target.lastObservation.err}
+          >
+            {target.lastObservation.ok
+              ? `判据 ${target.lastObservation.passed}/${target.lastObservation.total} 通过`
+              : target.lastObservation.err || `判据 ${target.lastObservation.passed}/${target.lastObservation.total} 通过`}
+          </span>
+        </div>
+      ) : null}
       <div className="flex items-center gap-2">
         <AvailabilityBar
           buckets={target.buckets}
@@ -200,7 +226,7 @@ export function TargetList({
           </div>
         ) : null}
         {showMain ? groups.map((group) => (
-          <section key={group.source} className="mb-2 last:mb-0">
+          <section key={group.key} className="mb-2 last:mb-0">
             <div className="sticky top-0 z-[1] flex items-baseline gap-2 bg-[hsl(var(--surface-raised))]/95 px-2.5 py-1.5 backdrop-blur-sm">
               <h3 className="text-[0.6875rem] font-semibold uppercase tracking-wide text-muted-foreground">{group.label}</h3>
               <span className="font-mono text-[0.625rem] text-muted-foreground/80">{group.targets.length}</span>
