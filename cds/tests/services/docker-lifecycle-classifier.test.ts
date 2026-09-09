@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { classifyDockerLifecycleEvent } from '../../src/services/docker-lifecycle-classifier.js';
 
@@ -75,6 +77,41 @@ describe('classifyDockerLifecycleEvent', () => {
 
     expect(result.reason.startsWith('由 alice@example.com 手动触发停止这个服务')).toBe(true);
     expect(result.reason).toContain('无需处理');
+  });
+
+  it('tells an infra stop apart from an infra recreate', () => {
+    const stopped = classifyDockerLifecycleEvent({
+      ...base,
+      action: 'die',
+      exitCode: 0,
+      lifecycleIntent: {
+        containerName: base.containerName,
+        kind: 'cds-infra-stop',
+        reason: 'infra 停止/删除，不重建',
+        requestedAt: new Date().toISOString(),
+        actor: 'ai',
+        trigger: 'manual',
+      },
+    });
+    const recreated = classifyDockerLifecycleEvent({
+      ...base,
+      action: 'die',
+      exitCode: 0,
+      lifecycleIntent: {
+        containerName: base.containerName,
+        kind: 'cds-infra-recreate',
+        reason: 'infra stop/rm 后重建',
+        requestedAt: new Date().toISOString(),
+        actor: 'ai',
+        trigger: 'manual',
+      },
+    });
+
+    // 停止 / 删除路径不会起新容器，说「等新容器」就是让人干等（Codex P2）。
+    expect(stopped.reason).toContain('不会自动重建');
+    expect(stopped.reason).not.toContain('等新容器');
+    expect(recreated.reason).toContain('等新容器');
+    expect(stopped.stopClass).toBe('cds-infra-stop');
   });
 
   it('says the initiator is unrecorded when the intent carries no actor or trigger', () => {
@@ -214,5 +251,26 @@ describe('classifyDockerLifecycleEvent', () => {
     expect(result.unexpected).toBe(false);
     expect(result.reason).toContain('收到停止信号后正常退出');
     expect(result.reason).toContain('exitCode=143');
+  });
+});
+
+// 上面那条只证明「分类器对两种意图说不同的话」，不证明「停止路径真的记了 stop」——
+// 把路由里的 'cds-infra-stop' 参数删掉，它照样全绿（predicate-and-wiring-discipline 形状 2）。
+// 所以这里扫真实调用点：停止 / 删除 / 远端停止三条路径必须显式表态，重启与重同步保持默认。
+describe('infra 停止意图的接线', () => {
+  const read = (rel: string) =>
+    fs.readFileSync(path.resolve(__dirname, '../../src', rel), 'utf8');
+
+  it('停止 / 删除 / 远端停止三条路径都显式传 cds-infra-stop', () => {
+    const branches = read('routes/branches.ts');
+    const executor = read('executor/routes.ts');
+    const stopCalls = [
+      ...branches.matchAll(/stopInfraService\(([^)]*)\)/g),
+      ...executor.matchAll(/stopInfraService\(([^)]*)\)/g),
+    ].map((m) => m[1]);
+
+    expect(stopCalls.filter((args) => args.includes("'cds-infra-stop'")).length).toBe(3);
+    // 重启路径必须留在默认的 recreate 上，否则「等新容器」这句会从该说的地方消失。
+    expect(stopCalls.some((args) => !args.includes("'cds-infra-stop'"))).toBe(true);
   });
 });

@@ -508,7 +508,8 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
   router.post('/infra/stop', async (req, res) => {
     const { containerName } = req.body as { containerName: string };
     try {
-      await containerService.stopInfraService(containerName);
+      // /exec/infra/stop 是远端停止，不接重建，意图记 stop。
+      await containerService.stopInfraService(containerName, 'cds-infra-stop');
       res.json({ message: 'Service stopped' });
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });

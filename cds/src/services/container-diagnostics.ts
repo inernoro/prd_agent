@@ -18,6 +18,9 @@ export type ContainerLifecycleIntentKind =
   | 'cds-remove'
   | 'cds-pre-run-replace'
   | 'cds-stale-cleanup'
+  // stop 与 recreate 必须分开：停止 / 删除不会起新容器，重建会。
+  // 合成一个值时，停止路径的停机原因会让人干等一个永远不来的新容器（Codex P2）。
+  | 'cds-infra-stop'
   | 'cds-infra-recreate';
 
 export interface ContainerLifecycleIntent {

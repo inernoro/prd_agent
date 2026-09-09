@@ -3012,8 +3012,17 @@ export class ContainerService {
     });
   }
 
-  /** Stop and remove an infrastructure service container */
-  async stopInfraService(containerName: string): Promise<void> {
+  /**
+   * Stop and remove an infrastructure service container.
+   *
+   * `intentKind` 决定停机原因怎么讲给人听：'cds-infra-stop' 是「停了就停了，不会自己回来」，
+   * 'cds-infra-recreate'（默认）是「重建流程的前半段，新容器随后就起」。两者共用一个值时，
+   * 停止 / 删除路径会告诉用户等一个永远不来的新容器（Codex P2）。
+   */
+  async stopInfraService(
+    containerName: string,
+    intentKind: 'cds-infra-stop' | 'cds-infra-recreate' = 'cds-infra-recreate',
+  ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
       severity: 'warn',
@@ -3025,7 +3034,11 @@ export class ContainerService {
       logs: before.logs,
       error: before.error,
     });
-    this.noteLifecycleIntent(containerName, 'cds-infra-recreate', 'infra stop/rm 重建或删除');
+    this.noteLifecycleIntent(
+      containerName,
+      intentKind,
+      intentKind === 'cds-infra-stop' ? 'infra 停止/删除，不重建' : 'infra stop/rm 后重建',
+    );
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
     this.recordContainerEvent({

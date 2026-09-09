@@ -20424,7 +20424,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
+      // 删除路径：停完不会有新容器，意图必须记成 stop 而不是 recreate。
+      try { await containerService.stopInfraService(service.containerName, 'cds-infra-stop'); } catch { /* ok */ }
       stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
@@ -20473,7 +20474,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      await containerService.stopInfraService(service.containerName);
+      // 停止路径：同上，停了就停了，不重建。
+      await containerService.stopInfraService(service.containerName, 'cds-infra-stop');
       stateService.updateInfraService(id, { status: 'stopped' }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已停止` });

@@ -75,6 +75,10 @@ const INTENT_NARRATIVE: Record<ContainerLifecycleIntentKind, { story: string; ve
     story: '清理残留容器，这个无主容器被回收',
     verdict: '这是正常回收，无需处理',
   },
+  'cds-infra-stop': {
+    story: '停止这个基础设施容器（停完即删除）',
+    verdict: '这是主动停止，不会自动重建；要它回来就去项目设置的基础设施里重新启动',
+  },
   'cds-infra-recreate': {
     story: '重建基础设施容器，旧容器被先删除',
     verdict: '这是重建流程的一部分，等新容器起来即可',
