@@ -224,33 +224,36 @@ public static class MdToPptAnchors
     }
 
     /// <summary>
-    /// 按页角色 + 设计意图挑版式范本：封面=首版式，结语=末版式；
-    /// 中间页按设计意图关键词匹配（数据/对比/引用/时间线/列表/表格），否则轮换不重复。
+    /// 首页面向封面；其余页优先匹配设计意图，未匹配的末页使用结语，内容页轮换。
     /// </summary>
     public static AnchorSlide PickLayout(Anchor anchor, int index, int total, string? designIntent)
     {
         if (index == 0) return anchor.Cover;
-        if (index == total - 1) return anchor.Closing;
-        var pool = anchor.ContentSlides;
-        if (pool.Count == 0) return anchor.Cover;
+        var allContentSlides = anchor.ContentSlides;
+        // 新的语义表格仅供明确表格意图，不能改变既有普通内容页轮换。
+        var pool = allContentSlides.Where(slide => slide.Layout != "s-table").ToList();
 
         var intent = designIntent ?? string.Empty;
         var keywordMap = new (string[] Keys, string[] LayoutHints)[]
         {
+            // 显式表格意图不能被同一句中的“表格数据”等通用数据词抢先覆盖。
+            (new[] { "表格", "table" }, new[] { "table", "dense", "financial" }),
             (new[] { "数据", "数字", "指标", "看板", "stat" }, new[] { "stats", "data", "numbers", "chart", "pie", "financial" }),
             (new[] { "对比", "比较", "vs" }, new[] { "compare", "split", "matrix" }),
             (new[] { "引用", "金句", "观点", "quote" }, new[] { "quote", "statement", "manifesto" }),
             (new[] { "时间线", "里程碑", "排期", "流程", "步骤" }, new[] { "timeline", "process", "roadmap", "cycle", "method", "pipeline" }),
             (new[] { "列表", "清单", "要点", "功能" }, new[] { "list", "grid", "index", "services", "pillars", "insights" }),
-            (new[] { "表格", "table" }, new[] { "table", "dense", "financial" }),
             (new[] { "代码", "命令", "终端", "code" }, new[] { "code", "terminal" }),
         };
         foreach (var (keys, hints) in keywordMap)
         {
             if (!keys.Any(k => intent.Contains(k, StringComparison.OrdinalIgnoreCase))) continue;
-            var hit = pool.FirstOrDefault(s => hints.Any(h => s.Layout.Contains(h, StringComparison.OrdinalIgnoreCase)));
+            var candidates = hints.Contains("table") ? allContentSlides : pool;
+            var hit = candidates.FirstOrDefault(s => hints.Any(h => s.Layout.Contains(h, StringComparison.OrdinalIgnoreCase)));
             if (hit != null) return hit;
         }
+        if (index == total - 1) return anchor.Closing;
+        if (pool.Count == 0) return anchor.Cover;
         // 轮换：相邻内容页不重复版式
         return pool[(index - 1) % pool.Count];
     }

@@ -2494,19 +2494,28 @@ public class MdToPptController : ControllerBase
 
     internal static string BuildAnchoredPageSystemPrompt(MdToPptAnchors.Anchor anchor, MdToPptAnchors.AnchorSlide layout, int index, int total)
     {
+        var semanticTable = layout.Layout == "s-table";
         return
             "你在一套人工精调的成品演示设计系统内工作（不允许自由发挥布局）。\n" +
             HtmlPptSkillContract() + "\n" +
             "## 铁律（违反会被系统剥离或整页重做）\n" +
-            "1. 下方版式范本的类名、结构层级、装饰元素一律保留——这是设计系统的身份，禁止改类名/删装饰/换结构\n" +
-            "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；标题与要点必须逐字复制输入，不得润色、改写或新增业务文案；同构列表项允许增删 1-2 个\n" +
+            (semanticTable
+                ? "1. 保留范本的 slide、标题区、表格容器、table/thead/tbody 与页脚身份及类名；唯一结构例外是表格行列数量按本页来源记录调整，禁止用卡片或固定列网格替代语义表格\n"
+                : "1. 下方版式范本的类名、结构层级、装饰元素一律保留——这是设计系统的身份，禁止改类名/删装饰/换结构\n") +
+            (semanticTable
+                ? "2. 标题与要点逐字复制输入；表头与单元格只取本页来源记录原文，每行单元格与列标题一一对应，不丢列、不串行、不合并不同记录；thead的th列数与每行tbody的单元格数量一致，增删行列不受范本样例数量限制\n"
+                : "2. 只把范本中的占位内容（标题/段落/数字/标签/列表项文字）替换为本页真实内容；标题与要点必须逐字复制输入，不得润色、改写或新增业务文案；同构列表项允许增删 1-2 个\n") +
             "3. 禁止内联布局样式：style 属性里不得出现 position/width/height/min-/max-/margin/transform/z-index/inset，禁止 vh/vw 单位\n" +
             "4. 内容必须忠实且放得下：不得精炼、摘要、拆义或另造短标签；优先删除重复展示和装饰性文字，仍放不下就保持原句让系统走既有兜底，禁止缩字号硬塞\n" +
             "5. 颜色/字体不得偏离设计系统（不要写新的颜色值）\n" +
-            "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可减少重复展示也不让正文与底部页码/页脚文字重叠；只在范本已有页码容器中保留原 class 并替换为正确页码，范本没有页码容器时禁止新增匿名数字页脚\n" +
+            (semanticTable
+                ? "6. 表格数据量按本页来源确定，使用已有表格容器的滚动与换行，不得删除记录来套样例行数，也不得挤压页眉页脚；范本没有页码容器时禁止新增匿名数字页脚\n"
+                : "6. 不得压到页脚/页眉：内容总量不超过范本原有内容量，宁可减少重复展示也不让正文与底部页码/页脚文字重叠；只在范本已有页码容器中保留原 class 并替换为正确页码，范本没有页码容器时禁止新增匿名数字页脚\n") +
             "7. 视觉装置不得留空：范本里的图表/数据可视化/SVG/统计块/大数字等装置必须填满；只能使用本页要点或全局上下文明确给出的事实，缺少数字时只能改用输入已有的完整原句，禁止编造人名、命令、版本、时间、token、费用、百分比或其他示意数值\n" +
             "8. 用户给出的创意方向只能转译为范本内的文案、数值、标签和已有视觉装置语义，不得破坏成品模板结构\n" +
-            "9. 禁止低级兜底版式：不得输出可见标题为“封面/目录/总结/标题/本页标题”的泛化页；不得只给一个标题加 bullet 列表；每页至少保留并填实范本中的两类视觉结构（如数据块、卡片组、图表、分栏、流程、时间线、对比、引用、行动区）\n" +
+            (semanticTable
+                ? "9. 本页以完整语义表格呈现来源记录即满足视觉结构要求，不额外添加卡片或图表；不得以 bullet 列表替代表格，不得输出“封面/目录/总结/标题/本页标题”等泛化标题\n"
+                : "9. 禁止低级兜底版式：不得输出可见标题为“封面/目录/总结/标题/本页标题”的泛化页；不得只给一个标题加 bullet 列表；每页至少保留并填实范本中的两类视觉结构（如数据块、卡片组、图表、分栏、流程、时间线、对比、引用、行动区）\n") +
             $"10. 只输出完整的 slide 块（第 {index + 1}/{total} 页）：首字符是 <，根元素与范本相同（class=\"{layout.ClassAttr}\"），" +
             "不含 <html>/<head>/<style>/<script>，无解释无代码围栏，禁止任何 emoji，禁止调用工具\n\n" +
             "## 本页版式范本（完整源码，照此结构替换内容）\n" + layout.Html;
@@ -2536,10 +2545,17 @@ public class MdToPptController : ControllerBase
         foreach (var b in bullets) sb.Append("- ").Append(b).Append('\n');
         if (!string.IsNullOrWhiteSpace(page.Design))
             sb.Append("设计意图（在范本允许范围内体现）：").Append(page.Design.Trim()).Append('\n');
+        if (!string.IsNullOrWhiteSpace(req.Content))
+        {
+            // Convert 已完成来源鉴权和快照分区；页级只复用一次，不重新检索或重复包裹。
+            sb.Append("本次已确认的资料上下文（保留用户提供与服务端知识的来源分区）：\n");
+            sb.Append(req.Content).Append('\n');
+            sb.Append("资料只用于补足本页标题、要点和设计意图所需的原文事实；表格保留所选记录各列对应关系，不得把整份资料重复铺到每一页。\n");
+        }
         var consoleGuard = BuildConsoleDashboardGuard(req.Content, req.Summary);
         if (!string.IsNullOrEmpty(consoleGuard)) sb.Append(consoleGuard);
         sb.Append("创意与质量要求：只通过版式、层级、装饰和已有视觉装置表达用户意图，不得发明文案、数字、对比标签或流程节点；");
-        sb.Append("范本同构区域只能填入上面的标题与要点原文，不得输出泛化标题“封面/目录/总结/标题”；");
+        sb.Append("范本同构区域只能填入上面的标题、要点及资料中与本页相关的原文事实，不得输出泛化标题“封面/目录/总结/标题”；");
         sb.Append("不得缩写、精炼、重组标题或要点，也不得为卡片、数据块另造短标签；只可使用输入中的完整原句；");
         sb.Append("页码只能复用范本已有页码容器和原 class，范本没有页码容器时不要新增数字页脚；");
         sb.Append("如果本页是封面，主标题必须是产品或主题名称，不得显示“封面”二字。");
@@ -3270,6 +3286,12 @@ public class MdToPptController : ControllerBase
             withoutNonText,
             "(?<open><(?<tag>div|footer)\\b[^>]*class\\s*=\\s*[\"'][^\"']*\\bslide-foot\\b[^\"']*[\"'][^>]*>[\\s\\S]*?<span\\b[^>]*>)\\s*\\d{1,2}\\s*/\\s*\\d{1,2}(?<close>\\s*</span>[\\s\\S]*?</\\k<tag>>)",
             match => match.Groups["open"].Value + match.Groups["close"].Value,
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase,
+            TimeSpan.FromSeconds(1));
+        // 表格单元格是独立事实边界；空串剥标签会把日期尾部与下一格时间拼成新数字。
+        // 内联标签仍保持连接，不能用 9<span>9</span> 绕过对 99 的既有判据。
+        withoutNonText = System.Text.RegularExpressions.Regex.Replace(
+            withoutNonText, "</?(?:td|th|tr)\\b[^>]*>", " ",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase,
             TimeSpan.FromSeconds(1));
         var visible = Normalize(System.Text.RegularExpressions.Regex.Replace(withoutNonText, "<[^>]+>", string.Empty));

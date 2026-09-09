@@ -90,6 +90,60 @@ public class MdToPptAnchorTests
     }
 
     [Fact]
+    public void PickLayout_ExplicitLastPageTablePrecedesClosingButRoleFallbacksRemain()
+    {
+        var anchor = MdToPptAnchors.Load("monochrome")!;
+        var middleTable = MdToPptAnchors.PickLayout(anchor, 1, 4, "版式：表格");
+        Assert.Contains("dense", middleTable.Layout);
+        Assert.Equal(middleTable, MdToPptAnchors.PickLayout(anchor, 3, 4, "版式：表格"));
+        const string confirmedIntent = "版式结构：表格；视觉装置：日期、时间、主题、总名额和剩余名额表格；排字策略：标题使用清晰易读的无衬线字体，正文采用中等大小的宋体或雅黑字体，排版整齐舒适；强调用法：清新蓝色作为表格的主色调，突出表格数据";
+        Assert.Equal(middleTable, MdToPptAnchors.PickLayout(anchor, 3, 4, confirmedIntent));
+        Assert.Equal(middleTable, MdToPptAnchors.PickLayout(anchor, 1, 4, confirmedIntent));
+        Assert.Equal(anchor.Closing, MdToPptAnchors.PickLayout(anchor, 3, 4, null));
+        Assert.Equal(anchor.Closing, MdToPptAnchors.PickLayout(anchor, 3, 4, "未指定版式"));
+        Assert.Equal(anchor.Cover, MdToPptAnchors.PickLayout(anchor, 0, 1, "版式：表格"));
+        var noContent = new MdToPptAnchors.Anchor("two-slides", "", "", new[] { anchor.Cover, anchor.Closing });
+        Assert.Equal(noContent.Closing, MdToPptAnchors.PickLayout(noContent, 1, 2, confirmedIntent));
+        Assert.Equal(noContent.Cover, MdToPptAnchors.PickLayout(noContent, 0, 2, confirmedIntent));
+    }
+
+    [Fact]
+    public void AnchoredPagePrompt_PreservesFrozenSourceAndTableOnceThroughGatewayAndRetry()
+    {
+        const string table = "| 日期 | 时间 | 主题 | 总名额 | 剩余 |\n| --- | --- | --- | --- | --- |\n| 2026-09-12 | 10:00—11:00 | 城市里的树 | 12 | 5 |\n| 2026-09-13 | 14:00—15:00 | 给未来的一封信 | 12 | 0 |\n| 2026-09-19 | 10:00—11:00 | 旧物的新故事 | 12 | 8 |";
+        var source = new string('资', 700) + "\n" + table;
+        var content = MdToPptController.BuildPartitionedKnowledgeContext(
+            "仅制作本页活动安排", null, null,
+            new[] { new PrdAgent.Core.Models.DesignKnowledgeSnapshot { Content = source, Title = "合成资料" } });
+        var request = new MdToPptConvertRequest
+        {
+            Content = content,
+            Summary = "社区服务",
+            OutlinePages = new List<MdToPptOutlinePageDto>
+            {
+                new() { Title = "活动安排", Bullets = new List<string> { "展示活动日期、时间、主题和名额" }, Design = "版式：表格" },
+            },
+        };
+        var prompt = MdToPptController.BuildAnchoredPageUserPrompt(request, 0, 1);
+        var retry = MdToPptController.BuildAnchoredPageRetryUserPrompt(prompt,
+            new MdToPptController.UnsupportedVisibleClaimValidation(
+                MdToPptController.UnsupportedVisibleClaimKind.UnsupportedNumeric, 1, "99"));
+        var wire = MdToPptController.BuildGatewayPageRequest(
+            new PrdAgent.Core.Models.InfraAgentRuntimeProfile(), "system", retry, "test.caller::chat");
+        var wireUser = wire.RequestBody!["messages"]![1]!["content"]!.GetValue<string>();
+        foreach (var text in new[] { prompt, retry, wireUser })
+        {
+            Assert.Contains(content, text);
+            Assert.Contains(table, text);
+            Assert.Equal(1, text.Split(source, StringSplitOptions.None).Length - 1);
+            Assert.Equal(1, text.Split("<server_knowledge ", StringSplitOptions.None).Length - 1);
+            Assert.Equal(1, text.Split("<user_supplied ", StringSplitOptions.None).Length - 1);
+        }
+        Assert.Equal(content, request.Content);
+        Assert.Contains("只用于补足本页", prompt);
+    }
+
+    [Fact]
     public void PagePrompts_UseGithubHtmlPptSkillContract()
     {
         var freePrompt = MdToPptController.BuildPageSystemPrompt("tech-dark", 1, 8);
@@ -108,6 +162,61 @@ public class MdToPptAnchorTests
         Assert.Contains("范本没有页码容器时禁止新增匿名数字页脚", anchoredPrompt);
         Assert.DoesNotContain("放不下就精炼文字", anchoredPrompt);
         Assert.DoesNotContain("缺数据就给合理示意值", anchoredPrompt);
+    }
+
+    [Theory]
+    [InlineData("editorial-ink")]
+    [InlineData("ocean-glass")]
+    public void SoftEditorial_ExplicitTableUsesSemanticCandidateWithoutChangingOrdinaryRotation(string theme)
+    {
+        var anchor = MdToPptAnchors.Resolve(theme)!;
+        const string intent = "版式结构：表格；视觉装置：日期、时间、主题、总名额和剩余名额表格；强调用法：突出表格数据";
+        var table = MdToPptAnchors.PickLayout(anchor, 3, 4, intent);
+        Assert.Equal("s-table", table.Layout);
+        Assert.Contains("<table", table.Html);
+        Assert.Contains("<thead>", table.Html);
+        Assert.Contains("<tbody>", table.Html);
+        Assert.Contains("scope=\"col\"", table.Html);
+        Assert.Equal("s-matrix", anchor.Closing.Layout);
+        Assert.Equal("12-s-matrix.html", anchor.Closing.File);
+        var oldAnchor = anchor with { Slides = anchor.Slides.Where(slide => slide.Layout != "s-table").ToArray() };
+        for (var index = 0; index < 32; index++)
+            Assert.Equal(MdToPptAnchors.PickLayout(oldAnchor, index, 32, null), MdToPptAnchors.PickLayout(anchor, index, 32, null));
+        Assert.Equal(MdToPptAnchors.PickLayout(oldAnchor, 3, 4, "数据指标"), MdToPptAnchors.PickLayout(anchor, 3, 4, "数据指标"));
+        var prompt = MdToPptController.BuildAnchoredPageSystemPrompt(anchor, table, 3, 4);
+        Assert.Contains("行列数量按本页来源记录调整", prompt);
+        Assert.Contains("每行单元格与列标题一一对应", prompt);
+        Assert.DoesNotContain("同构列表项允许增删 1-2 个", prompt);
+        Assert.DoesNotContain("内容总量不超过范本原有内容量", prompt);
+        Assert.Contains("完整语义表格呈现来源记录即满足视觉结构要求", prompt);
+        Assert.DoesNotContain("两类视觉结构", prompt);
+        var normalPrompt = MdToPptController.BuildAnchoredPageSystemPrompt(anchor, anchor.ContentSlides[0], 1, 4);
+        Assert.Contains("同构列表项允许增删 1-2 个", normalPrompt);
+        Assert.Contains("内容总量不超过范本原有内容量", normalPrompt);
+        Assert.Contains("两类视觉结构", normalPrompt);
+    }
+
+    [Fact]
+    public void SemanticTable_RealQualityGatePreservesCellBoundariesAndRejectsInventedNumbers()
+    {
+        const string source = "| 日期 | 时间 | 主题 | 总名额 | 剩余 |\n| --- | --- | --- | --- | --- |\n| 2026-09-12 | 10:00—11:00 | 城市里的树 | 12 | 5 |\n| 2026-09-13 | 14:00—15:00 | 给未来的一封信 | 12 | 0 |\n| 2026-09-19 | 10:00—11:00 | 旧物的新故事 | 12 | 8 |";
+        const string table = "<table><thead><tr><th>日期</th><th>时间</th><th>主题</th><th>总名额</th><th>剩余</th></tr></thead><tbody>"
+            + "<tr><td>2026-09-12</td><td>10:00—11:00</td><td>城市里的树</td><td>12</td><td>5</td></tr>"
+            + "<tr><td>2026-09-13</td><td>14:00—15:00</td><td>给未来的一封信</td><td>12</td><td>0</td></tr>"
+            + "<tr><td>2026-09-19</td><td>10:00—11:00</td><td>旧物的新故事</td><td>12</td><td>8</td></tr></tbody></table>";
+        var page = new MdToPptOutlinePageDto { Title = "活动名额" };
+        foreach (var html in new[] { table, table.Replace("><", ">\n<", StringComparison.Ordinal) })
+        {
+            var result = MdToPptController.ValidateUnsupportedVisibleClaims(html, page, null, source);
+            Assert.False(result.Rejected, $"{result.Kind}: {result.NormalizedToken}");
+        }
+        foreach (var invented in new[] { "99", "9<span>9</span>" })
+        {
+            var result = MdToPptController.ValidateUnsupportedVisibleClaims(
+                table.Replace("<td>5</td>", $"<td>{invented}</td>", StringComparison.Ordinal), page, null, source);
+            Assert.Equal(MdToPptController.UnsupportedVisibleClaimKind.UnsupportedNumeric, result.Kind);
+            Assert.Equal("99", result.NormalizedToken);
+        }
     }
 
     [Fact]
