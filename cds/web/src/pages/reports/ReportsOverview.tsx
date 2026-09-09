@@ -444,53 +444,72 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
   const supportLabel = { new: '新账', coverage: '没测完', decision: '需要你决定' } as const;
   const rateDelta = passRate.rate != null && passRate.previous.rate != null ? passRate.rate - passRate.previous.rate : null;
 
+  // 发布闸是红的时候，「需要你决定」那条支撑句与右栏发布闸卡一字不差。
+  // 同一句话在一屏里出现两次，读者会觉得这页在自言自语——重复的那条不渲染。
+  const supports = headline.supports.filter((s) => !(s.kind === 'decision' && releaseGate.state === 'blocked'));
+
+  /*
+   * 版面只有一条脊柱（2026-09-09 重排）。
+   *
+   * 改之前是三种互不对齐的列结构上下摞着：结论区 2fr/1fr（分割线在 67%）、
+   * 覆盖缺口 1fr/1fr（50%）、未通过与台账满宽。眼睛找不到一条贯穿的竖线，
+   * 于是每块单看都不错、合起来像散落一地。
+   *
+   * 现在整页只有一个分割：主栏（叙述：结论 → 未通过 → 覆盖）+ 320px 固定侧栏
+   * （仪表：发布闸 + 结论分布）。侧栏跨满三行并 sticky，那条竖线从页顶一直
+   * 通到底，且滚动时仪表一直在视野里。
+   *
+   * 同时定了三档权重，不再人人平等：
+   *   一档 结论——不套卡片，靠状态色条 + 留白 + 最大字号站住，全屏唯一主角；
+   *   二档 证据——常规卡（细边框 + card 底）；
+   *   三档 台账——由父组件渲染，用一条分隔线与上面隔开（查找工具，不是结论）。
+   */
   return (
-    <div className="flex flex-col gap-5">
-      {/* ① 结论头条 + 发布闸 + 分布 */}
-      {/*
-        lg:items-stretch —— 左列有了集中度条形图后通常更高，右列会在下方露出一段底色。
-        让右列拉齐并把「结论分布」卡设为 flex-1 + justify-between，空间分给内容而不是留白
-        （content-fills-canvas）。反向（右列更高）时左列只是底部多一点余量，不会再出现
-        之前那种「首屏被右列拉高、左卡中间一大块空」的老问题。
-      */}
-      <section className="grid items-start gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] lg:items-stretch">
-        <div className="relative flex flex-col gap-4 overflow-hidden rounded-[10px] border bg-card p-5" style={{ borderColor: `color-mix(in srgb, ${statusMeta.color} 35%, hsl(var(--hairline)))` }}>
-          <div className="absolute bottom-0 left-0 top-0 w-1" style={{ background: statusMeta.color }} />
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <Eyebrow>结论 · 最近 {overview.window.days} 天 · {totals.archived} 份归档{totals.folded ? `，折叠 ${totals.folded} 份重复后计 ${totals.counted} 份` : ''} · 数据截至 {fmtMonthDay(overview.window.to)}</Eyebrow>
-            <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full border px-2 text-[11.5px] font-semibold" style={{ color: statusMeta.color, background: statusMeta.soft, borderColor: `color-mix(in srgb, ${statusMeta.color} 30%, transparent)` }}>
-              <statusMeta.Icon className="h-3 w-3" />{headline.statusLabel}
-            </span>
-          </div>
-          <h1 className="m-0 text-[22px] font-semibold leading-snug tracking-[-0.015em] lg:text-[26px]" style={{ textWrap: 'pretty' }}>{headline.sentence}</h1>
-          <Concentration clusters={overview.clusters} projectName={projectName} onOpenCluster={onOpenCluster} />
-          {headline.supports.length ? (
-            <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
-              {headline.supports.map((s) => (
-                <div key={s.kind} className="flex flex-col gap-1.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-3">
-                  <div className="flex items-center gap-2 text-xs text-muted-foreground"><span className="h-2 w-2 shrink-0 rounded-full" style={supportDot(s.kind)} />{supportLabel[s.kind]}</div>
-                  <div className="text-[13px] leading-relaxed">{s.text}</div>
-                  <button type="button" className="mt-auto inline-flex w-fit items-center gap-1 text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onJump(s.anchor)}>
-                    {s.anchor === 'coverage' ? '查看覆盖缺口' : s.anchor === 'clusters' ? '查看未通过清单' : '去台账'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          ) : null}
+    <div className="grid grid-cols-1 gap-x-6 gap-y-6 xl:auto-rows-min xl:grid-cols-[minmax(0,1fr)_320px]">
+      {/* ① 结论（一档）：不套卡片 */}
+      <section className="relative min-w-0 pl-5 xl:col-start-1 xl:row-start-1">
+        <div className="absolute bottom-0.5 left-0 top-0.5 w-[3px] rounded-full" style={{ background: statusMeta.color }} />
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Eyebrow>结论 · 最近 {overview.window.days} 天 · {totals.archived} 份归档{totals.folded ? `，折叠 ${totals.folded} 份重复后计 ${totals.counted} 份` : ''} · 数据截至 {fmtMonthDay(overview.window.to)}</Eyebrow>
+          <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full border px-2 text-[11.5px] font-semibold" style={{ color: statusMeta.color, background: statusMeta.soft, borderColor: `color-mix(in srgb, ${statusMeta.color} 30%, transparent)` }}>
+            <statusMeta.Icon className="h-3 w-3" />{headline.statusLabel}
+          </span>
         </div>
-        <div className="flex flex-col gap-5">
+        <h1 className="m-0 mt-2.5 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em] lg:text-[30px]" style={{ textWrap: 'pretty' }}>{headline.sentence}</h1>
+        <Concentration clusters={overview.clusters} projectName={projectName} onOpenCluster={onOpenCluster} />
+        {supports.length ? (
+          // 支撑句改成行内条目：原来是三张带边框带底色的子卡片，卡中卡是密度失控不是密度高。
+          <ul className="m-0 mt-3.5 flex list-none flex-col gap-2 border-t border-[hsl(var(--hairline))] p-0 pt-3.5">
+            {supports.map((s) => (
+              <li key={s.kind} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[13px] leading-relaxed">
+                <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                  <span className="h-2 w-2 shrink-0 rounded-full" style={supportDot(s.kind)} />{supportLabel[s.kind]}
+                </span>
+                <span className="min-w-0 flex-1 text-[hsl(var(--foreground-muted))]">{s.text}</span>
+                <button type="button" className="shrink-0 text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onJump(s.anchor)}>
+                  {s.anchor === 'coverage' ? '查看覆盖缺口' : s.anchor === 'clusters' ? '查看未通过清单' : '去台账'}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </section>
+
+      {/* 侧栏（仪表）：跨满三行，那条竖线因此从页顶通到底；sticky 让它在滚动时一直在场 */}
+      <aside className="min-w-0 xl:col-start-2 xl:row-span-3 xl:row-start-1">
+        <div className="flex flex-col gap-4 xl:sticky xl:top-4">
           <div className="flex flex-col gap-2.5 rounded-[10px] border border-[hsl(var(--hairline))] p-4" style={{ background: `linear-gradient(180deg, ${gateMeta.soft}, hsl(var(--card)) 70%)` }}>
             <div className="flex items-center justify-between"><Eyebrow>发布闸</Eyebrow>{releaseGate.latest ? <span className="font-mono text-[11px] text-muted-foreground">{releaseGate.latest.kind} · {fmtMonthDay(releaseGate.latest.createdAt)}</span> : null}</div>
-            <div className="flex items-center gap-2.5" style={{ color: gateMeta.color }}><gateMeta.Icon className="h-6 w-6" strokeWidth={2} /><span className="text-2xl font-bold tracking-[-0.02em]">{gateMeta.label}</span></div>
+            <div className="flex items-center gap-2" style={{ color: gateMeta.color }}><gateMeta.Icon className="h-5 w-5" strokeWidth={2} /><span className="text-xl font-bold tracking-[-0.02em]">{gateMeta.label}</span></div>
             <div className="text-[12.5px] leading-relaxed text-[hsl(var(--foreground-muted))]">{releaseGate.reason}</div>
             {releaseGate.latest ? (
               <button type="button" className="inline-flex w-fit items-center gap-1 text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenReport(releaseGate.latest!.id)}>打开那份报告 <ExternalLink className="h-3 w-3" /></button>
             ) : null}
           </div>
-          <div className="flex flex-1 flex-col justify-between gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
+          <div className="flex flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
             <Eyebrow>结论分布 · 本窗 {totals.counted} 份 / 上窗 {totals.previous.counted} 份</Eyebrow>
             <VerdictBars overview={overview} />
-            <div className="flex flex-wrap items-baseline justify-between gap-2 border-t border-[hsl(var(--hairline))] pt-3">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 border-t border-[hsl(var(--hairline))] pt-3">
               <div className="text-[12.5px] text-[hsl(var(--foreground-muted))]">{passRate.kind}通过率 <b className="text-[15px] text-foreground">{fmtRate(passRate.rate)}</b> <span className="text-muted-foreground">{passRate.numerator} / {passRate.denominator}</span></div>
               <div className="text-xs text-muted-foreground">
                 上窗 {fmtRate(passRate.previous.rate)}{rateDelta != null ? `（${rateDelta >= 0 ? '+' : ''}${(rateDelta * 100).toFixed(1)} 点）` : ''}，分母 {passRate.previous.denominator} → {passRate.denominator}
@@ -499,10 +518,10 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
             <div className="text-[11.5px] leading-relaxed text-muted-foreground">每个验收目标只计最新一版；被取代的早期版本不进分母。</div>
           </div>
         </div>
-      </section>
+      </aside>
 
-      {/* ② 未通过与待决 */}
-      <section id="reports-clusters" className="overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
+      {/* ② 未通过与待决（二档） */}
+      <section id="reports-clusters" className="min-w-0 overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card xl:col-start-1 xl:row-start-2">
         <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
           <SectionTitle
             title="未通过与待决"
@@ -518,13 +537,13 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
         <ClusterTable overview={overview} projectName={projectName} onOpenCluster={onOpenCluster} onOpenReport={onOpenReport} />
       </section>
 
-      {/* ③ 覆盖缺口 */}
-      <section id="reports-coverage" className="grid gap-5 lg:grid-cols-2">
-        <div className="flex flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
+      {/* ③ 覆盖缺口（二档）：两张卡只在够宽时并排，窄了就纵向排，日历带不会被挤断 */}
+      <section id="reports-coverage" className="grid min-w-0 gap-5 xl:col-start-1 xl:row-start-3 2xl:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
           <SectionTitle title="每日验收连续性" sub={`近 ${overview.daily.length} 天 · 按报告创建日`} right={<CalendarDays className="h-4 w-4 text-muted-foreground" />} />
           <DailyStrip overview={overview} onOpenReport={onOpenReport} />
         </div>
-        <div className="flex flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
+        <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
           <SectionTitle title="合并的分支，验没验" sub="主干合并记录 × 报告的 PR / commit / 分支" right={<GitMerge className="h-4 w-4 text-muted-foreground" />} />
           <MergeCoverage overview={overview} onOpenReport={onOpenReport} />
         </div>

@@ -835,7 +835,7 @@ function ReportsHome({
   }
 
   return (
-    <div className="flex flex-col gap-5 pb-8">
+    <div className="flex flex-col gap-6 pb-8">
       {overviewState.status === 'loading' ? <LoadingBlock label="正在汇总验收结论" /> : null}
       {overviewState.status === 'error' ? (
         <div className="flex items-center justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
@@ -847,8 +847,8 @@ function ReportsHome({
         <ReportsOverviewPanel overview={overview} projectName={projectName} onOpenReport={openById} onOpenCluster={openCluster} onJump={jumpTo} />
       ) : null}
 
-      <section id="reports-ledger" className="overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
-        <div className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
+      <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
+        <div className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2.5">
           <h2 className="mr-2 text-[15px] font-semibold tracking-tight">报告台账</h2>
           <div className="flex min-w-0 flex-wrap items-center gap-0.5" role="tablist" aria-label="报告类型">
             <button type="button" role="tab" aria-selected={kindFilter === 'all'} className={`inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium ${kindFilter === 'all' ? 'bg-[hsl(var(--accent))] text-foreground' : 'text-[hsl(var(--foreground-muted))] hover:text-foreground'}`} onClick={() => { setKindFilter('all'); setPage(0); }}>
