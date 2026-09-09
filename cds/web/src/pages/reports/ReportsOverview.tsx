@@ -406,11 +406,14 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
                 </td>
                 <td className="px-3 py-3">
                   <button type="button" className="text-left font-semibold text-foreground hover:underline" onClick={() => onOpenReport(c.latestReportId)} title="打开最新一份">{c.target}</button>
-                  <div className="mt-0.5 font-mono text-[11.5px] text-muted-foreground">
+                  <div
+                    className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground"
+                    title={`${c.kinds.join(' · ')} · 最近 ${fmtMonthDay(c.latestCreatedAt)}${c.projectId ? ` · ${projectName(c.projectId)}` : ' · CDS 自身'}`}
+                  >
                     {c.kinds.join(' · ')} · 最近 {fmtMonthDay(c.latestCreatedAt)}{c.projectId ? ` · ${projectName(c.projectId)}` : ' · CDS 自身'}
                   </div>
                 </td>
-                <td className="w-[190px] px-3 py-3"><DefectPills counts={c.defectCounts} /></td>
+                <td className="w-[150px] px-3 py-3"><DefectPills counts={c.defectCounts} /></td>
                 <td className="px-3 py-3 text-[12.5px] leading-relaxed text-[hsl(var(--foreground-muted))]">{nextStep(c)}</td>
                 <td className="w-[96px] px-3 py-3 text-right">
                   <button type="button" className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenCluster(c)}>{c.count} 份</button>
@@ -485,7 +488,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
                 <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
                   <span className="h-2 w-2 shrink-0 rounded-full" style={supportDot(s.kind)} />{supportLabel[s.kind]}
                 </span>
-                <span className="min-w-0 flex-1 text-[hsl(var(--foreground-muted))]">{s.text}</span>
+                <span className="min-w-0 text-[hsl(var(--foreground-muted))]">{s.text}</span>
                 <button type="button" className="shrink-0 text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onJump(s.anchor)}>
                   {s.anchor === 'coverage' ? '查看覆盖缺口' : s.anchor === 'clusters' ? '查看未通过清单' : '去台账'}
                 </button>
