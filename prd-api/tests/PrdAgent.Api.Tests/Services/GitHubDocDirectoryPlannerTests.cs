@@ -74,7 +74,7 @@ public class GitHubDocDirectoryPlannerTests
         var scan = Scan(
             ("node_modules/pkg/docs/readme.md", "blob"),
             ("dist/docs/index.md", "blob"),
-            ("vendor/lib/doc/api.md", "blob"),
+            ("vendor/lib/doc/demo.md", "blob"),   // 用例文件名走守卫认得的 fixture 名，避免被当成真的文档面包屑
             (".github/docs/ci.md", "blob"));
 
         Assert.Empty(scan.RecommendedPaths);
