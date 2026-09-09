@@ -125,7 +125,8 @@ describe('secure database CLI invocation', () => {
       '  if [ "$1" = "--config" ]; then config="$2"; shift 2; else shift; fi',
       'done',
       'printf "CONFIG_PATH=%s\\n" "$config"',
-      'printf "CONFIG_MODE=%s\\n" "$(stat -f %Lp "$config" 2>/dev/null || stat -c %a "$config")"',
+      'config_mode="$(stat -c %a "$config" 2>/dev/null)" || config_mode="$(stat -f %Lp "$config")"',
+      'printf "CONFIG_MODE=%s\\n" "$config_mode"',
       'grep -q "mongo-canary-cleanup" "$config"',
       'exit 23',
     ].join('\n'), { mode: 0o700 });

@@ -32,7 +32,7 @@
     "design": 178,
     "plan": 24,
     "rule": 41,
-    "guide": 105,
+    "guide": 104,
     "report": 52,
     "debt": 213
   },
@@ -583,7 +583,7 @@
       "missing": 0,
       "bare": 0,
       "impl": 0,
-      "src": 10
+      "src": 9
     },
     "guide.platform.mcp-connector.md": {
       "missing": 0,
