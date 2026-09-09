@@ -118,6 +118,99 @@ function VerdictBars({ overview }: { overview: ReportsOverview }): JSX.Element {
 }
 
 /** 每日验收连续性：一行日格，状态色 + 文字；无报告的天走灰虚线（证据空白，不是失败）。 */
+/**
+ * 根因集中度：头条那句判断的图形证据。
+ *
+ * 为什么是水平条形（choosing-a-form：magnitude by identity, ranked）——头条说的是
+ * 「N 份未通过里有 M 份指向同一处」，这句话的本质是**集中度**：一眼要看出最长那根
+ * 比其余加起来还长。饼图比不出长度、折线没有时间轴、堆叠柱把对象挤成一列都读不出来。
+ *
+ * 颜色只用状态色（红 = 未通过 / 橙 = 有条件），且每根条都配对象名 + 段内数字 + 结论文字，
+ * 不靠颜色单独表意。红↔橙这对是色觉障碍的经典风险对，实测 deutan ΔE 15.0（暗色）
+ * / 16.3（白天），远高于 8 的门槛，另有直接标数兜底。
+ *
+ * 口径冲突簇的条形**真的拆成红 + 橙两段**——那正是「同一对象同日两种结论」这件事本身，
+ * 不能用一个颜色糊过去（所以聚合层要返回 failCount / conditionalCount）。
+ */
+const CONCENTRATION_ROWS = 5;
+
+function Concentration({ clusters, projectName, onOpenCluster }: {
+  clusters: OverviewCluster[];
+  projectName: (id: string | null) => string;
+  onOpenCluster: (c: OverviewCluster) => void;
+}): JSX.Element | null {
+  const ranked = useMemo(() => {
+    const order = { fail: 0, conflict: 1, conditional: 2 } as const;
+    return [...clusters].sort((a, b) => order[a.verdict] - order[b.verdict] || b.count - a.count);
+  }, [clusters]);
+  if (ranked.length === 0) return null;
+  const head = ranked.slice(0, CONCENTRATION_ROWS);
+  const rest = ranked.slice(CONCENTRATION_ROWS);
+  const restCount = rest.reduce((n, c) => n + c.count, 0);
+  // 刻度取「最长那根」，让最长条铺满可用宽度——集中度靠相对长度读，不靠绝对份数。
+  const max = Math.max(1, ...head.map((c) => c.count));
+  const totalFail = clusters.reduce((n, c) => n + c.failCount, 0);
+  const totalCond = clusters.reduce((n, c) => n + c.conditionalCount, 0);
+  const topShare = head[0] && totalFail + totalCond > 0
+    ? Math.round((head[0].count / (totalFail + totalCond)) * 100)
+    : null;
+
+  return (
+    <div className="flex flex-col gap-2.5 border-t border-[hsl(var(--hairline))] pt-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <Eyebrow>根因集中度 · 待办按验收对象合并</Eyebrow>
+        {/* 两个色 = 必须有图例（accessibility pass）；同时每段还直接标了数字。 */}
+        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-[2px]" style={{ background: 'hsl(var(--bad))' }} />未通过 {totalFail}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-[2px]" style={{ background: 'hsl(var(--warn))' }} />有条件 {totalCond}</span>
+        </div>
+      </div>
+      <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
+        {head.map((c) => {
+          const m = VERDICT_META[c.verdict === 'conflict' ? 'fail' : c.verdict];
+          const label = c.verdict === 'conflict' ? '口径冲突' : m.label;
+          const labelColor = c.verdict === 'conflict' ? 'hsl(var(--info))' : m.color;
+          const pct = (n: number) => `${(n / max) * 100}%`;
+          return (
+            <li key={c.id}>
+              <button
+                type="button"
+                onClick={() => onOpenCluster(c)}
+                title={`${c.target} · ${label} · 未通过 ${c.failCount} 份 / 有条件 ${c.conditionalCount} 份 · ${c.kinds.join(' · ')}${c.projectId ? ` · ${projectName(c.projectId)}` : ''} · 点击查看这 ${c.count} 份`}
+                className="group flex w-full items-center gap-3 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))]"
+              >
+                <span className="w-[128px] shrink-0 truncate text-[12.5px] font-medium text-foreground group-hover:underline lg:w-[152px]">{c.target}</span>
+                {/*
+                  条形：细、右端 4px 圆角、两段之间留 2px 表面缝（marks-and-anatomy）。
+                  数字不写在条内——白天主题橙底上的白字只有约 3.2:1，达不到 AA；
+                  直接标注移到条形右侧并走文字 token（「文字穿文字色，不穿系列色」）。
+                */}
+                <span className="flex h-[10px] min-w-0 flex-1 items-stretch gap-[2px]">
+                  {c.failCount > 0 ? (
+                    <span className="rounded-[4px]" style={{ width: pct(c.failCount), background: 'hsl(var(--bad))', minWidth: 6 }} />
+                  ) : null}
+                  {c.conditionalCount > 0 ? (
+                    <span className="rounded-[4px]" style={{ width: pct(c.conditionalCount), background: 'hsl(var(--warn))', minWidth: 6 }} />
+                  ) : null}
+                </span>
+                <span className="w-[34px] shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-foreground">{c.count}</span>
+                <span className="inline-flex w-[72px] shrink-0 items-center gap-1 whitespace-nowrap text-[11.5px] font-semibold" style={{ color: labelColor }}>
+                  <m.Icon className="h-3 w-3 shrink-0" />{label}
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="text-[11.5px] leading-relaxed text-muted-foreground">
+        {topShare != null && head[0] ? <>最长那根是「{head[0].target}」，占全部待办的 {topShare}%。</> : null}
+        {rest.length ? <>其余 {rest.length} 个对象合计 {restCount} 份，</> : null}
+        条形按对象合并、不按份数堆；点任意一根跳到它的全部报告。
+      </div>
+    </div>
+  );
+}
+
 function DailyStrip({ overview, onOpenReport }: { overview: ReportsOverview; onOpenReport: (id: string) => void }): JSX.Element {
   const days = overview.daily;
   const gaps = days.filter((d) => d.reports.length === 0);
@@ -357,6 +450,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
             </span>
           </div>
           <h1 className="m-0 text-[22px] font-semibold leading-snug tracking-[-0.015em] lg:text-[26px]" style={{ textWrap: 'pretty' }}>{headline.sentence}</h1>
+          <Concentration clusters={overview.clusters} projectName={projectName} onOpenCluster={onOpenCluster} />
           {headline.supports.length ? (
             <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
               {headline.supports.map((s) => (

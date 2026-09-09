@@ -56,6 +56,10 @@ export interface OverviewCluster {
   projectId: string | null;
   kinds: ReportKind[];
   count: number;
+  /** 未通过份数（口径冲突簇里也真实存在，用来把条形分成红 / 橙两段）。 */
+  failCount: number;
+  /** 有条件份数。 */
+  conditionalCount: number;
   reportIds: string[];
   latestReportId: string;
   latestCreatedAt: string;
@@ -292,6 +296,8 @@ function buildClusters(windowReports: OverviewReportRef[], allLatest: OverviewRe
       projectId,
       kinds: Array.from(new Set(g.map((r) => r.kind))),
       count: g.length,
+      failCount: fails.length,
+      conditionalCount: conds.length,
       reportIds: g.map((r) => r.id),
       latestReportId: g[0].id,
       latestCreatedAt: g[0].createdAt,

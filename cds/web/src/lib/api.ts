@@ -289,6 +289,10 @@ export interface OverviewCluster {
   projectId: string | null;
   kinds: ReportKind[];
   count: number;
+  /** 未通过份数（口径冲突簇里两种结论都真实存在，条形按此拆段）。 */
+  failCount: number;
+  /** 有条件份数。 */
+  conditionalCount: number;
   reportIds: string[];
   latestReportId: string;
   latestCreatedAt: string;

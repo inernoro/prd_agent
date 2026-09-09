@@ -158,6 +158,27 @@ describe('buildReportsOverview', () => {
     expect(coverage?.text).toContain('证据空白，不是产品缺陷');
   });
 
+  it('簇要给出未通过/有条件的份数拆分（口径冲突的条形靠它拆成红橙两段）', () => {
+    // 「根因集中度」条形图要把口径冲突簇真实拆成红 + 橙两段——那正是「同一对象同日
+    // 两种结论」这件事本身，不能用一个颜色糊过去。所以聚合层必须给出拆分份数，
+    // 前端不许拿 reportIds 再去猜。
+    const o = buildReportsOverview([
+      report({ title: '功能验收 · 库存同步 · 2026-09-05', createdAt: '2026-09-05T09:00:00Z', verdict: 'fail', defectCounts: { p1: 1 } }),
+      report({ title: '视觉回归 · 库存同步 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'conditional', defectCounts: { p2: 2 } }),
+      report({ title: 'PR验收 · 结算对账 · 2026-09-04', createdAt: '2026-09-04T09:00:00Z', verdict: 'fail', defectCounts: { p1: 1 } }),
+      report({ title: 'Commit验收 · 结算对账 · 2026-09-03', createdAt: '2026-09-03T09:00:00Z', verdict: 'fail', defectCounts: { p0: 1 } }),
+    ], [], { to: TO, days: 7 });
+    const byTarget = new Map(o.clusters.map((c) => [c.target, c]));
+    const conflict = byTarget.get('库存同步')!;
+    expect(conflict.verdict).toBe('conflict');
+    expect([conflict.failCount, conflict.conditionalCount]).toEqual([1, 1]);
+    const fails = byTarget.get('结算对账')!;
+    expect(fails.verdict).toBe('fail');
+    expect([fails.failCount, fails.conditionalCount]).toEqual([2, 0]);
+    // 拆分之和必须等于总份数，否则条形长度与右侧标注的数字对不上。
+    for (const c of o.clusters) expect(c.failCount + c.conditionalCount).toBe(c.count);
+  });
+
   it('被取代的早期版本也带服务端解析出的 kind（台账展开时不能整批掉进「其他」）', () => {
     // 2026-09-09 富数据验收实测到的回归：overview 只返回最新版时，前端展开
     // 「被取代版本」拿不到旧版的 kind，整批被算成「其他」——页签计数虚高，
