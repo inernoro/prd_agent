@@ -543,7 +543,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
       </section>
 
       {/* ③ 覆盖缺口（二档）：两张卡只在够宽时并排，窄了就纵向排，日历带不会被挤断 */}
-      <section id="reports-coverage" className="grid min-w-0 gap-5 xl:col-start-1 xl:row-start-3 2xl:grid-cols-2">
+      <section id="reports-coverage" className="grid min-w-0 gap-5 lg:grid-cols-2 xl:col-start-1 xl:row-start-3">
         <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
           <SectionTitle title="每日验收连续性" sub={`近 ${overview.daily.length} 天 · 按报告创建日`} right={<CalendarDays className="h-4 w-4 text-muted-foreground" />} />
           <DailyStrip overview={overview} onOpenReport={onOpenReport} />

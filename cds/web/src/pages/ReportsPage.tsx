@@ -848,8 +848,37 @@ function ReportsHome({
       ) : null}
 
       <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
-        <div className="flex flex-wrap items-center gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2.5">
-          <h2 className="mr-2 text-[15px] font-semibold tracking-tight">报告台账</h2>
+        {/*
+          台账表头拆成两行：第一行「标题 ——— 控件组」，第二行「类目页签」。
+          原来九个页签和四个控件挤同一行，一定会折，折叠开关还会孤零零掉到第二行最左边。
+          两组各自成立之后，类目多少个都不影响这一行的结构。
+        */}
+        <div className="flex flex-col gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <h2 className="text-[15px] font-semibold tracking-tight">报告台账</h2>
+            <span className="flex-1" />
+            {filterMenu}
+            <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-card px-2 transition-colors focus-within:border-primary/60">
+              <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              <input
+                value={searchQuery}
+                onChange={(event) => { onSearchChange(event.target.value); setPage(0); }}
+                placeholder="搜索报告标题"
+                aria-label="搜索报告标题"
+                className="h-full w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+              />
+              {searchQuery ? (
+                <button type="button" className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground" aria-label="清空搜索" title="清空搜索" onClick={() => onSearchChange('')}>
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
+            </div>
+            {hiddenSuperseded > 0 || showSuperseded ? (
+              <Button variant={showSuperseded ? 'secondary' : 'ghost'} size="sm" className="h-7" aria-pressed={showSuperseded} onClick={() => { setShowSuperseded((v) => !v); setPage(0); }} title="同一验收目标多次归档时，默认只显示最新一版">
+                {showSuperseded ? <Check /> : <History />}{showSuperseded ? '已展开被取代版本' : `折叠被取代版本 ${hiddenSuperseded}`}
+              </Button>
+            ) : null}
+          </div>
           <div className="flex min-w-0 flex-wrap items-center gap-0.5" role="tablist" aria-label="报告类型">
             <button type="button" role="tab" aria-selected={kindFilter === 'all'} className={`inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium ${kindFilter === 'all' ? 'bg-[hsl(var(--accent))] text-foreground' : 'text-[hsl(var(--foreground-muted))] hover:text-foreground'}`} onClick={() => { setKindFilter('all'); setPage(0); }}>
               全部<b className="font-mono text-[11px] font-medium text-muted-foreground">{allCount}</b>
@@ -860,28 +889,6 @@ function ReportsHome({
               </button>
             ))}
           </div>
-          <span className="flex-1" />
-          {filterMenu}
-          <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 transition-colors focus-within:border-primary/60">
-            <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-            <input
-              value={searchQuery}
-              onChange={(event) => { onSearchChange(event.target.value); setPage(0); }}
-              placeholder="搜索报告标题"
-              aria-label="搜索报告标题"
-              className="h-full w-full min-w-0 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
-            />
-            {searchQuery ? (
-              <button type="button" className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground" aria-label="清空搜索" title="清空搜索" onClick={() => onSearchChange('')}>
-                <X className="h-3.5 w-3.5" />
-              </button>
-            ) : null}
-          </div>
-          {hiddenSuperseded > 0 || showSuperseded ? (
-            <Button variant={showSuperseded ? 'secondary' : 'ghost'} size="sm" className="h-7" aria-pressed={showSuperseded} onClick={() => { setShowSuperseded((v) => !v); setPage(0); }} title="同一验收目标多次归档时，默认只显示最新一版">
-              {showSuperseded ? <Check /> : <History />}{showSuperseded ? '已展开被取代版本' : `折叠被取代版本 ${hiddenSuperseded}`}
-            </Button>
-          ) : null}
         </div>
         {pageRows.length === 0 ? (
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">当前筛选下没有报告</div>
