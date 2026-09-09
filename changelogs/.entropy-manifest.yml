@@ -647,3 +647,8 @@ processed:
   - 2026-09-06_entropy-cleanup.md
   - 2026-09-07_daily-report-evidence-figure.md
   - 2026-09-07_mcp-console-signal-encoding.md
+  - 2026-08-29_cdscli-deploy-trigger-failure-reason.md
+  - 2026-09-03_cds-web-entry-hidden-primary-fix.md
+  - 2026-09-07_container-exec-宿主注入与PEM脱敏.md
+  - 2026-09-07_entropy-cleanup.md
+  - 2026-09-07_发布系统验收缺口固化台账.md
