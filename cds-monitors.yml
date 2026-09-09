@@ -1,0 +1,114 @@
+# CDS 监控声明 — 由被监控方（本仓库）声明，CDS 消费
+#
+# 规则 SSOT：.claude/rules/degradation-must-alarm.md
+# 与 cds-compose.yml 并列：那份声明「怎么把我跑起来」，这份声明「怎么盯着我」。
+#
+# 行业依据（不自创协议）：
+#   声明形态 = Prometheus Operator ServiceMonitor（被监控方声明式地说「来抓我」）
+#   响应格式 = IETF draft-inadarei-api-health-check（application/health+json）
+#   去抖语义 = Alertmanager 的 for:
+#   告警取向 = Google SRE 的 symptom-based alerting（对症状告警，不对原因告警）
+#
+# 【当前状态】declared-not-wired
+#   本文件已按协议写好，但 CDS 侧的消费逻辑（health-json 探针 kind、声明导入、
+#   告警外发到 MAP 通知）尚未实现。在它接线之前，这里的每一行都还没有在跑——
+#   不要把本文件的存在当成「已经在监控了」的证据（predicate-and-wiring-discipline
+#   形状 8：把不成立的证据当成证据）。接线完成后把本行改为 wired 并记录接线提交。
+
+x-cds-monitors-version: 1
+x-cds-monitors-status: declared-not-wired
+x-cds-monitors-project: prd-agent
+
+# ── 鉴权：两个方向都必须是永久凭据，签一次用到撤销 ──
+#
+# 用户要求：不要短期失效的，不重复配对。
+x-cds-monitor-auth:
+  # 方向一 本仓库服务 → CDS（提交声明、上报自检结果）
+  #   用 CDS 项目级 Agent Key（cdsp_<slug12>_<suffix>）。
+  #   AgentKey 类型没有 expiresAt 字段，只有显式 DELETE 才写 revokedAt——天生永久。
+  toCds:
+    kind: cds-project-agent-key
+    envKey: CDS_AGENT_KEY
+    lifetime: permanent-until-revoked
+    # 声明**不直接写**监控：CDS 的 /api/uptime/monitors 写接口挂着
+    # denyProjectScopedWrite，项目级 key 一律 403（2026-09-08 安全加固，防止一个
+    # 项目的 key 去改别人的监控、或让它打任意外部地址）。那条边界是对的，不动它。
+    #
+    # 所以走 cds-compose.yml 已有的先例：提交为 pending-import → 管理员审批 → 生效。
+    # 「由被监控方发起声明」与「写权限仍归管理员」两件事在这个模式下不冲突，
+    # 而且心智与 cdscli import 完全一致，不引入第二套流程。
+    flow: declaration-import-then-approve
+    writesMonitorsDirectly: false
+
+  # 方向二 CDS → 本仓库自检端点（探测）
+  #   probeToken 由被监控方在**自己的库里** seed，随声明提交给 CDS，CDS 加密存。
+  #
+  #   硬禁令：不许放进 CDS 项目级 env。
+  #   cross-project-isolation 通道 9（2026-09-01 事故）——项目级 env 是项目范围的
+  #   单份值，同项目所有分支共用，任一分支轮换它，别人的分支下一次部署静默 401。
+  #   判据：一条预览的 probeToken 拿去打同项目另一条预览，必须被拒。
+  fromCds:
+    kind: self-seeded-probe-token
+    storage: monitored-service-own-database
+    lifetime: permanent-until-rotated
+    forbidden: cds-project-level-env
+
+# ── 监控项 ──
+#
+# probe: light  → 一次请求、只读、无副作用，进 6 小时常设监控
+# probe: heavy  → 有写入或需截图，只在 48 小时稳定冒烟里跑，不进常设
+#
+# assert 必须是定量断言（数字或枚举比较）。「看起来正常」这类不可判的话一律不收。
+monitors:
+  - id: llmgw.intent-draft.roundtrip
+    name: "用途码推导是否走的模型（而不是本地关键词降级）"
+    kind: health-json
+    url: "{llmgw_console}/healthz/deep?check=intent-draft"
+    componentId: intent-draft.roundtrip
+    # 直接对「走了降级」这个症状告警，而不是对某个具体根因告警——
+    # 下一个让它降级的原因还没被想到，症状判据照样能抓住。
+    assert: "observedValue == 'model'"
+    probe: light
+    intervalSeconds: 21600      # 6h
+    failuresToAlarm: 2
+    severity: P1
+    notify:
+      source: uptime-alert
+      section: admin
+    rationale: >
+      2026-09-09 事故：serving 在鉴权路径 500，前端退回本地关键词判定，
+      页面完整、码照出，全部验收判绿。降级本身没错，没有铃才是错。
+
+  - id: llmgw.serving.unhandled-exceptions
+    name: "网关 serving 近期未处理异常数"
+    kind: health-json
+    url: "{llmgw_serving}/healthz/deep?check=unhandled-exceptions"
+    componentId: serving.unhandled-exceptions
+    assert: "observedValue == 0"
+    observedUnit: count
+    probe: light
+    intervalSeconds: 21600      # 6h
+    failuresToAlarm: 1          # 未处理异常不去抖：出现一次就是一次
+    severity: P0
+    notify:
+      source: uptime-alert
+      section: admin
+    rationale: >
+      这套东西里最值钱的一条：不需要为每个功能单独写判据，
+      「页面看着好、后台在炸」的同类错误全部一次落网。
+
+  - id: map.api.unhandled-exceptions
+    name: "MAP 后端近期未处理异常数"
+    kind: health-json
+    url: "{map_api}/healthz/deep?check=unhandled-exceptions"
+    componentId: api.unhandled-exceptions
+    assert: "observedValue == 0"
+    observedUnit: count
+    probe: light
+    intervalSeconds: 21600      # 6h
+    failuresToAlarm: 1
+    severity: P0
+    notify:
+      source: uptime-alert
+      section: admin
+    rationale: "与上一条同理，覆盖 MAP 侧。"

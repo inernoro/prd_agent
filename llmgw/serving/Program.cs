@@ -16,6 +16,12 @@ using PrdAgent.Infrastructure.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// 全局 BSON 约定必须在任何 Mongo 读写之前装好：class map 是懒建的，一旦某个类型
+// 已经映射过，之后再注册约定不会追溯回去。这里只装约定、不装 MAP 的类映射
+// （serving 不需要那批实体），核心是 IgnoreExtraElements——serving 与 console-api
+// 共用 llm_gateway 库，写方加字段不能炸掉读方。见 RegisterConventionsOnly 的注释。
+BsonClassMapRegistration.RegisterConventionsOnly();
+
 // ───────────────────────── DI 装配 ─────────────────────────
 // 严格复刻 MAP（PrdAgent.Api/Program.cs）中承载 LlmGateway / ModelResolver 所需的注册，
 // 让本服务通过进程内 DI 直接 HOST 既有实现，再用 HTTP 端点暴露出去。不重写任何网关逻辑。
