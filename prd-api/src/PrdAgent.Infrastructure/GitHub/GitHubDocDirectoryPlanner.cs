@@ -71,8 +71,12 @@ public sealed class GitHubDirectoryScan
 /// </summary>
 public static class GitHubDocDirectoryPlanner
 {
-    /// <summary>默认扫描返回的目录数量上限，防止巨型仓库把响应撑爆。</summary>
-    public const int DefaultMaxDirectories = 600;
+    /// <summary>
+    /// 默认扫描返回的目录数量上限，防止巨型仓库把响应撑爆。
+    /// 取 1500 是量出来的：本仓库自己就有 666 个候选目录，600 那档一进来就是截断态，
+    /// 而截断意味着用户想勾的某个目录可能根本没出现在清单里。
+    /// </summary>
+    public const int DefaultMaxDirectories = 1500;
 
     private static readonly HashSet<string> DocDirectoryNames =
         new(StringComparer.OrdinalIgnoreCase) { "doc", "docs" };

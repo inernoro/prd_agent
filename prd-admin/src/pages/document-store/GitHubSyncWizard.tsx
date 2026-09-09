@@ -14,7 +14,7 @@ import {
 } from '@/services/real/githubConnect';
 import { addGitHubSubscriptionBatch } from '@/services/real/documentStore';
 import {
-  buildDirectoryTree, defaultSelection, toggleSelection, setSelection,
+  buildDirectoryTree, defaultSelection, defaultExpanded, toggleSelection, setSelection,
   selectionSummary, filterDirectories, directoryLabel,
   type DirectoryTreeNode,
 } from './githubDirectorySelection';
@@ -397,6 +397,8 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
   const [scanning, setScanning] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  /** 展开的目录（默认只展开通往已勾选目录的那几条链，几百个目录不全摊开） */
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(['']));
   const [keyword, setKeyword] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
@@ -410,7 +412,9 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
       return;
     }
     setScan(res.data);
-    setSelected(defaultSelection(res.data));
+    const initial = defaultSelection(res.data);
+    setSelected(initial);
+    setExpanded(defaultExpanded(res.data.directories, initial));
   }, [repo.owner, repo.repo, branch, onError]);
 
   useEffect(() => { void runScan(); }, [runScan]);
@@ -426,6 +430,11 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
     [scan, keyword],
   );
   const tree = useMemo(() => buildDirectoryTree(visible), [visible]);
+  // 搜索时把命中结果全展开——否则用户搜到了却看不见（结果藏在折叠的父目录里）
+  const effectiveExpanded = useMemo(
+    () => (keyword.trim() ? new Set(visible.map((d) => d.path)) : expanded),
+    [keyword, visible, expanded],
+  );
   const summary = useMemo(
     () => selectionSummary(scan?.directories ?? [], selected),
     [scan, selected],
@@ -507,7 +516,9 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
         ) : (
           tree.map((node) => (
             <DirectoryRow key={node.path} node={node} depth={0} selected={selected}
-              onToggle={(path) => setSelected((prev) => toggleSelection(prev, path))} />
+              expanded={effectiveExpanded}
+              onToggle={(path) => setSelected((prev) => toggleSelection(prev, path))}
+              onExpand={(path) => setExpanded((prev) => toggleSelection(prev, path))} />
           ))
         )}
       </div>
@@ -530,18 +541,35 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
   );
 }
 
-function DirectoryRow({ node, depth, selected, onToggle }: {
+function DirectoryRow({ node, depth, selected, expanded, onToggle, onExpand }: {
   node: DirectoryTreeNode;
   depth: number;
   selected: ReadonlySet<string>;
+  expanded: ReadonlySet<string>;
   onToggle: (path: string) => void;
+  onExpand: (path: string) => void;
 }) {
   const checked = selected.has(node.path);
+  const isOpen = expanded.has(node.path);
+  const hasChildren = node.children.length > 0;
   return (
     <>
+      <div className="hover-bg-soft w-full flex items-center gap-1 pr-3 transition-colors duration-200"
+        style={{ paddingLeft: 6 + depth * 16 }}>
+        <button
+          onClick={() => hasChildren && onExpand(node.path)}
+          aria-label={hasChildren ? (isOpen ? '折叠' : '展开') : undefined}
+          className="w-4 h-4 flex items-center justify-center shrink-0"
+          style={{ cursor: hasChildren ? 'pointer' : 'default', color: 'var(--text-muted)' }}>
+          {hasChildren && (
+            <ChevronRight size={12} style={{
+              transform: isOpen ? 'rotate(90deg)' : 'none',
+              transition: 'transform 160ms ease',
+            }} />
+          )}
+        </button>
       <button onClick={() => onToggle(node.path)}
-        className="hover-bg-soft w-full flex items-center gap-2 py-1.5 pr-3 text-left cursor-pointer transition-colors duration-200"
-        style={{ paddingLeft: 12 + depth * 16 }}>
+        className="flex-1 min-w-0 flex items-center gap-2 py-1.5 text-left cursor-pointer">
         <span className="w-[14px] h-[14px] rounded-[4px] flex items-center justify-center shrink-0 transition-all duration-200"
           style={{
             background: checked ? `rgba(${ACCENT},0.9)` : 'transparent',
@@ -565,8 +593,10 @@ function DirectoryRow({ node, depth, selected, onToggle }: {
           </span>
         )}
       </button>
-      {node.children.map((child) => (
-        <DirectoryRow key={child.path} node={child} depth={depth + 1} selected={selected} onToggle={onToggle} />
+      </div>
+      {isOpen && node.children.map((child) => (
+        <DirectoryRow key={child.path} node={child} depth={depth + 1} selected={selected}
+          expanded={expanded} onToggle={onToggle} onExpand={onExpand} />
       ))}
     </>
   );

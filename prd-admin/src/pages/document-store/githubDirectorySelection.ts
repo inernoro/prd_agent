@@ -104,6 +104,29 @@ export function filterDirectories(
   return directories.filter((d) => keep.has(d.path));
 }
 
+/**
+ * 初始展开集合：只展开「通往已勾选目录」的那几条路径。
+ *
+ * 一个真实仓库有几百个目录（本仓库 666 个），全部摊平渲染既慢又让人找不到重点。
+ * 默认只把 doc/docs 那几条链展开，其余折叠着，用户想找别的再自己点开或搜。
+ */
+export function defaultExpanded(
+  directories: GitHubDirectoryNode[],
+  selected: ReadonlySet<string>,
+): Set<string> {
+  const byPath = new Map(directories.map((d) => [d.path, d]));
+  const expanded = new Set<string>(['']);
+  for (const dir of directories) {
+    if (!selected.has(dir.path)) continue;
+    let parent = dir.parentPath;
+    while (parent !== null && !expanded.has(parent)) {
+      expanded.add(parent);
+      parent = byPath.get(parent)?.parentPath ?? null;
+    }
+  }
+  return expanded;
+}
+
 /** 目录展示名：根目录显示为「仓库根目录」，其余显示相对路径 */
 export function directoryLabel(dir: Pick<GitHubDirectoryNode, 'path' | 'name'>): string {
   return dir.path === '' ? '仓库根目录' : dir.path;

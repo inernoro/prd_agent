@@ -3,6 +3,7 @@ import type { GitHubDirectoryNode } from '@/services/real/githubConnect';
 import {
   buildDirectoryTree,
   defaultSelection,
+  defaultExpanded,
   toggleSelection,
   setSelection,
   selectionSummary,
@@ -99,6 +100,20 @@ describe('GitHub 同步向导 · 目录勾选', () => {
     expect(filtered).toContain('apps/web');
     expect(filtered).toContain('apps');
     expect(filtered).not.toContain('src');
+  });
+
+  it('默认只展开通往已勾选目录的那几条链', () => {
+    const dirs = [dir(''), dir('apps'), dir('apps/web'), dir('apps/web/docs'), dir('src'), dir('src/deep')];
+    const expanded = defaultExpanded(dirs, new Set(['apps/web/docs']));
+
+    // 通往 docs 的链要展开，才能让用户一眼看到默认勾了什么
+    expect([...expanded].sort()).toEqual(['', 'apps', 'apps/web']);
+    // 与勾选无关的分支保持折叠，几百个目录不会一次全摊开
+    expect(expanded.has('src')).toBe(false);
+  });
+
+  it('一个都没勾时只展开根', () => {
+    expect([...defaultExpanded([dir(''), dir('src')], new Set())]).toEqual(['']);
   });
 
   it('根目录显示成人话', () => {

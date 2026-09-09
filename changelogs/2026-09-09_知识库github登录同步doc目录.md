@@ -4,3 +4,5 @@
 | fix | prd-api | GitHub 目录同步改带用户 token 请求，支持私有仓并把限额从匿名 60/h 提到 5000/h |
 | fix | prd-api | GitHub 子条目去重键从 download_url 改为仓库内路径，避免私有仓临时 token 让同一文件每轮被判成新增+删除 |
 | docs | doc | 新增 design.knowledge-base.github-sync 设计文档，已知边界记入 debt.knowledge-base K-10 |
+| polish | prd-admin | GitHub 同步向导的目录树默认折叠，只展开通往已勾选目录的链路，几百个目录不再一次摊平 |
+| fix | prd-api | 仓库目录扫描上限 600 提到 1500，本仓库 666 个候选目录不再一进来就是截断态 |
