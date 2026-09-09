@@ -922,6 +922,19 @@ export interface UptimeTargetSummary {
   monitorId?: string;
   /** 自定义监控的标签 */
   tags?: string[];
+  /**
+   * 谁把这条监控加进来的（2026-09-09）。
+   *
+   * 监控中心要答得出「被谁追加了什么」：一条没人认领的监控红着，
+   * 没人知道该找谁，最后的结局是整块面板被无视。
+   * boundBranchId 非空表示它的寿命跟着那条分支走——分支没了它也会走。
+   */
+  addedBy?: {
+    by: string;
+    kind: 'human' | 'project-key' | 'global-key';
+    origin: 'manual' | 'agent-api';
+    boundBranchId?: string;
+  };
   /** 自定义监控是否启用（source=custom 时有） */
   enabled?: boolean;
   /**
@@ -1829,9 +1842,24 @@ export class UptimeMonitorService {
   }
 
   /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
-  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled'> {
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy'> {
     const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
-    return { monitorId, tags: monitor?.tags || [], enabled: monitor ? monitor.enabled : true };
+    return {
+      monitorId,
+      tags: monitor?.tags || [],
+      enabled: monitor ? monitor.enabled : true,
+      // 归属跟着定义走，不另存一份：定义改了（比如管理员接管），面板下一轮就跟上。
+      ...(monitor
+        ? {
+            addedBy: {
+              by: monitor.createdBy || '未记名',
+              kind: monitor.createdByKind || 'human',
+              origin: monitor.origin || 'manual',
+              ...(monitor.boundBranchId ? { boundBranchId: monitor.boundBranchId } : {}),
+            },
+          }
+        : {}),
+    };
   }
 
   /** 单 target 时序（已降采样到固定桶数）。 */

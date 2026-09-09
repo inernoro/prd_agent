@@ -1571,6 +1571,25 @@ export interface UptimeCustomMonitor {
   tags?: string[];
   /** false = 手动暂停：不探测、不计故障、已开的故障就地收尾 */
   enabled: boolean;
+  /**
+   * 谁加的属于哪类主体（审计与归属，2026-09-09）。
+   *
+   * createdBy 早就有（人类用户名），但没有它答不出「这条是人加的还是 Agent 加的」。
+   * 监控中心要答得出「谁加的、什么时候加的、从哪加的」——一个没人认领的监控红着，
+   * 没人知道该找谁，最后的结局是被静音。
+   */
+  createdByKind?: 'human' | 'project-key' | 'global-key';
+  /** 从哪加的：manual = 人在面板上加；agent-api = Agent 用项目 Key 自助登记 */
+  origin?: 'manual' | 'agent-api';
+  /**
+   * 绑定的分支。
+   *
+   * Agent 自助登记的监控必然指向某条分支的预览地址，而分支是会消失的——
+   * 分支删了监控还在，就变成一条永远红着的死地址，把真告警淹掉。
+   * 所以登记时由服务端**反查**出它属于哪条分支并钉在这里，
+   * 分支删除时随之清理（state.removeBranch 的级联）。
+   */
+  boundBranchId?: string;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;

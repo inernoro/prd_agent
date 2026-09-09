@@ -318,6 +318,8 @@ export class StateService {
   private releaseLogFlushTimer: NodeJS.Timeout | null = null;
 
   private readonly projectRemovedListeners: Array<(summary: ProjectRemovalSummary) => void> = [];
+  /** 分支删除时被级联清掉的自定义监控 id —— 运行态台账靠它同步抹除。 */
+  private readonly orphanedMonitorListeners: Array<(monitorIds: string[]) => void> = [];
 
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
@@ -1240,7 +1242,21 @@ export class StateService {
     return conflicts;
   }
 
-  removeBranch(id: string): void {
+  /**
+   * 删分支，并级联清掉**绑在这条分支上**的自定义监控。
+   *
+   * 返回被清掉的监控 id，调用方据此把运行态台账也抹掉（forgetTargets）。
+   * 返回值是新增的，原来返回 void——忽略它的调用方行为不变。
+   *
+   * 为什么必须级联（2026-09-09）：项目级 Key 自助登记的监控指向的是某条分支的
+   * 预览地址，而分支是会消失的。分支删了监控还在，就变成一条**永远红着的死地址**：
+   * 它不是故障，却长期占着故障位，把真告警淹掉，最后所有人学会无视这块面板。
+   * 项目删除早就有同款级联（同一个理由），分支这一层此前是漏的。
+   *
+   * 只清 boundBranchId 命中的：管理员手动加的监控没有这个绑定，不受影响——
+   * 那是人明确要盯的东西，不该因为某条分支没了就替他删掉。
+   */
+  removeBranch(id: string): string[] {
     if (!this.state.branches[id]) {
       throw new Error(`分支 "${id}" 不存在`);
     }
@@ -1248,6 +1264,21 @@ export class StateService {
     if (this.state.defaultBranch === id) {
       this.state.defaultBranch = null;
     }
+    const orphaned = Object.values(this.state.uptimeMonitors || {})
+      .filter((monitor) => monitor.boundBranchId === id)
+      .map((monitor) => monitor.id);
+    for (const mid of orphaned) delete this.state.uptimeMonitors?.[mid];
+    if (orphaned.length > 0) {
+      for (const listener of this.orphanedMonitorListeners) {
+        // 各自 try/catch：一个观察者抛了不该让删分支这件事失败。
+        try {
+          listener(orphaned);
+        } catch {
+          // 观察者自己的问题，不影响删除结果
+        }
+      }
+    }
+    return orphaned;
   }
 
   setDefaultBranch(id: string | null): void {
@@ -1894,6 +1925,18 @@ export class StateService {
    */
   onProjectRemoved(listener: (summary: ProjectRemovalSummary) => void): void {
     this.projectRemovedListeners.push(listener);
+  }
+
+  /**
+   * 分支删除导致监控被级联清理时回调一次。
+   *
+   * 为什么用观察者而不是让调用方处理返回值：removeBranch 有 5 个调用点，散在
+   * routes/branches、executor/routes、index 里，其中多数拿不到 uptimeMonitor 实例。
+   * 逐个接必然漏一个，而漏掉的那个不会报错——只会让被删分支的监控继续被探测
+   * （形状 2：链路只建一半）。一处触发、全局生效才接得住。
+   */
+  onUptimeMonitorsOrphaned(listener: (monitorIds: string[]) => void): void {
+    this.orphanedMonitorListeners.push(listener);
   }
 
   removeProject(id: string): ProjectRemovalSummary {

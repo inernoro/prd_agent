@@ -22,7 +22,7 @@ import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
-import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
+import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv, resolveBranchPublishedEntrypoints } from './services/preview-entrypoints.js';
 import { parseCdsRefs, resolveCdsRef, cdsRefResolverDepsFromState } from './services/cross-project-refs.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
 import {
@@ -5882,8 +5882,43 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   stateService.onProjectRemoved((summary) => {
     uptimeMonitor.forgetTargets(summary.uptimeMonitors.map((id) => customProbeTargetId({ id })));
   });
+  // 分支删除的同款级联：Agent 自助登记的监控绑在某条分支上，分支没了监控也得走，
+  // 否则留下一条永远红着的死地址，把真告警淹掉。
+  stateService.onUptimeMonitorsOrphaned((monitorIds) => {
+    uptimeMonitor.forgetTargets(monitorIds.map((id) => customProbeTargetId({ id })));
+    console.log(`  [uptime] 分支删除，级联清理 ${monitorIds.length} 条绑定监控`);
+  });
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
+    // 项目级自助登记的地址台账。
+    //
+    // 走 resolveBranchPublishedEntrypoints —— 与容器注入 CDS_SERVICE_URLS、
+    // /api/branches 下发 previewUrls 是同一份组装。自己按「slug + 子域」拼一份
+    // 会立刻变成第二个判定源：命名子域规则一改，合法地址被判非法（或反过来），
+    // 而两边都「看着对」。
+    //
+    // 它同时是两件事的依据：地址必须属于本项目（堵 SSRF），以及这条监控绑哪条分支
+    // （分支删除时随之清理，不留死地址）。
+    listProjectPreviewHosts: (projectId: string) => {
+      const previewHost = config.previewDomain || config.rootDomains?.[0];
+      if (!previewHost) return [];
+      const entrypointDeps = branchEntrypointDepsFromState(stateService, previewHost);
+      const hosts: Array<{ branchId: string; host: string }> = [];
+      for (const branch of stateService.getAllBranches()) {
+        if (branch.projectId !== projectId) continue;
+        const published = resolveBranchPublishedEntrypoints(branch, entrypointDeps);
+        for (const url of [published.previewUrl, ...Object.values(published.serviceUrls)]) {
+          if (!url) continue;
+          try {
+            hosts.push({ branchId: branch.id, host: new URL(url).host.toLowerCase() });
+          } catch {
+            // 拼不出合法 URL 的入口直接跳过：宁可少列一个，也不要把一个畸形 host
+            // 放进白名单当成「本项目的地址」。
+          }
+        }
+      }
+      return hosts;
+    },
     store: {
       listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
       getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),

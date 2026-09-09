@@ -384,6 +384,85 @@ export function evaluateHealthJson(
     : { ok: false, observed, err: `${field}=${observed}，期望 ${op === 'eq' ? '等于' : '不等于'} ${expected}` };
 }
 
+/** 某个项目名下一条分支的预览主机名，用于自助登记时的地址反查。 */
+export interface ProjectPreviewHost {
+  branchId: string;
+  host: string;
+}
+
+export type ProjectScopedWriteVerdict =
+  | { ok: true; boundBranchId: string }
+  | { ok: false; error: string; field?: string };
+
+/**
+ * 项目级 Key 自助登记监控的准入判定（2026-09-09）。
+ *
+ * 背景：自定义监控的写接口原本对项目级 Key 一律 403。那条边界的理由写得很具体
+ * （见 routes/uptime.ts 的 denyProjectScopedWrite），是两个实打实的风险，不是
+ * 「项目 Key 不可信」这种笼统判断：
+ *
+ *   风险 A  借 CDS 主机扫回环、内网、别的项目的内部服务（SSRF）；
+ *   风险 B  关键字探测把响应内容当 oracle 透出来。
+ *
+ * 所以这里不是把边界拆掉，而是开一条**同时堵死这两个风险**的窄路：
+ *
+ *   规则 1  只能写自己项目名下的监控          → 堵「改别人的」
+ *   规则 2  kind 只能是 health-json           → 堵风险 B：判据是结构化比较，
+ *           不像 keyword 那样能拿任意响应体当探针回显
+ *   规则 3  url 必须落在**该项目自己的**分支预览主机上 → 堵风险 A：
+ *           地址由服务端从项目的分支台账反查，调用方报什么地址都没用
+ *
+ * 规则 3 顺带解决了另一个问题：反查出来的 branchId 会被钉进 boundBranchId，
+ * 于是这条监控的寿命跟着那条分支走——临时分支删掉时监控一起消失，
+ * 不会留下一条永远红着的死地址（这是用户最担心的那种失效）。
+ */
+export function evaluateProjectScopedWrite(
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'projectId'>,
+  scope: string,
+  previewHosts: ProjectPreviewHost[],
+): ProjectScopedWriteVerdict {
+  if (!scope) return { ok: false, error: '缺少项目作用域' };
+  if (monitor.projectId && monitor.projectId !== scope) {
+    return {
+      ok: false,
+      error: '项目级 Key 只能登记自己项目名下的监控',
+      field: 'projectId',
+    };
+  }
+  if (monitor.kind !== 'health-json') {
+    return {
+      ok: false,
+      error: '项目级 Key 只能登记 health-json 监控：它的判据是结构化比较，'
+        + '不会像关键字探测那样把任意响应体透出来。其它探测方式请管理员添加',
+      field: 'kind',
+    };
+  }
+  let host = '';
+  try {
+    host = new URL(monitor.url || '').host.toLowerCase();
+  } catch {
+    return { ok: false, error: '地址必须是合法的 http:// 或 https:// 网址', field: 'url' };
+  }
+  if (previewHosts.length === 0) {
+    return {
+      ok: false,
+      error: '这个项目名下还没有已部署的分支，没有可登记的地址',
+      field: 'url',
+    };
+  }
+  const hit = previewHosts.find((x) => x.host.toLowerCase() === host);
+  if (!hit) {
+    return {
+      ok: false,
+      // 报出可选项，省得调用方靠猜——但只报本项目的，不泄漏别的项目有哪些分支。
+      error: `地址 ${host} 不属于本项目任何一条分支的预览域名。`
+        + `可登记的是：${previewHosts.map((x) => x.host).join('、')}`,
+      field: 'url',
+    };
+  }
+  return { ok: true, boundBranchId: hit.branchId };
+}
+
 export function describeMonitorProbe(monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'host' | 'port'>): string {
   if (monitor.kind === 'tcp') return `TCP 连接 ${monitor.host}:${monitor.port}`;
   const method = monitor.method || 'GET';

@@ -377,6 +377,25 @@ export function TargetDetail({
               ) : null}
               <dt className="text-muted-foreground">节奏</dt>
               <dd>每 {target.intervalSeconds} 秒一次，单次超时 {target.timeoutMs} ms</dd>
+              {target.addedBy ? (
+                <>
+                  <dt className="text-muted-foreground">添加者</dt>
+                  <dd>
+                    <span className="font-mono">{target.addedBy.by}</span>
+                    <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">
+                      {target.addedBy.origin === 'agent-api' ? 'Agent 自助登记' : '人工添加'}
+                    </span>
+                    {target.addedBy.boundBranchId ? (
+                      <span
+                        className="ml-2 text-[0.6875rem] text-muted-foreground"
+                        title="这条监控绑在该分支上，分支删除时会一起清理，不会留下打不通的死地址"
+                      >
+                        绑定分支 {target.addedBy.boundBranchId}
+                      </span>
+                    ) : null}
+                  </dd>
+                </>
+              ) : null}
               <dt className="text-muted-foreground">标识</dt>
               <dd className="break-all font-mono text-muted-foreground">{target.id}</dd>
             </dl>

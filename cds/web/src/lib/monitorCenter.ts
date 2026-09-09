@@ -61,6 +61,13 @@ export interface UptimeTargetSummary {
   intervalSeconds: number;
   timeoutMs: number;
   monitorId?: string;
+  /** 谁把这条监控加进来的（服务端算好下发，前端不推断）。 */
+  addedBy?: {
+    by: string;
+    kind: 'human' | 'project-key' | 'global-key';
+    origin: 'manual' | 'agent-api';
+    boundBranchId?: string;
+  };
   tags?: string[];
   enabled?: boolean;
   /** false = 按容器状态判定（不是观测），标「未实测」，不算正常 */
