@@ -92,8 +92,16 @@ monitors:
   - id: llmgw.serving.unhandled-exceptions
     name: "网关 serving 近期未处理异常数"
     kind: health-json
-    # 真实端点，免鉴权（CDS 探针刻意不带密钥），只回计数与窗口、不含异常文本
-    url: "{llmgw_serving}/gw/v1/healthz/deep"
+    # 占位符是 llmgw **子域**，不是「serving 的独立域名」——serving 容器在拓扑里
+    # 是内网服务，没有自己的对外入口，经 llmgw 子域路由过去（cdscli topology 的事实）。
+    # 写成 {llmgw_serving} 会让下一个人去找一个不存在的域名。
+    # 端点免鉴权（CDS 探针刻意不带密钥），只回计数与窗口、不含异常文本。
+    #
+    # 实测（2026-09-09，sha 860fdce1）：
+    #   curl {llmgw}/gw/v1/healthz/deep → 200 application/health+json，observedValue=0
+    #   用本仓库的 probeCustomMonitor 打它：判据成立判 up；把期望值改成 1 立刻判 down
+    #   并回报「observedValue=0，期望 等于 1」——证明它真在读值，不是恒绿。
+    url: "{llmgw}/gw/v1/healthz/deep"
     componentId: serving.unhandled-exceptions
     expect:
       field: observedValue
