@@ -372,9 +372,12 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
     );
   }
   const meta = (c: OverviewCluster): { label: string; Icon: LucideIcon; color: string; rail: string } => {
-    if (c.verdict === 'fail') return { label: `未通过 ×${c.count}`, Icon: CircleX, color: 'hsl(var(--bad))', rail: 'hsl(var(--bad))' };
+    // ×N 必须数「被命名的那一类」，不能数簇的总份数（2026-09-09 方向稿复核时发现）：
+    // 「昨日全部改动」是 1 份未通过 + 2 份有条件，旧写法渲染成「未通过 ×3」——
+    // 把有条件的两份也说成了未通过。这页存在的意义就是不让口径这样糊，自己更不能犯。
+    if (c.verdict === 'fail') return { label: `未通过 ×${c.failCount}`, Icon: CircleX, color: 'hsl(var(--bad))', rail: 'hsl(var(--bad))' };
     if (c.verdict === 'conflict') return { label: '口径冲突', Icon: CircleAlert, color: 'hsl(var(--info))', rail: 'hsl(var(--info))' };
-    return { label: `有条件 ×${c.count}`, Icon: TriangleAlert, color: 'hsl(var(--warn))', rail: 'hsl(var(--warn))' };
+    return { label: `有条件 ×${c.conditionalCount}`, Icon: TriangleAlert, color: 'hsl(var(--warn))', rail: 'hsl(var(--warn))' };
   };
   const nextStep = (c: OverviewCluster): string => {
     if (c.verdict === 'conflict') return '同一对象同日结论互相矛盾，先统一口径再复测；统计只认最新版。';
@@ -402,6 +405,9 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
               <tr key={c.id} className="border-t border-[hsl(var(--hairline))] align-top" style={{ boxShadow: `inset 3px 0 0 ${m.rail}` }}>
                 <td className="w-[128px] px-3 py-3">
                   <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12.5px] font-semibold" style={{ color: m.color }}><m.Icon className="h-3.5 w-3.5" />{m.label}</span>
+                  {c.verdict === 'fail' && c.conditionalCount > 0 ? (
+                    <div className="mt-0.5 whitespace-nowrap text-[11.5px] text-warn">另有条件 ×{c.conditionalCount}</div>
+                  ) : null}
                 </td>
                 <td className="px-3 py-3">
                   <button type="button" className="text-left font-semibold text-foreground hover:underline" onClick={() => onOpenReport(c.latestReportId)} title="打开最新一份">{c.target}</button>
