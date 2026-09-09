@@ -76,6 +76,7 @@ const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m =
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
 const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
+const BookshelfPage = lazy(() => import('@/pages/bookshelf/BookshelfPage'));
 const DataSyncPage = lazy(() => import('@/pages/data-sync/DataSyncPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
@@ -390,6 +391,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'infra',
       appKey: 'learning-center',
       tags: ['教程', '新手引导', '学习进度', '帮助'],
+    },
+  },
+  {
+    path: '/bookshelf',
+    permission: 'access',
+    element: shellGuarded('access', <BookshelfPage />),
+    nav: {
+      label: '公共藏书阁',
+      shortLabel: '藏书阁',
+      description: '从新手到高手的心路历程书目，七卷 + 结业考，开发与产品各一条线',
+      icon: 'Library',
+      section: 'infra',
+      appKey: 'bookshelf',
+      tags: ['书单', '成长', '读书', '考试', '新人', '规范'],
     },
   },
   {
