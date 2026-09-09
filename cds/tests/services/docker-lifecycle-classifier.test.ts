@@ -296,16 +296,20 @@ describe('infra 停止意图的接线', () => {
   const read = (rel: string) =>
     fs.readFileSync(path.resolve(__dirname, '../../src', rel), 'utf8');
 
-  it('停止 / 删除 / 远端停止三条路径都显式传 cds-infra-stop', () => {
-    const branches = read('routes/branches.ts');
-    const executor = read('executor/routes.ts');
-    const stopCalls = [
-      ...branches.matchAll(/stopInfraService\(([^)]*)\)/g),
-      ...executor.matchAll(/stopInfraService\(([^)]*)\)/g),
-    ].map((m) => m[1]);
+  // 扫全部调用点，不是只扫想得起来的那两个文件：上一版漏掉 project-infra-resync.ts，
+  // 于是它的删除路径带着 recreate 意图溜过守卫（Codex P2，规则里的「守卫自己没接上线」）。
+  // 总数也断言死，新增任何一处调用都会红，逼人当场表态是 stop 还是 recreate。
+  const CALLER_FILES = ['routes/branches.ts', 'executor/routes.ts', 'routes/project-infra-resync.ts'];
 
-    expect(stopCalls.filter((args) => args.includes("'cds-infra-stop'")).length).toBe(3);
-    // 重启路径必须留在默认的 recreate 上，否则「等新容器」这句会从该说的地方消失。
-    expect(stopCalls.some((args) => !args.includes("'cds-infra-stop'"))).toBe(true);
+  it('每个 stopInfraService 调用点都对停止还是重建表过态', () => {
+    const stopCalls = CALLER_FILES.flatMap((rel) =>
+      [...read(rel).matchAll(/stopInfraService\(([^)]*)\)/g)].map((m) => m[1]),
+    );
+    const explicitStops = stopCalls.filter((args) => args.includes("'cds-infra-stop'"));
+
+    // 4 条停了不重建：删除服务 / 停止服务 / 远端停止 / resync 的 Phase 1 删除。
+    expect(explicitStops.length).toBe(4);
+    // 2 条确实会重建，留在默认值上：分支面板的重启 / resync 的 Phase 2 更新。
+    expect(stopCalls.length - explicitStops.length).toBe(2);
   });
 });
