@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -347,6 +348,8 @@ public sealed class DesignArtifactLifecycleServiceTests
     public async Task CreateEndpoint_ShouldReturnDurableRunWhenRedisAndImmediateQueueAreUnavailable()
     {
         await using var fixture = await LifecycleMongoFixture.CreateAsync();
+        var policyConfiguration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["DesignArtifactRuntime:Model"] = "server-model", ["DesignArtifactRuntime:RequestPolicy:Temperature"] = "0.42" }).Build();
         var events = new Mock<IRunEventStore>();
         events.Setup(store => store.SetRunAsync(
                 It.IsAny<string>(),
@@ -400,7 +403,7 @@ public sealed class DesignArtifactLifecycleServiceTests
             providers.Object,
             knowledge.Object,
             new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
-            Mock.Of<IDesignArtifactCancellationCoordinator>());
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), policyConfiguration);
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -415,6 +418,8 @@ public sealed class DesignArtifactLifecycleServiceTests
             SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
             Runtime = DesignArtifactRuntimes.MapGateway,
             Instruction = "生成产品说明网页",
+            AdditionalProperties = new Dictionary<string, JsonElement>
+            { ["llmRequestPolicy"] = JsonSerializer.SerializeToElement(new { model = "client-model", temperature = 1.9 }) },
             KnowledgeReferences =
             [
                 new DesignKnowledgeReferenceRequest
@@ -430,6 +435,11 @@ public sealed class DesignArtifactLifecycleServiceTests
         var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
         Assert.Equal(RunStatuses.Queued, persisted.Status);
         Assert.Null(persisted.RecoveryEnqueuedAt);
+        policyConfiguration["DesignArtifactRuntime:Model"] = "later-model";
+        var reloaded = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == persisted.Id).SingleAsync();
+        Assert.Equal("server-model", reloaded.LlmRequestPolicy!.Model);
+        Assert.Equal(0.42, reloaded.LlmRequestPolicy.Temperature);
+        Assert.Equal("server-model", DesignArtifactModelSelection.ForRun(reloaded, policyConfiguration).ForMapClient());
     }
 
     [Fact]
@@ -1757,7 +1767,7 @@ public sealed class DesignArtifactLifecycleServiceTests
             Mock.Of<IDesignArtifactProviderCatalog>(),
             Mock.Of<IDesignKnowledgeSnapshotResolver>(),
             new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
-            cancellation ?? Mock.Of<IDesignArtifactCancellationCoordinator>());
+            cancellation ?? Mock.Of<IDesignArtifactCancellationCoordinator>(), new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

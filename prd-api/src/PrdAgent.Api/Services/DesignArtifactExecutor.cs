@@ -30,6 +30,76 @@ public interface IDesignArtifactExecutor
 /// <summary>MAP 持有的设计选模策略；执行器只消费同一配置，不接受远端自报的选择。</summary>
 internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string? Model)
 {
+    internal DesignArtifactLlmRequestPolicy? Policy { get; init; }
+
+    internal static DesignArtifactLlmRequestPolicy CaptureForNewRun(IConfiguration configuration)
+    {
+        var section = configuration.GetSection("DesignArtifactRuntime:RequestPolicy");
+        var allowed = new[] { "Temperature", "TopP", "ReasoningMode", "ReasoningEffort", "OutputTokenMode", "RequireDeclaredParameters", "PinnedPlatformId", "PinnedModelId" };
+        if (section.GetChildren().Any(item => !allowed.Contains(item.Key, StringComparer.OrdinalIgnoreCase)))
+            throw InvalidPolicy();
+        static string? Text(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        static double? Number(string? value)
+        {
+            if (value == null) return null;
+            if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var parsed)
+                || !double.IsFinite(parsed)) throw InvalidPolicy();
+            return parsed;
+        }
+        var model = Resolve(configuration);
+        var strictText = section["RequireDeclaredParameters"];
+        if (strictText != null && !bool.TryParse(strictText, out _)) throw InvalidPolicy();
+        var snapshot = new DesignArtifactLlmRequestPolicy
+        {
+            Model = model.Model, ModelPoolId = model.ModelPoolId,
+            PinnedPlatformId = Text(section["PinnedPlatformId"]), PinnedModelId = Text(section["PinnedModelId"]),
+            Temperature = Number(section["Temperature"]), TopP = Number(section["TopP"]),
+            ReasoningMode = Text(section["ReasoningMode"]), ReasoningEffort = Text(section["ReasoningEffort"]),
+            OutputTokenMode = Text(section["OutputTokenMode"]),
+            RequireDeclaredParameters = strictText != null && bool.Parse(strictText),
+        };
+        Validate(snapshot);
+        return snapshot;
+    }
+
+    internal static DesignArtifactModelSelection ForRun(DesignArtifactRun run, IConfiguration configuration)
+    {
+        if (run.LlmRequestPolicy is not { } snapshot) return Resolve(configuration); // legacy：只读、不回填
+        Validate(snapshot);
+        return new(snapshot.ModelPoolId, snapshot.Model) { Policy = snapshot };
+    }
+
+    private static InvalidOperationException InvalidPolicy() =>
+        new("当前设计模型参数配置不可用，请联系管理员调整后重新创建任务");
+
+    private static void Validate(DesignArtifactLlmRequestPolicy p)
+    {
+        if (p.Version != 1
+            || (p.Temperature is { } t && (!double.IsFinite(t) || t < 0 || t > 2))
+            || (p.TopP is { } top && (!double.IsFinite(top) || top < 0 || top > 1))
+            || ((p.PinnedPlatformId == null) != (p.PinnedModelId == null))
+            || (p.ModelPoolId != null && p.PinnedPlatformId != null)
+            || p.ReasoningMode is not (null or "omit" or "effort")
+            || p.OutputTokenMode is not (null or "omit")
+            || (p.ReasoningMode != "effort" && p.ReasoningEffort != null)
+            || (p.ReasoningMode == "effort" && p.ReasoningEffort is not ("none" or "minimal" or "low" or "medium" or "high" or "xhigh"))
+            || (p.RequireDeclaredParameters && (p.Temperature == null || p.TopP == null || p.ReasoningMode == null)))
+            throw InvalidPolicy();
+    }
+
+    internal void ApplyRequestParameters(JsonObject body)
+    {
+        if (Policy is not { } p) return;
+        if (p.OutputTokenMode == "omit")
+            foreach (var field in new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }) body.Remove(field);
+        if (p.Temperature is { } temperature) body["temperature"] = temperature;
+        if (p.TopP is { } topP) { body.Remove("topP"); body["top_p"] = topP; }
+        if (p.ReasoningMode != null)
+        {
+            foreach (var alias in new[] { "reasoning", "reasoning_effort", "reasoningEffort", "thinking", "include_reasoning" }) body.Remove(alias);
+            if (p.ReasoningMode == "effort") body["reasoning_effort"] = p.ReasoningEffort;
+        }
+    }
     internal static DesignArtifactModelSelection Resolve(IConfiguration configuration)
     {
         static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -53,6 +123,24 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         body.Remove("modelPoolId");
         body.Remove("model_policy");
         body.Remove("modelPolicy");
+        // MAP 冻结快照存在时，远端也不能用另一套 pin/provider 路由覆盖同一身份。
+        if (Policy != null)
+        {
+            foreach (var alias in new[] { "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId" }) body.Remove(alias);
+            if (body["provider"] is JsonObject provider)
+                foreach (var alias in new[] { "model_policy", "modelPolicy", "model_pool_id", "modelPoolId", "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId" }) provider.Remove(alias);
+            if (Policy.PinnedPlatformId != null)
+            {
+                body["pinned_platform_id"] = Policy.PinnedPlatformId;
+                body["pinned_model_id"] = Policy.PinnedModelId;
+            }
+            ApplyRequestParameters(body);
+            if (Policy.RequireDeclaredParameters)
+            {
+                if (body["provider"] is not JsonObject) body["provider"] = new JsonObject();
+                body["provider"]!["require_parameters"] = true;
+            }
+        }
         if (ModelPoolId != null)
         {
             body["model_pool_id"] = ModelPoolId;
@@ -93,7 +181,8 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
         string? currentHtml,
         [EnumeratorCancellation] CancellationToken ct)
     {
-        var expectedModel = DesignArtifactModelSelection.Resolve(_configuration).ForMapClient();
+        var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
+        var expectedModel = selection.ForMapClient();
         var knowledgeChars = run.KnowledgeReferences.Sum(x => x.Content.Length);
         var caller = run.Operation == DesignArtifactOperations.Edit
             ? AppCallerRegistry.Admin.WebHosting.EditHtml
@@ -123,9 +212,11 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
             AppCallerCode = caller,
             ModelType = ModelTypes.Chat,
             ExpectedModel = expectedModel,
+            PinnedPlatformId = selection.Policy?.PinnedPlatformId,
+            PinnedModelId = selection.Policy?.PinnedModelId,
             Stream = true,
             EnablePromptCache = true,
-            IncludeThinking = true,
+            IncludeThinking = selection.Policy?.ReasoningMode != "omit",
             TimeoutSeconds = 120,
             RequestBody = new JsonObject
             {
@@ -147,8 +238,10 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
                 QuestionText = userPrompt,
                 SystemPromptChars = systemPrompt.Length,
                 SystemPromptText = systemPrompt,
+                ParameterPolicy = selection.Policy?.RequireDeclaredParameters == true ? "strict-require" : null,
             },
         };
+        selection.ApplyRequestParameters(request.RequestBody!);
         await foreach (var chunk in _gateway.StreamAsync(request, ct))
         {
             if (chunk.Type is GatewayChunkType.Text or GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))

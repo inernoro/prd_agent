@@ -10,9 +10,11 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using Moq;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -39,6 +41,138 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// </summary>
 public class GatewayKeyGateContractTests
 {
+    [Theory]
+    [InlineData("map", null)]
+    [InlineData("map", "omit")]
+    [InlineData("open-design", null)]
+    [InlineData("open-design", "omit")]
+    public async Task FrozenOmit_ActualGatewayDoesNotRequireThinkingCapability(string runtime, string? outputTokenMode)
+    {
+        var upstream = new FrozenOmitHandler();
+        var resolver = new Moq.Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<string?>(),
+                Moq.It.IsAny<string?>(), Moq.It.IsAny<string?>(), Moq.It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ModelResolutionResult
+            {
+                Success = true, ActualModel = "gpt-4.1", ActualPlatformId = "test-platform",
+                ActualPlatformName = "Synthetic", PlatformType = "openai", Protocol = "openai",
+                ApiUrl = "https://upstream.invalid", ApiKey = "synthetic-key", ResolutionType = "PinnedModel",
+                SupportsThinking = false,
+                ParameterCapabilities = new Dictionary<string, bool>
+                { ["temperature"] = true, ["top_p"] = true, ["n"] = true },
+            });
+        var accessor = new PrdAgent.Core.Services.LLMRequestContextAccessor();
+        var gateway = new PrdAgent.Infrastructure.LlmGateway.LlmGateway(resolver.Object,
+            new FrozenOmitClientFactory(new HttpClient(upstream)),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>.Instance);
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var run = new DesignArtifactRun
+            {
+                Id = "synthetic-omit", UserId = "synthetic-user", Runtime = runtime, Instruction = "合成网页",
+                LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+                {
+                    Model = "gpt-4.1", PinnedPlatformId = "test-platform", PinnedModelId = "gpt-4.1",
+                    Temperature = 0.45, TopP = 1, ReasoningMode = "omit", RequireDeclaredParameters = true,
+                },
+            };
+            var configuration = new Microsoft.Extensions.Configuration.ConfigurationBuilder()
+                .AddInMemoryCollection(new Dictionary<string, string?>
+                { ["LlmGateway:ServeBaseUrl"] = "http://localhost", ["LlmGwServe:ApiKey"] = GatewayKey }).Build();
+            if (outputTokenMode != null)
+            {
+                var policy = JsonSerializer.SerializeToNode(run.LlmRequestPolicy)!.AsObject();
+                policy["OutputTokenMode"] = outputTokenMode;
+                run.LlmRequestPolicy = policy.Deserialize<DesignArtifactLlmRequestPolicy>();
+            }
+            if (runtime == "map")
+            {
+                var executor = new PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor(gateway, accessor, configuration);
+                var chunks = new List<PrdAgent.Api.Services.DesignArtifactExecutorChunk>();
+                await foreach (var chunk in executor.ExecuteAsync(run, null, CancellationToken.None)) chunks.Add(chunk);
+                Assert.Contains(chunks, x => x.Type == "delta" && x.Content == "<html>synthetic</html>");
+            }
+            else
+            {
+                var broker = new Moq.Mock<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker>();
+                broker.Setup(x => x.ReserveModelCallAsync(run.Id, "ticket", Moq.It.IsAny<CancellationToken>())).ReturnsAsync(run);
+                var proxy = new PrdAgent.Api.Controllers.Api.DesignArtifactRuntimeController(broker.Object,
+                    new FrozenOmitClientFactory(app.GetTestClient()), configuration,
+                    Microsoft.Extensions.Logging.Abstractions.NullLogger<PrdAgent.Api.Controllers.Api.DesignArtifactRuntimeController>.Instance)
+                { ControllerContext = new Microsoft.AspNetCore.Mvc.ControllerContext { HttpContext = new DefaultHttpContext() } };
+                var payload = System.Text.Encoding.UTF8.GetBytes("""{"model":"runtime","messages":[{"role":"user","content":"synthetic"}],"stream":true,"temperature":1.9,"reasoning_effort":"high","max_tokens":16384}""");
+                proxy.Request.Body = new MemoryStream(payload); proxy.Request.ContentLength = payload.Length;
+                proxy.Request.Headers.Authorization = "Bearer ticket";
+                proxy.Request.Headers["X-Gateway-Include-Thinking"] = "true"; // remote input cannot override frozen omit
+                proxy.Response.Body = new MemoryStream();
+                await proxy.ProxyChatCompletions(run.Id, CancellationToken.None);
+                Assert.Equal(200, proxy.Response.StatusCode);
+                Assert.Contains("synthetic", System.Text.Encoding.UTF8.GetString(((MemoryStream)proxy.Response.Body).ToArray()));
+            }
+            Assert.Equal(1, upstream.Count);
+            Assert.Equal(0.45, upstream.Body!["temperature"]!.GetValue<double>());
+            Assert.Equal(1, upstream.Body["top_p"]!.GetValue<double>());
+            Assert.Equal("gpt-4.1", upstream.Body["model"]!.GetValue<string>());
+            Assert.False(upstream.Body.ContainsKey("reasoning_effort"));
+            Assert.False(upstream.HasControlHeader);
+            foreach (var field in new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" })
+            {
+                if (outputTokenMode == "omit" || runtime == "map") Assert.False(upstream.Body.ContainsKey(field));
+                else if (field == "max_tokens") Assert.Equal(16384, upstream.Body[field]!.GetValue<int>());
+                else Assert.False(upstream.Body.ContainsKey(field));
+            }
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Theory]
+    [InlineData(null, 200, true)]
+    [InlineData("true", 200, true)]
+    [InlineData("false", 200, false)]
+    [InlineData("invalid", 400, true)]
+    [InlineData("0", 400, true)]
+    [InlineData("false,true", 400, true)]
+    public async Task IncludeThinkingHeader_IsExplicitAndFinite(string? header, int status, bool expected)
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
+            { Content = JsonContent.Create(new { model = "synthetic", messages = new[] { new { role = "user", content = "hi" } } }) };
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+            if (header != null) request.Headers.TryAddWithoutValidation("X-Gateway-Include-Thinking", header);
+            var response = await app.GetTestClient().SendAsync(request);
+            Assert.Equal(status, (int)response.StatusCode);
+            if (status == 200) Assert.Equal(expected, gateway.LastRequest!.IncludeThinking);
+            else { Assert.Null(gateway.LastRequest); Assert.Contains("invalid_include_thinking", await response.Content.ReadAsStringAsync()); }
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    private sealed class FrozenOmitClientFactory(HttpClient client) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => client;
+    }
+
+    private sealed class FrozenOmitHandler : HttpMessageHandler
+    {
+        public int Count { get; private set; }
+        public JsonObject? Body { get; private set; }
+        public bool HasControlHeader { get; private set; }
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            Count++;
+            Body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            HasControlHeader = request.Headers.Contains("X-Gateway-Include-Thinking");
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent("data: {\"choices\":[{\"delta\":{\"content\":\"<html>synthetic</html>\"}}]}\n\ndata: [DONE]\n\n", System.Text.Encoding.UTF8, "text/event-stream") };
+        }
+    }
+
     private const string GatewayKey = "correct-gateway-key";
 
     [Fact]
@@ -1400,6 +1534,11 @@ public class GatewayKeyGateContractTests
                     model = "chat-picked",
                     messages = new[] { new { role = "user", content = "hi" } },
                     parallel_tool_calls = true,
+                    n = 1,
+                    max_completion_tokens = 32768,
+                    temperature = 0.45,
+                    top_p = 1.0,
+                    reasoning_effort = "low",
                     provider = new { require_parameters = true },
                 }),
             };
@@ -1415,6 +1554,11 @@ public class GatewayKeyGateContractTests
             droppedParameters.ShouldNotBeNull();
             droppedParameters.ShouldNotContain("parallel_tool_calls");
             gateway.LastRequest.RequestBody!.ContainsKey("parallel_tool_calls").ShouldBeTrue();
+            gateway.LastRequest.RequestBody["n"]!.GetValue<int>().ShouldBe(1);
+            gateway.LastRequest.RequestBody["max_completion_tokens"]!.GetValue<int>().ShouldBe(32768);
+            gateway.LastRequest.RequestBody["temperature"]!.GetValue<double>().ShouldBe(0.45);
+            gateway.LastRequest.RequestBody["top_p"]!.GetValue<double>().ShouldBe(1.0);
+            gateway.LastRequest.RequestBody["reasoning_effort"]!.GetValue<string>().ShouldBe("low");
         }
         finally
         {

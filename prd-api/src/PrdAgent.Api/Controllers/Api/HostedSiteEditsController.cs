@@ -32,6 +32,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
     private readonly IWebPageDesignArtifactLifecycleAdapter _publicLifecycle;
     private readonly IDesignArtifactCancellationCoordinator _cancellation;
+    private readonly IConfiguration _configuration;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -43,7 +44,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         IDesignArtifactProviderCatalog providers,
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
         IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
-        IDesignArtifactCancellationCoordinator cancellation)
+        IDesignArtifactCancellationCoordinator cancellation,
+        IConfiguration configuration)
     {
         _sites = sites;
         _revisions = revisions;
@@ -55,6 +57,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         _knowledgeSnapshots = knowledgeSnapshots;
         _publicLifecycle = publicLifecycle;
         _cancellation = cancellation;
+        _configuration = configuration;
     }
 
     [HttpGet("runtime-capabilities")]
@@ -147,6 +150,12 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
 
         var runId = Guid.NewGuid().ToString("N");
+        DesignArtifactLlmRequestPolicy requestPolicy;
+        try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail("DESIGN_MODEL_POLICY_INVALID", ex.Message));
+        }
         var run = new DesignArtifactRun
         {
             Id = runId,
@@ -156,6 +165,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             Operation = DesignArtifactOperations.Edit,
             SourceSurface = DesignArtifactSourceSurfaces.WebHosting,
             Runtime = runtime,
+            LlmRequestPolicy = requestPolicy,
             RuntimeConnectionId = capability.ConnectionId,
             Instruction = instruction,
             Title = string.IsNullOrWhiteSpace(editable.Site.Title)

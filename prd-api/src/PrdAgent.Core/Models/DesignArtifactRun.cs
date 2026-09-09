@@ -1,5 +1,22 @@
 namespace PrdAgent.Core.Models;
 
+/// <summary>Run 创建时的非秘密请求快照；可空项未声明时沿用执行器既有行为。</summary>
+public sealed class DesignArtifactLlmRequestPolicy
+{
+    public int Version { get; set; } = 1;
+    public string? Model { get; set; }
+    public string? ModelPoolId { get; set; }
+    public string? PinnedPlatformId { get; set; }
+    public string? PinnedModelId { get; set; }
+    public double? Temperature { get; set; }
+    public double? TopP { get; set; }
+    public string? ReasoningMode { get; set; }
+    public string? ReasoningEffort { get; set; }
+    /// <summary>仅显式 omit 省略执行器输出 Token 上限；null 保留既有请求，不与 strict 隐式联动。</summary>
+    public string? OutputTokenMode { get; set; }
+    public bool RequireDeclaredParameters { get; set; }
+}
+
 /// <summary>
 /// 跨网页托管、知识库与 HTML PPT 的统一设计任务。
 /// v2 权威生命周期事件与状态保存在同一 Mongo 文档；Redis 仅服务历史流程和兼容投影。
@@ -20,6 +37,10 @@ public class DesignArtifactRun
     public string SourceSurface { get; set; } = DesignArtifactSourceSurfaces.WebHosting;
 
     public string Runtime { get; set; } = DesignArtifactRuntimes.MapGateway;
+
+    /// <summary>缺失仅代表旧任务，执行/读取不得回填或伪造历史冻结值。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public DesignArtifactLlmRequestPolicy? LlmRequestPolicy { get; set; }
 
     /// <summary>公共生命周期合同版本。存量 Run 缺失时只按只读 v1 兼容，不宣称 manifest 完整。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]

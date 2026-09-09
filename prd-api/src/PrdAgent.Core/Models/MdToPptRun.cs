@@ -91,6 +91,13 @@ public class MdToPptRun
 
     public DateTime? OutlineConfirmedAt { get; set; }
 
+    /// <summary>0 为历史流程；1 为服务端冻结来源块覆盖合同，不自动迁移历史 Run。</summary>
+    public int SourcePlanVersion { get; set; }
+    public int SourcePlanPageCount { get; set; }
+    public string? SourcePlanHash { get; set; }
+    /// <summary>子生成 Run 自有的确认页绑定；执行中不重新读取可变父大纲。</summary>
+    public string? SourcePlanJson { get; set; }
+
     public string? Error { get; set; }
 
     public string? Model { get; set; }

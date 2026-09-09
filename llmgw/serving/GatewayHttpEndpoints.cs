@@ -500,6 +500,19 @@ public static class GatewayHttpEndpoints
             var appCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.PageAgent.Generate);
             var userId = ResolveHeader(http, "X-Gateway-User-Id");
 
+            // 已经通过 Key 鉴权的内部输出合同；缺省保留旧行为，不推断模型内部推理。
+            var includeThinking = true;
+            if (http.Request.Headers.TryGetValue("X-Gateway-Include-Thinking", out var thinkingHeader))
+            {
+                if (thinkingHeader.Count != 1 || thinkingHeader[0] is not ("true" or "false"))
+                {
+                    await WriteCompatErrorAsync(http, "思考输出选项无效，请检查请求设置",
+                        "invalid_request_error", "invalid_include_thinking", 400);
+                    return;
+                }
+                includeThinking = thinkingHeader[0] == "true";
+            }
+
             var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
             if (body == null)
             {
@@ -522,7 +535,7 @@ public static class GatewayHttpEndpoints
             StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
-                "messages", "max_tokens", "temperature", "top_p", "stream",
+                "messages", "max_tokens", "max_completion_tokens", "n", "temperature", "top_p", "reasoning_effort", "stream",
                 "tools", "tool_choice", "response_format", "metadata", "reasoning", "logprobs", "top_logprobs", "parallel_tool_calls",
                 "provider", "model_policy", "modelPolicy", "model_pool_id", "modelPoolId",
                 "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId");
@@ -558,7 +571,7 @@ public static class GatewayHttpEndpoints
 
             var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
             if (await TryWriteGovernanceErrorAsync(http, governance)) return;
-            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream, includeThinking: includeThinking), CancellationToken.None);
             if (!promptPolicy.Success)
             {
                 await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);

@@ -50,6 +50,8 @@ export interface OutlineSlide {
   bullets: string[];
   /** 页级设计意图（版式/视觉装置/排字/强调），随大纲定稿喂给并行页面生成器 */
   design?: string;
+  /** 随页面移动的服务端冻结来源标识；合法性与完整覆盖由服务端校验。 */
+  sourceBlockIds?: string[];
 }
 
 /** 澄清问卷（opendesign 式：大纲阶段消歧，右侧填写后回传 AI） */
@@ -125,6 +127,7 @@ export interface OutlineStreamPageEvent {
   title: string;
   bullets: string[];
   design?: string;
+  sourceBlockIds?: string[];
 }
 
 export interface MdToPptOutlineStreamOptions extends MdToPptOutlineRequest {
@@ -170,7 +173,7 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
         signal: abortController.signal,
       });
       if (!response.ok) {
-        options.onError?.(`HTTP ${response.status}`);
+        await handleMdToPptRejectedResponse(response, options.onError);
         return;
       }
       const reader = response.body?.getReader();
@@ -205,11 +208,19 @@ export function streamMdToPptOutline(options: MdToPptOutlineStreamOptions): () =
                   clarify: data.clarify as ClarifyQuestion[] | undefined,
                 });
               } else if (currentEvent === 'page') {
+                const sourceBlockIds = data.sourceBlockIds;
+                if (sourceBlockIds !== undefined &&
+                    (!Array.isArray(sourceBlockIds) || !sourceBlockIds.every((id) => typeof id === 'string'))) {
+                  resolved = true;
+                  options.onError?.('大纲来源信息不完整，请重新生成大纲。');
+                  break outer;
+                }
                 options.onPage?.({
                   index: (data.index as number) ?? 0,
                   title: (data.title as string) ?? '',
                   bullets: Array.isArray(data.bullets) ? (data.bullets as string[]) : [],
                   design: (data.design as string) ?? undefined,
+                  sourceBlockIds,
                 });
               } else if (currentEvent === 'done') {
                 resolved = true;

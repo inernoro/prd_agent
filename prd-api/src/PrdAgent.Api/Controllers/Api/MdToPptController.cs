@@ -397,10 +397,13 @@ public class MdToPptController : ControllerBase
         var userId = this.GetRequiredUserId();
 
         IReadOnlyList<DesignKnowledgeSnapshot> knowledgeReferences;
+        MdToPptSourcePlan? sourcePlan = null;
         try
         {
             knowledgeReferences = await ResolveKnowledgeReferencesAsync(userId, req.KnowledgeReferences, HttpContext.RequestAborted);
+            if (knowledgeReferences.Count > 0) sourcePlan = MdToPptSourcePlan.Create(knowledgeReferences);
         }
+        catch (MdToPptSourcePlanException ex) { return UnprocessableEntity(new { error = ex.Message, code = ex.Code }); }
         catch (DesignKnowledgeSnapshotException ex)
         {
             return StatusCode(KnowledgeReferenceStatusCode(ex), new { error = ex.Message, code = ex.Code });
@@ -419,7 +422,8 @@ public class MdToPptController : ControllerBase
                 ? DesignArtifactSourceSurfaces.KnowledgeBase
                 : DesignArtifactSourceSurfaces.HtmlPpt,
             knowledgeReferences.ToList(),
-            userSuppliedContentHash: ComputeTextHash(req.Content, req.AttachmentText, req.ChatHistory));
+            userSuppliedContentHash: ComputeTextHash(req.Content, req.AttachmentText, req.ChatHistory),
+            sourcePlanPageCount: sourcePlan != null ? ResolveTargetPages(req) : 0);
 
         var targetPages = ResolveTargetPages(req);
         var systemPrompt =
@@ -446,6 +450,7 @@ public class MdToPptController : ControllerBase
             knowledgeReferences);
 
         var requestId = Guid.NewGuid().ToString("N");
+        if (sourcePlan != null) userContent += sourcePlan.OutlinePrompt();
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: requestId,
             GroupId: null,
@@ -508,6 +513,11 @@ public class MdToPptController : ControllerBase
 
         try
         {
+            if (sourcePlan != null)
+            {
+                var rawPages = JsonNode.Parse(raw)?["outline"]?.Deserialize<List<MdToPptOutlinePageDto>>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                sourcePlan.Bind(rawPages, targetPages);
+            }
             var normalized = NormalizeOutlinePayload(raw, targetPages);
             normalized["runId"] = outlineRun.Id;
             outlineRun.Status = "done";
@@ -530,6 +540,11 @@ public class MdToPptController : ControllerBase
                 _logger.LogWarning(ex, "[MdToPpt-Outline] public lifecycle completion pending runId={RunId}", outlineRun.Id);
             }
             return Ok(normalized);
+        }
+        catch (MdToPptSourcePlanException ex)
+        {
+            await PersistRunErrorAsync(outlineRun, ex.Message);
+            return UnprocessableEntity(new { error = ex.Message, code = ex.Code, runId = outlineRun.Id });
         }
         catch (JsonException)
         {
@@ -555,9 +570,17 @@ public class MdToPptController : ControllerBase
         var userId = this.GetRequiredUserId();
 
         IReadOnlyList<DesignKnowledgeSnapshot> knowledgeReferences;
+        MdToPptSourcePlan? sourcePlan = null;
         try
         {
             knowledgeReferences = await ResolveKnowledgeReferencesAsync(userId, req.KnowledgeReferences, HttpContext.RequestAborted);
+            if (knowledgeReferences.Count > 0) sourcePlan = MdToPptSourcePlan.Create(knowledgeReferences);
+        }
+        catch (MdToPptSourcePlanException ex)
+        {
+            Response.StatusCode = StatusCodes.Status422UnprocessableEntity;
+            await Response.WriteAsJsonAsync(new { error = ex.Message, code = ex.Code }, HttpContext.RequestAborted);
+            return;
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
@@ -587,7 +610,8 @@ public class MdToPptController : ControllerBase
                 ? DesignArtifactSourceSurfaces.KnowledgeBase
                 : DesignArtifactSourceSurfaces.HtmlPpt,
             knowledgeReferences.ToList(),
-            userSuppliedContentHash: ComputeTextHash(req.Content, req.AttachmentText, req.ChatHistory));
+            userSuppliedContentHash: ComputeTextHash(req.Content, req.AttachmentText, req.ChatHistory),
+            sourcePlanPageCount: sourcePlan != null ? ResolveTargetPages(req) : 0);
         await WriteEventAsync("run", new
         {
             runId = run.Id,
@@ -624,6 +648,7 @@ public class MdToPptController : ControllerBase
             knowledgeReferences);
 
         var requestId = Guid.NewGuid().ToString("N");
+        if (sourcePlan != null) userContent += sourcePlan.OutlinePrompt();
         using var _ = _llmRequestContext.BeginScope(new LlmRequestContext(
             RequestId: requestId,
             GroupId: null,
@@ -671,6 +696,8 @@ public class MdToPptController : ControllerBase
                 }
                 else if (type == "page")
                 {
+                    if (sourcePlan != null && emittedPages >= targetPages)
+                        throw new MdToPptSourcePlanException("source_plan_page_count", "大纲超过目标页数，请重新生成完整大纲后确认");
                     if (emittedPages >= targetPages) return;
                     emittedPages++;
                     if (JsonNode.Parse(root.GetRawText()) is JsonObject pg)
@@ -697,12 +724,14 @@ public class MdToPptController : ControllerBase
                 foreach (var p in pageArr)
                 {
                     if (p is not JsonObject po) continue;
-                    outline.Add(new JsonObject
+                    var persistedPage = new JsonObject
                     {
                         ["title"] = po["title"]?.GetValue<string>() ?? "",
                         ["bullets"] = po["bullets"]?.DeepClone() ?? new JsonArray(),
                         ["design"] = po["design"]?.GetValue<string>(),
-                    });
+                    };
+                    if (po["sourceBlockIds"] != null) persistedPage["sourceBlockIds"] = po["sourceBlockIds"]!.DeepClone();
+                    outline.Add(persistedPage);
                 }
                 var payload = new JsonObject
                 {
@@ -711,6 +740,7 @@ public class MdToPptController : ControllerBase
                     ["clarify"] = metaObj?["clarify"]?.DeepClone(),
                     ["outline"] = outline,
                 };
+                sourcePlan?.Bind(outline.Deserialize<List<MdToPptOutlinePageDto>>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true }), targetPages);
                 run.Status = "done";
                 run.OutlineJson = payload.ToJsonString();
                 run.OutlineHash = ComputeOutlineHash(
@@ -724,6 +754,8 @@ public class MdToPptController : ControllerBase
                     cancellationToken: CancellationToken.None);
                 await _designArtifactAdapter.CompletePlanAsync(run, CancellationToken.None);
             }
+            catch (MdToPptSourcePlanException) { throw; }
+            catch (Exception) when (sourcePlan != null) { throw; }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "[MdToPpt-OutlineStream] persist outline failed runId={RunId}", run.Id);
@@ -783,6 +815,8 @@ public class MdToPptController : ControllerBase
                     }
                     if (root.TryGetProperty("outline", out var olEl) && olEl.ValueKind == JsonValueKind.Array)
                     {
+                        if (sourcePlan != null && olEl.GetArrayLength() != targetPages)
+                            throw new MdToPptSourcePlanException("source_plan_page_count", "大纲页数不完整，请重新生成完整大纲后确认");
                         var idx = 0;
                         foreach (var pg in olEl.EnumerateArray().Take(targetPages))
                         {
@@ -795,6 +829,8 @@ public class MdToPptController : ControllerBase
                                 ["bullets"] = pg.TryGetProperty("bullets", out var bu) ? JsonNode.Parse(bu.GetRawText()) : new JsonArray(),
                                 ["design"] = pg.TryGetProperty("design", out var de) ? de.GetString() : null,
                             };
+                            if (pg.TryGetProperty("sourceBlockIds", out var ids) && ids.ValueKind != JsonValueKind.Null)
+                                page["sourceBlockIds"] = JsonNode.Parse(ids.GetRawText());
                             pageArr.Add(page.DeepClone());
                             await WriteEventAsync("page", page);
                             emittedPages++;
@@ -815,6 +851,11 @@ public class MdToPptController : ControllerBase
             }
             await PersistOutlineAsync();
             await WriteEventAsync("done", new { pages = emittedPages, runId = run.Id });
+        }
+        catch (MdToPptSourcePlanException ex)
+        {
+            await PersistRunErrorAsync(run, ex.Message);
+            await WriteEventAsync("error", new { message = ex.Message, code = ex.Code });
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
@@ -1447,6 +1488,19 @@ public class MdToPptController : ControllerBase
         if (string.IsNullOrWhiteSpace(req.Content) || req.OutlinePages is not { Count: > 0 })
             return BadRequest(new { error = "确认内容和大纲不能为空", code = "outline_confirmation_invalid" });
 
+        var outlineRun = await _db.MdToPptRuns.Find(item => item.Id == runId.Trim() && item.UserId == userId
+            && item.Op == "outline" && item.Status == "done").FirstOrDefaultAsync(HttpContext.RequestAborted);
+        if (outlineRun == null)
+            return Conflict(new { error = "大纲来源任务不存在或尚未完成，请重新生成大纲", code = "outline_run_not_ready" });
+        if (outlineRun.KnowledgeReferences.Count > 0 && outlineRun.SourcePlanVersion == 0)
+            return UnprocessableEntity(new { error = "此历史大纲尚未绑定完整知识来源，请重新生成大纲后确认；原演示稿仍可查看", code = "source_plan_required" });
+        string? sourcePlanHash = null;
+        if (outlineRun.SourcePlanVersion > 0)
+        {
+            try { sourcePlanHash = ComputeSourcePlanHash(outlineRun.KnowledgeReferences, req.OutlinePages, outlineRun.SourcePlanPageCount); }
+            catch (MdToPptSourcePlanException ex) { return UnprocessableEntity(new { error = ex.Message, code = ex.Code }); }
+        }
+
         var normalizedJson = BuildCanonicalOutlineJson(req.OutlinePages, req.Summary);
         var outlineHash = ComputeTextHash(normalizedJson);
         var contentHash = ComputeTextHash(req.Content);
@@ -1460,6 +1514,8 @@ public class MdToPptController : ControllerBase
                 .Set(item => item.ConfirmedOutlineJson, normalizedJson)
                 .Set(item => item.ConfirmedOutlineHash, outlineHash)
                 .Set(item => item.ConfirmedContentHash, contentHash)
+                .Set(item => item.SourcePlanJson, sourcePlanHash != null ? normalizedJson : null)
+                .Set(item => item.SourcePlanHash, sourcePlanHash)
                 .Set(item => item.OutlineConfirmedAt, confirmedAt)
                 .Set(item => item.UpdatedAt, confirmedAt),
             cancellationToken: HttpContext.RequestAborted);
@@ -1537,7 +1593,7 @@ public class MdToPptController : ControllerBase
                 return;
             }
         }
-        else if (knowledgeReferences.Count > 0 && req.OutlinePages is { Count: > 0 })
+        else if (knowledgeReferences.Count > 0)
         {
             Response.StatusCode = StatusCodes.Status400BadRequest;
             await Response.WriteAsJsonAsync(new
@@ -1546,6 +1602,27 @@ public class MdToPptController : ControllerBase
                 code = "outline_run_required",
             }, HttpContext.RequestAborted);
             return;
+        }
+
+        string? sourcePlanJson = null;
+        string? sourcePlanHash = null;
+        if (knowledgeReferences.Count > 0)
+        {
+            try
+            {
+                if (parentOutlineRun?.SourcePlanVersion != MdToPptSourcePlan.Version || !string.IsNullOrWhiteSpace(req.TemplateId))
+                    throw new MdToPptSourcePlanException("source_plan_required", "此知识大纲尚未建立完整来源绑定，或所选自定义模板不支持来源槽；请使用官方主题重新生成并确认大纲");
+                sourcePlanHash = ComputeSourcePlanHash(knowledgeReferences, req.OutlinePages, parentOutlineRun.SourcePlanPageCount);
+                sourcePlanJson = BuildCanonicalOutlineJson(req.OutlinePages, req.Summary);
+                if (sourcePlanHash != parentOutlineRun.SourcePlanHash || sourcePlanJson != parentOutlineRun.SourcePlanJson)
+                    throw new MdToPptSourcePlanException("source_plan_binding_mismatch", "知识页绑定已变化，请重新确认大纲后生成");
+            }
+            catch (MdToPptSourcePlanException ex)
+            {
+                Response.StatusCode = StatusCodes.Status422UnprocessableEntity;
+                await Response.WriteAsJsonAsync(new { error = ex.Message, code = ex.Code }, HttpContext.RequestAborted);
+                return;
+            }
         }
 
         var authoritativeContent = knowledgeReferences.Count == 0
@@ -1569,7 +1646,10 @@ public class MdToPptController : ControllerBase
             knowledgeReferences.ToList(),
             parentOutlineRunId: parentOutlineRun?.Id,
             parentPlanContentHash: parentOutlineRun?.OutlineHash,
-            userSuppliedContentHash: ComputeTextHash(userSuppliedContent));
+            userSuppliedContentHash: ComputeTextHash(userSuppliedContent),
+            sourcePlanPageCount: sourcePlanJson != null ? parentOutlineRun!.SourcePlanPageCount : 0,
+            sourcePlanJson: sourcePlanJson,
+            sourcePlanHash: sourcePlanHash);
         await WriteEventAsync("run", new { runId = run.Id });
 
         // 并行逐页编排（用户 2026-06-11 架构提案）：大纲定稿 → 壳子确定（设计系统）→
@@ -2047,7 +2127,10 @@ public class MdToPptController : ControllerBase
         string? parentOutlineRunId = null,
         string? parentPlanContentHash = null,
         string? userSuppliedContentHash = null,
-        string? runId = null)
+        string? runId = null,
+        int sourcePlanPageCount = 0,
+        string? sourcePlanJson = null,
+        string? sourcePlanHash = null)
     {
         var run = new MdToPptRun
         {
@@ -2076,6 +2159,10 @@ public class MdToPptController : ControllerBase
                 ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
                 : DesignArtifactInputAuthorities.UserSupplied,
             UserSuppliedContentHash = userSuppliedContentHash,
+            SourcePlanVersion = sourcePlanPageCount > 0 ? MdToPptSourcePlan.Version : 0,
+            SourcePlanPageCount = sourcePlanPageCount,
+            SourcePlanJson = sourcePlanJson,
+            SourcePlanHash = sourcePlanHash,
         };
         await _db.MdToPptRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
         await _designArtifactAdapter.BeginAsync(run, CancellationToken.None);
@@ -2108,6 +2195,11 @@ public class MdToPptController : ControllerBase
         try
         {
             html = PreparePublishedHtml(NormalizePresentationDocument(html));
+            if (!ValidateSourcePlanDocument(run, html))
+            {
+                await PersistRunErrorAsync(run, "演示稿来源内容不完整，未保存；请恢复完整大纲后重新生成");
+                return false;
+            }
             if (MdToPptAnchors.HasUnresolvedRuntimeReference(html))
             {
                 _logger.LogError("[MdToPpt] trusted presentation runtime unavailable runId={Id}", run.Id);
@@ -2148,6 +2240,38 @@ public class MdToPptController : ControllerBase
 
     internal static string ComputeHtmlHash(string html)
         => System.Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(html ?? string.Empty))).ToLowerInvariant();
+
+    internal static string ComputeSourcePlanHash(IReadOnlyList<DesignKnowledgeSnapshot> sources,
+        IReadOnlyList<MdToPptOutlinePageDto>? pages, int pageCount)
+    {
+        if (sources.Count == 0) throw new MdToPptSourcePlanException("source_plan_empty", "冻结知识来源为空，请重新选择知识并生成大纲");
+        var plan = MdToPptSourcePlan.Create(sources).Bind(pages, pageCount);
+        return MdToPptSourcePlan.Hash(string.Join("\n", plan.Select(x => x.Hash)));
+    }
+
+    internal static IReadOnlyList<MdToPptSourcePlan.PagePlan> RestoreSourcePlan(MdToPptRun run)
+    {
+        if (run.SourcePlanVersion != MdToPptSourcePlan.Version || string.IsNullOrWhiteSpace(run.SourcePlanJson))
+            throw new MdToPptSourcePlanException("source_plan_missing", "知识页计划缺失，请重新确认完整大纲后生成");
+        var pages = JsonNode.Parse(run.SourcePlanJson)?["outline"]?.Deserialize<List<MdToPptOutlinePageDto>>(
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        if (ComputeSourcePlanHash(run.KnowledgeReferences, pages, run.SourcePlanPageCount) != run.SourcePlanHash)
+            throw new MdToPptSourcePlanException("source_plan_binding_mismatch", "知识页计划与冻结来源不一致，请重新生成大纲");
+        return MdToPptSourcePlan.Create(run.KnowledgeReferences).Bind(pages, run.SourcePlanPageCount);
+    }
+
+    internal static bool ValidateSourcePlanDocument(MdToPptRun run, string html)
+    {
+        if (run.SourcePlanVersion == 0) return true;
+        try
+        {
+            var pages = RestoreSourcePlan(run);
+            var sections = FindBalancedClassBlocks(html, "slide");
+            return sections.Count == pages.Count && sections.Select((part, i) =>
+                MdToPptSourcePlan.HasCompleteMaterializedContent(html.Substring(part.Start, part.Length), pages[i])).All(x => x);
+        }
+        catch (Exception ex) when (ex is MdToPptSourcePlanException or JsonException) { return false; }
+    }
 
     internal static string BuildNormalizedRunId(string sourceRunId, string normalizedHash) =>
         $"normalize-{ComputeHtmlHash($"{sourceRunId.Trim()}\n{normalizedHash.Trim().ToLowerInvariant()}")[..32]}";
@@ -2332,13 +2456,16 @@ public class MdToPptController : ControllerBase
         var payload = new
         {
             summary = summary?.Trim() ?? string.Empty,
-            outline = (pages ?? Array.Empty<MdToPptOutlinePageDto>()).Select(page => new
+            outline = (pages ?? Array.Empty<MdToPptOutlinePageDto>()).Select(page =>
             {
-                title = page.Title?.Trim() ?? string.Empty,
-                bullets = (page.Bullets ?? new List<string>())
-                    .Select(item => item?.Trim() ?? string.Empty)
-                    .ToArray(),
-                design = page.Design?.Trim() ?? string.Empty,
+                var item = new JsonObject
+                {
+                    ["title"] = page.Title?.Trim() ?? string.Empty,
+                    ["bullets"] = JsonSerializer.SerializeToNode((page.Bullets ?? new List<string>()).Select(value => value?.Trim() ?? string.Empty)),
+                    ["design"] = page.Design?.Trim() ?? string.Empty,
+                };
+                if (page.SourceBlockIds != null) item["sourceBlockIds"] = JsonSerializer.SerializeToNode(page.SourceBlockIds);
+                return item;
             }).ToArray(),
         };
         return JsonSerializer.Serialize(payload);
@@ -2533,10 +2660,14 @@ public class MdToPptController : ControllerBase
             "- 如需要讲稿或创作说明，只能放进隐藏的 .notes 或 aside.notes，禁止把 presenter-only 文案显示在 slide 上\n";
     }
 
-    internal static string BuildAnchoredPageUserPrompt(MdToPptConvertRequest req, int index, int total)
+    internal static string BuildAnchoredPageUserPrompt(MdToPptConvertRequest req, int index, int total,
+        MdToPptSourcePlan.PagePlan? sourcePage = null)
     {
         var pages = req.OutlinePages!;
         var page = pages[index];
+        if (sourcePage != null)
+            return $"本页是第 {index + 1}/{total} 页。以下仅为设计方向，不是事实授权：\n" +
+                JsonSerializer.Serialize(new { page.Title, page.Design, req.Summary }) + MdToPptSourcePlan.PagePrompt(sourcePage);
         var bullets = (page.Bullets ?? new List<string>()).Where(b => !string.IsNullOrWhiteSpace(b)).ToList();
         var sb = new StringBuilder();
         sb.Append("整份 PPT 主题：").Append(req.Summary ?? "（通用）").Append('\n');
@@ -3182,6 +3313,7 @@ public class MdToPptController : ControllerBase
         None,
         UnsupportedNumeric,
         UnsupportedSemantic,
+        SourceContentIncomplete,
     }
 
     internal sealed record UnsupportedVisibleClaimValidation(
@@ -3197,6 +3329,23 @@ public class MdToPptController : ControllerBase
     }
 
     internal const string AnchoredQualityRepairFeedbackHeader = "## 首轮质量校验反馈";
+
+    internal static string MaterializeSourcePage(string generated, MdToPptSourcePlan.PagePlan sourcePage,
+        int index, int total, out UnsupportedVisibleClaimValidation validation)
+    {
+        if (!MdToPptSourcePlan.Materialize(generated, sourcePage, out var materialized, out var peripheral))
+        {
+            validation = new UnsupportedVisibleClaimValidation(UnsupportedVisibleClaimKind.SourceContentIncomplete);
+            return string.Empty;
+        }
+        // 仅用户已确认的展示标题独立允许；它不能替代来源槽。其余大纲/指令/data属性不增加事实授权。
+        var grounded = new MdToPptOutlinePageDto { Title = sourcePage.DisplayTitle,
+            Bullets = sourcePage.Blocks.SelectMany(x => x.Labels).Distinct().ToList() };
+        validation = ValidateUnsupportedVisibleClaims(peripheral, grounded, null,
+            string.Join("\n", sourcePage.Blocks.Select(x => x.Markdown)), index, total);
+        return validation.Rejected || !MdToPptSourcePlan.HasCompleteMaterializedContent(materialized, sourcePage)
+            ? string.Empty : materialized;
+    }
 
     /// <summary>
     /// 锚点只提供视觉结构；可见业务文字必须由本页标题、要点或源内容的完整事实片段组成。
@@ -3369,6 +3518,8 @@ public class MdToPptController : ControllerBase
 
         var feedback = validation.Kind switch
         {
+            UnsupportedVisibleClaimKind.SourceContentIncomplete =>
+                "校验原因：source_content_incomplete。请在本页正常阅读区域恢复本页计划中的全部空来源槽，ID逐字复制且每块一次；不要删除、改写原文或限制条件，不要添加隐藏属性。服务端将原位填入冻结内容。",
             UnsupportedVisibleClaimKind.UnsupportedNumeric when
                 validation.EvidenceOrdinal is > 0 &&
                 IsSafeNormalizedNumericFact(validation.NormalizedToken) =>
@@ -4230,6 +4381,23 @@ public class MdToPptController : ControllerBase
     private async Task RunPagesGenerationAsync(string userId, MdToPptConvertRequest req, MdToPptRun run)
     {
         var startedAt = DateTime.UtcNow;
+        IReadOnlyList<MdToPptSourcePlan.PagePlan>? sourcePages = null;
+        if (run.SourcePlanVersion > 0)
+        {
+            try
+            {
+                sourcePages = RestoreSourcePlan(run);
+                req.OutlinePages = JsonNode.Parse(run.SourcePlanJson!)!["outline"]!.Deserialize<List<MdToPptOutlinePageDto>>(
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch (Exception ex) when (ex is MdToPptSourcePlanException or JsonException)
+            {
+                const string message = "知识页计划无法恢复，请重新确认完整大纲后生成";
+                await PersistRunErrorAsync(run, message);
+                await WriteEventAsync("error", new { message, code = "source_plan_invalid" });
+                return;
+            }
+        }
         var pages = req.OutlinePages!;
         var total = pages.Count;
         var sseLock = new SemaphoreSlim(1, 1);
@@ -4356,12 +4524,17 @@ public class MdToPptController : ControllerBase
                     {
                         layout = MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design);
                         sys = BuildAnchoredPageSystemPrompt(anchor, layout, i, total);
-                        usr = BuildAnchoredPageUserPrompt(req, i, total);
+                        usr = BuildAnchoredPageUserPrompt(req, i, total, sourcePages?[i]);
                     }
                     else
                     {
                         sys = BuildPageSystemPrompt(effectiveTheme, i, total);
                         usr = BuildPageUserPrompt(req, i, total);
+                    }
+                    if (sourcePages != null)
+                    {
+                        usr = BuildAnchoredPageUserPrompt(req, i, total, sourcePages[i]);
+                        sys += "\n本次采用服务端事实槽：优先遵守用户消息的来源槽协议。范本只约束主题和外围布局；来源正文由服务端原位填充，完整表格/段落可以自适应增加高度并滚动，不受范本占位字数限制。不得用缩写或删除限制来适配范本。";
                     }
                     await EmitAsync("diag", new
                     {
@@ -4371,7 +4544,7 @@ public class MdToPptController : ControllerBase
                         title = pages[i].Title,
                         elapsedMs = (int)(DateTime.UtcNow - startedAt).TotalMilliseconds
                     });
-                    if (consoleDashboardMode)
+                    if (consoleDashboardMode && sourcePages == null)
                     {
                         var dashboardSection = ConsoleDashboardFallbackSlide(layout, pages[i], i, total);
                         sections[i] = dashboardSection;
@@ -4386,17 +4559,19 @@ public class MdToPptController : ControllerBase
                         i == 0 ? presession : null, run.KnowledgeReferences);
                     var unsupportedClaims = UnsupportedVisibleClaimValidation.Accepted;
                     var section = NormalizeGeneratedSlideFragment(pageResult.Text, anchor != null);
-                    if (anchor != null && layout != null && !string.IsNullOrEmpty(section))
+                    if (sourcePages != null && !string.IsNullOrEmpty(section))
+                        section = MaterializeSourcePage(section, sourcePages[i], i, total, out unsupportedClaims);
+                    if (sourcePages == null && anchor != null && layout != null && !string.IsNullOrEmpty(section))
                         section = RewriteAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content);
                     if (anchor != null && !string.IsNullOrEmpty(section))
                         section = NormalizeSlidePageIdentity(section, i, total);
-                    if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
+                    if (sourcePages == null && anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
                         ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
                     {
                         _logger.LogWarning("[MdToPpt-Pages] page {Idx} retained anchor sample text, retrying", i);
                         section = string.Empty;
                     }
-                    if (anchor != null && !string.IsNullOrEmpty(section))
+                    if (sourcePages == null && anchor != null && !string.IsNullOrEmpty(section))
                     {
                         unsupportedClaims = ValidateUnsupportedVisibleClaims(
                             section, pages[i], req.Summary, req.Content, i, total);
@@ -4432,17 +4607,19 @@ public class MdToPptController : ControllerBase
                             userId, connection, profile, sys, retryUserPrompt, $"PPT 第{i + 1}页R", run.Id,
                             null, run.KnowledgeReferences);
                         section = NormalizeGeneratedSlideFragment(retryResult.Text, anchor != null);
-                        if (anchor != null && layout != null && !string.IsNullOrEmpty(section))
+                        if (sourcePages != null && !string.IsNullOrEmpty(section))
+                            section = MaterializeSourcePage(section, sourcePages[i], i, total, out _);
+                        if (sourcePages == null && anchor != null && layout != null && !string.IsNullOrEmpty(section))
                             section = RewriteAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content);
                         if (anchor != null && !string.IsNullOrEmpty(section))
                             section = NormalizeSlidePageIdentity(section, i, total);
-                        if (anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
+                        if (sourcePages == null && anchor != null && layout != null && !string.IsNullOrEmpty(section) &&
                             ContainsAnchorSampleResidue(section, layout, pages[i], req.Summary, req.Content))
                         {
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} retained anchor sample text after retry, using fallback", i);
                             section = string.Empty;
                         }
-                        if (anchor != null && !string.IsNullOrEmpty(section) &&
+                        if (sourcePages == null && anchor != null && !string.IsNullOrEmpty(section) &&
                             ContainsUnsupportedVisibleClaims(section, pages[i], req.Summary, req.Content, i, total))
                         {
                             _logger.LogWarning("[MdToPpt-Pages] page {Idx} contains unsupported visible claims after retry, using fallback", i);
@@ -4461,7 +4638,9 @@ public class MdToPptController : ControllerBase
                         if (string.IsNullOrEmpty(section))
                         {
                             fallbackFlags[i] = true;
-                            section = consoleDashboardMode
+                            section = sourcePages != null
+                                ? MdToPptSourcePlan.Fallback(sourcePages[i], i, total, layout)
+                                : consoleDashboardMode
                                 ? ConsoleDashboardFallbackSlide(layout, pages[i], i, total)
                                 : anchor != null && layout != null
                                 ? AnchoredFallbackSlide(layout, pages[i], i, total)
@@ -4485,7 +4664,10 @@ public class MdToPptController : ControllerBase
                       // 单页全链路兜底：任何异常都不许杀整本
                       _logger.LogError(pageEx, "[MdToPpt-Pages] page {Idx} hard-failed, fallback slide", i);
                       fallbackFlags[i] = true;
-                      var fb = consoleDashboardMode
+                      var fb = sourcePages != null
+                          ? MdToPptSourcePlan.Fallback(sourcePages[i], i, total,
+                              anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design) : null)
+                          : consoleDashboardMode
                           ? ConsoleDashboardFallbackSlide(anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design) : null, pages[i], i, total)
                           : anchor != null
                           ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i, total)
@@ -5449,6 +5631,9 @@ public class MdToPptOutlinePageDto
     public List<string>? Bullets { get; set; }
     /// <summary>页级设计意图（来自流式大纲：版式/视觉装置/排字/强调），直接喂给并行子智能体</summary>
     public string? Design { get; set; }
+
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? SourceBlockIds { get; set; }
 }
 
 public class MdToPptPatchRequest

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Bson;
 using MongoDB.Driver;
@@ -236,7 +237,7 @@ public sealed class HostedSiteEditsControllerTests
             providers.Object,
             knowledge.Object,
             new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_hash_unit_{Guid.NewGuid():N}"),
-            Mock.Of<IDesignArtifactCancellationCoordinator>());
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -298,7 +299,7 @@ public sealed class HostedSiteEditsControllerTests
             Mock.Of<IDesignArtifactProviderCatalog>(),
             knowledge.Object,
             new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_preflight_unit_{Guid.NewGuid():N}"),
-            Mock.Of<IDesignArtifactCancellationCoordinator>());
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -409,24 +410,33 @@ public sealed class HostedSiteEditsControllerTests
                 CancellationToken.None))
             .ReturnsAsync(Array.Empty<DesignKnowledgeSnapshot>());
         var queue = new Mock<IRunQueue>();
+        var policyConfiguration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { ["DesignArtifactRuntime:Model"] = "server-edit-model", ["DesignArtifactRuntime:RequestPolicy:TopP"] = "0.92" }).Build();
         var controller = BuildController(
             fixture.Db,
             "owner-user",
             sites.Object,
             EnabledProvider(DesignArtifactRuntimes.OpenDesign).Object,
             knowledge.Object,
-            queue.Object);
+            queue.Object,
+            configuration: policyConfiguration);
 
         var result = await controller.CreateRun("site-a", new CreateHostedSiteEditRunRequest
         {
             Instruction = "调整版式",
             Runtime = DesignArtifactRuntimes.OpenDesign,
+            AdditionalProperties = new Dictionary<string, JsonElement>
+            { ["llmRequestPolicy"] = JsonSerializer.SerializeToElement(new { model = "client-model", topP = 0.1 }) },
         });
 
         Assert.IsType<AcceptedResult>(result);
         var persisted = await fixture.Db.DesignArtifactRuns.Find(_ => true).SingleAsync();
         Assert.Equal("connection-1", persisted.RuntimeConnectionId);
         Assert.Equal(expectedTitle, persisted.Title);
+        policyConfiguration["DesignArtifactRuntime:Model"] = "later-model";
+        var reloaded = await fixture.Db.DesignArtifactRuns.Find(item => item.Id == persisted.Id).SingleAsync();
+        Assert.Equal("server-edit-model", reloaded.LlmRequestPolicy!.Model);
+        Assert.Equal(0.92, reloaded.LlmRequestPolicy.TopP);
         queue.Verify(service => service.EnqueueAsync(RunKinds.DesignArtifact, persisted.Id, CancellationToken.None), Times.Once);
     }
 
@@ -934,7 +944,8 @@ public sealed class HostedSiteEditsControllerTests
         IHostedSiteRevisionService? revisions = null,
         IRunEventStore? events = null,
         IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null,
-        IDesignArtifactLifecycleService? lifecycle = null)
+        IDesignArtifactLifecycleService? lifecycle = null,
+        IConfiguration? configuration = null)
     {
         var controller = new HostedSiteEditsController(
             sites ?? Mock.Of<IHostedSiteService>(),
@@ -948,7 +959,8 @@ public sealed class HostedSiteEditsControllerTests
             publicLifecycle ?? Mock.Of<IWebPageDesignArtifactLifecycleAdapter>(),
             new DesignArtifactCancellationCoordinator(
                 db,
-                lifecycle ?? Mock.Of<IDesignArtifactLifecycleService>()));
+                lifecycle ?? Mock.Of<IDesignArtifactLifecycleService>()),
+            configuration ?? new ConfigurationBuilder().Build());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

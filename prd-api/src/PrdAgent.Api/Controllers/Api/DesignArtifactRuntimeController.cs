@@ -108,7 +108,8 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 throw new InvalidOperationException("模型请求缺少对话内容，请重新发起任务");
 
             var run = await _broker.ReserveModelCallAsync(runId, ReadBearerToken(), ct);
-            DesignArtifactModelSelection.Resolve(_configuration).ApplyToOpenAiRequest(body);
+            var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
+            selection.ApplyToOpenAiRequest(body);
             ApplySingleOutputContract(body);
 
             var serveBaseUrl = _configuration["LlmGateway:ServeBaseUrl"]?.Trim().TrimEnd('/');
@@ -131,6 +132,9 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             upstream.Headers.TryAddWithoutValidation("X-Gateway-Source", "map");
             upstream.Headers.TryAddWithoutValidation("X-Gateway-User-Id", run.UserId);
             upstream.Headers.TryAddWithoutValidation("X-Gateway-Run-Id", run.Id);
+            // 只消费经票据绑定的 MAP 快照，绝不转发远端同名请求头。
+            if (selection.Policy?.ReasoningMode == "omit")
+                upstream.Headers.TryAddWithoutValidation("X-Gateway-Include-Thinking", "false");
 
             var totalTimeout = ResolveProxyTotalTimeout(
                 _configuration,

@@ -60,6 +60,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IDesignKnowledgeSnapshotResolver _knowledgeSnapshots;
     private readonly IDesignArtifactCancellationCoordinator _cancellation;
     private readonly LlmGatewayDataContext _gatewayDb;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<DesignArtifactsController>? _logger;
 
     public DesignArtifactsController(
@@ -70,6 +71,7 @@ public sealed class DesignArtifactsController : ControllerBase
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
         LlmGatewayDataContext gatewayDb,
         IDesignArtifactCancellationCoordinator cancellation,
+        IConfiguration configuration,
         ILogger<DesignArtifactsController>? logger = null)
     {
         _db = db;
@@ -79,6 +81,7 @@ public sealed class DesignArtifactsController : ControllerBase
         _knowledgeSnapshots = knowledgeSnapshots;
         _gatewayDb = gatewayDb;
         _cancellation = cancellation;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -197,6 +200,12 @@ public sealed class DesignArtifactsController : ControllerBase
             ? DesignArtifactSourceSurfaces.KnowledgeBase
             : DesignArtifactSourceSurfaces.WebHosting;
         var runId = Guid.NewGuid().ToString("N");
+        DesignArtifactLlmRequestPolicy requestPolicy;
+        try { requestPolicy = DesignArtifactModelSelection.CaptureForNewRun(_configuration); }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail("DESIGN_MODEL_POLICY_INVALID", ex.Message));
+        }
         var run = new DesignArtifactRun
         {
             Id = runId,
@@ -206,6 +215,7 @@ public sealed class DesignArtifactsController : ControllerBase
             Operation = DesignArtifactOperations.Generate,
             SourceSurface = sourceSurface,
             Runtime = runtime,
+            LlmRequestPolicy = requestPolicy,
             RuntimeConnectionId = capability.ConnectionId,
             Instruction = instruction,
             Title = TrimOptional(request.Title, 200) ?? snapshots[0].Title,
@@ -729,6 +739,8 @@ public sealed class DesignArtifactsController : ControllerBase
         run.Operation,
         run.SourceSurface,
         run.Runtime,
+        run.LlmRequestPolicy,
+        llmRequestPolicyState = run.LlmRequestPolicy == null ? "legacy-unfrozen" : "frozen",
         run.Title,
         run.Progress,
         run.Phase,

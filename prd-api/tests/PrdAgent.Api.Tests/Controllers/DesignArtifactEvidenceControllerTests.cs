@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using Moq;
@@ -38,6 +39,14 @@ public sealed class DesignArtifactEvidenceControllerTests
         var dto = JsonSerializer.SerializeToElement(response, new JsonSerializerOptions(JsonSerializerDefaults.Web));
         Assert.Equal(120, dto.GetProperty("runtimeModelCallCount").GetInt32());
         Assert.False(dto.TryGetProperty("runtimeModelCallLimit", out _));
+        Assert.Equal("legacy-unfrozen", dto.GetProperty("llmRequestPolicyState").GetString());
+        var frozen = new DesignArtifactRun { LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "frozen", Temperature = 0.4 } };
+        var before = frozen.ToBson();
+        var projected = JsonSerializer.SerializeToElement(projection.Invoke(null, [frozen]), new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("frozen", projected.GetProperty("llmRequestPolicyState").GetString());
+        Assert.Equal("frozen", projected.GetProperty("llmRequestPolicy").GetProperty("model").GetString());
+        Assert.Equal(before, frozen.ToBson());
+        Assert.DoesNotContain("apiKey", projected.GetProperty("llmRequestPolicy").GetRawText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -257,7 +266,7 @@ public sealed class DesignArtifactEvidenceControllerTests
             Mock.Of<IDesignArtifactProviderCatalog>(),
             Mock.Of<IDesignKnowledgeSnapshotResolver>(),
             fixture.GatewayDb,
-            Mock.Of<IDesignArtifactCancellationCoordinator>());
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

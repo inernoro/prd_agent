@@ -2355,7 +2355,12 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
         },
         onPage: (pg) => {
           pagesSeen++;
-          const slide: OutlineSlide = { title: pg.title, bullets: pg.bullets, design: pg.design };
+          const slide: OutlineSlide = {
+            title: pg.title,
+            bullets: pg.bullets,
+            design: pg.design,
+            sourceBlockIds: pg.sourceBlockIds,
+          };
           const idx = (pg.index || pagesSeen) - 1;
           setOutlineDraft((prev) => {
             if (!prev) return prev;

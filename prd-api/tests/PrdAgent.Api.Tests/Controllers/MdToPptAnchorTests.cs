@@ -103,6 +103,18 @@ public class MdToPptAnchorTests
     }
 
     [Fact]
+    public void SourceTables_MobileCellsPreserveReadingOrderWithoutChangingOtherContent()
+    {
+        var anchor = MdToPptAnchors.Load("cyber-terminal")!;
+        var guarded = MdToPptAnchors.EnsureMobilePresentationGuard(anchor.Prefix, anchor.Name);
+        Assert.Contains(".slide [data-mdppt-source] table th, .slide [data-mdppt-source] table td", guarded);
+        Assert.Contains("white-space:nowrap !important; overflow-wrap:normal !important; word-break:normal !important", guarded);
+        Assert.Contains(".slide pre, .slide table { display:block; width:100% !important; overflow-x:auto !important; }", guarded);
+        var editorial = MdToPptAnchors.Resolve("editorial-ink")!;
+        Assert.DoesNotContain(".slide [data-mdppt-source] table th", MdToPptAnchors.EnsureMobilePresentationGuard(editorial.Prefix, editorial.Name));
+    }
+
+    [Fact]
     public void PickLayout_CoverClosingAndIntentMatching()
     {
         var anchor = MdToPptAnchors.Load("monochrome")!;

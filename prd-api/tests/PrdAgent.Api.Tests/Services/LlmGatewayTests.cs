@@ -19,6 +19,95 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public class LlmGatewayTests
 {
+    [Theory]
+    [InlineData(false, "reasoning_effort")]
+    [InlineData(true, "reasoning_effort")]
+    [InlineData(false, "reasoning")]
+    [InlineData(true, "reasoning")]
+    public async Task StrictReasoning_UnsupportedClaudeAdapterFailsBeforePhysicalSend(bool stream, string parameter)
+    {
+        var http = new SequenceHttpClientFactory((200, "{\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}]}"));
+        var resolver = new Moq.Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<string?>(),
+                Moq.It.IsAny<string?>(), Moq.It.IsAny<string?>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns(Task.FromResult(new ModelResolutionResult
+            {
+                Success = true, ActualModel = "synthetic", ActualPlatformId = "synthetic-platform",
+                ActualPlatformName = "Synthetic", PlatformType = "openai", Protocol = "claude-compatible",
+                ApiUrl = "https://upstream.invalid", ApiKey = "synthetic", ResolutionType = "PinnedModel",
+                SupportsThinking = true, ParameterCapabilities = new Dictionary<string, bool> { [parameter] = true },
+            }));
+        var gateway = new LlmGateway(resolver.Object, http, new TestLogger<LlmGateway>());
+        var body = new JsonObject { ["messages"] = new JsonArray() };
+        body[parameter] = parameter == "reasoning" ? new JsonObject { ["effort"] = "low" } : JsonValue.Create("low");
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.Lab.Chat, ModelType = ModelTypes.Chat,
+            IncludeThinking = true, RequestBody = body,
+            Context = new GatewayRequestContext { ParameterPolicy = "strict-require" },
+        };
+        if (stream)
+        {
+            var chunks = new List<GatewayStreamChunk>();
+            await foreach (var chunk in gateway.StreamAsync(request)) chunks.Add(chunk);
+            Assert.Contains(chunks, x => x.Type == GatewayChunkType.Error
+                && x.Error == $"当前模型协议尚不能保留请求参数 {parameter}，请调整参数或选择兼容协议");
+        }
+        else
+        {
+            var response = await gateway.SendAsync(request);
+            Assert.False(response.Success);
+            Assert.Equal("PARAMETER_PROTOCOL_UNSUPPORTED", response.ErrorCode);
+        }
+        Assert.Empty(http.RequestBodies);
+    }
+
+    [Theory]
+    [InlineData("temperature")]
+    [InlineData("top_p")]
+    [InlineData("reasoning_effort")]
+    [InlineData("reasoning")]
+    [InlineData("stop")]
+    [InlineData("temperature", false)]
+    [InlineData("top_p", false)]
+    [InlineData("reasoning_effort", false)]
+    [InlineData("temperature", true)]
+    [InlineData("top_p", true)]
+    [InlineData("reasoning_effort", true)]
+    public async Task FrozenSampling_StrictChecksAllRequestedParameters(string parameter, bool? capability = null)
+    {
+        var http = new SequenceHttpClientFactory((200, "{\"choices\":[{\"message\":{\"content\":\"synthetic\"}}]}"));
+        var gateway = new LlmGateway(new InMemoryModelResolver(), http, new TestLogger<LlmGateway>());
+        var resolution = new GatewayModelResolution
+        {
+            Success = true, ActualModel = "capability-model", ActualPlatformId = "capability-platform",
+            ActualPlatformName = "Capability Platform", PlatformType = "openai", Protocol = "openai",
+            ApiUrl = "https://api.example.com", ApiKey = "test", ResolutionType = "DirectModel",
+            ParameterCapabilities = new Dictionary<string, bool> { ["n"] = true },
+        };
+        if (capability.HasValue) resolution.ParameterCapabilities[parameter] = capability.Value;
+        var body = new JsonObject { ["messages"] = new JsonArray(), ["n"] = 1 };
+        body[parameter] = parameter is "temperature" or "top_p" ? JsonValue.Create(0.4)
+            : parameter == "reasoning" ? new JsonObject { ["effort"] = "low" } : JsonValue.Create("low");
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = "prd-agent-web.lab::chat", ModelType = "chat", EndpointPath = "/v1/chat/completions",
+            RequestBody = body, Context = new GatewayRequestContext { ParameterPolicy = "strict-require" },
+        }, resolution);
+        if (capability == true)
+        {
+            Assert.True(response.Success);
+            var sent = JsonNode.Parse(Assert.Single(http.RequestBodies))!.AsObject();
+            Assert.Equal(body[parameter]!.ToJsonString(), sent[parameter]!.ToJsonString());
+        }
+        else
+        {
+            Assert.False(response.Success);
+            Assert.Equal(capability == false ? "PARAMETER_UNSUPPORTED" : "PARAMETER_UNVERIFIED", response.ErrorCode);
+            Assert.Empty(http.RequestBodies);
+        }
+    }
+
     #region CreateClient Tests
 
     [Fact]

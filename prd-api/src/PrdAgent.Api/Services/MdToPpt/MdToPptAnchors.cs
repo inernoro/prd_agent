@@ -38,6 +38,9 @@ public static class MdToPptAnchors
   .slide *, .slide *::before, .slide *::after { box-sizing:border-box !important; min-width:0 !important; max-width:100% !important; }
   .slide img, .slide svg, .slide canvas, .slide video { height:auto !important; object-fit:contain !important; }
   .slide pre, .slide table { display:block; width:100% !important; overflow-x:auto !important; }
+  .slide [data-mdppt-source] table th, .slide [data-mdppt-source] table td {
+    white-space:nowrap !important; overflow-wrap:normal !important; word-break:normal !important;
+  }
   .slide h1, .slide [class*="-h1"] {
     font-size:clamp(32px, 9.5vw, 44px) !important;
     line-height:1.08 !important;

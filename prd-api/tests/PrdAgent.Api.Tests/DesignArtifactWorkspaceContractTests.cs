@@ -23,6 +23,157 @@ namespace PrdAgent.Api.Tests;
 public sealed class DesignArtifactWorkspaceContractTests
 {
     [Theory]
+    [InlineData("Temperature", "NaN")]
+    [InlineData("Temperature", "Infinity")]
+    [InlineData("Temperature", "2.1")]
+    [InlineData("TopP", "-0.1")]
+    [InlineData("TopP", "1.1")]
+    [InlineData("top_p", "0.5")]
+    [InlineData("ReasoningMode", "unsupported")]
+    [InlineData("OutputTokenMode", "limit")]
+    [InlineData("OutputTokenMode", "16384")]
+    [InlineData("ReasoningEffort", "high")]
+    [InlineData("PinnedPlatformId", "half-pin")]
+    [InlineData("RequireDeclaredParameters", "true")]
+    public void FrozenSampling_InvalidConfigurationFailsBeforeRunCreation(string key, string value)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        { [$"DesignArtifactRuntime:RequestPolicy:{key}"] = value }).Build();
+        Assert.Throws<InvalidOperationException>(() => DesignArtifactModelSelection.CaptureForNewRun(config));
+    }
+
+    [Fact]
+    public void FrozenSampling_CaptureIsIndependentAndLegacyIsNeverBackfilled()
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:Model"] = "model-a",
+            ["DesignArtifactRuntime:RequestPolicy:Temperature"] = "0.4",
+            ["DesignArtifactRuntime:RequestPolicy:TopP"] = "0.9",
+            ["DesignArtifactRuntime:RequestPolicy:ReasoningMode"] = "effort",
+            ["DesignArtifactRuntime:RequestPolicy:ReasoningEffort"] = "low",
+        }).Build();
+        var run = BuildRun();
+        run.LlmRequestPolicy = DesignArtifactModelSelection.CaptureForNewRun(config);
+        var persisted = BsonSerializer.Deserialize<DesignArtifactRun>(run.ToBson());
+        config["DesignArtifactRuntime:Model"] = "model-b";
+        config["DesignArtifactRuntime:RequestPolicy:Temperature"] = "1.4";
+        var selected = DesignArtifactModelSelection.ForRun(persisted, config);
+        Assert.Equal("model-a", selected.ForMapClient());
+        var body = JsonNode.Parse("""{"temperature":1.7,"topP":0.1,"reasoning":{"effort":"high"},"thinking":true,"reasoning_effort":"high"}""")!.AsObject();
+        selected.ApplyRequestParameters(body);
+        Assert.Equal(0.4, body["temperature"]!.GetValue<double>());
+        Assert.Equal(0.9, body["top_p"]!.GetValue<double>());
+        Assert.Equal("low", body["reasoning_effort"]!.GetValue<string>());
+        Assert.False(body.ContainsKey("topP")); Assert.False(body.ContainsKey("reasoning")); Assert.False(body.ContainsKey("thinking"));
+        Assert.Equal("model-b", DesignArtifactModelSelection.CaptureForNewRun(config).Model);
+        var legacy = BuildRun(); var before = legacy.ToBson();
+        Assert.Equal("model-b", DesignArtifactModelSelection.ForRun(legacy, config).ForMapClient());
+        Assert.Null(legacy.LlmRequestPolicy); Assert.Equal(before, legacy.ToBson());
+        var unspecified = BuildRun(); unspecified.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy();
+        Assert.Null(DesignArtifactModelSelection.ForRun(unspecified, config).ForMapClient());
+        var native = JsonNode.Parse("""{"temperature":0.45,"top_p":0.8,"reasoning":{"effort":"high"}}""")!.AsObject();
+        var old = native.ToJsonString(); DesignArtifactModelSelection.ForRun(unspecified, config).ApplyRequestParameters(native);
+        Assert.Equal(old, native.ToJsonString());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void FrozenOutputOmit_IsExplicitAndSurvivesConfigurationChanges(bool strict)
+    {
+        var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:RequestPolicy:OutputTokenMode"] = "omit",
+            ["DesignArtifactRuntime:RequestPolicy:Temperature"] = "0.45",
+            ["DesignArtifactRuntime:RequestPolicy:TopP"] = "1",
+            ["DesignArtifactRuntime:RequestPolicy:ReasoningMode"] = "omit",
+            ["DesignArtifactRuntime:RequestPolicy:RequireDeclaredParameters"] = strict.ToString(),
+        }).Build();
+        var run = BuildRun();
+        run.LlmRequestPolicy = DesignArtifactModelSelection.CaptureForNewRun(config);
+        run = BsonSerializer.Deserialize<DesignArtifactRun>(run.ToBson());
+        config["DesignArtifactRuntime:RequestPolicy:OutputTokenMode"] = null;
+        var body = JsonNode.Parse("""{"max_tokens":16384,"max_completion_tokens":32768,"max_output_tokens":8192,"n":1}""")!.AsObject();
+        DesignArtifactModelSelection.ForRun(run, config).ApplyRequestParameters(body);
+        foreach (var key in new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }) Assert.False(body.ContainsKey(key));
+        Assert.Equal(1, body["n"]!.GetValue<int>());
+        var legacy = BuildRun();
+        var legacyBefore = legacy.ToBson();
+        config["DesignArtifactRuntime:RequestPolicy:OutputTokenMode"] = "omit";
+        var original = JsonNode.Parse("""{"max_tokens":16384,"max_completion_tokens":32768,"max_output_tokens":8192}""")!.AsObject();
+        var preserved = original.ToJsonString();
+        DesignArtifactModelSelection.ForRun(legacy, config).ApplyRequestParameters(original);
+        Assert.Equal(preserved, original.ToJsonString());
+        Assert.Equal(legacyBefore, legacy.ToBson());
+        run.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+        { Temperature = 0.45, TopP = 1, ReasoningMode = "omit", RequireDeclaredParameters = true };
+        DesignArtifactModelSelection.ForRun(run, config).ApplyRequestParameters(original);
+        foreach (var key in new[] { "max_tokens", "max_completion_tokens", "max_output_tokens" }) Assert.True(original.ContainsKey(key));
+    }
+
+    [Theory]
+    [InlineData(DesignArtifactOperations.Generate)]
+    [InlineData(DesignArtifactOperations.Edit)]
+    public async Task FrozenSampling_RunSnapshotOverridesChangedConfigurationOnBothTransports(string operation)
+    {
+        var run = BuildRun();
+        run.Operation = operation;
+        var document = run.ToBsonDocument();
+        document["LlmRequestPolicy"] = new BsonDocument
+        {
+            ["Version"] = 1, ["Model"] = "frozen-model", ["Temperature"] = 0.61, ["TopP"] = 0.87,
+            ["ReasoningMode"] = "omit", ["RequireDeclaredParameters"] = true,
+            ["PinnedPlatformId"] = "frozen-platform", ["PinnedModelId"] = "frozen-model-id",
+        };
+        run = BsonSerializer.Deserialize<DesignArtifactRun>(document);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["DesignArtifactRuntime:Model"] = "changed-model",
+            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091", ["LlmGwServe:ApiKey"] = "test",
+        }).Build();
+        GatewayRequest? sent = null;
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.StreamAsync(It.IsAny<GatewayRequest>(), It.IsAny<CancellationToken>()))
+            .Callback<GatewayRequest, CancellationToken>((value, _) => sent = value).Returns(DesignResponse());
+        var context = new Mock<ILLMRequestContextAccessor>();
+        context.Setup(x => x.BeginScope(It.IsAny<LlmRequestContext>())).Returns(Mock.Of<IDisposable>());
+        await foreach (var _ in new MapGatewayDesignArtifactExecutor(gateway.Object, context.Object, configuration)
+                           .ExecuteAsync(run, null, CancellationToken.None)) { }
+        Assert.Equal("frozen-model", sent!.ExpectedModel);
+        Assert.Equal("frozen-platform", sent.PinnedPlatformId);
+        Assert.Equal("frozen-model-id", sent.PinnedModelId);
+        Assert.Equal(0.61, sent.RequestBody!["temperature"]!.GetValue<double>());
+        Assert.Equal(0.87, sent.RequestBody["top_p"]!.GetValue<double>());
+        Assert.Equal("strict-require", sent.Context!.ParameterPolicy);
+        Assert.False(sent.IncludeThinking);
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>();
+        broker.Setup(x => x.ReserveModelCallAsync(run.Id, "ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            configuration["DesignArtifactRuntime:Model"] = "changed-again";
+            var handler = new CapturingHandler();
+            var proxy = new DesignArtifactRuntimeController(broker.Object, new SingleClientFactory(handler), configuration,
+                NullLogger<DesignArtifactRuntimeController>.Instance)
+                { ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() } };
+            var bytes = Encoding.UTF8.GetBytes("""{"model":"runtime","temperature":1.2,"top_p":0.2,"reasoning":{"effort":"high"},"reasoning_effort":"high","messages":[],"max_tokens":32768}""");
+            proxy.Request.Body = new MemoryStream(bytes); proxy.Request.ContentLength = bytes.Length;
+            proxy.Request.Headers.Authorization = "Bearer ticket"; proxy.Response.Body = new MemoryStream();
+            await proxy.ProxyChatCompletions(run.Id, CancellationToken.None);
+            Assert.Equal(200, proxy.Response.StatusCode);
+            Assert.Equal("frozen-model", handler.Body!["model"]!.GetValue<string>());
+            Assert.Equal(sent.PinnedPlatformId, handler.Body["pinned_platform_id"]!.GetValue<string>());
+            Assert.Equal(sent.PinnedModelId, handler.Body["pinned_model_id"]!.GetValue<string>());
+            Assert.Equal(sent.RequestBody["temperature"]!.ToJsonString(), handler.Body["temperature"]!.ToJsonString());
+            Assert.Equal(sent.RequestBody["top_p"]!.ToJsonString(), handler.Body["top_p"]!.ToJsonString());
+            Assert.False(handler.Body.ContainsKey("reasoning")); Assert.False(handler.Body.ContainsKey("reasoning_effort"));
+            Assert.True(handler.Body["provider"]!["require_parameters"]!.GetValue<bool>());
+            Assert.Equal("false", handler.Header("X-Gateway-Include-Thinking"));
+            Assert.Equal(32768, handler.Body["max_tokens"]!.GetValue<int>());
+        }
+    }
+
+    [Theory]
     [InlineData(DesignArtifactOperations.Generate, " gpt-4.1 ", "gpt-4.1")]
     [InlineData(DesignArtifactOperations.Edit, " gpt-4.1 ", "gpt-4.1")]
     [InlineData(DesignArtifactOperations.Generate, null, null)]
@@ -106,6 +257,7 @@ public sealed class DesignArtifactWorkspaceContractTests
         proxy.Request.Body = new MemoryStream(request);
         proxy.Request.ContentLength = request.Length;
         proxy.Request.Headers.Authorization = "Bearer model-ticket";
+        proxy.Request.Headers["X-Gateway-Include-Thinking"] = "false";
         proxy.Response.Body = new MemoryStream();
         await proxy.ProxyChatCompletions(run.Id, CancellationToken.None);
 
@@ -119,6 +271,7 @@ public sealed class DesignArtifactWorkspaceContractTests
             Assert.False(handler.Body.ContainsKey(key));
         Assert.Equal(caller, handler.Header("X-Gateway-App-Caller"));
         Assert.Equal(run.Id, handler.Header("X-Gateway-Run-Id"));
+        Assert.Equal(string.Empty, handler.Header("X-Gateway-Include-Thinking")); // legacy ignores remote control header
         broker.VerifyAll();
     }
 
