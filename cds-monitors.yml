@@ -19,39 +19,55 @@ x-cds-monitors-version: 1
 x-cds-monitors-status: declared-not-wired
 x-cds-monitors-project: prd-agent
 
-# ── 鉴权：两个方向都必须是永久凭据，签一次用到撤销 ──
+# ── 鉴权：三个方向，全部「公钥配一次、签名每次现算」 ──
 #
-# 用户要求：不要短期失效的，不重复配对。
+# 你的要求是永久、不重复配对。这里不发明新机制——本仓库的
+# StableSmokeAuthenticationHandler 已经跑通了这套：MAP 配置里只存公钥，调用方持私钥，
+# 每次请求现签，带 nonce 防重放，认证通过后自动开号（SystemRoleKey=agent_tester）。
+#
+# 关键性质：**配对关系永久，过期的只是单次签名**。签名短时效是为了防重放，
+# 不是让你隔三差五重新配一次。私钥从不过网络，泄漏面比静态 token 小一个量级。
+# 行业同类：GitHub App 的 JWT 认证、AWS SigV4。
 x-cds-monitor-auth:
-  # 方向一 本仓库服务 → CDS（提交声明、上报自检结果）
-  #   用 CDS 项目级 Agent Key（cdsp_<slug12>_<suffix>）。
-  #   AgentKey 类型没有 expiresAt 字段，只有显式 DELETE 才写 revokedAt——天生永久。
+  # 方向一 本仓库 → CDS：提交监控声明
+  #
+  # 声明**不直接写**监控：CDS 的 /api/uptime/monitors 写接口挂着
+  # denyProjectScopedWrite，项目级 key 一律 403（2026-09-08 安全加固，防止一个项目的
+  # key 去改别人的监控、或让它打任意外部地址）。那条边界是对的，不动它。
+  # 所以走 cds-compose.yml 已有的先例：pending-import → 管理员审批 → 生效。
   toCds:
     kind: cds-project-agent-key
     envKey: CDS_AGENT_KEY
-    lifetime: permanent-until-revoked
-    # 声明**不直接写**监控：CDS 的 /api/uptime/monitors 写接口挂着
-    # denyProjectScopedWrite，项目级 key 一律 403（2026-09-08 安全加固，防止一个
-    # 项目的 key 去改别人的监控、或让它打任意外部地址）。那条边界是对的，不动它。
-    #
-    # 所以走 cds-compose.yml 已有的先例：提交为 pending-import → 管理员审批 → 生效。
-    # 「由被监控方发起声明」与「写权限仍归管理员」两件事在这个模式下不冲突，
-    # 而且心智与 cdscli import 完全一致，不引入第二套流程。
+    lifetime: permanent-until-revoked    # AgentKey 类型无 expiresAt，只有显式 DELETE
     flow: declaration-import-then-approve
     writesMonitorsDirectly: false
 
-  # 方向二 CDS → 本仓库自检端点（探测）
-  #   probeToken 由被监控方在**自己的库里** seed，随声明提交给 CDS，CDS 加密存。
+  # 方向二 CDS → 本仓库自检端点：探测
   #
-  #   硬禁令：不许放进 CDS 项目级 env。
-  #   cross-project-isolation 通道 9（2026-09-01 事故）——项目级 env 是项目范围的
-  #   单份值，同项目所有分支共用，任一分支轮换它，别人的分支下一次部署静默 401。
-  #   判据：一条预览的 probeToken 拿去打同项目另一条预览，必须被拒。
+  # 用 RSA 签名而不是静态 token：静态 token 一旦泄漏就是永久失守，而它还得存在
+  # 某个地方——存进 CDS 项目级 env 就正好踩上 cross-project-isolation 通道 9
+  # （2026-09-01 事故：项目级 env 同项目所有分支共用一份，一次轮换把兄弟分支打成 401）。
+  # 公钥不是秘密，放哪都行；私钥留在 CDS，不过网络。
   fromCds:
-    kind: self-seeded-probe-token
-    storage: monitored-service-own-database
-    lifetime: permanent-until-rotated
+    kind: rsa-signed-request
+    verifierHolds: public-key-only
+    replayGuard: nonce
+    lifetime: permanent-until-key-rotated
     forbidden: cds-project-level-env
+    # 判据：一条预览的签名拿去打同项目另一条预览必须被拒（作用域要进签名载荷）
+    scopeBoundToDeployment: true
+
+  # 方向三 CDS 告警 → MAP 站内通知：照 stable-smoke 的现成通道，不另造
+  #
+  # POST /api/dashboard/notifications/events 已经支持外部系统写入，
+  # stable-smoke 正在用它（规则 15：只定向发给配置用户，禁止全局通知）。
+  # 监控告警接同一条路，只是换一个 source。
+  alertToMap:
+    kind: rsa-signed-request
+    endpoint: "POST /api/dashboard/notifications/events"
+    precedent: StableSmokeAuthenticationHandler
+    targetPolicy: fixed-configured-account   # 固定通知账号，禁止全局通知
+    lifetime: permanent-until-key-rotated
 
 # ── 监控项 ──
 #
