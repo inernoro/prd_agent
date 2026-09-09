@@ -767,7 +767,7 @@ async function copyTextToClipboard(text: string): Promise<void> {
   textarea.value = text;
   textarea.setAttribute('readonly', '');
   textarea.style.position = 'fixed';
-  textarea.style.left = '-624.9375rem';
+  textarea.style.left = '-9999px';
   textarea.style.top = '0';
   document.body.appendChild(textarea);
   textarea.select();
