@@ -61,7 +61,7 @@
 
 ## 四、真实案例（2026-09-09，CDS 容器停止日志）
 
-现状（`cds/src/services/docker-lifecycle-classifier.ts` 的 cds 意图分支）：
+反例（`cds/src/services/docker-lifecycle-classifier.ts` 在 2026-09-09 之前的写法）：
 
 ```
 CDS 生命周期操作导致容器停止：cds-cds-self-...-cds-cds-self signal=9；已匹配 CDS 意图
@@ -90,6 +90,9 @@ actor=ai trigger=manual）
 
 同一个文件里的 `external-docker-kill` 分支反而是**做对了**的参照：它明说「没有匹配到
 CDS 停止/删除/重部署意图」，如实交出了「外因未知」，读者立刻知道要去查宿主上的人工操作。
+
+这个文件已按本规则重写（同批提交），八条停止原因逐条改成「外因在前、技术细节在后」，
+并新增了一条守卫：把文案退回旧格式，`docker-lifecycle-classifier.test.ts` 会红。
 
 ---
 

@@ -2524,7 +2524,9 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
   const previousStatus = svc.status;
   if (!['running', 'starting', 'building', 'restarting'].includes(String(previousStatus || ''))) return;
 
-  const classified = classifyDockerLifecycleEvent(event);
+  // 分支名只有 state 这边有（docker label 只带 cds.branch.id），传进去让停止原因
+  // 能说「分支 xxx」而不是一串容器名 —— 外因要说给人听（external-cause-first）。
+  const classified = classifyDockerLifecycleEvent({ ...event, branchName: branch.branch });
   svc.status = classified.nextServiceStatus;
   svc.errorMessage = classified.reason;
   if (allBranchServicesInactive(branch)) {
