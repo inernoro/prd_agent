@@ -262,6 +262,34 @@ SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作�
    的响应延迟仍在近一秒量级。一周复测要重点看这条：如果它在低负载时段也降不下来，说明瓶颈不在
    CPU 争抢，而在 master 进程内部（同步 IO、大对象序列化之类），那是另一批工作。
 
+**上线过程中撞到的一个坑（值得记住，下次别再踩）**：2026-09-09 14:11 合并 PR #1519 后立刻
+`self update`，命令回「self-update 完成」，`self status` 也显示 `headSha` 已是合并提交——**但线上
+跑的还是旧前端**。原因是 `CDS Prebuilt (self-update express)` 那条流水线 14:13:10 才为该 SHA 构建完，
+而更新是 14:11:55 发起的，早了 75 秒，于是拉到上一版预构建产物。
+
+判据在 `self status` 里现成就有，只是不看就会漏：`webBuildSha`（前端产物构建自哪个提交）、
+`bundleStale`、`bundleFreshness.changedPaths`。当时 `webBuildSha` 停在合并前的 `02ea9046`、
+`bundleStale=true`，而 `changedPaths` 里明明白白列着首页那个源文件——CDS 自己知道产物是旧的。
+
+**所以「self-update 成功」不等于「新代码在线上跑」。** 涉及前端改动的上线，判据是
+`webBuildSha == headSha 且 bundleStale=false`，再不放心就直接抓线上 JS 产物比对字面量
+（本次即 `curl` 首页拿入口包名、再从入口包里取 HomePage chunk 名、grep `rootMargin`）。
+
+**首页崩溃修复的真视觉验收（2026-09-09 14:2x UTC，产物对齐后）**：
+
+| 判据 | 结果 |
+|---|---|
+| 线上 HomePage chunk 里的 rootMargin | `0px 0px -40px 0px`（`-2.5rem` 零处） |
+| 无头浏览器打开 cds.miduo.org 首页 | 渲染成功，正文 2510 字，标题 `CDS · Cloud Dev Suite` |
+| 主线程存活 | true（页面加载后仍能在 3 秒内完成一次求值——崩溃时这里会超时） |
+| IntersectionObserver 构造错误 | 0 |
+| React #185（无限重渲染） | 0 |
+| pageerror 总数 | 0 |
+| 淡入动效（崩溃点本身） | 14 个 `.cdsh-reveal` 元素，滚动后 9 个已触发淡入——observer 真的在工作 |
+
+余下 2 条 console 错误是未登录访问接口的 401 与隧道未代理的外部资源 `ERR_CONNECTION_RESET`，
+与本次修复无关。
+
 **对比时的口径提醒**（两处，不注意就会把改进算多）：
 
 1. **webhook 那一行改后不再是同一批请求**。被廉价 ack 的投递不写 HTTP 日志，于是从「按日志统计」里
