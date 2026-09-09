@@ -5846,6 +5846,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 监控中心手动添加的目标。少了这一行，「添加监控」保存成功但永远不会被探——
       // 守卫测试 uptime-custom-monitors 盯着它。
       getUptimeMonitors: () => stateService.listUptimeMonitors(),
+      // 功能监控每次观测留下的证据（产物地址、判据逐条、本次请求体）。
+      // 少了这一行，探测照跑、判定照常，但详情页永远没有画廊——
+      // 而「这次生成出来长什么样」正是这类监控存在的理由。
+      recordMonitorObservation: (monitorId, observation) =>
+        stateService.recordMonitorObservation(monitorId, observation),
       // 用户视角探测的地址：与预览入口探测、PR 评论里的预览链接同一个拼法。
       // 少了这一行，分支目标只有进程视角，「用户视角 ●」永远不会出现。
       getPreviewUrl: (branch) => {

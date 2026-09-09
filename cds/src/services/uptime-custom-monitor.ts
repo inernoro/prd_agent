@@ -16,7 +16,16 @@
  */
 
 import net from 'node:net';
-import type { UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
+import type { MonitorObservation, UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
+import {
+  ASSERT_OPS,
+  VALUELESS_OPS,
+  describeAssertionFailure,
+  evaluateAssertions,
+  readPath,
+  type AssertOp,
+  type MonitorAssertion,
+} from './monitor-assertions.js';
 import type { UptimeSample } from './uptime-metrics.js';
 
 /**
@@ -40,7 +49,42 @@ const KEYWORD_BODY_LIMIT_BYTES = 512 * 1024;
 const MAX_NAME_LENGTH = 80;
 const MAX_TAGS = 10;
 
-export const MONITOR_KINDS: ReadonlyArray<UptimeCustomMonitorKind> = ['http', 'keyword', 'tcp', 'health-json'];
+export const MONITOR_KINDS: ReadonlyArray<UptimeCustomMonitorKind> = ['http', 'keyword', 'tcp', 'health-json', 'functional'];
+
+/** 功能监控保留多少次观测证据。看趋势够用，不做审计日志——无限增长会把台账撑爆。 */
+export const MAX_OBSERVATIONS = 20;
+/** 功能监控读响应体的上限：判据只看结构化字段，几百 KB 绰绰有余。 */
+const FUNCTIONAL_BODY_LIMIT_BYTES = 512 * 1024;
+/** 请求体模板上限，防止把一整个数据集塞进监控定义。 */
+const MAX_REQUEST_BODY_CHARS = 4000;
+const MAX_ASSERTIONS = 12;
+
+/**
+ * 随机提示词素材。
+ *
+ * 为什么必须随机：固定提示词会被上游缓存，跑一万次也只证明缓存还在，
+ * 证明不了这条生成链路今天还活着——那正是这类监控要回答的问题。
+ */
+const PROMPT_SUBJECTS = [
+  'a lighthouse on a basalt cliff', 'an empty tram at dawn', 'a greenhouse in winter',
+  'a fox crossing a frozen river', 'a bookshop with a cat asleep', 'a harbor crane at dusk',
+  'a desert observatory', 'a rowboat under willow branches',
+];
+const PROMPT_MOODS = [
+  'long exposure', 'soft overcast light', 'high contrast noon', 'blue hour',
+  'grainy film', 'backlit haze',
+];
+
+/** 展开请求体模板里的随机项。目前只有 {{randomPrompt}} 一个占位，刻意不做通用模板引擎。 */
+export function expandRequestTemplate(template: string, pick: (n: number) => number = (n) => Math.floor(Math.random() * n)): string {
+  if (!template.includes('{{randomPrompt}}')) return template;
+  const subject = PROMPT_SUBJECTS[pick(PROMPT_SUBJECTS.length)] ?? PROMPT_SUBJECTS[0];
+  const mood = PROMPT_MOODS[pick(PROMPT_MOODS.length)] ?? PROMPT_MOODS[0];
+  // JSON 安全：提示词进的是 JSON 字符串字面量，双引号与反斜杠必须转义，
+  // 否则一条带引号的素材会把整个请求体变成非法 JSON，表现为「监控自己坏了」。
+  const safe = `${subject}, ${mood}`.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return template.split('{{randomPrompt}}').join(safe);
+}
 
 /** health-json 断言可取的字段与运算，都是有限枚举（见 types.ts 上的理由）。 */
 export const HEALTH_FIELDS = ['status', 'observedValue'] as const;
@@ -70,6 +114,10 @@ export interface UptimeMonitorInput {
   healthField?: unknown;
   healthOp?: unknown;
   healthValue?: unknown;
+  requestMethod?: unknown;
+  requestBody?: unknown;
+  assertions?: unknown;
+  artifactUrlPath?: unknown;
 }
 
 export type NormalizeResult =
@@ -143,6 +191,88 @@ function newMonitorId(): string {
  * 把用户输入收敛成可落库的监控定义。返回的 error 是给人看的中文，field 指明
  * 哪个输入框该标红。
  */
+/**
+ * 功能监控的输入校验。
+ *
+ * 比其它 kind 严的两处，都是为了「加进去就能跑」而不是「加进去才发现跑不通」：
+ *   1. 请求体展开随机项后必须是合法 JSON——模板里少一个引号，线上表现是这条监控
+ *      从第一次探测起就红，而红的原因是监控自己写坏了，不是被监控的服务有问题；
+ *   2. 至少要有一条判据——没有判据的「功能监控」只是在定时发请求，
+ *      任何返回都算通过，是一条永远绿的假判据（比没有监控更糟）。
+ */
+function normalizeFunctionalInput(
+  input: UptimeMonitorInput,
+  monitor: UptimeCustomMonitor,
+  existing?: UptimeCustomMonitor,
+): NormalizeResult | { ok: true } {
+  const method = (str(input.requestMethod).toUpperCase() || existing?.requestMethod || 'POST') as 'GET' | 'POST';
+  if (method !== 'GET' && method !== 'POST') {
+    return { ok: false, error: '功能监控的请求方法只支持 GET 或 POST', field: 'requestMethod' };
+  }
+  monitor.requestMethod = method;
+
+  const rawBody = input.requestBody === undefined
+    ? existing?.requestBody
+    : (input.requestBody === null ? undefined : String(input.requestBody));
+  if (rawBody !== undefined && rawBody.trim() !== '') {
+    if (rawBody.length > MAX_REQUEST_BODY_CHARS) {
+      return { ok: false, error: `请求体不能超过 ${MAX_REQUEST_BODY_CHARS} 个字符`, field: 'requestBody' };
+    }
+    // 用展开后的样子校验：模板里带 {{randomPrompt}} 时，真正发出去的是替换后的文本，
+    // 校验原文只能证明「带占位符的字符串」合法，证明不了实际请求体合法。
+    try {
+      JSON.parse(expandRequestTemplate(rawBody));
+    } catch {
+      return { ok: false, error: '请求体展开随机项后不是合法 JSON', field: 'requestBody' };
+    }
+    monitor.requestBody = rawBody;
+  }
+
+  const rawAsserts = input.assertions === undefined ? existing?.assertions : input.assertions;
+  if (!Array.isArray(rawAsserts) || rawAsserts.length === 0) {
+    return { ok: false, error: '功能监控至少要有一条判据，否则任何返回都算通过', field: 'assertions' };
+  }
+  if (rawAsserts.length > MAX_ASSERTIONS) {
+    return { ok: false, error: `判据最多 ${MAX_ASSERTIONS} 条`, field: 'assertions' };
+  }
+  const assertions: MonitorAssertion[] = [];
+  for (const [i, raw] of rawAsserts.entries()) {
+    if (!raw || typeof raw !== 'object') {
+      return { ok: false, error: `第 ${i + 1} 条判据格式不对`, field: 'assertions' };
+    }
+    const item = raw as Record<string, unknown>;
+    const path = str(item.path);
+    if (!path) return { ok: false, error: `第 ${i + 1} 条判据缺少字段路径`, field: 'assertions' };
+    if (path.length > 200) return { ok: false, error: `第 ${i + 1} 条判据的路径过长`, field: 'assertions' };
+    const op = str(item.op) as AssertOp;
+    if (!ASSERT_OPS.includes(op)) {
+      return { ok: false, error: `第 ${i + 1} 条判据的运算必须是 ${ASSERT_OPS.join(' / ')}`, field: 'assertions' };
+    }
+    // 期望值允许是 "0"：判空看 undefined/空串，不用真值判断——
+    // 「数量等于 0」这类判据正是最该被写出来的那种。
+    const value = item.value === undefined || item.value === null ? undefined : String(item.value);
+    if (!VALUELESS_OPS.includes(op) && (value === undefined || value.trim() === '')) {
+      return { ok: false, error: `第 ${i + 1} 条判据（${op}）必须填期望值`, field: 'assertions' };
+    }
+    assertions.push({ path, op, ...(value === undefined ? {} : { value }) });
+  }
+  monitor.assertions = assertions;
+
+  const artifactPath = input.artifactUrlPath === undefined
+    ? existing?.artifactUrlPath
+    : (input.artifactUrlPath === null ? undefined : str(input.artifactUrlPath));
+  if (artifactPath) {
+    if (artifactPath.length > 200) {
+      return { ok: false, error: '产物路径过长', field: 'artifactUrlPath' };
+    }
+    monitor.artifactUrlPath = artifactPath;
+  }
+
+  // 观测证据跟着定义走：编辑判据不该把历史证据清掉，那是排障时唯一的对照。
+  if (existing?.observations?.length) monitor.observations = existing.observations;
+  return { ok: true };
+}
+
 export function normalizeUptimeMonitorInput(
   input: UptimeMonitorInput,
   options: { existing?: UptimeCustomMonitor; now?: () => number } = {},
@@ -179,68 +309,79 @@ export function normalizeUptimeMonitorInput(
     if (!url) return { ok: false, error: '请填写要探测的地址（http:// 或 https:// 开头）', field: 'url' };
     if (!parseHttpUrl(url)) return { ok: false, error: '地址必须是合法的 http:// 或 https:// 网址', field: 'url' };
     monitor.url = url;
-    const method = str(input.method).toUpperCase() || options.existing?.method || 'GET';
-    if (method !== 'GET' && method !== 'HEAD') {
-      return { ok: false, error: '请求方法只支持 GET 或 HEAD', field: 'method' };
+
+    if (kind === 'functional') {
+      const verdict = normalizeFunctionalInput(input, monitor, options.existing);
+      if (!verdict.ok) return verdict;
     }
-    // 关键字与 health-json 都要读响应体，HEAD 没有响应体——写了也是永远失败，直接拒掉。
-    if ((kind === 'keyword' || kind === 'health-json') && method === 'HEAD') {
-      return {
-        ok: false,
-        error: kind === 'keyword'
-          ? '关键字探测需要读取响应体，请求方法只能用 GET'
-          : 'health-json 探测需要读取响应体，请求方法只能用 GET',
-        field: 'method',
-      };
-    }
-    monitor.method = method;
-    // 状态码规则三种输入：没传 = 沿用旧值；传 null = 清掉自定义、回到默认；传字符串 = 用它。
-    // 编辑弹窗把清空的输入框发成 null——发成「不传」的话永远改不回默认（Codex PR #1514 P2）。
-    const expectedStatus = input.expectedStatus === null
-      ? DEFAULT_EXPECTED_STATUS
-      : (str(input.expectedStatus) || options.existing?.expectedStatus || DEFAULT_EXPECTED_STATUS);
-    if (!parseStatusSpec(expectedStatus)) {
-      return { ok: false, error: '状态码规则写法不合法，示例：200-299 或 200-399,401', field: 'expectedStatus' };
-    }
-    monitor.expectedStatus = expectedStatus;
-    if (kind === 'keyword') {
-      const keyword = typeof input.keyword === 'string' ? input.keyword : (options.existing?.keyword || '');
-      if (!keyword.trim()) return { ok: false, error: '关键字探测必须填写要匹配的文本', field: 'keyword' };
-      if (keyword.length > 200) return { ok: false, error: '关键字不能超过 200 个字符', field: 'keyword' };
-      monitor.keyword = keyword;
-    }
-    if (kind === 'health-json') {
-      const componentId = str(input.healthComponentId) || options.existing?.healthComponentId || '';
-      if (!componentId) {
-        return { ok: false, error: 'health-json 探测必须指定要断言的 componentId', field: 'healthComponentId' };
+
+    // 功能监控不吃下面这一整套：它的方法走 requestMethod（通常是 POST），判据看的是
+    // 响应内容而不是状态码。硬套「GET/HEAD + 期望状态码」会让一条合法的 POST 监控
+    // 根本存不进来，而报错还指着一个它没填过的字段。
+    if (kind !== 'functional') {
+      const method = str(input.method).toUpperCase() || options.existing?.method || 'GET';
+      if (method !== 'GET' && method !== 'HEAD') {
+        return { ok: false, error: '请求方法只支持 GET 或 HEAD', field: 'method' };
       }
-      if (componentId.length > 200) {
-        return { ok: false, error: 'componentId 不能超过 200 个字符', field: 'healthComponentId' };
+      // 关键字与 health-json 都要读响应体，HEAD 没有响应体——写了也是永远失败，直接拒掉。
+      if ((kind === 'keyword' || kind === 'health-json') && method === 'HEAD') {
+        return {
+          ok: false,
+          error: kind === 'keyword'
+            ? '关键字探测需要读取响应体，请求方法只能用 GET'
+            : 'health-json 探测需要读取响应体，请求方法只能用 GET',
+          field: 'method',
+        };
       }
-      const field = (str(input.healthField) || options.existing?.healthField || 'observedValue') as HealthAssertField;
-      if (!HEALTH_FIELDS.includes(field)) {
-        return { ok: false, error: `断言字段只能是 ${HEALTH_FIELDS.join(' / ')}`, field: 'healthField' };
+      monitor.method = method;
+      // 状态码规则三种输入：没传 = 沿用旧值；传 null = 清掉自定义、回到默认；传字符串 = 用它。
+      // 编辑弹窗把清空的输入框发成 null——发成「不传」的话永远改不回默认（Codex PR #1514 P2）。
+      const expectedStatus = input.expectedStatus === null
+        ? DEFAULT_EXPECTED_STATUS
+        : (str(input.expectedStatus) || options.existing?.expectedStatus || DEFAULT_EXPECTED_STATUS);
+      if (!parseStatusSpec(expectedStatus)) {
+        return { ok: false, error: '状态码规则写法不合法，示例：200-299 或 200-399,401', field: 'expectedStatus' };
       }
-      const op = (str(input.healthOp) || options.existing?.healthOp || 'eq') as HealthAssertOp;
-      if (!HEALTH_OPS.includes(op)) {
-        return { ok: false, error: `比较运算只能是 ${HEALTH_OPS.join(' / ')}`, field: 'healthOp' };
+      monitor.expectedStatus = expectedStatus;
+      if (kind === 'keyword') {
+        const keyword = typeof input.keyword === 'string' ? input.keyword : (options.existing?.keyword || '');
+        if (!keyword.trim()) return { ok: false, error: '关键字探测必须填写要匹配的文本', field: 'keyword' };
+        if (keyword.length > 200) return { ok: false, error: '关键字不能超过 200 个字符', field: 'keyword' };
+        monitor.keyword = keyword;
       }
-      // 期望值允许是 "0"，所以判空要看 undefined/空串，不能用真值判断——
-      // 「未处理异常数 == 0」正是最该被监控的那一条，用真值判断会把它拒掉。
-      const rawValue = input.healthValue === undefined || input.healthValue === null
-        ? options.existing?.healthValue
-        : String(input.healthValue);
-      const value = (rawValue ?? '').trim();
-      if (value === '') {
-        return { ok: false, error: 'health-json 探测必须填写期望值', field: 'healthValue' };
+      if (kind === 'health-json') {
+        const componentId = str(input.healthComponentId) || options.existing?.healthComponentId || '';
+        if (!componentId) {
+          return { ok: false, error: 'health-json 探测必须指定要断言的 componentId', field: 'healthComponentId' };
+        }
+        if (componentId.length > 200) {
+          return { ok: false, error: 'componentId 不能超过 200 个字符', field: 'healthComponentId' };
+        }
+        const field = (str(input.healthField) || options.existing?.healthField || 'observedValue') as HealthAssertField;
+        if (!HEALTH_FIELDS.includes(field)) {
+          return { ok: false, error: `断言字段只能是 ${HEALTH_FIELDS.join(' / ')}`, field: 'healthField' };
+        }
+        const op = (str(input.healthOp) || options.existing?.healthOp || 'eq') as HealthAssertOp;
+        if (!HEALTH_OPS.includes(op)) {
+          return { ok: false, error: `比较运算只能是 ${HEALTH_OPS.join(' / ')}`, field: 'healthOp' };
+        }
+        // 期望值允许是 "0"，所以判空要看 undefined/空串，不能用真值判断——
+        // 「未处理异常数 == 0」正是最该被监控的那一条，用真值判断会把它拒掉。
+        const rawValue = input.healthValue === undefined || input.healthValue === null
+          ? options.existing?.healthValue
+          : String(input.healthValue);
+        const value = (rawValue ?? '').trim();
+        if (value === '') {
+          return { ok: false, error: 'health-json 探测必须填写期望值', field: 'healthValue' };
+        }
+        if (value.length > 200) {
+          return { ok: false, error: '期望值不能超过 200 个字符', field: 'healthValue' };
+        }
+        monitor.healthComponentId = componentId;
+        monitor.healthField = field;
+        monitor.healthOp = op;
+        monitor.healthValue = value;
       }
-      if (value.length > 200) {
-        return { ok: false, error: '期望值不能超过 200 个字符', field: 'healthValue' };
-      }
-      monitor.healthComponentId = componentId;
-      monitor.healthField = field;
-      monitor.healthOp = op;
-      monitor.healthValue = value;
     }
   }
 
@@ -463,7 +604,7 @@ export function evaluateProjectScopedWrite(
   return { ok: true, boundBranchId: hit.branchId };
 }
 
-export function describeMonitorProbe(monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'host' | 'port'>): string {
+export function describeMonitorProbe(monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port'>): string {
   if (monitor.kind === 'tcp') return `TCP 连接 ${monitor.host}:${monitor.port}`;
   const method = monitor.method || 'GET';
   const status = monitor.expectedStatus || DEFAULT_EXPECTED_STATUS;
@@ -472,12 +613,106 @@ export function describeMonitorProbe(monitor: Pick<UptimeCustomMonitor, 'kind' |
     return `${method} ${monitor.url} · 状态 ${status} 且 check「${monitor.healthComponentId}」的 `
       + `${monitor.healthField} ${monitor.healthOp} ${monitor.healthValue}`;
   }
+  if (monitor.kind === 'functional') {
+    const asserts = (monitor.assertions || [])
+      .map((a) => `${a.path} ${a.op}${a.value === undefined ? '' : ` ${a.value}`}`)
+      .join('；');
+    const random = monitor.requestBody?.includes('{{randomPrompt}}') ? '（每次随机提示词）' : '';
+    return `${monitor.requestMethod || 'POST'} ${monitor.url}${random} · 断言 ${asserts || '（未配置）'}`;
+  }
   return `${method} ${monitor.url} · 状态 ${status}`;
 }
 
 // ── 探测实现（副作用） ──
 
-export type CustomProbeOutcome = Omit<UptimeSample, 't'>;
+export type CustomProbeOutcome = Omit<UptimeSample, 't'> & {
+  /**
+   * 功能监控这一次留下的证据。存活监控为空。
+   * 轮次拿到它写进监控定义的 observations——判定归判定，证据归证据，两件事。
+   */
+  observation?: MonitorObservation;
+};
+
+/**
+ * 功能监控：把业务真跑一遍，再在响应上逐条判。
+ *
+ * 与 health-json 的分工：那个问「服务自己觉得健康吗」，读的是服务给出的自检结论；
+ * 这个问「这条业务现在还能用吗」，自己发一次真请求，按调用方的判据验收返回值。
+ * 前者抓「后台在炸」，后者抓「后台没炸但产出不对」——2026-09-09 那次 500 属于前者，
+ * 「生图接口通、返回的却是 512×512」属于后者，两种都得有人盯。
+ */
+async function functionalProbe(
+  monitor: Pick<UptimeCustomMonitor, 'url' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath'>,
+  timeoutMs: number,
+): Promise<CustomProbeOutcome> {
+  const startedAt = Date.now();
+  const method = monitor.requestMethod || 'POST';
+  const requestBody = monitor.requestBody ? expandRequestTemplate(monitor.requestBody) : undefined;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
+  const observation = (extra: Partial<MonitorObservation>): MonitorObservation => ({
+    at: new Date(startedAt).toISOString(),
+    ok: false,
+    elapsedMs: Date.now() - startedAt,
+    results: [],
+    ...(requestBody ? { requestBody } : {}),
+    ...extra,
+  });
+
+  try {
+    const res = await fetch(monitor.url || '', {
+      method,
+      signal: ctrl.signal,
+      redirect: 'manual',
+      // 与其它自定义探测同款：绝不把探测令牌发给外部地址，只带公开的 polling 分类头。
+      headers: {
+        'user-agent': 'cds-uptime-monitor',
+        'x-cds-poll': 'true',
+        ...(requestBody ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(requestBody && method !== 'GET' ? { body: requestBody } : {}),
+    });
+    const code = res.status;
+    const raw = await readBodyPrefix(res, FUNCTIONAL_BODY_LIMIT_BYTES);
+
+    let doc: unknown;
+    try {
+      doc = JSON.parse(raw);
+    } catch {
+      const err = `响应不是合法 JSON（HTTP ${code}）`;
+      return { up: false, ms: Date.now() - startedAt, code, err, observation: observation({ code, err }) };
+    }
+
+    const { ok, results } = evaluateAssertions(doc, (monitor.assertions || []) as MonitorAssertion[]);
+    // 产物地址即使判据失败也要留：那张「不该是 512×512」的图正是排障要看的东西。
+    const artifactRaw = monitor.artifactUrlPath ? readPath(doc, monitor.artifactUrlPath) : undefined;
+    const artifactUrl = typeof artifactRaw === 'string' && artifactRaw.length > 0 ? artifactRaw : undefined;
+
+    const obs = observation({
+      ok,
+      code,
+      results,
+      ...(artifactUrl ? { artifactUrl } : {}),
+    });
+    return ok
+      ? { up: true, ms: Date.now() - startedAt, code, observation: obs }
+      : { up: false, ms: Date.now() - startedAt, code, err: describeAssertionFailure(results), observation: obs };
+  } catch (err) {
+    const aborted = (err as Error).name === 'AbortError';
+    const message = aborted
+      ? `请求超时（${timeoutMs}ms）`
+      : ((err as Error & { cause?: Error }).cause?.message || (err as Error).message);
+    return {
+      up: false,
+      ms: Date.now() - startedAt,
+      err: message,
+      observation: observation({ err: message }),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function tcpProbe(host: string, port: number, timeoutMs: number): Promise<CustomProbeOutcome> {
   const startedAt = Date.now();
@@ -573,7 +808,7 @@ async function httpProbe(
 
 /** 按监控定义发一次探测。timeoutMs 由调用方结算（监控自身 > 全局）。 */
 export async function probeCustomMonitor(
-  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'host' | 'port'>,
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   if (monitor.kind === 'tcp') {
@@ -581,5 +816,6 @@ export async function probeCustomMonitor(
     return await tcpProbe(monitor.host, monitor.port, timeoutMs);
   }
   if (!monitor.url) return { up: false, ms: 0, err: '未配置探测地址' };
+  if (monitor.kind === 'functional') return await functionalProbe(monitor, timeoutMs);
   return await httpProbe(monitor, timeoutMs);
 }

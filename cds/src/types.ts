@@ -1520,7 +1520,37 @@ export interface ReleaseStrategy {
  * 只存定义，不存采样：采样与故障台账仍由 uptime-monitor 统一记在自己的落盘文件里，
  * 定义删掉后该目标的台账会在下一轮探测被清理。
  */
-export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json';
+export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json' | 'functional';
+
+/**
+ * 一次功能监控观测留下的证据（2026-09-09）。
+ *
+ * 存活监控只需要答「通不通」，一条 up/down 就够。功能监控问的是「返回的东西对不对」，
+ * 于是**产物本身就是证据**：出了什么图、判据逐条怎么判的、这次发的什么提示词。
+ * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
+ */
+export interface MonitorObservation {
+  /** ISO 时间 */
+  at: string;
+  ok: boolean;
+  elapsedMs: number;
+  code?: number;
+  /** 逐条判据结果，全部跑完（不短路），一眼看出四条里哪条挂了 */
+  results: Array<{
+    path: string;
+    op: string;
+    expected?: string;
+    actual?: string;
+    ok: boolean;
+    err?: string;
+  }>;
+  /** 本次产物地址（生成的图片等），详情页画廊直接引用 */
+  artifactUrl?: string;
+  /** 本次真正发出去的请求体（随机项已展开）——排障第一件事就是看它 */
+  requestBody?: string;
+  /** 传输层失败（超时、连不上）的原因；判据不通过不算这里 */
+  err?: string;
+}
 
 export interface UptimeCustomMonitor {
   id: string;
@@ -1557,6 +1587,32 @@ export interface UptimeCustomMonitor {
   healthOp?: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
   /** health-json：期望值。lt/lte/gt/gte 按数值比较，eq/ne 按规范化后的字符串比较 */
   healthValue?: string;
+  /**
+   * functional：请求方法。功能监控要真的把业务跑一遍，多数是 POST。
+   */
+  requestMethod?: 'GET' | 'POST';
+  /**
+   * functional：请求体模板（JSON 文本）。
+   *
+   * 支持 `{{randomPrompt}}` 占位：每次观测替换成一条随机提示词。
+   * 固定提示词会被上游缓存，跑一万次也证明不了这条链路今天还活着。
+   */
+  requestBody?: string;
+  /**
+   * functional：判据列表，一次响应上判多条，全部通过才算通过。
+   * 结构化三元组，不是表达式（见 monitor-assertions.ts 顶部的理由）。
+   */
+  assertions?: Array<{ path: string; op: string; value?: string }>;
+  /**
+   * functional：产物地址在响应里的路径，如 `data.imageUrl`。
+   * 配了它，详情页才有画廊可看；没配就只留判据结果。
+   */
+  artifactUrlPath?: string;
+  /**
+   * functional：最近若干次观测的证据，新的在前。
+   * 只留最近 N 条——监控是看趋势的，不是审计日志，无限增长会把台账撑爆。
+   */
+  observations?: MonitorObservation[];
   /** tcp：主机 */
   host?: string;
   /** tcp：端口 */

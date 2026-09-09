@@ -35,7 +35,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import type { BranchEntry, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
+import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
 import {
   CUSTOM_PROBE_ID_PREFIX,
   customProbeTargetId,
@@ -314,6 +314,11 @@ export interface UptimeStateSource {
    * 「添加监控」保存了也永远不会被探（守卫测试盯着 index.ts 的这行接线）。
    */
   getUptimeMonitors?(): UptimeCustomMonitor[];
+  /**
+   * 记一次功能监控的观测证据（产物地址、判据逐条、本次请求体）。
+   * 不接线不报错，只是详情页永远没有画廊可看——所以有源码守卫钉住这行。
+   */
+  recordMonitorObservation?(monitorId: string, observation: MonitorObservation): void;
   /**
    * 分支的预览地址（用户视角探测用）。可选——不接线就没有用户视角判定，
    * 分支目标只有进程视角。
@@ -1574,6 +1579,16 @@ export class UptimeMonitorService {
     // 两条通道、立即探测都从这里走：硬 deadline 兜住「探测器承诺超时却永不返回」
     // （2026-09-08 一轮 await 卡死 24 小时的根因），异常按内部故障记、不参与降级。
     const r = await this.probeWithDeadline(probe, target, timeoutMs);
+    // 功能监控的证据在这里落账：轮次、立即探测都走 probeOne，接一处就全覆盖。
+    // 判定继续走 applySample——证据写失败不该影响这次探测的结论。
+    const observation = (r.outcome as { observation?: MonitorObservation }).observation;
+    if (observation && target.monitor?.id) {
+      try {
+        this.deps.state.recordMonitorObservation?.(target.monitor.id, observation);
+      } catch (err) {
+        this.deps.logger?.warn?.(`[uptime] 观测证据写入失败: ${(err as Error).message}`);
+      }
+    }
     return { target, ...r };
   }
 
