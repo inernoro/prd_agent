@@ -206,6 +206,16 @@ jobs:
       - name: Root layout contract
         run: python3 scripts/tests/test_root_layout_contract.py
 
+      # 监控声明契约。挂在这个 job 是因为它无 needs、无 if，每次 CI 都跑——
+      # 挂到带 path filter 的 job 上，只改 cds-monitors.yml 的 PR 就会绕过守卫
+      # （predicate-and-wiring-discipline 形状 7：守卫自己没接上线）。
+      # 显式装 pyyaml：缺依赖时脚本崩掉比静默跳过好，但装上更好——
+      # 一个不会跑的守卫等于没有守卫。
+      - name: CDS monitors contract
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/tests/test_cds_monitors_contract.py
+
   docs-readability:
     name: Docs Readability Ratchet
     needs: changes
