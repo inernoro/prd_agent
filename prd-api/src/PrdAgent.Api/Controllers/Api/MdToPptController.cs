@@ -3288,10 +3288,10 @@ public class MdToPptController : ControllerBase
             match => match.Groups["open"].Value + match.Groups["close"].Value,
             System.Text.RegularExpressions.RegexOptions.IgnoreCase,
             TimeSpan.FromSeconds(1));
-        // 表格单元格是独立事实边界；空串剥标签会把日期尾部与下一格时间拼成新数字。
+        // 表格单元格与显式换行是独立事实边界；空串剥标签会把相邻行的数字拼接。
         // 内联标签仍保持连接，不能用 9<span>9</span> 绕过对 99 的既有判据。
         withoutNonText = System.Text.RegularExpressions.Regex.Replace(
-            withoutNonText, "</?(?:td|th|tr)\\b[^>]*>", " ",
+            withoutNonText, "</?(?:td|th|tr|br)\\b[^>]*>", " ",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase,
             TimeSpan.FromSeconds(1));
         var visible = Normalize(System.Text.RegularExpressions.Regex.Replace(withoutNonText, "<[^>]+>", string.Empty));

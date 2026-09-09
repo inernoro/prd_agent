@@ -2170,6 +2170,13 @@ export class AgentWorkspaceSessionRuntime {
       : [];
     const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
     const editingExistingPage = fs.existsSync(currentIndexPath);
+    // One execution owns its frozen evidence and repair-retention state. Neither
+    // a later model edit nor another session can redefine the facts being checked.
+    const checkArtifactQuality = createArtifactQualityGate(
+      collectArtifactQualityEvidence(handle.workspaceDir),
+      collectVisibleTextOccurrenceConstraints(handle.workspaceDir),
+      collectArtifactQualityEvidence(handle.workspaceDir, false),
+    );
     try {
     const systemPrompt = [
       'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
@@ -2273,14 +2280,8 @@ export class AgentWorkspaceSessionRuntime {
             runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
           );
         }
-        const qualityEvidence = collectArtifactQualityEvidence(handle.workspaceDir);
-        const visibleTextOccurrenceConstraints = collectVisibleTextOccurrenceConstraints(handle.workspaceDir);
         try {
-          hardenedHtml = hardenSelfContainedHtml(
-            outputHtml.toString('utf8'),
-            qualityEvidence,
-            visibleTextOccurrenceConstraints,
-          );
+          hardenedHtml = checkArtifactQuality(outputHtml.toString('utf8'));
           break;
         } catch (error) {
           if (
@@ -2295,12 +2296,16 @@ export class AgentWorkspaceSessionRuntime {
           }
           const repairReason = classifyQualityRepairReason(error);
           if (!repairReason) throw error;
+          const preserveMeasuredFacts = repairReason.code === 'measured_claim_context_unresolved'
+            || repairReason.code === 'retained_measured_claim_missing';
           const repair = await this.odJson(handle, '/api/runs', {
             method: 'POST',
             body: buildRunBody([
               'The deterministic CDS publication gate rejected /workspace/index.html after your final review.',
               `The controlled rejection reason is ${repairReason.code}: ${repairReason.instruction}`,
-              'Fix exactly this proven quality violation in /workspace/index.html. Inspect the whole file and remove every occurrence of the same violation while preserving supported facts, valid structure, visual quality, and all other task constraints.',
+              preserveMeasuredFacts
+                ? `Read the frozen factual sources by these exact paths: ${[...knowledgeFiles, ...(editingExistingPage ? ['/workspace/current/index.html'] : [])].join(', ') || '/workspace/brief/task.json'}. Restore the original source wording with its subject and quantity together in visible text. Do not delete or change sourced quantities to silence this gate; preserve every other supported fact, valid structure, visual quality, and task constraint.`
+                : 'Fix exactly this proven quality violation in /workspace/index.html. Inspect the whole file and remove every occurrence of the same violation while preserving supported facts, valid structure, visual quality, and all other task constraints.',
               'Do not merely explain the change. Save the corrected file, reread it, and stop only after the violation is absent.',
             ].join(' ')),
             signal: this.signalForDeadline(executionDeadline, signal),
@@ -3129,6 +3134,15 @@ export function canAcceptUntrackedWorkspaceEdit(
 
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
+  if (message === 'index.html contains a measured claim with unresolved source context'
+    || message === 'index.html dropped a retained source-backed measured claim') {
+    const missing = message === 'index.html dropped a retained source-backed measured claim';
+    const token = controlledMeasuredClaimToken(error.details?.measuredClaimToken);
+    return {
+      code: missing ? 'retained_measured_claim_missing' : 'measured_claim_context_unresolved',
+      instruction: `${token ? `The source-backed quantity ${token}` : 'A source-backed quantity'} ${missing ? 'is no longer visibly retained' : 'has a value present in the sources, but its subject cannot be aligned confidently'}. Do not delete or change the quantity. Read the frozen factual sources and restore the original source wording, keeping the subject and quantity together in visible text.`,
+    };
+  }
   if (message === 'index.html contains no explicit body element') {
     return {
       code: 'missing_body',
@@ -3254,6 +3268,43 @@ export function hardenSelfContainedHtml(
   evidenceText = '',
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
 ): string {
+  return hardenHtmlWithFactRetention(rawHtml, evidenceText, visibleTextOccurrenceConstraints);
+}
+
+interface RetainedMeasuredFact {
+  token: string;
+  candidates: readonly MeasuredClaimContext[];
+}
+
+interface MeasuredFactRetentionState {
+  facts: Map<string, RetainedMeasuredFact>;
+  supportedClaims: MeasuredClaimIndex;
+  authoritativeClaims: MeasuredClaimIndex;
+}
+
+/** Retains only source-backed quantities already presented during this execution,
+ * not every number in a knowledge base. Source bindings cannot be replaced by a
+ * repaired page, model-authored attributes, or state from another execution. */
+export function createArtifactQualityGate(
+  evidenceText: string,
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
+  authoritativeEvidenceText = evidenceText,
+): (rawHtml: string) => string {
+  const retention: MeasuredFactRetentionState = {
+    facts: new Map(),
+    supportedClaims: indexMeasuredClaims(measuredClaimContexts(evidenceText)),
+    authoritativeClaims: indexMeasuredClaims(measuredClaimContexts(authoritativeEvidenceText)),
+  };
+  const constraints = visibleTextOccurrenceConstraints.map((constraint) => ({ ...constraint }));
+  return (rawHtml) => hardenHtmlWithFactRetention(rawHtml, evidenceText, constraints, retention);
+}
+
+function hardenHtmlWithFactRetention(
+  rawHtml: string,
+  evidenceText: string,
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
+  retention?: MeasuredFactRetentionState,
+): string {
   let html = normalizeGeneratedHtml(rawHtml);
   if (!DOCUMENT_ROOT_RE.test(html)) {
     throw new AgentWorkspaceRuntimeError(
@@ -3318,7 +3369,7 @@ export function hardenSelfContainedHtml(
     );
   }
   validateCssGeneratedContent(html);
-  validateArtifactQuality(html, evidenceText, visibleTextOccurrenceConstraints);
+  validateArtifactQuality(html, evidenceText, visibleTextOccurrenceConstraints, retention);
 
   const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
   const root = html.match(DOCUMENT_ROOT_RE);
@@ -3554,6 +3605,35 @@ interface MeasuredClaimContext {
   entityKeys: Set<string>;
 }
 
+interface MeasuredClaimIndex {
+  byToken: Map<string, MeasuredClaimContext[]>;
+  ids: Map<MeasuredClaimContext, number>;
+}
+
+function measuredClaimIdentity(claim: MeasuredClaimContext): string {
+  return JSON.stringify([claim.token.toLowerCase(), claim.context, claim.requiresContext,
+    claim.isStructural, [...claim.entityKeys].sort()]);
+}
+
+function indexMeasuredClaims(claims: readonly MeasuredClaimContext[]): MeasuredClaimIndex {
+  const byToken = new Map<string, MeasuredClaimContext[]>();
+  const ids = new Map<MeasuredClaimContext, number>();
+  const identities = new Set<string>();
+  for (const [ordinal, claim] of claims.entries()) {
+    const identity = measuredClaimIdentity(claim);
+    // Exact predicate-equivalent repetitions do not create different source
+    // bindings. Keep the first frozen ordinal, never merge distinct contexts.
+    if (identities.has(identity)) continue;
+    identities.add(identity);
+    ids.set(claim, ordinal);
+    const token = claim.token.toLowerCase();
+    const candidates = byToken.get(token) ?? [];
+    candidates.push(claim);
+    byToken.set(token, candidates);
+  }
+  return { byToken, ids };
+}
+
 function measuredClaimContexts(text: string): MeasuredClaimContext[] {
   const claims: MeasuredClaimContext[] = [];
   // Clock minutes are not standalone quantities: splitting "19:00 周六" at ':'
@@ -3646,6 +3726,18 @@ function hasClaimContextOverlap(
   return Math.min(leftTokens.size, rightTokens.size) <= 1 ? overlap === 1 : overlap >= 2;
 }
 
+function hasExplicitClaimEntityConflict(left: MeasuredClaimContext, right: MeasuredClaimContext): boolean {
+  const leftEntities = [...left.entityKeys].filter((key) => key !== 'PERSON');
+  const rightEntities = [...right.entityKeys].filter((key) => key !== 'PERSON');
+  return leftEntities.length > 0 && rightEntities.length > 0
+    && !leftEntities.some((key) => rightEntities.includes(key));
+}
+
+function alignsMeasuredClaim(source: MeasuredClaimContext, visible: MeasuredClaimContext): boolean {
+  return source.token.toLowerCase() === visible.token.toLowerCase()
+    && hasClaimContextOverlap(source.context, visible.context, visible.requiresContext, source.entityKeys, visible.entityKeys);
+}
+
 function normalizeClaimUnit(value: string, entityKeys: Set<string>): string {
   if (value === '％') return '%';
   if (value === '￥' || value === '¥' || value === '元' || value === '人民币') return 'CNY';
@@ -3699,6 +3791,7 @@ function validateArtifactQuality(
   html: string,
   evidenceText: string,
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
+  retention?: MeasuredFactRetentionState,
 ): void {
   let bodyContentStart: number | undefined;
   let bodyContentEnd: number | undefined;
@@ -3824,27 +3917,57 @@ function validateArtifactQuality(
     );
   }
 
-  const supportedClaims = measuredClaimContexts(evidenceText);
-  for (const [claimIndex, claim] of measuredClaimContexts(visible).entries()) {
-    if (claim.isStructural) continue;
-    const candidates = supportedClaims.filter((candidate) => candidate.token.toLowerCase() === claim.token.toLowerCase());
-    if (candidates.some((candidate) => hasClaimContextOverlap(
-      candidate.context,
-      claim.context,
-      claim.requiresContext,
-      candidate.entityKeys,
-      claim.entityKeys,
-    ))) continue;
+  const supportedClaims = retention?.supportedClaims ?? indexMeasuredClaims(measuredClaimContexts(evidenceText));
+  const authoritativeClaims = retention?.authoritativeClaims ?? supportedClaims;
+  const retainedFacts = retention?.facts;
+  const visibleClaims = measuredClaimContexts(visible);
+  const analysis = new Map<string, { claim: MeasuredClaimContext; ordinal: number;
+    sourceCandidates: MeasuredClaimContext[]; aligned: boolean; binding: MeasuredClaimContext[] }>();
+  for (const [ordinal, claim] of visibleClaims.entries()) {
+    const identity = measuredClaimIdentity(claim);
+    if (analysis.has(identity)) continue;
+    const token = claim.token.toLowerCase();
+    const candidates = (supportedClaims.byToken.get(token) ?? [])
+      .filter((candidate) => !hasExplicitClaimEntityConflict(candidate, claim));
+    const aligned = candidates.some((candidate) => alignsMeasuredClaim(candidate, claim));
+    const sourceCandidates = (authoritativeClaims.byToken.get(token) ?? [])
+      .filter((candidate) => !hasExplicitClaimEntityConflict(candidate, claim));
+    const sourceAligned = sourceCandidates.filter((candidate) => alignsMeasuredClaim(candidate, claim));
+    analysis.set(identity, { claim, ordinal, sourceCandidates, aligned,
+      binding: sourceAligned.length > 0 ? sourceAligned : sourceCandidates });
+  }
+  // Capture all eligible claims before reporting the first failure, so one repair
+  // cannot silently erase a later fact. An invented value never becomes required.
+  const analyzedClaims = [...analysis.values()];
+  for (const { claim, sourceCandidates, binding } of analyzedClaims) {
+    if (claim.isStructural || sourceCandidates.length === 0 || !retainedFacts) continue;
+    const key = `${claim.token.toLowerCase()}:${binding.map((candidate) => authoritativeClaims.ids.get(candidate)).join(',')}`;
+    if (!retainedFacts.has(key)) retainedFacts.set(key, { token: claim.token, candidates: binding });
+  }
+  for (const { ordinal, claim, sourceCandidates, aligned } of analyzedClaims) {
+    if (claim.isStructural || aligned) continue;
     const [number, unit] = claim.token.split('|');
     const measuredClaimToken = `${number}${unit}`;
     throw new AgentWorkspaceRuntimeError(
       'design_output_quality_rejected',
-      `index.html contains an unsupported measured claim: ${measuredClaimToken}`,
+      sourceCandidates.length > 0
+        ? 'index.html contains a measured claim with unresolved source context'
+        : `index.html contains an unsupported measured claim: ${measuredClaimToken}`,
       false,
       {
-        measuredClaimOrdinal: claimIndex + 1,
+        measuredClaimOrdinal: ordinal + 1,
         measuredClaimToken,
       },
+    );
+  }
+  for (const retained of retainedFacts?.values() ?? []) {
+    if (analyzedClaims.some(({ claim }) => !claim.isStructural
+      && retained.candidates.some((candidate) => alignsMeasuredClaim(candidate, claim)))) continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html dropped a retained source-backed measured claim',
+      false,
+      { measuredClaimToken: retained.token.replace('|', '') },
     );
   }
   const supportedFacts = sensitiveFacts(evidenceText);
@@ -3862,10 +3985,10 @@ function sensitiveFacts(text: string): Set<string> {
   return facts;
 }
 
-function collectArtifactQualityEvidence(workspaceDir: string): string {
+function collectArtifactQualityEvidence(workspaceDir: string, includeUserSuppliedTask = true): string {
   const evidence: string[] = [];
   const taskPath = path.join(workspaceDir, 'brief', 'task.json');
-  if (fs.existsSync(taskPath)) {
+  if (includeUserSuppliedTask && fs.existsSync(taskPath)) {
     try {
       const task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
       for (const key of ['title', 'instruction']) {

@@ -53,6 +53,8 @@
   const DESIGN_W_DEFAULT = 1920;
   const DESIGN_H_DEFAULT = 1080;
   const OVERLAY_HIDE_MS = 1800;
+  const READ_SCALE_MIN = 0.5;
+  const READ_SCALE_MAX = 3;
   const VALIDATE_ATTR = 'no_overflowing_text,no_overlapping_text,slide_sized_text';
 
   const pad2 = (n) => String(n).padStart(2, '0');
@@ -83,6 +85,12 @@
       background: #fff;
       will-change: transform;
     }
+
+    :host([data-view-mode="read"]) .stage { cursor: grab; }
+    :host([data-panning]) .stage { cursor: grabbing; }
+    :host([data-view-mode="read"]) .tapzones { display: none; }
+    :host([noscale]) .overlay,
+    :host([noscale]) .tapzones { display: none !important; }
 
     /* Slides live in light DOM (via <slot>) so authored CSS still applies.
        We absolutely position each slotted child to stack them. */
@@ -200,6 +208,14 @@
       background: rgba(255,255,255,0.12);
       border-radius: 4px;
     }
+    .btn.view {
+      display: none;
+      min-width: 58px;
+      padding: 0 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
 
     .count {
       font-variant-numeric: tabular-nums;
@@ -218,6 +234,19 @@
       height: 14px;
       background: rgba(255,255,255,0.18);
       margin: 0 2px;
+    }
+
+    @media (hover: none), (max-width: 640px) {
+      .overlay {
+        bottom: max(12px, env(safe-area-inset-bottom));
+        opacity: 1;
+        pointer-events: auto;
+        transform: translate(-50%, 0) scale(1);
+        filter: none;
+      }
+      .btn { height: 44px; min-width: 44px; }
+      .btn.view { display: inline-flex; }
+      .btn.reset .kbd { display: none; }
     }
 
     /* ── Print: one page per slide, no chrome ────────────────────────────
@@ -276,13 +305,33 @@
       this._notes = [];
       this._hideTimer = null;
       this._mouseIdleTimer = null;
+      this._viewMode = 'fit';
+      this._fitScale = 1;
+      this._readScale = READ_SCALE_MIN;
+      this._scale = 1;
+      this._panX = 0;
+      this._panY = 0;
+      this._gesturePointers = new Map();
+      this._pinchState = null;
+      this._touchGestureStart = null;
+      this._suppressClick = false;
+      this._spaceHeld = false;
 
       this._onKey = this._onKey.bind(this);
+      this._onKeyUp = this._onKeyUp.bind(this);
       this._onResize = this._onResize.bind(this);
       this._onSlotChange = this._onSlotChange.bind(this);
       this._onMouseMove = this._onMouseMove.bind(this);
       this._onTapBack = this._onTapBack.bind(this);
       this._onTapForward = this._onTapForward.bind(this);
+      this._onPointerDown = this._onPointerDown.bind(this);
+      this._onPointerMove = this._onPointerMove.bind(this);
+      this._onPointerUp = this._onPointerUp.bind(this);
+      this._onTouchStart = this._onTouchStart.bind(this);
+      this._onTouchMove = this._onTouchMove.bind(this);
+      this._onTouchEnd = this._onTouchEnd.bind(this);
+      this._onWheel = this._onWheel.bind(this);
+      this._onClickCapture = this._onClickCapture.bind(this);
     }
 
     get designWidth() {
@@ -297,15 +346,37 @@
       this._loadNotes();
       this._syncPrintPageRule();
       window.addEventListener('keydown', this._onKey);
+      window.addEventListener('keyup', this._onKeyUp);
       window.addEventListener('resize', this._onResize);
       window.addEventListener('mousemove', this._onMouseMove, { passive: true });
+      this.addEventListener('pointerdown', this._onPointerDown);
+      this.addEventListener('pointermove', this._onPointerMove, { passive: false });
+      this.addEventListener('pointerup', this._onPointerUp);
+      this.addEventListener('pointercancel', this._onPointerUp);
+      this.addEventListener('touchstart', this._onTouchStart, { passive: false });
+      this.addEventListener('touchmove', this._onTouchMove, { passive: false });
+      this.addEventListener('touchend', this._onTouchEnd);
+      this.addEventListener('touchcancel', this._onTouchEnd);
+      this.addEventListener('wheel', this._onWheel, { passive: false });
+      this.addEventListener('click', this._onClickCapture, true);
       // Initial collection + layout happens via slotchange, which fires on mount.
     }
 
     disconnectedCallback() {
       window.removeEventListener('keydown', this._onKey);
+      window.removeEventListener('keyup', this._onKeyUp);
       window.removeEventListener('resize', this._onResize);
       window.removeEventListener('mousemove', this._onMouseMove);
+      this.removeEventListener('pointerdown', this._onPointerDown);
+      this.removeEventListener('pointermove', this._onPointerMove);
+      this.removeEventListener('pointerup', this._onPointerUp);
+      this.removeEventListener('pointercancel', this._onPointerUp);
+      this.removeEventListener('touchstart', this._onTouchStart);
+      this.removeEventListener('touchmove', this._onTouchMove);
+      this.removeEventListener('touchend', this._onTouchEnd);
+      this.removeEventListener('touchcancel', this._onTouchEnd);
+      this.removeEventListener('wheel', this._onWheel);
+      this.removeEventListener('click', this._onClickCapture, true);
       if (this._hideTimer) clearTimeout(this._hideTimer);
       if (this._mouseIdleTimer) clearTimeout(this._mouseIdleTimer);
     }
@@ -322,6 +393,7 @@
     }
 
     _render() {
+      this.setAttribute('data-view-mode', this._viewMode);
       const style = document.createElement('style');
       style.textContent = stylesheet;
 
@@ -372,11 +444,16 @@
         </button>
         <span class="divider"></span>
         <button class="btn reset" type="button" aria-label="Reset to first slide" title="Reset (R)">Reset<span class="kbd">R</span></button>
+        <span class="divider"></span>
+        <button class="btn view" type="button" data-deck-view-toggle aria-label="Switch to reading view" title="Increase slide size">Read</button>
       `;
 
       overlay.querySelector('.prev').addEventListener('click', () => this._go(this._index - 1, 'click'));
       overlay.querySelector('.next').addEventListener('click', () => this._go(this._index + 1, 'click'));
       overlay.querySelector('.reset').addEventListener('click', () => this._go(0, 'click'));
+      overlay.querySelector('.view').addEventListener('click', () => {
+        this._setViewMode(this._viewMode === 'read' ? 'fit' : 'read');
+      });
 
       this._root.append(style, stage, tapzones, overlay);
       this._canvas = canvas;
@@ -384,6 +461,7 @@
       this._overlay = overlay;
       this._countEl = overlay.querySelector('.current');
       this._totalEl = overlay.querySelector('.total');
+      this._viewButton = overlay.querySelector('.view');
     }
 
     /** @page must live in the document stylesheet — it's a no-op inside
@@ -531,15 +609,230 @@
       // resetTransformSelector can't reach .canvas.style.transform directly.
       if (this.hasAttribute('noscale')) {
         this._canvas.style.transform = 'none';
+        this._canvas.removeAttribute('data-deck-scale');
         return;
       }
       const vw = window.innerWidth;
       const vh = window.innerHeight;
-      const s = Math.min(vw / this.designWidth, vh / this.designHeight);
-      this._canvas.style.transform = `scale(${s})`;
+      this._fitScale = Math.min(vw / this.designWidth, vh / this.designHeight);
+      if (this._viewMode === 'read') {
+        this._scale = Math.max(this._fitScale, Math.min(READ_SCALE_MAX, Math.max(READ_SCALE_MIN, this._readScale)));
+      } else {
+        this._scale = this._fitScale;
+        this._panX = 0;
+        this._panY = 0;
+      }
+      this._applyTransform();
     }
 
     _onResize() { this._fit(); }
+
+    _applyTransform() {
+      if (!this._canvas || this.hasAttribute('noscale')) return;
+      const maxX = Math.max(0, (this.designWidth * this._scale - window.innerWidth) / 2);
+      const maxY = Math.max(0, (this.designHeight * this._scale - window.innerHeight) / 2);
+      this._panX = Math.max(-maxX, Math.min(maxX, this._panX));
+      this._panY = Math.max(-maxY, Math.min(maxY, this._panY));
+      this._canvas.style.transform = `translate(${this._panX}px, ${this._panY}px) scale(${this._scale})`;
+      this._canvas.setAttribute('data-deck-scale', String(this._scale));
+    }
+
+    _setViewMode(mode) {
+      if (this.hasAttribute('noscale')) return;
+      this._viewMode = mode === 'read' ? 'read' : 'fit';
+      this.setAttribute('data-view-mode', this._viewMode);
+      if (this._viewMode === 'fit') {
+        this._readScale = READ_SCALE_MIN;
+        this._panX = 0;
+        this._panY = 0;
+        this._gesturePointers.clear();
+        this._pinchState = null;
+        this._touchGestureStart = null;
+        this.removeAttribute('data-panning');
+      }
+      this._updateViewButton();
+      this._fit();
+      if (this._viewMode === 'read') {
+        // Open at the authored reading origin. A centred crop can be entirely
+        // blank when a slide keeps its content near the top-left corner.
+        this._panX = Math.max(0, (this.designWidth * this._scale - window.innerWidth) / 2);
+        this._panY = Math.max(0, (this.designHeight * this._scale - window.innerHeight) / 2);
+        this._applyTransform();
+      }
+      this._flashOverlay();
+    }
+
+    _updateViewButton() {
+      if (!this._viewButton) return;
+      const reading = this._viewMode === 'read';
+      this._viewButton.textContent = reading ? 'Fit' : 'Read';
+      this._viewButton.setAttribute('aria-label', reading ? 'Fit whole slide' : 'Switch to reading view');
+      this._viewButton.setAttribute('title', reading ? 'Fit whole slide' : 'Increase slide size');
+    }
+
+    _isInteractiveGestureTarget(event) {
+      return event.composedPath().some((node) => {
+        if (!(node instanceof Element) || node === this) return false;
+        if (node.matches('button, a, input, textarea, select, summary, table, [role="button"], [role="table"], [contenteditable="true"]')) return true;
+        const style = window.getComputedStyle(node);
+        const scrollableX = /(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth;
+        const scrollableY = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight;
+        return scrollableX || scrollableY;
+      });
+    }
+
+    _onPointerDown(e) {
+      if (this._viewMode !== 'read' || this.hasAttribute('noscale')) return;
+      if (e.pointerType === 'mouse' && e.button !== 0) return;
+      if (e.pointerType === 'mouse' && !this._spaceHeld) return;
+      if (this._isInteractiveGestureTarget(e)) return;
+      this._gesturePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pointerType: e.pointerType });
+      this._suppressClick = false;
+      if (e.pointerType === 'mouse' || this._gesturePointers.size >= 2) {
+        for (const pointerId of this._gesturePointers.keys()) {
+          try { this.setPointerCapture(pointerId); } catch (err) {}
+        }
+        if (this._gesturePointers.size === 2) this._resetPinchState();
+        this.setAttribute('data-panning', '');
+      }
+    }
+
+    _onPointerMove(e) {
+      const previous = this._gesturePointers.get(e.pointerId);
+      if (!previous || this._viewMode !== 'read') return;
+      this._gesturePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, pointerType: previous.pointerType });
+      // Touch events expose both fingers atomically. Using sequential
+      // pointermove events here makes an equal-distance pan briefly shrink
+      // then grow, and the minimum-scale clamp turns that into scale drift.
+      if (previous.pointerType === 'touch') return;
+      let handled = false;
+      if (this._gesturePointers.size >= 2) {
+        const points = Array.from(this._gesturePointers.values()).slice(0, 2);
+        const midpoint = { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 };
+        const distance = Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+        const prior = this._pinchState;
+        if (prior && prior.distance > 0 && distance > 0) {
+          this._panX += midpoint.x - prior.midpoint.x;
+          this._panY += midpoint.y - prior.midpoint.y;
+          this._zoomAt(midpoint.x, midpoint.y, this._scale * (distance / prior.distance));
+          this._suppressClick = true;
+          handled = true;
+        }
+        this._pinchState = { midpoint, distance };
+      } else if (previous.pointerType === 'mouse' && this._spaceHeld) {
+        const dx = e.clientX - previous.x;
+        const dy = e.clientY - previous.y;
+        if (Math.abs(dx) + Math.abs(dy) > 0) {
+          this._panX += dx;
+          this._panY += dy;
+          this._applyTransform();
+          if (Math.abs(dx) + Math.abs(dy) > 3) this._suppressClick = true;
+          handled = true;
+        }
+      }
+      if (handled) e.preventDefault();
+    }
+
+    _onPointerUp(e) {
+      if (!this._gesturePointers.has(e.pointerId)) return;
+      this._gesturePointers.delete(e.pointerId);
+      try { this.releasePointerCapture(e.pointerId); } catch (err) {}
+      if (this._gesturePointers.size < 2) this._pinchState = null;
+      if (this._gesturePointers.size < 2) this.removeAttribute('data-panning');
+    }
+
+    _resetPinchState() {
+      const points = Array.from(this._gesturePointers.values()).slice(0, 2);
+      if (points.length < 2) { this._pinchState = null; return; }
+      this._pinchState = {
+        midpoint: { x: (points[0].x + points[1].x) / 2, y: (points[0].y + points[1].y) / 2 },
+        distance: Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y),
+      };
+    }
+
+    _onTouchStart(e) {
+      // Keep one-finger and nested table scrolling native. Only the explicit
+      // two-finger canvas gesture suppresses the browser's page pinch/zoom.
+      if (this._viewMode !== 'read' || this.hasAttribute('noscale')) return;
+      if (e.touches.length < 2 || this._isInteractiveGestureTarget(e)) return;
+      const first = e.touches[0];
+      const second = e.touches[1];
+      if (!this._touchGestureStart) {
+        this._touchGestureStart = {
+          midpoint: { x: (first.clientX + second.clientX) / 2, y: (first.clientY + second.clientY) / 2 },
+          distance: Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY),
+          scale: this._scale,
+          panX: this._panX,
+          panY: this._panY,
+        };
+      }
+      e.preventDefault();
+    }
+
+    _onTouchMove(e) {
+      if (this._viewMode !== 'read' || this.hasAttribute('noscale')) return;
+      if (e.touches.length < 2 || this._isInteractiveGestureTarget(e)) return;
+      if (!this._touchGestureStart) this._onTouchStart(e);
+      const start = this._touchGestureStart;
+      if (!start || start.distance <= 0) return;
+      const first = e.touches[0];
+      const second = e.touches[1];
+      const midpoint = { x: (first.clientX + second.clientX) / 2, y: (first.clientY + second.clientY) / 2 };
+      const distance = Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+      const minScale = Math.max(this._fitScale, READ_SCALE_MIN);
+      const scale = Math.max(minScale, Math.min(READ_SCALE_MAX, start.scale * (distance / start.distance)));
+      const ratio = scale / start.scale;
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+      this._panX = midpoint.x - centerX - (start.midpoint.x - centerX - start.panX) * ratio;
+      this._panY = midpoint.y - centerY - (start.midpoint.y - centerY - start.panY) * ratio;
+      this._scale = scale;
+      this._readScale = scale;
+      this._suppressClick = true;
+      this._applyTransform();
+      e.preventDefault();
+    }
+
+    _onTouchEnd(e) {
+      if (e.touches.length < 2) this._touchGestureStart = null;
+    }
+
+    _zoomAt(clientX, clientY, nextScale) {
+      const minScale = Math.max(this._fitScale, READ_SCALE_MIN);
+      const scale = Math.max(minScale, Math.min(READ_SCALE_MAX, nextScale));
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
+      const ratio = scale / this._scale;
+      this._panX = clientX - centerX - (clientX - centerX - this._panX) * ratio;
+      this._panY = clientY - centerY - (clientY - centerY - this._panY) * ratio;
+      this._scale = scale;
+      this._readScale = scale;
+      this._applyTransform();
+    }
+
+    _onWheel(e) {
+      if (this._viewMode !== 'read' || this.hasAttribute('noscale') || this._isInteractiveGestureTarget(e)) return;
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) {
+        this._zoomAt(e.clientX, e.clientY, this._scale * Math.exp(-e.deltaY * 0.003));
+      } else {
+        this._panX -= e.deltaX;
+        this._panY -= e.deltaY;
+        this._applyTransform();
+      }
+      this._flashOverlay();
+    }
+
+    _onClickCapture(e) {
+      if (!this._suppressClick) return;
+      this._suppressClick = false;
+      // A multi-touch gesture normally emits no click, so the flag can live
+      // until the user's next action. Never consume that later action when it
+      // targets an actual control or another interactive element.
+      if (this._isInteractiveGestureTarget(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }
 
     _onMouseMove() {
       // Keep overlay visible while mouse moves; hide after idle.
@@ -565,7 +858,9 @@
       const key = e.key;
       let handled = true;
 
-      if (key === 'ArrowRight' || key === 'PageDown' || key === ' ' || key === 'Spacebar') {
+      if ((key === ' ' || key === 'Spacebar') && this._viewMode === 'read') {
+        this._spaceHeld = true;
+      } else if (key === 'ArrowRight' || key === 'PageDown' || key === ' ' || key === 'Spacebar') {
         this._go(this._index + 1, 'keyboard');
       } else if (key === 'ArrowLeft' || key === 'PageUp') {
         this._go(this._index - 1, 'keyboard');
@@ -587,6 +882,10 @@
         e.preventDefault();
         this._flashOverlay();
       }
+    }
+
+    _onKeyUp(e) {
+      if (e.key === ' ' || e.key === 'Spacebar') this._spaceHeld = false;
     }
 
     _go(i, reason = 'api') {
@@ -611,6 +910,10 @@
     next() { this._go(this._index + 1, 'api'); }
     prev() { this._go(this._index - 1, 'api'); }
     reset() { this._go(0, 'api'); }
+    /** Current viewport mode: fit or read. */
+    get viewMode() { return this._viewMode; }
+    /** Switch viewport mode without changing the current slide. */
+    setViewMode(mode) { this._setViewMode(mode); }
   }
 
   if (!customElements.get('deck-stage')) {

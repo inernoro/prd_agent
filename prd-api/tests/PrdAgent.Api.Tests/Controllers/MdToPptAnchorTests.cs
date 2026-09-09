@@ -45,6 +45,33 @@ public class MdToPptAnchorTests
     }
 
     [Fact]
+    public void SoftEditorial_RuntimeProvidesBoundedMobileReadingViewWithoutChangingExportGeometry()
+    {
+        var anchor = MdToPptAnchors.Resolve("editorial-ink")!;
+        var guarded = MdToPptAnchors.EnsureMobilePresentationGuard(anchor.Prefix, anchor.Name);
+
+        Assert.Contains("const READ_SCALE_MIN = 0.5", guarded);
+        Assert.Contains("data-deck-view-toggle", guarded);
+        Assert.Contains(".btn.view {\n      display: none;", guarded);
+        Assert.Contains(".btn.view { display: inline-flex; }", guarded);
+        Assert.Contains("setViewMode(mode)", guarded);
+        Assert.Contains("Open at the authored reading origin", guarded);
+        Assert.Contains("this._gesturePointers", guarded);
+        Assert.Contains("this._gesturePointers.size >= 2", guarded);
+        Assert.Contains("e.pointerType === 'mouse' && !this._spaceHeld", guarded);
+        Assert.Contains("this.addEventListener('touchstart', this._onTouchStart, { passive: false })", guarded);
+        Assert.Contains("this.addEventListener('touchmove', this._onTouchMove, { passive: false })", guarded);
+        Assert.Contains("e.touches.length < 2 || this._isInteractiveGestureTarget(e)", guarded);
+        Assert.Contains("start.scale * (distance / start.distance)", guarded);
+        Assert.Contains("if (e.touches.length < 2) this._touchGestureStart = null", guarded);
+        Assert.Contains("if (this._isInteractiveGestureTarget(e)) return;\n      e.preventDefault();", guarded);
+        Assert.Contains("e.ctrlKey || e.metaKey", guarded);
+        Assert.Contains(":host([noscale]) .overlay", guarded);
+        Assert.Contains("this._canvas.style.transform = 'none'", guarded);
+        Assert.Contains("this._viewMode = 'fit'", guarded);
+    }
+
+    [Fact]
     public void HistoricalSoftEditorial_NormalizationCreatesSelfContainedRunnableDocument()
     {
         const string historical = "<!doctype html><html><head><script src=\"assets/deck-stage.js\"></script></head><body><deck-stage width=\"1920\" height=\"1080\"><section class=\"slide\">内容</section></deck-stage></body></html>";
@@ -94,7 +121,7 @@ public class MdToPptAnchorTests
     {
         var anchor = MdToPptAnchors.Load("monochrome")!;
         var middleTable = MdToPptAnchors.PickLayout(anchor, 1, 4, "版式：表格");
-        Assert.Contains("dense", middleTable.Layout);
+        Assert.Contains("<table", middleTable.Html);
         Assert.Equal(middleTable, MdToPptAnchors.PickLayout(anchor, 3, 4, "版式：表格"));
         const string confirmedIntent = "版式结构：表格；视觉装置：日期、时间、主题、总名额和剩余名额表格；排字策略：标题使用清晰易读的无衬线字体，正文采用中等大小的宋体或雅黑字体，排版整齐舒适；强调用法：清新蓝色作为表格的主色调，突出表格数据";
         Assert.Equal(middleTable, MdToPptAnchors.PickLayout(anchor, 3, 4, confirmedIntent));
@@ -103,7 +130,7 @@ public class MdToPptAnchorTests
         Assert.Equal(anchor.Closing, MdToPptAnchors.PickLayout(anchor, 3, 4, "未指定版式"));
         Assert.Equal(anchor.Cover, MdToPptAnchors.PickLayout(anchor, 0, 1, "版式：表格"));
         var noContent = new MdToPptAnchors.Anchor("two-slides", "", "", new[] { anchor.Cover, anchor.Closing });
-        Assert.Equal(noContent.Closing, MdToPptAnchors.PickLayout(noContent, 1, 2, confirmedIntent));
+        Assert.Throws<NotSupportedException>(() => MdToPptAnchors.PickLayout(noContent, 1, 2, confirmedIntent));
         Assert.Equal(noContent.Cover, MdToPptAnchors.PickLayout(noContent, 0, 2, confirmedIntent));
     }
 

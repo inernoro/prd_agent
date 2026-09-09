@@ -149,6 +149,19 @@ public static class MdToPptAnchors
                         l.TryGetProperty("summary", out var sm) ? sm.GetString() ?? "" : "",
                         File.ReadAllText(Path.Combine(root, "slides", file))));
                 }
+                if (slides.Count >= 3 && !slides.Any(IsSemanticTable))
+                {
+                    // One explicitly selected capability, inheriting the chosen
+                    // theme. Do not replace its cover, closing or content rotation.
+                    var shared = Path.Combine(AppContext.BaseDirectory, "Resources", "mdppt", "anchors", "_shared");
+                    var tableHtml = File.ReadAllText(Path.Combine(shared, "semantic-table.html"));
+                    var tableCss = File.ReadAllText(Path.Combine(shared, "semantic-table.css"));
+                    slides.Insert(slides.Count - 1, new AnchorSlide("_shared/semantic-table.html", "s-table",
+                        "slide mdppt-semantic-table", "Semantic source records table", tableHtml));
+                    var style = $"<style data-mdppt-semantic-table>\n{tableCss}\n</style>\n";
+                    var headClose = prefix.IndexOf("</head>", StringComparison.OrdinalIgnoreCase);
+                    prefix = headClose >= 0 ? prefix.Insert(headClose, style) : style + prefix;
+                }
                 return slides.Count >= 3 ? new Anchor(name, prefix, suffix, slides) : null;
             }
             catch
@@ -234,10 +247,12 @@ public static class MdToPptAnchors
         var pool = allContentSlides.Where(slide => slide.Layout != "s-table").ToList();
 
         var intent = designIntent ?? string.Empty;
+        if (intent.Contains("表格", StringComparison.OrdinalIgnoreCase)
+            || intent.Contains("table", StringComparison.OrdinalIgnoreCase))
+            return allContentSlides.FirstOrDefault(IsSemanticTable)
+                ?? throw new NotSupportedException($"Anchor '{anchor.Name}' has no semantic table layout.");
         var keywordMap = new (string[] Keys, string[] LayoutHints)[]
         {
-            // 显式表格意图不能被同一句中的“表格数据”等通用数据词抢先覆盖。
-            (new[] { "表格", "table" }, new[] { "table", "dense", "financial" }),
             (new[] { "数据", "数字", "指标", "看板", "stat" }, new[] { "stats", "data", "numbers", "chart", "pie", "financial" }),
             (new[] { "对比", "比较", "vs" }, new[] { "compare", "split", "matrix" }),
             (new[] { "引用", "金句", "观点", "quote" }, new[] { "quote", "statement", "manifesto" }),
@@ -248,8 +263,7 @@ public static class MdToPptAnchors
         foreach (var (keys, hints) in keywordMap)
         {
             if (!keys.Any(k => intent.Contains(k, StringComparison.OrdinalIgnoreCase))) continue;
-            var candidates = hints.Contains("table") ? allContentSlides : pool;
-            var hit = candidates.FirstOrDefault(s => hints.Any(h => s.Layout.Contains(h, StringComparison.OrdinalIgnoreCase)));
+            var hit = pool.FirstOrDefault(s => hints.Any(h => s.Layout.Contains(h, StringComparison.OrdinalIgnoreCase)));
             if (hit != null) return hit;
         }
         if (index == total - 1) return anchor.Closing;
@@ -257,4 +271,9 @@ public static class MdToPptAnchors
         // 轮换：相邻内容页不重复版式
         return pool[(index - 1) % pool.Count];
     }
+
+    private static bool IsSemanticTable(AnchorSlide slide) =>
+        slide.Layout == "s-table"
+        && System.Text.RegularExpressions.Regex.IsMatch(slide.Html, "<table(?:\\s|>)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
 }

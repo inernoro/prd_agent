@@ -2153,13 +2153,18 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
 
   useEffect(() => {
     if (!presentMode) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { setPresentMode(false); }
       else if (e.key === 'ArrowRight' || e.key === 'PageDown' || e.key === ' ') { e.preventDefault(); presentGoto(presentIdx + 1); }
       else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); presentGoto(presentIdx - 1); }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = previousBodyOverflow;
+    };
   }, [presentMode, presentIdx, presentGoto]);
 
   // ─── 下载独立 HTML（含当前主题样式，可直接双击打开演示）
@@ -3579,12 +3584,23 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
                     {generatedHtml ? '演示稿已生成' : isStreaming ? '正在生成' : '对话进行中'}
                   </div>
                   <div className="mt-1 text-xs text-token-muted">
-                    {isStreaming ? `已运行 ${elapsedSec}s，页面会持续更新` : generatedHtml ? '可继续精修、下载或发布为网页' : '继续输入即可调整方向'}
+                    {isStreaming ? `已运行 ${elapsedSec}s，页面会持续更新` : generatedHtml ? '可继续精修、预览或发布为网页' : '继续输入即可调整方向'}
                   </div>
                 </div>
                 {isStreaming && (
                   <button onClick={handleAbort} className="rounded-md border border-red-400/25 px-2.5 py-1.5 text-xs text-red-200">
                     中止
+                  </button>
+                )}
+                {generatedHtml && !isStreaming && (
+                  <button
+                    type="button"
+                    data-testid="mobile-present-button"
+                    onClick={handleFullscreen}
+                    className="flex min-h-11 shrink-0 items-center gap-1.5 rounded-md border border-token-subtle bg-token-card px-3 text-xs font-semibold text-token-primary hover-bg-soft"
+                  >
+                    <Maximize2 size={14} />
+                    预览演示稿
                   </button>
                 )}
               </div>
@@ -5261,27 +5277,37 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       )}
 
       {/* 演示模式（自定义全屏）：主 deck + 底部子页缩略条（诉求 9）。Esc / 关闭按钮退出。 */}
-      {presentMode && generatedHtml && (
-        <div className="fixed inset-0 z-[300] flex flex-col bg-black" data-testid="present-overlay">
+      {presentMode && generatedHtml && createPortal(
+        <div
+          className="fixed inset-0 z-[300] flex flex-col bg-black"
+          data-testid="present-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="演示稿预览"
+          style={{ height: '100dvh', maxHeight: '100dvh' }}
+        >
           <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-token-nested border-b border-token-subtle">
             <span className="text-[12px] text-token-secondary tabular-nums">
               第 {presentIdx + 1} / {deckThumbDocs.length || (slidePos?.total ?? 1)} 页
             </span>
             <div className="flex items-center gap-2">
               <button
+                type="button"
                 onClick={() => presentGoto(presentIdx - 1)}
                 disabled={presentIdx <= 0}
-                className="px-2 py-1 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft disabled:opacity-30"
+                className="min-h-11 px-2 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft disabled:opacity-30"
               >上一页</button>
               <button
+                type="button"
                 onClick={() => presentGoto(presentIdx + 1)}
                 disabled={presentIdx >= deckThumbDocs.length - 1}
-                className="px-2 py-1 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft disabled:opacity-30"
+                className="min-h-11 px-2 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft disabled:opacity-30"
               >下一页</button>
               <button
+                type="button"
                 onClick={() => setPresentMode(false)}
                 data-testid="present-close"
-                className="px-2 py-1 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft"
+                className="min-h-11 px-2 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft"
               >退出全屏 (Esc)</button>
             </div>
           </div>
@@ -5334,7 +5360,8 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
               ))}
             </div>
           )}
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* KB picker modal */}
