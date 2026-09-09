@@ -332,18 +332,39 @@ function buildDaily(latest: OverviewReportRef[], toMs: number, days: number, tzO
   return out;
 }
 
+/**
+ * 报告 ↔ 改动单元的对齐判据（唯一一份）。
+ *
+ * 报告侧只有三个自由文本字段（branch / commitSha / prNumber），改动侧（分支或墓碑）
+ * 也是这三样。合并覆盖与流水线漏斗都要按同一口径对齐——写两份必然漂
+ * （predicate-and-wiring-discipline 形状 3），所以抽在这里给两边共用。
+ *
+ * 三把钥匙按可信度排序：PR 号 > commit（允许任一方是前缀）> 分支名。
+ * 一把都对不上就是对不上，绝不猜——「对不上」本身是流水线要报的一档。
+ */
+export interface ChangeKeys {
+  projectId: string | null;
+  branch?: string | null;
+  prNumber?: number | null;
+  commitSha?: string | null;
+}
+
+export function matchesChange(r: OverviewReportRef, k: ChangeKeys): boolean {
+  if ((r.projectId || null) !== (k.projectId || null)) return false;
+  if (k.prNumber != null && r.prNumber != null && r.prNumber === k.prNumber) return true;
+  if (k.commitSha && r.commitSha && (k.commitSha.startsWith(r.commitSha) || r.commitSha.startsWith(k.commitSha))) return true;
+  return Boolean(k.branch && r.branch && r.branch === k.branch);
+}
+
 function buildMergeCoverage(tombstones: BranchTombstone[], latest: OverviewReportRef[], fromMs: number, toMs: number, projectId: string | null): ReportsOverview['mergeCoverage'] {
   const items: OverviewMergeItem[] = [];
   for (const t of tombstones) {
     if (t.reason !== 'merged') continue;
     if (projectId && t.projectId !== projectId) continue;
     if (!inWindow(t.removedAt, fromMs, toMs)) continue;
-    const matched = latest.filter((r) => {
-      if ((r.projectId || null) !== t.projectId) return false;
-      if (t.prNumber != null && r.prNumber === t.prNumber) return true;
-      if (t.mergeCommitSha && r.commitSha && (t.mergeCommitSha.startsWith(r.commitSha) || r.commitSha.startsWith(t.mergeCommitSha))) return true;
-      return Boolean(r.branch && r.branch === t.branch);
-    });
+    const matched = latest.filter((r) => matchesChange(r, {
+      projectId: t.projectId, branch: t.branch, prNumber: t.prNumber ?? null, commitSha: t.mergeCommitSha ?? null,
+    }));
     let status: MergeCoverageStatus = 'unverified';
     if (matched.length) {
       matched.sort((a, b) => b.createdAt.localeCompare(a.createdAt));

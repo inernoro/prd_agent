@@ -17,13 +17,15 @@ const source = readFileSync(
 describe('未通过与待决的簇标签', () => {
   it('未通过 / 有条件的 ×N 引的是分类计数，不是簇的总份数', () => {
     expect(source).toContain('`未通过 ×${c.failCount}`');
-    expect(source).toContain('`有条件 ×${c.conditionalCount}`');
+    expect(source).toContain('`原则性通过 ×${c.conditionalCount}`');
     expect(source).not.toContain('`未通过 ×${c.count}`');
-    expect(source).not.toContain('`有条件 ×${c.count}`');
+    expect(source).not.toContain('`原则性通过 ×${c.count}`');
+    // 旧词也不许回潮：conditional 的中文 2026-09-09 起统一写「原则性通过」
+    expect(source).not.toContain("label: '有条件'");
   });
 
   it('未通过簇里夹着有条件时，行内要把那几份单独说出来', () => {
     expect(source).toContain("c.verdict === 'fail' && c.conditionalCount > 0");
-    expect(source).toContain('另有条件 ×');
+    expect(source).toContain('另有原则性通过 ×');
   });
 });

@@ -343,6 +343,57 @@ export interface ReportsOverview {
 }
 
 /** 验收主页聚合；days 为时间窗天数，时区偏移取浏览器本地。 */
+/** 验收流水线总览（跨项目，一行一个项目）。首页给老板 / 观察者 / 架构师看的那一屏。 */
+export type ChangeStage = 'created' | 'deployed' | 'accepted' | 'merged';
+export type LeakKind = 'deployed-not-accepted' | 'merged-not-accepted' | 'merged-while-failing' | 'orphan-report';
+
+export interface PipelineFunnel {
+  changes: number;
+  deployed: number;
+  accepted: number;
+  merged: number;
+  /** 三档计数，不给通过率（分母失真且规范未定义）。 */
+  pass: number;
+  conditional: number;
+  fail: number;
+  undetermined: number;
+}
+
+export interface PipelineLeak {
+  kind: LeakKind;
+  subject: string;
+  projectId: string;
+  reportIds: string[];
+}
+
+export interface PipelineProjectRow {
+  projectId: string;
+  projectName: string;
+  funnel: PipelineFunnel;
+  leaks: Record<LeakKind, number>;
+  missingKinds: ReportKind[];
+  inFlight: number;
+  lastActivityAt: string | null;
+  githubLinked: boolean;
+}
+
+export interface PipelineOverview {
+  generatedAt: string;
+  recentDays: number | null;
+  total: PipelineFunnel;
+  totalLeaks: Record<LeakKind, number>;
+  projects: PipelineProjectRow[];
+  leaks: PipelineLeak[];
+}
+
+export async function fetchReportsPipeline(input: { recentDays?: number | null } = {}): Promise<PipelineOverview> {
+  const params = new URLSearchParams();
+  if (input.recentDays) params.set('recentDays', String(input.recentDays));
+  const qs = params.toString();
+  const res = await apiRequest<{ pipeline: PipelineOverview }>(`/api/reports/pipeline${qs ? `?${qs}` : ''}`);
+  return res.pipeline;
+}
+
 export async function fetchReportsOverview(input: { projectId?: string; days?: number } = {}): Promise<ReportsOverview> {
   const params = new URLSearchParams();
   if (input.projectId) params.set('projectId', input.projectId);

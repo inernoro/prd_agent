@@ -24,6 +24,7 @@ import {
   apiRequest,
   createReportFolder,
   fetchReportsOverview,
+  fetchReportsPipeline,
   createReportFromFile,
   createReportFromText,
   deleteReport,
@@ -44,6 +45,7 @@ import {
   type OverviewCluster,
   type OverviewReportRef,
   type ReportsOverview,
+  type PipelineOverview,
   type ReportFolder,
   type ReportFormat,
 } from '@/lib/api';
@@ -51,6 +53,7 @@ import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { useTheme } from '@/lib/theme';
 import { buildMapReportImportUrl } from '@/lib/knowledge-base-sync';
 import { ReportsOverviewPanel } from '@/pages/reports/ReportsOverview';
+import { PipelinePanel } from '@/pages/reports/PipelinePanel';
 
 interface ProjectLite {
   id: string;
@@ -67,6 +70,15 @@ type OverviewState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
   | { status: 'ok'; overview: ReportsOverview };
+
+/**
+ * 流水线总览的取数状态。不选项目时首页看的是它（跨项目、纵观全局与流水线）；
+ * 选了项目才切到 ReportsOverviewPanel——那一屏是**项目明细**，不是首页。
+ */
+type PipelineState =
+  | { status: 'loading' }
+  | { status: 'error'; message: string }
+  | { status: 'ok'; pipeline: PipelineOverview };
 
 /** 结论头条的时间窗（天）；持久在 sessionStorage，与列表排序同一存法。 */
 const OVERVIEW_WINDOWS = [7, 14, 30] as const;
@@ -161,6 +173,7 @@ export function ReportsPage(): JSX.Element {
   const [knowledgeDialogReport, setKnowledgeDialogReport] = useState<AcceptanceReport | null>(null);
   // 结论优先主页（2026-09-08 重做）：聚合与列表分开加载，聚合失败不拖垮台账。
   const [overviewState, setOverviewState] = useState<OverviewState>({ status: 'loading' });
+  const [pipelineState, setPipelineState] = useState<PipelineState>({ status: 'loading' });
   const [overviewDays, setOverviewDays] = useState<OverviewWindow>(readOverviewWindow);
   useEffect(() => { sessionStorage.setItem('cds-report-overview-days', String(overviewDays)); }, [overviewDays]);
 
@@ -201,6 +214,16 @@ export function ReportsPage(): JSX.Element {
       setOverviewState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [overviewScope, overviewDays]);
+  const loadPipeline = useCallback(async () => {
+    setPipelineState({ status: 'loading' });
+    try {
+      setPipelineState({ status: 'ok', pipeline: await fetchReportsPipeline({}) });
+    } catch (err) {
+      setPipelineState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+  }, []);
+  useEffect(() => { void loadPipeline(); }, [loadPipeline]);
+
   // state 变化（新建 / 删除 / 移动报告）后重算聚合，保证头条与台账同源。
   useEffect(() => {
     if (state.status !== 'ok') return;
@@ -528,7 +551,12 @@ export function ReportsPage(): JSX.Element {
           {state.status === 'ok' && !selected ? (
             <ReportsHome
               overviewState={overviewState}
-              onRetryOverview={() => void loadOverview()}
+              pipelineState={pipelineState}
+              // 「全局」= 既没有 URL 的 ?project=，筛选也停在「全部项目」。
+              // 只有这时首页才是跨项目流水线；否则读者已经选定了一个项目，该看明细。
+              isGlobalScope={!projectId && activeProjectFilter === 'all'}
+              onOpenProject={(pid) => setActiveProjectFilter(pid)}
+              onRetryOverview={() => { void loadOverview(); void loadPipeline(); }}
               allReports={allReports}
               reports={searchedReports}
               folders={folders}
@@ -723,11 +751,14 @@ export function ReportsPage(): JSX.Element {
  * 默认折叠被取代的早期版本（同一验收目标只展示最新版，标「v3 · 取代 2 份」）。
  */
 function ReportsHome({
-  overviewState, onRetryOverview, allReports, reports, folders, scopedFolders, projects, projectCounts, folderCounts,
+  overviewState, pipelineState, isGlobalScope, onOpenProject, onRetryOverview, allReports, reports, folders, scopedFolders, projects, projectCounts, folderCounts,
   activeProjectFilter, activeFolder, searchQuery, onSearchChange, showProjectFilter, onProjectFilterSelect, onFilterSelect,
   onCreateFolder, onCreate, onSelect, onDelete, onMove, onCopy, onSync, onManageConnections,
 }: {
   overviewState: OverviewState;
+  pipelineState: PipelineState;
+  isGlobalScope: boolean;
+  onOpenProject: (projectId: string) => void;
   onRetryOverview: () => void;
   allReports: AcceptanceReport[];
   reports: AcceptanceReport[];
@@ -836,16 +867,39 @@ function ReportsHome({
 
   return (
     <div className="flex flex-col gap-6 pb-8">
-      {overviewState.status === 'loading' ? <LoadingBlock label="正在汇总验收结论" /> : null}
-      {overviewState.status === 'error' ? (
-        <div className="flex items-center justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
-          <span className="text-muted-foreground">结论汇总加载失败：{overviewState.message}</span>
-          <Button variant="outline" size="sm" onClick={onRetryOverview}><RefreshCw />重试</Button>
-        </div>
-      ) : null}
-      {overview ? (
-        <ReportsOverviewPanel overview={overview} projectName={projectName} onOpenReport={openById} onOpenCluster={openCluster} onJump={jumpTo} />
-      ) : null}
+      {/*
+        首页（不选项目）= 跨项目流水线总览，服务老板 / 观察者 / 架构师的「纵观全局」。
+        选中某个项目后才切到 ReportsOverviewPanel —— 那一屏是**项目明细**（结论优先），
+        不再承担首页的职责。这是 2026-09-09 从需求重推的结论：首页的问题是「有哪几件
+        事要我管」，不是「这一份报告结论如何」。
+      */}
+      {isGlobalScope ? (
+        <>
+          {pipelineState.status === 'loading' ? <LoadingBlock label="正在汇总验收流水线" /> : null}
+          {pipelineState.status === 'error' ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
+              <span className="text-muted-foreground">流水线汇总加载失败：{pipelineState.message}</span>
+              <Button variant="outline" size="sm" onClick={onRetryOverview}><RefreshCw />重试</Button>
+            </div>
+          ) : null}
+          {pipelineState.status === 'ok' ? (
+            <PipelinePanel pipeline={pipelineState.pipeline} onOpenProject={onOpenProject} />
+          ) : null}
+        </>
+      ) : (
+        <>
+          {overviewState.status === 'loading' ? <LoadingBlock label="正在汇总验收结论" /> : null}
+          {overviewState.status === 'error' ? (
+            <div className="flex items-center justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-sm">
+              <span className="text-muted-foreground">结论汇总加载失败：{overviewState.message}</span>
+              <Button variant="outline" size="sm" onClick={onRetryOverview}><RefreshCw />重试</Button>
+            </div>
+          ) : null}
+          {overview ? (
+            <ReportsOverviewPanel overview={overview} projectName={projectName} onOpenReport={openById} onOpenCluster={openCluster} onJump={jumpTo} />
+          ) : null}
+        </>
+      )}
 
       <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
         {/*
@@ -926,7 +980,7 @@ function ReportsHome({
                       title={reportTooltip(r, projectLabel)}
                     >
                       <td className="w-[96px] whitespace-nowrap px-3 py-3">
-                        <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold"><VerdictIcon verdict={r.verdict} />{r.verdict === 'pass' ? '通过' : r.verdict === 'fail' ? '未通过' : r.verdict === 'conditional' ? '有条件' : <span className="text-muted-foreground">无结论</span>}</span>
+                        <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold"><VerdictIcon verdict={r.verdict} />{r.verdict === 'pass' ? '通过' : r.verdict === 'fail' ? '未通过' : r.verdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
                       </td>
                       <td className="px-3 py-3">
                         <div className="font-semibold text-foreground">{r.title}</div>
@@ -1313,7 +1367,7 @@ function FormatBadge({ format }: { format: ReportFormat }): JSX.Element {
 function VerdictBadge({ verdict }: { verdict: NonNullable<AcceptanceReport['verdict']> }): JSX.Element {
   const cfg: Record<string, { label: string; bg: string }> = {
     pass: { label: '通过', bg: '#1a7f37' },
-    conditional: { label: '有条件', bg: '#9a6700' },
+    conditional: { label: '原则性通过', bg: '#9a6700' },
     fail: { label: '不通过', bg: '#b42318' },
   };
   const c = cfg[verdict];
@@ -1327,14 +1381,14 @@ function VerdictBadge({ verdict }: { verdict: NonNullable<AcceptanceReport['verd
 function VerdictIcon({ verdict }: { verdict?: AcceptanceReport['verdict'] | null }): JSX.Element {
   if (verdict === 'pass') return <CircleCheck className="h-4 w-4 shrink-0 text-ok" aria-label="通过" />;
   if (verdict === 'fail') return <CircleX className="h-4 w-4 shrink-0 text-bad" aria-label="不通过" />;
-  if (verdict === 'conditional') return <CircleAlert className="h-4 w-4 shrink-0 text-warn" aria-label="有条件" />;
+  if (verdict === 'conditional') return <CircleAlert className="h-4 w-4 shrink-0 text-warn" aria-label="原则性通过" />;
   return <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-label="无结论" />;
 }
 
 function reportTooltip(report: AcceptanceReport, projectName: string | undefined): string {
   return [
     report.title,
-    report.verdict ? `结论：${report.verdict === 'pass' ? '通过' : report.verdict === 'fail' ? '不通过' : '有条件'}` : '结论：未标记',
+    report.verdict ? `结论：${report.verdict === 'pass' ? '通过' : report.verdict === 'fail' ? '不通过' : '原则性通过'}` : '结论：未标记',
     `格式：${report.format === 'html' ? 'HTML' : 'Markdown'}`,
     `大小：${formatBytes(report.sizeBytes)}`,
     projectName ? `项目：${projectName}` : null,

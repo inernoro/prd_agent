@@ -36,6 +36,7 @@ import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
+import { buildPipelineOverview } from '../services/acceptance-pipeline.js';
 import { buildReportsOverview } from '../services/acceptance-overview.js';
 
 /**
@@ -673,6 +674,28 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const tombstones = selfOnly ? [] : stateService.listRemovedBranches(projectId ?? null);
     const overview = buildReportsOverview(reports, tombstones, { days, tzOffsetMinutes, to, projectId: selfOnly ? null : projectId ?? null });
     res.json({ overview });
+  });
+
+  /**
+   * GET /api/reports/pipeline — 验收流水线总览（跨项目，一行一个项目）。
+   *
+   * 服务对象是老板 / 观察者 / 架构师：他们要「纵观全局和流水线」，不动手处理单条待办。
+   * 所以这里返回的是**环与环之间的落差**（漏在哪），不是报告列表，也不给通过率。
+   *
+   * 口径是「当前在途 + 最近完成」，`recentDays` 只筛后者（不给则不限）。
+   * 项目级凭证只看得到自己那个项目——可见范围等于授权范围，与 /reports/overview 同一条。
+   */
+  router.get('/reports/pipeline', (req: Request, res: Response) => {
+    const key = projectKeyOf(req);
+    const daysRaw = Number(req.query.recentDays);
+    const recentDays = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(365, Math.floor(daysRaw)) : null;
+    const scoped = key?.projectId ?? null;
+    const projects = stateService.getProjects().filter((p) => !scoped || p.id === scoped);
+    const branches = stateService.getAllBranches().filter((b) => !scoped || b.projectId === scoped);
+    const tombstones = stateService.listRemovedBranches(scoped);
+    const reports = stateService.listAcceptanceReports(scoped);
+    const pipeline = buildPipelineOverview(projects, branches, tombstones, reports, { recentDays });
+    res.json({ pipeline });
   });
 
   // GET /api/reports/assets/:name — 内容寻址的报告图片资源（PNG/JPG/...）。

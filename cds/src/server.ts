@@ -869,6 +869,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /export-config': '导出配置',
     'GET /reports': '列出验收报告',
     'GET /reports/overview': '验收主页聚合',
+      'GET /reports/pipeline': '验收流水线总览',
     'POST /reports': '创建验收报告',
     'POST /reports/assets': '上传验收截图',
     'GET /report-folders': '列出报告文件夹',

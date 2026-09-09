@@ -25,13 +25,13 @@ export interface ReportsOverviewProps {
 
 const VERDICT_META: Record<ReportVerdict, { label: string; Icon: LucideIcon; color: string; soft: string }> = {
   pass: { label: '通过', Icon: CircleCheck, color: 'hsl(var(--ok))', soft: 'hsl(var(--ok-soft))' },
-  conditional: { label: '有条件', Icon: TriangleAlert, color: 'hsl(var(--warn))', soft: 'hsl(var(--warn-soft))' },
+  conditional: { label: '原则性通过', Icon: TriangleAlert, color: 'hsl(var(--warn))', soft: 'hsl(var(--warn-soft))' },
   fail: { label: '未通过', Icon: CircleX, color: 'hsl(var(--bad))', soft: 'hsl(var(--bad-soft))' },
 };
 
 const MERGE_META: Record<MergeCoverageStatus, { label: string; color: string; dashed?: boolean }> = {
   verified: { label: '已验通过', color: 'hsl(var(--ok))' },
-  conditional: { label: '有条件', color: 'hsl(var(--warn))' },
+  conditional: { label: '原则性通过', color: 'hsl(var(--warn))' },
   failed: { label: '验了没过', color: 'hsl(var(--bad))' },
   unverified: { label: '零验收', color: 'hsl(var(--hairline-strong))', dashed: true },
 };
@@ -82,7 +82,7 @@ function VerdictBars({ overview }: { overview: ReportsOverview }): JSX.Element {
         return (
           <div key={r.label} className="flex items-center gap-3">
             <span className="w-8 shrink-0 text-[11px] text-muted-foreground">{r.label}</span>
-            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`${r.label}：通过 ${r.pass}，有条件 ${r.conditional}，未通过 ${r.fail}`} className="min-w-0 flex-1">
+            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`${r.label}：通过 ${r.pass}，原则性通过 ${r.conditional}，未通过 ${r.fail}`} className="min-w-0 flex-1">
               <rect x="0" y="0" width={W} height={H} rx="3" fill="hsl(var(--surface-sunken))" />
               {segs.map((s, i) => {
                 const w = Math.max(0, (s.n / max) * W - (i < segs.length - 1 ? GAP : 0));
@@ -157,7 +157,7 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
   const topShare = top && top.failCount > 0 && totalFail > 0
     ? { hit: top.failCount, base: totalFail, pct: Math.round((top.failCount / totalFail) * 100), word: '未通过' }
     : top && totalCond > 0
-      ? { hit: top.conditionalCount, base: totalCond, pct: Math.round((top.conditionalCount / totalCond) * 100), word: '有条件' }
+      ? { hit: top.conditionalCount, base: totalCond, pct: Math.round((top.conditionalCount / totalCond) * 100), word: '原则性通过' }
       : null;
 
   return (
@@ -167,7 +167,7 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
         {/* 两个色 = 必须有图例（accessibility pass）；同时每段还直接标了数字。 */}
         <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-[2px]" style={{ background: 'hsl(var(--bad))' }} />未通过 {totalFail}</span>
-          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-[2px]" style={{ background: 'hsl(var(--warn))' }} />有条件 {totalCond}</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-[2px]" style={{ background: 'hsl(var(--warn))' }} />原则性通过 {totalCond}</span>
         </div>
       </div>
       <ul className="m-0 flex list-none flex-col gap-1.5 p-0">
@@ -183,7 +183,7 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
               <button
                 type="button"
                 onClick={() => onOpenCluster(c)}
-                title={`${c.target} · ${label} · 未通过 ${c.failCount} 份 / 有条件 ${c.conditionalCount} 份 · ${c.kinds.join(' · ')}${c.projectId ? ` · ${projectName(c.projectId)}` : ''} · 点击查看这 ${c.count} 份`}
+                title={`${c.target} · ${label} · 未通过 ${c.failCount} 份 / 原则性通过 ${c.conditionalCount} 份 · ${c.kinds.join(' · ')}${c.projectId ? ` · ${projectName(c.projectId)}` : ''} · 点击查看这 ${c.count} 份`}
                 className="group flex w-full items-center gap-3 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))]"
               >
                 <span className="w-[128px] shrink-0 truncate text-[12.5px] font-medium text-foreground group-hover:underline lg:w-[152px]">{c.target}</span>
@@ -270,7 +270,7 @@ function DailyStrip({ overview, onOpenReport }: { overview: ReportsOverview; onO
   );
 }
 
-/** 合并覆盖：一根堆叠条（已验 / 有条件 / 验了没过 / 零验收）+ 逐条清单。 */
+/** 合并覆盖：一根堆叠条（已验 / 原则性通过 / 验了没过 / 零验收）+ 逐条清单。 */
 function MergeCoverage({ overview, onOpenReport }: { overview: ReportsOverview; onOpenReport: (id: string) => void }): JSX.Element {
   const { items, counts } = overview.mergeCoverage;
   const total = items.length;
@@ -286,7 +286,7 @@ function MergeCoverage({ overview, onOpenReport }: { overview: ReportsOverview; 
   }
   const headline = counts.unverified > 0
     ? <>{total} 条合并的分支里 <b className="text-foreground">{counts.verified} 条验过且通过</b>，{counts.failed + counts.conditional} 条验了但没有干净通过，<b className="text-foreground">{counts.unverified} 条零验收</b>。零验收是证据空白，不是产品缺陷。</>
-    : <>{total} 条合并的分支全部有验收记录：{counts.verified} 条通过，{counts.conditional} 条有条件，{counts.failed} 条未通过。</>;
+    : <>{total} 条合并的分支全部有验收记录：{counts.verified} 条通过，{counts.conditional} 条原则性通过，{counts.failed} 条未通过。</>;
   return (
     <div className="flex flex-col gap-3">
       <div className="text-[13.5px] leading-relaxed">{headline}</div>
@@ -367,7 +367,7 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
   if (clusters.length === 0) {
     return (
       <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-        这个时间窗内没有未通过或有条件通过的报告。
+        这个时间窗内没有未通过或原则性通过的报告。
       </div>
     );
   }
@@ -377,7 +377,7 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
     // 把有条件的两份也说成了未通过。这页存在的意义就是不让口径这样糊，自己更不能犯。
     if (c.verdict === 'fail') return { label: `未通过 ×${c.failCount}`, Icon: CircleX, color: 'hsl(var(--bad))', rail: 'hsl(var(--bad))' };
     if (c.verdict === 'conflict') return { label: '口径冲突', Icon: CircleAlert, color: 'hsl(var(--info))', rail: 'hsl(var(--info))' };
-    return { label: `有条件 ×${c.conditionalCount}`, Icon: TriangleAlert, color: 'hsl(var(--warn))', rail: 'hsl(var(--warn))' };
+    return { label: `原则性通过 ×${c.conditionalCount}`, Icon: TriangleAlert, color: 'hsl(var(--warn))', rail: 'hsl(var(--warn))' };
   };
   const nextStep = (c: OverviewCluster): string => {
     if (c.verdict === 'conflict') return '同一对象同日结论互相矛盾，先统一口径再复测；统计只认最新版。';
@@ -406,7 +406,7 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
                 <td className="w-[128px] px-3 py-3">
                   <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12.5px] font-semibold" style={{ color: m.color }}><m.Icon className="h-3.5 w-3.5" />{m.label}</span>
                   {c.verdict === 'fail' && c.conditionalCount > 0 ? (
-                    <div className="mt-0.5 whitespace-nowrap text-[11.5px] text-warn">另有条件 ×{c.conditionalCount}</div>
+                    <div className="mt-0.5 whitespace-nowrap text-[11.5px] text-warn">另有原则性通过 ×{c.conditionalCount}</div>
                   ) : null}
                 </td>
                 <td className="px-3 py-3">
@@ -540,7 +540,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
             right={(
               <div className="flex items-center gap-2 text-[11.5px] font-semibold">
                 <span className="rounded-full border px-2 py-0.5 text-bad" style={{ background: 'hsl(var(--bad-soft))', borderColor: 'color-mix(in srgb, hsl(var(--bad)) 30%, transparent)' }}>未通过 {totals.fail}</span>
-                <span className="rounded-full border px-2 py-0.5 text-warn" style={{ background: 'hsl(var(--warn-soft))', borderColor: 'color-mix(in srgb, hsl(var(--warn)) 30%, transparent)' }}>有条件 {totals.conditional}</span>
+                <span className="rounded-full border px-2 py-0.5 text-warn" style={{ background: 'hsl(var(--warn-soft))', borderColor: 'color-mix(in srgb, hsl(var(--warn)) 30%, transparent)' }}>原则性通过 {totals.conditional}</span>
               </div>
             )}
           />
