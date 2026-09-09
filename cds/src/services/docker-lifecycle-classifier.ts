@@ -129,7 +129,7 @@ export function classifyDockerLifecycleEvent(
       // 归因到此为止：内核确实因内存不足杀了它，但「谁的内存不够」这条事件答不了。
       // CDS 默认不给分支服务容器下发 --memory（container.ts 2026-05-28 起彻底删除），
       // 所以写「超过了它的内存上限、调大上限即可」会把宿主级内存压力指到错误的地方。
-      reason: `${subject}被内核的 OOM killer 杀掉了 —— 内存不够，不是任何人在 CDS 上的操作。`
+      reason: `${subject}被内核的 OOM killer 杀掉了 —— 内存不够，CDS 这边没有匹配到任何停止 / 替换 / 清理操作，这一下是内核发的。`
         + `但「谁的内存不够」这条事件答不了：可能是这个服务自己吃太多，也可能是宿主整体内存被挤爆`
         + `（CDS 默认不给分支服务容器设 --memory 上限，所以后者更常见）。`
         + `下一步：先看这个容器有没有内存限制、它的内存曲线，再对照宿主的内存记录与 dmesg 判断是哪一种。`
@@ -193,7 +193,7 @@ export function classifyDockerLifecycleEvent(
           ? `${subject}里的主进程收到停止信号后正常退出，CDS 这边没有对应的停止操作记录，`
             + `多半是宿主或容器编排发的停止。这不是崩溃；服务确实已经不在跑了，需要它就重新启动。`
             + technicalTail([name, exitText, signalText])
-          : `${subject}里的主进程自己正常结束了（退出码 0），没有人在 CDS 上停它。`
+          : `${subject}里的主进程自己正常结束了（退出码 0），CDS 这边没有匹配到任何停止操作。`
             + `这不是崩溃；如果这个服务本该常驻，多半是容器里的命令跑完就退了，下一步看容器日志确认。`
             + technicalTail([name, exitText, signalText]),
         stopClass: 'normal-exit',
@@ -204,7 +204,7 @@ export function classifyDockerLifecycleEvent(
       source: 'crash',
       nextServiceStatus: 'error',
       nextBranchStatus: 'error',
-      reason: `${subject}里的进程自己崩了（退出码 ${exitCode ?? '未知'}），不是任何人在 CDS 上的操作，`
+      reason: `${subject}里的进程自己退出了（退出码 ${exitCode ?? '未知'}），CDS 这边没有匹配到任何停止 / 替换 / 清理操作——但这不等于 CDS 没碰过它，自动重启刚把它拉起来也会走到这里，`
         + `通常是应用启动失败或运行中抛异常退出。下一步：看容器日志最后几十行定位崩溃点。`
         + technicalTail([name, exitText, oom, signalText]),
       stopClass: 'process-exit-error',

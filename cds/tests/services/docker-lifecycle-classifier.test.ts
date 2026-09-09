@@ -192,8 +192,11 @@ describe('classifyDockerLifecycleEvent', () => {
     expect(result.stopClass).toBe('oom-kill');
     // 外因是「内存不够」而不是「某个函数出错」，并且要给出下一步。
     expect(result.reason).toContain('OOM killer');
-    expect(result.reason).toContain('不是任何人在 CDS 上的操作');
     expect(result.reason).toContain('下一步');
+    // 「没匹配到停止意图」只能这么说，不能反推成「CDS 什么都没做」——
+    // 自动重启走的是 docker start，同样不留停止意图（Codex P2）。
+    expect(result.reason).toContain('没有匹配到任何停止');
+    expect(result.reason).not.toContain('不是任何人在 CDS 上的操作');
     // CDS 默认不给分支服务容器下发 --memory（container.ts 2026-05-28 起删除），
     // 所以不许断言成「超过了它自己的内存上限、调大即可」——那会把宿主级内存压力指错地方。
     // 这条守卫锁住「两种可能都点名、并要求去查宿主」，改回单一归因就会红。
@@ -252,8 +255,11 @@ describe('classifyDockerLifecycleEvent', () => {
     expect(result.nextServiceStatus).toBe('error');
     expect(result.stopClass).toBe('process-exit-error');
     expect(result.reason).toContain('分支 feature/x');
-    expect(result.reason).toContain('不是任何人在 CDS 上的操作');
     expect(result.reason).toContain('看容器日志');
+    expect(result.reason).toContain('没有匹配到任何停止');
+    // 崩溃前 CDS 可能刚用 docker start 把它拉起来，不许一口咬定跟 CDS 无关。
+    expect(result.reason).not.toContain('不是任何人在 CDS 上的操作');
+    expect(result.reason).toContain('这不等于 CDS 没碰过它');
     assertExternalCauseFirst(result.reason);
   });
 
@@ -270,7 +276,8 @@ describe('classifyDockerLifecycleEvent', () => {
     expect(result.nextBranchStatus).toBe('idle');
     expect(result.stopClass).toBe('normal-exit');
     expect(result.reason).toContain('这不是崩溃');
-    expect(result.reason).toContain('没有人在 CDS 上停它');
+    expect(result.reason).toContain('没有匹配到任何停止操作');
+    expect(result.reason).not.toContain('没有人在 CDS 上停它');
     assertExternalCauseFirst(result.reason);
   });
 
@@ -311,5 +318,20 @@ describe('infra 停止意图的接线', () => {
     expect(explicitStops.length).toBe(4);
     // 2 条确实会重建，留在默认值上：分支面板的重启 / resync 的 Phase 2 更新。
     expect(stopCalls.length - explicitStops.length).toBe(2);
+  });
+});
+
+// 分类结论必须出现在展示用的 message 上。infra 容器不带 branch/profile label，
+// 分支状态同步那条会提前 return，所以 docker-events 这一条是它唯一的出口；
+// 结论只写进 details 的话，删掉这段接线不会有任何测试变红（形状 2）。
+describe('分类结论进展示面的接线', () => {
+  it('docker-events 事件的 message 用分类结论，而不是只带 kind 的通用串', () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../src/services/container-diagnostics.ts'),
+      'utf8',
+    );
+    // 认准 docker-events 那一条：message 由 classification 起头，并取用 classification.reason。
+    // 只搜文件里有没有 'classification' 的话，details 里那份就能把守卫哄绿。
+    expect(source).toMatch(/message:\s*classification[\s\S]{0,400}classification\.reason/);
   });
 });

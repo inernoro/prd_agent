@@ -386,7 +386,13 @@ export class DockerEventMonitor {
       severity: recordedSeverity,
       source: 'docker-events',
       action,
-      message: `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
+      // 展示面必须看得见结论。infra 容器不带 cds.branch.id / cds.profile.id，index.ts 的
+      // 分支状态同步会提前 return，那条带 reason 的事件根本不会产生——结论只剩 details 里
+      // 一份没人展开的字段。取分类结论的第一句（那句按契约同时含「谁做了什么」和「要不要紧」），
+      // 完整版仍在 details.classification.reason。
+      message: classification
+        ? `docker ${action}${containerName ? `: ${containerName}` : ''} — ${classification.reason.split('。')[0]}。`
+        : `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
       projectId: lifecycleIntent?.projectId || null,
       branchId: branchId || null,
       profileId: profileId || null,
