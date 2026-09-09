@@ -762,6 +762,10 @@ function ReportsHome({
   const refById = useMemo(() => {
     const m = new Map<string, OverviewReportRef>();
     for (const ref of overview?.reports ?? []) m.set(ref.id, ref);
+    // 被取代的早期版本也要进这张表：展开时它们同样要按真实前缀落进九类页签。
+    // 少了这一行，展开后旧版整批掉进「其他」——页签计数虚高、点真实类目又看不到它们
+    // （2026-09-09 富数据验收实测到的回归）。
+    for (const ref of overview?.supersededReports ?? []) m.set(ref.id, ref);
     return m;
   }, [overview]);
   const supersededIds = useMemo(() => {

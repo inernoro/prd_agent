@@ -158,6 +158,24 @@ describe('buildReportsOverview', () => {
     expect(coverage?.text).toContain('证据空白，不是产品缺陷');
   });
 
+  it('被取代的早期版本也带服务端解析出的 kind（台账展开时不能整批掉进「其他」）', () => {
+    // 2026-09-09 富数据验收实测到的回归：overview 只返回最新版时，前端展开
+    // 「被取代版本」拿不到旧版的 kind，整批被算成「其他」——页签计数虚高，
+    // 点真实类目又看不到它们。标题解析是服务端 SSOT，旧版必须一并解析后返回。
+    const o = buildReportsOverview([
+      report({ id: 'v1', title: '功能验收 · 订单导出 · 2026-09-05', createdAt: '2026-09-05T09:00:00Z', verdict: 'fail', defectCounts: { p1: 2 } }),
+      report({ id: 'v2', title: '功能验收 · 订单导出 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'fail', defectCounts: { p1: 1 } }),
+      report({ id: 'v3', title: '功能验收 · 订单导出 · 2026-09-05', createdAt: '2026-09-05T11:00:00Z', verdict: 'conditional', defectCounts: { p2: 1 } }),
+    ], [], { to: TO, days: 7 });
+    expect(o.reports.map((r) => r.id)).toEqual(['v3']);
+    expect(o.supersededReports.map((r) => r.id)).toEqual(['v2', 'v1']);
+    // 关键断言：旧版的 kind 不是「其他」，而是标题合同解析出来的真实前缀。
+    expect(o.supersededReports.map((r) => r.kind)).toEqual(['功能验收', '功能验收']);
+    expect(o.supersededReports.every((r) => r.target === '订单导出')).toBe(true);
+    // 折叠掉的份数与被取代列表长度必须一致，否则「已折叠 N 份」会和实际对不上。
+    expect(o.totals.archived - o.totals.counted).toBe(o.supersededReports.length);
+  });
+
   it('窗口内没有报告 → 这次没测出来，发布闸未知', () => {
     const o = buildReportsOverview([], [], { to: TO, days: 7 });
     expect(o.headline.status).toBe('untested');

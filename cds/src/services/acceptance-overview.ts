@@ -125,6 +125,15 @@ export interface ReportsOverview {
   };
   /** 全时段折叠后的最新版报告（台账用，带版本与取代关系），按创建时间倒序。 */
   reports: OverviewReportRef[];
+  /**
+   * 被取代的早期版本（折叠掉的那些），同样带服务端解析出的 kind/target/targetDate。
+   *
+   * 为什么必须返回：台账「展开被取代版本」时这些行也要落进九类页签。前端只有
+   * `reports` 时查不到它们的 kind，会整批掉进「其他」——页签计数虚高、点真实类目
+   * 又看不到它们（2026-09-09 富数据验收实测）。标题解析是服务端 SSOT，
+   * 前端不得自己再实现一份（predicate-and-wiring-discipline 形状 3）。
+   */
+  supersededReports: OverviewReportRef[];
 }
 
 const TITLE_RE = /^(\S+?)\s*[·・]\s*(.+?)\s*[·・]\s*(\d{4}-\d{2}-\d{2})\s*$/;
@@ -197,7 +206,7 @@ function toRef(r: AcceptanceReportMeta, parsed: ParsedReportTitle, version: numb
  * 按身份键折叠：同一（项目 · 前缀 · 对象 · 目标日）只保留创建最晚的一版。
  * 这就是债务台账里「通过率只计每个身份的最新版」的落地；早期版本记进 supersedes。
  */
-export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: OverviewReportRef[]; folded: number } {
+export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: OverviewReportRef[]; superseded: OverviewReportRef[]; folded: number } {
   const groups = new Map<string, AcceptanceReportMeta[]>();
   for (const r of reports) {
     const key = identityKey(r, parseReportTitle(r.title));
@@ -206,16 +215,19 @@ export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: O
     else groups.set(key, [r]);
   }
   const latest: OverviewReportRef[] = [];
+  const superseded: OverviewReportRef[] = [];
   let folded = 0;
   for (const g of groups.values()) {
     g.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const last = g[g.length - 1];
     const parsed = parseReportTitle(last.title);
     latest.push(toRef(last, parsed, g.length, g.slice(0, -1).map((x) => x.id)));
+    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportTitle(old.title), i + 1, [])));
     folded += g.length - 1;
   }
   latest.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  return { latest, folded };
+  superseded.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return { latest, superseded, folded };
 }
 
 function inWindow(iso: string, from: number, to: number): boolean {
@@ -380,7 +392,7 @@ export function buildReportsOverview(
   const tz = options.tzOffsetMinutes ?? 0;
   const passRateKind = options.passRateKind ?? '功能验收';
 
-  const { latest: allLatest, folded: foldedAll } = foldReportVersions(reports);
+  const { latest: allLatest, superseded: allSuperseded, folded: foldedAll } = foldReportVersions(reports);
   const windowReports = allLatest.filter((r) => inWindow(r.createdAt, fromMs, toMs));
   const prevReports = allLatest.filter((r) => inWindow(r.createdAt, prevFromMs, fromMs));
   const archivedInWindow = reports.filter((r) => inWindow(r.createdAt, fromMs, toMs)).length;
@@ -486,5 +498,6 @@ export function buildReportsOverview(
     daily,
     mergeCoverage,
     reports: allLatest,
+    supersededReports: allSuperseded,
   };
 }

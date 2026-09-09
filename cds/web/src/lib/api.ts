@@ -334,6 +334,8 @@ export interface ReportsOverview {
   daily: OverviewDay[];
   mergeCoverage: { items: OverviewMergeItem[]; counts: Record<MergeCoverageStatus, number> };
   reports: OverviewReportRef[];
+  /** 被取代的早期版本；台账「展开被取代版本」时用它拿服务端解析出的 kind。 */
+  supersededReports: OverviewReportRef[];
 }
 
 /** 验收主页聚合；days 为时间窗天数，时区偏移取浏览器本地。 */
