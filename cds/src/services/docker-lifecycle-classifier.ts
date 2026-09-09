@@ -119,8 +119,13 @@ export function classifyDockerLifecycleEvent(
       source: 'oom',
       nextServiceStatus: 'error',
       nextBranchStatus: 'error',
-      reason: `${subject}占用内存超过了分配给它的上限，被宿主的 OOM killer 强制终止 —— 不是任何人在 CDS 上的操作。`
-        + `需要处理：调大这个服务的内存上限，或排查它是不是在漏内存。`
+      // 归因到此为止：内核确实因内存不足杀了它，但「谁的内存不够」这条事件答不了。
+      // CDS 默认不给分支服务容器下发 --memory（container.ts 2026-05-28 起彻底删除），
+      // 所以写「超过了它的内存上限、调大上限即可」会把宿主级内存压力指到错误的地方。
+      reason: `${subject}被内核的 OOM killer 杀掉了 —— 内存不够，不是任何人在 CDS 上的操作。`
+        + `但「谁的内存不够」这条事件答不了：可能是这个服务自己吃太多，也可能是宿主整体内存被挤爆`
+        + `（CDS 默认不给分支服务容器设 --memory 上限，所以后者更常见）。`
+        + `下一步：先看这个容器有没有内存限制、它的内存曲线，再对照宿主的内存记录与 dmesg 判断是哪一种。`
         + technicalTail([name, exitText, oom || 'OOMKilled=true', signalText]),
       stopClass: 'oom-kill',
       unexpected: true,

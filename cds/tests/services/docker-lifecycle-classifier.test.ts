@@ -118,10 +118,15 @@ describe('classifyDockerLifecycleEvent', () => {
     expect(result.unexpected).toBe(true);
     expect(result.nextServiceStatus).toBe('error');
     expect(result.stopClass).toBe('oom-kill');
-    // 外因是「内存超限」而不是「某个函数出错」，并且要给出下一步。
-    expect(result.reason).toContain('内存');
+    // 外因是「内存不够」而不是「某个函数出错」，并且要给出下一步。
+    expect(result.reason).toContain('OOM killer');
     expect(result.reason).toContain('不是任何人在 CDS 上的操作');
-    expect(result.reason).toContain('需要处理');
+    expect(result.reason).toContain('下一步');
+    // CDS 默认不给分支服务容器下发 --memory（container.ts 2026-05-28 起删除），
+    // 所以不许断言成「超过了它自己的内存上限、调大即可」——那会把宿主级内存压力指错地方。
+    // 这条守卫锁住「两种可能都点名、并要求去查宿主」，改回单一归因就会红。
+    expect(result.reason).toContain('宿主整体内存');
+    expect(result.reason).not.toMatch(/调大这个服务的内存上限|超过了分配给它的上限/);
     assertExternalCauseFirst(result.reason);
     expect(result.reason).toContain('OOMKilled=true');
   });
