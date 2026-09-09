@@ -65,7 +65,10 @@ const INTENT_NARRATIVE: Record<ContainerLifecycleIntentKind, { story: string; ve
   },
   'cds-stop': {
     story: '停止这个服务，容器随之退出',
-    verdict: '这是主动停止，无需处理；要它继续跑就在分支面板再启动一次',
+    // 不写死「无需处理」：同一个 kind 既承接手动停止与调度降温，也承接
+    // replica-member-not-ready 这类失败收尾（replica-set.ts:994）。说成无需处理
+    // 会把就绪失败盖掉，所以把判断交给紧随其后的那句 CDS 记录原因（Codex P2）。
+    verdict: '这是 CDS 主动停的，不是崩溃；原因见下一句，若它指向一次失败，重启前先看容器日志',
   },
   'cds-remove': {
     story: '删除这个容器',
@@ -143,7 +146,10 @@ export function classifyDockerLifecycleEvent(
       source: 'cds',
       nextServiceStatus: 'stopped',
       nextBranchStatus: 'idle',
-      reason: `由 ${describeInitiator(intent)}${narrative.story}（${scope}）。${narrative.verdict}。`
+      // 一句话里同时给出「谁做了什么」和「要不要紧」——只读到第一个句号的人
+      // 也不会把一次正常替换看成事故；随后单独一句摆出上游记录的原因原文。
+      reason: `由 ${describeInitiator(intent)}${narrative.story}（${scope}）——${narrative.verdict}。`
+        + (intent.reason ? `CDS 记录的原因：${intent.reason}。` : '')
         + technicalTail([
           name,
           exitText,

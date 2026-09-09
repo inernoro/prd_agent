@@ -20,6 +20,14 @@ function assertExternalCauseFirst(reason: string): void {
   expect(lead).not.toMatch(/exitCode=|signal=|requestId=|operation=/);
 }
 
+// 「要不要紧」必须落在第一个句号之前：只读到第一句的人（截断展示、通知摘要）
+// 否则只看得到「某个容器停了」，正常替换会被当成事故。
+function assertVerdictInFirstSentence(reason: string, verdictFragment: string): void {
+  const firstStop = reason.indexOf('。');
+  expect(firstStop).toBeGreaterThan(0);
+  expect(reason.slice(0, firstStop)).toContain(verdictFragment);
+}
+
 describe('classifyDockerLifecycleEvent', () => {
   it('classifies CDS lifecycle intent as intentional and traceable', () => {
     const result = classifyDockerLifecycleEvent({
@@ -50,7 +58,9 @@ describe('classifyDockerLifecycleEvent', () => {
     // 外因：谁 + 怎么触发的 + 做了什么 + 影响了谁 + 要不要紧，全在第一句里。
     expect(result.reason.startsWith('由 GitHub webhook 代码推送自动触发部署')).toBe(true);
     expect(result.reason).toContain('分支 main');
-    expect(result.reason).toContain('无需处理');
+    assertVerdictInFirstSentence(result.reason, '无需处理');
+    // 上游记录的原因原文不许被固定文案盖掉。
+    expect(result.reason).toContain('CDS 记录的原因：部署前替换同名旧容器');
     // 内因：一个都没丢，只是排到了后面。
     assertExternalCauseFirst(result.reason);
     expect(result.reason).toContain('requestId=req-123');
@@ -76,7 +86,32 @@ describe('classifyDockerLifecycleEvent', () => {
     });
 
     expect(result.reason.startsWith('由 alice@example.com 手动触发停止这个服务')).toBe(true);
-    expect(result.reason).toContain('无需处理');
+    assertVerdictInFirstSentence(result.reason, '不是崩溃');
+  });
+
+  it('does not call a failure-driven stop routine maintenance', () => {
+    // replica-set.ts:994 就绪失败后走的正是 cds-stop，reason 带着 replica-member-not-ready。
+    const result = classifyDockerLifecycleEvent({
+      ...base,
+      action: 'die',
+      exitCode: 0,
+      lifecycleIntent: {
+        containerName: base.containerName,
+        kind: 'cds-stop',
+        reason: 'replica-member-not-ready',
+        requestedAt: new Date().toISOString(),
+        actor: 'replica-set',
+        trigger: 'replica-set-readiness-failed',
+      },
+    });
+
+    expect(result.reason).toContain('CDS 记录的原因：replica-member-not-ready');
+    // 说成「无需处理」会把一次就绪失败盖掉（Codex P2）。
+    expect(result.reason).not.toContain('无需处理');
+    expect(result.reason).toContain('重启前先看容器日志');
+    // 施动者与触发方式都不在翻译表里，必须原样带出，让人看得出这是就绪失败。
+    expect(result.reason).toContain('replica-set');
+    expect(result.reason).toContain('replica-set-readiness-failed');
   });
 
   it('tells an infra stop apart from an infra recreate', () => {
