@@ -55,6 +55,20 @@ public class GitHubDirectorySyncService
         DocStoreServices.DocumentVersionService? versions,
         DocumentEntry parentEntry,
         CancellationToken ct)
+        => await SyncDirectoryAsync(db, documentService, versions, parentEntry, null, ct);
+
+    /// <summary>
+    /// 同步 GitHub 目录。<paramref name="accessToken"/> 非空时全程带用户 token 请求：
+    /// 私有仓才拉得到，限额也从匿名的 60 次/小时提到 5000 次/小时。
+    /// 匿名路径（token 为 null）行为与历史完全一致，公开仓订阅不受影响。
+    /// </summary>
+    public async Task<GitHubDirectoryDiff> SyncDirectoryAsync(
+        MongoDbContext db,
+        IDocumentService documentService,
+        DocStoreServices.DocumentVersionService? versions,
+        DocumentEntry parentEntry,
+        string? accessToken,
+        CancellationToken ct)
     {
         var diff = new GitHubDirectoryDiff();
 
@@ -80,7 +94,7 @@ public class GitHubDirectorySyncService
             matcher.AddInclude(includeGlob);
         }
 
-        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, ct);
+        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, accessToken, ct);
         _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'", files.Count, owner, repo, path, includeGlob ?? "*");
 
         if (files.Count == 0) return diff;
@@ -93,15 +107,34 @@ public class GitHubDirectorySyncService
                  e.Metadata["github_parent_id"] == parentEntry.Id
         ).ToListAsync(ct);
 
-        var existingByUrl = existingEntries.ToDictionary(e => e.SourceUrl ?? "", e => e);
+        // 去重键用仓库内路径，而不是 download_url ——
+        // 私有仓的 download_url 每次列目录都会带一个新的临时 token 查询串，
+        // 拿它当键会让「同一个文件」每轮同步都被判成"新增 + 删除"，历史版本一起没。
+        // 存量条目（早期没写 github_path）用 SourceUrl 兜底，避免升级当天全量重建。
+        var existingByKey = new Dictionary<string, DocumentEntry>(StringComparer.Ordinal);
+        foreach (var e in existingEntries)
+        {
+            var key = e.Metadata.GetValueOrDefault("github_path", "");
+            if (string.IsNullOrEmpty(key)) key = e.SourceUrl ?? "";
+            if (key.Length == 0) continue;
+            existingByKey[key] = e;
+        }
 
-        var processedUrls = new HashSet<string>();
+        var processedKeys = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var file in files)
         {
-            processedUrls.Add(file.DownloadUrl);
+            processedKeys.Add(file.Path);
 
-            if (existingByUrl.TryGetValue(file.DownloadUrl, out var existing))
+            if (!existingByKey.TryGetValue(file.Path, out var existing)
+                && existingByKey.TryGetValue(file.DownloadUrl, out var legacy))
+            {
+                // 命中存量键：登记它，否则下面的删除环节会把它当"远端已不存在"删掉
+                existing = legacy;
+                processedKeys.Add(file.DownloadUrl);
+            }
+
+            if (existing != null)
             {
                 // 已存在 → 比较 SHA 决定是否需要更新（GitHub SHA 即版本号，O(1) 命中判定）
                 var existingSha = existing.Metadata.GetValueOrDefault("github_sha", "");
@@ -126,7 +159,7 @@ public class GitHubDirectorySyncService
                     // 回填 github_last_commit_at：历史条目没有这个字段，无需重新拉内容，只补时间戳
                     if (!existing.Metadata.ContainsKey("github_last_commit_at"))
                     {
-                        var backfillDate = await GetLatestCommitDateAsync(owner, repo, file.Path, branch, ct);
+                        var backfillDate = await GetLatestCommitDateAsync(owner, repo, file.Path, branch, accessToken, ct);
                         if (backfillDate.HasValue)
                         {
                             existing.Metadata["github_last_commit_at"] = backfillDate.Value.ToString("O");
@@ -139,7 +172,7 @@ public class GitHubDirectorySyncService
                 }
 
                 // SHA 变了 → 重新拉取内容并更新
-                await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, ct);
+                await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, accessToken, ct);
                 diff.UpdatedCount++;
                 diff.FileChanges.Add(new DocumentSyncFileChange
                 {
@@ -170,7 +203,7 @@ public class GitHubDirectorySyncService
                     },
                 };
 
-                await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, ct, isNew: true);
+                await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, accessToken, ct, isNew: true);
                 diff.AddedCount++;
                 diff.FileChanges.Add(new DocumentSyncFileChange
                 {
@@ -181,9 +214,9 @@ public class GitHubDirectorySyncService
         }
 
         // 3) 删除远端已不存在的条目
-        foreach (var (url, entry) in existingByUrl)
+        foreach (var (key, entry) in existingByKey)
         {
-            if (!processedUrls.Contains(url))
+            if (!processedKeys.Contains(key))
             {
                 await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
                 // 级联清理该条目历史版本，和手动 DeleteEntry 一致，避免远端删文件后版本快照残留（Bugbot）
@@ -223,12 +256,13 @@ public class GitHubDirectorySyncService
         string owner,
         string repo,
         string branch,
+        string? accessToken,
         CancellationToken ct,
         bool isNew = false)
     {
         // 拉 git 最后提交时间（用来驱动前端显示的时间 + "NEW" 徽标）。
         // 和文件内容拉取并行，不把网络往返叠加在同步延迟上。
-        var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, branch, ct);
+        var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, branch, accessToken, ct);
         try
         {
             // 优化：跨知识库/同文件多次拉取复用检查 (Pooling by SHA)
@@ -307,8 +341,11 @@ public class GitHubDirectorySyncService
                 }
             }
 
-            // 拉取文件内容（通过 raw.githubusercontent.com）
-            var content = await Http.GetStringAsync(file.DownloadUrl, ct);
+            // 拉取文件内容：
+            //   已连接 → 走 Contents API + Accept: raw，带 Authorization，私有仓可读；
+            //   未连接 → 保持历史路径（raw.githubusercontent.com 的 download_url），公开仓行为不变。
+            // 注意不要把用户 token 发到 download_url 那个域，避免凭据外扩到非 api.github.com 主机。
+            var content = await FetchFileContentAsync(file, owner, repo, branch, accessToken, ct);
 
             if (string.IsNullOrWhiteSpace(content))
             {
@@ -373,14 +410,22 @@ public class GitHubDirectorySyncService
 
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<List<GitHubFile>> ListDirectoryFilesAsync(
-        string owner, string repo, string path, string branch, Matcher? matcher, CancellationToken ct)
+        string owner, string repo, string path, string branch, Matcher? matcher,
+        string? accessToken, CancellationToken ct)
     {
         var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{path}?ref={Uri.EscapeDataString(branch)}";
 
-        var response = await Http.GetAsync(url, ct);
+        using var request = BuildApiRequest(url, accessToken);
+        var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
+            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
+            {
+                throw new Exception(accessToken == null
+                    ? $"GitHub API 返回 {response.StatusCode}（匿名访问受限或该仓库为私有）：请在知识库里连接 GitHub 账号后重试"
+                    : $"GitHub API 返回 {response.StatusCode}：GitHub 授权可能已失效，请重新连接 GitHub 账号");
+            }
             throw new Exception($"GitHub API 返回 {response.StatusCode}: {body}");
         }
 
@@ -422,13 +467,14 @@ public class GitHubDirectorySyncService
     /// 返回 UTC DateTime；失败/无结果返回 null（不抛异常，避免影响主同步流程）。
     /// </summary>
     private async Task<DateTime?> GetLatestCommitDateAsync(
-        string owner, string repo, string path, string branch, CancellationToken ct)
+        string owner, string repo, string path, string branch, string? accessToken, CancellationToken ct)
     {
         try
         {
             var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/commits"
                     + $"?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(branch)}&per_page=1";
-            var response = await Http.GetAsync(url, ct);
+            using var request = BuildApiRequest(url, accessToken);
+            var response = await Http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogDebug("[GitHubSync] commits API {Code} for {Path}", response.StatusCode, path);
@@ -465,6 +511,47 @@ public class GitHubDirectorySyncService
             _logger.LogDebug(ex, "[GitHubSync] fetch commit date failed for {Path}", path);
             return null;
         }
+    }
+
+    /// <summary>
+    /// 构造一个指向 api.github.com 的请求；有 token 就带上 Authorization。
+    /// 只对 api.github.com 加凭据 —— 其它主机（raw.githubusercontent.com）一律不带。
+    /// </summary>
+    private static HttpRequestMessage BuildApiRequest(string url, string? accessToken, string? accept = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        if (!string.IsNullOrEmpty(accessToken)
+            && string.Equals(request.RequestUri?.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        }
+        if (!string.IsNullOrEmpty(accept))
+        {
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.ParseAdd(accept);
+        }
+        return request;
+    }
+
+    /// <summary>
+    /// 取单个文件正文。已连接走 Contents API 的 raw 媒体类型（私有仓可读、地址稳定不带临时 token），
+    /// 未连接沿用历史的 download_url。
+    /// </summary>
+    private async Task<string> FetchFileContentAsync(
+        GitHubFile file, string owner, string repo, string branch, string? accessToken, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return await Http.GetStringAsync(file.DownloadUrl, ct);
+        }
+
+        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+                + $"/contents/{Uri.EscapeDataString(file.Path).Replace("%2F", "/", StringComparison.Ordinal)}"
+                + $"?ref={Uri.EscapeDataString(branch)}";
+        using var request = BuildApiRequest(url, accessToken, "application/vnd.github.raw");
+        using var response = await Http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(ct);
     }
 
     /// <summary>解析 GitHub 仓库地址，提取 owner/repo/path/branch</summary>

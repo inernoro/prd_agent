@@ -69,6 +69,7 @@ import { StoreSyncBadge, SyncManagerPanel } from './SyncManagerPanel';
 import { RecentEntriesList } from './RecentEntriesList';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
+import { GitHubSyncWizard } from './GitHubSyncWizard';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
@@ -1178,6 +1179,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     navigate({ pathname: location.pathname, search: nextSearch, hash: location.hash }, { replace: true });
   }, [location.hash, location.pathname, location.search, navigate, selectedEntryId, storeId]);
   const [showSubscribe, setShowSubscribe] = useState(false);
+  /** GitHub 同步向导（连接账号 → 选仓库 → 勾目录 → 开启同步） */
+  const [showGitHubWizard, setShowGitHubWizard] = useState(false);
   const [showShareDialog, setShowShareDialog] = useState(false);
   /** 桌面端分享面板的锚点：就地悬浮在「分享」按钮下方 */
   const shareAnchorRef = useRef<HTMLSpanElement>(null);
@@ -2848,12 +2851,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         />
       )}
 
-      {/* 添加订阅对话框 */}
+      {/* 添加订阅对话框（URL 订阅走表单，GitHub 走登录 + 勾目录的向导） */}
       {showSubscribe && (
         <SubscribeDialog
           storeId={storeId}
           onClose={() => setShowSubscribe(false)}
           onCreated={(entry) => { setShowSubscribe(false); setEntries(prev => [entry, ...prev]); }}
+          onOpenGitHubWizard={() => { setShowSubscribe(false); setShowGitHubWizard(true); }}
+        />
+      )}
+
+      {/* GitHub 同步向导：连接账号 → 选仓库 → 勾目录（doc/docs 默认已勾）→ 开启同步 */}
+      {showGitHubWizard && (
+        <GitHubSyncWizard
+          storeId={storeId}
+          onClose={() => setShowGitHubWizard(false)}
+          onFinished={() => { void loadEntries(); void loadStore(); }}
         />
       )}
 
@@ -3224,10 +3237,12 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 }
 
 // ── 订阅源对话框（支持 URL 订阅 + GitHub 目录同步）──
-function SubscribeDialog({ storeId, onClose, onCreated }: {
+function SubscribeDialog({ storeId, onClose, onCreated, onOpenGitHubWizard }: {
   storeId: string;
   onClose: () => void;
   onCreated: (entry: DocumentEntry) => void;
+  /** 切到 GitHub 同步向导（登录 GitHub → 勾目录），推荐路径 */
+  onOpenGitHubWizard: () => void;
 }) {
   const [mode, setMode] = useState<'url' | 'github'>('url');
   const [title, setTitle] = useState('');
@@ -3312,6 +3327,27 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
         <div className="space-y-4 mb-4">
           {mode === 'github' ? (
             <>
+              {/* 推荐路径：不用让用户去 GitHub 抄地址，登录后系统把目录列出来给他勾 */}
+              <div className="rounded-[12px] p-3.5"
+                style={{ background: 'rgba(130,80,223,0.06)', border: '1px solid rgba(130,80,223,0.14)' }}>
+                <div className="text-[13px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+                  用 GitHub 账号登录后勾选目录
+                </div>
+                <p className="text-[11.5px] leading-[1.7] mb-2.5" style={{ color: 'var(--text-muted)' }}>
+                  登录你自己的 GitHub，系统会列出你有权限的仓库并扫出全部目录，
+                  所有 doc / docs 目录默认已勾好；私有仓也能同步。
+                </p>
+                <Button variant="primary" size="xs" onClick={onOpenGitHubWizard}>
+                  <Github size={12} /> 连接 GitHub 并勾选目录
+                </Button>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>或手动粘贴公开仓库目录地址</span>
+                <div className="flex-1 h-px" style={{ background: 'var(--border-subtle)' }} />
+              </div>
+
               <div>
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>GitHub 目录地址</label>
                 <input value={githubUrl} onChange={e => setGithubUrl(e.target.value)}

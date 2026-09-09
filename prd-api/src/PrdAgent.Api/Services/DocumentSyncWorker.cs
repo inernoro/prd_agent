@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 
 namespace PrdAgent.Api.Services;
 
@@ -71,6 +72,7 @@ public class DocumentSyncWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var documentService = scope.ServiceProvider.GetRequiredService<IDocumentService>();
         var versions = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
+        var githubConnections = scope.ServiceProvider.GetRequiredService<GitHubUserConnectionService>();
 
         var now = DateTime.UtcNow;
 
@@ -107,7 +109,7 @@ public class DocumentSyncWorker : BackgroundService
         foreach (var entry in dueEntries)
         {
             if (entry.SourceType == DocumentSourceType.GithubDirectory)
-                await SyncGitHubDirectoryAsync(db, documentService, versions, entry, ct);
+                await SyncGitHubDirectoryAsync(db, documentService, versions, githubConnections, entry, ct);
             else
                 await SyncSingleEntryAsync(db, documentService, versions, entry, ct);
         }
@@ -117,6 +119,7 @@ public class DocumentSyncWorker : BackgroundService
         MongoDbContext db,
         IDocumentService documentService,
         PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService versions,
+        GitHubUserConnectionService githubConnections,
         DocumentEntry entry,
         CancellationToken ct)
     {
@@ -127,11 +130,17 @@ public class DocumentSyncWorker : BackgroundService
             if (!await TryAcquireSyncLeaseAsync(db, entry, ct))
                 return;
 
+            // 条目上盖了哪个用户的 GitHub 连接，就用谁的 token 拉。
+            // 解不出来（用户断开 / token 失效）不是致命错：降级为匿名再试一次，
+            // 公开仓照样同步，私有仓会在下面以「请重新连接」的形式报错给用户看。
+            var accessToken = await ResolveEntryTokenAsync(githubConnections, entry, ct);
+
             var githubSyncService = new GitHubDirectorySyncService(
                 _scopeFactory.CreateScope().ServiceProvider
                     .GetRequiredService<ILogger<GitHubDirectorySyncService>>());
 
-            var diff = await githubSyncService.SyncDirectoryAsync(db, documentService, versions, entry, ct);
+            var diff = await githubSyncService.SyncDirectoryAsync(
+                db, documentService, versions, entry, accessToken, ct);
 
             // 标记同步完成
             var update = Builders<DocumentEntry>.Update
@@ -181,6 +190,28 @@ public class DocumentSyncWorker : BackgroundService
             sw.Stop();
             _logger.LogWarning(ex, "[DocumentSyncWorker] GitHub directory sync failed for {EntryId}", entry.Id);
             await MarkSyncError(db, entry, ex.Message, startedAt, (int)sw.ElapsedMilliseconds);
+        }
+    }
+
+    /// <summary>
+    /// 取该订阅条目应使用的 GitHub token：条目 metadata 里记了 github_connection_user_id 才有。
+    /// 解不出来返回 null（走匿名路径），并留一条日志便于排查"私有仓突然拉不到"。
+    /// </summary>
+    private static async Task<string?> ResolveEntryTokenAsync(
+        GitHubUserConnectionService githubConnections,
+        DocumentEntry entry,
+        CancellationToken ct)
+    {
+        var connectionUserId = entry.Metadata.GetValueOrDefault("github_connection_user_id", "");
+        if (string.IsNullOrWhiteSpace(connectionUserId)) return null;
+
+        try
+        {
+            return await githubConnections.ResolveTokenAsync(connectionUserId, ct);
+        }
+        catch (GitHubException)
+        {
+            return null;
         }
     }
 

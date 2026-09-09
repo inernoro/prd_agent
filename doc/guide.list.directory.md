@@ -100,6 +100,7 @@
 - [可复用组件产品 · 设计](./design.frontend.reusable-patterns.md) `design.frontend.reusable-patterns`
 - [Toast 通知系统 · 设计](./design.frontend.toast.md) `design.frontend.toast`
 - [CDS Agent 工作区基础设施模型 · 设计](./design.knowledge-base.agent-architecture.md) `design.knowledge-base.agent-architecture`
+- [知识库 GitHub 目录同步 · 设计](./design.knowledge-base.github-sync.md) `design.knowledge-base.github-sync`
 - [知识库引用网络（双链 + 反向链接 + 宇宙图） · 设计](./design.knowledge-base.mention-network.md) `design.knowledge-base.mention-network`
 - [录音交付流程与无 AI 纪要网页 · 设计](./design.knowledge-base.recording-delivery.md) `design.knowledge-base.recording-delivery`
 - [多文档知识库与文档类型系统 · 设计](./design.knowledge-base.multi-doc.md) `design.knowledge-base.multi-doc`

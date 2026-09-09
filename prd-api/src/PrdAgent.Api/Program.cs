@@ -1467,6 +1467,9 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubOAuthService,
     PrdAgent.Infrastructure.GitHub.GitHubOAuthService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubClient,
     PrdAgent.Infrastructure.GitHub.GitHubPrClient>();
+// per-user GitHub 连接的唯一判定源（连接状态 / token 解密 / 仓库·分支·目录读取）。
+// 知识库 GitHub 同步、共用连接中心 /api/github/* 都走它，避免各应用再抄一份 Device Flow。
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.GitHubUserConnectionService>();
 
 // PR Review V2（pr-review）业务层服务 —— 消费上面的 GitHub 基础设施
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();

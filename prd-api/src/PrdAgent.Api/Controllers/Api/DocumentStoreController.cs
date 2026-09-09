@@ -15,6 +15,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
@@ -57,6 +58,7 @@ public class DocumentStoreController : ControllerBase
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly DocumentStoreLiveTranscriptionRelay _liveTranscriptionRelay;
     private readonly DocumentAssetCleanupService _documentAssetCleanup;
+    private readonly GitHubUserConnectionService _githubConnections;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -128,6 +130,7 @@ public class DocumentStoreController : ControllerBase
         DocumentStoreLiveTranscriptionRelay liveTranscriptionRelay,
         DocumentAssetCleanupService documentAssetCleanup,
         EntryContentWriteService entryContentWriter,
+        GitHubUserConnectionService githubConnections,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -151,6 +154,7 @@ public class DocumentStoreController : ControllerBase
         _liveTranscriptionRelay = liveTranscriptionRelay;
         _documentAssetCleanup = documentAssetCleanup;
         _entryContentWriter = entryContentWriter;
+        _githubConnections = githubConnections;
         _logger = logger;
     }
 
@@ -4635,33 +4639,16 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(title))
             title = string.IsNullOrEmpty(path) ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}";
 
-        var entry = new DocumentEntry
-        {
-            StoreId = storeId,
-            Title = title,
-            Summary = $"GitHub 目录同步: {owner}/{repo}/{path}@{branch}",
-            SourceType = DocumentSourceType.GithubDirectory,
-            SourceUrl = request.GithubUrl.Trim(),
-            SyncIntervalMinutes = interval,
-            SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
-            ContentType = "application/x-github-directory",
-            CreatedBy = userId,
-            UpdatedBy = userId,
-            UpdatedByName = userName,
-            Metadata = new Dictionary<string, string>
-            {
-                ["github_owner"] = owner,
-                ["github_repo"] = repo,
-                ["github_path"] = path,
-                ["github_branch"] = branch,
-            },
-            Tags = request.Tags ?? new List<string>(),
-        };
+        // 手贴 URL 这条路径不要求先连 GitHub（历史行为：公开仓匿名可读），
+        // 但只要用户已经连过，就把连接盖在条目上，私有仓和 5000/h 限额同样受益。
+        var anonymousConnection = await _githubConnections.GetConnectionAsync(userId, CancellationToken.None);
 
-        if (!string.IsNullOrWhiteSpace(request.IncludeGlob))
-        {
-            entry.Metadata["github_include_glob"] = request.IncludeGlob.Trim();
-        }
+        var entry = BuildGitHubDirectoryEntry(
+            storeId, owner, repo, path, branch, title,
+            request.IncludeGlob, request.Tags, userId, userName,
+            connectionUserId: anonymousConnection != null ? userId : null,
+            sourceUrl: request.GithubUrl.Trim(),
+            syncIntervalMinutes: interval);
 
         await _db.DocumentEntries.InsertOneAsync(entry);
 
@@ -4677,6 +4664,193 @@ public class DocumentStoreController : ControllerBase
 
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
     }
+
+    /// <summary>
+    /// 批量添加 GitHub 目录订阅（登录 GitHub → 勾目录 → 一次开启同步）。
+    ///
+    /// 与单条 subscribe-github 的差别只有两点：一次收多个目录、且**要求已连接 GitHub**
+    /// （连接的 userId 会盖在每个条目上，同步 worker 据此带 token 请求，私有仓才拉得到）。
+    /// 已订阅过的目录不报错，走 skipped 返回，让"再勾一次"是幂等的。
+    /// </summary>
+    [HttpPost("stores/{storeId}/subscribe-github/batch")]
+    public async Task<IActionResult> AddGitHubSubscriptionBatch(
+        string storeId,
+        [FromBody] AddGitHubBatchSubscriptionRequest request,
+        CancellationToken ct)
+    {
+        var (userId, userName) = await GetActorInfoAsync();
+        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
+        if (error != null) return error;
+        if (store is null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (request == null || string.IsNullOrWhiteSpace(request.Owner) || string.IsNullOrWhiteSpace(request.Repo))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "owner / repo 不能为空"));
+
+        var owner = request.Owner.Trim();
+        var repo = request.Repo.Trim();
+        if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
+            return BadRequest(ApiResponse<object>.Fail(GitHubErrorCodes.PR_URL_INVALID, "owner/repo 含非法字符"));
+
+        var directories = request.Directories ?? new List<GitHubDirectorySelection>();
+        if (directories.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少要勾选一个目录"));
+        if (directories.Count > MaxGitHubBatchDirectories)
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT, $"一次最多订阅 {MaxGitHubBatchDirectories} 个目录，请分批开启"));
+
+        // 必须已连接：批量入口就是「GitHub 登录后勾目录」这条路径，
+        // 没有连接就没有 token，私有仓会在首次同步时静默 404。
+        var connection = await _githubConnections.GetConnectionAsync(userId, ct);
+        if (connection == null)
+            return StatusCode(412, ApiResponse<object>.Fail(
+                GitHubErrorCodes.GITHUB_NOT_CONNECTED, "尚未连接 GitHub 账号，请先授权"));
+
+        var branch = string.IsNullOrWhiteSpace(request.Branch) ? "main" : request.Branch.Trim();
+        var interval = Math.Clamp(request.SyncIntervalMinutes ?? 1440, 60, 1440);
+
+        var existing = await _db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+                Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .ToListAsync(ct);
+
+        var created = new List<DocumentEntry>();
+        var skipped = new List<object>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var selection in directories)
+        {
+            var path = (selection?.Path ?? string.Empty).Trim().Trim('/');
+
+            // 同一次请求里勾重了：只建一次
+            if (!seen.Add(path))
+            {
+                skipped.Add(new { path, reason = "duplicate_in_request" });
+                continue;
+            }
+
+            var duplicate = existing.FirstOrDefault(e =>
+                e.Metadata.GetValueOrDefault("github_owner") == owner &&
+                e.Metadata.GetValueOrDefault("github_repo") == repo &&
+                e.Metadata.GetValueOrDefault("github_path") == path &&
+                e.Metadata.GetValueOrDefault("github_branch") == branch);
+            if (duplicate != null)
+            {
+                skipped.Add(new { path, reason = "already_subscribed", entryId = duplicate.Id });
+                continue;
+            }
+
+            var title = string.IsNullOrWhiteSpace(selection?.Title)
+                ? (path.Length == 0 ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}")
+                : selection!.Title!.Trim();
+
+            var entry = BuildGitHubDirectoryEntry(
+                storeId, owner, repo, path, branch, title,
+                request.IncludeGlob, request.Tags, userId, userName,
+                connectionUserId: userId,
+                sourceUrl: BuildGitHubDirectoryUrl(owner, repo, branch, path),
+                syncIntervalMinutes: interval);
+
+            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
+            created.Add(entry);
+        }
+
+        if (created.Count > 0)
+        {
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == storeId,
+                Builders<DocumentStore>.Update
+                    .Inc(s => s.DocumentCount, created.Count)
+                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
+        }
+
+        _logger.LogInformation(
+            "[document-store] GitHub batch subscription: store={StoreId} {Owner}/{Repo}@{Branch} created={Created} skipped={Skipped} login={Login}",
+            storeId, owner, repo, branch, created.Count, skipped.Count, connection.GitHubLogin);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            created = created.Select(e => new
+            {
+                e.Id,
+                e.Title,
+                path = e.Metadata.GetValueOrDefault("github_path"),
+                e.SyncStatus,
+            }),
+            createdCount = created.Count,
+            skipped,
+            connectedLogin = connection.GitHubLogin,
+            owner,
+            repo,
+            branch,
+        }));
+    }
+
+    /// <summary>一次批量订阅最多允许勾多少个目录（防止一次把整仓上千目录全塞进来）。</summary>
+    private const int MaxGitHubBatchDirectories = 50;
+
+    /// <summary>
+    /// GitHub 目录订阅父条目的唯一构造口径 —— 单条和批量共用，
+    /// 避免两处各写一份 metadata 后漂移（predicate-and-wiring-discipline 形状 3）。
+    /// </summary>
+    private static DocumentEntry BuildGitHubDirectoryEntry(
+        string storeId,
+        string owner,
+        string repo,
+        string path,
+        string branch,
+        string title,
+        string? includeGlob,
+        List<string>? tags,
+        string userId,
+        string userName,
+        string? connectionUserId,
+        string sourceUrl,
+        int syncIntervalMinutes)
+    {
+        var entry = new DocumentEntry
+        {
+            StoreId = storeId,
+            Title = title,
+            Summary = $"GitHub 目录同步: {owner}/{repo}/{path}@{branch}",
+            SourceType = DocumentSourceType.GithubDirectory,
+            SourceUrl = sourceUrl,
+            SyncIntervalMinutes = syncIntervalMinutes,
+            SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
+            ContentType = "application/x-github-directory",
+            CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
+            Metadata = new Dictionary<string, string>
+            {
+                ["github_owner"] = owner,
+                ["github_repo"] = repo,
+                ["github_path"] = path,
+                ["github_branch"] = branch,
+            },
+            Tags = tags ?? new List<string>(),
+        };
+
+        if (!string.IsNullOrWhiteSpace(includeGlob))
+        {
+            entry.Metadata["github_include_glob"] = includeGlob.Trim();
+        }
+
+        // 同步 worker 据此解出该用户的 token：私有仓能拉、限额从匿名 60/h 提到 5000/h。
+        if (!string.IsNullOrWhiteSpace(connectionUserId))
+        {
+            entry.Metadata["github_connection_user_id"] = connectionUserId!;
+        }
+
+        return entry;
+    }
+
+    /// <summary>拼出目录在 GitHub 上的可点击地址（也当条目的 SourceUrl）。</summary>
+    private static string BuildGitHubDirectoryUrl(string owner, string repo, string branch, string path)
+        => path.Length == 0
+            ? $"https://github.com/{owner}/{repo}/tree/{branch}"
+            : $"https://github.com/{owner}/{repo}/tree/{branch}/{path}";
 
     /// <summary>置顶/取消置顶文档条目（支持多个置顶）</summary>
     [HttpPut("stores/{storeId}/pinned-entries")]
@@ -8274,6 +8448,24 @@ public class AddGitHubSubscriptionRequest
     public int? SyncIntervalMinutes { get; set; }
     public List<string>? Tags { get; set; }
     public string? IncludeGlob { get; set; }
+}
+
+public class AddGitHubBatchSubscriptionRequest
+{
+    public string Owner { get; set; } = string.Empty;
+    public string Repo { get; set; } = string.Empty;
+    public string? Branch { get; set; }
+    public List<GitHubDirectorySelection>? Directories { get; set; }
+    public string? IncludeGlob { get; set; }
+    public List<string>? Tags { get; set; }
+    public int? SyncIntervalMinutes { get; set; }
+}
+
+public class GitHubDirectorySelection
+{
+    /// <summary>仓库内目录路径；空串表示仓库根目录。</summary>
+    public string Path { get; set; } = string.Empty;
+    public string? Title { get; set; }
 }
 
 public class UpdateSubscriptionRequest
