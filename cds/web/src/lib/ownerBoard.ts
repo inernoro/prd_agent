@@ -80,6 +80,14 @@ export interface InfraSummary {
   down: number;
   /** 覆盖到几个环境——「4 个环境 × 14 项」比「56 项」好读 */
   environments: number;
+  /**
+   * 其中有多少条是分支预览。
+   *
+   * 单独拎出来是因为它们**默认不进业务视角**：一个实例里分支预览往往占九成，
+   * 混进第一屏会把「我的业务今天怎么样」这句话淹掉。但也不能让它们凭空消失——
+   * 用户会问「我明明有 170 个目标，这里怎么只剩 2 个」。
+   */
+  preview: number;
 }
 
 export interface OwnerBoard {
@@ -208,6 +216,7 @@ function summarizeInfra(targets: ReadonlyArray<UptimeTargetSummary>): InfraSumma
     total: infra.length,
     down: infra.filter((t) => t.status === 'down').length,
     environments: environments.size,
+    preview: infra.filter((t) => t.environment === 'preview').length,
   };
 }
 
@@ -218,9 +227,16 @@ function summarizeInfra(targets: ReadonlyArray<UptimeTargetSummary>): InfraSumma
  * 那时盯着的只有容器与端口，业务坏了这里根本不会红，而那正是用户问
  * 「我那么多条验收都解决不了这种低级错误」的原因。
  */
-export function buildOwnerBoard(targets: ReadonlyArray<UptimeTargetSummary>): OwnerBoard {
+export function buildOwnerBoard(
+  targets: ReadonlyArray<UptimeTargetSummary>,
+  /**
+   * 基础设施的统计范围。默认与业务同范围；调用方传项目全量时，
+   * 被环境筛选挡掉的分支预览仍然计入——「塌了要知道」这件事不该被业务视角过滤掉。
+   */
+  infraScope: ReadonlyArray<UptimeTargetSummary> = targets,
+): OwnerBoard {
   const rows = buildBusinessRows(targets);
-  const infra = summarizeInfra(targets);
+  const infra = summarizeInfra(infraScope);
 
   if (rows.length === 0) {
     return {

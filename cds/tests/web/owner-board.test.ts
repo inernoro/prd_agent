@@ -186,12 +186,28 @@ describe('第一屏说什么', () => {
     expect(board.tone).toBe('warn');
   });
 
-  it('基础设施折叠成一行：项数与覆盖的环境数', () => {
+  it('基础设施折叠成一行：项数、覆盖环境数，以及其中多少是分支预览', () => {
     const board = buildOwnerBoard([
       target({ name: 'A', environment: 'production' }),
       infra({ environment: 'preview' }),
       infra({ name: '端口', environment: 'production' }),
     ]);
-    expect(board.infra).toEqual({ total: 2, down: 0, environments: 2 });
+    expect(board.infra).toEqual({ total: 2, down: 0, environments: 2, preview: 1 });
+  });
+
+  it('基础设施可以统计到环境筛选之外 —— 被挡掉的分支预览不许凭空消失', () => {
+    // 业务视角只看生产（默认不含分支预览），但「塌了要知道」这件事不该被业务视角过滤掉：
+    // 否则用户会问「我明明有 170 个目标，这里怎么只剩 2 个」。
+    const all = [
+      target({ name: 'A', environment: 'production' }),
+      infra({ name: '端口', environment: 'production' }),
+      infra({ name: '容器1', environment: 'preview' }),
+      infra({ name: '容器2', environment: 'preview' }),
+    ];
+    const scoped = all.filter((t) => t.environment === 'production');
+    const board = buildOwnerBoard(scoped, all);
+    expect(board.rows).toHaveLength(1);
+    expect(board.infra.total).toBe(3);
+    expect(board.infra.preview).toBe(2);
   });
 });

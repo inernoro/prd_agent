@@ -374,7 +374,7 @@ export function StatusPage(): JSX.Element {
               </div>
 
               {boardView === 'owner' ? (
-                <div className="shrink-0">
+                <div className="flex min-h-0 flex-col lg:flex-1">
                   <OwnerBoard
                     targets={targets}
                     scope={scope}

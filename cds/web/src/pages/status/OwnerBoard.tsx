@@ -135,7 +135,7 @@ export function OwnerBoard({
   );
   const environments = useMemo(() => listEnvironments(projectTargets), [projectTargets]);
   const scoped = useMemo(() => scopeTargets(projectTargets, { projectId: null, environments: scope.environments }), [projectTargets, scope.environments]);
-  const board = useMemo(() => buildOwnerBoard(scoped), [scoped]);
+  const board = useMemo(() => buildOwnerBoard(scoped, projectTargets), [scoped, projectTargets]);
 
   const activeEnvs = new Set(scope.environments ?? environments);
   const toggleEnv = (env: MonitorEnvironment): void => {
@@ -148,7 +148,7 @@ export function OwnerBoard({
   const BannerIcon = BANNER_ICON[board.tone];
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex min-h-0 flex-col gap-3 lg:h-full">
       {/* 项目 + 环境：我在看谁 */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-[0.6875rem] text-muted-foreground">我的项目</span>
@@ -237,16 +237,20 @@ export function OwnerBoard({
       </div>
 
       {board.rows.length > 0 ? (
-        <div className="grid gap-2 md:grid-cols-2">
+        <div className="grid min-h-0 flex-1 auto-rows-min gap-2 overflow-y-auto md:grid-cols-2">
           {board.rows.map((row) => <BusinessCard key={row.key} row={row} onOpen={onOpenTarget} />)}
         </div>
       ) : (
-        <div className="flex flex-col items-start gap-2 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] px-4 py-5">
-          <div className="text-xs leading-5 text-muted-foreground">
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] px-6 py-10 text-center">
+          <div className="max-w-xl text-xs leading-5 text-muted-foreground">
             业务监控问的是「这条业务现在还能用吗」——发一次真请求，按你的判据验收返回值。
             没有它，容器全绿也只说明服务活着。
           </div>
-          <button type="button" className="text-xs text-primary-ink hover:underline" onClick={onAddMonitor}>
+          <button
+            type="button"
+            className="rounded-md border border-primary/45 bg-primary-soft px-3 py-1.5 text-xs text-primary-ink transition-colors hover:border-primary/70"
+            onClick={onAddMonitor}
+          >
             加第一条业务监控
           </button>
         </div>
@@ -260,7 +264,10 @@ export function OwnerBoard({
           {board.infra.environments} 个环境 × {board.infra.total} 项
           {board.infra.down > 0 ? `，${board.infra.down} 项异常` : '，全部正常'}
         </span>
-        <span className="text-[0.6875rem] text-muted-foreground">容器、端口、预览域名 —— 塌了这里会先红</span>
+        <span className="text-[0.6875rem] text-muted-foreground">
+          容器、端口、预览域名 —— 塌了这里会先红
+          {board.infra.preview > 0 ? `；其中 ${board.infra.preview} 项是分支预览，不进上面的业务视角` : ''}
+        </span>
       </div>
 
       <div className="flex items-start gap-2 text-[0.6875rem] leading-4 text-muted-foreground">
