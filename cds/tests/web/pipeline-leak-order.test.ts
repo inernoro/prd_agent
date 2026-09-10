@@ -11,6 +11,13 @@
  * 悄悄不见了。这正是 predicate-and-wiring-discipline 形状 2（链路只建一半，静默退化）。
  *
  * 所以本守卫改为：前端硬编码的每一个 LeakKind 字面量，必须在后端的 LeakKind 联合类型里存在。
+ *
+ * 2026-09-10 二次修订：首页换成厂房剖面后，那处依赖又换了形状——从 `l.kind === 'x'` 的
+ * 比较式变成了 `pipeline.totalLeaks['x']` 的下标式。只认比较式的判据于是同时犯两个错：
+ * 对真实存在的下标依赖视而不见，又因为「一条比较式都没有」而误报。这正是
+ * predicate-and-wiring-discipline 形状 1（判据比它该管的范围窄，换个等价写法就漏）。
+ * 现在两种写法都认，且不再要求「必须有依赖」——没有依赖是合法状态，守卫只管
+ * 「出现的必须存在」。
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -29,14 +36,19 @@ describe('首页引用的 LeakKind 字面量必须在后端存在', () => {
     return new Set([...block![1].matchAll(/'([a-z-]+)'/g)].map((m) => m[1]));
   })();
 
-  it('后端至少声明了「部署了没人验」这一类（首页靠它取示例分支）', () => {
-    expect(backendKinds.has('deployed-not-accepted')).toBe(true);
+  it('后端 LeakKind 联合类型解析得出取值，且不为空', () => {
+    expect(backendKinds.size).toBeGreaterThan(0);
   });
 
-  it('前端出现的每个 kind 字面量都对得上后端，没有拼错或已被改名的', () => {
-    // 只看 `l.kind !== 'x'` / `l.kind === 'x'` 这种真正参与过滤的比较，避免把注释里的词算进来
-    const used = [...panel.matchAll(/kind\s*[!=]==\s*'([a-z-]+)'/g)].map((m) => m[1]);
-    expect(used.length, '首页没有任何 kind 过滤了——若确实不再依赖，请连同本守卫一起删除并说明').toBeGreaterThan(0);
+  it('前端出现的每个 kind 字面量都对得上后端，比较式与下标式都算', () => {
+    // 两种写法都要认，少认一种就等于漏掉一半依赖：
+    //   比较式  l.kind === 'deployed-not-accepted'
+    //   下标式  pipeline.totalLeaks['report-missing-change-key']
+    const used = [
+      ...[...panel.matchAll(/kind\s*[!=]==\s*'([a-z-]+)'/g)].map((m) => m[1]),
+      ...[...panel.matchAll(/(?:totalLeaks|leaks)\s*\[\s*'([a-z-]+)'/g)].map((m) => m[1]),
+    ];
+    // 没有依赖是合法状态（首页可以不引用任何 kind），所以这里不要求 used 非空。
     for (const kind of used) {
       expect(backendKinds.has(kind), `首页用了 '${kind}'，后端 LeakKind 里没有这一项`).toBe(true);
     }
