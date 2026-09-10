@@ -9059,21 +9059,46 @@ def cmd_schedule_test(args: argparse.Namespace) -> None:
 # 自由文本判据一旦开口，下一轮就会被要求加同义词和嵌套（CLAUDE.md 5.5）。
 
 
+ASSERT_OPS = ("eq", "ne", "lt", "lte", "gt", "gte", "exists", "absent")
+
+
 def _parse_assertion(raw: str) -> dict[str, str]:
     """把 `image.height:eq:1024` 解析成判据。
 
-    只切两刀：期望值里可能自带冒号（时间、URL、比例），切多了会把 `16:9` 拦腰截断。
+    冒号两头都可能出现冒号，所以不能简单地切两刀：
+
+      期望值里自带冒号（时间、URL、比例）—— 切多了把 `16:9` 拦腰截断；
+      **路径里也自带冒号** —— health+json 的 check 键按 IETF 规范就是
+      `组件:度量`（`checks.serving:requests[0].observedValue`），
+      从左边切第一刀会把路径切成 `checks.serving` + 一个不存在的运算。
+
+    所以判据是「找运算符」而不是「按位置切」：运算符是**有限枚举**（八个），
+    从左往右找第一个被冒号夹住的、且确实是枚举成员的片段，它就是运算符，
+    左边全是路径、右边全是期望值。只有当路径里某一段**恰好等于**一个运算符名
+    （如 `data.eq.x`）时才会歧义，那种字段名现实中不存在，也可以改写路径规避。
     """
-    parts = raw.split(":", 2)
-    if len(parts) < 2 or not parts[0].strip() or not parts[1].strip():
-        die(f"判据写法应为 path:op[:value]，收到 {raw!r}", code=2)
-    path, op = parts[0].strip(), parts[1].strip()
-    item: dict[str, str] = {"path": path, "op": op}
-    if len(parts) == 3 and parts[2] != "":
-        item["value"] = parts[2]
-    elif op not in ("exists", "absent"):
-        die(f"判据 {raw!r} 的运算 {op} 需要期望值", code=2)
-    return item
+    text = raw.strip()
+    for i, piece in enumerate(text.split(":")):
+        if i == 0 or piece.strip() not in ASSERT_OPS:
+            continue
+        head_len = len(":".join(text.split(":")[:i]))
+        path = text[:head_len].strip()
+        op = piece.strip()
+        rest = text[head_len + 1 + len(piece):]
+        value = rest[1:] if rest.startswith(":") else ""
+        if not path:
+            die(f"判据写法应为 path:op[:value]，收到 {raw!r}", code=2)
+        item: dict[str, str] = {"path": path, "op": op}
+        if value != "":
+            item["value"] = value
+        elif op not in ("exists", "absent"):
+            die(f"判据 {raw!r} 的运算 {op} 需要期望值", code=2)
+        return item
+    die(
+        f"判据写法应为 path:op[:value]，收到 {raw!r}"
+        f"（运算必须是 {' / '.join(ASSERT_OPS)} 之一）",
+        code=2,
+    )
 
 
 def _monitor_payload(args: argparse.Namespace) -> dict[str, Any]:
@@ -9366,7 +9391,9 @@ def _build_parser() -> argparse.ArgumentParser:
     mona.add_argument(
         "--assert", dest="assert_", action="append", metavar="PATH:OP[:VALUE]",
         help="判据，可重复。OP ∈ eq/ne/lt/lte/gt/gte/exists/absent。"
-             "例：image.height:eq:1024。期望值里可以带冒号（16:9 不会被截断）",
+             "例：image.height:eq:1024。路径与期望值都可以带冒号——"
+             "health+json 的 check 键按规范就是「组件:度量」，写成 "
+             "checks.serving:requests.0.observedValue:gt:0（数组下标用 .0，不是 [0]）",
     )
     mona.add_argument(
         "--body",

@@ -6,7 +6,10 @@
 
   1. 期望值自带冒号（`16:9`、时间、URL）——切多了会把它拦腰截断，
      于是判据从「等于 16:9」变成「等于 16」，永远不通过；
-  2. exists / absent 不需要期望值——强制要求会让这两个运算根本没法用。
+  2. **路径也自带冒号**——health+json 的 check 键按 IETF 规范就是「组件:度量」
+     （`checks.serving:requests.0.observedValue`）。从左边切第一刀会把路径切成
+     `checks.serving` 加一个不存在的运算，于是这类判据**根本加不进来**；
+  3. exists / absent 不需要期望值——强制要求会让这两个运算根本没法用。
 
 SSOT：.claude/rules/degradation-must-alarm.md
 """
@@ -48,6 +51,13 @@ def main() -> int:
     check("absent 不需要期望值", parse("error:absent"), {"path": "error", "op": "absent"})
     # 期望值是 0 不能被当成「没填」——「数量等于 0」正是最该写出来的判据
     check("期望值为 0", parse("errors:eq:0"), {"path": "errors", "op": "eq", "value": "0"})
+    # 路径带冒号：IETF health+json 的 check 键就长这样，这是它最主要的使用场景
+    check("路径带冒号", parse("checks.serving:requests.0.observedValue:gt:0"),
+          {"path": "checks.serving:requests.0.observedValue", "op": "gt", "value": "0"})
+    check("路径带冒号 + 期望值带冒号", parse("checks.a:b.ratio:eq:16:9"),
+          {"path": "checks.a:b.ratio", "op": "eq", "value": "16:9"})
+    check("路径带冒号 + exists", parse("checks.serving:requests.0.observedValue:exists"),
+          {"path": "checks.serving:requests.0.observedValue", "op": "exists"})
 
     for bad, why in [("nothing", "缺运算"), (":eq:1", "缺路径"), ("a::1", "缺运算"), ("a:eq", "eq 缺期望值")]:
         try:
@@ -62,7 +72,7 @@ def main() -> int:
         for e in errors:
             print(f"- {e}")
         return 1
-    print("cdscli monitor contract passed: 判据解析 6 项正例、4 项反例均符合")
+    print("cdscli monitor contract passed: 判据解析 9 项正例、4 项反例均符合")
     return 0
 
 

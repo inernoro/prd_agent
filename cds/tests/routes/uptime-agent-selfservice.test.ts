@@ -237,5 +237,37 @@ describe('管理员身份行为不变', () => {
     expect(saved.origin).toBe('manual');
     // 管理员加的不绑分支：那是人明确要盯的东西，不该因为某条分支没了就替他删掉
     expect(saved.boundBranchId).toBeUndefined();
+    // 地址不在本项目的分支预览域名上，也就没有 previewBranchId
+    expect(saved.previewBranchId).toBeUndefined();
+  });
+
+  it('管理员加的地址若落在分支预览上，照样盖 previewBranchId（但不绑寿命）', async () => {
+    // 这是环境判定的结构性证据：不认「谁登记的」，只认「地址指着谁」。
+    // 少了它，手动加一条指着临时分支的监控会被算成生产，混进项目负责人的第一屏。
+    const { app, store } = makeApp({});
+    const res = await call(app, 'POST', '/api/uptime/monitors', {
+      kind: 'keyword', url: `https://${OWN_HOST}/`, keyword: 'ok', projectId: PROJECT,
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const saved = [...store.values()][0];
+    expect(saved.previewBranchId).toBe('branch-feat-x');
+    expect(saved.boundBranchId, '寿命仍然不跟着分支走：管理员明确要盯的东西不替他删').toBeUndefined();
+  });
+
+  it('把地址从分支预览改成正式地址时，previewBranchId 必须跟着消失', async () => {
+    // 留着旧结论 = 这条监控永远被算成分支预览，永远进不了第一屏。
+    // 走完整往返（先加再改）而不是直接塞一条种子：塞种子的话，即便这条戳
+    // 根本没被写过，用例也会绿——那是一条为错误理由通过的用例（形状 4）。
+    const { app, store } = makeApp({});
+    const created = await call(app, 'POST', '/api/uptime/monitors', {
+      kind: 'keyword', url: `https://${OWN_HOST}/`, keyword: 'ok', projectId: PROJECT,
+    });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const id = [...store.values()][0].id;
+    expect(store.get(id)?.previewBranchId, '前提：加进来时确实盖上了').toBe('branch-feat-x');
+
+    const res = await call(app, 'PUT', `/api/uptime/monitors/${id}`, { url: 'https://prod.example.com/' });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(store.get(id)?.previewBranchId).toBeUndefined();
   });
 });

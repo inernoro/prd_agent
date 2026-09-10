@@ -5,3 +5,5 @@
 | feat | cds | 被动监控必须声明样本量来源：窗口内零真实调用时判「绿灯不作数」，不判正常 |
 | feat | llmgw | serving 深度自检补 serving.requests：给「零未处理异常」这条判据加上分母，探针自身请求不计入 |
 | fix | cds | 第一屏改为撑满画布；基础设施行统计不再被业务环境筛选滤掉分支预览，并标出其中多少项是分支预览 |
+| fix | cds | cdscli 判据支持路径带冒号：health+json 的 check 键按规范就是「组件:度量」，此前这类判据根本加不进来 |
+| fix | cds | 地址落在分支预览上的监控一律判为分支预览环境（新增 previewBranchId），不再只对 Agent 自助登记生效 |

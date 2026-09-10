@@ -31,6 +31,7 @@ import {
   customProbeTargetId,
   describeMonitorProbe,
   evaluateProjectScopedWrite,
+  matchPreviewHost,
   normalizeUptimeMonitorInput,
   probeCustomMonitor,
   type ProjectPreviewHost,
@@ -88,6 +89,33 @@ function resolveWriteScope(
   }
   const keyId = (req as { cdsProjectKey?: { keyId?: string } }).cdsProjectKey?.keyId || '';
   return { admin: false, projectId: scope, keyId, boundBranchId: verdict.boundBranchId };
+}
+
+/**
+ * 盖「这个地址落在哪条分支的预览域名上」这个**纯事实**。
+ *
+ * 与 boundBranchId 刻意分开，它们是两件事：
+ *   boundBranchId  —— 寿命跟着那条分支走（分支删了监控一起消失）。
+ *                     只有 Agent 自助登记的才有，管理员明确要盯的东西不该被替他删掉。
+ *   previewBranchId —— 地址指着一条分支预览。**任何登记路径都要盖**，
+ *                     因为环境判定只认「地址指着谁」，不认「谁登记的」。
+ *
+ * 少了后者，管理员手动加一条指着临时分支的监控，会被算成生产环境混进项目负责人的
+ * 第一屏——那正是用户担心的「临时分支把自己的错误预览地址加进去」。
+ * 只在 agent-api 那条路上反查，就是把一条只在一条路径上成立的证据当成契约成立
+ * （predicate-and-wiring-discipline 形状 8）。
+ *
+ * 系统级监控（没有 projectId）查不了：那里没有可枚举的分支台账，如实留空。
+ */
+function stampPreviewBranch(
+  monitor: UptimeCustomMonitor,
+  listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[],
+): void {
+  const hit = monitor.projectId && listProjectPreviewHosts
+    ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId))
+    : undefined;
+  // 编辑时把地址从分支预览改成正式地址，这个戳必须跟着消失，不能留着旧结论。
+  monitor.previewBranchId = hit ? hit.branchId : undefined;
 }
 
 /** 按写入主体盖审计字段：监控中心要答得出「谁加的、从哪加的、绑着哪条分支」。 */
@@ -299,6 +327,7 @@ export function createUptimeRouter(deps: {
       return;
     }
     stampAudit(monitor, req, writeScope);
+    stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
     try {
       const saved = store.upsertUptimeMonitor(monitor);
       res.status(201).json({ monitor: saved, description: describeMonitorProbe(saved) });
@@ -343,6 +372,7 @@ export function createUptimeRouter(deps: {
       return;
     }
     stampAudit(monitor, req, writeScope);
+    stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
     try {
       const saved = store.upsertUptimeMonitor(monitor);
       // 台账立刻跟上新定义（尤其是归属项目），不等下一轮探测。

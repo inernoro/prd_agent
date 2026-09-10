@@ -1923,6 +1923,7 @@ export class UptimeMonitorService {
     const environment = resolveMonitorEnvironment({
       source,
       declared: monitor?.environment,
+      previewBranchId: monitor?.previewBranchId,
       boundBranchId: monitor?.boundBranchId,
       releaseEnvironment: record.releaseEnvironment,
     });

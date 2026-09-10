@@ -1679,6 +1679,14 @@ export interface UptimeCustomMonitor {
    * 分支删除时随之清理（state.removeBranch 的级联）。
    */
   boundBranchId?: string;
+  /**
+   * 这个地址落在哪条分支的预览域名上（纯事实，不含寿命语义）。
+   *
+   * 与 boundBranchId 分开：那个管「分支没了就一起删」，只有 Agent 自助登记的才有；
+   * 这个管「环境算不算分支预览」，**任何登记路径都要盖**——否则管理员手动加一条
+   * 指着临时分支的监控会被算成生产，混进项目负责人的第一屏。
+   */
+  previewBranchId?: string;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
