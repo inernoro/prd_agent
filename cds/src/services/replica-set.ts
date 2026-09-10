@@ -992,6 +992,7 @@ export class ReplicaSetService {
         // 报成「已停止」，而这条文案正是用户判断「它还在不在写主库」的唯一依据。
         try {
           await this.opts.container.stop(containerName, 'replica-member-not-ready', {
+            kind: 'cds-stop-after-failure',
             branchId, profileId, actor: 'replica-set', trigger: 'replica-set-readiness-failed',
           });
         } catch (err) {

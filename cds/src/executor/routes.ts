@@ -375,6 +375,7 @@ export function createExecutorRouter(deps: ExecutorRouterDeps): Router {
         svc.status = 'stopping';
         try {
           await containerService.stop(svc.containerName, '执行器停止（保留容器，可秒级唤醒）', {
+            kind: 'cds-stop',
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
