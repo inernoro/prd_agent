@@ -59,7 +59,12 @@ public static class GatewayHttpEndpoints
         {
             var path = context.Request.Path.Value ?? string.Empty;
             var protectedGatewayPath = path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
-                                       && !path.Equals("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase);
+                                       && !path.Equals("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase)
+                                       // 深度自检同样匿名：CDS 的自定义探针**刻意不携带任何密钥**
+                                       // （探测令牌绝不发给外部地址，见 uptime-custom-monitor 的 httpProbe），
+                                       // 要鉴权它就永远打不进来。代价是可控的——这个端点只回计数与窗口，
+                                       // 不含任何异常文本、路径或堆栈，泄漏面就是「这个网关最近崩没崩过」。
+                                       && !path.Equals("/gw/v1/healthz/deep", StringComparison.OrdinalIgnoreCase);
             var protectedCompatPath =
                 IsOpenAiCompatibleProtectedPath(path)
                 || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
@@ -216,6 +221,48 @@ public static class GatewayHttpEndpoints
             commit = gitCommit,
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
+
+        // 深度自检：把「最近有没有崩过」端出成 IETF draft-inadarei-api-health-check
+        // 的 application/health+json，供 CDS 的 health-json 探针按结构化判据判定
+        // （componentId=serving.unhandled-exceptions，断言 observedValue == 0）。
+        //
+        // 刻意**始终返回 200**：端点自己活着与被监控的东西是否健康，是两件事。
+        // 回 503 会让 CDS 先撞上状态码规则，错误信息退化成「HTTP 503 不在期望范围」，
+        // 而不是「observedValue=3，期望 eq 0」——后者才排得动障。
+        app.MapGet("/gw/v1/healthz/deep", (
+            [Microsoft.AspNetCore.Mvc.FromServices] ServingFaultTracker faults) =>
+        {
+            var count = faults.CountWithinWindow();
+            var now = DateTime.UtcNow;
+            var pass = count == 0;
+            return Results.Content(JsonSerializer.Serialize(new
+            {
+                status = pass ? "pass" : "fail",
+                version = "1",
+                serviceId = "llmgw-serving",
+                description = "LLM Gateway serving 深度自检",
+                commit = gitCommit,
+                checks = new Dictionary<string, object[]>
+                {
+                    ["serving:unhandled-exceptions"] = new object[]
+                    {
+                        new
+                        {
+                            componentId = "serving.unhandled-exceptions",
+                            componentType = "system",
+                            observedValue = count,
+                            observedUnit = "count",
+                            status = pass ? "pass" : "fail",
+                            time = now.ToString("o"),
+                            // 只给数与口径，不给异常内容——这个端点是匿名的。
+                            output = pass
+                                ? $"最近 {faults.WindowMinutes} 分钟无未处理异常"
+                                : $"最近 {faults.WindowMinutes} 分钟出现 {count} 次未处理异常，累计 {faults.TotalSinceStart} 次；详情见容器日志",
+                        },
+                    },
+                },
+            }, jsonOpts), "application/health+json");
+        });
 
         app.MapGet("/gw/v1/readyz", async (
             HttpContext http,

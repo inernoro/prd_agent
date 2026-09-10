@@ -1,0 +1,139 @@
+# CDS 监控声明 — 由被监控方（本仓库）声明，CDS 消费
+#
+# 规则 SSOT：.claude/rules/degradation-must-alarm.md
+# 与 cds-compose.yml 并列：那份声明「怎么把我跑起来」，这份声明「怎么盯着我」。
+#
+# 行业依据（不自创协议）：
+#   声明形态 = Prometheus Operator ServiceMonitor（被监控方声明式地说「来抓我」）
+#   响应格式 = IETF draft-inadarei-api-health-check（application/health+json）
+#   去抖语义 = Alertmanager 的 for:
+#   告警取向 = Google SRE 的 symptom-based alerting（对症状告警，不对原因告警）
+#
+# 【当前状态】declared-not-wired
+#
+#   三块拼图的进度，逐块说清，不含糊：
+#     [已通] health-json 探针 —— CDS 的 uptime-custom-monitor 已支持这种 kind，
+#            结构化判据（field/op/value）、check 不存在判失败、真实 HTTP 探测均有用例。
+#     [已通] 告警外发 —— uptime 状态翻转会投递 MAP 站内通知（source=uptime-alert）。
+#     [已通] serving 深度自检端点 —— GET /gw/v1/healthz/deep 回 health+json，
+#            免鉴权（CDS 探针刻意不带密钥），只含计数与窗口、不含异常文本。
+#     [未通] **本文件的自动导入** —— CDS 还不会读这份声明去建监控。
+#
+#   所以现在的实际情况是：链路已经能跑通，但那条监控项还得手动在监控中心添加一次。
+#   在自动导入接上之前，不要把本文件的存在当成「已经在监控了」的证据
+#   （predicate-and-wiring-discipline 形状 8：把不成立的证据当成证据）。
+#   自动导入落地后把本行改为 wired 并记录接线提交。
+
+x-cds-monitors-version: 1
+x-cds-monitors-status: declared-not-wired
+x-cds-monitors-project: prd-agent
+
+# ── 鉴权：三个方向，全部「公钥配一次、签名每次现算」 ──
+#
+# 你的要求是永久、不重复配对。这里不发明新机制——本仓库的
+# StableSmokeAuthenticationHandler 已经跑通了这套：MAP 配置里只存公钥，调用方持私钥，
+# 每次请求现签，带 nonce 防重放，认证通过后自动开号（SystemRoleKey=agent_tester）。
+#
+# 关键性质：**配对关系永久，过期的只是单次签名**。签名短时效是为了防重放，
+# 不是让你隔三差五重新配一次。私钥从不过网络，泄漏面比静态 token 小一个量级。
+# 行业同类：GitHub App 的 JWT 认证、AWS SigV4。
+x-cds-monitor-auth:
+  # 方向一 本仓库 → CDS：提交监控声明
+  #
+  # 声明**不直接写**监控：CDS 的 /api/uptime/monitors 写接口挂着
+  # denyProjectScopedWrite，项目级 key 一律 403（2026-09-08 安全加固，防止一个项目的
+  # key 去改别人的监控、或让它打任意外部地址）。那条边界是对的，不动它。
+  # 所以走 cds-compose.yml 已有的先例：pending-import → 管理员审批 → 生效。
+  toCds:
+    kind: cds-project-agent-key
+    envKey: CDS_AGENT_KEY
+    lifetime: permanent-until-revoked    # AgentKey 类型无 expiresAt，只有显式 DELETE
+    flow: declaration-import-then-approve
+    writesMonitorsDirectly: false
+
+  # 方向二 CDS → 本仓库自检端点：探测
+  #
+  # 用 RSA 签名而不是静态 token：静态 token 一旦泄漏就是永久失守，而它还得存在
+  # 某个地方——存进 CDS 项目级 env 就正好踩上 cross-project-isolation 通道 9
+  # （2026-09-01 事故：项目级 env 同项目所有分支共用一份，一次轮换把兄弟分支打成 401）。
+  # 公钥不是秘密，放哪都行；私钥留在 CDS，不过网络。
+  fromCds:
+    kind: rsa-signed-request
+    verifierHolds: public-key-only
+    replayGuard: nonce
+    lifetime: permanent-until-key-rotated
+    forbidden: cds-project-level-env
+    # 判据：一条预览的签名拿去打同项目另一条预览必须被拒（作用域要进签名载荷）
+    scopeBoundToDeployment: true
+
+  # 方向三 CDS 告警 → MAP 站内通知：照 stable-smoke 的现成通道，不另造
+  #
+  # POST /api/dashboard/notifications/events 已经支持外部系统写入，
+  # stable-smoke 正在用它（规则 15：只定向发给配置用户，禁止全局通知）。
+  # 监控告警接同一条路，只是换一个 source。
+  alertToMap:
+    kind: rsa-signed-request
+    endpoint: "POST /api/dashboard/notifications/events"
+    precedent: StableSmokeAuthenticationHandler
+    targetPolicy: fixed-configured-account   # 固定通知账号，禁止全局通知
+    lifetime: permanent-until-key-rotated
+
+# ── 监控项 ──
+#
+# probe: light  → 一次请求、只读、无副作用，进 6 小时常设监控
+# probe: heavy  → 有写入或需截图，只在 48 小时稳定冒烟里跑，不进常设
+#
+# 判据是**结构化字段**，不是可解析的表达式：自由文本判据一旦开口，下一轮就会被要求
+# 加同义词和嵌套语法（CLAUDE.md 5.5 的熔断条件之一）。
+#   expect.field  观测哪个字段：status / observedValue
+#   expect.op     比较运算：eq / ne / lt / lte / gt / gte
+#   expect.value  期望值（lt/lte/gt/gte 按数值比，eq/ne 按规范化字符串比）
+monitors:
+  - id: llmgw.serving.unhandled-exceptions
+    name: "网关 serving 近期未处理异常数"
+    kind: health-json
+    # 占位符是 llmgw **子域**，不是「serving 的独立域名」——serving 容器在拓扑里
+    # 是内网服务，没有自己的对外入口，经 llmgw 子域路由过去（cdscli topology 的事实）。
+    # 写成 {llmgw_serving} 会让下一个人去找一个不存在的域名。
+    # 端点免鉴权（CDS 探针刻意不带密钥），只回计数与窗口、不含异常文本。
+    #
+    # 实测（2026-09-09，sha 860fdce1）：
+    #   curl {llmgw}/gw/v1/healthz/deep → 200 application/health+json，observedValue=0
+    #   用本仓库的 probeCustomMonitor 打它：判据成立判 up；把期望值改成 1 立刻判 down
+    #   并回报「observedValue=0，期望 等于 1」——证明它真在读值，不是恒绿。
+    url: "{llmgw}/gw/v1/healthz/deep"
+    componentId: serving.unhandled-exceptions
+    expect:
+      field: observedValue
+      op: eq
+      value: 0
+    observedUnit: count
+    probe: light
+    intervalSeconds: 21600      # 6h；serving 侧的统计窗口必须 >= 这个值，否则探针恒读 0
+    failuresToAlarm: 1          # 未处理异常不去抖：出现一次就是一次
+    severity: P0
+    notify:
+      source: uptime-alert
+      section: admin
+    rationale: >
+      这套东西里最值钱的一条：不需要为每个功能单独写判据，
+      「页面看着好、后台在炸」的同类错误全部一次落网。
+      2026-09-09 那次 500 就是这么躺在容器日志里没人读的。
+
+# ── 还没有对应自检端点的监控项 ──
+#
+# 它们**不在** monitors 段里，因为声明一条打不通的监控只会一直红——
+# 假故障比没有监控更糟，还会把真告警淹掉。等端点落地再搬上去。
+plannedMonitors:
+  - id: llmgw.intent-draft.roundtrip
+    name: "用途码推导是否走的模型（而不是本地关键词降级）"
+    blockedBy: "console-api 尚未暴露 intent-draft 的自检 check"
+    intent: >
+      直接对「走了降级」这个症状告警。降级本身是对的，没有铃才是错的——
+      这正是 2026-09-09 用户看到那条红字时，全部验收都判绿的原因。
+    note: "真调一次推导会烧额度，6 小时一次可接受；实现时注意用系统 appCaller，别记进用户账"
+
+  - id: map.api.unhandled-exceptions
+    name: "MAP 后端近期未处理异常数"
+    blockedBy: "prd-api 尚未挂 ServingFaultTracker 同款计数与自检端点"
+    intent: "与 serving 那条同理，覆盖 MAP 侧"

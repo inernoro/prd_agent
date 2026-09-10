@@ -16,6 +16,12 @@ using PrdAgent.Infrastructure.Security;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// 全局 BSON 约定必须在任何 Mongo 读写之前装好：class map 是懒建的，一旦某个类型
+// 已经映射过，之后再注册约定不会追溯回去。这里只装约定、不装 MAP 的类映射
+// （serving 不需要那批实体），核心是 IgnoreExtraElements——serving 与 console-api
+// 共用 llm_gateway 库，写方加字段不能炸掉读方。见 RegisterConventionsOnly 的注释。
+BsonClassMapRegistration.RegisterConventionsOnly();
+
 // ───────────────────────── DI 装配 ─────────────────────────
 // 严格复刻 MAP（PrdAgent.Api/Program.cs）中承载 LlmGateway / ModelResolver 所需的注册，
 // 让本服务通过进程内 DI 直接 HOST 既有实现，再用 HTTP 端点暴露出去。不重写任何网关逻辑。
@@ -38,6 +44,11 @@ builder.Services.AddSingleton<GatewayBudgetCoordinator>();
 builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();
 builder.Services.AddSingleton<GatewayProviderConcurrencyCoordinator>();
+// 未处理异常计数：让「最近有没有崩过」成为一个能被机器定量读取的数。
+// 窗口默认 360 分钟，与 cds-monitors.yml 里 6 小时的常设探测间隔对齐——
+// 窗口小于探测间隔会让异常落在窗口外，探针读到 0 误判成健康。
+builder.Services.AddSingleton(sp => new ServingFaultTracker(
+    sp.GetRequiredService<IConfiguration>().GetValue("LlmGateway:FaultWindowMinutes", ServingFaultTracker.DefaultWindowMinutes)));
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -312,6 +323,9 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 });
 
 var app = builder.Build();
+// 必须是管道最外层：那次事故的异常一路穿透到 Kestrel 才被记录，
+// 挂在内层就抓不到同类故障。只记不吞，异常原样继续往外抛。
+app.UseMiddleware<ServingFaultTrackingMiddleware>();
 app.UseForwardedHeaders();
 app.UseWebSockets(new WebSocketOptions
 {

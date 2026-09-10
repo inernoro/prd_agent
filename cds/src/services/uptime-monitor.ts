@@ -35,7 +35,7 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import type { BranchEntry, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
+import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
 import {
   CUSTOM_PROBE_ID_PREFIX,
   customProbeTargetId,
@@ -314,6 +314,11 @@ export interface UptimeStateSource {
    * 「添加监控」保存了也永远不会被探（守卫测试盯着 index.ts 的这行接线）。
    */
   getUptimeMonitors?(): UptimeCustomMonitor[];
+  /**
+   * 记一次功能监控的观测证据（产物地址、判据逐条、本次请求体）。
+   * 不接线不报错，只是详情页永远没有画廊可看——所以有源码守卫钉住这行。
+   */
+  recordMonitorObservation?(monitorId: string, observation: MonitorObservation): void;
   /**
    * 分支的预览地址（用户视角探测用）。可选——不接线就没有用户视角判定，
    * 分支目标只有进程视角。
@@ -922,6 +927,36 @@ export interface UptimeTargetSummary {
   monitorId?: string;
   /** 自定义监控的标签 */
   tags?: string[];
+  /**
+   * 谁把这条监控加进来的（2026-09-09）。
+   *
+   * 监控中心要答得出「被谁追加了什么」：一条没人认领的监控红着，
+   * 没人知道该找谁，最后的结局是整块面板被无视。
+   * boundBranchId 非空表示它的寿命跟着那条分支走——分支没了它也会走。
+   */
+  addedBy?: {
+    by: string;
+    kind: 'human' | 'project-key' | 'global-key';
+    origin: 'manual' | 'agent-api';
+    boundBranchId?: string;
+  };
+  /** 这条是不是功能监控（列表按它分组：功能监控与存活监控问的不是同一个问题）。 */
+  functional?: boolean;
+  /**
+   * 最新一次观测的精简摘要，列表直接用。
+   *
+   * 刻意只带摘要：完整证据（判据逐条、请求体）随详情单独拉，
+   * 否则一个 20 条证据 × N 个监控的列表接口会被撑得又慢又肥。
+   */
+  lastObservation?: {
+    at: string;
+    ok: boolean;
+    /** 产物缩略图直接用它——「这次生成出来长什么样」是这类监控的主体信息 */
+    artifactUrl?: string;
+    passed: number;
+    total: number;
+    err?: string;
+  };
   /** 自定义监控是否启用（source=custom 时有） */
   enabled?: boolean;
   /**
@@ -1561,6 +1596,16 @@ export class UptimeMonitorService {
     // 两条通道、立即探测都从这里走：硬 deadline 兜住「探测器承诺超时却永不返回」
     // （2026-09-08 一轮 await 卡死 24 小时的根因），异常按内部故障记、不参与降级。
     const r = await this.probeWithDeadline(probe, target, timeoutMs);
+    // 功能监控的证据在这里落账：轮次、立即探测都走 probeOne，接一处就全覆盖。
+    // 判定继续走 applySample——证据写失败不该影响这次探测的结论。
+    const observation = (r.outcome as { observation?: MonitorObservation }).observation;
+    if (observation && target.monitor?.id) {
+      try {
+        this.deps.state.recordMonitorObservation?.(target.monitor.id, observation);
+      } catch (err) {
+        this.deps.logger?.warn?.(`[uptime] 观测证据写入失败: ${(err as Error).message}`);
+      }
+    }
     return { target, ...r };
   }
 
@@ -1829,9 +1874,38 @@ export class UptimeMonitorService {
   }
 
   /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
-  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled'> {
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation'> {
     const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
-    return { monitorId, tags: monitor?.tags || [], enabled: monitor ? monitor.enabled : true };
+    const latest = monitor?.observations?.[0];
+    return {
+      monitorId,
+      tags: monitor?.tags || [],
+      enabled: monitor ? monitor.enabled : true,
+      // 归属跟着定义走，不另存一份：定义改了（比如管理员接管），面板下一轮就跟上。
+      ...(monitor
+        ? {
+            addedBy: {
+              by: monitor.createdBy || '未记名',
+              kind: monitor.createdByKind || 'human',
+              origin: monitor.origin || 'manual',
+              ...(monitor.boundBranchId ? { boundBranchId: monitor.boundBranchId } : {}),
+            },
+          }
+        : {}),
+      ...(monitor?.kind === 'functional' ? { functional: true } : {}),
+      ...(latest
+        ? {
+            lastObservation: {
+              at: latest.at,
+              ok: latest.ok,
+              ...(latest.artifactUrl ? { artifactUrl: latest.artifactUrl } : {}),
+              passed: latest.results.filter((r) => r.ok).length,
+              total: latest.results.length,
+              ...(latest.err ? { err: latest.err } : {}),
+            },
+          }
+        : {}),
+    };
   }
 
   /** 单 target 时序（已降采样到固定桶数）。 */

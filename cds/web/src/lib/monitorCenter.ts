@@ -61,6 +61,24 @@ export interface UptimeTargetSummary {
   intervalSeconds: number;
   timeoutMs: number;
   monitorId?: string;
+  /** 是否功能监控（问「返回的东西对不对」，而不是「通不通」）。 */
+  functional?: boolean;
+  /** 最新一次观测的摘要；完整证据走 /uptime/monitors/:id/observations。 */
+  lastObservation?: {
+    at: string;
+    ok: boolean;
+    artifactUrl?: string;
+    passed: number;
+    total: number;
+    err?: string;
+  };
+  /** 谁把这条监控加进来的（服务端算好下发，前端不推断）。 */
+  addedBy?: {
+    by: string;
+    kind: 'human' | 'project-key' | 'global-key';
+    origin: 'manual' | 'agent-api';
+    boundBranchId?: string;
+  };
   tags?: string[];
   enabled?: boolean;
   /** false = 按容器状态判定（不是观测），标「未实测」，不算正常 */
@@ -617,6 +635,8 @@ export function filterTargets(
 
 export interface TargetGroup {
   source: ProbeSource;
+  /** 分组标识：custom 会被拆成「功能监控」与「自定义存活」两组，source 不足以区分。 */
+  key: string;
   label: string;
   hint: string;
   targets: UptimeTargetSummary[];
@@ -624,18 +644,53 @@ export interface TargetGroup {
 }
 
 export function groupTargetsBySource(targets: ReadonlyArray<UptimeTargetSummary>): TargetGroup[] {
-  return SOURCE_ORDER
-    .map((source) => {
-      const members = targets.filter((t) => t.source === source);
-      return {
-        source,
-        label: SOURCE_META[source].label,
-        hint: SOURCE_META[source].hint,
-        targets: members,
-        down: members.filter((t) => t.status === 'down' && !t.excluded).length,
-      };
-    })
-    .filter((group) => group.targets.length > 0);
+  const countDown = (xs: ReadonlyArray<UptimeTargetSummary>): number =>
+    xs.filter((t) => t.status === 'down' && !t.excluded).length;
+  const groups: TargetGroup[] = [];
+
+  for (const source of SOURCE_ORDER) {
+    const members = targets.filter((t) => t.source === source);
+    if (members.length === 0) continue;
+
+    // 功能监控与存活监控问的不是同一个问题：一个问「返回的东西对不对」，
+    // 一个问「通不通」。混在一列会让人把「存活全绿」读成「一切正常」，
+    // 而恰恰是功能监控红着的时候，服务通常还活得好好的。
+    if (source === 'custom') {
+      const functional = members.filter((t) => t.functional);
+      const alive = members.filter((t) => !t.functional);
+      if (functional.length > 0) {
+        groups.push({
+          source,
+          key: 'functional',
+          label: '功能监控',
+          hint: '发一次真请求，按判据验收返回值：接口通但产出不对，也算故障',
+          targets: functional,
+          down: countDown(functional),
+        });
+      }
+      if (alive.length > 0) {
+        groups.push({
+          source,
+          key: 'custom',
+          label: SOURCE_META.custom.label,
+          hint: SOURCE_META.custom.hint,
+          targets: alive,
+          down: countDown(alive),
+        });
+      }
+      continue;
+    }
+
+    groups.push({
+      source,
+      key: source,
+      label: SOURCE_META[source].label,
+      hint: SOURCE_META[source].hint,
+      targets: members,
+      down: countDown(members),
+    });
+  }
+  return groups;
 }
 
 /** 默认选中：保留当前选中；否则先选故障，再选待确认，最后第一条。 */
