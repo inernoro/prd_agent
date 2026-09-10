@@ -2797,6 +2797,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopping';
       try {
         await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+          kind: 'cds-stop-idle',
           projectId: branch.projectId,
           branchId: branch.id,
           profileId: svc.profileId,
@@ -2823,6 +2824,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       if (member.containerName) {
         try {
           await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+            kind: 'cds-stop-idle',
             projectId: branch.projectId,
             branchId: branch.id,
             profileId: `${replicaSet.profileId}--${member.id}`,
@@ -3180,6 +3182,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           lease?.assertCurrent(`auto-wake revert before ${svc.profileId}`);
           try {
             await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
+              kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
               profileId: svc.profileId,
@@ -3497,6 +3500,7 @@ const autoLifecycleService = new AutoLifecycleService(
           svc.status = 'stopping';
           try {
             await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+              kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
               profileId: svc.profileId,
@@ -3523,6 +3527,7 @@ const autoLifecycleService = new AutoLifecycleService(
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+                kind: 'cds-stop-idle',
                 projectId: branch.projectId,
                 branchId: branch.id,
                 profileId: `${replicaSet.profileId}--${member.id}`,

@@ -2283,7 +2283,10 @@ export class ContainerService {
   async stop(
     containerName: string,
     reason = 'cds-stop',
-    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+    // kind 以前不在这个 Pick 里，于是所有停止一律记成通用的 cds-stop：调用方明明知道
+    // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
+    // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
+    context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
   ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
@@ -2309,7 +2312,7 @@ export class ContainerService {
       },
     });
     await this.writeStopSentinel(containerName, reason);
-    this.noteLifecycleIntent(containerName, 'cds-stop', reason, {
+    this.noteLifecycleIntent(containerName, context.kind ?? 'cds-stop', reason, {
       projectId: context.projectId ?? null,
       branchId: context.branchId ?? null,
       profileId: context.profileId ?? null,
@@ -3021,7 +3024,7 @@ export class ContainerService {
    */
   async stopInfraService(
     containerName: string,
-    intentKind: 'cds-infra-stop' | 'cds-infra-recreate' = 'cds-infra-recreate',
+    intentKind: 'cds-infra-stop' | 'cds-infra-remove' | 'cds-infra-recreate' = 'cds-infra-recreate',
   ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
@@ -3034,11 +3037,12 @@ export class ContainerService {
       logs: before.logs,
       error: before.error,
     });
-    this.noteLifecycleIntent(
-      containerName,
-      intentKind,
-      intentKind === 'cds-infra-stop' ? 'infra 停止/删除，不重建' : 'infra stop/rm 后重建',
-    );
+    const INFRA_REASON: Record<typeof intentKind, string> = {
+      'cds-infra-stop': 'infra 停止，不重建',
+      'cds-infra-remove': 'infra 删除（容器与登记一起删）',
+      'cds-infra-recreate': 'infra stop/rm 后重建',
+    };
+    this.noteLifecycleIntent(containerName, intentKind, INFRA_REASON[intentKind]);
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
     this.recordContainerEvent({

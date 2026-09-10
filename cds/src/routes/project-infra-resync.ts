@@ -303,8 +303,8 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     for (const r of diff.removes) {
       try {
         const current = stateService.getInfraServiceForProjectAndId(projectId, r.id);
-        // Phase 1 是删除：停完就 removeInfraService，不会有新容器，意图记 stop 而非 recreate。
-        try { await containerService.stopInfraService(r.containerName, 'cds-infra-stop'); } catch { /* tolerate */ }
+        // Phase 1 是删除：停完就 removeInfraService，登记也没了，下一步是重新添加。
+        try { await containerService.stopInfraService(r.containerName, 'cds-infra-remove'); } catch { /* tolerate */ }
         if (deleteVolumes && current) {
           const namedVols = (current.volumes || [])
             .filter((v) => v.type !== 'bind')
