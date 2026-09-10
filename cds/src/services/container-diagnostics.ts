@@ -18,6 +18,9 @@ export type ContainerLifecycleIntentKind =
   | 'cds-remove'
   | 'cds-pre-run-replace'
   | 'cds-stale-cleanup'
+  // stop 与 recreate 必须分开：停止 / 删除不会起新容器，重建会。
+  // 合成一个值时，停止路径的停机原因会让人干等一个永远不来的新容器（Codex P2）。
+  | 'cds-infra-stop'
   | 'cds-infra-recreate';
 
 export interface ContainerLifecycleIntent {
@@ -383,7 +386,16 @@ export class DockerEventMonitor {
       severity: recordedSeverity,
       source: 'docker-events',
       action,
-      message: `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
+      // 展示面必须看得见结论。infra 容器不带 cds.branch.id / cds.profile.id，index.ts 的
+      // 分支状态同步会提前 return，那条带 reason 的事件根本不会产生——结论只剩 details 里
+      // 一份没人展开的字段。
+      // 按「技术细节：」切，不是按第一个句号切：只有匹配到 CDS 意图的那几条把结论放在首句，
+      // OOM / 正常退出 / destroy 的「这不是崩溃」「下一步去查什么」都在后面的句子里，
+      // 按句号截会把它们全丢掉，展示面就又只剩症状了（Codex 第六轮 P2）。
+      // 切掉的只有技术细节串，它原样留在 details.classification 里。
+      message: classification
+        ? `docker ${action}${containerName ? `: ${containerName}` : ''} — ${classification.reason.split('技术细节：')[0].trim()}`
+        : `docker ${action}${containerName ? `: ${containerName}` : ''}${lifecycleIntent ? ` (matched ${lifecycleIntent.kind})` : ''}`,
       projectId: lifecycleIntent?.projectId || null,
       branchId: branchId || null,
       profileId: profileId || null,
