@@ -141,6 +141,9 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['DUPLICATE', '相同内容已存在，请刷新确认或修改后重试。'],
   ['ALREADY_EXISTS', '相同内容已存在，请返回列表刷新并查看已有内容。'],
   ['TEMPLATE_VALIDATION_FAILED', '提交内容不符合模板要求，请按页面提示补全后重试。'],
+  // GitHub 目录订阅的子文档不单独同步，得对目录条目触发。这句必须原样到达用户——
+  // 之前它挂在通用码 INVALID_FORMAT 上，被兜底文案吃成「操作未完成，请检查输入后重试」。
+  ['GITHUB_CHILD_ENTRY_SYNC', '这篇文档由所属的 GitHub 目录订阅统一同步，请在该目录条目上触发同步。'],
 ]);
 
 function registeredUserFacingMessage(code: string, message: string): string | null {

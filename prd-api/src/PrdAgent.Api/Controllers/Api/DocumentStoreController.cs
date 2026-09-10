@@ -40,6 +40,12 @@ public class DocumentStoreController : ControllerBase
     /// <summary>AgentApiKey scope：写文档空间（替代 AI 超级密钥，最小权限归档验收报告）</summary>
     public const string ScopeWrite = "document-store:write";
 
+    /// <summary>
+    /// 对 GitHub 同步子文档手动触发同步时的专属错误码。
+    /// 前端 userReadableError 按码取文案，因此这个码必须和前端登记的一致。
+    /// </summary>
+    public const string GithubChildEntrySyncErrorCode = "GITHUB_CHILD_ENTRY_SYNC";
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
     private readonly IFileContentExtractor _fileContentExtractor;
@@ -5056,9 +5062,13 @@ public class DocumentStoreController : ControllerBase
 
         // GitHub 目录同步产出的子文件由父目录条目统一拉（见 DocumentSyncSchedule.IsGithubChildEntry）。
         // 这里不拦的话，标了「同步中」却永远没人认领，用户看到的是一个卡死的转圈。
+        //
+        // 用专属错误码而不是通用的 INVALID_FORMAT：前端对通用校验码只放行少数几种句式，
+        // 这句「该去点哪里」的引导会被兜底文案吃掉，用户只看到「操作未完成，请检查输入后重试」。
         if (DocumentSyncSchedule.IsGithubChildEntry(entry))
             return BadRequest(ApiResponse<object>.Fail(
-                ErrorCodes.INVALID_FORMAT, "该文档由 GitHub 目录订阅统一同步，请对所属目录条目触发同步"));
+                GithubChildEntrySyncErrorCode,
+                "该文档由所属的 GitHub 目录订阅统一同步，请对该目录条目触发同步"));
 
         // 暂停状态下不允许手动触发
         if (entry.IsPaused)

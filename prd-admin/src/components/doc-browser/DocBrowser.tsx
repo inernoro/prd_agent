@@ -257,6 +257,7 @@ import {
 import { streamSelectionRewrite } from '@/services/real/documentStore';
 import { threadColor, groupKey } from './inlineCommentShared';
 import { BulkActionBar } from './BulkActionBar';
+import { canOpenSubscriptionPanel, githubDirectoryStatusLabel, subscriptionSyncTone, GITHUB_DIRECTORY_SOURCE } from './subscriptionEntryState';
 
 // ── 类型 ──
 
@@ -311,6 +312,9 @@ export type DocBrowserEntry = {
   updatedByName?: string;
   summary?: string;
   syncStatus?: string;
+  /** 上次同步失败的原因（GitHub 目录订阅失败时要摊给用户看，不能只留在后台） */
+  syncError?: string;
+  lastSyncAt?: string;
   /** 是否暂停（订阅类型） */
   isPaused?: boolean;
   /** 最近一次"内容真正发生变化"的时间，用于显示 (new) 徽标 */
@@ -609,7 +613,21 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
   }
   if (isPrimary) return <Star size={14} style={{ color: 'var(--semantic-warning-text)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'var(--selection-text)' }} />;
-  if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
+  // GitHub 目录订阅：沿用下面订阅源同一套「用图标颜色表达同步状态」的约定。
+  // 之前这里恒为紫色，后台同步失败在文件树里完全看不出来（验收 P2）。
+  if (entry.sourceType === GITHUB_DIRECTORY_SOURCE) {
+    const ghTone = subscriptionSyncTone(entry);
+    const ghColor = ghTone === 'error' ? 'rgba(248,113,113,0.95)'
+      : ghTone === 'paused' ? 'var(--semantic-warning-text)'
+      : ghTone === 'syncing' ? 'rgba(96,165,250,0.95)'
+      : 'rgba(130,80,223,0.7)';
+    const ghLabel = githubDirectoryStatusLabel(ghTone);
+    return (
+      <Github size={14} style={{ color: ghColor }} aria-label={ghLabel}>
+        <title>{ghLabel}</title>
+      </Github>
+    );
+  }
   // 订阅源：用 Rss 图标本身的颜色表达同步状态（替代此前会独占一行徽章行的状态小圆点）。
   // 健康=中性灰（不啰嗦），出错=红，暂停=琥珀，同步中=蓝；让异常状态在文档树里直接可见。
   if (entry.sourceType === 'subscription') {
@@ -3101,7 +3119,10 @@ export function DocBrowser({
     const isAcc = !!(sel.metadata?.kind === 'acceptance-report' || sel.metadata?.verdict);
     const showEvidence = isAcc && !!preview?.text && !editMode;
     const showVersions = !!versionApi && !isMobile && !editMode;
-    const isSubscription = sel.sourceType === 'subscription';
+    // GitHub 目录父条目也是订阅：它才是「立即同步 / 暂停 / 看同步日志」真正该作用的对象。
+    // 之前这里只认 sourceType==='subscription'，于是目录条目菜单里根本没有同步入口，
+    // 用户拿一个同步失败的目录无处可点（验收 P1）。
+    const isSubscription = canOpenSubscriptionPanel(sel.sourceType);
     const githubSha = sel.metadata?.github_sha;
     const showSubscription = isSubscription && !!onOpenSubscription;
     // 移动端把低频动作（目录 / 划词评论 / 编辑）折进菜单，顶栏只留 字号/全屏/更多

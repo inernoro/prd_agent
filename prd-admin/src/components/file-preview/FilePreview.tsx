@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, CloudUpload, FileText, Clock3, RefreshCw } from 'lucide-react';
+import { Check, CloudUpload, FileText, Clock3, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
@@ -8,7 +8,7 @@ import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from './MarkdownViewer';
-import { listTranscribeStyles, retryRecordingArchive } from '@/services';
+import { listTranscribeStyles, retryRecordingArchive, triggerSync } from '@/services';
 import { toast } from '@/lib/toast';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 
@@ -684,6 +684,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             {owner}/{repo} · {path || '/'} · {branch}
           </div>
         )}
+        <GithubDirectorySyncStatus entry={entry} />
         {ghUrl && (
           <a href={ghUrl} target="_blank" rel="noopener noreferrer"
             className="h-8 px-4 rounded-[8px] text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
@@ -699,6 +700,69 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   return (
     <div className="text-center py-12 text-[12px]" style={{ color: 'var(--text-muted)' }}>
       暂无可预览的内容
+    </div>
+  );
+}
+
+/**
+ * GitHub 目录订阅的同步状态条：正常时只是一行淡字，失败时把原因整段摊开并给「重试同步」。
+ *
+ * 为什么必须摊开：后台同步失败此前完全不可见——目录条目在文件树里和普通条目长得一模一样，
+ * 用户等了五分钟没等到文档，也不知道是没拉完、还是授权断了、还是仓库没权限（验收 P2）。
+ */
+function GithubDirectorySyncStatus({ entry }: { entry: DocBrowserEntry }) {
+  const [busy, setBusy] = useState(false);
+  const [triggered, setTriggered] = useState(false);
+
+  const status = entry.syncStatus;
+  const failed = status === 'error' && !!entry.syncError;
+  const syncing = status === 'syncing' || triggered;
+
+  const retry = async () => {
+    setBusy(true);
+    const res = await triggerSync(entry.id);
+    setBusy(false);
+    if (res.success) {
+      setTriggered(true);
+      toast.success('已重新触发同步', '后台正在重试，稍后刷新查看结果');
+    } else {
+      toast.error('触发同步失败', res.error?.message);
+    }
+  };
+
+  if (failed) {
+    return (
+      <div className="max-w-[460px] w-full flex flex-col gap-2 px-3.5 py-3 rounded-[10px] text-left"
+        style={{ background: 'rgba(239,68,68,0.07)', border: '1px solid rgba(239,68,68,0.18)' }}>
+        <div className="flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--accent-fg-error)' }}>
+          <AlertTriangle size={13} /> 上次同步失败
+        </div>
+        <div className="text-[11.5px] leading-[1.7]" style={{ color: 'var(--text-secondary)' }}>
+          {entry.syncError}
+        </div>
+        <div>
+          <button onClick={() => void retry()} disabled={busy || syncing}
+            className="h-7 px-3 rounded-[8px] text-[11.5px] font-semibold flex items-center gap-1.5 cursor-pointer transition-colors"
+            style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
+            {busy ? <MapSpinner size={11} /> : <RefreshCw size={11} />}
+            {syncing ? '同步中…' : '重试同步'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (syncing) {
+    return (
+      <div className="flex items-center gap-2 text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+        <MapSpinner size={11} /> 正在同步该目录，完成后文档会出现在左侧目录里
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>
+      {entry.lastSyncAt ? `上次同步：${new Date(entry.lastSyncAt).toLocaleString('zh-CN')}` : '尚未同步'}
     </div>
   );
 }

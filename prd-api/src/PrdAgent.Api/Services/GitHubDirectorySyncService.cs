@@ -420,13 +420,7 @@ public class GitHubDirectorySyncService
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
-            if (response.StatusCode is System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden)
-            {
-                throw new Exception(accessToken == null
-                    ? $"GitHub API 返回 {response.StatusCode}（匿名访问受限或该仓库为私有）：请在知识库里连接 GitHub 账号后重试"
-                    : $"GitHub API 返回 {response.StatusCode}：GitHub 授权可能已失效，请重新连接 GitHub 账号");
-            }
-            throw new Exception($"GitHub API 返回 {response.StatusCode}: {body}");
+            throw new Exception(DescribeListFailure(response.StatusCode, body, accessToken, owner, repo, path, branch));
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
@@ -511,6 +505,40 @@ public class GitHubDirectorySyncService
             _logger.LogDebug(ex, "[GitHubSync] fetch commit date failed for {Path}", path);
             return null;
         }
+    }
+
+    /// <summary>
+    /// 把列目录失败翻译成一句「说清是谁的问题、下一步做什么」的话。
+    ///
+    /// 404 是这里最容易骗人的一个码：GitHub 对**无权访问的私有仓**返回的不是 403 而是 404，
+    /// 和「目录真的不存在」长得一模一样。所以必须把「这次带没带授权」一起说出来，
+    /// 否则用户看到的就是一句无法行动的 "Not Found"。
+    /// </summary>
+    private static string DescribeListFailure(
+        System.Net.HttpStatusCode status, string body, string? accessToken,
+        string owner, string repo, string path, string branch)
+    {
+        var target = $"{owner}/{repo}/{(string.IsNullOrEmpty(path) ? "/" : path)}@{branch}";
+        var authed = !string.IsNullOrEmpty(accessToken);
+
+        return status switch
+        {
+            System.Net.HttpStatusCode.NotFound when authed =>
+                $"GitHub 找不到 {target}：可能是目录或分支已删除，也可能是这个 GitHub 账号对该仓库没有读取权限"
+                + "（私有仓需要授权时勾选 repo 权限）。",
+            System.Net.HttpStatusCode.NotFound =>
+                $"GitHub 找不到 {target}：本次是**匿名**访问，私有仓在匿名下一律返回找不到。"
+                + "请在知识库里连接 GitHub 账号后重试。",
+            System.Net.HttpStatusCode.Unauthorized =>
+                "GitHub 授权已失效，请在知识库里重新连接 GitHub 账号后再试。",
+            System.Net.HttpStatusCode.Forbidden when body.Contains("rate limit", StringComparison.OrdinalIgnoreCase) =>
+                authed
+                    ? "GitHub 调用频率已达上限（已使用授权额度），请稍后重试。"
+                    : "GitHub 匿名调用频率已达上限（每小时 60 次）。请在知识库里连接 GitHub 账号，额度会提到每小时 5000 次。",
+            System.Net.HttpStatusCode.Forbidden =>
+                $"GitHub 拒绝访问 {target}：请确认该 GitHub 账号对此仓库有读取权限。",
+            _ => $"GitHub API 返回 {status}: {body}",
+        };
     }
 
     /// <summary>

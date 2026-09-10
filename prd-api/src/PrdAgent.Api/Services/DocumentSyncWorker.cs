@@ -131,16 +131,24 @@ public class DocumentSyncWorker : BackgroundService
                 return;
 
             // 条目上盖了哪个用户的 GitHub 连接，就用谁的 token 拉。
-            // 解不出来（用户断开 / token 失效）不是致命错：降级为匿名再试一次，
-            // 公开仓照样同步，私有仓会在下面以「请重新连接」的形式报错给用户看。
-            var accessToken = await ResolveEntryTokenAsync(githubConnections, entry, ct);
+            var credential = await ResolveEntryTokenAsync(githubConnections, entry, ct);
+            _logger.LogInformation(
+                "[GitHubSync] entry={EntryId} auth={Mode}", entry.Id, credential.Mode);
+
+            if (credential.BlockReason != null)
+            {
+                // 授权不可用时直接停在这里：匿名重试对私有仓只会得到一个无法解释的 404
+                sw.Stop();
+                await MarkSyncError(db, entry, credential.BlockReason, startedAt, (int)sw.ElapsedMilliseconds);
+                return;
+            }
 
             var githubSyncService = new GitHubDirectorySyncService(
                 _scopeFactory.CreateScope().ServiceProvider
                     .GetRequiredService<ILogger<GitHubDirectorySyncService>>());
 
             var diff = await githubSyncService.SyncDirectoryAsync(
-                db, documentService, versions, entry, accessToken, ct);
+                db, documentService, versions, entry, credential.Token, ct);
 
             // 标记同步完成
             var update = Builders<DocumentEntry>.Update
@@ -194,26 +202,41 @@ public class DocumentSyncWorker : BackgroundService
     }
 
     /// <summary>
-    /// 取该订阅条目应使用的 GitHub token：条目 metadata 里记了 github_connection_user_id 才有。
-    /// 解不出来返回 null（走匿名路径），并留一条日志便于排查"私有仓突然拉不到"。
+    /// 取该订阅条目应使用的 GitHub 凭据。
+    ///
+    /// 关键设计：**降级不许静默**。条目上盖了连接身份却解不出 token（用户断开了连接、
+    /// token 失效、密文解不开），说明这条订阅当初是以「带授权」的前提建立的——
+    /// 此时退回匿名请求，私有仓会收到一个无法解释的 404（GitHub 对无权访问的私有仓
+    /// 一律回 404 而不是 403），用户只看到「等了五分钟什么都没有」。
+    /// 所以这里把它翻译成一句人能看懂的阻断原因，交给调用方写进 SyncError。
+    ///
+    /// 从未盖过连接身份的条目（手贴公开仓 URL 的历史订阅）仍走匿名，行为不变。
     /// </summary>
-    private static async Task<string?> ResolveEntryTokenAsync(
+    private static async Task<GitHubSyncCredential> ResolveEntryTokenAsync(
         GitHubUserConnectionService githubConnections,
         DocumentEntry entry,
         CancellationToken ct)
     {
         var connectionUserId = entry.Metadata.GetValueOrDefault("github_connection_user_id", "");
-        if (string.IsNullOrWhiteSpace(connectionUserId)) return null;
+        if (!GitHubSyncCredentialPolicy.HasConnectionStamp(connectionUserId))
+            return GitHubSyncCredential.Anonymous();
 
         try
         {
-            return await githubConnections.ResolveTokenAsync(connectionUserId, ct);
+            var token = await githubConnections.ResolveTokenAsync(connectionUserId, ct);
+            return GitHubSyncCredentialPolicy.Decide(connectionUserId, token, null);
         }
-        catch (GitHubException)
+        catch (GitHubException ex)
         {
-            return null;
+            return GitHubSyncCredentialPolicy.Decide(connectionUserId, null, ex);
+        }
+        catch (Exception)
+        {
+            // 密文解不开（例如签名密钥轮换过）——同样不许退回匿名，否则私有仓只会给出 404
+            return GitHubSyncCredentialPolicy.Decide(connectionUserId, null, null);
         }
     }
+
 
     private async Task SyncSingleEntryAsync(
         MongoDbContext db,
