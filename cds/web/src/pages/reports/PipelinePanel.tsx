@@ -1,279 +1,370 @@
 /**
- * 验收流水线总览 —— `/reports` 不选项目时的第一屏（2026-09-09 第二次重做）。
+ * 验收报告首页第一屏 —— `/reports` 不选项目时的跨项目总览（2026-09-10 第三次重做）。
  *
- * 需求来源：首页服务的是老板 / 观察者 / 架构师，要「纵观全局和流水线」。他们不动手
- * 处理单条待办，所以这一屏既不是待办队列，也不是某一份报告结论的放大。
+ * 读者是老板 / 观察者 / 架构师：不处理单条待办，只看局面。前两版被否的原因分别是
+ * 「一排计数读不出结论」与「正常人进来不知道这个页面在做什么」，所以这一版的顺序是：
+ *   顶部五步流程条（先讲清在跟踪什么事，并标明本屏只统计第三、四环节）
+ *   → 71 条分流图（已验收 / 未验收，一个方块一条改动）
+ *   → 一行一个项目
+ *   → 两条脚注（合并环节缺数据、两类不计入方块的报告）
  *
- * 版面只有一条主线：改动 → 部署 → 验收 → 结论 → 合并。真正的信息不在每一环的数，
- * 而在**环与环之间掉下去多少**——那就是漏。所以漏画在环之间的缝里，不另开一块。
+ * 两条纪律，改这个文件前先读：
  *
- * 明确不做：通过率（分母失真且规范未定义，用户 2026-09-09 拍板去掉，只留三档计数）、
- * 趋势（周报的问题）、时间窗当主轴（会切断流转，降级成右上角一个筛选）。
+ * 1. **文风是行政语气，不是报道**。用户原话「你在严谨的页面中插入了一些艺术性话语，
+ *    正常情况下不会干这种事」。标题用名词短语不用疑问句；禁用「真的 / 只有 / 全场 /
+ *    最该 / 一条都没」这类替读者下判断的词。判断照给（conclusion-before-numbers 要求
+ *    第一屏给结论而不是一排计数），只是用陈述句说。
  *
- * 2026-09-10 返工：第一版把漏斗摆在最上面，用户原话「我看不懂你的首页」。
- * 按 conclusion-before-numbers.md 复盘——那一版只有计数层与对照层，缺结论层：
- * 「5 / 4 / 1 / 0，漏 3」每个数都对，合起来不告诉读者任何事。所以现在顺序是
- * 结论（一句判断）→ 该管的事（点名到分支）→ 走到哪一步（漏斗降级成支撑图）→ 按项目看。
- * 同时把内部词换成人话，并把「报告对不上分支」这类实现边界降为页脚小字——
- * 那是我的问题，不是读者要拍板的事。
+ * 2. **方块只编码验收状态，三档结论只走文字与标签**。因为「已验收」不等于「通过」——
+ *    5 条已验收里有 3 条未通过。若方块既表示已验收又表示通过档位，同一个颜色在一屏里
+ *    就有两个意思。所以：蓝(--info)=已验收、灰(--surface-sunken)=已部署未验收、
+ *    虚线空心=未部署；通过 / 原则性通过 / 未通过退到 chip 与状态句上。
+ *    `--primary` 只留给控件选中态，不参与数据编码。
  */
 import { useMemo } from 'react';
-import { CircleAlert, CircleCheck, CircleX, GitMerge, TriangleAlert } from 'lucide-react';
-import type { LeakKind, PipelineFunnel, PipelineOverview, PipelineProjectRow } from '@/lib/api';
-import { buildPipelineHeadline } from '@/lib/pipelineHeadline';
+import { CircleAlert, GitMerge, Info } from 'lucide-react';
+import type { PipelineFunnel, PipelineOverview, PipelineProjectRow } from '@/lib/api';
 
 export interface PipelinePanelProps {
   pipeline: PipelineOverview;
   onOpenProject: (projectId: string) => void;
 }
 
-/** 四种漏，按严重度排；文案直接说人话，不用内部词。 */
-const LEAK_META: Record<LeakKind, { label: string; hint: string; tone: 'bad' | 'warn' | 'info' }> = {
-  'merged-not-accepted': { label: '合并了，从来没验过', hint: '进了主干却没有任何验收报告——最危险的一种漏', tone: 'bad' },
-  'merged-while-failing': { label: '验了没过，还是合并了', hint: '最新结论是未通过，分支仍然合进了主干', tone: 'bad' },
-  'deployed-not-accepted': { label: '部署了，没人验', hint: '预览起来了但一份报告都没有，验收没跟上开发', tone: 'warn' },
-  'report-missing-change-key': { label: '报告没记它验的是谁', hint: '分支 / PR / commit 三样全空，这份报告永远挂不到任何改动上——归档流程的缺口', tone: 'warn' },
+/** 一条改动在本屏的三种状态。顺序即叙述顺序，不要重排。 */
+type ChangeState = 'accepted' | 'deployed-unaccepted' | 'undeployed';
+
+const STATE_META: Record<ChangeState, { label: string; swatch: string }> = {
+  accepted: { label: '已验收', swatch: 'bg-[hsl(var(--info))]' },
+  'deployed-unaccepted': {
+    label: '已部署未验收',
+    swatch: 'bg-[hsl(var(--surface-sunken))] border border-[hsl(var(--hairline-strong))]',
+  },
+  undeployed: {
+    label: '未部署',
+    swatch: 'bg-[hsl(var(--card))] border border-dashed border-[hsl(var(--hairline-strong))]',
+  },
 };
 
-const TONE = {
-  bad: { color: 'hsl(var(--bad))', soft: 'hsl(var(--bad-soft))', Icon: CircleX },
-  warn: { color: 'hsl(var(--warn))', soft: 'hsl(var(--warn-soft))', Icon: TriangleAlert },
-  info: { color: 'hsl(var(--info))', soft: 'hsl(var(--info-soft))', Icon: CircleAlert },
-} as const;
+/**
+ * 把漏斗基数拆成分流图的三段。
+ *
+ * 刻意**不用** `leaks['deployed-not-accepted']` 那个桶：它排除了「合并了没验」那一类，
+ * 等分支墓碑数据接进来（当前全库 merged=0，因为聚合还没接），桶里的数会小于真实的
+ * 「已部署未验收」，分流图就加不回总数、凭空少几个方块，而且今天两者恰好相等、
+ * 明天才静默错位——最难查的那种。用基数现推则恒等成立：
+ *   accepted + (deployed - accepted) + (changes - deployed) === changes
+ */
+function splitChanges(f: PipelineFunnel): Record<ChangeState, number> {
+  return {
+    accepted: f.accepted,
+    'deployed-unaccepted': Math.max(0, f.deployed - f.accepted),
+    undeployed: Math.max(0, f.changes - f.deployed),
+  };
+}
 
 function Eyebrow({ children }: { children: React.ReactNode }): JSX.Element {
   return <div className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">{children}</div>;
 }
 
-/**
- * 漏斗：四环横排，环与环之间的缝里标掉下去多少。
- * 环用等宽块而不是按数值缩放——数值差距常常是几十倍，缩放会把后面几环压成看不见的线。
- * 数量靠数字表达，位置靠顺序表达，缝里的红字才是要读的东西。
- */
-function Funnel({ funnel }: { funnel: PipelineFunnel }): JSX.Element {
-  const stages = [
-    { key: 'changes', label: '在改的分支', value: funnel.changes, hint: '还挂在 CDS 上的 + 最近撤下的' },
-    { key: 'deployed', label: '开了预览', value: funnel.deployed, hint: '起过预览容器，可以打开看' },
-    { key: 'accepted', label: '有人验过', value: funnel.accepted, hint: '至少一份对得上的验收报告' },
-    { key: 'merged', label: '进了主干', value: funnel.merged, hint: 'GitHub 合并记录' },
-  ];
-  // 每个缝一条，下标对齐左边那一环。第三个缝（验收 → 合并）不画：
-  // 「验了还没合并」是在途的正常状态，不是漏；那一段真正的漏是「合并了没验 / 验了没过还合并」，
-  // 它们是跨过环去的，画在下面的漏点卡里。
-  const drops = [
-    { n: funnel.changes - funnel.deployed, text: '没部署', tone: 'info' as const },
-    { n: funnel.deployed - funnel.accepted, text: '开了预览没人验', tone: 'warn' as const },
-  ];
+/** 一个方块 = 一条改动。size 用于稀疏与密集两端共用同一画法（不放大、只换行）。 */
+function Blocks({ counts, size = 11 }: { counts: Record<ChangeState, number>; size?: number }): JSX.Element {
+  const cells: ChangeState[] = [];
+  for (let i = 0; i < counts.accepted; i += 1) cells.push('accepted');
+  for (let i = 0; i < counts['deployed-unaccepted']; i += 1) cells.push('deployed-unaccepted');
+  for (let i = 0; i < counts.undeployed; i += 1) cells.push('undeployed');
+  if (!cells.length) return <span className="text-[12px] text-muted-foreground">无改动</span>;
   return (
-    <div className="flex flex-col gap-3">
-      <div className="grid items-stretch gap-0" style={{ gridTemplateColumns: 'repeat(4, minmax(0, 1fr))' }}>
-        {stages.map((s, i) => (
-          <div key={s.key} className="relative flex flex-col gap-1 px-4 py-3" style={{ borderLeft: i === 0 ? 'none' : '1px solid hsl(var(--hairline))' }}>
-            <Eyebrow>{s.label}</Eyebrow>
-            <div className="font-mono text-[20px] font-semibold leading-none tracking-[-0.02em]">{s.value}</div>
-            <div className="text-[11.5px] leading-snug text-muted-foreground">{s.hint}</div>
-            {drops[i] && drops[i].n > 0 ? (
-              <div
-                className="absolute -right-px top-1/2 z-10 hidden -translate-y-1/2 translate-x-1/2 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold lg:block"
-                style={{ color: TONE[drops[i].tone].color, background: TONE[drops[i].tone].soft, borderColor: `color-mix(in srgb, ${TONE[drops[i].tone].color} 30%, transparent)` }}
-              >
-                −{drops[i].n} {drops[i].text}
-              </div>
-            ) : null}
-          </div>
-        ))}
-      </div>
-      {/* 结论三档：跟在「跑过验收」那一环下面，因为它就是那一环的构成。不给百分比。 */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-[hsl(var(--hairline))] px-4 pt-3">
-        <Eyebrow>验过的这些，结论是</Eyebrow>
-        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: 'hsl(var(--ok))' }}>
-          <CircleCheck className="h-3.5 w-3.5" />通过 {funnel.pass}
-        </span>
-        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: 'hsl(var(--warn))' }}>
-          <TriangleAlert className="h-3.5 w-3.5" />原则性通过 {funnel.conditional}
-        </span>
-        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: 'hsl(var(--bad))' }}>
-          <CircleX className="h-3.5 w-3.5" />未通过 {funnel.fail}
-        </span>
-        {funnel.undetermined > 0 ? (
-          <span className="text-[12.5px] text-muted-foreground">另有 {funnel.undetermined} 份没有标结论</span>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-/** 项目行里的迷你漏斗：四段等宽方块，缺的那几段用灰虚线，读的是「哪一段断了」。 */
-function MiniFunnel({ f }: { f: PipelineFunnel }): JSX.Element {
-  const seg = (n: number, total: number, color: string) => (
-    n > 0
-      ? <span className="flex h-[18px] flex-1 items-center justify-center rounded-[4px] font-mono text-[11px] font-semibold" style={{ background: color, color: 'hsl(var(--card))' }}>{n}</span>
-      : <span className="flex h-[18px] flex-1 items-center justify-center rounded-[4px] border border-dashed border-[hsl(var(--hairline-strong))] font-mono text-[11px] text-muted-foreground">{total > 0 ? '0' : '—'}</span>
-  );
-  return (
-    <span className="flex min-w-0 items-stretch gap-[3px]" title={`改动 ${f.changes} · 部署 ${f.deployed} · 验收 ${f.accepted} · 合并 ${f.merged}`}>
-      {seg(f.changes, f.changes, 'hsl(var(--hairline-strong))')}
-      {seg(f.deployed, f.changes, 'hsl(var(--info))')}
-      {seg(f.accepted, f.changes, 'hsl(var(--primary))')}
-      {seg(f.merged, f.changes, 'hsl(var(--ok))')}
+    // 永远换行、从不横滚：窄屏下方块按容器宽度自然折行，不给页面制造横向滚动条
+    <span className="flex flex-wrap gap-[4px]">
+      {cells.map((state, i) => (
+        <span
+          key={`${state}-${i}`}
+          className={`inline-block rounded-[2px] ${STATE_META[state].swatch}`}
+          style={{ width: size, height: size }}
+          title={STATE_META[state].label}
+        />
+      ))}
     </span>
   );
 }
 
-export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): JSX.Element {
-  // 顺序必须与后端 acceptance-pipeline.ts 的 severity 表一致，守卫见 tests/web/pipeline-leak-order.test.ts
-  const leakOrder: LeakKind[] = [
-    'merged-not-accepted', 'merged-while-failing', 'deployed-not-accepted',
-    'report-missing-change-key',
+function Chip({ tone, children }: { tone: 'ok' | 'warn' | 'bad'; children: React.ReactNode }): JSX.Element {
+  return (
+    <span
+      className="inline-flex items-center rounded px-2 py-0.5 font-mono text-[12px] font-semibold"
+      style={{ background: `hsl(var(--${tone}-soft))`, color: `hsl(var(--${tone}))` }}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** 顶部五步流程条：先讲清一条改动本来要走什么路，再标明本屏只统计其中两步。 */
+function FlowStrip(): JSX.Element {
+  const steps = [
+    { n: '01', title: '提交改动', desc: '一条分支为一条改动' },
+    { n: '02', title: '部署预览环境', desc: 'CDS 起一个可访问的预览地址' },
+    { n: '03', title: '对预览做验收', desc: '打开预览地址执行验收', scope: true },
+    { n: '04', title: '归档验收报告', desc: '结论三档：通过 / 原则性通过 / 不通过', scope: true },
+    { n: '05', title: '合并进主干', desc: '代码进入正式分支' },
   ];
-  const activeLeaks = leakOrder.filter((k) => pipeline.totalLeaks[k] > 0);
-  const leakSubjects = useMemo(() => {
-    const m = new Map<LeakKind, string[]>();
+  return (
+    <section className="rounded-[10px] border border-[hsl(var(--hairline))] bg-card px-5 py-4">
+      <p className="m-0 text-[13px] text-muted-foreground">
+        一条代码改动从提交到进入主干的五个环节。<span className="font-semibold text-foreground">本屏统计第三、第四环节的执行情况。</span>
+      </p>
+      <div className="mt-3 grid gap-0 sm:grid-cols-2 lg:grid-cols-5">
+        {steps.map((s) => (
+          <div
+            key={s.n}
+            className="px-3 py-2.5 first:pl-0"
+            // 统计范围用底色标，不用 --primary：那个色留给控件选中态，不参与数据编码
+            style={s.scope ? { background: 'hsl(var(--surface-sunken))' } : undefined}
+          >
+            <div className="font-mono text-[11px] text-muted-foreground">{s.n}</div>
+            <div className="mt-0.5 text-[13.5px] font-semibold">{s.title}</div>
+            <div className="mt-0.5 text-[12px] leading-snug text-muted-foreground">{s.desc}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-1.5 text-center text-[12px] font-medium text-muted-foreground lg:text-left lg:pl-[42%]">
+        本屏统计范围
+      </div>
+    </section>
+  );
+}
+
+/** 分流图：左边总数，右边分成已验收 / 未验收两支。这组数全屏只在这里出现一次。 */
+function SplitDiagram({ funnel }: { funnel: PipelineFunnel }): JSX.Element {
+  const c = splitChanges(funnel);
+  const unaccepted = c['deployed-unaccepted'] + c.undeployed;
+  return (
+    <section className="grid gap-4 lg:grid-cols-[240px_minmax(0,1fr)]">
+      <div className="flex flex-col justify-center rounded-[10px] border border-[hsl(var(--hairline))] bg-card px-6 py-6">
+        <div className="flex items-baseline gap-1.5">
+          <span className="font-mono text-[52px] font-semibold leading-none tracking-[-0.03em]">{funnel.changes}</span>
+          <span className="text-[15px] text-muted-foreground">条</span>
+        </div>
+        <div className="mt-2 text-[14px] font-semibold">改动</div>
+        <p className="m-0 mt-1.5 text-[12px] leading-relaxed text-muted-foreground">
+          一条分支为一条改动。下方一个方块即其中一条。
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <div className="rounded-[10px] border border-[hsl(var(--hairline))] bg-card px-5 py-4">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+            <div className="min-w-[92px]">
+              <div className="text-[13.5px] font-semibold">已验收</div>
+              <div className="mt-0.5 flex items-baseline gap-1">
+                <span className="font-mono text-[26px] font-semibold leading-none" style={{ color: 'hsl(var(--info))' }}>
+                  {c.accepted}
+                </span>
+                <span className="text-[12px] text-muted-foreground">条</span>
+              </div>
+            </div>
+            <Blocks counts={{ accepted: c.accepted, 'deployed-unaccepted': 0, undeployed: 0 }} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone="ok">通过 {funnel.pass}</Chip>
+              <Chip tone="warn">原则性通过 {funnel.conditional}</Chip>
+              <Chip tone="bad">未通过 {funnel.fail}</Chip>
+              {funnel.undetermined > 0 ? (
+                <span className="text-[12px] text-muted-foreground">未标结论 {funnel.undetermined}</span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-[10px] border border-[hsl(var(--hairline))] bg-card px-5 py-4">
+          <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+            <div className="min-w-[92px]">
+              <div className="text-[13.5px] font-semibold">未验收</div>
+              <div className="mt-0.5 flex items-baseline gap-1">
+                <span className="font-mono text-[26px] font-semibold leading-none">{unaccepted}</span>
+                <span className="text-[12px] text-muted-foreground">条</span>
+              </div>
+            </div>
+            <div className="min-w-[200px] flex-1">
+              <Blocks counts={{ accepted: 0, 'deployed-unaccepted': c['deployed-unaccepted'], undeployed: c.undeployed }} />
+            </div>
+            <p className="m-0 max-w-[300px] text-[12px] leading-relaxed text-muted-foreground">
+              其中 <span className="font-semibold text-foreground">{c['deployed-unaccepted']}</span> 条已部署未验收：预览环境已就绪，无对应验收报告。
+              <span className="font-semibold text-foreground"> {c.undeployed}</span> 条未部署（虚线方块）。
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** 图例：方块的三种含义，兼作全局计数。 */
+function Legend({ funnel }: { funnel: PipelineFunnel }): JSX.Element {
+  const c = splitChanges(funnel);
+  const order: ChangeState[] = ['accepted', 'deployed-unaccepted', 'undeployed'];
+  return (
+    <section className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-[10px] border border-[hsl(var(--hairline))] bg-card px-4 py-3">
+      <Eyebrow>方块图例</Eyebrow>
+      {order.map((s) => (
+        <span key={s} className="inline-flex items-center gap-2 text-[12.5px]">
+          <span className={`inline-block h-[11px] w-[11px] rounded-[2px] ${STATE_META[s].swatch}`} />
+          {STATE_META[s].label} <span className="font-mono font-semibold">{c[s]}</span>
+        </span>
+      ))}
+      <span className="ml-auto inline-flex max-w-[520px] items-start gap-1.5 text-[11.5px] leading-relaxed text-muted-foreground">
+        <Info className="mt-[2px] h-3.5 w-3.5 shrink-0" />
+        方块颜色只表示验收状态，三档结论不进方块，只出现在文字与标签上——已验收不等于通过
+        （已验收 {funnel.accepted} 条中 {funnel.fail} 条未通过）。
+      </span>
+    </section>
+  );
+}
+
+/** 项目行右侧的状态列：一句结论 + 构成 + 一条真实的未验收分支名。 */
+function ProjectStatus({ row, sampleBranch }: { row: PipelineProjectRow; sampleBranch: string | null }): JSX.Element {
+  const c = splitChanges(row.funnel);
+  const verdicts: string[] = [];
+  if (row.funnel.pass > 0) verdicts.push(`通过 ${row.funnel.pass}`);
+  if (row.funnel.conditional > 0) verdicts.push(`原则性通过 ${row.funnel.conditional}`);
+  if (row.funnel.fail > 0) verdicts.push(`未通过 ${row.funnel.fail}`);
+  const hasFail = row.funnel.fail > 0;
+  const rail = row.funnel.changes === 0
+    ? 'hsl(var(--hairline-strong))'
+    : hasFail ? 'hsl(var(--bad))' : row.funnel.accepted > 0 ? 'hsl(var(--info))' : 'hsl(var(--warn))';
+
+  return (
+    <div className="border-l-[3px] pl-3" style={{ borderColor: rail }}>
+      <div className="text-[13px] font-semibold">
+        {row.funnel.changes === 0
+          ? '无改动'
+          : row.funnel.accepted === 0
+            ? '无验收记录'
+            : `已验收 ${row.funnel.accepted} 条：${verdicts.join('，')}`}
+      </div>
+      <div className="mt-0.5 text-[12px] leading-relaxed text-muted-foreground">
+        {row.funnel.changes === 0
+          ? '无在途分支，无最近撤下分支'
+          : [
+              c['deployed-unaccepted'] > 0 ? `${c['deployed-unaccepted']} 条已部署未验收` : '',
+              c.undeployed > 0 ? `${c.undeployed} 条未部署` : '',
+            ].filter(Boolean).join('，')}
+      </div>
+      {sampleBranch ? (
+        <div className="mt-1.5">
+          <div className="text-[11.5px] text-muted-foreground">
+            未验收分支{c['deployed-unaccepted'] > 1 ? `（示例，另有 ${c['deployed-unaccepted'] - 1} 条）` : ''}
+          </div>
+          <span
+            className="mt-1 inline-block max-w-full truncate rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[11px]"
+            title={sampleBranch}
+          >
+            {sampleBranch}
+          </span>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): JSX.Element {
+  // 每个项目取一条真实的未验收分支名当示例。分支名可长达 50+ 字符，靠 truncate 兜住。
+  const sampleBranches = useMemo(() => {
+    const m = new Map<string, string>();
     for (const l of pipeline.leaks) {
-      const list = m.get(l.kind) ?? [];
-      if (list.length < 4) list.push(l.subject);
-      m.set(l.kind, list);
+      if (l.kind !== 'deployed-not-accepted') continue;
+      if (!m.has(l.projectId)) m.set(l.projectId, l.subject);
     }
     return m;
   }, [pipeline.leaks]);
-  const unlinked = pipeline.projects.filter((p) => !p.githubLinked).length;
-  const headline = buildPipelineHeadline(pipeline);
-  const rail = TONE[headline.tone === 'ok' ? 'info' : headline.tone].color;
+
+  const unlinked = pipeline.projects.filter((p) => !p.githubLinked);
+  const noAcceptance = pipeline.projects.filter((p) => p.funnel.changes > 0 && p.funnel.accepted === 0).length;
+  const missingKeyed = pipeline.totalLeaks['report-missing-change-key'];
 
   return (
-    <div className="flex flex-col gap-7">
-      {/* 结论层：第一眼就是一句挂着数字的判断，不是一排要人自己算的计数 */}
-      <section className="flex flex-col gap-2.5 border-l-[3px] pl-4" style={{ borderColor: headline.tone === 'ok' ? 'hsl(var(--ok))' : rail }}>
-        <Eyebrow>验收现状 · {pipeline.projects.length} 个项目 · {pipeline.recentDays ? `近 ${pipeline.recentDays} 天` : '不限时间'}</Eyebrow>
-        <h1 className="m-0 text-[30px] font-semibold leading-[1.2] tracking-[-0.02em]">{headline.sentence}</h1>
-        {headline.points.length ? (
-          <ul className="m-0 flex list-none flex-col gap-1 p-0">
-            {headline.points.map((pt) => (
-              <li key={pt} className="text-[13.5px] leading-relaxed text-muted-foreground">{pt}</li>
-            ))}
-          </ul>
-        ) : null}
-        {headline.action ? (
-          <div className="mt-0.5 text-[13.5px] font-medium" style={{ color: headline.tone === 'ok' ? 'hsl(var(--ok))' : rail }}>{headline.action}</div>
-        ) : null}
-      </section>
+    <div className="flex flex-col gap-5">
+      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
+        <div className="min-w-0">
+          <Eyebrow>CDS 验收报告中心 · 全部项目 · 当前在途 + 最近撤下</Eyebrow>
+          <h1 className="m-0 mt-1.5 text-[24px] font-semibold tracking-[-0.02em]">代码改动的验收状态</h1>
+          <p className="m-0 mt-1.5 max-w-[760px] text-[13px] leading-relaxed text-muted-foreground">
+            CDS 上一条分支即一条代码改动。下方一个方块代表一条改动，方块颜色为该改动的验收状态；
+            {pipeline.projects.length} 个项目、{pipeline.total.changes} 条改动全部列出，一行一个项目。
+          </p>
+        </div>
+        <div className="text-right font-mono text-[11.5px] leading-relaxed text-muted-foreground">
+          <div>{pipeline.projects.length} 个项目 · {pipeline.total.changes} 条改动</div>
+          <div>统计口径：当前在途 + 最近撤下{pipeline.recentDays ? ` ${pipeline.recentDays} 天` : ''}</div>
+        </div>
+      </header>
 
-      <section className="flex flex-col gap-3">
-        <div className="flex items-baseline gap-2.5">
-          <h2 className="text-[15px] font-semibold tracking-tight">该管的是这些</h2>
-          <span className="text-xs text-muted-foreground">按严重度排 · 点名到分支</span>
-        </div>
-        {activeLeaks.length === 0 ? (
-          <div className="rounded-[10px] border border-dashed border-[hsl(var(--hairline-strong))] px-4 py-6 text-center text-[13px] text-muted-foreground">
-            没有需要你管的。{unlinked > 0 ? `不过 ${unlinked} 个项目没接 GitHub，合并这一步查不到——是看不见，不是没有。` : ''}
-          </div>
-        ) : (
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
-            {activeLeaks.map((k) => {
-              const meta = LEAK_META[k];
-              const tone = TONE[meta.tone];
-              const subjects = leakSubjects.get(k) ?? [];
-              const n = pipeline.totalLeaks[k];
-              return (
-                <div key={k} className="flex flex-col gap-2 rounded-[10px] border bg-card p-4" style={{ borderColor: `color-mix(in srgb, ${tone.color} 30%, hsl(var(--hairline)))` }}>
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="inline-flex items-center gap-2 text-[13.5px] font-semibold" style={{ color: tone.color }}>
-                      <tone.Icon className="h-4 w-4 shrink-0" />{meta.label}
-                    </span>
-                    <span className="font-mono text-[20px] font-semibold leading-none" style={{ color: tone.color }}>{n}</span>
-                  </div>
-                  <div className="text-[12px] leading-relaxed text-muted-foreground">{meta.hint}</div>
-                  <div className="flex flex-wrap gap-1.5 pt-0.5">
-                    {subjects.map((sub) => (
-                      <span key={sub} className="max-w-full truncate rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[11px]" title={sub}>{sub}</span>
-                    ))}
-                    {n > subjects.length ? <span className="px-1 py-0.5 text-[11px] text-muted-foreground">还有 {n - subjects.length} 个</span> : null}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {/* 构成：漏斗从主角降级为支撑图——它解释上面那句判断是怎么来的 */}
-      <section className="flex flex-col gap-3">
-        <div className="flex items-baseline gap-2.5">
-          <h2 className="text-[15px] font-semibold tracking-tight">这 {pipeline.total.changes} 条走到哪一步了</h2>
-          <span className="text-xs text-muted-foreground">一条分支算一条 · 相邻两步之间少掉的就是上面点名的</span>
-        </div>
-        <div className="rounded-[10px] border border-[hsl(var(--hairline))] bg-card py-1">
-          <Funnel funnel={pipeline.total} />
-        </div>
-      </section>
+      <FlowStrip />
+      <SplitDiagram funnel={pipeline.total} />
+      <Legend funnel={pipeline.total} />
 
       <section className="overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
-        <div className="flex items-baseline gap-2.5 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
-          <h2 className="text-[15px] font-semibold tracking-tight">按项目看</h2>
-          <span className="text-xs text-muted-foreground">要管的多的排前面 · 点项目名进它的验收明细</span>
+        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
+          <h2 className="text-[14px] font-semibold tracking-tight">按项目分列</h2>
+          <span className="text-xs text-muted-foreground">
+            {pipeline.projects.length} 个项目中，{noAcceptance} 个项目无验收记录 · 改动数由多到少 ·
+            右侧列出的分支名为该项目真实的未验收分支 · 点项目名进入该项目的验收明细
+          </span>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[880px] border-collapse text-[13px]">
-            <thead>
-              <tr className="text-left text-xs text-muted-foreground">
-                <th className="px-4 py-2.5 font-medium">项目</th>
-                <th className="w-[150px] px-3 py-2.5 font-medium">走到哪一步</th>
-                <th className="w-[190px] px-3 py-2.5 font-medium">验过的结论</th>
-                <th className="w-[120px] px-3 py-2.5 font-medium">要管的</th>
-                <th className="px-3 py-2.5 font-medium">没做过的验收类型</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pipeline.projects.map((p: PipelineProjectRow) => {
-                const leakTotal = Object.values(p.leaks).reduce((n, v) => n + v, 0);
-                return (
-                  <tr key={p.projectId} className="border-t border-[hsl(var(--hairline))] align-top">
-                    <td className="px-4 py-3">
-                      <button type="button" className="text-left font-semibold text-foreground hover:underline" onClick={() => onOpenProject(p.projectId)}>{p.projectName}</button>
-                      <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11.5px] text-muted-foreground">
-                        <span>在途 {p.inFlight}</span>
-                        {p.lastActivityAt ? <span>· 最近动静 {p.lastActivityAt.slice(5, 10)}</span> : <span>· 无动静</span>}
-                        {!p.githubLinked ? (
-                          <span className="inline-flex items-center gap-1 rounded border border-dashed border-[hsl(var(--hairline-strong))] px-1.5 text-[11px]" title="没接 GitHub 就没有合并事件，「合并」这一环永远是 0——那是看不见，不是没有">
-                            <GitMerge className="h-3 w-3" />未接 GitHub
-                          </span>
-                        ) : null}
-                      </div>
-                    </td>
-                    <td className="px-3 py-3"><MiniFunnel f={p.funnel} /></td>
-                    <td className="px-3 py-3">
-                      <div className="flex flex-wrap gap-1.5 font-mono text-[11.5px]">
-                        <span className="rounded px-1.5 py-0.5" style={{ background: 'hsl(var(--ok-soft))', color: 'hsl(var(--ok))' }}>通过 {p.funnel.pass}</span>
-                        <span className="rounded px-1.5 py-0.5" style={{ background: 'hsl(var(--warn-soft))', color: 'hsl(var(--warn))' }}>原则性 {p.funnel.conditional}</span>
-                        <span className="rounded px-1.5 py-0.5" style={{ background: 'hsl(var(--bad-soft))', color: 'hsl(var(--bad))' }}>未通过 {p.funnel.fail}</span>
-                      </div>
-                    </td>
-                    <td className="px-3 py-3">
-                      {leakTotal === 0
-                        ? <span className="text-muted-foreground">无</span>
-                        : <span className="font-mono text-[15px] font-semibold" style={{ color: p.leaks['merged-not-accepted'] || p.leaks['merged-while-failing'] ? 'hsl(var(--bad))' : 'hsl(var(--warn))' }}>{leakTotal}</span>}
-                      {p.staleReports > 0 ? (
-                        <div className="mt-0.5 font-mono text-[11px] text-muted-foreground" title="这些报告验的分支已被 CDS 回收，无从核对，所以不计进漏">
-                          另有 {p.staleReports} 份无从核对
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-3">
-                      {p.missingKinds.length === 0
-                        ? <span className="text-muted-foreground">九类都做过</span>
-                        : (
-                          <div className="flex flex-wrap gap-1">
-                            {p.missingKinds.map((k) => (
-                              <span key={k} className="rounded border border-dashed border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 text-[11.5px] text-muted-foreground">{k}</span>
-                            ))}
-                          </div>
-                        )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <ul className="m-0 list-none p-0">
+          {pipeline.projects.map((p) => (
+            <li
+              key={p.projectId}
+              className="grid gap-x-5 gap-y-3 border-t border-[hsl(var(--hairline))] px-4 py-3.5 first:border-t-0 lg:grid-cols-[220px_minmax(0,1fr)_300px]"
+            >
+              <div className="min-w-0">
+                <button
+                  type="button"
+                  className="text-left text-[13.5px] font-semibold text-foreground hover:underline"
+                  onClick={() => onOpenProject(p.projectId)}
+                >
+                  {p.projectName}
+                </button>
+                <div className="mt-0.5 font-mono text-[11.5px] text-muted-foreground">
+                  改动 {p.funnel.changes} · {p.lastActivityAt ? `最近动静 ${p.lastActivityAt.slice(5, 10)}` : '无动静'}
+                </div>
+                {!p.githubLinked ? (
+                  <span
+                    className="mt-1.5 inline-flex items-center gap-1 rounded border border-dashed border-[hsl(var(--hairline-strong))] px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground"
+                    title="未接 GitHub 的项目查不到合并记录，「合并进主干」这一环无从判断"
+                  >
+                    <GitMerge className="h-3 w-3" />未接 GitHub
+                  </span>
+                ) : null}
+              </div>
+              <div className="min-w-0">
+                <Blocks counts={splitChanges(p.funnel)} />
+                <div className="mt-1.5 font-mono text-[11.5px] text-muted-foreground">{p.funnel.changes} 条改动</div>
+              </div>
+              <ProjectStatus row={p} sampleBranch={sampleBranches.get(p.projectId) ?? null} />
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-2">
+        <div className="flex items-start gap-2 rounded-[10px] border border-dashed border-[hsl(var(--hairline-strong))] px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
+          <CircleAlert className="mt-[3px] h-3.5 w-3.5 shrink-0" />
+          <span>
+            本屏不含「合并进主干」环节：本次聚合未接入分支墓碑数据，全库查不到合并记录，
+            <span className="font-semibold text-foreground">这是查不到</span>，不作为结论。
+            {unlinked.length > 0 ? (
+              <> 另有 {unlinked.map((p) => p.projectName).join('、')} {unlinked.length > 1 ? '两' : ''}个项目未接 GitHub，其合并记录本就无从查询。</>
+            ) : null}
+          </span>
+        </div>
+        <div className="flex items-start gap-2 rounded-[10px] border border-dashed border-[hsl(var(--hairline-strong))] px-4 py-3 text-[12px] leading-relaxed text-muted-foreground">
+          <CircleAlert className="mt-[3px] h-3.5 w-3.5 shrink-0" />
+          <span>
+            另有两类报告不计入方块：<span className="font-semibold text-foreground">{missingKeyed} 份</span>报告未记录所验改动
+            （分支 / PR / commit 三项均为空），无法挂到任何一条改动，属归档流程缺口；
+            <span className="font-semibold text-foreground"> {pipeline.staleReports} 份</span>报告所指分支已被 CDS 回收，
+            <span className="font-semibold text-foreground">无从核对</span>，属背景数，不计为漏。
+          </span>
         </div>
       </section>
     </div>
