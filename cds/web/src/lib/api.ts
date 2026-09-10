@@ -543,7 +543,15 @@ export async function fetchReportRaw(id: string): Promise<string> {
   const url = apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
   const res = await fetch(url, { credentials: 'include' });
   if (!res.ok) {
-    throwApiError('GET', url, res, undefined, res.headers.get('x-cds-request-id') || undefined);
+    // 必须先把错误体读出来再抛：这里以前传的是 undefined，于是服务端明明回了
+    //「报告正文已丢失，原因是 …」，用户看到的却是「服务拒绝了请求，但没有返回
+    // 可读错误原因 (HTTP 404)」——最需要原因的那一屏恰好把原因扔了。
+    let parsed: unknown;
+    try {
+      const text = await res.text();
+      try { parsed = JSON.parse(text); } catch { parsed = text; }
+    } catch { /* 连体都读不出来时退回原行为 */ }
+    throwApiError('GET', url, res, parsed, res.headers.get('x-cds-request-id') || undefined);
   }
   return res.text();
 }

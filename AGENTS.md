@@ -188,6 +188,10 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 不适用：仅 `doc/` / 仅 Agent 元数据目录 / 仅 `changelogs/` 的 push。
 
+### 12. 账在哪，货就在哪（持久等级必须一致）
+
+一条记录的元数据与它的实体必须在同一个持久等级上。判据：**把容器删了重建，这条记录还取得出货吗？**「库里一行 + 容器本地盘一个文件」重建后就是一本翻得开、取不出货的幽灵台账（列表满满当当、点开全是 404），而且不报错不变红、通读代码挑不出来。所以：实体默认进**对象存储**、本地盘只配当读缓存（先写实体再落元数据，反过来失败时会留幽灵）；凭据不全**拒绝**静默回退本地；真只能落本地时元数据留机器可读标记（`storage:'local'`），让接口当场说清「这份重建就没」。机械判据只有一条——**测试必须删掉那个本地目录模拟一次重建**，不删缓存的测试永远是绿的。完整判据与现存缺口台账见 `.claude/rules/durable-payload-storage.md`。
+
 <!--
 历史背景：2026-04-26 用户反馈「不知道怎么看」——AI push 后只说「CDS 几分钟内自动部署」没给 URL。
 同日二次反馈 URL 公式错（缺 projectSlug 前缀）；2026-04-27 三次反馈项目名排第一遮住关键信息。
@@ -199,10 +203,8 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ## 规则与技能
 
-- **架构规则** `.claude/rules/`：54 条，全体 Agent 共用。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
-- **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制，所以在此点名——
-  - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
-  - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。
+- **架构规则** `.claude/rules/`：全体 Agent 共用（条数以目录为准，此处不写死——写死必漂）。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
+- **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制所以在此点名——`local-debugging.md`（本地连调、视觉修复、接口排查、CDS 部署验证的工作方式）；`production-release-safety.md`（碰发布链路 `exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow 前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`；公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数）。
 - **技能**：57 个在 `.claude/skills/`，另有 3 个在 `.agents/skills/`。多数宿主会自动注入名称与描述，**但只注入它自己那个技能根**——只认 `.agents/skills` 的宿主看不到另外 57 个。**注入不全时自己选**：`ls .claude/skills/`，每个目录的 `SKILL.md` frontmatter 里 `name` 与 `description` 就是选取依据（description 写明了触发场景）。frontmatter 字段的完整性由 CI 棘轮盯着（只降不升），但「目录里整个没有 SKILL.md」CI 现在拦不住——扫到这种目录按缺陷报出来，别当它不存在；此处同样不维护会漂移的第二份清单。
 <!--
 历史显式索引仅供旧宿主查阅，不作为规则或技能 SSOT，也不注入 Agent 上下文。
@@ -339,6 +341,4 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 10. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 11. **迁移/重构后** → `/hygiene`
 -->
-生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。
-
-常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解。首次开发 Agent 走 `/help`。
+生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解；首次开发 Agent 走 `/help`。

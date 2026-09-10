@@ -11,6 +11,7 @@ import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js'
 import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-delivery-retention.js';
 import { sanitizeProfileOverride } from './container.js';
 import { normalizeCacheHostPath, resolveCacheBase } from './cache-paths.js';
+import { createReportObjectStore, type ReportObjectStore } from './report-object-store.js';
 import { buildCacheMounts } from './cache-catalog.js';
 import { resolveDockerBridgeHost, resolveInfraPublishHosts } from './infra-publish.js';
 import { getGithubAppWhitelistSettings, normalizeGitHubOwnerList } from './github-app-whitelist.js';
@@ -288,6 +289,12 @@ export class StateService {
    *  at runtime for the "switch storage mode" flow in the Settings
    *  panel (P4 Part 18 D.3). */
   private backingStore: StateBackingStore;
+  /**
+   * 验收报告正文的持久层（2026-09-10）。元数据在这个 state 里（跟着 backingStore
+   * 进 Mongo），正文进对象存储——两半必须同一个持久等级，否则就是那批点不开的
+   * 幽灵报告。未配置对象存储时它 isConfigured()=false，写入方如实标 storage='local'。
+   */
+  private reportObjects: ReportObjectStore = createReportObjectStore();
   /** Project slug derived from repoRoot directory name, used for cache isolation */
   readonly projectSlug: string;
   /**
@@ -318,6 +325,14 @@ export class StateService {
     // when CDS_STORAGE_MODE=mongo, and supports runtime swaps via
     // setBackingStore().
     this.backingStore = backingStore ?? new JsonStateBackingStore(filePath);
+  }
+
+  /**
+   * 换掉报告正文的持久层。给测试用，也给「运行时配好凭据后热接上」留了口子——
+   * 与 setBackingStore 同一种接缝：持久层是可换的，读写路径不该知道它是谁。
+   */
+  setReportObjectStore(store: ReportObjectStore): void {
+    this.reportObjects = store;
   }
 
   /**
@@ -4935,11 +4950,40 @@ export class StateService {
   async readAcceptanceReportContentAsync(id: string): Promise<string | undefined> {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return undefined;
+    // 本地盘现在只是读缓存：命中就用，未命中不代表正文没了。
     try {
       return await fs.promises.readFile(this.reportFilePath(meta), 'utf-8');
     } catch {
-      return undefined;
+      // 落到对象存储——这才是正文的权威地址。
     }
+    if (!meta.objectKey) return undefined;
+    const content = await this.reportObjects.get(meta.objectKey);
+    if (content == null) return undefined;
+    // 回填缓存：同一份报告常被连续读（列表预览 → 详情 → 导出），
+    // 但回填失败绝不能影响本次返回，磁盘满的时候正文照样要读得出来。
+    try {
+      await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
+      await fs.promises.writeFile(this.reportFilePath(meta), content, 'utf-8');
+    } catch { /* 缓存回填是尽力而为 */ }
+    return content;
+  }
+
+  /**
+   * 正文当前处于什么状态——供 API 给出可读原因，而不是甩一个裸 404。
+   *
+   * 三种「读不到」的成因必须分开说：没配对象存储导致正文只在本地（会随容器蒸发）、
+   * 历史报告本来就没进对象存储、以及对象存储里也确实没有。混成一句
+   * 「HTTP 404」正是用户看到的那一屏。
+   */
+  describeAcceptanceReportStorage(meta: AcceptanceReportMeta): {
+    durable: boolean;
+    reason: string | null;
+  } {
+    if (meta.objectKey) return { durable: true, reason: null };
+    if (meta.storage === 'local') {
+      return { durable: false, reason: '归档时未配置对象存储，正文只写在容器本地盘，容器重建后会丢失' };
+    }
+    return { durable: false, reason: '本报告归档于正文入对象存储之前，正文可能已随容器重建丢失' };
   }
 
   // ── Report inline-image assets (content-addressed, 2026-06-26) ──
@@ -5053,6 +5097,10 @@ export class StateService {
     const meta = this.buildAcceptanceReportMeta(input);
     fs.mkdirSync(this.getReportsBase(), { recursive: true });
     fs.writeFileSync(this.reportFilePath(meta), input.content, 'utf-8');
+    // 同步路径只剩首启种子数据在用（对象存储是异步的，塞不进同步签名）。
+    // 它写的就是本地盘，那就如实标 local——宁可标成「会丢」，也不许标成持久而骗人。
+    meta.storage = 'local';
+    meta.objectKey = null;
     this.state.acceptanceReports!.push(meta);
     this.save();
     return meta;
@@ -5066,11 +5114,34 @@ export class StateService {
     input: Parameters<StateService['createAcceptanceReport']>[0],
   ): Promise<AcceptanceReportMeta> {
     const meta = this.buildAcceptanceReportMeta(input);
-    await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
-    await fs.promises.writeFile(this.reportFilePath(meta), input.content, 'utf-8');
+    // 顺序是有讲究的：先把正文写进对象存储，成功了才落元数据。
+    // 反过来（先落元数据后传正文）一旦上传失败，就又造出一条点不开的幽灵记录——
+    // 正是这次要根除的形状。上传抛错就整个归档失败，让调用方知道没存上。
+    await this.persistAcceptanceReportContent(meta, input.content);
     this.state.acceptanceReports!.push(meta);
     this.save();
     return meta;
+  }
+
+  /**
+   * 把正文写到它该在的地方，并把「写到哪了」如实记进元数据。
+   *
+   * 配了对象存储 → 正文进对象存储（权威），本地盘写一份读缓存（尽力而为）。
+   * 没配         → 只能写本地盘，且必须标 storage='local'，让上层能告诉用户
+   *                「这份正文重建就没」，而不是等它变成 404 才发现。
+   */
+  private async persistAcceptanceReportContent(meta: AcceptanceReportMeta, content: string): Promise<void> {
+    const objectKey = await this.reportObjects.put(meta, content);
+    meta.objectKey = objectKey;
+    meta.storage = objectKey ? 'object' : 'local';
+    try {
+      await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
+      await fs.promises.writeFile(this.reportFilePath(meta), content, 'utf-8');
+    } catch (err) {
+      // 对象存储已经收下了，本地缓存写不进去不该让归档失败。
+      // 但没配对象存储时本地盘是唯一副本，写不进去就是真失败，必须抛。
+      if (!objectKey) throw err;
+    }
   }
 
   /** create 的元数据构建（sync/async 变体共享，无 IO）。 */
@@ -5143,8 +5214,15 @@ export class StateService {
       formatChanged = true;
     }
     if (typeof updates.content === 'string') {
+      // 正文已在对象存储时，同步路径无法把新正文传上去：本地缓存改了、对象没改，
+      // 缓存一失效就把**旧正文**读回来当成当前版本——比报错难查得多。所以直接拒绝，
+      // 让调用方走 updateAcceptanceReportAsync（HTTP 路径本来就用的是异步版）。
+      if (meta.objectKey) {
+        throw new Error('该报告正文存于对象存储，请改用 updateAcceptanceReportAsync 更新正文');
+      }
       fs.mkdirSync(this.getReportsBase(), { recursive: true });
       fs.writeFileSync(this.reportFilePath(meta), updates.content, 'utf-8');
+      meta.storage = 'local';
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
       const nextPath = this.reportFilePath(meta);
       if (previousPath !== nextPath && fs.existsSync(previousPath)) {
@@ -5180,14 +5258,22 @@ export class StateService {
       formatChanged = true;
     }
     if (typeof updates.content === 'string') {
-      await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
-      await fs.promises.writeFile(this.reportFilePath(meta), updates.content, 'utf-8');
+      // 与新建同一条路：正文进对象存储、本地盘当缓存、如实标记落在哪一层。
+      const previousObjectKey = meta.objectKey || null;
+      await this.persistAcceptanceReportContent(meta, updates.content);
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
+      // 改了格式 → 对象键的扩展名跟着变，旧对象要删掉，否则桶里越积越多没人认领的正文。
+      if (previousObjectKey && previousObjectKey !== meta.objectKey) {
+        await this.reportObjects.remove(previousObjectKey).catch(() => undefined);
+      }
       const nextPath = this.reportFilePath(meta);
       if (previousPath !== nextPath) {
         try { await fs.promises.unlink(previousPath); } catch { /* best-effort cleanup of old extension */ }
       }
     } else if (formatChanged) {
+      // 只改格式不改正文时**不动 objectKey**：正文一律按 meta.objectKey 读，
+      // 键里的扩展名只是可读性，与定位无关。为了对齐扩展名去搬一次对象，
+      // 等于用一次「下载+上传+删除」换零收益，还多了一个中途失败丢正文的窗口。
       const nextPath = this.reportFilePath(meta);
       if (previousPath !== nextPath) {
         // 对齐同步版守卫：仅当源存在且目标不存在才 rename
@@ -5351,6 +5437,16 @@ export class StateService {
       fs.unlinkSync(this.reportFilePath(meta));
     } catch {
       // Content file may already be gone — metadata removal still proceeds.
+    }
+    if (meta.objectKey) {
+      // 删元数据是同步的，删对象是异步的：这里不阻塞。失败只会在桶里留一个
+      // 没人引用的对象（占空间，不是数据丢失），所以记一条日志就够，
+      // 绝不能因为删远端失败就把元数据留下——那又造出一条幽灵记录。
+      const key = meta.objectKey;
+      void this.reportObjects.remove(key).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('[reports] 对象存储正文删除失败，已留下孤儿对象', { objectKey: key, error: String(err) });
+      });
     }
     this.state.acceptanceReports = all.filter((r) => r.id !== id);
     this.save();

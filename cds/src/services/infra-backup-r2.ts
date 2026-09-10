@@ -151,6 +151,61 @@ export async function uploadAndVerifyR2Object(opts: {
   return { objectKey: opts.objectKey, bytes, sha256 };
 }
 
+/**
+ * 取回一个小对象的正文（验收报告这类，不是 GB 级备份）。
+ *
+ * 与 downloadAndVerifyR2Backup 的分工：那个为「大到装不进堆」的备份而写，必须流式落盘；
+ * 这个服务的是「必须整份进内存才能返回给 HTTP 响应」的正文，所以直接给 Buffer。
+ * 对象不存在时返回 null 而不是抛——调用方要据此区分「没存过」与「存了但取不回来」，
+ * 前者是历史数据，后者是故障，两者绝不能混成同一条错误。
+ */
+export async function fetchR2ObjectBuffer(opts: {
+  config: R2BackupConfig;
+  objectKey: string;
+  now?: Date;
+  fetchImpl?: typeof fetch;
+}): Promise<Buffer | null> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const url = objectUrl(opts.config, opts.objectKey);
+  const now = opts.now ?? new Date();
+  const emptyHash = crypto.createHash('sha256').update('').digest('hex');
+  const get = await fetchImpl(url, {
+    method: 'GET',
+    headers: signedHeaders({ config: opts.config, method: 'GET', url, payloadHash: emptyHash, now }),
+  });
+  if (get.status === 404) return null;
+  if (!get.ok) throw await r2HttpFailure('对象取回失败', get);
+  const body = Buffer.from(await get.arrayBuffer());
+  // 写入时盖了 x-amz-meta-sha256；有就必须对得上，防静默截断。
+  const expected = String(get.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
+  if (/^[a-f0-9]{64}$/.test(expected)) {
+    const actual = crypto.createHash('sha256').update(body).digest('hex');
+    if (actual !== expected) throw new Error('对象取回后 checksum 与写入时不一致');
+  }
+  return body;
+}
+
+/**
+ * 删除一个对象。对象本就不存在时视为成功——删除要幂等，
+ * 否则「删一半失败重试」会卡在一个已经达成的目标上。
+ */
+export async function deleteR2Object(opts: {
+  config: R2BackupConfig;
+  objectKey: string;
+  now?: Date;
+  fetchImpl?: typeof fetch;
+}): Promise<void> {
+  const fetchImpl = opts.fetchImpl ?? fetch;
+  const url = objectUrl(opts.config, opts.objectKey);
+  const now = opts.now ?? new Date();
+  const emptyHash = crypto.createHash('sha256').update('').digest('hex');
+  const res = await fetchImpl(url, {
+    method: 'DELETE',
+    headers: signedHeaders({ config: opts.config, method: 'DELETE', url, payloadHash: emptyHash, now }),
+  });
+  if (!res.ok && res.status !== 404) throw await r2HttpFailure('对象删除失败', res);
+}
+
 export function r2BackupConfigFromEnv(env: Record<string, string | undefined> = process.env): R2BackupConfig | null {
   const endpoint = String(env.R2_ENDPOINT || '').trim().replace(/\/+$/, '');
   const bucket = String(env.R2_BUCKET || '').trim();
@@ -180,7 +235,7 @@ function objectUrl(config: R2BackupConfig, objectKey: string): URL {
 
 function signedHeaders(opts: {
   config: R2BackupConfig;
-  method: 'PUT' | 'HEAD' | 'GET';
+  method: 'PUT' | 'HEAD' | 'GET' | 'DELETE';
   url: URL;
   payloadHash: string;
   now: Date;

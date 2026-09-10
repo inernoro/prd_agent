@@ -743,7 +743,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (mismatch) return res.status(mismatch.status).json(mismatch.body);
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+        // 说清「为什么没了」：没配对象存储 / 归档于改动之前 / 对象也确实不在，
+        // 三种成因的下一步动作完全不同，压成一句「已丢失」等于什么都没说。
+        const why = stateService.describeAcceptanceReportStorage(meta);
+        return res.status(404).json({
+          error: 'content_missing',
+          message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,
+          hint: why.durable ? undefined : '正文进对象存储后归档的报告不会再出现这种情况',
+        });
       }
       return sendReportContent(res, meta.format, content);
     } catch (err) {
@@ -760,7 +767,11 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (mismatch) return res.status(mismatch.status).json(mismatch.body);
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+        const why = stateService.describeAcceptanceReportStorage(meta);
+        return res.status(404).json({
+          error: 'content_missing',
+          message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,
+        });
       }
 
       const assetNames = new Set<string>();

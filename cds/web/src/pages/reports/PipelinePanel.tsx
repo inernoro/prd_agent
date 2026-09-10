@@ -9,10 +9,18 @@
  *
  * 明确不做：通过率（分母失真且规范未定义，用户 2026-09-09 拍板去掉，只留三档计数）、
  * 趋势（周报的问题）、时间窗当主轴（会切断流转，降级成右上角一个筛选）。
+ *
+ * 2026-09-10 返工：第一版把漏斗摆在最上面，用户原话「我看不懂你的首页」。
+ * 按 conclusion-before-numbers.md 复盘——那一版只有计数层与对照层，缺结论层：
+ * 「5 / 4 / 1 / 0，漏 3」每个数都对，合起来不告诉读者任何事。所以现在顺序是
+ * 结论（一句判断）→ 该管的事（点名到分支）→ 走到哪一步（漏斗降级成支撑图）→ 按项目看。
+ * 同时把内部词换成人话，并把「报告对不上分支」这类实现边界降为页脚小字——
+ * 那是我的问题，不是读者要拍板的事。
  */
 import { useMemo } from 'react';
 import { CircleAlert, CircleCheck, CircleX, GitMerge, TriangleAlert } from 'lucide-react';
 import type { LeakKind, PipelineFunnel, PipelineOverview, PipelineProjectRow } from '@/lib/api';
+import { buildPipelineHeadline } from '@/lib/pipelineHeadline';
 
 export interface PipelinePanelProps {
   pipeline: PipelineOverview;
@@ -44,17 +52,17 @@ function Eyebrow({ children }: { children: React.ReactNode }): JSX.Element {
  */
 function Funnel({ funnel }: { funnel: PipelineFunnel }): JSX.Element {
   const stages = [
-    { key: 'changes', label: '改动', value: funnel.changes, hint: '在途分支 + 最近撤下的分支' },
-    { key: 'deployed', label: '部署预览', value: funnel.deployed, hint: '起过预览容器' },
-    { key: 'accepted', label: '跑过验收', value: funnel.accepted, hint: '至少有一份对得上的报告' },
-    { key: 'merged', label: '合并主干', value: funnel.merged, hint: 'GitHub 合并事件留下的记录' },
+    { key: 'changes', label: '在改的分支', value: funnel.changes, hint: '还挂在 CDS 上的 + 最近撤下的' },
+    { key: 'deployed', label: '开了预览', value: funnel.deployed, hint: '起过预览容器，可以打开看' },
+    { key: 'accepted', label: '有人验过', value: funnel.accepted, hint: '至少一份对得上的验收报告' },
+    { key: 'merged', label: '进了主干', value: funnel.merged, hint: 'GitHub 合并记录' },
   ];
   // 每个缝一条，下标对齐左边那一环。第三个缝（验收 → 合并）不画：
   // 「验了还没合并」是在途的正常状态，不是漏；那一段真正的漏是「合并了没验 / 验了没过还合并」，
   // 它们是跨过环去的，画在下面的漏点卡里。
   const drops = [
     { n: funnel.changes - funnel.deployed, text: '没部署', tone: 'info' as const },
-    { n: funnel.deployed - funnel.accepted, text: '部署了没验', tone: 'warn' as const },
+    { n: funnel.deployed - funnel.accepted, text: '开了预览没人验', tone: 'warn' as const },
   ];
   return (
     <div className="flex flex-col gap-3">
@@ -62,7 +70,7 @@ function Funnel({ funnel }: { funnel: PipelineFunnel }): JSX.Element {
         {stages.map((s, i) => (
           <div key={s.key} className="relative flex flex-col gap-1 px-4 py-3" style={{ borderLeft: i === 0 ? 'none' : '1px solid hsl(var(--hairline))' }}>
             <Eyebrow>{s.label}</Eyebrow>
-            <div className="font-mono text-[26px] font-semibold leading-none tracking-[-0.02em]">{s.value}</div>
+            <div className="font-mono text-[20px] font-semibold leading-none tracking-[-0.02em]">{s.value}</div>
             <div className="text-[11.5px] leading-snug text-muted-foreground">{s.hint}</div>
             {drops[i] && drops[i].n > 0 ? (
               <div
@@ -128,31 +136,36 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
     }
     return m;
   }, [pipeline.leaks]);
-  const inFlight = pipeline.projects.reduce((n, p) => n + p.inFlight, 0);
   const unlinked = pipeline.projects.filter((p) => !p.githubLinked).length;
+  const headline = buildPipelineHeadline(pipeline);
+  const rail = TONE[headline.tone === 'ok' ? 'info' : headline.tone].color;
 
   return (
-    <div className="flex flex-col gap-6">
-      <section className="flex flex-col gap-4">
-        <div className="flex flex-wrap items-baseline justify-between gap-3">
-          <div className="flex items-baseline gap-3">
-            <h1 className="m-0 text-[20px] font-semibold tracking-[-0.02em]">验收流水线</h1>
-            <Eyebrow>{pipeline.projects.length} 个项目 · 在途 {inFlight} · 最近完成{pipeline.recentDays ? ` ${pipeline.recentDays} 天内` : '不限时间'}</Eyebrow>
-          </div>
-        </div>
-        <div className="rounded-[10px] border border-[hsl(var(--hairline))] bg-card py-1">
-          <Funnel funnel={pipeline.total} />
-        </div>
+    <div className="flex flex-col gap-7">
+      {/* 结论层：第一眼就是一句挂着数字的判断，不是一排要人自己算的计数 */}
+      <section className="flex flex-col gap-2.5 border-l-[3px] pl-4" style={{ borderColor: headline.tone === 'ok' ? 'hsl(var(--ok))' : rail }}>
+        <Eyebrow>验收现状 · {pipeline.projects.length} 个项目 · {pipeline.recentDays ? `近 ${pipeline.recentDays} 天` : '不限时间'}</Eyebrow>
+        <h1 className="m-0 text-[30px] font-semibold leading-[1.2] tracking-[-0.02em]">{headline.sentence}</h1>
+        {headline.points.length ? (
+          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+            {headline.points.map((pt) => (
+              <li key={pt} className="text-[13.5px] leading-relaxed text-muted-foreground">{pt}</li>
+            ))}
+          </ul>
+        ) : null}
+        {headline.action ? (
+          <div className="mt-0.5 text-[13.5px] font-medium" style={{ color: headline.tone === 'ok' ? 'hsl(var(--ok))' : rail }}>{headline.action}</div>
+        ) : null}
       </section>
 
       <section className="flex flex-col gap-3">
         <div className="flex items-baseline gap-2.5">
-          <h2 className="text-[15px] font-semibold tracking-tight">漏在哪</h2>
-          <span className="text-xs text-muted-foreground">环与环之间掉下去的，按严重度排</span>
+          <h2 className="text-[15px] font-semibold tracking-tight">该管的是这些</h2>
+          <span className="text-xs text-muted-foreground">按严重度排 · 点名到分支</span>
         </div>
         {activeLeaks.length === 0 ? (
           <div className="rounded-[10px] border border-dashed border-[hsl(var(--hairline-strong))] px-4 py-6 text-center text-[13px] text-muted-foreground">
-            当前口径下没有漏。{unlinked > 0 ? `注意有 ${unlinked} 个项目没接 GitHub，查不到合并记录——那是看不见，不是没有。` : ''}
+            没有需要你管的。{unlinked > 0 ? `不过 ${unlinked} 个项目没接 GitHub，合并这一步查不到——是看不见，不是没有。` : ''}
           </div>
         ) : (
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
@@ -181,27 +194,33 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
             })}
           </div>
         )}
-        {pipeline.staleReports > 0 ? (
-          <div className="text-[12px] leading-relaxed text-muted-foreground">
-            另有 {pipeline.staleReports} 份报告，它验的分支已经被 CDS 回收，现在无从核对。这不算漏——CDS 不保留几个月前的分支，对不上是常态。
-          </div>
-        ) : null}
+      </section>
+
+      {/* 构成：漏斗从主角降级为支撑图——它解释上面那句判断是怎么来的 */}
+      <section className="flex flex-col gap-3">
+        <div className="flex items-baseline gap-2.5">
+          <h2 className="text-[15px] font-semibold tracking-tight">这 {pipeline.total.changes} 条走到哪一步了</h2>
+          <span className="text-xs text-muted-foreground">一条分支算一条 · 相邻两步之间少掉的就是上面点名的</span>
+        </div>
+        <div className="rounded-[10px] border border-[hsl(var(--hairline))] bg-card py-1">
+          <Funnel funnel={pipeline.total} />
+        </div>
       </section>
 
       <section className="overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
         <div className="flex items-baseline gap-2.5 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-3">
-          <h2 className="text-[15px] font-semibold tracking-tight">一行一个项目</h2>
-          <span className="text-xs text-muted-foreground">漏多的排前面 · 点项目名进它的验收明细</span>
+          <h2 className="text-[15px] font-semibold tracking-tight">按项目看</h2>
+          <span className="text-xs text-muted-foreground">要管的多的排前面 · 点项目名进它的验收明细</span>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[880px] border-collapse text-[13px]">
             <thead>
               <tr className="text-left text-xs text-muted-foreground">
                 <th className="px-4 py-2.5 font-medium">项目</th>
-                <th className="w-[150px] px-3 py-2.5 font-medium">改动 · 部署 · 验收 · 合并</th>
-                <th className="w-[190px] px-3 py-2.5 font-medium">结论</th>
-                <th className="w-[120px] px-3 py-2.5 font-medium">漏</th>
-                <th className="px-3 py-2.5 font-medium">一次都没跑过的验收</th>
+                <th className="w-[150px] px-3 py-2.5 font-medium">走到哪一步</th>
+                <th className="w-[190px] px-3 py-2.5 font-medium">验过的结论</th>
+                <th className="w-[120px] px-3 py-2.5 font-medium">要管的</th>
+                <th className="px-3 py-2.5 font-medium">没做过的验收类型</th>
               </tr>
             </thead>
             <tbody>
@@ -241,7 +260,7 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
                     </td>
                     <td className="px-3 py-3">
                       {p.missingKinds.length === 0
-                        ? <span className="text-muted-foreground">九类都跑过</span>
+                        ? <span className="text-muted-foreground">九类都做过</span>
                         : (
                           <div className="flex flex-wrap gap-1">
                             {p.missingKinds.map((k) => (
