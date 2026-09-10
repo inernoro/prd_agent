@@ -46,7 +46,9 @@ import {
   CUSTOM_PROBE_ID_PREFIX,
   customProbeTargetId,
   describeMonitorProbe,
+  matchPreviewHost,
   probeCustomMonitor,
+  type ProjectPreviewHost,
 } from './uptime-custom-monitor.js';
 // 故障归因到发布的时间窗判定只有这一处，发布中心将来要展示同款关联必须复用它。
 import { linkIncidentToRelease, releaseIncidentLinkWindowMs } from './release-incident-link.js';
@@ -1163,6 +1165,14 @@ export class UptimeMonitorService {
       now?: () => number;
       logger?: { warn?: (m: string) => void; info?: (m: string) => void };
       /**
+       * 某个项目名下所有分支预览的主机名。用来反查「这条自定义监控的地址是不是
+       * 指着一条分支预览」——那是环境判定的结构性证据，比监控自己声明的环境优先。
+       *
+       * 可选：不接线时环境退回声明值，不猜（一条指着临时分支的监控会被当成它自称的
+       * 那个环境，混进项目负责人的第一屏——这是接线断掉时的已知退化，不是静默正确）。
+       */
+      listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[];
+      /**
        * 存活状态翻转出口（2026-07-29）。晚绑定的理由与 release-remote-watcher 的
        * setReleaseDriftNotifier 同源：监控模块不该反向 import 事件总线、更不该自己
        * 决定「这条要不要叫醒人」——那正是「存活一套、发布一套」两条分发逻辑的长法。
@@ -1832,6 +1842,7 @@ export class UptimeMonitorService {
     const now = this.now();
     const dayMs = 24 * 3600 * 1000;
     const targets: UptimeTargetSummary[] = [];
+    const lookupPreviewBranch = this.previewBranchLookup();
 
     for (const record of [...this.records.values()].sort(compareTargetsForDisplay)) {
       const measured = this.isMeasured(record);
@@ -1876,7 +1887,7 @@ export class UptimeMonitorService {
         projectName: record.projectName,
         branchStatus: record.branchStatus,
         branchLastActiveAt: record.branchLastActiveAt,
-        ...this.environmentFacet(record),
+        ...this.environmentFacet(record, lookupPreviewBranch),
         ...(record.source === 'custom' ? this.customFacet(record.profileId) : {}),
       });
     }
@@ -1907,6 +1918,28 @@ export class UptimeMonitorService {
   }
 
   /**
+   * 造一个「地址落在哪条分支预览上」的反查器，按项目缓存，一次摘要只查一遍。
+   *
+   * 没接线（或监控不属于任何项目）就恒返回 undefined——反查不到不等于「不是分支预览」，
+   * 但也没有别的可信来源，如实退回声明值，不猜。
+   */
+  private previewBranchLookup(): (monitor: UptimeCustomMonitor) => string | undefined {
+    const list = this.deps.listProjectPreviewHosts;
+    if (!list) return () => undefined;
+    const cache = new Map<string, ProjectPreviewHost[]>();
+    return (monitor) => {
+      const projectId = monitor.projectId;
+      if (!projectId) return undefined;
+      let hosts = cache.get(projectId);
+      if (!hosts) {
+        hosts = list(projectId);
+        cache.set(projectId, hosts);
+      }
+      return matchPreviewHost(monitor.url, hosts)?.branchId;
+    };
+  }
+
+  /**
    * 环境 + 观测方式：第一屏的两个主分维。
    *
    * 自定义监控的环境**以结构性证据为准**：地址指着一条分支预览时（boundBranchId
@@ -1915,6 +1948,7 @@ export class UptimeMonitorService {
    */
   private environmentFacet(
     record: UptimeTargetRecord,
+    lookupPreviewBranch: (monitor: UptimeCustomMonitor) => string | undefined,
   ): Pick<UptimeTargetSummary, 'environment' | 'environmentLabel' | 'observeMode' | 'sampleCount'> {
     const source = record.source || probeSourceOfId(record.id);
     const monitor = source === 'custom'
@@ -1923,7 +1957,10 @@ export class UptimeMonitorService {
     const environment = resolveMonitorEnvironment({
       source,
       declared: monitor?.environment,
-      previewBranchId: monitor?.previewBranchId,
+      // 写入时盖的戳优先；没有戳就当场反查一次（存量监控是在这个字段出现之前
+      // 登记的，它们身上没有戳，但地址照样指着一条分支预览——只认戳就等于
+      // 判据只在写入路径上成立，形状 1）。两条路走的是同一个 matchPreviewHost。
+      previewBranchId: monitor ? (monitor.previewBranchId ?? lookupPreviewBranch(monitor)) : undefined,
       boundBranchId: monitor?.boundBranchId,
       releaseEnvironment: record.releaseEnvironment,
     });

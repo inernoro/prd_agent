@@ -5840,6 +5840,39 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       + '（需要 CDS_MAP_NOTIFY_ENDPOINT / _KEY_ID / _USERNAME / _PRIVATE_KEY）');
   }
 
+  /**
+   * 项目级地址台账：某个项目名下所有分支预览的主机名。
+   *
+   * 走 resolveBranchPublishedEntrypoints —— 与容器注入 CDS_SERVICE_URLS、
+   * /api/branches 下发 previewUrls 是同一份组装。自己按「slug + 子域」拼一份
+   * 会立刻变成第二个判定源：命名子域规则一改，合法地址被判非法（或反过来），
+   * 而两边都「看着对」。
+   *
+   * 三个消费方共用这一份：写入门（地址必须属于本项目，堵 SSRF）、
+   * 分支绑定（分支删除时随之清理，不留死地址）、环境判定（地址指着分支预览的
+   * 监控一律算分支预览，不管它自称什么）。
+   */
+  const listProjectPreviewHosts = (projectId: string): Array<{ branchId: string; host: string }> => {
+    const previewHost = config.previewDomain || config.rootDomains?.[0];
+    if (!previewHost) return [];
+    const entrypointDeps = branchEntrypointDepsFromState(stateService, previewHost);
+    const hosts: Array<{ branchId: string; host: string }> = [];
+    for (const branch of stateService.getAllBranches()) {
+      if (branch.projectId !== projectId) continue;
+      const published = resolveBranchPublishedEntrypoints(branch, entrypointDeps);
+      for (const url of [published.previewUrl, ...Object.values(published.serviceUrls)]) {
+        if (!url) continue;
+        try {
+          hosts.push({ branchId: branch.id, host: new URL(url).host.toLowerCase() });
+        } catch {
+          // 拼不出合法 URL 的入口直接跳过：宁可少列一个，也不要把一个畸形 host
+          // 放进白名单当成「本项目的地址」。
+        }
+      }
+    }
+    return hosts;
+  };
+
   const uptimeMonitor = new UptimeMonitorService({
     state: {
       getAllBranches: () => stateService.getAllBranches(),
@@ -5868,6 +5901,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    // 环境判定的结构性证据来源：地址指着一条分支预览的监控一律算分支预览，
+    // 不管它自称什么。少了这一行，一条临时分支的监控只要 environment 填成
+    // production 就能混进项目负责人的第一屏。
+    listProjectPreviewHosts,
     // 掉线/恢复上总线。少了这一行，生产健康掉线只会躺在 incidents 台账里，
     // 没人盯着状态页就等于没发生——服务端站内信账本正是订阅总线拿到它的。
     // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
@@ -5902,35 +5939,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   });
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
-    // 项目级自助登记的地址台账。
-    //
-    // 走 resolveBranchPublishedEntrypoints —— 与容器注入 CDS_SERVICE_URLS、
-    // /api/branches 下发 previewUrls 是同一份组装。自己按「slug + 子域」拼一份
-    // 会立刻变成第二个判定源：命名子域规则一改，合法地址被判非法（或反过来），
-    // 而两边都「看着对」。
-    //
-    // 它同时是两件事的依据：地址必须属于本项目（堵 SSRF），以及这条监控绑哪条分支
-    // （分支删除时随之清理，不留死地址）。
-    listProjectPreviewHosts: (projectId: string) => {
-      const previewHost = config.previewDomain || config.rootDomains?.[0];
-      if (!previewHost) return [];
-      const entrypointDeps = branchEntrypointDepsFromState(stateService, previewHost);
-      const hosts: Array<{ branchId: string; host: string }> = [];
-      for (const branch of stateService.getAllBranches()) {
-        if (branch.projectId !== projectId) continue;
-        const published = resolveBranchPublishedEntrypoints(branch, entrypointDeps);
-        for (const url of [published.previewUrl, ...Object.values(published.serviceUrls)]) {
-          if (!url) continue;
-          try {
-            hosts.push({ branchId: branch.id, host: new URL(url).host.toLowerCase() });
-          } catch {
-            // 拼不出合法 URL 的入口直接跳过：宁可少列一个，也不要把一个畸形 host
-            // 放进白名单当成「本项目的地址」。
-          }
-        }
-      }
-      return hosts;
-    },
+    listProjectPreviewHosts,
     store: {
       listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
       getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
