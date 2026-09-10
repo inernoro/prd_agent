@@ -2748,6 +2748,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     deploymentRunService.cancel(runId, message, 'cancelled');
   }
 
+  /**
+   * 分支停止的施动者来源 -> 生命周期意图种类。
+   *
+   * stopAttributionFromRequest 早就算出了 source（webhook / ai / scheduler / cds / user…），
+   * 以前只有渲染好的 reason 字符串往下传，状态在半路丢了，停机原因于是分不出
+   * 「有人主动停的」和「系统自动降温」。这里把状态接回去。
+   */
+  function stopIntentKindFrom(
+    source: NonNullable<BranchEntry['lastStopSource']>,
+  ): 'cds-stop' | 'cds-stop-idle' {
+    // 自动省资源的两种来源容器都保留、随后可秒级唤醒，结论与「有人按了停止」不同。
+    return source === 'scheduler' || source === 'cds' ? 'cds-stop-idle' : 'cds-stop';
+  }
+
   function stopAttributionFromRequest(req: Request): {
     reason: string;
     source: NonNullable<BranchEntry['lastStopSource']>;
@@ -14976,6 +14990,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         try {
           await containerService.stop(svc.containerName, stopAttribution.reason, {
+            kind: stopIntentKindFrom(stopAttribution.source),
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -15000,6 +15015,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, stopAttribution.reason, {
+                kind: stopIntentKindFrom(stopAttribution.source),
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: `${replicaSet.profileId}--${member.id}`,
@@ -15201,6 +15217,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               let stopped = false;
               try {
                 await containerService.stop(member.containerName, 'replica-member-not-ready', {
+                  kind: 'cds-stop-after-failure',
                   branchId: entry.id, projectId: entry.projectId, profileId: replicaSet.profileId,
                   actor: 'branch-restart', trigger: 'replica-readiness-failed',
                 });
@@ -20424,7 +20441,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
+      // 删除路径：容器与登记一起删，下一步是「重新添加」而不是「重新启动」。
+      try { await containerService.stopInfraService(service.containerName, 'cds-infra-remove'); } catch { /* ok */ }
       stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
@@ -20473,7 +20491,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      await containerService.stopInfraService(service.containerName);
+      // 停止路径：同上，停了就停了，不重建。
+      await containerService.stopInfraService(service.containerName, 'cds-infra-stop');
       stateService.updateInfraService(id, { status: 'stopped' }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已停止` });

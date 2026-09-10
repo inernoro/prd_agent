@@ -2525,7 +2525,9 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
   const previousStatus = svc.status;
   if (!['running', 'starting', 'building', 'restarting'].includes(String(previousStatus || ''))) return;
 
-  const classified = classifyDockerLifecycleEvent(event);
+  // 分支名只有 state 这边有（docker label 只带 cds.branch.id），传进去让停止原因
+  // 能说「分支 xxx」而不是一串容器名 —— 外因要说给人听（external-cause-first）。
+  const classified = classifyDockerLifecycleEvent({ ...event, branchName: branch.branch });
   svc.status = classified.nextServiceStatus;
   svc.errorMessage = classified.reason;
   if (allBranchServicesInactive(branch)) {
@@ -2795,6 +2797,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopping';
       try {
         await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+          kind: 'cds-stop-idle',
           projectId: branch.projectId,
           branchId: branch.id,
           profileId: svc.profileId,
@@ -2821,6 +2824,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       if (member.containerName) {
         try {
           await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+            kind: 'cds-stop-idle',
             projectId: branch.projectId,
             branchId: branch.id,
             profileId: `${replicaSet.profileId}--${member.id}`,
@@ -3178,6 +3182,7 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           lease?.assertCurrent(`auto-wake revert before ${svc.profileId}`);
           try {
             await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
+              kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
               profileId: svc.profileId,
@@ -3495,6 +3500,7 @@ const autoLifecycleService = new AutoLifecycleService(
           svc.status = 'stopping';
           try {
             await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+              kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
               profileId: svc.profileId,
@@ -3521,6 +3527,7 @@ const autoLifecycleService = new AutoLifecycleService(
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+                kind: 'cds-stop-idle',
                 projectId: branch.projectId,
                 branchId: branch.id,
                 profileId: `${replicaSet.profileId}--${member.id}`,

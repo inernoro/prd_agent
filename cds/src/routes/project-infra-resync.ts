@@ -303,7 +303,8 @@ export function createProjectInfraResyncRouter(deps: InfraResyncDeps): Router {
     for (const r of diff.removes) {
       try {
         const current = stateService.getInfraServiceForProjectAndId(projectId, r.id);
-        try { await containerService.stopInfraService(r.containerName); } catch { /* tolerate */ }
+        // Phase 1 是删除：停完就 removeInfraService，登记也没了，下一步是重新添加。
+        try { await containerService.stopInfraService(r.containerName, 'cds-infra-remove'); } catch { /* tolerate */ }
         if (deleteVolumes && current) {
           const namedVols = (current.volumes || [])
             .filter((v) => v.type !== 'bind')
