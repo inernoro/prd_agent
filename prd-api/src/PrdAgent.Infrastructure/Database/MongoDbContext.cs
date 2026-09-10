@@ -158,6 +158,9 @@ public class MongoDbContext
     // Defect Agent 缺陷管理
     public IMongoCollection<DefectTemplate> DefectTemplates => _database.GetCollection<DefectTemplate>("defect_templates");
     public IMongoCollection<DefectReport> DefectReports => _database.GetCollection<DefectReport>("defect_reports");
+
+    /// <summary>公共藏书阁个人进度（一人一行，UserId 唯一）</summary>
+    public IMongoCollection<BookshelfProgress> BookshelfProgresses => _database.GetCollection<BookshelfProgress>("bookshelf_progress");
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
     public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");
@@ -1013,6 +1016,12 @@ public class MongoDbContext
         DefectTemplates.Indexes.CreateOne(new CreateIndexModel<DefectTemplate>(
             Builders<DefectTemplate>.IndexKeys.Descending(x => x.IsDefault).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_defect_templates_default" }));
+
+        // BookshelfProgresses：一人一行，UserId 建唯一索引——并发写入时靠它兜底，
+        // 只靠 upsert 的代码路径挡不住两个请求同时插入
+        BookshelfProgresses.Indexes.CreateOne(new CreateIndexModel<BookshelfProgress>(
+            Builders<BookshelfProgress>.IndexKeys.Ascending(x => x.UserId),
+            new CreateIndexOptions { Name = "idx_bookshelf_progress_user", Unique = true }));
 
         // DefectReports：按 reporterId + status 查询；按 assigneeId + status 查询
         DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(

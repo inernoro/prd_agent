@@ -16,7 +16,7 @@
  * 内容 SSOT：src/lib/bookshelf/catalog.ts（书目）、exams.ts（考题）。
  * 个人进度落 localStorage（见 stores/bookshelfStore.ts 的边界说明）。
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
   BookOpen, Check, ArrowRight, type LucideIcon,
@@ -26,6 +26,7 @@ import { QUESTIONS, questionsOf } from '@/lib/bookshelf/exams';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
 import type { Track, Volume, BookEntry } from '@/lib/bookshelf/types';
 import { ExamDialog } from './ExamDialog';
+import { TeamBoard } from './TeamBoard';
 
 const VOLUME_ICON_MAP: Record<string, LucideIcon> = {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
@@ -35,7 +36,7 @@ const VOLUME_ICON_MAP: Record<string, LucideIcon> = {
  * 五色分卷：卷序 → 身份色 + 图标盒底。两者都是 token，暗浅双档已在
  * tokens.css 双写。顺序与 VOLUMES 一一对应，改卷序要一起改。
  */
-const VOLUME_SKIN: { fg: string; box: string }[] = [
+export const VOLUME_SKIN: { fg: string; box: string }[] = [
   { fg: 'var(--accent-fg-emerald)', box: 'var(--shelf-box-emerald)' },
   { fg: 'var(--accent-gold)',       box: 'var(--shelf-box-gold)' },
   { fg: 'var(--accent-fg-blue)',    box: 'var(--shelf-box-blue)' },
@@ -77,6 +78,8 @@ export default function BookshelfPage() {
   const [examVolume, setExamVolume] = useState<Volume | null>(null);
 
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
+  const loadProgress = useBookshelfStore((s) => s.loadFromServer);
+  useEffect(() => { void loadProgress(); }, [loadProgress]);
   const examResults = useBookshelfStore((s) => s.examResults);
   const toggleRead = useBookshelfStore((s) => s.toggleRead);
 
@@ -369,6 +372,8 @@ export default function BookshelfPage() {
           </div>
         )}
       </section>
+
+      <TeamBoard volumeSkin={VOLUME_SKIN} />
 
       <ExamDialog volume={examVolume} open={!!examVolume} onOpenChange={(v) => !v && setExamVolume(null)} />
     </div>
