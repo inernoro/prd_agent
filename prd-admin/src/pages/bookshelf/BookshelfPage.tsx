@@ -19,7 +19,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
-  BookOpen, Check, ArrowRight, type LucideIcon,
+  BookOpen, Check, ArrowRight, CloudOff, RefreshCw, type LucideIcon,
 } from 'lucide-react';
 import { VOLUMES, PAIN_REMEDIES, ALL_BOOKS, findVolume } from '@/lib/bookshelf/catalog';
 import { QUESTIONS, questionsOf } from '@/lib/bookshelf/exams';
@@ -78,6 +78,8 @@ export default function BookshelfPage() {
   const [examVolume, setExamVolume] = useState<Volume | null>(null);
 
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
+  const syncState = useBookshelfStore((s) => s.syncState);
+  const retrySync = useBookshelfStore((s) => s.retrySync);
   const loadProgress = useBookshelfStore((s) => s.loadFromServer);
   useEffect(() => { void loadProgress(); }, [loadProgress]);
   const examResults = useBookshelfStore((s) => s.examResults);
@@ -128,6 +130,34 @@ export default function BookshelfPage() {
           </div>
         </div>
       </div>
+
+      {/* 同步状态：只在没同步上时出现。沉默失败比报错更伤——页面显示打了勾、
+          实际只在本机，用户换台设备发现没了就再也不信这个功能了。 */}
+      {(syncState === 'failed' || syncState === 'local') && (
+        <div
+          className="mt-4 flex items-center gap-3 px-4 py-2.5 rounded-[16px] flex-wrap"
+          style={{ background: 'var(--bg-card)', border: EDGE_THIN }}
+        >
+          <CloudOff size={16} strokeWidth={2.6} style={{ color: 'var(--accent-fg-amber)' }} className="shrink-0" />
+          <span className="text-[12.5px] font-bold">
+            {syncState === 'failed' ? '本次改动没同步上，只存在这台设备' : '当前是本机记录，没连上服务端'}
+          </span>
+          <span className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
+            {syncState === 'failed' ? '网络恢复或下次操作会自动重试' : '登录后进度会跨设备保留'}
+          </span>
+          {syncState === 'failed' && (
+            <button
+              type="button"
+              onClick={() => { void retrySync(); }}
+              className="ml-auto shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-bold transition-transform duration-150 hover:-translate-y-[1px]"
+              style={{ background: 'var(--bg-base)', border: EDGE_THIN }}
+            >
+              <RefreshCw size={12} strokeWidth={2.8} />
+              立即重试
+            </button>
+          )}
+        </div>
+      )}
 
       {/* ── Hero ── */}
       <section className="mt-10 flex flex-col lg:flex-row gap-10 items-start lg:items-center">
