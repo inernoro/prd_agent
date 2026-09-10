@@ -32,6 +32,19 @@ export interface UptimeBucket {
   down: number;
   avgLatencyMs: number | null;
   status: BucketStatus;
+  /**
+   * 桶内第一次失败的缩写日志（服务端 bucketizeSamples 盖的）。
+   * 7d / 30d 走按天聚合，原始失败原因已经不在了，那里恒为 undefined ——
+   * 悬浮层照实说「这个范围看不到原因」，不拿统计值编日志。
+   */
+  fail?: UptimeBucketFailure;
+}
+
+export interface UptimeBucketFailure {
+  at: number;
+  err: string;
+  code?: number;
+  count: number;
 }
 
 export interface UptimeTargetSummary {
@@ -746,4 +759,29 @@ export function availabilityOfBuckets(points: ReadonlyArray<UptimeBucket>): numb
     total += bucket.up + bucket.down;
   }
   return total > 0 ? up / total : null;
+}
+
+/**
+ * 柱条一段的读数。**唯一一份**：原生 title 与悬浮层读的是同一个函数，
+ * 免得两处各写一份、日后各自漂移（predicate-and-wiring-discipline 形状 3）。
+ *
+ * 失败那一段必须能答出「当时炸了什么」——所以 fail.err 是这里的主角。
+ * 拿不到原因（7d / 30d 按天聚合不留原始 err）就照实说拿不到，不编。
+ */
+export function describeBucket(bucket: UptimeBucket): string[] {
+  const window = `${formatClock(bucket.from)} — ${formatClock(bucket.to)}`;
+  if (bucket.status === 'none') return [window, '无采样（服务未运行或尚未探测）'];
+  const total = bucket.up + bucket.down;
+  const lines = [window, `成功 ${bucket.up} / 共 ${total} 次`];
+  if (bucket.avgLatencyMs !== null) lines.push(`平均响应 ${formatLatency(bucket.avgLatencyMs)}`);
+  if (bucket.down > 0) {
+    if (bucket.fail) {
+      const code = bucket.fail.code !== undefined ? ` · HTTP ${bucket.fail.code}` : '';
+      lines.push(`首次失败 ${formatClock(bucket.fail.at)}${code}`);
+      lines.push(bucket.fail.err);
+    } else {
+      lines.push('这个时间范围按天聚合，看不到当时的失败原因；切到 24 小时可见');
+    }
+  }
+  return lines;
 }
