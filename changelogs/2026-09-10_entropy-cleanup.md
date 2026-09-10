@@ -1,0 +1,1 @@
+| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 处理 5 条 changelog（cds 监控中心重做/review第五轮/测试修复、daily-acceptance-repair、上一轮 entropy-cleanup 均已由各自 PR 自带 debt.cds.md/debt.acceptance.daily-anchors.md 覆盖，manifest 补登记，无需追加新章节） |
