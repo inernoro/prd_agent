@@ -9095,6 +9095,19 @@ def _monitor_payload(args: argparse.Namespace) -> dict[str, Any]:
         payload["intervalSeconds"] = args.interval
     if args.timeout_ms:
         payload["timeoutMs"] = args.timeout_ms
+    if args.environment:
+        payload["environment"] = args.environment
+    if args.observe_mode:
+        payload["observeMode"] = args.observe_mode
+    if args.sample_count_path:
+        payload["sampleCountPath"] = args.sample_count_path
+    # 被动观测必须说清样本量从哪读：读不到样本量时「零流量」与「全部成功」
+    # 长得一模一样，那条监控会永远绿着。服务端也会拒，这里先给一句人话。
+    if args.observe_mode == "passive" and not args.sample_count_path:
+        die(
+            "被动观测必须加 --sample-count-path：读不到样本量的话，零流量会被读成一切正常",
+            code=2,
+        )
     project_id = args.project or os.environ.get("CDS_PROJECT_ID")
     if project_id:
         payload["projectId"] = project_id
@@ -9364,6 +9377,22 @@ def _build_parser() -> argparse.ArgumentParser:
     mona.add_argument("--interval", type=int, help="探测间隔（秒），常设轻探针建议 21600（6 小时）")
     mona.add_argument("--timeout-ms", type=int, help="单次超时（毫秒）；生成类接口给足，别用默认值卡它")
     mona.add_argument("--project", help="项目 id（缺省读 CDS_PROJECT_ID）")
+    mona.add_argument(
+        "--environment", choices=["production", "staging", "other"],
+        help="这条监控盯的是哪个环境，默认 production。第一屏按环境把同一条业务并排摆，"
+             "只有一个环境红时问题就在那个环境的配置。"
+             "地址指着分支预览时服务端会覆盖成 preview——那是结构性事实，声明改不了它",
+    )
+    mona.add_argument(
+        "--observe-mode", choices=["active", "passive"], default=None,
+        help="active（默认）自己发一次真请求；passive 读被监控方统计好的真实流量窗口。"
+             "两种绿含义不同：主动绿 = 刚亲自跑通过；被动绿 = 最近没人用坏（前提是真有人用）",
+    )
+    mona.add_argument(
+        "--sample-count-path",
+        help="被动观测必填：样本量（窗口内真实调用次数）在响应里的字段路径。"
+             "0 样本时界面判「绿灯不作数」，不判正常",
+    )
     mona.add_argument("--dry-run", action="store_true", help="只试跑、不登记")
     mona.set_defaults(func=cmd_monitor_add)
 

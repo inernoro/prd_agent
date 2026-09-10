@@ -233,6 +233,7 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] ServingFaultTracker faults) =>
         {
             var count = faults.CountWithinWindow();
+            var requests = faults.RequestsWithinWindow();
             var now = DateTime.UtcNow;
             var pass = count == 0;
             return Results.Content(JsonSerializer.Serialize(new
@@ -258,6 +259,24 @@ public static class GatewayHttpEndpoints
                             output = pass
                                 ? $"最近 {faults.WindowMinutes} 分钟无未处理异常"
                                 : $"最近 {faults.WindowMinutes} 分钟出现 {count} 次未处理异常，累计 {faults.TotalSinceStart} 次；详情见容器日志",
+                        },
+                    },
+                    // 「零异常」这条判据的分母。窗口里一次真实调用都没有时，
+                    // 「零异常」与「全部成功」长得一模一样——判成健康就是假绿。
+                    // 探针自己那几条路径不计入（见 ServingFaultTrackingMiddleware.IsProbePath）。
+                    ["serving:requests"] = new object[]
+                    {
+                        new
+                        {
+                            componentId = "serving.requests",
+                            componentType = "system",
+                            observedValue = requests,
+                            observedUnit = "count",
+                            status = requests > 0 ? "pass" : "warn",
+                            time = now.ToString("o"),
+                            output = requests > 0
+                                ? $"最近 {faults.WindowMinutes} 分钟有 {requests} 次真实调用"
+                                : $"最近 {faults.WindowMinutes} 分钟没有任何真实调用——上面那条零异常不作数",
                         },
                     },
                 },

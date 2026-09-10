@@ -105,6 +105,95 @@ public sealed class ServingFaultTrackerTests
     }
 
     [Fact]
+    public void 真实请求进入窗口内计数()
+    {
+        var tracker = new ServingFaultTracker();
+        tracker.RecordRequest();
+        tracker.RecordRequest();
+
+        tracker.RequestsWithinWindow().ShouldBe(2);
+    }
+
+    [Fact]
+    public void 窗口外的请求被丢弃()
+    {
+        var now = new DateTime(2026, 9, 10, 12, 0, 0, DateTimeKind.Utc);
+        var clock = now;
+        var tracker = new ServingFaultTracker(windowMinutes: 60, now: () => clock);
+
+        tracker.RecordRequest();
+        tracker.RequestsWithinWindow().ShouldBe(1);
+
+        clock = now.AddMinutes(61);
+        tracker.RequestsWithinWindow().ShouldBe(
+            0,
+            customMessage: "窗口外的请求必须被丢弃，否则样本量只增不减，「没人用」永远看不出来");
+    }
+
+    [Fact]
+    public async Task 中间件把成功请求也记进样本量()
+    {
+        // 这是「零异常」这条判据的分母。没有它，零流量与全部成功长得一模一样，
+        // 被动监控退化成一条恒绿的假判据（degradation-must-alarm）。
+        var tracker = new ServingFaultTracker();
+        var middleware = new ServingFaultTrackingMiddleware(_ => Task.CompletedTask, tracker);
+
+        await middleware.InvokeAsync(new DefaultHttpContext());
+
+        tracker.RequestsWithinWindow().ShouldBe(1);
+        tracker.CountWithinWindow().ShouldBe(0, customMessage: "成功请求不是异常");
+    }
+
+    [Fact]
+    public async Task 探针自己的请求不算真实调用()
+    {
+        // 少了这条排除，6 小时窗口里永远有那么一两次探针请求，
+        // 「零真实调用」这个最要紧的信号就永远出不来。
+        var tracker = new ServingFaultTracker();
+        var middleware = new ServingFaultTrackingMiddleware(_ => Task.CompletedTask, tracker);
+
+        foreach (var path in new[] { "/gw/v1/healthz/deep", "/gw/v1/healthz", "/gw/v1/readyz", "/metrics" })
+        {
+            var ctx = new DefaultHttpContext();
+            ctx.Request.Path = path;
+            await middleware.InvokeAsync(ctx);
+        }
+
+        tracker.RequestsWithinWindow().ShouldBe(
+            0,
+            customMessage: "探针路径不能算真实调用，否则样本量永远大于 0");
+    }
+
+    [Fact]
+    public async Task 抛异常的请求既记异常也记样本()
+    {
+        var tracker = new ServingFaultTracker();
+        var middleware = new ServingFaultTrackingMiddleware(_ => throw new InvalidOperationException("boom"), tracker);
+
+        await Should.ThrowAsync<InvalidOperationException>(async () => await middleware.InvokeAsync(new DefaultHttpContext()));
+
+        tracker.CountWithinWindow().ShouldBe(1);
+        tracker.RequestsWithinWindow().ShouldBe(
+            1,
+            customMessage: "崩掉的那次也是一次真实调用，分母不能漏");
+    }
+
+    [Fact]
+    public void 样本量声明必须与端点一起存在()
+    {
+        // 跨文件接线守卫：端点少了这条 check，或声明里少了这条监控，
+        // 「零异常」就又变回一条没有分母的判据。
+        var endpoints = File.ReadAllText(
+            Path.Combine(RepoRoot(), "llmgw", "serving", "GatewayHttpEndpoints.cs"));
+        var declaration = File.ReadAllText(Path.Combine(RepoRoot(), "cds-monitors.yml"));
+
+        endpoints.ShouldContain("serving.requests");
+        declaration.ShouldContain(
+            "serving.requests",
+            customMessage: "被动判据的分母必须同时在端点与监控声明里，否则零流量会被读成一切正常");
+    }
+
+    [Fact]
     public void 端点的componentId必须与监控声明一致()
     {
         // 跨文件接线守卫：端点改了 componentId 而声明没跟上（或反过来），

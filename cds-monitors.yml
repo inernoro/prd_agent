@@ -120,6 +120,31 @@ monitors:
       「页面看着好、后台在炸」的同类错误全部一次落网。
       2026-09-09 那次 500 就是这么躺在容器日志里没人读的。
 
+  - id: llmgw.serving.requests
+    name: "网关 serving 近期真实调用数"
+    kind: health-json
+    # 上面那条判据的**分母**。窗口里一次真实调用都没有时，「零异常」与「全部成功」
+    # 长得一模一样——只看零异常会把「没人用」读成「一切正常」，那是假绿。
+    # 探针自己那几条路径不计入（serving 侧 IsProbePath 排除 healthz/readyz/livez/metrics），
+    # 否则这个数永远至少是 1，最要紧的那个信号就永远出不来。
+    url: "{llmgw}/gw/v1/healthz/deep"
+    componentId: serving.requests
+    expect:
+      field: observedValue
+      op: gt
+      value: 0
+    observedUnit: count
+    probe: light
+    intervalSeconds: 21600      # 与上面同窗口：分子分母必须同一个窗口，否则比值没有意义
+    failuresToAlarm: 2          # 去抖：一个安静的窗口不值得叫人，连着两个才值得问一句
+    severity: P2
+    notify:
+      source: uptime-alert
+      section: admin
+    rationale: >
+      2026-09-10 补。被动观测的绿必须带样本量才算数：
+      「最近 6 小时零错误」在零流量下永远成立，它证明不了服务还能用。
+
 # ── 还没有对应自检端点的监控项 ──
 #
 # 它们**不在** monitors 段里，因为声明一条打不通的监控只会一直红——

@@ -43,12 +43,14 @@ import {
   type UptimeSummary,
   type UptimeTargetSummary,
 } from '@/lib/monitorCenter';
+import { defaultEnvironments, type OwnerScope } from '@/lib/ownerBoard';
 import { resolveStatusViewPhase } from '@/lib/statusView';
 import { BranchModal } from './status/BranchModal';
 import { CoverageDialog } from './status/CoverageDialog';
 import { IncidentTimeline, type IncidentFilter } from './status/IncidentTimeline';
 import { MonitorEditorDialog } from './status/MonitorEditorDialog';
 import { OverviewStrip } from './status/OverviewStrip';
+import { OwnerBoard } from './status/OwnerBoard';
 import { TargetDetail, type TargetActions } from './status/TargetDetail';
 import { TargetList } from './status/TargetList';
 import { MonitorCenterErrorCard, MonitorCenterSkeleton, SegmentedControl } from './status/primitives';
@@ -58,6 +60,26 @@ const POLL_INTERVAL_MS = 30_000;
 const NOTICE_TTL_MS = 6_000;
 
 type RightTab = 'detail' | 'incidents';
+/** 第一屏 = 我的业务；下钻 = 全部目标。默认落在第一屏。 */
+type BoardView = 'owner' | 'all';
+
+/**
+ * 项目选择存浏览器：CDS 目前是共享账户体系，「我负责哪个项目」是**这台浏览器**
+ * 的偏好，不是账号属性。存服务端会让两个人互相改对方的第一屏。
+ */
+const SCOPE_STORAGE_KEY = 'cds.status.ownerScope';
+
+function readStoredScope(): { projectId: string | null } {
+  try {
+    const raw = localStorage.getItem(SCOPE_STORAGE_KEY);
+    if (!raw) return { projectId: null };
+    const parsed = JSON.parse(raw) as { projectId?: unknown };
+    return { projectId: typeof parsed.projectId === 'string' ? parsed.projectId : null };
+  } catch {
+    // 隐私窗口 / 禁站点数据时读写都会抛，退回「全部项目」照常渲染。
+    return { projectId: null };
+  }
+}
 
 interface Notice {
   tone: 'ok' | 'danger' | 'neutral';
@@ -88,6 +110,9 @@ export function StatusPage(): JSX.Element {
   const [notice, setNotice] = useState<Notice | null>(null);
   const [branchModalProject, setBranchModalProject] = useState<string | null>(null);
   const [coverageOpen, setCoverageOpen] = useState(false);
+  const [boardView, setBoardView] = useState<BoardView>('owner');
+  // environments = null 表示「还没选过」，由 defaultEnvironments 按实际数据落一次默认。
+  const [scope, setScope] = useState<OwnerScope>(() => ({ ...readStoredScope(), environments: null }));
   const mounted = useRef(true);
 
   // 必须在 setup 里把 ref 置回 true：React.StrictMode（dev）会跑
@@ -163,6 +188,23 @@ export function StatusPage(): JSX.Element {
     return fallbackId ? targets.find((t) => t.id === fallbackId) ?? null : null;
   }, [targets, filtered, selectedId]);
   const headline = useMemo(() => (summary ? buildMonitorHeadline(summary, incidents, now) : null), [summary, incidents, now]);
+
+  // 环境默认值只在「还没选过」时落一次：用户手动取消勾选后不许被下一轮轮询改回去。
+  useEffect(() => {
+    if (scope.environments !== null || targets.length === 0) return;
+    setScope((prev) => (prev.environments === null
+      ? { ...prev, environments: defaultEnvironments(targets.filter((t) => !prev.projectId || t.projectId === prev.projectId)) }
+      : prev));
+  }, [targets, scope.environments]);
+
+  const onScope = useCallback((next: OwnerScope): void => {
+    setScope(next);
+    try {
+      localStorage.setItem(SCOPE_STORAGE_KEY, JSON.stringify({ projectId: next.projectId }));
+    } catch {
+      // 存不下就算了：这只是一个方便，不该因为它让页面出错。
+    }
+  }, []);
   const ongoingCount = incidents.filter((i) => i.ongoing).length;
 
   const openTarget = useCallback((id: string): void => {
@@ -316,6 +358,33 @@ export function StatusPage(): JSX.Element {
             <MonitorCenterErrorCard message={error || '未知错误'} onRetry={() => void load()} retrying={refreshing} pollSeconds={POLL_INTERVAL_MS / 1000} />
           ) : (
             <>
+              <div className="flex shrink-0 items-center gap-2">
+                <SegmentedControl<BoardView>
+                  value={boardView}
+                  options={[
+                    { value: 'owner', label: '我的业务' },
+                    { value: 'all', label: '全部目标', count: targets.length },
+                  ]}
+                  onChange={setBoardView}
+                  ariaLabel="第一屏视角"
+                />
+                <span className="hidden text-[0.6875rem] text-muted-foreground sm:inline">
+                  「我的业务」按项目与环境看业务能不能用；「全部目标」是逐个探测目标的运维视角
+                </span>
+              </div>
+
+              {boardView === 'owner' ? (
+                <div className="shrink-0">
+                  <OwnerBoard
+                    targets={targets}
+                    scope={scope}
+                    onScope={onScope}
+                    onOpenTarget={(targetId) => { setBoardView('all'); openTarget(targetId); }}
+                    onAddMonitor={() => setEditor({ open: true, monitor: null })}
+                  />
+                </div>
+              ) : (
+              <>
               <div className="shrink-0">
                 <OverviewStrip summary={summary} incidents={incidents} headline={headline} statusFilter={filter.status} onStatusFilter={onStatusFilter} onOpenCoverage={() => setCoverageOpen(true)} now={now} />
               </div>
@@ -386,6 +455,8 @@ export function StatusPage(): JSX.Element {
                   </div>
                 </div>
               </div>
+              </>
+              )}
             </>
           )}
         </div>

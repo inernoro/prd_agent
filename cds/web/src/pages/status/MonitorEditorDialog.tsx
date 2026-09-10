@@ -2,7 +2,7 @@
  * 添加 / 编辑自定义监控。
  *
  * 最小输入原则：主路径只有「选方式 + 填地址」两步，名称留空由服务端按主机名派生；
- * 方法 / 状态码规则 / 间隔 / 超时 / 归属项目 / 标签全部收进「高级」折叠区，
+ * 方法 / 状态码规则 / 间隔 / 超时 / 归属项目 / 环境 / 标签全部收进「高级」折叠区，
  * 各有正确默认值。保存前可以「测试一次」——走与轮次相同的探测实现，结果当场可见。
  */
 import { useEffect, useMemo, useState } from 'react';
@@ -20,7 +20,18 @@ import {
 } from '@/components/ui/dialog';
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { MONITOR_KIND_META, formatLatency, type CustomMonitor, type MonitorKind } from '@/lib/monitorCenter';
+import { MONITOR_KIND_META, formatLatency, type CustomMonitor, type MonitorEnvironment, type MonitorKind } from '@/lib/monitorCenter';
+
+/**
+ * 环境选项。第一屏按环境并排看同一条业务，所以每条监控都得说清自己盯的是哪个环境。
+ * 标签与顺序跟后端 monitor-environment.ts 一致；分支预览不在这里选——
+ * 它由服务端按「地址是不是指着一条分支预览」结构性判定，选了也会被覆盖。
+ */
+const ENVIRONMENT_OPTIONS: ReadonlyArray<{ value: Exclude<MonitorEnvironment, 'preview'>; label: string }> = [
+  { value: 'production', label: '生产' },
+  { value: 'staging', label: '预发' },
+  { value: 'other', label: '其他' },
+];
 
 interface ProjectRow {
   id: string;
@@ -40,6 +51,7 @@ interface Draft {
   intervalSeconds: string;
   timeoutMs: string;
   projectId: string;
+  environment: Exclude<MonitorEnvironment, 'preview'>;
   tags: string;
 }
 
@@ -67,6 +79,7 @@ function draftFrom(monitor: CustomMonitor | null): Draft {
     intervalSeconds: monitor?.intervalSeconds ? String(monitor.intervalSeconds) : '',
     timeoutMs: monitor?.timeoutMs ? String(monitor.timeoutMs) : '',
     projectId: monitor?.projectId || '',
+    environment: monitor?.environment && monitor.environment !== 'preview' ? monitor.environment : 'production',
     tags: (monitor?.tags || []).join(', '),
   };
 }
@@ -89,6 +102,7 @@ function payloadOf(draft: Draft): Record<string, unknown> {
   body.intervalSeconds = draft.intervalSeconds.trim() || null;
   body.timeoutMs = draft.timeoutMs.trim() || null;
   body.projectId = draft.projectId || null;
+  body.environment = draft.environment;
   body.tags = draft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
   return body;
 }
@@ -261,7 +275,7 @@ export function MonitorEditorDialog({ open, monitor, defaultProjectId, onOpenCha
               aria-expanded={advanced}
             >
               {advanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-              高级选项（方法、状态码规则、间隔、超时、归属、标签）
+              高级选项（方法、状态码规则、间隔、超时、归属、环境、标签）
             </button>
 
             {advanced ? (
@@ -289,6 +303,11 @@ export function MonitorEditorDialog({ open, monitor, defaultProjectId, onOpenCha
                   <select id="mon-project" className={INPUT_CLASS} value={draft.projectId} onChange={(e) => update({ projectId: e.target.value })}>
                     <option value="">系统级（不归属项目）</option>
                     {projects.map((p) => <option key={p.id} value={p.id}>{p.name || p.slug || p.id}</option>)}
+                  </select>
+                </FieldRow>
+                <FieldRow label="环境" htmlFor="mon-env" error={fieldError('environment')} hint="第一屏按环境并排看同一条业务：只有一个环境红，问题就在那个环境的配置">
+                  <select id="mon-env" className={INPUT_CLASS} value={draft.environment} onChange={(e) => update({ environment: e.target.value as Exclude<MonitorEnvironment, 'preview'> })}>
+                    {ENVIRONMENT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
                 </FieldRow>
                 <FieldRow label="标签" htmlFor="mon-tags" error={fieldError('tags')} hint="逗号分隔，用于搜索">

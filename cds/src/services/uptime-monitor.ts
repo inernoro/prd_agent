@@ -36,6 +36,12 @@ import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
+import { normalizeReleaseEnvironment, type ReleaseEnvironment } from './release-environment.js';
+import {
+  monitorEnvironmentLabel,
+  resolveMonitorEnvironment,
+  type MonitorEnvironment,
+} from './monitor-environment.js';
 import {
   CUSTOM_PROBE_ID_PREFIX,
   customProbeTargetId,
@@ -120,6 +126,8 @@ export interface ProbeTarget {
   url?: string;
   /** url 型不可探测时的人话原因，来自 release-probe-target 这一个判定源 */
   releaseSkipReason?: string;
+  /** 发布目标声明的环境（source=release 时才有）。归一走 monitor-environment。 */
+  releaseEnvironment?: ReleaseEnvironment;
   /**
    * 本轮是否应该探测。false = 分支被降温 / 未运行 / 正在构建，
    * 这不是故障，记 paused 且不产采样（时间桶留空，前端显示灰段）。
@@ -205,6 +213,8 @@ export interface UptimeTargetRecord {
   probeKind: ProbeKind;
   /** url 型：本目标探的是哪个地址（状态页展示，便于确认探的是不是线上） */
   probeUrl?: string;
+  /** 发布目标的环境（source=release）。存进台账是为了摘要不必再回查发布目标表。 */
+  releaseEnvironment?: ReleaseEnvironment;
   status: UptimeStatus;
   consecutiveFailures: number;
   consecutiveSuccesses: number;
@@ -541,6 +551,7 @@ export function selectReleaseProbeTargets(
       excluded: Boolean(excludedBy),
       excludedBy: excludedBy || undefined,
       releaseSkipReason: skipReason || undefined,
+      releaseEnvironment: normalizeReleaseEnvironment(target.environment),
     });
   }
   return targets;
@@ -869,6 +880,7 @@ function emptyRecord(target: ProbeTarget, now: number): UptimeTargetRecord {
     name: target.name,
     probeKind: target.probeKind,
     probeUrl: target.url,
+    releaseEnvironment: target.releaseEnvironment,
     status: 'unknown',
     consecutiveFailures: 0,
     consecutiveSuccesses: 0,
@@ -942,6 +954,25 @@ export interface UptimeTargetSummary {
   };
   /** 这条是不是功能监控（列表按它分组：功能监控与存活监控问的不是同一个问题）。 */
   functional?: boolean;
+  /**
+   * 这条目标属于哪个环境（生产 / 预发 / 其他 / 分支预览）。
+   *
+   * 判定走 monitor-environment 这一个源；前端**不再自己推一遍**，
+   * 否则同一个目标会在不同页面落进不同的环境组而没有任何东西变红。
+   */
+  environment: MonitorEnvironment;
+  /** 环境的中文名，后端给定，前端不另维护一份映射。 */
+  environmentLabel: string;
+  /**
+   * 观测方式：active = 自己发一次真请求；passive = 读真实流量的窗口统计。
+   * 两者的「绿」含义不同，界面必须分开说（degradation-must-alarm）。
+   */
+  observeMode: 'active' | 'passive';
+  /**
+   * 被动监控最近一次读到的样本量。undefined = 没读到（或不是被动监控）。
+   * **0 是最要紧的那个值**：判据通过但窗口里根本没人用过，绿灯不作数。
+   */
+  sampleCount?: number;
   /**
    * 最新一次观测的精简摘要，列表直接用。
    *
@@ -1486,6 +1517,7 @@ export class UptimeMonitorService {
     record.name = target.name;
     record.probeKind = target.probeKind;
     record.probeUrl = target.url;
+    record.releaseEnvironment = target.releaseEnvironment;
     record.projectId = target.projectId;
     record.profileId = target.profileId;
     record.excluded = target.excluded;
@@ -1844,6 +1876,7 @@ export class UptimeMonitorService {
         projectName: record.projectName,
         branchStatus: record.branchStatus,
         branchLastActiveAt: record.branchLastActiveAt,
+        ...this.environmentFacet(record),
         ...(record.source === 'custom' ? this.customFacet(record.profileId) : {}),
       });
     }
@@ -1870,6 +1903,36 @@ export class UptimeMonitorService {
         stalled: this.deps.config.enabled && this.lastCycleAt !== null && now - this.lastCycleAt > intervalMs * 2,
         userViewEnabled: this.deps.config.userViewEnabled !== false,
       },
+    };
+  }
+
+  /**
+   * 环境 + 观测方式：第一屏的两个主分维。
+   *
+   * 自定义监控的环境**以结构性证据为准**：地址指着一条分支预览时（boundBranchId
+   * 非空），不管它自称什么都算 preview。否则一条临时分支的监控只要把 environment
+   * 填成 production 就能混进项目负责人的第一屏——那正是用户担心的事。
+   */
+  private environmentFacet(
+    record: UptimeTargetRecord,
+  ): Pick<UptimeTargetSummary, 'environment' | 'environmentLabel' | 'observeMode' | 'sampleCount'> {
+    const source = record.source || probeSourceOfId(record.id);
+    const monitor = source === 'custom'
+      ? (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === record.profileId)
+      : undefined;
+    const environment = resolveMonitorEnvironment({
+      source,
+      declared: monitor?.environment,
+      boundBranchId: monitor?.boundBranchId,
+      releaseEnvironment: record.releaseEnvironment,
+    });
+    const observeMode = monitor?.observeMode === 'passive' ? 'passive' : 'active';
+    const sampleCount = observeMode === 'passive' ? monitor?.observations?.[0]?.sampleCount : undefined;
+    return {
+      environment,
+      environmentLabel: monitorEnvironmentLabel(environment),
+      observeMode,
+      ...(sampleCount === undefined ? {} : { sampleCount }),
     };
   }
 

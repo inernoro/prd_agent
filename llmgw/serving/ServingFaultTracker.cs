@@ -22,14 +22,17 @@ public sealed class ServingFaultTracker
     public const int DefaultWindowMinutes = 360;
 
     private readonly ConcurrentQueue<DateTime> _occurrences = new();
+    private readonly RollingMinuteCounter _requests;
     private readonly TimeSpan _window;
     private readonly Func<DateTime> _now;
     private long _totalSinceStart;
 
     public ServingFaultTracker(int windowMinutes = DefaultWindowMinutes, Func<DateTime>? now = null)
     {
-        _window = TimeSpan.FromMinutes(windowMinutes <= 0 ? DefaultWindowMinutes : windowMinutes);
+        var minutes = windowMinutes <= 0 ? DefaultWindowMinutes : windowMinutes;
+        _window = TimeSpan.FromMinutes(minutes);
         _now = now ?? (() => DateTime.UtcNow);
+        _requests = new RollingMinuteCounter(minutes, () => _now());
     }
 
     public int WindowMinutes => (int)_window.TotalMinutes;
@@ -44,12 +47,24 @@ public sealed class ServingFaultTracker
         Trim();
     }
 
+    /// <summary>
+    /// 记一次真实业务请求（探针自己那几条路径不算，见中间件）。
+    ///
+    /// 这是「零异常」这条判据的**分母**：窗口里一次调用都没有时，
+    /// 「零异常」和「全部成功」长得一模一样，判成健康就是假绿
+    /// （degradation-must-alarm：被动观测样本为 0 时绿灯不作数）。
+    /// </summary>
+    public void RecordRequest() => _requests.Record();
+
     /// <summary>窗口内的未处理异常数。这是探针断言 == 0 的那个观测值。</summary>
     public int CountWithinWindow()
     {
         Trim();
         return _occurrences.Count;
     }
+
+    /// <summary>窗口内的真实业务请求数。0 = 这段时间根本没人用过。</summary>
+    public long RequestsWithinWindow() => _requests.CountWithinWindow();
 
     /// <summary>
     /// 丢弃窗口外的记录。
@@ -64,6 +79,66 @@ public sealed class ServingFaultTracker
         {
             if (!_occurrences.TryDequeue(out _)) break;
         }
+    }
+}
+
+/// <summary>
+/// 按分钟分桶的滚动计数（环形数组，内存恒定）。
+///
+/// 异常可以一条一条存（它们本该很少）；请求不行——6 小时的流量逐条存 DateTime
+/// 会让这个观测组件自己变成负担。每分钟一个格子、总共 windowMinutes 个格子，
+/// 内存与流量无关。
+///
+/// 代价是边界精度到分钟：最老那一格可能有不到一分钟落在窗口之外。
+/// 对「这 6 小时有没有人用过」这个问题，这点误差无关紧要。
+/// </summary>
+internal sealed class RollingMinuteCounter
+{
+    private readonly long[] _counts;
+    private readonly long[] _minutes;
+    private readonly int _size;
+    private readonly Func<DateTime> _now;
+    private readonly object _gate = new();
+
+    public RollingMinuteCounter(int windowMinutes, Func<DateTime> now)
+    {
+        _size = windowMinutes <= 0 ? 1 : windowMinutes;
+        _counts = new long[_size];
+        _minutes = new long[_size];
+        for (var i = 0; i < _size; i++) _minutes[i] = long.MinValue;
+        _now = now;
+    }
+
+    private static long MinuteOf(DateTime t) => t.Ticks / TimeSpan.TicksPerMinute;
+
+    public void Record()
+    {
+        var minute = MinuteOf(_now());
+        var slot = (int)(((minute % _size) + _size) % _size);
+        lock (_gate)
+        {
+            // 格子被上一圈的分钟占着 → 那是窗口外的旧数据，直接覆盖而不是累加。
+            if (_minutes[slot] != minute)
+            {
+                _minutes[slot] = minute;
+                _counts[slot] = 0;
+            }
+            _counts[slot]++;
+        }
+    }
+
+    public long CountWithinWindow()
+    {
+        var oldest = MinuteOf(_now()) - _size + 1;
+        long total = 0;
+        lock (_gate)
+        {
+            for (var i = 0; i < _size; i++)
+            {
+                if (_minutes[i] >= oldest) total += _counts[i];
+            }
+        }
+        return total;
     }
 }
 
@@ -85,8 +160,25 @@ public sealed class ServingFaultTrackingMiddleware
         _tracker = tracker;
     }
 
+    /// <summary>
+    /// 探针与运维自己那几条路径不算「真实调用」。
+    ///
+    /// 少了这一条排除，6 小时窗口里永远有那么一两次探针请求，
+    /// 「零真实调用」这个最要紧的信号就永远出不来——被动监控又变回一条恒绿的假判据。
+    /// </summary>
+    private static bool IsProbePath(PathString path)
+    {
+        if (!path.HasValue) return false;
+        var value = path.Value!;
+        return value.StartsWith("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("/gw/v1/readyz", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("/gw/v1/livez", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("/metrics", StringComparison.OrdinalIgnoreCase);
+    }
+
     public async Task InvokeAsync(HttpContext context)
     {
+        if (!IsProbePath(context.Request.Path)) _tracker.RecordRequest();
         try
         {
             await _next(context);

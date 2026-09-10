@@ -17,6 +17,7 @@
 
 import net from 'node:net';
 import type { MonitorObservation, UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
+import { normalizeMonitorEnvironment, type MonitorEnvironment } from './monitor-environment.js';
 import {
   ASSERT_OPS,
   VALUELESS_OPS,
@@ -50,6 +51,15 @@ const MAX_NAME_LENGTH = 80;
 const MAX_TAGS = 10;
 
 export const MONITOR_KINDS: ReadonlyArray<UptimeCustomMonitorKind> = ['http', 'keyword', 'tcp', 'health-json', 'functional'];
+
+export type MonitorObserveMode = NonNullable<UptimeCustomMonitor['observeMode']>;
+export const OBSERVE_MODES: ReadonlyArray<MonitorObserveMode> = ['active', 'passive'];
+
+/**
+ * 只有这两种 kind 读得到结构化响应，也就只有它们能做被动观测。
+ * http / keyword / tcp 问的是「通不通」，谈不上样本量。
+ */
+const PASSIVE_CAPABLE_KINDS: ReadonlyArray<UptimeCustomMonitorKind> = ['health-json', 'functional'];
 
 /** 功能监控保留多少次观测证据。看趋势够用，不做审计日志——无限增长会把台账撑爆。 */
 export const MAX_OBSERVATIONS = 20;
@@ -118,6 +128,9 @@ export interface UptimeMonitorInput {
   requestBody?: unknown;
   assertions?: unknown;
   artifactUrlPath?: unknown;
+  environment?: unknown;
+  observeMode?: unknown;
+  sampleCountPath?: unknown;
 }
 
 export type NormalizeResult =
@@ -423,6 +436,48 @@ export function normalizeUptimeMonitorInput(
   const projectId = input.projectId === undefined ? (options.existing?.projectId ?? null) : (str(input.projectId) || null);
   monitor.projectId = projectId;
 
+  // 环境：没传就沿用旧值，都没有才落到 production（归一口径见 monitor-environment）。
+  // 这里存的是「声明」；真正生效的值在读的时候由 resolveMonitorEnvironment 结算，
+  // 地址指着分支预览时会被覆盖成 preview。
+  monitor.environment = normalizeMonitorEnvironment(
+    input.environment === undefined ? options.existing?.environment : input.environment,
+  ) as MonitorEnvironment;
+
+  const observeMode = (str(input.observeMode) || options.existing?.observeMode || 'active') as MonitorObserveMode;
+  if (!OBSERVE_MODES.includes(observeMode)) {
+    return { ok: false, error: `观测方式只能是 ${OBSERVE_MODES.join(' / ')}`, field: 'observeMode' };
+  }
+  if (observeMode === 'passive' && !PASSIVE_CAPABLE_KINDS.includes(kind)) {
+    return {
+      ok: false,
+      error: `被动观测只能用在 ${PASSIVE_CAPABLE_KINDS.join(' / ')} 上——它要从响应里读窗口统计，${kind} 只问得出通不通`,
+      field: 'observeMode',
+    };
+  }
+  monitor.observeMode = observeMode;
+
+  const sampleCountPath = input.sampleCountPath === undefined
+    ? options.existing?.sampleCountPath
+    : (input.sampleCountPath === null ? undefined : str(input.sampleCountPath));
+  if (observeMode === 'passive') {
+    // 硬要求，不是可选项：读不到样本量的被动监控里，「零流量」和「全部成功」
+    // 长得一模一样，它会永远绿着（degradation-must-alarm 的「假绿」）。
+    if (!sampleCountPath) {
+      return {
+        ok: false,
+        error: '被动观测必须指明样本量从哪读，否则零流量会被读成一切正常',
+        field: 'sampleCountPath',
+      };
+    }
+    if (sampleCountPath.length > 200) {
+      return { ok: false, error: '样本量路径过长', field: 'sampleCountPath' };
+    }
+    monitor.sampleCountPath = sampleCountPath;
+  } else if (sampleCountPath) {
+    // 主动观测留着这个字段没有坏处，但也没有意义——清掉，免得日后被误读成「它在看样本量」。
+    monitor.sampleCountPath = undefined;
+  }
+
   if (input.tags !== undefined) {
     if (!Array.isArray(input.tags)) return { ok: false, error: '标签必须是字符串数组', field: 'tags' };
     const tags = [...new Set(input.tags.map((t) => str(t)).filter(Boolean))].slice(0, MAX_TAGS);
@@ -627,11 +682,32 @@ export function describeMonitorProbe(monitor: Pick<UptimeCustomMonitor, 'kind' |
 
 export type CustomProbeOutcome = Omit<UptimeSample, 't'> & {
   /**
-   * 功能监控这一次留下的证据。存活监控为空。
+   * 功能监控与被动监控这一次留下的证据。纯存活监控为空。
    * 轮次拿到它写进监控定义的 observations——判定归判定，证据归证据，两件事。
    */
   observation?: MonitorObservation;
 };
+
+/**
+ * 被动监控的样本量：这个窗口里到底有没有人用过。
+ *
+ * 一个函数管两种 kind 的寻址方式（health-json 按 componentId，functional 按字段路径），
+ * 免得两处各写一份取值口径然后各自漂移。读不出数就返回 undefined ——
+ * 「读不到」和「读到 0」是两回事，不许合并。
+ */
+export function readSampleCount(
+  kind: UptimeCustomMonitorKind,
+  doc: unknown,
+  source: string | undefined,
+): number | undefined {
+  if (!source) return undefined;
+  const raw = kind === 'health-json'
+    ? findHealthCheck(doc, source)?.observedValue
+    : readPath(doc, source);
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
 
 /**
  * 功能监控：把业务真跑一遍，再在响应上逐条判。
@@ -642,7 +718,7 @@ export type CustomProbeOutcome = Omit<UptimeSample, 't'> & {
  * 「生图接口通、返回的却是 512×512」属于后者，两种都得有人盯。
  */
 async function functionalProbe(
-  monitor: Pick<UptimeCustomMonitor, 'url' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath'>,
+  monitor: Pick<UptimeCustomMonitor, 'url' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'observeMode' | 'sampleCountPath'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   const startedAt = Date.now();
@@ -689,11 +765,15 @@ async function functionalProbe(
     const artifactRaw = monitor.artifactUrlPath ? readPath(doc, monitor.artifactUrlPath) : undefined;
     const artifactUrl = typeof artifactRaw === 'string' && artifactRaw.length > 0 ? artifactRaw : undefined;
 
+    const sampleCount = monitor.observeMode === 'passive'
+      ? readSampleCount('functional', doc, monitor.sampleCountPath)
+      : undefined;
     const obs = observation({
       ok,
       code,
       results,
       ...(artifactUrl ? { artifactUrl } : {}),
+      ...(sampleCount === undefined ? {} : { sampleCount }),
     });
     return ok
       ? { up: true, ms: Date.now() - startedAt, code, observation: obs }
@@ -752,7 +832,7 @@ async function readBodyPrefix(res: Response, limitBytes: number): Promise<string
 }
 
 async function httpProbe(
-  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue'>,
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'observeMode' | 'sampleCountPath'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   const startedAt = Date.now();
@@ -779,17 +859,43 @@ async function httpProbe(
       }
     } else if (monitor.kind === 'health-json') {
       const body = await readBodyPrefix(res, HEALTH_BODY_LIMIT_BYTES);
+      const field = monitor.healthField || 'observedValue';
+      const op = monitor.healthOp || 'eq';
       const verdict = evaluateHealthJson(
         body,
         monitor.healthComponentId || '',
-        monitor.healthField || 'observedValue',
-        monitor.healthOp || 'eq',
+        field,
+        op,
         monitor.healthValue || '',
       );
+      // 被动监控要留证据：判据结论之外，还得带上这个窗口的样本量。
+      // 判据通过 + 样本量为 0 不是「一切正常」，是「没人用过」——两件事，界面分开说。
+      let observation: MonitorObservation | undefined;
+      if (monitor.observeMode === 'passive') {
+        let doc: unknown;
+        try { doc = JSON.parse(body); } catch { doc = undefined; }
+        const sampleCount = readSampleCount('health-json', doc, monitor.sampleCountPath);
+        observation = {
+          at: new Date(startedAt).toISOString(),
+          ok: verdict.ok,
+          elapsedMs: Date.now() - startedAt,
+          code,
+          results: [{
+            path: `${monitor.healthComponentId || ''}.${field}`,
+            op,
+            expected: monitor.healthValue,
+            ...(verdict.observed === undefined ? {} : { actual: verdict.observed }),
+            ok: verdict.ok,
+            ...(verdict.ok || !verdict.err ? {} : { err: verdict.err }),
+          }],
+          ...(sampleCount === undefined ? {} : { sampleCount }),
+        };
+      }
       if (!verdict.ok) {
         // 判据不成立时 HTTP 往往仍是 200——「接口通但结论是坏的」正是这类探测的存在意义。
-        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err };
+        return { up: false, ms: Date.now() - startedAt, code, err: verdict.err, ...(observation ? { observation } : {}) };
       }
+      return { up: true, ms: Date.now() - startedAt, code, ...(observation ? { observation } : {}) };
     } else {
       await res.body?.cancel().catch(() => undefined);
     }
@@ -808,7 +914,7 @@ async function httpProbe(
 
 /** 按监控定义发一次探测。timeoutMs 由调用方结算（监控自身 > 全局）。 */
 export async function probeCustomMonitor(
-  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port'>,
+  monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'method' | 'expectedStatus' | 'keyword' | 'healthComponentId' | 'healthField' | 'healthOp' | 'healthValue' | 'requestMethod' | 'requestBody' | 'assertions' | 'artifactUrlPath' | 'host' | 'port' | 'observeMode' | 'sampleCountPath'>,
   timeoutMs: number,
 ): Promise<CustomProbeOutcome> {
   if (monitor.kind === 'tcp') {

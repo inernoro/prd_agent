@@ -16,6 +16,10 @@ export type ProbeKind = 'http' | 'container' | 'url' | 'keyword' | 'tcp';
 /** 目标来源：谁的承诺。分组、可用率含义、能不能编辑都由它决定。 */
 export type ProbeSource = 'branch' | 'release' | 'custom';
 export type MonitorKind = 'http' | 'keyword' | 'tcp';
+/** 环境：第一屏的主分维。判定在后端（monitor-environment.ts），前端只渲染。 */
+export type MonitorEnvironment = 'production' | 'staging' | 'other' | 'preview';
+/** 观测方式：主动自己发一次真请求 / 被动读真实流量的窗口统计。 */
+export type ObserveMode = 'active' | 'passive';
 
 export interface UptimeSample {
   t: number;
@@ -76,6 +80,17 @@ export interface UptimeTargetSummary {
   monitorId?: string;
   /** 是否功能监控（问「返回的东西对不对」，而不是「通不通」）。 */
   functional?: boolean;
+  /** 属于哪个环境。后端算好下发，前端不推断（判据只许有一份）。 */
+  environment: MonitorEnvironment;
+  /** 环境中文名，后端给定。 */
+  environmentLabel: string;
+  /** 观测方式。绿的含义不同：主动绿 = 刚亲自跑通过；被动绿 = 最近没人用坏。 */
+  observeMode: ObserveMode;
+  /**
+   * 被动监控最近一次读到的样本量（窗口内真实调用次数）。
+   * 0 是最要紧的那个值：判据过了但根本没人用过，绿灯不作数。
+   */
+  sampleCount?: number;
   /** 最新一次观测的摘要；完整证据走 /uptime/monitors/:id/observations。 */
   lastObservation?: {
     at: string;
@@ -205,6 +220,12 @@ export interface CustomMonitor {
   intervalSeconds?: number;
   timeoutMs?: number;
   projectId?: string | null;
+  /** 盯的是哪个环境；preview 由服务端结构性判定，编辑器里选不到 */
+  environment?: MonitorEnvironment;
+  /** 观测方式；health-json / functional 才谈得上被动 */
+  observeMode?: ObserveMode;
+  /** 被动观测的样本量从哪读（health-json 是 componentId，functional 是字段路径） */
+  sampleCountPath?: string;
   tags?: string[];
   enabled: boolean;
   createdAt: string;

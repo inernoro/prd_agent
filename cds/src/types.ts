@@ -1550,6 +1550,11 @@ export interface MonitorObservation {
   requestBody?: string;
   /** 传输层失败（超时、连不上）的原因；判据不通过不算这里 */
   err?: string;
+  /**
+   * 被动监控这一次读到的样本量（窗口内真实调用次数）。
+   * 0 意味着「这段时间根本没人用」——判据通过也不算数，界面必须另说。
+   */
+  sampleCount?: number;
 }
 
 export interface UptimeCustomMonitor {
@@ -1623,6 +1628,34 @@ export interface UptimeCustomMonitor {
   timeoutMs?: number;
   /** 归属项目；空 = 系统级（只有人类账号与全局 Key 可见） */
   projectId?: string | null;
+  /**
+   * 这条监控盯的是哪个环境（生产 / 预发 / 其他 / 分支预览）。
+   *
+   * 归一与推导一律走 services/monitor-environment.ts，那里是唯一判定源。
+   * 注意：地址指着一条分支预览时，声明的值会被**结构性证据覆盖**成 preview——
+   * 否则一条临时分支的监控只要自称 production 就能混进项目负责人的第一屏。
+   */
+  environment?: 'production' | 'staging' | 'other' | 'preview';
+  /**
+   * 观测方式（2026-09-10）。
+   *
+   *   active  —— 自己发一次真请求，按判据验收返回值。绿 = 我刚亲自跑通过一遍。
+   *   passive —— 读被监控方统计好的真实流量窗口（错误率、未处理异常数）。
+   *              绿 = 最近没人用坏，**前提是真的有人用**。
+   *
+   * 两种绿的含义不同，界面必须分开说，否则「没人用」会被读成「一切正常」
+   * （degradation-must-alarm）。缺省 active，与存量监控的行为一致。
+   */
+  observeMode?: 'active' | 'passive';
+  /**
+   * passive 专用：样本量从哪读。**必填**——读不到样本量的被动监控是一条
+   * 恒绿的假判据，零流量与全部成功在它眼里长得一模一样。
+   *
+   * 取值随 kind 解释（与本文件里 healthComponentId / assertions.path 的既有分工一致）：
+   *   health-json —— 一个 componentId，读它的 observedValue；
+   *   functional  —— 响应文档里的字段路径，如 `data.requestCount`。
+   */
+  sampleCountPath?: string;
   /** 自由标签，列表里用于分组与搜索 */
   tags?: string[];
   /** false = 手动暂停：不探测、不计故障、已开的故障就地收尾 */
