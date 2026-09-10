@@ -3,21 +3,23 @@
  *
  * 编排逻辑：一句真实的抱怨 → 病根诊断 → 这一卷书 → 结业考验证你真的懂了。
  *
- * 视觉基准是 Linear（用户 2026-09-09 指定）。Linear 的四个字是「密、小、灰、快」，
- * 落到具体度量上：
- *   圆角 6px（不是 20px）· 正文 13px（不是 16px）· 列表行 36-40px（不是 60px）
- *   边框 1px 白 6%（不靠阴影分层）· 强调色只出现在选中态与主按钮
- *   hover 是提亮 120ms（不是位移 + 大投影）
- * 上一版栽在「仿 Linear 却把每个数都放大一倍」——那是仿冒品不是 Linear。
- * 改这个页面前先量一遍上面那行数，别凭手感放大。
+ * 视觉借自站内「智识殿堂」（pages/library/LibraryLandingPage.tsx）的粗野骨架，
+ * 度量逐条对齐：3px 墨边（强调 4px、小元素 2.5px）· 纯偏移硬投影（无模糊）
+ * · 大圆角 20-28px · font-weight 900 · 字距 -0.02~-0.04em · hover 上移 0.5。
+ * 与它的差别只在配色：奶油黄底换成系统暖纸 + 30px 细网格，四色图标盒换成
+ * 「五色分卷」——七卷各有身份色，痛点卡的色 = 目标卷的色，找卷不用读字。
+ *
+ * 改这个页面前先记住两件事：
+ *  1. 颜色一律走 token（--shelf-* 与 --accent-*），硬编码会被双皮肤棘轮拦下；
+ *  2. 网格线暗档必须是浅色——暗底上画墨线是看不见的，两档值不能照搬。
  *
  * 内容 SSOT：src/lib/bookshelf/catalog.ts（书目）、exams.ts（考题）。
  * 个人进度落 localStorage（见 stores/bookshelfStore.ts 的边界说明）。
  */
 import { useMemo, useState } from 'react';
-import { Check, ChevronRight, type LucideIcon } from 'lucide-react';
 import {
-  Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation, BookOpen,
+  Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
+  BookOpen, Check, ArrowRight, type LucideIcon,
 } from 'lucide-react';
 import { VOLUMES, PAIN_REMEDIES, ALL_BOOKS, findVolume } from '@/lib/bookshelf/catalog';
 import { QUESTIONS, questionsOf } from '@/lib/bookshelf/exams';
@@ -25,30 +27,54 @@ import { useBookshelfStore } from '@/stores/bookshelfStore';
 import type { Track, Volume, BookEntry } from '@/lib/bookshelf/types';
 import { ExamDialog } from './ExamDialog';
 
-/** 卷图标注册表（frontend-architecture.md：类型→图标映射走注册表，不写 switch）。 */
 const VOLUME_ICON_MAP: Record<string, LucideIcon> = {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
 };
+
+/**
+ * 五色分卷：卷序 → 身份色 + 图标盒底。两者都是 token，暗浅双档已在
+ * tokens.css 双写。顺序与 VOLUMES 一一对应，改卷序要一起改。
+ */
+const VOLUME_SKIN: { fg: string; box: string }[] = [
+  { fg: 'var(--accent-fg-emerald)', box: 'var(--shelf-box-emerald)' },
+  { fg: 'var(--accent-gold)',       box: 'var(--shelf-box-gold)' },
+  { fg: 'var(--accent-fg-blue)',    box: 'var(--shelf-box-blue)' },
+  { fg: 'var(--accent-fg-violet)',  box: 'var(--shelf-box-violet)' },
+  { fg: 'var(--accent-fg-amber)',   box: 'var(--shelf-box-amber)' },
+  { fg: 'var(--accent-fg-emerald)', box: 'var(--shelf-box-emerald)' },
+  { fg: 'var(--accent-fg-blue)',    box: 'var(--shelf-box-blue)' },
+];
+function skinOf(volumeId: string) {
+  const i = VOLUMES.findIndex((v) => v.id === volumeId);
+  return VOLUME_SKIN[i >= 0 ? i % VOLUME_SKIN.length : 0];
+}
+
+/** 30px 细网格（用户 2026-09-10 指定）。线色走 token，暗档自动翻成浅线。 */
+const GRID_BG =
+  'linear-gradient(var(--shelf-grid-line) 1px, transparent 1px) 0 0 / 100% 30px,' +
+  'linear-gradient(90deg, var(--shelf-grid-line) 1px, transparent 1px) 0 0 / 30px 100%,' +
+  'var(--bg-base)';
 
 const TRACK_LABEL: Record<Track, string> = { dev: '开发', pm: '产品', both: '通用' };
 const LEVEL_LABEL: Record<number, string> = { 1: '入门', 2: '进阶', 3: '硬骨头' };
 
 type TrackFilter = 'all' | 'dev' | 'pm';
 const TRACK_FILTERS: { key: TrackFilter; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'dev', label: '开发' },
-  { key: 'pm', label: '产品' },
+  { key: 'all', label: '全部' }, { key: 'dev', label: '开发' }, { key: 'pm', label: '产品' },
 ];
-
-function matchTrack(book: BookEntry, f: TrackFilter): boolean {
-  return f === 'all' || book.track === f || book.track === 'both';
+function matchTrack(b: BookEntry, f: TrackFilter) {
+  return f === 'all' || b.track === f || b.track === 'both';
 }
+
+const EDGE = '3px solid var(--shelf-edge)';
+const EDGE_THIN = '2.5px solid var(--shelf-edge)';
+const HARD_SM = '0 4px 0 var(--shelf-edge)';
+const HARD_MD = '6px 6px 0 var(--shelf-edge)';
 
 export default function BookshelfPage() {
   const [track, setTrack] = useState<TrackFilter>('all');
-  const [activeVolumeId, setActiveVolumeId] = useState<string>(VOLUMES[0].id);
+  const [activeVolumeId, setActiveVolumeId] = useState(VOLUMES[0].id);
   const [examVolume, setExamVolume] = useState<Volume | null>(null);
-  const [expandedBook, setExpandedBook] = useState<string | null>(null);
 
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
   const examResults = useBookshelfStore((s) => s.examResults);
@@ -56,298 +82,293 @@ export default function BookshelfPage() {
 
   const visibleBooks = useMemo(() => ALL_BOOKS.filter((b) => matchTrack(b, track)), [track]);
   const readCount = visibleBooks.filter((b) => readBookIds.includes(b.id)).length;
-  const passedVolumes = VOLUMES.filter((v) => examResults[v.id]?.passed).length;
+  const passedCount = VOLUMES.filter((v) => examResults[v.id]?.passed).length;
 
   const activeVolume = findVolume(activeVolumeId) ?? VOLUMES[0];
   const activeBooks = activeVolume.books.filter((b) => matchTrack(b, track));
+  const activeSkin = skinOf(activeVolume.id);
   const activeResult = examResults[activeVolume.id];
   const examCount = questionsOf(activeVolume.id).length;
-  const nextVolume = VOLUMES[VOLUMES.findIndex((v) => v.id === activeVolume.id) + 1] ?? null;
-
-  function jumpTo(volumeId: string) {
-    setActiveVolumeId(volumeId);
-    setExpandedBook(null);
-  }
 
   return (
-    <div className="w-full min-h-full flex flex-col" style={{ color: 'var(--text-primary)' }}>
-
-      {/* ── 顶栏：一行装下标题、筛选、进度 ── */}
-      <header
-        className="flex items-center justify-between gap-4 px-1 pb-3"
-        style={{ borderBottom: '1px solid var(--border-secondary)' }}
-      >
-        <div className="flex items-baseline gap-3 min-w-0">
-          <h1 className="text-[15px] font-semibold tracking-tight shrink-0">公共藏书阁</h1>
-          <span className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>
+    <div
+      className="w-full min-h-full -m-4 sm:-m-6 p-4 sm:p-8"
+      style={{ background: GRID_BG, color: 'var(--text-primary)' }}
+    >
+      {/* ── 悬浮 navbar ── */}
+      <div className="flex justify-center">
+        <div
+          className="flex items-center gap-4 sm:gap-6 pl-5 pr-2 py-2 rounded-full flex-wrap justify-center"
+          style={{ background: 'var(--bg-card)', border: EDGE, boxShadow: HARD_SM }}
+        >
+          <span className="text-[15px] font-black tracking-[-0.02em]">公共藏书阁</span>
+          <span className="text-[12.5px] font-bold" style={{ color: 'var(--text-muted)' }}>
             {VOLUMES.length} 卷 · {ALL_BOOKS.length} 本 · {QUESTIONS.length} 问
           </span>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <div
-            className="flex items-center p-[2px] rounded-[7px]"
-            style={{ background: 'var(--bg-secondary)' }}
-          >
+          <div className="flex items-center gap-1">
             {TRACK_FILTERS.map((f) => (
               <button
                 key={f.key}
                 type="button"
                 onClick={() => setTrack(f.key)}
-                className="px-2.5 h-[24px] rounded-[5px] text-[12px] font-medium transition-colors duration-[120ms]"
+                className="px-3 py-1.5 rounded-full text-[12.5px] font-bold transition-transform duration-150 hover:-translate-y-[1px]"
                 style={{
-                  background: track === f.key ? 'var(--bg-card-hover)' : 'transparent',
-                  color: track === f.key ? 'var(--text-primary)' : 'var(--text-muted)',
+                  background: track === f.key ? 'var(--accent-gold)' : 'transparent',
+                  color: track === f.key ? 'var(--accent-on-gold)' : 'var(--text-secondary)',
+                  border: track === f.key ? EDGE_THIN : '2.5px solid transparent',
+                  boxShadow: track === f.key ? '0 3px 0 var(--shelf-edge)' : 'none',
                 }}
               >
                 {f.label}
               </button>
             ))}
           </div>
-          <span className="text-[12px] tabular-nums" style={{ color: 'var(--text-muted)' }}>
-            已读 {readCount}/{visibleBooks.length} · 通关 {passedVolumes}/{VOLUMES.length}
-          </span>
         </div>
-      </header>
+      </div>
 
-      {/* ── 标题区：全页唯一的大字，但仍在 Linear 的量级里 ── */}
-      <section className="px-1 pt-7 pb-6">
-        <h2 className="text-[38px] font-semibold leading-[1.12] tracking-[-0.02em]">
-          看到我，算你有福了
-        </h2>
-        <p className="mt-2.5 text-[13px] leading-[1.7] max-w-[620px]" style={{ color: 'var(--text-secondary)' }}>
-          七卷不按学科排，按你会在哪一步卡住排。每卷钉着一句团队里真实说过的话——
-          从最像你处境的那句进去，比从第一页啃起有用得多。
-        </p>
+      {/* ── Hero ── */}
+      <section className="mt-10 flex flex-col lg:flex-row gap-10 items-start lg:items-center">
+        <div className="flex-1 min-w-0">
+          <div
+            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[12.5px] font-bold"
+            style={{ background: 'var(--bg-card)', border: EDGE }}
+          >
+            <span className="w-2 h-2 rounded-full" style={{ background: VOLUME_SKIN[0].fg }} />
+            开发者 · 产品经理 · 已读 {readCount}/{visibleBooks.length} · 通关 {passedCount}/{VOLUMES.length}
+          </div>
 
-        {/* 痛点入口：横向 chip，密而不吵 */}
-        <div className="mt-4 flex flex-wrap gap-1.5">
+          <h1
+            className="mt-5 font-black leading-[1.0] tracking-[-0.04em]"
+            style={{ fontSize: 'clamp(40px, 6vw, 84px)' }}
+          >
+            看到我，<br />算你有福了
+          </h1>
+
+          <p className="mt-5 max-w-[470px] text-[15px] font-medium leading-[1.72]" style={{ color: 'var(--text-secondary)' }}>
+            七卷不按学科排，按你会在哪一步卡住排。每卷钉着一句团队里真实说过的话——从最像你处境的那句进去。
+          </p>
+        </div>
+
+        {/* 当前卷卡 */}
+        <div
+          className="w-full lg:w-[390px] shrink-0 p-6 rounded-[28px]"
+          style={{ background: 'var(--bg-card)', border: '4px solid var(--shelf-edge)', boxShadow: `8px 8px 0 ${activeSkin.fg}` }}
+        >
+          <div className="flex items-center justify-between mb-4">
+            <div className="w-[50px] h-[50px] rounded-[15px] grid place-items-center" style={{ background: activeSkin.box, border: EDGE }}>
+              {(() => {
+                const Icon = VOLUME_ICON_MAP[activeVolume.icon] ?? BookOpen;
+                return <Icon size={23} strokeWidth={2.5} style={{ color: activeSkin.fg }} />;
+              })()}
+            </div>
+            <span className="px-3 py-1 rounded-full text-[11.5px] font-bold" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
+              {activeBooks.length} 本
+            </span>
+          </div>
+          <div className="text-[12px] font-bold" style={{ color: 'var(--text-muted)' }}>
+            卷{'一二三四五六七'[VOLUMES.findIndex((v) => v.id === activeVolume.id)]}
+          </div>
+          <div className="text-[32px] font-black tracking-[-0.03em] leading-[1.1]">{activeVolume.name}</div>
+          <div className="mt-3.5 px-4 py-3 rounded-[15px]" style={{ background: 'var(--bg-base)', border: EDGE }}>
+            <div className="text-[13.5px] font-bold leading-[1.6]">{activeVolume.painQuote}</div>
+          </div>
+          <div className="mt-4 flex items-center gap-2.5">
+            <div className="flex-1 h-3 rounded-full overflow-hidden" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
+              <div
+                className="h-full transition-[width] duration-500"
+                style={{
+                  width: `${activeBooks.length ? Math.round(activeBooks.filter((b) => readBookIds.includes(b.id)).length / activeBooks.length * 100) : 0}%`,
+                  background: activeSkin.fg,
+                }}
+              />
+            </div>
+            <span className="text-[12.5px] font-bold shrink-0">
+              {activeBooks.filter((b) => readBookIds.includes(b.id)).length} / {activeBooks.length} 本
+            </span>
+          </div>
+          {examCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setExamVolume(activeVolume)}
+              className="mt-4 w-full py-3 rounded-full text-[13.5px] font-bold tracking-[0.16em] transition-transform duration-150 hover:-translate-y-[1px]"
+              style={{ background: 'var(--text-primary)', color: 'var(--bg-base)', border: EDGE, boxShadow: `0 3px 0 ${activeSkin.fg}` }}
+            >
+              {activeResult ? `再考 · ${activeResult.correct}/${activeResult.total}` : `赴 考 · ${examCount} 题`}
+            </button>
+          )}
+        </div>
+      </section>
+
+      {/* ── 痛点药方 ── */}
+      <section className="mt-14">
+        <div className="text-center">
+          <div className="inline-block px-4 py-1.5 rounded-full text-[12.5px] font-bold" style={{ background: 'var(--bg-card)', border: EDGE }}>
+            从你的痛处进来
+          </div>
+          <h2 className="mt-4 font-black tracking-[-0.03em]" style={{ fontSize: 'clamp(28px, 3.4vw, 44px)' }}>
+            这些话，是不是很耳熟
+          </h2>
+        </div>
+
+        <div className="mt-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {PAIN_REMEDIES.map((r) => {
             const vol = findVolume(r.volumeId);
             if (!vol) return null;
+            const skin = skinOf(r.volumeId);
             const active = r.volumeId === activeVolumeId;
+            const Icon = VOLUME_ICON_MAP[vol.icon] ?? BookOpen;
             return (
               <button
                 key={r.quote}
                 type="button"
-                onClick={() => jumpTo(r.volumeId)}
-                title={r.diagnosis}
-                className="group flex items-center gap-1.5 pl-2.5 pr-2 h-[26px] rounded-[6px] text-[12px] transition-colors duration-[120ms]"
+                onClick={() => setActiveVolumeId(r.volumeId)}
+                className="text-left p-5 rounded-[22px] transition-transform duration-150 hover:-translate-y-0.5"
                 style={{
-                  background: active ? 'var(--bg-card-hover)' : 'var(--bg-secondary)',
-                  border: `1px solid ${active ? 'var(--border-default)' : 'var(--border-secondary)'}`,
-                  color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  background: 'var(--bg-card)',
+                  border: active ? '4px solid var(--shelf-edge)' : EDGE,
+                  boxShadow: active ? `8px 8px 0 ${skin.fg}` : HARD_MD,
                 }}
               >
-                <span className="truncate max-w-[280px]">{r.quote.replace(/[。」「]/g, '')}</span>
-                <ChevronRight size={12} style={{ color: 'var(--text-muted)' }} />
+                <div className="w-[38px] h-[38px] rounded-[12px] grid place-items-center mb-3" style={{ background: skin.box, border: EDGE_THIN }}>
+                  <Icon size={18} strokeWidth={2.5} style={{ color: skin.fg }} />
+                </div>
+                <div className="text-[15px] font-black leading-[1.5] tracking-[-0.01em]">{r.quote}</div>
+                <div className="mt-2.5 text-[12.5px] font-medium leading-[1.68]" style={{ color: 'var(--text-secondary)' }}>
+                  {r.diagnosis}
+                </div>
+                <div className="mt-3 inline-flex items-center gap-1.5 text-[12.5px] font-bold" style={{ color: skin.fg }}>
+                  去 {vol.name}
+                  <ArrowRight size={13} strokeWidth={2.6} />
+                </div>
               </button>
             );
           })}
         </div>
       </section>
 
-      {/* ── 主体：左卷列表 + 右书目，Linear 的 list-detail ── */}
-      <div className="flex-1 flex gap-5 px-1 pb-10 min-h-0">
+      {/* ── 七卷 ── */}
+      <section className="mt-14">
+        <div className="text-center">
+          <div className="inline-block px-4 py-1.5 rounded-full text-[12.5px] font-bold" style={{ background: 'var(--bg-card)', border: EDGE }}>
+            七卷
+          </div>
+          <h2 className="mt-4 font-black tracking-[-0.03em]" style={{ fontSize: 'clamp(28px, 3.4vw, 44px)' }}>
+            从开机到上台面
+          </h2>
+        </div>
 
-        {/* 左：七卷 */}
-        <nav className="w-[236px] shrink-0 flex flex-col gap-[2px]">
-          {VOLUMES.map((vol) => {
+        <div className="mt-7 grid gap-3 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
+          {VOLUMES.map((vol, i) => {
             const Icon = VOLUME_ICON_MAP[vol.icon] ?? BookOpen;
+            const skin = VOLUME_SKIN[i % VOLUME_SKIN.length];
             const books = vol.books.filter((b) => matchTrack(b, track));
             const read = books.filter((b) => readBookIds.includes(b.id)).length;
-            const active = vol.id === activeVolumeId;
             const passed = examResults[vol.id]?.passed;
+            const active = vol.id === activeVolumeId;
             return (
               <button
                 key={vol.id}
                 type="button"
-                onClick={() => jumpTo(vol.id)}
-                className="flex items-center gap-2.5 h-[36px] px-2.5 rounded-[6px] text-left transition-colors duration-[120ms]"
-                style={{ background: active ? 'var(--bg-card-hover)' : 'transparent' }}
+                onClick={() => setActiveVolumeId(vol.id)}
+                className="text-left p-4 rounded-[20px] transition-transform duration-150 hover:-translate-y-0.5"
+                style={{
+                  background: 'var(--bg-card)',
+                  border: active ? '4px solid var(--shelf-edge)' : EDGE,
+                  boxShadow: active ? `7px 7px 0 ${skin.fg}` : '5px 5px 0 var(--shelf-edge)',
+                }}
               >
-                <Icon
-                  size={15}
-                  strokeWidth={1.6}
-                  style={{ color: active ? 'var(--text-primary)' : 'var(--text-muted)' }}
-                  className="shrink-0"
-                />
-                <span
-                  className="text-[13px] font-medium flex-1 truncate"
-                  style={{ color: active ? 'var(--text-primary)' : 'var(--text-secondary)' }}
-                >
-                  {vol.name}
-                </span>
-                {passed && (
-                  <span
-                    className="text-[10px] px-1.5 h-[16px] leading-[16px] rounded-[4px] shrink-0 font-medium"
-                    style={{ background: 'var(--bg-tertiary)', color: 'var(--accent-fg-emerald)' }}
-                  >
-                    通关
-                  </span>
-                )}
-                <span className="text-[11px] tabular-nums shrink-0" style={{ color: 'var(--text-muted)' }}>
-                  {read}/{books.length}
-                </span>
+                <div className="flex items-center justify-between mb-3 min-h-[36px]">
+                  <div className="w-9 h-9 rounded-[11px] grid place-items-center" style={{ background: skin.box, border: EDGE_THIN }}>
+                    <Icon size={17} strokeWidth={2.6} style={{ color: skin.fg }} />
+                  </div>
+                  {passed && <span className="text-[11px] font-bold" style={{ color: skin.fg }}>通关</span>}
+                </div>
+                <div className="text-[11px] font-bold" style={{ color: 'var(--text-muted)' }}>卷{'一二三四五六七'[i]}</div>
+                <div className="text-[19px] font-black tracking-[-0.02em] leading-[1.2]">{vol.name}</div>
+                <div className="mt-1.5 h-[34px] overflow-hidden text-[11.5px] font-medium leading-[1.5]" style={{ color: 'var(--text-muted)' }}>
+                  {vol.subtitle}
+                </div>
+                <div className="mt-2.5 flex items-center gap-1.5">
+                  <div className="flex-1 h-2.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
+                    <div className="h-full transition-[width] duration-500" style={{ width: `${books.length ? Math.round(read / books.length * 100) : 0}%`, background: skin.fg }} />
+                  </div>
+                  <span className="text-[11px] font-bold shrink-0">{read}/{books.length}</span>
+                </div>
               </button>
             );
           })}
-        </nav>
+        </div>
+      </section>
 
-        {/* 右：选中卷 */}
-        <main className="flex-1 min-w-0">
-          {/* 卷抬头 */}
-          <div className="pb-4" style={{ borderBottom: '1px solid var(--border-secondary)' }}>
-            <div className="flex items-start justify-between gap-6">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="text-[20px] font-semibold tracking-tight">{activeVolume.name}</h3>
-                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
-                    {activeVolume.subtitle}
-                  </span>
-                </div>
-                <p
-                  className="mt-2.5 text-[13px] leading-[1.7] pl-2.5"
-                  style={{ color: 'var(--text-secondary)', borderLeft: '2px solid var(--border-default)' }}
-                >
-                  {activeVolume.painQuote}
-                </p>
-                <p className="mt-2 text-[12.5px] leading-[1.7]" style={{ color: 'var(--text-muted)' }}>
-                  {activeVolume.cure}
-                </p>
-              </div>
+      {/* ── 选中卷的书目 ── */}
+      <section className="mt-6 p-6 sm:p-7 rounded-[28px]" style={{ background: 'var(--bg-card)', border: '4px solid var(--shelf-edge)', boxShadow: `8px 8px 0 ${activeSkin.fg}` }}>
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="min-w-0">
+            <div className="text-[12px] font-bold" style={{ color: 'var(--text-muted)' }}>书目 · 按先读哪本排序</div>
+            <div className="text-[26px] font-black tracking-[-0.03em] leading-[1.15]">{activeVolume.name}</div>
+            <p className="mt-2 max-w-[640px] text-[13px] font-medium leading-[1.72]" style={{ color: 'var(--text-secondary)' }}>
+              {activeVolume.cure}
+            </p>
+          </div>
+        </div>
 
-              {examCount > 0 && (
+        <div className="mt-5 grid gap-3 lg:grid-cols-2">
+          {activeBooks.map((b, i) => {
+            const read = readBookIds.includes(b.id);
+            return (
+              <div
+                key={b.id}
+                className="flex gap-3.5 items-start p-4 rounded-[16px]"
+                style={{ background: read ? 'var(--bg-base)' : 'transparent', border: EDGE_THIN }}
+              >
                 <button
                   type="button"
-                  onClick={() => setExamVolume(activeVolume)}
-                  className="shrink-0 h-[26px] px-2.5 rounded-[6px] text-[12px] font-medium transition-colors duration-[120ms]"
-                  style={{
-                    background: 'var(--bg-secondary)',
-                    border: '1px solid var(--border-secondary)',
-                    color: 'var(--text-secondary)',
-                  }}
+                  title={read ? '取消已读' : '标记已读'}
+                  onClick={() => toggleRead(b.id)}
+                  className="w-[22px] h-[22px] mt-0.5 rounded-[7px] grid place-items-center shrink-0 transition-transform duration-150 hover:-translate-y-[1px]"
+                  style={{ background: read ? activeSkin.fg : 'transparent', border: EDGE_THIN }}
                 >
-                  {activeResult ? `再考 ${activeResult.correct}/${activeResult.total}` : `结业考 ${examCount} 题`}
+                  {read
+                    ? <Check size={12} strokeWidth={3.4} style={{ color: 'var(--bg-card)' }} />
+                    : <span className="text-[11px] font-bold" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>}
                 </button>
-              )}
-            </div>
-          </div>
-
-          {/* 书目：一行一本，展开才看细节 */}
-          <div className="flex flex-col">
-            {activeBooks.map((b, i) => {
-              const read = readBookIds.includes(b.id);
-              const open = expandedBook === b.id;
-              return (
-                <div key={b.id} style={{ borderBottom: '1px solid var(--border-secondary)' }}>
-                  <div
-                    className="flex items-center gap-2.5 h-[40px] px-1.5 rounded-[6px] cursor-pointer transition-colors duration-[120ms]"
-                    style={{ background: open ? 'var(--bg-secondary)' : 'transparent' }}
-                    onClick={() => setExpandedBook(open ? null : b.id)}
-                  >
-                    <button
-                      type="button"
-                      title={read ? '取消已读' : '标记已读'}
-                      onClick={(e) => { e.stopPropagation(); toggleRead(b.id); }}
-                      className="w-[16px] h-[16px] rounded-[4px] grid place-items-center shrink-0 transition-colors duration-[120ms]"
-                      style={{
-                        background: read ? 'var(--accent-fg-emerald)' : 'transparent',
-                        border: `1px solid ${read ? 'var(--accent-fg-emerald)' : 'var(--border-default)'}`,
-                      }}
-                    >
-                      {read && <Check size={11} strokeWidth={3} style={{ color: 'var(--bg-base)' }} />}
-                    </button>
-
-                    <span className="text-[11px] tabular-nums w-[14px] shrink-0" style={{ color: 'var(--text-muted)' }}>
-                      {i + 1}
+                <div className="min-w-0">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-[15px] font-black tracking-[-0.01em]">《{b.title}》</span>
+                    <span className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>{b.author}</span>
+                    <span className="text-[10.5px] font-bold px-1.5 py-0.5 rounded-md" style={{ background: 'var(--bg-base)', color: 'var(--text-muted)' }}>
+                      {TRACK_LABEL[b.track]} · {LEVEL_LABEL[b.level]}
                     </span>
-
-                    <span
-                      className="text-[13px] font-medium truncate"
-                      style={{ color: read ? 'var(--text-muted)' : 'var(--text-primary)' }}
-                    >
-                      《{b.title}》
-                    </span>
-
-                    <span className="text-[12px] truncate shrink-0" style={{ color: 'var(--text-muted)' }}>
-                      {b.author}
-                    </span>
-
-                    <div className="flex-1" />
-
-                    <span className="text-[11px] shrink-0 hidden sm:inline" style={{ color: 'var(--text-muted)' }}>
-                      {TRACK_LABEL[b.track]}
-                    </span>
-                    <span
-                      className="text-[10px] px-1.5 h-[17px] leading-[17px] rounded-[4px] shrink-0"
-                      style={{ background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
-                    >
-                      {LEVEL_LABEL[b.level]}
-                    </span>
-                    <ChevronRight
-                      size={13}
-                      className="shrink-0 transition-transform duration-[120ms]"
-                      style={{ color: 'var(--text-muted)', transform: open ? 'rotate(90deg)' : 'none' }}
-                    />
                   </div>
-
-                  {open && (
-                    <div className="pl-[46px] pr-2 pb-3.5 pt-0.5 flex flex-col gap-1.5">
-                      {b.original && (
-                        <div className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>{b.original}</div>
-                      )}
-                      <p className="text-[13px] leading-[1.72]" style={{ color: 'var(--text-secondary)' }}>
-                        {b.why}
-                      </p>
-                      <p className="text-[12.5px] leading-[1.7]" style={{ color: 'var(--accent-fg-emerald)' }}>
-                        读完你能：{b.takeaway}
-                      </p>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* 卷尾：读完之后往哪走。也顺带填掉书少时的下半屏空白。 */}
-          {examCount > 0 && (
-            <div className="mt-6 flex items-center justify-between gap-6 px-3.5 py-3 rounded-[7px]"
-              style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-secondary)' }}>
-              <div className="min-w-0">
-                <div className="text-[13px] font-medium">读过和站得住是两回事</div>
-                <div className="mt-1 text-[12.5px] leading-[1.7]" style={{ color: 'var(--text-muted)' }}>
-                  {activeResult
-                    ? `上次 ${activeResult.correct}/${activeResult.total}${activeResult.passed ? '，已通关。错题解析随时能再看一遍。' : '，还没过。错的地方正是这一卷要治的。'}`
-                    : `${examCount} 道判断题，答对 ${Math.ceil(examCount * 0.6)} 道及格。考的是判断，不是记忆。`}
+                  <p className="mt-2 text-[13px] font-medium leading-[1.68]" style={{ color: 'var(--text-secondary)' }}>{b.why}</p>
+                  <p className="mt-1.5 text-[12.5px] font-bold leading-[1.6]" style={{ color: activeSkin.fg }}>读完你能：{b.takeaway}</p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setExamVolume(activeVolume)}
-                className="shrink-0 h-[30px] px-4 rounded-[6px] text-[12.5px] font-medium transition-opacity duration-[120ms] hover:opacity-90"
-                style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
-              >
-                {activeResult ? '再考一次' : '开始结业考'}
-              </button>
-            </div>
-          )}
+            );
+          })}
+        </div>
 
-          {nextVolume && (
+        {examCount > 0 && (
+          <div className="mt-5 flex items-center justify-between gap-5 flex-wrap px-5 py-4 rounded-[18px]" style={{ background: 'var(--bg-base)', border: EDGE }}>
+            <div className="min-w-0">
+              <div className="text-[14px] font-black">读过和站得住是两回事</div>
+              <div className="mt-1 text-[12.5px] font-medium leading-[1.68]" style={{ color: 'var(--text-secondary)' }}>
+                {activeResult
+                  ? `上次 ${activeResult.correct}/${activeResult.total}${activeResult.passed ? '，已通关。错题解析随时能再看。' : '，还没过。错的地方正是这一卷要治的。'}`
+                  : `${examCount} 道判断题，答对 ${Math.ceil(examCount * 0.6)} 道及格。考的是判断，不是记忆。`}
+              </div>
+            </div>
             <button
               type="button"
-              onClick={() => jumpTo(nextVolume.id)}
-              className="mt-2 w-full flex items-center gap-2 px-3.5 h-[38px] rounded-[7px] text-left transition-colors duration-[120ms]"
-              style={{ border: '1px solid var(--border-secondary)' }}
+              onClick={() => setExamVolume(activeVolume)}
+              className="shrink-0 px-7 py-3 rounded-full text-[14px] font-bold tracking-[0.14em] transition-transform duration-150 hover:-translate-y-[1px]"
+              style={{ background: activeSkin.fg, color: 'var(--bg-card)', border: EDGE, boxShadow: HARD_SM }}
             >
-              <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>下一卷</span>
-              <span className="text-[13px] font-medium">{nextVolume.name}</span>
-              <span className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>{nextVolume.subtitle}</span>
-              <ChevronRight size={13} className="ml-auto shrink-0" style={{ color: 'var(--text-muted)' }} />
+              {activeResult ? '再考一次' : '赴 考'}
             </button>
-          )}
-        </main>
-      </div>
+          </div>
+        )}
+      </section>
 
       <ExamDialog volume={examVolume} open={!!examVolume} onOpenChange={(v) => !v && setExamVolume(null)} />
     </div>

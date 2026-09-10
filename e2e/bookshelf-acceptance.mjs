@@ -56,13 +56,14 @@ for (const theme of ['dark', 'light']) {
   }, theme);
 
   await page.goto(`http://127.0.0.1:${PORT}/bookshelf`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('text=看到我，算你有福了', { timeout: 20000 });
+  await page.waitForSelector('h1:has-text("算你有福了")', { timeout: 20000 });
   await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
   await page.waitForTimeout(600);
 
   const step = {};
-  // h1 是页面名「公共藏书阁」，这句主张挂在 h2 上（Linear 版把页头压成一行）
-  step['落地页大标题'] = await page.locator('h2', { hasText: '看到我，算你有福了' }).first().isVisible();
+  // 粗野版这句回到 h1，且「看到我，」与「算你有福了」被 <br> 分成两行，
+  // 整串匹配必失败 —— 按 h1 + 后半句断言。
+  step['落地页大标题'] = await page.locator('h1').filter({ hasText: '算你有福了' }).first().isVisible();
   step['痛点药方表'] = await page.locator('text=什么都不跟我说，代码规范，构建发布').first().isVisible();
   step['默认卷书目可见'] = await page.locator('text=《你的灯亮着吗？》').first().isVisible();
   await page.screenshot({ path: `${OUT}/01-landing-${theme}.png` });
@@ -70,14 +71,14 @@ for (const theme of ['dark', 'light']) {
   // 痛点卡必须落到各自对应的卷 —— 全都跳同一处等于药方表没接线。
   await page.locator('button', { hasText: '很多我都审不出来' }).first().click();
   await page.waitForTimeout(700);
-  step['痛点跳到卷七'] = await page.locator('h3', { hasText: '上台面' }).first().isVisible();
+  step['痛点跳到卷七'] = await page.locator('text=上台面').first().isVisible();
   step['卷七书目出现'] = await page.locator('text=《金字塔原理》').first().isVisible();
   await page.locator('button', { hasText: '项目改的我都不想看了' }).first().click();
   await page.waitForTimeout(700);
   step['另一痛点跳到卷五'] = await page.locator('text=《修改代码的艺术》').first().isVisible();
   await page.screenshot({ path: `${OUT}/02-volume-expanded-${theme}.png` });
 
-  const examBtn = page.locator('button', { hasText: '结业考' }).first();
+  const examBtn = page.locator('button').filter({ hasText: /赴\s*考|再考/ }).first();
   await examBtn.scrollIntoViewIfNeeded();
   await examBtn.click();
   await page.waitForTimeout(800);

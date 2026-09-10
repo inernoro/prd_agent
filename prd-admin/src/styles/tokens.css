@@ -94,6 +94,21 @@
   --accent-fg-danger: #f87171;
   --accent-fg-emerald: #34d399;
 
+  /* ── 公共藏书阁（/bookshelf）：粗野骨架 + 五色分卷 ──────────────────
+     七卷身份色直接复用上面的 --accent-fg-* 与 --accent-gold，这里只补三样
+     它们没有的：卡片墨边、纯偏移硬投影的颜色、图标盒底。
+     暗色档的坑：网格线必须翻成浅色——暗底上画墨线是看不见的（浅档 4%
+     墨线 / 暗档 4.5% 浅线），别照搬同一个值。 */
+  --shelf-edge: rgba(247, 247, 251, 0.42);
+  --shelf-edge-soft: rgba(247, 247, 251, 0.20);
+  --shelf-grid-line: rgba(247, 247, 251, 0.045);
+  --shelf-box-emerald: #1B3A2C;
+  --shelf-box-gold: #3B2620;
+  --shelf-box-blue: #1C2A44;
+  --shelf-box-violet: #2A2440;
+  --shelf-box-amber: #3A2F1B;
+
+
   /* 浮层面板底（Popover / Drawer / HoverCard / 划词浮层 / 兜底卡）。
      与 --panel 的区别：--panel 底部只有 0.78 alpha，飘在正文上会透字；
      浮层必须近实心。所有「浮在内容之上的面板」统一消费这两个，不要各写各的深色。 */
@@ -867,6 +882,17 @@
   --accent-fg-amber: #92400e;
   --accent-fg-danger: #b91c1c;
   --accent-fg-emerald: #166534;
+
+  /* ── 公共藏书阁（/bookshelf）浅色档，逐项对应 :root 的同名 token ── */
+  --shelf-edge: #1C1C1E;
+  --shelf-edge-soft: rgba(28, 28, 30, 0.28);
+  --shelf-grid-line: rgba(15, 23, 42, 0.040);
+  --shelf-box-emerald: #D8E8DC;
+  --shelf-box-gold: #EDD9D0;
+  --shelf-box-blue: #D6DEF3;
+  --shelf-box-violet: #E2DAF3;
+  --shelf-box-amber: #EFE0CE;
+
 
   /* 浮层在浅色下走暖纸色，且保持近实心 —— 半透明深色叠在纸面上就是「白底浮暗卡」。 */
   --overlay-panel-bg: linear-gradient(180deg, #FCFAF7 0%, #F4F0E9 100%);

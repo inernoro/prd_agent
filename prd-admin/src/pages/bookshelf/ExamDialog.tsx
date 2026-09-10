@@ -71,10 +71,10 @@ export function ExamDialog({
         <div className="flex flex-col gap-3.5">
           {submitted && (
             <div
-              className="flex items-center gap-3 rounded-[7px] p-3.5"
+              className="flex items-center gap-3 rounded-[18px] p-3.5"
               style={{
                 background: passed ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
-                border: `1px solid ${passed ? 'var(--accent-fg-emerald)' : 'var(--border-default)'}`,
+                border: `2.5px solid ${passed ? 'var(--accent-fg-emerald)' : 'var(--border-default)'}`,
               }}
             >
               <Award
@@ -82,7 +82,7 @@ export function ExamDialog({
                 style={{ color: passed ? 'var(--accent-fg-emerald)' : 'var(--text-muted)' }}
               />
               <div className="min-w-0">
-                <div className="text-[17px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-[19px] font-black tracking-[-0.02em]" style={{ color: 'var(--text-primary)' }}>
                   {correctCount} / {questions.length} 题 —— {passed ? '通过' : '未通过'}
                 </div>
                 <div className="text-[12.5px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>
@@ -100,8 +100,8 @@ export function ExamDialog({
             return (
               <div
                 key={q.id}
-                className="rounded-[7px] p-3.5"
-                style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-secondary)' }}
+                className="rounded-[18px] p-3.5"
+                style={{ background: 'var(--bg-secondary)', border: '2.5px solid var(--shelf-edge)' }}
               >
                 <div className="flex items-start gap-2 mb-2.5">
                   <span
@@ -110,7 +110,7 @@ export function ExamDialog({
                   >
                     {qi + 1}
                   </span>
-                  <p className="text-[14px] font-medium leading-[1.7]" style={{ color: 'var(--text-primary)' }}>
+                  <p className="text-[15px] font-black leading-[1.6] tracking-[-0.01em]" style={{ color: 'var(--text-primary)' }}>
                     {q.stem}
                   </p>
                 </div>
@@ -128,14 +128,14 @@ export function ExamDialog({
                         type="button"
                         disabled={submitted}
                         onClick={() => setPicked((p) => ({ ...p, [q.id]: oi }))}
-                        className="flex items-start gap-2.5 text-left px-3 py-2 rounded-[6px] transition-colors duration-[120ms]"
+                        className="flex items-start gap-2.5 text-left px-3 py-2 rounded-[14px] transition-colors duration-[120ms]"
                         style={{
                           background: showRight
                             ? 'var(--bg-tertiary)'
                             : isChosen
                               ? 'var(--bg-tertiary)'
                               : 'transparent',
-                          border: `1px solid ${
+                          border: `2.5px solid ${
                             showRight
                               ? 'var(--accent-fg-emerald)'
                               : showWrong
@@ -148,7 +148,7 @@ export function ExamDialog({
                         }}
                       >
                         <span
-                          className="shrink-0 text-[12px] font-bold mt-0.5 w-[18px] h-[18px] rounded-[4px] grid place-items-center"
+                          className="shrink-0 text-[12px] font-bold mt-0.5 w-[24px] h-[24px] rounded-[8px] grid place-items-center"
                           style={{
                             background: isChosen || showRight ? 'var(--bg-card-hover)' : 'transparent',
                             border: '1px solid var(--border-subtle)',
@@ -173,14 +173,14 @@ export function ExamDialog({
 
                 {submitted && (
                   <div
-                    className="mt-3 px-3 py-2 rounded-[6px] text-[12.5px] leading-[1.72]"
+                    className="mt-3 px-3 py-2 rounded-[14px] text-[12.5px] leading-[1.72]"
                     style={{
                       background: 'var(--bg-nested)',
-                      borderLeft: `3px solid ${right ? 'var(--accent-fg-emerald)' : 'var(--accent-fg-amber)'}`,
+                      borderLeft: `4px solid ${right ? 'var(--accent-fg-emerald)' : 'var(--accent-fg-amber)'}`,
                       color: 'var(--text-secondary)',
                     }}
                   >
-                    <span className="font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    <span className="font-bold" style={{ color: 'var(--text-primary)' }}>
                       {right ? '答对了。' : '为什么不是你选的那个：'}
                     </span>{' '}
                     {q.explain}
@@ -197,16 +197,16 @@ export function ExamDialog({
             <button
               type="button"
               onClick={reset}
-              className="flex items-center gap-1.5 px-3.5 h-[30px] rounded-[6px] text-[12.5px] font-medium transition-colors"
-              style={{ background: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+              className="flex items-center gap-1.5 px-3.5 h-[30px] rounded-[14px] text-[12.5px] font-medium transition-colors"
+              style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '3px solid var(--shelf-edge)', boxShadow: '0 4px 0 var(--shelf-edge)' }}
             >
               <RotateCcw size={14} /> 再考一次
             </button>
             <button
               type="button"
               onClick={() => handleClose(false)}
-              className="px-3.5 h-[30px] rounded-[6px] text-[12.5px] font-medium"
-              style={{ background: 'var(--gold-gradient)', color: 'var(--accent-on-gold)' }}
+              className="px-3.5 h-[30px] rounded-[14px] text-[12.5px] font-medium"
+              style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)', border: '3px solid var(--shelf-edge)', boxShadow: '0 4px 0 var(--shelf-edge)' }}
             >
               完成
             </button>
@@ -220,8 +220,8 @@ export function ExamDialog({
             <button
               type="button"
               onClick={handleSubmit}
-              className="px-4 h-[30px] rounded-[6px] text-[12.5px] font-medium transition-opacity duration-[120ms] hover:opacity-90"
-              style={{ background: 'var(--gold-gradient)', color: 'var(--accent-on-gold)' }}
+              className="px-4 h-[30px] rounded-[14px] text-[12.5px] font-medium transition-transform duration-150 hover:-translate-y-[1px]"
+              style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)', border: '3px solid var(--shelf-edge)', boxShadow: '0 4px 0 var(--shelf-edge)' }}
             >
               交卷
             </button>
