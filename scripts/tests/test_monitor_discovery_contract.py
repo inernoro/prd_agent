@@ -23,7 +23,12 @@ import re
 import sys
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
-ENDPOINT = REPO / "llmgw/serving/GatewayHttpEndpoints.cs"
+# 所有实现了协议的自检端点。新增一个就在这里登记——漏登记等于它的自描述
+# 从来没被这条守卫看过（形状 7：守卫自己没接上线）。
+ENDPOINTS = [
+    REPO / "llmgw/serving/GatewayHttpEndpoints.cs",
+    REPO / "prd-api/src/PrdAgent.Api/Program.cs",
+]
 PARSER = REPO / "cds/src/services/monitor-discovery.ts"
 # 运算枚举的 SSOT 在 monitor-assertions（解析器是 import 过去的），
 # 只扫解析器文件会把 eq / gt 判成「不认」——判据太窄（形状 1）。
@@ -47,13 +52,14 @@ def fail(errors: list[str]) -> int:
 
 def main() -> int:
     errors: list[str] = []
-    for path in (ENDPOINT, PARSER, ASSERTIONS, SPEC):
+    for path in (*ENDPOINTS, PARSER, ASSERTIONS, SPEC):
         if not path.exists():
             errors.append(f"缺文件：{path.relative_to(REPO)}")
     if errors:
         return fail(errors)
 
-    endpoint = ENDPOINT.read_text(encoding="utf-8")
+    sources = {p: p.read_text(encoding="utf-8") for p in ENDPOINTS}
+    endpoint = "\n".join(sources.values())
     # 解析器认什么，看它自己加上它 import 的枚举 SSOT。
     parser = PARSER.read_text(encoding="utf-8") + ASSERTIONS.read_text(encoding="utf-8")
 
@@ -93,15 +99,20 @@ def main() -> int:
                 f"读不到样本量时零流量与全部成功长得一模一样，那条监控会永远绿着"
             )
 
-    # 4. 端点自身必须仍在免鉴权名单里，否则探针连自描述都读不到
-    if '!path.Equals("/gw/v1/healthz/deep"' not in endpoint:
-        errors.append("深度自检端点不在免鉴权名单里，CDS 插上也读不到它的自描述")
+    # 4. 每个端点都必须仍然匿名可达，否则探针连自描述都读不到
+    gw = sources[REPO / "llmgw/serving/GatewayHttpEndpoints.cs"]
+    if '!path.Equals("/gw/v1/healthz/deep"' not in gw:
+        errors.append("llmgw 深度自检不在免鉴权名单里，CDS 插上也读不到它的自描述")
+    api = sources[REPO / "prd-api/src/PrdAgent.Api/Program.cs"]
+    if '"/api/healthz/deep", DeepHealth).AllowAnonymous()' not in api:
+        errors.append("MAP 深度自检没有 AllowAnonymous，CDS 探针会被鉴权挡在门外")
 
     if errors:
         return fail(errors)
     print(
         "monitor discovery contract passed: "
-        f"{len(blocks)} 段自描述，字段与枚举（op ∈ {sorted(declared_ops)}）两边一致"
+        f"{len(ENDPOINTS)} 个端点共 {len(blocks)} 段自描述，"
+        f"字段与枚举（op ∈ {sorted(declared_ops)}）两边一致"
     )
     return 0
 
