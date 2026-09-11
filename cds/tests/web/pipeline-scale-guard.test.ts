@@ -18,6 +18,7 @@ import {
   mound,
   outsideVbW,
   sceneMaxPx,
+  yardStartCx,
   sceneScale,
   sceneWidth,
   splitChanges,
@@ -230,5 +231,29 @@ describe('整块面板跟着最宽的那张图收', () => {
       expect(w).toBeGreaterThanOrEqual(prevOut);
       prevOut = w;
     }
+  });
+});
+
+describe('堆场：几根垛都居中，右边不许空一片', () => {
+  const PITCH = 132;
+  const BW = 84;
+
+  it.each([1, 2, 3, 5, 10, 24])('%i 个项目时左右留白相等', (n) => {
+    const vbW = yardVbW(n);
+    const start = yardStartCx(n);
+    const left = start - BW / 2;
+    const right = vbW - (start + PITCH * (n - 1) + BW / 2);
+    expect(Math.abs(left - right), `${n} 个项目：左 ${left} / 右 ${right}`).toBeLessThan(1.5);
+    expect(left).toBeGreaterThan(0);
+  });
+
+  it('一个项目时画布不再垫到半屏宽', () => {
+    // 之前下限是 560：一根垛 84 宽，右边 70% 是空地面线，用户原话「右边空空的」。
+    expect(yardVbW(1)).toBeLessThan(400);
+  });
+
+  it('项目多了照样按真实条数展开', () => {
+    expect(yardVbW(10)).toBeGreaterThan(yardVbW(3));
+    expect(yardVbW(3)).toBeGreaterThan(yardVbW(1));
   });
 });

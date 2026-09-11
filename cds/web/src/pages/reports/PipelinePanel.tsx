@@ -1096,9 +1096,20 @@ export function projectTip(p: PipelineProjectRow): string {
 
 /* ============================ 项目垛 ============================ */
 
-/** 堆场宽度：按真实项目数算，不再垫到固定宽度——一个项目就该是窄窄一条。 */
+/**
+ * 堆场宽度：按真实项目数算。
+ *
+ * 下限只保到「一根垛还看得清」，不再垫到半屏宽——预览实例只有一个项目时，
+ * 那条地面线一路铺到右边，右半张图什么都没有。
+ */
 export function yardVbW(projectCount: number): number {
-  return Math.max(560, 92 + YARD_PITCH * Math.max(0, projectCount - 1) + 60);
+  return Math.max(300, 92 + YARD_PITCH * Math.max(0, projectCount - 1) + 60);
+}
+
+/** 第一根垛的中心：让整排垛在画布里居中，项目少时不会缩在左边、右边空一片。 */
+export function yardStartCx(projectCount: number): number {
+  const span = YARD_PITCH * Math.max(0, projectCount - 1);
+  return Math.max(60, (yardVbW(projectCount) - span) / 2);
 }
 
 function YardWide({
@@ -1115,6 +1126,7 @@ function YardWide({
   const top = Math.min(YARD_GY - layer * maxCh - 36, YARD_GY - 60);
   // 宽度按真实项目数算，不再垫到 1360——一个项目就该是窄窄一条，不是一整屏空地。
   const vbW = yardVbW(projects.length);
+  const startCx = yardStartCx(projects.length);
   return (
     <svg
       className="pp-scene"
@@ -1125,7 +1137,7 @@ function YardWide({
     >
       <rect x={0} y={YARD_GY + 6} width={vbW} height={3} className="f-hair" />
       {projects.map((p, idx) => {
-        const cx = 92 + YARD_PITCH * idx;
+        const cx = startCx + YARD_PITCH * idx;
         const x = cx - YARD_BW / 2;
         const seq = stackSeq(p.funnel);
         const lines = wrapName(p.projectName);
