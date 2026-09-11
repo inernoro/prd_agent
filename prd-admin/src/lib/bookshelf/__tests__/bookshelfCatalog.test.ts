@@ -28,6 +28,16 @@ describe('藏书阁书目', () => {
     });
   });
 
+  // 一卷若全是 level 3 的硬骨头，等于没人读得动 —— 它会静默退化成「书架上好看」。
+  // 这条曾经是红的：卷六「驭 AI」原本只有 2 本可上手的书，其余全是模型原理专著，
+  // 而它要治的抱怨是「没怎么看 AI 写的代码」，读者要的是怎么审，不是怎么训模型。
+  it('每卷至少三本可上手的书（level ≤ 2），不许整卷都是硬骨头', () => {
+    VOLUMES.forEach((v) => {
+      const entry = v.books.filter((b) => b.level <= 2);
+      expect(entry.length, `卷「${v.name}」只有 ${entry.length} 本可上手的书，门槛太高`).toBeGreaterThanOrEqual(3);
+    });
+  });
+
   it('每本书的 why / takeaway 都写实，不出现「经典必读」这类空话', () => {
     const EMPTY_TALK = ['经典必读', '必读书目', '强烈推荐', '不容错过'];
     ALL_BOOKS.forEach((b) => {

@@ -76,6 +76,15 @@ for (const theme of ['dark', 'light']) {
   await page.locator('button', { hasText: '项目改的我都不想看了' }).first().click();
   await page.waitForTimeout(700);
   step['另一痛点跳到卷五'] = await page.locator('text=《修改代码的艺术》').first().isVisible();
+  // 卷六要治的是「AI 在乱写、没人看」——它必须给得出「怎么审」的书，
+  // 不能整卷都是模型原理。这一条盯着那批实操书，被删掉就会红。
+  await page.locator('button', { hasText: 'AI 都在乱写' }).first().click();
+  await page.waitForTimeout(700);
+  step['痛点跳到卷六'] = await page.locator('text=驭 AI').first().isVisible();
+  step['卷六有怎么审 AI 的书'] = await page.locator('text=你的代码就是犯罪现场').first().isVisible()
+    && await page.locator('text=代码阅读方法与实践').first().isVisible();
+  await page.screenshot({ path: `${OUT}/02b-volume-ai-${theme}.png` });
+
   await page.screenshot({ path: `${OUT}/02-volume-expanded-${theme}.png` });
 
   const examBtn = page.locator('button').filter({ hasText: /赴\s*考|再考/ }).first();
