@@ -6,3 +6,4 @@
 | test | prd-admin | e2e 补「服务端真的返回了数据」与「畸形上游响应」两条路径 |
 | polish | prd-admin | 痛点文案从逐字引用同事原话改写为处境描述，移除页面上的真人姓名 |
 | test | prd-admin | 新增守卫拦截原话回流（转述痕迹词） |
+| merge | platform | 合并 main（含 llmgw 读方 schema 容忍修复），llmgw-serve 容器恢复 |
