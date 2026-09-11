@@ -315,15 +315,6 @@ export function OwnerBoard({
           <div className="text-sm font-semibold leading-5">{board.headline}</div>
           {board.detail ? <div className="text-xs leading-5 opacity-90">{board.detail}</div> : null}
         </div>
-        {board.hiddenEnvironments && board.hiddenEnvironments.length > 0 ? (
-          <button
-            type="button"
-            onClick={revealHidden}
-            className="ml-auto shrink-0 self-center rounded-md border border-primary/45 bg-primary-soft px-2.5 py-1 text-xs text-primary-ink transition-colors hover:border-primary/70"
-          >
-            看这些环境
-          </button>
-        ) : null}
       </div>
 
       {/* 业务网格 */}
