@@ -186,8 +186,19 @@ export type LlmLogDetail = {
   outputImageCapturedAt?: string | null;
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
+  cachedInputPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
   pricePerCall?: number | null;
   priceCurrency?: string | null;
+  /** 价格来源：upstream / admin / migrated。 */
+  priceSource?: string | null;
+  priceObservedAt?: string | null;
+  /** 这次到底算没算出钱：priced / unpriced / stale_currency / no_usage。 */
+  costStatus?: string | null;
+  /** 算不出钱时的人话原因。 */
+  costUnpricedReason?: string | null;
+  estimatedCacheReadCost?: number | null;
+  estimatedCacheWriteCost?: number | null;
   estimatedInputCost?: number | null;
   estimatedOutputCost?: number | null;
   estimatedCallCost?: number | null;

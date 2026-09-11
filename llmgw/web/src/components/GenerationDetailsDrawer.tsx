@@ -581,7 +581,12 @@ export function GenerationDetailsDrawer({
                         : fmtCost(detail.providerReportedCost, detail.providerCostCurrency)}
                       note={detail.providerReportedCost != null
                         ? `Provider 实际${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
-                        : detail.estimatedCost == null ? '未知：缺 token 或价格快照' : 'Gateway 估算 · 等待 Provider 对账'}
+                        : detail.estimatedCost == null
+                          // 后端已经算过「为什么算不出」，直接把那句话端出来：
+                          // 「缺输入单价」和「价格还是 CNY 口径」是两件要做不同事的情况，
+                          // 笼统一句「未知」逼用户自己去猜该动哪儿。兜底文案保持不变。
+                          ? (detail.costUnpricedReason || '未知：缺 token 或价格快照')
+                          : 'Gateway 估算 · 等待 Provider 对账'}
                       icon={<Coins size={15} aria-hidden="true" />}
                     />
                     <MetricCard
@@ -709,6 +714,15 @@ export function GenerationDetailsDrawer({
                     <Row k="单次价格" v={detail.pricePerCall == null ? null : String(detail.pricePerCall)} />
                     <Row k="Gateway 输入估算" v={fmtCost(detail.estimatedInputCost, detail.estimatedCostCurrency)} />
                     <Row k="Gateway 输出估算" v={fmtCost(detail.estimatedOutputCost, detail.estimatedCostCurrency)} />
+                    {detail.estimatedCacheReadCost != null
+                      ? <Row k="Gateway 缓存读估算" v={fmtCost(detail.estimatedCacheReadCost, detail.estimatedCostCurrency)} />
+                      : null}
+                    {detail.estimatedCacheWriteCost != null
+                      ? <Row k="Gateway 缓存写估算" v={fmtCost(detail.estimatedCacheWriteCost, detail.estimatedCostCurrency)} />
+                      : null}
+                    {detail.priceSource
+                      ? <Row k="价格来源" v={`${detail.priceSource}${detail.priceObservedAt ? ` · 观测于 ${detail.priceObservedAt.slice(0, 16).replace('T', ' ')}` : ''}`} />
+                      : null}
                     <Row k="Gateway 单次估算" v={fmtCost(detail.estimatedCallCost, detail.estimatedCostCurrency)} />
                     <Row k="Provider 实际费用" v={fmtCost(detail.providerReportedCost, detail.providerCostCurrency)} />
                     <Row k="对账状态" v={detail.reconciliationStatus} />

@@ -270,6 +270,22 @@ public sealed class LlmLogDetail
     public decimal? EstimatedCallCost { get; set; }
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
+    /// <summary>缓存命中输入部分的成本。</summary>
+    public decimal? EstimatedCacheReadCost { get; set; }
+    /// <summary>写入缓存部分的成本（Anthropic 一类协议）。</summary>
+    public decimal? EstimatedCacheWriteCost { get; set; }
+    /// <summary>缓存命中输入单价快照。</summary>
+    public decimal? CachedInputPricePerMillion { get; set; }
+    /// <summary>写入缓存输入单价快照。</summary>
+    public decimal? CacheWritePricePerMillion { get; set; }
+    /// <summary>价格来源：upstream / admin / migrated。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>价格观测时间（ISO）。</summary>
+    public string? PriceObservedAt { get; set; }
+    /// <summary>这次到底算没算出钱：priced / unpriced / stale_currency / no_usage。</summary>
+    public string? CostStatus { get; set; }
+    /// <summary>算不出钱时的人话原因，直接给用户看。</summary>
+    public string? CostUnpricedReason { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
     public string? PriceSnapshotHash { get; set; }
     public string? ProviderRequestId { get; set; }

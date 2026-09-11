@@ -14459,6 +14459,16 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     PriceCurrency = d.AsNullableString("PriceCurrency"),
     EstimatedInputCost = d.AsNullableDecimal("EstimatedInputCost"),
     EstimatedOutputCost = d.AsNullableDecimal("EstimatedOutputCost"),
+    EstimatedCacheReadCost = d.AsNullableDecimal("EstimatedCacheReadCost"),
+    EstimatedCacheWriteCost = d.AsNullableDecimal("EstimatedCacheWriteCost"),
+    CachedInputPricePerMillion = d.AsNullableDecimal("CachedInputPricePerMillion"),
+    CacheWritePricePerMillion = d.AsNullableDecimal("CacheWritePricePerMillion"),
+    PriceSource = PricingPolicy.NormalizeSource(d.AsNullableString("PriceSource")),
+    PriceObservedAt = d.AsNullableUtcDateTime("PriceObservedAt").ToIso(),
+    // 算没算出钱与算不出的原因，跟金额一起给出来。只给一个空金额，用户没法知道
+    // 是这次没花钱、还是这条模型压根没配价——后者才是他要去处理的事。
+    CostStatus = ResolveLogCostStatus(d),
+    CostUnpricedReason = d.AsNullableString("CostUnpricedReason"),
     EstimatedCallCost = d.AsNullableDecimal("EstimatedCallCost"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
