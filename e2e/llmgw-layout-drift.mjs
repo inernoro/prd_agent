@@ -168,6 +168,22 @@ const STUBS = {
   },
   '/parameter-capabilities/meta': { items: [], templates: [] },
   '/logical-models': { items: LOGICAL_MODELS, total: LOGICAL_MODELS.length },
+  // 白名单列表那条趋势线的数据源。桩里必须给真值：给空会让页面走「暂无用量」分支，
+  // 于是量到的版式是降级态的，而不是用户真正看到的那一屏（判据对着错的东西跑）。
+  '/logical-models/usage': {
+    days: 30,
+    from: nowIso,
+    to: nowIso,
+    items: LOGICAL_MODELS.map((model, modelIndex) => ({
+      publicId: model.publicId,
+      days: Array.from({ length: 30 }, (_, day) => `2026-09-${String(day + 1).padStart(2, '0')}`),
+      dailyCalls: Array.from({ length: 30 }, (_, day) => Math.round(18 + day * 1.6 + Math.sin(day / 2.4 + modelIndex) * 7)),
+      totalCalls: 812 + modelIndex * 96,
+      totalTokens: 813_000 + modelIndex * 41_000,
+      totalCostUsd: 41.2 - modelIndex * 6.4,
+      unpricedCalls: modelIndex === 0 ? 0 : 68,
+    })),
+  },
   '/exchanges': { ...LIST, items: EXCHANGES, exchanges: EXCHANGES },
   '/capabilities/image-layering': {
     capabilityId: 'image-layering', state: 'installed', installed: true, verified: false, hasKey: true,

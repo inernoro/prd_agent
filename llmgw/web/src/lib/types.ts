@@ -966,6 +966,27 @@ export type LogicalModelItem = {
   offerings: ModelOfferingItem[];
 };
 export type LogicalModelsData = { items: LogicalModelItem[]; total: number };
+
+/** 逻辑模型近 N 天用量。白名单列表的趋势线与花费列都读它。 */
+export type LogicalModelUsageItem = {
+  publicId: string;
+  /** 日期刻度，与 dailyCalls 一一对应。 */
+  days: string[];
+  /** 每天的调用次数，没调用的那天是 0 而不是缺项——曲线才不会把空档画成连线。 */
+  dailyCalls: number[];
+  totalCalls: number;
+  totalTokens: number;
+  /** 只累加算得出钱的部分，缺价的不按零成本混进来。 */
+  totalCostUsd: number;
+  /** 缺价调用次数。大于零要在列表上标出来，否则花费会看着莫名其妙地低。 */
+  unpricedCalls: number;
+};
+export type LogicalModelUsageData = {
+  days: number;
+  from: string;
+  to: string;
+  items: LogicalModelUsageItem[];
+};
 export type CreateLogicalModelRequest = {
   publicId: string;
   name: string;

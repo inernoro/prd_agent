@@ -3693,6 +3693,108 @@ app.MapGet("/gw/logical-models", async (HttpContext http, string? modelType, boo
     return Json(ApiEnvelope<LogicalModelsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// 逻辑模型的近 N 天用量：按天卷起来，给列表里那条趋势线用。
+//
+// 为什么单开一个端点而不是复用 /gw/logs/summary：那个回的是整段窗口的标量汇总，
+// 画不出「每天多少」；而列表要在一屏里给十来个模型各一条曲线，逐个模型打一次汇总
+// 是 N+1。这里一次聚合把全部逻辑模型的日桶取回来。
+//
+// 花费只累加 CostStatus=priced 的那部分，缺价的单独计数——把算不出钱的当零成本加进去，
+// 会让这条曲线看起来很省钱，而那正是缺价治理要避免的假象。
+app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
+{
+    var window = Math.Clamp(days ?? 30, 1, 90);
+    var toUtc = DateTime.UtcNow;
+    var fromUtc = toUtc.Date.AddDays(-(window - 1));
+
+    var fb = Builders<BsonDocument>.Filter;
+    var filter = TenantAccess.FilterTeamScope(http, fb.And(
+        fb.Gte("StartedAt", fromUtc),
+        fb.Lte("StartedAt", toUtc),
+        fb.Ne("LogicalModelPublicId", BsonNull.Value),
+        fb.Exists("LogicalModelPublicId")));
+
+    var group = new BsonDocument("$group", new BsonDocument
+    {
+        { "_id", new BsonDocument
+            {
+                { "publicId", "$LogicalModelPublicId" },
+                { "day", new BsonDocument("$dateToString", new BsonDocument
+                    {
+                        { "format", "%Y-%m-%d" },
+                        { "date", "$StartedAt" },
+                    }) },
+            }
+        },
+        { "calls", new BsonDocument("$sum", 1) },
+        { "tokens", new BsonDocument("$sum", new BsonDocument("$add", new BsonArray
+            {
+                new BsonDocument("$ifNull", new BsonArray { "$InputTokens", 0 }),
+                new BsonDocument("$ifNull", new BsonArray { "$OutputTokens", 0 }),
+            })) },
+        { "usd", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Priced }),
+                new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
+                0,
+            })) },
+        { "unpriced", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Unpriced }),
+                1,
+                0,
+            })) },
+    });
+
+    var pipeline = new EmptyPipelineDefinition<BsonDocument>()
+        .Match(filter)
+        .AppendStage<BsonDocument, BsonDocument, BsonDocument>(group);
+    var rows = await logs.Aggregate(pipeline).ToListAsync();
+
+    var dayKeys = Enumerable.Range(0, window)
+        .Select(offset => fromUtc.AddDays(offset).ToString("yyyy-MM-dd"))
+        .ToList();
+    var dayIndex = dayKeys
+        .Select((key, index) => (key, index))
+        .ToDictionary(x => x.key, x => x.index, StringComparer.Ordinal);
+
+    var byModel = new Dictionary<string, LogicalModelUsageItem>(StringComparer.Ordinal);
+    foreach (var row in rows)
+    {
+        if (!row.TryGetValue("_id", out var idValue) || !idValue.IsBsonDocument) continue;
+        var id = idValue.AsBsonDocument;
+        var publicId = id.GetStringOrEmpty("publicId");
+        if (publicId.Length == 0) continue;
+
+        if (!byModel.TryGetValue(publicId, out var item))
+        {
+            item = new LogicalModelUsageItem
+            {
+                PublicId = publicId,
+                Days = dayKeys,
+                DailyCalls = new long[window],
+            };
+            byModel[publicId] = item;
+        }
+
+        var calls = row.AsNullableLong("calls") ?? 0;
+        item.TotalCalls += calls;
+        item.TotalTokens += row.AsNullableLong("tokens") ?? 0;
+        item.TotalCostUsd += row.AsNullableDecimal("usd") ?? 0m;
+        item.UnpricedCalls += row.AsNullableLong("unpriced") ?? 0;
+        if (dayIndex.TryGetValue(id.GetStringOrEmpty("day"), out var slot))
+            item.DailyCalls[slot] += calls;
+    }
+
+    return Json(ApiEnvelope<LogicalModelUsageData>.Ok(new LogicalModelUsageData
+    {
+        Days = window,
+        From = fromUtc,
+        To = toUtc,
+        Items = byModel.Values.OrderByDescending(x => x.TotalCalls).ToList(),
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogicalModelRequest? body) =>
 {
     var publicId = body?.PublicId?.Trim() ?? string.Empty;

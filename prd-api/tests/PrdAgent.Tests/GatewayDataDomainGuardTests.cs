@@ -5893,4 +5893,67 @@ public class GatewayDataDomainGuardTests
 
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
     }
+    /// <summary>
+    /// 白名单列表不许把团队 / appCaller 平铺成名字列表。
+    ///
+    /// 用户原话：「你直接列出这个研发、产品，这样的团队不好，万一很长呢，部门多呢，咋办？」
+    /// 样例数据下平铺看着挺好，一旦部门多起来或名字长起来就会把定宽的那一列撑爆。
+    /// 判据是「给数量」这条唯一口径必须还在，且行上不许再出现 join('、') 那种拼名字的写法。
+    /// </summary>
+    [Fact]
+    public void 白名单列表的团队授权只给数量不平铺名字()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        // 唯一口径：数量由 describeScope 算，行上只调用它
+        Assert.Contains("function describeScope(allowedAppCallerCodes: string[]): string", page);
+        Assert.Contains("`限 ${allowedAppCallerCodes.length} 个 appCaller`", page);
+        Assert.Contains("describeScope(item.allowedAppCallerCodes)", page);
+
+        // 退回平铺就红：把名字 join 起来当行内文案是这条规则要防的那个写法
+        Assert.DoesNotContain("allowedAppCallerCodes.join('、')", page);
+        Assert.DoesNotContain("item.allowedAppCallerCodes.join", page);
+    }
+
+    /// <summary>
+    /// 价格跟着线路走，不折算成一个统一价。
+    ///
+    /// 同一个模型走官网和走中转单价不同，取平均或取最低都会让账单对不上实际走的那条。
+    /// 用户口径：「不同价格就显示多个上游的价格就行，统计诚实即可」。
+    /// </summary>
+    [Fact]
+    public void 白名单列表按线路逐条报价且缺价如实标出()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        // 每条线路各取各的价：单价来自这条线路指向的那个物理模型
+        Assert.Contains("price: formatRoutePrice(model)", page);
+        // 缺价不编：没登记就说没登记
+        Assert.Contains("'单价未登记'", page);
+        // 非美金的价不当美金用，必须先换算（与计价侧 stale_currency 同一口径）
+        Assert.Contains("model.priceCurrency !== 'USD'", page);
+        // 价格来源与时效要透出来，否则「看起来是真的、其实早就过时」无从分辨
+        Assert.Contains("model.priceStale", page);
+        Assert.Contains("model.priceAgeDays", page);
+    }
+
+    /// <summary>
+    /// 用量趋势线的渐变 id 必须每个实例唯一。
+    ///
+    /// 同一页十来条曲线共用一个 id 时，浏览器一律取文档里第一个，后面所有曲线都会去填
+    /// 第一条的渐变——页面照常渲染、测试照常绿，只有肉眼看得出颜色不对。
+    /// 同时「全零」必须画成一条底线而不是一条假的平滑曲线：没人用和用量平稳是两件事。
+    /// </summary>
+    [Fact]
+    public void 用量趋势线渐变id每实例唯一且不把零画成曲线()
+    {
+        var visuals = ReadRepoFile("llmgw/web/src/components/ModelRouteVisuals.tsx");
+
+        Assert.Contains("useId()", visuals);
+        Assert.Contains("`spark${useId().replace(/:/g, '')}`", visuals);
+        Assert.Contains("const flat = peak <= 0;", visuals);
+        // 认不出的上游走中性色，不按名字猜品牌
+        Assert.Contains("function neutralBrand(", visuals);
+    }
+
 }

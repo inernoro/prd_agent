@@ -1329,6 +1329,35 @@ public sealed class CapabilityAuditFinding
     public List<string> UnknownCapabilities { get; set; } = new();
 }
 
+/// <summary>逻辑模型近 N 天用量，供白名单列表里那条趋势线与花费列使用。</summary>
+public sealed class LogicalModelUsageData
+{
+    public int Days { get; set; }
+    public DateTime From { get; set; }
+    public DateTime To { get; set; }
+    public List<LogicalModelUsageItem> Items { get; set; } = new();
+}
+
+public sealed class LogicalModelUsageItem
+{
+    public string PublicId { get; set; } = "";
+
+    /// <summary>日期刻度（yyyy-MM-dd），与 <see cref="DailyCalls"/> 一一对应。</summary>
+    public List<string> Days { get; set; } = new();
+
+    /// <summary>每天的调用次数，没有调用的那天是 0（不是缺项）——曲线才不会把空档画成连线。</summary>
+    public long[] DailyCalls { get; set; } = Array.Empty<long>();
+
+    public long TotalCalls { get; set; }
+    public long TotalTokens { get; set; }
+
+    /// <summary>只累加 CostStatus=priced 的花费。算不出钱的不按零成本混进来。</summary>
+    public decimal TotalCostUsd { get; set; }
+
+    /// <summary>缺价调用次数。大于零时列表上要标出来，否则花费会看着莫名其妙地低。</summary>
+    public long UnpricedCalls { get; set; }
+}
+
 public sealed class LogicalModelsData { public List<LogicalModelItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class LogicalModelItem
 {

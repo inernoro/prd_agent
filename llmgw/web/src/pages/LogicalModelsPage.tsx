@@ -23,6 +23,7 @@ import {
   deleteLogicalModel,
   getExchanges,
   getLogicalModels,
+  getLogicalModelUsage,
   getModels,
   setLogicalModelEnabled,
   setModelOfferingEnabled,
@@ -34,15 +35,18 @@ import type {
   CreateModelOfferingRequest,
   ExchangeItem,
   LogicalModelItem,
+  LogicalModelUsageItem,
   ModelItem,
+  ModelOfferingItem,
 } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
-import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
-import { CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
+import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, METRIC_CAPTION, MONO_META } from '@/lib/typography';
+import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
+import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
@@ -61,6 +65,10 @@ export function LogicalModelsPage() {
   const [items, setItems] = useState<LogicalModelItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
+  // 近 30 天用量：列表那条趋势线与花费列的唯一数据源。拉不到就整列不渲染，
+  // 不画一条假的平滑曲线——「没数据」和「用量平稳」是两件事，画成一样会误导。
+  const [usage, setUsage] = useState<Map<string, LogicalModelUsageItem> | null>(null);
+  const [expanded, setExpanded] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // 带 tone 的提示：此前是裸字符串 + 固定 tone="ok"，10 个写入点里有 6 个是失败路径，
   // 于是「更新路由策略失败」会渲染成一条绿色成功条 —— 运维会以为改动生效了（Codex P2）。
@@ -81,8 +89,8 @@ export function LogicalModelsPage() {
 
   async function reload() {
     setError(null);
-    const [logicalRes, modelsRes, exchangesRes] = await Promise.all([
-      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }),
+    const [logicalRes, modelsRes, exchangesRes, usageRes] = await Promise.all([
+      getLogicalModels(), getModels({ enabled: true }), getExchanges({ enabled: true }), getLogicalModelUsage(30),
     ]);
     if (!logicalRes.success) {
       setError(logicalRes.error?.message || '加载逻辑模型失败');
@@ -92,6 +100,8 @@ export function LogicalModelsPage() {
     setItems(logicalRes.data.items);
     if (modelsRes.success) setModels(modelsRes.data.items.filter((x) => x.authority === 'llm_gateway'));
     if (exchangesRes.success) setExchanges(exchangesRes.data.items.filter((x) => x.authority === 'llm_gateway'));
+    // 用量只是锦上添花，取不到不该让整页报错——列表照常渲染，那一列留空。
+    setUsage(usageRes.success ? new Map(usageRes.data.items.map((x) => [x.publicId, x])) : null);
   }
 
   useEffect(() => { void reload(); }, []);
@@ -215,17 +225,31 @@ export function LogicalModelsPage() {
   }
 
   const offeringCount = items?.reduce((sum, x) => sum + x.offerings.length, 0) ?? 0;
+  // 抬头先给结论再给数字：一排孤零零的计数读完不知道该干嘛，出问题的那几个才是要先看的。
+  const attention = useMemo(() => (items ?? [])
+    .filter((x) => x.enabled)
+    .map((x) => ({ item: x, health: summarizeHealth(x, describeRoutes(x, models)) }))
+    .filter((x) => x.health.tone === 'warn'), [items, models]);
+  const monthlyCostUsd = useMemo(
+    () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.totalCostUsd || 0), 0),
+    [usage]);
+  const unpricedCalls = useMemo(
+    () => [...(usage?.values() ?? [])].reduce((sum, x) => sum + (x.unpricedCalls || 0), 0),
+    [usage]);
 
   return (
     <PageShell>
       <PageHeader
-        title="逻辑模型目录"
-        subtitle="应用只选择稳定的模型标识，接哪个上游由它下面的 Offering 决定。"
+        title="模型白名单"
+        subtitle={attention.length === 0
+          ? '名单外的调用一律拒绝。应用只选择稳定的模型标识，接哪个上游由它下面的线路决定。'
+          : `${attention.map((x) => x.item.name).join('、')} 需要看一眼，其余线路正常。`}
         summary={items ? (
           <>
-            <span>模型 <strong>{items.length}</strong></span>
+            <span>名单内 <strong>{items.length}</strong> 个模型 · <strong>{offeringCount}</strong> 条线路</span>
             <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
-            <span>Offering <strong>{offeringCount}</strong></span>
+            {usage ? <span>近 30 天 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
+            {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
           </>
         ) : undefined}
         actions={canWrite ? (
@@ -305,109 +329,186 @@ export function LogicalModelsPage() {
           </Card>
         ) : null}
 
-        {(items ?? []).map((item) => (
-          <Card key={item.id} style={CARD_BODY}>
-            <div style={{ display: 'flex', gap: GAP.section, justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
-              <div>
-                <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <strong style={{ fontSize: 'var(--fs-body)' }}>{item.name}</strong>
-                  <code style={MONO_META}>{item.publicId}</code>
-                  <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
-                  <Chip label={item.routingStrategy === 'weighted' ? '权重路由' : '优先级路由'} color="var(--text-secondary)" bg="var(--bg-elevated)" />
-                  <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
+        {items !== null && items.length > 0 ? (
+          <Card style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ ...ROW_GRID, ...ROW_HEAD }}>
+              <span style={COL_CAP}>模型</span>
+              <span style={COL_CAP}>上游线路与单价</span>
+              <span style={COL_CAP}>近 30 天</span>
+              <span style={COL_CAP}>状态</span>
+              <span />
+            </div>
+
+            {(items ?? []).map((item) => {
+              const routes = describeRoutes(item, models);
+              const stat = usage?.get(item.publicId) ?? null;
+              const open = expanded === item.id;
+              const health = summarizeHealth(item, routes);
+              return (
+                <div key={item.id} style={{ borderTop: '1px solid var(--border-subtle)', background: health.tone === 'warn' ? 'var(--warn-bg)' : undefined, boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : undefined }}>
+                  <div style={ROW_GRID}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
+                      <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
+                      <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                        <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                        <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {item.publicId} · {describeScope(item.allowedAppCallerCodes)}
+                        </span>
+                      </span>
+                    </span>
+
+                    <span style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
+                      {routes.length === 0
+                        ? <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>没有上游线路，这个模型不承接请求</span>
+                        : routes.map((route) => (
+                          <span key={route.id} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, opacity: route.health === 'live' ? 1 : 0.66, minWidth: 0 }}>
+                            <RouteDot health={route.health} />
+                            <span style={{ fontSize: 'var(--fs-caption)', whiteSpace: 'nowrap' }}>{route.label}</span>
+                            <span style={route.priced ? { ...MONO_META, whiteSpace: 'nowrap' } : { ...HINT_TEXT, whiteSpace: 'nowrap' }}>{route.price}</span>
+                            <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>{route.roleLabel}</span>
+                          </span>
+                        ))}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal }}>
+                      {stat ? (
+                        <>
+                          <UsageSparkline values={stat.dailyCalls} title={`近 30 天 ${stat.totalCalls} 次调用`} />
+                          <span style={{ display: 'flex', flexDirection: 'column' }}>
+                            <span style={{ ...MONO_META, color: 'var(--text-primary)' }}>{formatUsd(stat.totalCostUsd)}</span>
+                            <span style={HINT_TEXT}>{formatCount(stat.totalCalls)} 次</span>
+                          </span>
+                        </>
+                      ) : <span style={HINT_TEXT}>暂无</span>}
+                    </span>
+
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
+                      <span aria-hidden style={{ width: 7, height: 7, borderRadius: 999, flexShrink: 0, background: health.dot }} />
+                      <span style={{ fontSize: 'var(--fs-secondary)', color: health.tone === 'warn' ? 'var(--warn)' : 'var(--text-secondary)' }}>{health.text}</span>
+                    </span>
+
+                    <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setExpanded((x) => (x === item.id ? null : item.id))}>
+                      {open ? '收起' : '展开'}
+                    </Button>
+                  </div>
+
+                  {open ? (
+                    <div style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px 46px`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
+                      {health.tone === 'warn' && health.advice ? <InlineAlert tone="info">{health.advice}</InlineAlert> : null}
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                        <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
+                        <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--ok)' : 'var(--text-muted)'} bg={item.enabled ? 'var(--ok-bg)' : 'var(--bg-elevated)'} />
+                        <span style={HINT_TEXT}>{item.capabilities.join(' · ') || '未声明能力'}</span>
+                        {canWrite ? (
+                          <>
+                            <span style={{ flex: 1 }} />
+                            <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}>
+                              <option value="priority">优先级与故障切换</option>
+                              <option value="weighted">权重负载均衡</option>
+                            </select>
+                            <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
+                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
+                            <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
+                          </>
+                        ) : null}
+                      </div>
+
+                      {offeringFor === item.id && canWrite ? (
+                        <form onSubmit={(e) => submitOffering(e, item)} style={INSET_BLOCK}>
+                          <FormGrid>
+                            <label style={labelStyle}>
+                              <span>目标类型</span>
+                              <select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}>
+                                <option value="model">Provider 模型</option>
+                                <option value="exchange">Exchange</option>
+                              </select>
+                            </label>
+                            <label style={labelStyle}>
+                              <span>上游目标</span>
+                              <select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}>
+                                <option value="">请选择</option>
+                                {targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+                              </select>
+                            </label>
+                            <label style={labelStyle}>
+                              <span>
+                                上游模型标识
+                                <HelpPopover label="上游模型标识">
+                                  留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。
+                                  协议与 Endpoint path 两栏同理，填了才覆盖。
+                                </HelpPopover>
+                              </span>
+                              <input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>协议</span>
+                              <input value={offeringDraft.protocol || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, protocol: e.target.value }))} placeholder="openai / google / exchange" style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>Endpoint path</span>
+                              <input value={offeringDraft.endpointPath || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, endpointPath: e.target.value }))} placeholder="例如 v1beta/models/{model}:generateContent" style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>优先级</span>
+                              <input type="number" min={0} value={offeringDraft.priority ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, priority: Number(e.target.value) }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>权重</span>
+                              <input type="number" min={1} value={offeringDraft.weight ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, weight: Number(e.target.value) }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>
+                                最大并发
+                                <HelpPopover label="最大并发">
+                                  留空表示继承上游自己的并发上限；每分钟速率留空表示这一层不额外限流。
+                                  两栏都填时，本条上游与上游本身的限制同时生效，任一层触顶都会让请求切到下一个上游。
+                                </HelpPopover>
+                              </span>
+                              <input type="number" min={1} max={10000} value={offeringDraft.maxConcurrency ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, maxConcurrency: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>每分钟速率</span>
+                              <input type="number" min={1} max={1000000} value={offeringDraft.rateLimitPerMinute ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, rateLimitPerMinute: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
+                            </label>
+                            <label style={labelStyle}>
+                              <span>运维备注</span>
+                              <input value={offeringDraft.notes || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, notes: e.target.value }))} style={inputStyle} />
+                            </label>
+                            <Button type="submit" variant="primary" size="sm" disabled={busy === `offering:${item.id}`}>{busy === `offering:${item.id}` ? '保存中' : editingOfferingId ? '保存修改' : '保存 Offering'}</Button>
+                            {editingOfferingId ? <Button type="button" size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>取消编辑</Button> : null}
+                          </FormGrid>
+                        </form>
+                      ) : null}
+
+                      {routes.map((route) => (
+                        <div key={`detail-${route.id}`} style={{ ...INSET_BLOCK, display: 'flex', alignItems: 'center', gap: GAP.section }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, width: 200, flexShrink: 0 }}>
+                            <RouteDot health={route.health} />
+                            <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+                              <strong style={{ fontSize: 'var(--fs-secondary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{route.label}</strong>
+                              <span style={HINT_TEXT}>{route.roleLabel} · 协议 {route.protocol}</span>
+                            </span>
+                          </span>
+                          <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0, flex: 1 }}>
+                            <span style={HINT_TEXT}>{route.priceOrigin}</span>
+                            <span style={HINT_TEXT}>优先级 {route.priority} · 权重 {route.weight} · {route.governance}</span>
+                          </span>
+                          {canWrite ? (
+                            <>
+                              <Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>
+                              <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button>
+                            </>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
-                <div style={{ ...HINT_TEXT, marginTop: GAP.tight }}>{item.capabilities.join(' · ') || '未声明能力'} · {item.offerings.length} 个 Offering</div>
-                <div style={{ ...HINT_TEXT, marginTop: GAP.tight }}>可用 appCaller：{item.allowedAppCallerCodes.length > 0 ? item.allowedAppCallerCodes.join('、') : '当前租户全部 appCaller'}</div>
-              </div>
-              {canWrite ? <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
-                <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}><option value="priority">优先级与故障切换</option><option value="weighted">权重负载均衡</option></select>
-                <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button><Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
-              </div> : null}
-            </div>
-
-            {offeringFor === item.id && canWrite ? (
-              <form onSubmit={(e) => submitOffering(e, item)} style={{ ...INSET_BLOCK, marginTop: GAP.section }}>
-                <FormGrid>
-                  <label style={labelStyle}>
-                    <span>目标类型</span>
-                    <select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}>
-                      <option value="model">Provider 模型</option>
-                      <option value="exchange">Exchange</option>
-                    </select>
-                  </label>
-                  <label style={labelStyle}>
-                    <span>上游目标</span>
-                    <select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}>
-                      <option value="">请选择</option>
-                      {targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
-                    </select>
-                  </label>
-                  <label style={labelStyle}>
-                    <span>
-                      上游模型标识
-                      <HelpPopover label="上游模型标识">
-                        留空就沿用上面所选目标自己登记的模型名；只有同一个上游要用另一个模型名时才在这里覆盖。
-                        协议与 Endpoint path 两栏同理，填了才覆盖。
-                      </HelpPopover>
-                    </span>
-                    <input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>协议</span>
-                    <input value={offeringDraft.protocol || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, protocol: e.target.value }))} placeholder="openai / google / exchange" style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>Endpoint path</span>
-                    <input value={offeringDraft.endpointPath || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, endpointPath: e.target.value }))} placeholder="例如 v1beta/models/{model}:generateContent" style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>优先级</span>
-                    <input type="number" min={0} value={offeringDraft.priority ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, priority: Number(e.target.value) }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>权重</span>
-                    <input type="number" min={1} value={offeringDraft.weight ?? 100} onChange={(e) => setOfferingDraft((x) => ({ ...x, weight: Number(e.target.value) }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>
-                      最大并发
-                      <HelpPopover label="最大并发">
-                        留空表示继承上游自己的并发上限；每分钟速率留空表示这一层不额外限流。
-                        两栏都填时，本条上游与上游本身的限制同时生效，任一层触顶都会让请求切到下一个上游。
-                      </HelpPopover>
-                    </span>
-                    <input type="number" min={1} max={10000} value={offeringDraft.maxConcurrency ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, maxConcurrency: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>每分钟速率</span>
-                    <input type="number" min={1} max={1000000} value={offeringDraft.rateLimitPerMinute ?? ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, rateLimitPerMinute: e.target.value ? Number(e.target.value) : undefined }))} style={inputStyle} />
-                  </label>
-                  <label style={labelStyle}>
-                    <span>运维备注</span>
-                    <input value={offeringDraft.notes || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, notes: e.target.value }))} style={inputStyle} />
-                  </label>
-                  <Button type="submit" variant="primary" size="sm" disabled={busy === `offering:${item.id}`}>{busy === `offering:${item.id}` ? '保存中' : editingOfferingId ? '保存修改' : '保存 Offering'}</Button>
-                  {editingOfferingId ? <Button type="button" size="sm" variant="ghost" onClick={() => openNewOffering(item.id)}>取消编辑</Button> : null}
-                </FormGrid>
-              </form>
-            ) : null}
-
-            <div style={{ marginTop: GAP.section, overflowX: 'auto' }}>
-              <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
-                <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={TABLE_HEAD_CELL}>{x}</th>)}</tr></thead>
-                <tbody>{item.offerings.length === 0 ? <tr><td colSpan={7} style={td}>还没有可用上游，当前逻辑模型不会承接请求。</td></tr> : item.offerings.map((o) => (
-                  <tr key={o.id}>
-                    <td style={td}><strong>{o.targetName}</strong><div style={HINT_TEXT}>{o.providerName || o.upstreamModelId || o.targetId}</div></td>
-                    <td style={td}>{o.targetKind}</td><td style={td}>{o.protocol || '继承目标'}</td><td style={td}>{o.priority} / {o.weight}</td>
-                    <td style={td}>{o.healthStatus === 0 ? '健康' : o.healthStatus === 1 ? '降权' : '不可用'}{o.consecutiveFailures > 0 ? ` · 连续失败 ${o.consecutiveFailures}` : ''}</td>
-                    <td style={td}>{o.maxConcurrency ? `并发 ${o.maxConcurrency}` : '继承上游'}{o.rateLimitPerMinute ? ` · ${o.rateLimitPerMinute}/分钟` : ''}</td>
-                    <td style={td}>{canWrite ? <div style={{ display: 'flex', gap: GAP.tight }}><Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, o)}>编辑</Button><Button size="sm" variant="ghost" disabled={busy === o.id} onClick={() => void toggleOffering(item, o.id, o.enabled)}>{o.enabled ? '停用' : '启用'}</Button></div> : (o.enabled ? '已启用' : '已停用')}</td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
+              );
+            })}
           </Card>
-        ))}
+        ) : null}
 
         <DetailsBlock title="工作原理：逻辑模型、Offering 与模型池的分工">
           <Prose>
@@ -425,4 +526,143 @@ export function LogicalModelsPage() {
   );
 }
 
-const td: React.CSSProperties = TABLE_CELL_MUTED;
+// ── 列表行的版式常量 ──────────────────────────────────────────────
+// 五列定宽而不是 auto：十来行模型的列头必须对齐，auto 会让每行各算各的宽度。
+const ROW_GRID: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr) 320px 168px 156px 64px',
+  alignItems: 'center',
+  gap: GAP.page,
+  padding: `${GAP.section}px ${CARD_PADDING}px`,
+};
+const ROW_HEAD: React.CSSProperties = { background: 'var(--bg-base)', paddingTop: GAP.normal, paddingBottom: GAP.normal };
+const COL_CAP: React.CSSProperties = { ...METRIC_CAPTION, whiteSpace: 'nowrap' };
+
+/**
+ * 团队授权只给数量，不平铺名字。
+ *
+ * 平铺的写法在样例数据下看着挺好（「研发、产品」），一旦部门多起来或者名字长起来
+ * 就会把整行撑爆，而列宽是定死的。数量不会变长，名字留在展开态里看。
+ */
+function describeScope(allowedAppCallerCodes: string[]): string {
+  return allowedAppCallerCodes.length === 0 ? '全部 appCaller' : `限 ${allowedAppCallerCodes.length} 个 appCaller`;
+}
+
+type RouteView = {
+  id: string;
+  offering: ModelOfferingItem;
+  label: string;
+  providerName?: string | null;
+  upstreamModelId?: string | null;
+  price: string;
+  /** 价格是不是真有值。没值时那一格是说明文字，不该用等宽排版——中文在等宽下发虚。 */
+  priced: boolean;
+  priceOrigin: string;
+  protocol: string;
+  priority: number;
+  weight: number;
+  governance: string;
+  health: RouteHealth;
+  roleLabel: string;
+};
+
+/**
+ * 把一个逻辑模型的 Offering 列表翻译成「线路」——列表上一条线路一行。
+ *
+ * 单价取的是这条线路指向的那个物理模型自己的价格：同一个模型走官网和走中转单价不同，
+ * 不折算成一个统一价（用户口径：几条线路就报几个价，统计诚实即可）。
+ * Exchange 线路当前没有价格字段，如实写「未登记」，不拿别处的价顶上。
+ */
+function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[] {
+  const ordered = [...item.offerings].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
+  // 「谁在扛流量」= 第一条既启用又健康的线路。全挂了就没有 live，不硬指一条。
+  const liveId = ordered.find((x) => x.enabled && x.healthStatus === 0)?.id ?? null;
+
+  return ordered.map((offering) => {
+    const model = offering.targetKind === 'model' ? models.find((x) => x.id === offering.targetId) : undefined;
+    const health: RouteHealth = !offering.enabled ? 'disabled'
+      : offering.healthStatus === 2 ? 'down'
+      : offering.id === liveId ? 'live'
+      : 'standby';
+    return {
+      id: offering.id,
+      offering,
+      label: offering.providerName || offering.targetName || offering.targetId,
+      providerName: offering.providerName,
+      upstreamModelId: offering.upstreamModelId,
+      price: formatRoutePrice(model),
+      priced: hasPrice(model),
+      priceOrigin: describePriceOrigin(model),
+      protocol: offering.protocol || '继承目标',
+      priority: offering.priority,
+      weight: offering.weight,
+      governance: offering.maxConcurrency ? `并发 ${offering.maxConcurrency}` : '并发继承上游',
+      health,
+      roleLabel: !offering.enabled ? '已停用'
+        : offering.healthStatus === 2 ? '熔断'
+        : offering.id === liveId ? '主' : '备',
+    };
+  });
+}
+
+function hasPrice(model: ModelItem | undefined): boolean {
+  if (!model) return false;
+  return model.pricePerCall != null || model.inputPricePerMillion != null || model.outputPricePerMillion != null;
+}
+
+/** 单价文案。没登记就说没登记——缺价不挡调用，但也不能假装有价。 */
+function formatRoutePrice(model: ModelItem | undefined): string {
+  if (!model) return '单价未登记';
+  if (model.pricePerCall != null) return `${formatUsd(model.pricePerCall)} / 次`;
+  const input = model.inputPricePerMillion;
+  const output = model.outputPricePerMillion;
+  if (input == null && output == null) return '单价未登记';
+  return `${input == null ? '—' : formatUsd(input)} / ${output == null ? '—' : formatUsd(output)}`;
+}
+
+function describePriceOrigin(model: ModelItem | undefined): string {
+  if (!model) return '单价未登记';
+  if (model.priceCurrency && model.priceCurrency !== 'USD') return `价格按 ${model.priceCurrency} 记，未换算成美金`;
+  if (!hasPrice(model)) return '单价未登记，这条线路的调用算不出钱';
+  const source = model.priceSource === 'upstream' ? '上游返回'
+    : model.priceSource === 'admin' ? '人工录入'
+    : model.priceSource === 'migrated' ? '历史价换算' : '来源不详';
+  const age = model.priceAgeDays == null ? '' : `，${model.priceAgeDays} 天前取的`;
+  return `价格${source}${age}${model.priceStale ? '（已过复核期）' : ''}`;
+}
+
+type HealthSummary = { text: string; dot: string; tone: 'ok' | 'warn'; advice?: string };
+
+/** 一行只给一句结论：要不要管。细节留给展开态。 */
+function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSummary {
+  if (!item.enabled) return { text: '已停用', dot: 'var(--text-muted)', tone: 'ok' };
+  if (routes.length === 0) {
+    return { text: '没有上游', dot: 'var(--warn)', tone: 'warn', advice: '这个模型下面还没有上游线路，它不会承接任何请求。先添加一条上游。' };
+  }
+  const down = routes.filter((x) => x.health === 'down');
+  const live = routes.find((x) => x.health === 'live');
+  if (down.length > 0 && live) {
+    return {
+      text: '已自动切走',
+      dot: 'var(--warn)',
+      tone: 'warn',
+      advice: `${down.map((x) => x.label).join('、')} 连续失败已被摘掉，流量正走 ${live.label}。冷却期满后系统会拿一条真实请求去试探，成功就自己回来，不用等人处理。`,
+    };
+  }
+  if (!live) {
+    return { text: '无可用线路', dot: 'var(--err)', tone: 'warn', advice: '所有上游线路都不可用，这个模型当前会解析失败。检查上游密钥与配额，或在展开里手动恢复一条。' };
+  }
+  if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
+  return { text: '正常', dot: 'var(--ok)', tone: 'ok' };
+}
+
+function formatUsd(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return '$0.00';
+  return value < 0.01 ? `$${value.toFixed(4)}` : `$${value.toFixed(2)}`;
+}
+
+function formatCount(value: number): string {
+  if (value >= 10000) return `${(value / 10000).toFixed(1)} 万`;
+  return value.toLocaleString('en-US');
+}
+

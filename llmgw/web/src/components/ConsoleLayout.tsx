@@ -24,7 +24,7 @@ const NAV_GROUPS: NavGroup[] = [
     { to: '/app-callers', label: 'appCaller', icon: <Tags size={16} />, page: 'appCallers' },
   ] },
   { label: '路由', items: [
-    { to: '/logical-models', label: '逻辑模型', icon: <Layers3 size={16} />, page: 'routeConfig' },
+    { to: '/logical-models', label: '模型白名单', icon: <Layers3 size={16} />, page: 'routeConfig' },
     { to: '/pools', label: '模型池', icon: <Boxes size={16} />, page: 'routeConfig' },
     { to: '/platforms', label: 'Provider', icon: <Server size={16} />, page: 'routeConfig' },
     { to: '/models', label: '模型', icon: <Cpu size={16} />, page: 'routeConfig' },

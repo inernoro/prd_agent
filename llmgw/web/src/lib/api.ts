@@ -40,6 +40,7 @@ import type {
   PlatformsData,
   ModelsData,
   LogicalModelsData,
+  LogicalModelUsageData,
   LogicalModelItem,
   ModelOfferingItem,
   CreateLogicalModelRequest,
@@ -627,6 +628,9 @@ export function getLogicalModels(params?: { modelType?: string; enabled?: boolea
   return apiRequest<LogicalModelsData>('/logical-models', {
     query: { modelType: params?.modelType, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
   });
+}
+export function getLogicalModelUsage(days = 30): Promise<ApiResponse<LogicalModelUsageData>> {
+  return apiRequest<LogicalModelUsageData>('/logical-models/usage', { query: { days: String(days) } });
 }
 export function createLogicalModel(req: CreateLogicalModelRequest): Promise<ApiResponse<LogicalModelItem>> {
   return apiRequest<LogicalModelItem>('/logical-models', { method: 'POST', body: req });
