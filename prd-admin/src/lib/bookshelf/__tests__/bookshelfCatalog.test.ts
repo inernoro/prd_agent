@@ -71,18 +71,47 @@ describe('痛点药方表', () => {
     });
   });
 
-  // 痛点写的是处境，不是某个人说过的话。
+  // 这一卷内容写的是处境，不是某个人说过的话。
   // 页面对全员可见，逐字挂上同事的原话等于把人架在那儿——转述成症状既留住
-  // 「说的就是我」的共鸣，也不让任何人对号入座。这条守卫防的是原话哪天又被贴回来。
-  it('痛点不留转述痕迹，也不出现人名', () => {
-    const TRACE = ['他说', '我说', '昨天', '跟我说', '不应该是我'];
-    const texts = [
-      ...VOLUMES.map((v) => ({ where: `卷「${v.name}」的 painQuote`, text: v.painQuote })),
-      ...PAIN_REMEDIES.map((r) => ({ where: `痛点卡「${r.quote}」`, text: r.quote })),
+  // 「说的就是我」的共鸣，也不让任何人对号入座。
+  //
+  // 判据范围是**全部面向读者的文案**，不只是痛点卡：第一版只扫 painQuote 与 quote，
+  // 于是书目 why 里的「很多我都审不出来」、考题里的「什么都不跟我说」「扫码流程」
+  // 一路漏到线上，是线上验收才抓回来的。判据窄过它该管的范围，就是没有判据。
+  it('全部读者可见文案都不留原话、人名与可定位的业务细节', () => {
+    const RETIRED = [
+      '王忠',                    // 同事姓名，一度直接挂在卷七的 painQuote 上
+      '不应该是我', '审不出来',  // 评审那段对话
+      '什么都不跟我说',          // 规范/构建/发布那段
+      '扫码', 'AI 都在乱写', '项目改的我都不想看了', '心累', '急赶急',
+      '他说', '我说', '昨天',    // 转述痕迹：出现即说明在照抄对话
     ];
+    const texts: { where: string; text: string }[] = [];
+    VOLUMES.forEach((v) => {
+      texts.push({ where: `卷「${v.name}」的 painQuote`, text: v.painQuote });
+      texts.push({ where: `卷「${v.name}」的 cure`, text: v.cure });
+      texts.push({ where: `卷「${v.name}」的 subtitle`, text: v.subtitle });
+      v.books.forEach((b) => {
+        texts.push({ where: `《${b.title}》的 why`, text: b.why });
+        texts.push({ where: `《${b.title}》的 takeaway`, text: b.takeaway });
+      });
+    });
+    PAIN_REMEDIES.forEach((r) => {
+      texts.push({ where: `痛点卡「${r.quote}」`, text: r.quote });
+      texts.push({ where: `痛点卡「${r.quote}」的 diagnosis`, text: r.diagnosis });
+    });
+    QUESTIONS.forEach((q) => {
+      texts.push({ where: `题 ${q.id} 的题干`, text: q.stem });
+      texts.push({ where: `题 ${q.id} 的解析`, text: q.explain });
+      q.options.forEach((o, i) => texts.push({ where: `题 ${q.id} 选项 ${i}`, text: o }));
+    });
     texts.forEach(({ where, text }) => {
-      TRACE.forEach((w) => {
-        expect(text, `${where} 带着转述痕迹「${w}」，说明是照抄某个人的原话`).not.toContain(w);
+      // 字段名写错时 text 会是 undefined，扫描静默通过——守卫自己就成了摆设。
+      // 第一版正是这样：PainRemedy 上并没有 cure 字段。
+      expect(typeof text, `${where} 取到的不是字符串，守卫扫了个空`).toBe('string');
+      RETIRED.forEach((w) => {
+        expect(text, `${where} 里出现「${w}」——那是同事的原话/姓名或能对号入座的业务细节`)
+          .not.toContain(w);
       });
     });
   });
