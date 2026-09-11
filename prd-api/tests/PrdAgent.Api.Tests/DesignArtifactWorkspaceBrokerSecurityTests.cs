@@ -483,7 +483,7 @@ public sealed class DesignArtifactWorkspaceBrokerSecurityTests
         const string runId = "run-model-audit-count";
         var workspace = await fixture.PrepareAsync(runId);
         // 真实旧文档仍可能留有已取消的上限；不迁移业务数据，也不能让它继续拦截请求。
-        var raw = fixture.Db.DesignArtifactRuns.Database.GetCollection<BsonDocument>("design_artifact_runs");
+        var raw = fixture.Db.DesignArtifactRuns.Database.GetCollection<BsonDocument>(fixture.Db.DesignArtifactRuns.CollectionNamespace.CollectionName);
         await raw.UpdateOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", runId),
             Builders<BsonDocument>.Update

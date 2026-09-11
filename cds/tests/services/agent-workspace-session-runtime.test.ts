@@ -10,12 +10,16 @@ import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
   MAP_DESIGN_WORKSPACE_SCHEMA,
+  OPEN_DESIGN_CODEX_VERSION,
+  buildOpenDesignCodexConfig,
   buildGeneratedArtifactFiles,
+  buildGeneratedPublicArtifactPackage,
   canAcceptUntrackedWorkspaceEdit,
   classifyQualityRepairReason,
   computePublicArtifactRevision,
   createArtifactQualityGate,
   hardenSelfContainedHtml,
+  hardenVerifiedPackageHtml,
   normalizeGeneratedHtml,
   normalizeWorkspaceTransfer,
 } from '../../src/services/agent-workspace-session-runtime.js';
@@ -172,6 +176,7 @@ class RecordingShell implements IShellExecutor {
   failContainerCreate = false;
   failVolumeInit = false;
   failTemplateInit = false;
+  failCodexConfig = false;
   volumeCleanupFailures = 0;
   egressCleanupFailures = 0;
   outputPreflightFailure: 'total_bytes' | 'file_count' | 'workspace_file_count' | 'node_count' | 'directory_depth' | 'special_file' | 'path_not_allowed' | 'input_changed' | 'file_changed' | null = null;
@@ -196,7 +201,7 @@ class RecordingShell implements IShellExecutor {
       return result('', 'storage limit was not enforced', 1);
     }
     if (command.includes('--entrypoint /bin/sh') && !command.includes('--cap-add CHOWN')) {
-      return result('/usr/local/bin/opencode\n');
+      return result('');
     }
     if (command.startsWith('docker network create')) return result('network-id\n');
     if (command.startsWith('docker volume create')) return result('volume-id\n');
@@ -252,6 +257,9 @@ class RecordingShell implements IShellExecutor {
       return this.failEgressConnect ? result('', 'connect denied', 1) : result('connected\n');
     }
     if (command.startsWith('docker exec ')) {
+      if (this.failCodexConfig && command.includes("/config.toml")) {
+        return result('', 'config write denied', 1);
+      }
       if (command.includes('/__health') && this.throwEgressHealth) throw new Error('health exec timed out');
       if (this.failTemplateInit && command.includes('design-templates/web-prototype')) {
         return result('', 'web prototype resources missing', 1);
@@ -297,7 +305,7 @@ class RecordingShell implements IShellExecutor {
 }
 
 function buildPackage(
-  files: Array<{ path: string; content: string; mediaType: string }>,
+  files: Array<{ path: string; content: string | Buffer; mediaType: string }>,
   options: { injectDefaultTask?: boolean; runId?: string; baseRevision?: string; instruction?: string } = {},
 ) {
   const runId = options.runId ?? 'map-run-1';
@@ -385,6 +393,198 @@ describe('AgentWorkspaceSessionRuntime', () => {
     vi.useRealTimers();
     vi.restoreAllMocks();
     if (rootDir) fs.rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it.each([[false, true], [true, true], [false, false]])('seeds complete edit resources before execution and never restores deleted output: delete=%s reports=%s', async (removeAsset, includeReports) => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-edit-resource-seed-'));
+    const html = '<!doctype html><html><head><title>Library</title></head><body><main><h1>Original sentence.</h1><p>Library information.</p></main></body></html>';
+    const metadataPaths = ['assets/accessibility-static-report.json', 'assets/design-tokens.json', 'assets/page-outline.json', 'assets/provenance.json'];
+    const assets = [
+      { path: 'assets/site.css', content: 'body { color: #123; }', mediaType: 'text/css' },
+      { path: 'assets/app.js', content: 'document.documentElement.dataset.ready = "yes";', mediaType: 'application/javascript' },
+      { path: 'assets/pixel.png', content: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6hQAAAABJRU5ErkJggg==', 'base64'), mediaType: 'image/png' },
+    ];
+    const oldPackage = buildGeneratedPublicArtifactPackage(hardenSelfContainedHtml(html), assets.map((file) => ({
+      path: file.path, contentBase64: Buffer.from(file.content).toString('base64'), sha256: digest(Buffer.from(file.content)),
+      size: Buffer.byteLength(file.content), mediaType: file.path.endsWith('.css') ? 'text/css; charset=utf-8' : file.path.endsWith('.js') ? 'text/javascript; charset=utf-8' : file.mediaType,
+    })));
+    const inputFiles = [
+      { path: 'current/index.html', content: html, mediaType: 'text/html' },
+      ...assets.map((file) => ({ ...file, path: `current/${file.path}` })),
+      ...oldPackage.filter((file) => metadataPaths.includes(file.path) || file.path === 'manifest.json').map((file) => ({
+        path: `current/${file.path}`, content: Buffer.from(file.contentBase64, 'base64'), mediaType: file.mediaType,
+      })),
+    ];
+    const pkg = buildPackage(inputFiles);
+    const shell = new RecordingShell();
+    let committed: any;
+    let models = 0;
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir, pollIntervalMs: 1, capabilityCacheMs: 0,
+      fetchImpl: async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+        if (url.pathname === '/input') return new Response(pkg.serialized);
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+        if (url.pathname === '/api/import/folder') return Response.json({ project: { id: 'edit-project', skillId: 'web-prototype' }, conversationId: 'edit-conversation' });
+        if (url.pathname === '/api/runs' && init?.method === 'POST') {
+          const request = JSON.parse(String(init.body));
+          expect(request.systemPrompt).not.toContain('must be removed from the final deliverable');
+          expect(request.systemPrompt).toContain('Preserve existing scripts, resources, and interactions');
+          if (models++ === 0) {
+            expect(fs.readFileSync(path.join(shell.workspaceDir, 'index.html'), 'utf8')).toBe(html);
+            for (const asset of assets) expect(fs.readFileSync(path.join(shell.workspaceDir, asset.path))).toEqual(Buffer.from(asset.content));
+            for (const filePath of [...metadataPaths, 'manifest.json']) expect(fs.existsSync(path.join(shell.workspaceDir, filePath))).toBe(false);
+            fs.writeFileSync(path.join(shell.workspaceDir, 'index.html'), html.replace('Original sentence.', 'Updated sentence.'));
+            if (removeAsset) fs.unlinkSync(path.join(shell.workspaceDir, 'assets/pixel.png'));
+          }
+          for (const file of inputFiles) expect(fs.readFileSync(path.join(shell.workspaceDir, file.path))).toEqual(Buffer.from(file.content));
+          return Response.json({ runId: 'edit-run' }, { status: 202 });
+        }
+        if (url.pathname === '/api/runs/edit-run') return Response.json({ status: 'succeeded', deliverableValid: true });
+        if (url.pathname === '/commit') {
+          committed = JSON.parse(String(init?.body));
+          return Response.json({ artifactRef: 'artifact:edit', resultSha256: digest(String(init?.body)) });
+        }
+        if (url.pathname.endsWith('/cancel')) return Response.json({});
+        return new Response('', { status: 404 });
+      },
+    });
+    await runtime.create('edit-seed', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA, inputPackageUrl: 'https://map.example.test/input', resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'fixture-transfer', inputSha256: pkg.sha256, baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024, maxOutputBytes: 6 * 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json', ...(includeReports ? ['assets/**'] : assets.map((asset) => asset.path))],
+    }, { cpuCores: 1, memoryMb: 768, timeoutSeconds: 30, networkPolicy: 'egress-only', autoCleanupMinutes: 5 });
+    // The fake shell performs no initialization for us: real create must materialize the editable copy.
+    expect(fs.readFileSync(path.join(shell.workspaceDir, 'assets/app.js'))).toEqual(Buffer.from(assets[1].content));
+    await runtime.execute('edit-seed', 'Update the sentence.', { baseUrl: 'https://map.example.test/llm/v1', protocol: 'openai', apiKey: 'fixture-model', model: 'map-managed' }, 'fixture-transfer');
+    for (const asset of assets) {
+      const file = committed.files.find((item: any) => item.path === asset.path);
+      if (removeAsset && asset.path === 'assets/pixel.png') expect(file).toBeUndefined();
+      else {
+        expect(Buffer.from(file.contentBase64, 'base64')).toEqual(Buffer.from(asset.content));
+        expect(file.sha256).toBe(digest(Buffer.from(asset.content)));
+      }
+    }
+    for (const filePath of metadataPaths) {
+      const file = committed.files.find((item: any) => item.path === filePath);
+      if (includeReports) {
+        expect(file).toBeDefined();
+        const expected = buildGeneratedArtifactFiles(hardenSelfContainedHtml(html.replace('Original sentence.', 'Updated sentence.')),
+          assets.filter((asset) => !removeAsset || asset.path !== 'assets/pixel.png').map((asset) => asset.path)).find((item) => item.path === filePath);
+        expect(file).toEqual(expected);
+      } else expect(file).toBeUndefined();
+    }
+    const manifest = JSON.parse(Buffer.from(committed.files.find((item: any) => item.path === 'manifest.json').contentBase64, 'base64').toString('utf8'));
+    expect(manifest.artifactRevision).toBe(computePublicArtifactRevision(committed.files.filter((item: any) => item.path !== 'manifest.json')));
+    expect(manifest.files.map((item: any) => item.path)).toEqual(committed.files.filter((item: any) => item.path !== 'manifest.json').map((item: any) => item.path));
+    expect(Buffer.from(committed.files.find((item: any) => item.path === 'index.html').contentBase64, 'base64').toString('utf8')).toContain('Updated sentence.');
+    for (const file of inputFiles) expect(fs.readFileSync(path.join(shell.workspaceDir, file.path))).toEqual(Buffer.from(file.content));
+    await runtime.stop('edit-seed');
+  });
+
+  it.each([
+    ['unsupported-extension', 'assets/drawing.svg', 'image/svg+xml', ['index.html', 'manifest.json', 'assets/**']],
+    ['unsupported-path', 'styles/site.css', 'text/css', ['index.html', 'manifest.json', 'assets/**']],
+    ['disallowed-resource', 'assets/site.css', 'text/css', ['index.html', 'manifest.json']],
+    ['wrong-mime', 'assets/site.css', 'application/json', ['index.html', 'manifest.json', 'assets/**']],
+    ['business-manifest', 'manifest.json', 'application/json', ['index.html', 'manifest.json', 'assets/**']],
+    ...['accessibility-static-report', 'design-tokens', 'page-outline', 'provenance'].map((name) =>
+      [`business-${name}`, `assets/${name}.json`, 'application/json', ['index.html', 'manifest.json', 'assets/**']] as const),
+  ])('rejects incompatible current resources before session allocation: %s', async (_label, filePath, mediaType, allowlist) => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-edit-resource-reject-'));
+    const pkg = buildPackage([
+      { path: 'current/index.html', content: '<!doctype html><html><body><main>Library</main></body></html>', mediaType: 'text/html' },
+      { path: `current/${filePath}`, content: '{}', mediaType },
+    ]);
+    const shell = new RecordingShell();
+    const requests: string[] = [];
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { rootDir, capabilityCacheMs: 0, fetchImpl: async (input) => {
+      const url = new URL(String(input));
+      requests.push(url.pathname);
+      if (url.pathname === '/input') return new Response(pkg.serialized);
+      if (url.pathname === '/api/health') return Response.json({ ok: true });
+      if (url.pathname === '/api/import/folder') return Response.json({ project: { id: 'unexpected-project', skillId: 'web-prototype' }, conversationId: 'unexpected-conversation' });
+      return new Response('', { status: 404 });
+    } });
+    await expect(runtime.create('edit-rejected', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA, inputPackageUrl: 'https://map.example.test/input', resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'fixture-transfer', inputSha256: pkg.sha256, baseRevision: 'rev-1', maxInputBytes: 1024 * 1024, maxOutputBytes: 6 * 1024 * 1024, allowedOutputPaths: allowlist,
+    }, { cpuCores: 1, memoryMb: 768, timeoutSeconds: 30, networkPolicy: 'egress-only', autoCleanupMinutes: 5 })).rejects.toMatchObject({ code: 'workspace_current_artifact_unsupported' });
+    expect(requests).toEqual(['/input']);
+    expect(shell.calls.some((call) => call.command.startsWith('docker create '))).toBe(false);
+    expect(shell.calls.some((call) => call.command.startsWith('docker network create '))).toBe(false);
+  });
+
+  it('does not tell quality repair to delete requested button behavior', () => {
+    const reason = classifyQualityRepairReason(new AgentWorkspaceRuntimeError('design_output_quality_rejected',
+      'index.html contains an enabled button without provable declarative behavior'));
+    expect(reason?.instruction).toContain('Do not remove or disable');
+    expect(reason?.instruction).toContain('report the incompatibility');
+    expect(reason?.instruction).not.toContain('Remove, disable, or');
+  });
+
+  it('pins the native Codex runtime and keeps MAP authority out of the configuration file', async () => {
+    const dockerfile = fs.readFileSync(new URL('../../open-design-runtime/Dockerfile', import.meta.url), 'utf8');
+    expect(dockerfile).toContain(`@openai/codex@${OPEN_DESIGN_CODEX_VERSION}`);
+    expect(dockerfile).not.toContain('opencode-ai');
+    const config = buildOpenDesignCodexConfig('http://map-egress:8787/task/llm/v1', 'map-selected-model');
+    expect(config).toContain('model = "map-selected-model"');
+    expect(config).toContain('base_url = "http://map-egress:8787/task/llm/v1"');
+    expect(config).toContain('env_key = "MAP_CODEX_MODEL_TOKEN"');
+    expect(config).toContain('wire_api = "responses"');
+    expect(config).toContain('requires_openai_auth = false');
+    expect(config).toContain('supports_websockets = false');
+    expect(config).not.toMatch(/OPENAI_API_KEY|CODEX_API_KEY|chatgpt|api\.openai\.com/);
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
+    await runtime.capability(true);
+    const probe = shell.calls.find((call) => call.command.includes('codex --version'));
+    expect(probe?.command).toContain(`codex-cli ${OPEN_DESIGN_CODEX_VERSION}`);
+    expect(probe?.command).not.toContain('opencode');
+  });
+
+  it('fails before starting Codex when the session model configuration cannot be installed', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-codex-config-test-'));
+    const shell = new RecordingShell();
+    shell.failCodexConfig = true;
+    const workspacePackage = buildPackage([]);
+    const requests: string[] = [];
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      autoPullImage: false,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async (input) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+        requests.push(url.pathname);
+        if (url.pathname === '/input') return new Response(workspacePackage.serialized);
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+        if (url.pathname === '/api/import/folder') return Response.json({
+          project: { id: 'codex-project', skillId: 'web-prototype' }, conversationId: 'codex-conversation',
+        });
+        throw new Error(`Unexpected request: ${url.pathname}`);
+      },
+    });
+    await runtime.create('session-codex-config', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+    }, {
+      cpuCores: 1, memoryMb: 768, timeoutSeconds: 30, networkPolicy: 'egress-only', autoCleanupMinutes: 5,
+    });
+    await expect(runtime.execute('session-codex-config', 'Build the page.', {
+      baseUrl: 'https://map.example.test/task/llm/v1', protocol: 'openai', apiKey: 'model-secret', model: 'map-managed',
+    }, 'transfer-token')).rejects.toMatchObject({ code: 'open_design_codex_config_failed' });
+    expect(requests).not.toContain('/api/runs');
+    expect(shell.calls.some((call) => call.command.startsWith('docker rm -f ') && call.command.includes('cds-od-egress-'))).toBe(true);
+    await runtime.stop('session-codex-config');
   });
 
   it('accepts OpenDesign no_artifact only when the shared workspace contains a new or changed page', () => {
@@ -619,6 +819,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
     const workspacePackage = buildPackage([
       { path: 'knowledge/source.md', content: 'Private knowledge body', mediaType: 'text/markdown' },
+      { path: 'knowledge/source/source.txt', content: 'Private original file bytes', mediaType: 'text/plain' },
       { path: 'brief.txt', content: 'Build a launch page', mediaType: 'text/plain' },
       { path: 'current/index.html', content: '<!doctype html><html><body>Current page</body></html>', mediaType: 'text/html' },
     ]);
@@ -776,8 +977,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
-    expect(preparedDesignTemplate?.command).toContain('if [ -f /workspace/current/index.html ]; then cp /workspace/current/index.html /workspace/index.html;');
-    expect(preparedDesignTemplate?.command).toContain('elif [ ! -f /workspace/index.html ]; then cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html; fi');
+    expect(fs.readFileSync(path.join(shell.workspaceDir, 'index.html'))).toEqual(fs.readFileSync(path.join(shell.workspaceDir, 'current/index.html')));
+    expect(preparedDesignTemplate?.command).toContain('if [ ! -f /workspace/index.html ]; then cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html; fi');
     expect(preparedDesignTemplate?.command).toContain('test -f /workspace/index.html');
 
     const executed = await runtime.execute(
@@ -796,7 +997,11 @@ describe('AgentWorkspaceSessionRuntime', () => {
       artifactRef: 'artifact:result-1',
       openDesignRunId: 'od-run-review',
       files: [
+        { path: 'assets/accessibility-static-report.json' },
         { path: 'assets/app.css' },
+        { path: 'assets/design-tokens.json' },
+        { path: 'assets/page-outline.json' },
+        { path: 'assets/provenance.json' },
         { path: 'index.html' },
         { path: 'manifest.json' },
       ],
@@ -1019,18 +1224,27 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body).toMatchObject({
       projectId: 'od-project',
       conversationId: 'od-conversation',
-      agentId: 'byok-opencode',
+      agentId: 'codex',
       model: 'map-managed',
       message: 'Make the page visually polished.',
-      byokProvider: {
-        protocol: 'openai',
-        apiKey: expect.stringMatching(/^cds-placeholder-[A-Za-z0-9_-]+$/),
-        baseUrl: 'http://map-egress:8787/api/design-artifacts/runtime/run-1/llm/v1',
-        model: 'map-managed',
-      },
     });
     expect(JSON.stringify(designRuns)).not.toContain('model-secret');
-    expect(run?.body.byokProvider.apiKey).toBe(relayClientToken);
+    for (const designRun of designRuns) {
+      expect(designRun.body.agentId).toBe('codex');
+      expect(designRun.body).not.toHaveProperty('byokProvider');
+    }
+    expect(shell.envFiles[0]?.content).toContain(`MAP_CODEX_MODEL_TOKEN=${relayClientToken}`);
+    const configCommand = shell.calls.find((call) => call.command.includes('/config.toml'));
+    expect(configCommand?.command).toContain('/app/.od/sandbox/agent-home/.codex');
+    expect(configCommand?.command).toContain('fs.constants.O_NOFOLLOW');
+    const encodedConfig = configCommand?.command.match(/Buffer.from\("([A-Za-z0-9+/=]+)",/)?.[1] || '';
+    expect(Buffer.from(encodedConfig, 'base64').toString('utf8')).toBe(buildOpenDesignCodexConfig(
+      'http://map-egress:8787/api/design-artifacts/runtime/run-1/llm/v1',
+      'map-managed',
+    ));
+    expect(configCommand?.command).not.toContain(relayClientToken);
+    expect(configCommand?.command).not.toContain('model-secret');
+    expect(shell.envFiles[0]?.content).not.toMatch(/^(?:OPENAI_API_KEY|CODEX_API_KEY|CODEX_HOME|HOME)=/m);
     expect(JSON.stringify(run?.body)).not.toContain('agent-forged-secret');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/assets/template.html');
     expect(run?.body.systemPrompt).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
@@ -1038,6 +1252,9 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body.systemPrompt).toContain('Read /workspace/brief/task.json first');
     expect(run?.body.systemPrompt).toContain('qualityContract in task.json is mandatory');
     expect(run?.body.systemPrompt).toContain('Read every knowledge source before editing: /workspace/knowledge/source.md');
+    expect(run?.body.systemPrompt).toContain('/workspace/knowledge/source/source.txt');
+    expect(fs.readFileSync(path.join(shell.workspaceDir, 'knowledge/source/source.txt'), 'utf8')).toBe('Private original file bytes');
+    expect(JSON.stringify(run?.body)).not.toContain('Private original file bytes');
     expect(run?.body.systemPrompt).toContain('it is the exact current published page and must remain the starting point');
     expect(run?.body.systemPrompt).toContain('Never replace the product identity with OpenDesign');
     expect(run?.body.systemPrompt).toContain('Remove every unresolved placeholder');
@@ -1045,7 +1262,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(run?.body.systemPrompt).toContain('A starting /workspace/index.html already exists');
     expect(run?.body.systemPrompt).toContain('small targeted edit operations');
     expect(run?.body.systemPrompt).toContain('never replace the whole document with one write operation');
-    expect(run?.body.systemPrompt).toContain('do not include JavaScript, script elements, inline event handlers');
+    expect(run?.body.systemPrompt).toContain('Preserve existing scripts, resources, and interactions');
+    expect(run?.body.systemPrompt).toContain('Never delete scripts or assets to silence a validation gate');
     expect(run?.body.systemPrompt).not.toContain('inline all CSS, JavaScript');
     expect(designRuns[1]?.body.message).toContain('Perform a strict final review');
     expect(designRuns[1]?.body.message).toContain('/workspace/brief/task.json');
@@ -1088,7 +1306,11 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(committed?.authorization).toBe('Bearer transfer-token');
     expect(committed?.body.runId).toBe('map-run-1');
     expect(committed?.body.files.map((file: any) => file.path)).toEqual([
+      'assets/accessibility-static-report.json',
       'assets/app.css',
+      'assets/design-tokens.json',
+      'assets/page-outline.json',
+      'assets/provenance.json',
       'index.html',
       'manifest.json',
     ]);
@@ -1098,7 +1320,11 @@ describe('AgentWorkspaceSessionRuntime', () => {
       artifactRevision: expect.stringMatching(/^[a-f0-9]{64}$/),
       entryFile: 'index.html',
       files: [
+        expect.objectContaining({ path: 'assets/accessibility-static-report.json' }),
         expect.objectContaining({ path: 'assets/app.css' }),
+        expect.objectContaining({ path: 'assets/design-tokens.json' }),
+        expect.objectContaining({ path: 'assets/page-outline.json' }),
+        expect.objectContaining({ path: 'assets/provenance.json' }),
         expect.objectContaining({ path: 'index.html' }),
       ],
     });
@@ -1126,6 +1352,15 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const requests: string[] = [];
     let committedPackage: any;
     let runCreates = 0;
+    const authorAssets = new Map<string, Buffer>([
+      ['assets/app.css', Buffer.from('body { color: #123456; }\n')],
+      ['assets/app.js', Buffer.from('export const label = "公开交互";\n')],
+      ['assets/module.mjs', Buffer.from('export default 1;\n')],
+      ...['png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'woff', 'woff2', 'ttf', 'otf'].map((extension) =>
+        [`assets/media.${extension}`, Buffer.from([0, 1, 128, 255, 10, 13])] as const),
+      ['assets/data.json', Buffer.from('{"label":"公开内容"}\n')],
+      ['assets/large.png', Buffer.alloc(3 * 1024 * 1024, 128)],
+    ]);
     const shell = new RecordingShell();
     const runtime = new AgentWorkspaceSessionRuntime(shell, {
       rootDir,
@@ -1153,7 +1388,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
             '<!doctype html><html><body><main>Product facts</main></body></html>',
           );
           fs.mkdirSync(path.join(shell.workspaceDir, 'assets'), { recursive: true });
-          fs.writeFileSync(path.join(shell.workspaceDir, 'assets', 'untrusted-note.json'), '{"private":"must not publish"}');
+          for (const [assetPath, bytes] of authorAssets) fs.writeFileSync(path.join(shell.workspaceDir, assetPath), bytes);
+          fs.writeFileSync(path.join(shell.workspaceDir, 'manifest.json'), '{"files":[],"artifactRevision":"author-forged"}');
           return Response.json({ runId: runCreates === 1 ? 'od-generate-build' : 'od-generate-review' }, { status: 202 });
         }
         if (url.pathname === '/api/runs/od-generate-build') {
@@ -1179,7 +1415,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       inputSha256: workspacePackage.sha256,
       baseRevision: 'rev-1',
       maxInputBytes: 1024 * 1024,
-      maxOutputBytes: 1024 * 1024,
+      maxOutputBytes: 6 * 1024 * 1024,
       allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
     }, {
       cpuCores: 1,
@@ -1208,7 +1444,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
       'assets/provenance.json',
       'index.html',
       'manifest.json',
-    ]);
+      ...authorAssets.keys(),
+    ].sort());
     const manifestFile = committedPackage.files.find((file: any) => file.path === 'manifest.json');
     const manifest = JSON.parse(Buffer.from(manifestFile.contentBase64, 'base64').toString('utf8'));
     expect(manifest.files.map((file: any) => file.path)).toEqual([
@@ -1217,7 +1454,13 @@ describe('AgentWorkspaceSessionRuntime', () => {
       'assets/page-outline.json',
       'assets/provenance.json',
       'index.html',
-    ]);
+      ...authorAssets.keys(),
+    ].sort());
+    expect(manifest.artifactRevision).toBe(computePublicArtifactRevision(committedPackage.files.filter((file: any) => file.path !== 'manifest.json')));
+    for (const [assetPath, bytes] of authorAssets) {
+      const committed = committedPackage.files.find((file: any) => file.path === assetPath);
+      expect(Buffer.from(committed.contentBase64, 'base64')).toEqual(bytes);
+    }
     for (const listed of manifest.files) {
       const committed = committedPackage.files.find((file: any) => file.path === listed.path);
       expect(committed).toBeDefined();
@@ -1230,9 +1473,10 @@ describe('AgentWorkspaceSessionRuntime', () => {
       expect(committed.sha256).toBe(digest(Buffer.from(committed.contentBase64, 'base64')));
       expect(committed.size).toBe(Buffer.from(committed.contentBase64, 'base64').byteLength);
     }
-    expect(committedPackage.files.some((file: any) => file.path === 'assets/untrusted-note.json')).toBe(false);
     const provenanceFile = committedPackage.files.find((file: any) => file.path === 'assets/provenance.json');
     const provenanceText = Buffer.from(provenanceFile.contentBase64, 'base64').toString('utf8');
+    expect(JSON.parse(provenanceText).publishedFiles).toEqual(committedPackage.files.map((file: any) => file.path));
+    expect(JSON.parse(provenanceText).privacy).toBe('author-assets-preserved-publication-review-required');
     expect(provenanceText).not.toContain('Private knowledge body');
     expect(provenanceText).not.toContain('knowledge/source.md');
     expect(provenanceText).not.toContain(workspacePackage.sha256);
@@ -1240,6 +1484,155 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(provenanceText).not.toContain('sourceClasses');
     expect(fs.existsSync(path.join(rootDir, 'session-generate', 'workspace', 'current', 'index.html'))).toBe(false);
     await runtime.stop('session-generate');
+  });
+
+  it.each([
+    ['generate', 'assets/extra.html'],
+    ['generate', 'assets/extra.svg'],
+    ['generate', 'assets/extra.xml'],
+    ['generate', 'assets/extra.txt'],
+    ['generate', 'assets/accessibility-static-report.json'],
+    ['generate', 'assets/design-tokens.json'],
+    ['generate', 'assets/page-outline.json'],
+    ['generate', 'assets/provenance.json'],
+    ['edit', 'assets/extra.svg'],
+    ['edit', 'assets/extra.html'],
+    ['generate', 'assets/data.json'],
+    ['generate', 'assets/wire.png'],
+  ])('rejects %s public output %s before the real execute commit', async (operation, outputPath) => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-public-assets-reject-'));
+    const html = '<!doctype html><html><body><main>Product facts</main></body></html>';
+    const workspacePackage = buildPackage(operation === 'edit'
+      ? [{ path: 'current/index.html', content: html, mediaType: 'text/html' }]
+      : []);
+    const shell = new RecordingShell();
+    let commits = 0;
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      capabilityCacheMs: 0,
+      pollIntervalMs: 1,
+      fetchImpl: async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+        if (url.pathname === '/input') return new Response(workspacePackage.serialized);
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+        if (url.pathname === '/api/import/folder') return Response.json({ project: { id: 'asset-project', skillId: 'web-prototype' }, conversationId: 'asset-conversation' });
+        if (url.pathname === '/api/runs' && init?.method === 'POST') {
+          fs.writeFileSync(path.join(shell.workspaceDir, 'index.html'), html);
+          fs.mkdirSync(path.join(shell.workspaceDir, 'assets'), { recursive: true });
+          if (outputPath === 'assets/wire.png') {
+            for (let index = 0; index < 6; index += 1) fs.writeFileSync(path.join(shell.workspaceDir, `assets/wire-${index}.png`), Buffer.alloc(900 * 1024, 128));
+          } else fs.writeFileSync(path.join(shell.workspaceDir, outputPath), '{}');
+          return Response.json({ runId: 'asset-run' }, { status: 202 });
+        }
+        if (url.pathname === '/api/runs/asset-run') return Response.json({ status: 'succeeded', deliverableValid: true });
+        if (url.pathname === '/commit') {
+          commits += 1;
+          return Response.json({ artifactRef: 'unexpected', resultSha256: digest(String(init?.body)) });
+        }
+        if (url.pathname.endsWith('/cancel')) return Response.json({});
+        return new Response('', { status: 404 });
+      },
+    });
+    await runtime.create('asset-rejection', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input', resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'fixture-transfer', inputSha256: workspacePackage.sha256, baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024, maxOutputBytes: 6 * 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+    }, { cpuCores: 1, memoryMb: 768, timeoutSeconds: 30, networkPolicy: 'egress-only', autoCleanupMinutes: 5 });
+    if (outputPath === 'assets/data.json') {
+      // Exercise the real collector, then corrupt its frozen evidence before
+      // execute builds/commits the public package. No fake package builder.
+      const collect = (runtime as any).collectOutputs.bind(runtime);
+      vi.spyOn(runtime as any, 'collectOutputs').mockImplementation((handle) => {
+        const files = collect(handle);
+        files.find((file: any) => file.path === outputPath).sha256 = '0'.repeat(64);
+        return files;
+      });
+    }
+    try {
+      await expect(runtime.execute('asset-rejection', 'Build the page.', {
+        baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+        protocol: 'openai', apiKey: 'fixture-model', model: 'map-managed',
+      }, 'fixture-transfer')).rejects.toMatchObject({ code: outputPath === 'assets/wire.png' ? 'design_output_too_large' : 'design_output_invalid' });
+      expect(commits).toBe(0);
+    } finally {
+      await runtime.stop('asset-rejection');
+    }
+  });
+
+  it.each(['sha256', 'size', 'mediaType', 'contentBase64', 'path', 'json', 'utf8'])('rejects tampered public resource %s rather than attesting it', (field) => {
+    const bytes = Buffer.from('{}');
+    const resource = { path: 'assets/data.json', contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length, mediaType: 'application/json; charset=utf-8' };
+    if (field === 'sha256') resource.sha256 = '0'.repeat(64);
+    if (field === 'size') resource.size += 1;
+    if (field === 'mediaType') resource.mediaType = 'text/html';
+    if (field === 'contentBase64') resource.contentBase64 = 'not-base64';
+    if (field === 'path') resource.path = 'assets/../escape.json';
+    if (field === 'json' || field === 'utf8') {
+      const invalid = field === 'utf8' ? Buffer.from([0x22, 0xff, 0x22]) : Buffer.from('<html></html>');
+      resource.contentBase64 = invalid.toString('base64');
+      resource.sha256 = digest(invalid);
+      resource.size = invalid.length;
+    }
+    expect(() => buildGeneratedPublicArtifactPackage('<html><body>Public</body></html>', [resource])).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it('counts generated metadata and manifest against the existing total file limit', () => {
+    const bytes = Buffer.from('body{}');
+    const resources = Array.from({ length: 95 }, (_, index) => ({ path: `assets/${index}.css`, contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length, mediaType: 'text/css; charset=utf-8' }));
+    expect(() => buildGeneratedPublicArtifactPackage('<html><body>Public</body></html>', resources)).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it('changes the public revision when preserved resource bytes change', () => {
+    const build = (css: string) => {
+      const bytes = Buffer.from(css);
+      const files = buildGeneratedPublicArtifactPackage('<html><body>Public</body></html>', [{ path: 'assets/app.css', contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length, mediaType: 'text/css; charset=utf-8' }]);
+      const manifest = JSON.parse(Buffer.from(files.find((file) => file.path === 'manifest.json')!.contentBase64, 'base64').toString('utf8'));
+      expect(manifest.artifactRevision).toBe(computePublicArtifactRevision(files.filter((file) => file.path !== 'manifest.json')));
+      return manifest.artifactRevision;
+    };
+    expect(build('body{color:red}')).not.toBe(build('body{color:tan}'));
+  });
+
+  it.each(['css', 'js', 'mjs'])('aligns public package strict UTF-8 for %s with MAP', (extension) => {
+    const bytes = Buffer.from([0xff, 0xfe]);
+    const file = { path: `assets/text.${extension}`, contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length, mediaType: extension === 'css' ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8' };
+    expect(() => buildGeneratedPublicArtifactPackage('<html></html>', [file])).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it.each(['bom', 'depth65'])('aligns public package JSON %s rejection with MAP', (kind) => {
+    const bytes = kind === 'bom' ? Buffer.from('\uFEFF{}') : Buffer.from('['.repeat(65) + '0' + ']'.repeat(65));
+    const file = { path: 'assets/data.json', contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length, mediaType: 'application/json; charset=utf-8' };
+    expect(() => buildGeneratedPublicArtifactPackage('<html></html>', [file])).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it('preserves public package JSON depth64 and canonical five MiB resources without rewriting', () => {
+    const resources = [
+      { path: 'assets/data.json', bytes: Buffer.from('['.repeat(64) + '"[escaped]"' + ']'.repeat(64)), mediaType: 'application/json; charset=utf-8' },
+      { path: 'assets/large.png', bytes: Buffer.alloc(5 * 1024 * 1024, 128), mediaType: 'image/png' },
+    ].map(({ bytes, ...file }) => ({ ...file, contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length }));
+    const files = buildGeneratedPublicArtifactPackage('<html></html>', resources);
+    for (const resource of resources) expect(files.find((file) => file.path === resource.path)).toEqual(resource);
+  });
+
+  it.each([
+    'assets/%2e%2e/app.js', 'assets/hash#.css', 'assets/query?.css', 'assets/colon:.css',
+    'assets/CON.css', 'assets/lpt9/font.css', 'assets/tail./app.css', 'assets/tail /app.css',
+    'assets/cafe\u0301.css', 'assets/control\u0085.css', `assets/${'x'.repeat(230)}.css`,
+  ])('aligns public package path rejection with MAP: %s', (filePath) => {
+    const bytes = Buffer.from('body{}');
+    const file = { path: filePath, contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length, mediaType: filePath.endsWith('.js') ? 'text/javascript; charset=utf-8' : 'text/css; charset=utf-8' };
+    expect(() => buildGeneratedPublicArtifactPackage('<html></html>', [file])).toThrow(AgentWorkspaceRuntimeError);
+  });
+
+  it.each(['case-duplicate', 'directory-collision', 'reserved-case', 'empty'])('aligns public package %s with MAP', (kind) => {
+    const bytes = kind === 'empty' ? Buffer.alloc(0) : Buffer.from('{}');
+    const make = (filePath: string) => ({ path: filePath, contentBase64: bytes.toString('base64'), sha256: digest(bytes), size: bytes.length, mediaType: kind === 'empty' ? 'text/css; charset=utf-8' : 'application/json; charset=utf-8' });
+    const files = kind === 'case-duplicate' ? [make('assets/a.json'), make('assets/A.JSON')]
+      : kind === 'directory-collision' ? [make('assets/a.json'), make('assets/A.JSON/b.json')]
+        : [make(kind === 'reserved-case' ? 'assets/PROVENANCE.JSON' : 'assets/empty.css')];
+    expect(() => buildGeneratedPublicArtifactPackage('<html></html>', files)).toThrow(AgentWorkspaceRuntimeError);
   });
 
   it('derives stable public metadata from the hardened page without leaking private provenance', () => {
@@ -1507,7 +1900,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           fs.writeFileSync(
             path.join(shell.workspaceDir, 'index.html'),
             unsafeOutput
-              ? '<!doctype html><html><body><main>Product facts</main><script>document.body.textContent="unsafe"</script></body></html>'
+              ? '<!doctype html><html><body><main>Product facts</main><iframe srcdoc="nested document"></iframe></body></html>'
               : blankShell
                 ? '<!doctype html><html><head><title>Only a tab title</title></head><body></body></html>'
             : runNumber === repairSucceedsOnRun
@@ -2439,7 +2832,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           return dockerVersion.promise;
         }
         if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        if (command.includes('--entrypoint /bin/sh')) return result();
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -2473,7 +2866,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           return dockerVersion.promise;
         }
         if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        if (command.includes('--entrypoint /bin/sh')) return result();
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -2503,7 +2896,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           return result('27.0.0\n');
         }
         if (command.startsWith('docker image inspect')) return result('sha256:image-a\n');
-        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        if (command.includes('--entrypoint /bin/sh')) return result();
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -2549,8 +2942,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (command.includes('--entrypoint /bin/sh')) {
           cliProbeCount += 1;
           return cliProbeCount === 1
-            ? result('/usr/local/bin/opencode\n')
-            : result('', 'opencode not found', 1);
+            ? result()
+            : result('', 'required Codex version missing', 1);
         }
         throw new Error(`unexpected command: ${command}`);
       },
@@ -2616,7 +3009,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
           installed = true;
           return result('pulled\n');
         }
-        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        if (command.includes('--entrypoint /bin/sh')) return result();
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -2660,7 +3053,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
       async exec(command: string): Promise<ExecResult> {
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) return result('sha256:image\n');
-        if (command.includes('--entrypoint /bin/sh')) return result('', 'opencode not found', 1);
+        if (command.includes('--entrypoint /bin/sh')) return result('', 'required Codex version missing', 1);
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -2669,7 +3062,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 does not contain the required OpenCode Agent CLI and web prototype resources',
+      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 does not contain the required Codex CLI 0.143.0 and web prototype resources',
     });
   });
 
@@ -2760,7 +3153,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         if (command.startsWith('docker volume ls -q')) return result('');
         if (command.startsWith('docker version')) return result('27.0.0\n');
         if (command.startsWith('docker image inspect')) return result('sha256:image\n');
-        if (command.includes('--entrypoint /bin/sh')) return result('/usr/local/bin/opencode\n');
+        if (command.includes('--entrypoint /bin/sh')) return result();
         throw new Error(`unexpected command: ${command}`);
       },
     };
@@ -2850,6 +3243,31 @@ describe('AgentWorkspaceSessionRuntime', () => {
     ];
     for (const html of unsafe) {
       expect(() => hardenSelfContainedHtml(html)).toThrowError(
+        expect.objectContaining({ code: 'design_output_not_self_contained' }),
+      );
+    }
+  });
+
+  it('allows interaction only through files in the verified package and keeps network egress closed', () => {
+    const html = '<!doctype html><html><head><link rel="stylesheet" href="assets/app.css"></head><body><button id="next">下一页</button><img src="assets/cover.png"><script src="assets/app.js"></script></body></html>';
+    const paths = ['index.html', 'assets/app.css', 'assets/app.js', 'assets/cover.png'];
+    const hardened = hardenVerifiedPackageHtml(html, paths);
+
+    expect(hardened).toContain("script-src 'self' 'unsafe-inline'");
+    expect(hardened).toContain("connect-src 'none'");
+    expect(hardened).toContain('src="assets/app.js"');
+    expect(hardened).toContain('href="assets/app.css"');
+    expect(hardened).toContain('<button id="next">下一页</button>');
+
+    for (const unsafe of [
+      html.replace('assets/app.js', 'https://tracker.example/app.js'),
+      html.replace('assets/app.js', 'assets/missing.js'),
+      html.replace('assets/app.js', '../private/app.js'),
+      html.replace('<body>', '<body><iframe src="assets/app.js"></iframe>'),
+      html.replace('<head>', '<head><meta http-equiv="refresh" content="0;url=https://tracker.example">'),
+      html.replace('<body>', '<body><a href="https://tracker.example">离开</a>'),
+    ]) {
+      expect(() => hardenVerifiedPackageHtml(unsafe, paths)).toThrowError(
         expect.objectContaining({ code: 'design_output_not_self_contained' }),
       );
     }

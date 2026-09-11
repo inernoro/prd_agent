@@ -15,6 +15,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using Xunit;
 
@@ -22,6 +23,161 @@ namespace PrdAgent.Api.Tests;
 
 public sealed class DesignArtifactWorkspaceContractTests
 {
+    [Theory]
+    [InlineData(DesignArtifactOperations.Generate)]
+    [InlineData(DesignArtifactOperations.Edit)]
+    public async Task ResponsesProxyPreservesTwoRoundToolInputsAndUsesFrozenMapConfiguration(string operation)
+    {
+        var run = BuildRun();
+        run.Operation = operation;
+        run.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy
+        {
+            Model = "frozen-codex-model", PinnedPlatformId = "map-platform", PinnedModelId = "map-model-id",
+            Temperature = 0.45, TopP = 0.9, ReasoningMode = "effort", ReasoningEffort = "low",
+            OutputTokenMode = "omit", RequireDeclaredParameters = true,
+        };
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091", ["LlmGwServe:ApiKey"] = "gateway-test-key",
+            ["DesignArtifactRuntime:Model"] = "changed-model",
+        }).Build();
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        var inputs = new[]
+        {
+            """[{"role":"user","content":[{"type":"input_text","text":"读取资料并写出 index.html"}]}]""",
+            """[{"role":"user","content":[{"type":"input_text","text":"读取资料并写出 index.html"}]},{"type":"function_call","id":"fc_1","call_id":"call_1","name":"read_file","arguments":"{\"path\":\"brief.md\"}"},{"type":"function_call_output","call_id":"call_1","output":"产品有三个卖点"}]""",
+        };
+        const string eventStream = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"done\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n";
+        foreach (var input in inputs)
+        {
+            var original = JsonNode.Parse("""
+                {"model":"runtime-choice","model_pool_id":"untrusted-pool","model_policy":"pool",
+                 "pinned_platform_id":"untrusted-platform","pinned_model_id":"untrusted-model",
+                 "provider":{"order":["untrusted-provider"],"model_policy":"pinned"},
+                 "store":false,"stream":true,"temperature":1.5,"top_p":0.1,"max_output_tokens":4096,
+                 "reasoning":{"effort":"high","summary":"auto"},"include":["reasoning.encrypted_content"],
+                 "tools":[{"type":"function","name":"read_file","parameters":{"type":"object","properties":{"path":{"type":"string"}}}}],
+                 "tool_choice":"auto","parallel_tool_calls":true}
+                """)!.AsObject();
+            original["input"] = JsonNode.Parse(input);
+            var handler = new CapturingHandler(responseBody: eventStream, responseMediaType: "text/event-stream");
+            var controller = BuildResponsesProxy(broker.Object, handler, configuration, original.ToJsonString());
+            controller.Request.Headers["X-Gateway-User-Id"] = "untrusted-user";
+            controller.Request.Headers["X-Gateway-Run-Id"] = "untrusted-run";
+
+            await controller.ProxyResponses(run.Id, CancellationToken.None);
+
+            Assert.Equal(200, controller.Response.StatusCode);
+            Assert.Equal("/gw/v1/responses", handler.RequestUri!.AbsolutePath);
+            Assert.StartsWith("text/event-stream", controller.Response.ContentType);
+            Assert.Equal("no", controller.Response.Headers["X-Accel-Buffering"].ToString());
+            Assert.Equal(eventStream, Encoding.UTF8.GetString(((MemoryStream)controller.Response.Body).ToArray()));
+            var sent = handler.Body!;
+            Assert.Equal("frozen-codex-model", sent["model"]!.GetValue<string>());
+            Assert.Equal("map-platform", sent["pinned_platform_id"]!.GetValue<string>());
+            Assert.Equal("map-model-id", sent["pinned_model_id"]!.GetValue<string>());
+            Assert.False(sent.ContainsKey("model_pool_id"));
+            Assert.False(sent["provider"]!.AsObject().ContainsKey("order"));
+            Assert.True(sent["provider"]!["require_parameters"]!.GetValue<bool>());
+            Assert.Equal(0.45, sent["temperature"]!.GetValue<double>());
+            Assert.Equal(0.9, sent["top_p"]!.GetValue<double>());
+            Assert.Equal("low", sent["reasoning"]!["effort"]!.GetValue<string>());
+            Assert.Equal("auto", sent["reasoning"]!["summary"]!.GetValue<string>());
+            foreach (var field in new[] { "input", "tools", "tool_choice", "parallel_tool_calls", "include", "store", "stream" })
+                Assert.True(JsonNode.DeepEquals(original[field], sent[field]), field);
+            foreach (var field in new[] { "messages", "n", "max_tokens", "max_completion_tokens", "max_output_tokens", "reasoning_effort" })
+                Assert.False(sent.ContainsKey(field), field);
+            Assert.Equal(run.Id, handler.Header("X-Gateway-Run-Id"));
+            Assert.Equal(run.UserId, handler.Header("X-Gateway-User-Id"));
+            Assert.Equal("map", handler.Header("X-Gateway-Source"));
+            Assert.Equal("gateway-test-key", handler.Header("X-Gateway-Key"));
+            Assert.Equal(operation == DesignArtifactOperations.Edit
+                ? AppCallerRegistry.Admin.WebHosting.EditHtml
+                : AppCallerRegistry.Admin.WebHosting.GenerateHtml, handler.Header("X-Gateway-App-Caller"));
+        }
+        broker.Verify(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>()), Times.Exactly(2));
+        broker.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("{}")]
+    [InlineData("{\"messages\":[]}")]
+    [InlineData("{\"input\":42}")]
+    [InlineData("invalid-json")]
+    public async Task ResponsesProxyRejectsMalformedContextBeforeCallingGateway(string body)
+    {
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        var handler = new CapturingHandler();
+        var controller = BuildResponsesProxy(broker.Object, handler, new ConfigurationBuilder().Build(), body);
+        await controller.ProxyResponses("run-invalid-context", CancellationToken.None);
+        Assert.Equal(409, controller.Response.StatusCode);
+        Assert.Null(handler.Body);
+        broker.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task ResponsesProxyRejectsInvalidTicketBeforeCallingGateway()
+    {
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(x => x.ReserveModelCallAsync("another-run", "model-ticket", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new UnauthorizedAccessException());
+        var handler = new CapturingHandler();
+        var controller = BuildResponsesProxy(broker.Object, handler, new ConfigurationBuilder().Build(), """{"input":[],"store":false}""");
+        await controller.ProxyResponses("another-run", CancellationToken.None);
+        Assert.Equal(401, controller.Response.StatusCode);
+        Assert.Null(handler.Body);
+        broker.VerifyAll();
+    }
+
+    [Fact]
+    public void ResponsesProxyHasAnActualHttpRoute()
+    {
+        var method = typeof(DesignArtifactRuntimeController).GetMethod(nameof(DesignArtifactRuntimeController.ProxyResponses))!;
+        var route = Assert.Single(method.GetCustomAttributes(typeof(HttpPostAttribute), inherit: true).Cast<HttpPostAttribute>());
+        Assert.Equal("llm/v1/responses", route.Template);
+    }
+
+    [Fact]
+    public void ResponsesWithoutMapModelFailInsteadOfUsingRuntimeOrDefaultSelection()
+    {
+        var body = JsonNode.Parse("""{"model":"runtime-default","input":[],"store":false}""")!.AsObject();
+        Assert.Throws<InvalidOperationException>(() => new DesignArtifactModelSelection(null, null).ApplyToResponsesRequest(body));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResponsesSamplingKeepsNativeShapeWithoutInjectingChatParameters(bool omitReasoning)
+    {
+        var body = JsonNode.Parse("""{"model":"runtime","input":"写网页","store":false,"max_output_tokens":10000,"reasoning":{"effort":"high"},"provider":{"pinnedModelId":"remote"},"pinned_model_id":"remote"}""")!.AsObject();
+        var selection = new DesignArtifactModelSelection(null, "map-selected")
+        {
+            Policy = omitReasoning ? new DesignArtifactLlmRequestPolicy { ReasoningMode = "omit" } : null,
+        };
+        selection.ApplyToResponsesRequest(body);
+        Assert.Equal("map-selected", body["model"]!.GetValue<string>());
+        Assert.Equal(10000, body["max_output_tokens"]!.GetValue<int>());
+        Assert.Equal(!omitReasoning, body.ContainsKey("reasoning"));
+        foreach (var field in new[] { "n", "max_tokens", "reasoning_effort", "provider", "pinned_model_id" }) Assert.False(body.ContainsKey(field));
+    }
+
+    private static DesignArtifactRuntimeController BuildResponsesProxy(
+        IDesignArtifactWorkspaceBroker broker, HttpMessageHandler handler, IConfiguration configuration, string requestBody)
+    {
+        var controller = new DesignArtifactRuntimeController(broker, new SingleClientFactory(handler), configuration,
+            NullLogger<DesignArtifactRuntimeController>.Instance)
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() },
+        };
+        var bytes = Encoding.UTF8.GetBytes(requestBody);
+        controller.Request.Body = new MemoryStream(bytes);
+        controller.Request.ContentLength = bytes.Length;
+        controller.Request.Headers.Authorization = "Bearer model-ticket";
+        controller.Response.Body = new MemoryStream();
+        return controller;
+    }
+
     [Theory]
     [InlineData("Temperature", "NaN")]
     [InlineData("Temperature", "Infinity")]
@@ -839,6 +995,40 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Contains("大小不符合要求", error.Message, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void VerifiedEditPackageReachesPublicationValidationWithoutGenerationReports(bool includeResources)
+    {
+        var html = HostedSiteRevisionRules.HardenGeneratedHtml(
+            "<!doctype html><html><head><title>修改后</title></head><body><h1>修改后</h1></body></html>");
+        var publicFiles = new List<DesignWorkspaceFile> { BuildFile("index.html", html, "text/html") };
+        if (includeResources)
+        {
+            publicFiles.Add(BuildFile("assets/site.css", "body { color: blue; }", "text/css"));
+            publicFiles.Add(BuildFile("assets/app.js", "void 0;", "text/javascript; charset=utf-8"));
+            publicFiles.Add(BuildFile("assets/cover.png", "unchanged-image-fixture", "image/png"));
+        }
+        var package = new DesignWorkspacePackage(DesignArtifactWorkspaceBroker.SchemaVersion,
+            "edit-roundtrip", "old-revision", publicFiles.Append(BuildManifest(publicFiles.ToArray())).ToArray());
+
+        var verified = DesignArtifactWorkspaceContract.ParseAndValidateResult(
+            JsonSerializer.SerializeToUtf8Bytes(package, DesignArtifactWorkspaceContract.JsonOptions),
+            "edit-roundtrip", "old-revision", DesignArtifactWorkspaceBroker.MaxOutputBytes);
+        var publicationFiles = verified.Files.Select(file => new HostedSiteVerifiedFile(
+            file.Path, Convert.FromBase64String(file.ContentBase64), file.Sha256, file.MediaType)).ToArray();
+        var accepted = HostedSiteService.ValidateVerifiedGeneratedFiles(publicationFiles);
+
+        Assert.Equal(publicFiles.Count + 1, accepted.Length);
+        foreach (var original in publicFiles)
+        {
+            var published = Assert.Single(accepted.Where(file => file.Path == original.Path));
+            Assert.Equal(Convert.FromBase64String(original.ContentBase64), published.Content);
+            Assert.Equal(original.Sha256, published.Sha256);
+            Assert.Equal(original.MediaType, published.MimeType);
+        }
+    }
+
     [Fact]
     public void VerifiedCdsHardenedResultCanBeHardenedAgainWithExactlyOneSystemCsp()
     {
@@ -1159,11 +1349,14 @@ public sealed class DesignArtifactWorkspaceContractTests
 
     private sealed class CapturingHandler(
         System.Net.HttpStatusCode responseStatus = System.Net.HttpStatusCode.OK,
-        string responseBody = "{\"id\":\"gateway-response\"}") : HttpMessageHandler
+        string responseBody = "{\"id\":\"gateway-response\"}",
+        string responseMediaType = "application/json") : HttpMessageHandler
     {
         private IReadOnlyDictionary<string, string[]> _headers = new Dictionary<string, string[]>();
 
         public JsonObject? Body { get; private set; }
+
+        public Uri? RequestUri { get; private set; }
 
         public bool RequestTokenCanBeCanceled { get; private set; }
 
@@ -1176,11 +1369,12 @@ public sealed class DesignArtifactWorkspaceContractTests
             CancellationToken cancellationToken)
         {
             RequestTokenCanBeCanceled = cancellationToken.CanBeCanceled;
+            RequestUri = request.RequestUri;
             _headers = request.Headers.ToDictionary(item => item.Key, item => item.Value.ToArray(), StringComparer.OrdinalIgnoreCase);
             Body = JsonNode.Parse(await request.Content!.ReadAsStringAsync(cancellationToken)) as JsonObject;
             return new HttpResponseMessage(responseStatus)
             {
-                Content = new StringContent(responseBody, Encoding.UTF8, "application/json"),
+                Content = new StringContent(responseBody, Encoding.UTF8, responseMediaType),
             };
         }
     }

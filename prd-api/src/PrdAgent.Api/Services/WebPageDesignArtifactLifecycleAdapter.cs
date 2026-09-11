@@ -334,12 +334,11 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
     public async Task<int> RecoverPendingAsync(int limit = 100, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
-        var candidates = await _db.DesignArtifactRuns.Find(run =>
-                run.ContractVersion == DesignArtifactContractVersions.Current
+        var candidates = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.ContractVersion == DesignArtifactContractVersions.Current
                 && run.Runtime == DesignArtifactRuntimes.OpenDesign
                 && run.ArtifactType == DesignArtifactTypes.WebPage
                 && (run.Status == RunStatuses.Running || run.Status == RunStatuses.Committing)
-                && (run.LeaseExpiresAt == null || run.LeaseExpiresAt <= now))
+                && (run.LeaseExpiresAt == null || run.LeaseExpiresAt <= now)))
             .SortBy(run => run.UpdatedAt)
             .Limit(Math.Clamp(limit, 1, 500))
             .ToListAsync(CancellationToken.None);
@@ -383,8 +382,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
             }
         }
 
-        var pendingBindings = await _db.DesignArtifactRuns.Find(run =>
-                run.ContractVersion == DesignArtifactContractVersions.Current
+        var pendingBindings = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.ContractVersion == DesignArtifactContractVersions.Current
                 && run.Runtime == DesignArtifactRuntimes.OpenDesign
                 && run.ArtifactType == DesignArtifactTypes.WebPage
                 && run.WorkspaceRef != null
@@ -392,7 +390,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
                 && run.WorkspaceRef.Adapter == AdapterId
                 && run.Status == RunStatuses.Done
                 && run.ArtifactSiteId == null
-                && run.ArtifactRevisionId == null)
+                && run.ArtifactRevisionId == null))
             .SortBy(run => run.UpdatedAt)
             .Limit(Math.Clamp(limit, 1, 500))
             .ToListAsync(CancellationToken.None);
@@ -444,7 +442,7 @@ public sealed class WebPageDesignArtifactLifecycleAdapter : IWebPageDesignArtifa
     }
 
     private async Task<DesignArtifactRun> RequireCurrentAsync(string runId) =>
-        await _db.DesignArtifactRuns.Find(run => run.Id == runId)
+        await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId))
             .FirstOrDefaultAsync(CancellationToken.None)
         ?? throw new DesignArtifactLifecycleException(
             DesignArtifactLifecycleErrorCodes.NotFound,

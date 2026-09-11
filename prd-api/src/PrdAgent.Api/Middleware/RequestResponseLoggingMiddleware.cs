@@ -97,7 +97,8 @@ public class RequestResponseLoggingMiddleware
         }
 
         var path = context.Request.Path.Value ?? "";
-        var carriesCredential = CarriesCredential(path);
+        var logTarget = HostedSitePreviewLogPolicy.Project(path, context.Request.QueryString.Value);
+        var carriesCredential = CarriesCredential(path) || logTarget.Sensitive;
         if (SkipLogPathPrefixes.Any(p => path.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
         {
             await _next(context);
@@ -107,7 +108,7 @@ public class RequestResponseLoggingMiddleware
         var requestId = Activity.Current?.Id ?? Guid.NewGuid().ToString("N")[..8];
         context.Items["RequestId"] = requestId;  // 全链路打通：Controller 可通过 HttpContext.Items["RequestId"] 获取
         var method = context.Request.Method;
-        var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
+        var query = logTarget.Query;
         var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
         var userId = context.User?.FindFirst("sub")?.Value ?? "anonymous";
         var tokenInfo = TryReadTokenInfo(context);
@@ -119,7 +120,7 @@ public class RequestResponseLoggingMiddleware
             tokenInfo.Username);
         var userPrefix = BuildUserLogPrefix(userDisplay, resolvedUserId);
         var protocol = context.Request.Protocol;
-        var absoluteUrl = BuildAbsoluteUrl(context, path, query);
+        var absoluteUrl = BuildAbsoluteUrl(context, logTarget.Path, query);
 
         var accept = context.Request.Headers.Accept.ToString();
         // 检查是否为 SSE 流式请求：
@@ -259,7 +260,7 @@ public class RequestResponseLoggingMiddleware
 
                 try
                 {
-                    if (responseBodyStream.Length > 0 && responseBodyStream.Length <= MaxInspectResponseBytes)
+                    if (!carriesCredential && responseBodyStream.Length > 0 && responseBodyStream.Length <= MaxInspectResponseBytes)
                     {
                         responseBodyStream.Seek(0, SeekOrigin.Begin);
                         using var reader = new StreamReader(responseBodyStream, leaveOpen: true);
@@ -712,8 +713,9 @@ public class RequestResponseLoggingMiddleware
         string? tokenClientType,
         string? tokenSessionKey)
     {
-        var path = context.Request.Path.Value ?? "";
-        var query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : "";
+        var logTarget = HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", context.Request.QueryString.Value);
+        var path = logTarget.Path;
+        var query = logTarget.Query;
         var method = context.Request.Method;
         var protocol = context.Request.Protocol;
         var absoluteUrl = BuildAbsoluteUrl(context, path, query);
@@ -1049,7 +1051,8 @@ public class RequestResponseLoggingMiddleware
             entry.LastSeenAt = now;
             entry.ClientType = "desktop";
 
-            var path = context.Request.Path.Value ?? "";
+            var logTarget = HostedSitePreviewLogPolicy.Project(context.Request.Path.Value ?? "", context.Request.QueryString.Value);
+            var path = logTarget.Path;
             // 心跳不计入最近请求（避免刷屏）
             var isHeartbeat = path.StartsWith("/api/v1/desktop/presence/heartbeat", StringComparison.OrdinalIgnoreCase);
 
@@ -1061,7 +1064,7 @@ public class RequestResponseLoggingMiddleware
                     RequestId = requestId,
                     Method = context.Request.Method,
                     Path = path,
-                    Query = context.Request.QueryString.HasValue ? context.Request.QueryString.Value : null,
+                    Query = string.IsNullOrEmpty(logTarget.Query) ? null : logTarget.Query,
                     StatusCode = context.Response.StatusCode,
                     DurationMs = durationMs
                 };

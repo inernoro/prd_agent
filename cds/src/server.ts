@@ -1,4 +1,5 @@
 import express from 'express';
+import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -600,7 +601,7 @@ function isSealedStorageRequest(req: express.Request): boolean {
 
 function requestPathForLogs(req: express.Request, res: express.Response): string {
   const raw = req.originalUrl || req.url || '/';
-  if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return raw;
+  if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
   return normalizedSealedStoragePath(req.url)
     ?? normalizedSealedStoragePath(raw)
     ?? '/api/cds-system/sealed-storage';
@@ -2113,7 +2114,7 @@ export function createServer(deps: ServerDeps): express.Express {
             || req.socket?.remoteAddress,
         referer: suppressRequestDetails
           ? undefined
-          : req.headers['referer'] || req.headers['origin'],
+          : redactHostedSitePreviewLog(String(req.headers['referer'] || req.headers['origin'] || '')) || undefined,
         userAgent: suppressRequestDetails
           ? undefined
           : req.headers['user-agent'],
@@ -2176,9 +2177,10 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
+    const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
-    const responseCapture = createBodyCapture();
+    const responseCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined);
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
     (res as any).write = function (chunk: unknown, ...args: unknown[]) {
@@ -2200,14 +2202,14 @@ export function createServer(deps: ServerDeps): express.Express {
       completeActiveRequest();
       const status = res.statusCode || 0;
       const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
-      const parsedReqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
+      const parsedReqBody = suppressPreviewBody ? {} : bodyPreviewFromUnknown(req.body, req.headers['content-type']);
       const suppressRequestBodyLog = Boolean(
         (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog,
       );
       const reqBody = selectRequestBodyForHttpLog(
         capturedReqBody,
         parsedReqBody,
-        suppressRequestBodyLog,
+        suppressRequestBodyLog || suppressPreviewBody,
       );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
@@ -2236,7 +2238,7 @@ export function createServer(deps: ServerDeps): express.Express {
         },
         response: {
           headers: responseHeaders,
-          ...respBody,
+          ...omitHostedSitePreviewBody(respBody, suppressPreviewBody),
         },
       });
     });
@@ -4045,7 +4047,8 @@ export function createServer(deps: ServerDeps): express.Express {
     (req as any).cdsRequestId = requestId;
     (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const { branchId, projectId, profileId } = extractApiMutationContext(req, deps);
+    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const { branchId, projectId, profileId } = suppressPreviewDetails ? {} : extractApiMutationContext(req, deps);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
@@ -4053,7 +4056,7 @@ export function createServer(deps: ServerDeps): express.Express {
     res.on('finish', () => {
       const status = res.statusCode || 200;
       const severity: ServerEventSeverity = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
-      const fullPath = `/api${req.path}`;
+      const fullPath = redactHostedSitePreviewLog(`/api${req.path}`);
       deps.serverEventLogStore?.record({
         category: 'system',
         severity,
@@ -4079,7 +4082,7 @@ export function createServer(deps: ServerDeps): express.Express {
           userAgent: suppressRequestDetails ? null : req.headers['user-agent'] || null,
           referer: suppressRequestDetails
             ? null
-            : req.headers['referer'] || req.headers['origin'] || null,
+            : redactHostedSitePreviewLog(String(req.headers['referer'] || req.headers['origin'] || '')) || null,
           contentLength: req.headers['content-length'] || null,
         },
       });
@@ -4108,13 +4111,14 @@ export function createServer(deps: ServerDeps): express.Express {
     res.setHeader('X-CDS-Request-Id', requestId);
 
     // Capture request body for detail view (truncate to 500 chars)
+    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
     const suppressRequestDetails = Boolean(
       (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
     );
-    const reqBody = !suppressRequestDetails && req.body && Object.keys(req.body).length > 0
+    const reqBody = !suppressPreviewDetails && !suppressRequestDetails && req.body && Object.keys(req.body).length > 0
       ? JSON.stringify(req.body).slice(0, 500)
       : undefined;
-    const reqQuery = !suppressRequestDetails && Object.keys(req.query).length > 0
+    const reqQuery = !suppressPreviewDetails && !suppressRequestDetails && Object.keys(req.query).length > 0
       ? new URLSearchParams(req.query as Record<string, string>).toString()
       : undefined;
 
@@ -4125,6 +4129,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const branchTags = branchId ? (deps.stateService.getBranch(branchId)?.tags ?? []) : [];
 
     const summarizeErrorBody = (chunk: unknown): string | undefined => {
+      if (suppressPreviewDetails) return undefined;
       if ((res.statusCode || 200) < 400) return undefined;
       let text = '';
       if (typeof chunk === 'string') {
@@ -4161,7 +4166,7 @@ export function createServer(deps: ServerDeps): express.Express {
         return origEnd(...args);
       }
       const duration = Date.now() - start;
-      const fullPath = `/api${req.path}`;
+      const fullPath = redactHostedSitePreviewLog(`/api${req.path}`);
       // Refine the label for GitHub webhook deliveries so the operator
       // can tell "push" from "check_run" / "issue_comment" / ... at a
       // glance, instead of seeing a homogeneous stream of "GitHub 推送
@@ -4191,7 +4196,7 @@ export function createServer(deps: ServerDeps): express.Express {
         branchTags: branchTags.length ? branchTags : undefined,
         remoteAddr: (req.headers['cf-connecting-ip'] as string) || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress,
         userAgent: req.headers['user-agent'],
-        referer: req.headers['referer'] || req.headers['origin'],
+        referer: redactHostedSitePreviewLog(String(req.headers['referer'] || req.headers['origin'] || '')) || undefined,
       };
       broadcastActivity(event);
       if (event.status >= 400) {

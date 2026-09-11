@@ -26,6 +26,10 @@ public class DesignArtifactRun
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
+    /// <summary>创建时冻结的项目、分支和 revision 执行范围。历史读取不补写，缺失保留 null。</summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DeploymentSlug { get; set; }
+
     public string UserId { get; set; } = string.Empty;
 
     public string Status { get; set; } = RunStatuses.Queued;
@@ -183,6 +187,11 @@ public class DesignArtifactRun
 
     public List<DesignKnowledgeSnapshot> KnowledgeReferences { get; set; } = new();
 
+    // Older readers ignore extra Run fields, but not fields inside KnowledgeReferences[].
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    [System.Text.Json.Serialization.JsonIgnore]
+    public DesignKnowledgeOriginalSnapshot? KnowledgeOriginals { get; set; }
+
     /// <summary>OpenDesign 工作区输入包的对象存储物理 key。只由 MAP 与 CDS 控制面读取。</summary>
     public string? WorkspaceInputAssetKey { get; set; }
 
@@ -268,6 +277,34 @@ public class DesignKnowledgeSnapshot
     public string Content { get; set; } = string.Empty;
 
     public string ContentHash { get; set; } = string.Empty;
+
+}
+
+public sealed class DesignKnowledgeOriginalSnapshot
+{
+    public int Version { get; set; } = 1;
+    public List<DesignKnowledgeOriginalBinding> References { get; set; } = new();
+}
+
+public sealed class DesignKnowledgeOriginalBinding
+{
+    public string EntryId { get; set; } = string.Empty;
+    public string StoreId { get; set; } = string.Empty;
+    // null means a verified document-only source, not an unfrozen legacy Run.
+    public DesignKnowledgeOriginalFile? File { get; set; }
+}
+
+public sealed class DesignKnowledgeOriginalFile
+{
+    public string AttachmentId { get; set; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
+    public string MimeType { get; set; } = string.Empty;
+    public long Size { get; set; }
+    public string Sha256 { get; set; } = string.Empty;
+
+    /// <summary>仅内部持久化；禁止投影到客户端或远程工作区。</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string StorageKey { get; set; } = string.Empty;
 }
 
 public static class DesignArtifactTypes

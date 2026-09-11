@@ -19,6 +19,7 @@
  */
 
 import http from 'node:http';
+import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from '../services/hosted-site-preview-log-policy.js';
 import zlib from 'node:zlib';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Socket } from 'node:net';
@@ -172,7 +173,9 @@ export class ProxyHandler {
     const requestId = String(req.headers['x-cds-request-id'] || '').trim() || createRequestId();
     req.headers['x-cds-request-id'] = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
+    const suppressPreviewBody = isHostedSitePreviewRequest(req.url || '/');
+    const safeLogPath = redactHostedSitePreviewLog(req.url || '/');
+    const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     // 原始 URL 留给日志用(/_cds/api/branches → /_cds/api/branches),
     // 不污染 req 共享对象。Cursor Bugbot Low:之前 mutate req.url 让 forward 日志
@@ -237,7 +240,7 @@ export class ProxyHandler {
       // master 那边能识别 status=error 给丰富错误页 + 重新部署链接)。
       if (this.opts.unknownHostFallbackHost && this.opts.unknownHostFallbackPort) {
         this.opts.logger?.info?.(
-          `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → no route for host=${host},fallback to master ${this.opts.unknownHostFallbackHost}:${this.opts.unknownHostFallbackPort}(preserve Host)`,
+          `[forward] ${req.method ?? 'GET'} ${safeLogPath} → no route for host=${host},fallback to master ${this.opts.unknownHostFallbackHost}:${this.opts.unknownHostFallbackPort}(preserve Host)`,
         );
         route = {
           _id: 'master-unknown-host-fallback',
@@ -254,14 +257,14 @@ export class ProxyHandler {
           requestKind: classifyHttpRequestKind({
             layer: 'forwarder',
             method: req.method || 'GET',
-            path: originalUrl,
+            path: safeLogPath,
             headers: req.headers,
           }),
           requestId,
           method: req.method || 'GET',
           protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
           host,
-          path: originalUrl,
+          path: safeLogPath,
           status: 503,
           durationMs: Date.now() - t0,
           outcome: 'server-error',
@@ -280,7 +283,7 @@ export class ProxyHandler {
         this.respondWaiting(res, 503);
         this.stats.record(host, 503, Date.now() - t0);
         this.opts.logger?.warn?.(
-          `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → no route for host=${host} (503,无 fallback 配置)`,
+          `[forward] ${req.method ?? 'GET'} ${safeLogPath} → no route for host=${host} (503,无 fallback 配置)`,
         );
         return;
       }
@@ -290,7 +293,7 @@ export class ProxyHandler {
     const requestKind = classifyHttpRequestKind({
       layer: 'forwarder',
       method: req.method || 'GET',
-      path: originalUrl,
+      path: safeLogPath,
       headers: req.headers,
     });
     const activeRequestId = this.opts.httpLogStore?.beginActive?.({
@@ -300,7 +303,7 @@ export class ProxyHandler {
       method: req.method || 'GET',
       protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
       host,
-      path: originalUrl,
+      path: safeLogPath,
       remoteAddr: (req.headers['cf-connecting-ip'] as string)
         || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
         || req.socket?.remoteAddress,
@@ -341,7 +344,7 @@ export class ProxyHandler {
         method: req.method || 'GET',
         protocol: String(req.headers['x-forwarded-proto'] || 'http').split(',')[0],
         host,
-        path: originalUrl,
+        path: safeLogPath,
         status,
         durationMs: Date.now() - t0,
         outcome: outcome || (status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok'),
@@ -349,21 +352,21 @@ export class ProxyHandler {
           || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
           || req.socket?.remoteAddress,
         branchId: route.branchId ?? null,
-        upstream: `${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? outgoingPath : ''}`,
+        upstream: `${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? redactHostedSitePreviewLog(outgoingPath) : ''}`,
         request: {
           headers: redactHeaders(req.headers),
           ...requestCapture.snapshot(req.headers['content-type']),
         },
         response: {
           headers: redactHeaders(res.getHeaders() as Record<string, unknown>),
-          ...response,
+          ...omitHostedSitePreviewBody(response, suppressPreviewBody),
         },
-        error,
+        error: error ? { ...error, message: error.message ? (suppressPreviewBody ? '[preview upstream error omitted]' : redactHostedSitePreviewLog(error.message)) : undefined } : undefined,
       });
     };
     if (process.env.CDS_FORWARDER_ACCESS_LOG === '1') {
       this.opts.logger?.info?.(
-        `[forward] ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${outgoingPath})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
+        `[forward] ${req.method ?? 'GET'} ${safeLogPath} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` (rewrite path → ${redactHostedSitePreviewLog(outgoingPath)})` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'})`,
       );
     }
 
@@ -511,7 +514,7 @@ export class ProxyHandler {
             status >= 200 && status < 300;
 
           if (shouldInjectWidget) {
-            this.injectWidgetAndSend(upstreamRes, res, route, finish, logHttp, respHeaders);
+            this.injectWidgetAndSend(upstreamRes, res, route, finish, logHttp, respHeaders, suppressPreviewBody);
           } else {
             // 非 HTML 或非 2xx:原样透传(保留压缩 / chunked / SSE 等)
             if (!res.headersSent) {
@@ -525,7 +528,7 @@ export class ProxyHandler {
               const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
               bodyBytes += buf.length;
               const captured = previewChunks.reduce((n, part) => n + part.length, 0);
-              if (captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
+              if (!suppressPreviewBody && captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
             });
             upstreamRes.on('end', () => {
               const bodyPreview = isBinaryContentType(contentType)
@@ -533,7 +536,7 @@ export class ProxyHandler {
                 : Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
               if (shouldLogApiFailure) {
                 this.opts.logger?.warn?.(
-                  `[forward] api upstream ${status}: ${req.method ?? 'GET'} ${originalUrl} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` path=${outgoingPath}` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'}, requestId=${String(upstreamRes.headers['x-cds-request-id'] || req.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${contentType || '-'})${bodyPreview ? ` body="${bodyPreview.slice(0, 240)}"` : ' emptyBody=true'}`,
+                  `[forward] api upstream ${status}: ${req.method ?? 'GET'} ${safeLogPath} → ${upstreamHost}:${upstreamPort}${outgoingPath !== originalUrl ? ` path=${redactHostedSitePreviewLog(outgoingPath)}` : ''} (host=${host}, branch=${route.branchId ?? 'unknown'}, requestId=${String(upstreamRes.headers['x-cds-request-id'] || req.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${contentType || '-'})${bodyPreview ? ` body="${redactHostedSitePreviewLog(bodyPreview).slice(0, 240)}"` : ' emptyBody=true'}`,
                 );
               }
               logHttp(status, { bodyPreview: bodyPreview || undefined, bodyBytes });
@@ -832,6 +835,7 @@ export class ProxyHandler {
       error?: { code?: string; message?: string },
     ) => void,
     overrideHeaders?: Record<string, string | string[] | undefined>,
+    suppressPreviewBody = false,
   ): void {
     const status = upstreamRes.statusCode ?? 200;
     const headers: Record<string, string | string[] | undefined> = overrideHeaders
@@ -848,7 +852,7 @@ export class ProxyHandler {
       if (aborted) return;
       aborted = true;
       this.opts.logger?.warn?.(
-        `[forward] upstreamRes mid-stream error during widget injection: ${err.message} (branch=${route.branchId ?? 'unknown'})`,
+        `[forward] upstreamRes mid-stream error during widget injection: ${suppressPreviewBody ? '[preview upstream error omitted]' : redactHostedSitePreviewLog(err.message)} (branch=${route.branchId ?? 'unknown'})`,
       );
       if (!res.headersSent) {
         this.respondWaiting(res, 502);
@@ -879,7 +883,7 @@ export class ProxyHandler {
       try {
         let body = Buffer.concat(chunks).toString('utf-8');
         const responseForLog = {
-          bodyPreview: body.slice(0, 8 * 1024),
+          bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
           bodyBytes: Buffer.byteLength(body, 'utf8'),
         };
         const widget = buildWidgetScript(route.branchId ?? '', route.branchName ?? '');

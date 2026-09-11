@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import os from 'node:os';
 import * as v8 from 'node:v8';
 import tls from 'node:tls';
@@ -4608,7 +4609,7 @@ proxyService.setOnAccess((branchId, method, reqPath, status, duration, profileId
     id: nextActivitySeq(),
     ts: new Date().toISOString(),
     method,
-    path: reqPath,
+    path: redactHostedSitePreviewLog(reqPath),
     status,
     duration,
     type: 'web',

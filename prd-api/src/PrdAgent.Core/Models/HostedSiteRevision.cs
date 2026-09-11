@@ -117,12 +117,17 @@ public static class HostedSiteRevisionRules
     public const int MaxHtmlBytes = 2 * 1024 * 1024;
     public const int MaxRejectionReasonLength = 500;
     public const string GeneratedArtifactCsp = "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src data:; font-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; manifest-src 'none'";
+    public const string VerifiedPackageArtifactCsp = "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src 'self' data: blob:; font-src 'self' data:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'self' blob:; manifest-src 'none'";
     private const string DocumentRootPattern = @"^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
     private const string DocumentHeadPattern = @"^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:""[^""<>]*""|'[^'<>]*'|[^\s""'`=<>]+))?)*\s*>";
     private static readonly string TrustedSystemCspMeta =
         $"<meta http-equiv=\"Content-Security-Policy\" content=\"{GeneratedArtifactCsp}\">";
     private static readonly string TrustedSystemCspEnvelope =
         $"<head>{TrustedSystemCspMeta}</head>";
+    private static readonly string TrustedVerifiedPackageCspMeta =
+        $"<meta http-equiv=\"Content-Security-Policy\" content=\"{VerifiedPackageArtifactCsp}\">";
+    private static readonly string TrustedVerifiedPackageCspEnvelope =
+        $"<head>{TrustedVerifiedPackageCspMeta}</head>";
 
     public static string NormalizeGeneratedHtml(string raw)
     {
@@ -253,15 +258,100 @@ public static class HostedSiteRevisionRules
     }
 
     /// <summary>
+    /// 加固已经通过工作区清单与逐文件哈希校验的网页包。与单文件安全模式不同，
+    /// 这里只允许入口引用同一受信包内的资源；外链、网络请求、嵌套页面仍然关闭。
+    /// </summary>
+    public static string HardenVerifiedPackageHtml(string raw, IReadOnlyCollection<string> packagePaths)
+    {
+        ArgumentNullException.ThrowIfNull(packagePaths);
+        var allowedPaths = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var candidate in packagePaths)
+        {
+            if (!DesignArtifactPublicPath.TryNormalize(candidate, out var normalized)
+                || !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(normalized, includeInternalManifest: true)
+                || !allowedPaths.Add(normalized))
+                throw new InvalidOperationException("设计产物文件路径无效或重复，请重新生成");
+        }
+        if (!allowedPaths.Contains("index.html"))
+            throw new InvalidOperationException("设计产物入口缺失，请重新生成");
+
+        var html = NormalizeGeneratedHtml(raw);
+        ValidateHtml(html);
+        EnsureNoUnresolvedTemplatePlaceholders(html);
+        html = ConvertRelativeKnowledgeAnchors(html);
+
+        foreach (var tag in ScanHtmlStartTags(html).Where(item => !item.IsClosing))
+        {
+            var attributes = ParseHtmlAttributes(tag.Attributes);
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    tag.Name,
+                    @"^(?:applet|base|iframe|frame|object|embed)$",
+                    RegexOptions,
+                    TimeSpan.FromSeconds(1))
+                || (tag.Name.Equals("meta", StringComparison.OrdinalIgnoreCase)
+                    && attributes.ContainsKey("http-equiv"))
+                || attributes.Keys.Any(name =>
+                    name.Equals("srcdoc", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("ping", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("formaction", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("xlink:href", StringComparison.OrdinalIgnoreCase)
+                    || name.Equals("srcset", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("生成页面包含不能在隔离资源包中运行的导航或嵌入能力");
+
+            foreach (var attribute in new[] { "src", "href", "poster", "background" })
+            {
+                var reference = ReadHtmlAttribute(tag.Attributes, attribute);
+                if (reference == null) continue;
+                EnsureVerifiedPackageReference(tag.Name, attribute, reference, allowedPaths);
+            }
+        }
+
+        if (System.Text.RegularExpressions.Regex.IsMatch(html, @"@import\s+(?:url\s*\()?", RegexOptions))
+            throw new InvalidOperationException("生成页面不能通过 CSS 导入其他资源");
+        foreach (System.Text.RegularExpressions.Match match in System.Text.RegularExpressions.Regex.Matches(
+                     html,
+                     @"url\(\s*([""']?)(.*?)\1\s*\)",
+                     RegexOptions))
+        {
+            var value = match.Groups[2].Value.Trim();
+            if (value.Length == 0 || value.StartsWith('#') || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!TryResolveVerifiedPackagePath(value, allowedPaths, out _))
+                throw new InvalidOperationException("生成页面的 CSS 引用了资源包以外的文件");
+        }
+
+        var root = System.Text.RegularExpressions.Regex.Match(
+            html,
+            DocumentRootPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        var afterRoot = root.Index + root.Length;
+        var head = System.Text.RegularExpressions.Regex.Match(
+            html[afterRoot..],
+            DocumentHeadPattern,
+            RegexOptions,
+            TimeSpan.FromSeconds(1));
+        if (head.Success)
+        {
+            var insertionIndex = afterRoot + head.Index + head.Length;
+            return html.Insert(insertionIndex, TrustedVerifiedPackageCspMeta);
+        }
+        return html.Insert(afterRoot, TrustedVerifiedPackageCspEnvelope);
+    }
+
+    /// <summary>
     /// 对已经通过离线安全校验的 AI 产物执行可发布质量闸门。
     /// evidenceText 必须由任务指令、知识快照和编辑前页面的可见正文组成，不能包含 CSS 或脚本。
     /// </summary>
-    public static void ValidateGeneratedContentQuality(string html, string evidenceText)
+    public static void ValidateGeneratedContentQuality(
+        string html,
+        string evidenceText,
+        bool allowScriptedControls = false)
     {
         ValidateHtml(html);
         var visibleText = ExtractVisibleText(html);
         EnsureNoVisibleDraftMarkers(html, visibleText);
-        EnsureStaticControlsHaveBehavior(html);
+        EnsureStaticControlsHaveBehavior(html, allowScriptedControls);
         EnsureNumericClaimsAreSupported(visibleText, evidenceText ?? string.Empty);
         EnsureSensitiveFactsAreSupported(visibleText, evidenceText ?? string.Empty);
     }
@@ -298,7 +388,7 @@ public static class HostedSiteRevisionRules
         }
     }
 
-    private static void EnsureStaticControlsHaveBehavior(string html)
+    private static void EnsureStaticControlsHaveBehavior(string html, bool allowScriptedControls)
     {
         var targets = new HashSet<string>(StringComparer.Ordinal);
         var popoverTargets = new HashSet<string>(StringComparer.Ordinal);
@@ -345,6 +435,9 @@ public static class HostedSiteRevisionRules
             if (HasHtmlAttribute(attrs, "disabled")) continue;
             var popoverTarget = System.Net.WebUtility.HtmlDecode((ReadHtmlAttribute(attrs, "popovertarget") ?? string.Empty).Trim());
             if (popoverTarget.Length > 0 && popoverTargets.Contains(popoverTarget)) continue;
+            if (allowScriptedControls && tags.Any(item => !item.IsClosing
+                    && item.Name.Equals("script", StringComparison.OrdinalIgnoreCase)))
+                continue;
             throw new InvalidOperationException(
                 "生成页面包含无法执行动作的按钮，已停止保存。声明式页面请使用指向真实区块的链接，或移除该按钮。");
         }
@@ -741,7 +834,12 @@ public static class HostedSiteRevisionRules
             TimeSpan.FromSeconds(1));
         if (!root.Success) return html;
         var envelopeStart = root.Index + root.Length;
-        if (!html.AsSpan(envelopeStart).StartsWith(TrustedSystemCspEnvelope, StringComparison.Ordinal))
+        var envelope = html.AsSpan(envelopeStart).StartsWith(TrustedSystemCspEnvelope, StringComparison.Ordinal)
+            ? TrustedSystemCspEnvelope
+            : html.AsSpan(envelopeStart).StartsWith(TrustedVerifiedPackageCspEnvelope, StringComparison.Ordinal)
+                ? TrustedVerifiedPackageCspEnvelope
+                : null;
+        if (envelope == null)
         {
             var head = System.Text.RegularExpressions.Regex.Match(
                 html[envelopeStart..],
@@ -750,11 +848,16 @@ public static class HostedSiteRevisionRules
                 TimeSpan.FromSeconds(1));
             if (!head.Success) return html;
             var metaStart = envelopeStart + head.Index + head.Length;
-            if (!html.AsSpan(metaStart).StartsWith(TrustedSystemCspMeta, StringComparison.Ordinal))
+            var meta = html.AsSpan(metaStart).StartsWith(TrustedSystemCspMeta, StringComparison.Ordinal)
+                ? TrustedSystemCspMeta
+                : html.AsSpan(metaStart).StartsWith(TrustedVerifiedPackageCspMeta, StringComparison.Ordinal)
+                    ? TrustedVerifiedPackageCspMeta
+                    : null;
+            if (meta == null)
                 return html;
-            return html.Remove(metaStart, TrustedSystemCspMeta.Length);
+            return html.Remove(metaStart, meta.Length);
         }
-        return html.Remove(envelopeStart, TrustedSystemCspEnvelope.Length);
+        return html.Remove(envelopeStart, envelope.Length);
     }
 
     private static readonly System.Text.RegularExpressions.RegexOptions RegexOptions =
@@ -770,6 +873,56 @@ public static class HostedSiteRevisionRules
             && !tag.Equals("a", StringComparison.OrdinalIgnoreCase)
             && !tag.Equals("area", StringComparison.OrdinalIgnoreCase)) return;
         throw new InvalidOperationException($"生成页面的 <{tag.ToLowerInvariant()}> 引用了外部资源");
+    }
+
+    private static void EnsureVerifiedPackageReference(
+        string tag,
+        string attribute,
+        string rawValue,
+        IReadOnlySet<string> allowedPaths)
+    {
+        var value = System.Net.WebUtility.HtmlDecode(rawValue).Trim();
+        if (value.Length == 0 || value.StartsWith('#')) return;
+        if (tag.Equals("a", StringComparison.OrdinalIgnoreCase)
+            || tag.Equals("area", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("生成页面的链接只能指向当前页面中的真实区块");
+        if (value.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+        {
+            if (attribute.Equals("src", StringComparison.OrdinalIgnoreCase)
+                && !tag.Equals("script", StringComparison.OrdinalIgnoreCase))
+                return;
+            throw new InvalidOperationException("生成页面把可执行资源内联到了不允许的位置");
+        }
+        if (!TryResolveVerifiedPackagePath(value, allowedPaths, out _))
+            throw new InvalidOperationException($"生成页面的 <{tag.ToLowerInvariant()}> 引用了资源包以外的文件");
+    }
+
+    private static bool TryResolveVerifiedPackagePath(
+        string rawValue,
+        IReadOnlySet<string> allowedPaths,
+        out string normalized)
+    {
+        normalized = string.Empty;
+        var value = rawValue.Trim();
+        if (value.Length == 0
+            || value.StartsWith('/')
+            || value.StartsWith("//", StringComparison.Ordinal)
+            || value.Contains('\\'))
+            return false;
+        var suffix = value.IndexOfAny(['?', '#']);
+        if (suffix >= 0) value = value[..suffix];
+        while (value.StartsWith("./", StringComparison.Ordinal)) value = value[2..];
+        try
+        {
+            value = Uri.UnescapeDataString(value);
+        }
+        catch (UriFormatException)
+        {
+            return false;
+        }
+        if (!DesignArtifactPublicPath.TryNormalize(value, out normalized)) return false;
+        return normalized.StartsWith("assets/", StringComparison.Ordinal)
+               && allowedPaths.Contains(normalized);
     }
 
     private static string ConvertRelativeKnowledgeAnchors(string html)

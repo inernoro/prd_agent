@@ -207,6 +207,7 @@ public sealed class HtmlPptDesignArtifactAdapterTests
         stale.ArtifactRecoveryNextAttemptAt = DateTime.UtcNow.AddMinutes(-1);
         stale.ArtifactRecoveryLastFailureCode = HtmlPptDesignArtifactAdapter.RecoveryFailureCode;
         await fixture.Db.MdToPptRuns.InsertOneAsync(stale);
+        await adapter.BeginAsync(stale);
 
         Assert.Equal(1, await adapter.RecoverPendingAsync());
 

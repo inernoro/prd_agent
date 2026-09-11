@@ -376,6 +376,7 @@ public static class DataSyncScope
         ["console_sso_tickets"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["defect_automation_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["design_artifact_runs"] = "运行时会话与审计投影：绑定当前实例的租约、工作区和执行器事实，跨实例复制会制造不可恢复的在途任务",
+        ["design_artifact_runs_v2"] = "部署范围内的设计任务：绑定项目、分支、revision 与执行租约，不能跨实例复制",
         ["data_sync_grants"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",
         ["data_sync_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["defect_share_links"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",

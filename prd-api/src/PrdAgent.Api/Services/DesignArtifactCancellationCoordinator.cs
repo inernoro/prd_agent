@@ -38,7 +38,7 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
         CancellationToken ct = default)
     {
         var current = await _db.DesignArtifactRuns
-            .Find(run => run.Id == runId && run.UserId == userId)
+            .Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId && run.UserId == userId))
             .FirstOrDefaultAsync(ct);
         if (current == null) return null;
 
@@ -98,7 +98,7 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
         }
 
         var updated = await db.DesignArtifactRuns.FindOneAndUpdateAsync(
-            filter,
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current) & (filter),
             update,
             new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
             {
@@ -108,7 +108,7 @@ public sealed class DesignArtifactCancellationCoordinator : IDesignArtifactCance
         if (updated != null) return updated;
 
         var concurrent = await db.DesignArtifactRuns
-            .Find(run => run.Id == current.Id && run.UserId == current.UserId)
+            .Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == current.Id && run.UserId == current.UserId))
             .FirstOrDefaultAsync(ct);
         if (concurrent?.Status == RunStatuses.Cancelled
             || concurrent?.Status == RunStatuses.Running && concurrent.CancelRequestedAt.HasValue)

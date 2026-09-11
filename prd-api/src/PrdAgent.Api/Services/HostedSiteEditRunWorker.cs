@@ -211,7 +211,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             executionCts.Token.ThrowIfCancellationRequested();
             var html = HardenExecutorOutput(output.ToString(), verifiedFiles);
             var qualityEvidence = BuildQualityEvidence(run, editable);
-            HostedSiteRevisionRules.ValidateGeneratedContentQuality(html, qualityEvidence);
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                html,
+                qualityEvidence,
+                allowScriptedControls: verifiedFiles != null);
             await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 88,
                 run.Operation == DesignArtifactOperations.Edit ? "正在校验并保存草稿" : "正在校验并保存托管网页");
             executionCts.Token.ThrowIfCancellationRequested();
@@ -477,7 +480,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-        var current = await db.DesignArtifactRuns.Find(item => item.Id == runId)
+        var current = await db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId))
             .FirstOrDefaultAsync(CancellationToken.None);
         if (current == null || current.Status == RunStatuses.Cancelled) return;
         if (current.Status != RunStatuses.Running
@@ -514,12 +517,12 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             var cancelledAt = DateTime.UtcNow;
             cancelled = await db.DesignArtifactRuns.FindOneAndUpdateAsync<DesignArtifactRun, DesignArtifactRun>(
-                item => item.Id == runId
+                item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId
                         && item.Status == RunStatuses.Running
                         && item.LeaseOwnerId == leaseOwner
                         && item.CancelRequestedAt != null
                         && item.ProducedArtifactSiteId == null
-                        && item.ProducedArtifactRevisionId == null,
+                        && item.ProducedArtifactRevisionId == null),
                 Builders<DesignArtifactRun>.Update
                     .Set(item => item.Status, RunStatuses.Cancelled)
                     .Set(item => item.Error, null)
@@ -563,7 +566,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
-        var current = await db.DesignArtifactRuns.Find(x => x.Id == runId)
+        var current = await db.DesignArtifactRuns.Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId))
             .FirstOrDefaultAsync(CancellationToken.None);
         var usesPublicLifecycle = current?.ContractVersion == DesignArtifactContractVersions.Current
                                   && current.Runtime == DesignArtifactRuntimes.OpenDesign;
@@ -590,11 +593,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             .Set(x => x.CompletedAt, DateTime.UtcNow)
             .Set(x => x.LeaseExpiresAt, null);
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && (usesPublicLifecycle
                      ? x.Status == RunStatuses.Error
                      : x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
-                 && x.LeaseOwnerId == leaseOwner,
+                 && x.LeaseOwnerId == leaseOwner),
             update,
             cancellationToken: CancellationToken.None);
         if (write.ModifiedCount == 0) return;
@@ -668,7 +671,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         while (!executionCts.IsCancellationRequested)
         {
-            var current = await db.DesignArtifactRuns.Find(item => item.Id == runId)
+            var current = await db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId))
                 .Project(item => new
                 {
                     item.Status,
@@ -704,12 +707,12 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string runId,
         string leaseOwner)
     {
-        return await db.DesignArtifactRuns.Find(item => item.Id == runId
+        return await db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId
                                                         && item.Status == RunStatuses.Running
                                                         && item.LeaseOwnerId == leaseOwner
                                                         && item.CancelRequestedAt != null
                                                         && item.ProducedArtifactSiteId == null
-                                                        && item.ProducedArtifactRevisionId == null)
+                                                        && item.ProducedArtifactRevisionId == null))
             .AnyAsync(CancellationToken.None);
     }
 
@@ -981,10 +984,29 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string rawHtml,
         IReadOnlyList<DesignWorkspaceFile>? verifiedFiles)
     {
-        var hardened = HostedSiteRevisionRules.HardenGeneratedHtml(
-            NormalizeTrustedSystemCspEnvelope(rawHtml));
-        if (verifiedFiles != null)
-            _ = BuildVerifiedHostedSiteFiles(verifiedFiles, hardened);
+        var normalized = NormalizeTrustedSystemCspEnvelope(rawHtml);
+        if (verifiedFiles != null && !string.Equals(normalized, rawHtml, StringComparison.Ordinal))
+        {
+            try
+            {
+                var legacyStrictHtml = HostedSiteRevisionRules.HardenGeneratedHtml(normalized);
+                if (string.Equals(legacyStrictHtml, rawHtml, StringComparison.Ordinal))
+                {
+                    _ = BuildVerifiedHostedSiteFiles(verifiedFiles, rawHtml);
+                    return rawHtml;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // 交互式受信包可能包含脚本；继续按包内资源策略核对。
+            }
+        }
+        var hardened = verifiedFiles == null
+            ? HostedSiteRevisionRules.HardenGeneratedHtml(normalized)
+            : HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+                normalized,
+                verifiedFiles.Select(file => file.Path).ToArray());
+        if (verifiedFiles != null) _ = BuildVerifiedHostedSiteFiles(verifiedFiles, hardened);
         return hardened;
     }
 
@@ -1021,6 +1043,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         DateTime completedAt,
         CancellationToken ct)
     {
+        if (run.DeploymentSlug != DeploymentScope.Current) return false;
         var completed = await CompleteRunAsync(
             db,
             run.Id,
@@ -1069,8 +1092,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
     {
         var message = error.Message.Length <= 500 ? error.Message : error.Message[..500];
         await db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId
-                 && (x.Status == RunStatuses.Committing || x.Status == RunStatuses.Error),
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
+                 && (x.Status == RunStatuses.Committing || x.Status == RunStatuses.Error)),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.CleanupPending, true)
                 .Set(x => x.CleanupAttemptedAt, attemptedAt)
@@ -1080,7 +1103,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
     private static Task ClearCleanupPendingAsync(MongoDbContext db, string runId, DateTime attemptedAt) =>
         db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId && x.Status == RunStatuses.Error && x.CleanupPending,
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.Status == RunStatuses.Error && x.CleanupPending),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.CleanupPending, false)
                 .Set(x => x.CleanupAttemptedAt, attemptedAt)
@@ -1100,14 +1123,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         CancellationToken ct)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && (x.Status == RunStatuses.Running
                      || x.ContractVersion == DesignArtifactContractVersions.Current
                      && x.Status == RunStatuses.Committing)
                  && x.CancelRequestedAt == null
                  && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
-                 && x.LeaseExpiresAt > now,
+                 && x.LeaseExpiresAt > now),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.Status, RunStatuses.Committing)
                 .Set(x => x.HeartbeatAt, now)
@@ -1131,7 +1154,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                      & fb.Eq(x => x.CleanupLeaseOwnerId, null)
                      & fb.Eq(x => x.CancelRequestedAt, null);
         return await db.DesignArtifactRuns.FindOneAndUpdateAsync(
-            filter,
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current) & (filter),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.Status, RunStatuses.Running)
                 .Set(x => x.LeaseOwnerId, leaseOwner)
@@ -1151,7 +1174,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         TimeSpan leaseDuration,
         CancellationToken ct)
     {
-        var candidate = await db.DesignArtifactRuns.Find(run => run.Id == runId)
+        var candidate = await db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId))
             .FirstOrDefaultAsync(ct);
         if (candidate?.ContractVersion != DesignArtifactContractVersions.Current)
             return await TryClaimAsync(db, runId, leaseOwner, now, leaseDuration, ct);
@@ -1186,11 +1209,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         CancellationToken ct)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && (x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
                  && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
-                 && x.LeaseExpiresAt > now,
+                 && x.LeaseExpiresAt > now),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.HeartbeatAt, now)
                 .Set(x => x.LeaseExpiresAt, now + leaseDuration)
@@ -1210,10 +1233,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         CancellationToken ct)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && x.Status == RunStatuses.Running
                  && x.LeaseOwnerId == leaseOwner
-                 && x.LeaseExpiresAt > updatedAt,
+                 && x.LeaseExpiresAt > updatedAt),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.Progress, progress)
                 .Set(x => x.Phase, phase)
@@ -1233,11 +1256,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         CancellationToken ct)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                  && x.Status == RunStatuses.Committing
                  && x.CleanupLeaseOwnerId == null
                  && x.LeaseOwnerId == leaseOwner
-                 && x.LeaseExpiresAt > completedAt,
+                 && x.LeaseExpiresAt > completedAt),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.Status, RunStatuses.Done)
                 .Set(x => x.Progress, 100)
@@ -1265,12 +1288,12 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         CancellationToken ct)
     {
         var write = await db.DesignArtifactRuns.UpdateOneAsync(
-            run => run.Id == runId
+            run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
                    && run.ContractVersion == DesignArtifactContractVersions.Current
                    && run.Status == RunStatuses.Committing
                    && run.CleanupLeaseOwnerId == null
                    && run.LeaseOwnerId == leaseOwner
-                   && run.LeaseExpiresAt > DateTime.UtcNow,
+                   && run.LeaseExpiresAt > DateTime.UtcNow),
             Builders<DesignArtifactRun>.Update
                 .Set(run => run.ProducedArtifactSiteId, siteId)
                 .Set(run => run.ProducedArtifactRevisionId, revisionId)
@@ -1292,12 +1315,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IWebPageDesignArtifactLifecycleAdapter? publicLifecycle = null,
         IDesignArtifactLifecycleService? lifecycle = null)
     {
+        // 仅恢复精确 revision。旧 revision 的排队接管和运行中执行器的可靠停止另行处理，
+        // 不能用过期时间推测异部署执行已停止，也不能批量改写其 DeploymentSlug。
         if (workspaceStorage != null)
             await RecoverRejectedWorkspaceResultsAsync(db, workspaceStorage, now, ct);
 
         // 上一轮已经终结但清理失败的任务先重试；本轮新发现的任务只尝试一次，避免故障时紧密重试。
         var pendingCleanup = await db.DesignArtifactRuns
-            .Find(x => x.Status == RunStatuses.Error && x.CleanupPending)
+            .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Status == RunStatuses.Error && x.CleanupPending))
             .Limit(100)
             .ToListAsync(ct);
         foreach (var candidate in pendingCleanup)
@@ -1308,14 +1333,14 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         if (sites != null)
         {
             var interruptedCleanup = await db.DesignArtifactRuns
-                .Find(x => x.Status == RunStatuses.Committing
+                .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Status == RunStatuses.Committing
                            && x.Operation == DesignArtifactOperations.Generate
                            && x.CleanupPending
                            && (x.CleanupStartedAt != null || x.CleanupLeaseOwnerId != null)
                            && x.LeaseOwnerId != null
                            && x.LeaseExpiresAt != null && x.LeaseExpiresAt <= now
                            && (x.CleanupLeaseExpiresAt == null || x.CleanupLeaseExpiresAt <= now)
-                           && x.ProducedArtifactSiteId == null && x.ProducedArtifactRevisionId == null)
+                           && x.ProducedArtifactSiteId == null && x.ProducedArtifactRevisionId == null))
                 .Limit(100)
                 .ToListAsync(ct);
             foreach (var candidate in interruptedCleanup)
@@ -1333,9 +1358,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
 
         var staleRunning = await db.DesignArtifactRuns
-            .Find(x => (x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
+            .Find(x => x.DeploymentSlug == DeploymentScope.Current && ((x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
                        && ((x.LeaseExpiresAt != null && x.LeaseExpiresAt <= now)
-                           || (x.LeaseExpiresAt == null && x.UpdatedAt <= now - LeaseDuration)))
+                           || (x.LeaseExpiresAt == null && x.UpdatedAt <= now - LeaseDuration))))
             .Limit(100)
             .ToListAsync(ct);
         foreach (var candidate in staleRunning)
@@ -1430,10 +1455,10 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
             }
             var write = await db.DesignArtifactRuns.UpdateOneAsync(
-                x => x.Id == candidate.Id
+                x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == candidate.Id
                      && x.Status == (usesPublicLifecycle ? RunStatuses.Error : candidate.Status)
                      && x.LeaseOwnerId == candidate.LeaseOwnerId
-                     && x.LeaseExpiresAt == candidate.LeaseExpiresAt,
+                     && x.LeaseExpiresAt == candidate.LeaseExpiresAt),
                 Builders<DesignArtifactRun>.Update
                     .Set(x => x.Status, RunStatuses.Error)
                     .Set(x => x.Error, interruptedMessage)
@@ -1474,17 +1499,17 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         }
 
         var queueCandidates = await db.DesignArtifactRuns
-            .Find(x => x.Status == RunStatuses.Queued
+            .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Status == RunStatuses.Queued
                        && x.UpdatedAt <= now - QueueRecoveryDelay
-                       && (x.RecoveryEnqueuedAt == null || x.RecoveryEnqueuedAt <= now - RecoveryInterval))
+                       && (x.RecoveryEnqueuedAt == null || x.RecoveryEnqueuedAt <= now - RecoveryInterval)))
             .Limit(100)
             .ToListAsync(ct);
         foreach (var candidate in queueCandidates)
         {
             var write = await db.DesignArtifactRuns.UpdateOneAsync(
-                x => x.Id == candidate.Id
+                x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == candidate.Id
                      && x.Status == RunStatuses.Queued
-                     && x.RecoveryEnqueuedAt == candidate.RecoveryEnqueuedAt,
+                     && x.RecoveryEnqueuedAt == candidate.RecoveryEnqueuedAt),
                 Builders<DesignArtifactRun>.Update.Set(x => x.RecoveryEnqueuedAt, now),
                 cancellationToken: CancellationToken.None);
             if (write.ModifiedCount == 1)
@@ -1533,13 +1558,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         else
         {
             cancelled = await db.DesignArtifactRuns.FindOneAndUpdateAsync<DesignArtifactRun, DesignArtifactRun>(
-                item => item.Id == candidate.Id
+                item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == candidate.Id
                         && item.Status == RunStatuses.Running
                         && item.LeaseOwnerId == candidate.LeaseOwnerId
                         && item.LeaseExpiresAt == candidate.LeaseExpiresAt
                         && item.CancelRequestedAt == candidate.CancelRequestedAt
                         && item.ProducedArtifactSiteId == null
-                        && item.ProducedArtifactRevisionId == null,
+                        && item.ProducedArtifactRevisionId == null),
                 Builders<DesignArtifactRun>.Update
                     .Set(item => item.Status, RunStatuses.Cancelled)
                     .Set(item => item.Phase, "设计任务已取消")
@@ -1599,14 +1624,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             || !run.CompletedAt.HasValue)
             return false;
 
-        var authoritativeRun = await db.DesignArtifactRuns.Find(item =>
-                item.Id == run.Id
+        var authoritativeRun = await db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == run.Id
                 && item.Status == RunStatuses.Done
                 && item.ArtifactType == DesignArtifactTypes.WebPage
                 && item.Operation == DesignArtifactOperations.Generate
                 && item.ArtifactSiteId != null
                 && item.CompletedAt != null
-                && item.PublishedActivityProjectionCompletedAt == null)
+                && item.PublishedActivityProjectionCompletedAt == null))
             .FirstOrDefaultAsync(ct);
         if (authoritativeRun == null) return false;
 
@@ -1620,13 +1644,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             var skippedAt = DateTime.UtcNow;
             await db.DesignArtifactRuns.UpdateOneAsync(
-                item => item.Id == authoritativeRun.Id
+                item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == authoritativeRun.Id
                         && item.Status == RunStatuses.Done
                         && item.ArtifactType == DesignArtifactTypes.WebPage
                         && item.Operation == DesignArtifactOperations.Generate
                         && item.ArtifactSiteId == authoritativeRun.ArtifactSiteId
                         && item.CompletedAt == authoritativeRun.CompletedAt
-                        && item.PublishedActivityProjectionCompletedAt == null,
+                        && item.PublishedActivityProjectionCompletedAt == null),
                 Builders<DesignArtifactRun>.Update
                     .Set(item => item.PublishedActivityProjectionCompletedAt, skippedAt)
                     .Set(item => item.PublishedActivityProjectionOutcome, "skipped")
@@ -1648,13 +1672,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             ct);
         var recordedAt = DateTime.UtcNow;
         await db.DesignArtifactRuns.UpdateOneAsync(
-            item => item.Id == authoritativeRun.Id
+            item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == authoritativeRun.Id
                     && item.Status == RunStatuses.Done
                     && item.ArtifactType == DesignArtifactTypes.WebPage
                     && item.Operation == DesignArtifactOperations.Generate
                     && item.ArtifactSiteId == site.Id
                     && item.CompletedAt == authoritativeRun.CompletedAt
-                    && item.PublishedActivityProjectionCompletedAt == null,
+                    && item.PublishedActivityProjectionCompletedAt == null),
             Builders<DesignArtifactRun>.Update
                 .Set(item => item.PublishedActivityRecordedAt, recordedAt)
                 .Set(item => item.PublishedActivityProjectionCompletedAt, recordedAt)
@@ -1695,7 +1719,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             if (attemptedIds.Count > 0)
                 pageFilter &= Builders<DesignArtifactRun>.Filter.Nin(run => run.Id, attemptedIds);
             var candidates = await db.DesignArtifactRuns
-                .Find(pageFilter)
+                .Find(Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current) & (pageFilter))
                 .SortByDescending(run => run.CompletedAt)
                 .Limit(batchSize)
                 .ToListAsync(ct);
@@ -1735,11 +1759,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         string? processEpoch = null)
     {
         var pendingWrites = await db.DesignArtifactRuns
-            .Find(x => x.WorkspaceResultAssetKey == null
+            .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.WorkspaceResultAssetKey == null
                        && x.WorkspacePendingResultAssetKey != null
                        && x.WorkspacePendingResultAssetKey != string.Empty
                        && x.WorkspacePendingResultAttemptId != null
-                       && x.WorkspacePendingResultAttemptId != string.Empty)
+                       && x.WorkspacePendingResultAttemptId != string.Empty))
             .Limit(100)
             .ToListAsync(ct);
         var recovered = 0;
@@ -1757,9 +1781,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
 
         // 兼容修复前已经落库的晚到结果清理线索。
         var candidates = await db.DesignArtifactRuns
-            .Find(x => x.WorkspaceResultAssetKey == null
+            .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.WorkspaceResultAssetKey == null
                        && x.WorkspaceRejectedResultAssetKey != null
-                       && x.WorkspaceRejectedResultAssetKey != string.Empty)
+                       && x.WorkspaceRejectedResultAssetKey != string.Empty))
             .Limit(100)
             .ToListAsync(ct);
         foreach (var candidate in candidates)
@@ -1769,9 +1793,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             {
                 await storage.DeleteByKeyAsync(key, CancellationToken.None);
                 var write = await db.DesignArtifactRuns.UpdateOneAsync(
-                    x => x.Id == candidate.Id
+                    x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == candidate.Id
                          && x.WorkspaceResultAssetKey == null
-                         && x.WorkspaceRejectedResultAssetKey == key,
+                         && x.WorkspaceRejectedResultAssetKey == key),
                     Builders<DesignArtifactRun>.Update
                         .Set(x => x.WorkspaceResultSha256, null)
                         .Set(x => x.WorkspaceRejectedResultAssetKey, null)
@@ -1786,9 +1810,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 var message = string.IsNullOrWhiteSpace(ex.Message) ? ex.GetType().Name : ex.Message;
                 if (message.Length > 500) message = message[..500];
                 await db.DesignArtifactRuns.UpdateOneAsync(
-                    x => x.Id == candidate.Id
+                    x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == candidate.Id
                          && x.WorkspaceResultAssetKey == null
-                         && x.WorkspaceRejectedResultAssetKey == key,
+                         && x.WorkspaceRejectedResultAssetKey == key),
                     Builders<DesignArtifactRun>.Update
                         .Set(x => x.WorkspaceRejectedResultCleanupAttemptedAt, attemptedAt)
                         .Set(x => x.WorkspaceRejectedResultCleanupError, message)
@@ -1806,6 +1830,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         IHostedSiteRevisionService? revisions,
         DateTime attemptedAt)
     {
+        if (run.DeploymentSlug != DeploymentScope.Current) return;
         try
         {
             if (run.Operation == DesignArtifactOperations.Edit)
@@ -1819,7 +1844,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     run.ArtifactRevisionId,
                     CancellationToken.None);
                 await db.DesignArtifactRuns.UpdateOneAsync(
-                    x => x.Id == run.Id && x.Status == RunStatuses.Error && x.CleanupPending,
+                    x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == run.Id && x.Status == RunStatuses.Error && x.CleanupPending),
                     Builders<DesignArtifactRun>.Update
                         .Set(x => x.CleanupPending, false)
                         .Set(x => x.CleanupAttemptedAt, attemptedAt)
@@ -1845,7 +1870,7 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         {
             var message = ex.Message.Length <= 500 ? ex.Message : ex.Message[..500];
             await db.DesignArtifactRuns.UpdateOneAsync(
-                x => x.Id == run.Id && x.Status == RunStatuses.Error && x.CleanupPending,
+                x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == run.Id && x.Status == RunStatuses.Error && x.CleanupPending),
                 Builders<DesignArtifactRun>.Update
                     .Set(x => x.CleanupAttemptedAt, attemptedAt)
                     .Set(x => x.CleanupLastError, message),

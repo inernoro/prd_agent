@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import { MongoClient, type Collection, type Sort } from 'mongodb';
 import { ensureIndexWithReconcile } from './mongo-index-reconcile.js';
+import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
 
 export interface HttpLogRecord {
   _id: string;
@@ -268,8 +269,9 @@ function redactStructuredValue(value: unknown, key = '', depth = 0, seen = new W
   if (key && BODY_SECRET_KEY.test(key)) return '[redacted]';
   // 值形状兜底：字段名没被上面认出来，但值本身就是一把 CDS 凭据时照样抹掉。
   if (typeof value === 'string' && looksLikeCdsCredential(value)) {
-    return value.replace(CDS_CREDENTIAL_VALUE, '[redacted]');
+    return redactHostedSitePreviewLog(value.replace(CDS_CREDENTIAL_VALUE, '[redacted]'));
   }
+  if (typeof value === 'string') return redactHostedSitePreviewLog(value);
   if (value == null || typeof value !== 'object') return value;
   if (depth >= MAX_REDACT_DEPTH) return '[cds http log redaction depth limit]';
   if (seen.has(value)) return '[cds http log circular]';
@@ -306,7 +308,7 @@ export function redactBodyText(value: string): string {
   const jsonRedacted = redactJsonText(value);
   if (jsonRedacted != null) return jsonRedacted;
 
-  let out = value;
+  let out = redactHostedSitePreviewLog(value);
   out = out.replace(
     /(^|[?&\s])([A-Za-z0-9_.-]*(?:token|secret|password|passwd|api[-_]?key|access[-_]?key|session|jwt|credential)[A-Za-z0-9_.-]*=)[^&\s]{1,300}/gi,
     (_match, prefix: string, key: string) => `${prefix}${key}[redacted]`,
@@ -317,7 +319,8 @@ export function redactBodyText(value: string): string {
   return out;
 }
 
-function sanitizePayload(payload: HttpLogRecord['request'] | HttpLogRecord['response']): typeof payload {
+function sanitizePayload(input: HttpLogRecord['request'] | HttpLogRecord['response'], suppress = false): typeof input {
+  const payload = omitHostedSitePreviewBody({ ...input, headers: redactHeaders(input.headers) }, suppress);
   const contentType = payload.headers?.['content-type'];
   if (isBinaryContentType(contentType)) {
     const declaredBytes = parseContentLength(payload.headers?.['content-length']);
@@ -355,7 +358,7 @@ export function redactHeaders(headers: IncomingHttpHeaders | Record<string, unkn
       continue;
     }
     const value = Array.isArray(rawValue) ? rawValue.join(', ') : String(rawValue);
-    out[key] = truncateUtf8(value, MAX_HEADER_VALUE);
+    out[key] = truncateUtf8(redactHostedSitePreviewLog(value), MAX_HEADER_VALUE);
   }
   return out;
 }
@@ -586,6 +589,8 @@ export class HttpLogStore {
     if (!this.shouldPersist(record)) return;
     const doc: HttpLogRecord = {
       ...record,
+      path: redactHostedSitePreviewLog(record.path),
+      upstream: record.upstream ? redactHostedSitePreviewLog(record.upstream) : record.upstream,
       requestKind: record.requestKind || classifyHttpRequestKind({
         layer: record.layer,
         method: record.method,
@@ -594,12 +599,12 @@ export class HttpLogStore {
       }),
       _id: `${record.requestId}:${Date.now()}:${Math.random().toString(16).slice(2)}`,
       ts: record.ts ? new Date(record.ts) : new Date(),
-      request: sanitizePayload(record.request),
-      response: sanitizePayload(record.response),
+      request: sanitizePayload(record.request, isHostedSitePreviewRequest(record.path)),
+      response: sanitizePayload(record.response, isHostedSitePreviewRequest(record.path)),
       error: record.error
         ? {
           code: record.error.code,
-          message: record.error.message ? truncateUtf8(record.error.message, MAX_ERROR_MESSAGE) : undefined,
+          message: record.error.message ? (isHostedSitePreviewRequest(record.path) ? '[preview upstream error omitted]' : truncateUtf8(redactHostedSitePreviewLog(record.error.message), MAX_ERROR_MESSAGE)) : undefined,
         }
         : undefined,
     };
@@ -636,6 +641,9 @@ export class HttpLogStore {
     const id = `${record.requestId}:${startedAt.getTime()}:${Math.random().toString(16).slice(2)}`;
     this.activeRequests.set(id, {
       ...record,
+      path: redactHostedSitePreviewLog(record.path),
+      upstream: record.upstream ? redactHostedSitePreviewLog(record.upstream) : record.upstream,
+      request: sanitizePayload(record.request, isHostedSitePreviewRequest(record.path)),
       requestKind: record.requestKind || classifyHttpRequestKind({
         layer: record.layer,
         method: record.method,

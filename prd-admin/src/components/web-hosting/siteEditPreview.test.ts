@@ -16,6 +16,8 @@ import {
   revisionLabel,
   runningGenerationActivity,
   sanitizeAiPreviewCss,
+  isLatestPreviewRequest,
+  VERIFIED_PACKAGE_PREVIEW_SANDBOX,
 } from './siteEditPreview';
 
 const previewHelperSource = readFileSync(new URL('./siteEditPreview.ts', import.meta.url), 'utf8');
@@ -36,9 +38,19 @@ describe('AI 流式网页严格预览', () => {
   it('严格 sandbox 不授予脚本、表单、弹窗、模态框或同源权限', () => {
     expect(AI_STREAM_PREVIEW_SANDBOX).toBe('');
     expect(generateDialogSource).toContain('sandbox={AI_STREAM_PREVIEW_SANDBOX}');
-    expect(editPanelSource).toContain('sandbox={AI_STREAM_PREVIEW_SANDBOX}');
+    expect(editPanelSource).toContain('sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}');
+    expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).toContain('allow-scripts');
+    expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).not.toContain('allow-same-origin');
+    expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).not.toContain('allow-popups');
     expect(generateDialogSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
     expect(editPanelSource).not.toContain('SRCDOC_PREVIEW_SANDBOX');
+  });
+
+  it('快速切换版本时只接受最后一次请求', () => {
+    const firstRequest = 1;
+    const secondRequest = 2;
+    expect(isLatestPreviewRequest(secondRequest, secondRequest)).toBe(true);
+    expect(isLatestPreviewRequest(firstRequest, secondRequest)).toBe(false);
   });
 
   it('通过 DOM parser 移除脚本节点、事件属性和可导航属性', () => {

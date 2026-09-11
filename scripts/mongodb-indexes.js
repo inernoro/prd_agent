@@ -1416,6 +1416,29 @@ ensureCatalogIndex("design_artifact_runs",
   }]
 )
 
+// 新设计任务与旧 worker 物理隔离。恢复查询以精确部署作用域为前导，
+// 不将同分支的不同 revision 合并成一个执行范围；仅由 DBA 脚本建立索引。
+const designRunV2Indexes = [
+  [{ DeploymentSlug: 1, Status: 1, UpdatedAt: 1 }, { name: "idx_design_run_v2_scope_status_updated" }],
+  [{ DeploymentSlug: 1, Status: 1, LeaseExpiresAt: 1 }, { name: "idx_design_run_v2_scope_lease" }],
+  [{ DeploymentSlug: 1, CleanupPending: 1, Status: 1 }, { name: "idx_design_run_v2_scope_cleanup" }],
+  [{ DeploymentSlug: 1, WorkspacePendingResultAssetKey: 1 }, { name: "idx_design_run_v2_scope_pending_workspace" }],
+  [{ DeploymentSlug: 1, WorkspaceRejectedResultAssetKey: 1 }, { name: "idx_design_run_v2_scope_rejected_workspace" }],
+  [{ WorkspaceResultAssetKey: 1 }, { name: "idx_design_run_v2_result_reference", sparse: true }],
+  [{ WorkspacePendingResultAssetKey: 1 }, { name: "idx_design_run_v2_pending_reference", sparse: true }],
+  [{ DeploymentSlug: 1, CompletedAt: -1 }, {
+    name: "idx_design_run_v2_publication_audit_pending",
+    partialFilterExpression: {
+      Status: "Done", ArtifactType: "web-page", Operation: "generate",
+      ArtifactSiteId: { $type: "string" }, CompletedAt: { $type: "date" },
+      PublishedActivityProjectionCompletedAt: null
+    }
+  }]
+]
+for (const [keys, options] of designRunV2Indexes) {
+  ensureCatalogIndex("design_artifact_runs_v2", keys, options)
+}
+
 // HTML PPT 专用 Run 与公共账本的中断恢复。合同版本和同步标记先做等值过滤，
 // UpdatedAt 直接提供最旧优先顺序，避免恢复 worker 周期性全表扫描。
 ensureCatalogIndex("md_to_ppt_runs",
@@ -1633,6 +1656,9 @@ verifyCatalogIndex(
   "idx_md_to_ppt_runs_contract_recovery",
   { "ArtifactContractVersion": 1, "ArtifactContractSynchronizedAt": 1, "UpdatedAt": 1 }
 )
+for (const [keys, options] of designRunV2Indexes) {
+  verifyCatalogIndex("design_artifact_runs_v2", options.name, keys, options)
+}
 
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(

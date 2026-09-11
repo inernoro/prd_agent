@@ -20,7 +20,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// <summary>
 /// LLM Gateway 核心实现 - 所有大模型调用的守门员
 /// </summary>
-public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
+public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 {
     private readonly IModelResolver _modelResolver;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -1353,7 +1353,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
-        var internalResolution = new ModelResolutionResult
+        var internalResolution = RestoreRawResolution(resolution);
+        var startedAt = DateTime.UtcNow;
+        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
+    }
+
+    private static ModelResolutionResult RestoreRawResolution(GatewayModelResolution resolution)
+        => new()
         {
             LogicalModelId = resolution.LogicalModelId,
             LogicalModelPublicId = resolution.LogicalModelPublicId,
@@ -1420,10 +1426,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             PriceCurrency = resolution.PriceCurrency,
             RetryCandidates = resolution.RetryCandidates
         };
-
-        var startedAt = DateTime.UtcNow;
-        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
-    }
 
     /// <inheritdoc />
     public Task<GatewayRawResponse> TestUpstreamProfileAsync(
@@ -4015,7 +4017,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return true;
         }
 
-        if (requestBody is not null && HasIncompatibleGpt56ToolReasoning(requestBody, resolution))
+        if (IsChatCompletionsEndpoint(request.EndpointPath)
+            && requestBody is not null && HasIncompatibleGpt56ToolReasoning(requestBody, resolution))
         {
             error = GatewayRawResponse.Fail(
                 "GPT56_TOOLS_REQUIRE_REASONING_NONE",

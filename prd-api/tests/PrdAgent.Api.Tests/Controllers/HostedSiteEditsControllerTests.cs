@@ -157,7 +157,7 @@ public sealed class HostedSiteEditsControllerTests
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>(MockBehavior.Strict);
-        knowledge.Setup(service => service.ResolveForRunAsync(
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
                 "owner-user",
                 It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
                 CancellationToken.None))
@@ -404,11 +404,11 @@ public sealed class HostedSiteEditsControllerTests
                 "<!doctype html><html><body>safe</body></html>",
                 siteTitle: siteTitle));
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
-        knowledge.Setup(service => service.ResolveForRunAsync(
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
                 "owner-user",
                 It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
                 CancellationToken.None))
-            .ReturnsAsync(Array.Empty<DesignKnowledgeSnapshot>());
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(Array.Empty<DesignKnowledgeSnapshot>(), new DesignKnowledgeOriginalSnapshot()));
         var queue = new Mock<IRunQueue>();
         var policyConfiguration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         { ["DesignArtifactRuntime:Model"] = "server-edit-model", ["DesignArtifactRuntime:RequestPolicy:TopP"] = "0.92" }).Build();
@@ -449,11 +449,11 @@ public sealed class HostedSiteEditsControllerTests
         sites.Setup(service => service.GetEditableEntryHtmlAsync("site-a", "owner-user", CancellationToken.None))
             .ReturnsAsync(BuildEditableEntry("<!doctype html><html><body>safe</body></html>"));
         var knowledge = new Mock<IDesignKnowledgeSnapshotResolver>();
-        knowledge.Setup(service => service.ResolveForRunAsync(
+        knowledge.Setup(service => service.ResolveWorkspaceForRunAsync(
                 "owner-user",
                 It.IsAny<IReadOnlyList<DesignKnowledgeReferenceIdentity>>(),
                 CancellationToken.None))
-            .ReturnsAsync(Array.Empty<DesignKnowledgeSnapshot>());
+            .ReturnsAsync(new DesignKnowledgeWorkspaceSnapshot(Array.Empty<DesignKnowledgeSnapshot>(), new DesignKnowledgeOriginalSnapshot()));
         var events = new Mock<IRunEventStore>();
         events.Setup(store => store.SetRunAsync(
                 It.IsAny<string>(),

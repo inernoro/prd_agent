@@ -71,6 +71,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var run = new DesignArtifactRun
         {
             Id = runId,
+            DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
             Status = RunStatuses.Running,
             ArtifactType = artifactType,
@@ -497,14 +498,14 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
                     || !string.IsNullOrWhiteSpace(current.ProducedArtifactRevisionId))
                     return current;
                 var healed = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
-                    Builders<DesignArtifactRun>.Filter.And(
+                    Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current) & (Builders<DesignArtifactRun>.Filter.And(
                         OwnedV2Filter(current.Id, current.UserId),
                         Builders<DesignArtifactRun>.Filter.Eq(item => item.CleanupLeaseOwnerId, null),
                         Builders<DesignArtifactRun>.Filter.Eq(
                             item => item.PublishBindingOperationId,
                             operationId),
                         Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactSiteId, null),
-                        Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null)),
+                        Builders<DesignArtifactRun>.Filter.Eq(item => item.ProducedArtifactRevisionId, null))),
                     Builders<DesignArtifactRun>.Update
                         .Set(item => item.ProducedArtifactSiteId, artifactId)
                         .Set(item => item.ProducedArtifactRevisionId, versionId)
@@ -632,7 +633,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
             });
         }
         return await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
-            filter,
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current) & (filter),
             Builders<DesignArtifactRun>.Update.Pipeline(
                 new BsonDocument[] { new("$set", updates) }),
             new FindOneAndUpdateOptions<DesignArtifactRun, DesignArtifactRun>
@@ -644,7 +645,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
 
     private async Task ValidateParentPlanAsync(string planRunId, string planHash, string userId)
     {
-        var plan = await _db.DesignArtifactRuns.Find(item => item.Id == planRunId && item.UserId == userId)
+        var plan = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == planRunId && item.UserId == userId))
             .FirstOrDefaultAsync(CancellationToken.None);
         if (plan == null
             || plan.ContractVersion != DesignArtifactContractVersions.Current
@@ -816,7 +817,7 @@ public sealed class DesignArtifactLifecycleService : IDesignArtifactLifecycleSer
         var normalizedRunId = Required(runId, "runId", 128);
         var normalizedUserId = Required(userId, "userId", 128);
         var run = await _db.DesignArtifactRuns
-            .Find(item => item.Id == normalizedRunId && item.UserId == normalizedUserId)
+            .Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == normalizedRunId && item.UserId == normalizedUserId))
             .FirstOrDefaultAsync(CancellationToken.None);
         if (run == null)
             throw new DesignArtifactLifecycleException(

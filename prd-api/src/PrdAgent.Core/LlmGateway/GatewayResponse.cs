@@ -4,6 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace PrdAgent.Core.LlmGateway;
 
+/// <summary>原生 HTTP 响应的一段字节；Data 仅在回调期间有效，不包含上游认证头。</summary>
+public sealed record GatewayNativeResponseChunk(int StatusCode, string ContentType, ReadOnlyMemory<byte> Data);
+
 /// <summary>
 /// LLM Gateway 统一响应模型
 /// </summary>

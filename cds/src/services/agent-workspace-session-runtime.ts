@@ -11,8 +11,33 @@ import { EGRESS_HEALTH_EXEC_TIMEOUT_MS, EGRESS_HEALTH_PROBE_SCRIPT, EGRESS_PROXY
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
 const PUBLIC_ARTIFACT_MANIFEST_SCHEMA = 'map-design-artifact-public-manifest-v2';
 export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474';
+export const OPEN_DESIGN_CODEX_VERSION = '0.143.0';
+// OpenDesign 0.21.1 sandbox-mode.ts owns this isolated per-session CODEX_HOME.
+const OPEN_DESIGN_CODEX_HOME = '/app/.od/sandbox/agent-home/.codex';
 const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
 const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-prototype';
+
+export function buildOpenDesignCodexConfig(baseUrl: string, model: string): string {
+  return [
+    `model = ${JSON.stringify(model)}`,
+    'model_provider = "map"',
+    'approval_policy = "never"',
+    'check_for_update_on_startup = false',
+    'cli_auth_credentials_store = "file"',
+    'web_search = "disabled"',
+    '',
+    '[model_providers.map]',
+    'name = "MAP design runtime"',
+    `base_url = ${JSON.stringify(baseUrl)}`,
+    'env_key = "MAP_CODEX_MODEL_TOKEN"',
+    'wire_api = "responses"',
+    'requires_openai_auth = false',
+    // Codex 0.143.0 HTTP requests carry full local history with store:false.
+    // previous_response_id is exclusive to its WebSocket incremental path.
+    'supports_websockets = false',
+    '',
+  ].join('\n');
+}
 
 export interface AgentWorkspaceResourcePolicy {
   cpuCores: number;
@@ -225,6 +250,22 @@ const ARTIFACT_CSP = [
   "worker-src 'none'",
   "manifest-src 'none'",
 ].join('; ');
+const VERIFIED_PACKAGE_ARTIFACT_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "media-src 'self' data: blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'self' blob:",
+  "manifest-src 'none'",
+].join('; ');
 const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const DOCUMENT_HEAD_RE = /^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
 const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
@@ -308,6 +349,7 @@ function normalizeDerivedText(value: string, maxLength: number): string {
  */
 export function buildGeneratedArtifactFiles(
   hardenedHtml: string,
+  authorAssetPaths: readonly string[] = [],
 ): WorkspacePackageFile[] {
   const headings: DerivedHeading[] = [];
   const customProperties = new Map<string, string>();
@@ -496,14 +538,21 @@ export function buildGeneratedArtifactFiles(
       schemaVersion: 'map-artifact-provenance-v1',
       producer: 'cds-open-design-runtime',
       derivationStage: 'post-security-hardening',
-      publicInput: 'hardened-index-html',
-      publishedFiles: ['index.html', ...CDS_GENERATED_ARTIFACT_PATHS, 'manifest.json'],
-      privacy: 'public-html-only-no-private-source-metadata',
+      publicInput: authorAssetPaths.length ? 'hardened-index-html-and-author-assets' : 'hardened-index-html',
+      publishedFiles: ['index.html', ...authorAssetPaths, ...CDS_GENERATED_ARTIFACT_PATHS, 'manifest.json'].sort(compareOrdinal),
+      privacy: authorAssetPaths.length
+        ? 'author-assets-preserved-publication-review-required'
+        : 'public-html-only-no-private-source-metadata',
     }),
   ].sort((left, right) => left.path.localeCompare(right.path));
 }
 
-export function buildGeneratedPublicArtifactPackage(hardenedHtml: string): WorkspacePackageFile[] {
+export function buildGeneratedPublicArtifactPackage(
+  hardenedHtml: string,
+  collectedFiles: readonly WorkspacePackageFile[],
+): WorkspacePackageFile[] {
+  const authorAssets = validatePublicArtifactFiles(collectedFiles, true)
+    .filter((file) => file.path !== 'index.html');
   const indexBytes = Buffer.from(hardenedHtml);
   const indexFile: WorkspacePackageFile = {
     path: 'index.html',
@@ -512,8 +561,9 @@ export function buildGeneratedPublicArtifactPackage(hardenedHtml: string): Works
     size: indexBytes.byteLength,
     mediaType: 'text/html; charset=utf-8',
   };
-  const publicFiles = [indexFile, ...buildGeneratedArtifactFiles(hardenedHtml)]
+  const publicFiles = [indexFile, ...authorAssets, ...buildGeneratedArtifactFiles(hardenedHtml, authorAssets.map((file) => file.path))]
     .sort((left, right) => compareOrdinal(left.path, right.path));
+  assertPublicArtifactFileCount(publicFiles.length + 1);
   return [...publicFiles, buildPublicArtifactManifest(publicFiles)]
     .sort((left, right) => compareOrdinal(left.path, right.path));
 }
@@ -923,7 +973,7 @@ async function readResponseLimited(response: Response, maxBytes: number): Promis
 }
 
 function decodeBase64(value: unknown, filePath: string): Buffer {
-  if (typeof value !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
+  if (typeof value !== 'string') {
     throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `invalid contentBase64 for ${filePath}`);
   }
   const bytes = Buffer.from(value, 'base64');
@@ -1128,7 +1178,178 @@ function mediaTypeForFile(filePath: string): string {
   if (extension === '.png') return 'image/png';
   if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
   if (extension === '.webp') return 'image/webp';
+  if (extension === '.gif') return 'image/gif';
+  if (extension === '.ico') return 'image/x-icon';
+  if (extension === '.woff') return 'font/woff';
+  if (extension === '.woff2') return 'font/woff2';
+  if (extension === '.ttf') return 'font/ttf';
+  if (extension === '.otf') return 'font/otf';
   return 'application/octet-stream';
+}
+
+function assertPublicArtifactFileCount(fileCount: number): void {
+  if (fileCount > MAX_OUTPUT_FILE_COUNT) {
+    throw new AgentWorkspaceRuntimeError('design_output_too_many_files', `Public output exceeds the ${MAX_OUTPUT_FILE_COUNT}-file limit`);
+  }
+}
+
+// Mirrors Core DesignArtifactPublicPath; workspace/private paths keep their
+// separate, existing transport contract.
+function assertPublicArtifactPath(filePath: string): void {
+  normalizeRelativePath(filePath);
+  if (filePath.length > 240 || filePath.normalize('NFC') !== filePath
+    || /[%?#:\u0000-\u001f\u007f-\u009f]/.test(filePath)
+    || filePath.split('/').some((segment) => /[ .]$/.test(segment)
+      || /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(segment.split('.')[0]))) {
+    throw new AgentWorkspaceRuntimeError('design_output_invalid', `invalid public output path: ${filePath}`);
+  }
+}
+
+function validatePublicJson(text: string): void {
+  // Keep BOM visible (and rejected by JSON.parse) and match MAP's 64-level
+  // JsonDocument limit without rewriting or recursively walking the payload.
+  JSON.parse(text);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const character of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+    } else if (character === '"') inString = true;
+    else if (character === '[' || character === '{') {
+      depth += 1;
+      if (depth > 64) throw new Error('JSON depth exceeds 64');
+    } else if (character === ']' || character === '}') depth -= 1;
+  }
+}
+
+// This is the byte-preservation boundary. Script execution is granted later only
+// when index.html references a file in this exact validated package.
+function validatePublicArtifactFiles(
+  files: readonly WorkspacePackageFile[],
+  rejectGeneratedPaths = false,
+): WorkspacePackageFile[] {
+  const seen = new Set<string>(rejectGeneratedPaths ? CDS_GENERATED_ARTIFACT_PATHS.map((filePath) => filePath.toUpperCase()) : []);
+  const validated = files.filter((file) => file.path !== 'manifest.json').map((file) => {
+    assertPublicArtifactPath(file.path);
+    const identity = file.path.toUpperCase();
+    if (rejectGeneratedPaths && CDS_GENERATED_ARTIFACT_PATHS.some((reserved) => reserved.toUpperCase() === identity)) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `public output path is reserved for CDS metadata: ${file.path}`);
+    }
+    if (seen.has(identity)) throw new AgentWorkspaceRuntimeError('design_output_invalid', `duplicate public output: ${file.path}`);
+    seen.add(identity);
+    if (file.path !== 'index.html'
+      && (!file.path.startsWith('assets/') || !/\.(?:css|js|mjs|png|jpe?g|gif|webp|ico|woff2?|ttf|otf|json)$/i.test(file.path))) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `unsupported public output type: ${file.path}`);
+    }
+    let bytes: Buffer;
+    try {
+      bytes = decodeBase64(file.contentBase64, file.path);
+    } catch {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `invalid public output bytes: ${file.path}`);
+    }
+    if (bytes.byteLength === 0 || bytes.byteLength !== file.size || sha256(bytes) !== file.sha256 || file.mediaType !== mediaTypeForFile(file.path)) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `public output integrity mismatch: ${file.path}`);
+    }
+    if (/\.(?:html|css|js|mjs|json)$/i.test(file.path)) {
+      try {
+        const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+        if (path.extname(file.path).toLowerCase() === '.json') validatePublicJson(text);
+      } catch {
+        throw new AgentWorkspaceRuntimeError('design_output_invalid', `public text output is not valid UTF-8 or JSON: ${file.path}`);
+      }
+    }
+    return { ...file };
+  });
+  for (const identity of seen) {
+    for (let separator = identity.indexOf('/'); separator >= 0; separator = identity.indexOf('/', separator + 1)) {
+      if (seen.has(identity.slice(0, separator))) {
+        throw new AgentWorkspaceRuntimeError('design_output_invalid', 'public output file and directory paths conflict');
+      }
+    }
+  }
+  return validated;
+}
+
+// Start edits from the verified public snapshot, not from a second merge at commit.
+// A deleted working-copy file must stay deleted; frozen current/ inputs are never exported.
+function prepareCurrentArtifactSeeds(
+  inputFiles: ParsedWorkspacePackage['files'],
+  transfer: WorkspaceTransferRequest,
+): WorkspacePackageFile[] {
+  const currentFiles = inputFiles.filter((file) => file.path.startsWith('current/'));
+  if (currentFiles.length === 0) return [];
+  try {
+    const currentEntry = currentFiles.find((file) => file.path === 'current/index.html');
+    if (!currentEntry) throw new Error('current entry is missing');
+    // These are format-compatibility checks, not proof of producer identity or authorization.
+    // An arbitrary uploaded file with the same reserved name must not silently disappear.
+    const knownReports = new Map(buildGeneratedArtifactFiles('')
+      .map((file) => [file.path, JSON.parse(Buffer.from(file.contentBase64, 'base64').toString('utf8')) as Record<string, unknown>]));
+    for (const file of currentFiles) {
+      const publicPath = file.path.slice('current/'.length);
+      const reportShape = knownReports.get(publicPath);
+      if (publicPath !== 'manifest.json' && !reportShape) continue;
+      const record = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(file.bytes));
+      if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('unknown reserved file format');
+      if (publicPath === 'manifest.json') {
+        if (record.schemaVersion !== PUBLIC_ARTIFACT_MANIFEST_SCHEMA || record.entryFile !== 'index.html'
+          || Object.keys(record).sort().join(',') !== 'artifactRevision,entryFile,files,schemaVersion'
+          || !Array.isArray(record.files) || !record.files.length || record.files.length >= MAX_OUTPUT_FILE_COUNT
+          || !record.files.every((item: unknown) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+            const listed = item as Record<string, unknown>;
+            return Object.keys(listed).sort().join(',') === 'mediaType,path,sha256,size'
+              && typeof listed.path === 'string' && typeof listed.mediaType === 'string'
+              && typeof listed.sha256 === 'string' && /^[a-f0-9]{64}$/.test(listed.sha256)
+              && typeof listed.size === 'number' && Number.isSafeInteger(listed.size) && listed.size > 0;
+          })
+          || record.artifactRevision !== computePublicArtifactRevision(record.files)) throw new Error('unknown reserved manifest format');
+        // Do not compare the old entry hash to normalized current/index.html:
+        // MAP may have removed the trusted system CSP envelope from that input.
+      } else if (record.schemaVersion !== reportShape!.schemaVersion
+        || Object.keys(record).sort().join(',') !== Object.keys(reportShape!).sort().join(',')
+        || publicPath === 'assets/provenance.json' && (record.producer !== reportShape!.producer || record.derivationStage !== reportShape!.derivationStage)) {
+        throw new Error('unknown reserved report format');
+      }
+    }
+    const candidates = currentFiles.map((file) => {
+      const publicPath = file.path.slice('current/'.length);
+      const expectedMime = mediaTypeForFile(publicPath);
+      // Stored sites may use a MIME without charset or the equivalent JS MIME.
+      // Normalize that declaration only; never re-encode the original bytes.
+      const [baseMime, ...parameters] = file.mediaType.split(';').map((part) => part.trim().toLowerCase());
+      const expectedBase = expectedMime.split(';')[0];
+      if (!(baseMime === expectedBase || expectedBase === 'text/javascript' && baseMime === 'application/javascript')
+        || parameters.length > 1 || parameters.some((parameter) => !/^charset\s*=\s*(?:utf-8|"utf-8")$/.test(parameter))) {
+        throw new Error('current resource MIME is incompatible with its file type');
+      }
+      return {
+        path: publicPath, contentBase64: file.bytes.toString('base64'), sha256: file.sha256,
+        size: file.bytes.byteLength, mediaType: expectedMime,
+      };
+    });
+    const validated = validatePublicArtifactFiles(candidates);
+    if (!validated.some((file) => file.path === 'index.html')) throw new Error('current entry is missing');
+    // Old derived reports describe the previous revision and must not masquerade
+    // as authored resources. Exact known paths only; case aliases remain invalid.
+    const seeds = validated.filter((file) => !CDS_GENERATED_ARTIFACT_PATHS.some((reportPath) => file.path === reportPath));
+    validatePublicArtifactFiles(seeds, true);
+    for (const seed of seeds) {
+      if (!isAllowedOutput(seed.path, transfer.allowedOutputPaths)) throw new Error('current resource is outside the authorized output paths');
+      if (inputFiles.some((file) => file.path === seed.path)) throw new Error('editable copy conflicts with a frozen input');
+    }
+    assertPublicArtifactFileCount(seeds.length + 1);
+    if (seeds.reduce((total, file) => total + file.size, 0) > transfer.maxOutputBytes) throw new Error('current resources exceed the output size limit');
+    return seeds;
+  } catch {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_current_artifact_unsupported',
+      'Current site cannot be copied intact into the authorized public workspace; check its paths, file types, and size',
+    );
+  }
 }
 
 function publicTransfer(transfer: WorkspaceTransferRequest): Omit<WorkspaceTransferRequest, 'transferToken'> {
@@ -1482,7 +1703,7 @@ export class AgentWorkspaceSessionRuntime {
         shellQuote(this.image),
         '-lc',
         shellQuote([
-          '(command -v opencode-cli >/dev/null 2>&1 || command -v opencode >/dev/null 2>&1)',
+          `test "$(codex --version)" = "codex-cli ${OPEN_DESIGN_CODEX_VERSION}"`,
           `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/SKILL.md`,
           `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html`,
           `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/references/layouts.md`,
@@ -1506,7 +1727,7 @@ export class AgentWorkspaceSessionRuntime {
           ? {
             available: false,
             resourcePolicyEnforcedPerSession: false,
-            reason: `OpenDesign image ${this.image} does not contain the required OpenCode Agent CLI and web prototype resources`,
+            reason: `OpenDesign image ${this.image} does not contain the required Codex CLI ${OPEN_DESIGN_CODEX_VERSION} and web prototype resources`,
           }
           : {
               available: false,
@@ -1741,6 +1962,7 @@ export class AgentWorkspaceSessionRuntime {
       );
       const workspacePackage = parseWorkspacePackage(packageBytes, transfer);
       const files = workspacePackage.files;
+      const editableSeeds = prepareCurrentArtifactSeeds(files, transfer);
       for (const file of files) {
         const target = path.join(workspaceDir, ...file.path.split('/'));
         const relative = path.relative(workspaceDir, target);
@@ -1749,6 +1971,11 @@ export class AgentWorkspaceSessionRuntime {
         }
         fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
         fs.writeFileSync(target, file.bytes, { mode: 0o644, flag: 'wx' });
+      }
+      for (const file of editableSeeds) {
+        const target = path.join(workspaceDir, ...file.path.split('/'));
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
+        fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'), { mode: 0o644, flag: 'wx' });
       }
       this.chownForContainer(hostRoot);
       onStage('workspace_materialized', { fileCount: files.length });
@@ -1836,6 +2063,9 @@ export class AgentWorkspaceSessionRuntime {
         `OD_API_TOKEN=${daemonApiToken}`,
         'OD_SANDBOX_MODE=1',
         'OD_SANDBOX_IMPORT_ALLOWED_ROOTS=/workspace',
+        // The real MAP ticket belongs only to the egress relay. Codex's
+        // provider-specific env_key receives this session-local placeholder.
+        `MAP_CODEX_MODEL_TOKEN=${egressClientToken}`,
       ].join('\n') + '\n';
       const envFilePath = path.join(hostRoot, `.docker-env-${crypto.randomBytes(8).toString('hex')}`);
       fs.writeFileSync(envFilePath, env, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
@@ -1946,7 +2176,7 @@ export class AgentWorkspaceSessionRuntime {
           'mkdir -p /workspace/.od-skills/web-prototype',
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /app/design-templates/web-prototype/`,
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /workspace/.od-skills/web-prototype/`,
-          `if [ -f /workspace/current/index.html ]; then cp /workspace/current/index.html /workspace/index.html; elif [ ! -f /workspace/index.html ]; then cp ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html /workspace/index.html; fi`,
+          `if [ ! -f /workspace/index.html ]; then cp ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html /workspace/index.html; fi`,
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',
           'test -f /app/design-templates/web-prototype/references/layouts.md',
@@ -2160,14 +2390,12 @@ export class AgentWorkspaceSessionRuntime {
       model.apiKey,
       handle.egressClientToken,
     );
-    const agentModelPlaceholderKey = handle.egressClientToken;
-    const knowledgeDir = path.join(handle.workspaceDir, 'knowledge');
-    const knowledgeFiles = fs.existsSync(knowledgeDir)
-      ? fs.readdirSync(knowledgeDir, { withFileTypes: true })
-          .filter((entry) => entry.isFile())
-          .map((entry) => `/workspace/knowledge/${entry.name}`)
-          .sort()
-      : [];
+    // Include nested originals from the verified MAP package, not only top-level
+    // text snapshots or files the generator might have added to the directory.
+    const knowledgeFiles = handle.inputFiles
+      .filter((file) => file.path.startsWith('knowledge/'))
+      .map((file) => `/workspace/${file.path}`)
+      .sort();
     const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
     const editingExistingPage = fs.existsSync(currentIndexPath);
     // One execution owns its frozen evidence and repair-retention state. Neither
@@ -2178,9 +2406,28 @@ export class AgentWorkspaceSessionRuntime {
       collectArtifactQualityEvidence(handle.workspaceDir, false),
     );
     try {
+    const codexConfig = buildOpenDesignCodexConfig(proxiedModelBaseUrl, model.model);
+    const configured = await this.shell.exec([
+      'docker exec',
+      shellQuote(handle.containerName),
+      'node -e',
+      shellQuote([
+        "const fs = require('node:fs');",
+        `const home = ${JSON.stringify(OPEN_DESIGN_CODEX_HOME)};`,
+        'fs.mkdirSync(home, { recursive: true, mode: 0o700 });',
+        'if (fs.realpathSync(home) !== home) throw new Error("Codex home must remain session-local");',
+        `fs.writeFileSync(home + '/config.toml', Buffer.from(${JSON.stringify(Buffer.from(codexConfig).toString('base64'))}, 'base64'), { mode: 0o600, flag: fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW });`,
+      ].join('\n')),
+    ].join(' '), { timeout: Math.min(this.remainingExecutionMs(executionDeadline), 10_000) });
+    if (configured.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_codex_config_failed',
+        'OpenDesign could not prepare its session-scoped MAP model configuration',
+      );
+    }
     const systemPrompt = [
       'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
-      'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Remove visible placeholders, empty links, missing fragment targets, and enabled buttons without provable declarative behavior.',
+      'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Correct visible placeholders, empty links, missing fragment targets, and nonfunctional buttons while preserving all requested behavior. Do not remove or disable requested controls to silence a validation gate; if the publication policy cannot support their behavior, report the incompatibility.',
       knowledgeFiles.length > 0
         ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
         : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
@@ -2191,23 +2438,16 @@ export class AgentWorkspaceSessionRuntime {
       editingExistingPage
         ? 'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.'
         : 'Build a complete responsive index.html, then reread task.json, every knowledge file, and the finished page. Remove every unresolved placeholder and verify every visible-language, source accuracy, navigation, control, and content constraint before claiming completion.',
-      'Keep the final webpage in index.html. The first release is declarative-only and self-contained: inline CSS, fonts, and images; do not include JavaScript, script elements, inline event handlers, or relative or remote assets. Existing scripts are static design reference only and must be removed from the final deliverable.',
+      'Keep the final webpage in index.html and public resources under assets/. Preserve existing scripts, resources, and interactions unless the user explicitly requests their removal. Never delete scripts or assets to silence a validation gate. The current publication execution policy may reject interactive HTML; report that incompatibility rather than degrading the requested deliverable. Frozen current/ files are reference originals; modify only their editable copies. System reports and manifest.json are rebuilt by CDS and must not be authored.',
       'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
     ].join(' ');
     const buildRunBody = (message: string) => ({
       projectId,
       conversationId,
-      agentId: 'byok-opencode',
+      agentId: 'codex',
       model: model.model,
       message,
       systemPrompt,
-      byokProvider: {
-        protocol: 'openai',
-        apiKey: agentModelPlaceholderKey,
-        baseUrl: proxiedModelBaseUrl,
-        model: model.model,
-        requiresApiKey: true,
-      },
     });
     onStage('open_design_run_starting', { projectId });
     const run = await this.odJson(handle, '/api/runs', {
@@ -2238,8 +2478,8 @@ export class AgentWorkspaceSessionRuntime {
           'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims. Correct every proven mismatch in the file before stopping.',
           editingExistingPage
             ? 'Use only the smallest targeted edit operations needed. Never use broad or global string replacement. Never alter CSS values, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.'
-            : 'For this newly generated page, remove or replace every unsupported element. Do not retain sample copy, fake actions, missing targets, invented measured claims, or incomplete sections merely to preserve the first draft.',
-          'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder, inert control, broken fragment, or unsupported claim is absent.',
+            : 'For this newly generated page, correct every unsupported element. Do not retain sample copy, fake actions, missing targets, invented measured claims, or incomplete sections merely to preserve the first draft. Never remove or disable requested functionality to bypass a platform limitation; report that incompatibility instead.',
+          'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder, inert control, broken fragment, or unsupported claim is absent. Do not satisfy this review by removing requested functionality; report incompatible publication requirements instead.',
         ].join(' ')),
         signal: this.signalForDeadline(executionDeadline, signal),
         acceptedStatuses: [200, 202],
@@ -2281,7 +2521,10 @@ export class AgentWorkspaceSessionRuntime {
           );
         }
         try {
-          hardenedHtml = checkArtifactQuality(outputHtml.toString('utf8'));
+          hardenedHtml = checkArtifactQuality(
+            outputHtml.toString('utf8'),
+            collectedFiles.map((file) => file.path),
+          );
           break;
         } catch (error) {
           if (
@@ -2305,7 +2548,7 @@ export class AgentWorkspaceSessionRuntime {
               `The controlled rejection reason is ${repairReason.code}: ${repairReason.instruction}`,
               preserveMeasuredFacts
                 ? `Read the frozen factual sources by these exact paths: ${[...knowledgeFiles, ...(editingExistingPage ? ['/workspace/current/index.html'] : [])].join(', ') || '/workspace/brief/task.json'}. Restore the original source wording with its subject and quantity together in visible text. Do not delete or change sourced quantities to silence this gate; preserve every other supported fact, valid structure, visual quality, and task constraint.`
-                : 'Fix exactly this proven quality violation in /workspace/index.html. Inspect the whole file and remove every occurrence of the same violation while preserving supported facts, valid structure, visual quality, and all other task constraints.',
+                : 'Fix exactly this proven quality violation in /workspace/index.html. Inspect the whole file and correct every occurrence of the same violation while preserving requested functionality, supported facts, valid structure, visual quality, and all other task constraints.',
               'Do not merely explain the change. Save the corrected file, reread it, and stop only after the violation is absent.',
             ].join(' ')),
             signal: this.signalForDeadline(executionDeadline, signal),
@@ -2331,14 +2574,14 @@ export class AgentWorkspaceSessionRuntime {
       indexFile!.contentBase64 = hardenedBytes.toString('base64');
       indexFile!.sha256 = sha256(hardenedBytes);
       indexFile!.size = hardenedBytes.byteLength;
-      // Publish a closed six-file package. OpenDesign may leave notes below
-      // assets/, but the self-contained page does not consume them and they
-      // have not passed a public active-content policy. CDS replaces those
-      // side outputs with post-hardening metadata it can fully attest.
-      const files = !editingExistingPage && handle.transfer.allowedOutputPaths.includes('assets/**')
-        ? buildGeneratedPublicArtifactPackage(hardenedHtml)
+      // Keep validated author assets byte-for-byte. CDS alone produces its
+      // reserved metadata and manifest; no author manifest is trusted.
+      collectedFiles = validatePublicArtifactFiles(collectedFiles, true);
+      const files = CDS_GENERATED_ARTIFACT_PATHS.every((reportPath) => isAllowedOutput(reportPath, handle.transfer.allowedOutputPaths))
+        ? buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles)
         : [...collectedFiles, buildPublicArtifactManifest(collectedFiles)]
             .sort((left, right) => compareOrdinal(left.path, right.path));
+      assertPublicArtifactFileCount(files.length);
       const totalOutputBytes = files.reduce((total, file) => total + file.size, 0);
       if (totalOutputBytes > handle.transfer.maxOutputBytes) {
         throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxOutputBytes');
@@ -2351,6 +2594,9 @@ export class AgentWorkspaceSessionRuntime {
         files,
       };
       const serialized = JSON.stringify(commitBody);
+      if (Buffer.byteLength(serialized, 'utf8') > handle.transfer.maxOutputBytes) {
+        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'Serialized public output exceeds maxOutputBytes');
+      }
       this.assertExecutionDeadline(executionDeadline);
       onStage('workspace_committing', { fileCount: files.length });
       const commitDeadline = Math.min(
@@ -3204,7 +3450,7 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
   if (message === 'index.html contains an enabled button without provable declarative behavior') {
     return {
       code: 'inert_enabled_button',
-      instruction: 'Remove, disable, or give provable declarative behavior to every enabled button.',
+      instruction: 'Repair each enabled button to perform the requested behavior. Do not remove or disable requested controls to silence this gate. If the current publication policy cannot support that behavior, report the incompatibility instead of degrading the deliverable.',
     };
   }
   if (message === 'index.html violates a visible text occurrence constraint') {
@@ -3271,6 +3517,21 @@ export function hardenSelfContainedHtml(
   return hardenHtmlWithFactRetention(rawHtml, evidenceText, visibleTextOccurrenceConstraints);
 }
 
+export function hardenVerifiedPackageHtml(
+  rawHtml: string,
+  packagePaths: readonly string[],
+  evidenceText = '',
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
+): string {
+  return hardenHtmlWithFactRetention(
+    rawHtml,
+    evidenceText,
+    visibleTextOccurrenceConstraints,
+    undefined,
+    packagePaths,
+  );
+}
+
 interface RetainedMeasuredFact {
   token: string;
   candidates: readonly MeasuredClaimContext[];
@@ -3289,14 +3550,20 @@ export function createArtifactQualityGate(
   evidenceText: string,
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
   authoritativeEvidenceText = evidenceText,
-): (rawHtml: string) => string {
+): (rawHtml: string, packagePaths?: readonly string[]) => string {
   const retention: MeasuredFactRetentionState = {
     facts: new Map(),
     supportedClaims: indexMeasuredClaims(measuredClaimContexts(evidenceText)),
     authoritativeClaims: indexMeasuredClaims(measuredClaimContexts(authoritativeEvidenceText)),
   };
   const constraints = visibleTextOccurrenceConstraints.map((constraint) => ({ ...constraint }));
-  return (rawHtml) => hardenHtmlWithFactRetention(rawHtml, evidenceText, constraints, retention);
+  return (rawHtml, packagePaths) => hardenHtmlWithFactRetention(
+    rawHtml,
+    evidenceText,
+    constraints,
+    retention,
+    packagePaths,
+  );
 }
 
 function hardenHtmlWithFactRetention(
@@ -3304,6 +3571,7 @@ function hardenHtmlWithFactRetention(
   evidenceText: string,
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
   retention?: MeasuredFactRetentionState,
+  packagePaths?: readonly string[],
 ): string {
   let html = normalizeGeneratedHtml(rawHtml);
   if (!DOCUMENT_ROOT_RE.test(html)) {
@@ -3312,11 +3580,14 @@ function hardenHtmlWithFactRetention(
       'index.html must contain an explicit html root element so the security policy can be injected',
     );
   }
+  const verifiedPackagePaths = packagePaths === undefined
+    ? undefined
+    : validateVerifiedPackagePaths(packagePaths);
   html = convertRelativeKnowledgeAnchors(html);
   for (const tag of iterateHtmlTags(html)) {
     if (tag.isClosing) continue;
     const name = tag.name.toLowerCase();
-    if (name === 'script') {
+    if (verifiedPackagePaths === undefined && name === 'script') {
       throw new AgentWorkspaceRuntimeError(
         'design_output_not_self_contained',
         'index.html contains executable script; the OpenDesign MVP accepts declarative HTML and CSS only',
@@ -3329,23 +3600,29 @@ function hardenHtmlWithFactRetention(
       );
     }
     const attributes = parseHtmlAttributes(tag.attributes);
-    for (const attribute of ['src', 'href']) {
+    for (const attribute of ['src', 'href', 'poster', 'background']) {
       const rawValue = attributes.get(attribute);
       if (rawValue === undefined) continue;
       const value = decodeHtmlText(rawValue ?? '').trim();
       if (!value || value.startsWith('#')) continue;
-      if (value.startsWith('data:') && name !== 'a' && name !== 'area') continue;
-      throw new AgentWorkspaceRuntimeError(
-        'design_output_not_self_contained',
-        `index.html references a non-inline resource from <${name}>`,
-      );
+      if (verifiedPackagePaths !== undefined) {
+        assertVerifiedPackageReference(name, attribute, value, verifiedPackagePaths);
+      } else {
+        if (value.startsWith('data:') && name !== 'a' && name !== 'area') continue;
+        throw new AgentWorkspaceRuntimeError(
+          'design_output_not_self_contained',
+          `index.html references a non-inline resource from <${name}>`,
+        );
+      }
     }
     if (
       [...attributes.keys()].some((attribute) => (
-        ['srcset', 'srcdoc', 'background', 'poster', 'ping', 'formaction', 'xlink:href'].includes(attribute)
-        || attribute.startsWith('on')
+        ['srcset', 'srcdoc', 'ping', 'formaction', 'xlink:href'].includes(attribute)
+        || (verifiedPackagePaths === undefined && attribute.startsWith('on'))
       ))
-      || /^(?:applet|base|iframe|frame|object|embed|form)$/i.test(name)
+      || (verifiedPackagePaths === undefined
+        ? /^(?:applet|base|iframe|frame|object|embed|form)$/i.test(name)
+        : /^(?:applet|base|iframe|frame|object|embed)$/i.test(name))
       || (name === 'meta' && attributes.has('http-equiv'))
     ) {
       throw new AgentWorkspaceRuntimeError(
@@ -3363,15 +3640,22 @@ function hardenHtmlWithFactRetention(
   for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
     const value = match[2].trim();
     if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
+    if (verifiedPackagePaths !== undefined && resolveVerifiedPackagePath(value, verifiedPackagePaths)) continue;
     throw new AgentWorkspaceRuntimeError(
       'design_output_not_self_contained',
       'index.html CSS references a non-inline resource',
     );
   }
   validateCssGeneratedContent(html);
-  validateArtifactQuality(html, evidenceText, visibleTextOccurrenceConstraints, retention);
+  validateArtifactQuality(
+    html,
+    evidenceText,
+    visibleTextOccurrenceConstraints,
+    retention,
+    verifiedPackagePaths !== undefined,
+  );
 
-  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${verifiedPackagePaths === undefined ? ARTIFACT_CSP : VERIFIED_PACKAGE_ARTIFACT_CSP}">`;
   const root = html.match(DOCUMENT_ROOT_RE);
   const head = html.slice(root![0].length).match(DOCUMENT_HEAD_RE);
   if (head) {
@@ -3379,6 +3663,68 @@ function hardenHtmlWithFactRetention(
     return `${html.slice(0, insertionIndex)}${cspMeta}${html.slice(insertionIndex)}`;
   }
   return html.replace(DOCUMENT_ROOT_RE, (documentRoot) => `${documentRoot}<head>${cspMeta}</head>`);
+}
+
+function validateVerifiedPackagePaths(packagePaths: readonly string[]): ReadonlySet<string> {
+  const paths = new Set<string>();
+  for (const candidate of packagePaths) {
+    try {
+      assertPublicArtifactPath(candidate);
+    } catch {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', 'verified package contains an invalid path');
+    }
+    if (paths.has(candidate)) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', 'verified package contains a duplicate path');
+    }
+    paths.add(candidate);
+  }
+  if (!paths.has('index.html')) {
+    throw new AgentWorkspaceRuntimeError('design_output_missing', 'verified package has no index.html');
+  }
+  return paths;
+}
+
+function assertVerifiedPackageReference(
+  tagName: string,
+  attribute: string,
+  rawValue: string,
+  packagePaths: ReadonlySet<string>,
+): void {
+  const value = rawValue.trim();
+  if (tagName === 'a' || tagName === 'area') {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html links may only target a fragment in the current document',
+    );
+  }
+  if (value.toLowerCase().startsWith('data:')) {
+    if (attribute === 'src' && tagName !== 'script') return;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html embeds an executable data resource in a disallowed position',
+    );
+  }
+  if (!resolveVerifiedPackagePath(value, packagePaths)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      `index.html references a resource outside the verified package from <${tagName}>`,
+    );
+  }
+}
+
+function resolveVerifiedPackagePath(rawValue: string, packagePaths: ReadonlySet<string>): string | undefined {
+  let value = rawValue.trim();
+  if (!value || value.startsWith('/') || value.includes('\\')) return undefined;
+  const suffix = value.search(/[?#]/);
+  if (suffix >= 0) value = value.slice(0, suffix);
+  while (value.startsWith('./')) value = value.slice(2);
+  try {
+    value = decodeURIComponent(value);
+    assertPublicArtifactPath(value);
+  } catch {
+    return undefined;
+  }
+  return value.startsWith('assets/') && packagePaths.has(value) ? value : undefined;
 }
 
 function extractVisibleHtmlText(html: string): string {
@@ -3792,6 +4138,7 @@ function validateArtifactQuality(
   evidenceText: string,
   visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
   retention?: MeasuredFactRetentionState,
+  allowScriptedControls = false,
 ): void {
   let bodyContentStart: number | undefined;
   let bodyContentEnd: number | undefined;
@@ -3837,8 +4184,10 @@ function validateArtifactQuality(
   const maxMissingLinkOrdinals = 256;
   const targets = new Set<string>();
   const popoverTargets = new Set<string>();
+  let hasScript = false;
   for (const tag of iterateHtmlTags(html)) {
     if (tag.isClosing) continue;
+    if (tag.name.toLowerCase() === 'script') hasScript = true;
     const attributes = tag.attributes;
     const target = decodeHtmlText((readHtmlAttribute(attributes, 'id') ?? readHtmlAttribute(attributes, 'name') ?? '').trim());
     if (target) {
@@ -3863,6 +4212,7 @@ function validateArtifactQuality(
       if (hasHtmlAttribute(attributes, 'disabled')) continue;
       const popoverTarget = readHtmlAttribute(attributes, 'popovertarget')?.trim();
       if (popoverTarget && popoverTargets.has(popoverTarget)) continue;
+      if (allowScriptedControls && hasScript) continue;
       throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains an enabled button without provable declarative behavior');
     }
     if (tagName !== 'a') continue;

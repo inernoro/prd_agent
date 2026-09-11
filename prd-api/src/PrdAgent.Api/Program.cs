@@ -347,6 +347,7 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.Services.HostedSiteService>()
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.Services.HostedSiteService>());
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteRevisionService, PrdAgent.Infrastructure.Services.HostedSiteRevisionService>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.HostedSitePreviewAccessService>();
 // 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
 

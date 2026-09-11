@@ -269,15 +269,14 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             throw new InvalidOperationException("无法验证站点对象包，不能认领生成版本");
         var site = await _db.HostedSites.Find(item => item.Id == entry.Site.Id).FirstOrDefaultAsync(ct)
                    ?? throw new InvalidOperationException("站点不存在，不能认领生成版本");
-        var sourceRun = await _db.DesignArtifactRuns.Find(run =>
-                run.Id == expectedRunId
+        var sourceRun = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == expectedRunId
                 && run.UserId == userId
                 && run.Runtime == expectedRuntime
                 && run.ArtifactType == DesignArtifactTypes.WebPage
                 && run.Operation == DesignArtifactOperations.Generate
                 && run.Status == RunStatuses.Committing
                 && run.ProducedArtifactSiteId == null
-                && run.ProducedArtifactRevisionId == null)
+                && run.ProducedArtifactRevisionId == null))
             .FirstOrDefaultAsync(ct);
         if (sourceRun == null)
             throw new InvalidOperationException("生成任务状态或产物归属已变化，不能认领版本");
@@ -477,6 +476,30 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         return await _db.HostedSiteRevisions
             .Find(x => x.Id == revisionId && x.SiteId == siteId)
             .FirstOrDefaultAsync(ct);
+    }
+
+    public async Task<HostedSiteRevisionFile?> GetVerifiedFileAsync(
+        string siteId,
+        string revisionId,
+        string path,
+        string userId,
+        CancellationToken ct = default)
+    {
+        if (await _sites.GetByIdAsync(siteId, userId, ct) == null)
+            throw new KeyNotFoundException("站点不存在");
+        var filter = Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Id, revisionId)
+                     & Builders<HostedSiteRevision>.Filter.Eq(revision => revision.SiteId, siteId)
+                     & Builders<HostedSiteRevision>.Filter.ElemMatch(
+                         revision => revision.VerifiedFiles,
+                         file => file.Path == path);
+        var projection = Builders<HostedSiteRevision>.Projection.ElemMatch(
+            revision => revision.VerifiedFiles,
+            file => file.Path == path);
+        var projected = await _db.HostedSiteRevisions
+            .Find(filter)
+            .Project<HostedSiteRevision>(projection)
+            .FirstOrDefaultAsync(ct);
+        return projected?.VerifiedFiles.SingleOrDefault();
     }
 
     public async Task<HostedSiteRevisionMutationResult> PublishAsync(

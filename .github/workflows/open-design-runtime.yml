@@ -44,7 +44,7 @@ jobs:
 
   build-and-push:
     name: Build and push OpenDesign runtime
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/codex/'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -85,6 +85,6 @@ jobs:
             echo "## OpenDesign runtime"
             echo ""
             echo "- runtime: OpenDesign 0.21.1"
-            echo "- agent: OpenCode 1.18.28"
+            echo "- agent: Codex CLI 0.143.0"
             echo "- digest: \`${{ steps.build.outputs.digest }}\`"
           } >> "$GITHUB_STEP_SUMMARY"

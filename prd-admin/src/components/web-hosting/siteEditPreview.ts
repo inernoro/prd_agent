@@ -67,6 +67,14 @@ export function canPublishRevision(item: Pick<HostedSiteRevision, 'isCurrent' | 
 
 export const AI_STREAM_PREVIEW_SANDBOX = '';
 
+// Verified multi-file packages are served from a short-lived, opaque-origin route.
+// Keep this narrower than the ordinary hosted-site direct preview.
+export const VERIFIED_PACKAGE_PREVIEW_SANDBOX = 'allow-scripts allow-forms allow-modals allow-downloads';
+
+export function isLatestPreviewRequest(requestId: number, latestRequestId: number): boolean {
+  return requestId === latestRequestId;
+}
+
 export const AI_STREAM_PREVIEW_CSP = [
   "default-src 'none';",
   "base-uri 'none';",

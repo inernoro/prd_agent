@@ -8,6 +8,7 @@ import { listRecentDocumentEntries } from '@/services/real/documentStore';
 import type { RecentDocumentEntry } from '@/services/contracts/documentStore';
 import {
   createHostedSiteEditRun,
+  createHostedSiteRevisionPreviewAccess,
   cancelHostedSiteEditRun,
   getDesignRuntimeCapabilities,
   getHostedSiteEditRun,
@@ -23,9 +24,11 @@ import {
 } from '@/services/real/webPages';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
+  VERIFIED_PACKAGE_PREVIEW_SANDBOX,
   activeSiteEditRunStorageKey,
   canPublishRevision,
   chooseDesignRuntime,
+  isLatestPreviewRequest,
   displayedDesignRuntime,
   elapsedSecondsSince,
   previewableAiStreamHtml,
@@ -112,7 +115,7 @@ function formatRevisionTime(value?: string | null) {
 function generationRecoveryDetail(detail: string) {
   const safetyFailure = /脚本|外链|表单|嵌入|导航|离线安全|安全校验/u.test(detail);
   const nextStep = safetyFailure
-    ? '请移除脚本、外链、表单或动态嵌入，只保留文字、图片说明和内联样式后再试。'
+    ? '请移除包外资源、外部网络地址或嵌套页面，只保留工作区内可核对的网页文件后再试。'
     : '你可以缩小修改范围、换一种说法或切换执行器后再试。';
   return `${detail}。线上版本没有变化，修改要求已保留。${nextStep}`;
 }
@@ -133,6 +136,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
   const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewExpiresAt, setPreviewExpiresAt] = useState<string | null>(null);
   const [previewedRevision, setPreviewedRevision] = useState<HostedSiteRevision | null>(null);
   const [draftRevisionId, setDraftRevisionId] = useState<string | null>(null);
   const [draftRevisionStatus, setDraftRevisionStatus] = useState<'draft' | 'publishing' | null>(null);
@@ -165,6 +170,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const rejectReasonRef = useRef<HTMLTextAreaElement | null>(null);
   const rejectReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const capabilitiesRef = useRef<DesignRuntimeCapability[]>([]);
+  const previewRequestRef = useRef(0);
 
   useEffect(() => {
     capabilitiesRef.current = capabilities;
@@ -296,15 +302,34 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   }, [recoveryNotice?.action, runtimeRecoveryGate?.runtimeId]);
 
   const openRevision = useCallback(async (revisionId: string) => {
-    const result = await previewHostedSiteRevision(site.id, revisionId);
+    const requestId = ++previewRequestRef.current;
+    setPreviewUrl(null);
+    setPreviewExpiresAt(null);
+    setPreviewHtml('');
+    setPreviewedRevision(null);
+    setDraftRevisionId(null);
+    setDraftRevisionStatus(null);
+    const [result, access] = await Promise.all([
+      previewHostedSiteRevision(site.id, revisionId),
+      createHostedSiteRevisionPreviewAccess(site.id, revisionId),
+    ]);
+    if (!isLatestPreviewRequest(requestId, previewRequestRef.current)) return;
     if (!result.success) {
       const detail = result.error?.message || '请稍后重试';
       setRecoveryNotice({ title: '版本预览失败', detail, action: 'preview', revisionId });
       toast.error('版本预览失败', detail);
       return;
     }
+    if (!access.success) {
+      const detail = access.error?.message || '请稍后重试';
+      setRecoveryNotice({ title: '完整版本预览失败', detail, action: 'preview', revisionId });
+      toast.error('完整版本预览失败', detail);
+      return;
+    }
     setRecoveryNotice((current) => current?.action === 'preview' ? null : current);
     setPreviewHtml(result.data.html);
+    setPreviewUrl(access.data.available ? access.data.previewUrl || null : null);
+    setPreviewExpiresAt(access.data.available ? access.data.expiresAt || null : null);
     setPreviewedRevision(result.data.revision);
     const publishable = canPublishRevision(result.data.revision);
     if (publishable && result.data.revision.instruction) {
@@ -321,6 +346,34 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       result.data.revision.status === 'published' ? 'published' : 'draft-ready',
     ));
   }, [site.id]);
+
+  useEffect(() => {
+    if (!previewUrl || !previewExpiresAt || !previewedRevision) return;
+    const revisionId = previewedRevision.id;
+    const requestId = previewRequestRef.current;
+    const expiresAtMs = Date.parse(previewExpiresAt);
+    const delay = Number.isFinite(expiresAtMs)
+      ? Math.max(1_000, expiresAtMs - Date.now() - 60_000)
+      : 1_000;
+    const timer = window.setTimeout(() => {
+      void createHostedSiteRevisionPreviewAccess(site.id, revisionId).then((access) => {
+        if (requestId !== previewRequestRef.current
+          || previewedRevision.id !== revisionId) return;
+        if (!access.success || !access.data.available || !access.data.previewUrl) {
+          setRecoveryNotice({
+            title: '完整版本预览已失效',
+            detail: access.success ? '请重新打开这个版本' : access.error?.message || '请重新打开这个版本',
+            action: 'preview',
+            revisionId,
+          });
+          return;
+        }
+        setPreviewUrl(access.data.previewUrl);
+        setPreviewExpiresAt(access.data.expiresAt || null);
+      });
+    }, delay);
+    return () => window.clearTimeout(timer);
+  }, [previewExpiresAt, previewUrl, previewedRevision, site.id]);
 
   useEffect(() => {
     try {
@@ -383,6 +436,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
         setGenerating(false);
         setThinking('');
         setPreviewHtml('');
+        setPreviewUrl(null);
         streamRef.current = '';
         setPhase('修改任务已停止，线上版本没有变化');
         setRecoveryNotice(null);
@@ -437,6 +491,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setDraftRevisionStatus(null);
     setThinking('');
     setPreviewHtml('');
+    setPreviewUrl(null);
     setPreviewedRevision(null);
     setRecoveryNotice(null);
     setRuntimeRecoveryGate(null);
@@ -511,7 +566,10 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             const now = Date.now();
             if (now - lastPaintAtRef.current >= 250) {
               const html = previewableAiStreamHtml(streamRef.current);
-              if (html) setPreviewHtml(html);
+              if (html) {
+                setPreviewUrl(null);
+                setPreviewHtml(html);
+              }
               lastPaintAtRef.current = now;
             }
             return;
@@ -539,6 +597,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             setGenerating(false);
             setThinking('');
             setPreviewHtml('');
+            setPreviewUrl(null);
             streamRef.current = '';
             setPhase('修改任务已停止，线上版本没有变化');
             setRecoveryNotice(null);
@@ -600,6 +659,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       setStopRequested(false);
       setThinking('');
       setPreviewHtml('');
+      setPreviewUrl(null);
       streamRef.current = '';
       setPhase('修改任务已停止，线上版本没有变化');
       setRecoveryNotice(null);
@@ -668,6 +728,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     onPublished(result.data.site);
     setRecoveryNotice(null);
     setPreviewHtml('');
+    setPreviewUrl(null);
     setPreviewedRevision(null);
     setDraftRevisionId(null);
     setDraftRevisionStatus(null);
@@ -701,6 +762,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setRecoveryNotice(null);
     if (draftRevisionId === revisionId) {
       setPreviewHtml('');
+      setPreviewUrl(null);
       setPreviewedRevision(null);
       setDraftRevisionId(null);
       setDraftRevisionStatus(null);
@@ -1024,7 +1086,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
               <div className="border-t border-token-subtle px-2.5 pb-2.5 pt-2">
                 <p>{activeRuntimeFact}</p>
                 <p className="mt-1">
-                  首版仅支持声明式自包含 HTML，含脚本、外链或 ZIP 资源会在任务创建前提示。
+                  完整工作区会原样保留；只有清单和哈希一致的包内脚本、样式与图片可以运行，包外资源会被拒绝。
                 </p>
                 {unavailableRuntimes.length > 0 && (
                   <p className="mt-1">
@@ -1232,8 +1294,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                 )}
               </div>
               <iframe
-                srcDoc={previewHtml}
-                sandbox={AI_STREAM_PREVIEW_SANDBOX}
+                src={previewUrl || undefined}
+                srcDoc={previewUrl ? undefined : previewHtml}
+                sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}
                 referrerPolicy="no-referrer"
                 title={previewedRevision ? `${revisionLabel(previewedRevision)}预览` : '修改草稿预览'}
                 className="h-64 w-full bg-white"

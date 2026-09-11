@@ -41,6 +41,420 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// </summary>
 public class GatewayKeyGateContractTests
 {
+    [Fact]
+    public async Task NativeResponses_TwoToolRoundsPreserveRawStreamAndTrustedAttribution()
+    {
+        const string first = "event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_native\",\"status\":\"in_progress\"}}\n\n";
+        const string last = "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"{\\\"path\\\":\"}\n\n"
+            + "event: response.function_call_arguments.delta\ndata: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"fc_1\",\"delta\":\"\\\"本地.html\\\"}\"}\n\n"
+            + "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_native\",\"status\":\"completed\",\"model\":\"native-model\",\"usage\":{\"input_tokens\":11,\"output_tokens\":7},\"output\":[{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"write_file\",\"arguments\":\"{}\"}]}}\n\n";
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var bodies = new List<JsonObject>();
+        var handler = new NativeResponsesHandler(async (request, ct) =>
+        {
+            request.RequestUri!.AbsolutePath.ShouldBe("/v1/responses");
+            request.Headers.Authorization!.Parameter.ShouldBe("synthetic-provider-key");
+            request.Headers.Contains("X-Gateway-Key").ShouldBeFalse();
+            bodies.Add(JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject());
+            if (bodies.Count == 1)
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StreamContent(new NativeGatedStream(first, last, release.Task))
+                    { Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream") } },
+                };
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"resp_final\",\"status\":\"completed\",\"model\":\"native-model\",\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"saved\"}]}],\"usage\":{\"input_tokens\":19,\"output_tokens\":3}}", System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        var resolver = NativeResponsesResolver();
+        var starts = new List<LlmLogStart>();
+        var dones = new List<LlmLogDone>();
+        var writer = NativeResponsesLogWriter(starts, dones);
+        var gateway = NativeResponsesGateway(resolver, handler, writer.Object);
+        var authorizer = new CapturingScopedKeyAuthorizer(_ => true);
+        await using var app = BuildHostWithGateway(gateway, keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var initial = JsonNode.Parse("{\"model\":\"native-model\",\"store\":false,\"stream\":true,\"input\":[{\"role\":\"user\",\"content\":\"write a file\"}],\"tools\":[{\"type\":\"function\",\"name\":\"write_file\",\"parameters\":{\"type\":\"object\"}}],\"provider\":{\"require_parameters\":true}}")!.AsObject();
+            using var response = await client.SendAsync(NativeResponsesRequest(initial, "native-first"), HttpCompletionOption.ResponseHeadersRead);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            using var reader = new StreamReader(await response.Content.ReadAsStreamAsync());
+            var firstLine = await reader.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            firstLine.ShouldBe("event: response.created");
+            release.Task.IsCompleted.ShouldBeFalse(); // 终态未就绪，调用方已读到首个原生事件。
+            release.SetResult();
+            var remaining = await reader.ReadToEndAsync();
+            (firstLine + "\n" + remaining).ShouldBe(first + last);
+            authorizer.RequiredScope.ShouldBe("stream:invoke");
+
+            var continuation = JsonNode.Parse("{\"model\":\"native-model\",\"store\":false,\"input\":[{\"role\":\"user\",\"content\":\"write a file\"},{\"type\":\"reasoning\",\"id\":\"rs_1\",\"encrypted_content\":\"synthetic-encrypted-history\",\"summary\":[]},{\"type\":\"function_call\",\"call_id\":\"call_1\",\"name\":\"write_file\",\"arguments\":\"{}\"},{\"type\":\"function_call_output\",\"call_id\":\"call_1\",\"output\":\"saved\"}],\"tools\":[{\"type\":\"function\",\"name\":\"write_file\",\"parameters\":{\"type\":\"object\"}}]}")!.AsObject();
+            using var final = await client.SendAsync(NativeResponsesRequest(continuation, "native-second"));
+            final.StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await final.Content.ReadAsStringAsync()).ShouldContain("resp_final");
+            bodies.Count.ShouldBe(2);
+            JsonNode.DeepEquals(bodies[1]["input"], continuation["input"]).ShouldBeTrue();
+            JsonNode.DeepEquals(bodies[0]["tools"], initial["tools"]).ShouldBeTrue();
+            bodies.All(x => !x.ContainsKey("messages") && !x.ContainsKey("n") && !x.ContainsKey("provider")).ShouldBeTrue();
+            resolver.Verify(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Exactly(2));
+            starts.Count.ShouldBe(2);
+            starts.All(x => x.TenantId == "tenant-test" && x.TeamId == "team-test" && x.ServiceKeyId == "capturing-key"
+                && x.UserId == "synthetic-user" && x.RunId == "synthetic-run" && x.SessionId == "synthetic-session"
+                && x.GatewayTransport == "http" && x.AppCallerCode == AppCallerRegistry.Admin.WebHosting.GenerateHtml).ShouldBeTrue();
+            dones.Select(x => x.InputTokens).ShouldBe(new int?[] { 11, 19 });
+            dones.Select(x => x.OutputTokens).ShouldBe(new int?[] { 7, 3 });
+            dones.All(x => x.Status == "succeeded" && x.EstimatedCost > 0).ShouldBeTrue();
+        }
+        finally { release.TrySetResult(); await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_RegisteredModelIdPinUsesTheSingleResolvedPhysicalModelName()
+    {
+        var resolver = NativeResponsesResolver();
+        var handler = new NativeResponsesHandler(async (request, ct) =>
+        {
+            var sent = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            sent["model"]!.GetValue<string>().ShouldBe("native-model");
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"resp_pin\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}", System.Text.Encoding.UTF8, "application/json"),
+            };
+        });
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(resolver, handler));
+        await app.StartAsync();
+        try
+        {
+            using var request = NativeResponsesRequest(JsonNode.Parse("{\"model\":\"native-model\",\"store\":false,\"input\":\"hello\"}")!.AsObject(), "native-pin");
+            request.Headers.Add("X-Gateway-Pinned-Platform-Id", "native-platform");
+            request.Headers.Add("X-Gateway-Pinned-Model-Id", "registered-model-record-id");
+            using var response = await app.GetTestClient().SendAsync(request);
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            resolver.Verify(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                "native-platform", "registered-model-record-id", It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Theory]
+    [InlineData("{\"model\":\"native-model\",\"input\":\"hello\"}")]
+    [InlineData("{\"store\":true,\"input\":\"hello\"}")]
+    [InlineData("{\"store\":false,\"input\":[],\"previous_response_id\":\"another-run\"}")]
+    [InlineData("{\"store\":false,\"input\":[],\"conversation\":\"another-run\"}")]
+    [InlineData("{\"store\":false,\"input\":[{\"type\":\"item_reference\",\"id\":\"another-run-item\"}]}")]
+    public async Task NativeResponses_StoredContextIsRejectedBeforeResolution(string json)
+    {
+        var resolver = NativeResponsesResolver();
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(resolver, handler));
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(NativeResponsesRequest(JsonNode.Parse(json)!.AsObject(), "reject-state"));
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await response.Content.ReadAsStringAsync()).ShouldContain("NATIVE_RESPONSES_STATELESS_REQUIRED");
+            resolver.Verify(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+            handler.Count.ShouldBe(0);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("wrong-key")]
+    public async Task NativeResponses_MissingOrWrongKeyNeverResolves(string? key)
+    {
+        var resolver = NativeResponsesResolver();
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(resolver, handler));
+        await app.StartAsync();
+        try
+        {
+            var request = NativeResponsesRequest(JsonNode.Parse("{\"store\":false,\"input\":\"hi\"}")!.AsObject(), "reject-key");
+            request.Headers.Remove("X-Gateway-Key");
+            if (key != null) request.Headers.Add("X-Gateway-Key", key);
+            using var response = await app.GetTestClient().SendAsync(request);
+            response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+            resolver.Verify(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Theory]
+    [InlineData(429, "{\"error\":{\"code\":\"rate_limit\"}}", "application/json")]
+    [InlineData(200, "data: {\"type\":\"response.failed\",\"response\":{\"status\":\"failed\",\"usage\":{\"input_tokens\":2,\"output_tokens\":1}}}\n\n", "text/event-stream")]
+    [InlineData(200, "data: {\"type\":\"response.created\"}\n\n", "text/event-stream")]
+    public async Task NativeResponses_FailedOrTruncatedUpstreamNeverLogsSuccess(int status, string payload, string type)
+    {
+        var handler = new NativeResponsesHandler((_, _) => Task.FromResult(new HttpResponseMessage((HttpStatusCode)status)
+        { Content = new StringContent(payload, System.Text.Encoding.UTF8, type) }));
+        var starts = new List<LlmLogStart>();
+        var dones = new List<LlmLogDone>();
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(NativeResponsesResolver(), handler, NativeResponsesLogWriter(starts, dones).Object));
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(NativeResponsesRequest(JsonNode.Parse("{\"store\":false,\"stream\":true,\"input\":\"hi\"}")!.AsObject(), "native-failure"));
+            ((int)response.StatusCode).ShouldBe(status); // 已开始的原生 SSE 不伪装成另一个 HTTP 响应。
+            (await response.Content.ReadAsStringAsync()).ShouldBe(payload);
+            dones.Count.ShouldBe(1);
+            dones[0].Status.ShouldBe("failed");
+            dones[0].StatusCode.ShouldBe(status == 200 ? 502 : status);
+            handler.Count.ShouldBe(1); // 不自动重发有副作用的原生工具轮次。
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_UnverifiedToolsFailClosedWithoutSending()
+    {
+        var resolver = NativeResponsesResolver(functionCalling: null);
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(resolver, handler));
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(NativeResponsesRequest(JsonNode.Parse("{\"store\":false,\"input\":[],\"tools\":[{\"type\":\"function\",\"name\":\"run\"}],\"provider\":{\"require_parameters\":true}}")!.AsObject(), "native-capability"));
+            response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await response.Content.ReadAsStringAsync()).ShouldContain("FUNCTION_CALLING_UNVERIFIED");
+            handler.Count.ShouldBe(0);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Theory]
+    [InlineData("low")]
+    [InlineData("none")]
+    public async Task NativeResponses_Gpt56NativeToolsAndReasoningRemainNative(string effort)
+    {
+        var body = JsonNode.Parse("{\"model\":\"gpt-5.6\",\"store\":false,\"input\":[],\"tools\":[{\"type\":\"function\",\"name\":\"run\",\"parameters\":{\"type\":\"object\"}}],\"provider\":{\"require_parameters\":true}}")!.AsObject();
+        body["reasoning"] = new JsonObject { ["effort"] = effort };
+        var handler = new NativeResponsesHandler(async (request, ct) =>
+        {
+            request.RequestUri!.AbsolutePath.ShouldBe("/v1/responses");
+            var sent = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            sent["model"]!.GetValue<string>().ShouldBe("gpt-5.6");
+            JsonNode.DeepEquals(sent["reasoning"], body["reasoning"]).ShouldBeTrue();
+            JsonNode.DeepEquals(sent["tools"], body["tools"]).ShouldBeTrue();
+            sent.ContainsKey("reasoning_effort").ShouldBeFalse();
+            sent.ContainsKey("messages").ShouldBeFalse();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent("{\"status\":\"completed\"}", System.Text.Encoding.UTF8, "application/json") };
+        });
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(NativeResponsesResolver(model: "gpt-5.6"), handler));
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(NativeResponsesRequest(body, "native-gpt56"));
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            handler.Count.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Theory]
+    [InlineData(true, 200, null)]
+    [InlineData(false, 400, "VISION_UNSUPPORTED")]
+    [InlineData(null, 400, "VISION_UNVERIFIED")]
+    public async Task NativeResponses_ImageInputKeepsChatIdentityAndChecksVisionCapability(bool? vision, int status, string? error)
+    {
+        var body = JsonNode.Parse("{\"model\":\"native-model\",\"store\":false,\"input\":[{\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"inspect this synthetic image\"},{\"type\":\"input_image\",\"image_url\":\"data:image/png;base64,c3ludGhldGlj\"}]}],\"provider\":{\"require_parameters\":true}}")!.AsObject();
+        var resolver = NativeResponsesResolver(vision: vision);
+        var starts = new List<LlmLogStart>();
+        var dones = new List<LlmLogDone>();
+        var handler = new NativeResponsesHandler(async (request, ct) =>
+        {
+            var sent = JsonNode.Parse(await request.Content!.ReadAsStringAsync(ct))!.AsObject();
+            JsonNode.DeepEquals(sent["input"], body["input"]).ShouldBeTrue();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            { Content = new StringContent("{\"status\":\"completed\"}", System.Text.Encoding.UTF8, "application/json") };
+        });
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(resolver, handler, NativeResponsesLogWriter(starts, dones).Object));
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(NativeResponsesRequest(body, "native-image"));
+            ((int)response.StatusCode).ShouldBe(status);
+            resolver.Verify(x => x.ResolveAsync(AppCallerRegistry.Admin.WebHosting.GenerateHtml, ModelTypes.Chat,
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
+            handler.Count.ShouldBe(vision == true ? 1 : 0);
+            if (error != null) (await response.Content.ReadAsStringAsync()).ShouldContain(error);
+            else
+            {
+                starts.Single().AppCallerCode.ShouldBe(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+                starts.Single().RunId.ShouldBe("synthetic-run");
+            }
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_FixDoesNotRelaxRawChatGpt56ToolReasoningGuard()
+    {
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var gateway = NativeResponsesGateway(NativeResponsesResolver(model: "gpt-5.6"), handler);
+        var response = await gateway.SendRawWithResolutionAsync(new GatewayRawRequest
+        {
+            AppCallerCode = AppCallerRegistry.Admin.WebHosting.GenerateHtml,
+            ModelType = ModelTypes.Chat, HttpMethod = "POST", EndpointPath = "/v1/chat/completions",
+            RequestBody = JsonNode.Parse("{\"model\":\"gpt-5.6\",\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}],\"reasoning_effort\":\"low\",\"tools\":[{\"type\":\"function\",\"function\":{\"name\":\"run\"}}]}")!.AsObject(),
+        }, new GatewayModelResolution
+        {
+            Success = true, ActualModel = "gpt-5.6", ActualPlatformId = "native-platform",
+            ApiUrl = "https://upstream.test", ApiKey = "synthetic-provider-key", PlatformType = "openai", Protocol = "openai",
+            SupportsFunctionCalling = true, SupportsThinking = true,
+        });
+        response.Success.ShouldBeFalse();
+        response.ErrorCode.ShouldBe("GPT56_TOOLS_REQUIRE_REASONING_NONE");
+        handler.Count.ShouldBe(0);
+    }
+
+    private static HttpRequestMessage NativeResponsesRequest(JsonObject body, string requestId)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/responses") { Content = JsonContent.Create(body) };
+        request.Headers.Add("X-Gateway-Key", GatewayKey);
+        request.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+        request.Headers.Add("X-Gateway-Source", "map");
+        request.Headers.Add("X-Gateway-Run-Id", "synthetic-run");
+        request.Headers.Add("X-Gateway-Session-Id", "synthetic-session");
+        request.Headers.Add("X-Gateway-User-Id", "synthetic-user");
+        request.Headers.Add("X-Gateway-Tenant-Id", "must-not-trust-client-tenant");
+        request.Headers.Add("X-Request-Id", requestId);
+        return request;
+    }
+
+    [Fact]
+    public async Task NativeResponses_ScopedKeyCannotEscalateToStreaming()
+    {
+        var resolver = NativeResponsesResolver();
+        var handler = new NativeResponsesHandler((_, _) => throw new InvalidOperationException("must not send"));
+        var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "invoke");
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(resolver, handler), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(NativeResponsesRequest(JsonNode.Parse("{\"store\":false,\"stream\":true,\"input\":\"hi\"}")!.AsObject(), "denied-stream"));
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            authorizer.RequiredScope.ShouldBe("stream:invoke");
+            resolver.Verify(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+                It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task NativeResponses_ExistingCancelRouteFinalizesFailedWithoutAnotherSend()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new NativeResponsesHandler(async (_, ct) =>
+        {
+            started.SetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            throw new InvalidOperationException("must cancel");
+        });
+        var starts = new List<LlmLogStart>();
+        var dones = new List<LlmLogDone>();
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(NativeResponsesResolver(), handler, NativeResponsesLogWriter(starts, dones).Object));
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var pending = client.SendAsync(NativeResponsesRequest(JsonNode.Parse("{\"store\":false,\"stream\":true,\"input\":\"hi\"}")!.AsObject(), "cancel-native"));
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var cancel = new HttpRequestMessage(HttpMethod.Post, "/gw/v1/requests/cancel-native/cancel");
+            cancel.Headers.Add("X-Gateway-Key", GatewayKey);
+            cancel.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+            using var cancelled = await client.SendAsync(cancel);
+            cancelled.StatusCode.ShouldBe(HttpStatusCode.Accepted);
+            using var response = await pending.WaitAsync(TimeSpan.FromSeconds(5));
+            response.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+            dones.Single().Status.ShouldBe("failed");
+            dones.Single().StatusCode.ShouldBe(409);
+            handler.Count.ShouldBe(1);
+        }
+        finally { await app.StopAsync(); }
+    }
+
+    private static Mock<IModelResolver> NativeResponsesResolver(bool? functionCalling = true,
+        string model = "native-model", bool? vision = true)
+    {
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(),
+            It.IsAny<string?>(), It.IsAny<string?>(), It.IsAny<CancellationToken>())).ReturnsAsync(new ModelResolutionResult
+            {
+                Success = true, ActualModel = model, ActualPlatformId = "native-platform", ApiUrl = "https://upstream.test",
+                ApiKey = "synthetic-provider-key", PlatformType = "openai", Protocol = "openai",
+                SupportsFunctionCalling = functionCalling, SupportsThinking = true, SupportsVision = vision,
+                InputPricePerMillion = 1, OutputPricePerMillion = 2,
+                ParameterCapabilities = new Dictionary<string, bool> { ["store"] = true, ["reasoning"] = true },
+            });
+        return resolver;
+    }
+
+    private static PrdAgent.Infrastructure.LlmGateway.LlmGateway NativeResponsesGateway(Mock<IModelResolver> resolver,
+        HttpMessageHandler handler, ILlmRequestLogWriter? writer = null)
+        => new(resolver.Object, new NativeResponsesClientFactory(handler),
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<PrdAgent.Infrastructure.LlmGateway.LlmGateway>.Instance, writer);
+
+    private static Mock<ILlmRequestLogWriter> NativeResponsesLogWriter(List<LlmLogStart> starts, List<LlmLogDone> dones)
+    {
+        var writer = new Mock<ILlmRequestLogWriter>();
+        writer.Setup(x => x.StartAsync(It.IsAny<LlmLogStart>(), It.IsAny<CancellationToken>()))
+            .Callback<LlmLogStart, CancellationToken>((start, _) => starts.Add(start)).ReturnsAsync("native-log");
+        writer.Setup(x => x.MarkDone(It.IsAny<string>(), It.IsAny<LlmLogDone>()))
+            .Callback<string, LlmLogDone>((_, done) => dones.Add(done));
+        return writer;
+    }
+
+    private sealed class NativeResponsesClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class NativeResponsesHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> handle) : HttpMessageHandler
+    {
+        public int Count { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        { Count++; return handle(request, ct); }
+    }
+
+    private sealed class NativeGatedStream(string prefix, string suffix, Task release) : Stream
+    {
+        private readonly byte[] _prefix = System.Text.Encoding.UTF8.GetBytes(prefix);
+        private readonly byte[] _suffix = System.Text.Encoding.UTF8.GetBytes(suffix);
+        private int _offset;
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            var offset = _offset;
+            if (offset >= _prefix.Length) await release.WaitAsync(ct);
+            var bytes = offset < _prefix.Length ? _prefix : _suffix;
+            var position = offset < _prefix.Length ? offset : offset - _prefix.Length;
+            var count = Math.Min(buffer.Length, Math.Min(7, bytes.Length - position));
+            if (count <= 0) return 0;
+            bytes.AsMemory(position, count).CopyTo(buffer);
+            _offset += count;
+            return count;
+        }
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct)
+            => ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => _offset; set => throw new NotSupportedException(); }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     [Theory]
     [InlineData("map", null)]
     [InlineData("map", "omit")]

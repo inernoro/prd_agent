@@ -297,7 +297,19 @@ public class MongoDbContext
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
     public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");
     public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
-    public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs");
+    // 物理集合隔离：未升级 worker 的旧扫描不能认领、恢复或清理新任务。
+    public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs_v2");
+
+    /// <summary>
+    /// 公开历史与共享对象引用保护专用只读查询。不得用于取消、生命周期、工作区或发布写入。
+    /// 不限定部署，用户归属等读取条件由调用方提供；不暴露旧集合的写句柄。
+    /// </summary>
+    public async Task<DesignArtifactRun?> FindDesignArtifactRunHistoryAsync(
+        System.Linq.Expressions.Expression<Func<DesignArtifactRun, bool>> predicate,
+        CancellationToken ct = default) =>
+        await DesignArtifactRuns.Find(predicate).FirstOrDefaultAsync(ct)
+        ?? await _database.GetCollection<DesignArtifactRun>("design_artifact_runs")
+            .Find(predicate).FirstOrDefaultAsync(ct);
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
     public IMongoCollection<ShareViewLog> ShareViewLogs => _database.GetCollection<ShareViewLog>("share_view_logs");
     public IMongoCollection<WebPageGroup> WebPageGroups => _database.GetCollection<WebPageGroup>("web_page_groups");

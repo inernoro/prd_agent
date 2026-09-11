@@ -130,15 +130,20 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
 
         IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
+        DesignKnowledgeOriginalSnapshot? originals = null;
         try
         {
-            snapshots = await _knowledgeSnapshots.ResolveForRunAsync(
-                userId,
-                knowledgeReferences.Select(reference => new DesignKnowledgeReferenceIdentity(
+            var identities = knowledgeReferences.Select(reference => new DesignKnowledgeReferenceIdentity(
                     reference.EntryId ?? string.Empty,
                     reference.StoreId ?? string.Empty,
-                    reference.ContentHash)).ToList(),
-                CancellationToken.None);
+                    reference.ContentHash)).ToList();
+            if (runtime == DesignArtifactRuntimes.OpenDesign)
+            {
+                var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
+                snapshots = workspace.KnowledgeReferences;
+                originals = workspace.Originals;
+            }
+            else snapshots = await _knowledgeSnapshots.ResolveForRunAsync(userId, identities, CancellationToken.None);
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
@@ -159,6 +164,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         var run = new DesignArtifactRun
         {
             Id = runId,
+            DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
             Status = RunStatuses.Queued,
             ArtifactType = DesignArtifactTypes.WebPage,
@@ -173,6 +179,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                 : editable.Site.Title.Trim(),
             TargetSiteId = siteId,
             KnowledgeReferences = snapshots.ToList(),
+            KnowledgeOriginals = originals,
             InputAuthority = snapshots.Count > 0
                 ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
                 : DesignArtifactInputAuthorities.UserSupplied,
@@ -262,14 +269,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     [HttpGet("runs/{runId}")]
     public async Task<IActionResult> GetRun(string siteId, string runId)
     {
-        var run = await _db.DesignArtifactRuns
-            .Find(x => x.Id == runId
-                       && x.UserId == this.GetRequiredUserId()
-                       && x.TargetSiteId == siteId
-                       && x.Operation == DesignArtifactOperations.Edit
-                       && x.ArtifactType == DesignArtifactTypes.WebPage
-                       && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting)
-            .FirstOrDefaultAsync(CancellationToken.None);
+        var run = await FindOwnedEditRunHistoryAsync(siteId, runId, this.GetRequiredUserId());
         return run == null
             ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "修改任务不存在"))
             : Ok(ApiResponse<object>.Ok(ToRunDto(run)));
@@ -279,7 +279,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     public async Task<IActionResult> CancelRun(string siteId, string runId)
     {
         var userId = this.GetRequiredUserId();
-        var current = await FindOwnedEditRunAsync(siteId, runId, userId);
+        var current = await FindOwnedEditableRunAsync(siteId, runId, userId);
         if (current == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "修改任务不存在"));
 
@@ -324,7 +324,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         Response.Headers["X-Accel-Buffering"] = "no";
 
         var userId = this.GetRequiredUserId();
-        var initial = await FindOwnedEditRunAsync(siteId, runId, userId);
+        var initial = await FindOwnedEditRunHistoryAsync(siteId, runId, userId);
         if (initial == null)
         {
             await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
@@ -371,7 +371,7 @@ public sealed class HostedSiteEditsController : ControllerBase
                     continue;
                 }
 
-                var snapshot = await FindOwnedEditRunAsync(siteId, runId, userId);
+                var snapshot = await FindOwnedEditRunHistoryAsync(siteId, runId, userId);
                 if (snapshot == null) return;
                 if (!redisProjectionAvailable
                     && (snapshot.Progress != lastMongoProgress
@@ -439,13 +439,22 @@ public sealed class HostedSiteEditsController : ControllerBase
         }
     }
 
-    private async Task<DesignArtifactRun?> FindOwnedEditRunAsync(string siteId, string runId, string userId) =>
-        await _db.DesignArtifactRuns.Find(x => x.Id == runId
+    private Task<DesignArtifactRun?> FindOwnedEditRunHistoryAsync(string siteId, string runId, string userId) =>
+        _db.FindDesignArtifactRunHistoryAsync(x => x.Id == runId
+                                                  && x.UserId == userId
+                                                  && x.TargetSiteId == siteId
+                                                  && x.Operation == DesignArtifactOperations.Edit
+                                                  && x.ArtifactType == DesignArtifactTypes.WebPage
+                                                  && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting,
+            CancellationToken.None);
+
+    private async Task<DesignArtifactRun?> FindOwnedEditableRunAsync(string siteId, string runId, string userId) =>
+        await _db.DesignArtifactRuns.Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                                          && x.UserId == userId
                                          && x.TargetSiteId == siteId
                                          && x.Operation == DesignArtifactOperations.Edit
                                          && x.ArtifactType == DesignArtifactTypes.WebPage
-                                         && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting)
+                                         && x.SourceSurface == DesignArtifactSourceSurfaces.WebHosting))
             .FirstOrDefaultAsync(CancellationToken.None);
 
     private async Task ProjectCancellationBestEffortAsync(DesignArtifactRun run)

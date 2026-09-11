@@ -181,15 +181,20 @@ public sealed class DesignArtifactsController : ControllerBase
         if (references.Count > 3)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "首版一次最多引用 3 篇知识"));
         IReadOnlyList<DesignKnowledgeSnapshot> snapshots;
+        DesignKnowledgeOriginalSnapshot? originals = null;
         try
         {
-            snapshots = await _knowledgeSnapshots.ResolveForRunAsync(
-                userId,
-                references.Select(reference => new DesignKnowledgeReferenceIdentity(
+            var identities = references.Select(reference => new DesignKnowledgeReferenceIdentity(
                     reference.EntryId ?? string.Empty,
                     reference.StoreId ?? string.Empty,
-                    reference.ContentHash)).ToList(),
-                CancellationToken.None);
+                    reference.ContentHash)).ToList();
+            if (runtime == DesignArtifactRuntimes.OpenDesign)
+            {
+                var workspace = await _knowledgeSnapshots.ResolveWorkspaceForRunAsync(userId, identities, CancellationToken.None);
+                snapshots = workspace.KnowledgeReferences;
+                originals = workspace.Originals;
+            }
+            else snapshots = await _knowledgeSnapshots.ResolveForRunAsync(userId, identities, CancellationToken.None);
         }
         catch (DesignKnowledgeSnapshotException ex)
         {
@@ -209,6 +214,7 @@ public sealed class DesignArtifactsController : ControllerBase
         var run = new DesignArtifactRun
         {
             Id = runId,
+            DeploymentSlug = DeploymentScope.Current,
             UserId = userId,
             Status = RunStatuses.Queued,
             ArtifactType = DesignArtifactTypes.WebPage,
@@ -220,6 +226,7 @@ public sealed class DesignArtifactsController : ControllerBase
             Instruction = instruction,
             Title = TrimOptional(request.Title, 200) ?? snapshots[0].Title,
             KnowledgeReferences = snapshots.ToList(),
+            KnowledgeOriginals = originals,
             InputAuthority = snapshots.Count > 0
                 ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
                 : DesignArtifactInputAuthorities.UserSupplied,
@@ -270,9 +277,8 @@ public sealed class DesignArtifactsController : ControllerBase
     [HttpGet("runs/{runId}")]
     public async Task<IActionResult> GetRun(string runId)
     {
-        var run = await _db.DesignArtifactRuns
-            .Find(x => x.Id == runId && x.UserId == this.GetRequiredUserId())
-            .FirstOrDefaultAsync(CancellationToken.None);
+        var run = await _db.FindDesignArtifactRunHistoryAsync(
+            x => x.Id == runId && x.UserId == this.GetRequiredUserId(), CancellationToken.None);
         return run == null
             ? NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"))
             : Ok(ApiResponse<object>.Ok(ToDto(run)));
@@ -283,10 +289,10 @@ public sealed class DesignArtifactsController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var generationRun = await _db.DesignArtifactRuns
-            .Find(run => run.Id == runId
+            .Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
                          && run.UserId == userId
                          && run.ArtifactType == DesignArtifactTypes.WebPage
-                         && run.Operation == DesignArtifactOperations.Generate)
+                         && run.Operation == DesignArtifactOperations.Generate))
             .FirstOrDefaultAsync(CancellationToken.None);
         if (generationRun == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
@@ -329,9 +335,8 @@ public sealed class DesignArtifactsController : ControllerBase
     [HttpGet("runs/{runId}/contract")]
     public async Task<IActionResult> GetContract(string runId)
     {
-        var run = await _db.DesignArtifactRuns
-            .Find(item => item.Id == runId && item.UserId == this.GetRequiredUserId())
-            .FirstOrDefaultAsync(CancellationToken.None);
+        var run = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == this.GetRequiredUserId(), CancellationToken.None);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
 
@@ -419,9 +424,8 @@ public sealed class DesignArtifactsController : ControllerBase
         [FromQuery] long afterSeq = 0,
         [FromQuery] int limit = 100)
     {
-        var run = await _db.DesignArtifactRuns
-            .Find(item => item.Id == runId && item.UserId == this.GetRequiredUserId())
-            .FirstOrDefaultAsync(CancellationToken.None);
+        var run = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == this.GetRequiredUserId(), CancellationToken.None);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
         if (run.ContractVersion != DesignArtifactContractVersions.Current)
@@ -454,9 +458,8 @@ public sealed class DesignArtifactsController : ControllerBase
     public async Task<IActionResult> GetEvidence(string runId)
     {
         var userId = this.GetRequiredUserId();
-        var run = await _db.DesignArtifactRuns
-            .Find(item => item.Id == runId && item.UserId == userId)
-            .FirstOrDefaultAsync(CancellationToken.None);
+        var run = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == userId, CancellationToken.None);
         if (run == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "设计任务不存在"));
 
@@ -601,9 +604,8 @@ public sealed class DesignArtifactsController : ControllerBase
         Response.Headers["X-Accel-Buffering"] = "no";
 
         var userId = this.GetRequiredUserId();
-        var initial = await _db.DesignArtifactRuns
-            .Find(item => item.Id == runId && item.UserId == userId)
-            .FirstOrDefaultAsync(CancellationToken.None);
+        var initial = await _db.FindDesignArtifactRunHistoryAsync(
+            item => item.Id == runId && item.UserId == userId, CancellationToken.None);
         if (initial == null)
         {
             await WriteEventAsync(null, "error", JsonSerializer.Serialize(new
@@ -658,9 +660,8 @@ public sealed class DesignArtifactsController : ControllerBase
                     continue;
                 }
 
-                var snapshot = await _db.DesignArtifactRuns
-                    .Find(item => item.Id == runId && item.UserId == userId)
-                    .FirstOrDefaultAsync(CancellationToken.None);
+                var snapshot = await _db.FindDesignArtifactRunHistoryAsync(
+                    item => item.Id == runId && item.UserId == userId, CancellationToken.None);
                 if (snapshot == null) return;
                 if (snapshot.Progress != lastMongoProgress
                     || !string.Equals(snapshot.Phase, lastMongoPhase, StringComparison.Ordinal))

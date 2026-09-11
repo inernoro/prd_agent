@@ -270,6 +270,122 @@ public static class GatewayHttpEndpoints
                 Cases: cases), jsonOpts);
         });
 
+        // 原生无状态 Responses：只装配既有治理与核心传输，不改旧兼容入口。
+        app.MapPost("/gw/v1/responses", async (
+            HttpContext http,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor,
+            IServiceProvider services) =>
+        {
+            var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+            if (PrdAgent.Infrastructure.LlmGateway.LlmGateway.ValidateNativeResponsesBody(body) is { } invalid)
+            {
+                await WriteCompatErrorAsync(http, invalid.ErrorMessage!, "invalid_request_error", invalid.ErrorCode, invalid.StatusCode);
+                return;
+            }
+            var nativeBody = body!;
+            var requestId = TrackGatewayRequestId(http);
+            var stream = ReadBool(nativeBody, "stream");
+            var model = ReadString(nativeBody, "model");
+            var pool = ResolveCompatModelPoolId(http, nativeBody);
+            var (platform, pinnedModel) = ResolveCompatPinnedTarget(http, nativeBody);
+            var policy = ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel);
+            var strict = ReadProviderRequireParameters(nativeBody);
+            var runId = ResolveCompatRunId(http, nativeBody);
+            StripGatewayRoutingFields(nativeBody);
+            // provider 是本网关的路由信封，不属于原生 OpenAI JSON；未知选项不可悄悄丢弃。
+            if (nativeBody["provider"] is JsonObject provider)
+            {
+                provider.Remove("require_parameters");
+                if (provider.Count != 0)
+                {
+                    await WriteCompatErrorAsync(http, "原生通道不支持该 provider 选项", "invalid_request_error", "NATIVE_PROVIDER_OPTION_UNSUPPORTED", 400);
+                    return;
+                }
+                nativeBody.Remove("provider");
+            }
+            // 图片属于输入能力，不改变已冻结的业务调用方类型；核心能力门会单独校验视觉支持。
+            var requestType = ModelTypes.Chat;
+            var ingress = new GatewayIngressRequest
+            {
+                RequestId = requestId,
+                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "map",
+                IngressProtocol = "gw-native",
+                AppCallerCode = ResolveVerifiedAppCaller(http, string.Empty),
+                RequestType = requestType,
+                ExpectedModel = policy == "pool" && !string.IsNullOrWhiteSpace(pool) ? pool : model,
+                ModelPoolId = pool,
+                ModelPolicy = policy,
+                PinnedPlatformId = platform,
+                PinnedModelId = pinnedModel,
+                ParameterPolicy = strict ? "strict-require" : "default-drop",
+                RequestBody = nativeBody,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId, RunId = runId,
+                    SessionId = ResolveHeader(http, "X-Gateway-Session-Id"),
+                    UserId = ResolveHeader(http, "X-Gateway-User-Id"),
+                    GatewayTransport = GatewayTransports.Http,
+                },
+            };
+            if (string.IsNullOrWhiteSpace(ingress.AppCallerCode))
+            {
+                await WriteCompatErrorAsync(http, "原生通道需要已授权调用方", "invalid_request_error", "APP_CALLER_REQUIRED", 400);
+                return;
+            }
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
+            // 既有提示词治理只会生成 Chat messages；有启用策略时明确拒绝，不能绕过或偷偷转换。
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
+            if (!promptPolicy.Success || !string.IsNullOrWhiteSpace(promptPolicy.Request.Context?.PromptPolicyId))
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage ?? "当前提示词策略未支持原生 Responses", "invalid_request_error",
+                    promptPolicy.ErrorCode ?? "NATIVE_RESPONSES_PROMPT_POLICY_UNSUPPORTED", 400);
+                return;
+            }
+            var request = ApplyVerifiedRawRequestContext(http, new GatewayRawRequest
+            {
+                AppCallerCode = ingress.AppCallerCode, ModelType = requestType,
+                EndpointPath = "/v1/responses", RequestBody = nativeBody,
+                Context = ingress.Context,
+                TimeoutSeconds = 900,
+            }, ingress);
+            using var scope = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
+            await RunWithRequestCancellationAsync(http, services, request.AppCallerCode, requestId, async token =>
+            {
+                var resolution = await gateway.ResolveModelAsync(request.AppCallerCode, request.ModelType,
+                    request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, token);
+                var disconnected = false;
+                var outcome = await gateway.SendNativeResponsesWithResolutionAsync(request, resolution, async (chunk, _) =>
+                {
+                    if (disconnected) return;
+                    try
+                    {
+                        if (!http.Response.HasStarted)
+                        {
+                            http.Response.StatusCode = chunk.StatusCode;
+                            http.Response.ContentType = chunk.ContentType;
+                            http.Response.Headers.CacheControl = "no-store";
+                            http.Response.Headers["X-Accel-Buffering"] = "no";
+                        }
+                        if (!chunk.Data.IsEmpty)
+                        {
+                            await http.Response.Body.WriteAsync(chunk.Data, http.RequestAborted);
+                            await http.Response.Body.FlushAsync(http.RequestAborted);
+                        }
+                    }
+                    catch (IOException) { disconnected = true; }
+                    catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { disconnected = true; }
+                    catch (ObjectDisposedException) { disconnected = true; }
+                }, token);
+                http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
+                if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
+                    http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
+                if (!outcome.Success && !http.Response.HasStarted && !disconnected)
+                    await WriteCompatErrorAsync(http, outcome.ErrorMessage ?? "原生请求失败", "api_error", outcome.ErrorCode, outcome.StatusCode);
+            });
+        });
+
         // OpenAI Responses 兼容入口。外部仍按 OpenAI 心智传 input / instructions，
         // 内部统一转成 chat-style GatewayRequest，router、日志、appCaller registry 不分叉。
         app.MapPost("/v1/responses", async (
@@ -1926,6 +2042,7 @@ public static class GatewayHttpEndpoints
 
     private static bool ShouldInspectAuthorizationBody(string path)
         => path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/responses", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/send", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/raw", StringComparison.OrdinalIgnoreCase)

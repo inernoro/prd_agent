@@ -1236,6 +1236,7 @@ export const api = {
     editRunStream: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/stream`,
     revisions: (siteId: string) => `/api/web-pages/${siteId}/edits/revisions`,
     revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,
+    revisionPreviewAccess: '/api/hosted-site-preview-access',
     publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
     rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
     rejectRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/reject`,

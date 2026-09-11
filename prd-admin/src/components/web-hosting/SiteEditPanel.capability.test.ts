@@ -38,8 +38,9 @@ describe('网页微调执行器事实接线', () => {
     expect(htmlPptServiceSource).not.toContain('content: item.content');
   });
 
-  it('在开始前明示首版自包含输入边界', () => {
-    expect(source).toContain('首版仅支持声明式自包含 HTML，含脚本、外链或 ZIP 资源会在任务创建前提示。');
+  it('在开始前明示受信工作区资源边界', () => {
+    expect(source).toContain('只有清单和哈希一致的包内脚本、样式与图片可以运行');
+    expect(source).toContain('包外资源会被拒绝');
   });
 
   it('版本操作具有明确文字和不小于 44px 的点击热区', () => {
@@ -97,7 +98,12 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('aria-live="polite"');
     expect(source).toContain('motion-reduce:animate-none');
     expect(source).toContain('{previewHtml ? (');
-    expect(source).toContain('srcDoc={previewHtml}');
+    expect(source).toContain('srcDoc={previewUrl ? undefined : previewHtml}');
+    expect(source).toContain('src={previewUrl || undefined}');
+    expect(source).toContain('createHostedSiteRevisionPreviewAccess(site.id, revisionId)');
+    expect(source).toContain('isLatestPreviewRequest(requestId, previewRequestRef.current)');
+    expect(source).toContain('setPreviewExpiresAt(access.data.available ? access.data.expiresAt || null : null)');
+    expect(source).toContain('expiresAtMs - Date.now() - 60_000');
   });
 
   it('明确表达草稿到发布的版本心智，并区分预览中的真实版本', () => {
@@ -117,7 +123,7 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('按原要求重试');
     expect(source).toContain('调整要求或切换执行器');
     expect(source).toContain('adjustFailedGeneration');
-    expect(source).toContain('请移除脚本、外链、表单或动态嵌入');
+    expect(source).toContain('请移除包外资源、外部网络地址或嵌套页面');
     expect(source).toContain('当前线上版本仍然有效，可直接重试发布。');
     expect(source).toContain('当前线上版本没有变化，可再次尝试。');
   });

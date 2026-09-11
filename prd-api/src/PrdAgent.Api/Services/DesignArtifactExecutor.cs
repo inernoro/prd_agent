@@ -87,7 +87,7 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
             throw InvalidPolicy();
     }
 
-    internal void ApplyRequestParameters(JsonObject body)
+    internal void ApplyRequestParameters(JsonObject body, bool responses = false)
     {
         if (Policy is not { } p) return;
         if (p.OutputTokenMode == "omit")
@@ -96,8 +96,19 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         if (p.TopP is { } topP) { body.Remove("topP"); body["top_p"] = topP; }
         if (p.ReasoningMode != null)
         {
+            var nativeReasoning = responses && body["reasoning"] is JsonObject existing
+                ? existing.DeepClone().AsObject()
+                : new JsonObject();
             foreach (var alias in new[] { "reasoning", "reasoning_effort", "reasoningEffort", "thinking", "include_reasoning" }) body.Remove(alias);
-            if (p.ReasoningMode == "effort") body["reasoning_effort"] = p.ReasoningEffort;
+            if (p.ReasoningMode == "effort")
+            {
+                if (responses)
+                {
+                    nativeReasoning["effort"] = p.ReasoningEffort;
+                    body["reasoning"] = nativeReasoning;
+                }
+                else body["reasoning_effort"] = p.ReasoningEffort;
+            }
         }
     }
     internal static DesignArtifactModelSelection Resolve(IConfiguration configuration)
@@ -116,7 +127,17 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
         return Model;
     }
 
-    internal void ApplyToOpenAiRequest(JsonObject body)
+    internal void ApplyToResponsesRequest(JsonObject body)
+    {
+        if (ModelPoolId == null && Model == null && Policy?.PinnedModelId == null)
+            throw new InvalidOperationException("当前设计任务没有指定模型，请配置后重新发起任务");
+        // provider 与 pin 是网关路由扩展，不是 Codex 可以自行决定的模型参数。
+        body.Remove("provider");
+        foreach (var alias in new[] { "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId" }) body.Remove(alias);
+        ApplyToOpenAiRequest(body, responses: true);
+    }
+
+    internal void ApplyToOpenAiRequest(JsonObject body, bool responses = false)
     {
         body.Remove("model");
         body.Remove("model_pool_id");
@@ -134,7 +155,7 @@ internal sealed record DesignArtifactModelSelection(string? ModelPoolId, string?
                 body["pinned_platform_id"] = Policy.PinnedPlatformId;
                 body["pinned_model_id"] = Policy.PinnedModelId;
             }
-            ApplyRequestParameters(body);
+            ApplyRequestParameters(body, responses);
             if (Policy.RequireDeclaredParameters)
             {
                 if (body["provider"] is not JsonObject) body["provider"] = new JsonObject();

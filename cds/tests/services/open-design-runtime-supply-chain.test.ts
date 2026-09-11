@@ -29,7 +29,10 @@ describe('OpenDesign runtime supply chain', () => {
     expect(workflow).not.toContain('od-0.21.1-opencode-1.18.28');
     expect(workflow).toContain('branches: [main]');
     expect(workflow).toContain("if: github.ref == 'refs/heads/main'");
+    expect(workflow).toContain("github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/codex/')");
     expect(workflow).toContain('Build runtime without publishing');
+    expect(workflow).toContain('agent: Codex CLI 0.143.0');
+    expect(workflow).not.toContain('agent: OpenCode');
   });
 
   it('ships versioned third-party provenance and license responsibilities in the derived image', () => {
@@ -42,10 +45,12 @@ describe('OpenDesign runtime supply chain', () => {
       'utf8',
     );
 
-    expect(dockerfile).toContain('org.opencontainers.image.licenses="Apache-2.0 AND MIT"');
+    expect(dockerfile).toContain('org.opencontainers.image.licenses="Apache-2.0"');
+    expect(dockerfile).toContain('@openai/codex@0.143.0');
+    expect(dockerfile).not.toContain('opencode-ai');
     expect(dockerfile).toContain('COPY THIRD_PARTY_NOTICES.md');
     expect(notices).toContain('| OpenDesign | 0.21.1 |');
-    expect(notices).toContain('| OpenCode | 1.18.28 |');
+    expect(notices).toContain('| Codex CLI | 0.143.0 |');
     expect(notices).toContain('正式升级前');
   });
 });

@@ -97,20 +97,36 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
 
     [HttpPost("llm/v1/chat/completions")]
     [RequestSizeLimit(MaxProxyRequestBytes)]
-    public async Task ProxyChatCompletions(string runId, CancellationToken ct)
+    public Task ProxyChatCompletions(string runId, CancellationToken ct) =>
+        ProxyModelAsync(runId, responses: false, ct);
+
+    [HttpPost("llm/v1/responses")]
+    [RequestSizeLimit(MaxProxyRequestBytes)]
+    public Task ProxyResponses(string runId, CancellationToken ct) =>
+        ProxyModelAsync(runId, responses: true, ct);
+
+    private async Task ProxyModelAsync(string runId, bool responses, CancellationToken ct)
     {
         try
         {
             var bodyBytes = await ReadBoundedBodyAsync(Request, MaxProxyRequestBytes, ct);
             var body = JsonNode.Parse(bodyBytes) as JsonObject
                        ?? throw new InvalidOperationException("模型请求格式不正确，请重新发起任务");
-            if (body["messages"] is not JsonArray)
+            if (!responses && body["messages"] is not JsonArray)
                 throw new InvalidOperationException("模型请求缺少对话内容，请重新发起任务");
+            if (responses && body["input"] is not JsonArray
+                && !(body["input"] is JsonValue input && input.TryGetValue<string>(out _)))
+                throw new InvalidOperationException("模型请求缺少任务上下文，请重新发起任务");
 
             var run = await _broker.ReserveModelCallAsync(runId, ReadBearerToken(), ct);
             var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
-            selection.ApplyToOpenAiRequest(body);
-            ApplySingleOutputContract(body);
+            if (responses)
+                selection.ApplyToResponsesRequest(body);
+            else
+            {
+                selection.ApplyToOpenAiRequest(body);
+                ApplySingleOutputContract(body);
+            }
 
             var serveBaseUrl = _configuration["LlmGateway:ServeBaseUrl"]?.Trim().TrimEnd('/');
             var gatewayKey = _configuration["LlmGwServe:ApiKey"]?.Trim();
@@ -123,7 +139,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
             using var upstream = new HttpRequestMessage(
                 HttpMethod.Post,
-                $"{serveBaseUrl}/v1/chat/completions")
+                responses ? $"{serveBaseUrl}/gw/v1/responses" : $"{serveBaseUrl}/v1/chat/completions")
             {
                 Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
             };
@@ -182,6 +198,8 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
             }
             Response.StatusCode = (int)response.StatusCode;
             Response.ContentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
+            if (response.Content.Headers.ContentType?.MediaType == "text/event-stream")
+                Response.Headers["X-Accel-Buffering"] = "no";
             await using var stream = await response.Content.ReadAsStreamAsync(proxyDeadline.Token);
             await CopyWithIdleTimeoutAsync(stream, Response.Body, idleTimeout, proxyDeadline.Token);
         }
@@ -300,7 +318,7 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         {
             UnauthorizedAccessException => (StatusCodes.Status401Unauthorized, "DESIGN_RUNTIME_TICKET_INVALID", "远程设计凭证无效或已过期，请重新发起任务"),
             KeyNotFoundException => (StatusCodes.Status404NotFound, "DESIGN_RUNTIME_RUN_NOT_FOUND", "设计任务不存在，请重新发起"),
-            InvalidOperationException => (StatusCodes.Status409Conflict, "DESIGN_RUNTIME_CONTRACT_REJECTED", "远程设计数据不符合本次任务合同，请重新发起"),
+            InvalidOperationException or JsonException => (StatusCodes.Status409Conflict, "DESIGN_RUNTIME_CONTRACT_REJECTED", "远程设计数据不符合本次任务合同，请重新发起"),
             BadHttpRequestException => (StatusCodes.Status413PayloadTooLarge, "DESIGN_RUNTIME_PAYLOAD_TOO_LARGE", "远程设计数据超过允许大小，请减少引用后重试"),
             _ => (StatusCodes.Status500InternalServerError, "DESIGN_RUNTIME_UNAVAILABLE", "远程设计服务暂时不可用，请稍后重试"),
         };

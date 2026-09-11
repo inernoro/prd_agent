@@ -425,15 +425,21 @@ public class HostedSiteService : IHostedSiteService
         return AttachDerivedFields(site)!;
     }
 
-    private static readonly string[] VerifiedGeneratedSitePaths =
+    private static readonly string[] RequiredVerifiedGeneratedSitePaths =
     [
-        "assets/accessibility-static-report.json",
-        "assets/design-tokens.json",
-        "assets/page-outline.json",
-        "assets/provenance.json",
         "index.html",
         "manifest.json",
     ];
+
+    // 生成附带的四份报告不是发布授权或完整性凭据，普通编辑也不要求伪造它们。
+    // Broker 已按清单逐个核验全部文件；这里继续校验每个文件及入口安全策略。
+
+    // 只扩展资源文件的保存，不扩大入口 HTML 的执行权限；SVG/HTML/XML 仍不允许作为附加文档。
+    private static readonly HashSet<string> VerifiedGeneratedResourceExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".css", ".js", ".mjs", ".json", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
+        ".woff", ".woff2", ".ttf", ".otf",
+    };
 
     public async Task<HostedSite> CreateFromVerifiedFilesAsync(
         string userId,
@@ -451,38 +457,14 @@ public class HostedSiteService : IHostedSiteService
             || string.IsNullOrWhiteSpace(sourceRef))
             throw new InvalidOperationException("已验证文件包只允许由设计任务创建新站点");
 
-        var ordered = files.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray();
-        if (!ordered.Select(file => file.Path).SequenceEqual(VerifiedGeneratedSitePaths, StringComparer.Ordinal))
-            throw new InvalidOperationException("设计产物文件包不完整，请重新生成");
-        foreach (var file in ordered)
-        {
-            if (file.Content.LongLength == 0
-                || !string.Equals(
-                    Convert.ToHexString(SHA256.HashData(file.Content)).ToLowerInvariant(),
-                    file.Sha256,
-                    StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("设计产物文件校验失败，请重新生成");
-            if (file.Path != "index.html"
-                && !string.Equals(file.MimeType, "application/json; charset=utf-8", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(file.MimeType, "application/json", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException("设计产物包含不能公开托管的文件类型，请重新生成");
-        }
-
+        var ordered = ValidateVerifiedGeneratedFiles(files);
         var indexFile = ordered.Single(file => file.Path == "index.html");
-        if (!indexFile.MimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("设计产物入口类型不正确，请重新生成");
-        var indexHtml = System.Text.Encoding.UTF8.GetString(indexFile.Content);
-        var rehardened = HostedSiteRevisionRules.HardenGeneratedHtml(
-            HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(indexHtml));
-        if (!string.Equals(rehardened, indexHtml, StringComparison.Ordinal))
-            throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
 
         // 站点身份绑定 Run，而对象仍按发布尝试隔离。这样完成建站但尚未回写 Produced
         // 时可以认领原站，旧尝试的晚到上传/补偿也不会触碰新尝试的对象。
-        var publishingRun = await _db.DesignArtifactRuns.Find(run =>
-                run.Id == sourceRef && run.UserId == userId
+        var publishingRun = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == sourceRef && run.UserId == userId
                 && run.Status == RunStatuses.Committing && run.LeaseOwnerId == leaseOwnerId
-                && run.LeaseExpiresAt > DateTime.UtcNow && run.CleanupLeaseOwnerId == null)
+                && run.LeaseExpiresAt > DateTime.UtcNow && run.CleanupLeaseOwnerId == null))
             .FirstOrDefaultAsync(ct);
         if (publishingRun == null)
             throw new InvalidOperationException("设计产物发布租约或补偿账本已变化，不能认领站点");
@@ -507,13 +489,13 @@ public class HostedSiteService : IHostedSiteService
             .ToList();
         var plannedAt = DateTime.UtcNow;
         var cleanupPlan = await _db.DesignArtifactRuns.UpdateOneAsync(
-            run => run.Id == sourceRef
+            run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == sourceRef
                    && run.UserId == userId
                    && run.Status == RunStatuses.Committing
                    && run.LeaseOwnerId == leaseOwnerId
                    && run.LeaseExpiresAt > plannedAt
                    && !run.CleanupPending
-                   && run.CleanupLeaseOwnerId == null,
+                   && run.CleanupLeaseOwnerId == null),
             Builders<DesignArtifactRun>.Update
                 .Set(run => run.CleanupPending, true)
                 .Set(run => run.CleanupArtifactSiteId, siteId)
@@ -634,12 +616,11 @@ public class HostedSiteService : IHostedSiteService
 
         // 校验完外部对象后再确认租约和补偿账本，禁止越权或与清理任务并发认领。
         var now = DateTime.UtcNow;
-        var claim = await _db.DesignArtifactRuns.Find(run =>
-                run.Id == runId && run.UserId == userId
+        var claim = await _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId && run.UserId == userId
                 && run.Status == RunStatuses.Committing
                 && run.LeaseOwnerId == leaseOwnerId && run.LeaseExpiresAt > now
                 && run.CleanupPending && run.CleanupArtifactSiteId == site.Id
-                && run.CleanupLeaseOwnerId == null)
+                && run.CleanupLeaseOwnerId == null))
             .FirstOrDefaultAsync(ct);
         if (claim == null || !claim.CleanupAssetKeys.OrderBy(key => key, StringComparer.Ordinal)
                 .SequenceEqual(site.Files.Select(file => file.CosKey).OrderBy(key => key, StringComparer.Ordinal), StringComparer.Ordinal))
@@ -652,15 +633,14 @@ public class HostedSiteService : IHostedSiteService
         string leaseOwnerId,
         string publishAttemptId,
         CancellationToken ct) =>
-        _db.DesignArtifactRuns.Find(run =>
-                run.Id == runId
+        _db.DesignArtifactRuns.Find(run => run.DeploymentSlug == DeploymentScope.Current && (run.Id == runId
                 && run.UserId == userId
                 && run.Status == RunStatuses.Committing
                 && run.LeaseOwnerId == leaseOwnerId
                 && run.LeaseExpiresAt > DateTime.UtcNow
                 && run.CleanupPending
                 && run.CleanupLeaseOwnerId == null
-                && run.CleanupPublishAttemptId == publishAttemptId)
+                && run.CleanupPublishAttemptId == publishAttemptId))
             .AnyAsync(ct);
 
     private async Task PersistAndTryCleanupLateGeneratedAssetAsync(
@@ -1192,30 +1172,85 @@ public class HostedSiteService : IHostedSiteService
             await ReleasePublishKeysAsync(siteId, keys, keepPending: true);
     }
 
-    private static HostedSiteVerifiedFile[] ValidateVerifiedGeneratedFiles(
+    internal static HostedSiteVerifiedFile[] ValidateVerifiedGeneratedFiles(
         IReadOnlyList<HostedSiteVerifiedFile> files)
     {
+        ArgumentNullException.ThrowIfNull(files);
+        if (files.Count < RequiredVerifiedGeneratedSitePaths.Length || files.Count > 100)
+            throw new InvalidOperationException("设计产物文件数量不符合要求，请重新生成");
         var ordered = files.OrderBy(file => file.Path, StringComparer.Ordinal).ToArray();
-        if (!ordered.Select(file => file.Path).SequenceEqual(VerifiedGeneratedSitePaths, StringComparer.Ordinal))
-            throw new InvalidOperationException("设计产物文件包不完整，请重新生成");
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var file in ordered)
         {
+            if (!DesignArtifactPublicPath.TryNormalize(file.Path, out var path)
+                || !DesignArtifactPublicPath.IsWebPageWorkspaceOutput(path, includeInternalManifest: true)
+                || !paths.Add(path))
+                throw new InvalidOperationException("设计产物文件路径无效或重复，请重新生成");
+        }
+        foreach (var path in paths)
+            for (var separator = path.IndexOf('/'); separator >= 0; separator = path.IndexOf('/', separator + 1))
+                if (paths.Contains(path[..separator]))
+                    throw new InvalidOperationException("设计产物文件与目录路径冲突，请重新生成");
+        if (!RequiredVerifiedGeneratedSitePaths.All(required => ordered.Any(file => file.Path == required)))
+            throw new InvalidOperationException("设计产物文件包不完整，请重新生成");
+
+        long totalBytes = 0;
+        var utf8 = new System.Text.UTF8Encoding(false, true);
+        foreach (var file in ordered)
+        {
+            totalBytes += file.Content.LongLength;
+            if (totalBytes > 6 * 1024 * 1024)
+                throw new InvalidOperationException("设计产物文件包超过大小上限，请精简后重试");
             var actualHash = Convert.ToHexString(SHA256.HashData(file.Content)).ToLowerInvariant();
             if (file.Content.LongLength == 0 || !string.Equals(actualHash, file.Sha256, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("设计产物文件校验失败，请重新生成");
-            if (file.Path != "index.html"
-                && !string.Equals(file.MimeType, "application/json; charset=utf-8", StringComparison.OrdinalIgnoreCase)
-                && !string.Equals(file.MimeType, "application/json", StringComparison.OrdinalIgnoreCase))
+
+            var extension = Path.GetExtension(file.Path);
+            if (file.Path != "index.html" && file.Path != "manifest.json"
+                && !VerifiedGeneratedResourceExtensions.Contains(extension))
                 throw new InvalidOperationException("设计产物包含不能公开托管的文件类型，请重新生成");
+            var expectedMime = GetMimeType(extension);
+            if (!System.Net.Http.Headers.MediaTypeHeaderValue.TryParse(file.MimeType, out var declaredMime)
+                || !(string.Equals(declaredMime.MediaType, expectedMime, StringComparison.OrdinalIgnoreCase)
+                     || expectedMime == "application/javascript"
+                     && string.Equals(declaredMime.MediaType, "text/javascript", StringComparison.OrdinalIgnoreCase))
+                || declaredMime.Parameters.Any(parameter =>
+                    !string.Equals(parameter.Name, "charset", StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(parameter.Value?.Trim('"'), "utf-8", StringComparison.OrdinalIgnoreCase))
+                || declaredMime.Parameters.Count > 1)
+                throw new InvalidOperationException("设计产物文件类型与内容声明不匹配，请重新生成");
+
+            if (expectedMime.StartsWith("text/", StringComparison.Ordinal)
+                || expectedMime is "application/javascript" or "application/json")
+            {
+                try
+                {
+                    var text = utf8.GetString(file.Content);
+                    if (expectedMime == "application/json")
+                    {
+                        using var document = System.Text.Json.JsonDocument.Parse(text);
+                    }
+                }
+                catch (Exception ex) when (ex is System.Text.DecoderFallbackException or System.Text.Json.JsonException)
+                {
+                    throw new InvalidOperationException("设计产物文本文件格式不正确，请重新生成");
+                }
+            }
         }
         var index = ordered.Single(file => file.Path == "index.html");
         if (!index.MimeType.StartsWith("text/html", StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("设计产物入口类型不正确，请重新生成");
         var indexHtml = System.Text.Encoding.UTF8.GetString(index.Content);
-        var rehardened = HostedSiteRevisionRules.HardenGeneratedHtml(
-            HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(indexHtml));
-        if (!string.Equals(rehardened, indexHtml, StringComparison.Ordinal))
-            throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
+        var trustedPayload = HostedSiteRevisionRules.StripSingleTrustedSystemCspEnvelope(indexHtml);
+        var interactiveHardened = HostedSiteRevisionRules.HardenVerifiedPackageHtml(
+            trustedPayload,
+            ordered.Select(file => file.Path).ToArray());
+        if (!string.Equals(interactiveHardened, indexHtml, StringComparison.Ordinal))
+        {
+            var legacyStaticHardened = HostedSiteRevisionRules.HardenGeneratedHtml(trustedPayload);
+            if (!string.Equals(legacyStaticHardened, indexHtml, StringComparison.Ordinal))
+                throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
+        }
         return ordered;
     }
 
@@ -1821,7 +1856,7 @@ public class HostedSiteService : IHostedSiteService
                                   & runFb.Eq(x => x.ProducedArtifactSiteId, null)
                                   & runFb.Eq(x => x.ProducedArtifactRevisionId, null);
         var run = await _db.DesignArtifactRuns.FindOneAndUpdateAsync(
-            cleanupClaimFilter,
+            Builders<DesignArtifactRun>.Filter.Eq(item => item.DeploymentSlug, DeploymentScope.Current) & (cleanupClaimFilter),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.CleanupPending, true)
                 .Set(x => x.CleanupLeaseOwnerId, cleanupOwner)
@@ -1832,7 +1867,7 @@ public class HostedSiteService : IHostedSiteService
         if (run == null)
         {
             var existing = await _db.DesignArtifactRuns
-                .Find(x => x.Id == runId && x.UserId == userId)
+                .Find(x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.UserId == userId))
                 .FirstOrDefaultAsync(ct);
             if (existing != null
                 && (existing.Status == RunStatuses.Committing || existing.Status == RunStatuses.Error)
@@ -1873,7 +1908,7 @@ public class HostedSiteService : IHostedSiteService
                     .Distinct(StringComparer.Ordinal)
                     .ToList();
                 var planWrite = await _db.DesignArtifactRuns.UpdateOneAsync(
-                    x => x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner,
+                    x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner),
                     Builders<DesignArtifactRun>.Update
                         .Set(x => x.CleanupPending, true)
                         .Set(x => x.CleanupArtifactSiteId, cleanupSiteId)
@@ -1911,10 +1946,10 @@ public class HostedSiteService : IHostedSiteService
                 }
 
                 await _db.DesignArtifactRuns.UpdateOneAsync(
-                    x => x.Id == runId
+                    x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
                          && x.UserId == userId
                          && x.CleanupArtifactSiteId == cleanupSiteId
-                         && x.CleanupLeaseOwnerId == cleanupOwner,
+                         && x.CleanupLeaseOwnerId == cleanupOwner),
                     Builders<DesignArtifactRun>.Update.Set(x => x.CleanupSiteRecordDeleted, true),
                     cancellationToken: CancellationToken.None);
             }
@@ -1930,7 +1965,7 @@ public class HostedSiteService : IHostedSiteService
         finally
         {
             await _db.DesignArtifactRuns.UpdateOneAsync(
-                x => x.Id == runId && x.CleanupLeaseOwnerId == cleanupOwner,
+                x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.CleanupLeaseOwnerId == cleanupOwner),
                 Builders<DesignArtifactRun>.Update
                     .Set(x => x.CleanupLeaseOwnerId, null)
                     .Set(x => x.CleanupLeaseExpiresAt, null),
@@ -1944,7 +1979,7 @@ public class HostedSiteService : IHostedSiteService
         string cleanupOwner,
         DateTime attemptedAt) =>
         _db.DesignArtifactRuns.UpdateOneAsync(
-            x => x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner,
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId && x.UserId == userId && x.CleanupLeaseOwnerId == cleanupOwner),
             Builders<DesignArtifactRun>.Update
                 .Set(x => x.CleanupPending, false)
                 .Set(x => x.CleanupStartedAt, null)

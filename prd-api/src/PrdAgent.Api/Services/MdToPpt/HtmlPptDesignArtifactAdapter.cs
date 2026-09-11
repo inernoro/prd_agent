@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -74,6 +75,9 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
         var current = await FindPublicRunAsync(run.Id);
         if (current == null)
         {
+            // 旧集合与其他部署的账本只能读取，不能借用同一 PPT 身份在本部署重建并遮住历史。
+            if (await _db.FindDesignArtifactRunHistoryAsync(item => item.Id == run.Id, CancellationToken.None) != null)
+                throw Conflict();
             try
             {
                 current = await _lifecycle.CreateSessionAsync(BuildSession(run), CancellationToken.None);
@@ -298,8 +302,10 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
     public async Task<int> RecoverPendingAsync(int limit = 100, CancellationToken ct = default)
     {
         var now = DateTime.UtcNow;
+        var deploymentScope = DeploymentScope.Current;
         var candidates = await _db.MdToPptRuns
-            .Find(run => run.ArtifactContractVersion == DesignArtifactContractVersions.Current
+            .Aggregate()
+            .Match(run => run.ArtifactContractVersion == DesignArtifactContractVersions.Current
                          && run.ArtifactContractSynchronizedAt == null
                          && run.ArtifactRecoveryDeadLetteredAt == null
                          && (run.ArtifactRecoveryNextAttemptAt == null
@@ -307,13 +313,29 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
                          && (run.Status == "done"
                              || run.Status == "error"
                              || run.UpdatedAt <= now.Subtract(StaleRunTtl)))
-            .SortBy(run => run.UpdatedAt)
+            // 在分页前关联已冻结的公共账本，避免旧部署或无归属任务占满候选窗口。
+            .AppendStage<BsonDocument>(new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", _db.DesignArtifactRuns.CollectionNamespace.CollectionName },
+                { "localField", "_id" },
+                { "foreignField", "_id" },
+                { "as", "_deploymentLedger" }
+            }))
+            .Match(new BsonDocument("_deploymentLedger", new BsonDocument("$elemMatch",
+                new BsonDocument(nameof(DesignArtifactRun.DeploymentSlug),
+                    deploymentScope == null ? BsonNull.Value : new BsonString(deploymentScope)))))
+            .Sort(new BsonDocument(nameof(MdToPptRun.UpdatedAt), 1))
             .Limit(Math.Clamp(limit, 1, 500))
+            .Project<MdToPptRun>(new BsonDocument("_deploymentLedger", 0))
             .ToListAsync(CancellationToken.None);
 
         var recovered = 0;
         foreach (var run in candidates)
         {
+            // PPT 专用集合没有部署字段，只有已冻结的公共账本能证明本部署的恢复资格。
+            // 先跳过旧/异部署账本及无账本孤儿；不得先改源任务状态，再在 Begin 失败后重试记账。
+            // 无账本孤儿的归属仍待明确，不能按 UpdatedAt 推测并抢建。
+            if (await FindPublicRunAsync(run.Id) == null) continue;
             try
             {
                 var staleRecycled = false;
@@ -555,7 +577,7 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
 
     private async Task<DesignArtifactRun?> FindPublicRunAsync(string runId)
     {
-        var run = await _db.DesignArtifactRuns.Find(item => item.Id == runId)
+        var run = await _db.DesignArtifactRuns.Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId))
             .FirstOrDefaultAsync(CancellationToken.None);
         return run;
     }

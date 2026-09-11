@@ -99,7 +99,8 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         || path.join(path.dirname(deps.stateService.getCacheBase()), 'agent-workspaces'),
     }) : undefined);
   const persistedRecoverableReservations = deps.stateService.listAgentSessionReservations()
-    .filter((reservation) => reservation.item.status !== 'stopped' && reservation.item.status !== 'failed');
+    .filter((reservation) => reservation.item.resourceCleanupPending === true
+      || (reservation.item.status !== 'stopped' && reservation.item.status !== 'failed'));
   // One process owns one recovery promise. Creation, replay convergence and exact stop all
   // observe this same barrier, so no request can interpret an in-progress/failed reaper as success.
   const agentSessionRecoveryPromise = (async (): Promise<void> => {
@@ -1884,7 +1885,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(auth.status).json({ error: { code: auth.code, message: auth.message } });
       return;
     }
-    const session = getOwnedCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
+    const session = getObservableCdsAgentSession(req.params.projectId, req.params.sessionId, auth.principalKey);
     if (!session) {
       res.status(404).json({ error: { code: 'session_not_found', message: 'agent session not found' } });
       return;
@@ -2188,9 +2189,7 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     const fApp = typeof req.query.app === 'string' ? req.query.app.trim().toLowerCase() : '';
     const fQ = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
     const fStatus = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
-    const isAdminPrincipal = auth.principalKey === 'cookie-admin'
-      || auth.principalKey === 'global-agent'
-      || auth.principalKey.startsWith('global-agent:');
+    const isAdminPrincipal = isAgentAdminPrincipal(auth.principalKey);
 
     const liveSummaries = Array.from(cdsAgentSessions.values())
       .filter(sess => (
@@ -2994,12 +2993,17 @@ function authenticateProjectRequest(
   if (req._cdsCookieAuth === true) {
     return { ok: true, principalKey: 'cookie-admin' };
   }
-  // AI 会话分两种(server.ts resolveAiSession):
+  // server.ts also stamps scoped connection tokens as AI sessions. Preserve that
+  // authenticated token and recheck project/scopes below; it is never an admin key.
+  const aiSession = req._aiSession as { id?: unknown; token?: unknown } | undefined;
+  const isConnectionSession = typeof aiSession?.id === 'string'
+    && aiSession.id.startsWith('cds-connection:');
+  // 其余 AI 会话分两种(server.ts resolveAiSession):
   //  - 全局超级密钥(AI_ACCESS_KEY):有 `_aiSession`、无 `cdsProjectKey` → admin 等价,放行。
   //  - 项目级 Agent Key(cdsp_*):同时带 `_aiSession` 和 `cdsProjectKey={projectId,keyId}`,
   //    只能访问自己被授权的那个项目。绝不能把它当 admin 等价 —— 否则给项目 A 签的 key 改下
   //    URL 里的 projectId 就能列/控制项目 B 的 Agent 会话(跨租户越权,Codex P1)。
-  if (req._aiSession) {
+  if (req._aiSession && !isConnectionSession) {
     const projectKey = req.cdsProjectKey;
     if (!projectKey) {
       const bearer = extractBearerToken(req.headers.authorization);
@@ -3020,7 +3024,9 @@ function authenticateProjectRequest(
       message: 'project-scoped key cannot access another project',
     };
   }
-  const token = extractBearerToken(req.headers.authorization);
+  const token = isConnectionSession
+    ? (typeof aiSession?.token === 'string' ? aiSession.token : undefined)
+    : extractBearerToken(req.headers.authorization);
   const connection = pairing.authenticateLongToken(token);
   if (!connection) {
     return { ok: false, status: 401, code: 'invalid_long_token', message: 'invalid connection token' };
@@ -3052,6 +3058,25 @@ function getOwnedCdsAgentSession(
 ): CdsAgentSession | undefined {
   const session = getCdsAgentSession(projectId, sessionId);
   return session?.principalKey === principalKey ? session : undefined;
+}
+
+function isAgentAdminPrincipal(principalKey: string): boolean {
+  return principalKey === 'cookie-admin'
+    || principalKey === 'global-agent'
+    || principalKey.startsWith('global-agent:');
+}
+
+// The existing operator list expands this read-only stream. Mutation routes must
+// continue to use exact ownership, including when the reader is an administrator.
+function getObservableCdsAgentSession(
+  projectId: string,
+  sessionId: string,
+  principalKey: string,
+): CdsAgentSession | undefined {
+  const session = getCdsAgentSession(projectId, sessionId);
+  return session && (session.principalKey === principalKey || isAgentAdminPrincipal(principalKey))
+    ? session
+    : undefined;
 }
 
 function toAgentWorkspaceRuntimeError(error: unknown): {

@@ -104,6 +104,12 @@ export interface HostedSiteRevisionRejection {
   changed: boolean;
 }
 
+export interface HostedSitePreviewAccess {
+  available: boolean;
+  previewUrl?: string;
+  expiresAt?: string;
+}
+
 export interface DesignRuntimeCapability {
   id: string;
   label: string;
@@ -1174,6 +1180,24 @@ export async function previewHostedSiteRevision(
   revisionId: string,
 ): Promise<ApiResponse<{ revision: HostedSiteRevision; html: string }>> {
   return apiRequest(api.webPages.revisionPreview(siteId, revisionId));
+}
+
+export async function createHostedSiteRevisionPreviewAccess(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<HostedSitePreviewAccess>> {
+  const response = await apiRequest<HostedSitePreviewAccess>(api.webPages.revisionPreviewAccess, {
+    method: 'POST',
+    body: { siteId, revisionId },
+  });
+  if (!response.success || !response.data.previewUrl) return response;
+  return {
+    ...response,
+    data: {
+      ...response.data,
+      previewUrl: buildApiUrl(response.data.previewUrl),
+    },
+  };
 }
 
 export async function publishHostedSiteRevision(

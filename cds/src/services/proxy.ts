@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './hosted-site-preview-log-policy.js';
 import zlib from 'node:zlib';
 import type { RoutingRule, BranchEntry, CdsConfig, BuildProfile } from '../types.js';
 import { StateService } from './state.js';
@@ -188,6 +189,9 @@ export class ProxyService {
       id: ++this.proxyLogSeq,
       ts: new Date().toISOString(),
       ...partial,
+      url: redactHostedSitePreviewLog(partial.url),
+      upstream: partial.upstream ? redactHostedSitePreviewLog(partial.upstream) : partial.upstream,
+      errorMessage: partial.errorMessage ? (isHostedSitePreviewRequest(partial.url) ? '[preview upstream error omitted]' : redactHostedSitePreviewLog(partial.errorMessage)) : undefined,
     };
     this.proxyLogBuffer.push(evt);
     if (this.proxyLogBuffer.length > PROXY_LOG_BUFFER_MAX) {
@@ -800,7 +804,7 @@ export class ProxyService {
     }
 
     if (process.env.CDS_PROXY_ACCESS_LOG === '1') {
-      console.log(`[proxy] ${req.method} ${req.url} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
+      console.log(`[proxy] ${req.method} ${redactHostedSitePreviewLog(req.url || '/')} → ${upstream} (branch=${branch.id}, profile=${profileId || 'default'})`);
     }
     // Update warm-pool LRU ordering. Throttling for access-event broadcasts
     // is handled separately via setOnAccess; scheduler.touch is cheap (single
@@ -2447,14 +2451,16 @@ ${shouldAutoRefresh ? `;(function(){
     if (typeof clientRes.setHeader === 'function') {
       clientRes.setHeader('X-CDS-Request-Id', requestId);
     }
-    const requestCapture = createBodyCapture(undefined, clientReq.headers['content-type']);
+    const suppressPreviewBody = isHostedSitePreviewRequest(clientReq.url || '/');
+    const safeLogPath = redactHostedSitePreviewLog(clientReq.url || '/');
+    const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, clientReq.headers['content-type']);
     if (typeof clientReq.on === 'function') {
       clientReq.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
     }
     const requestKind = classifyHttpRequestKind({
       layer: 'master-proxy',
       method: clientReq.method || 'GET',
-      path: clientReq.url || '/',
+      path: safeLogPath,
       headers: clientReq.headers,
     });
     const activeRequestId = this.httpLogStore?.beginActive?.({
@@ -2464,7 +2470,7 @@ ${shouldAutoRefresh ? `;(function(){
       method: clientReq.method || 'GET',
       protocol: String(clientReq.headers['x-forwarded-proto'] || 'http').split(',')[0],
       host: String(clientReq.headers.host || ''),
-      path: clientReq.url || '/',
+      path: safeLogPath,
       remoteAddr: (clientReq.headers['cf-connecting-ip'] as string)
         || (clientReq.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
         || clientReq.socket?.remoteAddress,
@@ -2510,7 +2516,7 @@ ${shouldAutoRefresh ? `;(function(){
         method: clientReq.method || 'GET',
         protocol: String(clientReq.headers['x-forwarded-proto'] || 'http').split(',')[0],
         host: String(clientReq.headers.host || ''),
-        path: clientReq.url || '/',
+        path: safeLogPath,
         status,
         durationMs: Date.now() - proxyStart,
         outcome: outcome || (status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok'),
@@ -2526,9 +2532,9 @@ ${shouldAutoRefresh ? `;(function(){
         },
         response: {
           headers: redactHeaders(clientRes.getHeaders() as Record<string, unknown>),
-          ...response,
+          ...omitHostedSitePreviewBody(response, suppressPreviewBody),
         },
-        error,
+        error: error ? { ...error, message: error.message ? (suppressPreviewBody ? '[preview upstream error omitted]' : redactHostedSitePreviewLog(error.message)) : undefined } : undefined,
       });
     };
     const url = new URL(upstream);
@@ -2555,7 +2561,7 @@ ${shouldAutoRefresh ? `;(function(){
     if (branchCtx?.trackAccess && this.onAccess) {
       const onAccessCb = this.onAccess;
       const method = clientReq.method || 'GET';
-      const reqPath = clientReq.url || '/';
+      const reqPath = safeLogPath;
       const branchId = branchCtx.branchId;
       const profileId = branchCtx.profileId;
       clientRes.on('finish', () => {
@@ -2629,7 +2635,7 @@ ${shouldAutoRefresh ? `;(function(){
         stream.on('end', () => {
           let body = Buffer.concat(chunks).toString('utf-8');
           const responseForLog = {
-            bodyPreview: body.slice(0, 8 * 1024),
+            bodyPreview: suppressPreviewBody ? undefined : body.slice(0, 8 * 1024),
             bodyBytes: Buffer.byteLength(body, 'utf8'),
           };
           // 版本信息（sha + 极速/源码）并入既有 CDS widget（左下角那个），不再单开角标——
@@ -2695,7 +2701,7 @@ ${shouldAutoRefresh ? `;(function(){
           const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
           bodyBytes += buf.length;
           const captured = previewChunks.reduce((n, part) => n + part.length, 0);
-          if (captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
+          if (!suppressPreviewBody && captured < 8 * 1024) previewChunks.push(buf.subarray(0, 8 * 1024 - captured));
         });
         proxyRes.on('end', () => {
           const bodyPreview = isBinaryContentType(contentType)
@@ -2703,7 +2709,7 @@ ${shouldAutoRefresh ? `;(function(){
             : Buffer.concat(previewChunks).toString('utf8').replace(/\0/g, '').trim();
           if (shouldLogApiFailure) {
             console.warn(
-              `[proxy] api upstream ${statusCode}: ${clientReq.method || 'GET'} ${reqUrl} → ${upstream} (host=${clientReq.headers.host || ''}, branch=${branchCtx?.branchId || 'unknown'}, requestId=${String(proxyRes.headers['x-cds-request-id'] || clientReq.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${String(contentType || '-')})${bodyPreview ? ` body="${bodyPreview.slice(0, 240)}"` : ' emptyBody=true'}`,
+              `[proxy] api upstream ${statusCode}: ${clientReq.method || 'GET'} ${safeLogPath} → ${upstream} (host=${clientReq.headers.host || ''}, branch=${branchCtx?.branchId || 'unknown'}, requestId=${String(proxyRes.headers['x-cds-request-id'] || clientReq.headers['x-cds-request-id'] || '-')}, bytes=${bodyBytes}, contentType=${String(contentType || '-')})${bodyPreview ? ` body="${redactHostedSitePreviewLog(bodyPreview).slice(0, 240)}"` : ' emptyBody=true'}`,
             );
           }
           logHttp(statusCode, { bodyPreview: bodyPreview || undefined, bodyBytes });
@@ -2713,7 +2719,7 @@ ${shouldAutoRefresh ? `;(function(){
     });
 
     proxyReq.on('error', (err: NodeJS.ErrnoException) => {
-      console.error(`[proxy] upstream error: ${err.message} → ${upstream}`);
+      console.error(`[proxy] upstream error: ${suppressPreviewBody ? '[preview upstream error omitted]' : redactHostedSitePreviewLog(err.message)} → ${upstream}`);
       logHttp(502, {}, err.code === 'ETIMEDOUT' ? 'timeout' : 'upstream-error', {
         code: err.code,
         message: err.message,
@@ -2752,7 +2758,7 @@ ${shouldAutoRefresh ? `;(function(){
         this.onAccess(
           branchCtx.branchId,
           clientReq.method || 'GET',
-          clientReq.url || '/',
+          safeLogPath,
           502,
           Date.now() - proxyStart,
           branchCtx.profileId,

@@ -81,6 +81,14 @@ public interface IHostedSiteRevisionService
         string userId,
         CancellationToken ct = default);
 
+    /// <summary>复核当前站点访问权，并只投影一个已验证版本文件，供短时预览读取。</summary>
+    Task<HostedSiteRevisionFile?> GetVerifiedFileAsync(
+        string siteId,
+        string revisionId,
+        string path,
+        string userId,
+        CancellationToken ct = default);
+
     Task<HostedSiteRevisionMutationResult> PublishAsync(
         string siteId,
         string revisionId,
