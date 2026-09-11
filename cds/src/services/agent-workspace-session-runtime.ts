@@ -10,7 +10,7 @@ import { EGRESS_HEALTH_EXEC_TIMEOUT_MS, EGRESS_HEALTH_PROBE_SCRIPT, EGRESS_PROXY
 
 export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
 const PUBLIC_ARTIFACT_MANIFEST_SCHEMA = 'map-design-artifact-public-manifest-v2';
-export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474';
+export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:59da2b7c6b810c9e6748cf60e9e753c70e358ba913382b095f7912fbc1d4d584';
 export const OPEN_DESIGN_CODEX_VERSION = '0.143.0';
 // OpenDesign 0.21.1 sandbox-mode.ts owns this isolated per-session CODEX_HOME.
 const OPEN_DESIGN_CODEX_HOME = '/app/.od/sandbox/agent-home/.codex';

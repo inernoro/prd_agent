@@ -6,10 +6,14 @@ on:
     paths:
       - "cds/open-design-runtime/**"
       - ".github/workflows/open-design-runtime.yml"
+      # 销钉与能力探针都住在这里。不列进来的话，「只改销钉」的 PR 不会触发
+      # 校验作业，而那恰恰是最容易引入漂移的那种改动。
+      - "cds/src/services/agent-workspace-session-runtime.ts"
   pull_request:
     paths:
       - "cds/open-design-runtime/**"
       - ".github/workflows/open-design-runtime.yml"
+      - "cds/src/services/agent-workspace-session-runtime.ts"
   workflow_dispatch:
 
 env:
@@ -88,3 +92,26 @@ jobs:
             echo "- agent: Codex CLI 0.143.0"
             echo "- digest: \`${{ steps.build.outputs.digest }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-pin:
+    name: Verify pinned runtime satisfies the capability probe
+    # 不依赖 build-and-push：它要校验的是「源码此刻钉住的那枚镜像」，
+    # 无论这次有没有构建新镜像，钉住的那枚都必须当场可用。
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull the pinned image and run the runtime probe
+        run: bash cds/open-design-runtime/verify-pinned-runtime.sh

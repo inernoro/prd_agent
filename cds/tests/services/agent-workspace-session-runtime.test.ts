@@ -11,6 +11,7 @@ import {
   AgentWorkspaceSessionRuntime,
   MAP_DESIGN_WORKSPACE_SCHEMA,
   OPEN_DESIGN_CODEX_VERSION,
+  OPEN_DESIGN_IMAGE,
   buildOpenDesignCodexConfig,
   buildGeneratedArtifactFiles,
   buildGeneratedPublicArtifactPackage,
@@ -931,7 +932,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(runCommand?.command).toContain('--tmpfs /tmp:rw,noexec,nosuid,size=128m,nr_inodes=2048');
     expect(runCommand?.command).toContain("--tmpfs '/app/design-templates:rw,noexec,nosuid,size=8m");
     expect(runCommand?.command).toContain('nr_inodes=512');
-    expect(runCommand?.command).toContain('ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474');
+    expect(runCommand?.command).toContain(OPEN_DESIGN_IMAGE);
     expect(runCommand?.command).toContain('type=volume');
     expect(runCommand?.command).not.toContain('type=bind');
     expect(runCommand?.command).toContain("--label 'cds.instance=instance-a'");
@@ -2989,7 +2990,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 is not installed on this CDS node',
+      reason: `OpenDesign image ${OPEN_DESIGN_IMAGE} is not installed on this CDS node`,
     });
   });
 
@@ -3043,7 +3044,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 could not be prepared on this CDS node: runtime image registry authentication failed',
+      reason: `OpenDesign image ${OPEN_DESIGN_IMAGE} could not be prepared on this CDS node: runtime image registry authentication failed`,
     });
     await expect(runtime.prepareImage()).resolves.toBeUndefined();
   });
@@ -3062,7 +3063,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     await expect(runtime.capability(true)).resolves.toEqual({
       available: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 does not contain the required Codex CLI 0.143.0 and web prototype resources',
+      reason: `OpenDesign image ${OPEN_DESIGN_IMAGE} does not contain the required Codex CLI ${OPEN_DESIGN_CODEX_VERSION} and web prototype resources`,
     });
   });
 

@@ -12,6 +12,7 @@ import { cdsEventsBus } from '../../src/services/cds-events-bus.js';
 import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
+  OPEN_DESIGN_IMAGE,
 } from '../../src/services/agent-workspace-session-runtime.js';
 import type { ServerEventLogSink, ServerEventRecord } from '../../src/services/server-event-log-store.js';
 import { StateService } from '../../src/services/state.js';
@@ -549,7 +550,7 @@ describe('Remote hosts project instances route', () => {
       healthy: false,
       selectable: false,
       resourcePolicyEnforcedPerSession: false,
-      reason: 'OpenDesign image ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:c4d2d53a21fa31adfb8b4b0dc189d6e8db3b7543f93c231c3574a75baf33f474 is being prepared on this CDS node',
+      reason: `OpenDesign image ${OPEN_DESIGN_IMAGE} is being prepared on this CDS node`,
     });
   });
 
