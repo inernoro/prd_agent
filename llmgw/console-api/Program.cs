@@ -3910,6 +3910,47 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
     return Json(ApiEnvelope<ModelOfferingItem>.Ok(item), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
+// 手动恢复一条上游线路：与模型池成员的 recover 同一语义——不直接放回健康，只授予进入
+// 半开的资格，由下一条真实业务请求负责验证，不额外发付费探测。
+// 没有这个入口之前，被隔离的 Offering 只能靠「去改一次平台密钥」这种副作用来复活。
+app.MapPost("/gw/logical-models/{logicalId}/offerings/{offeringId}/recover", async (HttpContext http, string logicalId, string offeringId) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", offeringId),
+        Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+    var existing = await gwModelOfferings.Find(filter).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+
+    var previousHealthStatus = existing.AsNullableInt("HealthStatus") ?? 0;
+    var now = DateTime.UtcNow;
+    await gwModelOfferings.UpdateOneAsync(
+        filter,
+        Builders<BsonDocument>.Update
+            .Set("HealthStatus", 2)
+            .Set("ConsecutiveSuccesses", 0)
+            .Set("ManualRecoveryAt", now)
+            .Unset("HalfOpenLeaseUntil")
+            .Set("UpdatedAt", now));
+
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "model-offering.recover",
+        targetType: "llmgw_model_offering",
+        targetId: offeringId,
+        targetName: existing.AsNullableString("UpstreamModelId") ?? existing.AsNullableString("TargetId"),
+        success: true,
+        reason: "manual-half-open",
+        changes: new BsonDocument
+        {
+            { "logicalModelId", logicalId },
+            { "fromHealthStatus", previousHealthStatus },
+            { "toHealthStatus", 2 },
+        });
+
+    return Json(ApiEnvelope<object>.Ok(new { offeringId, halfOpenPending = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId, [FromBody] UpdateModelOfferingRequest? body) =>
 {
     var fb = Builders<BsonDocument>.Filter;

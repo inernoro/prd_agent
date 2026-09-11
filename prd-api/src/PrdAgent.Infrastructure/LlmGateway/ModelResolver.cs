@@ -1415,7 +1415,9 @@ public class ModelResolver : IModelResolver
                 .Set(x => x.ConsecutiveFailures, 0)
                 .Set(x => x.HealthStatus, ModelHealthStatus.Healthy)
                 .Set(x => x.LastSuccessAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+                .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                .Unset(x => x.HalfOpenLeaseUntil)
+                .Unset(x => x.ManualRecoveryAt);
             await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
             return;
         }
@@ -1461,19 +1463,32 @@ public class ModelResolver : IModelResolver
             var filter = Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
-            var current = await offerings.Find(filter).FirstOrDefaultAsync(ct);
-            if (current is null) return;
-            var failures = current.ConsecutiveFailures + 1;
-            var status = failures >= 5 ? ModelHealthStatus.Unavailable
-                : failures >= 3 ? ModelHealthStatus.Degraded
-                : ModelHealthStatus.Healthy;
-            var update = Builders<GatewayModelOffering>.Update
-                .Inc(x => x.ConsecutiveFailures, 1)
-                .Set(x => x.ConsecutiveSuccesses, 0)
-                .Set(x => x.HealthStatus, status)
-                .Set(x => x.LastFailedAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow);
-            await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            // 先原子自增并取回自增后的真值，再据此升级状态。
+            // 不能像以前那样先 Find 一次、拿旧快照 +1 算出状态再 Set：并发失败时各请求读到的
+            // 是同一个自增前的值，谁最后落笔谁说了算，计数冲到几十而状态被写回健康，断路器
+            // 就一直不跳，全部流量继续打向已经死掉的上游。
+            var afterInc = await offerings.FindOneAndUpdateAsync(
+                filter,
+                Builders<GatewayModelOffering>.Update
+                    .Inc(x => x.ConsecutiveFailures, 1)
+                    .Set(x => x.ConsecutiveSuccesses, 0)
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                    .Unset(x => x.HalfOpenLeaseUntil),
+                new FindOneAndUpdateOptions<GatewayModelOffering> { ReturnDocument = ReturnDocument.After },
+                ct);
+            if (afterInc is null) return;
+            var status = GatewayCircuitBreakerPolicy.ClassifyByFailures(afterInc.ConsecutiveFailures);
+            if (!GatewayCircuitBreakerPolicy.IsEscalation(afterInc.HealthStatus, status))
+                return;
+            await offerings.UpdateOneAsync(
+                Builders<GatewayModelOffering>.Filter.And(
+                    filter,
+                    Builders<GatewayModelOffering>.Filter.Lt(x => x.HealthStatus, status)),
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.HealthStatus, status)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
             return;
         }
 
@@ -1495,25 +1510,40 @@ public class ModelResolver : IModelResolver
 
             if (model == null) return;
 
-            var newFailures = model.ConsecutiveFailures + 1;
-            var newStatus = newFailures >= 5 ? ModelHealthStatus.Unavailable :
-                            newFailures >= 3 ? ModelHealthStatus.Degraded :
-                            ModelHealthStatus.Healthy;
-
             var filter = Builders<ModelGroup>.Filter.And(
                 Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
                 Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
                     m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
 
-            var update = Builders<ModelGroup>.Update
-                .Inc("Models.$.ConsecutiveFailures", 1)
-                .Set("Models.$.ConsecutiveSuccesses", 0)
-                .Set("Models.$.HealthStatus", newStatus)
-                .Set("Models.$.LastFailedAt", DateTime.UtcNow)
-                .Unset("Models.$.HalfOpenLeaseUntil")
-                .Unset("Models.$.ManualRecoveryAt");
+            // 与 Offering 分支同一口径：先原子自增拿真值，再单调升级状态。
+            var afterInc = await modelGroups.FindOneAndUpdateAsync(
+                filter,
+                Builders<ModelGroup>.Update
+                    .Inc("Models.$.ConsecutiveFailures", 1)
+                    .Set("Models.$.ConsecutiveSuccesses", 0)
+                    .Set("Models.$.LastFailedAt", DateTime.UtcNow)
+                    .Unset("Models.$.HalfOpenLeaseUntil")
+                    .Unset("Models.$.ManualRecoveryAt"),
+                new FindOneAndUpdateOptions<ModelGroup> { ReturnDocument = ReturnDocument.After },
+                ct);
+            var updated = afterInc?.Models?.FirstOrDefault(m =>
+                m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel);
+            if (updated == null) return;
 
-            await modelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
+            var newFailures = updated.ConsecutiveFailures;
+            var newStatus = GatewayCircuitBreakerPolicy.ClassifyByFailures(newFailures);
+            if (GatewayCircuitBreakerPolicy.IsEscalation(updated.HealthStatus, newStatus))
+            {
+                await modelGroups.UpdateOneAsync(
+                    Builders<ModelGroup>.Filter.And(
+                        Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
+                        Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
+                            m => m.PlatformId == resolution.ActualPlatformId
+                                 && m.ModelId == resolution.ActualModel
+                                 && m.HealthStatus < newStatus)),
+                    Builders<ModelGroup>.Update.Set("Models.$.HealthStatus", newStatus),
+                    cancellationToken: ct);
+            }
 
             _logger.LogWarning(
                 "[ModelResolver] 记录失败: Model={Model}, Failures={Count}, Status={Status}",
@@ -1534,12 +1564,16 @@ public class ModelResolver : IModelResolver
             var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+            // 清掉半开痕迹与人工恢复标记：隔离是「这条线路当前确定不可用」的结论，
+            // 不能让上一轮的租约或某次人工恢复继续把它当成待试探的候选。
             var offeringUpdate = Builders<GatewayModelOffering>.Update
                 .Inc(x => x.ConsecutiveFailures, 1)
                 .Set(x => x.ConsecutiveSuccesses, 0)
                 .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
                 .Set(x => x.LastFailedAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow);
+                .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                .Unset(x => x.HalfOpenLeaseUntil)
+                .Unset(x => x.ManualRecoveryAt);
             await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
             return;
         }
@@ -1553,11 +1587,15 @@ public class ModelResolver : IModelResolver
             Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
             Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
                 m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
+        // 同上：普通失败路径本来就清这两个字段，隔离路径漏清会让一个密钥彻底作废的成员
+        // 在被人工恢复过一次之后，每轮租约到期就重新抢占一次真实用户请求的首发名额。
         var groupUpdate = Builders<ModelGroup>.Update
             .Inc("Models.$.ConsecutiveFailures", 1)
             .Set("Models.$.ConsecutiveSuccesses", 0)
             .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
-            .Set("Models.$.LastFailedAt", DateTime.UtcNow);
+            .Set("Models.$.LastFailedAt", DateTime.UtcNow)
+            .Unset("Models.$.HalfOpenLeaseUntil")
+            .Unset("Models.$.ManualRecoveryAt");
         await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
     }
 
@@ -1715,6 +1753,17 @@ public class ModelResolver : IModelResolver
             var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, expectedModel, ct);
             if (candidate is not null && IsLogicalOfferingAllowed(candidate, allowedGroups))
                 resolved.Add(candidate);
+        }
+
+        // 冷却期满后拿一条不可用 Offering 做半开试探，放在发送队列首位。
+        // 没有这一步，上面那句 Ne(HealthStatus, Unavailable) 就是一扇单向门：Offering 被摘掉之后
+        // 再也拿不到一次成功来翻身，只能等人去控制台改密钥。租约保证同一时刻只有一个请求在试。
+        var halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
+        if (halfOpen is not null)
+        {
+            var probe = await TryBuildLogicalOfferingResolutionAsync(logical, halfOpen, expectedModel, ct);
+            if (probe is not null && IsLogicalOfferingAllowed(probe, allowedGroups))
+                resolved.Insert(0, probe);
         }
 
         if (resolved.Count == 0)
@@ -2378,14 +2427,10 @@ public class ModelResolver : IModelResolver
         CancellationToken ct)
     {
         var now = DateTime.UtcNow;
-        var cooldownSeconds = Math.Clamp(
-            _config.GetValue<int?>("LlmGateway:CircuitBreaker:HalfOpenAfterSeconds") ?? 120,
-            10,
-            3600);
-        var leaseSeconds = Math.Clamp(
-            _config.GetValue<int?>("LlmGateway:CircuitBreaker:HalfOpenLeaseSeconds") ?? 30,
-            5,
-            300);
+        var cooldownSeconds = GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey));
+        var leaseSeconds = GatewayCircuitBreakerPolicy.ResolveHalfOpenLeaseSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenLeaseSecondsKey));
         var cutoff = now.AddSeconds(-cooldownSeconds);
         var candidate = group.Models
             .Where(member => IsHalfOpenEligible(member, now, cutoff))
@@ -2445,6 +2490,56 @@ public class ModelResolver : IModelResolver
             "[ModelResolver] 不可用成员进入自动半开验证: Pool={PoolId}, Model={ModelId}, LeaseSeconds={LeaseSeconds}",
             group.Id, candidate.ModelId, leaseSeconds);
         return candidate;
+    }
+
+    /// <summary>
+    /// 给逻辑模型认领一条半开 Offering。与模型池成员那套同源：条件写 + ModifiedCount 校验，
+    /// 租约自带过期，所以多实例安全，且拿到租约的实例挂掉也不会把 Offering 永久锁死。
+    /// </summary>
+    private async Task<GatewayModelOffering?> TryClaimHalfOpenOfferingAsync(
+        GatewayLogicalModel logical,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null) return null;
+
+        var now = DateTime.UtcNow;
+        var cooldownSeconds = GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey));
+        var leaseSeconds = GatewayCircuitBreakerPolicy.ResolveHalfOpenLeaseSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenLeaseSecondsKey));
+        var cutoff = now.AddSeconds(-cooldownSeconds);
+
+        var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        var fb = Builders<GatewayModelOffering>.Filter;
+        var claimed = await offerings.FindOneAndUpdateAsync(
+            fb.And(
+                fb.Eq(x => x.TenantId, CurrentTenantId),
+                fb.Eq(x => x.LogicalModelId, logical.Id),
+                fb.Eq(x => x.Enabled, true),
+                fb.Eq(x => x.HealthStatus, ModelHealthStatus.Unavailable),
+                fb.Or(
+                    fb.Exists(x => x.HalfOpenLeaseUntil, false),
+                    fb.Eq(x => x.HalfOpenLeaseUntil, null),
+                    fb.Lte(x => x.HalfOpenLeaseUntil, now)),
+                fb.Or(
+                    fb.Lte(x => x.ManualRecoveryAt, now),
+                    fb.Exists(x => x.LastFailedAt, false),
+                    fb.Eq(x => x.LastFailedAt, null),
+                    fb.Lte(x => x.LastFailedAt, cutoff))),
+            Builders<GatewayModelOffering>.Update
+                .Set(x => x.HalfOpenLeaseUntil, now.AddSeconds(leaseSeconds)),
+            new FindOneAndUpdateOptions<GatewayModelOffering>
+            {
+                ReturnDocument = ReturnDocument.After,
+                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority),
+            },
+            ct);
+        if (claimed is null) return null;
+
+        _logger.LogInformation(
+            "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
+            logical.PublicId, claimed.Id, leaseSeconds);
+        return claimed;
     }
 
     internal static bool IsHalfOpenEligible(ModelGroupItem member, DateTime now, DateTime cutoff)
