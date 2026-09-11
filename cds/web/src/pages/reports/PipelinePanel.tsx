@@ -93,6 +93,7 @@ const SCENE_CSS = `
   .pp-root [data-play="1"] .pp-dot{animation:pp-dot-in .3s ease-out backwards;animation-delay:var(--d,0ms);}
   .pp-root [data-play="1"] .pp-lab{animation:pp-lab-in .52s ease-out backwards;animation-delay:var(--d,0ms);}
   .pp-root .pp-spoke{animation:pp-roll 6s linear infinite;transform-box:fill-box;transform-origin:center;}
+  .pp-root .pp-chute{animation:pp-chute 2.6s linear infinite;}
 }
 @keyframes pp-crate-in{from{opacity:0;transform:translateY(9px);}}
 @keyframes pp-fall-in{from{opacity:0;transform:translateY(-46px);}}
@@ -102,28 +103,18 @@ const SCENE_CSS = `
 @keyframes pp-dot-in{from{opacity:0;}}
 @keyframes pp-lab-in{from{opacity:0;transform:translateY(6px);}}
 @keyframes pp-roll{to{transform:rotate(360deg);}}
+@keyframes pp-chute{to{transform:translate(var(--cdx,0px),var(--cdy,0px));}}
 `;
 
 /* ============================ 几何常量（照稿，勿改） ============================ */
 const DECK_T = 356;
 const DECK_B = 372;
-const LINTEL_B = 176;
-const OPEN_H = DECK_T - LINTEL_B;
 const FLOOR = 470;
 const BLADE = 34; // 闸板固定落差：结构件，不编码数据
-const CW = 16;
-const CH_ = 12;
-const CGX = 18;
-const CGY = 14;
-const GATE1_CX = 324;
-const GATE2_CX = 802;
-const GATE3_CX = 1264;
-const HEAP_R = GATE2_CX - 24;
-const ROW_MAX = 13;
+const HEAP_RISE = 156; // 货堆想顶到的高度：门洞净空由它反推，堆矮门洞就矮
 
 const BIN_TOP = 392;
 const BIN_W = 96;
-const BIN_CX = [900, 1020, 1140];
 
 const YARD_GY = 430;
 const YARD_PITCH = 132;
@@ -139,7 +130,6 @@ const M_OPEN = 120;
 const M_GATE_NEAR = M_BELT_R + 16;
 const M_GATE_FAR = M_GATE_NEAR - M_OPEN;
 const M_LINTEL_X = M_GATE_FAR - 16;
-const M_ROW_MAX = 6;
 const M_BELT_TOP = 140;
 const M_G1Y = 196;
 const M_GAP_Y = 236;
@@ -160,6 +150,21 @@ function canAnimate(): boolean {
   if (typeof window === 'undefined') return false;
   if (typeof IntersectionObserver !== 'function') return false;
   return !window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+}
+
+/**
+ * 图在卡片里显示多大。
+ *
+ * viewBox 已经随数据变宽变窄了，但光靠它图不会变小——SVG 宽度撑满时，
+ * viewBox 越窄内容反而被放得越大，于是「只有三只箱子」的那张图会被放成
+ * 一整屏。所以这里按内容量给一个显示宽度上限：数据多就铺满卡片，
+ * 数据少就整张图连同高度一起收下去，卡片不再是个装着一点点东西的大盒子。
+ */
+export function sceneWidth(vbW: number): React.CSSProperties {
+  // 幂次而不是线性：显示高度 = k x vbH，线性收的那点 k 压不下高度，
+  // 图还是一张占满半屏的大盒子。0.35 次方让小图明显小一圈，又不至于缩成邮票。
+  const k = 0.88 * Math.min(1, vbW / 1440) ** 0.35;
+  return { maxWidth: `${Math.round(vbW * k)}px` };
 }
 
 /** 错峰延迟：写进 CSS 自定义属性 --d，动画规则统一读它。 */
@@ -249,7 +254,7 @@ function CountText({
  * 明天才静默错位——最难查的那种。用基数现推则恒等成立：
  *   accepted + (deployed - accepted) + (changes - deployed) === changes
  */
-function splitChanges(f: PipelineFunnel): { accepted: number; heap: number; undeployed: number } {
+export function splitChanges(f: PipelineFunnel): { accepted: number; heap: number; undeployed: number } {
   return {
     accepted: Math.max(0, f.accepted),
     heap: Math.max(0, f.deployed - f.accepted),
@@ -258,7 +263,7 @@ function splitChanges(f: PipelineFunnel): { accepted: number; heap: number; unde
 }
 
 /** 货堆分行：底层最宽，逐层收窄，靠闸门一侧对齐。行数与箱数都由数据决定。 */
-function mound(n: number, rowMax: number): number[] {
+export function mound(n: number, rowMax: number): number[] {
   const rows: number[] = [];
   let rem = Math.max(0, Math.floor(n));
   let w = Math.min(rowMax, rem);
@@ -269,6 +274,78 @@ function mound(n: number, rowMax: number): number[] {
     w = Math.max(2, w - 1);
   }
   return rows;
+}
+
+export interface CrateScale {
+  /** 单只货箱的宽高与行列间距。 */
+  cw: number;
+  ch: number;
+  gx: number;
+  gy: number;
+  /** 每行箱数，底层在前。 */
+  rows: number[];
+  /** 整堆占地。 */
+  w: number;
+  h: number;
+}
+
+/**
+ * 货箱尺寸由数量反算，而不是写死。
+ *
+ * 写死 16x12 的后果两头都难看：71 条时 65 只箱子缩在角落、占不到带面一成，
+ * 屏幕上最大的一块反倒是空的；5 条时又是三只小箱吊在一整条空带上。
+ * 两种毛病看着相反，根子是同一个——**画布尺寸与数据量没有关系**。
+ *
+ * 所以这里让堆自己决定要多大地方：先按数量定行列（宽扁优于高塔），
+ * 再让堆高去顶满给定的净空，横向放不下时才回头压箱子。上下限是有的——
+ * 箱子再大也不能变成巨石（一只箱＝一条改动的质感就没了），再小也得看得见。
+ * 少量数据时箱子顶到上限、堆仍然小，那时候该缩的是画布本身，不是继续吹箱子。
+ */
+export function crateScale(
+  n: number,
+  opt: { span: number; rise: number; min?: number; max?: number; maxRows?: number },
+): CrateScale {
+  const min = opt.min ?? 10;
+  const max = opt.max ?? 34;
+  const maxRows = opt.maxRows ?? 6;
+  const count = Math.max(0, Math.floor(n));
+  if (count === 0) return { cw: min, ch: min * 0.75, gx: min + 2, gy: min * 0.75 + 2, rows: [], w: 0, h: 0 };
+
+  // 先定行数再定列数，而不是反过来。
+  //
+  // 关键是**行数要封顶**：堆高被门洞净空锁着，行数一多，每只箱子就得变小才塞得下,
+  // 于是「120 条的堆反而比 65 条的窄」——越多越挤，完全反直觉。封顶之后数量增长
+  // 只能往横里长，堆才会随数据一起变宽。堆的意思本来也是「排着队」，不是「垒成墙」。
+  const perMin = min + 2;
+  // 从这个行数起步，往上找**让箱子最大**的那一档。
+  //
+  // 光封顶行数还不够：数量再往上涨，宽度先顶到带面尽头，这时候还按原行数排，
+  // 就只能把箱子越压越扁——300 条的堆比 120 条的还矮，画布下半截白白空着。
+  // 所以顶格之后要让它往上多堆几行，把高度那一维也用掉。cw 关于行数是单峰的，
+  // 过了峰就停，不必搜到底。
+  const from = Math.min(maxRows, Math.max(1, Math.round(Math.sqrt(count * 0.55))));
+  const to = Math.max(maxRows, 20);
+  let best: { rows: number[]; cw: number } | null = null;
+  for (let R = from; R <= to; R += 1) {
+    // 每行比上一行少一只，R 行装得下 count 只所需要的首行宽度。
+    let cols = Math.ceil((count + (R * (R - 1)) / 2) / R);
+    // 横向真放不下时才回头砍列数——宁可堆高一点，也不让它戳出带面。
+    if (cols * perMin > opt.span) cols = Math.max(1, Math.floor(opt.span / perMin));
+    const rows = mound(count, cols);
+    const byHeight = (opt.rise / rows.length - 2) * (4 / 3);
+    const byWidth = opt.span / rows[0] - 2;
+    const cw = Math.min(max, Math.max(min, Math.min(byHeight, byWidth)));
+    if (!best || cw > best.cw + 1e-9) best = { rows, cw };
+    if (best.cw >= max - 1e-9) break;
+    if (cw < best.cw - 1e-9) break;
+  }
+  const rows = best!.rows;
+  const r = rows.length;
+  const cw = best!.cw;
+  const ch = cw * 0.75;
+  const gx = cw + 2;
+  const gy = ch + 2;
+  return { cw, ch, gx, gy, rows, w: rows[0] * gx, h: r * gy };
 }
 
 /** 一垛的箱序：验过的那几条按结论着色排在底部，其余是未验的素箱。 */
@@ -356,26 +433,29 @@ function SceneDefs(): JSX.Element {
 
 /* ============================ 宽屏：横向厂房剖面 ============================ */
 
-/** 闸门＝固定结构件。开合程度不表示任何数据，三道闸画法一致。 */
-function GateH({ cx, label, nodata }: { cx: number; label: string; nodata?: boolean }): JSX.Element {
+/**
+ * 闸门＝固定结构件。开合程度不表示任何数据，三道闸画法一致。
+ * 门楣高度由货堆决定（堆矮门洞就矮，整张图跟着矮下来），闸板落差 BLADE 恒定。
+ */
+function GateH({ cx, label, lintel, nodata }: { cx: number; label: string; lintel: number; nodata?: boolean }): JSX.Element {
   const lp = cx - 24;
   const rp = cx + 12;
   const sx = lp + 12;
   const sw = rp - lp - 12;
   return (
     <g>
-      <rect x={lp - 4} y={LINTEL_B - 16} width={rp + 12 - (lp - 4)} height={16} className="f-steel" />
-      <rect x={lp} y={LINTEL_B} width={12} height={DECK_T - LINTEL_B} className="f-steel" />
-      <rect x={rp} y={LINTEL_B} width={12} height={DECK_T - LINTEL_B} className="f-steel" />
+      <rect x={lp - 4} y={lintel - 16} width={rp + 12 - (lp - 4)} height={16} className="f-steel" />
+      <rect x={lp} y={lintel} width={12} height={DECK_T - lintel} className="f-steel" />
+      <rect x={rp} y={lintel} width={12} height={DECK_T - lintel} className="f-steel" />
       {nodata ? (
-        <rect x={sx} y={LINTEL_B} width={sw} height={OPEN_H} fill="url(#pp-nodata)" className="s-hairstrong-d" />
+        <rect x={sx} y={lintel} width={sw} height={DECK_T - lintel} fill="url(#pp-nodata)" className="s-hairstrong-d" />
       ) : (
         <>
-          <rect x={sx} y={LINTEL_B} width={sw} height={BLADE} fill="url(#pp-rib)" />
-          <rect x={sx - 3} y={LINTEL_B + BLADE - 5} width={sw + 6} height={5} className="f-steel-d" />
+          <rect x={sx} y={lintel} width={sw} height={BLADE} fill="url(#pp-rib)" />
+          <rect x={sx - 3} y={lintel + BLADE - 5} width={sw + 6} height={5} className="f-steel-d" />
         </>
       )}
-      <text x={cx - 6} y={LINTEL_B - 28} className="t-lab" textAnchor="middle">
+      <text x={cx - 6} y={lintel - 28} className="t-lab" textAnchor="middle">
         {label}
       </text>
     </g>
@@ -405,47 +485,118 @@ function BeltH({ x1, x2 }: { x1: number; x2: number }): JSX.Element {
   );
 }
 
-function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
+/**
+ * 宽屏厂房的横向分段。**每一段的宽度都由它装的东西决定**，累加出总宽——
+ * 这是把写死坐标改掉的整个理由：坐标写死时，71 条改动的货堆只占带面一成，
+ * 5 条改动又是三只小箱吊在一整条空带上，两头都难看。
+ *
+ * 门洞高度同理跟着货堆走：堆矮，门洞就矮，整张图跟着矮下来，卡片不再是
+ * 一个固定的大盒子装着一点点东西。
+ */
+export function hallLayoutWide(f: PipelineFunnel) {
   const { heap, undeployed } = splitChanges(f);
-  const rows = mound(heap, ROW_MAX);
-  const lx = HEAP_R - CGX * (rows[0] ?? 0) - 26;
+  const sc = crateScale(heap, { span: 760, rise: HEAP_RISE, min: 11, max: 34, maxRows: 6 });
+  const openH = Math.min(232, Math.max(104, sc.h + 26));
+  const lintel = DECK_T - openH;
+  const chuteTop = lintel + 14;
+  const gate1 = 336;
+  const heapL = gate1 + 44;
+  const heapR = heapL + Math.max(sc.w, 56);
+  const gate2 = heapR + 44;
+  const binCx = [gate2 + 92, gate2 + 212, gate2 + 332];
+  const gate3 = gate2 + 440;
+  const top = lintel - 92;
+  return {
+    heap,
+    undeployed,
+    sc,
+    lintel,
+    chuteTop,
+    gate1,
+    heapL,
+    heapR,
+    gate2,
+    binCx,
+    gate3,
+    top,
+    vbW: gate3 + 96,
+    vbH: FLOOR + 78 - top,
+  };
+}
+
+function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
+  const L = hallLayoutWide(f);
+  const { sc } = L;
   const bins: Array<{ cx: number; label: string; n: number; tone: Tone }> = [
-    { cx: BIN_CX[0], label: '通过', n: Math.max(0, f.pass), tone: 'ok' },
-    { cx: BIN_CX[1], label: '原则性', n: Math.max(0, f.conditional), tone: 'warn' },
-    { cx: BIN_CX[2], label: '未通过', n: Math.max(0, f.fail), tone: 'bad' },
+    { cx: L.binCx[0], label: '通过', n: Math.max(0, f.pass), tone: 'ok' },
+    { cx: L.binCx[1], label: '原则性', n: Math.max(0, f.conditional), tone: 'warn' },
+    { cx: L.binCx[2], label: '未通过', n: Math.max(0, f.fail), tone: 'bad' },
   ];
 
-  return (
-    <svg className="pp-scene" viewBox="0 112 1360 436" role="img" aria-label="验收流水线剖面">
-      <rect x={0} y={FLOOR} width={1360} height={4} className="f-hair" />
+  // 溜槽：上口在门楣下方，下口落在带面上，整体向右倾。里面的料沿槽向下流。
+  const chuteRun = DECK_T - L.chuteTop;
+  const chute = { tl: 24, tr: 140, bl: 92, br: 208 };
+  const slide = { dx: (chute.bl - chute.tl) * (sc.gy / Math.max(1, chuteRun)), dy: sc.gy };
+  const feed: Array<{ x: number; y: number }> = [];
+  for (let y = L.chuteTop - sc.gy * 2; y < DECK_T; y += sc.gy) {
+    for (let x = chute.tl; x < chute.br; x += sc.gx) feed.push({ x, y });
+  }
 
-      {/* 入料溜槽 + 总量 */}
-      <polygon points="46,206 128,206 176,356 106,356" className="f-deck s-hair" />
-      <text x={88} y={150} className="t-lab pp-lab" style={d(60)} textAnchor="middle">
+  return (
+    <svg
+      className="pp-scene"
+      viewBox={`0 ${L.top} ${L.vbW} ${L.vbH}`}
+      style={sceneWidth(L.vbW)}
+      role="img"
+      aria-label="验收流水线剖面"
+    >
+      <defs>
+        <clipPath id="pp-chute-w">
+          <polygon
+            points={`${chute.tl},${L.chuteTop} ${chute.tr},${L.chuteTop} ${chute.br},${DECK_T} ${chute.bl},${DECK_T}`}
+          />
+        </clipPath>
+      </defs>
+      <rect x={0} y={FLOOR} width={L.vbW} height={4} className="f-hair" />
+
+      {/* 入料溜槽：装着料，料在往下流。流量不是计数——总量写在旁边那个大数字上，
+          三处计数（缺口 / 货堆 / 料仓）仍然只在带面这一侧，恒等关系不受影响。 */}
+      <polygon
+        points={`${chute.tl},${L.chuteTop} ${chute.tr},${L.chuteTop} ${chute.br},${DECK_T} ${chute.bl},${DECK_T}`}
+        className="f-deck s-hair"
+      />
+      <g clipPath="url(#pp-chute-w)">
+        <g className="pp-chute" style={{ '--cdx': `${slide.dx}px`, '--cdy': `${slide.dy}px` } as React.CSSProperties}>
+          {feed.map((c, i) => (
+            <rect key={i} x={c.x} y={c.y} width={sc.cw} height={sc.ch} rx={1} className="f-crate s-hairstrong" />
+          ))}
+        </g>
+      </g>
+      <text x={82} y={L.lintel - 58} className="t-lab pp-lab" style={d(60)} textAnchor="middle">
         改动
       </text>
-      <CountText x={88} y={196} className="t-huge" textAnchor="middle" n={f.changes} />
+      <CountText x={82} y={L.lintel - 12} className="t-huge" textAnchor="middle" n={f.changes} />
 
-      <BeltH x1={106} x2={224} />
-      <BeltH x1={288} x2={1332} />
+      <BeltH x1={chute.bl} x2={224} />
+      <BeltH x1={288} x2={L.vbW - 28} />
 
       {/* 传送带缺口：掉下去的就是「未部署」，箱数即数据 */}
       <rect x={224} y={DECK_T} width={64} height={FLOOR - DECK_T} className="f-sunken s-hair" />
-      {Array.from({ length: undeployed }, (_, k) => {
-        const y = FLOOR - 3 - (k + 1) * (CH_ + 2);
+      {Array.from({ length: L.undeployed }, (_, k) => {
+        const y = FLOOR - 3 - (k + 1) * (sc.ch + 3);
         const rot = k % 2 === 0 ? -14 : 9;
         return (
           // 倾角留在 rect 的 transform 属性上，下落交给外层 g 的 CSS transform：
           // 两者写在同一个元素上，CSS 那个会把属性整条盖掉，箱子就摆正了。
           <g key={k} className="pp-fall" style={d(200 + k * 70)}>
             <rect
-              x={244}
+              x={256 - sc.cw / 2}
               y={y}
-              width={24}
-              height={CH_ + 1}
+              width={sc.cw}
+              height={sc.ch}
               rx={1.5}
               className="f-crate s-hairstrong"
-              transform={`rotate(${rot} 256 ${y + 7})`}
+              transform={`rotate(${rot} 256 ${y + sc.ch / 2})`}
             />
           </g>
         );
@@ -454,32 +605,44 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
         未部署
       </text>
       <text x={256} y={FLOOR + 58} className="t-num pp-lab" style={d(240)} textAnchor="middle">
-        {undeployed}
+        {L.undeployed}
       </text>
 
-      <GateH cx={GATE1_CX} label="部署" />
+      <GateH cx={L.gate1} label="部署" lintel={L.lintel} />
 
-      {/* 货堆：排在验收闸前的队伍，一箱一条改动 */}
-      {rows.map((n, i) =>
+      {/* 货堆：排在验收闸前的队伍，一箱一条改动。尺寸随数量反算，堆高顶满门洞。 */}
+      {sc.rows.map((n, i) =>
         Array.from({ length: n }, (_, k) => (
           <rect
             key={`${i}-${k}`}
-            x={HEAP_R - CGX * (k + 1) + 2}
-            y={344 - CGY * i}
-            width={CW}
-            height={CH_}
+            x={L.heapR - sc.gx * (k + 1) + 2}
+            y={DECK_T - sc.ch - sc.gy * i}
+            width={sc.cw}
+            height={sc.ch}
             rx={1}
             className="f-crate s-hairstrong pp-crate"
             style={d(300 + i * 55 + k * 9)}
           />
         )),
       )}
-      <text x={lx} y={252} className="t-lab pp-lab" style={d(300)} textAnchor="end">
+      <text
+        x={(L.heapL + L.heapR) / 2}
+        y={FLOOR + 26}
+        className="t-lab pp-lab"
+        style={d(300)}
+        textAnchor="middle"
+      >
         未验收
       </text>
-      <CountText x={lx} y={302} className="t-huge" textAnchor="end" n={heap} />
+      <CountText
+        x={(L.heapL + L.heapR) / 2}
+        y={FLOOR + 58}
+        className="t-huge"
+        textAnchor="middle"
+        n={L.heap}
+      />
 
-      <GateH cx={GATE2_CX} label="验收" />
+      <GateH cx={L.gate2} label="验收" lintel={L.lintel} />
 
       {/* 三个料仓：过闸后按结论分装，仓内箱数即三档计数 */}
       {bins.map(({ cx, label, n, tone }) => {
@@ -522,8 +685,8 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
         );
       })}
 
-      <GateH cx={GATE3_CX} label="合并" nodata />
-      <text x={1258} y={FLOOR + 26} className="t-lab pp-lab" style={d(1000)} textAnchor="middle">
+      <GateH cx={L.gate3} label="合并" lintel={L.lintel} nodata />
+      <text x={L.gate3 - 6} y={FLOOR + 26} className="t-lab pp-lab" style={d(1000)} textAnchor="middle">
         无数据
       </text>
     </svg>
@@ -569,8 +732,10 @@ function BeltV({ y1, y2 }: { y1: number; y2: number }): JSX.Element {
 
 function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
   const { heap, undeployed } = splitChanges(f);
-  const rows = mound(heap, M_ROW_MAX);
-  const heapBase = M_HEAP_TOP_MIN + CGY * Math.max(0, rows.length - 1);
+  // 窄屏货箱同样反算尺寸，只是可铺开的宽度换成了带面左侧那 300 个单位。
+  const sc = crateScale(heap, { span: 300, rise: 132, min: 10, max: 26, maxRows: 5 });
+  const rows = sc.rows;
+  const heapBase = M_HEAP_TOP_MIN + sc.gy * Math.max(0, rows.length - 1);
   const g2y = heapBase + 52;
   const spurT = g2y + 56;
   const deckB = spurT + 16;
@@ -579,7 +744,7 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
   const g3y = floorM + 110;
   const height = g3y + 62;
   const shaftX = M_BELT_X - M_SHAFT_LEN;
-  const lx = M_BELT_R - CGX * (rows[0] ?? 0) - 26;
+  const lx = M_BELT_R - sc.gx * (rows[0] ?? 0) - 26;
 
   const spurRollers: number[] = [];
   for (let x = 16 + 22; x < M_BELT_R - 10; x += 44) spurRollers.push(x);
@@ -605,18 +770,18 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
       {/* 带面缺口：掉出去的就是「未部署」 */}
       <rect x={shaftX} y={M_GAP_Y} width={M_SHAFT_LEN} height={M_GAP_H} className="f-sunken s-hair" />
       {Array.from({ length: undeployed }, (_, k) => {
-        const x = shaftX + 3 + k * 14;
+        const x = shaftX + 3 + k * (sc.ch + 2);
         const rot = k % 2 === 0 ? -14 : 9;
         return (
           <g key={k} className="pp-fall" style={d(200 + k * 70)}>
             <rect
               x={x}
               y={M_GAP_Y + 20}
-              width={CH_ + 1}
-              height={24}
+              width={sc.ch}
+              height={sc.cw}
               rx={1.5}
               className="f-crate s-hairstrong"
-              transform={`rotate(${rot} ${x + 6.5} ${M_GAP_Y + 32})`}
+              transform={`rotate(${rot} ${x + sc.ch / 2} ${M_GAP_Y + 20 + sc.cw / 2})`}
             />
           </g>
         );
@@ -635,10 +800,10 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
         Array.from({ length: n }, (_, k) => (
           <rect
             key={`${i}-${k}`}
-            x={M_BELT_R - CGX * (k + 1) + 2}
-            y={heapBase - CGY * i}
-            width={CW}
-            height={CH_}
+            x={M_BELT_R - sc.gx * (k + 1) + 2}
+            y={heapBase - sc.gy * i}
+            width={sc.cw}
+            height={sc.ch}
             rx={1}
             className="f-crate s-hairstrong pp-crate"
             style={d(300 + i * 55 + k * 9)}
@@ -725,10 +890,20 @@ function YardWide({
   onOpenProject: (projectId: string) => void;
 }): JSX.Element {
   const maxCh = projects.reduce((a, p) => Math.max(a, Math.max(0, p.funnel.changes)), 0);
-  const top = Math.min(YARD_GY - 11 * maxCh - 36, YARD_GY - 60);
-  const vbW = Math.max(1360, 92 + YARD_PITCH * Math.max(0, projects.length - 1) + 60);
+  // 层高由最高那一垛反算：最高的一垛总是顶到同一个高度，所以项目少、改动少的时候
+  // 格子变大看得清，而不是几条细线贴在地上；画布高度也因此稳定。
+  const layer = Math.min(26, Math.max(9, 340 / Math.max(1, maxCh)));
+  const top = Math.min(YARD_GY - layer * maxCh - 36, YARD_GY - 60);
+  // 宽度按真实项目数算，不再垫到 1360——一个项目就该是窄窄一条，不是一整屏空地。
+  const vbW = Math.max(560, 92 + YARD_PITCH * Math.max(0, projects.length - 1) + 60);
   return (
-    <svg className="pp-scene" viewBox={`0 ${top} ${vbW} ${512 - top}`} role="img" aria-label="按项目分垛">
+    <svg
+      className="pp-scene"
+      viewBox={`0 ${top} ${vbW} ${512 - top}`}
+      style={sceneWidth(vbW)}
+      role="img"
+      aria-label="按项目分垛"
+    >
       <rect x={0} y={YARD_GY + 6} width={vbW} height={3} className="f-hair" />
       {projects.map((p, idx) => {
         const cx = 92 + YARD_PITCH * idx;
@@ -755,16 +930,16 @@ function YardWide({
               <rect
                 key={i}
                 x={x}
-                y={YARD_GY - 11 * (i + 1) + 2}
+                y={YARD_GY - layer * (i + 1) + 2}
                 width={YARD_BW}
-                height={9}
+                height={layer - 2}
                 rx={1}
                 className={tone === 'crate' ? 'f-crate s-hairstrong pp-slab' : `f-${tone} pp-slab`}
                 style={d(idx * 70 + i * 16)}
               />
             ))}
             {ch ? (
-              <CountText x={cx} y={YARD_GY - 11 * ch - 10} className="t-num" textAnchor="middle" n={ch} />
+              <CountText x={cx} y={YARD_GY - layer * ch - 10} className="t-num" textAnchor="middle" n={ch} />
             ) : (
               <text x={cx} y={YARD_GY - 14} className="t-num t-mut pp-lab" style={d(idx * 70)} textAnchor="middle">
                 0
@@ -907,9 +1082,11 @@ function Dots({
 
 function OutsideWide({ orphan, reclaimed }: { orphan: number; reclaimed: number }): JSX.Element {
   const h = Math.max(108, 48 + dotRows(orphan, 15) * 10 + 20, 34 + dotRows(reclaimed, 30) * 10 + 20);
+  // 宽度只算到点阵真正用到的地方，后面不再垫一段固定空白。
+  const vbW = Math.max(620, 512 + Math.min(reclaimed, 30) * 10 + 60);
   return (
-    <svg className="pp-scene" viewBox={`0 0 1360 ${h}`} role="img" aria-label="场外报告">
-      <line x1={0} y1={14} x2={1360} y2={14} className="s-fence" />
+    <svg className="pp-scene" viewBox={`0 0 ${vbW} ${h}`} style={sceneWidth(vbW)} role="img" aria-label="场外报告">
+      <line x1={0} y1={14} x2={vbW} y2={14} className="s-fence" />
       <text x={0} y={52} className="t-lab pp-lab" style={d(60)}>
         无主
       </text>
