@@ -55,13 +55,13 @@ const SCENE_CSS = `
 .pp-root .s-hairstrong-d{stroke:hsl(var(--hairline-strong));stroke-width:1.5;stroke-dasharray:5 4;}
 .pp-root .s-fence{stroke:hsl(var(--hairline));stroke-width:2;stroke-dasharray:2 7;stroke-linecap:round;}
 
-.pp-root .t-huge{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:46px;font-weight:700;
+.pp-root .t-huge{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:calc(46px * var(--ts,1));font-weight:700;
   fill:hsl(var(--foreground));letter-spacing:-.02em;}
-.pp-root .t-num{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:26px;font-weight:700;
+.pp-root .t-num{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:calc(26px * var(--ts,1));font-weight:700;
   fill:hsl(var(--foreground));}
-.pp-root .t-lab{font-size:15px;font-weight:600;letter-spacing:.18em;fill:hsl(var(--muted-foreground));}
-.pp-root .t-name{font-size:12px;fill:hsl(var(--foreground));}
-.pp-root .t-tag{font-size:11px;letter-spacing:.1em;fill:hsl(var(--muted-foreground));}
+.pp-root .t-lab{font-size:calc(15px * var(--ts,1));font-weight:600;letter-spacing:.18em;fill:hsl(var(--muted-foreground));}
+.pp-root .t-name{font-size:calc(12px * var(--ts,1));fill:hsl(var(--foreground));}
+.pp-root .t-tag{font-size:calc(11px * var(--ts,1));letter-spacing:.1em;fill:hsl(var(--muted-foreground));}
 .pp-root .t-mut{fill:hsl(var(--hairline-strong));}
 .pp-root .t-ok{fill:hsl(var(--ok));}
 .pp-root .t-warn{fill:hsl(var(--warn));}
@@ -160,11 +160,31 @@ function canAnimate(): boolean {
  * 一整屏。所以这里按内容量给一个显示宽度上限：数据多就铺满卡片，
  * 数据少就整张图连同高度一起收下去，卡片不再是个装着一点点东西的大盒子。
  */
+/**
+ * 图缩到多小。
+ *
+ * 幂次而不是线性：显示高度 = k x vbH，线性收的那点 k 压不下高度，
+ * 图还是一张占满半屏的大盒子。0.35 次方让小图明显小一圈，又不至于缩成邮票。
+ */
+export function sceneScale(vbW: number): number {
+  return Math.max(0.45, 0.88 * Math.min(1, vbW / 1440) ** 0.35);
+}
+
+export function sceneMaxPx(vbW: number): number {
+  return Math.round(vbW * sceneScale(vbW));
+}
+
+/**
+ * 图的显示宽度 + 字号反向补偿。
+ *
+ * 整张 SVG 缩小时里面的字会一起缩——一个项目的堆场缩到六成，项目名就只剩 7px，
+ * 谁也看不清。所以把缩放的倒数交给 CSS，文字尺寸乘上它，显示出来的字号
+ * 跟图缩没缩没有关系。信息少的那张图于是变成「图形小、字照常」，
+ * 而不是整块一起糊掉。
+ */
 export function sceneWidth(vbW: number): React.CSSProperties {
-  // 幂次而不是线性：显示高度 = k x vbH，线性收的那点 k 压不下高度，
-  // 图还是一张占满半屏的大盒子。0.35 次方让小图明显小一圈，又不至于缩成邮票。
-  const k = 0.88 * Math.min(1, vbW / 1440) ** 0.35;
-  return { maxWidth: `${Math.round(vbW * k)}px` };
+  const k = sceneScale(vbW);
+  return { maxWidth: `${sceneMaxPx(vbW)}px`, '--ts': (1 / k).toFixed(3) } as React.CSSProperties;
 }
 
 /** 错峰延迟：写进 CSS 自定义属性 --d，动画规则统一读它。 */
@@ -890,6 +910,11 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
 
 /* ============================ 项目垛 ============================ */
 
+/** 堆场宽度：按真实项目数算，不再垫到固定宽度——一个项目就该是窄窄一条。 */
+export function yardVbW(projectCount: number): number {
+  return Math.max(560, 92 + YARD_PITCH * Math.max(0, projectCount - 1) + 60);
+}
+
 function YardWide({
   projects,
   onOpenProject,
@@ -903,7 +928,7 @@ function YardWide({
   const layer = Math.min(26, Math.max(9, 340 / Math.max(1, maxCh)));
   const top = Math.min(YARD_GY - layer * maxCh - 36, YARD_GY - 60);
   // 宽度按真实项目数算，不再垫到 1360——一个项目就该是窄窄一条，不是一整屏空地。
-  const vbW = Math.max(560, 92 + YARD_PITCH * Math.max(0, projects.length - 1) + 60);
+  const vbW = yardVbW(projects.length);
   return (
     <svg
       className="pp-scene"
@@ -1088,10 +1113,14 @@ function Dots({
   );
 }
 
+/** 场外宽度：只算到点阵真正用到的地方，后面不再垫一段固定空白。 */
+export function outsideVbW(reclaimed: number): number {
+  return Math.max(620, 512 + Math.min(Math.max(0, reclaimed), 30) * 10 + 60);
+}
+
 function OutsideWide({ orphan, reclaimed }: { orphan: number; reclaimed: number }): JSX.Element {
   const h = Math.max(108, 48 + dotRows(orphan, 15) * 10 + 20, 34 + dotRows(reclaimed, 30) * 10 + 20);
-  // 宽度只算到点阵真正用到的地方，后面不再垫一段固定空白。
-  const vbW = Math.max(620, 512 + Math.min(reclaimed, 30) * 10 + 60);
+  const vbW = outsideVbW(reclaimed);
   return (
     <svg className="pp-scene" viewBox={`0 0 ${vbW} ${h}`} style={sceneWidth(vbW)} role="img" aria-label="场外报告">
       <line x1={0} y1={14} x2={vbW} y2={14} className="s-fence" />
@@ -1158,8 +1187,16 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
   const orphan = Math.max(0, pipeline.totalLeaks['report-missing-change-key'] ?? 0);
   const reclaimed = Math.max(0, pipeline.staleReports);
 
+  // 三张图各自缩到自己该有的大小之后，卡片要是还占满整条，就成了「大盒子装一点东西」——
+  // 比不缩还空。所以整块面板跟着最宽的那张图收。
+  const panelPx = Math.max(
+    sceneMaxPx(hallLayoutWide(pipeline.total).vbW),
+    sceneMaxPx(yardVbW(pipeline.projects.length)),
+    sceneMaxPx(outsideVbW(reclaimed)),
+  );
+
   return (
-    <div className="pp-root flex flex-col gap-4">
+    <div className="pp-root flex flex-col gap-4" style={{ maxWidth: `${panelPx}px` }}>
       <style>{SCENE_CSS}</style>
       <SceneDefs />
 

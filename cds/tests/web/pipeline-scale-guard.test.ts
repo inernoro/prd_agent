@@ -10,12 +10,18 @@
  * 这两端正是用户分别说过「填不满」和「空荡荡」的那两张图。
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
   crateScale,
   hallLayoutWide,
   mound,
+  outsideVbW,
+  sceneMaxPx,
+  sceneScale,
   sceneWidth,
   splitChanges,
+  yardVbW,
 } from '../../web/src/pages/reports/PipelinePanel';
 import type { PipelineFunnel } from '../../web/src/lib/api';
 
@@ -158,6 +164,71 @@ describe('数据少的时候，画布要跟着小下去', () => {
       expect(L.gate3).toBeGreaterThan(L.gate2);
       expect(L.vbW).toBeGreaterThan(L.gate3);
       expect(L.vbH).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('字号补偿：图缩小，字不能跟着糊掉', () => {
+  const src = readFileSync(
+    resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'),
+    'utf8',
+  );
+
+  it('sceneWidth 交出了缩放的倒数', () => {
+    const k = sceneScale(600);
+    const ts = Number((sceneWidth(600) as Record<string, string>)['--ts']);
+    expect(ts).toBeCloseTo(1 / k, 2);
+    expect(ts).toBeGreaterThan(1);
+  });
+
+  it('每个文字类都真的乘上了这个倒数', () => {
+    // 只交出变量、CSS 那头不用，等于没补偿：字照缩，而且不会有任何报错。
+    for (const cls of ['t-huge', 't-num', 't-lab', 't-name', 't-tag']) {
+      const m = src.match(new RegExp(`\\.${cls}\\{[^}]*`));
+      expect(m, `找不到 .${cls} 的样式`).not.toBeNull();
+      expect(m![0], `.${cls} 的 font-size 没乘 var(--ts)`).toMatch(/font-size:calc\([^)]*var\(--ts/);
+    }
+  });
+
+  it('补偿之后，同一段文字在大图小图上的显示尺寸一致', () => {
+    for (const vbW of [400, 700, 1068, 1440]) {
+      const k = sceneScale(vbW);
+      const ts = 1 / k;
+      // viewBox 里的字号 x 缩放 = 屏幕上的字号，应当与 vbW 无关。
+      expect(15 * ts * k).toBeCloseTo(15, 6);
+    }
+  });
+});
+
+describe('整块面板跟着最宽的那张图收', () => {
+  it('面板宽度等于三张图里最宽的那个显示宽度', () => {
+    const px = Math.max(
+      sceneMaxPx(hallLayoutWide(REAL).vbW),
+      sceneMaxPx(yardVbW(10)),
+      sceneMaxPx(outsideVbW(119)),
+    );
+    expect(px).toBe(sceneMaxPx(hallLayoutWide(REAL).vbW));
+    // 数据薄的那一端，整块面板必须明显更窄，否则又变成大盒子装一点东西。
+    const thinPx = Math.max(
+      sceneMaxPx(hallLayoutWide(THIN).vbW),
+      sceneMaxPx(yardVbW(1)),
+      sceneMaxPx(outsideVbW(18)),
+    );
+    expect(thinPx).toBeLessThan(px * 0.8);
+  });
+
+  it('堆场与场外的宽度都随内容单调不减', () => {
+    let prevYard = -1;
+    for (const n of [1, 2, 5, 10, 30]) {
+      const w = yardVbW(n);
+      expect(w).toBeGreaterThanOrEqual(prevYard);
+      prevYard = w;
+    }
+    let prevOut = -1;
+    for (const n of [0, 5, 18, 119, 900]) {
+      const w = outsideVbW(n);
+      expect(w).toBeGreaterThanOrEqual(prevOut);
+      prevOut = w;
     }
   });
 });
