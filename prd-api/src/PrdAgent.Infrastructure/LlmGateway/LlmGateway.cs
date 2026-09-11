@@ -1412,8 +1412,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             ParameterCapabilities = resolution.ParameterCapabilities,
             InputPricePerMillion = resolution.InputPricePerMillion,
             OutputPricePerMillion = resolution.OutputPricePerMillion,
+            CachedInputPricePerMillion = resolution.CachedInputPricePerMillion,
+            CacheWritePricePerMillion = resolution.CacheWritePricePerMillion,
             PricePerCall = resolution.PricePerCall,
             PriceCurrency = resolution.PriceCurrency,
+            PriceSource = resolution.PriceSource,
+            PriceObservedAt = resolution.PriceObservedAt,
             RetryCandidates = resolution.RetryCandidates
         };
 
@@ -4403,8 +4407,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     RunId: request.Context?.RunId,
                     InputPricePerMillion: resolution.InputPricePerMillion,
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
+                    CachedInputPricePerMillion: resolution.CachedInputPricePerMillion,
+                    CacheWritePricePerMillion: resolution.CacheWritePricePerMillion,
                     PricePerCall: resolution.PricePerCall,
                     PriceCurrency: resolution.PriceCurrency,
+                    PriceSource: resolution.PriceSource,
+                    PriceObservedAt: resolution.PriceObservedAt,
                     TenantId: request.Context?.TenantId,
                     TeamId: request.Context?.TeamId,
                     ServiceKeyId: request.Context?.ServiceKeyId,
@@ -4476,10 +4484,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     FinishReason: finishReason,
                     EstimatedInputCost: cost.Input,
                     EstimatedOutputCost: cost.Output,
+                    EstimatedCacheReadCost: cost.CacheRead,
+                    EstimatedCacheWriteCost: cost.CacheWrite,
                     EstimatedCallCost: cost.Call,
                     EstimatedCost: cost.Total,
                     EstimatedCostCurrency: cost.Currency,
                     EstimatedCostUsd: cost.Usd,
+                    CostStatus: cost.Status,
+                    CostUnpricedReason: cost.Reason,
                     ProviderAttempts: providerAttempts ?? CompleteProviderAttempts(
                         resolution,
                         requestTransport: gatewayTransport,
@@ -4533,32 +4545,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return null;
     }
 
-    private static GatewayEstimatedCost EstimateCost(
+    /// <summary>
+    /// 算这次调用花了多少钱。算法本身在 <see cref="GatewayCostCalculator"/>——
+    /// 它是纯函数、有单测，这里只负责把解析结果和用量递进去。
+    /// </summary>
+    private static GatewayCostBreakdown EstimateCost(
         ModelResolutionResult? resolution,
         GatewayTokenUsage? tokenUsage,
         bool countCall)
-    {
-        var currency = string.IsNullOrWhiteSpace(resolution?.PriceCurrency)
-            ? null
-            : resolution.PriceCurrency.Trim().ToUpperInvariant();
-        var inputCost = tokenUsage?.InputTokens is > 0 && resolution?.InputPricePerMillion is decimal inputPrice
-            ? Math.Round(tokenUsage.InputTokens.Value * inputPrice / 1_000_000m, 8, MidpointRounding.AwayFromZero)
-            : (decimal?)null;
-        var outputCost = tokenUsage?.OutputTokens is > 0 && resolution?.OutputPricePerMillion is decimal outputPrice
-            ? Math.Round(tokenUsage.OutputTokens.Value * outputPrice / 1_000_000m, 8, MidpointRounding.AwayFromZero)
-            : (decimal?)null;
-        var callCost = countCall && resolution?.PricePerCall is decimal pricePerCall
-            ? Math.Round(Math.Max(0, pricePerCall), 8, MidpointRounding.AwayFromZero)
-            : (decimal?)null;
-
-        var parts = new[] { inputCost, outputCost, callCost }.Where(x => x is not null).Select(x => x!.Value).ToList();
-        if (parts.Count == 0)
-            return new GatewayEstimatedCost(null, null, null, null, currency, null);
-
-        var total = Math.Round(parts.Sum(), 8, MidpointRounding.AwayFromZero);
-        var usd = string.Equals(currency, "USD", StringComparison.OrdinalIgnoreCase) ? total : (decimal?)null;
-        return new GatewayEstimatedCost(inputCost, outputCost, callCost, total, currency, usd);
-    }
+        => GatewayCostCalculator.Calculate(resolution, tokenUsage, countCall);
 
     private Task FinishStreamLogAsync(
         string? logId,
@@ -4605,10 +4600,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     FinishReason: finishReason,
                     EstimatedInputCost: cost.Input,
                     EstimatedOutputCost: cost.Output,
+                    EstimatedCacheReadCost: cost.CacheRead,
+                    EstimatedCacheWriteCost: cost.CacheWrite,
                     EstimatedCallCost: cost.Call,
                     EstimatedCost: cost.Total,
                     EstimatedCostCurrency: cost.Currency,
                     EstimatedCostUsd: cost.Usd,
+                    CostStatus: cost.Status,
+                    CostUnpricedReason: cost.Reason,
                     ProviderAttempts: providerAttempts ?? (resolution is null
                         ? null
                         : CompleteProviderAttempts(
@@ -4688,14 +4687,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             // 日志累积容错：解析异常不影响主流程
         }
     }
-
-    private sealed record GatewayEstimatedCost(
-        decimal? Input,
-        decimal? Output,
-        decimal? Call,
-        decimal? Total,
-        string? Currency,
-        decimal? Usd);
 
     /// <summary>累加器 → 按 index 排序的 OpenAI 形状 tool_calls 数组；空则 null。</summary>
     private static System.Text.Json.Nodes.JsonArray? BuildAccumulatedToolCalls(
@@ -4786,8 +4777,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     RunId: request.Context?.RunId,
                     InputPricePerMillion: resolution.InputPricePerMillion,
                     OutputPricePerMillion: resolution.OutputPricePerMillion,
+                    CachedInputPricePerMillion: resolution.CachedInputPricePerMillion,
+                    CacheWritePricePerMillion: resolution.CacheWritePricePerMillion,
                     PricePerCall: resolution.PricePerCall,
                     PriceCurrency: resolution.PriceCurrency,
+                    PriceSource: resolution.PriceSource,
+                    PriceObservedAt: resolution.PriceObservedAt,
                     TenantId: request.Context?.TenantId,
                     TeamId: request.Context?.TeamId,
                     ServiceKeyId: request.Context?.ServiceKeyId,
@@ -4911,10 +4906,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     FinishReason: rawUsage.FinishReason,
                     EstimatedInputCost: cost.Input,
                     EstimatedOutputCost: cost.Output,
+                    EstimatedCacheReadCost: cost.CacheRead,
+                    EstimatedCacheWriteCost: cost.CacheWrite,
                     EstimatedCallCost: cost.Call,
                     EstimatedCost: cost.Total,
                     EstimatedCostCurrency: cost.Currency,
                     EstimatedCostUsd: cost.Usd,
+                    CostStatus: cost.Status,
+                    CostUnpricedReason: cost.Reason,
                     ProviderAttempts: providerAttempts ?? CompleteProviderAttempts(
                         resolution,
                         requestTransport: gatewayTransport,

@@ -291,14 +291,34 @@ public class LlmRequestLog
     // 成本快照（来自 GW 模型池成员价格配置；按请求完成时的 token 用量计算）
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? CacheWritePricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
+    /// <summary>价格来源：upstream / admin / migrated；空表示这份价格没有来源可考。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>价格观测时间，用于事后判断这笔账是按多久以前的价算的。</summary>
+    public DateTime? PriceObservedAt { get; set; }
     public decimal? EstimatedInputCost { get; set; }
     public decimal? EstimatedOutputCost { get; set; }
+    /// <summary>缓存命中输入部分的成本；没有缓存或没有缓存价时为 null。</summary>
+    public decimal? EstimatedCacheReadCost { get; set; }
+    /// <summary>写入缓存部分的成本；Anthropic 一类协议才有。</summary>
+    public decimal? EstimatedCacheWriteCost { get; set; }
     public decimal? EstimatedCallCost { get; set; }
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
+    /// <summary>
+    /// 这次调用到底算没算出钱：<c>priced</c> 算出来了 / <c>unpriced</c> 缺价算不出 /
+    /// <c>stale_currency</c> 价格不是 USD 口径，不敢记账 / <c>no_usage</c> 上游没给 token 用量。
+    ///
+    /// 存在的理由是限额：算不出钱的调用如果静默当成零成本，限额就是个摆设。
+    /// 这个字段让「没算出来」变成可数、可看、可拦的事实。
+    /// </summary>
+    public string? CostStatus { get; set; }
+    /// <summary>算不出钱时的人话原因，直接给控制台显示。</summary>
+    public string? CostUnpricedReason { get; set; }
     /// <summary>请求开始时价格字段的不可逆 SHA-256 快照，用于证明 estimated 的复算口径。</summary>
     public string? PriceSnapshotHash { get; set; }
     /// <summary>供应商响应头返回的请求标识，用于关联 provider actual；不接受客户端自报。</summary>

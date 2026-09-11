@@ -146,11 +146,17 @@ public class LlmRequestLogWriter : ILlmRequestLogWriter
                 IsStreaming = start.IsStreaming,
                 InputPricePerMillion = start.InputPricePerMillion,
                 OutputPricePerMillion = start.OutputPricePerMillion,
+                CachedInputPricePerMillion = start.CachedInputPricePerMillion,
+                CacheWritePricePerMillion = start.CacheWritePricePerMillion,
                 PricePerCall = start.PricePerCall,
                 PriceCurrency = string.IsNullOrWhiteSpace(start.PriceCurrency) ? null : start.PriceCurrency.Trim().ToUpperInvariant(),
+                PriceSource = string.IsNullOrWhiteSpace(start.PriceSource) ? null : start.PriceSource.Trim(),
+                PriceObservedAt = start.PriceObservedAt,
                 PriceSnapshotHash = LlmCostEvidence.BuildPriceSnapshotHash(
                     start.InputPricePerMillion,
                     start.OutputPricePerMillion,
+                    start.CachedInputPricePerMillion,
+                    start.CacheWritePricePerMillion,
                     start.PricePerCall,
                     start.PriceCurrency)
             };

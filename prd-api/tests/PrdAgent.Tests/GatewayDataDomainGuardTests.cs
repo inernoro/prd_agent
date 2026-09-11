@@ -3543,8 +3543,13 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
-    /// 价格只许来自上游。内置价目表会过时，而过时的价格比没有价格更危险——它看起来是真的，
+    /// 价格不许是一份写死在代码里的静态表。会过时，而过时的价格比没有价格更危险——它看起来是真的，
     /// 成本报表照算，没人会去核对（no-rootless-tree.md）。
+    ///
+    /// 2026-09-11 升级：这条原先只禁两个标识符名字（<c>PriceTable</c> / <c>BuiltinPricing</c>），
+    /// 是典型的「断言某段实现的字面不存在」——换个名字就能绕过，而它真正要防的东西
+    /// （说不出来源、说不出时效的价格）它一个字都没测。现在禁令保留，判据换成下面那条：
+    /// 价格必须带来源与观测时间。
     /// </summary>
     [Fact]
     public void ProviderPresets_DoesNotShipABuiltinPriceTable()
@@ -3554,6 +3559,84 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ReadPricing", presets);
         Assert.DoesNotContain("PriceTable", presets);
         Assert.DoesNotContain("BuiltinPricing", presets);
+    }
+
+    /// <summary>
+    /// 价格三件套：数字 + 从哪来 + 什么时候的，缺一不可。
+    ///
+    /// 判据落在「凡是把价格写进模型文档的地方，必须同时写来源与观测时间」。这不是形式主义：
+    /// OpenAI 官方的模型清单根本不返回价格，所以这类模型的价格只能靠人填；一份填完就没人再看的
+    /// 数字，半年后没有任何办法判断它还能不能信。来源与时效是这份数字唯一的根。
+    /// </summary>
+    [Fact]
+    public void 价格写入点必须同时记录来源与观测时间()
+    {
+        var policy = ReadRepoFile("llmgw/console-api/Provisioning/PricingPolicy.cs");
+        Assert.Contains("SourceUpstream", policy);
+        Assert.Contains("SourceAdmin", policy);
+        Assert.Contains("SourceMigrated", policy);
+        Assert.Contains("ReviewIntervalDays", policy);
+        Assert.Contains("IsStale", policy);
+
+        // 写价的三条路径：手工新建、上游批量导入、编辑已有模型。一条都不许只写数字。
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        Assert.Contains("[\"PriceSource\"]", provisioning);
+        Assert.Contains("[\"PriceObservedAt\"]", provisioning);
+
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("doc[\"PriceSource\"] = PricingPolicy.SourceUpstream", program);
+        Assert.Contains(".Set(\"PriceSource\", PricingPolicy.SourceAdmin)", program);
+    }
+
+    /// <summary>
+    /// 改了模型档案上的价格，引用它的模型池必须能跟着改——调度真正读的是池成员里那一份。
+    ///
+    /// 此前 <c>PUT /gw/models/{id}</c> 压根不存在：模型建完就只能删了重建，而重建会丢池成员绑定，
+    /// 于是没人敢动，价格要么一直空着要么一直旧着。这条守卫钉住「能改」与「改了能同步」两件事。
+    /// </summary>
+    [Fact]
+    public void 模型可编辑且价格能同步到引用它的模型池()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("app.MapPut(\"/gw/models/{id}\"", program);
+        Assert.Contains("app.MapGet(\"/gw/models/{id}/pool-usage\"", program);
+        Assert.Contains("SyncPoolMemberPricingAsync", program);
+        // 覆盖价必须看得出来是覆盖，而不是假装两边同源。
+        Assert.Contains("PoolMemberPriceMatchesModel", program);
+    }
+
+    /// <summary>
+    /// 控制台那份成本状态名必须与网关写进日志的那份逐字一致。
+    ///
+    /// 两个工程互不引用，只能各存一份；一旦漂移，统计口径和写入口径就对不上——
+    /// 写入侧记 <c>stale_currency</c>、统计侧按别的名字找，那部分调用会凭空从缺价统计里消失。
+    /// </summary>
+    [Fact]
+    public void 控制台的成本状态名与网关保持一致()
+    {
+        var core = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostStatus.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        foreach (var value in new[] { "priced", "unpriced", "stale_currency", "no_usage" })
+        {
+            Assert.Contains($"\"{value}\"", core);
+            Assert.Contains($"\"{value}\"", console);
+        }
+    }
+
+    /// <summary>
+    /// 计价只许有一份算法。网关不得自己再算一遍——缓存 token 该不该从输入里扣、非美金价格算不算数，
+    /// 这两个判断一旦有第二份实现，就会出现「两边各自正确、合起来对不上」的账。
+    /// </summary>
+    [Fact]
+    public void 计价只走唯一算法入口()
+    {
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+
+        Assert.Contains("GatewayCostCalculator.Calculate", gateway);
+        // 单价换算必须在算法里，网关里不许再出现按百万 token 折算的算式。
+        Assert.DoesNotContain("/ 1_000_000m", gateway);
     }
 
     /// <summary>

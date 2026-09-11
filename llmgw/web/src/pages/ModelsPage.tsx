@@ -26,6 +26,7 @@ import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, Mo
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
+import { ModelPricingDrawer, PRICE_SOURCE_LABELS } from '@/components/ModelPricingDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
@@ -47,6 +48,7 @@ export function ModelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
+  const [editModel, setEditModel] = useState<ModelItem | null>(null);
   const [keyValue, setKeyValue] = useState('');
   const [bulkKeyValue, setBulkKeyValue] = useState('');
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
@@ -678,7 +680,9 @@ export function ModelsPage() {
                           </div>
                         ) : null}
                       </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>{formatModelPrice(m)}</td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        <ModelPriceCell model={m} canWrite={canWrite} onEdit={() => setEditModel(m)} />
+                      </td>
                       <td style={td}>
                         {m.authority === 'llm_gateway' ? (
                           <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `导入于 ${m.claimedAt}` : undefined} />
@@ -689,7 +693,7 @@ export function ModelsPage() {
                       <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
                       <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal }}>
+                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'nowrap' }}>
                           {keyEditId === m.id ? (
                             <>
                               <input
@@ -711,6 +715,9 @@ export function ModelsPage() {
                             <>
                               {m.authority === 'llm_gateway' ? (
                                 <>
+                                  <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => setEditModel(m)}>
+                                    编辑
+                                  </Button>
                                   <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => { setKeyEditId(m.id); setKeyValue(''); }}>
                                     更新密钥
                                   </Button>
@@ -745,7 +752,69 @@ export function ModelsPage() {
           </div>
         )}
       </PageBody>
+      {editModel ? (
+        <ModelPricingDrawer
+          model={editModel}
+          onClose={() => setEditModel(null)}
+          onSaved={(updated) => {
+            setItems((prev) => (prev ? prev.map((x) => (x.id === updated.id ? updated : x)) : prev));
+            setEditModel(null);
+          }}
+        />
+      ) : null}
     </PageShell>
+  );
+}
+
+/**
+ * 价格单元格。金额之外必须同时给出来源与观测时间——说不出从哪来、什么时候的价格，
+ * 过一阵子谁都不知道还能不能信，而报表照算，没人会去核对。
+ *
+ * 缺价不是「零成本」，是「这条模型的调用没计上钱」，所以它在这里是一条要行动的提示，
+ * 而不是一个安静的破折号。
+ */
+function ModelPriceCell({ model, canWrite, onEdit }: { model: ModelItem; canWrite: boolean; onEdit: () => void }) {
+  const hasPrice = model.inputPricePerMillion != null
+    || model.outputPricePerMillion != null
+    || model.pricePerCall != null;
+
+  if (!hasPrice) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'nowrap' }}>
+        <Chip label="未定价" color="var(--warn)" bg="var(--warn-bg)" title="这条模型的调用不会计入成本与限额" />
+        {canWrite ? <Button size="sm" variant="ghost" onClick={onEdit}>补价格</Button> : null}
+      </span>
+    );
+  }
+
+  const source = model.priceSource ? PRICE_SOURCE_LABELS[model.priceSource] : undefined;
+  const amounts: string[] = [];
+  if (model.inputPricePerMillion != null) amounts.push(String(model.inputPricePerMillion));
+  if (model.outputPricePerMillion != null) amounts.push(String(model.outputPricePerMillion));
+
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+      <span>
+        {model.priceCurrency || '币种未知'} {amounts.join(' / ')}
+        {amounts.length > 0 ? <span style={{ color: 'var(--text-muted)' }}> 每百万</span> : null}
+        {model.pricePerCall != null ? <span style={{ color: 'var(--text-muted)' }}>{` · 每次 ${model.pricePerCall}`}</span> : null}
+      </span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'nowrap' }}>
+        {source
+          ? <Chip
+              label={model.priceStale && model.priceAgeDays != null ? `${source.label} · ${model.priceAgeDays} 天未复核` : source.label}
+              color={model.priceStale ? 'var(--warn)' : source.color}
+              bg={model.priceStale ? 'var(--warn-bg)' : source.bg}
+            />
+          : <Chip label="来源不明" color="var(--warn)" bg="var(--warn-bg)" title="这份价格说不出从哪来，无从判断是否可信" />}
+        {model.priceBillable === false
+          ? <Chip label="不计入限额" color="var(--warn)" bg="var(--warn-bg)" title="价格不是美金口径，这条模型的调用不会计入用量与限额" />
+          : null}
+        {model.cachedInputPricePerMillion != null
+          ? <span style={{ color: 'var(--ok)', fontSize: 'var(--fs-caption)' }}>{`缓存读 ${model.cachedInputPricePerMillion}`}</span>
+          : null}
+      </span>
+    </span>
   );
 }
 

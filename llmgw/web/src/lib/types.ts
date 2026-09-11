@@ -311,6 +311,14 @@ export type LogsMeta = {
   operations: string[];
 };
 
+/** 一条缺价模型漏掉了多少次调用，以及为什么算不出钱。 */
+export type UnpricedModelBucket = {
+  model: string;
+  provider?: string | null;
+  requests: number;
+  status: 'unpriced' | 'stale_currency';
+  reason?: string | null;
+};
 export type LogsBucketItem = {
   key: string;
   count: number;
@@ -333,6 +341,16 @@ export type LogsSummaryData = {
   pricedRequests: number;
   unknownCostRequests: number;
   priceCoveragePercent: number;
+  /** 缓存命中省下的钱（按输入全价与缓存价的差额算）。没有缓存命中时为 null。 */
+  cacheSavingsUsd?: number | null;
+  /** 有用量但模型没配价，这些调用没计上钱。 */
+  unpricedRequests?: number;
+  /** 模型价格不是美金口径，不敢记账。 */
+  staleCurrencyRequests?: number;
+  /** 上游没返回 token 用量，无从计价。 */
+  noUsageRequests?: number;
+  /** 按漏掉的调用次数排的缺价模型清单。 */
+  topUnpricedModels?: UnpricedModelBucket[];
   estimatedCosts: { currency: string; amount: number; requests: number }[];
   averageDurationMs?: number | null;
   transportDistribution: LogsBucketItem[];
@@ -807,10 +825,66 @@ export type ModelItem = {
   imageSizeControlMode?: ImageSizeControlMode;
   imageSizeFieldFormat?: ImageSizeFieldFormat | null;
   inputPricePerMillion?: number | null; outputPricePerMillion?: number | null;
+  /** 缓存命中输入单价。null 表示没配——计价时按输入全价算，不当免费。 */
+  cachedInputPricePerMillion?: number | null;
+  /** 写入缓存输入单价，Anthropic 一类按溢价收费的协议才用得上。 */
+  cacheWritePricePerMillion?: number | null;
   pricePerCall?: number | null; priceCurrency?: 'CNY' | 'USD' | null;
+  /** 价格来源：upstream 上游返回 / admin 人工录入 / migrated 由历史价换算。null 表示没有来源可考。 */
+  priceSource?: PriceSource | null;
+  priceObservedAt?: string | null;
+  priceUpdatedBy?: string | null;
+  /** 价格已到复核期（超过 30 天没看过，或压根没有观测时间）。 */
+  priceStale?: boolean;
+  priceAgeDays?: number | null;
+  /** 这份价格能不能用来记账：有价且币种是美金。false 的模型调用不会计入用量与限额。 */
+  priceBillable?: boolean;
   createdAt?: string | null; updatedAt?: string | null;
 };
+export type PriceSource = 'upstream' | 'admin' | 'migrated';
 export type ModelsData = { items: ModelItem[]; total: number };
+
+/** 一条模型被某个模型池引用的情况：继承档案价，还是用了自己的覆盖价。 */
+export type ModelPoolUsageItem = {
+  poolId: string;
+  poolName: string;
+  modelType?: string | null;
+  inherits: boolean;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  cachedInputPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: 'CNY' | 'USD' | null;
+  priceSource?: PriceSource | null;
+  priceObservedAt?: string | null;
+  priceUpdatedBy?: string | null;
+  /** 托管的只追加池，不接受从模型页改价。 */
+  managed: boolean;
+};
+export type ModelPoolUsageData = {
+  pools: ModelPoolUsageItem[];
+  inheritingCount: number;
+  overridingCount: number;
+};
+/**
+ * 改一条已有模型。真正参与计费的是模型池成员里的那份价格，所以改价时要一并交代
+ * 哪些池跟着改（syncPoolIds）；不在表里的池保留它自己的覆盖价。
+ */
+export type UpdateModelRequest = {
+  name?: string;
+  protocol?: string;
+  maxTokens?: number;
+  remark?: string;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
+  cachedInputPricePerMillion?: number;
+  cacheWritePricePerMillion?: number;
+  pricePerCall?: number;
+  priceCurrency?: 'USD';
+  clearPricing?: boolean;
+  syncPoolIds?: string[];
+};
 export type CreateModelRequest = {
   platformId: string;
   name?: string;
@@ -826,6 +900,8 @@ export type CreateModelRequest = {
   maxTokens?: number;
   inputPricePerMillion?: number;
   outputPricePerMillion?: number;
+  cachedInputPricePerMillion?: number;
+  cacheWritePricePerMillion?: number;
   pricePerCall?: number;
   priceCurrency?: 'CNY' | 'USD';
   remark?: string;

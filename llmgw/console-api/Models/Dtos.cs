@@ -412,6 +412,16 @@ public sealed class LogsSummaryData
     public long PricedRequests { get; set; }
     public long UnknownCostRequests { get; set; }
     public decimal PriceCoveragePercent { get; set; }
+    /// <summary>缓存命中省下的钱（按输入全价与缓存价的差额算）。没有缓存命中时为 null。</summary>
+    public decimal? CacheSavingsUsd { get; set; }
+    /// <summary>有用量但模型没配价，这次调用没计上钱。</summary>
+    public long UnpricedRequests { get; set; }
+    /// <summary>模型价格不是美金口径，不敢记账。</summary>
+    public long StaleCurrencyRequests { get; set; }
+    /// <summary>上游没返回 token 用量，无从计价。</summary>
+    public long NoUsageRequests { get; set; }
+    /// <summary>按「漏掉的调用次数」排的缺价模型清单，直接告诉用户该去给谁补价。</summary>
+    public List<UnpricedModelBucket> TopUnpricedModels { get; set; } = new();
     public List<EstimatedCostBucket> EstimatedCosts { get; set; } = new();
     public long? AverageDurationMs { get; set; }
     public List<LogsBucketItem> TransportDistribution { get; set; } = new();
@@ -419,6 +429,18 @@ public sealed class LogsSummaryData
     public List<LogsBucketItem> SourceSystemDistribution { get; set; } = new();
     public List<LogsBucketItem> IngressProtocolDistribution { get; set; } = new();
     public List<LogsBucketItem> ModelPolicyDistribution { get; set; } = new();
+}
+
+/// <summary>一条缺价模型漏掉了多少次调用，以及为什么算不出钱。</summary>
+public sealed class UnpricedModelBucket
+{
+    public string Model { get; set; } = string.Empty;
+    public string? Provider { get; set; }
+    public long Requests { get; set; }
+    /// <summary>unpriced / stale_currency，决定该去补价还是去换算币种。</summary>
+    public string Status { get; set; } = string.Empty;
+    /// <summary>直接给人看的一句原因。</summary>
+    public string? Reason { get; set; }
 }
 
 public sealed class EstimatedCostBucket
@@ -1163,8 +1185,24 @@ public sealed class ModelItem
     public string? ImageSizeFieldFormat { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
+    /// <summary>缓存命中输入单价。null 表示没配，计价时按输入全价算，不当免费。</summary>
+    public decimal? CachedInputPricePerMillion { get; set; }
+    /// <summary>写入缓存输入单价，Anthropic 一类按溢价收费的协议才用得上。</summary>
+    public decimal? CacheWritePricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
+    /// <summary>价格来源：upstream / admin / migrated；null 表示这份价格没有来源可考。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>价格观测时间（ISO）。</summary>
+    public string? PriceObservedAt { get; set; }
+    /// <summary>最后一次改价的人。</summary>
+    public string? PriceUpdatedBy { get; set; }
+    /// <summary>价格是否已到复核期（超过 30 天，或压根没有观测时间）。</summary>
+    public bool PriceStale { get; set; }
+    /// <summary>距上次观测过了多少天；没有观测时间为 null。</summary>
+    public int? PriceAgeDays { get; set; }
+    /// <summary>这份价格能不能用来记账：有价且币种是美金。</summary>
+    public bool PriceBillable { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
 public sealed class CreateModelRequest
@@ -1183,10 +1221,66 @@ public sealed class CreateModelRequest
     public int? MaxTokens { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? CacheWritePricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
     public string? Remark { get; set; }
 }
+
+/// <summary>
+/// 改一条已有模型。价格四档 + 币种一起提交，服务端据此重算来源与观测时间。
+///
+/// <see cref="SyncPoolIds"/> 是这次改动要一并更新的模型池：真正参与计费的是池成员里的那份价格，
+/// 只改模型档案而不同步，线上会继续按旧价跑——而两处单独看都没错，这正是最难发现的一种漂移。
+/// </summary>
+public sealed class UpdateModelRequest
+{
+    public string? Name { get; set; }
+    public string? Protocol { get; set; }
+    public int? MaxTokens { get; set; }
+    public string? Remark { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? CacheWritePricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    /// <summary>true 表示清空这条模型的全部价格字段。</summary>
+    public bool? ClearPricing { get; set; }
+    /// <summary>保存后要把新价格同步过去的模型池 ID；不在表里的池保留它自己的覆盖价。</summary>
+    public List<string>? SyncPoolIds { get; set; }
+}
+
+/// <summary>一条模型被某个模型池引用的情况：继承档案价，还是用了自己的覆盖价。</summary>
+public sealed class ModelPoolUsageItem
+{
+    public string PoolId { get; set; } = "";
+    public string PoolName { get; set; } = "";
+    public string? ModelType { get; set; }
+    /// <summary>true 表示这个池成员的价格与模型档案一致（继承）。</summary>
+    public bool Inherits { get; set; }
+    /// <summary>池成员上实际生效的价格，覆盖时与档案价不同。</summary>
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? CacheWritePricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    public string? PriceSource { get; set; }
+    public string? PriceObservedAt { get; set; }
+    public string? PriceUpdatedBy { get; set; }
+    /// <summary>这个池是不是只读的托管池（托管池不接受从这里改价）。</summary>
+    public bool Managed { get; set; }
+}
+
+public sealed class ModelPoolUsageData
+{
+    public List<ModelPoolUsageItem> Pools { get; set; } = new();
+    public int InheritingCount { get; set; }
+    public int OverridingCount { get; set; }
+}
+
 public sealed class UpdateModelImageSizeControlRequest
 {
     public string? Mode { get; set; }

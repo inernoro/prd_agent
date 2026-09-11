@@ -262,11 +262,23 @@ public class ModelResolutionResult
     /// <summary>输出 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
     public decimal? OutputPricePerMillion { get; init; }
 
+    /// <summary>缓存命中输入 Token 单价快照（每百万 Token）。null 表示没配，计价时按输入全价算。</summary>
+    public decimal? CachedInputPricePerMillion { get; init; }
+
+    /// <summary>写入缓存输入 Token 单价快照（每百万 Token）。null 表示没配，计价时按输入全价算。</summary>
+    public decimal? CacheWritePricePerMillion { get; init; }
+
     /// <summary>每次调用固定费用快照（币种由 PriceCurrency 指定）。</summary>
     public decimal? PricePerCall { get; init; }
 
-    /// <summary>价格币种。MAP 模型池历史价格字段为 CNY。</summary>
+    /// <summary>价格币种。计价口径是 USD；非 USD 的存量价格不记账，判为 stale_currency。</summary>
     public string? PriceCurrency { get; init; }
+
+    /// <summary>价格来源：upstream / admin / migrated。空表示存量数据，没有来源可考。</summary>
+    public string? PriceSource { get; init; }
+
+    /// <summary>价格观测时间，用于判断这份价格是不是已经陈旧。</summary>
+    public DateTime? PriceObservedAt { get; init; }
 
     // ========== Exchange 中继信息 ==========
 
@@ -377,8 +389,12 @@ public class ModelResolutionResult
             ParameterCapabilities = ParameterCapabilities,
             InputPricePerMillion = InputPricePerMillion,
             OutputPricePerMillion = OutputPricePerMillion,
+            CachedInputPricePerMillion = CachedInputPricePerMillion,
+            CacheWritePricePerMillion = CacheWritePricePerMillion,
             PricePerCall = PricePerCall,
             PriceCurrency = PriceCurrency,
+            PriceSource = PriceSource,
+            PriceObservedAt = PriceObservedAt,
             // 降级信息
             IsFallback = IsFallback,
             FallbackReason = FallbackReason,
@@ -515,8 +531,12 @@ public class ModelResolutionResult
             ParameterCapabilities = ExtractParameterCapabilities(EffectiveCapabilities(model, modelConfig)),
             InputPricePerMillion = model.InputPricePerMillion,
             OutputPricePerMillion = model.OutputPricePerMillion,
+            CachedInputPricePerMillion = model.CachedInputPricePerMillion,
+            CacheWritePricePerMillion = model.CacheWritePricePerMillion,
             PricePerCall = model.PricePerCall,
-            PriceCurrency = NormalizeModelPoolPriceCurrency(model.PriceCurrency)
+            PriceCurrency = NormalizeModelPoolPriceCurrency(model.PriceCurrency),
+            PriceSource = model.PriceSource,
+            PriceObservedAt = model.PriceObservedAt
         };
     }
 
@@ -582,8 +602,12 @@ public class ModelResolutionResult
             ParameterCapabilities = ExtractExchangePoolParameterCapabilities(model.Capabilities),
             InputPricePerMillion = model.InputPricePerMillion,
             OutputPricePerMillion = model.OutputPricePerMillion,
+            CachedInputPricePerMillion = model.CachedInputPricePerMillion,
+            CacheWritePricePerMillion = model.CacheWritePricePerMillion,
             PricePerCall = model.PricePerCall,
-            PriceCurrency = NormalizeModelPoolPriceCurrency(model.PriceCurrency)
+            PriceCurrency = NormalizeModelPoolPriceCurrency(model.PriceCurrency),
+            PriceSource = model.PriceSource,
+            PriceObservedAt = model.PriceObservedAt
         };
     }
 
@@ -659,8 +683,12 @@ public class ModelResolutionResult
             ParameterCapabilities = result.ParameterCapabilities,
             InputPricePerMillion = result.InputPricePerMillion,
             OutputPricePerMillion = result.OutputPricePerMillion,
+            CachedInputPricePerMillion = result.CachedInputPricePerMillion,
+            CacheWritePricePerMillion = result.CacheWritePricePerMillion,
             PricePerCall = result.PricePerCall,
-            PriceCurrency = result.PriceCurrency
+            PriceCurrency = result.PriceCurrency,
+            PriceSource = result.PriceSource,
+            PriceObservedAt = result.PriceObservedAt
         };
     }
 

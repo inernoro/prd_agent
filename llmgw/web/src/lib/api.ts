@@ -68,6 +68,8 @@ import type {
   CreateModelRequest,
   CreateModelResult,
   UpdateModelImageSizeControlRequest,
+  UpdateModelRequest,
+  ModelPoolUsageData,
   ParameterCapabilitiesMetaData,
   ExchangesData,
   ExchangeItem,
@@ -609,6 +611,14 @@ export function getModels(params?: { platformId?: string; enabled?: boolean }): 
 }
 export function createModel(req: CreateModelRequest): Promise<ApiResponse<CreateModelResult>> {
   return apiRequest<CreateModelResult>('/models', { method: 'POST', body: req });
+}
+/** 改一条已有模型（含价格四档与币种）。syncPoolIds 里的模型池会一并更新为新价格。 */
+export function updateModel(id: string, req: UpdateModelRequest): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/gw/models/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+/** 这条模型被哪些模型池引用，各自是继承档案价还是用了自己的覆盖价。 */
+export function getModelPoolUsage(id: string): Promise<ApiResponse<ModelPoolUsageData>> {
+  return apiRequest<ModelPoolUsageData>(`/gw/models/${encodeURIComponent(id)}/pool-usage`);
 }
 export function updateModelImageSizeControl(id: string, req: UpdateModelImageSizeControlRequest): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/image-size-control`, { method: 'PUT', body: req });

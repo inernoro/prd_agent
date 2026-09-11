@@ -2797,6 +2797,11 @@ app.MapGet("/gw/logs/summary", async (
         .Include("OutputTokens")
         .Include("InputPricePerMillion")
         .Include("OutputPricePerMillion")
+        .Include("CachedInputPricePerMillion")
+        .Include("CacheReadInputTokens")
+        .Include("EstimatedCacheReadCost")
+        .Include("CostStatus")
+        .Include("CostUnpricedReason")
         .Include("EstimatedCost")
         .Include("EstimatedCostCurrency")
         .Include("EstimatedCostUsd")
@@ -2822,16 +2827,50 @@ app.MapGet("/gw/logs/summary", async (
     var internalStatusQueries = physicalAttempts.LongCount(IsProviderPollAttempt);
 
     var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
-    var pricedDocs = docs
+    // 「这次调用算没算出钱」由写入时的 CostStatus 直接回答，不再在这里按价格字段反推一遍。
+    // 反推是判据分裂的温床：写入侧改了口径、统计侧还按老规矩算，两边各自正确、合起来对不上。
+    // 存量日志没有这个字段，才回退到旧的反推口径。
+    var classified = docs
         .Select(d => new
         {
             Amount = d.AsNullableDecimal("EstimatedCost"),
             Currency = NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
             Usd = d.AsNullableDecimal("EstimatedCostUsd"),
-            Complete = (d.AsNullableInt("InputTokens") is not > 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
-                && (d.AsNullableInt("OutputTokens") is not > 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null),
+            Status = ResolveLogCostStatus(d),
+            Reason = d.AsNullableString("CostUnpricedReason"),
+            Model = d.AsNullableString("Model"),
+            Provider = d.AsNullableString("Provider"),
+            CacheReadTokens = d.AsNullableInt("CacheReadInputTokens") ?? 0,
+            CacheReadCost = d.AsNullableDecimal("EstimatedCacheReadCost"),
+            InputPrice = d.AsNullableDecimal("InputPricePerMillion"),
         })
-        .Where(x => x.Amount is not null && x.Currency is not null && x.Complete)
+        .ToList();
+
+    var pricedDocs = classified
+        .Where(x => x.Status == GatewayCostStatusNames.Priced && x.Amount is not null && x.Currency is not null)
+        .ToList();
+
+    // 缓存省了多少：同样这批 token 如果按输入全价算要花多少，减去实际按缓存价算出来的。
+    // 两者都拿不到就不出这个数，不猜。
+    var cacheSavings = classified
+        .Where(x => x.Status == GatewayCostStatusNames.Priced && x.CacheReadTokens > 0
+                    && x.CacheReadCost is not null && x.InputPrice is not null)
+        .Sum(x => Math.Max(0m, x.CacheReadTokens * x.InputPrice!.Value / 1_000_000m - x.CacheReadCost!.Value));
+
+    var topUnpriced = classified
+        .Where(x => x.Status is GatewayCostStatusNames.Unpriced or GatewayCostStatusNames.StaleCurrency)
+        .GroupBy(x => (Model: x.Model ?? "unknown", x.Provider, x.Status))
+        .Select(g => new UnpricedModelBucket
+        {
+            Model = g.Key.Model,
+            Provider = g.Key.Provider,
+            Status = g.Key.Status,
+            Requests = g.LongCount(),
+            Reason = g.Select(x => x.Reason).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)),
+        })
+        .OrderByDescending(x => x.Requests)
+        .ThenBy(x => x.Model, StringComparer.Ordinal)
+        .Take(10)
         .ToList();
     var estimatedCosts = pricedDocs
         .GroupBy(x => x.Currency!, StringComparer.Ordinal)
@@ -2861,6 +2900,11 @@ app.MapGet("/gw/logs/summary", async (
         PricedRequests = pricedDocs.Count,
         UnknownCostRequests = docs.Count - pricedDocs.Count,
         PriceCoveragePercent = docs.Count == 0 ? 0m : Math.Round(pricedDocs.Count * 100m / docs.Count, 1, MidpointRounding.AwayFromZero),
+        CacheSavingsUsd = cacheSavings > 0 ? Math.Round(cacheSavings, 6, MidpointRounding.AwayFromZero) : null,
+        UnpricedRequests = classified.LongCount(x => x.Status == GatewayCostStatusNames.Unpriced),
+        StaleCurrencyRequests = classified.LongCount(x => x.Status == GatewayCostStatusNames.StaleCurrency),
+        NoUsageRequests = classified.LongCount(x => x.Status == GatewayCostStatusNames.NoUsage),
+        TopUnpricedModels = topUnpriced,
         EstimatedCosts = estimatedCosts,
         AverageDurationMs = durations.Count == 0 ? null : (long)Math.Round(durations.Average()),
         TransportDistribution = BuildBucket(docs, "GatewayTransport", fallbackKey: "unknown"),
@@ -2901,6 +2945,11 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
         .Include("OutputTokens")
         .Include("InputPricePerMillion")
         .Include("OutputPricePerMillion")
+        .Include("CachedInputPricePerMillion")
+        .Include("CacheReadInputTokens")
+        .Include("EstimatedCacheReadCost")
+        .Include("CostStatus")
+        .Include("CostUnpricedReason")
         .Include("EstimatedCost")
         .Include("EstimatedCostCurrency")
         .Include("EstimatedCostUsd")
@@ -2936,15 +2985,15 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
         .Select(d => d!.Value)
         .OrderBy(d => d)
         .ToList();
+    // 与上面那段同源：算没算出钱一律读 CostStatus，存量日志才回退反推。
     var pricedDocs = docs
         .Select(d => new
         {
             Amount = d.AsNullableDecimal("EstimatedCost"),
             Currency = NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
-            Complete = (d.AsNullableInt("InputTokens") is not > 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
-                && (d.AsNullableInt("OutputTokens") is not > 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null),
+            Status = ResolveLogCostStatus(d),
         })
-        .Where(x => x.Amount is not null && x.Currency is not null && x.Complete)
+        .Where(x => x.Status == GatewayCostStatusNames.Priced && x.Amount is not null && x.Currency is not null)
         .ToList();
     var estimatedCosts = pricedDocs
         .GroupBy(x => x.Currency!, StringComparer.Ordinal)
@@ -9858,6 +9907,13 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         if (entry.OutputPricePerMillion is not null) doc["OutputPricePerMillion"] = entry.OutputPricePerMillion.Value;
         if (entry.PricePerCall is not null) doc["PricePerCall"] = entry.PricePerCall.Value;
         if (!string.IsNullOrWhiteSpace(entry.PriceCurrency)) doc["PriceCurrency"] = entry.PriceCurrency;
+        // 价格带进来就必须同时带上「从哪来、什么时候的」。上游清单给的价是 upstream，
+        // 观测时间就是这次导入的时刻——没有这两样，三十天后没人说得清这个数还能不能信。
+        if (PricingPolicy.HasAnyPrice(entry.InputPricePerMillion, entry.OutputPricePerMillion, entry.PricePerCall))
+        {
+            doc["PriceSource"] = PricingPolicy.SourceUpstream;
+            doc["PriceObservedAt"] = now;
+        }
 
         try
         {
@@ -10103,6 +10159,246 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
 }).RequireAuthorization("ConfigWrite");
 
 // 模型启用/停用
+// 这条模型被哪些模型池引用，各自是继承档案价还是用了自己的覆盖价。
+//
+// 改价之前必须先看清会影响谁：真正参与计费的是池成员里的那份价格，只改模型档案而不同步，
+// 线上会继续按旧价跑，而两处单独看都没错——这是最难被发现的一种漂移。
+app.MapGet("/gw/models/{id}/pool-usage", async (HttpContext http, string id) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var modelDoc = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync()
+        ?? await models.Find(fb.Eq("_id", id)).FirstOrDefaultAsync();
+    if (modelDoc is null)
+        return Json(ApiEnvelope<ModelPoolUsageData>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+
+    var modelName = modelDoc.GetStringOrEmpty("ModelName");
+    var platformId = modelDoc.AsNullableString("PlatformId");
+    var pools = await gwModelPools.Find(TenantAccess.Filter(http, fb.Empty)).ToListAsync();
+    var data = new ModelPoolUsageData();
+
+    foreach (var pool in pools)
+    {
+        if (!pool.TryGetValue("Models", out var membersValue) || !membersValue.IsBsonArray) continue;
+        foreach (var memberValue in membersValue.AsBsonArray)
+        {
+            if (!memberValue.IsBsonDocument) continue;
+            var member = memberValue.AsBsonDocument;
+            if (!IsSamePoolMember(member, id, modelName, platformId)) continue;
+
+            var inherits = PoolMemberPriceMatchesModel(member, modelDoc);
+            data.Pools.Add(new ModelPoolUsageItem
+            {
+                PoolId = pool.GetStringOrEmpty("_id"),
+                PoolName = pool.AsNullableString("Name") ?? pool.GetStringOrEmpty("_id"),
+                ModelType = pool.AsNullableString("ModelType"),
+                Inherits = inherits,
+                InputPricePerMillion = member.AsNullableDecimal("InputPricePerMillion"),
+                OutputPricePerMillion = member.AsNullableDecimal("OutputPricePerMillion"),
+                CachedInputPricePerMillion = member.AsNullableDecimal("CachedInputPricePerMillion"),
+                CacheWritePricePerMillion = member.AsNullableDecimal("CacheWritePricePerMillion"),
+                PricePerCall = member.AsNullableDecimal("PricePerCall"),
+                PriceCurrency = PricingPolicy.NormalizeCurrency(member.AsNullableString("PriceCurrency")),
+                PriceSource = PricingPolicy.NormalizeSource(member.AsNullableString("PriceSource")),
+                PriceObservedAt = member.AsNullableUtcDateTime("PriceObservedAt").ToIso(),
+                PriceUpdatedBy = member.AsNullableString("PriceUpdatedBy"),
+                Managed = IsManagedAppendOnlyPool(pool),
+            });
+            break;
+        }
+    }
+
+    data.InheritingCount = data.Pools.Count(x => x.Inherits);
+    data.OverridingCount = data.Pools.Count(x => !x.Inherits);
+    return Json(ApiEnvelope<ModelPoolUsageData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 改一条已有模型。此前这个端点根本不存在：模型建完就只能删了重建，而重建会丢掉池成员绑定，
+// 于是没人敢动，价格就那么一直空着或一直旧着。
+//
+// 价格改动会连带做三件事：把来源记成「人工录入」、把观测时间刷成此刻、按 syncPoolIds 同步到池成员。
+// 不在 syncPoolIds 里的池保留它自己的覆盖价，并在 pool-usage 里显示为「覆盖」。
+app.MapPut("/gw/models/{id}", async (HttpContext http, string id, [FromBody] UpdateModelRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+
+    foreach (var (price, label) in new (decimal?, string)[]
+             {
+                 (body.InputPricePerMillion, "输入单价"),
+                 (body.OutputPricePerMillion, "输出单价"),
+                 (body.CachedInputPricePerMillion, "缓存读单价"),
+                 (body.CacheWritePricePerMillion, "缓存写单价"),
+                 (body.PricePerCall, "每次调用费用"),
+             })
+    {
+        if (!PricingPolicy.IsValidPrice(price))
+            return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", $"{label}不能为负数"), jsonOptions, 400);
+    }
+
+    var clearPricing = body.ClearPricing == true;
+    var requestedCurrency = PricingPolicy.NormalizeCurrency(body.PriceCurrency);
+    var hasPriceInput = body.InputPricePerMillion is not null
+        || body.OutputPricePerMillion is not null
+        || body.CachedInputPricePerMillion is not null
+        || body.CacheWritePricePerMillion is not null
+        || body.PricePerCall is not null;
+
+    if (!clearPricing && hasPriceInput && requestedCurrency is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "填了价格就必须声明币种，计价口径是 USD"), jsonOptions, 400);
+
+    var fb = Builders<BsonDocument>.Filter;
+    var sourceFilter = fb.Eq("_id", id);
+    var filter = TenantAccess.Filter(http, sourceFilter);
+    var doc = await gwModels.Find(filter).FirstOrDefaultAsync();
+    var targetModels = gwModels;
+    var targetAuthority = "llm_gateway";
+    if (doc is null)
+    {
+        if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
+            return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+        doc = await models.Find(sourceFilter).FirstOrDefaultAsync();
+        targetModels = models;
+        targetAuthority = "map";
+        filter = sourceFilter;
+    }
+    if (doc is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+
+    var now = DateTime.UtcNow;
+    var actor = http.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+        ?? http.User.Identity?.Name
+        ?? "unknown";
+    var update = Builders<BsonDocument>.Update.Set("UpdatedAt", now);
+    var changes = new BsonDocument();
+
+    if (!string.IsNullOrWhiteSpace(body.Name) && body.Name.Trim() != doc.AsNullableString("Name"))
+    {
+        update = update.Set("Name", body.Name.Trim());
+        changes.Add("name", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableString("Name")) },
+            { "to", body.Name.Trim() },
+        });
+    }
+
+    if (body.Protocol is not null)
+    {
+        var protocol = body.Protocol.Trim();
+        if (protocol.Length == 0)
+        {
+            update = update.Unset("Protocol");
+            changes.Add("protocol", new BsonDocument
+            {
+                { "from", ToBsonAuditValue(doc.AsNullableString("Protocol")) },
+                { "to", BsonNull.Value },
+            });
+        }
+        else if (protocol != doc.AsNullableString("Protocol"))
+        {
+            update = update.Set("Protocol", protocol);
+            changes.Add("protocol", new BsonDocument
+            {
+                { "from", ToBsonAuditValue(doc.AsNullableString("Protocol")) },
+                { "to", protocol },
+            });
+        }
+    }
+
+    if (body.MaxTokens is int maxTokens)
+    {
+        if (maxTokens <= 0)
+            return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "最大输出 token 必须大于 0"), jsonOptions, 400);
+        update = update.Set("MaxTokens", maxTokens);
+        changes.Add("maxTokens", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableInt("MaxTokens")) },
+            { "to", maxTokens },
+        });
+    }
+
+    if (body.Remark is not null)
+    {
+        var remark = body.Remark.Trim();
+        update = remark.Length == 0 ? update.Unset("Remark") : update.Set("Remark", remark);
+        changes.Add("remark", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableString("Remark")) },
+            { "to", remark.Length == 0 ? BsonNull.Value : remark },
+        });
+    }
+
+    var pricingTouched = clearPricing || hasPriceInput;
+    if (clearPricing)
+    {
+        update = update
+            .Unset("InputPricePerMillion").Unset("OutputPricePerMillion")
+            .Unset("CachedInputPricePerMillion").Unset("CacheWritePricePerMillion")
+            .Unset("PricePerCall").Unset("PriceCurrency")
+            .Unset("PriceSource").Unset("PriceObservedAt").Unset("PriceUpdatedBy");
+        changes.Add("pricing", new BsonDocument { { "cleared", true } });
+    }
+    else if (hasPriceInput)
+    {
+        update = SetOrUnsetDecimal(update, "InputPricePerMillion", body.InputPricePerMillion);
+        update = SetOrUnsetDecimal(update, "OutputPricePerMillion", body.OutputPricePerMillion);
+        update = SetOrUnsetDecimal(update, "CachedInputPricePerMillion", body.CachedInputPricePerMillion);
+        update = SetOrUnsetDecimal(update, "CacheWritePricePerMillion", body.CacheWritePricePerMillion);
+        update = SetOrUnsetDecimal(update, "PricePerCall", body.PricePerCall);
+        update = update
+            // 走到这里 requestedCurrency 必然非空：上面已经拒绝过「填了价格却没声明币种」。
+            .Set("PriceCurrency", requestedCurrency!)
+            // 人改过的价格，来源就是人工——不许沿用上一次的 upstream，否则来源会撒谎。
+            .Set("PriceSource", PricingPolicy.SourceAdmin)
+            .Set("PriceObservedAt", now)
+            .Set("PriceUpdatedBy", actor);
+        changes.Add("pricing", new BsonDocument
+        {
+            { "inputFrom", ToBsonAuditValue(doc.AsNullableDecimal("InputPricePerMillion")) },
+            { "inputTo", ToBsonAuditValue(body.InputPricePerMillion) },
+            { "outputFrom", ToBsonAuditValue(doc.AsNullableDecimal("OutputPricePerMillion")) },
+            { "outputTo", ToBsonAuditValue(body.OutputPricePerMillion) },
+            { "cachedInputTo", ToBsonAuditValue(body.CachedInputPricePerMillion) },
+            { "cacheWriteTo", ToBsonAuditValue(body.CacheWritePricePerMillion) },
+            { "perCallTo", ToBsonAuditValue(body.PricePerCall) },
+            { "currencyFrom", ToBsonAuditValue(doc.AsNullableString("PriceCurrency")) },
+            { "currencyTo", requestedCurrency },
+        });
+    }
+
+    await targetModels.UpdateOneAsync(filter, update);
+    var fresh = await targetModels.Find(filter).FirstOrDefaultAsync() ?? doc;
+
+    var syncedPools = new List<string>();
+    var skippedPools = new List<string>();
+    if (pricingTouched && body.SyncPoolIds is { Count: > 0 })
+    {
+        (syncedPools, skippedPools) = await SyncPoolMemberPricingAsync(
+            gwModelPools, http, fresh, id, body.SyncPoolIds, actor, now);
+    }
+
+    if (syncedPools.Count > 0 || skippedPools.Count > 0)
+    {
+        changes.Add("poolSync", new BsonDocument
+        {
+            { "synced", new BsonArray(syncedPools) },
+            { "skipped", new BsonArray(skippedPools) },
+        });
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.update",
+        targetType: targetAuthority == "llm_gateway" ? "llmgw_model" : "llmmodel",
+        targetId: id,
+        targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: changes);
+
+    return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPut("/gw/models/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
 {
     // 缺 enabled 字段一律拒绝，避免默认 false 误关模型。
@@ -14488,6 +14784,149 @@ static string? NormalizePriceCurrency(string? currency)
     return normalized is "CNY" or "USD" ? normalized : null;
 }
 
+/// <summary>
+/// 这条池成员指的是不是这条模型。池成员存的 ModelId 是**模型名**不是文档 id（见 BuildPoolMemberFromModel
+/// 的调用点），而不同入口写进去的可能是 ModelName、Name 或 _id 三者之一，所以三个都认。
+/// 只认一个，换条路建出来的成员就会被漏掉，改价时静默不同步。
+/// </summary>
+static bool IsSamePoolMember(BsonDocument member, string modelDocId, string? modelName, string? platformId)
+{
+    var memberModelId = member.AsNullableString("ModelId");
+    if (string.IsNullOrWhiteSpace(memberModelId)) return false;
+
+    var matchesModel = string.Equals(memberModelId, modelDocId, StringComparison.OrdinalIgnoreCase)
+        || (!string.IsNullOrWhiteSpace(modelName)
+            && string.Equals(memberModelId, modelName, StringComparison.OrdinalIgnoreCase));
+    if (!matchesModel) return false;
+
+    var memberPlatformId = member.AsNullableString("PlatformId");
+    // 成员或模型任一没有平台信息时不拿平台当否决条件——存量数据缺字段是常态，
+    // 拿缺失当「不匹配」会让这些成员永远同步不到新价格。
+    if (string.IsNullOrWhiteSpace(memberPlatformId) || string.IsNullOrWhiteSpace(platformId)) return true;
+    return string.Equals(memberPlatformId, platformId, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// 池成员的价格是不是跟模型档案完全一致（即「继承」）。任何一档不同就是覆盖，
+/// 界面上要如实标出来，而不是假装两边同源。
+/// </summary>
+static bool PoolMemberPriceMatchesModel(BsonDocument member, BsonDocument modelDoc)
+{
+    foreach (var field in new[]
+             {
+                 "InputPricePerMillion", "OutputPricePerMillion",
+                 "CachedInputPricePerMillion", "CacheWritePricePerMillion", "PricePerCall",
+             })
+    {
+        if (member.AsNullableDecimal(field) != modelDoc.AsNullableDecimal(field)) return false;
+    }
+
+    return string.Equals(
+        PricingPolicy.NormalizeCurrency(member.AsNullableString("PriceCurrency")),
+        PricingPolicy.NormalizeCurrency(modelDoc.AsNullableString("PriceCurrency")),
+        StringComparison.Ordinal);
+}
+
+/// <summary>价格字段：有值就写，没值就删——留着上一次的旧数字比没有数字更糟。</summary>
+static UpdateDefinition<BsonDocument> SetOrUnsetDecimal(
+    UpdateDefinition<BsonDocument> update, string field, decimal? value)
+    => value is decimal actual ? update.Set(field, new BsonDecimal128(actual)) : update.Unset(field);
+
+/// <summary>
+/// 把模型档案上的价格同步进指定的几个模型池成员。
+///
+/// 这一步是「价格只有一处真相」的落点：调度读的是池成员里的价格，档案改了不同步，
+/// 线上就会继续按旧价计费。托管的只追加池不接受从这里改价，如实跳过并报出来。
+/// </summary>
+static async Task<(List<string> Synced, List<string> Skipped)> SyncPoolMemberPricingAsync(
+    IMongoCollection<BsonDocument> pools,
+    HttpContext http,
+    BsonDocument modelDoc,
+    string modelDocId,
+    IEnumerable<string> poolIds,
+    string actor,
+    DateTime now)
+{
+    var synced = new List<string>();
+    var skipped = new List<string>();
+    var wanted = poolIds
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    if (wanted.Count == 0) return (synced, skipped);
+
+    var modelName = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name");
+    var platformId = modelDoc.AsNullableString("PlatformId");
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+
+    foreach (var poolId in wanted)
+    {
+        var pool = await pools.Find(TenantAccess.Filter(http, fb.Eq("_id", poolId))).FirstOrDefaultAsync();
+        if (pool is null) { skipped.Add(poolId); continue; }
+        if (IsManagedAppendOnlyPool(pool)) { skipped.Add(poolId); continue; }
+        if (!pool.TryGetValue("Models", out var membersValue) || !membersValue.IsBsonArray)
+        {
+            skipped.Add(poolId);
+            continue;
+        }
+
+        var membersArray = membersValue.AsBsonArray;
+        var changed = false;
+        foreach (var memberValue in membersArray)
+        {
+            if (!memberValue.IsBsonDocument) continue;
+            var member = memberValue.AsBsonDocument;
+            if (!IsSamePoolMember(member, modelDocId, modelName, platformId)) continue;
+
+            ApplyModelPricingToMember(member, modelDoc, actor, now);
+            changed = true;
+            break;
+        }
+
+        if (!changed) { skipped.Add(poolId); continue; }
+
+        await pools.UpdateOneAsync(
+            fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", poolId)),
+            Builders<BsonDocument>.Update
+                .Set("Models", membersArray)
+                .Set("UpdatedAt", now)
+                .Inc("Version", 1));
+        synced.Add(poolId);
+    }
+
+    return (synced, skipped);
+}
+
+/// <summary>把模型档案的五档价格连同来源、观测时间、操作者一起盖到池成员上。</summary>
+static void ApplyModelPricingToMember(BsonDocument member, BsonDocument modelDoc, string actor, DateTime now)
+{
+    foreach (var field in new[]
+             {
+                 "InputPricePerMillion", "OutputPricePerMillion",
+                 "CachedInputPricePerMillion", "CacheWritePricePerMillion", "PricePerCall",
+             })
+    {
+        if (modelDoc.AsNullableDecimal(field) is decimal value) member[field] = new BsonDecimal128(value);
+        else member.Remove(field);
+    }
+
+    if (PricingPolicy.NormalizeCurrency(modelDoc.AsNullableString("PriceCurrency")) is string currency)
+        member["PriceCurrency"] = currency;
+    else member.Remove("PriceCurrency");
+
+    if (PricingPolicy.NormalizeSource(modelDoc.AsNullableString("PriceSource")) is string source)
+        member["PriceSource"] = source;
+    else member.Remove("PriceSource");
+
+    if (modelDoc.AsNullableUtcDateTime("PriceObservedAt") is DateTime observedAt) member["PriceObservedAt"] = observedAt;
+    else member.Remove("PriceObservedAt");
+
+    member["PriceUpdatedBy"] = actor;
+    member["PriceSyncedAt"] = now;
+}
+
 static BsonDocument BuildPoolMemberFromModel(BsonDocument modelDoc, string modelId, string platformId, int priority, BsonDocument? existing)
 {
     var member = existing is not null ? new BsonDocument(existing) : new BsonDocument();
@@ -14517,10 +14956,21 @@ static BsonDocument BuildPoolMemberFromModel(BsonDocument modelDoc, string model
     else member.Remove("InputPricePerMillion");
     if (modelDoc.AsNullableDecimal("OutputPricePerMillion") is decimal outputPrice) member["OutputPricePerMillion"] = new BsonDecimal128(outputPrice);
     else member.Remove("OutputPricePerMillion");
+    if (modelDoc.AsNullableDecimal("CachedInputPricePerMillion") is decimal cachedInputPrice) member["CachedInputPricePerMillion"] = new BsonDecimal128(cachedInputPrice);
+    else member.Remove("CachedInputPricePerMillion");
+    if (modelDoc.AsNullableDecimal("CacheWritePricePerMillion") is decimal cacheWritePrice) member["CacheWritePricePerMillion"] = new BsonDecimal128(cacheWritePrice);
+    else member.Remove("CacheWritePricePerMillion");
     if (modelDoc.AsNullableDecimal("PricePerCall") is decimal pricePerCall) member["PricePerCall"] = new BsonDecimal128(pricePerCall);
     else member.Remove("PricePerCall");
     if (NormalizePriceCurrency(modelDoc.AsNullableString("PriceCurrency")) is string priceCurrency) member["PriceCurrency"] = priceCurrency;
     else member.Remove("PriceCurrency");
+    // 来源与观测时间跟着价格一起走。只复制数字不复制来源，池里那份就成了「说不出从哪来」的价格。
+    if (PricingPolicy.NormalizeSource(modelDoc.AsNullableString("PriceSource")) is string priceSource) member["PriceSource"] = priceSource;
+    else member.Remove("PriceSource");
+    if (modelDoc.AsNullableUtcDateTime("PriceObservedAt") is DateTime priceObservedAt) member["PriceObservedAt"] = priceObservedAt;
+    else member.Remove("PriceObservedAt");
+    if (modelDoc.AsNullableString("PriceUpdatedBy") is string priceUpdatedBy) member["PriceUpdatedBy"] = priceUpdatedBy;
+    else member.Remove("PriceUpdatedBy");
 
     member["IsMain"] = modelDoc.AsNullableBool("IsMain") ?? false;
     member["IsIntent"] = modelDoc.AsNullableBool("IsIntent") ?? false;
@@ -15205,6 +15655,13 @@ static PlatformItem MapPlatform(BsonDocument d, IConfiguration? keyConfig = null
 
 static ModelItem MapModel(BsonDocument d)
 {
+    var now = DateTime.UtcNow;
+    var priceObservedAt = d.AsNullableUtcDateTime("PriceObservedAt");
+    var inputPrice = d.AsNullableDecimal("InputPricePerMillion");
+    var outputPrice = d.AsNullableDecimal("OutputPricePerMillion");
+    var pricePerCall = d.AsNullableDecimal("PricePerCall");
+    var priceCurrency = PricingPolicy.NormalizeCurrency(d.AsNullableString("PriceCurrency"));
+    var hasAnyPrice = PricingPolicy.HasAnyPrice(inputPrice, outputPrice, pricePerCall);
     var capsArr = d.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray ? cv.AsBsonArray : new BsonArray();
     var caps = capsArr.Where(c => c.IsBsonDocument).Select(c => c.AsBsonDocument).Select(c => new ModelCapabilityItem
     {
@@ -15245,10 +15702,19 @@ static ModelItem MapModel(BsonDocument d)
         Capabilities = caps,
         ImageSizeControlMode = imageSizeControl.Mode,
         ImageSizeFieldFormat = imageSizeControl.FieldFormat,
-        InputPricePerMillion = d.AsNullableDecimal("InputPricePerMillion"),
-        OutputPricePerMillion = d.AsNullableDecimal("OutputPricePerMillion"),
-        PricePerCall = d.AsNullableDecimal("PricePerCall"),
-        PriceCurrency = d.AsNullableString("PriceCurrency"),
+        InputPricePerMillion = inputPrice,
+        OutputPricePerMillion = outputPrice,
+        CachedInputPricePerMillion = d.AsNullableDecimal("CachedInputPricePerMillion"),
+        CacheWritePricePerMillion = d.AsNullableDecimal("CacheWritePricePerMillion"),
+        PricePerCall = pricePerCall,
+        PriceCurrency = priceCurrency,
+        PriceSource = PricingPolicy.NormalizeSource(d.AsNullableString("PriceSource")),
+        PriceObservedAt = priceObservedAt.ToIso(),
+        PriceUpdatedBy = d.AsNullableString("PriceUpdatedBy"),
+        // 没配价的模型不叫「陈旧」，叫「没配」——两件事分开报，否则缺价会被淹在陈旧里。
+        PriceStale = hasAnyPrice && PricingPolicy.IsStale(priceObservedAt, now),
+        PriceAgeDays = PricingPolicy.AgeInDays(priceObservedAt, now),
+        PriceBillable = PricingPolicy.IsBillable(inputPrice, outputPrice, pricePerCall, priceCurrency),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
@@ -16831,4 +17297,51 @@ static async Task RunGatewayRecoveryLoopAsync(
     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
     {
     }
+}
+
+/// <summary>
+/// 这条日志算没算出钱。新日志直接读 CostStatus；2026-09 之前的存量日志没有这个字段，
+/// 才按「有 token 就得有对应单价」反推一遍，口径与当时的写入侧一致。
+/// </summary>
+static string ResolveLogCostStatus(BsonDocument d)
+{
+    var status = d.AsNullableString("CostStatus")?.Trim().ToLowerInvariant();
+    if (status is GatewayCostStatusNames.Priced
+        or GatewayCostStatusNames.Unpriced
+        or GatewayCostStatusNames.StaleCurrency
+        or GatewayCostStatusNames.NoUsage)
+    {
+        return status;
+    }
+
+    var inputTokens = d.AsNullableInt("InputTokens") ?? 0;
+    var outputTokens = d.AsNullableInt("OutputTokens") ?? 0;
+    if (inputTokens <= 0 && outputTokens <= 0 && d.AsNullableDecimal("EstimatedCost") is null)
+    {
+        return GatewayCostStatusNames.NoUsage;
+    }
+
+    var complete = (inputTokens <= 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
+        && (outputTokens <= 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null);
+    if (!complete || d.AsNullableDecimal("EstimatedCost") is null)
+    {
+        return GatewayCostStatusNames.Unpriced;
+    }
+
+    return NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")) is null
+        ? GatewayCostStatusNames.StaleCurrency
+        : GatewayCostStatusNames.Priced;
+}
+
+/// <summary>
+/// 网关写进日志的成本状态取值。console-api 是独立工程、引用不到网关那份常量，
+/// 只能在这里复述一份；两边漂移会让统计口径和写入口径对不上，所以由
+/// <c>GatewayCostStatusMirrorGuardTests</c> 从源码上钉住。
+/// </summary>
+static class GatewayCostStatusNames
+{
+    public const string Priced = "priced";
+    public const string Unpriced = "unpriced";
+    public const string StaleCurrency = "stale_currency";
+    public const string NoUsage = "no_usage";
 }
