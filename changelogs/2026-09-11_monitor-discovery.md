@@ -2,3 +2,4 @@
 | feat | llmgw | serving 深度自检的两条 check 补 cds:monitor 自描述段 |
 | refactor | cds | 删掉 cds-monitors.yml 与它的导入契约守卫——声明改由端点自报，两处声明只会各自漂移 |
 | docs | platform | 新增 spec.platform.monitor-discovery.md（协议字段表 + 三条命门 + 谁能插） |
+| fix | cds | 拔掉自检端点后，它名下的监控当场下线（此前成了孤儿，永远轮不到对账） |

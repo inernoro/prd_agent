@@ -18,6 +18,18 @@ import type { DiscoveredMonitor } from './monitor-discovery.js';
 /** 自发现监控的 id 前缀。人工与 Agent 登记的 id 是随机串，前缀在结构上不会相撞。 */
 export const DISCOVERED_ID_PREFIX = 'disc-';
 
+/**
+ * 从稳定 key 里取回端点地址。
+ *
+ * 用 lastIndexOf 而不是 split('#')[0]：URL 自己就允许带 fragment，
+ * 按第一个 `#` 切会把 `https://a/b#c#componentId` 的端点切成 `https://a/b`——
+ * 于是这条监控永远对不上它真正的端点，既不更新也不下线。
+ */
+export function endpointOfDiscoveryKey(key: string): string {
+  const i = (key || '').lastIndexOf('#');
+  return i < 0 ? '' : key.slice(0, i);
+}
+
 /** 由稳定 key 派生一个稳定且合法的监控 id（只含字母数字与连字符，≤64 位）。 */
 export function discoveredMonitorId(key: string, hash: (s: string) => string): string {
   return `${DISCOVERED_ID_PREFIX}${hash(key).slice(0, 24)}`;

@@ -216,3 +216,80 @@ describe('对账：插上与拔出', () => {
     expect(a.map((m) => m.id)).toEqual(b.map((m) => m.id));
   });
 });
+
+/**
+ * 拔掉端点之后，它名下的监控必须当场下线。
+ *
+ * 这一条是 2026-09-11 真视觉验收当场抓到的缺陷：对账只遍历**还登记着的**端点，
+ * 拔掉的那个名下的监控成了孤儿，永远轮不到——留下一堆永远探不到的死监控，
+ * 而且面板上看不出它们属于谁（predicate-and-wiring-discipline 形状 2：
+ * 当时代码注释里写着「由下一轮对账清理」，实际没有任何人执行那句话）。
+ */
+describe('拔掉端点：孤儿清理', () => {
+  it('从稳定 key 取端点时按最后一个 # 切 —— URL 自己就能带 fragment', async () => {
+    const { endpointOfDiscoveryKey } = await import('../../src/services/monitor-reconcile.js');
+    expect(endpointOfDiscoveryKey('https://a.test/b#frag#serving.x')).toBe('https://a.test/b#frag');
+    expect(endpointOfDiscoveryKey('https://a.test/b#serving.x')).toBe('https://a.test/b');
+    expect(endpointOfDiscoveryKey('没有井号')).toBe('');
+  });
+
+  it('端点已拔：它名下的监控被清掉，别的端点的不受影响', async () => {
+    const { runMonitorDiscovery } = await import('../../src/services/monitor-discovery-runner.js');
+    const kept = 'https://kept.test/healthz';
+    const gone = 'https://gone.test/healthz';
+    const monitors = [
+      { id: 'm-kept', origin: 'discovered', discoveryKey: `${kept}#a`, projectId: 'p1' },
+      { id: 'm-gone', origin: 'discovered', discoveryKey: `${gone}#a`, projectId: 'p1' },
+      { id: 'm-manual', origin: 'manual', projectId: 'p1' },
+    ] as unknown as UptimeCustomMonitor[];
+    const removed: string[] = [];
+
+    const summary = await runMonitorDiscovery({
+      listProjects: () => ([{ id: 'p1', monitorEndpoints: [kept] }] as never),
+      listUptimeMonitors: () => monitors,
+      upsertUptimeMonitor: () => undefined,
+      removeUptimeMonitor: (id: string) => { removed.push(id); },
+      fetchEndpoint: async (url) => ({ url, doc: { checks: { a: [{ componentId: 'a', [DISCOVERY_KEY]: { op: 'eq', value: 1 } }] } } }),
+      now: () => new Date('2026-09-11T00:00:00.000Z'),
+    });
+
+    expect(removed).toEqual(['m-gone']);
+    expect(summary.orphansRemoved).toBe(1);
+  });
+
+  it('端点全拔光时也要清 —— 不能因为「一个端点都没有」就直接跳过这个项目', async () => {
+    const { runMonitorDiscovery } = await import('../../src/services/monitor-discovery-runner.js');
+    const removed: string[] = [];
+    const summary = await runMonitorDiscovery({
+      listProjects: () => ([{ id: 'p1', monitorEndpoints: [] }] as never),
+      listUptimeMonitors: () => ([
+        { id: 'm1', origin: 'discovered', discoveryKey: 'https://gone.test/h#a', projectId: 'p1' },
+      ] as unknown as UptimeCustomMonitor[]),
+      upsertUptimeMonitor: () => undefined,
+      removeUptimeMonitor: (id: string) => { removed.push(id); },
+      fetchEndpoint: async (url) => ({ url, doc: undefined }),
+      now: () => new Date('2026-09-11T00:00:00.000Z'),
+    });
+    expect(removed).toEqual(['m1']);
+    expect(summary.orphansRemoved).toBe(1);
+  });
+
+  it('端点还在、只是这一轮打不通 —— 一条都不许清（不能和「拔掉」混为一谈）', async () => {
+    const { runMonitorDiscovery } = await import('../../src/services/monitor-discovery-runner.js');
+    const url = 'https://flaky.test/healthz';
+    const removed: string[] = [];
+    const summary = await runMonitorDiscovery({
+      listProjects: () => ([{ id: 'p1', monitorEndpoints: [url] }] as never),
+      listUptimeMonitors: () => ([
+        { id: 'm1', origin: 'discovered', discoveryKey: `${url}#a`, projectId: 'p1' },
+      ] as unknown as UptimeCustomMonitor[]),
+      upsertUptimeMonitor: () => undefined,
+      removeUptimeMonitor: (id: string) => { removed.push(id); },
+      fetchEndpoint: async (u) => ({ url: u, doc: undefined, err: '连不上' }),
+      now: () => new Date('2026-09-11T00:00:00.000Z'),
+    });
+    expect(removed).toEqual([]);
+    expect(summary.orphansRemoved).toBe(0);
+    expect(summary.endpoints[0].heldBecauseUnreachable).toBe(true);
+  });
+});

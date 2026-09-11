@@ -11,7 +11,7 @@ import crypto from 'node:crypto';
 
 import type { Project, UptimeCustomMonitor } from '../types.js';
 import { discoverMonitors, type DiscoveryRejection } from './monitor-discovery.js';
-import { reconcileDiscoveredMonitors } from './monitor-reconcile.js';
+import { endpointOfDiscoveryKey, reconcileDiscoveredMonitors } from './monitor-reconcile.js';
 
 /** 端点自检响应最多读多少：够读完 checks，又不会被一个无限流吃光内存。 */
 const BODY_LIMIT_BYTES = 512 * 1024;
@@ -88,6 +88,13 @@ export interface EndpointOutcome {
 export interface DiscoveryRunSummary {
   at: string;
   endpoints: EndpointOutcome[];
+  /**
+   * 端点被拔掉后清理掉的孤儿监控数。
+   *
+   * 单独一个数而不是混进某个端点的 removed：那个端点已经不在清单里了，
+   * 没有「它这一轮的结果」可言。
+   */
+  orphansRemoved: number;
 }
 
 export interface DiscoveryRunnerDeps {
@@ -113,10 +120,32 @@ export async function runMonitorDiscovery(deps: DiscoveryRunnerDeps): Promise<Di
   const now = deps.now ? deps.now() : new Date();
   const endpoints: EndpointOutcome[] = [];
 
+  let orphansRemoved = 0;
   for (const project of deps.listProjects()) {
     const urls = project.monitorEndpoints || [];
-    if (urls.length === 0) continue;
     const mine = deps.listUptimeMonitors(project.id).filter((m) => m.origin === 'discovered');
+
+    /*
+     * 先清孤儿，再对账。
+     *
+     * 端点被拔掉之后，它名下的监控就再也轮不到了——下面的循环只遍历**还登记着的**
+     * 端点。不单独清理的话，拔掉一个端点会留下一堆永远探不到的死监控，
+     * 而且面板上看不出它们属于谁（2026-09-11 真视觉验收当场抓到的：
+     * 拔掉端点后两条监控还在，predicate-and-wiring-discipline 形状 2）。
+     *
+     * 这与「端点通、某条 check 不在了」是两回事：那种要看端点这一轮说了什么，
+     * 这种连问都不用问——它的插口已经拔了。
+     */
+    const live = new Set(urls);
+    for (const monitor of mine) {
+      const endpoint = endpointOfDiscoveryKey(monitor.discoveryKey || '');
+      if (endpoint && !live.has(endpoint)) {
+        deps.removeUptimeMonitor(monitor.id);
+        orphansRemoved += 1;
+      }
+    }
+
+    if (urls.length === 0) continue;
 
     for (const url of urls) {
       const probe = await fetchEndpoint(url);
@@ -125,7 +154,7 @@ export async function runMonitorDiscovery(deps: DiscoveryRunnerDeps): Promise<Di
         endpointUrl: url,
         projectId: project.id,
         discovered: parsed?.monitors,
-        existing: mine.filter((m) => (m.discoveryKey || '').startsWith(`${url}#`)),
+        existing: mine.filter((m) => endpointOfDiscoveryKey(m.discoveryKey || '') === url),
         hash: sha1,
         now: () => now.toISOString(),
       });
@@ -158,5 +187,6 @@ export async function runMonitorDiscovery(deps: DiscoveryRunnerDeps): Promise<Di
     }
   }
 
-  return { at: now.toISOString(), endpoints };
+  if (orphansRemoved > 0) deps.logger?.info?.(`[discovery] 清理了 ${orphansRemoved} 条被拔掉端点留下的监控`);
+  return { at: now.toISOString(), endpoints, orphansRemoved };
 }
