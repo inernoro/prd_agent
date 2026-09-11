@@ -17,6 +17,7 @@
  * 个人进度落 localStorage（见 stores/bookshelfStore.ts 的边界说明）。
  */
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
   BookOpen, Check, ArrowRight, CloudOff, RefreshCw, type LucideIcon,
@@ -72,9 +73,43 @@ const EDGE_THIN = '2.5px solid var(--shelf-edge)';
 const HARD_SM = '0 4px 0 var(--shelf-edge)';
 const HARD_MD = '6px 6px 0 var(--shelf-edge)';
 
+/**
+ * 深链 ?vol= 的唯一解析规则。认得出的卷就用它，否则回落首卷。
+ *
+ * 导出是为了让守卫测试**导入这一份**，而不是在测试里复刻一遍——复刻出来的
+ * 判据只能证明副本自洽，改坏真实现它照样绿（predicate-and-wiring-discipline
+ * 形状 3：判据分裂成多份，然后各自漂移）。本文件写这条时就先栽过一次。
+ */
+export function resolveVolumeFromUrl(raw: string | null): string {
+  return raw && findVolume(raw) ? raw : VOLUMES[0].id;
+}
+
 export default function BookshelfPage() {
   const [track, setTrack] = useState<TrackFilter>('all');
-  const [activeVolumeId, setActiveVolumeId] = useState(VOLUMES[0].id);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // 深链 ?vol=<volumeId>：这页存在的用法之一是「谁说了那句话，就把对应那卷甩给他」，
+  // 所以链接点开必须直接落在那一卷。未知或缺省的 vol 回落到卷一，不报错。
+  const volFromUrl = searchParams.get('vol');
+  const [activeVolumeId, setActiveVolumeIdRaw] = useState(
+    () => resolveVolumeFromUrl(volFromUrl),
+  );
+
+  /** 切卷时同步进 URL（replace，不给浏览器后退键塞一堆中间态）。 */
+  function setActiveVolumeId(id: string) {
+    setActiveVolumeIdRaw(id);
+    const next = new URLSearchParams(searchParams);
+    next.set('vol', id);
+    setSearchParams(next, { replace: true });
+  }
+
+  // 别人改地址栏或从另一条深链跳进来时，跟着 URL 走
+  useEffect(() => {
+    const resolved = resolveVolumeFromUrl(volFromUrl);
+    if (volFromUrl && resolved === volFromUrl && resolved !== activeVolumeId) {
+      setActiveVolumeIdRaw(resolved);
+    }
+  }, [volFromUrl, activeVolumeId]);
   const [examVolume, setExamVolume] = useState<Volume | null>(null);
 
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
