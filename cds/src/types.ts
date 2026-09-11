@@ -1678,8 +1678,18 @@ export interface UptimeCustomMonitor {
    * 没人知道该找谁，最后的结局是被静音。
    */
   createdByKind?: 'human' | 'project-key' | 'global-key';
-  /** 从哪加的：manual = 人在面板上加；agent-api = Agent 用项目 Key 自助登记 */
-  origin?: 'manual' | 'agent-api';
+  /**
+   * 从哪来的：
+   *   manual     —— 人在面板上加的；
+   *   agent-api  —— Agent 用项目 Key 自助登记的；
+   *   discovered —— 自检端点自报的（监控自发现），由 CDS 每轮对账维护。
+   *
+   * discovered 的定义**不许人手改**：改了下一轮会被端点的声明覆盖，
+   * 那是漂移源。要改就去改服务自己的自描述。
+   */
+  origin?: 'manual' | 'agent-api' | 'discovered';
+  /** 自发现监控的稳定标识（端点 + componentId）。对账靠它，只有 discovered 才有。 */
+  discoveryKey?: string;
   /**
    * 绑定的分支。
    *
@@ -3504,6 +3514,13 @@ export interface ManagedProjectSpec {
 }
 
 export interface Project {
+  /**
+   * 监控自发现的端点清单（「插上」的那几个口）。
+   *
+   * CDS 每轮打这些地址，读它们自报的 `cds:monitor` 声明，对账出监控项。
+   * 端点自己说「判什么」，但**不说打哪**——CDS 打的永远是这里登记的地址。
+   */
+  monitorEndpoints?: string[];
   /**
    * 公开状态页的口令（不可枚举随机串）。有值 = 这个项目的公开面板已开，
    * 匿名访问 `/s/<token>` 可见；置空 = 立刻关掉，旧链接当即 404。

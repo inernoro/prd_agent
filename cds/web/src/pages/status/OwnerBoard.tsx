@@ -14,6 +14,7 @@ import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Globe,
 
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { DiscoveryStrip } from './DiscoveryStrip';
 import type { MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
   buildOwnerBoard,
@@ -127,12 +128,15 @@ export function OwnerBoard({
   onScope,
   onOpenTarget,
   onAddMonitor,
+  onReload,
 }: {
   targets: ReadonlyArray<UptimeTargetSummary>;
   scope: OwnerScope;
   onScope: (next: OwnerScope) => void;
   onOpenTarget: (targetId: string) => void;
   onAddMonitor: () => void;
+  /** 插上 / 拔掉端点之后监控项会变，让页面重拉一次摘要 */
+  onReload: () => void;
 }): JSX.Element {
   const projects = useMemo(() => listProjects(targets), [targets]);
   const projectTargets = useMemo(
@@ -297,6 +301,9 @@ export function OwnerBoard({
           </button>
         </div>
       )}
+
+      {/* 自检端点：插上即可，监控项由端点自报 */}
+      {scope.projectId ? <DiscoveryStrip projectId={scope.projectId} onChanged={onReload} /> : null}
 
       {/* 公开面板：同一批观测的另一个出口，对外只出业务名与红绿 */}
       {scope.projectId ? (

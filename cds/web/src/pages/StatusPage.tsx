@@ -381,6 +381,7 @@ export function StatusPage(): JSX.Element {
                     onScope={onScope}
                     onOpenTarget={(targetId) => { setBoardView('all'); openTarget(targetId); }}
                     onAddMonitor={() => setEditor({ open: true, monitor: null })}
+                    onReload={() => void load()}
                   />
                 </div>
               ) : (

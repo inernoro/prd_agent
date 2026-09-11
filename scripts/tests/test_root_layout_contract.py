@@ -28,11 +28,6 @@ ALLOWED_ROOT_FILES = {
     "README.md",
     "SECURITY.md",
     "cds-compose.yml",
-    # 与 cds-compose.yml 对称的另一半仓库级 CDS 声明：那份说「怎么把我跑起来」，
-    # 这份说「怎么盯着我」。监控项跨 llmgw 与 prd-api 两个模块，不归任何单一模块，
-    # 且和 compose 一样由 CDS 在仓库根消费，所以是 project-wide entrypoint。
-    # SSOT：.claude/rules/degradation-must-alarm.md
-    "cds-monitors.yml",
     "docker-compose.dev.yml",
     "docker-compose.local.yml",
     "docker-compose.yml",

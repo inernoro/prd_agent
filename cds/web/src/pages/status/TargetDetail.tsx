@@ -43,6 +43,7 @@ import {
   type UptimeHistory,
   type UptimeIncidentView,
   type UptimeTargetSummary,
+  MONITOR_ORIGIN_LABEL,
 } from '@/lib/monitorCenter';
 import { LatencyChart } from './LatencyChart';
 import { FunctionalEvidence } from './FunctionalEvidence';
@@ -393,7 +394,7 @@ export function TargetDetail({
                   <dd>
                     <span className="font-mono">{target.addedBy.by}</span>
                     <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">
-                      {target.addedBy.origin === 'agent-api' ? 'Agent 自助登记' : '人工添加'}
+                      {MONITOR_ORIGIN_LABEL[target.addedBy.origin] ?? '人工添加'}
                     </span>
                     {target.addedBy.boundBranchId ? (
                       <span

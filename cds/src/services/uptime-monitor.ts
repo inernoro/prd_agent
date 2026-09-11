@@ -953,7 +953,7 @@ export interface UptimeTargetSummary {
   addedBy?: {
     by: string;
     kind: 'human' | 'project-key' | 'global-key';
-    origin: 'manual' | 'agent-api';
+    origin: 'manual' | 'agent-api' | 'discovered';
     boundBranchId?: string;
   };
   /** 这条是不是功能监控（列表按它分组：功能监控与存活监控问的不是同一个问题）。 */

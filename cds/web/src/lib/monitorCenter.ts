@@ -106,7 +106,7 @@ export interface UptimeTargetSummary {
   addedBy?: {
     by: string;
     kind: 'human' | 'project-key' | 'global-key';
-    origin: 'manual' | 'agent-api';
+    origin: 'manual' | 'agent-api' | 'discovered';
     boundBranchId?: string;
   };
   tags?: string[];
@@ -232,6 +232,8 @@ export interface CustomMonitor {
   publicVisible?: boolean;
   /** 公开页上的对外叫法；留空用 name */
   publicName?: string;
+  /** 来源：discovered = 自检端点自报，定义由 CDS 每轮对账维护，人改了会被覆盖 */
+  origin?: 'manual' | 'agent-api' | 'discovered';
   tags?: string[];
   enabled: boolean;
   createdAt: string;
@@ -812,3 +814,14 @@ export function describeBucket(bucket: UptimeBucket): string[] {
   }
   return lines;
 }
+
+/**
+ * 监控来源的中文名。**用映射不用三元**：三元判断遇到新枚举值会静默落到 else 分支，
+ * 于是「自检端点自报」被显示成「人工添加」——枚举扩展最典型的漏法
+ * （enum-ripple-audit）。映射缺一个键至少还能看出来是空的。
+ */
+export const MONITOR_ORIGIN_LABEL: Record<'manual' | 'agent-api' | 'discovered', string> = {
+  manual: '人工添加',
+  'agent-api': 'Agent 自助登记',
+  discovered: '自检端点自报',
+};

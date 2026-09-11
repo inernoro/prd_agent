@@ -5367,6 +5367,43 @@ export class StateService {
     return meta;
   }
 
+  /** 项目登记的自检端点清单（监控自发现的「插口」）。 */
+  listMonitorEndpoints(projectId: string): string[] {
+    return [...(this.getProject(projectId)?.monitorEndpoints || [])];
+  }
+
+  /**
+   * 插上一个自检端点。幂等：同一个地址重复插不产生第二条。
+   * 返回 false 表示项目不存在。
+   */
+  addMonitorEndpoint(projectId: string, url: string): boolean {
+    if (!this.state.projects) return false;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return false;
+    const current = this.state.projects[idx];
+    const list = [...(current.monitorEndpoints || [])];
+    if (list.includes(url)) return true;
+    list.push(url);
+    this.state.projects[idx] = { ...current, monitorEndpoints: list, updatedAt: new Date().toISOString() };
+    this.save();
+    return true;
+  }
+
+  /**
+   * 拔掉一个自检端点。它名下的自发现监控由下一轮对账清理——
+   * 这里不顺手删：删监控是对账那一处的职责，两处都能删就会有两套判据。
+   */
+  removeMonitorEndpoint(projectId: string, url: string): boolean {
+    if (!this.state.projects) return false;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return false;
+    const current = this.state.projects[idx];
+    const list = (current.monitorEndpoints || []).filter((u) => u !== url);
+    this.state.projects[idx] = { ...current, monitorEndpoints: list, updatedAt: new Date().toISOString() };
+    this.save();
+    return true;
+  }
+
   /**
    * 开一个项目的公开状态页：生成（或幂等返回已有的）不可枚举 token。
    * 与报告分享同款，不重复 mint——重复 mint 会让上一条已经发出去的链接静默失效。

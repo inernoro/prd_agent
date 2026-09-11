@@ -75,6 +75,7 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
 import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
+import { runMonitorDiscovery, type DiscoveryRunSummary } from './services/monitor-discovery-runner.js';
 import { customProbeTargetId } from './services/uptime-custom-monitor.js';
 import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
@@ -5961,9 +5962,43 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   app.use('/api', createPublicStatusRouter(publicStatusDeps));
   app.use('/api', createStatusPageAdminRouter(publicStatusDeps));
 
+  /*
+   * 监控自发现（2026-09-11）。
+   *
+   * 声明不再放在仓库里等人导入——实现了协议的自检端点自己说「该怎么监控我」，
+   * CDS 插上一个地址就行（心智是 USB 描述符）。这里只管「什么时候跑」：
+   * 插上 / 拔掉时当场跑一轮，之后跟着探测轮次的节奏定时跑。
+   */
+  let lastDiscoveryRun: DiscoveryRunSummary | null = null;
+  let discoveryInFlight: Promise<DiscoveryRunSummary> | null = null;
+  const runDiscovery = async (): Promise<DiscoveryRunSummary> => {
+    // 并发合流：插上端点会立刻触发一轮，而定时那一轮可能正跑着。
+    // 两轮同时对账会互相覆盖写入，还会把「新增」重复记两次。
+    if (discoveryInFlight) return discoveryInFlight;
+    discoveryInFlight = runMonitorDiscovery({
+      listProjects: () => stateService.getProjects(),
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
+      removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    }).then((summary) => {
+      lastDiscoveryRun = summary;
+      return summary;
+    }).finally(() => { discoveryInFlight = null; });
+    return discoveryInFlight;
+  };
+  const discoveryIntervalMs = Math.max(60_000, uptimeMonitor.config.intervalMs || 60_000);
+  setInterval(() => { void runDiscovery().catch(() => undefined); }, discoveryIntervalMs).unref?.();
+  void runDiscovery().catch(() => undefined);
+
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
     listProjectPreviewHosts,
+    listMonitorEndpoints: (projectId: string) => stateService.listMonitorEndpoints(projectId),
+    addMonitorEndpoint: (projectId: string, url: string) => stateService.addMonitorEndpoint(projectId, url),
+    removeMonitorEndpoint: (projectId: string, url: string) => stateService.removeMonitorEndpoint(projectId, url),
+    runDiscovery,
+    lastDiscoveryRun: () => lastDiscoveryRun,
     store: {
       listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
       getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
