@@ -338,6 +338,52 @@ public static class GatewayHttpEndpoints
 
         // OpenAI Responses 兼容入口。外部仍按 OpenAI 心智传 input / instructions，
         // 内部统一转成 chat-style GatewayRequest，router、日志、appCaller registry 不分叉。
+        // OpenAI 标准的模型清单。对方把 base_url 指过来后，client.models.list() 直接可用。
+        //
+        // 这一条以前是缺的：四条 POST 兼容入口都有，唯独没有「列一下有哪些模型」，
+        // 于是对方能调却列不出可调什么，只能我们口头把模型名告诉他。
+        app.MapGet("/v1/models", async (
+            HttpContext http,
+            LlmGatewayDataContext data,
+            CancellationToken ct) =>
+        {
+            var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
+                data,
+                GetVerifiedTenantId(http),
+                ResolveVerifiedAppCaller(http, string.Empty) is { Length: > 0 } code ? code : null,
+                ct);
+            return Results.Content(
+                GatewayModelCatalogEndpoint.Serialize(catalog, jsonOpts),
+                "application/json; charset=utf-8");
+        });
+
+        // 单个模型。OpenAI SDK 的 client.models.retrieve(id) 走这里；
+        // 名单外一律 404，这就是白名单那道门在对外接口上的样子。
+        app.MapGet("/v1/models/{modelId}", async (
+            HttpContext http,
+            string modelId,
+            LlmGatewayDataContext data,
+            CancellationToken ct) =>
+        {
+            var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
+                data,
+                GetVerifiedTenantId(http),
+                ResolveVerifiedAppCaller(http, string.Empty) is { Length: > 0 } code ? code : null,
+                ct);
+            var match = catalog["data"]?.AsArray()
+                .FirstOrDefault(x => string.Equals(x?["id"]?.GetValue<string>(), modelId, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                return Results.Content(
+                    GatewayModelCatalogEndpoint.Serialize(GatewayModelCatalogEndpoint.BuildNotFound(modelId), jsonOpts),
+                    "application/json; charset=utf-8",
+                    statusCode: 404);
+            }
+            return Results.Content(
+                GatewayModelCatalogEndpoint.Serialize(match.DeepClone(), jsonOpts),
+                "application/json; charset=utf-8");
+        });
+
         app.MapPost("/v1/responses", async (
             HttpContext http,
             PrdAgent.Core.LlmGateway.ILlmGateway gateway,
@@ -2046,7 +2092,10 @@ public static class GatewayHttpEndpoints
         => path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/v1/responses", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/v1/images/generations", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/v1/images/edits", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/v1/images/edits", StringComparison.OrdinalIgnoreCase)
+           // 列清单同样要凭 key：白名单本身就是「谁能用哪些模型」，匿名可读等于把授权面白送。
+           || path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("/v1/models/", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<JsonObject?> ReadJsonBodyAsync(HttpRequest request, CancellationToken ct)
     {

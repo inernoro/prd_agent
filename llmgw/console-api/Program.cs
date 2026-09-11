@@ -10101,6 +10101,106 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         }
     }
 
+    /*
+      登上白名单：建公开模型名 + 挂一条上游线路。
+
+      不做这一步的后果是「批量登记只做了一半」——模型躺在 llmgw_models 里，调用方按公开
+      模型名请求却找不到它，用户得再去白名单页把同一个模型手工建两遍（建逻辑模型、挂 Offering）。
+      「模型」与「白名单」分成两页的代价就体现在这里，所以默认就替他做掉。
+
+      同名已存在时**不新建公开名，只多挂一条线路**：这正是「一个模型允许多个来源」的自然入口，
+      从另一个 Provider 再导一次 gpt-4o，得到的是 gpt-4o 的第二条线路，而不是第二个 gpt-4o。
+    */
+    if ((body?.PublishToWhitelist ?? true) && result.Created > 0)
+    {
+        try
+        {
+            var createdDocs = await gwModels.Find(TenantAccess.Filter(http, fb.And(
+                fb.Eq("PlatformId", id),
+                fb.In("ModelName", result.CreatedModelIds)))).ToListAsync();
+
+            foreach (var model in createdDocs)
+            {
+                var modelName = model.GetStringOrEmpty("ModelName");
+                if (modelName.Length == 0) continue;
+
+                var publicId = GatewayWhitelistPublishing.ToPublicId(modelName);
+                if (publicId.Length == 0) continue;
+                var normalizedPublicId = publicId.ToLowerInvariant();
+
+                var logical = await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                    Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalizedPublicId))).FirstOrDefaultAsync();
+
+                var capabilityCodes = (model.TryGetValue("Capabilities", out var capsValue) && capsValue.IsBsonArray
+                        ? capsValue.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument.GetStringOrEmpty("Type"))
+                        : Enumerable.Empty<string>())
+                    .Where(x => x.Length > 0)
+                    .ToList();
+                var modelType = GatewayWhitelistPublishing.ResolveModelType(capabilityCodes);
+
+                string logicalId;
+                if (logical is null)
+                {
+                    logicalId = $"gw-logical-{Guid.NewGuid():N}";
+                    await gwLogicalModels.InsertOneAsync(new BsonDocument
+                    {
+                        { "_id", logicalId }, { "TenantId", tenantId },
+                        { "PublicId", publicId }, { "PublicIdNormalized", normalizedPublicId },
+                        { "Name", publicId }, { "ModelType", modelType },
+                        { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, capabilityCodes).Persisted) },
+                        // 授权范围刻意留空 = 当前租户全部 appCaller 可用。
+                        // 导入这一步不替用户决定「谁能用」：收紧是治理动作，要有人明确拍板。
+                        { "AllowedAppCallerCodes", new BsonArray() },
+                        { "RoutingStrategy", "priority" }, { "Enabled", true }, { "DisplayOrder", 100 },
+                        { "CreatedAt", now }, { "UpdatedAt", now },
+                    });
+                    result.WhitelistedPublicIds.Add(publicId);
+                }
+                else
+                {
+                    logicalId = logical.GetStringOrEmpty("_id");
+                    result.LinkedToExistingCount++;
+                }
+
+                var modelId = model.GetStringOrEmpty("_id");
+                var duplicate = await gwModelOfferings.Find(Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                    Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId),
+                    Builders<BsonDocument>.Filter.Eq("TargetKind", "model"),
+                    Builders<BsonDocument>.Filter.Eq("TargetId", modelId))).AnyAsync();
+                if (duplicate) continue;
+
+                // 后来的线路排在已有线路之后：先登记的那条继续扛流量，导入不该悄悄改变谁是主路。
+                var existingRoutes = (int)await gwModelOfferings.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                    Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+
+                await gwModelOfferings.InsertOneAsync(new BsonDocument
+                {
+                    { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
+                    { "LogicalModelId", logicalId }, { "TargetKind", "model" }, { "TargetId", modelId },
+                    { "UpstreamModelId", modelName },
+                    { "Protocol", model.AsNullableString("Protocol") is { Length: > 0 } p ? p : BsonNull.Value },
+                    { "EndpointPath", BsonNull.Value },
+                    { "Priority", 100 + existingRoutes * 10 }, { "Weight", 100 },
+                    { "Enabled", true }, { "HealthStatus", 0 },
+                    { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
+                    { "MaxConcurrency", BsonNull.Value }, { "RateLimitPerMinute", BsonNull.Value },
+                    { "Notes", BsonNull.Value },
+                    { "CreatedAt", now }, { "UpdatedAt", now },
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            // 模型本身已入库，只是没登上名单——如实说，不报全绿。
+            result.WhitelistMessage = $"模型已导入，但登记白名单失败（{ex.GetType().Name}）："
+                + "这批模型暂时不在白名单里，调用方按公开模型名请求会找不到它们。"
+                + "可以在「模型白名单」页手动添加，或稍后重新导入（已存在的模型会被跳过，只补名单）。";
+        }
+    }
+
     // 被白名单拦下的要给可执行的下一步，不能只报一个数字。
     // 池同步失败那条更严重，已经占了 Message 就不覆盖它——两件事都发生时先说没进池那件。
     if (result.BlockedOutsideCatalog.Count > 0 && result.Message is null)

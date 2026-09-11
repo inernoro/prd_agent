@@ -27,6 +27,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\PrdAgent.Core\PrdAgent.Core.csproj" />
     <ProjectReference Include="..\..\src\PrdAgent.Infrastructure\PrdAgent.Infrastructure.csproj" />
+    <!--
+      console-api 的纯判断（公开模型名怎么剥前缀、多模态判成哪种用途）需要**行为断言**，
+      不是字面量断言：判据写在 minimal-api 的端点闭包旁边时，只能靠跑整条导入链路才验得到，
+      而它们恰恰是「删掉之后编译照过、测试照绿」的那类逻辑。
+      这是纯测试依赖，不改动生产接线：console-api 仍然是独立服务，不反向依赖本项目。
+    -->
+    <ProjectReference Include="..\..\..\llmgw\console-api\prd-llmgw.csproj" />
   </ItemGroup>
 
   <!-- MdsWriteRetiredFilter 是 MVC IActionFilter，要在测试里直接 new 出来跑，需要 MVC 类型 -->

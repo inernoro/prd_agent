@@ -161,9 +161,18 @@ export function PlatformsPage() {
     // 池同步失败时后端会如实回传：模型入库了但池路由选不到，不能报成全绿
     const blocked = res.data.blockedOutsideCatalog?.length ?? 0;
     const skippedExisting = res.data.skipped - blocked;
-    const base = `已导入 ${res.data.created} 个模型${skippedExisting > 0 ? `，跳过 ${skippedExisting} 个已存在的` : ''}`;
-    // 池同步失败与「被名录拦下」都要如实说，且都带可执行的下一步——后端的 message 已经写好了。
-    setToast(res.data.message ? `${base}。${res.data.message}` : base);
+    // 白名单登记是这次导入真正的终点：只说「导入了 N 个模型」，用户不知道调用方现在能不能调到。
+    const whitelisted = res.data.whitelistedPublicIds?.length ?? 0;
+    const linked = res.data.linkedToExistingCount ?? 0;
+    const published = [
+      whitelisted > 0 ? `${whitelisted} 个登上白名单` : '',
+      linked > 0 ? `${linked} 条挂到已有模型名下作为新线路` : '',
+    ].filter(Boolean).join('，');
+    const base = `已导入 ${res.data.created} 个模型${skippedExisting > 0 ? `，跳过 ${skippedExisting} 个已存在的` : ''}`
+      + (published ? `；${published}，调用方现在可以按公开模型名直接调` : '');
+    // 池同步失败、名录拦下、白名单登记失败都要如实说，且都带可执行的下一步——后端的 message 已经写好了。
+    const notes = [res.data.message, res.data.whitelistMessage].filter(Boolean).join(' ');
+    setToast(notes ? `${base}。${notes}` : base);
     setDiscovery(null);
   }
 

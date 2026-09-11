@@ -806,6 +806,12 @@ export type ImportUpstreamModelsResult = {
   /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
   poolSyncFailed?: boolean;
   message?: string;
+  /** 这次新登上白名单的公开模型名。 */
+  whitelistedPublicIds?: string[];
+  /** 挂到已有公开模型名下的线路数——「一个模型多个来源」就是这么长出来的。 */
+  linkedToExistingCount?: number;
+  /** 白名单登记失败的原因。模型已入库、只是没登上名单，不许报成全绿。 */
+  whitelistMessage?: string | null;
 };
 
 // ── 模型（无密钥，仅 hasKey）──

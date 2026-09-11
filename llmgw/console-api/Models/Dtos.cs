@@ -1992,6 +1992,16 @@ public sealed class UpstreamModelsData
 public sealed class ImportUpstreamModelsRequest
 {
     public List<ImportUpstreamModelEntry>? Models { get; set; }
+
+    /// <summary>
+    /// 导入的同时把模型登上白名单（建逻辑模型 + 挂一条上游线路）。默认开。
+    ///
+    /// 关掉之前想清楚：不登记的话，导入只在 llmgw_models 里留下一条物理模型记录，
+    /// 调用方按公开模型名请求时压根找不到它——用户点完「导入 N 个」看到成功提示，
+    /// 白名单里却什么都没多，还得再去另一页把同一个模型手工建两遍。
+    /// 这正是「模型」与「白名单」分成两页的实际代价，默认开就是为了不让用户承担它。
+    /// </summary>
+    public bool? PublishToWhitelist { get; set; }
 }
 
 public sealed class ImportUpstreamModelEntry
@@ -2030,6 +2040,20 @@ public sealed class ImportUpstreamModelsResult
 
     /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
     public bool PoolSyncFailed { get; set; }
+
+    /// <summary>这次新登上白名单的公开模型名。</summary>
+    public List<string> WhitelistedPublicIds { get; set; } = new();
+
+    /// <summary>
+    /// 挂到已有公开模型名下的线路数。
+    ///
+    /// 这是「一个模型多个来源」的自然入口：白名单里已经有 gpt-4o 了，再从另一个 Provider
+    /// 导一次同名模型，不新建一个公开名，而是给它多挂一条线路。
+    /// </summary>
+    public int LinkedToExistingCount { get; set; }
+
+    /// <summary>白名单登记失败时的原因。模型本身已入库，只是没登上名单——不许报成全绿。</summary>
+    public string? WhitelistMessage { get; set; }
 
     /// <summary>需要额外告诉用户的话（目前只有池同步失败时非空）。</summary>
     public string? Message { get; set; }

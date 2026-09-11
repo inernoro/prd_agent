@@ -17,6 +17,7 @@
 // 本路由被 e2e/llmgw-layout-drift.mjs 监测：新增上游与新建模型都必须留在页面内联表单里，
 // 不要改成抽屉或对话框——被测的扁平 DOM 一旦变成浮层，量到的就不是这一页的版式了。
 import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   createLogicalModel,
   createModelOffering,
@@ -59,6 +60,7 @@ function defaultImageGenerationCapabilities() {
 }
 
 export function LogicalModelsPage() {
+  const navigate = useNavigate();
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const { promptText } = useDialogs();
@@ -253,7 +255,12 @@ export function LogicalModelsPage() {
           </>
         ) : undefined}
         actions={canWrite ? (
-          <Button variant="primary" size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '添加逻辑模型'}</Button>
+          <>
+            {/* 批量登记是主路径：一次把上游的模型清单拉回来勾选登记，比一个个手建快一个量级。
+                它落在 Provider 页（凭据在那儿配、清单从那儿拉），这里给直达入口，不让用户自己找。 */}
+            <Button variant="primary" size="sm" onClick={() => navigate('/platforms')}>从上游批量登记</Button>
+            <Button size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '手动新建'}</Button>
+          </>
         ) : null}
       />
 
