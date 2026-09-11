@@ -91,6 +91,8 @@ export interface UptimeTargetSummary {
    * 0 是最要紧的那个值：判据过了但根本没人用过，绿灯不作数。
    */
   sampleCount?: number;
+  /** 这条业务是否出现在项目的公开面板上（服务端下发，前端只展示） */
+  publicVisible?: boolean;
   /** 最新一次观测的摘要；完整证据走 /uptime/monitors/:id/observations。 */
   lastObservation?: {
     at: string;
@@ -226,6 +228,10 @@ export interface CustomMonitor {
   observeMode?: ObserveMode;
   /** 被动观测的样本量从哪读（health-json 是 componentId，functional 是字段路径） */
   sampleCountPath?: string;
+  /** 是否出现在项目的公开状态页上 */
+  publicVisible?: boolean;
+  /** 公开页上的对外叫法；留空用 name */
+  publicName?: string;
   tags?: string[];
   enabled: boolean;
   createdAt: string;

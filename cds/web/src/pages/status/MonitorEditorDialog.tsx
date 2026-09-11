@@ -52,6 +52,8 @@ interface Draft {
   timeoutMs: string;
   projectId: string;
   environment: Exclude<MonitorEnvironment, 'preview'>;
+  publicVisible: boolean;
+  publicName: string;
   tags: string;
 }
 
@@ -80,6 +82,8 @@ function draftFrom(monitor: CustomMonitor | null): Draft {
     timeoutMs: monitor?.timeoutMs ? String(monitor.timeoutMs) : '',
     projectId: monitor?.projectId || '',
     environment: monitor?.environment && monitor.environment !== 'preview' ? monitor.environment : 'production',
+    publicVisible: Boolean(monitor?.publicVisible),
+    publicName: monitor?.publicName || '',
     tags: (monitor?.tags || []).join(', '),
   };
 }
@@ -103,6 +107,8 @@ function payloadOf(draft: Draft): Record<string, unknown> {
   body.timeoutMs = draft.timeoutMs.trim() || null;
   body.projectId = draft.projectId || null;
   body.environment = draft.environment;
+  body.publicVisible = draft.publicVisible;
+  body.publicName = draft.publicName.trim() || null;
   body.tags = draft.tags.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
   return body;
 }
@@ -275,7 +281,7 @@ export function MonitorEditorDialog({ open, monitor, defaultProjectId, onOpenCha
               aria-expanded={advanced}
             >
               {advanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-              高级选项（方法、状态码规则、间隔、超时、归属、环境、标签）
+              高级选项（方法、状态码规则、间隔、超时、归属、环境、公开、标签）
             </button>
 
             {advanced ? (
@@ -310,6 +316,39 @@ export function MonitorEditorDialog({ open, monitor, defaultProjectId, onOpenCha
                     {ENVIRONMENT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                   </select>
                 </FieldRow>
+                <FieldRow
+                  label="公开面板"
+                  htmlFor="mon-public"
+                  error={fieldError('publicVisible')}
+                  hint="勾上之后，这条业务会出现在项目的公开状态页上（匿名可见）。对外只出业务名与红黄绿，地址、判据、日志一律不出去"
+                >
+                  <label htmlFor="mon-public" className="flex items-center gap-2 text-xs text-foreground">
+                    <input
+                      id="mon-public"
+                      type="checkbox"
+                      className="h-4 w-4"
+                      checked={draft.publicVisible}
+                      onChange={(e) => update({ publicVisible: e.target.checked })}
+                    />
+                    在公开状态页上展示这条业务
+                  </label>
+                </FieldRow>
+                {draft.publicVisible ? (
+                  <FieldRow
+                    label="对外名称"
+                    htmlFor="mon-public-name"
+                    error={fieldError('publicName')}
+                    hint="留空就用上面的名称。内部名常带环境与组件缩写，那是给自己人看的"
+                  >
+                    <input
+                      id="mon-public-name"
+                      className={INPUT_CLASS}
+                      value={draft.publicName}
+                      onChange={(e) => update({ publicName: e.target.value })}
+                      placeholder="例如：图片生成"
+                    />
+                  </FieldRow>
+                ) : null}
                 <FieldRow label="标签" htmlFor="mon-tags" error={fieldError('tags')} hint="逗号分隔，用于搜索">
                   <input id="mon-tags" className={INPUT_CLASS} value={draft.tags} onChange={(e) => update({ tags: e.target.value })} placeholder="核心, 第三方" />
                 </FieldRow>

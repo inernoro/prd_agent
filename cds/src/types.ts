@@ -1656,6 +1656,16 @@ export interface UptimeCustomMonitor {
    *   functional  —— 响应文档里的字段路径，如 `data.requestCount`。
    */
   sampleCountPath?: string;
+  /**
+   * 这条业务是否出现在项目的公开面板上。缺省 false —— 公开是显式动作，
+   * 不是默认值：默认公开会让一条刚加的内部探针在下一次部署后对全网可见。
+   */
+  publicVisible?: boolean;
+  /**
+   * 对外叫法。公开面板上用它替代 name——内部名常带环境、组件与缩写
+   * （「llmgw serving 未处理异常」），那是给自己人看的。留空就用 name。
+   */
+  publicName?: string;
   /** 自由标签，列表里用于分组与搜索 */
   tags?: string[];
   /** false = 手动暂停：不探测、不计故障、已开的故障就地收尾 */
@@ -3494,6 +3504,17 @@ export interface ManagedProjectSpec {
 }
 
 export interface Project {
+  /**
+   * 公开状态页的口令（不可枚举随机串）。有值 = 这个项目的公开面板已开，
+   * 匿名访问 `/s/<token>` 可见；置空 = 立刻关掉，旧链接当即 404。
+   *
+   * 与验收报告的 shareToken 同款：token 自鉴权、不挂在登录网关后面——
+   * 它的全部意义就是给没有账号的人看。
+   */
+  statusPageToken?: string | null;
+  /** 公开面板开启时间。面板上不展示，只做审计。 */
+  statusPageOpenedAt?: string;
+
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
   /** URL-friendly slug (may equal id, usually kebab-case). */

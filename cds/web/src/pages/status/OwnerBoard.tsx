@@ -9,9 +9,10 @@
  *
  * 判据全在 lib/ownerBoard.ts，这里只负责摆放与着色。
  */
-import { useMemo } from 'react';
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Info, Waves } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Globe, Info, Waves } from 'lucide-react';
 
+import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import type { MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
@@ -115,6 +116,11 @@ function BusinessCard({ row, onOpen }: { row: BusinessRow; onOpen: (targetId: st
   );
 }
 
+interface StatusPageState {
+  open: boolean;
+  path: string | null;
+}
+
 export function OwnerBoard({
   targets,
   scope,
@@ -144,6 +150,42 @@ export function OwnerBoard({
     else next.add(env);
     onScope({ ...scope, environments: environments.filter((e) => next.has(e)) });
   };
+
+  // 公开面板的开关状态跟着选中的项目走：没选项目时无从谈起「公开哪个项目」。
+  const [statusPage, setStatusPage] = useState<StatusPageState | null>(null);
+  const [statusPageBusy, setStatusPageBusy] = useState(false);
+  const [statusPageError, setStatusPageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!scope.projectId) { setStatusPage(null); return; }
+    let alive = true;
+    apiRequest<StatusPageState>(`/api/projects/${encodeURIComponent(scope.projectId)}/status-page`)
+      .then((res) => { if (alive) { setStatusPage(res); setStatusPageError(null); } })
+      .catch((err) => { if (alive) setStatusPageError(err instanceof ApiError ? err.message : String(err)); });
+    return () => { alive = false; };
+  }, [scope.projectId]);
+
+  const toggleStatusPage = useCallback(async (): Promise<void> => {
+    if (!scope.projectId || statusPageBusy) return;
+    setStatusPageBusy(true);
+    try {
+      const next = await apiRequest<StatusPageState>(
+        `/api/projects/${encodeURIComponent(scope.projectId)}/status-page`,
+        { method: statusPage?.open ? 'DELETE' : 'POST' },
+      );
+      setStatusPage(next);
+      setStatusPageError(null);
+    } catch (err) {
+      setStatusPageError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setStatusPageBusy(false);
+    }
+  }, [scope.projectId, statusPage, statusPageBusy]);
+
+  const publicCount = useMemo(
+    () => new Set(scoped.filter((t) => t.publicVisible).map((t) => t.name)).size,
+    [scoped],
+  );
 
   const BannerIcon = BANNER_ICON[board.tone];
 
@@ -255,6 +297,43 @@ export function OwnerBoard({
           </button>
         </div>
       )}
+
+      {/* 公开面板：同一批观测的另一个出口，对外只出业务名与红绿 */}
+      {scope.projectId ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-info/25 bg-info-soft/40 px-3.5 py-2.5">
+          <Globe className="h-3.5 w-3.5 text-info" />
+          <span className="text-xs text-muted-foreground">公开面板</span>
+          {statusPage?.open && statusPage.path ? (
+            <>
+              <a
+                href={statusPage.path}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate font-mono text-xs text-info hover:underline"
+              >
+                {statusPage.path}
+              </a>
+              <span className="text-[0.6875rem] text-muted-foreground">
+                免登录只读 · {publicCount} 条业务对外 · 只出业务名与红绿，不出地址、判据、日志
+              </span>
+            </>
+          ) : (
+            <span className="text-[0.6875rem] text-muted-foreground">
+              未开启。开了之后拿到链接的人不用登录就能看到这几条业务的红绿，随时可撤销
+            </span>
+          )}
+          <div className="flex-grow" />
+          {statusPageError ? <span className="text-[0.6875rem] text-destructive">{statusPageError}</span> : null}
+          <button
+            type="button"
+            onClick={() => void toggleStatusPage()}
+            disabled={statusPageBusy}
+            className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-info/50 disabled:opacity-60"
+          >
+            {statusPageBusy ? '处理中' : statusPage?.open ? '关闭并撤销链接' : '开启公开面板'}
+          </button>
+        </div>
+      ) : null}
 
       {/* 基础设施：要能一眼确认没塌，但不占主视觉 */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3.5 py-2.5">

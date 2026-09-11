@@ -8,3 +8,4 @@
 | fix | cds | cdscli 判据支持路径带冒号：health+json 的 check 键按规范就是「组件:度量」，此前这类判据根本加不进来 |
 | fix | cds | 地址落在分支预览上的监控一律判为分支预览环境（新增 previewBranchId），不再只对 Agent 自助登记生效 |
 | fix | cds | 摘要按地址反查分支预览：存量监控没有 previewBranchId 戳也能判对环境，地址台账收成一份三方共用 |
+| feat | cds | 公开状态页：项目可开一个匿名只读面板（/s/<token>），对外只出业务名、红黄绿、7 天条带与更新时间，随时可撤销 |

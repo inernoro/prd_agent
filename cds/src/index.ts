@@ -74,6 +74,7 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
+import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
 import { customProbeTargetId } from './services/uptime-custom-monitor.js';
 import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
@@ -5937,6 +5938,29 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     uptimeMonitor.forgetTargets(monitorIds.map((id) => customProbeTargetId({ id })));
     console.log(`  [uptime] 分支删除，级联清理 ${monitorIds.length} 条绑定监控`);
   });
+  // 公开状态页。两条路分开注册：读取那条匿名（token 自鉴权，已在
+  // github-auth PUBLIC_PATHS / isPublicAccessRequestRoute 双白名单里），
+  // 开关那条走登录网关。合成一个 router 挂同一个前缀，等于把开关也放出去了。
+  const publicStatusDeps = {
+    state: {
+      getProjectByStatusPageToken: (token: string) => stateService.getProjectByStatusPageToken(token),
+      getProject: (id: string) => stateService.getProject(id),
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      openProjectStatusPage: (projectId: string) => stateService.openProjectStatusPage(projectId),
+      closeProjectStatusPage: (projectId: string) => stateService.closeProjectStatusPage(projectId),
+    },
+    monitor: {
+      getSummary: (barSegments?: number) => uptimeMonitor.getSummary(barSegments),
+      getHistory: (targetId: string, rangeMs: number, bucketCount: number) =>
+        uptimeMonitor.getHistory(targetId, rangeMs, bucketCount),
+    },
+    refreshHintSeconds: uptimeMonitor.config.intervalMs
+      ? Math.round(uptimeMonitor.config.intervalMs / 1000)
+      : 60,
+  };
+  app.use('/api', createPublicStatusRouter(publicStatusDeps));
+  app.use('/api', createStatusPageAdminRouter(publicStatusDeps));
+
   app.use('/api', createUptimeRouter({
     monitor: uptimeMonitor,
     listProjectPreviewHosts,

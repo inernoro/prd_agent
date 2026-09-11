@@ -131,6 +131,8 @@ export interface UptimeMonitorInput {
   environment?: unknown;
   observeMode?: unknown;
   sampleCountPath?: unknown;
+  publicVisible?: unknown;
+  publicName?: unknown;
 }
 
 export type NormalizeResult =
@@ -476,6 +478,20 @@ export function normalizeUptimeMonitorInput(
   } else if (sampleCountPath) {
     // 主动观测留着这个字段没有坏处，但也没有意义——清掉，免得日后被误读成「它在看样本量」。
     monitor.sampleCountPath = undefined;
+  }
+
+  // 公开面板：显式动作，缺省不公开。默认公开会让一条刚加的内部探针对全网可见。
+  monitor.publicVisible = input.publicVisible === undefined
+    ? Boolean(options.existing?.publicVisible)
+    : Boolean(input.publicVisible);
+  const publicName = input.publicName === undefined
+    ? options.existing?.publicName
+    : (input.publicName === null ? undefined : str(input.publicName));
+  if (publicName) {
+    if (publicName.length > MAX_NAME_LENGTH) {
+      return { ok: false, error: `对外名称不能超过 ${MAX_NAME_LENGTH} 个字符`, field: 'publicName' };
+    }
+    monitor.publicName = publicName;
   }
 
   if (input.tags !== undefined) {

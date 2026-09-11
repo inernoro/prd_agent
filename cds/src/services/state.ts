@@ -5367,6 +5367,54 @@ export class StateService {
     return meta;
   }
 
+  /**
+   * 开一个项目的公开状态页：生成（或幂等返回已有的）不可枚举 token。
+   * 与报告分享同款，不重复 mint——重复 mint 会让上一条已经发出去的链接静默失效。
+   */
+  openProjectStatusPage(projectId: string): Project | undefined {
+    if (!this.state.projects) return undefined;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return undefined;
+    const current = this.state.projects[idx];
+    if (current.statusPageToken) return current;
+    const next: Project = {
+      ...current,
+      statusPageToken: crypto.randomBytes(16).toString('hex'),
+      statusPageOpenedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.projects[idx] = next;
+    this.save();
+    return next;
+  }
+
+  /** 关掉公开状态页：token 置空，已经发出去的链接当即 404。 */
+  closeProjectStatusPage(projectId: string): Project | undefined {
+    if (!this.state.projects) return undefined;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return undefined;
+    const current = this.state.projects[idx];
+    if (!current.statusPageToken) return current;
+    const next: Project = {
+      ...current,
+      statusPageToken: null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.projects[idx] = next;
+    this.save();
+    return next;
+  }
+
+  /**
+   * 按公开状态页 token 反查项目（匿名 `/api/public/status/<token>` 用）。
+   * 空串一律不命中——否则一个没带 token 的请求会匹配上所有没开公开页的项目。
+   */
+  getProjectByStatusPageToken(token: string): Project | undefined {
+    const t = (token || '').trim();
+    if (!t) return undefined;
+    return (this.state.projects || []).find((p) => p.statusPageToken === t);
+  }
+
   /** E6：按分享 token 反查报告（公开 `/r/<token>` 路由用）。空/未命中返回 undefined。 */
   getReportByShareToken(token: string): AcceptanceReportMeta | undefined {
     const t = (token || '').trim();

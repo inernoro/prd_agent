@@ -941,6 +941,8 @@ export interface UptimeTargetSummary {
   monitorId?: string;
   /** 自定义监控的标签 */
   tags?: string[];
+  /** 这条业务是否出现在项目的公开面板上（第一屏那行「N 条业务对外」靠它数） */
+  publicVisible?: boolean;
   /**
    * 谁把这条监控加进来的（2026-09-09）。
    *
@@ -1975,13 +1977,14 @@ export class UptimeMonitorService {
   }
 
   /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
-  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation'> {
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation' | 'publicVisible'> {
     const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
     const latest = monitor?.observations?.[0];
     return {
       monitorId,
       tags: monitor?.tags || [],
       enabled: monitor ? monitor.enabled : true,
+      publicVisible: Boolean(monitor?.publicVisible),
       // 归属跟着定义走，不另存一份：定义改了（比如管理员接管），面板下一轮就跟上。
       ...(monitor
         ? {
