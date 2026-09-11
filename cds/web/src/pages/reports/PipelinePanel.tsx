@@ -34,7 +34,7 @@ export interface PipelinePanelProps {
    token，白天/黑夜自动翻转。明暗序两套主题一致：
    货箱(surface-sunken) < 传送带(surface-base) < 卡片(card) < 钢构(hairline-strong)。 */
 const SCENE_CSS = `
-.pp-root .pp-scene{display:block;width:100%;height:auto;}
+.pp-root .pp-scene{display:block;width:100%;height:auto;margin-inline:auto;}
 
 .pp-root .f-none{fill:none;}
 .pp-root .f-card{fill:hsl(var(--card));}
@@ -537,8 +537,14 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
   const chuteRun = DECK_T - L.chuteTop;
   const chute = { tl: 24, tr: 140, bl: 92, br: 208 };
   const slide = { dx: (chute.bl - chute.tl) * (sc.gy / Math.max(1, chuteRun)), dy: sc.gy };
+  // 槽里的料量跟着总量走：5 条改动配一整槽满料，读起来像「料很多」，
+  // 那就又是一处与数据无关的装饰。满槽对应 60 条上下，少了就只铺薄薄一层。
+  const feedRows = Math.max(1, Math.ceil((chuteRun / sc.gy + 2) * Math.min(1, f.changes / 60)));
   const feed: Array<{ x: number; y: number }> = [];
-  for (let y = L.chuteTop - sc.gy * 2; y < DECK_T; y += sc.gy) {
+  // 多铺一行在最上面：动画每轮向下挪一个行距，没有这一行补位，顶上会空出一条缝，
+  // 循环回原点时整槽料会「跳」一下。
+  for (let i = 0; i <= feedRows; i += 1) {
+    const y = DECK_T - sc.gy * (i + 1);
     for (let x = chute.tl; x < chute.br; x += sc.gx) feed.push({ x, y });
   }
 
@@ -634,10 +640,12 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
       >
         未验收
       </text>
+      {/* 与同一条基线上的其它数字同字号：46px 的大字会盖住上面那行标签，
+          而且「未验收」的分量本来就由它上面那一大堆货箱承担，不靠字号。 */}
       <CountText
         x={(L.heapL + L.heapR) / 2}
         y={FLOOR + 58}
-        className="t-huge"
+        className="t-num"
         textAnchor="middle"
         n={L.heap}
       />
