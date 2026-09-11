@@ -43,8 +43,10 @@ import {
   type UptimeHistory,
   type UptimeIncidentView,
   type UptimeTargetSummary,
+  MONITOR_ORIGIN_LABEL,
 } from '@/lib/monitorCenter';
 import { LatencyChart } from './LatencyChart';
+import { FunctionalEvidence } from './FunctionalEvidence';
 import { AvailabilityBar, SegmentedControl, SourceBadge, Stat, StatusPill } from './primitives';
 
 type HistoryState =
@@ -253,6 +255,15 @@ export function TargetDetail({
             <Stat label="探测间隔" value={`${target.intervalSeconds} 秒`} hint={`超时 ${Math.round(target.timeoutMs / 1000)} 秒`} />
           </div>
 
+          {/*
+            功能监控把证据排在时序图之前：它问的是「返回的东西对不对」，
+            打开详情第一个要回答的问题是「这次到底生成出了什么」，
+            而不是过去 24 小时的可用率曲线。存活监控没有这一段，顺序不变。
+          */}
+          {target.functional && target.monitorId ? (
+            <FunctionalEvidence monitorId={target.monitorId} />
+          ) : null}
+
           <section className="flex flex-col gap-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="flex items-baseline gap-2">
@@ -377,6 +388,25 @@ export function TargetDetail({
               ) : null}
               <dt className="text-muted-foreground">节奏</dt>
               <dd>每 {target.intervalSeconds} 秒一次，单次超时 {target.timeoutMs} ms</dd>
+              {target.addedBy ? (
+                <>
+                  <dt className="text-muted-foreground">添加者</dt>
+                  <dd>
+                    <span className="font-mono">{target.addedBy.by}</span>
+                    <span className="ml-2 rounded bg-muted px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">
+                      {MONITOR_ORIGIN_LABEL[target.addedBy.origin] ?? '人工添加'}
+                    </span>
+                    {target.addedBy.boundBranchId ? (
+                      <span
+                        className="ml-2 text-[0.6875rem] text-muted-foreground"
+                        title="这条监控绑在该分支上，分支删除时会一起清理，不会留下打不通的死地址"
+                      >
+                        绑定分支 {target.addedBy.boundBranchId}
+                      </span>
+                    ) : null}
+                  </dd>
+                </>
+              ) : null}
               <dt className="text-muted-foreground">标识</dt>
               <dd className="break-all font-mono text-muted-foreground">{target.id}</dd>
             </dl>

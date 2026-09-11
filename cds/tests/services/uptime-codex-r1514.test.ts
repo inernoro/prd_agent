@@ -271,7 +271,7 @@ describe('项目级 Key 看摘要与单目标', () => {
 });
 
 describe('P1 自定义监控只给管理员身份', () => {
-  it('项目级 Key 的新增 / 修改 / 删除 / 试探一律 403，且不会连出去；管理员照常', async () => {
+  it('项目级 Key 写危险形态（任意 kind / 回环地址）一律 403，且不会连出去；管理员照常', async () => {
     const store = memoryStore([customMonitor()]);
     const svc = makeMonitor({ monitors: [...store.rows.values()], now: () => MIN });
     const app = await serve(svc, store);
@@ -285,7 +285,12 @@ describe('P1 自定义监控只给管理员身份', () => {
       ] as const) {
         const r = await app.call(method, url, { scope: 'proj', body });
         expect(r.status, `${method} ${url}`).toBe(403);
-        expect(r.json.error).toContain('管理员');
+        // 2026-09-09 起项目级 Key 有一条**受限**自助登记路径（只允许 health-json +
+        // 本项目分支的预览地址，见 tests/routes/uptime-agent-selfservice.test.ts）。
+        // 这个用例用的是 kind=http + 回环地址，两条都不满足；而且本实例没注入地址台账，
+        // 闸是 fail-closed 的。不再断言具体措辞——它换过一次就会红，而这条用例真正
+        // 要守的是「拒绝、没连出去、数据没被改」，那三件事下面都还在断言。
+        expect(String(r.json.error || ''), `${method} ${url} 应给出拒绝原因`).not.toBe('');
       }
       expect(store.rows.has('mon-1')).toBe(true);
       // 只读仍然开放：项目级 Key 能列自己项目下的自定义监控

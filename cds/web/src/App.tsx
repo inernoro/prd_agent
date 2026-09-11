@@ -23,6 +23,7 @@ const LoginPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default:
 const TicketSsoPage = lazy(() => import('@/pages/LoginPage').then((m) => ({ default: m.TicketSsoPage })));
 const PreviewPreparingPage = lazy(() => import('@/pages/PreviewPreparingPage').then((m) => ({ default: m.PreviewPreparingPage })));
 const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) => ({ default: m.ProjectListPage })));
+const PublicStatusPage = lazy(() => import('@/pages/PublicStatusPage').then((m) => ({ default: m.PublicStatusPage })));
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 const ReleaseConsolePage = lazy(() => import('@/pages/ReleaseConsolePage').then((m) => ({ default: m.ReleaseConsolePage })));
@@ -267,6 +268,9 @@ export function App(): JSX.Element {
             <Route path="/auth/sso" element={<TicketSsoPage />} />
             <Route path="/preview-preparing" element={<PreviewPreparingPage />} />
             <Route path="/hello" element={<HelloPage />} />
+            {/* 公开状态页：token 自鉴权，匿名可达，不带控制台外壳（也不该带——
+                外壳里的项目切换、命令面板、Agent 浮层都不该出现在对外页上）。 */}
+            <Route path="/s/:token" element={<PublicStatusPage />} />
             {/* 控制台页面:共享持久化外壳(ConsoleLayout),切页只换 Outlet 内容,
                 侧栏/命令面板/全局浮层永不卸载 —— 布局归一 + 切页流畅的架构保证。 */}
             <Route element={<ConsoleLayout />}>

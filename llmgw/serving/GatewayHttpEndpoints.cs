@@ -59,7 +59,12 @@ public static class GatewayHttpEndpoints
         {
             var path = context.Request.Path.Value ?? string.Empty;
             var protectedGatewayPath = path.StartsWith("/gw/v1", StringComparison.OrdinalIgnoreCase)
-                                       && !path.Equals("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase);
+                                       && !path.Equals("/gw/v1/healthz", StringComparison.OrdinalIgnoreCase)
+                                       // 深度自检同样匿名：CDS 的自定义探针**刻意不携带任何密钥**
+                                       // （探测令牌绝不发给外部地址，见 uptime-custom-monitor 的 httpProbe），
+                                       // 要鉴权它就永远打不进来。代价是可控的——这个端点只回计数与窗口，
+                                       // 不含任何异常文本、路径或堆栈，泄漏面就是「这个网关最近崩没崩过」。
+                                       && !path.Equals("/gw/v1/healthz/deep", StringComparison.OrdinalIgnoreCase);
             var protectedCompatPath =
                 IsOpenAiCompatibleProtectedPath(path)
                 || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
@@ -216,6 +221,95 @@ public static class GatewayHttpEndpoints
             commit = gitCommit,
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
+
+        // 深度自检：把「最近有没有崩过」端出成 IETF draft-inadarei-api-health-check
+        // 的 application/health+json，供 CDS 的 health-json 探针按结构化判据判定
+        // （componentId=serving.unhandled-exceptions，断言 observedValue == 0）。
+        //
+        // 刻意**始终返回 200**：端点自己活着与被监控的东西是否健康，是两件事。
+        // 回 503 会让 CDS 先撞上状态码规则，错误信息退化成「HTTP 503 不在期望范围」，
+        // 而不是「observedValue=3，期望 eq 0」——后者才排得动障。
+        app.MapGet("/gw/v1/healthz/deep", (
+            [Microsoft.AspNetCore.Mvc.FromServices] ServingFaultTracker faults) =>
+        {
+            var count = faults.CountWithinWindow();
+            var requests = faults.RequestsWithinWindow();
+            var now = DateTime.UtcNow;
+            var pass = count == 0;
+            return Results.Content(JsonSerializer.Serialize(new
+            {
+                status = pass ? "pass" : "fail",
+                version = "1",
+                serviceId = "llmgw-serving",
+                description = "LLM Gateway serving 深度自检",
+                commit = gitCommit,
+                checks = new Dictionary<string, object[]>
+                {
+                    // check 用 Dictionary 而不是匿名对象：自描述段的键是 `cds:monitor`，
+                    // 带冒号，匿名类型的属性名写不出来。键名带冒号是刻意的——
+                    // 与 health+json 里「组件:度量」的键同风格，不会与 IETF 草案的保留字相撞。
+                    ["serving:unhandled-exceptions"] = new object[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["componentId"] = "serving.unhandled-exceptions",
+                            ["componentType"] = "system",
+                            ["observedValue"] = count,
+                            ["observedUnit"] = "count",
+                            ["status"] = pass ? "pass" : "fail",
+                            ["time"] = now.ToString("o"),
+                            // 只给数与口径，不给异常内容——这个端点是匿名的。
+                            ["output"] = pass
+                                ? $"最近 {faults.WindowMinutes} 分钟无未处理异常"
+                                : $"最近 {faults.WindowMinutes} 分钟出现 {count} 次未处理异常，累计 {faults.TotalSinceStart} 次；详情见容器日志",
+                            // 自描述：告诉 CDS 该怎么监控这一条（监控自发现协议）。
+                            // 它只说「判什么」——**打哪个地址由 CDS 侧登记的端点决定**，
+                            // 在这里写地址一律无效，那是这套协议的安全命门。
+                            ["cds:monitor"] = new
+                            {
+                                name = "网关 serving 近期未处理异常数",
+                                field = "observedValue",
+                                op = "eq",
+                                value = 0,
+                                intervalSeconds = 21600,
+                                failuresToAlarm = 1,   // 未处理异常不去抖：出现一次就是一次
+                                severity = "P0",
+                                observeMode = "passive",
+                                sampleComponentId = "serving.requests",
+                            },
+                        },
+                    },
+                    // 「零异常」这条判据的分母。窗口里一次真实调用都没有时，
+                    // 「零异常」与「全部成功」长得一模一样——判成健康就是假绿。
+                    // 探针自己那几条路径不计入（见 ServingFaultTrackingMiddleware.IsProbePath）。
+                    ["serving:requests"] = new object[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["componentId"] = "serving.requests",
+                            ["componentType"] = "system",
+                            ["observedValue"] = requests,
+                            ["observedUnit"] = "count",
+                            ["status"] = requests > 0 ? "pass" : "warn",
+                            ["time"] = now.ToString("o"),
+                            ["output"] = requests > 0
+                                ? $"最近 {faults.WindowMinutes} 分钟有 {requests} 次真实调用"
+                                : $"最近 {faults.WindowMinutes} 分钟没有任何真实调用——上面那条零异常不作数",
+                            ["cds:monitor"] = new
+                            {
+                                name = "网关 serving 近期真实调用数",
+                                field = "observedValue",
+                                op = "gt",
+                                value = 0,
+                                intervalSeconds = 21600,
+                                failuresToAlarm = 2,   // 一个安静的窗口不值得叫人，连着两个才值得问一句
+                                severity = "P2",
+                            },
+                        },
+                    },
+                },
+            }, jsonOpts), "application/health+json");
+        });
 
         app.MapGet("/gw/v1/readyz", async (
             HttpContext http,

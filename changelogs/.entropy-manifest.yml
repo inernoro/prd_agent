@@ -652,3 +652,13 @@ processed:
   - 2026-09-07_container-exec-宿主注入与PEM脱敏.md
   - 2026-09-07_entropy-cleanup.md
   - 2026-09-07_发布系统验收缺口固化台账.md
+  - 2026-09-07_授权健康中心入口补齐.md
+  - 2026-09-07_数据同步Run忽略未知字段.md
+  - 2026-09-08_cds-panel-footer-progress-rail-order.md
+  - 2026-09-08_cds控制面过载治理.md
+  - 2026-09-08_cds智能体接入口令极速版必备.md
+  - 2026-09-08_cds测试漏await修复.md
+  - 2026-09-08_cds监控中心review第五轮.md
+  - 2026-09-08_cds监控中心重做.md
+  - 2026-09-08_daily-acceptance-repair.md
+  - 2026-09-08_entropy-cleanup.md

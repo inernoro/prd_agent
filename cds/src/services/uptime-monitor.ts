@@ -35,12 +35,20 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import type { BranchEntry, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
+import type { BranchEntry, MonitorObservation, Project, ReleaseRun, ReleaseTarget, UptimeCustomMonitor } from '../types.js';
+import { normalizeReleaseEnvironment, type ReleaseEnvironment } from './release-environment.js';
+import {
+  monitorEnvironmentLabel,
+  resolveMonitorEnvironment,
+  type MonitorEnvironment,
+} from './monitor-environment.js';
 import {
   CUSTOM_PROBE_ID_PREFIX,
   customProbeTargetId,
   describeMonitorProbe,
+  matchPreviewHost,
   probeCustomMonitor,
+  type ProjectPreviewHost,
 } from './uptime-custom-monitor.js';
 // 故障归因到发布的时间窗判定只有这一处，发布中心将来要展示同款关联必须复用它。
 import { linkIncidentToRelease, releaseIncidentLinkWindowMs } from './release-incident-link.js';
@@ -120,6 +128,8 @@ export interface ProbeTarget {
   url?: string;
   /** url 型不可探测时的人话原因，来自 release-probe-target 这一个判定源 */
   releaseSkipReason?: string;
+  /** 发布目标声明的环境（source=release 时才有）。归一走 monitor-environment。 */
+  releaseEnvironment?: ReleaseEnvironment;
   /**
    * 本轮是否应该探测。false = 分支被降温 / 未运行 / 正在构建，
    * 这不是故障，记 paused 且不产采样（时间桶留空，前端显示灰段）。
@@ -205,6 +215,8 @@ export interface UptimeTargetRecord {
   probeKind: ProbeKind;
   /** url 型：本目标探的是哪个地址（状态页展示，便于确认探的是不是线上） */
   probeUrl?: string;
+  /** 发布目标的环境（source=release）。存进台账是为了摘要不必再回查发布目标表。 */
+  releaseEnvironment?: ReleaseEnvironment;
   status: UptimeStatus;
   consecutiveFailures: number;
   consecutiveSuccesses: number;
@@ -314,6 +326,11 @@ export interface UptimeStateSource {
    * 「添加监控」保存了也永远不会被探（守卫测试盯着 index.ts 的这行接线）。
    */
   getUptimeMonitors?(): UptimeCustomMonitor[];
+  /**
+   * 记一次功能监控的观测证据（产物地址、判据逐条、本次请求体）。
+   * 不接线不报错，只是详情页永远没有画廊可看——所以有源码守卫钉住这行。
+   */
+  recordMonitorObservation?(monitorId: string, observation: MonitorObservation): void;
   /**
    * 分支的预览地址（用户视角探测用）。可选——不接线就没有用户视角判定，
    * 分支目标只有进程视角。
@@ -536,6 +553,7 @@ export function selectReleaseProbeTargets(
       excluded: Boolean(excludedBy),
       excludedBy: excludedBy || undefined,
       releaseSkipReason: skipReason || undefined,
+      releaseEnvironment: normalizeReleaseEnvironment(target.environment),
     });
   }
   return targets;
@@ -864,6 +882,7 @@ function emptyRecord(target: ProbeTarget, now: number): UptimeTargetRecord {
     name: target.name,
     probeKind: target.probeKind,
     probeUrl: target.url,
+    releaseEnvironment: target.releaseEnvironment,
     status: 'unknown',
     consecutiveFailures: 0,
     consecutiveSuccesses: 0,
@@ -922,6 +941,57 @@ export interface UptimeTargetSummary {
   monitorId?: string;
   /** 自定义监控的标签 */
   tags?: string[];
+  /** 这条业务是否出现在项目的公开面板上（第一屏那行「N 条业务对外」靠它数） */
+  publicVisible?: boolean;
+  /**
+   * 谁把这条监控加进来的（2026-09-09）。
+   *
+   * 监控中心要答得出「被谁追加了什么」：一条没人认领的监控红着，
+   * 没人知道该找谁，最后的结局是整块面板被无视。
+   * boundBranchId 非空表示它的寿命跟着那条分支走——分支没了它也会走。
+   */
+  addedBy?: {
+    by: string;
+    kind: 'human' | 'project-key' | 'global-key';
+    origin: 'manual' | 'agent-api' | 'discovered';
+    boundBranchId?: string;
+  };
+  /** 这条是不是功能监控（列表按它分组：功能监控与存活监控问的不是同一个问题）。 */
+  functional?: boolean;
+  /**
+   * 这条目标属于哪个环境（生产 / 预发 / 其他 / 分支预览）。
+   *
+   * 判定走 monitor-environment 这一个源；前端**不再自己推一遍**，
+   * 否则同一个目标会在不同页面落进不同的环境组而没有任何东西变红。
+   */
+  environment: MonitorEnvironment;
+  /** 环境的中文名，后端给定，前端不另维护一份映射。 */
+  environmentLabel: string;
+  /**
+   * 观测方式：active = 自己发一次真请求；passive = 读真实流量的窗口统计。
+   * 两者的「绿」含义不同，界面必须分开说（degradation-must-alarm）。
+   */
+  observeMode: 'active' | 'passive';
+  /**
+   * 被动监控最近一次读到的样本量。undefined = 没读到（或不是被动监控）。
+   * **0 是最要紧的那个值**：判据通过但窗口里根本没人用过，绿灯不作数。
+   */
+  sampleCount?: number;
+  /**
+   * 最新一次观测的精简摘要，列表直接用。
+   *
+   * 刻意只带摘要：完整证据（判据逐条、请求体）随详情单独拉，
+   * 否则一个 20 条证据 × N 个监控的列表接口会被撑得又慢又肥。
+   */
+  lastObservation?: {
+    at: string;
+    ok: boolean;
+    /** 产物缩略图直接用它——「这次生成出来长什么样」是这类监控的主体信息 */
+    artifactUrl?: string;
+    passed: number;
+    total: number;
+    err?: string;
+  };
   /** 自定义监控是否启用（source=custom 时有） */
   enabled?: boolean;
   /**
@@ -1096,6 +1166,14 @@ export class UptimeMonitorService {
       userViewProbe?: UserViewProbeFn;
       now?: () => number;
       logger?: { warn?: (m: string) => void; info?: (m: string) => void };
+      /**
+       * 某个项目名下所有分支预览的主机名。用来反查「这条自定义监控的地址是不是
+       * 指着一条分支预览」——那是环境判定的结构性证据，比监控自己声明的环境优先。
+       *
+       * 可选：不接线时环境退回声明值，不猜（一条指着临时分支的监控会被当成它自称的
+       * 那个环境，混进项目负责人的第一屏——这是接线断掉时的已知退化，不是静默正确）。
+       */
+      listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[];
       /**
        * 存活状态翻转出口（2026-07-29）。晚绑定的理由与 release-remote-watcher 的
        * setReleaseDriftNotifier 同源：监控模块不该反向 import 事件总线、更不该自己
@@ -1451,6 +1529,7 @@ export class UptimeMonitorService {
     record.name = target.name;
     record.probeKind = target.probeKind;
     record.probeUrl = target.url;
+    record.releaseEnvironment = target.releaseEnvironment;
     record.projectId = target.projectId;
     record.profileId = target.profileId;
     record.excluded = target.excluded;
@@ -1561,6 +1640,16 @@ export class UptimeMonitorService {
     // 两条通道、立即探测都从这里走：硬 deadline 兜住「探测器承诺超时却永不返回」
     // （2026-09-08 一轮 await 卡死 24 小时的根因），异常按内部故障记、不参与降级。
     const r = await this.probeWithDeadline(probe, target, timeoutMs);
+    // 功能监控的证据在这里落账：轮次、立即探测都走 probeOne，接一处就全覆盖。
+    // 判定继续走 applySample——证据写失败不该影响这次探测的结论。
+    const observation = (r.outcome as { observation?: MonitorObservation }).observation;
+    if (observation && target.monitor?.id) {
+      try {
+        this.deps.state.recordMonitorObservation?.(target.monitor.id, observation);
+      } catch (err) {
+        this.deps.logger?.warn?.(`[uptime] 观测证据写入失败: ${(err as Error).message}`);
+      }
+    }
     return { target, ...r };
   }
 
@@ -1755,6 +1844,7 @@ export class UptimeMonitorService {
     const now = this.now();
     const dayMs = 24 * 3600 * 1000;
     const targets: UptimeTargetSummary[] = [];
+    const lookupPreviewBranch = this.previewBranchLookup();
 
     for (const record of [...this.records.values()].sort(compareTargetsForDisplay)) {
       const measured = this.isMeasured(record);
@@ -1799,6 +1889,7 @@ export class UptimeMonitorService {
         projectName: record.projectName,
         branchStatus: record.branchStatus,
         branchLastActiveAt: record.branchLastActiveAt,
+        ...this.environmentFacet(record, lookupPreviewBranch),
         ...(record.source === 'custom' ? this.customFacet(record.profileId) : {}),
       });
     }
@@ -1828,10 +1919,97 @@ export class UptimeMonitorService {
     };
   }
 
+  /**
+   * 造一个「地址落在哪条分支预览上」的反查器，按项目缓存，一次摘要只查一遍。
+   *
+   * 没接线（或监控不属于任何项目）就恒返回 undefined——反查不到不等于「不是分支预览」，
+   * 但也没有别的可信来源，如实退回声明值，不猜。
+   */
+  private previewBranchLookup(): (monitor: UptimeCustomMonitor) => string | undefined {
+    const list = this.deps.listProjectPreviewHosts;
+    if (!list) return () => undefined;
+    const cache = new Map<string, ProjectPreviewHost[]>();
+    return (monitor) => {
+      const projectId = monitor.projectId;
+      if (!projectId) return undefined;
+      let hosts = cache.get(projectId);
+      if (!hosts) {
+        hosts = list(projectId);
+        cache.set(projectId, hosts);
+      }
+      return matchPreviewHost(monitor.url, hosts)?.branchId;
+    };
+  }
+
+  /**
+   * 环境 + 观测方式：第一屏的两个主分维。
+   *
+   * 自定义监控的环境**以结构性证据为准**：地址指着一条分支预览时（boundBranchId
+   * 非空），不管它自称什么都算 preview。否则一条临时分支的监控只要把 environment
+   * 填成 production 就能混进项目负责人的第一屏——那正是用户担心的事。
+   */
+  private environmentFacet(
+    record: UptimeTargetRecord,
+    lookupPreviewBranch: (monitor: UptimeCustomMonitor) => string | undefined,
+  ): Pick<UptimeTargetSummary, 'environment' | 'environmentLabel' | 'observeMode' | 'sampleCount'> {
+    const source = record.source || probeSourceOfId(record.id);
+    const monitor = source === 'custom'
+      ? (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === record.profileId)
+      : undefined;
+    const environment = resolveMonitorEnvironment({
+      source,
+      declared: monitor?.environment,
+      // 写入时盖的戳优先；没有戳就当场反查一次（存量监控是在这个字段出现之前
+      // 登记的，它们身上没有戳，但地址照样指着一条分支预览——只认戳就等于
+      // 判据只在写入路径上成立，形状 1）。两条路走的是同一个 matchPreviewHost。
+      previewBranchId: monitor ? (monitor.previewBranchId ?? lookupPreviewBranch(monitor)) : undefined,
+      boundBranchId: monitor?.boundBranchId,
+      releaseEnvironment: record.releaseEnvironment,
+    });
+    const observeMode = monitor?.observeMode === 'passive' ? 'passive' : 'active';
+    const sampleCount = observeMode === 'passive' ? monitor?.observations?.[0]?.sampleCount : undefined;
+    return {
+      environment,
+      environmentLabel: monitorEnvironmentLabel(environment),
+      observeMode,
+      ...(sampleCount === undefined ? {} : { sampleCount }),
+    };
+  }
+
   /** 自定义监控在摘要里附带的定义字段（编辑 / 暂停 / 标签都靠它）。 */
-  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled'> {
+  private customFacet(monitorId: string): Pick<UptimeTargetSummary, 'monitorId' | 'tags' | 'enabled' | 'addedBy' | 'functional' | 'lastObservation' | 'publicVisible'> {
     const monitor = (this.deps.state.getUptimeMonitors?.() || []).find((m) => m.id === monitorId);
-    return { monitorId, tags: monitor?.tags || [], enabled: monitor ? monitor.enabled : true };
+    const latest = monitor?.observations?.[0];
+    return {
+      monitorId,
+      tags: monitor?.tags || [],
+      enabled: monitor ? monitor.enabled : true,
+      publicVisible: Boolean(monitor?.publicVisible),
+      // 归属跟着定义走，不另存一份：定义改了（比如管理员接管），面板下一轮就跟上。
+      ...(monitor
+        ? {
+            addedBy: {
+              by: monitor.createdBy || '未记名',
+              kind: monitor.createdByKind || 'human',
+              origin: monitor.origin || 'manual',
+              ...(monitor.boundBranchId ? { boundBranchId: monitor.boundBranchId } : {}),
+            },
+          }
+        : {}),
+      ...(monitor?.kind === 'functional' ? { functional: true } : {}),
+      ...(latest
+        ? {
+            lastObservation: {
+              at: latest.at,
+              ok: latest.ok,
+              ...(latest.artifactUrl ? { artifactUrl: latest.artifactUrl } : {}),
+              passed: latest.results.filter((r) => r.ok).length,
+              total: latest.results.length,
+              ...(latest.err ? { err: latest.err } : {}),
+            },
+          }
+        : {}),
+    };
   }
 
   /** 单 target 时序（已降采样到固定桶数）。 */

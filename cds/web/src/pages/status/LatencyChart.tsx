@@ -5,8 +5,9 @@
  *   - 悬停给最近一点的时间 / 响应 / 成功率读数，不靠 title 提示；
  *   - 只有 1 个点画不出线，退化成「样本不足」的空态，不画一条假的平线。
  */
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
+import { CHART_PAD, chartBox, pointerViewBoxX } from '@/lib/latencyChartGeometry';
 import {
   formatClock,
   formatLatency,
@@ -16,9 +17,7 @@ import {
   type UptimeBucket,
 } from '@/lib/monitorCenter';
 
-const W = 640;
-const H = 180;
-const PAD = { top: 12, right: 12, bottom: 22, left: 44 };
+const PAD = CHART_PAD;
 
 function formatAxisTime(ms: number, range: HistoryRange): string {
   if (range === '24h') return formatShortClock(ms);
@@ -29,6 +28,34 @@ function formatAxisTime(ms: number, range: HistoryRange): string {
 export function LatencyChart({ points, range }: { points: ReadonlyArray<UptimeBucket>; range: HistoryRange }): JSX.Element {
   const series = useMemo(() => latencySeries(points), [points]);
   const [hover, setHover] = useState<number | null>(null);
+  const [measured, setMeasured] = useState({ w: 0, h: 0 });
+  const observer = useRef<ResizeObserver | null>(null);
+
+  /*
+   * viewBox 的宽高都跟着元素实测像素走，缩放系数才恒为 1（见 latencyChartGeometry）。
+   * 高度也要实测：整站 85% 根字号下 h-44 解析出来是 149.6px，不是 176px。
+   *
+   * 用 ref 回调而不是 useEffect：曲线在「样本不足」与「有图」之间来回切换，
+   * svg 会反复挂载卸载，回调形式天然跟着节点走，不必给 effect 编一个依赖项。
+   */
+  const attachSvg = useCallback((el: SVGSVGElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!el) return;
+    const apply = (): void => {
+      const rect = el.getBoundingClientRect();
+      setMeasured((prev) => (prev.w === rect.width && prev.h === rect.height ? prev : { w: rect.width, h: rect.height }));
+    };
+    apply();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    observer.current = ro;
+  }, []);
+
+  const box = chartBox(measured.w, measured.h);
+  const W = box.w;
+  const H = box.h;
 
   if (series.points.length < 2) {
     return (
@@ -42,8 +69,8 @@ export function LatencyChart({ points, range }: { points: ReadonlyArray<UptimeBu
   const x0 = Math.min(...xs);
   const x1 = Math.max(...xs);
   const yMax = Math.max(series.max || 1, 1) * 1.15;
-  const plotW = W - PAD.left - PAD.right;
-  const plotH = H - PAD.top - PAD.bottom;
+  const plotW = box.plotW;
+  const plotH = box.plotH;
   const sx = (t: number): number => PAD.left + ((t - x0) / Math.max(1, x1 - x0)) * plotW;
   const sy = (ms: number): number => PAD.top + plotH - (ms / yMax) * plotH;
 
@@ -55,7 +82,7 @@ export function LatencyChart({ points, range }: { points: ReadonlyArray<UptimeBu
 
   const onMove = (event: React.MouseEvent<SVGSVGElement>): void => {
     const rect = event.currentTarget.getBoundingClientRect();
-    const px = ((event.clientX - rect.left) / rect.width) * W;
+    const px = pointerViewBoxX(event.clientX, rect.left, rect.width, W);
     let best = 0;
     let bestDist = Number.POSITIVE_INFINITY;
     series.points.forEach((p, i) => {
@@ -84,6 +111,7 @@ export function LatencyChart({ points, range }: { points: ReadonlyArray<UptimeBu
         </span>
       </div>
       <svg
+        ref={attachSvg}
         viewBox={`0 0 ${W} ${H}`}
         className="h-44 w-full"
         role="img"

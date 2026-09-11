@@ -59,6 +59,7 @@ public static class AdminNotificationSourceCatalog
         new("api-request-log", "API 请求日志", AdminNotificationSections.Admin, "API 请求日志和接口观测通知"),
         new("gateway-alert", "网关告警", AdminNotificationSections.Admin, "网关故障、限流和调用链路异常"),
         new("stable-smoke", "稳定冒烟", AdminNotificationSections.Admin, "核心业务双环境复测失败、条件通过、证据和恢复动作"),
+        new("uptime-alert", "监控告警", AdminNotificationSections.Admin, "CDS 常设探针发现的服务降级、后台未处理异常与不可用告警"),
         new("user-voice", "用户之声", AdminNotificationSections.Admin, "真实用户反馈、体验痛点和 VOC 运营消息"),
         new("team-activity-voice", "用户之声", AdminNotificationSections.Admin, "团队动态中的用户声音和反馈消息"),
         new("user-feedback", "用户反馈", AdminNotificationSections.Admin, "用户主动反馈和产品体验反馈"),

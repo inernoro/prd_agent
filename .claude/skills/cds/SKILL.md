@@ -112,6 +112,44 @@ $CLI report-folder list [--project <id>]
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
 
+## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
+
+存活监控问「通不通」，**功能监控问「返回的东西对不对」**：发一次真业务请求，
+在响应上跑多条判据。「生图接口通、返回的却是 512×512」只有它抓得住。
+
+标准动作是**先试跑、通过了才登记**——`monitor add` 内建这一步，跑不通直接拒绝并
+回判据结果。加进来就红的监控会很快让人把整块面板静音，比没有监控更糟。
+
+```bash
+python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
+  --name "视觉创作 · 生图尺寸" \
+  --url "https://<本项目分支的预览地址>/api/image/gen" \
+  --body '{"prompt":"{{randomPrompt}}","size":"1024x1024"}' \
+  --assert status:eq:succeeded \
+  --assert image.width:eq:1024 \
+  --assert image.height:eq:1024 \
+  --assert elapsedMs:lt:30000 \
+  --artifact-path image.url \
+  --interval 21600 --timeout-ms 45000
+```
+
+接到这类需求时该自己查、不要反问用户的几件事：
+
+- **端点与默认参数**去代码里读（出图默认尺寸、成功态字段名），据此写判据；
+- **地址只能是本项目分支的预览入口**，服务端会反查校验，填别处一律 403；
+- **提示词用 `{{randomPrompt}}`**：固定提示词会被上游缓存，跑一万次也证明不了
+  这条链路今天还活着；
+- **`--artifact-path` 尽量配上**：配了详情页才有产物画廊，判据红了才说得清
+  是模型抽风还是判据写错；
+- **超时给足**：生成类接口用默认值会把自己卡成假故障。
+
+判据是 `path:op:value`（op ∈ eq/ne/lt/lte/gt/gte/exists/absent），期望值里带冒号
+不会被截断（`16:9` 是完整的）。刻意不做表达式——自由文本判据一开口，下一轮就会被
+要求加同义词和嵌套。
+
+看历史证据：`cdscli monitor observations <id>`；只看功能监控：`monitor list --functional-only`。
+规则 SSOT 是 `.claude/rules/degradation-must-alarm.md`。
+
 ## 完整技能包与版本协作
 
 CDS 对外技能包固定包含五个目录：

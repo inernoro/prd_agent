@@ -87,17 +87,37 @@ public static class BsonClassMapRegistration
         }
     }
 
+    /// <summary>
+    /// 只装全局 BSON 约定，不注册 MAP 的类映射。
+    ///
+    /// 给 llmgw serving / console-api 这类**独立进程**用：它们与 MAP 共用同一批
+    /// record 类型和同一个 Mongo 库，却不跑 MAP 的 <see cref="Register"/>，于是一直
+    /// 处在 driver 的默认严格模式——库里多一个类上没有的字段就抛 FormatException。
+    ///
+    /// 2026-09-09 就是这么炸的：console-api 用 BsonDocument 往 llmgw_app_callers 写了
+    /// SystemManaged，serving 用强类型 GatewayAppCallerRecord 读同一个集合，鉴权路径上
+    /// 直接 500，前端退回本地关键词判定——页面看着正常，后台每次都在崩。
+    /// 读方对写方宽容是默认姿态：加字段不该炸掉还没认识它的那一方。
+    /// </summary>
+    public static void RegisterConventionsOnly() => RegisterConventions();
+
     private static void RegisterConventions()
     {
-        if (_conventionsRegistered) return;
-
-        var pack = new ConventionPack
+        lock (_lock)
         {
-            new StringIdCompatibilityConvention()
-        };
+            if (_conventionsRegistered) return;
 
-        ConventionRegistry.Register("PrdAgentStringIdCompat", pack, _ => true);
-        _conventionsRegistered = true;
+            var pack = new ConventionPack
+            {
+                new StringIdCompatibilityConvention(),
+                // 滚动发布与多进程共库的生存前提：任一进程先写了新字段，其余还没更新的
+                // 进程仍要能读。少了这一条，加字段就是一次跨进程的破坏性变更。
+                new IgnoreExtraElementsConvention(true),
+            };
+
+            ConventionRegistry.Register("PrdAgentStringIdCompat", pack, _ => true);
+            _conventionsRegistered = true;
+        }
     }
 
     private static void RegisterUser()

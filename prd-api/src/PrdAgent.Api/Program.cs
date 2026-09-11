@@ -1417,6 +1417,9 @@ foreach (var delegatable in PrdAgent.Core.Models.AgentUniverse.AgentCapabilityRe
             sp.GetRequiredService<ILogger<PrdAgent.Api.Services.Toolbox.AgentDelegateTool>>()));
 }
 
+// 进程级未处理异常 / 真实请求计数（自检端点的观测值来源，规则 degradation-must-alarm）。
+builder.Services.AddSingleton<PrdAgent.Api.Middleware.ApiFaultTracker>();
+
 // Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,
     PrdAgent.Infrastructure.Services.AgentTools.AgentToolRegistry>();
@@ -1546,6 +1549,10 @@ if (string.Equals(
 }
 
 // 始终启用"单行 Request finished 摘要日志"（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
+// 观测：把穿透整个管道的异常与真实请求数变成机器读得到的数（规则 degradation-must-alarm）。
+// 必须在最外层——被内层组件处理掉的异常不会走到这里，而 2026-09-09 那次事故的异常
+// 正是一路穿透到 Kestrel 才被记录的。只记不吞。
+app.UseMiddleware<PrdAgent.Api.Middleware.ApiFaultTrackingMiddleware>();
 app.UseRequestResponseLogging();
 
 app.UseExceptionMiddleware();
@@ -1602,6 +1609,16 @@ app.MapControllers();
 app.MapGet("/health", HealthCheck);
 app.MapGet("/health/ready", AssetStorageReadiness);
 app.MapGet("/api/health/ready", AssetStorageReadiness);
+// 深度自检（2026-09-11，监控自发现协议 doc/spec.platform.monitor-discovery.md）。
+//
+// 与 /health 的分工：那个回「进程还活着」，这个**真把关键链路走一遍**，逐项给定量结论，
+// 并在每条 check 上自报「该怎么监控我」——CDS 插上这个地址就能把监控项建起来。
+//
+// 免鉴权：CDS 探针刻意不携带任何密钥（探测令牌绝不发给外部地址）。所以这里
+// 只回计数、耗时与口径，不回任何业务内容、地址或异常文本。
+// 始终回 200：回 503 会让 CDS 先撞上状态码规则，错误退化成「HTTP 503 不在期望范围」，
+// 而不是「observedValue=3，期望 eq 0」——后者才排得动障。
+app.MapGet("/api/healthz/deep", DeepHealth).AllowAnonymous();
 app.MapGet("/api/v", VersionInfo);
 app.MapGet("/api/version", VersionInfo);
 
@@ -1638,6 +1655,133 @@ static IResult HealthCheck()
         Timestamp = DateTime.UtcNow
     };
     return Results.Ok(response);
+}
+
+/// <summary>
+/// 深度自检：真跑一次 Mongo 往返，加上进程级的异常与流量计数，每条都自报怎么监控。
+/// </summary>
+static async Task<IResult> DeepHealth(
+    PrdAgent.Api.Middleware.ApiFaultTracker faults,
+    PrdAgent.Infrastructure.Database.MongoDbContext db,
+    CancellationToken cancellationToken)
+{
+    var now = DateTime.UtcNow;
+    var faultCount = faults.CountWithinWindow();
+    var requests = faults.RequestsWithinWindow();
+
+    // Mongo 往返：这是「后端还能不能干活」最便宜的那条真链路。
+    // 探不通时把耗时记成 -1 而不是 0——0 会被判据读成「快得惊人」，是个假绿。
+    long mongoMs;
+    string mongoOutput;
+    try
+    {
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await db.Database.RunCommandAsync<MongoDB.Bson.BsonDocument>(
+            new MongoDB.Bson.BsonDocument("ping", 1), cancellationToken: cancellationToken);
+        mongoMs = started.ElapsedMilliseconds;
+        mongoOutput = $"Mongo 往返 {mongoMs} 毫秒";
+    }
+    catch (Exception ex)
+    {
+        mongoMs = -1;
+        mongoOutput = $"Mongo 探不通：{ex.GetType().Name}";
+    }
+
+    var payload = new Dictionary<string, object?>
+    {
+        ["status"] = faultCount == 0 && mongoMs >= 0 ? "pass" : "fail",
+        ["version"] = "1",
+        ["serviceId"] = "prd-api",
+        ["description"] = "MAP 后端深度自检",
+        ["time"] = now.ToString("o"),
+        // check 用 Dictionary 而不是匿名对象：自描述段的键是 `cds:monitor`，带冒号，
+        // 匿名类型的属性名写不出来。
+        ["checks"] = new Dictionary<string, object[]>
+        {
+            ["api:unhandled-exceptions"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "api.unhandled-exceptions",
+                    ["componentType"] = "system",
+                    ["observedValue"] = faultCount,
+                    ["observedUnit"] = "count",
+                    ["status"] = faultCount == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = faultCount == 0
+                        ? $"最近 {faults.WindowMinutes} 分钟无未处理异常"
+                        : $"最近 {faults.WindowMinutes} 分钟出现 {faultCount} 次未处理异常，累计 {faults.TotalSinceStart} 次；详情见容器日志",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 后端近期未处理异常数",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        observeMode = "passive",
+                        sampleComponentId = "api.requests",
+                    },
+                },
+            },
+            ["api:requests"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "api.requests",
+                    ["componentType"] = "system",
+                    ["observedValue"] = requests,
+                    ["observedUnit"] = "count",
+                    ["status"] = requests > 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = requests > 0
+                        ? $"最近 {faults.WindowMinutes} 分钟有 {requests} 次真实调用"
+                        : $"最近 {faults.WindowMinutes} 分钟没有任何真实调用——上面那条零异常不作数",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 后端近期真实调用数",
+                        field = "observedValue",
+                        op = "gt",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 2,
+                        severity = "P2",
+                    },
+                },
+            },
+            ["db:roundtrip"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "db.roundtrip",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = mongoMs,
+                    ["observedUnit"] = "ms",
+                    ["status"] = mongoMs >= 0 && mongoMs < 2000 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = mongoOutput,
+                    // 这条按 5 分钟一次：它是会变的量（往返耗时），高频才看得出趋势；
+                    // 上面两条是计数器，6 小时一次足够。节奏由每条 check 自己说，
+                    // 不是整个端点一个频率——这正是把声明放在服务这一侧的好处。
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 数据库往返耗时",
+                        field = "observedValue",
+                        op = "lt",
+                        value = 2000,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 2,
+                        severity = "P1",
+                    },
+                },
+            },
+        },
+    };
+
+    return Results.Content(
+        System.Text.Json.JsonSerializer.Serialize(payload),
+        "application/health+json");
 }
 
 static async Task<IResult> AssetStorageReadiness(

@@ -31,6 +31,7 @@
 - [海鲜市场产品规格 · 规格](./spec.marketplace.md) `spec.marketplace`
 - [应用注册中心协议 · 规格](./spec.platform.app-registry.md) `spec.platform.app-registry`
 - [LLM 网关测试矩阵 · 规格](./spec.platform.llm-gateway.test-matrix.md) `spec.platform.llm-gateway.test-matrix`
+- [监控自发现协议 · 规格](./spec.platform.monitor-discovery.md) `spec.platform.monitor-discovery`
 - [统一短链系统 · 规格](./spec.platform.short-links.md) `spec.platform.short-links`
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
 - [给设计方的画板请求（录音交付页）](./spec.prd-admin.recording-design-demo-request.md) `spec.prd-admin.recording-design-demo-request`

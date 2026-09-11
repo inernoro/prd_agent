@@ -30,6 +30,7 @@ docs:
   spec.knowledge-base.transfer-protocol: "MAP 知识库传输协议（MAP-KBTP v1） · 规格"
   spec.marketplace: "海鲜市场产品规格 · 规格"
   spec.platform.app-registry: "应用注册中心协议 · 规格"
+  spec.platform.monitor-discovery: "监控自发现协议 · 规格"
   spec.platform.llm-gateway.test-matrix: "LLM 网关测试矩阵 · 规格"
   spec.platform.short-links: "统一短链系统 · 规格"
   spec.prd: "PRD Agent 产品需求文档 · 规格"
