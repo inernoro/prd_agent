@@ -73,7 +73,7 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
   // 支撑句 4：查不到的部分要明说，否则上面那句「没有」会被读成保证。
   const unlinked = p.projects.filter((r) => !r.githubLinked).length;
   if (unlinked > 0) {
-    points.push(`${unlinked} 个项目没接 GitHub，合并这一步查不到——是看不见，不是没有`);
+    points.push(`${unlinked} 个项目没接 GitHub，合并这一步查不到`);
   }
 
   const top = (kind: string, n: number): string => {

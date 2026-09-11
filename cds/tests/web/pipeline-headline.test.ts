@@ -25,6 +25,9 @@ function row(name: string, extra: Partial<PipelineProjectRow> = {}): PipelinePro
     lastActivityAt: null, githubLinked: true, ...extra,
   };
 }
+function funnel(p: Partial<PipelineOverview['total']> = {}): PipelineOverview['total'] {
+  return { changes: 0, deployed: 0, accepted: 0, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0, ...p };
+}
 function overview(partial: Partial<PipelineOverview> = {}): PipelineOverview {
   return {
     generatedAt: '2026-09-10T00:00:00Z', recentDays: null,
@@ -184,5 +187,49 @@ describe('这句判断必须真的出现在页面上', () => {
     expect(sig, '找不到 HallShell').not.toBeNull();
     // 一旦它开始收 funnel / projects，背景就不再是背景了。
     expect(sig![0]).not.toMatch(/funnel|projects|PipelineFunnel/);
+  });
+});
+
+describe('严谨页面不写修辞（2026-09-11 用户第三次指出）', () => {
+  // 「合并这一步查不到——是看不见，不是没有」这种破折号对仗、反问、感叹，
+  // 在一个给老板看数的页面上是噪音。用户原话：「你在严谨的页面中插入了一些
+  // 艺术性话语，正常情况下不会干这种事」。破折号与问号叹号是可机检的抓手。
+  const cases: PipelineOverview[] = [
+    overview({ total: funnel({ changes: 71, deployed: 70, accepted: 5, pass: 1, conditional: 1, fail: 3 }), totalLeaks: leaks({ 'deployed-not-accepted': 65 }) }),
+    overview({ total: funnel({ changes: 5, deployed: 5, accepted: 1, conditional: 1 }), projects: [row('p1', { githubLinked: false })] }),
+    overview({ total: funnel({}) }),
+    overview({ total: funnel({ changes: 9, deployed: 9, accepted: 9, pass: 9 }) }),
+    overview({ total: funnel({ changes: 4, deployed: 4, accepted: 1, merged: 3 }), totalLeaks: leaks({ 'merged-not-accepted': 3 }) }),
+  ];
+  it.each(cases.map((c, i) => [i, c] as const))('第 %i 组句子里没有破折号 / 问号 / 叹号', (_i, p) => {
+    const h = buildPipelineHeadline(p);
+    const all = [h.sentence, ...h.points, h.action ?? ''].join(' ');
+    expect(all).not.toMatch(/——/);
+    expect(all).not.toMatch(/[？！?!]/);
+  });
+});
+
+describe('紧凑态：一句话，两张图', () => {
+  const src = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'), 'utf8');
+
+  it('紧凑态只渲染那一句，支撑点与下一步留给放大态', () => {
+    // Headline 的 !full 分支必须在碰到 points 之前就 return。
+    const body = src.match(/function Headline\(\{[\s\S]*?\n\}/)?.[0] ?? '';
+    expect(body, '找不到 Headline').not.toBe('');
+    const compact = body.slice(0, body.indexOf('  return ('));
+    expect(compact).toMatch(/if \(!full\)/);
+    expect(compact).not.toMatch(/h\.points/);
+    expect(compact).not.toMatch(/h\.action/);
+  });
+
+  it('紧凑态两张图都在：只放一张的话另半边就空着', () => {
+    // 锚点必须落在紧凑分支上。用三元的 `) : (` 会命中文件前面 GateH 里的同款三元，
+    // 于是 slice 出来的一大段把放大态也圈进去，紧凑态的图被删掉照样绿（实测过）。
+    const start = src.indexOf('<Headline h={headline} />');
+    expect(start, '找不到紧凑态的那句判断').toBeGreaterThan(-1);
+    const compact = src.slice(start);
+    expect(compact).toMatch(/\{hall\}/);
+    expect(compact).toMatch(/\{yard\}/);
+    expect([...compact.matchAll(/pp-mini/g)].length).toBeGreaterThanOrEqual(2);
   });
 });

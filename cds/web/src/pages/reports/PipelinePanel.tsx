@@ -1369,23 +1369,32 @@ const TONE_DOT: Record<'ok' | 'warn' | 'bad', string> = {
  * 于是这一屏退回成「一堆好看的图形，看不出在讲什么」。这里把它接回来。
  */
 function Headline({ h, full }: { h: ReturnType<typeof buildPipelineHeadline>; full?: boolean }): JSX.Element {
-  const points = full ? h.points : h.points.slice(0, 2);
+  // 紧凑态**只给一句**。支撑点与下一步是放大之后才该出现的东西——
+  // 第一屏摆三四行字，就成了「左边一堆字、右边一张图」，与「少字多图」正好相反。
+  if (!full) {
+    return (
+      <p className="m-0 flex items-center gap-2 text-[15px] leading-[1.6] text-muted-foreground">
+        <span className={`h-2 w-2 shrink-0 rounded-full ${TONE_DOT[h.tone]}`} />
+        <span className="min-w-0 text-foreground">{h.sentence}</span>
+      </p>
+    );
+  }
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-2.5">
         <span className={`mt-[9px] h-2 w-2 shrink-0 rounded-full ${TONE_DOT[h.tone]}`} />
         <p className="m-0 text-[19px] font-semibold leading-[1.5]">{h.sentence}</p>
       </div>
-      {points.length ? (
+      {h.points.length ? (
         <ul className="m-0 flex list-none flex-col gap-1 p-0 pl-[18px]">
-          {points.map((t) => (
+          {h.points.map((t) => (
             <li key={t} className="text-[13px] leading-[1.6] text-muted-foreground">
               {t}
             </li>
           ))}
         </ul>
       ) : null}
-      {full && h.action ? (
+      {h.action ? (
         <p className="m-0 pl-[18px] text-[13px] leading-[1.6] text-foreground">{h.action}</p>
       ) : null}
     </div>
@@ -1454,6 +1463,16 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
       </div>
     </>
   );
+  const yard = (
+    <>
+      <div className="lg:hidden">
+        <YardNarrow projects={pipeline.projects} onOpenProject={onOpenProject} />
+      </div>
+      <div className="hidden lg:block">
+        <YardWide projects={pipeline.projects} onOpenProject={onOpenProject} />
+      </div>
+    </>
+  );
 
   return (
     <div className="pp-root flex flex-col gap-4" style={{ maxWidth: `${panelPx}px` }} {...handlers}>
@@ -1489,14 +1508,7 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
             <Headline h={headline} full />
           </Card>
           <Card>{hall}</Card>
-          <Card>
-            <div className="lg:hidden">
-              <YardNarrow projects={pipeline.projects} onOpenProject={onOpenProject} />
-            </div>
-            <div className="hidden lg:block">
-              <YardWide projects={pipeline.projects} onOpenProject={onOpenProject} />
-            </div>
-          </Card>
+          <Card>{yard}</Card>
           <Card>
             <div className="lg:hidden">
               <OutsideNarrow orphan={orphan} reclaimed={reclaimed} />
@@ -1507,14 +1519,21 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
           </Card>
         </>
       ) : (
-        <Card>
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-            <div className="min-w-0 lg:flex-[5]">
-              <Headline h={headline} />
+        <>
+          <Headline h={headline} />
+          <Card>
+            {/* 两张图并排：厂房讲「卡在哪一环」，堆场讲「卡在谁那里」。
+                只放一张的话右边就空着，而那半边空白什么都没说。 */}
+            <div className="flex flex-col items-center gap-5 lg:flex-row lg:items-center lg:justify-center">
+              <div className="pp-mini w-full min-w-0" style={{ maxWidth: 560 }}>
+                {hall}
+              </div>
+              <div className="pp-mini w-full min-w-0" style={{ maxWidth: 400 }}>
+                {yard}
+              </div>
             </div>
-            <div className="pp-mini min-w-0 lg:flex-[4]">{hall}</div>
-          </div>
-        </Card>
+          </Card>
+        </>
       )}
     </div>
   );
