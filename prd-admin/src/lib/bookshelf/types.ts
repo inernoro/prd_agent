@@ -37,7 +37,7 @@ export interface Volume {
   subtitle: string;
   /** lucide-react 图标名 */
   icon: string;
-  /** 这一卷对应的真实抱怨（来自团队原话），让读者一眼认出「这说的就是我」 */
+  /** 这一卷对应的真实处境（按症状写，不逐字转述谁的原话），让读者一眼认出「这说的就是我」 */
   painQuote: string;
   /** 这一卷开的药方：读完之后那句抱怨为什么不再成立 */
   cure: string;
@@ -59,7 +59,7 @@ export interface ExamQuestion {
 
 /** 痛点药方：把一句抱怨映射到能治它的那一卷。 */
 export interface PainRemedy {
-  /** 团队里真实说过的那句话 */
+  /** 团队里真实卡住过的那种处境 */
   quote: string;
   /** 病根一句话 */
   diagnosis: string;

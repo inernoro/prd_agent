@@ -71,7 +71,23 @@ describe('痛点药方表', () => {
     });
   });
 
-  it('痛点原话不重复', () => {
+  // 痛点写的是处境，不是某个人说过的话。
+  // 页面对全员可见，逐字挂上同事的原话等于把人架在那儿——转述成症状既留住
+  // 「说的就是我」的共鸣，也不让任何人对号入座。这条守卫防的是原话哪天又被贴回来。
+  it('痛点不留转述痕迹，也不出现人名', () => {
+    const TRACE = ['他说', '我说', '昨天', '跟我说', '不应该是我'];
+    const texts = [
+      ...VOLUMES.map((v) => ({ where: `卷「${v.name}」的 painQuote`, text: v.painQuote })),
+      ...PAIN_REMEDIES.map((r) => ({ where: `痛点卡「${r.quote}」`, text: r.quote })),
+    ];
+    texts.forEach(({ where, text }) => {
+      TRACE.forEach((w) => {
+        expect(text, `${where} 带着转述痕迹「${w}」，说明是照抄某个人的原话`).not.toContain(w);
+      });
+    });
+  });
+
+  it('痛点描述不重复', () => {
     const quotes = PAIN_REMEDIES.map((r) => r.quote);
     expect(new Set(quotes).size).toBe(quotes.length);
   });

@@ -82,21 +82,21 @@ for (const theme of ['dark', 'light']) {
   // 粗野版这句回到 h1，且「看到我，」与「算你有福了」被 <br> 分成两行，
   // 整串匹配必失败 —— 按 h1 + 后半句断言。
   step['落地页大标题'] = await page.locator('h1').filter({ hasText: '算你有福了' }).first().isVisible();
-  step['痛点药方表'] = await page.locator('text=什么都不跟我说，代码规范，构建发布').first().isVisible();
+  step['痛点药方表'] = await page.locator('text=代码规范、构建发布，没人告诉我该怎么做').first().isVisible();
   step['默认卷书目可见'] = await page.locator('text=《你的灯亮着吗？》').first().isVisible();
   await page.screenshot({ path: `${OUT}/01-landing-${theme}.png` });
 
   // 痛点卡必须落到各自对应的卷 —— 全都跳同一处等于药方表没接线。
-  await page.locator('button', { hasText: '很多我都审不出来' }).first().click();
+  await page.locator('button', { hasText: '评审派给了看不出问题的人' }).first().click();
   await page.waitForTimeout(700);
   step['痛点跳到卷七'] = await page.locator('text=上台面').first().isVisible();
   step['卷七书目出现'] = await page.locator('text=《金字塔原理》').first().isVisible();
-  await page.locator('button', { hasText: '项目改的我都不想看了' }).first().click();
+  await page.locator('button', { hasText: '代码越改越乱，不想再打开' }).first().click();
   await page.waitForTimeout(700);
   step['另一痛点跳到卷五'] = await page.locator('text=《修改代码的艺术》').first().isVisible();
   // 卷六要治的是「AI 在乱写、没人看」——它必须给得出「怎么审」的书，
   // 不能整卷都是模型原理。这一条盯着那批实操书，被删掉就会红。
-  await page.locator('button', { hasText: 'AI 都在乱写' }).first().click();
+  await page.locator('button', { hasText: 'AI 生成的代码没人细看就合进去了' }).first().click();
   await page.waitForTimeout(700);
   step['痛点跳到卷六'] = await page.locator('text=驭 AI').first().isVisible();
   step['卷六有怎么审 AI 的书'] = await page.locator('text=你的代码就是犯罪现场').first().isVisible()

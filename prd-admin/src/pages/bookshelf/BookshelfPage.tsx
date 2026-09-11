@@ -213,7 +213,7 @@ export default function BookshelfPage() {
           </h1>
 
           <p className="mt-5 max-w-[470px] text-[15px] font-medium leading-[1.72]" style={{ color: 'var(--text-secondary)' }}>
-            七卷不按学科排，按你会在哪一步卡住排。每卷钉着一句团队里真实说过的话——从最像你处境的那句进去。
+            七卷不按学科排，按你会在哪一步卡住排。每卷钉着一种团队真实卡住过的处境——从最像你的那条进去。
           </p>
         </div>
 
@@ -274,7 +274,7 @@ export default function BookshelfPage() {
             从你的痛处进来
           </div>
           <h2 className="mt-4 font-black tracking-[-0.03em]" style={{ fontSize: 'clamp(28px, 3.4vw, 44px)' }}>
-            这些话，是不是很耳熟
+            这些处境，是不是很眼熟
           </h2>
         </div>
 
