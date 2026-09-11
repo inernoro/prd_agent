@@ -5,6 +5,8 @@
  * conclusion-before-numbers.md 的三条自律：句子必须挂真实数字、严重的先说、
  * 说不出结论时不许拿空话凑（「整体表现良好」放到任何团队都成立，等于没说）。
  */
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { buildPipelineHeadline } from '../../web/src/lib/pipelineHeadline.js';
 import type { PipelineOverview, PipelineProjectRow, LeakKind } from '../../web/src/lib/api.js';
@@ -129,5 +131,58 @@ describe('buildPipelineHeadline', () => {
       projects: [row('p1', { leaks: leaks({ 'deployed-not-accepted': 2 }) })],
     }));
     expect(allPass.points.join('|')).not.toContain('验过的');
+  });
+});
+
+/**
+ * 2026-09-11 补：接线守卫。
+ *
+ * 上面那些断言全绿了整整一天，而这段时间里**没有任何页面引用 buildPipelineHeadline**——
+ * 首页第三次重做时把它删掉了，文件和测试都留在原地，于是首页退回成
+ * 「一堆好看的图形，看不出在讲什么」，用户的原话是「会不会用户一看：这是什么」。
+ *
+ * 这正是 predicate-and-wiring-discipline 形状 2（链路只建一半）＋ 形状 4（测试测不到
+ * 它以为在测的东西）的合体：句子本身对不对，和这句话有没有出现在屏幕上，是两件事。
+ */
+describe('这句判断必须真的出现在页面上', () => {
+  const read = (p: string): string =>
+    readFileSync(resolve(__dirname, '../..', p), 'utf8');
+
+  it('有页面引用它，而且不是测试自己', () => {
+    const roots = ['web/src/pages/reports/PipelinePanel.tsx', 'web/src/pages/ReportsPage.tsx'];
+    const hit = roots.filter((f) => {
+      try {
+        // 必须是真的**调用**：`ReturnType<typeof buildPipelineHeadline>` 这种类型注解
+        // 也含这个名字，只查名字出现过的话，页面把调用删光了守卫照样绿。
+        return /buildPipelineHeadline\s*\(/.test(read(f));
+      } catch {
+        return false;
+      }
+    });
+    expect(hit.length, 'buildPipelineHeadline 没有任何页面引用——它又变成孤儿了').toBeGreaterThan(0);
+  });
+
+  it('引用它的那个页面真的把句子渲染出来了', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    // 光 import 不算：得有组件读 sentence，并且在两种形态下都渲染。
+    expect(src).toMatch(/h\.sentence/);
+    expect([...src.matchAll(/<Headline\b/g)].length, '紧凑态与放大态都要有这句判断').toBeGreaterThanOrEqual(2);
+  });
+
+  it('第一眼是紧凑态，细节要点「放大」才铺开', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    expect(src).toMatch(/const \[zoom, setZoom\] = useState\(false\)/);
+    expect(src).toMatch(/zoom \? '收起' : '放大'/);
+    // 紧凑态里图只做剪影：这么小的时候字号补偿会把标签撑得比闸门还宽。
+    expect(src).toMatch(/pp-mini/);
+    expect(src).toMatch(/\.pp-mini text\{display:none;\}/);
+  });
+
+  it('背景只是壳，不编码任何数据', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    const sig = src.match(/function HallShell\(\{[^}]*\}: \{[^}]*\}\)/);
+    expect(sig, '找不到 HallShell').not.toBeNull();
+    // 一旦它开始收 funnel / projects，背景就不再是背景了。
+    expect(sig![0]).not.toMatch(/funnel|projects|PipelineFunnel/);
   });
 });

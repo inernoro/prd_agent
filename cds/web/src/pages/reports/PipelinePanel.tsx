@@ -22,6 +22,7 @@
  *    裸写 `var(--x)` 会让整条属性静默失效（`.claude/rules/cds-theme-tokens.md` 第 0 条）。
  */
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { buildPipelineHeadline } from '@/lib/pipelineHeadline';
 import type { PipelineFunnel, PipelineOverview, PipelineProjectRow } from '@/lib/api';
 
 export interface PipelinePanelProps {
@@ -66,6 +67,17 @@ const SCENE_CSS = `
 .pp-root .t-ok{fill:hsl(var(--ok));}
 .pp-root .t-warn{fill:hsl(var(--warn));}
 .pp-root .t-bad{fill:hsl(var(--bad));}
+
+/* 背景：锯齿天窗 + 桁架柱 + 地面。厂房的剪影得有个壳才立得住——
+   没有壳的时候，图上就是几个形状浮在白底上，看不出这是一个「地方」。
+   一律走 hairline，只做衬托，不跟货箱抢。 */
+.pp-root .s-bg{stroke:hsl(var(--hairline));stroke-width:1.5;fill:none;stroke-linejoin:round;}
+.pp-root .s-bg-thin{stroke:hsl(var(--hairline));stroke-width:1;fill:none;}
+.pp-root .f-ground{fill:hsl(var(--hairline) / 0.4);}
+
+/* 紧凑态：只留剪影。图缩到这么小时字号补偿会把标签撑得比闸门还宽，
+   而该说的话已经由上面那句判断说了。 */
+.pp-root .pp-mini text{display:none;}
 
 .pp-root .g-hit{cursor:pointer;outline:none;}
 .pp-root rect[data-tip]:hover,.pp-root circle[data-tip]:hover,.pp-root polygon[data-tip]:hover{
@@ -528,6 +540,28 @@ function SceneDefs(): JSX.Element {
 
 /* ============================ 宽屏：横向厂房剖面 ============================ */
 
+/** 厂房的壳：锯齿天窗在上、桁架柱贯通、地面压底。纯装饰，不编码任何数据。 */
+function HallShell({ top, width }: { top: number; width: number }): JSX.Element {
+  const roofV = top + 30;
+  const roofP = top + 6;
+  const teeth: string[] = [];
+  for (let x = 0; x < width; x += 104) {
+    teeth.push(`M${x} ${roofV} L${x} ${roofP} L${Math.min(width, x + 104)} ${roofV}`);
+  }
+  const columns: number[] = [];
+  for (let x = 118; x < width - 40; x += 268) columns.push(x);
+  return (
+    <g aria-hidden="true">
+      <path d={teeth.join(' ')} className="s-bg" />
+      <line x1={0} y1={roofV} x2={width} y2={roofV} className="s-bg" />
+      {columns.map((x) => (
+        <line key={x} x1={x} y1={roofV} x2={x} y2={FLOOR} className="s-bg-thin" />
+      ))}
+      <rect x={0} y={FLOOR + 4} width={width} height={7} className="f-ground" />
+    </g>
+  );
+}
+
 /**
  * 闸门＝固定结构件。开合程度不表示任何数据，三道闸画法一致。
  * 门楣高度由货堆决定（堆矮门洞就矮，整张图跟着矮下来），闸板落差 BLADE 恒定。
@@ -673,6 +707,7 @@ function HallWide({ f, heapTips }: { f: PipelineFunnel; heapTips: string[] }): J
           />
         </clipPath>
       </defs>
+      <HallShell top={L.top} width={L.vbW} />
       <rect x={0} y={FLOOR} width={L.vbW} height={4} className="f-hair" />
 
       {/* 入料溜槽：装着料，料在往下流。流量不是计数——总量写在旁边那个大数字上，
@@ -1318,6 +1353,45 @@ function OutsideNarrow({ orphan, reclaimed }: { orphan: number; reclaimed: numbe
   );
 }
 
+/* ============================ 结论 ============================ */
+
+const TONE_DOT: Record<'ok' | 'warn' | 'bad', string> = {
+  ok: 'bg-[hsl(var(--ok))]',
+  warn: 'bg-[hsl(var(--warn))]',
+  bad: 'bg-[hsl(var(--bad))]',
+};
+
+/**
+ * 第一眼那句判断。
+ *
+ * 句子由 buildPipelineHeadline 规则生成，每句都挂着真实数字——它早就写好了，
+ * 只是首页三次重做之后没人再引用它（文件和它的 7 条守卫都还在、测试照绿），
+ * 于是这一屏退回成「一堆好看的图形，看不出在讲什么」。这里把它接回来。
+ */
+function Headline({ h, full }: { h: ReturnType<typeof buildPipelineHeadline>; full?: boolean }): JSX.Element {
+  const points = full ? h.points : h.points.slice(0, 2);
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-start gap-2.5">
+        <span className={`mt-[9px] h-2 w-2 shrink-0 rounded-full ${TONE_DOT[h.tone]}`} />
+        <p className="m-0 text-[19px] font-semibold leading-[1.5]">{h.sentence}</p>
+      </div>
+      {points.length ? (
+        <ul className="m-0 flex list-none flex-col gap-1 p-0 pl-[18px]">
+          {points.map((t) => (
+            <li key={t} className="text-[13px] leading-[1.6] text-muted-foreground">
+              {t}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {full && h.action ? (
+        <p className="m-0 pl-[18px] text-[13px] leading-[1.6] text-foreground">{h.action}</p>
+      ) : null}
+    </div>
+  );
+}
+
 /* ============================ 面板 ============================ */
 
 /**
@@ -1359,6 +1433,8 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
   const reclaimed = Math.max(0, pipeline.staleReports);
   const { tipState, handlers } = useTipDelegate();
   const heapTips = heapTipsOf(pipeline);
+  const headline = buildPipelineHeadline(pipeline);
+  const [zoom, setZoom] = useState(false);
 
   // 三张图各自缩到自己该有的大小之后，卡片要是还占满整条，就成了「大盒子装一点东西」——
   // 比不缩还空。所以整块面板跟着最宽的那张图收。
@@ -1366,6 +1442,17 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
     sceneMaxPx(hallLayoutWide(pipeline.total).vbW),
     sceneMaxPx(yardVbW(pipeline.projects.length)),
     sceneMaxPx(outsideVbW(reclaimed)),
+  );
+
+  const hall = (
+    <>
+      <div className="lg:hidden">
+        <HallNarrow f={pipeline.total} heapTips={heapTips} />
+      </div>
+      <div className="hidden lg:block">
+        <HallWide f={pipeline.total} heapTips={heapTips} />
+      </div>
+    </>
   );
 
   return (
@@ -1376,37 +1463,59 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
 
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="m-0 text-[22px] font-bold tracking-[0.14em]">验收流水线</h1>
-        <span className="font-mono text-[13px] tracking-[0.16em] text-muted-foreground">
-          {pipeline.generatedAt.slice(0, 10)}
-        </span>
+        <div className="flex items-baseline gap-4">
+          <span className="font-mono text-[13px] tracking-[0.16em] text-muted-foreground">
+            {pipeline.generatedAt.slice(0, 10)}
+          </span>
+          <button
+            type="button"
+            className="rounded-md border border-[hsl(var(--hairline))] px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground"
+            onClick={() => setZoom((v) => !v)}
+          >
+            {zoom ? '收起' : '放大'}
+          </button>
+        </div>
       </div>
 
-      <Card>
-        <div className="lg:hidden">
-          <HallNarrow f={pipeline.total} heapTips={heapTips} />
-        </div>
-        <div className="hidden lg:block">
-          <HallWide f={pipeline.total} heapTips={heapTips} />
-        </div>
-      </Card>
-
-      <Card>
-        <div className="lg:hidden">
-          <YardNarrow projects={pipeline.projects} onOpenProject={onOpenProject} />
-        </div>
-        <div className="hidden lg:block">
-          <YardWide projects={pipeline.projects} onOpenProject={onOpenProject} />
-        </div>
-      </Card>
-
-      <Card>
-        <div className="lg:hidden">
-          <OutsideNarrow orphan={orphan} reclaimed={reclaimed} />
-        </div>
-        <div className="hidden lg:block">
-          <OutsideWide orphan={orphan} reclaimed={reclaimed} />
-        </div>
-      </Card>
+      {/*
+        默认只占一小块：一句判断 + 一张剪影。
+        整屏铺开三张图是「好看但不知道在讲什么」——图是支撑，判断才是第一眼该读的
+        （conclusion-before-numbers：计数 → 对照 → 结论，停在前两层就是让人自己算）。
+        要看细节点「放大」。
+      */}
+      {zoom ? (
+        <>
+          <Card>
+            <Headline h={headline} full />
+          </Card>
+          <Card>{hall}</Card>
+          <Card>
+            <div className="lg:hidden">
+              <YardNarrow projects={pipeline.projects} onOpenProject={onOpenProject} />
+            </div>
+            <div className="hidden lg:block">
+              <YardWide projects={pipeline.projects} onOpenProject={onOpenProject} />
+            </div>
+          </Card>
+          <Card>
+            <div className="lg:hidden">
+              <OutsideNarrow orphan={orphan} reclaimed={reclaimed} />
+            </div>
+            <div className="hidden lg:block">
+              <OutsideWide orphan={orphan} reclaimed={reclaimed} />
+            </div>
+          </Card>
+        </>
+      ) : (
+        <Card>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+            <div className="min-w-0 lg:flex-[5]">
+              <Headline h={headline} />
+            </div>
+            <div className="pp-mini min-w-0 lg:flex-[4]">{hall}</div>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
