@@ -240,5 +240,6 @@
 - [知识驱动设计生成体系原计划](./plan.platform.design-generation.md)（历史与设计参照，冲突时以本文件为准）
 - [知识驱动设计生成体系设计](./design.platform.design-generation.md)
 - [知识库智能体架构](./design.knowledge-base.agent-architecture.md)
+- [OpenDesign 接入债务台账](./debt.platform.open-design.md)
 - [网页托管债务台账](./debt.web-hosting.md)
 - [网关协议保真债务台账](./debt.platform.llm-gateway.protocol-fidelity.md)
