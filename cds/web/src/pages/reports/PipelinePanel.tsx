@@ -68,6 +68,14 @@ const SCENE_CSS = `
 .pp-root .t-bad{fill:hsl(var(--bad));}
 
 .pp-root .g-hit{cursor:pointer;outline:none;}
+.pp-root rect[data-tip]:hover,.pp-root circle[data-tip]:hover,.pp-root polygon[data-tip]:hover{
+  stroke:hsl(var(--foreground));stroke-width:1.5;}
+.pp-root .pp-tip{position:fixed;z-index:60;pointer-events:none;max-width:300px;
+  padding:9px 11px;border-radius:8px;border:1px solid hsl(var(--hairline-strong));
+  background:hsl(var(--card));color:hsl(var(--foreground));
+  box-shadow:0 10px 28px hsl(var(--foreground) / 0.14);}
+.pp-root .pp-tip-h{font-size:13px;font-weight:600;line-height:1.5;word-break:break-all;}
+.pp-root .pp-tip-l{font-size:12px;line-height:1.6;color:hsl(var(--muted-foreground));word-break:break-all;}
 .pp-root .g-hit:hover .t-name,.pp-root .g-hit:focus-visible .t-name{text-decoration:underline;}
 
 /* ---------------------------- 动效 ----------------------------
@@ -185,6 +193,73 @@ export function sceneMaxPx(vbW: number): number {
 export function sceneWidth(vbW: number): React.CSSProperties {
   const k = sceneScale(vbW);
   return { maxWidth: `${sceneMaxPx(vbW)}px`, '--ts': (1 / k).toFixed(3) } as React.CSSProperties;
+}
+
+/* ============================ 悬浮提示 ============================
+   一只箱子＝一条改动，可是光看图不知道是哪一条。提示走**事件委托**：
+   元素只挂一个 data-tip 字符串（换行用 \n），pp-root 上统一接 mouseover /
+   mousemove / mouseout。65 只箱子各绑三个闭包是没必要的开销。 */
+
+/** 把几行文字编成 data-tip。空行自动丢掉，省得调用方到处写条件。 */
+export function tip(...lines: Array<string | false | null | undefined>): string {
+  return lines.filter((l): l is string => Boolean(l)).join('\n');
+}
+
+interface TipState {
+  x: number;
+  y: number;
+  lines: string[];
+}
+
+function useTipDelegate(): {
+  tipState: TipState | null;
+  handlers: {
+    onMouseOver: (e: React.MouseEvent) => void;
+    onMouseMove: (e: React.MouseEvent) => void;
+    onMouseOut: (e: React.MouseEvent) => void;
+  };
+} {
+  const [tipState, setTipState] = useState<TipState | null>(null);
+  const read = (e: React.MouseEvent): string | null => {
+    const el = e.target as Element | null;
+    // SVG 元素在旧一点的引擎里没有 closest，兜一手。
+    const hit = el && typeof el.closest === 'function' ? el.closest('[data-tip]') : null;
+    return hit ? hit.getAttribute('data-tip') : null;
+  };
+  return {
+    tipState,
+    handlers: {
+      onMouseOver: (e) => {
+        const raw = read(e);
+        setTipState(raw ? { x: e.clientX, y: e.clientY, lines: raw.split('\n') } : null);
+      },
+      onMouseMove: (e) => {
+        const raw = read(e);
+        setTipState(raw ? { x: e.clientX, y: e.clientY, lines: raw.split('\n') } : null);
+      },
+      onMouseOut: () => setTipState(null),
+    },
+  };
+}
+
+/** 跟着鼠标走的提示框。贴到视口边缘就翻到另一侧，不让它被裁掉。 */
+function TipBox({ state }: { state: TipState }): JSX.Element {
+  const W = 300;
+  const H = 26 * state.lines.length + 20;
+  const vw = typeof window === 'undefined' ? 1440 : window.innerWidth;
+  const vh = typeof window === 'undefined' ? 900 : window.innerHeight;
+  const left = state.x + 16 + W > vw ? Math.max(8, state.x - 16 - W) : state.x + 16;
+  const top = state.y + 18 + H > vh ? Math.max(8, state.y - 18 - H) : state.y + 18;
+  return (
+    <div className="pp-tip" style={{ left, top }}>
+      <div className="pp-tip-h">{state.lines[0]}</div>
+      {state.lines.slice(1).map((l, i) => (
+        <div key={i} className="pp-tip-l">
+          {l}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** 错峰延迟：写进 CSS 自定义属性 --d，动画规则统一读它。 */
@@ -457,13 +532,19 @@ function SceneDefs(): JSX.Element {
  * 闸门＝固定结构件。开合程度不表示任何数据，三道闸画法一致。
  * 门楣高度由货堆决定（堆矮门洞就矮，整张图跟着矮下来），闸板落差 BLADE 恒定。
  */
-function GateH({ cx, label, lintel, nodata }: { cx: number; label: string; lintel: number; nodata?: boolean }): JSX.Element {
+function GateH({
+  cx,
+  label,
+  lintel,
+  nodata,
+  hint,
+}: { cx: number; label: string; lintel: number; nodata?: boolean; hint: string }): JSX.Element {
   const lp = cx - 24;
   const rp = cx + 12;
   const sx = lp + 12;
   const sw = rp - lp - 12;
   return (
-    <g>
+    <g data-tip={hint}>
       <rect x={lp - 4} y={lintel - 16} width={rp + 12 - (lp - 4)} height={16} className="f-steel" />
       <rect x={lp} y={lintel} width={12} height={DECK_T - lintel} className="f-steel" />
       <rect x={rp} y={lintel} width={12} height={DECK_T - lintel} className="f-steel" />
@@ -544,14 +625,23 @@ export function hallLayoutWide(f: PipelineFunnel) {
   };
 }
 
-function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
+function HallWide({ f, heapTips }: { f: PipelineFunnel; heapTips: string[] }): JSX.Element {
   const L = hallLayoutWide(f);
   const { sc } = L;
-  const bins: Array<{ cx: number; label: string; n: number; tone: Tone }> = [
-    { cx: L.binCx[0], label: '通过', n: Math.max(0, f.pass), tone: 'ok' },
-    { cx: L.binCx[1], label: '原则性', n: Math.max(0, f.conditional), tone: 'warn' },
-    { cx: L.binCx[2], label: '未通过', n: Math.max(0, f.fail), tone: 'bad' },
+  const bins: Array<{ cx: number; label: string; n: number; tone: Tone; hint: string }> = [
+    { cx: L.binCx[0], label: '通过', n: Math.max(0, f.pass), tone: 'ok', hint: tip('通过', `${Math.max(0, f.pass)} 条改动验完判了通过`) },
+    { cx: L.binCx[1], label: '原则性', n: Math.max(0, f.conditional), tone: 'warn', hint: tip('原则性通过', `${Math.max(0, f.conditional)} 条改动有保留地放行`) },
+    { cx: L.binCx[2], label: '未通过', n: Math.max(0, f.fail), tone: 'bad', hint: tip('未通过', `${Math.max(0, f.fail)} 条改动验完判了不通过`) },
   ];
+  const chuteTip = tip('入料口', `${Math.max(0, f.changes)} 条改动`, '在途分支与最近撤下的分支');
+  const undeployedTip = tip('还没起预览的改动', `${L.undeployed} 条`, '连部署闸都没到');
+  const heapFallback = tip('未验收的改动', `${L.heap} 条`, '已部署，还没人验');
+  // 货堆按行画，提示按扁平序号取——两边都要稳定，错一位就张冠李戴。
+  const rowOffset: number[] = [];
+  sc.rows.reduce((acc, n) => {
+    rowOffset.push(acc);
+    return acc + n;
+  }, 0);
 
   // 溜槽：上口在门楣下方，下口落在带面上，整体向右倾。里面的料沿槽向下流。
   const chuteRun = DECK_T - L.chuteTop;
@@ -590,8 +680,9 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
       <polygon
         points={`${chute.tl},${L.chuteTop} ${chute.tr},${L.chuteTop} ${chute.br},${DECK_T} ${chute.bl},${DECK_T}`}
         className="f-deck s-hair"
+        data-tip={chuteTip}
       />
-      <g clipPath="url(#pp-chute-w)">
+      <g clipPath="url(#pp-chute-w)" data-tip={chuteTip}>
         <g className="pp-chute" style={{ '--cdx': `${slide.dx}px`, '--cdy': `${slide.dy}px` } as React.CSSProperties}>
           {feed.map((c, i) => (
             <rect key={i} x={c.x} y={c.y} width={sc.cw} height={sc.ch} rx={1} className="f-crate s-hairstrong" />
@@ -607,14 +698,14 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
       <BeltH x1={288} x2={L.vbW - 28} />
 
       {/* 传送带缺口：掉下去的就是「未部署」，箱数即数据 */}
-      <rect x={224} y={DECK_T} width={64} height={FLOOR - DECK_T} className="f-sunken s-hair" />
+      <rect x={224} y={DECK_T} width={64} height={FLOOR - DECK_T} className="f-sunken s-hair" data-tip={undeployedTip} />
       {Array.from({ length: L.undeployed }, (_, k) => {
         const y = FLOOR - 3 - (k + 1) * (sc.ch + 3);
         const rot = k % 2 === 0 ? -14 : 9;
         return (
           // 倾角留在 rect 的 transform 属性上，下落交给外层 g 的 CSS transform：
           // 两者写在同一个元素上，CSS 那个会把属性整条盖掉，箱子就摆正了。
-          <g key={k} className="pp-fall" style={d(200 + k * 70)}>
+          <g key={k} className="pp-fall" style={d(200 + k * 70)} data-tip={undeployedTip}>
             <rect
               x={256 - sc.cw / 2}
               y={y}
@@ -634,7 +725,7 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
         {L.undeployed}
       </text>
 
-      <GateH cx={L.gate1} label="部署" lintel={L.lintel} />
+      <GateH cx={L.gate1} label="部署" lintel={L.lintel} hint={tip('部署闸', '改动起了预览才算过这道闸')} />
 
       {/* 货堆：排在验收闸前的队伍，一箱一条改动。尺寸随数量反算，堆高顶满门洞。 */}
       {sc.rows.map((n, i) =>
@@ -648,6 +739,7 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
             rx={1}
             className="f-crate s-hairstrong pp-crate"
             style={d(300 + i * 55 + k * 9)}
+            data-tip={heapTips[rowOffset[i] + k] ?? heapFallback}
           />
         )),
       )}
@@ -670,13 +762,18 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
         n={L.heap}
       />
 
-      <GateH cx={L.gate2} label="验收" lintel={L.lintel} />
+      <GateH
+        cx={L.gate2}
+        label="验收"
+        lintel={L.lintel}
+        hint={tip('验收闸', '有人跑过验收、归了档才算过这道闸')}
+      />
 
       {/* 三个料仓：过闸后按结论分装，仓内箱数即三档计数 */}
-      {bins.map(({ cx, label, n, tone }) => {
+      {bins.map(({ cx, label, n, tone, hint }) => {
         const x0 = cx - BIN_W / 2;
         return (
-          <g key={label}>
+          <g key={label} data-tip={hint}>
             <polygon
               points={`${cx - 20},${DECK_B} ${cx + 20},${DECK_B} ${x0 + BIN_W},${BIN_TOP} ${x0},${BIN_TOP}`}
               className="f-deck s-hair"
@@ -713,7 +810,13 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
         );
       })}
 
-      <GateH cx={L.gate3} label="合并" lintel={L.lintel} nodata />
+      <GateH
+        cx={L.gate3}
+        label="合并"
+        lintel={L.lintel}
+        nodata
+        hint={tip('合并闸', '斜纹＝这一环没有数据', '分支墓碑还没接进聚合，不等于没有东西被合并')}
+      />
       <text x={L.gate3 - 6} y={FLOOR + 26} className="t-lab pp-lab" style={d(1000)} textAnchor="middle">
         无数据
       </text>
@@ -724,9 +827,14 @@ function HallWide({ f }: { f: PipelineFunnel }): JSX.Element {
 /* ============================ 窄屏：纵向流水 ============================ */
 
 /** 同一道闸转 90 度：门楣在左、两根门柱横跨带面、闸板自左插入。落差仍是 34。 */
-function GateV({ cy, label, nodata }: { cy: number; label: string; nodata?: boolean }): JSX.Element {
+function GateV({
+  cy,
+  label,
+  nodata,
+  hint,
+}: { cy: number; label: string; nodata?: boolean; hint: string }): JSX.Element {
   return (
-    <g>
+    <g data-tip={hint}>
       <rect x={M_LINTEL_X} y={cy - 28} width={16} height={52} className="f-steel" />
       <rect x={M_GATE_FAR} y={cy - 24} width={M_OPEN} height={12} className="f-steel" />
       <rect x={M_GATE_FAR} y={cy + 12} width={M_OPEN} height={12} className="f-steel" />
@@ -758,7 +866,7 @@ function BeltV({ y1, y2 }: { y1: number; y2: number }): JSX.Element {
   );
 }
 
-function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
+function HallNarrow({ f, heapTips }: { f: PipelineFunnel; heapTips: string[] }): JSX.Element {
   const { heap, undeployed } = splitChanges(f);
   // 窄屏货箱同样反算尺寸，只是可铺开的宽度换成了带面左侧那 300 个单位。
   const sc = crateScale(heap, { span: 300, rise: 132, min: 10, max: 26, maxRows: 5 });
@@ -777,16 +885,28 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
   const spurRollers: number[] = [];
   for (let x = 16 + 22; x < M_BELT_R - 10; x += 44) spurRollers.push(x);
 
-  const bins: Array<{ cx: number; label: string; n: number; tone: Tone }> = [
-    { cx: M_BIN_CX[0], label: '通过', n: Math.max(0, f.pass), tone: 'ok' },
-    { cx: M_BIN_CX[1], label: '原则性', n: Math.max(0, f.conditional), tone: 'warn' },
-    { cx: M_BIN_CX[2], label: '未通过', n: Math.max(0, f.fail), tone: 'bad' },
+  const bins: Array<{ cx: number; label: string; n: number; tone: Tone; hint: string }> = [
+    { cx: M_BIN_CX[0], label: '通过', n: Math.max(0, f.pass), tone: 'ok', hint: tip('通过', `${Math.max(0, f.pass)} 条改动验完判了通过`) },
+    { cx: M_BIN_CX[1], label: '原则性', n: Math.max(0, f.conditional), tone: 'warn', hint: tip('原则性通过', `${Math.max(0, f.conditional)} 条改动有保留地放行`) },
+    { cx: M_BIN_CX[2], label: '未通过', n: Math.max(0, f.fail), tone: 'bad', hint: tip('未通过', `${Math.max(0, f.fail)} 条改动验完判了不通过`) },
   ];
+  const chuteTip = tip('入料口', `${Math.max(0, f.changes)} 条改动`, '在途分支与最近撤下的分支');
+  const undeployedTip = tip('还没起预览的改动', `${undeployed} 条`, '连部署闸都没到');
+  const heapFallback = tip('未验收的改动', `${heap} 条`, '已部署，还没人验');
+  const rowOffset: number[] = [];
+  rows.reduce((acc, n) => {
+    rowOffset.push(acc);
+    return acc + n;
+  }, 0);
 
   return (
     <svg className="pp-scene" viewBox={`0 0 ${M_W} ${height}`} role="img" aria-label="验收流水线剖面">
       {/* 入料溜槽 + 总量 */}
-      <polygon points={`150,44 150,114 ${M_BELT_R},${M_BELT_TOP} ${M_BELT_R},70`} className="f-deck s-hair" />
+      <polygon
+        points={`150,44 150,114 ${M_BELT_R},${M_BELT_TOP} ${M_BELT_R},70`}
+        className="f-deck s-hair"
+        data-tip={chuteTip}
+      />
       <text x={24} y={60} className="t-lab pp-lab" style={d(60)}>
         改动
       </text>
@@ -796,12 +916,19 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
       <BeltV y1={M_GAP_Y + M_GAP_H} y2={height - 20} />
 
       {/* 带面缺口：掉出去的就是「未部署」 */}
-      <rect x={shaftX} y={M_GAP_Y} width={M_SHAFT_LEN} height={M_GAP_H} className="f-sunken s-hair" />
+      <rect
+        x={shaftX}
+        y={M_GAP_Y}
+        width={M_SHAFT_LEN}
+        height={M_GAP_H}
+        className="f-sunken s-hair"
+        data-tip={undeployedTip}
+      />
       {Array.from({ length: undeployed }, (_, k) => {
         const x = shaftX + 3 + k * (sc.ch + 2);
         const rot = k % 2 === 0 ? -14 : 9;
         return (
-          <g key={k} className="pp-fall" style={d(200 + k * 70)}>
+          <g key={k} className="pp-fall" style={d(200 + k * 70)} data-tip={undeployedTip}>
             <rect
               x={x}
               y={M_GAP_Y + 20}
@@ -821,7 +948,7 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
         {undeployed}
       </text>
 
-      <GateV cy={M_G1Y} label="部署" />
+      <GateV cy={M_G1Y} label="部署" hint={tip('部署闸', '改动起了预览才算过这道闸')} />
 
       {/* 货堆：行宽上限降到 6，货箱尺寸不变，只换行 */}
       {rows.map((n, i) =>
@@ -835,6 +962,7 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
             rx={1}
             className="f-crate s-hairstrong pp-crate"
             style={d(300 + i * 55 + k * 9)}
+            data-tip={heapTips[rowOffset[i] + k] ?? heapFallback}
           />
         )),
       )}
@@ -843,7 +971,7 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
       </text>
       <CountText x={lx} y={heapBase + 12} className="t-huge" textAnchor="end" n={heap} />
 
-      <GateV cy={g2y} label="验收" />
+      <GateV cy={g2y} label="验收" hint={tip('验收闸', '有人跑过验收、归了档才算过这道闸')} />
 
       {/* 分料横带 + 三个料仓并排 */}
       <rect x={16} y={spurT} width={M_BELT_R - 16} height={16} className="f-deck s-hair" />
@@ -859,10 +987,10 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
           />
         </g>
       ))}
-      {bins.map(({ cx, label, n, tone }) => {
+      {bins.map(({ cx, label, n, tone, hint }) => {
         const x0 = cx - M_BIN_W / 2;
         return (
-          <g key={label}>
+          <g key={label} data-tip={hint}>
             <polygon
               points={`${cx - 20},${deckB} ${cx + 20},${deckB} ${x0 + M_BIN_W},${binTop} ${x0},${binTop}`}
               className="f-deck s-hair"
@@ -900,11 +1028,34 @@ function HallNarrow({ f }: { f: PipelineFunnel }): JSX.Element {
       })}
       <rect x={0} y={floorM} width={M_W} height={3} className="f-hair" />
 
-      <GateV cy={g3y} label="合并" nodata />
+      <GateV cy={g3y} label="合并" nodata hint={tip('合并闸', '斜纹＝这一环没有数据', '分支墓碑还没接进聚合，不等于没有东西被合并')} />
       <text x={M_LINTEL_X - 12} y={g3y + 34} className="t-lab pp-lab" style={d(1000)} textAnchor="end">
         无数据
       </text>
     </svg>
+  );
+}
+
+const ORPHAN_TIP = (n: number): string =>
+  tip('报告没记它验的是谁', `${n} 份`, '没有 branch / commit / PR，挂不上任何改动——归档流程的缺口');
+
+const RECLAIMED_TIP = (n: number): string =>
+  tip('对应分支已被 CDS 回收', `${n} 份`, '无从核对，是常态不是漏');
+
+/** 一垛的悬浮内容：图上只放得下项目名和一个数，其余都在这里。 */
+export function projectTip(p: PipelineProjectRow): string {
+  const f = p.funnel;
+  const verdicts = f.pass + f.conditional + f.fail;
+  return tip(
+    p.projectName,
+    `改动 ${Math.max(0, f.changes)} · 部署过 ${Math.max(0, f.deployed)} · 验过 ${Math.max(0, f.accepted)}`,
+    verdicts > 0
+      ? `通过 ${f.pass} · 原则性 ${f.conditional} · 未通过 ${f.fail}`
+      : '一条都没验过',
+    p.staleReports > 0 ? `另有 ${p.staleReports} 份报告的分支已回收` : '',
+    p.lastActivityAt ? `最近动静 ${p.lastActivityAt.slice(0, 10)}` : '没有动静',
+    p.githubLinked ? '' : '未接 GitHub，合并这一环查不到',
+    '点击进入该项目',
   );
 }
 
@@ -950,6 +1101,7 @@ function YardWide({
             className="g-hit"
             role="button"
             tabIndex={0}
+            data-tip={projectTip(p)}
             onClick={() => onOpenProject(p.projectId)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' || e.key === ' ') {
@@ -958,7 +1110,6 @@ function YardWide({
               }
             }}
           >
-            <title>{p.projectName}</title>
             {seq.map((tone, i) => (
               <rect
                 key={i}
@@ -1032,12 +1183,11 @@ function YardNarrow({
       {projects.map((p) => {
         const seq = stackSeq(p.funnel);
         return (
-          <li key={p.projectId} className="flex h-[44px] items-center gap-2.5">
+          <li key={p.projectId} className="flex h-[44px] items-center gap-2.5" data-tip={projectTip(p)}>
             <div className="flex w-[104px] shrink-0 flex-col justify-center">
               <button
                 type="button"
                 className="block truncate text-left text-[12px] text-foreground hover:underline"
-                title={p.projectName}
                 onClick={() => onOpenProject(p.projectId)}
               >
                 {p.projectName}
@@ -1096,7 +1246,8 @@ function Dots({
   n,
   per,
   delay = 0,
-}: { x0: number; y0: number; n: number; per: number; delay?: number }): JSX.Element {
+  hint,
+}: { x0: number; y0: number; n: number; per: number; delay?: number; hint?: string }): JSX.Element {
   return (
     <>
       {Array.from({ length: Math.max(0, n) }, (_, i) => (
@@ -1107,6 +1258,7 @@ function Dots({
           r={3.2}
           className="f-hairstrong pp-dot"
           style={d(delay + i * 5)}
+          data-tip={hint}
         />
       ))}
     </>
@@ -1124,16 +1276,20 @@ function OutsideWide({ orphan, reclaimed }: { orphan: number; reclaimed: number 
   return (
     <svg className="pp-scene" viewBox={`0 0 ${vbW} ${h}`} style={sceneWidth(vbW)} role="img" aria-label="场外报告">
       <line x1={0} y1={14} x2={vbW} y2={14} className="s-fence" />
-      <text x={0} y={52} className="t-lab pp-lab" style={d(60)}>
-        无主
-      </text>
-      <CountText x={70} y={56} className="t-num" n={orphan} />
-      <Dots x0={126} y0={48} n={orphan} per={15} delay={80} />
-      <text x={330} y={52} className="t-lab pp-lab" style={d(240)}>
-        已回收
-      </text>
-      <CountText x={428} y={56} className="t-num" n={reclaimed} />
-      <Dots x0={512} y0={34} n={reclaimed} per={30} delay={260} />
+      <g data-tip={ORPHAN_TIP(orphan)}>
+        <text x={0} y={52} className="t-lab pp-lab" style={d(60)}>
+          无主
+        </text>
+        <CountText x={70} y={56} className="t-num" n={orphan} />
+      </g>
+      <Dots x0={126} y0={48} n={orphan} per={15} delay={80} hint={ORPHAN_TIP(orphan)} />
+      <g data-tip={RECLAIMED_TIP(reclaimed)}>
+        <text x={330} y={52} className="t-lab pp-lab" style={d(240)}>
+          已回收
+        </text>
+        <CountText x={428} y={56} className="t-num" n={reclaimed} />
+      </g>
+      <Dots x0={512} y0={34} n={reclaimed} per={30} delay={260} hint={RECLAIMED_TIP(reclaimed)} />
     </svg>
   );
 }
@@ -1150,14 +1306,14 @@ function OutsideNarrow({ orphan, reclaimed }: { orphan: number; reclaimed: numbe
       <text x={76} y={56} className="t-num">
         {orphan}
       </text>
-      <Dots x0={136} y0={48} n={orphan} per={15} />
+      <Dots x0={136} y0={48} n={orphan} per={15} hint={ORPHAN_TIP(orphan)} />
       <text x={0} y={base + 4} className="t-lab">
         已回收
       </text>
       <text x={76} y={base + 8} className="t-num">
         {reclaimed}
       </text>
-      <Dots x0={136} y0={base} n={reclaimed} per={15} />
+      <Dots x0={136} y0={base} n={reclaimed} per={15} hint={RECLAIMED_TIP(reclaimed)} />
     </svg>
   );
 }
@@ -1183,9 +1339,26 @@ function Card({ children }: { children: React.ReactNode }): JSX.Element {
   );
 }
 
+/**
+ * 给货堆里每一只箱子配一个分支名。
+ *
+ * 名字取自 `leaks` 里 deployed-not-accepted 那一类的 subject。注意**只拿来当标签**，
+ * 计数仍由 splitChanges 现推（它刻意不用这个桶，理由见 splitChanges 的注释）。
+ * 两边条数对不上时宁可一个都不绑：65 只箱子配 63 个名字，剩下两只会静默错位，
+ * 悬浮上去指鹿为马比没有提示更糟。
+ */
+export function heapTipsOf(pipeline: PipelineOverview): string[] {
+  const names = new Map(pipeline.projects.map((p) => [p.projectId, p.projectName]));
+  const list = pipeline.leaks.filter((l) => l.kind === 'deployed-not-accepted');
+  if (list.length !== splitChanges(pipeline.total).heap) return [];
+  return list.map((l) => tip(l.subject, names.get(l.projectId) ?? l.projectId, '已部署，还没人验'));
+}
+
 export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): JSX.Element {
   const orphan = Math.max(0, pipeline.totalLeaks['report-missing-change-key'] ?? 0);
   const reclaimed = Math.max(0, pipeline.staleReports);
+  const { tipState, handlers } = useTipDelegate();
+  const heapTips = heapTipsOf(pipeline);
 
   // 三张图各自缩到自己该有的大小之后，卡片要是还占满整条，就成了「大盒子装一点东西」——
   // 比不缩还空。所以整块面板跟着最宽的那张图收。
@@ -1196,7 +1369,8 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
   );
 
   return (
-    <div className="pp-root flex flex-col gap-4" style={{ maxWidth: `${panelPx}px` }}>
+    <div className="pp-root flex flex-col gap-4" style={{ maxWidth: `${panelPx}px` }} {...handlers}>
+      {tipState ? <TipBox state={tipState} /> : null}
       <style>{SCENE_CSS}</style>
       <SceneDefs />
 
@@ -1209,10 +1383,10 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
 
       <Card>
         <div className="lg:hidden">
-          <HallNarrow f={pipeline.total} />
+          <HallNarrow f={pipeline.total} heapTips={heapTips} />
         </div>
         <div className="hidden lg:block">
-          <HallWide f={pipeline.total} />
+          <HallWide f={pipeline.total} heapTips={heapTips} />
         </div>
       </Card>
 
