@@ -18,6 +18,7 @@ import { DiscoveryStrip } from './DiscoveryStrip';
 import type { MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
   buildOwnerBoard,
+  describeRow,
   listEnvironments,
   listProjects,
   scopeTargets,
@@ -102,11 +103,7 @@ function BusinessCard({ row, onOpen }: { row: BusinessRow; onOpen: (targetId: st
         </div>
 
         <div className={cn('truncate font-mono text-[0.6875rem]', row.worst === 'down' ? 'text-destructive' : row.worst === 'stale' ? 'text-warn' : 'text-muted-foreground')}>
-          {worstCell?.reason
-            ? `${worstCell.label} ${worstCell.reason}`
-            : row.observeMode === 'passive'
-              ? `窗口内 ${row.cells[0]?.sampleCount ?? 0} 次真实调用，无异常`
-              : `${row.cells.length} 个环境都通过判据`}
+          {describeRow(row)}
         </div>
 
         {row.attribution ? (

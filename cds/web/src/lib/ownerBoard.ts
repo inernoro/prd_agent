@@ -59,6 +59,27 @@ export interface EnvironmentCell {
   reason?: string;
 }
 
+/**
+ * 卡片上那句读数。
+ *
+ * 与 assessCell **共用同一个值**：文案里出现的样本量，必须就是判据用的那个。
+ * 曾经这句话写在组件里、用 `sampleCount ?? 0` 兜底，于是「这一轮没读到」被
+ * 显示成「0 次真实调用」——而判据把 undefined 当「没读到」判了正常。
+ * 页面上白纸黑字写着 0，系统却说一切正常，两边说的不是同一件事
+ * （predicate-and-wiring-discipline 形状 6：判据读的值不是显示的那个值）。
+ */
+export function describeRow(row: Pick<BusinessRow, 'observeMode' | 'cells' | 'worst'>): string {
+  const worstCell = row.cells.find((c) => c.health === row.worst) ?? row.cells[0];
+  if (worstCell?.reason) return `${worstCell.label} ${worstCell.reason}`;
+  if (row.observeMode === 'passive') {
+    const sample = row.cells.find((c) => c.sampleCount !== undefined)?.sampleCount;
+    // 读不到就说读不到。补一个 0 上去是在替判据撒谎。
+    if (sample === undefined) return '被动观测，这一轮没读到样本量';
+    return `窗口内 ${sample} 次真实调用，无异常`;
+  }
+  return `${row.cells.length} 个环境都通过判据`;
+}
+
 export interface BusinessRow {
   /** 合并键 = 监控名：同名的监控视为「同一条业务的不同环境」 */
   key: string;

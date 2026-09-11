@@ -19,6 +19,7 @@ import {
   buildAttribution,
   buildBusinessRows,
   buildOwnerBoard,
+  describeRow,
 } from '../../web/src/lib/ownerBoard.js';
 import type { MonitorEnvironment, UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
 
@@ -209,5 +210,36 @@ describe('第一屏说什么', () => {
     expect(board.rows).toHaveLength(1);
     expect(board.infra.total).toBe(3);
     expect(board.infra.preview).toBe(2);
+  });
+});
+
+/**
+ * 卡片文案与判据必须用同一个样本量。
+ *
+ * 2026-09-11 真视觉验收在截图上抓到的：一张卡片写着「窗口内 0 次真实调用」，
+ * 判据却判它正常。因为文案用 `sampleCount ?? 0` 兜底，把「这一轮没读到」
+ * 显示成了 0，而判据把 undefined 当「没读到」——页面上的数和系统认的数
+ * 不是同一个（predicate-and-wiring-discipline 形状 6）。
+ */
+describe('卡片读数与判据同源', () => {
+  const row = (sampleCount: number | undefined) => {
+    const t = target({ name: 'X', environment: 'production', observeMode: 'passive', ...(sampleCount === undefined ? {} : { sampleCount }) });
+    return buildBusinessRows([t])[0];
+  };
+
+  it('读不到样本量时照实说读不到，绝不显示成 0', () => {
+    const r = row(undefined);
+    expect(describeRow(r)).toBe('被动观测，这一轮没读到样本量');
+    expect(describeRow(r)).not.toContain('0 次');
+  });
+
+  it('读到 0 时既显示 0，也判「绿灯不作数」—— 两边同一个值', () => {
+    const r = row(0);
+    expect(r.worst).toBe('stale');
+    expect(describeRow(r)).toContain('0 次真实调用，绿灯不作数');
+  });
+
+  it('读到正数时显示那个数', () => {
+    expect(describeRow(row(13))).toContain('窗口内 13 次真实调用');
   });
 });

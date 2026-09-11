@@ -3,3 +3,4 @@
 | refactor | cds | 删掉 cds-monitors.yml 与它的导入契约守卫——声明改由端点自报，两处声明只会各自漂移 |
 | docs | platform | 新增 spec.platform.monitor-discovery.md（协议字段表 + 三条命门 + 谁能插） |
 | fix | cds | 拔掉自检端点后，它名下的监控当场下线（此前成了孤儿，永远轮不到对账） |
+| fix | cds | 业务卡片的样本量读数与判据同源：读不到就说读不到，不再用 ?? 0 显示成「0 次真实调用」却判正常 |
