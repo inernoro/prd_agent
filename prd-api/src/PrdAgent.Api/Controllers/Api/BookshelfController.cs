@@ -75,6 +75,9 @@ public class BookshelfController : ControllerBase
                 Correct = incoming.Correct,
                 Total = incoming.Total,
                 Passed = incoming.Passed,
+                // 读书数是快照，越界一律按 0（即裸考）——宁可少算通关，不许凭前端一句话虚增。
+                ReadAtExam = incoming.ReadAtExam < 0 ? 0 : incoming.ReadAtExam,
+                TotalAtExam = incoming.TotalAtExam < 0 ? 0 : incoming.TotalAtExam,
                 TakenAt = now,
             };
         }
@@ -125,17 +128,29 @@ public class BookshelfController : ControllerBase
                 // 查不到用户（离职清理、脏数据）时不塞假名字，前端按 null 显示「未知成员」
                 displayName = nameOf.TryGetValue(p.UserId, out var n) ? n : null,
                 readCount = p.ReadBookIds.Count,
-                passedCount = p.ExamResults.Values.Count(r => r.Passed),
-                passedVolumeIds = p.ExamResults.Where(kv => kv.Value.Passed).Select(kv => kv.Key).ToList(),
+                // 通关口径与前端 examContext.countsAsPassed 一致：读过 + 通过。
+                // 裸考（交卷时一本没读）单独计——否则读完整卷的人和没读的人在看板上长得一样，这个数就废了。
+                passedCount = p.ExamResults.Values.Count(r => r.Passed && r.ReadAtExam > 0),
+                blindPassedCount = p.ExamResults.Values.Count(r => r.Passed && r.ReadAtExam <= 0),
+                passedVolumeIds = p.ExamResults
+                    .Where(kv => kv.Value.Passed && kv.Value.ReadAtExam > 0)
+                    .Select(kv => kv.Key).ToList(),
                 updatedAt = p.UpdatedAt,
             })
             .OrderByDescending(r => r.passedCount)
             .ThenByDescending(r => r.readCount)
             .ToList();
 
-        // 每卷有多少人通关 —— 看板真正的用处：一眼看出全队哪一卷最薄弱
+        // 每卷有多少人通关 —— 看板真正的用处：一眼看出全队哪一卷最薄弱。
+        // 只计读过再考过的；裸考通过另算一份，看板分开展示。
         var perVolume = all
-            .SelectMany(p => p.ExamResults.Where(kv => kv.Value.Passed).Select(kv => kv.Key))
+            .SelectMany(p => p.ExamResults
+                .Where(kv => kv.Value.Passed && kv.Value.ReadAtExam > 0).Select(kv => kv.Key))
+            .GroupBy(v => v)
+            .ToDictionary(g => g.Key, g => g.Count());
+        var perVolumeBlind = all
+            .SelectMany(p => p.ExamResults
+                .Where(kv => kv.Value.Passed && kv.Value.ReadAtExam <= 0).Select(kv => kv.Key))
             .GroupBy(v => v)
             .ToDictionary(g => g.Key, g => g.Count());
 
@@ -144,6 +159,7 @@ public class BookshelfController : ControllerBase
             members = rows,
             memberCount = rows.Count,
             passedByVolume = perVolume,
+            blindPassedByVolume = perVolumeBlind,
         }));
     }
 
@@ -159,6 +175,10 @@ public class BookshelfController : ControllerBase
                 correct = kv.Value.Correct,
                 total = kv.Value.Total,
                 passed = kv.Value.Passed,
+                // 这两个必须原样吐回去：少了它们前端读到 0，所有成绩都会退化成「裸考」，
+                // 通关数一夜清零。写进库却读不回来，是典型的「链路只建一半」。
+                readAtExam = kv.Value.ReadAtExam,
+                totalAtExam = kv.Value.TotalAtExam,
                 takenAt = kv.Value.TakenAt,
             });
 }
@@ -176,4 +196,7 @@ public class SaveBookshelfExamResult
     public int Correct { get; set; }
     public int Total { get; set; }
     public bool Passed { get; set; }
+    /// <summary>交卷时该卷已读 / 总本数。旧客户端不传，默认 0 即按裸考处理。</summary>
+    public int ReadAtExam { get; set; }
+    public int TotalAtExam { get; set; }
 }

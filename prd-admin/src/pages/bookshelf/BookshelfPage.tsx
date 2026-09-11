@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { VOLUMES, PAIN_REMEDIES, ALL_BOOKS, findVolume } from '@/lib/bookshelf/catalog';
 import { QUESTIONS, questionsOf } from '@/lib/bookshelf/exams';
+import { stanceOf, countsAsPassed, examEntryLabel } from '@/lib/bookshelf/examContext';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
 import type { Track, Volume, BookEntry } from '@/lib/bookshelf/types';
 import { ExamDialog } from './ExamDialog';
@@ -122,13 +123,21 @@ export default function BookshelfPage() {
 
   const visibleBooks = useMemo(() => ALL_BOOKS.filter((b) => matchTrack(b, track)), [track]);
   const readCount = visibleBooks.filter((b) => readBookIds.includes(b.id)).length;
-  const passedCount = VOLUMES.filter((v) => examResults[v.id]?.passed).length;
+  // 与看板同一口径：裸考通过不算通关（examContext.countsAsPassed 是唯一判据）
+  const passedCount = VOLUMES.filter((v) => {
+    const r = examResults[v.id];
+    return r ? countsAsPassed(r.passed, r.readAtExam, r.totalAtExam) : false;
+  }).length;
 
   const activeVolume = findVolume(activeVolumeId) ?? VOLUMES[0];
   const activeBooks = activeVolume.books.filter((b) => matchTrack(b, track));
   const activeSkin = skinOf(activeVolume.id);
   const activeResult = examResults[activeVolume.id];
   const examCount = questionsOf(activeVolume.id).length;
+  // 按整卷算读了几本（不受开发/产品筛选影响）：一本没读时这不是「赴考」，是摸底。
+  const activeTotalBooks = activeVolume.books.length;
+  const activeReadBooks = activeVolume.books.filter((b) => readBookIds.includes(b.id)).length;
+  const activeStance = stanceOf(activeReadBooks, activeTotalBooks);
 
   return (
     <div
@@ -261,7 +270,9 @@ export default function BookshelfPage() {
               className="mt-4 w-full py-3 rounded-full text-[13.5px] font-bold tracking-[0.16em] transition-transform duration-150 hover:-translate-y-[1px]"
               style={{ background: 'var(--text-primary)', color: 'var(--bg-base)', border: EDGE, boxShadow: `0 3px 0 ${activeSkin.fg}` }}
             >
-              {activeResult ? `再考 · ${activeResult.correct}/${activeResult.total}` : `赴 考 · ${examCount} 题`}
+              {activeResult
+                ? `再考 · ${activeResult.correct}/${activeResult.total}`
+                : examEntryLabel(activeReadBooks, activeTotalBooks, examCount)}
             </button>
           )}
         </div>
@@ -331,7 +342,8 @@ export default function BookshelfPage() {
             const skin = VOLUME_SKIN[i % VOLUME_SKIN.length];
             const books = vol.books.filter((b) => matchTrack(b, track));
             const read = books.filter((b) => readBookIds.includes(b.id)).length;
-            const passed = examResults[vol.id]?.passed;
+            const r = examResults[vol.id];
+            const passed = r ? countsAsPassed(r.passed, r.readAtExam, r.totalAtExam) : false;
             const active = vol.id === activeVolumeId;
             return (
               <button
@@ -422,8 +434,16 @@ export default function BookshelfPage() {
               <div className="text-[14px] font-black">读过和站得住是两回事</div>
               <div className="mt-1 text-[12.5px] font-medium leading-[1.68]" style={{ color: 'var(--text-secondary)' }}>
                 {activeResult
-                  ? `上次 ${activeResult.correct}/${activeResult.total}${activeResult.passed ? '，已通关。错题解析随时能再看。' : '，还没过。错的地方正是这一卷要治的。'}`
-                  : `${examCount} 道判断题，答对 ${Math.ceil(examCount * 0.6)} 道及格。考的是判断，不是记忆。`}
+                  ? `上次 ${activeResult.correct}/${activeResult.total}${
+                      stanceOf(activeResult.readAtExam, activeResult.totalAtExam) === 'blind'
+                        ? `（当时这一卷一本没读，不计入通关）`
+                        : activeResult.passed
+                          ? '，已通关。错题解析随时能再看。'
+                          : '，还没过。错的地方正是这一卷要治的。'
+                    }`
+                  : activeStance === 'blind'
+                    ? `这一卷还没开始读。${examCount} 道判断题先摸个底，做完就知道该从哪本入手。`
+                    : `${examCount} 道判断题，答对 ${Math.ceil(examCount * 0.6)} 道及格。考的是判断，不是记忆。`}
               </div>
             </div>
             <button
@@ -432,7 +452,7 @@ export default function BookshelfPage() {
               className="shrink-0 px-7 py-3 rounded-full text-[14px] font-bold tracking-[0.14em] transition-transform duration-150 hover:-translate-y-[1px]"
               style={{ background: activeSkin.fg, color: 'var(--bg-card)', border: EDGE, boxShadow: HARD_SM }}
             >
-              {activeResult ? '再考一次' : '赴 考'}
+              {activeResult ? '再考一次' : activeStance === 'blind' ? '先摸个底' : '赴 考'}
             </button>
           </div>
         )}

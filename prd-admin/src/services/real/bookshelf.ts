@@ -13,6 +13,9 @@ export interface ServerExamResult {
   correct: number;
   total: number;
   passed: boolean;
+  /** 交卷时该卷已读 / 总本数。旧记录没有这两个字段，前端按零本（裸考）处理 */
+  readAtExam?: number;
+  totalAtExam?: number;
   takenAt: string;
 }
 
@@ -35,8 +38,10 @@ export interface TeamMemberRow {
 export interface BookshelfTeamDto {
   members: TeamMemberRow[];
   memberCount: number;
-  /** 卷 id → 通关人数。看板真正的用处：一眼看出全队哪一卷最薄弱 */
+  /** 卷 id → 通关人数（读过 + 通过）。看板真正的用处：一眼看出全队哪一卷最薄弱 */
   passedByVolume: Record<string, number>;
+  /** 卷 id → 裸考通过人数（一本没读就考过）。单独计，不混进上面那个数 */
+  blindPassedByVolume?: Record<string, number>;
 }
 
 export function getMyBookshelfProgress() {
@@ -45,7 +50,10 @@ export function getMyBookshelfProgress() {
 
 export function saveMyBookshelfProgress(payload: {
   readBookIds: string[];
-  examResults: Record<string, { correct: number; total: number; passed: boolean }>;
+  examResults: Record<string, {
+    correct: number; total: number; passed: boolean;
+    readAtExam: number; totalAtExam: number;
+  }>;
 }) {
   return apiRequest<BookshelfProgressDto>('/api/bookshelf/progress', {
     method: 'PUT',

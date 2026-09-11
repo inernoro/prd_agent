@@ -11,6 +11,7 @@ import { useMemo, useState } from 'react';
 import { CheckCircle2, XCircle, RotateCcw, Award } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
 import { questionsOf, isPassed, PASS_RATE } from '@/lib/bookshelf/exams';
+import { stanceOf } from '@/lib/bookshelf/examContext';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
 import type { Volume } from '@/lib/bookshelf/types';
 
@@ -27,10 +28,27 @@ export function ExamDialog({
   const [picked, setPicked] = useState<Record<string, number>>({});
   const [submitted, setSubmitted] = useState(false);
   const recordExam = useBookshelfStore((s) => s.recordExam);
+  const readBookIds = useBookshelfStore((s) => s.readBookIds);
+
+  // 交卷时这一卷读了几本 —— 决定这个分数该怎么读。按整卷算，不受当前开发/产品筛选影响。
+  const totalBooks = volume?.books.length ?? 0;
+  const readBooks = volume ? volume.books.filter((b) => readBookIds.includes(b.id)).length : 0;
+  const stance = stanceOf(readBooks, totalBooks);
 
   const answeredCount = Object.keys(picked).length;
   const correctCount = questions.filter((q) => picked[q.id] === q.answer).length;
   const passed = isPassed(correctCount, questions.length);
+
+  // 没读就考、考完还错了几题的人，最需要的不是一句「未通过」，是「先读哪两本」。
+  // 取这一卷门槛最低的两本未读书 —— 把考试变成入口，而不是出口。
+  const suggestedBooks = useMemo(() => {
+    if (!volume) return [];
+    return volume.books
+      .filter((b) => !readBookIds.includes(b.id))
+      .slice()
+      .sort((a, b) => a.level - b.level)
+      .slice(0, 2);
+  }, [volume, readBookIds]);
 
   function reset() {
     setPicked({});
@@ -45,6 +63,8 @@ export function ExamDialog({
       correct: correctCount,
       total: questions.length,
       passed: isPassed(correctCount, questions.length),
+      readAtExam: readBooks,
+      totalAtExam: totalBooks,
       takenAt: new Date().toISOString(),
     });
   }
@@ -61,11 +81,13 @@ export function ExamDialog({
       open={open}
       onOpenChange={handleClose}
       maxWidth={780}
-      title={`卷${'一二三四五六七'[volume.index - 1]} · ${volume.name} —— 结业考`}
+      title={`卷${'一二三四五六七'[volume.index - 1]} · ${volume.name} —— ${stance === 'blind' ? '摸底测' : '结业考'}`}
       description={
         submitted
           ? undefined
-          : `共 ${questions.length} 题，答对 ${Math.ceil(questions.length * PASS_RATE)} 题及格。考的是判断，不是记忆。`
+          : stance === 'blind'
+            ? `这一卷你还没开始读，这次是摸底：${questions.length} 题，考的是判断不是记忆。做完就知道该先读哪本。`
+            : `共 ${questions.length} 题，答对 ${Math.ceil(questions.length * PASS_RATE)} 题及格。考的是判断，不是记忆。`
       }
       content={
         <div className="flex flex-col gap-3.5">
@@ -83,12 +105,42 @@ export function ExamDialog({
               />
               <div className="min-w-0">
                 <div className="text-[19px] font-black tracking-[-0.02em]" style={{ color: 'var(--text-primary)' }}>
-                  {correctCount} / {questions.length} 题 —— {passed ? '通过' : '未通过'}
+                  {correctCount} / {questions.length} 题
+                  {' —— '}
+                  {stance === 'blind' ? (passed ? '底子在' : '有缺口') : (passed ? '通过' : '未通过')}
                 </div>
-                <div className="text-[12.5px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>
-                  {passed
-                    ? '这一卷的判断题你已经站得住。往下一卷走。'
-                    : '下面每题都有解析，看完再来一次。错的地方正是这一卷要治的。'}
+                <div className="text-[12.5px] mt-0.5 leading-[1.6]" style={{ color: 'var(--text-secondary)' }}>
+                  {/* 同一个分数，读没读过是两个结论。说清楚这次量的是什么。 */}
+                  {stance === 'blind' && (
+                    <>
+                      你是在一本没读的情况下考的（这一卷共 {totalBooks} 本）。
+                      {passed
+                        ? '底子在，但这不算通关——看板只记读过再考过的。'
+                        : '错的那几处正是这一卷要治的。'}
+                      {suggestedBooks.length > 0 && (
+                        <>
+                          建议从这两本开始：
+                          {suggestedBooks.map((b) => `《${b.title}》`).join('、')}。
+                        </>
+                      )}
+                    </>
+                  )}
+                  {stance === 'partial' && (
+                    <>
+                      读了 {readBooks}/{totalBooks} 本后考的。
+                      {passed
+                        ? '这一卷的判断题你已经站得住。往下一卷走。'
+                        : '下面每题都有解析，看完再来一次。'}
+                    </>
+                  )}
+                  {stance === 'complete' && (
+                    <>
+                      整卷 {totalBooks} 本读完后考的。
+                      {passed
+                        ? '这一卷的判断题你已经站得住。往下一卷走。'
+                        : '读完还错这几道，说明这几处没读透——解析在下面。'}
+                    </>
+                  )}
                 </div>
               </div>
             </div>

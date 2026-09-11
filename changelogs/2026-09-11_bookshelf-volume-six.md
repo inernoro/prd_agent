@@ -7,3 +7,6 @@
 | polish | prd-admin | 痛点文案从逐字引用同事原话改写为处境描述，移除页面上的真人姓名 |
 | test | prd-admin | 新增守卫拦截原话回流（转述痕迹词） |
 | merge | platform | 合并 main（含 llmgw 读方 schema 容忍修复），llmgw-serve 容器恢复 |
+| feat | prd-admin | 结业考区分摸底与结业：成绩记住「当时读了几本」，裸考给出先读哪本 |
+| feat | prd-api | 通关口径改为读过+通过，裸考通过单列 blindPassedByVolume |
+| test | prd-admin | 新增 examContext 判据守卫与成绩往返守卫（读写两个方向） |

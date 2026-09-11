@@ -105,11 +105,16 @@ for (const theme of ['dark', 'light']) {
 
   await page.screenshot({ path: `${OUT}/02-volume-expanded-${theme}.png` });
 
-  const examBtn = page.locator('button').filter({ hasText: /赴\s*考|再考/ }).first();
+  // 一本没读时入口必须说自己是摸底 —— 「赴考/通关」那套关卡话术配上零门槛才是漏洞。
+  step['没读时入口叫摸底不叫赴考'] =
+    (await page.locator('button').filter({ hasText: '先摸个底' }).count()) > 0
+    && (await page.locator('button').filter({ hasText: /赴\s*考/ }).count()) === 0;
+
+  const examBtn = page.locator('button').filter({ hasText: /先摸个底|赴\s*考|再考/ }).first();
   await examBtn.scrollIntoViewIfNeeded();
   await examBtn.click();
   await page.waitForTimeout(800);
-  step['考卷弹出'] = await page.locator('text=结业考').first().isVisible();
+  step['考卷弹出'] = await page.locator('text=摸底测').first().isVisible();
   await page.screenshot({ path: `${OUT}/03-exam-open-${theme}.png` });
 
   // 全选 A 再交卷：故意不全对，好让解析出场（解析才是这套题存在的理由）。
@@ -123,8 +128,11 @@ for (const theme of ['dark', 'light']) {
   await page.waitForTimeout(900);
 
   const body = await page.evaluate(() => document.body.innerText);
-  step['交卷后出分'] = /\d+\s*\/\s*\d+\s*题\s*——\s*(通过|未通过)/.test(body);
+  step['交卷后出分'] = /\d+\s*\/\s*\d+\s*题\s*——\s*(通过|未通过|底子在|有缺口)/.test(body);
   step['解析出现'] = body.includes('答对了。') || body.includes('为什么不是你选的那个');
+  // 裸考的结果页必须说清「这次量的是什么」并给出下一步该读哪本，否则考试还是个出口而非入口。
+  step['裸考结果说清上下文'] = body.includes('一本没读的情况下考的');
+  step['裸考结果给出先读哪本'] = body.includes('建议从这两本开始');
   await page.screenshot({ path: `${OUT}/04-exam-result-${theme}.png`, fullPage: true });
 
   const fails = Object.entries(step).filter(([, v]) => !v).map(([k]) => k);

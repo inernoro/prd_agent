@@ -43,6 +43,10 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
   const passedByVolume: Record<string, number> =
     data?.passedByVolume && typeof data.passedByVolume === 'object' ? data.passedByVolume : {};
   const members = Array.isArray(data?.members) ? data.members : [];
+  const blindByVolume: Record<string, number> =
+    data?.blindPassedByVolume && typeof data.blindPassedByVolume === 'object'
+      ? data.blindPassedByVolume : {};
+  const blindTotal = Object.values(blindByVolume).reduce((a, b) => a + (Number(b) || 0), 0);
 
   // 全队最薄弱的一卷：通关人数最少的那卷。没人考过任何卷时不出这句结论。
   const weakest = (() => {
@@ -60,6 +64,11 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
         {state === 'ready' && data && (
           <span className="px-2.5 py-1 rounded-full text-[11.5px] font-bold" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
             {memberCount} 人有记录
+          </span>
+        )}
+        {state === 'ready' && blindTotal > 0 && (
+          <span className="px-2.5 py-1 rounded-full text-[11.5px] font-bold" style={{ background: 'var(--bg-base)', border: EDGE_THIN, color: 'var(--text-muted)' }}>
+            {blindTotal} 次没读就考过
           </span>
         )}
       </div>
@@ -97,6 +106,7 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
           <div className="mt-4 grid gap-2 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
             {VOLUMES.map((v, i) => {
               const n = passedByVolume[v.id] ?? 0;
+              const blind = blindByVolume[v.id] ?? 0;
               const pct = memberCount > 0 ? Math.round((n / memberCount) * 100) : 0;
               const skin = volumeSkin[i % volumeSkin.length];
               return (
@@ -109,6 +119,11 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
                     </div>
                     <span className="text-[11px] font-bold shrink-0">{n}</span>
                   </div>
+                  {blind > 0 && (
+                    <div className="mt-1 text-[10.5px] font-bold" style={{ color: 'var(--text-muted)' }}>
+                      另有 {blind} 人没读就考过
+                    </div>
+                  )}
                 </div>
               );
             })}

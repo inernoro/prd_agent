@@ -30,6 +30,13 @@ export interface ExamResult {
   correct: number;
   total: number;
   passed: boolean;
+  /**
+   * 交卷时这一卷已读几本 / 共几本。
+   * 分数脱离这两个数就没有结论：裸考 5/7 与读完 11 本考 5/7 指向完全不同的下一步。
+   * 存的是快照——卷里的书会增删，不能事后用当前书数倒推。
+   */
+  readAtExam: number;
+  totalAtExam: number;
   /** ISO 时间戳 */
   takenAt: string;
 }
@@ -69,7 +76,10 @@ function toPayload(readBookIds: string[], examResults: Record<string, ExamResult
     readBookIds,
     examResults: Object.fromEntries(
       Object.entries(examResults).map(([k, v]) => [
-        k, { correct: v.correct, total: v.total, passed: v.passed },
+        k, {
+          correct: v.correct, total: v.total, passed: v.passed,
+          readAtExam: v.readAtExam ?? 0, totalAtExam: v.totalAtExam ?? 0,
+        },
       ]),
     ),
   };
@@ -125,7 +135,12 @@ export const useBookshelfStore = create<BookshelfState>()(
             const results: Record<string, ExamResult> = {};
             Object.entries(res.data.examResults ?? {}).forEach(([volumeId, r]) => {
               results[volumeId] = {
-                volumeId, correct: r.correct, total: r.total, passed: r.passed, takenAt: r.takenAt,
+                volumeId, correct: r.correct, total: r.total, passed: r.passed,
+                // 服务端可能是升级前写的旧记录，没有这两个字段——按零本处理（即裸考），
+                // 不许拿当前书数倒推假装读过。
+                readAtExam: r.readAtExam ?? 0,
+                totalAtExam: r.totalAtExam ?? 0,
+                takenAt: r.takenAt,
               };
             });
             set({

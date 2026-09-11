@@ -47,6 +47,16 @@ public class BookshelfExamResult
     /// <summary>是否及格（判据在前端 exams.ts，写库时一并存下结论）</summary>
     public bool Passed { get; set; }
 
+    /// <summary>
+    /// 交卷时这一卷已读几本 / 共几本。分数脱离这两个数就没有结论：
+    /// 一本没读考 5/7 与读完 11 本考 5/7 指向完全不同的下一步。
+    /// 存快照而不是事后按当前书数倒推——卷里的书会增删。
+    /// 升级前的旧记录没有这两个字段，反序列化后是 0，按裸考处理（与前端同口径）。
+    /// </summary>
+    public int ReadAtExam { get; set; }
+
+    public int TotalAtExam { get; set; }
+
     /// <summary>交卷时间（UTC）</summary>
     public DateTime TakenAt { get; set; } = DateTime.UtcNow;
 }

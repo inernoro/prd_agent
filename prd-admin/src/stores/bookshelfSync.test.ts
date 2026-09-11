@@ -129,7 +129,10 @@ describe('拉取失败不清空本地', () => {
 describe('成绩只留更好的那次', () => {
   it('更差的成绩不覆盖，也不触发推送', async () => {
     saveMock.mockResolvedValue({ success: true, data: {} });
-    const good = { volumeId: 'v1', correct: 4, total: 4, passed: true, takenAt: 'T1' };
+    const good = {
+      volumeId: 'v1', correct: 4, total: 4, passed: true,
+      readAtExam: 3, totalAtExam: 5, takenAt: 'T1',
+    };
     useBookshelfStore.getState().recordExam(good);
     await settle();
     saveMock.mockClear();
@@ -138,5 +141,57 @@ describe('成绩只留更好的那次', () => {
     await settle();
     expect(useBookshelfStore.getState().examResults.v1.correct).toBe(4);
     expect(saveMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('成绩必须带着「当时读了几本」一起往返', () => {
+  // 这两条各守一个方向。写方向断掉 → 服务端永远收到 0；读方向断掉 → 每次刷新后
+  // 所有成绩退化成裸考、通关数一夜清零。两边都是「删掉不会红」的静默退化：
+  // 本次就先漏了读方向（后端 ToPlainMap 没吐这两个字段），补守卫堵住。
+  it('写方向：推给服务端的快照带上 readAtExam / totalAtExam', async () => {
+    saveMock.mockResolvedValue({ success: true, data: {} });
+    useBookshelfStore.getState().recordExam({
+      volumeId: 'v-ai', correct: 6, total: 7, passed: true,
+      readAtExam: 11, totalAtExam: 11, takenAt: 'T1',
+    });
+    await settle();
+    const payload = saveMock.mock.calls[0][0] as {
+      examResults: Record<string, { readAtExam: number; totalAtExam: number }>;
+    };
+    expect(payload.examResults['v-ai'].readAtExam).toBe(11);
+    expect(payload.examResults['v-ai'].totalAtExam).toBe(11);
+  });
+
+  it('读方向：服务端返回的读书数要落进 store，不许丢', async () => {
+    loadMock.mockResolvedValue({
+      success: true,
+      data: {
+        readBookIds: [],
+        examResults: {
+          'v-ai': {
+            volumeId: 'v-ai', correct: 6, total: 7, passed: true,
+            readAtExam: 11, totalAtExam: 11, takenAt: 'T1',
+          },
+        },
+        updatedAt: null,
+      },
+    });
+    await useBookshelfStore.getState().loadFromServer();
+    expect(useBookshelfStore.getState().examResults['v-ai'].readAtExam).toBe(11);
+  });
+
+  it('旧记录没有这两个字段时按裸考处理，不许拿当前书数假装读过', async () => {
+    loadMock.mockResolvedValue({
+      success: true,
+      data: {
+        readBookIds: [],
+        examResults: {
+          'v-ai': { volumeId: 'v-ai', correct: 6, total: 7, passed: true, takenAt: 'T1' },
+        },
+        updatedAt: null,
+      },
+    });
+    await useBookshelfStore.getState().loadFromServer();
+    expect(useBookshelfStore.getState().examResults['v-ai'].readAtExam).toBe(0);
   });
 });
