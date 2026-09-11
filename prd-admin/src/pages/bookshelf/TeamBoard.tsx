@@ -33,10 +33,21 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
     return () => { alive = false; };
   }, []);
 
+  // 上游给什么都不许把整页带走。
+  // 2026-09-11 线上事故：后端返回的 JSON 缺 error 键，不满足 apiClient 的 ApiResponse
+  // 判据，data 于是不是看板那一层；memberCount 成了 undefined（既不等于 0、也不大于 0），
+  // 下面这段的 map 照跑，读 undefined['vol-boot'] 把整个藏书阁炸成「页面渲染出错」。
+  // 后端已对齐契约，这里再兜一道：看板拿不到数就降级成空态，不牵连书单。
+  const memberCount = typeof data?.memberCount === 'number' && Number.isFinite(data.memberCount)
+    ? data.memberCount : 0;
+  const passedByVolume: Record<string, number> =
+    data?.passedByVolume && typeof data.passedByVolume === 'object' ? data.passedByVolume : {};
+  const members = Array.isArray(data?.members) ? data.members : [];
+
   // 全队最薄弱的一卷：通关人数最少的那卷。没人考过任何卷时不出这句结论。
   const weakest = (() => {
-    if (!data || data.memberCount === 0) return null;
-    const counts = VOLUMES.map((v, i) => ({ vol: v, i, n: data.passedByVolume[v.id] ?? 0 }));
+    if (memberCount === 0) return null;
+    const counts = VOLUMES.map((v, i) => ({ vol: v, i, n: passedByVolume[v.id] ?? 0 }));
     if (counts.every((c) => c.n === 0)) return null;
     return counts.reduce((min, c) => (c.n < min.n ? c : min), counts[0]);
   })();
@@ -48,7 +59,7 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
         <h3 className="text-[20px] font-black tracking-[-0.02em]">团队看板</h3>
         {state === 'ready' && data && (
           <span className="px-2.5 py-1 rounded-full text-[11.5px] font-bold" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
-            {data.memberCount} 人有记录
+            {memberCount} 人有记录
           </span>
         )}
       </div>
@@ -63,13 +74,13 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
         </p>
       )}
 
-      {state === 'ready' && data && data.memberCount === 0 && (
+      {state === 'ready' && data && memberCount === 0 && (
         <p className="mt-3 text-[13px] font-medium leading-[1.7]" style={{ color: 'var(--text-secondary)' }}>
           还没有人开始读。你标记第一本书之后，这里就会出现记录——这块存在的意义就是让「谁读到哪」不用靠问。
         </p>
       )}
 
-      {state === 'ready' && data && data.memberCount > 0 && (
+      {state === 'ready' && data && memberCount > 0 && (
         <>
           {/* 结论先行：一句挂着数字的判断，而不是让人自己读一排数去算 */}
           {weakest && (
@@ -77,7 +88,7 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
               <TrendingDown size={17} strokeWidth={2.6} className="shrink-0 mt-0.5" style={{ color: volumeSkin[weakest.i]?.fg }} />
               <p className="text-[13.5px] font-bold leading-[1.65]">
                 全队最薄弱的是<span style={{ color: volumeSkin[weakest.i]?.fg }}>「{weakest.vol.name}」</span>——
-                {data.memberCount} 人里只有 {weakest.n} 人通关。{weakest.vol.painQuote}
+                {memberCount} 人里只有 {weakest.n} 人通关。{weakest.vol.painQuote}
               </p>
             </div>
           )}
@@ -85,8 +96,8 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
           {/* 每卷通关人数 */}
           <div className="mt-4 grid gap-2 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
             {VOLUMES.map((v, i) => {
-              const n = data.passedByVolume[v.id] ?? 0;
-              const pct = data.memberCount > 0 ? Math.round((n / data.memberCount) * 100) : 0;
+              const n = passedByVolume[v.id] ?? 0;
+              const pct = memberCount > 0 ? Math.round((n / memberCount) * 100) : 0;
               const skin = volumeSkin[i % volumeSkin.length];
               return (
                 <div key={v.id} className="p-3 rounded-[16px]" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
@@ -105,7 +116,7 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
 
           {/* 成员行 */}
           <div className="mt-4 flex flex-col gap-2">
-            {data.members.map((m) => (
+            {members.map((m) => (
               <div key={m.userId} className="flex items-center gap-3 px-4 py-2.5 rounded-[14px] flex-wrap" style={{ background: 'var(--bg-base)', border: EDGE_THIN }}>
                 <span className="text-[13.5px] font-black min-w-[96px]">
                   {m.displayName ?? '未知成员'}

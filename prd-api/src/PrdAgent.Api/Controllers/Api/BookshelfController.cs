@@ -37,16 +37,12 @@ public class BookshelfController : ControllerBase
     {
         var userId = this.GetRequiredUserId();
         var doc = await _db.BookshelfProgresses.Find(x => x.UserId == userId).FirstOrDefaultAsync();
-        return Ok(new
+        return Ok(ApiResponse<object>.Ok(new
         {
-            success = true,
-            data = new
-            {
-                readBookIds = doc?.ReadBookIds ?? new List<string>(),
-                examResults = ToResultMap(doc),
-                updatedAt = doc?.UpdatedAt,
-            },
-        });
+            readBookIds = doc?.ReadBookIds ?? new List<string>(),
+            examResults = ToResultMap(doc),
+            updatedAt = doc?.UpdatedAt,
+        }));
     }
 
     /// <summary>
@@ -99,11 +95,8 @@ public class BookshelfController : ControllerBase
         await _db.BookshelfProgresses.UpdateOneAsync(
             x => x.UserId == userId, update, new UpdateOptions { IsUpsert = true });
 
-        return Ok(new
-        {
-            success = true,
-            data = new { readBookIds = readIds, examResults = ToPlainMap(merged), updatedAt = now },
-        });
+        return Ok(ApiResponse<object>.Ok(
+            new { readBookIds = readIds, examResults = ToPlainMap(merged), updatedAt = now }));
     }
 
     /// <summary>
@@ -146,16 +139,12 @@ public class BookshelfController : ControllerBase
             .GroupBy(v => v)
             .ToDictionary(g => g.Key, g => g.Count());
 
-        return Ok(new
+        return Ok(ApiResponse<object>.Ok(new
         {
-            success = true,
-            data = new
-            {
-                members = rows,
-                memberCount = rows.Count,
-                passedByVolume = perVolume,
-            },
-        });
+            members = rows,
+            memberCount = rows.Count,
+            passedByVolume = perVolume,
+        }));
     }
 
     private static Dictionary<string, object> ToResultMap(BookshelfProgress? doc)

@@ -25,8 +25,26 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const MIME = { '.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml',
                '.woff2':'font/woff2','.woff':'font/woff','.png':'image/png','.json':'application/json' };
+// 藏书阁的两个接口在这里照线上真实响应作答。
+// 以前这里跟着 SPA fallback 返回 HTML，解析必失败、store 永远停在初始值——
+// 于是「服务端真的返回了进度」这条线上唯一会走的路径，本地一次都没跑过。
+const BOOKSHELF_DATA = {
+  '/api/bookshelf/progress': { readBookIds: [], examResults: {}, updatedAt: null },
+  '/api/bookshelf/team': { members: [], memberCount: 0, passedByVolume: {} },
+};
+// legacy = 后端曾经那种缺 error 键的返回。它不满足 apiClient 的 ApiResponse 判据，
+// 2026-09-11 把整个藏书阁炸成「页面渲染出错」。留着当守卫：降级可以，崩掉不行。
+let apiShape = 'ok';
+function bookshelfBody(u) {
+  const data = BOOKSHELF_DATA[u];
+  return apiShape === 'legacy' ? { success: true, data } : { success: true, data, error: null };
+}
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);
+  if (BOOKSHELF_DATA[u]) {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify(bookshelfBody(u)));
+  }
   let f = path.join(DIST, u);
   if (!fs.existsSync(f) || fs.statSync(f).isDirectory()) f = path.join(DIST, 'index.html'); // SPA fallback
   res.writeHead(200, { 'Content-Type': MIME[path.extname(f)] || 'application/octet-stream' });
@@ -112,6 +130,38 @@ for (const theme of ['dark', 'light']) {
   const fails = Object.entries(step).filter(([, v]) => !v).map(([k]) => k);
   if (fails.length) allOk = false;
   report.push({ theme, step });
+  await ctx.close();
+}
+
+// 守卫：上游返回畸形（缺 error 键的旧格式）时，看板降级但书单不许被带走。
+apiShape = 'legacy';
+{
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({
+      state: {
+        isAuthenticated: true,
+        user: { id: 'e2e', username: 'e2e', displayName: '验收' },
+        token: 'e2e-token', refreshToken: null, sessionKey: null,
+        permissions: ['access'], permissionsLoaded: true, isRoot: true, menuCatalog: [],
+      }, version: 0,
+    }));
+    localStorage.removeItem('bookshelf-progress');
+  });
+  await page.goto(`http://127.0.0.1:${PORT}/bookshelf`, { waitUntil: 'domcontentloaded' });
+  let survived = true;
+  try {
+    await page.waitForSelector('h1:has-text("算你有福了")', { timeout: 20000 });
+  } catch { survived = false; }
+  const crashed = await page.locator('text=页面渲染出错').first().isVisible().catch(() => false);
+  const shelfOk = await page.locator('text=《你的灯亮着吗？》').first().isVisible().catch(() => false);
+  const pass = survived && !crashed && shelfOk;
+  if (!pass) allOk = false;
+  console.log('');
+  console.log('[畸形上游响应]');
+  console.log(`  ${pass ? '通过' : '未通过'}  看板拿到畸形数据时页面不崩、书单照常可读`);
+  await page.screenshot({ path: `${OUT}/03-legacy-response.png` });
   await ctx.close();
 }
 

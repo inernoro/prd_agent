@@ -556,6 +556,7 @@ Playwright 逐像素实测双主题全部 ≥4.5:1。**残余风险**：token �
 |---|---|---|
 | ~~已读标记与结业考成绩只落 localStorage~~ | | 已还（2026-09-10）：`BookshelfProgress` 实体 + `GET/PUT /api/bookshelf/progress`，store 改为服务端优先、本地兜底 |
 | ~~没有团队看板~~ | | 已还（2026-09-10）：`GET /api/bookshelf/team` + `TeamBoard` 组件，含每卷通关人数与「全队最薄弱的一卷」 |
+| ~~团队看板接口返回不满足 ApiResponse 契约，整个藏书阁白屏~~ | | 已还（2026-09-11）：`BookshelfController` 三个端点改用 `ApiResponse<object>.Ok(...)`。原先裸写 `new { success, data }` 少了 `error` 键，`apiClient.isApiResponseLike` 要求三键齐全，判否后 `data` 不是看板那一层，`memberCount` 成 undefined（既不等于 0 也不大于 0），`VOLUMES.map` 照跑并读 `undefined['vol-boot']`，整页崩成「页面渲染出错」。TeamBoard 另兜一道类型防御；e2e 补「畸形上游响应」场景，已过红绿闭环 |
 | 进度整包 PUT，没有并发合并 | 同一人在两个标签页同时操作，后写的那次覆盖前一次的已读列表（成绩不受影响——服务端取更好的那次） | 已知即可。单人多标签同时改书单是极低频场景，为它上乐观锁不划算；真要治就给文档加 version 字段做 CAS |
 | ~~PUT 失败只记 console 不提示用户~~ | | 已还（2026-09-10）：`syncState` 四态 + 页面状态条 + 手动重试 + online 事件自动补发；防抖 400ms 合并连点。守卫 `stores/bookshelfSync.test.ts` 10 条，已过红绿闭环 |
 | 团队看板拉全表，没有分页 | 成员规模到几百人时首屏会变慢 | 待办：`GET /api/bookshelf/team` 加 limit/cursor，或只返回聚合 + Top N |
