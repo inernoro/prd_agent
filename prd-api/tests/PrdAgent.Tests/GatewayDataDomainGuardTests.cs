@@ -4282,7 +4282,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Include(\"EstimatedCostCurrency\")", consoleProgram);
         Assert.Contains(".Include(\"InputPricePerMillion\")", consoleProgram);
         Assert.Contains(".Include(\"OutputPricePerMillion\")", consoleProgram);
-        Assert.Contains("x.Amount is not null && x.Currency is not null && x.Complete", consoleProgram);
+        // 2026-09-11：判据从「按价格字段反推 Complete」换成「读写入时记下的 CostStatus」。
+        // 两条不变量没变——缺价保持未知不显示为 0、跨币种不相加——变的只是判断这件事的口径。
+        // 反推是判据分裂的温床：写入侧改了计价口径而统计侧还按老规矩算，两边各自正确、合起来对不上。
+        Assert.Contains("x.Status == GatewayCostStatusNames.Priced && x.Amount is not null && x.Currency is not null", consoleProgram);
+        Assert.Contains(".Include(\"CostStatus\")", consoleProgram);
         Assert.Contains("GroupBy(x => x.Currency!", consoleProgram);
         Assert.Contains("UnknownCostRequests = docs.Count - pricedDocs.Count", consoleProgram);
         Assert.Contains("EstimatedCostUsd = usdDocs.Count == 0 ? null", consoleProgram);
