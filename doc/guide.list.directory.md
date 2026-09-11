@@ -284,6 +284,7 @@
 - [前端移动端适配 · 计划](./plan.frontend.mobile-adaptation.md) `plan.frontend.mobile-adaptation`
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
 - [知识驱动设计生成体系 · 计划](./plan.platform.design-generation.md) `plan.platform.design-generation`
+- [OpenDesign 云端接力实施计划](./plan.platform.open-design.md) `plan.platform.open-design`
 - [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`
 - [LLM Gateway 外部平台化与控制台体验收口 · 计划](./plan.platform.llm-gateway.external-platform.md) `plan.platform.llm-gateway.external-platform`
