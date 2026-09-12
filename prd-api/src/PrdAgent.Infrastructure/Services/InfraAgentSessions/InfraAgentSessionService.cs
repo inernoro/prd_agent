@@ -1275,7 +1275,7 @@ public class InfraAgentSessionService : IInfraAgentSessionService
     {
         var session = await FindOwnedSessionAsync(userId, sessionId, ct);
         if (session == null) return null;
-        if (string.IsNullOrWhiteSpace(session.CdsSessionId)) return string.Empty;
+        if (!ShouldPollRemoteSession(session)) return string.Empty;
 
         try
         {
@@ -1285,11 +1285,20 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 HttpMethod.Get,
                 connection,
                 token,
-                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId)}/logs",
+                $"/api/projects/{Uri.EscapeDataString(session.CdsProjectId)}/agent-sessions/{Uri.EscapeDataString(session.CdsSessionId!)}/logs",
                 null,
                 ct);
             using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             return doc.RootElement.TryGetProperty("logs", out var logs) ? logs.GetString() : string.Empty;
+        }
+        catch (InfraAgentSessionException ex) when (IsCdsSessionNotFound(ex))
+        {
+            var missingCdsSessionId = session.CdsSessionId;
+            await ReconcileMissingCdsSessionAsync(session, "logs");
+            return await BuildLogFallbackAsync(
+                session,
+                $"CDS session {missingCdsSessionId} no longer exists",
+                ct);
         }
         catch (InfraAgentSessionException ex)
         {
@@ -1519,10 +1528,15 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             || HasRecentHealthyProbe(connection);
     }
 
-    private static bool IsCdsSessionNotFound(InfraAgentSessionException ex)
+    internal static bool IsCdsSessionNotFound(InfraAgentSessionException ex)
     {
         return string.Equals(ex.ErrorCode, InfraAgentSessionErrorCodes.CdsRequestFailed, StringComparison.OrdinalIgnoreCase)
             && ex.Message.Contains("session_not_found", StringComparison.OrdinalIgnoreCase);
+    }
+
+    internal static bool ShouldPollRemoteSession(InfraAgentSession session)
+    {
+        return !string.IsNullOrWhiteSpace(session.CdsSessionId);
     }
 
     private static void EnsureConnectionNotRevoked(InfraConnection connection)
@@ -1593,13 +1607,17 @@ public class InfraAgentSessionService : IInfraAgentSessionService
 
     private async Task TryImportCdsStreamEventsAsync(InfraAgentSession session, CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(session.CdsSessionId)) return;
+        if (!ShouldPollRemoteSession(session)) return;
 
         try
         {
             var connection = await GetActiveConnectionAsync(session, ct);
             var token = await GetLongTokenAsync(connection.Id, ct);
             await ImportCdsStreamEventsAsync(connection, token, session, 0, ct);
+        }
+        catch (InfraAgentSessionException ex) when (IsCdsSessionNotFound(ex))
+        {
+            await ReconcileMissingCdsSessionAsync(session, "stream");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -1608,35 +1626,59 @@ public class InfraAgentSessionService : IInfraAgentSessionService
                 "Failed to import CDS stream events for infra agent session {SessionId} cdsSession={CdsSessionId}",
                 session.Id,
                 session.CdsSessionId);
-
-            // 会话失联对账（2026-06-11 真实事故 x2）：CDS 是内存会话，CDS 自更新/重启
-            // 会瞬间清空全部会话——此前 MAP 轮询循环对 session_not_found 只打 warning，
-            // 调用方空转 4 分钟才超时。这里立即标记 failed + 落 error 事件，让消费方
-            // （MdToPpt 页级重试等）秒级感知并重建新会话。
-            if (ex is InfraAgentSessionException sessEx
-                && sessEx.Message.Contains("session_not_found", StringComparison.OrdinalIgnoreCase)
-                && session.Status != InfraAgentSessionStatuses.Failed
-                && session.Status != InfraAgentSessionStatuses.Stopped)
-            {
-                try
-                {
-                    const string lostMsg = "CDS 会话已丢失（CDS 服务可能刚重启/自更新），请重建会话重试";
-                    await MarkRuntimeFailedAsync(session, lostMsg, CancellationToken.None);
-                    // MarkRuntimeFailedAsync 不落事件——这里补一条 error 事件，
-                    // 让事件轮询方（RunAgentOnceAsync 等）立即收到终态而非空转到超时
-                    await AppendRawEventAsync(
-                        session.Id,
-                        await NextEventSeqAsync(session.Id, CancellationToken.None),
-                        InfraAgentEventTypes.Error,
-                        JsonSerializer.Serialize(new { message = lostMsg, code = "cds_session_lost" }),
-                        CancellationToken.None);
-                }
-                catch (Exception markEx)
-                {
-                    _logger.LogWarning(markEx, "mark session failed after session_not_found failed sessionId={Id}", session.Id);
-                }
-            }
         }
+    }
+
+    private async Task ReconcileMissingCdsSessionAsync(InfraAgentSession session, string source)
+    {
+        var missingCdsSessionId = session.CdsSessionId;
+        if (string.IsNullOrWhiteSpace(missingCdsSessionId)) return;
+
+        var now = DateTime.UtcNow;
+        var result = await _db.InfraAgentSessions.UpdateOneAsync(
+            x => x.Id == session.Id && x.CdsSessionId == missingCdsSessionId,
+            Builders<InfraAgentSession>.Update
+                .Set(x => x.CdsSessionId, null)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: CancellationToken.None);
+        session.CdsSessionId = null;
+        session.UpdatedAt = now;
+
+        if (result.ModifiedCount == 0) return;
+
+        _logger.LogInformation(
+            "Detached missing CDS session from infra agent session {SessionId} cdsSession={CdsSessionId} source={Source}",
+            session.Id,
+            missingCdsSessionId,
+            source);
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, CancellationToken.None),
+            InfraAgentEventTypes.Log,
+            JsonSerializer.Serialize(new
+            {
+                level = "warning",
+                source = "cds-session-transport",
+                message = "remote CDS session no longer exists; stopped polling it",
+                oldCdsSessionId = missingCdsSessionId,
+                detectedBy = source
+            }),
+            CancellationToken.None);
+
+        if (session.Status == InfraAgentSessionStatuses.Failed
+            || session.Status == InfraAgentSessionStatuses.Stopped)
+        {
+            return;
+        }
+
+        const string lostMsg = "CDS 会话已丢失（CDS 服务可能刚重启/自更新），请重建会话重试";
+        await MarkRuntimeFailedAsync(session, lostMsg, CancellationToken.None);
+        await AppendRawEventAsync(
+            session.Id,
+            await NextEventSeqAsync(session.Id, CancellationToken.None),
+            InfraAgentEventTypes.Error,
+            JsonSerializer.Serialize(new { message = lostMsg, code = "cds_session_lost" }),
+            CancellationToken.None);
     }
 
     private async Task<CdsStreamImportResult> ImportCdsStreamEventsAsync(
