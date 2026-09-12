@@ -1,0 +1,1 @@
+| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 处理 5 条历史 changelog（cds 监控第一屏/map 深度自检/文档标题漂移/前两轮 entropy-cleanup 均已由既有 spec.platform.monitor-discovery.md、debt.cds.md 覆盖，manifest 补登记，无需追加新章节），D5 codebase-snapshot（2026-05-31）仍过期，留人工审查 |
