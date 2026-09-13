@@ -115,6 +115,8 @@
 - **拒绝的声明只在监控中心展示，不外发告警**。一条写坏的声明是开发期问题，不该在半夜叫人。
 - **一个 componentId 只能申报一条监控**。要对同一个指标判两次（比如同时判上限与下限），拆成两条 check。
 - **对账频率跟着探测轮次**，所以改了自描述最长一个轮次后生效，不是立刻。
+- **`failuresToAlarm` 与 `severity` 目前没被消费**：对账只把名称、判据三件套、间隔、观测方式、样本量来源写进监控定义，去抖一律套全局阈值。声明里写「出现一次就报」不会生效——**别依赖它**。台账 MD-1（[debt.platform.md](./debt.platform.md)）。
+- **端点侧的「每条 check 都自带 `cds:monitor`」目前只由源码文本守卫保证，只认当前那两条 check**（`ServingFaultTrackerTests` 的 `CheckBlock`，按两个写死的起始标记切块）。**新增第三条 check 时它不会自动覆盖**，此时从目标 check 上摘掉 `cds:monitor` 可能仍判绿。**加第三条 check 的人必须同时把这个守卫改成解析响应**。台账 MD-2（[debt.platform.md](./debt.platform.md)）。
 
 ---
 

@@ -71,7 +71,7 @@ public sealed class ServingFaultTrackerTests
     [Fact]
     public void 默认窗口必须不小于六小时的常设探测间隔()
     {
-        // cds-monitors.yml 里 serving.unhandled-exceptions 是 21600 秒（6 小时）常设探测。
+        // 端点自描述里 serving.unhandled-exceptions 是 21600 秒（6 小时）常设探测。
         // 窗口比它短，异常就会落在窗口之外，探针每次读到 0 —— 一个恒绿的假判据，
         // 比没有判据更糟（predicate-and-wiring-discipline 形状 4）。
         ServingFaultTracker.DefaultWindowMinutes.ShouldBeGreaterThanOrEqualTo(
@@ -178,37 +178,76 @@ public sealed class ServingFaultTrackerTests
             customMessage: "崩掉的那次也是一次真实调用，分母不能漏");
     }
 
+    // 端点源码上两条 check 的起始标记，按它们在文件里的先后顺序排列。
+    // 判据必须**逐条 check** 地看，不能在整份源码上找子串：整份源码里
+    // 「某处出现过 cds:monitor」不等于「这一条 check 上有 cds:monitor」
+    // （predicate-and-wiring-discipline 形状 1：判据比它该管的范围宽）。
+    private const string UnhandledCheckMarker = "[\"serving:unhandled-exceptions\"] = new object[]";
+    private const string RequestsCheckMarker = "[\"serving:requests\"] = new object[]";
+
+    /// <summary>取端点源码里某一条 check 的声明块（到下一条 check 开始为止）。</summary>
+    private static string CheckBlock(string source, string startMarker, string? nextMarker)
+    {
+        var start = source.IndexOf(startMarker, StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(
+            0,
+            customMessage: $"端点上整条 check 不见了：找不到 {startMarker}");
+
+        var end = nextMarker == null
+            ? -1
+            : source.IndexOf(nextMarker, start, StringComparison.Ordinal);
+        return end < 0 ? source[start..] : source[start..end];
+    }
+
+    private static string EndpointSource() => File.ReadAllText(
+        Path.Combine(RepoRoot(), "llmgw", "serving", "GatewayHttpEndpoints.cs"));
+
     [Fact]
     public void 样本量声明必须与端点一起存在()
     {
-        // 跨文件接线守卫：端点少了这条 check，或声明里少了这条监控，
-        // 「零异常」就又变回一条没有分母的判据。
-        var endpoints = File.ReadAllText(
-            Path.Combine(RepoRoot(), "llmgw", "serving", "GatewayHttpEndpoints.cs"));
-        var declaration = File.ReadAllText(Path.Combine(RepoRoot(), "cds-monitors.yml"));
+        // 接线守卫：零异常那条必须指名一条**真实存在**的 check 当分母。
+        //
+        // 判据落在端点源码上，不再读仓库根的那份声明文件 —— 监控自发现落地后
+        // 声明就长在端点自己的响应里，那份文件已随之删除。判据跟着搬家，
+        // 而不是放宽：删掉 sampleComponentId、或把整条 serving:requests 删掉，
+        // 这里都会红。后者尤其要单独断言——`"serving.requests"` 这个子串
+        // 在 `sampleComponentId = "serving.requests"` 里也出现，光找它等于
+        // 让「被指名的分母根本不存在」这种情况静默通过。
+        var endpoints = EndpointSource();
+        var unhandled = CheckBlock(endpoints, UnhandledCheckMarker, RequestsCheckMarker);
+        var requests = CheckBlock(endpoints, RequestsCheckMarker, null);
 
-        endpoints.ShouldContain("serving.requests");
-        declaration.ShouldContain(
-            "serving.requests",
-            customMessage: "被动判据的分母必须同时在端点与监控声明里，否则零流量会被读成一切正常");
+        unhandled.ShouldContain(
+            "sampleComponentId = \"serving.requests\"",
+            customMessage: "零异常那条必须指名分母，否则窗口内一次调用都没有时它会判成健康");
+        requests.ShouldContain(
+            "[\"componentId\"] = \"serving.requests\"",
+            customMessage: "被指名的分母必须是端点上一条真实的 check，不能只是别处的一句引用");
     }
 
     [Fact]
-    public void 端点的componentId必须与监控声明一致()
+    public void 每条check都必须自带监控声明()
     {
-        // 跨文件接线守卫：端点改了 componentId 而声明没跟上（或反过来），
-        // 探针会去找一条不存在的 check —— CDS 侧会判失败，但那时已经在线上了。
-        var endpoints = File.ReadAllText(
-            Path.Combine(RepoRoot(), "llmgw", "serving", "GatewayHttpEndpoints.cs"));
-        var declaration = File.ReadAllText(Path.Combine(RepoRoot(), "cds-monitors.yml"));
+        // 接线守卫：componentId 与「该怎么判它」必须在**同一条 check 上**同时存在。
+        // 少了自描述段，对账就不会为这一条建监控 —— 那条铃在最需要的时候是哑的，
+        // 而整份源码里另一条 check 的 cds:monitor 会让粗糙的判据照样判绿。
+        var endpoints = EndpointSource();
+        var unhandled = CheckBlock(endpoints, UnhandledCheckMarker, RequestsCheckMarker);
+        var requests = CheckBlock(endpoints, RequestsCheckMarker, null);
 
         endpoints.ShouldContain(
             "\"/gw/v1/healthz/deep\"",
-            customMessage: "深度自检端点被移除或改名了，cds-monitors.yml 里的探针会打空");
-        endpoints.ShouldContain("serving.unhandled-exceptions");
-        declaration.ShouldContain(
-            "serving.unhandled-exceptions",
-            customMessage: "端点与监控声明的 componentId 必须一致，否则探针找不到那条 check");
+            customMessage: "深度自检端点被移除或改名了，登记在 CDS 上的探针会打空");
+
+        unhandled.ShouldContain(
+            "[\"componentId\"] = \"serving.unhandled-exceptions\"",
+            customMessage: "未处理异常这条 check 不能消失，它是「后台在炸、前台看着正常」的唯一判据");
+        unhandled.ShouldContain(
+            "[\"cds:monitor\"]",
+            customMessage: "未处理异常这条 check 必须自报怎么监控自己，否则那条 P0 监控建不出来");
+        requests.ShouldContain(
+            "[\"cds:monitor\"]",
+            customMessage: "真实调用数这条 check 必须自报怎么监控自己，否则分母那条监控建不出来");
     }
 
     [Fact]
