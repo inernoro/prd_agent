@@ -56,3 +56,40 @@ export function githubSyncingSignature(
     .sort()
     .join('|');
 }
+
+/**
+ * 手动触发同步后的**乐观**「同步中」是否该撤掉。
+ *
+ * 点「重试同步」到后台真的把状态改成 syncing 之间有个空档，界面先自己显示同步中。
+ * 但这个乐观标记必须在服务端给出新状态时撤掉，否则同步成功了卡片还写着「同步中」，
+ * 失败了按钮还是禁用的——在页面会轮询之后，这个洞立刻就能被用户撞上。
+ *
+ * 判据：观察到的状态**变了**（不再是触发那一刻看到的那个），乐观标记就该撤。
+ */
+export function shouldClearOptimisticSync(
+  observedStatus: string | undefined,
+  statusWhenTriggered: string | undefined,
+): boolean {
+  return observedStatus !== statusWhenTriggered;
+}
+
+/**
+ * 把「正在盯着的目录条目」并回这一页列表。
+ *
+ * 列表按创建时间倒序分页：一个目录同步出两百篇子文档之后，父条目会被自己的孩子挤出第一页。
+ * 只用列表结果刷新的话，父条目从界面上消失、轮询也跟着停——最终的成功/失败状态永远等不到。
+ * 所以父条目单独按 id 拉，并入这一页：在页里就替换，不在页里就补进来。
+ */
+export function mergeWatchedParents<T extends { id: string }>(
+  pageItems: readonly T[],
+  watched: readonly T[],
+): T[] {
+  if (watched.length === 0) return [...pageItems];
+  const byId = new Map(watched.map((w) => [w.id, w]));
+  const merged = pageItems.map((item) => byId.get(item.id) ?? item);
+  const present = new Set(pageItems.map((item) => item.id));
+  for (const w of watched) {
+    if (!present.has(w.id)) merged.push(w);
+  }
+  return merged;
+}

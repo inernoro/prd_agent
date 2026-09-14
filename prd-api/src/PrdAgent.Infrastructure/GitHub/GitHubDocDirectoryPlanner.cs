@@ -81,12 +81,20 @@ public static class GitHubDocDirectoryPlanner
     private static readonly HashSet<string> DocDirectoryNames =
         new(StringComparer.OrdinalIgnoreCase) { "doc", "docs" };
 
+    /// <summary>
+    /// 构建产物与依赖树的目录名。判据是「这里面的东西不是人写的」。
+    ///
+    /// 这里**不放** `packages`：它在 pnpm / lerna / yarn workspaces 里是**源码**工作区容器，
+    /// monorepo 的文档正是躺在 `packages/&lt;应用&gt;/docs` 下。把它当依赖目录排掉，
+    /// 等于对最常见的 monorepo 布局失约（本功能承诺的是「递归预勾全部 doc / docs」）。
+    /// 真正的依赖树由 `node_modules` / `vendor` / `third_party` 这几段拦住。
+    /// </summary>
     private static readonly HashSet<string> IgnoredSegments =
         new(StringComparer.OrdinalIgnoreCase)
         {
             "node_modules", "dist", "build", "bin", "obj", "out", "target",
             "vendor", "coverage", "__pycache__", "venv", "site-packages",
-            "packages", "third_party", "thirdparty",
+            "third_party", "thirdparty",
         };
 
     /// <summary>目录段是否属于「不该出现在知识库里」的构建/依赖产物。</summary>

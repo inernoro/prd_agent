@@ -4,6 +4,8 @@ import {
   subscriptionSyncTone,
   githubDirectoryStatusLabel,
   githubSyncingSignature,
+  shouldClearOptimisticSync,
+  mergeWatchedParents,
   GITHUB_DIRECTORY_SOURCE,
 } from './subscriptionEntryState';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
@@ -76,5 +78,36 @@ describe('同步中签名（驱动页面轮询）', () => {
   it('没有在同步的就返回空串——轮询必须能停下来', () => {
     expect(githubSyncingSignature([])).toBe('');
     expect(githubSyncingSignature(entries.filter((e) => e.syncStatus !== 'syncing'))).toBe('');
+  });
+});
+
+describe('乐观「同步中」的撤销时机', () => {
+  it('服务端状态一变就撤掉，否则同步完卡片还写着同步中', () => {
+    // 触发那一刻看到的是上次失败；后台接手改成 syncing → 撤乐观标记，改看真状态
+    expect(shouldClearOptimisticSync('syncing', 'error')).toBe(true);
+    expect(shouldClearOptimisticSync('idle', 'error')).toBe(true);
+    // 后台还没接手，状态没动 → 继续显示乐观的同步中
+    expect(shouldClearOptimisticSync('error', 'error')).toBe(false);
+  });
+});
+
+describe('把在盯的父条目并回当前页', () => {
+  const page = [{ id: 'a' }, { id: 'b' }];
+
+  it('在页里就替换成最新状态', () => {
+    expect(mergeWatchedParents(page, [{ id: 'b' }])).toEqual([{ id: 'a' }, { id: 'b' }]);
+    const fresh = { id: 'b', syncStatus: 'idle' };
+    expect(mergeWatchedParents(page, [fresh])[1]).toBe(fresh);
+  });
+
+  it('被自己的子文档挤出这一页时要补回来——否则轮询会提前停', () => {
+    const parent = { id: 'p', syncStatus: 'syncing' };
+    const merged = mergeWatchedParents(page, [parent]);
+    expect(merged).toHaveLength(3);
+    expect(merged).toContain(parent);
+  });
+
+  it('没有在盯的条目时原样返回', () => {
+    expect(mergeWatchedParents(page, [])).toEqual(page);
   });
 });

@@ -70,7 +70,7 @@ import { RecentEntriesList } from './RecentEntriesList';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { GitHubSyncWizard } from './GitHubSyncWizard';
-import { githubSyncingSignature } from '@/components/doc-browser/subscriptionEntryState';
+import { githubSyncingSignature, mergeWatchedParents } from '@/components/doc-browser/subscriptionEntryState';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
@@ -111,6 +111,7 @@ import {
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
+  getDocumentEntry,
   uploadDocumentFileWithProgress,
   replaceDocumentFile,
   getDocumentContent,
@@ -1591,11 +1592,18 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     if (!githubSyncSignature) return;
     let cancelled = false;
     let seq = 0; // 发号器：只应用最新一发的结果，防慢响应覆盖快响应
+    const watchedIds = githubSyncSignature.split('|');
     const check = async () => {
       const my = ++seq;
-      const res = await listDocumentEntries(storeId, 1, 200);
+      // 列表按创建时间倒序分页：目录同步出两百篇子文档后，父条目会被自己的孩子挤出第一页。
+      // 所以父条目单独按 id 拉一份并回来——否则它从界面消失、轮询也跟着停，最终状态永远等不到。
+      const [res, ...parents] = await Promise.all([
+        listDocumentEntries(storeId, 1, 200),
+        ...watchedIds.map((id) => getDocumentEntry(id)),
+      ]);
       if (cancelled || my !== seq || !res.success) return;
-      applyPolledEntries(res.data.items);
+      const watched = parents.filter((p) => p.success).map((p) => p.data);
+      applyPolledEntries(mergeWatchedParents(res.data.items, watched));
       setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
     };
     const timer = window.setInterval(() => { void check(); }, 6000);

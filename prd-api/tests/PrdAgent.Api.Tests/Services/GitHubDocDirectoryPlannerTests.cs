@@ -30,9 +30,10 @@ public class GitHubDocDirectoryPlannerTests
             ("src", "tree"),
             ("src/main.ts", "blob"));
 
-        // packages 在忽略名单里 —— 但这里要验的是"深层 docs 也能命中"，
-        // 所以用 apps/ 这种普通目录再验一次（见下个用例）。
         Assert.Contains("doc", scan.RecommendedPaths);
+        // monorepo 的标准布局：pnpm / lerna 的 packages/ 是源码工作区，不是依赖树。
+        // 把它当依赖排掉，本功能对最常见的 monorepo 就失约了。
+        Assert.Contains("packages/web/docs", scan.RecommendedPaths);
         Assert.DoesNotContain("src", scan.RecommendedPaths);
     }
 
