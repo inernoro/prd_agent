@@ -1,31 +1,26 @@
 /**
- * 首页厂房动效的接线守卫（2026-09-11）。
+ * 首页紧凑条动效的接线守卫（2026-09-14 随 B 稿重写）。
  *
  * 这套动效有一个特别糟糕的失效方式：**它坏掉的时候不报错，只是少了一半画面**。
- * 入场动画都是 `from{opacity:0}`，一旦某个类名拼错、keyframes 改名、或者有人
- * 把 animation 从 no-preference 媒体块里挪出去，结果不是「没动效」，而是
- * 「元素永远停在 opacity:0」——整块空白，编译过、类型过、测试全绿。
- * 这正是 predicate-and-wiring-discipline 形状 8（把不成立的证据当证据）与
- * 形状 2（链路只建一半）在 CSS 上的形态。
+ * 入场动画都是 `from{opacity:0}` / `from{transform:scaleX(0)}`，一旦某个类名拼错、
+ * keyframes 改名、或者有人把 animation 从 no-preference 媒体块里挪出去，结果不是
+ * 「没动效」，而是「元素永远停在 opacity:0 / scaleX(0)」——整块空白，编译过、
+ * 类型过、测试全绿。这正是 predicate-and-wiring-discipline 形状 8（把不成立的证据
+ * 当证据）与形状 2（链路只建一半）在 CSS 上的形态。
  *
- * 所以这里守四件事，每一件都对应一种已经能预见的坏法：
- *   1. animation 引用的 keyframes 必须存在，且定义了的 keyframes 必须有人用；
- *   2. 所有 animation 声明必须待在 prefers-reduced-motion: no-preference 里
- *      （守 reduce 用户，也守「动画没跑时画面仍然完整」这条兜底）；
- *   3. 基础样式（媒体块之外）不许出现 opacity:0 / transform / animation
- *      ——基础态必须就是终态；
- *   4. CSS 里定义的每个动画类都要在 JSX 里被真的挂上去，反之亦然。
+ * 上一版守的是厂房剖面的 SCENE_CSS。厂房整体换成紧凑条之后那个锚点没了，
+ * 但它防的坏法一件都没少，只是换了文件与类名，所以是重写不是删除。
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 
-const src = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'), 'utf8');
+const src = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/CompactStrip.tsx'), 'utf8');
 
-/** 取出 SCENE_CSS 模板字符串的内容。 */
+/** 取出 STRIP_CSS 模板字符串的内容（文档注释里也提到 hsl()/animation，不能一起扫）。 */
 const css = (() => {
-  const m = src.match(/const SCENE_CSS = `([\s\S]*?)\n`;/);
-  expect(m, 'SCENE_CSS 模板字符串没找到——改了名字就得来更新这条守卫').not.toBeNull();
+  const m = src.match(/export const STRIP_CSS = `([\s\S]*?)\n`;/);
+  expect(m, 'STRIP_CSS 模板字符串没找到——改了名字就得来更新这条守卫').not.toBeNull();
   return m![1];
 })();
 
@@ -45,10 +40,9 @@ const motionBlock = (() => {
 const baseCss = css
   .replace(motionBlock, '')
   .replace(/@keyframes[\s\S]*?\n?\}/g, '')
-  // 注释里照抄了 opacity:0 这几个字（就在说明为什么不许写），不剥掉会自己把自己判红。
   .replace(/\/\*[\s\S]*?\*\//g, '');
 
-describe('厂房动效：keyframes 两头都要接上', () => {
+describe('紧凑条动效：keyframes 两头都要接上', () => {
   it('animation 引用的 keyframes 都有定义', () => {
     const used = [...css.matchAll(/animation:\s*([a-z-]+)/g)].map((m) => m[1]);
     const defined = new Set([...css.matchAll(/@keyframes\s+([a-z-]+)/g)].map((m) => m[1]));
@@ -61,67 +55,84 @@ describe('厂房动效：keyframes 两头都要接上', () => {
   it('定义的 keyframes 都有人用（没有孤儿）', () => {
     const used = new Set([...css.matchAll(/animation:\s*([a-z-]+)/g)].map((m) => m[1]));
     const defined = [...css.matchAll(/@keyframes\s+([a-z-]+)/g)].map((m) => m[1]);
+    expect(defined.length).toBeGreaterThan(0);
     for (const name of defined) {
       expect(used.has(name), `@keyframes ${name} 没有任何规则引用它`).toBe(true);
     }
   });
 });
 
-describe('厂房动效：不动的那一档必须是完整画面', () => {
+describe('紧凑条动效：不动的那一档必须是完整画面', () => {
   it('所有 animation 声明都在 no-preference 媒体块内', () => {
     expect(baseCss).not.toMatch(/animation:/);
   });
 
   it('基础样式不写 opacity:0 / transform —— 基础态就是终态', () => {
-    // 动画全是 from{opacity:0}。基础样式里再写一次 opacity:0，
+    // 动画全是 from{opacity:0} / from{transform:scale*(0)}。基础样式里再写一次，
     // 就等于 reduce 用户（以及动画没触发的任何情况）永远看不到那个元素。
     expect(baseCss).not.toMatch(/opacity\s*:\s*0(\D|$)/);
     expect(baseCss).not.toMatch(/(^|[;{\s])transform\s*:/);
   });
 
   it('每条入场动画都带 backwards，延迟期间不会先闪一下', () => {
-    const lines = motionBlock.split('\n').filter((l) => /animation:/.test(l));
-    for (const line of lines) {
-      if (/infinite/.test(line)) continue; // 常驻的那一条没有延迟，不需要 backwards
-      expect(line, `这条动画没写 backwards：${line.trim()}`).toMatch(/backwards/);
+    const decls = motionBlock.match(/animation:[^;]+;/g) ?? [];
+    expect(decls.length).toBeGreaterThan(0);
+    for (const d of decls) {
+      if (/infinite/.test(d)) continue; // 常驻的那一条没有延迟，不需要 backwards
+      expect(d, `这条动画没写 backwards：${d.trim()}`).toMatch(/backwards/);
     }
   });
 });
 
-describe('厂房动效：类名两头都要挂上', () => {
-  const cssClasses = new Set([...css.matchAll(/\.(pp-(?!root|scene)[a-z-]+)/g)].map((m) => m[1]));
-  // JSX 里的类名散落在 className 字符串与模板字符串里，统一按词扫；
-  // SVG pattern 的 id 也叫 pp-*（pp-rib / pp-nodata），按 id= 声明把它们摘掉。
-  const patternIds = new Set([...src.matchAll(/id="(pp-[a-z-]+)"/g)].map((m) => m[1]));
-  const jsxClasses = new Set(
-    [...src.replace(css, '').matchAll(/\b(pp-(?!root|scene)[a-z-]+)\b/g)]
-      .map((m) => m[1])
-      .filter((c) => !patternIds.has(c)),
-  );
+describe('紧凑条动效：动的每个选择器都得有基础规则', () => {
+  // 只建一半的典型：媒体块里给 `.rial span` 写了动画（拼错），基础样式里没有这条，
+  // 于是动画挂在一个不存在的元素上——没人动、也没人报错。
+  const animated = [...motionBlock.matchAll(/\.cs\[data-play="1"\] \.([a-z-]+)/g)].map((m) => m[1]);
 
-  it('CSS 里定义的动画类都在 JSX 里被挂上了', () => {
-    expect(cssClasses.size).toBeGreaterThan(0);
-    for (const c of cssClasses) {
-      expect(jsxClasses.has(c), `CSS 定义了 .${c}，但 JSX 里没有任何元素挂它`).toBe(true);
-    }
+  it('媒体块里确实点名了若干元素', () => {
+    expect(new Set(animated).size).toBeGreaterThanOrEqual(3);
   });
 
-  it('JSX 里挂的动画类都在 CSS 里有规则', () => {
-    for (const c of jsxClasses) {
-      if (c.startsWith('pp-crate-in') || /-in$/.test(c) || c === 'pp-roll') continue; // keyframes 名字不是类名
-      expect(cssClasses.has(c), `JSX 挂了 ${c}，但 CSS 里没有这条规则——动效静默不生效`).toBe(true);
-    }
+  it.each([...new Set(animated)])('.%s 在基础样式里有规则', (cls) => {
+    expect(baseCss, `媒体块给 .${cls} 写了动画，但基础样式里没有这个类——多半是拼错了`).toMatch(
+      new RegExp(`\\.cs \\.${cls}[\\s,{:.]`),
+    );
+  });
+
+  // className 有三种写法（字面量 / 三元 / 模板串），把值都摘出来再按「类名 token」比对；
+  // 只认其中一种写法，就会把真的挂上了的类误判成没挂（形状 1：判据比范围窄）。
+  const classText = [
+    ...src.replace(css, '').matchAll(/className=(\{[\s\S]{0,200}?\}|"[^"]*")/g),
+  ]
+    .map((m) => m[1])
+    .join(' | ');
+
+  it.each([...new Set(animated)])('.%s 在 JSX 里真的被挂上了', (cls) => {
+    expect(classText, `CSS 给 .${cls} 写了动画，但 JSX 里没有任何元素挂它`).toMatch(
+      new RegExp(`(^|[\\s'"\`])${cls}([\\s'"\`]|$)`),
+    );
   });
 });
 
-describe('厂房动效：开关必须同源', () => {
-  it('CSS 的 data-play 与 Card 上写入的属性是同一个', () => {
+describe('紧凑条动效：开关必须同源', () => {
+  it('CSS 的 data-play 与容器上写入的属性是同一个', () => {
     expect(motionBlock).toMatch(/\[data-play="1"\]/);
     expect(src).toMatch(/data-play=\{play \? '1' : '0'\}/);
+  });
+
+  it('播放信号沿着 Provider 传给数字，不是就地写死 true', () => {
+    // 早期把 const play = useContext(PlayCtx) 临时改成 const play = true 调试过，
+    // 那样数字会在挂载瞬间就开始跑，滚到视口里时早已停住——动效等于没有。
+    expect(src).toMatch(/const play = useContext\(PlayCtx\)/);
+    expect(src).toMatch(/<PlayCtx\.Provider value=\{play\}>/);
   });
 
   it('数字计数在拿不到播放信号时显示的是真值，不是 0', () => {
     // CountText 的初值必须是 n；写成 useState(0) 会在 play 没来时把 0 当数据显示。
     expect(src).toMatch(/const \[v, setV\] = useState\(n\)/);
+  });
+
+  it('进不了视口也有兜底放行，数字不会永远停在 0', () => {
+    expect(src).toMatch(/setTimeout\(/);
   });
 });

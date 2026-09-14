@@ -27,7 +27,13 @@ const read = (p: string): string => readFileSync(resolve(__dirname, '../..', p),
 
 describe('首页引用的 LeakKind 字面量必须在后端存在', () => {
   const backend = read('src/services/acceptance-pipeline.ts');
-  const panel = read('web/src/pages/reports/PipelinePanel.tsx');
+  // 2026-09-14 三次修订：首页拆成 PipelinePanel（编排）+ CompactStrip（图形）之后，
+  // 下标式依赖跟着搬了家。只扫 PipelinePanel 就是形状 1 的老毛病——判据比它该管的
+  // 范围窄，依赖换个文件就漏。两个文件一起扫。
+  const panel = [
+    read('web/src/pages/reports/PipelinePanel.tsx'),
+    read('web/src/pages/reports/CompactStrip.tsx'),
+  ].join('\n');
 
   /** 后端 LeakKind 联合类型里声明的全部取值。 */
   const backendKinds = (() => {

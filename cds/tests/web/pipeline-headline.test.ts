@@ -182,12 +182,14 @@ describe('这句判断必须真的出现在页面上', () => {
     expect(src).toMatch(/<CompactStrip\b/);
   });
 
-  it('背景只是壳，不编码任何数据', () => {
+  it('外壳只是壳，不编码任何数据', () => {
+    // 2026-09-14：厂房剖面删掉后，这条守的对象从 HallShell 换成 Card——
+    // 那个「盛放一屏内容的容器」。意图一字未改：容器一旦开始收 funnel / projects，
+    // 数据就有了第二个渲染出口，两个出口迟早对不上。
     const src = read('web/src/pages/reports/PipelinePanel.tsx');
-    const sig = src.match(/function HallShell\(\{[^}]*\}: \{[^}]*\}\)/);
-    expect(sig, '找不到 HallShell').not.toBeNull();
-    // 一旦它开始收 funnel / projects，背景就不再是背景了。
-    expect(sig![0]).not.toMatch(/funnel|projects|PipelineFunnel/);
+    const sig = src.match(/function Card\(\{[^}]*\}: \{[^}]*\}\)/);
+    expect(sig, '找不到 Card').not.toBeNull();
+    expect(sig![0]).not.toMatch(/funnel|projects|PipelineFunnel|pipeline/);
   });
 });
 

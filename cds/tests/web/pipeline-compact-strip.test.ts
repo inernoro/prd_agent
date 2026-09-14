@@ -14,9 +14,19 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { dotMetrics } from '../../web/src/pages/reports/CompactStrip';
+import { dotMetrics, rowSplit } from '../../web/src/pages/reports/CompactStrip';
+import { splitChanges } from '../../web/src/pages/reports/PipelinePanel';
+import type { PipelineFunnel } from '../../web/src/lib/api';
 
 const src = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/CompactStrip.tsx'), 'utf8');
+const panel = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'), 'utf8');
+
+function funnel(p: Partial<PipelineFunnel>): PipelineFunnel {
+  return {
+    changes: 0, deployed: 0, accepted: 0, merged: 0,
+    pass: 0, conditional: 0, fail: 0, undetermined: 0, ...p,
+  };
+}
 
 /** 只看真正会渲染的样式，别把文档注释里提到的 hsl() 当成写死颜色（第一版就栽在这）。 */
 const css = (() => {
@@ -131,8 +141,23 @@ describe('点亮的点必须真的亮', () => {
   // 于是三段点阵全是浅灰、一个都不亮。页面照常渲染、类名照常挂上、测试照常绿。
   const idx = (re: RegExp): number => css.search(re);
 
-  it('三档点亮色都定义了', () => {
-    for (const tone of ['f1', 'f2', 'f3']) {
+  // 中性三档（各段自己的深浅）+ 结论三档（已验完那段按 pass/conditional/fail 分色）。
+  // 结论三档是 2026-09-14 补的：此前主体全是灰阶，用户原话「我看起来图标非常的清淡」。
+  const TONES = ['f1', 'f2', 'f3', 'v-ok', 'v-warn', 'v-bad'];
+
+  it('结论三档在 JSX 里真的被算出来并挂上去', () => {
+    // 少了这条，CSS 里三档颜色齐全、JSX 一个都不发，页面照样是一片灰。
+    for (const cls of ['v-ok', 'v-warn', 'v-bad']) {
+      expect(src, `没有任何地方产出 ${cls}`).toContain(`'${cls}'`);
+    }
+    // 三档分别来自 pass / conditional / fail，不是同一个数填三遍。
+    expect(src).toMatch(/t\.pass[\s\S]{0,40}'v-ok'/);
+    expect(src).toMatch(/t\.conditional[\s\S]{0,40}'v-warn'/);
+    expect(src).toMatch(/t\.fail[\s\S]{0,40}'v-bad'/);
+  });
+
+  it('六档点亮色都定义了', () => {
+    for (const tone of TONES) {
       expect(css, `缺 .d.${tone} 的点亮色`).toMatch(new RegExp(`\\.cs \\.d\\.${tone}\\{`));
     }
   });
@@ -140,7 +165,7 @@ describe('点亮的点必须真的亮', () => {
   it('点亮色写在基础底色之后（同特异性，后写才赢）', () => {
     const base = idx(/\.cs \.d\{/);
     expect(base).toBeGreaterThan(-1);
-    for (const tone of ['f1', 'f2', 'f3']) {
+    for (const tone of TONES) {
       const lit = idx(new RegExp(`\\.cs \\.d\\.${tone}\\{`));
       expect(lit, `.d.${tone} 写在 .d 之前，会被底色整条盖掉`).toBeGreaterThan(base);
     }
@@ -149,10 +174,69 @@ describe('点亮的点必须真的亮', () => {
   it('点亮色与底色不是同一个值', () => {
     const baseBg = css.match(/\.cs \.d\{[^}]*background:([^;}]+)/)?.[1]?.trim();
     expect(baseBg).toBeTruthy();
-    for (const tone of ['f1', 'f2', 'f3']) {
+    for (const tone of TONES) {
       const litBg = css.match(new RegExp(`\\.cs \\.d\\.${tone}\\{background:([^;}]+)`))?.[1]?.trim();
       expect(litBg, `.d.${tone} 没有自己的颜色`).toBeTruthy();
       expect(litBg, `.d.${tone} 的颜色和底色一样，点亮等于没亮`).not.toBe(baseBg);
     }
+  });
+});
+
+/* 下面两段是厂房剖面那版守卫（pipeline-scale-guard）里唯一与几何无关、
+   因而在这一版仍然成立的判据，随文件删除一并搬过来，不是新写的。 */
+
+describe('三段相加必须等于总数（总览与每一行同一套拆法）', () => {
+  const cases: PipelineFunnel[] = [
+    // 主实例真实形状：71 条改动 / 70 条部署过 / 5 条验过。
+    funnel({ changes: 71, deployed: 70, accepted: 5, pass: 1, conditional: 1, fail: 3 }),
+    // 预览实例的演示数据量级。
+    funnel({ changes: 5, deployed: 5, accepted: 2, pass: 1, conditional: 1 }),
+    funnel({}),
+    funnel({ changes: 1, deployed: 0 }),
+    funnel({ changes: 900, deployed: 880, accepted: 400 }),
+    // 口径错位的脏数据（验过的比部署的还多）也不许把三段算成负数。
+    funnel({ changes: 3, deployed: 1, accepted: 9 }),
+  ];
+
+  it.each(cases.map((f, i) => [i, f] as const))('第 %i 组：总览三段非负且加得回 changes', (_i, f) => {
+    const { accepted, heap, undeployed } = splitChanges(f);
+    expect(accepted).toBeGreaterThanOrEqual(0);
+    expect(heap).toBeGreaterThanOrEqual(0);
+    expect(undeployed).toBeGreaterThanOrEqual(0);
+    if (f.deployed >= f.accepted && f.changes >= f.deployed) {
+      expect(accepted + heap + undeployed).toBe(f.changes);
+    }
+  });
+
+  it.each(cases.map((f, i) => [i, f] as const))('第 %i 组：放大态每行三段恒等于 changes', (_i, f) => {
+    const { accepted, heap, undeployed } = rowSplit(f);
+    expect(accepted).toBeGreaterThanOrEqual(0);
+    expect(heap).toBeGreaterThanOrEqual(0);
+    expect(undeployed).toBeGreaterThanOrEqual(0);
+    // rowSplit 自己把脏数据夹住，所以这条对六组全都成立，没有前置条件。
+    expect(accepted + heap + undeployed).toBe(Math.max(0, f.changes));
+  });
+});
+
+describe('紧凑态与放大态是同一张图，不是两套编码', () => {
+  it('放大态渲染的仍是同一个 CompactStrip 实例', () => {
+    // 之前放大态是另一套厂房剖面，读者要在两种编码之间来回翻译。
+    // 这里钉住「两态共用同一个 strip 变量」，换成另建一棵树就会红。
+    expect(panel).toMatch(/const strip = \(\s*<CompactStrip/);
+    const zoomBranch = panel.slice(panel.indexOf('{zoom ? ('));
+    expect(zoomBranch).toMatch(/<Card>\{strip\}<\/Card>/);
+    expect(zoomBranch).toMatch(/<ExpandedPanel/);
+  });
+
+  it('紧凑态直接就是那条 strip，没有被包掉或换掉', () => {
+    const zoomBranch = panel.slice(panel.indexOf('{zoom ? ('));
+    // 三元的 else 分支（收起态）必须原样给出 strip。
+    expect(zoomBranch).toMatch(/\)\s*:\s*\(\s*strip\s*\)/);
+  });
+
+  it('放大态的样式表跟着一起挂上了', () => {
+    // EXPAND_CSS 忘了挂 <style> 的话，放大出来是一张没有样式的裸表格。
+    expect(panel).toMatch(/<style>\{EXPAND_CSS\}<\/style>/);
+    expect(panel).toMatch(/<style>\{STRIP_CSS\}<\/style>/);
   });
 });
