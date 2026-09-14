@@ -4893,10 +4893,18 @@ public class DocumentStoreController : ControllerBase
             _ => GitHubSyncCredentialPolicy.ConnectionUsability.Unknown,
         };
 
+    /// <summary>
+    /// 父条目对外展示的 GitHub 地址。逐段转义：目录名里合法的 # 会把后半段变成 URL 片段、
+    /// ? 会开始查询串，而订阅抽屉直接拿这个值当链接——不转义就是点进去落到别的目录。
+    /// </summary>
     private static string BuildGitHubDirectoryUrl(string owner, string repo, string branch, string path)
-        => path.Length == 0
-            ? $"https://github.com/{owner}/{repo}/tree/{branch}"
-            : $"https://github.com/{owner}/{repo}/tree/{branch}/{path}";
+    {
+        var baseUrl = $"https://github.com/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+                    + $"/tree/{Uri.EscapeDataString(branch)}";
+        if (path.Length == 0) return baseUrl;
+        var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
+        return $"{baseUrl}/{safePath}";
+    }
 
     /// <summary>置顶/取消置顶文档条目（支持多个置顶）</summary>
     [HttpPut("stores/{storeId}/pinned-entries")]

@@ -11,19 +11,19 @@
 ## 1. 管理摘要
 
 - **解决的问题**：此前把 GitHub 目录接进知识库，用户得自己去 GitHub 找到目录、复制 `tree/分支/路径` 形式的地址、粘回订阅框，一次只能加一个目录；而且同步是**匿名**请求 GitHub，私有仓根本拉不到，公开仓也共用 60 次/小时的匿名额度。
-- **核心方案**：复用已有的 per-user GitHub Device Flow 连接，新增一条共用的连接中心 `/api/github/*`（连接状态、仓库、分支、目录扫描），知识库侧提供四步向导与批量订阅端点；同步 worker 按条目上盖的连接身份带 token 请求。
+- **核心方案**：复用已有的「每个用户连自己的 GitHub 账号」能力，把它抽成一处**共用的连接入口**（连接状态、仓库、分支、目录扫描），任何应用都能用；知识库在它之上提供四步向导与一次开启多个目录的订阅；后台同步按条目上盖的连接身份带用户 token 请求 GitHub。
 - **默认口径**：递归扫出仓库里**所有** doc / docs 目录（不是只认根目录），默认勾选；用户可自由改。
 - **已知边界**：见 §6，均已记入 [debt.knowledge-base.md](./debt.knowledge-base.md)。
 
 ## 2. 背景与现状
 
-知识库早有「GitHub 目录订阅」：一个 `github_directory` 父条目记着 owner/repo/path/branch，`DocumentSyncWorker` 每天拉一次该目录下的 `.md`，按 SHA 增量更新、远端删了本地也删。能力在，入口不在——
+知识库早有「GitHub 目录订阅」：一个 `github_directory` 父条目记着 owner/repo/path/branch，后台同步每天拉一次该目录下的 Markdown，按 GitHub 的文件 SHA 增量更新、远端删了本地也删。能力在，入口不在——
 
 - 入口是一个「粘贴 GitHub 地址」输入框，用户要离开产品去 GitHub 找地址（违反 `minimal-user-input`：系统查得到的值不该摆输入框）；
 - 一次一个目录，一个仓库有五处文档就得重复五遍；
 - 请求不带任何凭据：私有仓 404，公开仓吃匿名限额。
 
-而 GitHub 登录能力其实早就有了（`GitHubOAuthService` 的 Device Flow + 加密存储的 `GitHubUserConnection`），只是被 pr-review / project-route-agent / tech-doc-format-agent 各抄了一份端点，知识库没份。
+而「用户连自己的 GitHub 账号」这件事其实早就做过了（配对码授权 + 加密存储的连接记录），只是被 pr-review / project-route-agent / tech-doc-format-agent 各抄了一份入口，知识库没份。
 
 ## 3. 用户怎么走
 
@@ -52,11 +52,11 @@
 
 ```mermaid
 flowchart LR
-  U[用户] -->|Device Flow| GC["/api/github/*<br/>连接中心"]
+  U[用户] -->|配对码授权| GC["GitHub 连接中心<br/>（共用）"]
   GC --> CONN[("github_user_connections<br/>token 加密")]
-  U -->|勾目录| KB["/api/document-store/.../subscribe-github/batch"]
+  U -->|勾目录一次开启| KB["知识库批量订阅"]
   KB --> ENTRY[("document_entries<br/>github_directory 父条目")]
-  W[DocumentSyncWorker] -->|读 github_connection_user_id| CONN
+  W[后台同步] -->|读 github_connection_user_id| CONN
   W -->|带 token| GH[(GitHub API)]
   W --> ENTRY
 ```
@@ -96,7 +96,20 @@ token 失效、密文解不开），**悄悄退回匿名请求**再试一次。
 - `github_directory` 父条目的 `IsFolder` / 子条目 `ParentId` 结构问题是历史债务（见 [debt.knowledge-base.md](./debt.knowledge-base.md)），本次未动，新旧条目形状保持一致。
 - 老的三处 Device Flow 端点（pr-review / project-route-agent / tech-doc-format-agent）仍在，前端未迁；它们与新连接中心读写同一张表，连一次处处可用。
 
-## 7. 相关
+## 7. 实现来源
+
+给要跳去看代码的人；只读这篇文档的人可以整块跳过。
+
+| 位置 | 文件 |
+|------|------|
+| 共用连接中心 | `prd-api/src/PrdAgent.Api/Controllers/Api/GitHubConnectController.cs`、`prd-api/src/PrdAgent.Infrastructure/GitHub/GitHubUserConnectionService.cs` |
+| 默认预勾判据 | `prd-api/src/PrdAgent.Infrastructure/GitHub/GitHubDocDirectoryPlanner.cs` |
+| 凭据与盖章判据 | `prd-api/src/PrdAgent.Api/Services/GitHubSyncCredentialPolicy.cs` |
+| 同步引擎与调度 | `prd-api/src/PrdAgent.Api/Services/GitHubDirectorySyncService.cs`、`DocumentSyncWorker.cs`、`DocumentSyncSchedule.cs` |
+| 批量订阅端点 | `prd-api/src/PrdAgent.Api/Controllers/Api/DocumentStoreController.cs` |
+| 向导与选择逻辑 | `prd-admin/src/pages/document-store/GitHubSyncWizard.tsx`、`githubDirectorySelection.ts`、`githubConnectionState.ts` |
+
+## 8. 相关
 
 - [design.knowledge-base.store.md](./design.knowledge-base.store.md)：文档空间主设计
 - [design.knowledge-base.store-sync.md](./design.knowledge-base.store-sync.md)：知识库跨环境同步（另一件事：库与库之间）

@@ -248,12 +248,21 @@ function ConnectStep({ oauthConfigured, onConnected, onError }: {
   const start = async () => {
     setStarting(true);
     onError('');
+    // 先同步开一个空白页再去发请求：浏览器只在「这次点击」的用户激活窗口内允许开新标签页，
+    // 等请求回来再 open 通常会被拦截——而界面上写着「在刚打开的 GitHub 页面粘贴配对码」，
+    // 用户看着一句不存在的事实发愣。被拦截（返回 null）也不影响主流程：配对码和
+    // 「重新打开授权页」按钮都在界面上。
+    // 注意不能带 noopener：带了 window.open 按规范返回 null，就拿不到这个页签去导航了。
+    // 改为拿到句柄后立刻断开 opener，隔离效果相同。
+    const authTab = window.open('about:blank', '_blank');
+    if (authTab) authTab.opener = null;
     const res = await startGitHubDeviceFlow();
     // 发起请求在路上时向导被关掉：清理函数比这两个定时器先跑，之后再建就没人清了，
     // 计时器会连同整个闭包一直留着。轮询那侧的守卫只在第一次请求回来后才生效，够不到这一段。
-    if (abandonedRef.current) return;
+    if (abandonedRef.current) { authTab?.close(); return; }
     setStarting(false);
     if (!res.success) {
+      authTab?.close(); // 发起就失败了，别给用户留一个空白页
       onError(res.error?.message ?? '发起 GitHub 授权失败', res.error?.code);
       return;
     }
@@ -261,7 +270,9 @@ function ConnectStep({ oauthConfigured, onConnected, onError }: {
     setFlow(res.data);
     setPhase('waiting');
     setRemaining(res.data.expiresInSeconds);
-    window.open(res.data.verificationUriComplete || res.data.verificationUri, '_blank', 'noopener');
+    const authUrl = res.data.verificationUriComplete || res.data.verificationUri;
+    if (authTab && !authTab.closed) authTab.location.href = authUrl;
+    else window.open(authUrl, '_blank', 'noopener'); // 没开成（被拦或被关）就再试一次，失败也有手动按钮兜底
 
     tickRef.current = window.setInterval(() => {
       setRemaining((prev) => (prev > 0 ? prev - 1 : 0));
@@ -307,7 +318,7 @@ function ConnectStep({ oauthConfigured, onConnected, onError }: {
       {phase === 'waiting' && flow ? (
         <div className="rounded-[12px] p-4" style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)' }}>
           <div className="text-[12px] mb-2" style={{ color: 'var(--text-muted)' }}>
-            在刚打开的 GitHub 页面粘贴这个配对码：
+            在打开的 GitHub 页面粘贴这个配对码（没自动打开就点下面的「重新打开授权页」）：
           </div>
           <div className="flex items-center gap-2 mb-3">
             <code className="text-[20px] font-mono font-bold tracking-[0.2em] px-3 py-2 rounded-[10px]"
