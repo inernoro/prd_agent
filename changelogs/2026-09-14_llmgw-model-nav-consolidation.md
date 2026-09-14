@@ -7,3 +7,4 @@
 | chore | prd-api | 测试项目删掉两个已由 ProjectReference 提供的 Compile Link，消除 CS0436 |
 | fix | llmgw | /v1/models 的 DataContext 参数补 [FromServices]，不注册它的宿主不再整张端点表构建失败 |
 | test | prd-api | 新增 serving 端点绑定守卫：最小宿主上枚举 EndpointDataSource 必须建得起来 |
+| polish | llmgw | 上游页删掉指向 Exchange 的那句说明（转接段就在上面），名下模型列不再折行 |

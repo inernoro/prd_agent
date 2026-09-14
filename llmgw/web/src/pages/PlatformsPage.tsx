@@ -2,7 +2,6 @@
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { Fragment, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
 import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
 import { ProviderModelsPanel, collectProviderModels, summarizeProviderModels } from '@/components/ProviderModelsPanel';
@@ -379,9 +378,7 @@ export function PlatformsPage() {
           <p>
             选平台、填密钥即可接入；这里存的是供应方密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。
           </p>
-          <div style={{ marginTop: 6, ...HINT_TEXT }}>
-            fal.ai 等原生接口不走这里，图片分层请到 <Link className="lg-text-link" to="/exchanges#image-layering">Exchange 一键接入</Link>。
-          </div>
+
         </div>
         {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
           {showCreate ? '收起配置' : '添加 Provider'}
@@ -588,6 +585,7 @@ export function PlatformsPage() {
                         background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
                         fontSize: 'var(--fs-secondary)',
                         color: ownedRows(p.id).some((x) => x.publicIds.length === 0) ? 'var(--warn)' : 'var(--text-secondary)',
+                        whiteSpace: 'nowrap',
                       }}
                     >
                       {summarizeProviderModels(ownedRows(p.id))}
