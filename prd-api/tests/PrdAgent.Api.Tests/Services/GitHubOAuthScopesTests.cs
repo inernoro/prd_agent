@@ -20,11 +20,10 @@ public class GitHubOAuthScopesTests
     [InlineData("   ")]
     public void 没配或配成空白时回落到默认scope(string? configured)
     {
-        // 按逗号切开逐个比对，不做子串匹配：`public_repo` 里也含 "repo"，
+        // 按空格切开逐个比对，不做子串匹配：`public_repo` 里也含 "repo"，
         // 而它恰恰**不给**私有仓权限——子串断言会在有人把默认值换成 public_repo 时
         // 保持绿色，等于把这条私有仓承诺的守卫废掉（形状 4a）。
-        var granted = GitHubOAuthService.ResolveScopes(configured)
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var granted = Granted(configured);
 
         granted.ShouldContain("repo", customMessage: "缺了完整的 repo scope，私有仓会一律 404");
         granted.ShouldContain("read:user", customMessage: "缺了 read:user，拿不到连接账号的信息");
@@ -34,16 +33,22 @@ public class GitHubOAuthScopesTests
     public void public_repo不算数_它不给私有仓权限()
     {
         // 这条是上一条的对照：证明那个断言真的能红，而不是被子串匹配蒙混过去。
-        var granted = GitHubOAuthService.ResolveScopes("public_repo,read:user")
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-
-        granted.ShouldNotContain("repo");
+        Granted("public_repo,read:user").ShouldNotContain("repo");
     }
 
-    [Fact]
-    public void 显式配置原样使用并去掉首尾空白()
+    [Theory]
+    [InlineData("  public_repo,read:user  ")]
+    [InlineData("public_repo read:user")]
+    [InlineData("public_repo,  read:user")]
+    public void 发出去的scope按空格分隔_逗号写法一并归一(string configured)
     {
-        GitHubOAuthService.ResolveScopes("  public_repo,read:user  ")
-            .ShouldBe("public_repo,read:user");
+        // GitHub 的 scope 参数是空格分隔的（本仓库另一个 GitHub 客户端发的也是 `repo read:user`）。
+        // 逗号写法会被当成一个没见过的 scope，授权可能被拒、或拿到一把不含 repo 的 token。
+        GitHubOAuthService.ResolveScopes(configured).ShouldBe("public_repo read:user");
     }
+
+    /// <summary>按 GitHub 的分隔符（空格）切出实际申请到的 scope 列表。</summary>
+    private static string[] Granted(string? configured)
+        => GitHubOAuthService.ResolveScopes(configured)
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }

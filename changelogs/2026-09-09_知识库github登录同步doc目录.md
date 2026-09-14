@@ -2,6 +2,8 @@
 | feat | prd-api | 知识库新增批量 GitHub 目录订阅端点，一次勾多个目录开启同步，重复勾选幂等跳过 |
 | feat | prd-admin | 知识库新增 GitHub 同步向导：连接 GitHub → 选仓库分支 → 勾目录（所有 doc/docs 递归预勾）→ 开启同步 |
 | fix | prd-api | GitHub 目录同步改带用户 token 请求，支持私有仓并把限额从匿名 60/h 提到 5000/h |
+| fix | prd-api | Device Flow 的 OAuth scope 按空格分隔发出（GitHub 的定义），逗号写法统一归一——写成逗号会被当成一个没见过的 scope，授权可能被拒或拿到不含 repo 的 token |
+| fix | prd-api | GitHub 二级限额（403/429 带 Retry-After、主配额没用完）也判为限额并按 Retry-After 给等待时长，不再提示用户去改仓库权限白折腾 |
 | fix | prd-api | Device Flow 的 OAuth scope 把空串当成没配：compose 注入的是 `${GitHubOAuth__Scopes:-}`（空串不是缺失），`?? 默认值` 因此不生效，按文档部署会拿到一把没有 scope 的 token，私有仓一律 404 |
 | fix | prd-api | GitHub 子条目去重键从 download_url 改为仓库内路径，避免私有仓临时 token 让同一文件每轮被判成新增+删除 |
 | fix | prd-api | GitHub 子文档来源地址存稳定 blob 地址，不再把私有仓的临时凭据写进库和界面 |

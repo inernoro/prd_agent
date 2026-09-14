@@ -53,4 +53,45 @@ public class GitHubRateLimitTests
         using var resp = Response(HttpStatusCode.Forbidden);
         Assert.Null(GitHubRateLimit.ResetHint(resp));
     }
+
+    [Fact]
+    public void 二级限额也算限额_主配额没用完照样要等()
+    {
+        // GitHub 的二级限额（短时间打得太快）是 403 + Retry-After，而主配额没用完，
+        // Remaining 仍非零。只看 Remaining 会把它判成「无权限」，于是提示用户去改仓库权限，
+        // 而他改什么都没用——正确的动作是等一会儿再来。
+        using var secondary = Response(
+            HttpStatusCode.Forbidden,
+            ("X-RateLimit-Remaining", "4321"),
+            ("Retry-After", "60"));
+
+        Assert.True(GitHubRateLimit.IsExhausted(secondary));
+    }
+
+    [Fact]
+    public void 二级限额的等待时长取Retry_After而不是主配额重置时刻()
+    {
+        // 此时 X-RateLimit-Reset 指向的是主配额的重置时刻（这里 50 分钟后），
+        // 远晚于 GitHub 真正要求的等待时间（60 秒）。给前者等于让用户白等。
+        var resetAt = DateTimeOffset.UtcNow.AddMinutes(50).ToUnixTimeSeconds();
+        using var secondary = Response(
+            HttpStatusCode.Forbidden,
+            ("X-RateLimit-Remaining", "4321"),
+            ("X-RateLimit-Reset", resetAt.ToString()),
+            ("Retry-After", "60"));
+
+        Assert.Equal("约 1 分钟", GitHubRateLimit.ResetHint(secondary));
+    }
+
+    [Fact]
+    public void 别的状态码带Retry_After不算限额()
+    {
+        // 503 + Retry-After 是「服务在维护」，不是限额；判成限额会给出误导的等待提示。
+        using var maintenance = Response(
+            HttpStatusCode.ServiceUnavailable,
+            ("X-RateLimit-Remaining", "4321"),
+            ("Retry-After", "60"));
+
+        Assert.False(GitHubRateLimit.IsExhausted(maintenance));
+    }
 }
