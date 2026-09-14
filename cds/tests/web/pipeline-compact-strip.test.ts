@@ -228,10 +228,15 @@ describe('紧凑态与放大态是同一张图，不是两套编码', () => {
     expect(zoomBranch).toMatch(/<ExpandedPanel/);
   });
 
-  it('紧凑态直接就是那条 strip，没有被包掉或换掉', () => {
+  it('紧凑态给的仍是同一个 strip，没有被换成另一棵树', () => {
     const zoomBranch = panel.slice(panel.indexOf('{zoom ? ('));
-    // 三元的 else 分支（收起态）必须原样给出 strip。
-    expect(zoomBranch).toMatch(/\)\s*:\s*\(\s*strip\s*\)/);
+    const compact = zoomBranch.slice(zoomBranch.indexOf(') : ('));
+    // 2026-09-14 走向折线落地后，紧凑态是「存量 strip + 走向」两块，不再是光秃秃
+    // 一个 strip。判据跟着从「只能是 strip」改成「必须包含那个 strip 变量」——
+    // 它防的事没变：存量那张图两态同源，不许在紧凑态另建一棵树。
+    expect(compact, '紧凑态没有渲染那个 strip 变量').toMatch(/\{strip\}/);
+    // 另建一棵树的样子就是这里又出现一次 <CompactStrip ...>。
+    expect(compact, '紧凑态自己又建了一个 CompactStrip').not.toMatch(/<CompactStrip/);
   });
 
   it('放大态的样式表跟着一起挂上了', () => {

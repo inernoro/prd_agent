@@ -36,7 +36,7 @@ import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
-import { buildPipelineOverview } from '../services/acceptance-pipeline.js';
+import { buildPipelineSeries, buildPipelineOverview } from '../services/acceptance-pipeline.js';
 import { buildReportsOverview } from '../services/acceptance-overview.js';
 
 /**
@@ -695,7 +695,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const tombstones = stateService.listRemovedBranches(scoped);
     const reports = stateService.listAcceptanceReports(scoped);
     const pipeline = buildPipelineOverview(projects, branches, tombstones, reports, { recentDays });
-    res.json({ pipeline });
+    // 走向和存量一起给：首屏两者都要，分两次请求会让曲线比数字晚到，读者看见的是半张图。
+    const seriesDaysRaw = Number(req.query.seriesDays);
+    const seriesDays = Number.isFinite(seriesDaysRaw) && seriesDaysRaw > 0
+      ? Math.min(365, Math.floor(seriesDaysRaw))
+      : 90;
+    const series = buildPipelineSeries(projects, branches, reports, { days: seriesDays });
+    res.json({ pipeline, series });
   });
 
   // GET /api/reports/assets/:name — 内容寻址的报告图片资源（PNG/JPG/...）。

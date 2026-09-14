@@ -46,6 +46,7 @@ import {
   type OverviewReportRef,
   type ReportsOverview,
   type PipelineOverview,
+  type PipelineSeries,
   type ReportFolder,
   type ReportFormat,
 } from '@/lib/api';
@@ -78,7 +79,7 @@ type OverviewState =
 type PipelineState =
   | { status: 'loading' }
   | { status: 'error'; message: string }
-  | { status: 'ok'; pipeline: PipelineOverview };
+  | { status: 'ok'; pipeline: PipelineOverview; series: PipelineSeries | null };
 
 /** 结论头条的时间窗（天）；持久在 sessionStorage，与列表排序同一存法。 */
 const OVERVIEW_WINDOWS = [7, 14, 30] as const;
@@ -217,7 +218,8 @@ export function ReportsPage(): JSX.Element {
   const loadPipeline = useCallback(async () => {
     setPipelineState({ status: 'loading' });
     try {
-      setPipelineState({ status: 'ok', pipeline: await fetchReportsPipeline({}) });
+      const { pipeline, series } = await fetchReportsPipeline({});
+      setPipelineState({ status: 'ok', pipeline, series });
     } catch (err) {
       setPipelineState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
@@ -883,7 +885,11 @@ function ReportsHome({
             </div>
           ) : null}
           {pipelineState.status === 'ok' ? (
-            <PipelinePanel pipeline={pipelineState.pipeline} onOpenProject={onOpenProject} />
+            <PipelinePanel
+              pipeline={pipelineState.pipeline}
+              series={pipelineState.series}
+              onOpenProject={onOpenProject}
+            />
           ) : null}
         </>
       ) : (

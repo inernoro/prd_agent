@@ -391,12 +391,39 @@ export interface PipelineOverview {
   leaks: PipelineLeak[];
 }
 
-export async function fetchReportsPipeline(input: { recentDays?: number | null } = {}): Promise<PipelineOverview> {
+/**
+ * 验收流水线的日序列（走向）。与 PipelineOverview 同一次请求返回。
+ *
+ * 每条数组长度都恒等于 days.length，没有数据的那天是 0 而不是缺项——
+ * 缺项会让折线在空白日直接连线，把 41 个没人验收的日子画成一条平滑的斜坡。
+ */
+export interface PipelineSeries {
+  days: string[];
+  changes: number[];
+  pass: number[];
+  conditional: number[];
+  fail: number[];
+  /** 有报告但结论字段为空。不是第四种结论。 */
+  undetermined: number[];
+  projects: Array<{ projectId: string | null; projectName: string; counts: number[]; total: number }>;
+  otherProjects: { count: number; total: number };
+  lastDayPartial: boolean;
+  /** 后端明说这份序列没有部署这一环，页面照实交代，不要自己补一条。 */
+  deployNote: 'no-deploy-history';
+}
+
+export async function fetchReportsPipeline(
+  input: { recentDays?: number | null; seriesDays?: number } = {},
+): Promise<{ pipeline: PipelineOverview; series: PipelineSeries | null }> {
   const params = new URLSearchParams();
   if (input.recentDays) params.set('recentDays', String(input.recentDays));
+  if (input.seriesDays) params.set('seriesDays', String(input.seriesDays));
   const qs = params.toString();
-  const res = await apiRequest<{ pipeline: PipelineOverview }>(`/api/reports/pipeline${qs ? `?${qs}` : ''}`);
-  return res.pipeline;
+  const res = await apiRequest<{ pipeline: PipelineOverview; series?: PipelineSeries }>(
+    `/api/reports/pipeline${qs ? `?${qs}` : ''}`,
+  );
+  // series 允许缺失：旧后端不返回它，那时页面只画存量，不画走向，也不能崩。
+  return { pipeline: res.pipeline, series: res.series ?? null };
 }
 
 export async function fetchReportsOverview(input: { projectId?: string; days?: number } = {}): Promise<ReportsOverview> {

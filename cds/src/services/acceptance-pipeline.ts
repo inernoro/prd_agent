@@ -328,3 +328,133 @@ export function buildPipelineOverview(
     leaks: allLeaks,
   };
 }
+
+/* ============================ 日序列 ============================
+   总览讲的是「此刻的存量」，它答不了「在变好还是变坏」。这一段补时间维度。
+
+   三条纪律：
+
+   1. **口径必须和总览同源**。报告先走 foldReportVersions 折叠版本，否则同一个
+      验收目标重复归档会在曲线上变成一个假峰，而同屏的总览数字是折叠过的——
+      一屏上两个数打架，最难查的那种。
+   2. **算不出来的不给**。「每日部署了几条」这里没有：分支只记 lastDeployAt
+      （最后一次部署的时刻），不是部署历史。按天分桶只会得到「最后一次部署时间的
+      分布」，那是另一件事。所以本函数不产出部署序列，也不给替代数字。
+   3. **只出原始日桶，不做平滑**。滚动平均是读法不是数据，属于渲染层；
+      后端做了平滑，前端就再也拿不回爆发的形状和空白日。 */
+
+/** 一条按日分桶的计数序列，长度恒等于 days.length。 */
+export interface PipelineSeries {
+  /** 连续日期（UTC，YYYY-MM-DD），中间不跳，没有数据的那天是 0 而不是缺项。 */
+  days: string[];
+  /** 每日新开的改动条数（分支 createdAt）。 */
+  changes: number[];
+  /** 每日归档报告按结论分档（折叠后）。 */
+  pass: number[];
+  conditional: number[];
+  fail: number[];
+  /** 有报告但结论字段为空。不是第四种结论，别和上面三档并列画。 */
+  undetermined: number[];
+  /** 报告数居前的项目各自的日序列；其余项目不进这里。 */
+  projects: Array<{ projectId: string | null; projectName: string; counts: number[]; total: number }>;
+  /** 没进 projects 的项目数与它们的报告合计，供页面如实交代「其余 N 个项目」。 */
+  otherProjects: { count: number; total: number };
+  /**
+   * 末格是否是不完整的一天/一段。渲染必须标出来，否则今天上午的半天会被
+   * 读成一整天的塌陷。
+   */
+  lastDayPartial: boolean;
+  /** 本序列**没有**部署这一环，且不是漏做。原因见上方注释，页面要照实说明。 */
+  deployNote: 'no-deploy-history';
+}
+
+export interface BuildSeriesOptions {
+  /** 回看天数，含今天。默认 90。 */
+  days?: number;
+  /** 项目序列最多给几条。默认 4。 */
+  topProjects?: number;
+  now?: Date;
+}
+
+function dayKey(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const s = String(iso);
+  return s.length >= 10 ? s.slice(0, 10) : null;
+}
+
+export function buildPipelineSeries(
+  projects: Project[],
+  branches: BranchEntry[],
+  reports: AcceptanceReportMeta[],
+  options: BuildSeriesOptions = {},
+): PipelineSeries {
+  const now = options.now ?? new Date();
+  const span = Math.max(1, Math.min(365, Math.floor(options.days ?? 90)));
+  const topN = Math.max(0, Math.floor(options.topProjects ?? 4));
+
+  // 从今天往回数 span 天（含今天），按 UTC 日切。
+  const endMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const days: string[] = [];
+  for (let i = span - 1; i >= 0; i -= 1) {
+    days.push(new Date(endMs - i * DAY_MS).toISOString().slice(0, 10));
+  }
+  const idx = new Map(days.map((d, i) => [d, i]));
+  const zeros = (): number[] => new Array(days.length).fill(0);
+
+  const changes = zeros();
+  for (const b of branches) {
+    const i = idx.get(dayKey(b.createdAt) ?? '');
+    if (i != null) changes[i] += 1;
+  }
+
+  // 与总览同一份折叠结果：重复归档只算最新一版。
+  const { latest: refs } = foldReportVersions(reports);
+
+  const pass = zeros();
+  const conditional = zeros();
+  const fail = zeros();
+  const undetermined = zeros();
+  const byTier: Record<string, number[]> = { pass, conditional, fail };
+
+  const perProject = new Map<string, { name: string; counts: number[]; total: number }>();
+  const nameOf = new Map(projects.map((p) => [p.id, p.name || p.id]));
+
+  for (const r of refs) {
+    const i = idx.get(dayKey(r.createdAt) ?? '');
+    if (i == null) continue;
+    (byTier[r.verdict ?? ''] ?? undetermined)[i] += 1;
+
+    // projectId 缺失的报告是「无主」，它是真实存在的一类，不能丢也不能假装成项目。
+    const pid = r.projectId ?? '';
+    let row = perProject.get(pid);
+    if (!row) {
+      row = { name: pid ? (nameOf.get(pid) ?? pid) : '无主（报告没记项目）', counts: zeros(), total: 0 };
+      perProject.set(pid, row);
+    }
+    row.counts[i] += 1;
+    row.total += 1;
+  }
+
+  const ranked = [...perProject.entries()].sort((a, b) => b[1].total - a[1].total);
+  const top = ranked.slice(0, topN);
+  const rest = ranked.slice(topN);
+
+  return {
+    days,
+    changes,
+    pass,
+    conditional,
+    fail,
+    undetermined,
+    projects: top.map(([pid, row]) => ({
+      projectId: pid || null,
+      projectName: row.name,
+      counts: row.counts,
+      total: row.total,
+    })),
+    otherProjects: { count: rest.length, total: rest.reduce((s, [, r]) => s + r.total, 0) },
+    // 末格永远是「今天到此刻为止」，除非此刻正好是 UTC 零点。
+    lastDayPartial: now.getTime() > endMs,
+    deployNote: 'no-deploy-history',
+  };
+}

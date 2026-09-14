@@ -12,10 +12,13 @@
 import { useState } from 'react';
 import { buildPipelineHeadline } from '@/lib/pipelineHeadline';
 import { CompactStrip, EXPAND_CSS, ExpandedPanel, STRIP_CSS } from '@/pages/reports/CompactStrip';
-import type { PipelineFunnel, PipelineOverview, PipelineProjectRow } from '@/lib/api';
+import { TREND_CSS, TrendCharts } from '@/pages/reports/TrendCharts';
+import type { PipelineFunnel, PipelineOverview, PipelineProjectRow, PipelineSeries } from '@/lib/api';
 
 export interface PipelinePanelProps {
   pipeline: PipelineOverview;
+  /** 日序列。旧后端不返回它，此时只画存量、不画走向，且不能崩。 */
+  series: PipelineSeries | null;
   onOpenProject: (projectId: string) => void;
 }
 
@@ -188,13 +191,17 @@ function Card({ children }: { children: React.ReactNode }): JSX.Element {
   );
 }
 
-export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): JSX.Element {
+export function PipelinePanel({ pipeline, series, onOpenProject }: PipelinePanelProps): JSX.Element {
   const orphan = Math.max(0, pipeline.totalLeaks['report-missing-change-key'] ?? 0);
   const reclaimed = Math.max(0, pipeline.staleReports);
   const split = splitChanges(pipeline.total);
   const headline = buildPipelineHeadline(pipeline);
   const { tipState, handlers } = useTipDelegate();
   const [zoom, setZoom] = useState(false);
+
+  // 走向与存量是两个问题（「在往哪走」和「现在多少」），所以两块都在，
+  // 不是二选一。旧后端没有 series 时这一块整块不出现，页面只少一层信息。
+  const trends = series ? <TrendCharts series={series} zoom={zoom} /> : null;
 
   const strip = (
     <CompactStrip
@@ -213,6 +220,7 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
       <style>{PANEL_CSS}</style>
       <style>{STRIP_CSS}</style>
       <style>{EXPAND_CSS}</style>
+      <style>{TREND_CSS}</style>
 
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <h1 className="m-0 text-[22px] font-bold tracking-[0.14em]">验收流水线</h1>
@@ -241,6 +249,7 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
             <Headline h={headline} full />
           </Card>
           <Card>{strip}</Card>
+          {trends}
           <Card>
             <ExpandedPanel
               pipeline={pipeline}
@@ -252,7 +261,10 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
           </Card>
         </>
       ) : (
-        strip
+        <>
+          {strip}
+          {trends}
+        </>
       )}
     </div>
   );
