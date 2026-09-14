@@ -143,6 +143,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
             repo={picked.repo}
             branch={picked.branch}
             onBack={() => setStep('repo')}
+            onCommitted={onFinished}
             onError={reportError}
             onDone={(batch) => { setResult(batch); setStep('done'); onFinished(); }}
           />
@@ -531,12 +532,14 @@ function RepoStep({ onSelected, onError }: {
 }
 
 /** 第三步：勾目录。进来就已经按 doc / docs 预勾好，用户只需要改他想改的。 */
-function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
+function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, onError }: {
   storeId: string;
   repo: GitHubRepository;
   branch: string;
   onBack: () => void;
   onDone: (result: BatchResult) => void;
+  /** 有批次已落库（哪怕整体失败）就调一次，让页面把新条目拉出来 */
+  onCommitted: () => void;
   onError: (msg: string, code?: string) => void;
 }) {
   const [scan, setScan] = useState<GitHubDirectoryScan | null>(null);
@@ -619,6 +622,9 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
             : base,
           res.error?.code,
         );
+        // 已落库的那几批必须让页面知道：用户此时很可能直接关掉向导，
+        // 不刷新的话那些订阅在文件树里根本不出现，要手动刷新整页才看得见。
+        if (merged.createdCount > 0) onCommitted();
         return;
       }
       merged.createdCount += res.data.createdCount;
@@ -650,7 +656,11 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
     return (
       <div className="flex-1 flex flex-col items-center justify-center gap-3 py-16">
         <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>目录没扫出来</span>
-        <Button variant="ghost" size="xs" onClick={() => void runScan()}><RefreshCw size={12} /> 重试</Button>
+        <div className="flex items-center gap-2">
+          {/* 分支被删/改名这类原因，重试多少次都是同一个结果——必须能退回去换仓库或分支 */}
+          <Button variant="ghost" size="xs" onClick={onBack}>上一步（换仓库或分支）</Button>
+          <Button variant="ghost" size="xs" onClick={() => void runScan()}><RefreshCw size={12} /> 重试</Button>
+        </div>
       </div>
     );
   }
