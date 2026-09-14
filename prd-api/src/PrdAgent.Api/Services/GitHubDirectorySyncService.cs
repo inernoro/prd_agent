@@ -77,7 +77,9 @@ public class GitHubDirectorySyncService
         if (!meta.TryGetValue("github_owner", out var owner) ||
             !meta.TryGetValue("github_repo", out var repo))
         {
-            throw new InvalidOperationException("缺少 github_owner 或 github_repo 元数据");
+            // 用户看得懂的说法 + 下一步；原始字段名只对开发者有意义，留在日志里
+            throw new GitHubSyncUserFacingException(
+                "这条订阅缺少仓库信息（无法确定要同步哪个 GitHub 仓库），请删掉它后用「从 GitHub 同步」重新添加。");
         }
 
         var path = meta.GetValueOrDefault("github_path", "");
@@ -468,7 +470,9 @@ public class GitHubDirectorySyncService
                 owner, repo, path, branch, (int)response.StatusCode, body);
             // 限额判定交给共用的 GitHubRateLimit（看 X-RateLimit-Remaining 头），
             // 不再自己在正文里找 "rate limit" 字样——同一件事两份判据必然漂（形状 3）。
-            throw new Exception(DescribeListFailure(
+            // GitHubSyncUserFacingException：DescribeListFailure 产出的就是可执行文案，
+            // 声明它可以原样给用户看；其余异常一律走 GitHubSyncFailureMessage 兜底翻译
+            throw new GitHubSyncUserFacingException(DescribeListFailure(
                 response.StatusCode, accessToken, owner, repo, path, branch,
                 rateLimited: GitHubRateLimit.IsExhausted(response),
                 resetHint: GitHubRateLimit.ResetHint(response)));

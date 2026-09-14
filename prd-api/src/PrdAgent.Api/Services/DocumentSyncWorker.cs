@@ -214,7 +214,10 @@ public class DocumentSyncWorker : BackgroundService
         {
             sw.Stop();
             _logger.LogWarning(ex, "[DocumentSyncWorker] GitHub directory sync failed for {EntryId}", entry.Id);
-            await MarkSyncError(db, entry, ex.Message, startedAt, (int)sw.ElapsedMilliseconds);
+            // 落到条目上的这一栏会原样渲染到目录卡片，所以只写用户可执行的说法；
+            // 原始异常（堆栈、Mongo/JSON 诊断）只进上面那条日志
+            await MarkSyncError(
+                db, entry, GitHubSyncFailureMessage.Describe(ex), startedAt, (int)sw.ElapsedMilliseconds);
         }
     }
 
