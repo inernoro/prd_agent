@@ -10,6 +10,7 @@ import {
   type ModelLeaderboardSnapshot,
 } from '@/services/real/modelLeaderboard';
 import { useAuthStore } from '@/stores/authStore';
+import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { toast } from '@/lib/toast';
 
 /** 「仅开源」筛选认这些授权字样之外的一切为闭源。 */
@@ -31,7 +32,11 @@ export default function ModelLeaderboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const isAdmin = useAuthStore((s) => s.user?.role === 'ADMIN');
+  // 与后端 ModelLeaderboardAdminController 的 WritePermission 对齐，
+  // 按权限判而不是按角色名——角色名只是权限的一种来源，前后端各判一套迟早对不上。
+  const permissions = useAuthStore((s) => s.permissions);
+  const isRoot = useAuthStore((s) => s.isRoot);
+  const canSync = hasEffectivePermission(permissions, 'mds.write', isRoot);
 
   const load = useCallback(async (target: string) => {
     setLoading(true);
@@ -131,7 +136,7 @@ export default function ModelLeaderboardPage() {
             >
               <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
             </button>
-            {isAdmin && (
+            {canSync && (
               <button
                 type="button"
                 onClick={() => void runSync()}
@@ -158,12 +163,12 @@ export default function ModelLeaderboardPage() {
           <EmptyNote
             title="这个环境还没有榜单数据"
             body={
-              isAdmin
+              canSync
                 ? '每天一轮的自动同步只在正式部署上跑（同项目多个预览共用一个库，都去写会互相覆盖）。要在这里看真实榜单，点下面按钮手动抓一次，约一两分钟。'
                 : '每天一轮的自动同步还没跑到这个环境。可以找管理员手动同步一次。'
             }
             action={
-              isAdmin ? (
+              canSync ? (
                 <button
                   type="button"
                   onClick={() => void runSync()}
