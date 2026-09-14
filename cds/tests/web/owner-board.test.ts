@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { MONITOR_ENVIRONMENT_ORDER } from '../../src/services/monitor-environment.js';
 import {
   ENVIRONMENT_ORDER,
+  ENVIRONMENT_SHORT,
   assessCell,
   assessFreshness,
   buildAttribution,
@@ -24,6 +25,7 @@ import {
   describeEvidence,
   describeRow,
   shortPredicate,
+  shouldDrawBar,
   latestEvidence,
 } from '../../web/src/lib/ownerBoard.js';
 import type { MonitorEnvironment, UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
@@ -489,5 +491,36 @@ describe('格子带上真实数字（卡片「专业感」的来源）', () => {
     ], NOW);
     expect(rows[0].cells[0].availability24h).toBeNull();
     expect(rows[0].cells[0].avgLatencyMs24h).toBeNull();
+  });
+});
+
+describe('柱条：会误导就不画', () => {
+  const bucket = (up: number, down = 0): { from: number; to: number; up: number; down: number } =>
+    ({ from: 0, to: 0, up, down });
+
+  it('样本铺得开就画', () => {
+    expect(shouldDrawBar([bucket(1), bucket(1), bucket(1), bucket(0)])).toBe(true);
+  });
+
+  it('48 格里只有 4 格有样本就不画 —— 那张图第一眼给出的印象是错的', () => {
+    const sparse = [...Array(44)].map(() => bucket(0)).concat([bucket(1), bucket(1), bucket(1), bucket(1)]);
+    expect(shouldDrawBar(sparse)).toBe(false);
+  });
+
+  it('一格都没有时不画', () => {
+    expect(shouldDrawBar([])).toBe(false);
+    expect(shouldDrawBar([bucket(0), bucket(0)])).toBe(false);
+  });
+
+  it('有故障的格子也算「有样本」——不能因为它是红的就当成没采到', () => {
+    expect(shouldDrawBar([bucket(0, 3), bucket(0, 2), bucket(0), bucket(0)])).toBe(true);
+  });
+});
+
+describe('环境缩写要认得出来', () => {
+  it('预发与分支预览不能都缩成「预」', () => {
+    expect(ENVIRONMENT_SHORT.staging).not.toBe(ENVIRONMENT_SHORT.preview);
+    // 两个字是下限：单字的「支」「他」没人认得
+    for (const v of Object.values(ENVIRONMENT_SHORT)) expect(v.length).toBeGreaterThanOrEqual(2);
   });
 });

@@ -24,6 +24,7 @@ import {
   describeEvidence,
   describeRow,
   shortPredicate,
+  shouldDrawBar,
   listEnvironments,
   listProjects,
   scopeTargets,
@@ -141,7 +142,7 @@ function BusinessCard({ row, now, onOpen }: { row: BusinessRow; now: number; onO
       </div>
 
       {/* 24 小时柱条：让这一屏活起来的那一条，也是「他干活了吗」最直观的答案。 */}
-      {worstCell && worstCell.buckets.length > 0 ? (
+      {worstCell && shouldDrawBar(worstCell.buckets) ? (
         <AvailabilityBar
           buckets={worstCell.buckets}
           segments={48}

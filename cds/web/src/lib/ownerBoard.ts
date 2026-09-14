@@ -31,12 +31,18 @@ export const ENVIRONMENT_ORDER: readonly MonitorEnvironment[] = [
   'preview',
 ];
 
-/** 一个字的环境缩写，业务卡上那排小格子用。 */
+/**
+ * 业务卡上那排小格子里的环境名。
+ *
+ * 原先是一个字：正 / 预 / 他 / 支。两个问题——「支」「他」单独拿出来没人认得，
+ * 而「预」（预发）和「支」（分支**预览**）在中文里本就都叫「预」，
+ * 读者没法分辨哪个是哪个。省那两个字换来的是一排看不懂的符号，不划算。
+ */
 export const ENVIRONMENT_SHORT: Record<MonitorEnvironment, string> = {
-  production: '正',
-  staging: '预',
-  other: '他',
-  preview: '支',
+  production: '生产',
+  staging: '预发',
+  other: '其他',
+  preview: '预览',
 };
 
 /**
@@ -176,6 +182,23 @@ export function shortPredicate(probeDescription: string): string {
     : text;
   // 状态码规则是所有 HTTP 探测都一样的通用前缀，不是这一条的特征。
   return rest.replace(/^状态\s*[\d,\-\s]+\s*且\s*/, '').trim() || text;
+}
+
+/**
+ * 这条柱条画出来是帮忙还是帮倒忙。
+ *
+ * 6 小时一探的监控，24 小时窗口切成 48 格只有 4 格有样本，其余 44 格是「那一格
+ * 没采到」的灰——而灰条在一排绿条里读起来就是「大面积挂了」。**一张会误导的图
+ * 比没有图更糟**，所以样本太稀时干脆不画，让证据行去说（它本来就说得更准）。
+ *
+ * 阈值取四分之一：低于它，图上灰色占绝对多数，第一眼给出的印象必然是错的。
+ */
+export const BAR_MIN_FILLED_RATIO = 0.25;
+
+export function shouldDrawBar(buckets: ReadonlyArray<{ up: number; down: number }>): boolean {
+  if (buckets.length === 0) return false;
+  const filled = buckets.filter((b) => b.up > 0 || b.down > 0).length;
+  return filled / buckets.length >= BAR_MIN_FILLED_RATIO;
 }
 
 export interface BusinessRow {

@@ -165,3 +165,53 @@ describe('脱敏：内部字段一个都不许出去', () => {
     }
   });
 });
+
+describe('同一个对外名合并成一行', () => {
+  const item = (over: Partial<PublicBoardSourceItem>): PublicBoardSourceItem => ({
+    name: 'x', status: 'up', measured: true, days: [], ...over,
+  });
+
+  it('两条 check 同一个对外名，对外只出一行', () => {
+    const board = buildPublicStatusBoard({
+      title: 'T', now: 0, refreshHintSeconds: 60,
+      items: [
+        item({ name: '网关未处理异常', publicName: 'AI 网关' }),
+        item({ name: '网关真实调用', publicName: 'AI 网关' }),
+      ],
+    });
+    expect(board.items).toHaveLength(1);
+    expect(board.items[0].name).toBe('AI 网关');
+    expect(board.headline).toContain('1 项');
+  });
+
+  it('合并取最差档 —— 一个服务有一处不好，对外就该说它不好', () => {
+    const board = buildPublicStatusBoard({
+      title: 'T', now: 0, refreshHintSeconds: 60,
+      items: [
+        item({ publicName: 'AI 网关', status: 'up' }),
+        item({ publicName: 'AI 网关', status: 'down' }),
+      ],
+    });
+    expect(board.items[0].status).toBe('down');
+  });
+
+  it('按日也取那天最差的', () => {
+    const board = buildPublicStatusBoard({
+      title: 'T', now: 0, refreshHintSeconds: 60,
+      items: [
+        item({ publicName: 'AI 网关', days: [{ day: '2026-09-14', up: 10, down: 0 }] }),
+        item({ publicName: 'AI 网关', days: [{ day: '2026-09-14', up: 0, down: 5 }] }),
+      ],
+    });
+    expect(board.items[0].days).toHaveLength(1);
+    expect(board.items[0].days[0].status).toBe('down');
+  });
+
+  it('对外名不同的仍是两行 —— 合并只按对外名，不按内部关系瞎猜', () => {
+    const board = buildPublicStatusBoard({
+      title: 'T', now: 0, refreshHintSeconds: 60,
+      items: [item({ publicName: 'AI 网关' }), item({ publicName: 'MAP 后端' })],
+    });
+    expect(board.items).toHaveLength(2);
+  });
+});
