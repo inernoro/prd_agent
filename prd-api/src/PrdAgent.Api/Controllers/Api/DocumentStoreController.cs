@@ -4631,11 +4631,7 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
             Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory));
         var existingEntries = await _db.DocumentEntries.Find(existingFilter).ToListAsync();
-        var duplicate = existingEntries.FirstOrDefault(e =>
-            e.Metadata.GetValueOrDefault("github_owner") == owner &&
-            e.Metadata.GetValueOrDefault("github_repo") == repo &&
-            e.Metadata.GetValueOrDefault("github_path") == path &&
-            e.Metadata.GetValueOrDefault("github_branch") == branch);
+        var duplicate = existingEntries.FirstOrDefault(e => IsSameGitHubDirectory(e, owner, repo, path, branch));
         if (duplicate != null)
             return BadRequest(ApiResponse<object>.Fail("ALREADY_EXISTS", $"该目录已订阅 (ID: {duplicate.Id})"));
 
@@ -4760,11 +4756,7 @@ public class DocumentStoreController : ControllerBase
                     continue;
                 }
 
-                var duplicate = existing.FirstOrDefault(e =>
-                    e.Metadata.GetValueOrDefault("github_owner") == owner &&
-                    e.Metadata.GetValueOrDefault("github_repo") == repo &&
-                    e.Metadata.GetValueOrDefault("github_path") == path &&
-                    e.Metadata.GetValueOrDefault("github_branch") == branch);
+                var duplicate = existing.FirstOrDefault(e => IsSameGitHubDirectory(e, owner, repo, path, branch));
                 if (duplicate != null)
                 {
                     skipped.Add(new { path, reason = "already_subscribed", entryId = duplicate.Id });
@@ -4892,6 +4884,21 @@ public class DocumentStoreController : ControllerBase
                 => GitHubSyncCredentialPolicy.ConnectionUsability.Revoked,
             _ => GitHubSyncCredentialPolicy.ConnectionUsability.Unknown,
         };
+
+    /// <summary>
+    /// 这个条目订阅的是不是同一个 GitHub 目录（唯一判定，手贴与批量两条路共用）。
+    ///
+    /// owner / repo **大小写不敏感**：GitHub 的用户名与仓库名不区分大小写，而手贴地址保留用户
+    /// 敲进去的大小写、仓库接口返回的是规范大小写——两条路各建一份，就会出现两个指向同一目录的
+    /// 订阅，接着把同一批文档导入两遍。
+    /// path / branch 保持区分大小写：Git 的路径与分支名本来就区分。
+    /// </summary>
+    private static bool IsSameGitHubDirectory(
+        DocumentEntry entry, string owner, string repo, string path, string branch)
+        => string.Equals(entry.Metadata.GetValueOrDefault("github_owner"), owner, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(entry.Metadata.GetValueOrDefault("github_repo"), repo, StringComparison.OrdinalIgnoreCase)
+        && entry.Metadata.GetValueOrDefault("github_path") == path
+        && entry.Metadata.GetValueOrDefault("github_branch") == branch;
 
     /// <summary>
     /// 父条目对外展示的 GitHub 地址。逐段转义：目录名里合法的 # 会把后半段变成 URL 片段、
