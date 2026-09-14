@@ -675,3 +675,5 @@ processed:
   - 2026-09-11_monitor-discovery.md
   - 2026-09-11_monitor-first-screen-dead-ends.md
   - 2026-09-12_entropy-cleanup.md
+  - 2026-09-13_entropy-cleanup.md
+  - 2026-09-13_serving-monitor-guard-follow-yml-removal.md
