@@ -71,3 +71,24 @@ export function getModelLeaderboardTop(
     { method: 'GET' },
   );
 }
+
+/** 手动同步的结果回显。 */
+export interface ModelLeaderboardSyncResult {
+  total: number;
+  succeeded: number;
+  boards: Array<{ board: string; ok: boolean; count: number; error: string | null }>;
+}
+
+/**
+ * 手动触发一次榜单同步（仅管理员）。
+ *
+ * 周期同步只在权威部署跑，所以分支预览上的库是空的；要在预览环境看效果就得手动点一次。
+ * 会对外站发五次请求，别当刷新按钮用。
+ */
+export function syncModelLeaderboard(): Promise<ApiResponse<ModelLeaderboardSyncResult>> {
+  return apiRequest<ModelLeaderboardSyncResult>('/api/model-leaderboard/sync', {
+    method: 'POST',
+    // 五个分榜逐个抓，每个页面 1.8-5MB，默认超时不够
+    timeoutMs: 180_000,
+  });
+}

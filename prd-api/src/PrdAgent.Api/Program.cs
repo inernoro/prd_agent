@@ -477,6 +477,8 @@ builder.Services.AddHttpClient(PrdAgent.Api.Services.ModelLeaderboard.ModelLeade
 })
     .ConfigurePrimaryHttpMessageHandler(sp =>
         sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+// 同步逻辑的唯一实现，周期 Worker 与管理员手动端点共用，避免两份各自漂移。
+builder.Services.AddScoped<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncService>();
 // 只在权威部署上跑：快照是共享库里的全局单行状态，多个分支预览同时写会互相覆盖。
 builder.Services.AddHostedService<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker>();
 

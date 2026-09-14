@@ -2,9 +2,6 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using MongoDB.Driver;
-using PrdAgent.Core.Models;
-using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Services.ModelLeaderboard;
@@ -54,18 +51,15 @@ public class ModelLeaderboardSyncWorker : BackgroundService
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _configuration;
-    private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<ModelLeaderboardSyncWorker> _logger;
 
     public ModelLeaderboardSyncWorker(
         IServiceScopeFactory scopeFactory,
         IConfiguration configuration,
-        IHttpClientFactory httpClientFactory,
         ILogger<ModelLeaderboardSyncWorker> logger)
     {
         _scopeFactory = scopeFactory;
         _configuration = configuration;
-        _httpClientFactory = httpClientFactory;
         _logger = logger;
     }
 
@@ -118,75 +112,12 @@ public class ModelLeaderboardSyncWorker : BackgroundService
     private async Task SyncAllAsync(CancellationToken ct)
     {
         using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+        // 同步逻辑只有一份，在 ModelLeaderboardSyncService 里；本 Worker 只负责「什么时候跑」。
+        var service = scope.ServiceProvider.GetRequiredService<ModelLeaderboardSyncService>();
 
-        var http = _httpClientFactory.CreateClient(HttpClientName);
-        var fetcher = new ArenaLeaderboardFetcher(http);
-        var sourceLabel = DeploymentAuthority.DescribeSource(_configuration);
+        var results = await service.SyncAllAsync(ct);
+        var succeeded = results.Count(r => r.Ok);
 
-        var succeeded = 0;
-        foreach (var board in Boards)
-        {
-            ct.ThrowIfCancellationRequested();
-            try
-            {
-                await SyncBoardAsync(db, fetcher, board, sourceLabel, ct);
-                succeeded++;
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // 保留旧快照：这里刻意不写库。页面会继续显示上一份，并如实标出它的日期。
-                _logger.LogWarning(ex,
-                    "模型榜同步：分榜 {Board} 本轮失败，保留上一份快照（页面会显示旧数据的日期）。", board);
-            }
-        }
-
-        _logger.LogInformation("模型榜同步：本轮完成 {Succeeded}/{Total} 个分榜。", succeeded, Boards.Length);
-    }
-
-    private async Task SyncBoardAsync(
-        MongoDbContext db,
-        ArenaLeaderboardFetcher fetcher,
-        string board,
-        string sourceLabel,
-        CancellationToken ct)
-    {
-        var entries = await fetcher.FetchAsync(board, ct);
-
-        // 比对上一份快照填升降。上一份不存在时全部留 null，前端不显示箭头。
-        var filter = Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Board, board);
-        var previous = await db.ModelLeaderboardSnapshots.Find(filter).FirstOrDefaultAsync(ct);
-        if (previous is not null)
-        {
-            var previousRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            foreach (var entry in previous.Entries)
-                previousRanks.TryAdd(entry.Name, entry.Rank);
-
-            foreach (var entry in entries)
-            {
-                if (previousRanks.TryGetValue(entry.Name, out var rank))
-                    entry.PreviousRank = rank;
-            }
-        }
-
-        var snapshot = new ModelLeaderboardSnapshot
-        {
-            // 覆盖写时沿用旧文档的 Id，保证「一个榜单一条文档」而不是每天堆一条
-            Id = previous?.Id ?? Guid.NewGuid().ToString("N"),
-            Board = board,
-            FetchedAt = DateTime.UtcNow,
-            SourceUrl = ArenaLeaderboardFetcher.BuildUrl(board),
-            SourceLabel = sourceLabel,
-            Entries = entries,
-        };
-
-        await db.ModelLeaderboardSnapshots.ReplaceOneAsync(
-            filter, snapshot, new ReplaceOptions { IsUpsert = true }, ct);
-
-        _logger.LogInformation("模型榜同步：分榜 {Board} 已更新，{Count} 个模型。", board, entries.Count);
+        _logger.LogInformation("模型榜同步：本轮完成 {Succeeded}/{Total} 个分榜。", succeeded, results.Count);
     }
 }

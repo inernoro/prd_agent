@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, RefreshCw } from 'lucide-react';
+import { CloudDownload, ExternalLink, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/design/PageHeader';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import {
   getModelLeaderboard,
+  syncModelLeaderboard,
   LEADERBOARD_BOARDS,
   type ModelLeaderboardEntry,
   type ModelLeaderboardSnapshot,
 } from '@/services/real/modelLeaderboard';
+import { useAuthStore } from '@/stores/authStore';
+import { toast } from '@/lib/toast';
 
 /** 「仅开源」筛选认这些授权字样之外的一切为闭源。 */
 const PROPRIETARY = /proprietary/i;
@@ -27,6 +30,8 @@ export default function ModelLeaderboardPage() {
   const [snapshot, setSnapshot] = useState<ModelLeaderboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const isAdmin = useAuthStore((s) => s.user?.role === 'ADMIN');
 
   const load = useCallback(async (target: string) => {
     setLoading(true);
@@ -43,6 +48,29 @@ export default function ModelLeaderboardPage() {
 
   useEffect(() => {
     void load(board);
+  }, [board, load]);
+
+  /**
+   * 手动拉一次。周期同步只在权威部署跑，分支预览上的库是空的，
+   * 要在预览环境看真实榜单就得点这里。抓五个分榜要一两分钟，所以按钮全程给状态。
+   */
+  const runSync = useCallback(async () => {
+    setSyncing(true);
+    const res = await syncModelLeaderboard();
+    setSyncing(false);
+    if (res.success && res.data) {
+      const { succeeded, total } = res.data;
+      const failed = res.data.boards.filter((b) => !b.ok);
+      if (failed.length > 0) {
+        // 部分失败要说清哪个榜、为什么，不要笼统报「部分成功」
+        toast.error(`同步完成 ${succeeded}/${total}，失败：${failed.map((b) => `${b.board}（${b.error ?? '未知原因'}）`).join('；')}`);
+      } else {
+        toast.success(`已同步 ${succeeded} 个分榜`);
+      }
+      await load(board);
+    } else {
+      toast.error(res.error?.message ?? '同步没跑起来');
+    }
   }, [board, load]);
 
   const entries = (snapshot?.entries ?? []).filter((e) =>
@@ -103,6 +131,19 @@ export default function ModelLeaderboardPage() {
             >
               <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
             </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => void runSync()}
+                disabled={syncing}
+                title="从 arena.ai 重新抓一次全部分榜（管理员）"
+                className="h-[28px] px-2.5 inline-flex items-center gap-1.5 rounded-[8px] text-[12px] font-medium transition-colors disabled:opacity-60"
+                style={{ color: 'var(--text-secondary)', background: 'var(--nested-block-bg)' }}
+              >
+                <CloudDownload size={13} className={syncing ? 'animate-pulse' : ''} />
+                {syncing ? '抓取中' : '立即同步'}
+              </button>
+            )}
           </div>
         }
       />
@@ -115,8 +156,26 @@ export default function ModelLeaderboardPage() {
           <EmptyNote title="榜单没读出来" body={error} />
         ) : !snapshot?.ready ? (
           <EmptyNote
-            title="首次同步还没跑完"
-            body="后台每天同步一次公开榜单，第一次同步会在服务启动几分钟后开始。稍后回来看看。"
+            title="这个环境还没有榜单数据"
+            body={
+              isAdmin
+                ? '每天一轮的自动同步只在正式部署上跑（同项目多个预览共用一个库，都去写会互相覆盖）。要在这里看真实榜单，点下面按钮手动抓一次，约一两分钟。'
+                : '每天一轮的自动同步还没跑到这个环境。可以找管理员手动同步一次。'
+            }
+            action={
+              isAdmin ? (
+                <button
+                  type="button"
+                  onClick={() => void runSync()}
+                  disabled={syncing}
+                  className="mt-1 self-start h-[32px] px-3.5 inline-flex items-center gap-2 rounded-[9px] text-[13px] font-medium transition-colors disabled:opacity-60"
+                  style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
+                >
+                  <CloudDownload size={14} className={syncing ? 'animate-pulse' : ''} />
+                  {syncing ? '正在抓取五个分榜…' : '立即同步一次'}
+                </button>
+              ) : undefined
+            }
           />
         ) : entries.length === 0 ? (
           <EmptyNote
@@ -349,7 +408,15 @@ function SourceLine({
   );
 }
 
-function EmptyNote({ title, body }: { title: string; body: string }) {
+function EmptyNote({
+  title,
+  body,
+  action,
+}: {
+  title: string;
+  body: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div
       className="mt-6 rounded-[12px] px-5 py-6 flex flex-col gap-2"
@@ -361,6 +428,7 @@ function EmptyNote({ title, body }: { title: string; body: string }) {
       <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
         {body}
       </span>
+      {action}
     </div>
   );
 }

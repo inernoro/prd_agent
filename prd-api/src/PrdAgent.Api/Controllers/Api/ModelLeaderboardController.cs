@@ -27,10 +27,17 @@ public class ModelLeaderboardController : ControllerBase
     private const int StaleAfterDays = 2;
 
     private readonly MongoDbContext _db;
+    private readonly ModelLeaderboardSyncService _sync;
+    private readonly ILogger<ModelLeaderboardController> _logger;
 
-    public ModelLeaderboardController(MongoDbContext db)
+    public ModelLeaderboardController(
+        MongoDbContext db,
+        ModelLeaderboardSyncService sync,
+        ILogger<ModelLeaderboardController> logger)
     {
         _db = db;
+        _sync = sync;
+        _logger = logger;
     }
 
     /// <summary>
@@ -108,6 +115,33 @@ public class ModelLeaderboardController : ControllerBase
             fetchedAt = snapshot.FetchedAt,
             stale = IsStale(snapshot.FetchedAt),
             entries = snapshot.Entries.Take(limit).Select(Project),
+        }));
+    }
+
+    /// <summary>
+    /// 手动触发一次同步。
+    ///
+    /// 为什么需要它：周期同步刻意只在权威部署跑（共享库里一个榜单只有一条文档，
+    /// N 个分支预览同时写会互相覆盖）。但这样一来，任何分支预览上的库都是空的，
+    /// 功能没法在预览域名上验收——而验收必须走真实访问路径。
+    /// 所以留一个手动入口：谁要看效果，谁自己点一次。
+    ///
+    /// 与 CdsReportImportWorker 是同一个模式：周期任务保持克制，手动入口补上可操作性。
+    ///
+    /// 限管理员：它会对外站发五次请求并覆盖共享库里的快照，不是普通用户该随手点的。
+    /// </summary>
+    [HttpPost("sync")]
+    [Authorize(Roles = "ADMIN")]
+    public async Task<IActionResult> Sync(CancellationToken ct)
+    {
+        _logger.LogInformation("模型榜同步：管理员手动触发。");
+        var results = await _sync.SyncAllAsync(ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            total = results.Count,
+            succeeded = results.Count(r => r.Ok),
+            boards = results.Select(r => new { board = r.Board, ok = r.Ok, count = r.Count, error = r.Error }),
         }));
     }
 
