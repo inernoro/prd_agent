@@ -82,6 +82,32 @@ public class PoolMigrationPlannerTests
     }
 
     [Fact]
+    public void 能力从池成员快照里取不能是空集合()
+    {
+        // 这个洞是影子比对在真实环境上抓出来的：搬过去的模型能力为空，能力门一律不放行，
+        // 于是搬迁报成功、调用方却调不到它，请求默默回落到池。
+        var withCaps = Pool(members: new BsonDocument
+        {
+            { "ModelId", "gpt-image-1" }, { "PlatformId", "p1" },
+            { "Capabilities", new BsonArray(new[]
+                {
+                    new BsonDocument { { "Type", "image_generation" }, { "Value", true } },
+                    // Value=false 是「明确不具备」，不是「没说」，不能当成具备
+                    new BsonDocument { { "Type", "video_generation" }, { "Value", false } },
+                }) },
+        });
+        var caps = PoolMigrationPlanner.CollectCapabilities(withCaps);
+        Assert.Contains("image_generation", caps);
+        Assert.DoesNotContain("video_generation", caps);
+
+        // 成员一条快照都没有时退到这个用途的基线能力，而不是交出空集合
+        Assert.Equal(new[] { "image_generation" }, PoolMigrationPlanner.CollectCapabilities(Pool(members: Member())));
+        var chat = Pool(members: Member());
+        chat["ModelType"] = "chat";
+        Assert.Equal(new[] { "chat" }, PoolMigrationPlanner.CollectCapabilities(chat));
+    }
+
+    [Fact]
     public void 搬迁默认试运行且不动旧表也能重复跑()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -110,6 +136,10 @@ public class PoolMigrationPlannerTests
 
         // 跳过要给原因，不能静默吞掉
         Assert.Contains("result.Skipped.Add", handler);
+
+        // 能力必须从池成员快照里取：传 null 得到空集合，空能力的模型能力门不放行
+        Assert.Contains("PoolMigrationPlanner.CollectCapabilities(pool)", handler);
+        Assert.DoesNotContain("NormalizeDetailed(modelType, null)", handler);
 
         // 同用途最多一个默认：搬迁是直接 Insert，绕过了 PUT 端点那条互斥。
         // 不在这里再走一遍同一条规则，就是判据分裂成两份各自漂移——这一整项工程要消灭的正是它。

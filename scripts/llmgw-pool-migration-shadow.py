@@ -26,6 +26,9 @@ def call(url: str, token: str, method: str = "GET", body: dict | None = None) ->
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     req.add_header("Authorization", f"Bearer {token}")
+    # 不带 User-Agent 会被边缘防护当成机器人挡掉（403 + error code 1010），
+    # 而那个 403 长得和「鉴权失败」一模一样，排查时很容易往错的方向找。
+    req.add_header("User-Agent", "llmgw-pool-migration-shadow/1.0")
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
@@ -97,17 +100,28 @@ def main() -> int:
         # 恢复到比对之前的状态。比对是只读意图的动作，不该留下副作用。
         set_default(args.base, args.token, logical_id, was_default)
 
-        same = old[0] == new[0] and old[1] == new[1]
-        flag = "一致" if same else "不一致"
+        # 三种结果要分开报，混成一句「不一致」会让最要紧的那种藏起来：
+        #   新路没生效 —— 打开了默认，解析却仍然走池。多半是能力门没放行或者线路建歪了，
+        #                 这是搬迁本身的缺陷，比选错模型严重得多。
+        #   选了别的  —— 两路都走了各自的通道，但最终上游不同。
+        #   一致      —— 通过。
+        engaged = new[2] == "LogicalModel"
+        same_route = old[0] == new[0] and old[1] == new[1]
+        if not engaged:
+            kind, flag = "new-path-not-engaged", "新路没生效（仍走池）"
+        elif not same_route:
+            kind, flag = "different-upstream", "选了别的上游"
+        else:
+            kind, flag = None, "一致"
         print(f"  [{model_type:<12}] 旧路 {old[0] or old[2]} / 新路 {new[0] or new[2]}  → {flag}")
-        if not same:
-            mismatches.append({"modelType": model_type, "publicId": m["publicId"], "old": old, "new": new})
+        if kind is not None:
+            mismatches.append({"kind": kind, "modelType": model_type, "publicId": m["publicId"], "old": old, "new": new})
 
     print()
     if mismatches:
         print(f"有 {len(mismatches)} 个用途新旧两路解析不一致，逐条列出：")
         for x in mismatches:
-            print(f"  {x['modelType']} · {x['publicId']}")
+            print(f"  [{x['kind']}] {x['modelType']} · {x['publicId']}")
             print(f"      旧路 model={x['old'][0]} platform={x['old'][1]} ({x['old'][2]})")
             print(f"      新路 model={x['new'][0]} platform={x['new'][1]} ({x['new'][2]})")
         print("\n差异必须逐条解释清楚才能往下走。不解释就往前推，等于把问题留给调用方去撞。")

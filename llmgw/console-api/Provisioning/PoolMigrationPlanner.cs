@@ -56,6 +56,59 @@ public static class PoolMigrationPlanner
         => member.GetValue("Priority", BsonNull.Value) is { IsInt32: true } p && p.AsInt32 > 0 ? p.AsInt32 : 100;
 
     /// <summary>
+    /// 用途 -> 这个用途最起码的那条能力。
+    ///
+    /// 只在池成员一条能力快照都没有时兜底。名字与 GatewayCapabilityContract 的词汇表同源，
+    /// 写错一个词的后果是模型建出来了但能力门不放行——搬迁看着成功，调用方却调不到。
+    /// </summary>
+    private static string? BaselineCapability(string modelType) => modelType.Trim().ToLowerInvariant() switch
+    {
+        "generation" => "image_generation",
+        "video-gen" or "video_gen" => "video_generation",
+        "chat" => "chat",
+        "intent" => "intent",
+        "vision" => "vision",
+        "code" => "code",
+        "embedding" => "embedding",
+        "rerank" => "rerank",
+        "asr" => "asr",
+        "tts" => "tts",
+        _ => null,
+    };
+
+    /// <summary>
+    /// 池成员的能力快照并集；一条都没有时退到这个用途的基线能力。
+    ///
+    /// 不能像最初那样传 null 进能力归一——那个函数只会把已有的 image_generation 展开成
+    /// 场景能力集，传 null 得到的是空集合。空能力的模型建出来之后能力门一律不放行，
+    /// 于是搬迁报成功、调用方却调不到它，请求默默回落到池。
+    /// 这个洞是影子比对在真实环境上抓出来的，不是想出来的。
+    /// </summary>
+    public static List<string> CollectCapabilities(BsonDocument pool)
+    {
+        var found = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var members = pool.GetValue("Models", BsonNull.Value) is { IsBsonArray: true } arr
+            ? arr.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument)
+            : Enumerable.Empty<BsonDocument>();
+        foreach (var member in members)
+        {
+            if (member.GetValue("Capabilities", BsonNull.Value) is not { IsBsonArray: true } caps) continue;
+            foreach (var cap in caps.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument))
+            {
+                // Value=false 是「明确不具备」，不是「没说」——不能当成具备
+                if (cap.GetValue("Value", BsonNull.Value) is { IsBoolean: true } v && !v.AsBoolean) continue;
+                var type = cap.GetValue("Type", BsonNull.Value) is { IsString: true } t ? t.AsString.Trim().ToLowerInvariant() : string.Empty;
+                if (type.Length > 0 && seen.Add(type)) found.Add(type);
+            }
+        }
+
+        if (found.Count > 0) return found;
+        var baseline = BaselineCapability(pool.GetValue("ModelType", BsonNull.Value) is { IsString: true } mt ? mt.AsString : string.Empty);
+        return baseline is null ? new List<string>() : new List<string> { baseline };
+    }
+
+    /// <summary>
     /// 搬迁是否要跳过这个池。
     ///
     /// 跳过的两种：没有对外名（没人能调）、没有成员（搬过去是个空模型，只会让白名单里

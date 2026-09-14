@@ -3886,7 +3886,10 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     { "_id", logicalId }, { "TenantId", tenantId },
                     { "PublicId", publicId }, { "PublicIdNormalized", normalized },
                     { "Name", poolName }, { "ModelType", modelType },
-                    { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, null).Persisted) },
+                    // 能力必须从池成员的快照里取。传 null 进去得到的是空集合，而空能力的模型
+                    // 能力门一律不放行——搬迁报成功、调用方却调不到它，请求默默回落到池。
+                    { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy
+                        .NormalizeDetailed(modelType, PoolMigrationPlanner.CollectCapabilities(pool)).Persisted) },
                     // 池没有 AllowedAppCallerCodes——它靠 appCaller 反向绑定池 id。
                     // 留空 = 当前租户全部 appCaller 可用，与池的实际可见范围一致；
                     // 搬迁不替用户收紧授权，收紧是治理动作要有人拍板。
