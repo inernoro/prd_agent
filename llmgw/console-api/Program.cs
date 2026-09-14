@@ -3795,6 +3795,167 @@ app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+/*
+  把存量模型池搬成模型：池的 Code 成公开名、成员成线路、IsDefaultForType 成默认标记。
+
+  三条刻意的设计：
+
+  1. **默认试运行**。不带 apply=true 时只算不写，把「会建哪些、会跳过哪些、为什么跳」
+     整份计划回给人看。搬迁只跑一次，跑错了拿回来的是脏数据，不该由一次手滑决定。
+  2. **只读旧表，写新表**。llmgw_model_pools 一个字节都不动，回退就是把新建的删掉。
+  3. **可重复跑**。同名公开模型已存在就只补线路，同一条线路（同 targetId）已存在就跳过。
+     搬到一半失败、或者新增了池要补搬，直接再跑一次即可，不会重复建。
+*/
+app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply) =>
+{
+    var dryRun = apply != true;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var result = new PoolMigrationResult { DryRun = dryRun };
+
+    var pools = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
+    if (pools.Count > PoolMigrationPlanner.MaxBatch)
+        return Json(ApiEnvelope<PoolMigrationResult>.Fail("TOO_MANY",
+            $"当前租户有 {pools.Count} 个池，一次最多搬 {PoolMigrationPlanner.MaxBatch} 个，请先按 modelType 分批"), jsonOptions, 400);
+    result.PoolsScanned = pools.Count;
+
+    foreach (var pool in pools)
+    {
+        var poolId = pool.GetStringOrEmpty("_id");
+        var poolName = pool.AsNullableString("Name") ?? poolId;
+        var skip = PoolMigrationPlanner.SkipReason(pool);
+        if (skip is not null)
+        {
+            result.Skipped.Add(new PoolMigrationSkip { PoolId = poolId, PoolName = poolName, Reason = skip });
+            continue;
+        }
+
+        var publicId = PoolMigrationPlanner.ToPublicId(pool);
+        var normalized = publicId.ToLowerInvariant();
+        var modelType = pool.AsNullableString("ModelType") ?? "chat";
+        var entry = new PoolMigrationEntry
+        {
+            PoolId = poolId,
+            PoolName = poolName,
+            PublicId = publicId,
+            ModelType = modelType,
+            RoutingStrategy = PoolMigrationPlanner.ToRoutingStrategy(pool),
+            IsDefaultForType = PoolMigrationPlanner.IsDefaultForType(pool),
+        };
+
+        var existing = await gwLogicalModels.Find(fb.And(
+            fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized))).FirstOrDefaultAsync();
+        var logicalId = existing?.GetStringOrEmpty("_id") ?? $"gw-logical-{Guid.NewGuid():N}";
+        entry.CreatedNewModel = existing is null;
+
+        var now = DateTime.UtcNow;
+        if (existing is null)
+        {
+            if (!dryRun)
+            {
+                await gwLogicalModels.InsertOneAsync(new BsonDocument
+                {
+                    { "_id", logicalId }, { "TenantId", tenantId },
+                    { "PublicId", publicId }, { "PublicIdNormalized", normalized },
+                    { "Name", poolName }, { "ModelType", modelType },
+                    { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, null).Persisted) },
+                    // 池没有 AllowedAppCallerCodes——它靠 appCaller 反向绑定池 id。
+                    // 留空 = 当前租户全部 appCaller 可用，与池的实际可见范围一致；
+                    // 搬迁不替用户收紧授权，收紧是治理动作要有人拍板。
+                    { "AllowedAppCallerCodes", new BsonArray() },
+                    { "RoutingStrategy", entry.RoutingStrategy },
+                    { "Enabled", true },
+                    { "IsDefaultForType", entry.IsDefaultForType },
+                    { "DisplayOrder", pool.AsNullableInt("Priority") ?? 100 },
+                    { "Description", $"由模型池「{poolName}」搬迁而来" },
+                    { "CreatedAt", now }, { "UpdatedAt", now },
+                });
+            }
+            result.ModelsCreated++;
+        }
+        else
+        {
+            result.LinkedToExisting++;
+        }
+
+        var members = pool.GetValue("Models", BsonNull.Value) is { IsBsonArray: true } arr
+            ? arr.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument).ToList()
+            : new List<BsonDocument>();
+        foreach (var member in members)
+        {
+            var memberModelId = member.AsNullableString("ModelId") ?? string.Empty;
+            var memberPlatformId = member.AsNullableString("PlatformId") ?? string.Empty;
+            if (memberModelId.Length == 0) continue;
+
+            // 池成员记的是「模型名 + 平台 id」，Offering 指的是物理模型文档的 _id，要换算一次。
+            // 换不出来说明这个成员指向的模型已经不在库里了，跳过并报出来——搬一条指向空气的
+            // 线路，只会让这个模型在真调用时才炸。
+            var physical = await gwModels.Find(fb.And(
+                fb.Eq("TenantId", tenantId),
+                fb.Eq("ModelName", memberModelId),
+                memberPlatformId.Length > 0 ? fb.Eq("PlatformId", memberPlatformId) : fb.Empty)).FirstOrDefaultAsync();
+            if (physical is null)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId, PoolName = poolName,
+                    Reason = $"成员「{memberModelId}」在模型库里找不到对应记录，这条线路没搬",
+                });
+                continue;
+            }
+
+            var physicalId = physical.GetStringOrEmpty("_id");
+            var duplicate = await gwModelOfferings.Find(fb.And(
+                fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).AnyAsync();
+            if (duplicate) continue;
+
+            if (!dryRun)
+            {
+                await gwModelOfferings.InsertOneAsync(new BsonDocument
+                {
+                    { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
+                    { "LogicalModelId", logicalId }, { "TargetKind", "model" }, { "TargetId", physicalId },
+                    { "UpstreamModelId", memberModelId },
+                    { "Protocol", member.AsNullableString("Protocol") is { Length: > 0 } mp ? mp : BsonNull.Value },
+                    { "EndpointPath", BsonNull.Value },
+                    { "Priority", PoolMigrationPlanner.MemberPriority(member) },
+                    { "Weight", member.AsNullableInt("Weight") ?? 100 },
+                    { "Enabled", true },
+                    // 健康状态刻意不搬：新线路一律从健康起步。搬一个「不可用」过来，
+                    // 新路径一上来就少一条线路，而那个不可用可能是几个月前的事了。
+                    { "HealthStatus", 0 }, { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
+                    { "MaxConcurrency", member.AsNullableInt("MaxConcurrency") is { } mc && mc > 0 ? mc : BsonNull.Value },
+                    { "RateLimitPerMinute", BsonNull.Value },
+                    { "Notes", BsonNull.Value },
+                    { "CreatedAt", now }, { "UpdatedAt", now },
+                });
+            }
+            entry.RouteCount++;
+            result.RoutesCreated++;
+        }
+
+        result.Entries.Add(entry);
+    }
+
+    if (!dryRun)
+    {
+        await WriteOperationAuditAsync(operationAudits, http,
+            action: "pool.migrate-to-models", targetType: "llmgw_model_pool", targetId: "(batch)",
+            targetName: null, success: true, reason: null,
+            changes: new BsonDocument
+            {
+                { "poolsScanned", result.PoolsScanned },
+                { "modelsCreated", result.ModelsCreated },
+                { "routesCreated", result.RoutesCreated },
+                { "linkedToExisting", result.LinkedToExisting },
+                { "skipped", result.Skipped.Count },
+            });
+    }
+
+    return Json(ApiEnvelope<PoolMigrationResult>.Ok(result), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogicalModelRequest? body) =>
 {
     var publicId = body?.PublicId?.Trim() ?? string.Empty;

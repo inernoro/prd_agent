@@ -1330,6 +1330,46 @@ public sealed class CapabilityAuditFinding
 }
 
 /// <summary>逻辑模型近 N 天用量，供白名单列表里那条趋势线与花费列使用。</summary>
+/// <summary>把存量模型池搬成模型（公开名 + 上游线路）的结果。</summary>
+public sealed class PoolMigrationResult
+{
+    /// <summary>试运行：只算不写。默认就是试运行——搬迁只该在人看过计划之后才真发生。</summary>
+    public bool DryRun { get; set; }
+
+    public int PoolsScanned { get; set; }
+    public int ModelsCreated { get; set; }
+    public int RoutesCreated { get; set; }
+
+    /// <summary>已经有同名公开模型、这次只给它补线路的池。</summary>
+    public int LinkedToExisting { get; set; }
+
+    public List<PoolMigrationEntry> Entries { get; set; } = new();
+
+    /// <summary>没搬的池与原因。静默跳过等于让人以为都搬完了。</summary>
+    public List<PoolMigrationSkip> Skipped { get; set; } = new();
+}
+
+public sealed class PoolMigrationEntry
+{
+    public string PoolId { get; set; } = "";
+    public string PoolName { get; set; } = "";
+    public string PublicId { get; set; } = "";
+    public string ModelType { get; set; } = "";
+    public string RoutingStrategy { get; set; } = "priority";
+    public bool IsDefaultForType { get; set; }
+    public int RouteCount { get; set; }
+
+    /// <summary>这次是新建了公开名，还是挂到了已有的同名模型下。</summary>
+    public bool CreatedNewModel { get; set; }
+}
+
+public sealed class PoolMigrationSkip
+{
+    public string PoolId { get; set; } = "";
+    public string PoolName { get; set; } = "";
+    public string Reason { get; set; } = "";
+}
+
 public sealed class LogicalModelUsageData
 {
     public int Days { get; set; }
