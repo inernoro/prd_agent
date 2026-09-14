@@ -82,6 +82,25 @@ public class GatewayWhitelistPublishingTests
     }
 
     [Fact]
+    public void 列模型要的是读权限不是调用权限()
+    {
+        // 2026-09-14 在 CDS 上真打一次才发现的：/v1/models 原先落到 ResolveRequiredScope 的
+        // 默认分支 invoke，权限判反了——一把只读的发现型 key（只有 route:read）列不出可用
+        // 模型，反而必须给能花钱的 invoke 才行。它和 /gw/v1/pools、/gw/v1/image-models
+        // 是同一件事：列出有什么。
+        var start = Serving.IndexOf("private static string ResolveRequiredScope(string path)", StringComparison.Ordinal);
+        Assert.True(start >= 0);
+        var end = Serving.IndexOf("return \"invoke\";", start, StringComparison.Ordinal);
+        Assert.True(end > start, "ResolveRequiredScope 的兜底分支变了，守卫取值口径需要更新");
+        var body = Serving[start..end];
+
+        // 必须在落到 invoke 兜底**之前**就判成 route:read
+        Assert.Contains("path.Equals(\"/v1/models\", StringComparison.OrdinalIgnoreCase)", body);
+        Assert.Contains("path.StartsWith(\"/v1/models/\", StringComparison.OrdinalIgnoreCase)", body);
+        Assert.Contains("return \"route:read\";", body);
+    }
+
+    [Fact]
     public void 对外清单按线路逐条报价且非美金不当美金报()
     {
         // 不折算成一个统一价：走官网和走中转单价不同，取平均会让对方算出来的账对不上

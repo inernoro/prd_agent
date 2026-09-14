@@ -290,6 +290,7 @@
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`
 - [LLM Gateway 外部平台化与控制台体验收口 · 计划](./plan.platform.llm-gateway.external-platform.md) `plan.platform.llm-gateway.external-platform`
 - [LLM 网关旧路径物理退场 · 计划](./plan.platform.llm-gateway.full-cutover.md) `plan.platform.llm-gateway.full-cutover`
+- [网关模型概念收敛（池并进模型、上游降一级） · 计划](./plan.platform.llm-gateway.model-consolidation.md) `plan.platform.llm-gateway.model-consolidation`
 - [LLM Gateway 故障隔离与恢复 · 计划](./plan.platform.llm-gateway.resilience.md) `plan.platform.llm-gateway.resilience`
 - [模型路由能力契约治理 · 状态看板](./plan.platform.llm-routing.capability-contract.md) `plan.platform.llm-routing.capability-contract`
 - [MCP 智能体接入台 · 计划](./plan.platform.mcp-agent-console.md) `plan.platform.mcp-agent-console`

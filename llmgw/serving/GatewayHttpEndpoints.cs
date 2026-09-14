@@ -1903,7 +1903,12 @@ public static class GatewayHttpEndpoints
             || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
-            || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase)) return "route:read";
+            || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase)
+            // 列模型是**读**，不是调用。落到默认的 invoke 会把权限判反：一把只读的发现型
+            // key（只有 route:read）列不出可用模型，反而必须给能花钱的 invoke 才行。
+            // 它和 /gw/v1/pools、/gw/v1/image-models 是同一件事——都是「列出有什么」。
+            || path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/v1/models/", StringComparison.OrdinalIgnoreCase)) return "route:read";
         return "invoke";
     }
 
