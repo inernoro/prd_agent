@@ -3,6 +3,7 @@ import {
   canOpenSubscriptionPanel,
   subscriptionSyncTone,
   githubDirectoryStatusLabel,
+  subscriptionIntervalOptions,
   GITHUB_DIRECTORY_SOURCE,
 } from './subscriptionEntryState';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
@@ -42,6 +43,24 @@ describe('订阅条目状态判据（2026-09-09 验收 P1/P2 的回归锁）', (
     expect(githubDirectoryStatusLabel('paused')).toContain('已暂停');
     expect(githubDirectoryStatusLabel('syncing')).toContain('同步中');
     expect(githubDirectoryStatusLabel('idle')).toBe('GitHub 目录订阅');
+  });
+});
+
+describe('同步周期档位', () => {
+  it('GitHub 目录没有可选档位——后端一律钳成每天一次', () => {
+    // 摆出 1 小时 / 6 小时 / 12 小时的结果是一次「同步间隔已更新」的成功空操作：
+    // 后端 UpdateSubscription 对 github_directory 把值钳到 1440，用户以为改了，其实没有。
+    expect(subscriptionIntervalOptions(GITHUB_DIRECTORY_SOURCE)).toEqual([]);
+  });
+
+  it('普通 URL 订阅仍然可调，且不超出后端允许的 5 分钟 ~ 24 小时', () => {
+    const options = subscriptionIntervalOptions('subscription');
+
+    expect(options.length).toBeGreaterThan(1);
+    options.forEach((minutes) => {
+      expect(minutes).toBeGreaterThanOrEqual(5);
+      expect(minutes).toBeLessThanOrEqual(1440);
+    });
   });
 });
 

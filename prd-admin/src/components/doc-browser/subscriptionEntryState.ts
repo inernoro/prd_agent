@@ -28,6 +28,22 @@ export function canOpenSubscriptionPanel(
   return entry.sourceType === 'subscription' || entry.sourceType === GITHUB_DIRECTORY_SOURCE;
 }
 
+/** GitHub 目录订阅的固定同步周期：后端一律钳到这个值 */
+export const GITHUB_DIRECTORY_FIXED_INTERVAL_MINUTES = 1440;
+
+/**
+ * 订阅面板里可供选择的同步周期档位（分钟）。
+ *
+ * GitHub 目录返回空：后端 `UpdateSubscription` 对 `github_directory` 把
+ * `SyncIntervalMinutes` 一律钳成 1440（每天一次，避免一个目录几十篇文档把 GitHub 限额打满），
+ * 所以界面上摆出 1 小时 / 6 小时 / 12 小时只会得到一次「同步间隔已更新」的成功空操作——
+ * 用户以为改了，下一轮同步还是第二天。档位表和后端的钳制必须是同一件事的两面。
+ */
+export function subscriptionIntervalOptions(sourceType?: string): number[] {
+  if (sourceType === GITHUB_DIRECTORY_SOURCE) return [];
+  return [15, 60, 360, 1440];
+}
+
 /** 同步状态 → 色调档位。失败优先于暂停，暂停优先于同步中。 */
 export function subscriptionSyncTone(
   entry: { syncStatus?: string; isPaused?: boolean },
