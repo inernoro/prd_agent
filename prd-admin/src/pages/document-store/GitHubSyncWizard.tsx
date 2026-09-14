@@ -798,8 +798,8 @@ function DoneStep({ result, repoFullName, branch, onClose }: {
       </div>
 
       <p className="text-[12px] leading-[1.7] mb-3" style={{ color: 'var(--text-muted)' }}>
-        后台会在 2 分钟内开始首次拉取，之后每天自动同步一次。
-        同步期间条目显示「同步中」，拉完就能在文件树里看到这些文档。
+        后台每隔两分钟扫一批待同步的条目，每批最多 20 个——目录勾得多时会排队分几批陆续开始，
+        之后每天自动同步一次。同步期间条目显示「同步中」，拉完就能在文件树里看到这些文档。
       </p>
 
       <div className="rounded-[12px] overflow-hidden mb-3" style={{ border: '1px solid var(--border-subtle)' }}>
