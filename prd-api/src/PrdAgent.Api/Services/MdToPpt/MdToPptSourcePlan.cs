@@ -259,6 +259,17 @@ internal sealed class MdToPptSourcePlan
         return true;
     }
 
+    /// <summary>版面角色名（封面 / 结语 / cover / closing…），不是这一页的内容标题。</summary>
+    private static readonly HashSet<string> StructuralLabels = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "封面", "首页", "扉页", "标题页", "结语", "结尾", "尾页", "结束", "谢谢", "谢谢观看", "致谢", "版权页",
+        "cover", "title", "title slide", "closing", "the end", "thank you", "thanks", "colophon",
+    };
+
+    internal static bool IsStructuralLabel(string? title) =>
+        !string.IsNullOrWhiteSpace(title)
+        && StructuralLabels.Contains(title.Trim().TrimEnd('。', '.', '!', '！', ':', '：'));
+
     internal static string Fallback(PagePlan page, int index, int total, MdToPptAnchors.AnchorSlide? layout = null)
     {
         var body = string.Join("\n", page.Blocks.Select(x => $"<div data-mdppt-source=\"{x.Id}\">{x.Html}</div>"));
@@ -270,7 +281,11 @@ internal sealed class MdToPptSourcePlan
         // 左上角、下面四分之三空着——一页丑，整份演示就废了。
         // 这里不引入任何范本专有类名（每套锚定的类名都不同），只用继承来的颜色字体
         // 加一套克制的排版：标题给到真正的展示字号，正文垂直居中、限宽、留出呼吸。
-        var title = string.IsNullOrEmpty(page.DisplayTitle)
+        // 「封面」「结语」这类是版面角色的名字，不是内容。大纲提示词的格式示例
+        // 就是这么写的（{"title":"封面"}），模型照抄，于是第一页最大的那行字是
+        // 「封面」两个字，真正的标题缩在下面——第一眼就废了。这类词一律不当标题印，
+        // 封面那一页的首个来源块本来就是文档大标题，它才是标题。
+        var title = string.IsNullOrEmpty(page.DisplayTitle) || IsStructuralLabel(page.DisplayTitle)
             ? string.Empty
             : "<h1 style=\"margin:0 0 0.44em;font-size:clamp(40px,5.4vw,92px);line-height:1.06;"
               + "letter-spacing:-0.02em;font-weight:600;color:inherit\">"

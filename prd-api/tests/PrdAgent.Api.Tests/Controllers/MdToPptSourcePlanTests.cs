@@ -479,7 +479,9 @@ public class MdToPptAnchorLayoutFitnessTests
         });
         var page = plan.Bind(new[]
         {
-            new MdToPptOutlinePageDto { Title = "封面", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
+            // 用真实内容标题：「封面」那类版面角色名有另一条规则专门管（见
+            // MdToPptStructuralLabelTests），这里测的是排版。
+            new MdToPptOutlinePageDto { Title = "三个角色", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
         }, 1)[0];
         var html = MdToPptSourcePlan.Fallback(page, 0, 6);
 
@@ -489,6 +491,95 @@ public class MdToPptAnchorLayoutFitnessTests
         Assert.Contains("justify-content:center", html, StringComparison.Ordinal);
         Assert.Contains("max-width:76ch", html, StringComparison.Ordinal);
         Assert.DoesNotContain("font-size:20px", html, StringComparison.Ordinal);
-        Assert.Contains("封面", html, StringComparison.Ordinal);
+        Assert.Contains("三个角色", html, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>
+/// 知识驱动时，判断一页内容多不多只能看服务端冻结的来源块，不能看大纲要点——
+/// 要点是排版计划，一个字都不落到幻灯片上。把要点算进来，就会拿「三条要点」
+/// 去判一页「其实只有一个小标题」的内容撑得起编号清单版式，结果清单里只有一条，
+/// 同一句话被眉标／条目标题／条目正文重复三遍。
+/// </summary>
+public class MdToPptShapeIgnoresOutlineBulletsTests
+{
+    [Fact]
+    public void KnowledgeDriven_BulletsDoNotCountAsPageContent()
+    {
+        const string doc = "## 为什么强调可替换\n";
+        var plan = MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
+        {
+            new() { StoreId = "s", EntryId = "e", Content = doc, ContentHash = MdToPptSourcePlan.Hash(doc) },
+        });
+        var page = plan.Bind(new[]
+        {
+            new MdToPptOutlinePageDto { Title = "系统优势", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
+        }, 1)[0];
+
+        // 大纲给了三条要点，但这一页真正会渲染的只有一个小标题。
+        var outline = new MdToPptOutlinePageDto
+        {
+            Title = "系统优势",
+            Bullets = new List<string> { "设计器可随时更换", "业务入口不变", "低替换成本" },
+        };
+
+        var knowledgeDriven = MdToPptController.ShapeOf(outline, page);
+        Assert.Equal(0, knowledgeDriven.ItemCount);
+        Assert.False(MdToPptAnchors.Fits(new MdToPptAnchors.AnchorSlide("f", "s-index", "slide", "", "<div></div>"), knowledgeDriven));
+
+        // 非知识驱动（没有冻结来源）时，要点就是这一页的内容，照常算。
+        var bulletsOnly = MdToPptController.ShapeOf(outline, null);
+        Assert.Equal(3, bulletsOnly.ItemCount);
+        Assert.True(MdToPptAnchors.Fits(new MdToPptAnchors.AnchorSlide("f", "s-index", "slide", "", "<div></div>"), bulletsOnly));
+    }
+}
+
+/// <summary>
+/// 「封面」「结语」是版面角色的名字，不是内容标题。大纲提示词的格式示例就写着
+/// {"title":"封面"}，模型照抄，于是第一页最大的那行字是「封面」两个字，
+/// 真正的标题缩在下面——第一眼就废了，卡片缩略图用的也是这一页。
+/// </summary>
+public class MdToPptStructuralLabelTests
+{
+    [Theory]
+    [InlineData("封面")]
+    [InlineData("结语")]
+    [InlineData("Cover")]
+    [InlineData("谢谢观看")]
+    [InlineData("致谢：")]
+    public void StructuralLabels_AreNotContentTitles(string title) =>
+        Assert.True(MdToPptSourcePlan.IsStructuralLabel(title));
+
+    [Theory]
+    [InlineData("三个角色")]
+    [InlineData("为什么强调可替换")]
+    [InlineData("知识驱动内容生成体系")]
+    public void RealTitles_AreKept(string title) =>
+        Assert.False(MdToPptSourcePlan.IsStructuralLabel(title));
+
+    [Fact]
+    public void CoverFallback_DoesNotPrintTheWordCoverAsHeadline()
+    {
+        const string doc = "# 知识驱动内容生成体系\n";
+        var plan = MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
+        {
+            new() { StoreId = "s", EntryId = "e", Content = doc, ContentHash = MdToPptSourcePlan.Hash(doc) },
+        });
+        var page = plan.Bind(new[]
+        {
+            new MdToPptOutlinePageDto { Title = "封面", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
+        }, 1)[0];
+        var html = MdToPptSourcePlan.Fallback(page, 0, 6);
+
+        Assert.DoesNotContain("封面", html, StringComparison.Ordinal);
+        // 真正的标题还在：封面那一页的首个来源块就是文档大标题。
+        Assert.Contains("知识驱动内容生成体系", html, StringComparison.Ordinal);
+
+        // 内容标题照常印。
+        var real = plan.Bind(new[]
+        {
+            new MdToPptOutlinePageDto { Title = "三个角色", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
+        }, 1)[0];
+        Assert.Contains("三个角色", MdToPptSourcePlan.Fallback(real, 1, 6), StringComparison.Ordinal);
     }
 }

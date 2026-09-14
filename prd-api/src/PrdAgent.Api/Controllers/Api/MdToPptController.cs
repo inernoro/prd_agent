@@ -1020,7 +1020,12 @@ public class MdToPptController : ControllerBase
     internal static MdToPptAnchors.PageShape ShapeOf(MdToPptOutlinePageDto? page, MdToPptSourcePlan.PagePlan? source)
     {
         var items = new List<string>();
-        if (page?.Bullets != null) items.AddRange(page.Bullets.Where(x => !string.IsNullOrWhiteSpace(x)));
+        // 知识驱动时，页面上真正出现的是服务端冻结的来源块；大纲要点只是排版计划，
+        // 一个字都不会落到幻灯片上。把要点算进来，就会拿「三条要点」去判一页
+        // 「其实只有一个小标题」的内容撑得起清单版式，于是编号清单里只有一条、
+        // 同一句话被眉标／条目标题／条目正文重复三遍。
+        if (source == null && page?.Bullets != null)
+            items.AddRange(page.Bullets.Where(x => !string.IsNullOrWhiteSpace(x)));
         if (source != null)
             foreach (var block in source.Blocks)
             {
