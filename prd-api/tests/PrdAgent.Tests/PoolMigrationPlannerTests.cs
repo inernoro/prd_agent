@@ -141,6 +141,11 @@ public class PoolMigrationPlannerTests
         Assert.Contains("PoolMigrationPlanner.CollectCapabilities(pool)", handler);
         Assert.DoesNotContain("NormalizeDetailed(modelType, null)", handler);
 
+        // 已有模型能力为空时要补上。空能力从来不是合法状态，而「重跑不会重复建」修不回来。
+        Assert.Contains("entry.RepairedCapabilities = true;", handler);
+        // 只补空的，不覆盖已有能力——那些可能是人工调过的
+        Assert.Contains("if (isEmpty)", handler);
+
         // 同用途最多一个默认：搬迁是直接 Insert，绕过了 PUT 端点那条互斥。
         // 不在这里再走一遍同一条规则，就是判据分裂成两份各自漂移——这一整项工程要消灭的正是它。
         Assert.Contains("fb.Eq(\"IsDefaultForType\", true)", handler);

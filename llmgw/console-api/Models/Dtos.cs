@@ -1361,6 +1361,9 @@ public sealed class PoolMigrationEntry
 
     /// <summary>这次是新建了公开名，还是挂到了已有的同名模型下。</summary>
     public bool CreatedNewModel { get; set; }
+
+    /// <summary>已有模型的能力原本是空的（能力门不放行），这次补上了。</summary>
+    public bool RepairedCapabilities { get; set; }
 }
 
 public sealed class PoolMigrationSkip

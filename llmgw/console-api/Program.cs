@@ -3906,6 +3906,34 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
         }
         else
         {
+            /*
+              已有同名模型时顺手修一件事：能力为空。
+
+              空能力从来不是一个合法状态——能力门一律不放行，这个模型的存在只会让调用方
+              以为它能用。搬迁第一版就产出过一批这样的模型（传 null 进能力归一得到空集合），
+              光靠「重跑不会重复建」修不回来，只能在这里补。
+
+              只补空的，不动已经有能力的：那些可能是人工调过的，搬迁没有资格覆盖。
+            */
+            var existingCaps = existing.GetValue("Capabilities", BsonNull.Value);
+            var isEmpty = !existingCaps.IsBsonArray || existingCaps.AsBsonArray.Count == 0;
+            if (isEmpty)
+            {
+                var repaired = LogicalModelCapabilityPolicy
+                    .NormalizeDetailed(modelType, PoolMigrationPlanner.CollectCapabilities(pool)).Persisted;
+                if (repaired.Count > 0)
+                {
+                    if (!dryRun)
+                    {
+                        await gwLogicalModels.UpdateOneAsync(
+                            fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                            Builders<BsonDocument>.Update
+                                .Set("Capabilities", new BsonArray(repaired))
+                                .Set("UpdatedAt", DateTime.UtcNow));
+                    }
+                    entry.RepairedCapabilities = true;
+                }
+            }
             result.LinkedToExisting++;
         }
 
