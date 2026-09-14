@@ -4,7 +4,6 @@ import {
   subscriptionSyncTone,
   githubDirectoryStatusLabel,
   githubSyncingSignature,
-  shouldClearOptimisticSync,
   mergeWatchedParents,
   GITHUB_DIRECTORY_SOURCE,
 } from './subscriptionEntryState';
@@ -78,16 +77,6 @@ describe('同步中签名（驱动页面轮询）', () => {
   it('没有在同步的就返回空串——轮询必须能停下来', () => {
     expect(githubSyncingSignature([])).toBe('');
     expect(githubSyncingSignature(entries.filter((e) => e.syncStatus !== 'syncing'))).toBe('');
-  });
-});
-
-describe('乐观「同步中」的撤销时机', () => {
-  it('服务端状态一变就撤掉，否则同步完卡片还写着同步中', () => {
-    // 触发那一刻看到的是上次失败；后台接手改成 syncing → 撤乐观标记，改看真状态
-    expect(shouldClearOptimisticSync('syncing', 'error')).toBe(true);
-    expect(shouldClearOptimisticSync('idle', 'error')).toBe(true);
-    // 后台还没接手，状态没动 → 继续显示乐观的同步中
-    expect(shouldClearOptimisticSync('error', 'error')).toBe(false);
   });
 });
 

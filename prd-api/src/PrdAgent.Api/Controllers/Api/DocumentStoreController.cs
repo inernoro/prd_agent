@@ -4745,51 +4745,58 @@ public class DocumentStoreController : ControllerBase
         // 而且重试只会跳过已建的那些、计数再也补不回来（server-authority：客户端断开不取消服务端任务）。
         var writeCt = CancellationToken.None;
 
-        foreach (var selection in directories)
+        // 计数回写放 finally：中途某条插入失败时，前面已经落库的那些条目必须被算进去。
+        // 漏算就再也补不回来——重试会把它们判成「已订阅」跳过，只有新插入的才计数。
+        try
         {
-            var path = (selection?.Path ?? string.Empty).Trim().Trim('/');
-
-            // 同一次请求里勾重了：只建一次
-            if (!seen.Add(path))
+            foreach (var selection in directories)
             {
-                skipped.Add(new { path, reason = "duplicate_in_request" });
-                continue;
+                var path = (selection?.Path ?? string.Empty).Trim().Trim('/');
+
+                // 同一次请求里勾重了：只建一次
+                if (!seen.Add(path))
+                {
+                    skipped.Add(new { path, reason = "duplicate_in_request" });
+                    continue;
+                }
+
+                var duplicate = existing.FirstOrDefault(e =>
+                    e.Metadata.GetValueOrDefault("github_owner") == owner &&
+                    e.Metadata.GetValueOrDefault("github_repo") == repo &&
+                    e.Metadata.GetValueOrDefault("github_path") == path &&
+                    e.Metadata.GetValueOrDefault("github_branch") == branch);
+                if (duplicate != null)
+                {
+                    skipped.Add(new { path, reason = "already_subscribed", entryId = duplicate.Id });
+                    continue;
+                }
+
+                var title = string.IsNullOrWhiteSpace(selection?.Title)
+                    ? (path.Length == 0 ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}")
+                    : selection!.Title!.Trim();
+
+                var entry = BuildGitHubDirectoryEntry(
+                    storeId, owner, repo, path, branch, title,
+                    request.IncludeGlob, request.Tags, userId, userName,
+                    connectionUserId: userId,
+                    sourceUrl: BuildGitHubDirectoryUrl(owner, repo, branch, path),
+                    syncIntervalMinutes: interval);
+
+                await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: writeCt);
+                created.Add(entry);
             }
-
-            var duplicate = existing.FirstOrDefault(e =>
-                e.Metadata.GetValueOrDefault("github_owner") == owner &&
-                e.Metadata.GetValueOrDefault("github_repo") == repo &&
-                e.Metadata.GetValueOrDefault("github_path") == path &&
-                e.Metadata.GetValueOrDefault("github_branch") == branch);
-            if (duplicate != null)
-            {
-                skipped.Add(new { path, reason = "already_subscribed", entryId = duplicate.Id });
-                continue;
-            }
-
-            var title = string.IsNullOrWhiteSpace(selection?.Title)
-                ? (path.Length == 0 ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}")
-                : selection!.Title!.Trim();
-
-            var entry = BuildGitHubDirectoryEntry(
-                storeId, owner, repo, path, branch, title,
-                request.IncludeGlob, request.Tags, userId, userName,
-                connectionUserId: userId,
-                sourceUrl: BuildGitHubDirectoryUrl(owner, repo, branch, path),
-                syncIntervalMinutes: interval);
-
-            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: writeCt);
-            created.Add(entry);
         }
-
-        if (created.Count > 0)
+        finally
         {
-            await _db.DocumentStores.UpdateOneAsync(
-                s => s.Id == storeId,
-                Builders<DocumentStore>.Update
-                    .Inc(s => s.DocumentCount, created.Count)
-                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: writeCt);
+            if (created.Count > 0)
+            {
+                await _db.DocumentStores.UpdateOneAsync(
+                    s => s.Id == storeId,
+                    Builders<DocumentStore>.Update
+                        .Inc(s => s.DocumentCount, created.Count)
+                        .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: writeCt);
+            }
         }
 
         _logger.LogInformation(

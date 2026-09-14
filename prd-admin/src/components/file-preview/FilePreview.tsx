@@ -7,7 +7,6 @@ import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
 import { TranscriptKaraoke } from '@/components/doc-browser/TranscriptKaraoke';
 import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/DocBrowser';
 import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
-import { shouldClearOptimisticSync } from '@/components/doc-browser/subscriptionEntryState';
 import { MarkdownViewer } from './MarkdownViewer';
 import { listTranscribeStyles, retryRecordingArchive, triggerSync } from '@/services';
 import { toast } from '@/lib/toast';
@@ -713,29 +712,20 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
  */
 function GithubDirectorySyncStatus({ entry }: { entry: DocBrowserEntry }) {
   const [busy, setBusy] = useState(false);
-  const [triggered, setTriggered] = useState(false);
-  /** 触发那一刻服务端报的状态——用它判断后台有没有接手 */
-  const statusWhenTriggered = useRef<string | undefined>(undefined);
 
   const status = entry.syncStatus;
   const failed = status === 'error' && !!entry.syncError;
-  const syncing = status === 'syncing' || triggered;
-
-  // 服务端状态一变就撤掉乐观标记：否则重试成功后卡片永远停在「同步中」，
-  // 再次失败时按钮还是禁用的（页面会轮询之后这个洞立刻能被撞上）。
-  useEffect(() => {
-    if (triggered && shouldClearOptimisticSync(status, statusWhenTriggered.current)) {
-      setTriggered(false);
-    }
-  }, [status, triggered]);
+  // 只认服务端报的状态，不做「我点过了所以算同步中」的乐观显示。
+  // 乐观标记要成立，得有人把新状态送回来；这张卡片够不到页面的条目状态，
+  // 于是它只能停在自己编的「同步中」上，还顺手把重试按钮锁死。
+  // 与其为它再接一条回传链路，不如不编——文案本来就写着「稍后刷新查看结果」。
+  const syncing = status === 'syncing';
 
   const retry = async () => {
     setBusy(true);
     const res = await triggerSync(entry.id);
     setBusy(false);
     if (res.success) {
-      statusWhenTriggered.current = status;
-      setTriggered(true);
       toast.success('已重新触发同步', '后台正在重试，稍后刷新查看结果');
     } else {
       toast.error('触发同步失败', res.error?.message);

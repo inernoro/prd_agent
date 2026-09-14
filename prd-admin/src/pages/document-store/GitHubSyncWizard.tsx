@@ -231,13 +231,15 @@ function ConnectStep({ onConnected, onError }: {
   const [phase, setPhase] = useState<'idle' | 'waiting' | 'denied' | 'expired'>('idle');
   const pollRef = useRef<number | null>(null);
   const tickRef = useRef<number | null>(null);
+  /** 卸载标记：向导被关掉时，在途的那一发轮询回来后不许再排下一发 */
+  const abandonedRef = useRef(false);
 
   const stopTimers = useCallback(() => {
     if (pollRef.current) { window.clearTimeout(pollRef.current); pollRef.current = null; }
     if (tickRef.current) { window.clearInterval(tickRef.current); tickRef.current = null; }
   }, []);
 
-  useEffect(() => stopTimers, [stopTimers]);
+  useEffect(() => () => { abandonedRef.current = true; stopTimers(); }, [stopTimers]);
 
   const start = async () => {
     setStarting(true);
@@ -262,6 +264,10 @@ function ConnectStep({ onConnected, onError }: {
     const poll = async (delay: number) => {
       pollRef.current = window.setTimeout(async () => {
         const p = await pollGitHubDeviceFlow(res.data.flowToken);
+        // 关掉向导时清的是「已经排好的那一发」；这一发正在路上，回来时组件可能已经没了。
+        // 不拦住的话，它会继续排下一发，直到配对码过期——期间还可能在用户已经离开之后
+        // 把连接落库并弹一个成功提示。
+        if (abandonedRef.current) return;
         if (!p.success) {
           stopTimers();
           setPhase('idle');
