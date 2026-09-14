@@ -84,6 +84,29 @@ export function selectionSummary(
 }
 
 /** 关键词过滤（匹配路径，命中的目录连同其祖先一起保留，保证树不断链） */
+/**
+ * 关键词**真正命中**的目录（不含只为把树连起来而保留的祖先）。
+ *
+ * 「全选 / 清空」必须用这个，不能用渲染用的那份列表：搜 `docs` 时，`packages`、
+ * `packages/web` 只是为了让树不断链才保留的上下文，把它们也勾上就等于订阅了仓库根目录
+ * 和一堆中间层——要么导进一批不相干的 Markdown，要么建出一个空订阅；「清空」同理，
+ * 会把用户此前勾好的祖先目录一起抹掉。
+ */
+export function keywordMatchedPaths(
+  directories: GitHubDirectoryNode[],
+  keyword: string,
+): string[] {
+  const trimmed = keyword.trim().toLowerCase();
+  if (!trimmed) return directories.map((d) => d.path);
+  return directories.filter((d) => matchesKeyword(d, trimmed)).map((d) => d.path);
+}
+
+/** 命中判据的唯一定义：过滤与批量操作共用，免得两处各判一次然后漂开（形状 3）。 */
+function matchesKeyword(dir: GitHubDirectoryNode, lowerKeyword: string): boolean {
+  return dir.path.toLowerCase().includes(lowerKeyword)
+    || dir.name.toLowerCase().includes(lowerKeyword);
+}
+
 export function filterDirectories(
   directories: GitHubDirectoryNode[],
   keyword: string,
@@ -93,7 +116,7 @@ export function filterDirectories(
 
   const keep = new Set<string>();
   for (const dir of directories) {
-    if (!dir.path.toLowerCase().includes(trimmed) && !dir.name.toLowerCase().includes(trimmed)) continue;
+    if (!matchesKeyword(dir, trimmed)) continue;
     keep.add(dir.path);
     let parent = dir.parentPath;
     while (parent !== null && !keep.has(parent)) {

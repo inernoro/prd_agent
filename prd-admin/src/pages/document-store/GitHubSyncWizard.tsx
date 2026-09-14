@@ -16,7 +16,7 @@ import {
 import { addGitHubSubscriptionBatch } from '@/services/real/documentStore';
 import {
   buildDirectoryTree, defaultSelection, defaultExpanded, toggleSelection, setSelection,
-  selectionSummary, filterDirectories, directoryLabel, chunkDirectories,
+  selectionSummary, filterDirectories, keywordMatchedPaths, directoryLabel, chunkDirectories,
   type DirectoryTreeNode,
 } from './githubDirectorySelection';
 import { isGitHubConnectionBroken, connectionBrokenHint } from './githubConnectionState';
@@ -661,6 +661,13 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
     [scan, keyword],
   );
   const tree = useMemo(() => buildDirectoryTree(visible), [visible]);
+  // 批量操作只作用于「真正命中关键词」的目录：visible 里还含着为了让树不断链而保留的
+  // 祖先（搜 docs 会带出 packages、packages/web），把它们也勾上就是订阅了仓库根目录和
+  // 一堆中间层；「清空」同理会抹掉用户此前勾好的祖先目录。
+  const visiblePaths = useMemo(
+    () => keywordMatchedPaths(scan?.directories ?? [], keyword),
+    [scan, keyword],
+  );
   // 搜索时把命中结果全展开——否则用户搜到了却看不见（结果藏在折叠的父目录里）
   const effectiveExpanded = useMemo(
     () => (keyword.trim() ? new Set(visible.map((d) => d.path)) : expanded),
@@ -747,8 +754,6 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
       </div>
     );
   }
-
-  const visiblePaths = visible.map((d) => d.path);
 
   return (
     <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>

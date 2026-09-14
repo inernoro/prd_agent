@@ -50,6 +50,7 @@
 | fix | prd-admin | GitHub 同步向导层级提到底部标签栏之上，移动端底部的「上一步 / 开启同步」不再被标签栏盖住点不到 |
 | fix | prd-api | 停机时的取消在逐文件同步那层也原样抛出，不再被吞成「这个文件拉不下来」 |
 | fix | prd-admin | 关闭向导后在途的授权请求与轮询一律停，不再泄漏计时器、也不会在用户离开后落连接并弹提示 |
+| fix | prd-admin | 搜索状态下的「全选 / 清空」只作用于真正命中关键词的目录——此前会把为了让树不断链而保留的祖先（仓库根目录、中间层）一起勾上或清掉 |
 | polish | prd-admin | GitHub 同步向导的目录树默认折叠，只展开通往已勾选目录的链路，几百个目录不再一次摊平 |
 | polish | prd-admin | GitHub 同步向导按前端模态框硬约束改造：createPortal 挂 body、尺寸走 inline style、滚动容器 minHeight 0 + inline overflowY + overscrollBehavior contain（滚到底不再把身后的知识库页面带着一起滚） |
 | test | prd-api | 新增凭据判据单测：连接断开 / token 失效 / 密文解不开一律阻断，不得退回匿名；已撤销的连接不许盖到手贴订阅上 |

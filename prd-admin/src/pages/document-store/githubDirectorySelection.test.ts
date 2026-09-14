@@ -8,6 +8,7 @@ import {
   setSelection,
   selectionSummary,
   filterDirectories,
+  keywordMatchedPaths,
   directoryLabel,
   chunkDirectories,
   GITHUB_BATCH_DIRECTORY_LIMIT,
@@ -102,6 +103,21 @@ describe('GitHub 同步向导 · 目录勾选', () => {
     expect(filtered).toContain('apps/web');
     expect(filtered).toContain('apps');
     expect(filtered).not.toContain('src');
+  });
+
+  it('批量操作只认真正命中的目录，不含为了连树而保留的祖先', () => {
+    const dirs = [dir(''), dir('apps'), dir('apps/web'), dir('apps/web/docs'), dir('src')];
+
+    // 渲染用的列表要带祖先（树不能断链），批量操作用的列表不能带——
+    // 否则搜 docs 点「全选」会把仓库根目录和中间层一起订阅掉。
+    expect(filterDirectories(dirs, 'docs').map((d) => d.path)).toContain('apps');
+    expect(keywordMatchedPaths(dirs, 'docs')).toEqual(['apps/web/docs']);
+  });
+
+  it('没有关键词时批量操作覆盖全部目录', () => {
+    const dirs = [dir(''), dir('apps'), dir('apps/web/docs')];
+
+    expect(keywordMatchedPaths(dirs, '   ')).toEqual(['', 'apps', 'apps/web/docs']);
   });
 
   it('默认只展开通往已勾选目录的那几条链', () => {
