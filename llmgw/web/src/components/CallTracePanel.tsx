@@ -153,8 +153,13 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
           按线路所属上游的协议交给对应适配器。这是全链路唯一按上游分叉的地方，且分叉键是协议，不是模型名。
         </p>
         <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap', paddingTop: GAP.tight }}>
-          {[...new Set(data.routes.map((x) => x.protocol || '继承目标'))].map((protocol) => (
-            <Chip key={protocol} label={`${protocol} 适配器`} color="var(--text-secondary)" bg="var(--bg-elevated)" />
+          {[...new Set(data.routes.filter((x) => !x.skipReason).map((x) => x.protocol || ''))].map((protocol) => (
+            <Chip
+              key={protocol || 'inherit'}
+              label={protocol ? `${protocol} 适配器` : '协议跟着目标模型走'}
+              color="var(--text-secondary)"
+              bg="var(--bg-elevated)"
+            />
           ))}
         </div>
       </Step>

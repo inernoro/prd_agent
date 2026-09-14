@@ -64,20 +64,26 @@ def fetch_trace(logical_id):
     return payload["data"]
 
 
-def upstream_of(route):
-    return route.get("upstreamModelId") or route.get("targetName") or route.get("targetId")
+def label_of(route):
+    provider = route.get("providerName")
+    name = route.get("upstreamModelId") or route.get("targetName") or route.get("targetId")
+    return f"{provider} / {name}" if provider else name
 
 
 def predicted(trace):
-    """面板推演出的可接受落点集合 + 一句人话说明为什么是这个集合。"""
+    """面板推演出的可接受落点 + 一句人话说明为什么是这些。
+
+    比的是 **offeringId** 不是模型名：同一个上游模型可能被登记成两条线路（不同顺位、
+    不同透传参数），按名字比会把「落到了另一条线路」判成一致。
+    """
     eligible = [r for r in trace["routes"] if not r.get("skipReason")]
     if not eligible:
-        return set(), "面板说一条能接的线路都没有，这次解析应当失败"
+        return {}, "面板说一条能接的线路都没有，这次解析应当失败"
     if trace["routingStrategy"] == "weighted" and len(eligible) > 1:
-        return ({upstream_of(r) for r in eligible},
+        return ({r["id"]: label_of(r) for r in eligible},
                 f"按权重分配，落点由请求派生，只断言落在这 {len(eligible)} 条里")
     head = min(eligible, key=lambda r: r.get("queuePosition") or 999)
-    return {upstream_of(head)}, f"按顺位，面板说队首是第 {head.get('queuePosition')} 位"
+    return {head["id"]: label_of(head)}, f"按顺位，面板说队首是第 {head.get('queuePosition')} 位"
 
 
 def resolve(model_type, expected_model):
@@ -87,18 +93,24 @@ def resolve(model_type, expected_model):
     return http("POST", f"{BASE}/gw/v1/resolve", {"Authorization": f"Bearer {SERVICE_KEY}"}, body)
 
 
-def actual_upstream(payload):
-    """运行时解析出的上游模型标识。字段名随版本有过变化，按优先级找，找不到就说找不到。"""
-    for path in (("actualModel",), ("resolution", "actualModel"), ("data", "actualModel"),
-                 ("modelId",), ("resolution", "modelId")):
-        node = payload
-        for key in path:
-            node = node.get(key) if isinstance(node, dict) else None
-            if node is None:
-                break
-        if isinstance(node, str) and node:
-            return node
-    return None
+def actual_route(payload):
+    """运行时解析落到的那条线路：(offeringId, 人读标签)。
+
+    /gw/v1/resolve 回的是 PascalCase（它直接序列化解析结果对象），和控制台那套
+    camelCase 不是一回事——踩过一次，这里两种都认，免得下次改序列化策略又哑掉。
+    """
+    def pick(*names):
+        for name in names:
+            value = payload.get(name)
+            if isinstance(value, str) and value:
+                return value
+        return None
+
+    offering = pick("OfferingId", "offeringId")
+    model = pick("ActualModel", "actualModel")
+    platform = pick("ActualPlatformName", "actualPlatformName")
+    label = f"{platform} / {model}" if platform and model else (model or offering)
+    return offering, label
 
 
 def main():
@@ -116,7 +128,7 @@ def main():
 
     print(f"对外模型 : {trace['publicId']}（{trace['modelType']}，{trace['routingStrategy']}）")
     print(f"面板结论 : {trace['conclusion']}")
-    print(f"推演落点 : {sorted(accepted) or '(无)'}  —— {why}")
+    print(f"推演落点 : {sorted(accepted.values()) or '(无)'}  —— {why}")
     print(f"不点名   : {trace['unnamed']['summary']}")
     skipped = [r for r in trace["routes"] if r.get("skipReason")]
     if skipped:
@@ -132,22 +144,24 @@ def main():
     if trace["unnamed"]["servesUnnamed"]:
         cases.append(("只给 appCallerCode 不点名", None))
 
-    for label, expected_model in cases:
+    for case, expected_model in cases:
         status, payload = resolve(model_type, expected_model)
-        got = actual_upstream(payload)
+        offering, got_label = actual_route(payload)
+        succeeded = status == 200 and bool(payload.get("Success", payload.get("success", True)))
         if not accepted:
-            ok = status >= 400 or got is None
-            verdict = "按面板说法这次解析应当失败" if ok else f"面板说调不通，运行时却解析到 {got}"
-        elif status != 200:
+            ok = not succeeded
+            verdict = "按面板说法这次解析应当失败" if ok else f"面板说调不通，运行时却解析到 {got_label}"
+        elif not succeeded:
             ok, verdict = False, f"解析失败：{str(payload)[:220]}"
-        elif got is None:
-            ok, verdict = False, f"响应里找不到落点字段，无法核对：{str(payload)[:220]}"
+        elif offering is None:
+            ok, verdict = False, f"响应里找不到线路标识，无法核对：{str(payload)[:220]}"
         else:
-            ok = got in accepted
-            verdict = "与面板推演一致" if ok else f"面板说会落到 {sorted(accepted)}，运行时解析到 {got}"
-        print(f"[{'通过' if ok else '失败'}] {label} — status={status} 运行时落点={got} · {verdict}")
+            ok = offering in accepted
+            verdict = ("与面板推演一致" if ok
+                       else f"面板说会落到 {sorted(accepted.values())}，运行时解析到 {got_label}（{offering}）")
+        print(f"[{'通过' if ok else '失败'}] {case} — status={status} 运行时落点={got_label} · {verdict}")
         if not ok:
-            failures.append(f"{label}：{verdict}")
+            failures.append(f"{case}：{verdict}")
 
     if not trace["unnamed"]["servesUnnamed"]:
         print("[跳过] 只给 appCallerCode 不点名 —— 面板声称不点名不会落到这个模型，"

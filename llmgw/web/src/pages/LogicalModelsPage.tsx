@@ -435,14 +435,14 @@ export function LogicalModelsPage() {
                       <span style={{ fontSize: 'var(--fs-secondary)', color: health.tone === 'warn' ? 'var(--warn)' : 'var(--text-secondary)' }}>{health.text}</span>
                     </span>
 
-                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end', flexWrap: 'nowrap' }}>
                       {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
                           「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
                       <Button size="sm" variant="ghost" aria-expanded={tracing} onClick={() => setTraceFor((x) => (x === item.id ? null : item.id))}>
-                        {tracing ? '收起全貌' : '调用全貌'}
+                        <span style={{ whiteSpace: 'nowrap' }}>{tracing ? '收起全貌' : '调用全貌'}</span>
                       </Button>
                       <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setExpanded((x) => (x === item.id ? null : item.id))}>
-                        {open ? '收起' : '展开'}
+                        <span style={{ whiteSpace: 'nowrap' }}>{open ? '收起' : '展开'}</span>
                       </Button>
                     </span>
                   </div>
@@ -594,7 +594,7 @@ export function LogicalModelsPage() {
 // 五列定宽而不是 auto：十来行模型的列头必须对齐，auto 会让每行各算各的宽度。
 const ROW_GRID: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'minmax(0, 1fr) 320px 168px 156px 64px',
+  gridTemplateColumns: 'minmax(0, 1fr) 300px 150px 142px 152px',
   alignItems: 'center',
   gap: GAP.page,
   padding: `${GAP.section}px ${CARD_PADDING}px`,
