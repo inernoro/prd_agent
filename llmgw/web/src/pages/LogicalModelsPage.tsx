@@ -186,6 +186,29 @@ export function LogicalModelsPage() {
     });
   }
 
+  /**
+   * 设为 / 取消「这个用途的默认」。
+   *
+   * 换兜底模型会改变线上行为：从此以后所有不点名模型的请求都走它。所以顶掉了谁必须
+   * 当场说清楚，不能让人点完一个开关、几天后才发现默认悄悄换了人。
+   */
+  async function toggleDefault(item: LogicalModelItem) {
+    const next = !item.isDefaultForType;
+    setBusy(`default:${item.id}`);
+    const res = await updateLogicalModel(item.id, { isDefaultForType: next });
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '设置默认失败'); return; }
+    setItems((prev) => prev?.map((x) => {
+      if (x.id === item.id) return res.data;
+      // 同用途的旧默认被服务端清掉了，本地列表也要跟着改，否则会同时显示两个「没点名时用它」
+      if (next && x.modelType === item.modelType && x.isDefaultForType) return { ...x, isDefaultForType: false };
+      return x;
+    }) || null);
+    okNotice(next
+      ? `${item.modelType} 用途没点名模型时，从现在起走「${item.name}」`
+      : `已取消「${item.name}」的默认；${item.modelType} 用途没点名的请求会回落到模型池`);
+  }
+
   async function toggleLogical(item: LogicalModelItem) {
     setBusy(item.id);
     const res = await setLogicalModelEnabled(item.id, !item.enabled);
@@ -252,6 +275,7 @@ export function LogicalModelsPage() {
             <span>已启用 <strong>{items.filter((x) => x.enabled).length}</strong></span>
             {usage ? <span>近 30 天 <strong>{formatUsd(monthlyCostUsd)}</strong></span> : null}
             {unpricedCalls > 0 ? <span>缺价调用 <strong>{formatCount(unpricedCalls)}</strong> 次未计入</span> : null}
+            <span>已设默认 <strong>{items.filter((x) => x.isDefaultForType).length}</strong> 个用途</span>
           </>
         ) : undefined}
         actions={canWrite ? (
@@ -352,12 +376,22 @@ export function LogicalModelsPage() {
               const open = expanded === item.id;
               const health = summarizeHealth(item, routes);
               return (
-                <div key={item.id} style={{ borderTop: '1px solid var(--border-subtle)', background: health.tone === 'warn' ? 'var(--warn-bg)' : undefined, boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : undefined }}>
+                <div key={item.id} style={{
+                  borderTop: '1px solid var(--border-subtle)',
+                  background: health.tone === 'warn' ? 'var(--warn-bg)' : item.isDefaultForType ? 'var(--accent-soft)' : undefined,
+                  // 异常优先于默认：一个模型既是默认又出了问题时，先让人看见出问题那件事
+                  boxShadow: health.tone === 'warn' ? 'inset 3px 0 0 var(--warn)' : item.isDefaultForType ? 'inset 3px 0 0 var(--accent)' : undefined,
+                }}>
                   <div style={ROW_GRID}>
                     <span style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, minWidth: 0 }}>
                       <UpstreamMark hints={[routes[0]?.providerName, routes[0]?.upstreamModelId, item.publicId]} />
                       <span style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                        <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                        <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0 }}>
+                          <strong style={{ fontSize: 'var(--fs-body)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.name}</strong>
+                          {item.isDefaultForType
+                            ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
+                            : null}
+                        </span>
                         <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {item.publicId} · {describeScope(item.allowedAppCallerCodes)}
                         </span>
@@ -414,6 +448,9 @@ export function LogicalModelsPage() {
                               <option value="priority">优先级与故障切换</option>
                               <option value="weighted">权重负载均衡</option>
                             </select>
+                            <Button size="sm" disabled={busy === `default:${item.id}`} onClick={() => void toggleDefault(item)}>
+                              {item.isDefaultForType ? '取消默认' : '设为默认'}
+                            </Button>
                             <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>

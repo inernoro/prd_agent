@@ -1369,6 +1369,9 @@ public sealed class LogicalModelItem
     public List<string> AllowedAppCallerCodes { get; set; } = new();
     public string RoutingStrategy { get; set; } = "priority";
     public bool Enabled { get; set; }
+
+    /// <summary>这个用途没点名模型时用它。同租户同用途最多一个。</summary>
+    public bool IsDefaultForType { get; set; }
     public int DisplayOrder { get; set; }
     public string? Description { get; set; }
     public string? CreatedAt { get; set; }
@@ -1415,6 +1418,9 @@ public sealed class UpdateLogicalModelRequest
     public string? RoutingStrategy { get; set; }
     public int? DisplayOrder { get; set; }
     public string? Description { get; set; }
+
+    /// <summary>设为/取消「这个用途的默认」。设为 true 时会顶掉同用途原来的那个默认。</summary>
+    public bool? IsDefaultForType { get; set; }
 }
 public sealed class CreateModelOfferingRequest
 {

@@ -965,6 +965,8 @@ export type LogicalModelItem = {
   allowedAppCallerCodes: string[];
   routingStrategy: 'priority' | 'weighted';
   enabled: boolean;
+  /** 这个用途没点名模型时用它。同租户同用途最多一个——原来的「模型池默认池」就是它。 */
+  isDefaultForType: boolean;
   displayOrder: number;
   description?: string | null;
   createdAt?: string | null;
@@ -1003,7 +1005,10 @@ export type CreateLogicalModelRequest = {
   displayOrder?: number;
   description?: string;
 };
-export type UpdateLogicalModelRequest = Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>;
+export type UpdateLogicalModelRequest =
+  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>
+  /** 设为 true 会顶掉同用途原来的那个默认，接口会把顶掉了谁回给你。 */
+  & { isDefaultForType?: boolean };
 export type CreateModelOfferingRequest = {
   targetKind: 'model' | 'exchange';
   targetId: string;

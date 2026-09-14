@@ -543,6 +543,17 @@ public class ModelResolver : IModelResolver
                 gatewayRegistry.StrictPoolContract ? gatewayRegistry.Groups : null);
             if (logical is not null)
                 return logical;
+
+            // 没点名模型时，先看这个用途有没有被标成默认的模型；没有才回落到模型池。
+            // 找不到、或者那个默认模型自己解析不出来，都原样回落——阶段 1 的整个价值在于
+            // 可回退：把标记关掉，线上行为必须和没有这个功能时一模一样。
+            if (string.IsNullOrWhiteSpace(expectedModel))
+            {
+                var byDefault = await TryResolveDefaultLogicalModelAsync(appCallerCode, modelType, ct,
+                    gatewayRegistry.StrictPoolContract ? gatewayRegistry.Groups : null);
+                if (byDefault is not null)
+                    return byDefault;
+            }
         }
 
         if (gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired)
@@ -1725,6 +1736,57 @@ public class ModelResolver : IModelResolver
             .FirstOrDefaultAsync(ct);
         if (logical is null)
             return null;
+
+        return await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct);
+    }
+
+    /// <summary>
+    /// 请求没点名模型时，这个用途被标成默认的那个模型。
+    ///
+    /// 这是「模型池并进模型」的接线点：池唯一比逻辑模型多出来的能力就是「当兜底」，
+    /// 补上它之后池不再是另一种东西，只是这一行多了个标记。
+    ///
+    /// 解析不出来（没挂线路、能力不匹配、线路全熔断）时返回 null 而不是失败结果，
+    /// 让调用方原样回落到模型池。阶段 1 的整个价值就在于**可回退**：把默认标记关掉
+    /// 或者默认模型坏掉，线上行为必须和没有这个功能时一模一样。
+    /// </summary>
+    private async Task<ModelResolutionResult?> TryResolveDefaultLogicalModelAsync(
+        string appCallerCode,
+        string modelType,
+        CancellationToken ct,
+        IReadOnlyCollection<ModelGroup>? allowedGroups = null)
+    {
+        if (_gatewayDb is null) return null;
+
+        var logicalModels = _gatewayDb.Context.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
+        // 写入侧保证同租户同用途最多一个默认；这里仍按 DisplayOrder 取第一个，
+        // 万一存量数据里有两个（直接写库、并发写入），取值也是确定的而不是看运气。
+        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType),
+                Builders<GatewayLogicalModel>.Filter.Eq(x => x.IsDefaultForType, true)))
+            .SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)
+            .FirstOrDefaultAsync(ct);
+        if (logical is null) return null;
+
+        var resolved = await ResolveFromLogicalModelAsync(logical, appCallerCode, logical.PublicId, allowedGroups, ct);
+        if (resolved is null || resolved.Success) return resolved;
+
+        _logger.LogWarning(
+            "[ModelResolver] 默认模型解析失败，回落到模型池: ModelType={Type}, Default={PublicId}, Reason={Reason}",
+            modelType, logical.PublicId, resolved.ErrorMessage);
+        return null;
+    }
+
+    private async Task<ModelResolutionResult?> ResolveFromLogicalModelAsync(
+        GatewayLogicalModel logical,
+        string appCallerCode,
+        string? expectedModel,
+        IReadOnlyCollection<ModelGroup>? allowedGroups,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null) return null;
 
         if (!SupportsAppCallerScenario(logical, appCallerCode))
         {

@@ -20,6 +20,20 @@ public sealed class GatewayLogicalModel
     public List<string> AllowedAppCallerCodes { get; set; } = new();
     public string RoutingStrategy { get; set; } = "priority";
     public bool Enabled { get; set; } = true;
+
+    /// <summary>
+    /// 这个用途没点名模型时用它。
+    ///
+    /// 字段名与模型池的 <c>ModelGroup.IsDefaultForType</c> 刻意一模一样：那正是池与本类型
+    /// 逐字段对照后唯一的真差别，补上它之后「模型池」就不再是另一种东西，只是这一行多了个标记。
+    ///
+    /// 同一租户同一 <see cref="ModelType"/> 最多一个默认。这个不变量由写入侧保证——
+    /// 唯一索引做不到，因为 false 与字段缺失都算「不是默认」，Mongo 的部分索引要按
+    /// 布尔值过滤才行，而存量文档压根没有这个字段。写入侧先清同用途旧默认再置新的，
+    /// 顺序反过来会出现一瞬间两个默认，恰好落在那一瞬的请求会解析到哪个全看运气。
+    /// </summary>
+    public bool IsDefaultForType { get; set; }
+
     public int DisplayOrder { get; set; } = 100;
     public string? Description { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

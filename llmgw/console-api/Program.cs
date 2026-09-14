@@ -3915,6 +3915,33 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
         updates.Add(string.IsNullOrWhiteSpace(body.Description)
             ? Builders<BsonDocument>.Update.Unset("Description")
             : Builders<BsonDocument>.Update.Set("Description", body.Description.Trim()));
+    // 「这个用途没点名时用它」——同租户同用途最多一个默认。
+    //
+    // 顺序是判据：**先把同用途的旧默认清掉，再置新的**。反过来会出现一瞬间两个默认，
+    // 恰好落在那一瞬的请求解析到哪个全看运气。清掉谁要回给用户，不能让兜底模型悄悄换人。
+    var displacedDefaults = new List<string>();
+    if (body.IsDefaultForType == true)
+    {
+        var current = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+            .FirstOrDefaultAsync();
+        if (current is null)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+        var modelType = current.GetStringOrEmpty("ModelType");
+        var sameTypeDefaults = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("ModelType", modelType),
+            Builders<BsonDocument>.Filter.Eq("IsDefaultForType", true),
+            Builders<BsonDocument>.Filter.Ne("_id", id)))).ToListAsync();
+        foreach (var other in sameTypeDefaults)
+        {
+            displacedDefaults.Add(other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id"));
+            await gwLogicalModels.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", other.GetStringOrEmpty("_id")),
+                Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+        }
+    }
+    if (body.IsDefaultForType is not null)
+        updates.Add(Builders<BsonDocument>.Update.Set("IsDefaultForType", body.IsDefaultForType.Value));
+
     if (updates.Count == 0)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
@@ -3925,7 +3952,13 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (updated is null)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.update", "llmgw_logical_model", id, updated.GetStringOrEmpty("Name"), true, null,
-        new BsonDocument { { "fieldCount", updates.Count - 1 } });
+        new BsonDocument
+        {
+            { "fieldCount", updates.Count - 1 },
+            // 换兜底模型是会改变线上行为的动作：日后排查「什么时候开始默认走它了」要查得到人
+            { "isDefaultForType", body.IsDefaultForType.HasValue ? body.IsDefaultForType.Value : BsonNull.Value },
+            { "displacedDefaults", new BsonArray(displacedDefaults) },
+        });
     var offerings = await gwModelOfferings.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id))).ToListAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
     var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
@@ -16213,6 +16246,8 @@ static LogicalModelItem MapLogicalModel(
         AllowedAppCallerCodes = logical.AsStringList("AllowedAppCallerCodes"),
         RoutingStrategy = logical.AsNullableString("RoutingStrategy") ?? "priority",
         Enabled = logical.AsNullableBool("Enabled") ?? true,
+        // 存量文档没有这个字段，缺失一律按「不是默认」——不能猜，猜错就是悄悄换掉兜底模型
+        IsDefaultForType = logical.AsNullableBool("IsDefaultForType") ?? false,
         DisplayOrder = logical.AsNullableInt("DisplayOrder") ?? 100,
         Description = logical.AsNullableString("Description"),
         CreatedAt = logical.AsNullableUtcDateTime("CreatedAt").ToIso(),
