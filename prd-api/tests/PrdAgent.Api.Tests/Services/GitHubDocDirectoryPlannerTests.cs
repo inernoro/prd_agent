@@ -81,14 +81,24 @@ public class GitHubDocDirectoryPlannerTests
     }
 
     [Fact]
-    public void 大小写与markdown扩展名都算数()
+    public void 目录名与后缀都不区分大小写()
     {
-        var scan = Scan(
-            ("Docs/Intro.MD", "blob"),
-            ("DOC/legacy.markdown", "blob"));
+        var scan = Scan(("Docs/Intro.MD", "blob"));
 
         Assert.Contains("Docs", scan.RecommendedPaths);
-        Assert.Contains("DOC", scan.RecommendedPaths);
+    }
+
+    [Fact]
+    public void 只认同步引擎真会导入的后缀()
+    {
+        // 规划器多认一种后缀，就会出现「默认勾上了、同步完 0 篇」——
+        // 两侧共用 IsSyncableMarkdown，这里把口径钉死（Codex review P2 / 形状 3）。
+        Assert.True(GitHubDocDirectoryPlanner.IsSyncableMarkdown("doc/a.MD"));
+        Assert.False(GitHubDocDirectoryPlanner.IsSyncableMarkdown("doc/a.markdown"));
+        Assert.False(GitHubDocDirectoryPlanner.IsSyncableMarkdown("doc/a.txt"));
+
+        var scan = Scan(("DOC/legacy.markdown", "blob"));
+        Assert.Empty(scan.RecommendedPaths);
     }
 
     [Fact]

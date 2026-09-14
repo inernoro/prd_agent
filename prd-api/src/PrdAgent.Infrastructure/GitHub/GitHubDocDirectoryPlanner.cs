@@ -148,7 +148,7 @@ public static class GitHubDocDirectoryPlanner
             var parent = ParentOf(path);
             directories.Add(parent);
             fileCounts[parent] = fileCounts.GetValueOrDefault(parent) + 1;
-            if (IsMarkdown(path))
+            if (IsSyncableMarkdown(path))
             {
                 markdownCounts[parent] = markdownCounts.GetValueOrDefault(parent) + 1;
             }
@@ -216,9 +216,16 @@ public static class GitHubDocDirectoryPlanner
         return nodes.Where(n => keep.Contains(n.Path)).ToList();
     }
 
-    private static bool IsMarkdown(string path)
-        => path.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
-        || path.EndsWith(".markdown", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// 同步引擎真正会导入的文件判据 —— 规划器与同步器必须共用这一个定义。
+    ///
+    /// 曾经这里多认一个 `.markdown`，而 GitHubDirectorySyncService 只认 `.md`：
+    /// 一个只放 `.markdown` 的 doc 目录会被算成「有 N 篇」并默认勾上，
+    /// 同步完却是 0 篇——判据分裂的典型（predicate-and-wiring-discipline 形状 3）。
+    /// 要扩展支持的后缀，改这一个函数，两边同时生效。
+    /// </summary>
+    public static bool IsSyncableMarkdown(string path)
+        => path.EndsWith(".md", StringComparison.OrdinalIgnoreCase);
 
     private static string ParentOf(string path)
     {

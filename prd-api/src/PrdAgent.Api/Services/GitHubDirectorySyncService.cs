@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Services;
@@ -172,13 +173,21 @@ public class GitHubDirectorySyncService
                 }
 
                 // SHA 变了 → 重新拉取内容并更新
-                await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, accessToken, ct);
-                diff.UpdatedCount++;
-                diff.FileChanges.Add(new DocumentSyncFileChange
+                var updated = await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, accessToken, ct);
+                if (updated)
                 {
-                    Path = file.Path,
-                    Action = DocumentSyncFileAction.Updated,
-                });
+                    diff.UpdatedCount++;
+                    diff.FileChanges.Add(new DocumentSyncFileChange
+                    {
+                        Path = file.Path,
+                        Action = DocumentSyncFileAction.Updated,
+                    });
+                }
+                else
+                {
+                    diff.FailedCount++;
+                    diff.FailedPaths.Add(file.Path);
+                }
             }
             else
             {
@@ -203,13 +212,21 @@ public class GitHubDirectorySyncService
                     },
                 };
 
-                await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, accessToken, ct, isNew: true);
-                diff.AddedCount++;
-                diff.FileChanges.Add(new DocumentSyncFileChange
+                var added = await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, accessToken, ct, isNew: true);
+                if (added)
                 {
-                    Path = file.Path,
-                    Action = DocumentSyncFileAction.Added,
-                });
+                    diff.AddedCount++;
+                    diff.FileChanges.Add(new DocumentSyncFileChange
+                    {
+                        Path = file.Path,
+                        Action = DocumentSyncFileAction.Added,
+                    });
+                }
+                else
+                {
+                    diff.FailedCount++;
+                    diff.FailedPaths.Add(file.Path);
+                }
             }
         }
 
@@ -241,13 +258,17 @@ public class GitHubDirectorySyncService
             cancellationToken: CancellationToken.None);
 
         _logger.LogInformation(
-            "[GitHubSync] Done: added={Added} updated={Updated} skipped={Skipped} deleted={Deleted}",
-            diff.AddedCount, diff.UpdatedCount, diff.SkippedCount, diff.DeletedCount);
+            "[GitHubSync] Done: added={Added} updated={Updated} skipped={Skipped} deleted={Deleted} failed={Failed}",
+            diff.AddedCount, diff.UpdatedCount, diff.SkippedCount, diff.DeletedCount, diff.FailedCount);
 
         return diff;
     }
 
-    private async Task SyncSingleFileAsync(
+    /// <summary>
+    /// 同步单个文件。**返回是否成功** —— 失败必须冒泡给调用方，
+    /// 否则文件没落库、计数却照加，父条目还标成功（形状 10：静默降级）。
+    /// </summary>
+    private async Task<bool> SyncSingleFileAsync(
         MongoDbContext db,
         IDocumentService documentService,
         DocStoreServices.DocumentVersionService? versions,
@@ -337,7 +358,7 @@ public class GitHubDirectorySyncService
                     if (versions != null && !string.IsNullOrWhiteSpace(newDoc.RawContent))
                         await versions.SnapshotAsync(entry.Id, entry.StoreId, newDoc.RawContent,
                             DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
-                    return; // 跳过后续的外网拉取
+                    return true; // 跳过后续的外网拉取
                 }
             }
 
@@ -350,7 +371,7 @@ public class GitHubDirectorySyncService
             if (string.IsNullOrWhiteSpace(content))
             {
                 _logger.LogWarning("[GitHubSync] Empty content for {Path}", file.Path);
-                return;
+                return false;
             }
 
             // 覆盖已存在文档前，把旧正文快照成版本：订阅文档被远端同步覆盖时，
@@ -401,10 +422,13 @@ public class GitHubDirectorySyncService
             if (versions != null)
                 await versions.SnapshotAsync(entry.Id, entry.StoreId, content,
                     DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
+
+            return true;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[GitHubSync] Failed to sync file {Path}", file.Path);
+            return false;
         }
     }
 
@@ -433,8 +457,8 @@ public class GitHubDirectorySyncService
             if (type != "file") continue;
 
             var name = item.GetProperty("name").GetString() ?? "";
-            // 只同步 .md 文件
-            if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) continue;
+            // 可导入后缀与目录规划器共用同一个判据，避免「勾上了却同步出 0 篇」
+            if (!GitHubDocDirectoryPlanner.IsSyncableMarkdown(name)) continue;
 
             // Glob 匹配（如匹配失败则丢弃）
             if (matcher != null && !matcher.Match(name).HasMatches) continue;
@@ -630,9 +654,31 @@ public class GitHubDirectoryDiff
     public int UpdatedCount { get; set; }
     public int DeletedCount { get; set; }
     public int SkippedCount { get; set; }
+
+    /// <summary>本轮有多少个文件没能拉下来（限流、401、超时…）。</summary>
+    public int FailedCount { get; set; }
+
+    /// <summary>失败文件的路径样本，写进 SyncError 让用户知道缺了什么。</summary>
+    public List<string> FailedPaths { get; set; } = new();
+
     public List<DocumentSyncFileChange> FileChanges { get; set; } = new();
 
     public bool HasChanges => AddedCount > 0 || UpdatedCount > 0 || DeletedCount > 0;
+
+    /// <summary>
+    /// 有文件失败。调用方**必须**据此把父条目标成失败，而不是照常标 idle——
+    /// 否则「少了几篇」会被一个绿色的成功状态盖住（形状 10：静默降级）。
+    /// </summary>
+    public bool HasFailures => FailedCount > 0;
+
+    /// <summary>给用户看的失败描述：缺了几篇、举几个例子。</summary>
+    public string BuildFailureMessage()
+    {
+        var sample = string.Join("、", FailedPaths.Take(3));
+        var more = FailedPaths.Count > 3 ? $" 等 {FailedPaths.Count} 个文件" : "";
+        return $"有 {FailedCount} 篇文档没有拉取成功（{sample}{more}）。"
+             + "常见原因是 GitHub 调用频率超限或授权失效；已同步的部分已保留，可稍后点「重试同步」补齐。";
+    }
 
     public string BuildSummary()
     {

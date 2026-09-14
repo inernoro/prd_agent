@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Github, X, Check, Search, RefreshCw, Copy, ExternalLink,
   Folder, FileText, Lock, ChevronRight, CheckCircle2, AlertCircle,
@@ -66,10 +67,12 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
 
   useEffect(() => { void loadAuth(); }, [loadAuth]);
 
-  return (
+  // frontend-modal.md 三条物理约束：尺寸走 inline style、createPortal 挂 body、滚动容器 minHeight:0
+  const wizard = (
     <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="surface-popover w-[720px] max-w-[94vw] max-h-[88vh] rounded-[16px] p-6 flex flex-col">
+      <div className="surface-popover rounded-[16px] p-6 flex flex-col"
+        style={{ width: 720, maxWidth: '94vw', maxHeight: '88vh', minHeight: 0 }}>
         <Header step={step} onClose={onClose} login={auth?.connected ? auth.login ?? null : null} />
 
         {error && (
@@ -111,6 +114,8 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
       </div>
     </div>
   );
+
+  return createPortal(wizard, document.body);
 }
 
 /** 顶部标题 + 步骤指示（让用户任何时候知道自己在第几步、还剩几步） */
@@ -227,7 +232,7 @@ function ConnectStep({ onConnected, onError }: { onConnected: () => void; onErro
   const mmss = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
       <p className="text-[12px] leading-[1.7] mb-4" style={{ color: 'var(--text-muted)' }}>
         连接你自己的 GitHub 账号后，就能同步你有权限的仓库（含私有仓）。授权只对你生效，
         令牌加密保存在你名下，随时可以断开。
@@ -283,6 +288,11 @@ function RepoStep({ onSelected, onError }: {
   const [query, setQuery] = useState('');
   const [repos, setRepos] = useState<GitHubRepository[]>([]);
   const [loading, setLoading] = useState(true);
+  // 后端按 GitHub 分页返回（默认每页 30），搜索也只在已取回的这些里过滤。
+  // 仓库多于一页的用户，光靠第一页找不到目标仓库，主流程就断在这里，所以要能继续加载。
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [active, setActive] = useState<GitHubRepository | null>(null);
   const [branches, setBranches] = useState<GitHubBranch[]>([]);
   const [branch, setBranch] = useState('');
@@ -294,12 +304,35 @@ function RepoStep({ onSelected, onError }: {
     const timer = window.setTimeout(async () => {
       const res = await listGitHubRepositories(query || undefined, 1, 30);
       if (cancelled) return;
-      if (res.success) setRepos(res.data.items);
-      else onError(res.error?.message ?? '读取仓库列表失败');
+      if (res.success) {
+        setRepos(res.data.items);
+        setPage(1);
+        setHasMore(res.data.hasMore);
+      } else {
+        onError(res.error?.message ?? '读取仓库列表失败');
+      }
       setLoading(false);
     }, query ? 300 : 0);
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [query, onError]);
+
+  const loadMore = async () => {
+    setLoadingMore(true);
+    const next = page + 1;
+    const res = await listGitHubRepositories(query || undefined, next, 30);
+    setLoadingMore(false);
+    if (!res.success) {
+      onError(res.error?.message ?? '读取更多仓库失败');
+      return;
+    }
+    // 按 id 去重：GitHub 分页期间仓库排序可能变动，避免出现重复行
+    setRepos((prev) => {
+      const seen = new Set(prev.map((r) => r.id));
+      return [...prev, ...res.data.items.filter((r) => !seen.has(r.id))];
+    });
+    setPage(next);
+    setHasMore(res.data.hasMore);
+  };
 
   const pick = async (repo: GitHubRepository) => {
     setActive(repo);
@@ -312,15 +345,15 @@ function RepoStep({ onSelected, onError }: {
   };
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
       <div className="relative mb-3">
         <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索仓库名"
           className="prd-field w-full h-9 pl-8 pr-3 rounded-[10px] text-[13px] outline-none" />
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-[220px] rounded-[12px]"
-        style={{ border: '1px solid var(--border-subtle)' }}>
+      <div className="flex-1 overflow-y-auto rounded-[12px]"
+        style={{ border: '1px solid var(--border-subtle)', minHeight: 0, maxHeight: '46vh' }}>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-12">
             <MapSpinner size={13} />
@@ -353,6 +386,14 @@ function RepoStep({ onSelected, onError }: {
               {active?.id === repo.id && <Check size={13} style={{ color: 'var(--accent-fg-violet)' }} />}
             </button>
           ))
+        )}
+        {!loading && hasMore && (
+          <button onClick={() => void loadMore()} disabled={loadingMore}
+            className="hover-bg-soft w-full flex items-center justify-center gap-1.5 px-3 py-2.5 text-[12px] cursor-pointer"
+            style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
+            {loadingMore ? <MapSpinner size={12} /> : null}
+            {loadingMore ? '正在加载…' : '加载更多仓库'}
+          </button>
         )}
       </div>
 
@@ -491,7 +532,7 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
   const visiblePaths = visible.map((d) => d.path);
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
       <div className="flex items-center gap-2 mb-3">
         <div className="relative flex-1">
           <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
@@ -509,8 +550,8 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto min-h-[240px] rounded-[12px] py-1"
-        style={{ border: '1px solid var(--border-subtle)' }}>
+      <div className="flex-1 overflow-y-auto rounded-[12px] py-1"
+        style={{ border: '1px solid var(--border-subtle)', minHeight: 0, maxHeight: '46vh' }}>
         {tree.length === 0 ? (
           <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>没有匹配的目录</div>
         ) : (
@@ -610,7 +651,7 @@ function DoneStep({ result, repoFullName, branch, onClose }: {
   onClose: () => void;
 }) {
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
       <div className="flex items-center gap-2 mb-3">
         <CheckCircle2 size={16} style={{ color: 'var(--accent-fg-success)' }} />
         <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>

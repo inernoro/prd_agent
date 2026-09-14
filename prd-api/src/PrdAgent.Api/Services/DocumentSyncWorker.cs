@@ -150,6 +150,31 @@ public class DocumentSyncWorker : BackgroundService
             var diff = await githubSyncService.SyncDirectoryAsync(
                 db, documentService, versions, entry, credential.Token, ct);
 
+            // 有文件没拉下来就是**部分失败**，不许标成功：已同步的部分保留，
+            // 但条目要红着并说清缺了什么，否则「少了几篇」会被绿色状态盖住。
+            if (diff.HasFailures)
+            {
+                sw.Stop();
+                if (diff.HasChanges)
+                {
+                    await db.DocumentSyncLogs.InsertOneAsync(new DocumentSyncLog
+                    {
+                        EntryId = entry.Id,
+                        StoreId = entry.StoreId,
+                        SyncedAt = startedAt,
+                        Kind = DocumentSyncLogKind.Change,
+                        ChangeSummary = diff.BuildSummary(),
+                        FileChanges = diff.FileChanges,
+                        DurationMs = (int)sw.ElapsedMilliseconds,
+                    }, cancellationToken: CancellationToken.None);
+                }
+                _logger.LogWarning(
+                    "[DocumentSyncWorker] GitHub directory sync partially failed for {EntryId}: {Failed} file(s)",
+                    entry.Id, diff.FailedCount);
+                await MarkSyncError(db, entry, diff.BuildFailureMessage(), startedAt, (int)sw.ElapsedMilliseconds);
+                return;
+            }
+
             // 标记同步完成
             var update = Builders<DocumentEntry>.Update
                 .Set(e => e.SyncStatus, DocumentSyncStatus.Idle)
