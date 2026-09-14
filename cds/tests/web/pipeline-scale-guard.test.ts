@@ -285,3 +285,27 @@ describe('字号补偿不许把数字切掉', () => {
     expect(glyphTop, `字顶 ${glyphTop.toFixed(1)} 已经越过画布上沿 ${top.toFixed(1)}`).toBeGreaterThan(top);
   });
 });
+
+describe('厂房顶上三样东西不许互相压', () => {
+  // 自下而上：总量数字 → 它的标签 → 锯齿屋顶。三者的位置都得按字号补偿算，
+  // 否则数据一薄、补偿系数一大，「改动」两个字就压到屋顶线上（实测 5 条时就压上了）。
+  const ROOF_TOP_OFFSET = 6;
+  const ROOF_BOTTOM_OFFSET = 30;
+
+  it.each([
+    ['真实 71 条', REAL],
+    ['演示 5 条', THIN],
+    ['只有 1 条', funnel({ changes: 1, deployed: 1 })],
+    ['一条都没有', funnel({})],
+    ['900 条', funnel({ changes: 900, deployed: 880, accepted: 400 })],
+  ])('%s：标签在屋顶之下、数字之上，互不重叠', (_name, f) => {
+    const L = hallLayoutWide(f as PipelineFunnel);
+    const ts = 1 / sceneScale(L.vbW);
+    const roofBottom = L.top + ROOF_BOTTOM_OFFSET;
+    const labelTop = L.labelY - 15 * ts * 0.78;
+    const numTop = L.numY - 46 * ts * 0.78;
+    expect(L.top + ROOF_TOP_OFFSET).toBeGreaterThanOrEqual(L.top);
+    expect(labelTop, `标签字顶 ${labelTop.toFixed(1)} 压到了屋顶底线 ${roofBottom.toFixed(1)}`).toBeGreaterThan(roofBottom);
+    expect(numTop, `数字字顶 ${numTop.toFixed(1)} 压到了标签基线 ${L.labelY.toFixed(1)}`).toBeGreaterThan(L.labelY);
+  });
+});

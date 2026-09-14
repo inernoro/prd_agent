@@ -35,7 +35,7 @@ export interface PipelinePanelProps {
    token，白天/黑夜自动翻转。明暗序两套主题一致：
    货箱(surface-sunken) < 传送带(surface-base) < 卡片(card) < 钢构(hairline-strong)。 */
 const SCENE_CSS = `
-.pp-root .pp-scene{display:block;width:100%;height:auto;margin-inline:auto;}
+.pp-root .pp-scene{display:block;width:100%;height:auto;}
 
 .pp-root .f-none{fill:none;}
 .pp-root .f-card{fill:hsl(var(--card));}
@@ -640,7 +640,14 @@ export function hallLayoutWide(f: PipelineFunnel) {
   const gate2 = heapR + 44;
   const binCx = [gate2 + 92, gate2 + 212, gate2 + 332];
   const gate3 = gate2 + 440;
-  const top = lintel - 92;
+  const vbW = gate3 + 96;
+  // 顶上三样东西自下而上排：总量数字、它的标签、锯齿屋顶。位置必须按字号补偿算——
+  // 补偿会把字放大，而屋顶和留白是按原始字号定的，数据一薄（补偿系数变大）
+  // 「改动」两个字就压到屋顶线上去了。0.78 是字顶到基线的保守占比。
+  const ts = 1 / sceneScale(vbW);
+  const numY = lintel - 12;
+  const labelY = numY - 46 * ts * 0.78 - 8;
+  const top = labelY - 15 * ts * 0.78 - 40;
   return {
     heap,
     undeployed,
@@ -654,7 +661,9 @@ export function hallLayoutWide(f: PipelineFunnel) {
     binCx,
     gate3,
     top,
-    vbW: gate3 + 96,
+    labelY,
+    numY,
+    vbW,
     vbH: FLOOR + 78 - top,
   };
 }
@@ -724,10 +733,10 @@ function HallWide({ f, heapTips }: { f: PipelineFunnel; heapTips: string[] }): J
           ))}
         </g>
       </g>
-      <text x={82} y={L.lintel - 58} className="t-lab pp-lab" style={d(60)} textAnchor="middle">
+      <text x={82} y={L.labelY} className="t-lab pp-lab" style={d(60)} textAnchor="middle">
         改动
       </text>
-      <CountText x={82} y={L.lintel - 12} className="t-huge" textAnchor="middle" n={f.changes} />
+      <CountText x={82} y={L.numY} className="t-huge" textAnchor="middle" n={f.changes} />
 
       <BeltH x1={chute.bl} x2={224} />
       <BeltH x1={288} x2={L.vbW - 28} />
