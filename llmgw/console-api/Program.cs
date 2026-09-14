@@ -3969,6 +3969,8 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                 fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).AnyAsync();
             if (duplicate) continue;
 
+            var carryUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
+            if (carryUnavailable) entry.CarriedUnavailableRoutes++;
             if (!dryRun)
             {
                 await gwModelOfferings.InsertOneAsync(new BsonDocument
@@ -3981,9 +3983,14 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     { "Priority", PoolMigrationPlanner.MemberPriority(member) },
                     { "Weight", member.AsNullableInt("Weight") ?? 100 },
                     { "Enabled", true },
-                    // 健康状态刻意不搬：新线路一律从健康起步。搬一个「不可用」过来，
-                    // 新路径一上来就少一条线路，而那个不可用可能是几个月前的事了。
-                    { "HealthStatus", 0 }, { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
+                    // 近期的不可用照搬，陈年旧账重置成健康。两头都不对：全搬会让新路径带着
+                    // 一个早就过期的判断少一条候选；全不搬会让新路径去用一个池正在主动避开的
+                    // 上游。判据见 PoolMigrationPlanner.ShouldCarryUnavailable。
+                    { "HealthStatus", carryUnavailable ? 2 : 0 },
+                    { "ConsecutiveFailures", carryUnavailable ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
+                    { "ConsecutiveSuccesses", 0 },
+                    { "LastFailedAt", carryUnavailable && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } lf
+                        ? lf : BsonNull.Value },
                     { "MaxConcurrency", member.AsNullableInt("MaxConcurrency") is { } mc && mc > 0 ? mc : BsonNull.Value },
                     { "RateLimitPerMinute", BsonNull.Value },
                     { "Notes", BsonNull.Value },

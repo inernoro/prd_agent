@@ -1364,6 +1364,9 @@ public sealed class PoolMigrationEntry
 
     /// <summary>已有模型的能力原本是空的（能力门不放行），这次补上了。</summary>
     public bool RepairedCapabilities { get; set; }
+
+    /// <summary>把近期的「不可用」一起搬过来的线路数。陈年旧账重置成健康，不算在内。</summary>
+    public int CarriedUnavailableRoutes { get; set; }
 }
 
 public sealed class PoolMigrationSkip

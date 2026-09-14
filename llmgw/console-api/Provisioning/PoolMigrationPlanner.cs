@@ -109,6 +109,35 @@ public static class PoolMigrationPlanner
     }
 
     /// <summary>
+    /// 「近期」的界限。超过这个时长的失败不再作数。
+    ///
+    /// 24 小时不是拍的：熔断冷却是 120 秒，冷却期满后下一条真实请求就会去半开试探。
+    /// 一条线路要在不可用上停留超过一天，只可能是这段时间根本没有流量走它——
+    /// 那个「不可用」说的是上一次有人用它时的事，不是现在的事。
+    /// </summary>
+    public static readonly TimeSpan RecentFailureWindow = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// 这个池成员的「不可用」要不要跟着搬过去。
+    ///
+    /// 两头都不对：
+    ///   全搬 —— 18 天前失败过一次的线路，搬过去新路径一上来就少一条候选，而那个判断早就过期了。
+    ///   全不搬 —— 新路径会去用一个池正在主动避开的上游，而它可能此刻真的是坏的。
+    /// 两种都在这个仓库的真实数据上见过：default-generation 的 chatgpt-image-latest 优先级最高、
+    /// 18 天前被单次 401 隔离，池一直跳过它；搬过去重置成健康之后，新路立刻选了它，
+    /// 于是新旧两路解析不一致——这是影子比对抓出来的，不是想出来的。
+    ///
+    /// 判据取中间：失败发生在窗口内就照搬（它说的是现在），窗口外重置成健康（它说的是过去）。
+    /// </summary>
+    public static bool ShouldCarryUnavailable(BsonDocument member, DateTime nowUtc)
+    {
+        var status = member.GetValue("HealthStatus", BsonNull.Value) is { IsInt32: true } h ? h.AsInt32 : 0;
+        if (status != 2) return false;
+        if (member.GetValue("LastFailedAt", BsonNull.Value) is not { IsValidDateTime: true } failedAt) return false;
+        return nowUtc - failedAt.ToUniversalTime() <= RecentFailureWindow;
+    }
+
+    /// <summary>
     /// 搬迁是否要跳过这个池。
     ///
     /// 跳过的两种：没有对外名（没人能调）、没有成员（搬过去是个空模型，只会让白名单里

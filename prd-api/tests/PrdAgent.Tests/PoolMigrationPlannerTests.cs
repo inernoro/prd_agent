@@ -108,6 +108,35 @@ public class PoolMigrationPlannerTests
     }
 
     [Fact]
+    public void 近期的不可用照搬陈年旧账重置()
+    {
+        var now = new DateTime(2026, 9, 14, 8, 0, 0, DateTimeKind.Utc);
+
+        BsonDocument M(int status, DateTime? failedAt)
+        {
+            var m = new BsonDocument { { "ModelId", "x" }, { "HealthStatus", status } };
+            if (failedAt is not null) m["LastFailedAt"] = failedAt.Value;
+            return m;
+        }
+
+        // 刚刚失败的：那个「不可用」说的是现在，照搬
+        Assert.True(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddMinutes(-5)), now));
+        Assert.True(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddHours(-23)), now));
+
+        // 18 天前失败的：熔断冷却只有 120 秒，还停在不可用只能是这段时间没人用它，
+        // 那个判断说的是过去。这正是 default-generation 的 chatgpt-image-latest 的真实处境。
+        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddDays(-18)), now));
+        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddHours(-25)), now));
+
+        // 健康与降权都不是「不可用」，一律从健康起步
+        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(0, now.AddMinutes(-1)), now));
+        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(1, now.AddMinutes(-1)), now));
+
+        // 标了不可用却没有失败时间：说不清是什么时候的事，按过去处理而不是拿它去挡新路径
+        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, null), now));
+    }
+
+    [Fact]
     public void 搬迁默认试运行且不动旧表也能重复跑()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
@@ -131,8 +160,10 @@ public class PoolMigrationPlannerTests
         Assert.Contains("if (duplicate) continue;", handler);
         Assert.Contains("result.LinkedToExisting++", handler);
 
-        // 健康状态不搬：搬一个几个月前的「不可用」过来，新路径一上来就少一条线路
-        Assert.Contains("{ \"HealthStatus\", 0 }", handler);
+        // 近期的不可用照搬、陈年旧账重置：全搬会让新路径带着过期判断少一条候选，
+        // 全不搬会让新路径去用一个池正在主动避开的上游。两种都在真实数据上见过。
+        Assert.Contains("carryUnavailable ? 2 : 0", handler);
+        Assert.Contains("PoolMigrationPlanner.ShouldCarryUnavailable(member, now)", handler);
 
         // 跳过要给原因，不能静默吞掉
         Assert.Contains("result.Skipped.Add", handler);
