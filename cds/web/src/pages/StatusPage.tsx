@@ -377,6 +377,8 @@ export function StatusPage(): JSX.Element {
                 <div className="flex min-h-0 flex-col lg:flex-1">
                   <OwnerBoard
                     targets={targets}
+                    now={now}
+                    prober={summary?.prober ?? null}
                     scope={scope}
                     onScope={onScope}
                     onOpenTarget={(targetId) => { setBoardView('all'); openTarget(targetId); }}

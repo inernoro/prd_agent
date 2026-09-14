@@ -16,6 +16,7 @@
  * 页面组件只负责摆放，判据全在这里，测试跑真值断言。
  */
 
+import { formatDuration, formatRelative } from './monitorCenter';
 import type { MonitorEnvironment, ObserveMode, UptimeTargetSummary } from './monitorCenter';
 
 /**
@@ -39,13 +40,57 @@ export const ENVIRONMENT_SHORT: Record<MonitorEnvironment, string> = {
 };
 
 /**
- * 一格的健康档位。比 UptimeStatus 多一档 `stale`——
- * 「判据通过但窗口里没有真实调用」既不是正常也不是故障，混进任何一边都是撒谎。
+ * 检查有没有真的发生过。
+ *
+ * 用户 2026-09-14 原话：「我天生谨慎，我还得看到没有出现问题的证据，
+ * 避免因为程序没有跑，而跳过了。」——这一档就是那句话的判据。
+ *
+ * 判定口诀：**把探测器关掉，面板会不会照样说「全部正常」？** 会，就是这一档没做。
+ * 「上一次是绿的」不等于「现在是绿的」：探针停了之后，旧结论会一直绿着，
+ * 而且不会有任何东西变红（predicate-and-wiring-discipline 形状 4b 的用户版）。
  */
-export type CellHealth = 'down' | 'stale' | 'unknown' | 'up';
+export type ProbeFreshness = 'never' | 'overdue' | 'late' | 'fresh';
 
-/** 严重度：排序与「最差档」都只认这一张表。 */
-const SEVERITY: Record<CellHealth, number> = { down: 0, stale: 1, unknown: 2, up: 3 };
+/**
+ * 迟到 / 逾期的起点，按「几个该条自己的探测间隔」算。
+ *
+ * 不用固定秒数：一条 5 分钟一探和一条 6 小时一探，「多久没消息算不对劲」差了 72 倍。
+ * 迟到起点取 1.5 个间隔而不是 1 个——探测循环是 60 秒一轮，恰好 1 个间隔会让
+ * 每条监控长期挂着「迟到」，那种永远亮着的灯等于没有灯。
+ */
+export const LATE_INTERVALS = 1.5;
+export const OVERDUE_INTERVALS = 3;
+
+export function assessFreshness(
+  target: Pick<UptimeTargetSummary, 'lastSample' | 'intervalSeconds'>,
+  now: number,
+): ProbeFreshness {
+  const at = target.lastSample?.t;
+  if (typeof at !== 'number' || !(at > 0)) return 'never';
+  const intervalMs = (target.intervalSeconds || 0) * 1000;
+  // 判不了「它本该多久来一次」，就不许说它新鲜——存疑时一律往保守那一侧倒。
+  if (!(intervalMs > 0)) return 'never';
+  const age = now - at;
+  if (age > intervalMs * OVERDUE_INTERVALS) return 'overdue';
+  if (age > intervalMs * LATE_INTERVALS) return 'late';
+  return 'fresh';
+}
+
+/**
+ * 一格的健康档位。比 UptimeStatus 多两档：
+ *   - `stale`：判据通过但窗口里没有真实调用——「没人用过」，不是「正常」；
+ *   - `overdue`：探针早该跑却没跑——「不知道」，更不是「正常」。
+ * 这两档混进 up 或 down 任何一边都是撒谎，而且是**最难被发现的**那种撒谎。
+ */
+export type CellHealth = 'down' | 'overdue' | 'stale' | 'unknown' | 'up';
+
+/**
+ * 严重度：排序与「最差档」都只认这一张表。
+ *
+ * overdue 排在 stale 前面：`stale` 是「我知道它没坏，只是没人用」，
+ * `overdue` 是「我什么都不知道」。不知道比知道得不够严重。
+ */
+const SEVERITY: Record<CellHealth, number> = { down: 0, overdue: 1, stale: 2, unknown: 3, up: 4 };
 
 export interface EnvironmentCell {
   environment: MonitorEnvironment;
@@ -53,6 +98,12 @@ export interface EnvironmentCell {
   short: string;
   health: CellHealth;
   targetId: string;
+  /** 这一格的检查新鲜度——「他干活了吗」的判据 */
+  freshness: ProbeFreshness;
+  /** 上次真的被检查的时刻；undefined = 从没检查过 */
+  lastProbeAt?: number;
+  /** 它本该多久被检查一次 */
+  intervalSeconds?: number;
   /** 被动监控这一格的样本量；undefined = 不是被动监控或没读到 */
   sampleCount?: number;
   /** 这一格为什么不好：故障原因 / 判据没过的实际值。好的时候没有。 */
@@ -80,6 +131,23 @@ export function describeRow(row: Pick<BusinessRow, 'observeMode' | 'cells' | 'wo
   return `${row.cells.length} 个环境都通过判据`;
 }
 
+/**
+ * 卡片上的证据行 —— 回答「他干活了吗」。
+ *
+ * 取这一行里**最旧**的那一格（短板），理由同 latestEvidence：
+ * 拿最新的那格给整行背书，等于用最好看的数字掩盖最旧的那个。
+ */
+export function describeEvidence(row: Pick<BusinessRow, 'cells'>, now: number): string {
+  const probed = row.cells.filter((c) => typeof c.lastProbeAt === 'number');
+  if (probed.length === 0) return '还没有检查记录';
+  const oldest = probed.reduce((acc, c) => ((c.lastProbeAt as number) < (acc.lastProbeAt as number) ? c : acc));
+  const at = Math.min(oldest.lastProbeAt as number, now);
+  const every = oldest.intervalSeconds
+    ? ` · 每 ${formatDuration(oldest.intervalSeconds * 1000)}一次`
+    : '';
+  return `${formatRelative(at, now)}检查过${every}`;
+}
+
 export interface BusinessRow {
   /** 合并键 = 监控名：同名的监控视为「同一条业务的不同环境」 */
   key: string;
@@ -87,6 +155,8 @@ export interface BusinessRow {
   observeMode: ObserveMode;
   cells: EnvironmentCell[];
   worst: CellHealth;
+  /** 这条业务检查的是什么（人话判据）。说不出来就没有这一句，不硬凑。 */
+  probe?: string;
   /** 最新一次产物（生图这类功能监控才有），卡片上直接摆缩略图 */
   artifactUrl?: string;
   /**
@@ -94,6 +164,49 @@ export interface BusinessRow {
    * 说不出来（全坏 / 只有一个环境）就没有这一句，不硬凑。
    */
   attribution?: string;
+}
+
+/** 判断时刻 + 探测器活性。两级粒度缺一不可，理由见 buildOwnerBoard 的参数注释。 */
+export interface OwnerBoardContext {
+  now: number;
+  /** 来自 summary.prober；拿不到就传 null，**不许假装它是健康的** */
+  prober: { stalled: boolean; lastCycleAt: number | null } | null;
+}
+
+/** 这一屏的结论建立在什么时候的检查之上。 */
+export interface BoardEvidence {
+  /** 最旧的那一次检查时刻（短板） */
+  at: number;
+  /** 短板是哪条业务——要追的时候直接有名字，不用人自己找 */
+  name: string;
+  /** 有检查记录的格子数。和总格子数不等时说明有格子从没被检查过。 */
+  checked: number;
+  /** 总格子数 */
+  total: number;
+}
+
+/**
+ * 取全屏的证据短板。
+ *
+ * 只统计**有检查记录**的格子；一个都没有就返回 undefined，由调用方说「还没有检查记录」——
+ * 编一个时间出来是这条判据最容易犯的错，那等于用一句假证据去支撑「一切正常」。
+ */
+export function latestEvidence(rows: ReadonlyArray<BusinessRow>, now: number): BoardEvidence | undefined {
+  let at: number | undefined;
+  let name = '';
+  let checked = 0;
+  let total = 0;
+  for (const row of rows) {
+    for (const cell of row.cells) {
+      total += 1;
+      if (typeof cell.lastProbeAt !== 'number') continue;
+      checked += 1;
+      // 未来时刻的样本（时钟漂移）不该被当成「刚检查过」，钳到 now。
+      const t = Math.min(cell.lastProbeAt, now);
+      if (at === undefined || t < at) { at = t; name = row.name; }
+    }
+  }
+  return at === undefined ? undefined : { at, name, checked, total };
 }
 
 export interface InfraSummary {
@@ -120,6 +233,14 @@ export interface OwnerBoard {
   rows: BusinessRow[];
   infra: InfraSummary;
   /**
+   * 「没出问题的证据」：这一屏的结论是基于什么时候的检查得出的。
+   *
+   * 取**最旧**的那一次而不是最新的——木桶按短板算。六条里五条一分钟前检查过、
+   * 一条三天前，说「最近一次检查一分钟前」是在拿最好看的那条给整屏背书。
+   * 没有任何一条检查过时为 undefined（那时页面必须说「还没有检查记录」）。
+   */
+  evidence?: BoardEvidence;
+  /**
    * 当前环境筛选把业务监控**全部**挡在外面时，它们实际在哪些环境。
    *
    * 有值 = 空白第一屏不是「还没有业务监控」，而是「筛选挡住了」。UI 据此给一键切换。
@@ -140,16 +261,32 @@ export function isBusinessTarget(target: UptimeTargetSummary): boolean {
  * `stale` 那一条是这套东西里最容易被写漏的：被动监控读的是真实流量的窗口统计，
  * 窗口里一次调用都没有时，「零错误」与「全部成功」长得一模一样。判成绿就是假绿。
  */
-export function assessCell(target: UptimeTargetSummary): CellHealth {
+export function assessCell(target: UptimeTargetSummary, freshness: ProbeFreshness): CellHealth {
   if (target.enabled === false || target.status === 'paused' || target.excluded) return 'unknown';
   if (target.status === 'down') return 'down';
+  // 探针早该跑却没跑：它上一次是绿的，但那是旧闻。**不知道不等于正常。**
+  // 刻意只降级 overdue、不降级 never——刚建的监控还没探第一次，
+  // 那是「还在等第一次判定」（走 unknown），不是「跑着跑着停了」。
+  if (freshness === 'overdue') return 'overdue';
   if (target.observeMode === 'passive' && target.sampleCount === 0) return 'stale';
   if (target.status === 'up' && target.measured) return 'up';
   return 'unknown';
 }
 
 /** 这一格为什么不好。好的格子没有理由，不编。 */
-function cellReason(target: UptimeTargetSummary, health: CellHealth): string | undefined {
+function cellReason(
+  target: UptimeTargetSummary,
+  health: CellHealth,
+  ctx: { freshness: ProbeFreshness; now: number },
+): string | undefined {
+  if (health === 'overdue') {
+    const at = target.lastSample?.t;
+    const every = target.intervalSeconds > 0 ? `每 ${formatDuration(target.intervalSeconds * 1000)}一次` : '';
+    // 说清「多久没消息」而不是「它坏了」——这两件事的下一步完全不同。
+    return at
+      ? `已 ${formatDuration(ctx.now - at)}没被检查过${every ? `（${every}）` : ''}，绿灯不作数`
+      : '还没有检查记录，绿灯不作数';
+  }
   if (health === 'stale') return '窗口内 0 次真实调用，绿灯不作数';
   if (health === 'down') {
     return target.lastObservation?.err
@@ -191,8 +328,13 @@ function environmentRank(env: MonitorEnvironment): number {
   return i < 0 ? ENVIRONMENT_ORDER.length : i;
 }
 
-/** 把同名监控按环境并成一行业务。 */
-export function buildBusinessRows(targets: ReadonlyArray<UptimeTargetSummary>): BusinessRow[] {
+/**
+ * 把同名监控按环境并成一行业务。
+ *
+ * `now` 是必填的：新鲜度判据要拿它算「多久没被检查过」。刻意不给默认值——
+ * 默认 `Date.now()` 会让测试无法钉死边界，而边界正是这条判据全部的价值所在。
+ */
+export function buildBusinessRows(targets: ReadonlyArray<UptimeTargetSummary>, now: number): BusinessRow[] {
   const byName = new Map<string, UptimeTargetSummary[]>();
   for (const target of targets) {
     if (!isBusinessTarget(target)) continue;
@@ -205,22 +347,28 @@ export function buildBusinessRows(targets: ReadonlyArray<UptimeTargetSummary>): 
   for (const [name, group] of byName) {
     const cells: EnvironmentCell[] = group
       .map((target) => {
-        const health = assessCell(target);
+        const freshness = assessFreshness(target, now);
+        const health = assessCell(target, freshness);
+        const reason = cellReason(target, health, { freshness, now });
         return {
           environment: target.environment,
           label: target.environmentLabel,
           short: ENVIRONMENT_SHORT[target.environment] ?? '?',
           health,
           targetId: target.id,
+          freshness,
+          ...(target.lastSample?.t ? { lastProbeAt: target.lastSample.t } : {}),
+          ...(target.intervalSeconds > 0 ? { intervalSeconds: target.intervalSeconds } : {}),
           ...(target.sampleCount === undefined ? {} : { sampleCount: target.sampleCount }),
-          ...(cellReason(target, health) ? { reason: cellReason(target, health) } : {}),
+          ...(reason ? { reason } : {}),
         };
       })
       .sort((a, b) => environmentRank(a.environment) - environmentRank(b.environment));
 
     // 产物取最坏那一格的：出问题时要看的是**那张不对的图**，不是随便一张。
     const worst = worstOf(cells);
-    const worstTarget = [...group].sort((a, b) => SEVERITY[assessCell(a)] - SEVERITY[assessCell(b)])[0];
+    const rank = (t: UptimeTargetSummary): number => SEVERITY[assessCell(t, assessFreshness(t, now))];
+    const worstTarget = [...group].sort((a, b) => rank(a) - rank(b))[0];
     const artifactUrl = worstTarget?.lastObservation?.artifactUrl;
 
     rows.push({
@@ -229,6 +377,9 @@ export function buildBusinessRows(targets: ReadonlyArray<UptimeTargetSummary>): 
       observeMode: group.some((t) => t.observeMode === 'passive') ? 'passive' : 'active',
       cells,
       worst,
+      // Q2「干了什么活」：这条业务到底检查的是什么。第一屏原先只有一句
+      // 「N 个环境都通过判据」——放到任何一条监控上都成立，等于没说。
+      ...(group[0]?.probeDescription ? { probe: group[0].probeDescription } : {}),
       ...(artifactUrl ? { artifactUrl } : {}),
       ...(buildAttribution(cells) ? { attribution: buildAttribution(cells) } : {}),
     });
@@ -266,15 +417,24 @@ export function buildOwnerBoard(
    *   - 空态判真假：业务监控全被环境筛选挡住时，第一屏不许说「还没有一条业务监控」。
    */
   unfiltered: ReadonlyArray<UptimeTargetSummary> = targets,
+  /**
+   * 判断时刻 + 探测器自身的活性。
+   *
+   * `prober.stalled` 必须由调用方传进来：探测器整个停摆时，**下面每一条结论都是旧闻**，
+   * 而单条监控的逾期判据要等 1.5～3 个间隔才显形（6 小时一探的那几条要等十几个小时）。
+   * 两级粒度都要，缺一条就会出现「探测器停了半天，面板照样一片绿」。
+   */
+  ctx: OwnerBoardContext = { now: Date.now(), prober: null },
 ): OwnerBoard {
-  const rows = buildBusinessRows(targets);
+  const now = ctx.now;
+  const rows = buildBusinessRows(targets, now);
   const infra = summarizeInfra(unfiltered);
 
   if (rows.length === 0) {
     // 空白第一屏有两种成因，说反了就是撒谎：真的一条都没建，还是建了但被筛选挡住。
     // 2026-09-11 角色验收现场：6 条业务监控全在分支预览，默认筛选只看生产，
     // 于是「我的业务」写着「还没有一条」，而同一页的「全部目标」正列着这 6 条。
-    const hidden = buildBusinessRows(unfiltered);
+    const hidden = buildBusinessRows(unfiltered, now);
     if (hidden.length > 0) {
       const cells = hidden.flatMap((r) => r.cells);
       const environments = ENVIRONMENT_ORDER.filter((env) => cells.some((c) => c.environment === env));
@@ -300,8 +460,26 @@ export function buildOwnerBoard(
   }
 
   const down = rows.filter((r) => r.worst === 'down');
+  const overdue = rows.filter((r) => r.worst === 'overdue');
   const stale = rows.filter((r) => r.worst === 'stale');
   const envCount = new Set(rows.flatMap((r) => r.cells.map((c) => c.environment))).size;
+  const evidence = latestEvidence(rows, now);
+
+  // 探测器停摆排在故障之前：它污染**其余全部结论**。这时我不是「知道业务好」，
+  // 是「什么都不知道」——而旧的绿灯会一直绿着，不会有任何东西变红。
+  if (ctx.prober?.stalled) {
+    const last = ctx.prober.lastCycleAt;
+    return {
+      headline: '探测器停摆了，下面所有结论都不作数',
+      detail: last
+        ? `上一轮探测在 ${formatRelative(last, now)} —— 在它恢复之前，这一屏的绿灯只是上次的旧闻，不代表业务现在还能用`
+        : '探测器一轮都没跑完 —— 这一屏还没有任何真实观测',
+      tone: 'danger',
+      rows,
+      infra,
+      evidence,
+    };
+  }
 
   if (down.length > 0) {
     const first = down[0];
@@ -311,7 +489,20 @@ export function buildOwnerBoard(
       ? `${first.name} 在「${badCell?.label ?? '某个环境'}」挂了，其余 ${others} 项业务正常`
       : `${down.length} 项业务有故障，其余 ${others} 项正常`;
     const detail = [badCell?.reason, first.attribution].filter(Boolean).join(' · ');
-    return { headline, detail: detail || undefined, tone: 'danger', rows, infra };
+    return { headline, detail: detail || undefined, tone: 'danger', rows, infra, evidence };
+  }
+
+  // 逾期排在零样本之前：「没检查过」比「检查了但没人用」更没底。
+  if (overdue.length > 0) {
+    const worstCell = overdue[0].cells.find((c) => c.health === 'overdue');
+    return {
+      headline: `${overdue.length} 项业务早该被检查却没有，它们的绿灯不作数`,
+      detail: `${overdue.map((r) => r.name).join('、')} —— ${worstCell?.reason || '探针没有按时跑'}。先确认探针还在跑，再谈业务好不好`,
+      tone: 'warn',
+      rows,
+      infra,
+      evidence,
+    };
   }
 
   if (stale.length > 0) {
@@ -321,17 +512,25 @@ export function buildOwnerBoard(
       tone: 'warn',
       rows,
       infra,
+      evidence,
     };
   }
 
+  // 「全部正常」这句话必须自带证据：**什么时候检查的**。
+  // 少了这半句，它和「探针三天没跑、页面照样绿」长得一模一样
+  // （用户 2026-09-14：「我还得看到没有出现问题的证据，避免因为程序没有跑，而跳过了」）。
+  const proof = evidence
+    ? `每一条都在 ${formatDuration(now - evidence.at)}内检查过`
+    : '但还没有任何一条真的被检查过';
   return {
-    headline: `${rows.length} 项业务在 ${envCount} 个环境都正常`,
+    headline: `${rows.length} 项业务在 ${envCount} 个环境都正常，${proof}`,
     detail: infra.down > 0
       ? `但基础设施有 ${infra.down} 项异常 —— 业务还没受影响，先去看那一项`
       : undefined,
     tone: infra.down > 0 ? 'warn' : 'ok',
     rows,
     infra,
+    evidence,
   };
 }
 
@@ -350,7 +549,7 @@ export interface ProjectOption {
  * 项目清单。按「有事的排前面」排序——多项目负责人打开就该先看见出事的那个，
  * 而不是按字母顺序自己找。
  */
-export function listProjects(targets: ReadonlyArray<UptimeTargetSummary>): ProjectOption[] {
+export function listProjects(targets: ReadonlyArray<UptimeTargetSummary>, now: number): ProjectOption[] {
   const byId = new Map<string, { name: string; businessCount: number; troubleCount: number }>();
   for (const target of targets) {
     if (!target.projectId) continue;
@@ -359,9 +558,11 @@ export function listProjects(targets: ReadonlyArray<UptimeTargetSummary>): Proje
     byId.set(target.projectId, entry);
   }
   for (const [id, entry] of byId) {
-    const rows = buildBusinessRows(targets.filter((t) => t.projectId === id));
+    const rows = buildBusinessRows(targets.filter((t) => t.projectId === id), now);
     entry.businessCount = rows.length;
-    entry.troubleCount = rows.filter((r) => r.worst === 'down' || r.worst === 'stale').length;
+    // 逾期一并计入「有事」：项目卡上的那个红点要能代表「这个项目有需要我管的东西」，
+    // 而「该检查却没检查」正是最需要人管的一种（它连坏没坏都还不知道）。
+    entry.troubleCount = rows.filter((r) => r.worst === 'down' || r.worst === 'overdue' || r.worst === 'stale').length;
   }
   return [...byId.entries()]
     .map(([id, entry]) => ({ id, ...entry }))

@@ -19,6 +19,7 @@ import { DiscoveryStrip } from './DiscoveryStrip';
 import type { MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
   buildOwnerBoard,
+  describeEvidence,
   describeRow,
   listEnvironments,
   listProjects,
@@ -31,12 +32,15 @@ import {
 
 const HEALTH_CELL: Record<CellHealth, string> = {
   down: 'border-destructive/50 bg-destructive/15 text-destructive',
+  // 逾期与零样本同色系（都是「绿灯不作数」），但它排在更前面——见 SEVERITY 注释。
+  overdue: 'border-warn/50 bg-warn-soft text-warn',
   stale: 'border-warn/50 bg-warn-soft text-warn',
   unknown: 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground',
   up: 'border-ok/40 bg-ok-soft text-ok',
 };
 
 const CARD_TONE: Record<CellHealth, string> = {
+  overdue: 'border-warn/40 bg-warn-soft/40',
   down: 'border-destructive/45 bg-destructive/5',
   stale: 'border-warn/40 bg-warn-soft/40',
   unknown: 'border-[hsl(var(--hairline))]',
@@ -57,7 +61,7 @@ const BANNER_ICON = {
   empty: Info,
 } as const;
 
-function BusinessCard({ row, onOpen }: { row: BusinessRow; onOpen: (targetId: string) => void }): JSX.Element {
+function BusinessCard({ row, now, onOpen }: { row: BusinessRow; now: number; onOpen: (targetId: string) => void }): JSX.Element {
   const worstCell = row.cells.find((c) => c.health === row.worst) ?? row.cells[0];
   const ModeIcon = row.observeMode === 'passive' ? Waves : ArrowRight;
   return (
@@ -104,8 +108,29 @@ function BusinessCard({ row, onOpen }: { row: BusinessRow; onOpen: (targetId: st
           </div>
         </div>
 
-        <div className={cn('truncate font-mono text-[0.6875rem]', row.worst === 'down' ? 'text-destructive' : row.worst === 'stale' ? 'text-warn' : 'text-muted-foreground')}>
+        <div className={cn(
+          'truncate font-mono text-[0.6875rem]',
+          row.worst === 'down' ? 'text-destructive'
+            : row.worst === 'overdue' || row.worst === 'stale' ? 'text-warn'
+              : 'text-muted-foreground',
+        )}>
           {describeRow(row)}
+        </div>
+
+        {/* Q2「干了什么活」：这条业务到底检查的是什么。原先第一屏一个字都没有。 */}
+        {row.probe ? (
+          <div className="truncate text-[0.6875rem] leading-4 text-muted-foreground" title={row.probe}>
+            检查 {row.probe}
+          </div>
+        ) : null}
+
+        {/* Q1/Q4「他干活了吗 / 没出问题的证据」：正常也要说清是什么时候检查出来的，
+            否则「探针三天没跑」和「一切正常」在这一屏上长得一模一样。 */}
+        <div className={cn(
+          'truncate font-mono text-[0.6875rem] leading-4',
+          row.worst === 'overdue' ? 'text-warn' : 'text-muted-foreground/80',
+        )}>
+          {describeEvidence(row, now)}
         </div>
 
         {row.attribution ? (
@@ -164,12 +189,21 @@ interface StatusPageState {
 export function OwnerBoard({
   targets,
   scope,
+  now,
+  prober,
   onScope,
   onOpenTarget,
   onAddMonitor,
   onReload,
 }: {
   targets: ReadonlyArray<UptimeTargetSummary>;
+  /** 判断时刻。由页面统一给，组件不自己取 Date.now()——否则每次重渲染判据都在动。 */
+  now: number;
+  /**
+   * 探测器自身活性（summary.prober）。拿不到就传 null。
+   * **不许在这里兜一个 stalled:false**：那等于探测器一挂，面板就开始替它撒谎。
+   */
+  prober: { stalled: boolean; lastCycleAt: number | null } | null;
   scope: OwnerScope;
   onScope: (next: OwnerScope) => void;
   onOpenTarget: (targetId: string) => void;
@@ -177,14 +211,17 @@ export function OwnerBoard({
   /** 插上 / 拔掉端点之后监控项会变，让页面重拉一次摘要 */
   onReload: () => void;
 }): JSX.Element {
-  const projects = useMemo(() => listProjects(targets), [targets]);
+  const projects = useMemo(() => listProjects(targets, now), [targets, now]);
   const projectTargets = useMemo(
     () => scopeTargets(targets, { projectId: scope.projectId, environments: null }),
     [targets, scope.projectId],
   );
   const environments = useMemo(() => listEnvironments(projectTargets), [projectTargets]);
   const scoped = useMemo(() => scopeTargets(projectTargets, { projectId: null, environments: scope.environments }), [projectTargets, scope.environments]);
-  const board = useMemo(() => buildOwnerBoard(scoped, projectTargets), [scoped, projectTargets]);
+  const board = useMemo(
+    () => buildOwnerBoard(scoped, projectTargets, { now, prober }),
+    [scoped, projectTargets, now, prober],
+  );
 
   const activeEnvs = new Set(scope.environments ?? environments);
   /**
@@ -335,7 +372,7 @@ export function OwnerBoard({
 
       {board.rows.length > 0 ? (
         <div className="grid min-h-0 flex-1 auto-rows-min gap-2 overflow-y-auto md:grid-cols-2">
-          {board.rows.map((row) => <BusinessCard key={row.key} row={row} onOpen={onOpenTarget} />)}
+          {board.rows.map((row) => <BusinessCard key={row.key} row={row} now={now} onOpen={onOpenTarget} />)}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] px-6 py-10 text-center">
