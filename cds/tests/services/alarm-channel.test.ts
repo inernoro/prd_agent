@@ -21,7 +21,7 @@ const NOW = 1_700_000_000_000;
 
 describe('通道状态四档，一档都不许塌成「正常」', () => {
   it('没配凭据 = unconfigured，且文案直说没人会被通知', () => {
-    const ch = new AlarmChannel(false, 'MAP 站内通知', ['CDS_MAP_NOTIFY_KEY_ID']);
+    const ch = new AlarmChannel(() => false, 'MAP 站内通知', () => ['CDS_MAP_NOTIFY_KEY_ID']);
     const snap = ch.snapshot();
     expect(snap.status).toBe('unconfigured');
     expect(snap.missing).toEqual(['CDS_MAP_NOTIFY_KEY_ID']);
@@ -29,14 +29,14 @@ describe('通道状态四档，一档都不许塌成「正常」', () => {
   });
 
   it('配了但没发过 = untested，不许说成健康', () => {
-    const snap = new AlarmChannel(true, 'MAP 站内通知').snapshot();
+    const snap = new AlarmChannel(() => true, 'MAP 站内通知').snapshot();
     expect(snap.status).toBe('untested');
     expect(describeAlarmChannel(snap)).not.toContain('通着');
     expect(describeAlarmChannel(snap)).toContain('未知数');
   });
 
   it('上一次失败 = failing，且把原因摆出来', () => {
-    const ch = new AlarmChannel(true, 'MAP 站内通知');
+    const ch = new AlarmChannel(() => true, 'MAP 站内通知');
     ch.record({ ok: false, status: 401, reason: 'MAP 返回 401' }, 'alert', NOW);
     const snap = ch.snapshot();
     expect(snap.status).toBe('failing');
@@ -45,7 +45,7 @@ describe('通道状态四档，一档都不许塌成「正常」', () => {
   });
 
   it('上一次成功 = healthy，并记成功次数', () => {
-    const ch = new AlarmChannel(true, 'MAP 站内通知');
+    const ch = new AlarmChannel(() => true, 'MAP 站内通知');
     ch.record({ ok: false, reason: 'x' }, 'alert', NOW);
     ch.record({ ok: true, status: 200 }, 'drill', NOW + 1000);
     const snap = ch.snapshot();
@@ -56,7 +56,7 @@ describe('通道状态四档，一档都不许塌成「正常」', () => {
   });
 
   it('从没发过时不编一条 last 出来', () => {
-    expect(new AlarmChannel(true, 'x').snapshot().last).toBeUndefined();
+    expect(new AlarmChannel(() => true, 'x').snapshot().last).toBeUndefined();
   });
 
   it('没配齐时只出变量名，不碰值', () => {

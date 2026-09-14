@@ -80,10 +80,16 @@ export class AlarmChannel {
   private failed = 0;
   private last?: AlarmDeliveryRecord;
 
+  /**
+   * `configured` / `missing` 都是**取值函数**而不是快照。
+   *
+   * 配置随时可改；定死一个启动时的布尔值，会让「刚刚配好」和「压根没配」
+   * 在面板上长得一模一样——那正是这个文件要防的那类静默。
+   */
   constructor(
-    private readonly configured: boolean,
+    private readonly configured: () => boolean,
     private readonly channel: string,
-    private readonly missing: string[] = [],
+    private readonly missing: () => string[] = () => [],
   ) {}
 
   record(result: { ok: boolean; status?: number; reason?: string }, kind: 'alert' | 'drill', now: number): void {
@@ -101,7 +107,8 @@ export class AlarmChannel {
   snapshot(): AlarmChannelSnapshot {
     // 顺序就是严重度：没配 > 没测过 > 上次失败 > 健康。
     // 「没配」排最前是因为它连失败都不会有——最安静的那种坏。
-    const status: AlarmChannelStatus = !this.configured
+    const missing = this.missing();
+    const status: AlarmChannelStatus = !this.configured()
       ? 'unconfigured'
       : this.last === undefined
         ? 'untested'
@@ -112,7 +119,7 @@ export class AlarmChannel {
       delivered: this.delivered,
       failed: this.failed,
       ...(this.last ? { last: this.last } : {}),
-      ...(status === 'unconfigured' && this.missing.length > 0 ? { missing: this.missing } : {}),
+      ...(status === 'unconfigured' && missing.length > 0 ? { missing } : {}),
     };
   }
 }

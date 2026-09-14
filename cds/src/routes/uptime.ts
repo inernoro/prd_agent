@@ -197,6 +197,10 @@ export function createUptimeRouter(deps: {
    * 不接则演练路由回 501——没有这条，「铃能不能响」永远只能靠等一次真故障。
    */
   runAlarmDrill?: (note: string) => Promise<{ ok: boolean; status?: number; reason?: string }>;
+  /** 读通道凭据的**打码视图**：配没配、端点、keyId、账号、私钥指纹。私钥本身不出。 */
+  readAlarmNotify?: () => Record<string, unknown>;
+  /** 写通道凭据；传 null 表示清除。 */
+  writeAlarmNotify?: (next: { endpoint: string; keyId: string; username: string; privateKey: string } | null) => void;
 }): Router {
   const router = Router();
 
@@ -248,6 +252,64 @@ export function createUptimeRouter(deps: {
     // 演练失败不是服务器错误，是**一条有用的结论**：铃现在是哑的。
     // 回 500 会让前端把它当成接口挂了，而不是当成答案。
     res.json(result);
+  });
+
+  /**
+   * 通知通道凭据的读接口。
+   *
+   * **私钥永远不回显**：只说配没配、指纹是什么。读接口把密钥吐回去，是最常见的
+   * 一种「看起来只是个设置页」的泄漏面（同 /api/env 2026-05-09 那次 P1.5）。
+   */
+  router.get('/cds-system/alarm-notify', (req, res) => {
+    if (projectScopeOf(req)) {
+      res.status(403).json({ error: '通知通道属于 CDS 系统设置，项目级 Key 不可读写' });
+      return;
+    }
+    if (!deps.readAlarmNotify) {
+      res.status(501).json({ error: '这个实例没有接通知通道配置' });
+      return;
+    }
+    res.json(deps.readAlarmNotify());
+  });
+
+  router.put('/cds-system/alarm-notify', (req, res) => {
+    if (projectScopeOf(req)) {
+      res.status(403).json({ error: '通知通道属于 CDS 系统设置，项目级 Key 不可读写' });
+      return;
+    }
+    if (!deps.writeAlarmNotify) {
+      res.status(501).json({ error: '这个实例没有接通知通道配置' });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    if (body.clear === true) {
+      deps.writeAlarmNotify(null);
+      res.json({ ...deps.readAlarmNotify?.(), message: '通知通道凭据已清除 —— 现在出问题不会有人被通知' });
+      return;
+    }
+    const str = (k: string): string => (typeof body[k] === 'string' ? (body[k] as string).trim() : '');
+    const endpoint = str('endpoint');
+    const keyId = str('keyId');
+    const username = str('username');
+    const privateKey = str('privateKey');
+    // 四项缺一即拒。半套凭据存进去只会在真出事那天以 401 的形式暴露，
+    // 而那正是最不该出意外的时刻。
+    const missing = (['endpoint', 'keyId', 'username', 'privateKey'] as const)
+      .filter((k) => !({ endpoint, keyId, username, privateKey })[k]);
+    if (missing.length > 0) {
+      res.status(400).json({ error: 'validation', message: `缺少 ${missing.join('、')}`, missing });
+      return;
+    }
+    if (!/^https:\/\//.test(endpoint)) {
+      res.status(400).json({ error: 'validation', message: '端点必须是 https —— 通知里带着业务名，不能走明文' });
+      return;
+    }
+    if (!/BEGIN [A-Z ]*PRIVATE KEY/.test(privateKey)) {
+      res.status(400).json({ error: 'validation', message: '私钥必须是 PEM 格式（BEGIN PRIVATE KEY）' });
+      return;
+    }
+    deps.writeAlarmNotify({ endpoint, keyId, username, privateKey });
+    res.json({ ...deps.readAlarmNotify?.(), message: '通知通道已配置 —— 建议立刻演练一次确认真能送到' });
   });
 
   router.get('/uptime/targets/:id/history', (req, res) => {

@@ -35,6 +35,8 @@ describe('通知通道的接线一根都不能少', () => {
 
   it('真告警的投递结果要记账——成功与失败两条路都要记', () => {
     expect(index).toContain('new AlarmChannel(');
+    // configured 必须是取值函数：传布尔快照会让「刚配好」和「压根没配」长得一样。
+    expect(index).toMatch(/new AlarmChannel\(\s*\(\)\s*=>/);
     // 只断言「出现过一次 record(..., 'alert')」是不够的：把成功那条 .then 删掉，
     // catch 里那条照样匹配，守卫照样绿（第一版就是这么空转的，形状 1：判据太窄）。
     // 成功路径与失败路径必须各自在场。
@@ -48,7 +50,7 @@ describe('通知通道的接线一根都不能少', () => {
     expect(index).toMatch(/alarmChannel\.record\([^)]*'drill'/);
     // 演练必须真的调 mapNotifier.send；只记账不发送等于自欺
     const drill = index.slice(index.indexOf('runAlarmDrill'), index.indexOf('runAlarmDrill') + 1200);
-    expect(drill).toContain('mapNotifier.send(');
+    expect(drill).toContain('notifier.send(');
   });
 
   it('摘要要下发通道状态，前端要读它（两头都在才算通）', () => {
@@ -60,5 +62,27 @@ describe('通知通道的接线一根都不能少', () => {
   it('前端不许给通道状态兜一个「健康」默认值', () => {
     // 只允许 `alarm={summary?.alarm}` 这种如实透传；出现 ?? 兜底即判红。
     expect(page).not.toMatch(/alarm=\{summary\?\.alarm\s*\?\?/);
+  });
+});
+
+describe('通知通道凭据：只写不读', () => {
+  const index = codeOf(read('../../src/index.ts'));
+  const uptime = codeOf(read('../../src/routes/uptime.ts'));
+
+  it('读接口回的是指纹，不是私钥本身', () => {
+    expect(index).toContain('privateKeyFingerprint');
+    // 回显里不许出现原文字段名（privateKey / privateKeyPem 直接回传即泄漏）
+    const reader = index.slice(index.indexOf('readAlarmNotify:'), index.indexOf('writeAlarmNotify:'));
+    expect(reader).not.toMatch(/privateKey:\s/);
+    expect(reader).not.toMatch(/privateKeyPem:\s/);
+  });
+
+  it('凭据是 CDS 系统级的，项目级 Key 一律拒绝', () => {
+    const block = uptime.slice(uptime.indexOf("'/cds-system/alarm-notify'"));
+    expect(block).toContain('projectScopeOf(req)');
+  });
+
+  it('四项缺一即拒——半套凭据只会在真出事那天以 401 暴露', () => {
+    expect(uptime).toMatch(/missing\.length > 0/);
   });
 });

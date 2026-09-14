@@ -4308,6 +4308,24 @@ export class StateService {
     return [...list].reverse().slice(cappedOffset, cappedOffset + cappedLimit);
   }
 
+  /**
+   * 通知通道凭据。**读出来是全的**（内部用，要拿去签名），
+   * 对外回显由路由负责打码——私钥永远不出 API。
+   */
+  getAlarmNotify(): import('../types.js').AlarmNotifyConfig | undefined {
+    const c = this.state.alarmNotify;
+    if (!c) return undefined;
+    // 四项缺任何一项都算没配：半套凭据只会在真出事那天以 401 的形式暴露。
+    const ok = [c.endpoint, c.keyId, c.username, c.privateKey].every((v) => (v || '').trim());
+    return ok ? c : undefined;
+  }
+
+  setAlarmNotify(next: import('../types.js').AlarmNotifyConfig | null): void {
+    if (next === null) delete this.state.alarmNotify;
+    else this.state.alarmNotify = next;
+    this.save();
+  }
+
   getGithubAppWhitelist(): import('../types.js').GithubAppWhitelistSettings {
     return getGithubAppWhitelistSettings(this.state.githubAppWhitelist);
   }

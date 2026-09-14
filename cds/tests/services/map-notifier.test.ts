@@ -192,12 +192,16 @@ describe('配置解析', () => {
 describe('接线守卫', () => {
   const indexSource = fs.readFileSync(path.join(REPO, 'cds/src/index.ts'), 'utf8');
 
-  it('onAlert 里必须真的调用 mapNotifier.send —— 少这一行铃永远不会响', () => {
+  it('onAlert 里必须真的把告警投出去 —— 少这一行铃永远不会响', () => {
     const at = indexSource.indexOf('onAlert: (type, data) => {');
     expect(at, '找不到 uptime 的 onAlert 接线，守卫的取值范围需要跟着改').toBeGreaterThanOrEqual(0);
     const block = indexSource.slice(at, at + 1200);
     expect(block).toContain('cdsEventsBus.publish');
-    expect(block).toContain('mapNotifier?.send');
+    // 断言「有东西被 send 出去」，而不是某个变量名的字面拼写：
+    // 2026-09-14 通知器从启动时定死改成现解析（凭据改完不必重启），
+    // 写死 `mapNotifier?.send` 的旧判据当场变红——它锁的是实现写法不是行为
+    // （predicate-and-wiring-discipline 形状 4a）。
+    expect(block).toMatch(/(mapNotifier|resolveMapNotifier\(\))\??\.send\(/);
   });
 
   it('未配置凭据时必须把「不会有人被通知」印出来，不许静默禁用', () => {

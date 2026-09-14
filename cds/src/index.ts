@@ -67,6 +67,7 @@ import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
 import crypto from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
@@ -5829,13 +5830,24 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   //
   // 没配齐凭据时**必须把这件事印出来**：静默禁用就是装了个永远不会响的铃，
   // 那正是这条链路要治的病。
-  const mapNotifierConfig = mapNotifierConfigFromEnv();
-  const mapNotifier = mapNotifierConfig
-    ? new MapNotifier(mapNotifierConfig, {
-        warn: (m) => console.warn(m),
-        info: (m) => console.log(m),
-      })
-    : null;
+  /**
+   * 每次用的时候现解析：**设置优先、env 兜底**。
+   *
+   * 不在启动时定死一个实例的原因很实在：凭据配好之后不该还要重启一次 CDS 才生效——
+   * 那等于把「接上铃」这件事又变回一件需要运维在场的事。
+   */
+  const resolveMapNotifier = (): MapNotifier | null => {
+    const stored = stateService.getAlarmNotify();
+    // 设置里存的是 privateKey（与 githubApp 同名法），MapNotifier 要的是 privateKeyPem。
+    // 在这一处显式转换，而不是让两个名字在下游各自漂。
+    const cfg = stored
+      ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, privateKeyPem: stored.privateKey }
+      : mapNotifierConfigFromEnv();
+    return cfg
+      ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) })
+      : null;
+  };
+  const mapNotifier = resolveMapNotifier();
   if (mapNotifier) {
     console.log('  [map-notifier] 存活告警将投递到 MAP 站内通知（source=uptime-alert）');
   } else {
@@ -5844,7 +5856,13 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   }
   // 光打一行启动日志不够：没有任何一条验收会去读 CDS 的 stdout。
   // 通道自身的状态必须跟着 uptime 摘要一起下发，让面板能说出「出事了有没有人被通知」。
-  const alarmChannel = new AlarmChannel(Boolean(mapNotifier), 'MAP 站内通知', missingAlarmEnvKeys());
+  // configured 传 getter 而不是布尔快照：配置是随时可改的，
+  // 定死一个启动时的布尔值会让「刚配好」和「压根没配」在面板上长得一模一样。
+  const alarmChannel = new AlarmChannel(
+    () => Boolean(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv()),
+    'MAP 站内通知',
+    () => (stateService.getAlarmNotify() ? [] : missingAlarmEnvKeys()),
+  );
 
   /**
    * 项目级地址台账：某个项目名下所有分支预览的主机名。
@@ -5919,7 +5937,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
-      void mapNotifier?.send({
+      void resolveMapNotifier()?.send({
         type,
         targetId: data.targetId,
         targetName: data.targetName,
@@ -6011,15 +6029,36 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     runDiscovery,
     lastDiscoveryRun: () => lastDiscoveryRun,
     alarmChannel: () => alarmChannel.snapshot(),
+    readAlarmNotify: () => {
+      const stored = stateService.getAlarmNotify();
+      const env = mapNotifierConfigFromEnv();
+      const eff = stored
+        ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, key: stored.privateKey, source: 'settings' as const }
+        : env
+          ? { endpoint: env.endpoint, keyId: env.keyId, username: env.username, key: env.privateKeyPem, source: 'env' as const }
+          : null;
+      if (!eff) return { configured: false, source: null, missingEnv: missingAlarmEnvKeys() };
+      return {
+        configured: true,
+        source: eff.source,
+        endpoint: eff.endpoint,
+        keyId: eff.keyId,
+        username: eff.username,
+        // 指纹而不是私钥：够用来核对「配的是不是我给的那把」，又不构成泄漏面。
+        privateKeyFingerprint: createHash('sha256').update(eff.key).digest('hex').slice(0, 16),
+      };
+    },
+    writeAlarmNotify: (next) => stateService.setAlarmNotify(next),
     // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
     // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。
     runAlarmDrill: async (note: string) => {
-      if (!mapNotifier) {
+      const notifier = resolveMapNotifier();
+      if (!notifier) {
         const reason = '通知通道没配齐，演练发不出去（这本身就是结论：现在出问题不会有人被通知）';
         alarmChannel.record({ ok: false, reason }, 'drill', Date.now());
         return { ok: false, reason };
       }
-      const result = await mapNotifier.send({
+      const result = await notifier.send({
         type: 'uptime.target.recovered',
         targetId: 'drill',
         targetName: '通知通道演练',
