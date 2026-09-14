@@ -583,6 +583,13 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
   const [submitting, setSubmitting] = useState(false);
   /** 分批提交时的进度（只有超过一批才显示，免得一批也弹个「1/1」） */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  /**
+   * 这一步已经离开：在途的分批提交回来后不许再改向导的步骤。
+   * 否则用户在提交期间退回上一步、换了个仓库，旧的那一发完成时会把向导推到完成页，
+   * 而完成页上写的是新仓库的名字——用旧结果配新标题。
+   */
+  const leftStepRef = useRef(false);
+  useEffect(() => () => { leftStepRef.current = true; }, []);
 
   const runScan = useCallback(async () => {
     setScanning(true);
@@ -648,6 +655,9 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
       if (!res.success) {
         setSubmitting(false);
         setProgress(null);
+        // 已落库的那部分仍要让页面知道（条目是真建了），但不再往向导里写任何错误或步骤
+        onCommitted();
+        if (leftStepRef.current) return;
         const base = res.error?.message ?? '开启同步失败';
         // 前面几批可能已经建好了，必须说清楚——否则用户以为一个都没成
         onError(
@@ -656,11 +666,6 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
             : base,
           res.error?.code,
         );
-        // 任何一批失败都要刷新，不能只在「前面有批次成功」时刷：后端是逐条插入、
-        // 条数在 finally 里回写的，所以第一批就失败时也可能已经落库了一部分，
-        // 此时 merged.createdCount 仍是 0。用户这时候多半直接关掉向导，
-        // 不刷新的话那些已建好的订阅在文件树里根本不出现，要手动刷新整页才看得见。
-        onCommitted();
         return;
       }
       merged.createdCount += res.data.createdCount;
@@ -671,6 +676,9 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
 
     setSubmitting(false);
     setProgress(null);
+    // 用户在提交期间退回上一步（甚至换了仓库）：条目已经建好，让页面刷新，
+    // 但不把向导推回完成页——那一屏会用当前选中的仓库名去标旧结果。
+    if (leftStepRef.current) { onCommitted(); return; }
     onDone(merged);
   };
 
@@ -743,7 +751,8 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
           {scan.truncated && <span>（仓库目录过多，只列出了前 {scan.directories.length} 个）</span>}
         </div>
         <div className="flex gap-2">
-          <Button variant="ghost" size="xs" onClick={onBack}>上一步</Button>
+          {/* 提交期间禁掉返回：在途的批次还在建条目，这时换仓库会让两边对不上 */}
+          <Button variant="ghost" size="xs" onClick={onBack} disabled={submitting}>上一步</Button>
           <Button variant="primary" size="xs" onClick={() => void submit()} disabled={submitting}>
             {submitting ? <MapSpinner size={12} /> : null}
             {submitting
