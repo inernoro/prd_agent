@@ -1008,9 +1008,9 @@ function ReportsHome({
                       </td>
                       <td className="w-[300px] px-3 py-3">
                         <div className="flex flex-wrap gap-1">
-                          {r.branch ? <span className="inline-flex h-[22px] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[11px] text-[hsl(var(--foreground-muted))]"><GitBranch className="h-3 w-3" />{r.branch}</span> : null}
-                          {r.commitSha ? <span className="inline-flex h-[22px] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[11px] text-[hsl(var(--foreground-muted))]"><GitCommitHorizontal className="h-3 w-3" />{r.commitSha.slice(0, 8)}</span> : null}
-                          {r.prNumber != null ? <span className="inline-flex h-[22px] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[11px] text-info"><GitPullRequest className="h-3 w-3" />#{r.prNumber}</span> : null}
+                          {r.branch ? <ChangeKeyChip icon={GitBranch} text={r.branch} /> : null}
+                          {r.commitSha ? <ChangeKeyChip icon={GitCommitHorizontal} text={r.commitSha.slice(0, 8)} /> : null}
+                          {r.prNumber != null ? <ChangeKeyChip icon={GitPullRequest} text={`#${r.prNumber}`} tone="info" /> : null}
                           {!r.branch && !r.commitSha && r.prNumber == null ? <span className="text-[11px] text-muted-foreground">未记录部署上下文</span> : null}
                         </div>
                       </td>
@@ -1050,6 +1050,32 @@ function ReportsHome({
         </div>
       </section>
     </div>
+  );
+}
+
+/**
+ * 验收对象那一格的胶囊（分支 / commit / PR）。
+ *
+ * 高度必须是 min-h 不能是 h：分支名是长标识（`claude/knowledge-base-github-sync-76rjsp`
+ * 这种），在 300px 的格子里必然换行，而固定高度的胶囊不会跟着长高，第二行就掉到
+ * 背景外面去——用户看到的是「字体溢出」。不截断是有意的：分支名的区分度全在尾巴上
+ * （...-76rjsp 与 ...-t57jzo 只差尾巴），截掉等于让这一列认不出是哪条分支。
+ *
+ * 三处（分支 / commit / PR）共用这一个组件，不再各抄一份 class 串——抄三份就是
+ * 改一处忘两处，这个洞刚才就是这么留下的。
+ */
+function ChangeKeyChip({
+  icon: Icon, text, tone,
+}: { icon: typeof GitBranch; text: string; tone?: 'info' }): JSX.Element {
+  return (
+    <span
+      className={`inline-flex min-h-[22px] max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 py-[3px] font-mono text-[11px] leading-[16px] ${
+        tone === 'info' ? 'text-info' : 'text-[hsl(var(--foreground-muted))]'
+      }`}
+    >
+      <Icon className="h-3 w-3 shrink-0" />
+      <span className="min-w-0 break-all">{text}</span>
+    </span>
   );
 }
 
