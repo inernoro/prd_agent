@@ -1013,6 +1013,27 @@ public class MdToPptController : ControllerBase
         }
     }
 
+    /// <summary>
+    /// 这一页真正有什么：要点条目 + （知识驱动时）服务端冻结的来源正文。
+    /// 版式选择要看这个，而不是它排在第几页。
+    /// </summary>
+    internal static MdToPptAnchors.PageShape ShapeOf(MdToPptOutlinePageDto? page, MdToPptSourcePlan.PagePlan? source)
+    {
+        var items = new List<string>();
+        if (page?.Bullets != null) items.AddRange(page.Bullets.Where(x => !string.IsNullOrWhiteSpace(x)));
+        if (source != null)
+            foreach (var block in source.Blocks)
+            {
+                // 小标题不是一「条」内容，只是它下面那段的名字；算进条数会把
+                // 「一段话」误判成「好几条」，又把清单版式发给撑不起它的页。
+                var text = block.Markdown.Trim();
+                if (text.StartsWith("#", StringComparison.Ordinal)) continue;
+                items.Add(text);
+            }
+        var extra = string.Join("\n", (source?.Blocks ?? Array.Empty<MdToPptSourcePlan.SourceBlock>()).Select(x => x.Markdown));
+        return MdToPptAnchors.PageShape.FromText(items, extra);
+    }
+
     internal static JsonObject NormalizeOutlinePayload(string rawJson, int targetPages)
     {
         var root = JsonNode.Parse(rawJson) as JsonObject ?? throw new JsonException("outline root must be object");
@@ -4568,7 +4589,7 @@ public class MdToPptController : ControllerBase
                     MdToPptAnchors.AnchorSlide? layout = null;
                     if (anchor != null)
                     {
-                        layout = MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design);
+                        layout = MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design, ShapeOf(pages[i], sourcePages?[i]));
                         sys = BuildAnchoredPageSystemPrompt(anchor, layout, i, total);
                         usr = BuildAnchoredPageUserPrompt(req, i, total, sourcePages?[i]);
                     }
@@ -4712,11 +4733,11 @@ public class MdToPptController : ControllerBase
                       fallbackFlags[i] = true;
                       var fb = sourcePages != null
                           ? MdToPptSourcePlan.Fallback(sourcePages[i], i, total,
-                              anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design) : null)
+                              anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design, ShapeOf(pages[i], sourcePages?[i])) : null)
                           : consoleDashboardMode
-                          ? ConsoleDashboardFallbackSlide(anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design) : null, pages[i], i, total)
+                          ? ConsoleDashboardFallbackSlide(anchor != null ? MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design, ShapeOf(pages[i], sourcePages?[i])) : null, pages[i], i, total)
                           : anchor != null
-                          ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design), pages[i], i, total)
+                          ? AnchoredFallbackSlide(MdToPptAnchors.PickLayout(anchor, i, total, pages[i].Design, ShapeOf(pages[i], sourcePages?[i])), pages[i], i, total)
                           : SanitizeSection(FallbackSection(pages[i], i));
                       sections[i] = NormalizeSlidePageIdentity(fb, i, total);
                       var n2 = Interlocked.Increment(ref doneCount);

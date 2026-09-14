@@ -377,3 +377,118 @@ public class MdToPptSourcePlanCoverageRepairTests
         Assert.Equal("source_plan_missing", Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 1)).Code);
     }
 }
+
+/// <summary>
+/// 版式必须配得上内容。
+///
+/// 背景（2026-09-14 用户看完产物："巨丑无比"）：PickLayout 只按页序轮换
+/// （pool[(index-1) % pool.Count]），不问这一页的内容撑不撑得起那个版式。
+/// 于是一页只有「验收标准」四个字 + 一句话，却轮到了大数字＋柱状图版式；
+/// 模型无数可填，只好把标题重复灌进每一个槽，90px 的标题撑爆容器、
+/// 柱状图全是装饰性假数据——编译过、测试绿、提示词也挑不出毛病，
+/// 只有把那一页投到屏幕上才看得见。
+/// </summary>
+public class MdToPptAnchorLayoutFitnessTests
+{
+    private static MdToPptAnchors.AnchorSlide Slide(string layout) => new("f.html", layout, "slide", "", "<div></div>");
+
+    [Fact]
+    public void DataLayout_NeedsRealNumbers()
+    {
+        var noNumbers = MdToPptAnchors.PageShape.FromText(
+            new[] { "用户只需选知识、说两句话，最后拿到一个已保存、能再次打开的完整网页。" }, null);
+        Assert.False(MdToPptAnchors.Fits(Slide("s-data"), noNumbers));
+
+        var withNumbers = MdToPptAnchors.PageShape.FromText(
+            new[] { "开信率 82%", "季度环比增长 14%", "样本 1200 人" }, null);
+        Assert.True(MdToPptAnchors.Fits(Slide("s-data"), withNumbers));
+    }
+
+    [Fact]
+    public void IndexLayout_NeedsSeveralItems()
+    {
+        var one = MdToPptAnchors.PageShape.FromText(new[] { "只有一条" }, null);
+        Assert.False(MdToPptAnchors.Fits(Slide("s-index"), one));
+        var three = MdToPptAnchors.PageShape.FromText(new[] { "一", "二", "三" }, null);
+        Assert.True(MdToPptAnchors.Fits(Slide("s-index"), three));
+    }
+
+    [Fact]
+    public void ManifestoLayout_NeedsOneShortLine()
+    {
+        var wall = MdToPptAnchors.PageShape.FromText(
+            new[] { "统一入口负责权限、模型选择与版本；隔离运行时负责会话与工作区；设计编排器负责拆解任务与把关版式。" }, null);
+        Assert.False(MdToPptAnchors.Fits(Slide("s-manifesto"), wall));
+        var oneLiner = MdToPptAnchors.PageShape.FromText(new[] { "替换成本低，才用得久。" }, null);
+        Assert.True(MdToPptAnchors.Fits(Slide("s-manifesto"), oneLiner));
+    }
+
+    [Fact]
+    public void HeadingsAreNotItems()
+    {
+        // 「## 三个角色」是下面那段的名字，不是一条内容。算进条数就会把
+        // 「一段话」误判成「好几条」，清单版式又会发给撑不起它的页。
+        var content = "统一入口负责权限、模型选择与版本；隔离运行时负责会话与工作区；设计编排器负责拆解任务与把关版式。";
+        var doc = "## 三个角色\n\n" + content + "\n";
+        var plan = MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
+        {
+            new() { StoreId = "s", EntryId = "e", Content = doc, ContentHash = MdToPptSourcePlan.Hash(doc) },
+        });
+        var page = plan.Bind(new[]
+        {
+            new MdToPptOutlinePageDto { Title = "三个角色", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
+        }, 1)[0];
+
+        var shape = MdToPptController.ShapeOf(new MdToPptOutlinePageDto { Title = "三个角色" }, page);
+        Assert.Equal(1, shape.ItemCount);
+        Assert.False(MdToPptAnchors.Fits(Slide("s-index"), shape));
+    }
+
+    [Fact]
+    public void PickLayout_SkipsLayoutsTheContentCannotFill()
+    {
+        var anchor = new MdToPptAnchors.Anchor("t", "", "", new[]
+        {
+            Slide("s-cover"), Slide("s-manifesto"), Slide("s-index"), Slide("s-chapter"),
+            Slide("s-data"), Slide("s-colophon"),
+        });
+        var thin = MdToPptAnchors.PageShape.FromText(new[] { "用户只需选知识、说两句话，最后拿到一个能再次打开的完整网页。" }, null);
+
+        // 轮换本来会在第 4 页撞上 s-data；内容没有数字，必须被跳过。
+        for (var i = 1; i <= 4; i++)
+        {
+            var picked = MdToPptAnchors.PickLayout(anchor, i, 6, designIntent: null, shape: thin);
+            Assert.NotEqual("s-data", picked.Layout);
+            Assert.NotEqual("s-index", picked.Layout);
+        }
+
+        // 意图说「数据」也不能凌驾于内容：这页依然没有数字。
+        Assert.NotEqual("s-data", MdToPptAnchors.PickLayout(anchor, 2, 6, "数据看板", thin).Layout);
+        // 有数字时才轮得到它。
+        var numeric = MdToPptAnchors.PageShape.FromText(new[] { "开信率 82%", "样本 1200 人" }, null);
+        Assert.Equal("s-data", MdToPptAnchors.PickLayout(anchor, 2, 6, "数据看板", numeric).Layout);
+    }
+
+    [Fact]
+    public void Fallback_IsNotAnUnstyledDump()
+    {
+        var doc = "# 知识驱动内容生成体系\n";
+        var plan = MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
+        {
+            new() { StoreId = "s", EntryId = "e", Content = doc, ContentHash = MdToPptSourcePlan.Hash(doc) },
+        });
+        var page = plan.Bind(new[]
+        {
+            new MdToPptOutlinePageDto { Title = "封面", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
+        }, 1)[0];
+        var html = MdToPptSourcePlan.Fallback(page, 0, 6);
+
+        // 兜底页照样会被投出去给人看：标题必须是展示字号，内容必须居中限宽，
+        // 不能再是「padding 5% + 全局 20px」那种左上角堆成一坨的裸排。
+        Assert.Contains("clamp(40px,5.4vw,92px)", html, StringComparison.Ordinal);
+        Assert.Contains("justify-content:center", html, StringComparison.Ordinal);
+        Assert.Contains("max-width:76ch", html, StringComparison.Ordinal);
+        Assert.DoesNotContain("font-size:20px", html, StringComparison.Ordinal);
+        Assert.Contains("封面", html, StringComparison.Ordinal);
+    }
+}

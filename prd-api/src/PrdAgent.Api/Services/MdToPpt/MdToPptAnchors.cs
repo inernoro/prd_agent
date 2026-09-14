@@ -242,12 +242,64 @@ public static class MdToPptAnchors
     /// <summary>
     /// 首页面向封面；其余页优先匹配设计意图，未匹配的末页使用结语，内容页轮换。
     /// </summary>
+    /// <summary>
+    /// 一页内容能不能撑起某个版式。范本里的版式各有前提：数据页要有数字、
+    /// 索引页要有好几条、宣言页要一句短话。轮换时不问这件事，就会出现
+    /// 「一页只有一句话却被塞进大数字＋柱状图版式」——模型无数可填，
+    /// 只好把标题重复灌进每个槽，标题撑爆容器、图表全是假数据。
+    /// 判据只看这一页自己的内容，不猜、不调模型。
+    /// </summary>
+    public readonly record struct PageShape(int ItemCount, int NumberCount, int LongestTextLength)
+    {
+        public static PageShape FromText(IEnumerable<string>? items, string? extraText)
+        {
+            var list = (items ?? Array.Empty<string>())
+                .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).ToList();
+            var all = string.Join("\n", list);
+            if (!string.IsNullOrWhiteSpace(extraText)) all += "\n" + extraText;
+            // 只认「独立成词的数量」：2026 这种年份也算数字，但 h2/第 3 页里的序号不该算。
+            var numbers = System.Text.RegularExpressions.Regex.Matches(
+                all, @"(?<![\w.])\d+(?:[.,]\d+)?\s*(?:%|％|万|亿|千|倍|分|秒|天|周|月|年|次|个|人|元|\$)?(?![\w])",
+                System.Text.RegularExpressions.RegexOptions.None, TimeSpan.FromSeconds(1)).Count;
+            var longest = list.Count == 0 ? (extraText?.Length ?? 0) : list.Max(x => x.Length);
+            return new PageShape(list.Count, numbers, longest);
+        }
+    }
+
+    private static readonly string[] NeedsNumbersHints = { "stats", "data", "numbers", "chart", "pie", "financial", "metric" };
+    private static readonly string[] NeedsManyItemsHints = { "index", "list", "grid", "services", "pillars", "insights", "timeline", "roadmap", "process" };
+    private static readonly string[] NeedsOneShortLineHints = { "quote", "manifesto", "statement" };
+
+    public static bool Fits(AnchorSlide slide, PageShape shape)
+    {
+        var layout = slide.Layout ?? string.Empty;
+        bool Hits(string[] hints) => hints.Any(h => layout.Contains(h, StringComparison.OrdinalIgnoreCase));
+        // 大数字／图表版式：至少两个数字，否则模型只能拿标题凑数。
+        if (Hits(NeedsNumbersHints)) return shape.NumberCount >= 2;
+        // 索引／清单／时间线：至少三条，一条内容撑不起这种版式。
+        if (Hits(NeedsManyItemsHints)) return shape.ItemCount >= 3;
+        // 宣言／金句：一句短话。这类版式的字号是 clamp(56px … 120px)，一屏放得下
+        // 二三十个字；把四五十字的整段话塞进去就会溢出成一团（实测 47 字即炸）。
+        if (Hits(NeedsOneShortLineHints)) return shape.ItemCount <= 2 && shape.LongestTextLength <= 30;
+        return true;
+    }
+
     public static AnchorSlide PickLayout(Anchor anchor, int index, int total, string? designIntent)
+        => PickLayout(anchor, index, total, designIntent, default, hasShape: false);
+
+    public static AnchorSlide PickLayout(
+        Anchor anchor, int index, int total, string? designIntent, PageShape shape, bool hasShape = true)
     {
         if (index == 0) return anchor.Cover;
         var allContentSlides = anchor.ContentSlides;
         // 新的语义表格仅供明确表格意图，不能改变既有普通内容页轮换。
         var pool = allContentSlides.Where(slide => slide.Layout != "s-table").ToList();
+        // 内容撑不起的版式先剔掉；全被剔掉时退回原池，宁可难看也不能没版式。
+        if (hasShape)
+        {
+            var fit = pool.Where(slide => Fits(slide, shape)).ToList();
+            if (fit.Count > 0) pool = fit;
+        }
 
         var intent = designIntent ?? string.Empty;
         if (intent.Contains("表格", StringComparison.OrdinalIgnoreCase)
@@ -266,6 +318,8 @@ public static class MdToPptAnchors
         foreach (var (keys, hints) in keywordMap)
         {
             if (!keys.Any(k => intent.Contains(k, StringComparison.OrdinalIgnoreCase))) continue;
+            // pool 已按内容撑不撑得起筛过：意图说「数据」但这页没有数字时，
+            // 这里就选不中大数字版式，落回下面的轮换——意图不能凌驾于内容之上。
             var hit = pool.FirstOrDefault(s => hints.Any(h => s.Layout.Contains(h, StringComparison.OrdinalIgnoreCase)));
             if (hit != null) return hit;
         }

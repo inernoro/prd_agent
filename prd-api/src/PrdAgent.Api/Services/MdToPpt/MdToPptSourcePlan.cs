@@ -265,9 +265,24 @@ internal sealed class MdToPptSourcePlan
         var open = layout == null ? null : Regex.Match(layout.Html, "<(div|section|article)\\b[^>]*>", RegexOptions.IgnoreCase);
         var root = open?.Success == true ? open.Value : "<div class=\"slide mdppt-source-fallback\">";
         var tag = open?.Success == true ? open.Groups[1].Value : "div";
-        return root + "<div style=\"position:relative;z-index:2;height:100%;box-sizing:border-box;padding:5%;overflow:auto;font-size:20px;line-height:1.5\">" +
-            (string.IsNullOrEmpty(page.DisplayTitle) ? "" : "<h1>" + WebUtility.HtmlEncode(page.DisplayTitle) + "</h1>") +
-            body + $"<div class=\"pagenum\">{index + 1}/{total}</div></div></{tag}>";
+        // 兜底页是「模型没按范本产出」时的退路，但它照样会被投出去给人看。
+        // 原来的写法是 padding 5% + 全局 20px 的裸堆：标题和正文一样大、内容全挤在
+        // 左上角、下面四分之三空着——一页丑，整份演示就废了。
+        // 这里不引入任何范本专有类名（每套锚定的类名都不同），只用继承来的颜色字体
+        // 加一套克制的排版：标题给到真正的展示字号，正文垂直居中、限宽、留出呼吸。
+        var title = string.IsNullOrEmpty(page.DisplayTitle)
+            ? string.Empty
+            : "<h1 style=\"margin:0 0 0.44em;font-size:clamp(40px,5.4vw,92px);line-height:1.06;"
+              + "letter-spacing:-0.02em;font-weight:600;color:inherit\">"
+              + WebUtility.HtmlEncode(page.DisplayTitle) + "</h1>";
+        return root
+            + "<div style=\"position:relative;z-index:2;height:100%;box-sizing:border-box;"
+            + "padding:clamp(40px,6vh,92px) clamp(40px,6vw,120px);display:flex;flex-direction:column;"
+            + "justify-content:center;gap:0.2em;overflow:auto;font-size:clamp(16px,1.45vw,23px);line-height:1.62\">"
+            + title
+            + "<div style=\"max-width:76ch\">" + body + "</div>"
+            + $"<div class=\"pagenum\" style=\"position:absolute;right:clamp(24px,3vw,56px);bottom:clamp(20px,3vh,40px);"
+            + $"font-size:13px;opacity:.55;letter-spacing:.08em\">{index + 1} / {total}</div></div></{tag}>";
     }
 
     private static bool HasHiddenAncestor(XElement node) => node.AncestorsAndSelf().Any(x =>
