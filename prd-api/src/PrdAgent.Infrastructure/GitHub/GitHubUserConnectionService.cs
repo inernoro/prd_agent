@@ -223,20 +223,40 @@ public sealed class GitHubUserConnectionService
         return new GitHubRepositoryPage(items, hasMore);
     }
 
-    /// <summary>列出仓库分支（最多 100 条，够覆盖绝大多数仓库的选择场景）。</summary>
+    /// <summary>一次分支请求取多少条，以及最多翻几页（上限 = 两者相乘）。</summary>
+    private const int BranchesPerPage = 100;
+    private const int MaxBranchPages = 5;
+
+    /// <summary>
+    /// 列出仓库分支。
+    ///
+    /// 必须翻页：只取第一页的话，分支超过 100 个的仓库里，目标分支只要不在这一页就**选不到**，
+    /// 而界面既没有翻页也没有手填分支的入口——用户有权限却做不成这件事。
+    /// 翻到取空或不足一页为止，并设一个页数上限兜住极端仓库（真有更多分支时，
+    /// 选择器至少还有前 500 个可用，而不是整个请求被拖死）。
+    /// </summary>
     public async Task<IReadOnlyList<GitHubBranchSummary>> ListBranchesAsync(
         string token, string owner, string repo, CancellationToken ct)
     {
         using var client = CreateApiClient(token);
-        using var resp = await client.GetAsync(
-            $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/branches?per_page=100", ct);
-        await ThrowIfErrorAsync(resp, $"读取 {owner}/{repo} 分支失败", ct);
+        var all = new List<GitHubBranchSummary>();
 
-        var branches = await resp.Content.ReadFromJsonAsync<List<GitHubBranchDto>>(cancellationToken: ct) ?? [];
-        return branches
-            .Where(b => !string.IsNullOrWhiteSpace(b.Name))
-            .Select(b => new GitHubBranchSummary { Name = b.Name!, Protected = b.Protected })
-            .ToList();
+        for (var page = 1; page <= MaxBranchPages; page++)
+        {
+            using var resp = await client.GetAsync(
+                $"repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/branches"
+                + $"?per_page={BranchesPerPage}&page={page}", ct);
+            await ThrowIfErrorAsync(resp, $"读取 {owner}/{repo} 分支失败", ct);
+
+            var branches = await resp.Content.ReadFromJsonAsync<List<GitHubBranchDto>>(cancellationToken: ct) ?? [];
+            all.AddRange(branches
+                .Where(b => !string.IsNullOrWhiteSpace(b.Name))
+                .Select(b => new GitHubBranchSummary { Name = b.Name!, Protected = b.Protected }));
+
+            if (branches.Count < BranchesPerPage) break;
+        }
+
+        return all;
     }
 
     /// <summary>列出单层目录内容（自由浏览用）。</summary>

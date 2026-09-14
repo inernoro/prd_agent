@@ -654,7 +654,13 @@ public class GitHubDirectorySyncService
         // https://github.com/owner/repo/tree/branch/path/to/dir
         // https://github.com/owner/repo
         var uri = new Uri(url);
-        var segments = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        // AbsolutePath 保留百分号转义（空格是 %20、# 是 %23）。必须先解回来：
+        // 存进条目的路径口径是**未转义的原始路径**（扫描器给的就是这种），
+        // 发请求时再统一转义一次。不解就会被二次转义成 %2520，打到一个不存在的目录上。
+        var segments = uri.AbsolutePath.Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.UnescapeDataString)
+            .ToArray();
 
         if (segments.Length < 2)
             throw new ArgumentException("无效的 GitHub 地址，至少需要 owner/repo");

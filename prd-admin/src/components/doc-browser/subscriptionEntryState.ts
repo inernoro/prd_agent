@@ -14,10 +14,18 @@ export const GITHUB_DIRECTORY_SOURCE = 'github_directory';
 
 /**
  * 该条目是否有「订阅面板」（立即同步 / 暂停 / 同步日志）。
- * GitHub 目录父条目必须算——它才是同步真正作用的对象，子文档反而不能单独同步。
+ *
+ * 两头都要判：
+ * - GitHub 目录**父条目**必须算——它才是同步真正作用的对象；
+ * - 目录导进来的**子文档**不能算。它们的 sourceType 也是 subscription，面板会照常打开，
+ *   但同步调度早已把它们排除（由父目录统一拉）。于是「暂停」「改同步周期」点下去后端
+ *   照样回成功，实际什么都不会发生——一个成功的空操作比报错更难查。
  */
-export function canOpenSubscriptionPanel(sourceType?: string): boolean {
-  return sourceType === 'subscription' || sourceType === GITHUB_DIRECTORY_SOURCE;
+export function canOpenSubscriptionPanel(
+  entry: { sourceType?: string; metadata?: Record<string, string> | null },
+): boolean {
+  if (entry.metadata?.github_parent_id) return false;
+  return entry.sourceType === 'subscription' || entry.sourceType === GITHUB_DIRECTORY_SOURCE;
 }
 
 /** 同步状态 → 色调档位。失败优先于暂停，暂停优先于同步中。 */

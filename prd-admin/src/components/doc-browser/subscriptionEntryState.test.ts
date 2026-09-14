@@ -10,13 +10,23 @@ import { toUserReadableErrorMessage } from '@/lib/userReadableError';
 describe('订阅条目状态判据（2026-09-09 验收 P1/P2 的回归锁）', () => {
   it('GitHub 目录父条目必须有订阅面板入口', () => {
     // 目录条目才是「立即同步」真正作用的对象；漏掉它 = 同步失败后无处可点
-    expect(canOpenSubscriptionPanel(GITHUB_DIRECTORY_SOURCE)).toBe(true);
-    expect(canOpenSubscriptionPanel('subscription')).toBe(true);
+    expect(canOpenSubscriptionPanel({ sourceType: GITHUB_DIRECTORY_SOURCE })).toBe(true);
+    expect(canOpenSubscriptionPanel({ sourceType: 'subscription' })).toBe(true);
   });
 
   it('普通上传文档没有订阅面板', () => {
-    expect(canOpenSubscriptionPanel('upload')).toBe(false);
-    expect(canOpenSubscriptionPanel(undefined)).toBe(false);
+    expect(canOpenSubscriptionPanel({ sourceType: 'upload' })).toBe(false);
+    expect(canOpenSubscriptionPanel({})).toBe(false);
+  });
+
+  it('目录导进来的子文档没有订阅面板', () => {
+    // 子文档的 sourceType 也是 subscription，但调度早就把它们排除了（由父目录统一拉）。
+    // 给它们开面板 = 「暂停」「改周期」点下去后端回成功、实际什么都没发生：
+    // 一个成功的空操作比报错更难查。
+    expect(canOpenSubscriptionPanel({
+      sourceType: 'subscription',
+      metadata: { github_parent_id: 'parent-1', github_path: 'doc/a.md' },
+    })).toBe(false);
   });
 
   it('同步失败的优先级高于暂停与同步中', () => {

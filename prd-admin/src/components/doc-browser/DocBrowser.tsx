@@ -3122,7 +3122,7 @@ export function DocBrowser({
     // GitHub 目录父条目也是订阅：它才是「立即同步 / 暂停 / 看同步日志」真正该作用的对象。
     // 之前这里只认 sourceType==='subscription'，于是目录条目菜单里根本没有同步入口，
     // 用户拿一个同步失败的目录无处可点（验收 P1）。
-    const isSubscription = canOpenSubscriptionPanel(sel.sourceType);
+    const isSubscription = canOpenSubscriptionPanel(sel);
     const githubSha = sel.metadata?.github_sha;
     const showSubscription = isSubscription && !!onOpenSubscription;
     // 移动端把低频动作（目录 / 划词评论 / 编辑）折进菜单，顶栏只留 字号/全屏/更多
