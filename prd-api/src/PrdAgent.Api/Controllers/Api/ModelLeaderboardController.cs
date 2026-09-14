@@ -75,6 +75,7 @@ public class ModelLeaderboardController : ControllerBase
             sourceUrl = snapshot.SourceUrl,
             stale = IsStale(snapshot.FetchedAt),
             total = snapshot.Entries.Count,
+            totalSessions = snapshot.TotalSessions,
             entries = snapshot.Entries.Take(limit).Select(Project),
         }));
     }
@@ -117,13 +118,28 @@ public class ModelLeaderboardController : ControllerBase
     private static object Project(ModelLeaderboardEntry e) => new
     {
         rank = e.Rank,
+        rankLow = e.RankLow,
+        rankHigh = e.RankHigh,
         name = e.Name,
         organization = e.Organization,
         license = e.License,
-        score = e.Score,
-        margin = e.Margin,
+        // 六个指标，值自带正负号（页面上的 ▲/▼ 已经解析进符号）
+        netImprovement = Metric(e.NetImprovement),
+        confirmedSuccess = Metric(e.ConfirmedSuccess),
+        praiseVsComplaint = Metric(e.PraiseVsComplaint),
+        steerability = Metric(e.Steerability),
+        bashRecovery = Metric(e.BashRecovery),
+        toolHallucination = Metric(e.ToolHallucination),
+        sessions = e.Sessions,
+        costPerTask = e.CostPerTask,
+        outputTokens = e.OutputTokens,
+        priceInput = e.PriceInput,
+        priceOutput = e.PriceOutput,
         previousRank = e.PreviousRank,
         // 名次升降：没有上一份快照时为 null，前端据此不显示箭头，而不是画一个「持平」
         rankDelta = e.PreviousRank is null ? (int?)null : e.PreviousRank - e.Rank,
     };
+
+    private static object? Metric(ModelLeaderboardMetric? m)
+        => m is null ? null : new { value = m.Value, margin = m.Margin };
 }

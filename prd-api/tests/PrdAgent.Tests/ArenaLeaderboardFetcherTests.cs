@@ -14,80 +14,134 @@ namespace PrdAgent.Tests;
 public class ArenaLeaderboardFetcherTests
 {
     /// <summary>
-    /// 真实页面片段：表头一行 + 模型两行。
+    /// 真实页面片段：表头一行 + 榜首一行（六个指标齐全）+ 一个开源模型行。
     ///
-    /// 保留了三个真实的坑：
-    /// 1. 表头行也是 &lt;tr&gt;，但没有 title/aria-label，必须被跳过而不是算成一个模型；
-    /// 2. 分数文本里夹着 React 的注释标记 <c>13.85&lt;!-- --&gt;%</c>，所以判据取的是
-    ///    aria-label 而不是标签文本；
-    /// 3. 厂商那一格是「Anthropic · Proprietary」这种一段式文本，开源模型还会有第三段
-    ///    托管方（Z.ai · MIT · SiliconFlow）。
+    /// 保留了这些真实的坑：
+    /// 1. 表头行也是 &lt;tr&gt;，但没有 title/aria-label，必须被跳过；
+    /// 2. 数字前夹着 React 的注释标记 <c>13.85&lt;!-- --&gt;%</c>；
+    /// 3. 方向是一个带 aria-label="Up"/"Down" 的 svg，<b>Down 必须变成负值</b>；
+    /// 4. 名次那格有三个裸数字：名次、区间下界、区间上界；
+    /// 5. 厂商那格是「Anthropic · Proprietary」，开源模型还会有第三段托管方。
     /// </summary>
     private const string RealFixture = """
 <table><tbody>
-<tr><th>Rank</th><th>Model</th><th>Net improvement</th></tr>
-<tr><td><div><a href="/leaderboard/agent?model=claude-fable-5-1-max"><span class="max-w-full truncate" title="Claude Fable 5.1 (Max)">Claude Fable 5.1 (Max)</span></a></div><span class="text-text-secondary truncate text-xs">Anthropic · Proprietary</span></td><td><div class="flex items-center gap-3"><div class="flex w-20 flex-none flex-col items-end tabular-nums"><span class="inline-flex items-center gap-0.5 tabular-nums text-interactive-positive text-sm"><svg role="img" aria-label="Up" class="size-3 shrink-0"></svg>13.85<!-- -->%</span><span class="text-text-muted text-xs">±1.92%</span></div><div class="min-w-0 flex-1"><svg viewBox="0 0 100 16" role="img" aria-label="Net improvement 13.85%"></svg></div></div></td></tr>
-<tr><td><div><a href="/leaderboard/agent?model=glm-5-2-max"><span class="max-w-full truncate" title="GLM 5.2 (Max)">GLM 5.2 (Max)</span></a></div><span class="text-text-secondary truncate text-xs">Z.ai · MIT · SiliconFlow</span></td><td><div class="flex items-center gap-3"><div class="flex w-20 flex-none flex-col items-end tabular-nums"><span class="inline-flex items-center gap-0.5 tabular-nums text-interactive-positive text-sm"><svg role="img" aria-label="Up" class="size-3 shrink-0"></svg>4.56<!-- -->%</span><span class="text-text-muted text-xs">±0.74%</span></div><div class="min-w-0 flex-1"><svg viewBox="0 0 100 16" role="img" aria-label="Net improvement 4.56%"></svg></div></div></td></tr>
+<tr><th>Rank</th><th>Model</th><th>Net Improvement</th><th>Confirmed Success</th><th>Praise vs Complaint</th><th>Steerability</th><th>Bash Recovery</th><th>Tool Hallucination</th><th>Sessions</th><th>Cost/Task (P50)</th><th>Output Tokens/Task (P50)</th><th>Price $/M</th></tr>
+<tr><td><span>1</span><span>1</span><span>4</span></td><td><span class="max-w-full truncate" title="Claude Fable 5.1 (Max)">Claude Fable 5.1 (Max)</span><span class="text-text-secondary truncate text-xs">Anthropic · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>13.85<!-- -->%</span><span class="text-text-muted text-xs">±1.92%</span></td><td><span><svg role="img" aria-label="Up"></svg>22.39<!-- -->%</span><span class="text-text-muted text-xs">±3.04%</span></td><td><span><svg role="img" aria-label="Up"></svg>36.35<!-- -->%</span><span class="text-text-muted text-xs">±7.68%</span></td><td><span><svg role="img" aria-label="Down"></svg>0.91<!-- -->%</span><span class="text-text-muted text-xs">±3.86%</span></td><td><span><svg role="img" aria-label="Up"></svg>11.07<!-- -->%</span><span class="text-text-muted text-xs">±1.00%</span></td><td><span><svg role="img" aria-label="Down"></svg>0.37<!-- -->%</span><span class="text-text-muted text-xs">±0.04%</span></td><td><span>12,416</span></td><td><span>$4.52</span></td><td><span>55.2K</span></td><td><span>$10</span><span>/</span><span>$50</span></td></tr>
+<tr><td><span>8</span><span>6</span><span>13</span></td><td><span class="max-w-full truncate" title="Kimi K3 (Max)">Kimi K3 (Max)</span><span class="text-text-secondary truncate text-xs">Moonshot · Kimi K3 license · SiliconFlow</span></td><td><span><svg role="img" aria-label="Up"></svg>6.46<!-- -->%</span><span class="text-text-muted text-xs">±0.70%</span></td><td><span><svg role="img" aria-label="Up"></svg>15.11<!-- -->%</span><span class="text-text-muted text-xs">±1.43%</span></td><td><span><svg role="img" aria-label="Up"></svg>12.49<!-- -->%</span><span class="text-text-muted text-xs">±2.43%</span></td><td><span><svg role="img" aria-label="Up"></svg>0.02<!-- -->%</span><span class="text-text-muted text-xs">±1.39%</span></td><td><span><svg role="img" aria-label="Up"></svg>9.42<!-- -->%</span><span class="text-text-muted text-xs">±1.12%</span></td><td><span><svg role="img" aria-label="Down"></svg>0.41<!-- -->%</span><span class="text-text-muted text-xs">±0.05%</span></td><td><span>14,853</span></td><td><span>$0.31</span></td><td><span>18.4K</span></td><td><span>$0.6</span><span>/</span><span>$2.5</span></td></tr>
 </tbody></table>
+<span>1,587,202<!-- --> <!-- -->sessions</span>
 """;
 
     [Fact]
-    public void Parse_真实页面片段_只认模型行不把表头算进去()
+    public void Parse_只认模型行不把表头算进去()
     {
-        var entries = ArenaLeaderboardFetcher.Parse(RealFixture);
+        var r = ArenaLeaderboardFetcher.Parse(RealFixture);
+        Assert.Equal(2, r.Entries.Count);
+    }
 
-        // fixture 里有 3 个 tr，其中第一个是表头
-        Assert.Equal(2, entries.Count);
+    /// <summary>
+    /// 六个指标必须按页面顺序对位到具名字段。
+    ///
+    /// 这是整个解析器最容易静默出错的地方：对方调换列序，解析器照样给出六个看起来
+    /// 正常的数字，只是每个都挂错了名字，页面上不会有任何异常。所以这里钉死真实的
+    /// 六个值——错位立刻变红。
+    /// </summary>
+    [Fact]
+    public void Parse_六个指标按页面顺序对位到具名字段()
+    {
+        var e = ArenaLeaderboardFetcher.Parse(RealFixture).Entries[0];
+
+        Assert.Equal(13.85, e.NetImprovement!.Value);
+        Assert.Equal(22.39, e.ConfirmedSuccess!.Value);
+        Assert.Equal(36.35, e.PraiseVsComplaint!.Value);
+        Assert.Equal(-0.91, e.Steerability!.Value);      // 页面上是 ▼0.91%
+        Assert.Equal(11.07, e.BashRecovery!.Value);
+        Assert.Equal(-0.37, e.ToolHallucination!.Value); // 页面上是 ▼0.37%
     }
 
     [Fact]
-    public void Parse_取到模型名分数与误差范围()
+    public void Parse_向下的箭头必须变成负值_不是丢掉方向()
     {
-        var entries = ArenaLeaderboardFetcher.Parse(RealFixture);
-        var first = entries[0];
+        var e = ArenaLeaderboardFetcher.Parse(RealFixture).Entries[0];
 
-        Assert.Equal("Claude Fable 5.1 (Max)", first.Name);
-        Assert.Equal(13.85, first.Score);
-        Assert.Equal(1.92, first.Margin);
-        Assert.Equal("Anthropic", first.Organization);
-        Assert.Equal("Proprietary", first.License);
+        // 丢方向是最隐蔽的错法：−0.91 变成 +0.91，页面上就从「掉了」变成「涨了」
+        Assert.True(e.Steerability!.Value < 0, "Down 方向必须体现为负值");
+        Assert.True(e.ToolHallucination!.Value < 0, "Down 方向必须体现为负值");
     }
 
     [Fact]
-    public void Parse_名次按页面顺序从1递增()
+    public void Parse_每个指标带上自己的置信区间半宽()
     {
-        var entries = ArenaLeaderboardFetcher.Parse(RealFixture);
+        var e = ArenaLeaderboardFetcher.Parse(RealFixture).Entries[0];
 
-        Assert.Equal(1, entries[0].Rank);
-        Assert.Equal(2, entries[1].Rank);
+        Assert.Equal(1.92, e.NetImprovement!.Margin);
+        Assert.Equal(3.04, e.ConfirmedSuccess!.Margin);
+        Assert.Equal(7.68, e.PraiseVsComplaint!.Margin);
+        Assert.Equal(3.86, e.Steerability!.Margin);
+        Assert.Equal(1.00, e.BashRecovery!.Margin);
+        Assert.Equal(0.04, e.ToolHallucination!.Margin);
     }
 
     [Fact]
-    public void Parse_开源模型的授权取第二段_忽略托管方()
+    public void Parse_名次带置信区间_页面上那个1到4()
     {
-        var entries = ArenaLeaderboardFetcher.Parse(RealFixture);
-        var glm = entries[1];
+        var r = ArenaLeaderboardFetcher.Parse(RealFixture);
 
-        // 「Z.ai · MIT · SiliconFlow」：第一段厂商、第二段授权，第三段托管方不要
-        Assert.Equal("Z.ai", glm.Organization);
-        Assert.Equal("MIT", glm.License);
+        Assert.Equal(1, r.Entries[0].Rank);
+        Assert.Equal(1, r.Entries[0].RankLow);
+        Assert.Equal(4, r.Entries[0].RankHigh);
+
+        Assert.Equal(6, r.Entries[1].RankLow);
+        Assert.Equal(13, r.Entries[1].RankHigh);
+    }
+
+    [Fact]
+    public void Parse_取到会话数成本token与双向单价()
+    {
+        var e = ArenaLeaderboardFetcher.Parse(RealFixture).Entries[0];
+
+        Assert.Equal(12416, e.Sessions);
+        Assert.Equal(4.52, e.CostPerTask);
+        Assert.Equal("55.2K", e.OutputTokens);
+        Assert.Equal(10, e.PriceInput);
+        Assert.Equal(50, e.PriceOutput);
+    }
+
+    [Fact]
+    public void Parse_取到页面头部的会话总数()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(RealFixture);
+        Assert.Equal(1_587_202, r.TotalSessions);
+    }
+
+    [Fact]
+    public void Parse_模型名厂商与授权_开源行的托管方不算授权()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(RealFixture);
+
+        Assert.Equal("Claude Fable 5.1 (Max)", r.Entries[0].Name);
+        Assert.Equal("Anthropic", r.Entries[0].Organization);
+        Assert.Equal("Proprietary", r.Entries[0].License);
+
+        // 「Moonshot · Kimi K3 license · SiliconFlow」：第三段是托管方，不要
+        Assert.Equal("Moonshot", r.Entries[1].Organization);
+        Assert.Equal("Kimi K3 license", r.Entries[1].License);
     }
 
     [Fact]
     public void Parse_页面结构变了就返回空_而不是编出条目()
     {
-        // 对方改版后最可能的样子：还是表格，但类名与无障碍属性全变了
         const string changed = """
 <table><tbody>
 <tr><td><span data-model="Claude Fable 5.1">Claude Fable 5.1</span></td><td><span data-score="13.85">13.85%</span></td></tr>
 </tbody></table>
 """;
 
-        var entries = ArenaLeaderboardFetcher.Parse(changed);
+        var r = ArenaLeaderboardFetcher.Parse(changed);
 
-        // 关键：解析不出来必须是「空」，让上层判定为失败并保留旧快照，
+        // 解析不出来必须是「空」，让上层判定为失败并保留旧快照，
         // 绝不能凑出一个半截条目当成今天的榜单写进库。
-        Assert.Empty(entries);
+        Assert.Empty(r.Entries);
     }
 
     [Fact]
@@ -95,45 +149,53 @@ public class ArenaLeaderboardFetcherTests
     {
         const string noMargin = """
 <table><tbody>
-<tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><svg role="img" aria-label="Net improvement 1.23%"></svg></td></tr>
+<tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span></td></tr>
 </tbody></table>
 """;
 
-        var entries = ArenaLeaderboardFetcher.Parse(noMargin);
+        var r = ArenaLeaderboardFetcher.Parse(noMargin);
 
-        Assert.Single(entries);
-        Assert.Equal(1.23, entries[0].Score);
-        Assert.Null(entries[0].Margin);
+        Assert.Single(r.Entries);
+        Assert.Equal(1.23, r.Entries[0].NetImprovement!.Value);
+        Assert.Null(r.Entries[0].NetImprovement!.Margin);
     }
 
     [Fact]
-    public void Parse_负分也能解析_榜尾模型的净改进是负数()
+    public void Parse_指标不足六个时不错位_缺的留null()
     {
-        const string negative = """
+        // 页面少给几列时，已有的仍按顺序对位，缺的是 null，不能把后面的值顶上来
+        const string partial = """
 <table><tbody>
-<tr><td><span title="Weak Model">Weak Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><svg role="img" aria-label="Net improvement -3.40%"></svg></td></tr>
+<tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span><span class="text-text-muted text-xs">±0.10%</span></td><td><span><svg role="img" aria-label="Up"></svg>4.56<!-- -->%</span><span class="text-text-muted text-xs">±0.20%</span></td></tr>
 </tbody></table>
 """;
 
-        var entries = ArenaLeaderboardFetcher.Parse(negative);
+        var e = ArenaLeaderboardFetcher.Parse(partial).Entries[0];
 
-        Assert.Single(entries);
-        Assert.Equal(-3.40, entries[0].Score);
+        Assert.Equal(1.23, e.NetImprovement!.Value);
+        Assert.Equal(4.56, e.ConfirmedSuccess!.Value);
+        Assert.Null(e.PraiseVsComplaint);
+        Assert.Null(e.Steerability);
+        Assert.Null(e.BashRecovery);
+        Assert.Null(e.ToolHallucination);
     }
 
     [Fact]
     public void MinimumEntries_下限足够把改版与短榜分开()
     {
-        // 改版时解析结果是 0-1 条，正常分榜是几十到几百条。
-        // 下限卡在这两者之间，且不能高到把冷门短榜误判成改版。
         Assert.InRange(ArenaLeaderboardFetcher.MinimumEntries, 2, 10);
+    }
+
+    [Fact]
+    public void ExpectedMetricCount_与页面表头的指标列数一致()
+    {
+        Assert.Equal(6, ArenaLeaderboardFetcher.ExpectedMetricCount);
     }
 
     [Fact]
     public void BuildUrl_按分榜拼地址()
     {
         Assert.Equal("https://arena.ai/leaderboard/agent", ArenaLeaderboardFetcher.BuildUrl("agent"));
-        Assert.Equal("https://arena.ai/leaderboard/code", ArenaLeaderboardFetcher.BuildUrl("code"));
     }
 
     /// <summary>
@@ -141,8 +203,7 @@ public class ArenaLeaderboardFetcherTests
     ///
     /// 第一版按站内路径一次放了五个分榜，部署后真跑一次才发现只有 agent 榜是服务端渲染
     /// 的，其余四个页面里只有「Loading leaderboard」骨架 + 一份未排名的模型目录。
-    /// 这条守卫不是反对加榜，是要求加榜的人先证明数据拿得到——照着站内有几个分榜就往
-    /// 数组里填几个，会让四个分榜在页面上永远空着，而且每天白打四次外站。
+    /// 这条守卫不是反对加榜，是要求加榜的人先证明数据拿得到。
     /// </summary>
     [Fact]
     public void Boards_只含服务端渲染的榜_加榜前须先证明数据拿得到()

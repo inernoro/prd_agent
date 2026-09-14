@@ -78,7 +78,8 @@ public class ModelLeaderboardSyncService
         string sourceLabel,
         CancellationToken ct)
     {
-        var entries = await fetcher.FetchAsync(board, ct);
+        var parsed = await fetcher.FetchAsync(board, ct);
+        var entries = parsed.Entries;
 
         // 比对上一份快照填升降。上一份不存在时全部留 null，前端不显示箭头。
         var filter = Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Board, board);
@@ -104,6 +105,7 @@ public class ModelLeaderboardSyncService
             FetchedAt = DateTime.UtcNow,
             SourceUrl = ArenaLeaderboardFetcher.BuildUrl(board),
             SourceLabel = sourceLabel,
+            TotalSessions = parsed.TotalSessions,
             Entries = entries,
         };
 

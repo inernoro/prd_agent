@@ -1,22 +1,53 @@
 import { apiRequest } from './apiClient';
 import type { ApiResponse } from '@/types/api';
 
+/**
+ * 一个指标：值 + 置信区间半宽。
+ *
+ * `value` 自带正负号（页面上的 ▲/▼ 后端已经解析进符号），所以 -0.91 就是「掉了 0.91%」，
+ * 前端不需要再判方向。`margin` 为 null 表示榜单没给误差范围，画图时退化成一根实心条。
+ */
+export interface ModelMetric {
+  value: number;
+  margin: number | null;
+}
+
 /** 榜单里的一行（与后端 ModelLeaderboardController.Project 一一对应）。 */
 export interface ModelLeaderboardEntry {
   rank: number;
+  /**
+   * 名次的置信区间。两个模型区间重叠时名次差别不作数——页面把区间显示出来才诚实。
+   * 抓不到时为 null，前端不显示这一行小字。
+   */
+  rankLow: number | null;
+  rankHigh: number | null;
   name: string;
   organization: string | null;
   license: string | null;
-  /** 该榜的主分数。agent 榜是净改进百分比（13.85 表示 +13.85%）。 */
-  score: number;
-  /** 分数的 ± 误差范围，榜单没给时为 null。 */
-  margin: number | null;
+
+  /** 主排序指标 */
+  netImprovement: ModelMetric | null;
+  confirmedSuccess: ModelMetric | null;
+  praiseVsComplaint: ModelMetric | null;
+  steerability: ModelMetric | null;
+  bashRecovery: ModelMetric | null;
+  /** 工具幻觉——这项越低越好 */
+  toolHallucination: ModelMetric | null;
+
+  sessions: number | null;
+  /** 单任务成本中位数，美元 */
+  costPerTask: number | null;
+  /** 单任务输出 token 中位数，原样保留页面写法（如 "55.2K"） */
+  outputTokens: string | null;
+  priceInput: number | null;
+  priceOutput: number | null;
+
   previousRank: number | null;
   /**
-   * 名次变化：正数表示上升几名，负数表示下降。
+   * 名次变化：正数上升，负数下降。
    *
    * **null 表示「不知道」**，不是「没变化」——首次同步时没有上一份快照可比。
-   * 渲染时必须区分这两种：null 不画箭头，0 才画持平。
+   * 渲染时必须区分：null 不画箭头，0 才画持平。
    */
   rankDelta: number | null;
 }
@@ -26,12 +57,14 @@ export interface ModelLeaderboardSnapshot {
   board: string;
   /** false = 后台首次同步还没跑完，前端给「正在准备」而不是画空表。 */
   ready: boolean;
-  /** 数据抓取时刻（ISO 字符串）。页面上「数据截至」显示的就是它。 */
   fetchedAt?: string;
   sourceUrl?: string;
   /** 超过两天没同步成功。前端把实时点变灰并标出数据日期，不装作是新的。 */
   stale?: boolean;
+  /** 模型个数 */
   total?: number;
+  /** 榜单口径下的会话总数（页面头部那个数）。抓不到时不显示这一格 */
+  totalSessions?: number | null;
   entries: ModelLeaderboardEntry[];
 }
 
@@ -82,7 +115,7 @@ export interface ModelLeaderboardSyncResult {
 }
 
 /**
- * 手动触发一次榜单同步（仅管理员）。
+ * 手动触发一次榜单同步（需「模型管理-写」权限）。
  *
  * 周期同步只在权威部署跑，所以分支预览上的库是空的；要在预览环境看效果就得手动点一次。
  * 会真的去打 arena.ai，别当刷新按钮用。

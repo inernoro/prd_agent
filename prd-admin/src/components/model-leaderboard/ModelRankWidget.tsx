@@ -124,7 +124,7 @@ export function ModelRankWidget({ board = 'agent' }: { board?: string } = {}) {
         </span>
         <span className="home-model-rank-name">{current.name}</span>
         <span className="home-model-rank-score">
-          {formatScore(current.score)}
+          {formatScore(current.netImprovement?.value)}
         </span>
       </span>
       <span className="home-model-rank-tag">{stale ? staleLabel : '模型榜'}</span>
@@ -149,8 +149,12 @@ function markOf(organization: string | null): string {
   return cleaned.slice(0, 2).toUpperCase();
 }
 
-/** agent 榜的分数是净改进百分比，正数带加号才读得出方向。 */
-function formatScore(score: number): string {
-  const fixed = score.toFixed(2);
-  return score > 0 ? `+${fixed}%` : `${fixed}%`;
+/**
+ * agent 榜的分数是净改进百分比，正数带加号才读得出方向。
+ * 负号用真正的减号 U+2212，与榜单页同一口径（连字符在等宽字里太短，容易看漏）。
+ */
+function formatScore(score: number | undefined): string {
+  if (score == null) return '';
+  const fixed = Math.abs(score).toFixed(2);
+  return score < 0 ? `−${fixed}%` : `+${fixed}%`;
 }
