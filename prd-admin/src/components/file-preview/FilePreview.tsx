@@ -668,8 +668,11 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     const repo = md.github_repo;
     const path = md.github_path;
     const branch = md.github_branch || 'main';
+    // 逐段转义：目录名里合法的 # 会把后半段变成 URL 片段，「在 GitHub 打开」就落到别的目录去了
+    const seg = (v: string) => encodeURIComponent(v);
+    const encodedPath = (path ?? '').split('/').filter(Boolean).map(seg).join('/');
     const ghUrl = owner && repo
-      ? `https://github.com/${owner}/${repo}/tree/${branch}/${path ?? ''}`.replace(/\/$/, '')
+      ? `https://github.com/${seg(owner)}/${seg(repo)}/tree/${seg(branch)}/${encodedPath}`.replace(/\/$/, '')
       : (md.sourceUrl || entry.metadata?.sourceUrl);
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-4 text-center">

@@ -247,6 +247,12 @@ public class DocumentSyncWorker : BackgroundService
         {
             return GitHubSyncCredentialPolicy.Decide(connectionUserId, null, ex);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 服务正在停机，不是凭据出了问题。吞掉它会给条目盖一个假的「授权失败」
+            // 并刷新 LastSyncAt——按天调度于是要等到次日才会再碰它。
+            throw;
+        }
         catch (Exception)
         {
             // 密文解不开（例如签名密钥轮换过）——同样不许退回匿名，否则私有仓只会给出 404
