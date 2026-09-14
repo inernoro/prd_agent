@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
-  Activity, BookOpen, Boxes, Bug, Building2, ChevronDown, CircleDollarSign, Cpu, FileClock, Layers3,
+  Activity, BookOpen, Bug, Building2, ChevronDown, CircleDollarSign, FileClock, Layers3,
   Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings, SlidersHorizontal,
-  ShieldCheck, Shuffle, Sun, Tags, UserRound, X,
+  ShieldCheck, Sun, Tags, UserRound, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
@@ -23,12 +23,13 @@ const NAV_GROUPS: NavGroup[] = [
     { to: '/logs', label: '请求记录', icon: <Activity size={16} />, page: 'logs' },
     { to: '/app-callers', label: 'appCaller', icon: <Tags size={16} />, page: 'appCallers' },
   ] },
+  // 路由这一组曾经是五条平级入口（模型白名单 / 模型池 / Provider / 模型 / Exchange），
+  // 而它们回答的其实只有两个问题：**调用方能点名什么**（模型）、**东西从哪来**（上游）。
+  // 模型池与模型白名单同构、已冻结新建；物理模型属于上游、在上游详情里展开看；
+  // Exchange 是上游的一种、收进上游页的第二段。三条旧地址仍然可达，只是不再占导航。
   { label: '路由', items: [
-    { to: '/logical-models', label: '模型白名单', icon: <Layers3 size={16} />, page: 'routeConfig' },
-    { to: '/pools', label: '模型池', icon: <Boxes size={16} />, page: 'routeConfig' },
-    { to: '/platforms', label: 'Provider', icon: <Server size={16} />, page: 'routeConfig' },
-    { to: '/models', label: '模型', icon: <Cpu size={16} />, page: 'routeConfig' },
-    { to: '/exchanges', label: 'Exchange', icon: <Shuffle size={16} />, page: 'routeConfig' },
+    { to: '/logical-models', label: '模型', icon: <Layers3 size={16} />, page: 'routeConfig' },
+    { to: '/platforms', label: '上游', icon: <Server size={16} />, page: 'routeConfig' },
   ] },
   { label: '开发者', items: [
     { to: '/quickstart', label: 'Quickstart', icon: <BookOpen size={16} />, page: 'quickstart' },

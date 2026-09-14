@@ -403,7 +403,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GetCollection<BsonDocument>(\"llmgw_model_pool_types\")", resolver);
         Assert.Contains("PinnedModel 不在 appCaller 专用模型池内", resolver);
         Assert.Contains("有则增加，无则不变", page);
-        Assert.Contains("按平台规则补齐", page);
+        // 2026-09-14 池已停止新建：「按平台规则补齐」会建池、也会往在承接流量的托管池里追加成员，
+        // 与冻结直接冲突，整块 UI 已删。这里反向钉住，防它随手被加回来。
+        // 补齐语义本身（有则增加，无则不变）仍留在页面的 HelpPopover 里，上一条断言管着。
+        Assert.DoesNotContain("按平台规则补齐", page);
+        Assert.Contains("const POOL_CREATION_FROZEN = true;", page);
+        Assert.Contains("canWrite && !POOL_CREATION_FROZEN", page);
+        // 冻结必须说出口，不能只把按钮藏了——用户会以为是权限问题或者页面坏了
+        Assert.Contains("已停止新建", page);
+        Assert.Contains("去模型页", page);
         Assert.Contains("pool.appendOnly ? 'compatible' : filterMode", page);
         Assert.Contains("已过滤已有成员与不匹配模型", page);
         Assert.Contains("return false;", page);
@@ -523,6 +531,74 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Math.max(10, bottomObstructionHeight(vh) + 8)", rowActions);
         // 抬高之后还要重算可用高度，否则菜单会从顶部溢出去
         Assert.Contains("maxHeight: Math.max(120, vh - bottom - 16)", rowActions);
+    }
+
+    [Fact]
+    public void RoutingNav_KeepsTwoEntriesAndLeavesNoDeadLinks()
+    {
+        // 路由这一组曾经是五条平级入口，而它们回答的只有两个问题：
+        // 调用方能点名什么（模型）、东西从哪来（上游）。合成两条之后有两件事必须同时成立：
+        //   1) 导航里不再出现那三条旧入口——否则合并等于没做；
+        //   2) 三条旧地址仍然可达——路由还在，页内还有入口，否则就是把页面做成了孤儿。
+        // 两条都属于「删掉之后编译照过、测试仍全绿」，必须有守卫。
+        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        var logicalModelsPage = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        var overviewPage = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
+        var upstreamsPage = ReadRepoFile("llmgw/web/src/pages/UpstreamsPage.tsx");
+
+        // 导航只剩两条。断言的是导航项本身（带 page/icon 的那一行），不是路径出现过没有——
+        // 注释和别处的 Link 都会提到这些路径，只查路径必然误判。
+        Assert.Contains("{ to: '/logical-models', label: '模型'", layout);
+        Assert.Contains("{ to: '/platforms', label: '上游'", layout);
+        Assert.DoesNotContain("to: '/pools', label:", layout);
+        Assert.DoesNotContain("to: '/models', label:", layout);
+        Assert.DoesNotContain("to: '/exchanges', label:", layout);
+
+        // 旧地址仍然注册着路由
+        Assert.Contains("path=\"/pools\"", app);
+        Assert.Contains("path=\"/models\"", app);
+        Assert.Contains("path=\"/exchanges\"", app);
+
+        // 且各自至少有一个页内入口，不靠背地址进去
+        Assert.Contains("navigate('/pools')", logicalModelsPage);
+        Assert.Contains("to=\"/models\"", overviewPage);
+
+        // /exchanges 落到上游页并自动选中「转接上游」那一段，锚点还在（图片分层是深链进来的）
+        Assert.Contains("location.pathname.endsWith('/exchanges')", upstreamsPage);
+        Assert.Contains("转接上游", upstreamsPage);
+    }
+
+    [Fact]
+    public void ProviderRow_ShowsOwnedModelsAndWhetherTheyAreRegistered()
+    {
+        // 「模型属于上游」这件事在界面上的落地：展开一条上游就看到它卖的货，
+        // 以及每个货登记到白名单没有——没登记的模型躺在库里，调用方按公开名请求找不到它。
+        // 在这之前这件事只能靠在两个页面之间来回对照才看得出来。
+        //
+        // 这条链路整条删掉编译照过、llmgw/web 又整包没有单测，属于「改动删掉测试仍全绿」，
+        // 所以必须有守卫（predicate-and-wiring-discipline 形状 2）。
+        var panel = ReadRepoFile("llmgw/web/src/components/ProviderModelsPanel.tsx");
+        var platformsPage = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+
+        // 判据认 targetId 不认名字：同名不同上游的两个物理模型按名字会被算成一个
+        Assert.Contains("offering.targetKind !== 'model'", panel);
+        Assert.Contains("byTarget.get(model.id)", panel);
+        Assert.DoesNotContain("byTarget.get(model.modelName)", panel);
+        // 没登记的排前面：这一屏唯一需要人动手的就是它们
+        Assert.Contains("a.publicIds.length - b.publicIds.length", panel);
+        // 结论句而不是一个数字：「3 个模型」读不出该不该管
+        Assert.Contains("个没登记", panel);
+        Assert.Contains("还没登记，调用方找不到它", panel);
+
+        // 接线：上游页真的渲染了它，而不是只建了组件没人用
+        Assert.Contains("ProviderModelsPanel", platformsPage);
+        Assert.Contains("collectProviderModels", platformsPage);
+        Assert.Contains("expandedModelsFor === p.id", platformsPage);
+        // 批量登记走的就是既有的上游拉取清单流程，不另起一条
+        Assert.Contains("onRegister={canWrite && p.authority === 'llm_gateway'", platformsPage);
+        // 导入完必须重拉：不重拉的话刚登记完那一列还停在「2 个没登记」
+        Assert.Contains("void refreshOwnedModels();", platformsPage);
     }
 
     [Fact]

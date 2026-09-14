@@ -17,10 +17,10 @@ import { LogsPage } from '@/pages/LogsPage';
 import { LogDetailPage } from '@/pages/LogDetailPage';
 import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
-import { PlatformsPage } from '@/pages/PlatformsPage';
+import { UpstreamsPage } from '@/pages/UpstreamsPage';
 import { ModelsPage } from '@/pages/ModelsPage';
 import { LogicalModelsPage } from '@/pages/LogicalModelsPage';
-import { ExchangesPage } from '@/pages/ExchangesPage';
+
 import { AuditsPage } from '@/pages/AuditsPage';
 import { ShadowPage } from '@/pages/ShadowPage';
 import { ServiceKeysPage } from '@/pages/ServiceKeysPage';
@@ -122,12 +122,13 @@ export function App() {
             <Route path="/app-callers/view" element={<RequirePageAccess page="appCallers"><AppCallerDetailsPage /></RequirePageAccess>} />
             <Route path="/app-callers/:id/prompt-policy" element={<RequirePageAccess page="promptPolicy"><PromptPolicyPage /></RequirePageAccess>} />
             <Route path="/pools" element={<RequirePageAccess page="routeConfig"><ModelPoolsPage /></RequirePageAccess>} />
-            <Route path="/platforms" element={<RequirePageAccess page="routeConfig"><PlatformsPage /></RequirePageAccess>} />
+            <Route path="/platforms" element={<RequirePageAccess page="routeConfig"><UpstreamsPage /></RequirePageAccess>} />
             <Route path="/platforms/view" element={<RequirePageAccess page="routeConfig"><ProviderDetailsPage /></RequirePageAccess>} />
             <Route path="/models" element={<RequirePageAccess page="routeConfig"><ModelsPage /></RequirePageAccess>} />
             <Route path="/models/view" element={<RequirePageAccess page="routeConfig"><ModelDetailsPage /></RequirePageAccess>} />
             <Route path="/logical-models" element={<RequirePageAccess page="routeConfig"><LogicalModelsPage /></RequirePageAccess>} />
-            <Route path="/exchanges" element={<RequirePageAccess page="routeConfig"><ExchangesPage /></RequirePageAccess>} />
+            {/* 旧地址保持可达：落到同一页并自动选中「转接上游」那一段，不留死链 */}
+            <Route path="/exchanges" element={<RequirePageAccess page="routeConfig"><UpstreamsPage /></RequirePageAccess>} />
             <Route path="/audits" element={<RequirePageAccess page="audits"><AuditsPage /></RequirePageAccess>} />
             <Route path="/service-keys" element={<RequirePageAccess page="serviceKeys"><ServiceKeysPage /></RequirePageAccess>} />
             <Route path="/quickstart" element={<RequirePageAccess page="quickstart"><QuickstartPage /></RequirePageAccess>} />

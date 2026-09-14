@@ -42,8 +42,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Include="..\..\..\llmgw\console-api\Organization\MembershipPolicy.cs" Link="Gateway\MembershipPolicy.cs" />
-    <Compile Include="..\..\..\llmgw\console-api\Governance\OfferingRoutingChangePolicy.cs" Link="Gateway\OfferingRoutingChangePolicy.cs" />
+    <!-- console-api 的两个判据文件此前是 link 进来的；现在整个项目已被 ProjectReference 引入，
+         再 link 一次会让同名类型出现两份（CS0436），删掉 link 由程序集提供。 -->
     <Compile Include="..\..\src\PrdAgent.Api\Services\InstanceIdentity.cs" Link="Services\InstanceIdentity.cs" />
     <!-- CDS 报告同步的「刷哪些库、各自从哪个源拉」判据。单独一个文件、只依赖 Core，
          就是为了能这样 link 进来跑；worker 本体拖着 BackgroundService/Mongo，搬不动。 -->

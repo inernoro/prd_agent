@@ -14,7 +14,7 @@
 //     卡片内边距只允许 CARD_PADDING(14) 与嵌套块 INSET_PADDING(10) 两种。
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, deletePool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, recoverPoolModel, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
+import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, deletePool, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, recoverPoolModel, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
 import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
@@ -223,10 +223,24 @@ type PoolMemberDraft = { modelKey: string; priority: string; protocol: string; p
 type PoolBulkImportDraft = { platformId: string; capabilityFilter: string; maxCount: string; enabledOnly: boolean; overwriteExisting: boolean };
 type PriceCurrencyCalibrationDraft = { modelType: string; targetCurrency: string; onlyMissing: boolean; includeMembersWithoutPrice: boolean };
 
+/**
+ * 模型池已停止新建（2026-09-14）。
+ *
+ * 它和「模型」是同一件事的两种写法：池的 Code 对应模型的 PublicId，成员对应线路，
+ * 顺位、权重、健康、熔断字段逐个同名，连 appCaller 绑定都一样。池唯一多出来的能力
+ * 是「没点名时用它」，这一条已经变成模型上的一行标记，存量池也已整体搬成了模型。
+ *
+ * 冻结的是**新建**，不是**修复**：旧解析路径仍在兜底，池成员真坏掉的时候人得能进来
+ * 摘掉它或让它恢复。全部锁死会把人关在门外，那比多一个概念更糟。
+ */
+const POOL_CREATION_FROZEN = true;
+
 export function ModelPoolsPage() {
   const { tenant } = useAuth();
   const navigate = useNavigate();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
+  // 修复类动作跟着 canWrite，新建类动作再过一道冻结闸
+  const canCreatePool = canWrite && !POOL_CREATION_FROZEN;
   const { confirm, promptText } = useDialogs();
   const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [poolTypes, setPoolTypes] = useState<PoolTypesData | null>(null);
@@ -256,7 +270,6 @@ export function ModelPoolsPage() {
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [sortBy, setSortBy] = useState('severity');
-  const [showFill, setShowFill] = useState(false);
   // 「恢复接单」的本地中间态。后端把成员留在不可用、只发一张进入半开的入场券，
   // 等下一条真实业务请求验证；若 UI 不记这一笔，点完按钮红标签纹丝不动、按钮还在原地，
   // 用户只会反复点。这个 Set 让该成员立刻显示「验证中」并收起按钮。
@@ -286,20 +299,6 @@ export function ModelPoolsPage() {
     };
   }, []);
 
-  async function ensureDefaultPools() {
-    setBusyId('ensure-pool-types');
-    setToast(null);
-    const res = await ensurePoolTypes();
-    setBusyId(null);
-    if (!res.success) {
-      setToast(res.error?.message || '补齐失败');
-      return;
-    }
-    setPoolTypes(res.data.types);
-    const fresh = await getPools();
-    if (fresh.success) setPools(fresh.data.items);
-    setToast(`补齐完成：新增 ${res.data.typesCreated} 个类型、${res.data.poolsCreated} 个默认池，追加 ${res.data.modelsAppended} 个兼容模型`);
-  }
 
   async function makeDefault(pool: ModelPool) {
     if (pool.isDefaultForType) return;
@@ -805,7 +804,7 @@ export function ModelPoolsPage() {
           </aside>
           <div className="mp-detail-main" style={{ padding: CARD_PADDING, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
             {toast ? <div role="status" style={{ ...INSET_BLOCK, border: '1px solid var(--border-subtle)', ...BODY_TEXT }}>{toast}</div> : null}
-            {isCreate && canWrite ? (
+            {isCreate && canCreatePool ? (
               <PoolCreateWizard
                 draft={createDraft}
                 step={createStep}
@@ -862,13 +861,27 @@ export function ModelPoolsPage() {
             subtitle="一次调用落到一个池，池内按顺位挑一个可用成员承接，成员不可用就交给下一顺位。"
             actions={(
               <>
-                {canWrite ? <Button size="sm" variant="primary" onClick={() => { setDrawer({ kind: 'create' }); setCreateStep(1); }}>新建模型池</Button> : null}
+                {canCreatePool ? <Button size="sm" variant="primary" onClick={() => { setDrawer({ kind: 'create' }); setCreateStep(1); }}>新建模型池</Button> : null}
                 <Button size="sm" variant="ghost" onClick={() => navigate('/learn')}>路由机制</Button>
               </>
             )}
           />
           <PageBody>
             {toast ? <div role="status" style={{ flexShrink: 0, ...INSET_BLOCK, border: '1px solid var(--border-subtle)', ...BODY_TEXT }}>{toast}</div> : null}
+            {/* 冻结横幅：说清「已经不建了」「去哪建」「这里还能做什么」。
+                只把按钮藏掉而不说一句，用户会以为是权限问题或者页面坏了。 */}
+            {POOL_CREATION_FROZEN ? (
+              <section data-testid="pool-freeze-banner" style={{ flexShrink: 0, ...CARD_BODY, border: '1px solid var(--border-strong)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
+                <Chip label="已停止新建" color="var(--warn)" bg="var(--warn-bg)" />
+                <span style={{ ...BODY_TEXT, flex: 1, minWidth: 240 }}>
+                  模型池能做的事模型都能做，存量池已搬成模型。
+                  <HelpPopover label="这里还能做什么">
+                    保留的是查看与修复：摘掉坏成员、让成员恢复、停用整池。冻结的只是新建——旧解析路径还在兜底，成员真坏掉时人得能进来处置，全锁死会把人关在门外。
+                  </HelpPopover>
+                </span>
+                <Button size="sm" variant="secondary" onClick={() => navigate('/logical-models')}>去模型页</Button>
+              </section>
+            ) : null}
             {/* 分诊条：每一段都是筛选器，默认停在「需要处理」。此前页头那句「N 个池需要处理」
                 不可点击，而页面没有筛选也没有排序，需要处理的池可能在第三屏，只能一张张翻。 */}
             <section style={{ display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap', ...CARD_BODY, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
@@ -910,46 +923,17 @@ export function ModelPoolsPage() {
                     {poolTypes?.total ?? 0} 类规则 · {ruleCoverageText}
                   </span>
                 </span>
-                {canWrite ? (
-                  <Button size="sm" variant="secondary" disabled={busyId === 'ensure-pool-types'} onClick={() => setShowFill((v) => !v)}>
-                    {busyId === 'ensure-pool-types' ? '正在补齐'
-                      : pools.length === 0 ? `按平台规则创建 ${poolTypes?.total ?? 0} 个池…`
-                      : '补齐缺失的池与成员…'}
-                  </Button>
-                ) : null}
               </div>
             </section>
-            {/* 补齐是写操作：它会建池，也会往**已经在承接流量的**托管池里追加成员。
-                只说「创建 N 个池」会让用户点完发现别的池多了成员，所以两段分开列。 */}
-            {showFill && canWrite ? (
-              <section style={{ ...CARD_BODY, border: '1px solid var(--accent)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', display: 'flex', flexDirection: 'column', gap: GAP.normal }}>
-                <strong style={{ ...SECTION_TITLE }}>
-                  按平台规则补齐
-                  {/* 补齐的完整语义与「有则增加，无则不变」同源，复用上面那个出口，不抄第二遍。 */}
-                  <HelpPopover label="补齐会做什么">
-                    {FILL_SEMANTICS}
-                  </HelpPopover>
-                </strong>
-                <span style={{ color: '#d29922', fontSize: 'var(--fs-caption)' }}>写操作：会建池，也会往已经在承接流量的托管池里追加成员。</span>
-                <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>待补模型的类型 {poolTypes?.waiting ?? 0} 个 · 已可用 {poolTypes?.ready ?? 0} 个</span>
-                <div style={{ display: 'flex', gap: GAP.normal }}>
-                  <Button size="sm" variant="primary" disabled={busyId === 'ensure-pool-types'} onClick={() => { setShowFill(false); void ensureDefaultPools(); }}>确认补齐</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setShowFill(false)}>取消</Button>
-                </div>
-              </section>
-            ) : null}
             {!canWrite ? <ReadOnlyNotice>当前角色可以查看模型池、成员健康和路由使用情况，但不能修改平台配置。</ReadOnlyNotice> : null}
             {pools.length === 0 ? (
               <section style={{ ...CARD_BODY, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: GAP.section, paddingTop: 40, paddingBottom: 40 }}>
-                <strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>还没有模型池，所有 AI 调用现在都会失败</strong>
-                <span style={{ ...BODY_TEXT }}>{canWrite ? `平台规则已经定义了 ${ruleTotal} 类业务路由，可以按规则一次性铺出对应的池，也可以手动建第一个。` : '当前租户暂无模型池，请联系 Owner 或 Admin 配置。'}</span>
-                {canWrite ? (
-                  <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', justifyContent: 'center' }}>
-                    {/* 按钮上带数量：用户点之前就知道这一下会建出几个池，而不是点完才发现。 */}
-                    <Button size="sm" variant="primary" disabled={busyId === 'ensure-pool-types'} onClick={() => void ensureDefaultPools()}>按平台规则创建 {ruleTotal} 个池</Button>
-                    <Button size="sm" variant="secondary" onClick={() => { setDrawer({ kind: 'create' }); setCreateStep(1); }}>手动新建一个池</Button>
-                  </div>
-                ) : null}
+                <strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>这里没有池，该去模型页</strong>
+                {/* prose-ok: 空状态文案，是守卫认可的第 2 个出口。冻结之后一个池都没有的租户不该再被引导去建池。 */}
+                <span style={{ ...BODY_TEXT }}>模型池已停止新建，它能做的事模型都能做。去模型页登记模型、配好线路，调用方按公开模型名就能调到。</span>
+                <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', justifyContent: 'center' }}>
+                  <Button size="sm" variant="primary" onClick={() => navigate('/logical-models')}>去模型页</Button>
+                </div>
                 <div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap', justifyContent: 'center' }}>
                   {(poolTypes?.items ?? []).map((item) => <Chip key={item.code} label={`${item.name}（${item.code}）`} color="var(--text-secondary)" bg="var(--bg-elevated)" />)}
                 </div>

@@ -265,7 +265,7 @@ export function LogicalModelsPage() {
   return (
     <PageShell>
       <PageHeader
-        title="模型白名单"
+        title="模型"
         subtitle={attention.length === 0
           ? '名单外的调用一律拒绝。应用只选择稳定的模型标识，接哪个上游由它下面的线路决定。'
           : `${attention.map((x) => x.item.name).join('、')} 需要看一眼，其余线路正常。`}
@@ -284,6 +284,9 @@ export function LogicalModelsPage() {
                 它落在 Provider 页（凭据在那儿配、清单从那儿拉），这里给直达入口，不让用户自己找。 */}
             <Button variant="primary" size="sm" onClick={() => navigate('/platforms')}>从上游批量登记</Button>
             <Button size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '手动新建'}</Button>
+            {/* 模型池已停止新建但存量还在兜底，出了事得能进去摘成员。
+                它不再占导航，入口就挂在取代它的这一页上——否则它就成了只有记住地址才找得到的孤儿页。 */}
+            <Button size="sm" variant="ghost" onClick={() => navigate('/pools')}>存量模型池</Button>
           </>
         ) : null}
       />

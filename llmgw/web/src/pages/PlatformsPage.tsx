@@ -3,8 +3,9 @@
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { Fragment, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
-import type { CreatePlatformRequest, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
+import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
+import { ProviderModelsPanel, collectProviderModels, summarizeProviderModels } from '@/components/ProviderModelsPanel';
 import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
@@ -46,6 +47,11 @@ export function PlatformsPage() {
   // 接完之后的两件交代：能不能通、上游有哪些模型
   const [testResult, setTestResult] = useState<Record<string, PlatformTestResult>>({});
   const [discovery, setDiscovery] = useState<{ platformId: string; data: UpstreamModelsData } | null>(null);
+  // 这个上游名下有哪些模型、登记了没有。模型本来就属于上游（PlatformId 必填），
+  // 展开上游就该看到——而「哪些没登记」在此之前只能靠在两个页面之间来回对照才看得出。
+  const [ownedModels, setOwnedModels] = useState<ModelItem[]>([]);
+  const [logicalModels, setLogicalModels] = useState<LogicalModelItem[]>([]);
+  const [expandedModelsFor, setExpandedModelsFor] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -60,10 +66,16 @@ export function PlatformsPage() {
     getProviderPresets().then((res) => {
       if (alive && res.success) setPresets(res.data.items);
     });
+    // 名下模型与登记状态是锦上添花，拉不到不该让整页报错——那一列留空即可
+    getModels().then((res) => { if (alive && res.success) setOwnedModels(res.data.items); });
+    getLogicalModels().then((res) => { if (alive && res.success) setLogicalModels(res.data.items); });
     return () => {
       alive = false;
     };
   }, []);
+
+  /** 某个上游名下的模型 + 登记状态。判据是「有没有线路指向它」，不是名字像不像。 */
+  const ownedRows = (platformId: string) => collectProviderModels(platformId, ownedModels, logicalModels);
 
   /** 选中预设 = 一次性填好所有系统知道的字段，用户只剩密钥要填。 */
   function applyPreset(next: ProviderPresetItem | null) {
@@ -174,6 +186,16 @@ export function PlatformsPage() {
     const notes = [res.data.message, res.data.whitelistMessage].filter(Boolean).join(' ');
     setToast(notes ? `${base}。${notes}` : base);
     setDiscovery(null);
+    // 导入完必须重新拉一次：不拉的话「名下模型」那一列还停在导入前的「2 个没登记」，
+    // 用户刚登记完却看到没变，会以为这次登记没生效。
+    void refreshOwnedModels();
+  }
+
+  /** 重新拉「名下模型 + 登记状态」。拉不到只让这一列留空，不打断主流程。 */
+  async function refreshOwnedModels() {
+    const [models, logical] = await Promise.all([getModels(), getLogicalModels()]);
+    if (models.success) setOwnedModels(models.data.items);
+    if (logical.success) setLogicalModels(logical.data.items);
   }
 
   async function toggle(p: PlatformItem) {
@@ -499,6 +521,7 @@ export function PlatformsPage() {
               <th style={th}>类型</th>
               <th style={th}>API URL</th>
               <th style={th}>并发</th>
+              <th style={th}>名下模型</th>
               <th style={th}>配置来源</th>
               <th style={th}>状态</th>
               <th style={th}>密钥</th>
@@ -555,6 +578,21 @@ export function PlatformsPage() {
                   <td style={td}>{p.platformType || '—'}</td>
                   <td style={{ ...td, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
                   <td style={td}>{p.maxConcurrency || '—'}</td>
+                  <td style={td}>
+                    {/* 一句话结论而不是一个数字：「3 个模型」读不出该不该管，
+                        「2 个没登记」读得出——没登记的模型调用方按名字请求找不到它。 */}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedModelsFor((x) => (x === p.id ? null : p.id))}
+                      style={{
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
+                        fontSize: 'var(--fs-secondary)',
+                        color: ownedRows(p.id).some((x) => x.publicIds.length === 0) ? 'var(--warn)' : 'var(--text-secondary)',
+                      }}
+                    >
+                      {summarizeProviderModels(ownedRows(p.id))}
+                    </button>
+                  </td>
                   <td style={td}>
                     {p.authority === 'llm_gateway' ? (
                       <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
@@ -642,10 +680,24 @@ export function PlatformsPage() {
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
+                {expandedModelsFor === p.id ? (
+                  <tr>
+                    {/* 名下模型占满整行：这是「模型属于上游」这件事的落地位置，
+                        窄列里塞不下「登记为哪几个公开名」这句结论 */}
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={9}>
+                      <ProviderModelsPanel
+                        rows={ownedRows(p.id)}
+                        onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude'
+                          ? () => void openDiscovery(p)
+                          : undefined}
+                      />
+                    </td>
+                  </tr>
+                ) : null}
                 {editId === p.id ? (
                   <tr>
                     {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={8}>
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={9}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
                           <input
