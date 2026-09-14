@@ -159,6 +159,93 @@ describe('手机档版式只走 appStoreTokens（防第二屏漂移）', () => {
   });
 });
 
+describe('藏书阁的面走自己的一档，不蹭全局 --bg-card', () => {
+  const SHELF_FILES = [
+    'BookshelfPage.tsx', 'TeamBoard.tsx', 'ExamDialog.tsx',
+    'mobile/parts.tsx', 'mobile/MobileLanding.tsx', 'mobile/MobileVolume.tsx',
+    'mobile/MobileExam.tsx', 'mobile/MobileBoard.tsx',
+  ];
+
+  it('不再直接用 --bg-card / --bg-sunken / --bg-input', () => {
+    /*
+     * 2026-09-14 用户：「太透明了」。全局 --bg-card 在暗档是 8% 白叠在 #141418 上，
+     * 合成出来只比底色亮 7%，这一页大面积铺开就发虚。
+     * 全局那档不能动（全站 420 处在用），所以藏书阁有自己的 --shelf-surface。
+     * 这条守的是「别有人顺手改回去」——改回去不会报错，只会悄悄变虚回原样。
+     */
+    SHELF_FILES.forEach((f) => {
+      const src = read(f);
+      ['var(--bg-card)', 'var(--bg-sunken)', 'var(--bg-input)'].forEach((tok) => {
+        expect(src, `${f} 用了 ${tok}，该用 --shelf-surface / --shelf-inset`)
+          .not.toContain(tok);
+      });
+    });
+  });
+
+  it('两档的面都比底色拉开足够距离，嵌块方向各自正确', () => {
+    const css = fs.readFileSync(
+      path.resolve(__dirname, '../../../styles/tokens.css'), 'utf-8',
+    );
+    const grab = (scope: string, name: string) => {
+      const block = css.slice(css.indexOf(scope));
+      const m = block.match(new RegExp(`\\${name}:\\s*(#[0-9A-Fa-f]{6})`));
+      return m ? m[1] : null;
+    };
+    const lum = (hex: string) => {
+      const n = parseInt(hex.slice(1), 16);
+      return ((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114;
+    };
+
+    /*
+     * 两条判据，各自治一种翻车：
+     *
+     * 1) 面与底色的距离要够。2026-09-14 第一次调这个值时我从 +18.9 改到 +22.2
+     *    就宣布修好了，实际肉眼几乎看不出差别——「我改大了一点」的手感不是判据，
+     *    量出来的差值才是。下限 24 是 iOS 暗档分组卡对纯黑底那个台阶的量级。
+     *
+     * 2) 嵌块的方向**按主题相反**，不是笔误：
+     *    暗档没法再往更暗走，iOS 的惯例是嵌入层更亮（#1C1C1E 卡 / #2C2C2E 嵌块），
+     *    设计稿算出来也正是 39 → 54；浅档反过来，纸面是最亮的一层。
+     *    这条原先写成「嵌块必须比面暗」，那是把我自己的直觉当judgment判据写进了守卫。
+     */
+    /*
+     * 门槛按主题分开，不是把浅档调松了事——是浅档物理上到不了 24：
+     * 底色 #EEEAE3 亮度 234.4，到纯白只剩 +20.6 的空间，而 themeSystem 的契约
+     * 又禁止浅档出现近白值。现在的 #FDFBF8 是 +16.9，已经吃掉可用空间的 82%。
+     * 14 这个下限刚好卡死「滑回原来的 #F8F5EF（+10.8）」这条退路。
+     * 暗档没有天花板问题，按 iOS 的台阶量级给 24。
+     */
+    const CASES = [
+      { scope: ':root', base: '--bg-base', insetLighter: true, minGap: 24 },
+      { scope: '[data-theme="light"]', base: '--bg-base', insetLighter: false, minGap: 14 },
+    ];
+
+    for (const { scope, base, insetLighter, minGap } of CASES) {
+      const baseHex = grab(scope, base);
+      const surface = grab(scope, '--shelf-surface');
+      const inset = grab(scope, '--shelf-inset');
+      expect(surface, `${scope} 缺 --shelf-surface（token 必须暗浅双写）`).toBeTruthy();
+      expect(inset, `${scope} 缺 --shelf-inset`).toBeTruthy();
+      expect(baseHex, `${scope} 缺 ${base}`).toBeTruthy();
+
+      const gap = Math.abs(lum(surface!) - lum(baseHex!));
+      expect(gap, `${scope} 的面只比底色差 ${gap.toFixed(1)} 亮度（下限 ${minGap}），看着还是发虚`)
+        .toBeGreaterThanOrEqual(minGap);
+
+      const delta = lum(inset!) - lum(surface!);
+      expect(Math.abs(delta), `${scope} 的嵌块与面差 ${Math.abs(delta).toFixed(1)}，分不出层`)
+        .toBeGreaterThanOrEqual(8);
+      if (insetLighter) {
+        expect(delta, `${scope}（暗档）的嵌块该比面更亮——暗色里没法再往更暗走`)
+          .toBeGreaterThan(0);
+      } else {
+        expect(delta, `${scope}（浅档）的嵌块该比面更暗——纸面是最亮的一层`)
+          .toBeLessThan(0);
+      }
+    }
+  });
+});
+
 describe('桌面档点了要真的「去」', () => {
   it('痛点卡与卷卡都走 gotoVolume，不是只换选中色', () => {
     const src = read('BookshelfPage.tsx');

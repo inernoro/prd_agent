@@ -18,7 +18,7 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
   const { state, raw: data, memberCount, passedByVolume, blindByVolume, blindTotal, members, weakest } = useTeamBoard();
 
   return (
-    <section className="mt-6 p-6 sm:p-7 rounded-[28px]" style={{ background: 'var(--bg-card)', border: EDGE, boxShadow: '6px 6px 0 var(--shelf-edge)' }}>
+    <section className="mt-6 p-6 sm:p-7 rounded-[28px]" style={{ background: 'var(--shelf-surface)', border: EDGE, boxShadow: '6px 6px 0 var(--shelf-edge)' }}>
       <div className="flex items-center gap-2.5 flex-wrap">
         <Users size={19} strokeWidth={2.6} />
         <h3 className="text-[20px] font-black tracking-[-0.02em]">团队看板</h3>
@@ -75,7 +75,7 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
                   <div className="text-[11px] font-bold" style={{ color: 'var(--text-muted)' }}>卷{'一二三四五六七'[i]}</div>
                   <div className="text-[14px] font-black tracking-[-0.01em] leading-[1.3]">{v.name}</div>
                   <div className="mt-2 flex items-center gap-1.5">
-                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--bg-card)', border: '2px solid var(--shelf-edge)' }}>
+                    <div className="flex-1 h-2 rounded-full overflow-hidden" style={{ background: 'var(--shelf-surface)', border: '2px solid var(--shelf-edge)' }}>
                       <div className="h-full transition-[width] duration-500" style={{ width: `${pct}%`, background: skin.fg }} />
                     </div>
                     <span className="text-[11px] font-bold shrink-0">{n}</span>

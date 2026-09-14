@@ -102,7 +102,7 @@ export function MobileBoard({
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={asStyle(AS_TYPE.itemTitle)}>{v.name}</div>
                     <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ flex: 1, height: 4, borderRadius: AS_SPACE.pillRadius, background: 'var(--bg-sunken)', overflow: 'hidden' }}>
+                      <div style={{ flex: 1, height: 4, borderRadius: AS_SPACE.pillRadius, background: 'var(--shelf-inset)', overflow: 'hidden' }}>
                         <div style={{ height: '100%', width: `${pct}%`, background: skin.fg, transition: 'width 500ms' }} />
                       </div>
                       <span style={{ ...asStyle(AS_TYPE.itemSubtitle), color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
@@ -134,7 +134,7 @@ export function MobileBoard({
                         title={v.name}
                         style={{
                           width: 14, height: 14, borderRadius: 4,
-                          background: m.passedVolumeIds.includes(v.id) ? skinOf(v.id).fg : 'var(--bg-sunken)',
+                          background: m.passedVolumeIds.includes(v.id) ? skinOf(v.id).fg : 'var(--shelf-inset)',
                         }}
                       />
                     ))}

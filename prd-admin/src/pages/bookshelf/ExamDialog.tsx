@@ -213,7 +213,7 @@ export function ExamDialog({
               type="button"
               onClick={reset}
               className="flex items-center gap-1.5 px-3.5 h-[30px] rounded-[14px] text-[12.5px] font-medium transition-colors"
-              style={{ background: 'var(--bg-card)', color: 'var(--text-primary)', border: '3px solid var(--shelf-edge)', boxShadow: '0 4px 0 var(--shelf-edge)' }}
+              style={{ background: 'var(--shelf-surface)', color: 'var(--text-primary)', border: '3px solid var(--shelf-edge)', boxShadow: '0 4px 0 var(--shelf-edge)' }}
             >
               <RotateCcw size={14} /> 再考一次
             </button>

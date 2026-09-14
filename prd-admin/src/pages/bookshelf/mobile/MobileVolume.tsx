@@ -86,7 +86,7 @@ function BookRow({
           <div
             style={{
               margin: '12px 0 0 34px', padding: '12px 14px',
-              borderRadius: AS_SPACE.iconRadius, background: 'var(--bg-sunken)',
+              borderRadius: AS_SPACE.iconRadius, background: 'var(--shelf-inset)',
             }}
           >
             <Eyebrow>为什么在这一卷</Eyebrow>
@@ -108,7 +108,7 @@ function BookRow({
             placeholder="打算在哪用它？一句话就够。"
             style={{
               margin: '8px 0 0 34px', width: 'calc(100% - 34px)', minHeight: 44,
-              borderRadius: AS_SPACE.iconRadius, background: 'var(--bg-input)',
+              borderRadius: AS_SPACE.iconRadius, background: 'var(--shelf-inset)',
               border: 0, outline: 'none', resize: 'none',
               padding: '12px 14px', ...asStyle(AS_TYPE.heroSubtitle), lineHeight: 1.4,
               color: 'var(--text-primary)', fontFamily: 'inherit',

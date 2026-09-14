@@ -223,7 +223,7 @@ function BookshelfDesktop() {
       <div className="flex justify-start sm:justify-center">
         <div
           className="w-full sm:w-auto flex items-center gap-3 sm:gap-6 px-4 sm:pl-5 sm:pr-2 py-2 rounded-[14px] sm:rounded-full flex-wrap justify-start sm:justify-center"
-          style={{ background: 'var(--bg-card)', border: EDGE, boxShadow: HARD_SM }}
+          style={{ background: 'var(--shelf-surface)', border: EDGE, boxShadow: HARD_SM }}
         >
           <span className="text-[15px] font-black tracking-[-0.02em]">公共藏书阁</span>
           <span className="text-[12.5px] font-bold" style={{ color: 'var(--text-muted)' }}>
@@ -255,7 +255,7 @@ function BookshelfDesktop() {
       {(syncState === 'failed' || syncState === 'local') && (
         <div
           className="mt-4 flex items-center gap-3 px-4 py-2.5 rounded-[16px] flex-wrap"
-          style={{ background: 'var(--bg-card)', border: EDGE_THIN }}
+          style={{ background: 'var(--shelf-surface)', border: EDGE_THIN }}
         >
           <CloudOff size={16} strokeWidth={2.6} style={{ color: 'var(--accent-fg-amber)' }} className="shrink-0" />
           <span className="text-[12.5px] font-bold">
@@ -283,7 +283,7 @@ function BookshelfDesktop() {
         <div className="flex-1 min-w-0">
           <div
             className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[12.5px] font-bold"
-            style={{ background: 'var(--bg-card)', border: EDGE }}
+            style={{ background: 'var(--shelf-surface)', border: EDGE }}
           >
             <span className="w-2 h-2 rounded-full" style={{ background: VOLUME_SKIN[0].fg }} />
             开发者 · 产品经理 · 已读 {readCount}/{visibleBooks.length} · 心得 {noteCount} · 通关 {passedCount}/{VOLUMES.length}
@@ -307,7 +307,7 @@ function BookshelfDesktop() {
           // 走 Tailwind 断点而不是 JS 判断，省掉一次 matchMedia 与首帧闪烁。
           className="w-full lg:w-[390px] shrink-0 p-5 sm:p-6 rounded-[22px] sm:rounded-[28px] border-[2.5px] sm:border-4 shadow-[4px_4px_0_var(--vol-skin)] sm:shadow-[8px_8px_0_var(--vol-skin)]"
           style={{
-            background: 'var(--bg-card)',
+            background: 'var(--shelf-surface)',
             borderColor: 'var(--shelf-edge)',
             ['--vol-skin' as string]: activeSkin.fg,
           }}
@@ -365,7 +365,7 @@ function BookshelfDesktop() {
       {/* ── 痛点药方 ── */}
       <section className="mt-14">
         <div className="text-center">
-          <div className="inline-block px-4 py-1.5 rounded-full text-[12.5px] font-bold" style={{ background: 'var(--bg-card)', border: EDGE }}>
+          <div className="inline-block px-4 py-1.5 rounded-full text-[12.5px] font-bold" style={{ background: 'var(--shelf-surface)', border: EDGE }}>
             从你的痛处进来
           </div>
           <h2 className="mt-4 font-black tracking-[-0.03em]" style={{ fontSize: 'clamp(28px, 3.4vw, 44px)' }}>
@@ -387,7 +387,7 @@ function BookshelfDesktop() {
                 onClick={() => gotoVolume(r.volumeId)}
                 className="text-left p-4 sm:p-5 rounded-[18px] sm:rounded-[22px] transition-transform duration-150 hover:-translate-y-0.5"
                 style={{
-                  background: 'var(--bg-card)',
+                  background: 'var(--shelf-surface)',
                   border: active ? '4px solid var(--shelf-edge)' : EDGE,
                   boxShadow: active ? `8px 8px 0 ${skin.fg}` : HARD_MD,
                 }}
@@ -412,7 +412,7 @@ function BookshelfDesktop() {
       {/* ── 七卷 ── */}
       <section className="mt-14">
         <div className="text-center">
-          <div className="inline-block px-4 py-1.5 rounded-full text-[12.5px] font-bold" style={{ background: 'var(--bg-card)', border: EDGE }}>
+          <div className="inline-block px-4 py-1.5 rounded-full text-[12.5px] font-bold" style={{ background: 'var(--shelf-surface)', border: EDGE }}>
             七卷
           </div>
           <h2 className="mt-4 font-black tracking-[-0.03em]" style={{ fontSize: 'clamp(28px, 3.4vw, 44px)' }}>
@@ -436,7 +436,7 @@ function BookshelfDesktop() {
                 onClick={() => gotoVolume(vol.id)}
                 className="text-left p-4 rounded-[20px] transition-transform duration-150 hover:-translate-y-0.5"
                 style={{
-                  background: 'var(--bg-card)',
+                  background: 'var(--shelf-surface)',
                   border: active ? '4px solid var(--shelf-edge)' : EDGE,
                   boxShadow: active ? `7px 7px 0 ${skin.fg}` : '5px 5px 0 var(--shelf-edge)',
                 }}
@@ -469,7 +469,7 @@ function BookshelfDesktop() {
         ref={booksRef}
         // scroll-mt：滚到这里时顶上留 24px，别让标题贴着视口上沿
         className="mt-6 p-6 sm:p-7 rounded-[28px] scroll-mt-6"
-        style={{ background: 'var(--bg-card)', border: '4px solid var(--shelf-edge)', boxShadow: `8px 8px 0 ${activeSkin.fg}` }}
+        style={{ background: 'var(--shelf-surface)', border: '4px solid var(--shelf-edge)', boxShadow: `8px 8px 0 ${activeSkin.fg}` }}
       >
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div className="min-w-0">
@@ -498,7 +498,7 @@ function BookshelfDesktop() {
                   style={{ background: read ? activeSkin.fg : 'transparent', border: EDGE_THIN }}
                 >
                   {read
-                    ? <Check size={12} strokeWidth={3.4} style={{ color: 'var(--bg-card)' }} />
+                    ? <Check size={12} strokeWidth={3.4} style={{ color: 'var(--shelf-surface)' }} />
                     : <span className="text-[11px] font-bold" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>}
                 </button>
                 <div className="min-w-0">
@@ -534,7 +534,7 @@ function BookshelfDesktop() {
                           type="button"
                           onClick={() => { setNote(b.id, noteDraft); setNotingBookId(null); }}
                           className="px-3 py-1 rounded-full text-[11.5px] font-bold"
-                          style={{ background: activeSkin.fg, color: 'var(--bg-card)', border: EDGE_THIN }}
+                          style={{ background: activeSkin.fg, color: 'var(--shelf-surface)', border: EDGE_THIN }}
                         >记下</button>
                         <button
                           type="button"
@@ -593,7 +593,7 @@ function BookshelfDesktop() {
               type="button"
               onClick={() => setExamVolume(activeVolume)}
               className="shrink-0 px-7 py-3 rounded-full text-[14px] font-bold tracking-[0.14em] transition-transform duration-150 hover:-translate-y-[1px]"
-              style={{ background: activeSkin.fg, color: 'var(--bg-card)', border: EDGE, boxShadow: HARD_SM }}
+              style={{ background: activeSkin.fg, color: 'var(--shelf-surface)', border: EDGE, boxShadow: HARD_SM }}
             >
               {activeResult ? '再考一次' : activeStance === 'blind' ? '先摸个底' : '赴 考'}
             </button>

@@ -187,7 +187,7 @@ export function MobileExam({
                             style={{
                               display: 'flex', gap: 10, alignItems: 'flex-start', textAlign: 'left',
                               padding: '10px 12px', borderRadius: AS_SPACE.iconRadius,
-                              border: 0, background: on ? 'var(--bg-sunken)' : 'transparent',
+                              border: 0, background: on ? 'var(--shelf-inset)' : 'transparent',
                               color: 'inherit',
                               outline: on ? `1.5px solid ${skin.fg}` : 'none',
                             }}
@@ -217,7 +217,7 @@ export function MobileExam({
                       <div
                         style={{
                           marginTop: 8, padding: '10px 12px', borderRadius: AS_SPACE.iconRadius,
-                          background: 'var(--bg-sunken)', ...asStyle(AS_TYPE.itemSubtitle),
+                          background: 'var(--shelf-inset)', ...asStyle(AS_TYPE.itemSubtitle),
                           lineHeight: 1.45, color: 'var(--text-secondary)', textWrap: 'pretty',
                         }}
                       >

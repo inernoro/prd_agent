@@ -112,7 +112,7 @@ export function MobileLanding({
                 alignItems: 'center',
                 ...asStyle(AS_TYPE.pill),
                 whiteSpace: 'nowrap',
-                background: on ? 'var(--text-primary)' : 'var(--bg-card)',
+                background: on ? 'var(--text-primary)' : 'var(--shelf-surface)',
                 color: on ? 'var(--bg-base)' : 'var(--text-secondary)',
               }}
             >

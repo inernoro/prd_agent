@@ -68,7 +68,7 @@ export function GroupCard({ children, style }: { children: ReactNode; style?: CS
     <div
       style={{
         borderRadius: AS_SPACE.shelfCardRadius,
-        background: 'var(--bg-card)',
+        background: 'var(--shelf-surface)',
         overflow: 'hidden',
         ...style,
       }}
@@ -124,7 +124,7 @@ export function FeaturedCard({ children, style }: { children: ReactNode; style?:
     <div
       style={{
         borderRadius: AS_SPACE.featuredRadius,
-        background: 'var(--bg-card)',
+        background: 'var(--shelf-surface)',
         padding: `${AS_SPACE.featuredPaddingY}px ${AS_SPACE.featuredPaddingX}px`,
         ...style,
       }}
@@ -204,7 +204,7 @@ export function Pill({
         alignItems: 'center',
         justifyContent: 'center',
         ...asStyle(AS_TYPE.pill),
-        background: solid ? (accent ?? 'var(--accent-fg-emerald)') : 'var(--bg-card)',
+        background: solid ? (accent ?? 'var(--accent-fg-emerald)') : 'var(--shelf-surface)',
         color: solid ? 'var(--bg-base)' : 'var(--text-primary)',
         opacity: disabled ? 0.5 : 1,
       }}
