@@ -144,6 +144,30 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   // GitHub 目录订阅的子文档不单独同步，得对目录条目触发。这句必须原样到达用户——
   // 之前它挂在通用码 INVALID_FORMAT 上，被兜底文案吃成「操作未完成，请检查输入后重试」。
   ['GITHUB_CHILD_ENTRY_SYNC', '这篇文档由所属的 GitHub 目录订阅统一同步，请在该目录条目上触发同步。'],
+  // 下面这几个码的后端文案要么本身就是泛化的，要么带 HTTP 码这类诊断信息，统一用固定中文替换。
+  // 带具体信息的那几个（限额重置时刻、仓库名）不在这里登记——见 GITHUB_CODES_MAY_NAME_IDENTIFIERS。
+  ['GITHUB_UPSTREAM_ERROR', 'GitHub 服务暂时异常，请稍后重试。'],
+  ['GITHUB_OAUTH_NOT_CONFIGURED', '管理员尚未配置 GitHub 应用，暂时无法连接 GitHub，请联系管理员。'],
+  ['DEVICE_FLOW_TOKEN_INVALID', '本次授权会话已失效，请重新发起 GitHub 授权。'],
+  ['DEVICE_FLOW_EXPIRED', '配对码已超时失效，请重新发起 GitHub 授权。'],
+  ['DEVICE_FLOW_ACCESS_DENIED', '你在 GitHub 页面拒绝了授权，如需继续请重新发起。'],
+  ['DEVICE_FLOW_REQUEST_FAILED', 'GitHub 授权服务暂时不可用，请稍后重试。'],
+]);
+
+/**
+ * 允许文案里出现拉丁标识符的错误码。
+ *
+ * 净化器默认拒绝含拉丁标识符的后端文案（防止把上游异常原文透给用户）。但 GitHub 这几个码的
+ * 文案是我们自己写的，且**关键信息恰恰是标识符**：哪个仓库看不见、限额几点恢复。
+ * 一刀切拒掉的结果是全部退化成「请检查输入后重试」——用户既不知道是哪个仓库，也不知道要等多久。
+ * 其余护栏（中文、有恢复动作、无换行、无 JSON、无 HTTP 码 / URL / 密钥等诊断片段）仍然生效。
+ */
+const GITHUB_CODES_MAY_NAME_IDENTIFIERS = new Set([
+  'GITHUB_RATE_LIMITED',
+  'GITHUB_REPO_NOT_VISIBLE',
+  'GITHUB_FORBIDDEN',
+  'GITHUB_NOT_CONNECTED',
+  'GITHUB_TOKEN_EXPIRED',
 ]);
 
 function registeredUserFacingMessage(code: string, message: string): string | null {
@@ -222,7 +246,8 @@ function isSafeUserMessage(message: string, code: string): boolean {
     || isActionableInvalidFormatMessage(text, normalizedCode)
     || (!isRegisteredCode
       && isStableContractCode
-      && !containsUnregisteredTechnicalIdentifier
+      && (!containsUnregisteredTechnicalIdentifier
+        || GITHUB_CODES_MAY_NAME_IDENTIFIERS.has(normalizedCode))
       && messageContainsRecovery(text));
 }
 

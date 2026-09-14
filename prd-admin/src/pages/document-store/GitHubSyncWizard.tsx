@@ -128,7 +128,9 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
             <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>正在读取 GitHub 连接状态…</span>
           </div>
         ) : step === 'connect' ? (
-          <ConnectStep onConnected={() => { setError(''); setErrorCode(undefined); void loadAuth(); setStep('repo'); }}
+          <ConnectStep
+            oauthConfigured={auth?.oauthConfigured !== false}
+            onConnected={() => { setError(''); setErrorCode(undefined); void loadAuth(); setStep('repo'); }}
             onError={reportError} />
         ) : step === 'repo' ? (
           <RepoStep
@@ -221,7 +223,9 @@ function Header({ step, login, onClose, onSwitchAccount, switching }: {
 }
 
 /** 第一步：Device Flow 授权。全程显示 user code、剩余时间与当前状态，不留静止等待。 */
-function ConnectStep({ onConnected, onError }: {
+function ConnectStep({ oauthConfigured, onConnected, onError }: {
+  /** 管理员配没配 GitHub 应用。没配时点「连接」只会失败，得当场说清而不是让用户空点 */
+  oauthConfigured: boolean;
   onConnected: () => void;
   onError: (msg: string, code?: string) => void;
 }) {
@@ -331,6 +335,18 @@ function ConnectStep({ onConnected, onError }: {
             {phase === 'denied' ? '你在 GitHub 页面拒绝了授权。' : '配对码已超时失效。'}
           </div>
           <Button variant="primary" size="xs" onClick={() => { setPhase('idle'); void start(); }}>重新发起授权</Button>
+        </div>
+      ) : !oauthConfigured ? (
+        <div className="rounded-[12px] p-4"
+          style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-subtle)' }}>
+          <div className="flex items-center gap-1.5 text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-primary)' }}>
+            <AlertCircle size={13} style={{ color: 'var(--accent-fg-warning)' }} />
+            管理员尚未配置 GitHub 应用
+          </div>
+          <div className="text-[11.5px] leading-[1.7]" style={{ color: 'var(--text-muted)' }}>
+            连接 GitHub 需要管理员先在服务端配置 GitHub 应用的 Client ID 与密钥。
+            在此之前这一步无法完成——请联系管理员配置后再来。
+          </div>
         </div>
       ) : (
         <Button variant="primary" size="sm" onClick={() => void start()} disabled={starting}>

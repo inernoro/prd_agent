@@ -3,7 +3,33 @@
 | feat | prd-admin | 知识库新增 GitHub 同步向导：连接 GitHub → 选仓库分支 → 勾目录（所有 doc/docs 递归预勾）→ 开启同步 |
 | fix | prd-api | GitHub 目录同步改带用户 token 请求，支持私有仓并把限额从匿名 60/h 提到 5000/h |
 | fix | prd-api | GitHub 子条目去重键从 download_url 改为仓库内路径，避免私有仓临时 token 让同一文件每轮被判成新增+删除 |
-| docs | doc | 新增 design.knowledge-base.github-sync 设计文档，已知边界记入 debt.knowledge-base K-10 |
-| polish | prd-admin | GitHub 同步向导的目录树默认折叠，只展开通往已勾选目录的链路，几百个目录不再一次摊平 |
+| fix | prd-api | GitHub 子文档来源地址存稳定 blob 地址，不再把私有仓的临时凭据写进库和界面 |
 | fix | prd-api | 仓库目录扫描上限 600 提到 1500，本仓库 666 个候选目录不再一进来就是截断态 |
-| fix | prd-api | GitHub 目录同步的子文件不再被当普通 URL 订阅单独重拉，私有仓不会每天刷出一批假的同步失败 |
+| fix | prd-api | monorepo 的 packages/*/docs 纳入默认预勾——packages 是源码工作区不是依赖树 |
+| fix | prd-api | 目录规划器与同步引擎共用可导入后缀判据，杜绝「默认勾上却同步出 0 篇」 |
+| fix | prd-api | GitHub 目录同步的子文件不再被当普通 URL 订阅单独重拉，私有仓不会每天刷出一批假的同步失败；同步 worker 的认领查询本身就排除子文件，普通订阅不会被它们占满候选窗口 |
+| fix | prd-api | GitHub 目录同步的授权降级不再静默：条目盖过连接身份却解不出 token 时直接阻断并写清原因，不再退回匿名请求（私有仓因此只收到无法解释的 404） |
+| fix | prd-api | GitHub 目录同步单文件失败不再被吞：失败计入 diff，父条目标为部分失败并说明缺了哪几篇，已同步部分保留 |
+| fix | prd-api | GitHub 列目录失败改为可执行文案，区分「匿名访问私有仓」「授权失效」「无读取权限」「频率超限」四种情形 |
+| fix | prd-api | GitHub 限额判据收敛成 GitHubRateLimit 唯一定义（读 X-RateLimit-Remaining），403 限额耗尽不再被说成「拒绝访问」，429 也不再落到原始状态码文案 |
+| fix | prd-api | 手贴 URL 建订阅前先探连接可用性，已撤销的授权不再盖到公开仓订阅上；限额或组织策略导致的 403 不算撤销 |
+| fix | prd-api | 批量订阅收紧到空间所有者，与单条订阅、手动同步一致，不再建出同步不了也删不掉的订阅 |
+| fix | prd-api | 批量订阅写入阶段改用服务端令牌且计数回写移入 finally，浏览器中途关闭或某条插入失败都不会留下偏小的空间计数 |
+| fix | prd-api | 仓库列表 hasMore 按过滤前条数算，搜索时不再提前说「没有更多」 |
+| fix | prd-api | 子文档手动同步的引导语改用专属错误码，不再被前端通用兜底文案吃成「操作未完成」 |
+| fix | prd-admin | GitHub 目录父条目补上订阅面板入口（立即同步 / 暂停 / 同步日志），此前只有普通订阅条目才有 |
+| fix | prd-admin | GitHub 目录条目的同步失败在文件树图标与目录卡片上可见，并给出失败原因与「重试同步」 |
+| fix | prd-admin | GitHub 的错误指引不再被用户文案净化器吃成通用兜底：限额重置时刻、看不见的仓库名等关键信息原样到达用户 |
+| fix | prd-admin | GitHub 401 不再触发后台登出：第三方凭据失效与会话失效分开判 |
+| fix | prd-admin | GitHub 连接失效给出重连出口（错误条内重连 + 标题栏换个账号），不再卡在向导中间 |
+| fix | prd-admin | 管理员未配置 GitHub 应用时，向导当场说明而不是给一个点了必然失败的按钮 |
+| fix | prd-admin | 仓库列表支持加载更多，且搜索词变更后作废在途的那一发，列表不再混进不匹配的仓库 |
+| fix | prd-admin | 连点两个仓库时丢弃过期的分支响应，不再把上一个仓库的分支灌进选择器 |
+| fix | prd-admin | 勾选目录超过 50 个自动分批提交并显示批次进度，中途失败说明已开启多少 |
+| fix | prd-admin | 关闭向导后在途的授权请求与轮询一律停，不再泄漏计时器、也不会在用户离开后落连接并弹提示 |
+| polish | prd-admin | GitHub 同步向导的目录树默认折叠，只展开通往已勾选目录的链路，几百个目录不再一次摊平 |
+| polish | prd-admin | GitHub 同步向导按前端模态框硬约束改造：createPortal 挂 body、尺寸走 inline style、滚动容器 minHeight 0 |
+| test | prd-api | 新增凭据判据单测：连接断开 / token 失效 / 密文解不开一律阻断，不得退回匿名；已撤销的连接不许盖到手贴订阅上 |
+| test | prd-admin | 新增订阅入口与错误文案回归锁，含「挂通用码会退化」的对照用例 |
+| rule | platform | 判据与接线纪律新增形状 10「静默降级，把可诊断的失败变成不可诊断的失败」，并补回自查清单一直漏登的形状 5 |
+| docs | doc | 新增 design.knowledge-base.github-sync 设计文档（含降级不许静默的根因小节）；债务台账 K-10 按 L2 复测事实重写，新增 K-11（复测未覆盖项）、K-12（教程未覆盖）、K-13（同步期间不自动刷新）、K-14（批量订阅并发幂等需唯一索引） |

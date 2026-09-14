@@ -295,3 +295,36 @@ describe('toUserReadableErrorMessage', () => {
     expect(toUserReadableErrorMessage({ code, message: '内部诊断不得展示' }, options)).toBe(expected);
   });
 });
+
+describe('GitHub 错误契约', () => {
+  it.each([
+    ['GITHUB_RATE_LIMITED', 'GitHub 调用频率已达上限，请在 16:20:00 后重试'],
+    ['GITHUB_REPO_NOT_VISIBLE', '仓库 acme/site 不存在，或你的 GitHub 账号无权访问；请核对仓库地址，或重新连接 GitHub 账号并授予私有仓权限后重试'],
+    ['GITHUB_NOT_CONNECTED', '尚未连接 GitHub 账号，请先在知识库里连接后重试'],
+    ['GITHUB_TOKEN_EXPIRED', 'GitHub 连接已过期，请重新授权'],
+  ])('%s 的后端指引必须原样到达用户，不被通用兜底吃掉', (code, message) => {
+    // 这几条文案的关键信息恰恰是拉丁标识符（哪个仓库、几点恢复），
+    // 净化器一刀切拒掉的话，用户只会看到「请检查文件后重新上传」，既不知道等多久也不知道是哪个仓库。
+    const out = toUserReadableErrorMessage({ code, message }, options);
+    expect(out).toContain(message);
+    expect(out).not.toContain(options.fallbackMessage);
+  });
+
+  it('上游异常仍被替换成固定文案，不透传 HTTP 码', () => {
+    const out = toUserReadableErrorMessage(
+      { code: 'GITHUB_UPSTREAM_ERROR', message: 'GitHub API 异常（HTTP 502）' },
+      options,
+    );
+    expect(out).toBe('GitHub 服务暂时异常，请稍后重试。');
+    expect(out).not.toMatch(/HTTP|502/);
+  });
+
+  it('放行只针对登记过的 GitHub 契约码，别的码照旧兜底', () => {
+    const out = toUserReadableErrorMessage(
+      { code: 'SOME_NEW_CODE', message: 'GitHub acme/site 出错了，请重试' },
+      options,
+    );
+    expect(out).toContain(options.fallbackMessage);
+  });
+});
+

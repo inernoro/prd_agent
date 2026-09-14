@@ -97,7 +97,11 @@ public sealed class GitHubUserConnectionService
             using var client = CreateApiClient(token);
             using var resp = await client.GetAsync("user", ct);
             if (resp.IsSuccessStatusCode) return GitHubConnectionUsability.Usable;
-            return resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+
+            // 只有 401 能证明这把 token 不认了。403 不行：GitHub 把**限额耗尽**也报成 403，
+            // 组织的 SAML 策略同样报 403，两种情况下 token 都是好的。
+            // 把它们判成 Revoked，会让一条私有仓订阅永久退回匿名（而匿名读私有仓只会得到 404）。
+            return resp.StatusCode == HttpStatusCode.Unauthorized
                 ? GitHubConnectionUsability.Revoked
                 : GitHubConnectionUsability.Unknown;
         }
