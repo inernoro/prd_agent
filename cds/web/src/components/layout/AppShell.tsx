@@ -982,12 +982,18 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
           {center}
         </div>
       ) : null}
-      {/* 桌面端:动作按钮平铺。 */}
-      {right ? <div className="cds-topbar-actions hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
+      {/* 桌面端:动作按钮平铺，**永远贴右**。
+          `ml-auto` 不能省：left 槽在桌面端是 md:flex-none（不撑开），没有 center 的页面
+          就没有任何东西把动作推到右边，于是「刷新 / 添加 XX」会紧挨着面包屑堆在左上角。
+          用户 2026-09-14 原话：「添加按钮要在右侧，主动操作按钮都在右上角哦，不要堆积在
+          左上角，这是用户心智问题」——左上是「我在哪」，右上是「我要做什么」，
+          两者挤在一起，读者每次都得重新分辨哪个是标题哪个是按钮。
+          有 center 的页面 center 自己 md:flex-1 会吃掉空白，这里的 ml-auto 无副作用。 */}
+      {right ? <div className="cds-topbar-actions ml-auto hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
       {/* 手机端:动作收进 ⋮ 溢出菜单,点开是竖向 action sheet —— 真正的移动端形态,
           而非把一排 PC 工具栏按钮硬塞进窄屏。 */}
       {right ? (
-        <div className="md:hidden">
+        <div className="ml-auto md:hidden">
           <button
             ref={kebabRef}
             type="button"

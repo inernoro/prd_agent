@@ -21,6 +21,8 @@ import {
   buildAttribution,
   buildBusinessRows,
   buildOwnerBoard,
+  buildGlobalBoard,
+  buildProjectRows,
   defaultEnvironments,
   describeEvidence,
   describeRow,
@@ -522,5 +524,74 @@ describe('环境缩写要认得出来', () => {
     expect(ENVIRONMENT_SHORT.staging).not.toBe(ENVIRONMENT_SHORT.preview);
     // 两个字是下限：单字的「支」「他」没人认得
     for (const v of Object.values(ENVIRONMENT_SHORT)) expect(v.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/*
+ * W6 全局面板：跨项目一屏。
+ *
+ * 它要回答的是单项目视角永远给不出的那个问题——**哪些项目根本没人盯**。
+ * 站在某一个项目里，你看不见另外十个项目的业务没有任何监控。
+ */
+describe('全局面板', () => {
+  const ctx = { now: NOW, prober: { stalled: false, lastCycleAt: NOW } };
+  const biz = (project: string, name: string, over: Partial<UptimeTargetSummary> = {}): UptimeTargetSummary =>
+    target({ name, environment: 'production', projectId: project, projectName: project,
+      lastSample: { t: NOW - 10_000, up: true, ms: 50 }, intervalSeconds: 300, ...over });
+  const infraOf = (project: string): UptimeTargetSummary =>
+    infra({ name: `${project} 容器`, environment: 'production', projectId: project, projectName: project } as never);
+
+  it('没有业务监控的项目算 unknown，不算正常', () => {
+    const rows = buildProjectRows([infraOf('P空')], NOW);
+    expect(rows[0].businessCount).toBe(0);
+    // 「没人盯」被渲染成绿色，等于用一个假绿把最该管的项目藏起来
+    expect(rows[0].worst).not.toBe('up');
+    expect(rows[0].worst).toBe('unknown');
+  });
+
+  it('把没人盯的项目单独拎出来，并在每一档结论里都说一次', () => {
+    const board = buildGlobalBoard([biz('A', 'a1'), infraOf('B'), infraOf('C')], ctx);
+    expect(board.unwatched.map((r) => r.id).sort()).toEqual(['B', 'C']);
+    expect(board.projectsWithBusiness).toBe(1);
+    expect(board.detail).toContain('2 个项目还没有业务监控');
+    expect(board.detail).toContain('不会红');
+  });
+
+  it('一个项目都没装业务监控时，结论直说这件事', () => {
+    const board = buildGlobalBoard([infraOf('A'), infraOf('B')], ctx);
+    expect(board.headline).toContain('还没有任何一个项目装了业务监控');
+    expect(board.tone).toBe('empty');
+  });
+
+  it('有故障时先说故障，但仍然带着「没人盯」那句', () => {
+    const board = buildGlobalBoard([biz('A', 'a1', { status: 'down' }), infraOf('B')], ctx);
+    expect(board.headline).toContain('挂了');
+    expect(board.tone).toBe('danger');
+    expect(board.detail).toContain('还没有业务监控');
+  });
+
+  it('探测器停摆盖过一切，包括故障', () => {
+    const board = buildGlobalBoard([biz('A', 'a1', { status: 'down' })],
+      { now: NOW, prober: { stalled: true, lastCycleAt: NOW - 3_600_000 } });
+    expect(board.headline).toContain('探测器停摆');
+    expect(board.headline).not.toContain('挂了');
+  });
+
+  it('全好时结论带证据，而且只要还有项目没人盯就不判 ok', () => {
+    const withBlind = buildGlobalBoard([biz('A', 'a1'), infraOf('B')], ctx);
+    expect(withBlind.headline).toContain('检查过');
+    expect(withBlind.tone).toBe('warn');
+
+    const clean = buildGlobalBoard([biz('A', 'a1')], ctx);
+    expect(clean.tone).toBe('ok');
+    expect(clean.detail).toBeUndefined();
+  });
+
+  it('有事的项目排前面', () => {
+    const rows = buildProjectRows([
+      biz('好', 'ok1'), biz('好', 'ok2'),
+      biz('坏', 'bad1', { status: 'down' }),
+    ], NOW);
+    expect(rows[0].id).toBe('坏');
   });
 });

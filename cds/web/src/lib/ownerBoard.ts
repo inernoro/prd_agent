@@ -591,6 +591,162 @@ export function buildOwnerBoard(
   };
 }
 
+/**
+ * 全局面板：跨项目一屏。
+ *
+ * 单项目视角回答「我这个项目今天怎么样」；全局视角要回答的是另一个问题——
+ * **「哪个项目有事，以及哪些项目根本没人盯」**。后者是全局独有的：
+ * 站在某一个项目里，你永远看不见另外十个项目的业务没有任何监控。
+ *
+ * 这也是这条链最开始那个问题的放大版：容器全绿不代表业务能用；
+ * 一个项目连业务监控都没有，那它的业务坏了，这一屏根本不会红。
+ */
+export interface ProjectRow {
+  id: string;
+  name: string;
+  /** 这个项目有几条业务监控。0 = 没人盯 */
+  businessCount: number;
+  /** 最差档。没有业务监控时是 unknown —— 不是 up，「没盯」不等于「没事」 */
+  worst: CellHealth;
+  down: number;
+  overdue: number;
+  stale: number;
+  /** 这个项目的证据短板（最旧一次检查）。一条都没检查过时没有 */
+  evidence?: BoardEvidence;
+  /** 覆盖到哪几个环境 */
+  environments: MonitorEnvironment[];
+}
+
+export function buildProjectRows(targets: ReadonlyArray<UptimeTargetSummary>, now: number): ProjectRow[] {
+  const byId = new Map<string, { name: string; targets: UptimeTargetSummary[] }>();
+  for (const target of targets) {
+    if (!target.projectId) continue;
+    const entry = byId.get(target.projectId) || { name: target.projectName || target.projectId, targets: [] };
+    if (!entry.name && target.projectName) entry.name = target.projectName;
+    entry.targets.push(target);
+    byId.set(target.projectId, entry);
+  }
+
+  const rows: ProjectRow[] = [];
+  for (const [id, entry] of byId) {
+    const business = buildBusinessRows(entry.targets, now);
+    const cells = business.flatMap((r) => r.cells);
+    rows.push({
+      id,
+      name: entry.name,
+      businessCount: business.length,
+      // 没有业务监控 = unknown，不是 up。这条是整块的立足点：
+      // 「没人盯」被渲染成绿色，就等于用一个假绿把最该管的项目藏起来了。
+      worst: business.length === 0 ? 'unknown' : worstOf(cells),
+      down: business.filter((r) => r.worst === 'down').length,
+      overdue: business.filter((r) => r.worst === 'overdue').length,
+      stale: business.filter((r) => r.worst === 'stale').length,
+      ...(latestEvidence(business, now) ? { evidence: latestEvidence(business, now) } : {}),
+      environments: ENVIRONMENT_ORDER.filter((env) => cells.some((c) => c.environment === env)),
+    });
+  }
+
+  // 有事的排前面；同档按「业务多的在前」，再按名字。没人盯的沉到最后单独说。
+  return rows.sort((a, b) =>
+    SEVERITY[a.worst] - SEVERITY[b.worst]
+    || b.businessCount - a.businessCount
+    || a.name.localeCompare(b.name));
+}
+
+export interface GlobalBoard {
+  headline: string;
+  detail?: string;
+  tone: 'danger' | 'warn' | 'ok' | 'empty';
+  rows: ProjectRow[];
+  /** 一条业务监控都没有的项目。全局视角独有的那个事实。 */
+  unwatched: ProjectRow[];
+  /** 全局证据短板 */
+  evidence?: BoardEvidence;
+  projectsWithBusiness: number;
+  businessTotal: number;
+}
+
+export function buildGlobalBoard(
+  targets: ReadonlyArray<UptimeTargetSummary>,
+  ctx: OwnerBoardContext,
+): GlobalBoard {
+  const now = ctx.now;
+  const all = buildProjectRows(targets, now);
+  const watched = all.filter((r) => r.businessCount > 0);
+  const unwatched = all.filter((r) => r.businessCount === 0);
+  const businessTotal = watched.reduce((n, r) => n + r.businessCount, 0);
+  const evidence = latestEvidence(buildBusinessRows(targets, now), now);
+  const base = { rows: watched, unwatched, projectsWithBusiness: watched.length, businessTotal, ...(evidence ? { evidence } : {}) };
+
+  // 「还有 N 个项目没人盯」这句话不分档，每一档都要带上——它是全局视角存在的理由。
+  const blind = unwatched.length > 0
+    ? `另有 ${unwatched.length} 个项目还没有业务监控：${unwatched.slice(0, 4).map((r) => r.name).join('、')}${unwatched.length > 4 ? ' 等' : ''} —— 它们的业务坏了，这一屏不会红`
+    : undefined;
+
+  if (ctx.prober?.stalled) {
+    return {
+      headline: '探测器停摆了，下面所有结论都不作数',
+      detail: ctx.prober.lastCycleAt
+        ? `上一轮探测在 ${formatRelative(ctx.prober.lastCycleAt, now)} —— 在它恢复之前，这一屏的绿灯只是旧闻`
+        : '探测器一轮都没跑完',
+      tone: 'danger',
+      ...base,
+    };
+  }
+
+  if (watched.length === 0) {
+    return {
+      headline: '还没有任何一个项目装了业务监控',
+      detail: unwatched.length > 0
+        ? `${unwatched.length} 个项目都只盯着容器与端口 —— 它们全绿只说明服务活着，不说明业务还能用`
+        : '这个实例还没有任何项目',
+      tone: 'empty',
+      ...base,
+    };
+  }
+
+  const bad = watched.filter((r) => r.down > 0);
+  if (bad.length > 0) {
+    const first = bad[0];
+    return {
+      headline: bad.length === 1
+        ? `${first.name} 有 ${first.down} 项业务挂了`
+        : `${bad.length} 个项目有业务故障，共 ${bad.reduce((n, r) => n + r.down, 0)} 项`,
+      detail: blind,
+      tone: 'danger',
+      ...base,
+    };
+  }
+
+  const late = watched.filter((r) => r.overdue > 0);
+  if (late.length > 0) {
+    return {
+      headline: `${late.reduce((n, r) => n + r.overdue, 0)} 项业务早该被检查却没有，它们的绿灯不作数`,
+      detail: [`分布在 ${late.map((r) => r.name).join('、')}`, blind].filter(Boolean).join('；'),
+      tone: 'warn',
+      ...base,
+    };
+  }
+
+  const idle = watched.filter((r) => r.stale > 0);
+  if (idle.length > 0) {
+    return {
+      headline: `${idle.reduce((n, r) => n + r.stale, 0)} 项业务最近没有真实调用，它们的绿灯不作数`,
+      detail: [`分布在 ${idle.map((r) => r.name).join('、')}`, blind].filter(Boolean).join('；'),
+      tone: 'warn',
+      ...base,
+    };
+  }
+
+  const proof = evidence ? `每一条都在 ${formatDuration(now - evidence.at)}内检查过` : '但还没有任何一条真的被检查过';
+  return {
+    headline: `${watched.length} 个项目的 ${businessTotal} 项业务都正常，${proof}`,
+    detail: blind,
+    tone: unwatched.length > 0 ? 'warn' : 'ok',
+    ...base,
+  };
+}
+
 // ── 作用域：项目 × 环境 ──
 
 export interface ProjectOption {

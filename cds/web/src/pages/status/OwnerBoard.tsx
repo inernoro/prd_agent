@@ -17,9 +17,11 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { DiscoveryStrip } from './DiscoveryStrip';
 import { AvailabilityBar } from './primitives';
-import { formatRelative } from '@/lib/monitorCenter';
+import { formatDuration, formatRelative } from '@/lib/monitorCenter';
 import type { AlarmChannelView, MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
+  ENVIRONMENT_SHORT,
+  buildGlobalBoard,
   buildOwnerBoard,
   describeEvidence,
   describeRow,
@@ -31,6 +33,7 @@ import {
   type BusinessRow,
   type CellHealth,
   type OwnerScope,
+  type ProjectRow,
   type ProjectOption,
 } from '@/lib/ownerBoard';
 
@@ -220,6 +223,62 @@ function NeedsProjectRow({ icon: Icon, title, what, projects, onPick }: {
   );
 }
 
+/**
+ * 全局视角的一张项目卡。
+ *
+ * 与业务卡的分工：业务卡回答「这条业务怎么样」，项目卡回答「这个项目要不要我管」。
+ * 所以它端出来的是**计数与短板**，不是某一条的可用率——把六条业务的可用率平均成
+ * 一个数是没有意义的（一条挂了九条好着，平均数只会把那一条藏起来）。
+ */
+function ProjectCard({ row, now, onOpen }: { row: ProjectRow; now: number; onOpen: (projectId: string) => void }): JSX.Element {
+  const trouble = row.down + row.overdue + row.stale;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(row.id)}
+      className={cn(
+        'group flex min-w-0 flex-col gap-2 rounded-lg border p-3 text-left transition-all hover:-translate-y-px hover:shadow-sm',
+        CARD_TONE[row.worst],
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT_TONE[row.worst])} />
+        <span className="truncate text-[0.8125rem] font-medium text-foreground">{row.name}</span>
+        <div className="ml-auto flex shrink-0 gap-1">
+          {row.environments.map((env) => (
+            <span key={env} className="rounded border border-[hsl(var(--hairline))] px-1 font-mono text-[0.625rem] leading-4 text-muted-foreground">
+              {ENVIRONMENT_SHORT[env]}
+            </span>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-start gap-5">
+        <Stat value={`${row.businessCount}`} label="业务监控" />
+        <Stat
+          value={`${trouble}`}
+          label="要处理"
+          tone={trouble > 0 ? (row.down > 0 ? 'text-destructive' : 'text-warn') : 'text-muted-foreground'}
+        />
+      </div>
+
+      <div className={cn(
+        'truncate text-[0.6875rem]',
+        row.worst === 'down' ? 'text-destructive' : row.worst === 'up' ? 'text-muted-foreground' : 'text-warn',
+      )}>
+        {row.down > 0 ? `${row.down} 项挂了`
+          : row.overdue > 0 ? `${row.overdue} 项早该检查却没有`
+            : row.stale > 0 ? `${row.stale} 项窗口内没人用过`
+              : `${row.businessCount} 项都通过判据`}
+      </div>
+
+      <div className="truncate border-t border-[hsl(var(--hairline))] pt-2 font-mono text-[0.625rem] text-muted-foreground/80">
+        {row.evidence ? `最旧一条在 ${formatDuration(now - row.evidence.at)}前检查过（${row.evidence.name}）` : '还没有检查记录'}
+      </div>
+    </button>
+  );
+}
+
 const DOT_TONE: Record<CellHealth, string> = {
   down: 'bg-destructive',
   overdue: 'bg-warn',
@@ -338,6 +397,18 @@ export function OwnerBoard({
     () => buildOwnerBoard(scoped, projectTargets, { now, prober }),
     [scoped, projectTargets, now, prober],
   );
+  /**
+   * 没选项目 = 全局视角。
+   *
+   * 「全部项目」原先把所有项目的业务卡拍平成一堵墙——项目一多就读不动，
+   * 而且它恰恰答不出全局独有的那个问题：**哪些项目根本没人盯**。
+   * 同一个选择器，选了就看业务、没选就看项目，不另开入口。
+   */
+  const global_ = useMemo(
+    () => (scope.projectId ? null : buildGlobalBoard(scoped, { now, prober })),
+    [scope.projectId, scoped, now, prober],
+  );
+  const headline = global_ ?? board;
 
   const activeEnvs = new Set(scope.environments ?? environments);
   /**
@@ -395,7 +466,7 @@ export function OwnerBoard({
     [scoped],
   );
 
-  const BannerIcon = BANNER_ICON[board.tone];
+  const BannerIcon = BANNER_ICON[global_?.tone ?? board.tone];
 
   return (
     <div className="flex min-h-0 flex-col gap-3 lg:h-full">
@@ -462,17 +533,17 @@ export function OwnerBoard({
       </div>
 
       {/* 结论：只说要不要管 */}
-      <div className={cn('flex items-start gap-3 rounded-lg border px-3.5 py-3', BANNER_TONE[board.tone])}>
+      <div className={cn('flex items-start gap-3 rounded-lg border px-3.5 py-3', BANNER_TONE[headline.tone])}>
         <BannerIcon className="mt-0.5 h-4 w-4 shrink-0" />
         <div className="flex min-w-0 flex-col gap-1">
-          <div className="text-sm font-semibold leading-5">{board.headline}</div>
-          {board.detail ? <div className="text-xs leading-5 opacity-90">{board.detail}</div> : null}
+          <div className="text-sm font-semibold leading-5">{headline.headline}</div>
+          {headline.detail ? <div className="text-xs leading-5 opacity-90">{headline.detail}</div> : null}
         </div>
       </div>
 
       {/* 业务网格 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span className="text-[0.8125rem] font-medium">我盯的业务</span>
+        <span className="text-[0.8125rem] font-medium">{global_ ? '我盯的项目' : '我盯的业务'}</span>
         <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary-ink">
           <ArrowRight className="h-3 w-3" />主动
           <span className="text-muted-foreground">定时真发一次，有产物</span>
@@ -486,7 +557,41 @@ export function OwnerBoard({
         </button>
       </div>
 
-      {board.rows.length > 0 ? (
+      {global_ ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
+          {global_.rows.length > 0 ? (
+            <div className="grid auto-rows-min gap-2.5 md:grid-cols-2 xl:grid-cols-3">
+              {global_.rows.map((row) => (
+                <ProjectCard key={row.id} row={row} now={now} onOpen={(id) => onScope({ ...scope, projectId: id })} />
+              ))}
+            </div>
+          ) : null}
+          {/* 没人盯的项目单独一块，而且不许用绿色壳子装 —— 它们不是「好着」，是「不知道」。
+              这是全局视角存在的理由：站在某一个项目里永远看不见这件事。 */}
+          {global_.unwatched.length > 0 ? (
+            <div className="rounded-lg border border-dashed border-warn/40 bg-warn-soft/20 p-3">
+              <div className="text-[0.8125rem] font-medium text-foreground">
+                {global_.unwatched.length} 个项目还没有业务监控
+              </div>
+              <div className="mt-1 text-[0.6875rem] leading-5 text-muted-foreground">
+                它们只盯着容器与端口 —— 全绿只说明服务活着，不说明业务还能用。点一个项目进去就能给它加第一条。
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {global_.unwatched.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    onClick={() => onScope({ ...scope, projectId: row.id })}
+                    className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-warn/60"
+                  >
+                    {row.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : board.rows.length > 0 ? (
         <div className="grid min-h-0 flex-1 auto-rows-min gap-2.5 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
           {board.rows.map((row) => <BusinessCard key={row.key} row={row} now={now} onOpen={onOpenTarget} />)}
         </div>
