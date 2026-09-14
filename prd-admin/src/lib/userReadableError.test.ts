@@ -310,6 +310,17 @@ describe('GitHub 错误契约', () => {
     expect(out).not.toContain(options.fallbackMessage);
   });
 
+  it.each([
+    // 这两条走的是 ThrowIfErrorAsync / Forbidden() 工厂，不是 RepoNotVisible 工厂——
+    // 上一轮的用例只覆盖了后者，于是「已放行」在真实路径上并不成立（净化器的恢复动作判据仍会挡掉）。
+    ['GITHUB_REPO_NOT_VISIBLE', '读取 acme/site@main 目录树失败：可能是仓库或分支不存在，也可能是这个 GitHub 账号无权访问；请核对地址，或重新连接 GitHub 账号并授予私有仓权限后重试'],
+    ['GITHUB_FORBIDDEN', 'GitHub 拒绝访问该资源，请确认这个 GitHub 账号对该仓库有读取权限后重试'],
+  ])('%s 走真实抛出路径时也必须原样到达用户', (code, message) => {
+    const out = toUserReadableErrorMessage({ code, message }, options);
+    expect(out).toContain(message);
+    expect(out).not.toContain(options.fallbackMessage);
+  });
+
   it('上游异常仍被替换成固定文案，不透传 HTTP 码', () => {
     const out = toUserReadableErrorMessage(
       { code: 'GITHUB_UPSTREAM_ERROR', message: 'GitHub API 异常（HTTP 502）' },

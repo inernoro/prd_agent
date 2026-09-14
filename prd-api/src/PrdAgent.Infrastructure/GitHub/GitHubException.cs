@@ -92,7 +92,8 @@ public class GitHubException : Exception
             $"仓库 {owner}/{repo} 可见，但 PR #{number} 不存在");
 
     public static GitHubException Forbidden() =>
-        new(GitHubErrorCodes.GITHUB_FORBIDDEN, 403, "GitHub 拒绝访问该资源");
+        new(GitHubErrorCodes.GITHUB_FORBIDDEN, 403,
+            "GitHub 拒绝访问该资源，请确认这个 GitHub 账号对该仓库有读取权限后重试");
 
     public static GitHubException RateLimited(string? retryAfter) =>
         new(GitHubErrorCodes.GITHUB_RATE_LIMITED, 429,

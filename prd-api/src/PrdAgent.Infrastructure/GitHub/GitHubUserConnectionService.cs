@@ -324,7 +324,12 @@ public sealed class GitHubUserConnectionService
                     throw GitHubException.RateLimited(GitHubRateLimit.ResetHint(resp));
                 throw GitHubException.Forbidden();
             case HttpStatusCode.NotFound:
-                throw new GitHubException(GitHubErrorCodes.GITHUB_REPO_NOT_VISIBLE, 404, message);
+                // 必须带下一步动作：GitHub 对无权访问的私有仓也返回 404，而且前端的用户文案净化器
+                // 会把「没有可执行动作」的消息换成通用兜底，那样这句就等于没说。
+                throw new GitHubException(
+                    GitHubErrorCodes.GITHUB_REPO_NOT_VISIBLE, 404,
+                    $"{message}：可能是仓库或分支不存在，也可能是这个 GitHub 账号无权访问；"
+                    + "请核对地址，或重新连接 GitHub 账号并授予私有仓权限后重试");
             case (HttpStatusCode)429:
                 throw GitHubException.RateLimited(GitHubRateLimit.ResetHint(resp));
             default:

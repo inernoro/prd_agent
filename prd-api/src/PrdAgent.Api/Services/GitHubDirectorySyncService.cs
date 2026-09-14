@@ -445,17 +445,25 @@ public class GitHubDirectorySyncService
         string owner, string repo, string path, string branch, Matcher? matcher,
         string? accessToken, CancellationToken ct)
     {
-        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{path}?ref={Uri.EscapeDataString(branch)}";
+        // 路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串，
+        // 结果是扫描器列得出来的目录，同步时打到另一个地址上必然失败。
+        var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
+        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{safePath}?ref={Uri.EscapeDataString(branch)}";
 
         using var request = BuildApiRequest(url, accessToken);
         var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
+            // 上游正文只进服务端日志：它会被 worker 存进 SyncError 并原样渲染在目录卡片上，
+            // 里面是协议 JSON 与文档链接，对用户既不可读也不可行动（external-cause-first）。
+            _logger.LogWarning(
+                "[GitHubSync] List {Owner}/{Repo}/{Path}@{Branch} failed: status={Status} body={Body}",
+                owner, repo, path, branch, (int)response.StatusCode, body);
             // 限额判定交给共用的 GitHubRateLimit（看 X-RateLimit-Remaining 头），
             // 不再自己在正文里找 "rate limit" 字样——同一件事两份判据必然漂（形状 3）。
             throw new Exception(DescribeListFailure(
-                response.StatusCode, body, accessToken, owner, repo, path, branch,
+                response.StatusCode, accessToken, owner, repo, path, branch,
                 rateLimited: GitHubRateLimit.IsExhausted(response),
                 resetHint: GitHubRateLimit.ResetHint(response)));
         }
@@ -552,7 +560,7 @@ public class GitHubDirectorySyncService
     /// 否则用户看到的就是一句无法行动的 "Not Found"。
     /// </summary>
     private static string DescribeListFailure(
-        System.Net.HttpStatusCode status, string body, string? accessToken,
+        System.Net.HttpStatusCode status, string? accessToken,
         string owner, string repo, string path, string branch,
         bool rateLimited = false, string? resetHint = null)
     {
@@ -581,7 +589,8 @@ public class GitHubDirectorySyncService
                 "GitHub 授权已失效，请在知识库里重新连接 GitHub 账号后再试。",
             System.Net.HttpStatusCode.Forbidden =>
                 $"GitHub 拒绝访问 {target}：请确认该 GitHub 账号对此仓库有读取权限。",
-            _ => $"GitHub API 返回 {status}: {body}",
+            // 未分类的状态码（422 / 5xx 等）：只给可行动的一句，正文已经进了服务端日志
+            _ => $"GitHub 读取 {target} 失败（状态 {(int)status}），请稍后重试；若持续失败请联系管理员查看服务端日志。",
         };
     }
 

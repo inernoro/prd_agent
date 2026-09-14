@@ -19,12 +19,24 @@ public static class GitHubRateLimit
         return first != null && int.TryParse(first, out var r) && r == 0;
     }
 
-    /// <summary>限额重置时刻（本地时间 HH:mm:ss）；拿不到就返回 null，由调用方退回泛化文案。</summary>
+    /// <summary>
+    /// 还要等多久（「约 12 分钟」）；拿不到就返回 null，由调用方退回泛化文案。
+    ///
+    /// 给的是**时长**不是时刻：服务端镜像不配时区，格式化出来的 HH:mm:ss 是容器的 UTC 时间，
+    /// 而用户在 UTC+8 看到的就是一个差了八小时的「请在 X 点后重试」。时长没有时区，谁读都对。
+    /// </summary>
     public static string? ResetHint(HttpResponseMessage resp)
     {
         if (!resp.Headers.TryGetValues("X-RateLimit-Reset", out var reset)) return null;
         var first = reset.FirstOrDefault();
         if (first == null || !long.TryParse(first, out var unix)) return null;
-        return DateTimeOffset.FromUnixTimeSeconds(unix).ToLocalTime().ToString("HH:mm:ss");
+
+        var remaining = DateTimeOffset.FromUnixTimeSeconds(unix) - DateTimeOffset.UtcNow;
+        if (remaining <= TimeSpan.Zero) return "约 1 分钟";
+
+        var minutes = (int)Math.Ceiling(remaining.TotalMinutes);
+        return minutes >= 60
+            ? $"约 {minutes / 60} 小时 {minutes % 60} 分钟"
+            : $"约 {minutes} 分钟";
     }
 }
