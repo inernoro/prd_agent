@@ -76,6 +76,7 @@ const SpeechAgentCreatePage = lazy(() => import('@/pages/speech-agent').then(m =
 const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentEditorPage })));
 const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
+const ModelLeaderboardPage = lazy(() => import('@/pages/model-leaderboard/ModelLeaderboardPage'));
 const DataSyncPage = lazy(() => import('@/pages/data-sync/DataSyncPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
@@ -375,6 +376,24 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'toolbox',
       appKey: 'review-agent',
       tags: ['评审', '产品', 'PRD'],
+    },
+  },
+  {
+    path: '/model-leaderboard',
+    // 全员可见（用户 2026-09-14 定）：榜单是 arena.ai 的公开数据，
+    // 不含本站调用量或成本这类经营信息，只要求登录。
+    permission: 'access',
+    element: shellGuarded('access', <ModelLeaderboardPage />),
+    nav: {
+      label: '模型排行榜',
+      shortLabel: '模型榜',
+      description: '业界模型怎么排：Agent / 代码 / 文档 / 视觉 / 生图 五个公开分榜，每天同步',
+      icon: 'Trophy',
+      section: 'toolbox',
+      appKey: 'model-leaderboard',
+      tags: ['模型', '排行榜', 'arena', '评测', '选型'],
+      // 规则 #9：新功能先带 wip，等真人在预览域名验收过再转正式
+      wip: true,
     },
   },
   {

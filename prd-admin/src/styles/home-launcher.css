@@ -42,22 +42,116 @@
 
 .home-desk-status-gap { flex: 1; min-width: 12px; }
 
-/* 教程承接卡在状态栏里脱掉外壳：只留进度环与文字，不再是第四种容器 */
-.home-desk-status-learning { flex-shrink: 0; }
+/* 模型榜挂件（原先这里是教程徽章环，教程已挪进左下角头像菜单）。
+   保持状态栏一贯的等宽小字调性：只加一层极轻的描边把它从纯文字里拎出来，
+   不引入第四种容器。 */
+.home-desk-status-rank { flex-shrink: 0; min-width: 0; }
 
-.home-desk-status-learning .home-learning-center {
-  width: auto;
-  padding: 0 !important;
-  gap: 8px;
-  background: none;
-  border: 0;
-  backdrop-filter: none !important;
-  -webkit-backdrop-filter: none !important;
+.home-model-rank {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 100%;
+  padding: 5px 9px 5px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-card);
+  cursor: pointer;
+  transition: background 180ms, border-color 180ms;
+}
+.home-model-rank:hover { background: var(--bg-card-hover); }
+.home-model-rank:focus-visible { outline: 2px solid var(--accent-gold); outline-offset: 2px; }
+
+/* 实时点：数据新鲜时呼吸，陈旧时变灰且不动——绝不让绿点挂在三天前的数据上 */
+.home-model-rank-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--semantic-success-text);
+  animation: homeModelRankPulse 2.4s ease-out infinite;
+}
+.home-model-rank-dot.is-stale {
+  background: var(--text-muted);
+  animation: none;
+}
+@keyframes homeModelRankPulse {
+  0%   { box-shadow: 0 0 0 0 rgba(79, 168, 139, 0.45); }
+  70%  { box-shadow: 0 0 0 6px rgba(79, 168, 139, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(79, 168, 139, 0); }
 }
 
-.home-desk-status-learning .home-learning-center:hover { background: none; border: 0; }
-.home-desk-status-learning .home-learning-center > div:first-child { width: 30px; height: 30px; }
-.home-desk-status-learning .home-learning-center svg { width: 30px; height: 30px; }
+.home-model-rank-slot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  transition: opacity 340ms ease, transform 340ms ease;
+}
+.home-model-rank-slot.is-swapping { opacity: 0; transform: translateY(-5px); }
+
+.home-model-rank-no {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  color: var(--accent-gold);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-model-rank-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--nested-block-bg);
+  color: var(--text-muted);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.home-model-rank-mark.is-lead {
+  border-color: var(--accent-gold);
+  color: var(--accent-gold);
+  background: transparent;
+}
+
+.home-model-rank-name {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-model-rank-score {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.home-model-rank-tag {
+  flex: 0 0 auto;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-subtle);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.home-model-rank-arrow { flex: 0 0 auto; color: var(--text-muted); }
+
+@media (prefers-reduced-motion: reduce) {
+  .home-model-rank-dot { animation: none; }
+  .home-model-rank-slot { transition: none; }
+}
 
 .home-desk-greet-row {
   display: flex;
@@ -598,7 +692,7 @@
 @media (max-width: 1023px) {
   .home-desk-deck-body { grid-template-columns: minmax(0, 1fr); }
   .home-desk-col--feed { border-left: 0; border-top: 1px solid var(--border-subtle); }
-  .home-desk-status-learning { display: none; }
+  .home-desk-status-rank { display: none; }
 }
 
 @media (max-width: 767px) {

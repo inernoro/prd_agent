@@ -467,6 +467,19 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Inf
 // 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
 builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
 
+// 模型排行榜：每天把 arena.ai 的公开榜单同步进本地库，页面只读库不打外站。
+// 超时给到 30 秒：榜单页是服务端渲染的大页面（agent 榜约 1.8MB、text 榜约 5.4MB），
+// 按 AiNews 那 8 秒配会稳定超时。出站仍走 SafeOutboundHttpHandler，不绕开 SSRF 防护。
+builder.Services.AddHttpClient(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker.HttpClientName, c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PrdAgent-ModelLeaderboard/1.0");
+})
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+// 只在权威部署上跑：快照是共享库里的全局单行状态，多个分支预览同时写会互相覆盖。
+builder.Services.AddHostedService<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker>();
+
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，ASR/vision 统一走 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
 // MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）。
