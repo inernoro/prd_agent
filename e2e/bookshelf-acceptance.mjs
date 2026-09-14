@@ -156,6 +156,51 @@ for (const theme of ['dark', 'light']) {
   await ctx.close();
 }
 
+// 守卫：手机端左右留白必须相等。
+// 2026-09-14 用户一眼看出「歪歪扭扭」，量出来是左 12 / 右 44 —— 根容器用 w-full 配负
+// margin，宽度没跟着补回来，整块被往左拽了 32px。这种偏移人眼一看就别扭，却没有任何
+// 判据在管，只能等人肉发现。现在量真实 boundingRect，偏差超过 2px 就红。
+{
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2,
+  });
+  const page = await ctx.newPage();
+  await page.addInitScript(() => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({
+      state: {
+        isAuthenticated: true,
+        user: { id: 'e2e', username: 'e2e', displayName: '验收' },
+        token: 'e2e-token', refreshToken: null, sessionKey: null,
+        permissions: ['access'], permissionsLoaded: true, isRoot: true, menuCatalog: [],
+      }, version: 0,
+    }));
+    localStorage.removeItem('bookshelf-progress');
+  });
+  await page.goto(`http://127.0.0.1:${PORT}/bookshelf`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('h1:has-text("算你有福了")', { timeout: 20000 });
+  await page.waitForTimeout(800);
+  const g = await page.evaluate(() => {
+    const probe = (el) => {
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return { left: Math.round(r.left), right: Math.round(window.innerWidth - r.right) };
+    };
+    return {
+      标题: probe(document.querySelector('h1')),
+      正文: probe(document.querySelector('h1')?.nextElementSibling),
+      溢出: document.documentElement.scrollWidth > window.innerWidth + 1,
+    };
+  });
+  const even = (x) => x && Math.abs(x.left - x.right) <= 2;
+  const pass = even(g.标题) && even(g.正文) && !g.溢出;
+  if (!pass) allOk = false;
+  console.log('');
+  console.log('[手机端版式]');
+  console.log(`  ${pass ? '通过' : '未通过'}  左右留白相等（标题 左${g.标题?.left}/右${g.标题?.right}，正文 左${g.正文?.left}/右${g.正文?.right}，横向溢出=${g.溢出}）`);
+  await page.screenshot({ path: `${OUT}/05-mobile-gutter.png` });
+  await ctx.close();
+}
+
 // 守卫：上游返回畸形（缺 error 键的旧格式）时，看板降级但书单不许被带走。
 apiShape = 'legacy';
 {

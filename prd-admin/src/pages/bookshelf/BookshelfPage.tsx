@@ -156,7 +156,16 @@ export default function BookshelfPage() {
 
   return (
     <div
-      className="w-full min-h-full -m-4 sm:-m-6 p-5 sm:p-8"
+      /*
+       * 手机档走全出血（w-screen + 负 margin 顶掉外壳的左右 padding），再自己给 20px
+       * 对称内边距 —— 内容左右留白必须相等，这是「整齐」的地基。
+       *
+       * 原来写的是 `w-full -m-4`：w-full 的宽度按父容器内容宽算，负 margin 只把这块
+       * 整体左移 16px，宽度并不会跟着补回来。于是整块被往左拽，实测左留白 12、右留白 44，
+       * 差 32px —— 看上去就是「所有东西都偏左、右边空一条」。
+       * 用 50% - 50vw 而不是写死 8px，是因为外壳 padding 是变量，写死就等着下次漂移。
+       */
+      className="w-screen ml-[calc(50%-50vw)] -my-4 px-5 py-5 min-h-full sm:w-full sm:ml-0 sm:-m-6 sm:p-8"
       style={{ background: GRID_BG, color: 'var(--text-primary)' }}
     >
       {/* ── 悬浮 navbar ── */}
