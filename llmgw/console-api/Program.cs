@@ -4042,8 +4042,11 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
     var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
     var item = MapLogicalModel(logical, offeringDocs, modelDocs, exchangeDocs, platformDocs);
 
+    // TargetUsable 必须带上，否则这里算出的结论会和 MapLogicalModel 已经算好的
+    // SkipReason 打架——同一屏给两个互相矛盾的答案，比不给还糟。
     var candidates = item.Offerings
-        .Select(x => new CallTracePlanner.RouteCandidate(x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled))
+        .Select(x => new CallTracePlanner.RouteCandidate(
+            x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled, x.TargetUsable))
         .ToList();
     var weighted = CallTracePlanner.IsWeighted(item.RoutingStrategy);
     var nameById = item.Offerings.ToDictionary(
@@ -16659,8 +16662,29 @@ static LogicalModelItem MapLogicalModel(
     // 「enabled && healthStatus === 0」会把「降级但仍在承接」的线路显示成「没有主」，
     // 而运行时照样在用它。
     var strategy = logical.AsNullableString("RoutingStrategy") ?? "priority";
+
+    // 目标是否可用 = 那个物理模型（或兑换所）启用着，且它所属的上游也启用着。
+    // 运行时在按 Offering 查目标时用 requireEnabled 过滤掉不可用的；这里必须算出同一个答案，
+    // 否则面板会把一条指向已停用模型的线路报成「会落到它」——2026-09-14 就这么错过一次，
+    // 线上 default-chat 的队首 chat-latest 物理模型是停用的，而面板照样指着它。
+    bool TargetUsable(ModelOfferingItem offering)
+    {
+        if (string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
+        {
+            return exchangeById.TryGetValue(offering.TargetId, out var exchange)
+                && (exchange.AsNullableBool("Enabled") ?? true);
+        }
+        if (!modelById.TryGetValue(offering.TargetId, out var target)) return false;
+        if (!(target.AsNullableBool("Enabled") ?? true)) return false;
+        var platformId = target.AsNullableString("PlatformId");
+        if (string.IsNullOrWhiteSpace(platformId)) return false;
+        return platformById.TryGetValue(platformId, out var platform)
+            && (platform.AsNullableBool("Enabled") ?? true);
+    }
+
     var candidates = offerings
-        .Select(x => new CallTracePlanner.RouteCandidate(x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled))
+        .Select(x => new CallTracePlanner.RouteCandidate(
+            x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled, TargetUsable(x)))
         .ToList();
     // seed 固定 0：面板是给人看的静态推演，不能每刷新一次换一个答案。
     // 运行时那边的 seed 由 requestId 派生，所以按权重分配时面板不指名道姓，只给比例。
@@ -16668,10 +16692,11 @@ static LogicalModelItem MapLogicalModel(
     var positionById = queue
         .Select((x, index) => (x.Id, Position: index + 1))
         .ToDictionary(x => x.Id, x => x.Position, StringComparer.Ordinal);
+    var candidateById = candidates.ToDictionary(x => x.Id, StringComparer.Ordinal);
     foreach (var offering in offerings)
     {
-        var candidate = new CallTracePlanner.RouteCandidate(
-            offering.Id, offering.Priority, offering.Weight, offering.HealthStatus, offering.Enabled);
+        var candidate = candidateById[offering.Id];
+        offering.TargetUsable = candidate.TargetUsable;
         offering.SkipReason = CallTracePlanner.SkipReason(candidate);
         offering.QueuePosition = positionById.TryGetValue(offering.Id, out var position) ? position : 0;
     }

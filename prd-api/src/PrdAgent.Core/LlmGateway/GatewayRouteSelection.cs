@@ -29,27 +29,40 @@ public static class GatewayRouteSelection
     /// <summary>线路熔断时的跳过原因。</summary>
     public const string SkipQuarantined = "连续失败太多，已被摘掉";
 
+    /// <summary>线路指向的那个上游模型（或它所属的上游）被停用时的跳过原因。</summary>
+    public const string SkipTargetDisabled = "上游那个模型被停用了";
+
     /// <param name="Id">线路标识。排序里做最后一级 tie-break，所以必须稳定。</param>
     /// <param name="Priority">顺位，小的先。</param>
     /// <param name="Weight">权重，只在按权重分配时有意义；小于 1 的按 1 算。</param>
     /// <param name="HealthStatus">0 健康 / 1 降级 / 2 熔断。</param>
     /// <param name="Enabled">这条线路自己有没有被停用。</param>
+    /// <param name="TargetUsable">它指向的上游模型与所属上游都还启用着吗。</param>
     public readonly record struct RouteCandidate(
         string Id,
         int Priority,
         int Weight,
         int HealthStatus,
-        bool Enabled);
+        bool Enabled,
+        bool TargetUsable = true);
 
     /// <summary>
     /// 这条线路为什么不参与这次排队；<c>null</c> 表示参与。
     ///
-    /// 停用排在熔断前面：一条既停用又熔断的线路，人要先知道它是被人关掉的，
-    /// 「连续失败太多」会把人引去查上游，而那不是原因。
+    /// 顺序按「人拿到这句话之后该去改哪儿」排，不是按代码方便：
+    /// 线路自己被关掉 → 目标模型/上游被关掉 → 熔断。一条既停用又熔断的线路，
+    /// 人要先知道它是被人关掉的；「连续失败太多」会把人引去查上游，而那不是原因。
+    ///
+    /// <c>TargetUsable</c> 这一档运行时并不从这里走——<c>ModelResolver</c> 是在随后按
+    /// Offering 去查目标模型与上游时用 <c>requireEnabled</c> 过滤掉的，效果相同、位置不同。
+    /// 放进来是因为控制台必须说得出**为什么**跳过：2026-09-14 就是漏了这一档，
+    /// 面板把一条指向已停用物理模型的线路报成了「会落到它」。
+    /// 运行时那处过滤是否还在，由 GatewayDataDomainGuardTests 钉住。
     /// </summary>
     public static string? SkipReason(in RouteCandidate candidate)
     {
         if (!candidate.Enabled) return SkipDisabled;
+        if (!candidate.TargetUsable) return SkipTargetDisabled;
         if (candidate.HealthStatus == HealthUnavailable) return SkipQuarantined;
         return null;
     }

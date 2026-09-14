@@ -1454,6 +1454,12 @@ public sealed class ModelOfferingItem
 
     /// <summary>排队名次，1 就是这次会落到的那一条；0 表示不参与。</summary>
     public int QueuePosition { get; set; }
+
+    /// <summary>
+    /// 它指向的上游模型与所属上游都还启用着吗。运行时按 Offering 查目标时会过滤掉不可用的，
+    /// 所以这一条不算进来，面板就会把一条指向已停用模型的线路报成「会落到它」。
+    /// </summary>
+    public bool TargetUsable { get; set; } = true;
 }
 /// <summary>一个对外模型的「调用全貌」：点名它之后会发生什么，用当前真实状态回答。</summary>
 public sealed class CallTraceData

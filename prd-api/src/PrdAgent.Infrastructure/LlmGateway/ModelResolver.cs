@@ -1881,9 +1881,17 @@ public class ModelResolver : IModelResolver
         return queue.Select(x => byId[x.Id]).ToList();
     }
 
-    /// <summary>Offering 映射成判据认识的形状。字段对不齐时镜像对照测试会红。</summary>
+    /// <summary>
+    /// Offering 映射成判据认识的形状。字段对不齐时镜像对照测试会红。
+    ///
+    /// TargetUsable 这里恒传 true：目标模型与上游是否启用，本方法拿不到，
+    /// 由随后的 <see cref="TryBuildLogicalOfferingResolutionAsync"/> 用 requireEnabled 过滤
+    /// （目标不可用时它返回 null，那条线路照样进不了候选，最终集合与在这里过滤等价）。
+    /// 控制台那边拿得到，所以它会传真值——它必须说得出「为什么跳过这条」。
+    /// </summary>
     internal static GatewayRouteSelection.RouteCandidate ToRouteCandidate(GatewayModelOffering offering)
-        => new(offering.Id, offering.Priority, offering.Weight, (int)offering.HealthStatus, offering.Enabled);
+        => new(offering.Id, offering.Priority, offering.Weight, (int)offering.HealthStatus, offering.Enabled,
+            TargetUsable: true);
 
     private async Task<ModelResolutionResult?> TryBuildLogicalOfferingResolutionAsync(
         GatewayLogicalModel logical,

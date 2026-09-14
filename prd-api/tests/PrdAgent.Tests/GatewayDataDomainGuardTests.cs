@@ -595,6 +595,16 @@ public class GatewayDataDomainGuardTests
         // 是默认、自己启用着、而且真有一条线路能接。
         Assert.Contains("item.IsDefaultForType && item.Enabled && hasEligibleRoute", consoleProgram);
         Assert.Contains("一条能接的线路都没有", consoleProgram);
+
+        // 一条线路不参与，除了它自己被停用/熔断，还有第三种：它指向的物理模型或所属上游被停用。
+        // 运行时用 requireEnabled 在查目标时过滤掉；控制台必须算出同一个答案并说得出原因。
+        // 2026-09-14 漏掉这一档，线上 default-chat 的队首指向一个已停用的物理模型，
+        // 面板照样指着它说「会落到它」——判据比它该管的范围窄（形状 1）。
+        Assert.Contains("modelFilter &= Builders<LLMModel>.Filter.Eq(x => x.Enabled, true)", resolver);
+        Assert.Contains("exchangeFilter &= Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)", resolver);
+        Assert.Contains("bool TargetUsable(ModelOfferingItem offering)", consoleProgram);
+        Assert.Contains("platformById.TryGetValue(platformId, out var platform)", consoleProgram);
+        Assert.Contains("上游那个模型被停用了", planner);
     }
 
     [Fact]

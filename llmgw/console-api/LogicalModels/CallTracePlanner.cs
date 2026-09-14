@@ -24,22 +24,28 @@ public static class CallTracePlanner
     /// <summary>与 GatewayRouteSelection.SkipQuarantined 逐字相同。</summary>
     public const string SkipQuarantined = "连续失败太多，已被摘掉";
 
+    /// <summary>与 GatewayRouteSelection.SkipTargetDisabled 逐字相同。</summary>
+    public const string SkipTargetDisabled = "上游那个模型被停用了";
+
     /// <param name="Id">线路标识，排序最后一级 tie-break。</param>
     /// <param name="Priority">顺位，小的先。</param>
     /// <param name="Weight">权重，小于 1 的按 1 算。</param>
     /// <param name="HealthStatus">0 健康 / 1 降级 / 2 熔断。</param>
     /// <param name="Enabled">线路自己有没有被停用。</param>
+    /// <param name="TargetUsable">它指向的上游模型与所属上游都还启用着吗。</param>
     public readonly record struct RouteCandidate(
         string Id,
         int Priority,
         int Weight,
         int HealthStatus,
-        bool Enabled);
+        bool Enabled,
+        bool TargetUsable = true);
 
     /// <summary>这条线路为什么不参与；null 表示参与。停用排在熔断前面。</summary>
     public static string? SkipReason(in RouteCandidate candidate)
     {
         if (!candidate.Enabled) return SkipDisabled;
+        if (!candidate.TargetUsable) return SkipTargetDisabled;
         if (candidate.HealthStatus == HealthUnavailable) return SkipQuarantined;
         return null;
     }

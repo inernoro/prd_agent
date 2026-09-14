@@ -20,48 +20,55 @@ namespace PrdAgent.Tests;
 public sealed class GatewayCallTraceMirrorTests
 {
     private static GatewayRouteSelection.RouteCandidate Core(
-        string id, int priority, int weight, int health, bool enabled)
-        => new(id, priority, weight, health, enabled);
+        string id, int priority, int weight, int health, bool enabled, bool targetUsable = true)
+        => new(id, priority, weight, health, enabled, targetUsable);
 
     private static CallTracePlanner.RouteCandidate Mirror(
-        string id, int priority, int weight, int health, bool enabled)
-        => new(id, priority, weight, health, enabled);
+        string id, int priority, int weight, int health, bool enabled, bool targetUsable = true)
+        => new(id, priority, weight, health, enabled, targetUsable);
 
     /// <summary>
     /// 覆盖用的输入集。每一组都对应一种真实会出现的库状态，不是随手编的排列——
     /// 排序只在「有东西能把两条线路分开」时才看得出差别，所以每组都刻意让某一级排序生效。
     /// </summary>
-    public static TheoryData<string, (string Id, int Priority, int Weight, int Health, bool Enabled)[]> Cases()
+    public static TheoryData<string, (string Id, int Priority, int Weight, int Health, bool Enabled, bool TargetUsable)[]> Cases()
     {
-        var data = new TheoryData<string, (string, int, int, int, bool)[]>();
+        var data = new TheoryData<string, (string, int, int, int, bool, bool)[]>();
         data.Add("空线路", []);
-        data.Add("单条健康", [("a", 10, 100, 0, true)]);
-        data.Add("顺位分先后", [("a", 20, 100, 0, true), ("b", 10, 100, 0, true)]);
-        data.Add("健康压过顺位", [("a", 10, 100, 1, true), ("b", 90, 100, 0, true)]);
-        data.Add("同顺位同健康按标识定序", [("b", 10, 100, 0, true), ("a", 10, 100, 0, true)]);
-        data.Add("熔断的不参与", [("a", 10, 100, 2, true), ("b", 20, 100, 0, true)]);
-        data.Add("停用的不参与", [("a", 10, 100, 0, false), ("b", 20, 100, 0, true)]);
-        data.Add("既停用又熔断", [("a", 10, 100, 2, false), ("b", 20, 100, 0, true)]);
-        data.Add("全部不参与", [("a", 10, 100, 2, true), ("b", 20, 100, 0, false)]);
-        data.Add("降级的仍然参与", [("a", 10, 100, 1, true), ("b", 20, 100, 1, true)]);
-        data.Add("权重悬殊", [("a", 10, 90, 0, true), ("b", 20, 10, 0, true)]);
-        data.Add("权重为零按一算", [("a", 10, 0, 0, true), ("b", 20, 0, 0, true)]);
-        data.Add("权重为负按一算", [("a", 10, -5, 0, true), ("b", 20, 3, 0, true)]);
-        data.Add("三条混合", [("a", 10, 50, 1, true), ("b", 10, 30, 0, true), ("c", 5, 20, 2, true)]);
+        data.Add("单条健康", [("a", 10, 100, 0, true, true)]);
+        data.Add("顺位分先后", [("a", 20, 100, 0, true, true), ("b", 10, 100, 0, true, true)]);
+        data.Add("健康压过顺位", [("a", 10, 100, 1, true, true), ("b", 90, 100, 0, true, true)]);
+        data.Add("同顺位同健康按标识定序", [("b", 10, 100, 0, true, true), ("a", 10, 100, 0, true, true)]);
+        data.Add("熔断的不参与", [("a", 10, 100, 2, true, true), ("b", 20, 100, 0, true, true)]);
+        data.Add("停用的不参与", [("a", 10, 100, 0, false, true), ("b", 20, 100, 0, true, true)]);
+        data.Add("既停用又熔断", [("a", 10, 100, 2, false, true), ("b", 20, 100, 0, true, true)]);
+        data.Add("全部不参与", [("a", 10, 100, 2, true, true), ("b", 20, 100, 0, false, true)]);
+        data.Add("降级的仍然参与", [("a", 10, 100, 1, true, true), ("b", 20, 100, 1, true, true)]);
+        data.Add("权重悬殊", [("a", 10, 90, 0, true, true), ("b", 20, 10, 0, true, true)]);
+        data.Add("权重为零按一算", [("a", 10, 0, 0, true, true), ("b", 20, 0, 0, true, true)]);
+        data.Add("权重为负按一算", [("a", 10, -5, 0, true, true), ("b", 20, 3, 0, true, true)]);
+        data.Add("三条混合", [("a", 10, 50, 1, true, true), ("b", 10, 30, 0, true, true), ("c", 5, 20, 2, true, true)]);
+        // 目标不可用：线路自己好好的，但它指向的物理模型（或所属上游）被停用了。
+        // 运行时按 Offering 查目标时过滤掉它；面板必须说得出这个原因。
+        // 2026-09-14 线上真实形态：default-chat 队首指向的 chat-latest 物理模型是停用的。
+        data.Add("目标被停用", [("a", 10, 100, 0, true, false), ("b", 20, 100, 0, true, true)]);
+        data.Add("目标被停用且自己也停用", [("a", 10, 100, 0, false, false), ("b", 20, 100, 0, true, true)]);
+        data.Add("目标被停用且熔断", [("a", 10, 100, 2, true, false), ("b", 20, 100, 0, true, true)]);
+        data.Add("全部目标不可用", [("a", 10, 100, 0, true, false), ("b", 20, 100, 0, true, false)]);
         data.Add("真实规模十条", Enumerable.Range(0, 10)
-            .Select(i => ($"r{i:D2}", i * 10, 100 - i * 7, i % 3, i % 5 != 4))
+            .Select(i => ($"r{i:D2}", i * 10, 100 - i * 7, i % 3, i % 5 != 4, i % 7 != 3))
             .ToArray());
         return data;
     }
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void 跳过原因_两边逐条相同(string label, (string Id, int Priority, int Weight, int Health, bool Enabled)[] rows)
+    public void 跳过原因_两边逐条相同(string label, (string Id, int Priority, int Weight, int Health, bool Enabled, bool TargetUsable)[] rows)
     {
         foreach (var row in rows)
         {
-            var core = GatewayRouteSelection.SkipReason(Core(row.Id, row.Priority, row.Weight, row.Health, row.Enabled));
-            var mirror = CallTracePlanner.SkipReason(Mirror(row.Id, row.Priority, row.Weight, row.Health, row.Enabled));
+            var core = GatewayRouteSelection.SkipReason(Core(row.Id, row.Priority, row.Weight, row.Health, row.Enabled, row.TargetUsable));
+            var mirror = CallTracePlanner.SkipReason(Mirror(row.Id, row.Priority, row.Weight, row.Health, row.Enabled, row.TargetUsable));
             Assert.Equal(core, mirror);
         }
         Assert.NotNull(label);
@@ -69,10 +76,10 @@ public sealed class GatewayCallTraceMirrorTests
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void 排队顺序_两边逐条相同(string label, (string Id, int Priority, int Weight, int Health, bool Enabled)[] rows)
+    public void 排队顺序_两边逐条相同(string label, (string Id, int Priority, int Weight, int Health, bool Enabled, bool TargetUsable)[] rows)
     {
-        var core = rows.Select(r => Core(r.Id, r.Priority, r.Weight, r.Health, r.Enabled)).ToList();
-        var mirror = rows.Select(r => Mirror(r.Id, r.Priority, r.Weight, r.Health, r.Enabled)).ToList();
+        var core = rows.Select(r => Core(r.Id, r.Priority, r.Weight, r.Health, r.Enabled, r.TargetUsable)).ToList();
+        var mirror = rows.Select(r => Mirror(r.Id, r.Priority, r.Weight, r.Health, r.Enabled, r.TargetUsable)).ToList();
 
         // seed 必须扫一遍：按权重分配时旋转落点全靠它，只测一个 seed 等于只测了一种落点。
         foreach (var weighted in new[] { false, true })
@@ -89,12 +96,12 @@ public sealed class GatewayCallTraceMirrorTests
 
     [Theory]
     [MemberData(nameof(Cases))]
-    public void 权重分配比例_两边逐条相同(string label, (string Id, int Priority, int Weight, int Health, bool Enabled)[] rows)
+    public void 权重分配比例_两边逐条相同(string label, (string Id, int Priority, int Weight, int Health, bool Enabled, bool TargetUsable)[] rows)
     {
         var core = GatewayRouteSelection.WeightShare(
-            rows.Select(r => Core(r.Id, r.Priority, r.Weight, r.Health, r.Enabled)).ToList());
+            rows.Select(r => Core(r.Id, r.Priority, r.Weight, r.Health, r.Enabled, r.TargetUsable)).ToList());
         var mirror = CallTracePlanner.WeightShare(
-            rows.Select(r => Mirror(r.Id, r.Priority, r.Weight, r.Health, r.Enabled)).ToList());
+            rows.Select(r => Mirror(r.Id, r.Priority, r.Weight, r.Health, r.Enabled, r.TargetUsable)).ToList());
         Assert.Equal(core.Select(x => (x.Id, x.Percent)), mirror.Select(x => (x.Id, x.Percent)));
         Assert.NotNull(label);
     }
@@ -121,6 +128,7 @@ public sealed class GatewayCallTraceMirrorTests
     {
         Assert.Equal(GatewayRouteSelection.SkipDisabled, CallTracePlanner.SkipDisabled);
         Assert.Equal(GatewayRouteSelection.SkipQuarantined, CallTracePlanner.SkipQuarantined);
+        Assert.Equal(GatewayRouteSelection.SkipTargetDisabled, CallTracePlanner.SkipTargetDisabled);
         Assert.Equal(GatewayRouteSelection.HealthUnavailable, CallTracePlanner.HealthUnavailable);
     }
 
@@ -136,6 +144,45 @@ public sealed class GatewayCallTraceMirrorTests
     }
 
     /// <summary>
+    /// 跳过原因按「人该去改哪儿」排：线路自己被关掉 → 目标被关掉 → 熔断。
+    /// 目标被停用时说成「连续失败太多」会把人引去查上游密钥，而那不是原因。
+    /// </summary>
+    [Fact]
+    public void 目标被停用时说目标而不是熔断()
+    {
+        var quarantinedAndTargetOff = Core(
+            "x", 10, 100, GatewayRouteSelection.HealthUnavailable, enabled: true, targetUsable: false);
+        Assert.Equal(GatewayRouteSelection.SkipTargetDisabled,
+            GatewayRouteSelection.SkipReason(quarantinedAndTargetOff));
+
+        var healthyButTargetOff = Core("y", 10, 100, 0, enabled: true, targetUsable: false);
+        Assert.Equal(GatewayRouteSelection.SkipTargetDisabled,
+            GatewayRouteSelection.SkipReason(healthyButTargetOff));
+
+        // 线路自己被关掉仍然优先：那是更直接的施动者
+        var bothOff = Core("z", 10, 100, 0, enabled: false, targetUsable: false);
+        Assert.Equal(GatewayRouteSelection.SkipDisabled, GatewayRouteSelection.SkipReason(bothOff));
+    }
+
+    /// <summary>
+    /// 队首指向的物理模型被停用时，结论不许指着它说「会落到它」。
+    /// 这是 2026-09-14 线上真实出现过的那一条：default-chat 的第 1 顺位 chat-latest
+    /// 物理模型是停用的，运行时跳过它，而面板照样指着它。
+    /// </summary>
+    [Fact]
+    public void 队首目标被停用时结论指向下一条()
+    {
+        var rows = new List<CallTracePlanner.RouteCandidate>
+        {
+            Mirror("head", 10, 100, 0, true, targetUsable: false),
+            Mirror("next", 20, 100, 0, true, targetUsable: true),
+        };
+        var conclusion = CallTracePlanner.Conclusion(rows, weighted: false, id => $"上游-{id}");
+        Assert.Contains("会落到 上游-next", conclusion);
+        Assert.DoesNotContain("上游-head", conclusion);
+    }
+
+    /// <summary>
     /// 按权重分配时，结论句**不许**指名道姓说会落到谁。
     /// 运行时的 seed 由 requestId 派生，面板用固定 seed；说「会落到 A」在按权重时就是编的。
     /// </summary>
@@ -144,8 +191,8 @@ public sealed class GatewayCallTraceMirrorTests
     {
         var rows = new List<CallTracePlanner.RouteCandidate>
         {
-            Mirror("a", 10, 70, 0, true),
-            Mirror("b", 20, 30, 0, true),
+            Mirror("a", 10, 70, 0, true, true),
+            Mirror("b", 20, 30, 0, true, true),
         };
         var conclusion = CallTracePlanner.Conclusion(rows, weighted: true, id => id);
         Assert.Contains("按权重", conclusion);
@@ -160,8 +207,8 @@ public sealed class GatewayCallTraceMirrorTests
     {
         var rows = new List<CallTracePlanner.RouteCandidate>
         {
-            Mirror("b", 20, 100, 0, true),
-            Mirror("a", 10, 100, 0, true),
+            Mirror("b", 20, 100, 0, true, true),
+            Mirror("a", 10, 100, 0, true, true),
         };
         var conclusion = CallTracePlanner.Conclusion(rows, weighted: false, id => $"上游-{id}");
         Assert.Contains("会落到 上游-a", conclusion);
@@ -174,8 +221,8 @@ public sealed class GatewayCallTraceMirrorTests
     {
         var allQuarantined = new List<CallTracePlanner.RouteCandidate>
         {
-            Mirror("a", 10, 100, CallTracePlanner.HealthUnavailable, true),
-            Mirror("b", 20, 100, CallTracePlanner.HealthUnavailable, true),
+            Mirror("a", 10, 100, CallTracePlanner.HealthUnavailable, true, true),
+            Mirror("b", 20, 100, CallTracePlanner.HealthUnavailable, true, true),
         };
         var text = CallTracePlanner.Conclusion(allQuarantined, weighted: false, id => id);
         Assert.Contains("现在调它会失败", text);
@@ -183,8 +230,8 @@ public sealed class GatewayCallTraceMirrorTests
 
         var mixed = new List<CallTracePlanner.RouteCandidate>
         {
-            Mirror("a", 10, 100, CallTracePlanner.HealthUnavailable, true),
-            Mirror("b", 20, 100, 0, false),
+            Mirror("a", 10, 100, CallTracePlanner.HealthUnavailable, true, true),
+            Mirror("b", 20, 100, 0, false, true),
         };
         var mixedText = CallTracePlanner.Conclusion(mixed, weighted: false, id => id);
         Assert.Contains("1 条被停用", mixedText);
@@ -204,7 +251,7 @@ public sealed class GatewayCallTraceMirrorTests
     [Fact]
     public void 只有一条线路时说清没有后备()
     {
-        var text = CallTracePlanner.Conclusion([Mirror("a", 10, 100, 0, true)], weighted: false, id => $"上游-{id}");
+        var text = CallTracePlanner.Conclusion([Mirror("a", 10, 100, 0, true, true)], weighted: false, id => $"上游-{id}");
         Assert.Contains("唯一一条", text);
         Assert.Contains("没有后备", text);
     }
