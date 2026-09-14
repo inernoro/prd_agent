@@ -9,6 +9,8 @@ import {
   selectionSummary,
   filterDirectories,
   directoryLabel,
+  chunkDirectories,
+  GITHUB_BATCH_DIRECTORY_LIMIT,
 } from './githubDirectorySelection';
 
 function dir(path: string, over: Partial<GitHubDirectoryNode> = {}): GitHubDirectoryNode {
@@ -119,5 +121,21 @@ describe('GitHub 同步向导 · 目录勾选', () => {
   it('根目录显示成人话', () => {
     expect(directoryLabel(dir(''))).toBe('仓库根目录');
     expect(directoryLabel(dir('doc/guide'))).toBe('doc/guide');
+  });
+});
+
+describe('分批提交', () => {
+  it('按后端上限切批，不多不少也不丢', () => {
+    const paths = Array.from({ length: 123 }, (_, i) => `pkg/${i}/docs`);
+    const chunks = chunkDirectories(paths);
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]).toHaveLength(GITHUB_BATCH_DIRECTORY_LIMIT);
+    expect(chunks[2]).toHaveLength(123 - GITHUB_BATCH_DIRECTORY_LIMIT * 2);
+    expect(chunks.flat()).toEqual(paths);
+  });
+
+  it('不足一批就一批，空选不产生空请求', () => {
+    expect(chunkDirectories(['doc'])).toEqual([['doc']]);
+    expect(chunkDirectories([])).toEqual([]);
   });
 });

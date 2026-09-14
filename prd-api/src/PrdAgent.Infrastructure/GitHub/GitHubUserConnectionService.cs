@@ -125,8 +125,14 @@ public sealed class GitHubUserConnectionService
         return client;
     }
 
-    /// <summary>列出当前用户可访问的仓库（owner / collaborator / org member，按更新时间倒序）。</summary>
-    public async Task<IReadOnlyList<GitHubRepositorySummary>> ListRepositoriesAsync(
+    /// <summary>
+    /// 列出当前用户可访问的仓库（owner / collaborator / org member，按更新时间倒序）。
+    ///
+    /// 返回值带 <c>HasMore</c>：它必须按**上游这一页的原始条数**算，不能按关键词过滤后的条数算。
+    /// 过滤是在本页内做的，30 条里筛剩 2 条时上游明明还有下一页，按过滤后条数判就成了「没有更多」，
+    /// 用户搜自己的仓库搜不到、也没得翻页。
+    /// </summary>
+    public async Task<GitHubRepositoryPage> ListRepositoriesAsync(
         string token, string? query, int page, int pageSize, CancellationToken ct)
     {
         page = Math.Max(1, page);
@@ -141,6 +147,9 @@ public sealed class GitHubUserConnectionService
         var repos = await resp.Content.ReadFromJsonAsync<List<GitHubRepositoryDto>>(cancellationToken: ct)
                     ?? [];
 
+        // 先按原始条数判还有没有下一页，再做本页过滤
+        var hasMore = repos.Count >= pageSize;
+
         var keyword = (query ?? string.Empty).Trim();
         if (keyword.Length > 0)
         {
@@ -150,7 +159,7 @@ public sealed class GitHubUserConnectionService
                 .ToList();
         }
 
-        return repos.Select(r =>
+        var items = repos.Select(r =>
         {
             var fullName = r.FullName ?? string.Empty;
             var parts = fullName.Split('/', 2);
@@ -168,6 +177,8 @@ public sealed class GitHubUserConnectionService
                 OwnerAvatarUrl = r.Owner?.AvatarUrl,
             };
         }).ToList();
+
+        return new GitHubRepositoryPage(items, hasMore);
     }
 
     /// <summary>列出仓库分支（最多 100 条，够覆盖绝大多数仓库的选择场景）。</summary>
@@ -281,6 +292,11 @@ public sealed class GitHubUserConnectionService
         => Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
 
     // ===== 对外结果模型 =====
+
+    /// <summary>一页仓库 + 上游是否还有下一页（HasMore 按过滤前的原始条数算）。</summary>
+    public sealed record GitHubRepositoryPage(
+        IReadOnlyList<GitHubRepositorySummary> Items,
+        bool HasMore);
 
     public sealed class GitHubRepositorySummary
     {

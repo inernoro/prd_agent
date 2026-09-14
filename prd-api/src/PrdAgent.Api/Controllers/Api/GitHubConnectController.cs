@@ -141,15 +141,16 @@ public sealed class GitHubConnectController : ControllerBase
         {
             var userId = this.GetRequiredUserId();
             var token = await _connections.ResolveTokenAsync(userId, ct);
-            var items = await _connections.ListRepositoriesAsync(token, query, page, pageSize, ct);
+            var result = await _connections.ListRepositoriesAsync(token, query, page, pageSize, ct);
             await _connections.TouchLastUsedAsync(userId, ct);
 
             return Ok(ApiResponse<object>.Ok(new
             {
-                items,
+                items = result.Items,
                 page = Math.Max(1, page),
                 pageSize,
-                hasMore = items.Count >= pageSize,
+                // HasMore 来自服务层（按过滤前条数算）——用这里过滤后的 items.Count 判会提前说「没有更多」
+                hasMore = result.HasMore,
             }));
         }
         catch (GitHubException ex)

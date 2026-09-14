@@ -4685,9 +4685,11 @@ public class DocumentStoreController : ControllerBase
         CancellationToken ct)
     {
         var (userId, userName) = await GetActorInfoAsync();
-        var (store, error) = await LoadWritableStoreAsync(storeId, userId);
-        if (error != null) return error;
-        if (store is null)
+        // 与单条 subscribe-github、以及手动触发同步（TriggerSync）一致，只认空间所有者。
+        // 放宽到「团队可写」会造出一批建得起来、却同步不了也删不掉的订阅：
+        // 那两条路径都按 OwnerId 判，团队成员建完立刻撞墙。
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
+        if (store == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         if (request == null || string.IsNullOrWhiteSpace(request.Owner) || string.IsNullOrWhiteSpace(request.Repo))

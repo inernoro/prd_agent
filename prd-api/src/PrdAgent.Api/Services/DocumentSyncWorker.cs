@@ -76,17 +76,9 @@ public class DocumentSyncWorker : BackgroundService
 
         var now = DateTime.UtcNow;
 
-        var regularCandidates = await db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
-                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory),
-                Builders<DocumentEntry>.Filter.Ne(e => e.SourceUrl, null),
-                Builders<DocumentEntry>.Filter.Gt(e => e.SyncIntervalMinutes, 0),
-                Builders<DocumentEntry>.Filter.Ne(e => e.IsPaused, true),
-                Builders<DocumentEntry>.Filter.Or(
-                    Builders<DocumentEntry>.Filter.Eq(e => e.SyncStatus, DocumentSyncStatus.Syncing),
-                    Builders<DocumentEntry>.Filter.Eq(e => e.LastSyncAt, null),
-                    Builders<DocumentEntry>.Filter.Lt(e => e.LastSyncAt, now.AddHours(-24))
-                )))
-            .Limit(50)
+        var regularCandidates = await db.DocumentEntries
+            .Find(DocumentSyncSchedule.BuildRegularCandidateFilter(now))
+            .Limit(DocumentSyncSchedule.RegularCandidateLimit)
             .ToListAsync(ct);
 
         var githubCandidates = await db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(

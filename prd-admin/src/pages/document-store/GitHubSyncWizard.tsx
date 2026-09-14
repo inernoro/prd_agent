@@ -8,7 +8,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  getGitHubAuthStatus, startGitHubDeviceFlow, pollGitHubDeviceFlow,
+  getGitHubAuthStatus, startGitHubDeviceFlow, pollGitHubDeviceFlow, disconnectGitHub,
   listGitHubRepositories, listGitHubBranches, scanGitHubDocDirectories,
   type GitHubAuthStatus, type GitHubDeviceFlowStart, type GitHubRepository,
   type GitHubBranch, type GitHubDirectoryScan,
@@ -16,9 +16,10 @@ import {
 import { addGitHubSubscriptionBatch } from '@/services/real/documentStore';
 import {
   buildDirectoryTree, defaultSelection, defaultExpanded, toggleSelection, setSelection,
-  selectionSummary, filterDirectories, directoryLabel,
+  selectionSummary, filterDirectories, directoryLabel, chunkDirectories,
   type DirectoryTreeNode,
 } from './githubDirectorySelection';
+import { isGitHubConnectionBroken, connectionBrokenHint } from './githubConnectionState';
 
 /**
  * 知识库 · GitHub 目录同步向导。
@@ -49,8 +50,32 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
   const [auth, setAuth] = useState<GitHubAuthStatus | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [error, setError] = useState('');
+  /** 出错时的后端错误码——据此判断这条错误是不是「连接本身坏了」，要不要给重连出口 */
+  const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
+  const [reconnecting, setReconnecting] = useState(false);
   const [picked, setPicked] = useState<{ repo: GitHubRepository; branch: string } | null>(null);
   const [result, setResult] = useState<BatchResult | null>(null);
+
+  /** 步骤里出错统一走这里：文案给用户看，错误码留给下面判断要不要给重连出口 */
+  const reportError = useCallback((message: string, code?: string) => {
+    setError(message);
+    setErrorCode(code);
+  }, []);
+
+  /**
+   * 存着的 token 已经失效时（换了账号、撤销了授权、token 过期），
+   * 状态接口仍然报「已连接」，向导会直接跳到选仓库然后一路报错——用户在这里是死路，
+   * 既退不回第一步也没法重新授权。所以凡是连接类错误都给一个出口：断开 + 回到第一步重连。
+   */
+  const reconnect = useCallback(async () => {
+    setReconnecting(true);
+    await disconnectGitHub();
+    setReconnecting(false);
+    setAuth(null);
+    setError('');
+    setErrorCode(undefined);
+    setStep('connect');
+  }, []);
 
   const loadAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -60,10 +85,10 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
       // 已连接就直接跳到选仓库，不让用户在一个「已完成」的步骤上多点一次
       setStep((prev) => (prev === 'connect' && res.data.connected ? 'repo' : prev));
     } else {
-      setError(res.error?.message ?? '读取 GitHub 连接状态失败');
+      reportError(res.error?.message ?? '读取 GitHub 连接状态失败', res.error?.code);
     }
     setAuthLoading(false);
-  }, []);
+  }, [reportError]);
 
   useEffect(() => { void loadAuth(); }, [loadAuth]);
 
@@ -73,13 +98,27 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="surface-popover rounded-[16px] p-6 flex flex-col"
         style={{ width: 720, maxWidth: '94vw', maxHeight: '88vh', minHeight: 0 }}>
-        <Header step={step} onClose={onClose} login={auth?.connected ? auth.login ?? null : null} />
+        <Header step={step} onClose={onClose} login={auth?.connected ? auth.login ?? null : null}
+          onSwitchAccount={() => void reconnect()} switching={reconnecting} />
 
         {error && (
           <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-[10px]"
             style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.16)' }}>
             <AlertCircle size={14} style={{ color: 'var(--accent-fg-error)', marginTop: 1 }} />
-            <span className="text-[12px]" style={{ color: 'var(--accent-fg-error)' }}>{error}</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-[12px]" style={{ color: 'var(--accent-fg-error)' }}>{error}</div>
+              {isGitHubConnectionBroken(errorCode) && (
+                <div className="flex items-center gap-2 mt-1.5">
+                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    {connectionBrokenHint(errorCode)}
+                  </span>
+                  <Button variant="ghost" size="xs" disabled={reconnecting} onClick={() => void reconnect()}>
+                    {reconnecting ? <MapSpinner size={11} /> : <Github size={11} />}
+                    {reconnecting ? '正在断开…' : '重新连接 GitHub'}
+                  </Button>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
@@ -89,11 +128,12 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
             <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>正在读取 GitHub 连接状态…</span>
           </div>
         ) : step === 'connect' ? (
-          <ConnectStep onConnected={() => { setError(''); void loadAuth(); setStep('repo'); }} onError={setError} />
+          <ConnectStep onConnected={() => { setError(''); setErrorCode(undefined); void loadAuth(); setStep('repo'); }}
+            onError={reportError} />
         ) : step === 'repo' ? (
           <RepoStep
-            onSelected={(repo, branch) => { setError(''); setPicked({ repo, branch }); setStep('directories'); }}
-            onError={setError}
+            onSelected={(repo, branch) => { setError(''); setErrorCode(undefined); setPicked({ repo, branch }); setStep('directories'); }}
+            onError={reportError}
           />
         ) : step === 'directories' && picked ? (
           <DirectoriesStep
@@ -101,7 +141,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
             repo={picked.repo}
             branch={picked.branch}
             onBack={() => setStep('repo')}
-            onError={setError}
+            onError={reportError}
             onDone={(batch) => { setResult(batch); setStep('done'); onFinished(); }}
           />
         ) : step === 'done' && result && picked ? (
@@ -119,7 +159,10 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
 }
 
 /** 顶部标题 + 步骤指示（让用户任何时候知道自己在第几步、还剩几步） */
-function Header({ step, login, onClose }: { step: Step; login: string | null; onClose: () => void }) {
+function Header({ step, login, onClose, onSwitchAccount, switching }: {
+  step: Step; login: string | null; onClose: () => void;
+  onSwitchAccount: () => void; switching: boolean;
+}) {
   const steps: Array<{ key: Step; label: string }> = [
     { key: 'connect', label: '连接 GitHub' },
     { key: 'repo', label: '选择仓库' },
@@ -139,7 +182,14 @@ function Header({ step, login, onClose }: { step: Step; login: string | null; on
           <div>
             <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>从 GitHub 同步文档</div>
             {login && (
-              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已连接 {login}</div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已连接 {login}</span>
+                <button onClick={onSwitchAccount} disabled={switching}
+                  className="text-[11px] underline cursor-pointer bg-transparent border-0 p-0"
+                  style={{ color: 'var(--text-muted)' }}>
+                  {switching ? '正在断开…' : '换个账号'}
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -171,7 +221,10 @@ function Header({ step, login, onClose }: { step: Step; login: string | null; on
 }
 
 /** 第一步：Device Flow 授权。全程显示 user code、剩余时间与当前状态，不留静止等待。 */
-function ConnectStep({ onConnected, onError }: { onConnected: () => void; onError: (msg: string) => void }) {
+function ConnectStep({ onConnected, onError }: {
+  onConnected: () => void;
+  onError: (msg: string, code?: string) => void;
+}) {
   const [flow, setFlow] = useState<GitHubDeviceFlowStart | null>(null);
   const [starting, setStarting] = useState(false);
   const [remaining, setRemaining] = useState(0);
@@ -192,7 +245,7 @@ function ConnectStep({ onConnected, onError }: { onConnected: () => void; onErro
     const res = await startGitHubDeviceFlow();
     setStarting(false);
     if (!res.success) {
-      onError(res.error?.message ?? '发起 GitHub 授权失败');
+      onError(res.error?.message ?? '发起 GitHub 授权失败', res.error?.code);
       return;
     }
 
@@ -212,7 +265,7 @@ function ConnectStep({ onConnected, onError }: { onConnected: () => void; onErro
         if (!p.success) {
           stopTimers();
           setPhase('idle');
-          onError(p.error?.message ?? 'GitHub 授权轮询失败');
+          onError(p.error?.message ?? 'GitHub 授权轮询失败', p.error?.code);
           return;
         }
         if (p.data.status === 'done') {
@@ -283,7 +336,7 @@ function ConnectStep({ onConnected, onError }: { onConnected: () => void; onErro
 /** 第二步：选仓库 + 分支。仓库地址由系统列出来，用户不必去 GitHub 复制 URL。 */
 function RepoStep({ onSelected, onError }: {
   onSelected: (repo: GitHubRepository, branch: string) => void;
-  onError: (msg: string) => void;
+  onError: (msg: string, code?: string) => void;
 }) {
   const [query, setQuery] = useState('');
   const [repos, setRepos] = useState<GitHubRepository[]>([]);
@@ -309,7 +362,7 @@ function RepoStep({ onSelected, onError }: {
         setPage(1);
         setHasMore(res.data.hasMore);
       } else {
-        onError(res.error?.message ?? '读取仓库列表失败');
+        onError(res.error?.message ?? '读取仓库列表失败', res.error?.code);
       }
       setLoading(false);
     }, query ? 300 : 0);
@@ -322,7 +375,7 @@ function RepoStep({ onSelected, onError }: {
     const res = await listGitHubRepositories(query || undefined, next, 30);
     setLoadingMore(false);
     if (!res.success) {
-      onError(res.error?.message ?? '读取更多仓库失败');
+      onError(res.error?.message ?? '读取更多仓库失败', res.error?.code);
       return;
     }
     // 按 id 去重：GitHub 分页期间仓库排序可能变动，避免出现重复行
@@ -341,7 +394,7 @@ function RepoStep({ onSelected, onError }: {
     const res = await listGitHubBranches(repo.owner, repo.repo);
     setBranchLoading(false);
     if (res.success) setBranches(res.data.items);
-    else onError(res.error?.message ?? '读取分支失败');
+    else onError(res.error?.message ?? '读取分支失败', res.error?.code);
   };
 
   return (
@@ -432,7 +485,7 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
   branch: string;
   onBack: () => void;
   onDone: (result: BatchResult) => void;
-  onError: (msg: string) => void;
+  onError: (msg: string, code?: string) => void;
 }) {
   const [scan, setScan] = useState<GitHubDirectoryScan | null>(null);
   const [scanning, setScanning] = useState(true);
@@ -442,6 +495,8 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set(['']));
   const [keyword, setKeyword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  /** 分批提交时的进度（只有超过一批才显示，免得一批也弹个「1/1」） */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const runScan = useCallback(async () => {
     setScanning(true);
@@ -449,7 +504,7 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
     const res = await scanGitHubDocDirectories(repo.owner, repo.repo, branch);
     setScanning(false);
     if (!res.success) {
-      onError(res.error?.message ?? '扫描仓库目录失败');
+      onError(res.error?.message ?? '扫描仓库目录失败', res.error?.code);
       return;
     }
     setScan(res.data);
@@ -486,24 +541,43 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
       onError('至少要勾选一个目录');
       return;
     }
+    // 后端一次最多收 50 个目录，超过就分批提交——否则 monorepo 勾完默认项直接被 400 挡下，
+    // 而界面上并没有「分批」这个操作可给用户做。重复提交是幂等的（已订阅的走 skipped）。
+    const chunks = chunkDirectories([...selected]);
     setSubmitting(true);
+    setProgress(chunks.length > 1 ? { done: 0, total: chunks.length } : null);
     onError('');
-    const res = await addGitHubSubscriptionBatch(storeId, {
-      owner: repo.owner,
-      repo: repo.repo,
-      branch,
-      directories: [...selected].map((path) => ({ path })),
-    });
-    setSubmitting(false);
-    if (!res.success) {
-      onError(res.error?.message ?? '开启同步失败');
-      return;
+
+    const merged: BatchResult = { createdCount: 0, created: [], skipped: [] };
+    for (let i = 0; i < chunks.length; i++) {
+      const res = await addGitHubSubscriptionBatch(storeId, {
+        owner: repo.owner,
+        repo: repo.repo,
+        branch,
+        directories: chunks[i].map((path) => ({ path })),
+      });
+      if (!res.success) {
+        setSubmitting(false);
+        setProgress(null);
+        const base = res.error?.message ?? '开启同步失败';
+        // 前面几批可能已经建好了，必须说清楚——否则用户以为一个都没成
+        onError(
+          merged.createdCount > 0
+            ? `${base}（已开启 ${merged.createdCount} 个目录，其余未开启；再点一次会跳过已开启的继续）`
+            : base,
+          res.error?.code,
+        );
+        return;
+      }
+      merged.createdCount += res.data.createdCount;
+      merged.created.push(...res.data.created);
+      merged.skipped.push(...res.data.skipped);
+      setProgress(chunks.length > 1 ? { done: i + 1, total: chunks.length } : null);
     }
-    onDone({
-      createdCount: res.data.createdCount,
-      created: res.data.created,
-      skipped: res.data.skipped,
-    });
+
+    setSubmitting(false);
+    setProgress(null);
+    onDone(merged);
   };
 
   if (scanning) {
@@ -574,7 +648,9 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onError }: {
           <Button variant="ghost" size="xs" onClick={onBack}>上一步</Button>
           <Button variant="primary" size="xs" onClick={() => void submit()} disabled={submitting}>
             {submitting ? <MapSpinner size={12} /> : null}
-            {submitting ? '正在开启…' : '开启同步'}
+            {submitting
+              ? (progress ? `正在开启… 第 ${progress.done + 1}/${progress.total} 批` : '正在开启…')
+              : '开启同步'}
           </Button>
         </div>
       </div>

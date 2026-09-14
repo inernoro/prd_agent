@@ -131,3 +131,20 @@ export function defaultExpanded(
 export function directoryLabel(dir: Pick<GitHubDirectoryNode, 'path' | 'name'>): string {
   return dir.path === '' ? '仓库根目录' : dir.path;
 }
+
+/**
+ * 后端一次批量订阅的目录上限（`MaxGitHubBatchDirectories`）。
+ *
+ * 两边必须一致：前端按这个数分批提交，后端超过就 400。
+ * 预勾选是「所有 doc / docs 目录」，monorepo 里每个包一个 docs/ 很容易超过 50——
+ * 不分批的话，用户按了「开启同步」只会拿到一句「请分批开启」，而界面上根本没有分批的办法。
+ */
+export const GITHUB_BATCH_DIRECTORY_LIMIT = 50;
+
+/** 把勾选的目录按后端上限切成若干批（顺序保持稳定，便于失败时说清第几批） */
+export function chunkDirectories(paths: string[], limit = GITHUB_BATCH_DIRECTORY_LIMIT): string[][] {
+  const size = Math.max(1, limit);
+  const chunks: string[][] = [];
+  for (let i = 0; i < paths.length; i += size) chunks.push(paths.slice(i, i + size));
+  return chunks;
+}

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using MongoDB.Bson.Serialization;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using Xunit;
@@ -79,6 +80,28 @@ public class DocumentSyncScheduleTests
         Assert.False(DocumentSyncSchedule.IsGithubChildEntry(entry));
         Assert.True(DocumentSyncSchedule.IsDue(entry, DateTime.UtcNow));
         Assert.NotNull(DocumentSyncSchedule.GetNextSyncAt(entry));
+    }
+
+    [Fact]
+    public void 认领查询本身就要排除GitHub子文件()
+    {
+        // 取回之后再判不到期是不够的：子文件会先把 Limit 窗口占满，
+        // 真正到期的普通订阅一条都取不到。这条断言盯的是**查询**而不是判据。
+        var rendered = DocumentSyncSchedule
+            .BuildRegularCandidateFilter(new DateTime(2026, 9, 14, 0, 0, 0, DateTimeKind.Utc))
+            .Render(new MongoDB.Driver.RenderArgs<DocumentEntry>(
+                BsonSerializer.SerializerRegistry.GetSerializer<DocumentEntry>(),
+                BsonSerializer.SerializerRegistry))
+            .ToString();
+
+        Assert.Contains(DocumentSyncSchedule.GithubParentIdKey, rendered);
+        // 必须是「排除」而不是「要求」。驱动对取反有几种等价渲染（$nor / $not / exists:false），
+        // 这里认语义不认某一种写法，免得驱动升级改了渲染形态就假红。
+        Assert.True(
+            rendered.Contains("$nor", StringComparison.Ordinal)
+                || rendered.Contains("$not", StringComparison.Ordinal)
+                || rendered.Contains("$exists\" : false", StringComparison.Ordinal),
+            $"认领查询必须排除子文件，实际渲染：{rendered}");
     }
 
     [Fact]
