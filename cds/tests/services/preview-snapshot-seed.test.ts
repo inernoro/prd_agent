@@ -24,6 +24,8 @@ import {
 } from '../../src/services/preview-instance-seed.js';
 import { buildPipelineOverview, buildPipelineSeries } from '../../src/services/acceptance-pipeline.js';
 
+interface SnapB { id: string; deployAgo: number | null }
+
 const SNAP = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, '../..', 'src/services/preview-demo-snapshot.json'), 'utf8'),
 );
@@ -120,6 +122,29 @@ describe('播种', () => {
       expect(b.status, `${b.id} 标成了 ${b.status}`).toBe('idle');
       expect(Object.keys(b.services || {})).toHaveLength(0);
     }
+  });
+
+  it('已经播过但播错的分支，会被补回来', () => {
+    // 补播天生只加不改，而预览实例的 state 跨部署保留——一次播错就一直错下去。
+    // 实机验到过：改完抽取端重新部署，页面上那个假数纹丝不动。
+    seedPreviewInstanceSnapshot(service);
+    const victim = SNAP.branches.find((b: SnapB) => b.deployAgo != null)!;
+    const stored = service.getBranch(victim.id)!;
+    stored.lastDeployAt = undefined;
+    expect(seedPreviewInstanceSnapshot(service), '播错的没被认出来').toBe(true);
+    expect(service.getBranch(victim.id)!.lastDeployAt, '播错的没被补回来').toBeTruthy();
+    // 补完之后再跑一次仍要是空跑。
+    expect(seedPreviewInstanceSnapshot(service)).toBe(false);
+  });
+
+  it('修复不越界：用户改过的备注不许被覆盖', () => {
+    seedPreviewInstanceSnapshot(service);
+    const victim = SNAP.branches.find((b: SnapB) => b.deployAgo != null)!;
+    const stored = service.getBranch(victim.id)!;
+    stored.lastDeployAt = undefined;
+    stored.notes = '我自己写的备注';
+    seedPreviewInstanceSnapshot(service);
+    expect(service.getBranch(victim.id)!.notes).toBe('我自己写的备注');
   });
 
   it('库里有真实项目时一条都不播', () => {

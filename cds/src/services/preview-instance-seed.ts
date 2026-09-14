@@ -414,6 +414,21 @@ export function seedPreviewInstanceSnapshot(state: StateService): boolean {
     seeded = true;
   }
 
+  // 补一遍已经播过、但当时播错的那些。
+  //
+  // 补播是「按 id 比对、缺了才加」，它天生修不了已经落库的错数据——而预览实例的
+  // state 跨部署保留，所以一次播错就会一直错下去，改了抽取端也没用（实机验到过：
+  // 页面上「没起预览 39」在修完抽取端、重新部署之后纹丝不动）。
+  // 修复面刻意开得极窄：只认快照项目名下的分支，只补「快照说起过预览、库里却没有
+  // 部署时刻」这一种，其余字段一律不碰，用户改过的备注之类也不动。
+  for (const b of snapBranches) {
+    if (!b.projectId || b.deployAgo == null) continue;
+    const stored = state.getBranch(b.id);
+    if (!stored || !isSnapshotProjectId(stored.projectId) || stored.lastDeployAt) continue;
+    stored.lastDeployAt = daysAgoIso(base, b.deployAgo)!;
+    seeded = true;
+  }
+
   const existingTitles = new Set(state.listAcceptanceReports(null).map((r) => r.title));
   for (const r of snapReports) {
     if (existingTitles.has(r.title)) continue;
