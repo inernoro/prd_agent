@@ -556,6 +556,9 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
   const runScan = useCallback(async () => {
     setScanning(true);
     setElapsed(0);
+    // 重试前先把上一次的错误条收掉：不清的话，重试成功后目录树是好的，
+    // 头上却仍挂着一条红色「扫描失败」，甚至还带着一个此刻毫无意义的「重新连接 GitHub」。
+    onError('');
     const res = await scanGitHubDocDirectories(repo.owner, repo.repo, branch);
     setScanning(false);
     if (!res.success) {
