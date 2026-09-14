@@ -105,11 +105,19 @@ public static class GatewayModelCatalogEndpoint
                 var perCall = ReadDecimal(model, "PricePerCall");
                 if (prompt is null && completion is null && perCall is null) continue;
 
+                // via 是给对方看「这条线路走的是哪个上游模型」，必须是人和机器都能用的名字。
+                // 不许回落到 TargetId——那是我们的内部 Mongo id，对外既没有意义，也不该泄露。
+                // 取值顺序：线路自己覆盖的上游模型名 > 物理模型登记的名字 > 不给这个字段。
+                var via = route.UpstreamModelId is { Length: > 0 } overridden
+                    ? overridden
+                    : model.GetValue("ModelName", BsonNull.Value) is { IsString: true } registered
+                        ? registered.AsString
+                        : null;
                 var routeNode = new JsonObject
                 {
-                    ["via"] = route.UpstreamModelId ?? route.TargetId,
                     ["unit"] = perCall is not null ? "per_call" : "per_million_tokens",
                 };
+                if (via is { Length: > 0 }) routeNode["via"] = via;
                 if (perCall is not null) routeNode["call"] = perCall.Value.ToString("0.####");
                 if (prompt is not null) routeNode["prompt"] = prompt.Value.ToString("0.####");
                 if (completion is not null) routeNode["completion"] = completion.Value.ToString("0.####");

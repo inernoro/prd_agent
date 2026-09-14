@@ -115,6 +115,10 @@ public class GatewayWhitelistPublishingTests
         Assert.Contains("x.AllowedAppCallerCodes.Contains(appCallerCode", Catalog);
         // 没有可用线路的模型不列出来，列了就是让对方白调一次
         Assert.Contains("logicalRoutes.Count == 0", Catalog);
+
+        // via 不许回落到内部 Mongo id：对外没有意义，也不该泄露我们的标识
+        Assert.DoesNotContain("[\"via\"] = route.UpstreamModelId ?? route.TargetId", Catalog);
+        Assert.Contains("model.GetValue(\"ModelName\"", Catalog);
     }
 
     private static string ReadRepoFile(string relativePath)
