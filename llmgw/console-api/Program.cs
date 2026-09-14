@@ -3848,6 +3848,34 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
         var logicalId = existing?.GetStringOrEmpty("_id") ?? $"gw-logical-{Guid.NewGuid():N}";
         entry.CreatedNewModel = existing is null;
 
+        /*
+          同用途最多一个默认——这条不变量在 PUT 端点有互斥，搬迁是直接 Insert，绕过了它。
+          判据分裂成两份各自漂移，正是这一整项工程要消灭的形状，所以这里把同一条规则再走一遍。
+
+          存量里一个用途标了两个默认（直接写库、历史数据）是有可能的。第二个降级成普通模型
+          并如实报出来，不能静默塞进去——两个默认之后，请求解析到哪个全看排序运气。
+        */
+        if (entry.IsDefaultForType)
+        {
+            var defaultTaken = await gwLogicalModels.Find(fb.And(
+                fb.Eq("TenantId", tenantId),
+                fb.Eq("ModelType", modelType),
+                fb.Eq("IsDefaultForType", true),
+                fb.Ne("_id", logicalId))).FirstOrDefaultAsync();
+            if (defaultTaken is not null)
+            {
+                var holder = defaultTaken.AsNullableString("PublicId") ?? defaultTaken.GetStringOrEmpty("_id");
+                entry.IsDefaultForType = false;
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"{modelType} 用途的默认已经是「{holder}」，这个池的兜底标记没搬（同用途只能有一个默认）；"
+                        + "线路照常搬，确认要换兜底就去模型页把默认改到它身上",
+                });
+            }
+        }
+
         var now = DateTime.UtcNow;
         if (existing is null)
         {

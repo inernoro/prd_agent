@@ -110,6 +110,12 @@ public class PoolMigrationPlannerTests
 
         // 跳过要给原因，不能静默吞掉
         Assert.Contains("result.Skipped.Add", handler);
+
+        // 同用途最多一个默认：搬迁是直接 Insert，绕过了 PUT 端点那条互斥。
+        // 不在这里再走一遍同一条规则，就是判据分裂成两份各自漂移——这一整项工程要消灭的正是它。
+        Assert.Contains("fb.Eq(\"IsDefaultForType\", true)", handler);
+        Assert.Contains("entry.IsDefaultForType = false;", handler);
+        Assert.Contains("同用途只能有一个默认", handler);
     }
 
     private static string ReadRepoFile(string relativePath)
