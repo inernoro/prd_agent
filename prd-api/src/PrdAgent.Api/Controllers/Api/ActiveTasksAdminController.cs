@@ -67,7 +67,7 @@ public class ActiveTasksAdminController : ControllerBase
             UserDisplayName = targetName,
             Title = req.Title.Trim(),
             Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
-            EstimateMinutes = Math.Max(0, req.EstimateMinutes),
+            DueAt = req.DueAt,
             State = ActiveTaskState.Standby,
             Source = ActiveTaskSource.Assigned,
             SourceRefType = req.SourceRefType,
@@ -120,7 +120,7 @@ public class ActiveTasksAdminController : ControllerBase
             UserId = req.UserId,
             UserDisplayName = targetName,
             Title = t,
-            EstimateMinutes = Math.Max(0, req.EstimateMinutes),
+            DueAt = req.DueAt,
             State = ActiveTaskState.Standby,
             Source = ActiveTaskSource.Assigned,
             AssignedBy = me,
@@ -215,7 +215,8 @@ public class ActiveTaskAssignRequest
     public string UserId { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Note { get; set; }
-    public int EstimateMinutes { get; set; }
+    /// <summary>什么时候要（可选）</summary>
+    public DateTime? DueAt { get; set; }
     public string? SourceRefType { get; set; }
     public string? SourceRefId { get; set; }
     /// <summary>true = 插到对方备用队首（下一件就做它），但不打断他手上那件</summary>
@@ -228,7 +229,7 @@ public class ActiveTaskAssignBatchRequest
 {
     public string UserId { get; set; } = string.Empty;
     public List<string>? Titles { get; set; }
-    public int EstimateMinutes { get; set; }
+    public DateTime? DueAt { get; set; }
 }
 
 public class ActiveTaskSettingsRequest

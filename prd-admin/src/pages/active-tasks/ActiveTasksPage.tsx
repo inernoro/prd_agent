@@ -16,6 +16,8 @@ import {
 } from '@/services/real/activeTasks';
 import type { ActiveTaskDto, MyActiveTasks } from '@/services/contracts/activeTasks';
 import type { ApiResponse } from '@/types/api';
+import { DuePicker } from './DuePicker';
+import { parseDueFromTitle } from './dueParse';
 import './activeTasks.css';
 
 function whenLabel(iso?: string | null): string {
@@ -37,6 +39,12 @@ export function ActiveTasksPage() {
   const [closingNote, setClosingNote] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [addTitle, setAddTitle] = useState('');
+  const [addDue, setAddDue] = useState<string | null>(null);
+  // 自己点过胶囊之后就不再自动认 —— 人手动定过的东西，机器不许再改
+  const [dueTouched, setDueTouched] = useState(false);
+
+  // 标题里写了「明天」「周五之前」就把时间认出来。只提示不偷改，人看得见才敢信。
+  const detected = dueTouched ? null : parseDueFromTitle(addTitle);
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockedOn, setBlockedOn] = useState('');
 
@@ -71,9 +79,12 @@ export function ActiveTasksPage() {
 
   const onAddConfirm = useCallback(async () => {
     if (!addTitle.trim()) return;
-    const ok = await run(() => createActiveTask({ title: addTitle.trim() }));
-    if (ok) { setAddOpen(false); setAddTitle(''); }
-  }, [addTitle, run]);
+    // 认出来的时间在这一刻才真正生效：标题摘掉时间词，时间填上
+    const title = detected ? detected.rest : addTitle.trim();
+    const dueAt = detected ? detected.iso : addDue;
+    const ok = await run(() => createActiveTask({ title, dueAt }));
+    if (ok) { setAddOpen(false); setAddTitle(''); setAddDue(null); setDueTouched(false); }
+  }, [addTitle, addDue, detected, run]);
 
   const onBlockConfirm = useCallback(async () => {
     if (!data?.active || !blockedOn.trim()) return;
@@ -122,6 +133,7 @@ export function ActiveTasksPage() {
                   {active.blocked
                     ? `卡住了 · 在等${active.blockedOn ?? '别人'}`
                     : `做了 ${active.elapsedLabel}`}
+                  {active.dueLabel && !active.blocked && ` · ${active.dueLabel}要`}
                 </span>
               </div>
               <button
@@ -151,6 +163,9 @@ export function ActiveTasksPage() {
                   {t.assignedByName && <span className="atb-tag">{t.assignedByName} 派的</span>}
                 </div>
               </div>
+              {t.dueLabel && (
+                <span className={`atb-due${t.overdue ? ' atb-due--overdue' : ''}`}>{t.dueLabel}</span>
+              )}
               <button className="atb-link" disabled={busy} onClick={() => void run(() => promoteActiveTask(t.id))}>
                 提前
               </button>
@@ -167,7 +182,7 @@ export function ActiveTasksPage() {
             </div>
           ))}
 
-          <button className="atb-row" onClick={() => setAddOpen(true)}>
+          <button className="atb-row" onClick={() => { setAddDue(null); setDueTouched(false); setAddOpen(true); }}>
             <span className="atb-circle" style={{ border: 'none', color: 'var(--text-muted)' }} aria-hidden="true">
               <Plus size={17} />
             </span>
@@ -238,7 +253,22 @@ export function ActiveTasksPage() {
               onChange={(e) => setAddTitle(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void onAddConfirm(); }}
             />
-            <span className="atb-sheet__hint">排在队尾。想先做它，加完点一下「提前」。</span>
+            {detected ? (
+              <div className="atb-detected">
+                <span>
+                  认出「{detected.text}」—— 加进去时标题会变成「{detected.rest}」
+                </span>
+                <button type="button" className="atb-link" onClick={() => { setDueTouched(true); setAddDue(null); }}>
+                  不用
+                </button>
+              </div>
+            ) : (
+              <DuePicker
+                value={addDue}
+                onChange={(v) => { setDueTouched(true); setAddDue(v); }}
+              />
+            )}
+            <span className="atb-sheet__hint">排在队尾。想先做它，加完点一下「提前」。时间不填也行 —— 大多数任务不该有时间要求。</span>
             <div className="atb-actions">
               <button className="atb-btn atb-btn--quiet" onClick={() => setAddOpen(false)}>取消</button>
               <button className="atb-btn" disabled={busy || !addTitle.trim()} onClick={() => void onAddConfirm()}>加进去</button>

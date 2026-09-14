@@ -314,3 +314,47 @@ select.atb-input { cursor: pointer; }
   .atb-row { padding: 0 15px; gap: 12px; }
   .atb-done-row { padding: 13px 15px; gap: 12px; }
 }
+
+/* 时间快捷胶囊（照提醒事项那套：先给四个常用的，点「自定」才出日历） */
+.atb-chip {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 17px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 15px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.atb-chip:hover { background: var(--bg-input-hover); }
+
+.atb-chip--on {
+  background: color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  color: var(--accent-gold-2);
+}
+
+/* 行尾的时间标签。过期只是换个颜色，不报警、不算准时率。 */
+.atb-due {
+  font-size: 14px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.atb-due--overdue { color: var(--accent-primary); }
+
+/* 认出时间时的那条提示。刻意不直接改输入框 —— 人看得见机器做了什么才敢信它。 */
+.atb-detected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 13px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-gold-2);
+  font-size: 14px;
+  line-height: 1.45;
+}

@@ -69,6 +69,7 @@ public class TasksOpenApiController : ControllerBase
                 blocked = active.Blocked,
                 blockedOn = active.BlockedOn,
                 spent = ActiveTaskConclusion.FormatDuration(active.ElapsedSecondsAt(now)),
+                due = ActiveTaskConclusion.FormatDue(active.DueAt, now),
             },
             next = standby.Select(x => new
             {
@@ -76,6 +77,7 @@ public class TasksOpenApiController : ControllerBase
                 title = x.Title,
                 source = x.Source,
                 assignedByName = x.AssignedByName,
+                due = ActiveTaskConclusion.FormatDue(x.DueAt, now),
             }).ToList(),
             stackCount = standby.Count,
             recentlyClosed = closed.Select(x => new
@@ -128,7 +130,7 @@ public class TasksOpenApiController : ControllerBase
         var me = GetUserId();
         var created = await AddToQueueAsync(
             req.UserId, me,
-            new OpenTaskAddRequest { Title = req.Title, Note = req.Note, SourceUrl = req.SourceUrl },
+            new OpenTaskAddRequest { Title = req.Title, Note = req.Note, SourceUrl = req.SourceUrl, DueAt = req.DueAt },
             ActiveTaskSource.Assigned, ct);
 
         return Ok(ApiResponse<object>.Ok(new
@@ -157,6 +159,7 @@ public class TasksOpenApiController : ControllerBase
             Note = note,
             State = ActiveTaskState.Standby,
             Source = source,
+            DueAt = req.DueAt,
             OrderKey = await ActiveTaskShared.NextTailOrderKeyAsync(_db, ownerId, ct),
             CreatedAt = now,
             UpdatedAt = now,
@@ -184,6 +187,9 @@ public class OpenTaskAddRequest
 
     /// <summary>来源链接（选填）：缺陷、PR、告警的地址，人接手时点得开</summary>
     public string? SourceUrl { get; set; }
+
+    /// <summary>什么时候要（选填）。不确定就别填 —— 编一个时间比没有时间更坏。</summary>
+    public DateTime? DueAt { get; set; }
 }
 
 public class OpenTaskAssignRequest : OpenTaskAddRequest

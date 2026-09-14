@@ -238,6 +238,7 @@ public static class McpBuiltinTools
                 new() { Name = "title", In = "body", Required = true, Description = "要做的是什么，一句话" },
                 new() { Name = "note", In = "body", Description = "补充说明，可选" },
                 new() { Name = "sourceUrl", In = "body", Description = "来源链接（缺陷/PR/告警地址），可选" },
+                new() { Name = "dueAt", In = "body", Description = "什么时候要，ISO 8601 时间，可选。不确定就别填——大多数任务不该有时间要求" },
             },
         },
         new McpToolDef
@@ -262,6 +263,7 @@ public static class McpBuiltinTools
                 new() { Name = "title", In = "body", Required = true, Description = "让他做什么，一句话" },
                 new() { Name = "note", In = "body", Description = "为什么派这件，可选" },
                 new() { Name = "sourceUrl", In = "body", Description = "来源链接，可选" },
+                new() { Name = "dueAt", In = "body", Description = "什么时候要，ISO 8601 时间，可选" },
             },
         },
         // ── 视觉创作（scope visual-agent:use）──

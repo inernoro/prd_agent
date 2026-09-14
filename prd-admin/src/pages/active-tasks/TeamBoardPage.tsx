@@ -12,6 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/lib/toast';
 import { assignActiveTask, getAssignableMembers, getTeamBoard } from '@/services/real/activeTasks';
 import type { AssignableMember, TeamBoard } from '@/services/contracts/activeTasks';
+import { DuePicker } from './DuePicker';
 import './activeTasks.css';
 
 function whenLabel(iso?: string | null): string {
@@ -32,6 +33,7 @@ export function TeamBoardPage() {
   const [assignTo, setAssignTo] = useState('');
   const [assignTitle, setAssignTitle] = useState('');
   const [assignNext, setAssignNext] = useState(false);
+  const [assignDue, setAssignDue] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -52,13 +54,14 @@ export function TeamBoardPage() {
     setAssignTo(userId ?? '');
     setAssignTitle('');
     setAssignNext(false);
+    setAssignDue(null);
     setAssignOpen(true);
   }, []);
 
   const onAssign = useCallback(async () => {
     if (!assignTo || !assignTitle.trim()) return;
     setBusy(true);
-    const res = await assignActiveTask({ userId: assignTo, title: assignTitle.trim(), urgent: assignNext });
+    const res = await assignActiveTask({ userId: assignTo, title: assignTitle.trim(), urgent: assignNext, dueAt: assignDue });
     setBusy(false);
     if (res.success) {
       const who = members.find((x) => x.userId === assignTo)?.displayName ?? '对方';
@@ -68,7 +71,7 @@ export function TeamBoardPage() {
     } else {
       toast.error(res.error?.message ?? '派活失败');
     }
-  }, [assignTo, assignTitle, assignNext, members, load]);
+  }, [assignTo, assignTitle, assignNext, assignDue, members, load]);
 
   if (loading) {
     return <div className="atb-page"><div className="atb-col atb-col--wide"><div className="atb-empty">正在看大家在做什么</div></div></div>;
@@ -157,6 +160,7 @@ export function TeamBoardPage() {
               onChange={(e) => setAssignTitle(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void onAssign(); }}
             />
+            <DuePicker value={assignDue} onChange={setAssignDue} />
             <label className="atb-check">
               <span>让他下一件就做</span>
               <input type="checkbox" checked={assignNext} onChange={(e) => setAssignNext(e.target.checked)} />

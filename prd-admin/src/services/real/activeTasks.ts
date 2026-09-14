@@ -23,7 +23,7 @@ export const getMyActiveTasks = () => apiRequest<MyActiveTasks>(`${base}/me`);
 export const createActiveTask = (body: {
   title: string;
   note?: string;
-  estimateMinutes?: number;
+  dueAt?: string | null;
   startNow?: boolean;
   source?: string;
   sourceRefType?: string;
@@ -33,7 +33,7 @@ export const createActiveTask = (body: {
 export const pasteActiveTasks = (text: string) =>
   apiRequest<{ created: number; items: ActiveTaskDto[] }>(`${base}/paste`, { method: 'POST', body: { text } });
 
-export const updateActiveTask = (id: string, body: { title?: string; note?: string; estimateMinutes?: number }) =>
+export const updateActiveTask = (id: string, body: { title?: string; note?: string; dueAt?: string | null; clearDue?: boolean }) =>
   apiRequest<ActiveTaskDto>(`${base}/${id}`, { method: 'PUT', body });
 
 export const promoteActiveTask = (id: string) =>
@@ -75,12 +75,12 @@ export const assignActiveTask = (body: {
   userId: string;
   title: string;
   note?: string;
-  estimateMinutes?: number;
+  dueAt?: string | null;
   urgent?: boolean;
   startNow?: boolean;
 }) => apiRequest<ActiveTaskDto>(`${adminBase}/assign`, { method: 'POST', body });
 
-export const assignActiveTasksBatch = (body: { userId: string; titles: string[]; estimateMinutes?: number }) =>
+export const assignActiveTasksBatch = (body: { userId: string; titles: string[]; dueAt?: string | null }) =>
   apiRequest<{ created: number; assignedTo: string; items: ActiveTaskDto[] }>(`${adminBase}/assign-batch`, {
     method: 'POST',
     body,

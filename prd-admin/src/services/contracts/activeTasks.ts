@@ -37,7 +37,11 @@ export interface ActiveTaskDto {
   note?: string | null;
   state: ActiveTaskStateValue;
   orderKey: number;
-  estimateMinutes: number;
+  /** 什么时候要（可选）。刻意不是「预估耗时」——那个一有就会长出估准度。 */
+  dueAt?: string | null;
+  /** 「今天」「明天」「周五」「昨天要的」——后端算好，前端不重算 */
+  dueLabel?: string | null;
+  overdue: boolean;
   elapsedSeconds: number;
   /** 做了多久的人话，如「3 小时」。刻意不给秒 —— 精确到秒的计时是监工。 */
   elapsedLabel: string;
@@ -47,7 +51,6 @@ export interface ActiveTaskDto {
   blockedOn?: string | null;
   blockedSeconds: number;
   blockedLabel: string;
-  overrun: boolean;
   source: string;
   sourceRefType?: string | null;
   sourceRefId?: string | null;

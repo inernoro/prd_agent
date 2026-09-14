@@ -36,8 +36,14 @@ public class ActiveTaskEntry
     /// <summary>备用队列内的排序键，越小越靠前（置顶 = 取当前最小值再减 1）</summary>
     public double OrderKey { get; set; }
 
-    /// <summary>预估耗时（分钟）。0 表示没估。</summary>
-    public int EstimateMinutes { get; set; }
+    /// <summary>
+    /// 什么时候要（可选）。
+    ///
+    /// 刻意是「截止」不是「预估耗时」：预估一旦存在，下一步必然长出估准度和超期判定，
+    /// 那是考核。截止只回答一件事 —— 这件事排在什么时候之前做完，帮做事的人自己排序。
+    /// 过期不报警、不算准时率，只在那一行淡淡标一下。
+    /// </summary>
+    public DateTime? DueAt { get; set; }
 
     /// <summary>本轮开始计时的时刻（仅 active 且未卡住时有值）</summary>
     public DateTime? StartedAt { get; set; }
@@ -121,15 +127,6 @@ public class ActiveTaskEntry
         return BlockedSeconds + live;
     }
 
-    /// <summary>
-    /// 是否超期：实际投入超过预估的 <paramref name="factor"/> 倍。没估过（EstimateMinutes 为 0）一律不算超期
-    /// —— 没有基准的「超期」是编出来的判断。
-    /// </summary>
-    public bool IsOverrun(DateTime now, double factor = 2.0)
-    {
-        if (EstimateMinutes <= 0) return false;
-        return ElapsedSecondsAt(now) > EstimateMinutes * 60 * factor;
-    }
 }
 
 /// <summary>活动任务状态。</summary>

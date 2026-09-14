@@ -175,7 +175,9 @@ public static class ActiveTaskShared
             note = masked ? null : e.Note,
             state = e.State,
             orderKey = e.OrderKey,
-            estimateMinutes = e.EstimateMinutes,
+            dueAt = e.DueAt,
+            dueLabel = ActiveTaskConclusion.FormatDue(e.DueAt, now),
+            overdue = ActiveTaskConclusion.IsOverdue(e.DueAt, now),
             elapsedSeconds = elapsed,
             elapsedLabel = ActiveTaskConclusion.FormatDuration(elapsed),
             // 前端本地续走计时用：服务端只在 active 且未卡住时给出起点
@@ -185,7 +187,6 @@ public static class ActiveTaskShared
             blockedOn = masked ? null : e.BlockedOn,
             blockedSeconds = blocked,
             blockedLabel = ActiveTaskConclusion.FormatDuration(blocked),
-            overrun = e.IsOverrun(now),
             source = e.Source,
             sourceRefType = e.SourceRefType,
             sourceRefId = e.SourceRefId,

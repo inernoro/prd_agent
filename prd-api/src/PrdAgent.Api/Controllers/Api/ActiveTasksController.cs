@@ -94,7 +94,7 @@ public class ActiveTasksController : ControllerBase
             UserDisplayName = display,
             Title = req.Title.Trim(),
             Note = string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim(),
-            EstimateMinutes = Math.Max(0, req.EstimateMinutes),
+            DueAt = req.DueAt,
             State = ActiveTaskState.Standby,
             Source = ActiveTaskSource.IsValid(req.Source) ? req.Source! : ActiveTaskSource.Manual,
             SourceRefType = req.SourceRefType,
@@ -164,7 +164,8 @@ public class ActiveTasksController : ControllerBase
         var update = Builders<ActiveTaskEntry>.Update.Set(x => x.UpdatedAt, DateTime.UtcNow);
         if (!string.IsNullOrWhiteSpace(req.Title)) update = update.Set(x => x.Title, req.Title.Trim());
         if (req.Note != null) update = update.Set(x => x.Note, string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim());
-        if (req.EstimateMinutes.HasValue) update = update.Set(x => x.EstimateMinutes, Math.Max(0, req.EstimateMinutes.Value));
+        if (req.ClearDue == true) update = update.Set(x => x.DueAt, (DateTime?)null);
+        else if (req.DueAt.HasValue) update = update.Set(x => x.DueAt, req.DueAt.Value);
 
         await _db.ActiveTaskEntries.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
         var saved = await _db.ActiveTaskEntries.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
@@ -367,7 +368,8 @@ public class ActiveTaskCreateRequest
 {
     public string Title { get; set; } = string.Empty;
     public string? Note { get; set; }
-    public int EstimateMinutes { get; set; }
+    /// <summary>什么时候要（可选）。不传就是没时间要求 —— 大多数任务都不该有。</summary>
+    public DateTime? DueAt { get; set; }
     public string? Source { get; set; }
     public string? SourceRefType { get; set; }
     public string? SourceRefId { get; set; }
@@ -385,7 +387,10 @@ public class ActiveTaskUpdateRequest
 {
     public string? Title { get; set; }
     public string? Note { get; set; }
-    public int? EstimateMinutes { get; set; }
+    public DateTime? DueAt { get; set; }
+
+    /// <summary>true = 把时间去掉（DueAt 传 null 无法与「不改」区分，所以单给一个开关）</summary>
+    public bool? ClearDue { get; set; }
 }
 
 public class ActiveTaskBlockRequest
