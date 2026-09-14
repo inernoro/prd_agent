@@ -330,6 +330,38 @@ describe('GitHub 错误契约', () => {
     expect(out).not.toMatch(/HTTP|502/);
   });
 
+  it.each([
+    // 仓库名与目录路径会正当地撞上「像技术标识符」的那几个词：`model-service` 命中 model，
+    // `acme/site/api/docs@main` 命中 /api/。上一轮的用例一律用 acme/site，恰好绕开了这些词，
+    // 于是「已放行」在真实仓库名上并不成立——用户看到的仍是通用兜底。
+    ['GITHUB_REPO_NOT_VISIBLE', '仓库 acme/model-service 不存在，或你的 GitHub 账号无权访问；请核对仓库地址后重试'],
+    ['GITHUB_REPO_NOT_VISIBLE', '读取 acme/site/api/docs@main 目录树失败：可能是目录不存在，请核对地址后重试'],
+    ['GITHUB_FORBIDDEN', '仓库 acme/protocol-docs 拒绝访问，请确认这个 GitHub 账号有读取权限后重试'],
+  ])('%s 的文案里出现仓库名 / 目录路径时不被当成内部诊断', (code, message) => {
+    const out = toUserReadableErrorMessage({ code, message }, options);
+    expect(out).toContain(message);
+    expect(out).not.toContain(options.fallbackMessage);
+  });
+
+  it.each([
+    // 放行的只是「像标识符」的那几个词；HTTP 码、URL、凭据词对同一批码照样是硬拒绝。
+    ['GITHUB_REPO_NOT_VISIBLE', '仓库 acme/model-service 读取失败（HTTP 500），请稍后重试'],
+    ['GITHUB_FORBIDDEN', '请带上 api-key 重新请求 https://api.github.com/repos 后重试'],
+    ['GITHUB_RATE_LIMITED', 'GitHub 限额耗尽，requestId=abc123，请稍后重试'],
+  ])('%s 仍然拒绝真正的诊断片段', (code, message) => {
+    const out = toUserReadableErrorMessage({ code, message }, options);
+    expect(out).toContain(options.fallbackMessage);
+    expect(out).not.toContain(message);
+  });
+
+  it('像标识符的那几个词只对 GitHub 契约码放行，别的码照旧拒绝', () => {
+    const out = toUserReadableErrorMessage(
+      { code: 'SOME_OTHER_CODE', message: '调用 model 服务失败，请稍后重试' },
+      options,
+    );
+    expect(out).toContain(options.fallbackMessage);
+  });
+
   it('放行只针对登记过的 GitHub 契约码，别的码照旧兜底', () => {
     const out = toUserReadableErrorMessage(
       { code: 'SOME_NEW_CODE', message: 'GitHub acme/site 出错了，请重试' },

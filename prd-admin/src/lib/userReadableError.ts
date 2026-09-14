@@ -27,10 +27,13 @@ const RECOVERY_WORDS = [
   '移除',
 ];
 
-const INTERNAL_DIAGNOSTIC_PATTERNS = [
+/**
+ * 永不放行的诊断片段：HTTP 状态码、协议正文、解析/网络异常、凭据词、密钥样式、IP、URL。
+ * 这些片段在任何用户文案里出现都是泄漏，没有「这是仓库名」这种正当解释。
+ */
+const HARD_DIAGNOSTIC_PATTERNS = [
   /\bHTTP\s*\d{3}\b/i,
-  /\b(?:traceId|requestId|runId|provider|offering|endpoint|model|protocol|token|stack|exception)\b/i,
-  /\/api\//i,
+  /\b(?:traceId|requestId|runId|stack|exception)\b/i,
   /<!doctype|<html|<body/i,
   /input must have at least/i,
   /unexpected token/i,
@@ -40,6 +43,17 @@ const INTERNAL_DIAGNOSTIC_PATTERNS = [
   /\b(?:sk|pk|rk)-[a-z0-9_-]{6,}\b/i,
   /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{2,5})?\b/,
   /https?:\/\//i,
+];
+
+/**
+ * 只是「长得像技术标识符」的词：它们在上游异常里是诊断，在仓库名 / 目录名里却完全正当
+ * （`model-service`、`api/docs`、`token-service` 都是真实存在的命名）。
+ * 默认仍然拒绝；只有 GITHUB_CODES_MAY_NAME_IDENTIFIERS 里那几个「文案由我们自己写、
+ * 关键信息恰恰是标识符」的契约码可以带着它们通过——而上面那张硬名单对它们照样生效。
+ */
+const IDENTIFIER_DIAGNOSTIC_PATTERNS = [
+  /\b(?:provider|offering|endpoint|model|protocol|token)\b/i,
+  /\/api\//i,
 ];
 
 const USER_MESSAGE_ALLOWLIST = new Map<string, ReadonlySet<string>>([
@@ -232,7 +246,13 @@ function isSafeUserMessage(message: string, code: string): boolean {
   if (/[\r\n]/u.test(text)) return false;
   if (/^[{[]/.test(text)) return false;
   if (!/[\u3400-\u9fff]/u.test(text)) return false;
-  if (INTERNAL_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) return false;
+  if (HARD_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) return false;
+  // 仓库名 / 目录路径会正当地撞上「像标识符」的那几个词（model-service、api/docs）。
+  // 这个放行必须排在硬名单之后：先拒诊断片段，再谈标识符。
+  const mayNameIdentifiers = GITHUB_CODES_MAY_NAME_IDENTIFIERS.has(normalizedCode);
+  if (!mayNameIdentifiers && IDENTIFIER_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) {
+    return false;
+  }
 
   const isExplicitlyAllowed = USER_MESSAGE_ALLOWLIST.get(normalizedCode)?.has(text) === true;
   const isStableContractCode = /^[A-Z][A-Z0-9_]{2,80}$/u.test(normalizedCode);
@@ -246,8 +266,7 @@ function isSafeUserMessage(message: string, code: string): boolean {
     || isActionableInvalidFormatMessage(text, normalizedCode)
     || (!isRegisteredCode
       && isStableContractCode
-      && (!containsUnregisteredTechnicalIdentifier
-        || GITHUB_CODES_MAY_NAME_IDENTIFIERS.has(normalizedCode))
+      && (!containsUnregisteredTechnicalIdentifier || mayNameIdentifiers)
       && messageContainsRecovery(text));
 }
 

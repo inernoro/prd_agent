@@ -423,6 +423,9 @@ function RepoStep({ onSelected, onError }: {
       const res = await listGitHubRepositories(query || undefined, 1, 30);
       if (cancelled) return;
       if (res.success) {
+        // 这一发成功就把上一次的失败收掉：否则用户改个搜索词重试成功了，
+        // 头顶那条红色错误条还挂着，他不知道到底好没好（下面两处同理）。
+        onError('');
         setRepos(res.data.items);
         setPage(1);
         setHasMore(res.data.hasMore);
@@ -448,6 +451,7 @@ function RepoStep({ onSelected, onError }: {
       onError(res.error?.message ?? '读取更多仓库失败', res.error?.code);
       return;
     }
+    onError('');
     // 按 id 去重：GitHub 分页期间仓库排序可能变动，避免出现重复行
     setRepos((prev) => {
       const seen = new Set(prev.map((r) => r.id));
@@ -469,8 +473,12 @@ function RepoStep({ onSelected, onError }: {
     const res = await listGitHubBranches(repo.owner, repo.repo);
     if (my !== branchSeqRef.current) return; // 已经换了仓库，这一发过期，丢弃
     setBranchLoading(false);
-    if (res.success) setBranches(res.data.items);
-    else onError(res.error?.message ?? '读取分支失败', res.error?.code);
+    if (res.success) {
+      onError('');
+      setBranches(res.data.items);
+    } else {
+      onError(res.error?.message ?? '读取分支失败', res.error?.code);
+    }
   };
 
   return (
