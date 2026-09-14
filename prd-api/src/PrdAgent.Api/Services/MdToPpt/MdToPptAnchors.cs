@@ -267,7 +267,10 @@ public static class MdToPptAnchors
     }
 
     private static readonly string[] NeedsNumbersHints = { "stats", "data", "numbers", "chart", "pie", "financial", "metric" };
-    private static readonly string[] NeedsManyItemsHints = { "index", "list", "grid", "services", "pillars", "insights", "timeline", "roadmap", "process" };
+    // colophon / credits 是多栏版权页：栏位比内容多的时候，模型会拿展示标题
+    // 把空栏挨个填满（实测一句话的收尾页上「结语」出现了六次）。
+    private static readonly string[] NeedsManyItemsHints =
+        { "index", "list", "grid", "services", "pillars", "insights", "timeline", "roadmap", "process", "colophon", "credits" };
     private static readonly string[] NeedsOneShortLineHints = { "quote", "manifesto", "statement" };
 
     public static bool Fits(AnchorSlide slide, PageShape shape)
@@ -323,7 +326,9 @@ public static class MdToPptAnchors
             var hit = pool.FirstOrDefault(s => hints.Any(h => s.Layout.Contains(h, StringComparison.OrdinalIgnoreCase)));
             if (hit != null) return hit;
         }
-        if (index == total - 1) return anchor.Closing;
+        // 收尾页同样要过内容这一关：原来是无条件发 Closing，于是一句话的收尾页
+        // 拿到四栏版权页，三栏空着被标题填满。撑不起就退回轮换里挑一个。
+        if (index == total - 1 && (!hasShape || Fits(anchor.Closing, shape))) return anchor.Closing;
         if (pool.Count == 0) return anchor.Cover;
         // 轮换：相邻内容页不重复版式
         return pool[(index - 1) % pool.Count];

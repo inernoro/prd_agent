@@ -583,3 +583,43 @@ public class MdToPptStructuralLabelTests
         Assert.Contains("三个角色", MdToPptSourcePlan.Fallback(real, 1, 6), StringComparison.Ordinal);
     }
 }
+
+/// <summary>
+/// 收尾页也要过内容这一关。原来 PickLayout 对最后一页无条件返回 Closing，
+/// 而 colophon 是四栏版权页：内容只有一句话时，模型拿展示标题把另外三栏
+/// 挨个填满——实测一页上「结语」出现了六次。
+/// </summary>
+public class MdToPptClosingLayoutFitnessTests
+{
+    private static MdToPptAnchors.AnchorSlide Slide(string layout) => new("f.html", layout, "slide", "", "<div></div>");
+
+    private static MdToPptAnchors.Anchor Anchor() => new("t", "", "", new[]
+    {
+        Slide("s-cover"), Slide("s-chapter"), Slide("s-manifesto"), Slide("s-colophon"),
+    });
+
+    [Fact]
+    public void ThinClosingPage_DoesNotGetTheMultiColumnColophon()
+    {
+        var oneSentence = MdToPptAnchors.PageShape.FromText(
+            new[] { "用户只需选知识、说两句话，最后拿到一个已保存、能再次打开的完整网页。" }, null);
+        Assert.False(MdToPptAnchors.Fits(Slide("s-colophon"), oneSentence));
+        Assert.NotEqual("s-colophon", MdToPptAnchors.PickLayout(Anchor(), 5, 6, null, oneSentence).Layout);
+    }
+
+    [Fact]
+    public void RichClosingPage_StillGetsIt()
+    {
+        var many = MdToPptAnchors.PageShape.FromText(
+            new[] { "编辑：林", "设计：伊藤", "校对：安雅", "出版：2026 秋" }, null);
+        Assert.True(MdToPptAnchors.Fits(Slide("s-colophon"), many));
+        Assert.Equal("s-colophon", MdToPptAnchors.PickLayout(Anchor(), 5, 6, null, many).Layout);
+    }
+
+    [Fact]
+    public void WithoutShape_BehaviourIsUnchanged()
+    {
+        // 非知识驱动、拿不到内容形状时不改变既有行为：收尾页还是收尾页。
+        Assert.Equal("s-colophon", MdToPptAnchors.PickLayout(Anchor(), 5, 6, null).Layout);
+    }
+}
