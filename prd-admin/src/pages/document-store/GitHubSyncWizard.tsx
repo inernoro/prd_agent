@@ -8,7 +8,7 @@ import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import { toast } from '@/lib/toast';
 import {
-  getGitHubAuthStatus, startGitHubDeviceFlow, pollGitHubDeviceFlow,
+  getGitHubAuthStatus, startGitHubDeviceFlow, pollGitHubDeviceFlow, disconnectGitHub,
   listGitHubRepositories, listGitHubBranches, scanGitHubDocDirectories,
   type GitHubAuthStatus, type GitHubDeviceFlowStart, type GitHubRepository,
   type GitHubBranch, type GitHubDirectoryScan,
@@ -54,6 +54,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
   const [errorCode, setErrorCode] = useState<string | undefined>(undefined);
   /** 「换个账号 / 重新连接」按下之后：留在第一步重新授权，期间不把旧连接删掉 */
   const [switchingAccount, setSwitchingAccount] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [picked, setPicked] = useState<{ repo: GitHubRepository; branch: string } | null>(null);
   const [result, setResult] = useState<BatchResult | null>(null);
 
@@ -78,6 +79,28 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     setErrorCode(undefined);
     setStep('connect');
   }, []);
+
+  /**
+   * 真正断开：把存着的连接（含 token 密文）删掉。
+   * 这是这一屏承诺的「令牌加密保存在你名下，随时可以断开」的兑现处——
+   * 「换个账号」不做删除（授权成功才替换），所以断开必须另有入口，否则那句话是空头支票。
+   * 破坏性动作，由调用处做二次确认。
+   */
+  const disconnect = useCallback(async () => {
+    setDisconnecting(true);
+    const res = await disconnectGitHub();
+    setDisconnecting(false);
+    if (!res.success) {
+      reportError(res.error?.message ?? '断开 GitHub 连接失败', res.error?.code);
+      return;
+    }
+    setAuth(null);
+    setSwitchingAccount(false);
+    setError('');
+    setErrorCode(undefined);
+    setStep('connect');
+    toast.success('已断开 GitHub 连接', '已存的访问令牌一并删除；已建的目录订阅会同步失败，直到重新连接。');
+  }, [reportError]);
 
   const loadAuth = useCallback(async () => {
     setAuthLoading(true);
@@ -111,7 +134,8 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
       <div className="surface-popover rounded-[16px] p-6 flex flex-col"
         style={{ width: 720, maxWidth: '94vw', maxHeight: '88vh', minHeight: 0 }}>
         <Header step={step} onClose={onClose} login={auth?.connected ? auth.login ?? null : null}
-          onSwitchAccount={reconnect} switching={switchingAccount} />
+          onSwitchAccount={reconnect} switching={switchingAccount}
+          onDisconnect={() => void disconnect()} disconnecting={disconnecting} />
 
         {error && (
           <div className="flex items-start gap-2 mb-3 px-3 py-2 rounded-[10px]"
@@ -175,10 +199,13 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
 }
 
 /** 顶部标题 + 步骤指示（让用户任何时候知道自己在第几步、还剩几步） */
-function Header({ step, login, onClose, onSwitchAccount, switching }: {
+function Header({ step, login, onClose, onSwitchAccount, switching, onDisconnect, disconnecting }: {
   step: Step; login: string | null; onClose: () => void;
   onSwitchAccount: () => void; switching: boolean;
+  onDisconnect: () => void; disconnecting: boolean;
 }) {
+  /** 断开是破坏性的（token 密文直接删掉），点一次先要个确认，再点才真断 */
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const steps: Array<{ key: Step; label: string }> = [
     { key: 'connect', label: '连接 GitHub' },
     { key: 'repo', label: '选择仓库' },
@@ -200,10 +227,19 @@ function Header({ step, login, onClose, onSwitchAccount, switching }: {
             {login && (
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已连接 {login}</span>
-                <button onClick={onSwitchAccount} disabled={switching}
+                <button onClick={onSwitchAccount} disabled={switching || disconnecting}
                   className="text-[11px] underline cursor-pointer bg-transparent border-0 p-0"
                   style={{ color: 'var(--text-muted)' }}>
                   {switching ? '正在重新授权' : '换个账号'}
+                </button>
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>·</span>
+                <button
+                  onClick={() => { if (confirmDisconnect) onDisconnect(); else setConfirmDisconnect(true); }}
+                  onBlur={() => setConfirmDisconnect(false)}
+                  disabled={disconnecting}
+                  className="text-[11px] underline cursor-pointer bg-transparent border-0 p-0"
+                  style={{ color: confirmDisconnect ? 'var(--accent-fg-error)' : 'var(--text-muted)' }}>
+                  {disconnecting ? '正在断开…' : confirmDisconnect ? '确认断开？已建订阅会同步失败' : '断开连接'}
                 </button>
               </div>
             )}

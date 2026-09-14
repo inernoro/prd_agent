@@ -56,6 +56,17 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
     }
 
     /// <summary>
+    /// 申请的 OAuth scope。
+    ///
+    /// 空串必须当成「没配」：docker-compose 里这一项写的是 `${GitHubOAuth__Scopes:-}`，
+    /// 没有在 .env 里显式给值时注入的是**空字符串**而不是缺失，`?? DefaultScopes` 因此不生效。
+    /// 结果是拿到一把没有任何 scope 的 token——公开仓照样能读，私有仓一律 404，
+    /// 而 GitHub 对无权访问的私有仓返回的就是 404，和「仓库不存在」无法区分。
+    /// </summary>
+    internal static string ResolveScopes(string? configured)
+        => string.IsNullOrWhiteSpace(configured) ? DefaultScopes : configured.Trim();
+
+    /// <summary>
     /// 向 GitHub 请求 device code。
     /// 返回给前端的 flow_token 是签名后的 (device_code, userId, expiry) 三元组，
     /// 前端在 poll 时原样回传，后端验签后解出 device_code 继续和 GitHub 交互。
@@ -68,7 +79,7 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
             throw GitHubException.OAuthNotConfigured();
         }
 
-        var scopes = _config["GitHubOAuth:Scopes"] ?? DefaultScopes;
+        var scopes = ResolveScopes(_config["GitHubOAuth:Scopes"]);
         var client = _httpClientFactory.CreateClient("GitHubApi");
         using var req = new HttpRequestMessage(HttpMethod.Post, DeviceCodeUrl);
         req.Headers.Accept.Clear();
