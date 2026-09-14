@@ -20,6 +20,9 @@ const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/Visual
 const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
 const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
 const ChatPage = lazy(() => import('@/pages/chat').then(m => ({ default: m.ChatPage })));
+const ActiveTasksPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTasksPage })));
+const ActiveTasksTeamPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.TeamBoardPage })));
+const ActiveTaskHistoryPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTaskHistoryPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
@@ -169,6 +172,45 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       statLabel: '画布',
       tags: ['视觉', '智能体', '图像', '生图', 'AI绘画'],
     },
+  },
+  {
+    path: '/active-tasks',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTasksPage />),
+    nav: {
+      label: '任务台',
+      shortLabel: '任务台',
+      description: '此刻在做什么、备用还剩几件、走过哪些 —— 一屏说清，老板不用问',
+      icon: 'ListChecks',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '任务',
+      tags: ['任务', '活动任务', '在做什么', '备用', '汇报', 'active tasks'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/team',
+    permission: 'active-tasks.manage',
+    element: shellGuarded('active-tasks.manage', <ActiveTasksTeamPage />),
+    nav: {
+      label: '团队此刻',
+      shortLabel: '团队此刻',
+      description: '全员在做什么、谁卡住、谁没活了，以及需要你出手的几件',
+      icon: 'Users',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '成员',
+      tags: ['团队', '此刻', '委派', '派活', '老板', 'team board'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/history',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTaskHistoryPage />),
   },
   {
     path: '/chat',

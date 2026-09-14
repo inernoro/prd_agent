@@ -1541,6 +1541,29 @@ db.mcp_usage_counters.createIndex(
 // db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
 
 
+// collection: active_task_entries
+// 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）。三条读路径：
+// 1) 个人任务台：按 userId + state 取在途，再按 OrderKey 排备用队列
+// 2) 团队此刻：按 state 扫全员在途（人数量级，不分页）
+// 3) 走过的路：按 userId + DoneAt 倒序翻历史
+db.active_task_entries.createIndex(
+  { "UserId": 1, "State": 1, "OrderKey": 1 },
+  { name: "idx_active_tasks_user_state_order" }
+)
+db.active_task_entries.createIndex(
+  { "State": 1, "UpdatedAt": -1 },
+  { name: "idx_active_tasks_state_updated" }
+)
+db.active_task_entries.createIndex(
+  { "UserId": 1, "DoneAt": -1 },
+  { name: "idx_active_tasks_user_done" }
+)
+// end collection: active_task_entries
+
+// collection: active_task_board_settings
+// 面板设置是全局单行（_id 固定为 "active-task-board"），按主键定位，不需要查询索引。
+// end collection: active_task_board_settings
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

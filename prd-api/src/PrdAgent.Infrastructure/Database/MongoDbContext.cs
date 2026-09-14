@@ -397,6 +397,10 @@ public class MongoDbContext
     public IMongoCollection<TaskTree> TaskTrees => _database.GetCollection<TaskTree>("task_trees");
     public IMongoCollection<TaskNode> TaskNodes => _database.GetCollection<TaskNode>("task_nodes");
 
+    // 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）
+    public IMongoCollection<ActiveTaskEntry> ActiveTaskEntries => _database.GetCollection<ActiveTaskEntry>("active_task_entries");
+    public IMongoCollection<ActiveTaskBoardSettings> ActiveTaskBoardSettingsCollection => _database.GetCollection<ActiveTaskBoardSettings>("active_task_board_settings");
+
     // Project Management 项目管理
     public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
     public IMongoCollection<PmTask> PmTasks => _database.GetCollection<PmTask>("pm_tasks");
@@ -1013,6 +1017,17 @@ public class MongoDbContext
         DefectTemplates.Indexes.CreateOne(new CreateIndexModel<DefectTemplate>(
             Builders<DefectTemplate>.IndexKeys.Descending(x => x.IsDefault).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_defect_templates_default" }));
+
+        // ActiveTaskEntries：团队视图按 state 扫全员；个人视图按 userId + state 排队；历史按 userId + 完成时间倒序
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.State).Ascending(x => x.OrderKey),
+            new CreateIndexOptions { Name = "idx_active_tasks_user_state_order" }));
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.State).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_active_tasks_state_updated" }));
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.DoneAt),
+            new CreateIndexOptions { Name = "idx_active_tasks_user_done" }));
 
         // DefectReports：按 reporterId + status 查询；按 assigneeId + status 查询
         DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(
