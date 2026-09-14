@@ -1,9 +1,8 @@
 /**
- * 活动任务清单 —— 前后端契约。
+ * 任务台 —— 前后端契约。
  *
- * 字段与 prd-api 的 ActiveTaskShared.ToDto / BuildTeamBoardAsync 一一对应。
- * 结论句（headline / fuelLabel / bossMirror）一律由后端算好下发，前端不再重算一遍阈值，
- * 否则同一个判断会分裂成两份然后各自漂移。
+ * 与后端 ActiveTaskShared.ToDto / BuildTeamBoardAsync 一一对应。
+ * 排序、标签、阈值一律由后端算好下发，前端不重算一遍，否则同一个判断会分裂成两份各自漂移。
  */
 
 export const ActiveTaskState = {
@@ -21,11 +20,10 @@ export const ActiveTaskSource = {
   Defect: 'defect',
   PmTask: 'pm_task',
 } as const;
-export type ActiveTaskSourceValue = (typeof ActiveTaskSource)[keyof typeof ActiveTaskSource];
 
 export const ActiveTaskSourceLabels: Record<string, string> = {
   manual: '自己加的',
-  assigned: '委派',
+  assigned: '派的',
   im_paste: '从聊天粘贴',
   defect: '缺陷池',
   pm_task: '项目任务',
@@ -41,8 +39,8 @@ export interface ActiveTaskDto {
   orderKey: number;
   estimateMinutes: number;
   elapsedSeconds: number;
+  /** 做了多久的人话，如「3 小时」。刻意不给秒 —— 精确到秒的计时是监工。 */
   elapsedLabel: string;
-  /** 服务端给的计时起点；前端据此本地续走秒表，不轮询 */
   startedAt?: string | null;
   running: boolean;
   blocked: boolean;
@@ -53,85 +51,65 @@ export interface ActiveTaskDto {
   source: string;
   sourceRefType?: string | null;
   sourceRefId?: string | null;
-  /** 委派人 —— 「看得见委派的是谁」靠这两个字段 */
   assignedBy?: string | null;
   assignedByName?: string | null;
   assignedAt?: string | null;
   doneAt?: string | null;
+  /** 做成了什么样 —— 结案时留的那句话，历史的全部价值在这里 */
+  closingNote?: string | null;
   dropReason?: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface MyActiveTasks {
+  /** 实心圆那条 */
   active: ActiveTaskDto | null;
+  /** 下面待做的，按顺序 */
   standby: ActiveTaskDto[];
+  /** 做完的（含放下的） */
   history: ActiveTaskDto[];
-  fuelLabel: string;
-  fuelLevel: 'empty' | 'low' | 'ok';
-  /** 老板此刻看到的你 —— 由操作自动生成的自述句 */
-  bossMirror: string;
+  displayName: string;
   serverNow: string;
 }
+
+export type TeamStatus = 'running' | 'blocked' | 'empty' | 'silent';
 
 export interface TeamPerson {
   userId: string;
   displayName: string;
-  status: 'running' | 'blocked' | 'overrun' | 'idle';
-  current: ActiveTaskDto | null;
+  status: TeamStatus;
+  /** 一句话：在做什么 / 卡住了在等谁 / 没活了 / 还没说在做什么 */
+  task: string;
+  /** 队列里堆了多少件 —— 负载，不是绩效 */
   standbyCount: number;
-  standbyMinutes: number;
-  fuelLevel: 'empty' | 'low' | 'ok';
-  fuelLabel: string;
-  todaySeconds: number;
-  todayLabel: string;
-  doneTodayCount: number;
   assignedByName?: string | null;
+  blockedSeconds: number;
 }
 
-export interface TeamAction {
-  kind: string;
-  userId: string;
-  who: string;
-  text: string;
-  cta: string;
+export interface ClosedItem {
+  id: string;
+  who?: string | null;
+  title: string;
+  closingNote?: string | null;
+  doneAt?: string | null;
 }
 
 export interface TeamBoard {
   headline: string;
-  kpis: { onDuty: number; blocked: number; lowFuel: number; overrun: number; doneWeek: number };
+  /** 有几个人要老板看一下 */
+  needsYou: number;
+  /** 堆到几件算多，后端配置 */
+  heavyStackThreshold: number;
   people: TeamPerson[];
-  actions: TeamAction[];
-  silentMembers: { userId: string; displayName: string }[];
-  settings: {
-    anonymousMode: string;
-    anonymousEnabled: boolean;
-    lowFuelThreshold: number;
-    blockedEscalateMinutes: number;
-  };
+  recentlyClosed: ClosedItem[];
   serverNow: string;
-}
-
-export interface HistoryLeak {
-  name: string;
-  seconds: number;
-  times: number;
-  label: string;
-  note: string;
 }
 
 export interface HistorySummary {
   headline: string;
   doneCount: number;
   droppedCount: number;
-  avgSeconds: number;
-  avgLabel: string;
-  idleSeconds: number;
-  idleLabel: string;
-  estimatedCount: number;
-  accurateCount: number;
-  overrunCount: number;
-  leaks: HistoryLeak[];
 }
 
 export interface ActiveTaskHistory {
@@ -148,6 +126,8 @@ export interface AssignableMember {
   standbyCount: number;
   currentTitle?: string | null;
   busy: boolean;
+  /** 「没活了」/「堆 5 件」—— 派活前看一眼，别往已经堆满的人身上加 */
+  stackHint?: string | null;
 }
 
 export interface ActiveTaskBoardSettings {
@@ -155,7 +135,7 @@ export interface ActiveTaskBoardSettings {
   anonymousMode: 'masked' | 'full' | 'headline';
   anonymousEnabled: boolean;
   blockedEscalateMinutes: number;
-  lowFuelThreshold: number;
+  heavyStackThreshold: number;
   updatedAt: string;
   updatedBy?: string | null;
 }
@@ -164,6 +144,5 @@ export interface PublicBoard {
   mode: string;
   board?: TeamBoard;
   headline?: string;
-  kpis?: TeamBoard['kpis'];
   serverNow?: string;
 }

@@ -216,6 +216,54 @@ public static class McpBuiltinTools
                 new() { Name = "entryId", In = "path", Required = true, Description = "文档条目 id" },
             },
         },
+        // ── 任务台（scope active-tasks:use / :manage）──
+        new McpToolDef
+        {
+            Name = "map_tasks_mine",
+            Description = "读「我」的任务台：此刻在做什么（做了多久、卡在等谁）、队列里还堆着几件、最近结了哪些案（含每件「做成了什么样」的那句话）。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "GET",
+            PathTemplate = "/api/open/tasks/mine",
+            WritesData = false,
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_add",
+            Description = "往「我」的队列尾部加一件任务。适合把缺陷、PR、告警变成一条待办；带上 sourceUrl 人接手时点得开。不会打断手上正在做的那件。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/mine",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "title", In = "body", Required = true, Description = "要做的是什么，一句话" },
+                new() { Name = "note", In = "body", Description = "补充说明，可选" },
+                new() { Name = "sourceUrl", In = "body", Description = "来源链接（缺陷/PR/告警地址），可选" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_team",
+            Description = "读全员此刻在做什么、谁卡住了在等谁、每人队列里堆了多少件，以及最近结案的那几条。需要管理档。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
+            Method = "GET",
+            PathTemplate = "/api/open/tasks/team",
+            WritesData = false,
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_assign",
+            Description = "派一件给别人，排到他的队尾，不打断他手上那件；任务上会带派活人的名字。userId 先用 map_tasks_team 拿。需要管理档。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/assign",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "userId", In = "body", Required = true, Description = "派给谁，取自 map_tasks_team 的 people[].userId" },
+                new() { Name = "title", In = "body", Required = true, Description = "让他做什么，一句话" },
+                new() { Name = "note", In = "body", Description = "为什么派这件，可选" },
+                new() { Name = "sourceUrl", In = "body", Description = "来源链接，可选" },
+            },
+        },
         // ── 视觉创作（scope visual-agent:use）──
         new McpToolDef
         {

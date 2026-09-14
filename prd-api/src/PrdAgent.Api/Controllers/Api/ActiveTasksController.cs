@@ -51,7 +51,6 @@ public class ActiveTasksController : ControllerBase
     {
         var userId = GetUserId();
         var now = DateTime.UtcNow;
-        var settings = await ActiveTaskShared.LoadSettingsAsync(_db, ct);
         var display = await ActiveTaskShared.ResolveDisplayNameAsync(_db, userId, ct);
 
         var live = await _db.ActiveTaskEntries
@@ -66,17 +65,14 @@ public class ActiveTasksController : ControllerBase
 
         var active = live.FirstOrDefault(x => x.State == ActiveTaskState.Active);
         var standby = live.Where(x => x.State == ActiveTaskState.Standby).OrderBy(x => x.OrderKey).ToList();
-        var standbyMinutes = standby.Sum(x => x.EstimateMinutes);
 
         return Ok(ApiResponse<object>.Ok(new
         {
+            // 界面是一个列表：实心圆那条 + 下面待做的 + 下面做完的。这里按同样的形状给。
             active = active == null ? null : ActiveTaskShared.ToDto(active, now),
             standby = standby.Select(x => ActiveTaskShared.ToDto(x, now)).ToList(),
             history = history.Select(x => ActiveTaskShared.ToDto(x, now)).ToList(),
-            fuelLabel = ActiveTaskConclusion.BuildFuelLabel(standby.Count, standbyMinutes, settings.LowFuelThreshold),
-            fuelLevel = ActiveTaskConclusion.FuelLevel(standby.Count, settings.LowFuelThreshold),
-            // 「老板此刻看到的你」：员工能看见自己汇报出去长什么样，这条闭环是整个面板的灵魂
-            bossMirror = ActiveTaskConclusion.BuildSelfMirror(display, active, standby.Count, now),
+            displayName = display,
             serverNow = now,
         }));
     }
@@ -211,9 +207,12 @@ public class ActiveTasksController : ControllerBase
         return Ok(ApiResponse<object>.Ok(ActiveTaskShared.ToDto(saved!, DateTime.UtcNow)));
     }
 
-    /// <summary>完成当前这件，并自动把备用队首顶上来 —— 「完成，切下一件」是一次点击，不是两步。</summary>
+    /// <summary>
+    /// 结案：做完这件，留一句「做成了什么样」，并自动把队首顶上来。
+    /// 结案与接下一件是同一个动作，不是两步。
+    /// </summary>
     [HttpPost("{id}/finish")]
-    public async Task<IActionResult> Finish(string id, CancellationToken ct = default)
+    public async Task<IActionResult> Finish(string id, [FromBody] ActiveTaskFinishRequest? req = null, CancellationToken ct = default)
     {
         var userId = GetUserId();
         var entry = await ActiveTaskShared.FindOwnedAsync(_db, id, userId, ct);
@@ -223,6 +222,15 @@ public class ActiveTasksController : ControllerBase
 
         var now = DateTime.UtcNow;
         await ActiveTaskShared.SettleAndSetStateAsync(_db, entry, ActiveTaskState.Done, now, ct);
+
+        var note = req?.ClosingNote?.Trim();
+        if (!string.IsNullOrWhiteSpace(note))
+        {
+            await _db.ActiveTaskEntries.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<ActiveTaskEntry>.Update.Set(x => x.ClosingNote, note),
+                cancellationToken: ct);
+        }
 
         // 队首自动顶上来
         var next = await _db.ActiveTaskEntries
@@ -384,6 +392,12 @@ public class ActiveTaskBlockRequest
 {
     /// <summary>在等谁、等什么（必填）</summary>
     public string BlockedOn { get; set; } = string.Empty;
+}
+
+public class ActiveTaskFinishRequest
+{
+    /// <summary>做成了什么样（选填，但界面上这是结案时唯一的输入）</summary>
+    public string? ClosingNote { get; set; }
 }
 
 public class ActiveTaskDropRequest

@@ -78,6 +78,15 @@ public class ActiveTaskEntry
     /// <summary>完成时刻</summary>
     public DateTime? DoneAt { get; set; }
 
+    /// <summary>
+    /// 结案说明 —— 「做成了什么样」。
+    ///
+    /// 这是结案与打勾的唯一区别：打勾只留下一个对号，一周后翻回来什么也看不出来。
+    /// 这句话是老板要看的、写周报要抄的、下个人接手要读的那一句。
+    /// 不强制填（逼着填会逼出「已完成」这种废话），但界面上它是结案时唯一的输入。
+    /// </summary>
+    public string? ClosingNote { get; set; }
+
     /// <summary>放弃原因（历史里保留放弃记录，不粉饰）</summary>
     public string? DropReason { get; set; }
 
@@ -184,8 +193,11 @@ public class ActiveTaskBoardSettings
     /// <summary>卡住多久自动升到老板的「需要你出手」（分钟）</summary>
     public int BlockedEscalateMinutes { get; set; } = 120;
 
-    /// <summary>备用任务少于几条算「粮草偏少」</summary>
-    public int LowFuelThreshold { get; set; } = 2;
+    /// <summary>
+    /// 堆到几件算「堆太多」，需要老板考虑分担。
+    /// 只有这一个阈值 —— 另一端「没活了」是 0，不需要配。
+    /// </summary>
+    public int HeavyStackThreshold { get; set; } = 8;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
     public string? UpdatedBy { get; set; }

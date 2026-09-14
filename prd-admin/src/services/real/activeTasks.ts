@@ -42,8 +42,12 @@ export const promoteActiveTask = (id: string) =>
 export const startActiveTask = (id: string) =>
   apiRequest<ActiveTaskDto>(`${base}/${id}/start`, { method: 'POST' });
 
-export const finishActiveTask = (id: string) =>
-  apiRequest<{ finished: string; next: ActiveTaskDto | null }>(`${base}/${id}/finish`, { method: 'POST' });
+/** 结案。closingNote 是「做成了什么样」那句话，选填但界面上是唯一的输入。 */
+export const finishActiveTask = (id: string, closingNote?: string) =>
+  apiRequest<{ finished: string; next: ActiveTaskDto | null }>(`${base}/${id}/finish`, {
+    method: 'POST',
+    body: { closingNote },
+  });
 
 export const blockActiveTask = (id: string, blockedOn: string) =>
   apiRequest<{ id: string; blocked: boolean }>(`${base}/${id}/block`, { method: 'POST', body: { blockedOn } });
@@ -88,7 +92,7 @@ export const saveBoardSettings = (body: {
   anonymousMode?: string;
   anonymousEnabled?: boolean;
   blockedEscalateMinutes?: number;
-  lowFuelThreshold?: number;
+  heavyStackThreshold?: number;
 }) => apiRequest<ActiveTaskBoardSettings>(`${adminBase}/settings`, { method: 'PUT', body });
 
 // ── 匿名侧（不带鉴权） ─────────────────────

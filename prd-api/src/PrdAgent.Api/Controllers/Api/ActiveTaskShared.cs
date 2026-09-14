@@ -133,60 +133,28 @@ public static class ActiveTaskShared
         return result;
     }
 
-    /// <summary>历史摘要：交付 / 放弃 / 平均耗时 / 空转，以及估准度与损耗归因。</summary>
+    /// <summary>
+    /// 历史摘要。刻意只有两个数：做成了几件、放弃了几件。
+    ///
+    /// 这里曾经有估准度（他估得准吗）和损耗归因（时间漏在哪）—— 都删了：
+    /// 那两块在衡量人，不在帮人沟通，摆在界面上就会让下面的人开始为数字干活。
+    /// </summary>
     public static object BuildHistorySummary(IReadOnlyList<ActiveTaskEntry> items, DateTime now)
     {
         var done = items.Where(x => x.State == ActiveTaskState.Done).ToList();
         var dropped = items.Where(x => x.State == ActiveTaskState.Dropped).ToList();
-        var idleSeconds = items.Sum(x => x.BlockedSecondsAt(now));
-        var avgSeconds = done.Count > 0 ? (int)done.Average(x => x.ElapsedSecondsAt(now)) : 0;
-
-        // 估准度：只统计估过的那些（没估过就没有基准，算进去等于编数据）
-        var estimated = done.Where(x => x.EstimateMinutes > 0).ToList();
-        var accurate = estimated.Count(x => x.ElapsedSecondsAt(now) <= x.EstimateMinutes * 60 * 1.2);
-        var overrun = estimated.Count(x => x.ElapsedSecondsAt(now) > x.EstimateMinutes * 60 * 2);
-
-        // 时间漏在哪：按「在等谁」归并
-        var leaks = items
-            .Where(x => !string.IsNullOrWhiteSpace(x.BlockedOn) && x.BlockedSecondsAt(now) > 0)
-            .GroupBy(x => x.BlockedOn!.Trim())
-            .Select(g => new
-            {
-                name = g.Key,
-                seconds = g.Sum(x => x.BlockedSecondsAt(now)),
-                times = g.Count(),
-            })
-            .OrderByDescending(x => x.seconds)
-            .Take(6)
-            .Select(x => new
-            {
-                x.name,
-                x.seconds,
-                x.times,
-                label = ActiveTaskConclusion.FormatDuration(x.seconds),
-                note = $"{x.times} 次 · 平均 {ActiveTaskConclusion.FormatDuration(x.seconds / Math.Max(x.times, 1))}",
-            })
-            .ToList();
 
         var headline = done.Count == 0 && dropped.Count == 0
-            ? "这段时间还没有已完成的任务，历史是空的。"
-            : leaks.Count > 0
-                ? $"交付 {done.Count} 件、放弃 {dropped.Count} 件，最大的一块损耗是等「{leaks[0].name}」，累计 {leaks[0].label}。"
-                : $"交付 {done.Count} 件、放弃 {dropped.Count} 件，没有记录到明显的等待损耗。";
+            ? "这段时间还没有结案的任务。"
+            : dropped.Count > 0
+                ? $"做成了 {done.Count} 件，放下了 {dropped.Count} 件。"
+                : $"做成了 {done.Count} 件。";
 
         return new
         {
             headline,
             doneCount = done.Count,
             droppedCount = dropped.Count,
-            avgSeconds,
-            avgLabel = ActiveTaskConclusion.FormatDuration(avgSeconds),
-            idleSeconds,
-            idleLabel = ActiveTaskConclusion.FormatDuration(idleSeconds),
-            estimatedCount = estimated.Count,
-            accurateCount = accurate,
-            overrunCount = overrun,
-            leaks,
         };
     }
 
@@ -226,6 +194,7 @@ public static class ActiveTaskShared
             assignedByName = e.AssignedByName,
             assignedAt = e.AssignedAt,
             doneAt = e.DoneAt,
+            closingNote = masked ? null : e.ClosingNote,
             dropReason = masked ? null : e.DropReason,
             createdAt = e.CreatedAt,
             updatedAt = e.UpdatedAt,
@@ -241,7 +210,11 @@ public static class ActiveTaskShared
     }
 
     /// <summary>
-    /// 团队看板聚合 —— 匿名侧也复用这一份，避免两处各算一遍然后漂移。
+    /// 团队看板聚合 —— 就是一个排好序的人员列表。
+    ///
+    /// 要你管的排最上面（卡住 &gt; 没活 &gt; 堆太多），其余按名字排。
+    /// 不另做「需要你出手」区块：那会让同一个人在一屏里出现两次。
+    /// 每人给一个堆积量 —— 那是负载不是绩效，所以只给数字，不给完成率/准时率那类东西。
     /// </summary>
     public static async Task<object> BuildTeamBoardAsync(
         MongoDbContext db, ActiveTaskBoardSettings settings, DateTime now, bool masked, CancellationToken ct)
@@ -250,130 +223,119 @@ public static class ActiveTaskShared
             .Find(x => x.State == ActiveTaskState.Active || x.State == ActiveTaskState.Standby)
             .ToListAsync(ct);
 
-        var todayStart = now.Date;
-        var doneToday = await db.ActiveTaskEntries
-            .Find(x => x.State == ActiveTaskState.Done && x.DoneAt >= todayStart)
-            .ToListAsync(ct);
-
-        var weekStart = now.Date.AddDays(-7);
-        var doneWeekCount = (int)await db.ActiveTaskEntries
-            .CountDocumentsAsync(x => x.State == ActiveTaskState.Done && x.DoneAt >= weekStart, cancellationToken: ct);
-
-        var groups = live.GroupBy(x => x.UserId).ToList();
-        var people = new List<object>();
-        var actions = new List<(int severity, object payload)>();
-        int blockedCount = 0, lowFuelCount = 0, overrunCount = 0;
-
-        foreach (var g in groups.OrderBy(g => g.Key))
-        {
-            var active = g.FirstOrDefault(x => x.State == ActiveTaskState.Active);
-            var standby = g.Where(x => x.State == ActiveTaskState.Standby).OrderBy(x => x.OrderKey).ToList();
-            var name = g.First().UserDisplayName ?? await ResolveDisplayNameAsync(db, g.Key, ct);
-            var standbyMinutes = standby.Sum(x => x.EstimateMinutes);
-            var fuelLevel = ActiveTaskConclusion.FuelLevel(standby.Count, settings.LowFuelThreshold);
-
-            var isBlocked = active?.Blocked == true;
-            var isOverrun = active?.IsOverrun(now) == true;
-            var todaySeconds = doneToday.Where(x => x.UserId == g.Key).Sum(x => x.ElapsedSecondsAt(now))
-                               + (active?.ElapsedSecondsAt(now) ?? 0);
-
-            if (isBlocked) blockedCount++;
-            if (fuelLevel == "empty") lowFuelCount++;
-            if (isOverrun) overrunCount++;
-
-            var status = active == null ? "idle" : isBlocked ? "blocked" : isOverrun ? "overrun" : "running";
-
-            people.Add(new
-            {
-                userId = g.Key,
-                displayName = name,
-                status,
-                current = active == null ? null : ToDto(active, now, masked),
-                standbyCount = standby.Count,
-                standbyMinutes,
-                fuelLevel,
-                fuelLabel = ActiveTaskConclusion.BuildFuelLabel(standby.Count, standbyMinutes, settings.LowFuelThreshold),
-                todaySeconds,
-                todayLabel = ActiveTaskConclusion.FormatDuration(todaySeconds),
-                doneTodayCount = doneToday.Count(x => x.UserId == g.Key),
-                // 委派可见性：这条正在做的活是谁派的
-                assignedByName = masked ? null : active?.AssignedByName,
-            });
-
-            // 需要你出手：卡住超阈值 > 备用见底 > 超期
-            if (isBlocked && active!.BlockedSecondsAt(now) >= settings.BlockedEscalateMinutes * 60)
-            {
-                actions.Add((1, new
-                {
-                    kind = "催一句",
-                    userId = g.Key,
-                    who = $"{name} · 卡 {ActiveTaskConclusion.FormatDuration(active.BlockedSecondsAt(now))}",
-                    text = masked
-                        ? $"{name} 卡住超过 {settings.BlockedEscalateMinutes} 分钟了，需要你去推一下。"
-                        : $"{name} 在等「{active.BlockedOn}」，已经等了 {ActiveTaskConclusion.FormatDuration(active.BlockedSecondsAt(now))}。",
-                    cta = "去催",
-                }));
-            }
-            if (fuelLevel == "empty")
-            {
-                actions.Add((2, new
-                {
-                    kind = "派活",
-                    userId = g.Key,
-                    who = $"{name} · 备用 0 件",
-                    text = active == null
-                        ? $"{name} 手上没活，备用队列也是空的。"
-                        : $"{name} 手上这件做完就没活了，备用队列是空的。",
-                    cta = "派任务",
-                }));
-            }
-            if (isOverrun)
-            {
-                actions.Add((3, new
-                {
-                    kind = "问一句",
-                    userId = g.Key,
-                    who = $"{name} · 已投入 {ActiveTaskConclusion.FormatDuration(active!.ElapsedSecondsAt(now))}",
-                    text = $"原估 {active.EstimateMinutes} 分钟的事已经做了 {ActiveTaskConclusion.FormatDuration(active.ElapsedSecondsAt(now))}，中途没报过卡住 —— 多半是范围变大了但没说。",
-                    cta = "请他补一句",
-                }));
-            }
-        }
-
-        // 还没汇报的人：近 7 天活跃但今天没有任何在途记录
+        // 近 7 天活跃的人也列出来 —— 没汇报不代表没干活，但老板得看得见这一行
         var activeSince = now.AddDays(-7);
         var recentUsers = await db.Users
             .Find(x => x.LastActiveAt >= activeSince || x.LastLoginAt >= activeSince)
             .Limit(200)
             .ToListAsync(ct);
-        var reported = groups.Select(g => g.Key).ToHashSet();
-        var silent = recentUsers
-            .Where(u => !reported.Contains(u.UserId))
-            .Select(u => new
+
+        var byUser = live.GroupBy(x => x.UserId).ToDictionary(g => g.Key, g => g.ToList());
+        var userIds = new HashSet<string>(byUser.Keys);
+        foreach (var u in recentUsers) userIds.Add(u.UserId);
+
+        var nameOf = recentUsers
+            .GroupBy(u => u.UserId)
+            .ToDictionary(
+                g => g.Key,
+                g => string.IsNullOrWhiteSpace(g.First().DisplayName) ? g.First().Username : g.First().DisplayName);
+
+        var people = new List<TeamRow>();
+        foreach (var uid in userIds)
+        {
+            byUser.TryGetValue(uid, out var mine);
+            var active = mine?.FirstOrDefault(x => x.State == ActiveTaskState.Active);
+            var standby = mine?.Count(x => x.State == ActiveTaskState.Standby) ?? 0;
+
+            var name = nameOf.TryGetValue(uid, out var n) && !string.IsNullOrWhiteSpace(n)
+                ? n
+                : (mine?.FirstOrDefault()?.UserDisplayName ?? await ResolveDisplayNameAsync(db, uid, ct));
+
+            string status;
+            string task;
+            if (active == null && standby == 0) { status = "empty"; task = "没活了"; }
+            else if (active == null) { status = "silent"; task = "还没说在做什么"; }
+            else if (active.Blocked)
             {
-                userId = u.UserId,
-                displayName = string.IsNullOrWhiteSpace(u.DisplayName) ? u.Username : u.DisplayName,
-            })
-            .Take(20)
+                status = "blocked";
+                task = masked || string.IsNullOrWhiteSpace(active.BlockedOn)
+                    ? "卡住了"
+                    : $"卡住了 · 在等{active.BlockedOn}";
+            }
+            else { status = "running"; task = masked ? MaskTitle(active.Title) : active.Title; }
+
+            people.Add(new TeamRow
+            {
+                UserId = uid,
+                DisplayName = name,
+                Status = status,
+                Task = task,
+                StandbyCount = standby,
+                AssignedByName = masked ? null : active?.AssignedByName,
+                BlockedSeconds = active?.BlockedSecondsAt(now) ?? 0,
+            });
+        }
+
+        // 排序：卡住 > 没活 > 堆太多 > 其余
+        var order = new Dictionary<string, int> { ["blocked"] = 0, ["empty"] = 1, ["silent"] = 3, ["running"] = 2 };
+        var sorted = people
+            .OrderBy(p => order.TryGetValue(p.Status, out var o) ? o : 9)
+            .ThenByDescending(p => p.Status == "running" && p.StandbyCount >= settings.HeavyStackThreshold ? 1 : 0)
+            .ThenBy(p => p.DisplayName, StringComparer.Ordinal)
             .ToList();
 
-        var onDuty = groups.Count;
+        var closed = await db.ActiveTaskEntries
+            .Find(x => x.State == ActiveTaskState.Done)
+            .SortByDescending(x => x.DoneAt)
+            .Limit(8)
+            .ToListAsync(ct);
+
+        var needsYou = sorted.Count(p => p.Status == "blocked" || p.Status == "empty");
+
         return new
         {
-            headline = ActiveTaskConclusion.BuildTeamHeadline(onDuty, blockedCount, lowFuelCount, overrunCount),
-            kpis = new
+            headline = BuildTeamHeadline(sorted.Count, needsYou),
+            needsYou,
+            heavyStackThreshold = settings.HeavyStackThreshold,
+            people = sorted.Select(p => new
             {
-                onDuty,
-                blocked = blockedCount,
-                lowFuel = lowFuelCount,
-                overrun = overrunCount,
-                doneWeek = doneWeekCount,
-            },
-            people,
-            actions = actions.OrderBy(a => a.severity).Select(a => a.payload).ToList(),
-            silentMembers = silent,
-            settings = new { settings.AnonymousMode, settings.AnonymousEnabled, settings.LowFuelThreshold, settings.BlockedEscalateMinutes },
+                userId = p.UserId,
+                displayName = p.DisplayName,
+                status = p.Status,
+                task = p.Task,
+                standbyCount = p.StandbyCount,
+                assignedByName = p.AssignedByName,
+                blockedSeconds = p.BlockedSeconds,
+            }).ToList(),
+            recentlyClosed = closed.Select(c => new
+            {
+                id = c.Id,
+                who = c.UserDisplayName,
+                title = masked ? MaskTitle(c.Title) : c.Title,
+                closingNote = masked ? null : c.ClosingNote,
+                doneAt = c.DoneAt,
+            }).ToList(),
             serverNow = now,
         };
+    }
+
+    /// <summary>团队头条：一句话，只说有没有要他管的，不报数字堆。</summary>
+    private static string BuildTeamHeadline(int total, int needsYou)
+    {
+        if (total == 0) return "还没有人汇报在做什么。";
+        return needsYou == 0
+            ? $"{total} 个人都在推进，没有要你管的。"
+            : $"{needsYou} 个人要你看一下，其余 {total - needsYou} 个正常。";
+    }
+
+    private sealed class TeamRow
+    {
+        public string UserId { get; set; } = string.Empty;
+        public string DisplayName { get; set; } = string.Empty;
+        public string Status { get; set; } = string.Empty;
+        public string Task { get; set; } = string.Empty;
+        public int StandbyCount { get; set; }
+        public string? AssignedByName { get; set; }
+        public int BlockedSeconds { get; set; }
     }
 }

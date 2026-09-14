@@ -170,6 +170,8 @@ public class ActiveTasksAdminController : ControllerBase
                 standbyCount = standby,
                 currentTitle = active?.Title,
                 busy = active != null,
+                // 派活前先看一眼他堆了多少，别往已经堆满的人身上加
+                stackHint = standby == 0 ? "没活了" : $"堆 {standby} 件",
             };
         }).ToList()));
     }
@@ -192,7 +194,7 @@ public class ActiveTasksAdminController : ControllerBase
         if (!string.IsNullOrWhiteSpace(req.AnonymousMode)) current.AnonymousMode = req.AnonymousMode!;
         if (req.AnonymousEnabled.HasValue) current.AnonymousEnabled = req.AnonymousEnabled.Value;
         if (req.BlockedEscalateMinutes.HasValue) current.BlockedEscalateMinutes = Math.Clamp(req.BlockedEscalateMinutes.Value, 5, 1440);
-        if (req.LowFuelThreshold.HasValue) current.LowFuelThreshold = Math.Clamp(req.LowFuelThreshold.Value, 0, 20);
+        if (req.HeavyStackThreshold.HasValue) current.HeavyStackThreshold = Math.Clamp(req.HeavyStackThreshold.Value, 2, 50);
         current.UpdatedAt = DateTime.UtcNow;
         current.UpdatedBy = GetUserId();
 
@@ -234,5 +236,5 @@ public class ActiveTaskSettingsRequest
     public string? AnonymousMode { get; set; }
     public bool? AnonymousEnabled { get; set; }
     public int? BlockedEscalateMinutes { get; set; }
-    public int? LowFuelThreshold { get; set; }
+    public int? HeavyStackThreshold { get; set; }
 }

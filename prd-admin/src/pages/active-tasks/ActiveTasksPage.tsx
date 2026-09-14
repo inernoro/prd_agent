@@ -1,100 +1,54 @@
 /**
- * 我的任务台 —— 员工侧。
+ * 我的任务 —— 一个列表，一条一条做完。
  *
- * 回答老板固定问的三个问题：此刻在做什么、做完接着做什么、走过哪些。
- * 刻意不做成第四块看板（pm-agent 已有看板/甘特/里程碑），它是一张汇报卡：
- * - 此刻正在做同时只允许一条（WIP=1），多线程等于没有焦点；
- * - 零表单：完成一次点击、队首自动顶上、时长自动记；
- * - 右上角「老板此刻看到的你」让员工看见自己汇报出去长什么样 —— 这条闭环是维护准确性的动力来源。
+ * 心智照「提醒事项」：每行一个圆圈，实心的那条是我在做的，点它就是结案。
+ * 结案会问一句「做成了什么样」——这是结案与打勾的唯一区别：打勾一周后翻回来
+ * 只有一串对号，那句话才是老板要看的、写周报要抄的、下个人接手要读的。
+ *
+ * 刻意没有的东西：跳秒的秒表、投入时长条、估准度、超期红灯。那些在衡量人，不在帮人沟通。
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import {
-  AlertTriangle, ArrowUp, Check, ClipboardPaste, Clock, Eye, Loader2, Plus, Trash2, X,
-} from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import {
-  blockActiveTask, createActiveTask, deleteActiveTask, dropActiveTask, finishActiveTask,
-  getMyActiveTasks, pasteActiveTasks, promoteActiveTask, startActiveTask, unblockActiveTask,
+  blockActiveTask, createActiveTask, deleteActiveTask, finishActiveTask,
+  getMyActiveTasks, promoteActiveTask, startActiveTask, unblockActiveTask,
 } from '@/services/real/activeTasks';
-import { ActiveTaskSourceLabels, type ActiveTaskDto, type MyActiveTasks } from '@/services/contracts/activeTasks';
+import type { ActiveTaskDto, MyActiveTasks } from '@/services/contracts/activeTasks';
 import type { ApiResponse } from '@/types/api';
 import './activeTasks.css';
 
-/** 秒 → HH:MM:SS，等宽数字下不跳动。 */
-function fmtClock(total: number): string {
-  const s = Math.max(0, Math.floor(total));
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${p(Math.floor(s / 3600))}:${p(Math.floor((s % 3600) / 60))}:${p(s % 60)}`;
-}
-
-/** 秒 → 人话。不足一小时给分钟，避免「0 小时」这种量纲退化。 */
-function fmtHuman(total: number): string {
-  const s = Math.max(0, Math.floor(total));
-  if (s < 60) return `${s} 秒`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m} 分`;
-  const h = Math.floor(m / 60);
-  const rest = m % 60;
-  return rest > 0 ? `${h} 小时 ${rest} 分` : `${h} 小时`;
+function whenLabel(iso?: string | null): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  const days = Math.floor((Date.now() - then) / 86400000);
+  if (days <= 0) return '今天';
+  if (days === 1) return '昨天';
+  if (days < 7) return `${days} 天前`;
+  return new Date(iso).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
 }
 
 export function ActiveTasksPage() {
-  const navigate = useNavigate();
   const [data, setData] = useState<MyActiveTasks | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [tick, setTick] = useState(0);
-  const loadedAtRef = useRef<number>(Date.now());
 
+  const [closeFor, setCloseFor] = useState<ActiveTaskDto | null>(null);
+  const [closingNote, setClosingNote] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [addTitle, setAddTitle] = useState('');
-  const [addEstimate, setAddEstimate] = useState('');
-  const [pasteOpen, setPasteOpen] = useState(false);
-  const [pasteText, setPasteText] = useState('');
   const [blockOpen, setBlockOpen] = useState(false);
   const [blockedOn, setBlockedOn] = useState('');
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     const res = await getMyActiveTasks();
-    if (res.success && res.data) {
-      setData(res.data);
-      loadedAtRef.current = Date.now();
-    } else if (!silent) {
-      toast.error(res.error?.message ?? '加载失败');
-    }
+    if (res.success && res.data) setData(res.data);
+    else if (!silent) toast.error(res.error?.message ?? '加载失败');
     setLoading(false);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
-
-  // 本地秒表：服务端只给起点，前端自己往前走，不轮询
-  useEffect(() => {
-    const t = window.setInterval(() => setTick((x) => x + 1), 1000);
-    return () => window.clearInterval(t);
-  }, []);
-
-  const active = data?.active ?? null;
-
-  /** 实时投入 = 服务端快照 + 本地流逝（用本地时间差，避开服务端/客户端时钟偏差）。 */
-  const liveElapsed = useMemo(() => {
-    if (!active) return 0;
-    if (!active.running) return active.elapsedSeconds;
-    void tick;
-    return active.elapsedSeconds + Math.floor((Date.now() - loadedAtRef.current) / 1000);
-  }, [active, tick]);
-
-  const liveBlocked = useMemo(() => {
-    if (!active?.blocked) return active?.blockedSeconds ?? 0;
-    void tick;
-    return active.blockedSeconds + Math.floor((Date.now() - loadedAtRef.current) / 1000);
-  }, [active, tick]);
-
-  const progressPct = useMemo(() => {
-    if (!active || active.estimateMinutes <= 0) return null;
-    return Math.min(100, Math.round((liveElapsed / (active.estimateMinutes * 60)) * 100));
-  }, [active, liveElapsed]);
 
   const run = useCallback(async <T,>(fn: () => Promise<ApiResponse<T>>, okMsg?: string) => {
     setBusy(true);
@@ -109,297 +63,173 @@ export function ActiveTasksPage() {
     return false;
   }, [load]);
 
-  const onFinish = useCallback(async () => {
-    if (!active) return;
-    await run(() => finishActiveTask(active.id), '已完成，队首那件顶上来了');
-  }, [active, run]);
-
-  const onBlockConfirm = useCallback(async () => {
-    if (!active || !blockedOn.trim()) return;
-    const ok = await run(() => blockActiveTask(active.id, blockedOn.trim()));
-    if (ok) { setBlockOpen(false); setBlockedOn(''); }
-  }, [active, blockedOn, run]);
+  const onCloseConfirm = useCallback(async () => {
+    if (!closeFor) return;
+    const ok = await run(() => finishActiveTask(closeFor.id, closingNote.trim() || undefined), '结案了，下一件顶上来了');
+    if (ok) { setCloseFor(null); setClosingNote(''); }
+  }, [closeFor, closingNote, run]);
 
   const onAddConfirm = useCallback(async () => {
     if (!addTitle.trim()) return;
-    const minutes = Number(addEstimate) > 0 ? Math.round(Number(addEstimate) * 60) : 0;
-    const ok = await run(() => createActiveTask({ title: addTitle.trim(), estimateMinutes: minutes }), '已加进备用队列');
-    if (ok) { setAddOpen(false); setAddTitle(''); setAddEstimate(''); }
-  }, [addTitle, addEstimate, run]);
+    const ok = await run(() => createActiveTask({ title: addTitle.trim() }));
+    if (ok) { setAddOpen(false); setAddTitle(''); }
+  }, [addTitle, run]);
 
-  const onPasteConfirm = useCallback(async () => {
-    if (!pasteText.trim()) return;
-    setBusy(true);
-    const res = await pasteActiveTasks(pasteText);
-    setBusy(false);
-    if (res.success && res.data) {
-      toast.success(`切出 ${res.data.created} 条，已进备用队列`);
-      setPasteOpen(false);
-      setPasteText('');
-      await load(true);
-    } else {
-      toast.error(res.error?.message ?? '没能从这段文字里切出任务');
-    }
-  }, [pasteText, load]);
+  const onBlockConfirm = useCallback(async () => {
+    if (!data?.active || !blockedOn.trim()) return;
+    const ok = await run(() => blockActiveTask(data.active!.id, blockedOn.trim()));
+    if (ok) { setBlockOpen(false); setBlockedOn(''); }
+  }, [data, blockedOn, run]);
 
   if (loading) {
-    return (
-      <div className="atb-page">
-        <div className="atb-empty">
-          <Loader2 size={20} className="atb-pulse" style={{ color: 'var(--accent-primary)' }} />
-          <div className="atb-empty__desc">正在拉取你的任务台</div>
-        </div>
-      </div>
-    );
+    return <div className="atb-page"><div className="atb-col"><div className="atb-empty">正在拉你的任务</div></div></div>;
   }
 
+  const active = data?.active ?? null;
   const standby = data?.standby ?? [];
-  const history = data?.history ?? [];
+  const done = (data?.history ?? []).filter((h) => h.state === 'done');
+  const total = (active ? 1 : 0) + standby.length;
 
   return (
     <div className="atb-page">
-      <div className="atb-head">
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14 }}>
-          <span className="atb-title">我的任务台</span>
-          <span className="atb-eyebrow">ACTIVE TASKS</span>
+      <div className="atb-col">
+        <div className="atb-head">
+          <span className="atb-title">我的任务</span>
+          <span className="atb-sub">{data?.displayName}</span>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <button className="atb-btn" onClick={() => setPasteOpen(true)}>
-            <ClipboardPaste size={15} />
-            从聊天记录粘贴
-          </button>
-          <button className="atb-btn" onClick={() => navigate('/active-tasks/history')}>
-            <Clock size={15} />
-            走过的路
-          </button>
-        </div>
-      </div>
 
-      <div className="atb-split">
-        <div className="atb-stack">
-          {/* 此刻正在做 */}
-          {active ? (
-            <div className={`atb-now${active.blocked ? ' atb-now--blocked' : active.overrun ? ' atb-now--overrun' : ''}`}>
-              <div className="atb-now__main">
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
-                  <span
-                    className="atb-eyebrow"
-                    style={{ color: active.blocked ? 'var(--accent-fg-warning)' : 'var(--accent-primary)' }}
-                  >
-                    {active.blocked ? '卡住了 · 正在等人' : '此刻正在做'}
-                  </span>
-                  <span className="atb-meta">
-                    {ActiveTaskSourceLabels[active.source] ?? '自己加的'}
-                    {active.assignedByName ? ` · ${active.assignedByName} 派的` : ''}
-                  </span>
+        {/* 一个列表：在做的 + 接下来的 + 加一件 */}
+        <div className="atb-list">
+          {total === 0 && (
+            <div className="atb-empty">还没有任务。加一件，点圆圈就开始。</div>
+          )}
+
+          {active && (
+            <div className="atb-row atb-row--now">
+              <button
+                className="atb-circle atb-circle--now"
+                disabled={busy}
+                aria-label="结案"
+                title="点一下结案"
+                onClick={() => { setCloseFor(active); setClosingNote(''); }}
+              />
+              <div className="atb-row__body">
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
+                  <span className="atb-row__title atb-row__title--now">{active.title}</span>
+                  {active.assignedByName && <span className="atb-tag">{active.assignedByName} 派的</span>}
                 </div>
-
-                <h2 className="atb-now__heading">{active.title}</h2>
-
-                {active.blocked && active.blockedOn ? (
-                  <p className="atb-now__desc">
-                    在等「{active.blockedOn}」，已经等了 {fmtHuman(liveBlocked)}。这条已经推到老板的「需要你出手」里了。
-                  </p>
-                ) : active.note ? (
-                  <p className="atb-now__desc">{active.note}</p>
-                ) : null}
-
-                {progressPct !== null && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-                    <div className="atb-progress">
-                      <div
-                        className="atb-progress__fill"
-                        style={{
-                          width: `${progressPct}%`,
-                          background: active.overrun ? 'var(--accent-fg-error)' : 'var(--accent-primary)',
-                        }}
-                      />
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      <span className="atb-meta">预估 {fmtHuman(active.estimateMinutes * 60)}</span>
-                      <span className="atb-meta" style={{ color: active.overrun ? 'var(--accent-fg-error)' : undefined }}>
-                        {active.overrun ? '已超出预估一倍以上' : `已用 ${progressPct}%`}
-                      </span>
-                    </div>
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap', marginTop: 4 }}>
-                  <button className="atb-btn atb-btn--primary" disabled={busy} onClick={onFinish}>
-                    <Check size={15} />
-                    完成，切下一件
-                  </button>
-                  {active.blocked ? (
-                    <button className="atb-btn atb-btn--warn" disabled={busy} onClick={() => void run(() => unblockActiveTask(active.id), '继续计时')}>
-                      <AlertTriangle size={15} />
-                      不卡了，继续
-                    </button>
-                  ) : (
-                    <button className="atb-btn" disabled={busy} onClick={() => setBlockOpen(true)}>
-                      <AlertTriangle size={15} />
-                      我卡住了
-                    </button>
-                  )}
-                  <button
-                    className="atb-btn"
-                    disabled={busy}
-                    onClick={() => void run(() => dropActiveTask(active.id, '中途放弃'), '已归入历史，保留放弃记录')}
-                  >
-                    <X size={15} />
-                    放弃这件
-                  </button>
-                </div>
+                <span className={`atb-row__sub${active.blocked ? ' atb-row__sub--alert' : ''}`}>
+                  {active.blocked
+                    ? `卡住了 · 在等${active.blockedOn ?? '别人'}`
+                    : `做了 ${active.elapsedLabel}`}
+                </span>
               </div>
-
-              <div className="atb-now__clock" style={{ color: active.blocked ? 'var(--accent-fg-warning)' : 'var(--accent-primary)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-                  <span className="atb-pulse" />
-                  <span className="atb-eyebrow" style={{ color: 'inherit' }}>{active.blocked ? 'BLOCKED' : 'RUNNING'}</span>
-                </div>
-                <div className="atb-clock__value">{fmtClock(active.blocked ? liveBlocked : liveElapsed)}</div>
-                <div className="atb-clock__note">{active.blocked ? '这段时间算空转，不计入投入' : `累计投入 ${fmtHuman(liveElapsed)}`}</div>
-              </div>
-            </div>
-          ) : (
-            <div className="atb-card">
-              <div className="atb-empty">
-                <Plus size={22} style={{ color: 'var(--accent-primary)' }} />
-                <div className="atb-empty__title">还没说你在做什么</div>
-                <div className="atb-empty__desc">
-                  老板那边现在显示「未汇报」。从下面的备用队列挑一件开始，或者直接加一条。
-                </div>
-                <button className="atb-btn atb-btn--primary" onClick={() => setAddOpen(true)}>
-                  <Plus size={15} />
-                  加一件并开始
-                </button>
-              </div>
+              <button
+                className="atb-link"
+                disabled={busy}
+                onClick={() => (active.blocked
+                  ? void run(() => unblockActiveTask(active.id))
+                  : setBlockOpen(true))}
+              >
+                {active.blocked ? '不卡了' : '卡住了'}
+              </button>
             </div>
           )}
 
-          {/* 备用任务 */}
-          <div className="atb-card">
-            <div className="atb-section-head">
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-                <span className="atb-section-title">备用任务</span>
-                <span className="atb-meta">按优先级排队 · 做完上面那件自动顶上来</span>
-              </div>
-              <span className={`atb-chip atb-chip--${data?.fuelLevel ?? 'ok'}`}>{data?.fuelLabel}</span>
-            </div>
-
-            {standby.length === 0 ? (
-              <div className="atb-empty">
-                <AlertTriangle size={22} style={{ color: 'var(--accent-fg-error)' }} />
-                <div className="atb-empty__title">备用任务已经见底</div>
-                <div className="atb-empty__desc">
-                  手上这件做完你就没活了。老板那边此刻已经亮红灯 —— 先挑两件垫上。
+          {standby.map((t) => (
+            <div className="atb-row" key={t.id}>
+              <button
+                className="atb-circle"
+                disabled={busy}
+                aria-label="开始做这件"
+                title="点一下开始做这件"
+                onClick={() => void run(() => startActiveTask(t.id), '换成做这件了')}
+              />
+              <div className="atb-row__body">
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 9 }}>
+                  <span className="atb-row__title">{t.title}</span>
+                  {t.assignedByName && <span className="atb-tag">{t.assignedByName} 派的</span>}
                 </div>
               </div>
-            ) : (
-              standby.map((t, i) => (
-                <div className="atb-row" key={t.id}>
-                  <span className="atb-row__no">{String(i + 1).padStart(2, '0')}</span>
-                  <div className="atb-row__body">
-                    <div className="atb-row__title">{t.title}</div>
-                    <div className="atb-row__sub">
-                      <span className={`atb-chip${t.source === 'assigned' ? ' atb-chip--accent' : ''}`}>
-                        {ActiveTaskSourceLabels[t.source] ?? '自己加的'}
-                        {t.assignedByName ? ` · ${t.assignedByName}` : ''}
-                      </span>
-                      {t.estimateMinutes > 0 && <span className="atb-meta">预估 {fmtHuman(t.estimateMinutes * 60)}</span>}
-                      {t.elapsedSeconds > 0 && <span className="atb-meta">已投入 {t.elapsedLabel}</span>}
+              <button className="atb-link" disabled={busy} onClick={() => void run(() => promoteActiveTask(t.id))}>
+                提前
+              </button>
+              {t.elapsedSeconds === 0 && (
+                <button
+                  className="atb-link"
+                  style={{ color: 'var(--text-muted)' }}
+                  disabled={busy}
+                  onClick={() => void run(() => deleteActiveTask(t.id))}
+                >
+                  删除
+                </button>
+              )}
+            </div>
+          ))}
+
+          <button className="atb-row" onClick={() => setAddOpen(true)}>
+            <span className="atb-circle" style={{ border: 'none', color: 'var(--text-muted)' }} aria-hidden="true">
+              <Plus size={17} />
+            </span>
+            <span className="atb-row__title" style={{ color: 'var(--text-muted)' }}>加一件</span>
+          </button>
+        </div>
+
+        {/* 做完的 */}
+        {done.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+            <span className="atb-group-label">做完的</span>
+            <div className="atb-list">
+              {done.slice(0, 8).map((d) => (
+                <div className="atb-done-row" key={d.id}>
+                  <span className="atb-circle atb-circle--done" aria-hidden="true">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 14 }}>
+                      <span className="atb-done-row__title">{d.title}</span>
+                      <span className="atb-when">{whenLabel(d.doneAt)}</span>
                     </div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 7, flexShrink: 0 }}>
-                    {i > 0 && (
-                      <button className="atb-btn atb-btn--sm" disabled={busy} onClick={() => void run(() => promoteActiveTask(t.id))}>
-                        <ArrowUp size={13} />
-                        置顶
-                      </button>
-                    )}
-                    <button className="atb-btn atb-btn--sm" disabled={busy} onClick={() => void run(() => startActiveTask(t.id), '换成做这件了')}>
-                      开始做
-                    </button>
-                    {t.elapsedSeconds === 0 && (
-                      <button className="atb-btn atb-btn--sm" disabled={busy} onClick={() => void run(() => deleteActiveTask(t.id))}>
-                        <Trash2 size={13} />
-                      </button>
-                    )}
+                    {d.closingNote && <span className="atb-done-row__note">{d.closingNote}</span>}
                   </div>
                 </div>
-              ))
-            )}
-
-            <button
-              className="atb-btn"
-              style={{ width: '100%', borderRadius: 0, borderLeft: 'none', borderRight: 'none', borderBottom: 'none', height: 42, justifyContent: 'center', background: 'transparent' }}
-              onClick={() => setAddOpen(true)}
-            >
-              <Plus size={14} />
-              加一件备用任务
-            </button>
-          </div>
-        </div>
-
-        {/* 侧栏 */}
-        <div className="atb-stack">
-          <div className="atb-mirror">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <Eye size={14} style={{ color: 'var(--accent-primary)' }} />
-              <span className="atb-eyebrow" style={{ color: 'var(--accent-primary)' }}>老板此刻看到的你</span>
-            </div>
-            <div className="atb-mirror__text">{data?.bossMirror}</div>
-            <div style={{ paddingTop: 9, borderTop: '1px solid color-mix(in srgb, var(--accent-primary) 20%, transparent)' }}>
-              <span className="atb-meta">这句话由你上面的操作自动生成，不用手写</span>
+              ))}
             </div>
           </div>
-
-          <div className="atb-card">
-            <div className="atb-section-head">
-              <span className="atb-section-title">刚刚走过的</span>
-              <button className="atb-btn atb-btn--sm" onClick={() => navigate('/active-tasks/history')}>全部历史</button>
-            </div>
-            {history.length === 0 ? (
-              <div className="atb-empty">
-                <div className="atb-empty__desc">还没有已结束的任务。完成第一件之后，这里会按时间倒序留下流水。</div>
-              </div>
-            ) : (
-              <div style={{ padding: '4px 17px 13px' }}>
-                {history.slice(0, 6).map((h: ActiveTaskDto) => (
-                  <div key={h.id} style={{ display: 'flex', gap: 11, padding: '9px 0', borderTop: '1px solid var(--border-secondary)' }}>
-                    <span
-                      style={{
-                        width: 7, height: 7, borderRadius: '50%', marginTop: 6, flexShrink: 0,
-                        background: h.state === 'dropped' ? 'var(--text-muted)' : 'var(--accent-fg-success)',
-                      }}
-                    />
-                    <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                      <div
-                        style={{
-                          fontSize: 12.5, lineHeight: 1.4, textWrap: 'pretty',
-                          color: h.state === 'dropped' ? 'var(--text-muted)' : 'var(--text-secondary)',
-                          textDecoration: h.state === 'dropped' ? 'line-through' : undefined,
-                        }}
-                      >
-                        {h.title}
-                      </div>
-                      <span className="atb-meta">
-                        {h.state === 'dropped' ? '放弃' : '完成'} · 用了 {h.elapsedLabel}
-                        {h.blockedSeconds > 0 ? ` · 空转 ${h.blockedLabel}` : ''}
-                      </span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* 加任务 */}
+      {/* 结案 */}
+      {closeFor && (
+        <div className="atb-sheet-backdrop" onClick={() => setCloseFor(null)}>
+          <div className="atb-sheet" onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <span className="atb-sheet__title">做成了什么样？</span>
+              <span className="atb-sheet__hint">{closeFor.title}</span>
+            </div>
+            <textarea
+              className="atb-input"
+              autoFocus
+              placeholder="一句话就行"
+              value={closingNote}
+              onChange={(e) => setClosingNote(e.target.value)}
+            />
+            <span className="atb-sheet__hint">
+              以后你和老板翻回来看的是这句，不是打勾。不写也能结，但那条历史就只剩一个标题。
+            </span>
+            <div className="atb-actions">
+              <button className="atb-btn atb-btn--quiet" onClick={() => setCloseFor(null)}>再想想</button>
+              <button className="atb-btn" disabled={busy} onClick={() => void onCloseConfirm()}>结案</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 加一件 */}
       {addOpen && (
-        <div className="atb-modal-backdrop" onClick={() => setAddOpen(false)}>
-          <div className="atb-modal" onClick={(e) => e.stopPropagation()}>
-            <span className="atb-section-title">加一件备用任务</span>
+        <div className="atb-sheet-backdrop" onClick={() => setAddOpen(false)}>
+          <div className="atb-sheet" onClick={(e) => e.stopPropagation()}>
+            <span className="atb-sheet__title">加一件</span>
             <input
               className="atb-input"
               autoFocus
@@ -408,62 +238,32 @@ export function ActiveTasksPage() {
               onChange={(e) => setAddTitle(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void onAddConfirm(); }}
             />
-            <input
-              className="atb-input"
-              placeholder="预估几小时（选填，不填就不判断超期）"
-              value={addEstimate}
-              onChange={(e) => setAddEstimate(e.target.value)}
-            />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="atb-btn" onClick={() => setAddOpen(false)}>取消</button>
-              <button className="atb-btn atb-btn--primary" disabled={busy || !addTitle.trim()} onClick={() => void onAddConfirm()}>加进队列</button>
+            <span className="atb-sheet__hint">排在队尾。想先做它，加完点一下「提前」。</span>
+            <div className="atb-actions">
+              <button className="atb-btn atb-btn--quiet" onClick={() => setAddOpen(false)}>取消</button>
+              <button className="atb-btn" disabled={busy || !addTitle.trim()} onClick={() => void onAddConfirm()}>加进去</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 粘贴聊天记录 */}
-      {pasteOpen && (
-        <div className="atb-modal-backdrop" onClick={() => setPasteOpen(false)}>
-          <div className="atb-modal" onClick={(e) => e.stopPropagation()}>
-            <span className="atb-section-title">从聊天记录粘贴</span>
-            <div className="atb-empty__desc" style={{ maxWidth: 'none', textAlign: 'left' }}>
-              把聊天里那段话整段贴进来，按行切成任务。序号、项目符号、发言人前缀会自动剥掉。
-            </div>
-            <textarea
-              className="atb-input"
-              autoFocus
-              placeholder={'张三：1. 把 P2 静默失败补上告警\n2. 分支级 env 覆盖\n- 生图超时兜底动画'}
-              value={pasteText}
-              onChange={(e) => setPasteText(e.target.value)}
-            />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="atb-btn" onClick={() => setPasteOpen(false)}>取消</button>
-              <button className="atb-btn atb-btn--primary" disabled={busy || !pasteText.trim()} onClick={() => void onPasteConfirm()}>切成任务</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 标记卡住 */}
+      {/* 卡住了 */}
       {blockOpen && (
-        <div className="atb-modal-backdrop" onClick={() => setBlockOpen(false)}>
-          <div className="atb-modal" onClick={(e) => e.stopPropagation()}>
-            <span className="atb-section-title">你在等谁？</span>
-            <div className="atb-empty__desc" style={{ maxWidth: 'none', textAlign: 'left' }}>
-              只说「卡住了」老板没法处理。写清在等谁、等什么，这条会带着等待时长推到他的待办里。
-            </div>
+        <div className="atb-sheet-backdrop" onClick={() => setBlockOpen(false)}>
+          <div className="atb-sheet" onClick={(e) => e.stopPropagation()}>
+            <span className="atb-sheet__title">在等谁？</span>
             <input
               className="atb-input"
               autoFocus
-              placeholder="例如：等王予重建旧构建容器"
+              placeholder="例如：王予重建那台机器"
               value={blockedOn}
               onChange={(e) => setBlockedOn(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void onBlockConfirm(); }}
             />
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-              <button className="atb-btn" onClick={() => setBlockOpen(false)}>取消</button>
-              <button className="atb-btn atb-btn--warn" disabled={busy || !blockedOn.trim()} onClick={() => void onBlockConfirm()}>标记卡住</button>
+            <span className="atb-sheet__hint">只说「卡住了」老板没法处理。说清在等谁，这条会排到他那屏最上面。</span>
+            <div className="atb-actions">
+              <button className="atb-btn atb-btn--quiet" onClick={() => setBlockOpen(false)}>取消</button>
+              <button className="atb-btn" disabled={busy || !blockedOn.trim()} onClick={() => void onBlockConfirm()}>就这样</button>
             </div>
           </div>
         </div>
