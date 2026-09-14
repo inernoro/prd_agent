@@ -10,13 +10,14 @@
  * 判据全在 lib/ownerBoard.ts，这里只负责摆放与着色。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, Cable, CheckCircle2, ChevronRight, Globe, Info, Waves } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, BellRing, Cable, CheckCircle2, ChevronRight, Globe, Info, Waves } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { DiscoveryStrip } from './DiscoveryStrip';
-import type { MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
+import { formatRelative } from '@/lib/monitorCenter';
+import type { AlarmChannelView, MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
   buildOwnerBoard,
   describeEvidence,
@@ -181,6 +182,69 @@ function NeedsProjectRow({ icon: Icon, title, what, projects, onPick }: {
   );
 }
 
+const ALARM_TONE: Record<AlarmChannelView['status'] | 'unknown', string> = {
+  unconfigured: 'border-destructive/40 bg-destructive/10',
+  failing: 'border-destructive/40 bg-destructive/10',
+  untested: 'border-warn/40 bg-warn-soft/40',
+  healthy: 'border-ok/30 bg-ok-soft/40',
+  unknown: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]',
+};
+
+/**
+ * 「出事了会不会有人告诉我」这一行。
+ *
+ * 四档文案各自回答同一个问题，一档都不许省成「未知」——除了服务端真没下发的那种
+ * 未知，那时也要明说「不知道」，而不是假装通着。
+ */
+function AlarmRow({ alarm, now }: { alarm: AlarmChannelView | undefined; now: number }): JSX.Element {
+  const [busy, setBusy] = useState(false);
+  const [drill, setDrill] = useState<{ ok: boolean; reason?: string } | null>(null);
+  const runDrill = useCallback(async (): Promise<void> => {
+    setBusy(true);
+    try {
+      const r = await apiRequest<{ ok: boolean; reason?: string }>('/api/uptime/alarm-drill', { method: 'POST', body: {} });
+      setDrill(r);
+    } catch (err) {
+      setDrill({ ok: false, reason: err instanceof ApiError ? err.message : String(err) });
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  const tone = ALARM_TONE[alarm?.status ?? 'unknown'];
+  const text = !alarm
+    ? '通知通道状态未知 —— 这个实例没有下发通道信息，出问题时有没有人被通知，现在说不准'
+    : alarm.status === 'unconfigured'
+      ? `出问题时不会有任何人被通知 —— ${alarm.channel}的凭据没配齐${alarm.missing?.length ? `（缺 ${alarm.missing.join('、')}）` : ''}`
+      : alarm.status === 'failing'
+        ? `上一次通知没送出去：${alarm.last?.reason || '原因不明'} —— 现在出问题也不会有人收到`
+        : alarm.status === 'untested'
+          ? `${alarm.channel}已接上，但这个进程还没真发过一次 —— 能不能送到仍然是未知数，点右边演练一次`
+          : `${alarm.channel}通着，已成功送出 ${alarm.delivered} 次${alarm.last ? `，上一次 ${formatRelative(alarm.last.at, now)}` : ''}`;
+
+  return (
+    <div className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3.5 py-2.5', tone)}>
+      <BellRing className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+      <span className="text-xs text-muted-foreground">通知</span>
+      <span className="text-[0.6875rem] text-foreground">{text}</span>
+      <div className="flex-grow" />
+      {drill ? (
+        <span className={cn('text-[0.6875rem]', drill.ok ? 'text-ok' : 'text-destructive')}>
+          {drill.ok ? '演练已送达' : `演练失败：${drill.reason || '原因不明'}`}
+        </span>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => void runDrill()}
+        disabled={busy}
+        className="shrink-0 rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-primary/50 disabled:opacity-60"
+      >
+        {busy ? '演练中' : '演练一次通知'}
+      </button>
+    </div>
+  );
+}
+
 interface StatusPageState {
   open: boolean;
   path: string | null;
@@ -191,6 +255,7 @@ export function OwnerBoard({
   scope,
   now,
   prober,
+  alarm,
   onScope,
   onOpenTarget,
   onAddMonitor,
@@ -204,6 +269,11 @@ export function OwnerBoard({
    * **不许在这里兜一个 stalled:false**：那等于探测器一挂，面板就开始替它撒谎。
    */
   prober: { stalled: boolean; lastCycleAt: number | null } | null;
+  /**
+   * 通知通道状态。undefined = 服务端没下发 = **不知道**，按「未知」渲染。
+   * 这里同样不许兜一个「通着」：铃哑了还替它说好话，比没有这一行更糟。
+   */
+  alarm: AlarmChannelView | undefined;
   scope: OwnerScope;
   onScope: (next: OwnerScope) => void;
   onOpenTarget: (targetId: string) => void;
@@ -465,6 +535,11 @@ export function OwnerBoard({
           onPick={(id) => onScope({ ...scope, projectId: id })}
         />
       )}
+
+      {/* 通知通道：出问题时会不会有人被通知。
+          这一行是整条链上最容易静默失效的一环——没配凭据时投递是一次 no-op，
+          启动日志里那句「不会有人被通知」没有任何验收会去读。所以它必须长在这一屏上。 */}
+      <AlarmRow alarm={alarm} now={now} />
 
       {/* 基础设施：要能一眼确认没塌，但不占主视觉 */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3.5 py-2.5">

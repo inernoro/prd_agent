@@ -156,7 +156,21 @@ export interface UptimeProberHealth {
   userViewEnabled: boolean;
 }
 
+/**
+ * 通知通道自身的状态。服务端不下发这个字段时**必须当成「不知道」**，
+ * 不许在前端兜一个「通着」——那等于铃哑了还替它说好话。
+ */
+export interface AlarmChannelView {
+  status: 'unconfigured' | 'untested' | 'healthy' | 'failing';
+  channel: string;
+  delivered: number;
+  failed: number;
+  last?: { at: number; ok: boolean; kind: 'alert' | 'drill'; reason?: string; status?: number };
+  missing?: string[];
+}
+
 export interface UptimeSummary {
+  alarm?: AlarmChannelView;
   enabled: boolean;
   generatedAt: number;
   intervalSeconds: number;

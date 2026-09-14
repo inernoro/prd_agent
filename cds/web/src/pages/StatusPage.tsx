@@ -379,6 +379,7 @@ export function StatusPage(): JSX.Element {
                     targets={targets}
                     now={now}
                     prober={summary?.prober ?? null}
+                    alarm={summary?.alarm}
                     scope={scope}
                     onScope={onScope}
                     onOpenTarget={(targetId) => { setBoardView('all'); openTarget(targetId); }}

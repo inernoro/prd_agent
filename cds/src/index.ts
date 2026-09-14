@@ -135,6 +135,7 @@ import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
 import { MapNotifier, mapNotifierConfigFromEnv } from './services/map-notifier.js';
+import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
 
 
 const configPath = process.argv[2] || undefined;
@@ -5841,6 +5842,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     console.log('  [map-notifier] 未配置，存活告警只进 CDS 事件总线，不会有人被通知'
       + '（需要 CDS_MAP_NOTIFY_ENDPOINT / _KEY_ID / _USERNAME / _PRIVATE_KEY）');
   }
+  // 光打一行启动日志不够：没有任何一条验收会去读 CDS 的 stdout。
+  // 通道自身的状态必须跟着 uptime 摘要一起下发，让面板能说出「出事了有没有人被通知」。
+  const alarmChannel = new AlarmChannel(Boolean(mapNotifier), 'MAP 站内通知', missingAlarmEnvKeys());
 
   /**
    * 项目级地址台账：某个项目名下所有分支预览的主机名。
@@ -5925,7 +5929,14 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,
-      }).catch((err) => console.warn(`[map-notifier] 未捕获的投递异常: ${(err as Error).message}`));
+      })
+        // 每一次投递都记账：面板上「铃通不通」这句话的唯一数据源。
+        .then((r) => alarmChannel.record(r, 'alert', Date.now()))
+        .catch((err) => {
+          const reason = `未捕获的投递异常: ${(err as Error).message}`;
+          alarmChannel.record({ ok: false, reason }, 'alert', Date.now());
+          console.warn(`[map-notifier] ${reason}`);
+        });
     },
   });
   // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
@@ -5999,6 +6010,26 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     removeMonitorEndpoint: (projectId: string, url: string) => stateService.removeMonitorEndpoint(projectId, url),
     runDiscovery,
     lastDiscoveryRun: () => lastDiscoveryRun,
+    alarmChannel: () => alarmChannel.snapshot(),
+    // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
+    // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。
+    runAlarmDrill: async (note: string) => {
+      if (!mapNotifier) {
+        const reason = '通知通道没配齐，演练发不出去（这本身就是结论：现在出问题不会有人被通知）';
+        alarmChannel.record({ ok: false, reason }, 'drill', Date.now());
+        return { ok: false, reason };
+      }
+      const result = await mapNotifier.send({
+        type: 'uptime.target.recovered',
+        targetId: 'drill',
+        targetName: '通知通道演练',
+        message: note || '这是一次人工演练，用来确认「出问题时铃会响」。看到它说明通道是通的。',
+        consecutiveFailures: 0,
+        detectedAt: new Date().toISOString(),
+      });
+      alarmChannel.record(result, 'drill', Date.now());
+      return result;
+    },
     store: {
       listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
       getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
