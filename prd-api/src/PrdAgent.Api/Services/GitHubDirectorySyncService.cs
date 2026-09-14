@@ -198,7 +198,7 @@ public class GitHubDirectorySyncService
                     StoreId = parentEntry.StoreId,
                     Title = file.Name,
                     SourceType = DocumentSourceType.Subscription,
-                    SourceUrl = file.DownloadUrl,
+                    SourceUrl = BuildBlobUrl(owner, repo, branch, file.Path),
                     SyncIntervalMinutes = parentEntry.SyncIntervalMinutes,
                     SyncStatus = DocumentSyncStatus.Idle,
                     ContentType = "text/markdown",
@@ -337,6 +337,11 @@ public class GitHubDirectorySyncService
                     entry.LastSyncAt = DateTime.UtcNow;
                     entry.LastChangedAt = DateTime.UtcNow;
                     entry.UpdatedAt = DateTime.UtcNow;
+                    entry.SourceUrl = BuildBlobUrl(owner, repo, branch, file.Path);
+                    // 与改写 SourceUrl 同一拍补上 github_path：存量条目（早期没有这个字段）
+                    // 是靠 SourceUrl == download_url 认亲的，只改地址不补路径键，下一轮同步
+                    // 会把它当"远端已不存在"删掉再重建，历史版本一起没。
+                    entry.Metadata["github_path"] = file.Path;
                     entry.Metadata["github_sha"] = file.Sha;
                     var cachedCommitDate = await commitDateTask;
                     if (cachedCommitDate.HasValue)
@@ -401,6 +406,9 @@ public class GitHubDirectorySyncService
             entry.LastSyncAt = DateTime.UtcNow;
             entry.LastChangedAt = DateTime.UtcNow; // SHA 变了才会进入此函数（除新建外），即真的有变化
             entry.UpdatedAt = DateTime.UtcNow;
+            entry.SourceUrl = BuildBlobUrl(owner, repo, branch, file.Path);
+            // 同上：改地址必须同时补路径键，否则存量条目下一轮会被判成删除 + 新增
+            entry.Metadata["github_path"] = file.Path;
             entry.Metadata["github_sha"] = file.Sha;
             var freshCommitDate = await commitDateTask;
             if (freshCommitDate.HasValue)
@@ -584,6 +592,18 @@ public class GitHubDirectorySyncService
         }
         return request;
     }
+
+    /// <summary>
+    /// 子条目对外展示的来源地址：GitHub 网页上这个文件的稳定地址。
+    ///
+    /// **不能存 download_url**：私有仓的那串地址带着几分钟就失效的临时凭据，
+    /// 存下来等于（其一）把凭据留在库里和界面上，（其二）用户过一会儿点开就是个死链。
+    /// 正文一直是走 Contents API 现取的，从不读这个字段，所以这里只管「人点得开」。
+    /// </summary>
+    private static string BuildBlobUrl(string owner, string repo, string branch, string path)
+        => $"https://github.com/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+         + $"/blob/{Uri.EscapeDataString(branch)}/"
+         + Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
 
     /// <summary>
     /// 取单个文件正文。已连接走 Contents API 的 raw 媒体类型（私有仓可读、地址稳定不带临时 token），

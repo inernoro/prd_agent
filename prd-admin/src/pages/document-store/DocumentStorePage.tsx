@@ -70,7 +70,7 @@ import { RecentEntriesList } from './RecentEntriesList';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { GitHubSyncWizard } from './GitHubSyncWizard';
-import { githubSyncingSignature, mergeWatchedParents } from '@/components/doc-browser/subscriptionEntryState';
+import { githubSyncingSignature, mergeWatchedParents, GITHUB_DIRECTORY_SOURCE } from '@/components/doc-browser/subscriptionEntryState';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
@@ -111,7 +111,7 @@ import {
   createDocumentStore,
   deleteDocumentStore,
   listDocumentEntries,
-  getDocumentEntry,
+  listDocumentEntriesBySourceType,
   uploadDocumentFileWithProgress,
   replaceDocumentFile,
   getDocumentContent,
@@ -1591,20 +1591,25 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   useEffect(() => {
     if (!githubSyncSignature) return;
     let cancelled = false;
-    let seq = 0; // 发号器：只应用最新一发的结果，防慢响应覆盖快响应
-    const watchedIds = githubSyncSignature.split('|');
+    let checking = false; // 上一轮没回来就跳过这一拍：慢响应不许把请求越堆越多
     const check = async () => {
-      const my = ++seq;
-      // 列表按创建时间倒序分页：目录同步出两百篇子文档后，父条目会被自己的孩子挤出第一页。
-      // 所以父条目单独按 id 拉一份并回来——否则它从界面消失、轮询也跟着停，最终状态永远等不到。
-      const [res, ...parents] = await Promise.all([
-        listDocumentEntries(storeId, 1, 200),
-        ...watchedIds.map((id) => getDocumentEntry(id)),
-      ]);
-      if (cancelled || my !== seq || !res.success) return;
-      const watched = parents.filter((p) => p.success).map((p) => p.data);
-      applyPolledEntries(mergeWatchedParents(res.data.items, watched));
-      setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+      if (checking) return;
+      checking = true;
+      try {
+        // 两个请求，与目录数量无关：
+        // 一是当前页条目（子文档陆续出现），二是**全部**目录父条目——列表按创建时间倒序分页，
+        // 一个目录同步出两百篇之后父条目会被自己的孩子挤出第一页，只看列表就会以为它没了。
+        const [res, parents] = await Promise.all([
+          listDocumentEntries(storeId, 1, 200),
+          listDocumentEntriesBySourceType(storeId, GITHUB_DIRECTORY_SOURCE),
+        ]);
+        if (cancelled || !res.success) return;
+        const watched = parents.success ? parents.data.items : [];
+        applyPolledEntries(mergeWatchedParents(res.data.items, watched));
+        setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+      } finally {
+        checking = false;
+      }
     };
     const timer = window.setInterval(() => { void check(); }, 6000);
     return () => { cancelled = true; window.clearInterval(timer); };

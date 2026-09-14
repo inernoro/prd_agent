@@ -352,6 +352,9 @@ function RepoStep({ onSelected, onError }: {
   const [branchLoading, setBranchLoading] = useState(false);
   /** 分支请求发号器：只认最新一发的结果（轮询/并发请求的 stale-response 守卫） */
   const branchSeqRef = useRef(0);
+  /** 当前搜索词的镜像：在途的「加载更多」用它判断自己是不是已经过期 */
+  const queryRef = useRef(query);
+  useEffect(() => { queryRef.current = query; }, [query]);
 
   useEffect(() => {
     let cancelled = false;
@@ -374,8 +377,13 @@ function RepoStep({ onSelected, onError }: {
   const loadMore = async () => {
     setLoadingMore(true);
     const next = page + 1;
+    // 记住这一发是给哪个关键词取的：用户在等待期间改了搜索词，这一发就作废。
+    // 否则 A 的第二页会被追加到 B 的第一页后面（列表里混进不匹配的仓库），
+    // 页码也被推到 2，B 的第二页从此被跳过。
+    const forQuery = query;
     const res = await listGitHubRepositories(query || undefined, next, 30);
-    setLoadingMore(false);
+    setLoadingMore(false); // 先收掉加载态，作废的那一发也不能让按钮一直转
+    if (forQuery !== queryRef.current) return; // 搜索词已改，这一发作废
     if (!res.success) {
       onError(res.error?.message ?? '读取更多仓库失败', res.error?.code);
       return;

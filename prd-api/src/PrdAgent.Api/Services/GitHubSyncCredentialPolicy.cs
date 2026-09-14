@@ -34,6 +34,24 @@ public static class GitHubSyncCredentialPolicy
     public const string UnreadableReason =
         "GitHub 授权凭据无法读取（可能是平台密钥轮换导致），请重新连接 GitHub 账号后再试。";
 
+    /// <summary>
+    /// 手贴 URL 建订阅时，这个用户的 GitHub 连接当下能不能用。
+    /// <c>Unknown</c> 是网络抖动这类**没问出结论**的情况，不是「不能用」。
+    /// </summary>
+    public enum ConnectionUsability { Usable, Revoked, Unknown }
+
+    /// <summary>
+    /// 手贴 URL 的订阅要不要盖上连接身份。
+    ///
+    /// 盖了就意味着同步一定带 token（解不出来会按上面的规则**阻断**，不退回匿名）。
+    /// 所以「连接记录还在、但用户已经在 GitHub 那边撤销了授权」这一种必须不盖：
+    /// 公开仓本来匿名就能同步，盖上去反而每天必然 401——把本来能用的路径改坏了。
+    /// 而问不出结论（网络抖动）时保持盖章：那才是保住私有仓的一侧，
+    /// 且失败会以可诊断的授权错误出现，不会退化成与「目录不存在」无法区分的 404。
+    /// </summary>
+    public static bool ShouldStampConnection(bool hasConnectionRecord, ConnectionUsability usability)
+        => hasConnectionRecord && usability != ConnectionUsability.Revoked;
+
     /// <summary>条目上是否盖了「用某个用户的 GitHub 连接来同步」的身份。</summary>
     public static bool HasConnectionStamp(string? connectionUserId)
         => !string.IsNullOrWhiteSpace(connectionUserId);

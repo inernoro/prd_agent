@@ -110,6 +110,26 @@ export const listDocumentEntriesReal: ListDocumentEntriesContract = async (store
   return await apiRequest(url, { method: 'GET' });
 };
 
+/**
+ * 只取某一类来源的条目（目录同步轮询用）。
+ *
+ * 轮询要盯的是「正在同步的 GitHub 目录父条目」。按 id 一条条打的话，
+ * 一次批量勾 50 个目录就是每轮 50 个请求；这里一次把该类条目全取回来，
+ * 轮询固定只有两个请求（列表 + 本函数），与目录数量无关。
+ */
+export async function listDocumentEntriesBySourceType(
+  storeId: string,
+  sourceType: string,
+  pageSize = 500,
+) {
+  const url = `${api.documentStore.entries.list(storeId)}`
+    + `?page=1&pageSize=${pageSize}&all=true&sourceType=${encodeURIComponent(sourceType)}`;
+  return await apiRequest<{
+    items: import('@/services/contracts/documentStore').DocumentEntry[];
+    total: number;
+  }>(url, { method: 'GET' });
+}
+
 /** 获取单条文档条目详情 */
 export async function getDocumentEntry(entryId: string) {
   return await apiRequest<import('@/services/contracts/documentStore').DocumentEntry>(

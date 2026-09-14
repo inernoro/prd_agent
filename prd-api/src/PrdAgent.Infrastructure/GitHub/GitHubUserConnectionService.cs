@@ -73,6 +73,44 @@ public sealed class GitHubUserConnectionService
         return token;
     }
 
+    /// <summary>
+    /// 这个用户的连接**当下**还能不能用（不只是「存过」）。
+    ///
+    /// 用户在 GitHub 那边撤销授权之后，本地记录仍在、token 也解得出来，但每次调用都是 401。
+    /// 三态返回：明确 401/403 才算 Revoked；网络抖动等问不出结论的一律 Unknown，
+    /// 交给调用方按「不确定时保守」处理——把不确定当成「已撤销」会静默改坏正常路径。
+    /// </summary>
+    public async Task<GitHubConnectionUsability> ProbeConnectionAsync(string userId, CancellationToken ct)
+    {
+        string token;
+        try
+        {
+            token = await ResolveTokenAsync(userId, ct);
+        }
+        catch (GitHubException)
+        {
+            return GitHubConnectionUsability.Revoked;
+        }
+
+        try
+        {
+            using var client = CreateApiClient(token);
+            using var resp = await client.GetAsync("user", ct);
+            if (resp.IsSuccessStatusCode) return GitHubConnectionUsability.Usable;
+            return resp.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden
+                ? GitHubConnectionUsability.Revoked
+                : GitHubConnectionUsability.Unknown;
+        }
+        catch (HttpRequestException)
+        {
+            return GitHubConnectionUsability.Unknown;
+        }
+        catch (TaskCanceledException)
+        {
+            return GitHubConnectionUsability.Unknown;
+        }
+    }
+
     /// <summary>Device Flow 成功后落库（同一用户覆盖旧连接）。</summary>
     public async Task<GitHubUserInfo> PersistConnectionAsync(
         string userId, string accessToken, string scope, CancellationToken ct)
@@ -296,6 +334,9 @@ public sealed class GitHubUserConnectionService
         => Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
 
     // ===== 对外结果模型 =====
+
+    /// <summary>连接可用性三态；Unknown 表示没问出结论（网络抖动等），不是「不可用」。</summary>
+    public enum GitHubConnectionUsability { Usable, Revoked, Unknown }
 
     /// <summary>一页仓库 + 上游是否还有下一页（HasMore 按过滤前的原始条数算）。</summary>
     public sealed record GitHubRepositoryPage(

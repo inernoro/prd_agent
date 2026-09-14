@@ -4647,12 +4647,26 @@ public class DocumentStoreController : ControllerBase
 
         // 手贴 URL 这条路径不要求先连 GitHub（历史行为：公开仓匿名可读），
         // 但只要用户已经连过，就把连接盖在条目上，私有仓和 5000/h 限额同样受益。
-        var anonymousConnection = await _githubConnections.GetConnectionAsync(userId, CancellationToken.None);
+        //
+        // 盖之前先问一句连接现在还认不认：用户在 GitHub 那边撤销授权后记录仍在，
+        // 盖上去会让本来匿名就能同步的公开仓变成每天必然 401 —— 把能用的路径改坏了。
+        // 问不出结论（网络抖动）时仍然盖，保住私有仓那一侧（判据见 GitHubSyncCredentialPolicy）。
+        var existingConnection = await _githubConnections.GetConnectionAsync(userId, CancellationToken.None);
+        var usability = existingConnection == null
+            ? GitHubSyncCredentialPolicy.ConnectionUsability.Revoked
+            : MapUsability(await _githubConnections.ProbeConnectionAsync(userId, CancellationToken.None));
+        var stampConnection = GitHubSyncCredentialPolicy.ShouldStampConnection(existingConnection != null, usability);
+        if (existingConnection != null && !stampConnection)
+        {
+            _logger.LogInformation(
+                "[document-store] GitHub subscription for {Owner}/{Repo} not stamped: stored connection is revoked; falling back to anonymous sync",
+                owner, repo);
+        }
 
         var entry = BuildGitHubDirectoryEntry(
             storeId, owner, repo, path, branch, title,
             request.IncludeGlob, request.Tags, userId, userName,
-            connectionUserId: anonymousConnection != null ? userId : null,
+            connectionUserId: stampConnection ? userId : null,
             sourceUrl: request.GithubUrl.Trim(),
             syncIntervalMinutes: interval);
 
@@ -4860,6 +4874,18 @@ public class DocumentStoreController : ControllerBase
     }
 
     /// <summary>拼出目录在 GitHub 上的可点击地址（也当条目的 SourceUrl）。</summary>
+    /// <summary>连接服务的三态翻成判据层的三态（两边各自独立演化，不共用枚举类型）。</summary>
+    private static GitHubSyncCredentialPolicy.ConnectionUsability MapUsability(
+        GitHubUserConnectionService.GitHubConnectionUsability probed)
+        => probed switch
+        {
+            GitHubUserConnectionService.GitHubConnectionUsability.Usable
+                => GitHubSyncCredentialPolicy.ConnectionUsability.Usable,
+            GitHubUserConnectionService.GitHubConnectionUsability.Revoked
+                => GitHubSyncCredentialPolicy.ConnectionUsability.Revoked,
+            _ => GitHubSyncCredentialPolicy.ConnectionUsability.Unknown,
+        };
+
     private static string BuildGitHubDirectoryUrl(string owner, string repo, string branch, string path)
         => path.Length == 0
             ? $"https://github.com/{owner}/{repo}/tree/{branch}"

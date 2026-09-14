@@ -72,4 +72,31 @@ public class GitHubSyncCredentialPolicyTests
         Assert.False(GitHubSyncCredentialPolicy.HasConnectionStamp("   "));
         Assert.Equal("anonymous", GitHubSyncCredentialPolicy.Decide("  ", null, GitHubException.NotConnected()).Mode);
     }
+
+    [Fact]
+    public void 已撤销的连接不许盖到手贴订阅上()
+    {
+        // 盖了就必然带 token 同步；连接已被用户在 GitHub 侧撤销时，
+        // 公开仓本来匿名能同步，盖上去反而每天 401——把能用的路径改坏了。
+        Assert.False(GitHubSyncCredentialPolicy.ShouldStampConnection(
+            true, GitHubSyncCredentialPolicy.ConnectionUsability.Revoked));
+    }
+
+    [Fact]
+    public void 问不出结论时保持盖章()
+    {
+        // 网络抖动不是「不可用」。当成不可用会把私有仓订阅静默降成匿名，
+        // 而匿名访问私有仓拿到的是 404，与「目录不存在」无法区分（形状 10）。
+        Assert.True(GitHubSyncCredentialPolicy.ShouldStampConnection(
+            true, GitHubSyncCredentialPolicy.ConnectionUsability.Unknown));
+        Assert.True(GitHubSyncCredentialPolicy.ShouldStampConnection(
+            true, GitHubSyncCredentialPolicy.ConnectionUsability.Usable));
+    }
+
+    [Fact]
+    public void 压根没连过就不存在盖章问题()
+    {
+        Assert.False(GitHubSyncCredentialPolicy.ShouldStampConnection(
+            false, GitHubSyncCredentialPolicy.ConnectionUsability.Usable));
+    }
 }

@@ -2038,6 +2038,7 @@ export {
   searchDocumentEntries,
   listKnowledgeEntriesPaged,
   getDocumentEntry,
+  listDocumentEntriesBySourceType,
   moveDocumentEntry,
   updateDocumentContent,
   publishDocumentEntryCreative,
