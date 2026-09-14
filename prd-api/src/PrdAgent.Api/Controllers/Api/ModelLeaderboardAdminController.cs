@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// ## 为什么单独一个 Controller
 ///
 /// <see cref="ModelLeaderboardController"/> 是全员可见的只读榜单，只要求登录；
-/// 而手动同步会对外站发五次请求并覆盖共享库里的快照，得限权限。
+/// 而手动同步会去打外站并覆盖共享库里的快照，得限权限。
 /// <see cref="AdminControllerAttribute"/> 是 <b>Controller 级</b>的——挂上去会连同 GET
 /// 一起要求读权限，那就不是全员可见了。所以把写操作单独拆出来，两边各自保持干净的权限面。
 /// </summary>

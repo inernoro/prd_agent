@@ -43,11 +43,18 @@ public class ModelLeaderboardSyncWorker : BackgroundService
     private static readonly TimeSpan StartupDelay = TimeSpan.FromMinutes(2);
 
     /// <summary>
-    /// 要同步的分榜，对应 arena.ai 的路径。选这五个是因为它们各自对得上本平台的一块功能：
-    /// agent 对智能体、code 对 PR 审查、document 对文档空间、vision 对视觉创作、
-    /// text-to-image 对生图。
+    /// 要同步的分榜。
+    ///
+    /// **只有 agent 一个，这是实测的结果，不是没做完。** 起初按 arena.ai 站内的分榜路径
+    /// 一次放了五个（agent / code / document / vision / text-to-image），部署后真跑一次
+    /// 才发现：只有 agent 榜的排名是服务端渲染进 HTML 的，其余四个榜页面里只有一个
+    /// 「Loading leaderboard」骨架和一份模型目录（目录里 rankByModality 全是
+    /// MAX_SAFE_INTEGER，即「未排名」），真实排名要浏览器执行 JS 后才异步加载。
+    ///
+    /// 为它们跑无头浏览器不值得：每天多四次浏览器启动，只为拿几张我们并不作为主榜的表。
+    /// 想加回来的人请先确认对方是否已改成服务端渲染，否则先解决「怎么拿数据」再谈加榜。
     /// </summary>
-    public static readonly string[] Boards = ["agent", "code", "document", "vision", "text-to-image"];
+    public static readonly string[] Boards = ["agent"];
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IConfiguration _configuration;

@@ -135,4 +135,18 @@ public class ArenaLeaderboardFetcherTests
         Assert.Equal("https://arena.ai/leaderboard/agent", ArenaLeaderboardFetcher.BuildUrl("agent"));
         Assert.Equal("https://arena.ai/leaderboard/code", ArenaLeaderboardFetcher.BuildUrl("code"));
     }
+
+    /// <summary>
+    /// 锁住「只同步 agent 榜」这个实测结论。
+    ///
+    /// 第一版按站内路径一次放了五个分榜，部署后真跑一次才发现只有 agent 榜是服务端渲染
+    /// 的，其余四个页面里只有「Loading leaderboard」骨架 + 一份未排名的模型目录。
+    /// 这条守卫不是反对加榜，是要求加榜的人先证明数据拿得到——照着站内有几个分榜就往
+    /// 数组里填几个，会让四个分榜在页面上永远空着，而且每天白打四次外站。
+    /// </summary>
+    [Fact]
+    public void Boards_只含服务端渲染的榜_加榜前须先证明数据拿得到()
+    {
+        Assert.Equal(new[] { "agent" }, ModelLeaderboardSyncWorker.Boards);
+    }
 }

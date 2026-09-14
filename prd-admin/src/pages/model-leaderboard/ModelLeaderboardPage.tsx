@@ -21,9 +21,8 @@ type RangeKey = 'all' | 'open';
 /**
  * 模型排行榜（/model-leaderboard）。
  *
- * 数据是 arena.ai 的公开榜单，由后端每天同步一次落库，这里只读库——外站抖动不会传导给用户。
- * 五个分榜各自对着本平台的一块功能：agent 对智能体、code 对 PR 审查、document 对文档空间、
- * vision 对视觉创作、text-to-image 对生图。
+ * 数据是 arena.ai 的 Agent 榜，由后端每天同步一次落库，这里只读库——外站抖动不会传导给用户。
+ * Agent 榜量的是工具调用可靠性、任务完成度、可操控性，比通用盲测更贴本平台的场景。
  */
 export default function ModelLeaderboardPage() {
   const [board, setBoard] = useState<string>('agent');
@@ -57,7 +56,7 @@ export default function ModelLeaderboardPage() {
 
   /**
    * 手动拉一次。周期同步只在权威部署跑，分支预览上的库是空的，
-   * 要在预览环境看真实榜单就得点这里。抓五个分榜要一两分钟，所以按钮全程给状态。
+   * 要在预览环境看真实榜单就得点这里。要去打外站，所以按钮全程给状态。
    */
   const runSync = useCallback(async () => {
     setSyncing(true);
@@ -70,7 +69,7 @@ export default function ModelLeaderboardPage() {
         // 部分失败要说清哪个榜、为什么，不要笼统报「部分成功」
         toast.error(`同步完成 ${succeeded}/${total}，失败：${failed.map((b) => `${b.board}（${b.error ?? '未知原因'}）`).join('；')}`);
       } else {
-        toast.success(`已同步 ${succeeded} 个分榜`);
+        toast.success(`榜单已更新`);
       }
       await load(board);
     } else {
@@ -94,7 +93,12 @@ export default function ModelLeaderboardPage() {
             ? `${currentBoard.label}榜 · ${currentBoard.hint}`
             : '公开模型榜单'
         }
-        tabs={LEADERBOARD_BOARDS.map((b) => ({ key: b.key, label: b.label }))}
+        // 只有一个分榜时不摆切换器——没得选就别假装能选
+        tabs={
+          LEADERBOARD_BOARDS.length > 1
+            ? LEADERBOARD_BOARDS.map((b) => ({ key: b.key, label: b.label }))
+            : undefined
+        }
         activeTab={board}
         onTabChange={setBoard}
         actions={
@@ -141,7 +145,7 @@ export default function ModelLeaderboardPage() {
                 type="button"
                 onClick={() => void runSync()}
                 disabled={syncing}
-                title="从 arena.ai 重新抓一次全部分榜（管理员）"
+                title="从 arena.ai 重新抓一次榜单"
                 className="h-[28px] px-2.5 inline-flex items-center gap-1.5 rounded-[8px] text-[12px] font-medium transition-colors disabled:opacity-60"
                 style={{ color: 'var(--text-secondary)', background: 'var(--nested-block-bg)' }}
               >
@@ -164,7 +168,7 @@ export default function ModelLeaderboardPage() {
             title="这个环境还没有榜单数据"
             body={
               canSync
-                ? '每天一轮的自动同步只在正式部署上跑（同项目多个预览共用一个库，都去写会互相覆盖）。要在这里看真实榜单，点下面按钮手动抓一次，约一两分钟。'
+                ? '每天一轮的自动同步只在正式部署上跑（同项目多个预览共用一个库，都去写会互相覆盖）。要在这里看真实榜单，点下面按钮手动抓一次。'
                 : '每天一轮的自动同步还没跑到这个环境。可以找管理员手动同步一次。'
             }
             action={
@@ -177,7 +181,7 @@ export default function ModelLeaderboardPage() {
                   style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                 >
                   <CloudDownload size={14} className={syncing ? 'animate-pulse' : ''} />
-                  {syncing ? '正在抓取五个分榜…' : '立即同步一次'}
+                  {syncing ? '正在从 arena.ai 抓取…' : '立即同步一次'}
                 </button>
               ) : undefined
             }

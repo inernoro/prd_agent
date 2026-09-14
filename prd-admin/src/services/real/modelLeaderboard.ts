@@ -35,13 +35,15 @@ export interface ModelLeaderboardSnapshot {
   entries: ModelLeaderboardEntry[];
 }
 
-/** 可选的分榜，与后端 ModelLeaderboardSyncWorker.Boards 对齐。 */
+/**
+ * 可选的分榜，与后端 ModelLeaderboardSyncWorker.Boards 对齐。
+ *
+ * 目前只有 Agent 一个：arena.ai 站内虽有 code / vision 等分榜，但只有 agent 榜的排名是
+ * 服务端渲染的，其余要浏览器执行 JS 才异步加载（详见后端 Boards 的注释）。
+ * 只有一个选项时页面不显示切换 tab——没得选就别摆一个假的选择器。
+ */
 export const LEADERBOARD_BOARDS = [
   { key: 'agent', label: 'Agent', hint: '工具可靠性 / 任务完成 / 可操控性' },
-  { key: 'code', label: '代码', hint: '代码能力对战' },
-  { key: 'document', label: '文档', hint: '长文档理解' },
-  { key: 'vision', label: '视觉', hint: '图像理解' },
-  { key: 'text-to-image', label: '生图', hint: '文生图' },
 ] as const;
 
 export type LeaderboardBoardKey = (typeof LEADERBOARD_BOARDS)[number]['key'];
@@ -83,12 +85,12 @@ export interface ModelLeaderboardSyncResult {
  * 手动触发一次榜单同步（仅管理员）。
  *
  * 周期同步只在权威部署跑，所以分支预览上的库是空的；要在预览环境看效果就得手动点一次。
- * 会对外站发五次请求，别当刷新按钮用。
+ * 会真的去打 arena.ai，别当刷新按钮用。
  */
 export function syncModelLeaderboard(): Promise<ApiResponse<ModelLeaderboardSyncResult>> {
   return apiRequest<ModelLeaderboardSyncResult>('/api/model-leaderboard/sync', {
     method: 'POST',
-    // 五个分榜逐个抓，每个页面 1.8-5MB，默认超时不够
+    // 榜单页是 1.8MB 的服务端渲染大页面，默认超时不够
     timeoutMs: 180_000,
   });
 }
