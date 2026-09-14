@@ -33,8 +33,9 @@ function minutesAgoIso(minutes: number): string {
 export function seedPreviewInstanceDemoData(state: StateService): boolean {
   const core = seedCoreDemoData(state);
   const extras = seedDemoExtras(state);
-  if (core || extras) state.save();
-  return core || extras;
+  const snap = seedPreviewInstanceSnapshot(state);
+  if (core || extras || snap) state.save();
+  return core || extras || snap;
 }
 
 /** 首播：项目 + 构建配置 + 分支 + 活动日志。只在完全空库时执行。 */
@@ -301,4 +302,145 @@ function seedDemoExtras(state: StateService): boolean {
   }
 
   return seeded;
+}
+
+/* ============================ 形状快照 ============================
+   2026-09-14 补播。
+
+   起因：验收报告首页加了走向折线之后，预览实例上只有 5 条改动 / 3 份报告，
+   曲线是三条贴零的直线——这一屏的形状（稀疏、爆发、三档交叉）在演示数据上
+   一点都看不出来，等于没法验收。所以把主实例 2026-09-09 的形状原样搬过来。
+
+   两件事必须说清：
+
+   1. **这是快照，不是这台实例上的真实部署**。项目描述、分支备注、报告正文
+      三处都写明了，且项目 id 一律带 snap- 前缀，与真实项目不可能撞。
+      （no-rootless-tree：不属于本实例的数据必须标出来源与时点。）
+   2. **时间存的是相对值**。快照里每条记的是「距播种时刻多少天」，播种时才
+      换算成绝对时刻。存绝对日期的话，几个月后 90 天窗口会把整批数据甩到窗外，
+      页面又变回空的——演示数据会自己腐烂，而且没人会发现。 */
+
+import snapshot from './preview-demo-snapshot.json' with { type: 'json' };
+
+/** 快照项目的 id 前缀。补播只认它，真实项目一律不碰。 */
+const SNAPSHOT_PREFIX = 'snap-';
+
+interface SnapBranch {
+  id: string;
+  projectId: string | null;
+  branch: string;
+  createdAgo: number | null;
+  deployed: boolean;
+  deployAgo: number | null;
+}
+interface SnapReport {
+  title: string;
+  projectId: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  prNumber: number | null;
+  verdict: string | null;
+  tier: string | null;
+  defectCounts: Record<string, number> | null;
+  createdAgo: number | null;
+}
+
+const daysAgoIso = (base: number, days: number | null): string | null =>
+  days == null ? null : new Date(base - days * 86_400_000).toISOString();
+
+/**
+ * 补播形状快照。已经播过的逐条跳过，所以升级 CDS 之后跑着的实例也补得上。
+ *
+ * 分支按 id 比对，报告按标题比对（报告 id 是创建时生成的，没有稳定标识）。
+ */
+export function seedPreviewInstanceSnapshot(state: StateService): boolean {
+  const snapProjects = snapshot.projects as Array<{ id: string; name: string }>;
+  const snapBranches = snapshot.branches as SnapBranch[];
+  const snapReports = snapshot.reports as SnapReport[];
+  if (!snapProjects.length) return false;
+
+  // 和首播同一条底线：库里出现任何一个既不是演示项目、也不是快照项目的项目，
+  // 就说明这台实例挂着真实数据（例如指到了外部 mongo），一条都不许播。
+  // 首播靠「零项目」守这条，补播不能照抄那个判据（它永远为假），得自己判。
+  const foreign = state
+    .getProjects()
+    .some((p) => p.id !== PREVIEW_DEMO_PROJECT_ID && !isSnapshotProjectId(p.id));
+  if (foreign) return false;
+
+  const base = Date.now();
+  const nowIso = new Date(base).toISOString();
+  const captured = String(snapshot.capturedAt).slice(0, 10);
+  // 标记词沿用「演示数据」四个字，不另起一套：已有守卫扫的就是它，
+  // 换个说法等于让那条守卫对这批新数据视而不见（形状 1：判据比范围窄）。
+  const origin = `演示数据（形状快照）：取自主实例 ${captured} 的真实形状，`
+    + '用于验收界面在真实数据量下的样子，不对应本实例上的任何部署。';
+
+  let seeded = false;
+
+  const existingProjects = new Set(state.getProjects().map((p) => p.id));
+  for (const p of snapProjects) {
+    if (existingProjects.has(p.id)) continue;
+    state.addProject({
+      id: p.id,
+      slug: p.id,
+      name: p.name,
+      description: origin,
+      kind: 'git',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    } as Project);
+    seeded = true;
+  }
+
+  const existingBranches = new Set(state.getAllBranches().map((b) => b.id));
+  for (const b of snapBranches) {
+    if (!b.projectId || existingBranches.has(b.id)) continue;
+    const createdAt = daysAgoIso(base, b.createdAgo) ?? nowIso;
+    // 起过预览的记成 idle 而不是 running：这台实例上没有任何容器，
+    // 标成 running 会让分支列表显示一排点不开的「运行中」，那才是骗人。
+    state.addBranch({
+      id: b.id,
+      projectId: b.projectId,
+      branch: b.branch,
+      worktreePath: `/tmp/preview-snapshot/${b.id}`,
+      status: 'idle',
+      createdAt,
+      lastDeployAt: daysAgoIso(base, b.deployAgo) ?? undefined,
+      deployCount: b.deployed ? 1 : 0,
+      notes: origin,
+      services: {},
+    } as BranchEntry);
+    existingBranches.add(b.id);
+    seeded = true;
+  }
+
+  const existingTitles = new Set(state.listAcceptanceReports(null).map((r) => r.title));
+  for (const r of snapReports) {
+    if (existingTitles.has(r.title)) continue;
+    const createdAt = daysAgoIso(base, r.createdAgo) ?? nowIso;
+    state.createAcceptanceReport({
+      title: r.title,
+      format: 'html',
+      content: `<h1>${r.title}</h1><p>${origin}</p><p>本页只保留标题、结论与归档时刻，用于呈现列表与统计的形状；原始正文不在快照内。</p>`,
+      projectId: r.projectId,
+      branchId: null,
+      branch: r.branch,
+      commitSha: r.commitSha,
+      prNumber: r.prNumber,
+      verdict: (r.verdict as 'pass' | 'conditional' | 'fail' | null) ?? null,
+      tier: r.tier,
+      defectCounts: r.defectCounts,
+      createdBy: 'preview-instance-seed',
+      createdAt,
+    });
+    existingTitles.add(r.title);
+    seeded = true;
+  }
+
+  return seeded;
+}
+
+/** 快照项目判定，给守卫与调用方共用，别在别处再写一遍前缀比较。 */
+export function isSnapshotProjectId(id: string | null | undefined): boolean {
+  return typeof id === 'string' && id.startsWith(SNAPSHOT_PREFIX);
 }

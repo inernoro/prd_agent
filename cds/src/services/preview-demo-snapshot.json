@@ -1,0 +1,4181 @@
+{
+ "_note": "主实例 2026-09-09 的只读形状快照，供预览实例当演示数据。时间是「距播种时刻多少天」的相对值，播种时再换算成绝对时刻，所以这批数据不会随时间推移滑出窗口。",
+ "capturedAt": "2026-09-09T23:00:00.000Z",
+ "projects": [
+  {
+   "id": "snap-defd4695ab5f",
+   "name": "标识中台 4.0 (IMP)"
+  },
+  {
+   "id": "snap-prd-agent",
+   "name": "MAP"
+  },
+  {
+   "id": "snap-f9e8b956d3dd",
+   "name": "CDS Self"
+  },
+  {
+   "id": "snap-88007650cd3c",
+   "name": "米多星球"
+  },
+  {
+   "id": "snap-1d3830093322",
+   "name": "BDE(互动营销)"
+  },
+  {
+   "id": "snap-983785a57efd",
+   "name": "工单系统MTS"
+  },
+  {
+   "id": "snap-e9b1f56c925c",
+   "name": "XXL-JOB-V2.2.0"
+  },
+  {
+   "id": "snap-019a6fc0f54c",
+   "name": "菌丝体组织操作系统"
+  },
+  {
+   "id": "snap-747f2fa4f6bc",
+   "name": "metersphere"
+  }
+ ],
+ "branches": [
+  {
+   "id": "snap-b0",
+   "projectId": "snap-88007650cd3c",
+   "branch": "dev-zetengtest",
+   "createdAgo": 78.712,
+   "deployed": true,
+   "deployAgo": 0.499
+  },
+  {
+   "id": "snap-b1",
+   "projectId": "snap-88007650cd3c",
+   "branch": "dev-3.13.3",
+   "createdAgo": 77.853,
+   "deployed": true,
+   "deployAgo": 0.38
+  },
+  {
+   "id": "snap-b2",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "createdAgo": 61.574,
+   "deployed": true,
+   "deployAgo": 1.79
+  },
+  {
+   "id": "snap-b3",
+   "projectId": "snap-983785a57efd",
+   "branch": "main",
+   "createdAgo": 56.505,
+   "deployed": true,
+   "deployAgo": 2.693
+  },
+  {
+   "id": "snap-b4",
+   "projectId": "snap-747f2fa4f6bc",
+   "branch": "main",
+   "createdAgo": 35.698,
+   "deployed": true,
+   "deployAgo": 35.693
+  },
+  {
+   "id": "snap-b5",
+   "projectId": "snap-019a6fc0f54c",
+   "branch": "preview/phase0",
+   "createdAgo": 22.473,
+   "deployed": true,
+   "deployAgo": 9.398
+  },
+  {
+   "id": "snap-b6",
+   "projectId": "snap-88007650cd3c",
+   "branch": "dev-t3.14.0.1",
+   "createdAgo": 21.887,
+   "deployed": true,
+   "deployAgo": 5.79
+  },
+  {
+   "id": "snap-b7",
+   "projectId": "snap-88007650cd3c",
+   "branch": "master",
+   "createdAgo": 15.537,
+   "deployed": true,
+   "deployAgo": 8.833
+  },
+  {
+   "id": "snap-b8",
+   "projectId": "snap-1d3830093322",
+   "branch": "demo/combo-gift-preview",
+   "createdAgo": 11.672,
+   "deployed": true,
+   "deployAgo": 0.868
+  },
+  {
+   "id": "snap-b9",
+   "projectId": "snap-e9b1f56c925c",
+   "branch": "main",
+   "createdAgo": 9.85,
+   "deployed": true,
+   "deployAgo": 5.643
+  },
+  {
+   "id": "snap-b10",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/task-schedule-redesign-lunkri",
+   "createdAgo": 8.794,
+   "deployed": true,
+   "deployAgo": 7.385
+  },
+  {
+   "id": "snap-b11",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/multi-project-deployment-discussion-8vzghl",
+   "createdAgo": 8.396,
+   "deployed": true,
+   "deployAgo": 7.558
+  },
+  {
+   "id": "snap-b12",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-runtime-config-entry-kv9u6q",
+   "createdAgo": 7.672,
+   "deployed": true,
+   "deployAgo": 7.383
+  },
+  {
+   "id": "snap-b13",
+   "projectId": "snap-88007650cd3c",
+   "branch": "codex/implement-finance-crm-workbench-customer-20260902",
+   "createdAgo": 7.616,
+   "deployed": true,
+   "deployAgo": 7.608
+  },
+  {
+   "id": "snap-b14",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/supplier-center-db-migration",
+   "createdAgo": 7.547,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b15",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/hotfix-web-pages-zip-limit-prod",
+   "createdAgo": 6.658,
+   "deployed": true,
+   "deployAgo": 6.653
+  },
+  {
+   "id": "snap-b16",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/redesign-overview-0ix420",
+   "createdAgo": 6.64,
+   "deployed": true,
+   "deployAgo": 6.626
+  },
+  {
+   "id": "snap-b17",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-mobile-agent-selection-issue-x4vpai",
+   "createdAgo": 6.62,
+   "deployed": true,
+   "deployAgo": 6.618
+  },
+  {
+   "id": "snap-b18",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/web-hosting-ai-edit-versioning",
+   "createdAgo": 6.587,
+   "deployed": true,
+   "deployAgo": 0.599
+  },
+  {
+   "id": "snap-b19",
+   "projectId": "snap-88007650cd3c",
+   "branch": "codex/merchant-stats-migration",
+   "createdAgo": 6.526,
+   "deployed": true,
+   "deployAgo": 6.516
+  },
+  {
+   "id": "snap-b20",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/assistant-mobile-ui-polish-20260904",
+   "createdAgo": 5.68,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b21",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/merge-content-marketing-main-20260904",
+   "createdAgo": 5.639,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b22",
+   "projectId": "snap-1d3830093322",
+   "branch": "main",
+   "createdAgo": 5.638,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b23",
+   "projectId": "snap-983785a57efd",
+   "branch": "consolidate-openjdk-20260901",
+   "createdAgo": 5.579,
+   "deployed": true,
+   "deployAgo": 5.562
+  },
+  {
+   "id": "snap-b24",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "codex/web-hosting-ai-edit-versioning",
+   "createdAgo": 4.952,
+   "deployed": true,
+   "deployAgo": 4.951
+  },
+  {
+   "id": "snap-b25",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "claude/org-management-logic-ui-alignment-y80l3r",
+   "createdAgo": 4.671,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b26",
+   "projectId": "snap-983785a57efd",
+   "branch": "chore/archive-changelogs-34088980914",
+   "createdAgo": 2.708,
+   "deployed": true,
+   "deployAgo": 2.707
+  },
+  {
+   "id": "snap-b27",
+   "projectId": "snap-983785a57efd",
+   "branch": "chore/archive-changelogs-34090453574",
+   "createdAgo": 2.693,
+   "deployed": true,
+   "deployAgo": 2.693
+  },
+  {
+   "id": "snap-b28",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/fix-mobile-bottom-sheet-visibility",
+   "createdAgo": 2.677,
+   "deployed": true,
+   "deployAgo": 2.413
+  },
+  {
+   "id": "snap-b29",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/content-random-redpacket",
+   "createdAgo": 2.613,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b30",
+   "projectId": "snap-1d3830093322",
+   "branch": "dev-combo-gift",
+   "createdAgo": 2.572,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b31",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-admin-reviewed-pr",
+   "createdAgo": 2.563,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b32",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-review-fixes",
+   "createdAgo": 2.536,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b33",
+   "projectId": "snap-88007650cd3c",
+   "branch": "dev-migration",
+   "createdAgo": 2.518,
+   "deployed": true,
+   "deployAgo": 1.539
+  },
+  {
+   "id": "snap-b34",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-reward-dialog",
+   "createdAgo": 2.437,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b35",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-edit-async-guards",
+   "createdAgo": 2.43,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b36",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-single-table-ui",
+   "createdAgo": 2.408,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b37",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-pr57-fixes",
+   "createdAgo": 1.901,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b38",
+   "projectId": "snap-1d3830093322",
+   "branch": "meeting-gift",
+   "createdAgo": 1.885,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b39",
+   "projectId": "snap-1d3830093322",
+   "branch": "dev-baier",
+   "createdAgo": 1.871,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b40",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-dev-baier",
+   "createdAgo": 1.852,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b41",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/wecom-gift-dev-baier-20260908",
+   "createdAgo": 1.69,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b42",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-demo-ui",
+   "createdAgo": 1.681,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b43",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-admin-feedback",
+   "createdAgo": 1.648,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b44",
+   "projectId": "snap-1d3830093322",
+   "branch": "fix/sales-area",
+   "createdAgo": 1.599,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b45",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-panel-design-iamxxf",
+   "createdAgo": 1.579,
+   "deployed": true,
+   "deployAgo": 1.416
+  },
+  {
+   "id": "snap-b46",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-monitoring-center-redesign-vz2uuc",
+   "createdAgo": 1.572,
+   "deployed": true,
+   "deployAgo": 1.446
+  },
+  {
+   "id": "snap-b47",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-reward-filter-memory",
+   "createdAgo": 1.529,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b48",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-container-page-load-vvf32r",
+   "createdAgo": 1.516,
+   "deployed": true,
+   "deployAgo": 1.51
+  },
+  {
+   "id": "snap-b49",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-award-groups-ui",
+   "createdAgo": 1.514,
+   "deployed": false,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b50",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/restore-award-pending-filters",
+   "createdAgo": 1.508,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b51",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/fix-combo-gift-link-auth-message",
+   "createdAgo": 1.502,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b52",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/wecom-demo-form-20260908",
+   "createdAgo": 1.463,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b53",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-mini-code-dialog",
+   "createdAgo": 1.461,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b54",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-acceptance-report-homepage-t57jzo",
+   "createdAgo": 1.439,
+   "deployed": true,
+   "deployAgo": 0.341
+  },
+  {
+   "id": "snap-b55",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-monitoring-center-review-r5-vz2uuc",
+   "createdAgo": 1.435,
+   "deployed": true,
+   "deployAgo": 1.421
+  },
+  {
+   "id": "snap-b56",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/award-page-group-mode",
+   "createdAgo": 1.433,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b57",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-code-export-task",
+   "createdAgo": 1.424,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b58",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-visible-columns",
+   "createdAgo": 1.389,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b59",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/fix-combo-gift-redirect-type",
+   "createdAgo": 1.378,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b60",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/combo-gift-physical-products",
+   "createdAgo": 1.354,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b61",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/developer-knowledge-collaboration-539y85",
+   "createdAgo": 0.671,
+   "deployed": true,
+   "deployAgo": 0.668
+  },
+  {
+   "id": "snap-b62",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/basic-error-solution-btq0os",
+   "createdAgo": 0.58,
+   "deployed": true,
+   "deployAgo": 0.512
+  },
+  {
+   "id": "snap-b63",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/wecom-prize-ui-align-20260909",
+   "createdAgo": 0.573,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b64",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/fix-red-packet-initial-load",
+   "createdAgo": 0.561,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b65",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/knowledge-base-github-sync-76rjsp",
+   "createdAgo": 0.514,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b66",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/frontend-feedback-form-experience",
+   "createdAgo": 0.502,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b67",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/third-party-system-management",
+   "createdAgo": 0.493,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b68",
+   "projectId": "snap-1d3830093322",
+   "branch": "codex/fix-wecom-code-type-ui-20260909",
+   "createdAgo": 0.427,
+   "deployed": true,
+   "deployAgo": null
+  },
+  {
+   "id": "snap-b69",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/collab-enterprise-contact-coverage",
+   "createdAgo": 0.395,
+   "deployed": true,
+   "deployAgo": null
+  }
+ ],
+ "reports": [
+  {
+   "title": "功能验收 · 知识库 / GitHub 登录后勾选目录一键同步 · 2026-09-09",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/knowledge-base-github-sync-76rjsp",
+   "commitSha": "3924478338726c390020815672f1e455aaa7157d",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 0.342
+  },
+  {
+   "title": "功能验收 · CDS 验收中心 / 验收报告主页重做 · 2026-09-08",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-acceptance-report-homepage-t57jzo",
+   "commitSha": "f6050552",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 1.365
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-09-06",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "81486bb9ce1d552f040a6411acc6b6011d3931a2",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 3.001
+  },
+  {
+   "title": "功能验收 · 网页托管 / OpenDesign 共享工作区与四个 MVP · 2026-09-07",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/web-hosting-ai-edit-versioning",
+   "commitSha": "33fe3be49fdd97cb3592824d1fc066a3bb9a15b4",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 3.133
+  },
+  {
+   "title": "功能验收 · 平台设计执行 / OpenDesign 共享工作区与网页版本链 · 2026-09-07",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/web-hosting-ai-edit-versioning",
+   "commitSha": "0840eeee21279fc60faa5aa95faf6a8ca6071af6",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 3.187
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-09-05",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "e6c4b7ed",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 3.98
+  },
+  {
+   "title": "PR验收 · #1493 / 智能体接入台 · 2026-09-05",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/mcp-integration-plan-k7k8od",
+   "commitSha": "03d220ce",
+   "prNumber": 1493,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 4.337
+  },
+  {
+   "title": "PR验收 · #1484 / 智能体接入台 + MCP 开放层 · 2026-09-05",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "e6c4b7ed98d27e147d26b9a85853b237c884b234",
+   "prNumber": 1484,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 4.518
+  },
+  {
+   "title": "每日验收 · 网页托管 / 全量变更 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "e6c4b7ed98d27e147d26b9a85853b237c884b234",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 4.995
+  },
+  {
+   "title": "PR验收 · #1484 / 智能体接入台 / MCP 开放层 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/mcp-integration-plan-k7k8od",
+   "commitSha": "35fbf0c8",
+   "prNumber": 1484,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 5.183
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离真实 mysql 分支复验 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "d0aa3111",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 5.544
+  },
+  {
+   "title": "视觉回归 · 知识驱动设计四个入口 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/web-hosting-ai-edit-versioning",
+   "commitSha": "efebf6f9d96061208a6d75a848a38d03d8836cf0",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 5.548
+  },
+  {
+   "title": "功能验收 · 智能体接入台 / MCP 接入与调用记录 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/mcp-integration-plan-k7k8od",
+   "commitSha": "fe2281cc",
+   "prNumber": 1484,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 5.608
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离派生库回写 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "4ccb9c62",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 5.628
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离时间点克隆初始化 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "50592196",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 5.753
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "338c2b1a1e851aabc4a814284c83cae6aa52df82",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 5.848
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-09-04",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "338c2b1a1e851aabc4a814284c83cae6aa52df82",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 5.85
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-09-03",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4da21020c5b25bc451e9d858f47804a6d9b04526",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 5.961
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-09-03",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4da21020c5b25bc451e9d858f47804a6d9b04526",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 5.976
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离数据台账 · 2026-09-03",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "86425ccf",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 6.418
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离连接串跟随 · 2026-09-03",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "d01f758f",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 6.53
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离库名分类器 · 2026-09-03",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "018ae06f",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 6.557
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离实测列 / 真实分支复验 · 2026-09-03",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "d013cba5",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 6.568
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 数据库隔离实测列 · 2026-09-03",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "d5ae264",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 6.603
+  },
+  {
+   "title": "每日验收 · 主干与活跃分支 · 2026-09-02",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 6.997
+  },
+  {
+   "title": "每日验收 · IMP TEST PR · 2026-09-02",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "81bd6c8ac7b9aa35d18487b2f9935a86f6fa8c7e",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 7.006
+  },
+  {
+   "title": "mdimp · IMP TEST PR · 2026-09-02 · 每日验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "81bd6c8ac7b9aa35d18487b2f9935a86f6fa8c7e",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 7.007
+  },
+  {
+   "title": "功能验收 · CDS 项目设置 / 项目设置数据库隔离页签 · 2026-09-02",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/database-isolation-project-settings-zwzyul",
+   "commitSha": "e6941ec",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 7.318
+  },
+  {
+   "title": "mdimp · 前端构建身份 · J-P1 本地四端生产制品验收 · 本地验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/frontend-build-identity",
+   "commitSha": "9d00389fa769ff69ccdf47d0bea0ef7674066895",
+   "prNumber": 940,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 7.515
+  },
+  {
+   "title": "mdimp · 前端构建身份 · J-P1 本地生产制品补充验收 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/frontend-build-identity",
+   "commitSha": "9d00389fa769ff69ccdf47d0bea0ef7674066895",
+   "prNumber": 940,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 7.528
+  },
+  {
+   "title": "缺陷复测 · 网页托管分享页 / 指定分享路径锚点与正文问答 · 2026-09-02",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "05ab62b953f0353bf6a12499fe9304dcbe20b679",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 7.549
+  },
+  {
+   "title": "缺陷复测 · 网页托管分享页锚点 · 2026-09-02",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/fix-hosted-site-folders-stable-smoke",
+   "commitSha": "4d83c8bf3bd7e7af89137bab97dec5b65be38a96",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 7.582
+  },
+  {
+   "title": "mdimp · 交付部署 · 前端构建身份 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/frontend-build-identity",
+   "commitSha": "9d00389fa769ff69ccdf47d0bea0ef7674066895",
+   "prNumber": 940,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 7.587
+  },
+  {
+   "title": "mdimp · 交付部署 · 前端构建身份 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/frontend-build-identity",
+   "commitSha": "9d00389fa769ff69ccdf47d0bea0ef7674066895",
+   "prNumber": 940,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 7.592
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-09-01",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "bd047b47a5178a28b8866abfd75e228e7edf2972",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 8.007
+  },
+  {
+   "title": "每日验收 · PRD Agent 昨日变更 · 2026-09-01",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "dbba7c52133d59ca7287628d32348a5b17bd42d8",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 8.012
+  },
+  {
+   "title": "分支验收 · 授权健康中心复验 · 2026-09-01",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/authorization-health-center",
+   "commitSha": "1700bf604b560f14e521f72edd570c9a8ac141c0",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 8.353
+  },
+  {
+   "title": "分支验收 · 授权健康中心 · 2026-09-01",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/authorization-health-center",
+   "commitSha": "1700bf604b560f14e521f72edd570c9a8ac141c0",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 8.355
+  },
+  {
+   "title": "mdimp · 异步任务调度 · Worker服务化拆分 · Head 3dd17dd7 · 完整复验 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/async-worker-service",
+   "commitSha": "3dd17dd7dc1b3b77e407e251e3fd1c1af84de229",
+   "prNumber": 869,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 8.711
+  },
+  {
+   "title": "mdimp · 每日验收 · 2026-08-31 main 广度冒烟 · 回归 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ac4e1f464776bbe67b971ca3105dbdbd3d413bb9",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 8.763
+  },
+  {
+   "title": "mdimp · 异步任务调度 · Worker服务化拆分 · 冲突修复与完整复验 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 8.776
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-31",
+   "projectId": "snap-prd-agent",
+   "branch": "origin/main",
+   "commitSha": "cf3079497fa72fd2ee35cb0fbd31ee0164fec5eb",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 8.832
+  },
+  {
+   "title": "mdimp · SaaS 安全部署 · 密钥配置失败关闭 · 修复复验 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/saas-security-fail-closed",
+   "commitSha": "b6d9def515051ee6d47428fd4997b877da119741",
+   "prNumber": 923,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 8.873
+  },
+  {
+   "title": "mdimp · SaaS 安全部署 · 密钥配置失败关闭 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/saas-security-fail-closed",
+   "commitSha": "b6d9def515051ee6d47428fd4997b877da119741",
+   "prNumber": 923,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 8.879
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-31",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "e591a6967afbc9093ecadebac0a9d75fecfd2e92",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 9.005
+  },
+  {
+   "title": "mdimp · SaaS 安全配置 · 密钥失败关闭 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/saas-security-fail-closed",
+   "commitSha": "c6b2a783ce95722dc22557d8b80db309ef00c5f6",
+   "prNumber": 923,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 9.499
+  },
+  {
+   "title": "mdimp · 成品码关系建批 · CL-04 v1.5 环境门与空态契约 · 验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "7ab63da9",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 9.535
+  },
+  {
+   "title": "mdimp · 组织治理 · CL-08 九类经营场景 · 修复复验 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "claude/imp-cl08-acceptance-sync-6ib0s4",
+   "commitSha": "86e6fb9c6d88e588aba630dc2453da8d70f6bf2e",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 9.816
+  },
+  {
+   "title": "功能验收 · 核心业务稳定冒烟（主管结论） · 2026-08-31",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0804621337ef643641c9b8e9ed6eed8382331df6",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 9.844
+  },
+  {
+   "title": "功能验收 · 核心业务稳定冒烟（技术附录） · 2026-08-31",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0804621337ef643641c9b8e9ed6eed8382331df6",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 9.845
+  },
+  {
+   "title": "功能验收 · 核心业务稳定冒烟 · 2026-08-31",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0804621337ef643641c9b8e9ed6eed8382331df6",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 9.847
+  },
+  {
+   "title": "功能验收 · 核心业务稳定冒烟 · 2026-08-31",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0804621337ef643641c9b8e9ed6eed8382331df6",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 9.85
+  },
+  {
+   "title": "mdimp · 组织治理 · CL-08 九类经营场景 · 验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "claude/imp-cl08-acceptance-sync-6ib0s4",
+   "commitSha": "ea31a5d4d83aa04c8b9e4ba9cfa2e7747aa0d270",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 9.855
+  },
+  {
+   "title": "mdimp · 组织治理 · CL-08 九类经营场景 · 验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "claude/imp-cl08-acceptance-sync-6ib0s4",
+   "commitSha": "ea31a5d4d83aa04c8b9e4ba9cfa2e7747aa0d270",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 9.856
+  },
+  {
+   "title": "mdimp · 组织治理 · CL-08 九类经营场景 · 验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "claude/imp-cl08-acceptance-sync-6ib0s4",
+   "commitSha": "ea31a5d4d83aa04c8b9e4ba9cfa2e7747aa0d270",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 9.859
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-30",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0804621337ef643641c9b8e9ed6eed8382331df6",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 10.006
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-30",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "84b56cf736ed261b0da4597e14b62c8ead5ba3e0",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 10.008
+  },
+  {
+   "title": "mdimp · 每日验收 · IMP PR · 2026-08-30 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "84b56cf736ed261b0da4597e14b62c8ead5ba3e0",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 10.01
+  },
+  {
+   "title": "缺陷复测 · 视觉创作 / 生图进度多尺寸组件诊断与真实流程缺口 · 2026-08-31",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/normalize-image-input",
+   "commitSha": "a4c0383f146345607ae174b15257d9adb05ac038",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 10.212
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-29 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "14a2e162ae692bcbd07996a0a8249938f68374a5",
+   "prNumber": 910,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 11.005
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-29",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "9e422383afe757b1aaa464e3ad4e9d7e2cd03798",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 11.005
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-29",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "14a2e162ae692bcbd07996a0a8249938f68374a5",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": {
+    "p2": 3,
+    "p1": 2,
+    "p0": 0,
+    "p3": 1
+   },
+   "createdAgo": 11.005
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-29 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "14a2e162ae692bcbd07996a0a8249938f68374a5",
+   "prNumber": 910,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 11.006
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-29 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "14a2e162ae692bcbd07996a0a8249938f68374a5",
+   "prNumber": 910,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 11.006
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-29 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "14a2e162ae692bcbd07996a0a8249938f68374a5",
+   "prNumber": 910,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 11.006
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-29 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "14a2e162ae692bcbd07996a0a8249938f68374a5",
+   "prNumber": 910,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 11.006
+  },
+  {
+   "title": "功能验收 · LLM网关 / LLM Gateway Quickstart 产物屏结构改稿 · 2026-08-29",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/model-gateway-optimization-k63tax",
+   "commitSha": "8a20c2d",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 11.094
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-29",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "21f4e0b3f882a8e3de34e9aec95ab6747bbe7848",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 11.854
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-28",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "6111abcb204749abfc76f3151c6772e08fc00a15",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 12.002
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-28",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "74ab846f5e142be2258150b0da5f4ae34202368f",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 4,
+    "p2": 3,
+    "p3": 1
+   },
+   "createdAgo": 12.008
+  },
+  {
+   "title": "功能验收 · LLM Gateway 服务网关设置与 401 治理 · 2026-08-28",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/model-gateway-optimization-k63tax",
+   "commitSha": "d378062",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 12.571
+  },
+  {
+   "title": "功能验收 · LLM Gateway Quickstart / 三屏创建线与三页签产物屏 · 2026-08-28",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/model-gateway-optimization-k63tax",
+   "commitSha": "693a970",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 12.925
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-27",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "10b22d9903408bd2d9678eb6e2a40696556feb85",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.003
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-27",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": {
+    "p0": 0,
+    "p2": 2,
+    "p3": 0,
+    "p1": 4
+   },
+   "createdAgo": 13.008
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-27 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.008
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-27 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.009
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-27",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": {
+    "p0": 0,
+    "p3": 0,
+    "p1": 4,
+    "p2": 2
+   },
+   "createdAgo": 13.01
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-27 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.011
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-27 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.011
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-27 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.011
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-27 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.011
+  },
+  {
+   "title": "姣忔棩楠屾敹 · IMP PR · 2026-08-27 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "ce624e6331b2e8347e368ba580212f256e5b2fcd",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.011
+  },
+  {
+   "title": "功能验收 · LLM Gateway Quickstart / 颁码闸门与三步向导 · 2026-08-27",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/model-gateway-optimization-k63tax",
+   "commitSha": "9d135ab",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 13.515
+  },
+  {
+   "title": "IMP · 公共扫码独立运行时 · PR #868 CDS 正式验收 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/scan-runtime-service",
+   "commitSha": "8a41f49505a4271dda37ac43fce9ea3499401dd3",
+   "prNumber": 868,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.661
+  },
+  {
+   "title": "IMP · 公共扫码独立运行时 · PR #868 CDS 正式验收 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/scan-runtime-service",
+   "commitSha": "8a41f49505a4271dda37ac43fce9ea3499401dd3",
+   "prNumber": 868,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.662
+  },
+  {
+   "title": "IMP · 公共扫码独立运行时 · PR #868 CDS 正式验收 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/scan-runtime-service",
+   "commitSha": "8a41f49505a4271dda37ac43fce9ea3499401dd3",
+   "prNumber": 868,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.664
+  },
+  {
+   "title": "发布验收 · 稳定性基线 / 核心业务稳定冒烟预检阻塞 · 2026-08-27",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "dd1381c0daa0c7d68aa7e9ccda13df96feb4b640",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.84
+  },
+  {
+   "title": "发布验收 · 稳定性基线 / 核心业务稳定冒烟预检阻塞 · 2026-08-27",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "dd1381c0daa0c7d68aa7e9ccda13df96feb4b640",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.842
+  },
+  {
+   "title": "发布验收 · 稳定性基线 / 核心业务稳定冒烟预检阻塞 · 2026-08-27",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "dd1381c0daa0c7d68aa7e9ccda13df96feb4b640",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.844
+  },
+  {
+   "title": "发布验收 · 稳定性基线 / 核心业务稳定冒烟预检阻塞 · 2026-08-27",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "dd1381c0daa0c7d68aa7e9ccda13df96feb4b640",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.849
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-26",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "dd1381c0daa0c7d68aa7e9ccda13df96feb4b640",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.989
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-26",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "dd1381c0daa0c7d68aa7e9ccda13df96feb4b640",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 13.995
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-26",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "051e95c37f1c0283dac23fe7d6d136d136a2ec4e",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 3,
+    "p2": 2,
+    "p3": 0
+   },
+   "createdAgo": 14.006
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-26 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "051e95c37f1c0283dac23fe7d6d136d136a2ec4e",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 14.007
+  },
+  {
+   "title": "每日验收 · IMP PR · 2026-08-25",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "cde7ecced54f79f23994c1b9cb01cadc77ac1372",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 4,
+    "p2": 3,
+    "p3": 1
+   },
+   "createdAgo": 15.011
+  },
+  {
+   "title": "每日验收 · 交付范围 · 2026-08-25",
+   "projectId": "snap-prd-agent",
+   "branch": "automation-5-daily-20260826",
+   "commitSha": "0b3b0310c8ce95be9e0070fd737eb6de9d2a68c7",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 15.013
+  },
+  {
+   "title": "功能验收 · 前端首页 / MAP 首页 / 四幕场景的组合 / 紧凑 / 动效 · 2026-08-25",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/homepage-redesign-strategy-mr08pu",
+   "commitSha": "5dab5e5c",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 15.456
+  },
+  {
+   "title": "功能验收 · 知识库 / 划词浮层 · 2026-08-25",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/homepage-redesign-strategy-mr08pu",
+   "commitSha": "69eb87aa",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 15.64
+  },
+  {
+   "title": "mdimp · Java DDD 分层治理 · application 与 infrastructure 边界 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 16.498
+  },
+  {
+   "title": "mdimp · Java DDD 分层治理 · application 与 infrastructure 边界 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/ddd-layer-boundary-refactor",
+   "commitSha": "fdd1ced360501f1494ddc459dede41b73bf006aa",
+   "prNumber": 818,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 16.606
+  },
+  {
+   "title": "mdimp · 基础设置/营销服务 · 销售区域IP扫码路由 · 优化 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/revert-region-ip-timeout-diagnostics",
+   "commitSha": "299071fd9f679b9efbbab7456e5c29988f52ad16",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 19.863
+  },
+  {
+   "title": "mdimp · 基础设置/营销服务 · 销售区域IP扫码路由 · 优化 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/revert-region-ip-timeout-diagnostics",
+   "commitSha": "299071fd9f679b9efbbab7456e5c29988f52ad16",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 19.874
+  },
+  {
+   "title": "缺陷复测 · 视觉创作 / 生图能力兼容修复 · 2026-08-17",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/hotfix-image-generation-capability",
+   "commitSha": "0f5520c268762702085c9e6e2b59544140378e43",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 23.632
+  },
+  {
+   "title": "缺陷复测 · DEF-2026-0191 / 视觉创作 3:4 图片比例 · 2026-08-16",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "add4748ab83ae0659b4f891ea872d0262f96031a",
+   "prNumber": 1347,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 24.76
+  },
+  {
+   "title": "缺陷复测 · DEF-2026-0190 / 网页托管 ZIP 上传反馈 · 2026-08-16",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "d74030e478d09d32cdad21fbeb67cdce171c5faa",
+   "prNumber": 1346,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 24.76
+  },
+  {
+   "title": "每日验收 · 全栈 / 全量变更 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "origin/main",
+   "commitSha": "46aa8890ad1e2542bf9cfd4ea657f9a7b9483fbc",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 24.992
+  },
+  {
+   "title": "缺陷复测 · 关键业务复测 / 录音、头像与视觉创作 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4f2a2e55707f8e9f33a599a32efee0752f533249",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.305
+  },
+  {
+   "title": "缺陷复测 · 关键业务复测 / 录音、头像与视觉创作 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4f2a2e55707f8e9f33a599a32efee0752f533249",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.307
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c0bc1ee0aa163061f5f7531f2d435b8d546289c3",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.808
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c0bc1ee0aa163061f5f7531f2d435b8d546289c3",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.821
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/accept-pr1368-pr1370-final-r2-20260815",
+   "commitSha": "f4bb0d937660417e4cd315e778ba6454adf5d64b",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.97
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/accept-pr1368-pr1370-final-r2-20260815",
+   "commitSha": "f4bb0d937660417e4cd315e778ba6454adf5d64b",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.978
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-15",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/accept-pr1368-pr1370-final-r2-20260815",
+   "commitSha": "f4bb0d937660417e4cd315e778ba6454adf5d64b",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.981
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-14",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c0bc1ee0aa163061f5f7531f2d435b8d546289c3",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.99
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-14",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c0bc1ee0aa163061f5f7531f2d435b8d546289c3",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.99
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-14",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c0bc1ee0aa163061f5f7531f2d435b8d546289c3",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 25.991
+  },
+  {
+   "title": "PR验收 · PR #1368 核心业务稳定冒烟 · 2026-08-14",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/stable-smoke-report-online",
+   "commitSha": "75eb09f1c78db90815c8c23c6108b91e174c325a",
+   "prNumber": 1368,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.438
+  },
+  {
+   "title": "PR验收 · PR #1368 核心业务稳定冒烟 · 2026-08-14",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/stable-smoke-report-online",
+   "commitSha": "75eb09f1c78db90815c8c23c6108b91e174c325a",
+   "prNumber": 1368,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.451
+  },
+  {
+   "title": "PR验收 · PR #1368 核心业务稳定冒烟 · 2026-08-14",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/stable-smoke-report-online",
+   "commitSha": "75eb09f1c78db90815c8c23c6108b91e174c325a",
+   "prNumber": 1368,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.452
+  },
+  {
+   "title": "IMP · 行政区域与 IP 销售区域路由 · OP 三地图厂商凭据 · CDS · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/region-routing-v17",
+   "commitSha": "ee080277d53aae244e80af3e0fef50c6255117e6",
+   "prNumber": 757,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.487
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "44a28a6d8",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.782
+  },
+  {
+   "title": "mdimp · 码包交付安全 · 密码跨消息日志数据库明文暴露 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/secure-package-password",
+   "commitSha": "ea5467fee7abcc45ce1bd09ffd221f6c5760e7cd",
+   "prNumber": 749,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.86
+  },
+  {
+   "title": "mdimp · 码包交付安全 · 密码跨消息日志数据库明文暴露 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/secure-package-password",
+   "commitSha": "ea5467fee7abcc45ce1bd09ffd221f6c5760e7cd",
+   "prNumber": 749,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.861
+  },
+  {
+   "title": "mdimp · 码包交付安全 · 密码跨消息日志数据库明文暴露 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/secure-package-password",
+   "commitSha": "ea5467fee7abcc45ce1bd09ffd221f6c5760e7cd",
+   "prNumber": 749,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 26.864
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f715100ecdb2dfca8b5bccfd265f70d366d8a546",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.003
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f715100ecdb2dfca8b5bccfd265f70d366d8a546",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.004
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "8d069d3caf05f5d0a32dc5f28b85a36c11bc60a9",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.825
+  },
+  {
+   "title": "发布验收 · 全业务关键功能 / 核心业务稳定冒烟 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "f6c6a41ff86f732156c929e88b5473f78261744b",
+   "prNumber": 1350,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.862
+  },
+  {
+   "title": "发布验收 · 全业务关键功能 / 核心业务稳定冒烟 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "f6c6a41ff86f732156c929e88b5473f78261744b",
+   "prNumber": 1350,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.866
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "f6c6a41ff86f732156c929e88b5473f78261744b",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.874
+  },
+  {
+   "title": "发布验收 · 核心业务稳定冒烟 · 2026-08-13",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "f6c6a41ff86f732156c929e88b5473f78261744b",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.882
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-12",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "184e3af25f2d2a0d4733de7d8f7d07ce2330cd8c",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 27.991
+  },
+  {
+   "title": "缺陷复测 · prd-admin / 浅色主题浮层提示层修复 · 2026-08-12",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/light-theme-tooltip-issue-ae80tw",
+   "commitSha": "410dd229813586e9b0766e1ab2e33ecf45c9df48",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 28.598
+  },
+  {
+   "title": "每日验收 · 主干与昨日变更 · 2026-08-11",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "01388f59f73ae6d19d6db5d238731ca8445da8c6",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 28.994
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-10",
+   "projectId": "snap-prd-agent",
+   "branch": "automation-5-daily-20260811",
+   "commitSha": "4f93070d078224a7edf952f486f1577e2e58c0d1",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 30.001
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-09",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/system-update-page-improvement-o384vq",
+   "commitSha": "896a33b3dfd698229cf65469545250986944fbaa",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 30.797
+  },
+  {
+   "title": "功能验收 · 核心业务稳定冒烟 · 2026-08-05",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "6f40fee8f55d8f051ab28a2068601ec68f6d25a6",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 35.836
+  },
+  {
+   "title": "每日验收 · 录音门禁与需求评估 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "main + target-day unpublished branches",
+   "commitSha": "06efeb6e6135a39b280d4b3fe94cb9064b135998",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.004
+  },
+  {
+   "title": "视觉回归 · 稳定冒烟 / 核心业务十模块 CDS 全面视觉回归 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "05b7fb3cd708ba4e25ff64813d6695e9b84c98e6",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.122
+  },
+  {
+   "title": "核心业务十模块 CDS 视觉验收技术附录 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "05b7fb3cd708ba4e25ff64813d6695e9b84c98e6",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.134
+  },
+  {
+   "title": "功能验收 · 核心业务稳定性 / 核心业务主管总账新证据口径 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "783c6e237",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.488
+  },
+  {
+   "title": "功能验收 · 核心业务稳定性 / 核心业务主管总账新证据口径 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "783c6e237",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.489
+  },
+  {
+   "title": "视觉回归 · 核心业务稳定性 / 稳定冒烟 / 核心业务主管账本一致性修订版 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "53da39a21",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.524
+  },
+  {
+   "title": "视觉回归 · 核心业务稳定性 / 稳定冒烟 / 核心业务主管账本一致性修订版 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "53da39a21",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.525
+  },
+  {
+   "title": "视觉回归 · 稳定冒烟 / 核心业务稳定性主管逐项账本 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "53da39a21",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.526
+  },
+  {
+   "title": "视觉回归 · 稳定冒烟 / 核心业务稳定性主管逐项账本 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "97b1f9760",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.537
+  },
+  {
+   "title": "视觉回归 · 核心业务稳定性 / 稳定冒烟主管逐项账本 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "1199a29faa72e65eec2ba9e9d51390f989e08369",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.548
+  },
+  {
+   "title": "视觉回归 · 稳定冒烟 / 关键业务主管版 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "3f0cf329f3185273df90a7aa4fd797f31f4ac202",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.568
+  },
+  {
+   "title": "功能验收 · 视觉创作 / 画布 AI 分层与 PSD 导出 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/layered-psd-mvp",
+   "commitSha": "4d1f4f24ac3b507f4daed6b6a05ed962d0752a70",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 36.591
+  },
+  {
+   "title": "功能验收 · 核心业务稳定验收 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "65055185cbbe1ad1b27ed95c769293c09955f3c5",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.595
+  },
+  {
+   "title": "功能验收 · 视觉创作 / 分层 PSD MVP · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/layered-psd-mvp",
+   "commitSha": "47522c3377b911101511c678f2627a36cd71e393",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 36.639
+  },
+  {
+   "title": "发布验收 · 核心业务十模块全面视觉与稳定冒烟 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "33f8eeb13ff62a0e213d75e8e75bcdef078421f7",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.642
+  },
+  {
+   "title": "缺陷复测 · 质量保障 / 未执行项透明度与核心业务稳定性 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "b78d83248",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.777
+  },
+  {
+   "title": "缺陷复测 · 质量保障 / 未执行项透明度与核心业务稳定性 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "b78d83248",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 36.779
+  },
+  {
+   "title": "分支验收 · 稳定性基线 / 核心业务稳定性与头像修改 · 2026-08-04",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "00d30f5abf183c1474438eae289c31c21b2d6486",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 37.017
+  },
+  {
+   "title": "每日验收 · 每日质量维护 / prd-agent 全量变更 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "main + target-day unpublished branches",
+   "commitSha": "1d7be3217b07b5e6fbcebc1093edc9137b85bd76",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 37.02
+  },
+  {
+   "title": "分支验收 · 视觉创作 / 头像修改与多图生图 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "53f8665b3a4ca51db79f2b3fa4f2dcc0ca390da2",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 37.25
+  },
+  {
+   "title": "分支验收 · 视觉创作 / 头像修改与多图生图 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "53f8665b3a4ca51db79f2b3fa4f2dcc0ca390da2",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 37.251
+  },
+  {
+   "title": "分支验收 · 视觉创作 / 头像修改与多图生图 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "53f8665b3a4ca51db79f2b3fa4f2dcc0ca390da2",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 37.254
+  },
+  {
+   "title": "分支验收 · 视觉创作 / 头像修改与多图生图 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "53f8665b3a4ca51db79f2b3fa4f2dcc0ca390da2",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 37.255
+  },
+  {
+   "title": "LLMGW 固定破窗管理员最终验收 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "58f6a4eb592f71b6c684eb8af8064368b44e04f7",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "P0 冒烟",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 0
+   },
+   "createdAgo": 37.607
+  },
+  {
+   "title": "功能验收 · llmgw / 任务诊断时间线 · 2026-08-02",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/ecstatic-davinci-tqy3zi",
+   "commitSha": "c65b969e0",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": {
+    "P0": 0,
+    "P1": 0,
+    "P2": 0,
+    "P3": 0
+   },
+   "createdAgo": 37.645
+  },
+  {
+   "title": "LLMGW 固定破窗管理员验收 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "028839e04b656e9df247fbee96f74c20f39f3e73",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "P0 冒烟",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 1
+   },
+   "createdAgo": 37.67
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-02",
+   "projectId": "snap-prd-agent",
+   "branch": "main + codex/self-avatar-edit + codex/visual-generation-preview",
+   "commitSha": "84189ba8594be1b01dc5e211376e074a4c08836e",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 38.008
+  },
+  {
+   "title": "功能验收 · CDS 与正式环境首次稳定冒烟 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "3dd9fce804af5f3c46e97983e912c8fcd539d105",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 38.115
+  },
+  {
+   "title": "功能验收 · 平台稳定性 / 核心业务稳定性基线 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "4a3701a7b01d481ab5bb08f75756e6d4657c60fc",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 38.159
+  },
+  {
+   "title": "功能验收 · 合成测试登录与稳定冒烟调度 · 2026-08-03",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "ce3fa7148949c306e648c2937a1e8a216b29485b",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 38.203
+  },
+  {
+   "title": "功能验收 · 视觉创作 / 图片模型接入与多图生图 · 2026-08-02",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/self-avatar-edit",
+   "commitSha": "f15d859e962a9d7254c53b5db20cf3129c88cffc",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 38.291
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-08-01",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f605055a23534ad5648c1694fd14050a3e1804a4",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 39.009
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-07-31",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "5359c841aeb00fa142f8e30ea3fb70c7a09e45c8",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 40.01
+  },
+  {
+   "title": "Commit验收 · 33aa5e992c / LLM Gateway / 33aa5e992 / 异步请求日志分层 · 2026-07-31",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-async-operation-logs",
+   "commitSha": "33aa5e992cdfc7dc566aee94ced18bf18db9e3ae",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 40.212
+  },
+  {
+   "title": "Commit验收 · 33aa5e992c / LLM Gateway / 33aa5e992 / 异步请求日志分层 · 2026-07-31",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-async-operation-logs",
+   "commitSha": "33aa5e992cdfc7dc566aee94ced18bf18db9e3ae",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 40.284
+  },
+  {
+   "title": "每日验收 · 全栈 / 全量变更 · 2026-07-30",
+   "projectId": "snap-prd-agent",
+   "branch": "automation-5-daily-20260731",
+   "commitSha": "be3c18d83e329e9cc029d7c37b8c977f50b4dd9b",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 41.006
+  },
+  {
+   "title": "每日验收 · 全栈 / 全量变更（规则合并后结论重算） · 2026-07-29",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "7826a61df145ab32417f0f0019b42e8978ce3fe7",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 41.196
+  },
+  {
+   "title": "每日验收 · 全栈 / 全量变更（结论修订版） · 2026-07-29",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "7826a61df145ab32417f0f0019b42e8978ce3fe7",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 0,
+    "p2": 0,
+    "p3": 0
+   },
+   "createdAgo": 41.584
+  },
+  {
+   "title": "每日验收 · 全栈 / 全量变更 · 2026-07-29",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "7826a61df145ab32417f0f0019b42e8978ce3fe7",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 41.79
+  },
+  {
+   "title": "缺陷复测 · 视频创作全链路与移动端触控 · 2026-07-29",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/video-studio-demo-redesign",
+   "commitSha": "f8c81fda2",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 42.258
+  },
+  {
+   "title": "功能验收 · 发布中心 / 就地添加服务器（复验补全） · 2026-07-29",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-release-center-redesign-leqn3z",
+   "commitSha": "944c84b",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 42.262
+  },
+  {
+   "title": "功能验收 · 发布中心 / 就地添加服务器 · 2026-07-29",
+   "projectId": "snap-f9e8b956d3dd",
+   "branch": "claude/cds-release-center-redesign-leqn3z",
+   "commitSha": "944c84b",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 42.367
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-07-28",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "b239edcffdc2ca5a3feaf650071414477175d046",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 42.999
+  },
+  {
+   "title": "缺陷复测 · 缺陷管理 / DEF-2026-0189 / 评审限流与断流恢复 · 2026-07-27",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f684ca862461a888a75553a3c9c13fc7d19c9288",
+   "prNumber": 1228,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 44.754
+  },
+  {
+   "title": "缺陷复测 · 缺陷管理 / DEF-2026-0189 / 评审限流与断流恢复 · 2026-07-27",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f684ca862461a888a75553a3c9c13fc7d19c9288",
+   "prNumber": 1228,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 44.76
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-07-26",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "6fb201e2cba8ec8da030dcfa773e6348be3d4f5b",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 45.017
+  },
+  {
+   "title": "PR验收 · #1264 / LLMGW 教程双链运行时与可视化 · 2026-07-27",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-tutorial-bilink-visualization",
+   "commitSha": "630686f1ee21ed7a96cc35b12a018329f9c058c4",
+   "prNumber": 1264,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 45.076
+  },
+  {
+   "title": "发布验收 · LLM Gateway 日志与三项能力生产闭环 · 2026-07-26",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "e3878565a1ba3bff497c842d0f03b64ca6d8a55d",
+   "prNumber": 1260,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 45.956
+  },
+  {
+   "title": "每日验收 · CDS / 全量变更 · 2026-07-25",
+   "projectId": "snap-prd-agent",
+   "branch": "automation-5-daily-20260726",
+   "commitSha": "221241b872c89d7dc5770dc480e2b1417273c5c9",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 46.025
+  },
+  {
+   "title": "缺陷复测 · 缺陷管理 / DEF-2026-0188 / 团队副负责人添加成员 · 2026-07-24",
+   "projectId": "snap-prd-agent",
+   "branch": "automation/daily-fix-2026-07-23-acceptance-rule-catalog",
+   "commitSha": "c3a0d44b0d99b11a37c61ce52567ff40aa67484a",
+   "prNumber": 1217,
+   "verdict": "conditional",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 46.045
+  },
+  {
+   "title": "prd-agent · 知识库 · 录音实时转写 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/fix-asr-response-fallback-20260724",
+   "commitSha": "a784b6308",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 47.783
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-07-23",
+   "projectId": "snap-prd-agent",
+   "branch": "origin/main",
+   "commitSha": "1b751ad065e31a6edc3e0ed99626e6ca6a5aa9bb",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 48.012
+  },
+  {
+   "title": "每日验收 · 全量变更 · 2026-07-23",
+   "projectId": "snap-prd-agent",
+   "branch": "origin/main",
+   "commitSha": "1b751ad065e31a6edc3e0ed99626e6ca6a5aa9bb",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 48.017
+  },
+  {
+   "title": "发布验收 · LLM Gateway 三项能力与日志体验 · 2026-07-23",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "1b751ad065e31a6edc3e0ed99626e6ca6a5aa9bb",
+   "prNumber": 1244,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 48.036
+  },
+  {
+   "title": "CDS 复制集模式验收 2026-07-23",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4244acf",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "复制集功能验收",
+   "defectCounts": {
+    "p1": 2
+   },
+   "createdAgo": 48.153
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 日志实体悬浮卡与详情页 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-log-entity-hover-pages",
+   "commitSha": "3b3fbfa4161d04faa99c067fbd0ec28675915370",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 48.714
+  },
+  {
+   "title": "prd-agent · 全量变更 · 昨日全量变更 · 每日巡检 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "e581ce4548758f3ab0c9d34fec11d182bfaec459",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 49.012
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 请求记录信息密度、右侧详情与正式发布 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "2603fff9bc8429319582a97b9506e31be3924817",
+   "prNumber": 1224,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 49.152
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 请求记录信息密度与下钻 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-logs-drawer-table-parity",
+   "commitSha": "6fb2d84c40f0ef9a351dae7484aded7feca7fe82",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 49.211
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 日志控制台与独立详情 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c07467529b614cfa1e46f2c1819f6e66cc4b3a19",
+   "prNumber": 1222,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 49.488
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 三项能力生产闭环 · 修复与验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "a63051dff17ce302da074b917efcb4857bd1fa35",
+   "prNumber": 1218,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 49.713
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-21 全量改动 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "a9067a1f50085ffc75670a24e83db31ee4726857",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 50.012
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-19 全量变更替代复验 · 复验 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "08f904b2ff53f33c4e782c596cd7864aaa6fde27",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.288
+  },
+  {
+   "title": "prd-agent · 知识库 · 快捷录音防重复启动 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/fix-asr-quota-alert-20260720",
+   "commitSha": "1cbf6101e",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 51.3
+  },
+  {
+   "title": "prd-agent · 知识库 · 快捷录音与同页转录 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/fix-asr-quota-alert-20260720",
+   "commitSha": "4dfb0d8c1",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 51.337
+  },
+  {
+   "title": "prd-agent · prd-admin/主题系统 · 首页主题与文字清晰度 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/home-theme-refresh",
+   "commitSha": "1211f0eb7f46936cd73ee2e1290cdcdf41c0a041",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.528
+  },
+  {
+   "title": "prd-agent · 知识库 · 录音交互式播放 · 新增功能 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/fix-asr-quota-alert-20260720",
+   "commitSha": "1e8e522ca",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.529
+  },
+  {
+   "title": "prd-agent · 知识库 · 录音转笔记单文档体验 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/fix-asr-quota-alert-20260720",
+   "commitSha": "17137de4a",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.646
+  },
+  {
+   "title": "prd-agent · 视觉创作 · 多图片模型选择器 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f39a3e43bcdc8f868a9fedc000227fce909d0ac7",
+   "prNumber": 1199,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 51.693
+  },
+  {
+   "title": "prd-agent · 全量变更 · 2026-07-19 全量变更替代复验 · 复验 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "automation/acceptance-rerun-2026-07-19",
+   "commitSha": "abff0a1f78ccef7f16c5e85378abbafde589dd9c",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.719
+  },
+  {
+   "title": "mdimp · 租户与权限治理 · 验收种子租户归属一致性 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/imp-loop-fix-tenant-owned-acceptance-seed",
+   "commitSha": "b432c8b5c2da9cd15fef04eed214c70ee8699157",
+   "prNumber": 410,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.868
+  },
+  {
+   "title": "mdimp · 租户与权限治理 · 验收种子租户归属一致性 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/imp-loop-fix-tenant-owned-acceptance-seed",
+   "commitSha": "b432c8b5c2da9cd15fef04eed214c70ee8699157",
+   "prNumber": 410,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.868
+  },
+  {
+   "title": "mdimp · 租户与权限治理 · 隐藏对象 HTTP 语义 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/imp-loop-fix-tenant-not-found-http-status",
+   "commitSha": "6340a6d255bffe1ed36438de5bec203debee4d25",
+   "prNumber": 412,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.884
+  },
+  {
+   "title": "mdimp · 租户与权限治理 · 隐藏对象 HTTP 语义 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/imp-loop-fix-tenant-not-found-http-status",
+   "commitSha": "6340a6d255bffe1ed36438de5bec203debee4d25",
+   "prNumber": 412,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 51.884
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-19 全量变更 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "abff0a1f78ccef7f16c5e85378abbafde589dd9c",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 52.014
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 正式发布与双向 SSO · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/hotfix-llmgw-recovery-heartbeat-prod",
+   "commitSha": "7f8865dcd97dc5d504f623c6834fe5680d43a0c9",
+   "prNumber": 1194,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 52.192
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 正式发布与 OpenRouter 式日志 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f9fc4c75012561ec20c27e56972c9a16aaab1f3f",
+   "prNumber": 1189,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 52.805
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-18 全量变更 · 自动验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "a288404175ab28e24004a8fb852bdd7ebd315a5a",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 53.007
+  },
+  {
+   "title": "mdimp · 开放平台 · 最终集成与对外可用 · 优化 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/open-platform-contract-provision",
+   "commitSha": "5524183f",
+   "prNumber": 400,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 53.619
+  },
+  {
+   "title": "mdimp · 开放平台 · 最终集成与对外可用 · 优化 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/open-platform-contract-provision",
+   "commitSha": "5e8e4ae4",
+   "prNumber": 400,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 53.65
+  },
+  {
+   "title": "prd-agent · 每日验收 · 昨日全部变更 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0ace8e486f93a67470d542cf27e9125784e72d77",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 53.693
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 三步客户端接入与简化密钥管理 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-client-quickstart",
+   "commitSha": "2cdf58268de824a46e350a4a49337a77dd6cefab",
+   "prNumber": 1179,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 54.214
+  },
+  {
+   "title": "mdimp · 开放平台 · 最终平台集成与对外可用验收 · 优化 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/open-platform-final-integration",
+   "commitSha": "2500211b7b5272236c640f5dc50d2848cb4f3883",
+   "prNumber": 387,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 54.603
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 外部平台化与权威教程 · 最终验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "d96cc9892446628ecdd09802c1439b641cb1be91",
+   "prNumber": 1176,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 54.689
+  },
+  {
+   "title": "prd-agent · 模型网关 · 外部平台化最终交付 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-final-delivery",
+   "commitSha": "6a0d128fe04a49f967d526de64030b7cbc49a8ba",
+   "prNumber": 1168,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 54.952
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-16 全量日变更 · 回归 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "ca087fdf737e51fa0d849e88feb27b19a38a600b",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 54.998
+  },
+  {
+   "title": "prd-agent · 模型网关 · 全流程与关联配置就地预览 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-final-delivery",
+   "commitSha": "working-tree",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 55.019
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 模型网关权威教程 · 视觉增密 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-tutorial-visual-density",
+   "commitSha": "3ce17e1215b481281917a2b1c84a721da1d70d77",
+   "prNumber": 1158,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 0,
+    "p2": 0,
+    "p3": 0
+   },
+   "createdAgo": 55.476
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0186 CSS 预加载错误恢复 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0ed13738394a060e9855f90f5bfc17c27fc03ee8",
+   "prNumber": 1033,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 55.533
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0185 视觉创作首页分页稳定性 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "85746eed9104227598bc675d5064ea182baecfbe",
+   "prNumber": 1032,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 55.568
+  },
+  {
+   "title": "mdimp · 应用中心 / 标识管理 · 产品落地方案与必要包材闭环 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 55.584
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0185 视觉创作首页分页稳定性 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "445481b37cf1449499110fbddafc261260554d4b",
+   "prNumber": 1032,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 55.591
+  },
+  {
+   "title": "mdimp · 产品落地方案 · 码关系校验规格与成品批次预警 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/product-landing-execution-card",
+   "commitSha": "a3ec1e7f",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 55.807
+  },
+  {
+   "title": "IMP 全量经营闭环健康检查、分支治理与 P0/P1 收口执行计划（v0.8）",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/imp-loop-fix-product-batch-lifecycle",
+   "commitSha": "24b561ba3b7f0c4b3777f83375131ba879778242",
+   "prNumber": 344,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 55.86
+  },
+  {
+   "title": "prd-agent · 模型网关 · 权威教程与全链路接入 · 新增功能 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "ef3883d",
+   "prNumber": 1149,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.098
+  },
+  {
+   "title": "prd-agent · LLM Gateway · Exchange 租户自助接入 · 新增功能 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-authoritative-tutorial-g2e",
+   "commitSha": "54d4508d4437b7cab7cda368575cd039bda63119",
+   "prNumber": 1148,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.211
+  },
+  {
+   "title": "prd-agent · LLM Gateway 权威教程 · 费用可信度与逐条追溯 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-authoritative-tutorial-g2d",
+   "commitSha": "ee4ca822be22fcf0f6afe26eed59b8eba5f225b8",
+   "prNumber": 1147,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.363
+  },
+  {
+   "title": "prd-agent · LLM Gateway · chat/vision Quickstart · 新增功能 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-authoritative-tutorial-g2c",
+   "commitSha": "ca3610399d5997cff3eeef1ba6ef0396833b05d5",
+   "prNumber": 1146,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.427
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 五角色 RBAC 可见性 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-authoritative-tutorial-g2b",
+   "commitSha": "bf9a541f47c0dca0cb6fa777707af327b1271c55",
+   "prNumber": 1145,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.462
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 五角色 RBAC 可见性 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-authoritative-tutorial-g2b",
+   "commitSha": "bf9a541f47c0dca0cb6fa777707af327b1271c55",
+   "prNumber": 1145,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.477
+  },
+  {
+   "title": "prd-agent · 视频创作 · 深色皮肤与作品状态 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/video-studio-visual-verified",
+   "commitSha": "e9b7408e7cf20bf4ee1bc0cf4c75230a96235116",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 56.546
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 组织成员安全自助管理 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "29f4e38e0713e26809a1e27420425c376c78b07a",
+   "prNumber": 1138,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.573
+  },
+  {
+   "title": "prd-agent · 视频创作 · Flow 式入口视觉回归 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/video-studio-visual-verified",
+   "commitSha": "101bd8bfe2f8d712dbc5656eac014cd6511664ea",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 56.596
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 组织成员安全自助管理打开复验 · 复验 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-authoritative-tutorial-t4",
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.605
+  },
+  {
+   "title": "prd-agent · LLM Gateway · 组织成员安全自助管理 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "codex/llmgw-authoritative-tutorial-t4",
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.609
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0183 网页托管筛选功能文字换行溢出 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "origin/main",
+   "commitSha": "dabeffbf18552ec3628be0612623aba5c24be1de",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 56.685
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0184 产品评审员上传文档失败 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "efaf4069f82582d07d3231d175cf0c4ff85c8cfe",
+   "prNumber": 1016,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 56.769
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0184 产品评审员上传文档失败 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "efaf4069f82582d07d3231d175cf0c4ff85c8cfe",
+   "prNumber": 1016,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 56.774
+  },
+  {
+   "title": "mdimp · 包材管理 · 包材档案八条命令闭环 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "codex/imp-loop-fix-packaging-archive-commands",
+   "commitSha": "88447e5e9b404f9fe54bbd06ec72f82b363295a3",
+   "prNumber": 340,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 56.879
+  },
+  {
+   "title": "prd-agent · 每日验收 · 全量变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "automation-5-daily-20260715",
+   "commitSha": "cc6c9eebaf46c61f1c894195cf7dde523a475604",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 56.929
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0182 产品评审员 Error 状态重传复测 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "ffaa8a11b9d06b0edb52fef1755d7c2c1210940e",
+   "prNumber": 1016,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 57.763
+  },
+  {
+   "title": "prd-agent · prd-agent · 每日自动验收 · 回归验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4a7a2300f5f0e6d30d47cbc7b1cdfaf63710548f",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 57.934
+  },
+  {
+   "title": "prd-agent · 知识库验收 · 自动发送与防风暴 · 新增功能 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "detached-head",
+   "commitSha": "a1cb52eec",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 58.229
+  },
+  {
+   "title": "prd-agent · 知识库验收 · 自动发送与防风暴 · 新增功能 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "detached-head",
+   "commitSha": "a1cb52eec",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 58.23
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0181 缺陷深链关闭与提交输入卡死 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "77075512e6176c2219d6d85bf214e572994903c3",
+   "prNumber": 1014,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 58.768
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-12 全量变更 · 自动化验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "a1cb52eec2c466a77b091efabbbddf6f35a217ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 58.947
+  },
+  {
+   "title": "prd-agent · 前端导航 · 返回上一页 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/navigation-history-bug-za3qbd",
+   "commitSha": "dd595b4",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 59.033
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0183 网页托管筛选功能文字换行溢出 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "origin/main",
+   "commitSha": "dabeffbf18552ec3628be0612623aba5c24be1de",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 59.719
+  },
+  {
+   "title": "IMP · 全量经营闭环健康检查 · 恢复审计诊断报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "origin/main",
+   "commitSha": "1f7c8d97f5facf65236e96d86639fbec3aa54a50",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "全量诊断",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 7,
+    "p2": 1,
+    "p3": 0
+   },
+   "createdAgo": 59.758
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-11 昨日变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4f8ee9cc93",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 59.927
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-11 昨日变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "4f8ee9cc93",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 59.931
+  },
+  {
+   "title": "mdimp · 全量经营闭环 · 主干发布前复测 · 修复 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "origin/main",
+   "commitSha": "38a232d100a33363f09cf3d911f88a60900a7264",
+   "prNumber": 276,
+   "verdict": "conditional",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 60.467
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-10 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c8bdd2ce4db1168282830655adfee010f4cb7132",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 60.938
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-10 · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c8bdd2ce4db1168282830655adfee010f4cb7132",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 60.941
+  },
+  {
+   "title": "prd-agent · 知识库 · 新增入口调色盘 FAB · 优化 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/kb-mobile-redesign-plan-de2clg",
+   "commitSha": "6be5c33",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 61.061
+  },
+  {
+   "title": "prd-agent · 知识库 · 录音转录全链路 · 新增功能 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/kb-mobile-redesign-plan-de2clg",
+   "commitSha": "d8c0610",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 61.095
+  },
+  {
+   "title": "mdimp · 供应商管理 · 供应商档案与授权及履约评价 · 自动化验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "f81ed5b5032a0eb6fef251dd530c85754d2082d0",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 61.52
+  },
+  {
+   "title": "mdimp · CDS验收环境 · 产品管理自动化测试 · 修复复测 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "f81ed5b5",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 61.526
+  },
+  {
+   "title": "mdimp · 产品管理 · 产品档案 · CDS环境自动化验收 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "f81ed5b5",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 61.556
+  },
+  {
+   "title": "mdimp · 产品管理 · 产品档案 · 自动化测试 · 验收报告",
+   "projectId": "snap-defd4695ab5f",
+   "branch": "main",
+   "commitSha": "f81ed5b5",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 61.578
+  },
+  {
+   "title": "prd-agent · 缺陷管理 · DEF-2026-0180 分享页 HTML 预览黑屏 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "a47d48cc8a5df3bcccc4821dbd3dee4dbc3e7649",
+   "prNumber": 1013,
+   "verdict": "fail",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 61.777
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-09 全量变更 · 自动验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "7be28795de703c34e33643825f3e56cc4b4ae601",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 61.944
+  },
+  {
+   "title": "CDS 自更新事前/事后差值验收（债务偿还 PR #1046）",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/cds-code-review-lsxkwx",
+   "commitSha": "b8e3b1a",
+   "prNumber": 1046,
+   "verdict": "conditional",
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 62.053
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-08 全量变更广度冒烟 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "b54613fd8983f5bc9a9b49fa807b8a6d016cd58a",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 62.946
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-07 变更广度冒烟 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "b64519df32ea02fe1f4ecab2e5db5c174841ae2f",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 63.947
+  },
+  {
+   "title": "CDS 配置体系 · self-update 后验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": "6779b9f2f",
+   "prNumber": null,
+   "verdict": "conditional",
+   "tier": "配置体系功能验收",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 1
+   },
+   "createdAgo": 64.597
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-06 全量变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "a1ce7ccf92e02e3ee72526ae22e9f2e434dfe16c",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": {
+    "p0": 0,
+    "p1": 2,
+    "p2": 1,
+    "p3": 0
+   },
+   "createdAgo": 64.752
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-05 变更范围 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "f4836740d6303afe872efaa6706875bf1dc59a17",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 66.026
+  },
+  {
+   "title": "prd-agent · CDS 设计系统 · 宝石品牌与细节打磨复审 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/cds-design-system-o5un0s",
+   "commitSha": "cac203d0",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 66.738
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-03 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "8f90385950f5998ba1d16d75e651069b5f6e271c",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 67.631
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.648
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.649
+  },
+  {
+   "title": "截图与视觉证据规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "页面优先证据规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "覆盖率与缺口账本规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "证明力矩阵规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "融合测试设计规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "影响面矩阵规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "PR commit 到结果映射与改动断言规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "广度冒烟与深度验收分级规范",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "MAP自动化测试规范总览",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "standard-v1",
+   "defectCounts": null,
+   "createdAgo": 68.65
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.674
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.684
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.685
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.699
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.702
+  },
+  {
+   "title": "prd-agent · 每日验收 · prd-agent 2026-07-02 变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "0044f01d86bdf45ce771e5daef3c022c30a346ab",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 68.782
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-07-01 全量变更高风险抽样 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "c279bed6c3fdec2f1610dee19f6dc7fd21ff6649",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 70.026
+  },
+  {
+   "title": "prd-agent · 每日验收 · 2026-06-26 全量变更 · 验收 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "main",
+   "commitSha": "18ffd0c44dd38b98d2e806b22205580545ff547d",
+   "prNumber": null,
+   "verdict": "fail",
+   "tier": "L2",
+   "defectCounts": null,
+   "createdAgo": 75.003
+  },
+  {
+   "title": "MAP · CDS界面 · 本会话5项UI改动 · 修复 · 验收报告",
+   "projectId": "snap-prd-agent",
+   "branch": "claude/cbs-updates-testing-asnv4y",
+   "commitSha": "6b8b7b59",
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L1",
+   "defectCounts": null,
+   "createdAgo": 75.28
+  },
+  {
+   "title": "视觉创作 demo · 嵌套文件夹演示",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": "pass",
+   "tier": "L0",
+   "defectCounts": null,
+   "createdAgo": 75.292
+  },
+  {
+   "title": "CDS↔MAP 知识库同步操作手册",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 76.201
+  },
+  {
+   "title": "CDS · 这几天修改总览 · 验收汇总",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.021
+  },
+  {
+   "title": "CDS · 验收报告组织化（项目入口+文件夹） · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.021
+  },
+  {
+   "title": "CDS · 自更新预检（先校验后切换） · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.021
+  },
+  {
+   "title": "CDS · 双主题与作用域命名（横切） · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 强制分支模式对齐 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 项目迁移（配置复刻到远端） · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 登录态识别与路由 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 发布探活分阶段（就绪超时下限） · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 构建并发闸与重试天花板 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 项目暂停与资源占用统计 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 运维面板与日志中心 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 命令面板字段级设置搜索 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 预览版本标记与彩色 favicon · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 看门狗与按需自愈 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 墓碑 / 过期分支分流页 · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 自动唤醒（预览访问唤醒降温分支） · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 极速版（CI 预构建部署） · 验收报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.041
+  },
+  {
+   "title": "CDS · 取证管线连通性 · 自检报告",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 77.057
+  },
+  {
+   "title": "prd-agent 每日验收演练 2026-06-22",
+   "projectId": "snap-prd-agent",
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 79.149
+  },
+  {
+   "title": "prd-agent 每日验收 2026-06-21",
+   "projectId": null,
+   "branch": null,
+   "commitSha": null,
+   "prNumber": null,
+   "verdict": null,
+   "tier": null,
+   "defectCounts": null,
+   "createdAgo": 80.035
+  }
+ ]
+}

@@ -5093,6 +5093,11 @@ export class StateService {
     contentHash?: string | null;
     publishedAt?: string | null;
     createdBy?: string;
+    /**
+     * 只给种子数据用：把归档时刻放到过去，好让演示数据有真实的时间分布。
+     * 业务路径一律不要传它——归档时刻由系统定，让调用方自报会让台账可被伪造。
+     */
+    createdAt?: string;
   }): AcceptanceReportMeta {
     const meta = this.buildAcceptanceReportMeta(input);
     fs.mkdirSync(this.getReportsBase(), { recursive: true });
@@ -5175,8 +5180,8 @@ export class StateService {
       contentHash: input.contentHash ?? null,
       publishedAt: input.publishedAt ?? null,
       createdBy: input.createdBy,
-      createdAt: now,
-      updatedAt: now,
+      createdAt: input.createdAt ?? now,
+      updatedAt: input.createdAt ?? now,
     };
   }
 
