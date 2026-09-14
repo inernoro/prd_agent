@@ -2283,7 +2283,10 @@ export class ContainerService {
   async stop(
     containerName: string,
     reason = 'cds-stop',
-    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+    // kind 以前不在这个 Pick 里，于是所有停止一律记成通用的 cds-stop：调用方明明知道
+    // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
+    // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
+    context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
   ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
@@ -2309,7 +2312,7 @@ export class ContainerService {
       },
     });
     await this.writeStopSentinel(containerName, reason);
-    this.noteLifecycleIntent(containerName, 'cds-stop', reason, {
+    this.noteLifecycleIntent(containerName, context.kind ?? 'cds-stop', reason, {
       projectId: context.projectId ?? null,
       branchId: context.branchId ?? null,
       profileId: context.profileId ?? null,
@@ -3012,8 +3015,17 @@ export class ContainerService {
     });
   }
 
-  /** Stop and remove an infrastructure service container */
-  async stopInfraService(containerName: string): Promise<void> {
+  /**
+   * Stop and remove an infrastructure service container.
+   *
+   * `intentKind` 决定停机原因怎么讲给人听：'cds-infra-stop' 是「停了就停了，不会自己回来」，
+   * 'cds-infra-recreate'（默认）是「重建流程的前半段，新容器随后就起」。两者共用一个值时，
+   * 停止 / 删除路径会告诉用户等一个永远不来的新容器（Codex P2）。
+   */
+  async stopInfraService(
+    containerName: string,
+    intentKind: 'cds-infra-stop' | 'cds-infra-remove' | 'cds-infra-recreate' = 'cds-infra-recreate',
+  ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
       severity: 'warn',
@@ -3025,7 +3037,12 @@ export class ContainerService {
       logs: before.logs,
       error: before.error,
     });
-    this.noteLifecycleIntent(containerName, 'cds-infra-recreate', 'infra stop/rm 重建或删除');
+    const INFRA_REASON: Record<typeof intentKind, string> = {
+      'cds-infra-stop': 'infra 停止，不重建',
+      'cds-infra-remove': 'infra 删除（容器与登记一起删）',
+      'cds-infra-recreate': 'infra stop/rm 后重建',
+    };
+    this.noteLifecycleIntent(containerName, intentKind, INFRA_REASON[intentKind]);
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
     this.recordContainerEvent({

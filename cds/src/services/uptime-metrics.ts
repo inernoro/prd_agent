@@ -295,6 +295,23 @@ export interface UptimeBucket {
   down: number;
   avgLatencyMs: number | null;
   status: 'up' | 'down' | 'partial' | 'none';
+  /**
+   * 桶内**第一次**失败的缩写日志，给柱条悬浮用（「当时到底炸了什么」）。
+   * 只在原始采样带 err / code 时才有：按天聚合（7d / 30d）不保留原始失败原因，
+   * 那里一律缺省 —— 宁可没有，也不拿桶级统计编一条像日志的话。
+   */
+  fail?: UptimeBucketFailure;
+}
+
+export interface UptimeBucketFailure {
+  /** 失败采样的时刻 */
+  at: number;
+  /** 缩写日志：探测器当时给出的原因短语 */
+  err: string;
+  /** HTTP 状态码（HTTP 探测才有） */
+  code?: number;
+  /** 该桶内失败次数，等于 bucket.down；放这里让悬浮层不必再算一次 */
+  count: number;
 }
 
 /** 把请求的桶数收敛到 [1, MAX_HISTORY_POINTS]，非法值回落到 fallback。 */
@@ -302,6 +319,17 @@ export function resolveBucketCount(requested: unknown, fallback: number): number
   const n = typeof requested === 'number' ? requested : Number(requested);
   if (!Number.isFinite(n) || n <= 0) return Math.min(fallback, MAX_HISTORY_POINTS);
   return Math.min(Math.floor(n), MAX_HISTORY_POINTS);
+}
+
+/**
+ * 失败采样的缩写日志。探测器已经写好人话（`用户视角 HTTP 502` / `探测超时`），
+ * 这里只做兜底：连 err 都没有就退回状态码，两样都没有就返回 null —— 不编。
+ */
+function failureReason(sample: UptimeSample): string | null {
+  const err = sample.err?.trim();
+  if (err) return err;
+  if (sample.code !== undefined) return `HTTP ${sample.code}`;
+  return null;
 }
 
 /**
@@ -341,6 +369,12 @@ export function bucketizeSamples(
       msCounts[idx] += 1;
     } else {
       buckets[idx].down += 1;
+      // 只留桶内**最早**那次失败：故障是从它开始的，后面往往是同一个原因的回声。
+      // 采样不保证按 t 有序，所以比时刻而不是「有没有填过」。
+      const reason = failureReason(s);
+      if (reason && (!buckets[idx].fail || s.t < (buckets[idx].fail as UptimeBucketFailure).at)) {
+        buckets[idx].fail = { at: s.t, err: reason, ...(s.code !== undefined ? { code: s.code } : {}), count: 0 };
+      }
     }
   }
   for (let i = 0; i < count; i++) {
@@ -350,6 +384,7 @@ export function bucketizeSamples(
     else if (b.down === 0) b.status = 'up';
     else if (b.up === 0) b.status = 'down';
     else b.status = 'partial';
+    if (b.fail) b.fail.count = b.down;
   }
   return buckets;
 }

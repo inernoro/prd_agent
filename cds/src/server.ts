@@ -1456,6 +1456,10 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 否则它永远执行不到、只会再回一句「未授权」。出参不含明文与哈希。
   // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
   if (method === 'GET' && path === '/api/credentials/self-check') return true;
+  // 公开状态页（2026-09-11）：token 自鉴权（16 字节随机串，不可枚举），
+  // 载荷由 public-status-board 白名单构造。只放行读取，不放行开关。
+  // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && /^\/api\/public\/status\/[a-f0-9]{32}$/.test(path)) return true;
   return false;
 }
 
@@ -2553,6 +2557,8 @@ export function createServer(deps: ServerDeps): express.Express {
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
       // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
       if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
+      // 公开状态页 `/s/:token`：同款 token 自鉴权，公开只读的 SPA 入口。
+      if (req.method === 'GET' && /^\/s\/[a-f0-9]{32}$/.test(req.path)) return next();
       // 验收报告图片资源：name 为内容寻址 sha256+扩展名（不可枚举），公开只读，
       // 供跨源（如 MAP 知识库）渲染报告时直接加载正文里的截图。
       if (req.method === 'GET' && req.path.startsWith('/api/reports/assets/')) return next();

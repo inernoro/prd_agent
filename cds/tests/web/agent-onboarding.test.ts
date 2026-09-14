@@ -294,7 +294,8 @@ describe('CDS Agent 接入口令', () => {
     //    + project-db-isolation（项目级数据库隔离原子读写，2026-09-02）
     //    + db-probe（分支数据库实测，只读，2026-09-03）
     //    + db-ledger（数据台账：备份 / 演练 / 丢弃门禁，2026-09-03）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(51);
+    //    + public-status（公开状态页：匿名只读面板 + 项目侧开关，2026-09-11）
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(52);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS

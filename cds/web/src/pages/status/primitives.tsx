@@ -6,15 +6,14 @@
  *   - up / down 不只靠颜色：柱条 down 段带斜纹 + 图标 + 文字，照顾色觉障碍；
  *   - 加载态是产物形状的 shimmer，不是静止 spinner。
  */
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { AlertTriangle, CheckCircle2, EyeOff, HelpCircle, PauseCircle, RefreshCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import {
   SOURCE_META,
-  formatClock,
-  formatLatency,
+  describeBucket,
   type ProbeSource,
   type UptimeBucket,
   type UptimeStatus,
@@ -97,14 +96,7 @@ export function SourceBadge({ source, full = false }: { source: ProbeSource; ful
 }
 
 function bucketTitle(bucket: UptimeBucket): string {
-  const window = `${formatClock(bucket.from)} — ${formatClock(bucket.to)}`;
-  if (bucket.status === 'none') return `${window}\n无采样（服务未运行或尚未探测）`;
-  const total = bucket.up + bucket.down;
-  return [
-    window,
-    `成功 ${bucket.up} / 共 ${total} 次`,
-    bucket.avgLatencyMs !== null ? `平均响应 ${formatLatency(bucket.avgLatencyMs)}` : null,
-  ].filter(Boolean).join('\n');
+  return describeBucket(bucket).join('\n');
 }
 
 /** 柱条单段。颜色 + 高度 + 斜纹三重编码，不只靠颜色区分 up/down。 */
@@ -133,7 +125,20 @@ export function BarSegment({ bucket, compact = false }: { bucket: UptimeBucket; 
   );
 }
 
-/** 可用率柱条：段数由调用方决定（列表迷你条 / 详情全宽条）。 */
+/**
+ * 可用率柱条：段数由调用方决定（列表迷你条 / 详情全宽条）。
+ *
+ * 全宽条在下方留一行**读数区**：指到哪一段就读哪一段，红段直接把当时的
+ * 缩写日志打出来（2026-09-10 用户点名的第二条：「悬浮在故障的条状物上面
+ * 能显示当时故障的缩写日志」）。
+ *
+ * 为什么是读数区而不是浮层：柱条活在 `overflow-x-auto` 里，任何绝对定位的
+ * 浮层都会被这层滚动容器裁掉；而要绕开它就得自己算鼠标坐标——正是同一批
+ * 反馈里第三条（竖线与鼠标差两公分）的成因。读数区不碰坐标，位置永远对。
+ * 每段仍带原生 title 兜底，键盘与读屏用户走 aria-label。
+ *
+ * 高度写死（h-9 读数区）以免指来指去时整块布局跳动。
+ */
 export function AvailabilityBar({
   buckets,
   segments,
@@ -147,10 +152,57 @@ export function AvailabilityBar({
   compact?: boolean;
   label: string;
 }): JSX.Element {
+  const [hover, setHover] = useState<number | null>(null);
   const shown = buckets.length > segments ? buckets.slice(buckets.length - segments) : buckets;
+
+  if (compact) {
+    return (
+      <div className={cn('flex items-stretch h-4 gap-[1px]', className)} role="img" aria-label={label}>
+        {shown.map((bucket) => <BarSegment key={bucket.from} bucket={bucket} compact />)}
+      </div>
+    );
+  }
+
+  const active = hover !== null ? shown[hover] : undefined;
+  const bad = active ? active.down > 0 : false;
+
   return (
-    <div className={cn('flex items-stretch', compact ? 'h-4 gap-[1px]' : 'h-9 gap-[2px]', className)} role="img" aria-label={label}>
-      {shown.map((bucket) => <BarSegment key={bucket.from} bucket={bucket} compact={compact} />)}
+    <div className={cn('flex flex-col gap-1.5', className)}>
+      <div className="flex h-9 items-stretch gap-[2px]" role="img" aria-label={label} onMouseLeave={() => setHover(null)}>
+        {shown.map((bucket, i) => (
+          <span
+            key={bucket.from}
+            className="flex min-w-0 flex-1 items-stretch"
+            onMouseEnter={() => setHover(i)}
+            data-bucket-index={i}
+          >
+            <BarSegment bucket={bucket} />
+          </span>
+        ))}
+      </div>
+      <div
+        className={cn(
+          'flex h-9 flex-col justify-center rounded-md border px-2.5 py-1',
+          bad ? 'border-destructive/40 bg-destructive/5' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]',
+        )}
+        aria-live="polite"
+        data-testid="bar-readout"
+      >
+        {active ? (
+          <>
+            <div className="truncate font-mono text-[0.6875rem] leading-4 text-muted-foreground">
+              {describeBucket(active).slice(0, 2).join(' · ')}
+            </div>
+            {describeBucket(active).length > 2 ? (
+              <div className={cn('truncate font-mono text-[0.6875rem] leading-4', bad ? 'text-destructive' : 'text-muted-foreground')}>
+                {describeBucket(active).slice(2).join(' · ')}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="font-mono text-[0.6875rem] leading-4 text-muted-foreground">把鼠标放到某一段上，看那段时间发生了什么</div>
+        )}
+      </div>
     </div>
   );
 }

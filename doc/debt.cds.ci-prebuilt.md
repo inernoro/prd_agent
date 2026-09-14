@@ -36,6 +36,7 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 | 11 | **webhook 完全漏投时需要手动恢复** | `workflow_run` webhook 若整条丢失（非早到/晚到，是压根没送达），分支会一直卡在旧 `ciTargetSha`/`ciImageStatus=waiting`，即使对应 commit 的 `Branch Image` 已在 GitHub Actions 构建成功。已提供运维兜底：`POST /branches/:id/prebuilt-image/claim`（`cds/src/services/prebuilt-image-claim.ts` + `branches.ts:10782`，校验 40 位 SHA + `branchUsesPrebuiltMode`，支持 `dryRun`）与 CLI `cdscli branch claim-prebuilt <id> --commit <sha> [--workflow-url] [--dry-run] [--deploy]`：运维在 Actions 页确认目标 commit 构建成功后手动把 `githubCommitSha/ciTargetSha/ciImageStatus` 标记 `ready`，`--deploy` 认领后立即按同一 commit 触发部署。 | 需要人工判断「哪个 commit 真的构建成功了」再执行认领；未做自动检测漏投并自愈。**2026-07-28 同日命中两次**（`ed72bfa` / `669792f`，均为只改 `cds/**` 的提交）：投递台账显示 push 已置 waiting，但该 sha 的 `Branch Image` completed 事件整条没送达，15 分钟看门狗按预期翻 failed 并在 PR 上留下红灯 —— 护栏工作正常，缺的是**主动补查**。现象特征：这类提交的 `Branch Image` 全部 image job 被 path-filter 跳过，工作流约 15 秒即完成，完成得越快越容易与 push 处理重叠，值得作为自愈优先级的判据。自愈方向：看门狗翻 failed 前先调一次 GitHub API 查该 sha 的 workflow runs（与 `CheckRunRunner.reconcileStale` 同款「不只依赖 webhook」的收敛思路），查到成功即自行认领，查不到再翻红。 |
 | 13 | **极速版没有静态前端的运行期配置注入** | 来源 #1437（2026-08-28，2026-09-08 吸收进本台账后关闭）。极速版对前端镜像只做「prebuilt 跳过 source mount」，平台按分支注入的只有 `VITE_GIT_BRANCH` / `VITE_BUILD_ID` 两个元数据，没有「容器启动时把分支级配置渲染成静态产物（如 `__APP_CONFIG__` 或 `/usr/share/nginx/html/config.js`）」的能力。于是凡是把 API 地址、子域等配置烤进构建产物的前端（mdimp 三个前端即如此），只能留在宿主机源码编译，占掉构建槽，是分支抖动主因之一 | prd-agent 自身前端不受影响。要做需要两边同时动：CDS 平台侧新增启动期配置渲染（建议照 env-provenance 的分支注入口径产出一份机读配置文件），应用侧改成运行期读取。验收方在 mdimp 仓库，prd-agent 单方做不完闭环，故记账不排期 |
 | 12 | **网关侧两个服务的版本自述仍是单值** | 网关控制台与网关引擎的镜像只把 commit 写进环境变量，容器启动时会被平台同名注入覆盖，其健康端点因此只能反映「部署希望跑哪版」而不是「实际跑哪版」——与主 API 在 2026-08-04 修掉的是同一个坑。未一并修的原因：对账逻辑目前放在主后端的公共库里，跨解决方案复用需要先定共享方式，宁可显式留尾也不半接线 | 对这两个服务判断「新代码上线了吗」仍可能被骗，可靠判据同样是 CDS 记录的实际派发 commit。修法照抄主 API：构建阶段把 commit 烤进程序集，端点分列实际值与期待值并当场对账 |
+| 14 | **极速版门禁覆盖面未核实到 import-and-init / copy-config-from** | 「Agent 只允许极速版部署」门禁（见「已偿还」）覆盖了部署、模式覆盖、构建配置写入等主要入口，但项目初始化时的 `import-and-init`、跨分支拷贝配置的 `copy-config-from`，以及「机器自建 prebuilt 配置」这条路径，尚未逐一核实是否落在门禁判定范围内 | 若这些入口能落到源码编译且不经门禁判定，机器凭据仍可能绕开「只允许极速版」的项目设置 |
 
 ## 验证状态（2026-06-23 生产实证）
 
@@ -56,6 +57,7 @@ SSOT 约定：镜像 tag = `sha-${github.sha}`（完整 40 hex，不可变）。
 | 债务 | 偿还方式 |
 |------|----------|
 | **版本端点报的 commit 是环境变量、不是二进制真身**（2026-08-04） | commit 改为在构建阶段烤进程序集，成为运行时改不掉的**实际值**；环境变量注入的那个降格为**期待值**，只代表本次部署希望跑哪版。版本端点同时给出两者并当场对账，不一致时直接在响应里告警。纯函数判定 + 守卫用例锁死「事故那组值必须判不一致」「缺任一边只能判未知，不许乐观放行」。原则已升级成通用规则的一节，覆盖所有「我是哪一版 / 我连哪个上游」类自述 |
+| **无法强制 Agent 只走极速版部署**（2026-09-08） | 新增项目级门禁「Agent 只允许极速版（CI 预构建）部署」（默认关闭，只能由真人开关）。开启后，机器凭据（AgentApiKey）发起的部署、分支模式覆盖、项目默认部署模式写入，只要最终会落到源码编译，一律 409 `agent_prebuilt_only` 拒绝；镜像拉取失败时也不再静默回退源码编译。判据按「实际生效模式」而非「声明的模式名」算，覆盖单服务部署、通用构建配置 PUT、项目默认模式、bulk 批量改模式、远端执行器派发等多个入口——上线后经过多轮复核，陆续堵住了「镜像拉不到时回退源码」「可伪造的内部豁免头」「显式空串覆盖被判成继承基线」「版本重放误判」等绕过路径。cdscli 同步在 `profile list` 里暴露 `prebuiltModes`/`deployRuntime.prebuilt`，供 Agent 按标志而非模式名识别极速版。**已知边界**：`import-and-init`、`copy-config-from` 两个入口以及「机器自建 prebuilt 配置」路径尚未纳入门禁覆盖核实，见「已知边界 / 待补」新增行 |
 
 ---
 

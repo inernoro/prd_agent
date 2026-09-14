@@ -16,6 +16,10 @@ export type ProbeKind = 'http' | 'container' | 'url' | 'keyword' | 'tcp';
 /** 目标来源：谁的承诺。分组、可用率含义、能不能编辑都由它决定。 */
 export type ProbeSource = 'branch' | 'release' | 'custom';
 export type MonitorKind = 'http' | 'keyword' | 'tcp';
+/** 环境：第一屏的主分维。判定在后端（monitor-environment.ts），前端只渲染。 */
+export type MonitorEnvironment = 'production' | 'staging' | 'other' | 'preview';
+/** 观测方式：主动自己发一次真请求 / 被动读真实流量的窗口统计。 */
+export type ObserveMode = 'active' | 'passive';
 
 export interface UptimeSample {
   t: number;
@@ -32,6 +36,19 @@ export interface UptimeBucket {
   down: number;
   avgLatencyMs: number | null;
   status: BucketStatus;
+  /**
+   * 桶内第一次失败的缩写日志（服务端 bucketizeSamples 盖的）。
+   * 7d / 30d 走按天聚合，原始失败原因已经不在了，那里恒为 undefined ——
+   * 悬浮层照实说「这个范围看不到原因」，不拿统计值编日志。
+   */
+  fail?: UptimeBucketFailure;
+}
+
+export interface UptimeBucketFailure {
+  at: number;
+  err: string;
+  code?: number;
+  count: number;
 }
 
 export interface UptimeTargetSummary {
@@ -61,6 +78,37 @@ export interface UptimeTargetSummary {
   intervalSeconds: number;
   timeoutMs: number;
   monitorId?: string;
+  /** 是否功能监控（问「返回的东西对不对」，而不是「通不通」）。 */
+  functional?: boolean;
+  /** 属于哪个环境。后端算好下发，前端不推断（判据只许有一份）。 */
+  environment: MonitorEnvironment;
+  /** 环境中文名，后端给定。 */
+  environmentLabel: string;
+  /** 观测方式。绿的含义不同：主动绿 = 刚亲自跑通过；被动绿 = 最近没人用坏。 */
+  observeMode: ObserveMode;
+  /**
+   * 被动监控最近一次读到的样本量（窗口内真实调用次数）。
+   * 0 是最要紧的那个值：判据过了但根本没人用过，绿灯不作数。
+   */
+  sampleCount?: number;
+  /** 这条业务是否出现在项目的公开面板上（服务端下发，前端只展示） */
+  publicVisible?: boolean;
+  /** 最新一次观测的摘要；完整证据走 /uptime/monitors/:id/observations。 */
+  lastObservation?: {
+    at: string;
+    ok: boolean;
+    artifactUrl?: string;
+    passed: number;
+    total: number;
+    err?: string;
+  };
+  /** 谁把这条监控加进来的（服务端算好下发，前端不推断）。 */
+  addedBy?: {
+    by: string;
+    kind: 'human' | 'project-key' | 'global-key';
+    origin: 'manual' | 'agent-api' | 'discovered';
+    boundBranchId?: string;
+  };
   tags?: string[];
   enabled?: boolean;
   /** false = 按容器状态判定（不是观测），标「未实测」，不算正常 */
@@ -174,6 +222,18 @@ export interface CustomMonitor {
   intervalSeconds?: number;
   timeoutMs?: number;
   projectId?: string | null;
+  /** 盯的是哪个环境；preview 由服务端结构性判定，编辑器里选不到 */
+  environment?: MonitorEnvironment;
+  /** 观测方式；health-json / functional 才谈得上被动 */
+  observeMode?: ObserveMode;
+  /** 被动观测的样本量从哪读（health-json 是 componentId，functional 是字段路径） */
+  sampleCountPath?: string;
+  /** 是否出现在项目的公开状态页上 */
+  publicVisible?: boolean;
+  /** 公开页上的对外叫法；留空用 name */
+  publicName?: string;
+  /** 来源：discovered = 自检端点自报，定义由 CDS 每轮对账维护，人改了会被覆盖 */
+  origin?: 'manual' | 'agent-api' | 'discovered';
   tags?: string[];
   enabled: boolean;
   createdAt: string;
@@ -617,6 +677,8 @@ export function filterTargets(
 
 export interface TargetGroup {
   source: ProbeSource;
+  /** 分组标识：custom 会被拆成「功能监控」与「自定义存活」两组，source 不足以区分。 */
+  key: string;
   label: string;
   hint: string;
   targets: UptimeTargetSummary[];
@@ -624,18 +686,53 @@ export interface TargetGroup {
 }
 
 export function groupTargetsBySource(targets: ReadonlyArray<UptimeTargetSummary>): TargetGroup[] {
-  return SOURCE_ORDER
-    .map((source) => {
-      const members = targets.filter((t) => t.source === source);
-      return {
-        source,
-        label: SOURCE_META[source].label,
-        hint: SOURCE_META[source].hint,
-        targets: members,
-        down: members.filter((t) => t.status === 'down' && !t.excluded).length,
-      };
-    })
-    .filter((group) => group.targets.length > 0);
+  const countDown = (xs: ReadonlyArray<UptimeTargetSummary>): number =>
+    xs.filter((t) => t.status === 'down' && !t.excluded).length;
+  const groups: TargetGroup[] = [];
+
+  for (const source of SOURCE_ORDER) {
+    const members = targets.filter((t) => t.source === source);
+    if (members.length === 0) continue;
+
+    // 功能监控与存活监控问的不是同一个问题：一个问「返回的东西对不对」，
+    // 一个问「通不通」。混在一列会让人把「存活全绿」读成「一切正常」，
+    // 而恰恰是功能监控红着的时候，服务通常还活得好好的。
+    if (source === 'custom') {
+      const functional = members.filter((t) => t.functional);
+      const alive = members.filter((t) => !t.functional);
+      if (functional.length > 0) {
+        groups.push({
+          source,
+          key: 'functional',
+          label: '功能监控',
+          hint: '发一次真请求，按判据验收返回值：接口通但产出不对，也算故障',
+          targets: functional,
+          down: countDown(functional),
+        });
+      }
+      if (alive.length > 0) {
+        groups.push({
+          source,
+          key: 'custom',
+          label: SOURCE_META.custom.label,
+          hint: SOURCE_META.custom.hint,
+          targets: alive,
+          down: countDown(alive),
+        });
+      }
+      continue;
+    }
+
+    groups.push({
+      source,
+      key: source,
+      label: SOURCE_META[source].label,
+      hint: SOURCE_META[source].hint,
+      targets: members,
+      down: countDown(members),
+    });
+  }
+  return groups;
 }
 
 /** 默认选中：保留当前选中；否则先选故障，再选待确认，最后第一条。 */
@@ -692,3 +789,39 @@ export function availabilityOfBuckets(points: ReadonlyArray<UptimeBucket>): numb
   }
   return total > 0 ? up / total : null;
 }
+
+/**
+ * 柱条一段的读数。**唯一一份**：原生 title 与悬浮层读的是同一个函数，
+ * 免得两处各写一份、日后各自漂移（predicate-and-wiring-discipline 形状 3）。
+ *
+ * 失败那一段必须能答出「当时炸了什么」——所以 fail.err 是这里的主角。
+ * 拿不到原因（7d / 30d 按天聚合不留原始 err）就照实说拿不到，不编。
+ */
+export function describeBucket(bucket: UptimeBucket): string[] {
+  const window = `${formatClock(bucket.from)} — ${formatClock(bucket.to)}`;
+  if (bucket.status === 'none') return [window, '无采样（服务未运行或尚未探测）'];
+  const total = bucket.up + bucket.down;
+  const lines = [window, `成功 ${bucket.up} / 共 ${total} 次`];
+  if (bucket.avgLatencyMs !== null) lines.push(`平均响应 ${formatLatency(bucket.avgLatencyMs)}`);
+  if (bucket.down > 0) {
+    if (bucket.fail) {
+      const code = bucket.fail.code !== undefined ? ` · HTTP ${bucket.fail.code}` : '';
+      lines.push(`首次失败 ${formatClock(bucket.fail.at)}${code}`);
+      lines.push(bucket.fail.err);
+    } else {
+      lines.push('这个时间范围按天聚合，看不到当时的失败原因；切到 24 小时可见');
+    }
+  }
+  return lines;
+}
+
+/**
+ * 监控来源的中文名。**用映射不用三元**：三元判断遇到新枚举值会静默落到 else 分支，
+ * 于是「自检端点自报」被显示成「人工添加」——枚举扩展最典型的漏法
+ * （enum-ripple-audit）。映射缺一个键至少还能看出来是空的。
+ */
+export const MONITOR_ORIGIN_LABEL: Record<'manual' | 'agent-api' | 'discovered', string> = {
+  manual: '人工添加',
+  'agent-api': 'Agent 自助登记',
+  discovered: '自检端点自报',
+};

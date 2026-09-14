@@ -1520,7 +1520,42 @@ export interface ReleaseStrategy {
  * 只存定义，不存采样：采样与故障台账仍由 uptime-monitor 统一记在自己的落盘文件里，
  * 定义删掉后该目标的台账会在下一轮探测被清理。
  */
-export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp';
+export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json' | 'functional';
+
+/**
+ * 一次功能监控观测留下的证据（2026-09-09）。
+ *
+ * 存活监控只需要答「通不通」，一条 up/down 就够。功能监控问的是「返回的东西对不对」，
+ * 于是**产物本身就是证据**：出了什么图、判据逐条怎么判的、这次发的什么提示词。
+ * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
+ */
+export interface MonitorObservation {
+  /** ISO 时间 */
+  at: string;
+  ok: boolean;
+  elapsedMs: number;
+  code?: number;
+  /** 逐条判据结果，全部跑完（不短路），一眼看出四条里哪条挂了 */
+  results: Array<{
+    path: string;
+    op: string;
+    expected?: string;
+    actual?: string;
+    ok: boolean;
+    err?: string;
+  }>;
+  /** 本次产物地址（生成的图片等），详情页画廊直接引用 */
+  artifactUrl?: string;
+  /** 本次真正发出去的请求体（随机项已展开）——排障第一件事就是看它 */
+  requestBody?: string;
+  /** 传输层失败（超时、连不上）的原因；判据不通过不算这里 */
+  err?: string;
+  /**
+   * 被动监控这一次读到的样本量（窗口内真实调用次数）。
+   * 0 意味着「这段时间根本没人用」——判据通过也不算数，界面必须另说。
+   */
+  sampleCount?: number;
+}
 
 export interface UptimeCustomMonitor {
   id: string;
@@ -1538,6 +1573,51 @@ export interface UptimeCustomMonitor {
   expectedStatus?: string;
   /** keyword：响应体必须包含的文本（区分大小写） */
   keyword?: string;
+  /**
+   * health-json：要断言哪一条 check。
+   *
+   * 对应 IETF draft-inadarei-api-health-check 的 checks——它既可能是
+   * `{"comp:measure": [{componentId, observedValue, status}]}`，也可能被实现简化成
+   * 一个数组。匹配时先认 componentId 字段，再退回用 checks 的键名。
+   */
+  healthComponentId?: string;
+  /** health-json：断言取该 check 的哪个字段 */
+  healthField?: 'status' | 'observedValue';
+  /**
+   * health-json：比较运算。
+   *
+   * 刻意是**有限枚举**而不是一句可解析的表达式：自由文本判据一旦开口，
+   * 下一轮就会被要求加同义词和嵌套语法（CLAUDE.md 5.5 的熔断条件之一）。
+   */
+  healthOp?: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+  /** health-json：期望值。lt/lte/gt/gte 按数值比较，eq/ne 按规范化后的字符串比较 */
+  healthValue?: string;
+  /**
+   * functional：请求方法。功能监控要真的把业务跑一遍，多数是 POST。
+   */
+  requestMethod?: 'GET' | 'POST';
+  /**
+   * functional：请求体模板（JSON 文本）。
+   *
+   * 支持 `{{randomPrompt}}` 占位：每次观测替换成一条随机提示词。
+   * 固定提示词会被上游缓存，跑一万次也证明不了这条链路今天还活着。
+   */
+  requestBody?: string;
+  /**
+   * functional：判据列表，一次响应上判多条，全部通过才算通过。
+   * 结构化三元组，不是表达式（见 monitor-assertions.ts 顶部的理由）。
+   */
+  assertions?: Array<{ path: string; op: string; value?: string }>;
+  /**
+   * functional：产物地址在响应里的路径，如 `data.imageUrl`。
+   * 配了它，详情页才有画廊可看；没配就只留判据结果。
+   */
+  artifactUrlPath?: string;
+  /**
+   * functional：最近若干次观测的证据，新的在前。
+   * 只留最近 N 条——监控是看趋势的，不是审计日志，无限增长会把台账撑爆。
+   */
+  observations?: MonitorObservation[];
   /** tcp：主机 */
   host?: string;
   /** tcp：端口 */
@@ -1548,10 +1628,85 @@ export interface UptimeCustomMonitor {
   timeoutMs?: number;
   /** 归属项目；空 = 系统级（只有人类账号与全局 Key 可见） */
   projectId?: string | null;
+  /**
+   * 这条监控盯的是哪个环境（生产 / 预发 / 其他 / 分支预览）。
+   *
+   * 归一与推导一律走 services/monitor-environment.ts，那里是唯一判定源。
+   * 注意：地址指着一条分支预览时，声明的值会被**结构性证据覆盖**成 preview——
+   * 否则一条临时分支的监控只要自称 production 就能混进项目负责人的第一屏。
+   */
+  environment?: 'production' | 'staging' | 'other' | 'preview';
+  /**
+   * 观测方式（2026-09-10）。
+   *
+   *   active  —— 自己发一次真请求，按判据验收返回值。绿 = 我刚亲自跑通过一遍。
+   *   passive —— 读被监控方统计好的真实流量窗口（错误率、未处理异常数）。
+   *              绿 = 最近没人用坏，**前提是真的有人用**。
+   *
+   * 两种绿的含义不同，界面必须分开说，否则「没人用」会被读成「一切正常」
+   * （degradation-must-alarm）。缺省 active，与存量监控的行为一致。
+   */
+  observeMode?: 'active' | 'passive';
+  /**
+   * passive 专用：样本量从哪读。**必填**——读不到样本量的被动监控是一条
+   * 恒绿的假判据，零流量与全部成功在它眼里长得一模一样。
+   *
+   * 取值随 kind 解释（与本文件里 healthComponentId / assertions.path 的既有分工一致）：
+   *   health-json —— 一个 componentId，读它的 observedValue；
+   *   functional  —— 响应文档里的字段路径，如 `data.requestCount`。
+   */
+  sampleCountPath?: string;
+  /**
+   * 这条业务是否出现在项目的公开面板上。缺省 false —— 公开是显式动作，
+   * 不是默认值：默认公开会让一条刚加的内部探针在下一次部署后对全网可见。
+   */
+  publicVisible?: boolean;
+  /**
+   * 对外叫法。公开面板上用它替代 name——内部名常带环境、组件与缩写
+   * （「llmgw serving 未处理异常」），那是给自己人看的。留空就用 name。
+   */
+  publicName?: string;
   /** 自由标签，列表里用于分组与搜索 */
   tags?: string[];
   /** false = 手动暂停：不探测、不计故障、已开的故障就地收尾 */
   enabled: boolean;
+  /**
+   * 谁加的属于哪类主体（审计与归属，2026-09-09）。
+   *
+   * createdBy 早就有（人类用户名），但没有它答不出「这条是人加的还是 Agent 加的」。
+   * 监控中心要答得出「谁加的、什么时候加的、从哪加的」——一个没人认领的监控红着，
+   * 没人知道该找谁，最后的结局是被静音。
+   */
+  createdByKind?: 'human' | 'project-key' | 'global-key';
+  /**
+   * 从哪来的：
+   *   manual     —— 人在面板上加的；
+   *   agent-api  —— Agent 用项目 Key 自助登记的；
+   *   discovered —— 自检端点自报的（监控自发现），由 CDS 每轮对账维护。
+   *
+   * discovered 的定义**不许人手改**：改了下一轮会被端点的声明覆盖，
+   * 那是漂移源。要改就去改服务自己的自描述。
+   */
+  origin?: 'manual' | 'agent-api' | 'discovered';
+  /** 自发现监控的稳定标识（端点 + componentId）。对账靠它，只有 discovered 才有。 */
+  discoveryKey?: string;
+  /**
+   * 绑定的分支。
+   *
+   * Agent 自助登记的监控必然指向某条分支的预览地址，而分支是会消失的——
+   * 分支删了监控还在，就变成一条永远红着的死地址，把真告警淹掉。
+   * 所以登记时由服务端**反查**出它属于哪条分支并钉在这里，
+   * 分支删除时随之清理（state.removeBranch 的级联）。
+   */
+  boundBranchId?: string;
+  /**
+   * 这个地址落在哪条分支的预览域名上（纯事实，不含寿命语义）。
+   *
+   * 与 boundBranchId 分开：那个管「分支没了就一起删」，只有 Agent 自助登记的才有；
+   * 这个管「环境算不算分支预览」，**任何登记路径都要盖**——否则管理员手动加一条
+   * 指着临时分支的监控会被算成生产，混进项目负责人的第一屏。
+   */
+  previewBranchId?: string;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
@@ -3359,6 +3514,24 @@ export interface ManagedProjectSpec {
 }
 
 export interface Project {
+  /**
+   * 监控自发现的端点清单（「插上」的那几个口）。
+   *
+   * CDS 每轮打这些地址，读它们自报的 `cds:monitor` 声明，对账出监控项。
+   * 端点自己说「判什么」，但**不说打哪**——CDS 打的永远是这里登记的地址。
+   */
+  monitorEndpoints?: string[];
+  /**
+   * 公开状态页的口令（不可枚举随机串）。有值 = 这个项目的公开面板已开，
+   * 匿名访问 `/s/<token>` 可见；置空 = 立刻关掉，旧链接当即 404。
+   *
+   * 与验收报告的 shareToken 同款：token 自鉴权、不挂在登录网关后面——
+   * 它的全部意义就是给没有账号的人看。
+   */
+  statusPageToken?: string | null;
+  /** 公开面板开启时间。面板上不展示，只做审计。 */
+  statusPageOpenedAt?: string;
+
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
   /** URL-friendly slug (may equal id, usually kebab-case). */

@@ -9052,6 +9052,128 @@ def cmd_schedule_test(args: argparse.Namespace) -> None:
     }, note="动作检测通过")
 
 
+# ── 功能监控：一句话加一条「带逻辑的监控」 ────────────────────────────────
+#
+# 存活监控问「通不通」，功能监控问「返回的东西对不对」：发一次真业务请求，
+# 在响应上跑多条结构化判据。判据是 path:op:value 三元组，不是表达式——
+# 自由文本判据一旦开口，下一轮就会被要求加同义词和嵌套（CLAUDE.md 5.5）。
+
+
+ASSERT_OPS = ("eq", "ne", "lt", "lte", "gt", "gte", "exists", "absent")
+
+
+def _parse_assertion(raw: str) -> dict[str, str]:
+    """把 `image.height:eq:1024` 解析成判据。
+
+    冒号两头都可能出现冒号，所以不能简单地切两刀：
+
+      期望值里自带冒号（时间、URL、比例）—— 切多了把 `16:9` 拦腰截断；
+      **路径里也自带冒号** —— health+json 的 check 键按 IETF 规范就是
+      `组件:度量`（`checks.serving:requests[0].observedValue`），
+      从左边切第一刀会把路径切成 `checks.serving` + 一个不存在的运算。
+
+    所以判据是「找运算符」而不是「按位置切」：运算符是**有限枚举**（八个），
+    从左往右找第一个被冒号夹住的、且确实是枚举成员的片段，它就是运算符，
+    左边全是路径、右边全是期望值。只有当路径里某一段**恰好等于**一个运算符名
+    （如 `data.eq.x`）时才会歧义，那种字段名现实中不存在，也可以改写路径规避。
+    """
+    text = raw.strip()
+    for i, piece in enumerate(text.split(":")):
+        if i == 0 or piece.strip() not in ASSERT_OPS:
+            continue
+        head_len = len(":".join(text.split(":")[:i]))
+        path = text[:head_len].strip()
+        op = piece.strip()
+        rest = text[head_len + 1 + len(piece):]
+        value = rest[1:] if rest.startswith(":") else ""
+        if not path:
+            die(f"判据写法应为 path:op[:value]，收到 {raw!r}", code=2)
+        item: dict[str, str] = {"path": path, "op": op}
+        if value != "":
+            item["value"] = value
+        elif op not in ("exists", "absent"):
+            die(f"判据 {raw!r} 的运算 {op} 需要期望值", code=2)
+        return item
+    die(
+        f"判据写法应为 path:op[:value]，收到 {raw!r}"
+        f"（运算必须是 {' / '.join(ASSERT_OPS)} 之一）",
+        code=2,
+    )
+
+
+def _monitor_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.assert_:
+        die("至少要有一条判据（--assert path:op:value）——没有判据的功能监控任何返回都算通过", code=2)
+    payload: dict[str, Any] = {
+        "kind": "functional",
+        "url": args.url,
+        "requestMethod": args.method,
+        "assertions": [_parse_assertion(a) for a in args.assert_],
+    }
+    if args.name:
+        payload["name"] = args.name
+    if args.body:
+        payload["requestBody"] = args.body
+    if args.artifact_path:
+        payload["artifactUrlPath"] = args.artifact_path
+    if args.interval:
+        payload["intervalSeconds"] = args.interval
+    if args.timeout_ms:
+        payload["timeoutMs"] = args.timeout_ms
+    if args.environment:
+        payload["environment"] = args.environment
+    if args.observe_mode:
+        payload["observeMode"] = args.observe_mode
+    if args.sample_count_path:
+        payload["sampleCountPath"] = args.sample_count_path
+    # 被动观测必须说清样本量从哪读：读不到样本量时「零流量」与「全部成功」
+    # 长得一模一样，那条监控会永远绿着。服务端也会拒，这里先给一句人话。
+    if args.observe_mode == "passive" and not args.sample_count_path:
+        die(
+            "被动观测必须加 --sample-count-path：读不到样本量的话，零流量会被读成一切正常",
+            code=2,
+        )
+    project_id = args.project or os.environ.get("CDS_PROJECT_ID")
+    if project_id:
+        payload["projectId"] = project_id
+    return payload
+
+
+def cmd_monitor_add(args: argparse.Namespace) -> None:
+    """先试跑、通过了才登记。
+
+    这一步是整条命令的价值所在：跑不通就不写进去。否则加进来的监控从第一次探测
+    起就红，而红的原因是判据自己写错了——那种「一加就红」的噪音会很快让人
+    把整块面板静音，比没有监控更糟。
+    """
+    payload = _monitor_payload(args)
+    trial = _call("POST", "/api/uptime/monitors/test", body=payload, timeout=max(30, (args.timeout_ms or 15000) // 1000 + 15))
+    if not trial.get("up"):
+        die(
+            "试跑未通过，未登记。判据或地址先改对再加。",
+            code=2,
+            extra={"trial": trial, "payload": payload},
+        )
+    if args.dry_run:
+        ok({"trial": trial, "payload": payload}, note="试跑通过（--dry-run，未登记）")
+        return
+    created = _call("POST", "/api/uptime/monitors", body=payload, timeout=20)
+    ok({"trial": trial, "monitor": created.get("monitor", created)}, note="试跑通过并已登记")
+
+
+def cmd_monitor_list(args: argparse.Namespace) -> None:
+    data = _call("GET", "/api/uptime/monitors")
+    monitors = data.get("monitors", data) if isinstance(data, dict) else data
+    if args.functional_only and isinstance(monitors, list):
+        monitors = [m for m in monitors if m.get("kind") == "functional"]
+    ok({"monitors": monitors})
+
+
+def cmd_monitor_observations(args: argparse.Namespace) -> None:
+    data = _call("GET", f"/api/uptime/monitors/{urllib.parse.quote(args.id)}/observations")
+    ok(data)
+
+
 def cmd_schedule_create(args: argparse.Namespace) -> None:
     job = _build_schedule_job_from_prompt(args, require_project=True)
     checks: list[dict[str, Any]] = []
@@ -9253,6 +9375,61 @@ def _build_parser() -> argparse.ArgumentParser:
     dvd.add_argument("--wait", action="store_true", help="等待 DeploymentRun 进入终态")
     dvd.add_argument("--timeout", type=int, default=300)
     dvd.set_defaults(func=cmd_deployment_version_deploy)
+
+    mon = sub.add_parser(
+        "monitor",
+        help="功能监控: 一句话加一条带判据的监控（先试跑再登记）/ 列表 / 历史观测",
+    ).add_subparsers(dest="sub", required=True)
+
+    mona = mon.add_parser(
+        "add",
+        help="加一条功能监控。先试跑，通过了才登记——跑不通就不写进去，避免一加就红",
+    )
+    mona.add_argument("--name", help="展示名；留空由服务端按地址派生")
+    mona.add_argument("--url", required=True, help="要打的业务端点（必须是本项目分支的预览地址）")
+    mona.add_argument("--method", default="POST", choices=["GET", "POST"], help="请求方法，默认 POST")
+    mona.add_argument(
+        "--assert", dest="assert_", action="append", metavar="PATH:OP[:VALUE]",
+        help="判据，可重复。OP ∈ eq/ne/lt/lte/gt/gte/exists/absent。"
+             "例：image.height:eq:1024。路径与期望值都可以带冒号——"
+             "health+json 的 check 键按规范就是「组件:度量」，写成 "
+             "checks.serving:requests.0.observedValue:gt:0（数组下标用 .0，不是 [0]）",
+    )
+    mona.add_argument(
+        "--body",
+        help='请求体 JSON。可用 {{randomPrompt}} 占位，每次探测换一条随机提示词——'
+             '固定提示词会被上游缓存，跑一万次也证明不了链路今天还活着',
+    )
+    mona.add_argument("--artifact-path", help="产物地址在响应里的路径，如 image.url；配了详情页才有画廊")
+    mona.add_argument("--interval", type=int, help="探测间隔（秒），常设轻探针建议 21600（6 小时）")
+    mona.add_argument("--timeout-ms", type=int, help="单次超时（毫秒）；生成类接口给足，别用默认值卡它")
+    mona.add_argument("--project", help="项目 id（缺省读 CDS_PROJECT_ID）")
+    mona.add_argument(
+        "--environment", choices=["production", "staging", "other"],
+        help="这条监控盯的是哪个环境，默认 production。第一屏按环境把同一条业务并排摆，"
+             "只有一个环境红时问题就在那个环境的配置。"
+             "地址指着分支预览时服务端会覆盖成 preview——那是结构性事实，声明改不了它",
+    )
+    mona.add_argument(
+        "--observe-mode", choices=["active", "passive"], default=None,
+        help="active（默认）自己发一次真请求；passive 读被监控方统计好的真实流量窗口。"
+             "两种绿含义不同：主动绿 = 刚亲自跑通过；被动绿 = 最近没人用坏（前提是真有人用）",
+    )
+    mona.add_argument(
+        "--sample-count-path",
+        help="被动观测必填：样本量（窗口内真实调用次数）在响应里的字段路径。"
+             "0 样本时界面判「绿灯不作数」，不判正常",
+    )
+    mona.add_argument("--dry-run", action="store_true", help="只试跑、不登记")
+    mona.set_defaults(func=cmd_monitor_add)
+
+    monl = mon.add_parser("list", help="列出监控")
+    monl.add_argument("--functional-only", action="store_true", help="只看功能监控")
+    monl.set_defaults(func=cmd_monitor_list)
+
+    mono = mon.add_parser("observations", help="看一条功能监控的历史观测证据（判据逐条、产物地址）")
+    mono.add_argument("id")
+    mono.set_defaults(func=cmd_monitor_observations)
 
     sch = sub.add_parser("schedule", help="任务调度: 口令创建 / 测试动作 / 列表 / 手动执行").add_subparsers(dest="sub", required=True)
     sp = sch.add_parser("parse", help="解析口令,不请求 CDS")

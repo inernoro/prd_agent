@@ -360,6 +360,24 @@ export function resolveBranchEntrypointsEnv(
   entry: BranchEntry,
   deps: BranchEntrypointDeps,
 ): PublishedEntrypointsEnv {
+  return {
+    reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS,
+    env: publishedEntrypointsEnv(resolveBranchPublishedEntrypoints(entry, deps)),
+  };
+}
+
+/**
+ * 同一份组装的**结构化**结果（2026-09-09 从 resolveBranchEntrypointsEnv 提取，零行为变化）。
+ *
+ * 提取的原因：存活监控的项目级自助登记要判「这个地址是不是本项目某条分支的入口」，
+ * 需要的是入口清单本身，不是它序列化成的那串 env。另拼一份枚举就是第二个判定源
+ * （predicate-and-wiring-discipline 形状 3）——命名子域规则一改，两边立刻对不上，
+ * 表现为合法地址被判成非法、或非法地址被放行。
+ */
+export function resolveBranchPublishedEntrypoints(
+  entry: BranchEntry,
+  deps: BranchEntrypointDeps,
+): PublishedEntrypoints {
   const project = deps.getProject(entry.projectId);
   const previewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
   const subdomains: string[] = [];
@@ -374,19 +392,16 @@ export function resolveBranchEntrypointsEnv(
     // 存量项目里叫 llmgw 的后端 API（声明 /gw/healthz）因此不会被当成控制台。
     if (!consoleSubdomain && isGatewayConsoleEntry(sub, bp.readinessProbe?.path)) consoleSubdomain = sub;
   }
-  return {
-    reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS,
-    env: publishedEntrypointsEnv(buildPublishedEntrypoints({
-      previewSlug,
-      previewHost: deps.previewHost,
-      subdomains,
-      consoleSubdomain,
-      // 与发布器同一份占位表：别名按根域展开 + 完整自定义域名。
-      occupiedHosts: deps.getAllBranches && deps.previewHost
-        ? occupiedHostOwners(deps.getAllBranches(), [deps.previewHost.replace(/^https?:\/\//, '').replace(/\/+$/, '')])
-        : undefined,
-    })),
-  };
+  return buildPublishedEntrypoints({
+    previewSlug,
+    previewHost: deps.previewHost,
+    subdomains,
+    consoleSubdomain,
+    // 与发布器同一份占位表：别名按根域展开 + 完整自定义域名。
+    occupiedHosts: deps.getAllBranches && deps.previewHost
+      ? occupiedHostOwners(deps.getAllBranches(), [deps.previewHost.replace(/^https?:\/\//, '').replace(/\/+$/, '')])
+      : undefined,
+  });
 }
 
 /** 从 StateService 造 deps —— 唯一一处知道「effective profile 要过 resolveEffectiveProfile」。 */

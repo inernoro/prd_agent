@@ -65,6 +65,15 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   // services/credential-self-check.ts，有不泄密用例守着）。
   // 与 isPublicAccessRequestRoute in server.ts（basic-auth 模式白名单）保持同步。
   '/api/credentials/self-check',
+  // 公开状态页（2026-09-11）：token 是 16 字节随机串、不可枚举，它的全部意义
+  // 就是给没有账号的人看——挂在登录网关后面等于没做。载荷由
+  // services/public-status-board.ts 白名单构造，只有业务名 / 红黄绿 / 7 天条带 /
+  // 更新时间四样；地址、判据、日志、分支名一律不出去（有守卫盯着）。
+  // 与 isPublicAccessRequestRoute in server.ts（basic-auth 模式白名单）保持同步。
+  //
+  // 只放行读取那一条：`/api/projects/:id/status-page` 那几个开关仍然要登录。
+  /^\/api\/public\/status\/[a-f0-9]{32}$/,
+  /^\/s\/[a-f0-9]{32}$/,
   // Static assets the login page needs before a session exists.
   /^\/assets\//,
   '/style.css',
