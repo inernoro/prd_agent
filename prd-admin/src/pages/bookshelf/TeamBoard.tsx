@@ -6,55 +6,16 @@
  *
  * 视觉沿用页面的粗野骨架（墨边 + 纯偏移硬投影），颜色全部走 token。
  */
-import { useEffect, useState } from 'react';
 import { Users, TrendingDown } from 'lucide-react';
-import { getBookshelfTeamBoard, type BookshelfTeamDto } from '@/services/real/bookshelf';
 import { VOLUMES } from '@/lib/bookshelf/catalog';
+import { useTeamBoard } from './useTeamBoard';
 
 const EDGE = '3px solid var(--shelf-edge)';
 const EDGE_THIN = '2.5px solid var(--shelf-edge)';
 
 export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: string }[] }) {
-  const [data, setData] = useState<BookshelfTeamDto | null>(null);
-  const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
-
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const res = await getBookshelfTeamBoard();
-        if (!alive) return;
-        if (res.success && res.data) { setData(res.data); setState('ready'); }
-        else setState('failed');
-      } catch {
-        if (alive) setState('failed');
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
-
-  // 上游给什么都不许把整页带走。
-  // 2026-09-11 线上事故：后端返回的 JSON 缺 error 键，不满足 apiClient 的 ApiResponse
-  // 判据，data 于是不是看板那一层；memberCount 成了 undefined（既不等于 0、也不大于 0），
-  // 下面这段的 map 照跑，读 undefined['vol-boot'] 把整个藏书阁炸成「页面渲染出错」。
-  // 后端已对齐契约，这里再兜一道：看板拿不到数就降级成空态，不牵连书单。
-  const memberCount = typeof data?.memberCount === 'number' && Number.isFinite(data.memberCount)
-    ? data.memberCount : 0;
-  const passedByVolume: Record<string, number> =
-    data?.passedByVolume && typeof data.passedByVolume === 'object' ? data.passedByVolume : {};
-  const members = Array.isArray(data?.members) ? data.members : [];
-  const blindByVolume: Record<string, number> =
-    data?.blindPassedByVolume && typeof data.blindPassedByVolume === 'object'
-      ? data.blindPassedByVolume : {};
-  const blindTotal = Object.values(blindByVolume).reduce((a, b) => a + (Number(b) || 0), 0);
-
-  // 全队最薄弱的一卷：通关人数最少的那卷。没人考过任何卷时不出这句结论。
-  const weakest = (() => {
-    if (memberCount === 0) return null;
-    const counts = VOLUMES.map((v, i) => ({ vol: v, i, n: passedByVolume[v.id] ?? 0 }));
-    if (counts.every((c) => c.n === 0)) return null;
-    return counts.reduce((min, c) => (c.n < min.n ? c : min), counts[0]);
-  })();
+  // 取数与防御在 useTeamBoard —— 手机档整屏看板共用同一份，不抄第二遍。
+  const { state, raw: data, memberCount, passedByVolume, blindByVolume, blindTotal, members, weakest } = useTeamBoard();
 
   return (
     <section className="mt-6 p-6 sm:p-7 rounded-[28px]" style={{ background: 'var(--bg-card)', border: EDGE, boxShadow: '6px 6px 0 var(--shelf-edge)' }}>

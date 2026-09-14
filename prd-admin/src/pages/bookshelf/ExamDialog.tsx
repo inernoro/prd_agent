@@ -7,12 +7,10 @@
  *    否则这套题只是个游戏。
  *  - 未答完不禁用交卷，但会明确提示还剩几题（不做沉默的禁用按钮）。
  */
-import { useMemo, useState } from 'react';
-import { CheckCircle2, XCircle, RotateCcw, Award } from 'lucide-react';
 import { Dialog } from '@/components/ui/Dialog';
-import { questionsOf, isPassed, PASS_RATE } from '@/lib/bookshelf/exams';
-import { stanceOf } from '@/lib/bookshelf/examContext';
-import { useBookshelfStore } from '@/stores/bookshelfStore';
+import { CheckCircle2, XCircle, RotateCcw, Award } from 'lucide-react';
+import { PASS_RATE } from '@/lib/bookshelf/exams';
+import { useExamSession } from './useExamSession';
 import type { Volume } from '@/lib/bookshelf/types';
 
 export function ExamDialog({
@@ -24,50 +22,15 @@ export function ExamDialog({
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
-  const questions = useMemo(() => (volume ? questionsOf(volume.id) : []), [volume]);
-  const [picked, setPicked] = useState<Record<string, number>>({});
-  const [submitted, setSubmitted] = useState(false);
-  const recordExam = useBookshelfStore((s) => s.recordExam);
-  const readBookIds = useBookshelfStore((s) => s.readBookIds);
-
-  // 交卷时这一卷读了几本 —— 决定这个分数该怎么读。按整卷算，不受当前开发/产品筛选影响。
-  const totalBooks = volume?.books.length ?? 0;
-  const readBooks = volume ? volume.books.filter((b) => readBookIds.includes(b.id)).length : 0;
-  const stance = stanceOf(readBooks, totalBooks);
-
-  const answeredCount = Object.keys(picked).length;
-  const correctCount = questions.filter((q) => picked[q.id] === q.answer).length;
-  const passed = isPassed(correctCount, questions.length);
-
-  // 没读就考、考完还错了几题的人，最需要的不是一句「未通过」，是「先读哪两本」。
-  // 取这一卷门槛最低的两本未读书 —— 把考试变成入口，而不是出口。
-  const suggestedBooks = useMemo(() => {
-    if (!volume) return [];
-    return volume.books
-      .filter((b) => !readBookIds.includes(b.id))
-      .slice()
-      .sort((a, b) => a.level - b.level)
-      .slice(0, 2);
-  }, [volume, readBookIds]);
-
-  function reset() {
-    setPicked({});
-    setSubmitted(false);
-  }
-
-  function handleSubmit() {
-    if (!volume) return;
-    setSubmitted(true);
-    recordExam({
-      volumeId: volume.id,
-      correct: correctCount,
-      total: questions.length,
-      passed: isPassed(correctCount, questions.length),
-      readAtExam: readBooks,
-      totalAtExam: totalBooks,
-      takenAt: new Date().toISOString(),
-    });
-  }
+  /*
+   * 分数、通关、推荐书一律问 useExamSession —— 手机档整屏考试用的是同一份。
+   * 抄成两份的后果不是报错，是「同一张卷子在手机和电脑上算出不同的通关结论」，
+   * 两边单独看都对（predicate-and-wiring-discipline 形状 3）。
+   */
+  const {
+    questions, picked, pick, submitted, submit, reset,
+    answeredCount, correctCount, passed, readBooks, totalBooks, stance, suggestedBooks,
+  } = useExamSession(volume);
 
   function handleClose(v: boolean) {
     if (!v) reset();
@@ -179,7 +142,7 @@ export function ExamDialog({
                         key={oi}
                         type="button"
                         disabled={submitted}
-                        onClick={() => setPicked((p) => ({ ...p, [q.id]: oi }))}
+                        onClick={() => pick(q.id, oi)}
                         className="flex items-start gap-2.5 text-left px-3 py-2 rounded-[14px] transition-colors duration-[120ms]"
                         style={{
                           background: showRight
@@ -271,7 +234,7 @@ export function ExamDialog({
             </span>
             <button
               type="button"
-              onClick={handleSubmit}
+              onClick={submit}
               className="px-4 h-[30px] rounded-[14px] text-[12.5px] font-medium transition-transform duration-150 hover:-translate-y-[1px]"
               style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)', border: '3px solid var(--shelf-edge)', boxShadow: '0 4px 0 var(--shelf-edge)' }}
             >

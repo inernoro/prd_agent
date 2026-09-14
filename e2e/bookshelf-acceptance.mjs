@@ -201,6 +201,115 @@ for (const theme of ['dark', 'light']) {
   await ctx.close();
 }
 
+// 手机档两级导航闭环（390 终稿）：落地页 → 卷页 → 考试 → 结果 → 回落地页。
+// 桌面是「同一屏换掉一段列表」，手机是「两层页面」——两棵不同的节点树，
+// 桌面那一轮全绿证明不了手机这条路走得通（closed-loop-acceptance：产物要真的出现）。
+// 双主题各跑一遍。
+for (const theme of ['dark', 'light']) {
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2,
+  });
+  const page = await ctx.newPage();
+  await page.addInitScript((t) => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({
+      state: {
+        isAuthenticated: true,
+        user: { id: 'e2e', username: 'e2e', displayName: '验收' },
+        token: 'e2e-token', refreshToken: null, sessionKey: null,
+        permissions: ['access'], permissionsLoaded: true, isRoot: true, menuCatalog: [],
+      }, version: 0,
+    }));
+    localStorage.removeItem('bookshelf-progress');
+    document.documentElement.setAttribute('data-theme', t);
+  }, theme);
+
+  const m = {};
+  await page.goto(`http://127.0.0.1:${PORT}/bookshelf`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('h1:has-text("算你有福了")', { timeout: 20000 });
+  await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+  await page.waitForTimeout(600);
+
+  // 落地页只放七卷清单，不该把某一卷的书目直接铺在上面（那就是改版前的单页形态）。
+  m['落地页七卷清单在'] = (await page.locator('text=开机').first().isVisible())
+    && (await page.locator('text=上台面').first().isVisible());
+  m['落地页不预先摊开书目'] =
+    !(await page.locator('text=《你的灯亮着吗？》').first().isVisible().catch(() => false));
+  m['落地页有处境卡'] = await page.locator('text=这些处境，是不是很眼熟').first().isVisible();
+  // 溢出要逐屏查。只在最后一屏查等于放过前面三屏——横滑卡组多加一个负边距
+  // 就会把右边顶出去 20px，而那一屏的其它断言照样全绿。
+  const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+  m['落地页无横向溢出'] = await noOverflow();
+  await page.screenshot({ path: `${OUT}/m1-landing-${theme}.png`, fullPage: true });
+
+  // 进卷页：点七卷清单里的「驭 AI」那一行
+  await page.locator('button', { hasText: '驭 AI' }).first().click();
+  await page.waitForTimeout(700);
+  m['卷页打开且书目出现'] = await page.locator('text=你的代码就是犯罪现场').first().isVisible();
+  m['卷页有返回藏书阁'] = await page.locator('button', { hasText: '藏书阁' }).first().isVisible();
+  m['卷页带上了深链'] = page.url().includes('vol=vol-ai');
+  m['卷页无横向溢出'] = await noOverflow();
+  await page.screenshot({ path: `${OUT}/m2-volume-${theme}.png`, fullPage: true });
+
+  // 一本没读时入口必须说自己是摸底
+  m['没读时入口叫摸底'] = (await page.locator('text=先摸个底').count()) > 0;
+
+  await page.locator('button', { hasText: '开始' }).first().click();
+  await page.waitForTimeout(700);
+  m['答题屏出现且有题干'] = (await page.locator('text=选一个你认为对的').first().isVisible())
+    && (await page.locator('text=交卷').first().isVisible());
+  await page.screenshot({ path: `${OUT}/m3-exam-${theme}.png`, fullPage: true });
+
+  // 每题选第一个选项，故意不全对，好让解析出场。
+  // 按 data-exam-option 取，不按文字：`has-text("A")` 会误中返回钮「‹ 驭 AI」，
+  // 点下去直接退出考试，而失败信息只会说「交卷按钮找不到」。
+  const picks = page.locator('[data-exam-option="0"]');
+  const pickCount = await picks.count();
+  if (pickCount === 0) allOk = false;
+  for (let i = 0; i < pickCount; i++) {
+    const o = picks.nth(i);
+    await o.scrollIntoViewIfNeeded().catch(() => {});
+    if (await o.isVisible()) await o.click({ timeout: 3000 }).catch(() => {});
+  }
+  m['每题都有可选项'] = pickCount > 0;
+  await page.waitForTimeout(300);
+  await page.locator('button', { hasText: '交卷' }).first().click();
+  await page.waitForTimeout(1200);
+
+  const mt = await page.evaluate(() => document.body.innerText);
+  m['交卷后出分'] = /\d+\s*\/\s*\d+/.test(mt);
+  m['裸考标明不计入通关'] = mt.includes('裸考不计入通关');
+  m['结果说清这次量的是什么'] = mt.includes('一本没读的情况下考的');
+  m['给出先读哪本'] = mt.includes('建议从这');
+  m['逐题解析出现'] = mt.includes('错在哪、为什么') && mt.includes('正确');
+  m['结果页无横向溢出'] = await noOverflow();
+  await page.screenshot({ path: `${OUT}/m4-result-${theme}.png`, fullPage: true });
+
+  // 回到这一卷 → 再回落地页，两级导航必须走得回来
+  await page.locator('button', { hasText: '回到这一卷' }).first().click();
+  await page.waitForTimeout(700);
+  m['结果能退回卷页'] = await page.locator('text=你的代码就是犯罪现场').first().isVisible();
+  await page.locator('button', { hasText: '藏书阁' }).first().click();
+  await page.waitForTimeout(700);
+  m['卷页能退回落地页'] = (await page.locator('h1:has-text("算你有福了")').first().isVisible())
+    && !page.url().includes('vol=');
+
+  // 团队看板是落地页的第二个入口，不能是个死行
+  await page.locator('button', { hasText: '团队看板' }).first().click();
+  await page.waitForTimeout(700);
+  m['看板打开'] = await page.locator('text=谁在读什么').first().isVisible()
+    || (await page.locator('text=还没有人开始读').first().isVisible().catch(() => false));
+  await page.screenshot({ path: `${OUT}/m5-board-${theme}.png`, fullPage: true });
+
+  m['看板页无横向溢出'] = await noOverflow();
+
+  const mfails = Object.entries(m).filter(([, v]) => !v).map(([k]) => k);
+  if (mfails.length) allOk = false;
+  console.log('');
+  console.log(`[手机档两级导航 · ${theme}]`);
+  for (const [k, v] of Object.entries(m)) console.log(`  ${v ? '通过' : '失败'}  ${k}`);
+  await ctx.close();
+}
+
 // 守卫：上游返回畸形（缺 error 键的旧格式）时，看板降级但书单不许被带走。
 apiShape = 'legacy';
 {

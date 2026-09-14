@@ -26,6 +26,8 @@ import { VOLUMES, PAIN_REMEDIES, ALL_BOOKS, findVolume } from '@/lib/bookshelf/c
 import { QUESTIONS, questionsOf } from '@/lib/bookshelf/exams';
 import { stanceOf, countsAsPassed, examEntryLabel } from '@/lib/bookshelf/examContext';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
+import { useIsMobile } from '@/hooks/useBreakpoint';
+import { BookshelfMobile } from './mobile/BookshelfMobile';
 import type { Track, Volume, BookEntry } from '@/lib/bookshelf/types';
 import { ExamDialog } from './ExamDialog';
 import { TeamBoard } from './TeamBoard';
@@ -94,7 +96,44 @@ export function resolveVolumeFromUrl(raw: string | null): string {
   return raw && findVolume(raw) ? raw : VOLUMES[0].id;
 }
 
+/**
+ * 页面入口：按视口分流成两套**结构不同**的实现。
+ *
+ * 不是 CSS 断点能办的事——手机档按 390 终稿改成了两级导航（落地页 ↔ 卷页），
+ * 渲染的节点树与桌面根本不是一棵。所以在渲染时判，而不是靠 `sm:` 类名。
+ * `useIsMobile` 用 useSyncExternalStore，只在跨 768px 时翻转，首帧就是准的，没有闪烁。
+ *
+ * 进度加载放在这一层：两套实现都要它，放在任一侧都会让另一侧漏掉。
+ */
 export default function BookshelfPage() {
+  const isMobile = useIsMobile();
+  const loadProgress = useBookshelfStore((s) => s.loadFromServer);
+  useEffect(() => { void loadProgress(); }, [loadProgress]);
+
+  if (isMobile) {
+    return (
+      /*
+       * 手机档全出血：`w-screen` + `ml-[calc(50%-50vw)]` 让这块从视口左边缘起算，
+       * 不受外壳左右 padding 影响（外壳给的是 `px-[var(--mobile-padding)]`，
+       * 值随断点在 10/8px 之间变，写死任何一个数都等着下次漂移）。
+       * 竖向用 `-my-3` **精确抵消**外壳的 `py-3`——差一档就会在顶部留一条色带。
+       * 左右内边距由内部各屏自己按 20px 基准线给。
+       *
+       * 背景是纯 --bg-base：终稿把 30px 网格连同墨边、硬投影一起去掉了，
+       * 分层只靠 --bg-card 与 --bg-base 的明度差。
+       */
+      <div
+        className="w-screen ml-[calc(50%-50vw)] -my-3 min-h-full"
+        style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}
+      >
+        <BookshelfMobile skinOf={skinOf} />
+      </div>
+    );
+  }
+  return <BookshelfDesktop />;
+}
+
+function BookshelfDesktop() {
   const [track, setTrack] = useState<TrackFilter>('all');
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -125,8 +164,6 @@ export default function BookshelfPage() {
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
   const syncState = useBookshelfStore((s) => s.syncState);
   const retrySync = useBookshelfStore((s) => s.retrySync);
-  const loadProgress = useBookshelfStore((s) => s.loadFromServer);
-  useEffect(() => { void loadProgress(); }, [loadProgress]);
   const examResults = useBookshelfStore((s) => s.examResults);
   const toggleRead = useBookshelfStore((s) => s.toggleRead);
   const bookNotes = useBookshelfStore((s) => s.bookNotes);
@@ -156,16 +193,9 @@ export default function BookshelfPage() {
 
   return (
     <div
-      /*
-       * 手机档走全出血（w-screen + 负 margin 顶掉外壳的左右 padding），再自己给 20px
-       * 对称内边距 —— 内容左右留白必须相等，这是「整齐」的地基。
-       *
-       * 原来写的是 `w-full -m-4`：w-full 的宽度按父容器内容宽算，负 margin 只把这块
-       * 整体左移 16px，宽度并不会跟着补回来。于是整块被往左拽，实测左留白 12、右留白 44，
-       * 差 32px —— 看上去就是「所有东西都偏左、右边空一条」。
-       * 用 50% - 50vw 而不是写死 8px，是因为外壳 padding 是变量，写死就等着下次漂移。
-       */
-      className="w-screen ml-[calc(50%-50vw)] -my-4 px-5 py-5 min-h-full sm:w-full sm:ml-0 sm:-m-6 sm:p-8"
+      // 桌面档：粗野骨架原样保留（3px 墨边 + 硬投影 + 30px 网格 + 整卡五色）。
+      // <768px 走的是 BookshelfMobile，两套互不干扰。
+      className="w-full -m-6 p-8 min-h-full"
       style={{ background: GRID_BG, color: 'var(--text-primary)' }}
     >
       {/* ── 悬浮 navbar ── */}
