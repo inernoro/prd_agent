@@ -170,7 +170,10 @@ public class MdToPptSourcePlanTests
                 "md-to-ppt-agent.generation::chat", "request", "user", "page", "run");
             var sent = wire.RequestBody!["messages"]![1]!["content"]!.GetValue<string>();
             Assert.Single(Regex.Matches(sent, page.Hash));
-            Assert.Single(Regex.Matches(sent, Regex.Escape(page.Blocks[0].Id)));
+            // 线上标识是短代号，不是 64 位内容寻址 Id——模型抄不全长 Id，
+            // 会整轮漏块（source_plan_incomplete）。仍然只许出现一次，不许重复喂源。
+            Assert.Single(Regex.Matches(sent, Regex.Escape(page.Blocks[0].Alias)));
+            Assert.DoesNotContain(page.Blocks[0].Id, sent, StringComparison.Ordinal);
             Assert.DoesNotContain("用户指令99", sent);
             Assert.False(wire.RequestBody.ContainsKey("max_tokens"));
             Assert.Equal("run", wire.Context!.RunId);
@@ -254,5 +257,123 @@ public class MdToPptSourcePlanTests
         }, "摘要");
         using var doc = JsonDocument.Parse(json);
         Assert.False(doc.RootElement.GetProperty("outline")[0].TryGetProperty("sourceBlockIds", out _));
+    }
+}
+
+/// <summary>
+/// 知识驱动大纲的输出契约守卫。
+///
+/// 背景（2026-09-14 真实故障）：两条大纲提示词的 JSON/JSONL 格式示例都写在 system 段，
+/// 而「每页必须输出 sourceBlockIds」只追加在 user 段末尾的冻结来源目录里。模型照抄 system
+/// 段的示例，产出的大纲页一律没有 sourceBlockIds，于是每一次知识驱动 PPT 生成都在
+/// <see cref="MdToPptSourcePlan.Bind"/> 里抛 source_plan_missing —— 编译过、测试全绿、
+/// 通读提示词也挑不出毛病，只有真跑一次才显形（判据与接线纪律 形状 2：链路只建一半）。
+///
+/// 提示词是方法体里拼出来的局部串，拿不到实例，只能扫源码确认这条线接上了。
+/// 断言的是「两处 system 段都追加了同一个契约常量」这件接线事实，不是某段措辞的字面存在。
+/// </summary>
+public class MdToPptOutlineSourcePlanContractTests
+{
+    private static string ControllerSource()
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 10 && dir != null; i++)
+        {
+            var candidate = Path.Combine(dir, "src", "PrdAgent.Api", "Controllers", "Api", "MdToPptController.cs");
+            if (File.Exists(candidate)) return File.ReadAllText(candidate);
+            dir = Path.GetDirectoryName(dir);
+        }
+        throw new FileNotFoundException("找不到 MdToPptController.cs，守卫无法取证——不要把这当成通过");
+    }
+
+    [Fact]
+    public void Contract_NamesTheFieldBindActuallyRequires()
+    {
+        // Bind 缺这个字段就抛 source_plan_missing，契约文案必须点名同一个字段。
+        var plan = MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
+        {
+            new() { StoreId = "s", EntryId = "e", Content = "# 标题\n\n正文一句话。\n", ContentHash = MdToPptSourcePlan.Hash("# 标题\n\n正文一句话。\n") },
+        });
+        var missing = Assert.Throws<MdToPptSourcePlanException>(
+            () => plan.Bind(new[] { new MdToPptOutlinePageDto() }, 1));
+        Assert.Equal("source_plan_missing", missing.Code);
+        var contract = MdToPptController.SourcePlanOutlineContract(plan.Blocks.Count);
+        Assert.Contains("sourceBlockIds", contract, StringComparison.Ordinal);
+        // 第二次失败形态是 source_plan_incomplete（字段有了、id 没覆盖全），
+        // 所以契约还必须把「一共几个 id」告诉模型，否则它没有可自查的数。
+        Assert.Contains(plan.Blocks.Count.ToString(), contract, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BothOutlineEndpoints_AppendTheContractToTheirSystemPrompt()
+    {
+        var source = ControllerSource();
+        var appends = Regex.Matches(source, @"if\s*\(sourcePlan\s*!=\s*null\)\s*systemPrompt\s*\+=\s*SourcePlanOutlineContract\(sourcePlan\.Blocks\.Count\)\s*;").Count;
+
+        // /outline（整块 JSON）与 /outline-stream（JSONL）各一处；少一处就有一条入口
+        // 仍然发不出 sourceBlockIds，而它不会让任何现有用例变红。
+        Assert.Equal(2, appends);
+    }
+}
+
+/// <summary>
+/// 来源覆盖补齐。模型每几轮就会漏掉一两个来源块，整份大纲被 Bind 判死，
+/// 用户拿到一个自己修不了的 422。补齐是确定性的：漏掉的块按原文顺序跟到
+/// 前一个已认领块所在页，不新增也不改写任何事实。
+/// </summary>
+public class MdToPptSourcePlanCoverageRepairTests
+{
+    private const string Doc = "# 标题\n\n## 一节\n\n一节正文。\n\n## 二节\n\n二节正文。\n";
+
+    private static MdToPptSourcePlan Plan() => MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
+    {
+        new() { StoreId = "s", EntryId = "e", Content = Doc, ContentHash = MdToPptSourcePlan.Hash(Doc) },
+    });
+
+    [Fact]
+    public void MissingBlocks_AttachToThePrecedingPage_AndBindThenPasses()
+    {
+        var plan = Plan();
+        Assert.Equal(5, plan.Blocks.Count);
+
+        // 模型只认领了第 1、3 个块，漏了 2、4、5（真实失败形态）。
+        var pages = new List<MdToPptOutlinePageDto>
+        {
+            new() { Title = "封面", SourceBlockIds = new List<string> { plan.Blocks[0].Alias } },
+            new() { Title = "正文", SourceBlockIds = new List<string> { plan.Blocks[2].Alias } },
+        };
+        var incomplete = Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 2));
+        Assert.Equal("source_plan_incomplete", incomplete.Code);
+
+        plan.RepairCoverage(pages);
+        var bound = plan.Bind(pages, 2);
+
+        // 补齐后每个块都落在某一页，且顺序与原文一致：块2 跟块1（封面），块4、5 跟块3（正文）。
+        Assert.Equal(new[] { plan.Blocks[0].Id, plan.Blocks[1].Id }, bound[0].Blocks.Select(x => x.Id));
+        Assert.Equal(new[] { plan.Blocks[2].Id, plan.Blocks[3].Id, plan.Blocks[4].Id }, bound[1].Blocks.Select(x => x.Id));
+    }
+
+    [Fact]
+    public void AlreadyComplete_RepairChangesNothing()
+    {
+        var plan = Plan();
+        var pages = new List<MdToPptOutlinePageDto>
+        {
+            new() { Title = "一", SourceBlockIds = plan.Blocks.Select(x => x.Alias).ToList() },
+        };
+        var before = pages[0].SourceBlockIds!.ToList();
+        plan.RepairCoverage(pages);
+        Assert.Equal(before, pages[0].SourceBlockIds);
+    }
+
+    [Fact]
+    public void ModelEmittedNothing_StaysAHardFailure_NotSilentlyAutoFilled()
+    {
+        // 一个块都没认领时不猜：那是模型整体没照格式走，补齐会把「彻底失败」伪装成「成功」。
+        var plan = Plan();
+        var pages = new List<MdToPptOutlinePageDto> { new() { Title = "一" } };
+        plan.RepairCoverage(pages);
+        Assert.Null(pages[0].SourceBlockIds);
+        Assert.Equal("source_plan_missing", Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 1)).Code);
     }
 }

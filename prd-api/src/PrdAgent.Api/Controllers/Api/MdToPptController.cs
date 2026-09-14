@@ -41,6 +41,19 @@ public class MdToPptController : ControllerBase
 {
     internal const string SystemGatewayProfileId = "system-gateway-default";
 
+    /// <summary>
+    /// 知识驱动大纲的输出契约补丁：两条大纲提示词的格式示例都不含 sourceBlockIds，
+    /// 而 MdToPptSourcePlan.Bind 要求每页必填。把契约钉进 system 段（模型真正照抄的那一份），
+    /// 否则每次知识驱动生成都在 Bind 阶段 source_plan_missing。
+    /// </summary>
+    internal static string SourcePlanOutlineContract(int blockCount) =>
+        "\n9. 本次是知识驱动生成：每一页对象都必须额外输出 \"sourceBlockIds\":[\"块ID\",...]，"
+        + "取值只能来自用户内容末尾「服务端冻结来源块目录」里的 id。"
+        + $"目录里一共 {blockCount} 个 id，全部 {blockCount} 个都必须在某一页出现，一个都不能漏；"
+        + "同一个 id 不要出现在两页。内容少的 id（小标题、过渡句）并到相邻页即可，不要因为「不重要」就丢掉。"
+        + $"输出最后一页之前，先把目录从头到尾核对一遍：{blockCount} 个 id 是否都已分配。"
+        + "缺字段或漏 id 的大纲会被服务端整份作废，必须重来。";
+
     private readonly IInfraAgentSessionService _sessions;
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
@@ -443,6 +456,11 @@ public class MdToPptController : ControllerBase
             "7. 用户内容里若已包含「澄清回答」段落，视为歧义已消除，不得再输出 clarify\n" +
             "8. 用户内容里若包含「当前大纲」段落，则本次是**调整任务**：只改动与调整要求直接相关的页；其余页的 title 与 bullets 必须逐字原样保留（一个字都不许改写/润色/增删/换序），输出时原文复制";
 
+        // 模型遵循的是 system 段里的格式示例，不是 user 段末尾追加的目录说明。
+        // 冻结来源目录只写进 user 段时，模型照抄上面那份不含 sourceBlockIds 的示例，
+        // Bind 阶段必然 source_plan_missing。所以契约必须同时写进 system 段。
+        if (sourcePlan != null) systemPrompt += SourcePlanOutlineContract(sourcePlan.Blocks.Count);
+
         var userContent = BuildPartitionedKnowledgeContext(
             req.Content,
             req.AttachmentText,
@@ -513,12 +531,17 @@ public class MdToPptController : ControllerBase
 
         try
         {
+            var normalized = NormalizeOutlinePayload(raw, targetPages);
             if (sourcePlan != null)
             {
-                var rawPages = JsonNode.Parse(raw)?["outline"]?.Deserialize<List<MdToPptOutlinePageDto>>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                sourcePlan.Bind(rawPages, targetPages);
+                // 先归一再校验：补回去的来源块必须写进真正落库、真正交给确认步骤的那份大纲，
+                // 否则只修了内存里的副本，确认时按原样重绑一次照样 source_plan_incomplete。
+                var pages = normalized["outline"]?.Deserialize<List<MdToPptOutlinePageDto>>(
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                sourcePlan.RepairCoverage(pages);
+                sourcePlan.Bind(pages, targetPages);
+                WriteBackSourceBlockIds(normalized, pages);
             }
-            var normalized = NormalizeOutlinePayload(raw, targetPages);
             normalized["runId"] = outlineRun.Id;
             outlineRun.Status = "done";
             outlineRun.OutlineJson = normalized.ToJsonString();
@@ -641,6 +664,9 @@ public class MdToPptController : ControllerBase
             "5. 用户内容含「澄清回答」段落 = 歧义已消除，不得再输出 clarify\n" +
             "6. 用户内容含「当前大纲」段落 = 调整任务：只改与调整要求直接相关的页；其余页 title 与 bullets 必须逐字原样保留（一个字不许改写/增删/换序），design 缺失的页补写 design 不算改动";
 
+        // 同上：JSONL 的 page 行格式示例同样要带 sourceBlockIds。
+        if (sourcePlan != null) systemPrompt += SourcePlanOutlineContract(sourcePlan.Blocks.Count);
+
         var userContent = BuildPartitionedKnowledgeContext(
             req.Content,
             req.AttachmentText,
@@ -740,7 +766,16 @@ public class MdToPptController : ControllerBase
                     ["clarify"] = metaObj?["clarify"]?.DeepClone(),
                     ["outline"] = outline,
                 };
-                sourcePlan?.Bind(outline.Deserialize<List<MdToPptOutlinePageDto>>(new JsonSerializerOptions { PropertyNameCaseInsensitive = true }), targetPages);
+                if (sourcePlan != null)
+                {
+                    // 与 /outline 同一条修法：先把模型漏掉的来源块补回相邻页，再校验，
+                    // 补齐结果写回 payload（落库与后续确认看的是这一份）。
+                    var streamedPages = outline.Deserialize<List<MdToPptOutlinePageDto>>(
+                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    sourcePlan.RepairCoverage(streamedPages);
+                    sourcePlan.Bind(streamedPages, targetPages);
+                    WriteBackSourceBlockIds(payload, streamedPages);
+                }
                 run.Status = "done";
                 run.OutlineJson = payload.ToJsonString();
                 run.OutlineHash = ComputeOutlineHash(
@@ -965,6 +1000,17 @@ public class MdToPptController : ControllerBase
         }
         if (raw.Length == 1 && digits.TryGetValue(raw[0], out var single)) return single;
         return null;
+    }
+
+    /// <summary>把补齐后的来源绑定写回归一化大纲，让落库与后续确认看到的是同一份。</summary>
+    internal static void WriteBackSourceBlockIds(JsonObject normalized, IReadOnlyList<MdToPptOutlinePageDto>? pages)
+    {
+        if (pages == null || normalized["outline"] is not JsonArray outline) return;
+        for (var index = 0; index < outline.Count && index < pages.Count; index++)
+        {
+            if (outline[index] is not JsonObject page) continue;
+            page["sourceBlockIds"] = JsonSerializer.SerializeToNode(pages[index].SourceBlockIds ?? new List<string>());
+        }
     }
 
     internal static JsonObject NormalizeOutlinePayload(string rawJson, int targetPages)
