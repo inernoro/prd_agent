@@ -35,9 +35,12 @@ describe('胶囊高度不许写死', () => {
     expect(chip).not.toMatch(/(?<!min-)\bh-\[\d+px\]/);
   });
 
-  it('长文本能在任意位置断行', () => {
-    // 分支名里只有斜杠和连字符可断，没有 break-all 的话一长串会整体溢出格子。
-    expect(chip).toMatch(/break-all/);
+  it('长文本断得掉，且断在连字符而不是词中间', () => {
+    // 没有断行设置的话，一串没有空格的长标识会整体溢出格子。
+    // 用 break-words 而不是 break-all：实测 break-all 断在词中间（`...sync-7` / `6rjsp`），
+    // break-words 断在连字符（`...sync-` / `76rjsp`），后者好读，且极端长 token 照样能断。
+    expect(chip).toMatch(/break-words/);
+    expect(chip, 'break-all 会把标识断在词中间').not.toMatch(/break-all/);
   });
 
   it('图标不许被压扁', () => {

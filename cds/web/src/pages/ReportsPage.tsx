@@ -1074,7 +1074,7 @@ function ChangeKeyChip({
       }`}
     >
       <Icon className="h-3 w-3 shrink-0" />
-      <span className="min-w-0 break-all">{text}</span>
+      <span className="min-w-0 break-words">{text}</span>
     </span>
   );
 }
