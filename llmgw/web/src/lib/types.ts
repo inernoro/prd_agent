@@ -955,6 +955,44 @@ export type ModelOfferingItem = {
   maxConcurrency?: number | null;
   rateLimitPerMinute?: number | null;
   notes?: string | null;
+  /** 为什么不参与这次排队；null 表示参与。服务端按唯一判据算好，前端不再自己判。 */
+  skipReason?: string | null;
+  /** 排队名次，1 就是这次会落到的那一条；0 表示不参与。 */
+  queuePosition: number;
+};
+
+/** 一个对外模型的调用全貌：点名它之后会发生什么，用当前真实状态回答。 */
+export type CallTraceData = {
+  publicId: string;
+  name: string;
+  modelType: string;
+  enabled: boolean;
+  isDefaultForType: boolean;
+  routingStrategy: string;
+  /** 第一屏那句结论。 */
+  conclusion: string;
+  gate: { enabled: boolean; openToAllCallers: boolean; allowedAppCallerCodes: string[]; summary: string };
+  unnamed: {
+    serversUnnamed?: boolean;
+    servesUnnamed: boolean;
+    currentDefaultPublicId?: string | null;
+    currentDefaultName?: string | null;
+    summary: string;
+  };
+  routes: ModelOfferingItem[];
+  routeExtras: Array<{
+    offeringId: string;
+    weightPercent?: number | null;
+    priceSummary?: string | null;
+    lastFailedAt?: string | null;
+  }>;
+  ledger: {
+    windowDays: number;
+    calls: number;
+    costUsd: number;
+    unpricedCalls: number;
+    lastCallAt?: string | null;
+  };
 };
 export type LogicalModelItem = {
   id: string;

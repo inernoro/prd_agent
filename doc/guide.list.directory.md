@@ -121,6 +121,7 @@
 - [GitHub 基础设施层 · 设计](./design.platform.github-infrastructure.md) `design.platform.github-infrastructure`
 - [图片引用日志与消息持久化 · 设计](./design.platform.image-ref-and-persistence.md) `design.platform.image-ref-and-persistence`
 - [LLM Gateway 全量迁移与生产发布复盘 · 设计](./design.platform.llm-gateway.migration-retrospective.md) `design.platform.llm-gateway.migration-retrospective`
+- [网关模型架构：一个名字、一条路、一份账 · 设计](./design.platform.llm-gateway.model-architecture.md) `design.platform.llm-gateway.model-architecture`
 - [LLM 网关物理独立设计 · 设计](./design.platform.llm-gateway.physical-isolation.md) `design.platform.llm-gateway.physical-isolation`
 - [LLM Gateway 图片生成重构 · 设计](./design.platform.llm-gateway.refactor.md) `design.platform.llm-gateway.refactor`
 - [LLM 网关与模型池统一 · 设计](./design.platform.llm-gateway.unification.md) `design.platform.llm-gateway.unification`

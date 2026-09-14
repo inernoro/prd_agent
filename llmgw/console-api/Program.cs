@@ -4022,6 +4022,108 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
     return Json(ApiEnvelope<PoolMigrationResult>.Ok(result), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+// 调用全貌：点名这个模型之后会发生什么，用**当前真实状态**回答。
+//
+// 为什么值得单开一个端点：列表能告诉人「有几条线路」，告诉不了人「现在发一个请求会落到谁」。
+// 而后者才是人要的那份心安——尤其在「只给 appCallerCode、不点名模型」这条路上，
+// 调用方连自己会用到哪个模型都不知道，这一屏就是唯一能说清的地方。
+//
+// 推演判据用 CallTracePlanner，它与运行时 GatewayRouteSelection 由行为对照测试逐条钉死。
+// 按权重分配时不指名道姓（运行时 seed 由 requestId 派生，说「会落到 A」就是编的），只给比例。
+app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string id, int? days) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (logical is null) return Json(ApiEnvelope<CallTraceData>.Fail("NOT_FOUND", "对外模型不存在"), jsonOptions, 404);
+
+    var offeringDocs = await gwModelOfferings.Find(TenantAccess.Filter(http, fb.Eq("LogicalModelId", id))).ToListAsync();
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    var item = MapLogicalModel(logical, offeringDocs, modelDocs, exchangeDocs, platformDocs);
+
+    var candidates = item.Offerings
+        .Select(x => new CallTracePlanner.RouteCandidate(x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled))
+        .ToList();
+    var weighted = CallTracePlanner.IsWeighted(item.RoutingStrategy);
+    var nameById = item.Offerings.ToDictionary(
+        x => x.Id,
+        x => x.ProviderName is { Length: > 0 } p ? $"{p} 的 {x.UpstreamModelId ?? x.TargetName}" : x.TargetName,
+        StringComparer.Ordinal);
+    var conclusion = CallTracePlanner.Conclusion(candidates, weighted,
+        routeId => nameById.TryGetValue(routeId, out var label) ? label : routeId);
+
+    // 不点名那条路：本用途现在的默认是谁。不是自己就把对方点出来——
+    // 「我不是默认」这句话没有下一步，「现在的默认是 X」才有。
+    var defaultDoc = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.And(
+            fb.Eq("ModelType", item.ModelType),
+            fb.Eq("IsDefaultForType", true)))).FirstOrDefaultAsync();
+    var defaultPublicId = defaultDoc?.GetStringOrEmpty("PublicId");
+    var servesUnnamed = item.IsDefaultForType && item.Enabled;
+    var unnamedSummary = servesUnnamed
+        ? $"调用方只给 appCallerCode、不点名模型时，{item.ModelType} 这个用途会落到它。"
+        : !item.Enabled && item.IsDefaultForType
+            ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——不点名的请求会失败，先启用它或改设别的模型为默认。"
+            : defaultPublicId is { Length: > 0 }
+                ? $"不点名时不会落到它；{item.ModelType} 这个用途现在的默认是 {defaultPublicId}。"
+                : $"不点名时不会落到它，而且 {item.ModelType} 这个用途现在没有默认——这类请求一律失败。";
+
+    var openToAll = item.AllowedAppCallerCodes.Count == 0;
+    var gateSummary = !item.Enabled
+        ? "这个模型是停用的，点名它会被当场拒绝。"
+        : openToAll
+            ? "没有配授权名单，所有调用方都能点名它。"
+            : $"只有名单里这 {item.AllowedAppCallerCodes.Count} 个调用方能点名它，别人点名会被拒。";
+
+    var share = weighted
+        ? CallTracePlanner.WeightShare(candidates).ToDictionary(x => x.Id, x => x.Percent, StringComparer.Ordinal)
+        : new Dictionary<string, double>(StringComparer.Ordinal);
+    var modelById = modelDocs.Where(x => x.GetStringOrEmpty("_id").Length > 0)
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var offeringById = offeringDocs.Where(x => x.GetStringOrEmpty("_id").Length > 0)
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var extras = item.Offerings.Select(route => new CallTraceRouteExtra
+    {
+        OfferingId = route.Id,
+        WeightPercent = share.TryGetValue(route.Id, out var percent) ? percent : null,
+        PriceSummary = DescribeRoutePrice(route, modelById),
+        LastFailedAt = offeringById.TryGetValue(route.Id, out var doc)
+            ? doc.AsNullableUtcDateTime("LastFailedAt").ToIso()
+            : null,
+    }).ToList();
+
+    var window = Math.Clamp(days ?? 30, 1, 90);
+    var ledger = await BuildCallTraceLedgerAsync(logs, http, item.PublicId, window);
+
+    return Json(ApiEnvelope<CallTraceData>.Ok(new CallTraceData
+    {
+        PublicId = item.PublicId,
+        Name = item.Name,
+        ModelType = item.ModelType,
+        Enabled = item.Enabled,
+        IsDefaultForType = item.IsDefaultForType,
+        RoutingStrategy = item.RoutingStrategy,
+        Conclusion = conclusion,
+        Gate = new CallTraceGate
+        {
+            Enabled = item.Enabled,
+            OpenToAllCallers = openToAll,
+            AllowedAppCallerCodes = item.AllowedAppCallerCodes,
+            Summary = gateSummary,
+        },
+        Unnamed = new CallTraceUnnamed
+        {
+            ServesUnnamed = servesUnnamed,
+            CurrentDefaultPublicId = defaultPublicId is { Length: > 0 } ? defaultPublicId : null,
+            CurrentDefaultName = defaultDoc?.AsNullableString("Name"),
+            Summary = unnamedSummary,
+        },
+        Routes = item.Offerings,
+        RouteExtras = extras,
+        Ledger = ledger,
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogicalModelRequest? body) =>
 {
     var publicId = body?.PublicId?.Trim() ?? string.Empty;
@@ -16407,6 +16509,77 @@ static void ApplyModelOfferingUpdate(BsonDocument document, UpdateModelOfferingR
     }
 }
 
+/// <summary>
+/// 线路单价一句话。价格挂在**物理模型**上而不是对外模型上——同一个名字走不同上游本来就不同价，
+/// 强行统一就是在账上撒谎。登记不全时返回 null，由面板如实说「单价未登记」，绝不补零。
+/// </summary>
+static string? DescribeRoutePrice(ModelOfferingItem route, IReadOnlyDictionary<string, BsonDocument> modelById)
+{
+    if (!string.Equals(route.TargetKind, "model", StringComparison.OrdinalIgnoreCase)) return null;
+    if (!modelById.TryGetValue(route.TargetId, out var model)) return null;
+    var currency = model.AsNullableString("PriceCurrency") ?? "USD";
+    var perCall = model.AsNullableDecimal("PricePerCall");
+    if (perCall is not null) return $"{currency} {perCall} / 次";
+    var input = model.AsNullableDecimal("InputPricePerMillion");
+    var output = model.AsNullableDecimal("OutputPricePerMillion");
+    if (input is null && output is null) return null;
+    var inputText = input is null ? "未登记" : $"{currency} {input}";
+    var outputText = output is null ? "未登记" : $"{currency} {output}";
+    return $"入 {inputText} / 出 {outputText} 每百万 token";
+}
+
+/// <summary>
+/// 这个对外模型近 N 天的账。只累加算出了钱的那部分，算不出的单独计数——
+/// 把它们当零成本加进去会让这一屏看起来很省钱，而那正是缺价治理要避免的假象。
+/// </summary>
+static async Task<CallTraceLedger> BuildCallTraceLedgerAsync(
+    IMongoCollection<BsonDocument> logs,
+    HttpContext http,
+    string publicId,
+    int windowDays)
+{
+    var ledger = new CallTraceLedger { WindowDays = windowDays };
+    if (string.IsNullOrWhiteSpace(publicId)) return ledger;
+
+    var fb = Builders<BsonDocument>.Filter;
+    var toUtc = DateTime.UtcNow;
+    var fromUtc = toUtc.Date.AddDays(-(windowDays - 1));
+    var filter = TenantAccess.FilterTeamScope(http, fb.And(
+        fb.Gte("StartedAt", fromUtc),
+        fb.Lte("StartedAt", toUtc),
+        fb.Eq("LogicalModelPublicId", publicId)));
+
+    var group = new BsonDocument("$group", new BsonDocument
+    {
+        { "_id", BsonNull.Value },
+        { "calls", new BsonDocument("$sum", 1) },
+        { "usd", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Priced }),
+                new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
+                0,
+            })) },
+        { "unpriced", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
+            {
+                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Unpriced }),
+                1,
+                0,
+            })) },
+        { "lastAt", new BsonDocument("$max", "$StartedAt") },
+    });
+    var pipeline = new EmptyPipelineDefinition<BsonDocument>()
+        .Match(filter)
+        .AppendStage<BsonDocument, BsonDocument, BsonDocument>(group);
+    var row = await logs.Aggregate(pipeline).FirstOrDefaultAsync();
+    if (row is null) return ledger;
+
+    ledger.Calls = row.AsNullableLong("calls") ?? 0;
+    ledger.CostUsd = row.AsNullableDecimal("usd") ?? 0m;
+    ledger.UnpricedCalls = row.AsNullableLong("unpriced") ?? 0;
+    ledger.LastCallAt = row.AsNullableUtcDateTime("lastAt").ToIso();
+    return ledger;
+}
+
 static LogicalModelItem MapLogicalModel(
     BsonDocument logical,
     IReadOnlyCollection<BsonDocument> offeringDocs,
@@ -16463,6 +16636,29 @@ static LogicalModelItem MapLogicalModel(
                 Notes = x.AsNullableString("Notes"),
             };
         }).ToList();
+
+    // 排队名次与跳过原因由服务端算好下发。判据只有一份（CallTracePlanner，与运行时
+    // GatewayRouteSelection 逐条对照），前端不再自己判——它此前那份
+    // 「enabled && healthStatus === 0」会把「降级但仍在承接」的线路显示成「没有主」，
+    // 而运行时照样在用它。
+    var strategy = logical.AsNullableString("RoutingStrategy") ?? "priority";
+    var candidates = offerings
+        .Select(x => new CallTracePlanner.RouteCandidate(x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled))
+        .ToList();
+    // seed 固定 0：面板是给人看的静态推演，不能每刷新一次换一个答案。
+    // 运行时那边的 seed 由 requestId 派生，所以按权重分配时面板不指名道姓，只给比例。
+    var queue = CallTracePlanner.Queue(candidates, CallTracePlanner.IsWeighted(strategy), 0);
+    var positionById = queue
+        .Select((x, index) => (x.Id, Position: index + 1))
+        .ToDictionary(x => x.Id, x => x.Position, StringComparer.Ordinal);
+    foreach (var offering in offerings)
+    {
+        var candidate = new CallTracePlanner.RouteCandidate(
+            offering.Id, offering.Priority, offering.Weight, offering.HealthStatus, offering.Enabled);
+        offering.SkipReason = CallTracePlanner.SkipReason(candidate);
+        offering.QueuePosition = positionById.TryGetValue(offering.Id, out var position) ? position : 0;
+    }
+
     return new LogicalModelItem
     {
         Id = logicalId,

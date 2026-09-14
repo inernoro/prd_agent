@@ -1444,7 +1444,84 @@ public sealed class ModelOfferingItem
     public int? MaxConcurrency { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
+
+    /// <summary>
+    /// 这条线路为什么不参与这次排队；null 表示参与。服务端按唯一判据算好，前端不再自己判——
+    /// 前端曾经自己算过一份（enabled &amp;&amp; healthStatus === 0），把「降级但仍在用」的线路
+    /// 显示成「没有主」，而运行时照样在用它。
+    /// </summary>
+    public string? SkipReason { get; set; }
+
+    /// <summary>排队名次，1 就是这次会落到的那一条；0 表示不参与。</summary>
+    public int QueuePosition { get; set; }
 }
+/// <summary>一个对外模型的「调用全貌」：点名它之后会发生什么，用当前真实状态回答。</summary>
+public sealed class CallTraceData
+{
+    public string PublicId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string ModelType { get; set; } = "";
+    public bool Enabled { get; set; }
+    public bool IsDefaultForType { get; set; }
+    public string RoutingStrategy { get; set; } = "priority";
+
+    /// <summary>第一屏那句结论：现在发一个请求会落到谁，或者为什么调不通。</summary>
+    public string Conclusion { get; set; } = "";
+    public CallTraceGate Gate { get; set; } = new();
+    public CallTraceUnnamed Unnamed { get; set; } = new();
+    public List<ModelOfferingItem> Routes { get; set; } = new();
+    public List<CallTraceRouteExtra> RouteExtras { get; set; } = new();
+    public CallTraceLedger Ledger { get; set; } = new();
+}
+
+/// <summary>目录闸：谁能点名它。</summary>
+public sealed class CallTraceGate
+{
+    public bool Enabled { get; set; }
+
+    /// <summary>没配授权名单 = 所有调用方都能点名它。</summary>
+    public bool OpenToAllCallers { get; set; }
+    public List<string> AllowedAppCallerCodes { get; set; } = new();
+    public string Summary { get; set; } = "";
+}
+
+/// <summary>「只给 appCallerCode、不点名模型」那条路会不会落到它。</summary>
+public sealed class CallTraceUnnamed
+{
+    /// <summary>不点名时会不会落到它。</summary>
+    public bool ServesUnnamed { get; set; }
+
+    /// <summary>这个用途现在的默认是谁；没有默认时为 null。</summary>
+    public string? CurrentDefaultPublicId { get; set; }
+    public string? CurrentDefaultName { get; set; }
+    public string Summary { get; set; } = "";
+}
+
+/// <summary>线路上那些只有全貌面板要用的附加值，按 OfferingId 对上。</summary>
+public sealed class CallTraceRouteExtra
+{
+    public string OfferingId { get; set; } = "";
+
+    /// <summary>按权重分配时这条线路分到的比例；按顺位时为 null。</summary>
+    public double? WeightPercent { get; set; }
+
+    /// <summary>单价一句话；登记不全时为 null，面板如实说「单价未登记」。</summary>
+    public string? PriceSummary { get; set; }
+    public string? LastFailedAt { get; set; }
+}
+
+/// <summary>账本：近 N 天这个模型花了多少。</summary>
+public sealed class CallTraceLedger
+{
+    public int WindowDays { get; set; }
+    public long Calls { get; set; }
+    public decimal CostUsd { get; set; }
+
+    /// <summary>算不出钱的调用数。把它们当零成本加进去就是在账上撒谎，所以单独计。</summary>
+    public long UnpricedCalls { get; set; }
+    public string? LastCallAt { get; set; }
+}
+
 public sealed class CreateLogicalModelRequest
 {
     public string? PublicId { get; set; }

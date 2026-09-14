@@ -1801,11 +1801,14 @@ public class ModelResolver : IModelResolver
         }
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        // 刻意把「停用」「熔断」这两个条件从查询里拿掉，全量取回后交给
+        // GatewayRouteSelection.SkipReason 判。原来写在查询条件里，等于同一个判据存在两份：
+        // 一份是这里的 Mongo filter，一份是控制台面板要给人看的「为什么跳过这条」——
+        // 两份必然漂移，而且漂了没人发现（形状 3）。一个对外模型下的线路是几十条量级，
+        // 全量取回的代价可以忽略。
         var available = await offerings.Find(Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.LogicalModelId, logical.Id),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
-                Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.LogicalModelId, logical.Id)))
             .ToListAsync(ct);
 
         var ordered = OrderLogicalOfferings(logical, available);
@@ -1859,35 +1862,27 @@ public class ModelResolver : IModelResolver
             logical.AllowedAppCallerCodes,
             appCallerCode);
 
+    /// <summary>
+    /// 这次该按什么顺序发。判据本体在 <see cref="GatewayRouteSelection"/>——控制台的
+    /// 「调用全貌」面板要回答同一个问题，两边必须是同一份判据，这里只做映射与转发。
+    /// </summary>
     private List<GatewayModelOffering> OrderLogicalOfferings(
         GatewayLogicalModel logical,
         List<GatewayModelOffering> offerings)
     {
-        var ordered = offerings
-            .OrderBy(x => x.HealthStatus == ModelHealthStatus.Healthy ? 0 : 1)
-            .ThenBy(x => x.Priority)
-            .ThenBy(x => x.Id, StringComparer.Ordinal)
-            .ToList();
-        if (!string.Equals(logical.RoutingStrategy, "weighted", StringComparison.OrdinalIgnoreCase)
-            || ordered.Count < 2)
-            return ordered;
-
         var seedText = $"{_requestContext?.Current?.RequestId ?? Guid.NewGuid().ToString("N")}::{logical.Id}";
         var seed = BitConverter.ToUInt32(SHA256.HashData(Encoding.UTF8.GetBytes(seedText)), 0);
-        var totalWeight = ordered.Sum(x => Math.Max(1, x.Weight));
-        var cursor = (int)(seed % (uint)totalWeight);
-        var firstIndex = 0;
-        for (var i = 0; i < ordered.Count; i++)
-        {
-            cursor -= Math.Max(1, ordered[i].Weight);
-            if (cursor < 0)
-            {
-                firstIndex = i;
-                break;
-            }
-        }
-        return ordered.Skip(firstIndex).Concat(ordered.Take(firstIndex)).ToList();
+        var byId = offerings.ToDictionary(x => x.Id, StringComparer.Ordinal);
+        var queue = GatewayRouteSelection.Queue(
+            offerings.Select(ToRouteCandidate).ToList(),
+            GatewayRouteSelection.IsWeighted(logical.RoutingStrategy),
+            seed);
+        return queue.Select(x => byId[x.Id]).ToList();
     }
+
+    /// <summary>Offering 映射成判据认识的形状。字段对不齐时镜像对照测试会红。</summary>
+    internal static GatewayRouteSelection.RouteCandidate ToRouteCandidate(GatewayModelOffering offering)
+        => new(offering.Id, offering.Priority, offering.Weight, (int)offering.HealthStatus, offering.Enabled);
 
     private async Task<ModelResolutionResult?> TryBuildLogicalOfferingResolutionAsync(
         GatewayLogicalModel logical,

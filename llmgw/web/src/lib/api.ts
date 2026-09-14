@@ -39,6 +39,7 @@ import type {
   EnsurePoolTypesResult,
   PlatformsData,
   ModelsData,
+  CallTraceData,
   LogicalModelsData,
   LogicalModelUsageData,
   LogicalModelItem,
@@ -624,6 +625,16 @@ export function getModelPoolUsage(id: string): Promise<ApiResponse<ModelPoolUsag
 export function updateModelImageSizeControl(id: string, req: UpdateModelImageSizeControlRequest): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/image-size-control`, { method: 'PUT', body: req });
 }
+/**
+ * 一个对外模型的调用全貌。
+ *
+ * 列表能说清「有几条线路」，说不清「现在发一个请求会落到谁」——而后者才是人要的那份心安，
+ * 尤其在「只给 appCallerCode、不点名模型」这条路上，调用方连自己会用到哪个模型都不知道。
+ */
+export function getCallTrace(id: string): Promise<ApiResponse<CallTraceData>> {
+  return apiRequest<CallTraceData>(`/logical-models/${encodeURIComponent(id)}/call-trace`);
+}
+
 export function getLogicalModels(params?: { modelType?: string; enabled?: boolean }): Promise<ApiResponse<LogicalModelsData>> {
   return apiRequest<LogicalModelsData>('/logical-models', {
     query: { modelType: params?.modelType, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },

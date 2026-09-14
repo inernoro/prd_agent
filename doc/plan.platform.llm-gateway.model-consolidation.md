@@ -35,7 +35,7 @@
 
 ## 影子比对抓到什么（阶段 2 的真实产出）
 
-脚本：[scripts/llmgw-pool-migration-shadow.py](../scripts/llmgw-pool-migration-shadow.py)。同一个 appCaller、同一个用途，先关默认让解析走池，再开默认让解析走模型，比最终的物理模型。
+做法：同一个 appCaller、同一个用途，先关默认让解析走池，再开默认让解析走模型，比最终落到的物理模型。脚本见文末「实现来源」。
 
 **一、搬过去的模型能力是空的**（已修）。建模型时传了 `NormalizeDetailed(modelType, null)`，那个函数只在已有 `image_generation` 时才展开场景能力集，传 null 得到空集合。空能力的模型在能力门一律不放行，于是搬迁报成功、调用方却调不到它，请求默默回落到池——回落本身工作正常，但产出了一个死模型。改成从池成员的能力快照取并集，一条都没有时退到用途基线能力。
 
@@ -58,3 +58,12 @@
 阶段 3 冻结的是**新建**不是**修复**：摘坏成员、让成员恢复、停用整池仍然可用。旧解析路径还在兜底，成员真坏掉时人得能进去处置；全锁死会把人关在门外，比多一个概念更糟。这一条与用户说的「只读」有出入，已在交付里点名。
 
 阶段 4 要删的 `PoolHealthTracker` / `ModelPoolDispatcher` 那套在生产请求链路上本来就是死代码（`IModelPool.DispatchAsync` 全仓无调用方），台账见 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md) 的 `2026-09-11-model-pool-dispatcher-is-a-shell`。
+
+---
+
+## 实现来源
+
+| 这一块 | 落在哪 |
+|---|---|
+| 影子比对脚本 | `scripts/llmgw-pool-migration-shadow.py` |
+| 架构总纲 | [design.platform.llm-gateway.model-architecture.md](./design.platform.llm-gateway.model-architecture.md) |

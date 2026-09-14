@@ -534,6 +534,55 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void CallTrace_AnswersWhereARequestLandsIncludingTheUnnamedPath()
+    {
+        // 「调用全貌」这一屏的全部价值建立在两件事上：它说的是当前真实状态，
+        // 而且它说的和运行时实际做的是同一份判据。任一条不成立，它就是一份看着很确定的假话。
+        //
+        // 判据一致性由 GatewayCallTraceMirrorTests 的行为对照钉住（那才是主守卫）；
+        // 这里钉的是**接线**与**产品语义**：端点在不在、前端调没调、
+        // 「只给 appCallerCode 不点名」那条路有没有被单独回答、按权重时有没有闭嘴不指名。
+        var planner = ReadRepoFile("llmgw/console-api/LogicalModels/CallTracePlanner.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var panel = ReadRepoFile("llmgw/web/src/components/CallTracePanel.tsx");
+        var modelsPage = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        // 端点存在，且排队名次是服务端算的
+        Assert.Contains("/gw/logical-models/{id}/call-trace", consoleProgram);
+        Assert.Contains("CallTracePlanner.Queue(candidates", consoleProgram);
+        Assert.Contains("offering.QueuePosition = positionById", consoleProgram);
+
+        // 接线：前端真的调了它，页面真的渲染了面板
+        Assert.Contains("getCallTrace", webApi);
+        Assert.Contains("call-trace", webApi);
+        Assert.Contains("CallTracePanel", modelsPage);
+        Assert.Contains("getCallTrace", panel);
+
+        // 前端不许再自己判「哪条在扛流量」——那份判据比运行时严，会把降级但仍在承接的
+        // 线路显示成「没有主」。名次一律用服务端下发的 queuePosition。
+        Assert.Contains("queuePosition === 1", modelsPage);
+        Assert.DoesNotContain("x.enabled && x.healthStatus === 0", modelsPage);
+
+        // 「只给 appCallerCode、不点名模型」那条路必须被单独回答，不能混在别的话里
+        Assert.Contains("call-trace-unnamed", panel);
+        Assert.Contains("只给 appCallerCode", panel);
+        Assert.Contains("ServesUnnamed", consoleProgram);
+        Assert.Contains("不点名模型时", consoleProgram);
+
+        // 按权重分配时不许指名道姓（运行时 seed 由 requestId 派生，说「会落到 A」就是编的）
+        Assert.Contains("按权重分到", planner);
+        Assert.Contains("不指名道姓", panel);
+
+        // 结论在第一屏。把一屏数字丢给人自己算「所以会落到谁」，这一屏就白做了
+        Assert.Contains("call-trace-conclusion", panel);
+
+        // 缺价如实说，不补零
+        Assert.Contains("未计价", panel);
+        Assert.Contains("单价未登记", panel);
+    }
+
+    [Fact]
     public void RoutingNav_KeepsTwoEntriesAndLeavesNoDeadLinks()
     {
         // 路由这一组曾经是五条平级入口，而它们回答的只有两个问题：

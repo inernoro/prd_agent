@@ -48,6 +48,7 @@ import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, METRIC_CAPTION, MONO_META } from '@/lib/typography';
 import { CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK } from '@/lib/surface';
 import { RouteDot, UpstreamMark, UsageSparkline, type RouteHealth } from '@/components/ModelRouteVisuals';
+import { CallTracePanel } from '@/components/CallTracePanel';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
@@ -71,6 +72,8 @@ export function LogicalModelsPage() {
   // 不画一条假的平滑曲线——「没数据」和「用量平稳」是两件事，画成一样会误导。
   const [usage, setUsage] = useState<Map<string, LogicalModelUsageItem> | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
+  /** 正在看调用全貌的那个模型。和「展开」分开：一个给配置，一个给推演。 */
+  const [traceFor, setTraceFor] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // 带 tone 的提示：此前是裸字符串 + 固定 tone="ok"，10 个写入点里有 6 个是失败路径，
   // 于是「更新路由策略失败」会渲染成一条绿色成功条 —— 运维会以为改动生效了（Codex P2）。
@@ -377,6 +380,7 @@ export function LogicalModelsPage() {
               const routes = describeRoutes(item, models);
               const stat = usage?.get(item.publicId) ?? null;
               const open = expanded === item.id;
+              const tracing = traceFor === item.id;
               const health = summarizeHealth(item, routes);
               return (
                 <div key={item.id} style={{
@@ -431,10 +435,23 @@ export function LogicalModelsPage() {
                       <span style={{ fontSize: 'var(--fs-secondary)', color: health.tone === 'warn' ? 'var(--warn)' : 'var(--text-secondary)' }}>{health.text}</span>
                     </span>
 
-                    <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setExpanded((x) => (x === item.id ? null : item.id))}>
-                      {open ? '收起' : '展开'}
-                    </Button>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, justifyContent: 'flex-end' }}>
+                      {/* 「调用全貌」独立于「展开」：展开给的是可改的配置，全貌给的是
+                          「现在发一个请求会落到谁」。后者是人最想确认、而配置项答不出的那件事。 */}
+                      <Button size="sm" variant="ghost" aria-expanded={tracing} onClick={() => setTraceFor((x) => (x === item.id ? null : item.id))}>
+                        {tracing ? '收起全貌' : '调用全貌'}
+                      </Button>
+                      <Button size="sm" variant="ghost" aria-expanded={open} onClick={() => setExpanded((x) => (x === item.id ? null : item.id))}>
+                        {open ? '收起' : '展开'}
+                      </Button>
+                    </span>
                   </div>
+
+                  {tracing ? (
+                    <div style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px 46px` }}>
+                      <CallTracePanel logicalModelId={item.id} />
+                    </div>
+                  ) : null}
 
                   {open ? (
                     <div style={{ padding: `0 ${CARD_PADDING}px ${CARD_PADDING}px 46px`, display: 'flex', flexDirection: 'column', gap: GAP.section }}>
@@ -621,14 +638,18 @@ type RouteView = {
  * Exchange 线路当前没有价格字段，如实写「未登记」，不拿别处的价顶上。
  */
 function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[] {
-  const ordered = [...item.offerings].sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id));
-  // 「谁在扛流量」= 第一条既启用又健康的线路。全挂了就没有 live，不硬指一条。
-  const liveId = ordered.find((x) => x.enabled && x.healthStatus === 0)?.id ?? null;
+  // 排队名次由服务端下发（CallTracePlanner，与运行时 GatewayRouteSelection 由行为对照测试钉死）。
+  // 这里**不再自己判**谁在扛流量：此前那份「enabled && healthStatus === 0」比运行时严——
+  // 运行时照样会用降级线路，只是把它排在健康的后面，于是全部降级时页面显示「没有主」，
+  // 而实际一直有一条在承接。判据分裂三份，漂了也没人发现。
+  const ordered = [...item.offerings].sort(
+    (a, b) => (a.queuePosition || 999) - (b.queuePosition || 999) || a.priority - b.priority || a.id.localeCompare(b.id));
+  const liveId = ordered.find((x) => x.queuePosition === 1)?.id ?? null;
 
   return ordered.map((offering) => {
     const model = offering.targetKind === 'model' ? models.find((x) => x.id === offering.targetId) : undefined;
-    const health: RouteHealth = !offering.enabled ? 'disabled'
-      : offering.healthStatus === 2 ? 'down'
+    const health: RouteHealth = offering.skipReason
+      ? (offering.enabled ? 'down' : 'disabled')
       : offering.id === liveId ? 'live'
       : 'standby';
     return {
@@ -645,8 +666,8 @@ function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[
       weight: offering.weight,
       governance: offering.maxConcurrency ? `并发 ${offering.maxConcurrency}` : '并发继承上游',
       health,
-      roleLabel: !offering.enabled ? '已停用'
-        : offering.healthStatus === 2 ? '熔断'
+      roleLabel: offering.skipReason
+        ? (offering.enabled ? '熔断' : '已停用')
         : offering.id === liveId ? '主' : '备',
     };
   });
