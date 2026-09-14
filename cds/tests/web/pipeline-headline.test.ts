@@ -167,18 +167,19 @@ describe('这句判断必须真的出现在页面上', () => {
 
   it('引用它的那个页面真的把句子渲染出来了', () => {
     const src = read('web/src/pages/reports/PipelinePanel.tsx');
-    // 光 import 不算：得有组件读 sentence，并且在两种形态下都渲染。
+    // 光 import 不算：得有组件真的读 sentence 并渲染。
+    // 2026-09-14：紧凑态换成 CompactStrip（数字领衔，没有句子），
+    // 这句判断只在放大态出现，所以要求 >= 1 而不是 >= 2。
     expect(src).toMatch(/h\.sentence/);
-    expect([...src.matchAll(/<Headline\b/g)].length, '紧凑态与放大态都要有这句判断').toBeGreaterThanOrEqual(2);
+    expect([...src.matchAll(/<Headline\b/g)].length, '放大态必须有这句判断').toBeGreaterThanOrEqual(1);
   });
 
   it('第一眼是紧凑态，细节要点「放大」才铺开', () => {
     const src = read('web/src/pages/reports/PipelinePanel.tsx');
     expect(src).toMatch(/const \[zoom, setZoom\] = useState\(false\)/);
     expect(src).toMatch(/zoom \? '收起' : '放大'/);
-    // 紧凑态里图只做剪影：这么小的时候字号补偿会把标签撑得比闸门还宽。
-    expect(src).toMatch(/pp-mini/);
-    expect(src).toMatch(/\.pp-mini text\{display:none;\}/);
+    // 紧凑态渲染的是紧凑条（数字领衔），不是缩小的厂房。
+    expect(src).toMatch(/<CompactStrip\b/);
   });
 
   it('背景只是壳，不编码任何数据', () => {
@@ -209,7 +210,7 @@ describe('严谨页面不写修辞（2026-09-11 用户第三次指出）', () =>
   });
 });
 
-describe('紧凑态：一句话，两张图', () => {
+describe('紧凑态：换成紧凑条', () => {
   const src = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'), 'utf8');
 
   it('紧凑态只渲染那一句，支撑点与下一步留给放大态', () => {
@@ -222,14 +223,11 @@ describe('紧凑态：一句话，两张图', () => {
     expect(compact).not.toMatch(/h\.action/);
   });
 
-  it('紧凑态两张图都在：只放一张的话另半边就空着', () => {
-    // 锚点必须落在紧凑分支上。用三元的 `) : (` 会命中文件前面 GateH 里的同款三元，
-    // 于是 slice 出来的一大段把放大态也圈进去，紧凑态的图被删掉照样绿（实测过）。
-    const start = src.indexOf('<Headline h={headline} />');
-    expect(start, '找不到紧凑态的那句判断').toBeGreaterThan(-1);
-    const compact = src.slice(start);
-    expect(compact).toMatch(/\{hall\}/);
-    expect(compact).toMatch(/\{yard\}/);
-    expect([...compact.matchAll(/pp-mini/g)].length).toBeGreaterThanOrEqual(2);
+  it('紧凑态渲染的是紧凑条，不是缩小的厂房', () => {
+    // 2026-09-14 换稿：把厂房整个缩小那条路走不通——隐喻要占半屏带标签才读得懂，
+    // 缩到几百像素再按「少字」把标签隐去，剩下的只是一堆灰方块。
+    expect(src).toMatch(/<CompactStrip\b/);
+    // 缩放厂房的那套残留不许回来：pp-mini 一旦再出现，说明又走回老路了。
+    expect(src, 'pp-mini 回来了——紧凑态又在缩厂房').not.toMatch(/pp-mini/);
   });
 });

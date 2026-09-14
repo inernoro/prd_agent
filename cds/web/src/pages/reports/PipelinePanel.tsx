@@ -23,6 +23,7 @@
  */
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { buildPipelineHeadline } from '@/lib/pipelineHeadline';
+import { CompactStrip, STRIP_CSS } from '@/pages/reports/CompactStrip';
 import type { PipelineFunnel, PipelineOverview, PipelineProjectRow } from '@/lib/api';
 
 export interface PipelinePanelProps {
@@ -75,9 +76,6 @@ const SCENE_CSS = `
 .pp-root .s-bg-thin{stroke:hsl(var(--hairline));stroke-width:1;fill:none;}
 .pp-root .f-ground{fill:hsl(var(--hairline) / 0.4);}
 
-/* 紧凑态：只留剪影。图缩到这么小时字号补偿会把标签撑得比闸门还宽，
-   而该说的话已经由上面那句判断说了。 */
-.pp-root .pp-mini text{display:none;}
 
 .pp-root .g-hit{cursor:pointer;outline:none;}
 .pp-root rect[data-tip]:hover,.pp-root circle[data-tip]:hover,.pp-root polygon[data-tip]:hover{
@@ -1510,6 +1508,7 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
     <div className="pp-root flex flex-col gap-4" {...handlers}>
       {tipState ? <TipBox state={tipState} /> : null}
       <style>{SCENE_CSS}</style>
+      <style>{STRIP_CSS}</style>
       <SceneDefs />
 
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
@@ -1551,21 +1550,16 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
           </Card>
         </>
       ) : (
-        <>
-          <Headline h={headline} />
-          <Card>
-            {/* 两张图并排：厂房讲「卡在哪一环」，堆场讲「卡在谁那里」。
-                只放一张的话右边就空着，而那半边空白什么都没说。 */}
-            <div className="flex flex-col items-center gap-5 lg:flex-row lg:items-center lg:justify-center">
-              <div className="pp-mini w-full min-w-0" style={{ maxWidth: 560 }}>
-                {hall}
-              </div>
-              <div className="pp-mini w-full min-w-0" style={{ maxWidth: 400 }}>
-                {yard}
-              </div>
-            </div>
-          </Card>
-        </>
+        // 紧凑态不再是「把厂房缩小」——那条路走不通：隐喻要占半屏带标签才读得懂，
+        // 缩到几百像素再把标签隐去，剩下的就只是一堆灰方块。换成数字领衔 + 微型图形。
+        <CompactStrip
+          pipeline={pipeline}
+          split={splitChanges(pipeline.total)}
+          orphan={orphan}
+          reclaimed={reclaimed}
+          onOpenProject={onOpenProject}
+          projectTip={projectTip}
+        />
       )}
     </div>
   );
