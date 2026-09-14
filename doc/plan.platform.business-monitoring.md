@@ -36,7 +36,7 @@
 
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 |---|---|---|---|---|---|
-| W1 业务可被自由纳入监控 | 90 | 已验收 | 无 | 其余项目（BDE / 标识中台 / 米多星球等）在别的仓库，需各自加自检端点 | 6 条在跑，三天 359/384 样本；协议 `spec.platform.monitor-discovery.md`；CI 守卫 `test_monitor_discovery_contract.py` |
+| W1 业务可被自由纳入监控 | 90 | 已验收 | 无 | 其余项目（BDE / 标识中台 / 米多星球等）在别的仓库，需各自加自检端点 | 6 条在跑，三天 359/384 样本；协议 [spec.platform.monitor-discovery.md](./spec.platform.monitor-discovery.md)；CI 守卫 `test_monitor_discovery_contract.py` |
 | W2 多环境并排 | 60 | 进行中 | 协议里没有 environment 字段，端点报不了自己是生产还是预览 | 协议加 `environment`，两端自检端点声明，对账透传 | 第一屏环境格子已上线（2026-09-11 真视觉验收） |
 | W3 主动/被动两种观测 | 100 | 已验收 | 无 | — | `observeMode` 分档；被动零样本不算绿（`owner-board.test.ts`） |
 | W4 面板 Q1/Q2/Q4（证据链） | 85 | 进行中 | 逾期/停摆两条**反面分支线上演示不了**，见下方「取证缺口」 | 要么短暂关一次监控总开关取证，要么加一条注入式的演练开关 | 线上 `498b0395`：headline「6 项业务在 1 个环境都正常，**每一条都在 3 小时 19 分内检查过**」；卡片带「检查 GET …observedValue lt 2000」与「4 分钟前检查过 · 每 5 分钟一次」；单测 41 条，三条核心判据红绿闭环 |
@@ -128,5 +128,5 @@ process.env，API 层没有任何通道能写它。于是「接铃」变成一�
 
 - 规则 `degradation-must-alarm.md`：这条链的来源；层 1 说的「监控是触发器不是看板」正是 W5 欠的账。
 - 规则 `predicate-and-wiring-discipline.md` 形状 4b（静默空跑）：Q4 是它的用户版表达——不会红的证据比没有证据更糟。
-- 协议 `spec.platform.monitor-discovery.md`：W1 的 SSOT，W2/W7 要在它上面加字段。
-- 债务 `debt.cds.md`：公开面板口令、存量监控 environment 回填。
+- 协议 [spec.platform.monitor-discovery.md](./spec.platform.monitor-discovery.md)：W1 的 SSOT，W2/W7 要在它上面加字段。
+- 债务 [debt.cds.md](./debt.cds.md)：公开面板口令、存量监控 environment 回填。

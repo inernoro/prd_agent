@@ -23,6 +23,7 @@ import {
   defaultEnvironments,
   describeEvidence,
   describeRow,
+  shortPredicate,
   latestEvidence,
 } from '../../web/src/lib/ownerBoard.js';
 import type { MonitorEnvironment, UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
@@ -441,5 +442,52 @@ describe('Q2 卡片要说清这条业务检查的是什么', () => {
       target({ name: 'A', environment: 'production', probeDescription: 'GET /api/healthz/deep · 断言 db.roundtrip < 500', ...probed(10_000, 300) }),
     ], NOW);
     expect(rows[0].probe).toContain('db.roundtrip');
+  });
+});
+
+describe('卡片上的判据短句', () => {
+  it('把开头那条长地址摘掉，留下真正要看的断言', () => {
+    const full = 'GET https://basic-error-solution-btq0os-claude-prd-agent.miduo.org/api/healthz/deep · 状态 200-399 且 check「db.roundtrip」的 observedValue lt 2000';
+    const short = shortPredicate(full);
+    expect(short).not.toContain('https://');
+    expect(short).not.toContain('状态 200-399');
+    expect(short).toContain('db.roundtrip');
+    expect(short).toContain('lt 2000');
+  });
+
+  it('格式对不上就原样返回 —— 宁可长，不可截错', () => {
+    expect(shortPredicate('断言 checks.serving.0.observedValue eq 0')).toBe('断言 checks.serving.0.observedValue eq 0');
+    expect(shortPredicate('')).toBe('');
+  });
+
+  it('只有一条地址、没有别的内容时不许返回空串', () => {
+    // 摘完什么都不剩的话，读者拿到一个空格子比拿到长地址更糟。
+    expect(shortPredicate('GET https://x/y')).toBe('GET https://x/y');
+  });
+});
+
+describe('格子带上真实数字（卡片「专业感」的来源）', () => {
+  it('可用率 / 平均响应 / 采样次数 / 柱条都透到格子上', () => {
+    const rows = buildBusinessRows([
+      target({
+        name: 'A', environment: 'production',
+        availability24h: 0.9987, avgLatencyMs24h: 94, sampleCount24h: 17,
+        buckets: [{ from: 1, to: 2, up: 3, down: 0 }] as never,
+        lastSample: { t: NOW - 10_000, up: true, ms: 90 }, intervalSeconds: 300,
+      }),
+    ], NOW);
+    const cell = rows[0].cells[0];
+    expect(cell.availability24h).toBeCloseTo(0.9987);
+    expect(cell.avgLatencyMs24h).toBe(94);
+    expect(cell.sampleCount24h).toBe(17);
+    expect(cell.buckets).toHaveLength(1);
+  });
+
+  it('算不出来时是 null，不是 0 —— 0 的意思是「全挂」不是「不知道」', () => {
+    const rows = buildBusinessRows([
+      target({ name: 'A', environment: 'production', availability24h: null, avgLatencyMs24h: null }),
+    ], NOW);
+    expect(rows[0].cells[0].availability24h).toBeNull();
+    expect(rows[0].cells[0].avgLatencyMs24h).toBeNull();
   });
 });

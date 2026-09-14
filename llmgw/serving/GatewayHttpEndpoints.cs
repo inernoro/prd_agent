@@ -276,6 +276,12 @@ public static class GatewayHttpEndpoints
                                 severity = "P0",
                                 observeMode = "passive",
                                 sampleComponentId = "serving.requests",
+                                // 自称生产：跑在分支预览上时 CDS 按地址判成分支预览并压过这句自称，
+                                // 所以写 production 不会让临时分支混进负责人的第一屏。
+                                environment = "production",
+                                // 对外只出业务名与红绿，不出地址、判据、日志——这条可以公开。
+                                publicVisible = true,
+                                publicName = "AI 网关",
                             },
                         },
                     },
@@ -304,6 +310,9 @@ public static class GatewayHttpEndpoints
                                 intervalSeconds = 21600,
                                 failuresToAlarm = 2,   // 一个安静的窗口不值得叫人，连着两个才值得问一句
                                 severity = "P2",
+                                environment = "production",
+                                // 「有没有人在用」是内部判据，对外说它没有意义，不公开。
+                                publicVisible = false,
                             },
                         },
                     },

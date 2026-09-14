@@ -100,6 +100,14 @@ export interface EnvironmentCell {
   targetId: string;
   /** 这一格的检查新鲜度——「他干活了吗」的判据 */
   freshness: ProbeFreshness;
+  /** 近 24h 可用率（0..1）。null = 还算不出来，**不许补 0**——0 是「全挂」，不是「不知道」 */
+  availability24h: number | null;
+  /** 近 24h 平均响应（ms）。null = 没有测得值 */
+  avgLatencyMs24h: number | null;
+  /** 近 24h 采样次数：可用率那个百分比是几次里算出来的 */
+  sampleCount24h: number;
+  /** 近 24h 可用率柱条。卡片上那条让面板活起来的东西 */
+  buckets: ReadonlyArray<UptimeTargetSummary['buckets'][number]>;
   /** 上次真的被检查的时刻；undefined = 从没检查过 */
   lastProbeAt?: number;
   /** 它本该多久被检查一次 */
@@ -146,6 +154,28 @@ export function describeEvidence(row: Pick<BusinessRow, 'cells'>, now: number): 
     ? ` · 每 ${formatDuration(oldest.intervalSeconds * 1000)}一次`
     : '';
   return `${formatRelative(at, now)}检查过${every}`;
+}
+
+/**
+ * 判据的短句。
+ *
+ * 卡片上原先摆的是整条 `GET https://…长地址… · 状态 200-399 且 check「x」的 observedValue lt 2000`，
+ * 地址占了八成宽度，而它恰恰是**最不需要每天看**的那部分——一眼扫的时候要看的是
+ * 「这条在断言什么」。地址仍然在（悬停可见），只是不再抢版面。
+ *
+ * 刻意做成**尽力而为 + 原样兜底**：这是在解析一段展示文本，格式一变就该退回原文，
+ * 而不是吐出一个截错的半句（宁可长，不可错）。
+ */
+export function shortPredicate(probeDescription: string): string {
+  const text = (probeDescription || '').trim();
+  if (!text) return '';
+  // 丢掉开头的 `GET <url>` 那一段；没有 ` · ` 分隔就原样返回。
+  const parts = text.split(' · ');
+  const rest = parts.length > 1 && /^[A-Z]+\s+https?:\/\//.test(parts[0])
+    ? parts.slice(1).join(' · ')
+    : text;
+  // 状态码规则是所有 HTTP 探测都一样的通用前缀，不是这一条的特征。
+  return rest.replace(/^状态\s*[\d,\-\s]+\s*且\s*/, '').trim() || text;
 }
 
 export interface BusinessRow {
@@ -357,6 +387,10 @@ export function buildBusinessRows(targets: ReadonlyArray<UptimeTargetSummary>, n
           health,
           targetId: target.id,
           freshness,
+          availability24h: target.availability24h,
+          avgLatencyMs24h: target.avgLatencyMs24h,
+          sampleCount24h: target.sampleCount24h,
+          buckets: target.buckets,
           ...(target.lastSample?.t ? { lastProbeAt: target.lastSample.t } : {}),
           ...(target.intervalSeconds > 0 ? { intervalSeconds: target.intervalSeconds } : {}),
           ...(target.sampleCount === undefined ? {} : { sampleCount: target.sampleCount }),

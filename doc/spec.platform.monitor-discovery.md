@@ -45,7 +45,8 @@
 | `severity` | 否 | `P0` / `P1`（默认） / `P2` |
 | `observeMode` | 否 | `active`（默认）自己发一次真请求；`passive` 读真实流量的窗口统计 |
 | `sampleComponentId` | `passive` 时必填 | 样本量取哪条 check 的 `observedValue` |
-| `publicVisible` / `publicName` | 否 | 是否上公开状态页、对外叫什么 |
+| `environment` | 否 | 自称属于哪个环境：`production` / `staging` / `other`。**不许写 `preview`** —— 分支预览是 CDS 按地址推出来的事实，不需要也不该由服务自称 |
+| `publicVisible` / `publicName` | 否 | 是否上公开状态页、对外叫什么。默认 `false`，公开必须是端点显式说的 |
 
 判据刻意是**结构化三元组**而不是一句可解析的表达式：自由文本判据一旦开口，下一轮就会被要求加同义词和嵌套语法。
 
@@ -60,11 +61,30 @@
       "name": "网关 serving 近期未处理异常数",
       "op": "eq", "value": 0,
       "intervalSeconds": 21600, "failuresToAlarm": 1, "severity": "P0",
-      "observeMode": "passive", "sampleComponentId": "serving.requests"
+      "observeMode": "passive", "sampleComponentId": "serving.requests",
+      "environment": "production", "publicVisible": true, "publicName": "AI 网关"
     }
   }]
 }
 ```
+
+### `environment` 是一句自称，不是事实
+
+服务说自己是 `production`，CDS 不一定采信：**地址指着一条分支预览的监控，
+无论它自称什么都算分支预览**。结构性证据压过声明，否则一条临时分支的自检端点
+只要写上 `production`，就能混进项目负责人的第一屏。
+
+所以这个字段只在拿不到结构性证据时才生效；写坏了（不在三个枚举里、或写了
+`preview`）**整条拒掉**，不落默认值——默认成 `production` 会把一条写错的声明
+直接推上第一屏，默认成 `other` 又会让它从该在的那一格里消失，两种都比拒掉糟。
+
+### `publicVisible` 的授权方向
+
+公开与否由**端点**说了算，不是 CDS 替它决定，也不是管理员在面板上勾一下就改得动——
+自发现监控由端点维护，人在面板上改完，下一轮对账会按端点的声明覆盖回去。
+要让一条上公开页，就在它自己的 `cds:monitor` 里写 `publicVisible: true`。
+
+只有严格 `true` 才算：`"true"` 这种字符串不算，免得一个手滑把内部判据推上对外页。
 
 ---
 

@@ -16,12 +16,14 @@ import type { LucideIcon } from 'lucide-react';
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { DiscoveryStrip } from './DiscoveryStrip';
+import { AvailabilityBar } from './primitives';
 import { formatRelative } from '@/lib/monitorCenter';
 import type { AlarmChannelView, MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
   buildOwnerBoard,
   describeEvidence,
   describeRow,
+  shortPredicate,
   listEnvironments,
   listProjects,
   scopeTargets,
@@ -62,81 +64,116 @@ const BANNER_ICON = {
   empty: Info,
 } as const;
 
+/** 一个数字 + 一个标签。数字大而实，标签小而淡——扫读靠的是这个落差。 */
+function Stat({ value, label, tone }: { value: string; label: string; tone?: string }): JSX.Element {
+  return (
+    <div className="flex min-w-0 flex-col leading-none">
+      <span className={cn('font-mono text-[0.9375rem] tabular-nums tracking-tight', tone || 'text-foreground')}>{value}</span>
+      <span className="mt-1 text-[0.625rem] text-muted-foreground">{label}</span>
+    </div>
+  );
+}
+
+const pct = (v: number | null): string => (v === null ? '—' : `${(v * 100).toFixed(v >= 1 ? 0 : 2)}%`);
+const ms = (v: number | null): string => (v === null ? '—' : `${Math.round(v)} ms`);
+
+/**
+ * 一条业务的卡片。
+ *
+ * 2026-09-14 重做。原先它是：一个 56px 的纯装饰图标框 + 一句「N 个环境都通过判据」
+ * + 一整条 `GET https://…` 长地址，六张卡长得一模一样、没有一个数字，用户的原话是
+ * 「死里死气的，不太专业」。
+ *
+ * 病根不是配色，是**卡片上没有信息**：可用率、平均响应、采样次数、24 小时柱条
+ * 这几样一直都在 target 上，只是没端出来（和之前「对照层」那次同一个病）。
+ * 监控卡之所以看着专业，靠的就是这几样——密度、真实数字、一条会动的条带。
+ */
 function BusinessCard({ row, now, onOpen }: { row: BusinessRow; now: number; onOpen: (targetId: string) => void }): JSX.Element {
   const worstCell = row.cells.find((c) => c.health === row.worst) ?? row.cells[0];
   const ModeIcon = row.observeMode === 'passive' ? Waves : ArrowRight;
+  const predicate = row.probe ? shortPredicate(row.probe) : '';
+  const tone = row.worst === 'down' ? 'text-destructive'
+    : row.worst === 'overdue' || row.worst === 'stale' ? 'text-warn'
+      : 'text-ok';
+
   return (
     <button
       type="button"
       onClick={() => onOpen(worstCell?.targetId ?? row.cells[0]?.targetId ?? '')}
       className={cn(
-        'flex min-w-0 gap-3 rounded-lg border p-3 text-left transition-colors hover:border-[hsl(var(--hairline-strong))]',
+        'group flex min-w-0 flex-col gap-2.5 rounded-lg border p-3 text-left transition-all',
+        'hover:-translate-y-px hover:shadow-sm',
         CARD_TONE[row.worst],
       )}
     >
-      {row.artifactUrl ? (
-        <img
-          src={row.artifactUrl}
-          alt=""
-          className={cn(
-            'h-14 w-14 shrink-0 rounded object-cover',
-            row.worst === 'down' ? 'ring-2 ring-destructive' : 'ring-1 ring-[hsl(var(--hairline))]',
-          )}
+      {/* 标题行：状态点 + 名字 + 环境格子。装饰性的大图标框已删——它占四分之一宽度只承载一位信息。 */}
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT_TONE[row.worst])} />
+        <ModeIcon
+          className={cn('h-3 w-3 shrink-0', row.observeMode === 'passive' ? 'text-info' : 'text-primary-ink')}
+          aria-label={row.observeMode === 'passive' ? '被动观测' : '主动观测'}
         />
-      ) : (
-        <div className={cn('flex h-14 w-14 shrink-0 items-center justify-center rounded border', HEALTH_CELL[row.worst])}>
-          <ModeIcon className="h-5 w-5" />
+        <span className="truncate text-[0.8125rem] font-medium text-foreground">{row.name}</span>
+        <div className="ml-auto flex shrink-0 gap-1">
+          {row.cells.map((cell) => (
+            <span
+              key={cell.environment}
+              title={`${cell.label}：${cell.reason || '正常'}`}
+              className={cn('rounded border px-1 font-mono text-[0.625rem] leading-4', HEALTH_CELL[cell.health])}
+            >
+              {cell.short}
+            </span>
+          ))}
         </div>
-      )}
+      </div>
 
-      <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-        <div className="flex min-w-0 items-center gap-2">
-          <ModeIcon
-            className={cn('h-3 w-3 shrink-0', row.observeMode === 'passive' ? 'text-info' : 'text-primary-ink')}
-            aria-label={row.observeMode === 'passive' ? '被动观测' : '主动观测'}
-          />
-          <span className="truncate text-[0.8125rem] font-medium text-foreground">{row.name}</span>
-          <div className="ml-auto flex shrink-0 gap-1">
-            {row.cells.map((cell) => (
-              <span
-                key={cell.environment}
-                title={`${cell.label}：${cell.reason || '正常'}`}
-                className={cn('rounded border px-1 font-mono text-[0.625rem] leading-4', HEALTH_CELL[cell.health])}
-              >
-                {cell.short}
-              </span>
-            ))}
-          </div>
-        </div>
+      {/* 数字行：可用率 / 平均响应 / 采样次数。null 一律显示「—」，不补 0——
+          0 的意思是「全挂」，不是「不知道」。 */}
+      <div className="flex items-start gap-5">
+        <Stat value={pct(worstCell?.availability24h ?? null)} label="24h 可用率" tone={tone} />
+        <Stat value={ms(worstCell?.avgLatencyMs24h ?? null)} label="平均响应" />
+        <Stat
+          value={row.observeMode === 'passive' && worstCell?.sampleCount !== undefined
+            ? `${worstCell.sampleCount}`
+            : `${worstCell?.sampleCount24h ?? 0}`}
+          label={row.observeMode === 'passive' ? '窗口内调用' : '24h 采样'}
+        />
+      </div>
 
-        <div className={cn(
-          'truncate font-mono text-[0.6875rem]',
-          row.worst === 'down' ? 'text-destructive'
-            : row.worst === 'overdue' || row.worst === 'stale' ? 'text-warn'
-              : 'text-muted-foreground',
-        )}>
-          {describeRow(row)}
-        </div>
+      {/* 24 小时柱条：让这一屏活起来的那一条，也是「他干活了吗」最直观的答案。 */}
+      {worstCell && worstCell.buckets.length > 0 ? (
+        <AvailabilityBar
+          buckets={worstCell.buckets}
+          segments={48}
+          compact
+          className="opacity-80 transition-opacity group-hover:opacity-100"
+          label={`${row.name} 最近 24 小时可用率分布`}
+        />
+      ) : null}
 
-        {/* Q2「干了什么活」：这条业务到底检查的是什么。原先第一屏一个字都没有。 */}
-        {row.probe ? (
-          <div className="truncate text-[0.6875rem] leading-4 text-muted-foreground" title={row.probe}>
-            检查 {row.probe}
-          </div>
-        ) : null}
+      {/* 状态那一句：坏的时候说原因，好的时候说证据。 */}
+      <div className={cn(
+        'truncate text-[0.6875rem]',
+        row.worst === 'down' ? 'text-destructive'
+          : row.worst === 'overdue' || row.worst === 'stale' ? 'text-warn'
+            : 'text-muted-foreground',
+      )}>
+        {describeRow(row)}
+      </div>
 
-        {/* Q1/Q4「他干活了吗 / 没出问题的证据」：正常也要说清是什么时候检查出来的，
-            否则「探针三天没跑」和「一切正常」在这一屏上长得一模一样。 */}
-        <div className={cn(
-          'truncate font-mono text-[0.6875rem] leading-4',
+      {/* 判据 + 证据。地址退到悬停里——它是查证时才要的东西，不该每天占八成宽度。 */}
+      <div className="flex min-w-0 items-center gap-2 border-t border-[hsl(var(--hairline))] pt-2">
+        {predicate ? (
+          <span className="min-w-0 flex-1 truncate font-mono text-[0.625rem] text-muted-foreground" title={row.probe}>
+            {predicate}
+          </span>
+        ) : <span className="flex-1" />}
+        <span className={cn(
+          'shrink-0 font-mono text-[0.625rem]',
           row.worst === 'overdue' ? 'text-warn' : 'text-muted-foreground/80',
         )}>
           {describeEvidence(row, now)}
-        </div>
-
-        {row.attribution ? (
-          <div className="truncate text-[0.6875rem] leading-4 text-muted-foreground">{row.attribution}</div>
-        ) : null}
+        </span>
       </div>
     </button>
   );
@@ -181,6 +218,14 @@ function NeedsProjectRow({ icon: Icon, title, what, projects, onPick }: {
     </div>
   );
 }
+
+const DOT_TONE: Record<CellHealth, string> = {
+  down: 'bg-destructive',
+  overdue: 'bg-warn',
+  stale: 'bg-warn',
+  unknown: 'bg-[hsl(var(--hairline-strong))]',
+  up: 'bg-ok',
+};
 
 const ALARM_TONE: Record<AlarmChannelView['status'] | 'unknown', string> = {
   unconfigured: 'border-destructive/40 bg-destructive/10',
@@ -441,7 +486,7 @@ export function OwnerBoard({
       </div>
 
       {board.rows.length > 0 ? (
-        <div className="grid min-h-0 flex-1 auto-rows-min gap-2 overflow-y-auto md:grid-cols-2">
+        <div className="grid min-h-0 flex-1 auto-rows-min gap-2.5 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
           {board.rows.map((row) => <BusinessCard key={row.key} row={row} now={now} onOpen={onOpenTarget} />)}
         </div>
       ) : (
