@@ -19,6 +19,7 @@ import {
   outsideVbW,
   sceneMaxPx,
   yardStartCx,
+  yardTop,
   sceneScale,
   sceneWidth,
   splitChanges,
@@ -201,21 +202,23 @@ describe('字号补偿：图缩小，字不能跟着糊掉', () => {
   });
 });
 
-describe('整块面板跟着最宽的那张图收', () => {
-  it('面板宽度等于三张图里最宽的那个显示宽度', () => {
-    const px = Math.max(
-      sceneMaxPx(hallLayoutWide(REAL).vbW),
-      sceneMaxPx(yardVbW(10)),
-      sceneMaxPx(outsideVbW(119)),
+describe('收的是图，不是卡片', () => {
+  it('卡片不许再设宽度上限：面板残缺比面板空更刺眼', () => {
+    // 曾经让 pp-root 跟着最宽那张图一起收窄，数据薄时面板只有可用宽的三分之二，
+    // 右边整条空着——用户看到的是「为啥只有一半」。卡片是容器，容器要完整。
+    const src = readFileSync(
+      resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'),
+      'utf8',
     );
-    expect(px).toBe(sceneMaxPx(hallLayoutWide(REAL).vbW));
-    // 数据薄的那一端，整块面板必须明显更窄，否则又变成大盒子装一点东西。
-    const thinPx = Math.max(
-      sceneMaxPx(hallLayoutWide(THIN).vbW),
-      sceneMaxPx(yardVbW(1)),
-      sceneMaxPx(outsideVbW(18)),
-    );
-    expect(thinPx).toBeLessThan(px * 0.8);
+    const rootLine = src.match(/<div className="pp-root[^>]*>/)?.[0] ?? '';
+    expect(rootLine, '找不到 pp-root').not.toBe('');
+    expect(rootLine, 'pp-root 又被套上宽度上限了').not.toMatch(/maxWidth/);
+  });
+
+  it('图本身仍随内容收，薄数据那端明显更小', () => {
+    const px = sceneMaxPx(hallLayoutWide(REAL).vbW);
+    const thinPx = sceneMaxPx(hallLayoutWide(THIN).vbW);
+    expect(thinPx).toBeLessThan(px * 0.85);
   });
 
   it('堆场与场外的宽度都随内容单调不减', () => {
@@ -255,5 +258,30 @@ describe('堆场：几根垛都居中，右边不许空一片', () => {
   it('项目多了照样按真实条数展开', () => {
     expect(yardVbW(10)).toBeGreaterThan(yardVbW(3));
     expect(yardVbW(3)).toBeGreaterThan(yardVbW(1));
+  });
+});
+
+describe('字号补偿不许把数字切掉', () => {
+  // 图越小，补偿把字放得越大。堆场的 viewBox 上沿如果还按原始字号留余量，
+  // 一个项目时「5」的上半截会被干净利落地裁掉——不报错、不变形，只是少半截。
+  const YARD_GY = 430;
+  const layerOf = (maxCh: number) => Math.min(26, Math.max(9, 340 / Math.max(1, maxCh)));
+
+  it.each([
+    [1, 5],
+    [1, 32],
+    [2, 7],
+    [5, 11],
+    [10, 32],
+    [24, 3],
+  ])('%i 个项目 / 最高 %i 条时，垛顶的数字完整落在画布内', (projects, maxCh) => {
+    const vbW = yardVbW(projects);
+    const ts = 1 / sceneScale(vbW);
+    const layer = layerOf(maxCh);
+    const top = yardTop(maxCh, layer, ts);
+    const baseline = YARD_GY - layer * maxCh - 10;
+    // t-num 是 26px，补偿后 26*ts；取 0.85 作字顶高度的保守上界。
+    const glyphTop = baseline - 26 * ts * 0.85;
+    expect(glyphTop, `字顶 ${glyphTop.toFixed(1)} 已经越过画布上沿 ${top.toFixed(1)}`).toBeGreaterThan(top);
   });
 });

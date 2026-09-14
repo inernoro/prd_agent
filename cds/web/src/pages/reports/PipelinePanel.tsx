@@ -1106,6 +1106,16 @@ export function yardVbW(projectCount: number): number {
   return Math.max(300, 92 + YARD_PITCH * Math.max(0, projectCount - 1) + 60);
 }
 
+/**
+ * 堆场 viewBox 的上沿。
+ *
+ * 余量乘 ts 是关键：图越小，字号补偿把数字放得越大，按原始尺寸留的那点空隙就兜不住，
+ * 数字会被 viewBox 从上面切掉一半——而且切得很干净，不报错、不变形，只是少半截。
+ */
+export function yardTop(maxCh: number, layer: number, ts: number): number {
+  return Math.min(YARD_GY - layer * Math.max(0, maxCh) - 36 * ts, YARD_GY - 60 * ts);
+}
+
 /** 第一根垛的中心：让整排垛在画布里居中，项目少时不会缩在左边、右边空一片。 */
 export function yardStartCx(projectCount: number): number {
   const span = YARD_PITCH * Math.max(0, projectCount - 1);
@@ -1123,10 +1133,13 @@ function YardWide({
   // 层高由最高那一垛反算：最高的一垛总是顶到同一个高度，所以项目少、改动少的时候
   // 格子变大看得清，而不是几条细线贴在地上；画布高度也因此稳定。
   const layer = Math.min(26, Math.max(9, 340 / Math.max(1, maxCh)));
-  const top = Math.min(YARD_GY - layer * maxCh - 36, YARD_GY - 60);
   // 宽度按真实项目数算，不再垫到 1360——一个项目就该是窄窄一条，不是一整屏空地。
   const vbW = yardVbW(projects.length);
   const startCx = yardStartCx(projects.length);
+  // 顶部留白要乘上字号补偿：图缩得越小，补偿把数字放得越大，按原尺寸留的那点余量
+  // 就兜不住了——一个项目时 viewBox 会把「5」拦腰切掉（补偿系数到 1.9）。
+  const ts = 1 / sceneScale(vbW);
+  const top = yardTop(maxCh, layer, ts);
   return (
     <svg
       className="pp-scene"
@@ -1457,13 +1470,11 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
   const headline = buildPipelineHeadline(pipeline);
   const [zoom, setZoom] = useState(false);
 
-  // 三张图各自缩到自己该有的大小之后，卡片要是还占满整条，就成了「大盒子装一点东西」——
-  // 比不缩还空。所以整块面板跟着最宽的那张图收。
-  const panelPx = Math.max(
-    sceneMaxPx(hallLayoutWide(pipeline.total).vbW),
-    sceneMaxPx(yardVbW(pipeline.projects.length)),
-    sceneMaxPx(outsideVbW(reclaimed)),
-  );
+  // 这里曾经让整块面板跟着最宽的那张图一起收窄，想治「大盒子装一点东西」。
+  // 结果更糟：数据薄的时候面板只有可用宽的三分之二，右边整条空着，
+  // 看起来像页面没渲染完（用户原话「为啥只有一半」）。
+  // 卡片是容器，容器残缺比容器空更刺眼——所以卡片保持满宽，收的是**图**：
+  // 每张图有自己的显示宽度上限并在卡内居中，高度照样跟着数据降下来。
 
   const hall = (
     <>
@@ -1487,7 +1498,7 @@ export function PipelinePanel({ pipeline, onOpenProject }: PipelinePanelProps): 
   );
 
   return (
-    <div className="pp-root flex flex-col gap-4" style={{ maxWidth: `${panelPx}px` }} {...handlers}>
+    <div className="pp-root flex flex-col gap-4" {...handlers}>
       {tipState ? <TipBox state={tipState} /> : null}
       <style>{SCENE_CSS}</style>
       <SceneDefs />
