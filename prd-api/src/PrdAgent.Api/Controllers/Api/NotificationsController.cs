@@ -367,6 +367,11 @@ public sealed class NotificationsController : ControllerBase
     {
         if (string.Equals(notification.Source, "llm-gateway-quota", StringComparison.OrdinalIgnoreCase))
         {
+            if (notification.Key?.StartsWith("llm-quota-exceeded:v2:", StringComparison.Ordinal) == true)
+            {
+                return (notification.Title, notification.Message);
+            }
+
             return (
                 "AI 创作服务需要管理员处理",
                 "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。");
