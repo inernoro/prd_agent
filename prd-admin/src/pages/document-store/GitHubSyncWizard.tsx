@@ -102,7 +102,9 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
 
   // frontend-modal.md 三条物理约束：尺寸走 inline style、createPortal 挂 body、滚动容器 minHeight:0
   const wizard = (
-    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
+    // z-[200]：移动端 MobileTabBar 是 fixed z-100，z-50 会被它压在下面，
+    // 底部那排「上一步 / 开启同步」正好落在 tab bar 的位置上，点不到。
+    <div className="surface-backdrop fixed inset-0 z-[200] flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="surface-popover rounded-[16px] p-6 flex flex-col"
         style={{ width: 720, maxWidth: '94vw', maxHeight: '88vh', minHeight: 0 }}>
@@ -633,9 +635,11 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
             : base,
           res.error?.code,
         );
-        // 已落库的那几批必须让页面知道：用户此时很可能直接关掉向导，
-        // 不刷新的话那些订阅在文件树里根本不出现，要手动刷新整页才看得见。
-        if (merged.createdCount > 0) onCommitted();
+        // 任何一批失败都要刷新，不能只在「前面有批次成功」时刷：后端是逐条插入、
+        // 条数在 finally 里回写的，所以第一批就失败时也可能已经落库了一部分，
+        // 此时 merged.createdCount 仍是 0。用户这时候多半直接关掉向导，
+        // 不刷新的话那些已建好的订阅在文件树里根本不出现，要手动刷新整页才看得见。
+        onCommitted();
         return;
       }
       merged.createdCount += res.data.createdCount;
