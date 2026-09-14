@@ -31,7 +31,7 @@ public class GitHubOAuthScopesTests
     }
 
     [Fact]
-    public void public_repo不算数——它不给私有仓权限()
+    public void public_repo不算数_它不给私有仓权限()
     {
         // 这条是上一条的对照：证明那个断言真的能红，而不是被子串匹配蒙混过去。
         var granted = GitHubOAuthService.ResolveScopes("public_repo,read:user")
