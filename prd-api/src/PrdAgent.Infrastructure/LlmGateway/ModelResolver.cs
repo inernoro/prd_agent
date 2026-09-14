@@ -1821,8 +1821,9 @@ public class ModelResolver : IModelResolver
         }
 
         // 冷却期满后拿一条不可用 Offering 做半开试探，放在发送队列首位。
-        // 没有这一步，上面那句 Ne(HealthStatus, Unavailable) 就是一扇单向门：Offering 被摘掉之后
-        // 再也拿不到一次成功来翻身，只能等人去控制台改密钥。租约保证同一时刻只有一个请求在试。
+        // 没有这一步，GatewayRouteSelection 把熔断线路剔出队列就是一扇单向门：Offering 被摘掉
+        // 之后再也拿不到一次成功来翻身，只能等人去控制台改密钥。租约保证同一时刻只有一个请求在试。
+        // 它刻意不进那个纯函数——要抢租约、要写库。面板也因此不把它当成确定的下一跳。
         var halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
         if (halfOpen is not null)
         {

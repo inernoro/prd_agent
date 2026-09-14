@@ -4,3 +4,4 @@
 | refactor | prd-api | 挑选判据抽成 GatewayRouteSelection 纯函数，ModelResolver 调它；停用与熔断不再写在 Mongo 查询条件里 |
 | test | prd-api | 新增判据行为对照：同一组输入喂运行时与控制台镜像，逐条断言结果一致，红绿闭环跑通 |
 | docs | doc | 新增 design.platform.llm-gateway.model-architecture：四层架构、一次调用七步、异构上游三个槽 |
+| fix | llmgw | 调用全貌的默认模型查询补 Enabled 与排序，与运行时逐条对齐；「会落到它」增加「真有一条线路能接」这一条 |

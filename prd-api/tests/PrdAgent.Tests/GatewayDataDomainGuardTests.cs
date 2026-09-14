@@ -580,6 +580,21 @@ public class GatewayDataDomainGuardTests
         // 缺价如实说，不补零
         Assert.Contains("未计价", panel);
         Assert.Contains("单价未登记", panel);
+
+        // 「不点名会落到谁」这一问在运行时是一次 Mongo 查询（TryResolveDefaultLogicalModelAsync），
+        // 不是纯函数，进不了 CallTracePlanner 的行为对照。它的三个条件必须在控制台这边逐条对齐，
+        // 否则面板会把一个根本不生效的默认报成「现在的默认」：
+        //   Enabled==true —— 停用的默认运行时会跳过并回落到池；
+        //   DisplayOrder/PublicId 排序 —— 存量有两个默认时不排序就是看 Mongo 心情。
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true)", resolver);
+        Assert.Contains("SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)", resolver);
+        Assert.Contains("Sort(Builders<BsonDocument>.Sort.Ascending(\"DisplayOrder\").Ascending(\"PublicId\"))", consoleProgram);
+
+        // 「会落到它」要三件事同时成立，少一条就是在撒谎：
+        // 是默认、自己启用着、而且真有一条线路能接。
+        Assert.Contains("item.IsDefaultForType && item.Enabled && hasEligibleRoute", consoleProgram);
+        Assert.Contains("一条能接的线路都没有", consoleProgram);
     }
 
     [Fact]

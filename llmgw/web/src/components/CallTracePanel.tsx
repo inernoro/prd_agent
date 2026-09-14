@@ -85,6 +85,12 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
             ))}
           </div>
         ) : null}
+        {/* 说清这一屏**没有**推演什么，比假装推演全了要好。
+            能力匹配是按每个调用方的场景判的，这里只列了授权名单。 */}
+        <p style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)', paddingTop: GAP.tight }}>
+          这一格只看授权与启用。能力是否匹配要按具体调用方的场景判，没在这一屏推演——
+          能力对不上会在解析时拒绝，理由写在请求记录里。
+        </p>
       </Step>
 
       <Step

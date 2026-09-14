@@ -4055,18 +4055,35 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
 
     // 不点名那条路：本用途现在的默认是谁。不是自己就把对方点出来——
     // 「我不是默认」这句话没有下一步，「现在的默认是 X」才有。
+    // 三个条件与运行时 TryResolveDefaultLogicalModelAsync **逐条对齐**，一条都不能少：
+    //   Enabled==true —— 停用的默认会被运行时跳过并回落到池，这里漏掉就会把一个
+    //                     根本不生效的模型报成「现在的默认」；
+    //   DisplayOrder/PublicId 排序 —— 存量数据里万一有两个默认（直接写库 / 并发写入），
+    //                     不排序就是看 Mongo 心情，面板与实际会指向不同的模型。
+    // 这是一次 Mongo 查询不是纯函数，没法进 CallTracePlanner 的行为对照，
+    // 所以由 GatewayDataDomainGuardTests 钉住这两个条件还在。
     var defaultDoc = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.And(
+            fb.Eq("Enabled", true),
             fb.Eq("ModelType", item.ModelType),
-            fb.Eq("IsDefaultForType", true)))).FirstOrDefaultAsync();
+            fb.Eq("IsDefaultForType", true))))
+        .Sort(Builders<BsonDocument>.Sort.Ascending("DisplayOrder").Ascending("PublicId"))
+        .FirstOrDefaultAsync();
     var defaultPublicId = defaultDoc?.GetStringOrEmpty("PublicId");
-    var servesUnnamed = item.IsDefaultForType && item.Enabled;
+
+    // 「会落到它」要三件事同时成立：是本用途的默认、自己启用着、而且真有一条线路能接。
+    // 少最后一条就会出现这种谎：面板说不点名会落到它，实际所有线路都被摘了，
+    // 运行时解析失败后回落到模型池——人照着面板去查，查的是一条根本没走的路。
+    var hasEligibleRoute = candidates.Any(x => CallTracePlanner.SkipReason(x) is null);
+    var servesUnnamed = item.IsDefaultForType && item.Enabled && hasEligibleRoute;
     var unnamedSummary = servesUnnamed
         ? $"调用方只给 appCallerCode、不点名模型时，{item.ModelType} 这个用途会落到它。"
-        : !item.Enabled && item.IsDefaultForType
-            ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——不点名的请求会失败，先启用它或改设别的模型为默认。"
-            : defaultPublicId is { Length: > 0 }
-                ? $"不点名时不会落到它；{item.ModelType} 这个用途现在的默认是 {defaultPublicId}。"
-                : $"不点名时不会落到它，而且 {item.ModelType} 这个用途现在没有默认——这类请求一律失败。";
+        : item.IsDefaultForType && !item.Enabled
+            ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——运行时会跳过它回落到模型池。先启用它，或改设别的模型为默认。"
+            : item.IsDefaultForType && !hasEligibleRoute
+                ? $"它是 {item.ModelType} 的默认，但一条能接的线路都没有——不点名的请求会解析失败并回落到模型池。先把上面那些线路修好。"
+                : defaultPublicId is { Length: > 0 }
+                    ? $"不点名时不会落到它；{item.ModelType} 这个用途现在的默认是 {defaultPublicId}。"
+                    : $"不点名时不会落到它，而且 {item.ModelType} 这个用途现在没有启用的默认——这类请求会回落到模型池。";
 
     var openToAll = item.AllowedAppCallerCodes.Count == 0;
     var gateSummary = !item.Enabled
