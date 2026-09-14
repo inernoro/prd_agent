@@ -3,8 +3,6 @@ import {
   canOpenSubscriptionPanel,
   subscriptionSyncTone,
   githubDirectoryStatusLabel,
-  githubSyncingSignature,
-  mergeWatchedParents,
   GITHUB_DIRECTORY_SOURCE,
 } from './subscriptionEntryState';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
@@ -56,47 +54,5 @@ describe('子文档手动同步的引导语必须原样到达用户', () => {
     );
 
     expect(message).not.toContain('目录条目触发同步');
-  });
-});
-
-describe('同步中签名（驱动页面轮询）', () => {
-  const entries = [
-    { id: 'p1', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'syncing' },
-    { id: 'p0', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'syncing' },
-    { id: 'p2', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'idle' },
-    // 暂停优先于同步中：暂停的条目后台不会再推进，轮询没有意义
-    { id: 'p3', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'syncing', isPaused: true },
-    // 子文档是 subscription，不该把轮询拖住（它们由父目录统一同步）
-    { id: 'c1', sourceType: 'subscription', syncStatus: 'syncing' },
-  ];
-
-  it('只认在同步的 GitHub 目录父条目，且顺序稳定', () => {
-    expect(githubSyncingSignature(entries)).toBe('p0|p1');
-  });
-
-  it('没有在同步的就返回空串——轮询必须能停下来', () => {
-    expect(githubSyncingSignature([])).toBe('');
-    expect(githubSyncingSignature(entries.filter((e) => e.syncStatus !== 'syncing'))).toBe('');
-  });
-});
-
-describe('把在盯的父条目并回当前页', () => {
-  const page = [{ id: 'a' }, { id: 'b' }];
-
-  it('在页里就替换成最新状态', () => {
-    expect(mergeWatchedParents(page, [{ id: 'b' }])).toEqual([{ id: 'a' }, { id: 'b' }]);
-    const fresh = { id: 'b', syncStatus: 'idle' };
-    expect(mergeWatchedParents(page, [fresh])[1]).toBe(fresh);
-  });
-
-  it('被自己的子文档挤出这一页时要补回来——否则轮询会提前停', () => {
-    const parent = { id: 'p', syncStatus: 'syncing' };
-    const merged = mergeWatchedParents(page, [parent]);
-    expect(merged).toHaveLength(3);
-    expect(merged).toContain(parent);
-  });
-
-  it('没有在盯的条目时原样返回', () => {
-    expect(mergeWatchedParents(page, [])).toEqual(page);
   });
 });

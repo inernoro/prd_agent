@@ -452,7 +452,12 @@ public class GitHubDirectorySyncService
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
-            throw new Exception(DescribeListFailure(response.StatusCode, body, accessToken, owner, repo, path, branch));
+            // 限额判定交给共用的 GitHubRateLimit（看 X-RateLimit-Remaining 头），
+            // 不再自己在正文里找 "rate limit" 字样——同一件事两份判据必然漂（形状 3）。
+            throw new Exception(DescribeListFailure(
+                response.StatusCode, body, accessToken, owner, repo, path, branch,
+                rateLimited: GitHubRateLimit.IsExhausted(response),
+                resetHint: GitHubRateLimit.ResetHint(response)));
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
@@ -548,10 +553,21 @@ public class GitHubDirectorySyncService
     /// </summary>
     private static string DescribeListFailure(
         System.Net.HttpStatusCode status, string body, string? accessToken,
-        string owner, string repo, string path, string branch)
+        string owner, string repo, string path, string branch,
+        bool rateLimited = false, string? resetHint = null)
     {
         var target = $"{owner}/{repo}/{(string.IsNullOrEmpty(path) ? "/" : path)}@{branch}";
         var authed = !string.IsNullOrEmpty(accessToken);
+        var retryAt = resetHint != null ? $"请在 {resetHint} 后重试。" : "请稍后重试。";
+
+        // 限额先判：GitHub 把「额度耗尽」同时报成 403 和 429，
+        // 落到下面的 403/默认分支就会变成「拒绝访问」或一串原始状态码，两种都不可行动。
+        if (rateLimited || (int)status == 429)
+        {
+            return authed
+                ? $"GitHub 调用频率已达上限（已使用授权额度）。{retryAt}"
+                : $"GitHub 匿名调用频率已达上限（每小时 60 次）。请在知识库里连接 GitHub 账号，额度会提到每小时 5000 次；{retryAt}";
+        }
 
         return status switch
         {
@@ -563,10 +579,6 @@ public class GitHubDirectorySyncService
                 + "请在知识库里连接 GitHub 账号后重试。",
             System.Net.HttpStatusCode.Unauthorized =>
                 "GitHub 授权已失效，请在知识库里重新连接 GitHub 账号后再试。",
-            System.Net.HttpStatusCode.Forbidden when body.Contains("rate limit", StringComparison.OrdinalIgnoreCase) =>
-                authed
-                    ? "GitHub 调用频率已达上限（已使用授权额度），请稍后重试。"
-                    : "GitHub 匿名调用频率已达上限（每小时 60 次）。请在知识库里连接 GitHub 账号，额度会提到每小时 5000 次。",
             System.Net.HttpStatusCode.Forbidden =>
                 $"GitHub 拒绝访问 {target}：请确认该 GitHub 账号对此仓库有读取权限。",
             _ => $"GitHub API 返回 {status}: {body}",

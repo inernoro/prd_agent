@@ -245,6 +245,9 @@ function ConnectStep({ onConnected, onError }: {
     setStarting(true);
     onError('');
     const res = await startGitHubDeviceFlow();
+    // 发起请求在路上时向导被关掉：清理函数比这两个定时器先跑，之后再建就没人清了，
+    // 计时器会连同整个闭包一直留着。轮询那侧的守卫只在第一次请求回来后才生效，够不到这一段。
+    if (abandonedRef.current) return;
     setStarting(false);
     if (!res.success) {
       onError(res.error?.message ?? '发起 GitHub 授权失败', res.error?.code);
