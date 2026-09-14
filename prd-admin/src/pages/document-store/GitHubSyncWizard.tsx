@@ -92,6 +92,14 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
 
   useEffect(() => { void loadAuth(); }, [loadAuth]);
 
+  // ESC 关闭（frontend-modal 的硬性清单之一）。只用键盘的人否则没有退出这个全屏向导的办法——
+  // 现有出口只有标题栏的关闭按钮和点蒙版，两者都要鼠标。
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+
   // frontend-modal.md 三条物理约束：尺寸走 inline style、createPortal 挂 body、滚动容器 minHeight:0
   const wizard = (
     <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
@@ -802,7 +810,9 @@ function DoneStep({ result, repoFullName, branch, onClose }: {
 
       <p className="text-[12px] leading-[1.7] mb-3" style={{ color: 'var(--text-muted)' }}>
         后台每隔两分钟扫一批待同步的条目，每批最多 20 个——目录勾得多时会排队分几批陆续开始，
-        之后每天自动同步一次。同步期间条目显示「同步中」，拉完就能在文件树里看到这些文档。
+        之后每天自动同步一次。
+        <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>页面不会自动刷新</span>
+        ：过一会儿手动刷新一下，就能看到条目从「同步中」变成拉好的文档。
       </p>
 
       <div className="rounded-[12px] overflow-hidden mb-3" style={{ border: '1px solid var(--border-subtle)' }}>

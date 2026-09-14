@@ -433,6 +433,12 @@ public class GitHubDirectorySyncService
 
             return true;
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 服务停机不是「这个文件拉不下来」。吞成失败的话，父条目会带着 HasFailures 收尾、
+            // 写一条用户看得见的同步错误并推进 LastSyncAt——按天调度于是要等到次日才再碰它。
+            throw;
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[GitHubSync] Failed to sync file {Path}", file.Path);
