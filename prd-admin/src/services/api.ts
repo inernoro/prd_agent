@@ -486,7 +486,6 @@ export const api = {
       status: () => '/api/github/auth/status',
       deviceStart: () => '/api/github/auth/device/start',
       devicePoll: () => '/api/github/auth/device/poll',
-      disconnect: () => '/api/github/auth/connection',
     },
     repositories: (query?: string, page?: number, pageSize?: number) => {
       const q = new URLSearchParams();

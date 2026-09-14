@@ -86,10 +86,6 @@ export function pollGitHubDeviceFlow(flowToken: string) {
   );
 }
 
-export function disconnectGitHub() {
-  return apiRequest<{ removed: boolean }>(api.github.auth.disconnect(), { method: 'DELETE' });
-}
-
 export function listGitHubRepositories(query?: string, page = 1, pageSize = 30) {
   return apiRequest<{ items: GitHubRepository[]; page: number; pageSize: number; hasMore: boolean }>(
     api.github.repositories(query, page, pageSize),
