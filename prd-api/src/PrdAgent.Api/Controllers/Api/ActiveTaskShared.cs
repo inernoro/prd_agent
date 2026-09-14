@@ -268,7 +268,7 @@ public static class ActiveTaskShared
         {
             var active = g.FirstOrDefault(x => x.State == ActiveTaskState.Active);
             var standby = g.Where(x => x.State == ActiveTaskState.Standby).OrderBy(x => x.OrderKey).ToList();
-            var name = g.First().UserDisplayName ?? await ResolveDisplayNameAsync(_db, g.Key, ct);
+            var name = g.First().UserDisplayName ?? await ResolveDisplayNameAsync(db, g.Key, ct);
             var standbyMinutes = standby.Sum(x => x.EstimateMinutes);
             var fuelLevel = ActiveTaskConclusion.FuelLevel(standby.Count, settings.LowFuelThreshold);
 
