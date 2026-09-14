@@ -16,7 +16,7 @@
  * 内容 SSOT：src/lib/bookshelf/catalog.ts（书目）、exams.ts（考题）。
  * 个人进度落 localStorage（见 stores/bookshelfStore.ts 的边界说明）。
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
@@ -27,6 +27,7 @@ import { QUESTIONS, questionsOf } from '@/lib/bookshelf/exams';
 import { stanceOf, countsAsPassed, examEntryLabel } from '@/lib/bookshelf/examContext';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
 import { useIsMobile } from '@/hooks/useBreakpoint';
+import { useReducedMotion } from '@/lib/useReducedMotion';
 import { BookshelfMobile } from './mobile/BookshelfMobile';
 import type { Track, Volume, BookEntry } from '@/lib/bookshelf/types';
 import { ExamDialog } from './ExamDialog';
@@ -150,6 +151,26 @@ function BookshelfDesktop() {
     const next = new URLSearchParams(searchParams);
     next.set('vol', id);
     setSearchParams(next, { replace: true });
+  }
+
+  /*
+   * 桌面档点痛点卡/卷卡之后，必须把人带到书目区。
+   *
+   * 2026-09-14 用户点了「去 懂业务 →」后反馈「除了变了颜色，没有效果呢」——
+   * 真正变化的书目区在下面两屏之外，屏幕上确实什么都没动。卡片上写着「去」，
+   * 却只换了个选中色，这是拿视觉反馈冒充导航（miduo-review-lens 镜头 4：
+   * 变化必须可感知；expectation-management：点了要看得见发生了什么）。
+   *
+   * 手机档没这个问题——那边点进去是另一屏。
+   */
+  const booksRef = useRef<HTMLElement>(null);
+  const reducedMotion = useReducedMotion();
+  function gotoVolume(id: string) {
+    setActiveVolumeId(id);
+    booksRef.current?.scrollIntoView({
+      behavior: reducedMotion ? 'auto' : 'smooth',
+      block: 'start',
+    });
   }
 
   // 别人改地址栏或从另一条深链跳进来时，跟着 URL 走
@@ -363,7 +384,7 @@ function BookshelfDesktop() {
               <button
                 key={r.quote}
                 type="button"
-                onClick={() => setActiveVolumeId(r.volumeId)}
+                onClick={() => gotoVolume(r.volumeId)}
                 className="text-left p-4 sm:p-5 rounded-[18px] sm:rounded-[22px] transition-transform duration-150 hover:-translate-y-0.5"
                 style={{
                   background: 'var(--bg-card)',
@@ -412,7 +433,7 @@ function BookshelfDesktop() {
               <button
                 key={vol.id}
                 type="button"
-                onClick={() => setActiveVolumeId(vol.id)}
+                onClick={() => gotoVolume(vol.id)}
                 className="text-left p-4 rounded-[20px] transition-transform duration-150 hover:-translate-y-0.5"
                 style={{
                   background: 'var(--bg-card)',
@@ -444,7 +465,12 @@ function BookshelfDesktop() {
       </section>
 
       {/* ── 选中卷的书目 ── */}
-      <section className="mt-6 p-6 sm:p-7 rounded-[28px]" style={{ background: 'var(--bg-card)', border: '4px solid var(--shelf-edge)', boxShadow: `8px 8px 0 ${activeSkin.fg}` }}>
+      <section
+        ref={booksRef}
+        // scroll-mt：滚到这里时顶上留 24px，别让标题贴着视口上沿
+        className="mt-6 p-6 sm:p-7 rounded-[28px] scroll-mt-6"
+        style={{ background: 'var(--bg-card)', border: '4px solid var(--shelf-edge)', boxShadow: `8px 8px 0 ${activeSkin.fg}` }}
+      >
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div className="min-w-0">
             <div className="text-[12px] font-bold" style={{ color: 'var(--text-muted)' }}>书目 · 按先读哪本排序</div>

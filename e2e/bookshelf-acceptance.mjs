@@ -87,6 +87,30 @@ for (const theme of ['dark', 'light']) {
   await page.screenshot({ path: `${OUT}/01-landing-${theme}.png` });
 
   // 痛点卡必须落到各自对应的卷 —— 全都跳同一处等于药方表没接线。
+  /*
+   * 点了痛点卡必须真的「去」到书目区。
+   * 2026-09-14 用户在桌面档点「去 懂业务 →」后反馈「除了变了颜色，没有效果呢」——
+   * 书目区在下面两屏之外，屏幕上确实什么都没动。
+   * 判据量的是**书目区在不在视口里**，不是「有没有报错」：源码守卫只能证明
+   * scrollIntoView 写着，证明不了它真的滚到了。
+   */
+  {
+    const painCard = page.locator('button', { hasText: '不熟业务的人被推去出方案' }).first();
+    await painCard.scrollIntoViewIfNeeded();
+    const booksSel = 'section.scroll-mt-6';
+    const before = await page.locator(booksSel).first().evaluate((el) => el.getBoundingClientRect().top);
+    await painCard.click();
+    await page.waitForTimeout(1200); // smooth 滚动要跑完
+    const after = await page.locator(booksSel).first().evaluate((el) => el.getBoundingClientRect().top);
+    const vh = await page.evaluate(() => window.innerHeight);
+    step['点痛点卡后书目区进入视口'] = after >= -4 && after < vh * 0.5;
+    step['点痛点卡后页面真的动了'] = Math.abs(after - before) > 40;
+    // 书名取 catalog 里卷三的首本，逐字对齐（不是「领域驱动设计」这种截断猜测）
+    step['滚到的是那一卷的书目'] = await page.locator(booksSel).first()
+      .locator('text=领域驱动设计：软件核心复杂性应对之道').first().isVisible().catch(() => false);
+    await page.screenshot({ path: `${OUT}/02d-pain-goto-${theme}.png` });
+  }
+
   await page.locator('button', { hasText: '评审派给了看不出问题的人' }).first().click();
   await page.waitForTimeout(700);
   step['痛点跳到卷七'] = await page.locator('text=上台面').first().isVisible();

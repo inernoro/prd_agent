@@ -159,6 +159,35 @@ describe('手机档版式只走 appStoreTokens（防第二屏漂移）', () => {
   });
 });
 
+describe('桌面档点了要真的「去」', () => {
+  it('痛点卡与卷卡都走 gotoVolume，不是只换选中色', () => {
+    const src = read('BookshelfPage.tsx');
+    /*
+     * 2026-09-14：卡片上写着「去 懂业务 →」，点下去只把选中态换了个颜色——
+     * 真正变化的书目区在下面两屏之外，屏幕上什么都没动。
+     * 这条接线删掉不会有任何红灯：页面照常渲染，选中色照常变，只是「去」变成了空话。
+     */
+    expect(src, '痛点卡不该只 setActiveVolumeId，要带用户去书目区')
+      .not.toContain('onClick={() => setActiveVolumeId(r.volumeId)}');
+    expect(src, '卷卡同上')
+      .not.toContain('onClick={() => setActiveVolumeId(vol.id)}');
+    expect(src).toContain('onClick={() => gotoVolume(r.volumeId)}');
+    expect(src).toContain('onClick={() => gotoVolume(vol.id)}');
+
+    // gotoVolume 必须真的滚过去，而不是换了个名字的同一件事
+    const fn = src.slice(src.indexOf('function gotoVolume'), src.indexOf('function gotoVolume') + 400);
+    expect(fn, 'gotoVolume 里没有 scrollIntoView，改名不等于修好').toContain('scrollIntoView');
+    expect(fn, '滚动目标必须是书目区的 ref').toContain('booksRef');
+    // 尊重系统的「减少动态效果」偏好，不硬写 smooth
+    expect(fn, '动效要看系统偏好，不许写死 smooth').toContain('reducedMotion');
+  });
+
+  it('书目区挂了 ref，滚动有落点', () => {
+    const src = read('BookshelfPage.tsx');
+    expect(src).toContain('ref={booksRef}');
+  });
+});
+
 describe('桌面档没有被改动', () => {
   it('桌面仍保留粗野骨架（墨边 + 硬投影 + 网格）', () => {
     const src = read('BookshelfPage.tsx');
