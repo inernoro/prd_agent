@@ -31,6 +31,7 @@ docs:
   spec.marketplace: "海鲜市场产品规格 · 规格"
   spec.platform.app-registry: "应用注册中心协议 · 规格"
   spec.platform.llm-gateway.test-matrix: "LLM 网关测试矩阵 · 规格"
+  spec.platform.open-design.sealed-acceptance: "四大场景密封验收清单 · 规格"
   spec.platform.short-links: "统一短链系统 · 规格"
   spec.prd: "PRD Agent 产品需求文档 · 规格"
   spec.prd-admin.recording-design-demo-request: "给设计方的画板请求（录音交付页）"
