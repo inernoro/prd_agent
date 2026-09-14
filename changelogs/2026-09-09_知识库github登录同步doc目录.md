@@ -35,6 +35,7 @@
 | fix | prd-admin | GitHub 的错误指引不再被用户文案净化器吃成通用兜底：限额重置时刻、看不见的仓库名等关键信息原样到达用户；净化器拆成「硬诊断」与「像标识符」两张名单，仓库名含 model / 目录路径含 api 不再被误判成内部诊断，而 HTTP 码、URL、凭据词对同一批码照样硬拒 |
 | fix | prd-admin | GitHub 401 不再触发后台登出：第三方凭据失效与会话失效分开判 |
 | fix | prd-admin | GitHub 连接失效给出重连出口（错误条内重连 + 标题栏换个账号），不再卡在向导中间；「换个账号」不再先删旧连接——授权成功才覆盖，中途放弃不会把已有订阅和其它 GitHub 功能一起弄成未连接 |
+| fix | prd-api | 断开连接的删除脱离 HTTP 连接（CancellationToken.None），用户点完就关页面不会让 token 密文半路留在库里 |
 | fix | prd-admin | 向导标题栏补「断开连接」（二次确认后才真删），兑现「令牌加密保存在你名下，随时可以断开」这句承诺——此前只有不做删除的「换个账号」，删除端点在前端没有任何入口 |
 | fix | prd-admin | 管理员未配置 GitHub 应用时，向导当场说明而不是给一个点了必然失败的按钮 |
 | fix | prd-admin | 仓库列表支持加载更多，且搜索词变更后作废在途的那一发，列表不再混进不匹配的仓库 |
@@ -48,7 +49,7 @@
 | fix | prd-api | 停机时的取消在逐文件同步那层也原样抛出，不再被吞成「这个文件拉不下来」 |
 | fix | prd-admin | 关闭向导后在途的授权请求与轮询一律停，不再泄漏计时器、也不会在用户离开后落连接并弹提示 |
 | polish | prd-admin | GitHub 同步向导的目录树默认折叠，只展开通往已勾选目录的链路，几百个目录不再一次摊平 |
-| polish | prd-admin | GitHub 同步向导按前端模态框硬约束改造：createPortal 挂 body、尺寸走 inline style、滚动容器 minHeight 0 |
+| polish | prd-admin | GitHub 同步向导按前端模态框硬约束改造：createPortal 挂 body、尺寸走 inline style、滚动容器 minHeight 0 + inline overflowY + overscrollBehavior contain（滚到底不再把身后的知识库页面带着一起滚） |
 | test | prd-api | 新增凭据判据单测：连接断开 / token 失效 / 密文解不开一律阻断，不得退回匿名；已撤销的连接不许盖到手贴订阅上 |
 | test | prd-admin | 新增订阅入口与错误文案回归锁，含「挂通用码会退化」的对照用例 |
 | rule | platform | 判据与接线纪律新增形状 10「静默降级，把可诊断的失败变成不可诊断的失败」，并补回自查清单一直漏登的形状 5 |

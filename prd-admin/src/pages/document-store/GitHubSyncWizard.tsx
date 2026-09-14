@@ -361,7 +361,7 @@ function ConnectStep({ oauthConfigured, replacingLogin, onConnected, onError }: 
   const mmss = `${String(Math.floor(remaining / 60)).padStart(2, '0')}:${String(remaining % 60).padStart(2, '0')}`;
 
   return (
-    <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
+    <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
       <p className="text-[12px] leading-[1.7] mb-4" style={{ color: 'var(--text-muted)' }}>
         连接你自己的 GitHub 账号后，就能同步你有权限的仓库（含私有仓）。授权只对你生效，
         令牌加密保存在你名下，随时可以断开。
@@ -525,8 +525,11 @@ function RepoStep({ onSelected, onError }: {
           className="prd-field w-full h-9 pl-8 pr-3 rounded-[10px] text-[13px] outline-none" />
       </div>
 
-      <div className="flex-1 overflow-y-auto rounded-[12px]"
-        style={{ border: '1px solid var(--border-subtle)', minHeight: 0, maxHeight: '46vh' }}>
+      <div className="flex-1 rounded-[12px]"
+        style={{
+          border: '1px solid var(--border-subtle)', minHeight: 0, maxHeight: '46vh',
+          overflowY: 'auto', overscrollBehavior: 'contain',
+        }}>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-12">
             <MapSpinner size={13} />
@@ -766,8 +769,11 @@ function DirectoriesStep({ storeId, repo, branch, onBack, onDone, onCommitted, o
         </Button>
       </div>
 
-      <div className="flex-1 overflow-y-auto rounded-[12px] py-1"
-        style={{ border: '1px solid var(--border-subtle)', minHeight: 0, maxHeight: '46vh' }}>
+      <div className="flex-1 rounded-[12px] py-1"
+        style={{
+          border: '1px solid var(--border-subtle)', minHeight: 0, maxHeight: '46vh',
+          overflowY: 'auto', overscrollBehavior: 'contain',
+        }}>
         {tree.length === 0 ? (
           <div className="py-12 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>没有匹配的目录</div>
         ) : (
@@ -870,7 +876,7 @@ function DoneStep({ result, repoFullName, branch, onClose }: {
   onClose: () => void;
 }) {
   return (
-    <div className="flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
+    <div className="flex-1" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
       <div className="flex items-center gap-2 mb-3">
         <CheckCircle2 size={16} style={{ color: 'var(--accent-fg-success)' }} />
         <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>

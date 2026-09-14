@@ -122,10 +122,13 @@ public sealed class GitHubConnectController : ControllerBase
 
     /// <summary>断开连接（删除本用户的 token；已建立的同步订阅会在下次同步时报"需要重新授权"）。</summary>
     [HttpDelete("auth/connection")]
-    public async Task<IActionResult> Disconnect(CancellationToken ct)
+    public async Task<IActionResult> Disconnect()
     {
         var userId = this.GetRequiredUserId();
-        var removed = await _connections.DisconnectAsync(userId, ct);
+        // 删除故意不接请求的 CancellationToken：用户点完「断开」就关页面是常见操作，
+        // 把它传下去会让删除在半路被取消，token 密文留在库里——用户以为断了，其实没断
+        // （server-authority：客户端断开不取消服务端已经开始的写入）。
+        var removed = await _connections.DisconnectAsync(userId, CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new { removed }));
     }
 

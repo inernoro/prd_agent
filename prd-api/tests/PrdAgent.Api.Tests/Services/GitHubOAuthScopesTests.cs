@@ -20,10 +20,24 @@ public class GitHubOAuthScopesTests
     [InlineData("   ")]
     public void 没配或配成空白时回落到默认scope(string? configured)
     {
-        var scopes = GitHubOAuthService.ResolveScopes(configured);
+        // 按逗号切开逐个比对，不做子串匹配：`public_repo` 里也含 "repo"，
+        // 而它恰恰**不给**私有仓权限——子串断言会在有人把默认值换成 public_repo 时
+        // 保持绿色，等于把这条私有仓承诺的守卫废掉（形状 4a）。
+        var granted = GitHubOAuthService.ResolveScopes(configured)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-        scopes.ShouldContain("repo", customMessage: "缺了 repo，私有仓会一律 404");
-        scopes.ShouldContain("read:user", customMessage: "缺了 read:user，拿不到连接账号的信息");
+        granted.ShouldContain("repo", customMessage: "缺了完整的 repo scope，私有仓会一律 404");
+        granted.ShouldContain("read:user", customMessage: "缺了 read:user，拿不到连接账号的信息");
+    }
+
+    [Fact]
+    public void public_repo不算数——它不给私有仓权限()
+    {
+        // 这条是上一条的对照：证明那个断言真的能红，而不是被子串匹配蒙混过去。
+        var granted = GitHubOAuthService.ResolveScopes("public_repo,read:user")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        granted.ShouldNotContain("repo");
     }
 
     [Fact]
