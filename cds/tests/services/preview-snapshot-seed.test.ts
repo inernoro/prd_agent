@@ -164,6 +164,21 @@ describe('播完之后，页面拿到的形状要对', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
+  it('「起过预览」这个事实要活着搬过来，不能在路上丢掉', () => {
+    // 真实发生过：快照里 70 条有 69 条起过预览，播种时把 services 清空（免得列表
+    // 显示一排点不开的「运行中」），而那三十多条分支的部署事实恰恰只记在 services 上、
+    // 没有部署时刻，于是事实整个丢了，页面显示「没起预览 39」这种假数。
+    const snapDeployed = SNAP.branches.filter((b: { deployed: boolean }) => b.deployed).length;
+    const o = buildPipelineOverview(
+      service.getProjects(), service.getAllBranches(), [], service.listAcceptanceReports(null), {},
+    );
+    const undeployed = o.total.changes - o.total.deployed;
+    const snapUndeployed = SNAP.branches.length - snapDeployed;
+    // 演示项目那 5 条也在库里（其中有没起过预览的），所以给一点余量，但不能差几十条。
+    expect(undeployed, `没起预览 ${undeployed} 条，快照里只有 ${snapUndeployed} 条`)
+      .toBeLessThanOrEqual(snapUndeployed + 5);
+  });
+
   it('存量总览有真实量级，不再是个位数', () => {
     // 搬这批数据的全部理由就是「5 条看不出形状」。跑一遍真聚合，确认量级真的上来了。
     const o = buildPipelineOverview(

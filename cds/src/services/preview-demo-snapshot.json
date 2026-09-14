@@ -158,7 +158,7 @@
    "branch": "codex/supplier-center-db-migration",
    "createdAgo": 7.547,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 7.547
   },
   {
    "id": "snap-b15",
@@ -206,7 +206,7 @@
    "branch": "codex/assistant-mobile-ui-polish-20260904",
    "createdAgo": 5.68,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 5.68
   },
   {
    "id": "snap-b21",
@@ -214,7 +214,7 @@
    "branch": "codex/merge-content-marketing-main-20260904",
    "createdAgo": 5.639,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 5.639
   },
   {
    "id": "snap-b22",
@@ -222,7 +222,7 @@
    "branch": "main",
    "createdAgo": 5.638,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 5.638
   },
   {
    "id": "snap-b23",
@@ -246,7 +246,7 @@
    "branch": "claude/org-management-logic-ui-alignment-y80l3r",
    "createdAgo": 4.671,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 4.671
   },
   {
    "id": "snap-b26",
@@ -278,7 +278,7 @@
    "branch": "codex/content-random-redpacket",
    "createdAgo": 2.613,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 2.613
   },
   {
    "id": "snap-b30",
@@ -286,7 +286,7 @@
    "branch": "dev-combo-gift",
    "createdAgo": 2.572,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 2.572
   },
   {
    "id": "snap-b31",
@@ -294,7 +294,7 @@
    "branch": "codex/combo-gift-admin-reviewed-pr",
    "createdAgo": 2.563,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 2.563
   },
   {
    "id": "snap-b32",
@@ -302,7 +302,7 @@
    "branch": "codex/combo-gift-review-fixes",
    "createdAgo": 2.536,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 2.536
   },
   {
    "id": "snap-b33",
@@ -318,7 +318,7 @@
    "branch": "codex/combo-gift-reward-dialog",
    "createdAgo": 2.437,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 2.437
   },
   {
    "id": "snap-b35",
@@ -326,7 +326,7 @@
    "branch": "codex/combo-gift-edit-async-guards",
    "createdAgo": 2.43,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 2.43
   },
   {
    "id": "snap-b36",
@@ -334,7 +334,7 @@
    "branch": "codex/combo-gift-single-table-ui",
    "createdAgo": 2.408,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 2.408
   },
   {
    "id": "snap-b37",
@@ -342,7 +342,7 @@
    "branch": "codex/combo-gift-pr57-fixes",
    "createdAgo": 1.901,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.901
   },
   {
    "id": "snap-b38",
@@ -350,7 +350,7 @@
    "branch": "meeting-gift",
    "createdAgo": 1.885,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.885
   },
   {
    "id": "snap-b39",
@@ -358,7 +358,7 @@
    "branch": "dev-baier",
    "createdAgo": 1.871,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.871
   },
   {
    "id": "snap-b40",
@@ -366,7 +366,7 @@
    "branch": "codex/combo-gift-dev-baier",
    "createdAgo": 1.852,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.852
   },
   {
    "id": "snap-b41",
@@ -374,7 +374,7 @@
    "branch": "codex/wecom-gift-dev-baier-20260908",
    "createdAgo": 1.69,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.69
   },
   {
    "id": "snap-b42",
@@ -382,7 +382,7 @@
    "branch": "codex/combo-gift-demo-ui",
    "createdAgo": 1.681,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.681
   },
   {
    "id": "snap-b43",
@@ -390,7 +390,7 @@
    "branch": "codex/combo-gift-admin-feedback",
    "createdAgo": 1.648,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.648
   },
   {
    "id": "snap-b44",
@@ -398,7 +398,7 @@
    "branch": "fix/sales-area",
    "createdAgo": 1.599,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.599
   },
   {
    "id": "snap-b45",
@@ -422,7 +422,7 @@
    "branch": "codex/combo-gift-reward-filter-memory",
    "createdAgo": 1.529,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.529
   },
   {
    "id": "snap-b48",
@@ -446,7 +446,7 @@
    "branch": "codex/restore-award-pending-filters",
    "createdAgo": 1.508,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.508
   },
   {
    "id": "snap-b51",
@@ -454,7 +454,7 @@
    "branch": "codex/fix-combo-gift-link-auth-message",
    "createdAgo": 1.502,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.502
   },
   {
    "id": "snap-b52",
@@ -462,7 +462,7 @@
    "branch": "codex/wecom-demo-form-20260908",
    "createdAgo": 1.463,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.463
   },
   {
    "id": "snap-b53",
@@ -470,7 +470,7 @@
    "branch": "codex/combo-gift-mini-code-dialog",
    "createdAgo": 1.461,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.461
   },
   {
    "id": "snap-b54",
@@ -494,7 +494,7 @@
    "branch": "codex/award-page-group-mode",
    "createdAgo": 1.433,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.433
   },
   {
    "id": "snap-b57",
@@ -502,7 +502,7 @@
    "branch": "codex/combo-gift-code-export-task",
    "createdAgo": 1.424,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.424
   },
   {
    "id": "snap-b58",
@@ -510,7 +510,7 @@
    "branch": "codex/combo-gift-visible-columns",
    "createdAgo": 1.389,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.389
   },
   {
    "id": "snap-b59",
@@ -518,7 +518,7 @@
    "branch": "codex/fix-combo-gift-redirect-type",
    "createdAgo": 1.378,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.378
   },
   {
    "id": "snap-b60",
@@ -526,7 +526,7 @@
    "branch": "codex/combo-gift-physical-products",
    "createdAgo": 1.354,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 1.354
   },
   {
    "id": "snap-b61",
@@ -550,7 +550,7 @@
    "branch": "codex/wecom-prize-ui-align-20260909",
    "createdAgo": 0.573,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 0.573
   },
   {
    "id": "snap-b64",
@@ -558,7 +558,7 @@
    "branch": "codex/fix-red-packet-initial-load",
    "createdAgo": 0.561,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 0.561
   },
   {
    "id": "snap-b65",
@@ -566,7 +566,7 @@
    "branch": "claude/knowledge-base-github-sync-76rjsp",
    "createdAgo": 0.514,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 0.514
   },
   {
    "id": "snap-b66",
@@ -574,7 +574,7 @@
    "branch": "codex/frontend-feedback-form-experience",
    "createdAgo": 0.502,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 0.502
   },
   {
    "id": "snap-b67",
@@ -582,7 +582,7 @@
    "branch": "codex/third-party-system-management",
    "createdAgo": 0.493,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 0.493
   },
   {
    "id": "snap-b68",
@@ -590,7 +590,7 @@
    "branch": "codex/fix-wecom-code-type-ui-20260909",
    "createdAgo": 0.427,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 0.427
   },
   {
    "id": "snap-b69",
@@ -598,7 +598,7 @@
    "branch": "codex/collab-enterprise-contact-coverage",
    "createdAgo": 0.395,
    "deployed": true,
-   "deployAgo": null
+   "deployAgo": 0.395
   }
  ],
  "reports": [
