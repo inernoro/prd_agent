@@ -21,6 +21,7 @@ import {
   GraduationCap,
   Image as ImageIcon,
   Landmark,
+  Library,
   Megaphone,
   Moon,
   Newspaper,
@@ -59,6 +60,9 @@ const APP_GRID: Array<{ key: string; title: string; route: string; Icon: LucideI
   { key: 'marketplace', title: '海鲜市场', route: '/marketplace', Icon: Store, accent: { from: '#3B7A75', to: AS_COLOR.teal } },
   { key: 'daily-post', title: '米多早报', route: '/daily-post', Icon: Newspaper, accent: { from: '#C8623A', to: AS_COLOR.orange } },
   { key: 'changelog', title: '更新中心', route: '/changelog', Icon: Megaphone, accent: { from: AS_COLOR.indigo, to: AS_COLOR.purple } },
+  // 藏书阁此前只在桌面「全部能力 · 底座」里，手机首页既没有它也没有搜索框 ——
+  // 手机用户只能靠别人发链接进来（2026-09-11 视觉验收记的 P1）。
+  { key: 'bookshelf', title: '藏书阁', route: '/bookshelf', Icon: Library, accent: { from: AS_COLOR.green, to: '#4E7E6A' } },
 ];
 
 /** 沉淀与档案：历史与个人资产类入口 */

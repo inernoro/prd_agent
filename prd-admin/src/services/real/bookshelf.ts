@@ -21,6 +21,8 @@ export interface ServerExamResult {
 
 export interface BookshelfProgressDto {
   readBookIds: string[];
+  /** 书 id → 一句话心得。旧记录没有这个字段 */
+  bookNotes?: Record<string, string>;
   examResults: Record<string, ServerExamResult>;
   updatedAt: string | null;
 }
@@ -30,6 +32,8 @@ export interface TeamMemberRow {
   /** 查不到用户时后端返回 null，前端显示「未知成员」，不编造名字 */
   displayName: string | null;
   readCount: number;
+  /** 写下过几条心得 —— 比「已读 N 本」更能说明真读过。旧后端不返回这个字段 */
+  noteCount?: number;
   passedCount: number;
   passedVolumeIds: string[];
   updatedAt: string;
@@ -50,6 +54,7 @@ export function getMyBookshelfProgress() {
 
 export function saveMyBookshelfProgress(payload: {
   readBookIds: string[];
+  bookNotes: Record<string, string>;
   examResults: Record<string, {
     correct: number; total: number; passed: boolean;
     readAtExam: number; totalAtExam: number;

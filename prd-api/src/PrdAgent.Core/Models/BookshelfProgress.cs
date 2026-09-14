@@ -24,6 +24,13 @@ public class BookshelfProgress
     /// <summary>已读书目 id 列表（对应 catalog.ts 的 BookEntry.id）</summary>
     public List<string> ReadBookIds { get; set; } = new();
 
+    /// <summary>
+    /// 书 id → 一句话心得。藏书阁里唯一一个「学习」动作：
+    /// 「已读」只是自我声明，写下「我打算在哪用它」才是真读过的痕迹。
+    /// 不设门槛，写不写都不影响标已读与考试。
+    /// </summary>
+    public Dictionary<string, string> BookNotes { get; set; } = new();
+
     /// <summary>每卷的最好成绩，key = 卷 id（对应 catalog.ts 的 Volume.id）</summary>
     public Dictionary<string, BookshelfExamResult> ExamResults { get; set; } = new();
 

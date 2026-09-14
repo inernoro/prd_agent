@@ -22,6 +22,9 @@ namespace PrdAgent.Api.Controllers.Api;
 [Authorize]
 public class BookshelfController : ControllerBase
 {
+    /// <summary>一句话心得的上限。够写一句「我打算在哪用它」，不够写读书报告——这是有意的。</summary>
+    private const int NoteMaxLength = 200;
+
     private readonly MongoDbContext _db;
     private readonly ILogger<BookshelfController> _logger;
 
@@ -40,6 +43,7 @@ public class BookshelfController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             readBookIds = doc?.ReadBookIds ?? new List<string>(),
+            bookNotes = doc?.BookNotes ?? new Dictionary<string, string>(),
             examResults = ToResultMap(doc),
             updatedAt = doc?.UpdatedAt,
         }));
@@ -87,9 +91,21 @@ public class BookshelfController : ControllerBase
             .Distinct()
             .ToList();
 
+        // 心得整包覆盖（它就是用户手上那份，没有「取更好的那次」这种语义）。
+        // 清洗三件事：去掉空白条、砍掉超长文本、丢掉没有书 id 的条目——
+        // 这是自由文本入库，前端说什么都不能直接信。
+        var notes = (req.BookNotes ?? new Dictionary<string, string>())
+            .Where(kv => !string.IsNullOrWhiteSpace(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value))
+            .ToDictionary(
+                kv => kv.Key.Trim(),
+                kv => kv.Value.Trim().Length > NoteMaxLength
+                    ? kv.Value.Trim()[..NoteMaxLength]
+                    : kv.Value.Trim());
+
         var update = Builders<BookshelfProgress>.Update
             .Set(x => x.UserId, userId)
             .Set(x => x.ReadBookIds, readIds)
+            .Set(x => x.BookNotes, notes)
             .Set(x => x.ExamResults, merged)
             .Set(x => x.UpdatedAt, now)
             .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
@@ -99,7 +115,7 @@ public class BookshelfController : ControllerBase
             x => x.UserId == userId, update, new UpdateOptions { IsUpsert = true });
 
         return Ok(ApiResponse<object>.Ok(
-            new { readBookIds = readIds, examResults = ToPlainMap(merged), updatedAt = now }));
+            new { readBookIds = readIds, bookNotes = notes, examResults = ToPlainMap(merged), updatedAt = now }));
     }
 
     /// <summary>
@@ -128,6 +144,8 @@ public class BookshelfController : ControllerBase
                 // 查不到用户（离职清理、脏数据）时不塞假名字，前端按 null 显示「未知成员」
                 displayName = nameOf.TryGetValue(p.UserId, out var n) ? n : null,
                 readCount = p.ReadBookIds.Count,
+                // 写下过几条心得。「已读」是自我声明，这个数才说明真读进去了。
+                noteCount = p.BookNotes.Count(kv => !string.IsNullOrWhiteSpace(kv.Value)),
                 // 通关口径与前端 examContext.countsAsPassed 一致：读过 + 通过。
                 // 裸考（交卷时一本没读）单独计——否则读完整卷的人和没读的人在看板上长得一样，这个数就废了。
                 passedCount = p.ExamResults.Values.Count(r => r.Passed && r.ReadAtExam > 0),
@@ -187,6 +205,8 @@ public class BookshelfController : ControllerBase
 public class SaveBookshelfProgressRequest
 {
     public List<string>? ReadBookIds { get; set; }
+    /// <summary>书 id → 一句话心得。整包覆盖，服务端会清洗空白与超长。</summary>
+    public Dictionary<string, string>? BookNotes { get; set; }
     public Dictionary<string, SaveBookshelfExamResult>? ExamResults { get; set; }
 }
 

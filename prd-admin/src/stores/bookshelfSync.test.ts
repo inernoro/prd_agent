@@ -30,7 +30,7 @@ beforeEach(() => {
   saveMock.mockReset();
   loadMock.mockReset();
   useBookshelfStore.setState({
-    readBookIds: [], examResults: {}, syncState: 'local', failedAttempts: 0,
+    readBookIds: [], bookNotes: {}, examResults: {}, syncState: 'local', failedAttempts: 0,
   });
 });
 afterEach(() => { vi.useRealTimers(); });
@@ -193,5 +193,44 @@ describe('成绩必须带着「当时读了几本」一起往返', () => {
     });
     await useBookshelfStore.getState().loadFromServer();
     expect(useBookshelfStore.getState().examResults['v-ai'].readAtExam).toBe(0);
+  });
+});
+
+describe('一句话心得同样要能往返', () => {
+  // 和成绩快照同一类风险：写进去读不回来，页面照常渲染、其它测试照常绿，
+  // 只有用户换台设备打开时才发现自己写的字没了。上次就漏了读方向，这次两头都钉住。
+  it('写方向：心得进快照', async () => {
+    saveMock.mockResolvedValue({ success: true, data: {} });
+    useBookshelfStore.getState().setNote('b-lamp', '下次接需求先答那三问再动手');
+    await settle();
+    const payload = saveMock.mock.calls[0][0] as { bookNotes: Record<string, string> };
+    expect(payload.bookNotes['b-lamp']).toBe('下次接需求先答那三问再动手');
+  });
+
+  it('读方向：服务端的心得落进 store', async () => {
+    loadMock.mockResolvedValue({
+      success: true,
+      data: { readBookIds: [], bookNotes: { 'b-lamp': '用在扫码那条链路上' }, examResults: {}, updatedAt: null },
+    });
+    await useBookshelfStore.getState().loadFromServer();
+    expect(useBookshelfStore.getState().bookNotes['b-lamp']).toBe('用在扫码那条链路上');
+  });
+
+  it('清空即删除，不留空串占位', async () => {
+    saveMock.mockResolvedValue({ success: true, data: {} });
+    useBookshelfStore.getState().setNote('b-lamp', '先写一句');
+    await settle();
+    useBookshelfStore.getState().setNote('b-lamp', '   ');
+    await settle();
+    expect('b-lamp' in useBookshelfStore.getState().bookNotes).toBe(false);
+  });
+
+  it('旧记录没有这个字段时按「还没写过」处理', async () => {
+    loadMock.mockResolvedValue({
+      success: true,
+      data: { readBookIds: [], examResults: {}, updatedAt: null },
+    });
+    await useBookshelfStore.getState().loadFromServer();
+    expect(useBookshelfStore.getState().bookNotes).toEqual({});
   });
 });

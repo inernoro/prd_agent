@@ -139,6 +139,10 @@ export function TeamBoard({ volumeSkin }: { volumeSkin: { fg: string; box: strin
                 <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-secondary)' }}>
                   已读 {m.readCount} 本
                 </span>
+                {/* 「已读」是自己点的勾，「心得」是真写下过的字 —— 后者才说明读进去了 */}
+                <span className="text-[12.5px] font-bold" style={{ color: (m.noteCount ?? 0) > 0 ? 'var(--accent-fg-emerald)' : 'var(--text-muted)' }}>
+                  心得 {m.noteCount ?? 0} 条
+                </span>
                 <span className="text-[12.5px] font-bold" style={{ color: 'var(--text-secondary)' }}>
                   通关 {m.passedCount} / {VOLUMES.length} 卷
                 </span>

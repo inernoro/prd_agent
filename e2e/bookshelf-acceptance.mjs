@@ -105,6 +105,21 @@ for (const theme of ['dark', 'light']) {
 
   await page.screenshot({ path: `${OUT}/02-volume-expanded-${theme}.png` });
 
+  // 藏书阁此前只有「我点了已读」这个自我声明，一个勾证明不了读进去没有。
+  // 写一句「打算在哪用它」才是真痕迹 —— 入口、编辑、回显三步都要在。
+  const noteEntry = page.locator('button', { hasText: '写一句：打算在哪用它' }).first();
+  step['每本书有写一句的入口'] = (await noteEntry.count()) > 0;
+  await noteEntry.click();
+  await page.waitForTimeout(400);
+  await page.locator('textarea').first().fill('先用在这条主流程的评审清单上');
+  await page.locator('button', { hasText: '记下' }).first().click();
+  await page.waitForTimeout(600);
+  step['心得写完回显在书卡上'] =
+    (await page.locator('text=先用在这条主流程的评审清单上').first().isVisible().catch(() => false))
+    && (await page.locator('text=我的一句话').first().isVisible().catch(() => false));
+  step['顶部计数跟着涨'] = /心得\s*1/.test(await page.evaluate(() => document.body.innerText));
+  await page.screenshot({ path: `${OUT}/02c-book-note-${theme}.png` });
+
   // 一本没读时入口必须说自己是摸底 —— 「赴考/通关」那套关卡话术配上零门槛才是漏洞。
   step['没读时入口叫摸底不叫赴考'] =
     (await page.locator('button').filter({ hasText: '先摸个底' }).count()) > 0

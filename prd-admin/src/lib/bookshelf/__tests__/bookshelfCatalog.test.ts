@@ -148,6 +148,15 @@ describe('结业考题', () => {
     });
   });
 
+  // 每卷 3 题时，蒙对两题就及格（0.6 门槛下 3 题需对 2 题）——一次运气就能通关，
+  // 这套题也就失去了诊断价值。6 题起步才让「及格」代表一点东西。
+  it('每卷至少六道题，题量少到能靠运气通关就不算考', () => {
+    VOLUMES.forEach((v) => {
+      const n = questionsOf(v.id).length;
+      expect(n, `卷「${v.name}」只有 ${n} 道题，蒙对两道就及格了`).toBeGreaterThanOrEqual(6);
+    });
+  });
+
   it('每一卷都配了考题，没有考不了的卷', () => {
     VOLUMES.forEach((v) => {
       expect(questionsOf(v.id).length, `卷「${v.name}」没有考题`).toBeGreaterThanOrEqual(3);

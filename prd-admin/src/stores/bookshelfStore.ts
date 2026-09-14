@@ -51,6 +51,15 @@ export type SyncState = 'synced' | 'saving' | 'failed' | 'local';
 
 interface BookshelfState {
   readBookIds: string[];
+  /**
+   * 书 id → 一句话心得。
+   *
+   * 这是藏书阁里唯一一个「学习」动作。此前只有「我点了已读」这个自我声明——
+   * 一个勾证明不了任何事，看板上的「已读 N 本」也就跟着没有分量。
+   * 写下「我打算在哪用它」才是真读过的痕迹，也才是看板上真正值钱的东西。
+   * 不设门槛：不写照样能标已读、照样能考，但写了的人看板上看得出来。
+   */
+  bookNotes: Record<string, string>;
   examResults: Record<string, ExamResult>;
   syncState: SyncState;
   /** 连续失败次数，用于退避与文案分级 */
@@ -58,6 +67,8 @@ interface BookshelfState {
   loadFromServer: () => Promise<void>;
   toggleRead: (bookId: string) => void;
   isRead: (bookId: string) => boolean;
+  /** 写下或改写一句心得；传空串即删除这条 */
+  setNote: (bookId: string, note: string) => void;
   recordExam: (result: ExamResult) => void;
   /** 用户手动点「重试同步」 */
   retrySync: () => Promise<void>;
@@ -71,9 +82,14 @@ let pushTimer: ReturnType<typeof setTimeout> | null = null;
 /** 导出给测试用：让用例能确定性地等一次防抖窗口，而不是靠 sleep 猜。 */
 export const __pushDebounceMs = PUSH_DEBOUNCE_MS;
 
-function toPayload(readBookIds: string[], examResults: Record<string, ExamResult>) {
+function toPayload(
+  readBookIds: string[],
+  examResults: Record<string, ExamResult>,
+  bookNotes: Record<string, string>,
+) {
   return {
     readBookIds,
+    bookNotes,
     examResults: Object.fromEntries(
       Object.entries(examResults).map(([k, v]) => [
         k, {
@@ -90,10 +106,10 @@ export const useBookshelfStore = create<BookshelfState>()(
     (set, get) => {
       /** 立即推送当前快照。成功→synced，失败→failed（不回滚，只亮状态）。 */
       async function flush(): Promise<void> {
-        const { readBookIds, examResults } = get();
+        const { readBookIds, examResults, bookNotes } = get();
         set({ syncState: 'saving' });
         try {
-          const res = await saveMyBookshelfProgress(toPayload(readBookIds, examResults));
+          const res = await saveMyBookshelfProgress(toPayload(readBookIds, examResults, bookNotes));
           if (res.success) {
             set({ syncState: 'synced', failedAttempts: 0 });
           } else {
@@ -124,6 +140,7 @@ export const useBookshelfStore = create<BookshelfState>()(
 
       return {
         readBookIds: [],
+        bookNotes: {},
         examResults: {},
         syncState: 'local',
         failedAttempts: 0,
@@ -145,6 +162,8 @@ export const useBookshelfStore = create<BookshelfState>()(
             });
             set({
               readBookIds: res.data.readBookIds ?? [],
+              // 旧记录没有这个字段，按「还没写过」处理
+              bookNotes: res.data.bookNotes ?? {},
               examResults: results,
               syncState: 'synced',
               failedAttempts: 0,
@@ -163,6 +182,15 @@ export const useBookshelfStore = create<BookshelfState>()(
 
         isRead: (bookId) => get().readBookIds.includes(bookId),
 
+        setNote: (bookId, note) => {
+          const text = note.trim();
+          const next = { ...get().bookNotes };
+          if (text) next[bookId] = text;
+          else delete next[bookId];          // 清空即删除，不留空字符串占位
+          set({ bookNotes: next });
+          schedulePush();
+        },
+
         recordExam: (result) => {
           const prev = get().examResults[result.volumeId];
           if (prev && result.correct <= prev.correct) return;   // 只留更好的那次
@@ -176,7 +204,7 @@ export const useBookshelfStore = create<BookshelfState>()(
         },
 
         resetAll: () => {
-          set({ readBookIds: [], examResults: {} });
+          set({ readBookIds: [], bookNotes: {}, examResults: {} });
           schedulePush();
         },
       };
@@ -186,11 +214,12 @@ export const useBookshelfStore = create<BookshelfState>()(
       version: 1,
       // 只持久化数据，不持久化同步状态：syncState 是「此刻与服务端的关系」，
       // 存进 localStorage 再读回来就是过期的谎（上次是 synced，这次可能已经断网了）。
-      partialize: (s) => ({ readBookIds: s.readBookIds, examResults: s.examResults }),
+      partialize: (s) => ({ readBookIds: s.readBookIds, bookNotes: s.bookNotes, examResults: s.examResults }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         if (!Array.isArray(state.readBookIds)) state.readBookIds = [];
         if (!state.examResults || typeof state.examResults !== 'object') state.examResults = {};
+        if (!state.bookNotes || typeof state.bookNotes !== 'object') state.bookNotes = {};
       },
     },
   ),

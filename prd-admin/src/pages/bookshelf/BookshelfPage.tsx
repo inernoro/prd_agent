@@ -69,6 +69,15 @@ function matchTrack(b: BookEntry, f: TrackFilter) {
   return f === 'all' || b.track === f || b.track === 'both';
 }
 
+/*
+ * 手机档（< 640px）的版式纪律，对齐 lib/appStoreTokens 那套 iOS 骨架：
+ *   - 一条 20px 基准线（AS_SPACE.gutter）：页眉、标题、正文、卡片左边缘全部对齐到它
+ *   - 间距只在 8 的倍数上走（8 / 16 / 24 / 32），不出现 14、18、22 这种随手值
+ *   - 圆角三档且外大内小：容器 22 / 内部块 12 / pill 999（AS_SPACE 同档）
+ *   - 墨边与硬投影在小屏减半——粗野骨架在 390 宽会把每个块都放大成噪音
+ * 桌面档（sm: 以上）保持原来的粗野骨架不变，两套互不干扰。
+ * 「不整齐」的根因就是手机上每个元素各有各的边距、圆角和间距，没有共同的刻度。
+ */
 const EDGE = '3px solid var(--shelf-edge)';
 const EDGE_THIN = '2.5px solid var(--shelf-edge)';
 const HARD_SM = '0 4px 0 var(--shelf-edge)';
@@ -120,9 +129,15 @@ export default function BookshelfPage() {
   useEffect(() => { void loadProgress(); }, [loadProgress]);
   const examResults = useBookshelfStore((s) => s.examResults);
   const toggleRead = useBookshelfStore((s) => s.toggleRead);
+  const bookNotes = useBookshelfStore((s) => s.bookNotes);
+  const setNote = useBookshelfStore((s) => s.setNote);
+  // 正在编辑哪本书的心得（同时只开一个，避免一屏十个输入框）
+  const [notingBookId, setNotingBookId] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
 
   const visibleBooks = useMemo(() => ALL_BOOKS.filter((b) => matchTrack(b, track)), [track]);
   const readCount = visibleBooks.filter((b) => readBookIds.includes(b.id)).length;
+  const noteCount = visibleBooks.filter((b) => (bookNotes[b.id] ?? '').trim().length > 0).length;
   // 与看板同一口径：裸考通过不算通关（examContext.countsAsPassed 是唯一判据）
   const passedCount = VOLUMES.filter((v) => {
     const r = examResults[v.id];
@@ -141,13 +156,13 @@ export default function BookshelfPage() {
 
   return (
     <div
-      className="w-full min-h-full -m-4 sm:-m-6 p-4 sm:p-8"
+      className="w-full min-h-full -m-4 sm:-m-6 p-5 sm:p-8"
       style={{ background: GRID_BG, color: 'var(--text-primary)' }}
     >
       {/* ── 悬浮 navbar ── */}
-      <div className="flex justify-center">
+      <div className="flex justify-start sm:justify-center">
         <div
-          className="flex items-center gap-4 sm:gap-6 pl-5 pr-2 py-2 rounded-full flex-wrap justify-center"
+          className="w-full sm:w-auto flex items-center gap-3 sm:gap-6 px-4 sm:pl-5 sm:pr-2 py-2 rounded-[14px] sm:rounded-full flex-wrap justify-start sm:justify-center"
           style={{ background: 'var(--bg-card)', border: EDGE, boxShadow: HARD_SM }}
         >
           <span className="text-[15px] font-black tracking-[-0.02em]">公共藏书阁</span>
@@ -204,32 +219,38 @@ export default function BookshelfPage() {
       )}
 
       {/* ── Hero ── */}
-      <section className="mt-10 flex flex-col lg:flex-row gap-10 items-start lg:items-center">
+      <section className="mt-6 sm:mt-10 flex flex-col lg:flex-row gap-6 sm:gap-10 items-start lg:items-center">
         <div className="flex-1 min-w-0">
           <div
             className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-[12.5px] font-bold"
             style={{ background: 'var(--bg-card)', border: EDGE }}
           >
             <span className="w-2 h-2 rounded-full" style={{ background: VOLUME_SKIN[0].fg }} />
-            开发者 · 产品经理 · 已读 {readCount}/{visibleBooks.length} · 通关 {passedCount}/{VOLUMES.length}
+            开发者 · 产品经理 · 已读 {readCount}/{visibleBooks.length} · 心得 {noteCount} · 通关 {passedCount}/{VOLUMES.length}
           </div>
 
           <h1
-            className="mt-5 font-black leading-[1.0] tracking-[-0.04em]"
-            style={{ fontSize: 'clamp(40px, 6vw, 84px)' }}
+            className="mt-4 sm:mt-5 font-black leading-[1.0] tracking-[-0.04em]"
+            style={{ fontSize: 'clamp(34px, 6vw, 84px)' }}
           >
             看到我，<br />算你有福了
           </h1>
 
-          <p className="mt-5 max-w-[470px] text-[15px] font-medium leading-[1.72]" style={{ color: 'var(--text-secondary)' }}>
+          <p className="mt-4 sm:mt-5 max-w-[470px] text-[15px] font-medium leading-[1.72]" style={{ color: 'var(--text-secondary)' }}>
             七卷不按学科排，按你会在哪一步卡住排。每卷钉着一种团队真实卡住过的处境——从最像你的那条进去。
           </p>
         </div>
 
         {/* 当前卷卡 */}
         <div
-          className="w-full lg:w-[390px] shrink-0 p-6 rounded-[28px]"
-          style={{ background: 'var(--bg-card)', border: '4px solid var(--shelf-edge)', boxShadow: `8px 8px 0 ${activeSkin.fg}` }}
+          // 墨边与硬投影在手机档减半：同一套骨架在 390 宽会把每个块都放大成噪音。
+          // 走 Tailwind 断点而不是 JS 判断，省掉一次 matchMedia 与首帧闪烁。
+          className="w-full lg:w-[390px] shrink-0 p-5 sm:p-6 rounded-[22px] sm:rounded-[28px] border-[2.5px] sm:border-4 shadow-[4px_4px_0_var(--vol-skin)] sm:shadow-[8px_8px_0_var(--vol-skin)]"
+          style={{
+            background: 'var(--bg-card)',
+            borderColor: 'var(--shelf-edge)',
+            ['--vol-skin' as string]: activeSkin.fg,
+          }}
         >
           <div className="flex items-center justify-between mb-4">
             <div className="w-[50px] h-[50px] rounded-[15px] grid place-items-center" style={{ background: activeSkin.box, border: EDGE }}>
@@ -245,8 +266,11 @@ export default function BookshelfPage() {
           <div className="text-[12px] font-bold" style={{ color: 'var(--text-muted)' }}>
             卷{'一二三四五六七'[VOLUMES.findIndex((v) => v.id === activeVolume.id)]}
           </div>
-          <div className="text-[32px] font-black tracking-[-0.03em] leading-[1.1]">{activeVolume.name}</div>
-          <div className="mt-3.5 px-4 py-3 rounded-[15px]" style={{ background: 'var(--bg-base)', border: EDGE }}>
+          <div className="text-[26px] sm:text-[32px] font-black tracking-[-0.03em] leading-[1.1]">{activeVolume.name}</div>
+          <div
+            className="mt-4 px-4 py-3 rounded-[12px] sm:rounded-[15px] border-[2.5px] sm:border-[3px]"
+            style={{ background: 'var(--bg-base)', borderColor: 'var(--shelf-edge)' }}
+          >
             <div className="text-[13.5px] font-bold leading-[1.6]">{activeVolume.painQuote}</div>
           </div>
           <div className="mt-4 flex items-center gap-2.5">
@@ -301,7 +325,7 @@ export default function BookshelfPage() {
                 key={r.quote}
                 type="button"
                 onClick={() => setActiveVolumeId(r.volumeId)}
-                className="text-left p-5 rounded-[22px] transition-transform duration-150 hover:-translate-y-0.5"
+                className="text-left p-4 sm:p-5 rounded-[18px] sm:rounded-[22px] transition-transform duration-150 hover:-translate-y-0.5"
                 style={{
                   background: 'var(--bg-card)',
                   border: active ? '4px solid var(--shelf-edge)' : EDGE,
@@ -336,7 +360,7 @@ export default function BookshelfPage() {
           </h2>
         </div>
 
-        <div className="mt-7 grid gap-3 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
+        <div className="mt-6 sm:mt-7 grid gap-2 sm:gap-3 grid-cols-2 sm:grid-cols-4 xl:grid-cols-7">
           {VOLUMES.map((vol, i) => {
             const Icon = VOLUME_ICON_MAP[vol.icon] ?? BookOpen;
             const skin = VOLUME_SKIN[i % VOLUME_SKIN.length];
@@ -398,7 +422,7 @@ export default function BookshelfPage() {
             return (
               <div
                 key={b.id}
-                className="flex gap-3.5 items-start p-4 rounded-[16px]"
+                className="flex gap-3.5 items-start p-4 rounded-[14px] sm:rounded-[16px]"
                 style={{ background: read ? 'var(--bg-base)' : 'transparent', border: EDGE_THIN }}
               >
                 <button
@@ -422,6 +446,60 @@ export default function BookshelfPage() {
                   </div>
                   <p className="mt-2 text-[13px] font-medium leading-[1.68]" style={{ color: 'var(--text-secondary)' }}>{b.why}</p>
                   <p className="mt-1.5 text-[12.5px] font-bold leading-[1.6]" style={{ color: activeSkin.fg }}>读完你能：{b.takeaway}</p>
+
+                  {/*
+                    唯一的「学习」动作。在此之前藏书阁只有「我点了已读」这个自我声明——
+                    一个勾证明不了什么，看板上的「已读 N 本」也就没有分量。
+                    写一句「打算在哪用它」才是真读过的痕迹。不设门槛：不写照样能标已读、能考。
+                  */}
+                  {notingBookId === b.id ? (
+                    <div className="mt-2.5">
+                      <textarea
+                        autoFocus
+                        value={noteDraft}
+                        maxLength={200}
+                        onChange={(e) => setNoteDraft(e.target.value)}
+                        placeholder="打算在哪用它？一句话就够。"
+                        className="w-full px-3 py-2 text-[12.5px] font-medium leading-[1.6] rounded-[12px] resize-none outline-none"
+                        rows={2}
+                        style={{ background: 'var(--bg-base)', border: EDGE_THIN, color: 'var(--text-primary)' }}
+                      />
+                      <div className="mt-1.5 flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => { setNote(b.id, noteDraft); setNotingBookId(null); }}
+                          className="px-3 py-1 rounded-full text-[11.5px] font-bold"
+                          style={{ background: activeSkin.fg, color: 'var(--bg-card)', border: EDGE_THIN }}
+                        >记下</button>
+                        <button
+                          type="button"
+                          onClick={() => setNotingBookId(null)}
+                          className="px-3 py-1 rounded-full text-[11.5px] font-bold"
+                          style={{ background: 'transparent', color: 'var(--text-muted)', border: EDGE_THIN }}
+                        >取消</button>
+                        <span className="text-[11px] font-medium ml-auto" style={{ color: 'var(--text-muted)' }}>
+                          {noteDraft.trim().length}/200
+                        </span>
+                      </div>
+                    </div>
+                  ) : bookNotes[b.id] ? (
+                    <button
+                      type="button"
+                      onClick={() => { setNotingBookId(b.id); setNoteDraft(bookNotes[b.id]); }}
+                      className="mt-2.5 w-full text-left px-3 py-2 rounded-[12px]"
+                      style={{ background: 'var(--bg-base)', border: EDGE_THIN }}
+                    >
+                      <span className="text-[11px] font-bold" style={{ color: 'var(--text-muted)' }}>我的一句话</span>
+                      <span className="block mt-0.5 text-[12.5px] font-medium leading-[1.6]">{bookNotes[b.id]}</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => { setNotingBookId(b.id); setNoteDraft(''); }}
+                      className="mt-2 text-[11.5px] font-bold underline underline-offset-[3px]"
+                      style={{ color: 'var(--text-muted)' }}
+                    >写一句：打算在哪用它</button>
+                  )}
                 </div>
               </div>
             );
