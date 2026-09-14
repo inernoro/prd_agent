@@ -344,7 +344,7 @@ public static class GatewayHttpEndpoints
         // 于是对方能调却列不出可调什么，只能我们口头把模型名告诉他。
         app.MapGet("/v1/models", async (
             HttpContext http,
-            LlmGatewayDataContext data,
+            [Microsoft.AspNetCore.Mvc.FromServices] LlmGatewayDataContext data,
             CancellationToken ct) =>
         {
             var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
@@ -362,7 +362,7 @@ public static class GatewayHttpEndpoints
         app.MapGet("/v1/models/{modelId}", async (
             HttpContext http,
             string modelId,
-            LlmGatewayDataContext data,
+            [Microsoft.AspNetCore.Mvc.FromServices] LlmGatewayDataContext data,
             CancellationToken ct) =>
         {
             var catalog = await GatewayModelCatalogEndpoint.BuildAsync(

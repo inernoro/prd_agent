@@ -5,3 +5,5 @@
 | refactor | llmgw | 「模型白名单」页标题改为「模型」，与导航同名 |
 | test | prd-api | 新增两条跨模块守卫：上游名下模型接线、导航两条且旧地址不留死链；均做过红绿闭环 |
 | chore | prd-api | 测试项目删掉两个已由 ProjectReference 提供的 Compile Link，消除 CS0436 |
+| fix | llmgw | /v1/models 的 DataContext 参数补 [FromServices]，不注册它的宿主不再整张端点表构建失败 |
+| test | prd-api | 新增 serving 端点绑定守卫：最小宿主上枚举 EndpointDataSource 必须建得起来 |
