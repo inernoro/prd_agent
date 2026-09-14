@@ -70,6 +70,7 @@ import { RecentEntriesList } from './RecentEntriesList';
 import { SendToPeerDialog } from '@/components/sync/SendToPeerDialog';
 import { SyncCenterDialog } from './SyncCenterDialog';
 import { GitHubSyncWizard } from './GitHubSyncWizard';
+import { githubSyncingSignature } from '@/components/doc-browser/subscriptionEntryState';
 import { listPeerSyncRuns } from '@/services/real/peerSync';
 import { updateDocumentStorePins } from '@/services/real/userPreferences';
 import { ConnectAiDialog } from './ConnectAiDialog';
@@ -1490,6 +1491,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       .join('|'),
     [entries],
   );
+  /** 正在同步的 GitHub 目录父条目（签名非空即开轮询，空即停） */
+  const githubSyncSignature = useMemo(() => githubSyncingSignature(entries), [entries]);
   const notifiedRecordingArchivesRef = useRef(new Set<string>());
 
   const applyPolledEntries = useCallback((nextEntries: DocumentEntry[]) => {
@@ -1500,6 +1503,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         return entry.id === next?.id
           && entry.updatedAt === next.updatedAt
           && entry.title === next.title
+          // 同步状态也要比：GitHub 目录同步时条目数可能不变、只有状态从 syncing 翻成 idle/error，
+          // 漏掉这两个字段轮询就白跑（拉回来了却判「没变化」不应用）
+          && entry.syncStatus === next.syncStatus
+          && entry.isPaused === next.isPaused
           && entry.metadata?.audioArchiveStatus === next.metadata?.audioArchiveStatus
           && entry.metadata?.audioArchiveNeedsRetry === next.metadata?.audioArchiveNeedsRetry
           && entry.metadata?.liveTranscript === next.metadata?.liveTranscript;
@@ -1575,6 +1582,25 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       window.clearInterval(timer);
     };
   }, [applyPolledEntries, pendingRecordingArchiveSignature, selectedEntryId, storeId]);
+
+  // GitHub 目录同步是后台长任务（私有仓 53 篇实测 379 秒），子文档一篇篇建出来。
+  // 只在开启同步那一刻刷一次，用户看到的是永远停在「同步中」的条目和空列表，
+  // 只能手动刷新才知道跑完没有——违反「禁止空白等待 / 变化必须可感知」。
+  // 有在同步的目录条目就 6s 一刷，跑完（签名变空）自动停。
+  useEffect(() => {
+    if (!githubSyncSignature) return;
+    let cancelled = false;
+    let seq = 0; // 发号器：只应用最新一发的结果，防慢响应覆盖快响应
+    const check = async () => {
+      const my = ++seq;
+      const res = await listDocumentEntries(storeId, 1, 200);
+      if (cancelled || my !== seq || !res.success) return;
+      applyPolledEntries(res.data.items);
+      setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+    };
+    const timer = window.setInterval(() => { void check(); }, 6000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [applyPolledEntries, githubSyncSignature, storeId]);
 
   // 轮询本库运行台账：有 syncing 记录时让顶栏「同步」按钮动起来（含对端推来的 incoming）。
   // 4s 一刷足够即时；无任务时也保持 4s（payload 很小），关页自动停。

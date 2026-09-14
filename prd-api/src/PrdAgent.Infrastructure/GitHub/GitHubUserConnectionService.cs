@@ -276,11 +276,15 @@ public sealed class GitHubUserConnectionService
             case HttpStatusCode.Unauthorized:
                 throw GitHubException.TokenExpired();
             case HttpStatusCode.Forbidden:
+                // GitHub 把「主限额耗尽」也报成 403，只有 X-RateLimit-Remaining 能区分。
+                // 不分开的话，限额跑满会被说成「拒绝访问该资源」，用户拿着这句去查权限，查不出任何东西。
+                if (GitHubRateLimit.IsExhausted(resp))
+                    throw GitHubException.RateLimited(GitHubRateLimit.ResetHint(resp));
                 throw GitHubException.Forbidden();
             case HttpStatusCode.NotFound:
                 throw new GitHubException(GitHubErrorCodes.GITHUB_REPO_NOT_VISIBLE, 404, message);
             case (HttpStatusCode)429:
-                throw GitHubException.RateLimited(null);
+                throw GitHubException.RateLimited(GitHubRateLimit.ResetHint(resp));
             default:
                 var body = await resp.Content.ReadAsStringAsync(ct);
                 _logger.LogWarning("[GitHubConnect] API failed: status={Status} body={Body}", (int)resp.StatusCode, body);

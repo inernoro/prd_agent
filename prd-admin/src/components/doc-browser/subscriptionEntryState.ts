@@ -39,3 +39,20 @@ export function githubDirectoryStatusLabel(tone: SubscriptionSyncTone): string {
     default: return 'GitHub 目录订阅';
   }
 }
+
+/**
+ * 正在同步的 GitHub 目录父条目签名（id 排序后拼串；空串 = 当前没有在同步的）。
+ *
+ * 一次目录同步可能跑几分钟（私有仓 53 篇实测 379 秒），期间子文档在后台一篇篇建出来。
+ * 页面若只在开启同步那一刻刷一次，用户看到的就是一个永远停在「同步中」的条目和一个空列表，
+ * 只能靠手动刷新猜后台跑完没有。签名变化即驱动轮询启停。
+ */
+export function githubSyncingSignature(
+  entries: ReadonlyArray<{ id: string; sourceType?: string; syncStatus?: string; isPaused?: boolean }>,
+): string {
+  return entries
+    .filter((e) => e.sourceType === GITHUB_DIRECTORY_SOURCE && subscriptionSyncTone(e) === 'syncing')
+    .map((e) => e.id)
+    .sort()
+    .join('|');
+}

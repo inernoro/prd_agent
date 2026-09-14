@@ -350,6 +350,8 @@ function RepoStep({ onSelected, onError }: {
   const [branches, setBranches] = useState<GitHubBranch[]>([]);
   const [branch, setBranch] = useState('');
   const [branchLoading, setBranchLoading] = useState(false);
+  /** 分支请求发号器：只认最新一发的结果（轮询/并发请求的 stale-response 守卫） */
+  const branchSeqRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -390,8 +392,14 @@ function RepoStep({ onSelected, onError }: {
   const pick = async (repo: GitHubRepository) => {
     setActive(repo);
     setBranch(repo.defaultBranch ?? 'main');
+    // 先清空：连点两个仓库时，慢的那一发回来会把上一个仓库的分支灌进选择器，
+    // 用户挑一个「看起来存在」的分支去扫，扫的却是另一个仓库里根本没有的分支。
+    setBranches([]);
+    branchSeqRef.current += 1;
+    const my = branchSeqRef.current;
     setBranchLoading(true);
     const res = await listGitHubBranches(repo.owner, repo.repo);
+    if (my !== branchSeqRef.current) return; // 已经换了仓库，这一发过期，丢弃
     setBranchLoading(false);
     if (res.success) setBranches(res.data.items);
     else onError(res.error?.message ?? '读取分支失败', res.error?.code);

@@ -3,6 +3,7 @@ import {
   canOpenSubscriptionPanel,
   subscriptionSyncTone,
   githubDirectoryStatusLabel,
+  githubSyncingSignature,
   GITHUB_DIRECTORY_SOURCE,
 } from './subscriptionEntryState';
 import { toUserReadableErrorMessage } from '@/lib/userReadableError';
@@ -54,5 +55,26 @@ describe('子文档手动同步的引导语必须原样到达用户', () => {
     );
 
     expect(message).not.toContain('目录条目触发同步');
+  });
+});
+
+describe('同步中签名（驱动页面轮询）', () => {
+  const entries = [
+    { id: 'p1', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'syncing' },
+    { id: 'p0', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'syncing' },
+    { id: 'p2', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'idle' },
+    // 暂停优先于同步中：暂停的条目后台不会再推进，轮询没有意义
+    { id: 'p3', sourceType: GITHUB_DIRECTORY_SOURCE, syncStatus: 'syncing', isPaused: true },
+    // 子文档是 subscription，不该把轮询拖住（它们由父目录统一同步）
+    { id: 'c1', sourceType: 'subscription', syncStatus: 'syncing' },
+  ];
+
+  it('只认在同步的 GitHub 目录父条目，且顺序稳定', () => {
+    expect(githubSyncingSignature(entries)).toBe('p0|p1');
+  });
+
+  it('没有在同步的就返回空串——轮询必须能停下来', () => {
+    expect(githubSyncingSignature([])).toBe('');
+    expect(githubSyncingSignature(entries.filter((e) => e.syncStatus !== 'syncing'))).toBe('');
   });
 });

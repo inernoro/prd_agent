@@ -4726,6 +4726,11 @@ public class DocumentStoreController : ControllerBase
         var skipped = new List<object>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
 
+        // 写入阶段用服务端自己的令牌：浏览器关掉 / 跳走会取消 ct，
+        // 那会在「已经建了几条」和「回写空间计数」之间断开，留下一批条目和一个偏小的 DocumentCount，
+        // 而且重试只会跳过已建的那些、计数再也补不回来（server-authority：客户端断开不取消服务端任务）。
+        var writeCt = CancellationToken.None;
+
         foreach (var selection in directories)
         {
             var path = (selection?.Path ?? string.Empty).Trim().Trim('/');
@@ -4759,7 +4764,7 @@ public class DocumentStoreController : ControllerBase
                 sourceUrl: BuildGitHubDirectoryUrl(owner, repo, branch, path),
                 syncIntervalMinutes: interval);
 
-            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: ct);
+            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: writeCt);
             created.Add(entry);
         }
 
@@ -4770,7 +4775,7 @@ public class DocumentStoreController : ControllerBase
                 Builders<DocumentStore>.Update
                     .Inc(s => s.DocumentCount, created.Count)
                     .Set(s => s.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+                cancellationToken: writeCt);
         }
 
         _logger.LogInformation(
