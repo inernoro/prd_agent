@@ -453,6 +453,52 @@ textarea.atb-input { height: auto; min-height: 96px; padding: 9px 11px; line-hei
 
 .atb-stack { display: flex; flex-direction: column; gap: 16px; }
 
+/* 窄屏：KPI 行原本 flex-shrink:0 + 26px gap，四项在 390px 下顶破卡片右边缘
+   （真机验收截图里「本周交付」被切掉）。窄屏改成两列换行，不再抢宽度。 */
+@media (max-width: 720px) {
+  .atb-headline {
+    gap: 14px;
+    padding: 16px;
+  }
+
+  .atb-headline__text {
+    min-width: 0;
+    font-size: 18px;
+  }
+
+  .atb-kpis {
+    width: 100%;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .atb-kpi {
+    flex: 1 1 calc(50% - 12px);
+    min-width: 0;
+  }
+
+  .atb-page {
+    padding: 18px 16px 24px;
+  }
+
+  /* 行式布局在窄屏退化成上下堆叠，否则时长条与状态胶囊会挤成一条缝 */
+  .atb-person {
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    gap: 10px;
+  }
+
+  .atb-col--time {
+    width: 100%;
+    padding-right: 0;
+  }
+
+  .atb-col--fuel,
+  .atb-col--status {
+    width: auto;
+  }
+}
+
 .atb-modal-backdrop {
   position: fixed;
   inset: 0;
