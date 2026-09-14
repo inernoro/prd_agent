@@ -75,6 +75,12 @@ export const STRIP_CSS = `
 .cs .field{display:flex;flex-wrap:wrap;gap:var(--dg);align-content:flex-end;width:100%;overflow:hidden;}
 .cs .d{display:block;width:var(--dot);height:var(--dot);border-radius:1px;
   background:hsl(var(--surface-sunken));}
+/* 点亮态必须写在 .d 之后：同特异性时后写的赢，写在前面会被上面那条底色整条盖掉，
+   于是三段点阵全是浅灰、一个都不亮——页面照常渲染，没有任何报错
+   （predicate-and-wiring-discipline 形状 6：生效的不是你以为的那条）。 */
+.cs .d.f1{background:hsl(var(--hairline-strong));}
+.cs .d.f2{background:hsl(var(--muted-foreground));}
+.cs .d.f3{background:hsl(var(--foreground));}
 
 .cs .z-verdict{flex:1 1 140px;max-width:250px;}
 .cs .vlist{display:flex;flex-direction:column;gap:7px;}

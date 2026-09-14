@@ -125,3 +125,34 @@ describe('窄屏不许塌', () => {
     expect(base).not.toMatch(/height:\d/);
   });
 });
+
+describe('点亮的点必须真的亮', () => {
+  // 真实数据上栽过一次：点亮色写在 `.cs .d` 基础规则**之前**，同特异性后写的赢，
+  // 于是三段点阵全是浅灰、一个都不亮。页面照常渲染、类名照常挂上、测试照常绿。
+  const idx = (re: RegExp): number => css.search(re);
+
+  it('三档点亮色都定义了', () => {
+    for (const tone of ['f1', 'f2', 'f3']) {
+      expect(css, `缺 .d.${tone} 的点亮色`).toMatch(new RegExp(`\\.cs \\.d\\.${tone}\\{`));
+    }
+  });
+
+  it('点亮色写在基础底色之后（同特异性，后写才赢）', () => {
+    const base = idx(/\.cs \.d\{/);
+    expect(base).toBeGreaterThan(-1);
+    for (const tone of ['f1', 'f2', 'f3']) {
+      const lit = idx(new RegExp(`\\.cs \\.d\\.${tone}\\{`));
+      expect(lit, `.d.${tone} 写在 .d 之前，会被底色整条盖掉`).toBeGreaterThan(base);
+    }
+  });
+
+  it('点亮色与底色不是同一个值', () => {
+    const baseBg = css.match(/\.cs \.d\{[^}]*background:([^;}]+)/)?.[1]?.trim();
+    expect(baseBg).toBeTruthy();
+    for (const tone of ['f1', 'f2', 'f3']) {
+      const litBg = css.match(new RegExp(`\\.cs \\.d\\.${tone}\\{background:([^;}]+)`))?.[1]?.trim();
+      expect(litBg, `.d.${tone} 没有自己的颜色`).toBeTruthy();
+      expect(litBg, `.d.${tone} 的颜色和底色一样，点亮等于没亮`).not.toBe(baseBg);
+    }
+  });
+});
