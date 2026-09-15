@@ -138,22 +138,52 @@ public class GitHubDirectoryReconcileTests
     }
 
     [Fact]
-    public void 列目录拿到404才算远端删光()
+    public void 列目录404且此刻仍读得到才算远端删光()
     {
         // Git 里没有空目录：删光最后一个文件，目录本身就不存在了，列目录拿到的是 404
         // 而不是「200 + 空清单」。这是最常见的一种删除，必须走调和。
-        // 前提是这一轮一定按不可变的提交号列目录（见下面那条守卫）——在提交号上拿到 404，
-        // 就证明那一刻该目录确实不存在。
-        Assert.True(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.NotFound));
+        Assert.True(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
+            HttpStatusCode.NotFound, GitHubDirectorySyncService.RemoteAccess.Confirmed));
+    }
+
+    [Fact]
+    public void 读不到仓库时的404一律不许当真()
+    {
+        // GitHub 对「无权访问的私有仓」回的也是 404，和「目录真没了」逐字一样。
+        // 定住提交号只定住了内容的版本、定不住授权：列目录前那次解析只能证明
+        // **那一刻**读得到，中间被收回授权、被移出组织、仓库被删，这里照样是 404。
+        // 所以删之前必须另外探一次，探不通就不删——一次权限变动换一次全量删除，代价最贵。
+        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
+            HttpStatusCode.NotFound, GitHubDirectorySyncService.RemoteAccess.Unconfirmed));
     }
 
     [Fact]
     public void 目录不是404时与本判据无关()
     {
-        // 限额、权限不足、GitHub 故障各有各的处置，不能借道这条判据去删东西
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.Forbidden));
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.InternalServerError));
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.OK));
+        // 限额、权限不足、GitHub 故障各有各的处置，不能借道这条判据去删东西。
+        // 连「读得到」都不能让它们借道。
+        foreach (var access in new[]
+                 {
+                     GitHubDirectorySyncService.RemoteAccess.Confirmed,
+                     GitHubDirectorySyncService.RemoteAccess.Unconfirmed,
+                 })
+        {
+            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.Forbidden, access));
+            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.InternalServerError, access));
+            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.OK, access));
+        }
+    }
+
+    [Fact]
+    public void 解析ref走通吃分支标签提交号的端点()
+    {
+        // 订阅地址 /tree/<ref>/<path> 里那一段允许是标签或提交号（`/tree/v1.2/docs`）。
+        // 用只认分支的 /branches/{ref} 去解析，这类订阅会解析失败 → 整轮中止 → 永远同步不了。
+        // 这条退化不会让任何行为测试变红（判据照绿、编译照过），只能靠守卫盯住端点选型。
+        var source = SyncServiceSource();
+
+        Assert.DoesNotContain("/branches/{Uri.EscapeDataString(", source, StringComparison.Ordinal);
+        Assert.Contains("/commits/{Uri.EscapeDataString(reference)}", source, StringComparison.Ordinal);
     }
 
     [Fact]

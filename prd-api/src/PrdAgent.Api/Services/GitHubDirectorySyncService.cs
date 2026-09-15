@@ -589,37 +589,54 @@ public class GitHubDirectorySyncService
     /// 这条不变量由控制流保证，不靠调用方多传一个布尔：多一个参数就多一种传错的方式，
     /// 而传错的后果是把一次权限变动变成一次数据清空。
     /// </summary>
-    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus)
-        => directoryStatus == HttpStatusCode.NotFound;
+    /// <summary>删之前那一刻，这个仓库到底还读不读得到——由一次真实探测得出，不许靠推断。</summary>
+    internal enum RemoteAccess
+    {
+        /// <summary>刚刚确认过：此刻仍读得到。</summary>
+        Confirmed,
+        /// <summary>没能确认（权限没了 / 仓库没了 / 网络不通）。</summary>
+        Unconfirmed,
+    }
+
+    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, RemoteAccess accessAfterNotFound)
+        => directoryStatus == HttpStatusCode.NotFound && accessAfterNotFound == RemoteAccess.Confirmed;
 
     /// <summary>
-    /// 把分支解析成它此刻指向的提交号，顺带证明仓库与分支都够得着。
-    /// 拿不到提交号（状态码非 200、响应缺字段、网络出错）一律回 null，调用方据此退回按分支名列目录。
+    /// 把一个 ref 解析成它此刻指向的提交号，顺带证明这个仓库此刻读得到。
+    /// ref 可以是分支名、标签名，也可以是提交号本身——订阅地址里 /tree/ 后面那一段
+    /// 允许是其中任意一种，只认分支会让按标签订阅的目录再也同步不了。
+    /// 拿不到提交号（状态码非 200、响应缺字段、网络出错）一律回 null，调用方据此决定停还是走。
     /// </summary>
-    private async Task<string?> ResolveBranchCommitAsync(
-        string owner, string repo, string branch, string? accessToken, CancellationToken ct)
+    private readonly record struct RefResolution(string? CommitSha, HttpStatusCode? Status)
+    {
+        /// <summary>上游明确答复了（有状态码），只是没给出可用的提交号。</summary>
+        public bool AnsweredButUnusable => CommitSha == null && Status.HasValue;
+    }
+
+    private async Task<RefResolution> ResolveRefCommitAsync(
+        string owner, string repo, string reference, string? accessToken, CancellationToken ct)
     {
         try
         {
+            // /commits/{ref} 对分支、标签、提交号一视同仁；/branches/{ref} 只认分支。
             var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
-                    + $"/branches/{Uri.EscapeDataString(branch)}";
+                    + $"/commits/{Uri.EscapeDataString(reference)}";
             using var request = BuildApiRequest(url, accessToken);
             using var response = await Http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
-                    "[GitHubSync] 解析 {Owner}/{Repo}@{Branch} 的头提交失败：{Status}",
-                    owner, repo, branch, (int)response.StatusCode);
-                return null;
+                    "[GitHubSync] 解析 {Owner}/{Repo}@{Ref} 的提交号失败：{Status}",
+                    owner, repo, reference, (int)response.StatusCode);
+                return new RefResolution(null, response.StatusCode);
             }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
-            var sha = doc.RootElement.TryGetProperty("commit", out var commit)
-                      && commit.TryGetProperty("sha", out var shaElement)
+            var sha = doc.RootElement.TryGetProperty("sha", out var shaElement)
                 ? shaElement.GetString()
                 : null;
-            return string.IsNullOrWhiteSpace(sha) ? null : sha;
+            return new RefResolution(string.IsNullOrWhiteSpace(sha) ? null : sha, response.StatusCode);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -630,8 +647,9 @@ public class GitHubDirectorySyncService
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
             // 走到这里的 OperationCanceledException 是 HttpClient 自己的超时（ct 没被取消）。
-            _logger.LogWarning(ex, "[GitHubSync] 解析 {Owner}/{Repo}@{Branch} 的头提交失败", owner, repo, branch);
-            return null;
+            // 网络层出错：上游一个字都没答，所以没有状态码可交。
+            _logger.LogWarning(ex, "[GitHubSync] 解析 {Owner}/{Repo}@{Ref} 的提交号失败", owner, repo, reference);
+            return new RefResolution(null, null);
         }
     }
 
@@ -640,23 +658,29 @@ public class GitHubDirectorySyncService
         string owner, string repo, string path, string branch, Matcher? matcher,
         string? accessToken, CancellationToken ct)
     {
-        // 先把分支解析成一个**不可变的提交号**，本轮所有读取都按它来。
-        // 这样「列不出来」与「仓库分支够不够得着」说的是同一个时刻的同一份快照：
-        // 在提交号上拿到 404，就证明那一刻该目录确实不存在，可以放心调和。
+        // 先把 ref（分支 / 标签 / 提交号都可能）解析成一个**不可变的提交号**，本轮所有读取都按它来，
+        // 这样清单、正文、版本号一定来自同一份快照，不会「清单来自一个提交、正文来自另一个」。
+        //
+        // 但要认清它定住的是什么：它定住了**内容的版本**，定不住**授权**。所以在提交号上拿到 404
+        // 仍不足以断定目录没了——删之前还要再探一次「此刻读不读得到这个仓库」，见下面那段。
         //
         // 解析不出来就**整轮中止**，不退回按分支名跑。退路看着体贴，实则让本轮承诺的
         // 「读取共用同一份快照」在那条路上不成立：一轮同步可能跑几分钟，期间分支往前走一步，
         // 清单与版本号来自旧提交、正文却取自新提交，于是新内容被按旧版本号存起来，
         // 下轮比版本号没变就跳过——正文和它自称的版本会一直对不上。
         // 中止是可恢复的：条目标红说明原因，用户点「重试同步」或等下一轮调度即可。
-        var commitSha = await ResolveBranchCommitAsync(owner, repo, branch, accessToken, ct);
-        if (commitSha == null)
+        var resolved = await ResolveRefCommitAsync(owner, repo, branch, accessToken, ct);
+        if (resolved.CommitSha == null)
         {
-            throw new GitHubSyncUserFacingException(
-                "暂时没能确定这个分支的当前版本（可能是网络波动、权限变化或分支已被删除），"
-                + "本轮先不同步以免存进不一致的内容。稍后点「重试同步」即可。");
+            // 失败文案只有一个出处（DescribeListFailure）：它已经分得清「带授权的找不到」
+            // 和「匿名访问私有仓」，在这儿另写一句必然和它漂。上游连状态码都没给（网络层出错）
+            // 才用兜底那句——那种情况下没有任何可归因的上游答复。
+            throw new GitHubSyncUserFacingException(resolved.AnsweredButUnusable
+                ? DescribeListFailure(resolved.Status!.Value, accessToken, owner, repo, path, branch)
+                : "暂时连不上 GitHub，本轮先不同步以免存进不一致的内容。稍后点「重试同步」即可。");
         }
 
+        var commitSha = resolved.CommitSha!;
         var reference = commitSha;
 
         // 路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串，
@@ -675,15 +699,29 @@ public class GitHubDirectorySyncService
             // 否则一次权限变动就会把用户已导入的文档全删掉。
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                if (ShouldReconcileAsEmpty(response.StatusCode))
+                // 定住提交号只定住了**内容的版本**，定不住**授权**：两次请求之间被移出组织、
+                // 被收回授权、仓库被删，GitHub 回的同样是 404。删之前再探一次「此刻还读不读得到」，
+                // 探不通就按失败处理——一次权限变动换一次全量删除，是这条链路上最贵的错。
+                // 探测拿的是已经定住的提交号，所以它只回答「读得到吗」，不会把分支的移动掺进来。
+                var probe = await ResolveRefCommitAsync(owner, repo, commitSha, accessToken, ct);
+                var accessAfterNotFound = probe.CommitSha != null
+                    ? RemoteAccess.Confirmed
+                    : RemoteAccess.Unconfirmed;
+
+                if (ShouldReconcileAsEmpty(response.StatusCode, accessAfterNotFound))
                 {
                     _logger.LogInformation(
-                        "[GitHubSync] {Owner}/{Repo}/{Path} 在提交 {Commit} 上不存在：按「远端删光了」调和",
+                        "[GitHubSync] {Owner}/{Repo}/{Path} 在提交 {Commit} 上不存在且此刻仍读得到该仓库：按「远端删光了」调和",
                         owner, repo, path, commitSha);
                     // 目录在那个提交上压根不存在，不存在「只回了一部分」的可能，所以这份空清单是完整的
                     return new DirectoryListing(new List<GitHubFile>(), Complete: true, Reference: reference);
                 }
 
+                _logger.LogWarning(
+                    "[GitHubSync] {Owner}/{Repo}/{Path} 列目录 404，但此刻读不到该仓库：不调和、按失败处理",
+                    owner, repo, path);
+                throw new GitHubSyncUserFacingException(DescribeListFailure(
+                    HttpStatusCode.NotFound, accessToken, owner, repo, path, branch));
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
