@@ -98,13 +98,17 @@ public class GitHubDirectorySyncService
             matcher.AddInclude(includeGlob);
         }
 
-        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, accessToken, ct);
-        _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'", files.Count, owner, repo, path, includeGlob ?? "*");
+        var listing = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, accessToken, ct);
+        var files = listing.Files;
+        _logger.LogInformation(
+            "[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'（清单完整：{Complete}）",
+            files.Count, owner, repo, path, includeGlob ?? "*", listing.Complete);
 
         // 这里**不能**在 files.Count == 0 时提前返回：列目录成功但一篇 Markdown 都不剩，
         // 说明远端把这个目录清空了（或全部改名），旧子文档就该跟着删。提前返回会让它们
         // 永远留在知识库里，用户看到的是一份远端已经不存在的文档。
-        // 列目录失败是抛异常（见 ListDirectoryFilesAsync），走不到这里，所以「空」只可能是真的空。
+        // 列目录失败是抛异常（见 ListDirectoryFilesAsync），走不到这里。
+        // 但「这一轮没见到」只在**清单完整**时才等于「远端没有了」—— 见下面第 3 步的闸。
 
         // 2) 查找该 Store 下已有的同步子条目（SourceType=subscription + github_parent_id）
         var existingEntries = await db.DocumentEntries.Find(
@@ -225,8 +229,27 @@ public class GitHubDirectorySyncService
             }
         }
 
-        // 3) 删除远端已不存在的条目（远端整个目录被清空时，这里会删掉全部子文档——这正是本意）
-        foreach (var entry in SelectStaleChildren(existingByKey, processedKeys))
+        // 3) 删除远端已不存在的条目（远端整个目录被删光时，这里会删掉全部子文档——这正是本意）
+        //
+        // **清单不完整时整个删除环节都不跑。** GitHub 的目录接口一次最多回 1000 条，超了就截断，
+        // 而截断这件事它不会明说。窗口之外的文件在本轮「没见到」，但它们在远端好好的——
+        // 照删就是拿一个非事件去做不可逆的破坏（连历史版本一起没）。
+        // 一个能真实发生的例子：某个目录塞了一千多个非 Markdown 文件，把原先导入的那几十篇挤出窗口，
+        // 过滤后恰好 0 篇，于是「远端删光了」这个判断成立——而实际上一篇都没少。
+        // 新增与更新不受影响：见到什么就同步什么，只有「删」需要完整清单撑腰。
+        if (!listing.Complete)
+        {
+            _logger.LogWarning(
+                "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 的目录清单可能被截断（上游一次最多 {Cap} 条），"
+                + "本轮跳过删除环节，只做新增与更新",
+                owner, repo, path, branch, ContentsApiDirectoryCap);
+            diff.ListingIncomplete = true;
+        }
+
+        var staleChildren = listing.Complete
+            ? SelectStaleChildren(existingByKey, processedKeys)
+            : new List<DocumentEntry>();
+        foreach (var entry in staleChildren)
         {
             await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
             // 级联清理该条目历史版本，和手动 DeleteEntry 一致，避免远端删文件后版本快照残留（Bugbot）
@@ -475,6 +498,21 @@ public class GitHubDirectorySyncService
             .Select(kv => kv.Value)
             .ToList();
 
+    /// <summary>GitHub 目录接口一次最多回多少条：超过就截断，而且它不会明说截断了。</summary>
+    internal const int ContentsApiDirectoryCap = 1000;
+
+    /// <summary>
+    /// 这份目录清单能不能代表远端的全部。
+    ///
+    /// 判据看**过滤前**的原始条数：到了上限就说明可能还有没回来的，
+    /// 「这一轮没见到」于是不再等于「远端没有了」，删除环节必须让路。
+    /// 过滤后的条数不能用来判断——它天然会因为非 Markdown 文件而变少。
+    /// </summary>
+    internal static bool IsListingComplete(int rawEntryCount) => rawEntryCount < ContentsApiDirectoryCap;
+
+    /// <summary>一次列目录的结果：过滤后的文件清单，以及这份清单是否代表远端的全部。</summary>
+    internal sealed record DirectoryListing(List<GitHubFile> Files, bool Complete);
+
     /// <summary>
     /// 目录列不出来（404）时，能不能当成「远端把它删光了」去调和。
     ///
@@ -509,7 +547,7 @@ public class GitHubDirectorySyncService
     }
 
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
-    private async Task<List<GitHubFile>> ListDirectoryFilesAsync(
+    private async Task<DirectoryListing> ListDirectoryFilesAsync(
         string owner, string repo, string path, string branch, Matcher? matcher,
         string? accessToken, CancellationToken ct)
     {
@@ -535,7 +573,8 @@ public class GitHubDirectorySyncService
                     _logger.LogInformation(
                         "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 已不存在，而仓库与分支仍可访问：按「远端删光了」调和",
                         owner, repo, path, branch);
-                    return [];
+                    // 目录压根不存在，不存在「只回了一部分」的可能，所以这份空清单是完整的
+                    return new DirectoryListing(new List<GitHubFile>(), Complete: true);
                 }
 
                 _logger.LogWarning(
@@ -562,9 +601,11 @@ public class GitHubDirectorySyncService
         var json = await response.Content.ReadAsStringAsync(ct);
         var doc = JsonDocument.Parse(json);
 
+        var rawCount = 0;
         var files = new List<GitHubFile>();
         foreach (var item in doc.RootElement.EnumerateArray())
         {
+            rawCount++;
             var type = item.GetProperty("type").GetString();
             if (type != "file") continue;
 
@@ -588,7 +629,9 @@ public class GitHubDirectorySyncService
             });
         }
 
-        return files;
+        // 完整性看**过滤前**的原始条数：过滤后的 0 篇既可能是「真没有 Markdown」，
+        // 也可能是「Markdown 全被挤出了窗口」，只有原始条数才分得开这两件事。
+        return new DirectoryListing(files, IsListingComplete(rawCount));
     }
 
     /// <summary>
@@ -795,6 +838,13 @@ public class GitHubDirectoryDiff
 
     /// <summary>本轮有多少个文件没能拉下来（限流、401、超时…）。</summary>
     public int FailedCount { get; set; }
+
+    /// <summary>
+    /// 这一轮的目录清单可能被上游截断，因此**跳过了删除环节**。
+    /// 记下来是为了让「这轮一条没删」有据可查：否则远端确实删了东西而这边没动，
+    /// 看起来会像同步坏了（external-cause-first：说得出为什么没动）。
+    /// </summary>
+    public bool ListingIncomplete { get; set; }
 
     /// <summary>失败文件的路径样本，写进 SyncError 让用户知道缺了什么。</summary>
     public List<string> FailedPaths { get; set; } = new();

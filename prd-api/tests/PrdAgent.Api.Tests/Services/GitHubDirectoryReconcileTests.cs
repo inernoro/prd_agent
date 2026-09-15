@@ -113,4 +113,33 @@ public class GitHubDirectoryReconcileTests
         Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
             HttpStatusCode.InternalServerError, HttpStatusCode.OK));
     }
+
+    [Fact]
+    public void 原始条数没到上限时清单算完整()
+    {
+        Assert.True(GitHubDirectorySyncService.IsListingComplete(0));
+        Assert.True(GitHubDirectorySyncService.IsListingComplete(42));
+        Assert.True(GitHubDirectorySyncService.IsListingComplete(
+            GitHubDirectorySyncService.ContentsApiDirectoryCap - 1));
+    }
+
+    [Fact]
+    public void 原始条数顶到上限就不能当成完整清单()
+    {
+        // GitHub 一次最多回 1000 条且不明说截断。窗口之外的文件这一轮「没见到」，
+        // 但它们在远端好好的——此时「没见到」不等于「没有了」，删除环节必须让路。
+        Assert.False(GitHubDirectorySyncService.IsListingComplete(
+            GitHubDirectorySyncService.ContentsApiDirectoryCap));
+        Assert.False(GitHubDirectorySyncService.IsListingComplete(
+            GitHubDirectorySyncService.ContentsApiDirectoryCap + 200));
+    }
+
+    [Fact]
+    public void 完整性只看过滤前的原始条数()
+    {
+        // 过滤后的 0 篇有两种来路：真没有 Markdown、或 Markdown 全被挤出窗口。
+        // 只有原始条数分得开——一个塞了一千多个非 Markdown 文件的目录，过滤后同样是 0 篇，
+        // 但它一篇都没少，绝不能按「远端删光了」处理。
+        Assert.False(GitHubDirectorySyncService.IsListingComplete(1200));
+    }
 }
