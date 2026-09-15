@@ -96,6 +96,32 @@ public class ArenaLeaderboardFetcherTests
         Assert.Equal(13, r.Entries[1].RankHigh);
     }
 
+    /// <summary>
+    /// 名次必须取页面上写的那个，不能拿「这是第几个解析成功的行」顶替。
+    ///
+    /// fixture 的第二行在页面上是第 8 名（中间六名不在这段片段里）。按行序算会给出 2，
+    /// 于是页面显示「02」、rankDelta 跟着一起错——而条目数、形状判定、六指标断言全都照样
+    /// 通过，没有任何东西会红。并列名次、有意跳号、任何一行被拒绝，都是同一个错法。
+    /// Codex 在 PR #1538 指出。
+    /// </summary>
+    [Fact]
+    public void Parse_名次取页面上写的那个_不是第几行()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(RealFixture);
+
+        Assert.Equal(8, r.Entries[1].Rank);
+    }
+
+    [Fact]
+    public void ParseScore_名次也取页面上写的那个()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(ScoreFixture);
+
+        // 两行在各自页面上都是第 1 名（分属不同的榜，片段拼在一起测列数混排）
+        Assert.Equal(1, r.Entries[0].Rank);
+        Assert.Equal(1, r.Entries[1].Rank);
+    }
+
     [Fact]
     public void Parse_取到会话数成本token与双向单价()
     {

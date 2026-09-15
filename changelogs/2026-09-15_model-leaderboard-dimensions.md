@@ -9,6 +9,10 @@
 | fix | prd-api | 写侧 Controller 改用 api/admin/ 前缀：权限中间件按路由前缀查权限，与只读端点同前缀会把只读也一起要求 mds.read，全员可见形同虚设 |
 | fix | prd-api | Agent 行必须恰好解析出六个指标，否则整行拒绝——中间某格改写会让后续值整体前移、每个字段挂错名字，而条目数与形状判定照样通过 |
 | fix | prd-api | 指标的误差改为按单元格解析：原先值与误差按整行出现顺序配对，任一指标缺误差格会让后续误差整体前移一位挂错指标，页面上看不出异常（补测试时照出来的真 bug） |
+| fix | prd-api | 名次取页面上写的那个，不再用「第几个解析成功的行」顶替——并列、跳号或任一行被拒都会让后续名次与升降箭头整体错位 |
+| fix | prd-api | 手动同步脱离 HTTP 请求的取消（server-authority）：浏览器离开不再让同步半途而废、在共享库里留下抓一半的状态 |
+| fix | prd-admin | 同步完成后的重拉认当前榜：同步要跑几秒到一分钟，期间切走会把旧榜数据装回新榜标题下 |
+| fix | prd-admin | 名次升降与排序箭头改用 lucide 图标，不再用字面三角与箭头字符（AGENTS.md 规则 0：状态用 SVG icon） |
 | fix | prd-api | 快照文档 Id 改为由榜名派生的确定性值，消除首次同步时周期任务与手动触发并发插出两条文档的窗口；/boards 读取同时改为重复容忍 |
 | fix | prd-api | model_leaderboard_snapshots 补进 DataSyncScope.Excluded（外站公开数据的本地缓存，跨实例搬运无意义且会误导来源） |
 | fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |

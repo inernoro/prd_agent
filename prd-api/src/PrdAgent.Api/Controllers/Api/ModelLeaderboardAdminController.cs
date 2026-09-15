@@ -56,7 +56,7 @@ public class ModelLeaderboardAdminController : ControllerBase
     /// 眼前这一个榜的数据。页面上的「立即同步」按钮传的是当前正在看的那个榜。
     /// </param>
     [HttpPost("sync")]
-    public async Task<IActionResult> Sync([FromQuery] string? board, CancellationToken ct)
+    public async Task<IActionResult> Sync([FromQuery] string? board)
     {
         if (!string.IsNullOrWhiteSpace(board) && !ModelLeaderboardCatalog.Contains(board))
         {
@@ -66,7 +66,12 @@ public class ModelLeaderboardAdminController : ControllerBase
         }
 
         _logger.LogInformation("模型榜同步：手动触发（{Board}）。", board ?? "全部");
-        var results = await _sync.SyncAllAsync(ct, board);
+
+        // 刻意不把 ct（= RequestAborted）传下去：浏览器离开、连接断掉、代理掐断这条长请求时，
+        // 同步不该半途而废——它要写的是共享库里的快照，停在一半会留下「抓了三个榜就没了」的
+        // 状态，而调用方根本不知道（server-authority.md：客户端被动断开不得取消服务器任务）。
+        // 取消只允许来自进程关闭，而不是某个浏览器标签页。
+        var results = await _sync.SyncAllAsync(CancellationToken.None, board);
 
         return Ok(ApiResponse<object>.Ok(new
         {

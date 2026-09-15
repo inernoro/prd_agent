@@ -216,7 +216,7 @@ public class ArenaLeaderboardFetcher
     /// 认不出来返回 null（那多半是分数榜的行）。
     /// </summary>
     private static ModelLeaderboardEntry? TryParseAgentRow(
-        string block, string name, string? organization, string? license, int rank)
+        string block, string name, string? organization, string? license, int fallbackRank)
     {
         // 指标：**逐个单元格**解析，值与它的误差必须来自同一格。
         //
@@ -258,11 +258,13 @@ public class ArenaLeaderboardFetcher
         // 拒绝行会让条目数掉到 MinimumEntries 以下并抛异常，于是保留旧快照——这才是想要的。
         if (metrics.Count != MetricCount) return null;
 
-        var (rankLow, rankHigh) = ParseRankSpread(BareNumberRegex.Matches(block), skip: 1);
+        // 名次格里的三个裸数字依次是：名次、区间下界、区间上界
+        var bare = BareNumberRegex.Matches(block);
+        var (rankLow, rankHigh) = ParseRankSpread(bare, skip: 1);
 
         var entry = new ModelLeaderboardEntry
         {
-            Rank = rank,
+            Rank = ParseRank(bare, index: 0, fallbackRank),
             RankLow = rankLow,
             RankHigh = rankHigh,
             Name = name,
@@ -293,7 +295,7 @@ public class ArenaLeaderboardFetcher
     /// （.claude/rules/predicate-and-wiring-discipline.md 形状 1：判据要经得起等价写法）。
     /// </summary>
     private static ModelLeaderboardEntry? TryParseScoreRow(
-        string block, string name, string? organization, string? license, int rank)
+        string block, string name, string? organization, string? license, int fallbackRank)
     {
         var cells = CellRegex.Matches(block);
         if (cells.Count < 5) return null;
@@ -321,7 +323,8 @@ public class ArenaLeaderboardFetcher
 
         var entry = new ModelLeaderboardEntry
         {
-            Rank = rank,
+            // 分数榜的名次单独一格（第 0 格），不与区间混在一起
+            Rank = ParseRank(BareNumberRegex.Matches(cells[0].Groups[1].Value), index: 0, fallbackRank),
             RankLow = rankLow,
             RankHigh = rankHigh,
             Name = name,
@@ -353,6 +356,19 @@ public class ArenaLeaderboardFetcher
 
         return entry;
     }
+
+    /// <summary>
+    /// 页面上写的名次。
+    ///
+    /// 不能拿「这是第几个解析成功的行」顶替（Codex 在 PR #1538 指出）：并列名次、有意跳号、
+    /// 以及任何一行被拒绝，都会让后面每一行的名次整体错位，而 rankDelta 是拿它算的，
+    /// 一错就连升降箭头也跟着错。拿不到时才退回行序——那时页面结构已经不对了，
+    /// 条目数多半也活不过 MinimumEntries。
+    /// </summary>
+    private static int ParseRank(MatchCollection numbers, int index, int fallback)
+        => numbers.Count > index && int.TryParse(numbers[index].Groups[1].Value, out var v) && v > 0
+            ? v
+            : fallback;
 
     /// <summary>
     /// 名次区间。agent 榜的三个裸数字是「名次、下界、上界」（skip=1 跳过名次），

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { CloudDownload, ExternalLink, RefreshCw } from 'lucide-react';
+import { ArrowDown, ChevronDown, ChevronUp, CloudDownload, ExternalLink, Minus, RefreshCw } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { glassBar } from '@/lib/glassStyles';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
@@ -143,6 +143,12 @@ export default function ModelLeaderboardPage() {
    */
   const inflightBoardRef = useRef(board);
 
+  /** 当前选中的榜。异步回调里不能直接看 board——那是闭包捕获的旧值。 */
+  const boardRef = useRef(board);
+  useEffect(() => {
+    boardRef.current = board;
+  }, [board]);
+
   const load = useCallback(
     async (force = false) => {
       inflightBoardRef.current = board;
@@ -234,8 +240,15 @@ export default function ModelLeaderboardPage() {
       }
       // 同步刚把库里的快照换掉了，缓存必须作废，否则点完同步还看着旧数据
       cacheRef.current.delete(board);
-      // 目录里的 ready / total 也变了，一起重拉——否则切换器上仍标着「暂无数据」
-      await Promise.all([load(true), loadCatalog()]);
+      // 目录里的 ready / total 也变了，一起重拉——否则切换器上仍标着「暂无数据」。
+      //
+      // 只在用户还停在这个榜时才重拉：这个闭包捕获的是**发起同步时**的 board，同步要跑
+      // 几秒到一分钟，期间切走的话 load(true) 会把旧榜的数据装回新榜的标题下面
+      // （Codex 在 PR #1538 指出，是前一轮那个请求竞态修复没覆盖到的第二条路径）。
+      await Promise.all([
+        boardRef.current === board ? load(true) : Promise.resolve(),
+        loadCatalog(),
+      ]);
     } else {
       toast.error(res.error?.message ?? '同步没跑起来');
     }
@@ -439,14 +452,20 @@ export default function ModelLeaderboardPage() {
                   <div>模型</div>
                   {kind === 'score' ? (
                     <>
-                      <div className="text-right" style={{ color: 'var(--accent-gold)' }}>对战分 ↓</div>
+                      <div className="text-right inline-flex items-center justify-end gap-1" style={{ color: 'var(--accent-gold)' }}>
+                        对战分
+                        <ArrowDown size={10} aria-label="按此列降序" />
+                      </div>
                       <div className="text-right">投票数</div>
                       <div className="text-right">单价 $/M</div>
                       <div className="text-right">上下文</div>
                     </>
                   ) : (
                     <>
-                      <div className="text-right" style={{ color: 'var(--accent-gold)' }}>净改进 ↓</div>
+                      <div className="text-right inline-flex items-center justify-end gap-1" style={{ color: 'var(--accent-gold)' }}>
+                        净改进
+                        <ArrowDown size={10} aria-label="按此列降序" />
+                      </div>
                       <div className="text-right">任务完成</div>
                       <div className="text-right">好评比</div>
                       <div className="text-right">可操控性</div>
@@ -670,15 +689,19 @@ function Row({
  */
 function RankDelta({ delta }: { delta: number | null }) {
   if (delta == null) return null;
-  if (delta === 0) return <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>—</span>;
+  if (delta === 0) {
+    return <Minus size={10} style={{ color: 'var(--text-muted)' }} aria-label="名次未变" />;
+  }
   const up = delta > 0;
+  // 升降是状态指示，走图标而不是字面三角字符（AGENTS.md 规则 0）
+  const Icon = up ? ChevronUp : ChevronDown;
   return (
     <span
-      className="font-mono text-[10px] tabular-nums"
+      className="font-mono text-[10px] tabular-nums inline-flex items-center gap-px"
       style={{ color: up ? 'var(--semantic-success-text)' : 'var(--semantic-danger-text)' }}
       title={up ? `上升 ${delta} 名` : `下降 ${Math.abs(delta)} 名`}
     >
-      {up ? '▲' : '▼'}
+      <Icon size={11} aria-hidden="true" />
       {Math.abs(delta)}
     </span>
   );
