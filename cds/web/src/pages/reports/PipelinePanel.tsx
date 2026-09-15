@@ -119,14 +119,20 @@ export function splitChanges(f: PipelineFunnel): { accepted: number; heap: numbe
 export function projectTip(p: PipelineProjectRow): string {
   const f = p.funnel;
   const verdicts = f.pass + f.conditional + f.fail;
+  // 三个数全部从 splitFunnel 取：原始字段是各自累加的，部署过可以多于改动、
+  // 验过可以多于部署过。图上画的是夹取后的值，提示这里要是读原始值，
+  // 鼠标移上去看到的数就和同一垛画出来的不是一个数。
+  const seg = splitFunnel(f);
+  const changes = Math.max(0, f.changes);
+  const deployed = changes - seg.undeployed;
   return tip(
     p.projectName,
-    `改动 ${Math.max(0, f.changes)} · 部署过 ${Math.max(0, f.deployed)} · 验过 ${Math.max(0, f.accepted)}`,
+    `改动 ${changes} · 部署过 ${deployed} · 验过 ${seg.accepted}`,
     // 验过的份数与「有结论的份数」是两件事：报告可以不填 verdict。
     // 混作一谈时同一张提示会先说「验过 5」再说「一条都没验过」，自己打自己。
     verdicts > 0
       ? `通过 ${f.pass} · 原则性 ${f.conditional} · 未通过 ${f.fail}`
-      : f.accepted > 0
+      : seg.accepted > 0
         ? '验过了，但都没有填结论'
         : '一条都没验过',
     p.staleReports > 0 ? `另有 ${p.staleReports} 份报告的分支已回收` : '',

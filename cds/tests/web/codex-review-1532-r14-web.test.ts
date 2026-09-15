@@ -46,6 +46,25 @@ describe('悬浮提示不自相矛盾', () => {
   });
 });
 
+describe('悬浮提示的数就是图上画的数', () => {
+  it('验过比部署过多的脏数据：提示里的三个数与 splitFunnel 一致，不是原始累加值', () => {
+    const f = row({ changes: 4, deployed: 1, accepted: 9 }).funnel;
+    const seg = splitFunnel(f);
+    // 前置条件：这组输入下原始值与夹取值确实不同，否则断言空转。
+    expect(f.accepted).not.toBe(seg.accepted);
+    const tip = projectTip(row({ changes: 4, deployed: 1, accepted: 9 }));
+    expect(tip).toContain(`验过 ${seg.accepted}`);
+    expect(tip).not.toContain('验过 9');
+    expect(tip).toContain(`部署过 ${4 - seg.undeployed}`);
+  });
+
+  it('夹取后验过归零时，结论那行说的是「一条都没验过」', () => {
+    const tip = projectTip(row({ changes: 4, deployed: 0, accepted: 3 }));
+    expect(tip).toContain('验过 0');
+    expect(tip).toContain('一条都没验过');
+  });
+});
+
 describe('三处分流读同一份数字', () => {
   it('挂在从未部署过的分支上的报告，累加值与逐级夹取值确实不同（判据有意义）', () => {
     const f = row({ changes: 4, deployed: 1, accepted: 3 }).funnel;
