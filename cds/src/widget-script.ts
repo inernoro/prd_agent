@@ -59,6 +59,9 @@ export function buildWidgetScript(
     #cds-widget .cds-badge.is-sync-success{background:rgba(19,41,28,0.95);border-color:rgba(63,185,80,0.45)}
     #cds-widget .cds-badge.is-sync-error{background:rgba(52,23,27,0.95);border-color:rgba(248,81,73,0.45)}
     #cds-widget .cds-badge-main{position:relative;z-index:1;display:flex;align-items:center;gap:6px}
+    #cds-widget .cds-badge--compact{padding:0;width:36px;height:36px;border-radius:18px;align-items:center;justify-content:center;cursor:pointer}
+    #cds-widget .cds-badge--compact button{display:flex;align-items:center;justify-content:center;width:36px;height:36px;margin:0;padding:0;border:none;background:transparent;color:#e2e8f0;cursor:pointer}
+    #cds-widget .cds-badge--compact .cds-compact-sha{position:absolute;right:-2px;bottom:-2px;font-size:8px;line-height:1;padding:1px 3px;border-radius:4px;background:rgba(56,139,253,0.9);color:#fff;font-family:ui-monospace,SFMono-Regular,monospace;pointer-events:none}
     #cds-widget .cds-badge-icon{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0}
     #cds-widget .cds-badge.is-syncing .cds-badge-icon svg{animation:cds-spin .95s linear infinite}
     #cds-widget .cds-branch{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -179,6 +182,10 @@ export function buildWidgetScript(
 
   // ── State ──
   var expanded=false;
+  // 手机上整条徽章压在业务内容上（2026-09-14 稳定冒烟：移动首页底部被分支状态条遮挡）。
+  // 窄屏进入 4 秒后收成 36px 的圆形小钮，只在用户点它时展开；桌面端不受影响。
+  var compact=false;
+  var compactTimer=null;
   var deploying=false;
   var deployProfileId=null;
   var profiles=[];
@@ -514,6 +521,20 @@ export function buildWidgetScript(
     return window.innerWidth<=640?12:Math.max(12,window.innerWidth-492);
   }
 
+  function isMobileViewport(){
+    return window.innerWidth<=640;
+  }
+  function scheduleMobileCompact(delayMs){
+    if(compactTimer){clearTimeout(compactTimer);compactTimer=null;}
+    if(!isMobileViewport()||expanded)return;
+    compactTimer=setTimeout(function(){
+      compactTimer=null;
+      if(!isMobileViewport()||expanded)return;
+      compact=true;
+      render();
+    },delayMs);
+  }
+
   var pos={x:defaultWidgetLeft(),y:defaultWidgetBottom()};
   var dragState=null;
   var widgetWasDragged=false;
@@ -544,6 +565,8 @@ export function buildWidgetScript(
   });
   document.addEventListener('mouseup',function(){dragState=null;});
   window.addEventListener('resize',function(){
+    if(!isMobileViewport()&&compact){compact=false;render();}
+    else if(isMobileViewport()&&!compact&&!compactTimer)scheduleMobileCompact(4000);
     if(widgetWasDragged){
       setWidgetPosition(pos.x,pos.y);
       return;
@@ -554,6 +577,23 @@ export function buildWidgetScript(
   // ── Render ──
   function render(){
     var h='';
+    // 同步（自动更新）进行中或失败时不许缩成圆钮：缩了就看不见转圈、进度轨和失败态，
+    // 用户会以为什么都没发生；同步结束（visible 归位）后下一次渲染自然回到紧凑态。
+    var compactNow=compact&&!expanded&&!syncState.visible;
+    root.setAttribute('data-cds-layout',compactNow?'compact':'full');
+
+    if(compactNow){
+      // 紧凑态：一颗 36px 圆钮 + 角标短 sha，不再有整行分支名、模式 chip 和两颗按钮。
+      h+='<div class="cds-badge cds-badge--compact" onmousedown="return false">';
+      h+='<button data-action="expand-compact" aria-label="显示分支信息 '+BRANCH_NAME+'" title="'+BRANCH_NAME+(commitSha?' @ '+shortSha(commitSha):'')+'">'+ICON_BRANCH+'</button>';
+      if(commitSha)h+='<span class="cds-compact-sha">'+shortSha(commitSha).slice(0,4)+'</span>';
+      h+='</div>';
+      root.innerHTML=h;
+      root.style.left=pos.x+'px';
+      root.style.bottom=pos.y+'px';
+      renderLogModal();
+      return;
+    }
 
     // Panel
     if(expanded){
@@ -761,7 +801,22 @@ export function buildWidgetScript(
     if(!btn)return;
     var action=btn.getAttribute('data-action');
     if(action==='dismiss'){root.remove();return;}
-    if(action==='close-panel'){expanded=false;render();return;}
+    // 两侧各加了一个独立动作，语义不冲突，都保留。
+    // close-panel 是本分支的面板关闭钮；收起之后照 main 的新约定安排手机端重新收成徽章，
+    // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收，两条路各行其是。
+    if(action==='close-panel'){
+      expanded=false;
+      render();
+      scheduleMobileCompact(8000);
+      return;
+    }
+    if(action==='expand-compact'){
+      compact=false;
+      render();
+      // 看完 8 秒自动收回去，手机上不留整条徽章。
+      scheduleMobileCompact(8000);
+      return;
+    }
     if(action==='close-log'){logProfileId=null;logContent='';render();return;}
     if(action==='open-log-modal'){
       var _pName=logProfileId||'';
@@ -776,6 +831,7 @@ export function buildWidgetScript(
       expanded=!expanded;
       if(expanded)fetchBranchInfo();
       render();
+      if(!expanded)scheduleMobileCompact(8000);
       return;
     }
     var logPid=btn.getAttribute('data-log-profile');
@@ -1852,6 +1908,7 @@ export function buildWidgetScript(
 
   // ── Initial: render badge + fetch branch info to update tab title immediately ──
   render();
+  scheduleMobileCompact(4000);
   fetchBranchInfo();
   initBranchStream();
   initAiStream();

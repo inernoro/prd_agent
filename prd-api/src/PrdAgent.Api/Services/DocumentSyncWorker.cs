@@ -142,9 +142,10 @@ public class DocumentSyncWorker : BackgroundService
             var diff = await githubSyncService.SyncDirectoryAsync(
                 db, documentService, versions, entry, credential.Token, ct);
 
-            // 有文件没拉下来就是**部分失败**，不许标成功：已同步的部分保留，
-            // 但条目要红着并说清缺了什么，否则「少了几篇」会被绿色状态盖住。
-            if (diff.HasFailures)
+            // 这一轮没把承诺的事做完就不许标成功：已同步的部分保留，但条目要红着并说清差在哪。
+            // 两种来路——有文件没拉下来（少了几篇），或目录清单被上游截断因而跳过了删除
+            // （多出几篇远端已经没有的）。对用户是同一件事：界面上的内容和远端对不上。
+            if (diff.NeedsAttention)
             {
                 sw.Stop();
                 if (diff.HasChanges)
@@ -161,8 +162,8 @@ public class DocumentSyncWorker : BackgroundService
                     }, cancellationToken: CancellationToken.None);
                 }
                 _logger.LogWarning(
-                    "[DocumentSyncWorker] GitHub directory sync partially failed for {EntryId}: {Failed} file(s)",
-                    entry.Id, diff.FailedCount);
+                    "[DocumentSyncWorker] GitHub 目录同步未完整收尾 entry={EntryId}：失败 {Failed} 篇，清单被截断={Truncated}",
+                    entry.Id, diff.FailedCount, diff.ListingIncomplete);
                 await MarkSyncError(db, entry, diff.BuildFailureMessage(), startedAt, (int)sw.ElapsedMilliseconds);
                 return;
             }

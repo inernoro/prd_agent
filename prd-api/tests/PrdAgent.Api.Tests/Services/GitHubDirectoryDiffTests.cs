@@ -47,4 +47,44 @@ public class GitHubDirectoryDiffTests
 
         Assert.Contains("等 5 个文件", diff.BuildFailureMessage());
     }
+
+    [Fact]
+    public void 清单被截断也要让父条目标红()
+    {
+        // 上一轮加了 ListingIncomplete 却没人读它：worker 只看 HasFailures，于是清掉 SyncError、
+        // 推进 LastSyncAt，把「跳过了删除」演成一次成功（形状 2：建了一半 + 形状 10：静默降级）。
+        var diff = new GitHubDirectoryDiff { AddedCount = 3, ListingIncomplete = true };
+
+        Assert.False(diff.HasFailures);
+        Assert.True(diff.NeedsAttention);
+
+        var message = diff.BuildFailureMessage();
+        Assert.Contains("上限", message);
+        Assert.Contains("没有处理删除", message);
+        Assert.Contains("拆细", message);
+    }
+
+    [Fact]
+    public void 两种来路同时出现时都要说到()
+    {
+        var diff = new GitHubDirectoryDiff
+        {
+            FailedCount = 1,
+            FailedPaths = { "doc/a.md" },
+            ListingIncomplete = true,
+        };
+
+        var message = diff.BuildFailureMessage();
+        Assert.Contains("doc/a.md", message);
+        Assert.Contains("重试同步", message);
+        Assert.Contains("上限", message);
+    }
+
+    [Fact]
+    public void 两样都没有才算这一轮做完了()
+    {
+        var diff = new GitHubDirectoryDiff { AddedCount = 5 };
+
+        Assert.False(diff.NeedsAttention);
+    }
 }

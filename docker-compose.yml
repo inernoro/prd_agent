@@ -105,6 +105,9 @@ services:
       - StableSmokeAuthentication__Keys__0__AllowedHost=${STABLE_SMOKE_ALLOWED_HOST:-}
       - StableSmokeAuthentication__Keys__0__PublicKey=${STABLE_SMOKE_PUBLIC_KEY:-}
       - StableSmokeAuthentication__Keys__0__AutoProvision=${STABLE_SMOKE_AUTO_PROVISION:-false}
+      # 是否由平台按 StableSmokeIdentityPolicy 托管巡检账号的权限（开号写入放行清单、存量缺项补齐）。
+      # 正式与本地默认关闭，只有 CDS 验证环境需要开启；关闭时账号权限完全由管理员手工决定。
+      - StableSmokeAuthentication__Keys__0__ManagePermissions=${STABLE_SMOKE_MANAGE_PERMISSIONS:-false}
       # GitHub OAuth Device Flow（PR Review Agent 使用）
       # 管理员需在 GitHub 创建 OAuth App 并勾选 "Enable Device Flow"，
       # 然后在宿主机 export 这两个变量（或写进同目录 .env 文件）。Device Flow 无需 Callback URL。

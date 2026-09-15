@@ -303,3 +303,12 @@ describe('【关键】底边那行必须夹在画布可见区域内', () => {
     for (const usage of usages) expect(usage).toContain('viewportRef={stageRef}');
   });
 });
+
+describe('GenDevelopLoader 接线守卫：底边一行的定位只能从共享换算函数拿', () => {
+  const source = readFileSync(resolve(__dirname, './GenDevelopLoader.tsx'), 'utf8');
+
+  it('宿主调用 generationProgressMetaStyle，而不是自己把中心点当左缘除 scale', () => {
+    expect(source).toContain('generationProgressMetaStyle(placement, scale)');
+    expect(source).not.toMatch(/meta\.style\.left = `\$\{placement\.left \/ scale\}px`/);
+  });
+});

@@ -35,7 +35,13 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('#cds-widget .cds-panel{width:calc(100vw - 24px)');
     expect(script).toContain('max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain');
     expect(script).toContain('data-action="close-panel" title="关闭 CDS 诊断面板" aria-label="关闭 CDS 诊断面板"');
-    expect(script).toContain("if(action==='close-panel'){expanded=false;render();return;}");
+    // 断行为不断字面排版：合并 main 的手机端收起之后，关闭钮同样要安排重新收成徽章，
+    // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收。
+    const closeHandler = script.slice(script.indexOf("if(action==='close-panel')"));
+    expect(closeHandler.slice(0, 160)).toContain('expanded=false;');
+    expect(closeHandler.slice(0, 160)).toContain('render();');
+    expect(closeHandler.slice(0, 160), '关闭面板后没有安排手机端重新收起')
+      .toContain('scheduleMobileCompact(8000);');
     expect(script).toContain('#cds-widget button{min-width:44px;min-height:44px}');
     expect(script).toContain('#cds-widget .cds-mode-select{min-height:44px}');
   });
@@ -71,5 +77,25 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain("else if(s.status==='running')icon='中';");
     expect(script).toContain("addOpsStep('end','snapshot','AI 操作完成');");
     expect(script).toContain("showHandshakeToast('已授权 AI 操作此页面','#60a5fa');");
+  });
+
+  it('collapses the preview widget into a compact chip on mobile so it stops covering page content', () => {
+    // 2026-09-14 稳定冒烟：移动首页底部被整条分支徽章压住。窄屏进入 4 秒后收成 36px 圆钮，
+    // 用户点开后 8 秒再收回；桌面端不受影响。布局态通过 data-cds-layout 暴露给自动化验收。
+    const script = buildWidgetScript('branch-a', 'branch/a');
+    expect(script).toContain('function isMobileViewport(){');
+    expect(script).toContain('return window.innerWidth<=640;');
+    expect(script).toContain('function scheduleMobileCompact(delayMs){');
+    // 同步进行中或失败时不缩：否则自动更新的转圈与失败态在手机上完全不可见（Codex review 2026-09-15 P2）。
+    expect(script).toContain('var compactNow=compact&&!expanded&&!syncState.visible;');
+    expect(script).toContain("root.setAttribute('data-cds-layout',compactNow?'compact':'full');");
+    expect(script).toContain('if(compactNow){');
+    expect(script).toContain('cds-badge cds-badge--compact');
+    expect(script).toContain("if(action==='expand-compact'){");
+    expect(script).toContain('.cds-badge--compact{padding:0;width:36px;height:36px;border-radius:18px;');
+    // 初次渲染后就排程收起；展开面板期间不收起，收起面板后重新排程。
+    expect(script).toContain('  render();\n  scheduleMobileCompact(4000);');
+    expect(script).toContain('if(!isMobileViewport()||expanded)return;');
+    expect(script).toContain('if(!expanded)scheduleMobileCompact(8000);');
   });
 });

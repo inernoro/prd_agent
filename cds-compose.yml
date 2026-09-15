@@ -316,6 +316,8 @@ services:
       StableSmokeAuthentication__Keys__0__AllowedHost: "@deployment"
       StableSmokeAuthentication__Keys__0__PublicKey: "${STABLE_SMOKE_PUBLIC_KEY}"
       StableSmokeAuthentication__Keys__0__AutoProvision: "true"
+      # CDS 验证环境要跑完整矩阵：按 StableSmokeIdentityPolicy 托管巡检账号权限（正式环境 compose 默认关闭）
+      StableSmokeAuthentication__Keys__0__ManagePermissions: "true"
       Changelog__RootPath: /repo
       Changelog__GitHubBranch: "${VITE_GIT_BRANCH:-main}"
       Changelog__GitHubToken: "${GITHUB_PAT:-}"
