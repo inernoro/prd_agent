@@ -176,9 +176,15 @@ function sumDefects(list: Array<Record<string, number> | null | undefined>): Rec
   return out;
 }
 
+/**
+ * 阻断缺陷数。写入侧不拦负数，而下游是用 `> 0` 与 `=== 0` 两个分支分流的：
+ * 负数两边都不落，一份未通过的报告会掉进 ok 档，首屏说「可以正常使用」而句子说有失败。
+ * 所以在这里就把每一项夹成非负，负数按零算，不让它往下走。
+ */
 function blockingDefects(d: Record<string, number> | null | undefined): number {
   if (!d) return 0;
-  return (d.p0 ?? d.P0 ?? 0) + (d.p1 ?? d.P1 ?? 0);
+  const n = (v: number | undefined): number => (Number.isFinite(v) && (v as number) > 0 ? (v as number) : 0);
+  return n(d.p0 ?? d.P0) + n(d.p1 ?? d.P1);
 }
 
 function identityKey(r: AcceptanceReportMeta, parsed: ParsedReportTitle): string {

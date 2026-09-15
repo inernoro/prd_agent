@@ -278,7 +278,9 @@ export function buildPipelineOverview(
       if (!iso) return;
       if (!lastActivityAt || iso > lastActivityAt) lastActivityAt = iso;
     };
-    for (const b of projectBranches) touch(b.lastDeployAt || b.createdAt);
+    // 「最近动静」取三者里最晚的一个，与 branchLiveSince 同口径：只看部署的话，
+    // 一条刚推过、还没重新部署的分支会显示成很久没动静。
+    for (const b of projectBranches) { touch(b.createdAt); touch(b.lastPushAt); touch(b.lastDeployAt); }
 
     for (const c of changes.values()) {
       const matched = projectRefs.filter((r) => matchesChange(r, c));
