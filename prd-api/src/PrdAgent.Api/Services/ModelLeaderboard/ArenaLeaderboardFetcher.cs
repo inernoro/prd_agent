@@ -218,30 +218,38 @@ public class ArenaLeaderboardFetcher
     private static ModelLeaderboardEntry? TryParseAgentRow(
         string block, string name, string? organization, string? license, int rank)
     {
-        // 指标：方向决定符号，误差按出现顺序一一对应
-        var dirVals = DirectionValueRegex.Matches(block);
-        if (dirVals.Count == 0) return null;
-
-        var margins = MarginRegex.Matches(block);
+        // 指标：**逐个单元格**解析，值与它的误差必须来自同一格。
+        //
+        // 原先是整行取两串匹配再按下标配对（第 i 个方向值配第 i 个 ±）。只要有一个指标
+        // 没有误差那一格，后面每个误差就整体前移一位挂到上一个指标头上——页面上看不出
+        // 任何异常，因为六个数字都还在、都还是合法的百分比。这个 bug 是补测试时才照出来
+        // 的（原 fixture 只有一个指标，照不出错位），与 Codex 在 PR #1538 指出的指标错位
+        // 同源：**凡是按出现顺序把两串东西配对，中间少一个就全错**。
         var metrics = new List<ModelLeaderboardMetric>();
-        for (var i = 0; i < dirVals.Count; i++)
+        foreach (Match cell in CellRegex.Matches(block))
         {
-            if (!double.TryParse(dirVals[i].Groups[2].Value, NumberStyles.Float,
+            var text = cell.Groups[1].Value;
+            var dv = DirectionValueRegex.Match(text);
+            if (!dv.Success) continue;
+            if (!double.TryParse(dv.Groups[2].Value, NumberStyles.Float,
                     CultureInfo.InvariantCulture, out var raw))
                 continue;
 
             double? margin = null;
-            if (i < margins.Count && double.TryParse(margins[i].Groups[1].Value, NumberStyles.Float,
+            if (MarginRegex.Match(text) is { Success: true } mg
+                && double.TryParse(mg.Groups[1].Value, NumberStyles.Float,
                     CultureInfo.InvariantCulture, out var m))
                 margin = m;
 
             metrics.Add(new ModelLeaderboardMetric
             {
                 // 方向直接进符号：页面显示 ▼0.91% 就是 -0.91，前端不必再判方向
-                Value = dirVals[i].Groups[1].Value == "Down" ? -raw : raw,
+                Value = dv.Groups[1].Value == "Down" ? -raw : raw,
                 Margin = margin,
             });
         }
+
+        if (metrics.Count == 0) return null;   // 一个指标格都没有 = 这不是 agent 行
 
         // 必须恰好六个。少一个就拒绝整行——不是保守，是因为 AssignMetrics 按位置对位：
         // 对方改了中间某一格的写法，解析出五个值会整体前移一位，「好评比」的数字挂到

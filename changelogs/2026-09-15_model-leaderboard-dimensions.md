@@ -8,6 +8,7 @@
 | fix | prd-api | 修正「只有 Agent 榜能拿到数据」的错误结论——此前试的是不存在的路径，404 兜底页里的一句 Loading leaderboard 被误当成懒加载骨架 |
 | fix | prd-api | 写侧 Controller 改用 api/admin/ 前缀：权限中间件按路由前缀查权限，与只读端点同前缀会把只读也一起要求 mds.read，全员可见形同虚设 |
 | fix | prd-api | Agent 行必须恰好解析出六个指标，否则整行拒绝——中间某格改写会让后续值整体前移、每个字段挂错名字，而条目数与形状判定照样通过 |
+| fix | prd-api | 指标的误差改为按单元格解析：原先值与误差按整行出现顺序配对，任一指标缺误差格会让后续误差整体前移一位挂错指标，页面上看不出异常（补测试时照出来的真 bug） |
 | fix | prd-api | 快照文档 Id 改为由榜名派生的确定性值，消除首次同步时周期任务与手动触发并发插出两条文档的窗口；/boards 读取同时改为重复容忍 |
 | fix | prd-api | model_leaderboard_snapshots 补进 DataSyncScope.Excluded（外站公开数据的本地缓存，跨实例搬运无意义且会误导来源） |
 | fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |
