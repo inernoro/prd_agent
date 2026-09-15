@@ -63,5 +63,5 @@
 | fix | prd-admin | isOpenSource 改读后端的 licenseKind，不再自己正则匹配授权字符串（frontend-architecture 单一数据源）；字段缺失按 unknown 处理、不按开源；非开源那行不再一律写「闭源」，改为一律显示授权原文——CC-BY-NC 和仅研究许可都不是闭源 |
 | fix | prd-admin | 目录项按忽略大小写解析并把 URL 归一：后端上一轮已经接受 ?board=Text，而前端还按大小写严格比，currentBoard 为 null 会把用户从一条后端已接受的链接踢回默认榜 |
 | fix | prd-api | 本页教程第 8 步文案跟着改：说清「仅开源」只放能认出来的标准开源许可，各家自造的要自己读条款 |
-| fix | prd-api | 名次区间注释里的字面双向箭头改成文字（规则 0：↔ 带 Emoji / Extended_Pictographic 属性；此前只扫了三角字符） |
+| fix | prd-api | 名次区间注释里的字面双向箭头字符（U+2194）改成文字「到」（规则 0：它带 Emoji / Extended_Pictographic 属性，且禁令明文覆盖 changelogs/；此前只扫了三角字符） |
 | test | prd-api | 新增 14 条授权归类守卫，取值是从存档页全量抽取去重的 42 种真实写法（含空值），逐个钉住该落哪一类，兼作匹配表的数据覆盖守卫 |
