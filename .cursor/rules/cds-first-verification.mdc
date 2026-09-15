@@ -4,7 +4,7 @@ description: 改了可执行代码、准备说「验证过了/编译通过/测�
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/cds-first-verification.md
-     生成时间: 2026-09-15T17:34:50Z -->
+     生成时间: 2026-09-15T17:42:52Z -->
 
 # 验证的权威位置（编译与测试各在哪里被证明）
 
@@ -31,6 +31,13 @@ grep -rn "你改的路径前缀" .github/workflows/ | grep -v "^.*#"
 
 表与 `.github/workflows/` 对不上时，以后者为准，并把表改回来。
 
+**这张表也不打算穷举 workflow。** 仓库里有十几条，还会增减；把它们的触发条件和步骤在这里抄一份，
+就是让同一份判据存在两处、各自漂移（`predicate-and-wiring-discipline.md` 形状 3）。
+所以表只负责一件 `.github/workflows/` 一眼看不出来的事：**哪些检查压根没有远端判据**
+（Admin 与 Desktop 的 lint、Desktop 的 vitest、Integration / Manual 测试、`prd-video`、
+`docker-compose*.yml`、清单外的脚本）——那才是会让人误报「已验证」的地方。
+「我这条路径会触发哪几条流水线」一律现查，不要背表。
+
 | 改了什么 | 权威判据 | 在哪跑 | 什么时候才有结论 |
 |---|---|---|---|
 | `prd-api/**/*.cs`（API 项目能不能编出来） | **Branch Image workflow 绿**，产出 `sha-<commit>` 镜像 | GitHub Actions `branch-image.yml` | **push 之后**（它由 push 触发），每次 push 都跑 |
@@ -40,9 +47,9 @@ grep -rn "你改的路径前缀" .github/workflows/ | grep -v "^.*#"
 | `prd-admin` 的 **lint** | 只有本地 `pnpm lint`——`Admin Dashboard Build` 没有 lint 步骤（它只跑 Type check / Run tests / Build，而 `build` 就是 `tsc && vite build`） | **只能本地** | 本地即时 |
 | `prd-desktop/src-tauri/**/*.rs` | CI 的 `Desktop Client Check` job 绿：`cargo check`（dev + release）、`cargo fmt --check`、`cargo clippy -- -D warnings` | 本地 或 Actions | push 之后，且同样 **feature 分支不自动跑** |
 | `prd-desktop` 前端 `.ts/.tsx` | tsc 与 vite build 由同一个 job 复核；**lint 与 vitest 只能本地**——那个 job 没有这两步，而 `prd-desktop/src` 下确实有五个测试文件 | tsc/build：本地或 Actions；lint/test：**只能本地** | 同上 |
-| `cds/**` | **三条**流水线，都要看：`CI` 的 `CDS Build & Test`（tsc + vitest）、专用的 `CDS CI`（`cds.yml`：build、`audit:ui` UI 回归审计、vitest、两组 Playwright 移动端冒烟、`cds/Dockerfile` 构建）、以及 `CDS Prebuilt`（`cds-prebuilt.yml`：tsc 门 + esbuild 后端 + vite 前端 + `Dockerfile.dist` 产物镜像，供 CDS 自更新 pull）。任一条绿都不代表另两条绿 | 本地 或 Actions | 前两条 push 之后且只在 main/develop；**`CDS Prebuilt` 所有分支 push 即触发** |
-| `llmgw/**` | 编译有远端判据：三家的镜像都在 `branch-image.yml` 里构建（`console-api` 的 Dockerfile 跑 `dotnet publish`、`web` 跑 `pnpm build`、`serving` 同理），push 即触发。另外 `llmgw/serving` 在 `PrdAgent.sln` 里，所以 `Server Build & Test` 也覆盖它，**`console-api` 不在 sln 里**。其余校验见 `llmgw/AGENTS.md` 的模块表 | 本地 或 Actions | 本地即时；Branch Image 在 push 之后 |
-| 发布链路脚本与部分技能脚本 | CI 的 `Production Release Script Test` job 绿。它跑的是一份**显式清单**（`exec_dep.sh`、`scripts/lib/*`、`scripts/tests/test_*.py`、`*.test.mjs`、cdscli、周报/日报技能的脚本……），清单见 `ci.yml` 的 `release-script-test` path filter | 本地 或 Actions | 同上 |
+| `cds/**` | **不止一条流水线**，用下面那条命令列全再逐条看（至少有 `CDS Build & Test`、专用的 `CDS CI`、所有分支都跑的 `CDS Prebuilt`，改到端口巡检相关文件还会多一条）。任一条绿都不代表其余绿 | 本地 或 Actions | 各条触发范围不同，以命令列出的为准 |
+| `llmgw/**` | 编译有远端判据：三家的镜像都在 `branch-image.yml` 里构建（`console-api` 跑 `dotnet publish`、`web` 跑 `pnpm build`），push 即触发；`serving` 另在 `PrdAgent.sln` 里，`Server Build & Test` 也覆盖它，**`console-api` 不在 sln 里**。**此外还有开 PR 才触发的检查**，用下面那条命令列全。其余校验见 `llmgw/AGENTS.md` | 本地 或 Actions | 见命令列出的各条 |
+| 发布链路脚本与部分技能脚本 | CI 的 `Production Release Script Test` job 绿。它跑的是一份**显式清单**（`exec_dep.sh`、`scripts/lib/*`、`scripts/tests/test_*.py`、`*.test.mjs`、cdscli、周报/日报技能的脚本……），清单见 `ci.yml` 的 `release-script-test` path filter | 本地 或 Actions | 它在 `ci.yml` 里，所以**普通 feature 分支 push 不会跑**——要么开 PR 到 main/develop，要么手动 dispatch |
 | Dockerfile | 已接线的那几个由镜像构建作业验：`prd-api` / `prd-admin` / `llmgw` 三家走 `branch-image.yml`（push 即触发），`cds/Dockerfile` 走 `cds.yml` 的 `Docker Build Check` | Actions | push 之后 |
 | `prd-video/**`、`docker-compose*.yml`、**不在上面那份清单里的** `scripts/**` 与技能脚本 | **没有任何 CI job 会验它们**（`grep -rn "prd-video" .github/workflows/` 零命中）——只能本地跑（模块自己的 `AGENTS.md` + AGENTS.md §5.2），跑不了就在交付里明说没验过 | 只能本地 | 本地即时 |
 | 页面打得开、流程跑得通 | 预览域名上的真人路径 + 截图 | CDS 分支预览 | push 即部署 |

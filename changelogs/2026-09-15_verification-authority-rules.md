@@ -9,3 +9,4 @@
 | fix | platform | 修 Codex 第五轮五条：Integration/Manual 改为按 FullyQualifiedName 点名跑（去掉 filter 全跑会拿真密钥去 VveAI/Volces 真生图、真花钱）；llmgw 三家的镜像都在 branch-image 构建，console-api/web 并非「只能本地」；第四节区分「有远端判据」与「只能本地」两类，后者本地跑绿就是它的验证结论；AGENTS.md 5.2 的手动 dispatch 收窄到「还没开 PR」的分支；diagnose.md 不再在自动部署之后又叫一次 cdscli deploy |
 | fix | platform | 修 Codex 第六轮四条：cdscli 的 help-me-check 里 error CS* 的建议跟上权威位置表（文档改了、出建议的那行代码没改）；例外从整个 .claude/skills/ 收窄到纯元数据（那底下有大量可执行脚本，表里本来就给了判据）；debt.platform 那节按 doc 规则去掉逐文件改法与实现细节，只留成因/影响/取舍/验收标准；「全量 xUnit」改成「非集成非手工那一档」 |
 | fix | platform | 修 Codex 第七轮一条并做结构性处理：cds 补上第三条流水线 CDS Prebuilt（所有分支 push 即触发，跑 tsc 门 + esbuild + vite + Dockerfile.dist 产物镜像，供自更新 pull）；同时在表前写明「这张表是快照、SSOT 是 .github/workflows/」，给出引用前先 grep 触发条件的动作，自查清单加一条 |
+| fix | platform | 第八轮触发 AGENTS.md 5.5 熔断（review 修复提交达 8 个、连续五轮同类），停止逐条追加 workflow：修「发布脚本行的触发时机继承错了」这条实缺陷，其余改为结构处理——表不再穷举流水线（仓库十几条且会增减，抄一份就是判据分裂），只保留「哪些检查压根没有远端判据」，「我这条路径触发哪几条」一律现查 |
