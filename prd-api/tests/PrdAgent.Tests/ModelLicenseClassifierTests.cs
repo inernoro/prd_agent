@@ -24,7 +24,7 @@ public sealed class ModelLicenseClassifierTests
     [InlineData("Apache 2.0")]
     [InlineData("Apache-2.0")]
     [InlineData("apache 2.0")]
-    public void 标准开源许可判 open(string license)
+    public void Classify_标准开源许可判open(string license)
         => Assert.Equal(LicenseKind.Open, ModelLicenseClassifier.Classify(license));
 
     // ---- 带限制：闭源 / 非商用 / 仅研究 / community ------------------------
@@ -45,7 +45,7 @@ public sealed class ModelLicenseClassifierTests
     [InlineData("krea-2-community-license")]
     [InlineData("Qwen-community-1.0")]
     [InlineData("qwen-community-1.0")]
-    public void 带使用限制的许可判 restricted(string license)
+    public void Classify_带使用限制的许可判restricted(string license)
         => Assert.Equal(LicenseKind.Restricted, ModelLicenseClassifier.Classify(license));
 
     // ---- 认不出来：各家自造的，条款没逐个读过就不敢说开源 ------------------
@@ -72,14 +72,14 @@ public sealed class ModelLicenseClassifierTests
     [InlineData("Nvidia")]
     [InlineData("Ideogram Open Model")]
     [InlineData("Open")]                // 名字里有 Open 不等于开源
-    public void 各家自造的许可判 unknown(string license)
+    public void Classify_各家自造的许可判unknown(string license)
         => Assert.Equal(LicenseKind.Unknown, ModelLicenseClassifier.Classify(license));
 
     [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public void 没有授权段判 unknown 而不是 open(string? license)
+    public void Classify_没有授权段判unknown而不是open(string? license)
     {
         // 这条单独立一个用例：把「读不出来」默认成「开源」正是原判据最贵的那个错误
         Assert.Equal(LicenseKind.Unknown, ModelLicenseClassifier.Classify(license));
@@ -88,7 +88,7 @@ public sealed class ModelLicenseClassifierTests
     // ---- 判据本身的形状 --------------------------------------------------
 
     [Fact]
-    public void 限制标记优先于开源家族()
+    public void Classify_限制标记优先于开源家族()
     {
         // 两边的词都在时，限制必须赢。判据顺序反过来这条就红。
         Assert.Equal(
@@ -97,7 +97,7 @@ public sealed class ModelLicenseClassifierTests
     }
 
     [Fact]
-    public void 开源家族按前缀加分隔符匹配_不是子串()
+    public void Classify_开源家族按前缀加分隔符匹配_不是子串()
     {
         // 子串匹配会被 permit / transmit 这类词命中，而一次误判就是一个错的绿徽章
         Assert.Equal(LicenseKind.Unknown, ModelLicenseClassifier.Classify("Transmit-Only License"));
@@ -106,7 +106,7 @@ public sealed class ModelLicenseClassifierTests
     }
 
     [Fact]
-    public void 归类只有三种取值()
+    public void Classify_归类只有三种取值()
     {
         // 前端按这三个值分支；多出第四种会让它悄悄落到 else 分支
         string[] samples =
