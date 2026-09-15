@@ -3491,6 +3491,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(response.ok(), body.error?.message || '无法读取网关逻辑模型').toBe(true);
       return body.data.items;
     };
+    let owner: GatewayLogicalModel | undefined;
+    let backup: GatewayOffering | undefined;
     const put = async (offeringId: string, data: Record<string, unknown>) => {
       const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${offeringId}`, {
         headers: gateway.headers,
@@ -3509,130 +3511,136 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(response.ok(), body.error?.message || `Offering ${offeringId} ${enabled ? '启用' : '停用'}失败`).toBe(true);
       return body.data;
     };
-    const index = await readGatewayUpstreamIndex(request, gateway);
-    // 进入时不看备用是否干净，一律先把所有逻辑模型上的注入态自愈、把启用着的带标记备用停掉，再选备用、取快照：
-    // 上一轮若只在主路注入之后就夭折，备用是干净的而主路不是，后面的「恰好只处理这一条」断言会被主路的遗留搅掉。
-    const pre = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
-    await disableStrayGatewayBackups(request, gateway, await readLogical());
-    expect(
-      pre.filter((item) => item.source === 'unrecoverable'),
-      '进入用例时网关上有无法还原的注入态，请先人工恢复这些 Offering 的 Endpoint 再跑',
-    ).toEqual([]);
-    let items = await readLogical();
-    let owner = items.find((item) => item.offerings.some(isGatewayFailoverBackup));
-    let backup = owner?.offerings.find(isGatewayFailoverBackup);
-    if (!owner || !backup) {
-      // 干净的网关（业务逻辑模型本来就有双上游、GW-007 从未补过备用）：本用例自己造一条带标记备用，
-      // 与 GW-007 共用同一份创建逻辑，造完立刻停用；不依赖别的用例先跑，也不跳过。
-      const candidates = items
-        .filter((item) => item.enabled && item.offerings.some((offering) => isLiveGatewayUpstream(offering, index)))
-        .sort((left, right) => left.publicId.localeCompare(right.publicId));
-      let created: GatewayOffering | undefined;
-      for (const candidate of candidates) {
-        const primary = candidate.offerings
-          .filter((offering) => isLiveGatewayUpstream(offering, index))
-          .sort((left, right) => left.priority - right.priority)[0];
-        created = await provisionTaggedFailoverBackup(request, gateway, items, index, candidate, primary);
-        if (created) {
-          owner = candidate;
-          break;
-        }
-      }
-      expect(created, '没有任何逻辑模型能从同类型逻辑模型借到第二个真实上游，无法构造带标记备用').toBeTruthy();
-      await setEnabled(created!.id, false);
-      items = await readLogical();
-      backup = items.find((item) => item.id === owner!.id)?.offerings.find(isGatewayFailoverBackup);
-      expect(backup, '刚创建的带标记备用必须能在逻辑模型上读回').toBeTruthy();
-    }
-    expect(isGatewayInjectedEndpoint(backup!), '自愈之后备用 Offering 不应再是注入态').toBe(false);
-    // 路由契约完全相同的捐出方在有的环境里存在、有的不存在（CDS 上备用是 openai 协议、捐出方是协议默认），
-    // 旧格式注入路径的两种结局都要验：有捐出方就按它还原，没有就必须原样不动并标记 unrecoverable。
-    const donor = items
-      .flatMap((item) => item.offerings.filter((offering) => offering.id !== backup!.id && sameGatewayRoutingContract(offering, backup!)))
-      .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0];
-    // 带标记备用在 GW-007 之外的干净状态永远是「停用」：进入时若是启用的，那只能是上一轮夭折留下的，结束时一并停掉。
-    const original = { endpointPath: backup!.endpointPath || '', priority: backup!.priority };
-    const readBackup = async () => {
-      const current = (await readLogical()).find((item) => item.id === owner!.id)?.offerings
-        .find((offering) => isGatewayFailoverBackup(offering) && offering.targetId === backup!.targetId);
-      expect(current, '带标记备用 Offering 必须始终留在逻辑模型上').toBeTruthy();
-      return current!;
-    };
-
-    const poison = async (injectedEndpointPath: string) => {
-      // 模拟 worker 在全路故障注入之后被硬杀：备用启用、Endpoint 停在注入态。
-      const current = await readBackup();
-      const poisoned = await put(current.id, { endpointPath: injectedEndpointPath, priority: original.priority });
-      expect(isGatewayInjectedEndpoint(poisoned)).toBe(true);
-      await setEnabled(poisoned.id, true);
-    };
-    const recoverOnce = async () => {
-      const recovered = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
-      expect(
-        recovered.map((item) => `${item.logicalId}:${item.targetId}`),
-        '自愈必须恰好处理这条遗留备用，不碰其它 Offering',
-      ).toEqual([`${owner!.id}:${backup!.targetId}`]);
-      return recovered[0];
-    };
-
-    // 注入路径构造器本身的边界：短路径（含多字节）可逆，超过网关 500 字符上限时退回不带原值的旧格式。
-    expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('all', 'v1/图片/generations?x=1', 2))).toBe('v1/图片/generations?x=1');
-    expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('primary', ''))).toBe('');
-    const longInjected = buildGatewayInjectedEndpoint('all', 'a'.repeat(480), 3);
-    expect(longInjected.length).toBeLessThanOrEqual(gatewayEndpointPathLimit);
-    expect(gatewayInjectedEndpointPattern.test(longInjected)).toBe(true);
-    expect(decodeGatewayInjectedEndpoint(longInjected)).toBeNull();
-
+    // 从补备用开始就进入清理作用域：创建成功但响应丢失、或紧接着的停用请求失败时，外层 finally 也要把
+    // 所有逻辑模型上启用着的带标记备用停掉，不让刚建的备用带着启用态留在 CDS 路由里。
     try {
-      // 情形一：本 PR 起的注入格式自带原值，精确还原，不依赖任何别的 Offering。
-      // 原 Endpoint 长到装不进 500 字符时构造器会退回不带原值的格式，那就按情形二的结局断言。
-      const embeddedPath = buildGatewayInjectedEndpoint('all', original.endpointPath, 0);
-      const embeddable = decodeGatewayInjectedEndpoint(embeddedPath) !== null;
-      await poison(embeddedPath);
-      const embedded = await recoverOnce();
-      const afterEmbedded = await readBackup();
-      if (embeddable) {
-        expect(embedded.source).toBe('embedded');
-        expect(embedded.to).toBe(original.endpointPath);
-        expect(isGatewayInjectedEndpoint(afterEmbedded)).toBe(false);
-        expect(afterEmbedded.endpointPath || '').toBe(original.endpointPath);
-        expect(afterEmbedded.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
-        expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
-      } else if (donor) {
-        expect(embedded.source).toBe('donor');
-        expect(afterEmbedded.endpointPath || '').toBe(donor.endpointPath || '');
-      } else {
-        expect(embedded.source).toBe('unrecoverable');
-        expect(afterEmbedded.endpointPath || '').toBe(embeddedPath);
+      const index = await readGatewayUpstreamIndex(request, gateway);
+      // 进入时不看备用是否干净，一律先把所有逻辑模型上的注入态自愈、把启用着的带标记备用停掉，再选备用、取快照：
+      // 上一轮若只在主路注入之后就夭折，备用是干净的而主路不是，后面的「恰好只处理这一条」断言会被主路的遗留搅掉。
+      const pre = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+      await disableStrayGatewayBackups(request, gateway, await readLogical());
+      expect(
+        pre.filter((item) => item.source === 'unrecoverable'),
+        '进入用例时网关上有无法还原的注入态，请先人工恢复这些 Offering 的 Endpoint 再跑',
+      ).toEqual([]);
+      let items = await readLogical();
+      owner = items.find((item) => item.offerings.some(isGatewayFailoverBackup));
+      backup = owner?.offerings.find(isGatewayFailoverBackup);
+      if (!owner || !backup) {
+        // 干净的网关（业务逻辑模型本来就有双上游、GW-007 从未补过备用）：本用例自己造一条带标记备用，
+        // 与 GW-007 共用同一份创建逻辑，造完立刻停用；不依赖别的用例先跑，也不跳过。
+        const candidates = items
+          .filter((item) => item.enabled && item.offerings.some((offering) => isLiveGatewayUpstream(offering, index)))
+          .sort((left, right) => left.publicId.localeCompare(right.publicId));
+        let created: GatewayOffering | undefined;
+        for (const candidate of candidates) {
+          const primary = candidate.offerings
+            .filter((offering) => isLiveGatewayUpstream(offering, index))
+            .sort((left, right) => left.priority - right.priority)[0];
+          created = await provisionTaggedFailoverBackup(request, gateway, items, index, candidate, primary);
+          if (created) {
+            owner = candidate;
+            break;
+          }
+        }
+        expect(created, '没有任何逻辑模型能从同类型逻辑模型借到第二个真实上游，无法构造带标记备用').toBeTruthy();
+        await setEnabled(created!.id, false);
+        items = await readLogical();
+        backup = items.find((item) => item.id === owner!.id)?.offerings.find(isGatewayFailoverBackup);
+        expect(backup, '刚创建的带标记备用必须能在逻辑模型上读回').toBeTruthy();
       }
+      expect(isGatewayInjectedEndpoint(backup!), '自愈之后备用 Offering 不应再是注入态').toBe(false);
+      // 路由契约完全相同的捐出方在有的环境里存在、有的不存在（CDS 上备用是 openai 协议、捐出方是协议默认），
+      // 旧格式注入路径的两种结局都要验：有捐出方就按它还原，没有就必须原样不动并标记 unrecoverable。
+      const donor = items
+        .flatMap((item) => item.offerings.filter((offering) => offering.id !== backup!.id && sameGatewayRoutingContract(offering, backup!)))
+        .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0];
+      // 带标记备用在 GW-007 之外的干净状态永远是「停用」：进入时若是启用的，那只能是上一轮夭折留下的，结束时一并停掉。
+      const original = { endpointPath: backup!.endpointPath || '', priority: backup!.priority };
+      const readBackup = async () => {
+        const current = (await readLogical()).find((item) => item.id === owner!.id)?.offerings
+          .find((offering) => isGatewayFailoverBackup(offering) && offering.targetId === backup!.targetId);
+        expect(current, '带标记备用 Offering 必须始终留在逻辑模型上').toBeTruthy();
+        return current!;
+      };
 
-      // 情形二：旧格式注入路径不带原值。有路由契约完全相同的捐出方就按它还原；没有就一个字都不许改。
-      const legacyEndpoint = `stable-smoke-all-failure/leftover-${Date.now()}`;
-      await poison(legacyEndpoint);
-      const legacy = await recoverOnce();
-      const afterLegacy = await readBackup();
-      if (donor) {
-        expect(legacy.source).toBe('donor');
-        expect(legacy.to).toBe(donor.endpointPath || '');
-        expect(afterLegacy.endpointPath || '').toBe(donor.endpointPath || '');
-        expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
-      } else {
-        expect(legacy.source, '没有相同路由契约的捐出方时不能拿别的 Endpoint 顶上').toBe('unrecoverable');
-        expect(afterLegacy.endpointPath || '', 'unrecoverable 的记录必须原样不动').toBe(legacyEndpoint);
-        expect(afterLegacy.enabled, 'unrecoverable 的记录连启停状态都不动，交给人工处理').toBe(true);
+      const poison = async (injectedEndpointPath: string) => {
+        // 模拟 worker 在全路故障注入之后被硬杀：备用启用、Endpoint 停在注入态。
+        const current = await readBackup();
+        const poisoned = await put(current.id, { endpointPath: injectedEndpointPath, priority: original.priority });
+        expect(isGatewayInjectedEndpoint(poisoned)).toBe(true);
+        await setEnabled(poisoned.id, true);
+      };
+      const recoverOnce = async () => {
+        const recovered = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+        expect(
+          recovered.map((item) => `${item.logicalId}:${item.targetId}`),
+          '自愈必须恰好处理这条遗留备用，不碰其它 Offering',
+        ).toEqual([`${owner!.id}:${backup!.targetId}`]);
+        return recovered[0];
+      };
+
+      // 注入路径构造器本身的边界：短路径（含多字节）可逆，超过网关 500 字符上限时退回不带原值的旧格式。
+      expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('all', 'v1/图片/generations?x=1', 2))).toBe('v1/图片/generations?x=1');
+      expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('primary', ''))).toBe('');
+      const longInjected = buildGatewayInjectedEndpoint('all', 'a'.repeat(480), 3);
+      expect(longInjected.length).toBeLessThanOrEqual(gatewayEndpointPathLimit);
+      expect(gatewayInjectedEndpointPattern.test(longInjected)).toBe(true);
+      expect(decodeGatewayInjectedEndpoint(longInjected)).toBeNull();
+
+      try {
+        // 情形一：本 PR 起的注入格式自带原值，精确还原，不依赖任何别的 Offering。
+        // 原 Endpoint 长到装不进 500 字符时构造器会退回不带原值的格式，那就按情形二的结局断言。
+        const embeddedPath = buildGatewayInjectedEndpoint('all', original.endpointPath, 0);
+        const embeddable = decodeGatewayInjectedEndpoint(embeddedPath) !== null;
+        await poison(embeddedPath);
+        const embedded = await recoverOnce();
+        const afterEmbedded = await readBackup();
+        if (embeddable) {
+          expect(embedded.source).toBe('embedded');
+          expect(embedded.to).toBe(original.endpointPath);
+          expect(isGatewayInjectedEndpoint(afterEmbedded)).toBe(false);
+          expect(afterEmbedded.endpointPath || '').toBe(original.endpointPath);
+          expect(afterEmbedded.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
+          expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+        } else if (donor) {
+          expect(embedded.source).toBe('donor');
+          expect(afterEmbedded.endpointPath || '').toBe(donor.endpointPath || '');
+        } else {
+          expect(embedded.source).toBe('unrecoverable');
+          expect(afterEmbedded.endpointPath || '').toBe(embeddedPath);
+        }
+
+        // 情形二：旧格式注入路径不带原值。有路由契约完全相同的捐出方就按它还原；没有就一个字都不许改。
+        const legacyEndpoint = `stable-smoke-all-failure/leftover-${Date.now()}`;
+        await poison(legacyEndpoint);
+        const legacy = await recoverOnce();
+        const afterLegacy = await readBackup();
+        if (donor) {
+          expect(legacy.source).toBe('donor');
+          expect(legacy.to).toBe(donor.endpointPath || '');
+          expect(afterLegacy.endpointPath || '').toBe(donor.endpointPath || '');
+          expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+        } else {
+          expect(legacy.source, '没有相同路由契约的捐出方时不能拿别的 Endpoint 顶上').toBe('unrecoverable');
+          expect(afterLegacy.endpointPath || '', 'unrecoverable 的记录必须原样不动').toBe(legacyEndpoint);
+          expect(afterLegacy.enabled, 'unrecoverable 的记录连启停状态都不动，交给人工处理').toBe(true);
+        }
+      } finally {
+        // 顺序恢复并逐步取新版本 id：同一条 Offering 的两次写不并发，也不拿旧 id 去改已被替代的版本。
+        const restore = await Promise.allSettled([(async () => {
+          // 快照在自愈之后才取，这里再守一道：任何情况下都不许把注入态写回网关。
+          if (gatewayInjectedEndpointPattern.test(original.endpointPath)) {
+            throw new Error(`快照里的 Endpoint 仍是注入态，拒绝写回：${original.endpointPath}`);
+          }
+          const latest = await readBackup();
+          const restored = await put(latest.id, { endpointPath: original.endpointPath, priority: original.priority });
+          await setEnabled(restored.id, false);
+        })()]);
+        expect(restore.filter((result) => result.status === 'rejected'), '用例结束必须把备用 Offering 恢复到进入前的状态').toEqual([]);
       }
     } finally {
-      // 顺序恢复并逐步取新版本 id：同一条 Offering 的两次写不并发，也不拿旧 id 去改已被替代的版本。
-      const restore = await Promise.allSettled([(async () => {
-        // 快照在自愈之后才取，这里再守一道：任何情况下都不许把注入态写回网关。
-        if (gatewayInjectedEndpointPattern.test(original.endpointPath)) {
-          throw new Error(`快照里的 Endpoint 仍是注入态，拒绝写回：${original.endpointPath}`);
-        }
-        const latest = await readBackup();
-        const restored = await put(latest.id, { endpointPath: original.endpointPath, priority: original.priority });
-        await setEnabled(restored.id, false);
-      })()]);
-      expect(restore.filter((result) => result.status === 'rejected'), '用例结束必须把备用 Offering 恢复到进入前的状态').toEqual([]);
+      await disableStrayGatewayBackups(request, gateway, await readLogical());
     }
   });
 
