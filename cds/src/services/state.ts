@@ -5409,6 +5409,34 @@ export class StateService {
     const meta = this.getAcceptanceReport(id);
     if (!meta) return null;
     const previousPath = this.reportFilePath(meta);
+    /*
+     * meta 就是 state 里那个**活对象**。下面任何一步抛出，路由会回 500 且不 save()，
+     * 但内存里的它已经被改过了：同一个进程里后续的列表与详情会读到那个被拒绝的标题；
+     * 格式更糟，reportFilePath 跟着扩展名走，本地缓存会去找另一个扩展名的文件、
+     * 或者拿旧对象配上新 MIME 端出去（Codex review 抓到）。
+     * 所以先拍一张快照，IO 段失败就整组回滚，让内存回到这次 PATCH 之前。
+     */
+    const before = {
+      title: meta.title, format: meta.format,
+      objectKey: meta.objectKey, storage: meta.storage, sizeBytes: meta.sizeBytes,
+    };
+    try {
+      await this.rewriteAcceptanceReportPayloadAsync(meta, updates, previousPath);
+    } catch (err) {
+      Object.assign(meta, before);
+      throw err;
+    }
+    this.applyAcceptanceReportFieldUpdates(meta, updates);
+    this.save();
+    return meta;
+  }
+
+  /** 异步更新的 IO 段：改标题/格式、重写正文、清理旧对象与旧缓存。抛出即由调用方回滚。 */
+  private async rewriteAcceptanceReportPayloadAsync(
+    meta: AcceptanceReportMeta,
+    updates: Parameters<StateService['updateAcceptanceReport']>[1],
+    previousPath: string,
+  ): Promise<void> {
     if (typeof updates.title === 'string') meta.title = updates.title;
     let formatChanged = false;
     if (updates.format !== undefined && updates.format !== meta.format) {
@@ -5444,9 +5472,6 @@ export class StateService {
         }
       }
     }
-    this.applyAcceptanceReportFieldUpdates(meta, updates);
-    this.save();
-    return meta;
   }
 
   /** update 的非 IO 字段应用（sync/async 变体共享）。 */

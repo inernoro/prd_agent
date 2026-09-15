@@ -405,8 +405,26 @@ export interface PipelineSeries {
   fail: number[];
   /** 有报告但结论字段为空。不是第四种结论。 */
   undetermined: number[];
-  projects: Array<{ projectId: string | null; projectName: string; counts: number[]; total: number }>;
+  projects: Array<{
+    projectId: string | null; projectName: string; counts: number[]; total: number;
+    /** 见下方同名字段；旧后端没有这个字段。 */
+    leadIn?: number[];
+  }>;
   otherProjects: { count: number; total: number };
+  /**
+   * 显示窗口**之前**那几天，只为把滚动均值的头几天算准——先在「预热 + 显示」上滚动，
+   * 再裁掉预热段。没有它的话开头几天只有 1~6 个样本，而图上每点都标着 7 日均。
+   * 裁多少由它自己的长度决定，前端不假设是几天。旧后端不返回它，那时按 0 天预热走，
+   * 行为与从前一致（少几天样本，但不会崩）。
+   */
+  leadIn?: {
+    days: string[];
+    changes: number[];
+    pass: number[];
+    conditional: number[];
+    fail: number[];
+    undetermined: number[];
+  };
   lastDayPartial: boolean;
   /** 后端明说这份序列没有部署这一环，页面照实交代，不要自己补一条。 */
   deployNote: 'no-deploy-history';

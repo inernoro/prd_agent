@@ -404,8 +404,27 @@ export interface PipelineSeries {
   fail: number[];
   /** 有报告但结论字段为空。不是第四种结论，别和上面三档并列画。 */
   undetermined: number[];
-  /** 报告数居前的项目各自的日序列；其余项目不进这里。 */
-  projects: Array<{ projectId: string | null; projectName: string; counts: number[]; total: number }>;
+  /** 报告数居前的项目各自的日序列；其余项目不进这里。`leadIn` 见下方同名字段。 */
+  projects: Array<{
+    projectId: string | null; projectName: string; counts: number[]; total: number; leadIn: number[];
+  }>;
+  /**
+   * 显示窗口**之前**那几天的同结构序列，只为把滚动均值的头几天算准。
+   *
+   * 不进图、不进合计、不进提示：它存在的唯一理由是「7 日均的第一天也得真有 7 天」。
+   * 没有它的话，开头六天只拿得到 1~6 个样本，而图上对每一点都标着 7 日均——
+   * 窗口之前刚好有一波活动时，左边缘会凭空多出一段并不存在的涨或跌（Codex review 抓到）。
+   *
+   * 长度由这里说了算（`SERIES_LEAD_IN`），前端按它自己的长度裁，不去假设是几天。
+   */
+  leadIn: {
+    days: string[];
+    changes: number[];
+    pass: number[];
+    conditional: number[];
+    fail: number[];
+    undetermined: number[];
+  };
   /** 没进 projects 的项目数与它们的报告合计，供页面如实交代「其余 N 个项目」。 */
   otherProjects: { count: number; total: number };
   /**
@@ -416,6 +435,13 @@ export interface PipelineSeries {
   /** 本序列**没有**部署这一环，且不是漏做。原因见上方注释，页面要照实说明。 */
   deployNote: 'no-deploy-history';
 }
+
+/**
+ * 预热天数：前端用 7 日滚动，所以第一格要算准就得多给 6 天。
+ * 这个数与前端的窗口长度是同一个契约的两半，`tests/services/pipeline-series.test.ts`
+ * 有一条断言把它钉在 `WIN - 1` 上，改一边不改另一边会红。
+ */
+export const SERIES_LEAD_IN = 6;
 
 export interface BuildSeriesOptions {
   /** 回看天数，含今天。默认 90。 */
@@ -441,14 +467,20 @@ export function buildPipelineSeries(
   const span = Math.max(1, Math.min(365, Math.floor(options.days ?? 90)));
   const topN = Math.max(0, Math.floor(options.topProjects ?? 4));
 
-  // 从今天往回数 span 天（含今天），按 UTC 日切。
+  // 从今天往回数 span 天（含今天），按 UTC 日切；再往前多铺 SERIES_LEAD_IN 天当预热。
+  // 预热段在最后被切出去单独返回，不进显示窗口，也不计入任何合计。
   const endMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const days: string[] = [];
-  for (let i = span - 1; i >= 0; i -= 1) {
-    days.push(new Date(endMs - i * DAY_MS).toISOString().slice(0, 10));
+  const total = span + SERIES_LEAD_IN;
+  const allDays: string[] = [];
+  for (let i = total - 1; i >= 0; i -= 1) {
+    allDays.push(new Date(endMs - i * DAY_MS).toISOString().slice(0, 10));
   }
-  const idx = new Map(days.map((d, i) => [d, i]));
-  const zeros = (): number[] => new Array(days.length).fill(0);
+  const idx = new Map(allDays.map((d, i) => [d, i]));
+  const zeros = (): number[] => new Array(allDays.length).fill(0);
+  /** 切掉预热段，得到显示窗口那一段。 */
+  const view = <T,>(xs: T[]): T[] => xs.slice(SERIES_LEAD_IN);
+  const head = <T,>(xs: T[]): T[] => xs.slice(0, SERIES_LEAD_IN);
+  const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
   const changes = zeros();
   for (const b of branches) {
@@ -465,7 +497,9 @@ export function buildPipelineSeries(
   const undetermined = zeros();
   const byTier: Record<string, number[]> = { pass, conditional, fail };
 
-  const perProject = new Map<string, { name: string; counts: number[]; total: number }>();
+  // total 不在这里累加：预热段也会落进 counts，累加出来的会把窗口之前那几天算进去。
+  // 统一在最后用 view(counts) 求和，排名也按这个口径。
+  const perProject = new Map<string, { name: string; counts: number[] }>();
   const nameOf = new Map(projects.map((p) => [p.id, p.name || p.id]));
 
   for (const r of refs) {
@@ -477,31 +511,42 @@ export function buildPipelineSeries(
     const pid = r.projectId ?? '';
     let row = perProject.get(pid);
     if (!row) {
-      row = { name: pid ? (nameOf.get(pid) ?? pid) : '无主（报告没记项目）', counts: zeros(), total: 0 };
+      row = { name: pid ? (nameOf.get(pid) ?? pid) : '无主（报告没记项目）', counts: zeros() };
       perProject.set(pid, row);
     }
     row.counts[i] += 1;
-    row.total += 1;
   }
 
-  const ranked = [...perProject.entries()].sort((a, b) => b[1].total - a[1].total);
+  const ranked = [...perProject.entries()]
+    .map(([pid, row]) => [pid, row, sum(view(row.counts))] as const)
+    .filter(([, , t]) => t > 0)
+    .sort((a, b) => b[2] - a[2]);
   const top = ranked.slice(0, topN);
   const rest = ranked.slice(topN);
 
   return {
-    days,
-    changes,
-    pass,
-    conditional,
-    fail,
-    undetermined,
-    projects: top.map(([pid, row]) => ({
+    days: view(allDays),
+    changes: view(changes),
+    pass: view(pass),
+    conditional: view(conditional),
+    fail: view(fail),
+    undetermined: view(undetermined),
+    projects: top.map(([pid, row, t]) => ({
       projectId: pid || null,
       projectName: row.name,
-      counts: row.counts,
-      total: row.total,
+      counts: view(row.counts),
+      total: t,
+      leadIn: head(row.counts),
     })),
-    otherProjects: { count: rest.length, total: rest.reduce((s, [, r]) => s + r.total, 0) },
+    otherProjects: { count: rest.length, total: rest.reduce((acc, [, , t]) => acc + t, 0) },
+    leadIn: {
+      days: head(allDays),
+      changes: head(changes),
+      pass: head(pass),
+      conditional: head(conditional),
+      fail: head(fail),
+      undetermined: head(undetermined),
+    },
     // 末格永远是「今天到此刻为止」，除非此刻正好是 UTC 零点。
     lastDayPartial: now.getTime() > endMs,
     deployNote: 'no-deploy-history',

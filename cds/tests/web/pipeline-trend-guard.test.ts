@@ -103,9 +103,10 @@ describe('两态：紧凑不画当日细线，刻度上限写在图上', () => {
 
   it('紧凑态按滚动峰值定刻度，放大态按当日峰值', () => {
     const raw = [0, 0, 0, 40, 0, 0, 0, 0, 0, 0];
-    expect(layerScale([raw], null, true).max).toBeGreaterThanOrEqual(40);
+    const line = { raw, roll: rolling(raw, 7) };
+    expect(layerScale([line], null, true).max).toBeGreaterThanOrEqual(40);
     // 7 日均把 40 摊成 <= 40/7，紧凑态的刻度必须跟着降下来，否则一条贴零的平线。
-    expect(layerScale([raw], null, false).max).toBeLessThan(40);
+    expect(layerScale([line], null, false).max).toBeLessThan(40);
   });
 
   /*
@@ -117,6 +118,9 @@ describe('两态：紧凑不画当日细线，刻度上限写在图上', () => {
   describe('层与刻度同源：这一态真正画出去的每个值都装得进刻度', () => {
     const lineRaw = [0, 1, 0, 9, 0, 0, 2, 0, 0, 0, 0, 14, 0, 0];
     const barRaw = [3, 0, 0, 22, 0, 0, 0, 1, 0, 0, 0, 0, 31, 0];
+    // 滚动由面板统一算好再传进来（预热段的口径见 codex-review-1532-r5-web）。
+    const line = { raw: lineRaw, roll: rolling(lineRaw, 7) };
+    const bars = { raw: barRaw, roll: rolling(barRaw, 7) };
 
     /* 「刻度装得下所有画出去的值」这句在 layerScale 内部是恒真的——max 就是从
      * 它自己返回的那几层算出来的，写成断言永远绿，等于没写（形状 4）。
@@ -124,18 +128,18 @@ describe('两态：紧凑不画当日细线，刻度上限写在图上', () => {
      * 自己再算一份。混层那次事故正是「组件另算」的形态。 */
 
     it('紧凑态柱子给的是 7 日均而不是当日原值', () => {
-      const { barVals } = layerScale([lineRaw], barRaw, false);
-      expect(barVals).toEqual(rolling(barRaw, 7));
+      const { barVals } = layerScale([line], bars, false);
+      expect(barVals).toEqual(bars.roll);
       expect(barVals).not.toEqual(barRaw);
     });
 
     it('放大态柱子回到当日原值', () => {
-      expect(layerScale([lineRaw], barRaw, true).barVals).toEqual(barRaw);
+      expect(layerScale([line], bars, true).barVals).toEqual(barRaw);
     });
 
     it('组件只从这一处取刻度与各层，不在旁边另算一份', () => {
       const jsx = src.slice(src.indexOf('function Chart('));
-      expect(jsx).toMatch(/const \{ max, rolls, barVals \} = layerScale\(/);
+      expect(jsx).toMatch(/const \{ max, barVals \} = layerScale\(/);
       expect(jsx, '组件里还留着自己算峰值的代码').not.toMatch(/niceMax\(/);
     });
   });

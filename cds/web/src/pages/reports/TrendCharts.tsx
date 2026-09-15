@@ -156,7 +156,10 @@ interface Line {
   label: string;
   cls: string;
   dash: string;
+  /** 当日原值（已裁掉预热段）。 */
   raw: number[];
+  /** 7 日滚动均值：**在含预热段的完整序列上**滚完再裁，长度与 raw 相同。 */
+  roll: number[];
   total: number;
 }
 
@@ -167,8 +170,8 @@ interface ChartProps {
   lines: Line[];
   days: string[];
   zoom: boolean;
-  /** 底层柱子（事件量，不是趋势）。与 lines 共用同一刻度。 */
-  bars?: { label: string; vals: number[]; total: number } | null;
+  /** 底层柱子（事件量，不是趋势）。与 lines 共用同一刻度，roll 的口径同 Line。 */
+  bars?: { label: string; vals: number[]; roll: number[]; total: number } | null;
   note?: string;
   tipFor: (i: number) => string;
 }
@@ -188,23 +191,23 @@ const WIN = 7;
  * 都 <= max」——测试照此断言，改回混层立刻红。
  */
 export function layerScale(
-  lineRaws: number[][],
-  barRaw: number[] | null,
+  layers: Array<{ raw: number[]; roll: number[] }>,
+  bars: { raw: number[]; roll: number[] } | null,
   zoom: boolean,
-): { max: number; rolls: number[][]; barVals: number[] | null } {
-  const rolls = lineRaws.map((r) => rolling(r, WIN));
-  const barVals = barRaw ? (zoom ? barRaw : rolling(barRaw, WIN)) : null;
+): { max: number; barVals: number[] | null } {
+  const barVals = bars ? (zoom ? bars.raw : bars.roll) : null;
   const drawn = zoom
-    ? [...lineRaws.flat(), ...rolls.flat(), ...(barVals ?? [])]
-    : [...rolls.flat(), ...(barVals ?? [])];
-  return { max: niceMax(Math.max(0, ...drawn)), rolls, barVals };
+    ? [...layers.flatMap((l) => l.raw), ...layers.flatMap((l) => l.roll), ...(barVals ?? [])]
+    : [...layers.flatMap((l) => l.roll), ...(barVals ?? [])];
+  return { max: niceMax(Math.max(0, ...drawn)), barVals };
 }
 
 function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: ChartProps): JSX.Element {
   const h = zoom ? 156 : 62;
   const w = 1000; // viewBox 宽，实际按容器缩放
   // 两态刻度不同是有意的，所以上限直接写在图上——不写的话同一条线在两态高低不同会被误读。
-  const { max, rolls, barVals } = layerScale(lines.map((l) => l.raw), bars?.vals ?? null, zoom);
+  // 滚动均值不在这里算：它必须在**含预热段**的完整序列上滚完再裁，那件事由面板统一做。
+  const { max, barVals } = layerScale(lines, bars ? { raw: bars.vals, roll: bars.roll } : null, zoom);
   const g = geom(days.length, w, h, max);
   const bandTop = g.y(Math.min(max, 4));
   const colW = w / Math.max(1, days.length);
@@ -263,8 +266,8 @@ function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: Char
             : null}
 
           {/* 读数层：滚动均线。两态都在，形状一致。 */}
-          {lines.map((l, k) => {
-            const d = linePath(rolls[k], g);
+          {lines.map((l) => {
+            const d = linePath(l.roll, g);
             return d ? <path key={l.key} className={`thick ${l.cls}`} d={d} /> : null;
           })}
 
@@ -318,6 +321,22 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
   const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
   const reports = days.map((_, i) => pass[i] + conditional[i] + fail[i] + undetermined[i]);
 
+  /**
+   * 滚动均值的**唯一**入口：先接上预热段再滚，滚完裁掉预热段。
+   *
+   * 顺序反过来（先裁再滚，或者压根没有预热段）就是 Codex 抓到的那个坏法：
+   * 开头几天只拿得到 1~6 个样本，而图上对每一点都标着「7 日均」。窗口之前刚好
+   * 有一波活动时，左边缘会凭空多出一段并不存在的涨或跌。
+   *
+   * 裁多少由后端给的预热段自己的长度决定，不写死 6——旧后端不给这个字段时它是
+   * 空数组，行为退回从前（样本少几天，但不崩）。
+   */
+  const warm = series.leadIn;
+  const roll = (head: number[] | undefined, xs: number[]): number[] => {
+    const h = head ?? [];
+    return rolling([...h, ...xs], WIN).slice(h.length);
+  };
+
   const tPass = sum(pass);
   const tCond = sum(conditional);
   const tFail = sum(fail);
@@ -327,8 +346,8 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
   const verdictTotal = tPass + tCond + tFail;
 
   // 结论走向那句判断：规则生成，每句挂真实数字，算不出来就不出这句。
-  const rPass = rolling(pass, WIN);
-  const rFail = rolling(fail, WIN);
+  const rPass = roll(warm?.pass, pass);
+  const rFail = roll(warm?.fail, fail);
   const aheadDays = days.filter((_, i) => rFail[i] > rPass[i]).length;
   const lastI = days.length - 1;
   const verdictSay = verdictTotal === 0 ? null : (
@@ -359,6 +378,7 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
     cls: GREY_CLS[i] ?? GREY_CLS[GREY_CLS.length - 1],
     dash: GREY_DASH[i] ?? GREY_DASH[GREY_DASH.length - 1],
     raw: p.counts,
+    roll: roll(p.leadIn, p.counts),
     total: p.total,
   }));
   const lead = series.projects[0];
@@ -371,6 +391,13 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
       ) : null}
     </>
   );
+
+  // 报告总数没有单独的预热序列，由三档加未定当场合出来（与上面 reports 同一算法）。
+  const rReports = roll(
+    warm ? warm.days.map((_, i) => warm.pass[i] + warm.conditional[i] + warm.fail[i] + warm.undetermined[i]) : undefined,
+    reports,
+  );
+  const rChanges = roll(warm?.changes, changes);
 
   const day = (i: number): string => days[i] ?? '';
   const verdictTip = (i: number): string =>
@@ -389,7 +416,7 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
       day(i),
       `新开改动 ${changes[i]} 条`,
       `归档报告 ${reports[i]} 份`,
-      `报告 7 日均 ${fmt1(rolling(reports, WIN)[i])} 份/日`,
+      `报告 7 日均 ${fmt1(rReports[i])} 份/日`,
     ].join('\n');
 
   return (
@@ -403,9 +430,9 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
           say={verdictSay}
           tipFor={verdictTip}
           lines={[
-            { key: 'pass', label: '通过', cls: 't-ok', dash: 'd-ok', raw: pass, total: tPass },
-            { key: 'cond', label: '原则性通过', cls: 't-warn', dash: 'd-warn', raw: conditional, total: tCond },
-            { key: 'fail', label: '未通过', cls: 't-bad', dash: 'd-bad', raw: fail, total: tFail },
+            { key: 'pass', label: '通过', cls: 't-ok', dash: 'd-ok', raw: pass, roll: rPass, total: tPass },
+            { key: 'cond', label: '原则性通过', cls: 't-warn', dash: 'd-warn', raw: conditional, roll: roll(warm?.conditional, conditional), total: tCond },
+            { key: 'fail', label: '未通过', cls: 't-bad', dash: 'd-bad', raw: fail, roll: rFail, total: tFail },
           ]}
           note={
             tUnd > 0
@@ -429,7 +456,7 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
           zoom={zoom}
           days={days}
           tipFor={flowTip}
-          bars={{ label: '新开改动', vals: changes, total: tChanges }}
+          bars={{ label: '新开改动', vals: changes, roll: rChanges, total: tChanges }}
           say={
             <>
               窗口内新开 <b>{tChanges}</b> 条改动、归档 <b>{tReports}</b> 份报告。
@@ -437,7 +464,7 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
             </>
           }
           lines={[
-            { key: 'rep', label: '归档报告', cls: 'g1', dash: 'd-g1', raw: reports, total: tReports },
+            { key: 'rep', label: '归档报告', cls: 'g1', dash: 'd-g1', raw: reports, roll: rReports, total: tReports },
           ]}
           note="两者单位不同（条分支 / 份报告），放在同一刻度是为了看共动与背离，不是为了比大小。"
         />
