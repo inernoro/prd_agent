@@ -263,3 +263,76 @@ export function NavBar({
     </div>
   );
 }
+
+/**
+ * 卷面图 —— 有图就是图，没图回落到卷序汉字方块。
+ *
+ * 「没图也要成立」是图位的硬约定（`lib/imagery`）：新卷刚加进来、管理员还没生成、
+ * 或者这次没拉到，页面都要照常渲染，不能留一个空框。所以这里不是「图加载失败兜底」，
+ * 是**两种都算正常态**。
+ *
+ * 有图时仍保留卷序汉字，压在左下角一小块半透明底上——去掉它就丢了「这是第几卷」
+ * 这条信息，而照片本身说不出卷序。底色走 --bg-base 而不是写死的深色：浅档下
+ * 压黑会变成一块脏灰（双皮肤棘轮也拦这条）。
+ */
+export function CoverBox({
+  src,
+  children,
+  fg,
+  box,
+  size,
+  coverWidth,
+  fontSize,
+}: {
+  /** 卷面图地址；null 即回落 */
+  src: string | null;
+  children: ReactNode;
+  fg: string;
+  box: string;
+  /** 无图时的方块边长 */
+  size: number;
+  /** 有图时的宽度（照片按 4:3 左右更耐看，默认与 size 同宽） */
+  coverWidth?: number;
+  fontSize: number;
+}) {
+  if (!src) {
+    return <NumberBox fg={fg} box={box} size={size} fontSize={fontSize}>{children}</NumberBox>;
+  }
+  return (
+    <div
+      style={{
+        width: coverWidth ?? size,
+        height: size,
+        flex: 'none',
+        borderRadius: AS_SPACE.iconRadius,
+        backgroundImage: `url(${src})`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      {/*
+        角标不能整块压 opacity —— 那会把文字一起压成半透明，落在照片上就是一道看不清的
+        小横杠（第一版实测如此）。底要实、字要实，两者都走 token 才在双主题下都立得住。
+      */}
+      <span
+        style={{
+          position: 'absolute',
+          left: 4,
+          bottom: 4,
+          padding: '1px 5px',
+          // 与成员通关小方块同一档（4），不为一个角标另起一档 —— 守卫只放行 4
+          borderRadius: 4,
+          background: 'var(--bg-base)',
+          color: 'var(--text-primary)',
+          fontSize: 12,
+          fontWeight: 800,
+          lineHeight: 1.35,
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}

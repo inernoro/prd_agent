@@ -13,11 +13,14 @@ import { AS_TYPE, AS_SPACE, AS_SIZE } from '@/lib/appStoreTokens';
 import { questionsOf } from '@/lib/bookshelf/exams';
 import { stanceOf } from '@/lib/bookshelf/examContext';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
+import { useImageryAsset } from '@/hooks/useImagery';
+import { bookshelfVolumeSlot } from '@/lib/imagery';
 import type { Volume, BookEntry, Track } from '@/lib/bookshelf/types';
 import {
   Eyebrow, SectionHead, GroupCard, GroupRow, FeaturedCard, NumberBox, Pill, NavBar, asStyle, GUTTER,
   BOTTOM_GAP,
 } from './parts';
+import { CoverBanner } from '../covers';
 
 const TRACK_LABEL: Record<Track, string> = { dev: '开发', pm: '产品', both: '通用' };
 const LEVEL_LABEL: Record<number, string> = { 1: '入门', 2: '进阶', 3: '硬骨头' };
@@ -142,12 +145,25 @@ export function MobileVolume({
   const questionCount = questionsOf(volume.id).length;
   const result = examResults[volume.id];
   const index = volume.index - 1;
+  /* 卷面图，没生成就不渲染那一条（CoverBanner 自己返回 null），版式照旧成立 */
+  const cover = useImageryAsset(bookshelfVolumeSlot(volume.id) ?? '');
 
   return (
     <div style={{ padding: `0 ${GUTTER}px ${BOTTOM_GAP}` }}>
       <NavBar backLabel="藏书阁" onBack={onBack} accent={skin.fg} trailing={
         <span style={{ ...asStyle(AS_TYPE.heroSubtitle), color: 'var(--text-muted)' }}>已读 {read}/{total}</span>
       } />
+
+      {/*
+        通栏卷面图。外层这一屏有 20px 左右 padding，所以要用负边距顶掉它才贴得到边；
+        这与落地页那条横滑卡正好相反——那边外层左右是 0，再加负边距就会横向溢出。
+        渐变终点是页面底色而不是卡片底色，否则图的下沿会在页面上露出一条色差。
+      */}
+      {cover && (
+        <div style={{ margin: `12px -${GUTTER}px 0` }}>
+          <CoverBanner src={cover} height={168} radius={0} fadeTo="var(--bg-base)" />
+        </div>
+      )}
 
       <div style={{ marginTop: 12, display: 'flex', gap: 16, alignItems: 'center' }}>
         <NumberBox fg={skin.fg} box={skin.box} size={AS_SIZE.gridIconSize} fontSize={28}>

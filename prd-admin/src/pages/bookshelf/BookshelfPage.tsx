@@ -29,6 +29,9 @@ import { useBookshelfStore } from '@/stores/bookshelfStore';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import { useReducedMotion } from '@/lib/useReducedMotion';
 import { BookshelfMobile } from './mobile/BookshelfMobile';
+import { CoverBanner } from './covers';
+import { useImageryAsset } from '@/hooks/useImagery';
+import { bookshelfVolumeSlot } from '@/lib/imagery';
 import type { Track, Volume, BookEntry } from '@/lib/bookshelf/types';
 import { ExamDialog } from './ExamDialog';
 import { TeamBoard } from './TeamBoard';
@@ -203,6 +206,8 @@ function BookshelfDesktop() {
   }).length;
 
   const activeVolume = findVolume(activeVolumeId) ?? VOLUMES[0];
+  /* 这一卷的卷面图；没生成就不渲染那一条，卡片回到原来的样子 */
+  const activeCover = useImageryAsset(bookshelfVolumeSlot(activeVolume.id) ?? '');
   const activeBooks = activeVolume.books.filter((b) => matchTrack(b, track));
   const activeSkin = skinOf(activeVolume.id);
   const activeResult = examResults[activeVolume.id];
@@ -305,13 +310,17 @@ function BookshelfDesktop() {
         <div
           // 墨边与硬投影在手机档减半：同一套骨架在 390 宽会把每个块都放大成噪音。
           // 走 Tailwind 断点而不是 JS 判断，省掉一次 matchMedia 与首帧闪烁。
-          className="w-full lg:w-[390px] shrink-0 p-5 sm:p-6 rounded-[22px] sm:rounded-[28px] border-[2.5px] sm:border-4 shadow-[4px_4px_0_var(--vol-skin)] sm:shadow-[8px_8px_0_var(--vol-skin)]"
+          // 通栏卷面图要贴到墨边内沿，所以 padding 下沉到内容层，外层只留 overflow-hidden。
+          // 圆角写在外层，图靠 overflow 裁出同样的角，不用再把圆角复制一遍到图上。
+          className="w-full lg:w-[390px] shrink-0 overflow-hidden rounded-[22px] sm:rounded-[28px] border-[2.5px] sm:border-4 shadow-[4px_4px_0_var(--vol-skin)] sm:shadow-[8px_8px_0_var(--vol-skin)]"
           style={{
             background: 'var(--shelf-surface)',
             borderColor: 'var(--shelf-edge)',
             ['--vol-skin' as string]: activeSkin.fg,
           }}
         >
+          <CoverBanner src={activeCover} height={150} radius={0} />
+          <div className={activeCover ? 'px-5 pb-5 sm:px-6 sm:pb-6' : 'p-5 sm:p-6'}>
           <div className="flex items-center justify-between mb-4">
             <div className="w-[50px] h-[50px] rounded-[15px] grid place-items-center" style={{ background: activeSkin.box, border: EDGE }}>
               {(() => {
@@ -359,6 +368,7 @@ function BookshelfDesktop() {
                 : examEntryLabel(activeReadBooks, activeTotalBooks, examCount)}
             </button>
           )}
+          </div>
         </div>
       </section>
 

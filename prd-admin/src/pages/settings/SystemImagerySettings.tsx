@@ -16,46 +16,47 @@ import { ResponsiveDialog } from '@/components/ui/ResponsiveDialog';
 import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { ImagePreviewDialog } from '@/components/ui/ImagePreviewDialog';
 import { toast } from '@/lib/toast';
-import { invalidateLandingAssets } from '@/pages/home/hooks/useLandingAssets';
+import { invalidateImagery } from '@/hooks/useImagery';
 import {
-  LANDING_PREVIEW_SLOTS,
-  applyArtStyleToPrompt,
-  buildLandingPreviewPrompt,
-  LANDING_ART_STYLES,
-  DEFAULT_LANDING_ART_STYLE,
-  landingArtStyle,
-  type LandingArtStyleKey,
-  landingPreviewSlotById,
-  type LandingPreviewSlot,
-} from '@/lib/landingPreviewSlots';
+  SYSTEM_IMAGERY_MODULES,
+  IMAGERY_STYLES,
+  applyImageryStyleToPrompt,
+  buildImageryPrompt,
+  imageryStyle,
+  type ImageryModule,
+  type ImagerySlot,
+  type ImageryStyleKey,
+} from '@/lib/imagery';
 
 /**
- * 系统设置 →「首页预览图」。
+ * 系统设置 →「系统配图」。
  *
- * 对外首页（`/home`）十幕，每幕一张示意图；这一屏负责把它们生出来、看一眼、
- * 不满意就带着改过的提示词再生一次。
+ * 全站由模型生成的图片，都在这一屏出生、改稿、重生成。图位来自
+ * `lib/imagery` 注册表——模块只声明「我有几个图位、默认提示词是什么」，
+ * 接新模块不用碰这个文件。
  *
- * 四条设计取舍：
+ * 五条设计取舍：
  *
- * 1. **提示词有默认值，且默认值是好用的那版**（`lib/landingPreviewSlots.ts`）。
- *    管理员打开弹窗看到的是一段能直接出图的完整提示词，不是空白框
- *    （`zero-friction-input`）。改过一次之后回填的是他自己那版，不是默认版——
- *    否则每次微调都要从头改一遍。
- * 2. **一个模型不行就自动换下一个**。池里 15 个出图模型全报 Healthy，实测只有
+ * 1. **提示词有默认值，且默认值是好用的那版**。管理员打开弹窗看到的是一段能直接
+ *    出图的完整提示词，不是空白框（`zero-friction-input`）。改过一次之后回填的是
+ *    他自己那版，不是默认版——否则每次微调都要从头改一遍。
+ * 2. **一个模型不行就自动换下一个**。池里十几个出图模型全报 Healthy，实测只有
  *    两个真能出图，其余一律 400（这是模型池健康探针的问题，不是这一屏的）。
  *    只按优先级挑第一个 = 稳定挑中坏的那个，用户点一次错一次。所以失败时按池内
- *    顺序自动往下试，上限 `MODEL_FALLBACK_LIMIT` 个，并在卡片上写明正在试哪个——
+ *    顺序自动往下试，上限 `MODEL_FALLBACK_LIMIT` 个，并在行上写明正在试哪个——
  *    「自动换了模型」这件事不能不告诉人（`expectation-management`）。
- * 3. **缩略图只占一小条**。十幕排成十张大图要滚很久，而这一屏的用途是「扫一眼谁
+ * 3. **缩略图只占一小条**。几十个图位排成大图要滚很久，而这一屏的用途是「扫一眼谁
  *    还没配、谁配得不对」，不是看图。所以缩略图压到 108px 宽的一条，点开才放大；
  *    放大弹层里直接给「重新生成」，看和换在同一个地方完成。
- * 4. **等待期给产物的形状**：生成中的缩略图是一块带斜纹的画框加秒表，不是转圈
- *    （`artifact-is-experience`）。一次「全部重新生成」十张并发跑，谁先出谁先落位。
+ * 4. **拍法按模块分别选**。对外首页要的是风景照，藏书阁要的是台面静物——一个全局
+ *    风格档会逼着两组图共用一种味道。所以每组自己一个下拉，默认值来自模块声明。
+ * 5. **先给判断再给数字**（`conclusion-before-numbers`）：顶部第一行是一句挂着数字
+ *    的结论（哪个模块缺得最多），不是让人自己读一排计数去算。
  */
 
 /**
  * 一次生成最多自动试几个模型。
- * 不设成「把池子试穿」：15 个模型逐个试要几分钟、烧十几次配额，而失败大多同因。
+ * 不设成「把池子试穿」：十几个模型逐个试要几分钟、烧十几次配额，而失败大多同因。
  * 试到第 3 个还不行，基本就是池子本身有问题，该去 LLM Gateway 控制台看，不该在这儿硬磨。
  */
 const MODEL_FALLBACK_LIMIT = 3;
@@ -83,6 +84,9 @@ type SlotState = {
   attempt?: number;
 };
 
+/** 一次生成的目标：图位 + 这一次实际要用的提示词 */
+type Target = { slot: ImagerySlot; prompt: string };
+
 /**
  * 生成中卡片的斜纹底：给等待一个「画布正在被填」的形状，而不是一个转圈。
  * 走 token 而非裸的白色透明叠加 —— 后者在浅色主题下会直接隐形（双皮肤棘轮盯着这条，
@@ -91,17 +95,25 @@ type SlotState = {
 const HATCH =
   'repeating-linear-gradient(45deg, var(--bg-tertiary) 0 12px, transparent 12px 24px)';
 
-export default function LandingPreviewSettings() {
+export default function SystemImagerySettings() {
   const [assets, setAssets] = useState<Record<string, HomepageAssetDto>>({});
   const [loading, setLoading] = useState(true);
   const [pools, setPools] = useState<ModelGroupForApp[]>([]);
   const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
   const [states, setStates] = useState<Record<string, SlotState>>({});
   const [tick, setTick] = useState(0);
-  const [editing, setEditing] = useState<{ slot: LandingPreviewSlot; prompt: string } | null>(null);
-  const [zoomSlotId, setZoomSlotId] = useState<string | null>(null);
-  /** 当前选的拍法。换一档再点生成，出来的就是另一种风格的同一个画面 */
-  const [artStyle, setArtStyle] = useState<LandingArtStyleKey>(DEFAULT_LANDING_ART_STYLE);
+  const [editing, setEditing] = useState<{ module: ImageryModule; slot: ImagerySlot; prompt: string } | null>(null);
+  const [zoomSlotKey, setZoomSlotKey] = useState<string | null>(null);
+
+  /**
+   * 每个模块自己的拍法。初始值来自模块声明——对外首页是风景照、藏书阁是台面静物，
+   * 一个全局档会逼着两组图共用一种味道。
+   */
+  const [styleByModule, setStyleByModule] = useState<Record<string, ImageryStyleKey>>(() => {
+    const init: Record<string, ImageryStyleKey> = {};
+    SYSTEM_IMAGERY_MODULES.forEach((m) => { init[m.id] = m.defaultStyle; });
+    return init;
+  });
 
   const controllersRef = useRef<AbortController[]>([]);
   /** 卸载后丢弃在途 SSE 回调，避免在已卸载组件上 setState */
@@ -110,7 +122,7 @@ export default function LandingPreviewSettings() {
   /**
    * 把池子摊平成**一串可依次尝试的模型**，而不是「每个池挑一个代表」。
    *
-   * 挑代表那种写法在这里是错的：池里 15 个模型全报 Healthy，实测只有两个能出图。
+   * 挑代表那种写法在这里是错的：池里十几个模型全报 Healthy，实测只有两个能出图。
    * 只挑优先级最高的那个 = 每次都稳定挑中同一个坏的，用户点一次错一次。
    * 摊平之后，第一个失败就能顺着往下试。
    *
@@ -164,10 +176,10 @@ export default function LandingPreviewSettings() {
   const hasModel = modelChain.length > 0;
 
   const reload = useCallback(async () => {
-    // 管理端这一屏是首页配图的唯一改动入口，改完就把 `/home` 那份模块级缓存丢掉。
-    // 不丢的话，同一个 SPA 会话里换完图再回首页，看到的还是换之前那一份——
+    // 这一屏是系统配图的唯一改动入口，改完就把消费侧那两份模块级缓存丢掉。
+    // 不丢的话，同一个 SPA 会话里换完图再回消费页，看到的还是换之前那一份——
     // 而他刚刚才亲手换过，只能整页刷新才看得见。
-    invalidateLandingAssets();
+    invalidateImagery();
     const res = await listHomepageAssets();
     if (!aliveRef.current) return;
     if (res.success) {
@@ -196,7 +208,7 @@ export default function LandingPreviewSettings() {
     };
   }, [reload]);
 
-  /** 有任务在跑时每秒重绘一次，让卡片上的秒表真的在走 */
+  /** 有任务在跑时每秒重绘一次，让行上的秒表真的在走 */
   const anyRunning = useMemo(() => Object.values(states).some((s) => s.status === 'running'), [states]);
   useEffect(() => {
     if (!anyRunning) return undefined;
@@ -210,16 +222,16 @@ export default function LandingPreviewSettings() {
   };
 
   /**
-   * 用一个指定模型跑一批槽位，返回**这一轮没出图的那些**（留给下一个模型接着试）。
+   * 用一个指定模型跑一批图位，返回**这一轮没出图的那些**（留给下一个模型接着试）。
    *
    * 一次 run 带 N 条 item，itemIndex 与 targets 下标一一对应 —— 回填时靠这个下标
-   * 认领，别用 prompt 反查（同一段提示词可能被两个槽位共用）。
+   * 认领，别用 prompt 反查（同一段提示词可能被两个图位共用）。
    */
   const runOnce = async (
-    targets: { slot: LandingPreviewSlot; prompt: string }[],
+    targets: Target[],
     model: { modelId: string; platformId: string },
     attempt: number,
-  ): Promise<{ slot: LandingPreviewSlot; prompt: string }[]> => {
+  ): Promise<Target[]> => {
     const now = Date.now();
     targets.forEach((t) =>
       patchState(t.slot.slot, { status: 'running', startedAt: now, model: model.modelId, attempt }),
@@ -235,19 +247,19 @@ export default function LandingPreviewSettings() {
         platformId: model.platformId,
         items: targets.map((t) => ({ prompt: t.prompt, count: 1, size: t.slot.size })),
         // 必须要 url：这条 run 不带 workspaceId，Worker 不会把 base64 落成资产，
-        // 而挂到首页槽位（adopt-image-run）引用的正是产物的 URL。要 b64_json 的话
+        // 而挂到槽位（adopt-image-run）引用的正是产物的 URL。要 b64_json 的话
         // 图生出来了、item.Url 却是空的，adopt 一律被拒。
         responseFormat: 'url',
         maxConcurrency: 3,
       },
-      idempotencyKey: `landing_${now}_${Math.random().toString(16).slice(2)}`,
+      idempotencyKey: `imagery_${now}_${Math.random().toString(16).slice(2)}`,
     });
     if (!created.success) return targets;
 
     const runId = String(created.data?.runId || '').trim();
     if (!runId) return targets;
 
-    /** 这一轮已经出图并挂上去的槽位；剩下的就是要换模型再试的 */
+    /** 这一轮已经出图并挂上去的图位；剩下的就是要换模型再试的 */
     const settled = new Set<string>();
     const adoptions: Promise<void>[] = [];
 
@@ -266,7 +278,7 @@ export default function LandingPreviewSettings() {
         if (!target) return;
 
         if (type === 'imageDone') {
-          // 出图即落位：把这张挂到槽位上，管理员不用再点一次「保存」
+          // 出图即落位：把这张挂到图位上，管理员不用再点一次「保存」
           adoptions.push(
             adoptHomepageAssetFromRun({
               slot: target.slot.slot,
@@ -277,7 +289,7 @@ export default function LandingPreviewSettings() {
             }).then((res) => {
               if (!aliveRef.current) return;
               if (!res.success) {
-                patchState(target.slot.slot, { status: 'error', error: res.error?.message || '挂到槽位失败' });
+                patchState(target.slot.slot, { status: 'error', error: res.error?.message || '挂到图位失败' });
                 // 挂载失败是我们这边的问题，换模型也救不了，标记为已了结不再重试
                 settled.add(target.slot.slot);
                 return;
@@ -302,7 +314,7 @@ export default function LandingPreviewSettings() {
      * 连接断了 ≠ 模型不行。
      *
      * 事件流重试 20 次仍连不上时，服务端那条 run 很可能还在跑、甚至已经跑完了；
-     * 我们只是没看见 imageDone。这时把剩下的槽位交给下一个模型重跑，等于为同一批图
+     * 我们只是没看见 imageDone。这时把剩下的图位交给下一个模型重跑，等于为同一批图
      * 再付一次钱，而且最后还可能报「都没出图」——实际第一次就成了。
      * 所以：流本身失败时如实说断了，并且**不往下换模型**（返回空的剩余清单）。
      */
@@ -320,9 +332,9 @@ export default function LandingPreviewSettings() {
   };
 
   /**
-   * 生成一批槽位：一个模型不行就自动换下一个，最多 `MODEL_FALLBACK_LIMIT` 个。
+   * 生成一批图位：一个模型不行就自动换下一个，最多 `MODEL_FALLBACK_LIMIT` 个。
    */
-  const generate = async (targets: { slot: LandingPreviewSlot; prompt: string }[]) => {
+  const generate = async (targets: Target[]) => {
     if (!hasModel) {
       toast.error('没有可用的文生图模型，请先到 LLM Gateway 控制台（左下角「模型网关」）配置');
       return;
@@ -355,24 +367,22 @@ export default function LandingPreviewSettings() {
     );
   };
 
-  const openDialog = (slot: LandingPreviewSlot) => {
+  /** 按当前拍法拼这一图位这一次要用的提示词（保住管理员改过的画面描述） */
+  const targetOf = useCallback(
+    (module: ImageryModule, slot: ImagerySlot): Target => ({
+      slot,
+      prompt: applyImageryStyleToPrompt(assets[slot.slot]?.prompt, slot, styleByModule[module.id]),
+    }),
+    [assets, styleByModule],
+  );
+
+  const openDialog = (module: ImageryModule, slot: ImagerySlot) => {
     // 回填他自己改过的那版画面描述，但前缀换成**当前选中的拍法**——
     // 弹窗里那行说明写的就是「前半段是当前拍法的风格约束」，回填旧拍法会自相矛盾
-    setEditing({ slot, prompt: applyArtStyleToPrompt(assets[slot.slot]?.prompt, slot, artStyle) });
+    setEditing({ module, slot, prompt: targetOf(module, slot).prompt });
   };
 
-  const handleGenerateAll = () => {
-    void generate(
-      LANDING_PREVIEW_SLOTS.map((s) => ({
-        slot: s,
-        // 换拍法之后点「全部重新生成」，必须真的换成新拍法：直接拿库里存的那段跑，
-        // 前缀还是上一次那个拍法，七次生图的钱花了、出来还是老样子
-        prompt: applyArtStyleToPrompt(assets[s.slot]?.prompt, s, artStyle),
-      })),
-    );
-  };
-
-  const handleDelete = async (slot: LandingPreviewSlot) => {
+  const handleDelete = async (slot: ImagerySlot) => {
     const res = await deleteHomepageAsset({ slot: slot.slot });
     if (!res.success) {
       toast.error(res.error?.message || '删除失败');
@@ -382,38 +392,63 @@ export default function LandingPreviewSettings() {
     await reload();
   };
 
-  if (loading) return <MapSectionLoader text="正在加载首页预览图…" />;
+  /** 全站统计 —— 顶部结论条用 */
+  const stats = useMemo(() => {
+    let total = 0;
+    let filled = 0;
+    let running = 0;
+    const missingByModule: { module: ImageryModule; missing: number }[] = [];
+    SYSTEM_IMAGERY_MODULES.forEach((m) => {
+      let mMissing = 0;
+      m.slots.forEach((s) => {
+        total += 1;
+        if (assets[s.slot]?.url) filled += 1; else mMissing += 1;
+        if (states[s.slot]?.status === 'running') running += 1;
+      });
+      missingByModule.push({ module: m, missing: mMissing });
+    });
+    const worst = [...missingByModule].sort((a, b) => b.missing - a.missing)[0];
+    return { total, filled, missing: total - filled, running, worst };
+  }, [assets, states]);
 
-  const generatedCount = LANDING_PREVIEW_SLOTS.filter((s) => assets[s.slot]?.url).length;
-  const zoomSlot = zoomSlotId ? landingPreviewSlotById(zoomSlotId) : undefined;
-  const zoomAsset = zoomSlot ? assets[zoomSlot.slot] : undefined;
+  /** 全站还缺的那些（不含正在生成的，那些已经在路上了，再点一次是重复计费） */
+  const missingTargets = useMemo(
+    () =>
+      SYSTEM_IMAGERY_MODULES.flatMap((m) =>
+        m.slots.filter((s) => !assets[s.slot]?.url && states[s.slot]?.status !== 'running').map((s) => targetOf(m, s)),
+      ),
+    [assets, states, targetOf],
+  );
+
+  if (loading) return <MapSectionLoader text="正在加载系统配图…" />;
+
+  const zoomEntry = zoomSlotKey
+    ? SYSTEM_IMAGERY_MODULES.flatMap((m) => m.slots).find((s) => s.slot === zoomSlotKey)
+    : undefined;
+  const zoomAsset = zoomEntry ? assets[zoomEntry.slot] : undefined;
   const zoomSrc = zoomAsset?.url ? withCacheBust(zoomAsset.url, zoomAsset.updatedAt) : null;
+  const editingStyle = editing ? imageryStyle(styleByModule[editing.module.id]) : null;
 
   return (
     <div className="flex flex-col gap-4">
-      {/* 控制条：结论在前（多少张已生成），操作在后 */}
+      {/* 顶部：先给判断，再给数字（conclusion-before-numbers） */}
       <div className="flex items-center gap-3 flex-wrap">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-sm" style={{ color: 'var(--text-primary)' }}>
-            {generatedCount} / {LANDING_PREVIEW_SLOTS.length} 幕已有配图
+            {stats.missing === 0
+              ? `${stats.total} 个图位全部配好了`
+              : `${stats.worst?.module.label} 还缺 ${stats.worst?.missing} 张${stats.missing > (stats.worst?.missing ?? 0) ? `，全站共缺 ${stats.missing} 张` : ''}`}
           </div>
           <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
-            首页两幕里的产物图。提示词已按位置写好默认值，点「生成」可当场改；换「拍法」再生成即整套换风格。
+            共 {stats.total} 个图位 · 已配 {stats.filled} · 缺 {stats.missing}
+            {stats.running > 0 ? ` · 生成中 ${stats.running}` : ''}
+            。提示词已按位置写好默认值，点「生成」可当场改；换「拍法」再生成即整组换风格。
           </div>
-        </div>
-
-        {/* 拍法：换一档，下次生成的画面不变、观感全变 */}
-        <div className="shrink-0" style={{ minWidth: '190px' }}>
-          <Select value={artStyle} onChange={(e) => setArtStyle(e.target.value as LandingArtStyleKey)} uiSize="sm">
-            {LANDING_ART_STYLES.map((st) => (
-              <option key={st.key} value={st.key}>{st.label}</option>
-            ))}
-          </Select>
         </div>
 
         {/* 一个模型也没有时不摆选择器；有多个时让人能钉住起点（失败仍会自动往下试） */}
         {modelChain.length > 1 && (
-          <div className="ml-auto shrink-0" style={{ minWidth: '220px' }}>
+          <div className="shrink-0" style={{ minWidth: '220px' }}>
             <Select
               value={selectedModelKey ?? modelChain[0]?.key ?? ''}
               onChange={(e) => setSelectedModelKey(e.target.value)}
@@ -430,13 +465,13 @@ export default function LandingPreviewSettings() {
         )}
 
         <Button
-          variant="secondary"
-          onClick={handleGenerateAll}
-          disabled={anyRunning || !hasModel}
-          className={modelChain.length > 1 ? 'shrink-0' : 'ml-auto shrink-0'}
+          variant="primary"
+          onClick={() => void generate(missingTargets)}
+          disabled={anyRunning || !hasModel || missingTargets.length === 0}
+          className="shrink-0"
         >
-          {anyRunning ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
-          全部重新生成
+          {anyRunning ? <MapSpinner size={14} /> : <Sparkles size={14} />}
+          生成缺失的 {missingTargets.length} 张
         </Button>
       </div>
 
@@ -449,119 +484,191 @@ export default function LandingPreviewSettings() {
         </div>
       )}
 
-      {/*
-        一行一幕的紧凑列表，缩略图只占 108px 宽的一条。
-        十幕排成十张大图要滚很久，而这一屏的用途是「扫一眼谁还没配、谁配得不对」，
-        不是看图 —— 看图点开缩略图，放大层里连「重新生成」一起给。
-      */}
-      <div className="flex flex-col gap-2">
-        {LANDING_PREVIEW_SLOTS.map((slot) => {
-          const asset = assets[slot.slot];
-          const st = states[slot.slot] ?? { status: 'idle' as const };
-          const running = st.status === 'running';
-          const elapsed = running && st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1000)) : 0;
-          // tick 只为让上面这个秒数每秒重算一次；读一下它，避免被当成未使用
-          void tick;
-          const src = asset?.url ? withCacheBust(asset.url, asset.updatedAt) : null;
+      {/* 按模块分组：每组一个拍法、一个「整组重生成」 */}
+      {SYSTEM_IMAGERY_MODULES.map((module) => {
+        const style = styleByModule[module.id] ?? module.defaultStyle;
+        const filled = module.slots.filter((s) => assets[s.slot]?.url).length;
+        const moduleRunning = module.slots.some((s) => states[s.slot]?.status === 'running');
 
-          return (
+        return (
+          <div
+            key={module.id}
+            style={{
+              borderRadius: '12px',
+              border: '1px solid var(--border-secondary)',
+              background: 'var(--bg-nested)',
+              overflow: 'hidden',
+            }}
+          >
+            {/* 组头 */}
             <div
-              key={slot.slot}
-              className="flex items-center gap-3 overflow-hidden"
-              style={{
-                padding: '8px 10px',
-                borderRadius: '10px',
-                border: '1px solid var(--border-secondary)',
-                background: 'var(--bg-card)',
-              }}
+              className="flex items-center gap-2 flex-wrap"
+              style={{ padding: '10px 12px', borderBottom: '1px solid var(--border-secondary)' }}
             >
-              {/* 缩略图：3:2 的一小条，固定宽高，出图时不跳版 */}
-              <button
-                type="button"
-                onClick={() => { if (src) setZoomSlotId(slot.id); }}
-                disabled={!src}
-                title={src ? '点击放大' : undefined}
-                className="relative flex items-center justify-center shrink-0 overflow-hidden group"
+              <span className="text-sm" style={{ color: 'var(--text-primary)' }}>{module.label}</span>
+              <span
+                className="text-[11px] shrink-0"
                 style={{
-                  width: '108px',
-                  height: '72px',
-                  borderRadius: '8px',
-                  border: '1px solid var(--border-subtle)',
-                  background: running ? HATCH : 'var(--bg-secondary)',
-                  backgroundColor: 'var(--bg-secondary)',
-                  cursor: src ? 'zoom-in' : 'default',
-                  padding: 0,
+                  padding: '1px 6px',
+                  borderRadius: '6px',
+                  background: 'var(--bg-secondary)',
+                  color: 'var(--text-muted)',
+                  fontFamily: 'var(--font-mono, ui-monospace, monospace)',
                 }}
               >
-                {src && !running && (
-                  <>
-                    <img src={src} alt={slot.label} className="w-full h-full" style={{ objectFit: 'cover' }} />
-                    {/*
-                      hover 时压一层同色遮罩再放图标。用 --bg-base + 半透明而不是黑色
-                      字面量：浅色主题下压黑会变成一块脏灰（双皮肤棘轮也拦这条）。
-                    */}
-                    <span
-                      className="absolute inset-0 items-center justify-center hidden group-hover:flex"
-                      style={{ background: 'var(--bg-base)', opacity: 0.72 }}
-                    >
-                      <Maximize2 size={15} style={{ color: 'var(--text-primary)' }} />
-                    </span>
-                  </>
-                )}
-                {running && <MapSpinner size={16} />}
-                {!src && !running && <ImageIcon size={16} style={{ color: 'var(--text-muted)' }} />}
-              </button>
+                {module.route}
+              </span>
+              <span
+                className="text-[11px] shrink-0"
+                style={{ color: filled === module.slots.length ? 'var(--accent-fg-success)' : 'var(--text-muted)' }}
+              >
+                {filled}/{module.slots.length} 已配
+              </span>
+              <span className="text-[11px] min-w-0 truncate" style={{ color: 'var(--text-muted)' }}>{module.hint}</span>
 
-              <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                <div className="flex items-baseline gap-2 min-w-0">
-                  <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{slot.label}</span>
-                  <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{slot.where}</span>
-                  <span className="text-[11px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>{slot.size}</span>
+              <div className="ml-auto flex items-center gap-2 shrink-0">
+                {/* 拍法：换一档，下次生成的画面不变、观感全变 */}
+                <div style={{ minWidth: '160px' }}>
+                  <Select
+                    value={style}
+                    onChange={(e) =>
+                      setStyleByModule((prev) => ({ ...prev, [module.id]: e.target.value as ImageryStyleKey }))
+                    }
+                    uiSize="sm"
+                  >
+                    {IMAGERY_STYLES.map((st) => (
+                      <option key={st.key} value={st.key}>{st.label}</option>
+                    ))}
+                  </Select>
                 </div>
-
-                {running ? (
-                  <span className="text-[11px] tabular-nums truncate" style={{ color: 'var(--text-secondary)' }}>
-                    正在生成 · 已等待 {elapsed}s
-                    {st.model ? ` · ${st.model}` : ''}
-                    {st.attempt && st.attempt > 1 ? `（第 ${st.attempt} 个模型）` : ''}
-                  </span>
-                ) : st.status === 'error' ? (
-                  <span className="text-[11px]" style={{ color: 'var(--semantic-danger-text)' }}>{st.error}</span>
-                ) : (
-                  <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                    {src ? '点缩略图放大，或直接重新生成' : '还没有配图'}
-                  </span>
-                )}
-              </div>
-
-              <div className="flex items-center gap-1.5 shrink-0">
-                <Button variant="secondary" size="sm" onClick={() => openDialog(slot)} disabled={running || !hasModel}>
-                  <Sparkles size={13} />
-                  {src ? '重新生成' : '生成'}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void generate(module.slots.map((s) => targetOf(module, s)))}
+                  disabled={moduleRunning || !hasModel}
+                >
+                  {moduleRunning ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
+                  整组重生成
                 </Button>
-                {src && (
-                  <Button variant="ghost" size="sm" onClick={() => void handleDelete(slot)} disabled={running}>
-                    <Trash2 size={13} />
-                    清除
-                  </Button>
-                )}
               </div>
             </div>
-          );
-        })}
-      </div>
+
+            {/*
+              一行一个图位的紧凑列表，缩略图只占 108px 宽的一条。
+              几十个图位排成大图要滚很久，而这一屏的用途是「扫一眼谁还没配、谁配得不对」，
+              不是看图 —— 看图点开缩略图，放大层里连「重新生成」一起给。
+            */}
+            <div className="flex flex-col">
+              {module.slots.map((slot) => {
+                const asset = assets[slot.slot];
+                const st = states[slot.slot] ?? { status: 'idle' as const };
+                const running = st.status === 'running';
+                const elapsed = running && st.startedAt ? Math.max(0, Math.round((Date.now() - st.startedAt) / 1000)) : 0;
+                // tick 只为让上面这个秒数每秒重算一次；读一下它，避免被当成未使用
+                void tick;
+                const src = asset?.url ? withCacheBust(asset.url, asset.updatedAt) : null;
+
+                return (
+                  <div
+                    key={slot.slot}
+                    className="flex items-center gap-3 overflow-hidden"
+                    style={{ padding: '8px 12px', borderTop: '1px solid var(--border-secondary)' }}
+                  >
+                    {/* 缩略图：3:2 的一小条，固定宽高，出图时不跳版 */}
+                    <button
+                      type="button"
+                      onClick={() => { if (src) setZoomSlotKey(slot.slot); }}
+                      disabled={!src}
+                      title={src ? '点击放大' : undefined}
+                      className="relative flex items-center justify-center shrink-0 overflow-hidden group"
+                      style={{
+                        width: '108px',
+                        height: '72px',
+                        borderRadius: '8px',
+                        border: '1px solid var(--border-subtle)',
+                        background: running ? HATCH : 'var(--bg-secondary)',
+                        backgroundColor: 'var(--bg-secondary)',
+                        cursor: src ? 'zoom-in' : 'default',
+                        padding: 0,
+                      }}
+                    >
+                      {src && !running && (
+                        <>
+                          <img src={src} alt={slot.label} className="w-full h-full" style={{ objectFit: 'cover' }} />
+                          {/*
+                            hover 时压一层同色遮罩再放图标。用 --bg-base + 半透明而不是黑色
+                            字面量：浅色主题下压黑会变成一块脏灰（双皮肤棘轮也拦这条）。
+                          */}
+                          <span
+                            className="absolute inset-0 items-center justify-center hidden group-hover:flex"
+                            style={{ background: 'var(--bg-base)', opacity: 0.72 }}
+                          >
+                            <Maximize2 size={15} style={{ color: 'var(--text-primary)' }} />
+                          </span>
+                        </>
+                      )}
+                      {running && <MapSpinner size={16} />}
+                      {!src && !running && <ImageIcon size={16} style={{ color: 'var(--text-muted)' }} />}
+                    </button>
+
+                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                      <div className="flex items-baseline gap-2 min-w-0">
+                        <span className="text-sm truncate" style={{ color: 'var(--text-primary)' }}>{slot.label}</span>
+                        <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{slot.where}</span>
+                        <span className="text-[11px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>{slot.size}</span>
+                      </div>
+
+                      {running ? (
+                        <span className="text-[11px] tabular-nums truncate" style={{ color: 'var(--text-secondary)' }}>
+                          正在生成 · 已等待 {elapsed}s
+                          {st.model ? ` · ${st.model}` : ''}
+                          {st.attempt && st.attempt > 1 ? `（第 ${st.attempt} 个模型）` : ''}
+                        </span>
+                      ) : st.status === 'error' ? (
+                        <span className="text-[11px]" style={{ color: 'var(--semantic-danger-text)' }}>{st.error}</span>
+                      ) : (
+                        <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          {src ? '点缩略图放大，或直接重新生成' : '还没有配图，页面走兜底渲染'}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => openDialog(module, slot)}
+                        disabled={running || !hasModel}
+                      >
+                        <Sparkles size={13} />
+                        {src ? '重新生成' : '生成'}
+                      </Button>
+                      {src && (
+                        <Button variant="ghost" size="sm" onClick={() => void handleDelete(slot)} disabled={running}>
+                          <Trash2 size={13} />
+                          清除
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
 
       {/*
         放大层：看图与换图在同一个地方完成 —— 点开是为了判断这张行不行，
         判断完就该能当场换掉，不该关掉再去列表里找那一行。
       */}
-      {zoomSlot && zoomSrc && (
+      {zoomEntry && zoomSrc && (
         <>
           <ImagePreviewDialog
-            images={[{ url: zoomSrc, alt: zoomSlot.label }]}
+            images={[{ url: zoomSrc, alt: zoomEntry.label }]}
             initialIndex={0}
             open
-            onClose={() => setZoomSlotId(null)}
+            onClose={() => setZoomSlotKey(null)}
           />
           <div
             className="fixed left-1/2 -translate-x-1/2 flex items-center gap-2"
@@ -570,7 +677,11 @@ export default function LandingPreviewSettings() {
             <Button
               variant="primary"
               size="sm"
-              onClick={() => { setZoomSlotId(null); openDialog(zoomSlot); }}
+              onClick={() => {
+                const module = SYSTEM_IMAGERY_MODULES.find((m) => m.slots.some((s) => s.slot === zoomEntry.slot));
+                setZoomSlotKey(null);
+                if (module) openDialog(module, zoomEntry);
+              }}
             >
               <Sparkles size={13} />
               换一张
@@ -610,14 +721,16 @@ export default function LandingPreviewSettings() {
                 }}
               />
               <p className="text-[11px]" style={{ color: 'var(--text-muted)', lineHeight: 1.7 }}>
-                前半段是当前「拍法」的风格约束（现在是{landingArtStyle(artStyle).label}：{landingArtStyle(artStyle).hint}），
-                整套图共用，改它这一张就和别的不成套了；后半段是这张自己的画面描述，通常只需要改这里。
+                前半段是当前「拍法」的风格约束（现在是{editingStyle?.label}：{editingStyle?.hint}），
+                这一组图共用，改它这一张就和同组别的不成套了；后半段是这张自己的画面描述，通常只需要改这里。
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setEditing({ ...editing, prompt: buildLandingPreviewPrompt(editing.slot, artStyle) })}
+                  onClick={() =>
+                    setEditing({ ...editing, prompt: buildImageryPrompt(editing.slot, styleByModule[editing.module.id]) })
+                  }
                 >
                   <RotateCcw size={13} />
                   恢复默认提示词

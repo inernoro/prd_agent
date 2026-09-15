@@ -14,11 +14,14 @@ import { AS_TYPE, AS_SPACE, AS_SIZE } from '@/lib/appStoreTokens';
 import { VOLUMES, PAIN_REMEDIES, ALL_BOOKS, findVolume } from '@/lib/bookshelf/catalog';
 import { countsAsPassed } from '@/lib/bookshelf/examContext';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
+import { useImageryModule } from '@/hooks/useImagery';
+import { bookshelfVolumeSlot } from '@/lib/imagery';
 import type { Track } from '@/lib/bookshelf/types';
 import {
-  Eyebrow, SectionHead, GroupCard, GroupRow, FeaturedCard, NumberBox, Chevron, asStyle, GUTTER,
+  Eyebrow, SectionHead, GroupCard, GroupRow, FeaturedCard, CoverBox, Chevron, asStyle, GUTTER,
   BOTTOM_GAP,
 } from './parts';
+import { CoverBanner } from '../covers';
 
 const VOL_NUM = '一二三四五六七';
 
@@ -56,6 +59,17 @@ export function MobileLanding({
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
   const bookNotes = useBookshelfStore((s) => s.bookNotes);
   const examResults = useBookshelfStore((s) => s.examResults);
+
+  /*
+   * 七卷的卷面图一次取一组。逐个调 useImageryAsset 会在同一屏挂七个 effect 去读
+   * 同一份缓存，白白多七次渲染；而且处境卡与七卷行读的是同一张图，分开取没有意义。
+   * 没生成的那些取不到，下面一律回落到卷序汉字方块——这一屏在零配图时必须照常成立。
+   */
+  const covers = useImageryModule('bookshelf');
+  const coverOf = (volumeId: string): string | null => {
+    const slotKey = bookshelfVolumeSlot(volumeId);
+    return slotKey ? (covers[slotKey] ?? null) : null;
+  };
 
   const visible = ALL_BOOKS.filter((b) => matchRole(b.track, role));
   const readCount = visible.filter((b) => readBookIds.includes(b.id)).length;
@@ -133,6 +147,7 @@ export function MobileLanding({
           if (!vol) return null;
           const skin = skinOf(p.volumeId);
           const count = vol.books.filter((b) => matchRole(b.track, role)).length;
+          const cover = coverOf(p.volumeId);
           return (
             <FeaturedCard
               key={p.quote}
@@ -140,28 +155,41 @@ export function MobileLanding({
                 width: AS_SIZE.shelfCardWidth,
                 flex: 'none',
                 scrollSnapAlign: 'start',
-                minHeight: 176,
+                // 有图那一档整体高一截。同一时刻这一组要么都有图要么都没有（整组一起生成），
+                // 所以横滑时高度仍然是齐的，不会出现参差。
+                minHeight: cover ? 268 : 176,
                 display: 'flex',
                 flexDirection: 'column',
-                gap: 12,
                 boxSizing: 'border-box',
                 cursor: 'pointer',
+                // 通栏图要贴到卡片边缘，所以 padding 下沉到内容层
+                padding: 0,
+                overflow: 'hidden',
               }}
             >
               <button
                 type="button"
                 onClick={() => onOpenVolume(p.volumeId)}
                 style={{
-                  display: 'flex', flexDirection: 'column', gap: 12, flex: 1,
+                  display: 'flex', flexDirection: 'column', flex: 1,
                   border: 0, background: 'transparent', padding: 0, textAlign: 'left', color: 'inherit',
                 }}
               >
-                <Eyebrow color={skin.fg}>卷{VOL_NUM[vol.index - 1]} · {vol.name}</Eyebrow>
-                <div style={{ ...asStyle(AS_TYPE.quote), textWrap: 'pretty' }}>{p.quote}</div>
-                <div style={{ ...asStyle(AS_TYPE.itemSubtitle), lineHeight: 1.4, color: 'var(--text-secondary)', textWrap: 'pretty', flex: 1 }}>
-                  {p.diagnosis}
+                <CoverBanner src={cover} height={112} radius={AS_SPACE.featuredRadius} />
+                <div
+                  style={{
+                    display: 'flex', flexDirection: 'column', gap: 12, flex: 1,
+                    // 有图时上边距交给图底那道渐变，再留 18 会在图与引号之间空出一条
+                    padding: `${cover ? 10 : AS_SPACE.featuredPaddingY}px ${AS_SPACE.featuredPaddingX}px ${AS_SPACE.featuredPaddingY}px`,
+                  }}
+                >
+                  <Eyebrow color={skin.fg}>卷{VOL_NUM[vol.index - 1]} · {vol.name}</Eyebrow>
+                  <div style={{ ...asStyle(AS_TYPE.quote), textWrap: 'pretty' }}>{p.quote}</div>
+                  <div style={{ ...asStyle(AS_TYPE.itemSubtitle), lineHeight: 1.4, color: 'var(--text-secondary)', textWrap: 'pretty', flex: 1 }}>
+                    {p.diagnosis}
+                  </div>
+                  <div style={{ ...asStyle(AS_TYPE.pill), color: skin.fg }}>去这一卷 · {count} 本 ›</div>
                 </div>
-                <div style={{ ...asStyle(AS_TYPE.pill), color: skin.fg }}>去这一卷 · {count} 本 ›</div>
               </button>
             </FeaturedCard>
           );
@@ -180,10 +208,18 @@ export function MobileLanding({
           const r = examResults[v.id];
           const passed = r ? countsAsPassed(r.passed, r.readAtExam, r.totalAtExam) : false;
           return (
-            <GroupRow key={v.id} onClick={() => onOpenVolume(v.id)} style={{ padding: '12px 16px' }}>
-              <NumberBox fg={skin.fg} box={skin.box} size={AS_SIZE.rowBoxSize} fontSize={20}>
+            <GroupRow key={v.id} onClick={() => onOpenVolume(v.id)} style={{ padding: '10px 16px' }}>
+              {/* 有卷面图就是图（56 宽，比方块宽一档更像"一幅画"），没有就回落汉字方块 */}
+              <CoverBox
+                src={coverOf(v.id)}
+                fg={skin.fg}
+                box={skin.box}
+                size={AS_SIZE.rowBoxSize}
+                coverWidth={56}
+                fontSize={20}
+              >
                 {VOL_NUM[v.index - 1]}
-              </NumberBox>
+              </CoverBox>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={asStyle(AS_TYPE.itemTitle)}>
                   {v.name}

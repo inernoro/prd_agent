@@ -39,8 +39,35 @@ function bookshelfBody(u) {
   const data = BOOKSHELF_DATA[u];
   return apiShape === 'legacy' ? { success: true, data } : { success: true, data, error: null };
 }
+
+// 卷面图那条路径要单独测：无图时回落汉字方块、有图时换成图，是两棵不同的节点树。
+// 只跑无图那一档等于新代码零覆盖 —— 把 CoverBox 的有图分支整个删掉，验收照样全绿。
+const VOLUME_SLOTS = ['boot', 'rules', 'domain', 'design', 'review', 'ai', 'stage']
+  .map((k) => `bookshelf.vol.${k}`);
+const COVER_URL = '/e2e-cover.svg';
+// 用 SVG 当假卷面：一张真 JPG 要么进仓库、要么现编码，而这里只需要「background-image 真的
+// 加载出了东西」这一个事实。渐变在截图里也看得出是一块图而不是纯色兜底方块。
+const COVER_SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="480" height="320">'
+  + '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1">'
+  + '<stop offset="0%" stop-color="#2a2620"/><stop offset="55%" stop-color="#6b4f38"/>'
+  + '<stop offset="100%" stop-color="#a8825a"/></linearGradient></defs>'
+  + '<rect width="480" height="320" fill="url(#g)"/></svg>';
+let coversOn = false;
+
 const server = http.createServer((req, res) => {
   const u = decodeURIComponent(req.url.split('?')[0]);
+  if (u === COVER_URL) {
+    res.writeHead(200, { 'Content-Type': 'image/svg+xml' });
+    return res.end(COVER_SVG);
+  }
+  if (u === '/api/homepage/assets') {
+    const data = {};
+    if (coversOn) {
+      VOLUME_SLOTS.forEach((slot) => { data[slot] = { url: COVER_URL, mime: 'image/svg+xml' }; });
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    return res.end(JSON.stringify({ success: true, data, error: null }));
+  }
   if (BOOKSHELF_DATA[u]) {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     return res.end(JSON.stringify(bookshelfBody(u)));
@@ -333,6 +360,83 @@ for (const theme of ['dark', 'light']) {
   for (const [k, v] of Object.entries(m)) console.log(`  ${v ? '通过' : '失败'}  ${k}`);
   await ctx.close();
 }
+
+// 卷面图配好之后那一档：同一套版式，图位有图。
+//
+// 这是一棵**不同的节点树**——CoverBox 换成带 background-image 的块、处境卡多出一条通栏、
+// 卷页顶部多出一条通栏。上面那几轮跑的全是「没配图」那一档，把有图分支整段删掉照样全绿
+// （predicate-and-wiring-discipline 形状 2：链路只建一半，编译过、测试绿、通读也挑不出）。
+coversOn = true;
+for (const theme of ['dark', 'light']) {
+  const ctx = await browser.newContext({
+    viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2,
+  });
+  const page = await ctx.newPage();
+  await page.addInitScript((t) => {
+    localStorage.setItem('prd-admin-auth', JSON.stringify({
+      state: {
+        isAuthenticated: true,
+        user: { id: 'e2e', username: 'e2e', displayName: '验收' },
+        token: 'e2e-token', refreshToken: null, sessionKey: null,
+        permissions: ['access'], permissionsLoaded: true, isRoot: true, menuCatalog: [],
+      }, version: 0,
+    }));
+    localStorage.removeItem('bookshelf-progress');
+    document.documentElement.setAttribute('data-theme', t);
+  }, theme);
+
+  const c = {};
+  await page.goto(`http://127.0.0.1:${PORT}/bookshelf`, { waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('h1:has-text("算你有福了")', { timeout: 20000 });
+  await page.evaluate((t) => document.documentElement.setAttribute('data-theme', t), theme);
+  await page.waitForTimeout(900);
+
+  // 数的是「真的引用了那张图的元素」，不是「有没有 background-image 属性」——
+  // 页面上本来就有别的带背景图的东西，只查属性会把它们算进来，判据就永远为真。
+  //
+  // 而且必须**按位置分开数**。第一版只断言「总数 >= 8」，结果把七卷行那一组整个
+  // 关掉（CoverBox 永远回落汉字方块）它依然绿：处境卡那 8 条自己就够数了。
+  // 判据比它要管的范围窄/松，是本仓库反复踩的形状 1 —— 所以这里按实际渲染尺寸
+  // 把两组分开：七卷行是 56 宽的小块，处境卡是 112 高的通栏。
+  const countCovers = () => page.evaluate((url) => {
+    const hit = (el) => (el.getAttribute('style') || '').includes(url);
+    const els = [...document.querySelectorAll('[style]')].filter(hit);
+    const size = (el) => el.getBoundingClientRect();
+    return {
+      total: els.length,
+      rows: els.filter((el) => Math.round(size(el).width) === 56).length,
+      banners: els.filter((el) => Math.round(size(el).height) === 112).length,
+    };
+  }, COVER_URL);
+
+  const landing = await countCovers();
+  // 七卷行必须是**七张**，一张不少：少一张说明某一卷的图位没接上，
+  // 而那一卷会静默回落成汉字方块 —— 光看页面挑不出来。
+  c['落地页七卷行都换成了卷面图'] = landing.rows === 7;
+  c['落地页处境卡有通栏配图'] = landing.banners >= 1;
+  await page.screenshot({ path: `${OUT}/m6-covers-landing-${theme}.png`, fullPage: true });
+
+  // 有图之后仍不许横向溢出：通栏图用负边距顶掉外层 padding，算错一边就会顶出屏幕。
+  const noOverflow = async () => page.evaluate(() =>
+    document.documentElement.scrollWidth <= document.documentElement.clientWidth + 1);
+  c['落地页有图时无横向溢出'] = await noOverflow();
+
+  // 进卷页：顶部那条通栏
+  await page.locator('text=先把话说清楚').first().click();
+  await page.waitForSelector('text=说的是不是你', { timeout: 20000 });
+  await page.waitForTimeout(700);
+  c['卷页通栏卷面图渲染出来了'] = (await countCovers()).total >= 1;
+  c['卷页有图时无横向溢出'] = await noOverflow();
+  await page.screenshot({ path: `${OUT}/m7-covers-volume-${theme}.png`, fullPage: true });
+
+  const cfails = Object.entries(c).filter(([, v]) => !v).map(([k]) => k);
+  if (cfails.length) allOk = false;
+  console.log('');
+  console.log(`[手机档卷面图 · ${theme}]`);
+  for (const [k, v] of Object.entries(c)) console.log(`  ${v ? '通过' : '失败'}  ${k}`);
+  await ctx.close();
+}
+coversOn = false;
 
 // 守卫：上游返回畸形（缺 error 键的旧格式）时，看板降级但书单不许被带走。
 apiShape = 'legacy';
