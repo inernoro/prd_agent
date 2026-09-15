@@ -306,11 +306,24 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
         }
     }
 
+    /// <summary>
+    /// 重放一条已完成的发布意图，返回它当初的收据。
+    ///
+    /// 收据是历史事实：「这条意图把版本 V 发布到了站点 S」。站点后来又发了新版本、
+    /// 或者回退过，都不改变这件事。原来按站点的**当前指针**去找，等于把收据的有效期
+    /// 绑在「它有没有被后来的发布顶掉」上——一旦顶掉，重放这次发布就再也拿不回收据，
+    /// 而恢复器明确不收 completed 意图，于是这条请求永远 503、永远说「正在自动恢复」
+    /// （Codex P2，2026-09-15；形状 1：判据比它该管的范围窄）。
+    ///
+    /// 那两条指针判据本来是防「只写了版本、站点指针还没推进」的半落地。这里用不上：
+    /// 本方法只在意图已是 completed 时才走到，而 completed 是成功发布的最后一次写入，
+    /// 站点与版本两侧此前都已落库。改判「这条版本自己确实完成过一次发布」——
+    /// 半落地的版本没有 PublishedContentVersion，也不会是 Published。
+    /// </summary>
     private async Task<HtmlPptPublishResult> LoadCompletedAsync(MdToPptRun run, CancellationToken ct)
     {
         var site = await _db.HostedSites.Find(item => item.Id == run.PublishedSiteId
-                                                       && item.OwnerUserId == run.UserId
-                                                       && item.PublishedRevisionId == run.PublishedVersionId)
+                                                       && item.OwnerUserId == run.UserId)
             .FirstOrDefaultAsync(ct);
         var revision = await _db.HostedSiteRevisions.Find(item => item.Id == run.PublishedVersionId
                                                                   && item.SiteId == run.PublishedSiteId
@@ -322,7 +335,7 @@ public sealed class HtmlPptPublishCoordinator : IHtmlPptPublishCoordinator
             : Hash(Encoding.UTF8.GetBytes(revision.Html ?? string.Empty));
         if (site == null
             || revision == null
-            || revision.PublishedContentVersion != site.ContentVersion
+            || revision.PublishedContentVersion == null
             || !FixedHashEquals(actualHash, run.PublishedHtmlHash)
             || !FixedHashEquals(actualHash, run.PublishIntentHtmlHash)
             || !FixedHashEquals(actualHash, run.HtmlHash))

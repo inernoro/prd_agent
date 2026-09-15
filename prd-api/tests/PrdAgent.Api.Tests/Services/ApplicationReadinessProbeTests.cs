@@ -179,6 +179,39 @@ public sealed class ApplicationReadinessProbeTests
             () => probe.CheckAsync(cancellationToken: cancellation.Token));
     }
 
+    [Fact]
+    public async Task HangingRedis_ShouldNotStartANewPingForEveryReadinessRequest()
+    {
+        // Redis 的 PingAsync 不收取消令牌，谁也停不掉它；本仓库量到过 multiplexer 半失活时
+        // 命令不按 SyncTimeout 抛异常而是直接挂住。就绪端点由编排每几秒打一次，不合并的话
+        // 一次 Redis 故障就会攒出成百条谁也停不掉的在途探测。
+        var started = 0;
+        var release = new TaskCompletionSource();
+        var probe = CreateProbe(
+            mongo: _ => Task.CompletedTask,
+            redis: _ =>
+            {
+                Interlocked.Increment(ref started);
+                return release.Task;
+            },
+            asset: (_, _) => Task.FromResult(HealthyAsset()),
+            dependencyTimeout: TimeSpan.FromMilliseconds(40));
+
+        for (var round = 0; round < 5; round++)
+        {
+            var result = await probe.CheckAsync(force: true);
+            result.ErrorCode.ShouldBe(ApplicationReadinessProbe.RedisUnavailable);
+        }
+
+        started.ShouldBe(1);
+
+        // 上一次真的结束之后不再合并：合并是为了不堆在途调用，不是缓存结论。
+        release.SetResult();
+        var recovered = await probe.CheckAsync(force: true);
+        recovered.Status.ShouldBe("healthy");
+        started.ShouldBe(2);
+    }
+
     private static ApplicationReadinessProbe CreateProbe(
         Func<CancellationToken, Task> mongo,
         Func<CancellationToken, Task> redis,

@@ -503,6 +503,126 @@ public sealed class HtmlPptDesignArtifactAdapterTests
         new DesignArtifactLifecycleService(fixture.Db, events),
         NullLogger<HtmlPptDesignArtifactAdapter>.Instance);
 
+    /// <summary>
+    /// 收据是历史事实：「这条意图把版本 V 发布到了站点 S」。站点后来又发了新版本把指针顶走，
+    /// 不该让重放这次发布再也拿不回收据——恢复器明确不收 completed 意图，那就是永久 503。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishCoordinator_ShouldReplayCompletedReceiptAfterANewerRevisionTookOverTheSite()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        const string html = "<!doctype html><html><head></head><body>superseded receipt</body></html>";
+        var hash = MdToPptController.ComputeHtmlHash(html);
+        var run = Run("publish-superseded", "convert", "done", html, hash);
+        var intentId = HtmlPptPublishCoordinator.BuildIntentId(run.Id, hash);
+        var publishedAt = new DateTime(2026, 9, 8, 2, 3, 4, DateTimeKind.Utc);
+        run.PublishIntentId = intentId;
+        run.PublishIntentStatus = "completed";
+        run.PublishIntentHtmlHash = hash;
+        run.PublishIntentCompletedAt = publishedAt;
+        run.PublishedSiteId = "superseded-site";
+        run.PublishedVersionId = "revision-v1";
+        run.PublishedHtmlHash = hash;
+        await fixture.Db.MdToPptRuns.InsertOneAsync(run);
+
+        // 站点已经被后来的一次发布推进：当前指针是 v2，ContentVersion 也跟着走了。
+        await fixture.Db.HostedSites.InsertOneAsync(new HostedSite
+        {
+            Id = "superseded-site",
+            OwnerUserId = run.UserId,
+            Title = run.Title,
+            SiteUrl = "https://site.invalid/index.html",
+            ContentVersion = publishedAt.AddMinutes(30),
+            PublishedRevisionId = "revision-v2",
+            SourceType = "md-to-ppt",
+            SourceRef = intentId,
+        });
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = "revision-v1",
+            SiteId = "superseded-site",
+            CreatedByUserId = run.UserId,
+            Status = HostedSiteRevisionStatuses.Published,
+            Source = HostedSiteRevisionSources.Baseline,
+            Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
+            SourceRunId = run.Id,
+            Html = html,
+            BasedOnContentVersion = publishedAt,
+            PublishedContentVersion = publishedAt,
+            CreatedAt = publishedAt,
+            PublishedAt = publishedAt,
+        });
+
+        var coordinator = new HtmlPptPublishCoordinator(
+            fixture.Db,
+            new Mock<IHostedSiteService>(MockBehavior.Strict).Object,
+            new Mock<IHostedSiteRevisionService>(MockBehavior.Strict).Object,
+            new Mock<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict).Object,
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        var replayed = await coordinator.PublishAsync(run, run.Title, null, [], []);
+
+        Assert.Equal("revision-v1", replayed.Revision.Id);
+        Assert.Equal("superseded-site", replayed.Site.Id);
+        Assert.Equal(hash, replayed.ContentHash);
+    }
+
+    /// <summary>半落地的版本（还没完成发布）仍然不能当成收据交出去。</summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task PublishCoordinator_ShouldStillWithholdAReceiptWhoseRevisionNeverFinishedPublishing()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        const string html = "<!doctype html><html><head></head><body>half landed</body></html>";
+        var hash = MdToPptController.ComputeHtmlHash(html);
+        var run = Run("publish-half-landed", "convert", "done", html, hash);
+        var intentId = HtmlPptPublishCoordinator.BuildIntentId(run.Id, hash);
+        var startedAt = new DateTime(2026, 9, 8, 2, 3, 4, DateTimeKind.Utc);
+        run.PublishIntentId = intentId;
+        run.PublishIntentStatus = "completed";
+        run.PublishIntentHtmlHash = hash;
+        run.PublishedSiteId = "half-landed-site";
+        run.PublishedVersionId = "revision-pending";
+        run.PublishedHtmlHash = hash;
+        await fixture.Db.MdToPptRuns.InsertOneAsync(run);
+
+        await fixture.Db.HostedSites.InsertOneAsync(new HostedSite
+        {
+            Id = "half-landed-site",
+            OwnerUserId = run.UserId,
+            Title = run.Title,
+            SiteUrl = "https://site.invalid/index.html",
+            ContentVersion = startedAt,
+            SourceType = "md-to-ppt",
+            SourceRef = intentId,
+        });
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(new HostedSiteRevision
+        {
+            Id = "revision-pending",
+            SiteId = "half-landed-site",
+            CreatedByUserId = run.UserId,
+            // 还停在 Publishing：版本账本没有完成过一次发布，没有 PublishedContentVersion。
+            Status = HostedSiteRevisionStatuses.Publishing,
+            Source = HostedSiteRevisionSources.Baseline,
+            Runtime = DesignArtifactRuntimes.HtmlPptPipeline,
+            SourceRunId = run.Id,
+            Html = html,
+            BasedOnContentVersion = startedAt,
+            CreatedAt = startedAt,
+        });
+
+        var coordinator = new HtmlPptPublishCoordinator(
+            fixture.Db,
+            new Mock<IHostedSiteService>(MockBehavior.Strict).Object,
+            new Mock<IHostedSiteRevisionService>(MockBehavior.Strict).Object,
+            new Mock<IHtmlPptDesignArtifactAdapter>(MockBehavior.Strict).Object,
+            NullLogger<HtmlPptPublishCoordinator>.Instance);
+
+        await Assert.ThrowsAsync<HtmlPptPublishPendingException>(
+            () => coordinator.PublishAsync(run, run.Title, null, [], []));
+    }
+
     private static MdToPptRun Run(
         string id,
         string op,
