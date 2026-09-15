@@ -61,9 +61,13 @@ public class ActiveTasksImportController : ControllerBase
         }
         if (text.Length > 20000) text = text[..20000];
 
-        // 模型不认得「今天」是几号，把当天与本周日期表交给它，让它算得出具体日期
+        // 模型不认得「今天」是几号，把当天与本周日期表交给它，让它算得出具体日期。
+        // 但**只在原文真的提到时间时才给**：2026-09-15 实测，原文一个日期都没有时，
+        // 这张表会变成诱饵 —— 9 条任务被模型全部安上了本周五。不给诱饵是第一道防线，
+        // 下面的 HasTimeCue 硬门是第二道。
         var now = DateTime.UtcNow.AddHours(8); // 团队在东八区，按本地日历推算
-        var calendar = BuildCalendarHint(now);
+        var textHasTime = HasTimeCue(text);
+        var calendar = textHasTime ? BuildCalendarHint(now) : "原文没有提到任何时间，所有条目一律不要填 dueAt。\n";
 
         var systemPrompt =
             "你把一段自由文本拆成一条条「要做的事」，按 JSONL 输出：每行一个独立 JSON 对象，行内不得换行，输出完一行立即换行。\n" +
@@ -71,7 +75,7 @@ public class ActiveTasksImportController : ControllerBase
             "每行格式：\n" +
             "{\"type\":\"task\",\"title\":\"改完登录页的错误提示\",\"dueAt\":\"2026-09-19\",\"why\":\"原文说周五前\"}\n" +
             "全部输出完，最后一行：\n" +
-            "{\"type\":\"done\",\"skipped\":\"被我丢掉的内容，一句话说清；没有就省略这个字段\"}\n\n" +
+            "{\"type\":\"done\",\"skipped\":\"丢掉了什么，最多 30 字概括；不要抄原文；没丢就省略这个字段\"}\n\n" +
             "规则：\n" +
             "1. title 是一件可以动手做的事，8-25 字，动词开头，不要「关于…的事项」这种壳子。一句话里含两件事就拆成两条。\n" +
             "2. dueAt 只在原文真的给了时间时才填，格式 yyyy-MM-dd。原文没说时间就整个省略这个字段 —— 不许猜，不许默认填今天。\n" +
@@ -139,11 +143,16 @@ public class ActiveTasksImportController : ControllerBase
                     var title = root.TryGetProperty("title", out var ti) ? ti.GetString()?.Trim() : null;
                     if (string.IsNullOrWhiteSpace(title)) return;
                     emitted++;
+                    // 硬门：原文里一个时间词都没有，模型给的任何日期都是编的，一律丢弃。
+                    // 提示词里已经写了「不许猜」，但那是对模型的期望，不是不变量 ——
+                    // 2026-09-15 实测 gpt-3.5-turbo-1106 压不住，9 条全给安上了本周五。
+                    var rawDue = textHasTime ? (root.TryGetProperty("dueAt", out var d) ? d.GetString() : null) : null;
                     await WriteEventAsync("task", new
                     {
                         title,
-                        dueAt = NormalizeDue(root.TryGetProperty("dueAt", out var d) ? d.GetString() : null),
-                        why = root.TryGetProperty("why", out var w) ? w.GetString() : null,
+                        dueAt = NormalizeDue(rawDue),
+                        // why 是「原文哪句让你判出这个时间」，没有时间就没有 why 可言
+                        why = rawDue == null ? null : (root.TryGetProperty("why", out var w) ? w.GetString() : null),
                     });
                 }
                 else if (type == "done")
@@ -151,7 +160,7 @@ public class ActiveTasksImportController : ControllerBase
                     await WriteEventAsync("summary", new
                     {
                         count = emitted,
-                        skipped = root.TryGetProperty("skipped", out var sk) ? sk.GetString() : null,
+                        skipped = Clip(root.TryGetProperty("skipped", out var sk) ? sk.GetString() : null, 80),
                     });
                 }
             }
@@ -201,6 +210,28 @@ public class ActiveTasksImportController : ControllerBase
             _logger.LogError(ex, "[ActiveTasks-Import] unexpected error userId={UserId}", userId);
             await WriteEventAsync("error", new { message = "拆解中断了，稍后再试" });
         }
+    }
+
+    /// <summary>
+    /// 原文里到底有没有提到时间。判得**宽**是对的：宁可放过几个也不要误杀 ——
+    /// 它只决定「要不要信模型给的日期」，放过之后还有 NormalizeDue 的 180 天窗口兜着。
+    /// 与前端 dueParse 的规则表同源（那边负责认出来是哪天，这边只负责认出来有没有）。
+    /// </summary>
+    private static readonly System.Text.RegularExpressions.Regex TimeCue = new(
+        "今天|今日|今晚|明天|明日|后天|大后天|昨天|周[一二三四五六日天]|礼拜[一二三四五六日天]|星期[一二三四五六日天]"
+        + "|本周|下周|这周|下个?月|本月|月底|月初|年底|季度末|上线前|发布前|截止|deadline|due"
+        + "|\\d{1,2}\\s*[月/-]\\s*\\d{1,2}|\\d{1,2}\\s*号|\\d{1,2}\\s*日"
+        + "|\\d+\\s*(?:天|周|个?月)(?:内|后|之内|以内)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    internal static bool HasTimeCue(string text) => !string.IsNullOrWhiteSpace(text) && TimeCue.IsMatch(text);
+
+    /// <summary>截断。模型偶尔把整段原文抄进 skipped，那一段会占掉半个浮层。</summary>
+    internal static string? Clip(string? s, int max)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        var t = s.Trim();
+        return t.Length <= max ? t : t[..max] + "…";
     }
 
     /// <summary>

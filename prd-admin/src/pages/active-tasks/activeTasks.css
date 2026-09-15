@@ -717,6 +717,11 @@ select.atb-input { cursor: pointer; }
 .atb-check-circle--ghost { border-style: dashed; cursor: default; }
 
 .atb-draft { align-items: flex-start; padding-top: 4px; padding-bottom: 4px; }
+/* 候选行的标题被右边的日期挤掉尾巴 —— input 在 flex 里默认 min-width:auto，
+   按内容撑，撑不下就把自己的文字裁掉。实测「…录音转文字功能」显示到「功」就没了，
+   而 input 的 value 是完整的：值对、看不见。必须显式给 0 才肯收缩。 */
+.atb-draft .atb-row__body { min-width: 0; }
+.atb-draft .atb-inline-input { min-width: 0; text-overflow: ellipsis; }
 .atb-draft--off { opacity: 0.45; }
 .atb-draft--off .atb-inline-input { text-decoration: line-through; }
 

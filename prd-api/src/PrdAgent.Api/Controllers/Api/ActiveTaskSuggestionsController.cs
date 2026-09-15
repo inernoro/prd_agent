@@ -211,13 +211,17 @@ public class ActiveTaskSuggestionsController : ControllerBase
         });
 
         var now = DateTime.UtcNow.AddHours(8);
+        // 和一键导入同一条硬门：建议原文里一个时间词都没有，模型给的任何日期都是编的。
+        // 提示词里的「不许猜」是对模型的期望，不是不变量 —— 弱一点的模型压根压不住。
+        var srcText = string.Join("\n", suggestions.Select(x => x.Text));
+        var textHasTime = ActiveTasksImportController.HasTimeCue(srcText);
         var systemPrompt =
             "你在帮一个人把别人给他的建议整理成他自己的待办。输出 JSONL：每行一个独立 JSON 对象，行内不得换行，输出完一行立即换行。\n" +
             "不要 markdown 围栏，不要任何前后缀解释。\n\n" +
             "每行格式：\n" +
             "{\"type\":\"task\",\"title\":\"把登录失败的提示改成能看懂的话\",\"dueAt\":\"2026-09-19\",\"from\":\"张三\",\"why\":\"张三说错误码看不懂\"}\n" +
             "全部输出完，最后一行：\n" +
-            "{\"type\":\"done\",\"skipped\":\"没转成任务的建议，一句话说清为什么；没有就省略\"}\n\n" +
+            "{\"type\":\"done\",\"skipped\":\"没转成任务的建议，最多 30 字概括；不要抄原文；没有就省略\"}\n\n" +
             "规则：\n" +
             "1. 建议是别人的说法，不是任务。你要翻译成「我要做什么」：动词开头、8-25 字、有具体落点。\n" +
             "   一条建议里含两件事就拆两条；几条建议说的是同一件事就合成一条，from 写上所有提的人。\n" +
@@ -226,7 +230,7 @@ public class ActiveTaskSuggestionsController : ControllerBase
             "4. 纯情绪、纯评价、纯感谢、已经做完的事，一律不转成任务，记进最后那行的 skipped。\n" +
             "5. 引用的知识库内容只用来把话说准（术语、模块名、既有约定），不要凭它自己发明新任务。\n" +
             "6. 最多 20 条。禁止 emoji。用中文，保留专有名词与英文技术词。\n\n" +
-            $"今天是 {now:yyyy-MM-dd}。\n" +
+            (textHasTime ? $"今天是 {now:yyyy-MM-dd}。\n" : "建议原文没有提到任何时间，所有条目一律不要填 dueAt。\n") +
             (string.IsNullOrWhiteSpace(extraHint) ? "" : $"\n这个人另外提了一个要求，优先满足它：{extraHint}\n");
 
         var userParts = new List<string>
@@ -297,7 +301,7 @@ public class ActiveTaskSuggestionsController : ControllerBase
                     await WriteEventAsync("task", new
                     {
                         title,
-                        dueAt = NormalizeDue(root.TryGetProperty("dueAt", out var d) ? d.GetString() : null),
+                        dueAt = NormalizeDue(textHasTime ? (root.TryGetProperty("dueAt", out var d) ? d.GetString() : null) : null),
                         from = root.TryGetProperty("from", out var f) ? f.GetString() : null,
                         why = root.TryGetProperty("why", out var w) ? w.GetString() : null,
                     });
@@ -307,7 +311,7 @@ public class ActiveTaskSuggestionsController : ControllerBase
                     await WriteEventAsync("summary", new
                     {
                         count = emitted,
-                        skipped = root.TryGetProperty("skipped", out var sk) ? sk.GetString() : null,
+                        skipped = ActiveTasksImportController.Clip(root.TryGetProperty("skipped", out var sk) ? sk.GetString() : null, 80),
                     });
                 }
             }
