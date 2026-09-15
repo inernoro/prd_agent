@@ -15,3 +15,4 @@
 | fix | prd-admin | 团队页轮询在标签页不可见时停跑 |
 | feat | prd-api | 任务台新增撤销结案 POST {id}/reopen，PUT 支持补写 closingNote |
 | polish | prd-admin | 任务台界面文案去掉「老板 / 让他」语气与解释性长句 |
+| docs | doc | 任务台设计文档补两端分化与新人上手两节，债务台账补 4 条（拖拽排序 / 不可编辑 / 删除无撤销 / 我的任务不自刷新） |
