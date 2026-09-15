@@ -75,3 +75,25 @@ export function replacingConnectionNotice(
   if (status.usable === 'revoked') return null;
   return { login: status.login ?? null, assertValid: status.usable === 'usable' };
 }
+
+/**
+ * 标题栏该怎么称呼当前这条连接。
+ *
+ * 分清两件事：
+ * - **存在**是事实——库里有这条记录，连的是谁，说出来没问题（含"没问出结论"那一档）。
+ * - **还连着**是断言——已经问出「授权被撤销」时再说「已连接」，就和同一屏上那句
+ *   「授权已被撤销，请重新授权」当面打架（2026-09-15 Codex review 第三轮 P2）。
+ *
+ * 所以已撤销时改成说清它是一条失效的本地记录：入口（换个账号 / 断开连接）照常留着，
+ * 用户正需要它们去恢复或清理。
+ *
+ * 本模块是「关于这条连接对用户说什么」的唯一出处——上一轮只堵了连接步骤那一句，
+ * 标题栏这句照样在说「已连接」，就是因为同一个判断散在两处。新增任何一处措辞都走这里。
+ */
+export function connectionHeaderLabel(
+  status: { connected: boolean; usable?: 'usable' | 'revoked' | 'unknown' | null; login?: string | null } | null,
+): string | null {
+  if (!status?.connected) return null;
+  const who = status.login ?? 'GitHub 账号';
+  return status.usable === 'revoked' ? `${who} · 授权已失效` : `已连接 ${who}`;
+}

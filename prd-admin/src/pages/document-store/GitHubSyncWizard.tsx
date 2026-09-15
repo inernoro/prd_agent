@@ -21,7 +21,7 @@ import {
 } from './githubDirectorySelection';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice,
+  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice, connectionHeaderLabel,
 } from './githubConnectionState';
 
 /**
@@ -149,7 +149,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="surface-popover rounded-[16px] p-6 flex flex-col"
         style={{ width: 720, maxWidth: '94vw', maxHeight: '88vh', minHeight: 0 }}>
-        <Header step={step} onClose={onClose} login={auth?.connected ? auth.login ?? null : null}
+        <Header step={step} onClose={onClose} connectionLabel={connectionHeaderLabel(auth)}
           onSwitchAccount={reconnect} switching={switchingAccount}
           onDisconnect={() => void disconnect()} disconnecting={disconnecting} />
 
@@ -215,8 +215,8 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
 }
 
 /** 顶部标题 + 步骤指示（让用户任何时候知道自己在第几步、还剩几步） */
-function Header({ step, login, onClose, onSwitchAccount, switching, onDisconnect, disconnecting }: {
-  step: Step; login: string | null; onClose: () => void;
+function Header({ step, connectionLabel, onClose, onSwitchAccount, switching, onDisconnect, disconnecting }: {
+  step: Step; connectionLabel: string | null; onClose: () => void;
   onSwitchAccount: () => void; switching: boolean;
   onDisconnect: () => void; disconnecting: boolean;
 }) {
@@ -240,9 +240,9 @@ function Header({ step, login, onClose, onSwitchAccount, switching, onDisconnect
           </div>
           <div>
             <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>从 GitHub 同步文档</div>
-            {login && (
+            {connectionLabel && (
               <div className="flex items-center gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已连接 {login}</span>
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{connectionLabel}</span>
                 <button onClick={onSwitchAccount} disabled={switching || disconnecting}
                   className="text-[11px] underline cursor-pointer bg-transparent border-0 p-0"
                   style={{ color: 'var(--text-muted)' }}>

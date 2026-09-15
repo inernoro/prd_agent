@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice,
+  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice, connectionHeaderLabel,
 } from './githubConnectionState';
 
 describe('GitHub 连接状态判据', () => {
@@ -75,5 +75,29 @@ describe('「换个账号」时关于旧连接该说什么', () => {
     const unknown = { connected: true, usable: 'unknown' as const, login: 'someone' };
     expect(shouldResumeAtRepoStep(unknown)).toBe(true);
     expect(replacingConnectionNotice(unknown, true)?.assertValid).toBe(false);
+  });
+});
+
+describe('标题栏怎么称呼当前这条连接', () => {
+  it('还能用 / 没问出结论 —— 说「已连接」', () => {
+    expect(connectionHeaderLabel({ connected: true, usable: 'usable', login: 'someone' })).toBe('已连接 someone');
+    expect(connectionHeaderLabel({ connected: true, usable: 'unknown', login: 'someone' })).toBe('已连接 someone');
+  });
+
+  it('已撤销 —— 不许说「已连接」，要说清这是条失效的本地记录', () => {
+    // 同一屏上正显示着「授权已被撤销，请重新授权」，标题栏再说已连接就是当面打架
+    const label = connectionHeaderLabel({ connected: true, usable: 'revoked', login: 'someone' });
+    expect(label).not.toContain('已连接');
+    expect(label).toContain('someone');
+    expect(label).toContain('失效');
+  });
+
+  it('没连过 —— 整块不显示', () => {
+    expect(connectionHeaderLabel({ connected: false, usable: null, login: null })).toBeNull();
+    expect(connectionHeaderLabel(null)).toBeNull();
+  });
+
+  it('连着但拿不到登录名 —— 仍然给得出称呼，不渲染出空洞', () => {
+    expect(connectionHeaderLabel({ connected: true, usable: 'usable', login: null })).toBe('已连接 GitHub 账号');
   });
 });
