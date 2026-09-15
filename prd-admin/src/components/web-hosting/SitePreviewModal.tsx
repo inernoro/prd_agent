@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
 import { X, ExternalLink, FileWarning, History, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -138,7 +139,9 @@ export default function SitePreviewModal({
     });
 
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      // 本 PR 把 SiteEditPanel 放进了这个预览浮层，它自己会开知识选择、回滚、驳回等
+      // Radix 弹窗，那些弹窗按 Escape 时已在捕获阶段处理掉了。判据与 ShareSiteEditDock 共用。
+      if (shouldCloseOnEscape(e)) {
         closeRef.current();
         return;
       }

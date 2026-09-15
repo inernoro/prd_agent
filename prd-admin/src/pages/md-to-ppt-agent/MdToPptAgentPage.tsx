@@ -89,6 +89,8 @@ interface KbRef {
   entryTitle: string;
   content: string;
   contentHash?: string;
+  /** 正文篇幅。正文本身不落盘（太大），但页数估算靠的正是篇幅，所以把它单独留下。 */
+  contentChars?: number;
 }
 
 type MsgPhase = 'outline' | 'generating' | 'done' | 'error' | 'patching' | 'text';
@@ -419,10 +421,14 @@ export function resolveNaturalPatchSlideIndex(instruction: string): number | nul
 }
 
 // 按显式页数优先，其次按内容长度估算页数（约 700 字/页，夹在 4~20 页）
-export function estimatePages(content: string): number {
+//
+// extraChars 是「手里没有正文、但知道它有多长」的那部分：从 sessionStorage 恢复的
+// 知识条目只存了身份与篇幅，正文是空的。不把篇幅补回来，一篇长文档刷新之后会被估成
+// 最低的 4 页，而服务端是严格按客户端给的页数执行的。
+export function estimatePages(content: string, extraChars = 0): number {
   const explicit = parseExplicitPages(content);
   if (explicit) return explicit;
-  const len = content.trim().length;
+  const len = content.trim().length + Math.max(0, extraChars);
   if (len === 0) return 8;
   return Math.max(4, Math.min(20, Math.round(len / 700)));
 }
@@ -1134,8 +1140,15 @@ function loadSession(key: string): SessionState | null {
  * 恢复之后没人需要这份正文：送服务端的只有 entryId / storeId / contentHash，
  * 正文只参与 estimatePages，而调整路径走的是 targetPagesOverride。所以只存身份。
  */
-function stripKbBodies<T extends { content?: string }>(refs: readonly T[] | undefined): T[] {
-  return (refs || []).map((ref) => ({ ...ref, content: '' }));
+function stripKbBodies<T extends { content?: string; contentChars?: number }>(
+  refs: readonly T[] | undefined,
+): T[] {
+  return (refs || []).map((ref) => ({
+    ...ref,
+    content: '',
+    // 篇幅是页数估算的唯一输入，扔掉正文就必须把它留下——否则刷新之后长文档被估成最低页数。
+    contentChars: ref.content ? ref.content.length : (ref.contentChars ?? 0),
+  }));
 }
 
 function saveSession(key: string, s: SessionState): void {
@@ -2279,7 +2292,13 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
       const historyMsgs = messages.filter((m) => m.role === 'user').slice(-3);
       const chatHistory = historyMsgs.map((m) => `用户: ${m.content}`).join('\n');
 
-      const targetPages = targetPagesOverride ?? estimatePages(userText + attachmentText + kbContext);
+      // 恢复自 session 的条目 content 是空的，篇幅走 contentChars 补回来。
+      const restoredKbChars = kbRefs.reduce(
+        (sum, ref) => sum + (ref.content ? 0 : (ref.contentChars ?? 0)),
+        0,
+      );
+      const targetPages = targetPagesOverride
+        ?? estimatePages(userText + attachmentText + kbContext, restoredKbChars);
 
       const assistantMsg = pushMsg({
         role: 'assistant',

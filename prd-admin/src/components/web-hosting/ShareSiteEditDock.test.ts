@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { shouldCloseOnEscape } from './ShareSiteEditDock';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,25 +32,4 @@ describe('分享页所有者修改入口', () => {
     expect(SOURCE).toContain("'calc(18px + env(safe-area-inset-bottom, 0px))'");
   });
 
-  // 坞里会打开 Radix 的知识选择弹窗，Radix 在捕获阶段处理 Escape 并 preventDefault，
-  // 事件照样冒泡到坞挂在 document 上的监听器。不看 defaultPrevented 的话，用户按一次
-  // Escape 只想关掉知识浏览器，却把整个坞连同还没保存的修改要求一起关掉了
-  // （Codex P2，2026-09-15）。
-  describe('Escape 只关最上面那一层', () => {
-    it('没人处理过的 Escape 关掉坞', () => {
-      expect(shouldCloseOnEscape({ key: 'Escape', defaultPrevented: false })).toBe(true);
-    });
-
-    it('已被上层弹窗处理掉的 Escape 不关坞', () => {
-      expect(
-        shouldCloseOnEscape({ key: 'Escape', defaultPrevented: true }),
-        '嵌套弹窗按 Escape 会连坞一起关掉，用户丢掉还没保存的修改要求',
-      ).toBe(false);
-    });
-
-    it('别的按键一概不关', () => {
-      expect(shouldCloseOnEscape({ key: 'Enter', defaultPrevented: false })).toBe(false);
-      expect(shouldCloseOnEscape({ key: 'Esc', defaultPrevented: false })).toBe(false);
-    });
-  });
 });

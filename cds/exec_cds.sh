@@ -202,7 +202,7 @@ env_upsert() {
     chmod 600 "$ENV_FILE" || rc=$?
   fi
   if [ "$rc" -eq 0 ]; then
-    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open(os.path.dirname(sys.argv[1]), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE" || rc=$?
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open((os.path.dirname(sys.argv[1]) or "."), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE" || rc=$?
   fi
   rm -f "$tmp"
   env_lock_release
@@ -3294,7 +3294,7 @@ migrate_env_cmd() {
     python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' "$env_tmp"
     mv -f "$env_tmp" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
-    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open(os.path.dirname(sys.argv[1]), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE"
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open((os.path.dirname(sys.argv[1]) or "."), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE"
   fi
 
   # ── 简洁的"完成 + 下一步" ──

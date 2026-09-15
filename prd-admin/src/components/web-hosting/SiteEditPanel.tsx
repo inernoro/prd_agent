@@ -490,6 +490,10 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setElapsedSeconds(0);
     setRunStartedAtMs(Date.now());
     setActiveRunRuntime(requestRuntime.id);
+    // 徽章必须在进入 generating 的同一拍清掉。原先它排在 createHostedSiteEditRun 之后，
+    // 于是新任务创建期间顶上挂的是上一轮的模型；创建失败时那个模型更会被留在一次
+    // 根本没发生的调用上——「读不到模型」长得跟「这次用的是它」一模一样。
+    setResolvedModel(null);
     setDraftRevisionId(null);
     setDraftRevisionStatus(null);
     setThinking('');
@@ -536,7 +540,6 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       return;
     }
     setActiveRunRuntime(created.data.runtime);
-    setResolvedModel(null);
     setActiveRunId(created.data.runId);
     try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), created.data.runId); } catch { /* ignore unavailable storage */ }
 
