@@ -17,7 +17,7 @@ import { Activity, ArrowRight, Waves } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatDuration, formatRelative } from '@/lib/monitorCenter';
-import { PULSE_GEOMETRY, buildPulse, describePulse } from '@/lib/pulseWall';
+import { PULSE_GEOMETRY, buildPulse, describePulse, hasPulseInk } from '@/lib/pulseWall';
 import { ENVIRONMENT_SHORT, shortPredicate, type BusinessRow, type CellHealth } from '@/lib/ownerBoard';
 
 const LINE: Record<CellHealth, string> = {
@@ -78,7 +78,7 @@ function PulseRow({
       </div>
 
       <div className="relative h-11">
-        {pulse.segments.length > 0 ? (
+        {hasPulseInk(pulse) ? (
           <svg
             viewBox={`0 0 ${PULSE_GEOMETRY.width} ${PULSE_GEOMETRY.height}`}
             preserveAspectRatio="none"
@@ -104,6 +104,11 @@ function PulseRow({
                 vectorEffect="non-scaling-stroke"
               />
             ))}
+            {/* 孤立样本画成点。6 小时探一次的监控在 24 小时里只有四个样本，全是孤立点；
+                因为「连不成线」就丢掉它们，整行会凭空消失，看起来像这条监控不存在。 */}
+            {pulse.dots.map((d, i) => (
+              <circle key={`d${i}`} cx={d.x} cy={d.y} r="1.8" fill={d.down ? 'hsl(var(--bad))' : stroke} vectorEffect="non-scaling-stroke" />
+            ))}
             {pulse.downs.map((d, i) => (
               <circle key={i} cx={d.x} cy={d.y} r="1.6" fill="hsl(var(--bad))" vectorEffect="non-scaling-stroke" />
             ))}
@@ -113,6 +118,13 @@ function PulseRow({
             <span className="font-mono text-[0.625rem] text-muted-foreground">{describePulse(pulse)}</span>
           </div>
         )}
+        {/* 形状读数：线画出来了也要说清它是什么形状——四个孤立点和一条连续线，
+            在图上长得差很远，但都「有东西」，光看图容易读成同一回事。 */}
+        {hasPulseInk(pulse) && pulse.segments.length === 0 ? (
+          <span className="pointer-events-none absolute left-0 top-0 font-mono text-[0.625rem] text-muted-foreground">
+            {describePulse(pulse)}
+          </span>
+        ) : null}
         {/* 节拍点：探测器在跑时它跳，停摆时它不跳也不亮 */}
         <span
           aria-hidden

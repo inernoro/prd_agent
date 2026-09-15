@@ -41,6 +41,14 @@ export interface Pulse {
    * 一段连续的有样本区间是一个 segment；中间只要有一个空桶就分段。
    */
   segments: string[];
+  /**
+   * 孤立样本：前后都没有相邻样本，连不成线的那些点。
+   *
+   * 不许因为「连不成线」就丢掉——它们是真实发生过的检查。6 小时探一次的监控
+   * 在 24 小时里只有四个样本，全是孤立点；要求两点成段会让这样一整行凭空消失，
+   * 看起来像「这条监控不存在」，而它其实一直好好地在跑（2026-09-15 线上实测发现）。
+   */
+  dots: Array<{ x: number; y: number; down: boolean }>;
   /** 失败桶的位置，单独标点——线还在（它有耗时），但那一段是红的。 */
   downs: Array<{ x: number; y: number }>;
   /** 纵轴上界（ms）。null = 这一行一个耗时样本都没有，画不出线。 */
@@ -74,7 +82,7 @@ export function buildPulse(
   const measured = buckets.filter((b) => typeof b.avgLatencyMs === 'number' && b.avgLatencyMs !== null);
   const peakMs = measured.length > 0 ? Math.max(...measured.map((b) => b.avgLatencyMs as number)) : null;
   if (total === 0 || peakMs === null) {
-    return { segments: [], downs: [], peakMs: null, filled: 0, sampled, total };
+    return { segments: [], dots: [], downs: [], peakMs: null, filled: 0, sampled, total };
   }
 
   const step = total > 1 ? geom.width / (total - 1) : geom.width;
@@ -84,9 +92,17 @@ export function buildPulse(
   const scale = peakMs > 0 ? span / peakMs : 0;
 
   const segments: string[] = [];
+  const dots: Array<{ x: number; y: number; down: boolean }> = [];
   const downs: Array<{ x: number; y: number }> = [];
-  let run: string[] = [];
+  let run: Array<{ x: number; y: number; down: boolean }> = [];
   let filled = 0;
+
+  // 一段连续样本结束：两个点以上画线，只有一个点就画点。两者都不许丢。
+  const flush = (): void => {
+    if (run.length > 1) segments.push(run.map((pt) => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(' '));
+    else if (run.length === 1) dots.push(run[0]);
+    run = [];
+  };
 
   buckets.forEach((bucket, i) => {
     const ms = bucket.avgLatencyMs;
@@ -94,18 +110,18 @@ export function buildPulse(
     // status === 'none' 与 avgLatencyMs === null 都表示这一段没有样本。
     // 两个条件都判：前者是服务端的结论，后者是它的原料，缺一条就会漏掉半边情况。
     if (bucket.status === 'none' || typeof ms !== 'number') {
-      if (run.length > 1) segments.push(run.join(' '));
-      run = [];
+      flush();
       return;
     }
     filled += 1;
     const y = floor - ms * scale;
-    run.push(`${x.toFixed(1)},${y.toFixed(1)}`);
-    if (bucket.down > 0) downs.push({ x, y });
+    const down = bucket.down > 0;
+    run.push({ x, y, down });
+    if (down) downs.push({ x, y });
   });
-  if (run.length > 1) segments.push(run.join(' '));
+  flush();
 
-  return { segments, downs, peakMs, filled, sampled, total };
+  return { segments, dots, downs, peakMs, filled, sampled, total };
 }
 
 /**
@@ -115,6 +131,11 @@ export function buildPulse(
  * 「这条监控大半时间没人在查」——那句话得用文字说，不能指望人从缺口数出来。
  */
 export const PULSE_MIN_FILLED_RATIO = 0.25;
+
+/** 这一行有没有任何东西可画。线、孤立点，有一样就算。 */
+export function hasPulseInk(pulse: Pulse): boolean {
+  return pulse.segments.length > 0 || pulse.dots.length > 0;
+}
 
 export function describePulse(pulse: Pulse): string {
   if (pulse.total === 0) return '还没有采样';
@@ -126,7 +147,10 @@ export function describePulse(pulse: Pulse): string {
     return `近 24 小时只有 ${pulse.filled}/${pulse.total} 段有采样 —— 线是断的，大半时间没人在查它`;
   }
   const peak = pulse.peakMs >= 1000 ? `${(pulse.peakMs / 1000).toFixed(1)}s` : `${Math.round(pulse.peakMs)}ms`;
-  return `峰值 ${peak}${pulse.downs.length > 0 ? ` · ${pulse.downs.length} 段有失败` : ''}`;
+  // 全是孤立点时说清楚：那不是「线断了」，是这条监控本来就隔很久才查一次。
+  const shape = pulse.segments.length === 0 && pulse.dots.length > 0
+    ? `${pulse.dots.length} 次检查（间隔太长，连不成线）· ` : '';
+  return `${shape}峰值 ${peak}${pulse.downs.length > 0 ? ` · ${pulse.downs.length} 段有失败` : ''}`;
 }
 
 // ── 盲区地图 ────────────────────────────────────────────────────

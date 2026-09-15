@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  PULSE_GEOMETRY, buildPulse, describePulse, buildBlindspotMap, describeBlindspots,
+  PULSE_GEOMETRY, buildPulse, describePulse, hasPulseInk, buildBlindspotMap, describeBlindspots,
 } from '../../web/src/lib/pulseWall.js';
 import type { MonitorEnvironment, UptimeBucket, UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
 
@@ -57,13 +57,25 @@ describe('脉搏墙：缺口就是证据', () => {
     }
   });
 
-  it('只有一个点的区间不成段 —— 两点才画得出线', () => {
-    expect(buildPulse([empty(), bucket(), empty()]).segments).toHaveLength(0);
+  // 2026-09-15 线上实测发现的真问题：6 小时探一次的监控在 90 段桶里只落四个孤立
+  // 样本，要求两点成段会让这样一整行凭空消失，看起来像「这条监控不存在」。
+  it('孤立样本画成点，不许因为连不成线就丢掉', () => {
+    const pulse = buildPulse([empty(), bucket(), empty(), bucket({ avgLatencyMs: 80 }), empty()]);
+    expect(pulse.segments).toHaveLength(0);
+    expect(pulse.dots).toHaveLength(2);
+    expect(hasPulseInk(pulse)).toBe(true);
+    expect(describePulse(pulse)).toContain('连不成线');
+  });
+
+  it('孤立的失败点也标成失败色', () => {
+    const pulse = buildPulse([empty(), bucket({ down: 1, status: 'down' }), empty()]);
+    expect(pulse.dots[0]?.down).toBe(true);
   });
 
   // 「一次都没采到」与「采到了但没测出耗时」的下一步完全不同，不许合成一句。
   it('一次采样都没有时说的是「没人在查它」', () => {
     const pulse = buildPulse([empty(), empty()]);
+    expect(hasPulseInk(pulse)).toBe(false);
     expect(pulse.segments).toHaveLength(0);
     expect(pulse.peakMs).toBeNull();
     expect(pulse.sampled).toBe(0);
