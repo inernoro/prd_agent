@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Services.ModelLeaderboard;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -31,13 +32,16 @@ namespace PrdAgent.Api.Controllers.Api;
 public class ModelLeaderboardAdminController : ControllerBase
 {
     private readonly ModelLeaderboardSyncService _sync;
+    private readonly IConfiguration _configuration;
     private readonly ILogger<ModelLeaderboardAdminController> _logger;
 
     public ModelLeaderboardAdminController(
         ModelLeaderboardSyncService sync,
+        IConfiguration configuration,
         ILogger<ModelLeaderboardAdminController> logger)
     {
         _sync = sync;
+        _configuration = configuration;
         _logger = logger;
     }
 
@@ -63,6 +67,27 @@ public class ModelLeaderboardAdminController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(
                 ErrorCodes.NOT_FOUND,
                 $"未知的榜单 {board}，可选：{string.Join(" / ", ModelLeaderboardCatalog.Keys)}"));
+        }
+
+        // 显式退出共享状态归属的部署，手动入口也不许写。
+        //
+        // 这条不是「预览不许写」——预览恰恰是这个入口存在的理由，它写的是自己作用域的文档
+        // （见 ModelLeaderboardScope）。这条挡的是另一种部署：**非 CDS 的 standby / canary**，
+        // 它用 ManageGlobalNotification=false 宣告「我不拥有任何共享状态」。那种部署没有
+        // CDS_PROJECT_ID，所以作用域是 null——它一点同步就直接改写权威文档，而周期 worker
+        // 恰恰因为同一个开关被挡住了（Codex 在 PR #1538 指出）。
+        //
+        // 又一次「两个写入路径对同一条规则给出相反答案」：这次那条规则就写在
+        // DeploymentAuthority.CanRunSharedScheduledWork 自己的注释里。
+        if (DeploymentAuthority.HasOptedOutOfSharedState(_configuration))
+        {
+            _logger.LogWarning(
+                "模型榜同步：本部署已用 {Key}=false 退出共享状态归属，拒绝手动同步。",
+                DeploymentAuthority.ManageGlobalNotificationKey);
+            return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(
+                ErrorCodes.PERMISSION_DENIED,
+                $"本部署已通过 {DeploymentAuthority.ManageGlobalNotificationKey}=false 声明不拥有共享状态，" +
+                "手动同步会改写权威快照，因此被拒绝。要同步请到权威部署上操作。"));
         }
 
         _logger.LogInformation("模型榜同步：手动触发（{Board}）。", board ?? "全部");

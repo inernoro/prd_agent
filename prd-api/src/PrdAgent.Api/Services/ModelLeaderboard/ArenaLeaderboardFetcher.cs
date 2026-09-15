@@ -245,6 +245,38 @@ public class ArenaLeaderboardFetcher
     }
 
     /// <summary>
+    /// 新快照至少要保住上一份多少条目，否则视为「解析了一半」。
+    ///
+    /// 取一半，与上面那几条覆盖率判据同一个宽松度：这是别人家的页面，榜单本身增减几个
+    /// 模型是常态，而**一夜之间掉一半**只可能是我们没解析对。
+    /// </summary>
+    public const double MinimumRetainedFraction = 0.5;
+
+    /// <summary>
+    /// 严重缩水就拒绝，别让「只解析出一部分」覆盖掉完整的那份。
+    ///
+    /// <see cref="MinimumEntries"/> 是**全局的 5**，而 text 榜实测 402 行：对方只改了一部分
+    /// 版式、只剩五行能解析出来时，5 >= 5 通过；覆盖率那几条判据算的是比例（5/5 全有厂商）
+    /// 也通过。于是一份少了 397 个模型的快照被接受、FetchedAt 还是新的，陈旧度判绿
+    /// （Codex 在 PR #1538 指出）。
+    ///
+    /// 判据用**上一份的条目数**而不是每个榜写死一个下限：榜会增减、行数天天变，写死的表
+    /// 必然漂（这个 PR 已经因为固定计数被指出过两次）。<paramref name="previousCount"/>
+    /// 为 0（首次同步）时不判——那时没有参照，只能靠 <see cref="MinimumEntries"/>。
+    /// </summary>
+    /// <exception cref="InvalidOperationException">缩水超过一半。</exception>
+    public static void EnsureNotTruncated(string board, int newCount, int previousCount)
+    {
+        if (previousCount <= 0) return;
+        if (newCount >= previousCount * MinimumRetainedFraction) return;
+
+        throw new InvalidOperationException(
+            $"{board} 这次只解析出 {newCount} 个条目，而上一份有 {previousCount} 个" +
+            $"（不足 {MinimumRetainedFraction:P0}）；多半是页面版式改了一部分，" +
+            "本次不写库，保留上一份快照。");
+    }
+
+    /// <summary>
     /// 从页面 HTML 解析条目。抽成公开静态方法，测试可以直接喂一段存档 HTML 断言解析结果，
     /// 不必联网。
     /// </summary>

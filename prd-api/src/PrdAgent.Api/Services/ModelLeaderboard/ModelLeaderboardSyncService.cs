@@ -139,6 +139,13 @@ public class ModelLeaderboardSyncService
         string sourceLabel,
         CancellationToken ct)
     {
+        // 抓取时刻在**抓之前**取，不在写库时取。
+        //
+        // 模型上的注释写着「抓取成功的时刻，不许拿当前时间冒充」，而原来这里是在构造
+        // 快照对象时才 DateTime.UtcNow——十一个榜串行抓、每个之间还歇一秒，写库时刻
+        // 与抓取时刻能差出一分钟。更要紧的是它让并发写没法排序：两个同步撞在一起时，
+        // **后写的总是拿到更大的时间戳**，哪怕它抓到的是更旧的数据（Codex 在 PR #1538 指出）。
+        var fetchedAt = DateTime.UtcNow;
         var parsed = await fetcher.FetchAsync(board, ct);
         var entries = parsed.Entries;
 
@@ -184,12 +191,28 @@ public class ModelLeaderboardSyncService
         // previous 已经是 PickVisible 按「自己的优先、其次最新」挑出来的，所以它只要是
         // 自己的，就一定是**自己那条里最新的**；它不是自己的（预览兜底到了权威那份）
         // 就说明本作用域还没有文档，该用确定性 Id 新建一条。
+        // 严重缩水就拒绝（判据与守卫都在 ArenaLeaderboardFetcher，与另外几条写库前判据同处）
+        ArenaLeaderboardFetcher.EnsureNotTruncated(board, entries.Count, previous?.Entries.Count ?? 0);
+
         var own = previous is not null
                   && ModelLeaderboardScope.IsOwnDocument(previous.DeploymentSlug, scope)
             ? previous
             : null;
         var documentId = own?.Id ?? ModelLeaderboardScope.DocumentId(board, scope);
-        var filter = Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Id, documentId);
+
+        // 条件写：只有当库里那条**不比我这次抓得新**时才替换。
+        //
+        // 周期 worker 与手动触发（或两个副本、两个管理员）同时同步同一个榜时，两边都先抓、
+        // 后写。原来的无条件 Replace 让**后写的赢**，哪怕它抓到的是更旧的数据——于是新数据
+        // 被旧数据覆盖，而且升降还是拿更新的那份当基线倒着算的（Codex 在 PR #1538 指出）。
+        //
+        // 加一条 FetchedAt 的判据之后，晚到的旧抓取匹配不上、写 0 条，新快照原地不动。
+        // 不用分布式锁：这是一次幂等的整份替换，「谁抓得新谁赢」就是正确语义，
+        // 而锁要额外一张表加上它自己的过期与收割（concurrency-gate-discipline 那一整套）。
+        // 首次写（库里还没有这条）由 Lt 之外的 upsert 兜住：过滤匹配不上就插入。
+        var filter = Builders<ModelLeaderboardSnapshot>.Filter.And(
+            Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Id, documentId),
+            Builders<ModelLeaderboardSnapshot>.Filter.Lt(x => x.FetchedAt, fetchedAt));
         if (previous is not null)
         {
             var previousRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -216,7 +239,7 @@ public class ModelLeaderboardSyncService
             Board = board,
             // 形状以**页面实际解析出来的**为准，不是照目录抄一份（FetchAsync 已校验两者一致）
             Kind = parsed.Kind,
-            FetchedAt = DateTime.UtcNow,
+            FetchedAt = fetchedAt,
             SourceUrl = ArenaLeaderboardFetcher.BuildUrl(board),
             SourceLabel = sourceLabel,
             // 盖上本部署的作用域，兄弟分支据此不会读到（也不会被覆盖）这一份
@@ -226,8 +249,33 @@ public class ModelLeaderboardSyncService
             Entries = entries,
         };
 
-        await _db.ModelLeaderboardSnapshots.ReplaceOneAsync(
-            filter, snapshot, new ReplaceOptions { IsUpsert = true }, ct);
+        // upsert 的三条出路：
+        // 1. 文档不存在 → 插入（UpsertedId 有值）；
+        // 2. 存在且比我旧 → 匹配上、替换（MatchedCount=1）；
+        // 3. 存在但不比我旧 → 过滤匹配不上，于是 upsert 去**插入**，而 _id 已被占用，
+        //    撞 E11000。这是并发下的正常结果，不是错误：捕获它，当成「有人比我新，让给他」。
+        // 下面那个 MatchedCount/UpsertedId 都空的分支按上面三条走不到，留着是兜底，
+        // 免得驱动哪天换了语义就变成静默覆盖。
+        try
+        {
+            var result = await _db.ModelLeaderboardSnapshots.ReplaceOneAsync(
+                filter, snapshot, new ReplaceOptions { IsUpsert = true }, ct);
+
+            if (result.MatchedCount == 0 && result.UpsertedId is null)
+            {
+                _logger.LogInformation(
+                    "模型榜同步：分榜 {Board} 本次抓取（{FetchedAt:O}）不比库里那份新，已让位，不覆盖。",
+                    board, fetchedAt);
+                return entries.Count;
+            }
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 并发下的正常结果：另一次同步先写进去了，而且它比我新。
+            _logger.LogInformation(
+                "模型榜同步：分榜 {Board} 撞上并发写入且对方更新，已让位，不覆盖。", board);
+            return entries.Count;
+        }
 
         _logger.LogInformation("模型榜同步：分榜 {Board} 已更新，{Count} 个模型。", board, entries.Count);
         return entries.Count;

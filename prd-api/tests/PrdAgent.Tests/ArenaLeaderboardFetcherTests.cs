@@ -657,6 +657,47 @@ public class ArenaLeaderboardFetcherTests
     }
 
     /// <summary>
+    /// 严重缩水必须拒绝。text 榜实测 402 行，对方只改一部分版式、只剩五行能解析时，
+    /// 全局下限（5）通过、覆盖率那几条判据算比例也通过——于是一份少了 397 个模型的快照
+    /// 被接受、FetchedAt 还是新的、陈旧度判绿（Codex 在 PR #1538 指出）。
+    /// </summary>
+    [Fact]
+    public void EnsureNotTruncated_只剩零头时拒绝()
+    {
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ArenaLeaderboardFetcher.EnsureNotTruncated("text", newCount: 5, previousCount: 402));
+        Assert.Contains("只解析出 5 个条目", ex.Message, StringComparison.Ordinal);
+        Assert.Contains("402", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnsureNotTruncated_首次同步没有参照时不判()
+    {
+        // 上一份不存在（previousCount=0）时只能靠全局下限，这里不许拦
+        ArenaLeaderboardFetcher.EnsureNotTruncated("text", newCount: 5, previousCount: 0);
+    }
+
+    [Theory]
+    [InlineData(402, 402)]   // 没变
+    [InlineData(402, 410)]   // 涨了
+    [InlineData(402, 201)]   // 正好一半，放行（判据是「不足一半」才拒）
+    [InlineData(43, 40)]     // agent 榜日常小幅波动
+    public void EnsureNotTruncated_正常波动放行(int previousCount, int newCount)
+    {
+        ArenaLeaderboardFetcher.EnsureNotTruncated("text", newCount, previousCount);
+    }
+
+    [Fact]
+    public void EnsureNotTruncated_判据是比例不是写死的每榜下限()
+    {
+        // 同一个绝对值在不同榜上结论不同：50 条对 43 行的 agent 榜是涨，
+        // 对 402 行的 text 榜是崩。写死每榜下限的表会漂，比例不会。
+        ArenaLeaderboardFetcher.EnsureNotTruncated("agent", newCount: 50, previousCount: 43);
+        Assert.Throws<InvalidOperationException>(
+            () => ArenaLeaderboardFetcher.EnsureNotTruncated("text", newCount: 50, previousCount: 402));
+    }
+
+    /// <summary>
     /// 把条目补到下限以上，好让「条目太少」这条不抢在被测判据前面抛。
     /// 补的是解析出来的真条目的副本，厂商等字段跟着一起复制。
     /// </summary>
