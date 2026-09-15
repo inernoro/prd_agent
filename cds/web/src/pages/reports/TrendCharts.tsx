@@ -125,6 +125,7 @@ export const TREND_CSS = `
 .tc .g1{stroke:hsl(var(--foreground));}
 .tc .g2{stroke:hsl(var(--muted-foreground));stroke-dasharray:7 3;}
 .tc .g3{stroke:hsl(var(--hairline-strong));stroke-dasharray:2 3;}
+.tc .g4{stroke:hsl(var(--muted-foreground));stroke-dasharray:9 3 2 3;}
 .tc .fillbar{fill:hsl(var(--hairline-strong));}
 
 .tc .lg{display:flex;flex-wrap:wrap;gap:0.25rem 0.8125rem;margin-top:0.4375rem;}
@@ -138,6 +139,7 @@ export const TREND_CSS = `
 .tc .d-g1{border-color:hsl(var(--foreground));}
 .tc .d-g2{border-color:hsl(var(--muted-foreground));border-top-style:dashed;}
 .tc .d-g3{border-color:hsl(var(--hairline-strong));border-top-style:dotted;}
+.tc .d-g4{border-color:hsl(var(--muted-foreground));border-top-style:double;}
 .tc .d-bar{border-color:hsl(var(--hairline-strong));border-top-width:0.4375rem;}
 
 .tc .note{margin:0.4375rem 0 0;font-size:0.6875rem;line-height:1.6;color:hsl(var(--muted-foreground));}
@@ -312,9 +314,16 @@ export interface TrendChartsProps {
   zoom: boolean;
 }
 
-/** 项目线的灰阶档位。四条及以上时最后一档复用最浅色，靠线型与线端直标区分。 */
-const GREY_CLS = ['g1', 'g2', 'g3', 'g3'] as const;
-const GREY_DASH = ['d-g1', 'd-g2', 'd-g3', 'd-g3'] as const;
+/*
+ * 项目线的四个档位，颜色与线型成对给出，第四档必须与前三档都能区分开。
+ *
+ * 原先第四档整个复用第三档（同色同线型），而后端默认就返回四条：图上两条轨迹一模一样、
+ * 图例里两个色块也一模一样，读者无法把哪条对应哪个项目。当时的注释说靠「线端直标」区分，
+ * 但那个直标从来没有渲染过——用一处不成立的说明去证明契约满足了
+ * （predicate-and-wiring-discipline 形状 8）。
+ */
+const GREY_CLS = ['g1', 'g2', 'g3', 'g4'] as const;
+const GREY_DASH = ['d-g1', 'd-g2', 'd-g3', 'd-g4'] as const;
 
 export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
   const { days, pass, conditional, fail, undetermined, changes } = series;

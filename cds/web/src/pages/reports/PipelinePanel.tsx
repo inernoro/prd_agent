@@ -122,9 +122,13 @@ export function projectTip(p: PipelineProjectRow): string {
   return tip(
     p.projectName,
     `改动 ${Math.max(0, f.changes)} · 部署过 ${Math.max(0, f.deployed)} · 验过 ${Math.max(0, f.accepted)}`,
+    // 验过的份数与「有结论的份数」是两件事：报告可以不填 verdict。
+    // 混作一谈时同一张提示会先说「验过 5」再说「一条都没验过」，自己打自己。
     verdicts > 0
       ? `通过 ${f.pass} · 原则性 ${f.conditional} · 未通过 ${f.fail}`
-      : '一条都没验过',
+      : f.accepted > 0
+        ? '验过了，但都没有填结论'
+        : '一条都没验过',
     p.staleReports > 0 ? `另有 ${p.staleReports} 份报告的分支已回收` : '',
     p.lastActivityAt ? `最近动静 ${p.lastActivityAt.slice(0, 10)}` : '没有动静',
     p.githubLinked ? '' : '未接 GitHub，合并这一环查不到',

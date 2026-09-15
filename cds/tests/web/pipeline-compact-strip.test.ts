@@ -14,6 +14,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
+import { splitFunnel } from '@/lib/pipelineFunnel';
 import { dotMetrics, rowSplit } from '../../web/src/pages/reports/CompactStrip';
 import { splitChanges } from '../../web/src/pages/reports/PipelinePanel';
 import type { PipelineFunnel } from '../../web/src/lib/api';
@@ -98,7 +99,22 @@ describe('项目条：宽度是条数，填充是验过的比例', () => {
   });
 
   it('验过数会被夹在 0 与改动数之间，脏数据不会撑爆填充', () => {
-    expect(src).toMatch(/Math\.min\(ch, p\.funnel\.accepted\)/);
+    // 原先这条钉的是 `Math.min(ch, p.funnel.accepted)` 这段字面实现，于是它反锁住了
+    // 一个比需要更窄的判据：只夹到 changes，不夹到 deployed。改成断言行为本身——
+    // 无论多脏的输入，这一垛用的 acc 都落在 [0, ch] 里，且与图、明细行同源。
+    expect(src, '项目垛必须和总览条、明细行读同一个函数').toContain('splitFunnel(p.funnel).accepted');
+    const dirty = [
+      { changes: 4, deployed: 1, accepted: 9, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0 },
+      { changes: 0, deployed: 5, accepted: 5, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0 },
+      { changes: -3, deployed: -1, accepted: -7, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0 },
+      { changes: 6, deployed: 6, accepted: 6, merged: 0, pass: 0, conditional: 0, fail: 0, undetermined: 0 },
+    ];
+    for (const f of dirty) {
+      const ch = Math.max(0, f.changes);
+      const acc = splitFunnel(f).accepted;
+      expect(acc, `脏输入 ${JSON.stringify(f)} 把填充撑出了 [0, ch]`).toBeGreaterThanOrEqual(0);
+      expect(acc).toBeLessThanOrEqual(ch);
+    }
   });
 });
 

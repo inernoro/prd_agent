@@ -115,13 +115,19 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
     const n = L['deployed-not-accepted'];
     return {
       tone: 'warn',
-      sentence: `${t.changes} 条在改的分支里，${n} 条部署了但没人验收`,
+      sentence: `${t.changes} 条改动里，${n} 条部署了但没人验收`,
       points: points.slice(0, 3),
       action: top('deployed-not-accepted', 3) ? `先验：${top('deployed-not-accepted', 3)}` : null,
     };
   }
+  /*
+   * 这里的数说的是「这个窗口里开出来的改动」，其中一部分已经合并或撤下，所以不能叫
+   * 「在改的分支」——那是把已完成的也算成在办的工作量。措辞对齐同屏那条总览条的
+   * 「改动」标签；不换成逐项目 inFlight 之和，因为那会让头条的数和图上的数对不上，
+   * 正是下面那段注释在防的「同一屏两个数打架」。
+   */
   if (t.changes === 0) {
-    return { tone: 'ok', sentence: '现在没有在改的分支', points: [], action: null };
+    return { tone: 'ok', sentence: '这个窗口里没有改动', points: [], action: null };
   }
   /*
    * 下面两句必须和同屏那张分流图读同一份数字。
@@ -135,7 +141,7 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
   if (seg.accepted >= Math.max(0, t.changes)) {
     return {
       tone: 'ok',
-      sentence: `${t.changes} 条在改的分支都验过了`,
+      sentence: `${t.changes} 条改动都验过了`,
       points: points.slice(0, 3),
       action: null,
     };
@@ -143,7 +149,7 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
   // 兜底：还有没部署因而谈不上验收的分支。不编判断，如实说构成。
   return {
     tone: 'ok',
-    sentence: `${t.changes} 条在改的分支，${seg.accepted} 条验过、${seg.undeployed} 条还没部署`,
+    sentence: `${t.changes} 条改动，${seg.accepted} 条验过、${seg.undeployed} 条还没部署`,
     points: points.slice(0, 3),
     action: null,
   };

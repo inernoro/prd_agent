@@ -463,7 +463,9 @@ export function CompactStrip({
           <div className="barrow">
             {projects.map((p) => {
               const ch = Math.max(0, p.funnel.changes);
-              const acc = Math.max(0, Math.min(ch, p.funnel.accepted));
+              // 走同一条 splitFunnel：只夹到 changes 的话，挂在从未部署过的分支上的报告
+              // 会让这一垛显示成「验过了」，而总览条与放大态明细把同一条改动画在「没起预览」里。
+              const acc = splitFunnel(p.funnel).accepted;
               return (
                 <div
                   key={p.projectId}

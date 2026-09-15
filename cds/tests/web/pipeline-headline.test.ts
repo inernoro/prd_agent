@@ -75,13 +75,13 @@ describe('buildPipelineHeadline', () => {
       projects: [row('p1', { funnel: { changes: 4, deployed: 4, accepted: 4, merged: 0, pass: 4, conditional: 0, fail: 0, undetermined: 0 } })],
     }));
     expect(h.tone).toBe('ok');
-    expect(h.sentence).toBe('4 条在改的分支都验过了');
+    expect(h.sentence).toBe('4 条改动都验过了');
     expect(h.action).toBeNull();
   });
 
   it('一条改动都没有时不编判断', () => {
     const h = buildPipelineHeadline(overview());
-    expect(h.sentence).toBe('现在没有在改的分支');
+    expect(h.sentence).toBe('这个窗口里没有改动');
     expect(h.points).toEqual([]);
   });
 
