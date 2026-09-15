@@ -18,15 +18,24 @@
 其实大多有 CI……）。所以引用这张表之前，**先扫一眼你改的路径出现在哪些 workflow 的触发条件里**：
 
 ```bash
-grep -rn "你改的路径前缀" .github/workflows/ | grep -v "^.*#"
+# 注意 grep 的是**顶层那一段**（prd-api / prd-admin / cds / llmgw / scripts……），
+# 不是你改的那个完整路径
+grep -rn "prd-api" .github/workflows/ | grep -v "^.*#"
 ```
+
+**为什么只 grep 顶层段**：workflow 里写的是 glob（`prd-api/**`），grep 只会在文件里找字面量，
+不会反过来拿你的路径去套 glob。拿 `prd-api/src/PrdAgent.Api/Services` 去 grep 是零命中，
+而 `branch-image.yml` 与 `ci.yml` 的 `prd-api/**` 其实都匹配这次改动——**零命中会被读成
+「没有流水线管我」，那正好是这条规则要防的误报**（Codex 在 PR #1539 指出）。
+
+所以：零命中先换粗一段再 grep 一次；顶层段也零命中，才是真的没有远端判据。
 
 表与 `.github/workflows/` 对不上时，以后者为准，并把表改回来。
 
 **这张表也不打算穷举 workflow。** 仓库里有十几条，还会增减；把它们的触发条件和步骤在这里抄一份，
 就是让同一份判据存在两处、各自漂移（`predicate-and-wiring-discipline.md` 形状 3）。
 所以表只负责一件 `.github/workflows/` 一眼看不出来的事：**哪些检查压根没有远端判据**
-（Admin 与 Desktop 的 lint、Desktop 的 vitest、Integration / Manual 测试、`prd-video`、
+（Admin 与 Desktop 的 lint、Desktop 的 vitest、Integration / Manual 测试、`thirdparty/`、
 `docker-compose*.yml`、清单外的脚本）——那才是会让人误报「已验证」的地方。
 「我这条路径会触发哪几条流水线」一律现查，不要背表。
 
@@ -44,7 +53,7 @@ grep -rn "你改的路径前缀" .github/workflows/ | grep -v "^.*#"
 | `llmgw/**` | 编译有远端判据，两条：① 三家的镜像都在 `branch-image.yml` 里构建（`console-api` 跑 `dotnet publish`、`web` 跑 `pnpm build`），push 即触发；② `Server Build & Test` 也覆盖 `serving` **与 `console-api`**——前者直接在 `PrdAgent.sln` 里，后者虽不是 sln 的项目条目，但 `PrdAgent.Api.Tests` 对它有 `ProjectReference`，于是被传递编译、相关测试照跑（`ci.yml` 的 server 过滤器也含 `llmgw/console-api/**`）。**此外还有开 PR 才触发的检查**，用下面那条命令列全。其余校验见 `llmgw/AGENTS.md` | 本地 或 Actions | 见命令列出的各条 |
 | 发布链路脚本与部分技能脚本 | CI 的 `Production Release Script Test` job 绿。它跑的是一份**显式清单**（`exec_dep.sh`、`scripts/lib/*`、`scripts/tests/test_*.py`、`*.test.mjs`、cdscli、周报/日报技能的脚本……），清单见 `ci.yml` 的 `release-script-test` path filter | 本地 或 Actions | 它在 `ci.yml` 里，所以**普通 feature 分支 push 不会跑**——要么开 PR 到 main/develop，要么手动 dispatch |
 | Dockerfile | 已接线的那几个由镜像构建作业验：`prd-api` / `prd-admin` / `llmgw` 三家走 `branch-image.yml`；`cds/Dockerfile` 走 `cds.yml` 的 `Docker Build Check`（注意 `cds-prebuilt.yml` 建的是 `Dockerfile.dist`，验不到这一个） | Actions | `branch-image.yml` 由 push 触发、所有分支都跑；**`Docker Build Check` 在 `cds.yml` 里，feature 分支 push 不跑**——要开 PR 到 main/develop |
-| `prd-video/**`、`docker-compose*.yml`、**不在上面那份清单里的** `scripts/**` 与技能脚本 | **没有任何 CI job 会验它们**（`grep -rn "prd-video" .github/workflows/` 零命中）——只能本地跑（模块自己的 `AGENTS.md` + AGENTS.md §5.2），跑不了就在交付里明说没验过 | 只能本地 | 本地即时 |
+| `thirdparty/**`、`docker-compose*.yml`、**不在上面那份清单里的** `scripts/**` 与技能脚本 | **没有任何 CI job 会验它们**（这两个路径在 `.github/workflows/` 里零命中，2026-09-15 核过）。**而且这一档连「该跑什么」都没有定义**：本仓库只有根与 `llmgw/` 两份 `AGENTS.md`，根 §5.2 的校验表里没有 compose、也没有通用脚本那一行。所以这里的诚实做法是：能想到的检查自己跑（compose 至少 `docker compose -f <file> config` 过一遍语法、脚本至少 `bash -n` / `python3 -m py_compile`），**并在交付里写清跑了什么、以及这一档目前没有约定门禁**——不要假装引了某条不存在的规范 | 只能本地，且无既定门禁 | 本地即时 |
 | 页面打得开、流程跑得通 | 预览域名上的真人路径 + 截图 | CDS 分支预览 | push 即部署 |
 | 后端接口行为 | 预览域名上打真实端点、断言返回值 | CDS 分支预览 | push 即部署 |
 
@@ -128,8 +137,12 @@ on:
   别照这个括号背）：本地只是加速器，它让你更快发现错误，但「验证过了」这句话要引那条
   流水线的结论。注意「有判据」不等于「这次 push 就有结论」——第四列写的才是什么时候有。
 - **第一节标着「只能本地」的**（Admin 与 Desktop 的 lint、Desktop 的 vitest、Integration /
-  Manual 测试、清单外的脚本）：**本地跑绿就是它的验证结论**，没有第二个地方能给。
+  Manual 测试）：**本地跑绿就是它的验证结论**，没有第二个地方能给。
   交付里如实写清跑了哪条命令、结果如何即可，不必也不该去等一个不存在的远端绿灯。
+- **第一节标着「无既定门禁」的**（compose、`thirdparty/`、清单外的脚本）：连该跑什么都没有
+  约定。这一档交付时要多说一句——**跑了什么，以及这一档本来就没有约定门禁**。
+  两件事都别做：不要因为「没规定」就什么都不跑，也不要引一条其实不存在的规范来充数
+  （`no-rootless-tree.md`：缺什么就明确暴露，不编）。
 
 `which dotnet` 是空的不等于机器上没有 SDK，它常装在 PATH 之外，断言之前先找一遍：
 
