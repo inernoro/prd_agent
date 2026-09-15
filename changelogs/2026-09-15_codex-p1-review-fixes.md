@@ -43,3 +43,4 @@
 | fix | prd-api | 保存分享时复制循环的三个早退出口统一先清理已上传对象：出口都排在 InsertManyAsync 之前，那批对象没有任何 HostedSite 认领也没有清理账本，而去重那关看的是 HostedSite，插入没发生就不算数，用户每重试一次都会再留下一批孤儿对象 |
 | fix | prd-api | 改写流的 Mongo 兜底补发 phase 也去掉 !redisProjectionAvailable：写侧独立失效时该标志恒为 true，阶段与进度会被一路抑制到终态，用户盯着几分钟不动的进度而库里一直在推进；补一条守卫钉住两条流的四处补发都不看读侧健康 |
 | fix | prd-admin | 分享页修改坞的 Escape 只关最上面那一层：嵌套的知识选择弹窗在捕获阶段已处理并 preventDefault，坞不再把同一次按键当成关自己，避免连带丢掉还没保存的修改要求 |
+| fix | prd-api | 保存分享的复制阶段外面再罩一层 catch → 收尾 → 重抛：finally 里释放借用围栏那步写 Mongo 失败时，异常会直接穿过整个方法、一个 return 都不经过，已上传的对象照样无主无账本 |

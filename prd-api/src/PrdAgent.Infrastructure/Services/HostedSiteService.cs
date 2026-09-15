@@ -4012,10 +4012,14 @@ public class HostedSiteService : IHostedSiteService
         var copiedKeys = new List<string>();
         var saveAttemptId = Guid.NewGuid().ToString("N");
 
-        // 这个循环有三个出口，它们都可能发生在「前面几个站点已经上传完对象」之后，而三个
-        // 出口全都排在 InsertManyAsync 之前——也就是说此刻这些对象没有任何 HostedSite 认领，
-        // 不做登记就再也没人知道它们存在。去重那一关看的是 HostedSite，插入没发生就不算数，
-        // 于是用户每重试一次就多一批孤儿对象。三个出口共用同一个收尾，不许各写各的。
+        // 这个循环的每一次离开，都可能发生在「前面几个站点已经上传完对象」之后，而它们全都
+        // 排在 InsertManyAsync 之前——也就是说此刻这些对象没有任何 HostedSite 认领，不做登记
+        // 就再也没人知道它们存在。去重那一关看的是 HostedSite，插入没发生就不算数，于是用户
+        // 每重试一次就多一批孤儿对象。所有离开共用同一个收尾，不许各写各的。
+        //
+        // 「离开」不止 return：finally 里释放借用围栏那一步（写 Mongo）抛出来的话，异常会
+        // 直接穿过整个方法，一个 return 都不经过。所以循环外面还罩了一层 catch → 收尾 → 重抛，
+        // 让「任何方式离开复制阶段都会收尾」成为结构上成立的事，而不是逐个出口数出来的。
         async Task DiscardCopiedObjectsAsync()
         {
             foreach (var key in copiedKeys)
@@ -4028,94 +4032,110 @@ public class HostedSiteService : IHostedSiteService
             }
         }
 
-        foreach (var original in originalSites)
+        try
         {
-            if (original.Files.Count(file =>
-                    string.Equals(file.Path, original.EntryFile, StringComparison.OrdinalIgnoreCase)) != 1)
+            foreach (var original in originalSites)
             {
-                await DiscardCopiedObjectsAsync();
-                return new SaveSharedSiteResult { Error = "分享源内容不完整，请联系分享者重新发布", HttpStatus = 409 };
-            }
-            var savedSiteId = Guid.NewGuid().ToString("N");
-            var savedFiles = new List<HostedSiteFile>();
-            var sourceKeys = original.Files
-                .Select(file => file.CosKey)
-                .Where(key => !string.IsNullOrWhiteSpace(key))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
-            try
-            {
-                // 把当前源对象借用登记到原站的持久发布围栏。原站即使在复制期间完成发布，
-                // 其旧对象清理器也必须等本次复制释放围栏；进程崩溃则由租约到期自动解锁。
-                if (sourceKeys.Length > 0)
+                if (original.Files.Count(file =>
+                        string.Equals(file.Path, original.EntryFile, StringComparison.OrdinalIgnoreCase)) != 1)
                 {
-                    await ReservePublishKeysAsync(
-                        original.Id,
-                        EffectiveContentVersion(original),
-                        sourceKeys,
-                        DateTime.UtcNow);
+                    await DiscardCopiedObjectsAsync();
+                    return new SaveSharedSiteResult { Error = "分享源内容不完整，请联系分享者重新发布", HttpStatus = 409 };
                 }
-            }
-            catch (InvalidOperationException)
-            {
-                await DiscardCopiedObjectsAsync();
-                return new SaveSharedSiteResult { Error = "分享内容正在变化，请刷新后重试", HttpStatus = 409 };
-            }
-            try
-            {
-                foreach (var file in original.Files)
+                var savedSiteId = Guid.NewGuid().ToString("N");
+                var savedFiles = new List<HostedSiteFile>();
+                var sourceKeys = original.Files
+                    .Select(file => file.CosKey)
+                    .Where(key => !string.IsNullOrWhiteSpace(key))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                try
                 {
-                    var bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct)
-                                ?? throw new IOException("分享源文件暂时不可用");
-                    var key = _storage.BuildSiteKey(savedSiteId, file.Path);
-                    await _storage.UploadToKeyAsync(key, bytes, file.MimeType, ct, SiteCacheControl);
-                    copiedKeys.Add(key);
-                    savedFiles.Add(new HostedSiteFile
+                    // 把当前源对象借用登记到原站的持久发布围栏。原站即使在复制期间完成发布，
+                    // 其旧对象清理器也必须等本次复制释放围栏；进程崩溃则由租约到期自动解锁。
+                    if (sourceKeys.Length > 0)
                     {
-                        Path = file.Path,
-                        CosKey = key,
-                        Size = bytes.LongLength,
-                        MimeType = file.MimeType,
-                    });
+                        await ReservePublishKeysAsync(
+                            original.Id,
+                            EffectiveContentVersion(original),
+                            sourceKeys,
+                            DateTime.UtcNow);
+                    }
                 }
+                catch (InvalidOperationException)
+                {
+                    await DiscardCopiedObjectsAsync();
+                    return new SaveSharedSiteResult { Error = "分享内容正在变化，请刷新后重试", HttpStatus = 409 };
+                }
+                try
+                {
+                    foreach (var file in original.Files)
+                    {
+                        var bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct)
+                                    ?? throw new IOException("分享源文件暂时不可用");
+                        var key = _storage.BuildSiteKey(savedSiteId, file.Path);
+                        await _storage.UploadToKeyAsync(key, bytes, file.MimeType, ct, SiteCacheControl);
+                        copiedKeys.Add(key);
+                        savedFiles.Add(new HostedSiteFile
+                        {
+                            Path = file.Path,
+                            CosKey = key,
+                            Size = bytes.LongLength,
+                            MimeType = file.MimeType,
+                        });
+                    }
+                }
+                catch
+                {
+                    await DiscardCopiedObjectsAsync();
+                    return new SaveSharedSiteResult { Error = "保存分享内容失败，请稍后重试", HttpStatus = 503 };
+                }
+                finally
+                {
+                    // 若对象仍是原站当前文件，可原子移除借用产生的 pending；若并发发布已经切换
+                    // Files，则只释放 active，保留发布事务写入的 pending 让清理器重新裁决。
+                    if (sourceKeys.Length > 0)
+                        await ReleaseBorrowedCurrentKeysAsync(original.Id, sourceKeys);
+                }
+                var saved = new HostedSite
+                {
+                    Id = savedSiteId,
+                    Title = original.Title,
+                    Description = original.Description,
+                    SourceType = "saved-share",
+                    SourceRef = token,
+                    CosPrefix = $"web-hosting/sites/{savedSiteId}/",
+                    EntryFile = original.EntryFile,
+                    SiteUrl = AppendVersion(
+                        _storage.BuildUrlForKey(savedFiles.Single(file =>
+                            string.Equals(file.Path, original.EntryFile, StringComparison.OrdinalIgnoreCase)).CosKey),
+                        original.ContentVersion),
+                    ContentVersion = original.ContentVersion,
+                    Files = savedFiles,
+                    TotalSize = savedFiles.Sum(file => file.Size),
+                    Tags = original.Tags.ToList(),
+                    Folder = original.Folder,
+                    CoverImageUrl = original.CoverImageUrl,
+                    WrappedAssetType = original.WrappedAssetType,
+                    IsSlideDeck = original.IsSlideDeck,
+                    SlideNavCompatVersion = original.SlideNavCompatVersion,
+                    OwnerUserId = userId,
+                };
+                savedSites.Add(saved);
             }
-            catch
+        }
+        catch
+        {
+            try
             {
                 await DiscardCopiedObjectsAsync();
-                return new SaveSharedSiteResult { Error = "保存分享内容失败，请稍后重试", HttpStatus = 503 };
             }
-            finally
+            catch (Exception cleanupError)
             {
-                // 若对象仍是原站当前文件，可原子移除借用产生的 pending；若并发发布已经切换
-                // Files，则只释放 active，保留发布事务写入的 pending 让清理器重新裁决。
-                if (sourceKeys.Length > 0)
-                    await ReleaseBorrowedCurrentKeysAsync(original.Id, sourceKeys);
+                // 收尾自己也炸了就只记一笔：把它抛出去会盖掉真正有信息量的那个异常。
+                _logger.LogWarning(cleanupError, "保存分享失败后清理已复制对象未完成: saveAttemptId={SaveAttemptId}", saveAttemptId);
             }
-            var saved = new HostedSite
-            {
-                Id = savedSiteId,
-                Title = original.Title,
-                Description = original.Description,
-                SourceType = "saved-share",
-                SourceRef = token,
-                CosPrefix = $"web-hosting/sites/{savedSiteId}/",
-                EntryFile = original.EntryFile,
-                SiteUrl = AppendVersion(
-                    _storage.BuildUrlForKey(savedFiles.Single(file =>
-                        string.Equals(file.Path, original.EntryFile, StringComparison.OrdinalIgnoreCase)).CosKey),
-                    original.ContentVersion),
-                ContentVersion = original.ContentVersion,
-                Files = savedFiles,
-                TotalSize = savedFiles.Sum(file => file.Size),
-                Tags = original.Tags.ToList(),
-                Folder = original.Folder,
-                CoverImageUrl = original.CoverImageUrl,
-                WrappedAssetType = original.WrappedAssetType,
-                IsSlideDeck = original.IsSlideDeck,
-                SlideNavCompatVersion = original.SlideNavCompatVersion,
-                OwnerUserId = userId,
-            };
-            savedSites.Add(saved);
+            throw;
         }
 
         try
