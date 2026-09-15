@@ -90,6 +90,7 @@ type RangeKey = 'all' | 'open';
 export default function ModelLeaderboardPage() {
   const isMobile = useIsMobile();
   const [boards, setBoards] = useState<LeaderboardBoardInfo[]>([]);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
 
   /**
    * 当前维度放在 URL 上（`?board=text-to-image`），不是组件 state。
@@ -134,7 +135,15 @@ export default function ModelLeaderboardPage() {
    * 让用户为一份不会变的数据反复等（用户 2026-09-15 反馈「没有缓存吗，这么卡」）。
    * 页头那个刷新按钮传 force，绕过缓存——要「现在就去看有没有更新」时还有得点。
    */
-  const cacheRef = useRef(new Map<string, ModelLeaderboardSnapshot>());
+  /**
+   * 已读过的榜。存的是「第几次请求拿到的」+ 数据本身，写入时只允许**更新的序号**覆盖更旧的。
+   *
+   * 不带序号时有个窄窗口（Codex 在 PR #1538 指出）：同一个榜的两个请求重叠、新的先回来，
+   * 旧的那个虽然会被下面的 seq 守卫挡住、不动这一屏，却已经在守卫之前把新数据从缓存里
+   * 顶掉了。之后切走再切回来，命中的就是那份旧的，而且不会再发请求——屏幕上是过期数据，
+   * 没有任何迹象。
+   */
+  const cacheRef = useRef(new Map<string, { seq: number; data: ModelLeaderboardSnapshot }>());
 
   /**
    * 最后一次发起的请求的序号。每发一次自增，回来时对不上就整份丢掉。
@@ -156,7 +165,7 @@ export default function ModelLeaderboardPage() {
     async (force = false) => {
       const seq = ++requestSeqRef.current;
 
-      const cached = cacheRef.current.get(board);
+      const cached = cacheRef.current.get(board)?.data;
       if (cached && !force) {
         setSnapshot(cached);
         setError(null);
@@ -169,9 +178,15 @@ export default function ModelLeaderboardPage() {
       // 文本榜实测 402 个模型，一次取全；渲染分批，不会因为行多就卡（见 INITIAL_ROWS）
       const res = await getModelLeaderboard(board, 500);
 
-      // 这期间用户可能已经切走、或又发了一次请求：缓存照存（下次切回来即时可用），
-      // 但只有最后一次发出的请求才有资格动这一屏
-      if (res.success && res.data) cacheRef.current.set(board, res.data);
+      // 这期间用户可能已经切走、或又发了一次请求。
+      //
+      // 缓存照存——切走那次的结果下次切回来即时可用，等于把白跑的请求变成预取；
+      // 但只认**更新的序号**，免得先发后到的那个把新数据顶掉（见 cacheRef 注释）。
+      // 动这一屏则更严：只有最后一次发出的请求才有资格。
+      if (res.success && res.data) {
+        const prev = cacheRef.current.get(board);
+        if (!prev || prev.seq < seq) cacheRef.current.set(board, { seq, data: res.data });
+      }
       if (seq !== requestSeqRef.current) return;
 
       if (res.success && res.data) {
@@ -189,10 +204,22 @@ export default function ModelLeaderboardPage() {
     void load();
   }, [load]);
 
-  /** 目录只拉一次，与首屏那个榜的数据并行——切换器不必等榜单数据回来才出现。 */
+  /**
+   * 目录与首屏那个榜的数据并行拉——切换器不必等榜单数据回来才出现。
+   *
+   * 失败必须留痕：目录空了的话 BoardSwitcher 整个不渲染，十一个维度里只剩 URL 上那一个
+   * 还能看，而这正是这个页面存在的理由。原来失败就静悄悄什么都不做，用户看到的是
+   * 「这页本来就没有切换器」，页头刷新又只重拉榜单数据、不重拉目录，整个会话都恢复不了
+   * （Codex 在 PR #1538 指出）。现在记下错误、显示出来，并由页头刷新一并重试。
+   */
   const loadCatalog = useCallback(async () => {
     const res = await getLeaderboardBoards();
-    if (res.success && res.data?.boards?.length) setBoards(res.data.boards);
+    if (res.success && res.data?.boards?.length) {
+      setBoards(res.data.boards);
+      setCatalogError(null);
+      return;
+    }
+    setCatalogError(res.error?.message ?? '维度列表没读出来');
   }, []);
 
   useEffect(() => {
@@ -402,6 +429,8 @@ export default function ModelLeaderboardPage() {
           onClick={() => {
             cacheRef.current.delete(board);
             void load(true);
+            // 目录也一并重试：它挂了的话十一个维度只剩当前这一个，而刷新是用户唯一的自救手段
+            if (catalogError || boards.length === 0) void loadCatalog();
           }}
           data-tour-id="model-leaderboard-refresh"
           title="绕过缓存，重新读一次这个榜"
@@ -436,7 +465,17 @@ export default function ModelLeaderboardPage() {
         {!isMobile && <TipsEntryButton className="shrink-0" />}
       </div>
 
-      <BoardSwitcher boards={boards} current={board} onPick={setBoard} />
+      {catalogError && boards.length === 0 ? (
+        <div
+          className="flex items-center gap-2 px-3 py-2 text-[12px] sm:px-6 shrink-0"
+          style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+          role="status"
+        >
+          维度列表没读出来（{catalogError}），现在只能看当前这一个榜；点右上角刷新重试。
+        </div>
+      ) : (
+        <BoardSwitcher boards={boards} current={board} onPick={setBoard} />
+      )}
 
       <div data-tour-id="model-leaderboard-table" className="flex-1 min-h-0 overflow-auto">
         {loading ? (

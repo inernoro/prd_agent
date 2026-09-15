@@ -52,8 +52,15 @@ public class ModelLeaderboardController : ControllerBase
         // 文本榜实测 402 行，上限放到 500 才不会把「共 402 个」截成一句谎话
         limit = Math.Clamp(limit, 1, 500);
 
+        // 按 FetchedAt 倒序取最新的那份，不是「随便一条匹配的」。
+        //
+        // 首次写的并发窗口（本 PR 已修掉成因）可能已经在库里留下同一个榜的两条文档，
+        // 而同步只更新其中一条、从不删另一条。不排序的话这里可能拿到那条永远不再更新的
+        // 孤儿：页面显示几天前的名次，而自检那条 check 看的是最新那份、判绿——
+        // 面板说健康、用户看到旧数据（Codex 在 PR #1538 指出）。
         var snapshot = await _db.ModelLeaderboardSnapshots
             .Find(x => x.Board == board)
+            .SortByDescending(x => x.FetchedAt)
             .FirstOrDefaultAsync(ct);
 
         if (snapshot is null)
@@ -139,6 +146,8 @@ public class ModelLeaderboardController : ControllerBase
 
         var snapshot = await _db.ModelLeaderboardSnapshots
             .Find(x => x.Board == board)
+            // 同上：存在重复文档时取最新那份，别让首页挂件显示孤儿快照
+            .SortByDescending(x => x.FetchedAt)
             .FirstOrDefaultAsync(ct);
 
         if (snapshot is null)
@@ -168,7 +177,7 @@ public class ModelLeaderboardController : ControllerBase
         name = e.Name,
         organization = e.Organization,
         license = e.License,
-        // 六个指标，值自带正负号（页面上的 ▲/▼ 已经解析进符号）
+        // 六个指标，值自带正负号（页面上的方向箭头 已经解析进符号）
         netImprovement = Metric(e.NetImprovement),
         confirmedSuccess = Metric(e.ConfirmedSuccess),
         praiseVsComplaint = Metric(e.PraiseVsComplaint),

@@ -37,3 +37,7 @@
 | fix | prd-api | 陈旧度 monitor 去掉 passive + sampleComponentId：那条声明照抄了未处理异常那条的形状，却让 sampleComponentId 指向自己，于是「快照多旧」被同时当成判据值和样本量——刚同步完显示「0 次真实调用」拒绝判绿 |
 | fix | prd-admin | 榜单页头的教程 pill 在手机宽度隐藏：这页页头是自绘的，拿不到 PageHeader/TabBar 那边的处理，按 onboarding-tips 规则自己判 |
 | docs | platform | changelog 里描述解析方向的字面三角改成文字（规则 0 的 emoji 禁令也管 changelogs/） |
+| fix | prd-api | 只读端点按 FetchedAt 倒序取最新快照：存在历史重复文档时，原先可能拿到永不更新的孤儿——自检看最新那份判绿、用户看到几天前的名次 |
+| fix | prd-admin | 缓存条目带请求序号、只允许更新的覆盖更旧的：同榜两个请求重叠时，先发后到的那个会在 seq 守卫之前把新数据从缓存顶掉，切走再切回就命中旧数据且不再重拉 |
+| fix | prd-admin | 维度目录拉取失败不再静默：记下错误并显示一行提示，页头刷新一并重试——目录空了 BoardSwitcher 整个不渲染，十一个维度只剩 URL 上那一个，整个会话恢复不了 |
+| docs | platform | 本 PR 新增源码/注释/测试里剩余的字面三角全部改成文字（规则 0 管全部项目内容，不只 UI 与 changelog） |

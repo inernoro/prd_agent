@@ -4,7 +4,7 @@ import type { ApiResponse } from '@/types/api';
 /**
  * 一个指标：值 + 置信区间半宽。
  *
- * `value` 自带正负号（页面上的 ▲/▼ 后端已经解析进符号），所以 -0.91 就是「掉了 0.91%」，
+ * `value` 自带正负号（页面上的方向箭头后端已经解析进符号），所以 -0.91 就是「掉了 0.91%」，
  * 前端不需要再判方向。`margin` 为 null 表示榜单没给误差范围，画图时退化成一根实心条。
  */
 export interface ModelMetric {

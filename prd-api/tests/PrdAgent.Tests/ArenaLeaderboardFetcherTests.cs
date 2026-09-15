@@ -56,9 +56,9 @@ public class ArenaLeaderboardFetcherTests
         Assert.Equal(13.85, e.NetImprovement!.Value);
         Assert.Equal(22.39, e.ConfirmedSuccess!.Value);
         Assert.Equal(36.35, e.PraiseVsComplaint!.Value);
-        Assert.Equal(-0.91, e.Steerability!.Value);      // 页面上是 ▼0.91%
+        Assert.Equal(-0.91, e.Steerability!.Value);      // 页面上是向下箭头0.91%
         Assert.Equal(11.07, e.BashRecovery!.Value);
-        Assert.Equal(-0.37, e.ToolHallucination!.Value); // 页面上是 ▼0.37%
+        Assert.Equal(-0.37, e.ToolHallucination!.Value); // 页面上是向下箭头0.37%
     }
 
     [Fact]

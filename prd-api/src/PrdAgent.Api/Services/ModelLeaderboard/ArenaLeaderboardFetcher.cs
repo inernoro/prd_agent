@@ -26,7 +26,7 @@ namespace PrdAgent.Api.Services.ModelLeaderboard;
 /// arena.ai 的分榜不是一个模子出来的（见 <see cref="ModelLeaderboardCatalog"/>）：
 /// agent 榜是六个百分比指标，其余十个榜是「Elo 分数 ± 区间 + 票数」。
 /// <see cref="Parse"/> **逐行**尝试两种形状并按命中多的那种定 Kind——刻意不按表头文字判，
-/// 因为表头是我们唯一拿不到机读关联的东西，而行内的形状特征（▲▼ 的 aria-label vs
+/// 因为表头是我们唯一拿不到机读关联的东西，而行内的形状特征（方向箭头的 aria-label vs
 /// 分数格的「数字 + ±区间」）互斥且稳定。
 ///
 /// 每行六个指标按页面里的**出现顺序**对应表头
@@ -65,7 +65,7 @@ public class ArenaLeaderboardFetcher
         @"title=""([^""]+)""", RegexOptions.Compiled);
 
     /// <summary>
-    /// 指标的方向与数值。页面把 ▲/▼ 画成一个带 aria-label 的 svg，紧跟着是数字。
+    /// 指标的方向与数值。页面把方向箭头 画成一个带 aria-label 的 svg，紧跟着是数字。
     /// 中间那段 <c>&lt;!-- --&gt;</c> 是 React 的注释标记，必须容忍。
     /// </summary>
     private static readonly Regex DirectionValueRegex = new(
@@ -240,7 +240,7 @@ public class ArenaLeaderboardFetcher
     }
 
     /// <summary>
-    /// 按 agent 榜的形状解析一行：六个「▲/▼ + 百分比 + ±误差」的指标。
+    /// 按 agent 榜的形状解析一行：六个「方向 + 百分比 + ±误差」的指标。
     /// 认不出来返回 null（那多半是分数榜的行）。
     /// </summary>
     private static ModelLeaderboardEntry? TryParseAgentRow(
@@ -271,7 +271,7 @@ public class ArenaLeaderboardFetcher
 
             metrics.Add(new ModelLeaderboardMetric
             {
-                // 方向直接进符号：页面显示 ▼0.91% 就是 -0.91，前端不必再判方向
+                // 方向直接进符号：页面显示向下 0.91% 就是 -0.91，前端不必再判方向
                 Value = dv.Groups[1].Value == "Down" ? -raw : raw,
                 Margin = margin,
             });
