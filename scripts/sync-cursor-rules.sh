@@ -47,7 +47,7 @@ RULES=(
   "ai-model-visibility|globs:auto|AI 模型可见性 —— UI 必须展示当前调用的模型名"
   "app-identity|globs:auto|应用身份隔离 —— Controller 硬编码 appKey，8 个应用标识"
   "bridge-ops|globs:auto|Page Agent Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填"
-  "cds-first-verification|description: 改完可执行代码却发现本地缺 dotnet/node/cargo 时阅读|CDS 优先验证：本地无 SDK ≠ 无法验证，禁止把验证负担转嫁给用户"
+  "cds-first-verification|description: 改了可执行代码、准备说「验证过了/编译通过/测试全绿」时阅读|验证的权威位置：每种改动的判据在哪条流水线、push 前后各能拿到什么，交付只给判据与结论"
   "codebase-snapshot|description: 查询项目功能状态/MongoDB 集合/已废弃概念/架构模式时阅读|代码库快照：架构模式、功能注册表、115 个 MongoDB 集合、已废弃概念"
   "data-audit|globs:auto|数据关系审计：新增实体引用时必须审计所有消费端点"
   "doc-types|globs:auto|doc/ 下文档 7 种类型前缀（spec/design/plan/rule/guide/report/debt）"
