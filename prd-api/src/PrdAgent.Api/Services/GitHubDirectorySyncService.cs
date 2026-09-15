@@ -522,19 +522,23 @@ public class GitHubDirectorySyncService
     /// <summary>
     /// 目录列不出来（404）时，能不能当成「远端把它删光了」去调和。
     ///
-    /// 判据要两个条件同时成立：目录本身 404，**而且**仓库与分支这一层仍然够得着。
-    /// GitHub 对无权访问的私有仓、改名的仓库、被删的分支一律回 404，与「目录真的没了」
-    /// 长得一模一样——只凭目录那一个 404 就动手删，等于把一次权限变动变成一次数据清空。
-    /// 探测不出结论（网络错误，refStatus 为 null）同样不许删。
+    /// 两个条件同时成立才行：目录 404，**而且这次是按已解析出的提交号列的**。
+    /// 提交号不可变：在它上面拿到 404，就证明那一刻该目录确实不存在；
+    /// 而解析提交号这一步本身已经证明仓库与分支都够得着。
+    ///
+    /// 按分支名列目录的 404 一律不许当真——GitHub 对无权访问的私有仓、改名的仓库、被删的分支
+    /// 回的是同一个 404；就算事后再探一次分支也不行，两次请求之间分支还会变（删掉目录的提交
+    /// 之后又来一个把它恢复的提交），于是「探到分支好好的」会被误读成「目录真没了」，
+    /// 把刚恢复的文档连同历史版本一起删掉。
     /// </summary>
-    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, HttpStatusCode? refStatus)
-        => directoryStatus == HttpStatusCode.NotFound && refStatus == HttpStatusCode.OK;
+    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, bool listedAtResolvedCommit)
+        => directoryStatus == HttpStatusCode.NotFound && listedAtResolvedCommit;
 
     /// <summary>
-    /// 探一下仓库 + 分支这一层还够不够得着，返回原始状态码；网络层出错返回 null（没问出结论）。
-    /// 用分支端点而不是仓库端点：它一次同时回答「仓库还在、还有权限、这个分支还在」三件事。
+    /// 把分支解析成它此刻指向的提交号，顺带证明仓库与分支都够得着。
+    /// 拿不到提交号（状态码非 200、响应缺字段、网络出错）一律回 null，调用方据此退回按分支名列目录。
     /// </summary>
-    private async Task<HttpStatusCode?> ProbeRefAsync(
+    private async Task<string?> ResolveBranchCommitAsync(
         string owner, string repo, string branch, string? accessToken, CancellationToken ct)
     {
         try
@@ -543,33 +547,73 @@ public class GitHubDirectorySyncService
                     + $"/branches/{Uri.EscapeDataString(branch)}";
             using var request = BuildApiRequest(url, accessToken);
             using var response = await Http.SendAsync(request, ct);
-            return response.StatusCode;
+            if (!response.IsSuccessStatusCode)
+            {
+                _logger.LogWarning(
+                    "[GitHubSync] 解析 {Owner}/{Repo}@{Branch} 的头提交失败：{Status}",
+                    owner, repo, branch, (int)response.StatusCode);
+                return null;
+            }
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            var sha = doc.RootElement.TryGetProperty("commit", out var commit)
+                      && commit.TryGetProperty("sha", out var shaElement)
+                ? shaElement.GetString()
+                : null;
+            return string.IsNullOrWhiteSpace(sha) ? null : sha;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            // 服务停机不是「探测没问出结论」。吞成 null 的话，上游会把目录那个 404 翻成一次
-            // 普通的同步失败：条目标红、LastSyncAt 照样推进，于是按日调度要等到次日才重试，
-            // 而真相只是「这轮被停机打断了」。原样抛出，交给 worker 的停机分支处理。
+            // 服务停机不是「没问出结论」：吞掉会让上游把它翻成一次用户可见的同步失败，
+            // 条目标红、下次调度推到次日，而真相只是这轮被打断了。交给 worker 的停机分支。
             throw;
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
-            // 走到这里的 OperationCanceledException 是 HttpClient 自己的超时（ct 没被取消），
-            // 那才算「没问出结论」。
-            _logger.LogWarning(ex, "[GitHubSync] 探测 {Owner}/{Repo}@{Branch} 失败", owner, repo, branch);
+            // 走到这里的 OperationCanceledException 是 HttpClient 自己的超时（ct 没被取消）。
+            _logger.LogWarning(ex, "[GitHubSync] 解析 {Owner}/{Repo}@{Branch} 的头提交失败", owner, repo, branch);
             return null;
         }
     }
+
+    /// <summary>GitHub 目录接口一次最多回多少条：超过就截断，而且它不会明说截断了。</summary>
+    internal const int ContentsApiDirectoryCap = 1000;
+
+    /// <summary>
+    /// 这份目录清单能不能代表远端的全部。
+    ///
+    /// 判据看**过滤前**的原始条数：到了上限就说明可能还有没回来的，
+    /// 「这一轮没见到」于是不再等于「远端没有了」，删除环节必须让路。
+    /// 过滤后的条数不能用来判断——它天然会因为非 Markdown 文件而变少。
+    /// </summary>
+    internal static bool IsListingComplete(int rawEntryCount) => rawEntryCount < ContentsApiDirectoryCap;
+
+    /// <summary>
+    /// 一次列目录的结果：过滤后的文件清单，以及这份清单是否代表远端的全部。
+    ///
+    /// 必须是 private：它带着 <see cref="GitHubFile"/>（private 嵌套类），
+    /// 声明成 internal 会让构造函数暴露一个可访问性更低的类型（CS0051）。
+    /// 它只在本类内部流转，测试打的是 <see cref="IsListingComplete"/> 那条判据，不需要这个类型。
+    /// </summary>
+    private sealed record DirectoryListing(List<GitHubFile> Files, bool Complete);
 
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<DirectoryListing> ListDirectoryFilesAsync(
         string owner, string repo, string path, string branch, Matcher? matcher,
         string? accessToken, CancellationToken ct)
     {
+        // 先把分支解析成一个**不可变的提交号**，再按它列目录。
+        // 这样「列不出来」与「仓库分支够不够得着」说的是同一个时刻的同一份快照：
+        // 在提交号上拿到 404，就证明那一刻该目录确实不存在，可以放心调和。
+        // 解析不出来（没权限、分支没了、网络抖动）就退回按分支名列——那条路上的 404 不许当真。
+        var commitSha = await ResolveBranchCommitAsync(owner, repo, branch, accessToken, ct);
+        var reference = commitSha ?? branch;
+
         // 路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串，
         // 结果是扫描器列得出来的目录，同步时打到另一个地址上必然失败。
         var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
-        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{safePath}?ref={Uri.EscapeDataString(branch)}";
+        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{safePath}?ref={Uri.EscapeDataString(reference)}";
 
         using var request = BuildApiRequest(url, accessToken);
         var response = await Http.SendAsync(request, ct);
@@ -582,19 +626,18 @@ public class GitHubDirectorySyncService
             // 否则一次权限变动就会把用户已导入的文档全删掉。
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                var refStatus = await ProbeRefAsync(owner, repo, branch, accessToken, ct);
-                if (ShouldReconcileAsEmpty(response.StatusCode, refStatus))
+                if (ShouldReconcileAsEmpty(response.StatusCode, listedAtResolvedCommit: commitSha != null))
                 {
                     _logger.LogInformation(
-                        "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 已不存在，而仓库与分支仍可访问：按「远端删光了」调和",
-                        owner, repo, path, branch);
-                    // 目录压根不存在，不存在「只回了一部分」的可能，所以这份空清单是完整的
+                        "[GitHubSync] {Owner}/{Repo}/{Path} 在提交 {Commit} 上不存在：按「远端删光了」调和",
+                        owner, repo, path, commitSha);
+                    // 目录在那个提交上压根不存在，不存在「只回了一部分」的可能，所以这份空清单是完整的
                     return new DirectoryListing(new List<GitHubFile>(), Complete: true);
                 }
 
                 _logger.LogWarning(
-                    "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 返回 404，但仓库/分支探测是 {RefStatus}：不当成删空，按失败处理",
-                    owner, repo, path, branch, refStatus?.ToString() ?? "探测失败");
+                    "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 返回 404，但没能把分支解析成提交号：不当成删空，按失败处理",
+                    owner, repo, path, branch);
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);

@@ -79,39 +79,35 @@ public class GitHubDirectoryReconcileTests
     }
 
     [Fact]
-    public void 目录没了而仓库分支还够得着才算远端删光()
+    public void 按提交号列目录拿到404才算远端删光()
     {
         // Git 里没有空目录：删光最后一个文件，目录本身就不存在了，列目录拿到的是 404
         // 而不是「200 + 空清单」。这是最常见的一种删除，必须走调和。
+        // 提交号不可变——在它上面拿到 404，就证明那一刻该目录确实不存在。
         Assert.True(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, HttpStatusCode.OK));
+            HttpStatusCode.NotFound, listedAtResolvedCommit: true));
     }
 
     [Fact]
-    public void 仓库或分支也够不着时绝不当成删光()
+    public void 没解析出提交号时的404一律不许当真()
     {
-        // GitHub 对无权访问的私有仓、改名的仓库、被删的分支一律回 404，和「目录真没了」
-        // 长得一模一样。只凭目录那一个 404 就动手删，等于把一次权限变动变成一次数据清空。
+        // 按分支名列目录的 404 有太多来路：无权访问的私有仓、改名的仓库、被删的分支。
+        // 而且分支会变——两次请求之间可能先删掉目录又把它恢复回来，
+        // 事后再探一次分支只会探到「好好的」，于是把刚恢复的文档连历史版本一起删掉。
         Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, HttpStatusCode.NotFound));
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, HttpStatusCode.Unauthorized));
+            HttpStatusCode.NotFound, listedAtResolvedCommit: false));
     }
-
-    [Fact]
-    public void 探测没问出结论时也不许删()
-        // 网络抖动让探测失败（null）——不确定就不动手，这是破坏性动作的默认姿势
-        => Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, null));
 
     [Fact]
     public void 目录不是404时与本判据无关()
     {
         // 限额、权限不足、GitHub 故障各有各的处置，不能借道这条判据去删东西
         Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.Forbidden, HttpStatusCode.OK));
+            HttpStatusCode.Forbidden, listedAtResolvedCommit: true));
         Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.InternalServerError, HttpStatusCode.OK));
+            HttpStatusCode.InternalServerError, listedAtResolvedCommit: true));
+        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
+            HttpStatusCode.OK, listedAtResolvedCommit: true));
     }
 
     [Fact]
