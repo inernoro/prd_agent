@@ -235,6 +235,11 @@ export function buildPipelineOverview(
     for (const t of projectTombs) {
       const merged = t.reason === 'merged';
       const existing = changes.get(t.branch);
+      // 放弃的分支（PR 关掉不合、分支删了）不是一件待办的改动：它既不在途、也不会合并，
+      // 没人需要去验它。之前它照样进 changes，于是把「在改的分支」「待验收」都撑大了一圈，
+      // 撑的还正好是这个项目历年放弃过多少次（Codex review 抓到）。
+      // 只有在它还能给活分支补 PR 号 / commit 的时候才有用，所以「无对应活分支」才跳过。
+      if (!merged && !existing) continue;
       if (existing) {
         // 分支名会被复用：上一条同名分支合并后墓碑仍在台账里，新开的同名分支是
         // 另一个 incarnation。无条件套用同名墓碑，会把一条正在跑的分支标成 merged，
@@ -298,11 +303,10 @@ export function buildPipelineOverview(
       // 落差判定。注意：没接 GitHub 的项目永远没有墓碑，
       // 「合并了没验」不成立，不能把「查不到」算成「漏」。
       //
-      // 「部署了没验」只对**还在途**的改动成立。墓碑分两种：merged 走下面那一档；
-      // abandoned（PR 关掉、分支删掉、活没干成）压根不需要验收——它 deployed=true、
-      // merged=false，不加 inFlight 就会被整条算进落差，把首页那句警告按放弃的分支数
-      // 一路顶高，而这里面没有一条是要人去处理的。首页喊狼喊到第二次就没人看了。
-      if (c.inFlight && c.deployed && !matched.length && !c.merged) {
+      // 「部署了没验」这一档不再需要单独挡放弃的分支：上面建 changes 时已经把
+      // 「abandoned 且无对应活分支」整条排除在外了。判据收在一处，不在两处各挡一次
+      // ——两处各挡一次正是本 PR 反复栽进去的那种形状。
+      if (c.deployed && !matched.length && !c.merged) {
         leaks['deployed-not-accepted'] += 1;
         allLeaks.push({ kind: 'deployed-not-accepted', subject: c.branch, projectId: pid, reportIds: [] });
       }

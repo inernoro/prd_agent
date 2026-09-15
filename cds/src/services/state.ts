@@ -5279,13 +5279,26 @@ export class StateService {
     const objectKey = await this.reportObjects.put(meta, content);
     meta.objectKey = objectKey;
     meta.storage = objectKey ? 'object' : 'local';
+    const cachePath = this.reportFilePath(meta);
+    const tmpPath = `${cachePath}.tmp-${process.pid}-${Date.now()}`;
     try {
       await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
-      await fs.promises.writeFile(this.reportFilePath(meta), content, 'utf-8');
+      // 先写临时文件再原子改名：直接覆盖的话，写到一半失败就把半份正文留成了缓存，
+      // 而读路径本地优先，这半份会被一直当成正文端出去。
+      await fs.promises.writeFile(tmpPath, content, 'utf-8');
+      await fs.promises.rename(tmpPath, cachePath);
     } catch (err) {
       // 对象存储已经收下了，本地缓存写不进去不该让归档失败。
       // 但没配对象存储时本地盘是唯一副本，写不进去就是真失败，必须抛。
+      await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
       if (!objectKey) throw err;
+      // 关键：**旧缓存必须删掉**。编辑一份已归档的报告时，对象存储收下了新正文、
+      // 本地缓存没更新成功，而 readAcceptanceReportContentAsync 永远本地优先——
+      // 留着它等于「改成功了，但页面上永远显示改之前那一版」，而且不报错
+      // （Codex review 抓到）。删掉之后下一次读会回源对象存储并回填。
+      // recursive：这个路径上无论躺着什么（半份文件、甚至一个同名目录）都必须清掉，
+      // 留下任何一种都会让下一次读命中它而不是回源。
+      await fs.promises.rm(cachePath, { force: true, recursive: true }).catch(() => {});
     }
   }
 

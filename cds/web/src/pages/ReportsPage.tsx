@@ -881,7 +881,14 @@ function ReportsHome({
     </div>
   );
 
-  if (allReports.length === 0) {
+  // 台账空 ≠ 整页空。首页那块流水线讲的是「有几条改动在跑、几条部署了还没验」——
+  // 一份报告都没有的时候，那句「部署了没验收」恰恰是最该被看见的一句，而原来这个
+  // early return 把整块流水线连同它一起吞掉了（Codex review 抓到）。
+  // 所以只有在「既没有报告、也没有流水线可讲」时才整页让位给空状态。
+  const pipelineHasSomething = isGlobalScope
+    && pipelineState.status === 'ok'
+    && pipelineState.pipeline.total.changes > 0;
+  if (allReports.length === 0 && !pipelineHasSomething) {
     return <EmptyReportsState onCreate={onCreate} filtered={false} filterMenu={filterMenu} />;
   }
 
@@ -969,7 +976,17 @@ function ReportsHome({
           </div>
         </div>
         {pageRows.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-muted-foreground">当前筛选下没有报告</div>
+          <div className="flex flex-col items-center gap-3 px-4 py-10 text-center text-sm text-muted-foreground">
+            {/* 「一份都还没有」与「筛掉了」是两回事：前者要给下一步动作，后者只要说清是筛的。 */}
+            {allReports.length === 0 ? (
+              <>
+                <span>还没有归档任何验收报告。上面的流水线来自分支与合并记录，不依赖台账。</span>
+                <Button size="sm" onClick={onCreate}><Plus />新建报告</Button>
+              </>
+            ) : (
+              <span>当前筛选下没有报告</span>
+            )}
+          </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[60rem] border-collapse text-[0.8125rem]">
