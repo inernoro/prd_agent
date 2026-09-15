@@ -2170,7 +2170,10 @@ export default function AppShell() {
                   ? 'p-0'
                   : isHomePage
                     ? 'p-0'
-                    : 'px-4 py-3'
+                    // 四边同宽：原来是 px-4 py-3（左右 16、上下 12），用户 2026-09-15
+                    // 反馈「左窄上宽」。这层是页面外的唯一一层间距（面板外观早已去掉，
+                    // 页面直接坐在应用背景上），所以它不该有方向差——同一个 16。
+                    : 'p-4'
             )}
             style={useCanvasPanel ? { overscrollBehavior: 'contain' } : undefined}
           >

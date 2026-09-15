@@ -1527,7 +1527,12 @@ export default function WebPagesPage() {
         />
       )}
 
-      {/* Toolbar（只属于资产库档；分享档有自己的三层切换与搜索） */}
+      {/* Toolbar（只属于资产库档；分享档有自己的三层切换与搜索）。
+          里面每一项都只在手机端渲染，桌面端这层是空的——而空的 flex item 仍然算一个
+          子元素，会和下一个子元素之间实打实吃掉根上的 gap-4，把整页内容往下推 16px。
+          看不出是谁干的：它自己高度为 0、不可见，页面却凭空多了一截顶部留白
+          （用户 2026-09-15 反馈「左窄上宽」）。所以桌面端整层不渲染。 */}
+      {isMobile && (
       <div className="flex flex-col gap-3" style={{ display: workspaceTab === 'library' ? undefined : 'none' }}>
         {/* 搜索 / 筛选：移动端从搜索开始；桌面端默认只保留一条工作台工具区。 */}
         {isMobile ? (
@@ -1836,6 +1841,7 @@ export default function WebPagesPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* 屏框（设计稿屏 1·A）：顶栏通栏 52px，其下三列贴边——左栏 212 / 中列（工具条 56 + 内容）/ 右栏 300。
           三列之间用竖分隔线而不是间隙，工具条属于中列、不横跨左右栏。 */}
