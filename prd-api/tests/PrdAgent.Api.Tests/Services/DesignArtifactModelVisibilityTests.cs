@@ -80,6 +80,26 @@ public sealed class DesignArtifactModelVisibilityTests
         Assert.Equal("LLM Gateway", single.ResolvedModel.Platform);
     }
 
+    // 真验收抓到的那一条（2026-09-15）：执行器发了、SSE 也推了，但 worker 只改了内存里的 run
+    // 对象，而它全程用 Update.Set 逐字段写库——于是 DTO 字段在、值恒为 null，刷新后面板空着。
+    // 单测测的是「函数对不对」，落库这一步得单独钉：worker 里必须有一条把这两个字段写进去的更新。
+    [Fact]
+    public void WorkerPersistsTheResolvedModelInsteadOfOnlyMutatingMemory()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null
+               && !File.Exists(Path.Combine(directory.FullName, "prd-api", "src", "PrdAgent.Api",
+                   "Services", "HostedSiteEditRunWorker.cs")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        var source = File.ReadAllText(Path.Combine(directory!.FullName, "prd-api", "src", "PrdAgent.Api",
+            "Services", "HostedSiteEditRunWorker.cs"));
+        // companion：真的读到了这个文件，否则下面两条会对着空串判绿。
+        Assert.Contains("chunk.Type == \"model\"", source, StringComparison.Ordinal);
+        Assert.Contains("Set(item => item.ResolvedModel", source, StringComparison.Ordinal);
+        Assert.Contains("Set(item => item.ResolvedPlatform", source, StringComparison.Ordinal);
+    }
+
     private static async Task<IReadOnlyList<DesignArtifactExecutorChunk>> RunExecutorAsync(
         IReadOnlyList<GatewayStreamChunk> chunks)
     {

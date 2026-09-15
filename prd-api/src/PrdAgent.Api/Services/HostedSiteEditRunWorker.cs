@@ -183,6 +183,16 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 {
                     run.ResolvedModel = chunk.ResolvedModel.Model;
                     run.ResolvedPlatform = chunk.ResolvedModel.Platform;
+                    // 只改内存里的 run 不会落库——这个 worker 全程用 Update.Set 逐字段写，
+                    // 漏了这一步，刷新或恢复时面板拿到的 resolvedModel 永远是 null
+                    //（真验收时就是这么发现的：DTO 字段在、值是空）。
+                    await db.DesignArtifactRuns.UpdateOneAsync(
+                        item => item.DeploymentSlug == DeploymentScope.Current && item.Id == runId,
+                        Builders<DesignArtifactRun>.Update
+                            .Set(item => item.ResolvedModel, run.ResolvedModel)
+                            .Set(item => item.ResolvedPlatform, run.ResolvedPlatform)
+                            .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
                     await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
                         runId,

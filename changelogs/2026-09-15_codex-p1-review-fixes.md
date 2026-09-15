@@ -11,3 +11,4 @@
 | fix | prd-api | 网页生成与改写把网关 Start 分片解析出的实际模型透出成 model 事件并落到 run 上，面板顶部按「模型 · 平台」展示，满足 ai-model-visibility |
 | fix | prd-admin | 生成弹窗与改写面板订阅 model 事件并在顶部渲染实际模型与平台，值全部来自后端不推断 |
 | ops | cds | 索引目录退出部署链路：撤掉 mongodb-indexes 一次性容器与 api 对它的启动依赖，索引仍由 DBA 手动跑，并补守卫防再加回来 |
+| fix | prd-api | 实际模型落库补上：worker 逐字段写库，原先只改内存对象，导致 run DTO 字段在而值恒为 null，刷新后面板显示不出模型 |
