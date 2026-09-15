@@ -5,7 +5,7 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 活动任务清单的共享读写逻辑 —— 员工侧 / 老板侧 / 匿名侧三个控制器共用同一份判定，
+/// 活动任务清单的共享读写逻辑 —— 本人侧 / 管理侧 / 匿名侧三个控制器共用同一份判定，
 /// 避免同一个判断被抄成三份然后各自漂移（见 .claude/rules/predicate-and-wiring-discipline.md 形状 3）。
 /// </summary>
 public static class ActiveTaskShared
@@ -224,7 +224,7 @@ public static class ActiveTaskShared
             .Find(x => x.State == ActiveTaskState.Active || x.State == ActiveTaskState.Standby)
             .ToListAsync(ct);
 
-        // 近 7 天活跃的人也列出来 —— 没汇报不代表没干活，但老板得看得见这一行
+        // 近 7 天活跃的人也列出来 —— 没汇报不代表没干活，但管理的人得看得见这一行
         var activeSince = now.AddDays(-7);
         var recentUsers = await db.Users
             .Find(x => x.LastActiveAt >= activeSince || x.LastLoginAt >= activeSince)

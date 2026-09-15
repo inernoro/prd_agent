@@ -7,7 +7,7 @@ namespace PrdAgent.Core.Models;
 /// - <see cref="PmTask"/>   项目维度，必须挂 ProjectId，服务看板/甘特/里程碑。
 /// - <see cref="PaTask"/>   个人助理维度，四象限，服务个人待办。
 /// - <see cref="ChannelTask"/> 外部渠道进来的 Agent 指令任务，不是人的工作。
-/// - 本实体              人维度，回答老板固定问的三件事：你此刻在做什么、做完接着做什么、走过哪些。
+/// - 本实体              人维度，回答别人固定会问的三件事：你此刻在做什么、做完接着做什么、走过哪些。
 ///
 /// 它是「状态机 + 指针」而不是任务本体：来自缺陷池 / PmTask / 委派时，
 /// SourceRefType + SourceRefId 指回源头，Title 冗余一份（匿名视图脱敏时不必回源查询）。
@@ -72,7 +72,7 @@ public class ActiveTaskEntry
     /// <summary>源头对象 ID</summary>
     public string? SourceRefId { get; set; }
 
-    /// <summary>委派人 UserId（老板派的活；自己加的为 null）—— 「看得见委派的是谁」靠这个字段</summary>
+    /// <summary>委派人 UserId（别人派的活；自己加的为 null）—— 「看得见委派的是谁」靠这个字段</summary>
     public string? AssignedBy { get; set; }
 
     /// <summary>委派人显示名（冗余）</summary>
@@ -88,7 +88,7 @@ public class ActiveTaskEntry
     /// 结案说明 —— 「做成了什么样」。
     ///
     /// 这是结案与打勾的唯一区别：打勾只留下一个对号，一周后翻回来什么也看不出来。
-    /// 这句话是老板要看的、写周报要抄的、下个人接手要读的那一句。
+    /// 这句话是别人要看的、写周报要抄的、下个人接手要读的那一句。
     /// 不强制填（逼着填会逼出「已完成」这种废话），但界面上它是结案时唯一的输入。
     /// </summary>
     public string? ClosingNote { get; set; }
@@ -155,7 +155,7 @@ public static class ActiveTaskSource
     /// <summary>自己加的</summary>
     public const string Manual = "manual";
 
-    /// <summary>老板委派</summary>
+    /// <summary>别人委派</summary>
     public const string Assigned = "assigned";
 
     /// <summary>从聊天记录粘贴拆出来的</summary>
@@ -187,11 +187,11 @@ public class ActiveTaskBoardSettings
     /// <summary>匿名面板是否开放（关掉则公开地址直接 404）</summary>
     public bool AnonymousEnabled { get; set; } = true;
 
-    /// <summary>卡住多久自动升到老板的「需要你出手」（分钟）</summary>
+    /// <summary>卡住多久自动升到管理侧的「需要你出手」（分钟）</summary>
     public int BlockedEscalateMinutes { get; set; } = 120;
 
     /// <summary>
-    /// 堆到几件算「堆太多」，需要老板考虑分担。
+    /// 堆到几件算「堆太多」，需要考虑分担。
     /// 只有这一个阈值 —— 另一端「没活了」是 0，不需要配。
     /// </summary>
     public int HeavyStackThreshold { get; set; } = 8;

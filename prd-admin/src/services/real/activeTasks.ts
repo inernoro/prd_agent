@@ -66,7 +66,7 @@ export const getActiveTaskHistory = (days = 14, userId?: string) =>
     `${base}/history?days=${days}${userId ? `&userId=${encodeURIComponent(userId)}` : ''}`,
   );
 
-// ── 老板侧 ─────────────────────────────────
+// ── 管理侧 ─────────────────────────────────
 export const getTeamBoard = () => apiRequest<TeamBoard>(`${adminBase}/team`);
 
 export const getAssignableMembers = () => apiRequest<AssignableMember[]>(`${adminBase}/members`);

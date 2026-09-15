@@ -9,9 +9,9 @@ using PrdAgent.Infrastructure.Database;
 namespace PrdAgent.Api.Controllers.Api;
 
 /// <summary>
-/// 活动任务清单 —— 老板侧：全员此刻、委派任务、匿名可见粒度配置。
+/// 活动任务清单 —— 管理侧：全员此刻、委派任务、匿名可见粒度配置。
 ///
-/// 这一屏不给老板一堆进度条让他自己读，直接给「需要你出手的几件」；
+/// 这一屏不给一堆进度条让人自己读，直接给「需要你出手的几件」；
 /// 节奏正常的人自动从这份清单里消失，不堆成待办
 /// （见 .claude/rules/conclusion-before-numbers.md）。
 /// </summary>

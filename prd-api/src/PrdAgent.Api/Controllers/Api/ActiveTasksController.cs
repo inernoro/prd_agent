@@ -13,7 +13,7 @@ namespace PrdAgent.Api.Controllers.Api;
 /// 活动任务清单 —— 员工侧：维护自己的「此刻在做什么 / 备用任务 / 走过的路」。
 ///
 /// 设计取向（见 doc/design.platform.active-tasks.md）：
-/// - 此刻正在做同时只允许一条（WIP=1）。多线程等于没有焦点，老板一眼要看到的就是那一件。
+/// - 此刻正在做同时只允许一条（WIP=1）。多线程等于没有焦点，看的人一眼要看到的就是那一件。
 /// - 零表单：完成一次点击，队首自动顶上来，时长自动记。用户只输入系统猜不到的两件事：
 ///   做完了、我卡住了在等谁。
 /// </summary>
@@ -253,7 +253,7 @@ public class ActiveTasksController : ControllerBase
     public async Task<IActionResult> Block(string id, [FromBody] ActiveTaskBlockRequest req, CancellationToken ct = default)
     {
         if (req == null || string.IsNullOrWhiteSpace(req.BlockedOn))
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请写清在等谁、等什么，只说「卡住了」老板没法处理"));
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请写清在等谁、等什么，只说「卡住了」别人没法接手"));
 
         var userId = GetUserId();
         var entry = await ActiveTaskShared.FindOwnedAsync(_db, id, userId, ct);

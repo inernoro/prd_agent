@@ -3,7 +3,7 @@
  *
  * 心智照「提醒事项」：每行一个圆圈，实心的那条是我在做的，点它就是结案。
  * 结案会问一句「做成了什么样」——这是结案与打勾的唯一区别：打勾一周后翻回来
- * 只有一串对号，那句话才是老板要看的、写周报要抄的、下个人接手要读的。
+ * 只有一串对号，那句话才是别人要看的、写周报要抄的、下个人接手要读的。
  *
  * 刻意没有的东西：跳秒的秒表、投入时长条、估准度、超期红灯。那些在衡量人，不在帮人沟通。
  */
@@ -229,9 +229,7 @@ export function ActiveTasksPage() {
               value={closingNote}
               onChange={(e) => setClosingNote(e.target.value)}
             />
-            <span className="atb-sheet__hint">
-              以后你和老板翻回来看的是这句，不是打勾。不写也能结，但那条历史就只剩一个标题。
-            </span>
+            <span className="atb-sheet__hint">这句话会留在历史里。</span>
             <div className="atb-actions">
               <button className="atb-btn atb-btn--quiet" onClick={() => setCloseFor(null)}>再想想</button>
               <button className="atb-btn" disabled={busy} onClick={() => void onCloseConfirm()}>结案</button>
@@ -290,7 +288,7 @@ export function ActiveTasksPage() {
               onChange={(e) => setBlockedOn(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') void onBlockConfirm(); }}
             />
-            <span className="atb-sheet__hint">只说「卡住了」老板没法处理。说清在等谁，这条会排到他那屏最上面。</span>
+            <span className="atb-sheet__hint">说清在等谁，别人才好接手。</span>
             <div className="atb-actions">
               <button className="atb-btn atb-btn--quiet" onClick={() => setBlockOpen(false)}>取消</button>
               <button className="atb-btn" disabled={busy || !blockedOn.trim()} onClick={() => void onBlockConfirm()}>就这样</button>

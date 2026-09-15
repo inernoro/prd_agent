@@ -100,7 +100,7 @@ export interface ClosedItem {
 
 export interface TeamBoard {
   headline: string;
-  /** 有几个人要老板看一下 */
+  /** 有几个人需要看一下 */
   needsYou: number;
   /** 堆到几件算多，后端配置 */
   heavyStackThreshold: number;
