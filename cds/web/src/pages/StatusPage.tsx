@@ -380,6 +380,7 @@ export function StatusPage(): JSX.Element {
                     now={now}
                     prober={summary?.prober ?? null}
                     alarm={summary?.alarm}
+                    alarmChannels={summary?.alarmChannels}
                     intervalSeconds={summary?.intervalSeconds}
                     scope={scope}
                     onScope={onScope}

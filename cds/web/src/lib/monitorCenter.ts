@@ -171,6 +171,8 @@ export interface AlarmChannelView {
 
 export interface UptimeSummary {
   alarm?: AlarmChannelView;
+  /** 用户自己配的通知通道状态。不下发 = 不知道，前端不许兜空数组当「一条都没有」。 */
+  alarmChannels?: import('./alarmVerdict').AlarmChannelStatus[];
   enabled: boolean;
   generatedAt: number;
   intervalSeconds: number;

@@ -17,12 +17,13 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { DiscoveryStrip } from './DiscoveryStrip';
 import { AlarmChannelsPanel } from '../cds-settings/AlarmChannelsPanel';
+import { judgeAlarm, type AlarmChannelStatus } from '@/lib/alarmVerdict';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AvailabilityBar } from './primitives';
 import { PulseWall } from './PulseWall';
 import { BlindspotMap } from './BlindspotMap';
 import { buildBlindspotMap, describeBlindspots } from '@/lib/pulseWall';
-import { formatDuration, formatRelative } from '@/lib/monitorCenter';
+import { formatDuration } from '@/lib/monitorCenter';
 import type { AlarmChannelView, MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
   ENVIRONMENT_SHORT,
@@ -69,6 +70,14 @@ const LIVE_TONE: Record<'danger' | 'warn' | 'ok' | 'empty', string> = {
   warn: 'text-warn',
   ok: 'text-ok',
   empty: 'text-muted-foreground',
+};
+
+/** 通知判定的着色。四档与 judgeAlarm 的 tone 一一对应。 */
+const VERDICT_TONE: Record<'ok' | 'warn' | 'bad' | 'unknown', string> = {
+  ok: 'border-ok/30 bg-ok-soft/40',
+  warn: 'border-warn/40 bg-warn-soft/50',
+  bad: 'border-destructive/40 bg-destructive/10',
+  unknown: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]',
 };
 
 const BANNER_TONE = {
@@ -344,13 +353,6 @@ const DOT_TONE: Record<CellHealth, string> = {
   up: 'bg-ok',
 };
 
-const ALARM_TONE: Record<AlarmChannelView['status'] | 'unknown', string> = {
-  unconfigured: 'border-destructive/40 bg-destructive/10',
-  failing: 'border-destructive/40 bg-destructive/10',
-  untested: 'border-warn/40 bg-warn-soft/40',
-  healthy: 'border-ok/30 bg-ok-soft/40',
-  unknown: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]',
-};
 
 /**
  * 「出事了会不会有人告诉我」这一行。
@@ -358,7 +360,12 @@ const ALARM_TONE: Record<AlarmChannelView['status'] | 'unknown', string> = {
  * 四档文案各自回答同一个问题，一档都不许省成「未知」——除了服务端真没下发的那种
  * 未知，那时也要明说「不知道」，而不是假装通着。
  */
-function AlarmRow({ alarm, now }: { alarm: AlarmChannelView | undefined; now: number }): JSX.Element {
+function AlarmRow({ alarm, channels, onOpen }: {
+  alarm: AlarmChannelView | undefined;
+  /** 多通道状态。undefined = 服务端没下发 = **不知道**，不许兜一个空数组当「一条都没有」。 */
+  channels: ReadonlyArray<AlarmChannelStatus> | undefined;
+  onOpen: () => void;
+}): JSX.Element {
   const [busy, setBusy] = useState(false);
   const [drill, setDrill] = useState<{ ok: boolean; reason?: string } | null>(null);
   const runDrill = useCallback(async (): Promise<void> => {
@@ -373,16 +380,12 @@ function AlarmRow({ alarm, now }: { alarm: AlarmChannelView | undefined; now: nu
     }
   }, []);
 
-  const tone = ALARM_TONE[alarm?.status ?? 'unknown'];
-  const text = !alarm
-    ? '通知通道状态未知 —— 这个实例没有下发通道信息，出问题时有没有人被通知，现在说不准'
-    : alarm.status === 'unconfigured'
-      ? `出问题时不会有任何人被通知 —— ${alarm.channel}的凭据没配齐${alarm.missing?.length ? `（缺 ${alarm.missing.join('、')}）` : ''}`
-      : alarm.status === 'failing'
-        ? `上一次通知没送出去：${alarm.last?.reason || '原因不明'} —— 现在出问题也不会有人收到`
-        : alarm.status === 'untested'
-          ? `${alarm.channel}已接上，但这个进程还没真发过一次 —— 能不能送到仍然是未知数，点右边演练一次`
-          : `${alarm.channel}通着，已成功送出 ${alarm.delivered} 次${alarm.last ? `，上一次 ${formatRelative(alarm.last.at, now)}` : ''}`;
+  // 判定只许有一份，且必须把两个来源一起看：曾经这里只认识早先那条单一 MAP 通道，
+  // 于是 Bark 配好、演练通过之后，面板照旧写着「出问题时不会有任何人被通知」——
+  // 一条关于铃的谎，比没有这一行更糟。
+  const verdict = judgeAlarm(alarm, channels);
+  const tone = VERDICT_TONE[verdict.tone];
+  const text = verdict.text;
 
   return (
     <div className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3.5 py-2.5', tone)}>
@@ -395,6 +398,13 @@ function AlarmRow({ alarm, now }: { alarm: AlarmChannelView | undefined; now: nu
           {drill.ok ? '演练已送达' : `演练失败：${drill.reason || '原因不明'}`}
         </span>
       ) : null}
+      <button
+        type="button"
+        onClick={onOpen}
+        className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-primary/50"
+      >
+        {verdict.live > 0 ? '通道设置' : '去配一条'}
+      </button>
       <button
         type="button"
         onClick={() => void runDrill()}
@@ -418,6 +428,7 @@ export function OwnerBoard({
   now,
   prober,
   alarm,
+  alarmChannels,
   intervalSeconds,
   onScope,
   onOpenTarget,
@@ -437,6 +448,8 @@ export function OwnerBoard({
    * 这里同样不许兜一个「通着」：铃哑了还替它说好话，比没有这一行更糟。
    */
   alarm: AlarmChannelView | undefined;
+  /** 多通道状态（summary.alarmChannels）。undefined = 服务端没下发 = 不知道。 */
+  alarmChannels: ReadonlyArray<AlarmChannelStatus> | undefined;
   /** 一轮探测的间隔（秒）。脉搏墙用它说「多久扫一遍」；拿不到就不说，不猜。 */
   intervalSeconds?: number;
   scope: OwnerScope;
@@ -883,7 +896,7 @@ export function OwnerBoard({
       {/* 通知通道：出问题时会不会有人被通知。
           这一行是整条链上最容易静默失效的一环——没配凭据时投递是一次 no-op，
           启动日志里那句「不会有人被通知」没有任何验收会去读。所以它必须长在这一屏上。 */}
-      <AlarmRow alarm={alarm} now={now} />
+      <AlarmRow alarm={alarm} channels={alarmChannels} onOpen={() => setNotifyOpen(true)} />
 
       {/* 基础设施：要能一眼确认没塌，但不占主视觉 */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3.5 py-2.5">
