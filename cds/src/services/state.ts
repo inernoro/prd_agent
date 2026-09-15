@@ -554,7 +554,11 @@ export class StateService {
         .filter((name) => name.startsWith(`${base}.bak.`))
         .map((name) => path.join(dir, name))
       : [];
-    const snapshots: Array<{ file: string; state: CdsState }> = [{ file: this.filePath, state: this.state }];
+    // 备份排在主文件之前，顺序是这件事的全部要害：本方法只在「主文件报告发生了变化」
+    // 时才被调用。先写主文件的话，崩在中途 = 主文件已密封、备份仍是明文，而重启时主文件
+    // 不再报 change，这些备份就永远不会被重扫，明文永久留在盘上。倒过来写，崩溃只会让
+    // 主文件仍是明文，下次启动照样检测得到、照样重跑一遍——中断可续。
+    const snapshots: Array<{ file: string; state: CdsState }> = [];
     for (const backupPath of backupPaths) {
       try {
         const backupState = JSON.parse(fs.readFileSync(backupPath, 'utf8')) as CdsState;
@@ -565,6 +569,7 @@ export class StateService {
         throw new Error(`旧版数据迁移凭据备份无法安全升级：${path.basename(backupPath)}: ${(error as Error).message}`);
       }
     }
+    snapshots.push({ file: this.filePath, state: this.state });
 
     for (const snapshot of snapshots) {
       fs.mkdirSync(path.dirname(snapshot.file), { recursive: true });

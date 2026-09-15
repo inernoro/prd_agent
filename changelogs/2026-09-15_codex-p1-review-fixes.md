@@ -27,3 +27,5 @@
 | fix | prd-api | 改写流的 Mongo 兜底补发 model 事件时去掉 !redisProjectionAvailable 条件：该标志只在本 Controller 读 Redis 失败时才翻，而 worker 的写入侧独立失效，写侧挂了读侧好着就会把模型事件永久抑制 |
 | fix | cds | 基础设施维护 job 记进程代次，读取点先把上一个进程遗留的 active 收敛成 failed：执行体只活在进程内存里，CDS 在 begin 与 finish 之间重启会让这条记录永远挡住凭据轮换且无从清理 |
 | docs | cds | compose 就地写明 llmgw-serve 的就绪声明实为存活检查（readyz 带密钥门、CDS 探针匿名且把 401 当就绪），三个候选方案与取舍记入 debt 台账待作者拍板 |
+| security | cds | 密封旧版迁移凭据前先脱敏日志：publicDataMigration 靠 source/target 上的明文密码比对着抹掉 log/progressMessage/errorMessage 里的密码，密封把明文拿走后就再也抹不掉了，存量 migration.log 里旧管线写进去的 --password <secret> 会从接口原样吐出且永久留存 |
+| security | cds | 凭据升级的落盘顺序改成备份在前、主文件在后：该流程只在「主文件报告发生变化」时触发，先写主文件则崩在中途会让备份里的明文永远不再被重扫；倒过来写则崩溃后下次启动仍能检测并续跑 |

@@ -234,6 +234,28 @@ export function migrateLegacyDataMigrationCredentials(migrations: DataMigration[
     if (migration.credentialsEncrypted !== undefined) {
       throw new Error(`数据迁移任务 ${migration.id} 同时包含明文与密封凭据，拒绝启动`);
     }
+    // 先脱敏，再密封：publicDataMigration 是拿 source/target 上的明文密码去比对着
+    // 抹掉 log / progressMessage / errorMessage 里的密码的。密封会把明文拿走，
+    // 之后那份「可比对的串」就再也没有了——升级前跑过的迁移，日志里存着旧管线写进去的
+    // `--password <secret>`，会原样从 GET /data-migrations/:id/log 吐出去，而且是永久的。
+    // 顺序反了就等于用一次安全加固制造一次凭据泄漏（判据与接线纪律 形状 5：
+    // 用变更前的状态去 gate 那个会改变该状态的变更，这里是它的镜像——变更销毁了判据的输入）。
+    const legacySecrets = [
+      migration.source.password,
+      migration.target.password,
+      migration.source.sshTunnel?.password,
+      migration.target.sshTunnel?.password,
+    ].filter((value): value is string => Boolean(value));
+    if (legacySecrets.length > 0) {
+      if (migration.log) migration.log = redactSecretValues(migration.log, legacySecrets);
+      if (migration.progressMessage) {
+        migration.progressMessage = redactSecretValues(migration.progressMessage, legacySecrets);
+      }
+      if (migration.errorMessage) {
+        migration.errorMessage = redactSecretValues(migration.errorMessage, legacySecrets);
+      }
+    }
+
     const sealed = sealMigrationConnections(migration.source, migration.target);
     migration.source = sealed.source;
     migration.target = sealed.target;
