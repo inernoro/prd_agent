@@ -218,7 +218,7 @@ public class ArenaLeaderboardFetcherTests
         // 六个指标齐全（整行的准入条件），但第一个没有 ± 那一格
         const string noMargin = """
 <table><tbody>
-<tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span></td><td><span><svg role="img" aria-label="Up"></svg>2.00<!-- -->%</span><span class="text-text-muted text-xs">±0.20%</span></td><td><span><svg role="img" aria-label="Up"></svg>3.00<!-- -->%</span><span class="text-text-muted text-xs">±0.30%</span></td><td><span><svg role="img" aria-label="Up"></svg>4.00<!-- -->%</span><span class="text-text-muted text-xs">±0.40%</span></td><td><span><svg role="img" aria-label="Up"></svg>5.00<!-- -->%</span><span class="text-text-muted text-xs">±0.50%</span></td><td><span><svg role="img" aria-label="Up"></svg>6.00<!-- -->%</span><span class="text-text-muted text-xs">±0.60%</span></td></tr>
+<tr><td><span>1</span><span>1</span><span>1</span></td><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span></td><td><span><svg role="img" aria-label="Up"></svg>2.00<!-- -->%</span><span class="text-text-muted text-xs">±0.20%</span></td><td><span><svg role="img" aria-label="Up"></svg>3.00<!-- -->%</span><span class="text-text-muted text-xs">±0.30%</span></td><td><span><svg role="img" aria-label="Up"></svg>4.00<!-- -->%</span><span class="text-text-muted text-xs">±0.40%</span></td><td><span><svg role="img" aria-label="Up"></svg>5.00<!-- -->%</span><span class="text-text-muted text-xs">±0.50%</span></td><td><span><svg role="img" aria-label="Up"></svg>6.00<!-- -->%</span><span class="text-text-muted text-xs">±0.60%</span></td></tr>
 </tbody></table>
 """;
 
@@ -246,7 +246,7 @@ public class ArenaLeaderboardFetcherTests
     {
         const string partial = """
 <table><tbody>
-<tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span><span class="text-text-muted text-xs">±0.10%</span></td><td><span><svg role="img" aria-label="Up"></svg>4.56<!-- -->%</span><span class="text-text-muted text-xs">±0.20%</span></td></tr>
+<tr><td><span>1</span><span>1</span><span>1</span></td><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span><span class="text-text-muted text-xs">±0.10%</span></td><td><span><svg role="img" aria-label="Up"></svg>4.56<!-- -->%</span><span class="text-text-muted text-xs">±0.20%</span></td></tr>
 </tbody></table>
 """;
 
