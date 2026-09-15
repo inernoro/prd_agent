@@ -33,8 +33,9 @@ function minutesAgoIso(minutes: number): string {
 export function seedPreviewInstanceDemoData(state: StateService): boolean {
   const core = seedCoreDemoData(state);
   const extras = seedDemoExtras(state);
-  if (core || extras) state.save();
-  return core || extras;
+  const snap = seedPreviewInstanceSnapshot(state);
+  if (core || extras || snap) state.save();
+  return core || extras || snap;
 }
 
 /** 首播：项目 + 构建配置 + 分支 + 活动日志。只在完全空库时执行。 */
@@ -280,7 +281,7 @@ function seedDemoExtras(state: StateService): boolean {
     `<h1>演示数据：${verdict} 示例报告</h1><p>预览实例自动生成，用于查看验收报告列表与详情的界面形状，不对应任何真实验收。</p>`;
   for (const [verdict, title, tier] of [
     ['pass', '演示数据：分支预览冒烟（通过）', 'smoke'],
-    ['conditional', '演示数据：发布前走查（有条件通过）', 'visual'],
+    ['conditional', '演示数据：发布前走查（原则性通过）', 'visual'],
     ['fail', '演示数据：回归验收（未通过）', 'regression'],
   ] as const) {
     // 报告的 id 是创建时生成的，没有稳定标识可比——用标题当身份。
@@ -301,4 +302,221 @@ function seedDemoExtras(state: StateService): boolean {
   }
 
   return seeded;
+}
+
+/* ============================ 形状快照 ============================
+   2026-09-14 补播。
+
+   起因：验收报告首页加了走向折线之后，预览实例上只有 5 条改动 / 3 份报告，
+   曲线是三条贴零的直线——这一屏的形状（稀疏、爆发、三档交叉）在演示数据上
+   一点都看不出来，等于没法验收。所以把主实例 2026-09-09 的形状原样搬过来。
+
+   两件事必须说清：
+
+   1. **这是快照，不是这台实例上的真实部署**。项目描述、分支备注、报告正文
+      三处都写明了，且项目 id 一律带 snap- 前缀，与真实项目不可能撞。
+      （no-rootless-tree：不属于本实例的数据必须标出来源与时点。）
+   2. **时间存的是相对值**。快照里每条记的是「距播种时刻多少天」，播种时才
+      换算成绝对时刻。存绝对日期的话，几个月后 90 天窗口会把整批数据甩到窗外，
+      页面又变回空的——演示数据会自己腐烂，而且没人会发现。 */
+
+import snapshot from './preview-demo-snapshot.json' with { type: 'json' };
+
+/** 快照项目的 id 前缀。补播只认它，真实项目一律不碰。 */
+const SNAPSHOT_PREFIX = 'snap-';
+
+interface SnapBranch {
+  id: string;
+  projectId: string | null;
+  branch: string;
+  createdAgo: number | null;
+  deployed: boolean;
+  deployAgo: number | null;
+}
+interface SnapReport {
+  title: string;
+  projectId: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  prNumber: number | null;
+  verdict: string | null;
+  tier: string | null;
+  defectCounts: Record<string, number> | null;
+  createdAgo: number | null;
+}
+
+const daysAgoIso = (base: number, days: number | null): string | null =>
+  days == null ? null : new Date(base - days * 86_400_000).toISOString();
+
+/**
+ * 补播形状快照。已经播过的逐条跳过，所以升级 CDS 之后跑着的实例也补得上。
+ *
+ * 分支按 id 比对，报告按标题比对（报告 id 是创建时生成的，没有稳定标识）。
+ */
+export function seedPreviewInstanceSnapshot(state: StateService): boolean {
+  const snapProjects = snapshot.projects as Array<{ id: string; name: string }>;
+  const snapBranches = snapshot.branches as SnapBranch[];
+  const snapReports = snapshot.reports as SnapReport[];
+  if (!snapProjects.length) return false;
+
+  // 和首播同一条底线：库里出现任何一个既不是演示项目、也不是快照项目的项目，
+  // 就说明这台实例挂着真实数据（例如指到了外部 mongo），一条都不许播。
+  // 首播靠「零项目」守这条，补播不能照抄那个判据（它永远为假），得自己判。
+  const foreign = state
+    .getProjects()
+    .some((p) => p.id !== PREVIEW_DEMO_PROJECT_ID && !isSnapshotProjectId(p.id));
+  if (foreign) return false;
+
+  const base = Date.now();
+  const nowIso = new Date(base).toISOString();
+  const captured = String(snapshot.capturedAt).slice(0, 10);
+  // 标记词沿用「演示数据」四个字，不另起一套：已有守卫扫的就是它，
+  // 换个说法等于让那条守卫对这批新数据视而不见（形状 1：判据比范围窄）。
+  const origin = `演示数据（形状快照）：取自主实例 ${captured} 的真实形状，`
+    + '用于验收界面在真实数据量下的样子，不对应本实例上的任何部署。';
+
+  let seeded = false;
+
+  const existingProjects = new Set(state.getProjects().map((p) => p.id));
+  for (const p of snapProjects) {
+    if (existingProjects.has(p.id)) continue;
+    state.addProject({
+      id: p.id,
+      slug: p.id,
+      name: p.name,
+      description: origin,
+      kind: 'git',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    } as Project);
+    seeded = true;
+  }
+
+  const existingBranches = new Set(state.getAllBranches().map((b) => b.id));
+  for (const b of snapBranches) {
+    if (!b.projectId || existingBranches.has(b.id)) continue;
+    const createdAt = daysAgoIso(base, b.createdAgo) ?? nowIso;
+    // 起过预览的记成 idle 而不是 running：这台实例上没有任何容器，
+    // 标成 running 会让分支列表显示一排点不开的「运行中」，那才是骗人。
+    state.addBranch({
+      id: b.id,
+      projectId: b.projectId,
+      branch: b.branch,
+      worktreePath: `/tmp/preview-snapshot/${b.id}`,
+      status: 'idle',
+      createdAt,
+      lastDeployAt: daysAgoIso(base, b.deployAgo) ?? undefined,
+      deployCount: b.deployed ? 1 : 0,
+      notes: origin,
+      services: {},
+    } as BranchEntry);
+    existingBranches.add(b.id);
+    seeded = true;
+  }
+
+  // 补一遍已经播过、但当时播错的那些。
+  //
+  // 补播是「按 id 比对、缺了才加」，它天生修不了已经落库的错数据——而预览实例的
+  // state 跨部署保留，所以一次播错就会一直错下去，改了抽取端也没用（实机验到过：
+  // 页面上「没起预览 39」在修完抽取端、重新部署之后纹丝不动）。
+  // 修复面刻意开得极窄：只认快照项目名下的分支，只补「快照说起过预览、库里却没有
+  // 部署时刻」这一种，其余字段一律不碰，用户改过的备注之类也不动。
+  for (const b of snapBranches) {
+    if (!b.projectId || b.deployAgo == null) continue;
+    const stored = state.getBranch(b.id);
+    if (!stored || !isSnapshotProjectId(stored.projectId) || stored.lastDeployAt) continue;
+    stored.lastDeployAt = daysAgoIso(base, b.deployAgo)!;
+    seeded = true;
+  }
+
+  // 已经播过的那批：把时间重新按相对天数锚到「现在」。
+  //
+  // 相对天数本来就是为了防腐烂，但它此前只在**首播**那一刻换算一次。预览实例的
+  // state 跨部署保留，于是那批报告的 createdAt 永远停在第一次播种的时刻，
+  // 90 天之后整批滑出 buildPipelineSeries 的窗口，演示走向变回空图——正是这套
+  // 设计要防的那件事，只是换了个地方发生（Codex review 抓到）。
+  //
+  // 只动快照自己播的那批（createdBy 认领 + 标题在快照里），且只在漂移超过一天时
+  // 才改，避免每次启动都把整库写一遍。
+  // 标题在快照里不唯一（同一验收目标多次归档）。插入时按 existingTitles 只落**第一条**，
+  // 所以这里也必须取第一条：用 new Map(...) 直接建会保留最后一条，它的 createdAgo 与
+  // 实际落库的那条不同，于是每次启动都判成「漂移了」，把整库重写一遍。
+  const snapReportByTitle = new Map<string, SnapReport>();
+  for (const r of snapReports) if (!snapReportByTitle.has(r.title)) snapReportByTitle.set(r.title, r);
+  for (const meta of state.listAcceptanceReports(null)) {
+    if (meta.createdBy !== 'preview-instance-seed') continue;
+    const snap = snapReportByTitle.get(meta.title);
+    if (!snap) continue;
+    const want = daysAgoIso(base, snap.createdAgo);
+    if (!want) continue;
+    const driftMs = Math.abs(Date.parse(meta.createdAt || '') - Date.parse(want));
+    if (!Number.isFinite(driftMs) || driftMs < 86_400_000) continue;
+    meta.createdAt = want;
+    meta.updatedAt = want;
+    seeded = true;
+  }
+  for (const b of snapBranches) {
+    if (!b.projectId || b.createdAgo == null) continue;
+    const stored = state.getBranch(b.id);
+    if (!stored || !isSnapshotProjectId(stored.projectId)) continue;
+    const want = daysAgoIso(base, b.createdAgo);
+    if (!want) continue;
+    const driftMs = Math.abs(Date.parse(stored.createdAt || '') - Date.parse(want));
+    if (!Number.isFinite(driftMs) || driftMs < 86_400_000) continue;
+    stored.createdAt = want;
+    if (b.deployAgo != null) stored.lastDeployAt = daysAgoIso(base, b.deployAgo)!;
+    seeded = true;
+  }
+
+  /*
+   * 演示正文按标题确定性生成——快照才是它的权威副本，容器本地盘只是那份副本的落地。
+   * 这跟「账在哪货就在哪」不冲突：那条规则的判据是「把容器删了重建，这条记录还取得出
+   * 货吗」，而这里每次启动都能从快照原样重算出来，所以重建之后取得出——**前提是真的
+   * 重算一遍**。此前只按标题判重，元数据跨部署留在库里、正文随容器没了，于是判重
+   * 直接跳过，那批报告点开永远 404（Codex review 抓到）。
+   * 所以这里不能只看「有没有这条记录」，还要看「它的正文还在不在」。
+   */
+  const bodyOf = (title: string): string =>
+    `<h1>${title}</h1><p>${origin}</p><p>本页只保留标题、结论与归档时刻，用于呈现列表与统计的形状；原始正文不在快照内。</p>`;
+  const seededByTitle = new Map<string, string>();
+  for (const r of state.listAcceptanceReports(null)) {
+    // 只认自己播的那批：别人写的报告正文丢了是另一回事，不许在这里替他重写。
+    if (r.createdBy !== 'preview-instance-seed') continue;
+    if (!seededByTitle.has(r.title)) seededByTitle.set(r.title, r.id);
+  }
+  for (const r of snapReports) {
+    const existingId = seededByTitle.get(r.title);
+    if (existingId) {
+      if (state.readAcceptanceReportContent(existingId) === undefined) {
+        state.updateAcceptanceReport(existingId, { content: bodyOf(r.title) });
+        seeded = true;
+      }
+      continue;
+    }
+    const createdAt = daysAgoIso(base, r.createdAgo) ?? nowIso;
+    const created = state.createAcceptanceReport({
+      title: r.title,
+      format: 'html',
+      content: bodyOf(r.title),
+      projectId: r.projectId,
+      branchId: null,
+      branch: r.branch,
+      commitSha: r.commitSha,
+      prNumber: r.prNumber,
+      verdict: (r.verdict as 'pass' | 'conditional' | 'fail' | null) ?? null,
+      tier: r.tier,
+      defectCounts: r.defectCounts,
+      createdBy: 'preview-instance-seed',
+      createdAt,
+    });
+    seededByTitle.set(r.title, created.id);
+    seeded = true;
+  }
+
+  return seeded;
+}
+
+/** 快照项目判定，给守卫与调用方共用，别在别处再写一遍前缀比较。 */
+export function isSnapshotProjectId(id: string | null | undefined): boolean {
+  return typeof id === 'string' && id.startsWith(SNAPSHOT_PREFIX);
 }
