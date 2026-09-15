@@ -57,3 +57,5 @@
 | fix | prd-api | EnsureUsable 补 agent 榜会话数覆盖率判据（只对 agent 榜判，分数榜没这一列）：对方改会话数那一格的写法时每行读成 null，而指标格解析成功、形状判定通过，整份快照被接受、页面那一列变横线而陈旧度判绿 |
 | fix | prd-api | 「读哪一份 / 写哪一条」的口径收敛到 ModelLeaderboardScope 一处（挑选 + 文档 Id 派生），Get / Top 共用一个读取方法，四个读取点不再各写一遍排序 |
 | test | prd-api | 新增 11 条作用域守卫（权威部署行为不变、兄弟分支互不可见、预览兜底与自己优先、文档 Id 在权威部署上逐字不变即不需迁移）+ 3 条会话数覆盖率守卫 |
+| docs | platform | model_leaderboard_snapshots 登记进两处持久化 SSOT（codebase-snapshot 的集合清单、data-dictionary 的集合表）——codebase-snapshot 规则的交叉校验第 4 条本来就要求 MongoDbContext 改动要回写数据字典 |
+| docs | platform | codebase-snapshot 的「MongoDB 集合 (123 个)」固定计数换成「去 grep 现查」：实测 MongoDbContext 有 277 个集合，那个数字差了一倍多且不会有任何东西提醒它过期 |
