@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Helpers;
@@ -26,11 +27,16 @@ public class SubmissionsController : ControllerBase
 
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
+    private readonly ILogger<SubmissionsController> _logger;
 
-    public SubmissionsController(MongoDbContext db, IAssetStorage assetStorage)
+    public SubmissionsController(
+        MongoDbContext db,
+        IAssetStorage assetStorage,
+        ILogger<SubmissionsController> logger)
     {
         _db = db;
         _assetStorage = assetStorage;
+        _logger = logger;
     }
 
     /// <summary>
@@ -391,6 +397,7 @@ public class SubmissionsController : ControllerBase
             candidates,
             currentUsersById,
             _assetStorage,
+            _logger,
             ct);
 
         return Ok(ApiResponse<object>.Ok(new { creators }));
@@ -400,11 +407,13 @@ public class SubmissionsController : ControllerBase
         IReadOnlyList<PublicSubmissionCreatorCandidate> candidates,
         IReadOnlyDictionary<string, User> currentUsersById,
         IAssetStorage assetStorage,
+        ILogger logger,
         CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(candidates);
         ArgumentNullException.ThrowIfNull(currentUsersById);
         ArgumentNullException.ThrowIfNull(assetStorage);
+        ArgumentNullException.ThrowIfNull(logger);
 
         using var gate = new SemaphoreSlim(
             CreatorAvatarExistenceConcurrency,
@@ -436,6 +445,19 @@ public class SubmissionsController : ControllerBase
                     {
                         avatarFileName = null;
                     }
+                }
+                catch (Exception error) when (
+                    error is not OperationCanceledException || !ct.IsCancellationRequested)
+                {
+                    // 对象存储抖一次不该把整张创作者榜打成 500：这条校验只为「别把已删对象露出去」，
+                    // 查不清就按不可用降级、前端退回首字母占位。降级必须留痕，不许静默
+                    // （predicate-and-wiring-discipline 形状 10）。
+                    logger.LogWarning(
+                        error,
+                        "公开创作者头像存在性校验失败，本次按头像不可用降级 ownerUserId={OwnerUserId} objectKey={ObjectKey}",
+                        candidate.OwnerUserId,
+                        objectKey);
+                    avatarFileName = null;
                 }
                 finally
                 {

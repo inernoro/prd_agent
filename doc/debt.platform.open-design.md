@@ -279,3 +279,33 @@ run 上并随终态事件下发，前端照旧提示「已生成，但归属团�
 
 现状影响：需要「删除」与「发布或保存分享」几乎同时发生才会命中，且后果是对象残留，
 不是数据错乱或越权。
+
+## 复审复提的三条，处置各不相同（2026-09-15 第十五轮）
+
+### 一、`builtin-web-pages` 没带 `wip: true`：不改（C 类，证据不足）
+
+AGENTS.md 9 要求的是**新 Agent** 在通过 8 验收之前带 `wip: true`。网页托管不是新 Agent：
+`origin/main` 的路由注册表里 `/web-pages` 早已是一条**没有** `wip` 的正式导航项，
+首页快捷入口与双主题验收标的也都在主干上。本 PR 那条提交（`5a1ba3348`）只补了它**缺失的
+移动端百宝箱入口**——同一个已转正的功能，在另一个入口上补齐。
+
+给它挂 `wip: true` 会让同一个功能在导航里是正式、在百宝箱里是未完成，两个入口自相矛盾，
+且把一个早就验收过的功能倒退回未完成态。所以不改。
+
+### 二、OpenDesign run 不产出 `model` 分片：维持 B 类，结论不变
+
+与上一节「不在本 PR 做的两条」第一条是同一条，复审换了个入口（设计产物执行器的远程完成路径）
+再提了一次。四条理由（值的来源在进程外 / 容器自报不算证据 / 跨三层协议变更 / 当前无法验证）
+仍然成立，处置不变：等 CDS 自更新后按「查网关调用记录」补，不靠容器自报。
+
+### 三、两条已按 A 类修掉
+
+- **就绪探针超时不取消下游**（`GatewayConsoleReadinessProbe`）：`WaitAsync(超时)` 只让调用方
+  走人，Mongo 探测本身留在后台跑——Mongo 掉线期间每 5 秒堆一条在途操作。改成 linked CTS
+  `CancelAfter`，令牌真的传进探测；外层仍留一层 `WaitAsync(linked)`，探测实现不认令牌时
+  5 秒上限照样成立。守卫：`CheckAsync_ShouldCancelMongoProbeWhenTimeoutElapses`。
+- **一个头像查存在性失败打死整张创作者榜**（`SubmissionsController`）：`Task.WhenAll` 里任一
+  `ExistsAsync` 抛异常就是 500。这条校验只为「别把已删对象露出去」，查不清按头像不可用降级
+  即可，前端退回首字母占位；降级留痕（形状 10），调用方取消仍照常上抛。守卫：
+  `ResolveCreators_ShouldDegradeAvatarWhenStorageProbeThrows` +
+  `ResolveCreators_ShouldStillPropagateCallerCancellation`。

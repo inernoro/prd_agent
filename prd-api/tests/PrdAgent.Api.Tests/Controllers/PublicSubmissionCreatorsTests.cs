@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
@@ -43,6 +45,7 @@ public sealed class PublicSubmissionCreatorsTests
             candidates,
             currentUsers,
             storage.Object,
+            NullLogger.Instance,
             cts.Token);
 
         Assert.Collection(
@@ -109,10 +112,104 @@ public sealed class PublicSubmissionCreatorsTests
             candidates,
             currentUsers,
             storage.Object,
+            NullLogger.Instance,
             CancellationToken.None);
 
         Assert.Equal(60, creators.Count);
         Assert.InRange(maxInFlight, 1, 8);
+    }
+
+    [Fact]
+    public async Task ResolveCreators_ShouldDegradeAvatarWhenStorageProbeThrows()
+    {
+        // 对象存储抖一次只该让这一个头像退回占位，不该把整张创作者榜打成 500。
+        var candidates = new[]
+        {
+            new SubmissionsController.PublicSubmissionCreatorCandidate(
+                "flaky", "抖动用户", "boom.jpg", 5),
+            new SubmissionsController.PublicSubmissionCreatorCandidate(
+                "healthy", "正常用户", "fine.jpg", 2),
+        };
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage
+            .Setup(x => x.ExistsAsync("icon/backups/head/boom.jpg", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("storage blip"));
+        storage
+            .Setup(x => x.ExistsAsync("icon/backups/head/fine.jpg", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(true);
+        var logger = new RecordingLogger();
+
+        var creators = await SubmissionsController.ResolvePublicSubmissionCreatorsAsync(
+            candidates,
+            new Dictionary<string, User>(StringComparer.Ordinal),
+            storage.Object,
+            logger,
+            CancellationToken.None);
+
+        Assert.Collection(
+            creators,
+            creator =>
+            {
+                Assert.Equal("抖动用户", creator.OwnerUserName);
+                Assert.Null(creator.OwnerAvatarFileName);
+            },
+            creator =>
+            {
+                Assert.Equal("正常用户", creator.OwnerUserName);
+                Assert.Equal("fine.jpg", creator.OwnerAvatarFileName);
+            });
+        // 降级不许静默（predicate-and-wiring-discipline 形状 10）
+        Assert.Contains(logger.Warnings, line => line.Contains("flaky", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ResolveCreators_ShouldStillPropagateCallerCancellation()
+    {
+        var candidates = new[]
+        {
+            new SubmissionsController.PublicSubmissionCreatorCandidate(
+                "user", "用户", "avatar.png", 1),
+        };
+        using var cts = new CancellationTokenSource();
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage
+            .Setup(x => x.ExistsAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns(async (string _, CancellationToken token) =>
+            {
+                await cts.CancelAsync();
+                token.ThrowIfCancellationRequested();
+                return true;
+            });
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => SubmissionsController.ResolvePublicSubmissionCreatorsAsync(
+                candidates,
+                new Dictionary<string, User>(StringComparer.Ordinal),
+                storage.Object,
+                NullLogger.Instance,
+                cts.Token));
+    }
+
+    private sealed class RecordingLogger : ILogger
+    {
+        public List<string> Warnings { get; } = [];
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (logLevel >= LogLevel.Warning)
+            {
+                Warnings.Add(formatter(state, exception));
+            }
+        }
     }
 
     private static User User(string userId, string displayName, string? avatarFileName) => new()
