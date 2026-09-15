@@ -5,3 +5,4 @@
 | fix | platform | 修 Codex review 两条：Branch Image 与 CI 都是 push 后才有结论（原表述与「校验全绿才准 push」自相矛盾）；CI 那档 xUnit 带 Category!=Integration&Manual 过滤，不是全量，不许写成「全量通过」 |
 | fix | platform | 修 Codex 第二轮两条：AGENTS.md §8 的「本地 + CDS 双验证」同步为权威位置表的判据；sync-cursor-rules.sh 里硬编码的 description 跟着规则一起更新，否则 Cursor 侧看不到扩大后的触发场景 |
 | fix | platform | 修 Codex 第三轮两条：权威位置表补齐 prd-desktop（含 Rust 四道）/ cds / llmgw / prd-video / Dockerfile / 脚本各自的判据（其中 prd-video、Dockerfile、脚本没有任何 CI job，只能本地跑）；lint 单列一行并写明只有本地能证明——Admin Dashboard Build 只跑 tsc / vitest / vite build，不含 ESLint |
+| fix | platform | 修 Codex 第四轮三条：权威位置表逐行按真实 workflow 步骤校准——prd-desktop 的 lint 与 vitest 那个 job 不跑（只能本地）；cds 有两条流水线，专用 CDS CI 还跑 UI 审计/Playwright 冒烟/Docker 构建；脚本与 Dockerfile 大量已有 CI 覆盖（release-script-test 的显式清单、branch-image、cds.yml），「没有任何 CI」收窄到 prd-video、docker-compose 与清单外的脚本 |

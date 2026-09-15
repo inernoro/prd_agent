@@ -19,10 +19,13 @@
 | `prd-api` 的 Integration / Manual 类测试 | 本地 `dotnet test` 去掉 filter 自己跑 | 本地（要真 MongoDB + ffmpeg） | 没有任何 CI 会跑它们（见第二节末） |
 | `prd-admin` 的 tsc / vitest / vite build | CI 的 `Admin Dashboard Build` job 绿（本地 `pnpm` 跑一遍更快） | 本地 或 Actions | 本地即时；CI 同上 |
 | `prd-admin` 的 **lint** | 只有本地 `pnpm lint`——`Admin Dashboard Build` 没有 lint 步骤（它只跑 Type check / Run tests / Build，而 `build` 就是 `tsc && vite build`） | **只能本地** | 本地即时 |
-| `prd-desktop` 前端 `.ts/.tsx` 与 `src-tauri/**/*.rs` | CI 的 `Desktop Client Check` job 绿：tsc、vite build、`cargo check`（dev + release）、`cargo fmt --check`、`cargo clippy -- -D warnings` | 本地 或 Actions | push 之后，且同样 **feature 分支不自动跑** |
-| `cds/**` | CI 的 `CDS Build & Test` job 绿：tsc + vitest（无 lint） | 本地 或 Actions | 同上 |
+| `prd-desktop/src-tauri/**/*.rs` | CI 的 `Desktop Client Check` job 绿：`cargo check`（dev + release）、`cargo fmt --check`、`cargo clippy -- -D warnings` | 本地 或 Actions | push 之后，且同样 **feature 分支不自动跑** |
+| `prd-desktop` 前端 `.ts/.tsx` | tsc 与 vite build 由同一个 job 复核；**lint 与 vitest 只能本地**——那个 job 没有这两步，而 `prd-desktop/src` 下确实有五个测试文件 | tsc/build：本地或 Actions；lint/test：**只能本地** | 同上 |
+| `cds/**` | 两条流水线，都要看：`CI` 的 `CDS Build & Test`（tsc + vitest）与**专用的 `CDS CI`**（`cds.yml`：build、`audit:ui` UI 回归审计、vitest、两组 Playwright 移动端冒烟、`cds/Dockerfile` 构建）。前者绿不代表后者绿 | 本地 或 Actions | 同上 |
 | `llmgw/**` | `llmgw/AGENTS.md` 的模块校验表。注意 `llmgw/serving` 在 `PrdAgent.sln` 里（`Server Build & Test` 覆盖它），**`llmgw/console-api` 不在**，只能自己 `dotnet build` | 本地（console-api / web）或 Actions（serving） | 本地即时；CI 同上 |
-| `prd-video/**`、Dockerfile、`docker-compose*.yml`、`scripts/**`、技能目录里的可执行脚本 | **没有任何 CI job 会验它们**——只能本地跑（模块自己的 `AGENTS.md` + AGENTS.md §5.2），跑不了就在交付里明说没验过 | 只能本地 | 本地即时 |
+| 发布链路脚本与部分技能脚本 | CI 的 `Production Release Script Test` job 绿。它跑的是一份**显式清单**（`exec_dep.sh`、`scripts/lib/*`、`scripts/tests/test_*.py`、`*.test.mjs`、cdscli、周报/日报技能的脚本……），清单见 `ci.yml` 的 `release-script-test` path filter | 本地 或 Actions | 同上 |
+| Dockerfile | 已接线的那几个由镜像构建作业验：`prd-api` / `prd-admin` / `llmgw` 三家走 `branch-image.yml`（push 即触发），`cds/Dockerfile` 走 `cds.yml` 的 `Docker Build Check` | Actions | push 之后 |
+| `prd-video/**`、`docker-compose*.yml`、**不在上面那份清单里的** `scripts/**` 与技能脚本 | **没有任何 CI job 会验它们**（`grep -rn "prd-video" .github/workflows/` 零命中）——只能本地跑（模块自己的 `AGENTS.md` + AGENTS.md §5.2），跑不了就在交付里明说没验过 | 只能本地 | 本地即时 |
 | 页面打得开、流程跑得通 | 预览域名上的真人路径 + 截图 | CDS 分支预览 | push 即部署 |
 | 后端接口行为 | 预览域名上打真实端点、断言返回值 | CDS 分支预览 | push 即部署 |
 
@@ -123,7 +126,8 @@ which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PAT
 - [ ] 新加的测试文件，csproj 里链进去了吗？它真的被编译过吗？
 - [ ] 本地能跑的我先跑了吗（快），还是白等了一轮 CI？
 - [ ] 我说的「lint 过了」是本地真跑的吗？没有任何 CI job 会跑 ESLint。
-- [ ] 改的是表里那些**没有 CI** 的东西（prd-video / Dockerfile / 脚本）吗？那就只能本地跑，跑不了要明说。
+- [ ] 改的是脚本 / Dockerfile 吗？先去 `ci.yml` 的 `release-script-test` path filter 里查一眼它在不在清单里——在清单里就有远端判据，不在才是「只能本地」。
+- [ ] 改的是 `cds/**` 吗？`CDS Build & Test` 只是两条流水线里的一条，专用的 `CDS CI` 还跑 UI 审计、Playwright 冒烟与 Docker 构建。
 - [ ] 交付叙述里还有「本地」「我这边」「环境没有」这类词吗？划掉之后还成立吗？
 - [ ] 有哪一项确实没做到吗？我是明说了，还是含混过去了？
 
