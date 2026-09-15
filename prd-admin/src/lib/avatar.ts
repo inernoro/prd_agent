@@ -95,6 +95,17 @@ export function normalizePublicAssetBaseUrl(value?: string | null): string {
   }
 }
 
+/**
+ * 资源基址的可渲染形态：绝对 http(s) 地址，或本地开发（ASSETS_PROVIDER=local）时后端下发的
+ * 同源相对前缀 `/local-assets`。协议相对的 `//host` 不算同源，照旧拒绝。
+ */
+export function normalizeRenderableAssetBaseUrl(value?: string | null): string {
+  const raw = (value ?? '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  if (raw.startsWith('/')) return raw.startsWith('//') ? '' : raw;
+  return normalizePublicAssetBaseUrl(raw);
+}
+
 function normalizeRenderableAssetUrl(value?: string | null): string {
   const raw = (value ?? '').trim();
   if (!raw) return '';
@@ -156,7 +167,9 @@ export function resolveNoHeadAvatarUrl(): string {
  * 所以上传流程与预览要继续指向真实的对象存储地址，不能拿打包版冒充「你刚上传的那张」。
  */
 export function resolveManagedNoHeadAvatarUrl(): string {
-  const cosBase = getAvatarBaseUrl();
+  // 这里要和后端 AvatarUrlBuilder.ResolvePublicBaseUrl 同口径：local 提供方下发的是相对前缀 /local-assets，
+  // 只认绝对地址会把本地开发环境的上传目标判成「未配置」，预览区永远空着。
+  const cosBase = normalizeRenderableAssetBaseUrl(useAuthStore.getState().cdnBaseUrl);
   if (!cosBase) return '';
   return joinUrl(joinUrl(cosBase, AVATAR_PATH_PREFIX), DEFAULT_NOHEAD_FILE);
 }

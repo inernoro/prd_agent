@@ -6,6 +6,7 @@ import {
   LOCAL_NOHEAD_AVATAR,
   isRemoteNoHeadAvatarUrl,
   normalizePublicAssetBaseUrl,
+  normalizeRenderableAssetBaseUrl,
   resolveAvatarUrl,
   resolveManagedNoHeadAvatarUrl,
   resolveNoHeadAvatarUrl,
@@ -59,6 +60,21 @@ describe('默认头像不依赖外部网络（2026-09-14 首页头像备用资�
     expect(resolveManagedNoHeadAvatarUrl()).toBe('https://cfi.miduo.org/icon/backups/head/nohead.png');
     useAuthStore.setState({ cdnBaseUrl: '' });
     expect(resolveManagedNoHeadAvatarUrl()).toBe('');
+  });
+
+  it('本地开发的 /local-assets 相对基址也能解析出托管默认头像地址', () => {
+    // docker-compose.dev.yml 的 ASSETS_PROVIDER=local：后端 AvatarUrlBuilder.ResolvePublicBaseUrl 下发 /local-assets
+    useAuthStore.setState({ cdnBaseUrl: '/local-assets' });
+    expect(resolveManagedNoHeadAvatarUrl()).toBe('/local-assets/icon/backups/head/nohead.png');
+    useAuthStore.setState({ cdnBaseUrl: '/local-assets/' });
+    expect(resolveManagedNoHeadAvatarUrl()).toBe('/local-assets/icon/backups/head/nohead.png');
+    // 协议相对与非 http(s) 协议照旧拒绝，不能借相对路径的口子放进来
+    useAuthStore.setState({ cdnBaseUrl: '//evil.example' });
+    expect(resolveManagedNoHeadAvatarUrl()).toBe('');
+    useAuthStore.setState({ cdnBaseUrl: 'ftp://cfi.miduo.org' });
+    expect(resolveManagedNoHeadAvatarUrl()).toBe('');
+    expect(normalizeRenderableAssetBaseUrl('/local-assets/')).toBe('/local-assets');
+    expect(normalizeRenderableAssetBaseUrl('https://cfi.miduo.org/')).toBe('https://cfi.miduo.org');
   });
 
   it('同源默认头像真的随前端打包，且足够小', () => {
