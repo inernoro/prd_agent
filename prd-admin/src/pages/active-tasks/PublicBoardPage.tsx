@@ -55,13 +55,13 @@ export function PublicBoardPage() {
         <span className="atb-group-label">{board?.headline ?? data.headline}</span>
 
         {board ? (
-          <div className="atb-list">
-            {board.people.length === 0 && <div className="atb-empty">今天还没有人汇报在做什么。</div>}
+          <div className="atb-list" role="list">
+            {board.people.length === 0 && <div className="atb-empty">还没有人在做什么</div>}
             {board.people.map((p) => {
               const alert = p.status === 'blocked' || p.status === 'empty';
               const stackAlert = p.standbyCount === 0 || p.standbyCount >= heavy;
               return (
-                <div className="atb-row" key={p.userId} style={{ minHeight: 62 }}>
+                <div className="atb-row atb-row--person" role="listitem" key={p.userId}>
                   <span className={`atb-avatar${alert ? ' atb-avatar--alert' : ''}`}>{p.displayName.slice(0, 1)}</span>
                   <div className="atb-row__body">
                     <span className="atb-row__title">{p.displayName}</span>

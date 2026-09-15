@@ -139,6 +139,10 @@
   background: var(--border-faint);
 }
 
+/* 带头像的行（团队 / 匿名看板）左缘更靠右：18 padding + 34 头像 + 14 间距 */
+.atb-list > .atb-row--person + *::before,
+.atb-list > * + .atb-row--person::before { left: 66px; }
+
 .atb-row {
   display: flex;
   align-items: center;
