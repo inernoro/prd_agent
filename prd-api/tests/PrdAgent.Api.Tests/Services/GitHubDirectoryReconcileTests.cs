@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.RegularExpressions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using Xunit;
@@ -15,24 +14,6 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public class GitHubDirectoryReconcileTests
 {
-    private static string RepoRoot()
-    {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
-        {
-            if (File.Exists(Path.Combine(dir.FullName, "CLAUDE.md"))
-                && Directory.Exists(Path.Combine(dir.FullName, "prd-api")))
-            {
-                return dir.FullName;
-            }
-            dir = dir.Parent;
-        }
-        throw new InvalidOperationException("找不到仓库根：向上没有同时含 CLAUDE.md 与 prd-api 的目录");
-    }
-
-    private static string SyncServiceSource() => File.ReadAllText(Path.Combine(
-        RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Services", "GitHubDirectorySyncService.cs"));
-
     private static DocumentEntry Child(string? githubPath, string? sourceUrl = null) => new()
     {
         Title = githubPath ?? sourceUrl ?? "未命名",
@@ -209,30 +190,10 @@ public class GitHubDirectoryReconcileTests
     public void 列目录的地址逐段转义路径且带上ref()
     {
         // 目录名里合法的 # 会被当成片段、? 会被当成查询串；斜杠是分隔符必须留着。
-        var url = GitHubDirectorySyncService.BuildContentsUrl("o", "r", "doc/a b#c", "abc123");
+        var url = GitHubDirectorySyncService.BuildContentsUrl(
+            "o", "r", "doc/a b#c", new GitHubDirectorySyncService.PinnedRef("abc123"));
 
         Assert.Equal("https://api.github.com/repos/o/r/contents/doc/a%20b%23c?ref=abc123", url);
-    }
-
-    [Fact]
-    public void 定不住提交号就整轮中止而不是退回按分支名跑()
-    {
-        // 上面那条判据敢把 404 当成「远端删光」，唯一的依据是这一轮读的是不可变的提交号。
-        // 一旦有人给它补一条「解析不出来就按分支名列」的退路，判据的前提就没了：
-        // 分支会变，两次请求之间先删目录再恢复，事后探分支只会探到「好好的」，
-        // 于是把刚恢复的文档连历史版本一起删掉。
-        //
-        // 这条退路即使加回来，编译照过、上面两条判据照绿（形状 2：静默退化），
-        // 所以只能靠源码守卫盯住：本轮的 ref 只许来自提交号。
-        var source = SyncServiceSource();
-
-        var assignments = Regex.Matches(source, @"var reference = (?<rhs>[^;]+);")
-            .Select(m => m.Groups["rhs"].Value.Trim())
-            .ToHashSet();
-
-        // 只许两种来源：源头是解析出来的提交号，下游是把本轮真正用过的那个 ref 原样传下去。
-        // 任何第三种写法（`commitSha ?? branch`、重新拿分支名等）都会让这条断言变红。
-        Assert.Equal(new[] { "commitSha", "listing.Reference" }.ToHashSet(), assignments);
     }
 
     [Fact]

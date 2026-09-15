@@ -295,7 +295,7 @@ public class GitHubDirectorySyncService
         string repo,
         string branch,
         // 本轮列目录实际用的 ref（解析成功即提交号）：正文与修改时间都按它取
-        string reference,
+        PinnedRef reference,
         string? accessToken,
         CancellationToken ct,
         bool isNew = false)
@@ -577,7 +577,7 @@ public class GitHubDirectorySyncService
     /// 取内容、取最近修改时间都要用它，否则「清单来自提交 A、正文取自提交 B」，
     /// 会把 B 的正文按 A 的版本号存起来，直到下次同步都对不上。
     /// </summary>
-    private sealed record DirectoryListing(List<GitHubFile> Files, bool Complete, string Reference);
+    private sealed record DirectoryListing(List<GitHubFile> Files, bool Complete, PinnedRef Reference);
 
     /// <summary>
     /// 目录列不出来（404）时，能不能当成「远端把它删光了」去调和。
@@ -625,6 +625,17 @@ public class GitHubDirectorySyncService
         return i < 0 ? path : path[(i + 1)..];
     }
 
+    /// <summary>
+    /// 本轮定住的那个提交号。做成独立类型而不是裸 string，是因为「这一轮所有读取共用同一份快照」
+    /// 这条不变量此前只能靠一条扫源码的守卫盯着——重命名一下它就假红，而某个新写的辅助函数
+    /// 改传分支名它又照样绿。换成类型之后，把分支名塞进任何一个要提交号的位置都编译不过，
+    /// 那条守卫也就可以删掉了：能用类型表达的不变量，不许降级成测试断言。
+    /// </summary>
+    internal readonly record struct PinnedRef(string CommitSha)
+    {
+        public override string ToString() => CommitSha;
+    }
+
     /// <summary>解析 ref 的请求地址。纯函数：测试直接断言它吐出来的地址，不去扫源码字面量。</summary>
     internal static string BuildRefResolveUrl(string owner, string repo, string reference)
         // /commits/{ref} 对分支、标签、提交号一视同仁；/branches/{ref} 只认分支，
@@ -633,11 +644,11 @@ public class GitHubDirectorySyncService
          + $"/commits/{Uri.EscapeDataString(reference)}";
 
     /// <summary>列目录的请求地址。路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串。</summary>
-    internal static string BuildContentsUrl(string owner, string repo, string path, string reference)
+    internal static string BuildContentsUrl(string owner, string repo, string path, PinnedRef reference)
     {
         var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
         return $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
-             + $"/contents/{safePath}?ref={Uri.EscapeDataString(reference)}";
+             + $"/contents/{safePath}?ref={Uri.EscapeDataString(reference.CommitSha)}";
     }
 
     /// <summary>
@@ -668,6 +679,22 @@ public class GitHubDirectorySyncService
 
     /// <summary>取证的结果：结论 + 万一是因为失败而没有结论，那份失败的完整口径。</summary>
     private readonly record struct AbsenceProof(PathAbsence Outcome, GitHubFailure? Failure = null);
+
+    /// <summary>上溯到的那一级长什么样。四种各有各的处置，不许压成「成功 / 失败」两档。</summary>
+    private enum AncestorKind
+    {
+        /// <summary>它是个目录，清单拿到了。</summary>
+        Listed,
+        /// <summary>它是个**文件**——那么它下面不可能还有东西，目标必然不存在。</summary>
+        IsFile,
+        /// <summary>这一级也不在，继续往上找。</summary>
+        NotFound,
+        /// <summary>没问出结论（限额、权限、故障、网络）。</summary>
+        Failed,
+    }
+
+    private readonly record struct AncestorListing(
+        AncestorKind Kind, List<string>? Names = null, bool Complete = false, GitHubFailure? Failure = null);
 
     private async Task<RefResolution> ResolveRefCommitAsync(
         string owner, string repo, string reference, string? accessToken, CancellationToken ct)
@@ -720,7 +747,7 @@ public class GitHubDirectorySyncService
     /// 没看见 ≠ 不存在，而这条结论下一步就是删东西。
     /// </summary>
     private async Task<AbsenceProof> ProvePathAbsentAsync(
-        string owner, string repo, string path, string commitSha, string? accessToken, CancellationToken ct)
+        string owner, string repo, string path, PinnedRef reference, string? accessToken, CancellationToken ct)
     {
         var target = path;
         while (true)
@@ -728,23 +755,32 @@ public class GitHubDirectorySyncService
             var parent = ParentPathOf(target);
             if (parent == null) return new AbsenceProof(PathAbsence.Unproven);
 
-            var (failure, names, complete) =
-                await TryListEntryNamesAsync(owner, repo, parent, commitSha, accessToken, ct);
+            var ancestor = await TryListEntryNamesAsync(owner, repo, parent, reference, accessToken, ct);
 
-            if (failure?.Status == HttpStatusCode.NotFound)
+            switch (ancestor.Kind)
             {
-                // 上一级也不在：接着往上找一个列得出来的。
-                target = parent;
-                continue;
+                case AncestorKind.NotFound:
+                    // 上一级也不在：接着往上找一个列得出来的。
+                    target = parent;
+                    continue;
+
+                case AncestorKind.IsFile:
+                    // 上一级是个文件。文件下面不可能挂着目录，所以目标在这个提交上必然不存在——
+                    // 这同样是正面证据（目录被同名文件顶替掉是真实会发生的一种删除）。
+                    return new AbsenceProof(PathAbsence.ProvenAbsent);
+
+                case AncestorKind.Listed:
+                    // 清单可能被上游截断时不作数：没看见不等于不存在。
+                    if (!ancestor.Complete || ancestor.Names == null) return new AbsenceProof(PathAbsence.Unproven);
+                    return new AbsenceProof(ancestor.Names.Contains(NameOf(target), StringComparer.Ordinal)
+                        ? PathAbsence.ProvenPresent
+                        : PathAbsence.ProvenAbsent);
+
+                default:
+                    // 没问出结论时把失败口径一起交上去：取证这一步撞上限额，用户该看到的是
+                    // 「等到几点几分再试」，而不是最初那条 404 翻出来的「找不到 / 没有权限」。
+                    return new AbsenceProof(PathAbsence.Unproven, ancestor.Failure);
             }
-
-            // 没有结论时把失败口径一起交上去：取证这一步撞上限额，用户该看到的是
-            // 「等到几点几分再试」，而不是最初那条 404 翻出来的「找不到 / 没有权限」。
-            if (names == null || !complete) return new AbsenceProof(PathAbsence.Unproven, failure);
-
-            return new AbsenceProof(names.Contains(NameOf(target), StringComparer.Ordinal)
-                ? PathAbsence.ProvenPresent
-                : PathAbsence.ProvenAbsent);
         }
     }
 
@@ -752,26 +788,35 @@ public class GitHubDirectorySyncService
     /// 列出某个目录下每一项的名字。只为取证用，所以失败一律如实回空，不抛也不猜。
     /// complete 复用与主清单同一条完整性判据（看过滤前的原始条数），免得两处各判一次然后漂。
     /// </summary>
-    private async Task<(GitHubFailure? Failure, List<string>? Names, bool Complete)> TryListEntryNamesAsync(
-        string owner, string repo, string path, string reference, string? accessToken, CancellationToken ct)
+    private async Task<AncestorListing> TryListEntryNamesAsync(
+        string owner, string repo, string path, PinnedRef reference, string? accessToken, CancellationToken ct)
     {
         try
         {
             using var request = BuildApiRequest(BuildContentsUrl(owner, repo, path, reference), accessToken);
             using var response = await Http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode) return (GitHubFailure.From(response), null, false);
+            if (!response.IsSuccessStatusCode)
+            {
+                return new AncestorListing(
+                    response.StatusCode == HttpStatusCode.NotFound ? AncestorKind.NotFound : AncestorKind.Failed,
+                    Failure: GitHubFailure.From(response));
+            }
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
             // 目标是目录时上游回数组；回对象说明这一级是文件，那它就没有「下一级」可言。
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return (GitHubFailure.From(response), null, false);
+            // 上游对目录回数组、对文件回对象。回对象说明这一级是个文件——这不是失败，
+            // 是一条结论；把它当失败会拼出「读取失败（状态 200）」这种自相矛盾的话，
+            // 还会让「目录被同名文件顶替」这种真实的删除永远调和不掉。
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new AncestorListing(AncestorKind.IsFile);
 
             var names = doc.RootElement.EnumerateArray()
                 .Select(e => e.TryGetProperty("name", out var n) ? n.GetString() : null)
                 .Where(n => !string.IsNullOrEmpty(n))
                 .Select(n => n!)
                 .ToList();
-            return (null, names, IsListingComplete(doc.RootElement.GetArrayLength()));
+            return new AncestorListing(
+                AncestorKind.Listed, names, IsListingComplete(doc.RootElement.GetArrayLength()));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -780,7 +825,7 @@ public class GitHubDirectorySyncService
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
         {
             _logger.LogWarning(ex, "[GitHubSync] 取证时列 {Owner}/{Repo}/{Path} 失败", owner, repo, path);
-            return (null, null, false);
+            return new AncestorListing(AncestorKind.Failed);
         }
     }
 
@@ -812,7 +857,7 @@ public class GitHubDirectorySyncService
         }
 
         var commitSha = resolved.CommitSha!;
-        var reference = commitSha;
+        var reference = new PinnedRef(commitSha);
 
         using var request = BuildApiRequest(BuildContentsUrl(owner, repo, path, reference), accessToken);
         var response = await Http.SendAsync(request, ct);
@@ -829,7 +874,7 @@ public class GitHubDirectorySyncService
                 // 分辨它不能靠「再确认一次仓库读得到」——那证明的是仓库，不是这个路径：
                 // 两次请求之间授权抖一下，确认照样通过，而那条 404 其实是权限造成的。
                 // 所以去取一份说的是同一件事的**正面证据**：上一级目录的清单里有没有它。
-                var proof = await ProvePathAbsentAsync(owner, repo, path, commitSha, accessToken, ct);
+                var proof = await ProvePathAbsentAsync(owner, repo, path, reference, accessToken, ct);
 
                 if (ShouldReconcileAsEmpty(response.StatusCode, proof.Outcome))
                 {
@@ -905,12 +950,12 @@ public class GitHubDirectorySyncService
     /// 返回 UTC DateTime；失败/无结果返回 null（不抛异常，避免影响主同步流程）。
     /// </summary>
     private async Task<DateTime?> GetLatestCommitDateAsync(
-        string owner, string repo, string path, string branch, string? accessToken, CancellationToken ct)
+        string owner, string repo, string path, PinnedRef reference, string? accessToken, CancellationToken ct)
     {
         try
         {
             var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/commits"
-                    + $"?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(branch)}&per_page=1";
+                    + $"?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(reference.CommitSha)}&per_page=1";
             using var request = BuildApiRequest(url, accessToken);
             var response = await Http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
@@ -1043,7 +1088,7 @@ public class GitHubDirectorySyncService
     /// 未连接沿用历史的 download_url。
     /// </summary>
     private async Task<string> FetchFileContentAsync(
-        GitHubFile file, string owner, string repo, string branch, string? accessToken, CancellationToken ct)
+        GitHubFile file, string owner, string repo, PinnedRef reference, string? accessToken, CancellationToken ct)
     {
         if (string.IsNullOrEmpty(accessToken))
         {
