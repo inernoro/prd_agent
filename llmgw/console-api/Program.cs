@@ -4053,7 +4053,7 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
         x => x.Id,
         x => x.ProviderName is { Length: > 0 } p ? $"{p} 的 {x.UpstreamModelId ?? x.TargetName}" : x.TargetName,
         StringComparer.Ordinal);
-    var conclusion = CallTracePlanner.Conclusion(candidates, weighted,
+    var conclusionCore = CallTracePlanner.Conclusion(candidates, weighted,
         routeId => nameById.TryGetValue(routeId, out var label) ? label : routeId);
 
     // 不点名那条路：本用途现在的默认是谁。不是自己就把对方点出来——
@@ -4118,6 +4118,19 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
         })
         .ToList();
     var reachingCount = unnamedCallers.Count(x => x.ReachesThisModel);
+
+    // 结论那一句同样需要主语，而且**点名与不点名都需要**。
+    //
+    // 运行时那道门（`!严格池契约 || 目录例外`）罩的不只是「不点名」那一档——它罩着整个
+    // 对外模型目录。配了专属池的调用方哪怕点名这个模型，也走不到这里，请求落进它自己的池。
+    // 2026-09-15 的逐调用方冒烟就是这么抓到的：点名 document-store-transcribe-summary 时
+    // 运行时回的是 GatewayRegistryPool，压根没有线路标识可比。
+    var outsiderCount = unnamedCallers.Count(x => !string.Equals(
+        x.Reach, nameof(CallTracePlanner.CallerReach.UsesModelCatalog), StringComparison.Ordinal));
+    var conclusion = outsiderCount == 0
+        ? conclusionCore
+        : $"{conclusionCore}这句话对认这张目录的 {unnamedCallers.Count - outsiderCount} 个调用方成立；"
+          + $"另外 {outsiderCount} 个配了专属池或未放行，点名与不点名都走不到这里。";
 
     var unnamedSummary = servesUnnamed
         ? unnamedCallers.Count == 0

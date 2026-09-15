@@ -651,6 +651,17 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("blocked:", flowPanel);
         Assert.Contains("call-trace-flow", flowPanel);
 
+        // 结论那一句也要有主语，而且点名与不点名都要有。
+        //
+        // 那道门罩的不只是「不点名」那一档，它罩着整张对外模型目录：配了专属池的调用方哪怕
+        // 点名这个模型也走不到这里。2026-09-15 的逐调用方冒烟就是这么抓到的——点名
+        // document-store-transcribe-summary 时运行时回的是 GatewayRegistryPool，没有线路标识。
+        // 只修「不点名」那一格等于只修了一半（形状 1 的同一处再犯）。
+        Assert.Contains("outsiderCount", consoleProgram);
+        Assert.Contains("点名与不点名都走不到这里", consoleProgram);
+        Assert.Contains("named_reach", smoke);
+        Assert.Contains("走不到这张目录", smoke);
+
         // 文档里那张静态图与面板这张是同构的，改一边忘另一边就会对不上。
         var architecture = ReadRepoFile("doc/design.platform.llm-gateway.model-architecture.md");
         Assert.Contains("```mermaid", architecture);

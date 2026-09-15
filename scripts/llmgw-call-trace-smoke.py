@@ -147,10 +147,21 @@ def main():
     failures = []
 
     # 点名那条路：用配置里给的调用方打一次。
+    #
+    # 先看这个调用方认不认对外模型目录——运行时那道门罩的不只是「不点名」那一档，它罩着
+    # 整张目录：配了专属池的调用方哪怕点名这个模型，也走不到这里，请求落进它自己的池。
+    # 所以对这种调用方要断言的是「运行时确实没走这张目录」，而不是「落点等于队首」。
+    by_code = {c["appCallerCode"]: c for c in (trace["unnamed"].get("callers") or [])}
+    named_reach = (by_code.get(APP_CALLER) or {}).get("reach", "UsesModelCatalog")
     status, payload = resolve(model_type, trace["publicId"])
     offering, got_label = actual_route(payload)
     succeeded = status == 200 and bool(payload.get("Success", payload.get("success", True)))
-    if not accepted:
+    if named_reach != "UsesModelCatalog":
+        # 走不到这张目录的调用方：运行时不该给出这个模型的线路标识。
+        ok = offering is None or offering not in accepted
+        verdict = ("面板说它走不到这张目录，运行时确实没走（落到 %s）" % got_label if ok
+                   else f"面板说它走不到这张目录，运行时却落到了这里的 {got_label}（{offering}）")
+    elif not accepted:
         ok = not succeeded
         verdict = "按面板说法这次解析应当失败" if ok else f"面板说调不通，运行时却解析到 {got_label}"
     elif not succeeded:
@@ -161,7 +172,9 @@ def main():
         ok = offering in accepted
         verdict = ("与面板推演一致" if ok
                    else f"面板说会落到 {sorted(accepted.values())}，运行时解析到 {got_label}（{offering}）")
-    print(f"[{'通过' if ok else '失败'}] 点名模型（{APP_CALLER}） — status={status} 运行时落点={got_label} · {verdict}")
+    reach_label = {"DedicatedPoolOnly": "配了专属池", "TrafficRejected": "未放行"}.get(named_reach, "认对外模型目录")
+    print(f"[{'通过' if ok else '失败'}] 点名模型（{APP_CALLER}，{reach_label}） — "
+          f"status={status} 运行时落点={got_label} · {verdict}")
     if not ok:
         failures.append(f"点名模型：{verdict}")
 
