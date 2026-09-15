@@ -12,3 +12,4 @@
 | fix | platform | 第八轮触发 AGENTS.md 5.5 熔断（review 修复提交达 8 个、连续五轮同类），停止逐条追加 workflow：修「发布脚本行的触发时机继承错了」这条实缺陷，其余改为结构处理——表不再穷举流水线（仓库十几条且会增减，抄一份就是判据分裂），只保留「哪些检查压根没有远端判据」，「我这条路径触发哪几条」一律现查 |
 | fix | platform | 修 Codex 第九轮三条：cdscli 的 error CS* 建议改成仓库无关（这套技能可 drop-in 到别的项目，写死 Branch Image / CI 会指向不存在的作业）；按 maintainer.md 场景 C bump patch 到 0.16.6（cdscli.py 与 SKILL.md 两处，否则 cmd_version 判 latest、存量安装静默复用旧副本）；llmgw 行补上 console-api 其实被 sln 传递编译（Api.Tests 对它有 ProjectReference） |
 | fix | platform | 修 Codex 第十轮一条：cdscli 的 error CS* 建议不再假定「有 CI」——先说行号就在这段日志里直接按它改，复现路径才给本地 SDK / cdscli branch logs / 本仓库的流水线三条，接入到没有 Actions 的仓库也有可执行的下一步 |
+| fix | platform | 修 Codex 第十一轮两条：cdscli 的兜底不再把 `cdscli branch logs` 写成可执行命令（真实用法要分支 id 与 --profile，裸跑退出码 2），改成说明性表述；diagnose.md 随技能分发的通用根因表与样例也去掉 Branch Image / Actions 这类仓库专属名，与 CLI 同一口径 |
