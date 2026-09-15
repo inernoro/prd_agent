@@ -592,6 +592,13 @@ export default function WebPagesPage() {
     if (!confirm('确定删除此站点？站点文件将同时被清理。')) return;
     const res = await deleteSite(id);
     if (res.success) {
+      // deleted=false 表示清理被发布租约推迟了，站点还在：抹掉卡片就是在说谎，
+      // 刷新之后它照样回来。如实留住卡片并说清在等什么。
+      if (res.data.deleted === false) {
+        toast.info('站点还在清理中', '页面正被发布流程占用，清理完成后列表里才会消失');
+        load();
+        return;
+      }
       setSites(prev => prev.filter(s => s.id !== id));
       setTotal(prev => prev - 1);
       loadMeta();
@@ -649,11 +656,17 @@ export default function WebPagesPage() {
     if (!confirm(`确定删除「${site.title}」？站点文件将同时被清理，此操作不可撤销。`)) return;
     const res = await deleteSite(site.id);
     if (res.success) {
+      // 与 handleDelete 同一判据：推迟清理时站点还在，不许乐观地把卡片抹掉。
+      if (res.data.deleted === false) {
+        toast.info('站点还在清理中', '页面正被发布流程占用，清理完成后列表里才会消失');
+        load();
+        return;
+      }
       setSites(prev => prev.filter(s => s.id !== site.id));
       setTotal(prev => prev - 1);
       loadMeta();
     }
-  }, [loadMeta]);
+  }, [load, loadMeta]);
 
   // 取消分享：撤销所有"仅指向该站点"的分享链接（单站点分享），多站点合集分享不动。
   const cancelShareForSite = useCallback(async (id: string) => {

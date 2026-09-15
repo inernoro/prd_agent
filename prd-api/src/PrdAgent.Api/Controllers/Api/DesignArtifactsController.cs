@@ -626,6 +626,7 @@ public sealed class DesignArtifactsController : ControllerBase
         var redisProjectionAvailable = true;
         var lastMongoProgress = -1;
         string? lastMongoPhase = null;
+        string? lastMongoModel = null;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -679,6 +680,19 @@ public sealed class DesignArtifactsController : ControllerBase
                     }), ct);
                     lastMongoProgress = snapshot.Progress;
                     lastMongoPhase = snapshot.Phase;
+                }
+                // Redis 那条投影挂了的时候，模型事件也跟着没了——而模型已经落在库里。
+                // 不在这里补一条，用户看到的就是「这次没有模型」，而不是「这次读不到模型」
+                // （静默降级：坏的那条路产出的结果和正常结果分不开）。
+                if (!string.IsNullOrWhiteSpace(snapshot.ResolvedModel)
+                    && !string.Equals(snapshot.ResolvedModel, lastMongoModel, StringComparison.Ordinal))
+                {
+                    await WriteEventAsync(null, "model", JsonSerializer.Serialize(new
+                    {
+                        model = snapshot.ResolvedModel,
+                        platform = snapshot.ResolvedPlatform,
+                    }), ct);
+                    lastMongoModel = snapshot.ResolvedModel;
                 }
                 if (snapshot.Status == RunStatuses.Done)
                 {

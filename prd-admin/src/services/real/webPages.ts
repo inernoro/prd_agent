@@ -853,7 +853,12 @@ export async function updateSite(id: string, data: {
   return apiRequest(api.webPages.byId(encodeURIComponent(id)), { method: 'PUT', body: data });
 }
 
-export async function deleteSite(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+/**
+ * 删除站点。内容发布租约还占着时后端会推迟清理，返回 202 + deleted=false，
+ * 站点依旧存在——调用方必须看 deleted，不能只看 success（看 success 就会把一张
+ * 还在的卡片从列表里抹掉，刷新之后它又回来了）。
+ */
+export async function deleteSite(id: string): Promise<ApiResponse<{ deleted: boolean; cleanupPending?: boolean }>> {
   return apiRequest(api.webPages.byId(encodeURIComponent(id)), { method: 'DELETE' });
 }
 

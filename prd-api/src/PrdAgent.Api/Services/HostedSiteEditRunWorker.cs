@@ -186,13 +186,20 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     // 只改内存里的 run 不会落库——这个 worker 全程用 Update.Set 逐字段写，
                     // 漏了这一步，刷新或恢复时面板拿到的 resolvedModel 永远是 null
                     //（真验收时就是这么发现的：DTO 字段在、值是空）。
-                    await db.DesignArtifactRuns.UpdateOneAsync(
-                        item => item.DeploymentSlug == DeploymentScope.Current && item.Id == runId,
-                        Builders<DesignArtifactRun>.Update
-                            .Set(item => item.ResolvedModel, run.ResolvedModel)
-                            .Set(item => item.ResolvedPlatform, run.ResolvedPlatform)
-                            .Set(item => item.UpdatedAt, DateTime.UtcNow),
-                        cancellationToken: CancellationToken.None);
+                    // 和相邻的 phase / 产物写入同一道租约闸：这个 worker 可能在模型流刚起步时
+                    // 就丢了租约，恢复 worker 已经接管，而缓冲里的 model 分片才姗姗到达。
+                    // 不设闸的话，掉队的 worker 会把新 worker 的模型覆盖掉，再推一条骗人的事件。
+                    if (!await PersistResolvedModelAsync(
+                            db,
+                            runId,
+                            leaseOwner,
+                            run.ResolvedModel,
+                            run.ResolvedPlatform,
+                            DateTime.UtcNow,
+                            CancellationToken.None))
+                    {
+                        throw new DesignArtifactRunLeaseLostException(runId);
+                    }
                     await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
                         runId,
@@ -1247,6 +1254,32 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             cancellationToken: ct);
         // Mongo 以毫秒存储时间；同毫秒续租可能不改变字节，但匹配仍证明租约有效。
         return write.MatchedCount == 1;
+    }
+
+    /// <summary>
+    /// 落库实际执行模型。判据与 <see cref="PersistPhaseAsync"/> 完全一致（同一条租约闸），
+    /// 未命中即代表租约已不在本 worker 手上，调用方据此停手，不要再往流里写东西。
+    /// </summary>
+    internal static async Task<bool> PersistResolvedModelAsync(
+        MongoDbContext db,
+        string runId,
+        string leaseOwner,
+        string? resolvedModel,
+        string? resolvedPlatform,
+        DateTime updatedAt,
+        CancellationToken ct)
+    {
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
+                 && x.Status == RunStatuses.Running
+                 && x.LeaseOwnerId == leaseOwner
+                 && x.LeaseExpiresAt > updatedAt),
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.ResolvedModel, resolvedModel)
+                .Set(x => x.ResolvedPlatform, resolvedPlatform)
+                .Max(x => x.UpdatedAt, updatedAt),
+            cancellationToken: ct);
+        return write.ModifiedCount == 1;
     }
 
     internal static async Task<bool> PersistPhaseAsync(

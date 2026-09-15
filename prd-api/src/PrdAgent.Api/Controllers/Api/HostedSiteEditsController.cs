@@ -340,6 +340,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         var redisProjectionAvailable = true;
         var lastMongoProgress = -1;
         string? lastMongoPhase = null;
+        string? lastMongoModel = null;
         try
         {
             while (!ct.IsCancellationRequested)
@@ -384,6 +385,19 @@ public sealed class HostedSiteEditsController : ControllerBase
                     }), ct);
                     lastMongoProgress = snapshot.Progress;
                     lastMongoPhase = snapshot.Phase;
+                }
+                // 同上：Redis 投影不可用时模型事件会整条丢掉，而值就在库里。补一条，
+                // 让「读不到模型」不至于长得跟「这次没有模型」一模一样。
+                if (!redisProjectionAvailable
+                    && !string.IsNullOrWhiteSpace(snapshot.ResolvedModel)
+                    && !string.Equals(snapshot.ResolvedModel, lastMongoModel, StringComparison.Ordinal))
+                {
+                    await WriteEventAsync(null, "model", JsonSerializer.Serialize(new
+                    {
+                        model = snapshot.ResolvedModel,
+                        platform = snapshot.ResolvedPlatform,
+                    }), ct);
+                    lastMongoModel = snapshot.ResolvedModel;
                 }
                 if (snapshot.Status == RunStatuses.Done)
                 {
