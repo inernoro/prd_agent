@@ -65,7 +65,8 @@ export interface PipelineLeak {
   kind: LeakKind;
   /** 命中的改动单元分支名；report-missing-change-key 时是报告标题。 */
   subject: string;
-  projectId: string;
+  /** null = 无主报告（报告自己没记项目），不是「所有项目」。 */
+  projectId: string | null;
   reportIds: string[];
 }
 
@@ -354,6 +355,31 @@ export function buildPipelineOverview(
     });
   }
 
+  /*
+   * 无主报告（projectId 为空）单独走一遍。
+   *
+   * 上面那个循环按 project.id 取 refs，无主报告一条都取不到，于是既不进
+   * totalLeaks['report-missing-change-key'] 也不进 staleReports——而**同一个响应**
+   * 里的走向序列把它们当成「无主」项目照常画了出来。一屏上两个数打架，
+   * 最难查的那种（Codex review 抓到）。
+   *
+   * 它没有分支也没有墓碑，所以不产生改动单元，不占 funnel 的任何一格，也**不伪造
+   * 一行项目**：无主就是无主，多一行假项目比少一个数更坏。它只在报告这一侧成立，
+   * 按与项目内同样的两档落账。
+   */
+  let unassignedStale = 0;
+  for (const r of refs) {
+    if ((r.projectId || null) !== null) continue;
+    if (hasChangeKey(r)) {
+      unassignedStale += 1;
+      continue;
+    }
+    totalLeaks['report-missing-change-key'] += 1;
+    allLeaks.push({
+      kind: 'report-missing-change-key', subject: r.title, projectId: null, reportIds: [r.id],
+    });
+  }
+
   // 漏点按严重度排：合并了没验 > 验了没过还合并 > 部署了没验 > 报告没记标识。
   const severity: Record<LeakKind, number> = {
     'merged-not-accepted': 0, 'merged-while-failing': 1, 'deployed-not-accepted': 2,
@@ -373,7 +399,7 @@ export function buildPipelineOverview(
     total,
     totalLeaks,
     projects: rows,
-    staleReports: rows.reduce((n, r) => n + r.staleReports, 0),
+    staleReports: rows.reduce((n, r) => n + r.staleReports, 0) + unassignedStale,
     leaks: allLeaks,
   };
 }

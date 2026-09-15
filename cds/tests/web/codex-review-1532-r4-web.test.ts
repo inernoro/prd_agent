@@ -15,16 +15,19 @@ const page = read('web/src/pages/ReportsPage.tsx');
 const trends = read('web/src/pages/reports/TrendCharts.tsx');
 
 describe('台账空 ≠ 整页空', () => {
-  it('整页让位给空状态的条件里，带上了「流水线也没东西可讲」', () => {
+  it('整页让位给空状态的条件不是单看台账', () => {
     expect(page, 'allReports 为空就直接 return 空状态，流水线被一起吞掉')
-      .toMatch(/if \(allReports\.length === 0 && !pipelineHasSomething\)/);
+      .not.toMatch(/if \(allReports\.length === 0\) \{/);
+    expect(page).toMatch(/if \(allReports\.length === 0 && pipelineSettledEmpty\)/);
   });
 
-  it('「有东西可讲」的判据是首页作用域 + 流水线加载成功 + 真有改动', () => {
-    const block = page.slice(page.indexOf('const pipelineHasSomething'), page.indexOf('if (allReports.length === 0'));
+  it('让位要求流水线成功返回且真的报了零', () => {
+    // 第六轮把判据从「不满足有东西」改成了「成功地报了零」——前者在加载中与加载失败时
+    // 同样成立，会把「正在汇总」和重试按钮一起吞掉。判据的完整形状见 r6 那份守卫。
+    const block = page.slice(page.indexOf('const pipelineSettledEmpty'), page.indexOf('if (allReports.length === 0'));
     expect(block).toContain('isGlobalScope');
     expect(block).toContain("pipelineState.status === 'ok'");
-    expect(block).toMatch(/pipeline\.total\.changes > 0/);
+    expect(block).toMatch(/total\.changes === 0/);
   });
 
   it('台账那一格自己说清是「一份都没有」还是「被筛掉了」，并给出下一步', () => {

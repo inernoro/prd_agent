@@ -364,7 +364,8 @@ export interface PipelineFunnel {
 export interface PipelineLeak {
   kind: LeakKind;
   subject: string;
-  projectId: string;
+  /** null = 无主报告（报告自己没记项目），不是「所有项目」。 */
+  projectId: string | null;
   reportIds: string[];
 }
 

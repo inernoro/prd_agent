@@ -885,10 +885,12 @@ function ReportsHome({
   // 一份报告都没有的时候，那句「部署了没验收」恰恰是最该被看见的一句，而原来这个
   // early return 把整块流水线连同它一起吞掉了（Codex review 抓到）。
   // 所以只有在「既没有报告、也没有流水线可讲」时才整页让位给空状态。
-  const pipelineHasSomething = isGlobalScope
-    && pipelineState.status === 'ok'
-    && pipelineState.pipeline.total.changes > 0;
-  if (allReports.length === 0 && !pipelineHasSomething) {
+  // 「成功地报了零」才算让位条件。加载中或加载失败一律不让位：那会把「正在汇总」
+  // 与「汇总失败 + 重试」一起换成一张干净的空卡片，于是一次持续失败的聚合看起来
+  // 就像本来就没有数据，连重试按钮都够不着（Codex review 抓到）。
+  const pipelineSettledEmpty = !isGlobalScope
+    || (pipelineState.status === 'ok' && pipelineState.pipeline.total.changes === 0);
+  if (allReports.length === 0 && pipelineSettledEmpty) {
     return <EmptyReportsState onCreate={onCreate} filtered={false} filterMenu={filterMenu} />;
   }
 

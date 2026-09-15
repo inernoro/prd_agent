@@ -468,14 +468,36 @@ export function seedPreviewInstanceSnapshot(state: StateService): boolean {
     seeded = true;
   }
 
-  const existingTitles = new Set(state.listAcceptanceReports(null).map((r) => r.title));
+  /*
+   * 演示正文按标题确定性生成——快照才是它的权威副本，容器本地盘只是那份副本的落地。
+   * 这跟「账在哪货就在哪」不冲突：那条规则的判据是「把容器删了重建，这条记录还取得出
+   * 货吗」，而这里每次启动都能从快照原样重算出来，所以重建之后取得出——**前提是真的
+   * 重算一遍**。此前只按标题判重，元数据跨部署留在库里、正文随容器没了，于是判重
+   * 直接跳过，那批报告点开永远 404（Codex review 抓到）。
+   * 所以这里不能只看「有没有这条记录」，还要看「它的正文还在不在」。
+   */
+  const bodyOf = (title: string): string =>
+    `<h1>${title}</h1><p>${origin}</p><p>本页只保留标题、结论与归档时刻，用于呈现列表与统计的形状；原始正文不在快照内。</p>`;
+  const seededByTitle = new Map<string, string>();
+  for (const r of state.listAcceptanceReports(null)) {
+    // 只认自己播的那批：别人写的报告正文丢了是另一回事，不许在这里替他重写。
+    if (r.createdBy !== 'preview-instance-seed') continue;
+    if (!seededByTitle.has(r.title)) seededByTitle.set(r.title, r.id);
+  }
   for (const r of snapReports) {
-    if (existingTitles.has(r.title)) continue;
+    const existingId = seededByTitle.get(r.title);
+    if (existingId) {
+      if (state.readAcceptanceReportContent(existingId) === undefined) {
+        state.updateAcceptanceReport(existingId, { content: bodyOf(r.title) });
+        seeded = true;
+      }
+      continue;
+    }
     const createdAt = daysAgoIso(base, r.createdAgo) ?? nowIso;
-    state.createAcceptanceReport({
+    const created = state.createAcceptanceReport({
       title: r.title,
       format: 'html',
-      content: `<h1>${r.title}</h1><p>${origin}</p><p>本页只保留标题、结论与归档时刻，用于呈现列表与统计的形状；原始正文不在快照内。</p>`,
+      content: bodyOf(r.title),
       projectId: r.projectId,
       branchId: null,
       branch: r.branch,
@@ -487,7 +509,7 @@ export function seedPreviewInstanceSnapshot(state: StateService): boolean {
       createdBy: 'preview-instance-seed',
       createdAt,
     });
-    existingTitles.add(r.title);
+    seededByTitle.set(r.title, created.id);
     seeded = true;
   }
 
