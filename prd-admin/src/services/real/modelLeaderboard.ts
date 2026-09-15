@@ -170,7 +170,9 @@ export function syncModelLeaderboard(
   board?: string,
 ): Promise<ApiResponse<ModelLeaderboardSyncResult>> {
   const query = board ? `?board=${encodeURIComponent(board)}` : '';
-  return apiRequest<ModelLeaderboardSyncResult>(`/api/model-leaderboard/sync${query}`, {
+  // 写侧在 /api/admin/ 前缀下：权限中间件按路由前缀查权限，与只读端点同前缀会把
+  // 只读也一起要求 mds.read（见后端 ModelLeaderboardAdminController 的注释）
+  return apiRequest<ModelLeaderboardSyncResult>(`/api/admin/model-leaderboard/sync${query}`, {
     method: 'POST',
     // 榜单页是 0.5-3MB 的服务端渲染大页面；不传 board 时十一个榜串行抓，要跑一分钟往上。
     // 超时了也不代表同步失败，只是前端不等了。

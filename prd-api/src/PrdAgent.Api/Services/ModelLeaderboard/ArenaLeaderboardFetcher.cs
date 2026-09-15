@@ -243,7 +243,12 @@ public class ArenaLeaderboardFetcher
             });
         }
 
-        if (metrics.Count == 0) return null;
+        // 必须恰好六个。少一个就拒绝整行——不是保守，是因为 AssignMetrics 按位置对位：
+        // 对方改了中间某一格的写法，解析出五个值会整体前移一位，「好评比」的数字挂到
+        // 「可操控性」名下，而条目数与形状判定照样通过。那是一份看起来完全正常、
+        // 实则每个字段都挂错名字的快照，会覆盖掉昨天的好数据，页面上没有任何异常可看。
+        // 拒绝行会让条目数掉到 MinimumEntries 以下并抛异常，于是保留旧快照——这才是想要的。
+        if (metrics.Count != MetricCount) return null;
 
         var (rankLow, rankHigh) = ParseRankSpread(BareNumberRegex.Matches(block), skip: 1);
 
@@ -381,15 +386,18 @@ public class ArenaLeaderboardFetcher
     /// 对方调换列序时这里会错位——但那种改动同样会让任何按列名的方案失效
     /// （表头与单元格之间没有机读关联），且解析器会继续给出看似正常的数字，
     /// 所以守卫测试里钉了一行真实数据的六个值，错位会立刻变红。
+    ///
+    /// 数量不足的情形进不到这里：调用方已经要求恰好 <see cref="MetricCount"/> 个，
+    /// 少一个就整行拒绝（见 TryParseAgentRow）。
     /// </summary>
     private static void AssignMetrics(ModelLeaderboardEntry entry, List<ModelLeaderboardMetric> metrics)
     {
-        if (metrics.Count > 0) entry.NetImprovement = metrics[0];
-        if (metrics.Count > 1) entry.ConfirmedSuccess = metrics[1];
-        if (metrics.Count > 2) entry.PraiseVsComplaint = metrics[2];
-        if (metrics.Count > 3) entry.Steerability = metrics[3];
-        if (metrics.Count > 4) entry.BashRecovery = metrics[4];
-        if (metrics.Count > 5) entry.ToolHallucination = metrics[5];
+        entry.NetImprovement = metrics[0];
+        entry.ConfirmedSuccess = metrics[1];
+        entry.PraiseVsComplaint = metrics[2];
+        entry.Steerability = metrics[3];
+        entry.BashRecovery = metrics[4];
+        entry.ToolHallucination = metrics[5];
     }
 
     private static long? ParseSessions(string block)

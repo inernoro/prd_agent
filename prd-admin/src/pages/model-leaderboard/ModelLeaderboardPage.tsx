@@ -134,8 +134,19 @@ export default function ModelLeaderboardPage() {
    */
   const cacheRef = useRef(new Map<string, ModelLeaderboardSnapshot>());
 
+  /**
+   * 最后一次发起的请求属于哪个榜。
+   *
+   * 切维度比请求回来快时，两个请求都还在飞，谁后到谁 setSnapshot——旧榜的数据会渲染在
+   * 新榜的标题和 URL 下面，直到下一次刷新（Codex 在 PR #1538 指出）。所以每次发请求前
+   * 记下目标榜，回来时对不上就整份丢掉，不碰任何 state。
+   */
+  const inflightBoardRef = useRef(board);
+
   const load = useCallback(
     async (force = false) => {
+      inflightBoardRef.current = board;
+
       const cached = cacheRef.current.get(board);
       if (cached && !force) {
         setSnapshot(cached);
@@ -148,8 +159,12 @@ export default function ModelLeaderboardPage() {
       setError(null);
       // 文本榜实测 402 个模型，一次取全；渲染分批，不会因为行多就卡（见 INITIAL_ROWS）
       const res = await getModelLeaderboard(board, 500);
+
+      // 这期间用户可能已经切走了：缓存照存（下次切回来即时可用），但不动当前这一屏
+      if (res.success && res.data) cacheRef.current.set(board, res.data);
+      if (inflightBoardRef.current !== board) return;
+
       if (res.success && res.data) {
-        cacheRef.current.set(board, res.data);
         setSnapshot(res.data);
       } else {
         setSnapshot(null);

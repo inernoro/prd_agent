@@ -101,8 +101,12 @@ public class ModelLeaderboardController : ControllerBase
             .Project(x => new { x.Board, x.Entries })
             .ToListAsync(ct);
 
-        var counts = existing.ToDictionary(
-            x => x.Board, x => x.Entries.Count, StringComparer.OrdinalIgnoreCase);
+        // 用 GroupBy 而不是 ToDictionary：库里同一个榜理论上只有一条文档，但「理论上」不该
+        // 让一个只读端点在数据意外重复时整个 500（历史上确实有过并发首写留下两条的窗口，
+        // 见 ModelLeaderboardSyncService.DeterministicId）。重复时取条目多的那条。
+        var counts = existing
+            .GroupBy(x => x.Board, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.Max(x => x.Entries.Count), StringComparer.OrdinalIgnoreCase);
 
         return Ok(ApiResponse<object>.Ok(new
         {

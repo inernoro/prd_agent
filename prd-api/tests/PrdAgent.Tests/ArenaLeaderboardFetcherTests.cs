@@ -148,9 +148,10 @@ public class ArenaLeaderboardFetcherTests
     [Fact]
     public void Parse_缺少误差范围时Margin为null_不拿0冒充()
     {
+        // 六个指标齐全（整行的准入条件），但第一个没有 ± 那一格
         const string noMargin = """
 <table><tbody>
-<tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span></td></tr>
+<tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span></td><td><span><svg role="img" aria-label="Up"></svg>2.00<!-- -->%</span><span class="text-text-muted text-xs">±0.20%</span></td><td><span><svg role="img" aria-label="Up"></svg>3.00<!-- -->%</span><span class="text-text-muted text-xs">±0.30%</span></td><td><span><svg role="img" aria-label="Up"></svg>4.00<!-- -->%</span><span class="text-text-muted text-xs">±0.40%</span></td><td><span><svg role="img" aria-label="Up"></svg>5.00<!-- -->%</span><span class="text-text-muted text-xs">±0.50%</span></td><td><span><svg role="img" aria-label="Up"></svg>6.00<!-- -->%</span><span class="text-text-muted text-xs">±0.60%</span></td></tr>
 </tbody></table>
 """;
 
@@ -159,26 +160,33 @@ public class ArenaLeaderboardFetcherTests
         Assert.Single(r.Entries);
         Assert.Equal(1.23, r.Entries[0].NetImprovement!.Value);
         Assert.Null(r.Entries[0].NetImprovement!.Margin);
+        // 后面五个的误差要各归各位，不能因为第一个缺了就整体错位
+        Assert.Equal(0.20, r.Entries[0].ConfirmedSuccess!.Margin);
+        Assert.Equal(0.60, r.Entries[0].ToolHallucination!.Margin);
     }
 
+    /// <summary>
+    /// 指标数量不足六个，整行拒绝——不是「缺的留 null」。
+    ///
+    /// 这条原先断言的是「已有的按顺序对位、缺的留 null」，那只在**尾部**缺列时才安全。
+    /// 对方把中间某一格换个写法（Codex 在 PR #1538 指出），解析出五个值会整体前移一位：
+    /// 「好评比」的数字挂到「可操控性」名下，而条目数与形状判定照样通过，
+    /// 于是一份每个字段都挂错名字、看起来却完全正常的快照会覆盖掉好数据。
+    /// 所以判据改成「恰好六个，否则拒绝整行」。
+    /// </summary>
     [Fact]
-    public void Parse_指标不足六个时不错位_缺的留null()
+    public void Parse_指标不足六个时整行拒绝_不拿错位的值冒充()
     {
-        // 页面少给几列时，已有的仍按顺序对位，缺的是 null，不能把后面的值顶上来
         const string partial = """
 <table><tbody>
 <tr><td><span title="Some Model">Some Model</span><span class="text-text-secondary truncate text-xs">Acme · Proprietary</span></td><td><span><svg role="img" aria-label="Up"></svg>1.23<!-- -->%</span><span class="text-text-muted text-xs">±0.10%</span></td><td><span><svg role="img" aria-label="Up"></svg>4.56<!-- -->%</span><span class="text-text-muted text-xs">±0.20%</span></td></tr>
 </tbody></table>
 """;
 
-        var e = ArenaLeaderboardFetcher.Parse(partial).Entries[0];
+        var r = ArenaLeaderboardFetcher.Parse(partial);
 
-        Assert.Equal(1.23, e.NetImprovement!.Value);
-        Assert.Equal(4.56, e.ConfirmedSuccess!.Value);
-        Assert.Null(e.PraiseVsComplaint);
-        Assert.Null(e.Steerability);
-        Assert.Null(e.BashRecovery);
-        Assert.Null(e.ToolHallucination);
+        // 拒绝后条目数会掉到 MinimumEntries 以下，FetchAsync 据此抛异常、保留旧快照
+        Assert.Empty(r.Entries);
     }
 
     [Fact]

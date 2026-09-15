@@ -9,15 +9,22 @@ namespace PrdAgent.Api.Controllers.Api;
 /// <summary>
 /// 模型排行榜的管理操作（写侧）。
 ///
-/// ## 为什么单独一个 Controller
+/// ## 为什么单独一个 Controller，而且路由前缀也必须不同
 ///
 /// <see cref="ModelLeaderboardController"/> 是全员可见的只读榜单，只要求登录；
 /// 而手动同步会去打外站并覆盖共享库里的快照，得限权限。
 /// <see cref="AdminControllerAttribute"/> 是 <b>Controller 级</b>的——挂上去会连同 GET
-/// 一起要求读权限，那就不是全员可见了。所以把写操作单独拆出来，两边各自保持干净的权限面。
+/// 一起要求读权限，所以写操作得单独拆出来。
+///
+/// 但只拆 Controller 不够：<c>AdminControllerScanner.GetRequiredPermission</c> 是按
+/// <b>路由前缀</b>查权限的，同前缀下有多个 Controller 时「取第一个的权限」。两个 Controller
+/// 当初都挂在 <c>api/model-leaderboard</c> 上，于是只读端点照样被要求 <c>mds.read</c>——
+/// 拆了等于没拆，全员可见根本没生效（用管理员账号测是发现不了的，他本来就有这个权限）。
+/// 所以这里改用 <c>api/admin/model-leaderboard</c>（项目里 admin 接口的惯例前缀），
+/// 让两边在权限映射表里彻底分开。
 /// </summary>
 [ApiController]
-[Route("api/model-leaderboard")]
+[Route("api/admin/model-leaderboard")]
 [Authorize]
 [AdminController("model-leaderboard", AdminPermissionCatalog.ModelsRead,
     WritePermission = AdminPermissionCatalog.ModelsWrite)]

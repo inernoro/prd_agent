@@ -34,6 +34,19 @@ public class ModelLeaderboardSyncService
         _logger = logger;
     }
 
+    /// <summary>
+    /// 由榜名派生的文档 Id。同一个榜永远算出同一个 Id，首次写的并发因此收敛到一条文档。
+    ///
+    /// 用榜名的哈希而不是榜名本身：榜名带连字符（`text-to-image`），而库里其它集合的 Id
+    /// 一律是 32 位十六进制（见 AGENTS.md 规则 7 的 Id 约定），保持同一个形状。
+    /// </summary>
+    internal static string DeterministicId(string board)
+    {
+        var bytes = System.Security.Cryptography.MD5.HashData(
+            System.Text.Encoding.UTF8.GetBytes("model-leaderboard:" + board.ToLowerInvariant()));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
     /// <summary>抓完一个榜歇多久再抓下一个。</summary>
     private static readonly TimeSpan BoardInterval = TimeSpan.FromSeconds(1);
 
@@ -114,8 +127,14 @@ public class ModelLeaderboardSyncService
 
         var snapshot = new ModelLeaderboardSnapshot
         {
-            // 覆盖写时沿用旧文档的 Id，保证「一个榜单一条文档」而不是每天堆一条
-            Id = previous?.Id ?? Guid.NewGuid().ToString("N"),
+            // 覆盖写时沿用旧文档的 Id；首次写用**由榜名派生的确定性 Id**，不是随机 Guid。
+            //
+            // 随机 Guid 在首次同步上有竞态（Codex 在 PR #1538 指出）：周期 worker 与手动触发
+            // 同时跑时，两边都看到 previous == null、各自生成一个 Id，而 upsert 的过滤条件
+            // 是 Board 而非 _id、库里也没有唯一索引（禁止自动建索引，见 no-auto-index.md），
+            // 于是同一个榜会插出两条文档——/boards 的 ToDictionary 当场抛，普通读取则随机
+            // 拿到其中一条。确定性 Id 让两边写同一个 _id，后到的覆盖先到的，天然收敛。
+            Id = previous?.Id ?? DeterministicId(board),
             Board = board,
             // 形状以**页面实际解析出来的**为准，不是照目录抄一份（FetchAsync 已校验两者一致）
             Kind = parsed.Kind,
