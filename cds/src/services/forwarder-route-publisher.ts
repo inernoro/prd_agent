@@ -266,22 +266,25 @@ export class ForwarderRoutePublisher {
       // 赢家会随部署翻转（「A 入口偶发进 B 端口」的机制之一）。排序后同一份配置永远发同一份路由。
       routableServices.sort((a, b) => a.profileId.localeCompare(b.profileId));
 
-      // 默认站（承载主域名上未被任何前缀命中的路径）的选法，两条规则叠在一起：
+      // 默认站（承载主域名上未被任何前缀命中的路径）的选法，三条规则叠在一起：
       //  1) 入口身份先于健康状态：显式声明根路径 '/' 的 profile 永远是默认站，否则主站构建或
       //     失败时，已就绪的网关 web 会接管主域——同 profile 的健康副本仍可接流量，但不能用
       //     另一个产品充当副本。
-      //  2) 没有显式根路径时按名兜底，且在**全部**可路由服务里选，不再只看 running——否则 web
-      //     重建期间默认站会落到第一个 running 的服务（往往是 API 端口），用户打开 / 看到的是
-      //     另一个应用。默认站没在跑时路由照发但 healthState 不是 running，forwarder 见状转
-      //     master 出该服务的等待页（proxy-handler），host 不消失、也不落到别的服务。
-      // 根路径候选只在可路由集合里找：挑一个不可路由的 profile 会让默认站没有上游端口。
-      const routableProfileIds = routableServices.map((service) => service.profileId);
+      //  2) 没有显式根路径时按名兜底，且候选是**分支声明过的全部服务**（按 id 排序后取，键序
+      //     无关），不是当前可路由的那几个——否则主入口还没拿到端口 / 已 error 时，默认站会滑到
+      //     碰巧就绪的兄弟服务（典型是独立网关 web），用户打开 / 看到的是另一个产品。
+      //  3) 选中的服务当前不可路由（error / stopped / 尚无端口）就**不发**默认路由，交给 master
+      //     现有的等待、失败页兜底；可路由但没在跑（building 等）时路由照发，healthState 不是
+      //     running，forwarder 见状转 master 出该服务的等待页（proxy-handler），host 不消失、
+      //     也不落到别的服务。
+      const declaredProfileIds = [
+        ...new Set([...Object.keys(branch.services ?? {}), ...replicaByProfile.keys()]),
+      ].sort((a, b) => a.localeCompare(b));
       const rootProfile = [...profileById.values()].find(
-        (profile) => routableProfileIds.includes(profile.id) && profile.pathPrefixes?.includes('/'),
+        (profile) => declaredProfileIds.includes(profile.id) && profile.pathPrefixes?.includes('/'),
       );
-      const defaultProfile = rootProfile?.id ?? pickDefaultProfile(routableProfileIds);
-      const defaultSvc = routableServices.find((service) => service.profileId === defaultProfile)!;
-      const defaultPort = defaultSvc.hostPort;
+      const defaultProfile = rootProfile?.id ?? pickDefaultProfile(declaredProfileIds);
+      const defaultSvc = routableServices.find((service) => service.profileId === defaultProfile);
 
       const hosts: string[] = [];
       for (const root of this.opts.rootDomains) {
@@ -416,11 +419,11 @@ export class ForwarderRoutePublisher {
         }
         // 3) 未匹配路径只交给主入口。主入口不可路由时不发布旧端口，
         // 由现有 master fallback 展示该分支的等待/失败状态。
-        pushRoute({
+        if (defaultSvc) pushRoute({
           _id: `${branch.id}:${defaultProfile}:default:${idx++}`,
           host,
           upstreamHost: '127.0.0.1',
-          upstreamPort: defaultPort,
+          upstreamPort: defaultSvc.hostPort,
           branchId: branch.id,
           branchName: branch.branch, // widget injection 需要 branchName,默认 route 也得带,否则 / 页面 widget 消失
           weight: 100,

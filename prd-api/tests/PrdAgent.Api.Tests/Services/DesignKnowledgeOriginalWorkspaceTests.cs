@@ -439,7 +439,9 @@ public sealed class DesignKnowledgeOriginalWorkspaceTests
                 Permissions.Object, null!, null!, null!, null!, new ConfigurationBuilder().Build(),
                 new DocumentStoreAssetNormalizer(Storage.Object, NullLogger<DocumentStoreAssetNormalizer>.Instance), null!,
                 new DocumentAssetCleanupService(Db, Storage.Object, NullLogger<DocumentAssetCleanupService>.Instance),
-                new EntryContentWriteService(Db, documents.Object, mentions, versions, NullLogger<EntryContentWriteService>.Instance), NullLogger<DocumentStoreController>.Instance)
+                new EntryContentWriteService(Db, documents.Object, mentions, versions, NullLogger<EntryContentWriteService>.Instance),
+                // 本用例不走 GitHub 连接，按本调用点对未使用依赖的既有写法传 null!
+                null!, NullLogger<DocumentStoreController>.Instance)
             {
                 ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext
                 { User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("sub", user)], "test")) } },

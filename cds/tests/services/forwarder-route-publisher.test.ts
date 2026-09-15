@@ -624,6 +624,7 @@ describe('ForwarderRoutePublisher', () => {
       rootDomains: ['miduo.org'],
     });
     publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8')) as RouteRecord[];
     // 默认站按 id 排序后按名兜底是 admin（building）：此前会把默认路由塞给碰巧在跑的 web，
     // 用户打开 / 看到的是另一个应用。现在仍指向 admin，healthState=unknown 让 forwarder 转等待页。
     const defaultRoute = data.find((r) => r.host.startsWith('mixed-demo.') && !r.pathPrefix);
@@ -649,12 +650,6 @@ describe('ForwarderRoutePublisher', () => {
     const def = (prefix: string) => data.find((r) => r.host.startsWith(prefix) && !r.pathPrefix);
     expect(def('order-a-demo.')).toMatchObject({ profileId: 'admin', upstreamPort: 42001 });
     expect(def('order-b-demo.')).toMatchObject({ profileId: 'admin', upstreamPort: 42001 });
-
-    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
-    const defaultRoute = data.find((r: { pathPrefix?: string }) => !r.pathPrefix);
-    expect(defaultRoute).toBeDefined();
-    expect(defaultRoute.upstreamPort).toBe(41001);
-    expect(defaultRoute.healthState).toBe('unknown');
   });
 
   it.each(['running', 'building', 'starting', 'restarting', 'error', 'stopped'] as const)(
