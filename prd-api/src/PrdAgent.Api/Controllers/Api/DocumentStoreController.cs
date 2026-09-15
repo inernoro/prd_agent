@@ -15,6 +15,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Api.Services;
@@ -39,6 +40,12 @@ public class DocumentStoreController : ControllerBase
     /// <summary>AgentApiKey scope：写文档空间（替代 AI 超级密钥，最小权限归档验收报告）</summary>
     public const string ScopeWrite = "document-store:write";
 
+    /// <summary>
+    /// 对 GitHub 同步子文档手动触发同步时的专属错误码。
+    /// 前端 userReadableError 按码取文案，因此这个码必须和前端登记的一致。
+    /// </summary>
+    public const string GithubChildEntrySyncErrorCode = "GITHUB_CHILD_ENTRY_SYNC";
+
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
     private readonly IFileContentExtractor _fileContentExtractor;
@@ -57,6 +64,7 @@ public class DocumentStoreController : ControllerBase
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
     private readonly DocumentStoreLiveTranscriptionRelay _liveTranscriptionRelay;
     private readonly DocumentAssetCleanupService _documentAssetCleanup;
+    private readonly GitHubUserConnectionService _githubConnections;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -128,6 +136,7 @@ public class DocumentStoreController : ControllerBase
         DocumentStoreLiveTranscriptionRelay liveTranscriptionRelay,
         DocumentAssetCleanupService documentAssetCleanup,
         EntryContentWriteService entryContentWriter,
+        GitHubUserConnectionService githubConnections,
         ILogger<DocumentStoreController> logger)
     {
         _db = db;
@@ -151,6 +160,7 @@ public class DocumentStoreController : ControllerBase
         _liveTranscriptionRelay = liveTranscriptionRelay;
         _documentAssetCleanup = documentAssetCleanup;
         _entryContentWriter = entryContentWriter;
+        _githubConnections = githubConnections;
         _logger = logger;
     }
 
@@ -4621,11 +4631,7 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
             Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory));
         var existingEntries = await _db.DocumentEntries.Find(existingFilter).ToListAsync();
-        var duplicate = existingEntries.FirstOrDefault(e =>
-            e.Metadata.GetValueOrDefault("github_owner") == owner &&
-            e.Metadata.GetValueOrDefault("github_repo") == repo &&
-            e.Metadata.GetValueOrDefault("github_path") == path &&
-            e.Metadata.GetValueOrDefault("github_branch") == branch);
+        var duplicate = existingEntries.FirstOrDefault(e => IsSameGitHubDirectory(e, owner, repo, path, branch));
         if (duplicate != null)
             return BadRequest(ApiResponse<object>.Fail("ALREADY_EXISTS", $"该目录已订阅 (ID: {duplicate.Id})"));
 
@@ -4635,33 +4641,30 @@ public class DocumentStoreController : ControllerBase
         if (string.IsNullOrEmpty(title))
             title = string.IsNullOrEmpty(path) ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}";
 
-        var entry = new DocumentEntry
+        // 手贴 URL 这条路径不要求先连 GitHub（历史行为：公开仓匿名可读），
+        // 但只要用户已经连过，就把连接盖在条目上，私有仓和 5000/h 限额同样受益。
+        //
+        // 盖之前先问一句连接现在还认不认：用户在 GitHub 那边撤销授权后记录仍在，
+        // 盖上去会让本来匿名就能同步的公开仓变成每天必然 401 —— 把能用的路径改坏了。
+        // 问不出结论（网络抖动）时仍然盖，保住私有仓那一侧（判据见 GitHubSyncCredentialPolicy）。
+        var existingConnection = await _githubConnections.GetConnectionAsync(userId, CancellationToken.None);
+        var usability = existingConnection == null
+            ? GitHubSyncCredentialPolicy.ConnectionUsability.Revoked
+            : MapUsability(await _githubConnections.ProbeConnectionAsync(userId, CancellationToken.None));
+        var stampConnection = GitHubSyncCredentialPolicy.ShouldStampConnection(existingConnection != null, usability);
+        if (existingConnection != null && !stampConnection)
         {
-            StoreId = storeId,
-            Title = title,
-            Summary = $"GitHub 目录同步: {owner}/{repo}/{path}@{branch}",
-            SourceType = DocumentSourceType.GithubDirectory,
-            SourceUrl = request.GithubUrl.Trim(),
-            SyncIntervalMinutes = interval,
-            SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
-            ContentType = "application/x-github-directory",
-            CreatedBy = userId,
-            UpdatedBy = userId,
-            UpdatedByName = userName,
-            Metadata = new Dictionary<string, string>
-            {
-                ["github_owner"] = owner,
-                ["github_repo"] = repo,
-                ["github_path"] = path,
-                ["github_branch"] = branch,
-            },
-            Tags = request.Tags ?? new List<string>(),
-        };
-
-        if (!string.IsNullOrWhiteSpace(request.IncludeGlob))
-        {
-            entry.Metadata["github_include_glob"] = request.IncludeGlob.Trim();
+            _logger.LogInformation(
+                "[document-store] GitHub subscription for {Owner}/{Repo} not stamped: stored connection is revoked; falling back to anonymous sync",
+                owner, repo);
         }
+
+        var entry = BuildGitHubDirectoryEntry(
+            storeId, owner, repo, path, branch, title,
+            request.IncludeGlob, request.Tags, userId, userName,
+            connectionUserId: stampConnection ? userId : null,
+            sourceUrl: request.GithubUrl.Trim(),
+            syncIntervalMinutes: interval);
 
         await _db.DocumentEntries.InsertOneAsync(entry);
 
@@ -4676,6 +4679,238 @@ public class DocumentStoreController : ControllerBase
             entry.Id, owner, repo, path, branch, storeId);
 
         return Ok(ApiResponse<DocumentEntry>.Ok(entry));
+    }
+
+    /// <summary>
+    /// 批量添加 GitHub 目录订阅（登录 GitHub → 勾目录 → 一次开启同步）。
+    ///
+    /// 与单条 subscribe-github 的差别只有两点：一次收多个目录、且**要求已连接 GitHub**
+    /// （连接的 userId 会盖在每个条目上，同步 worker 据此带 token 请求，私有仓才拉得到）。
+    /// 已订阅过的目录不报错，走 skipped 返回，让"再勾一次"是幂等的。
+    /// </summary>
+    [HttpPost("stores/{storeId}/subscribe-github/batch")]
+    public async Task<IActionResult> AddGitHubSubscriptionBatch(
+        string storeId,
+        [FromBody] AddGitHubBatchSubscriptionRequest request,
+        CancellationToken ct)
+    {
+        var (userId, userName) = await GetActorInfoAsync();
+        // 与单条 subscribe-github、以及手动触发同步（TriggerSync）一致，只认空间所有者。
+        // 放宽到「团队可写」会造出一批建得起来、却同步不了也删不掉的订阅：
+        // 那两条路径都按 OwnerId 判，团队成员建完立刻撞墙。
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId && s.OwnerId == userId).FirstOrDefaultAsync(ct);
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
+        if (request == null || string.IsNullOrWhiteSpace(request.Owner) || string.IsNullOrWhiteSpace(request.Repo))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "owner / repo 不能为空"));
+
+        var owner = request.Owner.Trim();
+        var repo = request.Repo.Trim();
+        if (!PrUrlParser.IsSafeOwnerRepo(owner, repo))
+            return BadRequest(ApiResponse<object>.Fail(GitHubErrorCodes.PR_URL_INVALID, "owner/repo 含非法字符"));
+
+        var directories = request.Directories ?? new List<GitHubDirectorySelection>();
+        if (directories.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "至少要勾选一个目录"));
+        if (directories.Count > MaxGitHubBatchDirectories)
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT, $"一次最多订阅 {MaxGitHubBatchDirectories} 个目录，请分批开启"));
+
+        // 必须已连接：批量入口就是「GitHub 登录后勾目录」这条路径，
+        // 没有连接就没有 token，私有仓会在首次同步时静默 404。
+        var connection = await _githubConnections.GetConnectionAsync(userId, ct);
+        if (connection == null)
+            return StatusCode(412, ApiResponse<object>.Fail(
+                GitHubErrorCodes.GITHUB_NOT_CONNECTED, "尚未连接 GitHub 账号，请先授权"));
+
+        var branch = string.IsNullOrWhiteSpace(request.Branch) ? "main" : request.Branch.Trim();
+        var interval = Math.Clamp(request.SyncIntervalMinutes ?? 1440, 60, 1440);
+
+        var existing = await _db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+                Builders<DocumentEntry>.Filter.Eq(e => e.SourceType, DocumentSourceType.GithubDirectory)))
+            .ToListAsync(ct);
+
+        var created = new List<DocumentEntry>();
+        var skipped = new List<object>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        // 写入阶段用服务端自己的令牌：浏览器关掉 / 跳走会取消 ct，
+        // 那会在「已经建了几条」和「回写空间计数」之间断开，留下一批条目和一个偏小的 DocumentCount，
+        // 而且重试只会跳过已建的那些、计数再也补不回来（server-authority：客户端断开不取消服务端任务）。
+        var writeCt = CancellationToken.None;
+
+        // 计数回写放 finally：中途某条插入失败时，前面已经落库的那些条目必须被算进去。
+        // 漏算就再也补不回来——重试会把它们判成「已订阅」跳过，只有新插入的才计数。
+        try
+        {
+            foreach (var selection in directories)
+            {
+                var path = (selection?.Path ?? string.Empty).Trim().Trim('/');
+
+                // 同一次请求里勾重了：只建一次
+                if (!seen.Add(path))
+                {
+                    skipped.Add(new { path, reason = "duplicate_in_request" });
+                    continue;
+                }
+
+                var duplicate = existing.FirstOrDefault(e => IsSameGitHubDirectory(e, owner, repo, path, branch));
+                if (duplicate != null)
+                {
+                    skipped.Add(new { path, reason = "already_subscribed", entryId = duplicate.Id });
+                    continue;
+                }
+
+                var title = string.IsNullOrWhiteSpace(selection?.Title)
+                    ? (path.Length == 0 ? $"{owner}/{repo}" : $"{owner}/{repo}/{path}")
+                    : selection!.Title!.Trim();
+
+                var entry = BuildGitHubDirectoryEntry(
+                    storeId, owner, repo, path, branch, title,
+                    request.IncludeGlob, request.Tags, userId, userName,
+                    connectionUserId: userId,
+                    sourceUrl: BuildGitHubDirectoryUrl(owner, repo, branch, path),
+                    syncIntervalMinutes: interval);
+
+                await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: writeCt);
+                created.Add(entry);
+            }
+        }
+        finally
+        {
+            if (created.Count > 0)
+            {
+                await _db.DocumentStores.UpdateOneAsync(
+                    s => s.Id == storeId,
+                    Builders<DocumentStore>.Update
+                        .Inc(s => s.DocumentCount, created.Count)
+                        .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: writeCt);
+            }
+        }
+
+        _logger.LogInformation(
+            "[document-store] GitHub batch subscription: store={StoreId} {Owner}/{Repo}@{Branch} created={Created} skipped={Skipped} login={Login}",
+            storeId, owner, repo, branch, created.Count, skipped.Count, connection.GitHubLogin);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            created = created.Select(e => new
+            {
+                e.Id,
+                e.Title,
+                path = e.Metadata.GetValueOrDefault("github_path"),
+                e.SyncStatus,
+            }),
+            createdCount = created.Count,
+            skipped,
+            connectedLogin = connection.GitHubLogin,
+            owner,
+            repo,
+            branch,
+        }));
+    }
+
+    /// <summary>一次批量订阅最多允许勾多少个目录（防止一次把整仓上千目录全塞进来）。</summary>
+    private const int MaxGitHubBatchDirectories = 50;
+
+    /// <summary>
+    /// GitHub 目录订阅父条目的唯一构造口径 —— 单条和批量共用，
+    /// 避免两处各写一份 metadata 后漂移（predicate-and-wiring-discipline 形状 3）。
+    /// </summary>
+    private static DocumentEntry BuildGitHubDirectoryEntry(
+        string storeId,
+        string owner,
+        string repo,
+        string path,
+        string branch,
+        string title,
+        string? includeGlob,
+        List<string>? tags,
+        string userId,
+        string userName,
+        string? connectionUserId,
+        string sourceUrl,
+        int syncIntervalMinutes)
+    {
+        var entry = new DocumentEntry
+        {
+            StoreId = storeId,
+            Title = title,
+            Summary = $"GitHub 目录同步: {owner}/{repo}/{path}@{branch}",
+            SourceType = DocumentSourceType.GithubDirectory,
+            SourceUrl = sourceUrl,
+            SyncIntervalMinutes = syncIntervalMinutes,
+            SyncStatus = DocumentSyncStatus.Syncing, // 立即触发首次同步
+            ContentType = "application/x-github-directory",
+            CreatedBy = userId,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
+            Metadata = new Dictionary<string, string>
+            {
+                ["github_owner"] = owner,
+                ["github_repo"] = repo,
+                ["github_path"] = path,
+                ["github_branch"] = branch,
+            },
+            Tags = tags ?? new List<string>(),
+        };
+
+        if (!string.IsNullOrWhiteSpace(includeGlob))
+        {
+            entry.Metadata["github_include_glob"] = includeGlob.Trim();
+        }
+
+        // 同步 worker 据此解出该用户的 token：私有仓能拉、限额从匿名 60/h 提到 5000/h。
+        if (!string.IsNullOrWhiteSpace(connectionUserId))
+        {
+            entry.Metadata["github_connection_user_id"] = connectionUserId!;
+        }
+
+        return entry;
+    }
+
+    /// <summary>拼出目录在 GitHub 上的可点击地址（也当条目的 SourceUrl）。</summary>
+    /// <summary>连接服务的三态翻成判据层的三态（两边各自独立演化，不共用枚举类型）。</summary>
+    private static GitHubSyncCredentialPolicy.ConnectionUsability MapUsability(
+        GitHubUserConnectionService.GitHubConnectionUsability probed)
+        => probed switch
+        {
+            GitHubUserConnectionService.GitHubConnectionUsability.Usable
+                => GitHubSyncCredentialPolicy.ConnectionUsability.Usable,
+            GitHubUserConnectionService.GitHubConnectionUsability.Revoked
+                => GitHubSyncCredentialPolicy.ConnectionUsability.Revoked,
+            _ => GitHubSyncCredentialPolicy.ConnectionUsability.Unknown,
+        };
+
+    /// <summary>
+    /// 这个条目订阅的是不是同一个 GitHub 目录（唯一判定，手贴与批量两条路共用）。
+    ///
+    /// owner / repo **大小写不敏感**：GitHub 的用户名与仓库名不区分大小写，而手贴地址保留用户
+    /// 敲进去的大小写、仓库接口返回的是规范大小写——两条路各建一份，就会出现两个指向同一目录的
+    /// 订阅，接着把同一批文档导入两遍。
+    /// path / branch 保持区分大小写：Git 的路径与分支名本来就区分。
+    /// </summary>
+    private static bool IsSameGitHubDirectory(
+        DocumentEntry entry, string owner, string repo, string path, string branch)
+        => string.Equals(entry.Metadata.GetValueOrDefault("github_owner"), owner, StringComparison.OrdinalIgnoreCase)
+        && string.Equals(entry.Metadata.GetValueOrDefault("github_repo"), repo, StringComparison.OrdinalIgnoreCase)
+        && entry.Metadata.GetValueOrDefault("github_path") == path
+        && entry.Metadata.GetValueOrDefault("github_branch") == branch;
+
+    /// <summary>
+    /// 父条目对外展示的 GitHub 地址。逐段转义：目录名里合法的 # 会把后半段变成 URL 片段、
+    /// ? 会开始查询串，而订阅抽屉直接拿这个值当链接——不转义就是点进去落到别的目录。
+    /// </summary>
+    private static string BuildGitHubDirectoryUrl(string owner, string repo, string branch, string path)
+    {
+        var baseUrl = $"https://github.com/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+                    + $"/tree/{Uri.EscapeDataString(branch)}";
+        if (path.Length == 0) return baseUrl;
+        var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
+        return $"{baseUrl}/{safePath}";
     }
 
     /// <summary>置顶/取消置顶文档条目（支持多个置顶）</summary>
@@ -4879,6 +5114,16 @@ public class DocumentStoreController : ControllerBase
 
         if (string.IsNullOrEmpty(entry.SourceUrl) && entry.SourceType != DocumentSourceType.GithubDirectory)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "该文档不是订阅源"));
+
+        // GitHub 目录同步产出的子文件由父目录条目统一拉（见 DocumentSyncSchedule.IsGithubChildEntry）。
+        // 这里不拦的话，标了「同步中」却永远没人认领，用户看到的是一个卡死的转圈。
+        //
+        // 用专属错误码而不是通用的 INVALID_FORMAT：前端对通用校验码只放行少数几种句式，
+        // 这句「该去点哪里」的引导会被兜底文案吃掉，用户只看到「操作未完成，请检查输入后重试」。
+        if (DocumentSyncSchedule.IsGithubChildEntry(entry))
+            return BadRequest(ApiResponse<object>.Fail(
+                GithubChildEntrySyncErrorCode,
+                "该文档由所属的 GitHub 目录订阅统一同步，请对该目录条目触发同步"));
 
         // 暂停状态下不允许手动触发
         if (entry.IsPaused)
@@ -8274,6 +8519,24 @@ public class AddGitHubSubscriptionRequest
     public int? SyncIntervalMinutes { get; set; }
     public List<string>? Tags { get; set; }
     public string? IncludeGlob { get; set; }
+}
+
+public class AddGitHubBatchSubscriptionRequest
+{
+    public string Owner { get; set; } = string.Empty;
+    public string Repo { get; set; } = string.Empty;
+    public string? Branch { get; set; }
+    public List<GitHubDirectorySelection>? Directories { get; set; }
+    public string? IncludeGlob { get; set; }
+    public List<string>? Tags { get; set; }
+    public int? SyncIntervalMinutes { get; set; }
+}
+
+public class GitHubDirectorySelection
+{
+    /// <summary>仓库内目录路径；空串表示仓库根目录。</summary>
+    public string Path { get; set; } = string.Empty;
+    public string? Title { get; set; }
 }
 
 public class UpdateSubscriptionRequest

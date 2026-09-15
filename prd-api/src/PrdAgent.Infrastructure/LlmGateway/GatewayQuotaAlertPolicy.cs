@@ -31,6 +31,7 @@ internal static class GatewayQuotaAlertPolicy
         string? errorCode,
         string? errorMessage,
         string? platformName,
+        string? modelName,
         ILogger logger)
     {
         if (notifier == null || !IsQuotaFailure(errorCode, errorMessage))
@@ -39,8 +40,8 @@ internal static class GatewayQuotaAlertPolicy
         try
         {
             await notifier.NotifyQuotaExceededAsync(
-                string.IsNullOrWhiteSpace(platformName) ? "独立 LLM 网关" : platformName,
-                UserReadableQuotaMessage,
+                platformName,
+                modelName,
                 CancellationToken.None);
         }
         catch (Exception ex)

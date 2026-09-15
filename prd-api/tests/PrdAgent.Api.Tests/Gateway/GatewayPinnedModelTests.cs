@@ -139,6 +139,9 @@ public class GatewayPinnedModelTests
             chunks.Add(chunk);
         }
 
+        var start = chunks.Single(x => x.Type == "start");
+        start.Model.ShouldBe(PinnedModel);
+        start.Platform.ShouldBe(PinnedPlatformId);
         chunks.Any(x => x.Type == "done").ShouldBeTrue();
         gateway.CapturedRequest.ShouldNotBeNull();
         gateway.CapturedRequest!.ExpectedModel.ShouldBe(PinnedModel);
@@ -273,6 +276,7 @@ public class GatewayPinnedModelTests
         {
             CapturedRequest = request;
             await Task.Yield();
+            yield return GatewayStreamChunk.Start(Resolution());
             yield return new GatewayStreamChunk { Type = GatewayChunkType.Done, Seq = 1 };
         }
 
