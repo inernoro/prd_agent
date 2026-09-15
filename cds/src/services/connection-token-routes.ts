@@ -113,6 +113,18 @@ const RULES: readonly ConnectionRouteRule[] = [
     why: 'Agent 会话日志：MAP 读取对应会话的脱敏运行诊断',
   },
   {
+    // OpenDesign 的创建**必然**返回 202（容器在后台起，路由当场只给一个预约），
+    // MAP 只能按自己发的 clientRequestId 回查才知道这份运行时到底建没建成。少了这条，
+    // 每一次轮询都在进路由之前被门挡掉，MAP 把会话一直停在 Creating 直到 15 分钟超时——
+    // 也就是说 OpenDesign 经配对连接根本起不来（Codex P1，2026-09-15）。
+    // 路由自身要 instance:read，且只返回 principalKey 等于调用方的预约与会话；
+    // 带上 clientRequestId 之后进一步收敛到调用方自己发起的那一次，不是全项目会话列表。
+    methods: ['GET'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions$/.test(path),
+    scope: 'instance:read',
+    why: 'Agent 会话回查：MAP 按自己的 clientRequestId 确认 202 预约最终建成了哪一份运行时',
+  },
+  {
     // 停止返回旧式无结构 400 时，MAP 要回读这一条会话才能分清「已经没了」与「真失败」。
     // 少了这条，回读在进会话路由之前就被门挡掉，MAP 把它读成鉴权失败，于是把清理判成
     // 永久失败（Codex P2，2026-09-15）。路由自身已经要 instance:read 且只放行调用方自己的

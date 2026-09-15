@@ -134,14 +134,16 @@ describe('Agent 会话调用按现有三个范围严格分权', () => {
     // 单条会话回读走 instance:read，不在 deployment:stream 这一档。
     expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-sessions/s1')).toBe(false);
     expect(connectionTokenAllows(['instance:read'], 'GET', '/api/projects/p1/agent-sessions/s1')).toBe(true);
-    // 会话列表始终不开：那才是这道门要挡的越权面。
-    expect(connectionTokenAllows(['instance:read'], 'GET', '/api/projects/p1/agent-sessions')).toBe(false);
+    // 按 clientRequestId 回查同样走 instance:read：OpenDesign 创建必然是 202，
+    // 不开这条，MAP 永远不知道那份预约建成了没有（Codex P1，2026-09-15）。
+    // 路由自身只返回调用方自己的预约与会话，所以开的是「我自己那一次」，不是全项目列表。
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-sessions')).toBe(false);
+    expect(connectionTokenAllows(['instance:read'], 'GET', '/api/projects/p1/agent-sessions')).toBe(true);
   });
 
   it('相似路径、错方法和管理端点不能搭便车', () => {
     const scopes = DEFAULT_SCOPES;
     for (const [method, path] of [
-      ['GET', '/api/projects/p1/agent-sessions'],
       ['POST', '/api/projects/p1/agent-runtime-providers'],
       ['POST', '/api/projects/p1/files'],
       ['GET', '/api/projects/p1/agent-requests'],
