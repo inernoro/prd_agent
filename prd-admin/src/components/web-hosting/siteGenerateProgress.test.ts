@@ -144,3 +144,30 @@ describe('刷新之后徽章要还原', () => {
     expect(reset.slice(0, reset.indexOf('setSelectedKnowledge'))).toContain('setResolvedModel(null)');
   });
 });
+
+describe('恢复轮询要分得清「断线」和「没了」', () => {
+  // 形状 3：两个面板各有一份恢复循环，改写面板早就终态处理 NOT_FOUND，生成弹窗没有，
+  // 于是它会每 1.5 秒无限轮询、generating 永远为真、旧 key 永远不清——用户发不起下一次生成。
+  const panels = [
+    ['SiteGenerateDialog.tsx', '生成弹窗'],
+    ['SiteEditPanel.tsx', '改写面板'],
+  ] as const;
+  for (const [file, label] of panels) {
+    it(`${label}把 NOT_FOUND 当终态收尾，而不是继续轮询`, () => {
+      const source = readFileSync(path.resolve(__dirname, file), 'utf8');
+      const branch = source.indexOf("result.error?.code === 'NOT_FOUND'");
+      expect(branch, `${label}没有单独处理 NOT_FOUND，会把永久失败当成断线一直重试`)
+        .toBeGreaterThan(-1);
+      // 终态分支必须真的收尾：停掉 generating 并就地 return，不落回重试路径。
+      const body = source.slice(branch, branch + 900);
+      expect(body, `${label}的 NOT_FOUND 分支没有停掉 generating`).toContain('setGenerating(false)');
+      expect(body, `${label}的 NOT_FOUND 分支没有 return，会继续走到重试`).toContain('return;');
+    });
+  }
+
+  it('生成弹窗的终态分支要清掉 sessionStorage 里的旧 run，否则重开还会卡在同一个循环', () => {
+    const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), 'utf8');
+    const branch = source.indexOf("result.error?.code === 'NOT_FOUND'");
+    expect(source.slice(branch, branch + 900)).toContain('sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY)');
+  });
+});

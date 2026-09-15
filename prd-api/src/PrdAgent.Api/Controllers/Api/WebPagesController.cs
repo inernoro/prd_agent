@@ -9,6 +9,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Filters;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -1339,6 +1340,9 @@ public class WebPagesController : ControllerBase
         }
         catch (HostedSiteDeletionPendingException ex)
         {
+            // 202 也是 2xx，活动流会照 WebPages.Delete 记成「删除了站点」——而这里站点还在，
+            // 清理只是排进了队。用过滤器既有的抑制钩子不留痕，等真删掉再说删掉了。
+            ActivityLogActionFilter.Suppress(HttpContext);
             return StatusCode(
                 StatusCodes.Status202Accepted,
                 ApiResponse<object>.Ok(new

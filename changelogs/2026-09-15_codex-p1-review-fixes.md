@@ -16,3 +16,5 @@
 | security | cds | 伙伴侧 workspaceTransfer 的下载与回写一律不跟随重定向：会话创建时钉死的 origin 在 3xx 之后不再成立，改走唯一入口 fetchPartnerTransfer 并把 3xx 判成失败，另加接线守卫防止新调用点绕过 |
 | fix | prd-api | 刷新恢复读回的 run DTO 补上 ResolvedModel／ResolvedPlatform，否则模型事件只在流的开头出现一次，刷新之后徽章再也回不来；并加守卫对齐两个 Controller 的 run 投影 |
 | fix | prd-admin | 生成弹窗与改写面板的恢复路径读回模型徽章，且弹窗重开时清空上一轮模型（常驻挂载，不清会把上一轮的模型当成本轮的显示出来）；平台兜底称谓收敛成共用常量 |
+| fix | prd-api | 删除站点遇到发布租约而推迟清理时不再往团队活动流记「删除了站点」——202 也是 2xx，会被记成已完成的删除，而站点还在；改用过滤器既有的抑制钩子，等真删掉再留痕 |
+| fix | prd-admin | 生成弹窗的恢复轮询把 NOT_FOUND 当终态收尾（停 generating、清 sessionStorage 旧 run），不再把永久失败当断线每 1.5 秒无限重试、让用户连下一次生成都发不起来；改写面板原本就是这么处理的 |

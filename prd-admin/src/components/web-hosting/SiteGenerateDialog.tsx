@@ -101,6 +101,17 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       const result = await getDesignArtifactRun(runId);
       if (signal.aborted) return;
       if (!result.success) {
+        // NOT_FOUND 是终态，不是断线：任务记录没了（或 sessionStorage 里那个 id 已经过期），
+        // 再怎么轮询都不会变。当成瞬时故障会卡住 generating、留着旧 key，用户连下一次生成
+        // 都发不起来。改写面板早就这么处理了，这里是同一条判据的第二份（形状 3）。
+        if (result.error?.code === 'NOT_FOUND') {
+          setGenerating(false);
+          setActiveRunId(null);
+          setStopRequested(false);
+          setPhase('上次的网页生成任务已经不在了，原来的知识与要求仍保留，可以直接重新生成');
+          sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+          return;
+        }
         failedReads += 1;
         setGenerating(true);
         setPhase(failedReads === 1
