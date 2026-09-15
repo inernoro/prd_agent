@@ -7,6 +7,7 @@ import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
+import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
   getLeaderboardBoards,
   getModelLeaderboard,
@@ -87,6 +88,7 @@ const ROWS_STEP = 40;
 type RangeKey = 'all' | 'open';
 
 export default function ModelLeaderboardPage() {
+  const isMobile = useIsMobile();
   const [boards, setBoards] = useState<LeaderboardBoardInfo[]>([]);
 
   /**
@@ -424,7 +426,14 @@ export default function ModelLeaderboardPage() {
           </button>
         )}
 
-        <TipsEntryButton className="shrink-0" />
+        {/*
+          手机宽度不显示教程 pill：onboarding-tips 规则规定手机端把顶部空间让给页面操作，
+          教程入口改由「我的 → 学习中心」承载，没走完的本页教程仍由 SpotlightOverlay
+          自动开讲、不依赖这个按钮（Codex 在 PR #1538 指出）。
+          这页的页头是自绘的（要把标题与副标题排两行），所以拿不到 PageHeader / TabBar
+          那边的处理，得自己判——写法照 TabBar 的 `!isMobile &&`。
+        */}
+        {!isMobile && <TipsEntryButton className="shrink-0" />}
       </div>
 
       <BoardSwitcher boards={boards} current={board} onPick={setBoard} />

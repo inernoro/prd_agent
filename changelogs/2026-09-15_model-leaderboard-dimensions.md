@@ -3,7 +3,7 @@
 | feat | prd-admin | 当前维度同步到 URL（?board=text-to-image），刷新保持、可分享、交付能给出落到该维度的深链；URL 里写了不存在的榜退回默认榜 |
 | feat | prd-admin | 榜单页内存缓存（切回已看过的维度不再重拉，刷新/同步按钮强制绕过）+ 渐进渲染（首屏 40 行，滚到底追加），治 402 行文本榜的卡顿 |
 | feat | prd-api | 新增 arena.ai 榜单同步：每天一轮抓取解析落库，只在权威部署跑，抓失败保留旧快照 |
-| feat | prd-api | 解析器支持两种表格形状——Agent 榜六指标（含置信区间、名次区间、会话数与成本单价，方向 ▲▼ 解析进数值符号）与对战分榜（Elo 分数、非对称区间、投票数、上下文窗口、初步标注），形状按页面实际结构判定并与目录声明校验 |
+| feat | prd-api | 解析器支持两种表格形状——Agent 榜六指标（含置信区间、名次区间、会话数与成本单价，方向（向上/向下）解析进数值符号）与对战分榜（Elo 分数、非对称区间、投票数、上下文窗口、初步标注），形状按页面实际结构判定并与目录声明校验 |
 | feat | prd-api | 新增 GET /api/model-leaderboard、/top、/boards 三个只读端点，全员可见，页面只读库不打外站；手动同步在 /api/admin/ 前缀下走「模型管理-写」权限，支持 ?board= 只同步单个榜 |
 | fix | prd-api | 修正「只有 Agent 榜能拿到数据」的错误结论——此前试的是不存在的路径，404 兜底页里的一句 Loading leaderboard 被误当成懒加载骨架 |
 | fix | prd-api | 写侧 Controller 改用 api/admin/ 前缀：权限中间件按路由前缀查权限，与只读端点同前缀会把只读也一起要求 mds.read，全员可见形同虚设 |
@@ -34,3 +34,6 @@
 | fix | prd-admin | 净改进那列的尺子改按「值 + 误差」的跨度算：原先只按值归一，最大那行的误差须被画布边界截掉，恰好把「这个数有多不确定」截没了（13.85±1.92 实测命中） |
 | fix | prd-admin | 首页挂件实时点的光晕改由 --semantic-success-text 派生：原先写死一个 rgba 绿，两套主题下都不等于点本身的颜色，亮色下尤其明显，且改 token 带不动它 |
 | fix | prd-api | 自检的陈旧度改为「每个榜取它自己最新的那份，再挑最旧的」：首次写并发窗口留下的重复文档永不更新，会让这条 check 永久告警，而每个榜其实都在正常同步 |
+| fix | prd-api | 陈旧度 monitor 去掉 passive + sampleComponentId：那条声明照抄了未处理异常那条的形状，却让 sampleComponentId 指向自己，于是「快照多旧」被同时当成判据值和样本量——刚同步完显示「0 次真实调用」拒绝判绿 |
+| fix | prd-admin | 榜单页头的教程 pill 在手机宽度隐藏：这页页头是自绘的，拿不到 PageHeader/TabBar 那边的处理，按 onboarding-tips 规则自己判 |
+| docs | platform | changelog 里描述解析方向的字面三角改成文字（规则 0 的 emoji 禁令也管 changelogs/） |

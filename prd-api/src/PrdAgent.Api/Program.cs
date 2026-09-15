@@ -1839,8 +1839,14 @@ static async Task<IResult> DeepHealth(
                         intervalSeconds = 21600,
                         failuresToAlarm = 1,
                         severity = "P2",
-                        observeMode = "passive",
-                        sampleComponentId = "model-leaderboard.staleness",
+                        // 不设 observeMode：这条是**主动读一次状态**，走默认的 active。
+                        //
+                        // 第一版照抄了上面那条未处理异常的 passive + sampleComponentId，但那两条的
+                        // 形状根本不同：那条判的是「窗口内出了几次异常」，要配一个**另一条 check**
+                        // 给出的请求量才有意义，所以 sampleComponentId 指向 api.requests。
+                        // 这条我却让它指向自己，于是 CDS 会把「快照多旧」同时当成判据值和样本量——
+                        // 刚同步完那一刻值是 0，面板上会显示「0 次真实调用」而拒绝判绿；平时显示
+                        // 12.4，又像是 12 次请求（Codex 在 PR #1538 指出）。
                     },
                 },
             },
