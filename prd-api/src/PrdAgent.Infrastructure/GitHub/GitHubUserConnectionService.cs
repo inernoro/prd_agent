@@ -63,14 +63,28 @@ public sealed class GitHubUserConnectionService
             throw GitHubException.NotConnected();
         }
 
-        var jwtSecret = _config["Jwt:Secret"]
-            ?? throw new InvalidOperationException("Jwt:Secret missing");
-        var token = ApiKeyCrypto.Decrypt(conn.AccessTokenEncrypted, jwtSecret);
+        var token = DecryptToken(conn);
         if (string.IsNullOrEmpty(token))
         {
             throw GitHubException.TokenExpired();
         }
         return token;
+    }
+
+    /// <summary>
+    /// 解开**这一条**连接记录里的令牌密文，解不开回 null。
+    ///
+    /// 独立出来是为了让调用方能把「用哪一条」攥在自己手里：断开那条路必须对同一条记录
+    /// 既撤销又删除，中途再查一次库就可能撤到另一条上去
+    /// （2026-09-15 Codex review 第九轮）。
+    /// </summary>
+    private string? DecryptToken(GitHubUserConnection conn)
+    {
+        if (string.IsNullOrEmpty(conn.AccessTokenEncrypted)) return null;
+        var jwtSecret = _config["Jwt:Secret"]
+            ?? throw new InvalidOperationException("Jwt:Secret missing");
+        var token = ApiKeyCrypto.Decrypt(conn.AccessTokenEncrypted, jwtSecret);
+        return string.IsNullOrEmpty(token) ? null : token;
     }
 
     /// <summary>
@@ -162,23 +176,38 @@ public sealed class GitHubUserConnectionService
         // 所以删除必须钉在这一条上（同一条记录、同一份密文），别人写进来的新连接不归这次断开管。
         var target = await GetConnectionAsync(userId, ct);
 
+        // 撤销用的令牌只能来自**刚刚捕获的那一条**，不能再查一次库：
+        // 中途若有人重新授权（甚至换了个账号），再查一次拿到的是新的那把，
+        // 于是会去撤销新账号的授权，而本该撤的那份原封不动——撤错了人，还漏撤了该撤的。
         GitHubTokenRevocation revocation;
-        try
-        {
-            var token = await ResolveTokenAsync(userId, ct);
-            revocation = await _oauth.RevokeTokenAsync(token, ct);
-        }
-        catch (GitHubException ex) when (ex.Code == GitHubErrorCodes.GITHUB_NOT_CONNECTED)
+        if (target == null)
         {
             // 压根没连过：没有可撤销的东西，不是失败，也没有要用户处理的事。
             revocation = GitHubTokenRevocation.NothingToRevoke;
         }
-        catch (Exception ex)
+        else
         {
-            // 密文解不开（换过密钥等）或其它意外：**我们手里这把钥匙读不出来，所以撤不了**。
-            // 不能因此报「已撤销」——那是撒谎；也不能让断开整个失败——用户首先要的是本地别再留着它。
-            _logger.LogWarning(ex, "[GitHubConnect] cannot resolve token for revocation user={UserId}", userId);
-            revocation = GitHubTokenRevocation.Failed;
+            string? token;
+            try
+            {
+                token = DecryptToken(target);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[GitHubConnect] 解不开这条连接的令牌密文 user={UserId}", userId);
+                token = null;
+            }
+
+            if (token == null)
+            {
+                // 密文解不开（换过密钥等）：**我们手里这把钥匙读不出来，所以撤不了**。
+                // 不能因此报「已撤销」——那是撒谎；也不能让断开整个失败——用户首先要的是本地别再留着它。
+                revocation = GitHubTokenRevocation.Failed;
+            }
+            else
+            {
+                revocation = await _oauth.RevokeTokenAsync(token, ct);
+            }
         }
 
         if (target == null)

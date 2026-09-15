@@ -545,8 +545,17 @@ public class GitHubDirectorySyncService
             using var response = await Http.SendAsync(request, ct);
             return response.StatusCode;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // 服务停机不是「探测没问出结论」。吞成 null 的话，上游会把目录那个 404 翻成一次
+            // 普通的同步失败：条目标红、LastSyncAt 照样推进，于是按日调度要等到次日才重试，
+            // 而真相只是「这轮被停机打断了」。原样抛出，交给 worker 的停机分支处理。
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        {
+            // 走到这里的 OperationCanceledException 是 HttpClient 自己的超时（ct 没被取消），
+            // 那才算「没问出结论」。
             _logger.LogWarning(ex, "[GitHubSync] 探测 {Owner}/{Repo}@{Branch} 失败", owner, repo, branch);
             return null;
         }
