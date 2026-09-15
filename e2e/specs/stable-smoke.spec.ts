@@ -3370,6 +3370,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不主动修改网关路由配置');
     // issue #1536：人为构造「带标记备用已启用 + Endpoint 停在注入态」的遗留状态，断言自愈把 Endpoint
     // 恢复成捐出方契约、健康计数清零，且重复执行不再有任何改动。
+    // 网关的 Offering 每次更新都会生成新版本（旧记录标记 SupersededByOfferingId，再改旧 id 会 409），
+    // 所以这里始终以「逻辑模型 + 标记 + targetId」重新定位当前版本，不拿进入前的 id 一路用到底。
     const gateway = await loginGateway(request);
     const readLogical = async () => {
       const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
@@ -3386,46 +3388,56 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0];
     expect(donor, `带标记备用 ${backup!.id} 的上游 ${backup!.targetId} 在其它逻辑模型上找不到捐出方 Offering`).toBeTruthy();
     const original = { enabled: backup!.enabled, endpointPath: backup!.endpointPath || '', priority: backup!.priority };
-    const put = async (data: Record<string, unknown>) => {
-      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${backup!.id}`, {
+    const readBackup = async () => {
+      const current = (await readLogical()).find((item) => item.id === owner!.id)?.offerings
+        .find((offering) => isGatewayFailoverBackup(offering) && offering.targetId === backup!.targetId);
+      expect(current, '带标记备用 Offering 必须始终留在逻辑模型上').toBeTruthy();
+      return current!;
+    };
+    const put = async (offeringId: string, data: Record<string, unknown>) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${offeringId}`, {
         headers: gateway.headers,
         data,
       });
       const body = await response.json() as ApiEnvelope<GatewayOffering>;
-      expect(response.ok(), body.error?.message || `Offering ${backup!.id} 更新失败`).toBe(true);
+      expect(response.ok(), body.error?.message || `Offering ${offeringId} 更新失败`).toBe(true);
       return body.data;
     };
-    const setEnabled = async (enabled: boolean) => {
-      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${backup!.id}/enabled`, {
+    const setEnabled = async (offeringId: string, enabled: boolean) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${offeringId}/enabled`, {
         headers: gateway.headers,
         data: { enabled },
       });
       const body = await response.json() as ApiEnvelope<GatewayOffering>;
-      expect(response.ok(), body.error?.message || `Offering ${backup!.id} ${enabled ? '启用' : '停用'}失败`).toBe(true);
+      expect(response.ok(), body.error?.message || `Offering ${offeringId} ${enabled ? '启用' : '停用'}失败`).toBe(true);
+      return body.data;
     };
 
     try {
       // 模拟 worker 在全路故障注入之后被硬杀：备用启用、Endpoint 停在注入态。
-      const poisoned = await put({ endpointPath: `stable-smoke-all-failure/leftover-${Date.now()}`, priority: original.priority });
+      const poisoned = await put(backup!.id, { endpointPath: `stable-smoke-all-failure/leftover-${Date.now()}`, priority: original.priority });
       expect(isGatewayInjectedEndpoint(poisoned)).toBe(true);
-      await setEnabled(true);
+      await setEnabled(poisoned.id, true);
 
       const recovered = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
-      expect(recovered.map((item) => item.offeringId), '自愈必须恰好处理这条遗留备用，不碰其它 Offering').toEqual([backup!.id]);
+      expect(
+        recovered.map((item) => `${item.logicalId}:${item.targetId}`),
+        '自愈必须恰好处理这条遗留备用，不碰其它 Offering',
+      ).toEqual([`${owner!.id}:${backup!.targetId}`]);
       expect(recovered[0].source).toBe('donor');
       expect(recovered[0].to).toBe(donor!.endpointPath || '');
 
-      const after = (await readLogical()).find((item) => item.id === owner!.id)?.offerings.find((offering) => offering.id === backup!.id);
-      expect(after, '自愈后备用 Offering 必须仍在逻辑模型上').toBeTruthy();
-      expect(isGatewayInjectedEndpoint(after!)).toBe(false);
-      expect(after!.endpointPath || '').toBe(donor!.endpointPath || '');
-      expect(after!.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
+      const after = await readBackup();
+      expect(isGatewayInjectedEndpoint(after)).toBe(false);
+      expect(after.endpointPath || '').toBe(donor!.endpointPath || '');
+      expect(after.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
       expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
     } finally {
-      // 顺序恢复：同一条 Offering 的两次写不并发，避免网关侧后写覆盖先写。
+      // 顺序恢复并逐步取新版本 id：同一条 Offering 的两次写不并发，也不拿旧 id 去改已被替代的版本。
       const restore = await Promise.allSettled([(async () => {
-        await put({ endpointPath: original.endpointPath, priority: original.priority });
-        await setEnabled(original.enabled);
+        const latest = await readBackup();
+        const restored = await put(latest.id, { endpointPath: original.endpointPath, priority: original.priority });
+        await setEnabled(restored.id, original.enabled);
       })()]);
       expect(restore.filter((result) => result.status === 'rejected'), '用例结束必须把备用 Offering 恢复到进入前的状态').toEqual([]);
     }
