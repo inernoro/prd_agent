@@ -711,8 +711,14 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
             return false;
         }
 
+        // writerFinished 也要能穿过这一道。上一轮只在下面那道进程代际闸上开了口子，而
+        // CommitResultAsync 走到这里时 run 还活着（它正握着租约），于是这道闸先一步返回，
+        // 那个口子一次都没被走到——修复在真实场景里是空的（Codex P2，2026-09-15）。
+        // 我自己那条守卫用的是已终态的 run，恰好绕开了这个顺序，所以它绿得毫无意义
+        //（形状 4：用例没在测它以为在测的东西）。
         var active = HasActiveWorkspaceWindow(current, current.LeaseOwnerId, attemptedAt);
         if (active
+            && !writerFinished
             && !string.Equals(
                 current.WorkspacePendingResultWriteState,
                 DesignWorkspaceResultWriteStates.SaveFailed,

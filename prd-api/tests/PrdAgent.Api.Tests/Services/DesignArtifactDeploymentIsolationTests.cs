@@ -337,7 +337,12 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     [InlineData(true)]
     public async Task WritingReservation_IsRecoverableWhenTheWriterKnowsItFinished(bool writerFinished)
     {
-        var pending = Run("writing-stranded", RunStatuses.Error);
+        // run 必须是「活着且握着租约」的真实形状：提交正是在这个状态下发生的。
+        // 上一版用已终态的 run，绕开了活跃窗口那道闸，于是这条用例绿得毫无意义。
+        var pending = Run("writing-stranded", RunStatuses.Running);
+        pending.LeaseOwnerId = "worker-a";
+        pending.LeaseExpiresAt = Now.AddMinutes(5);
+        pending.RuntimeTicketExpiresAt = Now.AddMinutes(5);
         pending.WorkspacePendingResultAssetKey = "stranded-object";
         pending.WorkspacePendingResultAttemptId = "attempt";
         pending.WorkspacePendingResultWriteState = DesignWorkspaceResultWriteStates.Writing;
