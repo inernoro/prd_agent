@@ -100,6 +100,8 @@ public class GitHubDirectorySyncService
 
         var listing = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, accessToken, ct);
         var files = listing.Files;
+        // 本轮所有对 GitHub 的读取都用同一个 ref：清单、正文、最近修改时间必须出自同一份快照。
+        var reference = listing.Reference;
         _logger.LogInformation(
             "[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'（清单完整：{Complete}）",
             files.Count, owner, repo, path, includeGlob ?? "*", listing.Complete);
@@ -159,7 +161,7 @@ public class GitHubDirectorySyncService
                     // 回填 github_last_commit_at：历史条目没有这个字段，无需重新拉内容，只补时间戳
                     if (!existing.Metadata.ContainsKey("github_last_commit_at"))
                     {
-                        var backfillDate = await GetLatestCommitDateAsync(owner, repo, file.Path, branch, accessToken, ct);
+                        var backfillDate = await GetLatestCommitDateAsync(owner, repo, file.Path, reference, accessToken, ct);
                         if (backfillDate.HasValue)
                         {
                             existing.Metadata["github_last_commit_at"] = backfillDate.Value.ToString("O");
@@ -172,7 +174,7 @@ public class GitHubDirectorySyncService
                 }
 
                 // SHA 变了 → 重新拉取内容并更新
-                var updated = await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, accessToken, ct);
+                var updated = await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, reference, accessToken, ct);
                 if (updated)
                 {
                     diff.UpdatedCount++;
@@ -211,7 +213,7 @@ public class GitHubDirectorySyncService
                     },
                 };
 
-                var added = await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, accessToken, ct, isNew: true);
+                var added = await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, reference, accessToken, ct, isNew: true);
                 if (added)
                 {
                     diff.AddedCount++;
@@ -292,13 +294,15 @@ public class GitHubDirectorySyncService
         string owner,
         string repo,
         string branch,
+        // 本轮列目录实际用的 ref（解析成功即提交号）：正文与修改时间都按它取
+        string reference,
         string? accessToken,
         CancellationToken ct,
         bool isNew = false)
     {
         // 拉 git 最后提交时间（用来驱动前端显示的时间 + "NEW" 徽标）。
         // 和文件内容拉取并行，不把网络往返叠加在同步延迟上。
-        var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, branch, accessToken, ct);
+        var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, reference, accessToken, ct);
         try
         {
             // 优化：跨知识库/同文件多次拉取复用检查 (Pooling by SHA)
@@ -386,7 +390,7 @@ public class GitHubDirectorySyncService
             //   已连接 → 走 Contents API + Accept: raw，带 Authorization，私有仓可读；
             //   未连接 → 保持历史路径（raw.githubusercontent.com 的 download_url），公开仓行为不变。
             // 注意不要把用户 token 发到 download_url 那个域，避免凭据外扩到非 api.github.com 主机。
-            var content = await FetchFileContentAsync(file, owner, repo, branch, accessToken, ct);
+            var content = await FetchFileContentAsync(file, owner, repo, reference, accessToken, ct);
 
             if (string.IsNullOrWhiteSpace(content))
             {
@@ -462,12 +466,41 @@ public class GitHubDirectorySyncService
     }
 
     /// <summary>
+    /// 从存量条目存着的 GitHub 地址里抠出仓库内路径。
+    ///
+    /// 早期条目没有单独存路径，只存了地址，而地址里嵌着一个 ref（分支名或提交号）。
+    /// 一旦列目录改成按提交号列，上游给回的地址也换成带提交号的那种，
+    /// 逐字符比对地址就再也认不出同一个文件——于是它会被当成新文件建一遍，
+    /// 原来那条被当成「远端已不存在」删掉，连历史版本一起没。
+    /// 所以认亲要认**路径**，不认地址里那一段会变的 ref。
+    ///
+    /// 认两种形状：raw 域名的 {owner}/{repo}/{ref}/{path}，以及网页端的 {owner}/{repo}/blob/{ref}/{path}。
+    /// 认不出来就返回 null，调用方仍用原地址当键（至少不会更糟）。
+    /// </summary>
+    internal static string? ExtractRepoPathFromGitHubUrl(string? url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return null;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return null;
+
+        var segments = uri.AbsolutePath.Trim('/').Split('/');
+        // raw：owner/repo/ref/path...   网页端：owner/repo/blob/ref/path...
+        var skip = segments.Length > 2 && segments[2].Equals("blob", StringComparison.OrdinalIgnoreCase) ? 4 : 3;
+        if (segments.Length <= skip) return null;
+
+        var path = string.Join('/', segments.Skip(skip));
+        return string.IsNullOrWhiteSpace(path) ? null : Uri.UnescapeDataString(path);
+    }
+
+    /// <summary>
     /// 给已存在的子条目编去重键。
     ///
-    /// 键用仓库内路径，而不是 download_url —— 私有仓的 download_url 每次列目录都会带一个新的
-    /// 临时 token 查询串，拿它当键会让「同一个文件」每轮同步都被判成"新增 + 删除"，历史版本一起没。
-    /// 存量条目（早期没写 github_path）用 SourceUrl 兜底，避免升级当天全量重建。
-    /// 两者都没有的条目不进索引：它认不了亲，也就不该被当成"远端已不存在"删掉。
+    /// 键用仓库内路径：私有仓的下载地址每次列目录都会带一个新的临时凭据查询串，
+    /// 而按提交号列目录时地址里还会换上提交号——拿地址当键，「同一个文件」每轮都会被判成
+    /// 「新增 + 删除」，历史版本一起没。
+    ///
+    /// 存量条目（早期没单独存路径）先试着从它存的地址里抠出路径，抠不出来才退回用原地址当键。
+    /// 一条条目可能同时挂在两个键上（抠出的路径 + 原地址），这是有意的：哪个键先认上都算认上。
+    /// 两样都没有的条目不进索引：它认不了亲，也就不该被当成「远端已不存在」删掉。
     /// </summary>
     internal static Dictionary<string, DocumentEntry> IndexExistingChildren(
         IEnumerable<DocumentEntry> existingEntries)
@@ -475,10 +508,18 @@ public class GitHubDirectorySyncService
         var indexed = new Dictionary<string, DocumentEntry>(StringComparer.Ordinal);
         foreach (var e in existingEntries)
         {
-            var key = e.Metadata.GetValueOrDefault("github_path", "");
-            if (string.IsNullOrEmpty(key)) key = e.SourceUrl ?? "";
-            if (key.Length == 0) continue;
-            indexed[key] = e;
+            var githubPath = e.Metadata.GetValueOrDefault("github_path", "");
+            if (!string.IsNullOrEmpty(githubPath))
+            {
+                indexed[githubPath] = e;
+                continue;
+            }
+
+            var derivedPath = ExtractRepoPathFromGitHubUrl(e.SourceUrl);
+            if (!string.IsNullOrEmpty(derivedPath)) indexed[derivedPath] = e;
+
+            var legacyUrl = e.SourceUrl ?? "";
+            if (legacyUrl.Length > 0) indexed[legacyUrl] = e;
         }
         return indexed;
     }
@@ -486,17 +527,31 @@ public class GitHubDirectorySyncService
     /// <summary>
     /// 本轮没在远端见到的子条目 —— 它们就是要删的那批。
     ///
-    /// 判据只有一条：这一轮列目录时没认到亲。**远端一篇都没剩下时，这里返回全部**，
-    /// 因为"目录被清空"和"目录里的文件被逐个删光"对用户是同一件事，产物都该跟着消失。
-    /// 调用方不得在 files 为空时跳过这一步（那正是 2026-09-15 对抗审查发现的洞）。
+    /// 判据只有一条：这一轮列目录时**这条条目的任何一个键**都没被认到。
+    /// 按条目去重：一条条目可能同时挂在两个键上（存量条目的路径与原地址），
+    /// 只要其中一个被认上就不算失联；也保证同一条不会被删两次、计数不会翻倍。
+    ///
+    /// **远端一篇都没剩下时，这里返回全部**，因为「目录被清空」和「目录里的文件被逐个删光」
+    /// 对用户是同一件事，产物都该跟着消失。调用方不得在 files 为空时跳过这一步。
     /// </summary>
     internal static List<DocumentEntry> SelectStaleChildren(
         IReadOnlyDictionary<string, DocumentEntry> existingByKey,
         IReadOnlySet<string> processedKeys)
-        => existingByKey
-            .Where(kv => !processedKeys.Contains(kv.Key))
-            .Select(kv => kv.Value)
-            .ToList();
+    {
+        var seenIds = new HashSet<string>(
+            existingByKey.Where(kv => processedKeys.Contains(kv.Key)).Select(kv => kv.Value.Id),
+            StringComparer.Ordinal);
+
+        var stale = new List<DocumentEntry>();
+        var added = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var entry in existingByKey.Values)
+        {
+            if (seenIds.Contains(entry.Id)) continue;
+            if (!added.Add(entry.Id)) continue;
+            stale.Add(entry);
+        }
+        return stale;
+    }
 
     /// <summary>GitHub 目录接口一次最多回多少条：超过就截断，而且它不会明说截断了。</summary>
     internal const int ContentsApiDirectoryCap = 1000;
@@ -517,7 +572,12 @@ public class GitHubDirectorySyncService
     /// 声明成 internal 会让构造函数暴露一个可访问性更低的类型（CS0051）。
     /// 它只在本类内部流转，测试打的是 <see cref="IsListingComplete"/> 那条判据，不需要这个类型。
     /// </summary>
-    private sealed record DirectoryListing(List<GitHubFile> Files, bool Complete);
+    /// <summary>
+    /// 本轮实际用的 ref：解析成功就是提交号，否则是分支名。
+    /// 取内容、取最近修改时间都要用它，否则「清单来自提交 A、正文取自提交 B」，
+    /// 会把 B 的正文按 A 的版本号存起来，直到下次同步都对不上。
+    /// </summary>
+    private sealed record DirectoryListing(List<GitHubFile> Files, bool Complete, string Reference);
 
     /// <summary>
     /// 目录列不出来（404）时，能不能当成「远端把它删光了」去调和。
@@ -611,7 +671,7 @@ public class GitHubDirectorySyncService
                         "[GitHubSync] {Owner}/{Repo}/{Path} 在提交 {Commit} 上不存在：按「远端删光了」调和",
                         owner, repo, path, commitSha);
                     // 目录在那个提交上压根不存在，不存在「只回了一部分」的可能，所以这份空清单是完整的
-                    return new DirectoryListing(new List<GitHubFile>(), Complete: true);
+                    return new DirectoryListing(new List<GitHubFile>(), Complete: true, Reference: reference);
                 }
 
                 _logger.LogWarning(
@@ -668,7 +728,7 @@ public class GitHubDirectorySyncService
 
         // 完整性看**过滤前**的原始条数：过滤后的 0 篇既可能是「真没有 Markdown」，
         // 也可能是「Markdown 全被挤出了窗口」，只有原始条数才分得开这两件事。
-        return new DirectoryListing(files, IsListingComplete(rawCount));
+        return new DirectoryListing(files, IsListingComplete(rawCount), reference);
     }
 
     /// <summary>
@@ -791,6 +851,13 @@ public class GitHubDirectorySyncService
     /// **不能存 download_url**：私有仓的那串地址带着几分钟就失效的临时凭据，
     /// 存下来等于（其一）把凭据留在库里和界面上，（其二）用户过一会儿点开就是个死链。
     /// 正文一直是走 Contents API 现取的，从不读这个字段，所以这里只管「人点得开」。
+    /// </summary>
+    /// <summary>
+    /// 条目上存给用户点的那个地址。
+    ///
+    /// 这里**刻意用分支名而不是提交号**：它是给人看的链接，指向分支才会随文档更新而更新；
+    /// 钉到提交号会让它永远停在导入那一刻的旧版本。与「读取一律钉提交号」不冲突——
+    /// 那是为了同一轮内取到同一份快照，这是为了链接长期有效。
     /// </summary>
     private static string BuildBlobUrl(string owner, string repo, string branch, string path)
         => $"https://github.com/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"

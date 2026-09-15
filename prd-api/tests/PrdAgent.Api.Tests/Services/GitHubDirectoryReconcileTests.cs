@@ -55,18 +55,58 @@ public class GitHubDirectoryReconcileTests
     }
 
     [Fact]
-    public void 存量条目用SourceUrl认亲()
+    public void 存量条目按路径认亲而不认地址里的ref()
     {
-        // 早期条目没有 github_path，只能靠 SourceUrl（当时存的是 download_url）认亲。
+        // 早期条目没单独存路径，只存了地址，而地址里嵌着分支名。列目录改成按提交号列之后，
+        // 上游给回的地址换成了带提交号的那种——逐字比对地址就认不出同一个文件，
+        // 于是它被当成新文件建一遍、原来那条被当成「远端已不存在」删掉，历史版本一起没。
         var legacy = Child(null, "https://raw.githubusercontent.com/o/r/main/doc/a.md");
         var indexed = GitHubDirectorySyncService.IndexExistingChildren(new[] { legacy });
 
-        Assert.True(indexed.ContainsKey("https://raw.githubusercontent.com/o/r/main/doc/a.md"));
+        // 路径这个键必须在：本轮按路径就能认上，与地址里那段 ref 无关
+        Assert.True(indexed.ContainsKey("doc/a.md"));
 
         var kept = GitHubDirectorySyncService.SelectStaleChildren(
-            indexed, new HashSet<string> { "https://raw.githubusercontent.com/o/r/main/doc/a.md" });
+            indexed, new HashSet<string> { "doc/a.md" });
         Assert.Empty(kept);
     }
+
+    [Fact]
+    public void 认不出路径的存量地址仍退回用原地址当键()
+    {
+        var legacy = Child(null, "https://example.com/somewhere");
+        var indexed = GitHubDirectorySyncService.IndexExistingChildren(new[] { legacy });
+
+        Assert.True(indexed.ContainsKey("https://example.com/somewhere"));
+    }
+
+    [Fact]
+    public void 一条条目挂在两个键上也只删一次()
+    {
+        // 存量条目同时挂在「抠出的路径」与「原地址」两个键上；两个键都没被认到时，
+        // 它应当只出现一次——否则同一条会被删两遍、计数翻倍。
+        var legacy = Child(null, "https://raw.githubusercontent.com/o/r/main/doc/a.md");
+        var indexed = GitHubDirectorySyncService.IndexExistingChildren(new[] { legacy });
+
+        Assert.Equal(2, indexed.Count);
+        Assert.Single(GitHubDirectorySyncService.SelectStaleChildren(indexed, new HashSet<string>()));
+    }
+
+    [Theory]
+    [InlineData("https://raw.githubusercontent.com/o/r/main/doc/a.md", "doc/a.md")]
+    [InlineData("https://raw.githubusercontent.com/o/r/abc123/doc/sub/b.md", "doc/sub/b.md")]
+    [InlineData("https://github.com/o/r/blob/main/doc/a.md", "doc/a.md")]
+    [InlineData("https://github.com/o/r/blob/abc123/doc/sub/b.md", "doc/sub/b.md")]
+    public void 从地址里抠路径要跳过那段会变的ref(string url, string expected)
+        => Assert.Equal(expected, GitHubDirectorySyncService.ExtractRepoPathFromGitHubUrl(url));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("not a url")]
+    [InlineData("https://raw.githubusercontent.com/o/r")]
+    public void 抠不出路径就如实回空(string? url)
+        => Assert.Null(GitHubDirectorySyncService.ExtractRepoPathFromGitHubUrl(url));
 
     [Fact]
     public void 两个键都没有的条目不进索引也就永远不会被删()
