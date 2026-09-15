@@ -50,7 +50,10 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('function isMobileViewport(){');
     expect(script).toContain('return window.innerWidth<=640;');
     expect(script).toContain('function scheduleMobileCompact(delayMs){');
-    expect(script).toContain("root.setAttribute('data-cds-layout',compact&&!expanded?'compact':'full');");
+    // 同步进行中或失败时不缩：否则自动更新的转圈与失败态在手机上完全不可见（Codex review 2026-09-15 P2）。
+    expect(script).toContain('var compactNow=compact&&!expanded&&!syncState.visible;');
+    expect(script).toContain("root.setAttribute('data-cds-layout',compactNow?'compact':'full');");
+    expect(script).toContain('if(compactNow){');
     expect(script).toContain('cds-badge cds-badge--compact');
     expect(script).toContain("if(action==='expand-compact'){");
     expect(script).toContain('.cds-badge--compact{padding:0;width:36px;height:36px;border-radius:18px;');

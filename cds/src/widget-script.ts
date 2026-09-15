@@ -557,9 +557,12 @@ export function buildWidgetScript(
   // ── Render ──
   function render(){
     var h='';
-    root.setAttribute('data-cds-layout',compact&&!expanded?'compact':'full');
+    // 同步（自动更新）进行中或失败时不许缩成圆钮：缩了就看不见转圈、进度轨和失败态，
+    // 用户会以为什么都没发生；同步结束（visible 归位）后下一次渲染自然回到紧凑态。
+    var compactNow=compact&&!expanded&&!syncState.visible;
+    root.setAttribute('data-cds-layout',compactNow?'compact':'full');
 
-    if(compact&&!expanded){
+    if(compactNow){
       // 紧凑态：一颗 36px 圆钮 + 角标短 sha，不再有整行分支名、模式 chip 和两颗按钮。
       h+='<div class="cds-badge cds-badge--compact" onmousedown="return false">';
       h+='<button data-action="expand-compact" aria-label="显示分支信息 '+BRANCH_NAME+'" title="'+BRANCH_NAME+(commitSha?' @ '+shortSha(commitSha):'')+'">'+ICON_BRANCH+'</button>';

@@ -7,6 +7,7 @@ import {
   isRemoteNoHeadAvatarUrl,
   normalizePublicAssetBaseUrl,
   resolveAvatarUrl,
+  resolveManagedNoHeadAvatarUrl,
   resolveNoHeadAvatarUrl,
 } from './avatar';
 import { useAuthStore } from '@/stores/authStore';
@@ -51,6 +52,13 @@ describe('默认头像不依赖外部网络（2026-09-14 首页头像备用资�
     expect(resolveNoHeadAvatarUrl()).toBe(LOCAL_NOHEAD_AVATAR);
     // 用户自己上传的头像仍然走对象存储
     expect(resolveAvatarUrl({ avatarFileName: 'inernoro.gif' })).toBe('https://cfi.miduo.org/icon/backups/head/inernoro.gif');
+  });
+
+  it('管理员托管的对象存储默认头像仍有独立解析入口，供上传预览与其它客户端使用', () => {
+    useAuthStore.setState({ cdnBaseUrl: 'https://cfi.miduo.org' });
+    expect(resolveManagedNoHeadAvatarUrl()).toBe('https://cfi.miduo.org/icon/backups/head/nohead.png');
+    useAuthStore.setState({ cdnBaseUrl: '' });
+    expect(resolveManagedNoHeadAvatarUrl()).toBe('');
   });
 
   it('同源默认头像真的随前端打包，且足够小', () => {

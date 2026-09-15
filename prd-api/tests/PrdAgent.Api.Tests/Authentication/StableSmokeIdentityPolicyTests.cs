@@ -99,7 +99,21 @@ public sealed class StableSmokeIdentityPolicyTests
     [Fact]
     public void KeyOptions_ShouldManagePermissionsByDefault()
     {
+        // 代码默认开启：CDS 平台的 compose 配置快照不会随仓库自动同步（REG-llmgw-auth-001），
+        // 若默认关闭，验证环境在快照更新前会静默失去补权能力。生产安全由 compose 显式传 false 保证（见下一条）。
         Assert.True(new StableSmokePublicKeyOptions().ManagePermissions);
+    }
+
+    [Theory]
+    [InlineData("docker-compose.yml", "StableSmokeAuthentication__Keys__0__ManagePermissions=${STABLE_SMOKE_MANAGE_PERMISSIONS:-false}")]
+    [InlineData("docker-compose.dev.yml", "StableSmokeAuthentication__Keys__0__ManagePermissions=${STABLE_SMOKE_MANAGE_PERMISSIONS:-false}")]
+    [InlineData("cds-compose.yml", "StableSmokeAuthentication__Keys__0__ManagePermissions: \"true\"")]
+    public void Deployments_ShouldWireManagePermissionsExplicitly(string composeFile, string expectedLine)
+    {
+        // 部署文件必须显式接上这个开关：正式与本地默认 false，CDS 验证环境 true。
+        // 少了这一行，文档里写的「正式环境可关闭」就是一句空话（Codex review 2026-09-15 P1）。
+        var compose = File.ReadAllText(LocateRepositoryFile(composeFile));
+        Assert.Contains(expectedLine, compose);
     }
 
     [Fact]

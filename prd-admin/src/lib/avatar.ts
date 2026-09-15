@@ -150,3 +150,14 @@ export function resolveNoHeadAvatarUrl(): string {
   return LOCAL_NOHEAD_AVATAR;
 }
 
+/**
+ * 对象存储上由管理员托管的那张默认头像（资源管理页「无头像兜底」上传的目标）。
+ * 管理端页面自己已改用同源打包版，但服务端 `avatarUrl` 仍把它下发给桌面端等其它客户端，
+ * 所以上传流程与预览要继续指向真实的对象存储地址，不能拿打包版冒充「你刚上传的那张」。
+ */
+export function resolveManagedNoHeadAvatarUrl(): string {
+  const cosBase = getAvatarBaseUrl();
+  if (!cosBase) return '';
+  return joinUrl(joinUrl(cosBase, AVATAR_PATH_PREFIX), DEFAULT_NOHEAD_FILE);
+}
+
