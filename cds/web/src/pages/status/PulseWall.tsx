@@ -116,20 +116,26 @@ function PulseRow({
                 vectorEffect="non-scaling-stroke"
               />
             ))}
-            {/* 孤立样本画成点。6 小时探一次的监控在 24 小时里只有四个样本，全是孤立点；
-                因为「连不成线」就丢掉它们，整行会凭空消失，看起来像这条监控不存在。 */}
-            {pulse.dots.map((d, i) => (
-              <circle key={`d${i}`} cx={d.x} cy={d.y} r="1.8" fill={d.down ? 'hsl(var(--bad))' : stroke} vectorEffect="non-scaling-stroke" />
-            ))}
-            {pulse.downs.map((d, i) => (
-              <circle key={i} cx={d.x} cy={d.y} r="1.6" fill="hsl(var(--bad))" vectorEffect="non-scaling-stroke" />
-            ))}
           </svg>
         ) : (
           <div className="flex h-11 items-center">
             <span className="font-mono text-[0.625rem] text-muted-foreground">{describePulse(pulse, expected)}</span>
           </div>
         )}
+        {/* 孤立样本与失败点画在 HTML 层，不画进 SVG。
+            那个 SVG 是 preserveAspectRatio="none" 横向拉伸的（折线需要这样铺满），
+            圆画在里面会被抻成扁横杠——线可以变形，点不行，点变形就读成了别的东西。 */}
+        {hasPulseInk(pulse) ? (
+          <div className="pointer-events-none absolute inset-0">
+            {[...pulse.dots.map((d) => ({ ...d })), ...pulse.downs.map((d) => ({ ...d, down: true }))].map((d, i) => (
+              <span
+                key={i}
+                className={cn('absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full', d.down ? 'bg-bad' : DOT[row.worst])}
+                style={{ left: `${(d.x / PULSE_GEOMETRY.width) * 100}%`, top: `${(d.y / PULSE_GEOMETRY.height) * 100}%` }}
+              />
+            ))}
+          </div>
+        ) : null}
         {/* 只有「真的漏过」才出话。以前不管三七二十一都盖一句「线是断的」，
             对 6 小时探一次的监控纯属冤枉——它一次没漏。 */}
         {hasPulseInk(pulse) && typeof expected === 'number' && pulse.filled < expected * 0.6 ? (
