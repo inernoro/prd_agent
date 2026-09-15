@@ -175,16 +175,36 @@ interface ChartProps {
 
 const WIN = 7;
 
+/**
+ * 这一态要画哪一层、配哪个刻度——唯一一份。
+ *
+ * 紧凑态整屏都是 7 日均（细线在 4rem 高度上糊成毛刺，柱子同理），
+ * 放大态整屏都是当日原值再叠滚动线。**层与刻度必须同源**：
+ * 此前柱子无条件画原值、刻度却按滚动峰值定，于是所有高于滚动峰值的天
+ * 被 geom 的 Math.min(v, max) 一律夹到顶——好几个高矮不同的日子看起来一样高，
+ * 而图上写着「上限 X 件/日（7 日均）」，那句话是假的（Codex review 抓到）。
+ *
+ * 判据因此不是「代码里写没写 zoom」，而是「这一态真正交给 <rect>/<path> 的每一个值
+ * 都 <= max」——测试照此断言，改回混层立刻红。
+ */
+export function layerScale(
+  lineRaws: number[][],
+  barRaw: number[] | null,
+  zoom: boolean,
+): { max: number; rolls: number[][]; barVals: number[] | null } {
+  const rolls = lineRaws.map((r) => rolling(r, WIN));
+  const barVals = barRaw ? (zoom ? barRaw : rolling(barRaw, WIN)) : null;
+  const drawn = zoom
+    ? [...lineRaws.flat(), ...rolls.flat(), ...(barVals ?? [])]
+    : [...rolls.flat(), ...(barVals ?? [])];
+  return { max: niceMax(Math.max(0, ...drawn)), rolls, barVals };
+}
+
 function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: ChartProps): JSX.Element {
   const h = zoom ? 156 : 62;
   const w = 1000; // viewBox 宽，实际按容器缩放
-  const rolls = lines.map((l) => rolling(l.raw, WIN));
-
-  // 紧凑态只画滚动线，刻度就按滚动线定；放大态把当日原值画回来，刻度必须容得下峰值。
   // 两态刻度不同是有意的，所以上限直接写在图上——不写的话同一条线在两态高低不同会被误读。
-  const peak = Math.max(...lines.flatMap((l) => l.raw), ...(bars?.vals ?? [0]));
-  const rollPeak = Math.max(...rolls.flatMap((r) => r), ...(bars ? rolling(bars.vals, WIN) : [0]));
-  const max = niceMax(zoom ? peak : rollPeak);
+  const { max, rolls, barVals } = layerScale(lines.map((l) => l.raw), bars?.vals ?? null, zoom);
   const g = geom(days.length, w, h, max);
   const bandTop = g.y(Math.min(max, 4));
   const colW = w / Math.max(1, days.length);
@@ -217,9 +237,9 @@ function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: Char
           {zoom && max > 4 ? <rect className="band" x={0} y={bandTop} width={w} height={h - bandTop} /> : null}
           <line className="grid" x1={0} y1={h} x2={w} y2={h} />
 
-          {bars ? (
+          {barVals ? (
             <g className="bar">
-              {bars.vals.map((v, i) =>
+              {barVals.map((v, i) =>
                 v > 0 ? (
                   <rect
                     key={i}

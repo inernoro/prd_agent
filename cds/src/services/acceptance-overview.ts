@@ -351,7 +351,12 @@ export interface ChangeKeys {
 
 export function matchesChange(r: OverviewReportRef, k: ChangeKeys): boolean {
   if ((r.projectId || null) !== (k.projectId || null)) return false;
-  if (k.prNumber != null && r.prNumber != null && r.prNumber === k.prNumber) return true;
+  // PR 号是最强的一把，两边都记了就以它为准：相等即命中，**不等即否决**，不许再退到分支名。
+  // 分支名会被复用（同一条 claude/xxx 跑完一个 PR 再开下一个），退下去就把上一个 PR 的
+  // 报告挂到了新改动上——首页据此报「已验收」，而这条改动其实一份报告都没有。
+  if (k.prNumber != null && r.prNumber != null) return r.prNumber === k.prNumber;
+  // commit 只做正向信号，不做否决：改动侧给的常常是**合并提交**，报告记的是分支头提交，
+  // 两者天然不同。拿它否决会把正常的合并覆盖判成没验，比漏判更糟。
   if (k.commitSha && r.commitSha && (k.commitSha.startsWith(r.commitSha) || r.commitSha.startsWith(k.commitSha))) return true;
   return Boolean(k.branch && r.branch && r.branch === k.branch);
 }

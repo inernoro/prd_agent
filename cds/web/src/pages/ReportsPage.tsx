@@ -223,7 +223,11 @@ export function ReportsPage(): JSX.Element {
   const loadPipeline = useCallback(async (quiet = false) => {
     if (!quiet) setPipelineState({ status: 'loading' });
     try {
-      const { pipeline, series } = await fetchReportsPipeline({});
+      // 时间窗要真的传下去。首页渲染的是流水线，不是 overview——只把 days 喂给
+      // fetchReportsOverview 的话，那三个按钮在首页只会换个选中底色，数字一个都不动
+      // （Codex review 抓到）。口径与 overview 一致：只筛「最近完成」（墓碑），
+      // 在途改动永远算在内。走向图是独立的 90 天层，各自在卡片上写明自己的区间。
+      const { pipeline, series } = await fetchReportsPipeline({ recentDays: overviewDays });
       setPipelineState({ status: 'ok', pipeline, series });
     } catch (err) {
       // 静默刷新失败时保留原有内容：把一屏已经读得懂的图换成一行报错，
@@ -232,8 +236,10 @@ export function ReportsPage(): JSX.Element {
         ? prev
         : { status: 'error', message: err instanceof ApiError ? err.message : String(err) }));
     }
-  }, []);
-  useEffect(() => { void loadPipeline(); }, [loadPipeline]);
+  }, [overviewDays]);
+  // 一律走 quiet：首挂时 pipelineState 本来就是 loading，该显示的骨架照常显示；
+  // 之后切时间窗时不把已经读得懂的一屏图打回 loading（变化可感知 ≠ 内容凭空消失）。
+  useEffect(() => { void loadPipeline(true); }, [loadPipeline]);
 
   // state 变化（新建 / 删除 / 移动报告）后重算聚合，保证头条与台账同源。
   // 流水线也必须一起重拉：它和头条是同一批数据的两个切面，只刷一个的话，

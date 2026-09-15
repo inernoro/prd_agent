@@ -13,7 +13,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { linePath, niceMax, rolling } from '../../web/src/pages/reports/TrendCharts';
+import { layerScale, linePath, niceMax, rolling } from '../../web/src/pages/reports/TrendCharts';
 
 const src = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/TrendCharts.tsx'), 'utf8');
 const panel = readFileSync(resolve(__dirname, '../..', 'web/src/pages/reports/PipelinePanel.tsx'), 'utf8');
@@ -102,7 +102,42 @@ describe('两态：紧凑不画当日细线，刻度上限写在图上', () => {
   });
 
   it('紧凑态按滚动峰值定刻度，放大态按当日峰值', () => {
-    expect(src).toMatch(/niceMax\(zoom \? peak : rollPeak\)/);
+    const raw = [0, 0, 0, 40, 0, 0, 0, 0, 0, 0];
+    expect(layerScale([raw], null, true).max).toBeGreaterThanOrEqual(40);
+    // 7 日均把 40 摊成 <= 40/7，紧凑态的刻度必须跟着降下来，否则一条贴零的平线。
+    expect(layerScale([raw], null, false).max).toBeLessThan(40);
+  });
+
+  /*
+   * 这一条钉的是「层与刻度同源」，不是源码里写没写 zoom。
+   * 曾经柱子无条件画当日原值、刻度却按滚动峰值定：geom 的 Math.min(v, max)
+   * 把所有高于上限的天一律夹到画布顶，几个高矮不同的日子看起来一样高，
+   * 而图上写着「上限 X 件/日（7 日均）」——图和它自己的说明不是一回事。
+   */
+  describe('层与刻度同源：这一态真正画出去的每个值都装得进刻度', () => {
+    const lineRaw = [0, 1, 0, 9, 0, 0, 2, 0, 0, 0, 0, 14, 0, 0];
+    const barRaw = [3, 0, 0, 22, 0, 0, 0, 1, 0, 0, 0, 0, 31, 0];
+
+    /* 「刻度装得下所有画出去的值」这句在 layerScale 内部是恒真的——max 就是从
+     * 它自己返回的那几层算出来的，写成断言永远绿，等于没写（形状 4）。
+     * 真正能红的判据是下面三条：每一态交出去的是哪一层、以及组件有没有绕过这里
+     * 自己再算一份。混层那次事故正是「组件另算」的形态。 */
+
+    it('紧凑态柱子给的是 7 日均而不是当日原值', () => {
+      const { barVals } = layerScale([lineRaw], barRaw, false);
+      expect(barVals).toEqual(rolling(barRaw, 7));
+      expect(barVals).not.toEqual(barRaw);
+    });
+
+    it('放大态柱子回到当日原值', () => {
+      expect(layerScale([lineRaw], barRaw, true).barVals).toEqual(barRaw);
+    });
+
+    it('组件只从这一处取刻度与各层，不在旁边另算一份', () => {
+      const jsx = src.slice(src.indexOf('function Chart('));
+      expect(jsx).toMatch(/const \{ max, rolls, barVals \} = layerScale\(/);
+      expect(jsx, '组件里还留着自己算峰值的代码').not.toMatch(/niceMax\(/);
+    });
   });
 });
 

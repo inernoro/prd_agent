@@ -297,7 +297,12 @@ export function buildPipelineOverview(
 
       // 落差判定。注意：没接 GitHub 的项目永远没有墓碑，
       // 「合并了没验」不成立，不能把「查不到」算成「漏」。
-      if (c.deployed && !matched.length && !c.merged) {
+      //
+      // 「部署了没验」只对**还在途**的改动成立。墓碑分两种：merged 走下面那一档；
+      // abandoned（PR 关掉、分支删掉、活没干成）压根不需要验收——它 deployed=true、
+      // merged=false，不加 inFlight 就会被整条算进落差，把首页那句警告按放弃的分支数
+      // 一路顶高，而这里面没有一条是要人去处理的。首页喊狼喊到第二次就没人看了。
+      if (c.inFlight && c.deployed && !matched.length && !c.merged) {
         leaks['deployed-not-accepted'] += 1;
         allLeaks.push({ kind: 'deployed-not-accepted', subject: c.branch, projectId: pid, reportIds: [] });
       }
