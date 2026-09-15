@@ -281,7 +281,7 @@ function seedDemoExtras(state: StateService): boolean {
     `<h1>演示数据：${verdict} 示例报告</h1><p>预览实例自动生成，用于查看验收报告列表与详情的界面形状，不对应任何真实验收。</p>`;
   for (const [verdict, title, tier] of [
     ['pass', '演示数据：分支预览冒烟（通过）', 'smoke'],
-    ['conditional', '演示数据：发布前走查（有条件通过）', 'visual'],
+    ['conditional', '演示数据：发布前走查（原则性通过）', 'visual'],
     ['fail', '演示数据：回归验收（未通过）', 'regression'],
   ] as const) {
     // 报告的 id 是创建时生成的，没有稳定标识可比——用标题当身份。

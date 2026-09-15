@@ -463,7 +463,7 @@ export function buildReportsOverview(
     } else {
       gateState = 'blocked';
       const b = blockingDefects(latestRelease.defectCounts);
-      gateReason = `最近一次发布验收 ${fmtDate(latestRelease.createdAt)} ${latestRelease.verdict === 'fail' ? '未通过' : '有条件通过'}`
+      gateReason = `最近一次发布验收 ${fmtDate(latestRelease.createdAt)} ${latestRelease.verdict === 'fail' ? '未通过' : '原则性通过'}`
         + (b ? `，阻断缺陷 ${b} 个` : '')
         + (lastPassRelease ? `；上一次通过是 ${fmtDate(lastPassRelease.createdAt)}。` : '；此前没有通过记录。');
     }
@@ -501,7 +501,7 @@ export function buildReportsOverview(
   } else if (counts.fail > 0) {
     sentence = `${counts.fail} 份未通过，分散在不同对象上。`;
   } else if (counts.conditional > 0) {
-    sentence = `${decided} 份验收没有发现阻断；${counts.conditional} 份有条件通过，条件都在待决清单里${undeterminedTail || '。'}`;
+    sentence = `${decided} 份验收没有发现阻断；${counts.conditional} 份原则性通过，条件都在待决清单里${undeterminedTail || '。'}`;
   } else {
     sentence = `${counts.pass} 份验收全部通过，没有发现阻断${undeterminedTail || '。'}`;
   }

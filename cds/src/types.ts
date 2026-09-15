@@ -2745,7 +2745,7 @@ export interface AcceptanceReportMeta {
   folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
-  /** 验收结论：pass 通过 / conditional 有条件通过 / fail 不通过；未判定为 null。 */
+  /** 验收结论：pass 通过 / conditional 原则性通过 / fail 不通过；未判定为 null。 */
   verdict?: 'pass' | 'conditional' | 'fail' | null;
   /** 验收档位（如 P0 冒烟 / 视觉回归 / 完整验收等，自由文本，用于看板分组）；可空。 */
   tier?: string | null;

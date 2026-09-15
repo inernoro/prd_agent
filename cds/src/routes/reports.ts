@@ -88,7 +88,7 @@ const VERDICT_CONCLUSION: Record<'pass' | 'conditional' | 'fail', 'success' | 'n
 };
 const VERDICT_CN: Record<'pass' | 'conditional' | 'fail', string> = {
   pass: '通过',
-  conditional: '有条件通过',
+  conditional: '原则性通过',
   fail: '不通过',
 };
 
