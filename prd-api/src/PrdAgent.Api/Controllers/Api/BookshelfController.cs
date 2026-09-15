@@ -322,7 +322,16 @@ public class BookshelfController : ControllerBase
 
         try
         {
-            await foreach (var chunk in _gateway.StreamAsync(request, ct))
+            /*
+             * 这里必须是 CancellationToken.None，不是 ct（server-authority 规则 1）。
+             * 传 ct 的话，读者读到一半退出页面就会把整篇生成连根掐掉：三分钟的
+             * 模型调用白烧、库里什么都没落下，下一个点进来的人从零开始再等一遍。
+             * 稿子是公共内容，它该写完——写完之后谁点进来都能直接读到。
+             *
+             * 往断掉的连接写 SSE 不会炸：WriteDigestEventAsync 自己吞掉
+             * OperationCanceledException 与 ObjectDisposedException。
+             */
+            await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
             {
                 if (chunk.Type == GatewayChunkType.Start)
                 {
@@ -340,8 +349,9 @@ public class BookshelfController : ControllerBase
         }
         catch (OperationCanceledException)
         {
-            // 客户端断开。已生成的部分不落库 —— 半篇稿子比没有稿子更糟：
-            // 下一个人点开会读到一篇断在半句话上的东西，还以为它就是全部。
+            // 走到这里只剩一种情况：网关自己中断了（进程停机）。客户端断开已经
+            // 不再能取消这条流。半篇稿子不落库——下一个人点开会读到一篇断在半句话
+            // 上的东西，还以为它就是全部。
             return;
         }
         catch (Exception ex)
@@ -372,11 +382,12 @@ public class BookshelfController : ControllerBase
 
         // 一本书一篇，整篇替换。upsert 而不是 insert：「重新生成」走同一条路，
         // 不该在库里堆出两篇。
+        // 同样用 None：读者退出页面不该让「已经写完的那一篇」写不进库（server-authority 规则 1）。
         await _db.BookDigests.ReplaceOneAsync(
             x => x.BookId == id,
             digest,
             new ReplaceOptions { IsUpsert = true },
-            ct);
+            CancellationToken.None);
 
         await WriteDigestEventAsync("done", new
         {
