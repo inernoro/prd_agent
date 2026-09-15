@@ -3348,6 +3348,13 @@ export interface InfraMaintenanceJob {
   status: 'active' | 'completed' | 'failed';
   startedAt: string;
   finishedAt?: string;
+  /**
+   * 开启这条 job 的 CDS 进程代次。active 记录的执行体活在进程内存里，进程没了就再也
+   * 没人能调 finishInfraMaintenanceJob——这个字段让读取方认得出「上一个进程遗留的
+   * active」并就地收敛掉，否则它会永远挡住凭据轮换（rotation.active_jobs_in_progress）。
+   * 旧数据没有这个字段，同样按遗留处理。
+   */
+  ownerGeneration?: string;
 }
 
 /**

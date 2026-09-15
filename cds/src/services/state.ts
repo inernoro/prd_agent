@@ -148,6 +148,12 @@ const SYSTEM_PROJECT_ID = '__system__';
  */
 const HINT_GLOBAL: StateSaveHint[] = [{ kind: 'global' }];
 
+/**
+ * 本 CDS 进程的代次。基础设施维护 job 的执行体只存在于进程内存里，所以「谁开的」
+ * 只需要区分到进程——进程一换，上一代留下的 active 就是遗留，可以就地收敛。
+ */
+const INFRA_MAINTENANCE_OWNER_GENERATION = `gen_${crypto.randomBytes(8).toString('hex')}`;
+
 /** 按「最新优先」裁剪一条分支的黑匣子列表：条数 ≤ MAX_ARCHIVES_PER_BRANCH 且累计字节 ≤ MAX_ARCHIVE_BYTES_PER_BRANCH。 */
 function trimArchiveList(list: ContainerLogArchiveEntry[]): ContainerLogArchiveEntry[] {
   if (!Array.isArray(list) || list.length === 0) return list;
@@ -4874,6 +4880,7 @@ export class StateService {
       kind: input.kind,
       status: 'active',
       startedAt: new Date().toISOString(),
+      ownerGeneration: INFRA_MAINTENANCE_OWNER_GENERATION,
     };
     this.state.infraMaintenanceJobs.push(job);
     this.state.infraMaintenanceJobs = [
@@ -4894,11 +4901,36 @@ export class StateService {
     await this.flush();
   }
 
+  /**
+   * 把上一个进程遗留的 active job 收敛成 failed，返回收敛条数。
+   *
+   * 这些 job 的执行体只活在进程内存里：CDS 在 begin 与 finish 之间重启，就再也没人
+   * 能调 finishInfraMaintenanceJob，而这条记录会永远出现在 listActive 里，让此后每一次
+   * 凭据轮换都撞 rotation.active_jobs_in_progress，且没有任何途径清掉。
+   * 同 ReleaseService.reconcileInterruptedReleases 的思路：守卫本身是「卡死」的放大器，
+   * 所以在读取点先收割一次再判定（concurrency-gate-discipline 五件套之「周期收敛」）。
+   */
+  reconcileOrphanedInfraMaintenanceJobs(): number {
+    const jobs = this.state.infraMaintenanceJobs || [];
+    let reconciled = 0;
+    for (const job of jobs) {
+      if (job.status !== 'active') continue;
+      if (job.ownerGeneration === INFRA_MAINTENANCE_OWNER_GENERATION) continue;
+      job.status = 'failed';
+      job.finishedAt = new Date().toISOString();
+      reconciled += 1;
+    }
+    if (reconciled > 0) this.save(HINT_GLOBAL);
+    return reconciled;
+  }
+
   listActiveInfraMaintenanceJobs(filter: {
     projectId?: string;
     serviceId?: string;
     runtime?: InfraMaintenanceJob['runtime'];
   } = {}): InfraMaintenanceJob[] {
+    // 先收割遗留，再判定——否则一次重启就能把凭据轮换永久钉死。
+    this.reconcileOrphanedInfraMaintenanceJobs();
     return (this.state.infraMaintenanceJobs || []).filter((job) => {
       if (job.status !== 'active') return false;
       if (filter.projectId && job.projectId !== filter.projectId) return false;

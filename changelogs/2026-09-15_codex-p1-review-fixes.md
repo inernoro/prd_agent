@@ -23,3 +23,7 @@
 | fix | prd-api | Redis 投影不可用时的 Mongo 兜底补发 model 事件（生成流与改写流各一处），值就在库里，不补的话「读不到模型」跟「这次没有模型」长得一模一样 |
 | fix | prd-admin | 删除被发布租约推迟时不再把卡片抹掉：两个单站点删除处理器改为先看 deleted 再决定，如实留住卡片并说明在等什么 |
 | test | prd-api | 模型落库守卫从钉住实现字面量改为断言行为：原先断言 `Set(item => item.ResolvedModel` 这串写法，补租约闸把写入抽成 PersistResolvedModelAsync 后 lambda 形参改名，守卫就红了而代码其实更对——反向锁死住实现的断言（形状 4a）换成「模型分支必须调落库方法、落库方法必须写这两个字段」 |
+| fix | prd-api | 设计模型代理超时且已发过响应头时中断下游连接：不中断的话 Kestrel 会把它收成一次干净的 200 EOF，超时被抹平，调用方读到「完整的成功」；上一轮只给上游中断那一支加了 Abort，超时这一支漏了 |
+| fix | prd-api | 改写流的 Mongo 兜底补发 model 事件时去掉 !redisProjectionAvailable 条件：该标志只在本 Controller 读 Redis 失败时才翻，而 worker 的写入侧独立失效，写侧挂了读侧好着就会把模型事件永久抑制 |
+| fix | cds | 基础设施维护 job 记进程代次，读取点先把上一个进程遗留的 active 收敛成 failed：执行体只活在进程内存里，CDS 在 begin 与 finish 之间重启会让这条记录永远挡住凭据轮换且无从清理 |
+| docs | cds | compose 就地写明 llmgw-serve 的就绪声明实为存活检查（readyz 带密钥门、CDS 探针匿名且把 401 当就绪），三个候选方案与取舍记入 debt 台账待作者拍板 |

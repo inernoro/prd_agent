@@ -386,10 +386,15 @@ public sealed class HostedSiteEditsController : ControllerBase
                     lastMongoProgress = snapshot.Progress;
                     lastMongoPhase = snapshot.Phase;
                 }
-                // 同上：Redis 投影不可用时模型事件会整条丢掉，而值就在库里。补一条，
-                // 让「读不到模型」不至于长得跟「这次没有模型」一模一样。
-                if (!redisProjectionAvailable
-                    && !string.IsNullOrWhiteSpace(snapshot.ResolvedModel)
+                // Redis 投影坏掉时模型事件会整条丢掉，而值就在库里，补一条，让「读不到模型」
+                // 不至于长得跟「这次没有模型」一模一样。
+                //
+                // 这里**不能**加 !redisProjectionAvailable：那个标志只在「本 Controller 读
+                // Redis 失败」时才翻，而 worker 的写入侧是独立失效的（它自己的 RunProjection
+                // 捕到写失败就停写）。写侧挂了、读侧好着，标志恒为 true，模型事件就被永久
+                // 抑制——坏的那条路又一次产出了和正常结果分不开的结果（形状 10）。
+                // 生成流那一侧本来就没有这个条件；重复推一条 model 对前端是幂等的。
+                if (!string.IsNullOrWhiteSpace(snapshot.ResolvedModel)
                     && !string.Equals(snapshot.ResolvedModel, lastMongoModel, StringComparison.Ordinal))
                 {
                     await WriteEventAsync(null, "model", JsonSerializer.Serialize(new

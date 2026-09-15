@@ -205,6 +205,12 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         }
         catch (OperationCanceledException)
         {
+            // 调用方自己走了：没有需要往下传的失败，记一条就够（与下面那个 catch 同一判据）。
+            if (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                _logger.LogInformation("设计模型调用方已断开连接，本次代理提前结束 runId={RunId}", runId);
+                return;
+            }
             _logger.LogWarning("远程设计模型代理超过截止时间或流式空闲上限 runId={RunId}", runId);
             if (!Response.HasStarted)
             {
@@ -220,7 +226,13 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                         runId,
                     },
                 }, responseDeadline.Token);
+                return;
             }
+            // 已经发过头了：不中断的话 Kestrel 会把下游收成一次干净的 200 EOF，
+            // 超时在这一层被抹平，OpenDesign 读到的是「完整的成功」。
+            // 下面那个 catch 为同一件事加了 Abort，这里漏了——同一条判据的两份写法
+            //（判据与接线纪律 形状 3 + 形状 10）。
+            HttpContext.Abort();
         }
         catch (Exception ex) when (ex is ObjectDisposedException or IOException)
         {
