@@ -70,6 +70,16 @@ public interface IHostedSiteRevisionService
         string? revisionId = null,
         CancellationToken ct = default);
 
+    /// <summary>
+    /// 列出版本记录，<b>只带元数据</b>：<see cref="HostedSiteRevision.Html"/> 与
+    /// <see cref="HostedSiteRevision.VerifiedFiles"/> 恒为空值，要正文或文件请逐条走
+    /// <see cref="GetAsync"/>。
+    ///
+    /// 这不是省事，是必须：一条版本记录可以带上多兆的整页 HTML 与整包文件字节，
+    /// 而列表一次取 100 条——不排除这两个字段的话，光是打开版本面板就会读出并分配
+    /// 几百兆，卡顿甚至打爆 API 进程。返回类型仍是实体，所以「哪些字段是空的」
+    /// 必须写在契约里，不能只在实现里偷偷 Project 掉（那正是「看着完整、其实被掏空」）。
+    /// </summary>
     Task<IReadOnlyList<HostedSiteRevision>> ListAsync(
         string siteId,
         string userId,

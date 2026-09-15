@@ -29,3 +29,4 @@
 | docs | cds | compose 就地写明 llmgw-serve 的就绪声明实为存活检查（readyz 带密钥门、CDS 探针匿名且把 401 当就绪），三个候选方案与取舍记入 debt 台账待作者拍板 |
 | security | cds | 密封旧版迁移凭据前先脱敏日志：publicDataMigration 靠 source/target 上的明文密码比对着抹掉 log/progressMessage/errorMessage 里的密码，密封把明文拿走后就再也抹不掉了，存量 migration.log 里旧管线写进去的 --password <secret> 会从接口原样吐出且永久留存 |
 | security | cds | 凭据升级的落盘顺序改成备份在前、主文件在后：该流程只在「主文件报告发生变化」时触发，先写主文件则崩在中途会让备份里的明文永远不再被重扫；倒过来写则崩溃后下次启动仍能检测并续跑 |
+| perf | prd-api | 版本历史列表排除整页 HTML 与文件字节数组：一条记录可带多兆的整页与整包文件，列表一次取 100 条而对外只映射元数据，不排除就等于打开版本面板即分配几百兆；「只带元数据」同时写进接口契约，不在实现里偷偷 Project |

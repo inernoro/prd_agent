@@ -458,8 +458,13 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
     {
         var entry = await _sites.GetEditableEntryHtmlAsync(siteId, userId, ct);
         await ReconcileActivePublicationAsync(entry.Site.PublishedRevisionId, entry.ContentVersion);
+        // 只取元数据：整页 HTML 与整包文件字节留在库里不读（契约见接口注释）。
+        // 一次 100 条 x 多兆的包 = 打开版本面板就分配几百兆。
         return await _db.HostedSiteRevisions
             .Find(x => x.SiteId == siteId)
+            .Project<HostedSiteRevision>(Builders<HostedSiteRevision>.Projection
+                .Exclude(x => x.Html)
+                .Exclude(x => x.VerifiedFiles))
             .SortByDescending(x => x.CreatedAt)
             .Limit(100)
             .ToListAsync(ct);
