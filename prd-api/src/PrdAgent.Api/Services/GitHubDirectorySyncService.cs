@@ -647,15 +647,27 @@ public class GitHubDirectorySyncService
     /// 拿不到提交号（状态码非 200、响应缺字段、网络出错）一律回 null，调用方据此决定停还是走。
     /// </summary>
     /// <summary>
-    /// 解析 ref 的结果。带着限额信息一起走：限额耗尽时上游回的是 403/429，
-    /// 只把状态码传下去会被说成「没有读取权限」，而正确的下一步是「等到几点几分再试」。
+    /// 一次 GitHub 请求失败的完整口径。**唯一构造入口是 From(response)**，所以限额判据
+    /// 不可能被漏掉——此前三处失败各自决定要不要带限额信息，漏了两次，两次都让用户看到
+    /// 「没有读取权限」而真正该做的是「等到几点几分再试」。能用类型挡住的，不留给下一个人记。
     /// </summary>
-    private readonly record struct RefResolution(
-        string? CommitSha, HttpStatusCode? Status, bool RateLimited = false, string? ResetHint = null)
+    private readonly record struct GitHubFailure(HttpStatusCode Status, bool RateLimited, string? ResetHint)
     {
-        /// <summary>上游明确答复了（有状态码），只是没给出可用的提交号。</summary>
-        public bool AnsweredButUnusable => CommitSha == null && Status.HasValue;
+        public static GitHubFailure From(HttpResponseMessage response) => new(
+            response.StatusCode,
+            GitHubRateLimit.IsExhausted(response),
+            GitHubRateLimit.ResetHint(response));
     }
+
+    /// <summary>解析 ref 的结果：要么拿到提交号，要么带着一份完整的失败口径。</summary>
+    private readonly record struct RefResolution(string? CommitSha, GitHubFailure? Failure)
+    {
+        /// <summary>上游明确答复了，只是没给出可用的提交号（网络层出错时连答复都没有）。</summary>
+        public bool AnsweredButUnusable => CommitSha == null && Failure.HasValue;
+    }
+
+    /// <summary>取证的结果：结论 + 万一是因为失败而没有结论，那份失败的完整口径。</summary>
+    private readonly record struct AbsenceProof(PathAbsence Outcome, GitHubFailure? Failure = null);
 
     private async Task<RefResolution> ResolveRefCommitAsync(
         string owner, string repo, string reference, string? accessToken, CancellationToken ct)
@@ -670,8 +682,7 @@ public class GitHubDirectorySyncService
                 _logger.LogWarning(
                     "[GitHubSync] 解析 {Owner}/{Repo}@{Ref} 的提交号失败：{Status}",
                     owner, repo, reference, (int)response.StatusCode);
-                return new RefResolution(null, response.StatusCode,
-                    GitHubRateLimit.IsExhausted(response), GitHubRateLimit.ResetHint(response));
+                return new RefResolution(null, GitHubFailure.From(response));
             }
 
             var json = await response.Content.ReadAsStringAsync(ct);
@@ -679,7 +690,7 @@ public class GitHubDirectorySyncService
             var sha = doc.RootElement.TryGetProperty("sha", out var shaElement)
                 ? shaElement.GetString()
                 : null;
-            return new RefResolution(string.IsNullOrWhiteSpace(sha) ? null : sha, response.StatusCode);
+            return new RefResolution(string.IsNullOrWhiteSpace(sha) ? null : sha, Failure: null);
 
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -693,7 +704,7 @@ public class GitHubDirectorySyncService
             // 走到这里的 OperationCanceledException 是 HttpClient 自己的超时（ct 没被取消）。
             // 网络层出错：上游一个字都没答，所以没有状态码可交。
             _logger.LogWarning(ex, "[GitHubSync] 解析 {Owner}/{Repo}@{Ref} 的提交号失败", owner, repo, reference);
-            return new RefResolution(null, null);
+            return new RefResolution(null, Failure: null);
         }
     }
 
@@ -708,30 +719,32 @@ public class GitHubDirectorySyncService
     /// 清单可能被上游截断（一次最多一千条且不明说）时一律判为没有结论：
     /// 没看见 ≠ 不存在，而这条结论下一步就是删东西。
     /// </summary>
-    private async Task<PathAbsence> ProvePathAbsentAsync(
+    private async Task<AbsenceProof> ProvePathAbsentAsync(
         string owner, string repo, string path, string commitSha, string? accessToken, CancellationToken ct)
     {
         var target = path;
         while (true)
         {
             var parent = ParentPathOf(target);
-            if (parent == null) return PathAbsence.Unproven;
+            if (parent == null) return new AbsenceProof(PathAbsence.Unproven);
 
-            var (status, names, complete) =
+            var (failure, names, complete) =
                 await TryListEntryNamesAsync(owner, repo, parent, commitSha, accessToken, ct);
 
-            if (status == HttpStatusCode.NotFound)
+            if (failure?.Status == HttpStatusCode.NotFound)
             {
                 // 上一级也不在：接着往上找一个列得出来的。
                 target = parent;
                 continue;
             }
 
-            if (names == null || !complete) return PathAbsence.Unproven;
+            // 没有结论时把失败口径一起交上去：取证这一步撞上限额，用户该看到的是
+            // 「等到几点几分再试」，而不是最初那条 404 翻出来的「找不到 / 没有权限」。
+            if (names == null || !complete) return new AbsenceProof(PathAbsence.Unproven, failure);
 
-            return names.Contains(NameOf(target), StringComparer.Ordinal)
+            return new AbsenceProof(names.Contains(NameOf(target), StringComparer.Ordinal)
                 ? PathAbsence.ProvenPresent
-                : PathAbsence.ProvenAbsent;
+                : PathAbsence.ProvenAbsent);
         }
     }
 
@@ -739,26 +752,26 @@ public class GitHubDirectorySyncService
     /// 列出某个目录下每一项的名字。只为取证用，所以失败一律如实回空，不抛也不猜。
     /// complete 复用与主清单同一条完整性判据（看过滤前的原始条数），免得两处各判一次然后漂。
     /// </summary>
-    private async Task<(HttpStatusCode? Status, List<string>? Names, bool Complete)> TryListEntryNamesAsync(
+    private async Task<(GitHubFailure? Failure, List<string>? Names, bool Complete)> TryListEntryNamesAsync(
         string owner, string repo, string path, string reference, string? accessToken, CancellationToken ct)
     {
         try
         {
             using var request = BuildApiRequest(BuildContentsUrl(owner, repo, path, reference), accessToken);
             using var response = await Http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode) return (response.StatusCode, null, false);
+            if (!response.IsSuccessStatusCode) return (GitHubFailure.From(response), null, false);
 
             var json = await response.Content.ReadAsStringAsync(ct);
             using var doc = JsonDocument.Parse(json);
             // 目标是目录时上游回数组；回对象说明这一级是文件，那它就没有「下一级」可言。
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return (response.StatusCode, null, false);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return (GitHubFailure.From(response), null, false);
 
             var names = doc.RootElement.EnumerateArray()
                 .Select(e => e.TryGetProperty("name", out var n) ? n.GetString() : null)
                 .Where(n => !string.IsNullOrEmpty(n))
                 .Select(n => n!)
                 .ToList();
-            return (response.StatusCode, names, IsListingComplete(doc.RootElement.GetArrayLength()));
+            return (null, names, IsListingComplete(doc.RootElement.GetArrayLength()));
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -794,8 +807,7 @@ public class GitHubDirectorySyncService
             // 和「匿名访问私有仓」，在这儿另写一句必然和它漂。上游连状态码都没给（网络层出错）
             // 才用兜底那句——那种情况下没有任何可归因的上游答复。
             throw new GitHubSyncUserFacingException(resolved.AnsweredButUnusable
-                ? DescribeListFailure(resolved.Status!.Value, accessToken, owner, repo, path, branch,
-                    rateLimited: resolved.RateLimited, resetHint: resolved.ResetHint)
+                ? Describe(resolved.Failure!.Value, accessToken, owner, repo, path, branch)
                 : "暂时连不上 GitHub，本轮先不同步以免存进不一致的内容。稍后点「重试同步」即可。");
         }
 
@@ -817,9 +829,9 @@ public class GitHubDirectorySyncService
                 // 分辨它不能靠「再确认一次仓库读得到」——那证明的是仓库，不是这个路径：
                 // 两次请求之间授权抖一下，确认照样通过，而那条 404 其实是权限造成的。
                 // 所以去取一份说的是同一件事的**正面证据**：上一级目录的清单里有没有它。
-                var absence = await ProvePathAbsentAsync(owner, repo, path, commitSha, accessToken, ct);
+                var proof = await ProvePathAbsentAsync(owner, repo, path, commitSha, accessToken, ct);
 
-                if (ShouldReconcileAsEmpty(response.StatusCode, absence))
+                if (ShouldReconcileAsEmpty(response.StatusCode, proof.Outcome))
                 {
                     _logger.LogInformation(
                         "[GitHubSync] {Owner}/{Repo}/{Path} 已不在提交 {Commit} 的上级清单里：按「远端删光了」调和",
@@ -830,9 +842,11 @@ public class GitHubDirectorySyncService
 
                 _logger.LogWarning(
                     "[GitHubSync] {Owner}/{Repo}/{Path} 列目录 404，但拿不到「它确实没了」的证据（{Absence}）：不调和、按失败处理",
-                    owner, repo, path, absence);
-                throw new GitHubSyncUserFacingException(DescribeListFailure(
-                    HttpStatusCode.NotFound, accessToken, owner, repo, path, branch));
+                    owner, repo, path, proof.Outcome);
+                // 取证自己也失败了（限额、权限、故障）就报它：那才是这一轮真正拦住我们的东西，
+                // 最初那条 404 翻出来的「找不到 / 没有权限」会把用户引去查错方向。
+                throw new GitHubSyncUserFacingException(Describe(
+                    proof.Failure ?? GitHubFailure.From(response), accessToken, owner, repo, path, branch));
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);
@@ -845,10 +859,8 @@ public class GitHubDirectorySyncService
             // 不再自己在正文里找 "rate limit" 字样——同一件事两份判据必然漂（形状 3）。
             // GitHubSyncUserFacingException：DescribeListFailure 产出的就是可执行文案，
             // 声明它可以原样给用户看；其余异常一律走 GitHubSyncFailureMessage 兜底翻译
-            throw new GitHubSyncUserFacingException(DescribeListFailure(
-                response.StatusCode, accessToken, owner, repo, path, branch,
-                rateLimited: GitHubRateLimit.IsExhausted(response),
-                resetHint: GitHubRateLimit.ResetHint(response)));
+            throw new GitHubSyncUserFacingException(Describe(
+                GitHubFailure.From(response), accessToken, owner, repo, path, branch));
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
@@ -946,6 +958,12 @@ public class GitHubDirectorySyncService
     /// 和「目录真的不存在」长得一模一样。所以必须把「这次带没带授权」一起说出来，
     /// 否则用户看到的就是一句无法行动的 "Not Found"。
     /// </summary>
+    /// <summary>把一份失败口径翻成用户能照着做的一句话。文案本体仍在 DescribeListFailure。</summary>
+    private static string Describe(
+        GitHubFailure failure, string? accessToken, string owner, string repo, string path, string branch)
+        => DescribeListFailure(failure.Status, accessToken, owner, repo, path, branch,
+            rateLimited: failure.RateLimited, resetHint: failure.ResetHint);
+
     private static string DescribeListFailure(
         System.Net.HttpStatusCode status, string? accessToken,
         string owner, string repo, string path, string branch,
