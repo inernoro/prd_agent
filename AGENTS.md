@@ -42,7 +42,7 @@ cd prd-video && pnpm start   # Remotion 4.0
 
 ### 2. C# 静态分析
 
-任何 `.cs` 改动后必须跑，`error CS*` 必须修复，`warning CS*` 评估是否本次引入：
+任何 `.cs` 改动后，`error CS*` 必须修复，`warning CS*` 评估是否本次引入。本地有 SDK 先跑一遍提速（`which dotnet || ls /opt/dotnet8/dotnet`，常装在 PATH 之外），但权威判据在远端且分两层：Branch Image 绿**只**证明 API 项目编得出来（它不编译 `PrdAgent.Tests`），sln 零 error + xUnit 全绿只能引 CI 的 `Server Build & Test`，而它在 feature 分支不自动跑（见 `cds-first-verification.md`）：
 
 ```bash
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
@@ -81,11 +81,11 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 | 改动范围 | 必跑校验 |
 |----------|----------|
-| `prd-api/` `.cs` | `dotnet build --no-restore`（零 `error CS*`） |
+| `prd-api/` `.cs` | Branch Image workflow 绿（= API 项目编得出来）；本地有 SDK 先 `dotnet build --no-restore` 提速 |
 | `prd-admin/` `prd-desktop/` 前端源码 | `.ts` `.tsx`：`pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警）。改到 `.css` **另跑 `pnpm build`**——tsc/lint/vitest 一个都不解析 CSS（2026-08-30 tokens.css 多一个 `*/`，本地三样全绿、CI 构建炸、分支停 idle、预览 503） |
 | `llmgw/` | 见 `llmgw/AGENTS.md` 的模块校验表 |
-| 含测试的模块 | `pnpm test` / `dotnet test` 全绿 |
-| 本地缺 SDK | 走 `/cds-deploy` 远端编译，CDS 绿灯后才推送 |
+| 含测试的模块 | `pnpm test` 全绿；`dotnet test` 要**手动把 `ci.yml` dispatch 到当前分支**才会跑（feature 分支不自动触发），没跑就不许写「测试全绿」 |
+| 新增/改动 `prd-api/tests/**` | 同上；另：`PrdAgent.Tests` 不引用 `PrdAgent.Api`，新被测源文件要在 csproj 里 `<Compile Include ... Link="..."/>` 链进去，否则编译不过而没人发现 |
 
 **5.3 禁止自动创建 PR**。除非用户明确说「提 PR / 创建 PR」，任务完成只做 commit + push。遇阻塞说明原因并等指示，禁止提交半成品。
 
@@ -228,7 +228,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
 | `navigation-registry.md` | 新 Agent / 新功能入口 | SSOT 模型：路由信息写到 launcherCatalog/agentSwitcherStore/toolboxStore，「设置→导航顺序」+ Cmd+K 自动同步；CI 跑 `navCoverage` 测试，未登记或 phantom 路由直接 fail |
 | `quickstart-zero-friction.md` | 入口脚本 (`*init*`, `*quick*`, `*setup*`, `Dockerfile`) | 快启动大包大揽：假设用户是小白，自动检测+安装依赖，不能自动的给复制粘贴命令 |
-| `cds-first-verification.md` | 任何可执行代码改动 (`.cs`, `.ts`, `.tsx`, `.rs`, Dockerfile) | 本地无 SDK ≠ 无法验证：必须用 `/cds-deploy` 兜底，禁止把验证负担转嫁给用户 |
+| `cds-first-verification.md` | 任何可执行代码改动 (`.cs`, `.ts`, `.tsx`, `.rs`, Dockerfile) | 每种改动的验证有唯一权威位置（编译在 Actions、运行在 CDS）；交付只给判据与结论，不给「我本地有没有 SDK」 |
 | `cds-auto-deploy.md` | 已 link GitHub 的项目交付收尾 | push 即部署 — 不再提示用户手动跑 `/cds-deploy-pipeline`；CDS 通过 webhook 自动建分支 + 构建 + 部署；UI 开着时必须有"分支出现 + 构建中"动画 |
 | `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
 | `compute-then-send.md` | `prd-api/src/**/*.cs` 里 LLM / 外部 API 调用类（ILlmGateway / OpenAIImageClient 等） | 外部调用必须分"算/发"两阶段：发送阶段接收已解析结果不得再 resolve；禁止用 DI 装饰器 / AsyncLocal / 实例字段 在兄弟调用间传递 state |
