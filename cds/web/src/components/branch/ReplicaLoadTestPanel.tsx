@@ -481,7 +481,7 @@ function Chart({ width, height, series, max, empty, dashed }: {
     );
   }
   return (
-    <div className="mt-1.5 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
+    <div className="mt-1.5 overflow-x-auto" style={{ overscrollBehaviorX: 'contain' }}>
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ minWidth: '20rem', width: '100%' }} preserveAspectRatio="none">
         {[0.25, 0.5, 0.75].map((r) => (
           <line key={r} x1={0} y1={height * r} x2={width} y2={height * r}
@@ -520,7 +520,7 @@ function ComparisonCard({ comparison }: { comparison: LoadTestComparisonView }):
 
 function MetricsTable({ targets }: { targets: LoadTestTargetMetricsView[] }): JSX.Element {
   return (
-    <div className="overflow-x-auto rounded-lg border border-[hsl(var(--hairline))]" style={{ overscrollBehavior: 'contain' }}>
+    <div className="overflow-x-auto rounded-lg border border-[hsl(var(--hairline))]" style={{ overscrollBehaviorX: 'contain' }}>
       <table className="w-full text-[0.6875rem]" style={{ minWidth: '38.75rem' }}>
         <thead>
           <tr className="border-b border-[hsl(var(--hairline))] text-left text-muted-foreground">
