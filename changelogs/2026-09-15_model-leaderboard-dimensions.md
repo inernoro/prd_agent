@@ -4,3 +4,4 @@
 | fix | prd-api | 修正「只有 Agent 榜能拿到数据」的错误结论——此前试的是不存在的路径，404 兜底页里的一句 Loading leaderboard 被误当成懒加载骨架 |
 | feat | prd-admin | 榜单页新增维度切换器（按对话理解/编程智能体/图像生成/视频生成四组），分数榜与 Agent 榜两套列各自渲染 |
 | test | prd-api | 解析守卫从 14 条扩到 27 条，新增分数榜真实片段 fixture 与分榜目录一致性断言 |
+| fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |

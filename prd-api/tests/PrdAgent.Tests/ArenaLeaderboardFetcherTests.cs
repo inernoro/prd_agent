@@ -339,7 +339,40 @@ public class ArenaLeaderboardFetcherTests
             },
             ModelLeaderboardCatalog.Keys);
 
-        Assert.Equal(ModelLeaderboardCatalog.Keys, ModelLeaderboardSyncWorker.Boards);
+    }
+
+    /// <summary>
+    /// Worker 的 Boards 必须是目录的转发，不能自己再写一份数组。
+    ///
+    /// 用源码扫描而不是 <c>Assert.Equal(Catalog.Keys, Worker.Boards)</c>：Worker 拖着
+    /// BackgroundService 与 Mongo，link 不进这个测试项目（见 PrdAgent.Tests.csproj 的
+    /// Compile Include 那一段）。判据换了形式，要防的事没变——两份清单各自漂移。
+    /// </summary>
+    [Fact]
+    public void Worker的分榜清单必须转发目录_不许自己再写一份()
+    {
+        var worker = Path.Combine(
+            LocateRepoRoot(),
+            "prd-api", "src", "PrdAgent.Api", "Services", "ModelLeaderboard",
+            "ModelLeaderboardSyncWorker.cs");
+
+        Assert.True(File.Exists(worker), $"找不到 {worker}——本守卫的前提不成立，请核对路径");
+
+        var source = File.ReadAllText(worker);
+        Assert.Contains("public static string[] Boards => ModelLeaderboardCatalog.Keys;", source);
+    }
+
+    private static string LocateRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, "doc"))
+                && Directory.Exists(Path.Combine(dir.FullName, "prd-api")))
+                return dir.FullName;
+            dir = dir.Parent;
+        }
+        return AppContext.BaseDirectory;
     }
 
     [Fact]
