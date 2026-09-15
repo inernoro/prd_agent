@@ -84,6 +84,7 @@ export function LogicalModelsPage() {
   const [offeringFor, setOfferingFor] = useState<string | null>(null);
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [claimDraft, setClaimDraft] = useState<{ id: string; value: string } | null>(null);
   const [draft, setDraft] = useState<CreateLogicalModelRequest>({
     publicId: '', name: '', modelType: 'generation', capabilities: defaultImageGenerationCapabilities(),
     allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100,
@@ -195,6 +196,34 @@ export function LogicalModelsPage() {
    * 换兜底模型会改变线上行为：从此以后所有不点名模型的请求都走它。所以顶掉了谁必须
    * 当场说清楚，不能让人点完一个开关、几天后才发现默认悄悄换了人。
    */
+  /**
+   * 改「对这些调用方而言我是默认」。
+   *
+   * 与「设为默认」是两件事：那个管「这个用途所有人不点名时用谁」，这个管「某几个
+   * 调用方不点名时用谁」，后者优先。模型池能做而对外模型此前做不到的就是后一件——
+   * 少了它，把最后一个走池的调用方切过来时它会掉到全局默认上，换了模型。
+   *
+   * 同用途下一个调用方最多被一个模型认领，服务端会把别人手上的同名调用方摘掉并
+   * 如实回给我们；本地列表也要跟着改，否则会同时显示两个模型认领同一个人。
+   */
+  async function saveClaims(item: LogicalModelItem, raw: string) {
+    const codes = raw.split(/[,，\s]+/).map((x) => x.trim()).filter(Boolean);
+    setBusy(`claims:${item.id}`);
+    const res = await updateLogicalModel(item.id, { defaultForAppCallerCodes: codes });
+    setBusy(null);
+    if (!res.success) { failNotice(res.error?.message || '保存认领失败'); return; }
+    setItems((prev) => prev?.map((x) => {
+      if (x.id === item.id) return res.data;
+      if (x.modelType !== item.modelType) return x;
+      const kept = x.defaultForAppCallerCodes.filter((c) => !codes.includes(c));
+      return kept.length === x.defaultForAppCallerCodes.length ? x : { ...x, defaultForAppCallerCodes: kept };
+    }) || null);
+    setClaimDraft(null);
+    okNotice(codes.length === 0
+      ? `已取消「${item.name}」的全部认领；这些调用方不点名时会回落到 ${item.modelType} 用途的默认`
+      : `${codes.length} 个调用方不点名时，从现在起走「${item.name}」`);
+  }
+
   async function toggleDefault(item: LogicalModelItem) {
     const next = !item.isDefaultForType;
     setBusy(`default:${item.id}`);
@@ -398,6 +427,14 @@ export function LogicalModelsPage() {
                           {item.isDefaultForType
                             ? <Chip label="没点名时用它" color="var(--accent)" bg="var(--accent-soft)" title={`${item.modelType} 用途的默认模型`} />
                             : null}
+                          {item.defaultForAppCallerCodes.length > 0
+                            ? <Chip
+                                label={`${item.defaultForAppCallerCodes.length} 个调用方指定它`}
+                                color="var(--ok)"
+                                bg="var(--ok-bg)"
+                                title={`这些调用方不点名时走它，优先于用途默认：\n${item.defaultForAppCallerCodes.join('\n')}`}
+                              />
+                            : null}
                         </span>
                         <span style={{ ...MONO_META, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {item.publicId} · {describeScope(item.allowedAppCallerCodes)}
@@ -471,12 +508,47 @@ export function LogicalModelsPage() {
                             <Button size="sm" disabled={busy === `default:${item.id}`} onClick={() => void toggleDefault(item)}>
                               {item.isDefaultForType ? '取消默认' : '设为默认'}
                             </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              aria-expanded={claimDraft?.id === item.id}
+                              onClick={() => setClaimDraft((x) => (x?.id === item.id
+                                ? null
+                                : { id: item.id, value: item.defaultForAppCallerCodes.join(', ') }))}
+                            >
+                              指定调用方
+                            </Button>
                             <Button size="sm" onClick={() => openNewOffering(item.id)}>添加上游</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void toggleLogical(item)}>{item.enabled ? '停用' : '启用'}</Button>
                             <Button size="sm" variant="ghost" disabled={busy === item.id} onClick={() => void removeLogical(item)}>删除</Button>
                           </>
                         ) : null}
                       </div>
+
+                      {claimDraft?.id === item.id && canWrite ? (
+                        <div data-testid="logical-model-claims" style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+                          <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
+                            这些调用方不点名模型时走它，优先于「{item.modelType} 用途的默认」。逗号或空格分隔；留空表示取消认领。
+                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
+                            <input
+                              aria-label={`${item.name} 指定的调用方`}
+                              value={claimDraft.value}
+                              placeholder="document-store.transcribe-summary::chat"
+                              onChange={(e) => setClaimDraft({ id: item.id, value: e.target.value })}
+                              style={{ flex: 1, minWidth: 260 }}
+                            />
+                            <Button
+                              size="sm"
+                              disabled={busy === `claims:${item.id}`}
+                              onClick={() => void saveClaims(item, claimDraft.value)}
+                            >
+                              保存
+                            </Button>
+                            <Button size="sm" variant="ghost" onClick={() => setClaimDraft(null)}>取消</Button>
+                          </div>
+                        </div>
+                      ) : null}
 
                       {offeringFor === item.id && canWrite ? (
                         <form onSubmit={(e) => submitOffering(e, item)} style={INSET_BLOCK}>

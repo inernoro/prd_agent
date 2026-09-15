@@ -1756,7 +1756,8 @@ public class ModelResolver : IModelResolver
     }
 
     /// <summary>
-    /// 请求没点名模型时，这个用途被标成默认的那个模型。
+    /// 请求没点名模型时该用哪个对外模型。**两层**：先问「有没有模型认领了这个调用方」，
+    /// 没有才回落到「这个用途的默认」。
     ///
     /// 这是「模型池并进模型」的接线点：池唯一比逻辑模型多出来的能力就是「当兜底」，
     /// 补上它之后池不再是另一种东西，只是这一行多了个标记。
@@ -1774,13 +1775,26 @@ public class ModelResolver : IModelResolver
         if (_gatewayDb is null) return null;
 
         var logicalModels = _gatewayDb.Context.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
-        // 写入侧保证同租户同用途最多一个默认；这里仍按 DisplayOrder 取第一个，
-        // 万一存量数据里有两个（直接写库、并发写入），取值也是确定的而不是看运气。
-        var logical = await logicalModels.Find(Builders<GatewayLogicalModel>.Filter.And(
-                Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true),
-                Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType),
-                Builders<GatewayLogicalModel>.Filter.Eq(x => x.IsDefaultForType, true)))
+        var fb = Builders<GatewayLogicalModel>.Filter;
+        // 两层查询共用的那三个条件：同租户、启用着、用途对得上。
+        var basics = fb.And(
+            fb.Eq(x => x.TenantId, CurrentTenantId),
+            fb.Eq(x => x.Enabled, true),
+            fb.Eq(x => x.ModelType, modelType));
+
+        // 第一层：有没有哪个模型认领了这个调用方。
+        //
+        // 这一层是模型池那个「按调用方兜底」能力的落点。少了它，把最后一个走池的调用方
+        // 切过来时它会掉到全局默认上——换了模型，那不是断流是换药。
+        // 两层都按 DisplayOrder/PublicId 排序：存量数据里万一有两个，取值确定而不是看运气。
+        var logical = await logicalModels
+            .Find(fb.And(basics, fb.AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)))
+            .SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)
+            .FirstOrDefaultAsync(ct);
+
+        // 第二层：这个用途的默认。
+        logical ??= await logicalModels
+            .Find(fb.And(basics, fb.Eq(x => x.IsDefaultForType, true)))
             .SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)
             .FirstOrDefaultAsync(ct);
         if (logical is null) return null;

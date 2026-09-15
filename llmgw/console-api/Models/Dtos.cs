@@ -523,6 +523,8 @@ public sealed class LegacyKeyCutoverUpdateRequest
     public string? Status { get; set; }
     public DateTime? DeadlineAt { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }
+    /// <summary>「对这些调用方而言我是默认」；不传表示不改。</summary>
+    public List<string>? DefaultForAppCallerCodes { get; set; }
     public List<string>? SuccessorServiceKeyIds { get; set; }
     public long RequiredSuccessorObservations { get; set; } = 1;
 }
@@ -1418,6 +1420,13 @@ public sealed class LogicalModelItem
 
     /// <summary>这个用途没点名模型时用它。同租户同用途最多一个。</summary>
     public bool IsDefaultForType { get; set; }
+
+    /// <summary>
+    /// 「对这些调用方而言，我是默认」——不点名时优先于 IsDefaultForType。
+    /// 授权名单回答「能不能点名我」，这一份回答「不点名时是不是我」，刻意分开两个字段。
+    /// </summary>
+    public List<string> DefaultForAppCallerCodes { get; set; } = new();
+
     public int DisplayOrder { get; set; }
     public string? Description { get; set; }
     public string? CreatedAt { get; set; }
@@ -1617,6 +1626,9 @@ public sealed class CreateLogicalModelRequest
     public string? ModelType { get; set; }
     public List<string> Capabilities { get; set; } = new();
     public List<string> AllowedAppCallerCodes { get; set; } = new();
+
+    /// <summary>「对这些调用方而言我是默认」——不点名时优先于用途默认。</summary>
+    public List<string> DefaultForAppCallerCodes { get; set; } = new();
     public string? RoutingStrategy { get; set; }
     public int? DisplayOrder { get; set; }
     public string? Description { get; set; }
@@ -1626,6 +1638,8 @@ public sealed class UpdateLogicalModelRequest
     public string? Name { get; set; }
     public List<string>? Capabilities { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }
+    /// <summary>「对这些调用方而言我是默认」；不传表示不改。</summary>
+    public List<string>? DefaultForAppCallerCodes { get; set; }
     public string? RoutingStrategy { get; set; }
     public int? DisplayOrder { get; set; }
     public string? Description { get; set; }

@@ -1036,6 +1036,11 @@ export type LogicalModelItem = {
   enabled: boolean;
   /** 这个用途没点名模型时用它。同租户同用途最多一个——原来的「模型池默认池」就是它。 */
   isDefaultForType: boolean;
+  /**
+   * 「对这些调用方而言，我是默认」——不点名时优先于 isDefaultForType。
+   * 授权名单回答「能不能点名我」，这一份回答「不点名时是不是我」，是两件事。
+   */
+  defaultForAppCallerCodes: string[];
   displayOrder: number;
   description?: string | null;
   createdAt?: string | null;
@@ -1070,6 +1075,8 @@ export type CreateLogicalModelRequest = {
   modelType: string;
   capabilities: string[];
   allowedAppCallerCodes: string[];
+  /** 「对这些调用方而言我是默认」，不点名时优先于用途默认。 */
+  defaultForAppCallerCodes?: string[];
   routingStrategy: 'priority' | 'weighted';
   displayOrder?: number;
   description?: string;

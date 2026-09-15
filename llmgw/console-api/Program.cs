@@ -4077,7 +4077,26 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
     // 少最后一条就会出现这种谎：面板说不点名会落到它，实际所有线路都被摘了，
     // 运行时解析失败后回落到模型池——人照着面板去查，查的是一条根本没走的路。
     var hasEligibleRoute = candidates.Any(x => CallTracePlanner.SkipReason(x) is null);
-    var servesUnnamed = item.IsDefaultForType && item.Enabled && hasEligibleRoute;
+
+    // 不点名时落到谁，是**两层**：先看有没有模型认领了这个调用方，没有才回落到用途默认。
+    // 面板必须把两层都算进去，否则又会出现「面板说不落到它、运行时落到它」那种假话。
+    var sameTypeDocs = await gwLogicalModels
+        .Find(TenantAccess.Filter(http, fb.And(fb.Eq("Enabled", true), fb.Eq("ModelType", item.ModelType))))
+        .Project(Builders<BsonDocument>.Projection
+            .Include("PublicId").Include("DefaultForAppCallerCodes").Include("IsDefaultForType"))
+        .ToListAsync();
+    // 这个调用方被哪个模型认领了（同用途下最多一个，写入侧保证）。
+    var claimedBy = new Dictionary<string, string>(StringComparer.Ordinal);
+    foreach (var doc in sameTypeDocs)
+    {
+        var owner = doc.GetStringOrEmpty("PublicId");
+        foreach (var code in GetStringArray(doc, "DefaultForAppCallerCodes"))
+            if (!string.IsNullOrWhiteSpace(code)) claimedBy.TryAdd(code, owner);
+    }
+    var myClaims = item.DefaultForAppCallerCodes;
+
+    // 模型这一侧：它有没有资格接住不点名的请求——要么是用途默认，要么认领了人。
+    var servesUnnamed = (item.IsDefaultForType || myClaims.Count > 0) && item.Enabled && hasEligibleRoute;
 
     // 这句话的主语：逐个调用方算一遍。
     //
@@ -4108,12 +4127,31 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
         {
             var reach = CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(
                 x.Code, CallTracePlanner.AllowsTraffic(x.Status), x.HasPools));
+            // 这个调用方走到目录之后，落到的是不是**这个**模型：
+            //   认领了它 → 是（只要这个模型启用着且有能接的线路）
+            //   被别人认领 → 不是，且说得出是谁
+            //   没人认领 → 看这个模型是不是用途默认
+            var mine = myClaims.Contains(x.Code, StringComparer.Ordinal);
+            var claimedElsewhere = !mine && claimedBy.TryGetValue(x.Code, out var owner);
+            var usable = item.Enabled && hasEligibleRoute;
+            var landsHere = reach == CallTracePlanner.CallerReach.UsesModelCatalog
+                && usable
+                && (mine || (!claimedElsewhere && item.IsDefaultForType));
+            var verdict = reach != CallTracePlanner.CallerReach.UsesModelCatalog
+                ? CallTracePlanner.UnnamedVerdict(reach, servesUnnamed)
+                : mine
+                    ? (usable
+                        ? "这个模型点名认领了它，不点名会落到这里"
+                        : "这个模型认领了它，但自己停用或没有能接的线路——请求会解析失败")
+                    : claimedElsewhere
+                        ? $"它被 {claimedBy[x.Code]} 认领了，不点名走那边"
+                        : CallTracePlanner.UnnamedVerdict(reach, servesUnnamed);
             return new CallTraceUnnamedCaller
             {
                 AppCallerCode = x.Code,
                 Reach = reach.ToString(),
-                ReachesThisModel = reach == CallTracePlanner.CallerReach.UsesModelCatalog && servesUnnamed,
-                Verdict = CallTracePlanner.UnnamedVerdict(reach, servesUnnamed),
+                ReachesThisModel = landsHere,
+                Verdict = verdict,
             };
         })
         .ToList();
@@ -4360,7 +4398,11 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
         { "Name", name }, { "ModelType", modelType }, { "Capabilities", new BsonArray(capabilities) },
         // 写入即打契约版本：没有版本的文档一律被迁移当成存量重算，避免新写入的数据也要靠迁移兜底。
         { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
-        { "AllowedAppCallerCodes", new BsonArray(appCallers) }, { "RoutingStrategy", strategy },
+        { "AllowedAppCallerCodes", new BsonArray(appCallers) },
+        { "DefaultForAppCallerCodes", new BsonArray(
+            (body?.DefaultForAppCallerCodes ?? new()).Select(x => x.Trim()).Where(x => x.Length > 0)
+                .Distinct(StringComparer.Ordinal)) },
+        { "RoutingStrategy", strategy },
         { "Enabled", true }, { "DisplayOrder", Math.Clamp(body?.DisplayOrder ?? 100, 0, 10000) },
         { "Description", string.IsNullOrWhiteSpace(body?.Description) ? BsonNull.Value : body.Description.Trim() },
         { "CreatedAt", now }, { "UpdatedAt", now },
@@ -4474,6 +4516,48 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (body.IsDefaultForType is not null)
         updates.Add(Builders<BsonDocument>.Update.Set("IsDefaultForType", body.IsDefaultForType.Value));
 
+    // 「对这些调用方而言我是默认」——同用途下一个调用方最多被一个模型认领。
+    //
+    // 不变量的维护顺序与上面那段一样：**先把别人手上的同名调用方摘掉，再置新的**。
+    // 反过来会出现一瞬间两个模型都认领同一个调用方，那一瞬的请求落到谁全看运气。
+    // 摘掉了谁要如实回给用户——这同样是会改变线上行为的动作，不能悄悄换人。
+    var displacedClaims = new List<string>();
+    if (body.DefaultForAppCallerCodes is not null)
+    {
+        var claims = body.DefaultForAppCallerCodes
+            .Select(x => x.Trim()).Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal).ToList();
+
+        var current = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+            .FirstOrDefaultAsync();
+        if (current is null)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+        var claimType = current.GetStringOrEmpty("ModelType");
+
+        if (claims.Count > 0)
+        {
+            var rivals = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ModelType", claimType),
+                Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", claims),
+                Builders<BsonDocument>.Filter.Ne("_id", id)))).ToListAsync();
+            foreach (var other in rivals)
+            {
+                var kept = other.AsStringList("DefaultForAppCallerCodes")
+                    .Where(x => !claims.Contains(x, StringComparer.Ordinal)).ToList();
+                var taken = other.AsStringList("DefaultForAppCallerCodes")
+                    .Where(x => claims.Contains(x, StringComparer.Ordinal));
+                var rivalId = other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id");
+                foreach (var code in taken) displacedClaims.Add($"{code} 原本由 {rivalId} 认领");
+                await gwLogicalModels.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.Eq("_id", other.GetStringOrEmpty("_id")),
+                    Builders<BsonDocument>.Update
+                        .Set("DefaultForAppCallerCodes", new BsonArray(kept))
+                        .Set("UpdatedAt", DateTime.UtcNow));
+            }
+        }
+        updates.Add(Builders<BsonDocument>.Update.Set("DefaultForAppCallerCodes", new BsonArray(claims)));
+    }
+
     if (updates.Count == 0)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
@@ -4490,6 +4574,7 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
             // 换兜底模型是会改变线上行为的动作：日后排查「什么时候开始默认走它了」要查得到人
             { "isDefaultForType", body.IsDefaultForType.HasValue ? body.IsDefaultForType.Value : BsonNull.Value },
             { "displacedDefaults", new BsonArray(displacedDefaults) },
+            { "displacedClaims", new BsonArray(displacedClaims) },
         });
     var offerings = await gwModelOfferings.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id))).ToListAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
@@ -16896,6 +16981,7 @@ static LogicalModelItem MapLogicalModel(
         Enabled = logical.AsNullableBool("Enabled") ?? true,
         // 存量文档没有这个字段，缺失一律按「不是默认」——不能猜，猜错就是悄悄换掉兜底模型
         IsDefaultForType = logical.AsNullableBool("IsDefaultForType") ?? false,
+        DefaultForAppCallerCodes = logical.AsStringList("DefaultForAppCallerCodes"),
         DisplayOrder = logical.AsNullableInt("DisplayOrder") ?? 100,
         Description = logical.AsNullableString("Description"),
         CreatedAt = logical.AsNullableUtcDateTime("CreatedAt").ToIso(),

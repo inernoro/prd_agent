@@ -593,9 +593,13 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)", resolver);
         Assert.Contains("Sort(Builders<BsonDocument>.Sort.Ascending(\"DisplayOrder\").Ascending(\"PublicId\"))", consoleProgram);
 
-        // 「会落到它」要三件事同时成立，少一条就是在撒谎：
-        // 是默认、自己启用着、而且真有一条线路能接。
-        Assert.Contains("item.IsDefaultForType && item.Enabled && hasEligibleRoute", consoleProgram);
+        // 「会落到它」要几件事同时成立，少一条就是在撒谎：够格当兜底（是用途默认，或者
+        // 认领了调用方）、自己启用着、而且真有一条线路能接。
+        //
+        // 这里断言的是**接线**不是措辞：上一版逐字锁死了那个表达式，结果补上「按调用方
+        // 认领」这一层之后，把判据改得更全反而让守卫变红——谁修谁的 CI 红（形状 4a）。
+        Assert.Contains("item.Enabled && hasEligibleRoute", consoleProgram);
+        Assert.Contains("item.IsDefaultForType || myClaims.Count > 0", consoleProgram);
         Assert.Contains("一条能接的线路都没有", consoleProgram);
 
         // 一条线路不参与，除了它自己被停用/熔断，还有第三种：它指向的物理模型或所属上游被停用。
@@ -626,7 +630,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(", consoleProgram);
         Assert.Contains("CallTracePlanner.AllowsTraffic", consoleProgram);
         Assert.Contains("fb.Eq(\"RequestType\", item.ModelType)", consoleProgram);
-        Assert.Contains("ReachesThisModel = reach == CallTracePlanner.CallerReach.UsesModelCatalog && servesUnnamed", consoleProgram);
+        // 同上：断言接线不断言措辞。「落到这个模型」必须同时看调用方那道门与两层默认。
+        Assert.Contains("ReachesThisModel = landsHere", consoleProgram);
+        Assert.Contains("reach == CallTracePlanner.CallerReach.UsesModelCatalog", consoleProgram);
+        Assert.Contains("mine || (!claimedElsewhere && item.IsDefaultForType)", consoleProgram);
 
         Assert.Contains("call-trace-unnamed-callers", panel);
         Assert.Contains("data.unnamed.callers.map", panel);
@@ -637,6 +644,27 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("for caller in callers:", smoke);
         Assert.Contains("app_caller=code", smoke);
         Assert.Contains("TrafficRejected", smoke);
+
+        // 不点名是**两层**：先看有没有模型认领了这个调用方，没有才回落到用途默认。
+        //
+        // 这一层是模型池那个「按调用方兜底」能力的落点——少了它，把最后一个走池的调用方
+        // 切过来时它会掉到全局默认上，换了模型。2026-09-15 盘线上数据才看出这个缺口：
+        // document-store.transcribe-summary::chat 用的是自己池里的 gpt-4.1-mini，
+        // 而 chat 的全局默认是 gpt-3.5-turbo。
+        //
+        // 面板必须把两层都算进去，否则又是一句「面板说不落到它、运行时落到它」的假话。
+        Assert.Contains("AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)", resolver);
+        // 顺序是判据：认领那一层必须查在用途默认之前，反了就等于这个字段不存在。
+        var claimAt = resolver.IndexOf("AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)", StringComparison.Ordinal);
+        var typeDefaultAt = resolver.IndexOf("fb.Eq(x => x.IsDefaultForType, true)", StringComparison.Ordinal);
+        Assert.True(claimAt > 0 && typeDefaultAt > claimAt,
+            "按调用方认领必须查在用途默认之前，否则那个字段等于不存在");
+
+        Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
+        Assert.Contains("claimedBy", consoleProgram);
+        Assert.Contains("它被 {claimedBy[x.Code]} 认领了", consoleProgram);
+        // 认领的唯一性由写入侧保证，且要先摘别人再置自己——反过来会有一瞬两个模型都认领同一个人。
+        Assert.Contains("displacedClaims", consoleProgram);
 
         // 判定流程图：图最容易被人当真，所以每条岔路的状态必须由后端下发，前端一句判断都不做。
         // 「前端自己判这支走不走」就是第二份判据（形状 3），而且是最难被发现的那一份。

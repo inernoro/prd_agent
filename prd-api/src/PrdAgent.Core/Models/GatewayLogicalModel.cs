@@ -34,6 +34,21 @@ public sealed class GatewayLogicalModel
     /// </summary>
     public bool IsDefaultForType { get; set; }
 
+    /// <summary>
+    /// 「对这些调用方而言，我是默认」——不点名时优先于 <see cref="IsDefaultForType"/>。
+    ///
+    /// 为什么必须有这一条：<see cref="IsDefaultForType"/> 是**按用途**的默认，一个用途只有一个。
+    /// 而模型池契约提供的是**按调用方**的默认（这个调用方不点名时用它自己那个池）。
+    /// 少了这一层，把最后一个走池的调用方切过来时它会掉到全局默认上——换了模型，
+    /// 那不是断流是换药。2026-09-15 盘点线上数据时才看出这个缺口。
+    ///
+    /// 与 <see cref="AllowedAppCallerCodes"/> 刻意分开两个字段：授权回答「能不能点名我」，
+    /// 这个回答「不点名时是不是我」。挤进一个字段的话，想给某人当默认就必须同时把别人挡在外面。
+    ///
+    /// 同一租户同一用途下，一个调用方最多被一个模型认领；这个不变量由写入侧保证。
+    /// </summary>
+    public List<string> DefaultForAppCallerCodes { get; set; } = new();
+
     public int DisplayOrder { get; set; } = 100;
     public string? Description { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
