@@ -39,6 +39,11 @@ export interface SiteGenerateSource {
 interface Props {
   open: boolean;
   initialSource?: SiteGenerateSource | null;
+  /**
+   * 发起时所在的团队空间，随请求一起冻结到服务端；个人空间传 null。
+   * 归属由服务端在建站时应用——浏览器可能早就不在了。
+   */
+  destinationTeamId?: string | null;
   onClose: () => void;
   onCreated: (siteId: string) => void;
 }
@@ -64,7 +69,7 @@ function readActiveRun(): string | null {
   try { return sessionStorage.getItem(ACTIVE_GENERATION_RUN_KEY); } catch { return null; }
 }
 
-export default function SiteGenerateDialog({ open, initialSource, onClose, onCreated }: Props) {
+export default function SiteGenerateDialog({ open, initialSource, destinationTeamId, onClose, onCreated }: Props) {
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(false);
@@ -100,6 +105,9 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   // 并且只有带 initialSource 时才预选知识——用 ref 是为了不把 initialSource 塞进
   // recoverActiveRun 的依赖里（那会让它在恢复途中被重建）。
   const initialSourceRef = useRef(initialSource);
+  // 目标空间在「发起生成」那一刻取一次就够——它随请求冻结到服务端，
+  // 之后用户在页面上换空间也不该改变这一轮的归属。
+  const destinationTeamIdRef = useRef(destinationTeamId);
 
   useEffect(() => {
     onCreatedRef.current = onCreated;
@@ -109,7 +117,12 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     initialSourceRef.current = initialSource;
   }, [initialSource]);
 
-  const finishGeneration = useCallback((siteId: string, siteUrl?: string) => {
+  const finishGeneration = useCallback((siteId: string, siteUrl?: string, destinationError?: string | null) => {
+    // 建站成功、归属失败是一种部分成功。不提示的话，用户在团队空间里找不到它，
+    // 只会以为生成丢了——「坏的那条路」不许长得跟完全成功一样。
+    if (destinationError) {
+      toast.error('已生成，但归属团队失败', `${destinationError}（网页暂在个人空间，可在卡片上手动移动）`);
+    }
     const finalPreview = previewableAiStreamHtml(streamRef.current);
     if (finalPreview) setPreviewHtml(finalPreview);
     setCompletedSite({ id: siteId, url: siteUrl });
@@ -159,7 +172,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
         const status = result.data.status.toLowerCase();
         const siteId = resolveGeneratedSiteId(result.data);
         if (status === 'done' && siteId) {
-          finishGeneration(siteId);
+          finishGeneration(siteId, undefined, result.data.destinationApplyError);
           return;
         }
         if (status === 'done') {
@@ -189,6 +202,9 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     if (!open) return;
     setLoadingKnowledge(true);
     setTitle(initialSource?.title || '');
+    // 目标空间在打开这一刻冻结：之后用户在页面上切空间，不该改变这一轮的归属
+    // （与上传弹窗打开时快照 currentSpace 是同一个口径）。
+    destinationTeamIdRef.current = destinationTeamId;
     setInstruction('');
     setPhase('选择知识，再用两句话说明页面给谁看、希望达到什么效果。');
     setProgress(0);
@@ -313,6 +329,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       title: title.trim() || selectedKnowledge[0].title,
       runtime: enabledRuntime.id,
       sourceSurface: initialSource ? 'knowledge-base' : 'web-hosting',
+      // 目标空间跟着请求走，不再等完成回调——用户中途离开时那条回调根本不会执行。
+      destinationTeamId: destinationTeamIdRef.current ?? null,
       knowledgeReferences,
     });
     if (!created.success) {
@@ -359,7 +377,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           }
           if (item.kind === 'done') {
             terminalObserved = true;
-            finishGeneration(item.siteId, item.siteUrl);
+            finishGeneration(item.siteId, item.siteUrl, item.destinationApplyError);
             return;
           }
           if (item.kind === 'error') {

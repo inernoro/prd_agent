@@ -266,7 +266,7 @@ public sealed class DesignArtifactEvidenceControllerTests
             Mock.Of<IDesignArtifactProviderCatalog>(),
             Mock.Of<IDesignKnowledgeSnapshotResolver>(),
             fixture.GatewayDb,
-            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build());
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

@@ -90,9 +90,11 @@ describe('分享页预览接线', () => {
     expect(source).not.toMatch(/超时[^\n]*setErrored\(true\)/);
   });
 
-  it('所有者真实预览入口接入同一套网页修改面板，并与提问坞互相让位', () => {
+  it('有编辑权的人才看到修改面板，并与提问坞互相让位', () => {
     expect(source).toContain('ShareSiteEditDock');
-    expect(source).toContain('isOwner && !site.wrappedAssetType');
+    // 2026-09-15：门从 isOwner（「谁建了这条分享链接」）换成后端给的 viewerCanEdit
+    // （「谁能编辑这个站点」）。后端明确允许团队编辑者建分享，旧判据会同时出两种错。
+    expect(source).toContain('site.viewerCanEdit && !site.wrappedAssetType');
     expect(source).toContain('adjacentToAsk={Boolean(token && data.ask?.enabled)}');
     expect(source).toContain("hidden={isFullscreen || showComments || askState !== 'collapsed'}");
     expect(source).toContain('onPublished={handleOwnerSitePublished}');

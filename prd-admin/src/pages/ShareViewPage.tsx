@@ -884,7 +884,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             onStateChange={setAskState}
           />
         )}
-        {isOwner && !site.wrappedAssetType && (
+        {/*
+          编辑坞的门走后端给的结论，不用 isOwner（那是「谁建了这条分享链接」）。
+          下面「存一份副本」那类提示仍然用 isOwner——在那里它问的正是「这条链接是不是我建的」，
+          两个判据服务的是两个问题，不能互相顶替。
+        */}
+        {site.viewerCanEdit && !site.wrappedAssetType && (
           <ShareSiteEditDock
             siteId={site.id}
             isMobile={isMobile}

@@ -6,7 +6,7 @@ export type SiteGenerationProgressEvent =
   | { kind: 'model'; model: string; platform: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'delta'; text: string }
-  | { kind: 'done'; siteId: string; siteUrl?: string }
+  | { kind: 'done'; siteId: string; siteUrl?: string; destinationApplyError?: string }
   | { kind: 'cancelled'; message: string }
   | { kind: 'error'; message: string }
   | { kind: 'unknown' };
@@ -64,6 +64,11 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
       kind: 'done',
       siteId: data.siteId,
       siteUrl: typeof data.siteUrl === 'string' ? data.siteUrl : undefined,
+      // 建站成功、归属失败是一种部分成功：终态事件带着它，调用方据此提示，
+      // 不许让它长得跟完全成功一样。
+      destinationApplyError: typeof data.destinationApplyError === 'string'
+        ? data.destinationApplyError
+        : undefined,
     };
   }
   if (event.event === 'cancelled') {

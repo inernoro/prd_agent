@@ -405,7 +405,7 @@ public sealed class DesignArtifactLifecycleServiceTests
             providers.Object,
             knowledge.Object,
             new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
-            Mock.Of<IDesignArtifactCancellationCoordinator>(), policyConfiguration);
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), policyConfiguration, Mock.Of<IHostedSiteService>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -1769,7 +1769,7 @@ public sealed class DesignArtifactLifecycleServiceTests
             Mock.Of<IDesignArtifactProviderCatalog>(),
             Mock.Of<IDesignKnowledgeSnapshotResolver>(),
             new LlmGatewayDataContext(fixture.ConnectionString, fixture.GatewayDatabaseName),
-            cancellation ?? Mock.Of<IDesignArtifactCancellationCoordinator>(), new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build());
+            cancellation ?? Mock.Of<IDesignArtifactCancellationCoordinator>(), new Microsoft.Extensions.Configuration.ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext

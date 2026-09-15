@@ -67,6 +67,7 @@ public sealed class DesignArtifactsController : ControllerBase
     private readonly IDesignArtifactCancellationCoordinator _cancellation;
     private readonly LlmGatewayDataContext _gatewayDb;
     private readonly IConfiguration _configuration;
+    private readonly IHostedSiteService _sites;
     private readonly ILogger<DesignArtifactsController>? _logger;
 
     public DesignArtifactsController(
@@ -78,6 +79,7 @@ public sealed class DesignArtifactsController : ControllerBase
         LlmGatewayDataContext gatewayDb,
         IDesignArtifactCancellationCoordinator cancellation,
         IConfiguration configuration,
+        IHostedSiteService sites,
         ILogger<DesignArtifactsController>? logger = null)
     {
         _db = db;
@@ -88,6 +90,7 @@ public sealed class DesignArtifactsController : ControllerBase
         _gatewayDb = gatewayDb;
         _cancellation = cancellation;
         _configuration = configuration;
+        _sites = sites;
         _logger = logger;
     }
 
@@ -167,6 +170,16 @@ public sealed class DesignArtifactsController : ControllerBase
         if (!string.Equals(request.ArtifactType, DesignArtifactTypes.WebPage, StringComparison.OrdinalIgnoreCase))
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "当前统一入口只支持生成网页，HTML PPT 请从对应工作台生成"));
 
+        // 目标空间在这一刻就定下来：用户还在场，权限不通过可以当场告诉他。等到建站时才校验，
+        // 用户多半已经走了，剩下的只有「静默落回个人空间」这一种结局。
+        var destinationTeamId = TrimOptional(request.DestinationTeamId, 64);
+        if (destinationTeamId != null
+            && !await _sites.CanPublishIntoTeamAsync(userId, destinationTeamId, CancellationToken.None))
+        {
+            return StatusCode(403, ApiResponse<object>.Fail(
+                ErrorCodes.PERMISSION_DENIED, "你在该团队是只读或非成员角色，无法把生成的网页放进这个空间"));
+        }
+
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
             ? DesignArtifactRuntimes.MapGateway
             : request.Runtime.Trim().ToLowerInvariant();
@@ -226,6 +239,7 @@ public sealed class DesignArtifactsController : ControllerBase
             ArtifactType = DesignArtifactTypes.WebPage,
             Operation = DesignArtifactOperations.Generate,
             SourceSurface = sourceSurface,
+            DestinationTeamId = destinationTeamId,
             Runtime = runtime,
             LlmRequestPolicy = requestPolicy,
             RuntimeConnectionId = capability.ConnectionId,
@@ -773,6 +787,10 @@ public sealed class DesignArtifactsController : ControllerBase
         run.ArtifactRevisionId,
         run.ProducedArtifactSiteId,
         run.ProducedArtifactRevisionId,
+        // 目标空间与它应用失败的原因。前端据此提示「已生成，但归属团队失败」——
+        // 建站成功、归属失败是一种部分成功，不许它长得跟完全成功一样。
+        run.DestinationTeamId,
+        run.DestinationApplyError,
         run.LinkedRunId,
         run.Error,
         cancelRequested = run.CancelRequestedAt.HasValue,
@@ -885,6 +903,13 @@ public sealed class CreateDesignArtifactRunRequest
     public string? Runtime { get; set; }
     public string? Instruction { get; set; }
     public string? Title { get; set; }
+
+    /// <summary>
+    /// 目标团队空间。在请求这一刻冻结，由服务端建站时应用——不要再依赖浏览器的完成回调，
+    /// 那条路在用户关掉页面时就断了，站点会静默留在个人空间。
+    /// </summary>
+    public string? DestinationTeamId { get; set; }
+
     public List<DesignKnowledgeReferenceRequest>? KnowledgeReferences { get; set; }
 
     [JsonExtensionData]

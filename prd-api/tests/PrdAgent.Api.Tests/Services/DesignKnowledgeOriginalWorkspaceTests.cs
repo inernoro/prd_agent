@@ -284,7 +284,7 @@ public sealed class DesignKnowledgeOriginalWorkspaceTests
         }
         else
         {
-            var controller = new DesignArtifactsController(f.Db, Mock.Of<IRunEventStore>(), queue.Object, provider.Object, f.Resolver, null!, null!, new ConfigurationBuilder().Build()) { ControllerContext = context };
+            var controller = new DesignArtifactsController(f.Db, Mock.Of<IRunEventStore>(), queue.Object, provider.Object, f.Resolver, null!, null!, new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>()) { ControllerContext = context };
             result = await controller.CreateRun(new CreateDesignArtifactRunRequest { ArtifactType = DesignArtifactTypes.WebPage, Runtime = runtime, Instruction = "Use the synthetic source", KnowledgeReferences = [new() { EntryId = f.Entry.Id, StoreId = f.Store.Id, ContentHash = refs[0].ExpectedContentHash }] });
         }
         if (missingKey && runtime == DesignArtifactRuntimes.OpenDesign)

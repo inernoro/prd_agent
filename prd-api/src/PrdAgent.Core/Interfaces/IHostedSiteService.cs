@@ -141,6 +141,18 @@ public interface IHostedSiteService
     Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct = default);
 
     /// <summary>
+    /// 这个用户能不能把网页放进这个团队空间（owner / editor）。与 SetSharedTeamsAsync 同一条判据，
+    /// 供「发起生成时就冻结目标空间」在用户还在场的那一刻先量一次。
+    /// </summary>
+    Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default);
+
+    /// <summary>
+    /// 这个用户能不能编辑这个站点。与编辑端点同一道角色门，供分享页决定显不显示编辑坞。
+    /// 前端不得再拿 createdBy 之类的代理量自己推。
+    /// </summary>
+    Task<bool> CanEditSiteAsync(HostedSite site, string userId, CancellationToken ct = default);
+
+    /// <summary>
     /// 把自己的站点物理复制一份进团队空间（COS 文件完整拷贝，副本与原件互相独立）。
     /// groupId 可选：副本直接归入目标团队的专题/日常分类。
     /// 站点不存在/非 owner 抛 KeyNotFoundException；目标团队无编辑权抛 UnauthorizedAccessException。
@@ -710,4 +722,13 @@ public class SharedSiteInfo
     /// 盖一条错误角标。
     /// </summary>
     public string? WrappedAssetType { get; set; }
+
+    /// <summary>
+    /// 当前访问者能不能编辑这个站点，由服务端用编辑端点那同一道角色门算出来。
+    ///
+    /// 前端**不要**再拿 createdBy 之类的代理量自己推：那是「谁建了这条分享链接」，
+    /// 而后端明确允许团队编辑者建分享——两者一错位，真正的站点主人进不去编辑坞，
+    /// 只建过链接的人反而看得见。匿名访问恒为 false。
+    /// </summary>
+    public bool ViewerCanEdit { get; set; }
 }

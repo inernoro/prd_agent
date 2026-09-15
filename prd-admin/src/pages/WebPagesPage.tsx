@@ -447,8 +447,12 @@ export default function WebPagesPage() {
 
   /**
    * 在团队空间里新建的站点必须归属该团队，否则会落到个人空间、从当前列表里消失。
-   * 上传与「引用知识生成」是两条创建路径，归属只能有一套判据——生成那条曾经漏掉，
-   * 于是从团队空间生成的网页一完成就不见了（形状 3：同一件事两处做，只做了一处）。
+   *
+   * 上传这条路径归属发生在这里：请求是同步的，响应回来时用户一定还在。
+   * **生成那条路径不同**——它是长任务，用户很可能在终态之前就关掉页面或切走，
+   * 归属若只活在完成回调里就会丢。所以生成的目标空间随创建请求冻结到服务端，
+   * 由服务端建站时应用；这里只保留「分组」这一层（它依赖当前视图，且丢了也只是
+   * 没进文件夹、网页仍在团队空间里看得见）。
    */
   const assignNewSiteToDialogSpace = async (siteId: string, verb: string) => {
     const dialogSpace = uploadDialogSpaceRef.current;
@@ -458,6 +462,13 @@ export default function WebPagesPage() {
       toast.error(`已${verb}，但归属团队失败`, `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
       return;
     }
+    await groupNewSiteInDialogSpace(siteId, verb);
+  };
+
+  /** 分组归属：只在「弹窗空间就是当前视图空间且当前有分组」时成立，与团队归属分开。 */
+  const groupNewSiteInDialogSpace = async (siteId: string, verb: string) => {
+    const dialogSpace = uploadDialogSpaceRef.current;
+    if (dialogSpace.kind !== 'team') return;
     if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeRealGroupId) {
       const grouped = await setSiteGroup(siteId, activeRealGroupId);
       if (!grouped.success) toast.error(`已${verb}，但归入分组失败`, grouped.error?.message || '可稍后通过批量操作移入分组');
@@ -2063,10 +2074,14 @@ export default function WebPagesPage() {
       <SiteGenerateDialog
         open={showGenerateDialog}
         initialSource={generateSource}
+        // 团队归属随请求冻结到服务端，由它建站时应用——用户中途离开时这条回调不会执行。
+        // 传实时值即可：弹窗在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
+        destinationTeamId={currentSpace.kind === 'team' ? currentSpace.teamId : null}
         onClose={() => setShowGenerateDialog(false)}
         onCreated={(siteId) => {
           void (async () => {
-            await assignNewSiteToDialogSpace(siteId, '生成');
+            // 团队已由服务端归好，这里只补分组（它依赖当前视图，服务端不知道）。
+            await groupNewSiteInDialogSpace(siteId, '生成');
             void load();
             void loadMeta();
           })();

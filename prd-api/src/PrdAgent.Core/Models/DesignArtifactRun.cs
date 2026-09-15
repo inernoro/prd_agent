@@ -42,6 +42,24 @@ public class DesignArtifactRun
 
     public string Runtime { get; set; } = DesignArtifactRuntimes.MapGateway;
 
+    /// <summary>
+    /// 发起这次生成时选中的目标团队空间，在**请求那一刻**就冻结下来。
+    ///
+    /// 之前这件事只活在浏览器的完成回调里：用户在终态事件到达前关掉页面或切走，
+    /// 服务端照样把站点生成完，但它会留在个人空间；换个标签页恢复也重建不出原来的目标，
+    /// 回调还可能读到「现在选中的分组」而不是「发起时的分组」。归属是发起时的意图，
+    /// 属于服务端该记住的事。个人空间为 null。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DestinationTeamId { get; set; }
+
+    /// <summary>
+    /// 应用目标空间时的失败原因（例如期间被移出团队）。站点已经建好了，所以不让它失败整轮，
+    /// 但也不许静默——前端拿到它就按「已生成，但归属团队失败」提示，与浏览器还在时的行为一致。
+    /// </summary>
+    [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
+    public string? DestinationApplyError { get; set; }
+
     /// <summary>本次实际执行的模型名（来自网关 Start 分片）。ai-model-visibility §4 要求报告实体落这个字段。</summary>
     public string? ResolvedModel { get; set; }
 

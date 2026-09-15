@@ -153,6 +153,13 @@ export interface DesignArtifactRunSummary {
   artifactRevisionId?: string | null;
   producedArtifactSiteId?: string | null;
   producedArtifactRevisionId?: string | null;
+  /** 发起时冻结的目标团队空间；个人空间为空。 */
+  destinationTeamId?: string | null;
+  /**
+   * 应用目标空间时的失败原因。站点已经建好了，所以这不是整轮失败——但也不能当成完全成功：
+   * 拿到它就提示「已生成，但归属团队失败」，与浏览器还在时的行为一致。
+   */
+  destinationApplyError?: string | null;
   linkedRunId?: string | null;
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
@@ -1115,6 +1122,14 @@ export interface SharedSiteInfo {
   pdfAssetUrl?: string;
   /** 包装资产类型（pdf / video / markdown …），普通 HTML 站为空。包装站没有可读正文 */
   wrappedAssetType?: string | null;
+  /**
+   * 当前访问者能不能编辑这个站点，由后端用编辑端点那同一道角色门算出来。
+   *
+   * 不要再拿 createdBy 之类的代理量自己推：那是「谁建了这条分享链接」，而后端明确
+   * 允许团队编辑者建分享——两者一错位，真正的站点主人进不去编辑坞，只建过链接的人
+   * 反而看得见。匿名访问恒为 false。
+   */
+  viewerCanEdit?: boolean;
 }
 
 export interface ShareViewData {
@@ -1421,6 +1436,13 @@ export async function createDesignArtifactRun(input: {
   title?: string;
   runtime?: string;
   sourceSurface: 'web-hosting' | 'knowledge-base';
+  /**
+   * 目标团队空间，在发起这一刻冻结、由服务端建站时应用。
+   *
+   * 之前归属只发生在浏览器的完成回调里：用户在终态事件到达前关掉页面或切走，服务端照样
+   * 把站点生成完，但它会留在个人空间；换个标签页恢复也重建不出原来的目标。个人空间传空。
+   */
+  destinationTeamId?: string | null;
   knowledgeReferences: DesignKnowledgeReferenceInput[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);

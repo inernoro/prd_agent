@@ -211,7 +211,7 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
             .ReturnsAsync(new List<DesignKnowledgeSnapshot> { new() { EntryId = "entry", StoreId = "store", ContentHash = new string('a', 64) } });
         var generation = WithUser(new DesignArtifactsController(
             _db, _events, _queue, provider.Object, knowledge.Object, _gateway,
-            new DesignArtifactCancellationCoordinator(_db, Lifecycle()), new ConfigurationBuilder().Build()));
+            new DesignArtifactCancellationCoordinator(_db, Lifecycle()), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>()));
         Assert.IsType<AcceptedResult>(await generation.CreateRun(new CreateDesignArtifactRunRequest {
             ArtifactType = DesignArtifactTypes.WebPage, Instruction = "生成测试网页",
             KnowledgeReferences = [new() { EntryId = "entry", StoreId = "store" }] }));
@@ -305,7 +305,7 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
     private DesignArtifactLifecycleService Lifecycle() => new(_db, _events);
     private DesignArtifactsController GenerationController() => WithUser(new DesignArtifactsController(
         _db, _events, _queue, Mock.Of<IDesignArtifactProviderCatalog>(), Mock.Of<IDesignKnowledgeSnapshotResolver>(),
-        _gateway, new DesignArtifactCancellationCoordinator(_db, Lifecycle()), new ConfigurationBuilder().Build()));
+        _gateway, new DesignArtifactCancellationCoordinator(_db, Lifecycle()), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>()));
     private HostedSiteEditsController EditController() => WithUser(new HostedSiteEditsController(
         Mock.Of<IHostedSiteService>(), Mock.Of<IHostedSiteRevisionService>(), _events, _queue, _db,
         NullLogger<HostedSiteEditsController>.Instance, Mock.Of<IDesignArtifactProviderCatalog>(),

@@ -882,6 +882,22 @@ public class HostedSiteService : IHostedSiteService
         string.IsNullOrWhiteSpace(wrappedAssetType)
         || string.Equals(wrappedAssetType, "markdown", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// 这个用户能不能编辑这个站点。与「谁建了那条分享链接」是两件事：后端明确允许团队
+    /// 编辑者创建分享，所以拿 createdBy 当编辑权判据会把真正的站点主人挡在外面、又把
+    /// 只建过链接的人放进来。
+    ///
+    /// 抽成公开的唯一判定源，是因为分享页要据此决定显不显示「站点编辑坞」，而那个结论
+    /// 只有服务端算得出来。前端不许再用任何代理量自己推一遍——那正是判据分裂的起点，
+    /// 同一个 DTO 的注释里已经为「提问入口」写过一次同样的话。
+    /// </summary>
+    public async Task<bool> CanEditSiteAsync(HostedSite site, string userId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return false;
+        var role = await ResolveSiteRoleAsync(site, userId, ct);
+        return WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId);
+    }
+
     private async Task<HostedSiteEditableEntry> GetEntryHtmlAsync(
         string siteId,
         string userId,
@@ -892,8 +908,7 @@ public class HostedSiteService : IHostedSiteService
         if (site == null)
             throw new KeyNotFoundException("站点不存在");
 
-        var role = await ResolveSiteRoleAsync(site, userId, ct);
-        if (!WebHostingPermission.Can(role, WebHostingAction.Edit, site.OwnerUserId == userId))
+        if (!await CanEditSiteAsync(site, userId, ct))
             throw new KeyNotFoundException("站点不存在");
 
         if (!string.IsNullOrWhiteSpace(site.WrappedAssetType)
@@ -2063,6 +2078,24 @@ public class HostedSiteService : IHostedSiteService
         return completedCount;
     }
 
+    private static bool HasTeamPublishRole(IReadOnlyDictionary<string, string> roles, string teamId) =>
+        roles.TryGetValue(teamId, out var role)
+        && (role == WebHostingRoles.Owner || role == WebHostingRoles.Editor);
+
+    /// <summary>
+    /// 这个用户能不能把网页放进这个团队空间（owner / editor，viewer 与非成员不行）。
+    ///
+    /// 与 <see cref="SetSharedTeamsAsync"/> 共用同一条判据：生成任务把目标空间冻结进请求时，
+    /// 必须在**用户还在场**的那一刻就用同一把尺子量一次，否则要么把校验推迟到用户已经离开、
+    /// 只能静默落回个人空间，要么在两处各写一套，下一次只改好其中一个。
+    /// </summary>
+    public async Task<bool> CanPublishIntoTeamAsync(string userId, string teamId, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(teamId)) return false;
+        var roles = await _teams.GetMyWebHostingTeamRolesAsync(userId, ct);
+        return HasTeamPublishRole(roles, teamId);
+    }
+
     public async Task<HostedSite?> SetSharedTeamsAsync(string siteId, string userId, List<string> teamIds, CancellationToken ct)
     {
         // 只有 owner 能改「分享到哪些团队」（分享出去是所有权动作）
@@ -2083,10 +2116,7 @@ public class HostedSiteService : IHostedSiteService
         // 移除团队也始终允许（move 对话框仅改文件夹时会把当前团队原样回传，不应 403）。
         // 只有把站点投进一个我无编辑权的新团队才需要拦截。
         var newlyAdded = requested.Where(t => !site.SharedTeamIds.Contains(t)).ToList();
-        var forbidden = newlyAdded
-            .Where(t => !(roles.TryGetValue(t, out var r)
-                          && (r == WebHostingRoles.Owner || r == WebHostingRoles.Editor)))
-            .ToList();
+        var forbidden = newlyAdded.Where(t => !HasTeamPublishRole(roles, t)).ToList();
         if (forbidden.Count > 0)
             throw new UnauthorizedAccessException("无权将网页分享到部分团队：你在这些团队是只读或非成员角色");
         var sanitized = requested;
@@ -2928,20 +2958,26 @@ public class HostedSiteService : IHostedSiteService
             siteIds.Insert(0, share.SiteId);
 
         var rawSites = await _db.HostedSites.Find(x => siteIds.Contains(x.Id)).ToListAsync(ct);
-        var sites = rawSites.Select(s => new SharedSiteInfo
+        var sites = new List<SharedSiteInfo>(rawSites.Count);
+        foreach (var s in rawSites)
         {
-            Id = s.Id,
-            Title = s.Title,
-            Description = s.Description,
-            SiteUrl = s.SiteUrl,
-            EntryFile = s.EntryFile,
-            TotalSize = s.TotalSize,
-            FileCount = s.Files.Count,
-            CoverImageUrl = s.CoverImageUrl,
-            PdfAssetUrl = TryBuildPdfAssetUrl(s),
-            // 前端据此跳过「取正文」——包装站没有可读的 HTML 正文，问了必被拒
-            WrappedAssetType = s.WrappedAssetType,
-        }).ToList();
+            sites.Add(new SharedSiteInfo
+            {
+                Id = s.Id,
+                Title = s.Title,
+                Description = s.Description,
+                SiteUrl = s.SiteUrl,
+                EntryFile = s.EntryFile,
+                TotalSize = s.TotalSize,
+                FileCount = s.Files.Count,
+                CoverImageUrl = s.CoverImageUrl,
+                PdfAssetUrl = TryBuildPdfAssetUrl(s),
+                // 前端据此跳过「取正文」——包装站没有可读的 HTML 正文，问了必被拒
+                WrappedAssetType = s.WrappedAssetType,
+                // 编辑权只有服务端算得出来，走编辑端点那同一道角色门；匿名访问恒为 false。
+                ViewerCanEdit = viewerUserId != null && await CanEditSiteAsync(s, viewerUserId, ct),
+            });
+        }
 
         await _db.HostedSites.UpdateManyAsync(
             x => siteIds.Contains(x.Id),

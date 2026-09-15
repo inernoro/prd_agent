@@ -292,7 +292,16 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             }
             object donePayload = run.Operation == DesignArtifactOperations.Edit
                 ? new { revisionId = persisted.RevisionId, siteId = persisted.SiteId, status = persisted.RevisionStatus }
-                : new { siteId = persisted.SiteId, siteUrl = persisted.SiteUrl, title = persisted.Title, revisionId = persisted.RevisionId };
+                : new
+                {
+                    siteId = persisted.SiteId,
+                    siteUrl = persisted.SiteUrl,
+                    title = persisted.Title,
+                    revisionId = persisted.RevisionId,
+                    // 建站成功、归属失败是一种部分成功，终态事件必须带着它，
+                    // 否则浏览器还在的那条路会把它读成完全成功。
+                    destinationApplyError = run.DestinationApplyError,
+                };
 
             run.Status = RunStatuses.Done;
             run.Progress = 100;
@@ -931,6 +940,30 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     null,
                     ct);
             }
+            // 目标空间是发起时冻结在 run 上的意图，在这里应用——浏览器可能早就不在了。
+            // 建站已经成功，所以归属失败不让整轮失败，但也不静默：原因记到 run 上，
+            // 前端拿到就按「已生成，但归属团队失败」提示，与浏览器还在时的行为一致。
+            if (!string.IsNullOrWhiteSpace(run.DestinationTeamId) && site != null)
+            {
+                try
+                {
+                    var moved = await sites.SetSharedTeamsAsync(
+                        site.Id, run.UserId, new List<string> { run.DestinationTeamId! }, ct);
+                    if (moved == null) throw new InvalidOperationException("站点不存在或无权限");
+                }
+                catch (Exception destinationEx)
+                {
+                    // 内存里的 run 也要记上：终态事件就是从它构造的，只写库的话浏览器还在时反而看不到。
+                    run.DestinationApplyError = destinationEx.Message;
+                    await db.DesignArtifactRuns.UpdateOneAsync(
+                        item => item.DeploymentSlug == DeploymentScope.Current && item.Id == run.Id,
+                        Builders<DesignArtifactRun>.Update
+                            .Set(item => item.DestinationApplyError, destinationEx.Message)
+                            .Set(item => item.UpdatedAt, DateTime.UtcNow),
+                        cancellationToken: CancellationToken.None);
+                }
+            }
+
             if (!await RenewLeaseAsync(
                     db,
                     run.Id,

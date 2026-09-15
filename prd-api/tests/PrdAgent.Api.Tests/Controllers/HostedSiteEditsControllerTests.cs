@@ -237,7 +237,7 @@ public sealed class HostedSiteEditsControllerTests
             providers.Object,
             knowledge.Object,
             new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_hash_unit_{Guid.NewGuid():N}"),
-            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build());
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
@@ -299,7 +299,7 @@ public sealed class HostedSiteEditsControllerTests
             Mock.Of<IDesignArtifactProviderCatalog>(),
             knowledge.Object,
             new LlmGatewayDataContext("mongodb://127.0.0.1:27017", $"design_preflight_unit_{Guid.NewGuid():N}"),
-            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build());
+            Mock.Of<IDesignArtifactCancellationCoordinator>(), new ConfigurationBuilder().Build(), Mock.Of<IHostedSiteService>());
         controller.ControllerContext = new ControllerContext
         {
             HttpContext = new DefaultHttpContext
