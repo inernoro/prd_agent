@@ -3410,16 +3410,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(response.ok(), body.error?.message || '无法读取网关逻辑模型').toBe(true);
       return body.data.items;
     };
-    const items = await readLogical();
+    let items = await readLogical();
     const owner = items.find((item) => item.offerings.some(isGatewayFailoverBackup));
-    const backup = owner?.offerings.find(isGatewayFailoverBackup);
+    let backup = owner?.offerings.find(isGatewayFailoverBackup);
     test.skip(!owner || !backup, 'CDS 网关上还没有 GW-007 留下的带标记备用 Offering，先跑一次 GW-007 再验本用例');
+    // 进入时备用本身就停在上一轮的注入态：先自愈再取快照，否则 finally 会把注入态原样写回去。
+    if (isGatewayInjectedEndpoint(backup!)) {
+      const pre = await recoverInjectedGatewayOfferings(request, gateway, items);
+      expect(
+        pre.filter((item) => item.source === 'unrecoverable'),
+        '进入用例时备用 Offering 停在无法还原的注入态，请先人工恢复 Endpoint 再跑',
+      ).toEqual([]);
+      items = await readLogical();
+      backup = items.find((item) => item.id === owner!.id)?.offerings.find(isGatewayFailoverBackup);
+      expect(backup && !isGatewayInjectedEndpoint(backup), '自愈后备用 Offering 必须仍在且不再是注入态').toBeTruthy();
+    }
     // 路由契约完全相同的捐出方在有的环境里存在、有的不存在（CDS 上备用是 openai 协议、捐出方是协议默认），
     // 旧格式注入路径的两种结局都要验：有捐出方就按它还原，没有就必须原样不动并标记 unrecoverable。
     const donor = items
       .flatMap((item) => item.offerings.filter((offering) => offering.id !== backup!.id && sameGatewayRoutingContract(offering, backup!)))
       .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0];
-    const original = { enabled: backup!.enabled, endpointPath: backup!.endpointPath || '', priority: backup!.priority };
+    // 带标记备用在 GW-007 之外的干净状态永远是「停用」：进入时若是启用的，那只能是上一轮夭折留下的，结束时一并停掉。
+    const original = { endpointPath: backup!.endpointPath || '', priority: backup!.priority };
     const readBackup = async () => {
       const current = (await readLogical()).find((item) => item.id === owner!.id)?.offerings
         .find((offering) => isGatewayFailoverBackup(offering) && offering.targetId === backup!.targetId);
@@ -3491,9 +3503,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     } finally {
       // 顺序恢复并逐步取新版本 id：同一条 Offering 的两次写不并发，也不拿旧 id 去改已被替代的版本。
       const restore = await Promise.allSettled([(async () => {
+        // 快照在自愈之后才取，这里再守一道：任何情况下都不许把注入态写回网关。
+        if (gatewayInjectedEndpointPattern.test(original.endpointPath)) {
+          throw new Error(`快照里的 Endpoint 仍是注入态，拒绝写回：${original.endpointPath}`);
+        }
         const latest = await readBackup();
         const restored = await put(latest.id, { endpointPath: original.endpointPath, priority: original.priority });
-        await setEnabled(restored.id, original.enabled);
+        await setEnabled(restored.id, false);
       })()]);
       expect(restore.filter((result) => result.status === 'rejected'), '用例结束必须把备用 Offering 恢复到进入前的状态').toEqual([]);
     }
