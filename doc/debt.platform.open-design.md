@@ -324,3 +324,50 @@ AGENTS.md 9 要求的是**新 Agent** 在通过 8 验收之前带 `wip: true`。
 为免这条结论只是一句「我读过代码」，补了一条用例把它钉住：裸对象的 2xx 必须被当成
 成功且 data 等于原对象。哪天真把请求侧收严了，这条会先红，提醒去改那一批端点，
 而不是让用户在页面上撞见「格式异常」。
+
+## 第十六轮复审（2026-09-15，head `0bbb19c`）
+
+三条 P2，两条按 A 类修掉，一条按 B 类记这里。
+
+### 一、远程会话处置：登记账本失败后回不到直接停止（A 类，已修）
+
+`OpenDesignRemoteArtifactExecutor.ExecuteAsync` 的 `finally` 里，直接停止写成了挂在
+「登记账本」分支上的 `else if`。于是只要走过完成事件那一支，账本登记失败就再也落不到停止：
+返回 null 落不到，抛错被外层 catch 吞掉同样落不到。而 `RecoverPendingStopsAsync` 的候选
+条件是 `CleanupRequestedAt != null`——没有账本的会话它一条都捞不回来，远程容器会一直占着
+直到 CDS 自己的生存期上限。
+
+复审给的成因（「完成轮次谓词不匹配且无人抢先登记」）其实不对：那一支 `ScheduleStopAsync`
+抛的是 409，不是返回 null。真正能返回 null 的只有会话文档不在了；而抛错那条路径
+（完成事件缺 `clientMessageId` 或 `CdsSessionId` 时的 502）才是会真实漏掉会话的入口。
+成因不同，缺陷形状相同，照修。
+
+修法是把处置决策抽成 `DisposeRemoteSessionAsync`（与同文件 `WaitForSessionReadyAsync` 同一
+写法，收委托），登记失败一律往下落到直接停止。这里敢无条件停止，是因为会话由 `ExecuteAsync`
+开头按 run 新建、`IsolationMode` 为 SessionContainer，除本执行器外没有第二个写入方，
+执行器一退出直接停止永远是正确处置。守卫 `DesignArtifactSessionDisposalTests` 六条；
+把写法退回 `else if`，其中两条（返回 null、抛错）当场变红。
+
+### 二、保存失败不标终态：三条 false 出口只有一条标了 error（A 类，已修）
+
+`PersistRunDoneAsync` 有三条返回 false 的出口，原本只有「来源内容不完整」那条调了
+`PersistRunErrorAsync`，另外两条（运行时资源未解析、写库异常）把 run 留在 `running`，
+等 15 分钟的陈旧扫描收尾。SSE 那几条路径还有流在推进，`local-edit` 这种同步端点根本没有
+第二个写入方——用户拿到 500，版本列表却挂着一条没人推进的幽灵版本，十五分钟后变成一条
+`Error` 为 null 的失败版本，连原因都没有。
+
+没有逐条补调用，而是把失败收敛成唯一出口：内层 `TryPersistRunDoneAsync` 只负责返回
+「成功 null / 失败原因」，外层统一落 `PersistRunErrorAsync`。于是「返回 false 必已标 error」
+成为结构性质，由编译器保证，不再依赖三处各自记得照做（对齐 `external-cause-first.md` 第四节：
+能用类型表达的不变量不许降级成测试断言）。这条没有配套守卫，因为写错的变体写不出来。
+
+### 三、本地编辑重试去重（B 类，不在本 PR 做）
+
+复审要求：服务端提交成功但响应丢失时，重试会用同一个父版本和同一份 HTML 再建一条
+`manual-edit` run，应该按幂等键或内容哈希返回既有子版本。
+
+判 B：产生的是一条内容完全相同的重复版本，不是脏数据、不是错误的权威版本，父子链也正常。
+而要把它做对，需要新增「按 `ParentRunId + HtmlHash` 查既有子版本」这层语义，并且为了并发下
+成立还要一个唯一索引——按 `no-auto-index.md`，索引是 DBA 执行的迁移，是本 PR 之外的动作。
+本 PR 的 §5.5 熔断早已触发，不在此展开。后续做的时候一并考虑「用户确实想从同一个父版本
+改出两份相同内容」这个合法场景要不要折叠。

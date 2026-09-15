@@ -2262,20 +2262,32 @@ public class MdToPptController : ControllerBase
         }).ToList());
     }
 
+    /// <summary>
+    /// 保存完成态版本。失败原因收敛成唯一出口：本函数返回 false 时，run 必然已被标成 error。
+    /// 让每条 false 分支自己决定标不标，就会漏——三条里原本只有第一条标了，另两条把 run 留在
+    /// running 交给 15 分钟的陈旧扫描收尾，而 local-edit 这种同步端点根本没有第二个写入方，
+    /// 版本列表会一直挂着一条没人推进的幽灵版本。这个不变量交给编译器，不交给测试断言。
+    /// </summary>
     private async Task<bool> PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded = 0, int total = 0)
+    {
+        var failure = await TryPersistRunDoneAsync(run, html, model, platform, degraded, total);
+        if (failure == null) return true;
+        await PersistRunErrorAsync(run, failure);
+        return false;
+    }
+
+    /// <summary>执行保存；成功返回 null，失败返回给用户看的原因（由调用方统一落成 error 状态）。</summary>
+    private async Task<string?> TryPersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded, int total)
     {
         try
         {
             html = PreparePublishedHtml(NormalizePresentationDocument(html));
             if (!ValidateSourcePlanDocument(run, html))
-            {
-                await PersistRunErrorAsync(run, "演示稿来源内容不完整，未保存；请恢复完整大纲后重新生成");
-                return false;
-            }
+                return "演示稿来源内容不完整，未保存；请恢复完整大纲后重新生成";
             if (MdToPptAnchors.HasUnresolvedRuntimeReference(html))
             {
                 _logger.LogError("[MdToPpt] trusted presentation runtime unavailable runId={Id}", run.Id);
-                return false;
+                return "演示稿运行时资源不可用，未保存；当前完成态版本仍然保留，请稍后重试";
             }
             run.Status = "done";
             run.Html = html;
@@ -2295,7 +2307,7 @@ public class MdToPptController : ControllerBase
         catch (Exception ex)
         {
             _logger.LogError(ex, "[MdToPpt] persist run done failed runId={Id}", run.Id);
-            return false;
+            return "演示稿版本保存失败，当前完成态版本仍然保留，请重试";
         }
 
         try
@@ -2307,7 +2319,7 @@ public class MdToPptController : ControllerBase
             // 专用完成态已经持久化；公共账本由恢复器枚举收敛，不能把已保存版本误报为丢失。
             _logger.LogWarning(ex, "[MdToPpt] public lifecycle completion pending runId={Id}", run.Id);
         }
-        return true;
+        return null;
     }
 
     internal static string ComputeHtmlHash(string html)

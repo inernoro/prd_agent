@@ -569,33 +569,61 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
         }
         finally
         {
+            await DisposeRemoteSessionAsync(
+                cleanupScheduled,
+                completedTurnObserved,
+                token => _sessions.ScheduleStopAsync(
+                    run.UserId,
+                    session.Id,
+                    completedCdsSessionId ?? string.Empty,
+                    completedMessageId ?? string.Empty,
+                    token),
+                token => _sessions.StopAsync(run.UserId, session.Id, token),
+                (error, scheduling) => _logger.LogWarning(
+                    error,
+                    scheduling
+                        ? "登记已完成 OpenDesign 会话清理账本失败 session={SessionId}"
+                        : "停止未完成的 OpenDesign 远程会话失败 session={SessionId}",
+                    session.Id));
+        }
+    }
+
+    /// <summary>
+    /// 释放本次运行独占的远程会话。会话是 ExecuteAsync 开头按 run 新建的 SessionContainer，
+    /// 除本执行器外没有第二个写入方，所以执行器一退出，直接停止永远是正确的处置。
+    /// 登记账本失败（返回 null 或抛错）时必须落到直接停止：RecoverPendingStopsAsync 的候选
+    /// 条件是 CleanupRequestedAt != null，没有账本的会话它一条都捞不回来，远程容器会一直占着
+    /// 直到 CDS 自己的生存期上限。返回是否已持久化清理账本。
+    /// </summary>
+    internal static async Task<bool> DisposeRemoteSessionAsync(
+        bool cleanupScheduled,
+        bool completedTurnObserved,
+        Func<CancellationToken, Task<InfraAgentSessionView?>> scheduleStop,
+        Func<CancellationToken, Task<InfraAgentSessionView?>> stop,
+        Action<Exception, bool> onFailure)
+    {
+        if (cleanupScheduled) return true;
+        if (completedTurnObserved)
+        {
             try
             {
-                if (!cleanupScheduled && completedTurnObserved)
-                {
-                    var scheduled = await _sessions.ScheduleStopAsync(
-                        run.UserId,
-                        session.Id,
-                        completedCdsSessionId ?? string.Empty,
-                        completedMessageId ?? string.Empty,
-                        CancellationToken.None);
-                    cleanupScheduled = scheduled != null;
-                }
-                else if (!cleanupScheduled)
-                {
-                    await _sessions.StopAsync(run.UserId, session.Id, CancellationToken.None);
-                }
+                cleanupScheduled = await scheduleStop(CancellationToken.None) != null;
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(
-                    ex,
-                    completedTurnObserved
-                        ? "登记已完成 OpenDesign 会话清理账本失败 session={SessionId}"
-                        : "停止未完成的 OpenDesign 远程会话失败 session={SessionId}",
-                    session.Id);
+                onFailure(ex, true);
             }
         }
+        if (cleanupScheduled) return true;
+        try
+        {
+            await stop(CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            onFailure(ex, false);
+        }
+        return false;
     }
 
     internal static async Task<InfraAgentSessionView> WaitForSessionReadyAsync(
