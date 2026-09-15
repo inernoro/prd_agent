@@ -224,7 +224,35 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         }
         catch (Exception ex) when (ex is ObjectDisposedException or IOException)
         {
-            _logger.LogInformation("远程设计模型连接已结束 runId={RunId}", runId);
+            // 这个 catch 会接住两件完全不同的事，以前一并吞掉、正常返回（Codex P1，2026-09-15）：
+            //  1) 调用方自己走了——没有需要往下传的失败，照旧只记一条；
+            //  2) 上游网关**刻意**中断了本次响应（缺终态事件时它会补一个 error 事件再断开）。
+            //     第二种被吞掉后，Kestrel 把下游收成一次干净的 200 EOF，网关那边造出来的传输失败
+            //     在这一层被抹平，OpenDesign 读到的又是「完整的成功」——判据与接线纪律 形状 10。
+            if (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                _logger.LogInformation("设计模型调用方已断开连接，本次代理提前结束 runId={RunId}", runId);
+                return;
+            }
+            _logger.LogWarning(ex, "上游网关中断了本次设计模型响应（多半是缺终态事件）runId={RunId}", runId);
+            if (!Response.HasStarted)
+            {
+                Response.StatusCode = StatusCodes.Status502BadGateway;
+                Response.ContentType = "application/json";
+                using var responseDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await Response.WriteAsJsonAsync(new
+                {
+                    error = new
+                    {
+                        code = "DESIGN_RUNTIME_MODEL_INTERRUPTED",
+                        message = "设计模型响应被上游中断，请重新发起任务",
+                        runId,
+                    },
+                }, responseDeadline.Token);
+                return;
+            }
+            // 已经发出去的状态码收不回，只能让下游确定地读到一次传输失败，而不是干净的 EOF。
+            HttpContext.Abort();
         }
         catch (Exception ex)
         {

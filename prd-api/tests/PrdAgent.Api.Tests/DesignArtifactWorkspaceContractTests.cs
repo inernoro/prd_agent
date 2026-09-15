@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -128,6 +129,132 @@ public sealed class DesignArtifactWorkspaceContractTests
         Assert.Equal(401, controller.Response.StatusCode);
         Assert.Null(handler.Body);
         broker.VerifyAll();
+    }
+
+    // Codex P1（2026-09-15）：网关在缺终态时会「补 error 事件 + 主动中断」，那个中断到了这一层
+    // 表现为一次读 IOException。以前 catch 直接吞掉正常返回，Kestrel 把下游收成干净的 200 EOF，
+    // 网关刻意造出来的传输失败被抹平，OpenDesign 读到的又是「完整的成功」（形状 10）。
+    [Fact]
+    public async Task UpstreamAbortBeforeAnyByteBecomesAnHonest502()
+    {
+        var run = AbortFixtureRun();
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
+            AbortFixtureBody);
+
+        await controller.ProxyResponses(run.Id, CancellationToken.None);
+
+        Assert.Equal(502, controller.Response.StatusCode);
+        controller.Response.Body.Position = 0;
+        var written = await new StreamReader(controller.Response.Body).ReadToEndAsync();
+        Assert.Contains("DESIGN_RUNTIME_MODEL_INTERRUPTED", written, StringComparison.Ordinal);
+        Assert.False(controller.HttpContext.RequestAborted.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task UpstreamAbortAfterHeadersPropagatesInsteadOfCleanEof()
+    {
+        var run = AbortFixtureRun();
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
+            AbortFixtureBody);
+        controller.HttpContext.Features.Set<IHttpResponseFeature>(new StartedResponseFeature());
+        // DefaultHttpContext 自带的生命周期 feature 的 Abort 是空实现，换一个记得住的，
+        // 否则这条断言测的是 stub 而不是行为。
+        var lifetime = new AbortableLifetimeFeature();
+        controller.HttpContext.Features.Set<IHttpRequestLifetimeFeature>(lifetime);
+        Assert.False(controller.HttpContext.RequestAborted.IsCancellationRequested);
+
+        await controller.ProxyResponses(run.Id, CancellationToken.None);
+
+        // 状态码收不回，唯一能做的是让下游确定地读到一次传输失败，而不是干净的 EOF。
+        Assert.True(controller.HttpContext.RequestAborted.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task CallerDisconnectStaysQuietInsteadOfSynthesizingAFailure()
+    {
+        var run = AbortFixtureRun();
+        var broker = new Mock<IDesignArtifactWorkspaceBroker>(MockBehavior.Strict);
+        broker.Setup(x => x.ReserveModelCallAsync(run.Id, "model-ticket", It.IsAny<CancellationToken>())).ReturnsAsync(run);
+        var controller = BuildResponsesProxy(broker.Object, new AbortingStreamHandler(), GatewayConfiguration(),
+            AbortFixtureBody);
+        var lifetime = new AbortableLifetimeFeature();
+        controller.HttpContext.Features.Set<IHttpRequestLifetimeFeature>(lifetime);
+        lifetime.Abort(); // 调用方先走了
+
+        await controller.ProxyResponses(run.Id, CancellationToken.None);
+
+        // 没有需要往下传的失败，不该凭空造一个 502 出来。
+        Assert.NotEqual(502, controller.Response.StatusCode);
+    }
+
+    private static DesignArtifactRun AbortFixtureRun()
+    {
+        var run = BuildRun();
+        run.LlmRequestPolicy = new DesignArtifactLlmRequestPolicy { Model = "frozen-codex-model" };
+        return run;
+    }
+
+    private const string AbortFixtureBody =
+        """{"store":false,"stream":true,"input":[{"role":"user","content":[{"type":"input_text","text":"写一页"}]}]}""";
+
+    private static IConfiguration GatewayConfiguration() => new ConfigurationBuilder()
+        .AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["LlmGateway:ServeBaseUrl"] = "http://llmgw-serve:8091",
+            ["LlmGwServe:ApiKey"] = "gateway-test-key",
+        }).Build();
+
+    /// <summary>上游返回 200，body 读到一半就被中断——网关那边「补 error 事件后 abort」的样子。</summary>
+    private sealed class AbortingStreamHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StreamContent(new ThrowingStream())
+                {
+                    Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("text/event-stream") },
+                },
+            });
+    }
+
+    private sealed class ThrowingStream : Stream
+    {
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => 0; set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => throw new IOException("upstream aborted");
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+            => throw new IOException("upstream aborted");
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+            => throw new IOException("upstream aborted");
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
+    private sealed class StartedResponseFeature : IHttpResponseFeature
+    {
+        public Stream Body { get; set; } = new MemoryStream();
+        public bool HasStarted => true;
+        public IHeaderDictionary Headers { get; set; } = new HeaderDictionary();
+        public string? ReasonPhrase { get; set; }
+        public int StatusCode { get; set; } = 200;
+        public void OnCompleted(Func<object, Task> callback, object state) { }
+        public void OnStarting(Func<object, Task> callback, object state) { }
+    }
+
+    private sealed class AbortableLifetimeFeature : IHttpRequestLifetimeFeature
+    {
+        private readonly CancellationTokenSource _source = new();
+        public CancellationToken RequestAborted { get => _source.Token; set { } }
+        public void Abort() => _source.Cancel();
     }
 
     [Fact]
