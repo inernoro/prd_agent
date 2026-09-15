@@ -3,3 +3,4 @@
 | docs | platform | AGENTS.md 规则 2 与 5.2 校验表按同一判据改写（零净增行，记忆契约 197 行不变）；principles / agent-universe / cds diagnose 三处衍生叙述对齐 |
 | docs | platform | debt.platform 新增「后端测试项目的接线方式」一节，记 Compile Include 机制的欠账与三个偿还方向 |
 | fix | platform | 修 Codex review 两条：Branch Image 与 CI 都是 push 后才有结论（原表述与「校验全绿才准 push」自相矛盾）；CI 那档 xUnit 带 Category!=Integration&Manual 过滤，不是全量，不许写成「全量通过」 |
+| fix | platform | 修 Codex 第二轮两条：AGENTS.md §8 的「本地 + CDS 双验证」同步为权威位置表的判据；sync-cursor-rules.sh 里硬编码的 description 跟着规则一起更新，否则 Cursor 侧看不到扩大后的触发场景 |
