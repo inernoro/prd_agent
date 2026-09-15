@@ -95,7 +95,21 @@ public sealed class DestinationApplyErrorFencingTests
                     Builders<DesignArtifactRun>.Update.Set(x => x.LeaseOwnerId, "worker-b"));
                 throw new IOException("对象存储抖了一下");
             });
+        // 归属排在版本快照之后（见下一条用例的理由），所以这两步必须先放行。
+        var siteRecord = new HostedSite { Id = "site-1", OwnerUserId = "user-1", EntryFile = "index.html" };
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(siteRecord, "<!doctype html><html><body>safe</body></html>", now));
         var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(x => x.EnsureGeneratedSnapshotAsync(
+                "site-1", "user-1", It.IsAny<HostedSiteEditableEntry>(), It.IsAny<string>(),
+                run.Id, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteRevision
+            {
+                Id = "revision-1",
+                SiteId = "site-1",
+                CreatedByUserId = "user-1",
+                Status = HostedSiteRevisionStatuses.Published,
+            });
 
         await Assert.ThrowsAsync<DesignArtifactRunLeaseLostException>(() =>
             HostedSiteEditRunWorker.PersistArtifactWithLeaseAsync(
@@ -117,5 +131,74 @@ public sealed class DestinationApplyErrorFencingTests
         // companion：归属确实被走到了，否则上面那条会因为「压根没走到这一步」而判绿。
         sites.Verify(x => x.SetSharedTeamsAsync(
             "site-1", "user-1", It.IsAny<List<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    /// <summary>
+    /// 归属团队必须排在所有还会失败的持久化步骤之后。
+    ///
+    /// 补偿只认「私有、未发布、未分享」的站点（CompensateGeneratedSiteCoreAsync 的围栏含
+    /// SharedTeamIds 为空）。先盖团队再撞上续租或版本快照失败，补偿就一个候选都找不到、
+    /// 随即清掉清理计划——任务报失败，而站点和它的对象仍然挂在用户选的团队里，没有任何
+    /// 东西会来收拾（Codex P2，2026-09-15）。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ASnapshotFailureMustNotLeaveTheSiteAlreadyAssignedToTheTeam()
+    {
+        await using var fixture = await RunMongoFixture.CreateAsync("destination_order");
+        var now = new DateTime(DateTime.UtcNow.Ticks - DateTime.UtcNow.Ticks % TimeSpan.TicksPerMillisecond, DateTimeKind.Utc);
+        var run = new DesignArtifactRun
+        {
+            Id = "run-destination-3",
+            DeploymentSlug = DeploymentScope.Current,
+            UserId = "user-1",
+            Status = RunStatuses.Queued,
+            Instruction = "生成页面",
+            Operation = DesignArtifactOperations.Generate,
+            DestinationTeamId = "team-1",
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await fixture.Db.DesignArtifactRuns.InsertOneAsync(run);
+        var claimed = await HostedSiteEditRunWorker.TryClaimAsync(
+            fixture.Db, run.Id, "worker-a", now, TimeSpan.FromMinutes(2), CancellationToken.None);
+        Assert.NotNull(claimed);
+
+        var siteRecord = new HostedSite { Id = "site-1", OwnerUserId = "user-1", EntryFile = "index.html" };
+        var sites = new Mock<IHostedSiteService>(MockBehavior.Strict);
+        sites.Setup(x => x.CreateFromContentAsync(
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string?>(),
+                It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<List<string>?>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<int?>()))
+            .ReturnsAsync(siteRecord);
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(siteRecord, "<!doctype html><html><body>safe</body></html>", now));
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(x => x.EnsureGeneratedSnapshotAsync(
+                "site-1", "user-1", It.IsAny<HostedSiteEditableEntry>(), It.IsAny<string>(),
+                run.Id, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new IOException("版本账本写失败"));
+
+        await Assert.ThrowsAsync<IOException>(() =>
+            HostedSiteEditRunWorker.PersistArtifactWithLeaseAsync(
+                fixture.Db,
+                claimed!,
+                "worker-a",
+                "<!doctype html><html><body>safe</body></html>",
+                null,
+                null,
+                sites.Object,
+                revisions.Object,
+                now.AddSeconds(1),
+                TimeSpan.FromMinutes(2),
+                CancellationToken.None));
+
+        // 站点还没被盖上团队，补偿的围栏因此仍然认得它。
+        sites.Verify(x => x.SetSharedTeamsAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<List<string>>(), It.IsAny<CancellationToken>()), Times.Never);
+        // companion：快照确实被走到了，否则上面那条会因为「压根没走到这一步」而判绿。
+        revisions.Verify(x => x.EnsureGeneratedSnapshotAsync(
+            "site-1", "user-1", It.IsAny<HostedSiteEditableEntry>(), It.IsAny<string>(),
+            run.Id, It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 }

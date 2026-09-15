@@ -942,9 +942,53 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     null,
                     ct);
             }
+            if (!await RenewLeaseAsync(
+                    db,
+                    run.Id,
+                    leaseOwner,
+                    DateTime.UtcNow,
+                    leaseDuration,
+                    CancellationToken.None))
+                throw new DesignArtifactRunLeaseLostException(run.Id);
+
+            var current = await sites.GetEditableEntryHtmlAsync(site.Id, run.UserId, ct);
+            var baseline = verifiedFiles == null
+                ? await revisions.EnsureGeneratedSnapshotAsync(
+                    site.Id,
+                    run.UserId,
+                    current,
+                    run.Runtime,
+                    run.Id,
+                    run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
+                    ct)
+                : await revisions.EnsureGeneratedVerifiedSnapshotAsync(
+                    site.Id,
+                    run.UserId,
+                    current,
+                    BuildVerifiedHostedSiteFiles(verifiedFiles, html),
+                    run.Runtime,
+                    run.Id,
+                    run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
+                    ct);
+            if (!await RenewLeaseAsync(
+                    db,
+                    run.Id,
+                    leaseOwner,
+                    DateTime.UtcNow,
+                    leaseDuration,
+                    CancellationToken.None))
+                throw new DesignArtifactRunLeaseLostException(run.Id);
+
             // 目标空间是发起时冻结在 run 上的意图，在这里应用——浏览器可能早就不在了。
             // 建站已经成功，所以归属失败不让整轮失败，但也不静默：原因记到 run 上，
             // 前端拿到就按「已生成，但归属团队失败」提示，与浏览器还在时的行为一致。
+            //
+            // **排在所有还会失败的步骤之后**：补偿只认「私有、未发布、未分享」的站点
+            // （CompensateGeneratedSiteCoreAsync 的围栏含 SharedTeamIds 为空），一旦先盖上
+            // 团队再撞上续租或版本快照失败，补偿就一个候选都找不到、随即清掉清理计划——
+            // 任务报失败，而站点和它的对象仍然挂在用户选的团队里，没有任何东西会来收拾
+            //（Codex P2，2026-09-15）。归属成功之后没有别的会失败的动作，围栏因此不会被提前破坏；
+            // 归属失败时站点仍是未分享状态，补偿照旧认得它。
             if (!string.IsNullOrWhiteSpace(run.DestinationTeamId) && site != null)
             {
                 // 记到 run 上的这句话会原样进浏览器的提示框，所以只能是稳定的用户文案：
@@ -986,43 +1030,6 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     run.DestinationApplyError = destinationError;
                 }
             }
-
-            if (!await RenewLeaseAsync(
-                    db,
-                    run.Id,
-                    leaseOwner,
-                    DateTime.UtcNow,
-                    leaseDuration,
-                    CancellationToken.None))
-                throw new DesignArtifactRunLeaseLostException(run.Id);
-
-            var current = await sites.GetEditableEntryHtmlAsync(site.Id, run.UserId, ct);
-            var baseline = verifiedFiles == null
-                ? await revisions.EnsureGeneratedSnapshotAsync(
-                    site.Id,
-                    run.UserId,
-                    current,
-                    run.Runtime,
-                    run.Id,
-                    run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
-                    ct)
-                : await revisions.EnsureGeneratedVerifiedSnapshotAsync(
-                    site.Id,
-                    run.UserId,
-                    current,
-                    BuildVerifiedHostedSiteFiles(verifiedFiles, html),
-                    run.Runtime,
-                    run.Id,
-                    run.KnowledgeReferences.Select(item => item.EntryId).ToList(),
-                    ct);
-            if (!await RenewLeaseAsync(
-                    db,
-                    run.Id,
-                    leaseOwner,
-                    DateTime.UtcNow,
-                    leaseDuration,
-                    CancellationToken.None))
-                throw new DesignArtifactRunLeaseLostException(run.Id);
             return new PersistedDesignArtifact(site.Id, baseline.Id, baseline.Status, site.SiteUrl, site.Title);
         }
         catch
