@@ -4,7 +4,7 @@ description: 改完可执行代码却发现本地缺 dotnet/node/cargo 时阅读
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/cds-first-verification.md
-     生成时间: 2026-09-15T08:05:08Z -->
+     生成时间: 2026-09-15T15:51:12Z -->
 
 # 验证的权威位置（编译与测试各在哪里被证明）
 
@@ -20,13 +20,19 @@ description: 改完可执行代码却发现本地缺 dotnet/node/cargo 时阅读
 
 每一行都要能被第三个人照着核一遍，不需要问你。
 
-| 改了什么 | 权威判据 | 在哪跑 | feature 分支会自动跑吗 |
+| 改了什么 | 权威判据 | 在哪跑 | 什么时候才有结论 |
 |---|---|---|---|
-| `prd-api/**/*.cs`（API 项目能不能编出来） | **Branch Image workflow 绿**，产出 `sha-<commit>` 镜像 | GitHub Actions `branch-image.yml` | 会，每次 push |
-| `prd-api` 整个 sln 编译 + xUnit 全量 | **CI workflow 的 `Server Build & Test` job 绿** | GitHub Actions `ci.yml` | **不会**（见第三节） |
-| `prd-admin` 的 tsc / lint / vitest | 本地 `pnpm` 跑一遍即可（快），CI 的 `Admin Dashboard Build` 是复核 | 本地 或 Actions | 同上 |
-| 页面打得开、流程跑得通 | 预览域名上的真人路径 + 截图 | CDS 分支预览 | 会，push 即部署 |
-| 后端接口行为 | 预览域名上打真实端点、断言返回值 | CDS 分支预览 | 会 |
+| `prd-api/**/*.cs`（API 项目能不能编出来） | **Branch Image workflow 绿**，产出 `sha-<commit>` 镜像 | GitHub Actions `branch-image.yml` | **push 之后**（它由 push 触发），每次 push 都跑 |
+| `prd-api` 整个 sln 编译 + 非集成非手工的 xUnit | **CI workflow 的 `Server Build & Test` job 绿** | GitHub Actions `ci.yml` | push 之后，且 **feature 分支不自动跑**（见第三节） |
+| `prd-api` 的 Integration / Manual 类测试 | 本地 `dotnet test` 去掉 filter 自己跑 | 本地（要真 MongoDB + ffmpeg） | 没有任何 CI 会跑它们（见第二节末） |
+| `prd-admin` 的 tsc / lint / vitest | 本地 `pnpm` 跑一遍即可（快），CI 的 `Admin Dashboard Build` 是复核 | 本地 或 Actions | 本地即时；CI 同上 |
+| 页面打得开、流程跑得通 | 预览域名上的真人路径 + 截图 | CDS 分支预览 | push 即部署 |
+| 后端接口行为 | 预览域名上打真实端点、断言返回值 | CDS 分支预览 | push 即部署 |
+
+**push 前能拿到的只有本地那一栏。** 后端三条权威判据全部在 push 之后才有结论——这不是
+可以绕过的，是流水线的形状。所以 AGENTS.md §5.2「校验全绿才准 push」对 `.cs` 的落法是：
+本地有 SDK 就先 build 一遍当 push 前门禁，没有就照推，**但 push 后必须回来看 Branch Image
+与 CI 的结论，红了当场修**——「推完就不管」和「本地没 SDK 所以不验证」是同一种错。
 
 CDS 在这张表里只负责**运行**，不负责编译：本仓库 `api-prd-agent` 走的是 express 模式，
 `branch-image.yml` 的头注释写得很清楚——「把 prd-api / prd-admin 编译成 ghcr 镜像……
@@ -43,9 +49,15 @@ CDS 收到 workflow_run.completed 后按 SHA docker pull + run，**不再在 CDS
 所以：
 
 - 要说「API 能编出来」→ 引 Branch Image 的 run 号
-- 要说「`dotnet build` 零 error」或「测试全绿」→ 只能引 `ci.yml` 的 `Server Build & Test`
+- 要说「`dotnet build` 零 error」→ 只能引 `ci.yml` 的 `Server Build & Test`
+- 要说测试→ 同上，但**那一档不是全量**：`ci.yml` 跑的是
+  `--filter "Category!=Integration&Category!=Manual"`，而仓库里确实有这两类用例
+  （`ImageGenIntegrationTests`、`ApiRequestLogTwoPhaseStorageTests` 等，它们要真
+  MongoDB 与 ffmpeg，CI 上跑不了）。所以那个 job 绿只证明**非集成、非手工的 xUnit 全绿**。
+  改动碰到那两类用例时，没有任何 CI 会验它——要么本地去掉 filter 自己跑，要么在交付里
+  明说这部分没验过。写成「xUnit 全量通过」就是在夸大。
 
-两者不许混着说。
+三者不许混着说。
 
 ## 三、feature 分支不自动跑 `dotnet test`，要自己触发
 
@@ -99,7 +111,7 @@ which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PAT
 [缺] 测试全绿（其实 feature 分支没跑过 xUnit）
 
 [有] C# 编译：Branch Image #6489 绿，镜像 sha-2df49f7 已产出（只覆盖 API 项目）
-[有] C# 测试：手动触发 CI #8146 在本分支跑 dotnet test，28 条守卫全绿
+[有] C# 测试：手动触发 CI #8146 跑 dotnet test（非集成非手工那一档），28 条守卫全绿
 [有] 页面：预览域名真人路径打开，双主题截图见下（或：截图未做，缺登录口令）
 ```
 
@@ -109,6 +121,7 @@ which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PAT
 
 - [ ] 我说的每一句「通过了」，都指得出是哪条流水线的哪个 job 吗？
 - [ ] 我有没有把 Branch Image 的绿，当成 `dotnet build` 或测试的绿？
+- [ ] 我说的「测试全绿」，包含 Integration / Manual 吗？CI 那一档不跑它们。
 - [ ] 改了 `.cs` 的话，`ci.yml` 在这条分支上真跑过吗（自动不会跑）？
 - [ ] 新加的测试文件，csproj 里链进去了吗？它真的被编译过吗？
 - [ ] 本地能跑的我先跑了吗（快），还是白等了一轮 CI？

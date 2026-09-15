@@ -42,7 +42,7 @@ cd prd-video && pnpm start   # Remotion 4.0
 
 ### 2. C# 静态分析
 
-任何 `.cs` 改动后，`error CS*` 必须修复，`warning CS*` 评估是否本次引入。本地有 SDK 先跑一遍提速（`which dotnet || ls /opt/dotnet8/dotnet`，常装在 PATH 之外），但权威判据在远端且分两层：Branch Image 绿**只**证明 API 项目编得出来（它不编译 `PrdAgent.Tests`），sln 零 error + xUnit 全绿只能引 CI 的 `Server Build & Test`，而它在 feature 分支不自动跑（见 `cds-first-verification.md`）：
+任何 `.cs` 改动后，`error CS*` 必须修复，`warning CS*` 评估是否本次引入。本地有 SDK 就先跑（`which dotnet || ls /opt/dotnet8/dotnet`，常装在 PATH 之外）——那是 push 前唯一能拿到的结论；权威判据都在 push 之后：Branch Image 绿**只**证明 API 项目编得出来（不编译 `PrdAgent.Tests`），sln 零 error 与 xUnit（`Category!=Integration&Category!=Manual` 那一档，不是全量）只能引 CI 的 `Server Build & Test`，而它在 feature 分支不自动跑（见 `cds-first-verification.md`）：
 
 ```bash
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
@@ -81,10 +81,10 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 | 改动范围 | 必跑校验 |
 |----------|----------|
-| `prd-api/` `.cs` | Branch Image workflow 绿（= API 项目编得出来）；本地有 SDK 先 `dotnet build --no-restore` 提速 |
+| `prd-api/` `.cs` | push 前：本地有 SDK 就 `dotnet build --no-restore`（零 `error CS*`）。push 后必须回看 Branch Image 绿（= API 项目编得出来），红了当场修 |
 | `prd-admin/` `prd-desktop/` 前端源码 | `.ts` `.tsx`：`pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警）。改到 `.css` **另跑 `pnpm build`**——tsc/lint/vitest 一个都不解析 CSS（2026-08-30 tokens.css 多一个 `*/`，本地三样全绿、CI 构建炸、分支停 idle、预览 503） |
 | `llmgw/` | 见 `llmgw/AGENTS.md` 的模块校验表 |
-| 含测试的模块 | `pnpm test` 全绿；`dotnet test` 要**手动把 `ci.yml` dispatch 到当前分支**才会跑（feature 分支不自动触发），没跑就不许写「测试全绿」 |
+| 含测试的模块 | `pnpm test` 全绿；`dotnet test` 要**手动把 `ci.yml` dispatch 到当前分支**才跑（且只跑非集成非手工那一档），没跑就不许写「测试通过」 |
 | 新增/改动 `prd-api/tests/**` | 同上；另：`PrdAgent.Tests` 不引用 `PrdAgent.Api`，新被测源文件要在 csproj 里 `<Compile Include ... Link="..."/>` 链进去，否则编译不过而没人发现 |
 
 **5.3 禁止自动创建 PR**。除非用户明确说「提 PR / 创建 PR」，任务完成只做 commit + push。遇阻塞说明原因并等指示，禁止提交半成品。
