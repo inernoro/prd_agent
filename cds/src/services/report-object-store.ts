@@ -104,8 +104,22 @@ export interface ReportObjectStore {
   remove(objectKey: string): Promise<void>;
 }
 
+/**
+ * 决定「现在这套凭据」的那几个环境变量。用它们的当前值做指纹，值一变就重解析。
+ *
+ * 只列真正参与解析的键：多列会让无关改动白白重解析，少列会让某个键的热改不生效。
+ */
+const ENV_KEYS = [
+  'R2_ENDPOINT', 'CDS_REPORTS_R2_BUCKET', 'R2_BUCKET',
+  'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'CDS_REPORTS_R2_PREFIX',
+] as const;
+
+function envFingerprint(env: Record<string, string | undefined>): string {
+  return ENV_KEYS.map((k) => `${k}=${env[k] ?? ''}`).join('\u0000');
+}
+
 export function createReportObjectStore(
-  config: ReportObjectStoreConfig | null = reportObjectStoreFromEnv(),
+  config?: ReportObjectStoreConfig | null,
   deps: {
     upload?: typeof uploadAndVerifyR2Object;
     fetchObject?: typeof fetchR2ObjectBuffer;
@@ -116,10 +130,37 @@ export function createReportObjectStore(
   const fetchObject = deps.fetchObject ?? fetchR2ObjectBuffer;
   const removeObject = deps.remove ?? deleteR2Object;
 
+  /**
+   * 显式传了 config（含 null）就钉死它——测试与调用方靠这条注入。
+   *
+   * 没传就跟着 process.env 走，且**每次操作前重新求值**：离机备份设置面板
+   * (`POST /cds-system/offsite-backup`) 写完 .cds.env 之后会把新值灌回 process.env
+   * 并回「无需重启」，而这个 store 是进程启动时建的。冻在构造那一刻的话，
+   * 原本没配对象存储的实例热配完仍然只写本地盘，正是本文件开头那本幽灵台账；
+   * 轮换凭据也会继续拿已作废的那把打，直到有人重启。
+   *
+   * 仍然在构造时先解析一次：凭据配一半必须在开机时就炸（reportObjectStoreFromEnv
+   * 会抛），这条 fail-fast 不能因为改成懒解析而丢掉。
+   */
+  const pinned = config !== undefined;
+  let resolved: ReportObjectStoreConfig | null = pinned ? (config as ReportObjectStoreConfig | null) : reportObjectStoreFromEnv();
+  let fingerprint = pinned ? '' : envFingerprint(process.env);
+
+  function current(): ReportObjectStoreConfig | null {
+    if (pinned) return resolved;
+    const now = envFingerprint(process.env);
+    if (now !== fingerprint) {
+      resolved = reportObjectStoreFromEnv();
+      fingerprint = now;
+    }
+    return resolved;
+  }
+
   return {
-    isConfigured: () => config !== null,
+    isConfigured: () => current() !== null,
 
     async put(meta, content) {
+      const config = current();
       if (!config) return null;
       const objectKey = reportObjectKey(meta, config.prefix);
       // 空正文不写：uploadAndVerifyR2Object 拒收空对象，且一份空报告本身就是缺陷，
@@ -131,12 +172,14 @@ export function createReportObjectStore(
     },
 
     async get(objectKey) {
+      const config = current();
       if (!config || !objectKey) return null;
       const buf = await fetchObject({ config, objectKey });
       return buf ? buf.toString('utf-8') : null;
     },
 
     async remove(objectKey) {
+      const config = current();
       if (!config || !objectKey) return;
       await removeObject({ config, objectKey });
     },
