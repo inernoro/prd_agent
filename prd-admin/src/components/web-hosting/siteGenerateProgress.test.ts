@@ -165,9 +165,13 @@ describe('恢复轮询要分得清「断线」和「没了」', () => {
     });
   }
 
-  it('生成弹窗的终态分支要清掉 sessionStorage 里的旧 run，否则重开还会卡在同一个循环', () => {
+  it('生成弹窗的终态分支要清掉持久化的旧 run，否则重开还会卡在同一个循环', () => {
     const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), 'utf8');
     const branch = source.indexOf("result.error?.code === 'NOT_FOUND'");
-    expect(source.slice(branch, branch + 900)).toContain('sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY)');
+    // 断言的是行为（把持久化的 run 清掉），不是某一种写法：这条原先钉死
+    // `sessionStorage.removeItem(...)` 的字面量，随后把 storage 访问收敛进
+    // forgetActiveRun 封装（让配额/隐私窗口抛异常时不至于中断生成）就红了，
+    // 而代码其实更对——反向锁死住实现的断言（判据与接线纪律 形状 4a）。
+    expect(source.slice(branch, branch + 900)).toContain('forgetActiveRun()');
   });
 });

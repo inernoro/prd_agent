@@ -45,6 +45,25 @@ interface Props {
 
 const ACTIVE_GENERATION_RUN_KEY = 'web-hosting-design-active-run-v1';
 
+/**
+ * sessionStorage 在隐私窗口、站点数据被禁、配额用尽时会**抛异常**，不是静默失败。
+ * 这里的持久化只是一个便利（刷新后能接回正在跑的任务），而它夹在「服务端任务已创建」
+ * 与「进入流式 try」之间——一抛，函数就地中断：服务端继续生成，弹窗永远停在
+ * 「正在校验所选知识」，用户既看不到流也没有可恢复的 key。
+ * 所以所有 storage 访问一律走这两个封装：存不下就当没存过，生成照跑。
+ */
+function rememberActiveRun(runId: string): void {
+  try { sessionStorage.setItem(ACTIVE_GENERATION_RUN_KEY, runId); } catch { /* 存不下不影响生成 */ }
+}
+
+function forgetActiveRun(): void {
+  try { sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY); } catch { /* 同上 */ }
+}
+
+function readActiveRun(): string | null {
+  try { return sessionStorage.getItem(ACTIVE_GENERATION_RUN_KEY); } catch { return null; }
+}
+
 export default function SiteGenerateDialog({ open, initialSource, onClose, onCreated }: Props) {
   const [recentKnowledge, setRecentKnowledge] = useState<RecentDocumentEntry[]>([]);
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>([]);
@@ -91,7 +110,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setGenerating(false);
     setActiveRunId(null);
     setStopRequested(false);
-    sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+    forgetActiveRun();
     onCreatedRef.current(siteId);
   }, []);
 
@@ -109,7 +128,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           setActiveRunId(null);
           setStopRequested(false);
           setPhase('上次的网页生成任务已经不在了，原来的知识与要求仍保留，可以直接重新生成');
-          sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+          forgetActiveRun();
           return;
         }
         failedReads += 1;
@@ -133,7 +152,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
         if (status === 'done') {
           setGenerating(false);
           setPhase('网页任务已结束，但未找到可打开的产物，请重新生成');
-          sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+          forgetActiveRun();
           return;
         }
         if (status === 'error' || status === 'cancelled') {
@@ -144,7 +163,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           setActiveRunId(null);
           setStopRequested(false);
           setPhase(message);
-          sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+          forgetActiveRun();
           return;
         }
         setGenerating(true);
@@ -212,7 +231,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
 
   useEffect(() => {
     if (!open) return;
-    const runId = sessionStorage.getItem(ACTIVE_GENERATION_RUN_KEY);
+    const runId = readActiveRun();
     if (!runId) return;
     const recovery = new AbortController();
     abortRef.current?.abort();
@@ -291,7 +310,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setResolvedModel(null);
     setActiveRunId(created.data.runId);
     setRunStartedAtMs(Date.parse(created.data.createdAt));
-    sessionStorage.setItem(ACTIVE_GENERATION_RUN_KEY, created.data.runId);
+    rememberActiveRun(created.data.runId);
 
     let terminalObserved = false;
     try {
@@ -334,7 +353,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             setActiveRunId(null);
             setStopRequested(false);
             setPhase(item.message);
-            sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+            forgetActiveRun();
             toast.error('网页生成失败', item.message);
             return;
           }
@@ -346,7 +365,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
             setPreviewHtml('');
             streamRef.current = '';
             setPhase(item.message);
-            sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+            forgetActiveRun();
           }
         },
       });
@@ -383,7 +402,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       setPreviewHtml('');
       streamRef.current = '';
       setPhase('网页生成已取消，未保存或发布新页面');
-      sessionStorage.removeItem(ACTIVE_GENERATION_RUN_KEY);
+      forgetActiveRun();
       return;
     }
     setPhase('服务器正在停止生成，完成前不会保存或发布页面');

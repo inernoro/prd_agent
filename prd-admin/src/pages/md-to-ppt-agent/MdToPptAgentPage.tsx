@@ -1125,12 +1125,31 @@ function loadSession(key: string): SessionState | null {
   }
 }
 
+/**
+ * 知识条目的正文可以有好几兆，而且同一份会同时挂在 messages[].kbRefs 与
+ * activeKnowledgeRefs 上，存一次等于存两份。超出 sessionStorage 配额时
+ * saveSession 是静默吞掉的——快照停在上一版，于是刷新之后连 runId 都恢复不出来，
+ * 而服务端还在跑（用户看到的是「任务没了」，其实只是存不下）。
+ *
+ * 恢复之后没人需要这份正文：送服务端的只有 entryId / storeId / contentHash，
+ * 正文只参与 estimatePages，而调整路径走的是 targetPagesOverride。所以只存身份。
+ */
+function stripKbBodies<T extends { content?: string }>(refs: readonly T[] | undefined): T[] {
+  return (refs || []).map((ref) => ({ ...ref, content: '' }));
+}
+
 function saveSession(key: string, s: SessionState): void {
   try {
-    // 不持久化 HTML 到 sessionStorage（太大），只存消息和 runId
+    // 不持久化 HTML 与知识正文到 sessionStorage（都太大），只存消息、身份和 runId
     const toSave: SessionState = {
       ...s,
-      messages: s.messages.map((m) => ({ ...m, outline: m.outline })),
+      messages: s.messages.map((m) => ({
+        ...m,
+        outline: m.outline,
+        ...(m.kbRefs ? { kbRefs: stripKbBodies(m.kbRefs) } : {}),
+      })),
+      activeKnowledgeRefs: stripKbBodies(s.activeKnowledgeRefs),
+      pendingKbRefs: stripKbBodies(s.pendingKbRefs),
     };
     sessionStorage.setItem(key, JSON.stringify(toSave));
   } catch {
