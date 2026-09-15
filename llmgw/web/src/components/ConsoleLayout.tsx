@@ -25,8 +25,9 @@ const NAV_GROUPS: NavGroup[] = [
   ] },
   // 路由这一组曾经是五条平级入口（模型白名单 / 模型池 / Provider / 模型 / Exchange），
   // 而它们回答的其实只有两个问题：**调用方能点名什么**（模型）、**东西从哪来**（上游）。
-  // 模型池与模型白名单同构、已冻结新建；物理模型属于上游、在上游详情里展开看；
-  // Exchange 是上游的一种、收进上游页的第二段。三条旧地址仍然可达，只是不再占导航。
+  // 模型池与模型白名单同构，2026-09-15 断流后整个退场（页面与写入端点都已删除）；
+  // 物理模型属于上游、在上游详情里展开看；Exchange 是上游的一种、收进上游页的第二段。
+  // 旧地址仍然可达（/pools 重定向到 /logical-models），只是不再占导航。
   { label: '路由', items: [
     { to: '/logical-models', label: '模型', icon: <Layers3 size={16} />, page: 'routeConfig' },
     { to: '/platforms', label: '上游', icon: <Server size={16} />, page: 'routeConfig' },
