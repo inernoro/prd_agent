@@ -139,15 +139,19 @@ public class ModelLeaderboardSyncService
         string sourceLabel,
         CancellationToken ct)
     {
-        // 抓取时刻在**抓之前**取，不在写库时取。
+        // 抓取时刻与**比对基线**都在抓之前取。
         //
-        // 模型上的注释写着「抓取成功的时刻，不许拿当前时间冒充」，而原来这里是在构造
-        // 快照对象时才 DateTime.UtcNow——十一个榜串行抓、每个之间还歇一秒，写库时刻
+        // 时刻：模型上的注释写着「抓取成功的时刻，不许拿当前时间冒充」，而原来这里是在
+        // 构造快照对象时才 DateTime.UtcNow——十一个榜串行抓、每个之间还歇一秒，写库时刻
         // 与抓取时刻能差出一分钟。更要紧的是它让并发写没法排序：两个同步撞在一起时，
         // **后写的总是拿到更大的时间戳**，哪怕它抓到的是更旧的数据（Codex 在 PR #1538 指出）。
+        //
+        // 基线：原来是抓完才读的，于是两次同步重叠时——A 先抓完先写，B 在那之后才读——
+        // B 会把 **A 刚写的那份**当成「上一份」，升降全部算成零，而 B 还会因为时间戳更新
+        // 赢下条件写，于是那一整天的名次变化在页面上消失（Codex 在 PR #1538 第二次指出
+        // 同一处的并发问题）。抓之前读，基线就是「我开始时库里那份」，重叠窗口从
+        // 「整个抓取时长」（1.8MB 的页面，数十秒）缩到「读与写之间的一瞬」。
         var fetchedAt = DateTime.UtcNow;
-        var parsed = await fetcher.FetchAsync(board, ct);
-        var entries = parsed.Entries;
 
         // 取一次、贯穿整个写入：过滤、挑基线、算 Id、盖戳都得是同一个作用域值
         var scope = ModelLeaderboardScope.Current;
@@ -170,6 +174,9 @@ public class ModelLeaderboardSyncService
         // 是有意义的（「相对线上那份，谁升了」）；没有基线才是真的什么都显示不了。
         var previous = ModelLeaderboardScope.PickVisible(
             candidates, x => x.DeploymentSlug, x => x.FetchedAt, scope);
+
+        var parsed = await fetcher.FetchAsync(board, ct);
+        var entries = parsed.Entries;
 
         // 写用 _id 过滤，不用 Board。
         //
