@@ -136,6 +136,10 @@ import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
 import { MapNotifier, mapNotifierConfigFromEnv } from './services/map-notifier.js';
+import { AlarmLedger } from './services/alarm-channel.js';
+import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
+import { sendAlarm } from './services/alarm-dispatch.js';
+import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
 
 
@@ -5863,6 +5867,19 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     'MAP 站内通知',
     () => (stateService.getAlarmNotify() ? [] : missingAlarmEnvKeys()),
   );
+  /**
+   * 多通道的投递记账本（2026-09-15）。
+   *
+   * 上面那条 alarmChannel 是单一 MAP 通道，先于本表存在且仍在工作；它接不上的原因
+   * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
+   * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
+   */
+  const alarmLedger = new AlarmLedger();
+  const alarmBoardUrl = (): string | undefined => {
+    const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
+    // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
+    return base ? `${base}/status` : undefined;
+  };
 
   /**
    * 项目级地址台账：某个项目名下所有分支预览的主机名。
@@ -5955,6 +5972,32 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
           alarmChannel.record({ ok: false, reason }, 'alert', Date.now());
           console.warn(`[map-notifier] ${reason}`);
         });
+
+      // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
+      // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
+      // 上游已去抖，重试会把一次翻转变成多条通知）。
+      const event = {
+        kind: classifyAlert(type, data.source),
+        projectId: data.projectId,
+        targetName: data.targetName,
+        message: data.message,
+        detectedAt: data.detectedAt,
+        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
+        consecutiveFailures: data.consecutiveFailures,
+      };
+      const boardUrl = alarmBoardUrl();
+      for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
+        void sendAlarm(channel, event, boardUrl ? { boardUrl } : {})
+          .then((r) => {
+            alarmLedger.record(channel.id, r, 'alert', Date.now());
+            if (!r.ok) console.warn(`[alarm] 通道「${channel.name}」投递失败: ${r.reason ?? '原因不明'}`);
+          })
+          .catch((err) => {
+            const reason = `未捕获的投递异常: ${(err as Error).message}`;
+            alarmLedger.record(channel.id, { ok: false, reason }, 'alert', Date.now());
+            console.warn(`[alarm] 通道「${channel.name}」${reason}`);
+          });
+      }
     },
   });
   // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
@@ -6029,6 +6072,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     runDiscovery,
     lastDiscoveryRun: () => lastDiscoveryRun,
     alarmChannel: () => alarmChannel.snapshot(),
+    alarmChannels: () => stateService.listAlarmChannels()
+      .map((c) => alarmLedger.view(c, channelConfigured(c))),
     readAlarmNotify: () => {
       const stored = stateService.getAlarmNotify();
       const env = mapNotifierConfigFromEnv();
@@ -6077,6 +6122,18 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       getProject: (projectId: string) => stateService.getProject(projectId),
     },
   }));
+  // 通知通道的读写与演练。挂在同一个 /api 前缀下，与监控摘要同一条身份闸。
+  app.use('/api', (() => {
+    const r = express.Router();
+    registerAlarmChannelRoutes(r, {
+      list: () => stateService.listAlarmChannels(),
+      upsert: (channel) => stateService.upsertAlarmChannel(channel),
+      remove: (id: string) => stateService.removeAlarmChannel(id),
+      ledger: alarmLedger,
+      boardUrl: alarmBoardUrl,
+    });
+    return r;
+  })());
   // 回填给 /healthz：探活循环停摆必须在健康端点上可见（2026-09-08）。
   serverDeps.uptimeMonitor = uptimeMonitor;
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()

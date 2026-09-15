@@ -4326,6 +4326,34 @@ export class StateService {
     this.save();
   }
 
+  /**
+   * 通知通道表。
+   *
+   * 读接口返回的是**存着的原样**（含密钥），只给服务端用；路由层负责脱敏后才出网
+   * ——私钥、Bark key、自定义请求头的值一律不回给前端，那些是写了就不再读的东西。
+   */
+  listAlarmChannels(): import('./alarm-route.js').AlarmChannelConfig[] {
+    return [...(this.state.alarmChannels ?? [])];
+  }
+
+  upsertAlarmChannel(next: import('./alarm-route.js').AlarmChannelConfig): void {
+    const list = this.state.alarmChannels ?? [];
+    const at = list.findIndex((c) => c.id === next.id);
+    if (at >= 0) list[at] = next;
+    else list.push(next);
+    this.state.alarmChannels = list;
+    this.save();
+  }
+
+  removeAlarmChannel(id: string): boolean {
+    const list = this.state.alarmChannels ?? [];
+    const next = list.filter((c) => c.id !== id);
+    if (next.length === list.length) return false;
+    this.state.alarmChannels = next;
+    this.save();
+    return true;
+  }
+
   getGithubAppWhitelist(): import('../types.js').GithubAppWhitelistSettings {
     return getGithubAppWhitelistSettings(this.state.githubAppWhitelist);
   }

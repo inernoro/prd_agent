@@ -197,6 +197,12 @@ export interface UptimeAlertEventData {
   branchId: string;
   /** 站内信渲染直接用它当主语，字段名与发布漂移事件对齐（targetName）。 */
   targetName: string;
+  /**
+   * 目标来源。通知路由拿它分「业务故障」还是「基础设施故障」——两者的下一步
+   * 完全不同，混成一个开关会逼人要么被分支预览刷屏、要么连真故障一起关掉。
+   * 给状态而不是让下游去切 targetId 前缀：前缀是 id 生成函数的实现细节。
+   */
+  source: ProbeSource;
   probeKind: ProbeKind;
   probeUrl?: string;
   message: string;
@@ -1753,6 +1759,7 @@ export class UptimeMonitorService {
         projectId: target.projectId,
         branchId: target.branchId,
         targetName: target.name,
+        source: target.source,
         probeKind: target.probeKind,
         ...(target.url ? { probeUrl: target.url } : {}),
         message,

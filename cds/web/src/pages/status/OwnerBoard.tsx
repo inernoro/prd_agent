@@ -16,6 +16,8 @@ import type { LucideIcon } from 'lucide-react';
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { DiscoveryStrip } from './DiscoveryStrip';
+import { AlarmChannelsPanel } from '../cds-settings/AlarmChannelsPanel';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AvailabilityBar } from './primitives';
 import { formatDuration, formatRelative } from '@/lib/monitorCenter';
 import type { AlarmChannelView, MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
@@ -445,6 +447,8 @@ export function OwnerBoard({
    * 理由写在 lib/rehearsal.ts 顶部。默认 `live`，刷新页面即回真实。
    */
   const [rehearsal, setRehearsal] = useState<RehearsalId>('live');
+  /** 通知设置。开在这一屏而不是让人去翻系统设置——「会不会有人被通知」是这一屏的问题。 */
+  const [notifyOpen, setNotifyOpen] = useState(false);
   const rehearsing = rehearsal !== 'live';
   const stage = useMemo(
     () => applyRehearsal(rehearsal, { targets, ctx: { now, prober } }),
@@ -588,8 +592,16 @@ export function OwnerBoard({
           })}
         </div>
 
-        {/* 演练：主动操作靠右（左上是「我在哪」，右上是「我要做什么」） */}
-        <div className="ml-auto inline-flex flex-wrap items-center gap-1">
+        {/* 主动操作靠右（左上是「我在哪」，右上是「我要做什么」）。
+            通知排在演练前面：出问题会不会有人被通知，比演练更常被问起。 */}
+        <button
+          type="button"
+          onClick={() => setNotifyOpen(true)}
+          className="ml-auto inline-flex items-center gap-1 rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
+        >
+          <BellRing className="h-3 w-3" />通知设置
+        </button>
+        <div className="inline-flex flex-wrap items-center gap-1">
           <FlaskConical className="h-3 w-3 text-muted-foreground" />
           <span className="mr-0.5 text-[0.6875rem] text-muted-foreground">演练</span>
           {REHEARSALS.map((item) => (
@@ -831,6 +843,17 @@ export function OwnerBoard({
           {board.infra.preview > 0 ? `；其中 ${board.infra.preview} 项是分支预览，不进上面的业务视角` : ''}
         </span>
       </div>
+
+      <Dialog open={notifyOpen} onOpenChange={setNotifyOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>通知设置 —— 哪些出问题、通知谁</DialogTitle>
+          </DialogHeader>
+          <div className="max-h-[70vh] overflow-y-auto pr-1">
+            <AlarmChannelsPanel projects={projects.map((p) => ({ id: p.id, name: p.name }))} />
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="flex items-start gap-2 text-[0.6875rem] leading-4 text-muted-foreground">
         <Info className="mt-0.5 h-3 w-3 shrink-0" />

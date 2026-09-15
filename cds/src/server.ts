@@ -782,6 +782,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /uptime/monitors': '列出自定义监控',
     'POST /uptime/monitors': '新增自定义监控',
     'POST /uptime/monitors/test': '试探自定义监控',
+    'GET /cds-system/alarm-channels': '列出通知通道',
+    'POST /cds-system/alarm-channels': '新增通知通道',
     // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
     'POST /bug-reports': '提交缺陷反馈',
     'GET /bug-reports': '列出缺陷反馈',
@@ -1079,6 +1081,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
     [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
     [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
+    [/^POST \/cds-system\/alarm-channels\/[^/]+\/drill$/, '演练通知通道'],
+    [/^PUT \/cds-system\/alarm-channels\/[^/]+$/, '修改通知通道'],
+    [/^DELETE \/cds-system\/alarm-channels\/[^/]+$/, '删除通知通道'],
     // 站内信：read-all 是静态路径（上面 staticMap 已覆盖），这里只需 :id 那条。
     // segment-safe `[^/]+`，别用贪婪 `(.+)`（PR #522 的教训：会跨 `/` 截胡）。
     [/^POST \/notices\/[^/]+\/dismiss$/, '忽略站内信'],

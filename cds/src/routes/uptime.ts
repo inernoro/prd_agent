@@ -19,7 +19,7 @@
  */
 
 import { Router } from 'express';
-import type { AlarmChannelSnapshot } from '../services/alarm-channel.js';
+import type { AlarmChannelSnapshot, AlarmChannelStatusView } from '../services/alarm-channel.js';
 
 import type { UptimeCustomMonitor } from '../types.js';
 import {
@@ -49,7 +49,7 @@ import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.j
  * 否则一把项目 Key 就能枚举出全实例每个项目的分支名、服务名、故障原因与
  * 时间线（Codex PR #1273 P1）。与 cds-events.ts 的同款守卫口径一致。
  */
-function projectScopeOf(req: unknown): string | null {
+export function projectScopeOf(req: unknown): string | null {
   return (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId ?? null;
 }
 
@@ -193,6 +193,11 @@ export function createUptimeRouter(deps: {
    */
   alarmChannel?: () => AlarmChannelSnapshot;
   /**
+   * 用户自己配的通知通道的状态。不接就是不知道——不接时摘要里不出这个字段，
+   * 面板据此说「这个实例没接通道配置」，而不是替它说「一条都没有」。
+   */
+  alarmChannels?: () => AlarmChannelStatusView[];
+  /**
    * 演练：走**真实投递路径**发一条测试通知，返回真实结果。
    * 不接则演练路由回 501——没有这条，「铃能不能响」永远只能靠等一次真故障。
    */
@@ -204,9 +209,14 @@ export function createUptimeRouter(deps: {
 }): Router {
   const router = Router();
 
-  const withAlarm = <T extends object>(summary: T): T & { alarm?: AlarmChannelSnapshot } => {
+  const withAlarm = <T extends object>(summary: T): T & { alarm?: AlarmChannelSnapshot; alarmChannels?: AlarmChannelStatusView[] } => {
     const alarm = deps.alarmChannel?.();
-    return alarm ? { ...summary, alarm } : summary;
+    const channels = deps.alarmChannels?.();
+    return {
+      ...summary,
+      ...(alarm ? { alarm } : {}),
+      ...(channels ? { alarmChannels: channels } : {}),
+    };
   };
 
   router.get('/uptime/summary', (req, res) => {

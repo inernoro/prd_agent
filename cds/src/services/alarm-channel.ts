@@ -142,3 +142,72 @@ export function describeAlarmChannel(snapshot: AlarmChannelSnapshot): string {
       return `${snapshot.channel}通着，已成功送出 ${snapshot.delivered} 次`;
   }
 }
+
+/**
+ * 多通道的投递记账本。
+ *
+ * 与上面那个单通道 AlarmChannel 同一套语义（没配 > 没测过 > 上次失败 > 健康），
+ * 只是按通道 id 分开记。刻意仍然不落库：它描述的是「此刻这个进程的通知能力」，
+ * 进程换了就该重新证明一次——一条「上个月成功过」的记录，在今天出事时毫无意义。
+ */
+export interface AlarmChannelStatusView {
+  id: string;
+  name: string;
+  kind: string;
+  status: AlarmChannelStatus;
+  delivered: number;
+  failed: number;
+  last?: AlarmDeliveryRecord;
+  /** 这条通道订了哪几类事件、管哪些项目——面板要能一眼看出「谁会收到什么」 */
+  events: string[];
+  projects: string[];
+  enabled: boolean;
+}
+
+interface LedgerEntry { delivered: number; failed: number; last?: AlarmDeliveryRecord }
+
+export class AlarmLedger {
+  private readonly byId = new Map<string, LedgerEntry>();
+
+  record(channelId: string, result: { ok: boolean; status?: number; reason?: string }, kind: 'alert' | 'drill', now: number): void {
+    const entry = this.byId.get(channelId) ?? { delivered: 0, failed: 0 };
+    if (result.ok) entry.delivered += 1;
+    else entry.failed += 1;
+    entry.last = {
+      at: now,
+      ok: result.ok,
+      kind,
+      ...(result.status === undefined ? {} : { status: result.status }),
+      ...(result.reason === undefined ? {} : { reason: result.reason }),
+    };
+    this.byId.set(channelId, entry);
+  }
+
+  forget(channelId: string): void {
+    this.byId.delete(channelId);
+  }
+
+  view(channel: {
+    id: string; name: string; kind: string; enabled: boolean;
+    events: ReadonlyArray<string>; projects: ReadonlyArray<string>;
+  }, configured: boolean): AlarmChannelStatusView {
+    const entry = this.byId.get(channel.id);
+    const status: AlarmChannelStatus = !configured
+      ? 'unconfigured'
+      : entry?.last === undefined
+        ? 'untested'
+        : entry.last.ok ? 'healthy' : 'failing';
+    return {
+      id: channel.id,
+      name: channel.name,
+      kind: channel.kind,
+      status,
+      delivered: entry?.delivered ?? 0,
+      failed: entry?.failed ?? 0,
+      ...(entry?.last ? { last: entry.last } : {}),
+      events: [...channel.events],
+      projects: [...channel.projects],
+      enabled: channel.enabled,
+    };
+  }
+}

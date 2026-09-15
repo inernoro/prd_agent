@@ -13,6 +13,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { BellRing, CheckCircle2, XCircle } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { AlarmChannelsPanel } from '../AlarmChannelsPanel';
 import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -83,7 +84,18 @@ export function AlarmNotifyTab(): JSX.Element {
   }, [load]);
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-6">
+      {/* 多协议通道在前：它是现在该用的那条路。Bark 的 key 当场就能粘进来，
+          不必先定「发给哪个 MAP 账号、用哪个 MAP 实例」那两件只有人能定的事。 */}
+      <AlarmChannelsPanel />
+
+      {/* 存量的单一 MAP 通道。先于多通道存在，且可能已经在工作——删掉它等于让已经
+          接好的铃在升级那天哑掉，所以留着，只是降到第二位并说清它和上面的关系。 */}
+      <div className="flex flex-col gap-4 border-t border-[hsl(var(--hairline))] pt-5">
+      <div className="text-xs text-muted-foreground">
+        下面这条是早先的单一 MAP 通道（走 .cds.env 或这一页的凭据）。它仍然工作；
+        新配通道请用上面那一块，MAP 也在那里能选。
+      </div>
       <div className={cn(
         'flex flex-wrap items-center gap-2 rounded-lg border px-3.5 py-3',
         view?.configured ? 'border-ok/30 bg-ok-soft/40' : 'border-destructive/40 bg-destructive/10',
@@ -152,6 +164,7 @@ export function AlarmNotifyTab(): JSX.Element {
             保存后立刻生效，不需要重启 CDS；存完请紧接着演练一次 —— 没演练过的通道，和没配的通道在真出事那天是一样的。
           </span>
         </div>
+      </div>
       </div>
     </div>
   );

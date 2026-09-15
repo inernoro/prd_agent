@@ -2454,6 +2454,15 @@ export interface CdsState {
    */
   alarmNotify?: AlarmNotifyConfig;
   /**
+   * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
+   *
+   * 与上面那条 alarmNotify 的关系：alarmNotify 是单一的 MAP 站内通知通道，先于
+   * 本表存在；本表是多通道（Bark / Webhook / MAP），一条事件可以同时进几条。
+   * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
+   * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
+   */
+  alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
+  /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
    * 项目的容器。SSH 凭据通过 sealToken（infra/secret-seal.ts）加密存储。
    *
@@ -4656,6 +4665,15 @@ export interface CdsConfig {
    * 那时铃是哑的，面板上必须直说。
    */
   alarmNotify?: AlarmNotifyConfig;
+  /**
+   * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
+   *
+   * 与上面那条 alarmNotify 的关系：alarmNotify 是单一的 MAP 站内通知通道，先于
+   * 本表存在；本表是多通道（Bark / Webhook / MAP），一条事件可以同时进几条。
+   * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
+   * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
+   */
+  alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
   /**
    * Public base URL of this CDS install (e.g. "https://cds.example.com").
    * Used as the `details_url` in GitHub check runs and for the
