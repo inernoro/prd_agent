@@ -8,7 +8,6 @@
  * 终稿的论证：七卷是七个并列项，用户要一眼扫完做对号入座，所以落地页只放清单；
  * 点进来才谈这一卷的细节。深链 ?vol= 天然对应这一层。
  */
-import { useState } from 'react';
 import { AS_TYPE, AS_SPACE, AS_SIZE } from '@/lib/appStoreTokens';
 import { questionsOf } from '@/lib/bookshelf/exams';
 import { stanceOf } from '@/lib/bookshelf/examContext';
@@ -27,24 +26,28 @@ const LEVEL_LABEL: Record<number, string> = { 1: '入门', 2: '进阶', 3: '硬�
 
 const VOL_NUM = '一二三四五六七';
 
+/**
+ * 书目行。
+ *
+ * 改版前这里点一下是**就地展开**「为什么在这一卷」加一个写心得的输入框 —— 也就是说，
+ * 用户在藏书阁里能做的全部事情，就是往里填东西。现在点一下进书页读精读稿，
+ * 那两样都挪到了书页里（写心得排在读完之后，它是锦上添花不是唯一内容）。
+ */
 function BookRow({
   book,
   accent,
   read,
   onToggleRead,
-  note,
-  onSaveNote,
+  onOpen,
+  hasNote,
 }: {
   book: BookEntry;
   accent: string;
   read: boolean;
   onToggleRead: () => void;
-  note: string | undefined;
-  onSaveNote: (v: string) => void;
+  onOpen: () => void;
+  hasNote: boolean;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const [draft, setDraft] = useState(note ?? '');
-
   return (
     <div style={{ padding: `${AS_SPACE.listItemPaddingY}px ${AS_SPACE.listItemPaddingX}px`, borderTop: '1px solid var(--border-faint)' }}>
       <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
@@ -71,54 +74,20 @@ function BookRow({
 
         <button
           type="button"
-          onClick={() => setExpanded((v) => !v)}
+          onClick={onOpen}
           style={{ flex: 1, minWidth: 0, textAlign: 'left', border: 0, background: 'transparent', padding: 0, color: 'inherit' }}
         >
           <div style={{ ...asStyle(AS_TYPE.itemTitle), lineHeight: 1.3, textWrap: 'pretty' }}>《{book.title}》</div>
           <div style={{ marginTop: 3, ...asStyle(AS_TYPE.itemSubtitle), color: 'var(--text-muted)' }}>
             {book.author} · {TRACK_LABEL[book.track]} · {LEVEL_LABEL[book.level]}
+            {hasNote && <span style={{ marginLeft: 6, color: accent }}>已记一句</span>}
           </div>
           <div style={{ marginTop: 8, ...asStyle(AS_TYPE.heroSubtitle), lineHeight: 1.4, color: 'var(--text-secondary)', textWrap: 'pretty' }}>
             <span style={{ fontWeight: 600, color: accent }}>读完你能</span> {book.takeaway}
           </div>
+          <div style={{ marginTop: 8, ...asStyle(AS_TYPE.pill), color: accent }}>读精读稿 ›</div>
         </button>
       </div>
-
-      {expanded && (
-        <>
-          <div
-            style={{
-              margin: '12px 0 0 34px', padding: '12px 14px',
-              borderRadius: AS_SPACE.iconRadius, background: 'var(--shelf-inset)',
-            }}
-          >
-            <Eyebrow>为什么在这一卷</Eyebrow>
-            <div style={{ marginTop: 6, ...asStyle(AS_TYPE.itemSubtitle), lineHeight: 1.45, color: 'var(--text-secondary)', textWrap: 'pretty' }}>
-              {book.why}
-            </div>
-          </div>
-          {/*
-            唯一的「学习」动作。在此之前藏书阁只有「我点了已读」这个自我声明——
-            一个勾证明不了什么。写一句「打算在哪用它」才是真读过的痕迹。
-            不设门槛：不写照样能标已读、能考。
-          */}
-          <textarea
-            value={draft}
-            maxLength={200}
-            rows={1}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => { if (draft !== (note ?? '')) onSaveNote(draft); }}
-            placeholder="打算在哪用它？一句话就够。"
-            style={{
-              margin: '8px 0 0 34px', width: 'calc(100% - 34px)', minHeight: 44,
-              borderRadius: AS_SPACE.iconRadius, background: 'var(--shelf-inset)',
-              border: 0, outline: 'none', resize: 'none',
-              padding: '12px 14px', ...asStyle(AS_TYPE.heroSubtitle), lineHeight: 1.4,
-              color: 'var(--text-primary)', fontFamily: 'inherit',
-            }}
-          />
-        </>
-      )}
     </div>
   );
 }
@@ -127,17 +96,18 @@ export function MobileVolume({
   volume,
   skin,
   onBack,
+  onOpenBook,
   onStartExam,
 }: {
   volume: Volume;
   skin: { fg: string; box: string };
   onBack: () => void;
+  onOpenBook: (bookId: string) => void;
   onStartExam: () => void;
 }) {
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
   const toggleRead = useBookshelfStore((s) => s.toggleRead);
   const bookNotes = useBookshelfStore((s) => s.bookNotes);
-  const setNote = useBookshelfStore((s) => s.setNote);
   const examResults = useBookshelfStore((s) => s.examResults);
 
   const total = volume.books.length;
@@ -220,8 +190,8 @@ export function MobileVolume({
             accent={skin.fg}
             read={readBookIds.includes(b.id)}
             onToggleRead={() => toggleRead(b.id)}
-            note={bookNotes[b.id]}
-            onSaveNote={(v) => setNote(b.id, v)}
+            onOpen={() => onOpenBook(b.id)}
+            hasNote={(bookNotes[b.id] ?? '').trim().length > 0}
           />
         ))}
       </GroupCard>

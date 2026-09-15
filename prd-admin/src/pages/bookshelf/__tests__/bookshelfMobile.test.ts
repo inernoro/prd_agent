@@ -78,16 +78,18 @@ describe('手机档接线（删掉不会红的那几处）', () => {
       .not.toContain('getBookshelfTeamBoard');
   });
 
-  it('手机档四屏都被外壳渲染，没有建了一半的屏', () => {
+  it('手机档五屏都被外壳渲染，没有建了一半的屏', () => {
     const shell = read('mobile/BookshelfMobile.tsx');
-    ['MobileLanding', 'MobileVolume', 'MobileExam', 'MobileBoard'].forEach((c) => {
+    ['MobileLanding', 'MobileVolume', 'MobileBook', 'MobileExam', 'MobileBoard'].forEach((c) => {
       expect(shell, `${c} 没有被外壳渲染，等于建了一半`).toMatch(new RegExp(`<${c}\\b`));
     });
   });
 });
 
 describe('手机档版式只走 appStoreTokens（防第二屏漂移）', () => {
-  const FILES = ['parts.tsx', 'MobileLanding.tsx', 'MobileVolume.tsx', 'MobileExam.tsx', 'MobileBoard.tsx']
+  // 新增一屏必须加进这张表 —— 漏了的话它就是一块不受档位纪律约束的飞地，
+  // 而「第二屏漂移」正是这组守卫存在的理由（本次 MobileBook 就差点漏掉）。
+  const FILES = ['parts.tsx', 'MobileLanding.tsx', 'MobileVolume.tsx', 'MobileBook.tsx', 'MobileExam.tsx', 'MobileBoard.tsx']
     .map((f) => ({ f, src: read(`mobile/${f}`) }));
 
   it('终稿的字号档位在 AS_TYPE 里都有出处', () => {
