@@ -5,3 +5,4 @@
 | feat | prd-admin | 榜单页新增维度切换器（按对话理解/编程智能体/图像生成/视频生成四组），分数榜与 Agent 榜两套列各自渲染 |
 | test | prd-api | 解析守卫从 14 条扩到 27 条，新增分数榜真实片段 fixture 与分榜目录一致性断言 |
 | fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |
+| fix | prd-api | model_leaderboard_snapshots 补进 DataSyncScope.Excluded（外站公开数据的本地缓存，跨实例搬运无意义且会误导来源） |
