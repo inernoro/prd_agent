@@ -21,7 +21,7 @@ import {
 } from './githubDirectorySelection';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint,
+  shouldResumeAtRepoStep, revokedConnectionHint, replacingLoginLabel,
 } from './githubConnectionState';
 
 /**
@@ -182,7 +182,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
         ) : step === 'connect' ? (
           <ConnectStep
             oauthConfigured={auth?.oauthConfigured !== false}
-            replacingLogin={switchingAccount && auth?.connected ? auth.login ?? null : null}
+            replacingLogin={replacingLoginLabel(auth, switchingAccount)}
             onConnected={() => { setError(''); setErrorCode(undefined); setSwitchingAccount(false); void loadAuth(); setStep('repo'); }}
             onError={reportError} />
         ) : step === 'repo' ? (

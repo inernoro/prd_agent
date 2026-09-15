@@ -52,3 +52,20 @@ export function revokedConnectionHint(status: {
   if (!status.connected || status.usable !== 'revoked') return null;
   return 'GitHub 上的授权已被撤销或失效，本地还留着一条旧记录。重新授权一次即可继续。';
 }
+
+/**
+ * 「换个账号」那一步要不要说出当前连的是谁。
+ *
+ * 只有在旧连接**此刻还真的有效**时才说——这句话的全文是「当前连接的是 X，它现在仍然有效」，
+ * 用来安抚用户「授权成功才会替换，失败也不会把你现在的连接弄丢」。
+ * 但走到这一步的另一条路是「授权已被撤销 → 点重新连接」，那条路上旧连接恰恰已经失效，
+ * 再说它仍然有效就是自相矛盾（2026-09-15 Codex review P2）。
+ */
+export function replacingLoginLabel(
+  status: { connected: boolean; usable?: 'usable' | 'revoked' | 'unknown' | null; login?: string | null } | null,
+  switchingAccount: boolean,
+): string | null {
+  if (!switchingAccount || !status?.connected) return null;
+  if (status.usable === 'revoked') return null;
+  return status.login ?? null;
+}

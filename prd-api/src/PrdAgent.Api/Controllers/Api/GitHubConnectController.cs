@@ -156,7 +156,9 @@ public sealed class GitHubConnectController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             removed = result.Removed,
-            revoked = result.Revocation is GitHubTokenRevocation.Revoked or GitHubTokenRevocation.AlreadyInvalid,
+            // 只有 GitHub 确认撤销、或本来就没有可撤的东西，才算「收回了」。
+            // Unverified（GitHub 回 404，可能是本站换过应用凭据）不算——那正是会骗人的那一档。
+            revoked = result.Revocation is GitHubTokenRevocation.Revoked or GitHubTokenRevocation.NothingToRevoke,
             revokeHint = DescribeRevocation(result.Revocation),
         }));
     }
@@ -175,7 +177,11 @@ public sealed class GitHubConnectController : ControllerBase
     internal static string? DescribeRevocation(GitHubTokenRevocation revocation) => revocation switch
     {
         GitHubTokenRevocation.Revoked => null,
-        GitHubTokenRevocation.AlreadyInvalid => null,
+        GitHubTokenRevocation.NothingToRevoke => null,
+        GitHubTokenRevocation.Unverified =>
+            "本地保存的访问令牌已删除。GitHub 没有确认这次撤销（它不认这把令牌属于本站的应用，"
+            + "可能你此前已自行移除，也可能本站的应用凭据换过），"
+            + ManualRevokeSuffix,
         GitHubTokenRevocation.NotConfigured =>
             "本地保存的访问令牌已删除。GitHub 那边的授权没能一起撤销（本站未配置撤销所需的应用密钥），"
             + ManualRevokeSuffix,

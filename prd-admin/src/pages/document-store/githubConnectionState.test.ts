@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint,
+  shouldResumeAtRepoStep, revokedConnectionHint, replacingLoginLabel,
 } from './githubConnectionState';
 
 describe('GitHub 连接状态判据', () => {
@@ -44,5 +44,23 @@ describe('进门时该停在哪一步', () => {
   it('压根没连过 —— 当然停在第一步，但那不是「被撤销」', () => {
     expect(shouldResumeAtRepoStep({ connected: false, usable: null })).toBe(false);
     expect(revokedConnectionHint({ connected: false, usable: 'revoked' })).toBeNull();
+  });
+});
+
+describe('「换个账号」时要不要说旧连接仍然有效', () => {
+  it('旧连接还有效 —— 说出来，好让用户知道授权失败也不会丢', () => {
+    expect(replacingLoginLabel({ connected: true, usable: 'usable', login: 'someone' }, true)).toBe('someone');
+    expect(replacingLoginLabel({ connected: true, usable: 'unknown', login: 'someone' }, true)).toBe('someone');
+  });
+
+  it('授权已被撤销 —— 不许再说它仍然有效', () => {
+    // 走到这一步的另一条路正是「已撤销 → 点重新连接」，那条路上旧连接恰恰已经失效
+    expect(replacingLoginLabel({ connected: true, usable: 'revoked', login: 'someone' }, true)).toBeNull();
+  });
+
+  it('没在换账号、或压根没连过 —— 不说', () => {
+    expect(replacingLoginLabel({ connected: true, usable: 'usable', login: 'someone' }, false)).toBeNull();
+    expect(replacingLoginLabel({ connected: false, usable: null, login: null }, true)).toBeNull();
+    expect(replacingLoginLabel(null, true)).toBeNull();
   });
 });

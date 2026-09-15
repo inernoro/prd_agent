@@ -164,8 +164,8 @@ public sealed class GitHubUserConnectionService
         }
         catch (GitHubException ex) when (ex.Code == GitHubErrorCodes.GITHUB_NOT_CONNECTED)
         {
-            // 压根没连过：没有可撤销的东西，不是失败。
-            revocation = GitHubTokenRevocation.AlreadyInvalid;
+            // 压根没连过：没有可撤销的东西，不是失败，也没有要用户处理的事。
+            revocation = GitHubTokenRevocation.NothingToRevoke;
         }
         catch (Exception ex)
         {

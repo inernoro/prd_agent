@@ -15,16 +15,29 @@ namespace PrdAgent.Api.Tests.Services;
 public class GitHubDisconnectRevocationTests
 {
     [Fact]
+    public void 撤销打的是删授权而不是删单把令牌()
+    {
+        // 删单把令牌只让这一把失效，应用仍列在用户的「已授权应用」里，
+        // 与「断开连接」这个承诺对不上（2026-09-15 Codex review P2）。
+        var url = GitHubOAuthService.BuildRevokeGrantUrl("Iv1.abc123");
+
+        Assert.EndsWith("/grant", url);
+        Assert.DoesNotContain("/token", url);
+        Assert.Contains("Iv1.abc123", url);
+    }
+
+    [Fact]
     public void 状态码204算撤销成功()
         => Assert.Equal(
             GitHubTokenRevocation.Revoked,
             GitHubOAuthService.MapRevocationStatus(HttpStatusCode.NoContent));
 
     [Fact]
-    public void 状态码404说明这把令牌本来就没了()
-        // 用户自己在 GitHub 上移除过：结果与撤销成功等价，不该报成失败吓人一跳。
+    public void 状态码404只能算未确认不能算撤销成功()
+        // GitHub 对「这把令牌不属于当前这个应用」也回 404。本站换过应用凭据之后，
+        // 旧令牌在旧应用名下可能仍然有效——把它当成功就是在骗用户说权限已经收回。
         => Assert.Equal(
-            GitHubTokenRevocation.AlreadyInvalid,
+            GitHubTokenRevocation.Unverified,
             GitHubOAuthService.MapRevocationStatus(HttpStatusCode.NotFound));
 
     [Fact]
@@ -38,16 +51,21 @@ public class GitHubDisconnectRevocationTests
     }
 
     [Fact]
-    public void 撤销成功时不多说一句话()
+    public void 撤销成功或本就无可撤时不多说一句话()
     {
         Assert.Null(GitHubConnectController.DescribeRevocation(GitHubTokenRevocation.Revoked));
-        Assert.Null(GitHubConnectController.DescribeRevocation(GitHubTokenRevocation.AlreadyInvalid));
+        Assert.Null(GitHubConnectController.DescribeRevocation(GitHubTokenRevocation.NothingToRevoke));
     }
 
     [Fact]
-    public void 撤销没成时必须告诉用户去哪儿手动移除()
+    public void 撤销没成或没确认时必须告诉用户去哪儿手动移除()
     {
-        foreach (var failed in new[] { GitHubTokenRevocation.NotConfigured, GitHubTokenRevocation.Failed })
+        foreach (var failed in new[]
+                 {
+                     GitHubTokenRevocation.Unverified,
+                     GitHubTokenRevocation.NotConfigured,
+                     GitHubTokenRevocation.Failed,
+                 })
         {
             var hint = GitHubConnectController.DescribeRevocation(failed);
             Assert.NotNull(hint);

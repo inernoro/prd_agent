@@ -255,8 +255,7 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
         try
         {
             var client = _httpClientFactory.CreateClient("GitHubApi");
-            using var req = new HttpRequestMessage(
-                HttpMethod.Delete, $"https://api.github.com/applications/{Uri.EscapeDataString(clientId!)}/token");
+            using var req = new HttpRequestMessage(HttpMethod.Delete, BuildRevokeGrantUrl(clientId!));
             var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
             req.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
             req.Headers.Accept.Clear();
@@ -275,14 +274,26 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
     }
 
     /// <summary>
+    /// 撤销授权的接口地址。
+    ///
+    /// 必须是 <c>/grant</c> 而不是 <c>/token</c>：后者只作废传进去的那一把令牌，
+    /// 应用依旧列在用户的「已授权应用」里——而按钮承诺的是收回授权。
+    /// <c>/grant</c> 删掉整份授权，连带作废本应用为该用户签发的所有令牌。
+    /// </summary>
+    internal static string BuildRevokeGrantUrl(string clientId)
+        => $"https://api.github.com/applications/{Uri.EscapeDataString(clientId)}/grant";
+
+    /// <summary>
     /// GitHub 撤销接口的状态码判据。
-    /// 204 = 撤销成功；404 = 这把 token 在 GitHub 那边已经不存在（用户自己移除过），
-    /// 对用户来说结果一样——授权没了，所以算 AlreadyInvalid 而不是失败。
+    ///
+    /// 204 = 确认撤销。404 **不能**当成功：GitHub 对「这把令牌不属于当前这个应用」也回 404，
+    /// 而本站换过应用凭据之后，旧令牌在旧应用名下可能仍然有效。连接记录没存签发它的应用身份，
+    /// 两种情形分不开，所以报「未确认」让用户自己去看一眼，而不是告诉他已经收回了。
     /// </summary>
     internal static GitHubTokenRevocation MapRevocationStatus(HttpStatusCode status) => status switch
     {
         HttpStatusCode.NoContent => GitHubTokenRevocation.Revoked,
-        HttpStatusCode.NotFound => GitHubTokenRevocation.AlreadyInvalid,
+        HttpStatusCode.NotFound => GitHubTokenRevocation.Unverified,
         _ => GitHubTokenRevocation.Failed,
     };
 
