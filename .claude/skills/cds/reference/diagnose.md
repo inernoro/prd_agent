@@ -76,7 +76,7 @@ found in: logs.api line 123
   at Program.cs(42, 13)
 
 [建议]
-1. 本地有 SDK 就 `dotnet build --no-restore` 复现（最快）；没有就看本仓库负责编译的那条流水线的 Build 日志
+1. 错误行号上面这段日志里就有，直接按它改；要复现的话，本地有 SDK 就 `dotnet build --no-restore`（最快），没有就翻这条部署自己的构建日志，或本仓库负责编译的那条流水线（如果有）
 2. 修复 Program.cs:42
 3. push 后等负责编译的那条流水线绿（那才是「编得出来」的判据）；项目已连 GitHub 且开着 autoDeploy 时 push 会自动部署，等它就位后冒烟即可，别再手动 `cdscli deploy`（会重复重启）——只有关了 autoDeploy 或分支被过滤掉时才需要手动
 

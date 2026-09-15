@@ -14,3 +14,4 @@
 | fix | platform | 修 Codex 第十轮一条：cdscli 的 error CS* 建议不再假定「有 CI」——先说行号就在这段日志里直接按它改，复现路径才给本地 SDK / cdscli branch logs / 本仓库的流水线三条，接入到没有 Actions 的仓库也有可执行的下一步 |
 | fix | platform | 修 Codex 第十一轮两条：cdscli 的兜底不再把 `cdscli branch logs` 写成可执行命令（真实用法要分支 id 与 --profile，裸跑退出码 2），改成说明性表述；diagnose.md 随技能分发的通用根因表与样例也去掉 Branch Image / Actions 这类仓库专属名，与 CLI 同一口径 |
 | fix | platform | 修 Codex 第十二轮两条：表里三处「同上」改成写死真实触发（ci.yml 的 job 在 feature 分支 push 不跑，要开 PR 或 dispatch）；debt 那节限定到单元测试项目、点明集成测试项目用的是整项目引用不受影响，免得偿还方案误用 |
+| fix | platform | 修 Codex 第十三轮两条：Dockerfile 那行区分两条流水线的触发范围（branch-image 所有分支 push 即跑，cds.yml 的 Docker Build Check 要开 PR；并点明 cds-prebuilt 建的是 Dockerfile.dist、验不到 cds/Dockerfile）；diagnose.md 的样例建议跟上同页表格与 CLI 的口径，先指部署自己的构建日志 |

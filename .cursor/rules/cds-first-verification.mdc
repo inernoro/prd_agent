@@ -4,7 +4,7 @@ description: 改了可执行代码、准备说「验证过了/编译通过/测�
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/cds-first-verification.md
-     生成时间: 2026-09-15T18:12:16Z -->
+     生成时间: 2026-09-15T18:25:31Z -->
 
 # 验证的权威位置（编译与测试各在哪里被证明）
 
@@ -50,7 +50,7 @@ grep -rn "你改的路径前缀" .github/workflows/ | grep -v "^.*#"
 | `cds/**` | **不止一条流水线**，用下面那条命令列全再逐条看（至少有 `CDS Build & Test`、专用的 `CDS CI`、所有分支都跑的 `CDS Prebuilt`，改到端口巡检相关文件还会多一条）。任一条绿都不代表其余绿 | 本地 或 Actions | 各条触发范围不同，以命令列出的为准 |
 | `llmgw/**` | 编译有远端判据，两条：① 三家的镜像都在 `branch-image.yml` 里构建（`console-api` 跑 `dotnet publish`、`web` 跑 `pnpm build`），push 即触发；② `Server Build & Test` 也覆盖 `serving` **与 `console-api`**——前者直接在 `PrdAgent.sln` 里，后者虽不是 sln 的项目条目，但 `PrdAgent.Api.Tests` 对它有 `ProjectReference`，于是被传递编译、相关测试照跑（`ci.yml` 的 server 过滤器也含 `llmgw/console-api/**`）。**此外还有开 PR 才触发的检查**，用下面那条命令列全。其余校验见 `llmgw/AGENTS.md` | 本地 或 Actions | 见命令列出的各条 |
 | 发布链路脚本与部分技能脚本 | CI 的 `Production Release Script Test` job 绿。它跑的是一份**显式清单**（`exec_dep.sh`、`scripts/lib/*`、`scripts/tests/test_*.py`、`*.test.mjs`、cdscli、周报/日报技能的脚本……），清单见 `ci.yml` 的 `release-script-test` path filter | 本地 或 Actions | 它在 `ci.yml` 里，所以**普通 feature 分支 push 不会跑**——要么开 PR 到 main/develop，要么手动 dispatch |
-| Dockerfile | 已接线的那几个由镜像构建作业验：`prd-api` / `prd-admin` / `llmgw` 三家走 `branch-image.yml`（push 即触发），`cds/Dockerfile` 走 `cds.yml` 的 `Docker Build Check` | Actions | push 之后 |
+| Dockerfile | 已接线的那几个由镜像构建作业验：`prd-api` / `prd-admin` / `llmgw` 三家走 `branch-image.yml`；`cds/Dockerfile` 走 `cds.yml` 的 `Docker Build Check`（注意 `cds-prebuilt.yml` 建的是 `Dockerfile.dist`，验不到这一个） | Actions | `branch-image.yml` 由 push 触发、所有分支都跑；**`Docker Build Check` 在 `cds.yml` 里，feature 分支 push 不跑**——要开 PR 到 main/develop |
 | `prd-video/**`、`docker-compose*.yml`、**不在上面那份清单里的** `scripts/**` 与技能脚本 | **没有任何 CI job 会验它们**（`grep -rn "prd-video" .github/workflows/` 零命中）——只能本地跑（模块自己的 `AGENTS.md` + AGENTS.md §5.2），跑不了就在交付里明说没验过 | 只能本地 | 本地即时 |
 | 页面打得开、流程跑得通 | 预览域名上的真人路径 + 截图 | CDS 分支预览 | push 即部署 |
 | 后端接口行为 | 预览域名上打真实端点、断言返回值 | CDS 分支预览 | push 即部署 |
