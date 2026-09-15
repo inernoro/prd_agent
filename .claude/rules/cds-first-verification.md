@@ -12,6 +12,17 @@
 
 每一行都要能被第三个人照着核一遍，不需要问你。
 
+**这张表是快照，不是 SSOT——SSOT 是 `.github/workflows/`。** 它写于 2026-09-15，而流水线会增减：
+本条规则自己在 review 里被连着纠正了七轮，每一轮都是某一行少算了一条 workflow 或多算了一个步骤
+（Admin 不跑 lint、Desktop 不跑 lint 与 vitest、cds 有三条流水线而不是一条、脚本与 Dockerfile
+其实大多有 CI……）。所以引用这张表之前，**先扫一眼你改的路径出现在哪些 workflow 的触发条件里**：
+
+```bash
+grep -rn "你改的路径前缀" .github/workflows/ | grep -v "^.*#"
+```
+
+表与 `.github/workflows/` 对不上时，以后者为准，并把表改回来。
+
 | 改了什么 | 权威判据 | 在哪跑 | 什么时候才有结论 |
 |---|---|---|---|
 | `prd-api/**/*.cs`（API 项目能不能编出来） | **Branch Image workflow 绿**，产出 `sha-<commit>` 镜像 | GitHub Actions `branch-image.yml` | **push 之后**（它由 push 触发），每次 push 都跑 |
@@ -21,7 +32,7 @@
 | `prd-admin` 的 **lint** | 只有本地 `pnpm lint`——`Admin Dashboard Build` 没有 lint 步骤（它只跑 Type check / Run tests / Build，而 `build` 就是 `tsc && vite build`） | **只能本地** | 本地即时 |
 | `prd-desktop/src-tauri/**/*.rs` | CI 的 `Desktop Client Check` job 绿：`cargo check`（dev + release）、`cargo fmt --check`、`cargo clippy -- -D warnings` | 本地 或 Actions | push 之后，且同样 **feature 分支不自动跑** |
 | `prd-desktop` 前端 `.ts/.tsx` | tsc 与 vite build 由同一个 job 复核；**lint 与 vitest 只能本地**——那个 job 没有这两步，而 `prd-desktop/src` 下确实有五个测试文件 | tsc/build：本地或 Actions；lint/test：**只能本地** | 同上 |
-| `cds/**` | 两条流水线，都要看：`CI` 的 `CDS Build & Test`（tsc + vitest）与**专用的 `CDS CI`**（`cds.yml`：build、`audit:ui` UI 回归审计、vitest、两组 Playwright 移动端冒烟、`cds/Dockerfile` 构建）。前者绿不代表后者绿 | 本地 或 Actions | 同上 |
+| `cds/**` | **三条**流水线，都要看：`CI` 的 `CDS Build & Test`（tsc + vitest）、专用的 `CDS CI`（`cds.yml`：build、`audit:ui` UI 回归审计、vitest、两组 Playwright 移动端冒烟、`cds/Dockerfile` 构建）、以及 `CDS Prebuilt`（`cds-prebuilt.yml`：tsc 门 + esbuild 后端 + vite 前端 + `Dockerfile.dist` 产物镜像，供 CDS 自更新 pull）。任一条绿都不代表另两条绿 | 本地 或 Actions | 前两条 push 之后且只在 main/develop；**`CDS Prebuilt` 所有分支 push 即触发** |
 | `llmgw/**` | 编译有远端判据：三家的镜像都在 `branch-image.yml` 里构建（`console-api` 的 Dockerfile 跑 `dotnet publish`、`web` 跑 `pnpm build`、`serving` 同理），push 即触发。另外 `llmgw/serving` 在 `PrdAgent.sln` 里，所以 `Server Build & Test` 也覆盖它，**`console-api` 不在 sln 里**。其余校验见 `llmgw/AGENTS.md` 的模块表 | 本地 或 Actions | 本地即时；Branch Image 在 push 之后 |
 | 发布链路脚本与部分技能脚本 | CI 的 `Production Release Script Test` job 绿。它跑的是一份**显式清单**（`exec_dep.sh`、`scripts/lib/*`、`scripts/tests/test_*.py`、`*.test.mjs`、cdscli、周报/日报技能的脚本……），清单见 `ci.yml` 的 `release-script-test` path filter | 本地 或 Actions | 同上 |
 | Dockerfile | 已接线的那几个由镜像构建作业验：`prd-api` / `prd-admin` / `llmgw` 三家走 `branch-image.yml`（push 即触发），`cds/Dockerfile` 走 `cds.yml` 的 `Docker Build Check` | Actions | push 之后 |
@@ -142,7 +153,8 @@ which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PAT
 - [ ] 本地能跑的我先跑了吗（快），还是白等了一轮 CI？
 - [ ] 我说的「lint 过了」是本地真跑的吗？没有任何 CI job 会跑 ESLint。
 - [ ] 改的是脚本 / Dockerfile 吗？先去 `ci.yml` 的 `release-script-test` path filter 里查一眼它在不在清单里——在清单里就有远端判据，不在才是「只能本地」。
-- [ ] 改的是 `cds/**` 吗？`CDS Build & Test` 只是两条流水线里的一条，专用的 `CDS CI` 还跑 UI 审计、Playwright 冒烟与 Docker 构建。
+- [ ] 改的是 `cds/**` 吗？那里有三条流水线（`CDS Build & Test` / `CDS CI` / `CDS Prebuilt`），任一条绿都不代表另两条绿。
+- [ ] 我引用第一节那张表之前，`grep` 过 `.github/workflows/` 确认它还是对的吗？表是快照，流水线会增减。
 - [ ] 交付叙述里还有「本地」「我这边」「环境没有」这类词吗？划掉之后还成立吗？
 - [ ] 有哪一项确实没做到吗？我是明说了，还是含混过去了？
 
