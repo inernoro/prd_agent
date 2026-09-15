@@ -119,12 +119,22 @@ export function parseChannel(
   const name = str(body.name, 64);
   if (!name) fail('给这条通道起个名字（「我的手机」「运维群」），出问题时你要认得出是谁响了');
 
-  // 归一化而不是直接过滤：旧名字（不分来源的 recovered）要能继续提交，不逼调用方先迁移。
-  const events = Array.isArray(body.events)
-    ? [...new Set(body.events
-        .map((e) => (typeof e === 'string' ? normalizeEventKind(e) : null))
-        .filter((e): e is AlarmEventKind => e !== null))]
-    : [];
+  /*
+   * 归一化而不是直接过滤：旧名字（不分来源的 recovered）要能继续提交，不逼调用方先迁移。
+   *
+   * 但**认不出来的名字必须当场拒**，不许静默丢掉。2026-09-15 亲身踩到：给一个跑着旧
+   * 代码的后端提交 `business-recovered`，它默默把这一项滤掉、返回 200，订阅就这么被
+   * 悄悄收窄了一半——我是因为顺手读了响应体才发现的。静默丢弃把一个本该立刻暴露的
+   * 版本不匹配，变成了一条要等真出事那天才会显形的错。
+   */
+  const rawEvents = Array.isArray(body.events) ? body.events : [];
+  const unknown = rawEvents.filter((e) => typeof e !== 'string' || normalizeEventKind(e) === null);
+  if (unknown.length > 0) {
+    fail(`认不出这些事件名：${unknown.map((e) => String(e)).join('、')}（可选：${ALARM_EVENT_KINDS.join(' / ')}）`);
+  }
+  const events = [...new Set(rawEvents
+    .map((e) => normalizeEventKind(e as string))
+    .filter((e): e is AlarmEventKind => e !== null))];
   // 空事件不是「静音」——静音靠 enabled。一条什么都不订的通道是一个从落地那天起
   // 就不会响的铃，而它在列表里看着和正常的一模一样。
   if (events.length === 0) fail('至少勾一类事件 —— 想临时静音请用开关，不要把事件清空');

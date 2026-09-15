@@ -1625,3 +1625,23 @@ mdimp 仓库切到 `dbScope=per-branch` 并下线脚本，属跨仓库迁移，�
 反查而抬升；或者回填之后 `previewBranchId` 为空且地址落在分支预览上的监控数为 0。
 
 **绕行**：把那条监控编辑保存一次，戳就补上了。
+
+## self-update 的 no-op 判定漏看后端产物（2026-09-15）
+
+**症状**：`/api/self-status` 报的 `headSha` 是新提交，而后端跑的还是上一版代码。
+本次实测：提交 `449f3447` 改了 `cds/src/services/alarm-route.ts`，部署后接口返回的
+事件枚举仍是改之前那三个；`self restart` 也救不回来（它按同一份 stale `dist/` 重启）。
+
+**成因链**：
+1. 上一个提交只改 `cds/web/src/**`，走「零停机前端更新」快路径——**后端不重编、不重启**；
+2. 下一个提交同时改了 `cds/src/**` 与 `cds/web/src/**`，推上去；
+3. 这一次 self-update 的 no-op 判定比的是 **git HEAD 与 web bundle**，两者都已是最新，
+   于是判 no-op、跳过 validate/build/restart。
+
+后端 `dist/` 与 HEAD 的差距**没有任何一步在比**，于是它可以无限期落后，而每一步都报
+「已是最新」。这比单纯部署失败更糟：失败会红，这个是绿着的。
+
+**判据**：no-op 判定必须把「后端 dist 的构建标记 == HEAD」也算进去，缺一项就不许判 no-op。
+
+**绕过办法（当前）**：再推一个改到 `cds/src/**` 的提交，让 analyze 看见后端文件、
+走全量路径。别指望 `self restart`——它不重编。

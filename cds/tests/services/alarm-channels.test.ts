@@ -62,6 +62,12 @@ describe('哪些出问题通知谁', () => {
     expect(routeAlarm([legacy], { ...EVENT, kind: 'infra-recovered' })).toHaveLength(0);
   });
 
+  // 静默丢弃把一个本该立刻暴露的版本不匹配，变成一条要等真出事那天才显形的错。
+  it('认不出的事件名当场拒，不静默丢掉', () => {
+    expect(() => parseChannel({ kind: 'bark', name: 'x', events: ['business-down', 'nope'], bark: { key: 'k' } }, undefined, NOW))
+      .toThrow(/认不出这些事件名/);
+  });
+
   it('写接口收得下旧名字，存的是新名字', () => {
     const next = parseChannel({ kind: 'bark', name: 'x', events: ['recovered'], bark: { key: 'k' } }, undefined, NOW);
     expect(next.events).toEqual(['business-recovered']);
