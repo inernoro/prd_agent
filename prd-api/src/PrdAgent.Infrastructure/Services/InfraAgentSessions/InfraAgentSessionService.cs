@@ -3089,7 +3089,8 @@ public class InfraAgentSessionService : IInfraAgentSessionService
             throw new InfraAgentSessionException(
                 InfraAgentSessionErrorCodes.CdsRequestFailed,
                 BuildCdsRequestFailureMessage((int)response.StatusCode, text),
-                StatusCodes.Status502BadGateway);
+                StatusCodes.Status502BadGateway,
+                (int)response.StatusCode);
         }
         return response;
     }

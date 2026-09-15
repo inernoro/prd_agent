@@ -549,10 +549,25 @@ public class InfraAgentSessionException : Exception
     public string ErrorCode { get; }
     public int HttpStatus { get; }
 
-    public InfraAgentSessionException(string errorCode, string message, int httpStatus = 400)
+    /// <summary>
+    /// CDS 那一侧真正返回的状态码；不是转发 CDS 响应时为 null。
+    ///
+    /// 单独留一个字段而不是让调用方去解析 Message：状态码在抛出点本来就是个数字，
+    /// 拼进句子之后再匹配关键字，等于把已有的状态降级成自由文本
+    ///（`external-cause-first.md` 第四节）。而 HttpStatus 恒为 502，分不出「路由不存在」
+    /// 与「连不上」——前者要升级 CDS，后者要修连接，给用户的下一步完全不同。
+    /// </summary>
+    public int? UpstreamStatus { get; }
+
+    public InfraAgentSessionException(
+        string errorCode,
+        string message,
+        int httpStatus = 400,
+        int? upstreamStatus = null)
         : base(message)
     {
         ErrorCode = errorCode;
         HttpStatus = httpStatus;
+        UpstreamStatus = upstreamStatus;
     }
 }

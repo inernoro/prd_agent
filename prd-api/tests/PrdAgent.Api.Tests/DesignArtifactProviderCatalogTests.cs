@@ -972,6 +972,60 @@ public class DesignArtifactProviderCatalogTests
         return new ConfigurationBuilder().AddInMemoryCollection(values).Build();
     }
 
+    /// <summary>
+    /// 「这条路由在对面不存在」与「连不上」要分开说：前者要升级 CDS，后者要修连接。
+    /// 压成同一句「请检查系统连接」，就是把人支去修一条健康的连接，而真正的版本/路由不匹配
+    /// 反而看不见（Codex P2，2026-09-15）。判据取抛出点带出来的真实状态码，不匹配异常文案。
+    /// </summary>
+    [Fact]
+    public async Task MissingRuntimeRouteIsReportedAsAVersionMismatchNotABrokenConnection()
+    {
+        using var cache = NewCache();
+        var catalog = BuildOpenDesignCatalog(cache, new StubProbe(
+            DesignArtifactRuntimes.OpenDesign,
+            _ => throw new InfraAgentSessionException(
+                "cds_request_failed",
+                "CDS 请求失败：HTTP 404 CDS 远端请求失败",
+                StatusCodes.Status502BadGateway,
+                StatusCodes.Status404NotFound)));
+
+        var capability = await catalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+
+        Assert.NotNull(capability);
+        Assert.False(capability!.Enabled);
+        Assert.Contains("升级", capability.Reason);
+        Assert.DoesNotContain("请检查系统连接", capability.Reason);
+    }
+
+    [Fact]
+    public async Task TransportFailureStillTellsTheUserToCheckTheConnection()
+    {
+        using var cache = NewCache();
+        var catalog = BuildOpenDesignCatalog(cache, new StubProbe(
+            DesignArtifactRuntimes.OpenDesign,
+            _ => throw new HttpRequestException("connection refused")));
+
+        var capability = await catalog.FindAsync("user-1", DesignArtifactRuntimes.OpenDesign);
+
+        Assert.NotNull(capability);
+        Assert.False(capability!.Enabled);
+        Assert.Contains("请检查系统连接", capability.Reason);
+    }
+
+    [Fact]
+    public void UpstreamStatusOtherThanNotFoundKeepsTheConnectionWording()
+    {
+        // 502 / 503 这类确实是「打不通对面」，不该被说成版本不匹配。
+        var reason = DesignArtifactProviderCatalog.DescribeProbeFailure(
+            new InfraAgentSessionException(
+                "cds_request_failed",
+                "CDS 请求失败：HTTP 503 CDS 远端请求失败",
+                StatusCodes.Status502BadGateway,
+                StatusCodes.Status503ServiceUnavailable));
+
+        Assert.Contains("请检查系统连接", reason);
+    }
+
     private static MemoryCache NewCache() => new(new MemoryCacheOptions());
 
     private static DesignArtifactProviderCatalog BuildOpenDesignCatalog(

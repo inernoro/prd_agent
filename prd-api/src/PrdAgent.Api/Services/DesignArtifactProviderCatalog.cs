@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Caching.Memory;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -124,18 +125,21 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
     private readonly IReadOnlyDictionary<string, IDesignArtifactProviderProbe> _probes;
     private readonly IMemoryCache _cache;
     private readonly TimeSpan _positiveCapabilityCacheDuration;
+    private readonly ILogger<DesignArtifactProviderCatalog>? _logger;
 
     public DesignArtifactProviderCatalog(
         IEnumerable<IDesignArtifactProviderDefinitionSource> definitionSources,
         IEnumerable<IDesignArtifactExecutor> executors,
         IEnumerable<IDesignArtifactProviderProbe> probes,
-        IMemoryCache cache)
+        IMemoryCache cache,
+        ILogger<DesignArtifactProviderCatalog>? logger = null)
         : this(
             definitionSources,
             executors,
             probes,
             cache,
-            PositiveCapabilityCacheDuration)
+            PositiveCapabilityCacheDuration,
+            logger)
     {
     }
 
@@ -144,8 +148,10 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
         IEnumerable<IDesignArtifactExecutor> executors,
         IEnumerable<IDesignArtifactProviderProbe> probes,
         IMemoryCache cache,
-        TimeSpan positiveCapabilityCacheDuration)
+        TimeSpan positiveCapabilityCacheDuration,
+        ILogger<DesignArtifactProviderCatalog>? logger = null)
     {
+        _logger = logger;
         _definitions = definitionSources
             .SelectMany(source => source.GetDefinitions())
             .GroupBy(definition => definition.Id, StringComparer.Ordinal)
@@ -239,6 +245,8 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
+            _logger?.LogWarning(
+                "CDS 运行事实探测超时 runtime={Runtime} userId={UserId}", definition.Id, userId);
             if (TryGetRecentPositiveCapability(cacheKey, out var cached))
                 return ToCapability(definition, cached.Configured, cached.Healthy, cached.Enabled, cached.Reason);
             return ToCapability(
@@ -253,8 +261,17 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
             // 请求自身已取消时必须向上传递，不能把过期请求伪装成可用能力。
             throw;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            // 原来这一支把什么都说成「请检查系统连接」，而且一个字都不记：连接明明是好的、
+            // 只是 CDS 那一版还没有这条运行时目录路由时，用户与运维会被支去修一条健康的连接，
+            // 真正的版本/路由不匹配反而看不见（Codex P2，2026-09-15）。
+            _logger?.LogWarning(
+                ex,
+                "读取 CDS 运行事实失败 runtime={Runtime} userId={UserId} upstreamStatus={UpstreamStatus}",
+                definition.Id,
+                userId,
+                (ex as InfraAgentSessionException)?.UpstreamStatus);
             if (TryGetRecentPositiveCapability(cacheKey, out var cached))
                 return ToCapability(definition, cached.Configured, cached.Healthy, cached.Enabled, cached.Reason);
             return ToCapability(
@@ -262,9 +279,19 @@ public sealed class DesignArtifactProviderCatalog : IDesignArtifactProviderCatal
                 configured: false,
                 healthy: false,
                 enabled: false,
-                reason: "暂时无法读取 CDS Remote Agent 运行事实，请检查系统连接");
+                reason: DescribeProbeFailure(ex));
         }
     }
+
+    /// <summary>
+    /// 探测失败给用户的那句话。分「这条路由在对面不存在」与「连不上」两类：前者要升级 CDS，
+    /// 后者要修连接，下一步完全不同，压成同一句等于让人去修一个好好的东西。
+    /// 判据取抛出点带出来的真实状态码，不去匹配异常文案（`external-cause-first.md` 第四节）。
+    /// </summary>
+    internal static string DescribeProbeFailure(Exception error) =>
+        (error as InfraAgentSessionException)?.UpstreamStatus == StatusCodes.Status404NotFound
+            ? "CDS 这一版没有运行时目录接口，OpenDesign 暂不可用；请先把 CDS 升级到支持该接口的版本"
+            : "暂时无法读取 CDS Remote Agent 运行事实，请检查系统连接";
 
     private bool TryGetRecentPositiveCapability(
         PositiveCapabilityCacheKey cacheKey,
