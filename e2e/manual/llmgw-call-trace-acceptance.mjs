@@ -56,6 +56,30 @@ await shot('02-调用全貌');
 const unnamed = (await page.locator('[data-testid="call-trace-unnamed"]').innerText()).replace(/\s+/g, ' ').trim();
 record('不点名那条路被单独回答', /appCallerCode/.test(unnamed), `「${unnamed.slice(0, 110)}」`);
 
+// 那句话必须有主语。2026-09-15 的 P1 就是它没有：只判模型自己，不问谁在调。
+const callerRows = await page.evaluate(() => {
+  const box = document.querySelector('[data-testid="call-trace-unnamed-callers"]');
+  if (!box) return null;
+  return [...box.children].map((el) => (el.innerText || '').replace(/\s+/g, ' ').trim());
+});
+if (callerRows && callerRows.length > 0) {
+  const labelled = callerRows.every((t) => /落到它|专属池|未放行|不落到它/.test(t));
+  record('不点名的结论逐个调用方给出，不是一句笼统的话',
+    labelled, `${callerRows.length} 个调用方，例：「${callerRows[0].slice(0, 90)}」`);
+} else {
+  record('不点名的结论逐个调用方给出，不是一句笼统的话',
+    /还没有登记任何调用方/.test(unnamed),
+    '这个用途没有登记调用方，面板如实说明（而不是给一句没有主语的断言）');
+}
+
+// 判定流程图：图最容易被人当真，所以三档状态必须都在，不能被抹成一条确定路径。
+const flow = (await page.locator('[data-testid="call-trace-flow"]').innerText()).replace(/\s+/g, ' ').trim();
+record('判定流程图画出了会拐走的地方',
+  /认对外模型目录吗/.test(flow) && /走不到|可能走|走这支/.test(flow),
+  `「${flow.slice(0, 130)}」`);
+const flowNodes = await page.locator('[data-testid^="call-trace-flow-"]').count();
+record('流程图七个节点齐全', flowNodes >= 7, `节点 ${flowNodes} 个`);
+
 const gate = (await page.locator('[data-testid="call-trace-gate"]').innerText()).replace(/\s+/g, ' ').trim();
 record('目录闸说清谁能点名它，并说明没推演什么', /能点名/.test(gate) && /没在这一屏推演/.test(gate), `「${gate.slice(0, 110)}」`);
 
