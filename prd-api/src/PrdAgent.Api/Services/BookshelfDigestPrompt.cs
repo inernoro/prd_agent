@@ -158,7 +158,7 @@ public static class BookshelfDigestPrompt
         - 不要写「强调了……的重要性」「体现了……的价值」这类空转句式。要么说清具体是什么，要么删掉这句。
         - 不要复述目录，不要逐章小结。
         - 全文 1500 到 2500 字。少于 1500 字说明论点展开得不够，回去把每条论点的例子和做法补上。
-        """
+        """;
 
     public static string BuildUserPrompt(Material m)
     {
