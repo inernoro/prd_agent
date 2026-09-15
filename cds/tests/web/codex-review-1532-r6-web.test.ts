@@ -21,8 +21,12 @@ describe('让位给空状态的条件：必须是「成功地报了零」', () =
     expect(block, '又退回了「不满足有东西」的反向判据').not.toMatch(/!pipelineHasSomething/);
   });
 
-  it('非首页作用域不受这条限制：那里本来就不渲染流水线', () => {
-    expect(block).toMatch(/!isGlobalScope/);
+  it('项目视图一律不让位：它有自己的证据要展示', () => {
+    // 原先写的是 `!isGlobalScope ||`——「选了项目就无条件允许让位」。于是一个还没有
+    // 报告、但有最近合并记录的项目，打开它看到的是一张空卡片，而合并覆盖
+    //（含「合并了一次都没验」）恰恰是那一屏最该看见的证据（第十二轮 Codex review 抓到）。
+    expect(block, '又退回了「非首页就允许让位」').not.toMatch(/!isGlobalScope/);
+    expect(block, '让位条件必须要求当前就是首页作用域').toMatch(/const pipelineSettledEmpty = isGlobalScope/);
   });
 
   it('加载与失败两块仍然在流水线分支里，带重试按钮', () => {

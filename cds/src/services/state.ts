@@ -5087,12 +5087,25 @@ export class StateService {
     if (!meta.objectKey) return undefined;
     const content = await this.reportObjects.get(meta.objectKey);
     if (content == null) return undefined;
-    // 回填缓存：同一份报告常被连续读（列表预览 → 详情 → 导出），
-    // 但回填失败绝不能影响本次返回，磁盘满的时候正文照样要读得出来。
+    /*
+     * 回填缓存：同一份报告常被连续读（列表预览 → 详情 → 导出），
+     * 但回填失败绝不能影响本次返回，磁盘满的时候正文照样要读得出来。
+     *
+     * 写法与写入路径同一套「临时文件 + 原子改名」：直接 writeFile 会先截断目标，
+     * 写到一半失败就留下半份文件；本次请求返回的是对象存储取回的正确正文，**下一次**
+     * 请求却会本地优先命中那半份，从此一直端出残缺正文，而且不报错
+     *（Codex review 抓到）。失败时连临时文件带坏缓存一起清掉。
+     */
+    const cachePath = this.reportFilePath(meta);
+    const tmpPath = `${cachePath}.tmp-${process.pid}-${Date.now()}`;
     try {
       await fs.promises.mkdir(this.getReportsBase(), { recursive: true });
-      await fs.promises.writeFile(this.reportFilePath(meta), content, 'utf-8');
-    } catch { /* 缓存回填是尽力而为 */ }
+      await fs.promises.writeFile(tmpPath, content, 'utf-8');
+      await fs.promises.rename(tmpPath, cachePath);
+    } catch {
+      await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+      await fs.promises.rm(cachePath, { force: true, recursive: true }).catch(() => {});
+    }
     return content;
   }
 

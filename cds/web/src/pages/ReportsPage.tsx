@@ -930,11 +930,21 @@ function ReportsHome({
   // 一份报告都没有的时候，那句「部署了没验收」恰恰是最该被看见的一句，而原来这个
   // early return 把整块流水线连同它一起吞掉了（Codex review 抓到）。
   // 所以只有在「既没有报告、也没有流水线可讲」时才整页让位给空状态。
-  // 「成功地报了零」才算让位条件。加载中或加载失败一律不让位：那会把「正在汇总」
-  // 与「汇总失败 + 重试」一起换成一张干净的空卡片，于是一次持续失败的聚合看起来
-  // 就像本来就没有数据，连重试按钮都够不着（Codex review 抓到）。
-  const pipelineSettledEmpty = !isGlobalScope
-    || (pipelineState.status === 'ok' && pipelineState.pipeline.total.changes === 0);
+  /*
+   * 整页让位给空状态，只在**首页**且流水线「成功地报了零」时成立。
+   *
+   * 两处收窄，都是前几轮踩出来的：
+   * 1. 加载中 / 加载失败不让位——那会把「正在汇总」与「汇总失败 + 重试」一起换成
+   *    一张干净的空卡片，一次持续失败的聚合看起来就像本来就没有数据。
+   * 2. **项目视图一律不让位**。这里原本写的是 `!isGlobalScope ||`，等于「选了项目就
+   *    无条件允许让位」——于是一个还没有报告、但有最近合并记录的项目，打开它看到的是
+   *    一张空卡片，而合并覆盖（包括「合并了一次都没验」）恰恰是那一屏最该看见的证据。
+   *    那是我上一轮修空状态时自己引入的回归（Codex review 抓到）。
+   *    项目视图的台账为空由台账自己那一格交代（它带新建入口），不牵连整页。
+   */
+  const pipelineSettledEmpty = isGlobalScope
+    && pipelineState.status === 'ok'
+    && pipelineState.pipeline.total.changes === 0;
   if (allReports.length === 0 && pipelineSettledEmpty) {
     return <EmptyReportsState onCreate={onCreate} filtered={false} filterMenu={filterMenu} />;
   }
