@@ -577,27 +577,6 @@ public class GitHubDirectorySyncService
         }
     }
 
-    /// <summary>GitHub 目录接口一次最多回多少条：超过就截断，而且它不会明说截断了。</summary>
-    internal const int ContentsApiDirectoryCap = 1000;
-
-    /// <summary>
-    /// 这份目录清单能不能代表远端的全部。
-    ///
-    /// 判据看**过滤前**的原始条数：到了上限就说明可能还有没回来的，
-    /// 「这一轮没见到」于是不再等于「远端没有了」，删除环节必须让路。
-    /// 过滤后的条数不能用来判断——它天然会因为非 Markdown 文件而变少。
-    /// </summary>
-    internal static bool IsListingComplete(int rawEntryCount) => rawEntryCount < ContentsApiDirectoryCap;
-
-    /// <summary>
-    /// 一次列目录的结果：过滤后的文件清单，以及这份清单是否代表远端的全部。
-    ///
-    /// 必须是 private：它带着 <see cref="GitHubFile"/>（private 嵌套类），
-    /// 声明成 internal 会让构造函数暴露一个可访问性更低的类型（CS0051）。
-    /// 它只在本类内部流转，测试打的是 <see cref="IsListingComplete"/> 那条判据，不需要这个类型。
-    /// </summary>
-    private sealed record DirectoryListing(List<GitHubFile> Files, bool Complete);
-
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<DirectoryListing> ListDirectoryFilesAsync(
         string owner, string repo, string path, string branch, Matcher? matcher,
