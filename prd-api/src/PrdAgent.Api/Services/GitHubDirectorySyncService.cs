@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 using DocStoreServices = PrdAgent.Infrastructure.Services.DocumentStore;
 
 namespace PrdAgent.Api.Services;
@@ -55,6 +56,20 @@ public class GitHubDirectorySyncService
         DocStoreServices.DocumentVersionService? versions,
         DocumentEntry parentEntry,
         CancellationToken ct)
+        => await SyncDirectoryAsync(db, documentService, versions, parentEntry, null, ct);
+
+    /// <summary>
+    /// 同步 GitHub 目录。<paramref name="accessToken"/> 非空时全程带用户 token 请求：
+    /// 私有仓才拉得到，限额也从匿名的 60 次/小时提到 5000 次/小时。
+    /// 匿名路径（token 为 null）行为与历史完全一致，公开仓订阅不受影响。
+    /// </summary>
+    public async Task<GitHubDirectoryDiff> SyncDirectoryAsync(
+        MongoDbContext db,
+        IDocumentService documentService,
+        DocStoreServices.DocumentVersionService? versions,
+        DocumentEntry parentEntry,
+        string? accessToken,
+        CancellationToken ct)
     {
         var diff = new GitHubDirectoryDiff();
 
@@ -62,7 +77,9 @@ public class GitHubDirectorySyncService
         if (!meta.TryGetValue("github_owner", out var owner) ||
             !meta.TryGetValue("github_repo", out var repo))
         {
-            throw new InvalidOperationException("缺少 github_owner 或 github_repo 元数据");
+            // 用户看得懂的说法 + 下一步；原始字段名只对开发者有意义，留在日志里
+            throw new GitHubSyncUserFacingException(
+                "这条订阅缺少仓库信息（无法确定要同步哪个 GitHub 仓库），请删掉它后用「从 GitHub 同步」重新添加。");
         }
 
         var path = meta.GetValueOrDefault("github_path", "");
@@ -80,7 +97,7 @@ public class GitHubDirectorySyncService
             matcher.AddInclude(includeGlob);
         }
 
-        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, ct);
+        var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, accessToken, ct);
         _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'", files.Count, owner, repo, path, includeGlob ?? "*");
 
         if (files.Count == 0) return diff;
@@ -93,15 +110,34 @@ public class GitHubDirectorySyncService
                  e.Metadata["github_parent_id"] == parentEntry.Id
         ).ToListAsync(ct);
 
-        var existingByUrl = existingEntries.ToDictionary(e => e.SourceUrl ?? "", e => e);
+        // 去重键用仓库内路径，而不是 download_url ——
+        // 私有仓的 download_url 每次列目录都会带一个新的临时 token 查询串，
+        // 拿它当键会让「同一个文件」每轮同步都被判成"新增 + 删除"，历史版本一起没。
+        // 存量条目（早期没写 github_path）用 SourceUrl 兜底，避免升级当天全量重建。
+        var existingByKey = new Dictionary<string, DocumentEntry>(StringComparer.Ordinal);
+        foreach (var e in existingEntries)
+        {
+            var key = e.Metadata.GetValueOrDefault("github_path", "");
+            if (string.IsNullOrEmpty(key)) key = e.SourceUrl ?? "";
+            if (key.Length == 0) continue;
+            existingByKey[key] = e;
+        }
 
-        var processedUrls = new HashSet<string>();
+        var processedKeys = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var file in files)
         {
-            processedUrls.Add(file.DownloadUrl);
+            processedKeys.Add(file.Path);
 
-            if (existingByUrl.TryGetValue(file.DownloadUrl, out var existing))
+            if (!existingByKey.TryGetValue(file.Path, out var existing)
+                && existingByKey.TryGetValue(file.DownloadUrl, out var legacy))
+            {
+                // 命中存量键：登记它，否则下面的删除环节会把它当"远端已不存在"删掉
+                existing = legacy;
+                processedKeys.Add(file.DownloadUrl);
+            }
+
+            if (existing != null)
             {
                 // 已存在 → 比较 SHA 决定是否需要更新（GitHub SHA 即版本号，O(1) 命中判定）
                 var existingSha = existing.Metadata.GetValueOrDefault("github_sha", "");
@@ -126,7 +162,7 @@ public class GitHubDirectorySyncService
                     // 回填 github_last_commit_at：历史条目没有这个字段，无需重新拉内容，只补时间戳
                     if (!existing.Metadata.ContainsKey("github_last_commit_at"))
                     {
-                        var backfillDate = await GetLatestCommitDateAsync(owner, repo, file.Path, branch, ct);
+                        var backfillDate = await GetLatestCommitDateAsync(owner, repo, file.Path, branch, accessToken, ct);
                         if (backfillDate.HasValue)
                         {
                             existing.Metadata["github_last_commit_at"] = backfillDate.Value.ToString("O");
@@ -139,13 +175,21 @@ public class GitHubDirectorySyncService
                 }
 
                 // SHA 变了 → 重新拉取内容并更新
-                await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, ct);
-                diff.UpdatedCount++;
-                diff.FileChanges.Add(new DocumentSyncFileChange
+                var updated = await SyncSingleFileAsync(db, documentService, versions, existing, file, owner, repo, branch, accessToken, ct);
+                if (updated)
                 {
-                    Path = file.Path,
-                    Action = DocumentSyncFileAction.Updated,
-                });
+                    diff.UpdatedCount++;
+                    diff.FileChanges.Add(new DocumentSyncFileChange
+                    {
+                        Path = file.Path,
+                        Action = DocumentSyncFileAction.Updated,
+                    });
+                }
+                else
+                {
+                    diff.FailedCount++;
+                    diff.FailedPaths.Add(file.Path);
+                }
             }
             else
             {
@@ -156,7 +200,7 @@ public class GitHubDirectorySyncService
                     StoreId = parentEntry.StoreId,
                     Title = file.Name,
                     SourceType = DocumentSourceType.Subscription,
-                    SourceUrl = file.DownloadUrl,
+                    SourceUrl = BuildBlobUrl(owner, repo, branch, file.Path),
                     SyncIntervalMinutes = parentEntry.SyncIntervalMinutes,
                     SyncStatus = DocumentSyncStatus.Idle,
                     ContentType = "text/markdown",
@@ -170,20 +214,28 @@ public class GitHubDirectorySyncService
                     },
                 };
 
-                await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, ct, isNew: true);
-                diff.AddedCount++;
-                diff.FileChanges.Add(new DocumentSyncFileChange
+                var added = await SyncSingleFileAsync(db, documentService, versions, entry, file, owner, repo, branch, accessToken, ct, isNew: true);
+                if (added)
                 {
-                    Path = file.Path,
-                    Action = DocumentSyncFileAction.Added,
-                });
+                    diff.AddedCount++;
+                    diff.FileChanges.Add(new DocumentSyncFileChange
+                    {
+                        Path = file.Path,
+                        Action = DocumentSyncFileAction.Added,
+                    });
+                }
+                else
+                {
+                    diff.FailedCount++;
+                    diff.FailedPaths.Add(file.Path);
+                }
             }
         }
 
         // 3) 删除远端已不存在的条目
-        foreach (var (url, entry) in existingByUrl)
+        foreach (var (key, entry) in existingByKey)
         {
-            if (!processedUrls.Contains(url))
+            if (!processedKeys.Contains(key))
             {
                 await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
                 // 级联清理该条目历史版本，和手动 DeleteEntry 一致，避免远端删文件后版本快照残留（Bugbot）
@@ -208,13 +260,17 @@ public class GitHubDirectorySyncService
             cancellationToken: CancellationToken.None);
 
         _logger.LogInformation(
-            "[GitHubSync] Done: added={Added} updated={Updated} skipped={Skipped} deleted={Deleted}",
-            diff.AddedCount, diff.UpdatedCount, diff.SkippedCount, diff.DeletedCount);
+            "[GitHubSync] Done: added={Added} updated={Updated} skipped={Skipped} deleted={Deleted} failed={Failed}",
+            diff.AddedCount, diff.UpdatedCount, diff.SkippedCount, diff.DeletedCount, diff.FailedCount);
 
         return diff;
     }
 
-    private async Task SyncSingleFileAsync(
+    /// <summary>
+    /// 同步单个文件。**返回是否成功** —— 失败必须冒泡给调用方，
+    /// 否则文件没落库、计数却照加，父条目还标成功（形状 10：静默降级）。
+    /// </summary>
+    private async Task<bool> SyncSingleFileAsync(
         MongoDbContext db,
         IDocumentService documentService,
         DocStoreServices.DocumentVersionService? versions,
@@ -223,12 +279,13 @@ public class GitHubDirectorySyncService
         string owner,
         string repo,
         string branch,
+        string? accessToken,
         CancellationToken ct,
         bool isNew = false)
     {
         // 拉 git 最后提交时间（用来驱动前端显示的时间 + "NEW" 徽标）。
         // 和文件内容拉取并行，不把网络往返叠加在同步延迟上。
-        var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, branch, ct);
+        var commitDateTask = GetLatestCommitDateAsync(owner, repo, file.Path, branch, accessToken, ct);
         try
         {
             // 优化：跨知识库/同文件多次拉取复用检查 (Pooling by SHA)
@@ -282,6 +339,11 @@ public class GitHubDirectorySyncService
                     entry.LastSyncAt = DateTime.UtcNow;
                     entry.LastChangedAt = DateTime.UtcNow;
                     entry.UpdatedAt = DateTime.UtcNow;
+                    entry.SourceUrl = BuildBlobUrl(owner, repo, branch, file.Path);
+                    // 与改写 SourceUrl 同一拍补上 github_path：存量条目（早期没有这个字段）
+                    // 是靠 SourceUrl == download_url 认亲的，只改地址不补路径键，下一轮同步
+                    // 会把它当"远端已不存在"删掉再重建，历史版本一起没。
+                    entry.Metadata["github_path"] = file.Path;
                     entry.Metadata["github_sha"] = file.Sha;
                     var cachedCommitDate = await commitDateTask;
                     if (cachedCommitDate.HasValue)
@@ -303,17 +365,20 @@ public class GitHubDirectorySyncService
                     if (versions != null && !string.IsNullOrWhiteSpace(newDoc.RawContent))
                         await versions.SnapshotAsync(entry.Id, entry.StoreId, newDoc.RawContent,
                             DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
-                    return; // 跳过后续的外网拉取
+                    return true; // 跳过后续的外网拉取
                 }
             }
 
-            // 拉取文件内容（通过 raw.githubusercontent.com）
-            var content = await Http.GetStringAsync(file.DownloadUrl, ct);
+            // 拉取文件内容：
+            //   已连接 → 走 Contents API + Accept: raw，带 Authorization，私有仓可读；
+            //   未连接 → 保持历史路径（raw.githubusercontent.com 的 download_url），公开仓行为不变。
+            // 注意不要把用户 token 发到 download_url 那个域，避免凭据外扩到非 api.github.com 主机。
+            var content = await FetchFileContentAsync(file, owner, repo, branch, accessToken, ct);
 
             if (string.IsNullOrWhiteSpace(content))
             {
                 _logger.LogWarning("[GitHubSync] Empty content for {Path}", file.Path);
-                return;
+                return false;
             }
 
             // 覆盖已存在文档前，把旧正文快照成版本：订阅文档被远端同步覆盖时，
@@ -343,6 +408,9 @@ public class GitHubDirectorySyncService
             entry.LastSyncAt = DateTime.UtcNow;
             entry.LastChangedAt = DateTime.UtcNow; // SHA 变了才会进入此函数（除新建外），即真的有变化
             entry.UpdatedAt = DateTime.UtcNow;
+            entry.SourceUrl = BuildBlobUrl(owner, repo, branch, file.Path);
+            // 同上：改地址必须同时补路径键，否则存量条目下一轮会被判成删除 + 新增
+            entry.Metadata["github_path"] = file.Path;
             entry.Metadata["github_sha"] = file.Sha;
             var freshCommitDate = await commitDateTask;
             if (freshCommitDate.HasValue)
@@ -364,24 +432,50 @@ public class GitHubDirectorySyncService
             if (versions != null)
                 await versions.SnapshotAsync(entry.Id, entry.StoreId, content,
                     DocumentVersionSource.Sync, entry.UpdatedBy ?? entry.CreatedBy, entry.UpdatedByName ?? entry.CreatedByName, ct: CancellationToken.None);
+
+            return true;
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 服务停机不是「这个文件拉不下来」。吞成失败的话，父条目会带着 HasFailures 收尾、
+            // 写一条用户看得见的同步错误并推进 LastSyncAt——按天调度于是要等到次日才再碰它。
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "[GitHubSync] Failed to sync file {Path}", file.Path);
+            return false;
         }
     }
 
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<List<GitHubFile>> ListDirectoryFilesAsync(
-        string owner, string repo, string path, string branch, Matcher? matcher, CancellationToken ct)
+        string owner, string repo, string path, string branch, Matcher? matcher,
+        string? accessToken, CancellationToken ct)
     {
-        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{path}?ref={Uri.EscapeDataString(branch)}";
+        // 路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串，
+        // 结果是扫描器列得出来的目录，同步时打到另一个地址上必然失败。
+        var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
+        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{safePath}?ref={Uri.EscapeDataString(branch)}";
 
-        var response = await Http.GetAsync(url, ct);
+        using var request = BuildApiRequest(url, accessToken);
+        var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
             var body = await response.Content.ReadAsStringAsync(ct);
-            throw new Exception($"GitHub API 返回 {response.StatusCode}: {body}");
+            // 上游正文只进服务端日志：它会被 worker 存进 SyncError 并原样渲染在目录卡片上，
+            // 里面是协议 JSON 与文档链接，对用户既不可读也不可行动（external-cause-first）。
+            _logger.LogWarning(
+                "[GitHubSync] List {Owner}/{Repo}/{Path}@{Branch} failed: status={Status} body={Body}",
+                owner, repo, path, branch, (int)response.StatusCode, body);
+            // 限额判定交给共用的 GitHubRateLimit（看 X-RateLimit-Remaining 头），
+            // 不再自己在正文里找 "rate limit" 字样——同一件事两份判据必然漂（形状 3）。
+            // GitHubSyncUserFacingException：DescribeListFailure 产出的就是可执行文案，
+            // 声明它可以原样给用户看；其余异常一律走 GitHubSyncFailureMessage 兜底翻译
+            throw new GitHubSyncUserFacingException(DescribeListFailure(
+                response.StatusCode, accessToken, owner, repo, path, branch,
+                rateLimited: GitHubRateLimit.IsExhausted(response),
+                resetHint: GitHubRateLimit.ResetHint(response)));
         }
 
         var json = await response.Content.ReadAsStringAsync(ct);
@@ -394,8 +488,8 @@ public class GitHubDirectorySyncService
             if (type != "file") continue;
 
             var name = item.GetProperty("name").GetString() ?? "";
-            // 只同步 .md 文件
-            if (!name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)) continue;
+            // 可导入后缀与目录规划器共用同一个判据，避免「勾上了却同步出 0 篇」
+            if (!GitHubDocDirectoryPlanner.IsSyncableMarkdown(name)) continue;
 
             // Glob 匹配（如匹配失败则丢弃）
             if (matcher != null && !matcher.Match(name).HasMatches) continue;
@@ -422,13 +516,14 @@ public class GitHubDirectorySyncService
     /// 返回 UTC DateTime；失败/无结果返回 null（不抛异常，避免影响主同步流程）。
     /// </summary>
     private async Task<DateTime?> GetLatestCommitDateAsync(
-        string owner, string repo, string path, string branch, CancellationToken ct)
+        string owner, string repo, string path, string branch, string? accessToken, CancellationToken ct)
     {
         try
         {
             var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/commits"
                     + $"?path={Uri.EscapeDataString(path)}&sha={Uri.EscapeDataString(branch)}&per_page=1";
-            var response = await Http.GetAsync(url, ct);
+            using var request = BuildApiRequest(url, accessToken);
+            var response = await Http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogDebug("[GitHubSync] commits API {Code} for {Path}", response.StatusCode, path);
@@ -467,6 +562,101 @@ public class GitHubDirectorySyncService
         }
     }
 
+    /// <summary>
+    /// 把列目录失败翻译成一句「说清是谁的问题、下一步做什么」的话。
+    ///
+    /// 404 是这里最容易骗人的一个码：GitHub 对**无权访问的私有仓**返回的不是 403 而是 404，
+    /// 和「目录真的不存在」长得一模一样。所以必须把「这次带没带授权」一起说出来，
+    /// 否则用户看到的就是一句无法行动的 "Not Found"。
+    /// </summary>
+    private static string DescribeListFailure(
+        System.Net.HttpStatusCode status, string? accessToken,
+        string owner, string repo, string path, string branch,
+        bool rateLimited = false, string? resetHint = null)
+    {
+        var target = $"{owner}/{repo}/{(string.IsNullOrEmpty(path) ? "/" : path)}@{branch}";
+        var authed = !string.IsNullOrEmpty(accessToken);
+        var retryAt = resetHint != null ? $"请在 {resetHint} 后重试。" : "请稍后重试。";
+
+        // 限额先判：GitHub 把「额度耗尽」同时报成 403 和 429，
+        // 落到下面的 403/默认分支就会变成「拒绝访问」或一串原始状态码，两种都不可行动。
+        if (rateLimited || (int)status == 429)
+        {
+            return authed
+                ? $"GitHub 调用频率已达上限（已使用授权额度）。{retryAt}"
+                : $"GitHub 匿名调用频率已达上限（每小时 60 次）。请在知识库里连接 GitHub 账号，额度会提到每小时 5000 次；{retryAt}";
+        }
+
+        return status switch
+        {
+            System.Net.HttpStatusCode.NotFound when authed =>
+                $"GitHub 找不到 {target}：可能是目录或分支已删除，也可能是这个 GitHub 账号对该仓库没有读取权限"
+                + "（私有仓需要授权时勾选 repo 权限）。",
+            System.Net.HttpStatusCode.NotFound =>
+                $"GitHub 找不到 {target}：本次是**匿名**访问，私有仓在匿名下一律返回找不到。"
+                + "请在知识库里连接 GitHub 账号后重试。",
+            System.Net.HttpStatusCode.Unauthorized =>
+                "GitHub 授权已失效，请在知识库里重新连接 GitHub 账号后再试。",
+            System.Net.HttpStatusCode.Forbidden =>
+                $"GitHub 拒绝访问 {target}：请确认该 GitHub 账号对此仓库有读取权限。",
+            // 未分类的状态码（422 / 5xx 等）：只给可行动的一句，正文已经进了服务端日志
+            _ => $"GitHub 读取 {target} 失败（状态 {(int)status}），请稍后重试；若持续失败请联系管理员查看服务端日志。",
+        };
+    }
+
+    /// <summary>
+    /// 构造一个指向 api.github.com 的请求；有 token 就带上 Authorization。
+    /// 只对 api.github.com 加凭据 —— 其它主机（raw.githubusercontent.com）一律不带。
+    /// </summary>
+    private static HttpRequestMessage BuildApiRequest(string url, string? accessToken, string? accept = null)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        if (!string.IsNullOrEmpty(accessToken)
+            && string.Equals(request.RequestUri?.Host, "api.github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+        }
+        if (!string.IsNullOrEmpty(accept))
+        {
+            request.Headers.Accept.Clear();
+            request.Headers.Accept.ParseAdd(accept);
+        }
+        return request;
+    }
+
+    /// <summary>
+    /// 子条目对外展示的来源地址：GitHub 网页上这个文件的稳定地址。
+    ///
+    /// **不能存 download_url**：私有仓的那串地址带着几分钟就失效的临时凭据，
+    /// 存下来等于（其一）把凭据留在库里和界面上，（其二）用户过一会儿点开就是个死链。
+    /// 正文一直是走 Contents API 现取的，从不读这个字段，所以这里只管「人点得开」。
+    /// </summary>
+    private static string BuildBlobUrl(string owner, string repo, string branch, string path)
+        => $"https://github.com/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+         + $"/blob/{Uri.EscapeDataString(branch)}/"
+         + Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
+
+    /// <summary>
+    /// 取单个文件正文。已连接走 Contents API 的 raw 媒体类型（私有仓可读、地址稳定不带临时 token），
+    /// 未连接沿用历史的 download_url。
+    /// </summary>
+    private async Task<string> FetchFileContentAsync(
+        GitHubFile file, string owner, string repo, string branch, string? accessToken, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(accessToken))
+        {
+            return await Http.GetStringAsync(file.DownloadUrl, ct);
+        }
+
+        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+                + $"/contents/{Uri.EscapeDataString(file.Path).Replace("%2F", "/", StringComparison.Ordinal)}"
+                + $"?ref={Uri.EscapeDataString(branch)}";
+        using var request = BuildApiRequest(url, accessToken, "application/vnd.github.raw");
+        using var response = await Http.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(ct);
+    }
+
     /// <summary>解析 GitHub 仓库地址，提取 owner/repo/path/branch</summary>
     public static (string owner, string repo, string path, string branch) ParseGitHubUrl(string url)
     {
@@ -474,7 +664,13 @@ public class GitHubDirectorySyncService
         // https://github.com/owner/repo/tree/branch/path/to/dir
         // https://github.com/owner/repo
         var uri = new Uri(url);
-        var segments = uri.AbsolutePath.Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
+        // AbsolutePath 保留百分号转义（空格是 %20、# 是 %23）。必须先解回来：
+        // 存进条目的路径口径是**未转义的原始路径**（扫描器给的就是这种），
+        // 发请求时再统一转义一次。不解就会被二次转义成 %2520，打到一个不存在的目录上。
+        var segments = uri.AbsolutePath.Trim('/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.UnescapeDataString)
+            .ToArray();
 
         if (segments.Length < 2)
             throw new ArgumentException("无效的 GitHub 地址，至少需要 owner/repo");
@@ -515,9 +711,31 @@ public class GitHubDirectoryDiff
     public int UpdatedCount { get; set; }
     public int DeletedCount { get; set; }
     public int SkippedCount { get; set; }
+
+    /// <summary>本轮有多少个文件没能拉下来（限流、401、超时…）。</summary>
+    public int FailedCount { get; set; }
+
+    /// <summary>失败文件的路径样本，写进 SyncError 让用户知道缺了什么。</summary>
+    public List<string> FailedPaths { get; set; } = new();
+
     public List<DocumentSyncFileChange> FileChanges { get; set; } = new();
 
     public bool HasChanges => AddedCount > 0 || UpdatedCount > 0 || DeletedCount > 0;
+
+    /// <summary>
+    /// 有文件失败。调用方**必须**据此把父条目标成失败，而不是照常标 idle——
+    /// 否则「少了几篇」会被一个绿色的成功状态盖住（形状 10：静默降级）。
+    /// </summary>
+    public bool HasFailures => FailedCount > 0;
+
+    /// <summary>给用户看的失败描述：缺了几篇、举几个例子。</summary>
+    public string BuildFailureMessage()
+    {
+        var sample = string.Join("、", FailedPaths.Take(3));
+        var more = FailedPaths.Count > 3 ? $" 等 {FailedPaths.Count} 个文件" : "";
+        return $"有 {FailedCount} 篇文档没有拉取成功（{sample}{more}）。"
+             + "常见原因是 GitHub 调用频率超限或授权失效；已同步的部分已保留，可稍后点「重试同步」补齐。";
+    }
 
     public string BuildSummary()
     {
