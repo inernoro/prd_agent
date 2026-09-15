@@ -725,24 +725,29 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
     {
         var revision = initial;
         var current = initialSite;
+        InvalidOperationException? lastRefusal = null;
         for (var attempt = 0; attempt < 40; attempt++)
         {
             if (revision.RollbackTargetRevisionId != targetRevisionId)
                 throw new InvalidOperationException("同一幂等键不能用于不同回退目标");
             if (revision.Status == HostedSiteRevisionStatuses.Published)
                 return new HostedSiteRevisionMutationResult(revision, current.Site, reportChange);
+            // Publishing 一律交给 PublishAsync 判，不在这里先拿站点指针筛一道：
+            // 进程在「标成 Publishing」之后、「切换站点指针」之前停掉时，指针永远对不上，
+            // 而 PublishAsync 自己有按 PublishAttemptTtl 接管过期尝试的路径——这里筛掉它，
+            // 那条尝试就再也没人接得了，40 轮全部空转，回退接口对这条记录永久失效。
             if (revision.Status == HostedSiteRevisionStatuses.Draft
-                || revision.Status == HostedSiteRevisionStatuses.Publishing
-                   && current.Site.PublishedRevisionId == revision.Id)
+                || revision.Status == HostedSiteRevisionStatuses.Publishing)
             {
                 try
                 {
                     var result = await PublishAsync(siteId, revision.Id, userId, CancellationToken.None);
                     return result with { Changed = reportChange && result.Changed };
                 }
-                catch (InvalidOperationException) when (attempt < 39)
+                catch (InvalidOperationException refusal) when (attempt < 39)
                 {
                     // 同 key 并发调用可能由另一个请求先取得发布围栏；重读同一事实，不新建版本。
+                    lastRefusal = refusal;
                 }
             }
 
@@ -752,7 +757,9 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 ?? throw new KeyNotFoundException("版本不存在");
             current = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
         }
-        throw new InvalidOperationException("同一回退请求正在处理，请稍后重试");
+        // 把最后一次拒绝的真实原因交出去：换成一句笼统的「正在处理」，
+        // 会把「站点在发布时已经变了」这类可行动的结论抹成一条无从下手的提示。
+        throw lastRefusal ?? new InvalidOperationException("同一回退请求正在处理，请稍后重试");
     }
 
     public async Task<(HostedSiteRevision Revision, bool Changed)> RejectAsync(

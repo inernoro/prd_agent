@@ -21,6 +21,11 @@ PRD API 禁止在应用启动时自动创建 MongoDB 索引。应用库索引由
 
 新增或修改查询时，应先更新可执行清单，再在设计或债务文档中引用集合名和索引名；不要把完整 DDL 再粘回文档。
 
+网页托管的删除清理新增两项人工维护索引：`hosted_sites` 的
+`idx_hosted_sites_asset_cleanup_due`（只收还欠着待删对象的站点）与 `hosted_site_deletion_tasks` 的
+`idx_hosted_site_deletion_due`。两者都服务于按分钟轮询的清理任务——没有它们，每一轮空扫都是
+整表扫描加排序。同样只通过 DBA 清单创建。
+
 本轮设计产物生命周期新增一项人工维护索引：`md_to_ppt_runs` 的
 `idx_md_to_ppt_runs_contract_recovery`。它服务于 HTML PPT 专用 Run 与公共设计产物账本的周期恢复，
 先按合同版本和同步状态筛选，再按更新时间从最旧记录开始收敛。该索引仍只通过上述 DBA 清单创建，

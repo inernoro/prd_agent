@@ -293,6 +293,56 @@ public sealed class HostedSiteRevisionConsistencyTests
             It.IsAny<string?>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
+    /// <summary>
+    /// 进程在「标成 Publishing」之后、「切换站点指针」之前停掉，同一幂等键重试必须能救回来
+    /// （Codex P2，2026-09-15）。
+    ///
+    /// 此前重放循环要求「Publishing 且站点指针已指向它」才交给 PublishAsync，而这种崩法下
+    /// 指针永远对不上：PublishAsync 自己那条按 PublishAttemptTtl 接管过期尝试的路径，
+    /// 在这里被筛掉了，40 轮全部空转，这条回退记录对回退接口永久失效。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task RollbackRetry_AfterAStalledPublishingAttempt_ShouldTakeOverAndFinish()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var baseVersion = MongoTime(DateTime.UtcNow.AddMinutes(-10));
+        var publishedVersion = MongoTime(DateTime.UtcNow);
+        var target = PublishingRevision("stalled-rollback-target", baseVersion);
+        target.Status = HostedSiteRevisionStatuses.Published;
+        target.PublishedAt = baseVersion;
+        target.PublishedContentVersion = baseVersion;
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(target);
+
+        // 上一次调用留下的半成品：状态是 Publishing，尝试戳记早已超过 TTL，站点指针还没切过去。
+        var stalled = PublishingRevision("stalled-rollback-attempt", baseVersion);
+        stalled.Source = HostedSiteRevisionSources.Rollback;
+        stalled.RollbackTargetRevisionId = target.Id;
+        stalled.RollbackIdempotencyKey = "stalled-request-key";
+        stalled.Html = target.Html;
+        stalled.PublishAttemptId = "attempt-gone";
+        stalled.PublishAttemptStartedAt =
+            MongoTime(DateTime.UtcNow - HostedSiteRevisionService.PublishAttemptTtl - TimeSpan.FromMinutes(1));
+        await fixture.Db.HostedSiteRevisions.InsertOneAsync(stalled);
+
+        var currentSite = Site(target.Id, baseVersion);
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(x => x.GetEditableEntryHtmlAsync("site-1", "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new HostedSiteEditableEntry(currentSite, target.Html, baseVersion));
+        sites.Setup(x => x.ReplaceEntryHtmlAsync(
+                "site-1", "user-1", target.Html, baseVersion, It.IsAny<string?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Site(null, publishedVersion));
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var recovered = await service.RollbackAsync("site-1", target.Id, "user-1", "stalled-request-key");
+
+        Assert.Equal(stalled.Id, recovered.Revision.Id);
+        Assert.Equal(HostedSiteRevisionStatuses.Published, recovered.Revision.Status);
+        // companion：确实复用了那条半成品，没有新建第二条回退版本。
+        Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(item =>
+            item.RollbackIdempotencyKey == "stalled-request-key"));
+    }
+
     [Fact]
     [Trait("Category", TestCategories.Integration)]
     public async Task ConcurrentRollback_WithSameIdempotencyKey_ShouldCreateAndPublishOneRevision()

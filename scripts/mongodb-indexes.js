@@ -1178,6 +1178,23 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_owner_folder" }
 )
 
+// 删除站点的对象清理是「到点就扫」的周期任务：只有还欠着待删对象的站点才该进这个索引，
+// 否则清理线程每分钟都在整表扫 + 排序。
+db.hosted_sites.createIndex(
+  { "AssetCleanupNextAttemptAt": 1, "AssetCleanupLeaseExpiresAt": 1 },
+  {
+    name: "idx_hosted_sites_asset_cleanup_due",
+    partialFilterExpression: { "PendingAssetCleanupKeys.0": { $exists: true } }
+  }
+)
+
+// collection: hosted_site_deletion_tasks
+// 推迟的删除任务同样按「到点 + 租约到期」认领。
+db.hosted_site_deletion_tasks.createIndex(
+  { "NextAttemptAt": 1, "LeaseExpiresAt": 1 },
+  { name: "idx_hosted_site_deletion_due" }
+)
+
 // 回退请求持久幂等；同一站点、操作者和请求键最多产生一个回退版本。
 ensureTightenedUniqueIndex("hosted_site_revisions",
   { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
