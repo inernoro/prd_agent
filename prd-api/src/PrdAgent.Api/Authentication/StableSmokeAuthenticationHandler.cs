@@ -378,23 +378,23 @@ public sealed class StableSmokeAuthenticationHandler
         var missing = StableSmokeIdentityPolicy.MissingPermissions(effective);
         if (missing.Count == 0) return user;
 
+        // 只做原子增删，不整表覆盖：管理员同时改了别的放行 / 拒绝项时，整表 Set 会把那次修改静默吞掉。
+        // $addToSet 只补缺的，$pullAll 只摘矩阵要求的，两者都与并发修改可交换。
+        await _db.Users.UpdateOneAsync(
+            Builders<User>.Filter.Eq(item => item.UserId, user.UserId),
+            Builders<User>.Update
+                .AddToSetEach(item => item.PermAllow, missing)
+                .PullAll(item => item.PermDeny, StableSmokeIdentityPolicy.RequiredPermissions),
+            cancellationToken: ct);
         var allow = new List<string>(user.PermAllow ?? new List<string>());
         foreach (var permission in missing)
         {
             if (!allow.Contains(permission, StringComparer.Ordinal)) allow.Add(permission);
         }
-        var deny = (user.PermDeny ?? new List<string>())
+        user.PermAllow = allow;
+        user.PermDeny = (user.PermDeny ?? new List<string>())
             .Where(item => !StableSmokeIdentityPolicy.RequiredPermissions.Contains(item, StringComparer.Ordinal))
             .ToList();
-
-        await _db.Users.UpdateOneAsync(
-            Builders<User>.Filter.Eq(item => item.UserId, user.UserId),
-            Builders<User>.Update
-                .Set(item => item.PermAllow, allow)
-                .Set(item => item.PermDeny, deny),
-            cancellationToken: ct);
-        user.PermAllow = allow;
-        user.PermDeny = deny;
 
         Logger.LogWarning(
             "稳定冒烟账号 {Username} 缺少巡检矩阵所需权限，已按 StableSmokeIdentityPolicy 补齐：{Missing}。"

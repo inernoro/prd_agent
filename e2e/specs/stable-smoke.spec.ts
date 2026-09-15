@@ -273,6 +273,7 @@ type GatewayOffering = {
   targetKind?: string;
   protocol?: string | null;
   endpointPath?: string | null;
+  upstreamModelId?: string | null;
   enabled: boolean;
   priority: number;
   healthStatus?: number;
@@ -3016,6 +3017,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       && offering.healthStatus !== 2
       && upstreamIds.has(offering.targetId)
     );
+    const isFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').includes(gatewayFailoverBackupNote);
     const distinctUpstreams = (item: GatewayLogicalModel) => new Set(item.offerings.filter(liveUpstream).map((offering) => offering.targetId));
     const describeLogical = (item: GatewayLogicalModel) => (
       `${item.publicId}[${item.offerings.filter(liveUpstream).map((offering) => upstreamById.get(offering.targetId)?.name || offering.targetId).join(' / ') || '无可用上游'}]`
@@ -3032,9 +3034,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     // 2026-09-14 那一轮因此直接判「没有两个可用上游」而未执行。没有第二个上游就没有故障切换可验，
     // 所以这里给业务默认逻辑模型临时挂一个同类型逻辑模型已经在用的真实上游作为备用（priority 更低，
     // 正常流量不会走到它），验完即停用。控制台没有删除 Offering 的接口，只能启停：停用后的记录带固定 Notes 标记，
-    // 下一轮复用同一条，不会越积越多。
-    let logical = candidates.find((item) => distinctUpstreams(item).size >= 2);
+    // 下一轮复用同一条，不会越积越多；上一轮若中途夭折留下已启用的标记记录，本轮也认领并在结束时停用。
+    // 备用上游照抄「捐出」它的那条 Offering 的路由契约（协议 / Endpoint / 上游模型名），不能拿主路的协议去配别人的上游。
+    let logical: GatewayLogicalModel | undefined;
     let provisionedBackup: GatewayOffering | undefined;
+    let offerings: GatewayOffering[] = [];
+    const originals = new Map<GatewayOffering, { endpointPath: string; priority: number }>();
+    let originalStrategy = '';
+    let workspaceId = '';
+    const runIds: string[] = [];
+
     const toggleOffering = async (logicalId: string, offeringId: string, enabled: boolean) => {
       const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${logicalId}/offerings/${offeringId}/enabled`, {
         headers: gateway.headers,
@@ -3045,69 +3054,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(body.data.enabled).toBe(enabled);
       return body.data;
     };
-    if (!logical) {
-      const preferred = candidates[0];
-      const primary = preferred.offerings.filter(liveUpstream).sort((left, right) => left.priority - right.priority)[0];
-      expect(primary, `${preferred.publicId} 没有可用的主路上游，无法补双上游夹具`).toBeTruthy();
-      const primaryPlatform = upstreamById.get(primary!.targetId)?.platformId || '';
-      const dormantBackup = preferred.offerings.find((offering) => (
-        !offering.enabled
-        && offering.targetId !== primary!.targetId
-        && upstreamIds.has(offering.targetId)
-        && (offering.notes || '').includes(gatewayFailoverBackupNote)
-      ));
-      if (dormantBackup) {
-        provisionedBackup = await toggleOffering(preferred.id, dormantBackup.id, true);
-      } else {
-        const backupTargetIds = [...new Set(logicalBody.data.items
-          .filter((item) => item.enabled && item.modelType === preferred.modelType && item.id !== preferred.id)
-          .flatMap((item) => item.offerings.filter(liveUpstream).map((offering) => offering.targetId))
-          .filter((targetId) => targetId !== primary!.targetId))]
-          .sort((left, right) => (
-            Number((upstreamById.get(right)?.platformId || '') === primaryPlatform)
-            - Number((upstreamById.get(left)?.platformId || '') === primaryPlatform)
-          ));
-        expect(
-          backupTargetIds.length,
-          `无法为 ${preferred.publicId} 补第二个真实上游：同类型逻辑模型没有其它可用上游。`
-          + `候选：${candidates.map(describeLogical).join('、')}`,
-        ).toBeGreaterThan(0);
-        const created = await request.post(`${gateway.baseUrl}/gw/logical-models/${preferred.id}/offerings`, {
-          headers: gateway.headers,
-          data: {
-            targetKind: 'model',
-            targetId: backupTargetIds[0],
-            protocol: primary!.protocol || undefined,
-            priority: primary!.priority + 10,
-            weight: 100,
-            notes: `${gatewayFailoverBackupNote}: 稳定冒烟 GW-007 备用上游，验收后停用，可复用`,
-          },
-        });
-        const createdBody = await created.json() as ApiEnvelope<GatewayOffering>;
-        expect(created.ok(), createdBody.error?.message || `为 ${preferred.publicId} 创建备用 Offering 失败`).toBe(true);
-        provisionedBackup = createdBody.data;
-      }
-      preferred.offerings = [
-        ...preferred.offerings.filter((offering) => offering.id !== provisionedBackup!.id),
-        provisionedBackup!,
-      ];
-      logical = preferred;
-    }
-    expect(
-      distinctUpstreams(logical!).size,
-      `故障切换需要两个不同的真实上游，当前：${describeLogical(logical!)}`,
-    ).toBeGreaterThanOrEqual(2);
-    const offerings = logical!.offerings
-      .filter(liveUpstream)
-      .sort((left, right) => left.priority - right.priority);
-    const originals = new Map(offerings.map((offering) => [offering, {
-      endpointPath: offering.endpointPath || '',
-      priority: offering.priority,
-    }]));
-    const originalStrategy = logical!.routingStrategy;
-    const { workspace } = await createVisualWorkspace(page, token, 'gateway-failover');
-    const runIds: string[] = [];
-
     const updateOffering = async (offering: GatewayOffering, endpointPath: string, priority = offering.priority) => {
       const response = await request.put(
         `${gateway.baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering.id}`,
@@ -3133,14 +3079,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const response = await page.request.post('/api/visual-agent/image-gen/runs', {
         headers: {
           ...authHeaders(token),
-          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}`,
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspaceId}-${suffix}`,
         },
         data: {
           platformId: 'logical-model',
           modelId: logical!.publicId,
           responseFormat: 'url',
           maxConcurrency: 1,
-          workspaceId: workspace.id,
+          workspaceId,
           appKey: 'visual-agent',
           items: [{
             prompt: '一枚放在纯白背景上的蓝色圆形徽章，产品摄影，不要文字',
@@ -3154,7 +3100,82 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       return run.runId;
     };
 
+    // 清理作用域从启用 / 创建备用上游之前就开始：中间任何一步失败，finally 都能把备用停回去。
     try {
+      logical = candidates.find((item) => distinctUpstreams(item).size >= 2);
+      if (logical) {
+        // 上一轮夭折时留下的已启用标记备用：本轮认领，结束时一并停用。
+        provisionedBackup = logical.offerings.find((offering) => offering.enabled && isFailoverBackup(offering));
+      } else {
+        const preferred = candidates[0];
+        const primary = preferred.offerings.filter(liveUpstream).sort((left, right) => left.priority - right.priority)[0];
+        expect(primary, `${preferred.publicId} 没有可用的主路上游，无法补双上游夹具`).toBeTruthy();
+        const primaryPlatform = upstreamById.get(primary!.targetId)?.platformId || '';
+        const dormantBackup = preferred.offerings.find((offering) => (
+          !offering.enabled
+          && offering.targetId !== primary!.targetId
+          && upstreamIds.has(offering.targetId)
+          && isFailoverBackup(offering)
+        ));
+        if (dormantBackup) {
+          provisionedBackup = await toggleOffering(preferred.id, dormantBackup.id, true);
+        } else {
+          const usedTargets = new Set([primary!.targetId]);
+          const donors = logicalBody.data.items
+            .filter((item) => item.enabled && item.modelType === preferred.modelType && item.id !== preferred.id)
+            .flatMap((item) => item.offerings.filter(liveUpstream))
+            .filter((offering) => {
+              if (usedTargets.has(offering.targetId)) return false;
+              usedTargets.add(offering.targetId);
+              return true;
+            })
+            .sort((left, right) => (
+              Number((upstreamById.get(right.targetId)?.platformId || '') === primaryPlatform)
+              - Number((upstreamById.get(left.targetId)?.platformId || '') === primaryPlatform)
+            ));
+          expect(
+            donors.length,
+            `无法为 ${preferred.publicId} 补第二个真实上游：同类型逻辑模型没有其它可用上游。`
+            + `候选：${candidates.map(describeLogical).join('、')}`,
+          ).toBeGreaterThan(0);
+          const donor = donors[0];
+          const created = await request.post(`${gateway.baseUrl}/gw/logical-models/${preferred.id}/offerings`, {
+            headers: gateway.headers,
+            data: {
+              targetKind: donor.targetKind || 'model',
+              targetId: donor.targetId,
+              // 路由契约照抄捐出方：它在自己的逻辑模型上就是这么跑通的。
+              protocol: donor.protocol || undefined,
+              endpointPath: donor.endpointPath || undefined,
+              upstreamModelId: donor.upstreamModelId || undefined,
+              priority: primary!.priority + 10,
+              weight: 100,
+              notes: `${gatewayFailoverBackupNote}: 稳定冒烟 GW-007 备用上游，验收后停用，可复用`,
+            },
+          });
+          const createdBody = await created.json() as ApiEnvelope<GatewayOffering>;
+          expect(created.ok(), createdBody.error?.message || `为 ${preferred.publicId} 创建备用 Offering 失败`).toBe(true);
+          provisionedBackup = createdBody.data;
+        }
+        preferred.offerings = [
+          ...preferred.offerings.filter((offering) => offering.id !== provisionedBackup!.id),
+          provisionedBackup!,
+        ];
+        logical = preferred;
+      }
+      expect(
+        distinctUpstreams(logical!).size,
+        `故障切换需要两个不同的真实上游，当前：${describeLogical(logical!)}`,
+      ).toBeGreaterThanOrEqual(2);
+      offerings = logical!.offerings
+        .filter(liveUpstream)
+        .sort((left, right) => left.priority - right.priority);
+      for (const offering of offerings) {
+        originals.set(offering, { endpointPath: offering.endpointPath || '', priority: offering.priority });
+      }
+      originalStrategy = logical!.routingStrategy;
+      workspaceId = (await createVisualWorkspace(page, token, 'gateway-failover')).workspace.id;
+
       await updateStrategy('priority');
       for (const [index, offering] of offerings.entries()) {
         await updateOffering(offering, originals.get(offering)!.endpointPath, (index + 1) * 10);
@@ -3205,17 +3226,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           originals.get(offering)!.priority,
         )
       )));
-      const strategyRestore = await Promise.allSettled([updateStrategy(originalStrategy)]);
-      const backupRestore = provisionedBackup
-        ? await Promise.allSettled([toggleOffering(logical!.id, provisionedBackup.id, false)])
+      const strategyRestore = originalStrategy ? await Promise.allSettled([updateStrategy(originalStrategy)]) : [];
+      const backupRestore = provisionedBackup && logical
+        ? await Promise.allSettled([toggleOffering(logical.id, provisionedBackup.id, false)])
         : [];
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: {
-          ...authHeaders(token),
-          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-gateway-failover-delete`,
-        },
-      });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      if (workspaceId) {
+        const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspaceId}`, {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspaceId}-gateway-failover-delete`,
+          },
+        });
+        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      }
       for (const runId of runIds) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
           headers: authHeaders(token),
