@@ -21,7 +21,7 @@ import {
 } from './githubDirectorySelection';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice, connectionHeaderLabel,
+  nextStepAfterAuthLoad, revokedConnectionHint, replacingConnectionNotice, connectionHeaderLabel,
 } from './githubConnectionState';
 
 /**
@@ -88,9 +88,9 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     const res = await getGitHubAuthStatus();
     if (res.success) {
       setAuth(res.data);
-      // 已连接**且 GitHub 现在还认**才跳到选仓库：授权被撤销时留在第一步，
-      // 否则用户会在第二步撞见一个 401，而该修的事在第一步。
-      setStep((prev) => (prev === 'connect' && shouldResumeAtRepoStep(res.data) ? 'repo' : prev));
+      // 步骤由判据统一决定：连接没了或已失效一律回第一步（否则用户会卡在一个需要有效
+      // 令牌的步骤上，点什么都报错）；还在第一步且可用才前进；其余保持原地。
+      setStep((prev) => nextStepAfterAuthLoad(prev, res.data, { connect: 'connect', repo: 'repo' }));
       const revoked = revokedConnectionHint(res.data);
       if (revoked) {
         setError(revoked);

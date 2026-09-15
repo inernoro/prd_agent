@@ -220,13 +220,23 @@ public sealed class GitHubUserConnectionService
         var result = await _db.GitHubUserConnections.DeleteOneAsync(
             x => x.Id == target.Id && x.AccessTokenEncrypted == target.AccessTokenEncrypted, ct);
 
-        var outcome = result.DeletedCount > 0
-            ? GitHubDisconnectOutcome.Removed
-            : GitHubDisconnectOutcome.ReplacedMeanwhile;
+        // 没删成有两种来路，**只看删除条数分不开**：
+        //   一是被替换（另一个标签页重新授权，密文换了，我们这条件不匹配）；
+        //   二是被别人抢先删了（两个标签页同时断开，都捕获到同一条，第一个删掉了它）。
+        // 所以回读一次：还在 = 被替换（那是别人的新连接，保留），不在 = 本来就没得删。
+        // 只凭条数就报「被替换」，会对着第二个标签页说「新的连接已保留」——而根本没有那条连接。
+        var outcome = GitHubDisconnectOutcome.Removed;
+        if (result.DeletedCount == 0)
+        {
+            var current = await GetConnectionAsync(userId, ct);
+            outcome = current == null
+                ? GitHubDisconnectOutcome.NothingToRemove
+                : GitHubDisconnectOutcome.ReplacedMeanwhile;
+        }
+
         if (outcome == GitHubDisconnectOutcome.ReplacedMeanwhile)
         {
-            // 没删成只有一种来路：这期间有人重新授权、把它换成了另一份连接。
-            // 那条新连接不归这次断开管，保留它才是对的。
+            // 回读确认过：那条新连接不归这次断开管，保留它才是对的。
             //
             // 已知边界：撤销打的是「删授权」，它会连带作废本应用为这个用户签发的**全部**令牌，
             // 所以那条新连接的令牌很可能也一起失效了。这里不去猜、也不替用户删——

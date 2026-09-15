@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice, connectionHeaderLabel,
+  shouldResumeAtRepoStep, nextStepAfterAuthLoad, revokedConnectionHint,
+  replacingConnectionNotice, connectionHeaderLabel,
 } from './githubConnectionState';
 
 describe('GitHub 连接状态判据', () => {
@@ -99,5 +100,33 @@ describe('标题栏怎么称呼当前这条连接', () => {
 
   it('连着但拿不到登录名 —— 仍然给得出称呼，不渲染出空洞', () => {
     expect(connectionHeaderLabel({ connected: true, usable: 'usable', login: null })).toBe('已连接 GitHub 账号');
+  });
+});
+
+describe('读完连接状态之后该待在哪一步', () => {
+  const steps = { connect: 'connect' as const, repo: 'repo' as const };
+
+  it('授权已失效 —— 不管此前在哪，一律回第一步', () => {
+    // 这条尤其管「断开时被并发替换、重读发现新令牌也一起失效」那条路：
+    // 人若停在选目录那一步，点什么都报错，而能解决问题的入口在第一步。
+    for (const prev of ['connect', 'repo', 'directories'] as const) {
+      expect(nextStepAfterAuthLoad(prev, { connected: true, usable: 'revoked' }, steps)).toBe('connect');
+    }
+  });
+
+  it('连接没了 —— 同样一律回第一步', () => {
+    for (const prev of ['connect', 'repo', 'directories'] as const) {
+      expect(nextStepAfterAuthLoad(prev, { connected: false, usable: null }, steps)).toBe('connect');
+    }
+  });
+
+  it('还在第一步且可用 —— 前进到选仓库', () => {
+    expect(nextStepAfterAuthLoad('connect', { connected: true, usable: 'usable' }, steps)).toBe('repo');
+    expect(nextStepAfterAuthLoad('connect', { connected: true, usable: 'unknown' }, steps)).toBe('repo');
+  });
+
+  it('已经在后面的步骤且连接好着 —— 保持原地，别把正在选目录的人弹走', () => {
+    expect(nextStepAfterAuthLoad('directories', { connected: true, usable: 'usable' }, steps)).toBe('directories');
+    expect(nextStepAfterAuthLoad('repo', { connected: true, usable: 'unknown' }, steps)).toBe('repo');
   });
 });

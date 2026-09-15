@@ -28,7 +28,29 @@ export function connectionBrokenHint(code?: string | null): string | null {
 }
 
 /**
- * 拿到连接状态后，向导该停在「连接」这一步还是直接跳到「选仓库」。
+ * 读完连接状态之后，向导该待在哪一步。
+ *
+ * 三条，顺序不能换：
+ * 1. **连接没了或已失效 → 一律回「连接」这一步**，不管此前在哪。否则用户会留在一个
+ *    需要有效令牌的步骤上（选仓库、勾目录），点什么都报错，而能解决问题的入口在第一步。
+ *    这条尤其管「断开时被并发替换、重读发现新令牌也被一起作废」那条路。
+ * 2. 还在第一步且连接可用 → 前进到选仓库，不让用户在一个已完成的步骤上多点一次。
+ * 3. 其余情况保持原地，别把正在选目录的人弹走。
+ *
+ * 「没问出结论」按可用处理（见下面的放行口径）：那是门禁，宁可放宽。
+ */
+export function nextStepAfterAuthLoad<TStep extends string>(
+  prev: TStep,
+  status: { connected: boolean; usable?: 'usable' | 'revoked' | 'unknown' | null },
+  steps: { connect: TStep; repo: TStep },
+): TStep {
+  if (!status.connected || status.usable === 'revoked') return steps.connect;
+  if (prev === steps.connect && shouldResumeAtRepoStep(status)) return steps.repo;
+  return prev;
+}
+
+/**
+ * 拿到连接状态后，能不能从「连接」这一步前进到「选仓库」。
  *
  * 判据看两件事，缺一不可：**存过连接**，而且它**现在还认**。
  * 只看 connected 就会出现：用户在 GitHub 那边撤销了授权，向导照样跳到选仓库，
