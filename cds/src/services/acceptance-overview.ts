@@ -1,0 +1,591 @@
+/**
+ * 验收报告主页的聚合（2026-09-08，验收报告主页重做 · 方向 A「结论优先」）。
+ *
+ * 纯函数：输入报告元数据 + 分支墓碑（合并记录）+ 时间窗，输出主页四段所需的一切。
+ * 不碰磁盘、不读正文，路由层只负责取数与鉴权。规则来源：
+ *   - doc/rule.acceptance.map-enterprise.md §4.1.2 标题合同 `{前缀} · {对象} · {日期}`、
+ *     §7.0 决策读者首屏（产品失败与验收失败分开）、§7.1 Verdict 语义分层
+ *   - doc/guide.acceptance.report-evidence.md §4 失败首屏红标、颜色契约
+ *   - .claude/rules/conclusion-before-numbers.md 第一屏是挂着数字的判断句；建议句相同的卡片合并
+ *   - doc/debt.acceptance-center-cds.md「验收报告重复归档」：通过率分母必须只计每个目标的最新版
+ */
+import type { AcceptanceReportMeta, BranchTombstone } from '../types.js';
+
+export type OverviewVerdict = 'pass' | 'conditional' | 'fail';
+
+/** 标题合同的九类前缀（§4.1.2）。不在此列的标题归「其他」。 */
+export const REPORT_KINDS = [
+  '功能验收', '每日验收', 'PR验收', 'Commit验收', '分支验收', '缺陷复测', '视觉回归', '发布验收', '规范演练',
+] as const;
+export type ReportKind = (typeof REPORT_KINDS)[number] | '其他';
+
+export interface ParsedReportTitle {
+  kind: ReportKind;
+  /** 重点对象（标题中段）；无法解析时为整个标题。 */
+  target: string;
+  /** 目标日期 YYYY-MM-DD；无法解析时为 null。 */
+  targetDate: string | null;
+}
+
+export interface OverviewReportRef {
+  id: string;
+  title: string;
+  kind: ReportKind;
+  target: string;
+  targetDate: string | null;
+  /**
+   * **生效结论**：有阻断缺陷即 fail，否则按报告自己写的那个。
+   * 在 `toRef` 这一个边界上换算一次，下游（计数、通过率、簇、日历、发布闸、流水线）
+   * 一律直接用它，谁都不必也不许再判一遍。
+   */
+  verdict: OverviewVerdict | null;
+  /** 报告自己写的结论，未经阻断缺陷覆盖。只给需要指出「它自称通过」的措辞用。 */
+  claimedVerdict: OverviewVerdict | null;
+  tier: string | null;
+  defectCounts: Record<string, number> | null;
+  projectId: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  prNumber: number | null;
+  createdAt: string;
+  shared: boolean;
+  /** 同一验收目标的第几版（1 = 唯一或最早）；只在折叠后的最新版上有意义。 */
+  version: number;
+  /** 被本版取代的早期版本 id（按创建时间升序）。 */
+  supersedes: string[];
+}
+
+export interface OverviewCluster {
+  id: string;
+  /** conflict：同一对象在窗口内既有未通过又有有条件的最新版结论。 */
+  verdict: 'fail' | 'conditional' | 'conflict';
+  target: string;
+  projectId: string | null;
+  kinds: ReportKind[];
+  count: number;
+  /** 未通过份数（口径冲突簇里也真实存在，用来把条形分成红 / 橙两段）。 */
+  failCount: number;
+  /** 有条件份数。 */
+  conditionalCount: number;
+  reportIds: string[];
+  latestReportId: string;
+  latestCreatedAt: string;
+  defectCounts: Record<string, number>;
+  /** 该对象连续多少个时间窗（含本窗）都有未通过；只对 fail/conflict 计算。 */
+  streakWindows: number;
+}
+
+export interface OverviewDay {
+  date: string;
+  reports: Array<{ id: string; verdict: OverviewVerdict | null }>;
+  /** 当天最差结论；无报告为 null。 */
+  worst: OverviewVerdict | null;
+}
+
+export type MergeCoverageStatus = 'verified' | 'conditional' | 'failed' | 'unverified';
+
+export interface OverviewMergeItem {
+  branch: string;
+  projectId: string;
+  prNumber: number | null;
+  prUrl: string | null;
+  mergeCommitSha: string | null;
+  mergedAt: string;
+  status: MergeCoverageStatus;
+  reportIds: string[];
+}
+
+export interface ReportsOverview {
+  window: { from: string; to: string; days: number; previousFrom: string };
+  headline: {
+    /** §7.0 三个固定开头之一。 */
+    status: 'broken' | 'ok' | 'untested';
+    statusLabel: '有功能坏了' | '可以正常使用' | '这次没测出来';
+    sentence: string;
+    supports: Array<{ kind: 'new' | 'coverage' | 'decision'; text: string; anchor: 'clusters' | 'coverage' | 'ledger' }>;
+  };
+  releaseGate: {
+    state: 'blocked' | 'open' | 'unknown';
+    reason: string;
+    latest: OverviewReportRef | null;
+    lastPass: OverviewReportRef | null;
+  };
+  totals: {
+    archived: number;
+    folded: number;
+    counted: number;
+    pass: number;
+    conditional: number;
+    fail: number;
+    undetermined: number;
+    previous: { counted: number; pass: number; conditional: number; fail: number; undetermined: number };
+  };
+  passRate: {
+    kind: ReportKind;
+    numerator: number;
+    denominator: number;
+    rate: number | null;
+    previous: { numerator: number; denominator: number; rate: number | null };
+  };
+  kinds: Array<{ kind: ReportKind; count: number }>;
+  clusters: OverviewCluster[];
+  daily: OverviewDay[];
+  mergeCoverage: {
+    items: OverviewMergeItem[];
+    counts: Record<MergeCoverageStatus, number>;
+  };
+  /** 全时段折叠后的最新版报告（台账用，带版本与取代关系），按创建时间倒序。 */
+  reports: OverviewReportRef[];
+  /**
+   * 被取代的早期版本（折叠掉的那些），同样带服务端解析出的 kind/target/targetDate。
+   *
+   * 为什么必须返回：台账「展开被取代版本」时这些行也要落进九类页签。前端只有
+   * `reports` 时查不到它们的 kind，会整批掉进「其他」——页签计数虚高、点真实类目
+   * 又看不到它们（2026-09-09 富数据验收实测）。标题解析是服务端 SSOT，
+   * 前端不得自己再实现一份（predicate-and-wiring-discipline 形状 3）。
+   */
+  supersededReports: OverviewReportRef[];
+}
+
+const TITLE_RE = /^(\S+?)\s*[·・]\s*(.+?)\s*[·・]\s*(\d{4}-\d{2}-\d{2})\s*$/;
+
+export function parseReportTitle(title: string): ParsedReportTitle {
+  const m = TITLE_RE.exec(title.trim());
+  if (!m) return { kind: '其他', target: title.trim(), targetDate: null };
+  const prefix = m[1];
+  const kind: ReportKind = (REPORT_KINDS as readonly string[]).includes(prefix) ? (prefix as ReportKind) : '其他';
+  return { kind, target: kind === '其他' ? title.trim() : m[2].trim(), targetDate: m[3] };
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 用调用方时区偏移把 ISO 时间落到 YYYY-MM-DD。offsetMinutes 与 Date#getTimezoneOffset 同号。 */
+export function localDateOf(iso: string, offsetMinutes: number): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return iso.slice(0, 10);
+  return new Date(t - offsetMinutes * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function verdictRank(v: OverviewVerdict | null): number {
+  return v === 'fail' ? 3 : v === 'conditional' ? 2 : v === 'pass' ? 1 : 0;
+}
+
+function sumDefects(list: Array<Record<string, number> | null | undefined>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const d of list) {
+    if (!d) continue;
+    for (const [k, v] of Object.entries(d)) {
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+      const key = k.toLowerCase();
+      // 先夹再加：直接相加的话，同一簇里 { p0: 2 } 与 { p0: -2 } 合成 p0: 0，
+      // 于是根因那一行说「没有记录阻断缺陷」，而首屏（逐份夹过）说的是「有功能坏了」。
+      out[key] = (out[key] ?? 0) + Math.max(0, v);
+    }
+  }
+  return out;
+}
+
+/**
+ * 阻断缺陷数。写入侧不拦负数，而下游是用 `> 0` 与 `=== 0` 两个分支分流的：
+ * 负数两边都不落，一份未通过的报告会掉进 ok 档，首屏说「可以正常使用」而句子说有失败。
+ * 所以在这里就把每一项夹成非负，负数按零算，不让它往下走。
+ */
+function blockingDefects(d: Record<string, number> | null | undefined): number {
+  if (!d) return 0;
+  const n = (v: number | undefined): number => (Number.isFinite(v) && (v as number) > 0 ? (v as number) : 0);
+  return n(d.p0 ?? d.P0) + n(d.p1 ?? d.P1);
+}
+
+/** 这份报告有没有阻断缺陷——唯一判据。 */
+function hasBlockingDefects(r: { defectCounts?: Record<string, number> | null }): boolean {
+  return blockingDefects(r.defectCounts) > 0;
+}
+
+/**
+ * 生效结论。写入侧允许 verdict 与缺陷数打架（`normDefectCounts` 收下 pass 配 P0>0），
+ * 而验收规范写着「P0/P1 存在，总 Verdict 不得 pass」，所以以缺陷为准。
+ *
+ * 首屏状态、发布闸、下一步建议一律读这一个，谁都不许自己再判一遍——上一轮就是只改了
+ * 首屏，发布闸照旧说「可以发布」，同一个响应里一边「有功能坏了」一边放行
+ * （predicate-and-wiring-discipline 形状 3）。
+ */
+export function effectiveVerdict(r: { verdict?: 'pass' | 'conditional' | 'fail' | null; defectCounts?: Record<string, number> | null }): 'pass' | 'conditional' | 'fail' | null {
+  if (hasBlockingDefects(r)) return 'fail';
+  return r.verdict ?? null;
+}
+
+function identityKey(r: AcceptanceReportMeta, parsed: ParsedReportTitle): string {
+  return [r.projectId || '', parsed.kind, parsed.target, parsed.targetDate || ''].join('|');
+}
+
+function toRef(r: AcceptanceReportMeta, parsed: ParsedReportTitle, version: number, supersedes: string[]): OverviewReportRef {
+  return {
+    id: r.id,
+    title: r.title,
+    kind: parsed.kind,
+    target: parsed.target,
+    targetDate: parsed.targetDate,
+    verdict: effectiveVerdict(r),
+    claimedVerdict: r.verdict ?? null,
+    tier: r.tier ?? null,
+    defectCounts: r.defectCounts ?? null,
+    projectId: r.projectId ?? null,
+    branch: r.branch ?? null,
+    commitSha: r.commitSha ?? null,
+    prNumber: r.prNumber ?? null,
+    createdAt: r.createdAt,
+    shared: Boolean(r.shareToken),
+    version,
+    supersedes,
+  };
+}
+
+/**
+ * 按身份键折叠：同一（项目 · 前缀 · 对象 · 目标日）只保留创建最晚的一版。
+ * 这就是债务台账里「通过率只计每个身份的最新版」的落地；早期版本记进 supersedes。
+ */
+export function foldReportVersions(reports: AcceptanceReportMeta[]): { latest: OverviewReportRef[]; superseded: OverviewReportRef[]; folded: number } {
+  const groups = new Map<string, AcceptanceReportMeta[]>();
+  for (const r of reports) {
+    const key = identityKey(r, parseReportTitle(r.title));
+    const g = groups.get(key);
+    if (g) g.push(r);
+    else groups.set(key, [r]);
+  }
+  const latest: OverviewReportRef[] = [];
+  const superseded: OverviewReportRef[] = [];
+  let folded = 0;
+  for (const g of groups.values()) {
+    g.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    const last = g[g.length - 1];
+    const parsed = parseReportTitle(last.title);
+    latest.push(toRef(last, parsed, g.length, g.slice(0, -1).map((x) => x.id)));
+    g.slice(0, -1).forEach((old, i) => superseded.push(toRef(old, parseReportTitle(old.title), i + 1, [])));
+    folded += g.length - 1;
+  }
+  latest.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  superseded.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  return { latest, superseded, folded };
+}
+
+function inWindow(iso: string, from: number, to: number): boolean {
+  const t = Date.parse(iso);
+  return !Number.isNaN(t) && t >= from && t < to;
+}
+
+function countVerdicts(list: OverviewReportRef[]): { counted: number; pass: number; conditional: number; fail: number; undetermined: number } {
+  let pass = 0; let conditional = 0; let fail = 0; let undetermined = 0;
+  for (const r of list) {
+    if (r.verdict === 'pass') pass += 1;
+    else if (r.verdict === 'conditional') conditional += 1;
+    else if (r.verdict === 'fail') fail += 1;
+    else undetermined += 1;
+  }
+  return { counted: list.length, pass, conditional, fail, undetermined };
+}
+
+function passRateOf(list: OverviewReportRef[], kind: ReportKind): { numerator: number; denominator: number; rate: number | null } {
+  const pool = list.filter((r) => r.kind === kind && r.verdict);
+  const numerator = pool.filter((r) => r.verdict === 'pass').length;
+  const denominator = pool.length;
+  return { numerator, denominator, rate: denominator ? numerator / denominator : null };
+}
+
+function buildClusters(windowReports: OverviewReportRef[], allLatest: OverviewReportRef[], windowDays: number, toMs: number): OverviewCluster[] {
+  const groups = new Map<string, OverviewReportRef[]>();
+  for (const r of windowReports) {
+    if (r.verdict !== 'fail' && r.verdict !== 'conditional') continue;
+    const key = `${r.projectId || ''}|${r.target}`;
+    const g = groups.get(key);
+    if (g) g.push(r);
+    else groups.set(key, [r]);
+  }
+  const clusters: OverviewCluster[] = [];
+  for (const [key, g] of groups) {
+    g.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const fails = g.filter((r) => r.verdict === 'fail');
+    const conds = g.filter((r) => r.verdict === 'conditional');
+    // 同一对象、同一目标日既有未通过又有有条件 → 口径冲突（记录自己打架，不是产品坏了）。
+    const conflict = fails.length > 0 && conds.length > 0
+      && fails.some((f) => conds.some((c) => c.targetDate && c.targetDate === f.targetDate));
+    const verdict: OverviewCluster['verdict'] = conflict ? 'conflict' : fails.length > 0 ? 'fail' : 'conditional';
+    const target = g[0].target;
+    const projectId = g[0].projectId;
+    // 连续多少个窗口有未通过：往前逐窗看同对象的最新版里有没有 fail。
+    let streak = 0;
+    if (verdict !== 'conditional') {
+      const windowMs = windowDays * DAY_MS;
+      for (let i = 0; i < 12; i += 1) {
+        const from = toMs - (i + 1) * windowMs;
+        const to = toMs - i * windowMs;
+        const hit = allLatest.some((r) => r.verdict === 'fail' && r.target === target && (r.projectId || null) === projectId && inWindow(r.createdAt, from, to));
+        if (!hit) break;
+        streak += 1;
+      }
+    }
+    clusters.push({
+      id: key,
+      verdict,
+      target,
+      projectId,
+      kinds: Array.from(new Set(g.map((r) => r.kind))),
+      count: g.length,
+      failCount: fails.length,
+      conditionalCount: conds.length,
+      reportIds: g.map((r) => r.id),
+      latestReportId: g[0].id,
+      latestCreatedAt: g[0].createdAt,
+      defectCounts: sumDefects(g.map((r) => r.defectCounts)),
+      streakWindows: streak,
+    });
+  }
+  const order = { fail: 0, conflict: 1, conditional: 2 } as const;
+  clusters.sort((a, b) => order[a.verdict] - order[b.verdict] || b.count - a.count || b.latestCreatedAt.localeCompare(a.latestCreatedAt));
+  return clusters;
+}
+
+function buildDaily(latest: OverviewReportRef[], toMs: number, days: number, tzOffsetMinutes: number): OverviewDay[] {
+  const byDate = new Map<string, OverviewReportRef[]>();
+  for (const r of latest) {
+    if (r.kind !== '每日验收') continue;
+    const d = localDateOf(r.createdAt, tzOffsetMinutes);
+    const g = byDate.get(d);
+    if (g) g.push(r);
+    else byDate.set(d, [r]);
+  }
+  const out: OverviewDay[] = [];
+  const endDate = localDateOf(new Date(toMs - 1).toISOString(), tzOffsetMinutes);
+  const endMs = Date.parse(`${endDate}T00:00:00Z`);
+  for (let i = days - 1; i >= 0; i -= 1) {
+    const date = new Date(endMs - i * DAY_MS).toISOString().slice(0, 10);
+    const reports = (byDate.get(date) ?? []).map((r) => ({ id: r.id, verdict: r.verdict }));
+    let worst: OverviewVerdict | null = null;
+    for (const r of reports) if (verdictRank(r.verdict) > verdictRank(worst)) worst = r.verdict;
+    out.push({ date, reports, worst });
+  }
+  return out;
+}
+
+/**
+ * 报告 ↔ 改动单元的对齐判据（唯一一份）。
+ *
+ * 报告侧只有三个自由文本字段（branch / commitSha / prNumber），改动侧（分支或墓碑）
+ * 也是这三样。合并覆盖与流水线漏斗都要按同一口径对齐——写两份必然漂
+ * （predicate-and-wiring-discipline 形状 3），所以抽在这里给两边共用。
+ *
+ * 三把钥匙按可信度排序：PR 号 > commit（允许任一方是前缀）> 分支名。
+ * 一把都对不上就是对不上，绝不猜——「对不上」本身是流水线要报的一档。
+ */
+export interface ChangeKeys {
+  projectId: string | null;
+  branch?: string | null;
+  prNumber?: number | null;
+  commitSha?: string | null;
+}
+
+export function matchesChange(r: OverviewReportRef, k: ChangeKeys): boolean {
+  if ((r.projectId || null) !== (k.projectId || null)) return false;
+  // PR 号是最强的一把，两边都记了就以它为准：相等即命中，**不等即否决**，不许再退到分支名。
+  // 分支名会被复用（同一条 claude/xxx 跑完一个 PR 再开下一个），退下去就把上一个 PR 的
+  // 报告挂到了新改动上——首页据此报「已验收」，而这条改动其实一份报告都没有。
+  if (k.prNumber != null && r.prNumber != null) return r.prNumber === k.prNumber;
+  // commit 只做正向信号，不做否决：改动侧给的常常是**合并提交**，报告记的是分支头提交，
+  // 两者天然不同。拿它否决会把正常的合并覆盖判成没验，比漏判更糟。
+  if (k.commitSha && r.commitSha && (k.commitSha.startsWith(r.commitSha) || r.commitSha.startsWith(k.commitSha))) return true;
+  return Boolean(k.branch && r.branch && r.branch === k.branch);
+}
+
+function buildMergeCoverage(tombstones: BranchTombstone[], latest: OverviewReportRef[], fromMs: number, toMs: number, projectId: string | null): ReportsOverview['mergeCoverage'] {
+  const items: OverviewMergeItem[] = [];
+  for (const t of tombstones) {
+    if (t.reason !== 'merged') continue;
+    if (projectId && t.projectId !== projectId) continue;
+    if (!inWindow(t.removedAt, fromMs, toMs)) continue;
+    const matched = latest.filter((r) => matchesChange(r, {
+      projectId: t.projectId, branch: t.branch, prNumber: t.prNumber ?? null, commitSha: t.mergeCommitSha ?? null,
+    }));
+    let status: MergeCoverageStatus = 'unverified';
+    if (matched.length) {
+      matched.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const v = matched[0].verdict;
+      status = v === 'pass' ? 'verified' : v === 'fail' ? 'failed' : v === 'conditional' ? 'conditional' : 'unverified';
+    }
+    items.push({
+      branch: t.branch,
+      projectId: t.projectId,
+      prNumber: t.prNumber ?? null,
+      prUrl: t.prUrl ?? null,
+      mergeCommitSha: t.mergeCommitSha ?? null,
+      mergedAt: t.removedAt,
+      status,
+      reportIds: matched.map((r) => r.id),
+    });
+  }
+  items.sort((a, b) => b.mergedAt.localeCompare(a.mergedAt));
+  const counts: Record<MergeCoverageStatus, number> = { verified: 0, conditional: 0, failed: 0, unverified: 0 };
+  for (const it of items) counts[it.status] += 1;
+  return { items, counts };
+}
+
+function fmtDate(iso: string): string {
+  return iso.slice(5, 10);
+}
+
+export interface BuildOverviewOptions {
+  /** 窗口结束（不含）；默认现在。 */
+  to?: Date;
+  /** 窗口天数；默认 7。 */
+  days?: number;
+  /** 调用方时区偏移（Date#getTimezoneOffset 同号）；默认 0。 */
+  tzOffsetMinutes?: number;
+  /** 通过率统计的报告类型；默认功能验收。 */
+  passRateKind?: ReportKind;
+  /** 每日验收连续性看多少天；默认 14。 */
+  dailyDays?: number;
+  /** 项目作用域（合并记录按此过滤）；null = 全部。 */
+  projectId?: string | null;
+}
+
+export function buildReportsOverview(
+  reports: AcceptanceReportMeta[],
+  tombstones: BranchTombstone[],
+  options: BuildOverviewOptions = {},
+): ReportsOverview {
+  const days = Math.max(1, Math.min(90, options.days ?? 7));
+  const toMs = (options.to ?? new Date()).getTime();
+  const fromMs = toMs - days * DAY_MS;
+  const prevFromMs = fromMs - days * DAY_MS;
+  const tz = options.tzOffsetMinutes ?? 0;
+  const passRateKind = options.passRateKind ?? '功能验收';
+
+  const { latest: allLatest, superseded: allSuperseded, folded: foldedAll } = foldReportVersions(reports);
+  const windowReports = allLatest.filter((r) => inWindow(r.createdAt, fromMs, toMs));
+  const prevReports = allLatest.filter((r) => inWindow(r.createdAt, prevFromMs, fromMs));
+  const archivedInWindow = reports.filter((r) => inWindow(r.createdAt, fromMs, toMs)).length;
+  const foldedInWindow = archivedInWindow - windowReports.length;
+  void foldedAll;
+
+  const counts = countVerdicts(windowReports);
+  const prevCounts = countVerdicts(prevReports);
+  const passRate = passRateOf(windowReports, passRateKind);
+  const prevPassRate = passRateOf(prevReports, passRateKind);
+
+  const kindCounts = new Map<ReportKind, number>();
+  for (const r of windowReports) kindCounts.set(r.kind, (kindCounts.get(r.kind) ?? 0) + 1);
+  const kinds = Array.from(kindCounts, ([kind, count]) => ({ kind, count })).sort((a, b) => b.count - a.count);
+
+  const clusters = buildClusters(windowReports, allLatest, days, toMs);
+  const daily = buildDaily(allLatest, toMs, Math.max(1, Math.min(90, options.dailyDays ?? 14)), tz);
+  const mergeCoverage = buildMergeCoverage(tombstones, allLatest, fromMs, toMs, options.projectId ?? null);
+
+  // 发布闸：只看最近一次「发布验收」的最新版结论。
+  // `r.verdict` 到这里已经是生效结论（在 toRef 换算过），所以一份没写结论但记了 P0 的
+  // 发布验收带着 fail 进来，不会再被这条前置过滤丢掉——原先它会被丢掉，于是更早那份
+  // 通过的报告继续把闸门撑开，而首屏已经说产品坏了（Codex 第二十二轮）。
+  // 不在这里再补一次 hasBlockingDefects：边界已经管了，补上去是一条永远不会红的分支。
+  const releaseReports = allLatest.filter((r) => r.kind === '发布验收' && r.verdict);
+  const latestRelease = releaseReports[0] ?? null;
+  const lastPassRelease = releaseReports.find((r) => r.verdict === 'pass') ?? null;
+  let gateState: ReportsOverview['releaseGate']['state'] = 'unknown';
+  let gateReason = '还没有任何发布验收报告，发布前先跑一次「发布验收」。';
+  if (latestRelease) {
+    if (latestRelease.verdict === 'pass') {
+      gateState = 'open';
+      gateReason = `最近一次发布验收 ${fmtDate(latestRelease.createdAt)} 通过。`;
+    } else {
+      gateState = 'blocked';
+      const b = blockingDefects(latestRelease.defectCounts);
+      // 措辞按报告自己写的结论说，后面紧跟阻断缺陷数——「标为通过，阻断缺陷 1 个」
+      // 才看得出这份报告自相矛盾；直接说成「未通过」会把矛盾藏起来。
+      const claimed = latestRelease.claimedVerdict === 'fail' ? '未通过'
+        : latestRelease.claimedVerdict === 'conditional' ? '原则性通过' : '标为通过';
+      gateReason = `最近一次发布验收 ${fmtDate(latestRelease.createdAt)} ${claimed}`
+        + (b ? `，阻断缺陷 ${b} 个` : '')
+        + (lastPassRelease ? `；上一次通过是 ${fmtDate(lastPassRelease.createdAt)}。` : '；此前没有通过记录。');
+    }
+  }
+
+  // 首屏状态（§7.0）：产品失败与验收失败分开。
+  //
+  // 「有阻断缺陷」不看 verdict：写入侧允许 verdict=pass 配 P0>0（`normDefectCounts` 不做
+  // 一致性校验），只认 fail 的话首屏会说「可以正常使用」，而同一份报告在台账里明晃晃
+  // 列着阻断缺陷。验收规范本身也写着「P0/P1 存在，总 Verdict 不得 pass」，所以这里以
+  // 缺陷数为准。fail 但完全没记缺陷的那一种仍按产品坏了处理（不知道 ≠ 没有）。
+  const failsWithBlocking = windowReports.filter((r) => hasBlockingDefects(r)
+    || (r.verdict === 'fail' && r.defectCounts == null));
+  const failsWithoutDefects = windowReports.filter((r) => r.verdict === 'fail' && r.defectCounts != null && blockingDefects(r.defectCounts) === 0);
+  // 没填结论的报告不算「测过」：把它算进 ok，第一屏就会对着 0 份通过说「可以正常使用」。
+  // verdict 在写入侧是可缺省的（POST /api/reports 不强制），所以这是真实输入能走到的分支。
+  const decided = counts.pass + counts.conditional + counts.fail;
+  let status: ReportsOverview['headline']['status'];
+  if (failsWithBlocking.length > 0) status = 'broken';
+  else if (decided === 0 || failsWithoutDefects.length > 0) status = 'untested';
+  else status = 'ok';
+  const statusLabel = status === 'broken' ? '有功能坏了' : status === 'ok' ? '可以正常使用' : '这次没测出来';
+
+  const top = clusters.find((c) => c.verdict === 'fail' || c.verdict === 'conflict');
+  let sentence: string;
+  const undeterminedTail = counts.undetermined > 0 ? `；另有 ${counts.undetermined} 份没有填结论，不计入判断。` : '';
+  if (windowReports.length === 0) {
+    sentence = `最近 ${days} 天没有归档任何验收报告，无法判断产品状态。`;
+  } else if (decided === 0) {
+    sentence = `最近 ${days} 天归档了 ${counts.counted} 份报告，都没有填结论，判断不出产品状态。`;
+  } else if (counts.fail > 0 && top) {
+    const same = top.count > 1 ? `里有 ${top.count} 份指向同一处：${top.target}` : `：${top.target}`;
+    const streak = top.streakWindows > 1 ? `，连续第 ${top.streakWindows} 个时间窗未通过` : '';
+    sentence = `${counts.fail} 份未通过${same}${streak}。`;
+  } else if (counts.fail > 0) {
+    sentence = `${counts.fail} 份未通过，分散在不同对象上。`;
+  } else if (counts.conditional > 0) {
+    sentence = `${decided} 份验收没有发现阻断；${counts.conditional} 份原则性通过，条件都在待决清单里${undeterminedTail || '。'}`;
+  } else {
+    sentence = `${counts.pass} 份验收全部通过，没有发现阻断${undeterminedTail || '。'}`;
+  }
+
+  const supports: ReportsOverview['headline']['supports'] = [];
+  const newFail = clusters.find((c) => c.verdict === 'fail' && c.streakWindows <= 1 && c !== top);
+  if (newFail) {
+    supports.push({ kind: 'new', anchor: 'clusters', text: `${newFail.target} 本窗新出现 ${newFail.count} 份未通过，之后没有复测。` });
+  }
+  const gapDays = daily.filter((d) => d.reports.length === 0).length;
+  const unverified = mergeCoverage.counts.unverified;
+  const coverageBits: string[] = [];
+  if (unverified > 0) coverageBits.push(`合并的 ${mergeCoverage.items.length} 条分支里 ${unverified} 条零验收`);
+  if (gapDays > 0) coverageBits.push(`${daily.length} 天里 ${gapDays} 天没有每日验收`);
+  if (coverageBits.length) supports.push({ kind: 'coverage', anchor: 'coverage', text: `${coverageBits.join('；')}。这是证据空白，不是产品缺陷。` });
+  if (gateState === 'blocked') {
+    supports.push({ kind: 'decision', anchor: 'ledger', text: `发布闸是红的：${gateReason}` });
+  } else if (top && top.streakWindows > 1) {
+    supports.push({ kind: 'decision', anchor: 'clusters', text: `${top.target} 已连续 ${top.streakWindows} 个时间窗未通过，需要指定负责人拆成单点逐点验。` });
+  }
+
+  return {
+    window: {
+      from: new Date(fromMs).toISOString(),
+      to: new Date(toMs).toISOString(),
+      days,
+      previousFrom: new Date(prevFromMs).toISOString(),
+    },
+    headline: { status, statusLabel, sentence, supports },
+    releaseGate: { state: gateState, reason: gateReason, latest: latestRelease, lastPass: lastPassRelease },
+    totals: {
+      archived: archivedInWindow,
+      folded: foldedInWindow,
+      counted: counts.counted,
+      pass: counts.pass,
+      conditional: counts.conditional,
+      fail: counts.fail,
+      undetermined: counts.undetermined,
+      // undetermined 一并带上：counted 里本来就含它，只给三档会让上窗那根条与它的总数对不上
+      // （屏幕上出现「上窗 5 份」配一根空条）。
+      previous: { counted: prevCounts.counted, pass: prevCounts.pass, conditional: prevCounts.conditional, fail: prevCounts.fail, undetermined: prevCounts.undetermined },
+    },
+    passRate: { kind: passRateKind, ...passRate, previous: prevPassRate },
+    kinds,
+    clusters,
+    daily,
+    mergeCoverage,
+    reports: allLatest,
+    supersededReports: allSuperseded,
+  };
+}
