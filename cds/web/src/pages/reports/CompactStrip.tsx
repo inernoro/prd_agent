@@ -13,7 +13,7 @@
  * 三条纪律：
  * 1. **每段点阵共用同一个分母**（都是 changes 个格子，点亮各自那几个），
  *    所以三段的比例可以直接对看，不需要图例。
- * 2. **点子尺寸随条数分档**：5 条时是 20px 的大方块，71 条时是 5px 的细点。
+ * 2. **点子尺寸随条数分档**：5 条时是 1.25rem 的大方块，71 条时是 0.3125rem 的细点。
  *    数据少的时候格子变大而不是画面变空——上一版最大的毛病就在这里。
  * 3. 颜色一律走 token 且 `hsl()` 包裹（token 是 HSL 三元组，裸写整条属性静默失效）。
  */
@@ -128,42 +128,42 @@ export interface CompactStripProps {
 export const EXPAND_CSS = `
 /* 放大态：与紧凑条同一套语言（数字 + 分段条 + 点阵），不再切换成另一种隐喻。
    之前放大态是厂房剖面，两套视觉摆在同一页上，读者要在两种编码之间来回翻译。 */
-.ex{display:flex;flex-direction:column;gap:14px;}
+.ex{display:flex;flex-direction:column;gap:0.875rem;}
 .ex table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;}
-.ex th{padding:0 0 8px;text-align:left;font-size:11px;font-weight:400;letter-spacing:.12em;
+.ex th{padding:0 0 0.5rem;text-align:left;font-size:0.6875rem;font-weight:400;letter-spacing:.12em;
   color:hsl(var(--muted-foreground));border-bottom:1px solid hsl(var(--hairline));white-space:nowrap;}
 .ex th.n,.ex td.n{text-align:right;}
-.ex td{padding:9px 0;border-bottom:1px solid hsl(var(--hairline));vertical-align:middle;}
+.ex td{padding:0.5625rem 0;border-bottom:1px solid hsl(var(--hairline));vertical-align:middle;}
 .ex tr.row{cursor:pointer;}
 .ex tr.row:hover td,.ex tr.row:focus-visible td{background:hsl(var(--surface-base));}
-.ex .pname{font-size:13px;font-weight:600;padding-right:16px;white-space:nowrap;
-  overflow:hidden;text-overflow:ellipsis;max-width:220px;}
-.ex .off{margin-left:8px;font-size:11px;font-weight:400;color:hsl(var(--muted-foreground));}
-.ex .barcell{width:60%;padding-right:16px;}
-.ex .seg{display:flex;gap:1px;height:14px;width:100%;border-radius:2px;overflow:hidden;
+.ex .pname{font-size:0.8125rem;font-weight:600;padding-right:1rem;white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;max-width:13.75rem;}
+.ex .off{margin-left:0.5rem;font-size:0.6875rem;font-weight:400;color:hsl(var(--muted-foreground));}
+.ex .barcell{width:60%;padding-right:1rem;}
+.ex .seg{display:flex;gap:1px;height:0.875rem;width:100%;border-radius:2px;overflow:hidden;
   background:hsl(var(--surface-sunken));}
 .ex .seg span{display:block;height:100%;}
 .ex .e1{background:hsl(var(--hairline-strong));}
 .ex .e2{background:hsl(var(--muted-foreground));}
 .ex .e3{background:hsl(var(--foreground));}
-.ex .num{font-size:14px;font-weight:600;padding-left:14px;white-space:nowrap;}
+.ex .num{font-size:0.875rem;font-weight:600;padding-left:0.875rem;white-space:nowrap;}
 .ex .num.mute{color:hsl(var(--hairline-strong));}
-.ex .when{font-size:12px;color:hsl(var(--muted-foreground));padding-left:14px;white-space:nowrap;}
-.ex .outside{display:flex;flex-wrap:wrap;gap:28px;padding-top:2px;}
-.ex .obox{display:flex;align-items:baseline;gap:8px;min-width:0;}
-.ex .olab{font-size:11px;letter-spacing:.12em;color:hsl(var(--muted-foreground));white-space:nowrap;}
-.ex .onum{font-size:19px;font-weight:600;}
-.ex .odots{display:flex;flex-wrap:wrap;gap:2px;align-content:center;max-width:420px;}
-.ex .odots i{display:block;width:5px;height:5px;border-radius:1px;background:hsl(var(--hairline-strong));}
+.ex .when{font-size:0.75rem;color:hsl(var(--muted-foreground));padding-left:0.875rem;white-space:nowrap;}
+.ex .outside{display:flex;flex-wrap:wrap;gap:1.75rem;padding-top:2px;}
+.ex .obox{display:flex;align-items:baseline;gap:0.5rem;min-width:0;}
+.ex .olab{font-size:0.6875rem;letter-spacing:.12em;color:hsl(var(--muted-foreground));white-space:nowrap;}
+.ex .onum{font-size:1.1875rem;font-weight:600;}
+.ex .odots{display:flex;flex-wrap:wrap;gap:2px;align-content:center;max-width:26.25rem;}
+.ex .odots i{display:block;width:0.3125rem;height:0.3125rem;border-radius:1px;background:hsl(var(--hairline-strong));}
 `;
 
 export const STRIP_CSS = `
-.cs{display:flex;flex-direction:column;gap:16px;border-radius:12px;
+.cs{display:flex;flex-direction:column;gap:1rem;border-radius:0.75rem;
   border:1px solid hsl(var(--hairline));background:hsl(var(--card));
-  padding:16px 18px;font-variant-numeric:tabular-nums;}
+  padding:1rem 1.125rem;font-variant-numeric:tabular-nums;}
 @media (min-width:1024px){
-  .cs{flex-direction:row;align-items:stretch;justify-content:space-between;gap:20px;
-    height:176px;padding:16px 22px;overflow:hidden;}
+  .cs{flex-direction:row;align-items:stretch;justify-content:space-between;gap:1.25rem;
+    height:11rem;padding:1rem 1.375rem;overflow:hidden;}
 }
 
 .cs .z{display:flex;min-width:0;flex-direction:column;justify-content:flex-start;}
@@ -173,32 +173,32 @@ export const STRIP_CSS = `
   .cs .vr{display:block;flex:0 0 1px;align-self:stretch;background:hsl(var(--hairline));}
 }
 
-.cs .pad{height:10px;flex:0 0 auto;}
-.cs .eyebrow{font-size:11px;line-height:13px;letter-spacing:.12em;white-space:nowrap;
+.cs .pad{height:0.625rem;flex:0 0 auto;}
+.cs .eyebrow{font-size:0.6875rem;line-height:0.8125rem;letter-spacing:.12em;white-space:nowrap;
   color:hsl(var(--muted-foreground));}
 .cs .eyebrow b{font-weight:600;letter-spacing:0;color:hsl(var(--foreground));}
 
 .cs .num{font-weight:600;letter-spacing:-.02em;line-height:1;}
-.cs .numbox{height:64px;display:flex;align-items:flex-end;}
-.cs .num-xl{font-size:64px;}
-.cs .num-l{font-size:40px;}
+.cs .numbox{height:4rem;display:flex;align-items:flex-end;}
+.cs .num-xl{font-size:4rem;}
+.cs .num-l{font-size:2.5rem;}
 .cs .t1{color:hsl(var(--hairline-strong));}
 .cs .t2{color:hsl(var(--muted-foreground));}
 .cs .t3{color:hsl(var(--foreground));}
 
-.cs .z-total{flex:1 1 124px;max-width:180px;}
-.cs .rail{display:flex;gap:1px;height:10px;width:100%;}
+.cs .z-total{flex:1 1 7.75rem;max-width:11.25rem;}
+.cs .rail{display:flex;gap:1px;height:0.625rem;width:100%;}
 .cs .rail span{display:block;height:100%;}
 .cs .f1{background:hsl(var(--hairline-strong));}
 .cs .f2{background:hsl(var(--muted-foreground));}
 .cs .f3{background:hsl(var(--foreground));}
 
-.cs .z-stages{flex:1.4 1 432px;max-width:666px;margin-left:-2px;}
-.cs .bracket{height:10px;flex:0 0 10px;margin-left:-20px;border-bottom:1px solid hsl(var(--hairline));}
-.cs .stagerow{display:flex;gap:18px;width:100%;flex:1 1 auto;align-items:stretch;}
+.cs .z-stages{flex:1.4 1 27rem;max-width:41.625rem;margin-left:-2px;}
+.cs .bracket{height:0.625rem;flex:0 0 0.625rem;margin-left:-1.25rem;border-bottom:1px solid hsl(var(--hairline));}
+.cs .stagerow{display:flex;gap:1.125rem;width:100%;flex:1 1 auto;align-items:stretch;}
 .cs .stage{position:relative;display:flex;min-width:0;flex:1 1 0;flex-direction:column;
   justify-content:space-between;}
-.cs .stage .tick{position:absolute;top:-6px;left:0;width:1px;height:6px;background:hsl(var(--hairline));}
+.cs .stage .tick{position:absolute;top:-0.375rem;left:0;width:1px;height:0.375rem;background:hsl(var(--hairline));}
 .cs .field{display:flex;flex-wrap:wrap;gap:var(--dg);align-content:flex-end;width:100%;overflow:hidden;}
 .cs .d{display:block;width:var(--dot);height:var(--dot);border-radius:1px;
   background:hsl(var(--surface-sunken));}
@@ -212,15 +212,15 @@ export const STRIP_CSS = `
 .cs .d.v-warn{background:hsl(var(--warn));}
 .cs .d.v-bad{background:hsl(var(--bad));}
 
-.cs .z-verdict{flex:1 1 140px;max-width:250px;}
-.cs .vlist{display:flex;flex-direction:column;gap:7px;}
-.cs .vrow{display:flex;align-items:center;gap:7px;}
-.cs .chip{flex:0 0 8px;height:8px;border-radius:2px;}
-.cs .vlab{flex:0 0 52px;font-size:11px;white-space:nowrap;color:hsl(var(--muted-foreground));}
-.cs .vbarw{flex:1 1 auto;min-width:20px;height:8px;border-radius:2px;overflow:hidden;
+.cs .z-verdict{flex:1 1 8.75rem;max-width:15.625rem;}
+.cs .vlist{display:flex;flex-direction:column;gap:0.4375rem;}
+.cs .vrow{display:flex;align-items:center;gap:0.4375rem;}
+.cs .chip{flex:0 0 0.5rem;height:0.5rem;border-radius:2px;}
+.cs .vlab{flex:0 0 3.25rem;font-size:0.6875rem;white-space:nowrap;color:hsl(var(--muted-foreground));}
+.cs .vbarw{flex:1 1 auto;min-width:1.25rem;height:0.5rem;border-radius:2px;overflow:hidden;
   background:hsl(var(--surface-sunken));}
 .cs .vbar{display:block;height:100%;}
-.cs .vnum{flex:0 0 16px;text-align:right;font-size:15px;font-weight:600;}
+.cs .vnum{flex:0 0 1rem;text-align:right;font-size:0.9375rem;font-weight:600;}
 .cs .c-ok{background:hsl(var(--ok));}
 .cs .c-warn{background:hsl(var(--warn));}
 .cs .c-bad{background:hsl(var(--bad));}
@@ -229,14 +229,14 @@ export const STRIP_CSS = `
 .cs .n-bad{color:hsl(var(--bad));}
 .cs .n-zero{color:hsl(var(--hairline-strong));}
 
-.cs .z-proj{flex:4 1 300px;min-width:240px;max-width:990px;}
-.cs .lead{display:flex;align-items:baseline;gap:8px;margin-top:5px;}
-.cs .lead b{font-size:13px;font-weight:600;}
-.cs .lead span{font-size:13px;color:hsl(var(--muted-foreground));}
-.cs .barrow{display:flex;align-items:flex-end;gap:4px;height:92px;margin-top:5px;
+.cs .z-proj{flex:4 1 18.75rem;min-width:15rem;max-width:61.875rem;}
+.cs .lead{display:flex;align-items:baseline;gap:0.5rem;margin-top:0.3125rem;}
+.cs .lead b{font-size:0.8125rem;font-weight:600;}
+.cs .lead span{font-size:0.8125rem;color:hsl(var(--muted-foreground));}
+.cs .barrow{display:flex;align-items:flex-end;gap:0.25rem;height:5.75rem;margin-top:0.3125rem;
   border-bottom:1px solid hsl(var(--hairline-strong));}
 .cs .bar{display:flex;min-width:0;align-items:flex-end;cursor:pointer;}
-.cs .track{position:relative;display:block;width:100%;height:92px;overflow:hidden;
+.cs .track{position:relative;display:block;width:100%;height:5.75rem;overflow:hidden;
   border:1px solid hsl(var(--hairline));border-bottom:none;border-radius:2px 2px 0 0;
   background:hsl(var(--surface-base));}
 .cs .track.empty{background:transparent;border-left:1px dotted hsl(var(--hairline-strong));
@@ -244,12 +244,12 @@ export const STRIP_CSS = `
 .cs .fill{position:absolute;left:0;right:0;bottom:0;background:hsl(var(--foreground));}
 .cs .bar:hover .track,.cs .bar:focus-visible .track{border-color:hsl(var(--foreground));}
 
-.cs .z-side{flex:1 1 106px;max-width:190px;}
-.cs .slist{display:flex;flex-direction:column;gap:11px;}
-.cs .srow{display:grid;grid-template-columns:auto 1fr;column-gap:8px;row-gap:4px;align-items:baseline;}
-.cs .slab{font-size:11px;color:hsl(var(--muted-foreground));}
-.cs .snum{font-size:19px;font-weight:600;text-align:right;}
-.cs .sbarw{grid-column:1 / -1;height:4px;border-radius:2px;overflow:hidden;
+.cs .z-side{flex:1 1 6.625rem;max-width:11.875rem;}
+.cs .slist{display:flex;flex-direction:column;gap:0.6875rem;}
+.cs .srow{display:grid;grid-template-columns:auto 1fr;column-gap:0.5rem;row-gap:0.25rem;align-items:baseline;}
+.cs .slab{font-size:0.6875rem;color:hsl(var(--muted-foreground));}
+.cs .snum{font-size:1.1875rem;font-weight:600;text-align:right;}
+.cs .sbarw{grid-column:1 / -1;height:0.25rem;border-radius:2px;overflow:hidden;
   background:hsl(var(--surface-sunken));}
 .cs .sbar{display:block;height:100%;background:hsl(var(--hairline-strong));}
 
@@ -265,12 +265,12 @@ export const STRIP_CSS = `
 @keyframes cs-growy{from{transform:scaleY(0);}}
 
 @media (max-width:1340px) and (min-width:1024px){
-  .cs{gap:15px;padding:16px 18px;}
-  .cs .stagerow{gap:14px;}
-  .cs .z-stages{flex:1.4 1 354px;}
-  .cs .bracket{margin-left:-15px;}
-  .cs .num-xl{font-size:56px;}
-  .cs .numbox{height:56px;}
+  .cs{gap:0.9375rem;padding:1rem 1.125rem;}
+  .cs .stagerow{gap:0.875rem;}
+  .cs .z-stages{flex:1.4 1 22.125rem;}
+  .cs .bracket{margin-left:-0.9375rem;}
+  .cs .num-xl{font-size:3.5rem;}
+  .cs .numbox{height:3.5rem;}
 }
 `;
 
@@ -279,7 +279,7 @@ export const STRIP_CSS = `
  *
  * 不做「按容器宽高实算」是有意的：容器宽度由 flex 在运行时决定，CSS 算不出来，
  * 要算就得上 ResizeObserver，为一排小方块引一套测量循环不划算。分档表的效果
- * 一样达到了目的——5 条时每格 20px，71 条时 5px，数据少的时候格子变大。
+ * 一样达到了目的——5 条时每格 1.25rem，71 条时 0.3125rem，数据少的时候格子变大。
  */
 export function dotMetrics(total: number): {
   dot: number;
@@ -469,7 +469,7 @@ export function CompactStrip({
                   className="bar"
                   role="button"
                   tabIndex={0}
-                  style={{ flex: ch > 0 ? `${ch} 1 8px` : '0 0 8px' }}
+                  style={{ flex: ch > 0 ? `${ch} 1 0.5rem` : '0 0 0.5rem' }}
                   data-tip={projectTip(p)}
                   onClick={() => onOpenProject(p.projectId)}
                   onKeyDown={(e) => {

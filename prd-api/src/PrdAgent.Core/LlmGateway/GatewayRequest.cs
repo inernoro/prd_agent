@@ -436,6 +436,15 @@ public sealed class GatewayAppCallerRecord
     public string AppCallerCode { get; set; } = string.Empty;
     public string RequestType { get; set; } = string.Empty;
     public string SourceSystem { get; set; } = "external";
+    /// <summary>
+    /// 是否由网关控制台自己托管的系统 appCaller（Quickstart 用途码推导等内部调用）。
+    ///
+    /// 三态，不要收敛成 bool：true = 系统托管；false = 明确属于用户；null = 存量文档还
+    /// 没有这个字段，此时由 console-api 按 SourceSystem 等特征兜底判定
+    /// （见 llmgw/console-api/Program.cs 的 callerIsOurs），读方不替它下结论。
+    /// 写方是弱类型 BsonDocument，这里是同一份数据的强类型读法——两边必须同时改。
+    /// </summary>
+    public bool? SystemManaged { get; set; }
     public string IngressProtocol { get; set; } = string.Empty;
     public List<string> ObservedIngressProtocols { get; set; } = new();
     public string? Title { get; set; }

@@ -2,9 +2,12 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type {
-  DbLedgerEntry, CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+  DbLedgerEntry, CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, UptimeCustomMonitor, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot,
+  MonitorObservation,
+} from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
+import { MAX_OBSERVATIONS } from './uptime-custom-monitor.js'; // monitor-observation-import
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
@@ -281,6 +284,17 @@ function migrateCustomEnv(raw: unknown): CustomEnvStore {
   return out;
 }
 
+/** removeProject 的级联清理清单（也是 onProjectRemoved 观察者收到的东西）。 */
+export interface ProjectRemovalSummary {
+  branches: string[];
+  buildProfiles: string[];
+  infraServices: string[];
+  routingRules: string[];
+  projectGrants: string[];
+  dbLedgerEntries: string[];
+  uptimeMonitors: string[];
+}
+
 export class StateService {
   private state: CdsState = emptyState();
   private readonly filePath: string;
@@ -312,6 +326,10 @@ export class StateService {
    * unref 掉：它绝不该让进程为了一次日志落盘而多活着。
    */
   private releaseLogFlushTimer: NodeJS.Timeout | null = null;
+
+  private readonly projectRemovedListeners: Array<(summary: ProjectRemovalSummary) => void> = [];
+  /** 分支删除时被级联清掉的自定义监控 id —— 运行态台账靠它同步抹除。 */
+  private readonly orphanedMonitorListeners: Array<(monitorIds: string[]) => void> = [];
 
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
@@ -1242,7 +1260,21 @@ export class StateService {
     return conflicts;
   }
 
-  removeBranch(id: string): void {
+  /**
+   * 删分支，并级联清掉**绑在这条分支上**的自定义监控。
+   *
+   * 返回被清掉的监控 id，调用方据此把运行态台账也抹掉（forgetTargets）。
+   * 返回值是新增的，原来返回 void——忽略它的调用方行为不变。
+   *
+   * 为什么必须级联（2026-09-09）：项目级 Key 自助登记的监控指向的是某条分支的
+   * 预览地址，而分支是会消失的。分支删了监控还在，就变成一条**永远红着的死地址**：
+   * 它不是故障，却长期占着故障位，把真告警淹掉，最后所有人学会无视这块面板。
+   * 项目删除早就有同款级联（同一个理由），分支这一层此前是漏的。
+   *
+   * 只清 boundBranchId 命中的：管理员手动加的监控没有这个绑定，不受影响——
+   * 那是人明确要盯的东西，不该因为某条分支没了就替他删掉。
+   */
+  removeBranch(id: string): string[] {
     if (!this.state.branches[id]) {
       throw new Error(`分支 "${id}" 不存在`);
     }
@@ -1250,6 +1282,21 @@ export class StateService {
     if (this.state.defaultBranch === id) {
       this.state.defaultBranch = null;
     }
+    const orphaned = Object.values(this.state.uptimeMonitors || {})
+      .filter((monitor) => monitor.boundBranchId === id)
+      .map((monitor) => monitor.id);
+    for (const mid of orphaned) delete this.state.uptimeMonitors?.[mid];
+    if (orphaned.length > 0) {
+      for (const listener of this.orphanedMonitorListeners) {
+        // 各自 try/catch：一个观察者抛了不该让删分支这件事失败。
+        try {
+          listener(orphaned);
+        } catch {
+          // 观察者自己的问题，不影响删除结果
+        }
+      }
+    }
+    return orphaned;
   }
 
   setDefaultBranch(id: string | null): void {
@@ -1888,20 +1935,35 @@ export class StateService {
    * Returns a summary of what was removed so the caller (route) can
    * report it to the operator.
    */
-  removeProject(id: string): {
-    branches: string[];
-    buildProfiles: string[];
-    infraServices: string[];
-    routingRules: string[];
-    projectGrants: string[];
-    dbLedgerEntries: string[];
-  } {
+  /**
+   * 删项目的观察者：台账落库之后回调一次，拿到级联清理清单。存活监控用它立刻
+   * 抹掉被删自定义监控的运行态台账——否则删项目响应回了 200，状态页还会把那条
+   * 监控和它的故障挂到下一轮（单条删除路由已经是立即 forgetTarget，删项目得同款）。
+   * 回调各自 try/catch，一个观察者抛了不影响删除结果。
+   */
+  onProjectRemoved(listener: (summary: ProjectRemovalSummary) => void): void {
+    this.projectRemovedListeners.push(listener);
+  }
+
+  /**
+   * 分支删除导致监控被级联清理时回调一次。
+   *
+   * 为什么用观察者而不是让调用方处理返回值：removeBranch 有 5 个调用点，散在
+   * routes/branches、executor/routes、index 里，其中多数拿不到 uptimeMonitor 实例。
+   * 逐个接必然漏一个，而漏掉的那个不会报错——只会让被删分支的监控继续被探测
+   * （形状 2：链路只建一半）。一处触发、全局生效才接得住。
+   */
+  onUptimeMonitorsOrphaned(listener: (monitorIds: string[]) => void): void {
+    this.orphanedMonitorListeners.push(listener);
+  }
+
+  removeProject(id: string): ProjectRemovalSummary {
     if (!this.state.projects) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
     const project = this.state.projects.find((p) => p.id === id);
     if (!project) {
-      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [] };
+      return { branches: [], buildProfiles: [], infraServices: [], routingRules: [], projectGrants: [], dbLedgerEntries: [], uptimeMonitors: [] };
     }
     if (project.legacyFlag) {
       throw new Error('Cannot remove the legacy default project');
@@ -1934,6 +1996,12 @@ export class StateService {
     const dbLedgerToRemove = (this.state.dbLedger || [])
       .filter((e) => e.projectId === id)
       .map((e) => e.id);
+    // 挂在这个项目名下的自定义监控一起删：留下来会带着一个不存在的 projectId
+    // 继续每轮往外发探测，而且没有任何项目级凭据能再管它（Codex PR #1514 第五轮 P2）。
+    // 系统级（projectId 为空）的不动。
+    const uptimeMonitorsToRemove = Object.values(this.state.uptimeMonitors || {})
+      .filter((m) => m.projectId === id)
+      .map((m) => m.id);
 
     // ── Cascade mutate ──
     for (const bid of branchesToRemove) {
@@ -1967,11 +2035,13 @@ export class StateService {
     if (this.state.dbLedger) {
       this.state.dbLedger = this.state.dbLedger.filter((e) => e.projectId !== id);
     }
+    for (const mid of uptimeMonitorsToRemove) delete this.state.uptimeMonitors?.[mid];
 
     this.state.projects = this.state.projects.filter((p) => p.id !== id);
     this.save();
 
-    return {
+    const summary: ProjectRemovalSummary = {
+      uptimeMonitors: uptimeMonitorsToRemove,
       branches: branchesToRemove,
       buildProfiles: buildProfilesToRemove,
       infraServices: infraServicesToRemove,
@@ -1979,6 +2049,10 @@ export class StateService {
       projectGrants: projectGrantsToRevoke,
       dbLedgerEntries: dbLedgerToRemove,
     };
+    for (const listener of this.projectRemovedListeners) {
+      try { listener(summary); } catch (err) { console.warn(`[state] 删项目观察者异常：${(err as Error).message}`); }
+    }
+    return summary;
   }
 
   /**
@@ -2348,6 +2422,60 @@ export class StateService {
     if (!this.state.releaseTargets?.[id]) return false;
     delete this.state.releaseTargets[id];
     this.save();
+    return true;
+  }
+
+  // ── 监控中心：自定义探测目标 ──
+
+  listUptimeMonitors(projectId?: string): UptimeCustomMonitor[] {
+    if (!this.state.uptimeMonitors) return [];
+    return Object.values(this.state.uptimeMonitors)
+      .filter((monitor) => !projectId || monitor.projectId === projectId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  /**
+   * 记一次功能监控的观测证据，新的在前，只留最近 MAX_OBSERVATIONS 条。
+   *
+   * 为什么截断：监控看的是趋势，不是审计日志。不截断的话每 6 小时一条、
+   * 一年下来单条监控上千条证据，state 台账会被撑爆，而没人会翻半年前那次生成。
+   */
+  recordMonitorObservation(monitorId: string, observation: MonitorObservation): void {
+    const monitor = this.state.uptimeMonitors?.[monitorId];
+    if (!monitor) return;
+    const kept = [observation, ...(monitor.observations || [])].slice(0, MAX_OBSERVATIONS);
+    monitor.observations = kept;
+    monitor.updatedAt = new Date().toISOString();
+    this.save();
+  }
+
+  getUptimeMonitor(id: string): UptimeCustomMonitor | undefined {
+    return this.state.uptimeMonitors?.[id];
+  }
+
+  upsertUptimeMonitor(monitor: UptimeCustomMonitor): UptimeCustomMonitor {
+    if (!this.state.uptimeMonitors) this.state.uptimeMonitors = {};
+    const existing = this.state.uptimeMonitors[monitor.id];
+    // 归属项目允许改：编辑弹窗把「归属项目」摆成了可编辑字段，管理员把一条监控
+    // 从系统级挪到项目、或在项目间挪，都是正当操作（Codex PR #1514 第二轮 P2）。
+    // 「客户端指定 id 命中他人条目」的防护在路由层：写入只给管理员身份，且新增时
+    // id 已存在直接 409，不在这里再判一遍项目。
+    const now = new Date().toISOString();
+    const saved: UptimeCustomMonitor = {
+      ...existing,
+      ...monitor,
+      createdAt: existing?.createdAt || monitor.createdAt || now,
+      updatedAt: now,
+    };
+    this.state.uptimeMonitors[monitor.id] = saved;
+    this.save(HINT_GLOBAL);
+    return saved;
+  }
+
+  removeUptimeMonitor(id: string): boolean {
+    if (!this.state.uptimeMonitors?.[id]) return false;
+    delete this.state.uptimeMonitors[id];
+    this.save(HINT_GLOBAL);
     return true;
   }
 
@@ -5340,6 +5468,91 @@ export class StateService {
       this.save();
     }
     return meta;
+  }
+
+  /** 项目登记的自检端点清单（监控自发现的「插口」）。 */
+  listMonitorEndpoints(projectId: string): string[] {
+    return [...(this.getProject(projectId)?.monitorEndpoints || [])];
+  }
+
+  /**
+   * 插上一个自检端点。幂等：同一个地址重复插不产生第二条。
+   * 返回 false 表示项目不存在。
+   */
+  addMonitorEndpoint(projectId: string, url: string): boolean {
+    if (!this.state.projects) return false;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return false;
+    const current = this.state.projects[idx];
+    const list = [...(current.monitorEndpoints || [])];
+    if (list.includes(url)) return true;
+    list.push(url);
+    this.state.projects[idx] = { ...current, monitorEndpoints: list, updatedAt: new Date().toISOString() };
+    this.save();
+    return true;
+  }
+
+  /**
+   * 拔掉一个自检端点。它名下的自发现监控由下一轮对账清理——
+   * 这里不顺手删：删监控是对账那一处的职责，两处都能删就会有两套判据。
+   */
+  removeMonitorEndpoint(projectId: string, url: string): boolean {
+    if (!this.state.projects) return false;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return false;
+    const current = this.state.projects[idx];
+    const list = (current.monitorEndpoints || []).filter((u) => u !== url);
+    this.state.projects[idx] = { ...current, monitorEndpoints: list, updatedAt: new Date().toISOString() };
+    this.save();
+    return true;
+  }
+
+  /**
+   * 开一个项目的公开状态页：生成（或幂等返回已有的）不可枚举 token。
+   * 与报告分享同款，不重复 mint——重复 mint 会让上一条已经发出去的链接静默失效。
+   */
+  openProjectStatusPage(projectId: string): Project | undefined {
+    if (!this.state.projects) return undefined;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return undefined;
+    const current = this.state.projects[idx];
+    if (current.statusPageToken) return current;
+    const next: Project = {
+      ...current,
+      statusPageToken: crypto.randomBytes(16).toString('hex'),
+      statusPageOpenedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.projects[idx] = next;
+    this.save();
+    return next;
+  }
+
+  /** 关掉公开状态页：token 置空，已经发出去的链接当即 404。 */
+  closeProjectStatusPage(projectId: string): Project | undefined {
+    if (!this.state.projects) return undefined;
+    const idx = this.state.projects.findIndex((p) => p.id === projectId);
+    if (idx < 0) return undefined;
+    const current = this.state.projects[idx];
+    if (!current.statusPageToken) return current;
+    const next: Project = {
+      ...current,
+      statusPageToken: null,
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.projects[idx] = next;
+    this.save();
+    return next;
+  }
+
+  /**
+   * 按公开状态页 token 反查项目（匿名 `/api/public/status/<token>` 用）。
+   * 空串一律不命中——否则一个没带 token 的请求会匹配上所有没开公开页的项目。
+   */
+  getProjectByStatusPageToken(token: string): Project | undefined {
+    const t = (token || '').trim();
+    if (!t) return undefined;
+    return (this.state.projects || []).find((p) => p.statusPageToken === t);
   }
 
   /** E6：按分享 token 反查报告（公开 `/r/<token>` 路由用）。空/未命中返回 undefined。 */

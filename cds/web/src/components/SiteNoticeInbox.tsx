@@ -345,7 +345,7 @@ export function SiteNoticeInbox(): JSX.Element {
         >
           <Bell className="h-5 w-5" />
           {informationCount > 0 ? (
-            <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[10px] leading-4 text-primary-foreground">
+            <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[0.625rem] leading-4 text-primary-foreground">
               {informationCount > 99 ? '99+' : informationCount}
             </span>
           ) : null}
@@ -365,7 +365,7 @@ export function SiteNoticeInbox(): JSX.Element {
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
             <div className="min-w-0">
               <div className="text-sm font-semibold">信息中心</div>
-              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">系统动态、授权审批与服务端站内信</div>
+              <div className="mt-0.5 truncate text-[0.6875rem] text-muted-foreground">系统动态、授权审批与服务端站内信</div>
             </div>
             <button type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭信息中心">
               <X className="h-4 w-4" />
@@ -373,7 +373,7 @@ export function SiteNoticeInbox(): JSX.Element {
           </div>
 
           {!outbound.configured ? (
-            <div className="border-b border-[hsl(var(--hairline))] bg-warn-soft px-3 py-2 text-[11px] leading-4 text-warn">
+            <div className="border-b border-[hsl(var(--hairline))] bg-warn-soft px-3 py-2 text-[0.6875rem] leading-4 text-warn">
               {outbound.reason || '未配置外发凭据，通知仅记录在 CDS 本地'}
             </div>
           ) : null}
@@ -404,19 +404,19 @@ export function SiteNoticeInbox(): JSX.Element {
                         <div className="flex items-start gap-2">
                           <div className="min-w-0 flex-1 text-sm font-semibold leading-5">{notice.title}</div>
                           {notice.occurrences > 1 ? (
-                            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] leading-4 text-muted-foreground">
+                            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[0.625rem] leading-4 text-muted-foreground">
                               {notice.occurrences} 次
                             </span>
                           ) : null}
                         </div>
                         {noticeProjectLabel(notice) ? (
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[0.6875rem] leading-4 text-muted-foreground">
                             <span className="inline-flex max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5">
                               <span className="shrink-0">项目</span>
                               <span className="truncate font-medium text-foreground">{noticeProjectLabel(notice)}</span>
                             </span>
                             {notice.projectSlug && notice.projectSlug !== noticeProjectLabel(notice) ? (
-                              <span className="truncate font-mono text-[10px]">{notice.projectSlug}</span>
+                              <span className="truncate font-mono text-[0.625rem]">{notice.projectSlug}</span>
                             ) : null}
                           </div>
                         ) : null}
@@ -426,7 +426,7 @@ export function SiteNoticeInbox(): JSX.Element {
                         {bodyCanExpand ? (
                           <button
                             type="button"
-                            className="mt-1 text-[11px] font-medium text-primary hover:underline"
+                            className="mt-1 text-[0.6875rem] font-medium text-primary hover:underline"
                             aria-expanded={bodyExpanded}
                             onClick={() => setExpandedNoticeIds((current) => {
                               const next = new Set(current);
@@ -439,7 +439,7 @@ export function SiteNoticeInbox(): JSX.Element {
                           </button>
                         ) : null}
                         {outboundHint(notice) ? (
-                          <div className="mt-1 text-[11px] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
+                          <div className="mt-1 text-[0.6875rem] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
                         ) : null}
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                           {notice.href ? (

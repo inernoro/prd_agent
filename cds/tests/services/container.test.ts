@@ -489,6 +489,80 @@ describe('ContainerService', () => {
       expect(runCmd).not.toContain('--memory-swap');
     });
 
+    // 2026-09-08 宿主过载复盘：不设上限，但托管容器挂低权重 slice（--cgroup-parent）。
+    // 决策由 workload-cgroup.ts 探测固化；这里只断言 run 命令「有决策就带、没决策不带」，
+    // 且永远不会因此夹带 --cpus / --memory。
+    it('appends --cgroup-parent to docker run when the workload cgroup is resolved, never a hard limit', async () => {
+      const { __setWorkloadCgroupForTest } = await import('../../src/services/workload-cgroup.js');
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      __setWorkloadCgroupForTest({
+        enabled: true, parent: 'system-cdsworkloads.slice', driver: 'systemd', weightManaged: true, reason: 'test',
+      });
+      try {
+        await service.runService(makeEntry(), makeProfile({ resources: { memoryMB: 1024, cpus: 2 } }), makeService());
+        const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+        expect(runCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
+        expect(runCmd).not.toContain('--cpus');
+        expect(runCmd).not.toContain('--memory');
+      } finally {
+        __setWorkloadCgroupForTest(null);
+      }
+    });
+
+    // Codex 三轮 P2：managed 构建容器（装依赖 + 打包）是本机最吃 CPU 的一段，
+    // 之前只有服务容器挂了 slice，构建期间照旧和控制面同权抢 CPU。
+    it('attaches the managed build container to the workload slice too', async () => {
+      const { __setWorkloadCgroupForTest } = await import('../../src/services/workload-cgroup.js');
+      const tmp = fs.mkdtempSync('/tmp/cds-managed-cgroup-');
+      fs.writeFileSync(`${tmp}/package.json`, '{}');
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker image inspect/, () => ({ stdout: '', stderr: 'missing', exitCode: 1 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker create/, () => ({ stdout: 'builder-id', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker cp/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker start/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker exec/, () => ({ stdout: 'build complete', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker commit/, () => ({ stdout: 'artifact-id', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'runtime-id', stderr: '', exitCode: 0 }));
+      __setWorkloadCgroupForTest({
+        enabled: true, parent: 'system-cdsworkloads.slice', driver: 'systemd', weightManaged: true, reason: 'test',
+      });
+      try {
+        await service.runService({
+          ...makeEntry(), projectId: 'p1', worktreePath: tmp, githubCommitSha: '1234567890abcdef',
+        }, makeProfile({
+          projectId: 'p1',
+          workDir: '.',
+          command: 'pnpm install && pnpm build && pnpm start',
+          managedBuild: {
+            stack: 'node',
+            installCommand: 'pnpm install',
+            buildCommand: 'pnpm build',
+            startCommand: 'pnpm start',
+            artifactImage: 'cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678',
+          },
+        }), makeService());
+        const createCmd = mock.commands.find((c) => c.includes('docker create') && c.includes('-managed-build'))!;
+        expect(createCmd).toContain("--cgroup-parent 'system-cdsworkloads.slice'");
+        expect(createCmd).not.toContain('--cpus');
+        expect(createCmd).not.toContain('--memory');
+      } finally {
+        __setWorkloadCgroupForTest(null);
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    });
+
+    it('omits --cgroup-parent when the workload cgroup is unresolved', async () => {
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+      await service.runService(makeEntry(), makeProfile(), makeService());
+      const runCmd = mock.commands.find(c => c.includes('docker run -d'))!;
+      expect(runCmd).not.toContain('--cgroup-parent');
+    });
+
     // 2026-05-28 用户授权"关闭所有容器资源限制" — 不再下发 --cpus 也不再下发
     // --memory。cpus / memoryMB 字段保留作 capacity 调度规划提示,不进 docker run。
     it('should NOT apply --cpus even when cpus is set (no-cpu-limit policy)', async () => {

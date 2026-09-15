@@ -7,7 +7,7 @@
  * behaviour is covered by github-webhook-dispatcher.test.ts.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
@@ -374,6 +374,64 @@ describe('GitHub webhook route', () => {
     }
     await new Promise((r) => setTimeout(r, 20));
     expect(deployCalls).toHaveLength(0);
+  });
+
+  // 2026-09-08 宿主过载复盘：噪声投递不再落投递日志——此前每条都 state 全量 save。
+  it('cheap-acks noise without recording a delivery: unsupported events and inert check_run/workflow_run actions', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    server = startServer();
+    const before = stateService.getGithubWebhookDeliveries(100).length;
+    const cases: Array<[string, Record<string, unknown>, string]> = [
+      ['workflow_job', { action: 'completed', repository: { full_name: 'octocat/repo' } }, 'ignored-unsubscribed'],
+      ['check_suite', { action: 'completed', repository: { full_name: 'octocat/repo' } }, 'ignored-unsubscribed'],
+      ['check_run', { action: 'created', check_run: { external_id: 'x', head_sha: 'a'.repeat(40) }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+      ['check_run', { action: 'completed', check_run: { external_id: 'x', head_sha: 'a'.repeat(40) }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+      ['workflow_run', { action: 'in_progress', workflow_run: { id: 1 }, repository: { full_name: 'octocat/repo' } }, 'ignored-noise'],
+    ];
+    for (const [event, payload, expectedAction] of cases) {
+      const body = JSON.stringify(payload);
+      const res = await request(server, 'POST', '/api/github/webhook', body, {
+        'X-GitHub-Event': event,
+        'X-Hub-Signature-256': sign('whsec-test', body),
+      });
+      expect(res.status, event).toBe(200);
+      expect(res.body.action, event).toBe(expectedAction);
+      expect(res.headers['x-cds-suppress-activity']).toBe('1');
+    }
+    await new Promise((r) => setTimeout(r, 30));
+    expect(stateService.getGithubWebhookDeliveries(100).length).toBe(before);
+    expect(deployCalls).toHaveLength(0);
+  });
+
+  /**
+   * Codex 四轮 P2：廉价 ack 不写 HTTP 日志，这些请求就从「按日志统计 webhook 耗时」
+   * 的口径里整个消失；只看那个口径，改前改后对比会把「不再观测」读成「不再耗时」。
+   * 所以被压掉的请求仍花掉的 master 时间必须在内存里如实记账，度量尺据此对齐口径。
+   */
+  it('accounts for the master time cheap-acked noise still costs', async () => {
+    const { getWebhookNoiseStats } = await import('../../src/routes/github-webhook.js');
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    server = startServer();
+    // 让 handler 内每次读时钟都前进，被压掉的请求耗时必然为正（真实环境常是个位数毫秒）
+    const realNow = Date.now.bind(Date);
+    let tick = 0;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (tick += 3));
+    try {
+      const baseline = getWebhookNoiseStats()?.suppressedDurationMs ?? 0;
+      for (const event of ['workflow_job', 'check_suite', 'status']) {
+        const body = JSON.stringify({ action: 'completed', repository: { full_name: 'octocat/repo' } });
+        const res = await request(server, 'POST', '/api/github/webhook', body, {
+          'X-GitHub-Event': event,
+          'X-Hub-Signature-256': sign('whsec-test', body),
+        });
+        expect(res.status, event).toBe(200);
+      }
+      const stats = getWebhookNoiseStats();
+      expect(stats?.suppressedTotal).toBeGreaterThanOrEqual(3);
+      expect(stats!.suppressedDurationMs).toBeGreaterThan(baseline);
+    } finally {
+      nowSpy.mockRestore();
+    }
   });
 
   it('returns 200 (ok:false) — NOT 500 — when the dispatcher throws', async () => {

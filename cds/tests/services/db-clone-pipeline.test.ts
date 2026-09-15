@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { StateService } from '../../src/services/state.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import {
-  relationalCloneArgv, parseTableCounts, compareTableCounts, verifyCloneRowCounts, cloneRelationalDbInPlace,
+  relationalCloneArgv, relationalReplaceArgv, parseTableCounts, compareTableCounts, verifyCloneRowCounts, cloneRelationalDbInPlace,
   type DbCloneExec, type DbCloneSpec,
 } from '../../src/services/db-clone-pipeline.js';
 import { perBranchCloneSpec, ensurePerBranchDbInitialized } from '../../src/services/per-branch-db-init.js';
@@ -60,6 +60,27 @@ function fakeExec(world: Record<string, Record<string, number>>, log: string[] =
 }
 
 describe('克隆三元组：脚本只从来源库、目标库、实例取值', () => {
+  /**
+   * Codex 十四轮 P2：数据库隔离克隆在部署期间自动跑，dump/import 是 CPU 与磁盘
+   * 密集的一段，此前没挂低权重 slice，会和控制面同权抢资源。
+   */
+  it('克隆与替换助手都挂低权重 slice（有决策就带，没决策不带）', async () => {
+    const { __setWorkloadCgroupForTest } = await import('../../src/services/workload-cgroup.js');
+    __setWorkloadCgroupForTest({
+      enabled: true, parent: 'system-cdsworkloads.slice', driver: 'systemd',
+      weightManaged: true, coverage: 'new-containers-only', reason: 'test',
+    });
+    try {
+      for (const built of [relationalCloneArgv(spec()), relationalReplaceArgv(spec())]) {
+        const joined = built.argv.join(' ');
+        expect(joined).toContain('--cgroup-parent system-cdsworkloads.slice');
+      }
+    } finally {
+      __setWorkloadCgroupForTest(null);
+    }
+    expect(relationalCloneArgv(spec()).argv.join(' ')).not.toContain('--cgroup-parent');
+  });
+
   it('mysql 与 postgres 的克隆脚本都长在三元组上，凭据经 -e 注入而不进脚本正文', () => {
     const my = relationalCloneArgv(spec());
     expect(my.argv[0]).toBe('run');

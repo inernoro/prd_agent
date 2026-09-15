@@ -30,9 +30,9 @@ describe('胶囊高度不许写死', () => {
   it('用 min-h 而不是 h', () => {
     expect(chip, '写死高度的胶囊装不下换行的分支名，第二行会掉到背景外').toMatch(/min-h-\[/);
     // h-[22px] 这种固定高度不许再出现在胶囊上。
-    // 注意 min-h-[22px] 里也含 "h-[22px]"，得把 min- 前缀排掉，否则这条守卫
-    // 会把正确写法判红（第一版就是这么误判的）。
-    expect(chip).not.toMatch(/(?<!min-)\bh-\[\d+px\]/);
+    // 注意 min-h-[1.375rem] 里也含 "h-[1.375rem]"，得把 min- 前缀排掉，否则这条守卫
+    // 会把正确写法判红（第一版就是这么误判的）。px 与 rem 两种单位都要认。
+    expect(chip).not.toMatch(/(?<!min-)\bh-\[[\d.]+(?:px|rem)\]/);
   });
 
   it('长文本断得掉，且断在连字符而不是词中间', () => {
@@ -58,9 +58,13 @@ describe('胶囊高度不许写死', () => {
 
 describe('三处共用一个组件，不许各抄一份', () => {
   const cell = (() => {
-    const i = src.indexOf('<td className="w-[300px] px-3 py-3">');
-    expect(i, '找不到验收对象那一格').toBeGreaterThan(-1);
-    return src.slice(i, src.indexOf('</td>', i));
+    // 锚点认内容不认宽度：原来写死 w-[300px]，2026-09-15 全站换 rem 之后当场失效；
+    // 放宽成 w-[任意单位] 又不唯一（同一文件里别的格子也是这个形状，会锚错格）。
+    // 这一格的身份是「装 ChangeKeyChip 的那一格」，就按它找。
+    const k = src.indexOf('<ChangeKeyChip');
+    expect(k, '找不到验收对象那一格').toBeGreaterThan(-1);
+    const i = src.lastIndexOf('<td', k);
+    return src.slice(i, src.indexOf('</td>', k));
   })();
 
   it('分支 / commit / PR 三处都走 ChangeKeyChip', () => {
@@ -72,7 +76,9 @@ describe('三处共用一个组件，不许各抄一份', () => {
     expect(cell, '这一格里又出现了内联的胶囊样式').not.toMatch(/inline-flex[^"]*rounded[^"]*border/);
   });
 
-  it('整个文件里不再有写死高度的胶囊残留', () => {
-    expect(src).not.toMatch(/inline-flex h-\[22px\]/);
+  it('这一格里不再有写死高度的胶囊残留', () => {
+    // 只扫这一格：文件别处也有定高的 inline-flex，但它们内部配了 truncate，
+    // 不换行就不会溢出，是对的。扫全文件会把那些一起误伤。
+    expect(cell).not.toMatch(/inline-flex h-\[[\d.]+(?:px|rem)\]/);
   });
 });

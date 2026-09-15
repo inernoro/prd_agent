@@ -204,7 +204,9 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ## 规则与技能
 
 - **架构规则** `.claude/rules/`：全体 Agent 共用（条数以目录为准，此处不写死——写死必漂）。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
-- **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制所以在此点名——`local-debugging.md`（本地连调、视觉修复、接口排查、CDS 部署验证的工作方式）；`production-release-safety.md`（碰发布链路 `exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow 前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`；公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数）。
+- **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制，所以在此点名——
+  - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
+  - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。
 - **技能**：57 个在 `.claude/skills/`，另有 3 个在 `.agents/skills/`。多数宿主会自动注入名称与描述，**但只注入它自己那个技能根**——只认 `.agents/skills` 的宿主看不到另外 57 个。**注入不全时自己选**：`ls .claude/skills/`，每个目录的 `SKILL.md` frontmatter 里 `name` 与 `description` 就是选取依据（description 写明了触发场景）。frontmatter 字段的完整性由 CI 棘轮盯着（只降不升），但「目录里整个没有 SKILL.md」CI 现在拦不住——扫到这种目录按缺陷报出来，别当它不存在；此处同样不维护会漂移的第二份清单。
 <!--
 历史显式索引仅供旧宿主查阅，不作为规则或技能 SSOT，也不注入 Agent 上下文。

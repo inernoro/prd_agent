@@ -643,7 +643,7 @@ describe('图表对齐与入口排布（都是演示时用户一眼看出来的�
    * 右边空出一整列。真正的修法是把主入口移出网格。
    */
   it('次要入口按可用宽度自适应分列', () => {
-    expect(PANEL).toMatch(/repeat\(auto-fit, minmax\(min\(100%, \d+px\), 1fr\)\)/);
+    expect(PANEL).toMatch(/repeat\(auto-fit, minmax\(min\(100%, [\d.]+rem\), 1fr\)\)/);
     expect(PANEL).not.toContain('md:grid-cols-2');
   });
 

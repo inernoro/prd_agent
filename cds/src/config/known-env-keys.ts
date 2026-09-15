@@ -118,6 +118,8 @@ export const KNOWN_CDS_ENV_KEYS: CdsEnvKeyDef[] = [
   { key: 'CDS_HOST', description: '运行时自动注入容器的 host 占位（无需手填）', isSecret: false, group: 'misc' },
   { key: 'CDS_MAX_CONCURRENT_BUILDS', description: '全局构建并发上限（默认 3）；超出时分支构建排队，避免多构建同时把宿主 CPU 吃满', isSecret: false, group: 'misc' },
   { key: 'CDS_BUILD_NICE', description: '源码 build/install 命令的 nice 优先级（默认 10，1-19，0/off 关闭）；让编译不饿死同机预览，非 docker 资源硬限', isSecret: false, group: 'misc' },
+  { key: 'CDS_BUILD_LOAD_FACTOR', description: '构建准入的宿主过载系数（默认 1.2）：load1 超过核数 x 系数时新构建只在没有构建在跑时放行，其余排队等负载回落；0/off 关闭，退回纯并发上限', isSecret: false, group: 'misc' },
+  { key: 'CDS_WORKLOAD_CGROUP_PARENT', description: '托管容器（分支 app / 共享 infra / 构建 job）挂到的 cgroup 父节点，默认 system-cdsworkloads.slice（低权重，让 CDS 控制面争抢时先拿 CPU/IO；不是容器上限）；0/off 关闭。docker 需为 systemd cgroup driver 权重才生效', isSecret: false, group: 'misc' },
 ];
 
 export type EnvClassification = 'cds-canonical' | 'cds-legacy' | 'unknown';

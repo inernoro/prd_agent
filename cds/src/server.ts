@@ -59,7 +59,13 @@ import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
-import { createGithubWebhookRouter } from './routes/github-webhook.js';
+import { createGithubWebhookRouter, getWebhookNoiseStats } from './routes/github-webhook.js';
+import { buildGateStatus } from './services/build-gate.js';
+import { getEventLoopLag } from './services/event-loop-lag.js';
+import { getWorkloadCgroupStatus } from './services/workload-cgroup.js';
+import { collectControlPlanePressure } from './services/control-plane-pressure.js';
+import type { UptimeCycleHealth } from './services/uptime-monitor.js';
+import type { OffHostAuditBreakerState } from './services/offhost-audit-log.js';
 import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
@@ -540,6 +546,13 @@ export interface ServerDeps {
   serverEventLogStore?: ServerEventLogSink | null;
   /** Serializes/fences branch container lifecycle writes. */
   branchOperationCoordinator?: BranchOperationCoordinator;
+  /**
+   * 探活监控（晚绑定：它在 createServer 之后才构造，index.ts 建好后回填）。
+   * /healthz 据此暴露「探活循环是否停摆」——2026-09-08 前它卡死 24 小时无人知晓。
+   */
+  uptimeMonitor?: { getCycleHealth(): UptimeCycleHealth } | null;
+  /** 离机审计熔断状态（healthz 暴露） */
+  offhostAudit?: { breakerState(): OffHostAuditBreakerState } | null;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -765,6 +778,10 @@ export function resolveApiLabel(method: string, path: string): string {
     // 自建存活监控 / 状态页（2026-07-27）
     'GET /uptime/summary': '查看存活总览',
     'GET /uptime/incidents': '列出存活故障',
+    // 监控中心自定义监控（2026-09-08）
+    'GET /uptime/monitors': '列出自定义监控',
+    'POST /uptime/monitors': '新增自定义监控',
+    'POST /uptime/monitors/test': '试探自定义监控',
     // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
     'POST /bug-reports': '提交缺陷反馈',
     'GET /bug-reports': '列出缺陷反馈',
@@ -1061,6 +1078,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
+    [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
+    [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
+    [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
     // 站内信：read-all 是静态路径（上面 staticMap 已覆盖），这里只需 :id 那条。
     // segment-safe `[^/]+`，别用贪婪 `(.+)`（PR #522 的教训：会跨 `/` 截胡）。
     [/^POST \/notices\/[^/]+\/dismiss$/, '忽略站内信'],
@@ -1438,6 +1458,10 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 否则它永远执行不到、只会再回一句「未授权」。出参不含明文与哈希。
   // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
   if (method === 'GET' && path === '/api/credentials/self-check') return true;
+  // 公开状态页（2026-09-11）：token 自鉴权（16 字节随机串，不可枚举），
+  // 载荷由 public-status-board 白名单构造。只放行读取，不放行开关。
+  // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && /^\/api\/public\/status\/[a-f0-9]{32}$/.test(path)) return true;
   return false;
 }
 
@@ -1958,9 +1982,37 @@ export function createServer(deps: ServerDeps): express.Express {
       if (!probeOk) overallOk = false;
     }
 
+    // Check 6: 控制面压力（2026-09-08 宿主过载复盘）。宿主 load / 事件循环延迟 /
+    // 构建闸门限流 / 探活停摆 / 容器 cgroup 归属 / webhook 噪声 / 审计熔断一次给全。
+    // 只进 checks 与 pressure 字段，**不**翻转 ok：ok 表达「进程活着」，过载是 degraded。
+    let pressure: ReturnType<typeof collectControlPlanePressure> | null = null;
+    try {
+      pressure = collectControlPlanePressure({
+        eventLoop: getEventLoopLag(),
+        buildGate: (() => {
+          const g = buildGateStatus();
+          return { active: g.active, queued: g.queued, max: g.max, load: g.load };
+        })(),
+        uptimeMonitor: deps.uptimeMonitor?.getCycleHealth() ?? null,
+        workloadCgroup: getWorkloadCgroupStatus(),
+        webhookNoise: getWebhookNoiseStats(),
+        offhostAudit: deps.offhostAudit?.breakerState() ?? null,
+      });
+      checks.controlPlane = {
+        ok: true,
+        detail: pressure.warnings.length === 0
+          ? `正常（load ${pressure.host.loadAvg1}/${pressure.host.cores} 核，事件循环 p99 ${pressure.eventLoop.current.p99Ms}ms）`
+          : pressure.warnings.map((w) => `[${w.level}] ${w.message}`).join(' · '),
+      };
+    } catch (err) {
+      checks.controlPlane = { ok: true, detail: `压力快照失败: ${(err as Error).message}` };
+    }
+
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
+      degraded: pressure?.degraded ?? false,
       checks,
+      pressure,
       timestamp: new Date().toISOString(),
     });
   });
@@ -2119,6 +2171,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     res.once('finish', () => {
       completeActiveRequest();
+      // 路由可声明本次请求不值得落 HTTP 日志（2026-09-08：webhook CI 噪声廉价 ack，
+      // 每条都写 Mongo 是宿主过载的一部分）。active 表照常收尾。
+      if (res.locals.cdsSkipHttpLog === true) return;
       const status = res.statusCode || 0;
       const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
       const parsedReqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
@@ -2504,6 +2559,8 @@ export function createServer(deps: ServerDeps): express.Express {
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
       // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
       if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
+      // 公开状态页 `/s/:token`：同款 token 自鉴权，公开只读的 SPA 入口。
+      if (req.method === 'GET' && /^\/s\/[a-f0-9]{32}$/.test(req.path)) return next();
       // 验收报告图片资源：name 为内容寻址 sha256+扩展名（不可枚举），公开只读，
       // 供跨源（如 MAP 知识库）渲染报告时直接加载正文里的截图。
       if (req.method === 'GET' && req.path.startsWith('/api/reports/assets/')) return next();

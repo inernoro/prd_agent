@@ -31,6 +31,7 @@
 - [海鲜市场产品规格 · 规格](./spec.marketplace.md) `spec.marketplace`
 - [应用注册中心协议 · 规格](./spec.platform.app-registry.md) `spec.platform.app-registry`
 - [LLM 网关测试矩阵 · 规格](./spec.platform.llm-gateway.test-matrix.md) `spec.platform.llm-gateway.test-matrix`
+- [监控自发现协议 · 规格](./spec.platform.monitor-discovery.md) `spec.platform.monitor-discovery`
 - [统一短链系统 · 规格](./spec.platform.short-links.md) `spec.platform.short-links`
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
 - [给设计方的画板请求（录音交付页）](./spec.prd-admin.recording-design-demo-request.md) `spec.prd-admin.recording-design-demo-request`
@@ -304,6 +305,7 @@
 ### 六、技术债务台账
 
 - [CDS 验收中心 · 债务台账](./debt.acceptance-center-cds.md) `debt.acceptance-center-cds`
+- [每日验收的锚点契约 · 债务台账](./debt.acceptance.daily-anchors.md) `debt.acceptance.daily-anchors`
 - [功能验收体系 · 债务台账](./debt.acceptance.system.md) `debt.acceptance.system`
 - [智能体宇宙 · 债务台账](./debt.agent-universe.md) `debt.agent-universe`
 - [CDS 平台杂项 · 债务台账](./debt.cds.md) `debt.cds`
@@ -379,6 +381,7 @@
 - [周报 2026-W34 (2026-08-17 ~ 2026-08-23)](./report.2026-W34.md) `report.2026-W34`
 - [周报 2026-W35 (2026-08-24 ~ 2026-08-30)](./report.2026-W35.md) `report.2026-W35`
 - [周报 2026-W36 (2026-08-31 ~ 2026-09-06)](./report.2026-W36.md) `report.2026-W36`
+- [周报 2026-W37 (2026-09-07 ~ 2026-09-13)](./report.2026-W37.md) `report.2026-W37`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

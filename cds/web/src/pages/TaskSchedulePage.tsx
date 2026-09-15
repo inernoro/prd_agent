@@ -528,16 +528,16 @@ export function TaskSchedulePage(): JSX.Element {
                   */}
                 <div className="hidden shrink-0 items-stretch lg:flex">
                   {overview.stats.map((stat) => (
-                    <div key={stat.label} className="flex w-[86px] flex-col justify-center border-l border-[hsl(var(--hairline))] px-3 py-2">
-                      <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
-                      <div className={`mt-0.5 font-mono text-[17px] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
+                    <div key={stat.label} className="flex w-[5.375rem] flex-col justify-center border-l border-[hsl(var(--hairline))] px-3 py-2">
+                      <div className="truncate text-[0.625rem] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
+                      <div className={`mt-0.5 font-mono text-[1.0625rem] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
                     </div>
                   ))}
-                  <div className="flex w-[188px] flex-col justify-center border-l border-[hsl(var(--hairline))] bg-primary-soft/50 px-3 py-2">
-                    <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">下一次触发</div>
+                  <div className="flex w-[11.75rem] flex-col justify-center border-l border-[hsl(var(--hairline))] bg-primary-soft/50 px-3 py-2">
+                    <div className="truncate text-[0.625rem] uppercase tracking-wide text-muted-foreground">下一次触发</div>
                     <div className="mt-0.5 flex items-baseline gap-2">
-                      <span className="font-mono text-[17px] font-semibold leading-tight text-primary-ink">{overview.nextCountdown}</span>
-                      <span className="min-w-0 truncate text-[11px] text-muted-foreground">{overview.nextName}</span>
+                      <span className="font-mono text-[1.0625rem] font-semibold leading-tight text-primary-ink">{overview.nextCountdown}</span>
+                      <span className="min-w-0 truncate text-[0.6875rem] text-muted-foreground">{overview.nextName}</span>
                     </div>
                   </div>
                 </div>
@@ -552,7 +552,7 @@ export function TaskSchedulePage(): JSX.Element {
                 此前索引被时间轴压到 y=445（52% 屏高）、只有 280×367，而它是使用频率
                 最高的元件；同时 2xl 才存在的第三栏让「新建」在 1536px 以下不可见。
                 两栏之后没有断点分歧，那个洞从结构上被填掉。 */}
-            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[300px_minmax(0,1fr)]">
+            <div className="grid flex-1 gap-3 xl:min-h-0 xl:grid-rows-[minmax(0,1fr)] xl:grid-cols-[18.75rem_minmax(0,1fr)]">
 
               {/* 左：任务索引。窄屏（<xl）退回自然流并限高，桌面才满高填充。 */}
               <section className="flex min-h-0 max-h-[52vh] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] xl:max-h-none">
@@ -574,9 +574,9 @@ export function TaskSchedulePage(): JSX.Element {
                   ) : groupedJobs.map((group) => (
                     <div key={group.key}>
                       <div className="flex items-center gap-2 px-1 pb-1 pt-2">
-                        <span className={`text-[10px] font-semibold uppercase tracking-wide ${group.tone}`}>{group.label}</span>
+                        <span className={`text-[0.625rem] font-semibold uppercase tracking-wide ${group.tone}`}>{group.label}</span>
                         <span className="h-px flex-1 bg-[hsl(var(--hairline))]" />
-                        <span className="font-mono text-[10px] text-muted-foreground">{group.jobs.length}</span>
+                        <span className="font-mono text-[0.625rem] text-muted-foreground">{group.jobs.length}</span>
                       </div>
                       {group.jobs.map((job) => (
                         <JobRow
@@ -633,7 +633,7 @@ export function TaskSchedulePage(): JSX.Element {
                         hiddenCount={0}
                       />
                     ) : null}
-                    <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] 2xl:grid-cols-[minmax(0,1fr)_440px]">
+                    <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_23.75rem] 2xl:grid-cols-[minmax(0,1fr)_27.5rem]">
                       <div className="flex min-h-0 max-h-[70vh] flex-col overflow-hidden border-b border-[hsl(var(--hairline))] xl:max-h-none xl:border-b-0 xl:border-r">
                         <JobOverview
                           job={selectedJob}
@@ -697,7 +697,7 @@ export function TaskSchedulePage(): JSX.Element {
           <DialogContent
             frame
             className="max-w-none"
-            style={{ width: 'min(960px, calc(100vw - 40px))', maxHeight: 'calc(100vh - 40px)' }}
+            style={{ width: 'min(60rem, calc(100vw - 2.5rem))', maxHeight: 'calc(100vh - 2.5rem)' }}
           >
             {/*
               * 双栏：左边定「什么时候跑」，右边整块给「跑什么」。动作是任务的本体
@@ -708,13 +708,13 @@ export function TaskSchedulePage(): JSX.Element {
               */}
             <DialogHeader className="shrink-0 border-b border-[hsl(var(--hairline))] py-3 pl-5 pr-12">
               <div className="text-left">
-                <DialogTitle className="text-[15px]">{form.id ? '编辑任务' : '新建任务'}</DialogTitle>
+                <DialogTitle className="text-[0.9375rem]">{form.id ? '编辑任务' : '新建任务'}</DialogTitle>
                 <div className="mt-0.5 text-xs text-muted-foreground">触发器启动任务，动作按顺序执行。</div>
               </div>
             </DialogHeader>
 
             <div className="min-h-0 flex-1 overflow-y-auto lg:overflow-hidden">
-              <div className="flex min-h-0 flex-col lg:grid lg:h-full lg:grid-cols-[300px_minmax(0,1fr)]">
+              <div className="flex min-h-0 flex-col lg:grid lg:h-full lg:grid-cols-[18.75rem_minmax(0,1fr)]">
                 <div className="min-h-0 border-b border-[hsl(var(--hairline))] p-4 lg:overflow-y-auto lg:border-b-0 lg:border-r">
                   <Field label="任务名称">
                     <input className={compactInputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="生码统计同步" />
@@ -730,7 +730,7 @@ export function TaskSchedulePage(): JSX.Element {
 
                   <div className="mt-4 border-t border-[hsl(var(--hairline))] pt-4">
                     <div className="mb-2.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      <span className="text-[12.5px] font-semibold">触发器</span>
+                      <span className="text-[0.7812rem] font-semibold">触发器</span>
                       <span className="text-xs text-muted-foreground">{scheduleLabelFromForm(form)}</span>
                     </div>
                     <div className="flex flex-wrap gap-1.5">
@@ -762,7 +762,7 @@ export function TaskSchedulePage(): JSX.Element {
                     <summary className="flex cursor-pointer list-none items-center gap-2 py-2 text-xs font-medium text-muted-foreground">
                       <SlidersHorizontal className="h-3.5 w-3.5" />
                       更多设置
-                      <span className="ml-auto text-[11px] opacity-70">{form.enabled ? '已启用' : '已停用'} · {form.timeoutSeconds}s · 重试 {form.retryCount}</span>
+                      <span className="ml-auto text-[0.6875rem] opacity-70">{form.enabled ? '已启用' : '已停用'} · {form.timeoutSeconds}s · 重试 {form.retryCount}</span>
                     </summary>
                     <div className="grid gap-3 pb-1 pt-2">
                       <Field label="启用状态">
@@ -801,7 +801,7 @@ export function TaskSchedulePage(): JSX.Element {
                 <div className="flex min-h-0 flex-col p-4">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                      <span className="text-[12.5px] font-semibold">动作步骤</span>
+                      <span className="text-[0.7812rem] font-semibold">动作步骤</span>
                       <span className="text-xs text-muted-foreground">{form.actions.length} 个动作，按列表顺序执行</span>
                     </div>
                     {form.actions.length > 0 ? (
@@ -814,7 +814,7 @@ export function TaskSchedulePage(): JSX.Element {
                   {form.actions.length === 0 ? (
                     <div className="flex min-h-40 flex-col items-center justify-center gap-3 rounded-md border border-dashed lg:flex-1 border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))]/45 px-6 py-8 text-center">
                       <div className="text-sm">这个任务触发后要做什么</div>
-                      <div className="max-w-[340px] text-xs text-muted-foreground">按顺序执行；任一步失败后面的步骤不再继续。</div>
+                      <div className="max-w-[21.25rem] text-xs text-muted-foreground">按顺序执行；任一步失败后面的步骤不再继续。</div>
                       <div className="mt-1 flex flex-wrap justify-center gap-2">
                         <Button type="button" variant="outline" size="sm" onClick={() => openActionDialog(null, 'http')}>
                           <Globe2 />
@@ -886,7 +886,7 @@ export function TaskSchedulePage(): JSX.Element {
               <div
                 role="alert"
                 data-editor-error
-                className="shrink-0 border-t border-destructive/40 bg-destructive/10 px-5 py-3 text-[12.5px] text-destructive"
+                className="shrink-0 border-t border-destructive/40 bg-destructive/10 px-5 py-3 text-[0.7812rem] text-destructive"
               >
                 {error}
               </div>
@@ -900,7 +900,7 @@ export function TaskSchedulePage(): JSX.Element {
               <div
                 role="status"
                 data-editor-toast
-                className="shrink-0 border-t border-ok/40 bg-ok/10 px-5 py-3 text-[12.5px] text-ok"
+                className="shrink-0 border-t border-ok/40 bg-ok/10 px-5 py-3 text-[0.7812rem] text-ok"
               >
                 {toast}
               </div>
@@ -909,7 +909,7 @@ export function TaskSchedulePage(): JSX.Element {
         </Dialog>
 
         <Dialog open={actionDialogOpen} onOpenChange={setActionDialogOpen}>
-          <DialogContent className="max-w-none" style={{ width: 'min(760px, calc(100vw - 32px))' }}>
+          <DialogContent className="max-w-none" style={{ width: 'min(47.5rem, calc(100vw - 2rem))' }}>
             <DialogHeader>
               <DialogTitle>{editingActionIndex === null ? '添加动作' : '编辑动作'}</DialogTitle>
               <DialogDescription>HTTP 会调用 CDS 能访问的接口，命令脚本会在独立 sandbox 工作区内执行。多个动作按列表顺序执行。</DialogDescription>
@@ -933,7 +933,7 @@ export function TaskSchedulePage(): JSX.Element {
                     <Rocket className="h-4 w-4" />
                     发布动作
                   </div>
-                  <div className="font-mono text-[11px] leading-5">{releaseActionSummary(actionDraft.release)}</div>
+                  <div className="font-mono text-[0.6875rem] leading-5">{releaseActionSummary(actionDraft.release)}</div>
                   <div>本页只展示与启停发布规则；来源、目标与闸门请到发布中心的「自动发布」页签编辑，避免在两处各改一半。</div>
                 </div>
               ) : actionDraft.targetType === 'http' ? (
@@ -954,7 +954,7 @@ export function TaskSchedulePage(): JSX.Element {
                       </div>
                     </div>
                   </details>
-                  <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-3">
+                  <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3">
                     <Field label="方法">
                       <select className={compactInputClass} value={actionDraft.method} onChange={(e) => setActionDraft({ ...actionDraft, method: e.target.value as HttpMethod })}>
                         {['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => <option key={method} value={method}>{method}</option>)}
@@ -1002,7 +1002,7 @@ export function TaskSchedulePage(): JSX.Element {
                   </div>
                   {checkResult.error ? <div className="mt-1 text-xs">{checkResult.error}</div> : null}
                   {checkResult.log ? (
-                    <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-background/60 p-2 font-mono text-[11px] leading-5">
+                    <pre className="mt-2 max-h-36 overflow-auto whitespace-pre-wrap rounded bg-background/60 p-2 font-mono text-[0.6875rem] leading-5">
                       {checkResult.log}
                     </pre>
                   ) : null}
@@ -1261,7 +1261,7 @@ function TimelineBand({
           <span className="text-sm font-semibold">今日调度轴</span>
           <span className="text-xs text-muted-foreground">左侧已发生，右侧待触发</span>
         </div>
-        <div className="hidden items-center gap-4 text-[11px] text-muted-foreground sm:flex">
+        <div className="hidden items-center gap-4 text-[0.6875rem] text-muted-foreground sm:flex">
           <span className="flex items-center gap-1.5"><span className="h-0.5 w-4 rounded bg-ok" />成功</span>
           <span className="flex items-center gap-1.5"><span className="h-2.5 w-0.5 rounded bg-bad" />失败</span>
           <span className="flex items-center gap-1.5"><span className="h-2 w-2 rounded-full border border-dashed border-[hsl(var(--hairline-strong))]" />待触发</span>
@@ -1276,7 +1276,7 @@ function TimelineBand({
        * 兜底取该规则点名的第 6 条：包一层横滚容器 + 内容自身 min-w，宽屏零变化。
        */}
       <div className={`overflow-x-auto ${compact ? 'px-4 pb-1 pt-1' : 'px-4 pb-3 pt-2'}`}>
-        <div className="min-w-[560px]">
+        <div className="min-w-[35rem]">
         {/* 刻度行的三段必须与泳道逐段对齐，否则刻度和点位是两套坐标。 */}
         <div className={compact ? 'hidden' : 'flex'}>
           <div className="w-44 shrink-0" />
@@ -1285,7 +1285,7 @@ function TimelineBand({
             {hourTicks.map(({ hour, leftPct }) => (
               <span
                 key={hour}
-                className="absolute top-0 font-mono text-[10px] text-muted-foreground"
+                className="absolute top-0 font-mono text-[0.625rem] text-muted-foreground"
                 style={{ left: `${leftPct}%`, transform: hour === 0 ? 'none' : hour === 24 ? 'translateX(-100%)' : 'translateX(-50%)' }}
               >
                 {String(hour).padStart(2, '0')}
@@ -1303,7 +1303,7 @@ function TimelineBand({
                   现在底纹统一只铺轨道区，选中靠名字列左侧一根竖条 + 主色墨。 */}
               <div className={`flex h-full w-44 shrink-0 items-center gap-1.5 pl-2 pr-3 ${lane.selected ? 'shadow-[inset_2px_0_0_hsl(var(--primary))]' : ''}`}>
                 <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${lane.disabled ? 'bg-muted-foreground' : 'bg-ok'}`} />
-                <span className={`truncate text-[11px] ${lane.disabled ? 'text-muted-foreground line-through' : lane.selected ? 'font-semibold text-primary-ink' : 'text-foreground-muted'}`}>{lane.name}</span>
+                <span className={`truncate text-[0.6875rem] ${lane.disabled ? 'text-muted-foreground line-through' : lane.selected ? 'font-semibold text-primary-ink' : 'text-foreground-muted'}`}>{lane.name}</span>
               </div>
               {/* 沟槽：轨道右端此前直接贴着调度列（实测 0px），虚线带压在「每 10 分钟」上。 */}
               <div className="box-border h-full w-6 shrink-0 border-l border-[hsl(var(--hairline))]" />
@@ -1324,10 +1324,10 @@ function TimelineBand({
                     title={event.title}
                     className={
                       event.status === 'pending'
-                        ? 'absolute top-1/2 h-[7px] w-[7px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-[hsl(var(--hairline-strong))]'
+                        ? 'absolute top-1/2 h-[0.4375rem] w-[0.4375rem] -translate-x-1/2 -translate-y-1/2 rounded-full border border-dashed border-[hsl(var(--hairline-strong))]'
                         : event.status === 'failed'
                           ? 'absolute top-1/2 h-3.5 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-sm bg-bad'
-                          : `absolute top-1/2 h-[7px] w-[7px] -translate-x-1/2 -translate-y-1/2 rounded-full ${statusTone(event.status)}`
+                          : `absolute top-1/2 h-[0.4375rem] w-[0.4375rem] -translate-x-1/2 -translate-y-1/2 rounded-full ${statusTone(event.status)}`
                     }
                     style={{ left: `${event.leftPct}%` }}
                   />
@@ -1336,18 +1336,18 @@ function TimelineBand({
               <div className="box-border h-full w-6 shrink-0 border-r border-[hsl(var(--hairline))]" />
               {/* 8rem 才放得下「每天 09:00 Asia/Shanghai」；4rem 时六行里有三行吃省略号。 */}
               <div className="flex w-32 shrink-0 justify-end">
-                <span className={`truncate text-[10px] ${lane.disabled ? 'text-bad' : 'text-muted-foreground'}`}>{lane.tag}</span>
+                <span className={`truncate text-[0.625rem] ${lane.disabled ? 'text-bad' : 'text-muted-foreground'}`}>{lane.tag}</span>
               </div>
             </div>
           ))}
 
           <div
-            className="pointer-events-none absolute top-0 w-px bg-primary shadow-[0_0_10px_hsl(var(--primary)/0.6)]"
+            className="pointer-events-none absolute top-0 w-px bg-primary shadow-[0_0_0.625rem_hsl(var(--primary)/0.6)]"
             style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, height: `${lanes.length * 28}px` }}
           />
           {compact ? null : (
             <span
-              className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[hsl(var(--status-ink))]"
+              className="pointer-events-none absolute -translate-x-1/2 rounded bg-primary px-1.5 py-0.5 font-mono text-[0.625rem] font-semibold text-[hsl(var(--status-ink))]"
               style={{ left: `calc(12.5rem + (100% - 22rem) * ${nowRatio / 100})`, top: `${lanes.length * 28 + 4}px` }}
             >
               现在 {nowLabel}
@@ -1356,7 +1356,7 @@ function TimelineBand({
         </div>
 
         {compact ? null : hiddenCount > 0 ? (
-          <div className="pl-[12.5rem] pt-7 text-[11px] text-muted-foreground">另有 {hiddenCount} 个任务未展开</div>
+          <div className="pl-[12.5rem] pt-7 text-[0.6875rem] text-muted-foreground">另有 {hiddenCount} 个任务未展开</div>
         ) : <div className="pt-6" />}
         </div>
       </div>
@@ -1395,7 +1395,7 @@ function RunStream({
             <button
               type="button"
               onClick={onToggleScope}
-              className="shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-px text-[11px] text-muted-foreground transition-colors hover:text-foreground"
+              className="shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-px text-[0.6875rem] text-muted-foreground transition-colors hover:text-foreground"
             >
               {scopeLabel}
             </button>
@@ -1458,15 +1458,15 @@ function JobRow({
     >
       <div className="flex items-center gap-2">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${disabled ? 'bg-muted-foreground' : job.lastRunStatus === 'failed' ? 'bg-bad' : job.lastRunStatus === 'skipped' ? 'bg-warn' : 'bg-ok'}`} />
-        <span className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${selected ? 'text-primary-ink' : ''}`}>{job.name}</span>
-        <span className={`shrink-0 font-mono text-[11px] ${disabled ? 'text-bad' : selected ? 'text-primary-ink' : 'text-muted-foreground'}`}>
+        <span className={`min-w-0 flex-1 truncate text-[0.8125rem] font-semibold ${selected ? 'text-primary-ink' : ''}`}>{job.name}</span>
+        <span className={`shrink-0 font-mono text-[0.6875rem] ${disabled ? 'text-bad' : selected ? 'text-primary-ink' : 'text-muted-foreground'}`}>
           {disabled ? '已停用' : countdown}
         </span>
       </div>
       <div className="mt-1.5 flex items-center gap-2">
-        <span className="min-w-0 max-w-[7rem] truncate text-[11px] text-muted-foreground">{projectLabel}</span>
+        <span className="min-w-0 max-w-[7rem] truncate text-[0.6875rem] text-muted-foreground">{projectLabel}</span>
         <span className="h-0.5 w-0.5 shrink-0 rounded-full bg-[hsl(var(--hairline-strong))]" />
-        <span className="shrink-0 whitespace-nowrap text-[11px] text-muted-foreground">{scheduleText}</span>
+        <span className="shrink-0 whitespace-nowrap text-[0.6875rem] text-muted-foreground">{scheduleText}</span>
         <span className="flex flex-1 justify-end gap-px">
           {bars.map((status, index) => (
             <span key={index} className={`h-2.5 w-1 rounded-sm ${statusTone(status)}`} />
@@ -1474,7 +1474,7 @@ function JobRow({
         </span>
       </div>
       {job.autoDisabledReason ? (
-        <div className="mt-1.5 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[10px] leading-4 text-destructive">
+        <div className="mt-1.5 rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-[0.625rem] leading-4 text-destructive">
           {job.autoDisabledReason}
         </div>
       ) : null}
@@ -1498,11 +1498,11 @@ function RunRow({
     <div className={`border-b border-[hsl(var(--hairline))]/70 ${bad ? 'bg-destructive/[0.08]' : ''}`}>
       <button type="button" onClick={onToggle} className="flex w-full items-center gap-3 px-4 py-2 text-left">
         <span className={`h-5 w-[3px] shrink-0 rounded-sm ${statusTone(run.status)}`} />
-        <span className="w-11 shrink-0 font-mono text-[11px] text-muted-foreground">{formatClock(run.startedAt || run.queuedAt)}</span>
+        <span className="w-11 shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{formatClock(run.startedAt || run.queuedAt)}</span>
         {showJobName
-          ? <span className={`min-w-0 max-w-[11rem] flex-1 truncate text-[12.5px] font-medium ${bad ? 'text-bad' : ''}`}>{jobName}</span>
+          ? <span className={`min-w-0 max-w-[11rem] flex-1 truncate text-[0.7812rem] font-medium ${bad ? 'text-bad' : ''}`}>{jobName}</span>
           : null}
-        <span className={`shrink-0 rounded px-1.5 py-px text-[10.5px] ${run.trigger === 'manual' ? 'border border-info/30 bg-info-soft text-info' : 'border border-[hsl(var(--hairline-strong))] text-muted-foreground'}`}>
+        <span className={`shrink-0 rounded px-1.5 py-px text-[0.6562rem] ${run.trigger === 'manual' ? 'border border-info/30 bg-info-soft text-info' : 'border border-[hsl(var(--hairline-strong))] text-muted-foreground'}`}>
           {run.trigger === 'manual' ? '手动' : run.trigger === 'push' ? 'push' : '定时'}
         </span>
         <span className="hidden shrink-0 items-center gap-0.5 sm:flex">
@@ -1513,8 +1513,8 @@ function RunRow({
         {/* 名字列缺席时，弹性空档要留在这里而不是名字原来的位置，
             否则「定时」和耗时之间会裂开一条几百像素的空白。 */}
         {showJobName ? null : <span className="flex-1" />}
-        <span className="w-14 shrink-0 text-right font-mono text-[11px] text-foreground-muted">{formatDuration(run.durationMs)}</span>
-        <span className={`w-14 shrink-0 text-right font-mono text-[11px] ${bad ? 'text-bad' : run.status === 'skipped' ? 'text-warn' : 'text-ok'}`}>
+        <span className="w-14 shrink-0 text-right font-mono text-[0.6875rem] text-foreground-muted">{formatDuration(run.durationMs)}</span>
+        <span className={`w-14 shrink-0 text-right font-mono text-[0.6875rem] ${bad ? 'text-bad' : run.status === 'skipped' ? 'text-warn' : 'text-ok'}`}>
           {run.httpStatus ? run.httpStatus : run.exitCode !== undefined ? `exit ${run.exitCode}` : runStatusLabel(run.status)}
         </span>
       </button>
@@ -1526,9 +1526,9 @@ function RunRow({
               {run.steps.map((step) => (
                 <div key={step.index} className="flex items-center gap-2 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-2 py-1">
                   <span className={`h-1.5 w-1.5 shrink-0 rounded-sm ${statusTone(step.status)}`} />
-                  <span className="font-mono text-[10px] text-muted-foreground">{step.index}</span>
-                  <span className="min-w-0 flex-1 truncate text-[11.5px]">{step.name}</span>
-                  <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">
+                  <span className="font-mono text-[0.625rem] text-muted-foreground">{step.index}</span>
+                  <span className="min-w-0 flex-1 truncate text-[0.7188rem]">{step.name}</span>
+                  <span className="shrink-0 font-mono text-[0.6562rem] text-muted-foreground">
                     {step.status === 'not-run' ? '未执行' : formatDuration(step.durationMs)}
                     {step.httpStatus ? ` · ${step.httpStatus}` : step.exitCode !== undefined ? ` · exit ${step.exitCode}` : ''}
                   </span>
@@ -1536,9 +1536,9 @@ function RunRow({
               ))}
             </div>
           ) : null}
-          {run.error ? <div className="mb-2 text-[11.5px] text-destructive">{run.error}</div> : null}
+          {run.error ? <div className="mb-2 text-[0.7188rem] text-destructive">{run.error}</div> : null}
           {run.log ? (
-            <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-[11px] leading-5 text-muted-foreground">
+            <pre className="max-h-44 overflow-auto whitespace-pre-wrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2 font-mono text-[0.6875rem] leading-5 text-muted-foreground">
               {run.log}
             </pre>
           ) : null}
@@ -1577,12 +1577,12 @@ function JobDetailHeader({
     <div className="flex shrink-0 flex-col gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5 sm:flex-row sm:items-center sm:gap-3">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className="truncate text-[15px] font-semibold">{job.name}</span>
+          <span className="truncate text-[0.9375rem] font-semibold">{job.name}</span>
           {disabled ? (
-            <span className="shrink-0 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-px text-[10.5px] font-semibold text-destructive">已停用</span>
+            <span className="shrink-0 rounded-full border border-destructive/40 bg-destructive/10 px-2 py-px text-[0.6562rem] font-semibold text-destructive">已停用</span>
           ) : null}
         </div>
-        <div className="mt-0.5 flex items-center gap-2 text-[11.5px] text-muted-foreground">
+        <div className="mt-0.5 flex items-center gap-2 text-[0.7188rem] text-muted-foreground">
           <span className="truncate">{projectLabel}</span>
           <span className="text-[hsl(var(--hairline-strong))]">·</span>
           <span className="truncate">{scheduleText}</span>
@@ -1648,8 +1648,8 @@ function JobOverview({
       <div className="flex shrink-0 items-stretch border-b border-[hsl(var(--hairline))]">
         {stats.map((stat) => (
           <div key={stat.label} className="min-w-0 flex-1 border-r border-[hsl(var(--hairline))] px-4 py-2 last:border-r-0">
-            <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
-            <div className={`mt-0.5 truncate font-mono text-[15px] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
+            <div className="truncate text-[0.625rem] uppercase tracking-wide text-muted-foreground">{stat.label}</div>
+            <div className={`mt-0.5 truncate font-mono text-[0.9375rem] font-semibold leading-tight ${stat.tone}`}>{stat.value}</div>
           </div>
         ))}
       </div>
@@ -1657,7 +1657,7 @@ function JobOverview({
       <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
         {health.bars.length > 0 ? (
           <div className="flex items-center gap-2.5">
-            <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">最近 {health.bars.length} 次</span>
+            <span className="shrink-0 text-[0.625rem] uppercase tracking-wide text-muted-foreground">最近 {health.bars.length} 次</span>
             {/* 原来是 h-6 flex-1 的大方块：拉宽后每格 105px，像被切碎的进度条而不是走势。 */}
             <div className="flex items-end gap-[2px]">
               {health.bars.map((status, index) => (
@@ -1668,34 +1668,34 @@ function JobOverview({
                 />
               ))}
             </div>
-            <span className="shrink-0 text-[10.5px] text-muted-foreground">越靠右越新</span>
+            <span className="shrink-0 text-[0.6562rem] text-muted-foreground">越靠右越新</span>
           </div>
         ) : null}
 
         <div>
           <div className="mb-2 flex items-center gap-2">
-            <span className="text-[10px] uppercase tracking-wide text-muted-foreground">动作链</span>
-            <span className="font-mono text-[10px] text-muted-foreground">{actions.length}</span>
+            <span className="text-[0.625rem] uppercase tracking-wide text-muted-foreground">动作链</span>
+            <span className="font-mono text-[0.625rem] text-muted-foreground">{actions.length}</span>
           </div>
           <div className="flex items-center gap-2.5">
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-primary/40 bg-primary-soft">
               <AlarmClock className="h-3.5 w-3.5 text-primary-ink" />
             </span>
-            <span className="text-[12.5px] text-foreground-muted">{scheduleText}</span>
+            <span className="text-[0.7812rem] text-foreground-muted">{scheduleText}</span>
           </div>
           {actions.map((action, index) => (
             <div key={action.id || index}>
               <div className="ml-[0.85rem] h-3 w-px bg-[hsl(var(--hairline-strong))]" />
               <div className="flex items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-2.5 py-2">
-                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[hsl(var(--hairline-strong))] font-mono text-[11.5px] font-semibold">{index + 1}</span>
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-[hsl(var(--hairline-strong))] font-mono text-[0.7188rem] font-semibold">{index + 1}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-1.5">
-                    <span className={`shrink-0 rounded px-1.5 py-px text-[9.5px] ${action.type === 'http' ? 'bg-info-soft text-info' : action.type === 'release' ? 'bg-primary-soft text-primary-ink' : 'bg-[hsl(var(--hairline))] text-foreground-muted'}`}>
+                    <span className={`shrink-0 rounded px-1.5 py-px text-[0.5938rem] ${action.type === 'http' ? 'bg-info-soft text-info' : action.type === 'release' ? 'bg-primary-soft text-primary-ink' : 'bg-[hsl(var(--hairline))] text-foreground-muted'}`}>
                       {action.type === 'http' ? 'HTTP' : action.type === 'release' ? '发布' : '命令'}
                     </span>
-                    <span className="truncate text-[12.5px] font-medium">{actionTitle(actionFromTarget(action))}</span>
+                    <span className="truncate text-[0.7812rem] font-medium">{actionTitle(actionFromTarget(action))}</span>
                   </div>
-                  <div className="mt-0.5 truncate font-mono text-[10.5px] text-muted-foreground">{actionDescription(actionFromTarget(action))}</div>
+                  <div className="mt-0.5 truncate font-mono text-[0.6562rem] text-muted-foreground">{actionDescription(actionFromTarget(action))}</div>
                 </div>
               </div>
             </div>
@@ -1705,7 +1705,7 @@ function JobOverview({
           <button
             type="button"
             onClick={onEdit}
-            className="flex w-full items-center gap-2.5 rounded-md border border-dashed border-[hsl(var(--hairline-strong))] px-2.5 py-2 text-left text-[12.5px] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary-ink"
+            className="flex w-full items-center gap-2.5 rounded-md border border-dashed border-[hsl(var(--hairline-strong))] px-2.5 py-2 text-left text-[0.7812rem] text-muted-foreground transition-colors hover:border-primary/50 hover:text-primary-ink"
           >
             <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-dashed border-[hsl(var(--hairline-strong))]">
               <Plus className="h-3.5 w-3.5" />
@@ -1716,8 +1716,8 @@ function JobOverview({
 
         {job.autoDisabledReason ? (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2.5">
-            <div className="text-[12px] font-medium leading-5 text-destructive">已自动停用</div>
-            <div className="mt-1 text-[11.5px] leading-5 text-muted-foreground">{job.autoDisabledReason}</div>
+            <div className="text-[0.75rem] font-medium leading-5 text-destructive">已自动停用</div>
+            <div className="mt-1 text-[0.7188rem] leading-5 text-muted-foreground">{job.autoDisabledReason}</div>
           </div>
         ) : null}
       </div>

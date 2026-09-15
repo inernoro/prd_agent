@@ -45,7 +45,7 @@ export function RollbackDialog({
   const rollbackCommand = state?.row.target.ssh?.rollbackCommand?.trim();
   return (
     <Dialog open={!!state} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(720px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(45rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>回滚站点版本</DialogTitle>
         </DialogHeader>
@@ -109,7 +109,7 @@ export function ArchiveTargetDialog({
   const valid = Boolean(state && state.reason.trim().length >= 8);
   return (
     <Dialog open={Boolean(state)} onOpenChange={(open) => { if (!open && !saving) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(620px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(38.75rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>归档发布目标</DialogTitle>
         </DialogHeader>
@@ -192,7 +192,7 @@ export function ReleaseLogDialog({
   const canActOnFailure = Boolean(current && (current.status === 'failed' || current.status === 'rollback_failed'));
   return (
     <Dialog open={!!run} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(768px, calc(100vw - 32px))' }}>
+      <DialogContent className="max-w-none" style={{ width: 'min(48rem, calc(100vw - 2rem))' }}>
         <DialogHeader>
           <DialogTitle>
             发布记录 {current?.releaseId ? <span className="font-mono text-sm text-muted-foreground">{current.releaseId}</span> : null}

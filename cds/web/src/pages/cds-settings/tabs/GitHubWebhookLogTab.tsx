@@ -216,7 +216,7 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
               }`}
             >
               <span>{tab.label}</span>
-              <span className="font-mono text-[11px] opacity-75">{counts[tab.key]}</span>
+              <span className="font-mono text-[0.6875rem] opacity-75">{counts[tab.key]}</span>
             </button>
           ))}
         </div>
@@ -262,77 +262,77 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs text-muted-foreground">{formatRelativeTime(d.receivedAt)}</span>
-                        <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                        <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground">
                           {d.event}
                         </span>
                         {d.repoFullName ? (
                           <span className="text-xs text-foreground/80">{d.repoFullName}</span>
                         ) : null}
                         {d.ref ? (
-                          <span className="font-mono text-[11px] text-muted-foreground">
+                          <span className="font-mono text-[0.6875rem] text-muted-foreground">
                             {d.ref.replace(/^refs\/heads\//, '')}
                           </span>
                         ) : null}
                         {d.commitSha ? (
-                          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px]">
+                          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[0.6875rem]">
                             {d.commitSha}
                           </span>
                         ) : null}
                         {d.actor ? <span className="text-xs text-muted-foreground">{d.actor}</span> : null}
                         {d.githubOwner ? (
-                          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] text-muted-foreground">
+                          <span className="rounded border border-border px-1.5 py-0.5 font-mono text-[0.6875rem] text-muted-foreground">
                             owner {d.githubOwner}
                           </span>
                         ) : null}
                         <span
-                          className={`rounded-md border px-1.5 py-0.5 text-[11px] ${dispatchActionTone(d.dispatchAction)}`}
+                          className={`rounded-md border px-1.5 py-0.5 text-[0.6875rem] ${dispatchActionTone(d.dispatchAction)}`}
                           title={dispatchActionTooltip(d.dispatchAction)}
                         >
                           {dispatchActionLabel(d.dispatchAction)}
                         </span>
                         {d.githubWhitelistDecision === 'blocked' ? (
-                          <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
+                          <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">
                             白名单拦截
                           </span>
                         ) : null}
                         {d.githubWhitelistCommentPosted ? (
-                          <span className="rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[11px] text-info">
+                          <span className="rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[0.6875rem] text-info">
                             已回复评论区
                           </span>
                         ) : null}
                         {d.branchId ? (
                           <span
-                            className="rounded border border-border bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[11px] text-foreground/80"
+                            className="rounded border border-border bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[0.6875rem] text-foreground/80"
                             title="CDS 实际派发或匹配到的目标分支 ID"
                           >
                             目标 {d.branchId}
                           </span>
                         ) : null}
                         {d.deployDispatched ? (
-                          <span className="rounded border border-ok/40 bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">
+                          <span className="rounded border border-ok/40 bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">
                             已派发
                           </span>
                         ) : null}
                         {d.deployDispatchError ? (
-                          <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive">
+                          <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[0.6875rem] text-destructive">
                             派发失败
                           </span>
                         ) : null}
                         {d.deployDedupSkipped ? (
-                          <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[11px] text-warn">
+                          <span className="rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.6875rem] text-warn">
                             去重跳过
                           </span>
                         ) : null}
                         {d.selfStatusBroadcast ? (
                           <span
-                            className="rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[11px] text-info"
+                            className="rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[0.6875rem] text-info"
                             title="这只说明左下角 self-update 提示收到刷新,不等同于部署成功"
                           >
                             左下角已通知
                           </span>
                         ) : null}
                         {!d.signatureValid ? (
-                          <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[11px] text-destructive">
+                          <span className="rounded border border-destructive/40 bg-destructive/10 px-1.5 py-0.5 text-[0.6875rem] text-destructive">
                             验签失败
                           </span>
                         ) : null}
@@ -375,9 +375,9 @@ export function GitHubWebhookLogTab({ onToast }: Props): JSX.Element {
                       {d.error ? <KV label="error" value={d.error} /> : null}
                       {d.payloadSnippet ? (
                         <div>
-                          <div className="mb-1 text-[11px] font-medium text-muted-foreground">payload (截断 4KB)</div>
+                          <div className="mb-1 text-[0.6875rem] font-medium text-muted-foreground">payload (截断 4KB)</div>
                           <pre
-                            className="max-h-64 overflow-auto whitespace-pre-wrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--bg-card))] p-2 font-mono text-[11px] leading-5"
+                            className="max-h-64 overflow-auto whitespace-pre-wrap rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--bg-card))] p-2 font-mono text-[0.6875rem] leading-5"
                             style={{ overscrollBehavior: 'contain' }}
                           >
                             {d.payloadSnippet}

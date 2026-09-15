@@ -322,8 +322,8 @@ export function LoadingPagesTab(): JSX.Element {
             className={cn(
               'relative w-full overflow-hidden',
               page.scope === 'fullscreen'
-                ? 'aspect-[16/9] min-h-[520px] bg-[#08070d] text-white'
-                : 'min-h-[220px] bg-transparent text-foreground',
+                ? 'aspect-[16/9] min-h-[32.5rem] bg-[#08070d] text-white'
+                : 'min-h-[13.75rem] bg-transparent text-foreground',
             )}
           >
             {page.kind === 'iframe' ? (
@@ -397,38 +397,38 @@ function ShapeGridWaitingPreview({
         hoverFillColor="rgba(255,255,255,0.035)"
         hoverTrailAmount={0}
       />
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(900px_620px_at_52%_46%,rgba(255,255,255,0.08),transparent_36%,rgba(18,15,23,0.82)_100%),linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.22)_48%,rgba(18,15,23,0.84))]" />
-      <main className="relative z-10 grid h-full grid-cols-1 items-center px-[clamp(20px,6vw,92px)] py-[clamp(32px,7vw,92px)] lg:grid-cols-[minmax(280px,720px)_minmax(0,1fr)]">
-        <section className="max-w-[720px] [text-shadow:0_2px_30px_rgba(0,0,0,0.72)]">
-          <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[11px] uppercase tracking-[0.28em] text-[#ded8ef]">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(56.25rem_38.75rem_at_52%_46%,rgba(255,255,255,0.08),transparent_36%,rgba(18,15,23,0.82)_100%),linear-gradient(90deg,rgba(18,15,23,0.9),rgba(18,15,23,0.22)_48%,rgba(18,15,23,0.84))]" />
+      <main className="relative z-10 grid h-full grid-cols-1 items-center px-[clamp(1.25rem,6vw,5.75rem)] py-[clamp(2rem,7vw,5.75rem)] lg:grid-cols-[minmax(17.5rem,45rem)_minmax(0,1fr)]">
+        <section className="max-w-[45rem] [text-shadow:0_2px_1.875rem_rgba(0,0,0,0.72)]">
+          <div className="mb-7 inline-flex items-center gap-2.5 font-mono text-[0.6875rem] uppercase tracking-[0.28em] text-[#ded8ef]">
             <CdsLogoLoader size="sm" className="text-[#f7f5ff]" />
             CDS Waiting Room
           </div>
-          <h1 className={cn('max-w-full leading-[0.96] tracking-normal', compact ? 'text-[clamp(34px,4.5vw,62px)]' : 'text-[clamp(42px,5.6vw,82px)]')}>
+          <h1 className={cn('max-w-full leading-[0.96] tracking-normal', compact ? 'text-[clamp(2.125rem,4.5vw,3.875rem)]' : 'text-[clamp(2.625rem,5.6vw,5.125rem)]')}>
             <span className="inline-block bg-[linear-gradient(120deg,rgba(247,245,255,0.76)_0%,rgba(247,245,255,0.76)_38%,#fff_48%,rgba(255,255,255,0.96)_52%,rgba(247,245,255,0.76)_62%,rgba(247,245,255,0.76)_100%)] bg-[length:220%_100%] bg-clip-text text-transparent animate-[shiny-text_3.2s_linear_infinite]">
               {heading}
             </span>
           </h1>
-          <p className="mt-6 max-w-[580px] text-[clamp(15px,1.45vw,20px)] leading-[1.75] text-white/62">{subtitle}</p>
+          <p className="mt-6 max-w-[36.25rem] text-[clamp(0.9375rem,1.45vw,1.25rem)] leading-[1.75] text-white/62">{subtitle}</p>
           <div className="mt-7 flex flex-wrap gap-3">
             <span className="rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 font-mono text-xs text-[#dde3ea] backdrop-blur-md">{branch}</span>
             <span className="rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs text-[#dde3ea] backdrop-blur-md">状态 · {status}</span>
           </div>
-          <div className="mt-8 flex max-w-[620px] flex-col gap-3">
+          <div className="mt-8 flex max-w-[38.75rem] flex-col gap-3">
             {services.map((service, index) => (
-              <div key={service} className="relative flex items-center gap-3 overflow-hidden border-t border-white/10 py-3 text-[15px]">
-                <span className="h-2 w-2 rounded-full bg-[#dbe4ee] shadow-[0_0_14px_#dbe4ee]" />
+              <div key={service} className="relative flex items-center gap-3 overflow-hidden border-t border-white/10 py-3 text-[0.9375rem]">
+                <span className="h-2 w-2 rounded-full bg-[#dbe4ee] shadow-[0_0_0.875rem_#dbe4ee]" />
                 <span>{service} · {index === 0 ? '进行中' : '等待中'}</span>
               </div>
             ))}
           </div>
-          <div className="mt-7 w-[min(620px,100%)] rounded-[18px] border border-white/12 bg-white/[0.035] p-4 backdrop-blur-md">
+          <div className="mt-7 w-[min(38.75rem,100%)] rounded-[1.125rem] border border-white/12 bg-white/[0.035] p-4 backdrop-blur-md">
             <div className="mb-2 flex items-center justify-between gap-3 text-xs text-white/70">
               <span>预计处理进度</span>
-              <strong className="font-mono text-[15px] text-slate-50">{compact ? '42%' : '68%'}</strong>
+              <strong className="font-mono text-[0.9375rem] text-slate-50">{compact ? '42%' : '68%'}</strong>
             </div>
             <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-              <span className={cn('block h-full rounded-full bg-[linear-gradient(90deg,#fff,#9f5050)] shadow-[0_0_18px_rgba(255,255,255,0.22)]', compact ? 'w-[42%]' : 'w-[68%]')} />
+              <span className={cn('block h-full rounded-full bg-[linear-gradient(90deg,#fff,#9f5050)] shadow-[0_0_1.125rem_rgba(255,255,255,0.22)]', compact ? 'w-[42%]' : 'w-[68%]')} />
             </div>
           </div>
         </section>
@@ -450,7 +450,7 @@ function ShapeGridSkeletonPreview({
     <div
       className={cn(
         'cds-shape-panel flex items-center justify-center rounded-md border border-dashed border-border text-muted-foreground',
-        expanded ? 'min-h-[320px] px-8 py-10' : 'min-h-[168px] px-4 py-5',
+        expanded ? 'min-h-[20rem] px-8 py-10' : 'min-h-[10.5rem] px-4 py-5',
       )}
     >
       <ShapeGrid
@@ -478,7 +478,7 @@ function ShapeGridSkeletonPreview({
 
 function PartialErrorPreview({ label, detail }: { label: string; detail: string }): JSX.Element {
   return (
-    <div className="cds-shape-panel flex min-h-[168px] items-center justify-center rounded-md border border-dashed border-destructive/35 px-4 py-5 text-destructive">
+    <div className="cds-shape-panel flex min-h-[10.5rem] items-center justify-center rounded-md border border-dashed border-destructive/35 px-4 py-5 text-destructive">
       <ShapeGrid
         className="cds-shape-backdrop"
         speed={0.08}

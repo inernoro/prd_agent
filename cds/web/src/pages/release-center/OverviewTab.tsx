@@ -68,7 +68,7 @@ export function OverviewTab({
       {row.promotion ? (
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-warn-soft px-4 py-3">
           <div className="min-w-0">
-            <div className="text-[13px] font-semibold text-warn">
+            <div className="text-[0.8125rem] font-semibold text-warn">
               {row.promotion.fromTargetName} 上跑着更新的一版
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
@@ -103,15 +103,15 @@ export function OverviewTab({
           <div className="font-mono text-lg font-semibold tabular-nums">
             {row.currentCommit ? row.currentCommit.slice(0, 7) : '未发布'}
           </div>
-          <p className="text-[12.5px] leading-relaxed text-muted-foreground">
+          <p className="text-[0.7812rem] leading-relaxed text-muted-foreground">
             {currentMeta?.subject || (row.currentCommit ? '台账里没有这个提交的说明' : '这个环境还没有成功发布过')}
           </p>
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[0.75rem] text-muted-foreground">
             {row.currentVersion ? `${row.currentVersion} · ` : ''}
             {formatDateTime(row.lastReleasedAt)}
             {row.lastOperator ? ` · ${row.lastOperator}` : ''}
           </p>
-          <p className={`text-[12px] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
+          <p className={`text-[0.75rem] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
             {position.text}
           </p>
         </StatCard>
@@ -121,14 +121,14 @@ export function OverviewTab({
             <span className="text-lg font-semibold">{formatResponseTime(row.health?.responseTimeMs)}</span>
             <Chip tone={healthTone(row.healthStatus)}>{healthLabel(row.healthStatus)}</Chip>
           </div>
-          <p className="break-all text-[12.5px] text-muted-foreground">
+          <p className="break-all text-[0.7812rem] text-muted-foreground">
             {row.health?.url || '未配置健康检查地址'}
           </p>
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[0.75rem] text-muted-foreground">
             最近检查 {formatAgo(row.health?.checkedAt, nowMs) || '-'}
             {row.health?.checkedAt ? '' : '（未监测）'}
           </p>
-          <p className="text-[12px] text-muted-foreground">
+          <p className="text-[0.75rem] text-muted-foreground">
             近 24 小时可用率 {formatAvailability(row.health?.availability24h)}
             {typeof row.health?.sampleCount24h === 'number' && row.health.sampleCount24h > 0
               ? `（${row.health.upCount24h ?? 0}/${row.health.sampleCount24h} 次探测通过）`
@@ -142,7 +142,7 @@ export function OverviewTab({
               <div className="text-lg font-semibold">
                 {row.dora.changeFailure.total} 次 · 失败 {row.dora.changeFailure.failed}
               </div>
-              <p className="text-[12.5px] text-muted-foreground">
+              <p className="text-[0.7812rem] text-muted-foreground">
                 变更失败率{' '}
                 {row.dora.changeFailure.ratio === null
                   ? '样本不足'
@@ -150,12 +150,12 @@ export function OverviewTab({
                 {' · '}
                 恢复中位 {row.dora.recovery.p50Ms === null ? '样本不足' : formatDoraDuration(row.dora.recovery.p50Ms)}
               </p>
-              <p className="text-[12px] text-muted-foreground">
+              <p className="text-[0.75rem] text-muted-foreground">
                 成功 {row.dora.frequency.successCount} 次 · 前置时间中位{' '}
                 {row.dora.leadTime.p50Ms === null ? '样本不足' : formatDoraDuration(row.dora.leadTime.p50Ms)}
               </p>
               {row.dora.recovery.ongoingCount > 0 ? (
-                <p className="text-[12px] text-warn">
+                <p className="text-[0.75rem] text-warn">
                   有 {row.dora.recovery.ongoingCount} 次失败尚未恢复
                 </p>
               ) : null}
@@ -163,7 +163,7 @@ export function OverviewTab({
           ) : (
             <>
               <div className="text-lg font-medium text-muted-foreground">样本不足</div>
-              <p className="text-[12.5px] text-muted-foreground">
+              <p className="text-[0.7812rem] text-muted-foreground">
                 这个 CDS 还没有下发本目标的发布统计，或统计窗口内一次发布都没有。
               </p>
             </>
@@ -200,7 +200,7 @@ export function OverviewTab({
             去配置页看完整脚本
           </button>
         </div>
-        <p className="mt-2 break-words text-[12.5px] text-muted-foreground">
+        <p className="mt-2 break-words text-[0.7812rem] text-muted-foreground">
           {releaseMethodSummary(row)}
         </p>
       </section>

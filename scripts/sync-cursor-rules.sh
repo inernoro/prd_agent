@@ -53,6 +53,7 @@ RULES=(
   "doc-types|globs:auto|doc/ 下文档 7 种类型前缀（spec/design/plan/rule/guide/report/debt）"
   "e2e-verification|description: 功能开发完成后准备验收时阅读|端到端验收：API 200 不等于功能正常，必须打开真实页面逐项核查"
   "enum-ripple-audit|globs:auto|枚举/常量扩展涟漪审计：全栈 6 层同步"
+  "external-cause-first|description: 写日志/报错/告警文案，或回答「它为什么坏了」时阅读|先说外因再说内因：第一句必须是谁的什么动作引起的、要不要紧，signal/异常/函数名只当附注"
   "frontend-architecture|globs:auto|前端架构：无业务状态 + SSOT + 注册表 + 统一 Loader + 默认可编辑"
   "frontend-modal|globs:auto|模态框 3 硬约束：inline style 高度 + createPortal + min-h:0"
   "gesture-unification|description: 实现 2D 画布平移/缩放时阅读（ReactFlow / 自定义 canvas / Konva）|画布手势统一原则"

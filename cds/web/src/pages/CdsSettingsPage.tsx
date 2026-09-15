@@ -289,7 +289,7 @@ function getInitialTab(): TabValue {
 function SettingsTabFallback(): JSX.Element {
   // 2026-05-28:用品牌 loader 替换裸"加载设置..." 文本,跟 CDS 视觉调性一致。
   return (
-    <div className="flex min-h-[200px] items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4">
+    <div className="flex min-h-[12.5rem] items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4">
       <CdsLogoLoader size="lg" inline={false} label={<span className="text-sm text-muted-foreground">加载设置…</span>} />
     </div>
   );
@@ -369,11 +369,11 @@ export function CdsSettingsPage(): JSX.Element {
             <TabsList aria-label="CDS 系统设置分区" className="cds-settings-nav cds-settings-rail">
               <div className="cds-settings-rail-head">
                 <div className="text-sm font-semibold">CDS 系统设置</div>
-                <div className="truncate font-mono text-[11px] text-muted-foreground">system</div>
+                <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">system</div>
               </div>
               {visibleTabGroups.map((group, groupIdx) => (
                 <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
-                  <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                  <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
                     {group.label}
                   </div>
                   {group.items.map((tab) => {

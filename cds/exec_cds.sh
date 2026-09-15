@@ -2290,8 +2290,12 @@ install_systemd_cmd() {
   echo
 
   local installed_unit="/etc/systemd/system/cds-master.service"
+  # 2026-09-08 托管容器低权重 slice（见 systemd/system-cdsworkloads.slice）：
+  # 和 master 单元一起装，master 启动后 systemd-sync 也会自动补装/修 drift。
+  local workload_slice="$cds_dir/systemd/system-cdsworkloads.slice"
   if [ "$(id -u)" = "0" ]; then
     cp "$out" "$installed_unit"
+    [ -f "$workload_slice" ] && cp "$workload_slice" /etc/systemd/system/system-cdsworkloads.slice
     systemctl daemon-reload
     systemctl enable --now cds-master >/dev/null
     ok "已安装 $installed_unit, daemon-reload + enable 完成"

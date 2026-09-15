@@ -45,14 +45,14 @@ function fmtRate(rate: number | null): string {
 }
 
 function Eyebrow({ children }: { children: React.ReactNode }): JSX.Element {
-  return <div className="font-mono text-[11px] uppercase tracking-[0.06em] text-muted-foreground">{children}</div>;
+  return <div className="font-mono text-[0.6875rem] uppercase tracking-[0.06em] text-muted-foreground">{children}</div>;
 }
 
 function SectionTitle({ title, sub, right }: { title: string; sub?: string; right?: React.ReactNode }): JSX.Element {
   return (
     <div className="flex items-baseline justify-between gap-3">
       <div className="flex items-baseline gap-2.5">
-        <h2 className="text-[15px] font-semibold tracking-tight">{title}</h2>
+        <h2 className="text-[0.9375rem] font-semibold tracking-tight">{title}</h2>
         {sub ? <span className="text-xs text-muted-foreground">{sub}</span> : null}
       </div>
       {right}
@@ -81,7 +81,7 @@ function VerdictBars({ overview }: { overview: ReportsOverview }): JSX.Element {
         let x = 0;
         return (
           <div key={r.label} className="flex items-center gap-3">
-            <span className="w-8 shrink-0 text-[11px] text-muted-foreground">{r.label}</span>
+            <span className="w-8 shrink-0 text-[0.6875rem] text-muted-foreground">{r.label}</span>
             <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`${r.label}：通过 ${r.pass}，原则性通过 ${r.conditional}，未通过 ${r.fail}`} className="min-w-0 flex-1">
               <rect x="0" y="0" width={W} height={H} rx="3" fill="hsl(var(--surface-sunken))" />
               {segs.map((s, i) => {
@@ -100,11 +100,11 @@ function VerdictBars({ overview }: { overview: ReportsOverview }): JSX.Element {
                 return el;
               })}
             </svg>
-            <span className="w-8 shrink-0 text-right font-mono text-[11px] text-muted-foreground">{total}</span>
+            <span className="w-8 shrink-0 text-right font-mono text-[0.6875rem] text-muted-foreground">{total}</span>
           </div>
         );
       })}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground">
         {(['pass', 'conditional', 'fail'] as ReportVerdict[]).map((k) => {
           const m = VERDICT_META[k];
           return (
@@ -165,7 +165,7 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <Eyebrow>根因集中度 · 待办按验收对象合并</Eyebrow>
         {/* 两个色 = 必须有图例（accessibility pass）；同时每段还直接标了数字。 */}
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-3 text-[0.6875rem] text-muted-foreground">
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-[2px]" style={{ background: 'hsl(var(--bad))' }} />未通过 {totalFail}</span>
           <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-[2px]" style={{ background: 'hsl(var(--warn))' }} />原则性通过 {totalCond}</span>
         </div>
@@ -186,22 +186,22 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
                 title={`${c.target} · ${label} · 未通过 ${c.failCount} 份 / 原则性通过 ${c.conditionalCount} 份 · ${c.kinds.join(' · ')}${c.projectId ? ` · ${projectName(c.projectId)}` : ''} · 点击查看这 ${c.count} 份`}
                 className="group flex w-full items-center gap-3 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-[hsl(var(--surface-sunken))]"
               >
-                <span className="w-[128px] shrink-0 truncate text-[12.5px] font-medium text-foreground group-hover:underline lg:w-[152px]">{c.target}</span>
+                <span className="w-[8rem] shrink-0 truncate text-[0.78125rem] font-medium text-foreground group-hover:underline lg:w-[9.5rem]">{c.target}</span>
                 {/*
-                  条形：细、右端 4px 圆角、两段之间留 2px 表面缝（marks-and-anatomy）。
+                  条形：细、右端 0.25rem 圆角、两段之间留 2px 表面缝（marks-and-anatomy）。
                   数字不写在条内——白天主题橙底上的白字只有约 3.2:1，达不到 AA；
                   直接标注移到条形右侧并走文字 token（「文字穿文字色，不穿系列色」）。
                 */}
-                <span className="flex h-[10px] min-w-0 flex-1 items-stretch gap-[2px]">
+                <span className="flex h-[0.625rem] min-w-0 flex-1 items-stretch gap-[2px]">
                   {c.failCount > 0 ? (
-                    <span className="rounded-[4px]" style={{ width: pct(c.failCount), background: 'hsl(var(--bad))', minWidth: 6 }} />
+                    <span className="rounded-[0.25rem]" style={{ width: pct(c.failCount), background: 'hsl(var(--bad))', minWidth: 6 }} />
                   ) : null}
                   {c.conditionalCount > 0 ? (
-                    <span className="rounded-[4px]" style={{ width: pct(c.conditionalCount), background: 'hsl(var(--warn))', minWidth: 6 }} />
+                    <span className="rounded-[0.25rem]" style={{ width: pct(c.conditionalCount), background: 'hsl(var(--warn))', minWidth: 6 }} />
                   ) : null}
                 </span>
-                <span className="w-[34px] shrink-0 text-right text-[12.5px] font-semibold tabular-nums text-foreground">{c.count}</span>
-                <span className="inline-flex w-[72px] shrink-0 items-center gap-1 whitespace-nowrap text-[11.5px] font-semibold" style={{ color: labelColor }}>
+                <span className="w-[2.125rem] shrink-0 text-right text-[0.78125rem] font-semibold tabular-nums text-foreground">{c.count}</span>
+                <span className="inline-flex w-[4.5rem] shrink-0 items-center gap-1 whitespace-nowrap text-[0.71875rem] font-semibold" style={{ color: labelColor }}>
                   <RowIcon className="h-3 w-3 shrink-0" />{label}
                 </span>
               </button>
@@ -209,7 +209,7 @@ function Concentration({ clusters, projectName, onOpenCluster }: {
           );
         })}
       </ul>
-      <div className="text-[11.5px] leading-relaxed text-muted-foreground">
+      <div className="text-[0.71875rem] leading-relaxed text-muted-foreground">
         {topShare && top ? <>最长那根是「{top.target}」，{topShare.base} 份{topShare.word}里有 {topShare.hit} 份在它身上（{topShare.pct}%）。</> : null}
         {rest.length ? <>其余 {rest.length} 个对象合计 {restCount} 份，</> : null}
         条形按对象合并、不按份数堆；点任意一根跳到它的全部报告。
@@ -226,7 +226,7 @@ function DailyStrip({ overview, onOpenReport }: { overview: ReportsOverview; onO
     : `${days.length} 天里 ${gaps.length} 天没有每日验收报告：${gaps.map((d) => fmtMonthDay(d.date)).join('、')}。这是证据空白，不是失败。`;
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-[13.5px] leading-relaxed">
+      <div className="text-[0.84375rem] leading-relaxed">
         {gaps.length ? <b className="text-foreground">{days.length} 天里 {gaps.length} 天没有每日验收</b> : null}
         {gaps.length ? gapText.slice(gapText.indexOf('：')) : gapText}
       </div>
@@ -237,17 +237,17 @@ function DailyStrip({ overview, onOpenReport }: { overview: ReportsOverview; onO
           const first = d.reports[0];
           const Inner = (
             <>
-              <span className="font-mono text-[11px] text-muted-foreground">{fmtMonthDay(d.date)}</span>
+              <span className="font-mono text-[0.6875rem] text-muted-foreground">{fmtMonthDay(d.date)}</span>
               {missing ? (
-                <span className="text-[10px] font-semibold text-muted-foreground">无报告</span>
+                <span className="text-[0.625rem] font-semibold text-muted-foreground">无报告</span>
               ) : (
-                <span className="inline-flex items-center gap-1 text-[10px] font-semibold" style={{ color: worst?.color }}>
+                <span className="inline-flex items-center gap-1 text-[0.625rem] font-semibold" style={{ color: worst?.color }}>
                   {worst ? <worst.Icon className="h-3 w-3" /> : null}<span className="hidden sm:inline">{worst?.label ?? '无结论'}{d.reports.length > 1 ? ` ×${d.reports.length}` : ''}</span>
                 </span>
               )}
             </>
           );
-          const cls = 'flex min-h-[44px] flex-col items-center justify-center gap-1 rounded-md border px-1 py-1.5 text-center';
+          const cls = 'flex min-h-[2.75rem] flex-col items-center justify-center gap-1 rounded-md border px-1 py-1.5 text-center';
           if (missing) {
             return (
               <div key={d.date} className={`${cls} border-dashed border-[hsl(var(--hairline-strong))] bg-transparent`} title={`${d.date} 没有每日验收报告`}>{Inner}</div>
@@ -279,7 +279,7 @@ function MergeCoverage({ overview, onOpenReport }: { overview: ReportsOverview; 
   let x = 0;
   if (total === 0) {
     return (
-      <div className="text-[13.5px] leading-relaxed text-muted-foreground">
+      <div className="text-[0.84375rem] leading-relaxed text-muted-foreground">
         这个时间窗内没有记录到主干合并。合并记录来自 GitHub 合并事件留下的分支墓碑；没接 GitHub 的项目这里永远是空的。
       </div>
     );
@@ -289,7 +289,7 @@ function MergeCoverage({ overview, onOpenReport }: { overview: ReportsOverview; 
     : <>{total} 条合并的分支全部有验收记录：{counts.verified} 条通过，{counts.conditional} 条原则性通过，{counts.failed} 条未通过。</>;
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-[13.5px] leading-relaxed">{headline}</div>
+      <div className="text-[0.84375rem] leading-relaxed">{headline}</div>
       <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="合并覆盖分布">
         <rect x="0" y="0" width={W} height={H} rx="3" fill="hsl(var(--surface-sunken))" />
         {order.filter((k) => counts[k] > 0).map((k, i, arr) => {
@@ -304,7 +304,7 @@ function MergeCoverage({ overview, onOpenReport }: { overview: ReportsOverview; 
           return el;
         })}
       </svg>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.6875rem] text-muted-foreground">
         {order.map((k) => (
           <span key={k} className="inline-flex items-center gap-1">
             <span className="inline-block h-2.5 w-2.5 rounded-sm" style={MERGE_META[k].dashed ? { border: `1px dashed ${MERGE_META[k].color}` } : { background: MERGE_META[k].color }} />
@@ -316,32 +316,32 @@ function MergeCoverage({ overview, onOpenReport }: { overview: ReportsOverview; 
         {items.map((it) => {
           const m = MERGE_META[it.status];
           return (
-            <div key={`${it.branch}-${it.mergedAt}`} className="grid items-center gap-3 border-t border-[hsl(var(--hairline))] py-2 grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_96px]">
+            <div key={`${it.branch}-${it.mergedAt}`} className="grid items-center gap-3 border-t border-[hsl(var(--hairline))] py-2 grid-cols-[minmax(0,1fr)_auto] lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_6rem]">
               <div className="min-w-0">
-                <div className="truncate text-[13px] font-semibold" title={it.branch}>{it.branch}</div>
+                <div className="truncate text-[0.8125rem] font-semibold" title={it.branch}>{it.branch}</div>
                 <div className="mt-0.5 flex flex-wrap items-center gap-1.5">
                   {it.prNumber != null ? (
                     it.prUrl ? (
-                      <a className="inline-flex h-[22px] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[11px] text-info hover:underline" href={it.prUrl} target="_blank" rel="noreferrer">
+                      <a className="inline-flex h-[1.375rem] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[0.6875rem] text-info hover:underline" href={it.prUrl} target="_blank" rel="noreferrer">
                         <GitPullRequest className="h-3 w-3" />#{it.prNumber}
                       </a>
                     ) : (
-                      <span className="inline-flex h-[22px] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[11px] text-info"><GitPullRequest className="h-3 w-3" />#{it.prNumber}</span>
+                      <span className="inline-flex h-[1.375rem] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[0.6875rem] text-info"><GitPullRequest className="h-3 w-3" />#{it.prNumber}</span>
                     )
                   ) : null}
-                  <span className="inline-flex h-[22px] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[11px] text-muted-foreground"><GitMerge className="h-3 w-3" />{fmtMonthDay(it.mergedAt)} 合并</span>
+                  <span className="inline-flex h-[1.375rem] items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 font-mono text-[0.6875rem] text-muted-foreground"><GitMerge className="h-3 w-3" />{fmtMonthDay(it.mergedAt)} 合并</span>
                 </div>
               </div>
-              <div className="hidden text-[11.5px] text-muted-foreground lg:block">
+              <div className="hidden text-[0.71875rem] text-muted-foreground lg:block">
                 {it.reportIds.length ? `${it.reportIds.length} 份验收匹配到这条分支` : '没有任何验收报告的 PR、commit 或分支指向它'}
               </div>
               <div className="flex justify-end">
                 {it.reportIds.length ? (
-                  <button type="button" className="inline-flex h-[22px] items-center gap-1 rounded-full border px-2 text-[11.5px] font-semibold hover:opacity-90" style={{ color: m.color, borderColor: `color-mix(in srgb, ${m.color} 35%, transparent)`, background: it.status === 'verified' ? 'hsl(var(--ok-soft))' : it.status === 'failed' ? 'hsl(var(--bad-soft))' : 'hsl(var(--warn-soft))' }} onClick={() => onOpenReport(it.reportIds[0])} title="打开最新一份匹配的报告">
+                  <button type="button" className="inline-flex h-[1.375rem] items-center gap-1 rounded-full border px-2 text-[0.71875rem] font-semibold hover:opacity-90" style={{ color: m.color, borderColor: `color-mix(in srgb, ${m.color} 35%, transparent)`, background: it.status === 'verified' ? 'hsl(var(--ok-soft))' : it.status === 'failed' ? 'hsl(var(--bad-soft))' : 'hsl(var(--warn-soft))' }} onClick={() => onOpenReport(it.reportIds[0])} title="打开最新一份匹配的报告">
                     {m.label}
                   </button>
                 ) : (
-                  <span className="inline-flex h-[22px] items-center rounded-full border border-dashed border-[hsl(var(--hairline-strong))] px-2 text-[11.5px] font-semibold text-muted-foreground">零验收</span>
+                  <span className="inline-flex h-[1.375rem] items-center rounded-full border border-dashed border-[hsl(var(--hairline-strong))] px-2 text-[0.71875rem] font-semibold text-muted-foreground">零验收</span>
                 )}
               </div>
             </div>
@@ -356,7 +356,7 @@ function DefectPills({ counts }: { counts: Record<string, number> }): JSX.Elemen
   const p0 = counts.p0 ?? 0; const p1 = counts.p1 ?? 0; const p2 = counts.p2 ?? 0; const p3 = counts.p3 ?? 0;
   if (!p0 && !p1 && !p2 && !p3) return null;
   const cell = (label: string, n: number, blocking: boolean): JSX.Element => (
-    <span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[11px] ${n === 0 ? 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' : blocking ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--warn-soft))] text-warn'}`}>{label} {n}</span>
+    <span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[0.6875rem] ${n === 0 ? 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' : blocking ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--warn-soft))] text-warn'}`}>{label} {n}</span>
   );
   return <span className="inline-flex flex-wrap gap-1">{cell('P0', p0, true)}{cell('P1', p1, true)}{cell('P2', p2, false)}{p3 ? cell('P3', p3, false) : null}</span>;
 }
@@ -389,9 +389,9 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
   };
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] border-collapse text-[13px]">
+      <table className="w-full min-w-[45rem] border-collapse text-[0.8125rem]">
         <thead>
-          <tr className="bg-[hsl(var(--surface-sunken))] text-left text-[11px] uppercase tracking-[0.04em] text-muted-foreground">
+          <tr className="bg-[hsl(var(--surface-sunken))] text-left text-[0.6875rem] uppercase tracking-[0.04em] text-muted-foreground">
             <th className="px-3 py-2.5 font-medium">结论</th>
             <th className="px-3 py-2.5 font-medium">验收项</th>
             <th className="px-3 py-2.5 font-medium">缺陷</th>
@@ -403,27 +403,27 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
             const m = meta(c);
             return (
               <tr key={c.id} className="border-t border-[hsl(var(--hairline))] align-top" style={{ boxShadow: `inset 3px 0 0 ${m.rail}` }}>
-                <td className="w-[128px] px-3 py-3">
-                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[12.5px] font-semibold" style={{ color: m.color }}><m.Icon className="h-3.5 w-3.5" />{m.label}</span>
+                <td className="w-[8rem] px-3 py-3">
+                  <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-[0.78125rem] font-semibold" style={{ color: m.color }}><m.Icon className="h-3.5 w-3.5" />{m.label}</span>
                   {c.verdict === 'fail' && c.conditionalCount > 0 ? (
-                    <div className="mt-0.5 whitespace-nowrap text-[11.5px] text-warn">另有原则性通过 ×{c.conditionalCount}</div>
+                    <div className="mt-0.5 whitespace-nowrap text-[0.71875rem] text-warn">另有原则性通过 ×{c.conditionalCount}</div>
                   ) : null}
                 </td>
                 <td className="px-3 py-3">
                   <button type="button" className="text-left font-semibold text-foreground hover:underline" onClick={() => onOpenReport(c.latestReportId)} title="打开最新一份">{c.target}</button>
                   <div
-                    className="mt-0.5 truncate font-mono text-[11.5px] text-muted-foreground"
+                    className="mt-0.5 truncate font-mono text-[0.71875rem] text-muted-foreground"
                     title={`${c.kinds.join(' · ')} · 最近 ${fmtMonthDay(c.latestCreatedAt)}${c.projectId ? ` · ${projectName(c.projectId)}` : ' · CDS 自身'}`}
                   >
                     {c.kinds.join(' · ')} · 最近 {fmtMonthDay(c.latestCreatedAt)}{c.projectId ? ` · ${projectName(c.projectId)}` : ' · CDS 自身'}
                   </div>
-                  <div className="mt-1.5 flex items-baseline gap-1.5 text-[12.5px] leading-relaxed text-[hsl(var(--foreground-muted))]">
-                    <span className="shrink-0 text-[11px] text-muted-foreground">下一步</span>
+                  <div className="mt-1.5 flex items-baseline gap-1.5 text-[0.78125rem] leading-relaxed text-[hsl(var(--foreground-muted))]">
+                    <span className="shrink-0 text-[0.6875rem] text-muted-foreground">下一步</span>
                     <span className="min-w-0">{nextStep(c)}</span>
                   </div>
                 </td>
-                <td className="w-[190px] px-3 py-3 align-top"><DefectPills counts={c.defectCounts} /></td>
-                <td className="w-[96px] px-3 py-3 text-right">
+                <td className="w-[11.875rem] px-3 py-3 align-top"><DefectPills counts={c.defectCounts} /></td>
+                <td className="w-[6rem] px-3 py-3 text-right">
                   <button type="button" className="inline-flex items-center gap-1 whitespace-nowrap text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenCluster(c)}>{c.count} 份</button>
                 </td>
               </tr>
@@ -466,7 +466,7 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
    * 覆盖缺口 1fr/1fr（50%）、未通过与台账满宽。眼睛找不到一条贯穿的竖线，
    * 于是每块单看都不错、合起来像散落一地。
    *
-   * 现在整页只有一个分割：主栏（叙述：结论 → 未通过 → 覆盖）+ 320px 固定侧栏
+   * 现在整页只有一个分割：主栏（叙述：结论 → 未通过 → 覆盖）+ 20rem 固定侧栏
    * （仪表：发布闸 + 结论分布）。侧栏跨满三行并 sticky，那条竖线从页顶一直
    * 通到底，且滚动时仪表一直在视野里。
    *
@@ -476,23 +476,23 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
    *   三档 台账——由父组件渲染，用一条分隔线与上面隔开（查找工具，不是结论）。
    */
   return (
-    <div className="grid grid-cols-1 gap-x-6 gap-y-6 xl:auto-rows-min xl:grid-cols-[minmax(0,1fr)_320px]">
+    <div className="grid grid-cols-1 gap-x-6 gap-y-6 xl:auto-rows-min xl:grid-cols-[minmax(0,1fr)_20rem]">
       {/* ① 结论（一档）：不套卡片 */}
       <section className="relative min-w-0 pl-5 xl:col-start-1 xl:row-start-1">
         <div className="absolute bottom-0.5 left-0 top-0.5 w-[3px] rounded-full" style={{ background: statusMeta.color }} />
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Eyebrow>结论 · 最近 {overview.window.days} 天 · {totals.archived} 份归档{totals.folded ? `，折叠 ${totals.folded} 份重复后计 ${totals.counted} 份` : ''} · 数据截至 {fmtMonthDay(overview.window.to)}</Eyebrow>
-          <span className="inline-flex h-[22px] items-center gap-1.5 rounded-full border px-2 text-[11.5px] font-semibold" style={{ color: statusMeta.color, background: statusMeta.soft, borderColor: `color-mix(in srgb, ${statusMeta.color} 30%, transparent)` }}>
+          <span className="inline-flex h-[1.375rem] items-center gap-1.5 rounded-full border px-2 text-[0.71875rem] font-semibold" style={{ color: statusMeta.color, background: statusMeta.soft, borderColor: `color-mix(in srgb, ${statusMeta.color} 30%, transparent)` }}>
             <statusMeta.Icon className="h-3 w-3" />{headline.statusLabel}
           </span>
         </div>
-        <h1 className="m-0 mt-2.5 text-[24px] font-semibold leading-[1.25] tracking-[-0.02em] lg:text-[30px]" style={{ textWrap: 'pretty' }}>{headline.sentence}</h1>
+        <h1 className="m-0 mt-2.5 text-[1.5rem] font-semibold leading-[1.25] tracking-[-0.02em] lg:text-[1.875rem]" style={{ textWrap: 'pretty' }}>{headline.sentence}</h1>
         <Concentration clusters={overview.clusters} projectName={projectName} onOpenCluster={onOpenCluster} />
         {supports.length ? (
           // 支撑句改成行内条目：原来是三张带边框带底色的子卡片，卡中卡是密度失控不是密度高。
           <ul className="m-0 mt-3.5 flex list-none flex-col gap-2 border-t border-[hsl(var(--hairline))] p-0 pt-3.5">
             {supports.map((s) => (
-              <li key={s.kind} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[13px] leading-relaxed">
+              <li key={s.kind} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 text-[0.8125rem] leading-relaxed">
                 <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
                   <span className="h-2 w-2 shrink-0 rounded-full" style={supportDot(s.kind)} />{supportLabel[s.kind]}
                 </span>
@@ -509,36 +509,36 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
       {/* 侧栏（仪表）：跨满三行，那条竖线因此从页顶通到底；sticky 让它在滚动时一直在场 */}
       <aside className="min-w-0 xl:col-start-2 xl:row-span-3 xl:row-start-1">
         <div className="flex flex-col gap-4 xl:sticky xl:top-4">
-          <div className="flex flex-col gap-2.5 rounded-[10px] border border-[hsl(var(--hairline))] p-4" style={{ background: `linear-gradient(180deg, ${gateMeta.soft}, hsl(var(--card)) 70%)` }}>
-            <div className="flex items-center justify-between"><Eyebrow>发布闸</Eyebrow>{releaseGate.latest ? <span className="font-mono text-[11px] text-muted-foreground">{releaseGate.latest.kind} · {fmtMonthDay(releaseGate.latest.createdAt)}</span> : null}</div>
+          <div className="flex flex-col gap-2.5 rounded-[0.625rem] border border-[hsl(var(--hairline))] p-4" style={{ background: `linear-gradient(180deg, ${gateMeta.soft}, hsl(var(--card)) 70%)` }}>
+            <div className="flex items-center justify-between"><Eyebrow>发布闸</Eyebrow>{releaseGate.latest ? <span className="font-mono text-[0.6875rem] text-muted-foreground">{releaseGate.latest.kind} · {fmtMonthDay(releaseGate.latest.createdAt)}</span> : null}</div>
             <div className="flex items-center gap-2" style={{ color: gateMeta.color }}><gateMeta.Icon className="h-5 w-5" strokeWidth={2} /><span className="text-xl font-bold tracking-[-0.02em]">{gateMeta.label}</span></div>
-            <div className="text-[12.5px] leading-relaxed text-[hsl(var(--foreground-muted))]">{releaseGate.reason}</div>
+            <div className="text-[0.78125rem] leading-relaxed text-[hsl(var(--foreground-muted))]">{releaseGate.reason}</div>
             {releaseGate.latest ? (
               <button type="button" className="inline-flex w-fit items-center gap-1 text-xs font-medium text-[hsl(var(--primary-ink))] hover:underline" onClick={() => onOpenReport(releaseGate.latest!.id)}>打开那份报告 <ExternalLink className="h-3 w-3" /></button>
             ) : null}
           </div>
-          <div className="flex flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
+          <div className="flex flex-col gap-3 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card p-4">
             <Eyebrow>结论分布 · 本窗 {totals.counted} 份 / 上窗 {totals.previous.counted} 份</Eyebrow>
             <VerdictBars overview={overview} />
             <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 border-t border-[hsl(var(--hairline))] pt-3">
-              <div className="text-[12.5px] text-[hsl(var(--foreground-muted))]">{passRate.kind}通过率 <b className="text-[15px] text-foreground">{fmtRate(passRate.rate)}</b> <span className="text-muted-foreground">{passRate.numerator} / {passRate.denominator}</span></div>
+              <div className="text-[0.78125rem] text-[hsl(var(--foreground-muted))]">{passRate.kind}通过率 <b className="text-[0.9375rem] text-foreground">{fmtRate(passRate.rate)}</b> <span className="text-muted-foreground">{passRate.numerator} / {passRate.denominator}</span></div>
               <div className="text-xs text-muted-foreground">
                 上窗 {fmtRate(passRate.previous.rate)}{rateDelta != null ? `（${rateDelta >= 0 ? '+' : ''}${(rateDelta * 100).toFixed(1)} 点）` : ''}，分母 {passRate.previous.denominator} → {passRate.denominator}
               </div>
             </div>
-            <div className="text-[11.5px] leading-relaxed text-muted-foreground">每个验收目标只计最新一版；被取代的早期版本不进分母。</div>
+            <div className="text-[0.71875rem] leading-relaxed text-muted-foreground">每个验收目标只计最新一版；被取代的早期版本不进分母。</div>
           </div>
         </div>
       </aside>
 
       {/* ② 未通过与待决（二档） */}
-      <section id="reports-clusters" className="min-w-0 overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card xl:col-start-1 xl:row-start-2">
+      <section id="reports-clusters" className="min-w-0 overflow-hidden rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card xl:col-start-1 xl:row-start-2">
         <div className="border-b border-[hsl(var(--hairline))] px-4 py-3">
           <SectionTitle
             title="未通过与待决"
             sub="同一对象的报告合并成一行，按根因不按份数"
             right={(
-              <div className="flex items-center gap-2 text-[11.5px] font-semibold">
+              <div className="flex items-center gap-2 text-[0.71875rem] font-semibold">
                 <span className="rounded-full border px-2 py-0.5 text-bad" style={{ background: 'hsl(var(--bad-soft))', borderColor: 'color-mix(in srgb, hsl(var(--bad)) 30%, transparent)' }}>未通过 {totals.fail}</span>
                 <span className="rounded-full border px-2 py-0.5 text-warn" style={{ background: 'hsl(var(--warn-soft))', borderColor: 'color-mix(in srgb, hsl(var(--warn)) 30%, transparent)' }}>原则性通过 {totals.conditional}</span>
               </div>
@@ -550,11 +550,11 @@ export function ReportsOverviewPanel({ overview, projectName, onOpenReport, onOp
 
       {/* ③ 覆盖缺口（二档）：两张卡只在够宽时并排，窄了就纵向排，日历带不会被挤断 */}
       <section id="reports-coverage" className="grid min-w-0 gap-5 lg:grid-cols-2 xl:col-start-1 xl:row-start-3">
-        <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
+        <div className="flex min-w-0 flex-col gap-3 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card p-4">
           <SectionTitle title="每日验收连续性" sub={`近 ${overview.daily.length} 天 · 按报告创建日`} right={<CalendarDays className="h-4 w-4 text-muted-foreground" />} />
           <DailyStrip overview={overview} onOpenReport={onOpenReport} />
         </div>
-        <div className="flex min-w-0 flex-col gap-3 rounded-[10px] border border-[hsl(var(--hairline))] bg-card p-4">
+        <div className="flex min-w-0 flex-col gap-3 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card p-4">
           <SectionTitle title="合并的分支，验没验" sub="主干合并记录 × 报告的 PR / commit / 分支" right={<GitMerge className="h-4 w-4 text-muted-foreground" />} />
           <MergeCoverage overview={overview} onOpenReport={onOpenReport} />
         </div>

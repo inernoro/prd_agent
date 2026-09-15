@@ -167,7 +167,7 @@ export function AgentKeyScopePanel({ value, onChange, disabled, currentProjectId
                   />
                   <span className="min-w-0 flex-1 truncate text-foreground">{p.name || p.slug || p.id}</span>
                   {isCurrent ? (
-                    <span className="shrink-0 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                    <span className="shrink-0 rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-primary">
                       当前项目
                     </span>
                   ) : null}

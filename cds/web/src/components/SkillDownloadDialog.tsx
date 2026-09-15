@@ -137,7 +137,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className="max-w-none"
-        style={{ width: 'min(1080px, calc(100vw - 32px))' }}
+        style={{ width: 'min(67.5rem, calc(100vw - 2rem))' }}
       >
         <DialogHeader>
           <DialogTitle>接入 Agent</DialogTitle>
@@ -217,7 +217,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
                 <Icon className="hidden h-4 w-4 sm:block" />
                 <span>{tab.label}</span>
                 {tab.recommended ? (
-                  <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
+                  <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[0.625rem] font-medium text-primary">
                     推荐
                   </span>
                 ) : null}
@@ -227,7 +227,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           })}
         </nav>
 
-        <div className="min-h-[260px]">
+        <div className="min-h-[16.25rem]">
           {/*
            * 上手助手切走时只藏不卸：卸载会把用户在向导里选的技能、交付方式连同
            * 所在步骤一起丢掉，回来直接退回步骤 01。而「去技能市场」这个入口正好

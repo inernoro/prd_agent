@@ -79,55 +79,55 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
   const unmonitored = envs.filter((env) => env.health === 'unmonitored');
 
   return (
-    <div className="grid items-start gap-4 xl:grid-cols-[420px_minmax(0,1fr)]">
-      <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[14px] border">
-        <div className="border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-4">
+    <div className="grid items-start gap-4 xl:grid-cols-[26.25rem_minmax(0,1fr)]">
+      <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
+        <div className="border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
           <h2 className="text-sm font-bold">探测配置</h2>
         </div>
-        <dl className="grid grid-cols-[104px_minmax(0,1fr)] gap-x-3 gap-y-2.5 px-[18px] py-4 text-[12.5px]">
-          <dt className="text-[11.5px] text-muted-foreground">检查地址</dt>
+        <dl className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 gap-y-2.5 px-[1.125rem] py-4 text-[0.7812rem]">
+          <dt className="text-[0.7188rem] text-muted-foreground">检查地址</dt>
           <dd className="min-w-0 break-all cds-ident">
             {selected ? (selectedProbe?.probeUrl || '未配置健康检查地址') : '未选择环境'}
           </dd>
-          <dt className="text-[11.5px] text-muted-foreground">探测间隔</dt>
+          <dt className="text-[0.7188rem] text-muted-foreground">探测间隔</dt>
           <dd className="cds-ident">{summary ? `${summary.intervalSeconds} 秒` : '读取中'}</dd>
-          <dt className="text-[11.5px] text-muted-foreground">超时</dt>
+          <dt className="text-[0.7188rem] text-muted-foreground">超时</dt>
           <dd className="cds-ident">{summary ? `${summary.timeoutMs} 毫秒` : '读取中'}</dd>
-          <dt className="text-[11.5px] text-muted-foreground">连续失败阈值</dt>
+          <dt className="text-[0.7188rem] text-muted-foreground">连续失败阈值</dt>
           <dd className="cds-ident">{summary ? `${summary.failureThreshold} 次` : '读取中'}</dd>
           {/* 这两行稿子没有，但它们是既有页面上真有的信息（探测的即时状态），
               删掉等于交付时悄悄少一块。数据同样来自 uptime summary 的 lastSample。 */}
-          <dt className="text-[11.5px] text-muted-foreground">最近检查</dt>
+          <dt className="text-[0.7188rem] text-muted-foreground">最近检查</dt>
           <dd className="cds-ident">
             {selectedProbe?.lastSample
               ? `${Math.max(0, Math.round((Date.now() - selectedProbe.lastSample.t) / 60_000))} 分钟前`
               : '尚未探测'}
           </dd>
-          <dt className="text-[11.5px] text-muted-foreground">响应时间</dt>
+          <dt className="text-[0.7188rem] text-muted-foreground">响应时间</dt>
           <dd className="cds-ident">
             {typeof selectedProbe?.lastSample?.ms === 'number' ? `${selectedProbe.lastSample.ms} ms` : '无数据'}
           </dd>
         </dl>
-        {error ? <p className="px-[18px] pb-4 text-xs text-bad">{error}</p> : null}
+        {error ? <p className="px-[1.125rem] pb-4 text-xs text-bad">{error}</p> : null}
         {summary && !summary.enabled ? (
-          <p className="mx-[18px] mb-4 rounded-[9px] border border-warn/40 bg-warn-soft px-3 py-2.5 text-[11.5px] text-warn">
+          <p className="mx-[1.125rem] mb-4 rounded-[0.5625rem] border border-warn/40 bg-warn-soft px-3 py-2.5 text-[0.7188rem] text-warn">
             存活监控当前是关闭的，下面的可用率与趋势都不会更新。
           </p>
         ) : null}
         {unmonitored.length > 0 ? (
-          <div className="mx-[18px] mb-4 rounded-[9px] border border-warn/40 bg-warn-soft px-3 py-2.5 text-[11.5px] text-warn">
+          <div className="mx-[1.125rem] mb-4 rounded-[0.5625rem] border border-warn/40 bg-warn-soft px-3 py-2.5 text-[0.7188rem] text-warn">
             {unmonitored.length} 个环境未监测（{unmonitored.map((env) => env.name).join('、')}）：
             它们的可用率、恢复时长算不出来，本页留空而不是写 0。
           </div>
         ) : null}
       </section>
 
-      <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[14px] border">
-        <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-4">
+      <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
+        <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
           <h2 className="text-sm font-bold">可用率趋势</h2>
-          <span className="cds-ident text-[11px] text-muted-foreground">近 24 小时 · 每根柱子 1 小时</span>
+          <span className="cds-ident text-[0.6875rem] text-muted-foreground">近 24 小时 · 每根柱子 1 小时</span>
         </div>
-        <div className="flex flex-col gap-4 p-[18px]">
+        <div className="flex flex-col gap-4 p-[1.125rem]">
           {envs.map((env) => {
             const target = byId.get(uptimeIdOf(env.id));
             const buckets = target?.buckets || [];
@@ -135,12 +135,12 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
             return (
               <div key={env.id} className="min-w-0">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="truncate text-[12.5px] font-semibold">{env.name}</span>
-                  <span className="cds-ident text-[12.5px]">{fleetAvailabilityText(env)}</span>
+                  <span className="truncate text-[0.7812rem] font-semibold">{env.name}</span>
+                  <span className="cds-ident text-[0.7812rem]">{fleetAvailabilityText(env)}</span>
                 </div>
                 {monitored ? (
                   <>
-                    <div className="mt-2 flex h-[34px] items-end gap-[3px]">
+                    <div className="mt-2 flex h-[2.125rem] items-end gap-[3px]">
                       {buckets.map((bucket) => {
                         const total = bucket.up + bucket.down;
                         const ratio = total > 0 ? bucket.up / total : 0;
@@ -157,12 +157,12 @@ export function HealthSection({ envs, selected }: HealthSectionProps): JSX.Eleme
                         );
                       })}
                     </div>
-                    <div className="mt-1 text-[10.5px] text-muted-foreground">
+                    <div className="mt-1 text-[0.6562rem] text-muted-foreground">
                       {target?.sampleCount24h ? `${target.sampleCount24h} 次采样` : '窗口内暂无采样'}
                     </div>
                   </>
                 ) : (
-                  <div className="mt-2 rounded-[9px] border border-dashed border-[hsl(var(--hairline-strong))] px-3 py-2.5 text-[11.5px] text-muted-foreground">
+                  <div className="mt-2 rounded-[0.5625rem] border border-dashed border-[hsl(var(--hairline-strong))] px-3 py-2.5 text-[0.7188rem] text-muted-foreground">
                     未配置健康检查地址，趋势不可绘制。
                   </div>
                 )}

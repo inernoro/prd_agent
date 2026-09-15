@@ -24,6 +24,15 @@ import {
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
+import {
+  buildPrebuiltGateRejection,
+  findNonPrebuiltProfiles,
+  isAgentGatedRequest,
+  isAgentPrebuiltOnly,
+  isPrebuiltMode,
+  PREBUILT_DEFINITION_FIELDS,
+  withoutSourceFallback,
+} from '../services/agent-prebuilt-gate.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { ensurePerBranchDbInitialized } from '../services/per-branch-db-init.js';
@@ -58,6 +67,9 @@ import {
 } from '../services/branch-protection.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
+import { getEventLoopLag } from '../services/event-loop-lag.js';
+import { workloadCgroupFlags } from '../services/workload-cgroup.js';
+import { EVENT_LOOP_LAG_CRITICAL_MS, EVENT_LOOP_LAG_WARN_MS } from '../services/control-plane-pressure.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
 import { createDeployQueueTracker } from '../services/deploy-queue-tracker.js';
 import { recordBuild, assessDeployLoop } from '../services/build-activity-tracker.js';
@@ -134,6 +146,7 @@ import {
 import { waitForRestartSafeBranchOperations, resolveRestartDrainTimeoutFromRequest } from '../services/restart-drain.js';
 import { ensureDockerNetworkWithReclaim } from '../services/docker-network-reclaim.js';
 import type { DeploymentRunService } from '../services/deployment-run.js';
+import { DEPLOYMENT_RUN_TERMINAL_STATUSES } from '../services/deployment-run.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 import type { ManagedProjectPlan, ManagedProjectService } from '../services/managed-project.js';
 import { classifyDeploymentFailure } from '../services/deployment-failure-classifier.js';
@@ -2735,6 +2748,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
     deploymentRunService.cancel(runId, message, 'cancelled');
   }
 
+  /**
+   * 分支停止的施动者来源 -> 生命周期意图种类。
+   *
+   * stopAttributionFromRequest 早就算出了 source（webhook / ai / scheduler / cds / user…），
+   * 以前只有渲染好的 reason 字符串往下传，状态在半路丢了，停机原因于是分不出
+   * 「有人主动停的」和「系统自动降温」。这里把状态接回去。
+   */
+  function stopIntentKindFrom(
+    source: NonNullable<BranchEntry['lastStopSource']>,
+  ): 'cds-stop' | 'cds-stop-idle' {
+    // 自动省资源的两种来源容器都保留、随后可秒级唤醒，结论与「有人按了停止」不同。
+    return source === 'scheduler' || source === 'cds' ? 'cds-stop-idle' : 'cds-stop';
+  }
+
   function stopAttributionFromRequest(req: Request): {
     reason: string;
     source: NonNullable<BranchEntry['lastStopSource']>;
@@ -2791,6 +2818,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
   }
 
+  /**
+   * 找「在途那次部署」的 run。首选按协调器给的 activeOperationId 精确匹配——
+   * 部署一拿到租约就把 operationId 写进了 run。
+   *
+   * 不拿 commitSha 当判据：run.commitSha 会在部署过程中被改写成解析后的真实 SHA
+   * （请求里写 `4444…`、落库可能是 `abc1234`），拿它比对必然静默漏配；何况
+   * 「是不是同一个提交」协调器已经判过了，这里再判一遍就是第二份会漂的判据。
+   *
+   * 匹配不上时只在「排除自己后恰好只剩一条非终态 run」的情况下兜底；有歧义就返回
+   * null，让调用方摘掉响应头退回分支状态轮询，而不是指一条可能错的 run。
+   */
+  function findLiveDeploymentRunId(branchId: string, activeOperationId: string | null, excludeRunId: string | null): string | null {
+    if (!deploymentRunService) return null;
+    const live = deploymentRunService.list({ branchId })
+      .filter((run) => run.id !== excludeRunId && !DEPLOYMENT_RUN_TERMINAL_STATUSES.has(run.status));
+    if (activeOperationId) {
+      const exact = live.find((run) => run.operationId === activeOperationId);
+      if (exact) return exact.id;
+    }
+    return live.length === 1 ? live[0].id : null;
+  }
+
   function beginBranchOperation(
     req: Request,
     res: Response,
@@ -2801,10 +2850,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha?: string | null;
       versionId?: string | null;
       hasOneShotOptions?: boolean;
+      /** commitSha 是请求自己钉住的（而非分支缓存兜底），才允许参与并入判定。 */
+      commitPinned?: boolean;
+      /** 本次部署将要落地的有效配置指纹，用于同 commit 并入判定。 */
+      configHash?: string | null;
       source: string;
       reason?: string | null;
       sse?: boolean;
       continueWith?: 'deploy' | 'deploy-profile' | null;
+      /** 外层在拿租约前就建好的占位 run；并入在途部署时用来排除自己。 */
+      deploymentRunId?: string | null;
     },
   ): BranchOperationLease | null {
     if (!branchOperationCoordinator) return null;
@@ -2820,11 +2875,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
       commitSha: input.commitSha || null,
       versionId: input.versionId || null,
       hasOneShotOptions: input.hasOneShotOptions || false,
+      commitPinned: input.commitPinned || false,
+      configHash: input.configHash || null,
       source: input.source,
       reason: input.reason || null,
       continueWith: input.continueWith || null,
     });
     if (decision.status === 'started') return decision.lease || null;
+
+    // merged / joined 都是「已受理、不新开操作」：merged 排到当前操作之后重放，
+    // joined 直接并入在途的同 commit 部署（2026-09-08，治 push 后紧跟手动 deploy 拆两遍容器）。
+    const accepted = decision.status === 'merged' || decision.status === 'joined';
+
+    // 并入在途部署时，调用方必须拿到一条**真的会跑完**的 run 来追踪。
+    // 外层 deploy handler 在取租约之前就 begin 了占位 run 并把它写进
+    // X-CDS-Deployment-Run-Id，而并入之后那条占位 run 会被取消；cdscli 只认这个头、
+    // 见 cancelled 即判「部署失败」——本 PR 要治的正是「push 后紧跟 deploy」这条路径，
+    // 头指错了等于治了个寂寞（Codex 三轮 P1）。所以这里把头改指向在途那次部署的 run；
+    // 实在找不到就把头摘掉，让 CLI 退回分支状态轮询，而不是盯着一条注定被取消的记录。
+    const joinedRunId = decision.status === 'joined'
+      ? findLiveDeploymentRunId(entry.id, decision.activeOperationId || null, input.deploymentRunId || null)
+      : null;
+    if (decision.status === 'joined' && !res.headersSent) {
+      if (joinedRunId) res.setHeader('X-CDS-Deployment-Run-Id', joinedRunId);
+      else res.removeHeader('X-CDS-Deployment-Run-Id');
+    }
+    (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId = joinedRunId || undefined;
 
     const payload = {
       ok: true,
@@ -2833,17 +2909,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
       activeOperationId: decision.activeOperationId,
       activeKind: decision.activeKind,
       pendingCommitSha: decision.pendingCommitSha,
-      message: decision.status === 'merged'
-        ? (triggerFromRequest(req) === 'manual'
-          ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
-          : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
-        : decision.reason || '同分支已有写操作正在运行',
+      deploymentRunId: joinedRunId || undefined,
+      message: decision.status === 'joined'
+        ? `同一提交（${(input.commitSha || '').slice(0, 7)}）的部署已在进行中，本次请求已并入在途部署，不再重复拆装容器`
+        : decision.status === 'merged'
+          ? (triggerFromRequest(req) === 'manual'
+            ? '已有同分支操作正在运行，本次部署已合并为最新待部署请求（当前操作完成后自动执行）'
+            : '已有同分支部署正在运行，本次 webhook 已合并为最新待部署 commit')
+          : decision.reason || '同分支已有写操作正在运行',
     };
     if (input.sse) {
       initSSE(res);
-      sendSSE(res, decision.status === 'merged' ? 'complete' : 'error', payload);
+      sendSSE(res, accepted ? 'complete' : 'error', payload);
       res.end();
-    } else if (decision.status === 'merged') {
+    } else if (accepted) {
       res.status(202).json(payload);
     } else {
       res.status(409).json({ ...payload, ok: false });
@@ -8758,6 +8837,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     ];
     const cmd = [
       'docker run -d',
+      // 资源代理也是托管工作负载，同样挂低权重 slice（Codex PR #1516 P2）。
+      ...workloadCgroupFlags(),
       `--name ${routeShellQuote(proxyContainerName)}`,
       `--network ${routeShellQuote(network)}`,
       // 纵深防御：即使上层路由门禁将来被误删，这个代理也只能绑定回环，
@@ -12172,6 +12253,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
     }
     const currentProfiles = managedPlan?.profiles || stateService.getEffectiveProfilesForBranch(entry);
+
+    // Agent 极速版门禁（2026-09-08）：项目开了 agentPrebuiltOnly，机器凭据发起的部署只要有一个
+    // 服务会走源码编译就拒绝——CDS 宿主的编译算力是全部项目共享的，Agent 不该拿它试错。
+    // 判定与响应都在 agent-prebuilt-gate.ts（唯一判定处）。项目按 `entry.projectId || 'default'`
+    // 取：没存 projectId 的老分支归 default 项目，不能因 deployProject 为空就漏判（Codex 第二轮 P1）。
+    // 判的对象是下面真正要部署的 `profiles`（带 versionId 时是版本物化后的清单，全是不可变镜像，
+    // 不编译源码），不是 currentProfiles——否则分支基线已切回源码模式时，重放一个合规的历史版本也会被
+    // 误拦（Codex 第七轮 P2）。
+    const gateProject = stateService.getProject(entry.projectId || 'default');
+    const agentPrebuiltGated = Boolean(gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req));
     let selectedDeploymentVersion = requestedVersionId && deploymentVersionService
       ? deploymentVersionService.get(requestedVersionId)
       : undefined;
@@ -12403,6 +12494,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? req.body.commitSha
         : undefined
     );
+    if (agentPrebuiltGated && gateProject) {
+      // 没点名版本时，下方还有一次按 requestCommitSha + deploymentConfigHash 的自动复用（findReusable）：
+      // 命中就跑不可变产物、不编译源码。门禁在这里用同一组输入先探一次，命中就按物化清单判——否则
+      // managed 配置明明有可复用版本，点名 versionId 放行、同一 commit 自动复用却被拦（Codex 第八轮 P2）。
+      let gateProfiles = profiles;
+      let gateVersion = selectedDeploymentVersion;
+      if (!gateVersion && requestCommitSha && deploymentVersionService && deploymentConfigHash) {
+        const reusableForGate = deploymentVersionService.findReusable({
+          projectId: entry.projectId || 'default',
+          branchId: entry.id,
+          commitSha: requestCommitSha,
+          configHash: deploymentConfigHash,
+        });
+        if (reusableForGate) {
+          try {
+            gateProfiles = deploymentVersionService.materializeProfiles(reusableForGate, currentProfiles);
+            gateVersion = reusableForGate;
+          } catch {
+            /* 物化失败（版本所需配置已不在）：下方复用同样会失败，按当前清单判 */
+          }
+        }
+      }
+      // 版本物化后的清单在执行时不再套分支覆盖（运行循环里 selectedDeploymentVersion ? profile : resolve…），
+      // 判定也不能套：分支此刻若选了显式 prebuilt: false 的模式，重放合规版本会被误拦（Codex 第八轮 P2）。
+      const violations = findNonPrebuiltProfiles(gateProfiles, gateVersion ? undefined : entry);
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(gateProject, gateProfiles, violations, {
+          branchId: entry.id,
+          operation: 'deploy',
+        }));
+        return;
+      }
+    }
     // 空转部署熔断（2026-08-29）：同一分支反复部署**同一个 commit** 是「部署环」的
     // 特征，正常连推每次都是新 SHA、永远不命中。判据与阈值见
     // build-activity-tracker.ts 的 assessDeployLoop 注释（含事故经过）。
@@ -12474,12 +12598,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不合并：pending 重放不带这些选项，强制部署会被暂停闸门拦下、env 豁免
       // 失效、执行器指定丢失（Codex P2），撞车维持 409 让调用方自己重试。
       hasOneShotOptions: forceDeployWhilePaused || ignoreRequired || Boolean(req.body?.targetExecutorId),
+      // 只有请求自己钉住了提交（webhook 的 head sha / body.commitSha）才允许并入：
+      // 没钉住时下面 pull 会 hard-reset 到届时的分支 HEAD，entry 上那个缓存 SHA
+      // 说明不了这次要部署什么（Codex 六轮 P1）。
+      commitPinned: Boolean(requestCommitSha),
+      // 同 commit 并入的前提不只是同一个提交，还得是同一份将要落地的配置
+      // （有效 profiles + 合并后的 env）。中间改过 env 或构建配置就不并入。
+      configHash: deploymentConfigHash || null,
       source: 'api.deploy-branch',
       reason: triggerFromRequest(req) === 'webhook' ? 'GitHub webhook deploy' : 'manual branch deploy',
       sse: true,
+      deploymentRunId: deploymentRun?.id || null,
     });
     if (branchOperationCoordinator && !branchOperationLease) {
-      cancelDeploymentRun(deploymentRun?.id, '部署请求未取得分支操作租约');
+      // 并入在途部署时占位 run 照样取消（它确实什么都没做），但要写清去向：
+      // 调用方已被改指向 joinedRunId，运行记录里也能看出这次为什么没自己跑。
+      const joinedRunId = (res.locals as Record<string, unknown>).cdsJoinedDeploymentRunId as string | undefined;
+      cancelDeploymentRun(
+        deploymentRun?.id,
+        joinedRunId ? `已并入在途部署 ${joinedRunId}，本次不重复拆装容器` : '部署请求未取得分支操作租约',
+      );
       return;
     }
 
@@ -12566,7 +12704,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           deploymentVersionId: selectedDeploymentVersion?.id,
           deploymentConfigHash,
           deploymentCapabilities: managedPlan?.capabilities,
-          profiles: selectedDeploymentVersion || managedPlan ? profiles : undefined,
+          // Agent 极速版门禁下的远端派发同样摘掉 sourceFallbackProfile：执行器拿到什么就按什么
+          // runService，master 不在这里摘，执行器就会在镜像拉不到时回退源码编译（Codex 第三轮 P1）。
+          // 未门禁时保持原样（版本 / managed 传已物化清单，否则由 proxy 内部自行 resolve）。
+          profiles: agentPrebuiltGated
+            ? (selectedDeploymentVersion || managedPlan
+                ? profiles
+                : currentProfiles.map((p) => resolveEffectiveProfile(p, entry))
+              ).map((p) => withoutSourceFallback(p))
+            : (selectedDeploymentVersion || managedPlan ? profiles : undefined),
         });
       } catch (err) {
         branchOperationFinalStatus = err instanceof BranchOperationSupersededError ? 'cancelled' : 'failed';
@@ -13103,13 +13249,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 「脱管闭包 + 同分支重复租约叠加」（2026-07-16 队列堵死复盘）。
         await runLayerWithSharedAbort(layer.items, async (profile, layerSignal) => {
           // Resolve baseline → 项目默认 → 分支 override → mode override
-          const effectiveProfile = selectedDeploymentVersion ? profile : resolveEffectiveProfile(profile, entry);
+          // Agent 极速版门禁下摘掉 sourceFallbackProfile：镜像拉不到就失败等 CI，
+          // 不在宿主上回退源码编译（那正是门禁要禁的事，Codex PR #1513 P1）。
+          const effectiveProfile = selectedDeploymentVersion
+            ? profile
+            : agentPrebuiltGated
+              ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
+              : resolveEffectiveProfile(profile, entry);
           const branchOverride = selectedDeploymentVersion ? undefined : entry.profileOverrides?.[profile.id];
           const activeMode = effectiveProfile.activeDeployMode;
           const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
             ? ` [${effectiveProfile.deployModes[activeMode].label}]`
             : '';
-          const overrideLabel = branchOverride ? ' (分支自定义)' : '';
+          const overrideLabel = (branchOverride ? ' (分支自定义)' : '')
+            + (agentPrebuiltGated && effectiveProfile.prebuiltImage ? ' (极速版门禁：镜像缺失不回退源码编译)' : '');
           const serviceStartTime = Date.now();
 
           // ── 全局构建并发闸 ──
@@ -13983,6 +14136,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
     }
+    // Agent 极速版门禁：单服务部署与整分支部署同一道闸（Codex PR #1513 P1：此端点绕过了整分支入口）。
+    const singleDeployProject = stateService.getProject(entry.projectId || 'default');
+    const singleDeployGated = Boolean(singleDeployProject && isAgentPrebuiltOnly(singleDeployProject) && isAgentGatedRequest(req));
+    if (singleDeployGated && singleDeployProject) {
+      const violations = findNonPrebuiltProfiles([profile], entry);
+      if (violations.length > 0) {
+        res.status(409).json(buildPrebuiltGateRejection(singleDeployProject, [profile], violations, {
+          branchId: entry.id,
+          operation: 'deploy',
+        }));
+        return;
+      }
+    }
 
     const profileRequestCommitSha = typeof req.body?.commitSha === 'string'
       && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
@@ -14113,13 +14279,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // Resolve baseline → branch override → deploy-mode override
-      const effectiveProfile = resolveEffectiveProfile(profile, entry);
+      // 门禁下摘掉源码回退（同整分支部署）。
+      const effectiveProfile = singleDeployGated
+        ? withoutSourceFallback(resolveEffectiveProfile(profile, entry))
+        : resolveEffectiveProfile(profile, entry);
       const branchOverride = entry.profileOverrides?.[profile.id];
       const activeMode = effectiveProfile.activeDeployMode;
       const modeLabel = activeMode && effectiveProfile.deployModes?.[activeMode]
         ? ` [${effectiveProfile.deployModes[activeMode].label}]`
         : '';
-      const overrideLabel = branchOverride ? ' (分支自定义)' : '';
+      const overrideLabel = (branchOverride ? ' (分支自定义)' : '')
+        + (singleDeployGated && effectiveProfile.prebuiltImage ? ' (极速版门禁：镜像缺失不回退源码编译)' : '');
 
       // Build & run the single profile
       logEvent({ step: `build-${profile.id}`, status: 'running', title: `正在构建 ${profile.name}${modeLabel}${overrideLabel}...`, timestamp: new Date().toISOString() });
@@ -14820,6 +14990,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       for (const svc of Object.values(entry.services)) {
         try {
           await containerService.stop(svc.containerName, stopAttribution.reason, {
+            kind: stopIntentKindFrom(stopAttribution.source),
             projectId: entry.projectId,
             branchId: entry.id,
             profileId: svc.profileId,
@@ -14844,6 +15015,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, stopAttribution.reason, {
+                kind: stopIntentKindFrom(stopAttribution.source),
                 projectId: entry.projectId,
                 branchId: entry.id,
                 profileId: `${replicaSet.profileId}--${member.id}`,
@@ -15045,6 +15217,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
               let stopped = false;
               try {
                 await containerService.stop(member.containerName, 'replica-member-not-ready', {
+                  kind: 'cds-stop-after-failure',
                   branchId: entry.id, projectId: entry.projectId, profileId: replicaSet.profileId,
                   actor: 'branch-restart', trigger: 'replica-readiness-failed',
                 });
@@ -15434,10 +15607,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 用分支**有效** profiles 解析目标（项目 profiles + 分支额外服务），与 GET /profile-overrides 一致
     // （Bugbot「Extra profile overrides PUT fails」）：原仅用项目级 getBuildProfile，分支级 extra-only 的
     // profileId 永远 404，尽管 GET 面板已把它列为可覆盖。effective 查找也天然项目内聚（更安全）。
-    const profile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+    const effectiveProfiles = stateService.getEffectiveProfilesForBranch(entry);
+    const profile = effectiveProfiles.find((p) => p.id === profileId);
     if (!profile) {
       res.status(404).json({ error: `构建配置 "${profileId}" 不存在` });
       return;
+    }
+    // Agent 极速版门禁：本 PUT 是**整体替换**（setBranchProfileOverride），所以机器凭据的每一次写入
+    // 都按「替换后的生效模式」判，不只在带 activeDeployMode 时判——只改 containerPort 的请求同样会把
+    // 原有的 express 覆盖抹掉、落回源码基线（Codex 第五轮 P1）。
+    //   - 带 activeDeployMode：显式空串会被原样持久化、解析时 `?? ` 让它胜出 = 不选模式 = 源码基线；
+    //   - 不带：替换后覆盖里没有模式，回到 profile 基线 activeDeployMode。
+    {
+      const overrideBody = (req.body ?? {}) as Record<string, unknown>;
+      const overrideProject = stateService.getProject(entry.projectId || 'default');
+      if (overrideProject && isAgentPrebuiltOnly(overrideProject) && isAgentGatedRequest(req)) {
+        const hasModeField = Object.prototype.hasOwnProperty.call(overrideBody, 'activeDeployMode');
+        // 判的必须是**将要落盘的原值**，不能先 trim：路由按原值持久化、运行时按原值精确查模式，
+        // `" express "` 这种值判成 express 放行后存下来查不到、落回源码基线（Codex 第十轮 P1）。
+        const pendingMode = hasModeField
+          ? (typeof overrideBody.activeDeployMode === 'string' && overrideBody.activeDeployMode !== '' ? overrideBody.activeDeployMode : undefined)
+          : (profile.activeDeployMode || undefined);
+        const violations = findNonPrebuiltProfiles([profile], entry, { profileId, modeId: pendingMode });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(overrideProject, [profile], violations, {
+            branchId: entry.id,
+            operation: 'branch-override',
+          }));
+          return;
+        }
+      }
     }
     try {
       // Body is the BuildProfileOverride object. Unknown keys are silently
@@ -16517,6 +16716,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
+    }
+    // Agent 极速版门禁：清掉覆盖等于回退到 profile 基线；基线不是极速版就不许 Agent 清。
+    {
+      const gateProject = stateService.getProject(entry.projectId || 'default');
+      const gateProfile = stateService.getEffectiveProfilesForBranch(entry).find((p) => p.id === profileId);
+      if (gateProfile && gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+        const violations = findNonPrebuiltProfiles([gateProfile], entry, {
+          profileId, modeId: gateProfile.activeDeployMode || undefined,
+        });
+        if (violations.length > 0) {
+          res.status(409).json(buildPrebuiltGateRejection(gateProject, [gateProfile], violations, {
+            branchId: entry.id,
+            operation: 'branch-override',
+          }));
+          return;
+        }
+      }
     }
     try {
       // 「恢复为公共配置」指的是构建/运行那套覆盖，不包括手动入口配置——后者只是恰好
@@ -17604,6 +17820,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const m = assertProjectAccess(req as any, profile.projectId);
         if (m) { res.status(m.status).json(m.body); return; }
       }
+      // Agent 极速版门禁：新建配置原样落盘请求体，机器凭据带 managedBuild 建一份配置，直接部署会被拦，
+      // 但随后 push 走豁免的 webhook 派发就在宿主上跑 install / build（Codex 第九轮 P1）。与通用 PUT 同一
+      // 口径只拦 managedBuild：prebuilt 标记本身不挂载源码、不编译（台账 G3），新建时不拦。
+      {
+        const gateProject = stateService.getProject(profile.projectId);
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req) && profile.managedBuild) {
+          res.status(409).json({
+            error: 'agent_prebuilt_only',
+            message: `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：managedBuild 会让 CDS 宿主编译源码，Agent 不得新建带它的构建配置，请由真人在项目设置页调整。`,
+            projectId: gateProject.id,
+            violations: [],
+            hint: '极速版配置只需 deployModes 里带 prebuilt: true 的模式或 prebuiltImage: true 的镜像站点，不需要 managedBuild。',
+          });
+          return;
+        }
+      }
       stateService.addBuildProfile(profile);
       stateService.save();
       res.status(201).json({ profile });
@@ -17678,6 +17910,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // `env` key to avoid creating a duplicate field.
           incomingBody.env = mergeEnv(incomingBody.environment);
           delete incomingBody.environment;
+        }
+      }
+      // Agent 极速版门禁：通用 PUT 也能改 activeDeployMode / deployModes / prebuiltImage，
+      // 不拦就绕过了 /deploy-mode 那道闸（Codex PR #1513 P1）。模式定义字段 Agent 一律不得动
+      // （改了就能把源码模式标成 prebuilt）；activeDeployMode 按合并后的结果判是否极速版。
+      {
+        const gateProject = stateService.getProject(existing.projectId || 'default');
+        const patch = incomingBody && typeof incomingBody === 'object' ? incomingBody as Record<string, unknown> : {};
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+          const touchedDefinition = PREBUILT_DEFINITION_FIELDS.filter((f) => f in patch);
+          if (touchedDefinition.length > 0) {
+            res.status(409).json({
+              error: 'agent_prebuilt_only',
+              message: `项目「${gateProject.aliasName || gateProject.name || gateProject.id}」要求 Agent 只使用极速版（CI 预构建）部署：构建配置的 ${touchedDefinition.join(' / ')} 定义了什么算极速版，Agent 不得修改，请由真人在项目设置页调整。`,
+              projectId: gateProject.id,
+              violations: [],
+              hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+            });
+            return;
+          }
+          if ('activeDeployMode' in patch) {
+            // 判将要落盘的原值，不 trim（同分支覆盖处的理由，Codex 第十轮 P1）
+            const nextMode = typeof patch.activeDeployMode === 'string' && patch.activeDeployMode !== ''
+              ? patch.activeDeployMode
+              : undefined;
+            if (!isPrebuiltMode(existing, nextMode)) {
+              const modeLabel = nextMode ? (existing.deployModes?.[nextMode]?.label || nextMode) : '源码构建（无部署模式）';
+              res.status(409).json(buildPrebuiltGateRejection(gateProject, [existing], [{
+                profileId: existing.id, profileName: existing.name || existing.id, modeId: nextMode || '', modeLabel,
+              }], { operation: 'profile-default' }));
+              return;
+            }
+          }
         }
       }
       stateService.updateBuildProfile(req.params.id, incomingBody);
@@ -17891,6 +18156,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         return;
       }
 
+      // Agent 极速版门禁：本端点整体替换 / 合并 deployModes（模式定义），机器凭据在开了门禁的
+      // 项目里一律不得动（改了就能抹掉 prebuilt 标记，Codex 第二轮 P1）。按**实际命中的 targets**
+      // 判（Codex 第五轮 P2：按全量 profile 判会让只改未门禁项目的批量请求被无关项目拦下）。
+      if (isAgentGatedRequest(req)) {
+        const gatedProjectIds = new Set(
+          targets
+            .map((p) => p.projectId || 'default')
+            .filter((pid) => isAgentPrebuiltOnly(stateService.getProject(pid))),
+        );
+        if (gatedProjectIds.size > 0) {
+          res.status(409).json({
+            error: 'agent_prebuilt_only',
+            message: `项目 ${[...gatedProjectIds].join('、')} 要求 Agent 只使用极速版（CI 预构建）部署：批量改写 deployModes（模式定义）会改变什么算极速版，Agent 不得执行，请由真人在项目设置页调整。`,
+            projectId: [...gatedProjectIds][0],
+            violations: [],
+            hint: '要切换本分支的部署模式请用 cdscli branch set-mode <branchId> <profileId> <极速版模式>。',
+          });
+          return;
+        }
+      }
+
+
       // 自动快照（这是批量破坏性写入）
       const snapshot = stateService.createConfigSnapshot({
         trigger: 'pre-destructive',
@@ -17941,6 +18228,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const available = profile.deployModes ? Object.keys(profile.deployModes).join(', ') : '无';
         res.status(400).json({ error: `部署模式 "${mode}" 不存在，可用: ${available}` });
         return;
+      }
+      // Agent 极速版门禁：项目默认是同项目全部分支共用的一份值（cross-project-isolation 通道 9
+      // 同款风险），Agent 不得把它写成非 prebuilt 模式，也不得清空回源码基线。
+      {
+        const gateProject = stateService.getProject(profile.projectId || 'default');
+        if (gateProject && isAgentPrebuiltOnly(gateProject) && isAgentGatedRequest(req)) {
+          const violations = findNonPrebuiltProfiles([profile], undefined, { profileId: id, modeId: mode || undefined });
+          if (violations.length > 0) {
+            res.status(409).json(buildPrebuiltGateRejection(gateProject, [profile], violations, {
+              operation: 'profile-default',
+            }));
+            return;
+          }
+        }
       }
       stateService.updateBuildProfile(id, { activeDeployMode: mode || undefined });
       stateService.save();
@@ -20140,7 +20441,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      try { await containerService.stopInfraService(service.containerName); } catch { /* ok */ }
+      // 删除路径：容器与登记一起删，下一步是「重新添加」而不是「重新启动」。
+      try { await containerService.stopInfraService(service.containerName, 'cds-infra-remove'); } catch { /* ok */ }
       stateService.removeInfraService(id, resolved.projectId);
       stateService.save();
       res.json({ message: `已删除基础设施服务 "${id}"` });
@@ -20189,7 +20491,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const service = stateService.getInfraServiceForProjectAndId(resolved.projectId, id);
     if (!service) { res.status(404).json({ error: `基础设施服务 "${id}" 不存在` }); return; }
     try {
-      await containerService.stopInfraService(service.containerName);
+      // 停止路径：同上，停了就停了，不重建。
+      await containerService.stopInfraService(service.containerName, 'cds-infra-stop');
       stateService.updateInfraService(id, { status: 'stopped' }, resolved.projectId);
       stateService.save();
       res.json({ message: `基础设施服务 "${id}" 已停止` });
@@ -24763,6 +25066,19 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     if (runningContainers > cores * 2) {
       warnings.push({ level: 'warning', code: 'too-many-containers', message: `运行容器 ${runningContainers} 个，超过核数 2 倍（${cores * 2}）：CPU 严重争抢，构建变慢。` });
     }
+    // 2026-09-08 宿主过载复盘：master 自己有没有被饿、构建准入有没有被负载收紧，
+    // 与 /healthz pressure 同口径（判据常量同源）。
+    const eventLoop = getEventLoopLag();
+    const lagP99 = Math.max(eventLoop.current.p99Ms, eventLoop.previous?.p99Ms || 0);
+    if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_CRITICAL_MS) {
+      warnings.push({ level: 'critical', code: 'event-loop-stalled', message: `master 事件循环 p99 延迟 ${lagP99}ms：所有请求一起变慢，先看宿主负载与同步阻塞。` });
+    } else if (eventLoop.enabled && lagP99 >= EVENT_LOOP_LAG_WARN_MS) {
+      warnings.push({ level: 'warning', code: 'event-loop-lagging', message: `master 事件循环 p99 延迟 ${lagP99}ms，临近卡顿。` });
+    }
+    const gate = buildGateStatus();
+    if (gate.load.saturated) {
+      warnings.push({ level: 'warning', code: 'build-throttled-by-load', message: `宿主过载（load ${gate.load.load1} / ${gate.load.cores} 核），构建准入已收紧为 1 并发：${gate.active} 在跑 / ${gate.queued} 排队。` });
+    }
     for (const b of build) {
       const m = Math.max(b.sourceMedianMs || 0, b.releaseMedianMs || 0);
       if (m > 6 * 60 * 1000) {
@@ -24775,6 +25091,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       containers: { running: runningContainers },
       scheduler,
       build,
+      eventLoop,
+      buildGate: { active: gate.active, queued: gate.queued, max: gate.max, load: gate.load },
       warnings,
       generatedAt: new Date().toISOString(),
     });

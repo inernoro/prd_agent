@@ -311,7 +311,7 @@ function HealthSection({ health }: { health: PerfHealth }): JSX.Element {
           <ul className="space-y-1.5">
             {warnings.map((w) => (
               <li key={w.code} className="flex items-start gap-2 text-xs leading-5">
-                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold ${w.level === 'critical' ? 'bg-destructive/20 text-destructive' : 'bg-warn-soft text-warn'}`}>
+                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[0.625rem] font-semibold ${w.level === 'critical' ? 'bg-destructive/20 text-destructive' : 'bg-warn-soft text-warn'}`}>
                   {w.level === 'critical' ? '严重' : '警告'}
                 </span>
                 <span className="text-foreground">{w.message}</span>

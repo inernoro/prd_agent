@@ -655,7 +655,7 @@ export function ReportsPage(): JSX.Element {
                     aria-label="关闭报告目录"
                     onClick={() => setNavDrawerOpen(false)}
                   />
-                  <div className="absolute left-0 top-0 flex h-full w-[min(88vw,420px)] flex-col border-r border-[hsl(var(--hairline))] bg-[hsl(var(--background))] shadow-2xl">
+                  <div className="absolute left-0 top-0 flex h-full w-[min(88vw,26.25rem)] flex-col border-r border-[hsl(var(--hairline))] bg-[hsl(var(--background))] shadow-2xl">
                     <div className="flex h-11 shrink-0 items-center justify-between border-b border-[hsl(var(--hairline))] px-3 text-sm font-medium">
                       <span>报告目录</span>
                       <Button variant="ghost" size="sm" onClick={() => setNavDrawerOpen(false)}>关闭</Button>
@@ -907,7 +907,7 @@ function ReportsHome({
         </>
       )}
 
-      <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[10px] border border-[hsl(var(--hairline))] bg-card">
+      <section id="reports-ledger" className="mt-1 overflow-hidden rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-card">
         {/*
           台账表头拆成两行：第一行「标题 ——— 控件组」，第二行「类目页签」。
           原来九个页签和四个控件挤同一行，一定会折，折叠开关还会孤零零掉到第二行最左边。
@@ -915,10 +915,10 @@ function ReportsHome({
         */}
         <div className="flex flex-col gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2.5">
           <div className="flex flex-wrap items-center gap-2">
-            <h2 className="text-[15px] font-semibold tracking-tight">报告台账</h2>
+            <h2 className="text-[0.9375rem] font-semibold tracking-tight">报告台账</h2>
             <span className="flex-1" />
             {filterMenu}
-            <div className="flex h-7 w-[200px] items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-card px-2 transition-colors focus-within:border-primary/60">
+            <div className="flex h-7 w-[12.5rem] items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-card px-2 transition-colors focus-within:border-primary/60">
               <Search className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               <input
                 value={searchQuery}
@@ -940,12 +940,12 @@ function ReportsHome({
             ) : null}
           </div>
           <div className="flex min-w-0 flex-wrap items-center gap-0.5" role="tablist" aria-label="报告类型">
-            <button type="button" role="tab" aria-selected={kindFilter === 'all'} className={`inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium ${kindFilter === 'all' ? 'bg-[hsl(var(--accent))] text-foreground' : 'text-[hsl(var(--foreground-muted))] hover:text-foreground'}`} onClick={() => { setKindFilter('all'); setPage(0); }}>
-              全部<b className="font-mono text-[11px] font-medium text-muted-foreground">{allCount}</b>
+            <button type="button" role="tab" aria-selected={kindFilter === 'all'} className={`inline-flex h-[1.875rem] shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[0.78125rem] font-medium ${kindFilter === 'all' ? 'bg-[hsl(var(--accent))] text-foreground' : 'text-[hsl(var(--foreground-muted))] hover:text-foreground'}`} onClick={() => { setKindFilter('all'); setPage(0); }}>
+              全部<b className="font-mono text-[0.6875rem] font-medium text-muted-foreground">{allCount}</b>
             </button>
             {kindTabs.map((t) => (
-              <button key={t.kind} type="button" role="tab" aria-selected={kindFilter === t.kind} className={`inline-flex h-[30px] shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[12.5px] font-medium ${kindFilter === t.kind ? 'bg-[hsl(var(--accent))] text-foreground' : 'text-[hsl(var(--foreground-muted))] hover:text-foreground'}`} onClick={() => { setKindFilter(t.kind); setPage(0); }}>
-                {t.kind}<b className="font-mono text-[11px] font-medium text-muted-foreground">{t.count}</b>
+              <button key={t.kind} type="button" role="tab" aria-selected={kindFilter === t.kind} className={`inline-flex h-[1.875rem] shrink-0 items-center gap-1.5 rounded-md px-2.5 text-[0.78125rem] font-medium ${kindFilter === t.kind ? 'bg-[hsl(var(--accent))] text-foreground' : 'text-[hsl(var(--foreground-muted))] hover:text-foreground'}`} onClick={() => { setKindFilter(t.kind); setPage(0); }}>
+                {t.kind}<b className="font-mono text-[0.6875rem] font-medium text-muted-foreground">{t.count}</b>
               </button>
             ))}
           </div>
@@ -954,9 +954,9 @@ function ReportsHome({
           <div className="px-4 py-10 text-center text-sm text-muted-foreground">当前筛选下没有报告</div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[960px] border-collapse text-[13px]">
+            <table className="w-full min-w-[60rem] border-collapse text-[0.8125rem]">
               <thead>
-                <tr className="bg-[hsl(var(--surface-sunken))] text-left text-[11px] uppercase tracking-[0.04em] text-muted-foreground">
+                <tr className="bg-[hsl(var(--surface-sunken))] text-left text-[0.6875rem] uppercase tracking-[0.04em] text-muted-foreground">
                   <th className="px-3 py-2.5 font-medium">结论</th>
                   <th className="px-3 py-2.5 font-medium">报告 · 前缀 / 对象 / 目标日</th>
                   <th className="px-3 py-2.5 font-medium">档位</th>
@@ -985,40 +985,40 @@ function ReportsHome({
                       tabIndex={0}
                       title={reportTooltip(r, projectLabel)}
                     >
-                      <td className="w-[96px] whitespace-nowrap px-3 py-3">
-                        <span className="inline-flex items-center gap-1.5 text-[12.5px] font-semibold"><VerdictIcon verdict={r.verdict} />{r.verdict === 'pass' ? '通过' : r.verdict === 'fail' ? '未通过' : r.verdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
+                      <td className="w-[6rem] whitespace-nowrap px-3 py-3">
+                        <span className="inline-flex items-center gap-1.5 text-[0.78125rem] font-semibold"><VerdictIcon verdict={r.verdict} />{r.verdict === 'pass' ? '通过' : r.verdict === 'fail' ? '未通过' : r.verdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
                       </td>
                       <td className="px-3 py-3">
                         <div className="font-semibold text-foreground">{r.title}</div>
-                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11.5px] text-muted-foreground">
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[0.71875rem] text-muted-foreground">
                           {superseded ? <span>已被更新的版本取代</span> : ref && ref.version > 1 ? <span>v{ref.version} · 取代 {ref.supersedes.length} 份早期版本</span> : null}
                           {projectLabel ? <span>{projectLabel}</span> : null}
                           <FormatBadge format={r.format} />
                         </div>
                       </td>
-                      <td className="w-[64px] px-3 py-3">{r.tier ? <span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[11px] font-semibold">{r.tier}</span> : null}</td>
-                      <td className="w-[150px] whitespace-nowrap px-3 py-3">
+                      <td className="w-[4rem] px-3 py-3">{r.tier ? <span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[0.6875rem] font-semibold">{r.tier}</span> : null}</td>
+                      <td className="w-[9.375rem] whitespace-nowrap px-3 py-3">
                         {r.defectCounts ? (
-                          <span className="inline-flex gap-1 font-mono text-[11px]">
+                          <span className="inline-flex gap-1 font-mono text-[0.6875rem]">
                             <span className={`rounded px-1.5 py-0.5 ${p0 ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P0 {p0}</span>
                             <span className={`rounded px-1.5 py-0.5 ${p1 ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P1 {p1}</span>
                             <span className={`rounded px-1.5 py-0.5 ${p2 ? 'bg-[hsl(var(--warn-soft))] text-warn' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P2 {p2}</span>
                           </span>
-                        ) : <span className="text-[11px] text-muted-foreground">未记录</span>}
+                        ) : <span className="text-[0.6875rem] text-muted-foreground">未记录</span>}
                       </td>
-                      <td className="w-[300px] px-3 py-3">
+                      <td className="w-[18.75rem] px-3 py-3">
                         <div className="flex flex-wrap gap-1">
                           {r.branch ? <ChangeKeyChip icon={GitBranch} text={r.branch} /> : null}
                           {r.commitSha ? <ChangeKeyChip icon={GitCommitHorizontal} text={r.commitSha.slice(0, 8)} /> : null}
                           {r.prNumber != null ? <ChangeKeyChip icon={GitPullRequest} text={`#${r.prNumber}`} tone="info" /> : null}
-                          {!r.branch && !r.commitSha && r.prNumber == null ? <span className="text-[11px] text-muted-foreground">未记录部署上下文</span> : null}
+                          {!r.branch && !r.commitSha && r.prNumber == null ? <span className="text-[0.6875rem] text-muted-foreground">未记录部署上下文</span> : null}
                         </div>
                       </td>
-                      <td className="w-[150px] whitespace-nowrap px-3 py-3 font-mono text-[11.5px] text-muted-foreground">
+                      <td className="w-[9.375rem] whitespace-nowrap px-3 py-3 font-mono text-[0.71875rem] text-muted-foreground">
                         {formatTime(r.createdAt)}
                         {r.shareToken ? <Share2 className="ml-1.5 inline h-3.5 w-3.5 text-info" aria-label="已分享" /> : null}
                       </td>
-                      <td className="w-[44px] px-2 py-2 text-right" onClick={(event) => event.stopPropagation()}>
+                      <td className="w-[2.75rem] px-2 py-2 text-right" onClick={(event) => event.stopPropagation()}>
                         <ReportRowActions
                           report={r}
                           folders={folders}
@@ -1057,7 +1057,7 @@ function ReportsHome({
  * 验收对象那一格的胶囊（分支 / commit / PR）。
  *
  * 高度必须是 min-h 不能是 h：分支名是长标识（`claude/knowledge-base-github-sync-76rjsp`
- * 这种），在 300px 的格子里必然换行，而固定高度的胶囊不会跟着长高，第二行就掉到
+ * 这种），在 18.75rem 的格子里必然换行，而固定高度的胶囊不会跟着长高，第二行就掉到
  * 背景外面去——用户看到的是「字体溢出」。不截断是有意的：分支名的区分度全在尾巴上
  * （...-76rjsp 与 ...-t57jzo 只差尾巴），截掉等于让这一列认不出是哪条分支。
  *
@@ -1069,7 +1069,7 @@ function ChangeKeyChip({
 }: { icon: typeof GitBranch; text: string; tone?: 'info' }): JSX.Element {
   return (
     <span
-      className={`inline-flex min-h-[22px] max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 py-[3px] font-mono text-[11px] leading-[16px] ${
+      className={`inline-flex min-h-[1.375rem] max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--code-bg))] px-1.5 py-[3px] font-mono text-[0.6875rem] leading-[1rem] ${
         tone === 'info' ? 'text-info' : 'text-[hsl(var(--foreground-muted))]'
       }`}
     >
@@ -1225,7 +1225,7 @@ function ProjectFilterMenu({
       trigger={(
         <Button variant="ghost" size="sm" className="h-7 min-w-0 shrink-0 gap-1.5 px-2" aria-label="打开项目筛选" title="项目筛选">
           <Boxes />
-          <span className="max-w-[96px] truncate">{label}</span>
+          <span className="max-w-[6rem] truncate">{label}</span>
         </Button>
       )}
     >
@@ -1389,7 +1389,7 @@ function FormatBadge({ format }: { format: ReportFormat }): JSX.Element {
   const Icon = format === 'html' ? FileCode2 : FileText;
   const label = format === 'html' ? 'HTML' : 'Markdown';
   return (
-    <span className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+    <span className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.6875rem] font-medium text-muted-foreground">
       <Icon className="h-3 w-3" />{label}
     </span>
   );
@@ -1404,7 +1404,7 @@ function VerdictBadge({ verdict }: { verdict: NonNullable<AcceptanceReport['verd
   };
   const c = cfg[verdict];
   return (
-    <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ background: c.bg }}>
+    <span className="inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[0.625rem] font-semibold text-white" style={{ background: c.bg }}>
       {c.label}
     </span>
   );
@@ -1609,7 +1609,7 @@ function ReportList({
     return (
       <div key={report.id}
         className={`group flex h-8 cursor-pointer items-center gap-2 rounded px-2 text-sm transition-colors ${active ? 'bg-primary/10 text-primary' : 'hover:bg-[hsl(var(--surface-sunken))]'}`}
-        style={{ paddingLeft: 8 + depth * 16 }}
+        style={{ paddingLeft: `${(8 + depth * 16) / 16}rem` }}
         onClick={() => onSelect(report)}
         onContextMenu={(event) => {
           event.preventDefault();
@@ -1650,7 +1650,7 @@ function ReportList({
     const rows: JSX.Element[] = [
       <div key={folder.id}
         className="group flex h-8 cursor-pointer items-center gap-1.5 rounded px-2 text-sm text-muted-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
-        style={{ paddingLeft: 6 + depth * 16 }}
+        style={{ paddingLeft: `${(6 + depth * 16) / 16}rem` }}
         title={`${folder.name}\n${count} 份报告`}
         onClick={() => toggleFolder(folder.id)}
         role="button"
@@ -1663,7 +1663,7 @@ function ReportList({
         <ChevronRight className={`h-3.5 w-3.5 shrink-0 transition-transform ${collapsed ? '' : 'rotate-90'}`} />
         <FolderOpen className="h-4 w-4 shrink-0" />
         <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-        <span className="shrink-0 text-[11px] text-muted-foreground">{count}</span>
+        <span className="shrink-0 text-[0.6875rem] text-muted-foreground">{count}</span>
         <div className="shrink-0 opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100" onClick={(event) => event.stopPropagation()}>
           <FolderRowActions
             onRename={() => onRenameFolderRequest(folder)}
@@ -1703,7 +1703,7 @@ function ReportList({
         <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`} />
         <Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{label}</span>
-        <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{count}</span>
+        <span className="shrink-0 text-[0.6875rem] font-normal text-muted-foreground">{count}</span>
       </div>,
     ];
     if (!collapsed) {
@@ -1730,7 +1730,7 @@ function ReportList({
         <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${collapsed ? '' : 'rotate-90'}`} />
         <CalendarDays className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1 truncate">{group.key}</span>
-        <span className="shrink-0 text-[11px] font-normal text-muted-foreground">{group.reports.length}</span>
+        <span className="shrink-0 text-[0.6875rem] font-normal text-muted-foreground">{group.reports.length}</span>
       </div>,
     ];
     if (!collapsed) for (const report of group.reports) rows.push(renderReportRow(report, 1));
@@ -1959,7 +1959,7 @@ function ReportContextMenu({
   const top = Math.max(8, Math.min(position.y, window.innerHeight - 440));
   return createPortal(
     <div
-      className="cds-overlay-anim fixed z-[320] max-h-[min(70vh,520px)] w-[260px] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
+      className="cds-overlay-anim fixed z-[320] max-h-[min(70vh,32.5rem)] w-[16.25rem] overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] py-1 shadow-2xl"
       style={{ left, top }}
       role="menu"
       aria-label={`报告操作：${report.title}`}
@@ -2183,11 +2183,11 @@ function ReportViewer({
         const linkColor = theme === 'dark' ? '#60a5fa' : '#2563eb';
         const doc = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>
           :root { color-scheme: ${theme}; }
-          body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 28px clamp(28px, 6vw, 96px); max-width: 1100px; margin: 0 auto; }
-          pre { background: rgba(127,127,127,0.12); padding: 12px; border-radius: 8px; overflow: auto; }
-          code { background: rgba(127,127,127,0.12); padding: 1px 4px; border-radius: 4px; }
+          body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height: 1.6; padding: 1.75rem clamp(1.75rem, 6vw, 6rem); max-width: 68.75rem; margin: 0 auto; }
+          pre { background: rgba(127,127,127,0.12); padding: 0.75rem; border-radius: 0.5rem; overflow: auto; }
+          code { background: rgba(127,127,127,0.12); padding: 1px 0.25rem; border-radius: 0.25rem; }
           pre code { background: transparent; padding: 0; }
-          table { border-collapse: collapse; } th, td { border: 1px solid rgba(127,127,127,0.3); padding: 6px 10px; }
+          table { border-collapse: collapse; } th, td { border: 1px solid rgba(127,127,127,0.3); padding: 0.375rem 0.625rem; }
           img { max-width: 100%; height: auto; }
           a { color: ${linkColor}; }
         </style></head><body>${parsed}</body></html>`;
@@ -2237,20 +2237,20 @@ function ReportViewer({
           {report.verdict ? <VerdictBadge verdict={report.verdict} /> : null}
           <span className="truncate text-sm font-medium">{report.title}</span>
           <FormatBadge format={report.format} />
-          <span className="inline-flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground" title={`报告时间：${formatTime(report.createdAt)}`}>
+          <span className="inline-flex shrink-0 items-center gap-1 text-[0.6875rem] text-muted-foreground" title={`报告时间：${formatTime(report.createdAt)}`}>
             <CalendarDays className="h-3.5 w-3.5" />报告时间 {formatTime(report.createdAt)}
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           {report.prNumber && report.verdict ? <PushToPrControl report={report} /> : null}
-          <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" onClick={() => onSync(report)} title="使用 MAP 当前登录账号保存到我的验收知识库">
+          <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-[0.6875rem]" onClick={() => onSync(report)} title="使用 MAP 当前登录账号保存到我的验收知识库">
             <Save />保存到 MAP
           </Button>
-          <Button asChild variant="outline" size="sm" className="h-7 gap-1 px-2 text-[11px]" title="下载正文、元数据和截图压缩包">
+          <Button asChild variant="outline" size="sm" className="h-7 gap-1 px-2 text-[0.6875rem]" title="下载正文、元数据和截图压缩包">
             <a href={reportDownloadUrl(report.id)} download><Download />下载 ZIP</a>
           </Button>
           <ShareControl report={report} />
-          <span className="text-[11px] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
+          <span className="text-[0.6875rem] text-muted-foreground">{formatBytes(report.sizeBytes)}</span>
           <Button
             variant="ghost"
             size="icon"
@@ -2324,11 +2324,11 @@ function ShareControl({ report }: { report: AcceptanceReport }): JSX.Element {
 
   return (
     <div className="flex items-center gap-1.5">
-      {hint ? <span className="text-[11px] text-muted-foreground">{hint}</span> : null}
+      {hint ? <span className="text-[0.6875rem] text-muted-foreground">{hint}</span> : null}
       <Button
         variant={token ? 'secondary' : 'outline'}
         size="sm"
-        className="h-7 gap-1 px-2 text-[11px]"
+        className="h-7 gap-1 px-2 text-[0.6875rem]"
         disabled={busy}
         onClick={() => void onEnableOrCopy()}
         title={token ? '复制匿名公开链接 /r/<token>' : '生成匿名只读公开链接（无需登录即可查看）'}
@@ -2378,11 +2378,11 @@ function PushToPrControl({ report }: { report: AcceptanceReport }): JSX.Element 
 
   return (
     <div className="flex items-center gap-1.5">
-      {hint ? <span className="max-w-[180px] truncate text-[11px] text-muted-foreground">{hint}</span> : null}
+      {hint ? <span className="max-w-[11.25rem] truncate text-[0.6875rem] text-muted-foreground">{hint}</span> : null}
       <Button
         variant="outline"
         size="sm"
-        className="h-7 gap-1 px-2 text-[11px]"
+        className="h-7 gap-1 px-2 text-[0.6875rem]"
         disabled={busy}
         onClick={() => void onPush()}
         title={`使用 CDS 关联仓库的 GitHub App 权限，把验收结论同步到 PR #${report.prNumber} 的评论和 Check Run`}

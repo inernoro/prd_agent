@@ -92,11 +92,11 @@ export function EnvironmentSidebar({
             <div className="divide-y divide-[hsl(var(--hairline))] border-t border-[hsl(var(--hairline))]">
               {archivedTargets.map((target) => (
                 <div key={target.id} className="px-3.5 py-2.5">
-                  <div className="truncate text-[13px] text-muted-foreground">{target.name}</div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">
+                  <div className="truncate text-[0.8125rem] text-muted-foreground">{target.name}</div>
+                  <div className="mt-1 text-[0.6875rem] text-muted-foreground">
                     {target.archiveReason || '未记录归档原因'}
                   </div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">
+                  <div className="mt-1 text-[0.6875rem] text-muted-foreground">
                     {formatDateTime(target.archivedAt)} · {target.archivedBy || '-'}
                   </div>
                 </div>
@@ -144,27 +144,27 @@ function EnvironmentRow({
     <button
       type="button"
       onClick={onSelect}
-      className={`grid w-full grid-cols-[10px_minmax(0,1fr)] items-start gap-2.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3 text-left transition-colors ${
+      className={`grid w-full grid-cols-[0.625rem_minmax(0,1fr)] items-start gap-2.5 border-b border-[hsl(var(--hairline))] px-3.5 py-3 text-left transition-colors ${
         selected ? 'bg-primary/10 shadow-[inset_3px_0_0_hsl(var(--primary))]' : 'hover:bg-[hsl(var(--surface-sunken))]/60'
       }`}
     >
       <span className="mt-1.5"><Led tone={tone} /></span>
       <span className="min-w-0">
         <span className="flex items-center justify-between gap-2">
-          <span className="truncate text-[13px] font-semibold">{label}</span>
+          <span className="truncate text-[0.8125rem] font-semibold">{label}</span>
           <Chip tone={tone}>{healthLabel(row.healthStatus)}</Chip>
         </span>
         {subLabel ? <span className="mt-0.5 block truncate text-xs text-muted-foreground">{subLabel}</span> : null}
-        <span className="mt-1 block truncate font-mono text-[11px] tabular-nums text-muted-foreground">
+        <span className="mt-1 block truncate font-mono text-[0.6875rem] tabular-nums text-muted-foreground">
           {row.currentCommit ? row.currentCommit.slice(0, 7) : '未发布'}
           {releasedAgo ? ` · ${releasedAgo}` : ''}
           {isCanonical ? ' · 主目标' : ''}
         </span>
-        <span className={`mt-1 block truncate text-[11px] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
+        <span className={`mt-1 block truncate text-[0.6875rem] ${position.tone === 'warn' ? 'text-warn' : 'text-muted-foreground'}`}>
           {position.text}
         </span>
         {latestFailed && row.latestRun ? (
-          <span className="mt-1 block truncate text-[11px] text-bad">
+          <span className="mt-1 block truncate text-[0.6875rem] text-bad">
             最近一次尝试 {row.latestRun.commitSha.slice(0, 7)} 失败
           </span>
         ) : null}

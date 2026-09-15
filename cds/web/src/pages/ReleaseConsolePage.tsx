@@ -98,12 +98,12 @@ function Sheet({ title, subtitle, onClose, foot, children }: {
         aria-modal="true"
         aria-label={title}
         onClick={(event) => event.stopPropagation()}
-        className="cds-surface-raised cds-hairline flex h-full w-full max-w-3xl flex-col overflow-hidden border shadow-2xl sm:h-[min(82vh,720px)] sm:rounded-xl"
+        className="cds-surface-raised cds-hairline flex h-full w-full max-w-3xl flex-col overflow-hidden border shadow-2xl sm:h-[min(82vh,45rem)] sm:rounded-xl"
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-semibold">{title}</h3>
-            {subtitle ? <p className="mt-0.5 truncate text-[11.5px] text-muted-foreground">{subtitle}</p> : null}
+            {subtitle ? <p className="mt-0.5 truncate text-[0.7188rem] text-muted-foreground">{subtitle}</p> : null}
           </div>
           <Button variant="ghost" size="sm" onClick={onClose} aria-label="关闭">
             <X />
@@ -129,7 +129,7 @@ function Sheet({ title, subtitle, onClose, foot, children }: {
  * 之前四处各写各的，改一处漏三处。
  */
 function SectionLabel({ children }: { children: ReactNode }): JSX.Element {
-  return <span className="cds-ident text-[11px] uppercase tracking-[0.14em] text-muted-foreground">{children}</span>;
+  return <span className="cds-ident text-[0.6875rem] uppercase tracking-[0.14em] text-muted-foreground">{children}</span>;
 }
 
 /**
@@ -171,10 +171,10 @@ function ProjectTagMarks({ project }: { project: ProjectLite }): JSX.Element | n
             title={tag.title}
             // aria-label 而不是只靠 title：读屏用户拿不到 title，图标对他们就是空的
             aria-label={tag.label}
-            className={`inline-flex h-[17px] items-center gap-[3px] rounded-[5px] border px-[3px] ${PROJECT_TAG_TONE_CLASS[tag.tone]}`}
+            className={`inline-flex h-[1.0625rem] items-center gap-[3px] rounded-[0.3125rem] border px-[3px] ${PROJECT_TAG_TONE_CLASS[tag.tone]}`}
           >
-            <Icon className={`h-[11px] w-[11px] ${tag.key === 'cloning' ? 'animate-spin' : ''}`} />
-            {tag.short ? <span className="cds-ident text-[10px] leading-none">{tag.short}</span> : null}
+            <Icon className={`h-[0.6875rem] w-[0.6875rem] ${tag.key === 'cloning' ? 'animate-spin' : ''}`} />
+            {tag.short ? <span className="cds-ident text-[0.625rem] leading-none">{tag.short}</span> : null}
           </span>
         );
       })}
@@ -714,16 +714,16 @@ export function ReleaseConsolePage(): JSX.Element {
             并让页面横滚，本仓库不允许——见 cds/.claude/rules/mobile-layout-fallback.md）。
             所以：xl 收成 240/300，wide(1440) 回到 264/340，2xl 才是参考值 288/380。 */}
         <div
-          className="flex h-full min-h-0 flex-col overflow-y-auto max-xl:gap-4 max-xl:p-4 xl:grid xl:grid-cols-[240px_minmax(0,1fr)_300px] xl:overflow-hidden wide:grid-cols-[264px_minmax(0,1fr)_340px] 2xl:grid-cols-[288px_minmax(0,1fr)_380px]"
+          className="flex h-full min-h-0 flex-col overflow-y-auto max-xl:gap-4 max-xl:p-4 xl:grid xl:grid-cols-[15rem_minmax(0,1fr)_18.75rem] xl:overflow-hidden wide:grid-cols-[16.5rem_minmax(0,1fr)_21.25rem] 2xl:grid-cols-[18rem_minmax(0,1fr)_23.75rem]"
         >
           {/* ══ 左栏：项目 + 环境 ══ */}
           {/* 窄屏把顺序翻过来：用户来这一页第一眼要看的是「现在成没成」，
               不是项目列表。桌面三栏不受影响（order 只在 max-lg 生效）。 */}
-          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-2 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:rounded-none xl:border-r xl:overflow-hidden">
+          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-2 max-xl:shrink-0 max-xl:rounded-[0.875rem] max-xl:border xl:rounded-none xl:border-r xl:overflow-hidden">
             <div className="shrink-0 px-4 pb-2.5 pt-4">
               <div className="mb-2.5 flex items-center justify-between">
                 <SectionLabel>PROJECTS</SectionLabel>
-                <span className="cds-ident text-[11px] text-muted-foreground">{projects.length} 个</span>
+                <span className="cds-ident text-[0.6875rem] text-muted-foreground">{projects.length} 个</span>
               </div>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
@@ -747,7 +747,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   type="button"
                   aria-pressed={item.id === projectId}
                   onClick={() => { setProjectId(item.id); setCenter(null); setBranches([]); setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); }}
-                  className={`mb-1 flex w-full flex-col gap-1 rounded-[9px] border px-3 py-2.5 text-left transition-colors ${
+                  className={`mb-1 flex w-full flex-col gap-1 rounded-[0.5625rem] border px-3 py-2.5 text-left transition-colors ${
                     item.id === projectId
                       ? 'border-primary/40 bg-primary/[0.08]'
                       : 'border-transparent hover:border-[hsl(var(--hairline-strong))] hover:bg-[hsl(var(--surface-sunken))]/60'
@@ -760,7 +760,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       甩到卡片最右边就变成另一列状态了。名字 min-w-0 truncate 负责让长名字
                       自己截断，标记 shrink-0 永远贴在它后面。 */}
                   <span className="flex w-full min-w-0 items-center gap-1.5">
-                    <span className={`min-w-0 truncate text-[13px] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
+                    <span className={`min-w-0 truncate text-[0.8125rem] font-medium ${item.id === projectId ? 'text-primary' : ''}`}>
                       {item.name || item.id}
                     </span>
                     <ProjectTagMarks project={item} />
@@ -775,7 +775,7 @@ export function ReleaseConsolePage(): JSX.Element {
             <div className="min-h-0 shrink-0 border-t border-[hsl(var(--hairline))] px-4 py-3.5">
               <div className="mb-2.5 flex items-center justify-between gap-2">
                 <SectionLabel>ENVIRONMENTS</SectionLabel>
-                <span className="cds-ident text-[11px] text-muted-foreground">{rows.length} 个</span>
+                <span className="cds-ident text-[0.6875rem] text-muted-foreground">{rows.length} 个</span>
               </div>
               {rows.length === 0 ? (
                 <p className="text-xs text-muted-foreground">这个项目还没有发布目标，去发布中心添加环境。</p>
@@ -785,7 +785,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     <div key={section.environment} className="flex flex-col gap-1.5">
                       {/* 后端没下发分组时 buildEnvironmentSections 退化成单组，此时不画组标题 */}
                       {section.degraded ? null : (
-                        <span className="px-0.5 text-[11.5px] text-muted-foreground">{section.label}</span>
+                        <span className="px-0.5 text-[0.7188rem] text-muted-foreground">{section.label}</span>
                       )}
                       {[...section.entries, ...section.disabledEntries].map((entry) => {
                         const item = entry.row;
@@ -800,7 +800,7 @@ export function ReleaseConsolePage(): JSX.Element {
                               setTargetId(item.target.id);
                               setRun(null); setHistoryRun(null); setLogs([]); setPreflight(null); setConfirmTargetId(null);
                             }}
-                            className={`flex items-center gap-2.5 rounded-[9px] border px-2.5 py-2 text-left transition-colors duration-150 ${
+                            className={`flex items-center gap-2.5 rounded-[0.5625rem] border px-2.5 py-2 text-left transition-colors duration-150 ${
                               selected
                                 ? 'border-primary/40 bg-primary/[0.08]'
                                 : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 hover:border-[hsl(var(--hairline-strong))]'
@@ -815,11 +815,11 @@ export function ReleaseConsolePage(): JSX.Element {
                             <span className="min-w-0 flex-1">
                               <span
                                 title={item.target.name}
-                                className={`block truncate text-[12.5px] font-medium ${selected ? 'text-primary' : ''}`}
+                                className={`block truncate text-[0.7812rem] font-medium ${selected ? 'text-primary' : ''}`}
                               >
                                 {item.target.name}
                                 {entry.isCanonical && section.entries.length > 1 ? (
-                                  <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">主</span>
+                                  <span className="ml-1.5 text-[0.6875rem] font-normal text-muted-foreground">主</span>
                                 ) : null}
                               </span>
                               <span className="block truncate cds-ident text-xs text-muted-foreground">
@@ -829,7 +829,7 @@ export function ReleaseConsolePage(): JSX.Element {
                             </span>
                             {/* 落后主干几个提交由后端 commitPosition 给；算不出时它缺席，这里就不显示 */}
                             {typeof behind === 'number' && behind > 0 ? (
-                              <span className="shrink-0 rounded bg-warn-soft px-1.5 py-0.5 cds-ident text-[11px] font-medium text-warn">
+                              <span className="shrink-0 rounded bg-warn-soft px-1.5 py-0.5 cds-ident text-[0.6875rem] font-medium text-warn">
                                 落后 {behind}
                               </span>
                             ) : null}
@@ -844,7 +844,7 @@ export function ReleaseConsolePage(): JSX.Element {
           </aside>
 
           {/* ══ 中栏：状态是主角 ══ */}
-          <main className="flex min-h-0 flex-col gap-3.5 max-xl:order-1 max-xl:shrink-0 xl:overflow-hidden xl:px-[22px] xl:py-[18px]">
+          <main className="flex min-h-0 flex-col gap-3.5 max-xl:order-1 max-xl:shrink-0 xl:overflow-hidden xl:px-[1.375rem] xl:py-[1.125rem]">
             {error ? (
               <div className="flex items-center gap-2 rounded-lg border border-bad/30 bg-bad-soft px-3 py-2 text-sm text-bad">
                 <AlertTriangle className="h-4 w-4 shrink-0" />
@@ -852,21 +852,21 @@ export function ReleaseConsolePage(): JSX.Element {
               </div>
             ) : null}
 
-            <section className={`cds-surface-raised shrink-0 rounded-[14px] border px-5 py-[18px] ${toneRing}`}>
-              <div className="flex flex-wrap items-center gap-[18px]">
+            <section className={`cds-surface-raised shrink-0 rounded-[0.875rem] border px-5 py-[1.125rem] ${toneRing}`}>
+              <div className="flex flex-wrap items-center gap-[1.125rem]">
                 {/* 进行中时向外扩一圈光晕（参考稿 pulseRing）。终态静止。 */}
-                <div className={`flex h-[52px] w-[52px] shrink-0 items-center justify-center rounded-[14px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] ${running ? 'cds-status-pulse' : ''}`}>
-                  {running ? <Loader2 className="h-[22px] w-[22px] animate-spin text-primary" />
-                    : failed ? <XCircle className="h-[22px] w-[22px] text-bad" />
-                    : shown ? <CheckCircle2 className="h-[22px] w-[22px] text-ok" />
-                    : <Rocket className="h-[22px] w-[22px] text-muted-foreground" />}
+                <div className={`flex h-[3.25rem] w-[3.25rem] shrink-0 items-center justify-center rounded-[0.875rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] ${running ? 'cds-status-pulse' : ''}`}>
+                  {running ? <Loader2 className="h-[1.375rem] w-[1.375rem] animate-spin text-primary" />
+                    : failed ? <XCircle className="h-[1.375rem] w-[1.375rem] text-bad" />
+                    : shown ? <CheckCircle2 className="h-[1.375rem] w-[1.375rem] text-ok" />
+                    : <Rocket className="h-[1.375rem] w-[1.375rem] text-muted-foreground" />}
                 </div>
 
                 {/* basis-0 + min-width：换行判据用的是各项的**假想主尺寸**（basis，中段被
                     min-width 兜住），不是 grow 之后的结果。1600 宽下内容行 764px，
                     52(图标) + 18 + 340 + 18 + 300(三个按钮) = 728，留得下一行。
                     版本选择挪进标题行之后操作组才收得到 300 —— 它在操作组里时是 480。 */}
-                <div className="min-w-[340px] flex-1 basis-0">
+                <div className="min-w-[21.25rem] flex-1 basis-0">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <h2 className={`text-xl font-bold ${failed ? 'text-bad' : running ? 'text-primary' : ''}`}>
                       {statusTitle}
@@ -874,12 +874,12 @@ export function ReleaseConsolePage(): JSX.Element {
                     {/* 「历史记录」这一枚是本次改动的核心：没有它，满格绿的进度条
                         会被读成「我刚发布成功了」，而用户其实什么都没做。 */}
                     {stance.badge ? (
-                      <span className="shrink-0 rounded-[6px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[10.5px] text-muted-foreground">
+                      <span className="shrink-0 rounded-[0.375rem] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.6562rem] text-muted-foreground">
                         {stance.badge}
                       </span>
                     ) : null}
                     {stance.selectedIsLive ? (
-                      <span className="shrink-0 rounded-[6px] bg-ok-soft px-1.5 py-0.5 text-[10.5px] text-ok">
+                      <span className="shrink-0 rounded-[0.375rem] bg-ok-soft px-1.5 py-0.5 text-[0.6562rem] text-ok">
                         选中版本已在线上
                       </span>
                     ) : null}
@@ -910,7 +910,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       onChange={(event) => { setBranchId(event.target.value); setConfirmTargetId(null); }}
                       title={previewUrl ? `来源 ${previewUrl}${sourceUrls.length > 1 ? ` 等 ${sourceUrls.length} 个入口` : ''}` : '取不到预览地址，发布前检查会拦下这一项'}
                       aria-label="要发布的版本"
-                      className="cds-ident h-7 max-w-[190px] shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[11px] outline-none focus:border-[hsl(var(--hairline-strong))]"
+                      className="cds-ident h-7 max-w-[11.875rem] shrink-0 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-[0.6875rem] outline-none focus:border-[hsl(var(--hairline-strong))]"
                     >
                       {branches.length === 0 ? <option value="">没有可发布的分支</option> : null}
                       {branches.map((item) => (
@@ -935,7 +935,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   </div>
                   {/* 参考稿这一行只有两个值：左边步数、右边耗时。别再往里塞日期——
                       塞了就换行，换行就把 banner 顶高，就是「头大」。 */}
-                  <div className="mt-2 flex items-center justify-between gap-4 cds-ident text-[11px] text-muted-foreground">
+                  <div className="mt-2 flex items-center justify-between gap-4 cds-ident text-[0.6875rem] text-muted-foreground">
                     <span className="truncate">
                       {progress.steps.filter((s) => s.state === 'done').length}/{progress.steps.length || 0} 步骤
                     </span>
@@ -985,7 +985,7 @@ export function ReleaseConsolePage(): JSX.Element {
               （用户原话：「很有心智负担」）。本次真发起了就不出——那时屏幕自己说得清。
             */}
             {stance.hint ? (
-              <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-[10px] border px-3.5 py-2.5 text-xs ${
+              <div className={`flex shrink-0 flex-wrap items-center gap-2 rounded-[0.625rem] border px-3.5 py-2.5 text-xs ${
                 stance.selectedIsLive
                   ? 'border-ok/40 bg-ok-soft text-ok'
                   : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground'
@@ -1001,7 +1001,7 @@ export function ReleaseConsolePage(): JSX.Element {
               退线上版本，那是把一个危险动作降级成一条链接。
             */}
             {arrivedIntent === 'rollback' && row ? (
-              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-[10px] border border-warn/40 bg-warn-soft px-3.5 py-2.5 text-xs text-warn">
+              <div className="flex shrink-0 flex-wrap items-center gap-2 rounded-[0.625rem] border border-warn/40 bg-warn-soft px-3.5 py-2.5 text-xs text-warn">
                 <RotateCcw className="h-3.5 w-3.5 shrink-0" />
                 <span className="min-w-0 flex-1 basis-full sm:basis-0">
                   从发布中心过来回滚 {row.target.name}
@@ -1083,7 +1083,7 @@ export function ReleaseConsolePage(): JSX.Element {
             {/* 只在检查拦下来时出现（passesPreflight 里全过就置 null）。
                 全过的话没必要拿一屏绿勾去打扰人——它已经继续往下发了。 */}
             {preflight ? (
-              <div className="shrink-0 rounded-[10px] border border-warn/40 bg-warn-soft px-3.5 py-2.5">
+              <div className="shrink-0 rounded-[0.625rem] border border-warn/40 bg-warn-soft px-3.5 py-2.5">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <span className="text-xs font-semibold text-warn">
                     发布前检查未通过，已停在发布前
@@ -1094,7 +1094,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 </div>
                 <ul className="flex flex-col gap-1">
                   {preflight.checks.map((check, index) => (
-                    <li key={check.id || check.name || index} className="flex items-start gap-2 text-[11.5px]">
+                    <li key={check.id || check.name || index} className="flex items-start gap-2 text-[0.7188rem]">
                       <span className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${check.status === 'fail' ? 'bg-bad' : check.status === 'warn' ? 'bg-warn' : 'bg-ok'}`} />
                       <span className="min-w-0 break-words">
                         {check.label || check.name || check.id}
@@ -1108,10 +1108,10 @@ export function ReleaseConsolePage(): JSX.Element {
 
             {/* 参考稿的流水线列是 300px，同样只在宽画布上成立：中栏 560 的时候
                 300 会把实时输出压到 246px，日志头那一排按钮直接被卡片切掉。 */}
-            <div className="grid min-h-0 flex-1 gap-3.5 xl:grid-cols-[232px_minmax(0,1fr)] 2xl:grid-cols-[300px_minmax(0,1fr)]">
+            <div className="grid min-h-0 flex-1 gap-3.5 xl:grid-cols-[14.5rem_minmax(0,1fr)] 2xl:grid-cols-[18.75rem_minmax(0,1fr)]">
               {/* 与右侧日志等高（参考稿 grid 两列 stretch）。之前用 self-start 让它按内容收高，
                   结果卡片底边下面空出一大块底色 —— 悬空的短卡读起来是「洞」，不是「省地方」。 */}
-              <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border">
+              <section className="cds-surface-raised cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[0.875rem] border">
                 <div className="shrink-0 border-b border-[hsl(var(--hairline)/0.6)] px-3.5 py-3">
                   <SectionLabel>Pipeline</SectionLabel>
                 </div>
@@ -1119,7 +1119,7 @@ export function ReleaseConsolePage(): JSX.Element {
                   {progress.steps.map((step) => (
                     <div
                       key={step.id}
-                      className={`flex items-start gap-2.5 rounded-[9px] px-2.5 py-2.5 transition-colors duration-200 ${
+                      className={`flex items-start gap-2.5 rounded-[0.5625rem] px-2.5 py-2.5 transition-colors duration-200 ${
                         step.state === 'failed' ? 'bg-bad-soft' : step.state === 'running' ? 'bg-primary/[0.08]' : ''
                       }`}
                     >
@@ -1134,7 +1134,7 @@ export function ReleaseConsolePage(): JSX.Element {
                           <span className={`min-w-0 truncate text-xs ${step.state === 'pending' ? 'text-muted-foreground' : ''}`}>{step.label}</span>
                           {/* 「哪一步正在跑」要说出来，不能只靠一个转圈图标（参考稿有这枚标签） */}
                           {step.state === 'running' ? (
-                            <span className="shrink-0 cds-ident text-[10px] text-primary">运行中</span>
+                            <span className="shrink-0 cds-ident text-[0.625rem] text-primary">运行中</span>
                           ) : null}
                         </span>
                         {/* 这一步实际跑的命令。计划里没有就不显示——不拿别的步骤的命令顶上。 */}
@@ -1153,18 +1153,18 @@ export function ReleaseConsolePage(): JSX.Element {
                     </div>
                   ))}
                   {progress.degraded ? (
-                    <p className="px-2.5 pt-1 text-[11.5px] text-muted-foreground">历史记录，仅按日志还原大致阶段。</p>
+                    <p className="px-2.5 pt-1 text-[0.7188rem] text-muted-foreground">历史记录，仅按日志还原大致阶段。</p>
                   ) : null}
                 </div>
               </section>
 
-              <section className="cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[14px] border bg-[hsl(var(--surface-sunken))]">
+              <section className="cds-hairline flex min-h-0 flex-col overflow-hidden rounded-[0.875rem] border bg-[hsl(var(--surface-sunken))]">
                 {/* 参考稿这一排是 24px 高的小按钮，不是常规 sm 按钮。
                     flex-wrap 保留：卡片 overflow-hidden，超宽会被直接裁掉
                     （实测过 scrollWidth 291 / clientWidth 244，半个按钮消失在卡外）。 */}
                 <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-2 gap-y-1.5 border-b border-[hsl(var(--hairline)/0.6)] px-3.5 py-2.5">
                   <SectionLabel>Live output</SectionLabel>
-                  <span className="flex flex-wrap items-center gap-2 [&>button]:h-6 [&>button]:rounded-md [&>button]:border [&>button]:border-[hsl(var(--hairline))] [&>button]:px-2.5 [&>button]:text-[11px]">
+                  <span className="flex flex-wrap items-center gap-2 [&>button]:h-6 [&>button]:rounded-md [&>button]:border [&>button]:border-[hsl(var(--hairline))] [&>button]:px-2.5 [&>button]:text-[0.6875rem]">
                     <button type="button" onClick={() => void copyLogs()} disabled={shownLogs.length === 0} className="text-muted-foreground hover:text-foreground disabled:opacity-40">
                       复制日志
                     </button>
@@ -1187,7 +1187,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     const atBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 40;
                     if (!atBottom && following) setFollowing(false);
                   }}
-                  className="min-h-0 flex-1 overflow-auto px-3.5 py-2.5 cds-ident text-[11.5px] leading-[1.75] max-xl:max-h-72"
+                  className="min-h-0 flex-1 overflow-auto px-3.5 py-2.5 cds-ident text-[0.7188rem] leading-[1.75] max-xl:max-h-72"
                 >
                   {shownLogs.length === 0 ? (
                     <p className="text-muted-foreground">还没有输出。点「开始发布」后，这里会逐行滚动。</p>
@@ -1207,7 +1207,7 @@ export function ReleaseConsolePage(): JSX.Element {
           {/* ══ 右栏：只放「看记录」。配置与 Agent 走全屏浮层 ══ */}
           {/* 348px 的窄栏装不下发布流水线和一整段任务文本 —— 塞进来就是逼人在
               一条窄缝里横向读命令。这两块改成浮层，右栏专心做记录。 */}
-          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-3 max-xl:shrink-0 max-xl:rounded-[14px] max-xl:border xl:rounded-none xl:border-l xl:overflow-hidden">
+          <aside className="cds-surface-raised flex min-h-0 flex-col border-[hsl(var(--hairline))] max-xl:order-3 max-xl:shrink-0 max-xl:rounded-[0.875rem] max-xl:border xl:rounded-none xl:border-l xl:overflow-hidden">
             {/* 参考稿是一条四格 tab（历史 / 失败 / 高级 / Agent），不是「左两个 tab
                 右两个链接」。后两个在这里打开全屏浮层——348px 的窄栏装不下流水线
                 与整段任务文本，这一条是对参考稿结构问题的有意修正，其余照抄。 */}
@@ -1225,7 +1225,7 @@ export function ReleaseConsolePage(): JSX.Element {
                 >
                   {label}
                   {key === 'failed' && failedRuns.length > 0 ? (
-                    <span className="rounded bg-bad-soft px-1.5 cds-ident text-[10px] text-bad">{failedRuns.length}</span>
+                    <span className="rounded bg-bad-soft px-1.5 cds-ident text-[0.625rem] text-bad">{failedRuns.length}</span>
                   ) : null}
                 </button>
               ))}
@@ -1241,7 +1241,7 @@ export function ReleaseConsolePage(): JSX.Element {
               ))}
             </div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto p-3.5 max-xl:max-h-[420px]">
+            <div className="min-h-0 flex-1 overflow-y-auto p-3.5 max-xl:max-h-[26.25rem]">
               {(() => {
                 const list = pane === 'failed' ? failedRuns : runsOfProject;
                 if (list.length === 0) {
@@ -1263,7 +1263,7 @@ export function ReleaseConsolePage(): JSX.Element {
                       return (
                         <div
                           key={item.releaseId}
-                          className={`flex min-w-0 flex-col gap-[7px] rounded-[10px] border px-3 py-[11px] transition-colors duration-150 hover:border-[hsl(var(--hairline-strong))] ${
+                          className={`flex min-w-0 flex-col gap-[0.4375rem] rounded-[0.625rem] border px-3 py-[0.6875rem] transition-colors duration-150 hover:border-[hsl(var(--hairline-strong))] ${
                             itemFailed ? 'border-bad/30 bg-bad-soft' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50'
                           }`}
                         >
@@ -1272,22 +1272,22 @@ export function ReleaseConsolePage(): JSX.Element {
                           <div className="flex min-w-0 items-center justify-between gap-2">
                             <span className="flex min-w-0 items-center gap-2">
                               <span
-                                className={`h-[7px] w-[7px] shrink-0 rounded-full ${
+                                className={`h-[0.4375rem] w-[0.4375rem] shrink-0 rounded-full ${
                                   itemFailed ? 'bg-bad' : live ? 'bg-primary' : itemTone === 'warn' ? 'bg-warn' : itemDone ? 'bg-ok' : 'bg-muted-foreground'
                                 }`}
                               />
                               <span className="shrink-0 cds-ident text-xs font-medium">{item.commitSha.slice(0, 7)}</span>
-                              <span className="truncate text-[11px] text-muted-foreground">
+                              <span className="truncate text-[0.6875rem] text-muted-foreground">
                                 {itemRow?.target.name || item.targetId}
                               </span>
                             </span>
-                            <span className={`shrink-0 cds-ident text-[10.5px] ${itemFailed ? 'text-bad' : live ? 'text-primary' : itemTone === 'warn' ? 'text-warn' : itemDone ? 'text-ok' : 'text-muted-foreground'}`}>
+                            <span className={`shrink-0 cds-ident text-[0.6562rem] ${itemFailed ? 'text-bad' : live ? 'text-primary' : itemTone === 'warn' ? 'text-warn' : itemDone ? 'text-ok' : 'text-muted-foreground'}`}>
                               {itemFailed ? '失败' : live ? '线上' : statusLabel(item.status)}
                             </span>
                           </div>
                           {/* 第二行：左元信息右操作（参考稿同一行）。元信息不 truncate——
                               300px 栏里先被吃掉的正好是末尾的耗时（1m42s 截成 1m4…）。 */}
-                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 cds-ident text-[10.5px] text-muted-foreground">
+                          <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-3 gap-y-1 cds-ident text-[0.6562rem] text-muted-foreground">
                             <span className="min-w-0">
                               {item.operator || '-'} · {formatDateTime(item.startedAt)}
                               {formatDuration(item.startedAt, item.finishedAt) ? ` · ${formatDuration(item.startedAt, item.finishedAt)}` : ''}
@@ -1375,7 +1375,7 @@ export function ReleaseConsolePage(): JSX.Element {
                     <li key={step.id} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
                       <div className="flex items-baseline gap-2">
                         <span className="cds-ident text-xs text-muted-foreground">{String(index + 1).padStart(2, '0')}</span>
-                        <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium">{step.title}</span>
+                        <span className="min-w-0 flex-1 truncate text-[0.7812rem] font-medium">{step.title}</span>
                         <span className="shrink-0 cds-ident text-xs text-muted-foreground">{step.kind}</span>
                       </div>
                       {step.command ? (
@@ -1386,7 +1386,7 @@ export function ReleaseConsolePage(): JSX.Element {
                         // 不要写成「这一步不执行命令」——那是在替后端圆场。当前三份计划模板
                         // 都没给 steps[].command 赋值（release-service.ts 建 plan 处），
                         // 所以这里如实说命令没登记，并指到真实脚本所在的地方。
-                        <p className="mt-1.5 text-[11px] text-muted-foreground">
+                        <p className="mt-1.5 text-[0.6875rem] text-muted-foreground">
                           计划模板没有登记这一步的命令。实际执行的脚本见下方「部署命令」与实时输出。
                         </p>
                       )}
@@ -1394,20 +1394,20 @@ export function ReleaseConsolePage(): JSX.Element {
                   ))}
                 </ol>
               )}
-              <dl className="grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-2 border-t border-[hsl(var(--hairline))] pt-3 text-xs">
-                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">方式</dt>
+              <dl className="grid grid-cols-[5.75rem_minmax(0,1fr)] gap-x-3 gap-y-2 border-t border-[hsl(var(--hairline))] pt-3 text-xs">
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">方式</dt>
                 <dd className="break-words">{row?.target.strategy?.mode || '项目现有脚本'}</dd>
-                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">部署命令</dt>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">部署命令</dt>
                 <dd className="break-all cds-ident text-xs">{row?.target.strategy?.command || row?.target.ssh?.deployCommand || '未配置'}</dd>
-                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">站点目录</dt>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">站点目录</dt>
                 <dd className="break-all cds-ident text-xs">{row?.target.ssh?.appPath || '未配置'}</dd>
-                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">健康检查</dt>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">健康检查</dt>
                 <dd className="break-all cds-ident text-xs">{row?.target.ssh?.healthcheckUrl || '未配置'}</dd>
-                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">回滚</dt>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">回滚</dt>
                 <dd className="break-all cds-ident text-xs">{row?.target.ssh?.rollbackCommand || '重新发布上一个成功版本'}</dd>
-                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">并发</dt>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">并发</dt>
                 <dd>服务端保证同一目标不并发（冲突返回 409）；跨目标那道锁是本页 UI 策略</dd>
-                <dt className="text-[11px] font-semibold uppercase tracking-normal text-muted-foreground">卡住判定</dt>
+                <dt className="text-[0.6875rem] font-semibold uppercase tracking-normal text-muted-foreground">卡住判定</dt>
                 <dd>超过 45 秒没有新输出即在状态区提示，并给出取证与中止入口</dd>
               </dl>
             </div>
@@ -1436,7 +1436,7 @@ export function ReleaseConsolePage(): JSX.Element {
               <p className="text-xs leading-relaxed text-muted-foreground">
                 结论与判据全部取自 releaseDiagnosis 从本次真实日志里提取的内容；提不出来会如实写「未能提取」，不编原因。
               </p>
-              <pre className="whitespace-pre-wrap break-words rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 cds-ident text-[12.5px] leading-relaxed">
+              <pre className="whitespace-pre-wrap break-words rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 cds-ident text-[0.7812rem] leading-relaxed">
                 {shown ? agentTask() : '选中一次运行后，这里给出可直接粘贴的任务文本。'}
               </pre>
             </div>

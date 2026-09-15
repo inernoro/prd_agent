@@ -1,13 +1,13 @@
 ---
 name: cds
 metadata:
-  version: 0.16.0
+  version: 0.16.5
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.16.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.16.5 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -67,11 +67,15 @@ $CLI env set DB_PASS=s3cret --scope <projectId>
 
 # 构建配置：就绪超时(探活) / 部署模式 —— AI 用 key 直接设，不依赖 dashboard
 # （这些以前被误以为是 dashboard 专属、API key 设不了，其实和 branch deploy 同一套鉴权）
-$CLI profile list --project <id>                 # 列出 profile + 当前部署模式 + 就绪超时
+$CLI profile list --project <id>                 # 列出 profile + 当前部署模式 + 就绪超时 + prebuiltModes（极速版判据）
 $CLI profile deploy-mode <profileId> dev         # 切 profile 激活部署模式（--reset 恢复默认）
 $CLI profile readiness <profileId> --timeout 1200  # 设就绪探测超时秒数（GET-合并-PUT 保留其它字段）
 $CLI profile readiness <profileId> --no-http     # 后台 worker：跳过 HTTP 探测只做 TCP（--http 撤销）
 $CLI branch set-mode <branchId> <profileId> dev  # 单分支部署模式覆盖（如把某预览分支 web 改 dev）
+# Agent 分支一律走极速版（CI 预构建）：只从 profile list 的 prebuiltModes 里选模式（本仓库叫 express），
+# 用 branch set-mode 只写当前分支覆盖，不用 profile deploy-mode 改项目级默认；不在 CDS 宿主跑源码编译。
+# 生效判据是 branch status 的 deployRuntime.prebuilt 为 true；prebuiltModes 为空时如实报告缺口，不得切源码模式顶替。
+# 项目开了「Agent 只允许极速版部署」门禁时，非极速版的 deploy / set-mode / profile deploy-mode 会被 409 agent_prebuilt_only 拒绝，按响应里的可切模式改正后重试。
 # 注：就绪超时是「每服务/每 profile」级（无系统全局默认值），无标签时运行时默认 180s。
 #     改完都需要重新部署生效（$CLI branch deploy <id>）。
 
@@ -107,6 +111,44 @@ $CLI report-folder list [--project <id>]
 ```
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
+
+## 加一条功能监控（用户说「帮我增加 XX 的监控」时）
+
+存活监控问「通不通」，**功能监控问「返回的东西对不对」**：发一次真业务请求，
+在响应上跑多条判据。「生图接口通、返回的却是 512×512」只有它抓得住。
+
+标准动作是**先试跑、通过了才登记**——`monitor add` 内建这一步，跑不通直接拒绝并
+回判据结果。加进来就红的监控会很快让人把整块面板静音，比没有监控更糟。
+
+```bash
+python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
+  --name "视觉创作 · 生图尺寸" \
+  --url "https://<本项目分支的预览地址>/api/image/gen" \
+  --body '{"prompt":"{{randomPrompt}}","size":"1024x1024"}' \
+  --assert status:eq:succeeded \
+  --assert image.width:eq:1024 \
+  --assert image.height:eq:1024 \
+  --assert elapsedMs:lt:30000 \
+  --artifact-path image.url \
+  --interval 21600 --timeout-ms 45000
+```
+
+接到这类需求时该自己查、不要反问用户的几件事：
+
+- **端点与默认参数**去代码里读（出图默认尺寸、成功态字段名），据此写判据；
+- **地址只能是本项目分支的预览入口**，服务端会反查校验，填别处一律 403；
+- **提示词用 `{{randomPrompt}}`**：固定提示词会被上游缓存，跑一万次也证明不了
+  这条链路今天还活着；
+- **`--artifact-path` 尽量配上**：配了详情页才有产物画廊，判据红了才说得清
+  是模型抽风还是判据写错；
+- **超时给足**：生成类接口用默认值会把自己卡成假故障。
+
+判据是 `path:op:value`（op ∈ eq/ne/lt/lte/gt/gte/exists/absent），期望值里带冒号
+不会被截断（`16:9` 是完整的）。刻意不做表达式——自由文本判据一开口，下一轮就会被
+要求加同义词和嵌套。
+
+看历史证据：`cdscli monitor observations <id>`；只看功能监控：`monitor list --functional-only`。
+规则 SSOT 是 `.claude/rules/degradation-must-alarm.md`。
 
 ## 完整技能包与版本协作
 

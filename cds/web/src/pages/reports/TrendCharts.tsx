@@ -11,7 +11,7 @@
  *   - **加一层滚动均线就成立**。7 日滚动（仍是每天一个点，不是周聚合）把走向
  *     抬出来，而当日原始细线留着滚动线会抹掉的两样东西：爆发的形状与空白日。
  *
- * 所以紧凑态只画滚动线（当日细线在 64px 高度上会糊成一片毛刺），
+ * 所以紧凑态只画滚动线（当日细线在 4rem 高度上会糊成一片毛刺），
  * 放大态把细线与日常参照带加回来。两态是同一条线，只是放大多一层细节。
  *
  * 三条纪律：
@@ -92,24 +92,24 @@ const md = (d: string): string => d.slice(5);
 /* ============================ 样式 ============================ */
 
 export const TREND_CSS = `
-.tc{display:flex;flex-direction:column;gap:12px;}
-.tc .row{display:flex;flex-direction:column;gap:12px;}
+.tc{display:flex;flex-direction:column;gap:0.75rem;}
+.tc .row{display:flex;flex-direction:column;gap:0.75rem;}
 .tc .card{flex:1 1 0;min-width:0;display:flex;flex-direction:column;
-  border:1px solid hsl(var(--hairline));border-radius:10px;padding:11px 13px 9px;
+  border:1px solid hsl(var(--hairline));border-radius:0.625rem;padding:0.6875rem 0.8125rem 0.5625rem;
   background:hsl(var(--card));}
-.tc .ttl{display:flex;align-items:baseline;justify-content:space-between;gap:8px;}
-.tc .ttl b{font-size:13px;font-weight:600;letter-spacing:.01em;}
-.tc .unit{font-size:10px;letter-spacing:.1em;color:hsl(var(--muted-foreground));white-space:nowrap;}
-.tc .say{margin:5px 0 0;font-size:12px;line-height:1.65;color:hsl(var(--muted-foreground));}
+.tc .ttl{display:flex;align-items:baseline;justify-content:space-between;gap:0.5rem;}
+.tc .ttl b{font-size:0.8125rem;font-weight:600;letter-spacing:.01em;}
+.tc .unit{font-size:0.625rem;letter-spacing:.1em;color:hsl(var(--muted-foreground));white-space:nowrap;}
+.tc .say{margin:0.3125rem 0 0;font-size:0.75rem;line-height:1.65;color:hsl(var(--muted-foreground));}
 .tc .say b{color:hsl(var(--foreground));font-weight:600;}
-.tc .capv{display:flex;align-items:baseline;justify-content:space-between;gap:8px;
-  margin-top:6px;font-size:10px;letter-spacing:.06em;color:hsl(var(--muted-foreground));}
+.tc .capv{display:flex;align-items:baseline;justify-content:space-between;gap:0.5rem;
+  margin-top:0.375rem;font-size:0.625rem;letter-spacing:.06em;color:hsl(var(--muted-foreground));}
 .tc .plot{margin-top:3px;}
 .tc svg{display:block;width:100%;overflow:visible;}
 
 .tc .band{fill:hsl(var(--foreground) / 0.05);}
 .tc .grid{stroke:hsl(var(--hairline));stroke-width:1;}
-.tc .axis{font-size:9px;fill:hsl(var(--muted-foreground));}
+.tc .axis{font-size:0.5625rem;fill:hsl(var(--muted-foreground));}
 .tc .col{fill:transparent;}
 .tc .col:hover{fill:hsl(var(--foreground) / 0.06);}
 
@@ -127,21 +127,21 @@ export const TREND_CSS = `
 .tc .g3{stroke:hsl(var(--hairline-strong));stroke-dasharray:2 3;}
 .tc .fillbar{fill:hsl(var(--hairline-strong));}
 
-.tc .lg{display:flex;flex-wrap:wrap;gap:4px 13px;margin-top:7px;}
-.tc .lgi{display:flex;align-items:center;gap:5px;font-size:11px;
+.tc .lg{display:flex;flex-wrap:wrap;gap:0.25rem 0.8125rem;margin-top:0.4375rem;}
+.tc .lgi{display:flex;align-items:center;gap:0.3125rem;font-size:0.6875rem;
   color:hsl(var(--muted-foreground));min-width:0;}
 .tc .lgi b{color:hsl(var(--foreground));font-weight:600;}
-.tc .dash{flex:0 0 17px;height:0;border-top-width:2px;border-top-style:solid;}
+.tc .dash{flex:0 0 1.0625rem;height:0;border-top-width:2px;border-top-style:solid;}
 .tc .d-ok{border-color:hsl(var(--ok));border-top-style:solid;}
 .tc .d-warn{border-color:hsl(var(--warn));border-top-style:dashed;}
 .tc .d-bad{border-color:hsl(var(--bad));border-top-style:dotted;}
 .tc .d-g1{border-color:hsl(var(--foreground));}
 .tc .d-g2{border-color:hsl(var(--muted-foreground));border-top-style:dashed;}
 .tc .d-g3{border-color:hsl(var(--hairline-strong));border-top-style:dotted;}
-.tc .d-bar{border-color:hsl(var(--hairline-strong));border-top-width:7px;}
+.tc .d-bar{border-color:hsl(var(--hairline-strong));border-top-width:0.4375rem;}
 
-.tc .note{margin:7px 0 0;font-size:11px;line-height:1.6;color:hsl(var(--muted-foreground));}
-.tc .foot{margin:0;font-size:11px;line-height:1.65;color:hsl(var(--muted-foreground));}
+.tc .note{margin:0.4375rem 0 0;font-size:0.6875rem;line-height:1.6;color:hsl(var(--muted-foreground));}
+.tc .foot{margin:0;font-size:0.6875rem;line-height:1.65;color:hsl(var(--muted-foreground));}
 .tc .foot b{color:hsl(var(--foreground));font-weight:600;}
 
 @media (min-width:1024px){
@@ -225,7 +225,7 @@ function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: Char
             </g>
           ) : null}
 
-          {/* 证据层：当日原值。只在放大态出现——64px 高度上它会糊成毛刺。 */}
+          {/* 证据层：当日原值。只在放大态出现——4rem 高度上它会糊成毛刺。 */}
           {zoom
             ? lines.map((l) => {
                 const d = linePath(l.raw, g);

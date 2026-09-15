@@ -27,6 +27,7 @@ export const DOCKER_LOG_LIMIT_FLAGS = ['--log-opt max-size=50m', '--log-opt max-
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
+import { workloadCgroupFlags } from './workload-cgroup.js';
 import { computeCdsInstanceId } from './orphan-container-reaper.js';
 import {
   collectContainerDiagnostics,
@@ -784,6 +785,9 @@ export class ContainerService {
         'docker create',
         `--name ${this.shellQuote(builderName)}`,
         `--network ${this.shellQuote(network)}`,
+        // managed 构建是本机最吃 CPU 的一段（装依赖 + 打包），必须和其它托管
+        // 负载一样挂低权重 slice，否则构建期间照旧和控制面同权抢 CPU（Codex 三轮 P2）。
+        ...workloadCgroupFlags(),
         '--entrypoint=""',
         '-w /app',
         `--env-file ${this.shellQuote(envFilePath)}`,
@@ -1496,7 +1500,9 @@ export class ContainerService {
       // docker 运行时资源限制(--memory / --memory-swap / --cpus)。
       // memoryMB / cpus 字段仅作 capacity 调度规划提示,不下发到 docker run。
       // 不下发任何 --memory / --memory-swap / --cpus,避免任何容器构造慢。
-      const resourceFlags: string[] = [];
+      // 2026-09-08 宿主过载复盘:不设上限,但把托管容器挂到低权重 slice
+      // (--cgroup-parent),争抢时 CDS 控制面先拿 CPU/IO。见 workload-cgroup.ts。
+      const resourceFlags: string[] = [...workloadCgroupFlags()];
 
       // Phase 7 fix(B10,2026-05-01)— --entrypoint 覆盖。
       // 默认不传(走 image 自带 ENTRYPOINT)。指定时:
@@ -1771,6 +1777,8 @@ export class ContainerService {
       const jobSpec = [
         ...volumeFlags,
         ...entrypointFlags,
+        // 一次性构建/迁移作业是 CPU 大头,同样挂低权重 slice(2026-09-08)。
+        ...workloadCgroupFlags(),
         `-w ${this.shellQuote(containerWorkDir)}`,
         envFlag,
         '--tmpfs /tmp',
@@ -2275,7 +2283,10 @@ export class ContainerService {
   async stop(
     containerName: string,
     reason = 'cds-stop',
-    context: Pick<ContainerRemoveContext, 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
+    // kind 以前不在这个 Pick 里，于是所有停止一律记成通用的 cds-stop：调用方明明知道
+    // 自己是主动停、降温省资源还是失败收尾，状态却在这一行被丢掉，下游只能去猜 reason
+    // 字符串。能用状态就用状态——调用方表态，不表态才落回 cds-stop。
+    context: Pick<ContainerRemoveContext, 'kind' | 'projectId' | 'branchId' | 'profileId' | 'serviceId' | 'requestId' | 'operationId' | 'actor' | 'trigger' | 'operation' | 'source'> = {},
   ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 80);
     this.recordContainerEvent({
@@ -2301,7 +2312,7 @@ export class ContainerService {
       },
     });
     await this.writeStopSentinel(containerName, reason);
-    this.noteLifecycleIntent(containerName, 'cds-stop', reason, {
+    this.noteLifecycleIntent(containerName, context.kind ?? 'cds-stop', reason, {
       projectId: context.projectId ?? null,
       branchId: context.branchId ?? null,
       profileId: context.profileId ?? null,
@@ -2931,6 +2942,8 @@ export class ContainerService {
       ...healthFlags,
       // 同上：基础设施容器同样受日志限额约束（2026-07-27 复盘 P1）
       ...DOCKER_LOG_LIMIT_FLAGS,
+      // 共享 infra 也是托管工作负载,一并挂低权重 slice(2026-09-08)。
+      ...workloadCgroupFlags(),
       ...(entrypointFlag ? [entrypointFlag] : []),
       this.infraLabels(service, network),
       `--restart ${restartPolicy}`,
@@ -3002,8 +3015,17 @@ export class ContainerService {
     });
   }
 
-  /** Stop and remove an infrastructure service container */
-  async stopInfraService(containerName: string): Promise<void> {
+  /**
+   * Stop and remove an infrastructure service container.
+   *
+   * `intentKind` 决定停机原因怎么讲给人听：'cds-infra-stop' 是「停了就停了，不会自己回来」，
+   * 'cds-infra-recreate'（默认）是「重建流程的前半段，新容器随后就起」。两者共用一个值时，
+   * 停止 / 删除路径会告诉用户等一个永远不来的新容器（Codex P2）。
+   */
+  async stopInfraService(
+    containerName: string,
+    intentKind: 'cds-infra-stop' | 'cds-infra-remove' | 'cds-infra-recreate' = 'cds-infra-recreate',
+  ): Promise<void> {
     const before = await this.captureContainerDiagnostics(containerName, 300);
     this.recordContainerEvent({
       severity: 'warn',
@@ -3015,7 +3037,12 @@ export class ContainerService {
       logs: before.logs,
       error: before.error,
     });
-    this.noteLifecycleIntent(containerName, 'cds-infra-recreate', 'infra stop/rm 重建或删除');
+    const INFRA_REASON: Record<typeof intentKind, string> = {
+      'cds-infra-stop': 'infra 停止，不重建',
+      'cds-infra-remove': 'infra 删除（容器与登记一起删）',
+      'cds-infra-recreate': 'infra stop/rm 后重建',
+    };
+    this.noteLifecycleIntent(containerName, intentKind, INFRA_REASON[intentKind]);
     const stopResult = await this.shell.exec(`docker stop ${containerName}`);
     const rmResult = await this.shell.exec(`docker rm ${containerName}`);
     this.recordContainerEvent({

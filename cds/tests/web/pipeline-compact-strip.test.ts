@@ -83,7 +83,8 @@ describe('三段点阵必须共用同一个分母', () => {
 
 describe('项目条：宽度是条数，填充是验过的比例', () => {
   it('flex 按改动数分配', () => {
-    expect(src).toMatch(/flex: ch > 0 \? `\$\{ch\} 1 8px`/);
+    // 不认单位：钉的是「flex 基数取 ch」，不是当时用 px 还是 rem 写的 basis。
+    expect(src).toMatch(/flex: ch > 0 \? `\$\{ch\} 1 [\d.]+(?:px|rem)`/);
   });
 
   it('填充高度是验过 / 改动，不是别的比例', () => {
@@ -93,7 +94,7 @@ describe('项目条：宽度是条数，填充是验过的比例', () => {
   it('零改动的项目画成空槽而不是消失', () => {
     // 宽度归零它就没了，读者会以为这个项目不存在。
     expect(src).toMatch(/track empty/);
-    expect(src).toMatch(/'0 0 8px'/);
+    expect(src).toMatch(/'0 0 [\d.]+(?:px|rem)'/);
   });
 
   it('验过数会被夹在 0 与改动数之间，脏数据不会撑爆填充', () => {

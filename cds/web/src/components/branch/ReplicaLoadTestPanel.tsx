@@ -200,13 +200,13 @@ export function ReplicaLoadTestPanel({ branchId, profileIds, membersOf, defaultP
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
         className="flex w-full flex-col rounded-xl border border-[hsl(var(--hairline))] bg-background shadow-2xl"
-        style={{ maxWidth: 880, height: '82vh', maxHeight: '82vh' }}
+        style={{ maxWidth: '55rem', height: '82vh', maxHeight: '82vh' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
           <Activity className="h-4 w-4 text-primary" />
           <b className="text-sm">复制集压测 · A/B 负载对比</b>
-          <span className="text-[11px] text-muted-foreground">同一入口、同一路径、同一时刻并排打，唯一变量是版本</span>
+          <span className="text-[0.6875rem] text-muted-foreground">同一入口、同一路径、同一时刻并排打，唯一变量是版本</span>
           <button type="button" className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground" title="关闭" onClick={onClose}>
             <X className="h-4 w-4" />
           </button>
@@ -235,7 +235,7 @@ export function ReplicaLoadTestPanel({ branchId, profileIds, membersOf, defaultP
                 {starting ? <Loader2 className="animate-spin" /> : <Play />}开始压测
               </Button>
             )}
-            <span className="text-[11px] text-muted-foreground">
+            <span className="text-[0.6875rem] text-muted-foreground">
               {chosen.length === 0
                 ? '该服务当前没有运行中的实例，先把服务跑起来再压'
                 : `将并排压 ${chosen.length} 个落点，合计并发 ${chosen.length * form.concurrency}（上限由服务端硬闸把关）`}
@@ -287,7 +287,7 @@ function StartFormCard({ form, setForm, profileIds, options, chosen, advanced, s
         </Field>
         <button
           type="button"
-          className="ml-auto flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+          className="ml-auto flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground"
           onClick={() => setAdvanced(!advanced)}
         >
           {advanced ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}高级选项
@@ -295,9 +295,9 @@ function StartFormCard({ form, setForm, profileIds, options, chosen, advanced, s
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
-        <span className="text-[11px] text-muted-foreground">落点：</span>
+        <span className="text-[0.6875rem] text-muted-foreground">落点：</span>
         {options.length === 0 ? (
-          <span className="text-[11px] text-muted-foreground">该服务没有可压的实例</span>
+          <span className="text-[0.6875rem] text-muted-foreground">该服务没有可压的实例</span>
         ) : options.map((o) => {
           const active = chosen.includes(o.memberId);
           return (
@@ -306,7 +306,7 @@ function StartFormCard({ form, setForm, profileIds, options, chosen, advanced, s
               type="button"
               disabled={disabled || !o.running}
               title={o.running ? '点击切换是否纳入本次压测' : '该实例不在运行态，无法压测'}
-              className={`rounded-full border px-2 py-0.5 text-[11px] transition-colors ${
+              className={`rounded-full border px-2 py-0.5 text-[0.6875rem] transition-colors ${
                 !o.running
                   ? 'cursor-not-allowed border-[hsl(var(--hairline))] text-muted-foreground opacity-60'
                   : active
@@ -359,7 +359,7 @@ function StartFormCard({ form, setForm, profileIds, options, chosen, advanced, s
 function Field({ label, children }: { label: string; children: React.ReactNode }): JSX.Element {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-[10px] uppercase tracking-wide text-muted-foreground">{label}</span>
+      <span className="text-[0.625rem] uppercase tracking-wide text-muted-foreground">{label}</span>
       {children}
     </label>
   );
@@ -386,7 +386,7 @@ function NumberInput({ value, min, max, disabled, onChange }: {
 
 function EmptyHint(): JSX.Element {
   return (
-    <div className="flex min-h-[180px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-[hsl(var(--hairline))] px-6 text-center">
+    <div className="flex min-h-[11.25rem] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-[hsl(var(--hairline))] px-6 text-center">
       <Activity className="h-6 w-6 text-muted-foreground" />
       <p className="mt-2 text-xs text-muted-foreground">
         还没有压测记录。点「开始压测」后，主实例与每个副本会被同时加压，
@@ -405,8 +405,8 @@ function RunView({ run }: { run: LoadTestRunView }): JSX.Element {
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] px-3 py-2">
         <StatusDot status={run.status} />
         <b className="text-xs">{run.phase}</b>
-        <span className="text-[11px] text-muted-foreground">{formatEta(run.elapsedSec, run.etaSec, run.status)}</span>
-        <span className="text-[11px] font-mono text-muted-foreground">
+        <span className="text-[0.6875rem] text-muted-foreground">{formatEta(run.elapsedSec, run.etaSec, run.status)}</span>
+        <span className="text-[0.6875rem] font-mono text-muted-foreground">
           {run.config.method} {run.config.path} · 并发 {run.config.concurrency}/落点
         </span>
         <div className="ml-auto h-1.5 w-40 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]">
@@ -418,7 +418,7 @@ function RunView({ run }: { run: LoadTestRunView }): JSX.Element {
       </div>
 
       {run.message ? (
-        <p className={`text-[11px] ${run.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>{run.message}</p>
+        <p className={`text-[0.6875rem] ${run.status === 'error' ? 'text-destructive' : 'text-muted-foreground'}`}>{run.message}</p>
       ) : null}
 
       <LiveChart run={run} />
@@ -450,18 +450,18 @@ function LiveChart({ run }: { run: LoadTestRunView }): JSX.Element {
   return (
     <div className="rounded-lg border border-[hsl(var(--hairline))] px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-3">
-        <b className="text-[11px] uppercase tracking-wide text-muted-foreground">每秒吞吐 QPS</b>
+        <b className="text-[0.6875rem] uppercase tracking-wide text-muted-foreground">每秒吞吐 QPS</b>
         {run.targets.map((t, i) => (
-          <span key={t.memberId} className="flex items-center gap-1 text-[11px] text-muted-foreground">
+          <span key={t.memberId} className="flex items-center gap-1 text-[0.6875rem] text-muted-foreground">
             <span className="h-0.5 w-3 rounded" style={{ background: lineColor(i) }} />{t.label}
           </span>
         ))}
-        <span className="ml-auto text-[11px] text-muted-foreground">峰值 {maxQps} req/s</span>
+        <span className="ml-auto text-[0.6875rem] text-muted-foreground">峰值 {maxQps} req/s</span>
       </div>
       <Chart width={W} height={H} series={measured.map((s) => s.map((p) => p.qps))} max={maxQps} empty={!hasPoint} />
       <div className="mt-2 flex items-center gap-3 border-t border-[hsl(var(--hairline))] pt-2">
-        <b className="text-[11px] uppercase tracking-wide text-muted-foreground">每秒 p95 延迟（ms）</b>
-        <span className="ml-auto text-[11px] text-muted-foreground">峰值 {maxP95} ms</span>
+        <b className="text-[0.6875rem] uppercase tracking-wide text-muted-foreground">每秒 p95 延迟（ms）</b>
+        <span className="ml-auto text-[0.6875rem] text-muted-foreground">峰值 {maxP95} ms</span>
       </div>
       <Chart width={W} height={H} series={measured.map((s) => s.map((p) => p.p95))} max={maxP95} empty={!hasPoint} dashed />
     </div>
@@ -474,7 +474,7 @@ function Chart({ width, height, series, max, empty, dashed }: {
   if (empty) {
     return (
       <div className="mt-1.5 flex items-center justify-center rounded-md border border-dashed border-[hsl(var(--hairline))]" style={{ height }}>
-        <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+        <span className="flex items-center gap-1.5 text-[0.6875rem] text-muted-foreground">
           <Loader2 className="h-3 w-3 animate-spin" />正在采集第一个秒级采样点…
         </span>
       </div>
@@ -482,7 +482,7 @@ function Chart({ width, height, series, max, empty, dashed }: {
   }
   return (
     <div className="mt-1.5 overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
-      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ minWidth: 320, width: '100%' }} preserveAspectRatio="none">
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ minWidth: '20rem', width: '100%' }} preserveAspectRatio="none">
         {[0.25, 0.5, 0.75].map((r) => (
           <line key={r} x1={0} y1={height * r} x2={width} y2={height * r}
             stroke="hsl(var(--hairline))" strokeWidth={1} strokeDasharray="3 4" />
@@ -507,7 +507,7 @@ function ComparisonCard({ comparison }: { comparison: LoadTestComparisonView }):
       <p className="mt-1 text-xs">{comparison.summary}</p>
       <div className="mt-2 grid gap-1">
         {comparison.rows.map((row) => (
-          <p key={row.memberId} className="text-[11px] text-muted-foreground">
+          <p key={row.memberId} className="text-[0.6875rem] text-muted-foreground">
             <span className="font-mono text-foreground">{row.label}</span>
             <span className="mx-1">相对基线 {comparison.baselineLabel}：</span>
             {row.verdict}
@@ -521,7 +521,7 @@ function ComparisonCard({ comparison }: { comparison: LoadTestComparisonView }):
 function MetricsTable({ targets }: { targets: LoadTestTargetMetricsView[] }): JSX.Element {
   return (
     <div className="overflow-x-auto rounded-lg border border-[hsl(var(--hairline))]" style={{ overscrollBehavior: 'contain' }}>
-      <table className="w-full text-[11px]" style={{ minWidth: 620 }}>
+      <table className="w-full text-[0.6875rem]" style={{ minWidth: '38.75rem' }}>
         <thead>
           <tr className="border-b border-[hsl(var(--hairline))] text-left text-muted-foreground">
             <th className="px-2.5 py-1.5 font-medium">落点</th>
@@ -567,14 +567,14 @@ function HistoryList({ runs, activeId, onPick }: {
 }): JSX.Element {
   return (
     <div className="rounded-lg border border-[hsl(var(--hairline))] px-3 py-2">
-      <b className="text-[11px] uppercase tracking-wide text-muted-foreground">历史压测</b>
+      <b className="text-[0.6875rem] uppercase tracking-wide text-muted-foreground">历史压测</b>
       <div className="mt-1.5 grid gap-1">
         {runs.slice(0, 8).map((r) => (
           <button
             key={r.id}
             type="button"
             onClick={() => onPick(r)}
-            className={`flex items-center gap-3 rounded-md px-2 py-1 text-left text-[11px] hover:bg-[hsl(var(--surface-sunken))] ${r.id === activeId ? 'bg-[hsl(var(--surface-sunken))]' : ''}`}
+            className={`flex items-center gap-3 rounded-md px-2 py-1 text-left text-[0.6875rem] hover:bg-[hsl(var(--surface-sunken))] ${r.id === activeId ? 'bg-[hsl(var(--surface-sunken))]' : ''}`}
           >
             <StatusDot status={r.status} />
             <span className="font-mono">{r.profileId}</span>

@@ -27,12 +27,12 @@ export interface PipelinePanelProps {
    字符串（换行用 \n），pp-root 上统一接 mouseover / mousemove / mouseout。 */
 
 const PANEL_CSS = `
-.pp-root .pp-tip{position:fixed;z-index:60;pointer-events:none;max-width:300px;
-  padding:9px 11px;border-radius:8px;border:1px solid hsl(var(--hairline-strong));
+.pp-root .pp-tip{position:fixed;z-index:60;pointer-events:none;max-width:18.75rem;
+  padding:0.5625rem 0.6875rem;border-radius:0.5rem;border:1px solid hsl(var(--hairline-strong));
   background:hsl(var(--card));color:hsl(var(--foreground));
-  box-shadow:0 10px 28px hsl(var(--foreground) / 0.14);}
-.pp-root .pp-tip-h{font-size:13px;font-weight:600;line-height:1.5;word-break:break-all;}
-.pp-root .pp-tip-l{font-size:12px;line-height:1.6;color:hsl(var(--muted-foreground));word-break:break-all;}
+  box-shadow:0 0.625rem 1.75rem hsl(var(--foreground) / 0.14);}
+.pp-root .pp-tip-h{font-size:0.8125rem;font-weight:600;line-height:1.5;word-break:break-all;}
+.pp-root .pp-tip-l{font-size:0.75rem;line-height:1.6;color:hsl(var(--muted-foreground));word-break:break-all;}
 `;
 
 /** 把几行文字编成 data-tip。空行自动丢掉，省得调用方到处写条件。 */
@@ -153,7 +153,7 @@ function Headline({ h, full }: { h: ReturnType<typeof buildPipelineHeadline>; fu
   // 第一屏摆三四行字，就成了「左边一堆字、右边一张图」，与「少字多图」正好相反。
   if (!full) {
     return (
-      <p className="m-0 flex items-center gap-2 text-[15px] leading-[1.6] text-muted-foreground">
+      <p className="m-0 flex items-center gap-2 text-[0.9375rem] leading-[1.6] text-muted-foreground">
         <span className={`h-2 w-2 shrink-0 rounded-full ${TONE_DOT[h.tone]}`} />
         <span className="min-w-0 text-foreground">{h.sentence}</span>
       </p>
@@ -162,20 +162,20 @@ function Headline({ h, full }: { h: ReturnType<typeof buildPipelineHeadline>; fu
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-start gap-2.5">
-        <span className={`mt-[9px] h-2 w-2 shrink-0 rounded-full ${TONE_DOT[h.tone]}`} />
-        <p className="m-0 text-[19px] font-semibold leading-[1.5]">{h.sentence}</p>
+        <span className={`mt-[0.5625rem] h-2 w-2 shrink-0 rounded-full ${TONE_DOT[h.tone]}`} />
+        <p className="m-0 text-[1.1875rem] font-semibold leading-[1.5]">{h.sentence}</p>
       </div>
       {h.points.length ? (
-        <ul className="m-0 flex list-none flex-col gap-1 p-0 pl-[18px]">
+        <ul className="m-0 flex list-none flex-col gap-1 p-0 pl-[1.125rem]">
           {h.points.map((t) => (
-            <li key={t} className="text-[13px] leading-[1.6] text-muted-foreground">
+            <li key={t} className="text-[0.8125rem] leading-[1.6] text-muted-foreground">
               {t}
             </li>
           ))}
         </ul>
       ) : null}
       {h.action ? (
-        <p className="m-0 pl-[18px] text-[13px] leading-[1.6] text-foreground">{h.action}</p>
+        <p className="m-0 pl-[1.125rem] text-[0.8125rem] leading-[1.6] text-foreground">{h.action}</p>
       ) : null}
     </div>
   );
@@ -185,7 +185,7 @@ function Headline({ h, full }: { h: ReturnType<typeof buildPipelineHeadline>; fu
 
 function Card({ children }: { children: React.ReactNode }): JSX.Element {
   return (
-    <div className="rounded-[12px] border border-[hsl(var(--hairline))] bg-card px-4 py-4 sm:px-5">
+    <div className="rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-card px-4 py-4 sm:px-5">
       {children}
     </div>
   );
@@ -223,14 +223,14 @@ export function PipelinePanel({ pipeline, series, onOpenProject }: PipelinePanel
       <style>{TREND_CSS}</style>
 
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h1 className="m-0 text-[22px] font-bold tracking-[0.14em]">验收流水线</h1>
+        <h1 className="m-0 text-[1.375rem] font-bold tracking-[0.14em]">验收流水线</h1>
         <div className="flex items-baseline gap-4">
-          <span className="font-mono text-[13px] tracking-[0.16em] text-muted-foreground">
+          <span className="font-mono text-[0.8125rem] tracking-[0.16em] text-muted-foreground">
             {pipeline.generatedAt.slice(0, 10)}
           </span>
           <button
             type="button"
-            className="rounded-md border border-[hsl(var(--hairline))] px-2.5 py-1 text-[12px] text-muted-foreground hover:text-foreground"
+            className="rounded-md border border-[hsl(var(--hairline))] px-2.5 py-1 text-[0.75rem] text-muted-foreground hover:text-foreground"
             onClick={() => setZoom((v) => !v)}
           >
             {zoom ? '收起' : '放大'}

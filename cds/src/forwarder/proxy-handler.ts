@@ -25,6 +25,7 @@ import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
+import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
 import {
   classifyHttpRequestKind,
   createBodyCapture,
@@ -393,6 +394,10 @@ export class ProxyHandler {
       if (v == null) continue;
       fwdHeaders[k] = v as string | string[];
     }
+    // 存活监控的探测令牌只给 CDS 自己看，不能带进分支容器（容器里的代码拿到它
+    // 就能回放到 master 代理上豁免 LRU）。master 的 ProxyService 会抹，这条数据面
+    // 直连容器的路也必须抹（Codex PR #1514 第三轮 P2）。
+    delete fwdHeaders[PROBE_MARKER_HEADER];
     // Hop-by-hop headers belong to the client↔forwarder connection and must
     // not be replayed upstream, otherwise a browser/client `Connection: close`
     // disables the forwarder's keepalive agent and defeats socket reuse.
@@ -731,6 +736,7 @@ export class ProxyHandler {
     for (const [k, v] of Object.entries(req.headers)) {
       if (v != null) fwdHeaders[k] = v as string | string[];
     }
+    delete fwdHeaders[PROBE_MARKER_HEADER]; // 同 handle()：探测令牌不进容器
     if (extraHeadersUp) {
       for (const [k, v] of Object.entries(extraHeadersUp)) fwdHeaders[k] = v;
     }

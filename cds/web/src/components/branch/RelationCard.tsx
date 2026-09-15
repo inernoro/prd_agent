@@ -32,11 +32,11 @@ export function FindingsList({ findings, onPick }: { findings: LintFindingView[]
       {findings.map((f, i) => (
         <div key={`${f.rule}-${i}`} className="cds-surface-sunken cds-hairline cursor-pointer rounded-md p-2.5" onMouseEnter={() => onPick?.(f.services[0] ?? null)} onMouseLeave={() => onPick?.(null)}>
           <div className="flex items-center gap-1.5 text-xs">
-            <span className={`inline-flex h-[18px] items-center rounded-full border px-1.5 text-[10px] font-semibold ${SEV_CLS[f.severity]}`}>{SEV_LABEL[f.severity]}</span>
-            <b className="font-mono text-[11px]">{f.rule}</b>
+            <span className={`inline-flex h-[1.125rem] items-center rounded-full border px-1.5 text-[0.625rem] font-semibold ${SEV_CLS[f.severity]}`}>{SEV_LABEL[f.severity]}</span>
+            <b className="font-mono text-[0.6875rem]">{f.rule}</b>
           </div>
-          <div className="mt-1 text-[11px] text-foreground-muted">{f.message}</div>
-          <div className="mt-1 text-[10px] text-muted-foreground">修法：{f.fix}</div>
+          <div className="mt-1 text-[0.6875rem] text-foreground-muted">{f.message}</div>
+          <div className="mt-1 text-[0.625rem] text-muted-foreground">修法：{f.fix}</div>
         </div>
       ))}
     </div>
@@ -67,35 +67,35 @@ export function RelationCard({ branchId }: { branchId: string }): JSX.Element | 
       <div className={`mx-5 mt-4 rounded-xl border p-3 ${tone}`} data-testid="relation-card">
         <div className="mb-2 flex flex-wrap items-center gap-2 px-1 text-sm font-semibold">
           关系
-          {errors ? <span className="inline-flex h-[18px] items-center rounded-full border border-destructive/60 px-1.5 text-[10px] font-semibold text-destructive">{errors} 处配置错误</span> : null}
-          {warnings ? <span className="inline-flex h-[18px] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[10px] font-semibold text-warn">{warnings} 条警告</span> : null}
-          {!errors && !warnings ? <span className="inline-flex h-[18px] items-center rounded-full border border-ok/50 bg-ok-soft px-1.5 text-[10px] font-semibold text-ok">无问题</span> : null}
+          {errors ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-destructive/60 px-1.5 text-[0.625rem] font-semibold text-destructive">{errors} 处配置错误</span> : null}
+          {warnings ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[0.625rem] font-semibold text-warn">{warnings} 条警告</span> : null}
+          {!errors && !warnings ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-ok/50 bg-ok-soft px-1.5 text-[0.625rem] font-semibold text-ok">无问题</span> : null}
           <span className="flex-1" />
           <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="半屏查看关系图与需要处理的事项"><PanelRightOpen />半屏查看</Button>
           <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
         </div>
         <div className="px-1 text-xs leading-relaxed text-foreground-muted">{relationHeadline(data)}</div>
-        <div className="mt-2 cursor-pointer rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]" style={{ height: 180 }} onClick={() => setOpen(true)} title="点击半屏查看">
-          <RelationGraph payload={data} compact style={{ height: 180 }} />
+        <div className="mt-2 cursor-pointer rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]" style={{ height: '11.25rem' }} onClick={() => setOpen(true)} title="点击半屏查看">
+          <RelationGraph payload={data} compact style={{ height: '11.25rem' }} />
         </div>
       </div>
       {open ? (
         <div className="fixed inset-0 z-50" role="dialog" aria-label="关系图" data-testid="relation-drawer">
           <div className="absolute inset-0 bg-[hsl(var(--status-ink))]/40" onClick={() => setOpen(false)} />
-          <div className="absolute inset-y-0 right-0 flex w-[min(100vw,760px)] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl">
-            <div className="flex h-[52px] items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
+          <div className="absolute inset-y-0 right-0 flex w-[min(100vw,47.5rem)] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl">
+            <div className="flex h-[3.25rem] items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
               <span className="text-sm font-bold">关系</span>
-              <span className="font-mono text-[11px] text-muted-foreground">{data.branch}</span>
-              {errors ? <span className="inline-flex h-[18px] items-center rounded-full border border-destructive/60 px-1.5 text-[10px] font-semibold text-destructive">{errors} 错误</span> : null}
-              {warnings ? <span className="inline-flex h-[18px] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[10px] font-semibold text-warn">{warnings} 警告</span> : null}
+              <span className="font-mono text-[0.6875rem] text-muted-foreground">{data.branch}</span>
+              {errors ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-destructive/60 px-1.5 text-[0.625rem] font-semibold text-destructive">{errors} 错误</span> : null}
+              {warnings ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[0.625rem] font-semibold text-warn">{warnings} 警告</span> : null}
               <span className="flex-1" />
               <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)}><Maximize2 />全屏</Button>
               <Button variant="ghost" size="sm" onClick={() => setOpen(false)} aria-label="关闭"><X /></Button>
             </div>
             <div className="flex min-h-0 flex-1">
               <RelationGraph payload={data} highlight={highlight} className="min-w-0 flex-1" style={{ height: '100%' }} />
-              <div className="w-[280px] shrink-0 overflow-auto border-l border-[hsl(var(--hairline))] p-3">
-                <div className="mb-2 text-[11px] font-bold text-muted-foreground">需要处理</div>
+              <div className="w-[17.5rem] shrink-0 overflow-auto border-l border-[hsl(var(--hairline))] p-3">
+                <div className="mb-2 text-[0.6875rem] font-bold text-muted-foreground">需要处理</div>
                 <FindingsList findings={data.lint.findings} onPick={setHighlight} />
               </div>
             </div>
