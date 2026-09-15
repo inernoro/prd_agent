@@ -2121,6 +2121,110 @@ public sealed class DesignArtifactRunRecoveryTests
         storage.VerifyAll();
     }
 
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task SaveSharedSite_ShouldDiscardCopiedObjects_WhenLaterSiteManifestIsInvalid()
+    {
+        // 多站点分享里，前一个站点的对象已经上传完，后一个站点的 entry-file 清单不合法 →
+        // 循环在 InsertManyAsync 之前就返回。此刻那批对象没有任何 HostedSite 认领，
+        // 不登记就永远没人知道它们存在；而去重那一关看的是 HostedSite，插入没发生就不算数，
+        // 用户每重试一次都会再留下一批（Codex P2，2026-09-15）。
+        await using var fixture = await RunMongoFixture.CreateAsync();
+        var now = MongoTime(DateTime.UtcNow);
+        var verified = BuildVerifiedGeneratedFiles();
+        var healthy = new HostedSite
+        {
+            Id = "site-share-a-healthy",
+            OwnerUserId = "owner",
+            SourceType = "design-agent",
+            EntryFile = "index.html",
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Files = verified.Select(file => new HostedSiteFile
+            {
+                Path = file.Path,
+                CosKey = $"web-hosting/sites/site-share-a-healthy/{file.Path}",
+                Size = file.Content.LongLength,
+                MimeType = file.MimeType,
+            }).ToList(),
+        };
+        // 第二个站点的 EntryFile 在 Files 里找不到 → 清单校验不过。
+        var broken = new HostedSite
+        {
+            Id = "site-share-b-broken",
+            OwnerUserId = "owner",
+            SourceType = "design-agent",
+            EntryFile = "missing-entry.html",
+            ContentVersion = now,
+            CreatedAt = now,
+            UpdatedAt = now,
+            Files = [new HostedSiteFile
+            {
+                Path = "index.html",
+                CosKey = "web-hosting/sites/site-share-b-broken/index.html",
+                Size = 1,
+                MimeType = "text/html",
+            }],
+        };
+        // $in 查 _id 走 _id 索引，返回顺序按 _id 排——id 前缀 a/b 让「健康站点先被处理」
+        // 这件事确定下来，下面的 companion 断言再确认一次真的先上传了再撞上 409。
+        await fixture.Db.HostedSites.InsertManyAsync([healthy, broken]);
+        await fixture.Db.WebPageShareLinks.InsertOneAsync(new WebPageShareLink
+        {
+            Id = "share-partial",
+            Token = "share-partial-token",
+            SiteIds = [healthy.Id, broken.Id],
+            CreatedBy = "owner",
+            AccessLevel = "public",
+            Visibility = "public",
+        });
+
+        var bytesByKey = healthy.Files.ToDictionary(
+            file => file.CosKey,
+            file => verified.Single(source => source.Path == file.Path).Content,
+            StringComparer.Ordinal);
+        var uploadedKeys = new List<string>();
+        var deletedKeys = new List<string>();
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        storage.Setup(x => x.TryDownloadBytesAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string key, CancellationToken _) => bytesByKey[key]);
+        storage.Setup(x => x.BuildSiteKey(It.IsAny<string>(), It.IsAny<string>()))
+            .Returns((string siteId, string path) => $"web-hosting/sites/{siteId}/{path}");
+        storage.Setup(x => x.UploadToKeyAsync(
+                It.IsAny<string>(), It.IsAny<byte[]>(), It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<string?>()))
+            .Returns((string key, byte[] _, string? _, CancellationToken _, string? _) =>
+            {
+                uploadedKeys.Add(key);
+                return Task.CompletedTask;
+            });
+        storage.Setup(x => x.BuildUrlForKey(It.IsAny<string>()))
+            .Returns((string key) => $"https://assets.test/{key}");
+        storage.Setup(x => x.DeleteByKeyAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Returns((string key, CancellationToken _) =>
+            {
+                deletedKeys.Add(key);
+                return Task.CompletedTask;
+            });
+        var service = CreateHostedSiteService(fixture.Db, storage.Object);
+
+        var result = await service.SaveSharedSiteAsync(
+            "share-partial-token", null, "reader", CancellationToken.None);
+
+        // companion：确实走到了「前一个站点已上传、后一个清单不合法」这条路径。
+        Assert.Equal(409, result.HttpStatus);
+        Assert.NotEmpty(uploadedKeys);
+        Assert.False(result.Saved);
+        Assert.Empty(await fixture.Db.HostedSites
+            .Find(site => site.OwnerUserId == "reader")
+            .ToListAsync());
+
+        // 已上传的那批必须逐个被登记并清掉，否则它们既无主也无账本。
+        Assert.All(uploadedKeys, key =>
+            Assert.Contains(key, deletedKeys, StringComparer.Ordinal));
+    }
+
     private static IReadOnlyList<HostedSiteVerifiedFile> BuildVerifiedGeneratedFiles() =>
         BuildDesignWorkspaceFiles().Select(file => new HostedSiteVerifiedFile(
             file.Path,

@@ -4011,11 +4011,31 @@ public class HostedSiteService : IHostedSiteService
         var savedSites = new List<HostedSite>();
         var copiedKeys = new List<string>();
         var saveAttemptId = Guid.NewGuid().ToString("N");
+
+        // 这个循环有三个出口，它们都可能发生在「前面几个站点已经上传完对象」之后，而三个
+        // 出口全都排在 InsertManyAsync 之前——也就是说此刻这些对象没有任何 HostedSite 认领，
+        // 不做登记就再也没人知道它们存在。去重那一关看的是 HostedSite，插入没发生就不算数，
+        // 于是用户每重试一次就多一批孤儿对象。三个出口共用同一个收尾，不许各写各的。
+        async Task DiscardCopiedObjectsAsync()
+        {
+            foreach (var key in copiedKeys)
+            {
+                await PersistAndTryCleanupLateGeneratedAssetAsync(
+                    saveAttemptId,
+                    userId,
+                    key,
+                    CancellationToken.None);
+            }
+        }
+
         foreach (var original in originalSites)
         {
             if (original.Files.Count(file =>
                     string.Equals(file.Path, original.EntryFile, StringComparison.OrdinalIgnoreCase)) != 1)
+            {
+                await DiscardCopiedObjectsAsync();
                 return new SaveSharedSiteResult { Error = "分享源内容不完整，请联系分享者重新发布", HttpStatus = 409 };
+            }
             var savedSiteId = Guid.NewGuid().ToString("N");
             var savedFiles = new List<HostedSiteFile>();
             var sourceKeys = original.Files
@@ -4038,6 +4058,7 @@ public class HostedSiteService : IHostedSiteService
             }
             catch (InvalidOperationException)
             {
+                await DiscardCopiedObjectsAsync();
                 return new SaveSharedSiteResult { Error = "分享内容正在变化，请刷新后重试", HttpStatus = 409 };
             }
             try
@@ -4060,14 +4081,7 @@ public class HostedSiteService : IHostedSiteService
             }
             catch
             {
-                foreach (var key in copiedKeys)
-                {
-                    await PersistAndTryCleanupLateGeneratedAssetAsync(
-                        saveAttemptId,
-                        userId,
-                        key,
-                        CancellationToken.None);
-                }
+                await DiscardCopiedObjectsAsync();
                 return new SaveSharedSiteResult { Error = "保存分享内容失败，请稍后重试", HttpStatus = 503 };
             }
             finally

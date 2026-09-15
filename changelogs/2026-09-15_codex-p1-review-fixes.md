@@ -40,3 +40,4 @@
 | security | cds | 旧版迁移日志里「紧跟密码旗标的那一个值」不看长度一律掩掉：创建接口对口令长度没有下限，一两位的口令会跳过 length>=3 的整串脱敏，而密封紧接着拿走明文，那串密码从此永久留在 GET /data-migrations/:id/log 里 |
 | refactor | cds | 旧版迁移遗留文本（log / progressMessage / errorMessage）的脱敏收敛成唯一口径 redactLegacyMigrationText，升级与对外投影两处共用，不再各写一套 |
 | fix | prd-admin | 生成任务恢复不到（NOT_FOUND）时不再谎称「原来的知识与要求仍保留，可以直接重新生成」：打开弹窗已清空要求、无 initialSource 时连知识也清空，生成按钮此刻是禁用的；文案改为按真实状态分两种说法 |
+| fix | prd-api | 保存分享时复制循环的三个早退出口统一先清理已上传对象：出口都排在 InsertManyAsync 之前，那批对象没有任何 HostedSite 认领也没有清理账本，而去重那关看的是 HostedSite，插入没发生就不算数，用户每重试一次都会再留下一批孤儿对象 |
