@@ -34,7 +34,7 @@ public class ModelLeaderboardController : ControllerBase
     }
 
     /// <summary>
-    /// 读一个分榜。<paramref name="board"/> 取值见 <see cref="ModelLeaderboardSyncWorker.Boards"/>。
+    /// 读一个分榜。<paramref name="board"/> 取值见 <see cref="ModelLeaderboardCatalog.Boards"/>。
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> Get(
@@ -42,14 +42,15 @@ public class ModelLeaderboardController : ControllerBase
         [FromQuery] int limit = 50,
         CancellationToken ct = default)
     {
-        if (!ModelLeaderboardSyncWorker.Boards.Contains(board, StringComparer.OrdinalIgnoreCase))
+        if (!ModelLeaderboardCatalog.Contains(board))
         {
             return BadRequest(ApiResponse<object>.Fail(
                 ErrorCodes.NOT_FOUND,
-                $"未知的榜单 {board}，可选：{string.Join(" / ", ModelLeaderboardSyncWorker.Boards)}"));
+                $"未知的榜单 {board}，可选：{string.Join(" / ", ModelLeaderboardCatalog.Keys)}"));
         }
 
-        limit = Math.Clamp(limit, 1, 200);
+        // 文本榜实测 402 行，上限放到 500 才不会把「共 402 个」截成一句谎话
+        limit = Math.Clamp(limit, 1, 500);
 
         var snapshot = await _db.ModelLeaderboardSnapshots
             .Find(x => x.Board == board)
@@ -73,10 +74,49 @@ public class ModelLeaderboardController : ControllerBase
             ready = true,
             fetchedAt = snapshot.FetchedAt,
             sourceUrl = snapshot.SourceUrl,
+            kind = string.IsNullOrEmpty(snapshot.Kind) ? BoardKind.Agent : snapshot.Kind,
             stale = IsStale(snapshot.FetchedAt),
             total = snapshot.Entries.Count,
             totalSessions = snapshot.TotalSessions,
+            totalVotes = snapshot.TotalVotes,
             entries = snapshot.Entries.Take(limit).Select(Project),
+        }));
+    }
+
+    /// <summary>
+    /// 分榜目录：有哪些榜、中文叫什么、归哪一组、是什么形状。
+    ///
+    /// 单开一个端点而不是把中文名硬编码在前端：榜名与分组是业务数据，
+    /// 前端不许另存一份映射表（.claude/rules/frontend-architecture.md「单一数据源原则」）。
+    /// 页面加载时它和默认榜的数据并行拉，不多一跳等待。
+    ///
+    /// <c>ready</c> 表示这个榜在库里已经有快照——首次同步还没轮到的榜，切换器上会标出来，
+    /// 而不是让用户点进去看一张空表。
+    /// </summary>
+    [HttpGet("boards")]
+    public async Task<IActionResult> BoardCatalog(CancellationToken ct = default)
+    {
+        var existing = await _db.ModelLeaderboardSnapshots
+            .Find(Builders<ModelLeaderboardSnapshot>.Filter.Empty)
+            .Project(x => new { x.Board, x.Entries })
+            .ToListAsync(ct);
+
+        var counts = existing.ToDictionary(
+            x => x.Board, x => x.Entries.Count, StringComparer.OrdinalIgnoreCase);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            defaultBoard = ModelLeaderboardCatalog.DefaultBoard,
+            boards = ModelLeaderboardCatalog.Boards.Select(b => new
+            {
+                key = b.Key,
+                label = b.Label,
+                group = b.Group,
+                kind = b.Kind,
+                hint = b.Hint,
+                ready = counts.ContainsKey(b.Key),
+                total = counts.TryGetValue(b.Key, out var c) ? c : 0,
+            }),
         }));
     }
 
@@ -107,6 +147,7 @@ public class ModelLeaderboardController : ControllerBase
             board = snapshot.Board,
             ready = true,
             fetchedAt = snapshot.FetchedAt,
+            kind = string.IsNullOrEmpty(snapshot.Kind) ? BoardKind.Agent : snapshot.Kind,
             stale = IsStale(snapshot.FetchedAt),
             entries = snapshot.Entries.Take(limit).Select(Project),
         }));
@@ -130,6 +171,13 @@ public class ModelLeaderboardController : ControllerBase
         steerability = Metric(e.Steerability),
         bashRecovery = Metric(e.BashRecovery),
         toolHallucination = Metric(e.ToolHallucination),
+        // 分数榜字段（agent 榜上全为 null，前端按 kind 选列）
+        score = e.Score,
+        scoreMarginUp = e.ScoreMarginUp,
+        scoreMarginDown = e.ScoreMarginDown,
+        votes = e.Votes,
+        contextWindow = e.ContextWindow,
+        preliminary = e.Preliminary,
         sessions = e.Sessions,
         costPerTask = e.CostPerTask,
         outputTokens = e.OutputTokens,

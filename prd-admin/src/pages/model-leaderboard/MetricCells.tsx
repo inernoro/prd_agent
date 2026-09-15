@@ -147,3 +147,94 @@ export function orgMark(organization: string | null): string {
 export function isOpenSource(license: string | null): boolean {
   return !/proprietary/i.test(license ?? 'Proprietary');
 }
+
+/** 分数条的画布尺寸。比 agent 榜的误差须宽一些——分数榜这一列本来就该是主角。 */
+const SCORE_BAR_W = 148;
+const SCORE_BAR_H = 18;
+
+/**
+ * 对战分条：整列共用一把尺，左端是全列最低分、右端是全列最高分。
+ *
+ * ## 为什么不从 0 起画
+ *
+ * Elo 分数是相对分，全榜挤在 1200-1520 之间。从 0 起画的话每根条都是九成满，
+ * 榜首和垫底看起来一模一样——那根条就只是装饰。按全列的实际跨度归一，
+ * 条长才真的对应「差多少」。
+ *
+ * ## 须仍然是重点
+ *
+ * 图像视频这些榜的样本少，误差经常到 ±26，而相邻两名只差 4 分。不把区间画出来，
+ * 读者会以为第一名真的赢了第二名。区间重叠时名次差别不作数，这句话对分数榜比对
+ * agent 榜更要紧。
+ */
+export function ScoreBar({
+  value,
+  marginUp,
+  marginDown,
+  min,
+  max,
+  lead = false,
+}: {
+  value: number;
+  marginUp: number | null;
+  marginDown: number | null;
+  /** 全列最小值（已含误差下界），下同 */
+  min: number;
+  max: number;
+  lead?: boolean;
+}) {
+  const span = max - min;
+  const mid = SCORE_BAR_H / 2;
+  // 全列只有一行、或者所有分数一样时 span 为 0：画满，不做除零
+  const x = (v: number) =>
+    span <= 0 ? SCORE_BAR_W : Math.max(0, Math.min(SCORE_BAR_W, ((v - min) / span) * SCORE_BAR_W));
+
+  const end = x(value);
+  const lo = marginDown != null ? x(value - marginDown) : null;
+  const hi = marginUp != null ? x(value + marginUp) : null;
+
+  const barFill = lead
+    ? 'var(--accent-gold)'
+    : 'color-mix(in srgb, var(--accent-gold) 72%, transparent)';
+  const whisker = lead ? 'var(--text-secondary)' : 'var(--text-muted)';
+  const barH = lead ? 5 : 4;
+
+  return (
+    <svg
+      width={SCORE_BAR_W}
+      height={SCORE_BAR_H}
+      viewBox={`0 0 ${SCORE_BAR_W} ${SCORE_BAR_H}`}
+      aria-hidden="true"
+      className="shrink-0"
+    >
+      <line x1={0} y1={mid} x2={SCORE_BAR_W} y2={mid} stroke="var(--border-subtle)" strokeWidth={1} />
+      <rect x={0} y={mid - barH / 2} width={Math.max(2, end)} height={barH} rx={barH / 2} fill={barFill} />
+      {lo != null && hi != null && (
+        <>
+          <line x1={lo} y1={mid - 4.5} x2={lo} y2={mid + 4.5} stroke={whisker} strokeWidth={lead ? 1.4 : 1.3} />
+          <line x1={hi} y1={mid - 4.5} x2={hi} y2={mid + 4.5} stroke={whisker} strokeWidth={lead ? 1.4 : 1.3} />
+          <line x1={lo} y1={mid} x2={hi} y2={mid} stroke={whisker} strokeWidth={lead ? 1.2 : 1.1} />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/**
+ * 置信区间的文字写法。两边相等就写「±13」，不等才写「+20/−5」。
+ *
+ * 一律写成非对称形式会让 402 行里每一行都多出一半没信息量的字符；
+ * 一律压成对称又会在真遇到非对称时说谎。所以看数据说话。
+ */
+export function formatScoreMargin(up: number | null, down: number | null): string {
+  if (up == null && down == null) return '';
+  if (up != null && down != null && Math.abs(up - down) < 0.005) return `±${up.toFixed(0)}`;
+  const u = up != null ? `+${up.toFixed(0)}` : '';
+  const d = down != null ? `−${down.toFixed(0)}` : '';
+  return [u, d].filter(Boolean).join('/');
+}
+
+/** 大数字的千分位写法，票数与会话数共用。 */
+export function formatCount(v: number | null | undefined): string {
+  return v == null ? '—' : v.toLocaleString('en-US');
+}

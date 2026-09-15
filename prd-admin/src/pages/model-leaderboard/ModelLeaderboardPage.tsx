@@ -7,13 +7,25 @@ import { toast } from '@/lib/toast';
 import { useAuthStore } from '@/stores/authStore';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import {
+  getLeaderboardBoards,
   getModelLeaderboard,
   syncModelLeaderboard,
+  type LeaderboardBoardInfo,
   type ModelLeaderboardEntry,
   type ModelLeaderboardSnapshot,
   type ModelMetric,
 } from '@/services/real/modelLeaderboard';
-import { ErrorBar, HeatCell, PlainCell, formatSigned, isOpenSource, orgMark } from './MetricCells';
+import {
+  ErrorBar,
+  HeatCell,
+  PlainCell,
+  ScoreBar,
+  formatCount,
+  formatScoreMargin,
+  formatSigned,
+  isOpenSource,
+  orgMark,
+} from './MetricCells';
 
 /**
  * 模型排行榜（/model-leaderboard）。
@@ -25,15 +37,26 @@ import { ErrorBar, HeatCell, PlainCell, formatSigned, isOpenSource, orgMark } fr
  * 第一版只显示「名次 / 模型 / 一个百分比 / 授权」，宽屏下三格是空的，进度条缩成一根细线。
  * 根因不是排版，是数据只抓了一个指标。榜单原页面每行有六个指标、会话数、单任务成本和单价，
  * 全都拿得到——补齐之后宽度自然被填满，也才够做选型判断（好用且不贵）。
+ *
+ * ## 为什么有两套表
+ *
+ * arena.ai 的十一个分榜是两种形状：Agent 榜是六个百分比指标，其余十个（文本 / 图像 /
+ * 视频 / 代码…）是「对战分 ± 区间 + 票数」。用一套列去套两种数据只会让一半格子是空的，
+ * 所以按快照里的 <c>kind</c> 分流渲染。kind 是后端按页面**实际解析出来的结构**写的，
+ * 不是前端按榜名硬猜——对方改了某个榜的结构，这里会跟着变。
  */
 
-/** 表格列宽，与设计稿一致。行与表头共用同一个模板，改一处就得改两处的问题在这里被消掉。 */
+/** Agent 榜的列宽，与设计稿一致。行与表头共用同一个模板，改一处就得改两处的问题在这里被消掉。 */
 const GRID = '92px minmax(240px, 1fr) 196px 136px 136px 136px 128px 124px 104px 88px 104px';
+
+/** 分数榜的列宽。列少了一半，所以把分数那列放宽——它是这张表唯一的主角。 */
+const GRID_SCORE = '92px minmax(240px, 1fr) 268px 120px 116px 104px';
 
 type RangeKey = 'all' | 'open';
 
 export default function ModelLeaderboardPage() {
-  const board = 'agent';
+  const [boards, setBoards] = useState<LeaderboardBoardInfo[]>([]);
+  const [board, setBoard] = useState('agent');
   const [range, setRange] = useState<RangeKey>('all');
   const [snapshot, setSnapshot] = useState<ModelLeaderboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -48,23 +71,51 @@ export default function ModelLeaderboardPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const res = await getModelLeaderboard(board, 60);
+    // 文本榜实测 402 个模型，取 200 够看且不至于把一屏拉成长卷；底部会如实写出总数
+    const res = await getModelLeaderboard(board, 200);
     if (res.success && res.data) setSnapshot(res.data);
     else {
       setSnapshot(null);
       setError(res.error?.message ?? '榜单没读出来，稍后再试');
     }
     setLoading(false);
-  }, []);
+  }, [board]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  /** 手动拉一次。周期同步只在权威部署跑，分支预览上的库是空的，要看真实榜单就得点这里。 */
+  /** 目录只拉一次，与首屏那个榜的数据并行——切换器不必等榜单数据回来才出现。 */
+  const loadCatalog = useCallback(async () => {
+    const res = await getLeaderboardBoards();
+    if (res.success && res.data?.boards?.length) setBoards(res.data.boards);
+  }, []);
+
+  useEffect(() => {
+    void loadCatalog();
+  }, [loadCatalog]);
+
+  const currentBoard = useMemo(
+    () => boards.find((b) => b.key === board) ?? null,
+    [boards, board],
+  );
+
+  /**
+   * 表格形状以**快照里的 kind** 为准，目录里的 kind 只在快照还没到时垫一下。
+   * 两者不一致时快照赢：它描述的是手上这份数据实际长什么样。
+   */
+  const kind = snapshot?.kind ?? currentBoard?.kind ?? 'agent';
+
+  /**
+   * 手动拉一次**当前这个榜**。
+   *
+   * 周期同步只在权威部署跑，分支预览上的库是空的，要看真实榜单就得点这里。
+   * 只同步当前榜而不是十一个全抓：用户点这个按钮时想看的就是眼前这一屏，
+   * 让他为另外十个榜等一分钟没有道理（切换器上没数据的榜自己带小灰点，点进去再同步即可）。
+   */
   const runSync = useCallback(async () => {
     setSyncing(true);
-    const res = await syncModelLeaderboard();
+    const res = await syncModelLeaderboard(board);
     setSyncing(false);
     if (res.success && res.data) {
       const failed = res.data.boards.filter((b) => !b.ok);
@@ -75,11 +126,12 @@ export default function ModelLeaderboardPage() {
       } else {
         toast.success('榜单已更新');
       }
-      await load();
+      // 目录里的 ready / total 也变了，一起重拉——否则切换器上仍标着「暂无数据」
+      await Promise.all([load(), loadCatalog()]);
     } else {
       toast.error(res.error?.message ?? '同步没跑起来');
     }
-  }, [load]);
+  }, [board, load, loadCatalog]);
 
   const entries = useMemo(
     () => (snapshot?.entries ?? []).filter((e) => (range === 'open' ? isOpenSource(e.license) : true)),
@@ -101,6 +153,20 @@ export default function ModelLeaderboardPage() {
     };
   }, [entries]);
 
+  /**
+   * 分数榜那根条的量程：全列的最低下界到最高上界。
+   *
+   * 含误差在内，是因为须要画得进画布——只按分数取范围的话，垫底那行的下须会被截掉，
+   * 而那恰恰是「这个分其实没那么确定」最该被看见的地方。
+   */
+  const scoreRange = useMemo(() => {
+    const scored = entries.filter((e) => e.score != null);
+    if (scored.length === 0) return { min: 0, max: 1 };
+    const lows = scored.map((e) => e.score! - (e.scoreMarginDown ?? 0));
+    const highs = scored.map((e) => e.score! + (e.scoreMarginUp ?? 0));
+    return { min: Math.min(...lows), max: Math.max(...highs) };
+  }, [entries]);
+
   return (
     <div className="h-full min-h-0 flex flex-col">
       {/* ── 页头：沿用 PageHeader 的玻璃横条，但这页要把标题与副标题排成两行，故自绘 ── */}
@@ -117,11 +183,11 @@ export default function ModelLeaderboardPage() {
               className="font-mono text-[10px] uppercase"
               style={{ letterSpacing: '0.1em', color: 'var(--text-muted)' }}
             >
-              Agent Arena
+              {board} Arena
             </span>
           </div>
           <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
-            按「当 Agent 用好不好使」排名：工具调用可靠性、任务完成度、可操控性
+            {currentBoard?.hint ?? '人类盲测对战榜，数据来自 arena.ai'}
           </span>
         </div>
 
@@ -166,7 +232,7 @@ export default function ModelLeaderboardPage() {
             type="button"
             onClick={() => void runSync()}
             disabled={syncing}
-            title="从 arena.ai 重新抓一次榜单"
+            title="从 arena.ai 重新抓一次当前这个榜"
             className="h-[28px] px-2.5 inline-flex items-center gap-1.5 rounded-[8px] text-[12px] font-medium transition-colors disabled:opacity-60"
             style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
           >
@@ -177,6 +243,8 @@ export default function ModelLeaderboardPage() {
 
         <TipsEntryButton className="shrink-0" />
       </div>
+
+      <BoardSwitcher boards={boards} current={board} onPick={setBoard} />
 
       <div className="flex-1 min-h-0 overflow-auto">
         {loading ? (
@@ -217,12 +285,12 @@ export default function ModelLeaderboardPage() {
             <MetaStrip snapshot={snapshot} shown={entries.length} />
 
             <div className="overflow-x-auto">
-              <div style={{ minWidth: 1360 }}>
+              <div style={{ minWidth: kind === 'score' ? 920 : 1360 }}>
                 {/* 表头 */}
                 <div
                   className="grid items-end px-6 pt-2.5 pb-2 font-mono text-[9.5px] uppercase shrink-0"
                   style={{
-                    gridTemplateColumns: GRID,
+                    gridTemplateColumns: kind === 'score' ? GRID_SCORE : GRID,
                     letterSpacing: '0.09em',
                     color: 'var(--text-muted)',
                     borderBottom: '1px solid var(--border-subtle)',
@@ -230,24 +298,39 @@ export default function ModelLeaderboardPage() {
                 >
                   <div>名次</div>
                   <div>模型</div>
-                  <div className="text-right" style={{ color: 'var(--accent-gold)' }}>净改进 ↓</div>
-                  <div className="text-right">任务完成</div>
-                  <div className="text-right">好评比</div>
-                  <div className="text-right">可操控性</div>
-                  <div className="text-right">命令恢复</div>
-                  <div className="text-right">工具幻觉</div>
-                  <div className="text-right">会话数</div>
-                  <div className="text-right">单任务成本</div>
-                  <div className="text-right">单价 $/M</div>
+                  {kind === 'score' ? (
+                    <>
+                      <div className="text-right" style={{ color: 'var(--accent-gold)' }}>对战分 ↓</div>
+                      <div className="text-right">投票数</div>
+                      <div className="text-right">单价 $/M</div>
+                      <div className="text-right">上下文</div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-right" style={{ color: 'var(--accent-gold)' }}>净改进 ↓</div>
+                      <div className="text-right">任务完成</div>
+                      <div className="text-right">好评比</div>
+                      <div className="text-right">可操控性</div>
+                      <div className="text-right">命令恢复</div>
+                      <div className="text-right">工具幻觉</div>
+                      <div className="text-right">会话数</div>
+                      <div className="text-right">单任务成本</div>
+                      <div className="text-right">单价 $/M</div>
+                    </>
+                  )}
                 </div>
 
-                {entries.map((e, i) => (
-                  <Row key={`${e.rank}-${e.name}`} entry={e} lead={i === 0} columnMax={columnMax} />
-                ))}
+                {entries.map((e, i) =>
+                  kind === 'score' ? (
+                    <ScoreRow key={`${e.rank}-${e.name}`} entry={e} lead={i === 0} range={scoreRange} />
+                  ) : (
+                    <Row key={`${e.rank}-${e.name}`} entry={e} lead={i === 0} columnMax={columnMax} />
+                  ),
+                )}
               </div>
             </div>
 
-            <Legend />
+            <Legend kind={kind} />
           </>
         )}
       </div>
@@ -266,6 +349,17 @@ function MetaStrip({ snapshot, shown }: { snapshot: ModelLeaderboardSnapshot; sh
       })
     : '未知';
 
+  /**
+   * 样本量。Agent 榜统计的是会话，分数榜统计的是人类投票——单位不同，各说各的，
+   * 不合成一个「样本数」让读者自己猜是什么。两个都没有就整格不显示。
+   */
+  const sample =
+    snapshot.totalSessions != null
+      ? `${snapshot.totalSessions.toLocaleString('en-US')} 次会话`
+      : snapshot.totalVotes != null
+        ? `${snapshot.totalVotes.toLocaleString('en-US')} 次投票`
+        : null;
+
   return (
     <div
       className="flex items-center px-6 py-[11px] text-[12px] shrink-0"
@@ -282,14 +376,14 @@ function MetaStrip({ snapshot, shown }: { snapshot: ModelLeaderboardSnapshot; sh
         </span>
       </span>
 
-      {snapshot.totalSessions != null && (
+      {sample && (
         <>
           <Divider />
           <span className="inline-flex items-center gap-[7px]">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.8" aria-hidden="true">
               <path d="M4 19V9M10 19V5M16 19v-7M22 19H2" strokeLinecap="round" />
             </svg>
-            <span className="font-mono tabular-nums">{snapshot.totalSessions.toLocaleString('en-US')} 次会话</span>
+            <span className="font-mono tabular-nums">{sample}</span>
           </span>
         </>
       )}
@@ -352,71 +446,9 @@ function Row({
         background: lead ? 'color-mix(in srgb, var(--accent-gold) 5.5%, transparent)' : undefined,
       }}
     >
-      {/* 名次 + 置信区间 */}
-      <div className="flex flex-col gap-px">
-        <span className="inline-flex items-baseline gap-1.5">
-          <span
-            className="font-mono font-bold leading-none tabular-nums"
-            style={{ fontSize: lead ? 21 : 15, color: lead ? 'var(--accent-gold)' : 'var(--text-secondary)' }}
-          >
-            {String(entry.rank).padStart(2, '0')}
-          </span>
-          <RankDelta delta={entry.rankDelta} />
-        </span>
-        {entry.rankLow != null && entry.rankHigh != null && (
-          <span className="font-mono text-[9.5px]" style={{ color: 'var(--text-muted)' }}>
-            区间 {entry.rankLow}–{entry.rankHigh}
-          </span>
-        )}
-      </div>
+      <RankCell entry={entry} lead={lead} />
 
-      {/* 模型 */}
-      <div className="flex items-center gap-[11px] min-w-0">
-        <span
-          className="inline-flex items-center justify-center shrink-0 font-mono font-bold"
-          style={{
-            width: lead ? 26 : 24,
-            height: lead ? 26 : 24,
-            fontSize: lead ? 9 : 8.5,
-            borderRadius: 7,
-            background: lead ? 'color-mix(in srgb, var(--accent-gold) 16%, transparent)' : 'var(--nested-block-bg)',
-            border: `1px solid ${lead ? 'color-mix(in srgb, var(--accent-gold) 40%, transparent)' : 'var(--border-subtle)'}`,
-            color: lead ? 'var(--accent-gold)' : 'var(--text-muted)',
-          }}
-        >
-          {orgMark(entry.organization)}
-        </span>
-        <span className="flex flex-col gap-px min-w-0">
-          <span className="flex items-center gap-[7px] min-w-0">
-            <span
-              className="font-mono truncate"
-              style={{
-                fontSize: lead ? 14 : 13,
-                fontWeight: lead ? 600 : 550,
-                color: 'var(--text-primary)',
-                letterSpacing: '-0.01em',
-              }}
-            >
-              {entry.name}
-            </span>
-            {open && (
-              <span
-                className="font-mono text-[8.5px] rounded-[4px] px-[5px] py-px shrink-0"
-                style={{
-                  letterSpacing: '0.08em',
-                  color: 'var(--semantic-success-text)',
-                  border: '1px solid color-mix(in srgb, var(--semantic-success-text) 40%, transparent)',
-                }}
-              >
-                开源
-              </span>
-            )}
-          </span>
-          <span className="text-[10.5px] truncate" style={{ color: 'var(--text-muted)' }}>
-            {entry.organization ?? '未知厂商'} · {open ? entry.license ?? '开源' : '闭源'}
-          </span>
-        </span>
-      </div>
+      <ModelCell entry={entry} lead={lead} />
 
       {/* 净改进：误差须 + 数值 */}
       <div className="flex items-center gap-2.5 justify-end">
@@ -491,7 +523,7 @@ function RankDelta({ delta }: { delta: number | null }) {
 }
 
 /** 表尾图例：把误差须和名次区间的读法说清楚，而不是留一片空白。 */
-function Legend() {
+function Legend({ kind }: { kind: 'agent' | 'score' }) {
   return (
     <div
       className="flex items-center gap-5 flex-wrap px-6 py-3.5 text-[11.5px]"
@@ -509,8 +541,16 @@ function Legend() {
       </span>
       <span className="w-px h-3" style={{ background: 'var(--border-subtle)' }} aria-hidden="true" />
       <span>名次下方的「区间」同理：榜首的真实名次可能落在 1–4 之间</span>
+      {kind === 'score' && (
+        <>
+          <span className="w-px h-3" style={{ background: 'var(--border-subtle)' }} aria-hidden="true" />
+          <span>
+            条长按本榜的最低到最高分归一（不是从 0 起）；标「初步」的行样本还不够，分数还会变
+          </span>
+        </>
+      )}
       <div className="flex-1" />
-      <span>每天 04:00 同步一次</span>
+      <span>每天同步一次</span>
     </div>
   );
 }
@@ -528,6 +568,270 @@ function EmptyNote({ title, body, action }: { title: string; body: string; actio
       <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</span>
       <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{body}</span>
       {action}
+    </div>
+  );
+}
+
+/**
+ * 名次格 + 名次置信区间。两种表共用——同一段视觉写两遍，迟早各自漂移
+ * （.claude/rules/predicate-and-wiring-discipline.md 形状 3）。
+ */
+function RankCell({ entry, lead }: { entry: ModelLeaderboardEntry; lead: boolean }) {
+  return (
+    <div className="flex flex-col gap-px">
+      <span className="inline-flex items-baseline gap-1.5">
+        <span
+          className="font-mono font-bold leading-none tabular-nums"
+          style={{ fontSize: lead ? 21 : 15, color: lead ? 'var(--accent-gold)' : 'var(--text-secondary)' }}
+        >
+          {String(entry.rank).padStart(2, '0')}
+        </span>
+        <RankDelta delta={entry.rankDelta} />
+      </span>
+      {entry.rankLow != null && entry.rankHigh != null && (
+        <span className="font-mono text-[9.5px]" style={{ color: 'var(--text-muted)' }}>
+          区间 {entry.rankLow}–{entry.rankHigh}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** 厂商标 + 模型名 + 开源徽章 + 厂商授权小字。两种表共用。 */
+function ModelCell({ entry, lead }: { entry: ModelLeaderboardEntry; lead: boolean }) {
+  const open = isOpenSource(entry.license);
+  return (
+    <div className="flex items-center gap-[11px] min-w-0">
+      <span
+        className="inline-flex items-center justify-center shrink-0 font-mono font-bold"
+        style={{
+          width: lead ? 26 : 24,
+          height: lead ? 26 : 24,
+          fontSize: lead ? 9 : 8.5,
+          borderRadius: 7,
+          background: lead ? 'color-mix(in srgb, var(--accent-gold) 16%, transparent)' : 'var(--nested-block-bg)',
+          border: `1px solid ${lead ? 'color-mix(in srgb, var(--accent-gold) 40%, transparent)' : 'var(--border-subtle)'}`,
+          color: lead ? 'var(--accent-gold)' : 'var(--text-muted)',
+        }}
+      >
+        {orgMark(entry.organization)}
+      </span>
+      <span className="flex flex-col gap-px min-w-0">
+        <span className="flex items-center gap-[7px] min-w-0">
+          <span
+            className="font-mono truncate"
+            style={{
+              fontSize: lead ? 14 : 13,
+              fontWeight: lead ? 600 : 550,
+              color: 'var(--text-primary)',
+              letterSpacing: '-0.01em',
+            }}
+          >
+            {entry.name}
+          </span>
+          {open && (
+            <span
+              className="font-mono text-[8.5px] rounded-[4px] px-[5px] py-px shrink-0"
+              style={{
+                letterSpacing: '0.08em',
+                color: 'var(--semantic-success-text)',
+                border: '1px solid color-mix(in srgb, var(--semantic-success-text) 40%, transparent)',
+              }}
+            >
+              开源
+            </span>
+          )}
+        </span>
+        <span className="text-[10.5px] truncate" style={{ color: 'var(--text-muted)' }}>
+          {entry.organization ?? '未知厂商'} · {open ? entry.license ?? '开源' : '闭源'}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * 分数榜的一行：名次 / 模型 / 对战分（条 + 数值 + 区间）/ 投票数 / 单价 / 上下文。
+ *
+ * 单价与上下文只有文本类的几个榜有，图像视频榜那两格是「—」。不为此再拆一套列模板：
+ * 同一个切换器下的表格换来换去还改变列数，读者每切一次都要重新找一遍眼睛落点。
+ */
+function ScoreRow({
+  entry,
+  lead,
+  range,
+}: {
+  entry: ModelLeaderboardEntry;
+  lead: boolean;
+  /** 整列的分数跨度，条长按它归一 */
+  range: { min: number; max: number };
+}) {
+  const open = isOpenSource(entry.license);
+
+  return (
+    <div
+      className="grid items-center px-6 transition-colors hover-bg-soft"
+      style={{
+        gridTemplateColumns: GRID_SCORE,
+        padding: lead ? '13px 24px' : '11px 24px',
+        borderBottom: '1px solid var(--border-subtle)',
+        background: lead ? 'color-mix(in srgb, var(--accent-gold) 5.5%, transparent)' : undefined,
+      }}
+    >
+      <RankCell entry={entry} lead={lead} />
+
+      <ModelCell entry={entry} lead={lead} />
+
+      {/* 对战分：条 + 数值 + 置信区间 */}
+      <div className="flex items-center gap-2.5 justify-end">
+        {entry.score != null ? (
+          <>
+            <ScoreBar
+              value={entry.score}
+              marginUp={entry.scoreMarginUp}
+              marginDown={entry.scoreMarginDown}
+              min={range.min}
+              max={range.max}
+              lead={lead}
+            />
+            <span className="flex flex-col items-end gap-px" style={{ minWidth: 78 }}>
+              <span className="flex items-baseline gap-[5px]">
+                <span
+                  className="font-mono tabular-nums"
+                  style={{
+                    fontSize: lead ? 15 : 13.5,
+                    fontWeight: lead ? 700 : 650,
+                    color: 'var(--text-primary)',
+                  }}
+                >
+                  {Math.round(entry.score)}
+                </span>
+                {entry.preliminary && (
+                  <span
+                    className="font-mono text-[8.5px] rounded-[4px] px-[5px] py-px shrink-0"
+                    style={{
+                      letterSpacing: '0.06em',
+                      color: 'var(--accent-gold)',
+                      border: '1px solid color-mix(in srgb, var(--accent-gold) 40%, transparent)',
+                    }}
+                    title="榜单标注：样本还不够，这个分数会继续变"
+                  >
+                    初步
+                  </span>
+                )}
+              </span>
+              <span className="font-mono text-[9.5px]" style={{ color: 'var(--text-muted)' }}>
+                {formatScoreMargin(entry.scoreMarginUp, entry.scoreMarginDown)}
+              </span>
+            </span>
+          </>
+        ) : (
+          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>—</span>
+        )}
+      </div>
+
+      <div className="text-right font-mono text-[12px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+        {formatCount(entry.votes)}
+      </div>
+      <div
+        className="text-right font-mono text-[12px] tabular-nums"
+        style={{ color: open ? 'var(--semantic-success-text)' : 'var(--text-secondary)' }}
+      >
+        {entry.priceInput != null && entry.priceOutput != null
+          ? `$${trimZero(entry.priceInput)} / $${trimZero(entry.priceOutput)}`
+          : '—'}
+      </div>
+      <div className="text-right font-mono text-[12px] tabular-nums" style={{ color: 'var(--text-secondary)' }}>
+        {entry.contextWindow ?? '—'}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 榜单切换器：按分组排的一条横滚胶囊栏。
+ *
+ * ## 为什么不是下拉框
+ *
+ * 十一个榜分四组，下拉框会把「有哪些维度可看」藏起来——用户得先点开才知道有文生图这一项。
+ * 摊开成一条，进页面就看得见全部维度，这正是用户要的「能筛选其他维度」。
+ * 横向滚动而不是换行：窄屏下换成两三行会把表格挤出首屏
+ * （.claude/rules/mobile-first-density.md：进内容前控制条 ≤1 条）。
+ *
+ * ## 只有一个榜时整条不显示
+ *
+ * 没得选就别摆一个假的选择器（chief-designer-usability.md 第二原则）。
+ * 目录还没拉回来时同理——宁可晚半秒出现，也不要先闪一个只有一项的空壳。
+ */
+function BoardSwitcher({
+  boards,
+  current,
+  onPick,
+}: {
+  boards: LeaderboardBoardInfo[];
+  current: string;
+  onPick: (key: string) => void;
+}) {
+  const groups = useMemo(() => {
+    const out: Array<{ name: string; items: LeaderboardBoardInfo[] }> = [];
+    for (const b of boards) {
+      const last = out[out.length - 1];
+      if (last && last.name === b.group) last.items.push(b);
+      else out.push({ name: b.group, items: [b] });
+    }
+    return out;
+  }, [boards]);
+
+  if (boards.length < 2) return null;
+
+  return (
+    <div
+      className="flex items-center gap-4 px-6 py-2 overflow-x-auto shrink-0"
+      style={{ borderBottom: '1px solid var(--border-subtle)' }}
+      role="group"
+      aria-label="榜单维度"
+    >
+      {groups.map((g, gi) => (
+        <div key={g.name} className="flex items-center gap-2.5 shrink-0">
+          {gi > 0 && <span className="w-px h-3.5 mr-1.5" style={{ background: 'var(--border-subtle)' }} aria-hidden="true" />}
+          <span
+            className="font-mono text-[9.5px] uppercase shrink-0 whitespace-nowrap"
+            style={{ letterSpacing: '0.09em', color: 'var(--text-muted)' }}
+          >
+            {g.name}
+          </span>
+          <div className="flex items-center gap-1 shrink-0">
+            {g.items.map((b) => {
+              const active = b.key === current;
+              return (
+                <button
+                  key={b.key}
+                  type="button"
+                  onClick={() => onPick(b.key)}
+                  aria-pressed={active}
+                  // 没数据的榜照样可以点：点进去会看到「这个环境还没有榜单数据」和同步按钮，
+                  // 比一个禁用到点不动、也不说为什么的按钮有用
+                  title={b.ready ? `${b.hint}（${b.total} 个模型）` : `${b.hint}（这个环境还没同步过）`}
+                  className="h-[26px] px-[11px] rounded-[8px] text-[12px] font-medium transition-colors whitespace-nowrap inline-flex items-center gap-1.5"
+                  style={{
+                    background: active ? 'var(--accent-gold)' : 'var(--nested-block-bg)',
+                    color: active ? 'var(--accent-on-gold)' : 'var(--text-secondary)',
+                  }}
+                >
+                  {b.label}
+                  {!b.ready && (
+                    <span
+                      className="w-[5px] h-[5px] rounded-full shrink-0"
+                      style={{ background: 'var(--text-muted)' }}
+                      aria-label="暂无数据"
+                    />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

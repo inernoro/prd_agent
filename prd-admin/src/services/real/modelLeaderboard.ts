@@ -34,6 +34,23 @@ export interface ModelLeaderboardEntry {
   /** 工具幻觉——这项越低越好 */
   toolHallucination: ModelMetric | null;
 
+  /** 人类盲测对战分（Elo 风格）。只有分数榜有，agent 榜为 null */
+  score: number | null;
+  /**
+   * 分数置信区间的上/下半宽。
+   *
+   * 多数榜两边一样（页面写「±13」），code 榜写成「+16/-16」。存两个数是为了不把
+   * 非对称区间压扁——真遇到 +20/-5 时压扁会让误差须画错方向。相等时前端渲染成「±13」。
+   */
+  scoreMarginUp: number | null;
+  scoreMarginDown: number | null;
+  /** 人类投票数（参与了多少次盲测对战） */
+  votes: number | null;
+  /** 上下文窗口，原样保留页面写法（如 "1M"）。图像视频榜没有这一列 */
+  contextWindow: string | null;
+  /** 榜单给这一行打了「初步」标：样本还不够，分数会继续变 */
+  preliminary: boolean;
+
   sessions: number | null;
   /** 单任务成本中位数，美元 */
   costPerTask: number | null;
@@ -61,25 +78,51 @@ export interface ModelLeaderboardSnapshot {
   sourceUrl?: string;
   /** 超过两天没同步成功。前端把实时点变灰并标出数据日期，不装作是新的。 */
   stale?: boolean;
+  /**
+   * 表格形状：agent = 六指标那套，score = 对战分那套。
+   *
+   * 由后端按**页面实际解析出来的结构**写进快照，不是前端按榜名硬猜——
+   * 对方哪天改了某个榜的结构，这里会跟着变。
+   */
+  kind?: 'agent' | 'score';
   /** 模型个数 */
   total?: number;
   /** 榜单口径下的会话总数（页面头部那个数）。抓不到时不显示这一格 */
   totalSessions?: number | null;
+  /** 分数榜口径下的总投票数（页面头部那个数）。与 totalSessions 是两件事，不合并 */
+  totalVotes?: number | null;
   entries: ModelLeaderboardEntry[];
 }
 
-/**
- * 可选的分榜，与后端 ModelLeaderboardSyncWorker.Boards 对齐。
- *
- * 目前只有 Agent 一个：arena.ai 站内虽有 code / vision 等分榜，但只有 agent 榜的排名是
- * 服务端渲染的，其余要浏览器执行 JS 才异步加载（详见后端 Boards 的注释）。
- * 只有一个选项时页面不显示切换 tab——没得选就别摆一个假的选择器。
- */
-export const LEADERBOARD_BOARDS = [
-  { key: 'agent', label: 'Agent', hint: '工具可靠性 / 任务完成 / 可操控性' },
-] as const;
+/** 一个分榜的目录项，字段与后端 LeaderboardBoardInfo 一一对应。 */
+export interface LeaderboardBoardInfo {
+  key: string;
+  /** 中文名。**后端给的**——前端不另存一份映射表（frontend-architecture.md 单一数据源） */
+  label: string;
+  /** 分组中文名，切换器按它分段 */
+  group: string;
+  kind: 'agent' | 'score';
+  /** 一句话说明这个榜在比什么 */
+  hint: string;
+  /** 库里已经有这个榜的快照。false = 首次同步还没轮到它 */
+  ready: boolean;
+  total: number;
+}
 
-export type LeaderboardBoardKey = (typeof LEADERBOARD_BOARDS)[number]['key'];
+export interface LeaderboardCatalog {
+  defaultBoard: string;
+  boards: LeaderboardBoardInfo[];
+}
+
+/**
+ * 读分榜目录：有哪些榜、叫什么、归哪组、是什么形状。
+ *
+ * 这份清单只能来自后端。前端曾经写死过一个「只有 agent 一个榜」的常量，
+ * 而那个结论本身是错的（见后端 ModelLeaderboardCatalog 的注释），错误就这么被抄了两份。
+ */
+export function getLeaderboardBoards(): Promise<ApiResponse<LeaderboardCatalog>> {
+  return apiRequest<LeaderboardCatalog>('/api/model-leaderboard/boards', { method: 'GET' });
+}
 
 /** 读一个分榜的完整快照（榜单页用）。 */
 export function getModelLeaderboard(
@@ -119,11 +162,18 @@ export interface ModelLeaderboardSyncResult {
  *
  * 周期同步只在权威部署跑，所以分支预览上的库是空的；要在预览环境看效果就得手动点一次。
  * 会真的去打 arena.ai，别当刷新按钮用。
+ *
+ * @param board 只同步这一个榜。不传则同步全部十一个，要跑一分钟左右——
+ *   页面上的按钮一律传当前正在看的那个榜，点一次几秒就好。
  */
-export function syncModelLeaderboard(): Promise<ApiResponse<ModelLeaderboardSyncResult>> {
-  return apiRequest<ModelLeaderboardSyncResult>('/api/model-leaderboard/sync', {
+export function syncModelLeaderboard(
+  board?: string,
+): Promise<ApiResponse<ModelLeaderboardSyncResult>> {
+  const query = board ? `?board=${encodeURIComponent(board)}` : '';
+  return apiRequest<ModelLeaderboardSyncResult>(`/api/model-leaderboard/sync${query}`, {
     method: 'POST',
-    // 榜单页是 1.8MB 的服务端渲染大页面，默认超时不够
-    timeoutMs: 180_000,
+    // 榜单页是 0.5-3MB 的服务端渲染大页面；不传 board 时十一个榜串行抓，要跑一分钟往上。
+    // 超时了也不代表同步失败，只是前端不等了。
+    timeoutMs: 600_000,
   });
 }

@@ -1,3 +1,4 @@
+using System.Linq;
 using PrdAgent.Api.Services.ModelLeaderboard;
 using Xunit;
 
@@ -198,16 +199,181 @@ public class ArenaLeaderboardFetcherTests
         Assert.Equal("https://arena.ai/leaderboard/agent", ArenaLeaderboardFetcher.BuildUrl("agent"));
     }
 
+    [Fact]
+    public void Parse_Agent榜判成Agent形状()
+    {
+        Assert.Equal(BoardKind.Agent, ArenaLeaderboardFetcher.Parse(RealFixture).Kind);
+    }
+
+    // ───────────────────────── 分数榜（其余十个榜） ─────────────────────────
+
     /// <summary>
-    /// 锁住「只同步 agent 榜」这个实测结论。
+    /// 真实页面片段：表头 + text-to-image 榜首（5 列、±区间、带 Preliminary 标）
+    /// + code 榜首（7 列、非对称的「+16/-16」、带单价与上下文）。
     ///
-    /// 第一版按站内路径一次放了五个分榜，部署后真跑一次才发现只有 agent 榜是服务端渲染
-    /// 的，其余四个页面里只有「Loading leaderboard」骨架 + 一份未排名的模型目录。
-    /// 这条守卫不是反对加榜，是要求加榜的人先证明数据拿得到。
+    /// 两行列数不同是**故意的**：分数榜里图像视频类只有 5 列，文本类有 7 列。
+    /// 解析器按单元格位置取值，列数不同也不能错位。
+    /// </summary>
+    private const string ScoreFixture = """
+<table><thead><tr><th>Rank</th><th>Rank Spread</th><th>Model</th><th>Score</th><th>Votes</th></tr></thead><tbody>
+<tr><td><div><span>1</span></div></td><td><div><span>1</span><svg width="16" viewBox="0 0 24 24"><path/></svg><span>2</span></div></td><td><div><div class="shrink-0"><svg viewBox="0 0 16 16"><path/></svg></div><div class="flex min-w-0 flex-1 flex-col"><a target="_blank" href="https://openai.com/index/introducing-chatgpt-images-2-5/" class="text-interactive-active inline-flex min-w-0 items-center font-mono text-sm"><span class="max-w-full truncate" title="gpt-image-2.5-sunburst">gpt-image-2.5-sunburst</span></a><span class="text-text-secondary truncate text-xs">OpenAI · Proprietary</span></div></div></td><td><div><span class="body-sm">1421</span><span class="text-text-tertiary body-xs">±13</span><button><span><svg class="lucide lucide-info"><path/></svg><span>Preliminary</span></span></button></div></td><td><span class="body-sm">3,149</span></td></tr>
+<tr><td><div><span>1</span></div></td><td><div><span>1</span><svg width="16" viewBox="0 0 24 24"><path/></svg><span>1</span></div></td><td><div><div class="shrink-0"><svg viewBox="0 0 16 16"><path/></svg></div><div class="flex min-w-0 flex-1 flex-col"><a target="_blank" href="https://openai.com/index/gpt-6-astra/" class="text-interactive-active inline-flex min-w-0 items-center font-mono text-sm"><span class="max-w-full truncate" title="gpt-6-astra-max">gpt-6-astra-max</span></a><span class="text-text-secondary truncate text-xs">OpenAI · Proprietary</span></div></div></td><td><div><span class="body-sm">1800</span><span class="text-text-tertiary body-xs">+16/-16</span></div></td><td><span class="body-sm">2,281</span></td><td><span class="text-sm">$10<!-- --> / <!-- -->$50</span></td><td><span class="text-sm">1.1M</span></td></tr>
+</tbody></table>
+<span>8,146,274<!-- --> <!-- -->votes</span>
+""";
+
+    [Fact]
+    public void ParseScore_判成分数形状并取到两行()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(ScoreFixture);
+
+        Assert.Equal(BoardKind.Score, r.Kind);
+        Assert.Equal(2, r.Entries.Count);
+    }
+
+    [Fact]
+    public void ParseScore_对战分与对称区间()
+    {
+        var e = ArenaLeaderboardFetcher.Parse(ScoreFixture).Entries[0];
+
+        Assert.Equal(1421, e.Score);
+        Assert.Equal(13, e.ScoreMarginUp);
+        Assert.Equal(13, e.ScoreMarginDown);
+        Assert.Equal(3149, e.Votes);
+        Assert.Equal("gpt-image-2.5-sunburst", e.Name);
+        Assert.Equal("OpenAI", e.Organization);
+    }
+
+    /// <summary>
+    /// 非对称区间必须原样保留两个数。
+    ///
+    /// 压成一个对称半宽看着无害（这两个数恰好相等），但真遇到「+20/-5」时，
+    /// 误差须会画错方向——而那正是最需要看清楚的那种行。
     /// </summary>
     [Fact]
-    public void Boards_只含服务端渲染的榜_加榜前须先证明数据拿得到()
+    public void ParseScore_非对称区间不压成对称()
     {
-        Assert.Equal(new[] { "agent" }, ModelLeaderboardSyncWorker.Boards);
+        var e = ArenaLeaderboardFetcher.Parse(ScoreFixture).Entries[1];
+
+        Assert.Equal(1800, e.Score);
+        Assert.Equal(16, e.ScoreMarginUp);
+        Assert.Equal(16, e.ScoreMarginDown);
+    }
+
+    /// <summary>
+    /// 列数不同的两行不能互相错位：5 列那行没有单价与上下文，7 列那行有。
+    /// 靠「整行里第几个匹配」取值的写法在这里一定会翻车。
+    /// </summary>
+    [Fact]
+    public void ParseScore_五列与七列混排时不错位()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(ScoreFixture);
+
+        // 图像榜只有五列：没有单价、没有上下文
+        Assert.Null(r.Entries[0].PriceInput);
+        Assert.Null(r.Entries[0].ContextWindow);
+
+        // 代码榜七列：单价与上下文都在
+        Assert.Equal(10, r.Entries[1].PriceInput);
+        Assert.Equal(50, r.Entries[1].PriceOutput);
+        Assert.Equal("1.1M", r.Entries[1].ContextWindow);
+        Assert.Equal(2281, r.Entries[1].Votes);
+    }
+
+    [Fact]
+    public void ParseScore_名次区间取自它自己那一格()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(ScoreFixture);
+
+        // 分数（1421 / 1800）也是裸数字，按整行顺序数会把它当成名次上界
+        Assert.Equal(1, r.Entries[0].RankLow);
+        Assert.Equal(2, r.Entries[0].RankHigh);
+        Assert.Equal(1, r.Entries[1].RankLow);
+        Assert.Equal(1, r.Entries[1].RankHigh);
+    }
+
+    [Fact]
+    public void ParseScore_保留榜单的初步标注()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(ScoreFixture);
+
+        // 3149 票的初步分和 23 万票的稳定分摆在一起，不标注就是在误导读者
+        Assert.True(r.Entries[0].Preliminary);
+        Assert.False(r.Entries[1].Preliminary);
+    }
+
+    [Fact]
+    public void ParseScore_取到页面头部的总投票数()
+    {
+        var r = ArenaLeaderboardFetcher.Parse(ScoreFixture);
+
+        Assert.Equal(8_146_274, r.TotalVotes);
+        // 分数榜没有「会话」这个口径，不许拿投票数冒充
+        Assert.Null(r.TotalSessions);
+    }
+
+    // ───────────────────────── 分榜目录 ─────────────────────────
+
+    /// <summary>
+    /// 锁住这份实测出来的分榜清单。
+    ///
+    /// 第一版这里只有 agent 一个，注释写着「其余榜是客户端懒加载」——那是错的：当时试的是
+    /// <c>/leaderboard/image</c> 这类**猜出来的路径**，它们在 arena.ai 上不存在，
+    /// 返回的 404 兜底页里有一句「Loading leaderboard」，于是被当成了「骨架没加载完」。
+    /// 下面十一个是从站内链接抠出来的真实路径，2026-09-15 逐个抓过，行数分别是
+    /// 43 / 128 / 402 / 152 / 34 / 44 / 78 / 55 / 48 / 48 / 10。
+    ///
+    /// 这条守卫不反对增删榜，它要求改这份清单的人**先真抓一次数一数行数**
+    /// （.claude/rules/predicate-and-wiring-discipline.md 形状 8：不许拿不成立的证据当证明）。
+    /// </summary>
+    [Fact]
+    public void Catalog_十一个实测存在的分榜()
+    {
+        Assert.Equal(
+            new[]
+            {
+                "agent", "code",
+                "text", "vision", "search", "document",
+                "text-to-image", "image-edit",
+                "text-to-video", "image-to-video", "video-edit",
+            },
+            ModelLeaderboardCatalog.Keys);
+
+        Assert.Equal(ModelLeaderboardCatalog.Keys, ModelLeaderboardSyncWorker.Boards);
+    }
+
+    [Fact]
+    public void Catalog_每个榜都有中文名分组与说明()
+    {
+        foreach (var b in ModelLeaderboardCatalog.Boards)
+        {
+            Assert.False(string.IsNullOrWhiteSpace(b.Label), $"{b.Key} 缺中文名");
+            Assert.False(string.IsNullOrWhiteSpace(b.Group), $"{b.Key} 缺分组");
+            Assert.False(string.IsNullOrWhiteSpace(b.Hint), $"{b.Key} 缺说明");
+            Assert.Contains(b.Kind, new[] { BoardKind.Agent, BoardKind.Score });
+        }
+    }
+
+    [Fact]
+    public void Catalog_只有Agent榜是Agent形状()
+    {
+        // 十一个榜里只有 agent 是六指标那套；这条如果变了，页面的两套列也得跟着改
+        Assert.Equal(
+            new[] { "agent" },
+            ModelLeaderboardCatalog.Boards.Where(b => b.Kind == BoardKind.Agent).Select(b => b.Key));
+    }
+
+    [Fact]
+    public void Catalog_默认榜在清单里()
+    {
+        Assert.True(ModelLeaderboardCatalog.Contains(ModelLeaderboardCatalog.DefaultBoard));
+    }
+
+    [Fact]
+    public void Catalog_没有重复的榜()
+    {
+        Assert.Equal(
+            ModelLeaderboardCatalog.Keys.Length,
+            ModelLeaderboardCatalog.Keys.Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 }

@@ -44,11 +44,22 @@ public class ModelLeaderboardAdminController : ControllerBase
     ///
     /// 与 CdsReportImportWorker 同一个模式：周期任务保持克制，手动入口补上可操作性。
     /// </summary>
+    /// <param name="board">
+    /// 只同步这一个榜。不传就同步全部十一个——那要跑一分钟左右，而用户通常只是想看
+    /// 眼前这一个榜的数据。页面上的「立即同步」按钮传的是当前正在看的那个榜。
+    /// </param>
     [HttpPost("sync")]
-    public async Task<IActionResult> Sync(CancellationToken ct)
+    public async Task<IActionResult> Sync([FromQuery] string? board, CancellationToken ct)
     {
-        _logger.LogInformation("模型榜同步：手动触发。");
-        var results = await _sync.SyncAllAsync(ct);
+        if (!string.IsNullOrWhiteSpace(board) && !ModelLeaderboardCatalog.Contains(board))
+        {
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.NOT_FOUND,
+                $"未知的榜单 {board}，可选：{string.Join(" / ", ModelLeaderboardCatalog.Keys)}"));
+        }
+
+        _logger.LogInformation("模型榜同步：手动触发（{Board}）。", board ?? "全部");
+        var results = await _sync.SyncAllAsync(ct, board);
 
         return Ok(ApiResponse<object>.Ok(new
         {

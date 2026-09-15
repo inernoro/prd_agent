@@ -34,22 +34,37 @@ public class ModelLeaderboardSyncService
         _logger = logger;
     }
 
+    /// <summary>抓完一个榜歇多久再抓下一个。</summary>
+    private static readonly TimeSpan BoardInterval = TimeSpan.FromSeconds(1);
+
     /// <summary>一个分榜的同步结果，给手动触发的调用方回显用。</summary>
     public record BoardResult(string Board, bool Ok, int Count, string? Error);
 
     /// <summary>
-    /// 同步全部分榜。每个榜独立处理，一个失败不影响其他榜。
+    /// 同步分榜。每个榜独立处理，一个失败不影响其他榜。
     /// </summary>
-    public async Task<List<BoardResult>> SyncAllAsync(CancellationToken ct)
+    /// <param name="onlyBoard">只同步这一个榜；null 表示全部。</param>
+    public async Task<List<BoardResult>> SyncAllAsync(CancellationToken ct, string? onlyBoard = null)
     {
         var http = _httpClientFactory.CreateClient(ModelLeaderboardSyncWorker.HttpClientName);
         var fetcher = new ArenaLeaderboardFetcher(http);
         var sourceLabel = DeploymentAuthority.DescribeSource(_configuration);
 
+        var targets = string.IsNullOrWhiteSpace(onlyBoard)
+            ? ModelLeaderboardSyncWorker.Boards
+            : ModelLeaderboardSyncWorker.Boards
+                .Where(b => string.Equals(b, onlyBoard, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
         var results = new List<BoardResult>();
-        foreach (var board in ModelLeaderboardSyncWorker.Boards)
+        foreach (var board in targets)
         {
             ct.ThrowIfCancellationRequested();
+
+            // 十一个榜串行抓，每个之间歇一秒。对方是一个免费的公开站点，
+            // 我们没有理由在同一秒里把十一个几兆的页面一起拽下来。
+            if (results.Count > 0) await Task.Delay(BoardInterval, ct);
+
             try
             {
                 var count = await SyncBoardAsync(fetcher, board, sourceLabel, ct);
@@ -102,10 +117,13 @@ public class ModelLeaderboardSyncService
             // 覆盖写时沿用旧文档的 Id，保证「一个榜单一条文档」而不是每天堆一条
             Id = previous?.Id ?? Guid.NewGuid().ToString("N"),
             Board = board,
+            // 形状以**页面实际解析出来的**为准，不是照目录抄一份（FetchAsync 已校验两者一致）
+            Kind = parsed.Kind,
             FetchedAt = DateTime.UtcNow,
             SourceUrl = ArenaLeaderboardFetcher.BuildUrl(board),
             SourceLabel = sourceLabel,
             TotalSessions = parsed.TotalSessions,
+            TotalVotes = parsed.TotalVotes,
             Entries = entries,
         };
 

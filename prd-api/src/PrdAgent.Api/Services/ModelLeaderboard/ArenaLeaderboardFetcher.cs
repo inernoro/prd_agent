@@ -21,6 +21,14 @@ namespace PrdAgent.Api.Services.ModelLeaderboard;
 /// <c>text-text-secondary truncate text-xs</c> 稳得多——后者是构建产物，换个主题或
 /// 升级一次依赖就会变。
 ///
+/// ## 两种表格形状
+///
+/// arena.ai 的分榜不是一个模子出来的（见 <see cref="ModelLeaderboardCatalog"/>）：
+/// agent 榜是六个百分比指标，其余十个榜是「Elo 分数 ± 区间 + 票数」。
+/// <see cref="Parse"/> **逐行**尝试两种形状并按命中多的那种定 Kind——刻意不按表头文字判，
+/// 因为表头是我们唯一拿不到机读关联的东西，而行内的形状特征（▲▼ 的 aria-label vs
+/// 分数格的「数字 + ±区间」）互斥且稳定。
+///
 /// 每行六个指标按页面里的**出现顺序**对应表头
 /// （净改进 / 任务完成 / 好评比 / 可操控性 / 命令恢复 / 工具幻觉）。刻意不按列名去认：
 /// 那些中文名是我们自己起的，页面上只有英文表头，而表头与单元格之间没有任何机读关联。
@@ -91,6 +99,29 @@ public class ArenaLeaderboardFetcher
     private static readonly Regex TotalSessionsRegex = new(
         @"(\d{1,3}(?:,\d{3})+)<!-- --> <!-- -->sessions", RegexOptions.Compiled);
 
+    /// <summary>分数榜页面头部的总投票数，如「8,146,274 votes」。</summary>
+    private static readonly Regex TotalVotesRegex = new(
+        @"(\d{1,3}(?:,\d{3})+)<!-- --> <!-- -->votes", RegexOptions.Compiled);
+
+    /// <summary>把一行切成单元格。分数榜的列位置是固定的，按格取值比在整行里数第几个匹配稳。</summary>
+    private static readonly Regex CellRegex = new(
+        @"<td[^>]*>(.*?)</td>", RegexOptions.Singleline | RegexOptions.Compiled);
+
+    /// <summary>
+    /// 分数格：分数 + 置信区间。两种写法都要认——多数榜是「±13」，code 榜是「+16/-16」。
+    /// 不依赖 class 名（那是构建产物），只认「一个数字 span 紧跟一个区间 span」这个结构。
+    /// </summary>
+    private static readonly Regex ScoreRegex = new(
+        @">([\d,]+(?:\.\d+)?)</span><span[^>]*>(?:±|&plusmn;)([\d.]+)</span>"
+        + @"|>([\d,]+(?:\.\d+)?)</span><span[^>]*>\+([\d.]+)/-([\d.]+)</span>",
+        RegexOptions.Compiled);
+
+    /// <summary>票数格里的整数（可能带千分位，也可能只有三位数）。</summary>
+    private static readonly Regex PlainNumberRegex = new(@">(\d{1,3}(?:,\d{3})*)<", RegexOptions.Compiled);
+
+    /// <summary>上下文窗口，如 1M / 200K。</summary>
+    private static readonly Regex ContextRegex = new(@">([\d.]+[KM])<", RegexOptions.Compiled);
+
     private readonly HttpClient _http;
 
     public ArenaLeaderboardFetcher(HttpClient http)
@@ -101,8 +132,12 @@ public class ArenaLeaderboardFetcher
     /// <summary>拼出某个分榜的地址。</summary>
     public static string BuildUrl(string board) => $"{BaseUrl}/{board}";
 
-    /// <summary>解析结果：条目 + 页面级元信息。</summary>
-    public record ParseResult(List<ModelLeaderboardEntry> Entries, long? TotalSessions);
+    /// <summary>解析结果：条目 + 页面级元信息。<paramref name="Kind"/> 见 <see cref="BoardKind"/>。</summary>
+    public record ParseResult(
+        string Kind,
+        List<ModelLeaderboardEntry> Entries,
+        long? TotalSessions,
+        long? TotalVotes);
 
     /// <summary>
     /// 抓取并解析一个分榜。
@@ -123,6 +158,17 @@ public class ArenaLeaderboardFetcher
                 "多半是页面结构变了；本次不写库，保留上一份快照。");
         }
 
+        // 形状与目录声明的不符 = 对方把这个榜换了结构。宁可让数据变旧，也不要写进一批
+        // 按错误形状解出来的值——那种错误在页面上看起来完全正常，没人会发现
+        // （.claude/rules/degradation-must-alarm.md：降级必须响铃）。
+        var expected = ModelLeaderboardCatalog.Find(board)?.Kind;
+        if (expected is not null && result.Kind != expected)
+        {
+            throw new InvalidOperationException(
+                $"{url} 解析出的表格形状是 {result.Kind}，目录里声明的是 {expected}；" +
+                "对方多半改了这个榜的结构，本次不写库，保留上一份快照。");
+        }
+
         return result;
     }
 
@@ -132,98 +178,198 @@ public class ArenaLeaderboardFetcher
     /// </summary>
     public static ParseResult Parse(string html)
     {
-        var entries = new List<ModelLeaderboardEntry>();
+        // 两种形状各攒一份，最后按命中多的那种定 Kind。逐行判、不看表头的理由见类注释。
+        var agentEntries = new List<ModelLeaderboardEntry>();
+        var scoreEntries = new List<ModelLeaderboardEntry>();
 
         foreach (Match row in RowRegex.Matches(html))
         {
             var block = row.Groups[1].Value;
 
             var nameMatch = NameRegex.Match(block);
-            if (!nameMatch.Success) continue;
+            if (!nameMatch.Success) continue;   // 表头行与筛选行就是这么被跳过的
 
-            // 指标：方向决定符号，误差按出现顺序一一对应
-            var dirVals = DirectionValueRegex.Matches(block);
-            if (dirVals.Count == 0) continue;   // 表头行与筛选行就是这么被跳过的
+            var name = WebUtility.HtmlDecode(nameMatch.Groups[1].Value);
+            var (organization, license) = ParseOrgLicense(block);
 
-            var margins = MarginRegex.Matches(block);
-            var metrics = new List<ModelLeaderboardMetric>();
-            for (var i = 0; i < dirVals.Count; i++)
+            var agent = TryParseAgentRow(block, name, organization, license, agentEntries.Count + 1);
+            if (agent is not null)
             {
-                if (!double.TryParse(dirVals[i].Groups[2].Value, NumberStyles.Float,
-                        CultureInfo.InvariantCulture, out var raw))
-                    continue;
-
-                double? margin = null;
-                if (i < margins.Count && double.TryParse(margins[i].Groups[1].Value, NumberStyles.Float,
-                        CultureInfo.InvariantCulture, out var m))
-                    margin = m;
-
-                metrics.Add(new ModelLeaderboardMetric
-                {
-                    // 方向直接进符号：页面显示 ▼0.91% 就是 -0.91，前端不必再判方向
-                    Value = dirVals[i].Groups[1].Value == "Down" ? -raw : raw,
-                    Margin = margin,
-                });
+                agentEntries.Add(agent);
+                continue;
             }
 
-            if (metrics.Count == 0) continue;
-
-            string? organization = null;
-            string? license = null;
-            var orgMatch = OrgRegex.Match(block);
-            if (orgMatch.Success)
-            {
-                // 「Anthropic · Proprietary」，偶尔还有第三段（托管方），只取前两段
-                var parts = WebUtility.HtmlDecode(orgMatch.Groups[1].Value)
-                    .Split('·', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                if (parts.Length > 0) organization = parts[0];
-                if (parts.Length > 1) license = parts[1];
-            }
-
-            // 行首三个裸数字：名次、区间下界、上界
-            var bare = BareNumberRegex.Matches(block);
-            int? rankLow = null, rankHigh = null;
-            if (bare.Count >= 3
-                && int.TryParse(bare[1].Groups[1].Value, out var lo)
-                && int.TryParse(bare[2].Groups[1].Value, out var hi)
-                && lo <= hi)
-            {
-                rankLow = lo;
-                rankHigh = hi;
-            }
-
-            var entry = new ModelLeaderboardEntry
-            {
-                Rank = entries.Count + 1,
-                RankLow = rankLow,
-                RankHigh = rankHigh,
-                Name = WebUtility.HtmlDecode(nameMatch.Groups[1].Value),
-                Organization = organization,
-                License = license,
-                Sessions = ParseSessions(block),
-                OutputTokens = TokensRegex.Match(block) is { Success: true } t ? t.Groups[1].Value : null,
-            };
-
-            // 六个指标按页面出现顺序对位；页面加列或少列时只填得到的那几个，不错位
-            AssignMetrics(entry, metrics);
-
-            // 美元金额按顺序：单任务成本、输入单价、输出单价
-            var dollars = DollarRegex.Matches(block);
-            if (dollars.Count > 0 && TryDouble(dollars[0].Groups[1].Value, out var cost)) entry.CostPerTask = cost;
-            if (dollars.Count > 1 && TryDouble(dollars[1].Groups[1].Value, out var pin)) entry.PriceInput = pin;
-            if (dollars.Count > 2 && TryDouble(dollars[2].Groups[1].Value, out var pout)) entry.PriceOutput = pout;
-
-            entries.Add(entry);
+            var score = TryParseScoreRow(block, name, organization, license, scoreEntries.Count + 1);
+            if (score is not null) scoreEntries.Add(score);
         }
 
-        long? totalSessions = null;
-        var totalMatch = TotalSessionsRegex.Match(html);
-        if (totalMatch.Success
-            && long.TryParse(totalMatch.Groups[1].Value, NumberStyles.AllowThousands,
-                CultureInfo.InvariantCulture, out var total))
-            totalSessions = total;
+        long? totalSessions = ParseGroupedNumber(TotalSessionsRegex, html);
+        long? totalVotes = ParseGroupedNumber(TotalVotesRegex, html);
 
-        return new ParseResult(entries, totalSessions);
+        return scoreEntries.Count > agentEntries.Count
+            ? new ParseResult(BoardKind.Score, scoreEntries, totalSessions, totalVotes)
+            : new ParseResult(BoardKind.Agent, agentEntries, totalSessions, totalVotes);
+    }
+
+    /// <summary>
+    /// 按 agent 榜的形状解析一行：六个「▲/▼ + 百分比 + ±误差」的指标。
+    /// 认不出来返回 null（那多半是分数榜的行）。
+    /// </summary>
+    private static ModelLeaderboardEntry? TryParseAgentRow(
+        string block, string name, string? organization, string? license, int rank)
+    {
+        // 指标：方向决定符号，误差按出现顺序一一对应
+        var dirVals = DirectionValueRegex.Matches(block);
+        if (dirVals.Count == 0) return null;
+
+        var margins = MarginRegex.Matches(block);
+        var metrics = new List<ModelLeaderboardMetric>();
+        for (var i = 0; i < dirVals.Count; i++)
+        {
+            if (!double.TryParse(dirVals[i].Groups[2].Value, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out var raw))
+                continue;
+
+            double? margin = null;
+            if (i < margins.Count && double.TryParse(margins[i].Groups[1].Value, NumberStyles.Float,
+                    CultureInfo.InvariantCulture, out var m))
+                margin = m;
+
+            metrics.Add(new ModelLeaderboardMetric
+            {
+                // 方向直接进符号：页面显示 ▼0.91% 就是 -0.91，前端不必再判方向
+                Value = dirVals[i].Groups[1].Value == "Down" ? -raw : raw,
+                Margin = margin,
+            });
+        }
+
+        if (metrics.Count == 0) return null;
+
+        var (rankLow, rankHigh) = ParseRankSpread(BareNumberRegex.Matches(block), skip: 1);
+
+        var entry = new ModelLeaderboardEntry
+        {
+            Rank = rank,
+            RankLow = rankLow,
+            RankHigh = rankHigh,
+            Name = name,
+            Organization = organization,
+            License = license,
+            Sessions = ParseSessions(block),
+            OutputTokens = TokensRegex.Match(block) is { Success: true } t ? t.Groups[1].Value : null,
+        };
+
+        // 六个指标按页面出现顺序对位；页面加列或少列时只填得到的那几个，不错位
+        AssignMetrics(entry, metrics);
+
+        // 美元金额按顺序：单任务成本、输入单价、输出单价
+        var dollars = DollarRegex.Matches(block);
+        if (dollars.Count > 0 && TryDouble(dollars[0].Groups[1].Value, out var cost)) entry.CostPerTask = cost;
+        if (dollars.Count > 1 && TryDouble(dollars[1].Groups[1].Value, out var pin)) entry.PriceInput = pin;
+        if (dollars.Count > 2 && TryDouble(dollars[2].Groups[1].Value, out var pout)) entry.PriceOutput = pout;
+
+        return entry;
+    }
+
+    /// <summary>
+    /// 按分数榜的形状解析一行。列位置固定：
+    /// 名次 / 名次区间 / 模型 / 分数±区间 / 票数 [/ 单价 / 上下文]。
+    ///
+    /// 按单元格取值而不是在整行里数「第几个匹配」：分数、票数、名次区间在整行里都是裸数字，
+    /// 靠出现顺序去认，对方在某一格里多包一层 span 就会整排错位
+    /// （.claude/rules/predicate-and-wiring-discipline.md 形状 1：判据要经得起等价写法）。
+    /// </summary>
+    private static ModelLeaderboardEntry? TryParseScoreRow(
+        string block, string name, string? organization, string? license, int rank)
+    {
+        var cells = CellRegex.Matches(block);
+        if (cells.Count < 5) return null;
+
+        var scoreCell = cells[3].Groups[1].Value;
+        var scoreMatch = ScoreRegex.Match(scoreCell);
+        if (!scoreMatch.Success) return null;
+
+        // 两个分支：对称的「±13」在 1-2 组，非对称的「+16/-16」在 3-5 组
+        double score, up, down;
+        if (scoreMatch.Groups[1].Success)
+        {
+            if (!TryDouble(scoreMatch.Groups[1].Value.Replace(",", ""), out score)) return null;
+            if (!TryDouble(scoreMatch.Groups[2].Value, out up)) return null;
+            down = up;
+        }
+        else
+        {
+            if (!TryDouble(scoreMatch.Groups[3].Value.Replace(",", ""), out score)) return null;
+            if (!TryDouble(scoreMatch.Groups[4].Value, out up)) return null;
+            if (!TryDouble(scoreMatch.Groups[5].Value, out down)) return null;
+        }
+
+        var (rankLow, rankHigh) = ParseRankSpread(BareNumberRegex.Matches(cells[1].Groups[1].Value), skip: 0);
+
+        var entry = new ModelLeaderboardEntry
+        {
+            Rank = rank,
+            RankLow = rankLow,
+            RankHigh = rankHigh,
+            Name = name,
+            Organization = organization,
+            License = license,
+            Score = score,
+            ScoreMarginUp = up,
+            ScoreMarginDown = down,
+            // 页面给样本不足的行打的标。不搬过来的话，3149 票的初步分和 23 万票的稳定分
+            // 在我们页面上会长得一模一样。
+            Preliminary = scoreCell.Contains(">Preliminary<", StringComparison.Ordinal),
+        };
+
+        var votes = PlainNumberRegex.Match(cells[4].Groups[1].Value);
+        if (votes.Success && long.TryParse(votes.Groups[1].Value, NumberStyles.AllowThousands,
+                CultureInfo.InvariantCulture, out var v))
+            entry.Votes = v;
+
+        // 单价与上下文只有文本类的几个榜有；图像视频榜就五列，到这里就结束了
+        if (cells.Count > 5)
+        {
+            var dollars = DollarRegex.Matches(cells[5].Groups[1].Value);
+            if (dollars.Count > 0 && TryDouble(dollars[0].Groups[1].Value, out var pin)) entry.PriceInput = pin;
+            if (dollars.Count > 1 && TryDouble(dollars[1].Groups[1].Value, out var pout)) entry.PriceOutput = pout;
+        }
+
+        if (cells.Count > 6 && ContextRegex.Match(cells[6].Groups[1].Value) is { Success: true } ctx)
+            entry.ContextWindow = ctx.Groups[1].Value;
+
+        return entry;
+    }
+
+    /// <summary>
+    /// 名次区间。agent 榜的三个裸数字是「名次、下界、上界」（skip=1 跳过名次），
+    /// 分数榜是单独一格、只有两个数（skip=0）。
+    /// </summary>
+    private static (int?, int?) ParseRankSpread(MatchCollection numbers, int skip)
+    {
+        if (numbers.Count < skip + 2) return (null, null);
+        if (!int.TryParse(numbers[skip].Groups[1].Value, out var lo)) return (null, null);
+        if (!int.TryParse(numbers[skip + 1].Groups[1].Value, out var hi)) return (null, null);
+        return lo <= hi ? (lo, hi) : (null, null);
+    }
+
+    /// <summary>厂商与授权，页面里是「Anthropic · Proprietary」这种一段式文本。</summary>
+    private static (string?, string?) ParseOrgLicense(string block)
+    {
+        var m = OrgRegex.Match(block);
+        if (!m.Success) return (null, null);
+
+        // 偶尔还有第三段（托管方，如「Moonshot · Kimi K3 license · SiliconFlow」），只取前两段
+        var parts = WebUtility.HtmlDecode(m.Groups[1].Value)
+            .Split('·', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return (parts.Length > 0 ? parts[0] : null, parts.Length > 1 ? parts[1] : null);
+    }
+
+    private static long? ParseGroupedNumber(Regex regex, string html)
+    {
+        var m = regex.Match(html);
+        return m.Success && long.TryParse(m.Groups[1].Value, NumberStyles.AllowThousands,
+            CultureInfo.InvariantCulture, out var v) ? v : null;
     }
 
     /// <summary>
