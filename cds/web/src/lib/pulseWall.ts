@@ -125,26 +125,37 @@ export function buildPulse(
 }
 
 /**
- * 线断得厉害就别只画线。
+ * 「点这么少」到底正不正常，只有跟**它自己的间隔**比才知道。
  *
- * 一条只剩零星几个点的线看起来像「数据很少」，而它真正的意思往往是
- * 「这条监控大半时间没人在查」——那句话得用文字说，不能指望人从缺口数出来。
+ * 2026-09-15 线上实测踩到的：MAP 名下多数业务监控 6 小时探一次，24 小时里本来
+ * 就只有 4 个样本。第一版拿「填充率 < 25%」判，一律写成「线是断的，大半时间
+ * 没人在查它」——对这几条是**纯属冤枉**，它们一次没漏。
+ *
+ * 这和新鲜度环是同一条道理：绝对数量没有意义，除以它自己的节奏才有。
+ * 拿不到间隔就不下这个结论（判不了就不说，别猜）。
  */
-export const PULSE_MIN_FILLED_RATIO = 0.25;
+export const PULSE_SPARSE_RATIO = 0.6;
+
+/** 按间隔算这条监控在窗口里本该有几次检查。间隔不可用时返回 null。 */
+export function expectedSamples(intervalSeconds: number | undefined, windowMs: number, buckets: number): number | null {
+  if (!intervalSeconds || intervalSeconds <= 0 || buckets <= 0) return null;
+  // 上限是桶数：探得比桶还密时，一个桶里的多次采样只会合成一个点。
+  return Math.min(buckets, Math.max(1, Math.round(windowMs / (intervalSeconds * 1000))));
+}
 
 /** 这一行有没有任何东西可画。线、孤立点，有一样就算。 */
 export function hasPulseInk(pulse: Pulse): boolean {
   return pulse.segments.length > 0 || pulse.dots.length > 0;
 }
 
-export function describePulse(pulse: Pulse): string {
+export function describePulse(pulse: Pulse, expected?: number | null): string {
   if (pulse.total === 0) return '还没有采样';
   // 「一次都没采到」与「采到了但没测出耗时」的下一步完全不同，不许合成一句。
   if (pulse.sampled === 0) return '近 24 小时一次采样都没有 —— 没人在查它';
   if (pulse.peakMs === null) return '有采样但没有测得耗时 —— 这条线画不出来';
-  const ratio = pulse.filled / pulse.total;
-  if (ratio < PULSE_MIN_FILLED_RATIO) {
-    return `近 24 小时只有 ${pulse.filled}/${pulse.total} 段有采样 —— 线是断的，大半时间没人在查它`;
+  // 只有跟它自己该有的次数比，才判得出「少」。比不了就不判（拿不到间隔时 expected 为空）。
+  if (typeof expected === 'number' && expected > 0 && pulse.filled < expected * PULSE_SPARSE_RATIO) {
+    return `本该检查 ${expected} 次，只落到 ${pulse.filled} 次 —— 中间漏过`;
   }
   const peak = pulse.peakMs >= 1000 ? `${(pulse.peakMs / 1000).toFixed(1)}s` : `${Math.round(pulse.peakMs)}ms`;
   // 全是孤立点时说清楚：那不是「线断了」，是这条监控本来就隔很久才查一次。

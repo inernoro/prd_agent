@@ -17,7 +17,7 @@ import { Activity, ArrowRight, Waves } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { formatDuration, formatRelative } from '@/lib/monitorCenter';
-import { PULSE_GEOMETRY, buildPulse, describePulse, hasPulseInk } from '@/lib/pulseWall';
+import { PULSE_GEOMETRY, buildPulse, describePulse, expectedSamples, hasPulseInk } from '@/lib/pulseWall';
 import { ENVIRONMENT_SHORT, shortPredicate, type BusinessRow, type CellHealth } from '@/lib/ownerBoard';
 
 const LINE: Record<CellHealth, string> = {
@@ -50,6 +50,10 @@ function PulseRow({
   // 多环境的行取最差那一格画线：出问题时要看的是不对的那条，不是随便一条。
   const cell = row.cells.find((c) => c.health === row.worst) ?? row.cells[0];
   const pulse = useMemo(() => buildPulse(cell?.buckets ?? []), [cell?.buckets]);
+  // 「点这么少正不正常」只有跟它自己的间隔比才知道 —— 6 小时探一次的监控在 24 小时里
+  // 本来就只有四个点，那不是断线。
+  const expected = expectedSamples(cell?.intervalSeconds, 24 * 3600 * 1000, pulse.total);
+  const everyLabel = cell?.intervalSeconds ? `每 ${formatDuration(cell.intervalSeconds * 1000)}` : '';
   const ModeIcon = row.observeMode === 'passive' ? Waves : ArrowRight;
   const stroke = LINE[row.worst];
 
@@ -72,9 +76,17 @@ function PulseRow({
             ))}
           </div>
         </div>
-        <span className="truncate font-mono text-[0.625rem] text-muted-foreground">
-          {row.probe ? shortPredicate(row.probe) : '没有写判据'}
-        </span>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="truncate font-mono text-[0.625rem] text-muted-foreground">
+            {row.probe ? shortPredicate(row.probe) : '没有写判据'}
+          </span>
+          {/* 间隔摆在这里，四个孤立点才读得懂：它不是断线，是它本来就隔这么久查一次 */}
+          {everyLabel ? (
+            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] px-1 font-mono text-[0.625rem] leading-4 text-muted-foreground">
+              {everyLabel}
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div className="relative h-11">
@@ -115,14 +127,14 @@ function PulseRow({
           </svg>
         ) : (
           <div className="flex h-11 items-center">
-            <span className="font-mono text-[0.625rem] text-muted-foreground">{describePulse(pulse)}</span>
+            <span className="font-mono text-[0.625rem] text-muted-foreground">{describePulse(pulse, expected)}</span>
           </div>
         )}
-        {/* 形状读数：线画出来了也要说清它是什么形状——四个孤立点和一条连续线，
-            在图上长得差很远，但都「有东西」，光看图容易读成同一回事。 */}
-        {hasPulseInk(pulse) && pulse.segments.length === 0 ? (
-          <span className="pointer-events-none absolute left-0 top-0 font-mono text-[0.625rem] text-muted-foreground">
-            {describePulse(pulse)}
+        {/* 只有「真的漏过」才出话。以前不管三七二十一都盖一句「线是断的」，
+            对 6 小时探一次的监控纯属冤枉——它一次没漏。 */}
+        {hasPulseInk(pulse) && typeof expected === 'number' && pulse.filled < expected * 0.6 ? (
+          <span className="pointer-events-none absolute right-0 top-0 rounded bg-warn-soft px-1 font-mono text-[0.625rem] text-warn">
+            {describePulse(pulse, expected)}
           </span>
         ) : null}
         {/* 节拍点：探测器在跑时它跳，停摆时它不跳也不亮 */}

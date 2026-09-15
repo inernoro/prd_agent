@@ -12,7 +12,8 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  PULSE_GEOMETRY, buildPulse, describePulse, hasPulseInk, buildBlindspotMap, describeBlindspots,
+  PULSE_GEOMETRY, buildPulse, describePulse, expectedSamples, hasPulseInk,
+  buildBlindspotMap, describeBlindspots,
 } from '../../web/src/lib/pulseWall.js';
 import type { MonitorEnvironment, UptimeBucket, UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
 
@@ -107,9 +108,37 @@ describe('脉搏墙：缺口就是证据', () => {
     expect(pulse.downs).toHaveLength(1);
   });
 
-  it('线断得厉害要用文字说，不能指望人从缺口数出来', () => {
-    const buckets = [bucket(), bucket(), ...Array.from({ length: 18 }, empty)];
-    expect(describePulse(buildPulse(buckets))).toContain('线是断的');
+  /*
+   * 2026-09-15 线上实测的冤案：MAP 名下多数监控 6 小时探一次，24 小时里本来就只有
+   * 4 个样本，第一版拿「填充率 < 25%」一律判「大半时间没人在查它」——它们一次没漏。
+   * 「少」只有跟它自己该有的次数比才成立。
+   */
+  it('按自己的间隔算，该有几次就是几次 —— 不拿绝对数量判「断」', () => {
+    const day = 24 * 3600 * 1000;
+    expect(expectedSamples(6 * 3600, day, 90)).toBe(4);
+    expect(expectedSamples(60, day, 90)).toBe(90);      // 探得比桶密，上限是桶数
+    expect(expectedSamples(undefined, day, 90)).toBeNull();
+    expect(expectedSamples(0, day, 90)).toBeNull();
+  });
+
+  it('6 小时探一次的监控只有 4 个点，不算漏', () => {
+    const buckets = [bucket(), ...Array.from({ length: 20 }, empty), bucket(),
+      ...Array.from({ length: 20 }, empty), bucket(), ...Array.from({ length: 20 }, empty), bucket()];
+    const pulse = buildPulse(buckets);
+    expect(pulse.filled).toBe(4);
+    expect(describePulse(pulse, 4)).not.toContain('漏过');
+  });
+
+  it('该有 90 次只落到 2 次，才叫漏过', () => {
+    const pulse = buildPulse([bucket(), bucket(), ...Array.from({ length: 88 }, empty)]);
+    expect(describePulse(pulse, 90)).toContain('漏过');
+  });
+
+  // 判不了就不说：拿不到间隔时不许猜一个结论出来。
+  it('拿不到间隔就不下「漏过」这个结论', () => {
+    const pulse = buildPulse([bucket(), bucket(), ...Array.from({ length: 88 }, empty)]);
+    expect(describePulse(pulse, null)).not.toContain('漏过');
+    expect(describePulse(pulse)).not.toContain('漏过');
   });
 });
 
