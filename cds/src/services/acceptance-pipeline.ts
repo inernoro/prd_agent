@@ -333,6 +333,10 @@ export function buildPipelineOverview(
         touch(r.createdAt);
         continue;
       }
+      // 对不上改动，但它确确实实是这个项目刚归档的一份报告——活跃时间要算上它。
+      // 不算的话，一个项目「昨天刚验过、只是分支已被回收」会显示成「最近动静：无」
+      //（Codex review 抓到）。
+      touch(r.createdAt);
       staleReports += 1;
     }
 

@@ -177,6 +177,8 @@ export function ReportsPage(): JSX.Element {
   const [pipelineState, setPipelineState] = useState<PipelineState>({ status: 'loading' });
   /** 流水线请求的代次。后发的请求让先发的作废，防止慢响应盖掉新结果。 */
   const pipelineReqRef = useRef(0);
+  /** 结论聚合请求的代次。同上——切项目 / 切档位时防止慢响应盖掉新结果。 */
+  const overviewReqRef = useRef(0);
   const [overviewDays, setOverviewDays] = useState<OverviewWindow>(readOverviewWindow);
   useEffect(() => { sessionStorage.setItem('cds-report-overview-days', String(overviewDays)); }, [overviewDays]);
 
@@ -209,11 +211,23 @@ export function ReportsPage(): JSX.Element {
   // 聚合作用域跟随「项目筛选」：URL 的 ?project= 优先；否则用筛选菜单的选择（self = 只看 CDS 自身）。
   const overviewScope = projectId || (activeProjectFilter === 'all' ? '' : activeProjectFilter === 'self' ? '__self__' : activeProjectFilter);
   const loadOverview = useCallback(async () => {
+    /*
+     * 与流水线同一套代次保护：后发的请求让先发的作废。
+     *
+     * 快速切项目或切档位时会有两个请求在飞，慢的那个后回来就会盖掉新的——
+     * 选中的是 A 项目，屏幕上却是 B 项目（或全局）的结论，而且不报错。
+     * 上一轮只给 loadPipeline 加了这层保护，它的兄弟函数原样留着，
+     * 又是「同一条判断只修了一面」（Codex review 抓到）。
+     */
+    const gen = (overviewReqRef.current += 1);
+    const superseded = (): boolean => overviewReqRef.current !== gen;
     setOverviewState({ status: 'loading' });
     try {
       const overview = await fetchReportsOverview({ projectId: overviewScope || undefined, days: overviewDays });
+      if (superseded()) return;
       setOverviewState({ status: 'ok', overview });
     } catch (err) {
+      if (superseded()) return;
       setOverviewState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [overviewScope, overviewDays]);

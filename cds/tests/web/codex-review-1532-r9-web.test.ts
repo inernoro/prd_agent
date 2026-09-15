@@ -74,3 +74,26 @@ describe('后发的请求让先发的作废', () => {
     expect(loadPipeline).toMatch(/fetchReportsPipeline\(\{ recentDays: wantDays \}\)/);
   });
 });
+
+/**
+ * Codex review 第十一轮：loadPipeline 的兄弟函数 loadOverview 还没有同样的保护。
+ * 快速切项目时，慢的那个响应会盖掉新的——选中 A 项目、屏幕上是 B 项目的结论。
+ */
+describe('结论聚合也要有代次保护', () => {
+  const loadOverview = (() => {
+    const start = page.indexOf('const loadOverview = useCallback(');
+    expect(start, '找不到 loadOverview').toBeGreaterThan(0);
+    return page.slice(start, page.indexOf('const loadPipeline = useCallback(', start));
+  })();
+
+  it('有自己的代次 ref，不与流水线共用一个计数器', () => {
+    // 共用的话，一次流水线请求会把在飞的结论请求也作废掉，反过来也是。
+    expect(page).toMatch(/const overviewReqRef = useRef\(0\);/);
+    expect(loadOverview).toMatch(/const gen = \(overviewReqRef\.current \+= 1\);/);
+  });
+
+  it('成功与失败两条路都丢弃过期响应', () => {
+    const hits = [...loadOverview.matchAll(/if \(superseded\(\)\) return;/g)];
+    expect(hits, `只挡了 ${hits.length} 处，成功与失败都要挡`).toHaveLength(2);
+  });
+});

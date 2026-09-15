@@ -958,6 +958,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     if (title === undefined && content === undefined && !hasFormat && !hasFolder && !hasMeta) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
     }
+    // 空正文与创建路由同一口径：那边拒，这边也拒。
+    // 放行的话，配了对象存储的实例上会走成「put 收不下空正文 → objectKey 被清掉 →
+    // 标成 local」——元数据还在、正文只剩一个空的本地文件，容器一重建就是又一条
+    // 点不开的幽灵记录，而接口回的是 200（Codex review 抓到）。
+    if (content !== undefined && !String(content).trim()) {
+      return res.status(400).json({ error: 'missing_content', message: '报告内容为空（请粘贴内容或上传文件）' });
+    }
     if (content !== undefined && exceedsCap(content)) {
       return res.status(413).json({ error: 'content_too_large', message: `报告内容超过上限（${MAX_CONTENT_BYTES / 1024 / 1024}MB）` });
     }

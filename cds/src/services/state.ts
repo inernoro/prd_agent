@@ -5277,6 +5277,21 @@ export class StateService {
    */
   private async persistAcceptanceReportContent(meta: AcceptanceReportMeta, content: string): Promise<void> {
     const objectKey = await this.reportObjects.put(meta, content);
+    /*
+     * 配了对象存储，就不许再退回本地。
+     *
+     * put 返回 null 只有两种成因：没配（那是有意只用本地），或者正文为空被拒收。
+     * 后者在配了对象存储的实例上会一路走成「objectKey 被清掉 + storage='local'」——
+     * 元数据完好、正文只剩一个空的本地文件，重建即成幽灵，而接口回 200。
+     * 这正是本轮要根除的形状，所以在这里当场拒绝，而不是如实标个 local 就算交代
+     *（Codex review 抓到）。路由层也拦了一道空正文，这里是纵深。
+     */
+    if (!objectKey && this.reportObjects.isConfigured()) {
+      throw new Error(
+        '对象存储已配置，但这份正文没有被收下（多半是正文为空）。'
+        + '拒绝退回本地盘：那会留下一条重建即打不开的记录。',
+      );
+    }
     meta.objectKey = objectKey;
     meta.storage = objectKey ? 'object' : 'local';
     const cachePath = this.reportFilePath(meta);
