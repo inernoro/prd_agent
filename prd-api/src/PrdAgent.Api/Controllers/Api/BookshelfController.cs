@@ -274,9 +274,11 @@ public class BookshelfController : ControllerBase
         // 提示词改版后旧稿子不再复用：PromptVersion 这个字段如果没人读，它就只是一条
         // 记下来给人看的备注，改了提示词还得靠人记得「哪些该重生成」——而人不会记得。
         // 判据放在服务端是因为稿子是公共内容，只有这里能保证所有入口口径一致。
+        // 无论走不走复用都要先读一次：重写那一篇必须沿用库里那份的 _id（见文末保存处）。
+        var existing = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
+
         if (!force)
         {
-            var existing = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
             var fresh = existing != null
                 && string.Equals(existing.PromptVersion, BookshelfDigestPrompt.Version, StringComparison.Ordinal);
             if (fresh && !string.IsNullOrWhiteSpace(existing!.Content))
@@ -370,6 +372,16 @@ public class BookshelfController : ControllerBase
 
         var digest = new BookDigest
         {
+            /*
+             * 沿用库里那份的 _id。BookDigest 的 Id 默认是 Guid.NewGuid()，直接拿新对象去
+             * ReplaceOne 一份已存在的文档，Mongo 会以 code 66 拒绝：「_id 是不可变字段」。
+             *
+             * 这个洞从第一版就在，而且只在「重写」时才现形——首次生成走的是 upsert 的
+             * insert 分支，_id 是新的没问题；第二次起每一次都炸，异常又发生在 SSE 已经
+             * 开始输出之后，ExceptionMiddleware 想改 header 再炸一次，于是前端只看到流
+             * 无声断掉、库里还是旧的那篇。三次「重新生成」全部石沉大海，日志里才有真相。
+             */
+            Id = existing?.Id ?? Guid.NewGuid().ToString("N"),
             BookId = id,
             Content = content,
             PromptVersion = BookshelfDigestPrompt.Version,
@@ -383,11 +395,25 @@ public class BookshelfController : ControllerBase
         // 一本书一篇，整篇替换。upsert 而不是 insert：「重新生成」走同一条路，
         // 不该在库里堆出两篇。
         // 同样用 None：读者退出页面不该让「已经写完的那一篇」写不进库（server-authority 规则 1）。
-        await _db.BookDigests.ReplaceOneAsync(
-            x => x.BookId == id,
-            digest,
-            new ReplaceOptions { IsUpsert = true },
-            CancellationToken.None);
+        try
+        {
+            await _db.BookDigests.ReplaceOneAsync(
+                x => x.BookId == id,
+                digest,
+                new ReplaceOptions { IsUpsert = true },
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            /*
+             * 写库炸在 SSE 已经开始输出之后：异常一路冒到 ExceptionMiddleware，它想改
+             * Content-Type 又炸一次「Headers are read-only」，最终前端看到的是流无声断掉。
+             * 在这里兜住，至少让读者知道「稿子写完了但没存下」，而不是对着半截屏幕猜。
+             */
+            _logger.LogError(ex, "精读稿写库失败 BookId={BookId}", id);
+            await WriteDigestEventAsync("error", new { code = "SAVE_FAILED", message = "稿子写完了但没能存下，重试一次" }, ct);
+            return;
+        }
 
         await WriteDigestEventAsync("done", new
         {

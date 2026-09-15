@@ -3,3 +3,4 @@
 | fix | prd-api | 精读稿提示词分开材料用途：规则材料只供第三段，前两段只讲这本书 |
 | fix | prd-api | 提示词版本升 v2，旧版稿子不再复用，进页自动重写 |
 | fix | prd-api | 精读稿生成改用 CancellationToken.None，读者中途退出不再掐断整篇生成 |
+| fix | prd-api | 精读稿重写时沿用库里那份 _id，修复 Mongo code 66 导致「重新生成」永远存不下 |
