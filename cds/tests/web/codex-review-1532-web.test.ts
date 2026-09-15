@@ -82,6 +82,10 @@ describe('报告增删之后，流水线要跟着重算', () => {
   });
 
   it('静默刷新失败时保留原内容，不把一屏图换成一行报错', () => {
-    expect(src).toMatch(/quiet && prev\.status === 'ok'/);
+    // 这条原先钉的是 `quiet && prev.status === 'ok'` 的字面量。第九轮给它加了一个
+    // 「必须是同一档」的前提（换档失败不许静默保留，否则按钮在撒谎），字面量随之失效。
+    // 断言改回意图：失败分支里存在「quiet 时保留 prev」这条路，具体条件由
+    // codex-review-1532-r9-web 那份守卫钉住——不然这条会反过来把旧缺陷锁死。
+    expect(src).toMatch(/quiet && sameWindow\(prev\)\s*\n?\s*\? prev/);
   });
 });

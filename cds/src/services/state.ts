@@ -5714,18 +5714,27 @@ export class StateService {
     } catch {
       // Content file may already be gone — metadata removal still proceeds.
     }
-    if (meta.objectKey) {
-      // 删元数据是同步的，删对象是异步的：这里不阻塞。失败只会在桶里留一个
-      // 没人引用的对象（占空间，不是数据丢失），所以记一条日志就够，
-      // 绝不能因为删远端失败就把元数据留下——那又造出一条幽灵记录。
-      const key = meta.objectKey;
-      void this.reportObjects.remove(key).catch((err) => {
-        // eslint-disable-next-line no-console
-        console.warn('[reports] 对象存储正文删除失败，已留下孤儿对象', { objectKey: key, error: String(err) });
-      });
-    }
+    const orphanKey = meta.objectKey || null;
     this.state.acceptanceReports = all.filter((r) => r.id !== id);
     this.save();
+    if (orphanKey) {
+      /*
+       * 顺序是有讲究的：**先删元数据，再删对象**，而且删对象不阻塞。
+       *
+       * 反过来（先删对象）有一个窗口：save() 是写后即返回的（Mongo 后端排队写），
+       * 对象已经没了而那次写盘失败或者进程退出，重启后元数据还在、还指着一个
+       * 被删掉的键——这条报告从此永远打不开。反之，先删元数据就算删对象失败，
+       * 也只是在桶里留一个没人引用的孤儿（占空间，不是数据丢失）。
+       * 两者不对等，所以宁可留孤儿（Codex review 抓到）。
+       *
+       * 这和「改格式时不删旧对象」是同一条判断的两面：任何删除都排在
+       * 元数据落定之后，桶里的孤儿统一等一次回收（判据见 doc/debt.cds.md）。
+       */
+      void this.reportObjects.remove(orphanKey).catch((err) => {
+        // eslint-disable-next-line no-console
+        console.warn('[reports] 对象存储正文删除失败，已留下孤儿对象', { objectKey: orphanKey, error: String(err) });
+      });
+    }
     return true;
   }
 

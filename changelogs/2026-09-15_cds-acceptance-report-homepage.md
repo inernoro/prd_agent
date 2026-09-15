@@ -110,3 +110,8 @@
 | refactor | cds | splitFunnel 从 CompactStrip 挪进 lib，图 / 明细行 / 判断句共用同一个函数，lib 不再被 pages 倒挂 |
 | docs | cds | debt.cds.md 记一笔：报告旧版本对象改为留存，欠一次可重跑的孤儿回收 |
 | test | cds | 新增 10 条守卫，三条篡改逐一验过会红 |
+| fix | cds | 预览实例清洗补齐 R2 成组凭据：此前只删两把密钥、留下 ENDPOINT 与 BUCKET，被清洗成「四缺二」触发配置事故判据，子实例开不了机（实测 /healthz 503） |
+| fix | cds | 删报告改为先落元数据再删远端对象，避免对象已删而元数据写盘失败导致报告永远打不开 |
+| fix | cds | 换时间窗失败时不再静默保留旧数据：保留只对同一档的刷新成立，换档失败照实报错 |
+| docs | cds | debt.cds.md 记一笔：storage='local' 标记未端到用户眼前 |
+| test | cds | 新增 10 条守卫，四条篡改逐一验过会红；其中一条端到端复现「子实例开不了机」 |

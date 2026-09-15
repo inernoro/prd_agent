@@ -221,6 +221,8 @@ export function ReportsPage(): JSX.Element {
    * 首次进入没有内容可保留，才走 loading。
    */
   const loadPipeline = useCallback(async (quiet = false) => {
+    // 这一次请求要的是哪一档。失败时用它判「静默保留」还不成立——见下面那段。
+    const wantDays = overviewDays;
     if (!quiet) setPipelineState({ status: 'loading' });
     try {
       // 时间窗要真的传下去。首页渲染的是流水线，不是 overview——只把 days 喂给
@@ -230,9 +232,17 @@ export function ReportsPage(): JSX.Element {
       const { pipeline, series } = await fetchReportsPipeline({ recentDays: overviewDays });
       setPipelineState({ status: 'ok', pipeline, series });
     } catch (err) {
-      // 静默刷新失败时保留原有内容：把一屏已经读得懂的图换成一行报错，
-      // 对读者是净损失。首次加载失败才有必要把错误顶上来。
-      setPipelineState((prev) => (quiet && prev.status === 'ok'
+      /*
+       * 静默刷新失败时保留原有内容：把一屏已经读得懂的图换成一行报错，对读者是净损失。
+       *
+       * 但「保留」只对**同一档**的刷新成立。换档失败还保留的话，按钮已经跳到「近 7 天」
+       * 而屏幕上还是 30 天那份数据，既没报错也没有任何陈旧提示——按钮在撒谎
+       *（Codex review 抓到）。所以再加一条：这次请求要的档位必须等于屏幕上那份数据
+       * 实际所用的档位（后端在 pipeline.recentDays 里如实回传），否则一律把错误顶上来。
+       */
+      const sameWindow = (prev: PipelineState): boolean => prev.status === 'ok'
+        && (prev.pipeline.recentDays ?? null) === (wantDays ?? null);
+      setPipelineState((prev) => (quiet && sameWindow(prev)
         ? prev
         : { status: 'error', message: err instanceof ApiError ? err.message : String(err) }));
     }
