@@ -2444,34 +2444,32 @@ public class ModelResolver : IModelResolver
             envApiKey);
     }
 
-    private ModelGroupItem? SelectBestModel(ModelGroup group)
+    /// <summary>
+    /// 池成员的发送顺序——**调权威判据**，不在这里另写一遍。
+    ///
+    /// 「健康优先 → 顺位」这一句在 2026-09-15 之前，这个文件里就有两份（池的重试候选、
+    /// 内存实现），加上无人调用的 SelectBestModel 和控制台镜像，全仓一共四份。
+    /// 判据分裂各自漂移是本仓库反复吃过亏的形状 3，所以统一收到 GatewayRouteSelection。
+    ///
+    /// Id 传的是**补零的下标**：权威判据最后一级 tie-break 按 Id 的序数序排，
+    /// 补零下标的序数序就是原数组顺序——同顺位同健康的成员，谁先谁后与改之前一模一样。
+    /// 这是刻意的：这次是减枝不是改行为，池成员的发送次序不许在这一刀里悄悄变。
+    /// </summary>
+    internal static List<ModelGroupItem> OrderPoolMembers(IReadOnlyList<ModelGroupItem>? members)
     {
-        if (group.Models == null || group.Models.Count == 0)
-            return null;
-
-        // 优先选择健康的模型，按优先级排序
-        var healthy = group.Models
-            .Where(m => m.HealthStatus == ModelHealthStatus.Healthy)
-            .OrderBy(m => m.Priority)
-            .FirstOrDefault();
-
-        if (healthy != null)
-            return healthy;
-
-        // 其次选择降权的模型
-        var degraded = group.Models
-            .Where(m => m.HealthStatus == ModelHealthStatus.Degraded)
-            .OrderBy(m => m.Priority)
-            .FirstOrDefault();
-
-        if (degraded != null)
-            return degraded;
-
-        // 最后选择任意可用模型（排除 Unavailable）
-        return group.Models
-            .Where(m => m.HealthStatus != ModelHealthStatus.Unavailable)
-            .OrderBy(m => m.Priority)
-            .FirstOrDefault();
+        if (members is null || members.Count == 0) return [];
+        var candidates = members
+            .Select((m, i) => new GatewayRouteSelection.RouteCandidate(
+                Id: i.ToString("D6"),
+                Priority: m.Priority,
+                Weight: 100,
+                HealthStatus: (int)m.HealthStatus,
+                Enabled: true))
+            .ToList();
+        return GatewayRouteSelection
+            .Queue(candidates, weighted: false, seed: 0)
+            .Select(x => members[int.Parse(x.Id)])
+            .ToList();
     }
 
     private async Task<List<ModelGroupItem>> SelectProviderRetryCandidatesAsync(
@@ -2483,11 +2481,7 @@ public class ModelResolver : IModelResolver
         if (group.Models == null || group.Models.Count == 0)
             return [];
 
-        var candidates = group.Models
-            .Where(m => m.HealthStatus != ModelHealthStatus.Unavailable)
-            .OrderBy(m => m.HealthStatus == ModelHealthStatus.Healthy ? 0 : 1)
-            .ThenBy(m => m.Priority)
-            .ToList();
+        var candidates = OrderPoolMembers(group.Models);
 
         if (includeAllAvailable)
         {
@@ -3246,11 +3240,6 @@ public class ModelResolver : IModelResolver
         };
     }
 
-    internal static bool NeedsModelConfigFallback(ModelGroupItem model)
-        => string.IsNullOrWhiteSpace(model.Protocol)
-           || model.Capabilities is null
-           || model.Capabilities.Count == 0;
-
     #endregion
 }
 
@@ -3432,11 +3421,7 @@ public class InMemoryModelResolver : IModelResolver
         {
             var selectedModels = preferredGroup != null && group.Id == preferredGroup.Id
                 ? (preferredItem is null ? [] : new List<ModelGroupItem> { preferredItem })
-                : group.Models?
-                    .Where(m => m.HealthStatus != ModelHealthStatus.Unavailable)
-                    .OrderBy(m => m.HealthStatus == ModelHealthStatus.Healthy ? 0 : 1)
-                    .ThenBy(m => m.Priority)
-                    .ToList() ?? [];
+                : ModelResolver.OrderPoolMembers(group.Models);
             if (!allowProviderRetryCandidates && selectedModels.Count > 1)
                 selectedModels = [selectedModels[0]];
 
