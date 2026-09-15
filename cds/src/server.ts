@@ -1,4 +1,5 @@
 import express from 'express';
+import { isHostedSitePreviewRequest, omitHostedSitePreviewBody, redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -51,10 +52,13 @@ import { createCdsSystemConnectionsRouter } from './routes/cds-system-connection
 import { sha256Hex } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createCdsSystemOffsiteBackupRouter } from './routes/cds-system-offsite-backup.js';
+import { createCdsSystemSealedStorageRouter } from './routes/cds-system-sealed-storage.js';
+import { defaultEnvFilePath } from './services/env-file.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
 import { createInfraBackupRouter } from './routes/infra-backup.js';
 import { createInfraDataRouter } from './routes/infra-data.js';
+import { createInfraCredentialRotationRouter } from './routes/infra-credential-rotation.js';
 import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createCommentTemplateRouter } from './routes/comment-template.js';
@@ -113,6 +117,7 @@ import {
   parseHttpLogLayer,
   parseHttpRequestKindValue,
   redactHeaders,
+  selectRequestBodyForHttpLog,
   type ActiveHttpRequestRecord,
   type HttpActiveRequestFilter,
   type HttpLogRecord,
@@ -122,6 +127,12 @@ import {
 import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } from './services/server-event-log-store.js';
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
+import { InfraCredentialRotationService } from './services/infra-credential-rotation.js';
+import {
+  CdsRotationConsumerCoordinator,
+  ProjectSharedCredentialRotationBackend,
+  StateInfraCredentialRotationStore,
+} from './services/infra-credential-rotation-runtime.js';
 import { isPreviewInstance } from './services/preview-instance.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import {
@@ -559,6 +570,67 @@ function makeToken(user: string, pass: string): string {
   return crypto.createHash('sha256').update(`cds:${user}:${pass}`).digest('hex');
 }
 
+function issueHumanSessionToken(user: string, pass: string, nowMs = Date.now()): string {
+  const issuedAt = Math.floor(nowMs / 1000).toString(36);
+  const signature = crypto.createHmac('sha256', pass)
+    .update(`cds:human-session:v1:${user}:${issuedAt}`)
+    .digest('hex');
+  return `${issuedAt}.${signature}`;
+}
+
+function verifyHumanSessionToken(
+  token: string | undefined,
+  user: string,
+  pass: string,
+  ttlMs: number,
+  nowMs = Date.now(),
+): boolean {
+  if (!token) return false;
+  const [issuedAtRaw, signature, ...extra] = token.split('.');
+  if (!issuedAtRaw || !signature || extra.length > 0) return false;
+  const issuedAtSeconds = Number.parseInt(issuedAtRaw, 36);
+  if (!Number.isSafeInteger(issuedAtSeconds)) return false;
+  const ageMs = nowMs - issuedAtSeconds * 1000;
+  if (ageMs < 0 || ageMs > ttlMs) return false;
+  const expected = issueHumanSessionToken(user, pass, issuedAtSeconds * 1000);
+  return tokenMatches(token, expected);
+}
+
+function tokenMatches(actual: string | undefined, expected: string): boolean {
+  if (!actual || !expected) return false;
+  const actualBytes = Buffer.from(actual, 'utf8');
+  const expectedBytes = Buffer.from(expected, 'utf8');
+  return actualBytes.length === expectedBytes.length
+    && crypto.timingSafeEqual(actualBytes, expectedBytes);
+}
+
+function normalizedSealedStoragePath(value: unknown): string | null {
+  let pathname = String(value || '').split('?')[0].toLowerCase();
+  if (pathname.startsWith('/_cds/api/')) pathname = pathname.slice('/_cds'.length);
+  if (pathname.length > 1 && pathname.endsWith('/')) pathname = pathname.slice(0, -1);
+  return pathname === '/api/cds-system/sealed-storage'
+    || pathname === '/api/cds-system/sealed-storage/initialize'
+    ? pathname
+    : null;
+}
+
+function isSealedStorageRequest(req: express.Request): boolean {
+  return [req.url, req.originalUrl].some((value) => normalizedSealedStoragePath(value) !== null);
+}
+
+function requestPathForLogs(req: express.Request, res: express.Response): string {
+  const raw = req.originalUrl || req.url || '/';
+  if (!(res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return redactHostedSitePreviewLog(raw);
+  return normalizedSealedStoragePath(req.url)
+    ?? normalizedSealedStoragePath(raw)
+    ?? '/api/cds-system/sealed-storage';
+}
+
+function requestHeadersForLogs(req: express.Request, res: express.Response): Record<string, string> {
+  if ((res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails) return {};
+  return redactHeaders(req.headers) ?? {};
+}
+
 function legacyAuthUser(username: string, authMode: 'disabled' | 'basic') {
   return {
     id: authMode === 'basic' ? `basic:${username}` : 'anonymous',
@@ -808,6 +880,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /cds-system/offsite-backup': '查询离机备份配置',
     'PUT /cds-system/offsite-backup': '保存离机备份配置',
     'POST /cds-system/offsite-backup/test': '实测离机备份配置',
+    'GET /cds-system/sealed-storage': '查询密封存储',
+    'POST /cds-system/sealed-storage/initialize': '初始化密封存储',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
     'GET /cds-system/github/app-whitelist': '获取 GitHub 白名单',
     'PUT /cds-system/github/app-whitelist': '更新 GitHub 白名单',
@@ -1228,6 +1302,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/infra\/(.+)\/backup$/, '下载数据库备份'],
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
+    [/^GET \/projects\/[^/]+\/infra\/[^/]+\/credential-rotation$/, '查看共享凭据轮换'],
+    [/^POST \/projects\/[^/]+\/infra\/[^/]+\/credential-rotation$/, '执行共享凭据轮换'],
     [/^GET \/projects\/[^/]+\/backup-health$/, '查看周期备份'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
     [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
@@ -1706,6 +1782,24 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
 
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
+  const credentialRotationService = new InfraCredentialRotationService(
+    new StateInfraCredentialRotationStore(deps.stateService),
+    new ProjectSharedCredentialRotationBackend(
+      deps.stateService,
+      new CdsRotationConsumerCoordinator(deps.stateService, deps.config),
+      undefined,
+      undefined,
+      {
+        recreate: async (service) => {
+          await deps.containerService.stopInfraService(service.containerName);
+          await deps.containerService.startInfraService(service, deps.stateService.getCustomEnv(service.projectId));
+          deps.stateService.updateInfraService(service.id, { status: 'running', errorMessage: undefined }, service.projectId);
+          deps.stateService.save();
+          await deps.stateService.flush();
+        },
+      },
+    ),
+  );
   const deploymentRunService = new DeploymentRunService(deps.stateService);
   const deploymentVersionService = new DeploymentVersionService(deps.stateService);
   const managedProjectService = new ManagedProjectService(deps.stateService);
@@ -1828,6 +1922,17 @@ export function createServer(deps: ServerDeps): express.Express {
     }
     next();
   });
+  // 密封存储初始化端点永远不接收客户端材料。必须在任何 body parser 和认证
+  // 之前识别并脱敏；否则畸形或超限 JSON 会在 Express 解析阶段提前失败，
+  // 让请求内容绕过路由级保护。匹配语义与 Express 默认的大小写/尾斜杠一致。
+  app.use((req, res, next) => {
+    if (isSealedStorageRequest(req)) {
+      (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog = true;
+      (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails = true;
+      (res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity = true;
+    }
+    next();
+  });
   // `verify` is called with the raw buffer before body-parser parses it.
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
@@ -1845,6 +1950,7 @@ export function createServer(deps: ServerDeps): express.Express {
     },
   });
   app.use((req, res, next) => {
+    if (isSealedStorageRequest(req)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     return globalJsonParser(req, res, next);
@@ -2067,7 +2173,12 @@ export function createServer(deps: ServerDeps): express.Express {
   // Assign a request id before auth so 401/403/400 responses are also
   // traceable from browser Network details and systemd logs.
   app.use('/api', (req, res, next) => {
-    const existing = String(req.headers['x-cds-request-id'] || '').trim();
+    const suppressRequestDetails = Boolean(
+      (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
+    );
+    const existing = suppressRequestDetails
+      ? ''
+      : String(req.headers['x-cds-request-id'] || '').trim();
     const requestId = existing || createRequestId();
     (req as any).cdsRequestId = requestId;
     res.locals.cdsRequestId = requestId;
@@ -2087,14 +2198,20 @@ export function createServer(deps: ServerDeps): express.Express {
       console.warn('[api] request failed before activity middleware', {
         requestId,
         method: req.method,
-        path: req.originalUrl || req.url,
+        path: requestPathForLogs(req, res),
         status: res.statusCode,
-        remoteAddr: (req.headers['cf-connecting-ip'] as string)
-          || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
-          || req.ip
-          || req.socket?.remoteAddress,
-        referer: req.headers['referer'] || req.headers['origin'],
-        userAgent: req.headers['user-agent'],
+        remoteAddr: suppressRequestDetails
+          ? undefined
+          : (req.headers['cf-connecting-ip'] as string)
+            || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+            || req.ip
+            || req.socket?.remoteAddress,
+        referer: suppressRequestDetails
+          ? undefined
+          : redactHostedSitePreviewLog(String(req.headers['referer'] || req.headers['origin'] || '')) || undefined,
+        userAgent: suppressRequestDetails
+          ? undefined
+          : req.headers['user-agent'],
       });
     });
     next();
@@ -2103,9 +2220,12 @@ export function createServer(deps: ServerDeps): express.Express {
   // Persistent HTTP log for master/dashboard requests. This intentionally
   // writes one Mongo document per request, never an array inside cds_state.
   app.use((req, res, next) => {
+    const suppressRequestDetails = Boolean(
+      (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
+    );
     const requestId =
       (req as any).cdsRequestId
-      || String(req.headers['x-cds-request-id'] || '').trim()
+      || (suppressRequestDetails ? '' : String(req.headers['x-cds-request-id'] || '').trim())
       || createRequestId();
     (req as any).cdsRequestId = requestId;
     res.locals.cdsRequestId = requestId;
@@ -2117,7 +2237,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const requestKind = classifyHttpRequestKind({
       layer: 'master',
       method: req.method || 'GET',
-      path: req.originalUrl || req.url || '/',
+      path: requestPathForLogs(req, res),
       headers: req.headers,
     });
     const activeRequestId = deps.httpLogStore?.beginActive?.({
@@ -2125,12 +2245,14 @@ export function createServer(deps: ServerDeps): express.Express {
       requestKind,
       requestId,
       method: req.method || 'GET',
-      protocol: String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
-      host: String(req.headers.host || ''),
-      path: req.originalUrl || req.url || '/',
-      remoteAddr: getRemoteAddr(req),
+      protocol: suppressRequestDetails
+        ? undefined
+        : String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
+      host: suppressRequestDetails ? undefined : String(req.headers.host || ''),
+      path: requestPathForLogs(req, res),
+      remoteAddr: suppressRequestDetails ? undefined : getRemoteAddr(req),
       request: {
-        headers: redactHeaders(req.headers),
+        headers: requestHeadersForLogs(req, res),
       },
     });
     let activeCompleted = false;
@@ -2149,9 +2271,10 @@ export function createServer(deps: ServerDeps): express.Express {
       activeCleanupTimer = setTimeout(completeActiveRequest, 60_000);
       activeCleanupTimer.unref?.();
     };
-    const requestCapture = createBodyCapture(undefined, req.headers['content-type']);
+    const suppressPreviewBody = [req.originalUrl, req.url].some((value) => isHostedSitePreviewRequest(value || '/'));
+    const requestCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined, req.headers['content-type']);
     req.on('data', (chunk: Buffer | string) => requestCapture.onChunk(chunk));
-    const responseCapture = createBodyCapture();
+    const responseCapture = createBodyCapture(suppressPreviewBody ? 0 : undefined);
     const origWrite = res.write.bind(res);
     const origEnd = res.end.bind(res);
     (res as any).write = function (chunk: unknown, ...args: unknown[]) {
@@ -2176,8 +2299,15 @@ export function createServer(deps: ServerDeps): express.Express {
       if (res.locals.cdsSkipHttpLog === true) return;
       const status = res.statusCode || 0;
       const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
-      const parsedReqBody = bodyPreviewFromUnknown(req.body, req.headers['content-type']);
-      const reqBody = capturedReqBody.bodyBytes > 0 ? capturedReqBody : parsedReqBody;
+      const parsedReqBody = suppressPreviewBody ? {} : bodyPreviewFromUnknown(req.body, req.headers['content-type']);
+      const suppressRequestBodyLog = Boolean(
+        (res.locals as { cdsSuppressRequestBodyLog?: boolean }).cdsSuppressRequestBodyLog,
+      );
+      const reqBody = selectRequestBodyForHttpLog(
+        capturedReqBody,
+        parsedReqBody,
+        suppressRequestBodyLog || suppressPreviewBody,
+      );
       const responseHeaders = redactHeaders(res.getHeaders() as Record<string, unknown>);
       const respBody = responseCapture.snapshot(res.getHeader('content-type'));
       deps.httpLogStore?.record({
@@ -2185,23 +2315,27 @@ export function createServer(deps: ServerDeps): express.Express {
         requestKind,
         requestId,
         method: req.method || 'GET',
-        protocol: String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
-        host: String(req.headers.host || ''),
-        path: req.originalUrl || req.url || '/',
+        protocol: suppressRequestDetails
+          ? undefined
+          : String(req.headers['x-forwarded-proto'] || req.protocol || '').split(',')[0] || undefined,
+        host: suppressRequestDetails ? undefined : String(req.headers.host || ''),
+        path: requestPathForLogs(req, res),
         status,
         durationMs: Date.now() - start,
         outcome: status >= 500 ? 'server-error' : status >= 400 ? 'client-error' : 'ok',
-        remoteAddr: (req.headers['cf-connecting-ip'] as string)
-          || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
-          || req.ip
-          || req.socket?.remoteAddress,
+        remoteAddr: suppressRequestDetails
+          ? undefined
+          : (req.headers['cf-connecting-ip'] as string)
+            || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()
+            || req.ip
+            || req.socket?.remoteAddress,
         request: {
-          headers: redactHeaders(req.headers),
+          headers: requestHeadersForLogs(req, res),
           ...reqBody,
         },
         response: {
           headers: responseHeaders,
-          ...respBody,
+          ...omitHostedSitePreviewBody(respBody, suppressPreviewBody),
         },
       });
     });
@@ -2520,7 +2654,8 @@ export function createServer(deps: ServerDeps): express.Express {
     app.post('/api/login', (req, res) => {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
-        res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
+        const humanSessionToken = issueHumanSessionToken(cdsUser!, cdsPass!);
+        res.setHeader('Set-Cookie', basicSessionCookie(humanSessionToken, sessionTtlMs, cookieSecure));
         res.json({ success: true });
       } else {
         res.status(401).json({ error: '用户名或密码错误' });
@@ -2528,7 +2663,7 @@ export function createServer(deps: ServerDeps): express.Express {
     });
 
     app.post('/api/logout', (_req, res) => {
-      res.setHeader('Set-Cookie', 'cds_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly');
+      res.setHeader('Set-Cookie', clearBasicSessionCookie(cookieSecure));
       res.json({ success: true });
     });
   }
@@ -3045,21 +3180,25 @@ export function createServer(deps: ServerDeps): express.Express {
       // Check human cookie auth
       const cookieToken = parseCookie(req.headers.cookie || '', 'cds_token');
       const headerToken = req.headers['x-cds-token'] as string | undefined;
-      const token = cookieToken || headerToken;
-      if (token === validToken) {
+      const humanCookieValid = authEnabled
+        && verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs);
+      const machineHeaderValid = tokenMatches(headerToken, validToken);
+      if (humanCookieValid || machineHeaderValid) {
         // 滑动续期：basic 模式的 cds_token 是静态派生值、服务端没有会话记录，
         // 只能靠「每次带 cookie 的已鉴权请求重发一次 cookie」来续。不这么做的话，
         // basic 部署会停在签发时那个固定期限上，完全吃不到统一的 7 天滑动策略。
         // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
-        if (cookieToken === validToken) {
-          res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
+        if (humanCookieValid) {
+          const renewedToken = issueHumanSessionToken(cdsUser!, cdsPass!);
+          res.setHeader('Set-Cookie', basicSessionCookie(renewedToken, sessionTtlMs, cookieSecure));
+          (req as any)._cdsCookieAuth = true;
+          (req as any)._cdsBasicHumanAuth = true;
         }
         // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
         // can distinguish human cookie auth (admin-equivalent on this single-
         // tenant CDS) from machine credentials. Static AI_ACCESS_KEY and
         // global cdsg_ keys deliberately do NOT set this — see reveal /
         // customEnv masking in routes/branches.ts and routes/projects.ts.
-        (req as any)._cdsCookieAuth = true;
         return next();
       }
 
@@ -3135,7 +3274,8 @@ export function createServer(deps: ServerDeps): express.Express {
           const headerToken = typeof req.headers['x-cds-token'] === 'string'
             ? req.headers['x-cds-token']
             : '';
-          return Boolean(validToken && (cookieToken || headerToken) === validToken);
+          return verifyHumanSessionToken(cookieToken, cdsUser!, cdsPass!, sessionTtlMs)
+            || tokenMatches(headerToken, validToken);
         }
         return Boolean(
           request.cdsSession
@@ -4006,12 +4146,16 @@ export function createServer(deps: ServerDeps): express.Express {
     (req as any).cdsRequestId = requestId;
     (res.locals as { cdsRequestId?: string }).cdsRequestId = requestId;
     res.setHeader('X-CDS-Request-Id', requestId);
-    const { branchId, projectId, profileId } = extractApiMutationContext(req, deps);
-    const actor = resolveActorFromRequest(req);
+    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const { branchId, projectId, profileId } = suppressPreviewDetails ? {} : extractApiMutationContext(req, deps);
+    const suppressRequestDetails = Boolean(
+      (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
+    );
+    const actor = suppressRequestDetails ? 'human-admin' : resolveActorFromRequest(req);
     res.on('finish', () => {
       const status = res.statusCode || 200;
       const severity: ServerEventSeverity = status >= 500 ? 'error' : status >= 400 ? 'warn' : 'info';
-      const fullPath = `/api${req.path}`;
+      const fullPath = redactHostedSitePreviewLog(`/api${req.path}`);
       deps.serverEventLogStore?.record({
         category: 'system',
         severity,
@@ -4026,14 +4170,18 @@ export function createServer(deps: ServerDeps): express.Express {
         details: {
           method: req.method.toUpperCase(),
           path: fullPath,
-          originalUrl: req.originalUrl,
+          originalUrl: requestPathForLogs(req, res),
           status,
           durationMs: Date.now() - start,
           actor,
-          trigger: req.headers['x-cds-trigger'] || req.headers['x-github-event'] || null,
-          remoteAddr: getRemoteAddr(req),
-          userAgent: req.headers['user-agent'] || null,
-          referer: req.headers['referer'] || req.headers['origin'] || null,
+          trigger: suppressRequestDetails
+            ? null
+            : req.headers['x-cds-trigger'] || req.headers['x-github-event'] || null,
+          remoteAddr: suppressRequestDetails ? null : getRemoteAddr(req),
+          userAgent: suppressRequestDetails ? null : req.headers['user-agent'] || null,
+          referer: suppressRequestDetails
+            ? null
+            : redactHostedSitePreviewLog(String(req.headers['referer'] || req.headers['origin'] || '')) || null,
           contentLength: req.headers['content-length'] || null,
         },
       });
@@ -4043,6 +4191,7 @@ export function createServer(deps: ServerDeps): express.Express {
 
   // ── API activity tracking middleware (before routes, after auth) ──
   app.use('/api', (req, res, next) => {
+    if ((res.locals as { cdsSuppressActivity?: boolean }).cdsSuppressActivity) return next();
     // Skip SSE streams and static
     if (req.path === '/activity-stream' || req.path === '/ai/pairing-stream' || req.path === '/state-stream') return next();
     // Skip dashboard auto-poll requests (X-CDS-Poll: true) — they are noise
@@ -4061,10 +4210,14 @@ export function createServer(deps: ServerDeps): express.Express {
     res.setHeader('X-CDS-Request-Id', requestId);
 
     // Capture request body for detail view (truncate to 500 chars)
-    const reqBody = req.body && Object.keys(req.body).length > 0
+    const suppressPreviewDetails = isHostedSitePreviewRequest(req.originalUrl || `/api${req.path}`);
+    const suppressRequestDetails = Boolean(
+      (res.locals as { cdsSuppressRequestDetails?: boolean }).cdsSuppressRequestDetails,
+    );
+    const reqBody = !suppressPreviewDetails && !suppressRequestDetails && req.body && Object.keys(req.body).length > 0
       ? JSON.stringify(req.body).slice(0, 500)
       : undefined;
-    const reqQuery = Object.keys(req.query).length > 0
+    const reqQuery = !suppressPreviewDetails && !suppressRequestDetails && Object.keys(req.query).length > 0
       ? new URLSearchParams(req.query as Record<string, string>).toString()
       : undefined;
 
@@ -4075,6 +4228,7 @@ export function createServer(deps: ServerDeps): express.Express {
     const branchTags = branchId ? (deps.stateService.getBranch(branchId)?.tags ?? []) : [];
 
     const summarizeErrorBody = (chunk: unknown): string | undefined => {
+      if (suppressPreviewDetails) return undefined;
       if ((res.statusCode || 200) < 400) return undefined;
       let text = '';
       if (typeof chunk === 'string') {
@@ -4111,7 +4265,7 @@ export function createServer(deps: ServerDeps): express.Express {
         return origEnd(...args);
       }
       const duration = Date.now() - start;
-      const fullPath = `/api${req.path}`;
+      const fullPath = redactHostedSitePreviewLog(`/api${req.path}`);
       // Refine the label for GitHub webhook deliveries so the operator
       // can tell "push" from "check_run" / "issue_comment" / ... at a
       // glance, instead of seeing a homogeneous stream of "GitHub 推送
@@ -4141,7 +4295,7 @@ export function createServer(deps: ServerDeps): express.Express {
         branchTags: branchTags.length ? branchTags : undefined,
         remoteAddr: (req.headers['cf-connecting-ip'] as string) || (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || req.socket?.remoteAddress,
         userAgent: req.headers['user-agent'],
-        referer: req.headers['referer'] || req.headers['origin'],
+        referer: redactHostedSitePreviewLog(String(req.headers['referer'] || req.headers['origin'] || '')) || undefined,
       };
       broadcastActivity(event);
       if (event.status >= 400) {
@@ -4286,6 +4440,8 @@ export function createServer(deps: ServerDeps): express.Express {
     stateService: deps.stateService,
     containerService: deps.containerService,
     config: deps.config,
+    shell: deps.shell,
+    serverEventLogStore: deps.serverEventLogStore,
   }));
   // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
   //
@@ -4410,10 +4566,22 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createCdsSystemTopologyRouter({ aggregator: topologyAggregator }));
   // 离机备份（R2）配置入口，系统级。先实测再落盘、落盘后热生效，见 routes/cds-system-offsite-backup.ts。
   app.use('/api', createCdsSystemOffsiteBackupRouter());
+  app.use('/api', createCdsSystemSealedStorageRouter({
+    authMode,
+    // 密钥文件位置必须与启动期 loader 使用同一 SSOT，不能跟随数据库里可
+    // 热更新的 repoRoot 漂移，否则当前进程可用、重启后却找不到解密根密钥。
+    envFilePath: defaultEnvFilePath,
+    audit: deps.serverEventLogStore,
+  }));
   app.use('/api', createDockerNetworkHealthRouter({ shell: deps.shell }));
   // 基础设施数据备份/恢复（mongodump/mongorestore/redis dump.rdb/tar）
   app.use('/api', createInfraBackupRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any, repoRoot: deps.config.repoRoot }));
   app.use('/api', createInfraDataRouter({ stateService: deps.stateService, shell: deps.shell, assertProjectAccess: assertProjectAccess as any }));
+  app.use('/api', createInfraCredentialRotationRouter({
+    stateService: deps.stateService,
+    rotationService: credentialRotationService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
   // 遗留 default 项目迁移（见 legacy-cleanup.ts 头部注释）
   app.use('/api', createLegacyCleanupRouter({
     stateService: deps.stateService,
@@ -5093,12 +5261,17 @@ export function installSpaFallback(
  * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
  * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
  */
-function basicSessionCookie(token: string, ttlMs: number): string {
+function basicSessionCookie(token: string, ttlMs: number, secure: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
-  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly`;
+  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
+}
+
+function clearBasicSessionCookie(secure: boolean): string {
+  return `cds_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly${secure ? '; Secure' : ''}`;
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {
   const match = cookieStr.match(new RegExp(`(?:^|;\\s*)${name}=([^;]*)`));
-  return match ? decodeURIComponent(match[1]) : undefined;
+  if (!match) return undefined;
+  try { return decodeURIComponent(match[1]); } catch { return undefined; }
 }

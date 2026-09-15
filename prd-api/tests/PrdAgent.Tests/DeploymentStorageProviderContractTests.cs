@@ -29,6 +29,10 @@ public sealed class DeploymentStorageProviderContractTests
         Assert.Contains("ASSETS_PROVIDER: cloudflareR2", cdsRoot);
         Assert.Contains("ASSETS_EXPECTED_PROVIDER: cloudflareR2", cdsRoot);
         Assert.Contains("cds.readiness-path: \"/health/ready\"", cdsRoot);
+        Assert.Contains("cds.readiness-path: \"/gw/readyz\"", cdsRoot);
+        Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsRoot);
+        Assert.DoesNotContain("cds.readiness-path: \"/gw/healthz\"", cdsRoot);
+        Assert.DoesNotContain("cds.readiness-path: \"/gw/v1/healthz\"", cdsRoot);
         Assert.DoesNotContain("TENCENT_COS_", cdsRoot);
         Assert.DoesNotContain("ASSETS_PROVIDER: tencentCos", cdsRoot);
 

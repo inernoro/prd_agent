@@ -301,6 +301,21 @@ public class MongoDbContext
 
     // Web Hosting 网页托管与分享
     public IMongoCollection<HostedSite> HostedSites => _database.GetCollection<HostedSite>("hosted_sites");
+    public IMongoCollection<HostedSiteDeletionTask> HostedSiteDeletionTasks => _database.GetCollection<HostedSiteDeletionTask>("hosted_site_deletion_tasks");
+    public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
+    // 物理集合隔离：未升级 worker 的旧扫描不能认领、恢复或清理新任务。
+    public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs_v2");
+
+    /// <summary>
+    /// 公开历史与共享对象引用保护专用只读查询。不得用于取消、生命周期、工作区或发布写入。
+    /// 不限定部署，用户归属等读取条件由调用方提供；不暴露旧集合的写句柄。
+    /// </summary>
+    public async Task<DesignArtifactRun?> FindDesignArtifactRunHistoryAsync(
+        System.Linq.Expressions.Expression<Func<DesignArtifactRun, bool>> predicate,
+        CancellationToken ct = default) =>
+        await DesignArtifactRuns.Find(predicate).FirstOrDefaultAsync(ct)
+        ?? await _database.GetCollection<DesignArtifactRun>("design_artifact_runs")
+            .Find(predicate).FirstOrDefaultAsync(ct);
     public IMongoCollection<HostedSiteOptimizationSession> HostedSiteOptimizationSessions =>
         _database.GetCollection<HostedSiteOptimizationSession>("hosted_site_optimization_sessions");
     public IMongoCollection<WebPageShareLink> WebPageShareLinks => _database.GetCollection<WebPageShareLink>("web_page_share_links");
@@ -1611,6 +1626,20 @@ public class MongoDbContext
         HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
             Builders<HostedSite>.IndexKeys.Ascending(x => x.OwnerUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_hosted_sites_owner_created" }));
+        HostedSites.Indexes.CreateOne(new CreateIndexModel<HostedSite>(
+            Builders<HostedSite>.IndexKeys
+                .Ascending(x => x.AssetCleanupNextAttemptAt)
+                .Ascending(x => x.AssetCleanupLeaseExpiresAt),
+            new CreateIndexOptions<HostedSite>
+            {
+                Name = "idx_hosted_sites_asset_cleanup_due",
+                PartialFilterExpression = Builders<HostedSite>.Filter.Exists("PendingAssetCleanupKeys.0", true),
+            }));
+        HostedSiteDeletionTasks.Indexes.CreateOne(new CreateIndexModel<HostedSiteDeletionTask>(
+            Builders<HostedSiteDeletionTask>.IndexKeys
+                .Ascending(x => x.NextAttemptAt)
+                .Ascending(x => x.LeaseExpiresAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_deletion_due" }));
         ShortVideoMaterialRuns.Indexes.CreateOne(new CreateIndexModel<ShortVideoMaterialRun>(
             Builders<ShortVideoMaterialRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_short_video_material_runs_user_created" }));

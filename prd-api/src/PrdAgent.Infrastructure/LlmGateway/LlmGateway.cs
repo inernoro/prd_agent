@@ -20,7 +20,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// <summary>
 /// LLM Gateway 核心实现 - 所有大模型调用的守门员
 /// </summary>
-public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
+public partial class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 {
     private readonly IModelResolver _modelResolver;
     private readonly IHttpClientFactory _httpClientFactory;
@@ -47,7 +47,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         "service_tier",
         "store",
         "user",
-        "n"
+        "n",
+        "temperature",
+        "top_p",
+        "reasoning",
+        "reasoning_effort"
     };
     private const string InvalidAppCallerErrorCode = "APP_CALLER_INVALID";
     private const string MaxTokensField = "max_tokens";
@@ -1362,7 +1366,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
         // 将 GatewayModelResolution 转回 ModelResolutionResult 以复用内部执行逻辑
         // GatewayModelResolution 已包含 ApiKey / ExchangeAuthScheme / ExchangeTransformerConfig
-        var internalResolution = new ModelResolutionResult
+        var internalResolution = RestoreRawResolution(resolution);
+        var startedAt = DateTime.UtcNow;
+        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
+    }
+
+    private static ModelResolutionResult RestoreRawResolution(GatewayModelResolution resolution)
+        => new()
         {
             LogicalModelId = resolution.LogicalModelId,
             LogicalModelPublicId = resolution.LogicalModelPublicId,
@@ -1429,10 +1439,6 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             PriceCurrency = resolution.PriceCurrency,
             RetryCandidates = resolution.RetryCandidates
         };
-
-        var startedAt = DateTime.UtcNow;
-        return await ExecuteRawWithResolutionAsync(request, internalResolution, startedAt, ct);
-    }
 
     /// <inheritdoc />
     public Task<GatewayRawResponse> TestUpstreamProfileAsync(
@@ -4034,7 +4040,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             return true;
         }
 
-        if (requestBody is not null && HasIncompatibleGpt56ToolReasoning(requestBody, resolution))
+        if (IsChatCompletionsEndpoint(request.EndpointPath)
+            && requestBody is not null && HasIncompatibleGpt56ToolReasoning(requestBody, resolution))
         {
             error = GatewayRawResponse.Fail(
                 "GPT56_TOOLS_REQUIRE_REASONING_NONE",
@@ -4139,6 +4146,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         out GatewayResponse? error)
     {
         error = null;
+        if (UnsupportedStrictProtocolParameter(context, resolution, requestBody) is { } unsupported)
+        {
+            error = GatewayResponse.Fail("PARAMETER_PROTOCOL_UNSUPPORTED",
+                $"当前模型协议尚不能保留请求参数 {unsupported}，请调整参数或选择兼容协议", 400);
+            return true;
+        }
         if (!TryFindRejectedStrictParameter(context, resolution, requestBody, out var parameter, out var supported))
             return false;
 
@@ -4170,6 +4183,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return true;
     }
 
+    private static string? UnsupportedStrictProtocolParameter(
+        GatewayRequestContext? context, ModelResolutionResult resolution, JsonObject? body)
+    {
+        // 当前 Claude 适配器未转换这两个 OpenAI 推理字段；能力声明不能替代真实 wire 支持。
+        if (!IsStrictParameterPolicy(context) || body == null
+            || NormalizeAdapterKey(string.IsNullOrWhiteSpace(resolution.Protocol)
+                ? resolution.PlatformType : resolution.Protocol) != "claude") return null;
+        return new[] { "reasoning", "reasoning_effort" }.FirstOrDefault(key => IsRequestedJsonParameter(body, key));
+    }
+
     private static bool TryFindRejectedStrictParameter(
         GatewayRequestContext? context,
         ModelResolutionResult resolution,
@@ -4191,7 +4214,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         && resolution.ParameterCapabilities.TryGetValue(key, out var value)
                 ? value
                 : null;
-            return CapabilityRejected(supported, strict);
+            if (CapabilityRejected(supported, strict)) return true;
         }
 
         return false;

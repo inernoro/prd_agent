@@ -22,6 +22,36 @@ public static class AssetStorageDeletePolicy
 {
     private const string AvatarPathPrefix = "icon/backups/head/";
 
+    /// <summary>
+    /// 网页托管只允许删除一个明确归属到 32 位站点 ID 的文件对象。
+    /// 目录前缀本身、路径穿越和非标准站点 ID 均拒绝，避免把“删除站点”扩大成按前缀批量删除。
+    /// </summary>
+    public static bool IsHostedSiteFileKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
+        if (!normalized.StartsWith("web-hosting/sites/", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var segments = normalized.Split('/', StringSplitOptions.None);
+        if (segments.Length < 4
+            || !string.Equals(segments[0], "web-hosting", StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(segments[1], "sites", StringComparison.OrdinalIgnoreCase)
+            || !System.Text.RegularExpressions.Regex.IsMatch(
+                segments[2],
+                "^[0-9a-f]{32}$",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase
+                | System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+        {
+            return false;
+        }
+
+        return segments.Skip(3).All(segment =>
+            !string.IsNullOrWhiteSpace(segment)
+            && segment != "."
+            && segment != ".."
+            && !segment.Any(char.IsControl));
+    }
+
     public static bool IsVersionedUserAvatarKey(string? key, string? configuredPrefix = null)
     {
         var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
@@ -76,19 +106,25 @@ public static class AssetStorageDeletePolicy
     }
 
     /// <summary>
+    /// 设计工作区元数据是内容寻址的系统对象，可安全回收。
+    /// </summary>
+    public static bool IsContentAddressedDesignWorkspaceMetadataKey(string? key, string? configuredPrefix = null)
+    {
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
+        return System.Text.RegularExpressions.Regex.IsMatch(
+            normalized,
+            @"^web-hosting/meta/[a-z2-7]{26}\.json$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase
+            | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    /// <summary>
     /// 网页托管优化只允许回收系统生成的临时对象。站点 ID 必须是 32 位十六进制，
     /// 且路径必须落在 __chunks、__source 或 __preview 下；正式站点文件永远不命中。
     /// </summary>
     public static bool IsHostedSiteOptimizationTemporaryKey(string? key, string? configuredPrefix = null)
     {
-        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
-        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
-        if (!string.IsNullOrWhiteSpace(prefix)
-            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
-        {
-            normalized = normalized[(prefix.Length + 1)..];
-        }
-
+        var normalized = StripConfiguredPrefix(key, configuredPrefix);
         if (normalized.Contains("/../", StringComparison.Ordinal)
             || normalized.EndsWith("/..", StringComparison.Ordinal)
             || normalized.Contains("/./", StringComparison.Ordinal)
@@ -100,6 +136,19 @@ public static class AssetStorageDeletePolicy
             @"^web-hosting/sites/[0-9a-f]{32}/__(chunks/[0-9]{6}\.part|source/source\.zip|preview/.+)$",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase
             | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    }
+
+    private static string StripConfiguredPrefix(string? key, string? configuredPrefix)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/').TrimStart('/');
+        var prefix = (configuredPrefix ?? string.Empty).Trim().Replace('\\', '/').Trim('/');
+        if (!string.IsNullOrWhiteSpace(prefix)
+            && normalized.StartsWith(prefix + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            normalized = normalized[(prefix.Length + 1)..];
+        }
+
+        return normalized;
     }
 }
 
@@ -125,6 +174,19 @@ public interface IAssetStorage
     ///   - 兜底：".bin"（绝不再用 .png 兜底，否则 CDN 会按图片处理音视频）
     /// </summary>
     Task<StoredAsset> SaveAsync(byte[] bytes, string mime, CancellationToken ct, string? domain = null, string? type = null, string? fileName = null, string? extensionHint = null);
+
+    /// <summary>
+    /// 在实际写入前预演 <see cref="SaveAsync"/> 将返回的精确物理 key。
+    /// 需要在对象写入前持久化补偿意图的调用方使用；真实存储实现必须与 SaveAsync 共用同一套 key 规则。
+    /// 不支持预演的兼容实现返回 null。
+    /// </summary>
+    string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null) => null;
 
     /// <summary>
     /// 按 sha256 读取 bytes（用于本地存储或兼容旧数据）。

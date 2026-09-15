@@ -45,6 +45,23 @@ public class LocalAssetStorage : IAssetStorage
         return new StoredAsset(sha, url, bytes.LongLength, safeMime, key);
     }
 
+    public string? TryBuildContentAddressedKey(
+        byte[] bytes,
+        string mime,
+        string? domain = null,
+        string? type = null,
+        string? fileName = null,
+        string? extensionHint = null)
+    {
+        if (bytes == null || bytes.Length == 0) return null;
+        var safeMime = string.IsNullOrWhiteSpace(mime) ? "application/octet-stream" : mime.Trim();
+        var ext = ResolveExtension(extensionHint, fileName, safeMime);
+        var sha = Sha256Hex(bytes);
+        var dir = ResolveDir(domain, type);
+        var filePath = Path.Combine(dir, $"{sha}.{ext}");
+        return Path.GetRelativePath(_baseDir, filePath).Replace(Path.DirectorySeparatorChar, '/');
+    }
+
     public async Task<(byte[] bytes, string mime)?> TryReadByShaAsync(string sha256, CancellationToken ct, string? domain = null, string? type = null)
     {
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();

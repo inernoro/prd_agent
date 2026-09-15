@@ -40,6 +40,7 @@ public class GatewayReviewRuntimeAdapterTests
             var request = new InfraAgentRuntimeRunRequest
             {
                 RunId = "run-1",
+                TraceId = "root-design-run-1",
                 UserId = "user-42",
                 MapSessionId = "session-7",
                 WorkspaceRoot = workspace,
@@ -78,6 +79,7 @@ public class GatewayReviewRuntimeAdapterTests
             // LlmRequestContext 正确设置（否则访问控制层会拒绝）。
             Assert.NotNull(accessor.LastContext);
             Assert.Equal("user-42", accessor.LastContext!.UserId);
+            Assert.Equal("root-design-run-1", accessor.LastContext.RunId);
             Assert.Equal(AppCallerRegistry.InfraAgent.ReviewLite.Chat, accessor.LastContext.AppCallerCode);
             Assert.Equal(AppCallerRegistry.InfraAgent.ReviewLite.Chat, gateway.LastAppCallerCode);
             Assert.Equal(ModelTypes.Chat, gateway.LastModelType);

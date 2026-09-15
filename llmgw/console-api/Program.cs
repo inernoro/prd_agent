@@ -29,6 +29,7 @@ using PrdAgent.LlmGw.Organization;
 using PrdAgent.LlmGw.Provisioning;
 using PrdAgent.LlmGw.LogicalModels;
 using PrdAgent.LlmGw.Security;
+using PrdAgent.LlmGw;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -100,6 +101,7 @@ var mapDatabase = mapMongoClient.GetDatabase(mongoDb);
 var gatewayDatabase = gatewayMongoClient.GetDatabase(gatewayDbName);
 builder.Services.AddSingleton(mapMongoClient);
 builder.Services.AddSingleton(mapDatabase);
+builder.Services.AddSingleton(new GatewayConsoleReadinessProbe(gatewayDatabase));
 
 // ── JWT 签发器（独立密钥）──
 // 会话默认 30 天且用后自动续期（响应头 X-Gw-Token 换发），只要在用就不会掉登录。
@@ -887,6 +889,19 @@ app.MapGet("/gw/healthz", () => Results.Json(new
     // 空/缺省表示「平台没告诉我 MAP 在哪」，前端据此退回本地推算，而不是拿空串去拼地址。
     mapHomeUrl = string.IsNullOrWhiteSpace(mapHomeUrl) ? null : mapHomeUrl,
 }, jsonOptions)).AllowAnonymous();
+
+app.MapGet("/gw/readyz", async (
+    GatewayConsoleReadinessProbe probe,
+    HttpContext http) =>
+{
+    var snapshot = await probe.CheckAsync(http.RequestAborted);
+    return Results.Json(
+        snapshot,
+        jsonOptions,
+        statusCode: string.Equals(snapshot.Status, "ready", StringComparison.Ordinal)
+            ? StatusCodes.Status200OK
+            : StatusCodes.Status503ServiceUnavailable);
+}).AllowAnonymous();
 
 app.MapGet("/gw/lifecycle/status", async (HttpContext http) =>
 {

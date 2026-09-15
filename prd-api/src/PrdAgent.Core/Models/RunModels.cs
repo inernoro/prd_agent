@@ -8,12 +8,14 @@ public static class RunKinds
     public const string VideoGen = "videoGen";
     public const string VideoToDoc = "videoToDoc";
     public const string Arena = "arena";
+    public const string DesignArtifact = "designArtifact";
 }
 
 public static class RunStatuses
 {
     public const string Queued = "Queued";
     public const string Running = "Running";
+    public const string Committing = "Committing";
     public const string Done = "Done";
     public const string Error = "Error";
     public const string Cancelled = "Cancelled";
@@ -69,5 +71,3 @@ public class RunSnapshot
     public string SnapshotJson { get; set; } = "{}";
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
-
-

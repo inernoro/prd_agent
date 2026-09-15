@@ -295,7 +295,9 @@ describe('CDS Agent 接入口令', () => {
     //    + db-probe（分支数据库实测，只读，2026-09-03）
     //    + db-ledger（数据台账：备份 / 演练 / 丢弃门禁，2026-09-03）
     //    + public-status（公开状态页：匿名只读面板 + 项目侧开关，2026-09-11）
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(52);
+    //    + cds-system-sealed-storage（密封存储初始化，只允许全局人工管理员同源发起，2026-09-06）
+    //    + infra-credential-rotation（基础设施凭据轮换，密封存储就绪 + 作业排空后才可执行，2026-09-06）
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(54);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS

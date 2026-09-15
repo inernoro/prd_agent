@@ -258,6 +258,10 @@ export class ReplicaSetService {
       // 先做可行性预检，把「没有库可隔离 / infra 没在跑」这类失败在同步阶段就讲清楚
       const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, profile);
       if (!target) throw new ReplicaSetError(409, `无法隔离数据库：${reason}`);
+      if (target.engine === 'mongo'
+        && !this.opts.state.canStartInfraMaintenance(branch.projectId || 'default', target.infra.id)) {
+        throw new ReplicaSetError(409, 'MongoDB 正在轮换凭据，暂不能创建隔离副本');
+      }
     }
     // 「一个 + 号」路径：不传 versionId 就复制当前版本（同版本水平副本）
     const isQuickReplica = !input.versionId;
@@ -450,6 +454,10 @@ export class ReplicaSetService {
     }
     const target = guardHits[0].target;
     const profileId = guardHits[0].profileId;
+    if (target.engine === 'mongo'
+      && !this.opts.state.canStartInfraMaintenance(branch.projectId || 'default', target.infra.id)) {
+      return { accepted: false, reason: 'MongoDB 正在轮换凭据，暂不能启动数据库保护罩克隆' };
+    }
     const inflightKey = this.isolationKey(branchId, target);
     if (this.isolationInFlight.has(inflightKey)) {
       return { accepted: false, reason: `该源库已有一个隔离克隆在进行中（${this.isolationInFlight.get(inflightKey)}），请等它完成后再操作` };
@@ -458,7 +466,7 @@ export class ReplicaSetService {
       .map((s) => /^guard-(\d+)$/.exec(s.memberId)?.[1]).filter(Boolean).map(Number);
     const guardId = `guard-${used.length ? Math.max(...used) + 1 : 1}`;
     this.isolationInFlight.set(inflightKey, guardId);
-    void cloneReplicaDb({
+    void this.cloneReplicaDbWithMaintenance(branch, target, {
       target,
       memberId: guardId,
       profileId,
@@ -488,6 +496,28 @@ export class ReplicaSetService {
       this.isolationInFlight.delete(inflightKey);
     });
     return { accepted: true };
+  }
+
+  private async cloneReplicaDbWithMaintenance(
+    branch: BranchEntry,
+    target: NonNullable<ReturnType<typeof resolveReplicaDbTarget>['target']>,
+    input: Parameters<typeof cloneReplicaDb>[0],
+  ): Promise<Awaited<ReturnType<typeof cloneReplicaDb>>> {
+    if (target.engine !== 'mongo') return await cloneReplicaDb(input);
+    const job = await this.opts.state.beginInfraMaintenanceJob({
+      projectId: branch.projectId || 'default',
+      serviceId: target.infra.id,
+      runtime: 'mongodb',
+      kind: 'replica-isolation',
+    });
+    let completed = false;
+    try {
+      const cloned = await cloneReplicaDb(input);
+      completed = true;
+      return cloned;
+    } finally {
+      await this.opts.state.finishInfraMaintenanceJob(job.id, completed ? 'completed' : 'failed');
+    }
   }
 
   /**
@@ -586,6 +616,10 @@ export class ReplicaSetService {
       return { accepted: true };
     }
     const inflightKey = this.isolationKey(branchId, target);
+    if (target.engine === 'mongo'
+      && !this.opts.state.canStartInfraMaintenance(branch.projectId || 'default', target.infra.id)) {
+      return { accepted: false, reason: 'MongoDB 正在轮换凭据，暂不能启动复制隔离克隆' };
+    }
     if (this.isolationInFlight.has(inflightKey)) {
       return { accepted: false, reason: `该源库已有一个隔离克隆在进行中（${this.isolationInFlight.get(inflightKey)}），请等它完成后再操作` };
     }
@@ -605,7 +639,7 @@ export class ReplicaSetService {
     const releaseIsoOps = this.trackMemberOps(branchId, profileId, members.map((m) => m.id));
     void (async () => {
       try {
-        const cloned = await cloneReplicaDb({
+        const cloned = await this.cloneReplicaDbWithMaintenance(branch, target, {
           target, memberId: guardId, profileId, branchId, now: this.opts.now,
           instanceId: this.opts.instanceId,
           publishHost: this.dockerBridgeHost(),
@@ -906,7 +940,7 @@ export class ReplicaSetService {
         return;
       }
       try {
-        const cloned = await cloneReplicaDb({
+        const cloned = await this.cloneReplicaDbWithMaintenance(branch, target, {
           target,
           memberId,
           profileId,

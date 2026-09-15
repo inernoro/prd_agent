@@ -128,7 +128,8 @@ public sealed class GatewayReviewRuntimeAdapter : IInfraAgentRuntimeAdapter
                 DocumentHash: null,
                 SystemPromptRedacted: null,
                 RequestType: "chat",
-                AppCallerCode: AppCallerRegistry.InfraAgent.ReviewLite.Chat));
+                AppCallerCode: AppCallerRegistry.InfraAgent.ReviewLite.Chat,
+                RunId: string.IsNullOrWhiteSpace(request.TraceId) ? null : request.TraceId));
 
             var client = _gateway.CreateClient(
                 AppCallerRegistry.InfraAgent.ReviewLite.Chat,

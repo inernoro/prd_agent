@@ -14,6 +14,7 @@ import {
   Replace,
   Share2,
   Trash2,
+  WandSparkles,
 } from 'lucide-react';
 import type { HostedSite, SiteOwnerCard } from '@/services/real/webPages';
 import { SitePreview } from '@/components/SitePreview';
@@ -82,6 +83,8 @@ export interface SiteCardProps {
   onMove?: () => void;
   onComments?: () => void;
   onAskConfig?: () => void;
+  /** 原操作菜单中的 AI 微调入口；版本记录留在编辑面板内部。 */
+  onAiEdit?: () => void;
 }
 
 /**
@@ -104,6 +107,7 @@ export function buildCardActionLayers(args: {
   onMove?: () => void;
   onComments?: () => void;
   onAskConfig?: () => void;
+  onAiEdit?: () => void;
 }): { hover: CardMoreAction[]; menu: CardMoreAction[] } {
   const { site, caps: c } = args;
   const isPublic = site.visibility === 'public';
@@ -121,6 +125,7 @@ export function buildCardActionLayers(args: {
   ].filter(Boolean) as CardMoreAction[];
 
   const lowFrequency: CardMoreAction[] = [
+    c.canEdit && args.onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: args.onAiEdit } : null,
     c.canSetVisibility
       ? isPublic
         ? { label: '取消公开', icon: <Lock size={13} />, onClick: args.onTogglePublic }
@@ -176,6 +181,7 @@ export function SiteCard({
   onMove,
   onComments,
   onAskConfig,
+  onAiEdit,
 }: SiteCardProps) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const canDrag = canDragSiteCard(c);
@@ -233,6 +239,7 @@ export function SiteCard({
     onMove,
     onComments,
     onAskConfig,
+    onAiEdit,
   });
 
   // 状态胶囊（设计稿：10.5px / padding 2-6 / radius 5 / 同色系描边 + 淡底，胶囊内无图标）
@@ -355,7 +362,7 @@ export function SiteCard({
           {/* 右上：来源。小卡不渲染——176px 宽的缩略图顶部放两枚徽章就满了（设计稿小卡只有形态） */}
           {!isSmall && (
             <span
-              className="absolute right-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md"
+              className="absolute right-2 top-2 z-20 inline-flex items-center gap-1 backdrop-blur-md [@media(hover:none)]:hidden"
               style={{
                 height: 20, padding: '0 6px', borderRadius: 'var(--radius-chip)',
                 fontFamily: 'var(--font-code)', fontSize: 9, letterSpacing: 'var(--tracking-badge)',
@@ -365,6 +372,16 @@ export function SiteCard({
             >
               {siteSourceLabel(site.sourceType)}
             </span>
+          )}
+
+          {/* 触屏没有 hover：中卡和大卡必须另有常驻菜单入口，不能把唯一 kebab 藏在 hover 条里。 */}
+          {!isSmall && (
+            <div
+              className="absolute right-[7px] top-[7px] z-20 hidden [@media(hover:none)]:block"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <CardMoreButton actions={menuActions} touchActions={hoverActions.length} onScrim />
+            </div>
           )}
 
           {/* 右上（小卡）：唯一一枚 kebab。小卡不渲染 hover 条，这颗就是全部操作入口。
@@ -397,21 +414,25 @@ export function SiteCard({
             </span>
           )}
 
-          {/* 左下：批量勾选（设计稿是常驻 20×20，未选时低对比，不是 hover 才出现） */}
+          {/* 左下：视觉勾选框保持 20×20，真实按钮热区为 44×44，触屏不用精准点中小方框。 */}
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); onSelect(); }}
             aria-label={selected ? '取消选择' : '选择'}
             data-no-drag
-            className="absolute bottom-[7px] left-[7px] z-20 inline-flex items-center justify-center transition-opacity hover:!opacity-100 group-hover:opacity-100"
-            style={{
-              width: 20, height: 20, borderRadius: 'var(--radius-chip)',
-              background: selected ? 'var(--accent-primary)' : 'var(--scrim-badge-bg)',
-              border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-strong)'}`,
-              opacity: selected ? 1 : 0.5,
-            }}
+            className="absolute bottom-[-5px] left-[-5px] z-20 inline-flex h-11 w-11 items-center justify-center"
           >
-            {selected && <Check size={12} strokeWidth={2.8} style={{ color: 'var(--accent-on-primary)' }} />}
+            <span
+              className="inline-flex h-5 w-5 items-center justify-center transition-opacity hover:!opacity-100 group-hover:opacity-100"
+              style={{
+                borderRadius: 'var(--radius-chip)',
+                background: selected ? 'var(--accent-primary)' : 'var(--scrim-badge-bg)',
+                border: `1px solid ${selected ? 'var(--accent-primary)' : 'var(--border-strong)'}`,
+                opacity: selected ? 1 : 0.5,
+              }}
+            >
+              {selected && <Check size={12} strokeWidth={2.8} style={{ color: 'var(--accent-on-primary)' }} />}
+            </span>
           </button>
 
           {/*

@@ -1,0 +1,44 @@
+/* Explicit table capability only: inherit the selected deck's color and font. */
+.slide.mdppt-semantic-table {
+  box-sizing: border-box;
+  display: flex;
+  padding: 60px 84px;
+  background: var(--hc-bg, var(--gd-bg, var(--c-bg, var(--cream, transparent))));
+  color: var(--c-fg, inherit);
+  font-family: var(--f-body, inherit);
+  flex-direction: column;
+  justify-content: center;
+  align-items: stretch;
+  gap: 24px;
+}
+.slide.mdppt-semantic-table .mdppt-table-heading { flex: 0 0 auto; min-width: 0; }
+.slide.mdppt-semantic-table .mdppt-table-heading h2 {
+  position: static; margin: 0 0 12px; font: inherit; font-size: 44px;
+  font-weight: 700; line-height: 1.15; color: inherit;
+  font-family: var(--f-heading, inherit);
+}
+.slide.mdppt-semantic-table .mdppt-table-heading p {
+  position: static; margin: 0; font: inherit; font-size: 20px; line-height: 1.5; color: inherit;
+}
+.slide.mdppt-semantic-table .mdppt-table-viewport {
+  flex: 0 1 auto; min-height: 0; min-width: 0; width: 100%;
+  overflow: auto; border: 1px solid currentColor; border-radius: 8px;
+}
+.slide.mdppt-semantic-table table {
+  width: 100%; border-collapse: collapse; table-layout: auto;
+  font: inherit; font-size: 20px; line-height: 1.5; color: inherit;
+}
+.slide.mdppt-semantic-table caption {
+  padding: 12px 18px; text-align: left; font-size: 16px; font-weight: 500;
+}
+.slide.mdppt-semantic-table th,
+.slide.mdppt-semantic-table td {
+  padding: 16px 18px; text-align: left; vertical-align: top;
+  font: inherit; color: inherit; border-top: 1px solid currentColor;
+  overflow-wrap: break-word;
+}
+.slide.mdppt-semantic-table th { font-weight: 700; }
+.slide.mdppt-semantic-table .mdppt-table-footer {
+  flex: 0 0 auto; position: static; font: inherit; font-size: 16px;
+  line-height: 1.5; color: inherit;
+}

@@ -64,6 +64,77 @@ const RULES: readonly ConnectionRouteRule[] = [
     scope: 'report:read',
     why: '验收报告正文：镜像一份到外部系统的知识库',
   },
+  {
+    // Agent 运行时目录：MAP 在创建设计会话前读取 CDS 的真实运行能力。
+    // 只开放这一条 project-scoped GET；项目列表、运行配置和远程主机管理仍不可达。
+    methods: ['GET'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-runtime-providers$/.test(path),
+    scope: 'instance:read',
+    why: 'Agent 运行时目录：MAP 读取已授权项目可用的运行 Provider 与隔离事实',
+  },
+  {
+    // 创建和停止会话都会分配或回收 CDS 托管资源，沿用配对时已经明确授予的
+    // shared-service:deploy；不开放会话列表、任意项目写文件或容量管理端点。
+    methods: ['POST'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions$/.test(path),
+    scope: 'shared-service:deploy',
+    why: 'Agent 会话创建：MAP 在已授权项目内申请一份 CDS 托管的隔离运行资源',
+  },
+  {
+    methods: ['POST'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions\/[^/]+\/stop$/.test(path),
+    scope: 'shared-service:deploy',
+    why: 'Agent 会话停止：MAP 回收自己在已授权项目内申请的运行资源',
+  },
+  {
+    // 消息、事件流与工具审批构成同一次 Agent 执行交互，沿用 deployment:stream。
+    // 每条都按方法和完整路径形状列出，避免 agent-sessions 前缀变成万能入口。
+    methods: ['POST'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions\/[^/]+\/messages$/.test(path),
+    scope: 'deployment:stream',
+    why: 'Agent 会话消息：MAP 向已创建的 CDS 会话提交本轮任务',
+  },
+  {
+    methods: ['GET'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions\/[^/]+\/stream$/.test(path),
+    scope: 'deployment:stream',
+    why: 'Agent 会话事件流：MAP 续接已授权会话的增量执行事件',
+  },
+  {
+    methods: ['POST'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions\/[^/]+\/tool-approvals\/[^/]+$/.test(path),
+    scope: 'deployment:stream',
+    why: 'Agent 工具审批：MAP 把用户决定回送给对应 CDS 会话',
+  },
+  {
+    methods: ['GET'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions\/[^/]+\/logs$/.test(path),
+    scope: 'instance:read',
+    why: 'Agent 会话日志：MAP 读取对应会话的脱敏运行诊断',
+  },
+  {
+    // OpenDesign 的创建**必然**返回 202（容器在后台起，路由当场只给一个预约），
+    // MAP 只能按自己发的 clientRequestId 回查才知道这份运行时到底建没建成。少了这条，
+    // 每一次轮询都在进路由之前被门挡掉，MAP 把会话一直停在 Creating 直到 15 分钟超时——
+    // 也就是说 OpenDesign 经配对连接根本起不来（Codex P1，2026-09-15）。
+    // 路由自身要 instance:read，且只返回 principalKey 等于调用方的预约与会话；
+    // 带上 clientRequestId 之后进一步收敛到调用方自己发起的那一次，不是全项目会话列表。
+    methods: ['GET'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions$/.test(path),
+    scope: 'instance:read',
+    why: 'Agent 会话回查：MAP 按自己的 clientRequestId 确认 202 预约最终建成了哪一份运行时',
+  },
+  {
+    // 停止返回旧式无结构 400 时，MAP 要回读这一条会话才能分清「已经没了」与「真失败」。
+    // 少了这条，回读在进会话路由之前就被门挡掉，MAP 把它读成鉴权失败，于是把清理判成
+    // 永久失败（Codex P2，2026-09-15）。路由自身已经要 instance:read 且只放行调用方自己的
+    // 会话（getOwnedCdsAgentSession），所以这里放行的是一条只读、按主体收敛的单条读取，
+    // 不是会话列表。
+    methods: ['GET'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions\/[^/]+$/.test(path),
+    scope: 'instance:read',
+    why: 'Agent 会话回读：MAP 在停止返回不可判定错误时确认自己那条会话的真实状态',
+  },
 ];
 
 /**

@@ -129,6 +129,41 @@ function ensureTightenedUniqueIndex(collectionName, keys, options, legacyDefinit
   collection.createIndex(keys, options)
 }
 
+function ensureCatalogIndex(collectionName, keys, options, legacyDefinitions = []) {
+  const collection = db.getCollection(collectionName)
+  const collectionExists = db.getCollectionInfos({ name: collectionName }).length > 0
+  const existing = collectionExists
+    ? collection.getIndexes().find(index => index.name === options.name)
+    : undefined
+  if (!existing) {
+    collection.createIndex(keys, options)
+    return
+  }
+  if (sameIndexDefinition(existing, keys, options.partialFilterExpression)) {
+    collection.createIndex(keys, options)
+    return
+  }
+  const knownLegacy = legacyDefinitions.some(definition =>
+    sameIndexDefinition(existing, definition.keys, definition.partialFilterExpression)
+  )
+  if (!knownLegacy) {
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: existing index definition differs from the catalog`
+    )
+    return
+  }
+  const restoreOptions = restorableIndexOptions(existing)
+  try {
+    collection.dropIndex(existing.name)
+    collection.createIndex(keys, options)
+  } catch (error) {
+    try { collection.createIndex(existing.key, restoreOptions) } catch (_) { }
+    tightenedUniqueIndexMigrationFailures.push(
+      `${collectionName}.${options.name}: ${error.message || error}`
+    )
+  }
+}
+
 // collection: users
 db.users.createIndex({ "Username": 1 })
 db.users.createIndex(
@@ -1143,6 +1178,64 @@ db.hosted_sites.createIndex(
   { name: "idx_hosted_sites_owner_folder" }
 )
 
+// 删除站点的对象清理是「到点就扫」的周期任务：只有还欠着待删对象的站点才该进这个索引，
+// 否则清理线程每分钟都在整表扫 + 排序。
+db.hosted_sites.createIndex(
+  { "AssetCleanupNextAttemptAt": 1, "AssetCleanupLeaseExpiresAt": 1 },
+  {
+    name: "idx_hosted_sites_asset_cleanup_due",
+    partialFilterExpression: { "PendingAssetCleanupKeys.0": { $exists: true } }
+  }
+)
+
+// collection: hosted_site_deletion_tasks
+// 推迟的删除任务同样按「到点 + 租约到期」认领。
+db.hosted_site_deletion_tasks.createIndex(
+  { "NextAttemptAt": 1, "LeaseExpiresAt": 1 },
+  { name: "idx_hosted_site_deletion_due" }
+)
+
+// 回退请求持久幂等；同一站点、操作者和请求键最多产生一个回退版本。
+ensureTightenedUniqueIndex("hosted_site_revisions",
+  { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
+  {
+    name: "uniq_hosted_site_revision_rollback_idempotency",
+    unique: true,
+    partialFilterExpression: { "RollbackIdempotencyKey": { $type: "string" } }
+  }
+)
+
+// collection: infra_agent_sessions
+// One-shot design sessions persist remote cleanup intent here. The API cleanup worker scans only
+// dated requests; the partial index keeps normal reusable sessions out of the recovery index.
+db.infra_agent_sessions.createIndex(
+  { "CleanupNextAttemptAt": 1, "CleanupRequestedAt": 1, "ActiveMessageId": 1, "Status": 1, "StopLeaseExpiresAt": 1 },
+  {
+    name: "idx_infra_agent_sessions_cleanup_requested",
+    partialFilterExpression: { "CleanupRequestedAt": { $type: "date" } }
+  }
+)
+
+// PPT 预热跨 API 副本 single-flight；认领或停止会清空 PrewarmKey。
+ensureTightenedUniqueIndex("infra_agent_sessions",
+  { "PrewarmKey": 1 },
+  {
+    name: "uniq_infra_agent_sessions_prewarm_key",
+    unique: true,
+    partialFilterExpression: { "PrewarmKey": { $type: "string" } }
+  }
+)
+db.infra_agent_sessions.createIndex(
+  { "PrewarmExpiresAt": 1 },
+  {
+    name: "idx_infra_agent_sessions_prewarm_expiry",
+    partialFilterExpression: {
+      "ClientApp": "md-to-ppt-prewarm",
+      "PrewarmExpiresAt": { $type: "date" }
+    }
+  }
+)
+
 // collection: hosted_site_optimization_sessions
 // 临时优化任务按用户与到期时间查询；后台 worker 按状态与更新时间认领。
 db.hosted_site_optimization_sessions.createIndex(
@@ -1341,6 +1434,69 @@ db.activity_logs.createIndex(
   { name: "idx_activity_logs_module_created" }
 )
 
+// 后台领域事实幂等键 — HTTP 动态不写此字段，sparse 避免影响普通请求留痕
+db.activity_logs.createIndex(
+  { "DeduplicationKey": 1 },
+  { name: "uniq_activity_logs_deduplication_key", unique: true, sparse: true }
+)
+
+// 生成站点发布审计恢复 — 每 15 秒只扫描尚未完成投影的终态 Run，标记写入后自动退出索引
+ensureCatalogIndex("design_artifact_runs",
+  { "CompletedAt": -1 },
+  {
+    name: "idx_design_artifact_runs_publication_audit_pending",
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityProjectionCompletedAt": null
+    }
+  },
+  [{
+    keys: { "CompletedAt": -1 },
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityRecordedAt": null
+    }
+  }]
+)
+
+// 新设计任务与旧 worker 物理隔离。恢复查询以精确部署作用域为前导，
+// 不将同分支的不同 revision 合并成一个执行范围；仅由 DBA 脚本建立索引。
+const designRunV2Indexes = [
+  [{ DeploymentSlug: 1, Status: 1, UpdatedAt: 1 }, { name: "idx_design_run_v2_scope_status_updated" }],
+  [{ DeploymentSlug: 1, Status: 1, LeaseExpiresAt: 1 }, { name: "idx_design_run_v2_scope_lease" }],
+  [{ DeploymentSlug: 1, CleanupPending: 1, Status: 1 }, { name: "idx_design_run_v2_scope_cleanup" }],
+  [{ DeploymentSlug: 1, WorkspacePendingResultAssetKey: 1 }, { name: "idx_design_run_v2_scope_pending_workspace" }],
+  [{ DeploymentSlug: 1, WorkspaceRejectedResultAssetKey: 1 }, { name: "idx_design_run_v2_scope_rejected_workspace" }],
+  [{ WorkspaceResultAssetKey: 1 }, { name: "idx_design_run_v2_result_reference", sparse: true }],
+  [{ WorkspacePendingResultAssetKey: 1 }, { name: "idx_design_run_v2_pending_reference", sparse: true }],
+  [{ DeploymentSlug: 1, CompletedAt: -1 }, {
+    name: "idx_design_run_v2_publication_audit_pending",
+    partialFilterExpression: {
+      Status: "Done", ArtifactType: "web-page", Operation: "generate",
+      ArtifactSiteId: { $type: "string" }, CompletedAt: { $type: "date" },
+      PublishedActivityProjectionCompletedAt: null
+    }
+  }]
+]
+for (const [keys, options] of designRunV2Indexes) {
+  ensureCatalogIndex("design_artifact_runs_v2", keys, options)
+}
+
+// HTML PPT 专用 Run 与公共账本的中断恢复。合同版本和同步标记先做等值过滤，
+// UpdatedAt 直接提供最旧优先顺序，避免恢复 worker 周期性全表扫描。
+ensureCatalogIndex("md_to_ppt_runs",
+  { "ArtifactContractVersion": 1, "ArtifactContractSynchronizedAt": 1, "UpdatedAt": 1 },
+  { name: "idx_md_to_ppt_runs_contract_recovery" }
+)
+
 // collection: document_entry_versions
 // (EntryId, VersionNumber) 唯一 — 同一文档版本号不重复，并发重复分配被 unique 索引拦截
 db.document_entry_versions.createIndex(
@@ -1502,6 +1658,59 @@ db.document_entries.createIndex(
 // 卡片预览（每库最近 3 条）走的是同一条索引，不另建。
 // end collection: document_entries
 
+function verifyCatalogIndex(collectionName, name, keys, options = {}) {
+  const index = db.getCollection(collectionName).getIndexes().find(item => item.name === name)
+  if (!index
+      || JSON.stringify(index.key) !== JSON.stringify(keys)
+      || Boolean(index.unique) !== Boolean(options.unique)
+      || Boolean(index.sparse) !== Boolean(options.sparse)
+      || JSON.stringify(index.partialFilterExpression || {}) !== JSON.stringify(options.partialFilterExpression || {})) {
+    tightenedUniqueIndexMigrationFailures.push(`${collectionName}.${name}: deployed definition differs from catalog`)
+  }
+}
+
+verifyCatalogIndex(
+  "activity_logs",
+  "uniq_activity_logs_deduplication_key",
+  { "DeduplicationKey": 1 },
+  { unique: true, sparse: true }
+)
+verifyCatalogIndex(
+  "hosted_site_revisions",
+  "uniq_hosted_site_revision_rollback_idempotency",
+  { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
+  { unique: true, partialFilterExpression: { "RollbackIdempotencyKey": { $type: "string" } } }
+)
+verifyCatalogIndex(
+  "infra_agent_sessions",
+  "uniq_infra_agent_sessions_prewarm_key",
+  { "PrewarmKey": 1 },
+  { unique: true, partialFilterExpression: { "PrewarmKey": { $type: "string" } } }
+)
+verifyCatalogIndex(
+  "design_artifact_runs",
+  "idx_design_artifact_runs_publication_audit_pending",
+  { "CompletedAt": -1 },
+  {
+    partialFilterExpression: {
+      "Status": "Done",
+      "ArtifactType": "web-page",
+      "Operation": "generate",
+      "ArtifactSiteId": { $type: "string" },
+      "CompletedAt": { $type: "date" },
+      "PublishedActivityProjectionCompletedAt": null
+    }
+  }
+)
+verifyCatalogIndex(
+  "md_to_ppt_runs",
+  "idx_md_to_ppt_runs_contract_recovery",
+  { "ArtifactContractVersion": 1, "ArtifactContractSynchronizedAt": 1, "UpdatedAt": 1 }
+)
+for (const [keys, options] of designRunV2Indexes) {
+  verifyCatalogIndex("design_artifact_runs_v2", options.name, keys, options)
+}
+
 // collection: mcp_call_logs
 // 智能体接入台的调用记录。两个读法都很热：
 //   1. 面板按「我的 + 本部署 + 时间倒序」翻页（Overview 与 calls 列表）
@@ -1539,7 +1748,6 @@ db.mcp_usage_counters.createIndex(
 // 调用记录是用户的审计流水，删多久算合适是产品决定（用户要能回看自己的智能体做过什么），
 // 不在这里替他定。库大到要治的时候由 DBA 按策略开这一行（示例 180 天）：
 // db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
-
 
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(

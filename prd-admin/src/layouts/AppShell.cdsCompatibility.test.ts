@@ -31,9 +31,8 @@ describe('AppShell CDS preview compatibility', () => {
 
   // 上一条只证明「算出来的锚点在右侧」，不证明「这个值真的落到了元素上」。
   // 徽章的 CSS 默认值是 left:12px（左下角，正好压住贴底的头像），只有 inline style
-  // 覆盖掉它才轮不到 CSS 生效。而 setWidgetPosition() 只在拖拽/缩放时才调 ——
-  // 首屏靠的是 render() 里那两行直接落 pos。这两行删掉，上面的断言依旧全绿，
-  // 徽章却会退回左下角压住头像。所以这条单独盯「接线」。
+  // 覆盖掉它才轮不到 CSS 生效。首屏必须由 render() 调统一定位函数；定位函数同时负责
+  // 桌面端与移动端宽高边界，不能再绕过它直接写两份位置逻辑。
   it('首屏由 render() 把 pos 落成 inline style，CSS 默认的 left:12px 轮不到生效', () => {
     // render() 的函数体：从 function render(){ 到下一个顶层函数 renderLogModal 之前。
     const renderBody = widgetSource.slice(
@@ -41,8 +40,15 @@ describe('AppShell CDS preview compatibility', () => {
       widgetSource.indexOf('function renderLogModal(){'),
     );
     expect(renderBody).not.toHaveLength(0);
-    expect(renderBody).toContain("root.style.left=pos.x+'px'");
-    expect(renderBody).toContain("root.style.bottom=pos.y+'px'");
+    expect(renderBody).toContain('setWidgetPosition(pos.x,pos.y);');
+
+    const positionBody = widgetSource.slice(
+      widgetSource.indexOf('function setWidgetPosition(x,y){'),
+      widgetSource.indexOf('function onMouseDown(e){'),
+    );
+    expect(positionBody).not.toHaveLength(0);
+    expect(positionBody).toContain("root.style.left=pos.x+'px'");
+    expect(positionBody).toContain("root.style.bottom=pos.y+'px'");
 
     // 而且 render() 必须在初始化时就被调用一次（不是等到某个交互）。
     // 定位靠缩进：注入脚本整体包在一个 IIFE 里，顶层语句缩进 2 格，函数体内的调用
