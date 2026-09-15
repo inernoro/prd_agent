@@ -18,4 +18,7 @@
 | fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |
 | fix | prd-admin | 切维度时旧请求后返回不再覆盖新榜数据（按发起时的榜校验，对不上整份丢弃，缓存照存） |
 | fix | prd-admin | 表格布局三连修：模型列不再吃掉全部富余（中间空一大块）、指标条加满宽轨道（长列表右边缘不再是锯齿）、撤掉居中让表格靠边填满画布 |
+| feat | prd-api | 深度自检端点新增「模型榜快照陈旧度」check 与 cds:monitor 声明：同步连着失败时读端点照样 200、只有页面上一个 stale 标签，现在有了不靠人去点的常设判据（48 小时，与页面同阈值） |
+| fix | prd-admin | 刷新与同步按钮的 loading 改用统一的 MapSpinner，不再自绘 animate-spin（frontend-architecture 强制） |
+| fix | prd-admin | 请求守卫从「记目标榜」换成单调递增序号：同一个榜的两个请求（首屏未回时点刷新、同步后强制重拉）board 相同，原守卫挡不住 |
 | test | prd-api | 解析守卫扩到 28 条，fixture 取自真实页面片段，覆盖六指标对位、Down 转负、非对称区间、五列与七列混排、分榜目录一致性 |

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { ArrowDown, ChevronDown, ChevronUp, CloudDownload, ExternalLink, Minus, RefreshCw } from 'lucide-react';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { glassBar } from '@/lib/glassStyles';
 import { hasEffectivePermission } from '@/lib/permissionAccess';
 import { toast } from '@/lib/toast';
@@ -135,13 +135,14 @@ export default function ModelLeaderboardPage() {
   const cacheRef = useRef(new Map<string, ModelLeaderboardSnapshot>());
 
   /**
-   * 最后一次发起的请求属于哪个榜。
+   * 最后一次发起的请求的序号。每发一次自增，回来时对不上就整份丢掉。
    *
-   * 切维度比请求回来快时，两个请求都还在飞，谁后到谁 setSnapshot——旧榜的数据会渲染在
-   * 新榜的标题和 URL 下面，直到下一次刷新（Codex 在 PR #1538 指出）。所以每次发请求前
-   * 记下目标榜，回来时对不上就整份丢掉，不碰任何 state。
+   * 起初只记「目标榜」，那只挡得住切维度的竞态（旧榜数据渲染在新榜标题下）。同一个榜的
+   * 两个请求——比如首屏那次还在飞、用户又点了刷新，或者同步完成后的强制重拉——board
+   * 字符串一模一样，都能通过守卫，于是先发后到的那个会把新数据覆盖回旧的
+   * （Codex 在 PR #1538 第三轮指出）。用单调递增的序号，两种竞态一起挡掉。
    */
-  const inflightBoardRef = useRef(board);
+  const requestSeqRef = useRef(0);
 
   /** 当前选中的榜。异步回调里不能直接看 board——那是闭包捕获的旧值。 */
   const boardRef = useRef(board);
@@ -151,7 +152,7 @@ export default function ModelLeaderboardPage() {
 
   const load = useCallback(
     async (force = false) => {
-      inflightBoardRef.current = board;
+      const seq = ++requestSeqRef.current;
 
       const cached = cacheRef.current.get(board);
       if (cached && !force) {
@@ -166,9 +167,10 @@ export default function ModelLeaderboardPage() {
       // 文本榜实测 402 个模型，一次取全；渲染分批，不会因为行多就卡（见 INITIAL_ROWS）
       const res = await getModelLeaderboard(board, 500);
 
-      // 这期间用户可能已经切走了：缓存照存（下次切回来即时可用），但不动当前这一屏
+      // 这期间用户可能已经切走、或又发了一次请求：缓存照存（下次切回来即时可用），
+      // 但只有最后一次发出的请求才有资格动这一屏
       if (res.success && res.data) cacheRef.current.set(board, res.data);
-      if (inflightBoardRef.current !== board) return;
+      if (seq !== requestSeqRef.current) return;
 
       if (res.success && res.data) {
         setSnapshot(res.data);
@@ -376,7 +378,7 @@ export default function ModelLeaderboardPage() {
           className="h-[28px] w-[28px] inline-flex items-center justify-center rounded-[8px] transition-colors"
           style={{ background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
         >
-          <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
+          {loading ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
         </button>
 
         {canSync && (
@@ -388,7 +390,7 @@ export default function ModelLeaderboardPage() {
             className="h-[28px] px-2.5 inline-flex items-center gap-1.5 rounded-[8px] text-[12px] font-medium transition-colors disabled:opacity-60"
             style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
           >
-            <CloudDownload size={13} className={syncing ? 'animate-pulse' : ''} />
+            {syncing ? <MapSpinner size={13} /> : <CloudDownload size={13} />}
             {syncing ? '抓取中' : '立即同步'}
           </button>
         )}
@@ -421,7 +423,7 @@ export default function ModelLeaderboardPage() {
                   className="mt-1 self-start h-[32px] px-3.5 inline-flex items-center gap-2 rounded-[9px] text-[13px] font-medium transition-colors disabled:opacity-60"
                   style={{ background: 'var(--accent-gold)', color: 'var(--accent-on-gold)' }}
                 >
-                  <CloudDownload size={14} className={syncing ? 'animate-pulse' : ''} />
+                  {syncing ? <MapSpinner size={14} /> : <CloudDownload size={14} />}
                   {syncing ? '正在从 arena.ai 抓取…' : '立即同步一次'}
                 </button>
               ) : undefined

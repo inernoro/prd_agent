@@ -1702,6 +1702,42 @@ static async Task<IResult> DeepHealth(
         mongoOutput = $"Mongo 探不通：{ex.GetType().Name}";
     }
 
+    // 榜单快照的陈旧度。这是「同步链路还活着吗」唯一不靠人去点就能读到的信号：
+    // 抓取失败时 SyncService 刻意保留旧快照（宁可旧也不写空），读端点照样 200，
+    // 页面上只有一个需要人打开才看得见的 stale 标签——降级把一次持续失败翻译成了一次
+    // 表面成功（degradation-must-alarm.md）。所以这里对**症状**（数据多旧）而不是
+    // 原因（哪次抓取失败）暴露一条机读判据。
+    double leaderboardStaleHours;
+    string leaderboardOutput;
+    try
+    {
+        var oldest = await db.ModelLeaderboardSnapshots
+            .Find(MongoDB.Driver.Builders<PrdAgent.Core.Models.ModelLeaderboardSnapshot>.Filter.Empty)
+            .SortBy(x => x.FetchedAt)
+            .Limit(1)
+            .FirstOrDefaultAsync(cancellationToken);
+
+        if (oldest is null)
+        {
+            // 一个榜都还没同步过：说明还没跑起来，不是「很新」。用 -1 表示，判据会判失败。
+            leaderboardStaleHours = -1;
+            leaderboardOutput = "还没有任何榜单快照（周期同步只在权威部署跑，分支预览属正常）";
+        }
+        else
+        {
+            leaderboardStaleHours = Math.Round((now - oldest.FetchedAt).TotalHours, 1);
+            leaderboardOutput = leaderboardStaleHours <= 48
+                ? $"最旧的榜单快照是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
+                : $"最旧的榜单快照已经 {leaderboardStaleHours} 小时没更新（{oldest.Board}）——"
+                  + "同步大概率连着失败了，去看容器日志里 ModelLeaderboardSync 的告警";
+        }
+    }
+    catch (Exception ex)
+    {
+        leaderboardStaleHours = -1;
+        leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
+    }
+
     var payload = new Dictionary<string, object?>
     {
         ["status"] = faultCount == 0 && mongoMs >= 0 ? "pass" : "fail",
@@ -1737,6 +1773,34 @@ static async Task<IResult> DeepHealth(
                         severity = "P0",
                         observeMode = "passive",
                         sampleComponentId = "api.requests",
+                    },
+                },
+            },
+            ["model-leaderboard:staleness"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-leaderboard.staleness",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = leaderboardStaleHours,
+                    ["observedUnit"] = "h",
+                    // -1（读不到 / 一个榜都没有）也落在 fail 这一侧：没有数据不等于数据很新
+                    ["status"] = leaderboardStaleHours >= 0 && leaderboardStaleHours <= 48 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = leaderboardOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "模型榜快照陈旧度",
+                        field = "observedValue",
+                        // 同步是每天一轮，容忍连着两轮失败（48 小时）再响——与页面上 stale
+                        // 标签同一个阈值，两处不许各定一个
+                        op = "lte",
+                        value = 48,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 1,
+                        severity = "P2",
+                        observeMode = "passive",
+                        sampleComponentId = "model-leaderboard.staleness",
                     },
                 },
             },
