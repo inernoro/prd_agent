@@ -6,3 +6,4 @@
 | test | prd-api | 解析守卫从 14 条扩到 27 条，新增分数榜真实片段 fixture 与分榜目录一致性断言 |
 | fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |
 | fix | prd-api | model_leaderboard_snapshots 补进 DataSyncScope.Excluded（外站公开数据的本地缓存，跨实例搬运无意义且会误导来源） |
+| feat | prd-admin | 当前维度同步到 URL（?board=text-to-image），刷新保持、可分享、交付能给出落到该维度的深链；URL 里写了不存在的榜退回默认榜 |

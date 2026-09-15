@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CloudDownload, ExternalLink, RefreshCw } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { glassBar } from '@/lib/glassStyles';
@@ -56,7 +57,32 @@ type RangeKey = 'all' | 'open';
 
 export default function ModelLeaderboardPage() {
   const [boards, setBoards] = useState<LeaderboardBoardInfo[]>([]);
-  const [board, setBoard] = useState('agent');
+
+  /**
+   * 当前维度放在 URL 上（`?board=text-to-image`），不是组件 state。
+   *
+   * 三件事都靠它：刷新后还在这一屏、能把某个维度的链接直接发给别人、交付时给得出
+   * 落到那一屏的深链（AGENTS.md 规则 11：不给根地址）。默认 agent 时不写 query，
+   * 免得首页进来的干净链接立刻被塞上一截参数。
+   */
+  const [searchParams, setSearchParams] = useSearchParams();
+  const board = searchParams.get('board') ?? 'agent';
+  const setBoard = useCallback(
+    (key: string) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (key === 'agent') next.delete('board');
+          else next.set('board', key);
+          return next;
+        },
+        // 切维度是浏览而不是导航到新页面，用 replace 免得把浏览器的后退键塞满
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
   const [range, setRange] = useState<RangeKey>('all');
   const [snapshot, setSnapshot] = useState<ModelLeaderboardSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -99,6 +125,18 @@ export default function ModelLeaderboardPage() {
     () => boards.find((b) => b.key === board) ?? null,
     [boards, board],
   );
+
+  /**
+   * URL 里写了个不存在的榜（手敲错、或者对方删了某个榜）就退回默认榜。
+   *
+   * 不这么做的话页面会一直停在「榜单没读出来：未知的榜单 xxx」——那是把一个我们自己
+   * 能处理的输入错误，摆成了一条死路（guided-exploration.md：异常态要给得出下一步）。
+   * 目录还没回来时不判，否则首帧就会把用户手上的合法链接改掉。
+   */
+  useEffect(() => {
+    if (boards.length === 0 || currentBoard) return;
+    setBoard('agent');
+  }, [boards.length, currentBoard, setBoard]);
 
   /**
    * 表格形状以**快照里的 kind** 为准，目录里的 kind 只在快照还没到时垫一下。
