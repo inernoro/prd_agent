@@ -260,7 +260,7 @@ public sealed class AdminPermissionMiddleware
         await _next(context);
     }
 
-    private static bool IsDesignArtifactRuntimeDataPlaneRequest(HttpContext context)
+    internal static bool IsDesignArtifactRuntimeDataPlaneRequest(HttpContext context)
     {
         if (context.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() == null)
             return false;
@@ -279,11 +279,17 @@ public sealed class AdminPermissionMiddleware
             return false;
 
         var operationPath = remainder[(runIdSeparator + 1)..];
+        // 这份清单必须与 DesignArtifactRuntimeController 的路由逐条对齐：漏一条，那条就会落回
+        // 父级 /api/design-artifacts 的管理员门，在 run 级模型票据被校验之前先 401。
+        // `llm/v1/responses` 曾经漏掉（Codex P1，2026-09-15），而 OpenDesign 的 Codex 运行时
+        // 正是 wire_api = "responses"——于是每一次真实模型调用都失败。
+        // 防再漏一条的守卫：DesignArtifactRuntimeDataPlaneBypassTests 反射控制器路由逐条比对。
         return (HttpMethods.IsGet(context.Request.Method)
                 && (string.Equals(operationPath, "workspace/input", StringComparison.OrdinalIgnoreCase)
                     || string.Equals(operationPath, "llm/v1/models", StringComparison.OrdinalIgnoreCase)))
                || (HttpMethods.IsPost(context.Request.Method)
                    && (string.Equals(operationPath, "workspace/result", StringComparison.OrdinalIgnoreCase)
-                       || string.Equals(operationPath, "llm/v1/chat/completions", StringComparison.OrdinalIgnoreCase)));
+                       || string.Equals(operationPath, "llm/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "llm/v1/responses", StringComparison.OrdinalIgnoreCase)));
     }
 }

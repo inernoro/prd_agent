@@ -51,6 +51,11 @@ describe('连接凭据的路由白名单', () => {
         .toBe('shared-service:deploy');
       expect(connectionTokenRequiredScope('GET', `/api/projects/${project}/agent-sessions/${session}/logs`))
         .toBe('instance:read');
+      // 停止返回旧式无结构 400 时 MAP 要回读这一条会话，分清「已经没了」与「真失败」。
+      // 这条最初在拒绝名单里、理由写的是「未被 MAP 使用的旁路」——回读落地后那个前提就不成立了
+      //（Codex P2，2026-09-15）。放行的是单条只读，路由自身仍只给调用方自己的会话。
+      expect(connectionTokenRequiredScope('GET', `/api/projects/${project}/agent-sessions/${session}`))
+        .toBe('instance:read');
     });
   });
 
@@ -101,7 +106,6 @@ describe('连接凭据的路由白名单', () => {
       for (const [method, path] of [
         ['POST', '/api/projects/p1/agent-runtime-providers'],
         ['GET', '/api/projects/p1/agent-sessions'],
-        ['GET', base],
         ['GET', `${base}/messages`],
         ['POST', `${base}/stream`],
         ['GET', `${base}/tool-approvals/a1`],

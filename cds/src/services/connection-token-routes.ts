@@ -112,6 +112,17 @@ const RULES: readonly ConnectionRouteRule[] = [
     scope: 'instance:read',
     why: 'Agent 会话日志：MAP 读取对应会话的脱敏运行诊断',
   },
+  {
+    // 停止返回旧式无结构 400 时，MAP 要回读这一条会话才能分清「已经没了」与「真失败」。
+    // 少了这条，回读在进会话路由之前就被门挡掉，MAP 把它读成鉴权失败，于是把清理判成
+    // 永久失败（Codex P2，2026-09-15）。路由自身已经要 instance:read 且只放行调用方自己的
+    // 会话（getOwnedCdsAgentSession），所以这里放行的是一条只读、按主体收敛的单条读取，
+    // 不是会话列表。
+    methods: ['GET'],
+    match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions\/[^/]+$/.test(path),
+    scope: 'instance:read',
+    why: 'Agent 会话回读：MAP 在停止返回不可判定错误时确认自己那条会话的真实状态',
+  },
 ];
 
 /**

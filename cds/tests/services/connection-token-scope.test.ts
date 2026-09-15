@@ -131,13 +131,17 @@ describe('Agent 会话调用按现有三个范围严格分权', () => {
     expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions/s1/tool-approvals/a1')).toBe(true);
     expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions')).toBe(false);
     expect(connectionTokenAllows(scopes, 'POST', '/api/projects/p1/agent-sessions/s1/stop')).toBe(false);
+    // 单条会话回读走 instance:read，不在 deployment:stream 这一档。
+    expect(connectionTokenAllows(scopes, 'GET', '/api/projects/p1/agent-sessions/s1')).toBe(false);
+    expect(connectionTokenAllows(['instance:read'], 'GET', '/api/projects/p1/agent-sessions/s1')).toBe(true);
+    // 会话列表始终不开：那才是这道门要挡的越权面。
+    expect(connectionTokenAllows(['instance:read'], 'GET', '/api/projects/p1/agent-sessions')).toBe(false);
   });
 
   it('相似路径、错方法和管理端点不能搭便车', () => {
     const scopes = DEFAULT_SCOPES;
     for (const [method, path] of [
       ['GET', '/api/projects/p1/agent-sessions'],
-      ['GET', '/api/projects/p1/agent-sessions/s1'],
       ['POST', '/api/projects/p1/agent-runtime-providers'],
       ['POST', '/api/projects/p1/files'],
       ['GET', '/api/projects/p1/agent-requests'],
