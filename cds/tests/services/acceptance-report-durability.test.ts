@@ -70,7 +70,9 @@ describe('验收报告正文的持久性', () => {
       format: 'md', content: '# 结论\n\n通过。', projectId: 'p1', createdBy: 'ai',
     });
     expect(meta.storage).toBe('object');
-    expect(meta.objectKey).toBe('reports/p1/' + meta.id + '.md');
+    // 前缀（这里的 config 是 'p'）必须拼进对象键：它此前被解析出来就没人用过，
+    // 报告全落在桶根、和基础设施备份混在一起，跟着备份的回收策略一起被删。
+    expect(meta.objectKey).toBe('p/reports/p1/' + meta.id + '.md');
 
     rebuildContainer();
 

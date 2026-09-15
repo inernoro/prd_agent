@@ -215,22 +215,34 @@ export function ReportsPage(): JSX.Element {
       setOverviewState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   }, [overviewScope, overviewDays]);
-  const loadPipeline = useCallback(async () => {
-    setPipelineState({ status: 'loading' });
+  /**
+   * 拉流水线。`quiet` 用于「报告增删后的重算」：那种时候面板上已经有内容，
+   * 再把状态打回 loading 会让整块图表凭空消失一下再回来，比不刷新还难看。
+   * 首次进入没有内容可保留，才走 loading。
+   */
+  const loadPipeline = useCallback(async (quiet = false) => {
+    if (!quiet) setPipelineState({ status: 'loading' });
     try {
       const { pipeline, series } = await fetchReportsPipeline({});
       setPipelineState({ status: 'ok', pipeline, series });
     } catch (err) {
-      setPipelineState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+      // 静默刷新失败时保留原有内容：把一屏已经读得懂的图换成一行报错，
+      // 对读者是净损失。首次加载失败才有必要把错误顶上来。
+      setPipelineState((prev) => (quiet && prev.status === 'ok'
+        ? prev
+        : { status: 'error', message: err instanceof ApiError ? err.message : String(err) }));
     }
   }, []);
   useEffect(() => { void loadPipeline(); }, [loadPipeline]);
 
   // state 变化（新建 / 删除 / 移动报告）后重算聚合，保证头条与台账同源。
+  // 流水线也必须一起重拉：它和头条是同一批数据的两个切面，只刷一个的话，
+  // 删掉一份报告后台账少了一行、而上面的漏斗与走向还是旧的（Codex review 抓到）。
   useEffect(() => {
     if (state.status !== 'ok') return;
     void loadOverview();
-  }, [loadOverview, state]);
+    void loadPipeline(true);
+  }, [loadOverview, loadPipeline, state]);
 
   // 直达深链：报告加载完成后，按 ?folder= / ?report= 自动激活文件夹并打开对应报告。
   // 用 identity-guard 的函数式 setState 避免重复触发（命中即稳定，不抖动）。

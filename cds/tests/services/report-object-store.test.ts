@@ -28,15 +28,17 @@ describe('reportObjectStoreFromEnv', () => {
     })).not.toBeNull();
   });
 
-  it('凭据只有一半时返回 null，不做「有几个算几个」的降级', () => {
-    // 半套凭据只会写出一批取不回来的对象——prd-api 的 AssetStorageProviderResolver
-    // 早就明令禁止这种静默回退，CDS 这边照抄。
+  it('凭据只有一半时抛错，不做「有几个算几个」的降级', () => {
+    // 这条用例原先断言的是 toBeNull()——而返回 null 恰恰就是那个静默降级：
+    // 调用方据此走本地盘、接口照回 201，重建之后又是一本取不出货的台账。
+    // 用例名写着「不做降级」，断言却把降级锁死了（Codex review 抓到）。
+    // 现在的口径：四个全空 = 有意只用本地；配了一半 = 配置事故，当场抛。
     for (const partial of [
       { R2_ENDPOINT: 'https://x.r2.cloudflarestorage.com' },
       { R2_ENDPOINT: 'https://x.r2.cloudflarestorage.com', R2_BUCKET: 'b' },
       { R2_ENDPOINT: 'https://x.r2.cloudflarestorage.com', R2_BUCKET: 'b', R2_ACCESS_KEY_ID: 'a' },
     ]) {
-      expect(reportObjectStoreFromEnv(partial), JSON.stringify(partial)).toBeNull();
+      expect(() => reportObjectStoreFromEnv(partial), JSON.stringify(partial)).toThrow(/只配了一半/);
     }
   });
 
@@ -52,13 +54,13 @@ describe('reportObjectStoreFromEnv', () => {
 
 describe('reportObjectKey', () => {
   it('按项目分段，扩展名跟格式走', () => {
-    expect(reportObjectKey({ id: 'abc', format: 'md', projectId: 'p1' })).toBe('reports/p1/abc.md');
-    expect(reportObjectKey({ id: 'abc', format: 'html', projectId: 'p1' })).toBe('reports/p1/abc.html');
+    expect(reportObjectKey({ id: 'abc', format: 'md', projectId: 'p1' })).toBe('cds-acceptance-reports/reports/p1/abc.md');
+    expect(reportObjectKey({ id: 'abc', format: 'html', projectId: 'p1' })).toBe('cds-acceptance-reports/reports/p1/abc.html');
   });
 
   it('projectId 缺失或含奇怪字符时不许拼出空段或穿越路径', () => {
-    expect(reportObjectKey({ id: 'abc', format: 'md', projectId: null })).toBe('reports/_unassigned/abc.md');
-    expect(reportObjectKey({ id: 'abc', format: 'md', projectId: '../../etc' })).toBe('reports/etc/abc.md');
+    expect(reportObjectKey({ id: 'abc', format: 'md', projectId: null })).toBe('cds-acceptance-reports/reports/_unassigned/abc.md');
+    expect(reportObjectKey({ id: 'abc', format: 'md', projectId: '../../etc' })).toBe('cds-acceptance-reports/reports/etc/abc.md');
   });
 });
 
@@ -78,9 +80,9 @@ describe('createReportObjectStore', () => {
         return { objectKey: opts.objectKey, bytes: opts.body.byteLength, sha256: 'x' };
       },
     });
-    expect(await store.put({ id: 'a', format: 'md', projectId: 'p' }, '# 标题')).toBe('reports/p/a.md');
+    expect(await store.put({ id: 'a', format: 'md', projectId: 'p' }, '# 标题')).toBe('cds-acceptance-reports/reports/p/a.md');
     expect(calls[0]).toEqual({
-      objectKey: 'reports/p/a.md',
+      objectKey: 'cds-acceptance-reports/reports/p/a.md',
       contentType: 'text/markdown; charset=utf-8',
       body: '# 标题',
     });

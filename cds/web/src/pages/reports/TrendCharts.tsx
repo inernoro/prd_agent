@@ -289,6 +289,10 @@ export interface TrendChartsProps {
   zoom: boolean;
 }
 
+/** 项目线的灰阶档位。四条及以上时最后一档复用最浅色，靠线型与线端直标区分。 */
+const GREY_CLS = ['g1', 'g2', 'g3', 'g3'] as const;
+const GREY_DASH = ['d-g1', 'd-g2', 'd-g3', 'd-g3'] as const;
+
 export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
   const { days, pass, conditional, fail, undetermined, changes } = series;
   const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
@@ -326,11 +330,14 @@ export function TrendCharts({ series, zoom }: TrendChartsProps): JSX.Element {
     </>
   );
 
-  const projLines: Line[] = series.projects.slice(0, 3).map((p, i) => ({
+  // 画后端给多少条，不自己再截一刀。后端默认给 4 条并把第 5 名之后算进
+  // otherProjects；前端若只画前 3，第 4 名既没画线、也不在「其余 N 个项目」里，
+  // 图例与报告总数就对不上账（Codex review 抓到）。
+  const projLines: Line[] = series.projects.map((p, i) => ({
     key: p.projectId ?? `_none${i}`,
     label: p.projectName,
-    cls: ['g1', 'g2', 'g3'][i] ?? 'g3',
-    dash: ['d-g1', 'd-g2', 'd-g3'][i] ?? 'd-g3',
+    cls: GREY_CLS[i] ?? GREY_CLS[GREY_CLS.length - 1],
+    dash: GREY_DASH[i] ?? GREY_DASH[GREY_DASH.length - 1],
     raw: p.counts,
     total: p.total,
   }));

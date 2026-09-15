@@ -137,6 +137,34 @@ function hasChangeKey(r: OverviewReportRef): boolean {
 }
 
 /** 分支是否真的部署过：有服务实例，或有过一次部署完成时间。 */
+/**
+ * 一条活分支「当前这一代」从什么时候开始算。
+ *
+ * 与 proxy.ts 的陈旧墓碑判定同口径：createdAt / lastPushAt / lastDeployAt 取最近者。
+ * 分支名被复用时，上一代的墓碑早于这个时刻。
+ */
+export function branchLiveSince(b: BranchEntry): number {
+  return Math.max(
+    Date.parse(b.createdAt || '') || 0,
+    Date.parse(b.lastPushAt || '') || 0,
+    Date.parse(b.lastDeployAt || '') || 0,
+  );
+}
+
+/**
+ * 这块墓碑是不是上一代同名分支留下的。
+ *
+ * `liveSince` 为 undefined 表示没有同名活分支——那墓碑就是它自己的历史，不算陈旧。
+ * 墓碑没有 removedAt（解析不出时间）时按「不陈旧」处理：宁可少判一次复用，
+ * 也不要把真实的合并记录丢掉。
+ */
+export function tombstoneIsStale(t: BranchTombstone, liveSince: number | undefined): boolean {
+  if (!liveSince) return false;
+  const tombAt = Date.parse(t.removedAt || '') || 0;
+  if (!tombAt) return false;
+  return tombAt < liveSince;
+}
+
 function branchDeployed(b: BranchEntry): boolean {
   return Object.keys(b.services || {}).length > 0 || Boolean(b.lastDeployAt);
 }
@@ -175,6 +203,12 @@ export function buildPipelineOverview(
     const pid = project.id;
     const projectRefs = refs.filter((r) => (r.projectId || null) === pid);
     const projectBranches = branches.filter((b) => b.projectId === pid);
+    // 同名活分支的「这一代从何时开始」，供下面剔除上一代留下的墓碑。
+    const liveSince = new Map<string, number>();
+    for (const b of projectBranches) {
+      const at = branchLiveSince(b);
+      liveSince.set(b.branch, Math.max(liveSince.get(b.branch) ?? 0, at));
+    }
     const projectTombs = tombstones.filter(
       (t) => t.projectId === pid
         && (mergedFloorMs == null || (Date.parse(t.removedAt || '') || 0) >= mergedFloorMs),
@@ -202,6 +236,12 @@ export function buildPipelineOverview(
       const merged = t.reason === 'merged';
       const existing = changes.get(t.branch);
       if (existing) {
+        // 分支名会被复用：上一条同名分支合并后墓碑仍在台账里，新开的同名分支是
+        // 另一个 incarnation。无条件套用同名墓碑，会把一条正在跑的分支标成 merged，
+        // 于是首页把它报成「没验就合并」或「没过还合并」——首页最不能做的就是喊狼。
+        // 判据与 proxy.ts 的陈旧墓碑判定同口径：墓碑早于当前 incarnation 的活动时间
+        // 就是上一代的，不采用。
+        if (tombstoneIsStale(t, liveSince.get(t.branch))) continue;
         existing.merged = existing.merged || merged;
         existing.mergedAt = merged ? (t.removedAt || null) : existing.mergedAt;
         if (existing.prNumber == null) existing.prNumber = t.prNumber ?? null;

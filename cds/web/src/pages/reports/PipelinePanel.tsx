@@ -11,7 +11,7 @@
  */
 import { useState } from 'react';
 import { buildPipelineHeadline } from '@/lib/pipelineHeadline';
-import { CompactStrip, EXPAND_CSS, ExpandedPanel, STRIP_CSS } from '@/pages/reports/CompactStrip';
+import { CompactStrip, EXPAND_CSS, ExpandedPanel, STRIP_CSS, splitFunnel } from '@/pages/reports/CompactStrip';
 import { TREND_CSS, TrendCharts } from '@/pages/reports/TrendCharts';
 import type { PipelineFunnel, PipelineOverview, PipelineProjectRow, PipelineSeries } from '@/lib/api';
 
@@ -105,15 +105,14 @@ function TipBox({ state }: { state: TipState }): JSX.Element {
  * 刻意**不用** `leaks['deployed-not-accepted']` 那个桶：它排除了「合并了没验」那一类，
  * 等分支墓碑数据接进来（当前全库 merged=0，因为聚合还没接），桶里的数会小于真实的
  * 「已部署未验收」，分流图就加不回总数、凭空少几个方块，而且今天两者恰好相等、
- * 明天才静默错位——最难查的那种。用基数现推则恒等成立：
- *   accepted + (deployed - accepted) + (changes - deployed) === changes
+ * 明天才静默错位——最难查的那种。
+ *
+ * 实现直接转给 splitFunnel：此前这里和 CompactStrip 的 rowSplit 是两份实现，
+ * 这一份只对每段各自 max(0, …)，在「验过的比部署的还多」这种脏数据上三段之和会
+ * 大于 changes（Codex review 抓到）。现在只有一个口径。
  */
 export function splitChanges(f: PipelineFunnel): { accepted: number; heap: number; undeployed: number } {
-  return {
-    accepted: Math.max(0, f.accepted),
-    heap: Math.max(0, f.deployed - f.accepted),
-    undeployed: Math.max(0, f.changes - f.deployed),
-  };
+  return splitFunnel(f);
 }
 
 /** 一垛的悬浮内容：图上只放得下项目名和一个数，其余都在这里。 */
