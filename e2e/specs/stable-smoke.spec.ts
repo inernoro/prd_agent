@@ -3205,17 +3205,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       testInfo.annotations.push({ type: 'gateway-fixture-recovery', description: summary });
       console.warn(`[GW-007] 发现上一轮遗留的网关注入态：${summary}`);
     }
-    expect(
-      leftovers.filter((item) => item.source === 'unrecoverable'),
-      '上一轮遗留的注入态既没有自带原值、也找不到相同路由契约的捐出方，不能猜着写：请人工恢复这些 Offering 的 Endpoint 后再跑',
-    ).toEqual([]);
     // 带标记备用在一轮 GW-007 之外只能是停用：不论挂在哪个逻辑模型上（包括本轮不会选中的），
     // 启用着的一律先停掉，否则上一轮夭折留下的备用会一直参与 CDS 真实流量的路由。
+    // 先隔离、再判无法还原：还原不了的备用也不能带着注入态继续在线。
     const straySummary = await disableStrayGatewayBackups(request, gateway, logicalBody.data.items);
     if (straySummary.length > 0) {
       testInfo.annotations.push({ type: 'gateway-fixture-stray-backup', description: straySummary.join('; ') });
       console.warn(`[GW-007] 发现上一轮遗留的已启用备用并已停用：${straySummary.join('; ')}`);
     }
+    expect(
+      leftovers.filter((item) => item.source === 'unrecoverable'),
+      '上一轮遗留的注入态既没有自带原值、也找不到相同路由契约的捐出方，不能猜着写：请人工恢复这些 Offering 的 Endpoint 后再跑',
+    ).toEqual([]);
     const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
     const { upstreamIds, upstreamById } = upstreamIndex;
 
@@ -3426,20 +3427,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
           // 主路与备用的 Endpoint 已按 originals 复原；这里再按注入前缀扫一遍，把本轮没登记到的注入态也恢复。
           const leftoverAfterRun = await recoverInjectedGatewayOfferings(request, gateway, body.data.items);
-          const unrecoverable = leftoverAfterRun.filter((item) => item.source === 'unrecoverable');
-          if (unrecoverable.length > 0) {
-            throw new Error(`清理阶段仍有无法还原的注入态 Offering，需要人工恢复 Endpoint：${describeGatewayRecovery(unrecoverable)}`);
-          }
           const owner = body.data.items.find((item) => item.id === backupOwnerId);
           for (const offering of owner?.offerings || []) {
             if (offering.enabled && isFailoverBackup(offering)) backupIds.add(offering.id);
           }
-          // 其它逻辑模型上若还有启用着的带标记备用（本轮没选中它们），同样一并停掉。
+          // 其它逻辑模型上若还有启用着的带标记备用（本轮没选中它们），同样一并停掉；
+          // 先隔离再报无法还原，还原不了的备用也不能带着注入态继续在线。
           await disableStrayGatewayBackups(
             request,
             gateway,
             body.data.items.filter((item) => item.id !== backupOwnerId),
           );
+          const unrecoverable = leftoverAfterRun.filter((item) => item.source === 'unrecoverable');
+          if (unrecoverable.length > 0) {
+            throw new Error(`清理阶段仍有无法还原的注入态 Offering，需要人工恢复 Endpoint：${describeGatewayRecovery(unrecoverable)}`);
+          }
         })()])
         : [];
       const backupRestore = backupOwnerId
@@ -3536,6 +3538,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     // 进入时备用本身就停在上一轮的注入态：先自愈再取快照，否则 finally 会把注入态原样写回去。
     if (isGatewayInjectedEndpoint(backup!)) {
       const pre = await recoverInjectedGatewayOfferings(request, gateway, items);
+      // 先隔离再判无法还原：还原不了的备用也不能带着注入态继续在线。
+      await disableStrayGatewayBackups(request, gateway, items);
       expect(
         pre.filter((item) => item.source === 'unrecoverable'),
         '进入用例时备用 Offering 停在无法还原的注入态，请先人工恢复 Endpoint 再跑',
