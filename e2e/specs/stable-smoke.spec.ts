@@ -3253,9 +3253,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     // 备用上游照抄「捐出」它的那条 Offering 的路由契约（协议 / Endpoint / 上游模型名），不能拿主路的协议去配别人的上游。
     let logical: GatewayLogicalModel | undefined;
     let provisionedBackup: GatewayOffering | undefined;
-    // 备用上游挂在哪个逻辑模型上，在发出启用 / 创建请求之前就记下：响应丢失或断言失败时，
-    // finally 仍知道去哪里把带标记的备用找回来停掉。
-    let backupOwnerLogicalId = '';
     let offerings: GatewayOffering[] = [];
     const originals = new Map<GatewayOffering, { endpointPath: string; priority: number }>();
     let originalStrategy = '';
@@ -3335,7 +3332,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           && upstreamIds.has(offering.targetId)
           && isFailoverBackup(offering)
         ));
-        backupOwnerLogicalId = preferred.id;
         if (taggedBackup) {
           // 先登记归属再等待启用：网关启用成功但响应丢失 / 断言失败时，finally 照样能停掉它。
           provisionedBackup = taggedBackup;
@@ -3418,38 +3414,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         )
       )));
       const strategyRestore = originalStrategy ? await Promise.allSettled([updateStrategy(originalStrategy)]) : [];
-      // 停用临时备用：已知的那条 + 重新拉一次逻辑模型、按标记找回仍在启用的（创建请求响应不确定时
-      // provisionedBackup 为空，但网关那边可能已经建好并启用了）。
-      const backupOwnerId = logical?.id || backupOwnerLogicalId;
-      const backupIds = new Set<string>();
-      if (provisionedBackup) backupIds.add(provisionedBackup.id);
-      const rediscover = backupOwnerId
-        ? await Promise.allSettled([(async () => {
-          const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
-          const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
-          expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
-          // 主路与备用的 Endpoint 已按 originals 复原；这里再按注入前缀扫一遍，把本轮没登记到的注入态也恢复。
-          const owner = body.data.items.find((item) => item.id === backupOwnerId);
-          for (const offering of owner?.offerings || []) {
-            if (offering.enabled && isFailoverBackup(offering)) backupIds.add(offering.id);
-          }
-          // 其它逻辑模型上若还有启用着的带标记备用（本轮没选中它们），同样一并停掉；
-          // 隔离排在自愈之前：自愈的网关请求失败也不能让备用带着注入态继续在线。
-          await disableStrayGatewayBackups(
-            request,
-            gateway,
-            body.data.items.filter((item) => item.id !== backupOwnerId),
-          );
-          const leftoverAfterRun = await recoverInjectedGatewayOfferings(request, gateway, body.data.items);
-          const unrecoverable = leftoverAfterRun.filter((item) => item.source === 'unrecoverable');
-          if (unrecoverable.length > 0) {
-            throw new Error(`清理阶段仍有无法还原的注入态 Offering，需要人工恢复 Endpoint：${describeGatewayRecovery(unrecoverable)}`);
-          }
-        })()])
-        : [];
-      const backupRestore = backupOwnerId
-        ? await Promise.allSettled([...backupIds].map((offeringId) => toggleOffering(backupOwnerId, offeringId, false)))
-        : [];
+      // 停用临时备用：不再攒 id——网关每次改路由都会换 id，先按当前列表把所有逻辑模型上启用着的带标记备用
+      // （含本轮 owner 上的那条，以及创建请求响应不确定时没登记到的那条）按当前 id 停掉，再自愈注入态；
+      // 停用状态随新版本延续，自愈之后不需要再追新 id。隔离排在自愈之前：自愈请求失败也不能让备用在线。
+      const backupRestore = await Promise.allSettled([(async () => {
+        const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
+        const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+        expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
+        await disableStrayGatewayBackups(request, gateway, body.data.items);
+        // 主路与备用的 Endpoint 已按 originals 复原；这里再按注入前缀扫一遍，把本轮没登记到的注入态也恢复。
+        const leftoverAfterRun = await recoverInjectedGatewayOfferings(request, gateway, body.data.items);
+        const unrecoverable = leftoverAfterRun.filter((item) => item.source === 'unrecoverable');
+        if (unrecoverable.length > 0) {
+          throw new Error(`清理阶段仍有无法还原的注入态 Offering，需要人工恢复 Endpoint：${describeGatewayRecovery(unrecoverable)}`);
+        }
+      })()]);
       // 工作区与探针 run 的清理也走 allSettled：它们失败时要把服务端的错误原文带出来（此前是 data 为 null
       // 直接抛 TypeError，把服务端的 409 原因和前面真正的断言失败一起遮住了），并且不能挡住网关复原结果的核对。
       const workspaceCleanup = await Promise.allSettled([(async () => {
@@ -3472,7 +3451,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         }
       })()]);
       expect(
-        [...restoreResults, ...strategyRestore, ...rediscover, ...backupRestore, ...workspaceCleanup]
+        [...restoreResults, ...strategyRestore, ...backupRestore, ...workspaceCleanup]
           .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
           .map((result) => String(result.reason?.message || result.reason)),
         '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用，工作区与探针 run 必须删除',
