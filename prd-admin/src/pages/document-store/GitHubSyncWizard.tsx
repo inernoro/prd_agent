@@ -19,7 +19,11 @@ import {
   selectionSummary, filterDirectories, keywordMatchedPaths, directoryLabel, chunkDirectories,
   type DirectoryTreeNode,
 } from './githubDirectorySelection';
-import { isGitHubConnectionBroken, connectionBrokenHint } from './githubConnectionState';
+import {
+  isGitHubConnectionBroken, connectionBrokenHint,
+  nextStepAfterAuthLoad, revokedConnectionHint, replacingConnectionNotice, connectionHeaderLabel,
+  describeDisconnectNotice,
+} from './githubConnectionState';
 
 /**
  * 知识库 · GitHub 目录同步向导。
@@ -80,6 +84,25 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     setStep('connect');
   }, []);
 
+  const loadAuth = useCallback(async () => {
+    setAuthLoading(true);
+    const res = await getGitHubAuthStatus();
+    if (res.success) {
+      setAuth(res.data);
+      // 步骤由判据统一决定：连接没了或已失效一律回第一步（否则用户会卡在一个需要有效
+      // 令牌的步骤上，点什么都报错）；还在第一步且可用才前进；其余保持原地。
+      setStep((prev) => nextStepAfterAuthLoad(prev, res.data, { connect: 'connect', repo: 'repo' }));
+      const revoked = revokedConnectionHint(res.data);
+      if (revoked) {
+        setError(revoked);
+        setErrorCode('GITHUB_TOKEN_EXPIRED');
+      }
+    } else {
+      reportError(res.error?.message ?? '读取 GitHub 连接状态失败', res.error?.code);
+    }
+    setAuthLoading(false);
+  }, [reportError]);
+
   /**
    * 真正断开：把存着的连接（含 token 密文）删掉。
    * 这是这一屏承诺的「令牌加密保存在你名下，随时可以断开」的兑现处——
@@ -94,26 +117,26 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
       reportError(res.error?.message ?? '断开 GitHub 连接失败', res.error?.code);
       return;
     }
-    setAuth(null);
     setSwitchingAccount(false);
     setError('');
     setErrorCode(undefined);
-    setStep('connect');
-    toast.success('已断开 GitHub 连接', '已存的访问令牌一并删除；已建的目录订阅会同步失败，直到重新连接。');
-  }, [reportError]);
 
-  const loadAuth = useCallback(async () => {
-    setAuthLoading(true);
-    const res = await getGitHubAuthStatus();
-    if (res.success) {
-      setAuth(res.data);
-      // 已连接就直接跳到选仓库，不让用户在一个「已完成」的步骤上多点一次
-      setStep((prev) => (prev === 'connect' && res.data.connected ? 'repo' : prev));
-    } else {
-      reportError(res.error?.message ?? '读取 GitHub 连接状态失败', res.error?.code);
+    // 提示由判据一次产出：本地结果与「GitHub 那边收回了没」是两件互不相干的事，
+    // 各说各的。按分支各自 return 会漏掉后者，而那句是安全相关的（形状 2）。
+    const notice = describeDisconnectNotice(res.data);
+    toast[notice.tone](notice.title, notice.message);
+
+    if (res.data.outcome === 'replaced-meanwhile') {
+      // 后端**有意保住**了那条新连接，此时不能清空状态说「已断开」。重读一次连接状态：
+      // 收回授权可能把新令牌也一起作废了，失效的话这一读会把向导退回第一步。
+      void loadAuth();
+      return;
     }
-    setAuthLoading(false);
-  }, [reportError]);
+
+    // 已删除、或本来就没有：这里确实没有连接了，清空并回到第一步。
+    setAuth(null);
+    setStep('connect');
+  }, [reportError, loadAuth]);
 
   useEffect(() => { void loadAuth(); }, [loadAuth]);
 
@@ -133,7 +156,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="surface-popover rounded-[16px] p-6 flex flex-col"
         style={{ width: 720, maxWidth: '94vw', maxHeight: '88vh', minHeight: 0 }}>
-        <Header step={step} onClose={onClose} login={auth?.connected ? auth.login ?? null : null}
+        <Header step={step} onClose={onClose} connectionLabel={connectionHeaderLabel(auth)}
           onSwitchAccount={reconnect} switching={switchingAccount}
           onDisconnect={() => void disconnect()} disconnecting={disconnecting} />
 
@@ -166,7 +189,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
         ) : step === 'connect' ? (
           <ConnectStep
             oauthConfigured={auth?.oauthConfigured !== false}
-            replacingLogin={switchingAccount && auth?.connected ? auth.login ?? null : null}
+            replacing={replacingConnectionNotice(auth, switchingAccount)}
             onConnected={() => { setError(''); setErrorCode(undefined); setSwitchingAccount(false); void loadAuth(); setStep('repo'); }}
             onError={reportError} />
         ) : step === 'repo' ? (
@@ -199,8 +222,8 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
 }
 
 /** 顶部标题 + 步骤指示（让用户任何时候知道自己在第几步、还剩几步） */
-function Header({ step, login, onClose, onSwitchAccount, switching, onDisconnect, disconnecting }: {
-  step: Step; login: string | null; onClose: () => void;
+function Header({ step, connectionLabel, onClose, onSwitchAccount, switching, onDisconnect, disconnecting }: {
+  step: Step; connectionLabel: string | null; onClose: () => void;
   onSwitchAccount: () => void; switching: boolean;
   onDisconnect: () => void; disconnecting: boolean;
 }) {
@@ -224,9 +247,9 @@ function Header({ step, login, onClose, onSwitchAccount, switching, onDisconnect
           </div>
           <div>
             <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>从 GitHub 同步文档</div>
-            {login && (
+            {connectionLabel && (
               <div className="flex items-center gap-1.5">
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已连接 {login}</span>
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{connectionLabel}</span>
                 <button onClick={onSwitchAccount} disabled={switching || disconnecting}
                   className="text-[11px] underline cursor-pointer bg-transparent border-0 p-0"
                   style={{ color: 'var(--text-muted)' }}>
@@ -273,11 +296,14 @@ function Header({ step, login, onClose, onSwitchAccount, switching, onDisconnect
 }
 
 /** 第一步：Device Flow 授权。全程显示 user code、剩余时间与当前状态，不留静止等待。 */
-function ConnectStep({ oauthConfigured, replacingLogin, onConnected, onError }: {
+function ConnectStep({ oauthConfigured, replacing, onConnected, onError }: {
   /** 管理员配没配 GitHub 应用。没配时点「连接」只会失败，得当场说清而不是让用户空点 */
   oauthConfigured: boolean;
-  /** 「换个账号」进来时当前还连着谁——要让用户知道旧连接此刻仍然有效，授权成功才会被替换 */
-  replacingLogin?: string | null;
+  /**
+   * 「换个账号」进来时当前还连着谁。
+   * `assertValid` 为真才允许多说一句"它现在仍然有效"——没问出结论时那句话没有根据。
+   */
+  replacing?: { login: string | null; assertValid: boolean } | null;
   onConnected: () => void;
   onError: (msg: string, code?: string) => void;
 }) {
@@ -413,15 +439,16 @@ function ConnectStep({ oauthConfigured, replacingLogin, onConnected, onError }: 
         </div>
       ) : (
         <div className="flex flex-col items-center gap-2">
-          {replacingLogin && (
+          {replacing && (
             <div className="text-[11.5px] text-center leading-[1.7]" style={{ color: 'var(--text-muted)' }}>
-              当前连接的是 {replacingLogin}，它现在仍然有效。
+              当前连接的是 {replacing.login ?? '另一个 GitHub 账号'}
+              {replacing.assertValid ? '，它现在仍然有效' : ''}。
               新账号授权成功后才会替换它；直接关掉向导不会断开现有连接。
             </div>
           )}
           <Button variant="primary" size="sm" onClick={() => void start()} disabled={starting}>
             {starting ? <MapSpinner size={12} /> : <Github size={13} />}
-            {starting ? '正在发起授权…' : replacingLogin ? '用另一个账号授权' : '连接 GitHub 账号'}
+            {starting ? '正在发起授权…' : replacing ? '用另一个账号授权' : '连接 GitHub 账号'}
           </Button>
         </div>
       )}

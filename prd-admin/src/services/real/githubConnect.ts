@@ -8,8 +8,17 @@ import { api } from '@/services/api';
  * token 加密存在他自己名下，能看到哪些仓库由 GitHub 决定，本系统不代管。
  */
 
+/**
+ * 连接**当下**还能不能用。
+ * connected 只说明库里存过记录；用户在 GitHub 那边撤销授权后它仍是 true。
+ * unknown 是「没问出结论」（网络抖动等），不得当成已失效——那会把正常连接误判掉。
+ */
+export type GitHubConnectionUsability = 'usable' | 'revoked' | 'unknown';
+
 export interface GitHubAuthStatus {
   connected: boolean;
+  /** 未连接时为 null；已连接时是后端真打一次 GitHub 得到的三态 */
+  usable?: GitHubConnectionUsability | null;
   /** 管理员是否配置了 OAuth App；false 时前端要直说"管理员没配"，不要让用户空点 */
   oauthConfigured: boolean;
   login?: string | null;
@@ -86,9 +95,24 @@ export function pollGitHubDeviceFlow(flowToken: string) {
   );
 }
 
-/** 断开并删除当前用户存着的 GitHub 连接（token 密文一并删掉） */
+/**
+ * 断开并删除当前用户存着的 GitHub 连接（token 密文一并删掉），并请后端去 GitHub 撤销授权。
+ *
+ * revoked=false 表示**本地删了、GitHub 那边没撤掉**，此时 revokeHint 里是给用户的下一步；
+ * 界面必须把它说出来，不能因为「本地删成功了」就报一个干净的成功（形状 10：静默降级）。
+ */
+/**
+ * 本地这一侧发生了什么。三态而不是布尔：「没删成」有两种完全相反的来路——
+ * 本来就没有，或你在别处刚连上、后端给你留着了——界面要据此说两句相反的话。
+ */
+export type GitHubDisconnectOutcome = 'removed' | 'nothing-to-remove' | 'replaced-meanwhile';
+
 export function disconnectGitHub() {
-  return apiRequest<{ removed: boolean }>(api.github.auth.disconnect(), { method: 'DELETE' });
+  return apiRequest<{
+    outcome: GitHubDisconnectOutcome;
+    revoked: boolean;
+    revokeHint?: string | null;
+  }>(api.github.auth.disconnect(), { method: 'DELETE' });
 }
 
 export function listGitHubRepositories(query?: string, page = 1, pageSize = 30) {

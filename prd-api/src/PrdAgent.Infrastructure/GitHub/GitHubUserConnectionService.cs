@@ -63,14 +63,28 @@ public sealed class GitHubUserConnectionService
             throw GitHubException.NotConnected();
         }
 
-        var jwtSecret = _config["Jwt:Secret"]
-            ?? throw new InvalidOperationException("Jwt:Secret missing");
-        var token = ApiKeyCrypto.Decrypt(conn.AccessTokenEncrypted, jwtSecret);
+        var token = DecryptToken(conn);
         if (string.IsNullOrEmpty(token))
         {
             throw GitHubException.TokenExpired();
         }
         return token;
+    }
+
+    /// <summary>
+    /// 解开**这一条**连接记录里的令牌密文，解不开回 null。
+    ///
+    /// 独立出来是为了让调用方能把「用哪一条」攥在自己手里：断开那条路必须对同一条记录
+    /// 既撤销又删除，中途再查一次库就可能撤到另一条上去
+    /// （2026-09-15 Codex review 第九轮）。
+    /// </summary>
+    private string? DecryptToken(GitHubUserConnection conn)
+    {
+        if (string.IsNullOrEmpty(conn.AccessTokenEncrypted)) return null;
+        var jwtSecret = _config["Jwt:Secret"]
+            ?? throw new InvalidOperationException("Jwt:Secret missing");
+        var token = ApiKeyCrypto.Decrypt(conn.AccessTokenEncrypted, jwtSecret);
+        return string.IsNullOrEmpty(token) ? null : token;
     }
 
     /// <summary>
@@ -82,15 +96,23 @@ public sealed class GitHubUserConnectionService
     /// </summary>
     public async Task<GitHubConnectionUsability> ProbeConnectionAsync(string userId, CancellationToken ct)
     {
-        string token;
-        try
-        {
-            token = await ResolveTokenAsync(userId, ct);
-        }
-        catch (GitHubException)
-        {
-            return GitHubConnectionUsability.Revoked;
-        }
+        var conn = await GetConnectionAsync(userId, ct);
+        if (conn == null) return GitHubConnectionUsability.Revoked;
+        return await ProbeConnectionAsync(conn, ct);
+    }
+
+    /// <summary>
+    /// 探**这一条**连接还能不能用。
+    ///
+    /// 调用方已经握着一条记录时必须走这个重载，别再传 userId 让它重查一次库：
+    /// 中途若有人换了账号，重查拿到的是另一条，于是会「拿 B 的令牌去探，报 A 的账号信息」——
+    /// 界面说 A 可用，接下来的请求却走 B。同一条记录既用来展示又用来判断，才不会前后不一。
+    /// </summary>
+    public async Task<GitHubConnectionUsability> ProbeConnectionAsync(
+        GitHubUserConnection conn, CancellationToken ct)
+    {
+        var token = DecryptToken(conn);
+        if (token == null) return GitHubConnectionUsability.Revoked;
 
         try
         {
@@ -105,11 +127,11 @@ public sealed class GitHubUserConnectionService
                 ? GitHubConnectionUsability.Revoked
                 : GitHubConnectionUsability.Unknown;
         }
-        catch (HttpRequestException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return GitHubConnectionUsability.Unknown;
+            throw;
         }
-        catch (TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
             return GitHubConnectionUsability.Unknown;
         }
@@ -144,10 +166,98 @@ public sealed class GitHubUserConnectionService
         return userInfo;
     }
 
-    public async Task<bool> DisconnectAsync(string userId, CancellationToken ct)
+    /// <summary>
+    /// 断开当前用户的 GitHub 连接：**先去 GitHub 撤销授权，再删本地密文**。
+    ///
+    /// 顺序不能反：先删了本地就再也拿不到那把 token，撤销也就无从谈起，
+    /// 于是"断开"只断在自己这边，GitHub 的已授权应用列表里那一条还挂着——
+    /// 用户以为收回了权限，其实没有。
+    ///
+    /// 撤销失败不阻断本地删除（用户的诉求首先是"别再用我的账号"），但结果要原样带回去给用户看，
+    /// 不许静默吞掉（predicate-and-wiring-discipline 形状 10）。
+    /// </summary>
+    public async Task<GitHubDisconnectResult> DisconnectAsync(string userId, CancellationToken ct)
     {
-        var result = await _db.GitHubUserConnections.DeleteOneAsync(x => x.UserId == userId, ct);
-        return result.DeletedCount > 0;
+        // 先把要断开的**那一条**记下来。后面撤销要打一次 GitHub（几百毫秒），
+        // 这期间用户完全可能在另一个标签页把授权重新走完、写入一条新连接；
+        // 那时再按用户 ID 删，删掉的就是刚连上的新连接——用户眼睁睁看着刚接好的又没了。
+        // 所以删除必须钉在这一条上（同一条记录、同一份密文），别人写进来的新连接不归这次断开管。
+        var target = await GetConnectionAsync(userId, ct);
+
+        // 撤销用的令牌只能来自**刚刚捕获的那一条**，不能再查一次库：
+        // 中途若有人重新授权（甚至换了个账号），再查一次拿到的是新的那把，
+        // 于是会去撤销新账号的授权，而本该撤的那份原封不动——撤错了人，还漏撤了该撤的。
+        GitHubTokenRevocation revocation;
+        if (target == null)
+        {
+            // 压根没连过：没有可撤销的东西，不是失败，也没有要用户处理的事。
+            revocation = GitHubTokenRevocation.NothingToRevoke;
+        }
+        else
+        {
+            string? token;
+            try
+            {
+                token = DecryptToken(target);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[GitHubConnect] 解不开这条连接的令牌密文 user={UserId}", userId);
+                token = null;
+            }
+
+            if (token == null)
+            {
+                // 密文解不开（换过密钥等）：**我们手里这把钥匙读不出来，所以撤不了**。
+                // 不能因此报「已撤销」——那是撒谎；也不能让断开整个失败——用户首先要的是本地别再留着它。
+                revocation = GitHubTokenRevocation.Failed;
+            }
+            else
+            {
+                revocation = await _oauth.RevokeTokenAsync(token, ct);
+            }
+        }
+
+        if (target == null)
+        {
+            _logger.LogInformation("[GitHubConnect] disconnect user={UserId}：本来就没有连接记录", userId);
+            return new GitHubDisconnectResult(GitHubDisconnectOutcome.NothingToRemove, revocation);
+        }
+
+        // 钉住 Id + 那一份密文：中途被别人换掉（重新授权会 upsert 同一条记录、换新密文）就不删。
+        var result = await _db.GitHubUserConnections.DeleteOneAsync(
+            x => x.Id == target.Id && x.AccessTokenEncrypted == target.AccessTokenEncrypted, ct);
+
+        // 没删成有两种来路，**只看删除条数分不开**：
+        //   一是被替换（另一个标签页重新授权，密文换了，我们这条件不匹配）；
+        //   二是被别人抢先删了（两个标签页同时断开，都捕获到同一条，第一个删掉了它）。
+        // 所以回读一次：还在 = 被替换（那是别人的新连接，保留），不在 = 本来就没得删。
+        // 只凭条数就报「被替换」，会对着第二个标签页说「新的连接已保留」——而根本没有那条连接。
+        var outcome = GitHubDisconnectOutcome.Removed;
+        if (result.DeletedCount == 0)
+        {
+            var current = await GetConnectionAsync(userId, ct);
+            outcome = current == null
+                ? GitHubDisconnectOutcome.NothingToRemove
+                : GitHubDisconnectOutcome.ReplacedMeanwhile;
+        }
+
+        if (outcome == GitHubDisconnectOutcome.ReplacedMeanwhile)
+        {
+            // 回读确认过：那条新连接不归这次断开管，保留它才是对的。
+            //
+            // 已知边界：撤销打的是「删授权」，它会连带作废本应用为这个用户签发的**全部**令牌，
+            // 所以那条新连接的令牌很可能也一起失效了。这里不去猜、也不替用户删——
+            // 连接状态接口每次都会真问一次 GitHub，失效的话界面会显示「授权已失效」并给出重连出口。
+            _logger.LogWarning(
+                "[GitHubConnect] disconnect user={UserId}：期间连接已被替换，保留新连接不删", userId);
+        }
+
+        _logger.LogInformation(
+            "[GitHubConnect] disconnect user={UserId} outcome={Outcome} revocation={Revocation}",
+            userId, outcome, revocation);
+
+        return new GitHubDisconnectResult(outcome, revocation);
     }
 
     public Task TouchLastUsedAsync(string userId, CancellationToken ct)
@@ -366,6 +476,31 @@ public sealed class GitHubUserConnectionService
 
     /// <summary>连接可用性三态；Unknown 表示没问出结论（网络抖动等），不是「不可用」。</summary>
     public enum GitHubConnectionUsability { Usable, Revoked, Unknown }
+
+    /// <summary>
+    /// 本地这一侧发生了什么。三态，因为「没删成」有两种完全不同的来路，
+    /// 而用户该看到的话正好相反：一种是「本来就没有」，一种是「你在别处刚连上、给你留着了」。
+    /// 用布尔表达这件事必然要靠调用方去猜是哪一种，猜错就会对着用户说反话。
+    /// </summary>
+    public enum GitHubDisconnectOutcome
+    {
+        /// <summary>那条连接已删除。</summary>
+        Removed,
+
+        /// <summary>进来时就没有连接记录（比如另一个标签页已经断开过了）。</summary>
+        NothingToRemove,
+
+        /// <summary>断开期间连接被替换成了另一份，按约定保留它，没有删。</summary>
+        ReplacedMeanwhile,
+    }
+
+    /// <summary>
+    /// 断开的结果：本地这一侧发生了什么、GitHub 那边的授权撤掉了没。
+    /// 两件事分开报，因为它们可以一成一败，而用户的下一步取决于后者。
+    /// </summary>
+    public sealed record GitHubDisconnectResult(
+        GitHubDisconnectOutcome Outcome,
+        GitHubTokenRevocation Revocation);
 
     /// <summary>一页仓库 + 上游是否还有下一页（HasMore 按过滤前的原始条数算）。</summary>
     public sealed record GitHubRepositoryPage(
