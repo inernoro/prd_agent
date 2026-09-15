@@ -137,6 +137,21 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
    * 各算各的话，屏幕上就出现「都验过了」配一张画着未验收方块的图——同一屏两个数打架，
    * 最难查的那种（Codex review 抓到）。所以这里改用 splitFunnel 的三段。
    */
+  /*
+   * 验过了不等于验过关。走到这里说明没有「合了没验」「验不过还合」「部署了没验」这三类漏，
+   * 但「已验完」那一段里仍然可能有未通过——同屏的总览条正把那几条画成红的，头条却绿着
+   * 说「都验过了」。覆盖率干净与结论干净是两件事，不能用前者盖掉后者（Codex review 抓到）。
+   * 未通过的具体是谁由支撑句 2 给（它挂着 accepted 与 fail 两个数），这里只负责把调子摆正。
+   */
+  if (t.fail > 0) {
+    return {
+      tone: 'bad',
+      sentence: `${t.changes} 条改动都验过了，其中 ${t.fail} 条没通过`,
+      points: points.slice(0, 3),
+      action: null,
+    };
+  }
+
   const seg = splitFunnel(t);
   if (seg.accepted >= Math.max(0, t.changes)) {
     return {
