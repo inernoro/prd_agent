@@ -59,3 +59,9 @@
 | test | prd-api | 新增 11 条作用域守卫（权威部署行为不变、兄弟分支互不可见、预览兜底与自己优先、文档 Id 在权威部署上逐字不变即不需迁移）+ 3 条会话数覆盖率守卫 |
 | docs | platform | model_leaderboard_snapshots 登记进两处持久化 SSOT（codebase-snapshot 的集合清单、data-dictionary 的集合表）——codebase-snapshot 规则的交叉校验第 4 条本来就要求 MongoDbContext 改动要回写数据字典 |
 | docs | platform | codebase-snapshot 的「MongoDB 集合 (123 个)」固定计数换成「去 grep 现查」：实测 MongoDbContext 有 277 个集合，那个数字差了一倍多且不会有任何东西提醒它过期 |
+| fix | prd-api | 授权归类改由后端给（新增 ModelLicenseClassifier，三态 open/restricted/unknown）：原判据是前端的「除了 Proprietary 都算开源」，实测四个榜 42 种授权写法里，CC-BY-NC-4.0、flux-non-commercial-license、Mistral Research 与九种 community 许可全被标成开源并挂上绿徽章，而「仅开源」在本页教程里是推荐给想自部署的人的 |
+| fix | prd-admin | isOpenSource 改读后端的 licenseKind，不再自己正则匹配授权字符串（frontend-architecture 单一数据源）；字段缺失按 unknown 处理、不按开源；非开源那行不再一律写「闭源」，改为一律显示授权原文——CC-BY-NC 和仅研究许可都不是闭源 |
+| fix | prd-admin | 目录项按忽略大小写解析并把 URL 归一：后端上一轮已经接受 ?board=Text，而前端还按大小写严格比，currentBoard 为 null 会把用户从一条后端已接受的链接踢回默认榜 |
+| fix | prd-api | 本页教程第 8 步文案跟着改：说清「仅开源」只放能认出来的标准开源许可，各家自造的要自己读条款 |
+| fix | prd-api | 名次区间注释里的字面双向箭头改成文字（规则 0：↔ 带 Emoji / Extended_Pictographic 属性；此前只扫了三角字符） |
+| test | prd-api | 新增 14 条授权归类守卫，取值是从存档页全量抽取去重的 42 种真实写法（含空值），逐个钉住该落哪一类，兼作匹配表的数据覆盖守卫 |

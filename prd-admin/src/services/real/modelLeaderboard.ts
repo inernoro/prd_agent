@@ -24,6 +24,15 @@ export interface ModelLeaderboardEntry {
   name: string;
   organization: string | null;
   license: string | null;
+  /**
+   * 授权归类，后端给（ModelLicenseClassifier）。'open' 才算开源。
+   *
+   * 不要退回自己判 license 字符串：原来前端写的是「除了 Proprietary 都算开源」，
+   * 把 CC-BY-NC、仅研究、各家 community 许可全标成了开源，而「仅开源」筛选
+   * 在本页教程里是推荐给想自部署的人的（Codex 在 PR #1538 指出）。
+   * 旧快照的响应可能没有这个字段，当 'unknown' 处理——不许当 'open'。
+   */
+  licenseKind?: 'open' | 'restricted' | 'unknown';
 
   /** 主排序指标 */
   netImprovement: ModelMetric | null;

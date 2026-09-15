@@ -1,4 +1,4 @@
-import type { ModelMetric } from '@/services/real/modelLeaderboard';
+import type { ModelLeaderboardEntry, ModelMetric } from '@/services/real/modelLeaderboard';
 
 /**
  * 榜单里那些「一眼看强弱」的小部件。抽出来是因为一行要用六次，
@@ -218,9 +218,23 @@ export function orgMark(organization: string | null): string {
   return cleaned.slice(0, 2).toUpperCase();
 }
 
-/** 授权字样是否算开源。榜单里除了 Proprietary 都按开源处理（MIT / Apache / 各家自有 license）。 */
-export function isOpenSource(license: string | null): boolean {
-  return !/proprietary/i.test(license ?? 'Proprietary');
+/**
+ * 是否算开源——**读后端给的归类，不自己判字符串**。
+ *
+ * 这里原来写的是 `!/proprietary/i.test(license)`，也就是「默认开源、只排除一个词」。
+ * 拿线上四个榜的真实数据数过：42 种授权写法里，被它标成开源并挂上绿徽章的包括
+ * `CC-BY-NC-4.0`、`flux-non-commercial-license`（明确非商用）、`Mistral Research`（仅研究）
+ * 和九种 `*Community` 许可（source-available 但带使用限制）。而「仅开源」这个筛选，
+ * 本页教程里是推荐给想自部署的人的——在用户会照着做决定的地方给了错信息
+ * （Codex 在 PR #1538 指出）。
+ *
+ * 判据搬到后端 `ModelLicenseClassifier`，理由不只是正确性：`frontend-architecture.md`
+ * 的「单一数据源原则」本来就不许前端维护业务映射表。
+ *
+ * 字段缺失（旧构建的响应）按 unknown 处理，**不按开源**：认不出来就别给绿灯。
+ */
+export function isOpenSource(entry: Pick<ModelLeaderboardEntry, 'licenseKind'>): boolean {
+  return entry.licenseKind === 'open';
 }
 
 /**

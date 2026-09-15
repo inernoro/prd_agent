@@ -226,8 +226,16 @@ export default function ModelLeaderboardPage() {
     void loadCatalog();
   }, [loadCatalog]);
 
+  /**
+   * 目录项按**忽略大小写**解析，与后端同一个口径。
+   *
+   * 后端的校验与查询都已归一（`ModelLeaderboardCatalog.Find` 是 OrdinalIgnoreCase），
+   * 所以 `?board=Text` 会正常返回文本榜的数据；而这里如果还按大小写严格比，
+   * `currentBoard` 是 null，下面那个 effect 就把用户从一条**后端已经接受的**链接上
+   * 踢回默认榜（Codex 在 PR #1538 指出——这是上一轮后端归一的另一半，当时只改了后端）。
+   */
   const currentBoard = useMemo(
-    () => boards.find((b) => b.key === board) ?? null,
+    () => boards.find((b) => b.key.toLowerCase() === board.toLowerCase()) ?? null,
     [boards, board],
   );
 
@@ -239,9 +247,16 @@ export default function ModelLeaderboardPage() {
    * 目录还没回来时不判，否则首帧就会把用户手上的合法链接改掉。
    */
   useEffect(() => {
-    if (boards.length === 0 || currentBoard) return;
-    setBoard('agent');
-  }, [boards.length, currentBoard, setBoard]);
+    if (boards.length === 0) return;
+    // 解析不到才退回默认榜
+    if (!currentBoard) {
+      setBoard('agent');
+      return;
+    }
+    // 解析到了但大小写与目录不一致，把 URL 归一成目录里那个写法：
+    // 分享出去的链接、以及交付里给的深链，应当是唯一那一种写法。
+    if (currentBoard.key !== board) setBoard(currentBoard.key);
+  }, [boards.length, currentBoard, board, setBoard]);
 
   /**
    * 表格形状以**快照里的 kind** 为准，目录里的 kind 只在快照还没到时垫一下。
@@ -289,7 +304,7 @@ export default function ModelLeaderboardPage() {
   }, [board, load, loadCatalog]);
 
   const entries = useMemo(
-    () => (snapshot?.entries ?? []).filter((e) => (range === 'open' ? isOpenSource(e.license) : true)),
+    () => (snapshot?.entries ?? []).filter((e) => (range === 'open' ? isOpenSource(e) : true)),
     [snapshot, range],
   );
 
@@ -710,7 +725,7 @@ function Row({
   lead: boolean;
   columnMax: { net: number; netSpan: number; confirmed: number; praise: number; steer: number };
 }) {
-  const open = isOpenSource(entry.license);
+  const open = isOpenSource(entry);
   // 当列最大值占从中轴到边缘的 46%（留两格边距，免得最长那根顶到框线上）
   // 46（而非 50）给画布留边；分母用「值 + 误差」的跨度，保证最长的那根须也落在画布内
   const netScale = 46 / columnMax.netSpan;
@@ -883,7 +898,7 @@ function RankCell({ entry, lead }: { entry: ModelLeaderboardEntry; lead: boolean
 
 /** 厂商标 + 模型名 + 开源徽章 + 厂商授权小字。两种表共用。 */
 function ModelCell({ entry, lead }: { entry: ModelLeaderboardEntry; lead: boolean }) {
-  const open = isOpenSource(entry.license);
+  const open = isOpenSource(entry);
   return (
     <div className="flex items-center gap-[11px] min-w-0">
       <span
@@ -927,7 +942,9 @@ function ModelCell({ entry, lead }: { entry: ModelLeaderboardEntry; lead: boolea
           )}
         </span>
         <span className="text-[10.5px] truncate" style={{ color: 'var(--text-muted)' }}>
-          {entry.organization ?? '未知厂商'} · {open ? entry.license ?? '开源' : '闭源'}
+          {/* 授权一律显示原文。原来非 open 时一律写「闭源」，而 CC-BY-NC / 仅研究 /
+              各家 community 许可都不是闭源——那是另一种说错。绿色与徽章只由 open 决定。 */}
+          {entry.organization ?? '未知厂商'} · {entry.license ?? '授权未知'}
         </span>
       </span>
     </div>
@@ -950,7 +967,7 @@ function ScoreRow({
   /** 整列的分数跨度，条长按它归一 */
   range: { min: number; max: number };
 }) {
-  const open = isOpenSource(entry.license);
+  const open = isOpenSource(entry);
 
   return (
     <div

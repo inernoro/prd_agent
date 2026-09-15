@@ -1302,7 +1302,7 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 5 步：名次与并列", Body = "名次后面那个区间是并列范围。写着「3」而区间是 2–6，意思是它和另外几个模型在统计上分不出高下——别把第 3 和第 5 当成两个档。" },
                         new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 6 步：条形右端那根细须", Body = "那是置信区间。两个模型的须重叠得厉害，这点分差就说明不了问题；须短的那个是样本够多、数字更稳。" },
                         new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 7 步：分数不跨榜比", Body = "对战分是相对分。文生图的 1421 和文本对话的 1506 不是一回事，页面上分数永远和榜名一起出现，不要拎出来当「模型总分」。" },
-                        new() { Selector = "[data-tour-id=model-leaderboard-range]", Title = "第 8 步：只看开源", Body = "要自己部署就切「仅开源」，闭源模型会被滤掉。厂商与授权取自榜单页，显示在模型名下面那行。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-range]", Title = "第 8 步：只看开源", Body = "要自己部署就切「仅开源」。它只放**能认出来的标准开源许可**（MIT / Apache 这类）；闭源、非商用、仅研究和各家 community 许可都不在里面，各家自造的许可也不在——那些得你自己读条款。授权原文一直显示在模型名下面那行。" },
                         new() { Selector = "[data-tour-id=model-leaderboard-refresh]", Title = "第 9 步：想要更新的数据", Body = "觉得太旧就点这个按钮重读一次库；有「模型管理」权限的还能点「立即同步」直接从 arena.ai 抓当前这个榜。维度写在网址上（?board=），可以直接把某一屏发给同事。看完点「完成」" },
                     },
                 }),

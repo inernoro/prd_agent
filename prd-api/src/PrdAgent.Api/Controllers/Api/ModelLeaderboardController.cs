@@ -225,6 +225,10 @@ public class ModelLeaderboardController : ControllerBase
         name = e.Name,
         organization = e.Organization,
         license = e.License,
+        // 授权归类由后端给（frontend-architecture「单一数据源原则」：业务映射表不进前端）。
+        // 原来前端自己判 `!/proprietary/i`，把非商用与仅研究的许可全标成了开源，
+        // 见 ModelLicenseClassifier 的注释。
+        licenseKind = ModelLicenseClassifier.Classify(e.License),
         // 六个指标，值自带正负号（页面上的方向箭头 已经解析进符号）
         netImprovement = Metric(e.NetImprovement),
         confirmedSuccess = Metric(e.ConfirmedSuccess),
