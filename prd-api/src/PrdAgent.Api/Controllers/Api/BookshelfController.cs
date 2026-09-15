@@ -270,10 +270,16 @@ public class BookshelfController : ControllerBase
         }
 
         // 已经有稿子就直接吐出去，不重复烧一次生成。force=true 是「重新生成」那个按钮走的路径。
+        //
+        // 提示词改版后旧稿子不再复用：PromptVersion 这个字段如果没人读，它就只是一条
+        // 记下来给人看的备注，改了提示词还得靠人记得「哪些该重生成」——而人不会记得。
+        // 判据放在服务端是因为稿子是公共内容，只有这里能保证所有入口口径一致。
         if (!force)
         {
             var existing = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
-            if (existing != null && !string.IsNullOrWhiteSpace(existing.Content))
+            var fresh = existing != null
+                && string.Equals(existing.PromptVersion, BookshelfDigestPrompt.Version, StringComparison.Ordinal);
+            if (fresh && !string.IsNullOrWhiteSpace(existing!.Content))
             {
                 await WriteDigestEventAsync("cached", new
                 {

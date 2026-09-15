@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AS_TYPE, AS_SPACE } from '@/lib/appStoreTokens';
 import { StreamingText } from '@/components/streaming/StreamingText';
+import { DigestMarkdown } from '../DigestMarkdown';
 import { getBookDigest, streamBookDigest } from '@/services/real/bookshelf';
 import { useBookshelfStore } from '@/stores/bookshelfStore';
 import type { BookEntry, Volume, Track } from '@/lib/bookshelf/types';
@@ -100,7 +101,9 @@ export function MobileBook({
     void (async () => {
       const res = await getBookDigest(book.id);
       if (cancelled || !aliveRef.current) return;
-      if (res.success && res.data?.exists && res.data.content) {
+      // stale = 这篇是旧版提示词写的。不认它就等于 stale 这个字段白算一场：
+      // 后端已经改成「版本对不上就不复用」，前端这里再吃一次缓存，两边口径就分裂了。
+      if (res.success && res.data?.exists && res.data.content && !res.data.stale) {
         setText(res.data.content);
         setModel(res.data.model ?? null);
         setCitedRules(res.data.citedRules ?? []);
@@ -175,8 +178,10 @@ export function MobileBook({
             text={text}
             streaming={phase === 'generating'}
             markdown
-            block
-            className="bookshelf-digest"
+            // 只传 markdown 不传 renderMarkdown 的话，StreamingText 里
+            // `markdown && !!renderMarkdown` 判假，整篇退回纯文本渲染，
+            // `## 这本书在说什么` 这些语法会原样裸露在屏幕上。
+            renderMarkdown={(c) => <DigestMarkdown content={c} />}
           />
         )}
 

@@ -28,7 +28,7 @@ public static class BookshelfDigestPrompt
     /// 提示词版本。改了下面任何一段文案都要跟着升——存量稿子是用旧版写的，
     /// 没有这个字段就只能靠人记得「哪些该重生成」，而人不会记得。
     /// </summary>
-    public const string Version = "v1";
+    public const string Version = "v2";
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly Lazy<ContextFile> Context = new(Load, LazyThreadSafetyMode.ExecutionAndPublication);
@@ -125,15 +125,26 @@ public static class BookshelfDigestPrompt
         """
         你在为一个开发团队写一本书的「精读稿」。读者是这个团队的工程师和产品经理，他们大概率不会去读原书——这篇稿子就是他们能拿到的全部。
 
+        用户消息里有两类材料，用途是分开的，不要混用：
+
+        - 「这本书」「它被编在哪一卷」「编者为什么把它放进这一卷」「编者写的一句话收获」——这是关于**这本书**的材料，供第一、二段使用。
+        - 「我们的规则」——这是这个团队自己的规则与事故，**只供第三段使用**。第一、二段不许引用它、不许把它当成这本书的论点。
+
         写成三段，各用一个 Markdown 二级标题：
 
         ## 这本书在说什么
 
-        把全书收敛成 3 到 5 条核心论点。每条先用一句话把主张说死，再用一段话展开。展开里要有书中的具体做法或例子，不要停在抽象概括上。
+        把全书收敛成 3 到 5 条核心论点，每条一个三级标题（###）加一段展开。
+
+        论点必须来自**这本书本身**：这本书讨论的是什么问题、作者主张怎么做、书里举了什么例子。
+        编者的推荐语只是提示这本书为什么被选进来，不是这本书的论点——不要把它当成书的内容复述一遍。
+        展开里要有书中的具体做法、术语或例子，不要停在抽象概括上。
 
         ## 怎么用在我们身上
 
-        3 到 5 条下周就能做的具体动作。每条必须是动作（「接需求先答三问：问题是谁的、真正困扰是什么、不解决会怎样」），不是感受（「要重视需求分析」）。想不出具体动作的宁可少写一条。
+        3 到 5 条下周就能做的具体动作。每条必须是动作（「接需求先答三问：问题是谁的、真正困扰是什么、不解决会怎样」），不是感受（「要重视需求分析」）。
+
+        这一段不许是第一段的换句话说。第一段讲书里说了什么，这一段讲**我们改哪个环节、在什么时候做、做出来是什么样**。想不出具体动作的宁可少写一条。
 
         ## 我们在哪儿栽过
 
@@ -144,13 +155,16 @@ public static class BookshelfDigestPrompt
         - 第三段只能用给定的规则材料。材料里没有的事故，一个字都不许编——读者会照着去仓库里翻，翻不到，整篇稿子就都不可信了。
         - 材料不足以支撑第三段时，就直说「这本书还没有对上我们自己的事故记录」然后收尾，不要用泛泛的行业案例凑数。
         - 全文中文。不要使用 emoji。不要写「总之」「综上所述」「在当今时代」这类套话。
+        - 不要写「强调了……的重要性」「体现了……的价值」这类空转句式。要么说清具体是什么，要么删掉这句。
         - 不要复述目录，不要逐章小结。
-        - 全文 1500 到 2500 字。
-        """;
+        - 全文 1500 到 2500 字。少于 1500 字说明论点展开得不够，回去把每条论点的例子和做法补上。
+        """
 
     public static string BuildUserPrompt(Material m)
     {
         var sb = new StringBuilder();
+        sb.AppendLine("以下 1-4 节是关于这本书的材料，供第一、二段使用；最后的「我们的规则」只供第三段使用。");
+        sb.AppendLine();
         sb.AppendLine("# 这本书");
         sb.AppendLine($"书名：《{m.Book.Title}》");
         if (!string.IsNullOrWhiteSpace(m.Book.Original)) sb.AppendLine($"原名：{m.Book.Original}");
@@ -162,7 +176,7 @@ public static class BookshelfDigestPrompt
         sb.AppendLine($"这一卷要治的处境：{m.Volume.PainQuote}");
         sb.AppendLine($"这一卷的药方：{m.Volume.Cure}");
         sb.AppendLine();
-        sb.AppendLine("# 编者为什么把它放进这一卷");
+        sb.AppendLine("# 编者为什么把它放进这一卷（这是编者的推荐理由，不是这本书的论点）");
         sb.AppendLine(m.Book.Why);
         sb.AppendLine();
         sb.AppendLine("# 编者写的一句话收获");
@@ -177,7 +191,7 @@ public static class BookshelfDigestPrompt
         }
 
         sb.AppendLine("# 我们的规则");
-        sb.AppendLine("以下是这个团队自己写下的规则与真实事故。第三段只能用这里的内容。");
+        sb.AppendLine("以下是这个团队自己写下的规则与真实事故。**只有第三段用得上这里的内容**——第一、二段不许引用它，更不许把它当成这本书的论点。");
         foreach (var r in m.Rules)
         {
             sb.AppendLine();

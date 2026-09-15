@@ -65,6 +65,17 @@ describe('精读稿接线', () => {
     expect(bookPage.includes('streaming={'), 'StreamingText 没接 streaming 状态，光标与最终 markdown 不会切换').toBe(true);
   });
 
+  /*
+   * StreamingText 里的判据是 `markdown && !!renderMarkdown` —— 两个 prop 缺一个，
+   * 整篇就退回纯文本，`## 这本书在说什么` 这种语法原样裸露在屏幕上，
+   * 而且 tsc/lint/单测一个都不会红（两个 prop 都是可选的）。
+   * 这坑 review #1358 在提问答案那条链路上已经抓过一次，这里是第二次犯。
+   */
+  it('markdown 真的渲染成排版，不是把语法裸露出来', () => {
+    expect(bookPage.includes('renderMarkdown='), '只传了 markdown 没传 renderMarkdown，StreamingText 会退回纯文本渲染').toBe(true);
+    expect(bookPage.includes('DigestMarkdown'), '没有接上精读稿的 markdown 渲染器').toBe(true);
+  });
+
   it('等待期写明在等什么、等了多久（规则 #6 禁止空白等待）', () => {
     expect(bookPage.includes('已等待'), '没有耗时提示，用户对着静止界面不知道还要多久').toBe(true);
   });
