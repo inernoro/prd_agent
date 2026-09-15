@@ -57,10 +57,27 @@ import {
  * 富余该给的是那根带误差须的条：条越长，区间分得越开、分差越读得出来
  * （content-fills-canvas.md：空间要变成信息，不是留白）。
  */
-const GRID = '92px minmax(230px, 380px) minmax(196px, 1fr) 136px 136px 136px 128px 124px 104px 88px 104px';
+const GRID = '92px minmax(230px, 520px) minmax(196px, 320px) 136px 136px 136px 128px 124px 104px 88px 104px';
 
-/** 分数榜只有六列，富余更多，所以把 1fr 给对战分那列——它是这张表唯一的主角。 */
-const GRID_SCORE = '92px minmax(230px, 380px) minmax(268px, 1fr) 120px 116px 104px';
+/**
+ * 分数榜只有六列，富余比 Agent 榜多得多。
+ *
+ * 这里两个上限都是量出来的，不是拍的：模型名最长的一行是
+ * `gemini-3.1-flash-image (nano-banana-2) [web…`，380px 会把它截断；而对战分那根条
+ * 一旦吃掉全部富余会被拉到 960px，变成一排几乎等长的横线——条长的差别反而看不出来了。
+ * 所以两列各给一个上限，剩下的富余交给下面的 TABLE_MAX 居中收口。
+ */
+const GRID_SCORE = '92px minmax(260px, 560px) minmax(268px, 460px) 120px 116px 104px';
+
+/**
+ * 表格的宽度上限，超出就整体居中。
+ *
+ * 六列的分数榜在 1920 屏上本来就填不满，与其把富余硬塞给某一列（塞给模型列是一片空白，
+ * 塞给分数条是一排长横线），不如让表格居中、两侧对称留白——
+ * content-fills-canvas.md 对文本类产物明确允许这一种收口方式。
+ * Agent 榜十一列，1820 都不够用，这个上限对它不生效。
+ */
+const TABLE_MAX = { agent: 2200, score: 1480 } as const;
 
 /**
  * 首屏渲染多少行、每次追加多少行。
@@ -396,7 +413,13 @@ export default function ModelLeaderboardPage() {
             <MetaStrip snapshot={snapshot} shown={entries.length} rendered={shownEntries.length} />
 
             <div className="overflow-x-auto">
-              <div style={{ minWidth: kind === 'score' ? 920 : 1360 }}>
+              <div
+                style={{
+                  minWidth: kind === 'score' ? 920 : 1360,
+                  maxWidth: TABLE_MAX[kind],
+                  margin: '0 auto',
+                }}
+              >
                 {/* 表头 */}
                 <div
                   className="grid items-end px-6 pt-2.5 pb-2 font-mono text-[9.5px] uppercase shrink-0"
