@@ -2270,24 +2270,90 @@ public class MdToPptController : ControllerBase
     /// </summary>
     private async Task<bool> PersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded = 0, int total = 0)
     {
-        var failure = await TryPersistRunDoneAsync(run, html, model, platform, degraded, total);
-        if (failure == null) return true;
-        await PersistRunErrorAsync(run, failure);
-        return false;
+        var outcome = await TryPersistRunDoneAsync(run, html, model, platform, degraded, total);
+        if (outcome.Failure == null) return true;
+        var disposition = await ResolveSaveFailureAsync(
+            outcome.WriteAmbiguous,
+            () => WasRunCompletionPersistedAsync(run.Id, run.HtmlHash));
+        switch (disposition)
+        {
+            case SaveFailureDisposition.ReportSuccess:
+                return true;
+            case SaveFailureDisposition.LeaveForStaleSweep:
+                _logger.LogError("[MdToPpt] persist run done outcome unknown runId={Id}", run.Id);
+                return false;
+            default:
+                await PersistRunErrorAsync(run, outcome.Failure);
+                return false;
+        }
     }
 
-    /// <summary>执行保存；成功返回 null，失败返回给用户看的原因（由调用方统一落成 error 状态）。</summary>
-    private async Task<string?> TryPersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded, int total)
+    /// <summary>保存的结果。`Failure` 为 null 即成功；`WriteAmbiguous` 表示这次失败无法确定写入到底落没落库。</summary>
+    private readonly record struct PersistRunDoneOutcome(string? Failure, bool WriteAmbiguous);
+
+    /// <summary>保存失败之后怎么处置这条 run。</summary>
+    internal enum SaveFailureDisposition
+    {
+        /// <summary>标成 error：确定没写进去。</summary>
+        MarkFailed,
+        /// <summary>当成功返回：回读证明完成态其实已经落库（回执丢了而已）。</summary>
+        ReportSuccess,
+        /// <summary>不下结论：回读也读不到，留给陈旧扫描兜底，别猜一个可能抹掉用户作品的结论。</summary>
+        LeaveForStaleSweep,
+    }
+
+    /// <summary>
+    /// 写库那一支的失败是「不确定」而不是「没发生」——内容写进去了、回执丢在路上，抛的也是它。
+    /// 无条件降级会把一条真的完成版本改写成 error，用户再也打不开它，比不标终态更糟。
+    /// 所以只有这一支才回读权威状态；其余失败在写之前就退出了，回读一次纯属多打一次库
+    /// （Codex P2，2026-09-15）。
+    /// </summary>
+    internal static async Task<SaveFailureDisposition> ResolveSaveFailureAsync(
+        bool writeAmbiguous,
+        Func<Task<bool?>> probeCompletionPersisted)
+    {
+        if (!writeAmbiguous) return SaveFailureDisposition.MarkFailed;
+        return await probeCompletionPersisted() switch
+        {
+            true => SaveFailureDisposition.ReportSuccess,
+            null => SaveFailureDisposition.LeaveForStaleSweep,
+            _ => SaveFailureDisposition.MarkFailed,
+        };
+    }
+
+    /// <summary>回读权威状态：true = 完成态确实写进去了，false = 确实没有，null = 读不到，无从判断。</summary>
+    private async Task<bool?> WasRunCompletionPersistedAsync(string runId, string? expectedHtmlHash)
+    {
+        if (string.IsNullOrWhiteSpace(expectedHtmlHash)) return false;
+        try
+        {
+            var persisted = await _db.MdToPptRuns
+                .Find(x => x.Id == runId)
+                .Project(x => new { x.Status, x.HtmlHash })
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (persisted == null) return false;
+            return persisted.Status == "done"
+                && string.Equals(persisted.HtmlHash, expectedHtmlHash, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "[MdToPpt] re-read run after ambiguous save failed runId={Id}", runId);
+            return null;
+        }
+    }
+
+    /// <summary>执行保存；成功返回空原因，失败返回给用户看的原因（由调用方统一落成 error 状态）。</summary>
+    private async Task<PersistRunDoneOutcome> TryPersistRunDoneAsync(MdToPptRun run, string html, string? model, string? platform, int degraded, int total)
     {
         try
         {
             html = PreparePublishedHtml(NormalizePresentationDocument(html));
             if (!ValidateSourcePlanDocument(run, html))
-                return "演示稿来源内容不完整，未保存；请恢复完整大纲后重新生成";
+                return new PersistRunDoneOutcome("演示稿来源内容不完整，未保存；请恢复完整大纲后重新生成", false);
             if (MdToPptAnchors.HasUnresolvedRuntimeReference(html))
             {
                 _logger.LogError("[MdToPpt] trusted presentation runtime unavailable runId={Id}", run.Id);
-                return "演示稿运行时资源不可用，未保存；当前完成态版本仍然保留，请稍后重试";
+                return new PersistRunDoneOutcome("演示稿运行时资源不可用，未保存；当前完成态版本仍然保留，请稍后重试", false);
             }
             run.Status = "done";
             run.Html = html;
@@ -2306,8 +2372,10 @@ public class MdToPptController : ControllerBase
         }
         catch (Exception ex)
         {
+            // 这一支盖住整个写入过程，所以它是唯一「可能已经落库」的失败——标成不确定，
+            // 由调用方回读权威状态再决定要不要降级。
             _logger.LogError(ex, "[MdToPpt] persist run done failed runId={Id}", run.Id);
-            return "演示稿版本保存失败，当前完成态版本仍然保留，请重试";
+            return new PersistRunDoneOutcome("演示稿版本保存失败，当前完成态版本仍然保留，请重试", true);
         }
 
         try
@@ -2319,7 +2387,7 @@ public class MdToPptController : ControllerBase
             // 专用完成态已经持久化；公共账本由恢复器枚举收敛，不能把已保存版本误报为丢失。
             _logger.LogWarning(ex, "[MdToPpt] public lifecycle completion pending runId={Id}", run.Id);
         }
-        return null;
+        return new PersistRunDoneOutcome(null, false);
     }
 
     internal static string ComputeHtmlHash(string html)

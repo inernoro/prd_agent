@@ -19,12 +19,23 @@
  * 用户在授权页看到的范围说明涵盖它吗？三句里有一句答不上来，就不该加。
  */
 
+/** 一次请求的查询串，取自 Express 的 `req.query`。 */
+export type ConnectionRouteQuery = Record<string, unknown>;
+
 /** 连接凭据可达的一条路由，以及它要求的授权范围。 */
 interface ConnectionRouteRule {
   /** 允许的 HTTP 方法；`'*'` 表示不限（仅用于 Bridge 那类必须能写的能力）。 */
   methods: readonly string[] | '*';
   /** 路径判据。 */
   match: (path: string) => boolean;
+  /**
+   * 查询串判据（可选）。路径与方法都对上之后还要它点头，这条规则才算命中。
+   *
+   * 存在的理由：有些集合路由**只有带上收敛参数时**才在这把凭据的授权范围内。
+   * 只按路径放行等于把整个集合也一起放开——「带了参数就收敛了」是调用方的善意，
+   * 不是判据。不点头就当这条规则没命中，落到表尾即拒绝（fail-closed）。
+   */
+  requireQuery?: (query: ConnectionRouteQuery) => boolean;
   /** 需要的授权范围，取自连接授权时授予的 scopes。 */
   scope: string;
   /** 给人看的说明，出现在测试与排障里。 */
@@ -117,12 +128,16 @@ const RULES: readonly ConnectionRouteRule[] = [
     // MAP 只能按自己发的 clientRequestId 回查才知道这份运行时到底建没建成。少了这条，
     // 每一次轮询都在进路由之前被门挡掉，MAP 把会话一直停在 Creating 直到 15 分钟超时——
     // 也就是说 OpenDesign 经配对连接根本起不来（Codex P1，2026-09-15）。
-    // 路由自身要 instance:read，且只返回 principalKey 等于调用方的预约与会话；
-    // 带上 clientRequestId 之后进一步收敛到调用方自己发起的那一次，不是全项目会话列表。
+    // 路由自身要 instance:read，且只返回 principalKey 等于调用方的预约与会话。
+    // **必须带 clientRequestId**：处理器把缺省的查询值当成「不过滤」，所以只按路径放行
+    // 等于把这把凭据名下的整份会话清单（clientUser、模型端点、工作区、仓库、容器、
+    // 运行时元数据）一起开出去，而 MAP 只需要自己刚发起的那一份（Codex P2，2026-09-15）。
+    // 上一版把「带上参数就收敛了」写进了注释——那是调用方的善意，不是判据。
     methods: ['GET'],
     match: (path) => /^\/api\/projects\/[^/]+\/agent-sessions$/.test(path),
+    requireQuery: (query) => typeof query.clientRequestId === 'string' && query.clientRequestId.trim() !== '',
     scope: 'instance:read',
-    why: 'Agent 会话回查：MAP 按自己的 clientRequestId 确认 202 预约最终建成了哪一份运行时',
+    why: 'Agent 会话回查：MAP 按自己的 clientRequestId 确认 202 预约最终建成了哪一份运行时（缺该参数即拒绝）',
   },
   {
     // 停止返回旧式无结构 400 时，MAP 要回读这一条会话才能分清「已经没了」与「真失败」。
@@ -142,11 +157,16 @@ const RULES: readonly ConnectionRouteRule[] = [
  *
  * @returns 需要的 scope；`null` = 这条路由不对连接凭据开放。
  */
-export function connectionTokenRequiredScope(method: string, path: string): string | null {
+export function connectionTokenRequiredScope(
+  method: string,
+  path: string,
+  query: ConnectionRouteQuery = {},
+): string | null {
   const upper = (method || '').toUpperCase();
   for (const rule of RULES) {
     if (!rule.match(path)) continue;
     if (rule.methods !== '*' && !rule.methods.includes(upper)) continue;
+    if (rule.requireQuery && !rule.requireQuery(query)) continue;
     return rule.scope;
   }
   return null;

@@ -1570,7 +1570,7 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
     // connection-token-routes.ts, and each of those declares the scope it needs.
     // Keep the list there, not here — see that file for why.
     const connectionScope = stateService
-      ? connectionTokenRequiredScope(req.method, req.path)
+      ? connectionTokenRequiredScope(req.method, req.path, req.query as Record<string, unknown>)
       : null;
     if (stateService && connectionScope) {
       const hash = crypto.createHash('sha256').update(headerKey).digest('hex');
