@@ -470,17 +470,25 @@ export default function ModelLeaderboardPage() {
         {!isMobile && <TipsEntryButton className="shrink-0" />}
       </div>
 
-      {catalogError && boards.length === 0 ? (
-        <div
-          className="flex items-center gap-2 px-3 py-2 text-[12px] sm:px-6 shrink-0"
-          style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
-          role="status"
-        >
-          维度列表没读出来（{catalogError}），现在只能看当前这一个榜；点右上角刷新重试。
-        </div>
-      ) : (
-        <BoardSwitcher boards={boards} current={board} onPick={setBoard} />
-      )}
+      {/*
+        锚点挂在这层**常驻**的壳上，而不是 BoardSwitcher 自己身上。
+        BoardSwitcher 在 boards 不足两个时返回 null（加载中、拉取失败都属于这种），
+        而本页教程第 2 步指着这个选择器——锚点跟着组件一起消失的话，
+        SpotlightOverlay 找不到元素、轮询十秒后弹失败卡（Codex 在 PR #1538 指出）。
+      */}
+      <div data-tour-id="model-leaderboard-boards" className="shrink-0">
+        {catalogError && boards.length === 0 ? (
+          <div
+            className="flex items-center gap-2 px-3 py-2 text-[12px] sm:px-6"
+            style={{ borderBottom: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
+            role="status"
+          >
+            维度列表没读出来（{catalogError}），现在只能看当前这一个榜；点右上角刷新重试。
+          </div>
+        ) : (
+          <BoardSwitcher boards={boards} current={board} onPick={setBoard} />
+        )}
+      </div>
 
       <div data-tour-id="model-leaderboard-table" className="flex-1 min-h-0 overflow-auto">
         {loading ? (
@@ -524,6 +532,7 @@ export default function ModelLeaderboardPage() {
               <div style={{ minWidth: kind === 'score' ? 920 : 1360 }}>
                 {/* 表头 */}
                 <div
+                  data-tour-id="model-leaderboard-columns"
                   className="grid items-end px-6 pt-2.5 pb-2 font-mono text-[9.5px] uppercase shrink-0"
                   style={{
                     gridTemplateColumns: kind === 'score' ? GRID_SCORE : GRID,
@@ -624,9 +633,13 @@ function MetaStrip({
         ? `${snapshot.totalVotes.toLocaleString('en-US')} 次投票`
         : null;
 
+  // 手机宽度必须能换行：这是表格之前的第三条横条（页头、维度切换器、这条），
+  // 375px 上日期 + 样本量 + 条目数 + 来源链接 + 两个分隔线撑不下，会横向溢出、
+  // 把榜单本体挤到首屏之外（Codex 在 PR #1538 指出）
   return (
     <div
-      className="flex items-center px-6 py-[11px] text-[12px] shrink-0"
+      data-tour-id="model-leaderboard-meta"
+      className="flex flex-wrap items-center gap-y-1 px-3 py-2 text-[12px] sm:px-6 sm:py-[11px] shrink-0"
       style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border-subtle)' }}
     >
       <span className="inline-flex items-center gap-[7px]">
@@ -1057,7 +1070,6 @@ function BoardSwitcher({
 
   return (
     <div
-      data-tour-id="model-leaderboard-boards"
       className="flex items-center gap-4 px-6 py-2 overflow-x-auto shrink-0"
       style={{ borderBottom: '1px solid var(--border-subtle)' }}
       role="group"

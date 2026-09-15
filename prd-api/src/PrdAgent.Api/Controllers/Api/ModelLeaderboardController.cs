@@ -105,15 +105,22 @@ public class ModelLeaderboardController : ControllerBase
     {
         var existing = await _db.ModelLeaderboardSnapshots
             .Find(Builders<ModelLeaderboardSnapshot>.Filter.Empty)
-            .Project(x => new { x.Board, x.Entries })
+            .Project(x => new { x.Board, x.FetchedAt, EntryCount = x.Entries.Count })
             .ToListAsync(ct);
 
         // 用 GroupBy 而不是 ToDictionary：库里同一个榜理论上只有一条文档，但「理论上」不该
         // 让一个只读端点在数据意外重复时整个 500（历史上确实有过并发首写留下两条的窗口，
-        // 见 ModelLeaderboardSyncService.DeterministicId）。重复时取条目多的那条。
+        // 见 ModelLeaderboardSyncService.DeterministicId）。
+        //
+        // 重复时取**最新那条**，不是条目最多那条（Codex 在 PR #1538 指出，这是同一疏漏的
+        // 第四处：Get / Top、自检、同步基线都已改成看最新）。取最多的话，某个榜缩短之后
+        // 切换器会永远显示那个更大的旧数字——同步只更新最新那条，孤儿的条目数冻在原处。
         var counts = existing
             .GroupBy(x => x.Board, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.Max(x => x.Entries.Count), StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(
+                g => g.Key,
+                g => g.OrderByDescending(x => x.FetchedAt).First().EntryCount,
+                StringComparer.OrdinalIgnoreCase);
 
         return Ok(ApiResponse<object>.Ok(new
         {

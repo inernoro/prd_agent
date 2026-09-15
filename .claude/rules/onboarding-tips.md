@@ -34,7 +34,7 @@ paths:
   | 知识库 | `/document-store` | `document-store-page-guide` | 8 |
   | 文学创作 | `/literary-agent` | `literary-page-guide` | 8（+ 进编辑器步骤见下） |
   | 海鲜市场 | `/marketplace` | `marketplace-page-guide` | 6 |
-  | 模型排行榜 | `/model-leaderboard` | `model-leaderboard-page-guide` | 5 |
+  | 模型排行榜 | `/model-leaderboard` | `model-leaderboard-page-guide` | 9 |
   | 智识殿堂 | `/library` | `library-landing-page-guide` | 7 |
   | 作品广场 | `/showcase` | `showcase-page-guide` | 6 |
   | 缺陷管理 | `/defect-agent` | `defect-page-guide` | 8（贯通:浏览→打开提交面板→填写→提交） |
