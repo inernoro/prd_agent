@@ -6,7 +6,10 @@
 //
 // 双主题那两条的判据是「两张图真的不一样」而不是「不是深色底」——控制台默认本来就是浅色，
 // 只断言后者的话，深色那一遍从来没验过，两张截图字节完全相同却照样全绿（测试自己坏了）。
-// 页面字节取自预览容器（逐字节核对过），API 转发到同一个预览域名——浏览器只跟 localhost 说话。
+//
+// 默认直连预览域名。沙箱里出网要走 agent proxy，所以 HTTPS_PROXY 有值时把它交给浏览器；
+// 没有就直连。chromium 路径可用 PLAYWRIGHT_CHROMIUM_PATH 覆盖。
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { chromium } from '/home/user/prd_agent/cds/node_modules/playwright/index.mjs';
@@ -20,7 +23,47 @@ fs.mkdirSync(OUT, { recursive: true });
 const results = [];
 const record = (name, ok, detail) => { results.push({ name, ok, detail }); console.log(`${ok ? '[通过]' : '[失败]'} ${name} — ${detail}`); };
 
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium', args: ['--no-sandbox', '--no-proxy-server'] });
+// 沙箱的出网代理会做 TLS 中间人，而 chromium 不认它的 CA。
+//
+// 解法是**钉住那几张 CA 的公钥**，不是关掉证书校验：--ignore-certificate-errors-spki-list
+// 只对列进去的公钥放行，别的证书照样按正常规则验。SPKI 指纹在运行时从 CA bundle 现算，
+// 不写死——写死的指纹过期之后会静默退化成「连不上」，而人会以为是页面坏了。
+//
+// 反面教材记在这里：第一版随手写了 --ignore-certificate-errors=false 想「显式关掉忽略」，
+// chromium 只看这个开关在不在、不看值，于是**全局忽略了所有证书错误**，页面照样打开、
+// 测试照样绿——一条为了错误的原因而通过的断言。
+function proxyCaSpkiPins() {
+  const bundlePath = process.env.NODE_EXTRA_CA_CERTS || '/root/.ccr/ca-bundle.crt';
+  if (!fs.existsSync(bundlePath)) return [];
+  const pems = fs.readFileSync(bundlePath, 'utf8').split(/(?=-----BEGIN CERTIFICATE-----)/);
+  const pins = new Set();
+  for (const pem of pems) {
+    if (!pem.includes('BEGIN CERTIFICATE')) continue;
+    try {
+      const cert = new crypto.X509Certificate(pem);
+      // 只钉代理自己那几张（组织是 Anthropic），公共 CA 本来就受信，不需要也不应该钉。
+      if (!/O=Anthropic/i.test(cert.subject.replace(/\s+/g, ''))) continue;
+      const der = cert.publicKey.export({ type: 'spki', format: 'der' });
+      pins.add(crypto.createHash('sha256').update(der).digest('base64'));
+    } catch { /* 解析不了的跳过，不影响其余 */ }
+  }
+  return [...pins];
+}
+
+const proxy = process.env.HTTPS_PROXY || process.env.https_proxy;
+const pins = proxy ? proxyCaSpkiPins() : [];
+if (proxy && pins.length === 0) {
+  console.error('走代理但没能从 CA bundle 里算出代理 CA 的指纹，页面会因证书不受信打不开。');
+  process.exit(2);
+}
+const browser = await chromium.launch({
+  executablePath: process.env.PLAYWRIGHT_CHROMIUM_PATH || '/opt/pw-browsers/chromium',
+  args: [
+    '--no-sandbox',
+    ...(proxy ? [`--ignore-certificate-errors-spki-list=${pins.join(',')}`] : ['--no-proxy-server']),
+  ],
+  proxy: proxy ? { server: proxy } : undefined,
+});
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 const page = await ctx.newPage();
 
@@ -37,7 +80,10 @@ await page.evaluate(([t, u, te, e]) => {
 }, [TOKEN, JSON.stringify(session.user), JSON.stringify(session.tenant), session.expiresAt]);
 
 // 真人路径：点导航进模型页
-await page.goto(`${BASE}/llmgw/`, { waitUntil: 'networkidle' });
+// 不用 networkidle：控制台有常驻的流式连接（分支状态 / 日志推送），网络永远不会「空闲」，
+// 等它等的是一个不会发生的事件。等真正要点的那个导航出现即可。
+await page.goto(`${BASE}/llmgw/`, { waitUntil: 'domcontentloaded' });
+await page.waitForSelector('.lg-console-sidebar nav a:has-text("模型")', { timeout: 60000 });
 await page.click('.lg-console-sidebar nav a:has-text("模型")');
 await page.waitForURL('**/llmgw/logical-models**');
 await settle();
@@ -111,7 +157,8 @@ for (const [theme, name] of [['light', '03-白天-调用全貌'], ['dark', '04-�
     localStorage.setItem('llmgw.theme', t);
     document.documentElement.setAttribute('data-theme', t);
   }, theme);
-  await page.reload({ waitUntil: 'networkidle' });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('button:has-text("调用全貌")', { timeout: 60000 });
   await settle();
   await page.locator('button:has-text("调用全貌")').first().click();
   await page.waitForSelector('[data-testid="call-trace-panel"]', { timeout: 30000 });
