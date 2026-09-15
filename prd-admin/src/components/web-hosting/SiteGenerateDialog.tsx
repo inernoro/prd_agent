@@ -282,6 +282,9 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     abortRef.current?.abort();
     abortRef.current = abort;
     setGenerating(true);
+    // 与改写面板同一处判据：徽章必须在进入 generating 的同一拍清掉。排在创建请求之后，
+    // 创建期间顶上挂的是上一轮的模型；创建失败时它更会被留在一次根本没发生的调用上。
+    setResolvedModel(null);
     setStopRequested(false);
     setElapsedSeconds(0);
     setRunStartedAtMs(Date.now());
@@ -320,7 +323,6 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       return;
     }
     setActiveRunRuntime(created.data.runtime);
-    setResolvedModel(null);
     setActiveRunId(created.data.runId);
     setRunStartedAtMs(Date.parse(created.data.createdAt));
     rememberActiveRun(created.data.runId);

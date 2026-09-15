@@ -4892,8 +4892,24 @@ export class StateService {
       ...this.state.infraMaintenanceJobs.filter((item) => item.status === 'active'),
       ...this.state.infraMaintenanceJobs.filter((item) => item.status !== 'active').slice(-200),
     ];
-    this.save(HINT_GLOBAL);
-    await this.flush();
+    try {
+      this.save(HINT_GLOBAL);
+      await this.flush();
+    } catch (error) {
+      // 落盘失败时必须把这次预约摘掉再抛。它盖的是**当前**代次，而收割器只收上一代的
+      // 遗留（那是有意的：本代的 job 可能正在跑）。留着它，调用方又拿不到 handle 去
+      // finish，于是这个服务的凭据轮换到进程重启为止都进不来——一次写盘抖动换来一道
+      // 永久闸门。摘除本身也尽力落盘，但真正挡路的是内存态，闸读的就是它。
+      this.state.infraMaintenanceJobs = (this.state.infraMaintenanceJobs || [])
+        .filter((item) => item.id !== job.id);
+      try {
+        this.save(HINT_GLOBAL);
+        await this.flush();
+      } catch {
+        // 已经在失败路径上，落盘再失败也不改变结论：内存里那条已经摘掉了。
+      }
+      throw error;
+    }
     return { ...job };
   }
 
