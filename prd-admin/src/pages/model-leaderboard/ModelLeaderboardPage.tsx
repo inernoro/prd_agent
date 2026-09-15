@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { CloudDownload, ExternalLink, RefreshCw } from 'lucide-react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
@@ -47,11 +47,29 @@ import {
  * 不是前端按榜名硬猜——对方改了某个榜的结构，这里会跟着变。
  */
 
-/** Agent 榜的列宽，与设计稿一致。行与表头共用同一个模板，改一处就得改两处的问题在这里被消掉。 */
-const GRID = '92px minmax(240px, 1fr) 196px 136px 136px 136px 128px 124px 104px 88px 104px';
+/**
+ * 列宽模板。行与表头共用同一个，改一处就得改两处的问题在这里被消掉。
+ *
+ * ## 模型列限了上限，富余全给指标条
+ *
+ * 第一版模型列写的是 `minmax(240px, 1fr)`，宽屏下所有富余宽度都塞给了它——而模型名
+ * 只有二十来个字符，于是表格中间空出六百多像素（用户 2026-09-15 反馈「中间空这么一大块」）。
+ * 富余该给的是那根带误差须的条：条越长，区间分得越开、分差越读得出来
+ * （content-fills-canvas.md：空间要变成信息，不是留白）。
+ */
+const GRID = '92px minmax(230px, 380px) minmax(196px, 1fr) 136px 136px 136px 128px 124px 104px 88px 104px';
 
-/** 分数榜的列宽。列少了一半，所以把分数那列放宽——它是这张表唯一的主角。 */
-const GRID_SCORE = '92px minmax(240px, 1fr) 268px 120px 116px 104px';
+/** 分数榜只有六列，富余更多，所以把 1fr 给对战分那列——它是这张表唯一的主角。 */
+const GRID_SCORE = '92px minmax(230px, 380px) minmax(268px, 1fr) 120px 116px 104px';
+
+/**
+ * 首屏渲染多少行、每次追加多少行。
+ *
+ * 文本榜 402 行、每行十来个节点，一次性铺出来会卡住整页（用户同一轮反馈「这么卡」）。
+ * 滚到底再追加即可——榜单是从上往下看的，没人会一屏跳到第 400 名。
+ */
+const INITIAL_ROWS = 40;
+const ROWS_STEP = 40;
 
 type RangeKey = 'all' | 'open';
 
@@ -94,18 +112,40 @@ export default function ModelLeaderboardPage() {
   const isRoot = useAuthStore((s) => s.isRoot);
   const canSync = hasEffectivePermission(permissions, 'mds.write', isRoot);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    // 文本榜实测 402 个模型，取 200 够看且不至于把一屏拉成长卷；底部会如实写出总数
-    const res = await getModelLeaderboard(board, 200);
-    if (res.success && res.data) setSnapshot(res.data);
-    else {
-      setSnapshot(null);
-      setError(res.error?.message ?? '榜单没读出来，稍后再试');
-    }
-    setLoading(false);
-  }, [board]);
+  /**
+   * 已经读过的榜留在内存里。
+   *
+   * 榜单是后端每天同步一次的快照，同一次浏览里不会变；来回切维度还每次重拉，就是
+   * 让用户为一份不会变的数据反复等（用户 2026-09-15 反馈「没有缓存吗，这么卡」）。
+   * 页头那个刷新按钮传 force，绕过缓存——要「现在就去看有没有更新」时还有得点。
+   */
+  const cacheRef = useRef(new Map<string, ModelLeaderboardSnapshot>());
+
+  const load = useCallback(
+    async (force = false) => {
+      const cached = cacheRef.current.get(board);
+      if (cached && !force) {
+        setSnapshot(cached);
+        setError(null);
+        setLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      setError(null);
+      // 文本榜实测 402 个模型，一次取全；渲染分批，不会因为行多就卡（见 INITIAL_ROWS）
+      const res = await getModelLeaderboard(board, 500);
+      if (res.success && res.data) {
+        cacheRef.current.set(board, res.data);
+        setSnapshot(res.data);
+      } else {
+        setSnapshot(null);
+        setError(res.error?.message ?? '榜单没读出来，稍后再试');
+      }
+      setLoading(false);
+    },
+    [board],
+  );
 
   useEffect(() => {
     void load();
@@ -164,8 +204,10 @@ export default function ModelLeaderboardPage() {
       } else {
         toast.success('榜单已更新');
       }
+      // 同步刚把库里的快照换掉了，缓存必须作废，否则点完同步还看着旧数据
+      cacheRef.current.delete(board);
       // 目录里的 ready / total 也变了，一起重拉——否则切换器上仍标着「暂无数据」
-      await Promise.all([load(), loadCatalog()]);
+      await Promise.all([load(true), loadCatalog()]);
     } else {
       toast.error(res.error?.message ?? '同步没跑起来');
     }
@@ -190,6 +232,34 @@ export default function ModelLeaderboardPage() {
       steer: pick((e) => e.steerability),
     };
   }, [entries]);
+
+  /**
+   * 首屏只铺 INITIAL_ROWS 行，滚到底再追加。
+   *
+   * 换榜或换筛选都从头开始——不然从 402 行的文本榜切到 10 行的视频编辑榜，
+   * 会带着一个「已展开 400 行」的状态过去。
+   */
+  const [visibleRows, setVisibleRows] = useState(INITIAL_ROWS);
+  useEffect(() => {
+    setVisibleRows(INITIAL_ROWS);
+  }, [board, range]);
+
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const el = sentinelRef.current;
+    if (!el) return;
+    // 提前 400px 就开始追加，让用户滚到底时下一批已经在了——而不是先看见一截空白
+    const io = new IntersectionObserver(
+      (es) => {
+        if (es[0]?.isIntersecting) setVisibleRows((n) => n + ROWS_STEP);
+      },
+      { rootMargin: '400px' },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [entries.length]);
+
+  const shownEntries = useMemo(() => entries.slice(0, visibleRows), [entries, visibleRows]);
 
   /**
    * 分数榜那根条的量程：全列的最低下界到最高上界。
@@ -256,8 +326,11 @@ export default function ModelLeaderboardPage() {
 
         <button
           type="button"
-          onClick={() => void load()}
-          title="重新读取"
+          onClick={() => {
+            cacheRef.current.delete(board);
+            void load(true);
+          }}
+          title="绕过缓存，重新读一次这个榜"
           aria-label="重新读取榜单"
           className="h-[28px] w-[28px] inline-flex items-center justify-center rounded-[8px] transition-colors"
           style={{ background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
@@ -320,7 +393,7 @@ export default function ModelLeaderboardPage() {
           />
         ) : (
           <>
-            <MetaStrip snapshot={snapshot} shown={entries.length} />
+            <MetaStrip snapshot={snapshot} shown={entries.length} rendered={shownEntries.length} />
 
             <div className="overflow-x-auto">
               <div style={{ minWidth: kind === 'score' ? 920 : 1360 }}>
@@ -358,12 +431,24 @@ export default function ModelLeaderboardPage() {
                   )}
                 </div>
 
-                {entries.map((e, i) =>
+                {shownEntries.map((e, i) =>
                   kind === 'score' ? (
                     <ScoreRow key={`${e.rank}-${e.name}`} entry={e} lead={i === 0} range={scoreRange} />
                   ) : (
                     <Row key={`${e.rank}-${e.name}`} entry={e} lead={i === 0} columnMax={columnMax} />
                   ),
+                )}
+
+                {/* 滚到这儿就追加下一批。还有剩的时候才挂，铺完了就摘掉 */}
+                {shownEntries.length < entries.length && (
+                  <div
+                    ref={sentinelRef}
+                    className="px-6 py-3 text-[11.5px] font-mono"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    正在展开第 {shownEntries.length + 1}–
+                    {Math.min(shownEntries.length + ROWS_STEP, entries.length)} 名…
+                  </div>
                 )}
               </div>
             </div>
@@ -377,7 +462,17 @@ export default function ModelLeaderboardPage() {
 }
 
 /** 元信息条：数据从哪来、多新、多少样本。 */
-function MetaStrip({ snapshot, shown }: { snapshot: ModelLeaderboardSnapshot; shown: number }) {
+function MetaStrip({
+  snapshot,
+  shown,
+  rendered,
+}: {
+  snapshot: ModelLeaderboardSnapshot;
+  /** 当前筛选后的条数 */
+  shown: number;
+  /** 已经铺到页面上的条数（渐进渲染，滚动时会涨） */
+  rendered: number;
+}) {
   const date = snapshot.fetchedAt
     ? new Date(snapshot.fetchedAt).toLocaleString('zh-CN', {
         month: '2-digit',
@@ -435,6 +530,7 @@ function MetaStrip({ snapshot, shown }: { snapshot: ModelLeaderboardSnapshot; sh
         <span className="font-mono tabular-nums">
           {snapshot.total ?? shown} 个模型
           {shown !== (snapshot.total ?? shown) ? ` · 当前筛出 ${shown} 个` : ''}
+          {rendered < shown ? ` · 已显示前 ${rendered} 名` : ''}
         </span>
       </span>
 
@@ -471,8 +567,8 @@ function Row({
   columnMax: { net: number; confirmed: number; praise: number; steer: number };
 }) {
   const open = isOpenSource(entry.license);
-  // 净改进那列用 44px 表示当列最大值——设计稿里榜首条正好是这个长度
-  const netScale = 44 / columnMax.net;
+  // 当列最大值占从中轴到边缘的 46%（留两格边距，免得最长那根顶到框线上）
+  const netScale = 46 / columnMax.net;
 
   return (
     <div

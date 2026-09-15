@@ -5,8 +5,7 @@ import type { ModelMetric } from '@/services/real/modelLeaderboard';
  * 而且误差须的画法是本页最容易被改坏的细节。
  */
 
-/** 误差须的画布尺寸，与设计稿一致（Main.dc.html 里的 104×18）。 */
-const BAR_W = 104;
+/** 条的高度。宽度不再写死——由所在列给多少就占多少，见下。 */
 const BAR_H = 18;
 
 /**
@@ -16,7 +15,13 @@ const BAR_H = 18;
  * 它们的名次差别本来就不作数。画成实心条是在假装精确——须画出来，读者才知道这个 +13.85%
  * 实际可能是 11.93 到 15.77 之间的任何一个数。
  *
- * 坐标全部按 `scale`（值 → px）换算，零点在中轴：正值向右、负值向左。
+ * ## 为什么用百分比定位而不是固定宽度的 SVG
+ *
+ * 固定 104px 的画布在宽屏下会把富余宽度留给别的列（最后落在模型名那一列，变成一大片
+ * 空白）。改成撑满所在列之后，宽屏上条更长、须分得更开——多出来的像素直接变成了
+ * 可读性，而不是空白（content-fills-canvas.md）。
+ *
+ * 坐标以中轴为零点：正值向右、负值向左，`scale` 是「一个百分点换算成画布宽度的百分之几」。
  */
 export function ErrorBar({
   metric,
@@ -24,42 +29,95 @@ export function ErrorBar({
   lead = false,
 }: {
   metric: ModelMetric;
-  /** 把「一个百分点」换算成多少像素；由整列的最大绝对值决定，全列共用一把尺 */
+  /** 值 → 画布百分比；由整列的最大绝对值决定，全列共用一把尺 */
   scale: number;
   /** 榜首那行：条更粗、须更亮 */
   lead?: boolean;
 }) {
-  const zero = BAR_W / 2;
-  const mid = BAR_H / 2;
+  const clamp = (v: number) => Math.max(0, Math.min(100, v));
   const len = metric.value * scale;
-  const x = len >= 0 ? zero : zero + len;
-  const w = Math.max(2, Math.abs(len));
+  const x = clamp(len >= 0 ? 50 : 50 + len);
+  const w = Math.min(100 - x, Math.abs(len));
 
-  // 须的两端 = 值 ± 误差，夹在画布内，免得大误差把须画到框外
-  const clamp = (v: number) => Math.max(1, Math.min(BAR_W - 1, zero + v * scale));
-  const lo = metric.margin != null ? clamp(metric.value - metric.margin) : null;
-  const hi = metric.margin != null ? clamp(metric.value + metric.margin) : null;
+  const lo = metric.margin != null ? clamp(50 + (metric.value - metric.margin) * scale) : null;
+  const hi = metric.margin != null ? clamp(50 + (metric.value + metric.margin) * scale) : null;
 
-  const barFill = lead ? 'var(--accent-gold)' : 'color-mix(in srgb, var(--accent-gold) 72%, transparent)';
+  const barFill = lead
+    ? 'var(--accent-gold)'
+    : 'color-mix(in srgb, var(--accent-gold) 72%, transparent)';
   const whisker = lead ? 'var(--text-secondary)' : 'var(--text-muted)';
-  const barH = lead ? 5 : 4;
 
   return (
-    <svg width={BAR_W} height={BAR_H} viewBox={`0 0 ${BAR_W} ${BAR_H}`} aria-hidden="true" className="shrink-0">
-      {/* 基线与零点 */}
-      <line x1={0} y1={mid} x2={BAR_W} y2={mid} stroke="var(--border-subtle)" strokeWidth={1} />
-      <line x1={zero} y1={3} x2={zero} y2={BAR_H - 3} stroke="var(--border-default)" strokeWidth={1} />
-      {/* 分数条 */}
-      <rect x={x} y={mid - barH / 2} width={w} height={barH} rx={barH / 2} fill={barFill} />
-      {/* 置信区间的须：两根竖线 + 一根横梁 */}
-      {lo != null && hi != null && (
-        <>
-          <line x1={lo} y1={mid - 4.5} x2={lo} y2={mid + 4.5} stroke={whisker} strokeWidth={lead ? 1.4 : 1.3} />
-          <line x1={hi} y1={mid - 4.5} x2={hi} y2={mid + 4.5} stroke={whisker} strokeWidth={lead ? 1.4 : 1.3} />
-          <line x1={lo} y1={mid} x2={hi} y2={mid} stroke={whisker} strokeWidth={lead ? 1.2 : 1.1} />
-        </>
-      )}
-    </svg>
+    <Track>
+      {/* 零点中轴 */}
+      <span
+        style={{
+          position: 'absolute', left: '50%', top: 3, bottom: 3, width: 1,
+          background: 'var(--border-default)',
+        }}
+      />
+      <Bar left={x} width={w} fill={barFill} lead={lead} />
+      <Whiskers lo={lo} hi={hi} color={whisker} lead={lead} />
+    </Track>
+  );
+}
+
+/** 条与须共用的画布：撑满所在列，高度固定。 */
+function Track({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="relative block flex-1"
+      style={{ height: BAR_H, minWidth: 90 }}
+    >
+      {/* 基线 */}
+      <span
+        style={{
+          position: 'absolute', left: 0, right: 0, top: '50%', height: 1,
+          background: 'var(--border-subtle)',
+        }}
+      />
+      {children}
+    </span>
+  );
+}
+
+function Bar({ left, width, fill, lead }: { left: number; width: number; fill: string; lead: boolean }) {
+  const h = lead ? 5 : 4;
+  return (
+    <span
+      style={{
+        position: 'absolute', left: `${left}%`, top: '50%', transform: 'translateY(-50%)',
+        width: `${Math.max(width, 0)}%`, minWidth: 2, height: h, borderRadius: h / 2, background: fill,
+      }}
+    />
+  );
+}
+
+/** 置信区间的须：两根竖线 + 一根横梁。区间抓不到时整组不画，不拿 0 冒充。 */
+function Whiskers({
+  lo, hi, color, lead,
+}: { lo: number | null; hi: number | null; color: string; lead: boolean }) {
+  if (lo == null || hi == null) return null;
+  const t = lead ? 1.4 : 1.2;
+  return (
+    <>
+      <span
+        style={{
+          position: 'absolute', left: `${lo}%`, right: `${100 - hi}%`, top: '50%',
+          height: 1, background: color,
+        }}
+      />
+      {[lo, hi].map((x, i) => (
+        <span
+          key={i}
+          style={{
+            position: 'absolute', left: `${x}%`, top: '50%',
+            transform: 'translate(-50%, -50%)', width: t, height: 9, background: color,
+          }}
+        />
+      ))}
+    </>
   );
 }
 
@@ -148,10 +206,6 @@ export function isOpenSource(license: string | null): boolean {
   return !/proprietary/i.test(license ?? 'Proprietary');
 }
 
-/** 分数条的画布尺寸。比 agent 榜的误差须宽一些——分数榜这一列本来就该是主角。 */
-const SCORE_BAR_W = 148;
-const SCORE_BAR_H = 18;
-
 /**
  * 对战分条：整列共用一把尺，左端是全列最低分、右端是全列最高分。
  *
@@ -165,7 +219,7 @@ const SCORE_BAR_H = 18;
  *
  * 图像视频这些榜的样本少，误差经常到 ±26，而相邻两名只差 4 分。不把区间画出来，
  * 读者会以为第一名真的赢了第二名。区间重叠时名次差别不作数，这句话对分数榜比对
- * agent 榜更要紧。
+ * agent 榜更要紧——所以这一列吃掉整行的富余宽度，让须分得开、看得清。
  */
 export function ScoreBar({
   value,
@@ -184,39 +238,24 @@ export function ScoreBar({
   lead?: boolean;
 }) {
   const span = max - min;
-  const mid = SCORE_BAR_H / 2;
   // 全列只有一行、或者所有分数一样时 span 为 0：画满，不做除零
-  const x = (v: number) =>
-    span <= 0 ? SCORE_BAR_W : Math.max(0, Math.min(SCORE_BAR_W, ((v - min) / span) * SCORE_BAR_W));
+  const pct = (v: number) =>
+    span <= 0 ? 100 : Math.max(0, Math.min(100, ((v - min) / span) * 100));
 
-  const end = x(value);
-  const lo = marginDown != null ? x(value - marginDown) : null;
-  const hi = marginUp != null ? x(value + marginUp) : null;
+  const end = pct(value);
+  const lo = marginDown != null ? pct(value - marginDown) : null;
+  const hi = marginUp != null ? pct(value + marginUp) : null;
 
   const barFill = lead
     ? 'var(--accent-gold)'
     : 'color-mix(in srgb, var(--accent-gold) 72%, transparent)';
   const whisker = lead ? 'var(--text-secondary)' : 'var(--text-muted)';
-  const barH = lead ? 5 : 4;
 
   return (
-    <svg
-      width={SCORE_BAR_W}
-      height={SCORE_BAR_H}
-      viewBox={`0 0 ${SCORE_BAR_W} ${SCORE_BAR_H}`}
-      aria-hidden="true"
-      className="shrink-0"
-    >
-      <line x1={0} y1={mid} x2={SCORE_BAR_W} y2={mid} stroke="var(--border-subtle)" strokeWidth={1} />
-      <rect x={0} y={mid - barH / 2} width={Math.max(2, end)} height={barH} rx={barH / 2} fill={barFill} />
-      {lo != null && hi != null && (
-        <>
-          <line x1={lo} y1={mid - 4.5} x2={lo} y2={mid + 4.5} stroke={whisker} strokeWidth={lead ? 1.4 : 1.3} />
-          <line x1={hi} y1={mid - 4.5} x2={hi} y2={mid + 4.5} stroke={whisker} strokeWidth={lead ? 1.4 : 1.3} />
-          <line x1={lo} y1={mid} x2={hi} y2={mid} stroke={whisker} strokeWidth={lead ? 1.2 : 1.1} />
-        </>
-      )}
-    </svg>
+    <Track>
+      <Bar left={0} width={end} fill={barFill} lead={lead} />
+      <Whiskers lo={lo} hi={hi} color={whisker} lead={lead} />
+    </Track>
   );
 }
 

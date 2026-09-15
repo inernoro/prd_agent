@@ -7,3 +7,5 @@
 | fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |
 | fix | prd-api | model_leaderboard_snapshots 补进 DataSyncScope.Excluded（外站公开数据的本地缓存，跨实例搬运无意义且会误导来源） |
 | feat | prd-admin | 当前维度同步到 URL（?board=text-to-image），刷新保持、可分享、交付能给出落到该维度的深链；URL 里写了不存在的榜退回默认榜 |
+| fix | prd-admin | 修表格中间空一大块：模型列的 1fr 改为限宽，富余宽度给带误差须的指标条（条与须改百分比定位，撑满所在列） |
+| perf | prd-admin | 榜单加内存缓存（切回已看过的维度不再重拉，刷新/同步按钮强制绕过）+ 渐进渲染（首屏 40 行，滚到底追加），治 402 行文本榜的卡顿 |
