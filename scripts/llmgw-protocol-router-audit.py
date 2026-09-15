@@ -322,8 +322,6 @@ def build_report() -> dict[str, Any]:
             "app.MapGet(\"/gw/app-callers\"",
             "app.MapPut(\"/gw/app-callers/{id}\"",
             "app.MapPost(\"/gw/app-callers/bulk-governance\"",
-            "app.MapPost(\"/gw/pools\"",
-            "app.MapPost(\"/gw/pools/bulk-claim\"",
             "app.MapGet(\"/gw/audits\"",
             "llmgw_operation_audits",
             "ReadyForHttpFull",

@@ -15,7 +15,6 @@ import { OverviewPage } from '@/pages/HomePage';
 import { GovernancePage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
 import { LogDetailPage } from '@/pages/LogDetailPage';
-import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
 import { UpstreamsPage } from '@/pages/UpstreamsPage';
 import { ModelsPage } from '@/pages/ModelsPage';
@@ -121,7 +120,9 @@ export function App() {
             <Route path="/app-callers" element={<RequirePageAccess page="appCallers"><AppCallersPage /></RequirePageAccess>} />
             <Route path="/app-callers/view" element={<RequirePageAccess page="appCallers"><AppCallerDetailsPage /></RequirePageAccess>} />
             <Route path="/app-callers/:id/prompt-policy" element={<RequirePageAccess page="promptPolicy"><PromptPolicyPage /></RequirePageAccess>} />
-            <Route path="/pools" element={<RequirePageAccess page="routeConfig"><ModelPoolsPage /></RequirePageAccess>} />
+            {/* 模型池已于 2026-09-15 删除（断流后池上零流量）。旧地址不留死链：
+                收藏夹、文档里、别人贴的链接还会打过来，重定向到模型页而不是 404。 */}
+            <Route path="/pools" element={<Navigate to="/logical-models" replace />} />
             <Route path="/platforms" element={<RequirePageAccess page="routeConfig"><UpstreamsPage /></RequirePageAccess>} />
             <Route path="/platforms/view" element={<RequirePageAccess page="routeConfig"><ProviderDetailsPage /></RequirePageAccess>} />
             <Route path="/models" element={<RequirePageAccess page="routeConfig"><ModelsPage /></RequirePageAccess>} />

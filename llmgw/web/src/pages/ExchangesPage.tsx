@@ -529,7 +529,7 @@ export function ExchangesPage() {
               <span style={HINT_TEXT}>{savedItem.models.length} 条模型映射已读回</span>
               <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
                 <Link className="lg-text-link" to={`/audits?targetType=llmgw_model_exchange&search=${encodeURIComponent(savedItem.id)}`}>打开本次审计 <ArrowRight size={13} /></Link>
-                <Link className="lg-text-link" to="/pools">去模型池 <ArrowRight size={13} /></Link>
+                <Link className="lg-text-link" to="/logical-models">去模型 <ArrowRight size={13} /></Link>
               </div>
             </div>
           </Card>
@@ -590,7 +590,7 @@ export function ExchangesPage() {
               <Prose>保存只建立配置和审计，不会调用上游，也不产生费用。</Prose>
               <ol className="lg-exchange-steps" aria-label="Exchange 三步工作流">
                 <li><strong>创建映射</strong><p style={BODY_TEXT}>填写上游地址、模型标识和通讯密钥。</p></li>
-                <li><strong>加入模型池</strong><p style={BODY_TEXT}>把已启用模型加入对应用途的模型池。</p></li>
+                <li><strong>挂成线路</strong><p style={BODY_TEXT}>把已启用模型挂到对应用途的对外模型池。</p></li>
                 <li><strong>用 requestId 验证</strong><p style={BODY_TEXT}>从 Quickstart 安全测试，再到审计定位变更。</p></li>
               </ol>
               {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>创建第一条映射</Button> : null}
@@ -720,7 +720,7 @@ export function ExchangesPage() {
         <DetailsBlock title="工作原理：Exchange 把非标准上游接成可调度的模型">
           <Prose>
             一条 Exchange 记录目标地址、adapter 与认证方式，再把上游模型标识映射成明确用途，
-            之后就能像平台模型一样加入模型池。租户由服务端会话解析，通讯密钥只写不读，
+            之后就能像平台模型一样挂成对外模型的线路。租户由服务端会话解析，通讯密钥只写不读，
             保存只写配置与审计，不会替你调用上游产生费用。
           </Prose>
           <TutorialLink chapter="chapter-19">查看教程：第 19 章 Exchange 映射</TutorialLink>

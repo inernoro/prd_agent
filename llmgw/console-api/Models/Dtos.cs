@@ -650,7 +650,6 @@ public sealed class SessionsData
 // ── 配置写请求（网关配置面第二刀，可写）──
 // 字段用 nullable：缺字段/空 body 时为 null，处理器拒绝（避免默认 false 误关平台/模型/默认池）。
 public sealed class ToggleEnabledRequest { public bool? Enabled { get; set; } }
-public sealed class ToggleDefaultRequest { public bool? IsDefault { get; set; } }
 public sealed class RotateApiKeyRequest { public string? ApiKey { get; set; } }
 public sealed class BulkRotateApiKeysRequest
 {
@@ -670,37 +669,6 @@ public sealed class BulkRotateApiKeysResult
     public long SkippedCount { get; set; }
     public string FilterSummary { get; set; } = "";
 }
-public sealed class CreatePoolRequest
-{
-    public string? Name { get; set; }
-    public string? Code { get; set; }
-    public string? ModelType { get; set; }
-    public int? Priority { get; set; }
-    public bool? IsDefaultForType { get; set; }
-    public int? StrategyType { get; set; }
-    public string? Description { get; set; }
-}
-public sealed class UpdatePoolRequest
-{
-    public string? Name { get; set; }
-    public string? Code { get; set; }
-    public string? ModelType { get; set; }
-    public int? Priority { get; set; }
-    public bool? IsDefaultForType { get; set; }
-    public int? StrategyType { get; set; }
-    public string? Description { get; set; }
-}
-public sealed class BulkClaimPoolsRequest
-{
-    public string? ModelType { get; set; }
-    public bool? Overwrite { get; set; }
-}
-public sealed class BulkClaimPoolsResult
-{
-    public int Claimed { get; set; }
-    public int Skipped { get; set; }
-    public List<PoolItem> Items { get; set; } = new();
-}
 public sealed class PoolTypesData
 {
     public List<PoolTypeItem> Items { get; set; } = new();
@@ -718,49 +686,6 @@ public sealed class PoolTypeItem
     public int ModelCount { get; set; }
     public bool Ready { get; set; }
     public long Version { get; set; }
-}
-public sealed class EnsurePoolTypesResult
-{
-    public int TypesCreated { get; set; }
-    public int PoolsCreated { get; set; }
-    public int ModelsAppended { get; set; }
-    public PoolTypesData Types { get; set; } = new();
-}
-public sealed class BulkCalibratePoolPriceCurrencyRequest
-{
-    public string? ModelType { get; set; }
-    public string? TargetCurrency { get; set; }
-    public bool? OnlyMissing { get; set; }
-    public bool? IncludeMembersWithoutPrice { get; set; }
-}
-public sealed class BulkCalibratePoolPriceCurrencyResult
-{
-    public int ScannedPools { get; set; }
-    public int TouchedPools { get; set; }
-    public int MatchedMembers { get; set; }
-    public int UpdatedMembers { get; set; }
-    public string TargetCurrency { get; set; } = "";
-}
-public sealed class BulkImportPoolModelsRequest
-{
-    public string? PlatformId { get; set; }
-    public bool? EnabledOnly { get; set; }
-    public string? CapabilityFilter { get; set; }
-    public bool? OverwriteExisting { get; set; }
-    public int? MaxCount { get; set; }
-    public int? StartPriority { get; set; }
-    public int? PriorityStep { get; set; }
-}
-public sealed class BulkImportPoolModelsResult
-{
-    public int ScannedModels { get; set; }
-    public int MatchedModels { get; set; }
-    public int Imported { get; set; }
-    public int Updated { get; set; }
-    public int SkippedExisting { get; set; }
-    public int SkippedInvalid { get; set; }
-    public string CapabilityFilter { get; set; } = "";
-    public PoolItem? Pool { get; set; }
 }
 public sealed class BulkUpdateModelCapabilitiesRequest
 {
@@ -803,25 +728,6 @@ public sealed class BindActiveAppCallerPoolsResult
     public int Skipped { get; set; }
     public int MissingDefaultPool { get; set; }
     public List<ConfigAuthorityGapItem> Items { get; set; } = new();
-}
-public sealed class UpsertPoolModelRequest
-{
-    public string? ModelId { get; set; }
-    public string? PlatformId { get; set; }
-    public int? Priority { get; set; }
-    public string? Protocol { get; set; }
-    public bool? EnablePromptCache { get; set; }
-    public int? MaxTokens { get; set; }
-    public decimal? InputPricePerMillion { get; set; }
-    public decimal? OutputPricePerMillion { get; set; }
-    public decimal? PricePerCall { get; set; }
-    public string? PriceCurrency { get; set; }
-    public List<ModelCapabilityItem>? Capabilities { get; set; }
-}
-public sealed class RecoverPoolModelRequest
-{
-    public string? ModelId { get; set; }
-    public string? PlatformId { get; set; }
 }
 public sealed class UpdateGatewayAppCallerRequest
 {

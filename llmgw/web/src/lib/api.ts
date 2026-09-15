@@ -35,8 +35,6 @@ import type {
   SessionsData,
   LlmLogDetail,
   PoolsData,
-  PoolTypesData,
-  EnsurePoolTypesResult,
   PlatformsData,
   ModelsData,
   CallTraceData,
@@ -56,11 +54,9 @@ import type {
   BulkUpdateGatewayAppCallersResult,
   OperationAuditsData,
   ShadowData,
-  ModelPool,
   PlatformItem,
   PlatformDeleteBlockers,
   ModelDeleteBlockers,
-  PoolDeleteBlockers,
   ExchangeDeleteBlockers,
   LogicalModelDeleteResult,
   AppCallerDeleteResult,
@@ -79,16 +75,7 @@ import type {
   ImageLayeringCapabilityStatus,
   CreateExchangeRequest,
   UpdateExchangeRequest,
-  UpsertPoolModelRequest,
   KeyHealthData,
-  CreatePoolRequest,
-  UpdatePoolRequest,
-  BulkClaimPoolsRequest,
-  BulkClaimPoolsResult,
-  BulkCalibratePoolPriceCurrencyRequest,
-  BulkCalibratePoolPriceCurrencyResult,
-  BulkImportPoolModelsRequest,
-  BulkImportPoolModelsResult,
   BulkRotateApiKeysRequest,
   BulkRotateApiKeysResult,
   BulkUpdateModelCapabilitiesRequest,
@@ -912,10 +899,6 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
 }
-/** 删除模型池。是当前默认池或仍有 appCaller 绑定时返回 409 + POOL_IN_USE。 */
-export function deletePool(id: string): Promise<ApiResponse<PoolDeleteBlockers>> {
-  return apiRequest<PoolDeleteBlockers>(`/pools/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
 /** 删除逻辑模型。名下 offering 是从属子项，跟着一起删，返回删除条数。 */
 export function deleteLogicalModel(id: string): Promise<ApiResponse<LogicalModelDeleteResult>> {
   return apiRequest<LogicalModelDeleteResult>(`/logical-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -999,48 +982,6 @@ export function deleteExchangeApiKey(id: string): Promise<ApiResponse<ExchangeIt
 }
 export function bulkRotateApiKeys(req: BulkRotateApiKeysRequest): Promise<ApiResponse<BulkRotateApiKeysResult>> {
   return apiRequest<BulkRotateApiKeysResult>('/api-keys/bulk-rotate', { method: 'POST', body: req });
-}
-export function setPoolDefault(id: string, isDefault: boolean): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/default`, { method: 'PUT', body: { isDefault } });
-}
-export function getPoolTypes(): Promise<ApiResponse<PoolTypesData>> {
-  return apiRequest<PoolTypesData>('/pool-types');
-}
-export function ensurePoolTypes(): Promise<ApiResponse<EnsurePoolTypesResult>> {
-  return apiRequest<EnsurePoolTypesResult>('/pool-types/ensure', { method: 'POST' });
-}
-export function claimPoolToGateway(id: string): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
-}
-export function createPool(req: CreatePoolRequest): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>('/pools', { method: 'POST', body: req });
-}
-export function updatePool(id: string, req: UpdatePoolRequest): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
-}
-export function bulkClaimPools(req: BulkClaimPoolsRequest): Promise<ApiResponse<BulkClaimPoolsResult>> {
-  return apiRequest<BulkClaimPoolsResult>('/pools/bulk-claim', { method: 'POST', body: req });
-}
-export function bulkCalibratePoolPriceCurrency(req: BulkCalibratePoolPriceCurrencyRequest): Promise<ApiResponse<BulkCalibratePoolPriceCurrencyResult>> {
-  return apiRequest<BulkCalibratePoolPriceCurrencyResult>('/pools/price-currency/bulk-calibrate', { method: 'POST', body: req });
-}
-export function bulkImportPoolModels(id: string, req: BulkImportPoolModelsRequest): Promise<ApiResponse<BulkImportPoolModelsResult>> {
-  return apiRequest<BulkImportPoolModelsResult>(`/pools/${encodeURIComponent(id)}/models/bulk-import`, { method: 'POST', body: req });
-}
-export function upsertPoolModel(id: string, req: UpsertPoolModelRequest): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, { method: 'PUT', body: req });
-}
-export function recoverPoolModel(id: string, modelId: string, platformId: string): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models/recover`, {
-    method: 'POST',
-    body: { modelId, platformId },
-  });
-}
-export function removePoolModel(id: string, modelId: string, platformId?: string): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, {
-    method: 'DELETE',
-    query: { modelId, platformId },
-  });
 }
 
 // ── 服务网关设置：系统级功能（当前是 Quickstart 的一句话推导）用哪个模型 ──

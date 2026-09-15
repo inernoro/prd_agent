@@ -1008,8 +1008,8 @@ public class ModelResolver : IModelResolver
     /// 补上它之后池不再是另一种东西，只是这一行多了个标记。
     ///
     /// 解析不出来（没挂线路、能力不匹配、线路全熔断）时返回 null 而不是失败结果，
-    /// 让调用方原样回落到模型池。阶段 1 的整个价值就在于**可回退**：把默认标记关掉
-    /// 或者默认模型坏掉，线上行为必须和没有这个功能时一模一样。
+    /// 让调用方继续往下走（钉死的上游 / legacy 兜底）。
+    /// 2026-09-15 删池之前这里回落的是模型池；池删了之后，都走不通就是如实失败。
     /// </summary>
     private async Task<ModelResolutionResult?> TryResolveDefaultLogicalModelAsync(
         string appCallerCode,
@@ -1048,7 +1048,7 @@ public class ModelResolver : IModelResolver
         if (resolved is null || resolved.Success) return resolved;
 
         _logger.LogWarning(
-            "[ModelResolver] 默认模型解析失败，回落到模型池: ModelType={Type}, Default={PublicId}, Reason={Reason}",
+            "[ModelResolver] 默认模型解析失败: ModelType={Type}, Default={PublicId}, Reason={Reason}",
             modelType, logical.PublicId, resolved.ErrorMessage);
         return null;
     }

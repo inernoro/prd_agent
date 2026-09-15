@@ -26,6 +26,19 @@
 **还债的样子**：把那 150 条用例迁到「对外模型目录」这套语义上（点名 / 不点名两层默认 / pinned /
 legacy 兜底），然后连同 `InMemoryModelResolver` 一起删。
 
+## 模型池退场留下的三处尾巴（2026-09-15）
+
+**状态**：未还
+
+删壳之后池只剩两个只读入口（`GET /gw/pool-types`、`GET /gw/pools`）与一条搬迁入口
+（`POST /gw/pools/migrate-to-models`）。三处尾巴各有各的理由，逐条记下来免得下一个人重新盘：
+
+| 尾巴 | 体量 | 为什么没一起删 | 还债的样子 |
+|---|---|---|---|
+| MAP 侧池调度子系统 `PrdAgent.Infrastructure/ModelPool/` | 2277 行 | `IModelPoolQueryService` 被 7 个文件引用，牵的是 MAP 自己的产品功能（后台「测试这个池通不通」那个按钮），不属于网关这一刀的范围 | 单列一轮，先判那个按钮还要不要，再决定是删是留 |
+| `GET /gw/pools` 与调用方页的池筛选、实体详情的池名展示 | 端点约 120 行 + 前端两处 | 存量调用方文档上还留着 `ModelPoolId` / `AllowedModelPoolIds` 字段，页面拿它做筛选与展示；端点一删这两处就只能显示裸 id | 把这些历史字段从调用方文档上清掉，两处展示改为「对外模型」维度，之后端点自然可删 |
+| `BuildPoolMemberFromModel` 的 `existing` 参数 | 1 个参数 + 一处三元死分支 | 唯一调用点在 `migrate-to-models` 里恒传 `null`，所以那个三元永远走 else。但**正式环境的存量池还没搬过**，这条路是它唯一的搬迁通道，删参数的收益小于碰它的风险 | 正式环境搬迁跑完之后，连同 `migrate-to-models` 一起删 |
+
 ---
 > **关联设计**：[LLM Gateway 统一调用](./design.platform.llm-gateway.md)、[AppCaller 模型池选择与池内调度](./design.platform.model-pool.md)、[LLM 网关与模型池统一](./design.platform.llm-gateway.unification.md)
 > **整改计划**：[LLM Gateway 故障隔离与恢复](./plan.platform.llm-gateway.resilience.md)、[LLM 网关旧路径物理退场](./plan.platform.llm-gateway.full-cutover.md)

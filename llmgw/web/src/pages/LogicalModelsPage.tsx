@@ -238,7 +238,7 @@ export function LogicalModelsPage() {
     }) || null);
     okNotice(next
       ? `${item.modelType} 用途没点名模型时，从现在起走「${item.name}」`
-      : `已取消「${item.name}」的默认；${item.modelType} 用途没点名的请求会回落到模型池`);
+      : `已取消「${item.name}」的默认；${item.modelType} 用途没点名的请求会失败，直到你给它设一个新的默认`);
   }
 
   async function toggleLogical(item: LogicalModelItem) {
@@ -316,9 +316,6 @@ export function LogicalModelsPage() {
                 它落在 Provider 页（凭据在那儿配、清单从那儿拉），这里给直达入口，不让用户自己找。 */}
             <Button variant="primary" size="sm" onClick={() => navigate('/platforms')}>从上游批量登记</Button>
             <Button size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '手动新建'}</Button>
-            {/* 模型池已停止新建但存量还在兜底，出了事得能进去摘成员。
-                它不再占导航，入口就挂在取代它的这一页上——否则它就成了只有记住地址才找得到的孤儿页。 */}
-            <Button size="sm" variant="ghost" onClick={() => navigate('/pools')}>存量模型池</Button>
           </>
         ) : null}
       />

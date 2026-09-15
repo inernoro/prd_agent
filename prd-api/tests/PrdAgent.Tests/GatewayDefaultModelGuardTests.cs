@@ -45,7 +45,7 @@ public class GatewayDefaultModelGuardTests
         Assert.Contains("if (resolved is null || resolved.Success) return resolved;", method);
         Assert.Contains("return null;", method);
         // 回落要留痕，否则默认模型坏了没人知道，只会看到流量莫名其妙走了池
-        Assert.Contains("默认模型解析失败，回落到模型池", method);
+        Assert.Contains("默认模型解析失败", method);
     }
 
     [Fact]
@@ -86,7 +86,7 @@ public class GatewayDefaultModelGuardTests
         Assert.Contains("item.isDefaultForType", Page);
         Assert.Contains("没点名时用它", Page);
         // 取消默认时要说清后果：回落到模型池，而不是「没有模型可用」
-        Assert.Contains("回落到模型池", Page);
+        Assert.Contains("会失败，直到你给它设一个新的默认", Page);
         // 同用途旧默认被服务端清掉后，本地列表要跟着改，否则会同时显示两个默认
         Assert.Contains("x.modelType === item.modelType && x.isDefaultForType", Page);
     }
