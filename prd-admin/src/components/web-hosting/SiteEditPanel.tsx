@@ -134,6 +134,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [runStartedAtMs, setRunStartedAtMs] = useState<number | null>(null);
   const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
+  const [resolvedModel, setResolvedModel] = useState<{ model: string; platform: string } | null>(null);
   const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -533,6 +534,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       return;
     }
     setActiveRunRuntime(created.data.runtime);
+    setResolvedModel(null);
     setActiveRunId(created.data.runId);
     try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), created.data.runId); } catch { /* ignore unavailable storage */ }
 
@@ -555,6 +557,15 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             if (typeof item.progress === 'number') {
               setProgress(siteEditDisplayProgress('incomplete', item.progress));
             }
+            return;
+          }
+          // 实际执行的模型只在流的开头来一次；顶部展示，值来自后端不推断
+          //（.claude/rules/ai-model-visibility.md）。
+          if (event.event === 'model' && typeof data.model === 'string' && data.model.trim()) {
+            setResolvedModel({
+              model: data.model,
+              platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : 'LLM Gateway',
+            });
             return;
           }
           if (event.event === 'thinking' && typeof data.text === 'string') {
@@ -1154,6 +1165,12 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                     {generating ? 'AI 正在生成隔离草稿' : recoveryNotice ? '未完成的草稿预览' : '版本预览已就绪'}
                   </div>
                   <span role="status" aria-live="polite" className="sr-only">{phase}</span>
+                  {resolvedModel && (
+                    <p className="mt-1 font-mono text-[11px] text-token-muted">
+                      {/* ai-model-visibility：换了模型结果就会不同，所以摆在这一块最上面，不藏进折叠区。 */}
+                      <span aria-hidden="true">●</span> {resolvedModel.model} · {resolvedModel.platform}
+                    </p>
+                  )}
                   <p aria-hidden="true" className="mt-1 text-[11px] leading-relaxed text-token-muted">
                     {generating ? runningGenerationActivity(phase, elapsedSeconds) : phase}
                   </p>

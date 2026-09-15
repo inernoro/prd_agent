@@ -12,7 +12,15 @@ namespace PrdAgent.Api.Services;
 public sealed record DesignArtifactExecutorChunk(
     string Type,
     string Content,
-    IReadOnlyList<DesignWorkspaceFile>? VerifiedFiles = null);
+    IReadOnlyList<DesignWorkspaceFile>? VerifiedFiles = null,
+    DesignArtifactResolvedModel? ResolvedModel = null);
+
+/// <summary>
+/// 本次生成实际用到的模型与平台（Codex P1，2026-09-15）。用户会因为「换了个模型」直接感到
+/// 结果不同，所以 ai-model-visibility 要求把它摆在面板顶部；值只能来自网关 Start 分片的解析
+/// 结果，前端不许自己推断（规则 §2「数据后端来源」）。
+/// </summary>
+public sealed record DesignArtifactResolvedModel(string Model, string Platform);
 
 /// <summary>设计执行器的稳定边界。OpenDesign 或其他运行时必须实现该契约后才能进入调度。</summary>
 public interface IDesignArtifactExecutor
@@ -191,6 +199,13 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
         _configuration = configuration;
     }
 
+    private static string FirstNonBlank(params string?[] candidates)
+    {
+        foreach (var candidate in candidates)
+            if (!string.IsNullOrWhiteSpace(candidate)) return candidate!;
+        return "LLM Gateway";
+    }
+
     public string Runtime => DesignArtifactRuntimes.MapGateway;
 
     public bool Supports(string artifactType, string operation) =>
@@ -263,8 +278,29 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
             },
         };
         selection.ApplyRequestParameters(request.RequestBody!);
+        var sentModel = false;
         await foreach (var chunk in _gateway.StreamAsync(request, ct))
         {
+            // Start 是唯一带解析结果的分片：模型池换人或故障转移之后，真正跑这次生成的模型
+            // 只在这里出现一次。以前整个循环只留文本、思考和错误，于是面板永远只能显示
+            // 「MAP 网关」这种运行时名字，规则要的「{模型} · {平台}」无从谈起。
+            if (!sentModel && chunk.Type == GatewayChunkType.Start && chunk.Resolution != null
+                && !string.IsNullOrWhiteSpace(chunk.Resolution.ActualModel))
+            {
+                sentModel = true;
+                yield return new DesignArtifactExecutorChunk(
+                    "model",
+                    chunk.Resolution.ActualModel,
+                    ResolvedModel: new DesignArtifactResolvedModel(
+                        chunk.Resolution.ActualModel,
+                        // 这两个字段没配平台时给的是空串不是 null，`??` 兜不住，
+                        // 面板会渲染成「模型 · 」这样一个半截标签。
+                        FirstNonBlank(
+                            chunk.Resolution.ActualPlatformName,
+                            chunk.Resolution.ActualPlatformId,
+                            "LLM Gateway")));
+                continue;
+            }
             if (chunk.Type is GatewayChunkType.Text or GatewayChunkType.Thinking && !string.IsNullOrEmpty(chunk.Content))
                 yield return new DesignArtifactExecutorChunk(chunk.Type == GatewayChunkType.Text ? "delta" : "thinking", chunk.Content);
             else if (chunk.Type == GatewayChunkType.Error)

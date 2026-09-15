@@ -57,6 +57,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [runStartedAtMs, setRunStartedAtMs] = useState<number | null>(null);
   const [activeRunRuntime, setActiveRunRuntime] = useState<string | null>(null);
+  const [resolvedModel, setResolvedModel] = useState<{ model: string; platform: string } | null>(null);
   const [thinking, setThinking] = useState('');
   const [previewHtml, setPreviewHtml] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -272,6 +273,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
       return;
     }
     setActiveRunRuntime(created.data.runtime);
+    setResolvedModel(null);
     setActiveRunId(created.data.runId);
     setRunStartedAtMs(Date.parse(created.data.createdAt));
     sessionStorage.setItem(ACTIVE_GENERATION_RUN_KEY, created.data.runId);
@@ -286,6 +288,10 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           if (item.kind === 'phase') {
             if (item.message) setPhase(item.message);
             if (typeof item.progress === 'number') setProgress(item.progress);
+            return;
+          }
+          if (item.kind === 'model') {
+            setResolvedModel({ model: item.model, platform: item.platform });
             return;
           }
           if (item.kind === 'thinking') {
@@ -433,6 +439,12 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
                 </select>
               ) : (
                 <p className="mt-1 text-token-secondary">当前使用：{visibleRuntime?.label || '正在检测'}</p>
+              )}
+              {resolvedModel && (
+                <p className="mt-1 font-mono text-[11px] text-token-muted">
+                  {/* ai-model-visibility：用户会因为换了模型直接感到结果不同，所以摆在这一屏最上面。 */}
+                  <span aria-hidden="true">●</span> {resolvedModel.model} · {resolvedModel.platform}
+                </p>
               )}
               {visibleRuntime && (
                 <p className="mt-1 leading-relaxed text-token-muted">

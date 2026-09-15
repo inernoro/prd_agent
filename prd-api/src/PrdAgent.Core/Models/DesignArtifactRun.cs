@@ -42,6 +42,12 @@ public class DesignArtifactRun
 
     public string Runtime { get; set; } = DesignArtifactRuntimes.MapGateway;
 
+    /// <summary>本次实际执行的模型名（来自网关 Start 分片）。ai-model-visibility §4 要求报告实体落这个字段。</summary>
+    public string? ResolvedModel { get; set; }
+
+    /// <summary>本次实际执行的平台名。与 ResolvedModel 同源，前端顶部按「{模型} · {平台}」展示。</summary>
+    public string? ResolvedPlatform { get; set; }
+
     /// <summary>缺失仅代表旧任务，执行/读取不得回填或伪造历史冻结值。</summary>
     [MongoDB.Bson.Serialization.Attributes.BsonIgnoreIfNull]
     public DesignArtifactLlmRequestPolicy? LlmRequestPolicy { get; set; }

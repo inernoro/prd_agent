@@ -296,7 +296,7 @@ services:
       dotnet build --no-restore --no-incremental -c Debug &&
       dotnet run --project src/PrdAgent.Api --no-build -c Debug --urls http://0.0.0.0:5000
     depends_on:
-      mongodb-indexes: { condition: service_completed_successfully }
+      mongodb: { condition: service_healthy }
       redis: { condition: service_healthy }
     environment:
       # 仅服务特有变量，全局变量已由 x-cds-env 注入
@@ -555,19 +555,13 @@ services:
       interval: 10s
       retries: 3
 
-  # DBA 索引目录必须在 API 切流前幂等执行并精确校验；失败时 API 不启动。
-  mongodb-indexes:
-    image: mongo:8.0
-    volumes:
-      - .:/repo:ro
-    depends_on:
-      mongodb: { condition: service_healthy }
-    environment:
-      CDS_MONGODB_URL: "${CDS_MONGODB_URL}"
-    command: >-
-      mongosh "$CDS_MONGODB_URL" --quiet
-      --eval 'db = db.getSiblingDB("prdagent"); load("/repo/scripts/mongodb-indexes.js")'
-    restart: "no"
+  # 索引目录不进部署链路（Codex P1，2026-09-15）。曾在这里放过一个 mongodb-indexes 一次性容器，
+  # 两处都错：一是 CDS 的 compose 解析把「挂了相对路径源码」当成应用服务，于是给它 /app 工作目录、
+  # 合成 8080 端口，再等一个 mongosh 永远不会开的 TCP 监听——脚本挂载路径也随之失效，任何一次
+  # 重新导入都会让这个服务失败并连坐拖住 API；二是它本身违反 no-auto-index：索引由 DBA 跑
+  # scripts/mongodb-indexes.js 手动建，正是为了避开「索引冲突导致应用启动失败」这一类事故，
+  # 而那一版恰恰把 API 启动挂到了它的成功退出上。清单与验证步骤见
+  # doc/guide.platform.mongodb-indexes.md。
 
   redis:
     image: redis:7-alpine

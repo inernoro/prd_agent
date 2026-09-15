@@ -313,17 +313,25 @@ public sealed class ActivityActionRecorderTests
         Assert.Contains("\"Status\": \"Done\"", catalog, StringComparison.Ordinal);
     }
 
+    // 这条原先要求 cds-compose 用一次性容器跑索引目录、并让 api 等它成功退出（Codex P1，
+    // 2026-09-15 撤除）。那个做法在 CDS 上跑不起来——compose 解析把「挂相对路径源码」判成应用
+    // 服务，给它 /app 与合成 8080 端口，然后等一个 mongosh 永远不开的监听——而且违反
+    // no-auto-index：索引归 DBA 手动建，正是为了避开「索引冲突导致应用启动失败」。
+    // 反向的守卫在 cds/tests/services/compose-no-index-job.test.ts；这里只守清单本身还在。
     [Fact]
-    public void CdsCompose_ShouldGateApiCutoverOnVerifiedMongoIndexCatalog()
+    public void MongoIndexCatalogStaysADbaRunScript()
     {
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         while (directory != null && !File.Exists(Path.Combine(directory.FullName, "cds-compose.yml")))
             directory = directory.Parent;
         Assert.NotNull(directory);
-        var compose = File.ReadAllText(Path.Combine(directory!.FullName, "cds-compose.yml"));
-        Assert.Contains("mongodb-indexes: { condition: service_completed_successfully }", compose, StringComparison.Ordinal);
-        Assert.Contains("load(\"/repo/scripts/mongodb-indexes.js\")", compose, StringComparison.Ordinal);
-        Assert.Contains("restart: \"no\"", compose, StringComparison.Ordinal);
+        Assert.True(File.Exists(Path.Combine(directory!.FullName, "scripts", "mongodb-indexes.js")));
+        // 只看生效的那几行：注释里点名「为什么撤掉」是有用的说明，不该被自己的守卫判红。
+        var compose = string.Join('\n', File
+            .ReadAllLines(Path.Combine(directory.FullName, "cds-compose.yml"))
+            .Where(line => !line.TrimStart().StartsWith('#')));
+        Assert.DoesNotContain("service_completed_successfully", compose, StringComparison.Ordinal);
+        Assert.DoesNotContain("mongodb-indexes.js", compose, StringComparison.Ordinal);
     }
 
     private static DesignArtifactRun Run(

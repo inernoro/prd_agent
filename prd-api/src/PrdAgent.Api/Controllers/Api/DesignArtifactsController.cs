@@ -740,6 +740,10 @@ public sealed class DesignArtifactsController : ControllerBase
         run.Operation,
         run.SourceSurface,
         run.Runtime,
+        // 实际执行的模型与平台：刷新或恢复未完成任务时，面板靠它显示「{模型} · {平台}」，
+        // 而不是只显示运行时名字（ai-model-visibility §4）。
+        run.ResolvedModel,
+        run.ResolvedPlatform,
         run.LlmRequestPolicy,
         llmRequestPolicyState = run.LlmRequestPolicy == null ? "legacy-unfrozen" : "frozen",
         run.Title,

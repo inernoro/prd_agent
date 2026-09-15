@@ -177,6 +177,22 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         throw new InvalidOperationException("设计执行器重复提交了产物文件包，请重新生成");
                     verifiedFiles = chunk.VerifiedFiles;
                 }
+                // 实际模型只在流的开头出现一次：立刻推给前端并落到 run 上，
+                // 刷新或恢复时面板同样显示得出来（ai-model-visibility §3「流式实时」+ §4「存库字段」）。
+                if (chunk.Type == "model" && chunk.ResolvedModel != null)
+                {
+                    run.ResolvedModel = chunk.ResolvedModel.Model;
+                    run.ResolvedPlatform = chunk.ResolvedModel.Platform;
+                    await projection.WriteAsync(() => _events.AppendEventAsync(
+                        RunKinds.DesignArtifact,
+                        runId,
+                        "model",
+                        new { model = chunk.ResolvedModel.Model, platform = chunk.ResolvedModel.Platform },
+                        RunTtl,
+                        CancellationToken.None));
+                    continue;
+                }
+
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     output.Append(chunk.Content);

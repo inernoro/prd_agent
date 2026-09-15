@@ -3,6 +3,7 @@ import type { DesignArtifactRunSummary } from '@/services/real/webPages';
 
 export type SiteGenerationProgressEvent =
   | { kind: 'phase'; message?: string; progress?: number }
+  | { kind: 'model'; model: string; platform: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'delta'; text: string }
   | { kind: 'done'; siteId: string; siteUrl?: string }
@@ -28,6 +29,15 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
       kind: 'phase',
       message: typeof data.message === 'string' ? data.message : undefined,
       progress: typeof data.progress === 'number' ? data.progress : undefined,
+    };
+  }
+  // 实际执行的模型只在流的开头出现一次；面板顶部按「{模型} · {平台}」展示，
+  // 值一律来自后端，前端不推断（.claude/rules/ai-model-visibility.md §2）。
+  if (event.event === 'model' && typeof data.model === 'string' && data.model.trim()) {
+    return {
+      kind: 'model',
+      model: data.model,
+      platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : 'LLM Gateway',
     };
   }
   if (event.event === 'thinking' && typeof data.text === 'string')

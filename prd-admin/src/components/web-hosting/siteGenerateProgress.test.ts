@@ -70,3 +70,42 @@ describe('SiteGenerateDialog generation progress contract', () => {
     expect(source).not.toContain('return () => {\n      void stopGeneration()');
   });
 });
+
+
+describe('实际模型必须透出到面板', () => {
+  // .claude/rules/ai-model-visibility.md：用户会因为「换了个模型」直接感到结果不同，
+  // 所以模型池换人或故障转移之后真正跑这一次的模型必须显示出来，且只能来自后端。
+  it('把后端的 model 事件解析成模型与平台', () => {
+    expect(parseSiteGenerationProgressEvent({
+      event: 'model',
+      data: JSON.stringify({ model: 'anthropic/claude-sonnet-4-6', platform: 'OpenRouter' }),
+    })).toEqual({ kind: 'model', model: 'anthropic/claude-sonnet-4-6', platform: 'OpenRouter' });
+  });
+
+  it('平台缺失时兜底到网关名，但模型名绝不自己编', () => {
+    expect(parseSiteGenerationProgressEvent({
+      event: 'model',
+      data: JSON.stringify({ model: 'gpt-5' }),
+    })).toEqual({ kind: 'model', model: 'gpt-5', platform: 'LLM Gateway' });
+    for (const data of ['{}', '{"model":""}', '{"model":"   "}']) {
+      expect(parseSiteGenerationProgressEvent({ event: 'model', data }).kind, data).toBe('unknown');
+    }
+  });
+});
+
+describe('两个面板都要把模型摆出来，不只是解析出来', () => {
+  // 形状 2（链路只建到一半）：解析器认得 model 事件，但没人渲染，删掉也不会红。
+  const panels = [
+    ['SiteGenerateDialog.tsx', '生成弹窗'],
+    ['SiteEditPanel.tsx', '改写面板'],
+  ] as const;
+  for (const [file, label] of panels) {
+    it(`${label}订阅 model 事件并渲染「模型 · 平台」`, () => {
+      const source = readFileSync(path.resolve(__dirname, file), 'utf8');
+      expect(source, `${label}没有消费 model 事件`).toMatch(/kind === 'model'|event\.event === 'model'/);
+      expect(source, `${label}没有把模型渲染出来`).toContain('{resolvedModel.model} · {resolvedModel.platform}');
+      // 值必须来自后端：面板里不许出现写死的模型名当占位。
+      expect(source).not.toMatch(/resolvedModel\s*=\s*\{\s*model:\s*'/);
+    });
+  }
+});
