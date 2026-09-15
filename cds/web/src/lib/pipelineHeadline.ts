@@ -64,15 +64,25 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
     points.push(`验过的 ${t.accepted} 条里，${parts.join('、')}`);
   }
 
-  // 支撑句 3：更危险的那一类是不是干净的。说「没有」也是结论，前提是查得到。
+  /*
+   * 支撑句 3：更危险的那一类是不是干净的。说「没有」也是结论，前提是查得到。
+   * 「查不到的部分」必须和它**同在一句**，不能拆成两条：下面每个分支都走
+   * points.slice(0, 3)，凑够四条时被切掉的正好是后一条，于是屏幕上只剩
+   * 「没有不安全的合并」——把「查得到的范围里没有」读成了「全场没有」，
+   * 一句假的保证（Codex review 抓到）。合成一句，截断就切不开它们。
+   */
   const linked = p.projects.filter((r) => r.githubLinked).length;
-  if (linked > 0 && L['merged-not-accepted'] === 0 && L['merged-while-failing'] === 0) {
-    points.push('没有「没验就合并」或「没过还合并」的情况');
-  }
-
-  // 支撑句 4：查不到的部分要明说，否则上面那句「没有」会被读成保证。
   const unlinked = p.projects.filter((r) => !r.githubLinked).length;
-  if (unlinked > 0) {
+  const mergeClean = linked > 0
+    && L['merged-not-accepted'] === 0 && L['merged-while-failing'] === 0;
+  if (mergeClean && unlinked > 0) {
+    points.push(
+      `接了 GitHub 的 ${linked} 个项目里没有「没验就合并」或「没过还合并」，`
+      + `另有 ${unlinked} 个项目没接，合并这一步查不到`,
+    );
+  } else if (mergeClean) {
+    points.push('没有「没验就合并」或「没过还合并」的情况');
+  } else if (unlinked > 0) {
     points.push(`${unlinked} 个项目没接 GitHub，合并这一步查不到`);
   }
 

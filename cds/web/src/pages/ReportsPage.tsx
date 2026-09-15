@@ -575,7 +575,10 @@ export function ReportsPage(): JSX.Element {
               // 「全局」= 既没有 URL 的 ?project=，筛选也停在「全部项目」。
               // 只有这时首页才是跨项目流水线；否则读者已经选定了一个项目，该看明细。
               isGlobalScope={!projectId && activeProjectFilter === 'all'}
-              onOpenProject={(pid) => setActiveProjectFilter(pid)}
+              // 下钻要走和筛选菜单同一条路：那条路会把选中的文件夹复位。
+              // 只设项目筛选的话，读者手上若停着另一个项目的文件夹，下钻过去
+              // 台账会是空的——而他刚点的就是那个项目（Codex review 抓到）。
+              onOpenProject={handleProjectFilterChange}
               onRetryOverview={() => { void loadOverview(); void loadPipeline(); }}
               allReports={allReports}
               reports={searchedReports}
