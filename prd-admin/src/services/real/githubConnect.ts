@@ -101,11 +101,18 @@ export function pollGitHubDeviceFlow(flowToken: string) {
  * revoked=false 表示**本地删了、GitHub 那边没撤掉**，此时 revokeHint 里是给用户的下一步；
  * 界面必须把它说出来，不能因为「本地删成功了」就报一个干净的成功（形状 10：静默降级）。
  */
+/**
+ * 本地这一侧发生了什么。三态而不是布尔：「没删成」有两种完全相反的来路——
+ * 本来就没有，或你在别处刚连上、后端给你留着了——界面要据此说两句相反的话。
+ */
+export type GitHubDisconnectOutcome = 'removed' | 'nothing-to-remove' | 'replaced-meanwhile';
+
 export function disconnectGitHub() {
-  return apiRequest<{ removed: boolean; revoked: boolean; revokeHint?: string | null }>(
-    api.github.auth.disconnect(),
-    { method: 'DELETE' },
-  );
+  return apiRequest<{
+    outcome: GitHubDisconnectOutcome;
+    revoked: boolean;
+    revokeHint?: string | null;
+  }>(api.github.auth.disconnect(), { method: 'DELETE' });
 }
 
 export function listGitHubRepositories(query?: string, page = 1, pageSize = 30) {

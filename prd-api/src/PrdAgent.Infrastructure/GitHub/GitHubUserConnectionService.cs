@@ -213,15 +213,17 @@ public sealed class GitHubUserConnectionService
         if (target == null)
         {
             _logger.LogInformation("[GitHubConnect] disconnect user={UserId}：本来就没有连接记录", userId);
-            return new GitHubDisconnectResult(Removed: false, revocation);
+            return new GitHubDisconnectResult(GitHubDisconnectOutcome.NothingToRemove, revocation);
         }
 
         // 钉住 Id + 那一份密文：中途被别人换掉（重新授权会 upsert 同一条记录、换新密文）就不删。
         var result = await _db.GitHubUserConnections.DeleteOneAsync(
             x => x.Id == target.Id && x.AccessTokenEncrypted == target.AccessTokenEncrypted, ct);
 
-        var removed = result.DeletedCount > 0;
-        if (!removed)
+        var outcome = result.DeletedCount > 0
+            ? GitHubDisconnectOutcome.Removed
+            : GitHubDisconnectOutcome.ReplacedMeanwhile;
+        if (outcome == GitHubDisconnectOutcome.ReplacedMeanwhile)
         {
             // 没删成只有一种来路：这期间有人重新授权、把它换成了另一份连接。
             // 那条新连接不归这次断开管，保留它才是对的。
@@ -234,10 +236,10 @@ public sealed class GitHubUserConnectionService
         }
 
         _logger.LogInformation(
-            "[GitHubConnect] disconnect user={UserId} removed={Removed} revocation={Revocation}",
-            userId, removed, revocation);
+            "[GitHubConnect] disconnect user={UserId} outcome={Outcome} revocation={Revocation}",
+            userId, outcome, revocation);
 
-        return new GitHubDisconnectResult(removed, revocation);
+        return new GitHubDisconnectResult(outcome, revocation);
     }
 
     public Task TouchLastUsedAsync(string userId, CancellationToken ct)
@@ -458,10 +460,29 @@ public sealed class GitHubUserConnectionService
     public enum GitHubConnectionUsability { Usable, Revoked, Unknown }
 
     /// <summary>
-    /// 断开的结果：本地那条记录删掉了没、GitHub 那边的授权撤掉了没。
+    /// 本地这一侧发生了什么。三态，因为「没删成」有两种完全不同的来路，
+    /// 而用户该看到的话正好相反：一种是「本来就没有」，一种是「你在别处刚连上、给你留着了」。
+    /// 用布尔表达这件事必然要靠调用方去猜是哪一种，猜错就会对着用户说反话。
+    /// </summary>
+    public enum GitHubDisconnectOutcome
+    {
+        /// <summary>那条连接已删除。</summary>
+        Removed,
+
+        /// <summary>进来时就没有连接记录（比如另一个标签页已经断开过了）。</summary>
+        NothingToRemove,
+
+        /// <summary>断开期间连接被替换成了另一份，按约定保留它，没有删。</summary>
+        ReplacedMeanwhile,
+    }
+
+    /// <summary>
+    /// 断开的结果：本地这一侧发生了什么、GitHub 那边的授权撤掉了没。
     /// 两件事分开报，因为它们可以一成一败，而用户的下一步取决于后者。
     /// </summary>
-    public sealed record GitHubDisconnectResult(bool Removed, GitHubTokenRevocation Revocation);
+    public sealed record GitHubDisconnectResult(
+        GitHubDisconnectOutcome Outcome,
+        GitHubTokenRevocation Revocation);
 
     /// <summary>一页仓库 + 上游是否还有下一页（HasMore 按过滤前的原始条数算）。</summary>
     public sealed record GitHubRepositoryPage(

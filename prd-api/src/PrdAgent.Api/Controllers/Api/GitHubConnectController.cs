@@ -155,13 +155,27 @@ public sealed class GitHubConnectController : ControllerBase
         var result = await _connections.DisconnectAsync(userId, CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new
         {
-            removed = result.Removed,
+            outcome = DescribeDisconnectOutcome(result.Outcome),
             // 只有 GitHub 确认撤销、或本来就没有可撤的东西，才算「收回了」。
             // Unverified（GitHub 回 404，可能是本站换过应用凭据）不算——那正是会骗人的那一档。
             revoked = result.Revocation is GitHubTokenRevocation.Revoked or GitHubTokenRevocation.NothingToRevoke,
             revokeHint = DescribeRevocation(result.Revocation),
         }));
     }
+
+    /// <summary>
+    /// 本地这一侧的结果 → 线上契约字符串。三态逐个列出：
+    /// 「没删成」有两种来路，前端要据此说完全相反的两句话，不能压成一个布尔让它自己猜。
+    /// </summary>
+    internal static string DescribeDisconnectOutcome(
+        GitHubUserConnectionService.GitHubDisconnectOutcome outcome) => outcome switch
+    {
+        GitHubUserConnectionService.GitHubDisconnectOutcome.Removed => "removed",
+        GitHubUserConnectionService.GitHubDisconnectOutcome.NothingToRemove => "nothing-to-remove",
+        GitHubUserConnectionService.GitHubDisconnectOutcome.ReplacedMeanwhile => "replaced-meanwhile",
+        // 兜底取最保守的一档：宁可让界面去重读一次真实状态，也不谎报「已删除」。
+        _ => "replaced-meanwhile",
+    };
 
     /// <summary>去 GitHub 自查并移除的那半句——多处共用一份，免得改一处忘一处。</summary>
     private const string ManualRevokeSuffix =

@@ -120,13 +120,23 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     setError('');
     setErrorCode(undefined);
 
-    // removed=false 意味着断开期间你在别处重新连了一次，后端**有意保住**了那条新连接。
-    // 此时不能清空状态说「已断开」——界面会和事实相反。重新读一次连接状态，
-    // 顺便让它去问一次 GitHub：收回授权可能把新令牌也一起作废了，失效的话这一读就会显示出来。
-    if (!res.data.removed) {
+    // 「没删成」有两种相反的来路，必须分开说，否则会对着用户讲反话。
+    if (res.data.outcome === 'replaced-meanwhile') {
+      // 断开期间你在别处重新连了一次，后端**有意保住**了那条新连接。
+      // 此时不能清空状态说「已断开」。重新读一次连接状态，顺便让它去问一次 GitHub：
+      // 收回授权可能把新令牌也一起作废了，失效的话这一读就会显示出来。
       void loadAuth();
       toast.warning('这条连接已被替换，未执行断开',
         '断开期间你在别处重新连接了 GitHub，新的连接已保留。若它显示为已失效，重新授权一次即可。');
+      return;
+    }
+
+    if (res.data.outcome === 'nothing-to-remove') {
+      // 进来时就没有连接记录（多半是另一个标签页已经断过了）。状态照清，但别说「已删除」——
+      // 没有的东西删不了，说了就是无中生有。
+      setAuth(null);
+      setStep('connect');
+      toast.info('这里已经没有 GitHub 连接了', '可能你在别处已经断开过。需要的话重新连接即可。');
       return;
     }
 
