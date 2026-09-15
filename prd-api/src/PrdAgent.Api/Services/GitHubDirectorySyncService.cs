@@ -859,19 +859,39 @@ public class GitHubDirectoryDiff
 
     public bool HasChanges => AddedCount > 0 || UpdatedCount > 0 || DeletedCount > 0;
 
-    /// <summary>
-    /// 有文件失败。调用方**必须**据此把父条目标成失败，而不是照常标 idle——
-    /// 否则「少了几篇」会被一个绿色的成功状态盖住（形状 10：静默降级）。
-    /// </summary>
+    /// <summary>有文件没拉下来。</summary>
     public bool HasFailures => FailedCount > 0;
 
-    /// <summary>给用户看的失败描述：缺了几篇、举几个例子。</summary>
+    /// <summary>
+    /// 这一轮**没把承诺的事做完**，调用方必须据此把父条目标红，而不是照常标 idle。
+    ///
+    /// 两种来路，后果对用户是同一件事——界面显示的内容和远端对不上：
+    /// 有文件没拉下来（少了几篇），或清单被截断因而跳过了删除（多出几篇远端已经没有的）。
+    /// 任一情况被一个绿色的成功状态盖住，都是形状 10 的静默降级。
+    /// </summary>
+    public bool NeedsAttention => HasFailures || ListingIncomplete;
+
+    /// <summary>给用户看的描述：发生了什么 + 下一步怎么办（两种来路都可能同时出现）。</summary>
     public string BuildFailureMessage()
     {
-        var sample = string.Join("、", FailedPaths.Take(3));
-        var more = FailedPaths.Count > 3 ? $" 等 {FailedPaths.Count} 个文件" : "";
-        return $"有 {FailedCount} 篇文档没有拉取成功（{sample}{more}）。"
-             + "常见原因是 GitHub 调用频率超限或授权失效；已同步的部分已保留，可稍后点「重试同步」补齐。";
+        var parts = new List<string>();
+
+        if (HasFailures)
+        {
+            var sample = string.Join("、", FailedPaths.Take(3));
+            var more = FailedPaths.Count > 3 ? $" 等 {FailedPaths.Count} 个文件" : "";
+            parts.Add($"有 {FailedCount} 篇文档没有拉取成功（{sample}{more}）。"
+                    + "常见原因是 GitHub 调用频率超限或授权失效；已同步的部分已保留，可稍后点「重试同步」补齐。");
+        }
+
+        if (ListingIncomplete)
+        {
+            parts.Add($"这个目录的条目数超过了 GitHub 一次能返回的上限（{GitHubDirectorySyncService.ContentsApiDirectoryCap} 条），"
+                    + "本轮只做了新增与更新、没有处理删除——远端已经删掉的文档在这里可能仍然可见。"
+                    + "把目录拆细，或清掉目录里无关的文件之后再同步即可恢复。");
+        }
+
+        return string.Join(" ", parts);
     }
 
     public string BuildSummary()
