@@ -56,7 +56,11 @@ describe('通知通道的接线一根都不能少', () => {
   it('摘要要下发通道状态，前端要读它（两头都在才算通）', () => {
     expect(uptime).toContain('alarmChannel?.()');
     expect(page).toContain('alarm={summary?.alarm}');
-    expect(board).toContain('<AlarmRow');
+    expect(page).toContain('alarmChannels={summary?.alarmChannels}');
+    // 2026-09-15 第一屏重排后，通知状态不再是底部一整行（AlarmRow），而是右上角那枚芯片；
+    // 判定仍只有 alarmVerdict 一份，芯片只是它的显示。删掉芯片这一屏就又不知道铃通不通了。
+    expect(board).toMatch(/judgeAlarm\(alarm, alarmChannels\)/);
+    expect(board).toMatch(/label="通知"/);
   });
 
   it('前端不许给通道状态兜一个「健康」默认值', () => {
