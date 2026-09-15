@@ -2724,13 +2724,18 @@ function MdToPptSessionPage({ context }: { context: PptSessionContext }) {
           '\n\n调整要求：' + instruction +
           '\n（硬约束：只改动与调整要求直接相关的页；其余页的标题与要点必须逐字原样保留，' +
           '禁止任何改写、润色、增删、换序。除非调整要求明确提到增减页数，否则总页数保持不变）',
-        [], [],
+        // 知识来源必须跟着走：调整会另起一个大纲 run，确认时后端拿新 run 的冻结来源
+        // 与前端送上来的 activeKnowledgeRefs 比对（KnowledgeReferenceSetsMatch）。
+        // 这里传空数组，新 run 的来源就是空的，知识驱动的 PPT 一调整就 409
+        // outline_knowledge_mismatch，再也生成不出来。adjustMode 下 requestOutline
+        // 不会回写 activeKnowledgeRefs，不存在自覆盖。
+        [], activeKnowledgeRefs,
         draft.totalPages || draft.outline.length,
         draft.sourceText,
         true
       );
     },
-    [outlineDraft, isProcessing, requestOutline, serializeClarifyAnswers, serializeOutline]
+    [outlineDraft, isProcessing, activeKnowledgeRefs, requestOutline, serializeClarifyAnswers, serializeOutline]
   );
 
   // ─── Patch flow（对话式精修）。baseHtml 允许携带编辑模式未提交的最新稿；
