@@ -1095,9 +1095,9 @@ public class GitHubDirectorySyncService
             return await Http.GetStringAsync(file.DownloadUrl, ct);
         }
 
-        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
-                + $"/contents/{Uri.EscapeDataString(file.Path).Replace("%2F", "/", StringComparison.Ordinal)}"
-                + $"?ref={Uri.EscapeDataString(branch)}";
+        // 和列目录共用同一个地址构造：此前这里自己拼了一遍，于是「路径逐段转义」这条规矩
+        // 在两处各写了一份（形状 3），而参数名一改就露出它还在用旧的那个变量。
+        var url = BuildContentsUrl(owner, repo, file.Path, reference);
         using var request = BuildApiRequest(url, accessToken, "application/vnd.github.raw");
         using var response = await Http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
