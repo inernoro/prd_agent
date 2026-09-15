@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
@@ -474,6 +475,39 @@ public class GitHubDirectorySyncService
             .Select(kv => kv.Value)
             .ToList();
 
+    /// <summary>
+    /// 目录列不出来（404）时，能不能当成「远端把它删光了」去调和。
+    ///
+    /// 判据要两个条件同时成立：目录本身 404，**而且**仓库与分支这一层仍然够得着。
+    /// GitHub 对无权访问的私有仓、改名的仓库、被删的分支一律回 404，与「目录真的没了」
+    /// 长得一模一样——只凭目录那一个 404 就动手删，等于把一次权限变动变成一次数据清空。
+    /// 探测不出结论（网络错误，refStatus 为 null）同样不许删。
+    /// </summary>
+    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, HttpStatusCode? refStatus)
+        => directoryStatus == HttpStatusCode.NotFound && refStatus == HttpStatusCode.OK;
+
+    /// <summary>
+    /// 探一下仓库 + 分支这一层还够不够得着，返回原始状态码；网络层出错返回 null（没问出结论）。
+    /// 用分支端点而不是仓库端点：它一次同时回答「仓库还在、还有权限、这个分支还在」三件事。
+    /// </summary>
+    private async Task<HttpStatusCode?> ProbeRefAsync(
+        string owner, string repo, string branch, string? accessToken, CancellationToken ct)
+    {
+        try
+        {
+            var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+                    + $"/branches/{Uri.EscapeDataString(branch)}";
+            using var request = BuildApiRequest(url, accessToken);
+            using var response = await Http.SendAsync(request, ct);
+            return response.StatusCode;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            _logger.LogWarning(ex, "[GitHubSync] 探测 {Owner}/{Repo}@{Branch} 失败", owner, repo, branch);
+            return null;
+        }
+    }
+
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<List<GitHubFile>> ListDirectoryFilesAsync(
         string owner, string repo, string path, string branch, Matcher? matcher,
@@ -488,6 +522,27 @@ public class GitHubDirectorySyncService
         var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
+            // 目录整个消失是**最常见的一种删除**：Git 里没有空目录，删光最后一个文件，
+            // 目录本身就不存在了，这里拿到的是 404 而不是「200 + 空清单」。
+            // 但 GitHub 对「无权访问」「仓库改名」「分支被删」返回的同样是 404，
+            // 所以先确认仓库与这个分支还够得着——够得着才敢把它当成「远端删光了」去调和，
+            // 否则一次权限变动就会把用户已导入的文档全删掉。
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                var refStatus = await ProbeRefAsync(owner, repo, branch, accessToken, ct);
+                if (ShouldReconcileAsEmpty(response.StatusCode, refStatus))
+                {
+                    _logger.LogInformation(
+                        "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 已不存在，而仓库与分支仍可访问：按「远端删光了」调和",
+                        owner, repo, path, branch);
+                    return [];
+                }
+
+                _logger.LogWarning(
+                    "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 返回 404，但仓库/分支探测是 {RefStatus}：不当成删空，按失败处理",
+                    owner, repo, path, branch, refStatus?.ToString() ?? "探测失败");
+            }
+
             var body = await response.Content.ReadAsStringAsync(ct);
             // 上游正文只进服务端日志：它会被 worker 存进 SyncError 并原样渲染在目录卡片上，
             // 里面是协议 JSON 与文档链接，对用户既不可读也不可行动（external-cause-first）。

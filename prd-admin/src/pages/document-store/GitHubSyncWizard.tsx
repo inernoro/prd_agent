@@ -21,7 +21,7 @@ import {
 } from './githubDirectorySelection';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint, replacingLoginLabel,
+  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice,
 } from './githubConnectionState';
 
 /**
@@ -182,7 +182,7 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
         ) : step === 'connect' ? (
           <ConnectStep
             oauthConfigured={auth?.oauthConfigured !== false}
-            replacingLogin={replacingLoginLabel(auth, switchingAccount)}
+            replacing={replacingConnectionNotice(auth, switchingAccount)}
             onConnected={() => { setError(''); setErrorCode(undefined); setSwitchingAccount(false); void loadAuth(); setStep('repo'); }}
             onError={reportError} />
         ) : step === 'repo' ? (
@@ -289,11 +289,14 @@ function Header({ step, login, onClose, onSwitchAccount, switching, onDisconnect
 }
 
 /** 第一步：Device Flow 授权。全程显示 user code、剩余时间与当前状态，不留静止等待。 */
-function ConnectStep({ oauthConfigured, replacingLogin, onConnected, onError }: {
+function ConnectStep({ oauthConfigured, replacing, onConnected, onError }: {
   /** 管理员配没配 GitHub 应用。没配时点「连接」只会失败，得当场说清而不是让用户空点 */
   oauthConfigured: boolean;
-  /** 「换个账号」进来时当前还连着谁——要让用户知道旧连接此刻仍然有效，授权成功才会被替换 */
-  replacingLogin?: string | null;
+  /**
+   * 「换个账号」进来时当前还连着谁。
+   * `assertValid` 为真才允许多说一句"它现在仍然有效"——没问出结论时那句话没有根据。
+   */
+  replacing?: { login: string | null; assertValid: boolean } | null;
   onConnected: () => void;
   onError: (msg: string, code?: string) => void;
 }) {
@@ -429,15 +432,16 @@ function ConnectStep({ oauthConfigured, replacingLogin, onConnected, onError }: 
         </div>
       ) : (
         <div className="flex flex-col items-center gap-2">
-          {replacingLogin && (
+          {replacing && (
             <div className="text-[11.5px] text-center leading-[1.7]" style={{ color: 'var(--text-muted)' }}>
-              当前连接的是 {replacingLogin}，它现在仍然有效。
+              当前连接的是 {replacing.login ?? '另一个 GitHub 账号'}
+              {replacing.assertValid ? '，它现在仍然有效' : ''}。
               新账号授权成功后才会替换它；直接关掉向导不会断开现有连接。
             </div>
           )}
           <Button variant="primary" size="sm" onClick={() => void start()} disabled={starting}>
             {starting ? <MapSpinner size={12} /> : <Github size={13} />}
-            {starting ? '正在发起授权…' : replacingLogin ? '用另一个账号授权' : '连接 GitHub 账号'}
+            {starting ? '正在发起授权…' : replacing ? '用另一个账号授权' : '连接 GitHub 账号'}
           </Button>
         </div>
       )}

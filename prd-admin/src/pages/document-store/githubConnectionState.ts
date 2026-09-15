@@ -54,18 +54,24 @@ export function revokedConnectionHint(status: {
 }
 
 /**
- * 「换个账号」那一步要不要说出当前连的是谁。
+ * 「换个账号」那一步，关于当前这条连接该说什么。
  *
- * 只有在旧连接**此刻还真的有效**时才说——这句话的全文是「当前连接的是 X，它现在仍然有效」，
- * 用来安抚用户「授权成功才会替换，失败也不会把你现在的连接弄丢」。
- * 但走到这一步的另一条路是「授权已被撤销 → 点重新连接」，那条路上旧连接恰恰已经失效，
- * 再说它仍然有效就是自相矛盾（2026-09-15 Codex review P2）。
+ * 返回两件事，因为它们的成立条件不同：
+ * - `login`：当前连的是谁。连着就能说（含"没问出结论"），它只是个事实。
+ * - `assertValid`：能不能再加一句"它现在仍然有效"。这是**断言**，只有真的问出
+ *   「还能用」才配说。已撤销时当然不能说；**没问出结论时同样不能说**——探测超时
+ *   或非 401 的失败都会落到这一档，那时有效性根本没被确认过
+ *   （2026-09-15 Codex review 第二轮 P2）。
+ *
+ * 放行与断言是两把尺子，不要互相借用：进门该停在哪一步（shouldResumeAtRepoStep）
+ * 对"没问出结论"一律放行，因为那是**门禁**，宁可放进来也不能把正常连接挡在门外；
+ * 而这里是**说给用户听的话**，宁可少说一句也不能说一句没根据的。
  */
-export function replacingLoginLabel(
+export function replacingConnectionNotice(
   status: { connected: boolean; usable?: 'usable' | 'revoked' | 'unknown' | null; login?: string | null } | null,
   switchingAccount: boolean,
-): string | null {
+): { login: string | null; assertValid: boolean } | null {
   if (!switchingAccount || !status?.connected) return null;
   if (status.usable === 'revoked') return null;
-  return status.login ?? null;
+  return { login: status.login ?? null, assertValid: status.usable === 'usable' };
 }

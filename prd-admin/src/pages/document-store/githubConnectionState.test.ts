@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
-  shouldResumeAtRepoStep, revokedConnectionHint, replacingLoginLabel,
+  shouldResumeAtRepoStep, revokedConnectionHint, replacingConnectionNotice,
 } from './githubConnectionState';
 
 describe('GitHub 连接状态判据', () => {
@@ -47,20 +47,33 @@ describe('进门时该停在哪一步', () => {
   });
 });
 
-describe('「换个账号」时要不要说旧连接仍然有效', () => {
-  it('旧连接还有效 —— 说出来，好让用户知道授权失败也不会丢', () => {
-    expect(replacingLoginLabel({ connected: true, usable: 'usable', login: 'someone' }, true)).toBe('someone');
-    expect(replacingLoginLabel({ connected: true, usable: 'unknown', login: 'someone' }, true)).toBe('someone');
+describe('「换个账号」时关于旧连接该说什么', () => {
+  it('确认还能用 —— 说出是谁，并且可以断言它仍然有效', () => {
+    expect(replacingConnectionNotice({ connected: true, usable: 'usable', login: 'someone' }, true))
+      .toEqual({ login: 'someone', assertValid: true });
   });
 
-  it('授权已被撤销 —— 不许再说它仍然有效', () => {
-    // 走到这一步的另一条路正是「已撤销 → 点重新连接」，那条路上旧连接恰恰已经失效
-    expect(replacingLoginLabel({ connected: true, usable: 'revoked', login: 'someone' }, true)).toBeNull();
+  it('没问出结论 —— 可以说出是谁，但不许断言它仍然有效', () => {
+    // 探测超时或非 401 的失败都会落到 unknown，那时有效性根本没被确认过
+    expect(replacingConnectionNotice({ connected: true, usable: 'unknown', login: 'someone' }, true))
+      .toEqual({ login: 'someone', assertValid: false });
+    expect(replacingConnectionNotice({ connected: true, login: 'someone' }, true))
+      .toEqual({ login: 'someone', assertValid: false });
+  });
+
+  it('授权已被撤销 —— 整句都不说', () => {
+    expect(replacingConnectionNotice({ connected: true, usable: 'revoked', login: 'someone' }, true)).toBeNull();
   });
 
   it('没在换账号、或压根没连过 —— 不说', () => {
-    expect(replacingLoginLabel({ connected: true, usable: 'usable', login: 'someone' }, false)).toBeNull();
-    expect(replacingLoginLabel({ connected: false, usable: null, login: null }, true)).toBeNull();
-    expect(replacingLoginLabel(null, true)).toBeNull();
+    expect(replacingConnectionNotice({ connected: true, usable: 'usable', login: 'someone' }, false)).toBeNull();
+    expect(replacingConnectionNotice({ connected: false, usable: null, login: null }, true)).toBeNull();
+    expect(replacingConnectionNotice(null, true)).toBeNull();
+  });
+
+  it('放行与断言是两把尺子：同一个 unknown，门禁放行、嘴上不许说', () => {
+    const unknown = { connected: true, usable: 'unknown' as const, login: 'someone' };
+    expect(shouldResumeAtRepoStep(unknown)).toBe(true);
+    expect(replacingConnectionNotice(unknown, true)?.assertValid).toBe(false);
   });
 });
