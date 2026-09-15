@@ -111,6 +111,34 @@ public class GatewayKeyGateContractTests
         finally { release.TrySetResult(); await app.StopAsync(); }
     }
 
+    // Codex P2（2026-09-15）：缓冲接受到 32 MiB，而旁路观测器的逐字累积上限是 4 MiB。
+    // 两个上限不一致时，中间那一档「在承诺范围内的合法响应」会因为观测器溢出而判成未完成，
+    // 于是一次成功的调用被退成 502 OUTCOME_UNKNOWN（形状 6：判据读的不是真正生效的那份值）。
+    [Fact]
+    public async Task NativeResponses_DeliversASuccessfulBodyLargerThanTheAuditWindow()
+    {
+        var filler = new string('a', 5 * 1024 * 1024);
+        var payload = "{\"id\":\"resp_big\",\"status\":\"completed\",\"output\":[{\"text\":\"" + filler + "\"}]}";
+        payload.Length.ShouldBeGreaterThan(4 * 1024 * 1024);
+        payload.Length.ShouldBeLessThan(32 * 1024 * 1024);
+        var handler = new NativeResponsesHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
+        }));
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(NativeResponsesResolver(), handler));
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(JsonNode.Parse("{\"model\":\"native-model\",\"store\":false,\"input\":\"hello\"}")!.AsObject(), "native-big"));
+            response.StatusCode.ShouldBe(HttpStatusCode.OK);
+            var text = await response.Content.ReadAsStringAsync();
+            text.ShouldContain("resp_big", Case.Sensitive);
+            text.Length.ShouldBe(payload.Length);
+        }
+        finally { await app.StopAsync(); }
+    }
+
     // Codex P1（2026-09-15）：上游 200 但没走到终态时，以前是先把 body 转发出去再判定失败，
     // Response.HasStarted 已为真 → 合成的 502 被吞掉，调用方读到一次干净的 200 加残缺输出，
     // 只有内部账目知道它失败了（判据与接线纪律 形状 10：静默降级）。

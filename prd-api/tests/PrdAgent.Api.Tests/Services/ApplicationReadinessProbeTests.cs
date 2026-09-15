@@ -113,6 +113,59 @@ public sealed class ApplicationReadinessProbeTests
     }
 
     [Fact]
+    public async Task CheckAsync_ShouldCancelStalledDependencyProbes()
+    {
+        // 超时只让调用方走人是不够的：探测留在后台跑，依赖掉线期间每次就绪请求都堆一条在途操作。
+        CancellationToken mongoToken = default;
+        var probe = CreateProbe(
+            mongo: async token =>
+            {
+                mongoToken = token;
+                await Task.Delay(TimeSpan.FromSeconds(30), token);
+            },
+            redis: _ => Task.CompletedTask,
+            asset: (_, _) => Task.FromResult(HealthyAsset()),
+            dependencyTimeout: TimeSpan.FromMilliseconds(50));
+
+        var result = await probe.CheckAsync();
+
+        result.Status.ShouldBe("unhealthy");
+        result.ErrorCode.ShouldBe(ApplicationReadinessProbe.MongoUnavailable);
+        mongoToken.IsCancellationRequested.ShouldBeTrue(
+            customMessage: "超时后传给依赖探测的令牌必须已取消，否则这条探测会在后台继续跑");
+    }
+
+    [Fact]
+    public async Task CheckAsync_ShouldNotHangOnAStalledAssetStorageProbe()
+    {
+        // 对象存储那一条此前没有超时：存储卡住时 Task.WhenAll 一直等，整个 /health/ready 挂着，
+        // 部署就绪检查会超时，而调用方在它后面排队。
+        CancellationToken assetToken = default;
+        var probe = CreateProbe(
+            mongo: _ => Task.CompletedTask,
+            redis: _ => Task.CompletedTask,
+            asset: async (_, token) =>
+            {
+                assetToken = token;
+                await Task.Delay(TimeSpan.FromSeconds(30), token);
+                return HealthyAsset();
+            },
+            dependencyTimeout: TimeSpan.FromMilliseconds(50));
+
+        var check = probe.CheckAsync();
+        var completed = await Task.WhenAny(check, Task.Delay(TimeSpan.FromSeconds(10)));
+        completed.ShouldBeSameAs(
+            check,
+            customMessage: "存储卡住时就绪检查必须在依赖超时内给出结论，而不是一直挂着");
+
+        var result = await check;
+        result.Status.ShouldBe("unhealthy");
+        result.ErrorCode.ShouldBe(ApplicationReadinessProbe.AssetStorageUnavailable);
+        assetToken.IsCancellationRequested.ShouldBeTrue(
+            customMessage: "超时后传给存储探测的令牌必须已取消");
+    }
+
+    [Fact]
     public async Task CheckAsync_ShouldPropagateCallerCancellation()
     {
         using var cancellation = new CancellationTokenSource();
@@ -129,12 +182,14 @@ public sealed class ApplicationReadinessProbeTests
     private static ApplicationReadinessProbe CreateProbe(
         Func<CancellationToken, Task> mongo,
         Func<CancellationToken, Task> redis,
-        Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> asset)
+        Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> asset,
+        TimeSpan? dependencyTimeout = null)
         => new(
             mongo,
             redis,
             asset,
-            NullLogger<ApplicationReadinessProbe>.Instance);
+            NullLogger<ApplicationReadinessProbe>.Instance,
+            dependencyTimeout);
 
     private static AssetStorageReadinessResponse HealthyAsset()
         => new() { Status = "healthy" };

@@ -962,6 +962,11 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                         destinationError = DestinationAssignmentFailure.SiteUnavailable;
                     }
                 }
+                catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                {
+                    // 被取消不是归属失败：接管者可能正在重跑这一轮，把它记成失败就是替别人下结论。
+                    throw;
+                }
                 catch (Exception destinationEx)
                 {
                     logger?.LogWarning(
@@ -972,14 +977,13 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 }
                 if (destinationError != null)
                 {
+                    // 与 model / phase 同一道租约闸：只按 run id 写的话，丢了租约的 worker 会把
+                    // 接管者已经跑成功的那一轮改写成「归属失败」——写不中就是租约没了，停手。
+                    if (!await PersistDestinationApplyErrorAsync(
+                            db, run.Id, leaseOwner, destinationError, DateTime.UtcNow, CancellationToken.None))
+                        throw new DesignArtifactRunLeaseLostException(run.Id);
                     // 内存里的 run 也要记上：终态事件就是从它构造的，只写库的话浏览器还在时反而看不到。
                     run.DestinationApplyError = destinationError;
-                    await db.DesignArtifactRuns.UpdateOneAsync(
-                        item => item.DeploymentSlug == DeploymentScope.Current && item.Id == run.Id,
-                        Builders<DesignArtifactRun>.Update
-                            .Set(item => item.DestinationApplyError, destinationError)
-                            .Set(item => item.UpdatedAt, DateTime.UtcNow),
-                        cancellationToken: CancellationToken.None);
                 }
             }
 
@@ -1332,6 +1336,33 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 .Max(x => x.UpdatedAt, updatedAt),
             cancellationToken: ct);
         return write.ModifiedCount == 1;
+    }
+
+    /// <summary>
+    /// 归属失败写回 run，闸的判据与 <see cref="RenewLeaseAsync"/> 对齐而不是与
+    /// <see cref="PersistResolvedModelAsync"/> 对齐：模型那条跑在流式阶段（Running），
+    /// 这条跑在 BeginCommit 之后（Committing），照抄前者会让每一次归属失败都误判成租约丢失。
+    /// 判「匹配」而不是「改动」：同值重写在 Mongo 里可能一个字节都不变，但匹配已证明租约有效。
+    /// </summary>
+    internal static async Task<bool> PersistDestinationApplyErrorAsync(
+        MongoDbContext db,
+        string runId,
+        string leaseOwner,
+        string destinationApplyError,
+        DateTime updatedAt,
+        CancellationToken ct)
+    {
+        var write = await db.DesignArtifactRuns.UpdateOneAsync(
+            x => x.DeploymentSlug == DeploymentScope.Current && (x.Id == runId
+                 && (x.Status == RunStatuses.Running || x.Status == RunStatuses.Committing)
+                 && x.CleanupLeaseOwnerId == null
+                 && x.LeaseOwnerId == leaseOwner
+                 && x.LeaseExpiresAt > updatedAt),
+            Builders<DesignArtifactRun>.Update
+                .Set(x => x.DestinationApplyError, destinationApplyError)
+                .Max(x => x.UpdatedAt, updatedAt),
+            cancellationToken: ct);
+        return write.MatchedCount == 1;
     }
 
     internal static async Task<bool> PersistPhaseAsync(

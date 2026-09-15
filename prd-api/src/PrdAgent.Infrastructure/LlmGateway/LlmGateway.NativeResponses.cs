@@ -126,8 +126,8 @@ public partial class LlmGateway
                 {
                     // 原始字节先交付；旁路观测不得改变事件、ID、分片及多轮内容。
                     await write(new(status, contentType, buffer.AsMemory(0, count)), deadline.Token);
+                    observer.Append(buffer.AsSpan(0, count));
                 }
-                observer.Append(buffer.AsSpan(0, count));
             }
             if (overflowed)
             {
@@ -137,7 +137,12 @@ public partial class LlmGateway
                     502);
                 return outcome;
             }
-            observer.Complete();
+            // 缓冲路径直接按手里这份完整 body 判定，不走观测器的逐字累积：
+            // 那一层有自己的 4 MiB 字符上限，而缓冲接受到 32 MiB——两个上限不一致时，
+            // 中间那一档「在承诺范围内的合法响应」会因为观测器溢出而被判成 Completed=false，
+            // 于是一次成功的调用被退成 502 OUTCOME_UNKNOWN（形状 6：判据读的不是真正生效的那份值）。
+            if (buffered != null) observer.ObserveBufferedBody(buffered.GetBuffer().AsSpan(0, (int)buffered.Length));
+            else observer.Complete();
             auditBody = observer.AuditBody;
             var successful = response.IsSuccessStatusCode && observer.Completed && wantsStream == isStream;
             // 缓冲路径只在校验通过后交付；不通过就一个字节都不发，让调用方发结构化错误。
@@ -234,6 +239,10 @@ public partial class LlmGateway
                 else _overflow = true;
             }
         }
+
+        /// <summary>非流式缓冲路径：整份 body 都在手里，直接解析，不受逐字累积的字符上限约束。</summary>
+        public void ObserveBufferedBody(ReadOnlySpan<byte> body) =>
+            Observe(Encoding.UTF8.GetString(body), false);
 
         public void Complete()
         {

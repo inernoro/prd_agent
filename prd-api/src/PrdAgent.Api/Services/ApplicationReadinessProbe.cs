@@ -15,7 +15,8 @@ public sealed class ApplicationReadinessProbe
     internal const string RedisUnavailable = "REDIS_UNAVAILABLE";
     internal const string AssetStorageUnavailable = "ASSET_STORAGE_UNAVAILABLE";
 
-    private static readonly TimeSpan DependencyTimeout = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan DefaultDependencyTimeout = TimeSpan.FromSeconds(5);
+    private readonly TimeSpan _dependencyTimeout;
     private readonly Func<CancellationToken, Task> _mongoProbe;
     private readonly Func<CancellationToken, Task> _redisProbe;
     private readonly Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> _assetProbe;
@@ -33,12 +34,9 @@ public sealed class ApplicationReadinessProbe
                     new BsonDocument("ping", 1),
                     cancellationToken: cancellationToken);
             },
-            async cancellationToken =>
-            {
-                await redis.GetDatabase().PingAsync().WaitAsync(
-                    DependencyTimeout,
-                    cancellationToken);
-            },
+            // PingAsync 不收令牌，所以这里不再自己套一层超时——上限由 ProbeAsync 统一施加，
+            // 两处各写一个超时就是同一条判据的两份拷贝，改一处忘一处。
+            async _ => await redis.GetDatabase().PingAsync(),
             (force, cancellationToken) => assetProbe.CheckAsync(force, cancellationToken),
             logger)
     {
@@ -48,12 +46,15 @@ public sealed class ApplicationReadinessProbe
         Func<CancellationToken, Task> mongoProbe,
         Func<CancellationToken, Task> redisProbe,
         Func<bool, CancellationToken, Task<AssetStorageReadinessResponse>> assetProbe,
-        ILogger<ApplicationReadinessProbe> logger)
+        ILogger<ApplicationReadinessProbe> logger,
+        TimeSpan? dependencyTimeout = null)
     {
         _mongoProbe = mongoProbe;
         _redisProbe = redisProbe;
         _assetProbe = assetProbe;
         _logger = logger;
+        // 显式传入只为把这条 5 秒上限缩短到可测。
+        _dependencyTimeout = dependencyTimeout ?? DefaultDependencyTimeout;
     }
 
     public async Task<ApplicationReadinessResponse> CheckAsync(
@@ -93,9 +94,13 @@ public sealed class ApplicationReadinessProbe
         Func<CancellationToken, Task> probe,
         CancellationToken cancellationToken)
     {
+        // 超时必须真的把下游操作取消掉：只 WaitAsync(超时) 会让 /health/ready 走人、
+        // 探测留在后台跑，依赖掉线期间每次就绪请求都堆一条在途操作。
+        using var probeScope = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeScope.CancelAfter(_dependencyTimeout);
         try
         {
-            await probe(cancellationToken).WaitAsync(DependencyTimeout, cancellationToken);
+            await probe(probeScope.Token).WaitAsync(probeScope.Token);
             return Ready(name);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -116,9 +121,13 @@ public sealed class ApplicationReadinessProbe
         bool force,
         CancellationToken cancellationToken)
     {
+        // 对象存储与 Mongo / Redis 共用同一条超时口径：少了它，存储卡住时
+        // Task.WhenAll 会一直等，/health/ready 整个挂着，调用方在它后面排队。
+        using var probeScope = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeScope.CancelAfter(_dependencyTimeout);
         try
         {
-            var result = await _assetProbe(force, cancellationToken);
+            var result = await _assetProbe(force, probeScope.Token).WaitAsync(probeScope.Token);
             if (string.Equals(result.Status, "healthy", StringComparison.Ordinal))
             {
                 return new AssetReadinessResult(Ready("asset-storage"), result);

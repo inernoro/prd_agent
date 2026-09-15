@@ -62,3 +62,7 @@
 | fix | prd-api | 团队活动流留痕改成提交之后的尽力而为：站点文档已写进库，留痕再抛出去会把一次已成功的归属报告成失败——controller 那条路给 500，生成任务那条路记下 DestinationApplyError，终态事件于是告诉用户「网页留在个人空间」，而它已经在团队里了；吞掉但留日志 |
 | security | prd-api | 归属失败给用户的那句话收敛成有限枚举，不再用异常的 Message：它经 run 落库、经终态事件下发、最后原样进浏览器提示框，而 Mongo／网络／驱动的消息里常带库名、主机与协议状态；诊断细节只进服务端日志 |
 | refactor | prd-api | 测试里的一次性 Mongo 库收敛成共用 fixture：三份私有拷贝逐字相同、只有库名前缀不同（形状 3） |
+| fix | prd-api | MAP 的 /health/ready 超时改成真的取消下游探测：Mongo / Redis 那两条此前只让调用方走人、探测留在后台跑，依赖掉线期间每次就绪请求都堆一条在途操作 |
+| fix | prd-api | /health/ready 的对象存储探测补上与其余依赖相同的超时：此前它没有上限，存储卡住时 Task.WhenAll 一直等、整个就绪检查挂着，部署就绪检查会超时而调用方在它后面排队 |
+| fix | prd-api | 原生 Responses 缓冲路径改为按手里那份完整 body 判定：观测器逐字累积的 4 MiB 字符上限与缓冲接受的 32 MiB 不一致，中间那一档合法响应会被判成未完成，一次成功的调用被退成 502 OUTCOME_UNKNOWN |
+| fix | prd-api | 归属失败写回 run 加租约闸并对齐提交后阶段的判据（Running 或 Committing）：只按 run id 写的话，丢了租约的 worker 会把接管者已跑成功的那一轮改写成「归属失败」；被取消不再当成归属失败上报 |
