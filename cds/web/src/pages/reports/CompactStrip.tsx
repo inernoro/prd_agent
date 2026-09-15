@@ -18,7 +18,8 @@
  * 3. 颜色一律走 token 且 `hsl()` 包裹（token 是 HSL 三元组，裸写整条属性静默失效）。
  */
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { PipelineFunnel, PipelineOverview, PipelineProjectRow } from '@/lib/api';
+import { splitFunnel } from '@/lib/pipelineFunnel';
+import type { PipelineOverview, PipelineProjectRow } from '@/lib/api';
 
 /* ============================ 动效 ============================
    基础样式一律是终态，动画整体关在 prefers-reduced-motion: no-preference 里，
@@ -526,23 +527,9 @@ export interface ExpandedPanelProps {
   projectTip: (p: PipelineProjectRow) => string;
 }
 
-/**
- * 把一个漏斗拆成流水线的三段：没起预览 / 待验收 / 已验完。
- *
- * **三段相加恒等于 changes**，靠的是逐级夹取（deployed 夹进 changes，accepted 再夹进
- * deployed），不是各段各自 max(0, …)。分别夹会在脏数据上失守：验过的比部署的还多时
- * （报告挂在一条从没部署过的分支上就会这样），heap 被夹成 0 而 accepted 原样留着，
- * 三段之和大于 changes，画出来就是分段条比总长还长、数字对不上。
- *
- * 总览与放大态每一行共用这一个函数。这件事此前有两份实现、口径不同，
- * 而两份都「看起来对」——Codex review 抓到的正是这个。
- */
-export function splitFunnel(f: PipelineFunnel): { undeployed: number; heap: number; accepted: number } {
-  const changes = Math.max(0, f.changes);
-  const deployed = Math.max(0, Math.min(changes, f.deployed));
-  const accepted = Math.max(0, Math.min(deployed, f.accepted));
-  return { undeployed: changes - deployed, heap: deployed - accepted, accepted };
-}
+// splitFunnel 现在住在 lib（判断句那一侧也要用它，而 lib 不该依赖 pages）。
+// 这里原样转出去，老调用方与守卫的 import 路径不变。
+export { splitFunnel } from '@/lib/pipelineFunnel';
 
 /** 一行项目的三段。与总览同一套拆法——就是同一个函数，不是抄一遍。 */
 export function rowSplit(f: PipelineProjectRow['funnel']): { undeployed: number; heap: number; accepted: number } {

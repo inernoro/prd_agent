@@ -5448,10 +5448,18 @@ export class StateService {
       const previousObjectKey = meta.objectKey || null;
       await this.persistAcceptanceReportContent(meta, updates.content);
       meta.sizeBytes = Buffer.byteLength(updates.content, 'utf8');
-      // 改了格式 → 对象键的扩展名跟着变，旧对象要删掉，否则桶里越积越多没人认领的正文。
-      if (previousObjectKey && previousObjectKey !== meta.objectKey) {
-        await this.reportObjects.remove(previousObjectKey).catch(() => undefined);
-      }
+      /*
+       * 改了格式 → 对象键的扩展名跟着变，旧对象就没人认领了。但这里**不删**它。
+       *
+       * 删要成立得有一个前提：新的 objectKey 已经持久化。而 save() 是写后即返回的
+       * （Mongo 后端更是排队写），删完之后进程要是退了或者那次写盘失败，持久的元数据
+       * 仍然指着刚被删掉的旧键——报告重启即不可读，而新对象成了没人认领的孤儿。
+       * 一个删不掉的孤儿只占空间，一份读不出来的报告是数据丢失，两者不对等
+       *（Codex review 抓到）。
+       *
+       * 所以旧版本留着，等一次真正的回收（判据与待办见 doc/debt.cds.md）。
+       */
+      void previousObjectKey;
       const nextPath = this.reportFilePath(meta);
       if (previousPath !== nextPath) {
         try { await fs.promises.unlink(previousPath); } catch { /* best-effort cleanup of old extension */ }

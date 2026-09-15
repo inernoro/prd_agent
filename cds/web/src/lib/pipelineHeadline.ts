@@ -14,6 +14,7 @@
  * 纯函数，不碰 React，好让守卫直接断言句子本身。
  */
 import type { PipelineOverview } from './api';
+import { splitFunnel } from './pipelineFunnel';
 
 export type HeadlineTone = 'bad' | 'warn' | 'ok';
 
@@ -122,7 +123,16 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
   if (t.changes === 0) {
     return { tone: 'ok', sentence: '现在没有在改的分支', points: [], action: null };
   }
-  if (t.accepted >= t.changes) {
+  /*
+   * 下面两句必须和同屏那张分流图读同一份数字。
+   *
+   * 后端的 accepted 是独立累加的，挂在一条从未部署过的分支上的报告会让
+   * accepted > deployed；而图走 splitFunnel（逐级夹取），会把那条改动画在「没起预览」里。
+   * 各算各的话，屏幕上就出现「都验过了」配一张画着未验收方块的图——同一屏两个数打架，
+   * 最难查的那种（Codex review 抓到）。所以这里改用 splitFunnel 的三段。
+   */
+  const seg = splitFunnel(t);
+  if (seg.accepted >= Math.max(0, t.changes)) {
     return {
       tone: 'ok',
       sentence: `${t.changes} 条在改的分支都验过了`,
@@ -133,7 +143,7 @@ export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
   // 兜底：还有没部署因而谈不上验收的分支。不编判断，如实说构成。
   return {
     tone: 'ok',
-    sentence: `${t.changes} 条在改的分支，${t.accepted} 条验过、${t.changes - t.deployed} 条还没部署`,
+    sentence: `${t.changes} 条在改的分支，${seg.accepted} 条验过、${seg.undeployed} 条还没部署`,
     points: points.slice(0, 3),
     action: null,
   };

@@ -356,27 +356,34 @@ export function buildPipelineOverview(
   }
 
   /*
-   * 无主报告（projectId 为空）单独走一遍。
+   * 挂不到任何**现存项目**的报告单独走一遍。
    *
-   * 上面那个循环按 project.id 取 refs，无主报告一条都取不到，于是既不进
-   * totalLeaks['report-missing-change-key'] 也不进 staleReports——而**同一个响应**
-   * 里的走向序列把它们当成「无主」项目照常画了出来。一屏上两个数打架，
-   * 最难查的那种（Codex review 抓到）。
+   * 上面那个循环按 project.id 取 refs，两种报告一条都取不到：
+   *   1. projectId 为空的「无主」报告；
+   *   2. projectId 指着一个**已被删除**的项目（removeProject 不动报告，那个 id 就悬着了）。
+   * 于是它们既不进 totalLeaks['report-missing-change-key'] 也不进 staleReports——而
+   * **同一个响应**里的走向序列仍然按各自的 projectId 把它们画了出来。一屏上两个数打架，
+   * 最难查的那种（Codex review 连着抓到两次，第二次就是这个「只挡了 null」的窄判据）。
    *
-   * 它没有分支也没有墓碑，所以不产生改动单元，不占 funnel 的任何一格，也**不伪造
-   * 一行项目**：无主就是无主，多一行假项目比少一个数更坏。它只在报告这一侧成立，
-   * 按与项目内同样的两档落账。
+   * 判据因此不是「projectId 是不是空」，而是「它指的那个项目现在还在不在」。
+   * 按现存项目集合判，删项目、加项目都不必回来改这里。
+   *
+   * 它们没有分支也没有墓碑，所以不产生改动单元，不占 funnel 的任何一格，也**不伪造
+   * 一行项目**：无主就是无主，多一行假项目比少一个数更坏。只在报告这一侧落账，
+   * 按与项目内同样的两档。
    */
+  const livingProjectIds = new Set(projects.map((p) => p.id));
   let unassignedStale = 0;
   for (const r of refs) {
-    if ((r.projectId || null) !== null) continue;
+    const pid = r.projectId || null;
+    if (pid !== null && livingProjectIds.has(pid)) continue;
     if (hasChangeKey(r)) {
       unassignedStale += 1;
       continue;
     }
     totalLeaks['report-missing-change-key'] += 1;
     allLeaks.push({
-      kind: 'report-missing-change-key', subject: r.title, projectId: null, reportIds: [r.id],
+      kind: 'report-missing-change-key', subject: r.title, projectId: pid, reportIds: [r.id],
     });
   }
 
