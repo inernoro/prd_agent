@@ -323,6 +323,45 @@ public sealed class DesignArtifactDeploymentIsolationTests : IAsyncLifetime
         controller.Response.Body.Position = 0;
         return await new StreamReader(controller.Response.Body, leaveOpen: true).ReadToEndAsync();
     }
+    /// <summary>
+    /// 上传已确认、随后那次「写完了」的状态落盘失败时，预约不该被永久钉在本代进程上
+    /// （Codex P2，2026-09-15）。
+    ///
+    /// 恢复器按设计拒收「writing + 本代进程」的预约——那是为了不去删一份可能还在上传的对象。
+    /// 但上传确认返回之后状态写失败时，这条保护就把唯一能收拾残局的动作也挡掉了：租约过期
+    /// 也没人收得走，对象和预约一起留到进程重启（concurrency-gate-discipline：账本要周期收敛，
+    /// 不能只靠重启）。调用方手里有「这一次上传确实收工了」的事实，据此放行。
+    /// </summary>
+    [DesignScopeMongoTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task WritingReservation_IsRecoverableWhenTheWriterKnowsItFinished(bool writerFinished)
+    {
+        var pending = Run("writing-stranded", RunStatuses.Error);
+        pending.WorkspacePendingResultAssetKey = "stranded-object";
+        pending.WorkspacePendingResultAttemptId = "attempt";
+        pending.WorkspacePendingResultWriteState = DesignWorkspaceResultWriteStates.Writing;
+        pending.WorkspacePendingResultProcessEpoch = DesignArtifactWorkspaceBroker.CurrentProcessEpoch;
+        await InsertAsync(pending, CurrentScope);
+
+        var storage = new Mock<IAssetStorage>(MockBehavior.Strict);
+        if (writerFinished)
+        {
+            storage.Setup(item => item.ExistsAsync("stranded-object", It.IsAny<CancellationToken>())).ReturnsAsync(true);
+            storage.Setup(item => item.DeleteByKeyAsync("stranded-object", It.IsAny<CancellationToken>()))
+                .Returns(Task.CompletedTask);
+        }
+
+        var recovered = await DesignArtifactWorkspaceBroker.RecoverPendingWorkspaceResultAsync(
+            _db, storage.Object, pending, Now, default, writerFinished: writerFinished);
+
+        // companion：不带这个事实时保护仍然成立——否则上面那一半会把「保护被削掉」也判成通过。
+        Assert.Equal(writerFinished, recovered);
+        storage.VerifyAll();
+        var after = await Read(pending.Id);
+        Assert.Equal(writerFinished ? null : "stranded-object", after.WorkspacePendingResultAssetKey);
+    }
+
     private static DesignArtifactRun Run(string id, string status) => new()
     {
         Id = id, UserId = "owner", Status = status, CreatedAt = Now.AddMinutes(-10), UpdatedAt = Now.AddMinutes(-5),

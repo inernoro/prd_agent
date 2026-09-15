@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -69,6 +70,7 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
     private readonly IConfiguration _configuration;
     private readonly IHostedSiteService? _sites;
     private readonly IDesignKnowledgeSnapshotResolver? _knowledge;
+    private readonly ILogger<DesignArtifactWorkspaceBroker>? _logger;
     // CDS parseWorkspacePackage accepts at most 512 input files, not the 1024 workspace total.
     internal const int MaxInputFileCount = 512;
 
@@ -91,12 +93,14 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         IDataProtectionProvider dataProtectionProvider,
         IConfiguration configuration,
         IHostedSiteService? sites = null,
-        IDesignKnowledgeSnapshotResolver? knowledge = null)
+        IDesignKnowledgeSnapshotResolver? knowledge = null,
+        ILogger<DesignArtifactWorkspaceBroker>? logger = null)
     {
         _db = db;
         _storage = storage;
         _protector = dataProtectionProvider.CreateProtector("DesignArtifactWorkspaceBroker.v1");
         _configuration = configuration;
+        _logger = logger;
         _sites = sites;
         _knowledge = knowledge;
     }
@@ -433,17 +437,49 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         // 单独落下 stored 状态，让恢复器能够区分“上传可能仍在进行”与“对象已确认可见”。
         // 即便进程在本次更新前退出，writing 状态也已经携带精确 key，租约失效后仍可查存在性并回收。
         var storedAt = DateTime.UtcNow;
-        await _db.DesignArtifactRuns.UpdateOneAsync(
-            item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId
-                    && item.WorkspaceResultAssetKey == null
-                    && item.WorkspaceResultSha256 == packageSha
-                    && item.WorkspacePendingResultAssetKey == pendingKey
-                    && item.WorkspacePendingResultAttemptId == attemptId),
-            Builders<DesignArtifactRun>.Update
-                .Set(item => item.WorkspacePendingResultWriteState, DesignWorkspaceResultWriteStates.Stored)
-                .Set(item => item.WorkspacePendingResultWriteError, null)
-                .Set(item => item.UpdatedAt, storedAt),
-            cancellationToken: CancellationToken.None);
+        try
+        {
+            await _db.DesignArtifactRuns.UpdateOneAsync(
+                item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId
+                        && item.WorkspaceResultAssetKey == null
+                        && item.WorkspaceResultSha256 == packageSha
+                        && item.WorkspacePendingResultAssetKey == pendingKey
+                        && item.WorkspacePendingResultAttemptId == attemptId),
+                Builders<DesignArtifactRun>.Update
+                    .Set(item => item.WorkspacePendingResultWriteState, DesignWorkspaceResultWriteStates.Stored)
+                    .Set(item => item.WorkspacePendingResultWriteError, null)
+                    .Set(item => item.UpdatedAt, storedAt),
+                cancellationToken: CancellationToken.None);
+        }
+        catch (Exception transitionError)
+        {
+            // 对象已经确认写进去了，只是这条「写完了」的状态没落盘。不接住的话预约会停在
+            // writing + 本代进程上，恢复器按设计拒收，于是对象和预约一起留到进程重启。
+            // 这里带着「写入者确实收工了」这个事实去回收——它是我们手里的证据，不是猜的。
+            var recovered = await _db.DesignArtifactRuns
+                .Find(item => item.DeploymentSlug == DeploymentScope.Current && (item.Id == runId))
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (recovered != null)
+            {
+                try
+                {
+                    await RecoverPendingWorkspaceResultAsync(
+                        _db, _storage, recovered, storedAt, CancellationToken.None, writerFinished: true);
+                }
+                catch (Exception cleanupError)
+                {
+                    _logger?.LogWarning(
+                        cleanupError,
+                        "远程设计结果状态落盘失败后回收也失败 runId={RunId} key={Key}",
+                        runId, pendingKey);
+                }
+            }
+            _logger?.LogWarning(
+                transitionError,
+                "远程设计结果已写入对象存储，但状态落盘失败 runId={RunId} key={Key}",
+                runId, pendingKey);
+            throw;
+        }
 
         var completedAt = DateTime.UtcNow;
         var update = Builders<DesignArtifactRun>.Update
@@ -654,7 +690,8 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         DateTime attemptedAt,
         CancellationToken ct,
         bool throwOnCleanupFailure = false,
-        string? processEpoch = null)
+        string? processEpoch = null,
+        bool writerFinished = false)
     {
         var key = candidate.WorkspacePendingResultAssetKey;
         var attemptId = candidate.WorkspacePendingResultAttemptId;
@@ -684,7 +721,13 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
 
         // writing 表示对象存储调用尚未确认返回。同一进程仍可能在完成上传，不能依赖固定时长猜测。
         // 只有新的进程代际才能确认旧写入者已经退出，再按精确 key 接管回收。
-        if (string.Equals(
+        //
+        // 例外是 writerFinished：调用方手里有「这一次上传已经确认返回」的事实，只是随后那次
+        // 状态落盘失败了（Codex P2，2026-09-15）。少了这个出口，上传成功 + 状态写失败会把预约
+        // 永久钉在 writing + 本代进程上——租约过期也没人收得走，对象与预约一起留到进程重启
+        //（concurrency-gate-discipline：账本必须有周期收敛，不能只靠重启）。
+        if (!writerFinished
+            && string.Equals(
                 current.WorkspacePendingResultWriteState,
                 DesignWorkspaceResultWriteStates.Writing,
                 StringComparison.Ordinal)
