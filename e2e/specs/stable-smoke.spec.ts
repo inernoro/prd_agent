@@ -888,6 +888,7 @@ async function openModule(
     failedImages.push(`${failed.url()} (${reason})`);
   });
 
+  await applySandboxHostStubs(page);
   const loginUrl = await issueTicket(request, module.path);
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForURL((url) => url.pathname.startsWith(module.path), { timeout: 30_000 });
@@ -940,6 +941,36 @@ async function expectNoBrokenImages(page: Page, label: string, failedImages: str
   ).toEqual([]);
 }
 
+/**
+ * CDS 反代注入的分支小部件不是产品的一部分。手机视口下旧版小部件是一整条徽章，正好压在录音面板的
+ * 「暂停录音」「结束录音并转成文字」上（2026-09-15 复测：点击被 #cds-widget 拦截）。录音旅程验的是产品，
+ * 先把它关掉；新版小部件会自己收成圆钮，移动端入口用例单独验它。
+ */
+async function dismissCdsPreviewWidget(page: Page) {
+  const dismiss = page.locator('#cds-widget button[data-action="dismiss"]');
+  if (await dismiss.count()) {
+    await dismiss.first().click({ force: true }).catch(() => undefined);
+    await expect(page.locator('#cds-widget')).toHaveCount(0);
+  }
+}
+
+/**
+ * 沙箱排障用：出口代理会重新终结 TLS，浏览器信任库里没有那张 CA 时，页面里第三方绝对外链
+ * （如 Cloudflare 注入的 beacon 脚本）会报 ERR_CERT_AUTHORITY_INVALID，把与被测功能无关的噪音
+ * 记成「前端运行错误」。设置 STABLE_SMOKE_STUB_HOSTS=host1,host2 后，这些域名的请求由空响应代替。
+ * 正式巡检不设置该变量，任何外链失败照旧计入。
+ */
+async function applySandboxHostStubs(page: Page) {
+  const hosts = (process.env.STABLE_SMOKE_STUB_HOSTS || '').split(',').map((item) => item.trim()).filter(Boolean);
+  for (const host of hosts) {
+    await page.route((url) => url.hostname === host, (route) => route.fulfill({
+      status: 200,
+      contentType: route.request().resourceType() === 'script' ? 'application/javascript' : 'text/plain',
+      body: '',
+    }));
+  }
+}
+
 async function dismissBlockingTutorial(page: Page) {
   const learned = page.getByRole('button', { name: '我已学会' });
   await learned.waitFor({ state: 'visible', timeout: 2_500 }).catch(() => undefined);
@@ -953,6 +984,7 @@ async function openQuickRecord(page: Page, request: APIRequestContext) {
   const token = await loginAndReadToken(page, request, '/document-store');
   await page.goto('/document-store?quickRecord=1', { waitUntil: 'domcontentloaded' });
   await dismissBlockingTutorial(page);
+  await dismissCdsPreviewWidget(page);
   return token;
 }
 
@@ -2678,6 +2710,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await route.continue();
       });
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}&quickRecord=1`, { waitUntil: 'domcontentloaded' });
+      await dismissCdsPreviewWidget(page);
       const recordingState = page.getByTestId('recording-state');
       await expect(recordingState, '进入快捷录音后必须自动开始').toHaveAttribute('data-state', 'recording', { timeout: 20_000 });
       const destination = page.locator('select:visible').filter({
