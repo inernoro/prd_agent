@@ -154,6 +154,8 @@ export interface DesignArtifactRunSummary {
   producedArtifactSiteId?: string | null;
   producedArtifactRevisionId?: string | null;
   linkedRunId?: string | null;
+  resolvedModel?: string | null;
+  resolvedPlatform?: string | null;
   error?: string | null;
   cancelRequested?: boolean;
   cancelRequestedAt?: string | null;

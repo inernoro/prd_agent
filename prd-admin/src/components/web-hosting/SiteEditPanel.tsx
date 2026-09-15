@@ -36,6 +36,7 @@ import {
   revisionLabel,
   runningGenerationActivity,
 } from './siteEditPreview';
+import { GATEWAY_PLATFORM_FALLBACK, resolveRunModelBadge } from './siteGenerateProgress';
 
 interface Props {
   site: HostedSite;
@@ -423,6 +424,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       setPhase(result.data.phase);
       setProgress(siteEditDisplayProgress('incomplete', result.data.progress));
       setActiveRunRuntime(result.data.runtime);
+      setResolvedModel(resolveRunModelBadge(result.data));
       setRunStartedAtMs(Date.parse(result.data.createdAt));
       const status = result.data.status.toLowerCase();
       if (status === 'done' && result.data.artifactRevisionId) {
@@ -564,7 +566,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
           if (event.event === 'model' && typeof data.model === 'string' && data.model.trim()) {
             setResolvedModel({
               model: data.model,
-              platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : 'LLM Gateway',
+              platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : GATEWAY_PLATFORM_FALLBACK,
             });
             return;
           }

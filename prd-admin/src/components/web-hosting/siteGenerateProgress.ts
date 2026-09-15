@@ -15,6 +15,21 @@ export function resolveGeneratedSiteId(run: DesignArtifactRunSummary): string | 
   return run.artifactSiteId || run.producedArtifactSiteId || null;
 }
 
+/** 后端只给了模型名、没给平台名时的兜底称谓。三个消费点共用这一份，别各写各的。 */
+export const GATEWAY_PLATFORM_FALLBACK = 'LLM Gateway';
+
+/**
+ * 刷新后从 run 读回徽章。流事件只在开头出现一次，错过就只能靠这条恢复，
+ * 所以恢复路径必须和流事件用同一套兜底口径。
+ */
+export function resolveRunModelBadge(
+  run: DesignArtifactRunSummary,
+): { model: string; platform: string } | null {
+  const model = run.resolvedModel?.trim();
+  if (!model) return null;
+  return { model, platform: run.resolvedPlatform?.trim() || GATEWAY_PLATFORM_FALLBACK };
+}
+
 export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGenerationProgressEvent {
   if (!event.data) return { kind: 'unknown' };
   let data: Record<string, unknown>;
@@ -37,7 +52,7 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
     return {
       kind: 'model',
       model: data.model,
-      platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : 'LLM Gateway',
+      platform: typeof data.platform === 'string' && data.platform.trim() ? data.platform : GATEWAY_PLATFORM_FALLBACK,
     };
   }
   if (event.event === 'thinking' && typeof data.text === 'string')

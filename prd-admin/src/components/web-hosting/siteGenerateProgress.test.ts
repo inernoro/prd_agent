@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { DesignArtifactRunSummary } from '@/services/real/webPages';
 import {
+  GATEWAY_PLATFORM_FALLBACK,
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
+  resolveRunModelBadge,
 } from './siteGenerateProgress';
 
 const run = (overrides: Partial<DesignArtifactRunSummary>): DesignArtifactRunSummary => ({
@@ -108,4 +110,37 @@ describe('两个面板都要把模型摆出来，不只是解析出来', () => {
       expect(source).not.toMatch(/resolvedModel\s*=\s*\{\s*model:\s*'/);
     });
   }
+});
+
+describe('刷新之后徽章要还原', () => {
+  it('从 run 读回模型；平台缺失时退回统一兜底', () => {
+    expect(resolveRunModelBadge(run({ resolvedModel: 'gpt-4.1', resolvedPlatform: 'OpenAI' })))
+      .toEqual({ model: 'gpt-4.1', platform: 'OpenAI' });
+    expect(resolveRunModelBadge(run({ resolvedModel: 'gpt-4.1', resolvedPlatform: '  ' })))
+      .toEqual({ model: 'gpt-4.1', platform: GATEWAY_PLATFORM_FALLBACK });
+  });
+
+  it('没有模型就不出徽章，不拿空串顶上', () => {
+    expect(resolveRunModelBadge(run({}))).toBeNull();
+    expect(resolveRunModelBadge(run({ resolvedModel: '   ' }))).toBeNull();
+  });
+
+  // 形状 2：恢复读回这条线删掉不会红——流事件已经过去了，只有刷新时才看得出来。
+  const panels = [
+    ['SiteGenerateDialog.tsx', '生成弹窗'],
+    ['SiteEditPanel.tsx', '改写面板'],
+  ] as const;
+  for (const [file, label] of panels) {
+    it(`${label}的恢复路径把徽章读回来`, () => {
+      const source = readFileSync(path.resolve(__dirname, file), 'utf8');
+      expect(source, `${label}恢复时没有还原模型`).toContain('setResolvedModel(resolveRunModelBadge(');
+    });
+  }
+
+  it('生成弹窗常驻挂载，重开时必须清掉上一轮的模型', () => {
+    const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), 'utf8');
+    // 打开时的重置块：以 setActiveRunRuntime(null) 起头，必须在同一块里清掉 resolvedModel。
+    const reset = source.slice(source.indexOf('setActiveRunRuntime(null);'));
+    expect(reset.slice(0, reset.indexOf('setSelectedKnowledge'))).toContain('setResolvedModel(null)');
+  });
 });

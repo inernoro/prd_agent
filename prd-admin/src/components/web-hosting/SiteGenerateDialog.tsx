@@ -26,6 +26,7 @@ import {
 import {
   parseSiteGenerationProgressEvent,
   resolveGeneratedSiteId,
+  resolveRunModelBadge,
 } from './siteGenerateProgress';
 
 export interface SiteGenerateSource {
@@ -110,6 +111,7 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
         setPhase(result.data.phase || '正在恢复网页生成进度');
         setProgress(result.data.progress);
         setActiveRunRuntime(result.data.runtime);
+        setResolvedModel(resolveRunModelBadge(result.data));
         setRunStartedAtMs(Date.parse(result.data.createdAt));
         const status = result.data.status.toLowerCase();
         const siteId = resolveGeneratedSiteId(result.data);
@@ -150,6 +152,8 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     setElapsedSeconds(0);
     setRunStartedAtMs(null);
     setActiveRunRuntime(null);
+    // 这个弹窗常驻挂载：不在这里清掉，重开之后会把上一轮的模型当成本轮的显示出来。
+    setResolvedModel(null);
     setThinking('');
     setPreviewHtml('');
     setCompletedSite(null);

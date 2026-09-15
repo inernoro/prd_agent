@@ -696,6 +696,10 @@ public sealed class HostedSiteEditsController : ControllerBase
         artifactSiteId = run.ArtifactSiteId ?? run.ProducedArtifactSiteId,
         artifactRevisionId = run.ArtifactRevisionId ?? run.ProducedArtifactRevisionId,
         run.LinkedRunId,
+        // 刷新之后徽章要还原，所以恢复读回也必须带上执行模型
+        // （.claude/rules/ai-model-visibility.md：值一律来自后端）。
+        run.ResolvedModel,
+        run.ResolvedPlatform,
         run.Error,
         cancelRequested = run.CancelRequestedAt.HasValue,
         run.CancelRequestedAt,

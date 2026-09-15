@@ -1365,6 +1365,24 @@ export class AgentWorkspaceSessionRuntime {
   private readonly image: string;
   private readonly daemonPort: number;
   private readonly fetchImpl: typeof fetch;
+
+  /**
+   * 伙伴侧（MAP）传输的唯一出口。会话创建时把 inputPackageUrl / resultCommitUrl 钉在
+   * partner origin 上，但 fetch 默认会跟随 3xx——跟过去的那一跳不再受钉定约束，
+   * 等于把 CDS 变成一个可被伙伴端指挥的内网请求器。所以这里一律 redirect: 'manual'
+   * 并把 3xx 判成失败：要换地址就重新签一次会话，不能靠一个 Location 头临时改道。
+   */
+  private async fetchPartnerTransfer(url: string, init: RequestInit, field: string): Promise<Response> {
+    const response = await this.fetchImpl(url, { ...init, redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_transfer_redirect_rejected',
+        `${field} responded with HTTP ${response.status}; redirects are not followed because the target origin is pinned at session creation`,
+        false,
+      );
+    }
+    return response;
+  }
   private readonly pollIntervalMs: number;
   private readonly capabilityCacheMs: number;
   private readonly capabilityNegativeCacheMs: number;
@@ -1935,13 +1953,13 @@ export class AgentWorkspaceSessionRuntime {
       fs.mkdirSync(outputDir, { recursive: true, mode: 0o750 });
       fs.mkdirSync(dataDir, { recursive: true, mode: 0o750 });
       onStage('workspace_downloading');
-      const response = await this.fetchImpl(transfer.inputPackageUrl, {
+      const response = await this.fetchPartnerTransfer(transfer.inputPackageUrl, {
         headers: { Authorization: `Bearer ${transfer.transferToken}`, Accept: 'application/json' },
         signal: AbortSignal.any([
           creatingHandle.abortController.signal,
           AbortSignal.timeout(Math.min(policy.timeoutSeconds * 1000, 60_000)),
         ]),
-      });
+      }, 'workspaceTransfer.inputPackageUrl');
       if (creatingHandle.cancelRequested) {
         throw new AgentWorkspaceRuntimeError(
           'workspace_creation_cancelled',
@@ -2603,7 +2621,7 @@ export class AgentWorkspaceSessionRuntime {
         executionDeadline,
         Date.now() + Math.min(handle.policy.timeoutSeconds * 1000, 60_000),
       );
-      const commitResponse = await this.fetchImpl(handle.transfer.resultCommitUrl, {
+      const commitResponse = await this.fetchPartnerTransfer(handle.transfer.resultCommitUrl, {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${transferToken}`,
@@ -2612,7 +2630,7 @@ export class AgentWorkspaceSessionRuntime {
         },
         body: serialized,
         signal: this.signalForDeadline(commitDeadline, signal),
-      });
+      }, 'workspaceTransfer.resultCommitUrl');
       const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
       this.assertExecutionDeadline(executionDeadline);
       let commit: Record<string, unknown> = {};

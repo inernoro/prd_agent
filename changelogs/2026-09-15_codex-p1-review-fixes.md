@@ -13,3 +13,6 @@
 | ops | cds | 索引目录退出部署链路：撤掉 mongodb-indexes 一次性容器与 api 对它的启动依赖，索引仍由 DBA 手动跑，并补守卫防再加回来 |
 | fix | prd-api | 实际模型落库补上：worker 逐字段写库，原先只改内存对象，导致 run DTO 字段在而值恒为 null，刷新后面板显示不出模型 |
 | fix | prd-api | 公开生成流的事件白名单补上 model，否则 worker 发出的模型事件在 SSE 出口被静默丢弃，前端永远收不到；并加守卫按 worker 实际 append 的事件名逐一比对白名单 |
+| security | cds | 伙伴侧 workspaceTransfer 的下载与回写一律不跟随重定向：会话创建时钉死的 origin 在 3xx 之后不再成立，改走唯一入口 fetchPartnerTransfer 并把 3xx 判成失败，另加接线守卫防止新调用点绕过 |
+| fix | prd-api | 刷新恢复读回的 run DTO 补上 ResolvedModel／ResolvedPlatform，否则模型事件只在流的开头出现一次，刷新之后徽章再也回不来；并加守卫对齐两个 Controller 的 run 投影 |
+| fix | prd-admin | 生成弹窗与改写面板的恢复路径读回模型徽章，且弹窗重开时清空上一轮模型（常驻挂载，不清会把上一轮的模型当成本轮的显示出来）；平台兜底称谓收敛成共用常量 |

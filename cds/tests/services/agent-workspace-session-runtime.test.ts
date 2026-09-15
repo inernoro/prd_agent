@@ -714,6 +714,43 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.calls.some((call) => call.command.startsWith('docker network create'))).toBe(false);
   });
 
+  it('refuses to follow a redirect on the pinned partner input transfer', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const shell = new RecordingShell();
+    const seenRedirect: Array<RequestRedirect | undefined> = [];
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      // 会话创建时 origin 已被钉死，但伙伴端仍可以用一个 302 把这次请求引到内网地址。
+      fetchImpl: async (_input, init) => {
+        seenRedirect.push(init?.redirect);
+        return new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/latest/meta-data/' } });
+      },
+    });
+
+    await expect(runtime.create('session-redirect-input', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: 'a'.repeat(64),
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json'],
+    }, {
+      cpuCores: 1,
+      memoryMb: 768,
+      timeoutSeconds: 30,
+      networkPolicy: 'egress-only',
+      autoCleanupMinutes: 5,
+    })).rejects.toMatchObject({ code: 'workspace_transfer_redirect_rejected' });
+
+    expect(seenRedirect).toContain('manual');
+  });
+
   it('rejects a cleanup TTL that cannot cover execution and result commit', async () => {
     const shell = new RecordingShell();
     const runtime = new AgentWorkspaceSessionRuntime(shell, { autoPullImage: false });
