@@ -52,7 +52,7 @@ public sealed class ShareViewerEditCapabilityTests
     [Trait("Category", TestCategories.Integration)]
     public async Task SiteOwnerCanEdit_EvenWhenSomeoneElseCreatedTheShare()
     {
-        await using var fixture = await RunMongoFixture.CreateAsync();
+        await using var fixture = await RunMongoFixture.CreateAsync("share_edit_capability");
         var service = CreateService(fixture.Db);
         Assert.True(await service.CanEditSiteAsync(TeamSite(), "site-owner", CancellationToken.None));
     }
@@ -61,7 +61,7 @@ public sealed class ShareViewerEditCapabilityTests
     [Trait("Category", TestCategories.Integration)]
     public async Task TeamEditorCanEdit_AndTeamViewerCannot()
     {
-        await using var fixture = await RunMongoFixture.CreateAsync();
+        await using var fixture = await RunMongoFixture.CreateAsync("share_edit_capability");
 
         var editor = CreateService(fixture.Db, new Dictionary<string, string> { ["team-1"] = "editor" });
         Assert.True(await editor.CanEditSiteAsync(TeamSite(), "teammate", CancellationToken.None));
@@ -75,7 +75,7 @@ public sealed class ShareViewerEditCapabilityTests
     [Trait("Category", TestCategories.Integration)]
     public async Task OutsiderAndAnonymousCannotEdit()
     {
-        await using var fixture = await RunMongoFixture.CreateAsync();
+        await using var fixture = await RunMongoFixture.CreateAsync("share_edit_capability");
         var service = CreateService(fixture.Db);
 
         // 只建过分享链接、对站点没有任何角色的人：这正是旧判据会放进来的那一类。
@@ -87,7 +87,7 @@ public sealed class ShareViewerEditCapabilityTests
     [Trait("Category", TestCategories.Integration)]
     public async Task PublishIntoTeamRequiresOwnerOrEditorRole()
     {
-        await using var fixture = await RunMongoFixture.CreateAsync();
+        await using var fixture = await RunMongoFixture.CreateAsync("share_edit_capability");
 
         var editor = CreateService(fixture.Db, new Dictionary<string, string> { ["team-1"] = "editor" });
         Assert.True(await editor.CanPublishIntoTeamAsync("teammate", "team-1", CancellationToken.None));
@@ -97,33 +97,5 @@ public sealed class ShareViewerEditCapabilityTests
 
         var stranger = CreateService(fixture.Db);
         Assert.False(await stranger.CanPublishIntoTeamAsync("nobody", "team-1", CancellationToken.None));
-    }
-
-    private sealed class RunMongoFixture : IAsyncDisposable
-    {
-        private readonly MongoClient _client;
-        private readonly string _databaseName;
-
-        private RunMongoFixture(MongoClient client, string connectionString, string databaseName)
-        {
-            _client = client;
-            _databaseName = databaseName;
-            Db = new MongoDbContext(connectionString, databaseName);
-        }
-
-        internal MongoDbContext Db { get; }
-
-        internal static async Task<RunMongoFixture> CreateAsync()
-        {
-            var connectionString = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
-                                   ?? "mongodb://127.0.0.1:27017";
-            var settings = MongoClientSettings.FromConnectionString(connectionString);
-            settings.ServerSelectionTimeout = TimeSpan.FromSeconds(3);
-            var client = new MongoClient(settings);
-            await client.GetDatabase("admin").RunCommandAsync<BsonDocument>(new BsonDocument("ping", 1));
-            return new RunMongoFixture(client, connectionString, $"share_edit_capability_{Guid.NewGuid():N}");
-        }
-
-        public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);
     }
 }

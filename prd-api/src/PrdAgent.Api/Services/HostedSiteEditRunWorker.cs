@@ -276,7 +276,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 DateTime.UtcNow,
                 LeaseDuration,
                 executionCts.Token,
-                verifiedFiles);
+                verifiedFiles,
+                _logger);
             run.ArtifactSiteId = persisted.SiteId;
             run.ArtifactRevisionId = persisted.RevisionId;
             if (run.ContractVersion == DesignArtifactContractVersions.Current
@@ -845,7 +846,8 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
         DateTime now,
         TimeSpan leaseDuration,
         CancellationToken ct,
-        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles = null)
+        IReadOnlyList<DesignWorkspaceFile>? verifiedFiles = null,
+        ILogger? logger = null)
     {
         if (!await BeginCommitAsync(db, run.Id, leaseOwner, now, leaseDuration, CancellationToken.None))
             throw new DesignArtifactRunLeaseLostException(run.Id);
@@ -945,20 +947,37 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             // 前端拿到就按「已生成，但归属团队失败」提示，与浏览器还在时的行为一致。
             if (!string.IsNullOrWhiteSpace(run.DestinationTeamId) && site != null)
             {
+                // 记到 run 上的这句话会原样进浏览器的提示框，所以只能是稳定的用户文案：
+                // 异常的 Message 里可能带库名、主机、驱动状态，那些只该进服务端日志。
+                string? destinationError = null;
                 try
                 {
                     var moved = await sites.SetSharedTeamsAsync(
                         site.Id, run.UserId, new List<string> { run.DestinationTeamId! }, ct);
-                    if (moved == null) throw new InvalidOperationException("站点不存在或无权限");
+                    if (moved == null)
+                    {
+                        logger?.LogWarning(
+                            "生成任务归属团队时站点不可写 runId={RunId} siteId={SiteId} teamId={TeamId}",
+                            run.Id, site.Id, run.DestinationTeamId);
+                        destinationError = DestinationAssignmentFailure.SiteUnavailable;
+                    }
                 }
                 catch (Exception destinationEx)
                 {
+                    logger?.LogWarning(
+                        destinationEx,
+                        "生成任务归属团队失败 runId={RunId} siteId={SiteId} teamId={TeamId}",
+                        run.Id, site.Id, run.DestinationTeamId);
+                    destinationError = DestinationAssignmentFailure.Describe(destinationEx);
+                }
+                if (destinationError != null)
+                {
                     // 内存里的 run 也要记上：终态事件就是从它构造的，只写库的话浏览器还在时反而看不到。
-                    run.DestinationApplyError = destinationEx.Message;
+                    run.DestinationApplyError = destinationError;
                     await db.DesignArtifactRuns.UpdateOneAsync(
                         item => item.DeploymentSlug == DeploymentScope.Current && item.Id == run.Id,
                         Builders<DesignArtifactRun>.Update
-                            .Set(item => item.DestinationApplyError, destinationEx.Message)
+                            .Set(item => item.DestinationApplyError, destinationError)
                             .Set(item => item.UpdatedAt, DateTime.UtcNow),
                         cancellationToken: CancellationToken.None);
                 }

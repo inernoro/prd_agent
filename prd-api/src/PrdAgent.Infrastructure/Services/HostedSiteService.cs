@@ -2131,9 +2131,25 @@ public class HostedSiteService : IHostedSiteService
 
         if (added.Count > 0)
         {
-            await _teamActivity.LogForTeamsAsync(
-                added, TeamAppKey.WebHosting, userId,
-                TeamActivityAction.SiteShared, "site", site.Id, site.Title, ct);
+            // 活动流是提交之后的尽力而为记录，不是这次归属的一部分。
+            // 让它抛出去，会把一次**已经写进库**的归属报告成失败：
+            // controller 那条路给用户 500，生成任务那条路把 DestinationApplyError 记上，
+            // 于是终态事件告诉用户「网页留在个人空间」，而它其实已经在团队里了。
+            // 所以吞掉——但不静默（predicate-and-wiring-discipline 形状 10），留一条日志。
+            try
+            {
+                await _teamActivity.LogForTeamsAsync(
+                    added, TeamAppKey.WebHosting, userId,
+                    TeamActivityAction.SiteShared, "site", site.Id, site.Title, ct);
+            }
+            catch (Exception activityError)
+            {
+                _logger.LogWarning(
+                    activityError,
+                    "站点已归属团队，但团队活动流留痕失败 siteId={SiteId} teams={Teams}",
+                    site.Id,
+                    string.Join(",", added));
+            }
         }
 
         site.SharedTeamIds = sanitized;
