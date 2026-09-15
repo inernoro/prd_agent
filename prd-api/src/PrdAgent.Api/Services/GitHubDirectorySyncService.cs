@@ -610,6 +610,13 @@ public class GitHubDirectorySyncService
     internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, PathAbsence absence)
         => directoryStatus == HttpStatusCode.NotFound && absence == PathAbsence.ProvenAbsent;
 
+    /// <summary>
+    /// Contents 接口对**目录**回数组、对**文件**回对象。两处读它的地方共用这一条判别：
+    /// 少判一次的后果是直接把对象当数组遍历，抛异常、整轮同步失败，而真相只是
+    /// 「那个目录被同名文件顶替了」——那本该是一条可以调和的结论。
+    /// </summary>
+    internal static bool IsDirectoryPayload(JsonValueKind rootKind) => rootKind == JsonValueKind.Array;
+
     /// <summary>父路径：`a/b` → `a`，`a` → 仓库根（空串），仓库根本身 → null（无处可上溯）。</summary>
     internal static string? ParentPathOf(string path)
     {
@@ -808,7 +815,7 @@ public class GitHubDirectorySyncService
             // 上游对目录回数组、对文件回对象。回对象说明这一级是个文件——这不是失败，
             // 是一条结论；把它当失败会拼出「读取失败（状态 200）」这种自相矛盾的话，
             // 还会让「目录被同名文件顶替」这种真实的删除永远调和不掉。
-            if (doc.RootElement.ValueKind != JsonValueKind.Array) return new AncestorListing(AncestorKind.IsFile);
+            if (!IsDirectoryPayload(doc.RootElement.ValueKind)) return new AncestorListing(AncestorKind.IsFile);
 
             var names = doc.RootElement.EnumerateArray()
                 .Select(e => e.TryGetProperty("name", out var n) ? n.GetString() : null)
@@ -910,6 +917,17 @@ public class GitHubDirectorySyncService
 
         var json = await response.Content.ReadAsStringAsync(ct);
         var doc = JsonDocument.Parse(json);
+
+        // 订阅的这个路径自己变成了文件（有人把目录换成了同名文件）：上游回的是 200 + 对象，
+        // 不是上面处理的 404。直接拿去遍历数组会抛异常、整轮同步失败、旧子文档永远留着，
+        // 而这份 200 恰恰是「这个目录在这个提交上不存在了」的正面证据——照「远端删光了」调和。
+        if (!IsDirectoryPayload(doc.RootElement.ValueKind))
+        {
+            _logger.LogInformation(
+                "[GitHubSync] {Owner}/{Repo}/{Path} 在提交 {Commit} 上是个文件而不是目录：按「远端删光了」调和",
+                owner, repo, path, commitSha);
+            return new DirectoryListing(new List<GitHubFile>(), Complete: true, Reference: reference);
+        }
 
         var rawCount = 0;
         var files = new List<GitHubFile>();

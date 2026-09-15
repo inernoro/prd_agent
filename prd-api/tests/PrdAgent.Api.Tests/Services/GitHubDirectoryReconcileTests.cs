@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using Xunit;
@@ -194,6 +195,19 @@ public class GitHubDirectoryReconcileTests
             "o", "r", "doc/a b#c", new GitHubDirectorySyncService.PinnedRef("abc123"));
 
         Assert.Equal("https://api.github.com/repos/o/r/contents/doc/a%20b%23c?ref=abc123", url);
+    }
+
+    [Theory]
+    [InlineData("[]", true)]
+    [InlineData("[{\"name\":\"a.md\"}]", true)]
+    [InlineData("{\"name\":\"doc\",\"type\":\"file\"}", false)]
+    public void 目录回数组文件回对象(string payload, bool expected)
+    {
+        // 少判这一次的后果是把对象当数组遍历：抛异常、整轮同步失败、旧子文档永远留着，
+        // 而真相只是「那个目录被同名文件顶替了」——那本该是一条可以调和的结论。
+        // 订阅路径自己变成文件、以及上溯时撞见文件，两处共用这一条判别。
+        using var doc = JsonDocument.Parse(payload);
+        Assert.Equal(expected, GitHubDirectorySyncService.IsDirectoryPayload(doc.RootElement.ValueKind));
     }
 
     [Fact]
