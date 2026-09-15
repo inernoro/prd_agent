@@ -22,6 +22,7 @@ import {
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
   nextStepAfterAuthLoad, revokedConnectionHint, replacingConnectionNotice, connectionHeaderLabel,
+  describeDisconnectNotice,
 } from './githubConnectionState';
 
 /**
@@ -120,36 +121,21 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     setError('');
     setErrorCode(undefined);
 
-    // 「没删成」有两种相反的来路，必须分开说，否则会对着用户讲反话。
+    // 提示由判据一次产出：本地结果与「GitHub 那边收回了没」是两件互不相干的事，
+    // 各说各的。按分支各自 return 会漏掉后者，而那句是安全相关的（形状 2）。
+    const notice = describeDisconnectNotice(res.data);
+    toast[notice.tone](notice.title, notice.message);
+
     if (res.data.outcome === 'replaced-meanwhile') {
-      // 断开期间你在别处重新连了一次，后端**有意保住**了那条新连接。
-      // 此时不能清空状态说「已断开」。重新读一次连接状态，顺便让它去问一次 GitHub：
-      // 收回授权可能把新令牌也一起作废了，失效的话这一读就会显示出来。
+      // 后端**有意保住**了那条新连接，此时不能清空状态说「已断开」。重读一次连接状态：
+      // 收回授权可能把新令牌也一起作废了，失效的话这一读会把向导退回第一步。
       void loadAuth();
-      toast.warning('这条连接已被替换，未执行断开',
-        '断开期间你在别处重新连接了 GitHub，新的连接已保留。若它显示为已失效，重新授权一次即可。');
       return;
     }
 
-    if (res.data.outcome === 'nothing-to-remove') {
-      // 进来时就没有连接记录（多半是另一个标签页已经断过了）。状态照清，但别说「已删除」——
-      // 没有的东西删不了，说了就是无中生有。
-      setAuth(null);
-      setStep('connect');
-      toast.info('这里已经没有 GitHub 连接了', '可能你在别处已经断开过。需要的话重新连接即可。');
-      return;
-    }
-
+    // 已删除、或本来就没有：这里确实没有连接了，清空并回到第一步。
     setAuth(null);
     setStep('connect');
-    // 撤销没成时不许报一个干净的成功：本地删了不等于 GitHub 那边的授权收回了，
-    // 后端把下一步写在 revokeHint 里，这里原样端给用户（形状 10：静默降级）。
-    if (res.data.revoked) {
-      toast.success('已断开 GitHub 连接', '本站保存的连接已删除，GitHub 上的授权也已收回；已建的目录订阅会同步失败，直到重新连接。');
-    } else {
-      toast.warning('已断开，但 GitHub 授权未撤销',
-        res.data.revokeHint ?? '本站保存的连接已删除，请到 GitHub 设置里确认本应用已不在已授权列表中。');
-    }
   }, [reportError, loadAuth]);
 
   useEffect(() => { void loadAuth(); }, [loadAuth]);

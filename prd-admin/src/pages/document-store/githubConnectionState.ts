@@ -119,3 +119,55 @@ export function connectionHeaderLabel(
   const who = status.login ?? 'GitHub 账号';
   return status.usable === 'revoked' ? `${who} · 授权已失效` : `已连接 ${who}`;
 }
+
+/** 断开之后给用户看的那条提示：语气、标题、正文。 */
+export type DisconnectNotice = {
+  tone: 'success' | 'info' | 'warning';
+  title: string;
+  message: string;
+};
+
+/**
+ * 断开的结果怎么说给用户听。
+ *
+ * 这件事由两件**互不相干**的事组成，必须各说各的、谁也不许把谁挤掉：
+ * - 本地这一侧发生了什么（删了 / 本来就没有 / 被替换所以保留）；
+ * - GitHub 那边的授权收回了没（没收回时后端会给出下一步，那句必须端到用户面前）。
+ *
+ * 写成「按本地结果分叉、每支各自 return」就会漏：只要某一支忘了看撤销结果，
+ * 用户就再也看不到「GitHub 上可能还留着授权」这句——而那是安全相关的。
+ * 所以这里把两段拼起来一次性产出，漏说在结构上不可能发生。
+ */
+export function describeDisconnectNotice(result: {
+  outcome: 'removed' | 'nothing-to-remove' | 'replaced-meanwhile';
+  revoked: boolean;
+  revokeHint?: string | null;
+}): DisconnectNotice {
+  const local = {
+    'removed': '本站保存的连接已删除。',
+    'nothing-to-remove': '这里已经没有 GitHub 连接了（可能你在别处已经断开过）。',
+    'replaced-meanwhile': '断开期间你在别处重新连接了 GitHub，新的连接已保留；若它显示为已失效，重新授权一次即可。',
+  }[result.outcome];
+
+  if (!result.revoked) {
+    return {
+      tone: 'warning',
+      title: 'GitHub 授权可能仍然存在',
+      message: `${local} ${result.revokeHint ?? '请到 GitHub 设置里确认本应用已不在已授权列表中。'}`,
+    };
+  }
+
+  if (result.outcome === 'removed') {
+    return {
+      tone: 'success',
+      title: '已断开 GitHub 连接',
+      message: `${local} GitHub 上的授权也已收回；已建的目录订阅会同步失败，直到重新连接。`,
+    };
+  }
+
+  return {
+    tone: result.outcome === 'replaced-meanwhile' ? 'warning' : 'info',
+    title: result.outcome === 'replaced-meanwhile' ? '这条连接已被替换，未执行断开' : '这里已经没有 GitHub 连接了',
+    message: local,
+  };
+}

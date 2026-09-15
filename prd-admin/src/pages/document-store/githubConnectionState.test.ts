@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isGitHubConnectionBroken, connectionBrokenHint,
   shouldResumeAtRepoStep, nextStepAfterAuthLoad, revokedConnectionHint,
-  replacingConnectionNotice, connectionHeaderLabel,
+  replacingConnectionNotice, connectionHeaderLabel, describeDisconnectNotice,
 } from './githubConnectionState';
 
 describe('GitHub 连接状态判据', () => {
@@ -128,5 +128,44 @@ describe('读完连接状态之后该待在哪一步', () => {
   it('已经在后面的步骤且连接好着 —— 保持原地，别把正在选目录的人弹走', () => {
     expect(nextStepAfterAuthLoad('directories', { connected: true, usable: 'usable' }, steps)).toBe('directories');
     expect(nextStepAfterAuthLoad('repo', { connected: true, usable: 'unknown' }, steps)).toBe('repo');
+  });
+});
+
+describe('断开之后说给用户听的那条提示', () => {
+  const hint = '请到 GitHub 设置里确认本应用已不在已授权列表中。';
+
+  it('没收回授权 —— 无论本地结果如何，都必须把下一步端到用户面前', () => {
+    // 这一条是安全相关的：按本地结果分叉、各自 return 的写法漏掉过它
+    for (const outcome of ['removed', 'nothing-to-remove', 'replaced-meanwhile'] as const) {
+      const n = describeDisconnectNotice({ outcome, revoked: false, revokeHint: hint });
+      expect(n.tone).toBe('warning');
+      expect(n.message).toContain('确认本应用已不在已授权列表');
+    }
+  });
+
+  it('没收回且后端没给提示 —— 也要自带兜底的下一步，不能只说本地结果', () => {
+    const n = describeDisconnectNotice({ outcome: 'nothing-to-remove', revoked: false });
+    expect(n.message).toContain('GitHub');
+    expect(n.message).toContain('确认');
+  });
+
+  it('删掉了且授权也收回了 —— 干净的成功', () => {
+    const n = describeDisconnectNotice({ outcome: 'removed', revoked: true });
+    expect(n.tone).toBe('success');
+    expect(n.message).toContain('已删除');
+    expect(n.message).toContain('收回');
+  });
+
+  it('本来就没有 —— 平铺直叙，不说「已删除」这种无中生有的话', () => {
+    const n = describeDisconnectNotice({ outcome: 'nothing-to-remove', revoked: true });
+    expect(n.tone).toBe('info');
+    expect(n.message).not.toContain('已删除');
+  });
+
+  it('被替换 —— 说清新连接被保留，并提示它可能已失效', () => {
+    const n = describeDisconnectNotice({ outcome: 'replaced-meanwhile', revoked: true });
+    expect(n.tone).toBe('warning');
+    expect(n.message).toContain('保留');
+    expect(n.message).toContain('重新授权');
   });
 });
