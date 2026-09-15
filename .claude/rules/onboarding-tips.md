@@ -26,7 +26,7 @@ paths:
 
 - **唯一数据源**：`prd-api/src/PrdAgent.Api/Controllers/Api/DailyTipsController.cs` 的 `BuildDefaultTips(now)`。每个页面一条 `*-page-guide` 的 `card` 类型 seed，`DisplayOrder = 0`（保证该页打开抽屉时本页教程排第一）。
 - **锚点**：页面上的 `data-tour-id="..."` 属性。Tour 每一步的 `Selector` 必须能在对应页面 `document.querySelector` 命中。
-- 已落地的页面教程（截至 2026-06-02）：
+- 已落地的页面教程（截至 2026-09-15）：
   | 页面 | route | seed id | 步数 |
   |------|-------|---------|------|
   | 网页托管 | `/web-pages` | `webpages-page-guide` | 14 |
@@ -34,6 +34,7 @@ paths:
   | 知识库 | `/document-store` | `document-store-page-guide` | 8 |
   | 文学创作 | `/literary-agent` | `literary-page-guide` | 8（+ 进编辑器步骤见下） |
   | 海鲜市场 | `/marketplace` | `marketplace-page-guide` | 6 |
+  | 模型排行榜 | `/model-leaderboard` | `model-leaderboard-page-guide` | 5 |
   | 智识殿堂 | `/library` | `library-landing-page-guide` | 7 |
   | 作品广场 | `/showcase` | `showcase-page-guide` | 6 |
   | 缺陷管理 | `/defect-agent` | `defect-page-guide` | 8（贯通:浏览→打开提交面板→填写→提交） |

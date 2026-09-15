@@ -345,7 +345,12 @@ export default function ModelLeaderboardPage() {
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [entries.length]);
+    // 依赖里必须有 visibleRows，不能只有 entries.length（Codex 在 PR #1538 指出）：
+    // 哨兵只在「还有剩」时才挂，而切到「仅开源」那一刻，entries 已经换成更短的子集、
+    // visibleRows 还是展开后的大数，于是首帧没有哨兵——这次 effect 拿到 null 直接返回。
+    // 紧接着重置 effect 把 visibleRows 打回 40，哨兵重新挂上，可 entries.length 没再变，
+    // 光靠它当依赖就不会重跑，观察器永远接不上：剩下的行再也追加不出来。
+  }, [entries.length, visibleRows]);
 
   const shownEntries = useMemo(() => entries.slice(0, visibleRows), [entries, visibleRows]);
 

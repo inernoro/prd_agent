@@ -156,8 +156,13 @@ public class ModelLeaderboardSyncService
         var entries = parsed.Entries;
 
         // 比对上一份快照填升降。上一份不存在时全部留 null，前端不显示箭头。
+        //
+        // 按 FetchedAt 倒序：存量重复文档里挑到孤儿的话，升降就是拿「某个任意的更旧排名」
+        // 算出来的，而 Get / Top / 自检都已经改成看最新那份——四处口径必须一致，
+        // 否则页面上的箭头讲的是另一个故事（Codex 在 PR #1538 指出，同一个疏漏的第三处）。
         var previous = await _db.ModelLeaderboardSnapshots
             .Find(Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Board, board))
+            .SortByDescending(x => x.FetchedAt)
             .FirstOrDefaultAsync(ct);
 
         // 写用 _id 过滤，不用 Board。
