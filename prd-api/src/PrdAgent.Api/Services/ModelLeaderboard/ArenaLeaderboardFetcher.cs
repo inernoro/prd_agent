@@ -156,11 +156,11 @@ public class ArenaLeaderboardFetcher
     }
 
     /// <summary>
-    /// 这份解析结果能不能写库。三条判据都是「宁可让数据变旧，也不要写进一批看起来正常、
+    /// 这份解析结果能不能写库。每条判据都是「宁可让数据变旧，也不要写进一批看起来正常、
     /// 实则错的值」（.claude/rules/degradation-must-alarm.md）。
     ///
     /// 抽成公开静态方法是为了能被测试直接喂存档 HTML 断言——留在 FetchAsync 里的话，
-    /// 这三条只有联网才走得到，等于三条没人验过的判据（predicate-and-wiring-discipline
+    /// 它们只有联网才走得到，等于一批没人验过的判据（predicate-and-wiring-discipline
     /// 形状 4：不会红的证据比没有证据更糟）。
     /// </summary>
     /// <exception cref="InvalidOperationException">任一条不成立。</exception>
@@ -204,6 +204,34 @@ public class ArenaLeaderboardFetcher
                 $"{url} 解析出 {result.Entries.Count} 个条目，其中只有 {withLicense} 个带授权；" +
                 "多半是厂商那段的分隔符或授权写法变了，本次不写库，保留上一份快照。" +
                 "（授权是「仅开源」筛选的唯一判据，缺了它那个筛选会静默清空。）");
+        }
+
+        // 会话数的覆盖率。**只对 agent 榜判**——分数榜压根没有这一列，一并判会把十个
+        // 分数榜全部拒掉。
+        //
+        // 为什么需要它：agent 榜是默认榜，而会话数是那张表唯一的样本量（「这个净改进是
+        // 43 次会话还是 4 万次会话里测出来的」）。它由 SessionsRegex 在整行里找一个带
+        // 千分位的数字，对方只改会话数那一格的写法时，每一行都读成 null，而指标格解析
+        // 成功、行数与形状判定照样通过——于是整份快照被接受、覆盖掉昨天的好数据，页面上
+        // 那一列变成横线，FetchedAt 却是新的，陈旧度那条 check 判绿
+        // （.claude/rules/degradation-must-alarm.md：有降级的地方必须有铃。
+        //  Codex 在 PR #1538 指出——上一轮把分数榜的票数改成了必填，
+        //  agent 榜这半边是同一个洞，当时没跟着补）。
+        //
+        // 用覆盖率而不是像票数那样整行拒绝：SessionsRegex 要的是**带千分位**的数字，
+        // 所以会话数不足 1000 的模型天生读不出来。整行拒绝会把这种合法行也丢掉，
+        // 而那正是新上榜模型的常态。阈值同样取一半——实测 agent 榜 43/43 行都有会话数
+        // （离这条线很远），而「几乎每一行都没有」只可能是我们的选择器失配。
+        if (result.Kind == BoardKind.Agent)
+        {
+            var withSessions = result.Entries.Count(e => e.Sessions.HasValue);
+            if (withSessions * 2 < result.Entries.Count)
+            {
+                throw new InvalidOperationException(
+                    $"{url} 解析出 {result.Entries.Count} 个条目，其中只有 {withSessions} 个带会话数；" +
+                    "多半是会话数那一格的写法变了，本次不写库，保留上一份快照。" +
+                    "（会话数是 agent 榜唯一的样本量，缺了它整列会变成横线而没有任何异常可看。）");
+            }
         }
 
         // 形状与目录声明的不符 = 对方把这个榜换了结构。

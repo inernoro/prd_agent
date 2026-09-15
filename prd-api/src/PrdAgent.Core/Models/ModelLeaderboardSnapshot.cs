@@ -39,6 +39,21 @@ public class ModelLeaderboardSnapshot
     public string? SourceLabel { get; set; }
 
     /// <summary>
+    /// 写它的那个部署的作用域。权威部署（生产/本地）为 null，CDS 分支预览为
+    /// "{projectId}::{branch}"。判据与读写口径都收在
+    /// <c>ModelLeaderboardScope</c> 一个地方。
+    ///
+    /// 为什么要这个字段：一个榜在库里只有一条文档，而这个库被同项目所有分支预览
+    /// 共享（cross-project-isolation.md 通道 4）。没有它的时候，任一条预览上点一次
+    /// 「立即同步」就会把兄弟分支正在读的那条文档换成本分支未合并解析器的产物——
+    /// 别人的验收就此变成谎话，而两边都看不出异常（同规则通道 8 的形状）。
+    ///
+    /// <b>存量文档没有这个字段，读作 null，正是权威部署的作用域</b>——所以不需要迁移，
+    /// 生产的行为也与本字段落地前完全一致。
+    /// </summary>
+    public string? DeploymentSlug { get; set; }
+
+    /// <summary>
     /// 榜单口径下的会话总数（页面头部那个「1,587,202 sessions」）。
     /// 抓不到时为 null——页面上就不显示这一格，不填 0 冒充。
     /// </summary>

@@ -47,6 +47,7 @@
          搬不动（守卫改为扫它的源码，见 ArenaLeaderboardFetcherTests）。 -->
     <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ArenaLeaderboardFetcher.cs" Link="Services\ModelLeaderboard\ArenaLeaderboardFetcher.cs" />
     <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLeaderboardCatalog.cs" Link="Services\ModelLeaderboard\ModelLeaderboardCatalog.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLeaderboardScope.cs" Link="Services\ModelLeaderboard\ModelLeaderboardScope.cs" />
   </ItemGroup>
 
 </Project>

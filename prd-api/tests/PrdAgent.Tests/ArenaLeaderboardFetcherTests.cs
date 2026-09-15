@@ -579,6 +579,75 @@ public class ArenaLeaderboardFetcherTests
         Assert.Contains("形状", ex.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// agent 榜的会话数几乎全空 = 对方改了那一格的写法。指标格解析成功、行数与形状判定
+    /// 照样通过，所以原来这一份会被接受、覆盖掉昨天的好数据——页面上那一列变成横线，
+    /// 而 FetchedAt 是新的、陈旧度那条 check 判绿（Codex 在 PR #1538 指出；
+    /// 上一轮把分数榜的票数改成必填，agent 榜这半边是同一个洞，当时没跟着补）。
+    ///
+    /// 会话数是 agent 榜唯一的样本量：「这个净改进是 43 次会话还是 4 万次会话里测出来的」。
+    /// </summary>
+    [Fact]
+    public void EnsureUsable_agent榜会话数几乎全空时拒绝整份()
+    {
+        // 只去掉千分位（SessionsRegex 要的正是带千分位的数字），其余一个字不动——
+        // 正是对方把那一格换个写法时会发生的事
+        var noSessions = RealFixture
+            .Replace(">12,416<", ">12416<", StringComparison.Ordinal)
+            .Replace(">14,853<", ">14853<", StringComparison.Ordinal);
+        Assert.NotEqual(RealFixture, noSessions);
+
+        var parsed = ArenaLeaderboardFetcher.Parse(noSessions);
+        Assert.Equal(2, parsed.Entries.Count);                           // 行还在
+        Assert.All(parsed.Entries, e => Assert.NotNull(e.Organization));  // 厂商还在
+        Assert.All(parsed.Entries, e => Assert.NotNull(e.License));       // 授权还在
+        Assert.All(parsed.Entries, e => Assert.Null(e.Sessions));         // 会话数没了
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ArenaLeaderboardFetcher.EnsureUsable("u", "agent", Padded(parsed)));
+        Assert.Contains("带会话数", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 分数榜压根没有会话数这一列，不能被上面那条判据顺手拒掉——十个分数榜会全军覆没。
+    /// 这条钉住「只对 agent 榜判」，去掉那个 Kind 判断它就会变红。
+    /// </summary>
+    [Fact]
+    public void EnsureUsable_分数榜没有会话数也放行()
+    {
+        var parsed = Padded(ArenaLeaderboardFetcher.Parse(ScoreFixture));
+        Assert.All(parsed.Entries, e => Assert.Null(e.Sessions));   // 它本来就没有这一列
+
+        ArenaLeaderboardFetcher.EnsureUsable("u", "text", parsed);   // 不抛即通过
+    }
+
+    /// <summary>
+    /// 会话数不足 1000 的模型天生读不出来（SessionsRegex 要带千分位），所以这一项用
+    /// 覆盖率而不是像票数那样整行拒绝——个别新上榜的小样本模型是合法的，不该被丢掉。
+    /// </summary>
+    [Fact]
+    public void EnsureUsable_个别行缺会话数仍放行()
+    {
+        // 直接搭条目而不是改 fixture 再走 Padded：Padded 是**循环复用同一批引用**把条目
+        // 补到下限的，两行的 fixture 里改掉一行，补完是「五条里三条缺」——反而越过了阈值，
+        // 这条用例就会因为阈值以外的原因变红，测不到它要测的东西。
+        var entries = Enumerable.Range(0, ArenaLeaderboardFetcher.MinimumEntries)
+            .Select(i => new ModelLeaderboardEntry
+            {
+                Rank = i + 1,
+                Name = $"model-{i}",
+                Organization = "Anthropic",
+                License = "Proprietary",
+                // 只有一行缺：会话数不足 1000 的模型天生读不出来，那是合法的新上榜模型
+                Sessions = i == 0 ? null : 12_000 + i,
+            })
+            .ToList();
+
+        var parsed = new ArenaLeaderboardFetcher.ParseResult(BoardKind.Agent, entries, null, null);
+
+        ArenaLeaderboardFetcher.EnsureUsable("u", "agent", parsed);   // 不抛即通过
+    }
+
     [Fact]
     public void EnsureUsable_正常的一份放行()
     {

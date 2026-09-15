@@ -34,19 +34,6 @@ public class ModelLeaderboardSyncService
         _logger = logger;
     }
 
-    /// <summary>
-    /// 由榜名派生的文档 Id。同一个榜永远算出同一个 Id，首次写的并发因此收敛到一条文档。
-    ///
-    /// 用榜名的哈希而不是榜名本身：榜名带连字符（`text-to-image`），而库里其它集合的 Id
-    /// 一律是 32 位十六进制（见 AGENTS.md 规则 7 的 Id 约定），保持同一个形状。
-    /// </summary>
-    internal static string DeterministicId(string board)
-    {
-        var bytes = System.Security.Cryptography.MD5.HashData(
-            System.Text.Encoding.UTF8.GetBytes("model-leaderboard:" + board.ToLowerInvariant()));
-        return Convert.ToHexString(bytes).ToLowerInvariant();
-    }
-
     /// <summary>抓完一个榜歇多久再抓下一个。</summary>
     private static readonly TimeSpan BoardInterval = TimeSpan.FromSeconds(1);
 
@@ -155,15 +142,27 @@ public class ModelLeaderboardSyncService
         var parsed = await fetcher.FetchAsync(board, ct);
         var entries = parsed.Entries;
 
+        // 取一次、贯穿整个写入：过滤、挑基线、算 Id、盖戳都得是同一个作用域值
+        var scope = ModelLeaderboardScope.Current;
+
+        // 候选文档：本榜里「本部署看得见」的那些（自己的 + 权威部署的）。
+        // 读一把列表而不是 FirstOrDefault，因为下面要分别取两样东西——比对基线与写入目标。
+        var candidates = await _db.ModelLeaderboardSnapshots
+            .Find(Builders<ModelLeaderboardSnapshot>.Filter.And(
+                Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Board, board),
+                ModelLeaderboardScope.VisibleFilter(scope)))
+            .ToListAsync(ct);
+
         // 比对上一份快照填升降。上一份不存在时全部留 null，前端不显示箭头。
         //
-        // 按 FetchedAt 倒序：存量重复文档里挑到孤儿的话，升降就是拿「某个任意的更旧排名」
-        // 算出来的，而 Get / Top / 自检都已经改成看最新那份——四处口径必须一致，
-        // 否则页面上的箭头讲的是另一个故事（Codex 在 PR #1538 指出，同一个疏漏的第三处）。
-        var previous = await _db.ModelLeaderboardSnapshots
-            .Find(Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Board, board))
-            .SortByDescending(x => x.FetchedAt)
-            .FirstOrDefaultAsync(ct);
+        // 口径与页面读取**同一个函数**：自己的优先、其次最新。四处各写一遍排序是上一轮
+        // 连着四轮 review 的来源（predicate-and-wiring-discipline 形状 3），现在只有
+        // ModelLeaderboardScope.PickVisible 这一个入口。
+        //
+        // 基线允许落到权威那份：一条刚建的预览第一次同步时，拿权威快照当基线算出来的升降
+        // 是有意义的（「相对线上那份，谁升了」）；没有基线才是真的什么都显示不了。
+        var previous = ModelLeaderboardScope.PickVisible(
+            candidates, x => x.DeploymentSlug, x => x.FetchedAt, scope);
 
         // 写用 _id 过滤，不用 Board。
         //
@@ -171,8 +170,25 @@ public class ModelLeaderboardSyncService
         // 换成了「其中一条撞 _id 报 E11000」（Codex 在 PR #1538 第二次指出同一处）：
         // 两个并发的首次同步都发现 Board 无匹配，于是都走插入，而它们算出的 _id 是同一个。
         // 按 _id 过滤之后，后到的那个会匹配上先到的那条并替换它，两边都成功收敛。
-        // 存量文档的随机 Id 由 previous?.Id 继续沿用，不会多出一条。
-        var documentId = previous?.Id ?? DeterministicId(board);
+        //
+        // **目标文档只能是本作用域自己那条**，不能顺手用 previous 的 Id：预览上 previous
+        // 往往就是权威那份（见上），拿它的 Id 去 Replace 等于把兄弟分支正在读的文档
+        // 覆盖掉——这一条正是本轮要修的洞（Codex 在 PR #1538 指出）。
+        // 存量文档（DeploymentSlug 缺失 = null）在权威部署上仍由自己的随机 Id 沿用，
+        // 不会多出一条。
+        // 不用 candidates.FirstOrDefault(自己的)——那是**任意一条**自己的。存量重复文档
+        // （权威部署上两条都是 DeploymentSlug=null）会让它随机挑中那条更旧的孤儿，于是
+        // 同步一直写旧的、而页面按「取最新」读另一条永远不更新的——正好把前几轮修掉的
+        // 那个 bug 原样装回来。
+        //
+        // previous 已经是 PickVisible 按「自己的优先、其次最新」挑出来的，所以它只要是
+        // 自己的，就一定是**自己那条里最新的**；它不是自己的（预览兜底到了权威那份）
+        // 就说明本作用域还没有文档，该用确定性 Id 新建一条。
+        var own = previous is not null
+                  && ModelLeaderboardScope.IsOwnDocument(previous.DeploymentSlug, scope)
+            ? previous
+            : null;
+        var documentId = own?.Id ?? ModelLeaderboardScope.DocumentId(board, scope);
         var filter = Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Id, documentId);
         if (previous is not null)
         {
@@ -203,6 +219,8 @@ public class ModelLeaderboardSyncService
             FetchedAt = DateTime.UtcNow,
             SourceUrl = ArenaLeaderboardFetcher.BuildUrl(board),
             SourceLabel = sourceLabel,
+            // 盖上本部署的作用域，兄弟分支据此不会读到（也不会被覆盖）这一份
+            DeploymentSlug = scope,
             TotalSessions = parsed.TotalSessions,
             TotalVotes = parsed.TotalVotes,
             Entries = entries,
