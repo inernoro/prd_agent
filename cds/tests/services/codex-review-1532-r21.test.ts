@@ -21,8 +21,10 @@ describe('发布闸与首屏读同一个生效结论', () => {
     const o = buildReportsOverview([
       report({ title: '发布验收 · 主干 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'pass', defectCounts: { p0: 1 } }),
     ], [], { to: TO, days: 7 });
-    // 前置条件：这份报告自己写的是通过，否则测的是别的分支。
-    expect(o.totals.pass).toBe(1);
+    // 前置条件：夹具写的是 pass，生效结论已被阻断缺陷压成 fail。
+    expect(o.totals.counted).toBe(1);
+    expect(o.totals.pass).toBe(0);
+    expect(o.totals.fail).toBe(1);
     expect(o.releaseGate.state).not.toBe('open');
     expect(o.headline.status).toBe('broken');
     // 措辞要让矛盾看得见：既说它自称通过，也说阻断缺陷几个。

@@ -101,8 +101,11 @@ describe('阻断缺陷压过安全结论（第十九轮）', () => {
     const o = buildReportsOverview([
       report({ title: '功能验收 · 丁 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'pass', defectCounts: { p0: 3 } }),
     ], [], { to: TO, days: 7 });
-    // 前置条件：这份报告确实被算作通过，否则测的是别的分支。
-    expect(o.totals.pass).toBe(1);
+    // 前置条件：夹具写的是 pass，而生效结论已被阻断缺陷压成 fail——
+    // 计数在 toRef 那个边界上就换算过了，所以这里 pass 是 0、fail 是 1。
+    expect(o.totals.counted).toBe(1);
+    expect(o.totals.pass).toBe(0);
+    expect(o.totals.fail).toBe(1);
     expect(o.headline.status).toBe('broken');
     expect(o.headline.statusLabel).not.toBe('可以正常使用');
   });

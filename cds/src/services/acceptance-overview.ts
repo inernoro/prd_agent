@@ -33,7 +33,14 @@ export interface OverviewReportRef {
   kind: ReportKind;
   target: string;
   targetDate: string | null;
+  /**
+   * **生效结论**：有阻断缺陷即 fail，否则按报告自己写的那个。
+   * 在 `toRef` 这一个边界上换算一次，下游（计数、通过率、簇、日历、发布闸、流水线）
+   * 一律直接用它，谁都不必也不许再判一遍。
+   */
   verdict: OverviewVerdict | null;
+  /** 报告自己写的结论，未经阻断缺陷覆盖。只给需要指出「它自称通过」的措辞用。 */
+  claimedVerdict: OverviewVerdict | null;
   tier: string | null;
   defectCounts: Record<string, number> | null;
   projectId: string | null;
@@ -218,7 +225,8 @@ function toRef(r: AcceptanceReportMeta, parsed: ParsedReportTitle, version: numb
     kind: parsed.kind,
     target: parsed.target,
     targetDate: parsed.targetDate,
-    verdict: r.verdict ?? null,
+    verdict: effectiveVerdict(r),
+    claimedVerdict: r.verdict ?? null,
     tier: r.tier ?? null,
     defectCounts: r.defectCounts ?? null,
     projectId: r.projectId ?? null,
@@ -471,13 +479,17 @@ export function buildReportsOverview(
   const mergeCoverage = buildMergeCoverage(tombstones, allLatest, fromMs, toMs, options.projectId ?? null);
 
   // 发布闸：只看最近一次「发布验收」的最新版结论。
+  // `r.verdict` 到这里已经是生效结论（在 toRef 换算过），所以一份没写结论但记了 P0 的
+  // 发布验收带着 fail 进来，不会再被这条前置过滤丢掉——原先它会被丢掉，于是更早那份
+  // 通过的报告继续把闸门撑开，而首屏已经说产品坏了（Codex 第二十二轮）。
+  // 不在这里再补一次 hasBlockingDefects：边界已经管了，补上去是一条永远不会红的分支。
   const releaseReports = allLatest.filter((r) => r.kind === '发布验收' && r.verdict);
   const latestRelease = releaseReports[0] ?? null;
-  const lastPassRelease = releaseReports.find((r) => effectiveVerdict(r) === 'pass') ?? null;
+  const lastPassRelease = releaseReports.find((r) => r.verdict === 'pass') ?? null;
   let gateState: ReportsOverview['releaseGate']['state'] = 'unknown';
   let gateReason = '还没有任何发布验收报告，发布前先跑一次「发布验收」。';
   if (latestRelease) {
-    if (effectiveVerdict(latestRelease) === 'pass') {
+    if (latestRelease.verdict === 'pass') {
       gateState = 'open';
       gateReason = `最近一次发布验收 ${fmtDate(latestRelease.createdAt)} 通过。`;
     } else {
@@ -485,8 +497,8 @@ export function buildReportsOverview(
       const b = blockingDefects(latestRelease.defectCounts);
       // 措辞按报告自己写的结论说，后面紧跟阻断缺陷数——「标为通过，阻断缺陷 1 个」
       // 才看得出这份报告自相矛盾；直接说成「未通过」会把矛盾藏起来。
-      const claimed = latestRelease.verdict === 'fail' ? '未通过'
-        : latestRelease.verdict === 'conditional' ? '原则性通过' : '标为通过';
+      const claimed = latestRelease.claimedVerdict === 'fail' ? '未通过'
+        : latestRelease.claimedVerdict === 'conditional' ? '原则性通过' : '标为通过';
       gateReason = `最近一次发布验收 ${fmtDate(latestRelease.createdAt)} ${claimed}`
         + (b ? `，阻断缺陷 ${b} 个` : '')
         + (lastPassRelease ? `；上一次通过是 ${fmtDate(lastPassRelease.createdAt)}。` : '；此前没有通过记录。');
@@ -500,7 +512,7 @@ export function buildReportsOverview(
   // 列着阻断缺陷。验收规范本身也写着「P0/P1 存在，总 Verdict 不得 pass」，所以这里以
   // 缺陷数为准。fail 但完全没记缺陷的那一种仍按产品坏了处理（不知道 ≠ 没有）。
   const failsWithBlocking = windowReports.filter((r) => hasBlockingDefects(r)
-    || (effectiveVerdict(r) === 'fail' && r.defectCounts == null));
+    || (r.verdict === 'fail' && r.defectCounts == null));
   const failsWithoutDefects = windowReports.filter((r) => r.verdict === 'fail' && r.defectCounts != null && blockingDefects(r.defectCounts) === 0);
   // 没填结论的报告不算「测过」：把它算进 ok，第一屏就会对着 0 份通过说「可以正常使用」。
   // verdict 在写入侧是可缺省的（POST /api/reports 不强制），所以这是真实输入能走到的分支。
