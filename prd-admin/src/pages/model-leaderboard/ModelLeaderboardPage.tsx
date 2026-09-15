@@ -60,24 +60,20 @@ import {
 const GRID = '92px minmax(230px, 520px) minmax(196px, 320px) 136px 136px 136px 128px 124px 104px 88px 104px';
 
 /**
- * 分数榜只有六列，富余比 Agent 榜多得多。
+ * 分数榜只有六列，富余比 Agent 榜多得多，全部给对战分那一列。
  *
- * 这里两个上限都是量出来的，不是拍的：模型名最长的一行是
- * `gemini-3.1-flash-image (nano-banana-2) [web…`，380px 会把它截断；而对战分那根条
- * 一旦吃掉全部富余会被拉到 960px，变成一排几乎等长的横线——条长的差别反而看不出来了。
- * 所以两列各给一个上限，剩下的富余交给下面的 TABLE_MAX 居中收口。
- */
-const GRID_SCORE = '92px minmax(260px, 560px) minmax(268px, 460px) 120px 116px 104px';
-
-/**
- * 表格的宽度上限，超出就整体居中。
+ * 这个决定改过三次，把三次的理由都记下来，免得后人再绕一遍：
  *
- * 六列的分数榜在 1920 屏上本来就填不满，与其把富余硬塞给某一列（塞给模型列是一片空白，
- * 塞给分数条是一排长横线），不如让表格居中、两侧对称留白——
- * content-fills-canvas.md 对文本类产物明确允许这一种收口方式。
- * Agent 榜十一列，1820 都不够用，这个上限对它不生效。
+ * 1. 富余给模型列（`minmax(240px, 1fr)`）→ 模型名只有二十来个字符，表格中间空出六百多像素。
+ * 2. 富余给条、但条只有一根线 → 右端跟着数值跑，78 行铺开右边缘是一条锯齿线。
+ * 3. 于是给两列都设上限、表格居中 → 锯齿没了，但左边空出一大片，表格不填满画布了。
+ *
+ * 真正的解法是第 2 步缺的那一半：**给条加满宽轨道**（见 MetricCells 的 Track）。
+ * 右边缘由轨道钉死，条再长也是一排整齐的槽，于是富余可以放心全给它——
+ * 既填满画布，又不参差。模型列仍留 560px 上限，是因为最长的
+ * `gemini-3.1-flash-image (nano-banana-2) [web…` 到这个宽度就够了，再宽只是空白。
  */
-const TABLE_MAX = { agent: 2200, score: 1480 } as const;
+const GRID_SCORE = '92px minmax(260px, 560px) minmax(268px, 1fr) 120px 116px 104px';
 
 /**
  * 首屏渲染多少行、每次追加多少行。
@@ -413,13 +409,7 @@ export default function ModelLeaderboardPage() {
             <MetaStrip snapshot={snapshot} shown={entries.length} rendered={shownEntries.length} />
 
             <div className="overflow-x-auto">
-              <div
-                style={{
-                  minWidth: kind === 'score' ? 920 : 1360,
-                  maxWidth: TABLE_MAX[kind],
-                  margin: '0 auto',
-                }}
-              >
+              <div style={{ minWidth: kind === 'score' ? 920 : 1360 }}>
                 {/* 表头 */}
                 <div
                   className="grid items-end px-6 pt-2.5 pb-2 font-mono text-[9.5px] uppercase shrink-0"
