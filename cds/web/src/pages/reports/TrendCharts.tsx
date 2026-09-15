@@ -203,7 +203,16 @@ function Chart({ title, unit, say, lines, days, zoom, bars, note, tipFor }: Char
         </span>
       </div>
       <div className="plot">
-        <svg viewBox={`0 0 ${w} ${h}`} height={h} preserveAspectRatio="none" role="img" aria-label={title}>
+        {/* 高度走 rem：SVG 的 height 数值属性等于 px，不跟根字号缩，
+            在 80/85/100 三档尺度下会出现「字缩了、画布没缩」。viewBox 仍用
+            无单位的绘图坐标，preserveAspectRatio="none" 让它按实际高度拉伸。 */}
+        <svg
+          viewBox={`0 0 ${w} ${h}`}
+          style={{ height: `${h / 16}rem` }}
+          preserveAspectRatio="none"
+          role="img"
+          aria-label={title}
+        >
           {/* 日常参照带：放大态才给，用来说明「九成日子落在这条带里」。 */}
           {zoom && max > 4 ? <rect className="band" x={0} y={bandTop} width={w} height={h - bandTop} /> : null}
           <line className="grid" x1={0} y1={h} x2={w} y2={h} />

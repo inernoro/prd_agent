@@ -106,6 +106,17 @@ describe('两态：紧凑不画当日细线，刻度上限写在图上', () => {
   });
 });
 
+describe('画布高度要跟着整站尺度缩', () => {
+  it('SVG 不用数值型 height 属性', () => {
+    // SVG 的 height="62" 等于 62px，不跟根字号走。整站是 80/85/100 三档尺度
+    // （html{font-size:85%}），于是会出现「周围的字缩了、画布没缩」。
+    // rem-scale-guard 只扫 px 字面量与 style={{}} 里的数字，扫不到 SVG 属性，
+    // 所以这条改动删掉不会有任何东西变红——那就得自己钉一条。
+    expect(src, 'svg 用了数值型 height 属性').not.toMatch(/<svg[^>]*\sheight=\{[^}]*\}/);
+    expect(src).toMatch(/style=\{\{ height: `\$\{h \/ 16\}rem` \}\}/);
+  });
+});
+
 describe('部署那条线不许被补回来', () => {
   it('组件里没有任何部署序列的引用', () => {
     expect(src).not.toMatch(/deployed\s*[:.[]/);
