@@ -466,16 +466,22 @@ export function buildReportsOverview(
   // 首屏状态（§7.0）：产品失败与验收失败分开。
   const failsWithBlocking = windowReports.filter((r) => r.verdict === 'fail' && (r.defectCounts == null || blockingDefects(r.defectCounts) > 0));
   const failsWithoutDefects = windowReports.filter((r) => r.verdict === 'fail' && r.defectCounts != null && blockingDefects(r.defectCounts) === 0);
+  // 没填结论的报告不算「测过」：把它算进 ok，第一屏就会对着 0 份通过说「可以正常使用」。
+  // verdict 在写入侧是可缺省的（POST /api/reports 不强制），所以这是真实输入能走到的分支。
+  const decided = counts.pass + counts.conditional + counts.fail;
   let status: ReportsOverview['headline']['status'];
   if (failsWithBlocking.length > 0) status = 'broken';
-  else if (windowReports.length === 0 || failsWithoutDefects.length > 0) status = 'untested';
+  else if (decided === 0 || failsWithoutDefects.length > 0) status = 'untested';
   else status = 'ok';
   const statusLabel = status === 'broken' ? '有功能坏了' : status === 'ok' ? '可以正常使用' : '这次没测出来';
 
   const top = clusters.find((c) => c.verdict === 'fail' || c.verdict === 'conflict');
   let sentence: string;
+  const undeterminedTail = counts.undetermined > 0 ? `；另有 ${counts.undetermined} 份没有填结论，不计入判断。` : '';
   if (windowReports.length === 0) {
     sentence = `最近 ${days} 天没有归档任何验收报告，无法判断产品状态。`;
+  } else if (decided === 0) {
+    sentence = `最近 ${days} 天归档了 ${counts.counted} 份报告，都没有填结论，判断不出产品状态。`;
   } else if (counts.fail > 0 && top) {
     const same = top.count > 1 ? `里有 ${top.count} 份指向同一处：${top.target}` : `：${top.target}`;
     const streak = top.streakWindows > 1 ? `，连续第 ${top.streakWindows} 个时间窗未通过` : '';
@@ -483,9 +489,9 @@ export function buildReportsOverview(
   } else if (counts.fail > 0) {
     sentence = `${counts.fail} 份未通过，分散在不同对象上。`;
   } else if (counts.conditional > 0) {
-    sentence = `${counts.counted} 份验收没有发现阻断；${counts.conditional} 份有条件通过，条件都在待决清单里。`;
+    sentence = `${decided} 份验收没有发现阻断；${counts.conditional} 份有条件通过，条件都在待决清单里${undeterminedTail || '。'}`;
   } else {
-    sentence = `${counts.counted} 份验收全部通过，没有发现阻断。`;
+    sentence = `${counts.pass} 份验收全部通过，没有发现阻断${undeterminedTail || '。'}`;
   }
 
   const supports: ReportsOverview['headline']['supports'] = [];

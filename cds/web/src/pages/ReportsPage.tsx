@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
+import { resolveKindFilter } from '@/lib/reportKindFilter';
 import {
   ArrowLeft, ArrowUpDown, Boxes, CalendarDays, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, Database, Download, FileCode2, FileText, FolderOpen,
   GitBranch, GitCommitHorizontal, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
@@ -899,6 +900,15 @@ function ReportsHome({
     return order.filter((k) => (kindCounts.get(k) ?? 0) > 0).map((k) => ({ kind: k, count: kindCounts.get(k) ?? 0 }));
   }, [kindCounts]);
   const allCount = useMemo(() => Array.from(kindCounts.values()).reduce((a, b) => a + b, 0), [kindCounts]);
+  // 选中的类型在新作用域里一份都没有时，页签会被 kindTabs 摘掉（它只留 count > 0 的），
+  // 而 ledgerRows 还照着它过滤：台账空着，界面上却没有任何选中的控件能解释或清掉它。
+  // 判据在 resolveKindFilter 里，这里只负责接线。
+  useEffect(() => {
+    const next = resolveKindFilter(kindFilter, kindTabs);
+    if (next === kindFilter) return;
+    setKindFilter(next);
+    setPage(0);
+  }, [kindTabs, kindFilter]);
 
   const openById = useCallback((id: string) => {
     const r = reportById.get(id);
