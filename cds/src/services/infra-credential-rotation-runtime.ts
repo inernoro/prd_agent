@@ -334,6 +334,41 @@ function declaredApplicationConnectionKeys(
   });
 }
 
+/**
+ * 部署 SSE 的权威结论只在终态事件的 payload 里：路由算完 hasError 之后发
+ * `event: complete` 且 `ok: !hasError`——**失败时它同样发 complete**，只是 ok 是 false。
+ * 所以「响应里出现过 event: complete」不能当成功判据，「整段里搜得到 "ok":true」也不能
+ * （中途任何一帧都可能带这个串）。这条判定的下游是「把消费者标记为已部署、继续走向
+ * 撤销旧凭据」，读错一次就是拿着没部署成功的消费者去吊销它还在用的凭据。
+ *
+ * 路由那边的注释写得很清楚：消费方直接读 ok，不要再自己推导。这里照做。
+ */
+export function readDeploymentSseOutcome(body: string): { ok: boolean; reason: string } {
+  const frames = String(body || '').replace(/\r\n/g, '\n').split(/\n\n+/);
+  let terminal: { event: string; data: string } | null = null;
+  for (const frame of frames) {
+    let event = '';
+    const dataLines: string[] = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice('event:'.length).trim();
+      else if (line.startsWith('data:')) dataLines.push(line.slice('data:'.length).trim());
+    }
+    if (event === 'complete' || event === 'error') terminal = { event, data: dataLines.join('\n') };
+  }
+  if (!terminal) return { ok: false, reason: 'no_terminal_event' };
+  if (terminal.event === 'error') return { ok: false, reason: 'deploy_error_event' };
+  let payload: unknown;
+  try {
+    payload = JSON.parse(terminal.data);
+  } catch {
+    // 解析不出来就是不知道，不是成功——「读不到结论」不许长得跟「结论是成功」一样。
+    return { ok: false, reason: 'unparsable_complete_payload' };
+  }
+  const ok = typeof payload === 'object' && payload !== null
+    && (payload as { ok?: unknown }).ok === true;
+  return { ok, reason: ok ? 'ok' : 'complete_reported_failure' };
+}
+
 export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinator {
   constructor(
     private readonly state: StateService,
@@ -411,8 +446,9 @@ export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinat
           },
         );
         const body = await response.text();
-        if (!response.ok || !/(?:event:\s*complete|"ok"\s*:\s*true)/.test(body)) {
-          throw new Error('rotation.consumer_deploy_failed');
+        const outcome = readDeploymentSseOutcome(body);
+        if (!response.ok || !outcome.ok) {
+          throw new Error(`rotation.consumer_deploy_failed:${response.ok ? outcome.reason : `http_${response.status}`}`);
         }
         await onProgress?.(consumerIds.filter((consumerId) => consumerId.split('/')[0] === branchId));
       } finally {

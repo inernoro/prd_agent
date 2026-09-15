@@ -3061,7 +3061,11 @@ export class AgentWorkspaceSessionRuntime {
       `--env ${shellQuote('CDS_OUTPUT_PREFLIGHT=1')}`,
       `--env ${shellQuote(`CDS_OUTPUT_PREFLIGHT_CONFIG=${config}`)}`,
       '--entrypoint node',
-      shellQuote(OPEN_DESIGN_IMAGE),
+      // 用这次会话真正在跑的那个镜像，不是编译进来的默认值。能力探测、准备、主会话
+      // 全走 this.image；导出这一步却退回默认镜像，于是「配置的镜像验过了、能跑」
+      // 与「导出时拉的是另一个镜像」可以同时成立——离线节点上表现为整轮跑完、只在
+      // 导出那一刻失败，而失败原因指向一个与本次运行无关的镜像。
+      shellQuote(this.image),
       '-e',
       shellQuote(OUTPUT_PREFLIGHT_SCRIPT),
     ].join(' '), { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) });
