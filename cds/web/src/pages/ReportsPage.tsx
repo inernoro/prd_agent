@@ -919,13 +919,17 @@ function ReportsHome({
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
   // 「证据」= 把该对象的全部报告平铺进台账（搜索对象名），而不是只开最新一份。
+  // 所有会把行挡住的筛选都要一起放开：类型页签、被取代版本、页码，以及文件夹与系统视图。
+  // 少放开一个，链接上写着「N 份」点进去却是空台账——从「不通过」视图点开一份原则性通过的
+  // 根因就正好命中这一格（predicate-and-wiring-discipline 形状 1：判据只盖住看得见的那一个）。
   const openCluster = useCallback((cluster: OverviewCluster) => {
     onSearchChange(cluster.target);
+    onFilterSelect('all');
     setKindFilter('all');
     setShowSuperseded(true);
     setPage(0);
     window.setTimeout(() => jumpTo('ledger'), 0);
-  }, [onSearchChange, jumpTo]);
+  }, [onSearchChange, onFilterSelect, jumpTo]);
 
   const filterMenu = (
     <div className="flex items-center gap-1">
