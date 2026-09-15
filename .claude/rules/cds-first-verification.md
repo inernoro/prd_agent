@@ -148,9 +148,15 @@ which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PAT
 
 ## 七、例外
 
-只改这些的，不需要走上面任何一条：`doc/`、`.claude/skills/`、`.claude/rules/`、
-`changelogs/`、`README.md`、纯注释。凡是改动可执行代码（`.cs` / `.ts` / `.tsx` /
-`.rs` / `.cjs` / Dockerfile / docker-compose 等）一律要，无例外。
+只改这些的，不需要走上面任何一条：`doc/`、`.claude/rules/`、`changelogs/`、`README.md`、
+纯注释，以及技能目录里的**纯元数据**（`SKILL.md`、`reference/` 下的说明文档）。
+
+**技能目录不整个豁免**：`.claude/skills/` 底下有大量可执行脚本（`cdscli.py`、各技能的
+`scripts/*.py|mjs`），它们在第一节的表里是有判据的——一部分在 `release-script-test` 的
+清单里，其余只能本地跑。按文件类型判，不按目录判。
+
+凡是改动可执行代码（`.cs` / `.ts` / `.tsx` / `.rs` / `.py` / `.mjs` / `.cjs` /
+Dockerfile / docker-compose 等）一律要，无例外。
 
 ## 八、历史背景
 
