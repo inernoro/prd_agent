@@ -156,6 +156,12 @@ public sealed class GitHubUserConnectionService
     /// </summary>
     public async Task<GitHubDisconnectResult> DisconnectAsync(string userId, CancellationToken ct)
     {
+        // 先把要断开的**那一条**记下来。后面撤销要打一次 GitHub（几百毫秒），
+        // 这期间用户完全可能在另一个标签页把授权重新走完、写入一条新连接；
+        // 那时再按用户 ID 删，删掉的就是刚连上的新连接——用户眼睁睁看着刚接好的又没了。
+        // 所以删除必须钉在这一条上（同一条记录、同一份密文），别人写进来的新连接不归这次断开管。
+        var target = await GetConnectionAsync(userId, ct);
+
         GitHubTokenRevocation revocation;
         try
         {
@@ -175,12 +181,34 @@ public sealed class GitHubUserConnectionService
             revocation = GitHubTokenRevocation.Failed;
         }
 
-        var result = await _db.GitHubUserConnections.DeleteOneAsync(x => x.UserId == userId, ct);
+        if (target == null)
+        {
+            _logger.LogInformation("[GitHubConnect] disconnect user={UserId}：本来就没有连接记录", userId);
+            return new GitHubDisconnectResult(Removed: false, revocation);
+        }
+
+        // 钉住 Id + 那一份密文：中途被别人换掉（重新授权会 upsert 同一条记录、换新密文）就不删。
+        var result = await _db.GitHubUserConnections.DeleteOneAsync(
+            x => x.Id == target.Id && x.AccessTokenEncrypted == target.AccessTokenEncrypted, ct);
+
+        var removed = result.DeletedCount > 0;
+        if (!removed)
+        {
+            // 没删成只有一种来路：这期间有人重新授权、把它换成了另一份连接。
+            // 那条新连接不归这次断开管，保留它才是对的。
+            //
+            // 已知边界：撤销打的是「删授权」，它会连带作废本应用为这个用户签发的**全部**令牌，
+            // 所以那条新连接的令牌很可能也一起失效了。这里不去猜、也不替用户删——
+            // 连接状态接口每次都会真问一次 GitHub，失效的话界面会显示「授权已失效」并给出重连出口。
+            _logger.LogWarning(
+                "[GitHubConnect] disconnect user={UserId}：期间连接已被替换，保留新连接不删", userId);
+        }
+
         _logger.LogInformation(
             "[GitHubConnect] disconnect user={UserId} removed={Removed} revocation={Revocation}",
-            userId, result.DeletedCount > 0, revocation);
+            userId, removed, revocation);
 
-        return new GitHubDisconnectResult(result.DeletedCount > 0, revocation);
+        return new GitHubDisconnectResult(removed, revocation);
     }
 
     public Task TouchLastUsedAsync(string userId, CancellationToken ct)
