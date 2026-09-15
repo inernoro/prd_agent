@@ -67,4 +67,18 @@
 | 封面稳定走兜底 | 四次重跑四次都是，说明模型产出封面槽位的成功率有系统性问题，不是偶发 | 兜底页现在能见人，但没用上 s-cover 的版面设计 | 查封面范本的槽位协议为什么模型对不上；这是「产出成功率」问题，与版式选择无关 |
 | 版式退化成单一 | 六页里四页是 s-chapter。这篇知识本身是「小标题 + 一段话」重复四次，撑得起的版式筛完只剩两个 | 观感单调，但选的没错 | 换一篇有数据、有清单的知识验证会不会自动分化；必要时给 PickLayout 加「相邻页不重样」的偏好 |
 | 同页标题出现两次 | 页面标题与知识小标题说的是同一件事 | 已从六次降到两次，不再刺眼 | 暂不处理；真要治得在大纲阶段避免用小标题原文当页标题 |
-| OpenDesign 执行器在预览环境不可用 | `enabled=false`，原因「暂时无法读取 CDS Remote Agent 运行事实」；codex / claude 适配器在 MAP 未注册 | 四个 MVP 目前全部由 map-gateway 承担，OpenDesign 这条路一次都没真跑过 | 这正是 S1 基座那一步；PPT 的观感问题不能算在 OpenDesign 头上 |
+| OpenDesign 执行器在预览环境不可用 | **根因已定位**：MAP 探针打的 `GET /api/projects/{id}/agent-runtime-providers` 在线上 CDS 上返回 `Unknown API endpoint`。线上 CDS 跑另一条分支，其 `remote-hosts.ts` blob 与 `origin/main` 完全一致（`624091482`），两边都没有这条路由；CDS 侧的运行时注册表、capability 探针、镜像构建在主干上都是 0 个文件 | 四个 MVP 目前全部由 map-gateway 承担，OpenDesign 这条路一次都没真跑过 | CDS 半边已随 [PR #1533](https://github.com/inernoro/prd_agent/pull/1533) 提交合主干；合并后还需线上 CDS 自更新到含该构建才生效 |
+
+## OpenDesign 不可用的排查结论（2026-09-15）
+
+**不是配置问题，也不是凭据问题。** 逐层验过：
+
+| 层 | 结论 |
+|---|---|
+| MAP 的 CDS 连接 | `status: active`、`lastProbeOk: true`、scope 含 `instance:read` 与 `shared-service:deploy`，够用 |
+| CDS 路由 | 拿 `AI_ACCESS_KEY` 直打，返回 `Unknown API endpoint: GET /api/projects/.../agent-runtime-providers` |
+| 线上 CDS 构建 | 跑 `claude/basic-error-solution-btq0os` @ `6d981fb2e`，其 `remote-hosts.ts` blob = `624091482`，与 `origin/main` 完全一致，都没有这条路由 |
+| 主干上的 CDS 物料 | `agent-runtime-provider-registry.ts`、`agent-workspace-session-runtime.ts`、`open-design-runtime/` 在 `origin/main` 上都是 **0 个文件** |
+| 销钉镜像 | GHCR 上仍可拉（manifest HTTP 200），`prepareImage()` 会自动 pull，不是阻塞点 |
+
+**顺带一个诊断性缺陷（尚未修）**：`DesignArtifactProviderCatalog` 的 catch-all 把真实异常（404）吞掉，统一报「暂时无法读取 CDS Remote Agent 运行事实，请检查系统连接」。而连接是好的——这句话把排查指向了完全错误的方向。建议把 404 / 超时 / 连接失败分开报。
