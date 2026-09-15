@@ -122,18 +122,34 @@ function PulseRow({
             <span className="font-mono text-[0.625rem] text-muted-foreground">{describePulse(pulse, expected)}</span>
           </div>
         )}
-        {/* 孤立样本与失败点画在 HTML 层，不画进 SVG。
-            那个 SVG 是 preserveAspectRatio="none" 横向拉伸的（折线需要这样铺满），
-            圆画在里面会被抻成扁横杠——线可以变形，点不行，点变形就读成了别的东西。 */}
+        {/* 孤立样本画成「一次检查一根」的棒棒糖：一根细杆从基线立到那次的耗时高度，
+            顶上一个圆头。
+            
+            为什么不是零散的点：用户 2026-09-15 问「为什么有些是点状的、有些是折线图」——
+            零散的点看起来像一条**断掉的折线**，而它其实是另一回事：那条监控 6 小时才查
+            一次，四次都没漏。棒棒糖是离散测量的标准画法，一眼就读成「刻意如此」而不是
+            「坏了」。密的连成线，稀的一次一根，两种画法各自诚实。
+
+            画在 HTML 层而不是 SVG 里：那个 SVG 是 preserveAspectRatio="none" 横向拉伸的
+            （折线需要这样铺满），圆画在里面会被抻成扁横杠——线可以变形，点不行。 */}
         {hasPulseInk(pulse) ? (
           <div className="pointer-events-none absolute inset-0">
-            {[...pulse.dots.map((d) => ({ ...d })), ...pulse.downs.map((d) => ({ ...d, down: true }))].map((d, i) => (
-              <span
-                key={i}
-                className={cn('absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full', d.down ? 'bg-bad' : DOT[row.worst])}
-                style={{ left: `${(d.x / PULSE_GEOMETRY.width) * 100}%`, top: `${(d.y / PULSE_GEOMETRY.height) * 100}%` }}
-              />
-            ))}
+            {[...pulse.dots, ...pulse.downs.map((d) => ({ ...d, down: true }))].map((d, i) => {
+              const top = (d.y / PULSE_GEOMETRY.height) * 100;
+              const base = ((PULSE_GEOMETRY.height - PULSE_GEOMETRY.pad) / PULSE_GEOMETRY.height) * 100;
+              return (
+                <span key={i} className="absolute" style={{ left: `${(d.x / PULSE_GEOMETRY.width) * 100}%`, top: 0, bottom: 0 }}>
+                  <span
+                    className={cn('absolute w-px -translate-x-1/2', d.down ? 'bg-bad/45' : 'bg-[hsl(var(--hairline-strong))]')}
+                    style={{ top: `${top}%`, height: `${Math.max(0, base - top)}%` }}
+                  />
+                  <span
+                    className={cn('absolute h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full', d.down ? 'bg-bad' : DOT[row.worst])}
+                    style={{ top: `${top}%` }}
+                  />
+                </span>
+              );
+            })}
           </div>
         ) : null}
         {/* 只有「真的漏过」才出话。以前不管三七二十一都盖一句「线是断的」，
@@ -188,7 +204,7 @@ export function PulseWall({
       <div className="grid shrink-0 grid-cols-[minmax(0,1fr)] gap-2 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-2 lg:grid-cols-[15rem_minmax(0,1fr)_9.5rem]">
         <span className="font-mono text-[0.625rem] tracking-widest text-muted-foreground">业务 / 判据</span>
         <span className="hidden font-mono text-[0.625rem] tracking-widest text-muted-foreground lg:block">
-          近 24 小时 · 线高 = 响应耗时 · 断开 = 那一段没有采样
+          近 24 小时 · 高度 = 响应耗时 · 探得密的连成线，探得稀的一次检查一根
         </span>
         <span className="hidden text-right font-mono text-[0.625rem] tracking-widest text-muted-foreground lg:block">可用率 · 上次检查</span>
       </div>

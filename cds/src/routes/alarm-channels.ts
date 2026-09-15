@@ -28,6 +28,7 @@ import { BARK_LEVELS, drillEvent, sendAlarm } from '../services/alarm-dispatch.j
 import {
   ALARM_EVENT_KINDS,
   channelConfigured,
+  normalizeEventKind,
   type AlarmChannelConfig,
   type AlarmChannelKind,
   type AlarmEventKind,
@@ -118,8 +119,11 @@ export function parseChannel(
   const name = str(body.name, 64);
   if (!name) fail('给这条通道起个名字（「我的手机」「运维群」），出问题时你要认得出是谁响了');
 
+  // 归一化而不是直接过滤：旧名字（不分来源的 recovered）要能继续提交，不逼调用方先迁移。
   const events = Array.isArray(body.events)
-    ? body.events.filter((e): e is AlarmEventKind => ALARM_EVENT_KINDS.includes(e as AlarmEventKind))
+    ? [...new Set(body.events
+        .map((e) => (typeof e === 'string' ? normalizeEventKind(e) : null))
+        .filter((e): e is AlarmEventKind => e !== null))]
     : [];
   // 空事件不是「静音」——静音靠 enabled。一条什么都不订的通道是一个从落地那天起
   // 就不会响的铃，而它在列表里看着和正常的一模一样。

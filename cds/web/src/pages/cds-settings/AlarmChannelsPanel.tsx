@@ -23,7 +23,7 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 type ChannelKind = 'bark' | 'webhook' | 'map';
-type EventKind = 'business-down' | 'infra-down' | 'recovered';
+type EventKind = 'business-down' | 'business-recovered' | 'infra-down' | 'infra-recovered';
 type ChannelStatus = 'unconfigured' | 'untested' | 'healthy' | 'failing';
 
 const KIND_LABEL: Record<ChannelKind, string> = {
@@ -33,10 +33,11 @@ const KIND_LABEL: Record<ChannelKind, string> = {
 };
 
 /** 事件名后面那句话解释「勾了会收到什么」——只给名字等于让人自己猜。 */
-const EVENT_META: Record<EventKind, { label: string; what: string }> = {
+const EVENT_META: Record<EventKind, { label: string; what: string; noisy?: boolean }> = {
   'business-down': { label: '业务故障', what: '你自己加的业务监控判据没过 —— 用户现在用不了' },
-  'infra-down': { label: '基础设施故障', what: '容器、端口、预览域名不通 —— 分支预览重建时也会触发，容易刷屏' },
-  recovered: { label: '恢复', what: '之前挂掉的那条重新通了' },
+  'business-recovered': { label: '业务恢复', what: '之前挂掉的那条业务重新通了' },
+  'infra-down': { label: '基础设施故障', what: '容器、端口、预览域名不通 —— 分支预览重建时也会触发', noisy: true },
+  'infra-recovered': { label: '基础设施恢复', what: '容器重新起来了 —— 分支预览一天重建几十次，这一档最吵', noisy: true },
 };
 
 const STATUS_META: Record<ChannelStatus, { text: string; tone: string }> = {
@@ -77,9 +78,10 @@ interface DraftState {
 function emptyDraft(kind: ChannelKind): DraftState {
   return {
     kind, name: '',
-    // 默认只订业务故障：基础设施故障在有分支预览的实例上会刷屏，
-    // 而一条刷屏的铃和一条不响的铃下场一样——都会被关掉。
-    events: ['business-down'],
+    // 默认只订业务两档。基础设施那两档在有分支预览的实例上会刷屏——2026-09-15
+    // 实测：配好一条通道 3 秒内就收到 5 条，全是预览容器的起落。
+    // 一条刷屏的铃和一条不响的铃下场一样，都会被关掉。
+    events: ['business-down', 'business-recovered'],
     projects: [],
     barkKey: '', barkServerUrl: '', barkGroup: '', barkLevel: '', barkCall: false,
     hookUrl: '', hookMethod: 'POST', hookContentType: '', hookBody: '', hookHeaders: '',
@@ -379,10 +381,12 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
               {(Object.keys(EVENT_META) as EventKind[]).map((k) => (
                 <button key={k} type="button" title={EVENT_META[k].what} onClick={() => toggleEvent(k)}
                   aria-pressed={draft.events.includes(k)}
-                  className={cn('rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
+                  className={cn('inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
                     draft.events.includes(k) ? 'border-primary/50 bg-primary-soft text-primary-ink'
                       : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground')}>
                   {EVENT_META[k].label}
+                  {/* 吵的那两档要标出来，别让人勾完才发现手机在响个不停 */}
+                  {EVENT_META[k].noisy ? <span className="text-warn">会吵</span> : null}
                 </button>
               ))}
             </div>

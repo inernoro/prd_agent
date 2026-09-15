@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  classifyAlert, routeAlarm, renderAlarmMessage, channelConfigured,
+  classifyAlert, routeAlarm, renderAlarmMessage, channelConfigured, normalizeEventKind,
   type AlarmChannelConfig, type AlarmEvent,
 } from '../../src/services/alarm-route.js';
 import { buildBarkUrl, renderTemplate } from '../../src/services/alarm-dispatch.js';
@@ -35,7 +35,36 @@ describe('哪些出问题通知谁', () => {
   it('业务与基础设施分开，看的是 source 这个状态', () => {
     expect(classifyAlert('uptime.target.down', 'custom')).toBe('business-down');
     expect(classifyAlert('uptime.target.down', 'branch')).toBe('infra-down');
-    expect(classifyAlert('uptime.target.recovered', 'custom')).toBe('recovered');
+  });
+
+  /*
+   * 2026-09-15 配第一条真通道时当场量出来的：第一版把「恢复」合成一档，而 CDS 实例上
+   * 有 254 个分支预览目标，创建通道后 3 秒内就有 5 条推送打到手机。合并的那一档里
+   * 业务的份额接近于零——它名义上叫「恢复」，实际是「分支预览重建播报」。
+   */
+  it('恢复也必须按来源拆，否则那一档实际是分支预览重建播报', () => {
+    expect(classifyAlert('uptime.target.recovered', 'custom')).toBe('business-recovered');
+    expect(classifyAlert('uptime.target.recovered', 'branch')).toBe('infra-recovered');
+  });
+
+  it('订了业务恢复的通道，收不到预览容器的恢复', () => {
+    const c = channel({ events: ['business-recovered'] });
+    expect(routeAlarm([c], { ...EVENT, kind: 'business-recovered' })).toHaveLength(1);
+    expect(routeAlarm([c], { ...EVENT, kind: 'infra-recovered' })).toHaveLength(0);
+  });
+
+  // 旧订阅继续工作，但只升成「业务恢复」——把它静默扩成「连预览容器也推给你」，
+  // 是替用户做了一个他没同意的扩张，而这个方向的错会直接变成刷屏。
+  it('存量的不分来源 recovered 按业务恢复算，不静默扩成两档', () => {
+    expect(normalizeEventKind('recovered')).toBe('business-recovered');
+    const legacy = channel({ events: ['recovered' as never] });
+    expect(routeAlarm([legacy], { ...EVENT, kind: 'business-recovered' })).toHaveLength(1);
+    expect(routeAlarm([legacy], { ...EVENT, kind: 'infra-recovered' })).toHaveLength(0);
+  });
+
+  it('写接口收得下旧名字，存的是新名字', () => {
+    const next = parseChannel({ kind: 'bark', name: 'x', events: ['recovered'], bark: { key: 'k' } }, undefined, NOW);
+    expect(next.events).toEqual(['business-recovered']);
   });
 
   it('停用的通道一条都不发', () => {
@@ -43,7 +72,7 @@ describe('哪些出问题通知谁', () => {
   });
 
   it('没订这一类的不发', () => {
-    expect(routeAlarm([channel({ events: ['recovered'] })], EVENT)).toHaveLength(0);
+    expect(routeAlarm([channel({ events: ['business-recovered'] })], EVENT)).toHaveLength(0);
   });
 
   // 空项目列表 = 全部项目。默认成「一个都不要」会造出一条从落地那天起就不响的铃。
@@ -72,7 +101,7 @@ describe('通知正文', () => {
   });
 
   it('恢复是 passive，并明说无需处理', () => {
-    const m = renderAlarmMessage({ ...EVENT, kind: 'recovered' });
+    const m = renderAlarmMessage({ ...EVENT, kind: 'business-recovered' });
     expect(m.level).toBe('passive');
     expect(m.body).toContain('无需处理');
   });
@@ -137,7 +166,7 @@ describe('写接口', () => {
 
   // 读接口从不回密钥，所以前端也交不回来。强求必填 = 每改一次名字都要重敲一遍。
   it('留空的密钥保持原值', () => {
-    const next = parseChannel({ kind: 'bark', name: '改了名', events: ['recovered'], bark: { key: '' } }, channel(), NOW);
+    const next = parseChannel({ kind: 'bark', name: '改了名', events: ['business-recovered'], bark: { key: '' } }, channel(), NOW);
     expect(next.bark?.key).toBe('abcd1234');
     expect(next.name).toBe('改了名');
     expect(next.id).toBe('c1');

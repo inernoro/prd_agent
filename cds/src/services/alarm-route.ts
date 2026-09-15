@@ -19,21 +19,43 @@ import type { ProbeSource, UptimeAlertEventType } from './uptime-monitor.js';
 export type AlarmChannelKind = 'bark' | 'webhook' | 'map';
 
 /**
- * 事件类别。三类，按「要不要立刻起床」分，不按技术来源分。
+ * 事件类别。两个维度相乘：**业务还是基础设施** × **坏了还是好了**。
  *
- * 业务故障与基础设施故障分开，是因为它们的下一步完全不同：业务挂了是用户现在用不了，
+ * 业务与基础设施必须分开，因为下一步完全不同：业务挂了是用户现在用不了，
  * 容器挂了往往是分支预览在重建。把两者塞进同一个开关，等于逼人要么被预览刷屏、
  * 要么连真故障一起关掉——而多数人会选后者，那条铃就此变成摆设。
+ *
+ * 「恢复」也必须按来源拆，这一条是 2026-09-15 配第一条真通道时当场量出来的：
+ * 第一版把恢复合成一档，而 CDS 实例上有 254 个分支预览目标，创建通道后 3 秒内
+ * 就有 5 条推送打到手机。**合并的那一档里，业务的份额接近于零**——
+ * 它名义上叫「恢复」，实际上是「分支预览重建播报」。
  */
-export type AlarmEventKind = 'business-down' | 'infra-down' | 'recovered';
+export type AlarmEventKind = 'business-down' | 'business-recovered' | 'infra-down' | 'infra-recovered';
 
-export const ALARM_EVENT_KINDS: ReadonlyArray<AlarmEventKind> = ['business-down', 'infra-down', 'recovered'];
+export const ALARM_EVENT_KINDS: ReadonlyArray<AlarmEventKind> = [
+  'business-down', 'business-recovered', 'infra-down', 'infra-recovered',
+];
 
 export const ALARM_EVENT_LABEL: Record<AlarmEventKind, string> = {
   'business-down': '业务故障',
+  'business-recovered': '业务恢复',
   'infra-down': '基础设施故障',
-  recovered: '恢复',
+  'infra-recovered': '基础设施恢复',
 };
+
+/**
+ * 存量事件名 → 现在的名字。
+ *
+ * 只有一条：早先的 `recovered` 不分来源。它按「业务恢复」算而不是两个都算——
+ * 把一条旧订阅静默升级成「连 254 个预览容器的恢复也推给你」，是替用户做了一个
+ * 他没同意的扩张，而这个方向的错会直接变成刷屏。
+ */
+const LEGACY_EVENT: Record<string, AlarmEventKind> = { recovered: 'business-recovered' };
+
+export function normalizeEventKind(raw: string): AlarmEventKind | null {
+  if ((ALARM_EVENT_KINDS as ReadonlyArray<string>).includes(raw)) return raw as AlarmEventKind;
+  return LEGACY_EVENT[raw] ?? null;
+}
 
 export interface AlarmBarkConfig {
   /** 自建 Bark 服务器；留空走官方 */
@@ -102,8 +124,9 @@ export interface AlarmEvent {
  * （能用状态就用状态，拿不到状态才退回匹配字符串）。
  */
 export function classifyAlert(type: UptimeAlertEventType, source: ProbeSource): AlarmEventKind {
-  if (type === 'uptime.target.recovered') return 'recovered';
-  return source === 'custom' ? 'business-down' : 'infra-down';
+  const business = source === 'custom';
+  if (type === 'uptime.target.recovered') return business ? 'business-recovered' : 'infra-recovered';
+  return business ? 'business-down' : 'infra-down';
 }
 
 /**
@@ -119,7 +142,8 @@ export function routeAlarm(
 ): AlarmChannelConfig[] {
   return channels.filter((c) => {
     if (!c.enabled) return false;
-    if (!c.events.includes(event.kind)) return false;
+    // 存量订阅里可能还写着旧名字，这里归一化后再比，不要求写方先迁移。
+    if (!c.events.some((e) => normalizeEventKind(e) === event.kind)) return false;
     if (c.projects.length > 0 && !c.projects.includes(event.projectId)) return false;
     return true;
   });
@@ -144,7 +168,7 @@ export interface AlarmMessage {
  */
 export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string } = {}): AlarmMessage {
   const where = event.projectId ? `项目 ${event.projectId}` : '未归属项目';
-  if (event.kind === 'recovered') {
+  if (event.kind === 'business-recovered' || event.kind === 'infra-recovered') {
     return {
       title: `${event.targetName} 恢复了`,
       body: `${where} · 探测已连续成功，这一条重新可用。无需处理。`,

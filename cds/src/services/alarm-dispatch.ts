@@ -148,7 +148,7 @@ export async function sendAlarm(
       timeoutMs,
     });
     return await notifier.send({
-      type: event.kind === 'recovered' ? 'uptime.target.recovered' : 'uptime.target.down',
+      type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
       targetId: event.targetName,
       targetName: event.targetName,
       projectId: event.projectId,
