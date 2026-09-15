@@ -767,6 +767,30 @@ export async function addGitHubSubscription(storeId: string, input: {
   );
 }
 
+/** 批量添加 GitHub 目录订阅（登录 GitHub → 勾目录 → 一次开启同步） */
+export async function addGitHubSubscriptionBatch(storeId: string, input: {
+  owner: string;
+  repo: string;
+  branch?: string;
+  directories: Array<{ path: string; title?: string }>;
+  includeGlob?: string;
+  tags?: string[];
+  syncIntervalMinutes?: number;
+}) {
+  return await apiRequest<{
+    created: Array<{ id: string; title: string; path: string; syncStatus: string }>;
+    createdCount: number;
+    skipped: Array<{ path: string; reason: string; entryId?: string }>;
+    connectedLogin: string;
+    owner: string;
+    repo: string;
+    branch: string;
+  }>(
+    api.documentStore.entries.subscribeGithubBatch(storeId),
+    { method: 'POST', body: input },
+  );
+}
+
 /** 手动触发同步 */
 export async function triggerSync(entryId: string) {
   return await apiRequest<{ triggered: boolean }>(
