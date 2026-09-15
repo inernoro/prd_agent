@@ -106,6 +106,85 @@ describe('共享凭据轮换真实消费者适配', () => {
     });
   });
 
+  // enumerate 对 profile ID 不设限（上面那条用例自己就把 worker 算成了消费者），
+  // verify 却一度按 MAP 的命名设白名单、并写死 .NET 的连接键名——于是一个健康的
+  // 自定义消费者会让整次轮换回滚（Codex P1 x2，2026-09-15；形状 3：同一件事两处判）。
+  it('自定义消费者（非 api/llmgw 命名、用 DATABASE_URL 接入）验得过，不再整体回滚', async () => {
+    const branch = {
+      id: 'branch1', projectId: 'project-a', status: 'running', services: {
+        worker: { profileId: 'worker', containerName: 'worker-1', hostPort: 19000, status: 'running' },
+      },
+    } as unknown as BranchEntry;
+    const calls: Array<{ url: string }> = [];
+    const probeDeps = {
+      // 这个容器根本没有 MongoDB__ConnectionString——正是写死键名时查无此键的那种消费者。
+      inspectContainerEnv: vi.fn(async () => ({ DATABASE_URL: 'mongodb://next-secret@mongodb/app' })),
+      fetch: vi.fn(async (url: string) => {
+        calls.push({ url });
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    };
+    const coordinator = new CdsRotationConsumerCoordinator({
+      getBranch: () => branch,
+      getEffectiveProfilesForBranch: () => [{
+        id: 'worker',
+        env: { DATABASE_URL: '${CDS_MONGODB_URL}' },
+        readinessProbe: { path: '/ready' },
+      }],
+    } as never, { masterPort: 9900 } as never, probeDeps);
+
+    await coordinator.verify(infra(), ['branch1/worker'], {
+      runtime: 'mongodb', previousUser: 'old', previousSecret: 'old-secret', nextUser: 'next', nextSecret: 'next-secret',
+      originalServiceEnv: {}, originalProjectEnv: {}, resolvedServiceEnv: {},
+    } as never);
+
+    // 探针走 profile 自己声明的那条路径，而不是 MAP 的 /health/ready。
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('http://127.0.0.1:19000/ready');
+  });
+
+  it('自定义消费者没有声明就绪探针时仍然拒绝——放宽的是命名，不是「可验证」这条要求', async () => {
+    const branch = {
+      id: 'branch1', projectId: 'project-a', status: 'running', services: {
+        worker: { profileId: 'worker', containerName: 'worker-1', hostPort: 19000, status: 'running' },
+      },
+    } as unknown as BranchEntry;
+    const coordinator = new CdsRotationConsumerCoordinator({
+      getBranch: () => branch,
+      getEffectiveProfilesForBranch: () => [{ id: 'worker', env: { DATABASE_URL: '${CDS_MONGODB_URL}' } }],
+    } as never, { masterPort: 9900 } as never, {
+      inspectContainerEnv: vi.fn(async () => ({ DATABASE_URL: 'mongodb://next-secret@mongodb/app' })),
+      fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+    });
+
+    await expect(coordinator.verify(infra(), ['branch1/worker'], {
+      runtime: 'mongodb', previousUser: 'old', previousSecret: 'old-secret', nextUser: 'next', nextSecret: 'next-secret',
+      originalServiceEnv: {}, originalProjectEnv: {}, resolvedServiceEnv: {},
+    } as never)).rejects.toThrow('rotation.consumer_readiness_contract_missing');
+  });
+
+  it('新凭据没真的加载进去仍然判失败——放宽的是认哪个键，不是要不要核对', async () => {
+    const branch = {
+      id: 'branch1', projectId: 'project-a', status: 'running', services: {
+        worker: { profileId: 'worker', containerName: 'worker-1', hostPort: 19000, status: 'running' },
+      },
+    } as unknown as BranchEntry;
+    const coordinator = new CdsRotationConsumerCoordinator({
+      getBranch: () => branch,
+      getEffectiveProfilesForBranch: () => [{
+        id: 'worker', env: { DATABASE_URL: '${CDS_MONGODB_URL}' }, readinessProbe: { path: '/ready' },
+      }],
+    } as never, { masterPort: 9900 } as never, {
+      inspectContainerEnv: vi.fn(async () => ({ DATABASE_URL: 'mongodb://old-secret@mongodb/app' })),
+      fetch: vi.fn(async () => new Response('{}', { status: 200 })),
+    });
+
+    await expect(coordinator.verify(infra(), ['branch1/worker'], {
+      runtime: 'mongodb', previousUser: 'old', previousSecret: 'old-secret', nextUser: 'next', nextSecret: 'next-secret',
+      originalServiceEnv: {}, originalProjectEnv: {}, resolvedServiceEnv: {},
+    } as never)).rejects.toThrow('rotation.consumer_new_credential_not_loaded');
+  });
+
   it.each([
     {
       profileId: 'api', hostPort: 15000, readinessPath: '/health/ready', status: 'healthy',

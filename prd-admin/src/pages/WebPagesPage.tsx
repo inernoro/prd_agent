@@ -445,6 +445,25 @@ export default function WebPagesPage() {
     setShowUploadDialog(true);
   };
 
+  /**
+   * 在团队空间里新建的站点必须归属该团队，否则会落到个人空间、从当前列表里消失。
+   * 上传与「引用知识生成」是两条创建路径，归属只能有一套判据——生成那条曾经漏掉，
+   * 于是从团队空间生成的网页一完成就不见了（形状 3：同一件事两处做，只做了一处）。
+   */
+  const assignNewSiteToDialogSpace = async (siteId: string, verb: string) => {
+    const dialogSpace = uploadDialogSpaceRef.current;
+    if (dialogSpace.kind !== 'team') return;
+    const assigned = await setSiteTeams(siteId, [dialogSpace.teamId]);
+    if (!assigned.success) {
+      toast.error(`已${verb}，但归属团队失败`, `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
+      return;
+    }
+    if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeRealGroupId) {
+      const grouped = await setSiteGroup(siteId, activeRealGroupId);
+      if (!grouped.success) toast.error(`已${verb}，但归入分组失败`, grouped.error?.message || '可稍后通过批量操作移入分组');
+    }
+  };
+
   useEffect(() => {
     if (!location.search || consumedLaunchRef.current === location.search) return;
     const launch = parseDesignArtifactLaunch(location.search);
@@ -456,8 +475,11 @@ export default function WebPagesPage() {
       title: launch.sourceTitle,
       storeName: launch.sourceStoreName,
     });
+    // 深链直接开生成弹窗时也要快照空间：这条路径以前从不设 ref，
+    // 归属会用到上一次打开上传弹窗时的旧值（或默认的个人空间）。
+    uploadDialogSpaceRef.current = currentSpace;
     setShowGenerateDialog(true);
-  }, [location.search]);
+  }, [location.search, currentSpace]);
   // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
   // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
@@ -2022,19 +2044,8 @@ export default function WebPagesPage() {
               setPendingExternalFile(null);
             }
             // 串数据修复：在团队空间内新建的站点必须归属该团队空间，否则会落到个人空间。
-            // 用打开弹窗时快照的空间（uploadDialogSpaceRef），避免上传期间切换空间归错团队
-            const dialogSpace = uploadDialogSpaceRef.current;
-            if (saved && isCreate && dialogSpace.kind === 'team') {
-              const assigned = await setSiteTeams(saved.id, [dialogSpace.teamId]);
-              // 归属失败不能静默：告知用户站点暂在个人空间（与 dropzone 路径一致）
-              if (!assigned.success) {
-                toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
-              } else if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeRealGroupId) {
-                // 仍停留在同一团队的专题/分类视图 → 新网页顺手归入该分组
-                const grouped = await setSiteGroup(saved.id, activeRealGroupId);
-                if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
-              }
-            }
+            // 用打开弹窗时快照的空间（uploadDialogSpaceRef），避免上传期间切换空间归错团队。
+            if (saved && isCreate) await assignNewSiteToDialogSpace(saved.id, '上传');
             load();
             loadMeta();
             // 仅"新建上传"触发滑入 + 光环动效；编辑/重传现有站点不动
@@ -2047,7 +2058,13 @@ export default function WebPagesPage() {
         open={showGenerateDialog}
         initialSource={generateSource}
         onClose={() => setShowGenerateDialog(false)}
-        onCreated={() => { void load(); void loadMeta(); }}
+        onCreated={(siteId) => {
+          void (async () => {
+            await assignNewSiteToDialogSpace(siteId, '生成');
+            void load();
+            void loadMeta();
+          })();
+        }}
       />
 
       {/* 拖文件替换网页 — 二次确认 */}

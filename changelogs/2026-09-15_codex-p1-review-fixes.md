@@ -30,3 +30,5 @@
 | security | cds | 密封旧版迁移凭据前先脱敏日志：publicDataMigration 靠 source/target 上的明文密码比对着抹掉 log/progressMessage/errorMessage 里的密码，密封把明文拿走后就再也抹不掉了，存量 migration.log 里旧管线写进去的 --password <secret> 会从接口原样吐出且永久留存 |
 | security | cds | 凭据升级的落盘顺序改成备份在前、主文件在后：该流程只在「主文件报告发生变化」时触发，先写主文件则崩在中途会让备份里的明文永远不再被重扫；倒过来写则崩溃后下次启动仍能检测并续跑 |
 | perf | prd-api | 版本历史列表排除整页 HTML 与文件字节数组：一条记录可带多兆的整页与整包文件，列表一次取 100 条而对外只映射元数据，不排除就等于打开版本面板即分配几百兆；「只带元数据」同时写进接口契约，不在实现里偷偷 Project |
+| fix | cds | 凭据轮换的 verify 与 enumerate 对齐判据：认哪个应用连接键改用 profile 自己声明的键（写死 .NET 键名会让靠 ${CDS_*_URL}/MONGO_URI/DATABASE_URL/CACHE_URL 接入的消费者查无此键、整次轮换回滚），就绪探测改走 profile 声明的路径而非按 api/llmgw 命名设白名单；已知形态仍做深度校验，认不得的退到「声明的探针返回 200」 |
+| fix | prd-admin | 团队空间里「引用知识生成」的网页也归属该团队与分组：归属逻辑抽成共用函数，上传与生成两条创建路径共用；深链直接开生成弹窗时也快照当前空间，不再沿用上一次的旧值 |

@@ -317,6 +317,23 @@ const DEFAULT_CONSUMER_PROBE_DEPS: ConsumerProbeDeps = {
 };
 
 /** 使用 CDS 自己的部署端点重建真实消费者，并以容器运行环境反查新凭据确已加载。 */
+/**
+ * profile 自己声明的「应用连接键」。enumerate 用它判断谁是消费者，verify 用它
+ * 判断新凭据有没有真的加载进去——两处必须是同一套判据，否则会出现
+ * 「算你是消费者、又验不了你」的死角，让整次轮换回滚。
+ */
+function declaredApplicationConnectionKeys(
+  profile: { env?: Record<string, string> } | undefined,
+  runtime: 'mongodb' | 'redis',
+): string[] {
+  return Object.keys(profile?.env || {}).filter((key) => {
+    if (/^CDS_/i.test(key) || /(?:INITDB_ROOT|PASSWORD|USERNAME|\bUSER)$/i.test(key)) return false;
+    return runtime === 'mongodb'
+      ? /(MONGO|DATABASE_URL|CONNECTIONSTRING)/i.test(key)
+      : /(REDIS|CACHE_URL|CONNECTIONSTRING)/i.test(key);
+  });
+}
+
 export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinator {
   constructor(
     private readonly state: StateService,
@@ -354,12 +371,7 @@ export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinat
         // project customEnv 与 CDS 派生键会被全量注入每个 profile，不能把容器里
         // 任意 CDS_MONGODB_URL/CDS_REDIS_* 的存在当成“该 profile 正在消费”。
         // legacy 运行态兜底只核对 profile 自己声明的应用连接键。
-        const declaredApplicationKeys = Object.keys(profile.env || {}).filter((key) => {
-          if (/^CDS_/i.test(key) || /(?:INITDB_ROOT|PASSWORD|USERNAME|\bUSER)$/i.test(key)) return false;
-          return runtime === 'mongodb'
-            ? /(MONGO|DATABASE_URL|CONNECTIONSTRING)/i.test(key)
-            : /(REDIS|CACHE_URL|CONNECTIONSTRING)/i.test(key);
-        });
+        const declaredApplicationKeys = declaredApplicationConnectionKeys(profile, runtime);
         const liveCredentialMatch = declaredApplicationKeys.some((key) => {
           const value = liveEnv[key] || '';
           return value.includes(currentSecret) || value.includes(encodeURIComponent(currentSecret));
@@ -424,15 +436,22 @@ export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinat
         throw new Error('rotation.consumer_service_not_running');
       }
       const env = await this.probeDeps.inspectContainerEnv(item.containerName);
-      const applicationKey = expected.runtime === 'mongodb'
-        ? 'MongoDB__ConnectionString'
-        : 'Redis__ConnectionString';
-      const applicationConnection = env[applicationKey] || '';
-      if (!applicationConnection.includes(expected.nextSecret)
-        && !applicationConnection.includes(encodeURIComponent(expected.nextSecret))) {
-        throw new Error('rotation.consumer_new_credential_not_loaded');
-      }
       const profile = this.state.getEffectiveProfilesForBranch(branch).find((candidate) => candidate.id === profileId);
+      // 认哪个键，必须和 enumerate 认消费者时用的是同一套判据。写死 .NET 的
+      // MongoDB__ConnectionString / Redis__ConnectionString 会让所有「靠 ${CDS_*_URL}、
+      // MONGO_URI、DATABASE_URL、CACHE_URL 接入」的消费者在这里查无此键，
+      // 于是 verify 必败、整次轮换回滚——而 enumerate 明明把它们算成了消费者
+      //（判据与接线纪律 形状 3：同一件事两处判，规则不一样）。
+      const applicationKeys = [
+        ...declaredApplicationConnectionKeys(profile, expected.runtime),
+        expected.runtime === 'mongodb' ? 'MongoDB__ConnectionString' : 'Redis__ConnectionString',
+      ];
+      const loaded = applicationKeys.some((key) => {
+        const value = env[key] || '';
+        return value.includes(expected.nextSecret)
+          || value.includes(encodeURIComponent(expected.nextSecret));
+      });
+      if (!loaded) throw new Error('rotation.consumer_new_credential_not_loaded');
       const readinessPath = profile?.readinessProbe?.path;
       if (!readinessPath) throw new Error('rotation.consumer_readiness_contract_missing');
       await this.verifyReadiness(profileId, item.hostPort, env, readinessPath);
@@ -449,9 +468,17 @@ export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinat
     const isServing = id === 'llmgw-serve' || id.startsWith('llmgw-serve-');
     const isConsole = !isServing && (id === 'llmgw' || id.startsWith('llmgw-'));
     const isApi = id === 'api' || id.startsWith('api-');
-    if (!isServing && !isConsole && !isApi) throw new Error('rotation.consumer_readiness_contract_missing');
-    const expectedPath = isServing ? '/gw/v1/readyz' : isConsole ? '/gw/readyz' : '/health/ready';
-    if (readinessPath !== expectedPath) throw new Error('rotation.consumer_readiness_contract_mismatch');
+    // 这三类是我们**知道响应长什么样**的形态，可以做深度校验（status 取值 + 必需组件）。
+    // 但「认不认得这个名字」不再是一道门：enumerate 接纳消费者时对 profile ID 不设限
+    //（按 dependsOn / env 引用 / 实际凭据匹配都算），这里却按 MAP 的命名一票否决——
+    // 一个健康的自定义消费者（比如 worker，仓库自己的枚举用例里就有）会让每次轮换
+    // 整体回滚（形状 3：同一件事两处判，规则不一样）。CDS 服务的是任意项目，
+    // 名字不该是判据。认不得的形态退到我们真正有契约的那一层：声明的探针返回 200。
+    const knownShape = isServing || isConsole || isApi;
+    if (knownShape) {
+      const expectedPath = isServing ? '/gw/v1/readyz' : isConsole ? '/gw/readyz' : '/health/ready';
+      if (readinessPath !== expectedPath) throw new Error('rotation.consumer_readiness_contract_mismatch');
+    }
     const headers: Record<string, string> = {};
     if (isServing) {
       const gatewayKey = env.LlmGwServe__ApiKey || env.LLMGW_SERVE_API_KEY || '';
@@ -464,6 +491,8 @@ export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinat
       const response = await this.probeDeps.fetch(`http://127.0.0.1:${hostPort}${readinessPath}`, { headers, signal: controller.signal });
       if (response.status === 401) throw new Error('rotation.business_readiness_auth_failed');
       if (response.status !== 200) throw new Error('rotation.consumer_readiness_failed');
+      // 认不得的形态：我们对它的响应体没有契约，就到 200 为止，不编一套校验去假装验过。
+      if (!knownShape) return;
       const body = await response.json() as {
         status?: unknown;
         components?: Array<{ name?: unknown; ready?: unknown }>;
