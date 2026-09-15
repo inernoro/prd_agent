@@ -5103,11 +5103,23 @@ export class StateService {
    * 历史报告本来就没进对象存储、以及对象存储里也确实没有。混成一句
    * 「HTTP 404」正是用户看到的那一屏。
    */
-  describeAcceptanceReportStorage(meta: AcceptanceReportMeta): {
+  describeAcceptanceReportStorage(meta: AcceptanceReportMeta, opts: { bodyMissing?: boolean } = {}): {
     durable: boolean;
     reason: string | null;
   } {
-    if (meta.objectKey) return { durable: true, reason: null };
+    if (meta.objectKey) {
+      // 第四种成因：元数据说它在对象存储里，可是取不回来——桶里没有、凭据换了、
+      // 或者对象存储本身不可达。它与「历史报告没进过对象存储」的下一步动作完全不同
+      // （一个是去查桶和网络，一个是无法挽回只能重跑），压成同一句「正文已丢失」
+      // 等于把最需要原因的那一屏的原因扔了。
+      if (opts.bodyMissing) {
+        return {
+          durable: true,
+          reason: `正文登记在对象存储的 ${meta.objectKey}，但这次取不回来：桶里没有该对象，或凭据/网络不通。这不是历史数据缺失，去查对象存储配置与连通性`,
+        };
+      }
+      return { durable: true, reason: null };
+    }
     if (meta.storage === 'local') {
       return { durable: false, reason: '归档时未配置对象存储，正文只写在容器本地盘，容器重建后会丢失' };
     }

@@ -147,6 +147,49 @@ describe('播种', () => {
     expect(service.getBranch(victim.id)!.notes).toBe('我自己写的备注');
   });
 
+  it('再次播种会把时间重新锚到现在，演示数据不会随时间腐烂', () => {
+    // 相对天数只在首播换算一次的话，预览实例跨部署保留 state，那批报告的 createdAt
+    // 永远停在第一次播种的时刻，90 天后整批滑出走向图的窗口——正是这套设计要防的事。
+    seedPreviewInstanceSnapshot(service);
+    const before = service.listAcceptanceReports(null)
+      .filter((r) => r.createdBy === 'preview-instance-seed');
+    expect(before.length).toBeGreaterThan(50);
+
+    // 模拟「这批数据是 100 天前播下的」。
+    const shift = 100 * 86_400_000;
+    for (const r of before) {
+      r.createdAt = new Date(Date.parse(r.createdAt) - shift).toISOString();
+    }
+    for (const b of service.getAllBranches().filter((x) => isSnapshotProjectId(x.projectId))) {
+      b.createdAt = new Date(Date.parse(b.createdAt) - shift).toISOString();
+    }
+
+    expect(seedPreviewInstanceSnapshot(service), '陈旧的时间戳没被认出来').toBe(true);
+
+    const cutoff = Date.now() - 95 * 86_400_000;
+    const after = service.listAcceptanceReports(null)
+      .filter((r) => r.createdBy === 'preview-instance-seed');
+    const stale = after.filter((r) => Date.parse(r.createdAt) < cutoff);
+    expect(stale, `${stale.length} 份报告仍在 95 天窗口之外`).toHaveLength(0);
+  });
+
+  it('时间没漂时不重写，避免每次启动都刷一遍库', () => {
+    seedPreviewInstanceSnapshot(service);
+    expect(seedPreviewInstanceSnapshot(service)).toBe(false);
+  });
+
+  it('只动快照自己播的那批，别人的报告不碰', () => {
+    seedPreviewInstanceSnapshot(service);
+    const foreign = service.createAcceptanceReport({
+      title: '别人写的报告', format: 'html', content: '<p>x</p>',
+      projectId: null, verdict: 'pass', createdBy: 'somebody-else',
+      createdAt: '2020-01-01T00:00:00.000Z',
+    });
+    seedPreviewInstanceSnapshot(service);
+    const still = service.listAcceptanceReports(null).find((r) => r.id === foreign.id);
+    expect(still!.createdAt, '把别人的报告时间改了').toBe('2020-01-01T00:00:00.000Z');
+  });
+
   it('库里有真实项目时一条都不播', () => {
     service.addProject({
       id: 'a-real-project',

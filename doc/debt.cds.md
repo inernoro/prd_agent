@@ -1125,6 +1125,7 @@ mysql / postgres 的 `_URL` 目前没有任何消费方，等真有人用再按�
 | 相关 | `cds/web/src/pages/ProjectSettingsPage.tsx`（`ProjectMigrationTab`） |
 | 相关 | `cds/src/routes/branches.ts`（导出/导入配置，复刻底座） |
 | 相关 | `cds/src/routes/infra-backup.ts`（mongodump/mongorestore，数据迁移底座） |
+| 截图资源持久化（未做） | `cds/src/services/state.ts`（`writeReportAsset` / `resolveReportAssetFile` / `normalizeInlineImages`）、`cds/src/services/report-object-store.ts` |
 | 相关 | `cds/src/services/deploy-stuck-reconciler.ts`（看门狗纯函数 SSOT） |
 | 相关 | `cds/src/services/build-log-meta.ts`（构建历史元数据纯函数，已单测） |
 | 过期分支预览页 | `cds/src/index.ts`（墓碑页渲染与分流）、`cds/src/services/state.ts`（墓碑记录）、`cds/src/routes/github-webhook.ts`（触发） |
@@ -1659,3 +1660,23 @@ mdimp 仓库切到 `dbScope=per-branch` 并下线脚本，属跨仓库迁移，�
 
 补法：给图表单开一组 chart-only 的语义色 token（`--chart-ok` 等），在暗底明度带内取值，
 不动全局 token。做之前先用 validator 校一遍，别凭眼睛调。
+
+## 验收报告的截图资源仍只在容器本地盘（2026-09-15）
+
+来源 PR #1532 第二轮 Codex review（P1）。报告正文已经进对象存储、容器重建后读得回来，
+但报告里的截图没有：归档时会把内联图抽成独立资源，文件写在容器本地的资源目录里，
+容器一重建就没。于是重建之后是「正文打得开、每张图 404」，对视觉验收报告来说
+证据等于没了。
+
+这正是「账在哪货就在哪」判的那种形状，只是下移了一层：账（元数据）与正文现在同级了，
+图还留在原地。
+
+**为什么不在那个 PR 里顺手做**：资源的写入面是同步接口，被同步的归档路径调用，
+而对象存储是异步的；分发面是本地文件的流式响应，要改成「本地未命中就回源对象存储
+并回填」。这是一条新的持久化管线，不是那个 PR 那次口径修正的缺陷，按协作规则
+§5.5 的「有价值但扩范围」留在这里。
+
+**做完算数的判据**：把资源目录整个删掉模拟一次容器重建，报告详情页里的每一张截图
+仍然打得开。不删那个目录的测试永远是绿的——这是这类缺陷唯一可靠的机械判据。
+
+**绕行**：暂时没有。现存报告的截图重建即失，重跑验收才能拿回。

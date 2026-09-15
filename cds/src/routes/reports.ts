@@ -751,7 +751,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (content === undefined) {
         // 说清「为什么没了」：没配对象存储 / 归档于改动之前 / 对象也确实不在，
         // 三种成因的下一步动作完全不同，压成一句「已丢失」等于什么都没说。
-        const why = stateService.describeAcceptanceReportStorage(meta);
+        const why = stateService.describeAcceptanceReportStorage(meta, { bodyMissing: true });
         return res.status(404).json({
           error: 'content_missing',
           message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,
@@ -773,7 +773,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (mismatch) return res.status(mismatch.status).json(mismatch.body);
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        const why = stateService.describeAcceptanceReportStorage(meta);
+        const why = stateService.describeAcceptanceReportStorage(meta, { bodyMissing: true });
         return res.status(404).json({
           error: 'content_missing',
           message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,

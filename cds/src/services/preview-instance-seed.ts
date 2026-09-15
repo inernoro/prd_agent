@@ -429,6 +429,45 @@ export function seedPreviewInstanceSnapshot(state: StateService): boolean {
     seeded = true;
   }
 
+  // 已经播过的那批：把时间重新按相对天数锚到「现在」。
+  //
+  // 相对天数本来就是为了防腐烂，但它此前只在**首播**那一刻换算一次。预览实例的
+  // state 跨部署保留，于是那批报告的 createdAt 永远停在第一次播种的时刻，
+  // 90 天之后整批滑出 buildPipelineSeries 的窗口，演示走向变回空图——正是这套
+  // 设计要防的那件事，只是换了个地方发生（Codex review 抓到）。
+  //
+  // 只动快照自己播的那批（createdBy 认领 + 标题在快照里），且只在漂移超过一天时
+  // 才改，避免每次启动都把整库写一遍。
+  // 标题在快照里不唯一（同一验收目标多次归档）。插入时按 existingTitles 只落**第一条**，
+  // 所以这里也必须取第一条：用 new Map(...) 直接建会保留最后一条，它的 createdAgo 与
+  // 实际落库的那条不同，于是每次启动都判成「漂移了」，把整库重写一遍。
+  const snapReportByTitle = new Map<string, SnapReport>();
+  for (const r of snapReports) if (!snapReportByTitle.has(r.title)) snapReportByTitle.set(r.title, r);
+  for (const meta of state.listAcceptanceReports(null)) {
+    if (meta.createdBy !== 'preview-instance-seed') continue;
+    const snap = snapReportByTitle.get(meta.title);
+    if (!snap) continue;
+    const want = daysAgoIso(base, snap.createdAgo);
+    if (!want) continue;
+    const driftMs = Math.abs(Date.parse(meta.createdAt || '') - Date.parse(want));
+    if (!Number.isFinite(driftMs) || driftMs < 86_400_000) continue;
+    meta.createdAt = want;
+    meta.updatedAt = want;
+    seeded = true;
+  }
+  for (const b of snapBranches) {
+    if (!b.projectId || b.createdAgo == null) continue;
+    const stored = state.getBranch(b.id);
+    if (!stored || !isSnapshotProjectId(stored.projectId)) continue;
+    const want = daysAgoIso(base, b.createdAgo);
+    if (!want) continue;
+    const driftMs = Math.abs(Date.parse(stored.createdAt || '') - Date.parse(want));
+    if (!Number.isFinite(driftMs) || driftMs < 86_400_000) continue;
+    stored.createdAt = want;
+    if (b.deployAgo != null) stored.lastDeployAt = daysAgoIso(base, b.deployAgo)!;
+    seeded = true;
+  }
+
   const existingTitles = new Set(state.listAcceptanceReports(null).map((r) => r.title));
   for (const r of snapReports) {
     if (existingTitles.has(r.title)) continue;

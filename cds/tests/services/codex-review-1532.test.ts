@@ -6,13 +6,18 @@
  * 「陈旧墓碑」在 proxy 里有、在流水线聚合里没有。这类缺陷不报错、
  * 通读单边代码也挑不出来，只有把两份并排看才显形。
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   buildPipelineOverview, branchLiveSince, tombstoneIsStale,
 } from '../../src/services/acceptance-pipeline.js';
 import { reportObjectKey, reportObjectStoreFromEnv } from '../../src/services/report-object-store.js';
+import { StateService } from '../../src/services/state.js';
+import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { AcceptanceReportMeta, BranchEntry, BranchTombstone, Project } from '../../src/types.js';
 
 const project = (id: string): Project => ({
@@ -139,5 +144,61 @@ describe('报告对象键必须带上配置的前缀', () => {
     );
     expect(src, 'put 里没把 config.prefix 传下去，前缀就又成了死配置')
       .toMatch(/reportObjectKey\(meta, config\.prefix\)/);
+  });
+});
+
+describe('「读不到」的成因必须分得开，四种各说各的', () => {
+  let service: StateService;
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-why-'));
+    process.env.CDS_CACHE_BASE = path.join(dir, 'cache');
+    service = new StateService(path.join(dir, 'state.json'));
+    service.load();
+  });
+  afterEach(async () => {
+    await flushAllJsonStateStores();
+    delete process.env.CDS_CACHE_BASE;
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+  });
+
+  const meta = (p: Record<string, unknown>) => p as never;
+
+  it('登记在对象存储且取得回来：不用给原因', () => {
+    const r = service.describeAcceptanceReportStorage(meta({ objectKey: 'k', storage: 'object' }));
+    expect(r).toEqual({ durable: true, reason: null });
+  });
+
+  it('登记在对象存储却取不回来：要给可执行的下一步，不能只说「已丢失」', () => {
+    // 这一条与「历史报告没进过对象存储」的下一步动作完全不同：
+    // 一个是去查桶和网络，一个是无法挽回只能重跑。压成同一句等于把原因扔了。
+    const r = service.describeAcceptanceReportStorage(
+      meta({ objectKey: 'reports/p/a.md', storage: 'object' }), { bodyMissing: true },
+    );
+    expect(r.reason, '取不回来时没给原因').toBeTruthy();
+    expect(r.reason).toContain('reports/p/a.md');
+    expect(r.reason, '没说清该去查什么').toMatch(/凭据|网络|连通/);
+    // 与「历史报告没进过对象存储」那句必须是两句话，不能压成一种。
+    const legacy = service.describeAcceptanceReportStorage(meta({ objectKey: null, storage: undefined }));
+    expect(r.reason).not.toBe(legacy.reason);
+  });
+
+  it('没配对象存储 / 归档于改动之前：两句话不一样', () => {
+    const local = service.describeAcceptanceReportStorage(meta({ objectKey: null, storage: 'local' }));
+    const legacy = service.describeAcceptanceReportStorage(meta({ objectKey: null, storage: undefined }));
+    expect(local.reason).toBeTruthy();
+    expect(legacy.reason).toBeTruthy();
+    expect(local.reason).not.toBe(legacy.reason);
+  });
+
+  it('两个 404 分支都把 bodyMissing 传下去了', () => {
+    // 方法支持了第四种成因，调用方不传等于白支持（链路只建一半）。
+    const routes = readFileSync(resolve(__dirname, '../..', 'src/routes/reports.ts'), 'utf8');
+    const calls = [...routes.matchAll(/describeAcceptanceReportStorage\([^)]*\)/g)].map((m) => m[0]);
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+    for (const c of calls) {
+      expect(c, `这处没传 bodyMissing：${c}`).toMatch(/bodyMissing: true/);
+    }
   });
 });
