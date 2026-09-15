@@ -100,7 +100,10 @@ public class GitHubDirectorySyncService
         var files = await ListDirectoryFilesAsync(owner, repo, path, branch, matcher, accessToken, ct);
         _logger.LogInformation("[GitHubSync] Found {Count} files in {Owner}/{Repo}/{Path} matching glob '{Glob}'", files.Count, owner, repo, path, includeGlob ?? "*");
 
-        if (files.Count == 0) return diff;
+        // 这里**不能**在 files.Count == 0 时提前返回：列目录成功但一篇 Markdown 都不剩，
+        // 说明远端把这个目录清空了（或全部改名），旧子文档就该跟着删。提前返回会让它们
+        // 永远留在知识库里，用户看到的是一份远端已经不存在的文档。
+        // 列目录失败是抛异常（见 ListDirectoryFilesAsync），走不到这里，所以「空」只可能是真的空。
 
         // 2) 查找该 Store 下已有的同步子条目（SourceType=subscription + github_parent_id）
         var existingEntries = await db.DocumentEntries.Find(
@@ -110,18 +113,7 @@ public class GitHubDirectorySyncService
                  e.Metadata["github_parent_id"] == parentEntry.Id
         ).ToListAsync(ct);
 
-        // 去重键用仓库内路径，而不是 download_url ——
-        // 私有仓的 download_url 每次列目录都会带一个新的临时 token 查询串，
-        // 拿它当键会让「同一个文件」每轮同步都被判成"新增 + 删除"，历史版本一起没。
-        // 存量条目（早期没写 github_path）用 SourceUrl 兜底，避免升级当天全量重建。
-        var existingByKey = new Dictionary<string, DocumentEntry>(StringComparer.Ordinal);
-        foreach (var e in existingEntries)
-        {
-            var key = e.Metadata.GetValueOrDefault("github_path", "");
-            if (string.IsNullOrEmpty(key)) key = e.SourceUrl ?? "";
-            if (key.Length == 0) continue;
-            existingByKey[key] = e;
-        }
+        var existingByKey = IndexExistingChildren(existingEntries);
 
         var processedKeys = new HashSet<string>(StringComparer.Ordinal);
 
@@ -232,21 +224,18 @@ public class GitHubDirectorySyncService
             }
         }
 
-        // 3) 删除远端已不存在的条目
-        foreach (var (key, entry) in existingByKey)
+        // 3) 删除远端已不存在的条目（远端整个目录被清空时，这里会删掉全部子文档——这正是本意）
+        foreach (var entry in SelectStaleChildren(existingByKey, processedKeys))
         {
-            if (!processedKeys.Contains(key))
+            await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
+            // 级联清理该条目历史版本，和手动 DeleteEntry 一致，避免远端删文件后版本快照残留（Bugbot）
+            await db.DocumentEntryVersions.DeleteManyAsync(v => v.EntryId == entry.Id, CancellationToken.None);
+            diff.DeletedCount++;
+            diff.FileChanges.Add(new DocumentSyncFileChange
             {
-                await db.DocumentEntries.DeleteOneAsync(e => e.Id == entry.Id, cancellationToken: CancellationToken.None);
-                // 级联清理该条目历史版本，和手动 DeleteEntry 一致，避免远端删文件后版本快照残留（Bugbot）
-                await db.DocumentEntryVersions.DeleteManyAsync(v => v.EntryId == entry.Id, CancellationToken.None);
-                diff.DeletedCount++;
-                diff.FileChanges.Add(new DocumentSyncFileChange
-                {
-                    Path = entry.Metadata.GetValueOrDefault("github_path", entry.Title),
-                    Action = DocumentSyncFileAction.Deleted,
-                });
-            }
+                Path = entry.Metadata.GetValueOrDefault("github_path", entry.Title),
+                Action = DocumentSyncFileAction.Deleted,
+            });
         }
 
         // 4) 更新父条目的文档计数 + 同步状态
@@ -447,6 +436,43 @@ public class GitHubDirectorySyncService
             return false;
         }
     }
+
+    /// <summary>
+    /// 给已存在的子条目编去重键。
+    ///
+    /// 键用仓库内路径，而不是 download_url —— 私有仓的 download_url 每次列目录都会带一个新的
+    /// 临时 token 查询串，拿它当键会让「同一个文件」每轮同步都被判成"新增 + 删除"，历史版本一起没。
+    /// 存量条目（早期没写 github_path）用 SourceUrl 兜底，避免升级当天全量重建。
+    /// 两者都没有的条目不进索引：它认不了亲，也就不该被当成"远端已不存在"删掉。
+    /// </summary>
+    internal static Dictionary<string, DocumentEntry> IndexExistingChildren(
+        IEnumerable<DocumentEntry> existingEntries)
+    {
+        var indexed = new Dictionary<string, DocumentEntry>(StringComparer.Ordinal);
+        foreach (var e in existingEntries)
+        {
+            var key = e.Metadata.GetValueOrDefault("github_path", "");
+            if (string.IsNullOrEmpty(key)) key = e.SourceUrl ?? "";
+            if (key.Length == 0) continue;
+            indexed[key] = e;
+        }
+        return indexed;
+    }
+
+    /// <summary>
+    /// 本轮没在远端见到的子条目 —— 它们就是要删的那批。
+    ///
+    /// 判据只有一条：这一轮列目录时没认到亲。**远端一篇都没剩下时，这里返回全部**，
+    /// 因为"目录被清空"和"目录里的文件被逐个删光"对用户是同一件事，产物都该跟着消失。
+    /// 调用方不得在 files 为空时跳过这一步（那正是 2026-09-15 对抗审查发现的洞）。
+    /// </summary>
+    internal static List<DocumentEntry> SelectStaleChildren(
+        IReadOnlyDictionary<string, DocumentEntry> existingByKey,
+        IReadOnlySet<string> processedKeys)
+        => existingByKey
+            .Where(kv => !processedKeys.Contains(kv.Key))
+            .Select(kv => kv.Value)
+            .ToList();
 
     /// <summary>调用 GitHub Contents API 获取目录下的文件列表</summary>
     private async Task<List<GitHubFile>> ListDirectoryFilesAsync(

@@ -19,7 +19,10 @@ import {
   selectionSummary, filterDirectories, keywordMatchedPaths, directoryLabel, chunkDirectories,
   type DirectoryTreeNode,
 } from './githubDirectorySelection';
-import { isGitHubConnectionBroken, connectionBrokenHint } from './githubConnectionState';
+import {
+  isGitHubConnectionBroken, connectionBrokenHint,
+  shouldResumeAtRepoStep, revokedConnectionHint,
+} from './githubConnectionState';
 
 /**
  * 知识库 · GitHub 目录同步向导。
@@ -99,7 +102,14 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     setError('');
     setErrorCode(undefined);
     setStep('connect');
-    toast.success('已断开 GitHub 连接', '已存的访问令牌一并删除；已建的目录订阅会同步失败，直到重新连接。');
+    // 撤销没成时不许报一个干净的成功：本地删了不等于 GitHub 那边的授权收回了，
+    // 后端把下一步写在 revokeHint 里，这里原样端给用户（形状 10：静默降级）。
+    if (res.data.revoked) {
+      toast.success('已断开 GitHub 连接', '本地令牌已删除，GitHub 上的授权也已撤销；已建的目录订阅会同步失败，直到重新连接。');
+    } else {
+      toast.warning('已断开，但 GitHub 授权未撤销',
+        res.data.revokeHint ?? '本地保存的访问令牌已删除，请到 GitHub 设置里手动移除本应用的授权。');
+    }
   }, [reportError]);
 
   const loadAuth = useCallback(async () => {
@@ -107,8 +117,14 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     const res = await getGitHubAuthStatus();
     if (res.success) {
       setAuth(res.data);
-      // 已连接就直接跳到选仓库，不让用户在一个「已完成」的步骤上多点一次
-      setStep((prev) => (prev === 'connect' && res.data.connected ? 'repo' : prev));
+      // 已连接**且 GitHub 现在还认**才跳到选仓库：授权被撤销时留在第一步，
+      // 否则用户会在第二步撞见一个 401，而该修的事在第一步。
+      setStep((prev) => (prev === 'connect' && shouldResumeAtRepoStep(res.data) ? 'repo' : prev));
+      const revoked = revokedConnectionHint(res.data);
+      if (revoked) {
+        setError(revoked);
+        setErrorCode('GITHUB_TOKEN_EXPIRED');
+      }
     } else {
       reportError(res.error?.message ?? '读取 GitHub 连接状态失败', res.error?.code);
     }

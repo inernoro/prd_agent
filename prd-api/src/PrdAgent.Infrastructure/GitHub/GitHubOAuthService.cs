@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -238,6 +239,52 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
 
         return info;
     }
+
+    public async Task<GitHubTokenRevocation> RevokeTokenAsync(string accessToken, CancellationToken ct)
+    {
+        var clientId = _config["GitHubOAuth:ClientId"];
+        var clientSecret = _config["GitHubOAuth:ClientSecret"];
+
+        // 撤销接口用的是 Basic client_id:client_secret（不是用户 token 的 Bearer）。
+        // 没配 secret 就调不了——如实回 NotConfigured，不要吞掉当成功。
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+        {
+            return GitHubTokenRevocation.NotConfigured;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("GitHubApi");
+            using var req = new HttpRequestMessage(
+                HttpMethod.Delete, $"https://api.github.com/applications/{Uri.EscapeDataString(clientId!)}/token");
+            var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+            req.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
+            req.Headers.Accept.Clear();
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            req.Content = JsonContent.Create(new { access_token = accessToken });
+
+            using var resp = await client.SendAsync(req, ct);
+            return MapRevocationStatus(resp.StatusCode);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // token 本身绝不进日志；只记下"撤销这一步没成"，让调用方去告诉用户下一步。
+            _logger.LogWarning(ex, "[GitHubConnect] revoke token failed (network)");
+            return GitHubTokenRevocation.Failed;
+        }
+    }
+
+    /// <summary>
+    /// GitHub 撤销接口的状态码判据。
+    /// 204 = 撤销成功；404 = 这把 token 在 GitHub 那边已经不存在（用户自己移除过），
+    /// 对用户来说结果一样——授权没了，所以算 AlreadyInvalid 而不是失败。
+    /// </summary>
+    internal static GitHubTokenRevocation MapRevocationStatus(HttpStatusCode status) => status switch
+    {
+        HttpStatusCode.NoContent => GitHubTokenRevocation.Revoked,
+        HttpStatusCode.NotFound => GitHubTokenRevocation.AlreadyInvalid,
+        _ => GitHubTokenRevocation.Failed,
+    };
 
     // ===== Flow token helpers =====
 

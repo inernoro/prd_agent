@@ -49,4 +49,31 @@ public interface IGitHubOAuthService
     /// 用 access_token 拉取当前 GitHub 用户信息（login / id / avatar）。
     /// </summary>
     Task<GitHubUserInfo> FetchUserInfoAsync(string accessToken, CancellationToken ct);
+
+    /// <summary>
+    /// 在 GitHub 那边撤销这把 token 的授权（DELETE /applications/:client_id/token）。
+    ///
+    /// 只删本地密文不等于用户"断开"了：GitHub 的已授权应用列表里那一条还在，
+    /// 那把 token 对 GitHub 仍然有效。断开时必须连带撤销，语义才和按钮写的一致。
+    ///
+    /// 返回值是有限枚举而不是 bool：撤销失败时调用方要如实告诉用户"本地已删、GitHub 那边没撤掉、
+    /// 请自行去设置里移除"，不能假装成功（external-cause-first：要不要紧 + 下一步）。
+    /// </summary>
+    Task<GitHubTokenRevocation> RevokeTokenAsync(string accessToken, CancellationToken ct);
+}
+
+/// <summary>撤销 GitHub 授权的结果。四态，调用方必须逐个表态。</summary>
+public enum GitHubTokenRevocation
+{
+    /// <summary>GitHub 已确认撤销（204）。</summary>
+    Revoked,
+
+    /// <summary>GitHub 说这把 token 本来就不存在了（404）——用户可能已经自己移除过，结果等价于已撤销。</summary>
+    AlreadyInvalid,
+
+    /// <summary>没配 ClientSecret，撤销接口要求 Basic 认证，调不了。本地照删，但要说清 GitHub 侧没动。</summary>
+    NotConfigured,
+
+    /// <summary>调用失败（网络、GitHub 报错）。本地照删，但要说清 GitHub 侧没撤掉。</summary>
+    Failed,
 }

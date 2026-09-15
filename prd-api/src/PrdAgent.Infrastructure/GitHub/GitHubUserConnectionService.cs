@@ -144,10 +144,43 @@ public sealed class GitHubUserConnectionService
         return userInfo;
     }
 
-    public async Task<bool> DisconnectAsync(string userId, CancellationToken ct)
+    /// <summary>
+    /// 断开当前用户的 GitHub 连接：**先去 GitHub 撤销授权，再删本地密文**。
+    ///
+    /// 顺序不能反：先删了本地就再也拿不到那把 token，撤销也就无从谈起，
+    /// 于是"断开"只断在自己这边，GitHub 的已授权应用列表里那一条还挂着——
+    /// 用户以为收回了权限，其实没有。
+    ///
+    /// 撤销失败不阻断本地删除（用户的诉求首先是"别再用我的账号"），但结果要原样带回去给用户看，
+    /// 不许静默吞掉（predicate-and-wiring-discipline 形状 10）。
+    /// </summary>
+    public async Task<GitHubDisconnectResult> DisconnectAsync(string userId, CancellationToken ct)
     {
+        GitHubTokenRevocation revocation;
+        try
+        {
+            var token = await ResolveTokenAsync(userId, ct);
+            revocation = await _oauth.RevokeTokenAsync(token, ct);
+        }
+        catch (GitHubException ex) when (ex.Code == GitHubErrorCodes.GITHUB_NOT_CONNECTED)
+        {
+            // 压根没连过：没有可撤销的东西，不是失败。
+            revocation = GitHubTokenRevocation.AlreadyInvalid;
+        }
+        catch (Exception ex)
+        {
+            // 密文解不开（换过密钥等）或其它意外：**我们手里这把钥匙读不出来，所以撤不了**。
+            // 不能因此报「已撤销」——那是撒谎；也不能让断开整个失败——用户首先要的是本地别再留着它。
+            _logger.LogWarning(ex, "[GitHubConnect] cannot resolve token for revocation user={UserId}", userId);
+            revocation = GitHubTokenRevocation.Failed;
+        }
+
         var result = await _db.GitHubUserConnections.DeleteOneAsync(x => x.UserId == userId, ct);
-        return result.DeletedCount > 0;
+        _logger.LogInformation(
+            "[GitHubConnect] disconnect user={UserId} removed={Removed} revocation={Revocation}",
+            userId, result.DeletedCount > 0, revocation);
+
+        return new GitHubDisconnectResult(result.DeletedCount > 0, revocation);
     }
 
     public Task TouchLastUsedAsync(string userId, CancellationToken ct)
@@ -366,6 +399,12 @@ public sealed class GitHubUserConnectionService
 
     /// <summary>连接可用性三态；Unknown 表示没问出结论（网络抖动等），不是「不可用」。</summary>
     public enum GitHubConnectionUsability { Usable, Revoked, Unknown }
+
+    /// <summary>
+    /// 断开的结果：本地那条记录删掉了没、GitHub 那边的授权撤掉了没。
+    /// 两件事分开报，因为它们可以一成一败，而用户的下一步取决于后者。
+    /// </summary>
+    public sealed record GitHubDisconnectResult(bool Removed, GitHubTokenRevocation Revocation);
 
     /// <summary>一页仓库 + 上游是否还有下一页（HasMore 按过滤前的原始条数算）。</summary>
     public sealed record GitHubRepositoryPage(

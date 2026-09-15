@@ -39,16 +39,28 @@ public sealed class GitHubConnectController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>当前用户的 GitHub 连接状态（未连接也是 200，前端据此决定显示"去连接"还是"已连接"）。</summary>
+    /// <summary>
+    /// 当前用户的 GitHub 连接状态（未连接也是 200，前端据此决定显示"去连接"还是"已连接"）。
+    ///
+    /// <c>connected</c> 只说明库里存过一条记录。用户在 GitHub 那边撤销授权后这条记录还在，
+    /// 于是界面显示"已连接"、一点仓库却报错——所以连着的时候还要**真打一次 GitHub** 问一句
+    /// 现在还认不认，结果放在 <c>usable</c> 里（usable / revoked / unknown 三态，
+    /// unknown 表示网络抖动等没问出结论，前端不得当成已失效）。
+    /// </summary>
     [HttpGet("auth/status")]
     public async Task<IActionResult> GetStatus(CancellationToken ct)
     {
         var userId = this.GetRequiredUserId();
         var conn = await _connections.GetConnectionAsync(userId, ct);
 
+        var usable = conn == null
+            ? null
+            : DescribeUsability(await _connections.ProbeConnectionAsync(userId, ct));
+
         return Ok(ApiResponse<object>.Ok(new
         {
             connected = conn != null,
+            usable,
             oauthConfigured = _connections.IsOAuthConfigured(),
             login = conn?.GitHubLogin,
             avatarUrl = conn?.AvatarUrl,
@@ -57,6 +69,18 @@ public sealed class GitHubConnectController : ControllerBase
             lastUsedAt = conn?.LastUsedAt,
         }));
     }
+
+    /// <summary>
+    /// 可用性枚举 → 线上契约字符串。三态逐个列出（新增枚举值时这里会漏，所以兜底取最保守的
+    /// "unknown"——它不会把一条正常连接挡在门外，也不会谎称可用）。
+    /// </summary>
+    internal static string DescribeUsability(GitHubUserConnectionService.GitHubConnectionUsability probed) => probed switch
+    {
+        GitHubUserConnectionService.GitHubConnectionUsability.Usable => "usable",
+        GitHubUserConnectionService.GitHubConnectionUsability.Revoked => "revoked",
+        GitHubUserConnectionService.GitHubConnectionUsability.Unknown => "unknown",
+        _ => "unknown",
+    };
 
     /// <summary>发起 Device Flow：返回给用户看的 user_code 和验证地址。</summary>
     [HttpPost("auth/device/start")]
@@ -128,9 +152,37 @@ public sealed class GitHubConnectController : ControllerBase
         // 删除故意不接请求的 CancellationToken：用户点完「断开」就关页面是常见操作，
         // 把它传下去会让删除在半路被取消，token 密文留在库里——用户以为断了，其实没断
         // （server-authority：客户端断开不取消服务端已经开始的写入）。
-        var removed = await _connections.DisconnectAsync(userId, CancellationToken.None);
-        return Ok(ApiResponse<object>.Ok(new { removed }));
+        var result = await _connections.DisconnectAsync(userId, CancellationToken.None);
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            removed = result.Removed,
+            revoked = result.Revocation is GitHubTokenRevocation.Revoked or GitHubTokenRevocation.AlreadyInvalid,
+            revokeHint = DescribeRevocation(result.Revocation),
+        }));
     }
+
+    /// <summary>手动去 GitHub 移除授权的那半句——三处共用一份，免得改一处忘一处。</summary>
+    private const string ManualRevokeSuffix =
+        "如需彻底收回，请到 GitHub 设置 → Applications → Authorized OAuth Apps 里手动移除。";
+
+    /// <summary>
+    /// 把撤销结果翻成给用户看的一句话：先说结果，再说要不要紧 / 下一步（external-cause-first）。
+    ///
+    /// 撤销成功时返回 null —— 没有需要用户处理的事，就不要多说一句话。
+    /// 兜底分支走的是「没撤掉」那一侧：将来新增枚举值而忘了在这里表态时，最坏结果是多提醒一次，
+    /// 而不是让用户以为授权已经收回（宁可多说，不可谎报）。
+    /// </summary>
+    internal static string? DescribeRevocation(GitHubTokenRevocation revocation) => revocation switch
+    {
+        GitHubTokenRevocation.Revoked => null,
+        GitHubTokenRevocation.AlreadyInvalid => null,
+        GitHubTokenRevocation.NotConfigured =>
+            "本地保存的访问令牌已删除。GitHub 那边的授权没能一起撤销（本站未配置撤销所需的应用密钥），"
+            + ManualRevokeSuffix,
+        _ =>
+            "本地保存的访问令牌已删除。向 GitHub 撤销授权时没有成功（网络或 GitHub 侧报错），"
+            + ManualRevokeSuffix,
+    };
 
     /// <summary>当前用户可访问的仓库（含私有仓，取决于授权 scope）。</summary>
     [HttpGet("repositories")]
