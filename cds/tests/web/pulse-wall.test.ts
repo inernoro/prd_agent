@@ -197,6 +197,18 @@ describe('盲区地图：没人盯不许是绿的', () => {
   });
 
   // 覆盖度不该被当前筛选裁掉——判据只认传进来的那一份，所以这一条守的是调用方。
+  // 第一版拿 projectId 当名字，整张图列出来是一串 12 位哈希，人认不出那是哪个项目。
+  it('项目名走 projectName，不是拿 ID 顶上', () => {
+    const named = [
+      target({ projectId: 'f9e8b956d3dd', projectName: 'BDE(互动营销)', name: '容器', environment: 'production', source: 'branch' as never }),
+    ];
+    expect(buildBlindspotMap(named, NOW).rows[0]?.name).toBe('BDE(互动营销)');
+  });
+
+  it('连 projectName 都没有时才退回 ID，不编一个', () => {
+    expect(buildBlindspotMap([targets[2]], NOW).rows[0]?.name).toBe('bde');
+  });
+
   it('列只出现真实存在过的环境', () => {
     const map = buildBlindspotMap(targets, NOW);
     expect(map.environments).toEqual(['production', 'preview']);

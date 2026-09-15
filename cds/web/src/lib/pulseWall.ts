@@ -247,7 +247,9 @@ export function buildBlindspotMap(
 
     const watched = cells.some((c) => c.kind === 'watched');
     const trouble = cells.filter((c) => c.worst && c.worst !== 'up').length;
-    rows.push({ id, name: list[0]?.projectId || id, cells, watched, trouble });
+    // 名字走 projectName——和项目 chip 用同一个字段。第一版拿 projectId 当名字，
+    // 于是整张图列出来的是一串 12 位哈希，人根本认不出那是哪个项目（线上实测发现）。
+    rows.push({ id, name: list.find((t) => t.projectName)?.projectName || id, cells, watched, trouble });
   }
 
   // 有问题的排最前，然后是没人盯的（它们才是这张图要喊的），最后是好着的。
