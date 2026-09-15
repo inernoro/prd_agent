@@ -390,7 +390,7 @@ const describeGatewayRecovery = (items: GatewayFixtureRecovery[]) => items
   .map((item) => `${item.logicalId}/${item.offeringId}: ${item.from} -> ${item.to || '(协议默认)'} [${item.source}]`)
   .join('; ');
 
-/** 把所有逻辑模型上仍在启用的带标记备用停掉（GW-007 之外它们只能是停用），返回处理过的记录描述。 */
+/** 把传入的（读取时只取启用中的）逻辑模型上仍在启用的带标记备用停掉（GW-007 之外它们只能是停用），返回处理过的记录描述。 */
 async function disableStrayGatewayBackups(
   request: APIRequestContext,
   gateway: { baseUrl: string; headers: Record<string, string> },
@@ -3200,20 +3200,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
     const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
     expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取网关逻辑模型').toBe(true);
-    // 上一轮硬中断遗留的注入态先自愈，再做任何判定（issue #1536）；发现了就写进报告，不静默。
+    // 带标记备用在一轮 GW-007 之外只能是停用：不论挂在哪个逻辑模型上（包括本轮不会选中的），
+    // 启用着的一律先停掉，否则上一轮夭折留下的备用会一直参与 CDS 真实流量的路由。
+    // 隔离排在自愈之前：自愈要发多次网关请求，任何一次失败（selfheal10 就遇到过共享 Mongo 断连）
+    // 都不能让带着注入态的备用继续在线。
+    const straySummary = await disableStrayGatewayBackups(request, gateway, logicalBody.data.items);
+    if (straySummary.length > 0) {
+      testInfo.annotations.push({ type: 'gateway-fixture-stray-backup', description: straySummary.join('; ') });
+      console.warn(`[GW-007] 发现上一轮遗留的已启用备用并已停用：${straySummary.join('; ')}`);
+    }
+    // 上一轮硬中断遗留的注入态自愈，再做任何判定（issue #1536）；发现了就写进报告，不静默。
     const leftovers = await recoverInjectedGatewayOfferings(request, gateway, logicalBody.data.items);
     if (leftovers.length > 0) {
       const summary = describeGatewayRecovery(leftovers);
       testInfo.annotations.push({ type: 'gateway-fixture-recovery', description: summary });
       console.warn(`[GW-007] 发现上一轮遗留的网关注入态：${summary}`);
-    }
-    // 带标记备用在一轮 GW-007 之外只能是停用：不论挂在哪个逻辑模型上（包括本轮不会选中的），
-    // 启用着的一律先停掉，否则上一轮夭折留下的备用会一直参与 CDS 真实流量的路由。
-    // 先隔离、再判无法还原：还原不了的备用也不能带着注入态继续在线。
-    const straySummary = await disableStrayGatewayBackups(request, gateway, logicalBody.data.items);
-    if (straySummary.length > 0) {
-      testInfo.annotations.push({ type: 'gateway-fixture-stray-backup', description: straySummary.join('; ') });
-      console.warn(`[GW-007] 发现上一轮遗留的已启用备用并已停用：${straySummary.join('; ')}`);
     }
     expect(
       leftovers.filter((item) => item.source === 'unrecoverable'),
@@ -3428,18 +3429,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
           expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
           // 主路与备用的 Endpoint 已按 originals 复原；这里再按注入前缀扫一遍，把本轮没登记到的注入态也恢复。
-          const leftoverAfterRun = await recoverInjectedGatewayOfferings(request, gateway, body.data.items);
           const owner = body.data.items.find((item) => item.id === backupOwnerId);
           for (const offering of owner?.offerings || []) {
             if (offering.enabled && isFailoverBackup(offering)) backupIds.add(offering.id);
           }
           // 其它逻辑模型上若还有启用着的带标记备用（本轮没选中它们），同样一并停掉；
-          // 先隔离再报无法还原，还原不了的备用也不能带着注入态继续在线。
+          // 隔离排在自愈之前：自愈的网关请求失败也不能让备用带着注入态继续在线。
           await disableStrayGatewayBackups(
             request,
             gateway,
             body.data.items.filter((item) => item.id !== backupOwnerId),
           );
+          const leftoverAfterRun = await recoverInjectedGatewayOfferings(request, gateway, body.data.items);
           const unrecoverable = leftoverAfterRun.filter((item) => item.source === 'unrecoverable');
           if (unrecoverable.length > 0) {
             throw new Error(`清理阶段仍有无法还原的注入态 Offering，需要人工恢复 Endpoint：${describeGatewayRecovery(unrecoverable)}`);
@@ -3518,8 +3519,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const index = await readGatewayUpstreamIndex(request, gateway);
       // 进入时不看备用是否干净，一律先把所有逻辑模型上的注入态自愈、把启用着的带标记备用停掉，再选备用、取快照：
       // 上一轮若只在主路注入之后就夭折，备用是干净的而主路不是，后面的「恰好只处理这一条」断言会被主路的遗留搅掉。
-      const pre = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+      // 隔离排在自愈之前：自愈的网关请求失败也不能让备用带着注入态继续在线。
       await disableStrayGatewayBackups(request, gateway, await readLogical());
+      const pre = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
       expect(
         pre.filter((item) => item.source === 'unrecoverable'),
         '进入用例时网关上有无法还原的注入态，请先人工恢复这些 Offering 的 Endpoint 再跑',
