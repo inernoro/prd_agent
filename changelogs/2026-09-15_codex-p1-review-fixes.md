@@ -12,3 +12,4 @@
 | fix | prd-admin | 生成弹窗与改写面板订阅 model 事件并在顶部渲染实际模型与平台，值全部来自后端不推断 |
 | ops | cds | 索引目录退出部署链路：撤掉 mongodb-indexes 一次性容器与 api 对它的启动依赖，索引仍由 DBA 手动跑，并补守卫防再加回来 |
 | fix | prd-api | 实际模型落库补上：worker 逐字段写库，原先只改内存对象，导致 run DTO 字段在而值恒为 null，刷新后面板显示不出模型 |
+| fix | prd-api | 公开生成流的事件白名单补上 model，否则 worker 发出的模型事件在 SSE 出口被静默丢弃，前端永远收不到；并加守卫按 worker 实际 append 的事件名逐一比对白名单 |

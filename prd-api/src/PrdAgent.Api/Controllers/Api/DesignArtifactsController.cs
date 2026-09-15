@@ -44,9 +44,15 @@ public sealed class DesignArtifactsController : ControllerBase
         "workspace_session_not_found",
         "workspace_transfer_invalid",
     };
-    private static readonly HashSet<string> PublicGenerationStreamEvents = new(StringComparer.Ordinal)
+    /// <summary>
+    /// 公开生成流放行的事件名。worker 产出的事件必须出现在这里才会推给前端，漏一个就是
+    /// 「事件发了、前端永远收不到」的静默断链——`model` 就这么漏过一次（Codex P1，2026-09-15）。
+    /// 守卫：DesignArtifactStreamEventContractTests 扫 worker 真正 append 的事件名逐一比对。
+    /// </summary>
+    internal static readonly HashSet<string> PublicGenerationStreamEvents = new(StringComparer.Ordinal)
     {
         "phase",
+        "model",
         "thinking",
         "delta",
         "done",
