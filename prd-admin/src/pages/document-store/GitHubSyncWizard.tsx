@@ -105,10 +105,10 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     // 撤销没成时不许报一个干净的成功：本地删了不等于 GitHub 那边的授权收回了，
     // 后端把下一步写在 revokeHint 里，这里原样端给用户（形状 10：静默降级）。
     if (res.data.revoked) {
-      toast.success('已断开 GitHub 连接', '本地令牌已删除，GitHub 上的授权也已撤销；已建的目录订阅会同步失败，直到重新连接。');
+      toast.success('已断开 GitHub 连接', '本站保存的连接已删除，GitHub 上的授权也已收回；已建的目录订阅会同步失败，直到重新连接。');
     } else {
       toast.warning('已断开，但 GitHub 授权未撤销',
-        res.data.revokeHint ?? '本地保存的访问令牌已删除，请到 GitHub 设置里手动移除本应用的授权。');
+        res.data.revokeHint ?? '本站保存的连接已删除，请到 GitHub 设置里确认本应用已不在已授权列表中。');
     }
   }, [reportError]);
 

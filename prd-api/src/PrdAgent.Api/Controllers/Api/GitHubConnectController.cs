@@ -163,12 +163,16 @@ public sealed class GitHubConnectController : ControllerBase
         }));
     }
 
-    /// <summary>手动去 GitHub 移除授权的那半句——三处共用一份，免得改一处忘一处。</summary>
+    /// <summary>去 GitHub 自查并移除的那半句——多处共用一份，免得改一处忘一处。</summary>
     private const string ManualRevokeSuffix =
-        "如需彻底收回，请到 GitHub 设置 → Applications → Authorized OAuth Apps 里手动移除。";
+        "请到 GitHub 设置 → Applications → Authorized OAuth Apps 里确认本应用已不在列表中；若还在，手动移除即可。";
 
     /// <summary>
     /// 把撤销结果翻成给用户看的一句话：先说结果，再说要不要紧 / 下一步（external-cause-first）。
+    ///
+    /// 只写用户**能据此行动**的部分。为什么没撤成（没配应用密钥、网络出错、GitHub 不认这把令牌）
+    /// 属于本站的内部诊断，用户拿它什么也做不了——留在服务端日志里即可，
+    /// 断开那一步已按结果枚举记过一条（2026-09-15 Codex review 第八轮）。
     ///
     /// 撤销成功时返回 null —— 没有需要用户处理的事，就不要多说一句话。
     /// 兜底分支走的是「没撤掉」那一侧：将来新增枚举值而忘了在这里表态时，最坏结果是多提醒一次，
@@ -179,14 +183,10 @@ public sealed class GitHubConnectController : ControllerBase
         GitHubTokenRevocation.Revoked => null,
         GitHubTokenRevocation.NothingToRevoke => null,
         GitHubTokenRevocation.Unverified =>
-            "本地保存的访问令牌已删除。GitHub 没有确认这次撤销（它不认这把令牌属于本站的应用，"
-            + "可能你此前已自行移除，也可能本站的应用凭据换过），"
-            + ManualRevokeSuffix,
-        GitHubTokenRevocation.NotConfigured =>
-            "本地保存的访问令牌已删除。GitHub 那边的授权没能一起撤销（本站未配置撤销所需的应用密钥），"
+            "本站保存的连接已删除。GitHub 没有确认这次撤销（可能你此前已经自行移除过），"
             + ManualRevokeSuffix,
         _ =>
-            "本地保存的访问令牌已删除。向 GitHub 撤销授权时没有成功（网络或 GitHub 侧报错），"
+            "本站保存的连接已删除，但 GitHub 那边的授权没能一起收回。"
             + ManualRevokeSuffix,
     };
 

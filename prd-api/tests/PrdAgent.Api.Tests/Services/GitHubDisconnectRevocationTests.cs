@@ -73,6 +73,11 @@ public class GitHubDisconnectRevocationTests
             Assert.Contains("已删除", hint!);
             Assert.Contains("GitHub", hint);
             Assert.Contains("移除", hint);
+
+            // 只写用户能据此行动的部分：没撤成的内部原因（有没有配密钥、令牌属不属于本应用）
+            // 用户拿它什么也做不了，留在服务端日志里（2026-09-15 Codex review 第八轮）。
+            Assert.DoesNotContain("应用密钥", hint);
+            Assert.DoesNotContain("访问令牌", hint);
         }
     }
 }
