@@ -8192,13 +8192,16 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         gwPlatforms,
         gwModels,
         gwModelExchanges,
+        gwLogicalModels,
+        gwModelOfferings,
         TenantAccess.GetRequired(http).TenantId,
         effectiveStatus,
         effectiveModelPoolId,
         effectiveModelPolicy,
         doc.GetStringOrEmpty("RequestType"),
         effectiveAllowedModelPoolIds,
-        effectiveDefaultModelPoolId);
+        effectiveDefaultModelPoolId,
+        doc.AsNullableString("AppCallerCode"));
     if (activeConfigError is not null)
     {
         return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", activeConfigError), jsonOptions, 400);
@@ -8571,6 +8574,8 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         gwPlatforms,
         gwModels,
         gwModelExchanges,
+        gwLogicalModels,
+        gwModelOfferings,
         TenantAccess.GetRequired(http).TenantId,
         filter,
         targetStatus,
@@ -17401,6 +17406,8 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> gwModels,
     IMongoCollection<BsonDocument> gwModelExchanges,
+    IMongoCollection<BsonDocument> gwLogicalModels,
+    IMongoCollection<BsonDocument> gwModelOfferings,
     string tenantId,
     FilterDefinition<BsonDocument> filter,
     string? targetStatus,
@@ -17425,11 +17432,16 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
             gwPlatforms,
             gwModels,
             gwModelExchanges,
+            gwLogicalModels,
+            gwModelOfferings,
             tenantId,
             effectiveStatus,
             effectiveModelPoolId,
             effectiveModelPolicy,
-            doc.GetStringOrEmpty("RequestType"));
+            doc.GetStringOrEmpty("RequestType"),
+            allowedModelPoolIds: GetStringArray(doc, "AllowedModelPoolIds"),
+            defaultModelPoolId: doc.AsNullableString("DefaultModelPoolId"),
+            appCallerCode: doc.AsNullableString("AppCallerCode"));
         if (error is not null)
         {
             var code = doc.AsNullableString("AppCallerCode") ?? doc.GetStringOrEmpty("_id");
@@ -17439,18 +17451,74 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
     return null;
 }
 
+/// <summary>
+/// 不点名的请求，这个用途下有没有对外模型接得住这个调用方；接得住就回它的 PublicId。
+///
+/// 判据与运行时 <c>TryResolveDefaultLogicalModelAsync</c> **两层逐条对齐**：
+///   1. 有没有模型认领了这个调用方（DefaultForAppCallerCodes）
+///   2. 没有，才看这个用途标了默认的那个
+/// 两层都要求启用着、而且真有一条启用的线路——只挂着名字接不住任何请求。
+///
+/// 为什么这个判据必须在写入侧也有一份：把调用方改成 active 却没人接得住，它不会当场报错，
+/// 而是等到第一个真实请求才静默失败。守卫钉住两边的顺序一致。
+/// </summary>
+static async Task<string?> FindUnnamedCatcherAsync(
+    IMongoCollection<BsonDocument> gwLogicalModels,
+    IMongoCollection<BsonDocument> gwModelOfferings,
+    string tenantId,
+    string? requestType,
+    string? appCallerCode)
+{
+    if (string.IsNullOrWhiteSpace(requestType)) return null;
+    var fb = Builders<BsonDocument>.Filter;
+    var basics = fb.And(
+        fb.Eq("TenantId", tenantId),
+        fb.Eq("Enabled", true),
+        fb.Eq("ModelType", requestType));
+
+    async Task<string?> FirstWithRouteAsync(FilterDefinition<BsonDocument> filter)
+    {
+        var docs = await gwLogicalModels.Find(filter)
+            .Sort(Builders<BsonDocument>.Sort.Ascending("DisplayOrder").Ascending("PublicId"))
+            .ToListAsync();
+        foreach (var doc in docs)
+        {
+            var routes = await gwModelOfferings.CountDocumentsAsync(fb.And(
+                fb.Eq("TenantId", tenantId),
+                fb.Eq("LogicalModelId", doc.GetStringOrEmpty("_id")),
+                fb.Eq("Enabled", true)));
+            if (routes > 0) return doc.AsNullableString("PublicId") ?? doc.GetStringOrEmpty("_id");
+        }
+        return null;
+    }
+
+    // 第一层：谁认领了它。
+    if (!string.IsNullOrWhiteSpace(appCallerCode))
+    {
+        var claimed = await FirstWithRouteAsync(
+            fb.And(basics, fb.AnyEq("DefaultForAppCallerCodes", appCallerCode)));
+        if (claimed is not null) return claimed;
+    }
+
+    // 第二层：这个用途的默认。
+    return await FirstWithRouteAsync(fb.And(basics, fb.Eq("IsDefaultForType", true)));
+}
+
 static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> gwModelPools,
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> gwModels,
     IMongoCollection<BsonDocument> gwModelExchanges,
+    IMongoCollection<BsonDocument> gwLogicalModels,
+    IMongoCollection<BsonDocument> gwModelOfferings,
     string tenantId,
     string? status,
     string? modelPoolId,
     string? modelPolicy,
     string? requestType,
     IReadOnlyList<string>? allowedModelPoolIds = null,
-    string? defaultModelPoolId = null)
+    string? defaultModelPoolId = null,
+    string? appCallerCode = null)
 {
     if (!string.Equals(status, "active", StringComparison.OrdinalIgnoreCase))
     {
@@ -17476,7 +17544,23 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     }
     if (string.IsNullOrWhiteSpace(effectivePoolId))
     {
-        return "active appCaller 必须绑定 llm_gateway.llmgw_model_pools 中的 GW 权威模型池。";
+        // 不绑池是允许的——**只要有对外模型接得住它**。
+        //
+        // 这条校验原来写的是「active appCaller 必须绑定 GW 权威模型池」，那是旧世界的
+        // 不变量：池是必需品。断流（把还在走池的调用方切到对外模型目录）第一次撞上的
+        // 就是这堵墙——架构上池早已可替换，写入侧却还把它当必需品。
+        //
+        // 换成真正该守的那件事：不点名的请求得有人接。判据与运行时那两层逐条对齐——
+        // 先看有没有模型认领了这个调用方，没有才看这个用途的默认；两层都要启用且真有
+        // 一条能接的线路，否则这个调用方一改成 active 就会开始静默失败。
+        var catcher = await FindUnnamedCatcherAsync(
+            gwLogicalModels, gwModelOfferings, tenantId, requestType, appCallerCode);
+        if (catcher is null)
+        {
+            return $"active appCaller 既没绑模型池，{requestType} 这个用途也没有对外模型接得住它："
+                + "要么在模型页给某个对外模型「指定调用方」认领它，要么给这个用途设一个默认模型（且它得有能接的线路）。";
+        }
+        return null;
     }
 
     var pool = await gwModelPools

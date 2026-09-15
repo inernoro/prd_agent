@@ -308,7 +308,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".AddToSet(x => x.ObservedIngressProtocols, ingressProtocol)", servingEndpoints);
         Assert.Contains("ObservedIngressProtocols = GetObservedIngressProtocols(d)", consoleProgram);
         Assert.Contains("fb.AnyEq(\"ObservedIngressProtocols\"", consoleProgram);
-        Assert.Contains("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
+        // 这里原本钉的是「active appCaller 必须绑定 GW 权威模型池」——那是旧世界的不变量：
+        // 池是必需品。2026-09-15 断流时换掉了：真正该守的是「不点名的请求有没有人接」，
+        // 绑池只是接住它的其中一种方式。判据搬到本文件下面那条专门的断言里。
+        Assert.Contains("FindUnnamedCatcherAsync", consoleProgram);
         Assert.Contains("active appCaller 必须使用 modelPolicy=auto/pool/pinned", consoleProgram);
         var modelResolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
         Assert.DoesNotContain("active-appcaller-auto-policy-without-gateway-pool", modelResolver);
@@ -665,6 +668,25 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("它被 {claimedBy[x.Code]} 认领了", consoleProgram);
         // 认领的唯一性由写入侧保证，且要先摘别人再置自己——反过来会有一瞬两个模型都认领同一个人。
         Assert.Contains("displacedClaims", consoleProgram);
+
+        // 「必须绑池」换成「必须有人接得住」。
+        //
+        // 断流第一次撞上的就是这堵墙：架构上池早已可替换，写入侧却还把它当必需品
+        // （active appCaller 必须绑定 GW 权威模型池）。真正该守的不是「绑没绑池」，
+        // 是「不点名的请求有没有人接」——不然调用方一改成 active 就开始静默失败。
+        Assert.DoesNotContain("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
+        Assert.Contains("FindUnnamedCatcherAsync", consoleProgram);
+        Assert.Contains("也没有对外模型接得住它", consoleProgram);
+        // 写入侧那份判据必须与运行时的两层同序：先认领、后用途默认。
+        var catcherAt = consoleProgram.IndexOf("static async Task<string?> FindUnnamedCatcherAsync", StringComparison.Ordinal);
+        Assert.True(catcherAt > 0);
+        var catcherBody = consoleProgram[catcherAt..Math.Min(consoleProgram.Length, catcherAt + 2600)];
+        var claimLayer = catcherBody.IndexOf("AnyEq(\"DefaultForAppCallerCodes\"", StringComparison.Ordinal);
+        var typeLayer = catcherBody.IndexOf("fb.Eq(\"IsDefaultForType\", true)", StringComparison.Ordinal);
+        Assert.True(claimLayer > 0 && typeLayer > claimLayer,
+            "写入侧的「接得住」判据必须与运行时同序：先认领、后用途默认");
+        // 只挂着名字接不住请求：必须真有一条启用的线路。
+        Assert.Contains("gwModelOfferings.CountDocumentsAsync", consoleProgram);
 
         // 判定流程图：图最容易被人当真，所以每条岔路的状态必须由后端下发，前端一句判断都不做。
         // 「前端自己判这支走不走」就是第二份判据（形状 3），而且是最难被发现的那一份。
