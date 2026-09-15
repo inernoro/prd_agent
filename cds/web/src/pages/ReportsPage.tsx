@@ -371,7 +371,10 @@ export function ReportsPage(): JSX.Element {
       });
     }
     if (activeFolder === 'shared') return projectFilteredReports.filter((r) => Boolean(r.shareToken));
-    if (activeFolder === 'failed') return projectFilteredReports.filter((r) => r.verdict === 'fail');
+    // 「不通过」视图必须和台账行读同一个判据：行里按生效结论显示「未通过」，
+    // 这里却筛原始 verdict 的话，正是那份让首屏判红的报告会被这个视图藏起来，
+    // 徽章还显示 0——点进「不通过」看到空列表（Codex review 抓到）。
+    if (activeFolder === 'failed') return projectFilteredReports.filter((r) => effectiveVerdict(r) === 'fail');
     return projectFilteredReports.filter((r) => r.folderId === activeFolder);
   }, [projectFilteredReports, activeFolder]);
 
@@ -399,7 +402,7 @@ export function ReportsPage(): JSX.Element {
       if (!Number.isNaN(created) && created >= since) recent += 1;
       if (!Number.isNaN(created) && created < before) older += 1;
       if (r.shareToken) shared += 1;
-      if (r.verdict === 'fail') failed += 1;
+      if (effectiveVerdict(r) === 'fail') failed += 1;
     }
     return { byFolder: m, unfiled, recent, older, shared, failed, total: projectFilteredReports.length };
   }, [projectFilteredReports]);

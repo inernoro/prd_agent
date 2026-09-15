@@ -209,7 +209,7 @@ function hasBlockingDefects(r: { defectCounts?: Record<string, number> | null })
  * 首屏，发布闸照旧说「可以发布」，同一个响应里一边「有功能坏了」一边放行
  * （predicate-and-wiring-discipline 形状 3）。
  */
-function effectiveVerdict(r: { verdict?: 'pass' | 'conditional' | 'fail' | null; defectCounts?: Record<string, number> | null }): 'pass' | 'conditional' | 'fail' | null {
+export function effectiveVerdict(r: { verdict?: 'pass' | 'conditional' | 'fail' | null; defectCounts?: Record<string, number> | null }): 'pass' | 'conditional' | 'fail' | null {
   if (hasBlockingDefects(r)) return 'fail';
   return r.verdict ?? null;
 }

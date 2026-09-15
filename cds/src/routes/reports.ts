@@ -37,7 +37,7 @@ import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
 import { buildPipelineSeries, buildPipelineOverview } from '../services/acceptance-pipeline.js';
-import { buildReportsOverview } from '../services/acceptance-overview.js';
+import { buildReportsOverview, effectiveVerdict } from '../services/acceptance-overview.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -864,7 +864,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       ? `${base}/reports?${meta.projectId ? `project=${encodeURIComponent(meta.projectId)}&` : ''}${meta.folderId ? `folder=${encodeURIComponent(meta.folderId)}&` : ''}report=${encodeURIComponent(meta.id)}`
       : '';
     const shareLink = base && meta.shareToken ? `${base}/r/${meta.shareToken}` : '';
-    const vCn = VERDICT_CN[meta.verdict];
+    /*
+     * 回写 GitHub 用的是**生效结论**，不是报告自己写的那个。一份标着通过却记了 P0 的报告，
+     * CDS 这边（首屏、发布闸、台账、跨项目流水线）一律按未通过算，回写却按原始 verdict 发，
+     * 结果是 PR Checks 面板挂一个绿色的「CDS 验收」，而同一份报告在 CDS 上是红的——
+     * 对外发假绿灯比内部口径不一致更糟（Codex review 抓到）。
+     */
+    const effVerdict = effectiveVerdict(meta) ?? meta.verdict;
+    const vCn = VERDICT_CN[effVerdict];
 
     // 评论正文（markdown）。HTML 注释标记便于以后识别/去重 CDS 验收评论。
     const lines: string[] = [];
@@ -899,7 +906,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
           name: 'CDS 验收',
           headSha: meta.commitSha,
           status: 'completed',
-          conclusion: VERDICT_CONCLUSION[meta.verdict],
+          conclusion: VERDICT_CONCLUSION[effVerdict],
           detailsUrl: deeplink || undefined,
           externalId: meta.id,
           completedAt: new Date().toISOString(),
