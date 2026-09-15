@@ -3038,6 +3038,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     // 备用上游照抄「捐出」它的那条 Offering 的路由契约（协议 / Endpoint / 上游模型名），不能拿主路的协议去配别人的上游。
     let logical: GatewayLogicalModel | undefined;
     let provisionedBackup: GatewayOffering | undefined;
+    // 备用上游挂在哪个逻辑模型上，在发出启用 / 创建请求之前就记下：响应丢失或断言失败时，
+    // finally 仍知道去哪里把带标记的备用找回来停掉。
+    let backupOwnerLogicalId = '';
     let offerings: GatewayOffering[] = [];
     const originals = new Map<GatewayOffering, { endpointPath: string; priority: number }>();
     let originalStrategy = '';
@@ -3117,7 +3120,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           && upstreamIds.has(offering.targetId)
           && isFailoverBackup(offering)
         ));
+        backupOwnerLogicalId = preferred.id;
         if (dormantBackup) {
+          // 先登记归属再等待启用：网关启用成功但响应丢失 / 断言失败时，finally 照样能停掉它。
+          provisionedBackup = dormantBackup;
           provisionedBackup = await toggleOffering(preferred.id, dormantBackup.id, true);
         } else {
           const usedTargets = new Set([primary!.targetId]);
@@ -3227,8 +3233,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         )
       )));
       const strategyRestore = originalStrategy ? await Promise.allSettled([updateStrategy(originalStrategy)]) : [];
-      const backupRestore = provisionedBackup && logical
-        ? await Promise.allSettled([toggleOffering(logical.id, provisionedBackup.id, false)])
+      // 停用临时备用：已知的那条 + 重新拉一次逻辑模型、按标记找回仍在启用的（创建请求响应不确定时
+      // provisionedBackup 为空，但网关那边可能已经建好并启用了）。
+      const backupOwnerId = logical?.id || backupOwnerLogicalId;
+      const backupIds = new Set<string>();
+      if (provisionedBackup) backupIds.add(provisionedBackup.id);
+      const rediscover = backupOwnerId
+        ? await Promise.allSettled([(async () => {
+          const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
+          const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+          expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
+          const owner = body.data.items.find((item) => item.id === backupOwnerId);
+          for (const offering of owner?.offerings || []) {
+            if (offering.enabled && isFailoverBackup(offering)) backupIds.add(offering.id);
+          }
+        })()])
+        : [];
+      const backupRestore = backupOwnerId
+        ? await Promise.allSettled([...backupIds].map((offeringId) => toggleOffering(backupOwnerId, offeringId, false)))
         : [];
       if (workspaceId) {
         const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspaceId}`, {
@@ -3245,7 +3267,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         })).status()).toBe(404);
       }
       expect(
-        [...restoreResults, ...strategyRestore, ...backupRestore].filter((result) => result.status === 'rejected'),
+        [...restoreResults, ...strategyRestore, ...rediscover, ...backupRestore].filter((result) => result.status === 'rejected'),
         '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用',
       ).toEqual([]);
     }
