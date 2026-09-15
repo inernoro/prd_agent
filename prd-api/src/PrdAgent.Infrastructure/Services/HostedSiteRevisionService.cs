@@ -114,6 +114,11 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
                 Sha256 = file.Sha256,
                 MimeType = file.MimeType,
             }).ToList(),
+            // 记下建档那一刻线上站点是什么形态。多文件站点的旁挂对象（CSS、图片）不在这条
+            // 版本里，日后回退时必须拦住，而那时站点早已变样、看当时的形态是唯一可靠来源。
+            CapturedContentShape = HasUncapturedSidecars(entry.Site)
+                ? HostedSiteContentShapes.MultiFile
+                : HostedSiteContentShapes.SelfContainedHtml,
             BasedOnContentVersion = entry.ContentVersion,
             PublishedContentVersion = entry.ContentVersion,
             CreatedAt = entry.ContentVersion,
@@ -657,6 +662,10 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             throw new InvalidOperationException("只能回退到已经发布的版本");
 
         var current = await _sites.GetEditableEntryHtmlAsync(siteId, userId, ct);
+        if (!CanReproduceSite(target, current.Site))
+            throw new InvalidOperationException(
+                "该版本只留下了入口 HTML，当时站点的样式与图片没有一并存档，回退会得到一个残缺站点；"
+                + "请改用「另存为新版本」或重新生成。");
         var existing = await _db.HostedSiteRevisions.Find(item =>
                 item.SiteId == siteId
                 && item.CreatedByUserId == userId
@@ -713,6 +722,42 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
             return await ReplayRollbackAsync(siteId, userId, target.Id, winner, latest, reportChange: false);
         }
         return await ReplayRollbackAsync(siteId, userId, target.Id, rollback, current, reportChange: true);
+    }
+
+    /// <summary>
+    /// 这条版本自己的内容，够不够把站点还原成它当时的样子。
+    ///
+    /// 带整包 VerifiedFiles 的够；只有入口 HTML 的，仅当那时站点本来就是单文件形态才够。
+    /// 多文件站点的旁挂对象只存在于对象存储里，而下一次整包发布会把它们回收掉——那之后
+    /// 按入口 HTML 回退，拿到的是旧 HTML 配新版本的样式与图片，或者干脆指向已删对象
+    /// （Codex P1，2026-09-15）。存量版本没有记过形态，退而按站点当前形态判断：
+    /// 当前就是单文件的，入口 HTML 足以还原；当前是多文件的，不给还原。
+    /// </summary>
+    internal static bool CanReproduceSite(HostedSiteRevision revision, HostedSite currentSite)
+    {
+        if (revision.VerifiedFiles.Count > 0) return true;
+        if (string.IsNullOrWhiteSpace(revision.CapturedContentShape))
+            return !HasUncapturedSidecars(currentSite);
+        return string.Equals(
+            revision.CapturedContentShape,
+            HostedSiteContentShapes.SelfContainedHtml,
+            StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 这个站点除入口文件之外，还有没有只存在于对象存储里、不会被入口 HTML 带走的旁挂内容。
+    ///
+    /// 问的是「旁挂对象」而不是直接套 <see cref="HostedSiteContentShapeRules.IsSelfContainedHtml"/>：
+    /// 后者对**一个文件都没登记**的站点也返回 false，而那种站点根本没有内容会丢。
+    /// 生成包那六个路径（manifest 与 assets 下的几份 JSON）按既有产品语义算自包含——
+    /// 入口 HTML 不靠它们渲染，替换入口时本来就会一并丢掉。
+    /// </summary>
+    private static bool HasUncapturedSidecars(HostedSite site)
+    {
+        var files = site.Files ?? new List<HostedSiteFile>();
+        if (files.Count == 0) return false;
+        if (HostedSiteContentShapeRules.IsSelfContainedHtml(site)) return false;
+        return files.Any(file => !string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task<HostedSiteRevisionMutationResult> ReplayRollbackAsync(

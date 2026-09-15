@@ -821,6 +821,44 @@ public sealed class HostedSiteRevisionConsistencyTests
     private static string Sha256(byte[] content) =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(content)).ToLowerInvariant();
 
+    /// <summary>
+    /// 建基线时要记下线上站点当时的形态，回退才拦得住「还原不出来」的那种版本。
+    /// 判据建好了没人调用，是本仓库反复栽过的形状；这条钉住它真的被写进库里、也真的拦住回退。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task MultiFileBaseline_ShouldRecordItsShapeAndRefuseAnUnfaithfulRollback()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var version = MongoTime(DateTime.UtcNow);
+        var site = Site(null, version);
+        site.Files =
+        [
+            new HostedSiteFile { Path = "index.html", CosKey = "k/index.html", MimeType = "text/html" },
+            new HostedSiteFile { Path = "styles/site.css", CosKey = "k/styles/site.css", MimeType = "text/css" },
+        ];
+        var entry = new HostedSiteEditableEntry(site, "<!doctype html><html>multi</html>", version);
+        var sites = new Mock<IHostedSiteService>();
+        sites.Setup(service => service.GetEditableEntryHtmlAsync(site.Id, "user-1", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(entry);
+        var service = new HostedSiteRevisionService(fixture.Db, sites.Object);
+
+        var baseline = await service.EnsureCurrentSnapshotAsync(site.Id, "user-1", entry);
+
+        Assert.Equal(HostedSiteContentShapes.MultiFile, baseline.CapturedContentShape);
+        Assert.Empty(baseline.VerifiedFiles);
+
+        var refused = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => service.RollbackAsync(site.Id, baseline.Id, "user-1", "rollback-key-1"));
+        Assert.Contains("只留下了入口 HTML", refused.Message);
+
+        // 拦住之后不许留下半条回退草稿。
+        var drafts = await fixture.Db.HostedSiteRevisions
+            .Find(item => item.SiteId == site.Id && item.Source == HostedSiteRevisionSources.Rollback)
+            .ToListAsync();
+        Assert.Empty(drafts);
+    }
+
     private static HostedSite Site(string? revisionId, DateTime contentVersion) => new()
     {
         Id = "site-1",

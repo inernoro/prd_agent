@@ -50,6 +50,15 @@ public class HostedSiteRevision
     [JsonIgnore]
     public List<HostedSiteRevisionFile> VerifiedFiles { get; set; } = new();
 
+    /// <summary>
+    /// 建这条版本时线上站点的内容形态（取值见 <see cref="HostedSiteContentShapes"/>）。
+    ///
+    /// 它回答的是「这条版本自己的内容够不够还原当时的站点」：单文件站点只要一份入口
+    /// HTML 就够；多文件站点还有 CSS、图片等旁挂对象，而没带 VerifiedFiles 的版本一份
+    /// 都没存下来。存量数据没有这个字段，为空表示形态未知。
+    /// </summary>
+    public string? CapturedContentShape { get; set; }
+
     /// <summary>该版本生成时所依据的线上 ContentVersion。</summary>
     public DateTime BasedOnContentVersion { get; set; }
 
