@@ -1271,6 +1271,41 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=workflow-list]", Title = "第 4 步：卡片操作与执行", Body = "每张卡可「编辑 / 画布 / 执行 / 删除」；进画布后拖舱、连线、点执行即可跑。看完点「完成」" },
                     },
                 }),
+
+            // 19. 模型排行榜 —— 本页 9 步教程
+            //
+            // 第 3、4 步的 selector 带逗号兜底（safeQuery 支持选择器列表，首个命中的赢）：
+            // 元信息条与表头只在「已有快照且非空」时才渲染，而分支预览首次进来、
+            // 或目录/榜单拉取失败时都不满足——首次进来的人恰好是自动开讲的对象，
+            // 走到第 3 步就会等十秒然后看到「找不到元素」卡片（Codex 在 PR #1538 指出，
+            // 与上一轮维度切换器那处是同一个形状）。兜底指向常驻的表格容器。
+            //
+            // 新页必须同批带 seed：页头挂了 TipsEntryButton，而 pageTips 为空时它自己隐藏，
+            // 于是入口与自动开讲一起静默消失，页面照常渲染、没有任何东西变红
+            // （predicate-and-wiring-discipline 形状 2，Codex 在 PR #1538 指出）。
+            T("model-leaderboard-page-guide", "card",
+                "模型排行榜：本页 9 步上手教程",
+                "看业界模型在十一个公开分榜上的真实排名，按维度选型，并读懂并列区间与置信区间。",
+                "/model-leaderboard",
+                "开始本页教程",
+                "[data-tour-id=model-leaderboard-page-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=model-leaderboard-page-title]", Title = "第 1 步：这是什么", Body = "arena.ai 的公开榜单，人类盲测对战出来的模型排名。每天同步一次，不含本站的调用量与成本。", NavigateTo = "/model-leaderboard" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-boards]", Title = "第 2 步：按维度切换", Body = "编程与智能体、对话与理解、图像生成、视频生成四组共十一个分榜。选型看哪一项就点哪个榜——文生图强不代表写代码强。带小灰点的榜是这个环境还没同步过。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-meta], [data-tour-id=model-leaderboard-table]", Title = "第 3 步：先看数据多旧、样本多大", Body = "这条横条写着快照日期与对战样本量（会话数或投票数）。样本几千的榜和样本几十万的榜，可信度不是一回事；日期变金色就是超过两天没同步成功了。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-columns], [data-tour-id=model-leaderboard-table]", Title = "第 4 步：列都是什么意思", Body = "带金色箭头的那列就是当前的排序依据。Agent 榜是六个百分比指标（净改进、确认成功率……），其余是对战分（Elo）加票数——两套表头不同，切榜时列会整批换。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 5 步：名次与并列", Body = "名次后面那个区间是并列范围。写着「3」而区间是 2–6，意思是它和另外几个模型在统计上分不出高下——别把第 3 和第 5 当成两个档。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 6 步：条形右端那根细须", Body = "那是置信区间。两个模型的须重叠得厉害，这点分差就说明不了问题；须短的那个是样本够多、数字更稳。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 7 步：分数不跨榜比", Body = "对战分是相对分。文生图的 1421 和文本对话的 1506 不是一回事，页面上分数永远和榜名一起出现，不要拎出来当「模型总分」。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-range]", Title = "第 8 步：只看开源", Body = "要自己部署就切「仅开源」。它只放**能认出来的标准开源许可**（MIT / Apache 这类）；闭源、非商用、仅研究和各家 community 许可都不在里面，各家自造的许可也不在——那些得你自己读条款。授权原文一直显示在模型名下面那行。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-refresh]", Title = "第 9 步：想要更新的数据", Body = "觉得太旧就点这个按钮重读一次库；有「模型管理」权限的还能点「立即同步」直接从 arena.ai 抓当前这个榜。维度写在网址上（?board=），可以直接把某一屏发给同事。看完点「完成」" },
+                    },
+                }),
         };
     }
 }

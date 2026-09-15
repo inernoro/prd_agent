@@ -1,0 +1,75 @@
+| feat | prd-admin | 首页右上角教程中心换成模型排行榜挂件，轮播前三，点击进入 /model-leaderboard；教程整体移入左下角头像菜单 |
+| feat | prd-admin | 新增模型排行榜页，11 个公开分榜按四组可切（编程智能体/代码能力/文本对话/图像理解/联网搜索/文档理解/文生图/图像编辑/文生视频/图生视频/视频编辑），支持仅开源筛选，已注册百宝箱 |
+| feat | prd-admin | 当前维度同步到 URL（?board=text-to-image），刷新保持、可分享、交付能给出落到该维度的深链；URL 里写了不存在的榜退回默认榜 |
+| feat | prd-admin | 榜单页内存缓存（切回已看过的维度不再重拉，刷新/同步按钮强制绕过）+ 渐进渲染（首屏 40 行，滚到底追加），治 402 行文本榜的卡顿 |
+| feat | prd-api | 新增 arena.ai 榜单同步：每天一轮抓取解析落库，只在权威部署跑，抓失败保留旧快照 |
+| feat | prd-api | 解析器支持两种表格形状——Agent 榜六指标（含置信区间、名次区间、会话数与成本单价，方向（向上/向下）解析进数值符号）与对战分榜（Elo 分数、非对称区间、投票数、上下文窗口、初步标注），形状按页面实际结构判定并与目录声明校验 |
+| feat | prd-api | 新增 GET /api/model-leaderboard、/top、/boards 三个只读端点，全员可见，页面只读库不打外站；手动同步在 /api/admin/ 前缀下走「模型管理-写」权限，支持 ?board= 只同步单个榜 |
+| fix | prd-api | 修正「只有 Agent 榜能拿到数据」的错误结论——此前试的是不存在的路径，404 兜底页里的一句 Loading leaderboard 被误当成懒加载骨架 |
+| fix | prd-api | 写侧 Controller 改用 api/admin/ 前缀：权限中间件按路由前缀查权限，与只读端点同前缀会把只读也一起要求 mds.read，全员可见形同虚设 |
+| fix | prd-api | Agent 行必须恰好解析出六个指标，否则整行拒绝——中间某格改写会让后续值整体前移、每个字段挂错名字，而条目数与形状判定照样通过 |
+| fix | prd-api | 指标的误差改为按单元格解析：原先值与误差按整行出现顺序配对，任一指标缺误差格会让后续误差整体前移一位挂错指标，页面上看不出异常（补测试时照出来的真 bug） |
+| fix | prd-api | 名次取页面上写的那个，不再用「第几个解析成功的行」顶替——并列、跳号或任一行被拒都会让后续名次与升降箭头整体错位 |
+| fix | prd-api | 手动同步脱离 HTTP 请求的取消（server-authority）：浏览器离开不再让同步半途而废、在共享库里留下抓一半的状态 |
+| fix | prd-admin | 同步完成后的重拉认当前榜：同步要跑几秒到一分钟，期间切走会把旧榜数据装回新榜标题下 |
+| fix | prd-admin | 名次升降与排序箭头改用 lucide 图标，不再用字面三角与箭头字符（AGENTS.md 规则 0：状态用 SVG icon） |
+| fix | prd-api | 快照文档 Id 改为由榜名派生的确定性值，消除首次同步时周期任务与手动触发并发插出两条文档的窗口；/boards 读取同时改为重复容忍 |
+| fix | prd-api | model_leaderboard_snapshots 补进 DataSyncScope.Excluded（外站公开数据的本地缓存，跨实例搬运无意义且会误导来源） |
+| fix | prd-api | 修复 ArenaLeaderboardFetcherTests 编译失败（error CS0234）：测试项目不引用 PrdAgent.Api，被测文件须逐个 Compile Include，此前漏链导致这批守卫从落地起从未编译过 |
+| fix | prd-admin | 切维度时旧请求后返回不再覆盖新榜数据（按发起时的榜校验，对不上整份丢弃，缓存照存） |
+| fix | prd-admin | 表格布局三连修：模型列不再吃掉全部富余（中间空一大块）、指标条加满宽轨道（长列表右边缘不再是锯齿）、撤掉居中让表格靠边填满画布 |
+| feat | prd-api | 深度自检端点新增「模型榜快照陈旧度」check 与 cds:monitor 声明：同步连着失败时读端点照样 200、只有页面上一个 stale 标签，现在有了不靠人去点的常设判据（48 小时，与页面同阈值） |
+| fix | prd-admin | 刷新与同步按钮的 loading 改用统一的 MapSpinner，不再自绘 animate-spin（frontend-architecture 强制） |
+| fix | prd-admin | 请求守卫从「记目标榜」换成单调递增序号：同一个榜的两个请求（首屏未回时点刷新、同步后强制重拉）board 相同，原守卫挡不住 |
+| test | prd-api | 解析守卫扩到 28 条，fixture 取自真实页面片段，覆盖六指标对位、Down 转负、非对称区间、五列与七列混排、分榜目录一致性 |
+| fix | prd-api | 自检的「没有快照」哨兵从 -1 改成远大于阈值的值：判据是 lte 48，-1 当然小于 48，于是同步从没跑起来过的部署会永远绿——一盏点不亮的灯 |
+| fix | prd-api | 自检同时判覆盖：十一个榜缺任何一个都判失败，此前只看最旧的那条，一个榜成功十个榜失败照样绿 |
+| fix | prd-api | 名次改读名次格的第一个 span，读不出来整行拒绝、不退回行序；退路会让对方改一次名次写法就整份快照名次由我们代笔，而条目数守卫照样绿 |
+| fix | prd-api | 写库 upsert 改按确定性 _id 过滤：只换 Id 不换过滤条件，等于把「插出两条」换成「其中一条撞 E11000」 |
+| fix | prd-api | 同步失败改回稳定错误码 + 一句人话，异常原文只进服务端日志——原先 ex.Message 被前端直接插进 toast |
+| fix | prd-api | 写库前三条判据抽成 EnsureUsable 并补齐守卫（此前只有联网才走得到，等于三条没人验过的判据）；新增厂商覆盖率判据：类名重排会让每行厂商双双变 null、「仅开源」被静默清空，而条目数与形状判定照样通过 |
+| fix | prd-admin | 新增模型排行榜本页 5 步教程 seed 与锚点：页头挂了教程入口而无 seed 时它自己隐藏，入口与自动开讲一起静默消失 |
+| fix | prd-admin | 百宝箱描述从「五个公开分榜」改为按分组表述：榜会增减，写具体榜名必然漂 |
+| fix | prd-admin | 榜单页头在手机宽度允许换行并收窄内边距，标题不再被几个定宽控件挤出屏幕 |
+| fix | prd-admin | 净改进那列的尺子改按「值 + 误差」的跨度算：原先只按值归一，最大那行的误差须被画布边界截掉，恰好把「这个数有多不确定」截没了（13.85±1.92 实测命中） |
+| fix | prd-admin | 首页挂件实时点的光晕改由 --semantic-success-text 派生：原先写死一个 rgba 绿，两套主题下都不等于点本身的颜色，亮色下尤其明显，且改 token 带不动它 |
+| fix | prd-api | 自检的陈旧度改为「每个榜取它自己最新的那份，再挑最旧的」：首次写并发窗口留下的重复文档永不更新，会让这条 check 永久告警，而每个榜其实都在正常同步 |
+| fix | prd-api | 陈旧度 monitor 去掉 passive + sampleComponentId：那条声明照抄了未处理异常那条的形状，却让 sampleComponentId 指向自己，于是「快照多旧」被同时当成判据值和样本量——刚同步完显示「0 次真实调用」拒绝判绿 |
+| fix | prd-admin | 榜单页头的教程 pill 在手机宽度隐藏：这页页头是自绘的，拿不到 PageHeader/TabBar 那边的处理，按 onboarding-tips 规则自己判 |
+| docs | platform | changelog 里描述解析方向的字面三角改成文字（规则 0 的 emoji 禁令也管 changelogs/） |
+| fix | prd-api | 只读端点按 FetchedAt 倒序取最新快照：存在历史重复文档时，原先可能拿到永不更新的孤儿——自检看最新那份判绿、用户看到几天前的名次 |
+| fix | prd-admin | 缓存条目带请求序号、只允许更新的覆盖更旧的：同榜两个请求重叠时，先发后到的那个会在 seq 守卫之前把新数据从缓存顶掉，切走再切回就命中旧数据且不再重拉 |
+| fix | prd-admin | 维度目录拉取失败不再静默：记下错误并显示一行提示，页头刷新一并重试——目录空了 BoardSwitcher 整个不渲染，十一个维度只剩 URL 上那一个，整个会话恢复不了 |
+| docs | platform | 本 PR 新增源码/注释/测试里剩余的字面三角全部改成文字（规则 0 管全部项目内容，不只 UI 与 changelog） |
+| fix | prd-admin | 渐进渲染的观察器依赖补上 visibleRows：从展开状态切到「仅开源」时哨兵首帧不存在、随后重挂但 entries.length 未变，观察器永远接不上，剩下的行再也追加不出来 |
+| fix | prd-api | 同步时取上一份快照也按 FetchedAt 倒序：升降箭头此前可能拿存量孤儿当基线，与 Get / Top / 自检三处口径不一致 |
+| docs | platform | 模型排行榜登记进 onboarding-tips 的「已落地的页面教程」台账（锚点审计靠这张表识别带教程的页面），表头日期同步到 2026-09-15 |
+| fix | prd-admin | 教程锚点改挂常驻外壳：BoardSwitcher 在维度不足两个时返回 null（加载中与拉取失败都属于），锚点随它消失会让本页教程第 2 步找不到元素、轮询十秒后弹失败卡 |
+| fix | prd-admin | 元信息横条在手机宽度允许换行并收内边距：它是表格前的第三条横条，375px 上日期+样本量+条目数+来源链接撑不下，会横向溢出并把榜单挤出首屏 |
+| fix | prd-api | /boards 的条目数改取最新快照而非条目最多那条：某个榜缩短后切换器会永远显示旧的大数字（孤儿文档的条目数冻在原处） |
+| feat | prd-api | 本页教程从 5 步扩到 9 步（onboarding-tips 规定 8-15 步，少于 6 步意义不大），新增「先看数据多旧与样本多大」「列都是什么意思」「名次与并列」「置信区间」「分数不跨榜比」，并补两个锚点 |
+| fix | prd-api | 教程第 3、4 步的 selector 加逗号兜底：元信息条与表头只在有快照时渲染，分支预览首次进来或拉取失败时首次用户走到第 3 步就撞失败卡 |
+| fix | prd-api | EnsureUsable 单独判授权覆盖率：它与厂商出自同一段文本的不同段，对方改分隔符时厂商照样解得出、授权全 null，而「仅开源」筛选的唯一判据正是授权 |
+| fix | prd-api | 分数榜票数改为必填，读不出来整行拒绝：原先留 null 照样接受，整列票数变横线而 FetchedAt 是新的、陈旧度判绿 |
+| test | prd-api | 补两条守卫（授权几乎全空整份拒绝、票数读不出来整行拒绝），解析守卫共 36 条 |
+| fix | prd-api | 快照按部署作用域隔离（新增 DeploymentSlug）：库被同项目所有分支预览共享，此前任一条预览点一次「立即同步」就换掉兄弟分支正在读的那条文档，别人的验收看到的是本分支未合并解析器的产物而两边都看不出异常；读取改为「自己的优先、权威的兜底」，预览没自己同步过时照旧显示线上那份 |
+| fix | prd-api | 只读端点先把榜名归一到目录里那个写法再查库：校验是忽略大小写的而 Mongo 等值过滤不是，?board=Text 会通过校验然后一条都匹配不上，一个存在的榜被报成 ready=false |
+| fix | prd-api | EnsureUsable 补 agent 榜会话数覆盖率判据（只对 agent 榜判，分数榜没这一列）：对方改会话数那一格的写法时每行读成 null，而指标格解析成功、形状判定通过，整份快照被接受、页面那一列变横线而陈旧度判绿 |
+| fix | prd-api | 「读哪一份 / 写哪一条」的口径收敛到 ModelLeaderboardScope 一处（挑选 + 文档 Id 派生），Get / Top 共用一个读取方法，四个读取点不再各写一遍排序 |
+| test | prd-api | 新增 11 条作用域守卫（权威部署行为不变、兄弟分支互不可见、预览兜底与自己优先、文档 Id 在权威部署上逐字不变即不需迁移）+ 3 条会话数覆盖率守卫 |
+| docs | platform | model_leaderboard_snapshots 登记进两处持久化 SSOT（codebase-snapshot 的集合清单、data-dictionary 的集合表）——codebase-snapshot 规则的交叉校验第 4 条本来就要求 MongoDbContext 改动要回写数据字典 |
+| docs | platform | codebase-snapshot 的「MongoDB 集合 (123 个)」固定计数换成「去 grep 现查」：实测 MongoDbContext 有 277 个集合，那个数字差了一倍多且不会有任何东西提醒它过期 |
+| fix | prd-api | 授权归类改由后端给（新增 ModelLicenseClassifier，三态 open/restricted/unknown）：原判据是前端的「除了 Proprietary 都算开源」，实测四个榜 42 种授权写法里，CC-BY-NC-4.0、flux-non-commercial-license、Mistral Research 与九种 community 许可全被标成开源并挂上绿徽章，而「仅开源」在本页教程里是推荐给想自部署的人的 |
+| fix | prd-admin | isOpenSource 改读后端的 licenseKind，不再自己正则匹配授权字符串（frontend-architecture 单一数据源）；字段缺失按 unknown 处理、不按开源；非开源那行不再一律写「闭源」，改为一律显示授权原文——CC-BY-NC 和仅研究许可都不是闭源 |
+| fix | prd-admin | 目录项按忽略大小写解析并把 URL 归一：后端上一轮已经接受 ?board=Text，而前端还按大小写严格比，currentBoard 为 null 会把用户从一条后端已接受的链接踢回默认榜 |
+| fix | prd-api | 本页教程第 8 步文案跟着改：说清「仅开源」只放能认出来的标准开源许可，各家自造的要自己读条款 |
+| fix | prd-api | 名次区间注释里的字面双向箭头字符（U+2194）改成文字「到」（规则 0：它带 Emoji / Extended_Pictographic 属性，且禁令明文覆盖 changelogs/；此前只扫了三角字符） |
+| test | prd-api | 新增 14 条授权归类守卫，取值是从存档页全量抽取去重的 42 种真实写法（含空值），逐个钉住该落哪一类，兼作匹配表的数据覆盖守卫 |
+| fix | prd-api | 手动同步入口补上「退出共享状态归属」判据：非 CDS 的 standby/canary 用 ManageGlobalNotification=false 宣告不拥有共享状态时，周期 worker 被挡住而手动入口照写——它没有 CDS_PROJECT_ID、作用域为 null，一点同步就直接改写权威快照 |
+| refactor | prd-api | 该判据抽成 DeploymentAuthority.HasOptedOutOfSharedState：它此前在密文轮换与周期任务里各写了一遍，现在三个消费方共用一份 |
+| fix | prd-api | 新增「严重缩水拒绝」判据（EnsureNotTruncated）：全局下限是 5 而 text 榜实测 402 行，对方只改一部分版式、只剩五行能解析时，下限通过、覆盖率按比例算也通过，一份少了 397 个模型的快照会被接受且陈旧度判绿。判据用上一份的条目数比例，不给每个榜写死下限 |
+| fix | prd-api | FetchedAt 改取真实抓取时刻（抓之前取），不再在写库时取 now：十一个榜串行抓能差出一分钟，更要紧的是并发写时后写的总拿到更大时间戳、哪怕数据更旧 |
+| fix | prd-api | 写库改为条件替换（只在库里那份不比本次抓取新时才覆盖），并把并发撞键当成正常让位：周期 worker 与手动触发同时同步时，原先无条件替换让后写的赢，旧数据会盖掉新数据且升降倒着算 |
+| fix | prd-admin | 首页榜单挂件周期重拉（30 分钟）+ 陈旧度改按 fetchedAt 现算：原先只在挂载时拉一次、stale 冻在首次响应那一刻，首页开着过夜就一直显示旧名次而实时点还绿着跳 |
+| test | prd-api | 新增 6 条守卫（退出开关只认显式 false、三个消费方一致否决、缩水拒绝与正常波动放行、判据是比例不是每榜写死） |
+| fix | prd-api | 升降基线改在抓取之前读：原先抓完才读，两次同步重叠时 B 会把 A 刚写的那份当成「上一份」，升降全算成零，而 B 还因时间戳更新赢下条件写，那一整天的名次变化在页面上消失 |
