@@ -475,3 +475,23 @@ AGENTS.md 9 要求的是**新 Agent** 在通过 8 验收之前带 `wip: true`。
 两条都要新增持久字段、新增还原路径、改回收判据，属于 AGENTS.md 5.5 的 B 类。本 PR 的熔断
 早已触发，所以只止血、不展开。顺带记下复审提到的另一半：历史版本的**预览**对多文件站点
 同样只呈现入口 HTML，那是展示失真而非破坏，一并放进这条后续工作。
+
+## 第二十轮复审的一条反驳（2026-09-15，C 类）
+
+复审判「PPT 会话上下文 ID 里带 `location.key`，整页刷新后 React Router 会把它初始化成
+`default`，于是落到另一个 sessionStorage 命名空间，存着的 `activeRunId` 与大纲游标找不回来，
+服务端任务还在跑而页面从空白重新导入知识」，定级 P2。
+
+核对 `react-router@7.10.1` 的实现，前提不成立：
+
+- `createBrowserLocation` 读的是 `globalHistory.state && globalHistory.state.key || "default"`；
+- `getHistoryState` 在 push / replace 时把 `key` 写进 `window.history.state`；
+- `window.history.state` 属于那条会话历史条目，跨刷新存活。
+
+所以站内跳转来的条目（知识启动走的正是 `navigate(buildDesignArtifactLaunchPath(...))`），
+刷新后拿到的仍是 push 时写下的那个 key；地址栏直达 / 新标签打开的条目从头到尾都是
+`default`（`getUrlBasedHistory` 初始化只补 `idx`，不补 `key`），刷新后还是 `default`。
+两种路径的 key 都不会在刷新时改变，恢复游标因此找得回来。
+
+不改代码，但补了一条用例把这个结论钉住：同一个 key 两次解析必须得到同一个上下文，
+`default` 与站内 key 各测一次且互不串味。哪天路由升级真的改了 key 的存活语义，这条会先红。

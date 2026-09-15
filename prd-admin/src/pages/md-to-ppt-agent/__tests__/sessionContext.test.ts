@@ -56,6 +56,25 @@ describe('HTML PPT 知识启动上下文', () => {
     expect(resolvePptSessionContext(launch(), saved)).toEqual(first);
   });
 
+  it('刷新后取到同一个 history key 就落回同一命名空间（含直达打开的 default）', () => {
+    // react-router v7 的 BrowserRouter 把 key 写进 window.history.state（getHistoryState），
+    // 读取时 `globalHistory.state?.key || 'default'`；history.state 随会话历史条目一起
+    // 跨刷新存活，所以刷新同一条目拿到的是同一个 key。站内跳转来的条目是 push 时写下的
+    // 随机 key，地址栏直达/新标签打开的条目从头到尾都是 'default' —— 两种都不会在刷新
+    // 时改变，恢复游标因此找得回来（复审 P2 称刷新后一律变成 'default'，与此不符）。
+    const saved = storage();
+    const direct = resolvePptSessionContext(launch('default'), saved);
+    activatePptSessionContext(direct, saved);
+    saved.setItem(direct.sessionKey, '直达打开的稿子');
+
+    expect(resolvePptSessionContext(launch('default'), saved)).toEqual(direct);
+    expect(saved.getItem(direct.sessionKey)).toBe('直达打开的稿子');
+    // 站内跳转来的条目同理，而且与直达那条互不串味。
+    const pushed = resolvePptSessionContext(launch('navigation-a'), saved);
+    expect(pushed.id).not.toBe(direct.id);
+    expect(resolvePptSessionContext(launch('navigation-a'), saved)).toEqual(pushed);
+  });
+
   it('不可用的恢复指针不阻塞菜单启动，显式知识启动不依赖存储可用性', () => {
     const saved = { getItem: () => { throw new Error('disabled'); } };
     expect(resolvePptSessionContext({ key: 'menu', search: '' }, saved).id).toBe('legacy');
