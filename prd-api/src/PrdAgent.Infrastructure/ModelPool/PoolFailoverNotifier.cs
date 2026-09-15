@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
 using PrdAgent.Core.Models;
@@ -133,15 +135,85 @@ public class PoolFailoverNotifier : IPoolFailoverNotifier
             openNotifications.Count, modelType, affectedUserIds.Count);
     }
 
-    public Task NotifyQuotaExceededAsync(string platformName, string message, CancellationToken ct = default)
-        => UpsertNotificationAsync(
-            key: "llm-quota-exceeded",
+    public Task NotifyQuotaExceededAsync(
+        string? platformName,
+        string? modelName,
+        CancellationToken ct = default)
+    {
+        var environment = ResolveQuotaEnvironment(Environment.GetEnvironmentVariable);
+        var platform = NormalizeQuotaDetail(platformName);
+        var model = NormalizeQuotaDetail(modelName);
+
+        return UpsertNotificationAsync(
+            key: BuildQuotaNotificationKey(environment.Identity, platform, model),
             title: "AI 服务额度不足",
-            message: message,
+            message: BuildQuotaNotificationMessage(environment.Label, platform, model),
             level: "error",
             source: "llm-gateway-quota",
             targetUserId: null,
             ct: ct);
+    }
+
+    internal static string BuildQuotaNotificationMessage(
+        string environmentLabel,
+        string platformName,
+        string modelName)
+        => $"上游 AI 服务因额度不足拒绝了本次调用，本次 AI 创作未完成。\n" +
+           $"环境：{environmentLabel}\n" +
+           $"模型：{modelName}\n" +
+           $"平台：{platformName}\n" +
+           "请稍后重试；管理员需要检查服务额度或切换可用配置。诊断信息已保留。";
+
+    internal static string BuildQuotaNotificationKey(
+        string environmentIdentity,
+        string platformName,
+        string modelName)
+    {
+        var identity = $"{environmentIdentity}\n{platformName}\n{modelName}";
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))
+            .ToLowerInvariant()[..16];
+        return $"llm-quota-exceeded:v2:{hash}";
+    }
+
+    internal static (string Label, string Identity) ResolveQuotaEnvironment(
+        Func<string, string?> readEnvironmentVariable)
+    {
+        var projectId = NormalizeEnvironmentValue(readEnvironmentVariable("CDS_PROJECT_ID"));
+        var branch = NormalizeEnvironmentValue(readEnvironmentVariable("VITE_GIT_BRANCH"))
+                     ?? NormalizeEnvironmentValue(readEnvironmentVariable("BULLMQ_PREFIX"));
+
+        if (projectId != null)
+        {
+            return branch != null
+                ? ($"CDS 预览环境（分支：{branch}）", $"cds:{projectId}:{branch}")
+                : ($"CDS 预览环境（项目：{projectId}）", $"cds:{projectId}");
+        }
+
+        var hostEnvironment = NormalizeEnvironmentValue(readEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
+                              ?? NormalizeEnvironmentValue(readEnvironmentVariable("DOTNET_ENVIRONMENT"));
+        return hostEnvironment?.ToLowerInvariant() switch
+        {
+            "production" => ("正式环境", "production"),
+            "staging" => ("预发布环境", "staging"),
+            "test" or "testing" or "tests" => ("测试环境", "test"),
+            "development" => ("本地开发环境", "development"),
+            { Length: > 0 } value => ($"{hostEnvironment} 环境", value),
+            _ => ("未识别环境", "unknown"),
+        };
+    }
+
+    private static string NormalizeQuotaDetail(string? value)
+    {
+        var normalized = NormalizeEnvironmentValue(value);
+        if (normalized == null) return "未能从网关响应确认";
+        return normalized.Length <= 160 ? normalized : normalized[..160];
+    }
+
+    private static string? NormalizeEnvironmentValue(string? value)
+    {
+        var normalized = value?.Replace('\r', ' ').Replace('\n', ' ').Trim();
+        return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+    }
 
     private async Task UpsertNotificationAsync(
         string key, string title, string message, string level, string source,
