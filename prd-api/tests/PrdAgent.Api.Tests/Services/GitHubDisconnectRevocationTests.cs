@@ -69,15 +69,19 @@ public class GitHubDisconnectRevocationTests
         {
             var hint = GitHubConnectController.DescribeRevocation(failed);
             Assert.NotNull(hint);
-            // 「发生了什么 + 下一步」：本地删了要说，GitHub 那边没撤也要说，还要说清去哪儿撤。
-            Assert.Contains("已删除", hint!);
-            Assert.Contains("GitHub", hint);
+            // 「发生了什么 + 下一步」：GitHub 那边没撤要说，还要说清去哪儿撤。
+            Assert.Contains("GitHub", hint!);
             Assert.Contains("移除", hint);
 
             // 只写用户能据此行动的部分：没撤成的内部原因（有没有配密钥、令牌属不属于本应用）
-            // 用户拿它什么也做不了，留在服务端日志里（2026-09-15 Codex review 第八轮）。
+            // 用户拿它什么也做不了，留在服务端日志里。
             Assert.DoesNotContain("应用密钥", hint);
             Assert.DoesNotContain("访问令牌", hint);
+
+            // **只说 GitHub 那一侧**：本地状态由界面按结果自己说。两边都说就会拼出
+            // 「新的连接已保留」+「本站保存的连接已删除」这种自相矛盾的话。
+            Assert.DoesNotContain("本站保存的连接", hint);
+            Assert.DoesNotContain("已删除", hint);
         }
     }
 }

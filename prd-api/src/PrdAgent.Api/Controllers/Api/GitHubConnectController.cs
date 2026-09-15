@@ -53,9 +53,11 @@ public sealed class GitHubConnectController : ControllerBase
         var userId = this.GetRequiredUserId();
         var conn = await _connections.GetConnectionAsync(userId, ct);
 
+        // 探的是**刚读到的这一条**，不是再查一次库：中途若有人换了账号，重查会拿到另一条，
+        // 于是「用 B 的令牌去探、把 A 的账号信息报给用户」——界面说 A 可用，后续请求却走 B。
         var usable = conn == null
             ? null
-            : DescribeUsability(await _connections.ProbeConnectionAsync(userId, ct));
+            : DescribeUsability(await _connections.ProbeConnectionAsync(conn, ct));
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -182,11 +184,15 @@ public sealed class GitHubConnectController : ControllerBase
         "请到 GitHub 设置 → Applications → Authorized OAuth Apps 里确认本应用已不在列表中；若还在，手动移除即可。";
 
     /// <summary>
-    /// 把撤销结果翻成给用户看的一句话：先说结果，再说要不要紧 / 下一步（external-cause-first）。
+    /// 把撤销结果翻成给用户看的一句话。
+    ///
+    /// **只说 GitHub 那一侧**：本地这一侧发生了什么（删了 / 本来就没有 / 被替换所以保留）
+    /// 由界面按结果自己说。两边都说本地状态，拼起来会自相矛盾——例如「新的连接已保留」
+    /// 后面跟一句「本站保存的连接已删除」。
     ///
     /// 只写用户**能据此行动**的部分。为什么没撤成（没配应用密钥、网络出错、GitHub 不认这把令牌）
     /// 属于本站的内部诊断，用户拿它什么也做不了——留在服务端日志里即可，
-    /// 断开那一步已按结果枚举记过一条（2026-09-15 Codex review 第八轮）。
+    /// 断开那一步已按结果枚举记过一条。
     ///
     /// 撤销成功时返回 null —— 没有需要用户处理的事，就不要多说一句话。
     /// 兜底分支走的是「没撤掉」那一侧：将来新增枚举值而忘了在这里表态时，最坏结果是多提醒一次，
@@ -197,11 +203,9 @@ public sealed class GitHubConnectController : ControllerBase
         GitHubTokenRevocation.Revoked => null,
         GitHubTokenRevocation.NothingToRevoke => null,
         GitHubTokenRevocation.Unverified =>
-            "本站保存的连接已删除。GitHub 没有确认这次撤销（可能你此前已经自行移除过），"
-            + ManualRevokeSuffix,
+            "GitHub 没有确认这次撤销（可能你此前已经自行移除过），" + ManualRevokeSuffix,
         _ =>
-            "本站保存的连接已删除，但 GitHub 那边的授权没能一起收回。"
-            + ManualRevokeSuffix,
+            "GitHub 那边的授权没能一起收回。" + ManualRevokeSuffix,
     };
 
     /// <summary>当前用户可访问的仓库（含私有仓，取决于授权 scope）。</summary>

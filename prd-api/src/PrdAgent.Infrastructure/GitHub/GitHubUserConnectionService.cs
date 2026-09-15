@@ -96,15 +96,23 @@ public sealed class GitHubUserConnectionService
     /// </summary>
     public async Task<GitHubConnectionUsability> ProbeConnectionAsync(string userId, CancellationToken ct)
     {
-        string token;
-        try
-        {
-            token = await ResolveTokenAsync(userId, ct);
-        }
-        catch (GitHubException)
-        {
-            return GitHubConnectionUsability.Revoked;
-        }
+        var conn = await GetConnectionAsync(userId, ct);
+        if (conn == null) return GitHubConnectionUsability.Revoked;
+        return await ProbeConnectionAsync(conn, ct);
+    }
+
+    /// <summary>
+    /// 探**这一条**连接还能不能用。
+    ///
+    /// 调用方已经握着一条记录时必须走这个重载，别再传 userId 让它重查一次库：
+    /// 中途若有人换了账号，重查拿到的是另一条，于是会「拿 B 的令牌去探，报 A 的账号信息」——
+    /// 界面说 A 可用，接下来的请求却走 B。同一条记录既用来展示又用来判断，才不会前后不一。
+    /// </summary>
+    public async Task<GitHubConnectionUsability> ProbeConnectionAsync(
+        GitHubUserConnection conn, CancellationToken ct)
+    {
+        var token = DecryptToken(conn);
+        if (token == null) return GitHubConnectionUsability.Revoked;
 
         try
         {
@@ -119,11 +127,11 @@ public sealed class GitHubUserConnectionService
                 ? GitHubConnectionUsability.Revoked
                 : GitHubConnectionUsability.Unknown;
         }
-        catch (HttpRequestException)
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            return GitHubConnectionUsability.Unknown;
+            throw;
         }
-        catch (TaskCanceledException)
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
         {
             return GitHubConnectionUsability.Unknown;
         }

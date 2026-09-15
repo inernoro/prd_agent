@@ -150,6 +150,8 @@ export function describeDisconnectNotice(result: {
   }[result.outcome];
 
   if (!result.revoked) {
+    // 后端那句**只讲 GitHub 那一侧**，本地这一侧由上面的 local 负责——
+    // 两边都讲本地状态就会拼出「新的连接已保留」+「连接已删除」这种自相矛盾的话。
     return {
       tone: 'warning',
       title: 'GitHub 授权可能仍然存在',
