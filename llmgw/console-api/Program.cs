@@ -4176,8 +4176,8 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
             : reachingCount == unnamedCallers.Count
                 ? $"这个用途下 {unnamedCallers.Count} 个调用方不点名时都会落到它。"
                 : reachingCount == 0
-                    ? $"它是 {item.ModelType} 的默认，但这个用途下 {unnamedCallers.Count} 个调用方都走不到这一档（配了专属池或未放行）——现在没有人会不点名地落到它。"
-                    : $"这个用途下 {unnamedCallers.Count} 个调用方里，{reachingCount} 个不点名时会落到它；其余的配了专属池或未放行，走的是别的路。"
+                    ? $"它够格接不点名的请求，但这个用途下 {unnamedCallers.Count} 个调用方没有一个会落到它（{DescribeMissReasons(unnamedCallers)}）。"
+                    : $"这个用途下 {unnamedCallers.Count} 个调用方里，{reachingCount} 个不点名时会落到它；其余 {unnamedCallers.Count - reachingCount} 个走的是别的路（{DescribeMissReasons(unnamedCallers)}）。"
         : item.IsDefaultForType && !item.Enabled
             ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——运行时会跳过它回落到模型池。先启用它，或改设别的模型为默认。"
             : item.IsDefaultForType && !hasEligibleRoute
@@ -17449,6 +17449,27 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
         }
     }
     return null;
+}
+
+/// <summary>
+/// 「其余那些为什么没落到它」——按真实构成如实说，不写死成某几种。
+///
+/// 上一版这句话写死了「配了专属池或未放行」。断流之后原因变成了「被别的模型认领了」，
+/// 那句总结就开始说不准——逐调用方那一栏是对的，总结却在撒一个小谎。
+/// 判据要么来自数据，要么就别下结论（形状 1：判据比它该管的范围窄）。
+/// </summary>
+static string DescribeMissReasons(IReadOnlyList<CallTraceUnnamedCaller> callers)
+{
+    var parts = new List<string>();
+    var pool = callers.Count(x => string.Equals(x.Reach, nameof(CallTracePlanner.CallerReach.DedicatedPoolOnly), StringComparison.Ordinal));
+    var rejected = callers.Count(x => string.Equals(x.Reach, nameof(CallTracePlanner.CallerReach.TrafficRejected), StringComparison.Ordinal));
+    var claimed = callers.Count(x => !x.ReachesThisModel && x.Verdict.Contains("认领了", StringComparison.Ordinal));
+    var other = callers.Count(x => !x.ReachesThisModel) - pool - rejected - claimed;
+    if (claimed > 0) parts.Add($"{claimed} 个被别的模型认领");
+    if (pool > 0) parts.Add($"{pool} 个配了专属池");
+    if (rejected > 0) parts.Add($"{rejected} 个未放行");
+    if (other > 0) parts.Add($"{other} 个这个用途的默认不是它");
+    return parts.Count == 0 ? "没有别人" : string.Join("、", parts);
 }
 
 /// <summary>

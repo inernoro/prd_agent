@@ -688,6 +688,12 @@ public class GatewayDataDomainGuardTests
         // 只挂着名字接不住请求：必须真有一条启用的线路。
         Assert.Contains("gwModelOfferings.CountDocumentsAsync", consoleProgram);
 
+        // 「其余那些为什么没落到它」必须按真实构成说，不许写死成某几种原因。
+        // 上一版写死了「配了专属池或未放行」，断流之后原因变成「被别的模型认领了」，
+        // 那句总结就开始撒一个小谎——逐调用方那一栏是对的，总结不是（形状 1）。
+        Assert.Contains("DescribeMissReasons", consoleProgram);
+        Assert.DoesNotContain("其余的配了专属池或未放行", consoleProgram);
+
         // 判定流程图：图最容易被人当真，所以每条岔路的状态必须由后端下发，前端一句判断都不做。
         // 「前端自己判这支走不走」就是第二份判据（形状 3），而且是最难被发现的那一份。
         var flowPanel = ReadRepoFile("llmgw/web/src/components/CallTraceFlow.tsx");
