@@ -271,8 +271,21 @@ export default function ModelLeaderboardPage() {
   const columnMax = useMemo(() => {
     const pick = (get: (e: ModelLeaderboardEntry) => ModelMetric | null) =>
       Math.max(...entries.map((e) => Math.abs(get(e)?.value ?? 0)), 0.0001);
+
+    // 净改进那一列画的是**带误差须的条**，尺子要量的是整个区间而不只是值本身。
+    // 只按值取最大的话，最大那行的须会被画布边界截掉——而截掉的恰恰是「这个数有多不确定」，
+    // 于是榜首看上去比谁都确定（Codex 在 PR #1538 指出）。
+    // 实测就命中了：13.85 ± 1.92，误差占值 13.9%，而值撑到 96% 时只剩 4% 的余地。
+    // 其余三列是热力格、不画须，仍按值归一。
+    const span = Math.max(
+      ...entries.map((e) =>
+        e.netImprovement ? Math.abs(e.netImprovement.value) + (e.netImprovement.margin ?? 0) : 0,
+      ),
+      0.0001,
+    );
     return {
       net: pick((e) => e.netImprovement),
+      netSpan: span,
       confirmed: pick((e) => e.confirmedSuccess),
       praise: pick((e) => e.praiseVsComplaint),
       steer: pick((e) => e.steerability),
@@ -629,11 +642,12 @@ function Row({
 }: {
   entry: ModelLeaderboardEntry;
   lead: boolean;
-  columnMax: { net: number; confirmed: number; praise: number; steer: number };
+  columnMax: { net: number; netSpan: number; confirmed: number; praise: number; steer: number };
 }) {
   const open = isOpenSource(entry.license);
   // 当列最大值占从中轴到边缘的 46%（留两格边距，免得最长那根顶到框线上）
-  const netScale = 46 / columnMax.net;
+  // 46（而非 50）给画布留边；分母用「值 + 误差」的跨度，保证最长的那根须也落在画布内
+  const netScale = 46 / columnMax.netSpan;
 
   return (
     <div

@@ -68,17 +68,23 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--semantic-success-text);
+  /* color 与 background 同一个 token：光晕用 currentColor 调出来，跟着主题走。
+     原来光晕写死成 rgba(79,168,139,…)，那个绿在两套主题里都不等于
+     --semantic-success-text（暗色 #86efac / 亮色 #166534），亮色下点和光晕明显不是
+     一个颜色，而且以后改 token 也带不动它（Codex 在 PR #1538 指出）。
+     色值混合照 tokens.css 里阴影的既有写法。 */
+  color: var(--semantic-success-text);
+  background: currentColor;
   animation: homeModelRankPulse 2.4s ease-out infinite;
 }
 .home-model-rank-dot.is-stale {
-  background: var(--text-muted);
+  color: var(--text-muted);
   animation: none;
 }
 @keyframes homeModelRankPulse {
-  0%   { box-shadow: 0 0 0 0 rgba(79, 168, 139, 0.45); }
-  70%  { box-shadow: 0 0 0 6px rgba(79, 168, 139, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(79, 168, 139, 0); }
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, currentColor 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 0%, transparent); }
 }
 
 .home-model-rank-slot {

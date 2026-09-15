@@ -1751,7 +1751,18 @@ static async Task<IResult> DeepHealth(
         }
         else
         {
-            var oldest = snapshots.OrderBy(x => x.FetchedAt).First();
+            // 每个榜取**它自己最新的那份**，再在这些里面挑最旧的。
+            //
+            // 不能直接对全量文档取最旧（Codex 在 PR #1538 指出）：首次写的并发窗口
+            // （已在本 PR 修掉，但可能已经在库里留下残留）会让同一个榜有两条文档，
+            // 而同步只更新其中一条、从不删另一条。覆盖判断用的是集合、不受影响，
+            // 但陈旧度会一直盯着那条永远不再更新的孤儿，48 小时后这条 check 就永久告警，
+            // 而实际上每个榜都在正常同步——一条永远响的铃和一条永远不响的铃同样没用。
+            var oldest = snapshots
+                .GroupBy(x => x.Board, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.OrderByDescending(x => x.FetchedAt).First())
+                .OrderBy(x => x.FetchedAt)
+                .First();
             leaderboardStaleHours = Math.Round((now - oldest.FetchedAt).TotalHours, 1);
             leaderboardOutput = leaderboardStaleHours <= 48
                 ? $"{storedBoards.Count} 个榜都有快照，最旧的一份是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
