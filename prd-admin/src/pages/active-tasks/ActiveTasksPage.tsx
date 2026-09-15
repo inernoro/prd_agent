@@ -173,7 +173,10 @@ export function ActiveTasksPage() {
 
   /** 删除 / 放下 —— 两条路都能撤回来，所以按钮永远在 */
   const onRemove = useCallback(async (t: ActiveTaskDto) => {
-    const dropped = t.elapsedSeconds > 0;
+    // 正在做的那条一律走「放下」留痕：它刚开始计时时 elapsedSeconds 还是 0，
+    // 光看这个数会走到「真删」那条路上去，而后端只允许删备用队列里的 —— 400 回来的
+    // 那句话还会让人一头雾水。按状态判，不按秒数判。
+    const dropped = t.state === 'active' || t.elapsedSeconds > 0;
     const ok = await run<{ id: string }>(() => (dropped ? dropActiveTask(t.id) : deleteActiveTask(t.id)));
     if (ok) {
       setJustGone({ id: t.id, title: t.title, dueAt: t.dueAt, orderKey: t.orderKey, dropped });
@@ -277,13 +280,20 @@ export function ActiveTasksPage() {
       )}
 
       {now ? (
-        <button
-          className="atb-link"
-          disabled={busy}
-          onClick={() => (t.blocked ? void run(() => unblockActiveTask(t.id)) : setBlockOpen(true))}
-        >
-          {t.blocked ? '不卡了' : '卡住了'}
-        </button>
+        <div className="atb-rowact">
+          <button
+            className="atb-link"
+            disabled={busy}
+            onClick={() => (t.blocked ? void run(() => unblockActiveTask(t.id)) : setBlockOpen(true))}
+          >
+            {t.blocked ? '不卡了' : '卡住了'}
+          </button>
+          {/* 做到一半决定不做了，直接放下。上一版这里没有这个入口，
+              人得先切到另一件、再回头把它放下 —— 画状态机时才看出来这条绕路。 */}
+          <button className="atb-link atb-link--quiet" disabled={busy} onClick={() => void onRemove(t)}>
+            放下
+          </button>
+        </div>
       ) : (
         <div className="atb-rowact">
           <button className="atb-link" disabled={busy} onClick={() => void run(() => startActiveTask(t.id))}>开始</button>

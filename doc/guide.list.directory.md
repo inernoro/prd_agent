@@ -207,6 +207,7 @@
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
 - [海鲜市场（配置市场）使用 · 指南](./guide.marketplace.md) `guide.marketplace`
 - [开放平台 Open API · 指南](./guide.open-platform.open-api.md) `guide.open-platform.open-api`
+- [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
