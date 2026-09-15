@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type RefObject } from 'react';
 import { getGenAvgMs } from '@/lib/genTiming';
-import { generationProgressPlacement } from './generationProgressPlacement';
+import { generationProgressMetaStyle, generationProgressPlacement } from './generationProgressPlacement';
 
 // build-marker: gen-develop-loader v2 (2026-08-30) — 强制 chunk 重编译，冲掉 CDS 构建缓存
 
@@ -249,10 +249,13 @@ export function GenDevelopLoader({
       }, meta.offsetHeight * scale);
       meta.style.visibility = placement ? 'visible' : 'hidden';
       if (!placement) return;
-      meta.style.left = `${placement.left / scale}px`;
+      // placement.left 是中心点不是左缘；换算收敛在 generationProgressMetaStyle 里，
+      // 2026-09-14 那次「右缘 590.75 > 画框 501」就是在这里把中心当左缘直接除了 scale。
+      const style = generationProgressMetaStyle(placement, scale);
+      meta.style.left = `${style.left}px`;
       meta.style.right = 'auto';
-      meta.style.bottom = `${placement.bottom / scale}px`;
-      meta.style.width = `${placement.width / scale}px`;
+      meta.style.bottom = `${style.bottom}px`;
+      meta.style.width = `${style.width}px`;
     };
     const schedule = () => { if (!frame) frame = window.requestAnimationFrame(place); };
     // 只观察祖先变换，不观察这一行自身的样式；否则测量与写入会互相触发成死循环。

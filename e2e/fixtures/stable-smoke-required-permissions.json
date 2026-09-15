@@ -1,0 +1,18 @@
+{
+  "$comment": "稳定冒烟巡检身份必须持有的管理权限。SSOT 是 prd-api/src/PrdAgent.Core/Security/StableSmokeIdentityPolicy.cs，两边由 StableSmokeIdentityPolicyTests 钉死；改一边不改另一边 CI 会红。",
+  "requiredPermissions": [
+    "access",
+    "users.read",
+    "users.write",
+    "authz.manage",
+    "document-store.read",
+    "document-store.write",
+    "ai-toolbox.use",
+    "video-agent.use",
+    "literary-agent.use",
+    "visual-agent.use",
+    "settings.read",
+    "web-pages.read",
+    "web-pages.write"
+  ]
+}

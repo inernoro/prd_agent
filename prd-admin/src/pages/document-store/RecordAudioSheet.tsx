@@ -1139,6 +1139,7 @@ export function RecordAudioSheet({
         <button
           type="button"
           onClick={() => { onClose(); onPickFile(targetStoreId || storeId); }}
+          data-testid="recording-unavailable-upload"
           className="flex min-h-11 cursor-pointer items-center justify-center rounded-[12px] px-5 text-[14px] font-semibold"
           style={{ background: 'var(--bg-card)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}>
           上传文件
@@ -1287,7 +1288,12 @@ export function RecordAudioSheet({
         className="mx-auto flex w-full max-w-[360px] flex-col items-center gap-1.5 rounded-[14px] px-4 py-3"
         style={{ background: 'var(--bg-card)', border: '1px solid var(--border-faint)' }}
       >
-      <div className="flex justify-center">
+      {/*
+        状态胶囊的文案是给人看的（「正在录音 00:12」「已暂停 00:12」），会跟稿面一起改；
+        自动化只认 data-state。稳定冒烟 REC-001/002/006 此前按「录音中」的字面匹配，
+        文案一改就全线找不到元素，和权限问题混在一起报成「录制状态未出现」。
+      */}
+      <div className="flex justify-center" data-testid="recording-state" data-state={state}>
         {state === 'requesting' ? (
           <span
             className="inline-flex items-center gap-2 rounded-full px-3.5 py-1.5 text-[13px] font-semibold"

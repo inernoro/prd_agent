@@ -10,6 +10,7 @@ using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 
 namespace PrdAgent.Api.Authentication;
@@ -43,6 +44,7 @@ public sealed class StableSmokeAuthenticationHandler
     private readonly IConfiguration _configuration;
     private readonly IUserService _userService;
     private readonly IIdGenerator _idGenerator;
+    private readonly IAdminPermissionService _permissionService;
     private readonly MongoDbContext _db;
 
     public StableSmokeAuthenticationHandler(
@@ -52,12 +54,14 @@ public sealed class StableSmokeAuthenticationHandler
         IConfiguration configuration,
         IUserService userService,
         IIdGenerator idGenerator,
+        IAdminPermissionService permissionService,
         MongoDbContext db)
         : base(options, logger, encoder)
     {
         _configuration = configuration;
         _userService = userService;
         _idGenerator = idGenerator;
+        _permissionService = permissionService;
         _db = db;
     }
 
@@ -317,7 +321,11 @@ public sealed class StableSmokeAuthenticationHandler
     private async Task<User?> GetOrProvisionUserAsync(StableSmokePublicKeyOptions key, CancellationToken ct)
     {
         var existing = await _userService.GetByUsernameAsync(key.Username);
-        if (existing is not null || !key.AutoProvision) return existing;
+        if (existing is not null)
+        {
+            return key.ManagePermissions ? await ReconcilePermissionsAsync(existing, key, ct) : existing;
+        }
+        if (!key.AutoProvision) return null;
 
         var user = new User
         {
@@ -327,7 +335,10 @@ public sealed class StableSmokeAuthenticationHandler
                 Convert.ToBase64String(RandomNumberGenerator.GetBytes(48))),
             DisplayName = string.IsNullOrWhiteSpace(key.DisplayName) ? "稳定冒烟账号" : key.DisplayName.Trim(),
             Role = UserRole.QA,
-            SystemRoleKey = "agent_tester",
+            SystemRoleKey = StableSmokeIdentityPolicy.ProvisionedSystemRoleKey,
+            // 角色只给 Agent 体验者，矩阵要的管理类权限走显式放行清单：
+            // 旧构建也认 PermAllow，同一份共享库里新老部署对这个账号的判断一致。
+            PermAllow = key.ManagePermissions ? StableSmokeIdentityPolicy.RequiredPermissions.ToList() : null,
             UserType = UserType.Human,
             Status = UserStatus.Active,
             MustResetPassword = false,
@@ -337,9 +348,10 @@ public sealed class StableSmokeAuthenticationHandler
         {
             await _db.Users.InsertOneAsync(user, cancellationToken: ct);
             Logger.LogWarning(
-                "Stable smoke account provisioned. username={Username}, keyId={KeyId}, requestId={RequestId}",
+                "Stable smoke account provisioned. username={Username}, keyId={KeyId}, permAllow={PermAllow}, requestId={RequestId}",
                 user.Username,
                 key.KeyId,
+                string.Join(",", user.PermAllow ?? new List<string>()),
                 Context.TraceIdentifier);
             return user;
         }
@@ -347,6 +359,51 @@ public sealed class StableSmokeAuthenticationHandler
         {
             return await _userService.GetByUsernameAsync(key.Username);
         }
+    }
+
+    /// <summary>
+    /// 存量巡检账号补齐矩阵权限。
+    ///
+    /// 2026-09-14 的事故：<c>stsmk_cds</c> 在 09-01 由本处理器自动开号，拿到的只有「Agent 体验者」角色，
+    /// 没有文档空间与用户管理权限，48 小时巡检里录音、文件、短视频、会话权限四个模块 30 余项
+    /// 全部在业务动作之前被权限中间件挡成「无权限」，报告只看到现象看不到外因。
+    /// 这里在每次签名认证通过后按 <see cref="StableSmokeIdentityPolicy"/> 核对一次，缺什么补什么，
+    /// 只加不减：显式放行进 <c>PermAllow</c>，被拒绝清单里的同名项一并移出，并把补齐动作写进日志。
+    /// 签名身份本来就能为这个账号签发登录票据，把它的权限对齐到配置声明的契约不是越权，
+    /// 而是让「配置说它能跑矩阵」与「库里它真能跑矩阵」重新成为同一件事。
+    /// </summary>
+    private async Task<User> ReconcilePermissionsAsync(User user, StableSmokePublicKeyOptions key, CancellationToken ct)
+    {
+        var effective = await _permissionService.GetEffectivePermissionsAsync(user.UserId, isRoot: false, ct);
+        var missing = StableSmokeIdentityPolicy.MissingPermissions(effective);
+        if (missing.Count == 0) return user;
+
+        var allow = new List<string>(user.PermAllow ?? new List<string>());
+        foreach (var permission in missing)
+        {
+            if (!allow.Contains(permission, StringComparer.Ordinal)) allow.Add(permission);
+        }
+        var deny = (user.PermDeny ?? new List<string>())
+            .Where(item => !StableSmokeIdentityPolicy.RequiredPermissions.Contains(item, StringComparer.Ordinal))
+            .ToList();
+
+        await _db.Users.UpdateOneAsync(
+            Builders<User>.Filter.Eq(item => item.UserId, user.UserId),
+            Builders<User>.Update
+                .Set(item => item.PermAllow, allow)
+                .Set(item => item.PermDeny, deny),
+            cancellationToken: ct);
+        user.PermAllow = allow;
+        user.PermDeny = deny;
+
+        Logger.LogWarning(
+            "稳定冒烟账号 {Username} 缺少巡检矩阵所需权限，已按 StableSmokeIdentityPolicy 补齐：{Missing}。"
+            + "外因：账号由签名认证自动开号时只带 Agent 体验者角色；keyId={KeyId}, requestId={RequestId}",
+            user.Username,
+            string.Join(",", missing),
+            key.KeyId,
+            Context.TraceIdentifier);
+        return user;
     }
 }
 
@@ -360,6 +417,13 @@ public sealed class StableSmokePublicKeyOptions
     public string AllowedHost { get; set; } = string.Empty;
     public string PublicKey { get; set; } = string.Empty;
     public bool AutoProvision { get; set; }
+
+    /// <summary>
+    /// 是否由平台按 <see cref="PrdAgent.Core.Security.StableSmokeIdentityPolicy"/> 托管该账号的权限：
+    /// 开号时写入显式放行清单，存量账号缺项时补齐。默认开启；只读环境（如正式环境只给只读巡检）
+    /// 在配置里显式置为 false，此时账号权限完全由管理员手工决定。
+    /// </summary>
+    public bool ManagePermissions { get; set; } = true;
 
     public bool IsComplete =>
         !string.IsNullOrWhiteSpace(KeyId)

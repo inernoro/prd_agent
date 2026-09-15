@@ -24,6 +24,11 @@ const speechFixture = Buffer.from(readFileSync(
   resolve(specDir, '../fixtures/stable-smoke-speech.m4a.b64'),
   'utf8',
 ).trim(), 'base64');
+// 巡检身份必须持有的管理权限；SSOT 是后端 StableSmokeIdentityPolicy，由跨语言契约测试钉死两边一致。
+const requiredIdentityPermissions = (JSON.parse(readFileSync(
+  resolve(specDir, '../fixtures/stable-smoke-required-permissions.json'),
+  'utf8',
+)) as { requiredPermissions: string[] }).requiredPermissions;
 
 type TicketResponse = {
   success: boolean;
@@ -265,12 +270,26 @@ type UploadArtifactItem = {
 type GatewayOffering = {
   id: string;
   targetId: string;
+  targetKind?: string;
   protocol?: string | null;
   endpointPath?: string | null;
   enabled: boolean;
   priority: number;
   healthStatus?: number;
+  notes?: string | null;
 };
+
+type GatewayUpstreamModel = {
+  id: string;
+  name?: string | null;
+  platformId?: string | null;
+  protocol?: string | null;
+  enabled?: boolean;
+};
+
+/** 多图引用只能走这些保留参考图语义的图片协议；聊天协议会把图片当文本丢掉（REG-multi-image-001）。 */
+const referencePreservingImageProtocols = ['openrouter-image', 'openai', 'openai-compatible'];
+const gatewayFailoverBackupNote = 'stable-smoke-failover-backup';
 
 type GatewayLogicalModel = {
   id: string;
@@ -534,6 +553,11 @@ async function waitForImageRun(page: Page, token: string, runId: string, timeout
 
 async function loginGateway(request: APIRequestContext) {
   const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+  // 本地排障用：已经拿到的控制台会话令牌直接复用（例如 MAP 管理员一键登录换来的），不再走签名或口令。
+  const presetToken = process.env.STABLE_SMOKE_GW_TOKEN?.trim();
+  if (presetToken) {
+    return { baseUrl, headers: { Authorization: `Bearer ${presetToken}` } };
+  }
   const signingKeyId = process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim();
   const signingPrivateKey = process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim();
   if (signingKeyId && signingPrivateKey) {
@@ -848,11 +872,20 @@ async function openModule(
   testInfo: TestInfo,
 ) {
   const errors: string[] = [];
+  const failedImages: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error' && !/favicon|ResizeObserver/i.test(message.text())) {
       errors.push(message.text());
     }
+  });
+  // 图片资源加载失败在控制台里不是 error，只能从网络层与 <img> 自身的解码结果判断。
+  // 2026-09-14：首页默认头像（对象存储上 3 MB 的 nohead.png）加载失败两次，旧判据一条都没抓到。
+  page.on('requestfailed', (failed) => {
+    if (failed.resourceType() !== 'image') return;
+    const reason = failed.failure()?.errorText || 'failed';
+    if (/ERR_ABORTED/i.test(reason)) return;
+    failedImages.push(`${failed.url()} (${reason})`);
   });
 
   const loginUrl = await issueTicket(request, module.path);
@@ -863,12 +896,48 @@ async function openModule(
   await page.waitForTimeout(800);
   await dismissBlockingTutorial(page);
   expect(errors, `${module.label} 页面出现前端运行错误`).toEqual([]);
+  await expectNoBrokenImages(page, module.label, failedImages);
 
   const screenshot = await page.screenshot({ fullPage: true });
   await testInfo.attach(`${module.key}-${testInfo.project.name}`, {
     body: screenshot,
     contentType: 'image/png',
   });
+}
+
+/**
+ * 页面上的每一张图都必须真的解出来：网络层没有失败请求，DOM 里没有 complete 却 0 宽的 <img>。
+ * 等待上限 8 秒——默认头像这类静态资源超过这个时间还没到，本身就是要报出来的问题。
+ */
+async function expectNoBrokenImages(page: Page, label: string, failedImages: string[]) {
+  // 懒加载且还没滚进视口的图片浏览器根本不会去取，不算「没加载完」；
+  // SVG 没有固有尺寸时 naturalWidth 也可能是 0，不能拿它当碎图判据。
+  const readImageState = () => page.evaluate(() => {
+    const inViewport = (image: HTMLImageElement) => {
+      const rect = image.getBoundingClientRect();
+      return rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
+    };
+    const isSvg = (image: HTMLImageElement) => /\.svg(?:[?#].*)?$|^data:image\/svg/i.test(image.currentSrc || image.src || '');
+    const pending = Array.from(document.images)
+      .filter((image) => !image.complete && (image.loading !== 'lazy' || inViewport(image)))
+      .map((image) => image.currentSrc || image.src);
+    const broken = Array.from(document.images)
+      .filter((image) => image.complete
+        && image.naturalWidth === 0
+        && (image.getAttribute('src') || '').length > 0
+        && !isSvg(image))
+      .map((image) => image.currentSrc || image.src);
+    return { pending, broken };
+  });
+  await expect.poll(
+    async () => (await readImageState()).pending.length,
+    { message: `${label} 页面图片在 8 秒内全部结束加载`, timeout: 8_000 },
+  ).toBe(0).catch(() => undefined);
+  const { broken: brokenImages, pending: stillLoading } = await readImageState();
+  expect(
+    [...failedImages, ...brokenImages.map((url) => `${url} (浏览器解码为 0 宽，页面上是碎图)`), ...stillLoading.map((url) => `${url} (8 秒后仍未加载完成)`)],
+    `${label} 页面存在加载失败的图片资源`,
+  ).toEqual([]);
 }
 
 async function dismissBlockingTutorial(page: Page) {
@@ -1372,6 +1441,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       }
       if (siteId) await deleteStableHostedSite(page, token, siteId);
     }
+  });
+
+  test('[CORE-003][REG-auth-identity-permissions-001] 巡检身份持有矩阵所需的全部管理权限', async ({ page, request }) => {
+    // 2026-09-14：自动开号只给了 Agent 体验者角色，录音、文件、短视频、会话权限四个模块三十余项
+    // 在业务动作之前就被权限中间件挡成「无权限」。这里先把外因说清楚，后面的旅程才有资格失败。
+    const token = await loginAndReadToken(page, request, '/');
+    const me = await readEnvelope<{
+      username: string;
+      systemRoleKey?: string | null;
+      effectivePermissions: string[];
+    }>(await page.request.get('/api/authz/me', { headers: authHeaders(token) }));
+    const missing = requiredIdentityPermissions.filter((permission) => !me.effectivePermissions.includes(permission));
+    expect(
+      missing,
+      `巡检账号 ${me.username}（系统角色 ${me.systemRoleKey || '无'}）缺少矩阵所需权限：${missing.join('、')}。`
+      + '外因：账号由签名认证自动开号时只带了 Agent 体验者角色；修复后的后端会在下一次签名认证时按 StableSmokeIdentityPolicy 补齐，'
+      + '若仍缺失，说明部署的后端版本早于该修复，或该部署把 ManagePermissions 显式关闭了。',
+    ).toEqual([]);
   });
 
   test('[CORE-002][CORE-003] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
@@ -2591,25 +2678,27 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await route.continue();
       });
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}&quickRecord=1`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByText('录音中', { exact: true }), '进入快捷录音后必须自动开始').toBeVisible({ timeout: 20_000 });
+      const recordingState = page.getByTestId('recording-state');
+      await expect(recordingState, '进入快捷录音后必须自动开始').toHaveAttribute('data-state', 'recording', { timeout: 20_000 });
       const destination = page.locator('select:visible').filter({
         has: page.locator(`option[value="${storeId}"]`),
       }).first();
       await expect(destination).toBeVisible();
       if (await destination.inputValue() !== storeId) await destination.selectOption(storeId);
       await expect(destination).toHaveValue(storeId);
-      const timer = page.getByText(/^\d{2}:\d{2}$/).first();
+      const timer = page.getByTestId('recording-elapsed');
       await expect(timer).toBeVisible();
+      await expect(timer).toHaveText(/^\d{2}:\d{2}$/);
       await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe('00:00');
 
       await page.getByRole('button', { name: '暂停录音' }).click();
-      await expect(page.getByText('已暂停', { exact: true })).toBeVisible();
+      await expect(recordingState).toHaveAttribute('data-state', 'paused');
       const pausedAt = await timer.textContent();
       await page.waitForTimeout(1_200);
       expect(await timer.textContent(), '暂停期间计时不得继续增长').toBe(pausedAt);
 
       await page.getByRole('button', { name: '继续录音' }).click();
-      await expect(page.getByText('录音中', { exact: true })).toBeVisible();
+      await expect(recordingState).toHaveAttribute('data-state', 'recording');
       await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe(pausedAt);
 
       const completionPromise = page.waitForResponse((response) => (
@@ -2673,12 +2762,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openQuickRecord(page, request);
 
-    await expect(page.getByText('录音中', { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('recording-state')).toHaveAttribute('data-state', 'recording', { timeout: 20_000 });
     await page.waitForTimeout(1_500);
     await page.getByRole('button', { name: '结束录音并转成文字' }).click();
     await expect(page.getByText('整段录音几乎没有检测到声音，转录很可能失败。请确认麦克风没有静音。')).toBeVisible();
     await page.getByRole('button', { name: '放弃本次录音' }).click();
-    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+    await expect(page.getByTestId('recording-state'), '放弃后录音面板必须关闭').toBeHidden();
   });
 
   test('[REC-008] 浏览器不支持录音时直接提供上传音频兜底', async ({ page, request }) => {
@@ -2688,9 +2777,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openQuickRecord(page, request);
     await expect(page.getByText('当前浏览器不支持录音', { exact: true })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByRole('button', { name: /上传音频文件/ })).toBeVisible();
+    const uploadFallback = page.getByTestId('recording-unavailable-upload');
+    await expect(uploadFallback, '不支持录音时必须给上传音频兜底').toBeVisible();
+    await expect(uploadFallback).toHaveText(/上传/);
     await page.getByRole('button', { name: '取消录音' }).click();
-    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+    await expect(uploadFallback, '取消后录音面板必须关闭').toBeHidden();
   });
 
   test('[VIS-001][REG-visual-policy-001] 单图模型目录有唯一业务默认且不暴露池', async ({ page, request }) => {
@@ -2874,9 +2965,10 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const upstreamResponse = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, {
       headers: gateway.headers,
     });
-    const upstreamBody = await upstreamResponse.json() as ApiEnvelope<{ items: Array<{ id: string }> }>;
+    const upstreamBody = await upstreamResponse.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
     expect(upstreamResponse.ok(), upstreamBody.error?.message || '无法读取网关模型目录').toBe(true);
     const upstreamIds = new Set(upstreamBody.data.items.map((item) => item.id));
+    const upstreamById = new Map(upstreamBody.data.items.map((item) => [item.id, item]));
 
     const pools = await readEnvelope<ImageModelPool[]>(
       await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) }),
@@ -2886,32 +2978,94 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         .filter((pool) => pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')))
         .map((pool) => pool.code),
     );
-    const logical = logicalBody.data.items.find((item) => (
-      item.enabled
-      && availableCodes.has(item.publicId)
-      && item.offerings.filter((offering) => (
-        offering.enabled
-        && offering.healthStatus !== 2
+    const liveUpstream = (offering: GatewayOffering) => (
+      offering.enabled
+      && offering.healthStatus !== 2
+      && upstreamIds.has(offering.targetId)
+    );
+    const distinctUpstreams = (item: GatewayLogicalModel) => new Set(item.offerings.filter(liveUpstream).map((offering) => offering.targetId));
+    const describeLogical = (item: GatewayLogicalModel) => (
+      `${item.publicId}[${item.offerings.filter(liveUpstream).map((offering) => upstreamById.get(offering.targetId)?.name || offering.targetId).join(' / ') || '无可用上游'}]`
+    );
+    const candidates = logicalBody.data.items
+      .filter((item) => item.enabled && availableCodes.has(item.publicId))
+      .sort((left, right) => (
+        Number(Boolean(pools.find((pool) => pool.code === right.publicId)?.isDefault))
+        - Number(Boolean(pools.find((pool) => pool.code === left.publicId)?.isDefault))
+      ));
+    expect(candidates.length, 'CDS 没有任何业务开放且可用的文生图逻辑模型，无法执行故障切换验收').toBeGreaterThan(0);
+
+    // 双上游判据。矩阵要求「主路故障后备用上游成功」，但 CDS 的业务逻辑模型（image1 / image2）各自只挂一个真实上游，
+    // 2026-09-14 那一轮因此直接判「没有两个可用上游」而未执行。没有第二个上游就没有故障切换可验，
+    // 所以这里给业务默认逻辑模型临时挂一个同类型逻辑模型已经在用的真实上游作为备用（priority 更低，
+    // 正常流量不会走到它），验完即停用。控制台没有删除 Offering 的接口，只能启停：停用后的记录带固定 Notes 标记，
+    // 下一轮复用同一条，不会越积越多。
+    let logical = candidates.find((item) => distinctUpstreams(item).size >= 2);
+    let provisionedBackup: GatewayOffering | undefined;
+    const toggleOffering = async (logicalId: string, offeringId: string, enabled: boolean) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${logicalId}/offerings/${offeringId}/enabled`, {
+        headers: gateway.headers,
+        data: { enabled },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `备用 Offering ${offeringId} ${enabled ? '启用' : '停用'}失败`).toBe(true);
+      expect(body.data.enabled).toBe(enabled);
+      return body.data;
+    };
+    if (!logical) {
+      const preferred = candidates[0];
+      const primary = preferred.offerings.filter(liveUpstream).sort((left, right) => left.priority - right.priority)[0];
+      expect(primary, `${preferred.publicId} 没有可用的主路上游，无法补双上游夹具`).toBeTruthy();
+      const primaryPlatform = upstreamById.get(primary!.targetId)?.platformId || '';
+      const dormantBackup = preferred.offerings.find((offering) => (
+        !offering.enabled
+        && offering.targetId !== primary!.targetId
         && upstreamIds.has(offering.targetId)
-      )).length >= 2
-      && new Set(item.offerings
-        .filter((offering) => (
-          offering.enabled
-          && offering.healthStatus !== 2
-          && upstreamIds.has(offering.targetId)
-        ))
-        .map((offering) => offering.targetId)).size >= 2
-    ));
+        && (offering.notes || '').includes(gatewayFailoverBackupNote)
+      ));
+      if (dormantBackup) {
+        provisionedBackup = await toggleOffering(preferred.id, dormantBackup.id, true);
+      } else {
+        const backupTargetIds = [...new Set(logicalBody.data.items
+          .filter((item) => item.enabled && item.modelType === preferred.modelType && item.id !== preferred.id)
+          .flatMap((item) => item.offerings.filter(liveUpstream).map((offering) => offering.targetId))
+          .filter((targetId) => targetId !== primary!.targetId))]
+          .sort((left, right) => (
+            Number((upstreamById.get(right)?.platformId || '') === primaryPlatform)
+            - Number((upstreamById.get(left)?.platformId || '') === primaryPlatform)
+          ));
+        expect(
+          backupTargetIds.length,
+          `无法为 ${preferred.publicId} 补第二个真实上游：同类型逻辑模型没有其它可用上游。`
+          + `候选：${candidates.map(describeLogical).join('、')}`,
+        ).toBeGreaterThan(0);
+        const created = await request.post(`${gateway.baseUrl}/gw/logical-models/${preferred.id}/offerings`, {
+          headers: gateway.headers,
+          data: {
+            targetKind: 'model',
+            targetId: backupTargetIds[0],
+            protocol: primary!.protocol || undefined,
+            priority: primary!.priority + 10,
+            weight: 100,
+            notes: `${gatewayFailoverBackupNote}: 稳定冒烟 GW-007 备用上游，验收后停用，可复用`,
+          },
+        });
+        const createdBody = await created.json() as ApiEnvelope<GatewayOffering>;
+        expect(created.ok(), createdBody.error?.message || `为 ${preferred.publicId} 创建备用 Offering 失败`).toBe(true);
+        provisionedBackup = createdBody.data;
+      }
+      preferred.offerings = [
+        ...preferred.offerings.filter((offering) => offering.id !== provisionedBackup!.id),
+        provisionedBackup!,
+      ];
+      logical = preferred;
+    }
     expect(
-      logical,
-      'CDS 需要至少一个带两个不同、真实存在且未被隔离上游的文生图逻辑模型，才能执行故障切换验收',
-    ).toBeTruthy();
+      distinctUpstreams(logical!).size,
+      `故障切换需要两个不同的真实上游，当前：${describeLogical(logical!)}`,
+    ).toBeGreaterThanOrEqual(2);
     const offerings = logical!.offerings
-      .filter((offering) => (
-        offering.enabled
-        && offering.healthStatus !== 2
-        && upstreamIds.has(offering.targetId)
-      ))
+      .filter(liveUpstream)
       .sort((left, right) => left.priority - right.priority);
     const originals = new Map(offerings.map((offering) => [offering, {
       endpointPath: offering.endpointPath || '',
@@ -3019,6 +3173,9 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         )
       )));
       const strategyRestore = await Promise.allSettled([updateStrategy(originalStrategy)]);
+      const backupRestore = provisionedBackup
+        ? await Promise.allSettled([toggleOffering(logical!.id, provisionedBackup.id, false)])
+        : [];
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: {
           ...authHeaders(token),
@@ -3032,8 +3189,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         })).status()).toBe(404);
       }
       expect(
-        [...restoreResults, ...strategyRestore].filter((result) => result.status === 'rejected'),
-        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint',
+        [...restoreResults, ...strategyRestore, ...backupRestore].filter((result) => result.status === 'rejected'),
+        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用',
       ).toEqual([]);
     }
   });
@@ -3062,6 +3219,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await openModule(page, request, module, testInfo);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
+
+    // CDS 预览小部件在手机上必须收成紧凑圆钮：2026-09-14 移动首页底部被整条分支徽章压住。
+    // 小部件由 CDS 反代注入，改动要等 CDS 自更新后才生效；这里按它暴露的布局态判定，不猜。
+    const widget = page.locator('#cds-widget');
+    if (await widget.count()) {
+      await expect(
+        widget,
+        'CDS 预览小部件在手机上应在 4 秒后收成紧凑态（data-cds-layout=compact）；仍是整条徽章说明 CDS 尚未自更新到含移动端紧凑态的版本',
+      ).toHaveAttribute('data-cds-layout', 'compact', { timeout: 10_000 });
+      const box = await widget.boundingBox();
+      expect(box, '紧凑态小部件必须可见').not.toBeNull();
+      expect(box!.width, '紧凑态小部件宽度不得超过 48px').toBeLessThanOrEqual(48);
+      expect(box!.height, '紧凑态小部件高度不得超过 48px').toBeLessThanOrEqual(48);
+      await testInfo.attach('mobile-home-compact-widget', { body: await page.screenshot(), contentType: 'image/png' });
+    }
   });
 
   test('[VIS-009][REG-visual-policy-001] 真实触控手机使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
@@ -3506,14 +3678,33 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const logicalModels = await readEnvelope<{ items: GatewayLogicalModel[] }>(
         await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers }),
       );
-      const dedicatedLogical = logicalModels.items.find((item) => (
-        item.enabled
-        && healthyPoolCodes.has(item.publicId)
-        && item.offerings
+      const upstreamModels = await readEnvelope<{ items: GatewayUpstreamModel[] }>(
+        await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
+      );
+      const upstreamById = new Map(upstreamModels.items.map((item) => [item.id, item]));
+      // 主路协议：Offering 没显式声明时继承上游模型的协议。
+      const primaryProtocol = (item: GatewayLogicalModel) => {
+        const primary = item.offerings
           .filter((offering) => offering.enabled)
-          .sort((left, right) => left.priority - right.priority)[0]?.protocol === 'openrouter-image'
-      ));
-      expect(dedicatedLogical, '没有配置以 openrouter-image 为主路的可用多图逻辑模型').toBeTruthy();
+          .sort((left, right) => left.priority - right.priority)[0];
+        if (!primary) return '';
+        return (primary.protocol || upstreamById.get(primary.targetId)?.protocol || '').toLowerCase();
+      };
+      // 业务默认池排最前：2026-08-31 起 MAP 只开放 image1 / image2 两个 OpenAI 图片模型，
+      // 多图旅程要验的是「业务默认模型带着参考图真实生成」，不再限定必须是 OpenRouter 主路；
+      // 协议只要能把 input_references 或 image[] 原样送到上游即可，具体线上契约在 assertWireReferences 里逐条核。
+      const businessCandidates = logicalModels.items
+        .filter((item) => item.enabled && healthyPoolCodes.has(item.publicId))
+        .sort((left, right) => (
+          Number(Boolean(pools.find((pool) => pool.code === right.publicId)?.isDefault))
+          - Number(Boolean(pools.find((pool) => pool.code === left.publicId)?.isDefault))
+        ));
+      const dedicatedLogical = businessCandidates.find((item) => referencePreservingImageProtocols.includes(primaryProtocol(item)));
+      expect(
+        dedicatedLogical,
+        `业务开放的多图逻辑模型里没有一个主路走图片协议（${referencePreservingImageProtocols.join(' / ')}）。`
+        + `候选：${businessCandidates.map((item) => `${item.publicId}=${primaryProtocol(item) || '未知协议'}`).join('、') || '无'}`,
+      ).toBeTruthy();
       const pool = pools.find((item) => item.code === dedicatedLogical!.publicId);
       expect(pool, 'OpenRouter 多图逻辑模型未进入业务模型目录').toBeTruthy();
 

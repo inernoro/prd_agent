@@ -42,4 +42,21 @@ describe('widget bridge polling gate', () => {
     expect(script).toContain('setWidgetPosition(pos.x,pos.y);');
     expect(script).not.toContain('if(widgetWasDragged)return;');
   });
+
+  it('collapses the preview widget into a compact chip on mobile so it stops covering page content', () => {
+    // 2026-09-14 稳定冒烟：移动首页底部被整条分支徽章压住。窄屏进入 4 秒后收成 36px 圆钮，
+    // 用户点开后 8 秒再收回；桌面端不受影响。布局态通过 data-cds-layout 暴露给自动化验收。
+    const script = buildWidgetScript('branch-a', 'branch/a');
+    expect(script).toContain('function isMobileViewport(){');
+    expect(script).toContain('return window.innerWidth<=640;');
+    expect(script).toContain('function scheduleMobileCompact(delayMs){');
+    expect(script).toContain("root.setAttribute('data-cds-layout',compact&&!expanded?'compact':'full');");
+    expect(script).toContain('cds-badge cds-badge--compact');
+    expect(script).toContain("if(action==='expand-compact'){");
+    expect(script).toContain('.cds-badge--compact{padding:0;width:36px;height:36px;border-radius:18px;');
+    // 初次渲染后就排程收起；展开面板期间不收起，收起面板后重新排程。
+    expect(script).toContain('  render();\n  scheduleMobileCompact(4000);');
+    expect(script).toContain('if(!isMobileViewport()||expanded)return;');
+    expect(script).toContain('if(!expanded)scheduleMobileCompact(8000);');
+  });
 });
