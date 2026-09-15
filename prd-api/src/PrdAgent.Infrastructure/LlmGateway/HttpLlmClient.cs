@@ -166,7 +166,12 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
         if (earlyError != null)
         {
             await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                _failoverNotifier, null, earlyError, null, _logger);
+                _failoverNotifier,
+                null,
+                earlyError,
+                null,
+                _pinnedModelId ?? _expectedModel,
+                _logger);
             reader?.Dispose();
             stream?.Dispose();
             resp?.Dispose();
@@ -195,7 +200,12 @@ public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
                     if (string.Equals(chunk.Type, "error", StringComparison.OrdinalIgnoreCase))
                     {
                         await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                            _failoverNotifier, null, chunk.ErrorMessage, null, _logger);
+                            _failoverNotifier,
+                            chunk.ErrorCode,
+                            chunk.ErrorMessage,
+                            chunk.Platform,
+                            chunk.Model ?? _pinnedModelId ?? _expectedModel,
+                            _logger);
                     }
                     yield return chunk;
                 }

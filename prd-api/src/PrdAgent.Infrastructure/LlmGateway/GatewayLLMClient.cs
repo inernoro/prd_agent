@@ -144,7 +144,9 @@ public class GatewayLLMClient : ILLMClient
                     Type = "error",
                     ErrorMessage = chunk.Error ?? "Gateway 返回错误",
                     // 结构化原因跟着走：业务层据它判「配置问题」还是「暂时故障」，不猜文案
-                    ErrorCode = chunk.ErrorCode
+                    ErrorCode = chunk.ErrorCode,
+                    Model = chunk.Resolution?.ActualModel,
+                    Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
                 };
                 yield break;
             }
@@ -165,7 +167,12 @@ public class GatewayLLMClient : ILLMClient
 
             if (chunk.Type == GatewayChunkType.Start)
             {
-                yield return new LLMStreamChunk { Type = "start" };
+                yield return new LLMStreamChunk
+                {
+                    Type = "start",
+                    Model = chunk.Resolution?.ActualModel,
+                    Platform = chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                };
             }
             else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
             {

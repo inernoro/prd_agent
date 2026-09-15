@@ -38,7 +38,7 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
     private const string TokenUrl = "https://github.com/login/oauth/access_token";
     private const string VerificationUriDefault = "https://github.com/login/device";
     private const string UserInfoUrl = "https://api.github.com/user";
-    private const string DefaultScopes = "repo,read:user";
+    private const string DefaultScopes = "repo read:user";
     private const int FlowTokenTtlSeconds = 900;
 
     private readonly IConfiguration _config;
@@ -56,6 +56,28 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
     }
 
     /// <summary>
+    /// 申请的 OAuth scope。
+    ///
+    /// 空串必须当成「没配」：docker-compose 里这一项写的是 `${GitHubOAuth__Scopes:-}`，
+    /// 没有在 .env 里显式给值时注入的是**空字符串**而不是缺失，`?? DefaultScopes` 因此不生效。
+    /// 结果是拿到一把没有任何 scope 的 token——公开仓照样能读，私有仓一律 404，
+    /// 而 GitHub 对无权访问的私有仓返回的就是 404，和「仓库不存在」无法区分。
+    /// </summary>
+    internal static string ResolveScopes(string? configured)
+    {
+        var raw = string.IsNullOrWhiteSpace(configured) ? DefaultScopes : configured;
+        // GitHub 的 scope 参数按**空格**分隔（OAuth 2.0 的定义，本仓库另一个 GitHub 客户端
+        // cds/src/services/github-oauth-client.ts 发的也是 `repo read:user`）。
+        // 写成逗号会被当成「一个没见过的 scope」而不是两项权限——授权可能被拒，
+        // 或者拿到一把不含 repo 的 token，私有仓依旧一律 404。
+        // 历史配置里逗号写法很常见，这里统一归一，不让部署方式决定成败。
+        var parts = raw.Split(
+            new[] { ',', ' ', '\t', '\n', '\r' },
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return string.Join(' ', parts);
+    }
+
+    /// <summary>
     /// 向 GitHub 请求 device code。
     /// 返回给前端的 flow_token 是签名后的 (device_code, userId, expiry) 三元组，
     /// 前端在 poll 时原样回传，后端验签后解出 device_code 继续和 GitHub 交互。
@@ -68,7 +90,7 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
             throw GitHubException.OAuthNotConfigured();
         }
 
-        var scopes = _config["GitHubOAuth:Scopes"] ?? DefaultScopes;
+        var scopes = ResolveScopes(_config["GitHubOAuth:Scopes"]);
         var client = _httpClientFactory.CreateClient("GitHubApi");
         using var req = new HttpRequestMessage(HttpMethod.Post, DeviceCodeUrl);
         req.Headers.Accept.Clear();

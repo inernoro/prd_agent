@@ -81,6 +81,8 @@ describe('apiRequest timeout', () => {
     expect(isSessionAuthenticationFailure(401, 'AUTH_AI_KEY_INVALID')).toBe(false);
     expect(isSessionAuthenticationFailure(401, 'AUTH_AGENT_KEY_INVALID')).toBe(false);
     expect(isSessionAuthenticationFailure(401)).toBe(true);
+    // GitHub 连接过期是上游凭据的事，不该把人踢出后台
+    expect(isSessionAuthenticationFailure(401, 'GITHUB_TOKEN_EXPIRED')).toBe(false);
   });
 
   it('aborts a request that never returns headers', async () => {

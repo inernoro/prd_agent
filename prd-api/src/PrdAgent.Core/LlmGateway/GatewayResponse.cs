@@ -86,14 +86,19 @@ public class GatewayResponse
     /// </summary>
     public string? LogId { get; init; }
 
-    public static GatewayResponse Fail(string errorCode, string errorMessage, int statusCode = 500)
+    public static GatewayResponse Fail(
+        string errorCode,
+        string errorMessage,
+        int statusCode = 500,
+        GatewayModelResolution? resolution = null)
     {
         return new GatewayResponse
         {
             Success = false,
             ErrorCode = errorCode,
             ErrorMessage = errorMessage,
-            StatusCode = statusCode
+            StatusCode = statusCode,
+            Resolution = resolution,
         };
     }
 
@@ -498,8 +503,17 @@ public class GatewayStreamChunk
     public static GatewayStreamChunk Thinking(string content) => new() { Type = GatewayChunkType.Thinking, Content = content };
     public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };
     public static GatewayStreamChunk Done(string? finishReason, GatewayTokenUsage? usage) => new() { Type = GatewayChunkType.Done, FinishReason = finishReason, TokenUsage = usage };
-    public static GatewayStreamChunk Fail(string error, string? errorCode = null)
-        => new() { Type = GatewayChunkType.Error, Error = error, ErrorCode = errorCode };
+    public static GatewayStreamChunk Fail(
+        string error,
+        string? errorCode = null,
+        GatewayModelResolution? resolution = null)
+        => new()
+        {
+            Type = GatewayChunkType.Error,
+            Error = error,
+            ErrorCode = errorCode,
+            Resolution = resolution,
+        };
     public static GatewayStreamChunk ToolCallChunk(JsonArray delta) => new() { Type = GatewayChunkType.ToolCall, ToolCallDelta = delta };
 }
 

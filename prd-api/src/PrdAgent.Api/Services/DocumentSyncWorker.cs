@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.GitHub;
 
 namespace PrdAgent.Api.Services;
 
@@ -71,20 +72,13 @@ public class DocumentSyncWorker : BackgroundService
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var documentService = scope.ServiceProvider.GetRequiredService<IDocumentService>();
         var versions = scope.ServiceProvider.GetRequiredService<PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService>();
+        var githubConnections = scope.ServiceProvider.GetRequiredService<GitHubUserConnectionService>();
 
         var now = DateTime.UtcNow;
 
-        var regularCandidates = await db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
-                Builders<DocumentEntry>.Filter.Ne(e => e.SourceType, DocumentSourceType.GithubDirectory),
-                Builders<DocumentEntry>.Filter.Ne(e => e.SourceUrl, null),
-                Builders<DocumentEntry>.Filter.Gt(e => e.SyncIntervalMinutes, 0),
-                Builders<DocumentEntry>.Filter.Ne(e => e.IsPaused, true),
-                Builders<DocumentEntry>.Filter.Or(
-                    Builders<DocumentEntry>.Filter.Eq(e => e.SyncStatus, DocumentSyncStatus.Syncing),
-                    Builders<DocumentEntry>.Filter.Eq(e => e.LastSyncAt, null),
-                    Builders<DocumentEntry>.Filter.Lt(e => e.LastSyncAt, now.AddHours(-24))
-                )))
-            .Limit(50)
+        var regularCandidates = await db.DocumentEntries
+            .Find(DocumentSyncSchedule.BuildRegularCandidateFilter(now))
+            .Limit(DocumentSyncSchedule.RegularCandidateLimit)
             .ToListAsync(ct);
 
         var githubCandidates = await db.DocumentEntries.Find(Builders<DocumentEntry>.Filter.And(
@@ -107,7 +101,7 @@ public class DocumentSyncWorker : BackgroundService
         foreach (var entry in dueEntries)
         {
             if (entry.SourceType == DocumentSourceType.GithubDirectory)
-                await SyncGitHubDirectoryAsync(db, documentService, versions, entry, ct);
+                await SyncGitHubDirectoryAsync(db, documentService, versions, githubConnections, entry, ct);
             else
                 await SyncSingleEntryAsync(db, documentService, versions, entry, ct);
         }
@@ -117,6 +111,7 @@ public class DocumentSyncWorker : BackgroundService
         MongoDbContext db,
         IDocumentService documentService,
         PrdAgent.Infrastructure.Services.DocumentStore.DocumentVersionService versions,
+        GitHubUserConnectionService githubConnections,
         DocumentEntry entry,
         CancellationToken ct)
     {
@@ -127,11 +122,50 @@ public class DocumentSyncWorker : BackgroundService
             if (!await TryAcquireSyncLeaseAsync(db, entry, ct))
                 return;
 
+            // 条目上盖了哪个用户的 GitHub 连接，就用谁的 token 拉。
+            var credential = await ResolveEntryTokenAsync(githubConnections, entry, ct);
+            _logger.LogInformation(
+                "[GitHubSync] entry={EntryId} auth={Mode}", entry.Id, credential.Mode);
+
+            if (credential.BlockReason != null)
+            {
+                // 授权不可用时直接停在这里：匿名重试对私有仓只会得到一个无法解释的 404
+                sw.Stop();
+                await MarkSyncError(db, entry, credential.BlockReason, startedAt, (int)sw.ElapsedMilliseconds);
+                return;
+            }
+
             var githubSyncService = new GitHubDirectorySyncService(
                 _scopeFactory.CreateScope().ServiceProvider
                     .GetRequiredService<ILogger<GitHubDirectorySyncService>>());
 
-            var diff = await githubSyncService.SyncDirectoryAsync(db, documentService, versions, entry, ct);
+            var diff = await githubSyncService.SyncDirectoryAsync(
+                db, documentService, versions, entry, credential.Token, ct);
+
+            // 有文件没拉下来就是**部分失败**，不许标成功：已同步的部分保留，
+            // 但条目要红着并说清缺了什么，否则「少了几篇」会被绿色状态盖住。
+            if (diff.HasFailures)
+            {
+                sw.Stop();
+                if (diff.HasChanges)
+                {
+                    await db.DocumentSyncLogs.InsertOneAsync(new DocumentSyncLog
+                    {
+                        EntryId = entry.Id,
+                        StoreId = entry.StoreId,
+                        SyncedAt = startedAt,
+                        Kind = DocumentSyncLogKind.Change,
+                        ChangeSummary = diff.BuildSummary(),
+                        FileChanges = diff.FileChanges,
+                        DurationMs = (int)sw.ElapsedMilliseconds,
+                    }, cancellationToken: CancellationToken.None);
+                }
+                _logger.LogWarning(
+                    "[DocumentSyncWorker] GitHub directory sync partially failed for {EntryId}: {Failed} file(s)",
+                    entry.Id, diff.FailedCount);
+                await MarkSyncError(db, entry, diff.BuildFailureMessage(), startedAt, (int)sw.ElapsedMilliseconds);
+                return;
+            }
 
             // 标记同步完成
             var update = Builders<DocumentEntry>.Update
@@ -180,9 +214,55 @@ public class DocumentSyncWorker : BackgroundService
         {
             sw.Stop();
             _logger.LogWarning(ex, "[DocumentSyncWorker] GitHub directory sync failed for {EntryId}", entry.Id);
-            await MarkSyncError(db, entry, ex.Message, startedAt, (int)sw.ElapsedMilliseconds);
+            // 落到条目上的这一栏会原样渲染到目录卡片，所以只写用户可执行的说法；
+            // 原始异常（堆栈、Mongo/JSON 诊断）只进上面那条日志
+            await MarkSyncError(
+                db, entry, GitHubSyncFailureMessage.Describe(ex), startedAt, (int)sw.ElapsedMilliseconds);
         }
     }
+
+    /// <summary>
+    /// 取该订阅条目应使用的 GitHub 凭据。
+    ///
+    /// 关键设计：**降级不许静默**。条目上盖了连接身份却解不出 token（用户断开了连接、
+    /// token 失效、密文解不开），说明这条订阅当初是以「带授权」的前提建立的——
+    /// 此时退回匿名请求，私有仓会收到一个无法解释的 404（GitHub 对无权访问的私有仓
+    /// 一律回 404 而不是 403），用户只看到「等了五分钟什么都没有」。
+    /// 所以这里把它翻译成一句人能看懂的阻断原因，交给调用方写进 SyncError。
+    ///
+    /// 从未盖过连接身份的条目（手贴公开仓 URL 的历史订阅）仍走匿名，行为不变。
+    /// </summary>
+    private static async Task<GitHubSyncCredential> ResolveEntryTokenAsync(
+        GitHubUserConnectionService githubConnections,
+        DocumentEntry entry,
+        CancellationToken ct)
+    {
+        var connectionUserId = entry.Metadata.GetValueOrDefault("github_connection_user_id", "");
+        if (!GitHubSyncCredentialPolicy.HasConnectionStamp(connectionUserId))
+            return GitHubSyncCredential.Anonymous();
+
+        try
+        {
+            var token = await githubConnections.ResolveTokenAsync(connectionUserId, ct);
+            return GitHubSyncCredentialPolicy.Decide(connectionUserId, token, null);
+        }
+        catch (GitHubException ex)
+        {
+            return GitHubSyncCredentialPolicy.Decide(connectionUserId, null, ex);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            // 服务正在停机，不是凭据出了问题。吞掉它会给条目盖一个假的「授权失败」
+            // 并刷新 LastSyncAt——按天调度于是要等到次日才会再碰它。
+            throw;
+        }
+        catch (Exception)
+        {
+            // 密文解不开（例如签名密钥轮换过）——同样不许退回匿名，否则私有仓只会给出 404
+            return GitHubSyncCredentialPolicy.Decide(connectionUserId, null, null);
+        }
+    }
+
 
     private async Task SyncSingleEntryAsync(
         MongoDbContext db,
