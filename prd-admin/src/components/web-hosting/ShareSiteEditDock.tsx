@@ -20,6 +20,16 @@ interface Props {
  * 分享接口只下发公开预览字段，修改面板需要完整站点对象。因此入口先用登录态读取完整站点，
  * 但编辑、版本、发布和回退仍全部复用 SiteEditPanel，避免形成第二套修改协议。
  */
+/**
+ * 这个坞是挂在 document 上听 Escape 的，而它里面会打开 Radix 的知识选择弹窗。
+ * Radix 在捕获阶段处理 Escape 并 preventDefault，事件照样冒泡到这里——不看
+ * defaultPrevented 的话，用户按一次 Escape 只想关掉知识浏览器，却把整个坞连同
+ * 还没保存的修改要求一起关掉了。已经被上层处理掉的按键，这里不再当成关自己。
+ */
+export function shouldCloseOnEscape(event: Pick<KeyboardEvent, 'key' | 'defaultPrevented'>): boolean {
+  return event.key === 'Escape' && !event.defaultPrevented;
+}
+
 export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = false, adjacentToAsk = false, onPublished }: Props) {
   const [site, setSite] = useState<HostedSite | null>(null);
   const [loading, setLoading] = useState(true);
@@ -51,7 +61,7 @@ export default function ShareSiteEditDock({ siteId, isMobile = false, hidden = f
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
+      if (shouldCloseOnEscape(event)) setOpen(false);
     };
     document.addEventListener('keydown', closeOnEscape);
     return () => document.removeEventListener('keydown', closeOnEscape);

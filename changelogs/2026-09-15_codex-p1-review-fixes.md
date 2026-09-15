@@ -41,3 +41,5 @@
 | refactor | cds | 旧版迁移遗留文本（log / progressMessage / errorMessage）的脱敏收敛成唯一口径 redactLegacyMigrationText，升级与对外投影两处共用，不再各写一套 |
 | fix | prd-admin | 生成任务恢复不到（NOT_FOUND）时不再谎称「原来的知识与要求仍保留，可以直接重新生成」：打开弹窗已清空要求、无 initialSource 时连知识也清空，生成按钮此刻是禁用的；文案改为按真实状态分两种说法 |
 | fix | prd-api | 保存分享时复制循环的三个早退出口统一先清理已上传对象：出口都排在 InsertManyAsync 之前，那批对象没有任何 HostedSite 认领也没有清理账本，而去重那关看的是 HostedSite，插入没发生就不算数，用户每重试一次都会再留下一批孤儿对象 |
+| fix | prd-api | 改写流的 Mongo 兜底补发 phase 也去掉 !redisProjectionAvailable：写侧独立失效时该标志恒为 true，阶段与进度会被一路抑制到终态，用户盯着几分钟不动的进度而库里一直在推进；补一条守卫钉住两条流的四处补发都不看读侧健康 |
+| fix | prd-admin | 分享页修改坞的 Escape 只关最上面那一层：嵌套的知识选择弹窗在捕获阶段已处理并 preventDefault，坞不再把同一次按键当成关自己，避免连带丢掉还没保存的修改要求 |

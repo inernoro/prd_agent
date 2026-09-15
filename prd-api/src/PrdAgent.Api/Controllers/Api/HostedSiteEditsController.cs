@@ -374,9 +374,14 @@ public sealed class HostedSiteEditsController : ControllerBase
 
                 var snapshot = await FindOwnedEditRunHistoryAsync(siteId, runId, userId);
                 if (snapshot == null) return;
-                if (!redisProjectionAvailable
-                    && (snapshot.Progress != lastMongoProgress
-                        || !string.Equals(snapshot.Phase, lastMongoPhase, StringComparison.Ordinal)))
+                // 与下面的 model 事件同一条理由，也与生成流那一侧逐字相同：这里**不能**加
+                // !redisProjectionAvailable。worker 的写入侧是独立失效的（它的 RunProjection
+                // 捕到写失败就停写），写侧挂了、读侧好着时这个标志恒为 true，阶段与进度会被
+                // 一路抑制到终态——用户盯着一个几分钟不动的进度，而库里一直在推进。
+                // 上一轮只把这个条件从 model 那一段拿掉，这一段原样留着，正是同一判据的两份
+                // 拷贝各自漂移（形状 3）。重复推一条 phase 对前端是幂等的（它是赋值不是追加）。
+                if (snapshot.Progress != lastMongoProgress
+                    || !string.Equals(snapshot.Phase, lastMongoPhase, StringComparison.Ordinal))
                 {
                     await WriteEventAsync(null, "phase", JsonSerializer.Serialize(new
                     {
