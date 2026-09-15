@@ -10,7 +10,7 @@
  * 判据全在 lib/ownerBoard.ts，这里只负责摆放与着色。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, BellRing, Cable, CheckCircle2, ChevronRight, Globe, Info, Waves } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, BellRing, Cable, CheckCircle2, ChevronRight, FlaskConical, Globe, Info, Waves } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { ApiError, apiRequest } from '@/lib/api';
@@ -32,10 +32,14 @@ import {
   scopeTargets,
   type BusinessRow,
   type CellHealth,
+  type GlobalBoard,
+  type OwnerBoard as OwnerBoardModel,
+  type OwnerBoardContext,
   type OwnerScope,
   type ProjectRow,
   type ProjectOption,
 } from '@/lib/ownerBoard';
+import { REHEARSALS, applyRehearsal, rehearsalById, type RehearsalId } from '@/lib/rehearsal';
 
 const HEALTH_CELL: Record<CellHealth, string> = {
   down: 'border-destructive/50 bg-destructive/15 text-destructive',
@@ -52,6 +56,14 @@ const CARD_TONE: Record<CellHealth, string> = {
   stale: 'border-warn/40 bg-warn-soft/40',
   unknown: 'border-[hsl(var(--hairline))]',
   up: 'border-[hsl(var(--hairline))]',
+};
+
+/** 「此刻真实结论」那一句的着色。不复用 BANNER_TONE：那套带底色，套在嵌套小条上会糊。 */
+const LIVE_TONE: Record<'danger' | 'warn' | 'ok' | 'empty', string> = {
+  danger: 'text-destructive',
+  warn: 'text-warn',
+  ok: 'text-ok',
+  empty: 'text-muted-foreground',
 };
 
 const BANNER_TONE = {
@@ -92,7 +104,44 @@ const ms = (v: number | null): string => (v === null ? '—' : `${Math.round(v)}
  * 这几样一直都在 target 上，只是没端出来（和之前「对照层」那次同一个病）。
  * 监控卡之所以看着专业，靠的就是这几样——密度、真实数字、一条会动的条带。
  */
-function BusinessCard({ row, now, onOpen }: { row: BusinessRow; now: number; onOpen: (targetId: string) => void }): JSX.Element {
+/** 演练标。小、但每张被扰动的卡上都有——截图裁出来也认得出这不是真的。 */
+function RehearsalMark(): JSX.Element {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-primary/40 bg-primary-soft px-1 font-mono text-[0.625rem] leading-4 text-primary-ink">
+      <FlaskConical className="h-2.5 w-2.5" />演练
+    </span>
+  );
+}
+
+/**
+ * 一次完整的「收窄 → 判定」。
+ *
+ * 抽出来是因为演练要跑**两遍**：一遍喂扰动过的输入（屏幕上看到的），一遍喂真实输入
+ * （横幅里那句「真实结论」）。两遍必须走同一条链，否则「演练时真实结论显示成什么」
+ * 会变成第二份判据，跟着漂（形状 3）。而那句真实结论恰恰是演练不掩盖真实故障的唯一保证。
+ */
+interface BoardBundle {
+  projectTargets: ReadonlyArray<UptimeTargetSummary>;
+  scoped: ReadonlyArray<UptimeTargetSummary>;
+  board: OwnerBoardModel;
+  global_: GlobalBoard | null;
+  headline: Pick<OwnerBoardModel, 'headline' | 'detail' | 'tone'>;
+}
+
+function buildBundle(
+  targets: ReadonlyArray<UptimeTargetSummary>,
+  ctx: OwnerBoardContext,
+  scope: OwnerScope,
+): BoardBundle {
+  const projectTargets = scopeTargets(targets, { projectId: scope.projectId, environments: null });
+  const scoped = scopeTargets(projectTargets, { projectId: null, environments: scope.environments });
+  const board = buildOwnerBoard(scoped, projectTargets, ctx);
+  // 没选项目 = 全局视角。同一个选择器，选了看业务、没选看项目。
+  const global_ = scope.projectId ? null : buildGlobalBoard(scoped, ctx);
+  return { projectTargets, scoped, board, global_, headline: global_ ?? board };
+}
+
+function BusinessCard({ row, now, onOpen, rehearsing }: { row: BusinessRow; now: number; onOpen: (targetId: string) => void; rehearsing: boolean }): JSX.Element {
   const worstCell = row.cells.find((c) => c.health === row.worst) ?? row.cells[0];
   const ModeIcon = row.observeMode === 'passive' ? Waves : ArrowRight;
   const predicate = row.probe ? shortPredicate(row.probe) : '';
@@ -112,6 +161,8 @@ function BusinessCard({ row, now, onOpen }: { row: BusinessRow; now: number; onO
     >
       {/* 标题行：状态点 + 名字 + 环境格子。装饰性的大图标框已删——它占四分之一宽度只承载一位信息。 */}
       <div className="flex min-w-0 items-center gap-2">
+        {/* 演练标长在卡片上，不只在横幅上：单张卡被裁出来当证据是这个功能唯一的危险。 */}
+        {rehearsing ? <RehearsalMark /> : null}
         <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT_TONE[row.worst])} />
         <ModeIcon
           className={cn('h-3 w-3 shrink-0', row.observeMode === 'passive' ? 'text-info' : 'text-primary-ink')}
@@ -230,7 +281,7 @@ function NeedsProjectRow({ icon: Icon, title, what, projects, onPick }: {
  * 所以它端出来的是**计数与短板**，不是某一条的可用率——把六条业务的可用率平均成
  * 一个数是没有意义的（一条挂了九条好着，平均数只会把那一条藏起来）。
  */
-function ProjectCard({ row, now, onOpen }: { row: ProjectRow; now: number; onOpen: (projectId: string) => void }): JSX.Element {
+function ProjectCard({ row, now, onOpen, rehearsing }: { row: ProjectRow; now: number; onOpen: (projectId: string) => void; rehearsing: boolean }): JSX.Element {
   const trouble = row.down + row.overdue + row.stale;
   return (
     <button
@@ -242,6 +293,7 @@ function ProjectCard({ row, now, onOpen }: { row: ProjectRow; now: number; onOpe
       )}
     >
       <div className="flex min-w-0 items-center gap-2">
+        {rehearsing ? <RehearsalMark /> : null}
         <span className={cn('h-2 w-2 shrink-0 rounded-full', DOT_TONE[row.worst])} />
         <span className="truncate text-[0.8125rem] font-medium text-foreground">{row.name}</span>
         <div className="ml-auto flex shrink-0 gap-1">
@@ -386,29 +438,33 @@ export function OwnerBoard({
   /** 插上 / 拔掉端点之后监控项会变，让页面重拉一次摘要 */
   onReload: () => void;
 }): JSX.Element {
-  const projects = useMemo(() => listProjects(targets, now), [targets, now]);
-  const projectTargets = useMemo(
-    () => scopeTargets(targets, { projectId: scope.projectId, environments: null }),
-    [targets, scope.projectId],
-  );
-  const environments = useMemo(() => listEnvironments(projectTargets), [projectTargets]);
-  const scoped = useMemo(() => scopeTargets(projectTargets, { projectId: null, environments: scope.environments }), [projectTargets, scope.environments]);
-  const board = useMemo(
-    () => buildOwnerBoard(scoped, projectTargets, { now, prober }),
-    [scoped, projectTargets, now, prober],
-  );
   /**
-   * 没选项目 = 全局视角。
+   * 演练：只读地把面板推到它该变红的那几档。
    *
-   * 「全部项目」原先把所有项目的业务卡拍平成一堵墙——项目一多就读不动，
-   * 而且它恰恰答不出全局独有的那个问题：**哪些项目根本没人盯**。
-   * 同一个选择器，选了就看业务、没选就看项目，不另开入口。
+   * 判据一个字不动，只换喂给它的输入——这是它作为取证手段成立的全部理由，
+   * 理由写在 lib/rehearsal.ts 顶部。默认 `live`，刷新页面即回真实。
    */
-  const global_ = useMemo(
-    () => (scope.projectId ? null : buildGlobalBoard(scoped, { now, prober })),
-    [scope.projectId, scoped, now, prober],
+  const [rehearsal, setRehearsal] = useState<RehearsalId>('live');
+  const rehearsing = rehearsal !== 'live';
+  const stage = useMemo(
+    () => applyRehearsal(rehearsal, { targets, ctx: { now, prober } }),
+    [rehearsal, targets, now, prober],
   );
-  const headline = global_ ?? board;
+
+  const projects = useMemo(() => listProjects(stage.targets, now), [stage.targets, now]);
+  const bundle = useMemo(() => buildBundle(stage.targets, stage.ctx, scope), [stage.targets, stage.ctx, scope]);
+  /**
+   * 真实那一份。演练期间它仍然算、仍然摆在横幅里。
+   *
+   * 少了它，演练就成了一块能盖住真实故障的幕布：有人在演练「一切正常」的时候，
+   * 线上真的挂了，而屏幕上什么都看不出来。
+   */
+  const live = useMemo(
+    () => (rehearsing ? buildBundle(targets, { now, prober }, scope) : null),
+    [rehearsing, targets, now, prober, scope],
+  );
+  const { projectTargets, scoped, board, global_, headline } = bundle;
+  const environments = useMemo(() => listEnvironments(projectTargets), [projectTargets]);
 
   const activeEnvs = new Set(scope.environments ?? environments);
   /**
@@ -467,6 +523,7 @@ export function OwnerBoard({
   );
 
   const BannerIcon = BANNER_ICON[global_?.tone ?? board.tone];
+  const rehearsalNote = rehearsalById(rehearsal);
 
   return (
     <div className="flex min-h-0 flex-col gap-3 lg:h-full">
@@ -530,7 +587,68 @@ export function OwnerBoard({
             );
           })}
         </div>
+
+        {/* 演练：主动操作靠右（左上是「我在哪」，右上是「我要做什么」） */}
+        <div className="ml-auto inline-flex flex-wrap items-center gap-1">
+          <FlaskConical className="h-3 w-3 text-muted-foreground" />
+          <span className="mr-0.5 text-[0.6875rem] text-muted-foreground">演练</span>
+          {REHEARSALS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              title={item.proves}
+              onClick={() => setRehearsal(item.id)}
+              aria-pressed={rehearsal === item.id}
+              className={cn(
+                'rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
+                rehearsal === item.id
+                  ? 'border-primary/50 bg-primary-soft text-primary-ink'
+                  : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
       </div>
+
+      {/* 演练挂牌。整屏一条 + 每张卡一个小标，两处都不能少：
+          横幅解释这是什么，卡上的标保证单张截图裁出来也认得出。 */}
+      {rehearsing ? (
+        <div className="flex flex-col gap-1.5 rounded-lg border border-primary/45 bg-primary-soft px-3.5 py-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <FlaskConical className="h-4 w-4 shrink-0 text-primary-ink" />
+            <span className="text-sm font-semibold text-primary-ink">
+              演练中 —— 下面这一屏的数据是假的，不是线上现在的样子
+            </span>
+            <div className="flex-grow" />
+            <button
+              type="button"
+              onClick={() => setRehearsal('live')}
+              className="rounded-md border border-primary/45 bg-[hsl(var(--surface-raised))] px-2 py-1 text-[0.6875rem] text-primary-ink transition-colors hover:border-primary/70"
+            >
+              回到真实
+            </button>
+          </div>
+          <div className="text-xs leading-5 text-foreground">
+            这一档要证明的：{rehearsalNote.proves}
+          </div>
+          {/* 演练动了什么，逐条说清。说不清就等于在造一份没人能复核的证据。 */}
+          {stage.changed ? (
+            <div className="text-[0.6875rem] leading-5 text-muted-foreground">动了什么：{stage.changed}</div>
+          ) : null}
+          {stage.blocked ? (
+            <div className="text-[0.6875rem] leading-5 text-warn">演不了：{stage.blocked}</div>
+          ) : null}
+          {/* 真实结论始终摆着：演练不许盖住此刻真的出了事这件事。 */}
+          {live ? (
+            <div className="mt-0.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2.5 py-1.5 text-[0.6875rem] leading-5">
+              <span className="text-muted-foreground">此刻真实结论：</span>
+              <span className={cn('font-medium', LIVE_TONE[live.headline.tone])}>{live.headline.headline}</span>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {/* 结论：只说要不要管 */}
       <div className={cn('flex items-start gap-3 rounded-lg border px-3.5 py-3', BANNER_TONE[headline.tone])}>
@@ -552,7 +670,14 @@ export function OwnerBoard({
           <Waves className="h-3 w-3" />被动
           <span className="text-muted-foreground">读真实流量的窗口，无产物</span>
         </span>
-        <button type="button" className="ml-auto text-[0.6875rem] text-primary-ink hover:underline" onClick={onAddMonitor}>
+        {/* 演练中禁用一切真实写操作：面板上是假数据，此时点下去的每一步都在对着假前提做真事。 */}
+        <button
+          type="button"
+          disabled={rehearsing}
+          title={rehearsing ? '演练中不能改真实配置 —— 先点「回到真实」' : undefined}
+          className="ml-auto text-[0.6875rem] text-primary-ink hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
+          onClick={onAddMonitor}
+        >
           加一条业务监控
         </button>
       </div>
@@ -562,7 +687,7 @@ export function OwnerBoard({
           {global_.rows.length > 0 ? (
             <div className="grid auto-rows-min gap-2.5 md:grid-cols-2 xl:grid-cols-3">
               {global_.rows.map((row) => (
-                <ProjectCard key={row.id} row={row} now={now} onOpen={(id) => onScope({ ...scope, projectId: id })} />
+                <ProjectCard key={row.id} row={row} now={now} rehearsing={rehearsing} onOpen={(id) => onScope({ ...scope, projectId: id })} />
               ))}
             </div>
           ) : null}
@@ -593,7 +718,7 @@ export function OwnerBoard({
         </div>
       ) : board.rows.length > 0 ? (
         <div className="grid min-h-0 flex-1 auto-rows-min gap-2.5 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
-          {board.rows.map((row) => <BusinessCard key={row.key} row={row} now={now} onOpen={onOpenTarget} />)}
+          {board.rows.map((row) => <BusinessCard key={row.key} row={row} now={now} rehearsing={rehearsing} onOpen={onOpenTarget} />)}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] px-6 py-10 text-center">
@@ -671,7 +796,8 @@ export function OwnerBoard({
           <button
             type="button"
             onClick={() => void toggleStatusPage()}
-            disabled={statusPageBusy}
+            disabled={statusPageBusy || rehearsing}
+            title={rehearsing ? '演练中不能改真实配置 —— 先点「回到真实」' : undefined}
             className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-info/50 disabled:opacity-60"
           >
             {statusPageBusy ? '处理中' : statusPage?.open ? '关闭并撤销链接' : '开启公开面板'}
