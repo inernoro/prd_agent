@@ -47,7 +47,13 @@ public sealed class GatewayResolutionLabelGuardTests
         var produced = new HashSet<string>(StringComparer.Ordinal);
         var consumedAt = new List<(string File, string Literal)>();
 
-        var assign = new Regex("ResolutionType\\s*=\\s*\"([A-Za-z]+)\"");
+        // 大小写两种开头都要收：产出既有属性赋值 ResolutionType = "X"，也有局部变量
+        // resolutionType = "X"（解析主流程就是用后者攒出最终标签的）。
+        //
+        // 这条正则的第一版只收大写开头的，于是漏掉了 resolutionType = "DefaultPool"，
+        // 我据此把「ResolutionType == \"DefaultPool\" 永远为假」这个结论下错了——
+        // 守卫自己犯了它要防的那种错（形状 6：判据读的值不是真正生效的那个）。
+        var assign = new Regex("[Rr]esolutionType\\s*=\\s*\"([A-Za-z]+)\"");
         // 消费：== "X" / != "X" / switch 分支里的 "X" =>，都跟在 ResolutionType 后面不远处。
         var compare = new Regex("ResolutionType\\s*(?:==|!=)\\s*\"([A-Za-z]+)\"");
         var switchArm = new Regex("ResolutionType\\s+switch\\s*\\{([^}]*)\\}", RegexOptions.Singleline);

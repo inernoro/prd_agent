@@ -278,14 +278,13 @@ def build_report() -> dict[str, Any]:
     ok, detail = _contains_all(
         resolver + "\n" + prod_stage + "\n" + compose + "\n" + cds_compose,
         [
-            "使用 GW appCaller 模型池",
+            # 2026-09-15 断流后删掉了模型池那一整套分支，所以这里不再要求池相关的符号存在。
+            # 仍然要守的是同一件事：GW 配置是权威，MAP 只是兼容退路，且退路能被开关关掉。
             "DisableMapConfigFallbackForRegisteredAppCallers",
             "DisableMapConfigFallbackForActiveAppCallers",
-            "GW appCaller 禁止 MAP fallback",
-            "TryGetGatewayRegistryGroupsAsync",
-            "FindGatewayOwnedOrMapModelPoolAsync",
-            "FindGatewayOwnedDefaultModelPoolsAsync",
-            "FindGatewayOwnedExchangeAsync",
+            "TryGetGatewayAppCallerStatusAsync",
+            "TryResolveLogicalModelAsync",
+            "TryResolveDefaultLogicalModelAsync",
             "allowMapFallback: !gatewayConfigRequired",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",

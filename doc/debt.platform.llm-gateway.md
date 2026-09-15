@@ -6,6 +6,26 @@
 **谁该读**：接手网关的工程师；做发布判断的人。
 **读完能做什么**：查清某条债务的状态与对应证据。
 
+
+## InMemoryModelResolver 是已删子系统留下的化石（2026-09-15）
+
+**状态**：未还 | **体量**：约 470 行，150 条用例挂在它身上
+
+2026-09-15 删掉模型池那一整套解析分支（`ResolveCoreAsync` 从 767 行降到 88 行）之后，
+`ModelResolver.cs` 尾部那个 `InMemoryModelResolver` 成了化石：它是给测试用的替身，
+里面还完整实现着一套**生产代码里已经不存在的**池解析（专属池 → 默认池 → 成员挑选 → legacy 兜底）。
+
+为什么没一起删：`ModelResolverTests`(32) / `LlmGatewayTests`(106) / `GatewayFaultDomainIsolationTests`(5) /
+`GatewayPinnedModelTests`(4) 共 150 条用例直接 new 它。一刀删掉等于同时重写这 150 条，
+风险远大于收益，所以留到下一轮单独做。
+
+**留着的代价**：任何人读 `ModelResolver.cs` 会看到两套解析——一套真的、一套只在测试里跑的。
+判据分裂的土壤（形状 3）。目前靠一条约束兜着：它的成员排序**委托给** `GatewayRouteSelection`，
+不许自己再写一份。
+
+**还债的样子**：把那 150 条用例迁到「对外模型目录」这套语义上（点名 / 不点名两层默认 / pinned /
+legacy 兜底），然后连同 `InMemoryModelResolver` 一起删。
+
 ---
 > **关联设计**：[LLM Gateway 统一调用](./design.platform.llm-gateway.md)、[AppCaller 模型池选择与池内调度](./design.platform.model-pool.md)、[LLM 网关与模型池统一](./design.platform.llm-gateway.unification.md)
 > **整改计划**：[LLM Gateway 故障隔离与恢复](./plan.platform.llm-gateway.resilience.md)、[LLM 网关旧路径物理退场](./plan.platform.llm-gateway.full-cutover.md)

@@ -316,16 +316,15 @@ public class GatewayDataDomainGuardTests
         var modelResolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
         Assert.DoesNotContain("active-appcaller-auto-policy-without-gateway-pool", modelResolver);
         Assert.Contains("allowMapFallback: !gatewayConfigRequired", modelResolver);
-        Assert.Contains("TryGetGatewayRegistryGroupsAsync", modelResolver);
+        Assert.Contains("TryGetGatewayAppCallerStatusAsync", modelResolver);
         Assert.Contains("GatewayAppCallerPolicy.AllowsTraffic", modelResolver);
-        Assert.Contains("FindGatewayOwnedDefaultModelPoolsAsync", modelResolver);
-        Assert.Contains("gatewayRegistry.TrafficRejected", modelResolver);
+        Assert.Contains("caller.TrafficRejected", modelResolver);
         Assert.Contains("DisableMapConfigFallbackForRegisteredAppCallers", modelResolver);
         Assert.Contains("if (!gatewayConfigRequired)", modelResolver);
-        Assert.True(
-            modelResolver.IndexOf("if (!gatewayConfigRequired)", StringComparison.Ordinal)
-            < modelResolver.IndexOf("_db.LLMAppCallers", StringComparison.Ordinal),
-            "GW-only 模式必须在任何 MAP appCaller 查询前短路");
+        // 这条不变量在 2026-09-15 删池之后**变强了**：原来要求「GW-only 模式必须在任何
+        // MAP appCaller 查询之前短路」，现在解析器根本不查 MAP 的调用方集合——那段查询
+        // 是池路才需要的，池删了它也没了。所以判据从「顺序对」升成「压根没有」。
+        Assert.DoesNotContain("_db.LLMAppCallers", modelResolver);
         Assert.True(
             modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal)
             < modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal),
@@ -403,8 +402,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PLATFORM_DISABLED", console);
         Assert.Contains("modelId = modelDoc.AsNullableString(\"ModelName\") ?? modelDoc.AsNullableString(\"Name\") ?? modelDoc.GetStringOrEmpty(\"_id\")", console);
         Assert.DoesNotContain("!Flag(model, \"IsImageGen\")", registry);
-        Assert.Contains("GetCollection<BsonDocument>(\"llmgw_model_pool_types\")", resolver);
-        Assert.Contains("PinnedModel 不在 appCaller 专用模型池内", resolver);
         Assert.Contains("有则增加，无则不变", page);
         // 2026-09-14 池已停止新建：「按平台规则补齐」会建池、也会往在承接流量的托管池里追加成员，
         // 与冻结直接冲突，整块 UI 已删。这里反向钉住，防它随手被加回来。
@@ -420,73 +417,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("return false;", page);
     }
 
-    [Fact]
-    public void PoolDispatch_SkipsMembersWhoseModelRecordIsExplicitlyDisabled()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
-        var console = ReadRepoFile("llmgw/console-api/Program.cs");
-
-        // 托管默认池是 append-only：成员删不掉（APPEND_ONLY_POOL）、也不许覆盖，
-        // 加成员时又有 MODEL_DISABLED 拦着「停用模型不许进池」。两条规矩合起来，
-        // 「停用模型」就是把一个已在池里的坏条目请出调度的唯一动作——它必须真的有效果。
-        Assert.Contains("平台托管默认池不允许删除成员", console);
-        Assert.Contains("停用模型不能加入平台托管默认池", console);
-        Assert.Contains("private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
-        Assert.Contains("await IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
-        Assert.Contains("已停用，跳过该候选", resolver);
-
-        // 判据只认「库里明写着 Enabled=false」。用 Eq(Enabled,false) 查，而不是取回来再判
-        // `!model.Enabled`——bool 反序列化会把缺字段的老文档读成 false，那样会把一批
-        // 从没被人停用过的成员误判成停用。
-        Assert.Contains("Builders<LLMModel>.Filter.Eq(m => m.Enabled, false)", resolver);
-        // 三个别名都要认：池成员的 ModelId 按 `ModelName ?? Name ?? _id` 存，
-        // 少认 Name 的话，缺 ModelName 的那类模型停用了也照发——而托管池删不掉成员，
-        // 停用是唯一处置手段，等于这道闸对它们整类失效。
-        //
-        // 判据现在收敛在 PoolMemberIdMatch 一处。这条守卫原先断言的是
-        // IsPoolMemberModelExplicitlyDisabledAsync **函数体内**含三个别名——那把判据的
-        // 位置也钉死了，而真正要守的是「三个别名」和「只有一份」。事实上正是因为判据被
-        // 抄成两份，FindGatewayOwnedOrMapModelAsync 那份漏了 Name：GW 里启用着、只填了
-        // Name 的模型查不到，就被当成「GW 没有权威记录」，放行 MAP 侧的过期停用副本，
-        // 把可用候选跳过。所以这里改成钉判定源本身 + 钉「没人再手写第二份」。
-        var idMatch = SourceSlice.Member(resolver, "private static FilterDefinition<LLMModel> PoolMemberIdMatch(");
-        Assert.Contains("Eq(m => m.ModelName, modelId)", idMatch);
-        Assert.Contains("Eq(m => m.Name, modelId)", idMatch);
-        Assert.Contains("Eq(m => m.Id, modelId)", idMatch);
-
-        // 两处查询都必须走它：停用检查 + 「GW 有没有权威记录」
-        Assert.True(
-            Regex.Matches(resolver, @"PoolMemberIdMatch\(modelId\)").Count >= 2,
-            "有查询没走 PoolMemberIdMatch——判据一旦被抄第二份就会各自漂移");
-
-        // 谁也不许在别处再手写一遍别名表：ModelName/Id 的 Or 组合只应出现在判定源里
-        var handRolled = Regex.Matches(
-            resolver,
-            @"Filter\.Or\(\s*Builders<LLMModel>\.Filter\.Eq\(m => m\.ModelName, modelId\)").Count;
-        Assert.True(handRolled <= 1, $"别名表被手写了 {handRolled} 份，应当只有 PoolMemberIdMatch 一处");
-        var fetchThenTest = new Regex(@"IsPoolMemberModelExplicitlyDisabled[\s\S]{0,1600}?!\w+\.Enabled");
-        Assert.False(
-            fetchThenTest.IsMatch(resolver),
-            "别把「查回来再判 !Enabled」当停用证据：缺字段的老文档会被误判成停用，必须用 Eq(Enabled,false) 过滤");
-
-        // 这道闸不许拿「找到了可用配置」当「它没被停用」的证据。
-        //
-        // 上面那次 FindGatewayOwnedOrMapModelAsync 开着 MAP 兜底：GW 里明写着停用时它会
-        // 跳过、改捞 MAP 里那份还启用着的旧副本，结果非空。谁要是拿 `modelConfig is null`
-        // 给这道闸当前置条件，运维在网关点的停用就整条被短路，模型照发——两个数据源时
-        // 「查得到可用配置」并不能证明「没被停用」。
-        var dispatchGuard = SourceSlice.Member(
-            resolver, "await IsPoolMemberModelExplicitlyDisabledAsync(");
-        Assert.False(
-            new Regex(@"if \(\s*modelConfig is null\s*&&\s*await IsPoolMemberModelExplicitlyDisabledAsync")
-                .IsMatch(resolver),
-            "停用判定不许由 modelConfig 是否为空来把门：GW 停用 + MAP 有启用旧副本时会被整条短路");
-
-        // 反向也要钉住：GW 有权威记录时不许再拿 MAP 的停用旧副本说事，否则会把
-        // GW 里启用着的模型误判成停用。所以 MAP 侧只在 modelConfig 为空时才参与。
-        Assert.Contains("allowMapFallback: !gatewayConfigRequired && modelConfig is null", resolver);
-        Assert.Contains("已停用，跳过该候选", dispatchGuard);
-    }
 
     [Fact]
     public void IntentPoolEligibility_HasExactlyOneJudgmentAndOneWayToDeclareIt()
@@ -624,8 +554,6 @@ public class GatewayDataDomainGuardTests
         //
         // 判据本身的两侧一致由 GatewayCallTraceMirrorTests 钉住；这里钉的是**接线**：
         // 运行时真的走共享判据、端点真的逐个调用方算、面板真的逐个调用方渲染、冒烟真的逐个跑。
-        Assert.Contains("GatewayRouteSelection.Reach(new GatewayRouteSelection.CallerBinding(", resolver);
-        Assert.Contains("callerReach == GatewayRouteSelection.CallerReach.UsesModelCatalog", resolver);
         // 名单只许有一份：解析器那个方法必须转发到权威集合，不许自己再列一遍。
         Assert.Contains("GatewayRouteSelection.ModelCatalogExceptions.Contains(appCallerCode)", resolver);
         Assert.DoesNotContain("appCallerCode is AppCallerRegistry.VisualAgent.Image.Text2Img", resolver);
@@ -4296,53 +4224,8 @@ public class GatewayDataDomainGuardTests
             "这些方法把 HostedSite 交给了前端却没挂派生字段，PDF 站在这些路径上会退回壳子：" + string.Join("、", missing));
     }
 
-    [Fact]
-    public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
 
-        Assert.Contains("ShouldFailClosedWhenDedicatedPoolUnavailable", resolver);
-        Assert.Contains("ModelTypes.VideoGen", resolver);
-        Assert.Contains("ModelTypes.Asr", resolver);
-        Assert.Contains("跳过 expectedModel 的 LLMModels 直连兜底", resolver);
-        Assert.Contains("拒绝降级 legacy 直连", resolver);
-    }
 
-    /// <summary>
-    /// 失败关闭只在「认定有专属绑定」时才被查，所以绑定判据必须是唯一的一份。
-    /// 生产 ResolveAsync 与 InMemoryModelResolver 各判一次的话，改一处忘一处，
-    /// 失败关闭会在其中一条路径上静默失效（predicate-and-wiring-discipline 形状 3）。
-    /// 这里断言两条解析路径都走同一个 HasDedicatedBinding。
-    /// </summary>
-    [Fact]
-    public void ModelResolver_BothResolutionPathsShareTheDedicatedBindingPredicate()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
-
-        var uses = System.Text.RegularExpressions.Regex
-            .Matches(resolver, @"HasDedicatedBinding\(requirement\?\.ModelGroupIds\)")
-            .Count;
-
-        Assert.True(uses >= 2,
-            $"生产与 InMemory 两条解析路径都必须用共享的 HasDedicatedBinding 判据，实际只有 {uses} 处");
-    }
-
-    [Fact]
-    public void ModelResolver_AvailablePoolsFailClosedBeforeMapFallbackForExternalTenants()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
-        var methodStart = resolver.IndexOf("public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync", StringComparison.Ordinal);
-        var mapFallback = resolver.IndexOf("var appCaller = await _db.LLMAppCallers", methodStart, StringComparison.Ordinal);
-        var externalTenantGuard = resolver.IndexOf(
-            "if (!string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal))",
-            methodStart,
-            StringComparison.Ordinal);
-
-        Assert.True(methodStart >= 0 && mapFallback > methodStart, "找不到 available-pools MAP fallback");
-        Assert.True(
-            externalTenantGuard > methodStart && externalTenantGuard < mapFallback,
-            "外部租户必须在读取 MAP LLMAppCallers/ModelGroups 前 fail closed");
-    }
 
     [Fact]
     public void ImageGenRunWorker_DoesNotSilentlyDowngradeReferenceImageRunsToText2Img()

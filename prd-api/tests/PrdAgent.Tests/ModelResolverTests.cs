@@ -946,58 +946,6 @@ public class ModelResolverTests
     }
 
     [Fact]
-    public void StrictPoolCandidates_DefaultDeny_ShouldKeepOnlySelectedPool()
-    {
-        var first = CreateModelGroup(
-            "pool-first", "First Pool", "generation", false, 0,
-            ("plat-1", "first-model", ModelHealthStatus.Healthy));
-        var second = CreateModelGroup(
-            "pool-second", "Second Pool", "generation", false, 1,
-            ("plat-2", "second-model", ModelHealthStatus.Healthy));
-
-        var candidates = ModelResolver.SelectStrictPoolCandidates(
-            [first, second],
-            "pool-second",
-            allowCrossPoolFallback: false);
-
-        Assert.Single(candidates);
-        Assert.Equal("pool-second", candidates[0].Id);
-    }
-
-    [Fact]
-    public void StrictPoolCandidates_ExplicitlyAllowed_ShouldPreserveFallbackOrder()
-    {
-        var first = CreateModelGroup(
-            "pool-first", "First Pool", "generation", false, 0,
-            ("plat-1", "first-model", ModelHealthStatus.Healthy));
-        var second = CreateModelGroup(
-            "pool-second", "Second Pool", "generation", false, 1,
-            ("plat-2", "second-model", ModelHealthStatus.Healthy));
-
-        var candidates = ModelResolver.SelectStrictPoolCandidates(
-            [first, second],
-            "Second Pool",
-            allowCrossPoolFallback: true);
-
-        Assert.Equal(["pool-second", "pool-first"], candidates.Select(pool => pool.Id));
-    }
-
-    [Fact]
-    public void StrictPoolCandidates_UnknownSelection_ShouldFailClosed()
-    {
-        var pool = CreateModelGroup(
-            "pool-only", "Only Pool", "generation", false, 0,
-            ("plat-1", "only-model", ModelHealthStatus.Healthy));
-
-        var candidates = ModelResolver.SelectStrictPoolCandidates(
-            [pool],
-            "outside-pool",
-            allowCrossPoolFallback: true);
-
-        Assert.Empty(candidates);
-    }
-
-    [Fact]
     public void HalfOpenEligibility_ShouldRequireCooldownAndExpiredLease()
     {
         var now = DateTime.UtcNow;
