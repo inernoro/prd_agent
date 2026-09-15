@@ -49,20 +49,34 @@ export function ErrorBar({
 
   return (
     <Track>
-      {/* 零点中轴 */}
+      {/* 零点中轴：压在轨道上，负值往左、正值往右都从这里起算 */}
       <span
         style={{
-          position: 'absolute', left: '50%', top: 3, bottom: 3, width: 1,
+          position: 'absolute', left: '50%', top: 2, bottom: 2, width: 1,
           background: 'var(--border-default)',
         }}
       />
-      <Bar left={x} width={w} fill={barFill} lead={lead} />
+      <Bar left={x} width={w} fill={barFill} />
       <Whiskers lo={lo} hi={hi} color={whisker} lead={lead} />
     </Track>
   );
 }
 
-/** 条与须共用的画布：撑满所在列，高度固定。 */
+/** 轨道的高度。条填在里面，须画在它上面（比它高，压得住）。 */
+const TRACK_H = 6;
+
+/**
+ * 条与须共用的画布：撑满所在列，高度固定。
+ *
+ * ## 为什么有一条满宽的轨道，而不是一根细基线
+ *
+ * 第一版画的是一根 1px 基线，条只有起点固定、右端跟着数值跑。三五行的设计稿上看不出问题，
+ * 78 行真实数据一铺开，右边缘就成了一条锯齿线——用户 2026-09-15 的原话是「列表里面忽长忽短，
+ * 我不认同这好看」，说得对。
+ *
+ * 轨道把右边缘钉死：扫下来是一排等长的槽，条在槽里填充。长短差异照样读得出来（那是数据），
+ * 但视觉上不再是一堆参差的线头。这是进度条的通用做法，不是我发明的。
+ */
 function Track({ children }: { children: React.ReactNode }) {
   return (
     <span
@@ -70,11 +84,13 @@ function Track({ children }: { children: React.ReactNode }) {
       className="relative block flex-1"
       style={{ height: BAR_H, minWidth: 90 }}
     >
-      {/* 基线 */}
+      {/* 轨道：满宽，右边缘永远齐平 */}
       <span
         style={{
-          position: 'absolute', left: 0, right: 0, top: '50%', height: 1,
-          background: 'var(--border-subtle)',
+          position: 'absolute', left: 0, right: 0, top: '50%',
+          transform: 'translateY(-50%)',
+          height: TRACK_H, borderRadius: TRACK_H / 2,
+          background: 'var(--nested-block-bg)',
         }}
       />
       {children}
@@ -82,13 +98,14 @@ function Track({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Bar({ left, width, fill, lead }: { left: number; width: number; fill: string; lead: boolean }) {
-  const h = lead ? 5 : 4;
+/** 填在轨道里的那一段。与轨道同高，看起来就是轨道被填满了多少。 */
+function Bar({ left, width, fill }: { left: number; width: number; fill: string }) {
   return (
     <span
       style={{
         position: 'absolute', left: `${left}%`, top: '50%', transform: 'translateY(-50%)',
-        width: `${Math.max(width, 0)}%`, minWidth: 2, height: h, borderRadius: h / 2, background: fill,
+        width: `${Math.max(width, 0)}%`, minWidth: 3,
+        height: TRACK_H, borderRadius: TRACK_H / 2, background: fill,
       }}
     />
   );
@@ -253,7 +270,7 @@ export function ScoreBar({
 
   return (
     <Track>
-      <Bar left={0} width={end} fill={barFill} lead={lead} />
+      <Bar left={0} width={end} fill={barFill} />
       <Whiskers lo={lo} hi={hi} color={whisker} lead={lead} />
     </Track>
   );

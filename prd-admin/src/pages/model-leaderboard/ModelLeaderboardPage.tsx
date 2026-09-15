@@ -687,14 +687,15 @@ function Legend({ kind }: { kind: 'agent' | 'score' }) {
       style={{ color: 'var(--text-muted)', borderTop: '1px solid var(--border-subtle)' }}
     >
       <span className="inline-flex items-center gap-2">
+        {/* 图例要和行里长得一样：满宽轨道 + 填充段 + 两端的须 */}
         <svg width="42" height="12" viewBox="0 0 42 12" aria-hidden="true">
-          <line x1="0" y1="6" x2="42" y2="6" stroke="var(--border-subtle)" strokeWidth="1" />
-          <rect x="0" y="4" width="24" height="4" rx="2" fill="color-mix(in srgb, var(--accent-gold) 70%, transparent)" />
-          <line x1="19" y1="2" x2="19" y2="10" stroke="var(--text-muted)" strokeWidth="1.2" />
-          <line x1="29" y1="2" x2="29" y2="10" stroke="var(--text-muted)" strokeWidth="1.2" />
+          <rect x="0" y="3" width="42" height="6" rx="3" fill="var(--nested-block-bg)" />
+          <rect x="0" y="3" width="24" height="6" rx="3" fill="color-mix(in srgb, var(--accent-gold) 70%, transparent)" />
+          <line x1="19" y1="1" x2="19" y2="11" stroke="var(--text-muted)" strokeWidth="1.2" />
+          <line x1="29" y1="1" x2="29" y2="11" stroke="var(--text-muted)" strokeWidth="1.2" />
           <line x1="19" y1="6" x2="29" y2="6" stroke="var(--text-muted)" strokeWidth="1" />
         </svg>
-        <span>横条是分数，两端的须是 95% 置信区间——区间重叠的两个模型，名次差别不作数</span>
+        <span>轨道里填多少代表分数高低，两端的须是 95% 置信区间——区间重叠的两个模型，名次差别不作数</span>
       </span>
       <span className="w-px h-3" style={{ background: 'var(--border-subtle)' }} aria-hidden="true" />
       <span>名次下方的「区间」同理：榜首的真实名次可能落在 1–4 之间</span>
