@@ -22,3 +22,4 @@
 | fix | prd-api | 实际模型落库改走与 phase 相同的租约闸：丢了租约的 worker 不再覆盖接管者写入的模型、也不再推一条骗人的 model 事件，未命中即按租约丢失停手 |
 | fix | prd-api | Redis 投影不可用时的 Mongo 兜底补发 model 事件（生成流与改写流各一处），值就在库里，不补的话「读不到模型」跟「这次没有模型」长得一模一样 |
 | fix | prd-admin | 删除被发布租约推迟时不再把卡片抹掉：两个单站点删除处理器改为先看 deleted 再决定，如实留住卡片并说明在等什么 |
+| test | prd-api | 模型落库守卫从钉住实现字面量改为断言行为：原先断言 `Set(item => item.ResolvedModel` 这串写法，补租约闸把写入抽成 PersistResolvedModelAsync 后 lambda 形参改名，守卫就红了而代码其实更对——反向锁死住实现的断言（形状 4a）换成「模型分支必须调落库方法、落库方法必须写这两个字段」 |

@@ -94,10 +94,26 @@ public sealed class DesignArtifactModelVisibilityTests
         Assert.NotNull(directory);
         var source = File.ReadAllText(Path.Combine(directory!.FullName, "prd-api", "src", "PrdAgent.Api",
             "Services", "HostedSiteEditRunWorker.cs"));
-        // companion：真的读到了这个文件，否则下面两条会对着空串判绿。
+        // companion：真的读到了这个文件，否则下面几条会对着空串判绿。
         Assert.Contains("chunk.Type == \"model\"", source, StringComparison.Ordinal);
-        Assert.Contains("Set(item => item.ResolvedModel", source, StringComparison.Ordinal);
-        Assert.Contains("Set(item => item.ResolvedPlatform", source, StringComparison.Ordinal);
+
+        // 这里只管「模型有没有真的落库」这件行为，不钉住某一种写法——
+        // 原先断言的是 `Set(item => item.ResolvedModel` 这串字面量，随后为了补租约闸
+        // 把这次写入抽成 PersistResolvedModelAsync（lambda 形参从 item 变成 x），
+        // 守卫就红了，而代码其实更对了。反向锁死住实现的断言正是这种形状
+        // （判据与接线纪律 形状 4a），换成行为断言。
+        var branch = source.IndexOf("chunk.Type == \"model\"", StringComparison.Ordinal);
+        var body = source.Substring(branch, Math.Min(1500, source.Length - branch));
+        Assert.Contains("PersistResolvedModelAsync", body, StringComparison.Ordinal);
+
+        // 落库方法确实写这两个字段（闸的判据由 DesignArtifactModelFencingTests 单独盯）。
+        var persist = source.IndexOf("PersistResolvedModelAsync(\n        MongoDbContext", StringComparison.Ordinal);
+        if (persist < 0)
+            persist = source.IndexOf("internal static async Task<bool> PersistResolvedModelAsync", StringComparison.Ordinal);
+        Assert.True(persist > 0, "找不到落库方法，模型可能又退回成只改内存");
+        var persistBody = source.Substring(persist, Math.Min(1200, source.Length - persist));
+        Assert.Contains("x.ResolvedModel", persistBody, StringComparison.Ordinal);
+        Assert.Contains("x.ResolvedPlatform", persistBody, StringComparison.Ordinal);
     }
 
     private static async Task<IReadOnlyList<DesignArtifactExecutorChunk>> RunExecutorAsync(
