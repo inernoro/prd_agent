@@ -470,7 +470,13 @@ export function buildReportsOverview(
   }
 
   // 首屏状态（§7.0）：产品失败与验收失败分开。
-  const failsWithBlocking = windowReports.filter((r) => r.verdict === 'fail' && (r.defectCounts == null || blockingDefects(r.defectCounts) > 0));
+  //
+  // 「有阻断缺陷」不看 verdict：写入侧允许 verdict=pass 配 P0>0（`normDefectCounts` 不做
+  // 一致性校验），只认 fail 的话首屏会说「可以正常使用」，而同一份报告在台账里明晃晃
+  // 列着阻断缺陷。验收规范本身也写着「P0/P1 存在，总 Verdict 不得 pass」，所以这里以
+  // 缺陷数为准。fail 但完全没记缺陷的那一种仍按产品坏了处理（不知道 ≠ 没有）。
+  const failsWithBlocking = windowReports.filter((r) => blockingDefects(r.defectCounts) > 0
+    || (r.verdict === 'fail' && r.defectCounts == null));
   const failsWithoutDefects = windowReports.filter((r) => r.verdict === 'fail' && r.defectCounts != null && blockingDefects(r.defectCounts) === 0);
   // 没填结论的报告不算「测过」：把它算进 ok，第一屏就会对着 0 份通过说「可以正常使用」。
   // verdict 在写入侧是可缺省的（POST /api/reports 不强制），所以这是真实输入能走到的分支。

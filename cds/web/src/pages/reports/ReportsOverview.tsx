@@ -11,6 +11,7 @@
  * 每个色块都配文字与图标，不靠颜色单独表意（报告证据指南 §4 颜色契约）。
  */
 import { useMemo } from 'react';
+import { blockingDefects, severityCount } from '@/lib/defectCounts';
 import { CalendarDays, CircleAlert, CircleCheck, CircleX, ExternalLink, GitMerge, GitPullRequest, TriangleAlert } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import type { MergeCoverageStatus, OverviewCluster, ReportsOverview, ReportVerdict } from '@/lib/api';
@@ -353,7 +354,9 @@ function MergeCoverage({ overview, onOpenReport }: { overview: ReportsOverview; 
 }
 
 function DefectPills({ counts }: { counts: Record<string, number> }): JSX.Element | null {
-  const p0 = counts.p0 ?? 0; const p1 = counts.p1 ?? 0; const p2 = counts.p2 ?? 0; const p3 = counts.p3 ?? 0;
+  // 逐档夹过再渲染：写入侧不拦负数，直接渲染会在屏幕上出现「P1 -2」。
+  const p0 = severityCount(counts.p0); const p1 = severityCount(counts.p1);
+  const p2 = severityCount(counts.p2); const p3 = severityCount(counts.p3);
   if (!p0 && !p1 && !p2 && !p3) return null;
   const cell = (label: string, n: number, blocking: boolean): JSX.Element => (
     <span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-mono text-[0.6875rem] ${n === 0 ? 'bg-[hsl(var(--surface-sunken))] text-muted-foreground' : blocking ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--warn-soft))] text-warn'}`}>{label} {n}</span>
@@ -381,7 +384,9 @@ function ClusterTable({ overview, projectName, onOpenCluster, onOpenReport }: { 
   };
   const nextStep = (c: OverviewCluster): string => {
     if (c.verdict === 'conflict') return '同一对象同日结论互相矛盾，先统一口径再复测；统计只认最新版。';
-    const blocking = (c.defectCounts.p0 ?? 0) + (c.defectCounts.p1 ?? 0);
+    // 走同一条判据：直接相加的话 { p0: 2, p1: -2 } 得零，这一行会说「没有记录阻断缺陷」，
+    // 而同屏的首屏状态（后端已夹过）说的是「有功能坏了」。
+    const blocking = blockingDefects(c.defectCounts);
     if (c.verdict === 'fail' && blocking === 0 && Object.keys(c.defectCounts).length > 0) return '未通过但没有记录阻断缺陷：按规范这是验收链路失败而不是产品坏了，先把失败原因写进报告再复跑。';
     if (c.verdict === 'fail' && c.streakWindows > 1) return `连续第 ${c.streakWindows} 个时间窗未通过，拆成单点逐点给出「通 / 不通、卡在哪一步」，并指定负责人。`;
     if (c.verdict === 'fail') return c.count > 1 ? '同一对象多份未通过，合并成一条待办处理，修完做一次缺陷复测。' : '修复后做一次缺陷复测，通过前不当作可用入口。';

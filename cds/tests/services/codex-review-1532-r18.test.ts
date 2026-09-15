@@ -90,3 +90,42 @@ describe('术语转正之后，模板不能再教作者写旧词', () => {
     expect(gate).toContain('"原则性通过"');
   });
 });
+
+describe('阻断缺陷压过安全结论（第十九轮）', () => {
+  /*
+   * 写入侧允许 verdict=pass 配 P0>0，而首屏原本只在 verdict==='fail' 时才看缺陷数，
+   * 于是同一份报告在首屏是「可以正常使用」、在台账里列着阻断缺陷。
+   * 验收规范本身写着「P0/P1 存在，总 Verdict 不得 pass」。
+   */
+  it('verdict 为 pass 但有 P0 时，首屏判「有功能坏了」', () => {
+    const o = buildReportsOverview([
+      report({ title: '功能验收 · 丁 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'pass', defectCounts: { p0: 3 } }),
+    ], [], { to: TO, days: 7 });
+    // 前置条件：这份报告确实被算作通过，否则测的是别的分支。
+    expect(o.totals.pass).toBe(1);
+    expect(o.headline.status).toBe('broken');
+    expect(o.headline.statusLabel).not.toBe('可以正常使用');
+  });
+
+  it('原则性通过带 P1 同样判「有功能坏了」', () => {
+    const o = buildReportsOverview([
+      report({ title: '功能验收 · 戊 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'conditional', defectCounts: { p1: 1 } }),
+    ], [], { to: TO, days: 7 });
+    expect(o.headline.status).toBe('broken');
+  });
+
+  it('干净的通过报告不受影响', () => {
+    const o = buildReportsOverview([
+      report({ title: '功能验收 · 己 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'pass', defectCounts: { p2: 4 } }),
+    ], [], { to: TO, days: 7 });
+    expect(o.headline.status).toBe('ok');
+    expect(o.headline.statusLabel).toBe('可以正常使用');
+  });
+
+  it('未通过且完全没记缺陷仍按产品坏了处理（不知道不等于没有）', () => {
+    const o = buildReportsOverview([
+      report({ title: '功能验收 · 庚 · 2026-09-05', createdAt: '2026-09-05T10:00:00Z', verdict: 'fail' }),
+    ], [], { to: TO, days: 7 });
+    expect(o.headline.status).toBe('broken');
+  });
+});
