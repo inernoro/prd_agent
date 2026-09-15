@@ -118,7 +118,7 @@ export interface ReportsOverview {
     conditional: number;
     fail: number;
     undetermined: number;
-    previous: { counted: number; pass: number; conditional: number; fail: number };
+    previous: { counted: number; pass: number; conditional: number; fail: number; undetermined: number };
   };
   passRate: {
     kind: ReportKind;
@@ -576,7 +576,9 @@ export function buildReportsOverview(
       conditional: counts.conditional,
       fail: counts.fail,
       undetermined: counts.undetermined,
-      previous: { counted: prevCounts.counted, pass: prevCounts.pass, conditional: prevCounts.conditional, fail: prevCounts.fail },
+      // undetermined 一并带上：counted 里本来就含它，只给三档会让上窗那根条与它的总数对不上
+      // （屏幕上出现「上窗 5 份」配一根空条）。
+      previous: { counted: prevCounts.counted, pass: prevCounts.pass, conditional: prevCounts.conditional, fail: prevCounts.fail, undetermined: prevCounts.undetermined },
     },
     passRate: { kind: passRateKind, ...passRate, previous: prevPassRate },
     kinds,

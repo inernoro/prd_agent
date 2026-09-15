@@ -3,6 +3,7 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { resolveKindFilter } from '@/lib/reportKindFilter';
+import { effectiveVerdict, severityCount } from '@/lib/defectCounts';
 import {
   ArrowLeft, ArrowUpDown, Boxes, CalendarDays, Check, ChevronRight, ChevronsDownUp, ChevronsUpDown, CircleAlert, CircleCheck, CircleX, ClipboardCheck, Clock3, Database, Download, FileCode2, FileText, FolderOpen,
   GitBranch, GitCommitHorizontal, GitPullRequest, History, Inbox, Layers, Link2, Maximize2, Minimize2, MoreVertical, Network, Pencil, Plus, RefreshCw, Save, Search, Share2, SlidersHorizontal, Trash2, Upload, X,
@@ -1081,10 +1082,13 @@ function ReportsHome({
               <tbody>
                 {pageRows.map((r) => {
                   const ref = refById.get(r.id);
-                  const rail = r.verdict === 'fail' ? 'hsl(var(--bad))' : r.verdict === 'conditional' ? 'hsl(var(--warn))' : 'transparent';
+                  // 结论一律取生效值：聚合那边在 toRef 已经换算过，所以 ref 上的就是生效结论；
+                  // 不在窗口里、没有 ref 的行走同一条前端判据兜底，两条路得出同一个答案。
+                  const rowVerdict = ref?.verdict ?? effectiveVerdict(r);
+                  const rail = rowVerdict === 'fail' ? 'hsl(var(--bad))' : rowVerdict === 'conditional' ? 'hsl(var(--warn))' : 'transparent';
                   const projectLabel = r.projectId ? projectName(r.projectId) : undefined;
                   const dc = r.defectCounts ?? {};
-                  const p0 = dc.p0 ?? dc.P0 ?? 0; const p1 = dc.p1 ?? dc.P1 ?? 0; const p2 = dc.p2 ?? dc.P2 ?? 0;
+                  const p0 = severityCount(dc.p0 ?? dc.P0); const p1 = severityCount(dc.p1 ?? dc.P1); const p2 = severityCount(dc.p2 ?? dc.P2);
                   const superseded = supersededIds.has(r.id);
                   return (
                     <tr
@@ -1098,7 +1102,9 @@ function ReportsHome({
                       title={reportTooltip(r, projectLabel)}
                     >
                       <td className="whitespace-nowrap px-3 py-3">
-                        <span className="inline-flex items-center gap-1.5 text-[0.78125rem] font-semibold"><VerdictIcon verdict={r.verdict} />{r.verdict === 'pass' ? '通过' : r.verdict === 'fail' ? '未通过' : r.verdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
+                        {/* 走生效结论：一份写着通过却带 P0 的报告，聚合那边已经算作未通过，
+                            这一列若还显示「通过」，同一屏就自己打自己（Codex 第二十三轮）。 */}
+                        <span className="inline-flex items-center gap-1.5 text-[0.78125rem] font-semibold"><VerdictIcon verdict={rowVerdict} />{rowVerdict === 'pass' ? '通过' : rowVerdict === 'fail' ? '未通过' : rowVerdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
                       </td>
                       <td className="px-3 py-3">
                         <div className="break-words font-semibold text-foreground">{r.title}</div>

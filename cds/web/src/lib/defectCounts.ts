@@ -17,3 +17,17 @@ export function blockingDefects(counts: Record<string, number> | null | undefine
   if (!counts) return 0;
   return severityCount(counts.p0 ?? counts.P0) + severityCount(counts.p1 ?? counts.P1);
 }
+
+/**
+ * 生效结论：有阻断缺陷即 fail，否则按报告自己写的那个。
+ *
+ * 后端在 `toRef` 那个边界上换算过一次，聚合出来的一切都带生效结论；但台账那一列读的是
+ * 报告列表接口的原始数据，不经过 refs。少了这一步，同一屏会一边说「有功能坏了」，
+ * 一边把那份罪魁报告显示成「通过」。
+ */
+export function effectiveVerdict(
+  r: { verdict?: 'pass' | 'conditional' | 'fail' | null; defectCounts?: Record<string, number> | null },
+): 'pass' | 'conditional' | 'fail' | null {
+  if (blockingDefects(r.defectCounts) > 0) return 'fail';
+  return r.verdict ?? null;
+}

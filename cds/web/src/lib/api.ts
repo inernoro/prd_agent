@@ -330,7 +330,7 @@ export interface ReportsOverview {
   releaseGate: { state: 'blocked' | 'open' | 'unknown'; reason: string; latest: OverviewReportRef | null; lastPass: OverviewReportRef | null };
   totals: {
     archived: number; folded: number; counted: number; pass: number; conditional: number; fail: number; undetermined: number;
-    previous: { counted: number; pass: number; conditional: number; fail: number };
+    previous: { counted: number; pass: number; conditional: number; fail: number; undetermined: number };
   };
   passRate: { kind: ReportKind; numerator: number; denominator: number; rate: number | null; previous: { numerator: number; denominator: number; rate: number | null } };
   kinds: Array<{ kind: ReportKind; count: number }>;

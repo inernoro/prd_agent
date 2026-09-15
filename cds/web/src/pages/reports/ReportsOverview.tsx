@@ -65,32 +65,44 @@ function SectionTitle({ title, sub, right }: { title: string; sub?: string; righ
  * 结论分布：本窗 / 上窗两根横向堆叠条（部分与整体，报告证据指南 §4 状态色）。
  * 段与段之间留 2px 表面缝，段内直接标数，右侧图例带图标。
  */
+/** 无结论不是第四种结论，用中性色，别占语义三档的颜色。 */
+const segFill = (k: ReportVerdict | 'undetermined'): string =>
+  (k === 'undetermined' ? 'hsl(var(--hairline-strong))' : VERDICT_META[k].color);
+const segLabel = (k: ReportVerdict | 'undetermined'): string =>
+  (k === 'undetermined' ? '无结论' : VERDICT_META[k].label);
+
 function VerdictBars({ overview }: { overview: ReportsOverview }): JSX.Element {
   const rows = [
     { label: '本窗', ...overview.totals },
     { label: '上窗', ...overview.totals.previous },
   ];
-  const max = Math.max(1, ...rows.map((r) => r.pass + r.conditional + r.fail));
+  // 无结论也画进去、也算进总数：它本来就在 counted 里，只画三档的话，
+  // 一个「全是无结论」的上窗会显示成空条配 0，而别处还说着上窗有几份。
+  const sum = (r: { pass: number; conditional: number; fail: number; undetermined: number }): number =>
+    r.pass + r.conditional + r.fail + r.undetermined;
+  const max = Math.max(1, ...rows.map(sum));
   const W = 320; const H = 18; const GAP = 2;
   return (
     <div className="flex flex-col gap-2">
       {rows.map((r) => {
-        const total = r.pass + r.conditional + r.fail;
-        const segs: Array<{ key: ReportVerdict; n: number }> = [
-          { key: 'pass', n: r.pass }, { key: 'conditional', n: r.conditional }, { key: 'fail', n: r.fail },
-        ].filter((s) => s.n > 0) as Array<{ key: ReportVerdict; n: number }>;
+        const total = sum(r);
+        const all: Array<{ key: ReportVerdict | 'undetermined'; n: number }> = [
+          { key: 'pass', n: r.pass }, { key: 'conditional', n: r.conditional },
+          { key: 'fail', n: r.fail }, { key: 'undetermined', n: r.undetermined },
+        ];
+        const segs = all.filter((s) => s.n > 0);
         let x = 0;
         return (
           <div key={r.label} className="flex items-center gap-3">
             <span className="w-8 shrink-0 text-[0.6875rem] text-muted-foreground">{r.label}</span>
-            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`${r.label}：通过 ${r.pass}，原则性通过 ${r.conditional}，未通过 ${r.fail}`} className="min-w-0 flex-1">
+            <svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`${r.label}：通过 ${r.pass}，原则性通过 ${r.conditional}，未通过 ${r.fail}，无结论 ${r.undetermined}`} className="min-w-0 flex-1">
               <rect x="0" y="0" width={W} height={H} rx="3" fill="hsl(var(--surface-sunken))" />
               {segs.map((s, i) => {
                 const w = Math.max(0, (s.n / max) * W - (i < segs.length - 1 ? GAP : 0));
                 const el = (
                   <g key={s.key}>
-                    <rect x={x} y="0" width={w} height={H} rx={3} fill={VERDICT_META[s.key].color}>
-                      <title>{`${r.label} ${VERDICT_META[s.key].label} ${s.n} 份`}</title>
+                    <rect x={x} y="0" width={w} height={H} rx={3} fill={segFill(s.key)}>
+                      <title>{`${r.label} ${segLabel(s.key)} ${s.n} 份`}</title>
                     </rect>
                     {w >= 22 ? (
                       <text x={x + w / 2} y={H / 2 + 4} textAnchor="middle" fontSize="11" fontWeight="600" fill="hsl(var(--status-ink))" fontFamily="var(--cds-font-mono)">{s.n}</text>
