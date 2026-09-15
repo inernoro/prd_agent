@@ -78,7 +78,7 @@ found in: logs.api line 123
 [建议]
 1. 本地有 SDK 就 `cd prd-api && dotnet build --no-restore` 复现（最快）；没有就直接看 Actions 日志
 2. 修复 Program.cs:42
-3. push 后等 Branch Image 绿（那才是「编得出来」的判据），再 `cdscli deploy`
+3. push 后等 Branch Image 绿（那才是「编得出来」的判据）；本仓库已连 GitHub，push 会自动部署，等它就位后冒烟即可，别再手动 `cdscli deploy`（会重复重启）——只有项目关了 autoDeploy 或分支被过滤掉时才需要手动
 
 [环境变量检查]
   envKeys 包含 AI_ACCESS_KEY: [OK]
