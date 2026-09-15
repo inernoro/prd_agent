@@ -582,17 +582,15 @@ public class GitHubDirectorySyncService
     /// <summary>
     /// 目录列不出来（404）时，能不能当成「远端把它删光了」去调和。
     ///
-    /// 两个条件同时成立才行：目录 404，**而且这次是按已解析出的提交号列的**。
-    /// 提交号不可变：在它上面拿到 404，就证明那一刻该目录确实不存在；
-    /// 而解析提交号这一步本身已经证明仓库与分支都够得着。
+    /// 只看一件事：是不是 404。因为走到这一步时，**本轮必然是按已解析的提交号列的**——
+    /// 解析不出提交号那一轮已经中止了。提交号不可变：在它上面拿到 404，
+    /// 就证明那一刻该目录确实不存在；而解析这一步本身已经证明仓库与分支都够得着。
     ///
-    /// 按分支名列目录的 404 一律不许当真——GitHub 对无权访问的私有仓、改名的仓库、被删的分支
-    /// 回的是同一个 404；就算事后再探一次分支也不行，两次请求之间分支还会变（删掉目录的提交
-    /// 之后又来一个把它恢复的提交），于是「探到分支好好的」会被误读成「目录真没了」，
-    /// 把刚恢复的文档连同历史版本一起删掉。
+    /// 这条不变量由控制流保证，不靠调用方多传一个布尔：多一个参数就多一种传错的方式，
+    /// 而传错的后果是把一次权限变动变成一次数据清空。
     /// </summary>
-    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, bool listedAtResolvedCommit)
-        => directoryStatus == HttpStatusCode.NotFound && listedAtResolvedCommit;
+    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus)
+        => directoryStatus == HttpStatusCode.NotFound;
 
     /// <summary>
     /// 把分支解析成它此刻指向的提交号，顺带证明仓库与分支都够得着。
@@ -642,12 +640,24 @@ public class GitHubDirectorySyncService
         string owner, string repo, string path, string branch, Matcher? matcher,
         string? accessToken, CancellationToken ct)
     {
-        // 先把分支解析成一个**不可变的提交号**，再按它列目录。
+        // 先把分支解析成一个**不可变的提交号**，本轮所有读取都按它来。
         // 这样「列不出来」与「仓库分支够不够得着」说的是同一个时刻的同一份快照：
         // 在提交号上拿到 404，就证明那一刻该目录确实不存在，可以放心调和。
-        // 解析不出来（没权限、分支没了、网络抖动）就退回按分支名列——那条路上的 404 不许当真。
+        //
+        // 解析不出来就**整轮中止**，不退回按分支名跑。退路看着体贴，实则让本轮承诺的
+        // 「读取共用同一份快照」在那条路上不成立：一轮同步可能跑几分钟，期间分支往前走一步，
+        // 清单与版本号来自旧提交、正文却取自新提交，于是新内容被按旧版本号存起来，
+        // 下轮比版本号没变就跳过——正文和它自称的版本会一直对不上。
+        // 中止是可恢复的：条目标红说明原因，用户点「重试同步」或等下一轮调度即可。
         var commitSha = await ResolveBranchCommitAsync(owner, repo, branch, accessToken, ct);
-        var reference = commitSha ?? branch;
+        if (commitSha == null)
+        {
+            throw new GitHubSyncUserFacingException(
+                "暂时没能确定这个分支的当前版本（可能是网络波动、权限变化或分支已被删除），"
+                + "本轮先不同步以免存进不一致的内容。稍后点「重试同步」即可。");
+        }
+
+        var reference = commitSha;
 
         // 路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串，
         // 结果是扫描器列得出来的目录，同步时打到另一个地址上必然失败。
@@ -665,7 +675,7 @@ public class GitHubDirectorySyncService
             // 否则一次权限变动就会把用户已导入的文档全删掉。
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                if (ShouldReconcileAsEmpty(response.StatusCode, listedAtResolvedCommit: commitSha != null))
+                if (ShouldReconcileAsEmpty(response.StatusCode))
                 {
                     _logger.LogInformation(
                         "[GitHubSync] {Owner}/{Repo}/{Path} 在提交 {Commit} 上不存在：按「远端删光了」调和",
@@ -674,9 +684,6 @@ public class GitHubDirectorySyncService
                     return new DirectoryListing(new List<GitHubFile>(), Complete: true, Reference: reference);
                 }
 
-                _logger.LogWarning(
-                    "[GitHubSync] {Owner}/{Repo}/{Path}@{Branch} 返回 404，但没能把分支解析成提交号：不当成删空，按失败处理",
-                    owner, repo, path, branch);
             }
 
             var body = await response.Content.ReadAsStringAsync(ct);

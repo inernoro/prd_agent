@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.RegularExpressions;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
 using Xunit;
@@ -14,6 +15,24 @@ namespace PrdAgent.Api.Tests.Services;
 /// </summary>
 public class GitHubDirectoryReconcileTests
 {
+    private static string RepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "CLAUDE.md"))
+                && Directory.Exists(Path.Combine(dir.FullName, "prd-api")))
+            {
+                return dir.FullName;
+            }
+            dir = dir.Parent;
+        }
+        throw new InvalidOperationException("找不到仓库根：向上没有同时含 CLAUDE.md 与 prd-api 的目录");
+    }
+
+    private static string SyncServiceSource() => File.ReadAllText(Path.Combine(
+        RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Services", "GitHubDirectorySyncService.cs"));
+
     private static DocumentEntry Child(string? githubPath, string? sourceUrl = null) => new()
     {
         Title = githubPath ?? sourceUrl ?? "未命名",
@@ -119,35 +138,43 @@ public class GitHubDirectoryReconcileTests
     }
 
     [Fact]
-    public void 按提交号列目录拿到404才算远端删光()
+    public void 列目录拿到404才算远端删光()
     {
         // Git 里没有空目录：删光最后一个文件，目录本身就不存在了，列目录拿到的是 404
         // 而不是「200 + 空清单」。这是最常见的一种删除，必须走调和。
-        // 提交号不可变——在它上面拿到 404，就证明那一刻该目录确实不存在。
-        Assert.True(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, listedAtResolvedCommit: true));
-    }
-
-    [Fact]
-    public void 没解析出提交号时的404一律不许当真()
-    {
-        // 按分支名列目录的 404 有太多来路：无权访问的私有仓、改名的仓库、被删的分支。
-        // 而且分支会变——两次请求之间可能先删掉目录又把它恢复回来，
-        // 事后再探一次分支只会探到「好好的」，于是把刚恢复的文档连历史版本一起删掉。
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, listedAtResolvedCommit: false));
+        // 前提是这一轮一定按不可变的提交号列目录（见下面那条守卫）——在提交号上拿到 404，
+        // 就证明那一刻该目录确实不存在。
+        Assert.True(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.NotFound));
     }
 
     [Fact]
     public void 目录不是404时与本判据无关()
     {
         // 限额、权限不足、GitHub 故障各有各的处置，不能借道这条判据去删东西
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.Forbidden, listedAtResolvedCommit: true));
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.InternalServerError, listedAtResolvedCommit: true));
-        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.OK, listedAtResolvedCommit: true));
+        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.Forbidden));
+        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.InternalServerError));
+        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.OK));
+    }
+
+    [Fact]
+    public void 定不住提交号就整轮中止而不是退回按分支名跑()
+    {
+        // 上面那条判据敢把 404 当成「远端删光」，唯一的依据是这一轮读的是不可变的提交号。
+        // 一旦有人给它补一条「解析不出来就按分支名列」的退路，判据的前提就没了：
+        // 分支会变，两次请求之间先删目录再恢复，事后探分支只会探到「好好的」，
+        // 于是把刚恢复的文档连历史版本一起删掉。
+        //
+        // 这条退路即使加回来，编译照过、上面两条判据照绿（形状 2：静默退化），
+        // 所以只能靠源码守卫盯住：本轮的 ref 只许来自提交号。
+        var source = SyncServiceSource();
+
+        var assignments = Regex.Matches(source, @"var reference = (?<rhs>[^;]+);")
+            .Select(m => m.Groups["rhs"].Value.Trim())
+            .ToHashSet();
+
+        // 只许两种来源：源头是解析出来的提交号，下游是把本轮真正用过的那个 ref 原样传下去。
+        // 任何第三种写法（`commitSha ?? branch`、重新拿分支名等）都会让这条断言变红。
+        Assert.Equal(new[] { "commitSha", "listing.Reference" }.ToHashSet(), assignments);
     }
 
     [Fact]
