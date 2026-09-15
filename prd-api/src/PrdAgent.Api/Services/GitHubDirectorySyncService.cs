@@ -510,8 +510,14 @@ public class GitHubDirectorySyncService
     /// </summary>
     internal static bool IsListingComplete(int rawEntryCount) => rawEntryCount < ContentsApiDirectoryCap;
 
-    /// <summary>一次列目录的结果：过滤后的文件清单，以及这份清单是否代表远端的全部。</summary>
-    internal sealed record DirectoryListing(List<GitHubFile> Files, bool Complete);
+    /// <summary>
+    /// 一次列目录的结果：过滤后的文件清单，以及这份清单是否代表远端的全部。
+    ///
+    /// 必须是 private：它带着 <see cref="GitHubFile"/>（private 嵌套类），
+    /// 声明成 internal 会让构造函数暴露一个可访问性更低的类型（CS0051）。
+    /// 它只在本类内部流转，测试打的是 <see cref="IsListingComplete"/> 那条判据，不需要这个类型。
+    /// </summary>
+    private sealed record DirectoryListing(List<GitHubFile> Files, bool Complete);
 
     /// <summary>
     /// 目录列不出来（404）时，能不能当成「远端把它删光了」去调和。
