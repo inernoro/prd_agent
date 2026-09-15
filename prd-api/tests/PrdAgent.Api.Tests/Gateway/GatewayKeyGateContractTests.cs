@@ -243,8 +243,12 @@ public class GatewayKeyGateContractTests
             {
                 // 200 已发出、收不回，但不许干净收尾冒充一段完整的成功流（形状 10）：
                 // 要么补出 error 事件，要么连接被中断，调用方两种都读得出「这次没成」。
-                text.ShouldStartWith(payload);
-                (aborted || text.Contains("event: error")).ShouldBeTrue();
+                // 不断言「已转发的那段字节还在」——abort 与缓冲刷出是竞态，已发出的部分可能
+                // 随连接一起丢掉，那同样是一次可观测的失败。钉住它只会让这条用例随机红
+                //（CI 上就这么红过一次：text 为空）。
+                (aborted || text.Contains("event: error")).ShouldBeTrue(
+                    customMessage: $"既没中断也没有 error 事件，调用方会把它读成一次干净的成功：{text}");
+                if (!aborted) text.ShouldNotBe(payload, customMessage: "干净收完残缺内容 = 假成功");
             }
             dones.Count.ShouldBe(1);
             dones[0].Status.ShouldBe("failed");
