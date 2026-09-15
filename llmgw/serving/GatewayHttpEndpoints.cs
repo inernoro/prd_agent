@@ -475,8 +475,15 @@ public static class GatewayHttpEndpoints
                 http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
                 if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
                     http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
-                if (!outcome.Success && !http.Response.HasStarted && !disconnected)
-                    await WriteCompatErrorAsync(http, outcome.ErrorMessage ?? "原生请求失败", "api_error", outcome.ErrorCode, outcome.StatusCode);
+                if (!outcome.Success && !disconnected)
+                {
+                    if (!http.Response.HasStarted)
+                        await WriteCompatErrorAsync(http, outcome.ErrorMessage ?? "原生请求失败", "api_error", outcome.ErrorCode, outcome.StatusCode);
+                    else if (http.Response.StatusCode is >= 200 and < 300)
+                        // 只有「看起来成功」的那种才需要补救。上游非 2xx 是原样透传的，状态码
+                        // 自己已经说了实话，把它中断只会让调用方少看到上游的错误体。
+                        await TerminateStartedNativeResponseAsync(http, outcome);
+                }
             });
         });
 
@@ -3826,6 +3833,38 @@ public static class GatewayHttpEndpoints
         return trimmed.StartsWith("models/", StringComparison.OrdinalIgnoreCase)
             ? trimmed["models/".Length..]
             : trimmed;
+    }
+
+    /// <summary>
+    /// 已经发出 200 之后才判定失败时的可观测终止（Codex P1，2026-09-15）。流式响应收不回状态码，
+    /// 若就此干净收尾，调用方读到的是一段完整成功的流——内部账目记了失败，外部一无所知
+    /// （判据与接线纪律 形状 10）。这里先补一个 error 事件说清原因，再中断连接：分块传输下
+    /// 正常 EOF 与被截断在客户端看来一样，只有中断能让对方确定地读到一次传输失败。
+    /// </summary>
+    private static async Task TerminateStartedNativeResponseAsync(HttpContext http, GatewayRawResponse outcome)
+    {
+        try
+        {
+            if ((http.Response.ContentType ?? string.Empty).StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    error = new
+                    {
+                        type = "api_error",
+                        code = outcome.ErrorCode,
+                        message = outcome.ErrorMessage ?? "上游未返回完整成功结果",
+                    },
+                }, SnakeJson);
+                await http.Response.WriteAsync($"event: error\ndata: {payload}\n\n", http.RequestAborted);
+                await http.Response.Body.FlushAsync(http.RequestAborted);
+            }
+        }
+        catch (IOException) { }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        http.Abort();
     }
 
     private static async Task WriteCompatErrorAsync(

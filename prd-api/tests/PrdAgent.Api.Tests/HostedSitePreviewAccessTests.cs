@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Mvc;
 using Moq;
 using PrdAgent.Api.Controllers.Api;
@@ -74,6 +75,64 @@ public sealed class HostedSitePreviewAccessTests
         Assert.DoesNotContain("allow-same-origin", csp, StringComparison.Ordinal);
         Assert.Contains("frame-ancestors 'self'", csp, StringComparison.Ordinal);
         Assert.Equal("private, no-store, max-age=0", controller.Response.Headers.CacheControl);
+    }
+
+    // Codex P1（2026-09-15）：拆分部署（admin 与 API 不同源）时前端会显式拼出跨源的预览地址，
+    // 而 CSP 写死 frame-ancestors 'self'，浏览器把这块发布前必看的核对面板整片挡成空白。
+    // 可嵌入来源改跟已声明的 Cors:AllowedOrigins 同一份名单走。
+    [Fact]
+    public async Task ConfiguredAdminOriginMayFrameTheVerifiedPreview()
+    {
+        var embed = HostedSitePreviewEmbedOptions.FromConfiguration(
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Cors:AllowedOrigins:0"] = "https://admin.example.test",
+                ["Cors:AllowedOrigins:1"] = "https://admin.example.test:8443/ignored/path",
+                ["Cors:AllowedOrigins:2"] = "not-a-url",
+                ["Cors:AllowedOrigins:3"] = "ftp://admin.example.test",
+            }).Build());
+        Assert.Equal(
+            new[] { "https://admin.example.test", "https://admin.example.test:8443" },
+            embed.FrameAncestors);
+
+        var revision = Revision();
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        revisions.Setup(x => x.GetVerifiedFileAsync(
+                "site-a", "revision-a", "index.html", "viewer-user", CancellationToken.None))
+            .ReturnsAsync(revision.VerifiedFiles[0]);
+        var access = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
+        var issued = access.Issue(revision, "viewer-user");
+        var controller = Controller(new HostedSitePreviewFilesController(revisions.Object, access, embed));
+        controller.Request.Headers["Sec-Fetch-Site"] = "cross-site";
+        // 跨站 iframe 里 Strict / Lax 的 cookie 浏览器一律不带，CSP 放行了也照样空白。
+        var accessId = Bootstrap(controller, issued.Ticket, expectedSameSite: "none");
+
+        Assert.IsType<FileContentResult>(await controller.Read(accessId, "index.html"));
+        var csp = controller.Response.Headers.ContentSecurityPolicy.ToString();
+        Assert.Contains(
+            "frame-ancestors 'self' https://admin.example.test https://admin.example.test:8443",
+            csp,
+            StringComparison.Ordinal);
+    }
+
+    // 单源部署（没配 Cors:AllowedOrigins）必须原样不变：只许同源嵌入、cookie 维持 Strict。
+    [Fact]
+    public void SingleOriginDeploymentKeepsSelfOnlyFramingAndStrictCookie()
+    {
+        Assert.Empty(HostedSitePreviewEmbedOptions.FromConfiguration(new ConfigurationBuilder().Build()).FrameAncestors);
+        Assert.EndsWith(
+            "frame-ancestors 'self'",
+            HostedSitePreviewFilesController.BuildContentSecurityPolicy(HostedSitePreviewEmbedOptions.SelfOnly),
+            StringComparison.Ordinal);
+
+        var revision = Revision();
+        var access = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
+        var issued = access.Issue(revision, "viewer-user");
+        var controller = Controller(new HostedSitePreviewFilesController(
+            new Mock<IHostedSiteRevisionService>(MockBehavior.Strict).Object, access));
+        controller.Request.Headers["Sec-Fetch-Site"] = "cross-site";
+        // Bootstrap 内部断言 samesite=strict：拿不到 Sec-Fetch-Site 的信任面就不该放宽。
+        Bootstrap(controller, issued.Ticket);
     }
 
     [Fact]
@@ -195,7 +254,10 @@ public sealed class HostedSitePreviewAccessTests
         return controller;
     }
 
-    private static string Bootstrap(HostedSitePreviewFilesController controller, string ticket)
+    private static string Bootstrap(
+        HostedSitePreviewFilesController controller,
+        string ticket,
+        string expectedSameSite = "strict")
     {
         var redirect = Assert.IsType<RedirectResult>(controller.Bootstrap(ticket));
         const string prefix = "../";
@@ -206,7 +268,7 @@ public sealed class HostedSitePreviewAccessTests
         var setCookie = controller.Response.Headers.SetCookie.ToString();
         Assert.Contains("HttpOnly", setCookie, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("secure", setCookie, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("samesite=strict", setCookie, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"samesite={expectedSameSite}", setCookie, StringComparison.OrdinalIgnoreCase);
         controller.Request.Headers.Cookie = setCookie.Split(';', 2)[0];
         return accessId;
     }

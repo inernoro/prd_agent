@@ -3,7 +3,6 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), 'utf8');
-const dialogSource = readFileSync(path.resolve(__dirname, '../ui/Dialog.tsx'), 'utf8');
 
 describe('SiteGenerateDialog responsive layout contract', () => {
   it('keeps critical modal height inline and every grid branch shrinkable', () => {
@@ -14,9 +13,14 @@ describe('SiteGenerateDialog responsive layout contract', () => {
     expect(source.match(/min-w-0/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
   });
 
-  it('allows the shared dialog title block to shrink before the close button clips', () => {
-    expect(dialogSource).toContain('className="min-w-0 flex-1"');
-    expect(dialogSource).not.toContain('className="min-w-0 flex-shrink-0"');
+  // 共享 Dialog 的标题块用什么 flex 属性，归 2026-09-01 的「控制台形态」那一版所有，
+  // 不该由网页托管这个调用方用字面量断言钉死（判据与接线纪律 形状 4a：断言实现的字面存在，
+  // 谁改谁的 CI 红）。这里只守本组件自己的契约：标题与说明不许把关闭按钮挤出容器。
+  it('keeps its own dialog title short enough not to crowd the shared header', () => {
+    const title = source.match(/title="([^"]+)"/)?.[1];
+    // companion：正则没匹到就判红，否则这条断言会对着空串永远绿（形状 4b）。
+    expect(title, '没在源码里找到弹窗标题').toBeTruthy();
+    expect(title!.length, '标题过长会在窄屏把关闭按钮挤出容器').toBeLessThanOrEqual(12);
   });
 
   it('keeps the primary action visible while mobile configuration scrolls and hides an empty preview', () => {

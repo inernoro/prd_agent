@@ -988,9 +988,26 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         res.status(422).json({ error: runtimeError });
         return;
       }
+      // SSRF 门（Codex P1，2026-09-15）：workspaceTransfer 的两个 URL 会让 CDS 自己发起服务端
+      // GET / POST，所以它们必须钉死在**已验证的 MAP 连接来源**上。此前这条检查挂在
+      // `auth.partnerBaseUrl` 为真的前提下，而 authenticateProjectRequest 有三条鉴权路径根本
+      // 不带 partnerBaseUrl（项目级 Agent Key、全局 Key、仪表盘 cookie）——它们一进来整条检查
+      // 就被跳过，调用方可以把 URL 指向 http://127.0.0.1 或任意内网地址，让 CDS 代打
+      //（判据与接线纪律 形状 1：判据比它该管的范围窄）。没有已验证来源就不许建 OpenDesign 会话。
+      const partnerOrigin = safeOrigin(auth.partnerBaseUrl);
+      if (!partnerOrigin) {
+        res.status(403).json({
+          error: {
+            code: 'partner_origin_required',
+            message: 'OpenDesign sessions require an authenticated MAP connection origin',
+            runtime,
+          },
+        });
+        return;
+      }
       if (
-        auth.partnerBaseUrl
-        && new URL(workspaceTransfer.inputPackageUrl).origin !== new URL(auth.partnerBaseUrl).origin
+        safeOrigin(workspaceTransfer.inputPackageUrl) !== partnerOrigin
+        || safeOrigin(workspaceTransfer.resultCommitUrl) !== partnerOrigin
       ) {
         res.status(422).json({
           error: {
@@ -3043,6 +3060,16 @@ function authenticateProjectRequest(
     partnerBaseUrl: connection.partnerBaseUrl,
     principalKey: `connection:${connection.id}`,
   };
+}
+
+/** 取 URL 的 origin；空值或非法 URL 一律返回 null，绝不退回「比不出来就放行」。 */
+function safeOrigin(value: string | undefined | null): string | null {
+  if (!value) return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
 }
 
 function getCdsAgentSession(projectId: string, sessionId: string): CdsAgentSession | undefined {

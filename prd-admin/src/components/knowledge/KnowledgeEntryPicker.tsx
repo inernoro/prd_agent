@@ -354,7 +354,6 @@ export default function KnowledgeEntryPicker({
         description="按知识库浏览或搜索单篇知识。只会引用你有读取权限的条目。"
         maxWidth={920}
         zIndex={220}
-        contentClassName="p-3 sm:p-5"
         contentStyle={{
           width: 'min(920px, calc(100vw - 16px))',
           maxWidth: 'calc(100vw - 16px)',

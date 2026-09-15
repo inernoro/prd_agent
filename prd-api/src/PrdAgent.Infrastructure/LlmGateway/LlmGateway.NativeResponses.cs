@@ -10,6 +10,9 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 
 public partial class LlmGateway
 {
+    /// <summary>非流式原生响应「先校验再交付」的缓冲上界；超过就如实失败，不悄悄退回裸转发。</summary>
+    private const int MaxBufferedNativeResponseBytes = 32 * 1024 * 1024;
+
     public async Task<GatewayRawResponse> SendNativeResponsesWithResolutionAsync(
         GatewayRawRequest request,
         GatewayModelResolution resolution,
@@ -93,25 +96,56 @@ public partial class LlmGateway
             var status = (int)response.StatusCode;
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/json";
             responseHeaders = LlmCostEvidence.BuildSafeResponseHeaders(response, contentType);
-            observer = new NativeResponsesAuditObserver(contentType.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase));
-            await write(new(status, contentType, ReadOnlyMemory<byte>.Empty), deadline.Token);
+            var wantsStream = body["stream"] is JsonValue streamValue && streamValue.TryGetValue<bool>(out var streaming) && streaming;
+            var isStream = contentType.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase);
+            observer = new NativeResponsesAuditObserver(isStream);
+            // 非流式成功响应先读完再交付（Codex P1，2026-09-15）：上游 200 却缺终态
+            // response.completed、或内容类型与请求的 stream 不符时，以前是**先把 body 转发出去**
+            // 再判定失败，此时 Response.HasStarted 已为真，合成的 502 被吞掉，调用方看到的是一次
+            // 干净的 200 加一段残缺输出，只有内部账目知道它失败了（判据与接线纪律 形状 10：
+            // 静默降级，把可诊断的失败变成不可诊断的）。先缓冲就还没写过响应头，端点得以如实发 502。
+            // 流式收不回已发的 200，改由端点在流尾可观测地终止（写 error 事件并中断连接）。
+            var buffered = !wantsStream && response.IsSuccessStatusCode ? new MemoryStream() : null;
+            if (buffered == null) await write(new(status, contentType, ReadOnlyMemory<byte>.Empty), deadline.Token);
             await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
             var buffer = new byte[16 * 1024];
             var first = true;
+            var overflowed = false;
             while (true)
             {
                 var count = await stream.ReadAsync(buffer, deadline.Token);
                 if (count == 0) break;
                 if (first) { first = false; if (logId != null) _logWriter?.MarkFirstByte(logId, DateTime.UtcNow); }
-                // 原始字节先交付；旁路观测不得改变事件、ID、分片及多轮内容。
-                await write(new(status, contentType, buffer.AsMemory(0, count)), deadline.Token);
+                if (buffered != null)
+                {
+                    // 缓冲要有上界，否则「先校验再交付」自己就成了内存洞。
+                    if (buffered.Length + count > MaxBufferedNativeResponseBytes) { overflowed = true; break; }
+                    buffered.Write(buffer, 0, count);
+                }
+                else
+                {
+                    // 原始字节先交付；旁路观测不得改变事件、ID、分片及多轮内容。
+                    await write(new(status, contentType, buffer.AsMemory(0, count)), deadline.Token);
+                }
                 observer.Append(buffer.AsSpan(0, count));
+            }
+            if (overflowed)
+            {
+                outcome = GatewayRawResponse.Fail(
+                    "NATIVE_RESPONSES_BODY_TOO_LARGE",
+                    "上游非流式响应超出可校验上限，请改用流式",
+                    502);
+                return outcome;
             }
             observer.Complete();
             auditBody = observer.AuditBody;
-            var wantsStream = body["stream"] is JsonValue streamValue && streamValue.TryGetValue<bool>(out var streaming) && streaming;
-            var isStream = contentType.StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase);
             var successful = response.IsSuccessStatusCode && observer.Completed && wantsStream == isStream;
+            // 缓冲路径只在校验通过后交付；不通过就一个字节都不发，让调用方发结构化错误。
+            if (buffered != null && successful)
+            {
+                await write(new(status, contentType, ReadOnlyMemory<byte>.Empty), deadline.Token);
+                await write(new(status, contentType, buffered.ToArray()), deadline.Token);
+            }
             outcome = new GatewayRawResponse
             {
                 Success = successful,

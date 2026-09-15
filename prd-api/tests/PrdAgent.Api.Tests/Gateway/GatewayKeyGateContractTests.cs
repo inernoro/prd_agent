@@ -111,6 +111,34 @@ public class GatewayKeyGateContractTests
         finally { release.TrySetResult(); await app.StopAsync(); }
     }
 
+    // Codex P1（2026-09-15）：上游 200 但没走到终态时，以前是先把 body 转发出去再判定失败，
+    // Response.HasStarted 已为真 → 合成的 502 被吞掉，调用方读到一次干净的 200 加残缺输出，
+    // 只有内部账目知道它失败了（判据与接线纪律 形状 10：静默降级）。
+    [Theory]
+    [InlineData("{\"id\":\"resp_truncated\",\"status\":\"in_progress\"}", "application/json")]
+    [InlineData("event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"r\",\"status\":\"in_progress\"}}\n\n", "text/event-stream")]
+    public async Task NativeResponses_NonStreamingTerminalFailureNeverReachesTheClientAsSuccess(string payload, string contentType)
+    {
+        var handler = new NativeResponsesHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(payload, System.Text.Encoding.UTF8, contentType),
+        }));
+        await using var app = BuildHostWithGateway(NativeResponsesGateway(NativeResponsesResolver(), handler));
+        await app.StartAsync();
+        try
+        {
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(JsonNode.Parse("{\"model\":\"native-model\",\"store\":false,\"input\":\"hello\"}")!.AsObject(), "native-truncated"));
+            response.StatusCode.ShouldBe(HttpStatusCode.BadGateway);
+            var text = await response.Content.ReadAsStringAsync();
+            text.ShouldContain("NATIVE_RESPONSES_OUTCOME_UNKNOWN");
+            // 一个字节都没发过：残缺的上游 body 不能混进调用方读到的响应里。
+            text.ShouldNotContain("resp_truncated", Case.Sensitive);
+            text.ShouldNotContain("response.created", Case.Sensitive);
+        }
+        finally { await app.StopAsync(); }
+    }
+
     [Fact]
     public async Task NativeResponses_RegisteredModelIdPinUsesTheSingleResolvedPhysicalModelName()
     {
@@ -200,15 +228,46 @@ public class GatewayKeyGateContractTests
         await app.StartAsync();
         try
         {
-            using var response = await app.GetTestClient().SendAsync(NativeResponsesRequest(JsonNode.Parse("{\"store\":false,\"stream\":true,\"input\":\"hi\"}")!.AsObject(), "native-failure"));
+            using var response = await app.GetTestClient().SendAsync(
+                NativeResponsesRequest(JsonNode.Parse("{\"store\":false,\"stream\":true,\"input\":\"hi\"}")!.AsObject(), "native-failure"),
+                HttpCompletionOption.ResponseHeadersRead);
             ((int)response.StatusCode).ShouldBe(status); // 已开始的原生 SSE 不伪装成另一个 HTTP 响应。
-            (await response.Content.ReadAsStringAsync()).ShouldBe(payload);
+            var (text, aborted) = await ReadToleratingAbortAsync(response);
+            if (status != 200)
+            {
+                // 上游非 2xx 原样透传：状态码自己已经说了实话，不动它。
+                aborted.ShouldBeFalse();
+                text.ShouldBe(payload);
+            }
+            else
+            {
+                // 200 已发出、收不回，但不许干净收尾冒充一段完整的成功流（形状 10）：
+                // 要么补出 error 事件，要么连接被中断，调用方两种都读得出「这次没成」。
+                text.ShouldStartWith(payload);
+                (aborted || text.Contains("event: error")).ShouldBeTrue();
+            }
             dones.Count.ShouldBe(1);
             dones[0].Status.ShouldBe("failed");
             dones[0].StatusCode.ShouldBe(status == 200 ? 502 : status);
             handler.Count.ShouldBe(1); // 不自动重发有副作用的原生工具轮次。
         }
         finally { await app.StopAsync(); }
+    }
+
+    /// <summary>读响应体，连接被中断时如实报告——中断本身就是一种可观测的失败信号。</summary>
+    private static async Task<(string Text, bool Aborted)> ReadToleratingAbortAsync(HttpResponseMessage response)
+    {
+        var buffer = new MemoryStream();
+        try
+        {
+            await using var body = await response.Content.ReadAsStreamAsync();
+            await body.CopyToAsync(buffer);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException)
+        {
+            return (System.Text.Encoding.UTF8.GetString(buffer.ToArray()), true);
+        }
+        return (System.Text.Encoding.UTF8.GetString(buffer.ToArray()), false);
     }
 
     [Fact]

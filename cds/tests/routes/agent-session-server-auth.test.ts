@@ -150,6 +150,36 @@ describe('Agent sessions through the real basic-auth server', () => {
     expect(AgentWorkspaceSessionRuntime.prototype.create).not.toHaveBeenCalled();
   });
 
+  // Codex P1（2026-09-15）：workspaceTransfer 的两个 URL 由 CDS 自己去 GET / POST，必须钉在
+  // 已验证的 MAP 连接来源上。原先的来源检查挂在 `auth.partnerBaseUrl` 为真的前提下，而全局 Key
+  // 与仪表盘 cookie 这两条鉴权路径都不带它——检查整条被跳过，调用方就能让 CDS 去打 127.0.0.1。
+  it('refuses OpenDesign creation for callers without a validated MAP origin', async () => {
+    const server = await start();
+    const login = await request(server, 'POST', '/api/login', {}, { username: 'fixture-admin', password: 'fixture-password' });
+    expect(login.status).toBe(200);
+    const cookie = login.headers['set-cookie']![0].split(';')[0];
+    const body = (clientRequestId: string) => ({
+      runtime: 'open-design', workloadKind: 'design-artifact', clientRequestId,
+      model: 'map-managed', modelProtocol: 'openai', modelApiKey: 'model-secret',
+      modelBaseUrl: 'http://127.0.0.1:9/llm/v1',
+      workspaceTransfer: { schemaVersion: 'map-design-workspace-v1',
+        inputPackageUrl: 'http://127.0.0.1:9/input', resultCommitUrl: 'http://127.0.0.1:9/commit',
+        transferToken: 'fixture-transfer', inputSha256: 'a'.repeat(64), baseRevision: 'fixture-revision',
+        maxInputBytes: 1024, maxOutputBytes: 2048, allowedOutputPaths: ['index.html', 'manifest.json'] },
+      resourcePolicy: { cpuCores: 1, memoryMb: 768, timeoutSeconds: 120, networkPolicy: 'egress-only', autoCleanupMinutes: 5 },
+    });
+    for (const [label, auth] of [
+      ['global-key', { 'X-AI-Access-Key': 'fixture-global-key' }],
+      ['cookie-admin', { Cookie: cookie }],
+    ] as const) {
+      const denied = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, auth, body(`ssrf-${label}`));
+      expect(denied.status, label).toBe(403);
+      expect(denied.body.error.code, label).toBe('partner_origin_required');
+    }
+    expect(AgentWorkspaceSessionRuntime.prototype.create).not.toHaveBeenCalled();
+    expect(state.listAgentSessionReservations()).toHaveLength(0);
+  });
+
   it('allows administrators to observe a machine session, not mutate it or grant other connections access', async () => {
     const other = authorize('another-owner');
     const server = await start();

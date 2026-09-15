@@ -351,6 +351,9 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService>(sp =>
     sp.GetRequiredService<PrdAgent.Infrastructure.Services.HostedSiteService>());
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteRevisionService, PrdAgent.Infrastructure.Services.HostedSiteRevisionService>();
 builder.Services.AddSingleton<PrdAgent.Api.Services.HostedSitePreviewAccessService>();
+// 预览 iframe 的可嵌入来源与 CORS 信任来源同源同表（见 HostedSitePreviewEmbedOptions 注释）。
+builder.Services.AddSingleton(
+    PrdAgent.Api.Controllers.Api.HostedSitePreviewEmbedOptions.FromConfiguration(builder.Configuration));
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOptimizationService, PrdAgent.Infrastructure.Services.HostedSiteOptimizationService>();
 // 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
