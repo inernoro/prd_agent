@@ -4,7 +4,7 @@ description: 改了可执行代码、准备说「验证过了/编译通过/测�
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/cds-first-verification.md
-     生成时间: 2026-09-15T18:40:36Z -->
+     生成时间: 2026-09-15T19:03:49Z -->
 
 # 验证的权威位置（编译与测试各在哪里被证明）
 
@@ -43,7 +43,8 @@ grep -rn "你改的路径前缀" .github/workflows/ | grep -v "^.*#"
 | `prd-api/**/*.cs`（API 项目能不能编出来） | **Branch Image workflow 绿**，产出 `sha-<commit>` 镜像 | GitHub Actions `branch-image.yml` | **push 之后**（它由 push 触发），每次 push 都跑 |
 | `prd-api` 整个 sln 编译 + 非集成非手工的 xUnit | **CI workflow 的 `Server Build & Test` job 绿** | GitHub Actions `ci.yml` | push 之后，且 **feature 分支不自动跑**（见第三节） |
 | `prd-api` 的 Integration / Manual 类测试 | 本地**按 `--filter FullyQualifiedName~<类名>` 点名跑受影响的那几条**，并写清它各自要什么前置（见第二节末）。**不许去掉 filter 全跑**——那一档里有会真的打外部服务、真的花钱的用例 | 只能本地 | 没有任何 CI 会跑它们 |
-| `prd-admin` 的 tsc / vitest / vite build | CI 的 `Admin Dashboard Build` job 绿（本地 `pnpm` 跑一遍更快） | 本地 或 Actions | 本地即时；那个 job 在 `ci.yml` 里，**普通 feature 分支 push 不会跑**——要么开 PR 到 main/develop，要么手动 dispatch |
+| `prd-admin` 的 **tsc + vite build** | **Branch Image workflow 的 `Build prd-admin image` 绿**——`prd-admin/Dockerfile` 里跑的 `pnpm run build` 就是 `tsc && vite build`，编不过镜像就建不出来（本地 `pnpm build` 跑一遍更快） | GitHub Actions `branch-image.yml` | push 之后，**每次 push 都跑**（它由 push 触发、`prd-admin/**` 在它的 path filter 里） |
+| `prd-admin` 的 **vitest** | CI 的 `Admin Dashboard Build` job 绿（本地 `pnpm test` 跑一遍更快） | 本地 或 Actions | 本地即时；那个 job 在 `ci.yml` 里，**普通 feature 分支 push 不会跑**——要么开 PR 到 main/develop，要么手动 dispatch。镜像构建不覆盖它：`pnpm run build` 里没有测试 |
 | `prd-admin` 的 **lint** | 只有本地 `pnpm lint`——`Admin Dashboard Build` 没有 lint 步骤（它只跑 Type check / Run tests / Build，而 `build` 就是 `tsc && vite build`） | **只能本地** | 本地即时 |
 | `prd-desktop/src-tauri/**/*.rs` | CI 的 `Desktop Client Check` job 绿：`cargo check`（dev + release）、`cargo fmt --check`、`cargo clippy -- -D warnings` | 本地 或 Actions | 同在 `ci.yml` 里：**feature 分支 push 不会跑**，要开 PR 到 main/develop 或手动 dispatch |
 | `prd-desktop` 前端 `.ts/.tsx` | tsc 与 vite build 由同一个 job 复核；**lint 与 vitest 只能本地**——那个 job 没有这两步，而 `prd-desktop/src` 下确实有五个测试文件 | tsc/build：本地或 Actions；lint/test：**只能本地** | tsc/build 同上一行（开 PR 或 dispatch 才跑）；lint 与 vitest 本地即时 |
@@ -71,6 +72,12 @@ CDS 收到 workflow_run.completed 后按 SHA docker pull + run，**不再在 CDS
 
 `branch-image.yml` 走 `prd-api/Dockerfile`，里面只 `publish` **PrdAgent.Api 一个项目**，
 **不编译 `PrdAgent.Tests`**。于是一个测试项目根本编译不过的提交，照样能拿到绿色的镜像。
+
+**别把这条读成「镜像绿一律不算编译绿」**：它对 prd-api 成立，是因为那个 Dockerfile 恰好
+只 publish 一个项目、把测试项目落在外面。`prd-admin/Dockerfile` 里跑的是
+`pnpm run build`（= `tsc && vite build`），所以 Admin 镜像绿**就是**类型检查与打包的权威
+结论，而且每次 push 都有——它只是不跑 vitest。一条流水线覆盖到哪为止，看它实际执行的
+那条命令，不看它叫什么名字。
 
 所以：
 
@@ -125,8 +132,9 @@ on:
 
 但要分清两种情况，别把这句话念成「本地永远不算数」：
 
-- **有远端权威判据的**（sln 编译、非集成非手工 xUnit、镜像构建）：本地只是加速器，它让你更快
-  发现错误，但「验证过了」这句话要引那条流水线的结论。
+- **第一节表里给出了远端判据的**（sln 编译、非集成非手工 xUnit、各家镜像构建……以表为准，
+  别照这个括号背）：本地只是加速器，它让你更快发现错误，但「验证过了」这句话要引那条
+  流水线的结论。注意「有判据」不等于「这次 push 就有结论」——第四列写的才是什么时候有。
 - **第一节标着「只能本地」的**（Admin 与 Desktop 的 lint、Desktop 的 vitest、Integration /
   Manual 测试、清单外的脚本）：**本地跑绿就是它的验证结论**，没有第二个地方能给。
   交付里如实写清跑了哪条命令、结果如何即可，不必也不该去等一个不存在的远端绿灯。
