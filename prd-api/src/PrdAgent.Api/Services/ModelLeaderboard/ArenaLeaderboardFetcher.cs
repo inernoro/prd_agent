@@ -190,6 +190,22 @@ public class ArenaLeaderboardFetcher
                 "多半是模型格里那串类名变了，本次不写库，保留上一份快照。");
         }
 
+        // 授权要**单独**判，不能靠厂商的覆盖率代表它（Codex 在 PR #1538 指出）。
+        //
+        // 两者出自同一段文本「Anthropic · Proprietary」，但取的是分隔后的不同段：对方只要
+        // 改分隔符或把授权换个写法，厂商照样解得出来、这项覆盖率仍是 100%，而**每一行的
+        // 授权都变成 null**。「仅开源」筛选的判据正是授权，isOpenSource(null) 一律判闭源，
+        // 于是那个筛选被静默清空——而这个 PR 把它当成卖点之一。
+        // 守一半等于没守：成对的字段要成对地判。
+        var withLicense = result.Entries.Count(e => !string.IsNullOrWhiteSpace(e.License));
+        if (withLicense * 2 < result.Entries.Count)
+        {
+            throw new InvalidOperationException(
+                $"{url} 解析出 {result.Entries.Count} 个条目，其中只有 {withLicense} 个带授权；" +
+                "多半是厂商那段的分隔符或授权写法变了，本次不写库，保留上一份快照。" +
+                "（授权是「仅开源」筛选的唯一判据，缺了它那个筛选会静默清空。）");
+        }
+
         // 形状与目录声明的不符 = 对方把这个榜换了结构。
         var expected = ModelLeaderboardCatalog.Find(board)?.Kind;
         if (expected is not null && result.Kind != expected)
@@ -377,10 +393,18 @@ public class ArenaLeaderboardFetcher
             Preliminary = scoreCell.Contains(">Preliminary<", StringComparison.Ordinal),
         };
 
+        // 票数是分数榜的**必填**列，读不出来就整行拒绝（Codex 在 PR #1538 指出）。
+        //
+        // 原来它是「读到就填、读不到留 null」：对方只改票数格的写法时，分数已经解析成功、
+        // 行的形状已经判定，于是整份快照被接受、覆盖掉上一份好数据，而 EnsureUsable 也不看
+        // 票数覆盖率——页面上整列票数变成横线，FetchedAt 却是新的，陈旧度那条 check 判绿。
+        // 票数是判断「这个分可不可信」的唯一依据（3149 票与 23 万票天差地别），
+        // 它缺了这一行就没有价值，不该留在快照里。
         var votes = PlainNumberRegex.Match(cells[4].Groups[1].Value);
-        if (votes.Success && long.TryParse(votes.Groups[1].Value, NumberStyles.AllowThousands,
+        if (!votes.Success || !long.TryParse(votes.Groups[1].Value, NumberStyles.AllowThousands,
                 CultureInfo.InvariantCulture, out var v))
-            entry.Votes = v;
+            return null;
+        entry.Votes = v;
 
         // 单价与上下文只有文本类的几个榜有；图像视频榜就五列，到这里就结束了
         if (cells.Count > 5)

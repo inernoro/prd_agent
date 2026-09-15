@@ -513,6 +513,51 @@ public class ArenaLeaderboardFetcherTests
         Assert.Contains("带厂商", ex.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 授权几乎全空 = 厂商那段的分隔符或授权写法变了。厂商仍解得出来、它那条覆盖率仍是
+    /// 100%，所以必须单独判这一项（Codex 在 PR #1538 指出）：授权是「仅开源」筛选的唯一
+    /// 判据，isOpenSource(null) 一律判闭源，缺了它那个筛选会静默清空。
+    ///
+    /// 阈值取一半而非 100%：实测四个榜的授权覆盖率是 87.5%–98.6%（有些行只有厂商一段），
+    /// 要求全覆盖会把每个榜都拒掉。
+    /// </summary>
+    [Fact]
+    public void EnsureUsable_授权几乎全空时拒绝整份()
+    {
+        // 只去掉分隔符，厂商那段照样在——正是对方改写法时会发生的事
+        var noLicense = RealFixture.Replace(" · ", " ", StringComparison.Ordinal);
+        Assert.NotEqual(RealFixture, noLicense);
+
+        var parsed = ArenaLeaderboardFetcher.Parse(noLicense);
+        Assert.Equal(2, parsed.Entries.Count);                        // 行还在
+        Assert.All(parsed.Entries, e => Assert.NotNull(e.Organization)); // 厂商还在
+        Assert.All(parsed.Entries, e => Assert.Null(e.License));       // 授权没了
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ArenaLeaderboardFetcher.EnsureUsable("u", "agent", Padded(parsed)));
+        Assert.Contains("带授权", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 分数榜的票数读不出来就整行拒绝。对方只改票数格的写法时，分数已经解析成功、行的形状
+    /// 也已判定，原来会「留 null 照样接受」——整列票数在页面上变成横线，而 FetchedAt 是新的、
+    /// 陈旧度那条 check 判绿（Codex 在 PR #1538 指出）。
+    /// 票数是判断「这个分可不可信」的唯一依据，3149 票与 23 万票天差地别。
+    /// </summary>
+    [Fact]
+    public void ParseScore_票数读不出来时整行拒绝()
+    {
+        // 把票数那格的千分位数字换成带单位的写法
+        var broken = ScoreFixture
+            .Replace('"' + "body-sm" + '"' + ">3,149<", '"' + "body-sm" + '"' + ">3.1k<", StringComparison.Ordinal)
+            .Replace('"' + "body-sm" + '"' + ">2,281<", '"' + "body-sm" + '"' + ">2.3k<", StringComparison.Ordinal);
+        Assert.NotEqual(ScoreFixture, broken);
+
+        var r = ArenaLeaderboardFetcher.Parse(broken);
+
+        Assert.Empty(r.Entries);
+    }
+
     [Fact]
     public void EnsureUsable_条目太少时拒绝整份()
     {
