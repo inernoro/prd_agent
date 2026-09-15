@@ -161,6 +161,14 @@ public class MongoDbContext
 
     /// <summary>公共藏书阁个人进度（一人一行，UserId 唯一）</summary>
     public IMongoCollection<BookshelfProgress> BookshelfProgresses => _database.GetCollection<BookshelfProgress>("bookshelf_progress");
+
+    /// <summary>
+    /// 一本书一篇精读稿，全站共享（不是每人一份）。
+    ///
+    /// 不建索引：这张表上限就是书单的本数（当前 51），全表扫的代价远低于维护一条索引，
+    /// 而本仓库对启动期自动建索引本来就有禁令（`no-auto-index`）。
+    /// </summary>
+    public IMongoCollection<BookDigest> BookDigests => _database.GetCollection<BookDigest>("book_digests");
     public IMongoCollection<DefectMessage> DefectMessages => _database.GetCollection<DefectMessage>("defect_messages");
     public IMongoCollection<DefectFolder> DefectFolders => _database.GetCollection<DefectFolder>("defect_folders");
     public IMongoCollection<DefectProject> DefectProjects => _database.GetCollection<DefectProject>("defect_projects");

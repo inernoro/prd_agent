@@ -100,6 +100,17 @@ public static class Desktop
         public const string SkillGen = "prd-agent.skill-gen::chat";
     }
 
+    public static class Bookshelf
+    {
+        [AppCallerMetadata(
+            "公共藏书阁-精读稿",
+            "给书单里的一本书生成精读稿：核心论点、怎么用在我们身上、我们在哪条规则上栽过",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Bookshelf"
+        )]
+        public const string Digest = "prd-agent.bookshelf.digest::chat";
+    }
+
     public static class Arena
     {
         [AppCallerMetadata(

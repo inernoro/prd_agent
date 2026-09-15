@@ -1,7 +1,12 @@
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -26,11 +31,18 @@ public class BookshelfController : ControllerBase
     private const int NoteMaxLength = 200;
 
     private readonly MongoDbContext _db;
+    private readonly ILlmGateway _gateway;
     private readonly ILogger<BookshelfController> _logger;
 
-    public BookshelfController(MongoDbContext db, ILogger<BookshelfController> logger)
+    private static readonly JsonSerializerOptions SseJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
+
+    public BookshelfController(MongoDbContext db, ILlmGateway gateway, ILogger<BookshelfController> logger)
     {
         _db = db;
+        _gateway = gateway;
         _logger = logger;
     }
 
@@ -199,6 +211,189 @@ public class BookshelfController : ControllerBase
                 totalAtExam = kv.Value.TotalAtExam,
                 takenAt = kv.Value.TakenAt,
             });
+    // ───────────── 精读稿 ─────────────
+    //
+    // 藏书阁原来只有一张书单：书名、作者、一句 takeaway，然后一个输入框让用户自己写心得。
+    // 用户点两下发现没东西读是必然的 —— 里面本来就只有索引、没有内容。
+    // 用户原话：「点进去就是让用户输入，什么意思？用户提供内容？」
+    //
+    // 这两个端点让「学习」这件事真的发生：系统产出可读的内容，用户消费它。
+    // 按需生成：第一个点进这本书的人触发，生成完落库，之后所有人读同一篇。
+
+    /// <summary>取这本书的精读稿。还没生成时返回 exists=false，不 404 —— 首次点开是常态不是异常。</summary>
+    [HttpGet("books/{bookId}/digest")]
+    public async Task<IActionResult> GetDigest(string bookId, CancellationToken ct)
+    {
+        var id = (bookId ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(id))
+            return Ok(ApiResponse<object>.Ok(new { exists = false }));
+
+        var doc = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
+        if (doc == null || string.IsNullOrWhiteSpace(doc.Content))
+            return Ok(ApiResponse<object>.Ok(new { exists = false }));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            exists = true,
+            content = doc.Content,
+            model = doc.Model,
+            platform = doc.Platform,
+            citedRules = doc.CitedRules,
+            generatedAt = doc.GeneratedAt,
+            // 提示词升版之后，前端据此提示「这篇是旧版写法，可以重生成」
+            stale = !string.Equals(doc.PromptVersion, BookshelfDigestPrompt.Version, StringComparison.Ordinal),
+        }));
+    }
+
+    /// <summary>
+    /// 流式生成这本书的精读稿。
+    ///
+    /// 走 SSE 而不是等生成完一次性返回：这一篇要写一两千字，等完再给就是几十秒白屏，
+    /// 而本仓库对这件事有明令（规则 #6：静止的「加载中」超过 2 秒即为体验缺陷）。
+    /// </summary>
+    [HttpGet("books/{bookId}/digest/stream")]
+    [Produces("text/event-stream")]
+    public async Task StreamDigest(string bookId, [FromQuery] bool force, CancellationToken ct)
+    {
+        Response.ContentType = "text/event-stream";
+        Response.Headers.CacheControl = "no-cache";
+        Response.Headers.Connection = "keep-alive";
+
+        var userId = this.GetRequiredUserId();
+        var id = (bookId ?? string.Empty).Trim();
+
+        var material = BookshelfDigestPrompt.Find(id);
+        if (material == null)
+        {
+            await WriteDigestEventAsync("error", new { code = "NOT_FOUND", message = "书单里没有这本书" }, ct);
+            return;
+        }
+
+        // 已经有稿子就直接吐出去，不重复烧一次生成。force=true 是「重新生成」那个按钮走的路径。
+        if (!force)
+        {
+            var existing = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
+            if (existing != null && !string.IsNullOrWhiteSpace(existing.Content))
+            {
+                await WriteDigestEventAsync("cached", new
+                {
+                    content = existing.Content,
+                    model = existing.Model,
+                    platform = existing.Platform,
+                    citedRules = existing.CitedRules,
+                }, ct);
+                await WriteDigestEventAsync("done", new { reused = true }, ct);
+                return;
+            }
+        }
+
+        var request = new GatewayRequest
+        {
+            AppCallerCode = AppCallerRegistry.Bookshelf.Digest,
+            ModelType = ModelTypes.Chat,
+            Stream = true,
+            IncludeThinking = false,
+            RequestBody = new JsonObject
+            {
+                ["messages"] = new JsonArray
+                {
+                    new JsonObject { ["role"] = "system", ["content"] = BookshelfDigestPrompt.BuildSystemPrompt() },
+                    new JsonObject { ["role"] = "user", ["content"] = BookshelfDigestPrompt.BuildUserPrompt(material) },
+                },
+                ["temperature"] = 0.6,
+                ["max_tokens"] = 4000,
+            },
+            Context = new GatewayRequestContext
+            {
+                UserId = userId,
+                QuestionText = "精读稿：" + material.Book.Title,
+            },
+        };
+
+        var buffer = new StringBuilder();
+        string? model = null;
+        string? platform = null;
+
+        try
+        {
+            await foreach (var chunk in _gateway.StreamAsync(request, ct))
+            {
+                if (chunk.Type == GatewayChunkType.Start)
+                {
+                    model = chunk.Resolution?.ActualModel;
+                    platform = chunk.Resolution?.ActualPlatformName;
+                    // 模型可见性（`ai-model-visibility`）：用户会因为换了模型感知到差异，得让他看得见
+                    await WriteDigestEventAsync("start", new { model, platform }, ct);
+                }
+                else if (chunk.Type == GatewayChunkType.Text && !string.IsNullOrEmpty(chunk.Content))
+                {
+                    buffer.Append(chunk.Content);
+                    await WriteDigestEventAsync("text", new { content = chunk.Content }, ct);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 客户端断开。已生成的部分不落库 —— 半篇稿子比没有稿子更糟：
+            // 下一个人点开会读到一篇断在半句话上的东西，还以为它就是全部。
+            return;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "生成精读稿失败 BookId={BookId}", id);
+            await WriteDigestEventAsync("error", new { code = "GEN_FAILED", message = "生成失败，稍后再试" }, ct);
+            return;
+        }
+
+        var content = buffer.ToString().Trim();
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            await WriteDigestEventAsync("error", new { code = "EMPTY", message = "模型没有返回内容" }, ct);
+            return;
+        }
+
+        var digest = new BookDigest
+        {
+            BookId = id,
+            Content = content,
+            PromptVersion = BookshelfDigestPrompt.Version,
+            Model = model,
+            Platform = platform,
+            GeneratedByUserId = userId,
+            GeneratedAt = DateTime.UtcNow,
+            CitedRules = material.Rules.Select(r => r.Name).ToList(),
+        };
+
+        // 一本书一篇，整篇替换。upsert 而不是 insert：「重新生成」走同一条路，
+        // 不该在库里堆出两篇。
+        await _db.BookDigests.ReplaceOneAsync(
+            x => x.BookId == id,
+            digest,
+            new ReplaceOptions { IsUpsert = true },
+            ct);
+
+        await WriteDigestEventAsync("done", new
+        {
+            reused = false,
+            model,
+            platform,
+            citedRules = digest.CitedRules,
+        }, ct);
+    }
+
+    private async Task WriteDigestEventAsync(string eventName, object data, CancellationToken ct)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(data, SseJsonOptions);
+            await Response.WriteAsync("event: " + eventName + "\n", ct);
+            await Response.WriteAsync("data: " + json + "\n\n", ct);
+            await Response.Body.FlushAsync(ct);
+        }
+        catch (OperationCanceledException) { /* 客户端断开 */ }
+        catch (ObjectDisposedException) { /* 连接已关闭 */ }
+    }
+
 }
 
 /// <summary>整包保存进度的请求体。</summary>

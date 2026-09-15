@@ -31,6 +31,7 @@ export const VOLUMES: Volume[] = [
         level: 1,
         why: '不熟业务流程就被推去出方案，根子是拿到需求直接想解法、从没确认过问题是什么、谁的问题。这本书整本都在训练这一步。',
         takeaway: '接需求先答三问：问题是谁的、真正困扰是什么、不解决会怎样。答不上来就不动手。',
+        relatedRules: ['visual-anchor-first', 'no-rootless-tree'],
       },
       {
         id: 'b-pragmatic',
