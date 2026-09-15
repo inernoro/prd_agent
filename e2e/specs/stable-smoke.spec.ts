@@ -3439,6 +3439,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const downloadButton = page.getByTitle('下载图片').first();
       await expect(downloadButton, '选中生成图后必须出现真实下载操作').toBeVisible();
       const canvasSource = await generatedImage.getAttribute('src');
+      // 浏览器给用户存盘用的名字来自产品写在 <a download> 上的属性；Chromium 在 downloadWillBegin
+      // 阶段对 blob 链接只回报占位名 "download"（2026-09-15 用 141 版实测，blob / data 链接皆如此），
+      // 所以文件名判据直接读产品写的属性，CDP 的建议名只在它给出真实值时才参与比对。
+      await page.evaluate(() => {
+        const bucket: Array<{ download: string; href: string }> = [];
+        (window as unknown as { __stsmkDownloads: typeof bucket }).__stsmkDownloads = bucket;
+        const nativeClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function patchedClick(this: HTMLAnchorElement) {
+          bucket.push({ download: this.download, href: this.href.slice(0, 32) });
+          return nativeClick.call(this);
+        };
+      });
       const observedDownloadRequests: string[] = [];
       const recordDownloadRequest = (request: { method(): string; url(): string }) => {
         if (request.method() === 'GET') observedDownloadRequests.push(request.url());
@@ -3471,8 +3483,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(downloadedBytes.byteLength).toBeGreaterThan(512);
       const downloadedMime = detectImageMime(downloadedBytes);
       const expectedExtension = extensionForImageMime(downloadedMime);
-      expect(download.suggestedFilename()).toContain('蓝色陶瓷杯');
-      expect(download.suggestedFilename().toLowerCase().endsWith(expectedExtension)).toBe(true);
+      const anchorDownloads = await page.evaluate(() => (
+        (window as unknown as { __stsmkDownloads?: Array<{ download: string; href: string }> }).__stsmkDownloads || []
+      ));
+      expect(anchorDownloads.length, '下载必须通过带 download 属性的同源链接触发').toBeGreaterThan(0);
+      const savedName = anchorDownloads.at(-1)!.download;
+      expect(savedName, '存盘文件名必须带提示词主体').toContain('蓝色陶瓷杯');
+      expect(savedName.toLowerCase().endsWith(expectedExtension), `存盘扩展名必须与实际 MIME 一致：${savedName} / ${downloadedMime}`).toBe(true);
+      if (download.suggestedFilename() !== 'download') {
+        expect(download.suggestedFilename()).toBe(savedName);
+      }
       expect(generatedArtifacts.some((artifact) => artifact.mime === downloadedMime)).toBe(true);
       const downloadedDimensions = await decodeDownloadedImageDimensions(page, downloadedBytes, downloadedMime);
       const requestedDimensions = String(completed.detail.items[0].requestedSize || '').split('x').map(Number);
