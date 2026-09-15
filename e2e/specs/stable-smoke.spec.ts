@@ -303,7 +303,8 @@ const gatewayFailoverBackupNote = 'stable-smoke-failover-backup';
 // 硬中断后不需要任何外部记录就能把它精确还原（网关只要求相对路径、无控制字符、无反斜杠、不超过 500 字符）。
 const gatewayInjectedEndpointPattern = /^stable-smoke-(?:primary|all)-failure\//;
 const isGatewayInjectedEndpoint = (offering: GatewayOffering) => gatewayInjectedEndpointPattern.test(offering.endpointPath || '');
-const isGatewayFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').includes(gatewayFailoverBackupNote);
+// 只认本夹具写入的精确格式（标记开头、紧跟冒号），管理员在别的 Offering 备注里顺带提到这串字也不会被当成夹具。
+const isGatewayFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').trimStart().startsWith(`${gatewayFailoverBackupNote}:`);
 // 网关对 Endpoint 的上限是 500 字符：原值经 base64url 放大后装不下时退回不带原值的旧格式，
 // 硬中断后只能靠相同路由契约的捐出方还原（或人工处理），但故障注入本身照常执行，不会因为路径太长而验不了切换。
 const gatewayEndpointPathLimit = 500;
