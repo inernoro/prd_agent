@@ -447,7 +447,8 @@ async function provisionTaggedFailoverBackup(
   primary: GatewayOffering,
 ): Promise<GatewayOffering | undefined> {
   const primaryPlatform = index.upstreamById.get(primary.targetId)?.platformId || '';
-  const usedTargets = new Set([primary.targetId]);
+  // 逻辑模型上已经绑过的上游（含停用、未打标记的）都不能再挑：网关对未被替代的同 target 记录判重复。
+  const usedTargets = new Set(preferred.offerings.map((offering) => offering.targetId));
   const donor = items
     .filter((item) => item.enabled && item.modelType === preferred.modelType && item.id !== preferred.id)
     .flatMap((item) => item.offerings.filter((offering) => isLiveGatewayUpstream(offering, index)))
@@ -3509,6 +3510,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       return body.data;
     };
     const index = await readGatewayUpstreamIndex(request, gateway);
+    // 进入时不看备用是否干净，一律先把所有逻辑模型上的注入态自愈、把启用着的带标记备用停掉，再选备用、取快照：
+    // 上一轮若只在主路注入之后就夭折，备用是干净的而主路不是，后面的「恰好只处理这一条」断言会被主路的遗留搅掉。
+    const pre = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+    await disableStrayGatewayBackups(request, gateway, await readLogical());
+    expect(
+      pre.filter((item) => item.source === 'unrecoverable'),
+      '进入用例时网关上有无法还原的注入态，请先人工恢复这些 Offering 的 Endpoint 再跑',
+    ).toEqual([]);
     let items = await readLogical();
     let owner = items.find((item) => item.offerings.some(isGatewayFailoverBackup));
     let backup = owner?.offerings.find(isGatewayFailoverBackup);
@@ -3535,19 +3544,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       backup = items.find((item) => item.id === owner!.id)?.offerings.find(isGatewayFailoverBackup);
       expect(backup, '刚创建的带标记备用必须能在逻辑模型上读回').toBeTruthy();
     }
-    // 进入时备用本身就停在上一轮的注入态：先自愈再取快照，否则 finally 会把注入态原样写回去。
-    if (isGatewayInjectedEndpoint(backup!)) {
-      const pre = await recoverInjectedGatewayOfferings(request, gateway, items);
-      // 先隔离再判无法还原：还原不了的备用也不能带着注入态继续在线。
-      await disableStrayGatewayBackups(request, gateway, items);
-      expect(
-        pre.filter((item) => item.source === 'unrecoverable'),
-        '进入用例时备用 Offering 停在无法还原的注入态，请先人工恢复 Endpoint 再跑',
-      ).toEqual([]);
-      items = await readLogical();
-      backup = items.find((item) => item.id === owner!.id)?.offerings.find(isGatewayFailoverBackup);
-      expect(backup && !isGatewayInjectedEndpoint(backup), '自愈后备用 Offering 必须仍在且不再是注入态').toBeTruthy();
-    }
+    expect(isGatewayInjectedEndpoint(backup!), '自愈之后备用 Offering 不应再是注入态').toBe(false);
     // 路由契约完全相同的捐出方在有的环境里存在、有的不存在（CDS 上备用是 openai 协议、捐出方是协议默认），
     // 旧格式注入路径的两种结局都要验：有捐出方就按它还原，没有就必须原样不动并标记 unrecoverable。
     const donor = items
@@ -3588,15 +3585,26 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
     try {
       // 情形一：本 PR 起的注入格式自带原值，精确还原，不依赖任何别的 Offering。
-      await poison(buildGatewayInjectedEndpoint('all', original.endpointPath, 0));
+      // 原 Endpoint 长到装不进 500 字符时构造器会退回不带原值的格式，那就按情形二的结局断言。
+      const embeddedPath = buildGatewayInjectedEndpoint('all', original.endpointPath, 0);
+      const embeddable = decodeGatewayInjectedEndpoint(embeddedPath) !== null;
+      await poison(embeddedPath);
       const embedded = await recoverOnce();
-      expect(embedded.source).toBe('embedded');
-      expect(embedded.to).toBe(original.endpointPath);
       const afterEmbedded = await readBackup();
-      expect(isGatewayInjectedEndpoint(afterEmbedded)).toBe(false);
-      expect(afterEmbedded.endpointPath || '').toBe(original.endpointPath);
-      expect(afterEmbedded.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
-      expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+      if (embeddable) {
+        expect(embedded.source).toBe('embedded');
+        expect(embedded.to).toBe(original.endpointPath);
+        expect(isGatewayInjectedEndpoint(afterEmbedded)).toBe(false);
+        expect(afterEmbedded.endpointPath || '').toBe(original.endpointPath);
+        expect(afterEmbedded.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
+        expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+      } else if (donor) {
+        expect(embedded.source).toBe('donor');
+        expect(afterEmbedded.endpointPath || '').toBe(donor.endpointPath || '');
+      } else {
+        expect(embedded.source).toBe('unrecoverable');
+        expect(afterEmbedded.endpointPath || '').toBe(embeddedPath);
+      }
 
       // 情形二：旧格式注入路径不带原值。有路由契约完全相同的捐出方就按它还原；没有就一个字都不许改。
       const legacyEndpoint = `stable-smoke-all-failure/leftover-${Date.now()}`;
