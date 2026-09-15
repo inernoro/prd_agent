@@ -83,35 +83,6 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     setStep('connect');
   }, []);
 
-  /**
-   * 真正断开：把存着的连接（含 token 密文）删掉。
-   * 这是这一屏承诺的「令牌加密保存在你名下，随时可以断开」的兑现处——
-   * 「换个账号」不做删除（授权成功才替换），所以断开必须另有入口，否则那句话是空头支票。
-   * 破坏性动作，由调用处做二次确认。
-   */
-  const disconnect = useCallback(async () => {
-    setDisconnecting(true);
-    const res = await disconnectGitHub();
-    setDisconnecting(false);
-    if (!res.success) {
-      reportError(res.error?.message ?? '断开 GitHub 连接失败', res.error?.code);
-      return;
-    }
-    setAuth(null);
-    setSwitchingAccount(false);
-    setError('');
-    setErrorCode(undefined);
-    setStep('connect');
-    // 撤销没成时不许报一个干净的成功：本地删了不等于 GitHub 那边的授权收回了，
-    // 后端把下一步写在 revokeHint 里，这里原样端给用户（形状 10：静默降级）。
-    if (res.data.revoked) {
-      toast.success('已断开 GitHub 连接', '本站保存的连接已删除，GitHub 上的授权也已收回；已建的目录订阅会同步失败，直到重新连接。');
-    } else {
-      toast.warning('已断开，但 GitHub 授权未撤销',
-        res.data.revokeHint ?? '本站保存的连接已删除，请到 GitHub 设置里确认本应用已不在已授权列表中。');
-    }
-  }, [reportError]);
-
   const loadAuth = useCallback(async () => {
     setAuthLoading(true);
     const res = await getGitHubAuthStatus();
@@ -130,6 +101,46 @@ export function GitHubSyncWizard({ storeId, onClose, onFinished }: {
     }
     setAuthLoading(false);
   }, [reportError]);
+
+  /**
+   * 真正断开：把存着的连接（含 token 密文）删掉。
+   * 这是这一屏承诺的「令牌加密保存在你名下，随时可以断开」的兑现处——
+   * 「换个账号」不做删除（授权成功才替换），所以断开必须另有入口，否则那句话是空头支票。
+   * 破坏性动作，由调用处做二次确认。
+   */
+  const disconnect = useCallback(async () => {
+    setDisconnecting(true);
+    const res = await disconnectGitHub();
+    setDisconnecting(false);
+    if (!res.success) {
+      reportError(res.error?.message ?? '断开 GitHub 连接失败', res.error?.code);
+      return;
+    }
+    setSwitchingAccount(false);
+    setError('');
+    setErrorCode(undefined);
+
+    // removed=false 意味着断开期间你在别处重新连了一次，后端**有意保住**了那条新连接。
+    // 此时不能清空状态说「已断开」——界面会和事实相反。重新读一次连接状态，
+    // 顺便让它去问一次 GitHub：收回授权可能把新令牌也一起作废了，失效的话这一读就会显示出来。
+    if (!res.data.removed) {
+      void loadAuth();
+      toast.warning('这条连接已被替换，未执行断开',
+        '断开期间你在别处重新连接了 GitHub，新的连接已保留。若它显示为已失效，重新授权一次即可。');
+      return;
+    }
+
+    setAuth(null);
+    setStep('connect');
+    // 撤销没成时不许报一个干净的成功：本地删了不等于 GitHub 那边的授权收回了，
+    // 后端把下一步写在 revokeHint 里，这里原样端给用户（形状 10：静默降级）。
+    if (res.data.revoked) {
+      toast.success('已断开 GitHub 连接', '本站保存的连接已删除，GitHub 上的授权也已收回；已建的目录订阅会同步失败，直到重新连接。');
+    } else {
+      toast.warning('已断开，但 GitHub 授权未撤销',
+        res.data.revokeHint ?? '本站保存的连接已删除，请到 GitHub 设置里确认本应用已不在已授权列表中。');
+    }
+  }, [reportError, loadAuth]);
 
   useEffect(() => { void loadAuth(); }, [loadAuth]);
 
