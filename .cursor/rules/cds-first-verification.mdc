@@ -4,7 +4,7 @@ description: 改了可执行代码、准备说「验证过了/编译通过/测�
 
 <!-- 本文件由 scripts/sync-cursor-rules.sh 自动生成，请勿直接编辑。
      事实源: .claude/rules/cds-first-verification.md
-     生成时间: 2026-09-15T16:32:31Z -->
+     生成时间: 2026-09-15T16:47:42Z -->
 
 # 验证的权威位置（编译与测试各在哪里被证明）
 
@@ -25,7 +25,12 @@ description: 改了可执行代码、准备说「验证过了/编译通过/测�
 | `prd-api/**/*.cs`（API 项目能不能编出来） | **Branch Image workflow 绿**，产出 `sha-<commit>` 镜像 | GitHub Actions `branch-image.yml` | **push 之后**（它由 push 触发），每次 push 都跑 |
 | `prd-api` 整个 sln 编译 + 非集成非手工的 xUnit | **CI workflow 的 `Server Build & Test` job 绿** | GitHub Actions `ci.yml` | push 之后，且 **feature 分支不自动跑**（见第三节） |
 | `prd-api` 的 Integration / Manual 类测试 | 本地 `dotnet test` 去掉 filter 自己跑 | 本地（要真 MongoDB + ffmpeg） | 没有任何 CI 会跑它们（见第二节末） |
-| `prd-admin` 的 tsc / lint / vitest | 本地 `pnpm` 跑一遍即可（快），CI 的 `Admin Dashboard Build` 是复核 | 本地 或 Actions | 本地即时；CI 同上 |
+| `prd-admin` 的 tsc / vitest / vite build | CI 的 `Admin Dashboard Build` job 绿（本地 `pnpm` 跑一遍更快） | 本地 或 Actions | 本地即时；CI 同上 |
+| `prd-admin` 的 **lint** | 只有本地 `pnpm lint`——`Admin Dashboard Build` 没有 lint 步骤（它只跑 Type check / Run tests / Build，而 `build` 就是 `tsc && vite build`） | **只能本地** | 本地即时 |
+| `prd-desktop` 前端 `.ts/.tsx` 与 `src-tauri/**/*.rs` | CI 的 `Desktop Client Check` job 绿：tsc、vite build、`cargo check`（dev + release）、`cargo fmt --check`、`cargo clippy -- -D warnings` | 本地 或 Actions | push 之后，且同样 **feature 分支不自动跑** |
+| `cds/**` | CI 的 `CDS Build & Test` job 绿：tsc + vitest（无 lint） | 本地 或 Actions | 同上 |
+| `llmgw/**` | `llmgw/AGENTS.md` 的模块校验表。注意 `llmgw/serving` 在 `PrdAgent.sln` 里（`Server Build & Test` 覆盖它），**`llmgw/console-api` 不在**，只能自己 `dotnet build` | 本地（console-api / web）或 Actions（serving） | 本地即时；CI 同上 |
+| `prd-video/**`、Dockerfile、`docker-compose*.yml`、`scripts/**`、技能目录里的可执行脚本 | **没有任何 CI job 会验它们**——只能本地跑（模块自己的 `AGENTS.md` + AGENTS.md §5.2），跑不了就在交付里明说没验过 | 只能本地 | 本地即时 |
 | 页面打得开、流程跑得通 | 预览域名上的真人路径 + 截图 | CDS 分支预览 | push 即部署 |
 | 后端接口行为 | 预览域名上打真实端点、断言返回值 | CDS 分支预览 | push 即部署 |
 
@@ -125,6 +130,8 @@ which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PAT
 - [ ] 改了 `.cs` 的话，`ci.yml` 在这条分支上真跑过吗（自动不会跑）？
 - [ ] 新加的测试文件，csproj 里链进去了吗？它真的被编译过吗？
 - [ ] 本地能跑的我先跑了吗（快），还是白等了一轮 CI？
+- [ ] 我说的「lint 过了」是本地真跑的吗？没有任何 CI job 会跑 ESLint。
+- [ ] 改的是表里那些**没有 CI** 的东西（prd-video / Dockerfile / 脚本）吗？那就只能本地跑，跑不了要明说。
 - [ ] 交付叙述里还有「本地」「我这边」「环境没有」这类词吗？划掉之后还成立吗？
 - [ ] 有哪一项确实没做到吗？我是明说了，还是含混过去了？
 
