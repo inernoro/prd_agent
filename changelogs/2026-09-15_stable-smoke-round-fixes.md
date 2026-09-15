@@ -13,3 +13,4 @@
 | test | e2e | GW-007 清理作用域前置到启用备用上游之前、认领上一轮遗留的已启用备用、备用照抄捐出方 Offering 的路由契约 |
 | fix | prd-api | 稳定冒烟账号补齐权限改为对 null 安全的聚合管道更新：存量账号 PermAllow / PermDeny 为 BSON null 时 $addToSet / $pullAll 会整条报错，补齐从未生效；新增真 Mongo 回归测试复现旧写法报错并覆盖 null / 缺失 / 已有清单三种形态 |
 | fix | prd-admin | 资源管理页托管默认头像地址接受本地开发下发的 /local-assets 相对基址，绝对地址仍只认 http(s)，协议相对地址照旧拒绝 |
+| test | prd-api | 稳定冒烟权限夹具增加 superPermission 并由跨语言契约测试钉住；e2e 预检与后端同口径，持有 super 视为矩阵权限齐全；模块入口图片判定补记 4xx/5xx 图片响应，SVG 改用 decode() 判碎图 |

@@ -25,10 +25,17 @@ const speechFixture = Buffer.from(readFileSync(
   'utf8',
 ).trim(), 'base64');
 // 巡检身份必须持有的管理权限；SSOT 是后端 StableSmokeIdentityPolicy，由跨语言契约测试钉死两边一致。
-const requiredIdentityPermissions = (JSON.parse(readFileSync(
+const identityPermissionPolicy = JSON.parse(readFileSync(
   resolve(specDir, '../fixtures/stable-smoke-required-permissions.json'),
   'utf8',
-)) as { requiredPermissions: string[] }).requiredPermissions;
+)) as { superPermission: string; requiredPermissions: string[] };
+const requiredIdentityPermissions = identityPermissionPolicy.requiredPermissions;
+// 与后端 StableSmokeIdentityPolicy.MissingPermissions 同口径：持有 super 的账号视为矩阵权限齐全。
+const missingIdentityPermissions = (effective: string[]) => (
+  effective.includes(identityPermissionPolicy.superPermission)
+    ? []
+    : requiredIdentityPermissions.filter((permission) => !effective.includes(permission))
+);
 
 type TicketResponse = {
   success: boolean;
@@ -888,6 +895,12 @@ async function openModule(
     if (/ERR_ABORTED/i.test(reason)) return;
     failedImages.push(`${failed.url()} (${reason})`);
   });
+  // 404 / 5xx 是「完成的响应」而不是 requestfailed，图片照样是碎的，必须单独记下来。
+  page.on('response', (response) => {
+    if (response.request().resourceType() !== 'image') return;
+    const status = response.status();
+    if (status >= 400) failedImages.push(`${response.url()} (HTTP ${status})`);
+  });
 
   await applySandboxHostStubs(page);
   const loginUrl = await issueTicket(request, module.path);
@@ -913,8 +926,8 @@ async function openModule(
  */
 async function expectNoBrokenImages(page: Page, label: string, failedImages: string[]) {
   // 懒加载且还没滚进视口的图片浏览器根本不会去取，不算「没加载完」；
-  // SVG 没有固有尺寸时 naturalWidth 也可能是 0，不能拿它当碎图判据。
-  const readImageState = () => page.evaluate(() => {
+  // SVG 没有固有尺寸时 naturalWidth 也可能是 0，不能只拿它当碎图判据——改问浏览器 decode() 有没有成功。
+  const readImageState = () => page.evaluate(async () => {
     const inViewport = (image: HTMLImageElement) => {
       const rect = image.getBoundingClientRect();
       return rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
@@ -923,12 +936,20 @@ async function expectNoBrokenImages(page: Page, label: string, failedImages: str
     const pending = Array.from(document.images)
       .filter((image) => !image.complete && (image.loading !== 'lazy' || inViewport(image)))
       .map((image) => image.currentSrc || image.src);
-    const broken = Array.from(document.images)
-      .filter((image) => image.complete
-        && image.naturalWidth === 0
-        && (image.getAttribute('src') || '').length > 0
-        && !isSvg(image))
-      .map((image) => image.currentSrc || image.src);
+    const broken: string[] = [];
+    for (const image of Array.from(document.images)) {
+      if (!image.complete || image.naturalWidth !== 0 || (image.getAttribute('src') || '').length === 0) continue;
+      const source = image.currentSrc || image.src;
+      if (!isSvg(image)) {
+        broken.push(source);
+        continue;
+      }
+      try {
+        await image.decode();
+      } catch {
+        broken.push(source);
+      }
+    }
     return { pending, broken };
   });
   await expect.poll(
@@ -1485,7 +1506,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       systemRoleKey?: string | null;
       effectivePermissions: string[];
     }>(await page.request.get('/api/authz/me', { headers: authHeaders(token) }));
-    const missing = requiredIdentityPermissions.filter((permission) => !me.effectivePermissions.includes(permission));
+    const missing = missingIdentityPermissions(me.effectivePermissions);
     expect(
       missing,
       `巡检账号 ${me.username}（系统角色 ${me.systemRoleKey || '无'}）缺少矩阵所需权限：${missing.join('、')}。`

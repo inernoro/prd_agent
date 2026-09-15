@@ -127,6 +127,8 @@ public sealed class StableSmokeIdentityPolicyTests
             .ToList();
 
         Assert.Equal(StableSmokeIdentityPolicy.RequiredPermissions, fixture);
+        // e2e 预检把「持有 super 即视为齐全」与后端 MissingPermissions 对齐，super 的字面量也要钉在同一份夹具里。
+        Assert.Equal(AdminPermissionCatalog.Super, document.RootElement.GetProperty("superPermission").GetString());
     }
 
     private static string LocateRepositoryFile(string relativePath)
