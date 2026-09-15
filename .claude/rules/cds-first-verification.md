@@ -155,12 +155,12 @@ which dotnet || ls /opt/dotnet8/dotnet    # 有就 export PATH=/opt/dotnet8:$PAT
 - [ ] 我说的每一句「通过了」，都指得出是哪条流水线的哪个 job 吗？
 - [ ] 我有没有把 Branch Image 的绿，当成 `dotnet build` 或测试的绿？
 - [ ] 我说的「测试全绿」，包含 Integration / Manual 吗？CI 那一档不跑它们。
-- [ ] 改了 `.cs` 的话，`ci.yml` 在这条分支上真跑过吗（自动不会跑）？
+- [ ] 改了 `.cs` 的话，`ci.yml` 在这条分支上真跑过吗（普通 feature push 不会跑——开 PR 到 main/develop 或手动 dispatch 才跑）？
 - [ ] 新加的测试文件，csproj 里链进去了吗？它真的被编译过吗？
 - [ ] 本地能跑的我先跑了吗（快），还是白等了一轮 CI？
 - [ ] 我说的「lint 过了」是本地真跑的吗？没有任何 CI job 会跑 ESLint。
 - [ ] 改的是脚本 / Dockerfile 吗？先去 `ci.yml` 的 `release-script-test` path filter 里查一眼它在不在清单里——在清单里就有远端判据，不在才是「只能本地」。
-- [ ] 改的是 `cds/**` 吗？那里有三条流水线（`CDS Build & Test` / `CDS CI` / `CDS Prebuilt`），任一条绿都不代表另两条绿。
+- [ ] 改的是 `cds/**` 吗？那里**至少**三条流水线（`CDS Build & Test` / `CDS CI` / `CDS Prebuilt`），改到端口巡检相关文件还会多一条——按触发条件现查一遍，别按固定条数收工；任一条绿都不代表其余绿。
 - [ ] 我引用第一节那张表之前，`grep` 过 `.github/workflows/` 确认它还是对的吗？表是快照，流水线会增减。
 - [ ] 交付叙述里还有「本地」「我这边」「环境没有」这类词吗？划掉之后还成立吗？
 - [ ] 有哪一项确实没做到吗？我是明说了，还是含混过去了？
