@@ -1707,34 +1707,62 @@ static async Task<IResult> DeepHealth(
     // 页面上只有一个需要人打开才看得见的 stale 标签——降级把一次持续失败翻译成了一次
     // 表面成功（degradation-must-alarm.md）。所以这里对**症状**（数据多旧）而不是
     // 原因（哪次抓取失败）暴露一条机读判据。
+    //
+    // 两条命门（都是 Codex 在 PR #1538 指出的，两条都会让这个 check 变成一盏永远不亮的灯）：
+    //
+    // 1. **哨兵值必须判失败**。第一版在「一条快照都没有」时把值设成 -1，注释还写着
+    //    「判据会判失败」——而判据是 `lte 48`，-1 当然小于 48，于是同步从来没跑起来过的
+    //    部署会永远绿。哨兵值要选在判据的**失败侧**，不能凭直觉挑一个「看起来异常」的数。
+    //    这里统一用 UnhealthySentinel（远大于阈值），任何取不到数的分支都走它。
+    //
+    // 2. **要看覆盖，不只看最旧的那条**。每个榜的失败是各自 catch 的，成功的照写。
+    //    于是「十一个榜里只有一个同步成功」会让这条查询拿到一份很新的快照而判绿，
+    //    另外十个维度在页面上永远空着却无人告警。所以先比对目录里声明的榜是否都在库里，
+    //    缺了就直接判失败——覆盖不全比数据旧更严重。
+    const double leaderboardUnhealthySentinel = 9999;
     double leaderboardStaleHours;
     string leaderboardOutput;
     try
     {
-        var oldest = await db.ModelLeaderboardSnapshots
+        var snapshots = await db.ModelLeaderboardSnapshots
             .Find(MongoDB.Driver.Builders<PrdAgent.Core.Models.ModelLeaderboardSnapshot>.Filter.Empty)
-            .SortBy(x => x.FetchedAt)
-            .Limit(1)
-            .FirstOrDefaultAsync(cancellationToken);
+            .Project(x => new { x.Board, x.FetchedAt })
+            .ToListAsync(cancellationToken);
 
-        if (oldest is null)
+        var storedBoards = snapshots
+            .Select(x => x.Board)
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missingBoards = PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardCatalog.Keys
+            .Where(k => !storedBoards.Contains(k))
+            .ToArray();
+
+        if (snapshots.Count == 0)
         {
-            // 一个榜都还没同步过：说明还没跑起来，不是「很新」。用 -1 表示，判据会判失败。
-            leaderboardStaleHours = -1;
-            leaderboardOutput = "还没有任何榜单快照（周期同步只在权威部署跑，分支预览属正常）";
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = "一个榜单快照都没有——周期同步从来没成功跑完过，"
+                + "整个模型排行榜页面是空的；去看容器日志里 ModelLeaderboardSync 的告警";
+        }
+        else if (missingBoards.Length > 0)
+        {
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = $"缺 {missingBoards.Length} 个榜的快照（{string.Join("、", missingBoards)}）——"
+                + "这些维度在页面上是空的；去看容器日志里这几个榜的同步告警";
         }
         else
         {
+            var oldest = snapshots.OrderBy(x => x.FetchedAt).First();
             leaderboardStaleHours = Math.Round((now - oldest.FetchedAt).TotalHours, 1);
             leaderboardOutput = leaderboardStaleHours <= 48
-                ? $"最旧的榜单快照是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
+                ? $"{storedBoards.Count} 个榜都有快照，最旧的一份是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
                 : $"最旧的榜单快照已经 {leaderboardStaleHours} 小时没更新（{oldest.Board}）——"
                   + "同步大概率连着失败了，去看容器日志里 ModelLeaderboardSync 的告警";
         }
     }
     catch (Exception ex)
     {
-        leaderboardStaleHours = -1;
+        // 读不到就是读不到，不能判绿（同上：哨兵必须在失败侧）
+        leaderboardStaleHours = leaderboardUnhealthySentinel;
         leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
     }
 
@@ -1784,8 +1812,9 @@ static async Task<IResult> DeepHealth(
                     ["componentType"] = "datastore",
                     ["observedValue"] = leaderboardStaleHours,
                     ["observedUnit"] = "h",
-                    // -1（读不到 / 一个榜都没有）也落在 fail 这一侧：没有数据不等于数据很新
-                    ["status"] = leaderboardStaleHours >= 0 && leaderboardStaleHours <= 48 ? "pass" : "warn",
+                    // 与下面 cds:monitor 的 op/value 同一个判据，两处不许各写一遍：
+                    // 拿不到数的分支已经把值置成远大于阈值的哨兵，这里不必再判一次「是不是 -1」
+                    ["status"] = leaderboardStaleHours <= 48 ? "pass" : "warn",
                     ["time"] = now.ToString("o"),
                     ["output"] = leaderboardOutput,
                     ["cds:monitor"] = new

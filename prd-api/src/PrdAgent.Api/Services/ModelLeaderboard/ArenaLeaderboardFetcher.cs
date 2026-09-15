@@ -151,6 +151,21 @@ public class ArenaLeaderboardFetcher
         var html = await response.Content.ReadAsStringAsync(ct);
 
         var result = Parse(html);
+        EnsureUsable(url, board, result);
+        return result;
+    }
+
+    /// <summary>
+    /// 这份解析结果能不能写库。三条判据都是「宁可让数据变旧，也不要写进一批看起来正常、
+    /// 实则错的值」（.claude/rules/degradation-must-alarm.md）。
+    ///
+    /// 抽成公开静态方法是为了能被测试直接喂存档 HTML 断言——留在 FetchAsync 里的话，
+    /// 这三条只有联网才走得到，等于三条没人验过的判据（predicate-and-wiring-discipline
+    /// 形状 4：不会红的证据比没有证据更糟）。
+    /// </summary>
+    /// <exception cref="InvalidOperationException">任一条不成立。</exception>
+    public static void EnsureUsable(string url, string board, ParseResult result)
+    {
         if (result.Entries.Count < MinimumEntries)
         {
             throw new InvalidOperationException(
@@ -158,9 +173,24 @@ public class ArenaLeaderboardFetcher
                 "多半是页面结构变了；本次不写库，保留上一份快照。");
         }
 
-        // 形状与目录声明的不符 = 对方把这个榜换了结构。宁可让数据变旧，也不要写进一批
-        // 按错误形状解出来的值——那种错误在页面上看起来完全正常，没人会发现
-        // （.claude/rules/degradation-must-alarm.md：降级必须响铃）。
+        // 厂商的覆盖率。OrgRegex 认的是对方生成出来的那串 Tailwind 类名，
+        // 一旦重排或改名，每一行的 organization / license 会**双双变 null**，而条目数与
+        // 形状判定照样通过：页面上所有模型的厂商栏空着，「仅开源」筛选被静默清空
+        // （isOpenSource(null) 一律判闭源）——又一次「降级而不响铃」
+        // （Codex 在 PR #1538 指出）。
+        //
+        // 阈值取一半，不取 100%：这是别人家的页面，个别行缺厂商是它的自由，
+        // 而「几乎每一行都没有」只可能是我们的选择器失配。实测六个榜 778/778 行都有厂商，
+        // 离这条线很远，不会误伤。
+        var withOrganization = result.Entries.Count(e => !string.IsNullOrWhiteSpace(e.Organization));
+        if (withOrganization * 2 < result.Entries.Count)
+        {
+            throw new InvalidOperationException(
+                $"{url} 解析出 {result.Entries.Count} 个条目，其中只有 {withOrganization} 个带厂商；" +
+                "多半是模型格里那串类名变了，本次不写库，保留上一份快照。");
+        }
+
+        // 形状与目录声明的不符 = 对方把这个榜换了结构。
         var expected = ModelLeaderboardCatalog.Find(board)?.Kind;
         if (expected is not null && result.Kind != expected)
         {
@@ -168,8 +198,6 @@ public class ArenaLeaderboardFetcher
                 $"{url} 解析出的表格形状是 {result.Kind}，目录里声明的是 {expected}；" +
                 "对方多半改了这个榜的结构，本次不写库，保留上一份快照。");
         }
-
-        return result;
     }
 
     /// <summary>
@@ -192,14 +220,14 @@ public class ArenaLeaderboardFetcher
             var name = WebUtility.HtmlDecode(nameMatch.Groups[1].Value);
             var (organization, license) = ParseOrgLicense(block);
 
-            var agent = TryParseAgentRow(block, name, organization, license, agentEntries.Count + 1);
+            var agent = TryParseAgentRow(block, name, organization, license);
             if (agent is not null)
             {
                 agentEntries.Add(agent);
                 continue;
             }
 
-            var score = TryParseScoreRow(block, name, organization, license, scoreEntries.Count + 1);
+            var score = TryParseScoreRow(block, name, organization, license);
             if (score is not null) scoreEntries.Add(score);
         }
 
@@ -216,7 +244,7 @@ public class ArenaLeaderboardFetcher
     /// 认不出来返回 null（那多半是分数榜的行）。
     /// </summary>
     private static ModelLeaderboardEntry? TryParseAgentRow(
-        string block, string name, string? organization, string? license, int fallbackRank)
+        string block, string name, string? organization, string? license)
     {
         // 指标：**逐个单元格**解析，值与它的误差必须来自同一格。
         //
@@ -258,13 +286,22 @@ public class ArenaLeaderboardFetcher
         // 拒绝行会让条目数掉到 MinimumEntries 以下并抛异常，于是保留旧快照——这才是想要的。
         if (metrics.Count != MetricCount) return null;
 
-        // 名次格里的三个裸数字依次是：名次、区间下界、区间上界
-        var bare = BareNumberRegex.Matches(block);
-        var (rankLow, rankHigh) = ParseRankSpread(bare, skip: 1);
+        // 名次格里的三个裸数字依次是：名次、区间下界、区间上界。
+        //
+        // 只在**第一格里**找，不扫整行：扫整行的话，名次格的写法一变，正则会自动顺到
+        // 后面某个碰巧是裸数字的格（区间、会话数、价格），于是仍然解析成功、仍然给出一个
+        // 貌似合理的名次——拒绝那一步就永远不会发生。判据要读它该读的那个位置，
+        // 读不到就是读不到（predicate-and-wiring-discipline 形状 6：判据读的不是真正生效的值）。
+        var cells = CellRegex.Matches(block);
+        if (cells.Count == 0) return null;
+        var rankCell = cells[0].Groups[1].Value;
+        var rank = TryParseRank(rankCell);
+        if (rank is null) return null;   // 名次读不出来就是坏行，不拿行序冒充
+        var (rankLow, rankHigh) = ParseRankSpread(BareNumberRegex.Matches(rankCell), skip: 1);
 
         var entry = new ModelLeaderboardEntry
         {
-            Rank = ParseRank(bare, index: 0, fallbackRank),
+            Rank = rank.Value,
             RankLow = rankLow,
             RankHigh = rankHigh,
             Name = name,
@@ -295,7 +332,7 @@ public class ArenaLeaderboardFetcher
     /// （.claude/rules/predicate-and-wiring-discipline.md 形状 1：判据要经得起等价写法）。
     /// </summary>
     private static ModelLeaderboardEntry? TryParseScoreRow(
-        string block, string name, string? organization, string? license, int fallbackRank)
+        string block, string name, string? organization, string? license)
     {
         var cells = CellRegex.Matches(block);
         if (cells.Count < 5) return null;
@@ -319,12 +356,14 @@ public class ArenaLeaderboardFetcher
             if (!TryDouble(scoreMatch.Groups[5].Value, out down)) return null;
         }
 
+        // 分数榜的名次单独一格（第 0 格），不与区间混在一起
+        var rank = TryParseRank(cells[0].Groups[1].Value);
+        if (rank is null) return null;   // 同上：名次读不出来就是坏行
         var (rankLow, rankHigh) = ParseRankSpread(BareNumberRegex.Matches(cells[1].Groups[1].Value), skip: 0);
 
         var entry = new ModelLeaderboardEntry
         {
-            // 分数榜的名次单独一格（第 0 格），不与区间混在一起
-            Rank = ParseRank(BareNumberRegex.Matches(cells[0].Groups[1].Value), index: 0, fallbackRank),
+            Rank = rank.Value,
             RankLow = rankLow,
             RankHigh = rankHigh,
             Name = name,
@@ -358,17 +397,36 @@ public class ArenaLeaderboardFetcher
     }
 
     /// <summary>
-    /// 页面上写的名次。
-    ///
-    /// 不能拿「这是第几个解析成功的行」顶替（Codex 在 PR #1538 指出）：并列名次、有意跳号、
-    /// 以及任何一行被拒绝，都会让后面每一行的名次整体错位，而 rankDelta 是拿它算的，
-    /// 一错就连升降箭头也跟着错。拿不到时才退回行序——那时页面结构已经不对了，
-    /// 条目数多半也活不过 MinimumEntries。
+    /// 名次格里的第一个 span。名次就写在这里——agent 榜是「名次、下界、上界」三个 span 挨着，
+    /// 分数榜的名次单独一格。
     /// </summary>
-    private static int ParseRank(MatchCollection numbers, int index, int fallback)
-        => numbers.Count > index && int.TryParse(numbers[index].Groups[1].Value, out var v) && v > 0
+    private static readonly Regex FirstSpanRegex = new(
+        @"<span[^>]*>([^<]*)</span>", RegexOptions.Compiled);
+
+    /// <summary>
+    /// 页面上写的名次。取不到就是坏行，调用方整行拒绝。
+    ///
+    /// 不能拿「这是第几个解析成功的行」顶替（Codex 在 PR #1538 连指两轮）：并列名次、
+    /// 有意跳号、以及任何一行被拒绝，都会让后面每一行的名次整体错位，而 rankDelta 是拿它
+    /// 算的，一错就连升降箭头也跟着错。
+    ///
+    /// 第二轮指的是**退路本身**：原来取不到时退回行序，于是对方只要改名次格的写法，
+    /// 每一行都会被「接受 + 编一个名次」，六指标、分数、票数全都还对得上，条目数守卫
+    /// 照样绿，而整份快照的名次是我们自己编的。行序不是名次的降级近似，它是另一个量，
+    /// 拿它冒充就是 no-rootless-tree 说的那种编造。所以这里不给退路：返回 null。
+    ///
+    /// 读**第一个 span 的文本**，不是「格子里第一个裸数字」：agent 榜的名次与名次区间
+    /// 挤在同一格里，按裸数字找的话，名次那个 span 写法一变（`1` → `#1`），正则会自动
+    /// 顺到下一个 span——也就是区间下界——于是仍然给出一个貌似合理的名次，拒绝那一步
+    /// 永远不会发生。这是补这条守卫时用等价脚本当场照出来的：第一版按裸数字找，
+    /// 把两行的名次都改坏，解析器照样给出 1 和 6。
+    /// </summary>
+    private static int? TryParseRank(string cellHtml)
+        => FirstSpanRegex.Match(cellHtml) is { Success: true } m
+            && int.TryParse(m.Groups[1].Value.Trim(), out var v)
+            && v > 0
             ? v
-            : fallback;
+            : null;
 
     /// <summary>
     /// 名次区间。agent 榜的三个裸数字是「名次、下界、上界」（skip=1 跳过名次），

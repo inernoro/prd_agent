@@ -50,8 +50,53 @@ public class ModelLeaderboardSyncService
     /// <summary>抓完一个榜歇多久再抓下一个。</summary>
     private static readonly TimeSpan BoardInterval = TimeSpan.FromSeconds(1);
 
-    /// <summary>一个分榜的同步结果，给手动触发的调用方回显用。</summary>
-    public record BoardResult(string Board, bool Ok, int Count, string? Error);
+    /// <summary>
+    /// 一个分榜的同步结果，给手动触发的调用方回显用。
+    ///
+    /// <paramref name="ErrorCode"/> 是稳定枚举，<paramref name="Error"/> 是给人看的一句话
+    /// （含下一步）。两者都不含异常原文：原来这里直接放 <c>ex.Message</c>，而调用方把它
+    /// 插进 toast，于是 HTTP 地址、Mongo 的 E11000、内部端点会原样弹到用户脸上，
+    /// 而且没有任何稳定契约可供前端分支（Codex 在 PR #1538 指出）。异常只进服务端日志。
+    /// </summary>
+    public record BoardResult(string Board, bool Ok, int Count, string? ErrorCode, string? Error);
+
+    /// <summary>同步失败的稳定错误码。新增分类时前端可按码分支，不必去匹配文案。</summary>
+    public static class SyncErrorCodes
+    {
+        /// <summary>抓不到对方的页面：网络不通、超时、非 2xx。</summary>
+        public const string Unreachable = "arena_unreachable";
+
+        /// <summary>抓到了但解析不出来：条目太少或表格形状与目录声明的不符。</summary>
+        public const string MarkupChanged = "arena_markup_changed";
+
+        /// <summary>解析成功但写库失败。</summary>
+        public const string StoreFailed = "store_failed";
+
+        /// <summary>其它。原因只在服务端日志里。</summary>
+        public const string Unknown = "unknown";
+    }
+
+    /// <summary>
+    /// 把异常翻译成「稳定码 + 给人看的一句话」。
+    ///
+    /// 措辞守 external-cause-first：先说这次是什么原因、要不要紧、下一步做什么，
+    /// 技术细节留在日志里（日志那行带 ex，排障够用）。
+    /// </summary>
+    private static (string Code, string Message) ClassifyFailure(Exception ex) => ex switch
+    {
+        HttpRequestException or TaskCanceledException or TimeoutException => (
+            SyncErrorCodes.Unreachable,
+            "抓不到 arena.ai 的页面（对方暂时不可达或超时）。上一份快照仍在用，稍后重试或等下一轮自动同步。"),
+        InvalidOperationException => (
+            SyncErrorCodes.MarkupChanged,
+            "arena.ai 的页面结构与解析器对不上，本次没有写库、保留了上一份快照。需要更新解析器，详见服务端日志。"),
+        MongoException => (
+            SyncErrorCodes.StoreFailed,
+            "数据抓到了但写库失败，本次未更新。请查看服务端日志。"),
+        _ => (
+            SyncErrorCodes.Unknown,
+            "同步失败，本次未更新，上一份快照仍在用。原因已记入服务端日志。"),
+    };
 
     /// <summary>
     /// 同步分榜。每个榜独立处理，一个失败不影响其他榜。
@@ -81,7 +126,7 @@ public class ModelLeaderboardSyncService
             try
             {
                 var count = await SyncBoardAsync(fetcher, board, sourceLabel, ct);
-                results.Add(new BoardResult(board, true, count, null));
+                results.Add(new BoardResult(board, true, count, null, null));
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -92,7 +137,8 @@ public class ModelLeaderboardSyncService
                 // 保留旧快照：这里刻意不写库。页面继续显示上一份，并如实标出它的日期。
                 _logger.LogWarning(ex,
                     "模型榜同步：分榜 {Board} 失败，保留上一份快照（页面会显示旧数据的日期）。", board);
-                results.Add(new BoardResult(board, false, 0, ex.Message));
+                var (code, message) = ClassifyFailure(ex);
+                results.Add(new BoardResult(board, false, 0, code, message));
             }
         }
 
@@ -110,8 +156,19 @@ public class ModelLeaderboardSyncService
         var entries = parsed.Entries;
 
         // 比对上一份快照填升降。上一份不存在时全部留 null，前端不显示箭头。
-        var filter = Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Board, board);
-        var previous = await _db.ModelLeaderboardSnapshots.Find(filter).FirstOrDefaultAsync(ct);
+        var previous = await _db.ModelLeaderboardSnapshots
+            .Find(Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Board, board))
+            .FirstOrDefaultAsync(ct);
+
+        // 写用 _id 过滤，不用 Board。
+        //
+        // 上一轮给首次写换了确定性 Id，但过滤条件还是 Board——这只是把「插出两条文档」
+        // 换成了「其中一条撞 _id 报 E11000」（Codex 在 PR #1538 第二次指出同一处）：
+        // 两个并发的首次同步都发现 Board 无匹配，于是都走插入，而它们算出的 _id 是同一个。
+        // 按 _id 过滤之后，后到的那个会匹配上先到的那条并替换它，两边都成功收敛。
+        // 存量文档的随机 Id 由 previous?.Id 继续沿用，不会多出一条。
+        var documentId = previous?.Id ?? DeterministicId(board);
+        var filter = Builders<ModelLeaderboardSnapshot>.Filter.Eq(x => x.Id, documentId);
         if (previous is not null)
         {
             var previousRanks = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -134,7 +191,7 @@ public class ModelLeaderboardSyncService
             // 是 Board 而非 _id、库里也没有唯一索引（禁止自动建索引，见 no-auto-index.md），
             // 于是同一个榜会插出两条文档——/boards 的 ToDictionary 当场抛，普通读取则随机
             // 拿到其中一条。确定性 Id 让两边写同一个 _id，后到的覆盖先到的，天然收敛。
-            Id = previous?.Id ?? DeterministicId(board),
+            Id = documentId,
             Board = board,
             // 形状以**页面实际解析出来的**为准，不是照目录抄一份（FetchAsync 已校验两者一致）
             Kind = parsed.Kind,

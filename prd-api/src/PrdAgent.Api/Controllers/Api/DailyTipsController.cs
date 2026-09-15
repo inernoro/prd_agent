@@ -1271,6 +1271,31 @@ public sealed class DailyTipsController : ControllerBase
                         new() { Selector = "[data-tour-id=workflow-list]", Title = "第 4 步：卡片操作与执行", Body = "每张卡可「编辑 / 画布 / 执行 / 删除」；进画布后拖舱、连线、点执行即可跑。看完点「完成」" },
                     },
                 }),
+
+            // 19. 模型排行榜 —— 本页 5 步教程
+            //
+            // 新页必须同批带 seed：页头挂了 TipsEntryButton，而 pageTips 为空时它自己隐藏，
+            // 于是入口与自动开讲一起静默消失，页面照常渲染、没有任何东西变红
+            // （predicate-and-wiring-discipline 形状 2，Codex 在 PR #1538 指出）。
+            T("model-leaderboard-page-guide", "card",
+                "模型排行榜：本页 5 步上手教程",
+                "看业界模型在十一个公开分榜上的真实排名，按维度选型。",
+                "/model-leaderboard",
+                "开始本页教程",
+                "[data-tour-id=model-leaderboard-page-title]",
+                0,
+                new DailyTipAutoAction
+                {
+                    Scroll = "center",
+                    Steps = new List<DailyTipTourStep>
+                    {
+                        new() { Selector = "[data-tour-id=model-leaderboard-page-title]", Title = "第 1 步：这是什么", Body = "arena.ai 的公开榜单，人类盲测对战出来的模型排名。每天同步一次，不含本站的调用量与成本。", NavigateTo = "/model-leaderboard" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-boards]", Title = "第 2 步：按维度切换", Body = "编程与智能体、对话与理解、图像生成、视频生成四组共十一个分榜。选型看哪一项就点哪个榜——文生图强不代表写代码强。带小灰点的榜是这个环境还没同步过。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-table]", Title = "第 3 步：读榜", Body = "名次后面那个区间是并列范围，条形右端的细须是置信区间——两个模型的须重叠得厉害，就说明这点分差还说明不了问题。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-range]", Title = "第 4 步：只看开源", Body = "要自己部署就切「仅开源」，闭源模型会被滤掉。" },
+                        new() { Selector = "[data-tour-id=model-leaderboard-refresh]", Title = "第 5 步：数据多旧", Body = "页头标着这份快照的日期。觉得太旧就点这个按钮重读一次；有「模型管理」权限的还能点「立即同步」直接从 arena.ai 抓。看完点「完成」" },
+                    },
+                }),
         };
     }
 }

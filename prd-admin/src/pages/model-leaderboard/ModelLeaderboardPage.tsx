@@ -234,8 +234,11 @@ export default function ModelLeaderboardPage() {
     if (res.success && res.data) {
       const failed = res.data.boards.filter((b) => !b.ok);
       if (failed.length > 0) {
+        // 后端给的是「稳定码 + 一句人话」，这里原样转述即可；多个榜同因失败时只说一次，
+        // 免得十一个榜各弹一遍同样的话
+        const reasons = Array.from(new Set(failed.map((b) => b.error ?? '原因见服务端日志')));
         toast.error(
-          `同步未全部成功：${failed.map((b) => `${b.board}（${b.error ?? '未知原因'}）`).join('；')}`,
+          `${failed.length} 个榜未更新（${failed.map((b) => b.board).join('、')}）：${reasons.join('；')}`,
         );
       } else {
         toast.success('榜单已更新');
@@ -321,13 +324,23 @@ export default function ModelLeaderboardPage() {
   return (
     <div className="h-full min-h-0 flex flex-col">
       {/* ── 页头：沿用 PageHeader 的玻璃横条，但这页要把标题与副标题排成两行，故自绘 ── */}
+      {/*
+        手机宽度（375px）上原来是一条不换行的定宽行：标题 + 范围切换 + 刷新 + 同步 + 教程，
+        gap-4 加左右各 24px 内边距，几个定宽控件就吃掉大半屏，标题被挤没
+        （Codex 在 PR #1538 指出）。改成允许换行 + 窄屏收内边距与间距：
+        窄屏时控件整体掉到第二行，标题占满第一行。
+      */}
       <div
-        className="flex items-center gap-4 px-6 py-3.5 shrink-0"
+        className="flex flex-wrap items-center gap-x-2.5 gap-y-2 px-3 py-3 sm:gap-x-4 sm:px-6 sm:py-3.5 shrink-0"
         style={{ ...glassBar, borderRadius: 0, borderLeft: 0, borderRight: 0, borderTop: 0 }}
       >
         <div className="flex flex-col gap-[3px] min-w-0">
           <div className="flex items-baseline gap-2.5">
-            <span className="text-[19px] font-semibold tracking-[-0.02em]" style={{ color: 'var(--text-primary)' }}>
+            <span
+              data-tour-id="model-leaderboard-page-title"
+              className="text-[19px] font-semibold tracking-[-0.02em]"
+              style={{ color: 'var(--text-primary)' }}
+            >
               模型排行榜
             </span>
             <span
@@ -342,9 +355,11 @@ export default function ModelLeaderboardPage() {
           </span>
         </div>
 
-        <div className="flex-1" />
+        {/* 宽屏把控件推到右边；窄屏 flex-wrap 生效后它自己占一行，控件整体落到第二行 */}
+        <div className="flex-1 min-w-[12px]" />
 
         <div
+          data-tour-id="model-leaderboard-range"
           className="flex items-center gap-0.5 p-0.5 rounded-[10px]"
           style={{ background: 'var(--nested-block-bg)' }}
           role="group"
@@ -373,6 +388,7 @@ export default function ModelLeaderboardPage() {
             cacheRef.current.delete(board);
             void load(true);
           }}
+          data-tour-id="model-leaderboard-refresh"
           title="绕过缓存，重新读一次这个榜"
           aria-label="重新读取榜单"
           className="h-[28px] w-[28px] inline-flex items-center justify-center rounded-[8px] transition-colors"
@@ -400,7 +416,7 @@ export default function ModelLeaderboardPage() {
 
       <BoardSwitcher boards={boards} current={board} onPick={setBoard} />
 
-      <div className="flex-1 min-h-0 overflow-auto">
+      <div data-tour-id="model-leaderboard-table" className="flex-1 min-h-0 overflow-auto">
         {loading ? (
           // 不给静止的「加载中」：等待必须有持续变化的内容（AGENTS.md 规则 6）
           <MapSectionLoader text="正在读取榜单" />
@@ -974,6 +990,7 @@ function BoardSwitcher({
 
   return (
     <div
+      data-tour-id="model-leaderboard-boards"
       className="flex items-center gap-4 px-6 py-2 overflow-x-auto shrink-0"
       style={{ borderBottom: '1px solid var(--border-subtle)' }}
       role="group"

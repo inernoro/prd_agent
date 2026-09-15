@@ -77,7 +77,15 @@ public class ModelLeaderboardAdminController : ControllerBase
         {
             total = results.Count,
             succeeded = results.Count(r => r.Ok),
-            boards = results.Select(r => new { board = r.Board, ok = r.Ok, count = r.Count, error = r.Error }),
+            boards = results.Select(r => new
+            {
+                board = r.Board,
+                ok = r.Ok,
+                count = r.Count,
+                // 稳定码 + 给人看的一句话。异常原文不出这个进程（见 BoardResult 注释）。
+                errorCode = r.ErrorCode,
+                error = r.Error,
+            }),
         }));
     }
 }

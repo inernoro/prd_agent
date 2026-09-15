@@ -1,5 +1,6 @@
 using System.Linq;
 using PrdAgent.Api.Services.ModelLeaderboard;
+using PrdAgent.Core.Models;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -120,6 +121,46 @@ public class ArenaLeaderboardFetcherTests
         // 两行在各自页面上都是第 1 名（分属不同的榜，片段拼在一起测列数混排）
         Assert.Equal(1, r.Entries[0].Rank);
         Assert.Equal(1, r.Entries[1].Rank);
+    }
+
+    /// <summary>
+    /// 名次读不出来时整行拒绝，**不退回行序**。
+    ///
+    /// 上一条守的是「别拿行序当名次」，这条守的是那条退路本身：对方只要改掉名次格的写法，
+    /// 每一行都会被「接受 + 编一个名次」，六指标、会话数、成本全都还对得上，条目数守卫
+    /// 照样绿，而整份快照的名次是我们自己编的，还会覆盖掉昨天的好数据。
+    /// 行序不是名次的降级近似，它是另一个量。Codex 在 PR #1538 第二轮指出。
+    /// </summary>
+    [Fact]
+    public void Parse_名次读不出来时整行拒绝_不退回行序()
+    {
+        // 把两行的名次都改成读不出来的写法（>1< → >第1<），区间那两个数字原样保留。
+        // 区间还在，正是这条守卫的要害：判据若扫整行就会顺到区间下界，照样给出一个名次。
+        var broken = RealFixture
+            .Replace("<td><span>1</span><span>1</span><span>4</span></td>",
+                     "<td><span>第1</span><span>1</span><span>4</span></td>", StringComparison.Ordinal)
+            .Replace("<td><span>8</span><span>6</span><span>13</span></td>",
+                     "<td><span>第8</span><span>6</span><span>13</span></td>", StringComparison.Ordinal);
+        Assert.NotEqual(RealFixture, broken);   // 替换真的命中了，不是一条空跑的绿灯
+
+        var r = ArenaLeaderboardFetcher.Parse(broken);
+
+        Assert.Empty(r.Entries);
+    }
+
+    [Fact]
+    public void ParseScore_名次读不出来时整行拒绝()
+    {
+        // 分数榜的名次是单独一格：<td><div><span>1</span></div></td>
+        var broken = ScoreFixture.Replace(
+            "<td><div><span>1</span></div></td>",
+            "<td><div><span>第一</span></div></td>",
+            StringComparison.Ordinal);
+        Assert.NotEqual(ScoreFixture, broken);
+
+        var r = ArenaLeaderboardFetcher.Parse(broken);
+
+        Assert.Empty(r.Entries);
     }
 
     [Fact]
@@ -442,5 +483,74 @@ public class ArenaLeaderboardFetcherTests
         Assert.Equal(
             ModelLeaderboardCatalog.Keys.Length,
             ModelLeaderboardCatalog.Keys.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
+    // ── 写库前的三条判据（EnsureUsable）────────────────────────────────────
+    //
+    // 这三条原来埋在 FetchAsync 里，只有联网才走得到，等于三条从没被验过的判据。
+    // 抽出来之后每条都有守卫：把判据删掉，下面对应那条会红。
+
+    /// <summary>
+    /// 厂商几乎全空 = 模型格里那串类名变了。条目数与形状判定都照样通过，只有这条能拦住：
+    /// 页面上所有模型的厂商栏空着，「仅开源」筛选被静默清空（Codex 在 PR #1538 指出）。
+    /// </summary>
+    [Fact]
+    public void EnsureUsable_厂商几乎全空时拒绝整份()
+    {
+        // 只改类名，表格数据一个字不动——正是对方重排类名时会发生的事
+        var renamed = RealFixture.Replace(
+            "text-text-secondary truncate text-xs",
+            "text-text-secondary truncate text-xs-v2", StringComparison.Ordinal);
+        Assert.NotEqual(RealFixture, renamed);
+
+        var parsed = ArenaLeaderboardFetcher.Parse(renamed);
+        Assert.Equal(2, parsed.Entries.Count);                       // 行还在，数据还在
+        Assert.All(parsed.Entries, e => Assert.Null(e.Organization)); // 厂商没了
+
+        var padded = Padded(parsed);
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ArenaLeaderboardFetcher.EnsureUsable("u", "agent", padded));
+        Assert.Contains("带厂商", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnsureUsable_条目太少时拒绝整份()
+    {
+        var parsed = ArenaLeaderboardFetcher.Parse(RealFixture);   // 2 条，低于下限 5
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ArenaLeaderboardFetcher.EnsureUsable("u", "agent", parsed));
+        Assert.Contains("下限", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnsureUsable_形状与目录声明不符时拒绝整份()
+    {
+        // agent 榜解出来却是分数形状 = 对方把这个榜换了结构
+        var parsed = Padded(ArenaLeaderboardFetcher.Parse(ScoreFixture));
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => ArenaLeaderboardFetcher.EnsureUsable("u", "agent", parsed));
+        Assert.Contains("形状", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnsureUsable_正常的一份放行()
+    {
+        var parsed = Padded(ArenaLeaderboardFetcher.Parse(RealFixture));
+
+        ArenaLeaderboardFetcher.EnsureUsable("u", "agent", parsed);   // 不抛即通过
+    }
+
+    /// <summary>
+    /// 把条目补到下限以上，好让「条目太少」这条不抢在被测判据前面抛。
+    /// 补的是解析出来的真条目的副本，厂商等字段跟着一起复制。
+    /// </summary>
+    private static ArenaLeaderboardFetcher.ParseResult Padded(ArenaLeaderboardFetcher.ParseResult r)
+    {
+        var entries = new List<ModelLeaderboardEntry>(r.Entries);
+        while (entries.Count < ArenaLeaderboardFetcher.MinimumEntries)
+            entries.Add(entries[entries.Count % r.Entries.Count]);
+        return r with { Entries = entries };
     }
 }

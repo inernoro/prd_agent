@@ -154,7 +154,15 @@ export function getModelLeaderboardTop(
 export interface ModelLeaderboardSyncResult {
   total: number;
   succeeded: number;
-  boards: Array<{ board: string; ok: boolean; count: number; error: string | null }>;
+  boards: Array<{
+    board: string;
+    ok: boolean;
+    count: number;
+    /** 稳定错误码（arena_unreachable / arena_markup_changed / store_failed / unknown），可按码分支 */
+    errorCode: string | null;
+    /** 给人看的一句话，含下一步。后端不会把异常原文放进来。 */
+    error: string | null;
+  }>;
 }
 
 /**

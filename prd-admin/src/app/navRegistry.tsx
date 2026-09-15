@@ -387,7 +387,10 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
     nav: {
       label: '模型排行榜',
       shortLabel: '模型榜',
-      description: '业界模型怎么排：Agent / 代码 / 文档 / 视觉 / 生图 五个公开分榜，每天同步',
+      // 数目与分组跟着后端目录（ModelLeaderboardCatalog）走。这里写的是分组名而不是
+      // 逐个榜名：榜会增减，分组不常动，写具体榜名必然漂（原文停在「五个公开分榜」，
+      // 而页面早已是十一个，Codex 在 PR #1538 指出）。
+      description: '业界模型怎么排：编程与智能体、对话与理解、图像生成、视频生成四组共十一个公开分榜，每天同步',
       icon: 'Trophy',
       section: 'toolbox',
       appKey: 'model-leaderboard',
