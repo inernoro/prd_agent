@@ -33,8 +33,10 @@ export const createActiveTask = (body: {
 export const pasteActiveTasks = (text: string) =>
   apiRequest<{ created: number; items: ActiveTaskDto[] }>(`${base}/paste`, { method: 'POST', body: { text } });
 
-export const updateActiveTask = (id: string, body: { title?: string; note?: string; dueAt?: string | null; clearDue?: boolean }) =>
-  apiRequest<ActiveTaskDto>(`${base}/${id}`, { method: 'PUT', body });
+export const updateActiveTask = (
+  id: string,
+  body: { title?: string; note?: string; dueAt?: string | null; clearDue?: boolean; closingNote?: string },
+) => apiRequest<ActiveTaskDto>(`${base}/${id}`, { method: 'PUT', body });
 
 export const promoteActiveTask = (id: string) =>
   apiRequest<{ id: string; promoted: boolean }>(`${base}/${id}/promote`, { method: 'POST' });
@@ -48,6 +50,10 @@ export const finishActiveTask = (id: string, closingNote?: string) =>
     method: 'POST',
     body: { closingNote },
   });
+
+/** 撤销结案 —— 点圆圈变成一下就完成，就必须能一下就反悔 */
+export const reopenActiveTask = (id: string) =>
+  apiRequest<ActiveTaskDto>(`${base}/${id}/reopen`, { method: 'POST' });
 
 export const blockActiveTask = (id: string, blockedOn: string) =>
   apiRequest<{ id: string; blocked: boolean }>(`${base}/${id}/block`, { method: 'POST', body: { blockedOn } });

@@ -9,6 +9,8 @@ import { useSearchParams } from 'react-router-dom';
 import { toast } from '@/lib/toast';
 import { getActiveTaskHistory } from '@/services/real/activeTasks';
 import type { ActiveTaskDto, ActiveTaskHistory } from '@/services/contracts/activeTasks';
+import { TaskShell } from './TaskShell';
+import { whenLabel } from './taskTime';
 import './activeTasks.css';
 
 const RANGES = [
@@ -16,15 +18,6 @@ const RANGES = [
   { days: 30, label: '本月' },
   { days: 90, label: '本季' },
 ];
-
-function dayLabel(iso?: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  const days = Math.floor((Date.now() - d.getTime()) / 86400000);
-  if (days <= 0) return '今天';
-  if (days === 1) return '昨天';
-  return d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
-}
 
 export function ActiveTaskHistoryPage() {
   const [params] = useSearchParams();
@@ -43,40 +36,43 @@ export function ActiveTaskHistoryPage() {
 
   useEffect(() => { void load(); }, [load]);
 
+  // 时间范围是一组互斥选项，和 DuePicker 用同一种表达（胶囊），不另发明一套文字链接
+  const ranges = (
+    <div className="atb-chips">
+      {RANGES.map((r) => (
+        <button
+          key={r.days}
+          className={`atb-chip${days === r.days ? ' atb-chip--on' : ''}`}
+          aria-pressed={days === r.days}
+          onClick={() => setDays(r.days)}
+        >
+          {r.label}
+        </button>
+      ))}
+    </div>
+  );
+
   if (loading) {
-    return <div className="atb-page"><div className="atb-col"><div className="atb-empty">正在翻历史</div></div></div>;
+    return (
+      <TaskShell title="做成了什么" trailing={ranges}>
+        <div className="atb-list" aria-busy="true" style={{ minHeight: 160 }} />
+      </TaskShell>
+    );
   }
 
   const items = (data?.items ?? []).filter((x: ActiveTaskDto) => x.state === 'done' || x.state === 'dropped');
+  const serverNow = data?.serverNow;
 
   return (
-    <div className="atb-page">
-      <div className="atb-col">
-        <div className="atb-head">
-          <span className="atb-title">做成了什么</span>
-          <div style={{ display: 'flex', gap: 14 }}>
-            {RANGES.map((r) => (
-              <button
-                key={r.days}
-                className="atb-link"
-                style={days === r.days ? undefined : { color: 'var(--text-muted)' }}
-                onClick={() => setDays(r.days)}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
+    <TaskShell title="做成了什么" trailing={ranges} headline={data?.summary?.headline}>
+      {items.length === 0 && <div className="atb-empty">这段时间没有结案</div>}
 
-        {data?.summary?.headline && <span className="atb-group-label">{data.summary.headline}</span>}
-
-        <div className="atb-list">
-          {items.length === 0 && <div className="atb-empty">这段时间还没有结案的任务。</div>}
-
+      {items.length > 0 && (
+        <div className="atb-list" role="list">
           {items.map((it) => {
             const dropped = it.state === 'dropped';
             return (
-              <div className="atb-done-row" key={it.id}>
+              <div className="atb-done-row" role="listitem" key={it.id}>
                 <span className="atb-circle atb-circle--done" aria-hidden="true">
                   {dropped ? (
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="3" strokeLinecap="round"><path d="M18 6 6 18M6 6l12 12" /></svg>
@@ -84,10 +80,12 @@ export function ActiveTaskHistoryPage() {
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
                   )}
                 </span>
-                <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 3 }}>
-                  <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 14 }}>
-                    <span className="atb-done-row__title">{it.title}</span>
-                    <span className="atb-when">{dropped ? '放下了' : dayLabel(it.doneAt)}</span>
+                <div className="atb-done-row__body">
+                  <div className="atb-done-row__line">
+                    <span className="atb-done-row__title">
+                      <span className="sr-only">{dropped ? '已放下：' : '已完成：'}</span>{it.title}
+                    </span>
+                    <span className="atb-when">{dropped ? '放下了' : whenLabel(it.doneAt, serverNow)}</span>
                   </div>
                   {(it.closingNote || it.dropReason) && (
                     <span className="atb-done-row__note">{it.closingNote ?? it.dropReason}</span>
@@ -97,8 +95,8 @@ export function ActiveTaskHistoryPage() {
             );
           })}
         </div>
-      </div>
-    </div>
+      )}
+    </TaskShell>
   );
 }
 

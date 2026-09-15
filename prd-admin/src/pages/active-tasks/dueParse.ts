@@ -7,6 +7,8 @@
  * 认不出来就老老实实认不出来，让人点胶囊 —— 猜错比不猜更烦人。
  */
 
+import { endOfDay } from './dueTime';
+
 export interface DueMatch {
   /** 识别到的时间，ISO 字符串 */
   iso: string;
@@ -16,12 +18,6 @@ export interface DueMatch {
   rest: string;
 }
 
-/** 「今天要」指的是今天下班前，不是此刻 */
-function endOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(18, 0, 0, 0);
-  return x;
-}
 
 function plusDays(n: number): Date {
   const d = new Date();

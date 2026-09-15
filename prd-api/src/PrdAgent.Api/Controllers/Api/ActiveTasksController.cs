@@ -166,6 +166,9 @@ public class ActiveTasksController : ControllerBase
         if (req.Note != null) update = update.Set(x => x.Note, string.IsNullOrWhiteSpace(req.Note) ? null : req.Note.Trim());
         if (req.ClearDue == true) update = update.Set(x => x.DueAt, (DateTime?)null);
         else if (req.DueAt.HasValue) update = update.Set(x => x.DueAt, req.DueAt.Value);
+        // 结案后补写「做成了什么样」：点圆圈是一下就完成的，那句话在完成之后补，不挡在完成前面
+        if (req.ClosingNote != null)
+            update = update.Set(x => x.ClosingNote, string.IsNullOrWhiteSpace(req.ClosingNote) ? null : req.ClosingNote.Trim());
 
         await _db.ActiveTaskEntries.UpdateOneAsync(x => x.Id == id, update, cancellationToken: ct);
         var saved = await _db.ActiveTaskEntries.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
@@ -246,6 +249,35 @@ public class ActiveTasksController : ControllerBase
             next = next == null ? null : ActiveTaskShared.ToDto(
                 await _db.ActiveTaskEntries.Find(x => x.Id == next.Id).FirstOrDefaultAsync(ct) ?? next, now),
         }));
+    }
+
+    /// <summary>
+    /// 撤销结案：把刚结案的那条放回「正在做」，顶替它的那条退回备用队首。
+    /// 存在的理由只有一个 —— 点圆圈变成了一下就完成，那就必须能一下就反悔。
+    /// </summary>
+    [HttpPost("{id}/reopen")]
+    public async Task<IActionResult> Reopen(string id, CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var entry = await ActiveTaskShared.FindOwnedAsync(_db, id, userId, ct);
+        if (entry == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (entry.State != ActiveTaskState.Done && entry.State != ActiveTaskState.Dropped)
+            return Ok(ApiResponse<object>.Ok(new { id, reopened = false, alreadyOpen = true }));
+
+        var now = DateTime.UtcNow;
+        await _db.ActiveTaskEntries.UpdateOneAsync(
+            x => x.Id == id,
+            Builders<ActiveTaskEntry>.Update
+                .Set(x => x.DoneAt, (DateTime?)null)
+                .Set(x => x.ClosingNote, (string?)null)
+                .Set(x => x.DropReason, (string?)null)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        // MakeActiveAsync 会把当前在做的那条退回备用队首，正好还原结案前的样子
+        await ActiveTaskShared.MakeActiveAsync(_db, userId, id, now, ct);
+        var saved = await _db.ActiveTaskEntries.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        return Ok(ApiResponse<object>.Ok(ActiveTaskShared.ToDto(saved!, now)));
     }
 
     /// <summary>标记卡住。必须写清在等谁 —— 只说「卡住了」不算汇报。</summary>
@@ -388,6 +420,9 @@ public class ActiveTaskUpdateRequest
     public string? Title { get; set; }
     public string? Note { get; set; }
     public DateTime? DueAt { get; set; }
+
+    /// <summary>结案后补写的那句「做成了什么样」；传空串表示清掉</summary>
+    public string? ClosingNote { get; set; }
 
     /// <summary>true = 把时间去掉（DueAt 传 null 无法与「不改」区分，所以单给一个开关）</summary>
     public bool? ClearDue { get; set; }
