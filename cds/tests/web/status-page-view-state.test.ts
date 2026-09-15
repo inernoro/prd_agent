@@ -1,9 +1,9 @@
 /**
- * 状态页三态守卫（2026-07-27）。
+ * 监控中心三态守卫（2026-07-27 立，2026-09-08 随重做搬家）。
  *
  * 旧实现只有 `summary` 一个信号：首次加载失败时只 setError，summary 仍是 null，
  * 于是页面同时渲染「读取失败」横幅和永久骨架屏——屏幕在说两件矛盾的事，
- * 读屏用户还会一直听到 role="status" 的「正在读取存活监控数据」。
+ * 读屏用户还会一直听到 role="status" 的「正在读取」。
  *
  * 本文件锁住两件事：
  *   1. 判定纯函数 resolveStatusViewPhase 把 loading / ready / error 分清楚；
@@ -11,8 +11,7 @@
  *      原因 + 重试按钮（引导式空状态），不能回退成 `!summary ? 骨架` 的写法。
  *
  * cds/web 没有 jsdom / testing-library 设施（vitest 只跑 tests/**\/*.test.ts 的
- * 纯 TS），所以走本仓库既有的「纯函数单测 + 源码契约守卫」双保险，与
- * tests/web/bottom-right-overlay-offsets.test.ts 同款做法。
+ * 纯 TS），所以走本仓库既有的「纯函数单测 + 源码契约守卫」双保险。
  */
 
 import { describe, it, expect } from 'vitest';
@@ -25,10 +24,9 @@ import {
   resolveStatusViewPhase,
 } from '../../web/src/lib/statusView.js';
 
-const STATUS_PAGE = path.join(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../web/src/pages/StatusPage.tsx',
-);
+const WEB = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../web/src');
+const STATUS_PAGE = path.join(WEB, 'pages/StatusPage.tsx');
+const PRIMITIVES = path.join(WEB, 'pages/status/primitives.tsx');
 
 describe('resolveStatusViewPhase 三态判定', () => {
   it('首次加载中（无数据无错误）= loading', () => {
@@ -67,17 +65,25 @@ describe('describeStatusLoadError 给出可行动的原因', () => {
 });
 
 describe('StatusPage 源码契约', () => {
-  const source = fs.readFileSync(STATUS_PAGE, 'utf-8');
+  const page = fs.readFileSync(STATUS_PAGE, 'utf-8');
+  const primitives = fs.readFileSync(PRIMITIVES, 'utf-8');
 
   it('骨架屏只在 loading 相位渲染，不再用 `!summary` 当加载判据', () => {
-    expect(source).toContain('resolveStatusViewPhase');
-    expect(source).toContain("phase === 'loading'");
-    expect(source).not.toContain('{!summary ? (');
+    expect(page).toContain('resolveStatusViewPhase');
+    expect(page).toContain("phase === 'loading'");
+    expect(page).toContain('<MonitorCenterSkeleton />');
+    expect(page).not.toContain('{!summary ? (');
   });
 
   it('错误相位有重试按钮与错误说明，不是一句「加载失败」了事', () => {
-    expect(source).toContain("phase === 'error'");
-    expect(source).toContain('describeStatusLoadError');
-    expect(source).toContain('重新加载');
+    expect(page).toContain("phase === 'error'");
+    expect(page).toContain('<MonitorCenterErrorCard');
+    expect(primitives).toContain('describeStatusLoadError');
+    expect(primitives).toContain('重新加载');
+  });
+
+  it('有数据时轮询失败只做顶部提示、保留旧数据', () => {
+    expect(page).toContain("phase === 'ready' && error");
+    expect(page).toContain('显示的是上一次成功的数据');
   });
 });

@@ -42,7 +42,7 @@ export function parseMatrixCaseIds(markdown) {
 
 export function parseMatrixCases(markdown) {
   return markdown.split('\n').flatMap((line) => {
-    if (!/^\|\s*(?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW)-\d+\s*\|/.test(line)) return [];
+    if (!/^\|\s*(?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB)-\d+\s*\|/.test(line)) return [];
     const cells = line.split('|').slice(1, -1).map((cell) => cell.trim());
     if (cells.length < 5) return [];
     return [{
@@ -110,6 +110,9 @@ export function validateCatalog(catalog) {
     if (!Array.isArray(feature.breadcrumb) || feature.breadcrumb.length < 3) errors.push(`${feature.id} 缺少可追踪面包屑`);
     if (!feature.entryPath?.startsWith('/')) errors.push(`${feature.id} 缺少站内 entryPath`);
     if (!Array.isArray(feature.requiredCaseIds) || feature.requiredCaseIds.length === 0) errors.push(`${feature.id} 缺少 requiredCaseIds`);
+    if ((feature.cdsOnlyRegressionCaseIds || []).some((caseId) => !(feature.regressionCaseIds || []).includes(caseId))) {
+      errors.push(`${feature.id} 的 cdsOnlyRegressionCaseIds 必须属于 regressionCaseIds`);
+    }
     if (!Array.isArray(feature.sourcePrefixes) || feature.sourcePrefixes.length === 0) errors.push(`${feature.id} 缺少 sourcePrefixes`);
     if (!['planned', 'entry', 'contract', 'contract-and-entry', 'journey'].includes(feature.automationStatus)) errors.push(`${feature.id} 的 automationStatus 不合法`);
     if (!feature.cdsPolicy || !feature.productionPolicy) errors.push(`${feature.id} 缺少双环境策略`);
@@ -171,10 +174,12 @@ export function buildPlan({
   const matrixSelection = selectMatrixCasesByEnvironment(normalizedMatrixCases, commit);
   const matrixById = new Map(normalizedMatrixCases.map((item) => [item.caseId, item]));
   const visualRegressionSet = new Set(visualRegressionCaseIds);
+  const cdsOnlyRegressionSet = new Set(selected.flatMap((feature) => feature.cdsOnlyRegressionCaseIds || []));
   const functionalRegressions = activeRegressions.filter((caseId) => !visualRegressionSet.has(caseId));
   const visualRegressions = activeRegressions.filter((caseId) => visualRegressionSet.has(caseId));
   const selectedCaseIds = selected.flatMap((feature) => [...feature.requiredCaseIds, ...(feature.regressionCaseIds || [])]);
   const selectedForEnvironment = (environment) => selectedCaseIds.filter((caseId) => {
+    if (environment === 'production' && cdsOnlyRegressionSet.has(caseId)) return false;
     const matrixCase = matrixById.get(caseId);
     if (!matrixCase) return true;
     return matrixSelection[environment].includes(caseId);
@@ -188,7 +193,7 @@ export function buildPlan({
     production: [...new Set([
       ...(mode === 'scheduled' ? matrixSelection.production : []),
       ...selectedForEnvironment('production'),
-      ...functionalRegressions,
+      ...functionalRegressions.filter((caseId) => !cdsOnlyRegressionSet.has(caseId)),
     ])].sort(),
   };
   const requiredCaseIds = [...new Set([

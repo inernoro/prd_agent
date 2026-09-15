@@ -21,6 +21,7 @@ export const createAgentApiKeyReal: CreateAgentApiKeyContract = async (input) =>
       description: input.description,
       scopes: input.scopes,
       ttlDays: input.ttlDays,
+      scopeMode: input.scopeMode,
     },
   });
 };
@@ -32,7 +33,11 @@ export const updateAgentApiKeyReal: UpdateAgentApiKeyContract = async (input) =>
       name: input.name,
       description: input.description,
       scopes: input.scopes,
+      scopeMode: input.scopeMode,
       isActive: input.isActive,
+      mcpDailyImageQuota: input.mcpDailyImageQuota,
+      mcpDailyWriteQuota: input.mcpDailyWriteQuota,
+      mcpRateLimitPerMin: input.mcpRateLimitPerMin,
     },
   });
 };

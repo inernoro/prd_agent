@@ -62,7 +62,7 @@ public class JwtService : IJwtService
         };
 
         // root 破窗账户：标记在 token 中，供授权层兜底放行（不依赖 DB）
-        if (string.Equals(user.UserId, "root", StringComparison.Ordinal))
+        if (string.Equals(user.UserId, Security.AdminPermissionCatalog.RootUserId, StringComparison.Ordinal))
         {
             claims.Add(new Claim("isRoot", "1"));
         }

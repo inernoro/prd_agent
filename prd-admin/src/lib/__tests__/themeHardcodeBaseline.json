@@ -485,12 +485,6 @@
     "darkRgbaBg": 1,
     "lightFg": 0
   },
-  "/components/ui/GenSweepLoader.tsx": {
-    "whiteAlpha": 5,
-    "darkHex": 0,
-    "darkRgbaBg": 1,
-    "lightFg": 3
-  },
   "/components/ui/GlobalDefectSubmitDialog.tsx": {
     "whiteAlpha": 1,
     "darkHex": 0,

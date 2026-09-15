@@ -60,7 +60,7 @@ function describeRule(job: ScheduledJobSummary): string {
   return bits.join(' · ');
 }
 
-const FIELD = 'h-9 w-full rounded-[9px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-3 text-[12.5px] outline-none focus:border-primary/60';
+const FIELD = 'h-9 w-full rounded-[0.5625rem] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-3 text-[0.7812rem] outline-none focus:border-primary/60';
 
 export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionProps): JSX.Element {
   const [jobs, setJobs] = useState<ScheduledJobSummary[]>([]);
@@ -187,10 +187,10 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[14px] border">
-        <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-[15px]">
+      <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
+        <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-[0.9375rem]">
           <h2 className="text-sm font-bold">自动发布规则</h2>
-          <span className="text-[11.5px] text-muted-foreground">分支满足条件时自动发到目标环境</span>
+          <span className="text-[0.7188rem] text-muted-foreground">分支满足条件时自动发到目标环境</span>
           <span className="flex-1" />
           <Button variant="outline" size="sm" className="h-8" onClick={startNew}>
             <Plus />
@@ -199,13 +199,13 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
         </div>
 
         {error ? (
-          <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-bad-soft px-[18px] py-2.5 text-xs text-bad">{error}</p>
+          <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-bad-soft px-[1.125rem] py-2.5 text-xs text-bad">{error}</p>
         ) : null}
 
         {draft ? (
-          <div className="grid gap-x-[18px] gap-y-3.5 border-b border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] p-[18px] sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-x-[1.125rem] gap-y-3.5 border-b border-[hsl(var(--hairline)/0.6)] bg-[hsl(var(--surface-sunken))] p-[1.125rem] sm:grid-cols-2 xl:grid-cols-4">
             <label className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-[11.5px] text-muted-foreground">分支匹配</span>
+              <span className="text-[0.7188rem] text-muted-foreground">分支匹配</span>
               <input
                 value={draft.branchPattern}
                 placeholder="main 或 release/*"
@@ -230,11 +230,11 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
                 「已启用」却永远不触发——UI 提供一个永远不会生效的选项，比没有这个
                 选项更糟。等 PR webhook 接上再放出来。 */}
             <label className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-[11.5px] text-muted-foreground">触发事件</span>
+              <span className="text-[0.7188rem] text-muted-foreground">触发事件</span>
               <input value="每次 push（含 PR 合并进该分支）" readOnly className={FIELD} />
             </label>
             <label className="flex min-w-0 flex-col gap-1.5">
-              <span className="text-[11.5px] text-muted-foreground">仅当这些路径变更（留空 = 任何改动）</span>
+              <span className="text-[0.7188rem] text-muted-foreground">仅当这些路径变更（留空 = 任何改动）</span>
               <input
                 value={draft.pathPattern}
                 placeholder="docs/**"
@@ -243,7 +243,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
               />
             </label>
             <div className="flex flex-wrap items-center gap-4 sm:col-span-2 xl:col-span-4">
-              <label className="flex items-center gap-2 text-[12.5px]">
+              <label className="flex items-center gap-2 text-[0.7812rem]">
                 <input
                   type="checkbox"
                   checked={draft.requireApproval}
@@ -251,7 +251,7 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
                 />
                 需手动批准（到点只跑预检并发一条待确认通知，永不自动发布）
               </label>
-              <label className="flex items-center gap-2 text-[12.5px]">
+              <label className="flex items-center gap-2 text-[0.7812rem]">
                 <input
                   type="checkbox"
                   checked={draft.enabled}
@@ -270,12 +270,12 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
         ) : null}
 
         {loading ? (
-          <div className="flex items-center gap-2 px-[18px] py-6 text-xs text-muted-foreground">
+          <div className="flex items-center gap-2 px-[1.125rem] py-6 text-xs text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" />
             正在读取规则
           </div>
         ) : pushRules.length === 0 ? (
-          <p className="px-[18px] py-6 text-xs text-muted-foreground">
+          <p className="px-[1.125rem] py-6 text-xs text-muted-foreground">
             还没有自动发布规则。建一条之后，命中的分支被推送时 CDS 会自己发到目标环境，不需要人在场。
           </p>
         ) : (
@@ -286,31 +286,31 @@ export function AutoRulesSection({ projectId, rows, onToast }: AutoRulesSectionP
               return (
                 <div
                   key={job.id}
-                  className="flex flex-wrap items-center gap-[14px] border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-[14px]"
+                  className="flex flex-wrap items-center gap-[0.875rem] border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-[0.875rem]"
                 >
-                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5 xl:min-w-[280px]">
-                    <span className="cds-ident rounded-[7px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 py-[3px] text-[12.5px]">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2.5 xl:min-w-[17.5rem]">
+                    <span className="cds-ident rounded-[0.4375rem] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 py-[3px] text-[0.7812rem]">
                       {job.schedule.branchPattern}
                     </span>
-                    <ArrowRight className="h-[18px] w-[18px] shrink-0 text-muted-foreground" />
-                    <span className="truncate text-[12.5px] font-semibold">
+                    <ArrowRight className="h-[1.125rem] w-[1.125rem] shrink-0 text-muted-foreground" />
+                    <span className="truncate text-[0.7812rem] font-semibold">
                       {owner?.target.name || action?.targetId || '未指定环境'}
                     </span>
-                    <span className={`text-[11px] font-semibold ${typeTone(owner?.target.environment)}`}>
+                    <span className={`text-[0.6875rem] font-semibold ${typeTone(owner?.target.environment)}`}>
                       {TYPE_TEXT[owner?.target.environment || 'other'] || '其它'}
                     </span>
                   </div>
-                  <div className="w-[170px] shrink-0 text-[12px] text-muted-foreground">{describeRule(job)}</div>
-                  <div className="w-[150px] shrink-0 cds-ident text-[11.5px] text-muted-foreground">
+                  <div className="w-[10.625rem] shrink-0 text-[0.75rem] text-muted-foreground">{describeRule(job)}</div>
+                  <div className="w-[9.375rem] shrink-0 cds-ident text-[0.7188rem] text-muted-foreground">
                     {job.lastRunAt ? formatDateTime(job.lastRunAt) : '尚未触发'}
                   </div>
-                  <div className="flex w-[96px] shrink-0 items-center gap-[7px]">
-                    <span className={`h-[7px] w-[7px] rounded-full ${job.enabled ? 'bg-ok' : 'bg-[hsl(var(--hairline-strong))]'}`} />
-                    <span className={`text-[12px] ${job.enabled ? 'font-semibold' : 'text-muted-foreground'}`}>
+                  <div className="flex w-[6rem] shrink-0 items-center gap-[0.4375rem]">
+                    <span className={`h-[0.4375rem] w-[0.4375rem] rounded-full ${job.enabled ? 'bg-ok' : 'bg-[hsl(var(--hairline-strong))]'}`} />
+                    <span className={`text-[0.75rem] ${job.enabled ? 'font-semibold' : 'text-muted-foreground'}`}>
                       {job.enabled ? '启用' : '暂停'}
                     </span>
                   </div>
-                  <span className="flex shrink-0 items-center gap-1.5 [&_button]:h-[30px] [&_button]:px-2.5">
+                  <span className="flex shrink-0 items-center gap-1.5 [&_button]:h-[1.875rem] [&_button]:px-2.5">
                     <Button variant="outline" size="sm" onClick={() => startEdit(job)}>
                       <Pencil />
                       编辑

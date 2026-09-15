@@ -31,6 +31,12 @@ export interface RoutingRule {
   enabled: boolean;
 }
 
+import type { TopologyLintReport } from './services/topology-lint.js';
+
+/** 服务角色枚举（`cds.role` 合法值，也是推断结果的值域）。 */
+export type ServiceRole = 'web' | 'api' | 'worker';
+export const SERVICE_ROLES: readonly ServiceRole[] = ['web', 'api', 'worker'];
+
 /** A build profile defines how to build/run a specific type of project */
 export interface BuildProfile {
   id: string;
@@ -103,6 +109,18 @@ export interface BuildProfile {
    * called. Derived from the `cds.web-entry-*` compose labels.
    */
   webEntry?: WebEntryConfig;
+  /**
+   * 显式声明的服务角色（compose label `cds.role`）：web = 给人看的静态站 / 前端，
+   * api = 被前端或其他服务调用的接口，worker = 不对外提供 HTTP 的后台任务 / 一次性作业。
+   * 没有声明时 CDS 按路由事实 + 服务名推断（service-graph inferServiceRole），
+   * 推断结果会在画布上标成「推断」；声明后覆盖一切推断。
+   */
+  role?: ServiceRole;
+  /**
+   * 显式声明的调用关系（compose label `cds.calls`，逗号分隔的服务 id）。环境变量里推不出
+   * 「谁调用谁」时用它补上，画布按声明画边并标来源为声明。
+   */
+  calls?: string[];
   /**
    * Service dependencies — IDs of infra services or other profiles this app depends on.
    * Derived from compose `depends_on`. Used for startup ordering.
@@ -240,6 +258,12 @@ export interface BuildProfile {
    * 多分支不互相破坏数据"的北极星目标。
    */
   dbScope?: 'shared' | 'per-branch';
+  /**
+   * 数据库隔离收敛 4（2026-09-04）—— 分支独立库的初始化方式（只在 dbScope=per-branch 时有意义）。
+   *   empty（默认）：空库，应用启动时自己建库、跑迁移
+   *   clone：首次部署前从共享库时间点克隆一份（mysql / postgres；mongo 暂不支持，按空库处理）
+   */
+  dbInit?: 'empty' | 'clone';
 }
 
 /**
@@ -295,7 +319,7 @@ export interface EnvKeyProvenance {
   value: string;
   /** 最终生效值来自哪一层(last-writer-wins) */
   source: EnvSource;
-  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' 等 */
+  /** 细分说明:'jwt-fallback' | 'node-runtime' | 'version-metadata' | 'per-branch-db-suffix' | 'per-branch-db-url' 等 */
   detail?: string;
   /** 被更高层覆盖(shadow)的更低层来源,按合并顺序排列 — 继承链展示用 */
   shadowed?: EnvSource[];
@@ -508,6 +532,8 @@ export interface BuildProfileOverride {
    * branchOverride 改成 'per-branch' 拿到独立 DB,避免污染 main。
    */
   dbScope?: 'shared' | 'per-branch';
+  /** 按分支覆盖分支独立库的初始化方式（见 BuildProfile.dbInit） */
+  dbInit?: 'empty' | 'clone';
   /**
    * 2026-05-01 Phase 7(B10)新增 —— Docker entrypoint 覆盖。
    * 见 BuildProfile.entrypoint 注释。允许个别分支临时改 entrypoint(如调试用)。
@@ -667,6 +693,114 @@ export interface ReplicaDbSnapshot {
    */
   dedicatedAuth?: 'source-infra';
   clonedAt: string;
+}
+
+/** 数据台账里一条派生库的备份记录（文件在 CDS 宿主的备份目录） */
+export interface DbLedgerBackup {
+  id: string;
+  /** 宿主上的绝对路径 */
+  file: string;
+  bytes: number;
+  sha256: string;
+  createdAt: string;
+  /** 备份时源库的对象数（表 / 集合），演练时用来比对 */
+  objects?: number;
+  /** 演练验证：还原到临时库并核对对象数成功的时间；没有这个字段的备份不算备份 */
+  verifiedAt?: string;
+  verifyDetail?: string;
+}
+
+export type DbLedgerKind = 'per-branch' | 'isolated' | 'unknown';
+export type DbLedgerStatus = 'active' | 'orphaned' | 'dropped';
+
+/**
+ * 数据台账条目：一条派生库「从谁来、什么时候、多大、备份在哪、现在去哪了」。
+ */
+export interface DbLedgerEntry {
+  id: string;
+  projectId: string;
+  kind: DbLedgerKind;
+  engine: 'mongo' | 'mysql' | 'postgres';
+  dbName: string;
+  infraId?: string;
+  infraContainer: string;
+  /** 血缘：从哪个库派生（分支独立库 = 去掉后缀的库；隔离库 = 克隆源库；扫描补录 = 未知） */
+  sourceDb?: string;
+  branchId?: string;
+  branch?: string;
+  profileId?: string;
+  memberId?: string;
+  /** 隔离库快照 id（与 branch.replicaDbSnapshots 对应） */
+  snapshotId?: string;
+  dedicatedContainer?: string;
+  dedicatedHostPort?: number;
+  dedicatedAuth?: 'source-infra';
+  /** cds = CDS 自己派生的；scan = 扫描实例补录的存量库，来源未知 */
+  origin: 'cds' | 'scan';
+  status: DbLedgerStatus;
+  createdAt: string;
+  updatedAt: string;
+  /** 分支删除后转孤儿的时间 */
+  orphanedAt?: string;
+  droppedAt?: string;
+  droppedBy?: string;
+  /** 没有验证过的备份、用户复述库名强制丢弃 */
+  droppedForced?: boolean;
+  backups: DbLedgerBackup[];
+  /** 最近一次量到的对象数（表 / 集合） */
+  lastObjects?: { count: number; measuredAt: string };
+  /** 时间点克隆初始化（收敛 4）：从哪个库、什么时候克隆的、逐表行数校验结果 */
+  clone?: DbLedgerClone;
+  /** 视图字段（不落盘）：按当前配置折算的初始化方式，分支独立库条目才有 */
+  initMode?: 'empty' | 'clone';
+  /** 回写记录（收敛 5）：派生库整库写回源库的每一次，含回写前快照、冲突清单、校验与回退 */
+  writeBacks?: DbWriteBackRecord[];
+  note?: string;
+}
+
+/** 回写冲突：源库（主库）在克隆之后被写过、回写会覆盖的表；没有基线时按当前差异列 */
+export interface DbWriteBackConflict {
+  table: string;
+  /** 克隆时主库的行数（有克隆基线才有） */
+  baseline?: number;
+  parentNow: number;
+  derived?: number;
+  reason: 'parent-changed' | 'parent-only' | 'differs';
+}
+
+export interface DbWriteBackRecord {
+  id: string;
+  /** 被覆盖的源库（主库） */
+  targetDb: string;
+  at: string;
+  by?: string;
+  /** 回写前目标库的自动备份（必须演练验证过才会走到替换那一步） */
+  snapshot: DbLedgerBackup;
+  conflicts: DbWriteBackConflict[];
+  baselineKind: 'clone-time' | 'none';
+  /** 回写后逐表校验：目标库（source 列）对派生库（target 列） */
+  verification: DbCloneVerification;
+  /** 回退：用回写前快照还原目标库（回退前再拍一次目标库快照，回退本身也可回退） */
+  rolledBackAt?: string;
+  rollbackSnapshot?: DbLedgerBackup;
+  rollbackCheck?: { ok: boolean; objects: number; expected?: number; measuredAt: string };
+}
+
+/** 克隆后的逐表行数校验：源库与目标库各数一遍，差异逐表列出 */
+export interface DbCloneVerification {
+  ok: boolean;
+  measuredAt: string;
+  tables: Array<{ table: string; source: number; target: number }>;
+  /** 两边都有但行数不同的表 */
+  mismatched: string[];
+  sourceOnly: string[];
+  targetOnly: string[];
+}
+
+export interface DbLedgerClone {
+  sourceDb: string;
+  clonedAt: string;
+  verification: DbCloneVerification;
 }
 
 /** 复制集执行计划的步骤类型（草稿-保存模型：用户先排操作，保存后串行执行） */
@@ -1376,6 +1510,208 @@ export interface ReleaseStrategy {
   detectedFrom?: string[];
 }
 
+/**
+ * 监控中心里由人手动添加的探测目标（2026-09-08）。
+ *
+ * 与分支预览服务（从 BranchEntry 推导）和生产发布目标（从 ReleaseTarget 推导）
+ * 并列成为第三类探测来源。前两类是「系统替你盯」，这一类是「你让系统盯」——
+ * 第三方依赖、上游网关、还没接进 CDS 的旧服务，都归这里。
+ *
+ * 只存定义，不存采样：采样与故障台账仍由 uptime-monitor 统一记在自己的落盘文件里，
+ * 定义删掉后该目标的台账会在下一轮探测被清理。
+ */
+export type UptimeCustomMonitorKind = 'http' | 'keyword' | 'tcp' | 'health-json' | 'functional';
+
+/**
+ * 一次功能监控观测留下的证据（2026-09-09）。
+ *
+ * 存活监控只需要答「通不通」，一条 up/down 就够。功能监控问的是「返回的东西对不对」，
+ * 于是**产物本身就是证据**：出了什么图、判据逐条怎么判的、这次发的什么提示词。
+ * 不留证据的功能监控，红了以后没人说得清是模型抽风还是判据写错，最后只能被静音。
+ */
+export interface MonitorObservation {
+  /** ISO 时间 */
+  at: string;
+  ok: boolean;
+  elapsedMs: number;
+  code?: number;
+  /** 逐条判据结果，全部跑完（不短路），一眼看出四条里哪条挂了 */
+  results: Array<{
+    path: string;
+    op: string;
+    expected?: string;
+    actual?: string;
+    ok: boolean;
+    err?: string;
+  }>;
+  /** 本次产物地址（生成的图片等），详情页画廊直接引用 */
+  artifactUrl?: string;
+  /** 本次真正发出去的请求体（随机项已展开）——排障第一件事就是看它 */
+  requestBody?: string;
+  /** 传输层失败（超时、连不上）的原因；判据不通过不算这里 */
+  err?: string;
+  /**
+   * 被动监控这一次读到的样本量（窗口内真实调用次数）。
+   * 0 意味着「这段时间根本没人用」——判据通过也不算数，界面必须另说。
+   */
+  sampleCount?: number;
+}
+
+export interface UptimeCustomMonitor {
+  id: string;
+  /** 展示名；留空时由服务端按地址派生（主机名 / host:port） */
+  name: string;
+  kind: UptimeCustomMonitorKind;
+  /** http / keyword：完整地址（http 或 https） */
+  url?: string;
+  /** http / keyword：请求方法，默认 GET */
+  method?: 'GET' | 'HEAD';
+  /**
+   * http / keyword：判存活的状态码规则，如 `200-299` / `200-399,401`。
+   * 默认 `200-399`。空串与缺省同义。
+   */
+  expectedStatus?: string;
+  /** keyword：响应体必须包含的文本（区分大小写） */
+  keyword?: string;
+  /**
+   * health-json：要断言哪一条 check。
+   *
+   * 对应 IETF draft-inadarei-api-health-check 的 checks——它既可能是
+   * `{"comp:measure": [{componentId, observedValue, status}]}`，也可能被实现简化成
+   * 一个数组。匹配时先认 componentId 字段，再退回用 checks 的键名。
+   */
+  healthComponentId?: string;
+  /** health-json：断言取该 check 的哪个字段 */
+  healthField?: 'status' | 'observedValue';
+  /**
+   * health-json：比较运算。
+   *
+   * 刻意是**有限枚举**而不是一句可解析的表达式：自由文本判据一旦开口，
+   * 下一轮就会被要求加同义词和嵌套语法（CLAUDE.md 5.5 的熔断条件之一）。
+   */
+  healthOp?: 'eq' | 'ne' | 'lt' | 'lte' | 'gt' | 'gte';
+  /** health-json：期望值。lt/lte/gt/gte 按数值比较，eq/ne 按规范化后的字符串比较 */
+  healthValue?: string;
+  /**
+   * functional：请求方法。功能监控要真的把业务跑一遍，多数是 POST。
+   */
+  requestMethod?: 'GET' | 'POST';
+  /**
+   * functional：请求体模板（JSON 文本）。
+   *
+   * 支持 `{{randomPrompt}}` 占位：每次观测替换成一条随机提示词。
+   * 固定提示词会被上游缓存，跑一万次也证明不了这条链路今天还活着。
+   */
+  requestBody?: string;
+  /**
+   * functional：判据列表，一次响应上判多条，全部通过才算通过。
+   * 结构化三元组，不是表达式（见 monitor-assertions.ts 顶部的理由）。
+   */
+  assertions?: Array<{ path: string; op: string; value?: string }>;
+  /**
+   * functional：产物地址在响应里的路径，如 `data.imageUrl`。
+   * 配了它，详情页才有画廊可看；没配就只留判据结果。
+   */
+  artifactUrlPath?: string;
+  /**
+   * functional：最近若干次观测的证据，新的在前。
+   * 只留最近 N 条——监控是看趋势的，不是审计日志，无限增长会把台账撑爆。
+   */
+  observations?: MonitorObservation[];
+  /** tcp：主机 */
+  host?: string;
+  /** tcp：端口 */
+  port?: number;
+  /** 探测间隔（秒）。缺省跟随实例全局间隔；小于全局间隔时按全局间隔执行 */
+  intervalSeconds?: number;
+  /** 单次探测超时（毫秒）。缺省跟随实例全局超时 */
+  timeoutMs?: number;
+  /** 归属项目；空 = 系统级（只有人类账号与全局 Key 可见） */
+  projectId?: string | null;
+  /**
+   * 这条监控盯的是哪个环境（生产 / 预发 / 其他 / 分支预览）。
+   *
+   * 归一与推导一律走 services/monitor-environment.ts，那里是唯一判定源。
+   * 注意：地址指着一条分支预览时，声明的值会被**结构性证据覆盖**成 preview——
+   * 否则一条临时分支的监控只要自称 production 就能混进项目负责人的第一屏。
+   */
+  environment?: 'production' | 'staging' | 'other' | 'preview';
+  /**
+   * 观测方式（2026-09-10）。
+   *
+   *   active  —— 自己发一次真请求，按判据验收返回值。绿 = 我刚亲自跑通过一遍。
+   *   passive —— 读被监控方统计好的真实流量窗口（错误率、未处理异常数）。
+   *              绿 = 最近没人用坏，**前提是真的有人用**。
+   *
+   * 两种绿的含义不同，界面必须分开说，否则「没人用」会被读成「一切正常」
+   * （degradation-must-alarm）。缺省 active，与存量监控的行为一致。
+   */
+  observeMode?: 'active' | 'passive';
+  /**
+   * passive 专用：样本量从哪读。**必填**——读不到样本量的被动监控是一条
+   * 恒绿的假判据，零流量与全部成功在它眼里长得一模一样。
+   *
+   * 取值随 kind 解释（与本文件里 healthComponentId / assertions.path 的既有分工一致）：
+   *   health-json —— 一个 componentId，读它的 observedValue；
+   *   functional  —— 响应文档里的字段路径，如 `data.requestCount`。
+   */
+  sampleCountPath?: string;
+  /**
+   * 这条业务是否出现在项目的公开面板上。缺省 false —— 公开是显式动作，
+   * 不是默认值：默认公开会让一条刚加的内部探针在下一次部署后对全网可见。
+   */
+  publicVisible?: boolean;
+  /**
+   * 对外叫法。公开面板上用它替代 name——内部名常带环境、组件与缩写
+   * （「llmgw serving 未处理异常」），那是给自己人看的。留空就用 name。
+   */
+  publicName?: string;
+  /** 自由标签，列表里用于分组与搜索 */
+  tags?: string[];
+  /** false = 手动暂停：不探测、不计故障、已开的故障就地收尾 */
+  enabled: boolean;
+  /**
+   * 谁加的属于哪类主体（审计与归属，2026-09-09）。
+   *
+   * createdBy 早就有（人类用户名），但没有它答不出「这条是人加的还是 Agent 加的」。
+   * 监控中心要答得出「谁加的、什么时候加的、从哪加的」——一个没人认领的监控红着，
+   * 没人知道该找谁，最后的结局是被静音。
+   */
+  createdByKind?: 'human' | 'project-key' | 'global-key';
+  /**
+   * 从哪来的：
+   *   manual     —— 人在面板上加的；
+   *   agent-api  —— Agent 用项目 Key 自助登记的；
+   *   discovered —— 自检端点自报的（监控自发现），由 CDS 每轮对账维护。
+   *
+   * discovered 的定义**不许人手改**：改了下一轮会被端点的声明覆盖，
+   * 那是漂移源。要改就去改服务自己的自描述。
+   */
+  origin?: 'manual' | 'agent-api' | 'discovered';
+  /** 自发现监控的稳定标识（端点 + componentId）。对账靠它，只有 discovered 才有。 */
+  discoveryKey?: string;
+  /**
+   * 绑定的分支。
+   *
+   * Agent 自助登记的监控必然指向某条分支的预览地址，而分支是会消失的——
+   * 分支删了监控还在，就变成一条永远红着的死地址，把真告警淹掉。
+   * 所以登记时由服务端**反查**出它属于哪条分支并钉在这里，
+   * 分支删除时随之清理（state.removeBranch 的级联）。
+   */
+  boundBranchId?: string;
+  /**
+   * 这个地址落在哪条分支的预览域名上（纯事实，不含寿命语义）。
+   *
+   * 与 boundBranchId 分开：那个管「分支没了就一起删」，只有 Agent 自助登记的才有；
+   * 这个管「环境算不算分支预览」，**任何登记路径都要盖**——否则管理员手动加一条
+   * 指着临时分支的监控会被算成生产，混进项目负责人的第一屏。
+   */
+  previewBranchId?: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string;
+}
+
 export interface ReleaseProjectIdentity {
   projectId: string;
   projectSlug: string;
@@ -1770,6 +2106,8 @@ export interface CdsState {
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */
   releasePlans?: Record<string, ReleasePlan>;
+  /** 监控中心的自定义探测目标，key 为 UptimeCustomMonitor.id。旧状态可缺省。 */
+  uptimeMonitors?: Record<string, UptimeCustomMonitor>;
   /**
    * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
    * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
@@ -2015,6 +2353,13 @@ export interface CdsState {
    * 由 DestructiveOperationLog 单独追踪（见 undoable 字段）。
    */
   configSnapshots?: ConfigSnapshot[];
+  /**
+   * 数据台账（数据库隔离收敛 3，2026-09-03）：分支独立库、隔离库、备份、演练、丢弃、
+   * 扫描补录全部记在这一本里，按血缘成树。隔离库快照仍在 branch.replicaDbSnapshots
+   * （运行时真相），台账只补它的备份与去向；分支删掉后快照随分支消失，台账里的
+   * 条目转「孤儿」留下来——派生库不许失踪。
+   */
+  dbLedger?: DbLedgerEntry[];
   /**
    * 2026-04-22 新增 —— 破坏性操作审计 + 撤销。
    *
@@ -3106,6 +3451,8 @@ export interface PendingImport {
   purpose: string;
   /** Raw cds-compose YAML. Stored verbatim; parsed lazily on approve. */
   composeYaml: string;
+  /** 提交时算好的拓扑体检（plan.cds.service-relations）：审批页展示，error 级阻断审批。 */
+  lint?: TopologyLintReport;
   /** Precomputed summary so the dashboard can render without re-parsing. */
   summary: {
     addedProfiles: string[];
@@ -3219,6 +3566,24 @@ export interface ManagedProjectSpec {
 }
 
 export interface Project {
+  /**
+   * 监控自发现的端点清单（「插上」的那几个口）。
+   *
+   * CDS 每轮打这些地址，读它们自报的 `cds:monitor` 声明，对账出监控项。
+   * 端点自己说「判什么」，但**不说打哪**——CDS 打的永远是这里登记的地址。
+   */
+  monitorEndpoints?: string[];
+  /**
+   * 公开状态页的口令（不可枚举随机串）。有值 = 这个项目的公开面板已开，
+   * 匿名访问 `/s/<token>` 可见；置空 = 立刻关掉，旧链接当即 404。
+   *
+   * 与验收报告的 shareToken 同款：token 自鉴权、不挂在登录网关后面——
+   * 它的全部意义就是给没有账号的人看。
+   */
+  statusPageToken?: string | null;
+  /** 公开面板开启时间。面板上不展示，只做审计。 */
+  statusPageOpenedAt?: string;
+
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
   /** URL-friendly slug (may equal id, usually kebab-case). */
@@ -3486,6 +3851,16 @@ export interface Project {
    * Checks panel also reports smoke status.
    */
   autoSmokeEnabled?: boolean;
+  /**
+   * Agent 只允许极速版（CI 预构建）部署（2026-09-08）。
+   *
+   * 开启后，凡是机器凭据（项目 Agent Key / AI Access Key，判定见 machine-caller.ts）
+   * 发起的部署，若任一服务的生效部署模式不是 prebuilt，就在入口拒绝（409
+   * `agent_prebuilt_only`）；Agent 也不能把分支覆盖或项目默认写成非 prebuilt 模式，
+   * 更不能自己关掉这个开关。真人在页面上的操作不受限，内部系统派发
+   * （X-CDS-Trigger）不受限。默认关闭：老项目行为零变化，需要的项目自己打开。
+   */
+  agentPrebuiltOnly?: boolean;
   /**
    * 项目的虚拟 cds-compose.yml —— 配置 SSOT（2026-05-29）。
    *

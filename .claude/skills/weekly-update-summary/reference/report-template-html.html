@@ -220,6 +220,16 @@
   @media (max-width: 640px) { .stat-row { flex-wrap: wrap; } .stat-row div { flex: 1 1 33%; border-bottom: 1px solid var(--line); } }
   .colophon { margin-top: 26px; padding-top: 12px; border-top: 3px solid var(--ink); display: flex;
     justify-content: space-between; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3); }
+
+  /* 证据图契约（report-design-system.md §1.6）：IMG 占位由 publish.py 展开成裸
+     <figure><img><figcaption></figure>，不带 class、可出现在正文任何位置，所以尺寸规则
+     必须无作用域——挂在某个容器下的规则在容器外一条都不生效，截图会按原始物理像素平铺。
+     （CSS 注释里不能写占位的字面写法：它不会被剥掉，发布闸会当成未替换的占位拒发）
+     publish.py 发布闸 + scripts/tests/test_report_evidence_figure.py 共同钉住。 */
+  figure { margin: 14px 0 4px; }
+  figure img { width: 100%; max-width: 100%; height: auto; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--indigo); border: 1px solid var(--indigo); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
 </style>
 </head>
 <body>

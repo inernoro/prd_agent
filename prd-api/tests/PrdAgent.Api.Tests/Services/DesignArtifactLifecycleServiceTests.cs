@@ -207,7 +207,8 @@ public sealed class DesignArtifactLifecycleServiceTests
         var sites = new Mock<IHostedSiteService>();
         var site = new HostedSite { Id = "persisted-site", OwnerUserId = run.UserId, Title = run.Title! };
         sites.Setup(service => service.CreateFromContentAsync(run.UserId, It.IsAny<string>(), run.Title,
-                It.IsAny<string>(), "design-agent", run.Id, It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>()))
+                It.IsAny<string>(), "design-agent", run.Id, It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>(),
+                It.IsAny<int?>()))
             .ReturnsAsync(site);
         sites.Setup(service => service.GetEditableEntryHtmlAsync(site.Id, run.UserId, It.IsAny<CancellationToken>()))
             .ReturnsAsync(new HostedSiteEditableEntry(site, ProjectionTestHtml, DateTime.UtcNow));
@@ -237,7 +238,8 @@ public sealed class DesignArtifactLifecycleServiceTests
         Assert.Equal("persisted-revision", persisted.ArtifactRevisionId);
         Assert.Null(persisted.Error);
         sites.Verify(service => service.CreateFromContentAsync(run.UserId, It.IsAny<string>(), run.Title,
-            It.IsAny<string>(), "design-agent", run.Id, It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<string>(), "design-agent", run.Id, It.IsAny<List<string>>(), null, It.IsAny<CancellationToken>(),
+            It.IsAny<int?>()), Times.Once);
         sites.Verify(service => service.CompensateGeneratedSiteAsync(It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         events.Verify(store => store.GetRunAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);

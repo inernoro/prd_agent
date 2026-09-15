@@ -59,11 +59,4 @@ export const QUICK_ACTIONS: QuickAction[] = [
     route: '/logs',
     description: '查看 LLM 请求日志',
   },
-  {
-    key: 'model-manage',
-    label: '模型管理',
-    icon: 'Cpu',
-    route: '/mds',
-    description: '管理 LLM 模型配置',
-  },
 ];

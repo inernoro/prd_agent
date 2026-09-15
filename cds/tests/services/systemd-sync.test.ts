@@ -5,7 +5,7 @@
  * 这里只测 renderDesiredUnit() 的纯函数 + 分支逻辑。
  */
 import { describe, it, expect } from 'vitest';
-import { renderDesiredUnit, syncSystemdUnit } from '../../src/services/systemd-sync.js';
+import { extractRuntimeWeights, renderDesiredUnit, syncSystemdUnit } from '../../src/services/systemd-sync.js';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -92,6 +92,32 @@ describe('systemd unit templates', () => {
       .find(line => line.startsWith('ReadWritePaths='));
     expect(readWritePaths).toContain('/etc/systemd/system');
   });
+
+  // 2026-09-08 宿主过载复盘：控制面只划优先级不设上限——单元里必须有权重、不得出现 CPUQuota。
+  it('master/forwarder units carry CPU/IO weight (priority) but no CPUQuota (limit)', () => {
+    for (const name of ['cds-master.service', 'cds-forwarder.service']) {
+      const unit = fs.readFileSync(path.resolve(__dirname, '../../systemd', name), 'utf8');
+      expect(unit, name).toMatch(/^CPUWeight=1000$/m);
+      expect(unit, name).toMatch(/^IOWeight=1000$/m);
+      expect(unit, name).not.toMatch(/^CPUQuota=/m);
+    }
+  });
+
+  it('extractRuntimeWeights 只取 CPUWeight / IOWeight，忽略注释与其它键', () => {
+    const unit = fs.readFileSync(path.resolve(__dirname, '../../systemd/cds-master.service'), 'utf8');
+    expect(extractRuntimeWeights(unit)).toEqual(['CPUWeight=1000', 'IOWeight=1000']);
+    expect(extractRuntimeWeights('# CPUWeight=5\nMemoryMax=infinity\nNice=-5\n')).toEqual([]);
+  });
+
+  it('workload slice nests under system.slice with low weight and is the value container.ts passes to docker', () => {
+    const slice = fs.readFileSync(path.resolve(__dirname, '../../systemd/system-cdsworkloads.slice'), 'utf8');
+    expect(slice).toMatch(/^\[Slice\]$/m);
+    expect(slice).toMatch(/^CPUWeight=100$/m);
+    expect(slice).toMatch(/^IOWeight=100$/m);
+    // 默认 slice 名与单元文件名必须同源，否则 docker 引用的 slice 没有权重文件。
+    const src = fs.readFileSync(path.resolve(__dirname, '../../src/services/workload-cgroup.ts'), 'utf8');
+    expect(src).toContain("DEFAULT_WORKLOAD_SLICE = 'system-cdsworkloads.slice'");
+  });
 });
 
 describe('syncSystemdUnit branching', () => {
@@ -125,6 +151,30 @@ describe('syncSystemdUnit branching', () => {
         restartAfterReload: false,
       });
       expect(r.status).toBe('skipped');
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
+    }
+  });
+
+  it('installIfMissing 时「未安装」不再当 dev 环境跳过（只可能卡在非 root）', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sysd-sync-'));
+    try {
+      fs.writeFileSync(path.join(tmp, 'repo.slice'), '[Slice]\nCPUWeight=100\n');
+      const r = syncSystemdUnit({
+        repoUnit: path.join(tmp, 'repo.slice'),
+        installedUnit: path.join(tmp, 'no-such.slice'),
+        repoRoot: '/x',
+        cdsDir: '/x/cds',
+        label: 't',
+        restartAfterReload: false,
+        installIfMissing: true,
+      });
+      if (typeof process.getuid === 'function' && process.getuid() !== 0) {
+        expect(r.status).toBe('skipped');
+        expect((r as { reason: string }).reason).not.toContain('not installed');
+      } else {
+        expect(['installed', 'error']).toContain(r.status);
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
     }

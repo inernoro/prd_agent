@@ -53,7 +53,8 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
         var accessKey = accessKeyHeader.ToString().Trim();
         if (string.IsNullOrWhiteSpace(accessKey))
         {
-            return AuthenticateResult.NoResult();
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AiKeyInvalid);
+            return AuthenticateResult.Fail("AI Access Key cannot be empty");
         }
         if (accessKey.StartsWith("sk-ak-", StringComparison.Ordinal))
         {
@@ -67,6 +68,7 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
             Logger.LogWarning(
                 "[401] AI Access Key 认证失败：服务器未配置 AI_ACCESS_KEY - Path: {Path}, Method: {Method}, IP: {IP}",
                 requestPath, requestMethod, clientIp);
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AiKeyNotConfigured);
             return AuthenticateResult.Fail("AI Access Key authentication not configured");
         }
 
@@ -77,6 +79,7 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
                 "[401] AI Access Key 无效 - Path: {Path}, Method: {Method}, IP: {IP}, KeyPrefix: {KeyPrefix}",
                 requestPath, requestMethod, clientIp,
                 accessKey.Length > 8 ? accessKey[..8] + "..." : accessKey);
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AiKeyInvalid);
             return AuthenticateResult.Fail("Invalid AI Access Key");
         }
 
@@ -86,6 +89,7 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
             Logger.LogWarning(
                 "[401] AI Access Key 认证失败：缺少 X-AI-Impersonate 头部 - Path: {Path}, Method: {Method}, IP: {IP}",
                 requestPath, requestMethod, clientIp);
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AiIdentityRequired);
             return AuthenticateResult.Fail("X-AI-Impersonate header is required");
         }
 
@@ -95,6 +99,7 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
             Logger.LogWarning(
                 "[401] AI Access Key 认证失败：X-AI-Impersonate 为空 - Path: {Path}, Method: {Method}, IP: {IP}",
                 requestPath, requestMethod, clientIp);
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AiIdentityRequired);
             return AuthenticateResult.Fail("X-AI-Impersonate header cannot be empty");
         }
 
@@ -105,7 +110,8 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
             Logger.LogWarning(
                 "[401] AI Access Key 认证失败：用户不存在 - Path: {Path}, Method: {Method}, IP: {IP}, Username: {Username}",
                 requestPath, requestMethod, clientIp, impersonateUsername);
-            return AuthenticateResult.Fail($"User '{impersonateUsername}' not found");
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AiIdentityUnavailable);
+            return AuthenticateResult.Fail("AI impersonation identity unavailable");
         }
 
         // 6. 检查用户状态（禁用的用户不允许模拟）
@@ -114,7 +120,8 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
             Logger.LogWarning(
                 "[401] AI Access Key 认证失败：用户已禁用 - Path: {Path}, Method: {Method}, IP: {IP}, Username: {Username}",
                 requestPath, requestMethod, clientIp, impersonateUsername);
-            return AuthenticateResult.Fail($"User '{impersonateUsername}' is disabled");
+            AuthorizationFailureContract.Set(Context, AuthorizationFailureContract.AiIdentityUnavailable);
+            return AuthenticateResult.Fail("AI impersonation identity unavailable");
         }
 
         // 7. 构造 Claims（以被模拟用户的身份，但附加超级权限标记）
@@ -146,6 +153,9 @@ public class AiAccessKeyAuthenticationHandler : AuthenticationHandler<AiAccessKe
 
         return AuthenticateResult.Success(ticket);
     }
+
+    protected override Task HandleChallengeAsync(AuthenticationProperties properties) =>
+        AuthorizationFailureContract.WriteChallengeAsync(Context);
 }
 
 /// <summary>

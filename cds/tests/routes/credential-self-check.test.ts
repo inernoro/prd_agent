@@ -90,7 +90,7 @@ describe('GET /api/credentials/self-check', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    flushAllJsonStateStores();
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 

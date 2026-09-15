@@ -18,7 +18,10 @@
 
 import type { BuildProfile, EnvKeyProvenance, EnvSource } from '../types.js';
 import { resolveEnvTemplates, ENV_TEMPLATE_RE, envTemplateDefault } from './compose-parser.js';
-import { applyPerBranchDbIsolation, slugifyBranchForDb } from './db-scope-isolation.js';
+import { applyPerBranchDbIsolation, explainPerBranchDbIsolation, slugifyBranchForDb } from './db-scope-isolation.js';
+
+/** 与 cross-project-refs 的 CDS_REF_RE 同形（这里不能反向 import：那条链经 preview-entrypoints 会成环） */
+const CDS_REF_TOKEN_RE = /\$\{CDS_REF:[A-Za-z0-9_.~-]+\/[A-Za-z0-9_.~-]+(?:@[^}\s]+)?\}/g;
 
 /**
  * 平台注入的已发布入口表。
@@ -74,6 +77,11 @@ export interface EnvResolveResult {
   env: Record<string, string>;
   /** 逐 key 溯源(检查器端点用;输出 API 前必须过 maskSecrets) */
   provenance: EnvKeyProvenance[];
+  /**
+   * 分支独立库对连接串做了什么（收敛 2）：没跟随的连接串（库名段指向别的库）在这里报出，
+   * 配置检查器据此标「连接串未跟随」——分支独立库不能对着一条没改的串静默说「已隔离」。
+   */
+  perBranchDb?: { unfollowedUrls: Array<{ key: string; reason: string }> };
 }
 
 interface TrackedEntry {
@@ -131,6 +139,9 @@ export function resolveProfileRuntimeEnvWithProvenance(
     jwtIssuer: string;
     injectBullmqPrefix?: boolean;
     publishedEntrypoints?: PublishedEntrypointsEnv;
+    /** 跨项目引用解析：把 `${CDS_REF:项目/服务[@分支]}` 换成目标公网地址；返回 null 表示解析失败（原样保留） */
+    resolveCdsRef?: (raw: string) => string | null;
+
   },
 ): EnvResolveResult {
   const tracked = new Map<string, TrackedEntry>();
@@ -225,14 +236,35 @@ export function resolveProfileRuntimeEnvWithProvenance(
     trackSet(tracked, 'CDS_BUILD_TIME', deployTime, 'platform-injected', 'version-metadata');
   }
 
+  // 5.5 跨项目引用（plan.cds.service-relations 第三批）：`${CDS_REF:...}` 换成目标公网地址。
+  // 放在模板展开之前，让引用出来的地址还能参与 ${VAR} 拼接；解析失败原样保留、只打标，
+  // 不阻断部署——断裂由体检的 reference-broken 报出，比让整次部署失败对用户更可控。
+  if (opts.resolveCdsRef) {
+    for (const [k, v] of Object.entries(view())) {
+      if (!v.includes('${CDS_REF:')) continue;
+      let unresolved = false;
+      const next = v.replace(CDS_REF_TOKEN_RE, (raw) => {
+        const url = opts.resolveCdsRef!(raw);
+        if (url == null) { unresolved = true; return raw; }
+        return url;
+      });
+      trackSet(tracked, k, next, 'platform-injected', unresolved ? 'cds-ref-unresolved' : 'cds-ref');
+    }
+  }
+
   // 6. per-branch DB 隔离改写(复用 SSOT applyPerBranchDbIsolation,对比 diff 打标)
   const beforeIsolation = view();
   const isolatedEnv = applyPerBranchDbIsolation(beforeIsolation, profile.dbScope, entry.branch);
+  const rewriteRows = explainPerBranchDbIsolation(beforeIsolation, profile.dbScope, entry.branch);
+  const rewriteKind = new Map(rewriteRows.map((r) => [r.key, r.kind]));
   for (const [k, v] of Object.entries(isolatedEnv)) {
     if (beforeIsolation[k] !== v) {
-      trackSet(tracked, k, v, 'per-branch-db', 'per-branch-db-suffix');
+      trackSet(tracked, k, v, 'per-branch-db', rewriteKind.get(k) === 'url-followed' ? 'per-branch-db-url' : 'per-branch-db-suffix');
     }
   }
+  const unfollowedUrls = rewriteRows
+    .filter((r) => r.kind === 'url-unfollowed')
+    .map((r) => ({ key: r.key, reason: r.reason || '连接串未跟随' }));
 
   // 7. 缺失模板校验(异常消息与旧实现一字不差 —— 调用方按消息文案兜底提示)
   const missingTemplates = missingEnvTemplates(isolatedEnv);
@@ -268,5 +300,5 @@ export function resolveProfileRuntimeEnvWithProvenance(
   }
   provenance.sort((a, b) => a.key.localeCompare(b.key));
 
-  return { env: resolvedEnv, provenance };
+  return { env: resolvedEnv, provenance, perBranchDb: { unfollowedUrls } };
 }

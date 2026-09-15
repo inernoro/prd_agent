@@ -418,7 +418,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
           </div>
           <div className="flex items-center gap-2">
             {uploadHint ? (
-              <span className="text-[10px] text-muted-foreground">{uploadHint}</span>
+              <span className="text-[0.625rem] text-muted-foreground">{uploadHint}</span>
             ) : null}
             <input
               ref={fileInputRef}
@@ -478,7 +478,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                     </div>
                   )}
                   {initScriptHint ? (
-                    <div className="text-[10px] text-muted-foreground">{initScriptHint}</div>
+                    <div className="text-[0.625rem] text-muted-foreground">{initScriptHint}</div>
                   ) : null}
                 </div>
               </div>
@@ -628,7 +628,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                           <div className="flex items-baseline justify-between gap-2 text-foreground">
                             <span>{key}</span>
                             {hint ? (
-                              <span className="text-[10px] text-muted-foreground">{hint}</span>
+                              <span className="text-[0.625rem] text-muted-foreground">{hint}</span>
                             ) : null}
                           </div>
                           <div className="mt-1 flex gap-1">
@@ -673,7 +673,7 @@ export function EnvSetupDialog({ projectId, projectName, onOpenChange, onComplet
                       <div key={key} className="text-muted-foreground">
                         <span className="text-foreground">{key}</span>
                         {hint ? (
-                          <span className="ml-2 text-[10px]">{hint}</span>
+                          <span className="ml-2 text-[0.625rem]">{hint}</span>
                         ) : null}
                         <div className="mt-0.5 break-all">{value}</div>
                       </div>

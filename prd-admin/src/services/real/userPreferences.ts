@@ -12,6 +12,12 @@ import type {
   UpdateAgentSwitcherPreferencesContract,
   UpdateHomeLauncherPreferencesContract,
   UpdateDefaultNavLayoutContract,
+  GetUserNavLayoutsContract,
+  ResetUserNavLayoutContract,
+  RemoveNavTokensContract,
+  RemoveNavTokensResult,
+  UserNavLayoutItem,
+  UserNavLayoutsResult,
   ApplyDefaultNavToAllUsersContract,
   ThemeConfigResponse,
   VisualAgentPreferences,
@@ -36,13 +42,14 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; navLayoutSynced?: boolean; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
   return ok({
     navOrder: res.data.navOrder ?? [],
     navHidden: res.data.navHidden ?? [],
+    navLayoutSynced: res.data.navLayoutSynced === true,
     defaultNavOrder: res.data.defaultNavOrder ?? [],
     defaultNavHidden: res.data.defaultNavHidden ?? [],
     themeConfig: res.data.themeConfig,
@@ -192,5 +199,48 @@ export const applyDefaultNavToAllUsersReal: ApplyDefaultNavToAllUsersContract = 
   return ok({
     matchedCount: res.data.matchedCount ?? 0,
     modifiedCount: res.data.modifiedCount ?? 0,
+  });
+};
+
+export const getUserNavLayoutsReal: GetUserNavLayoutsContract = async (): Promise<ApiResponse<UserNavLayoutsResult>> => {
+  const res = await apiRequest<UserNavLayoutsResult>(api.settings.userNavLayouts());
+  if (!res.success) return res;
+  const items = (res.data.items ?? []).map(normalizeUserNavLayoutItem);
+  return ok({
+    items,
+    totalCount: res.data.totalCount ?? items.length,
+    customizedCount: res.data.customizedCount ?? items.filter((it) => it.customized).length,
+    catalog: res.data.catalog ?? [],
+  });
+};
+
+export const resetUserNavLayoutReal: ResetUserNavLayoutContract = async (userId): Promise<ApiResponse<UserNavLayoutItem>> => {
+  const res = await apiRequest<UserNavLayoutItem>(api.settings.userNavLayout(userId), { method: 'DELETE' });
+  if (!res.success) return res;
+  return ok(normalizeUserNavLayoutItem(res.data));
+};
+
+function normalizeUserNavLayoutItem(raw: UserNavLayoutItem): UserNavLayoutItem {
+  return {
+    ...raw,
+    navOrder: raw.navOrder ?? [],
+    navHidden: raw.navHidden ?? [],
+    customized: Boolean(raw.customized),
+  };
+}
+
+export const removeNavTokensReal: RemoveNavTokensContract = async (tokens): Promise<ApiResponse<RemoveNavTokensResult>> => {
+  const res = await apiRequest<RemoveNavTokensResult>(api.settings.removeNavTokens(), {
+    method: 'POST',
+    body: { tokens },
+  });
+  if (!res.success) return res;
+  return ok({
+    tokens: res.data.tokens ?? tokens,
+    defaultRemovedCount: res.data.defaultRemovedCount ?? 0,
+    defaultNavOrder: res.data.defaultNavOrder ?? [],
+    defaultNavHidden: res.data.defaultNavHidden ?? [],
+    usersMatchedCount: res.data.usersMatchedCount ?? 0,
+    usersModifiedCount: res.data.usersModifiedCount ?? 0,
   });
 };

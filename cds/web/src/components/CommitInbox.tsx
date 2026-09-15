@@ -239,13 +239,13 @@ export function CommitInbox({
                 {latest ? latest.branchName : title}
               </span>
               {latest ? (
-                <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground">
+                <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.6875rem] font-medium text-muted-foreground">
                   {eventActionLabel(latest.source)}
                 </span>
               ) : null}
             </span>
             {latest ? (
-              <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+              <span className="mt-1 block truncate text-[0.6875rem] text-muted-foreground">
                 {latest.subject || latest.repoFullName || '收到提交更新'}
                 {' · '}
                 <span className="font-mono">{shortSha(latest.sha)}</span>
@@ -258,7 +258,7 @@ export function CommitInbox({
             {latest ? (
               <span className="hidden text-right sm:block">
                 <span className="block text-xs font-semibold text-foreground">{formatRelative(latest.receivedAt)}</span>
-                <span className="block font-mono text-[11px] text-muted-foreground">{formatExactTime(latest.receivedAt)}</span>
+                <span className="block font-mono text-[0.6875rem] text-muted-foreground">{formatExactTime(latest.receivedAt)}</span>
               </span>
             ) : null}
             {unreadCount > 0 ? (
@@ -295,7 +295,7 @@ export function CommitInbox({
                       <div className="flex min-w-0 items-center gap-2">
                         <GitCommit className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         <span className="min-w-0 truncate text-sm font-semibold leading-5 text-foreground">{notice.branchName}</span>
-                        <span className="inline-flex shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                        <span className="inline-flex shrink-0 items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.6875rem] text-muted-foreground">
                           <Tag className="h-3 w-3" />
                           {eventActionLabel(notice.source)}
                         </span>
@@ -303,21 +303,21 @@ export function CommitInbox({
                       {notice.subject ? (
                         <div className="mt-0.5 truncate pl-5 text-xs leading-5 text-foreground/85">{notice.subject}</div>
                       ) : null}
-                      <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 gap-y-1 pl-5 text-[11px] text-muted-foreground">
+                      <div className="mt-0.5 flex min-w-0 flex-wrap gap-x-2 gap-y-1 pl-5 text-[0.6875rem] text-muted-foreground">
                         <span className="font-mono">{shortSha(notice.sha)}</span>
                         <span>延迟 {formatLatency(notice.latencyMs)}</span>
                         {notice.repoFullName ? <span className="min-w-0 truncate">{notice.repoFullName}</span> : null}
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-col items-end justify-center gap-1.5">
-                      <div className="whitespace-nowrap text-right text-[11px] text-muted-foreground">
+                      <div className="whitespace-nowrap text-right text-[0.6875rem] text-muted-foreground">
                         <span className="font-medium text-foreground/80">{formatRelative(notice.receivedAt)}</span>
                         <span className="mx-1 text-muted-foreground/60">·</span>
                         <span className="font-mono">{formatExactTime(notice.receivedAt)}</span>
                       </div>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] px-2 py-1 text-[11px] text-primary hover:bg-primary/10"
+                        className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] px-2 py-1 text-[0.6875rem] text-primary hover:bg-primary/10"
                         onClick={(event) => {
                           event.stopPropagation();
                           openNotice(notice);
@@ -332,10 +332,10 @@ export function CommitInbox({
               </div>
             )}
             <div className="flex items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-3 py-2">
-              <span className="text-[11px] text-muted-foreground">实时流 {connected ? '在线' : '重连中'}</span>
+              <span className="text-[0.6875rem] text-muted-foreground">实时流 {connected ? '在线' : '重连中'}</span>
               <button
                 type="button"
-                className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                className="inline-flex items-center gap-1 text-[0.6875rem] text-muted-foreground hover:text-foreground"
                 onClick={(event) => {
                   event.stopPropagation();
                   setNotices([]);

@@ -31,6 +31,10 @@ public class HostedSite
     /// <summary>来源引用（如 workflowExecutionId）</summary>
     public string? SourceRef { get; set; }
 
+    /// <summary>最近一次内容重传的幂等引用；普通重传会清空。</summary>
+    [JsonIgnore]
+    public string? LastReuploadRef { get; set; }
+
     // ── COS 存储 ──
 
     /// <summary>COS 上的目录前缀: web-hosting/sites/{siteId}/</summary>
@@ -93,6 +97,10 @@ public class HostedSite
 
     /// <summary>分类文件夹</summary>
     public string? Folder { get; set; }
+
+    /// <summary>服务端权威文件夹名称键，供客户端比较；不写入 MongoDB。</summary>
+    [BsonIgnore]
+    public string FolderCanonicalName => WebFolderName.Canonicalize(Folder);
 
     /// <summary>封面图 URL</summary>
     public string? CoverImageUrl { get; set; }
@@ -414,6 +422,7 @@ public class WebPageShareLink
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? ExpiresAt { get; set; }
+
     public bool IsRevoked { get; set; }
 
     /// <summary>

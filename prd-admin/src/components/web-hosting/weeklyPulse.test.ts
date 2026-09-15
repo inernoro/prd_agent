@@ -16,6 +16,7 @@ function site(over: Partial<HostedSite> = {}): HostedSite {
     files: [],
     totalSize: 1024,
     tags: [],
+    folderCanonicalName: '',
     ownerUserId: 'u1',
     viewCount: 0,
     createdAt: '2026-08-20T00:00:00.000Z',

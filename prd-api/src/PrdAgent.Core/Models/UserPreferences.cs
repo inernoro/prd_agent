@@ -26,6 +26,12 @@ public class UserPreferences
     public List<string>? NavHidden { get; set; }
 
     /// <summary>
+    /// 导航布局（NavOrder / NavHidden）最近一次改动时间。与 <see cref="UpdatedAt"/> 分开：
+    /// 后者任何偏好（皮肤、Agent 切换器等）一动就变，不能当「导航改动时间」来排序展示。
+    /// </summary>
+    public DateTime? NavLayoutUpdatedAt { get; set; }
+
+    /// <summary>
     /// 主题/皮肤配置
     /// </summary>
     public ThemeConfig? ThemeConfig { get; set; }

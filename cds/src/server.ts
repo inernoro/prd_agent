@@ -22,6 +22,7 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createTopologyRouter } from './routes/topology.js';
 import { createBootstrapRouter } from './routes/bootstrap.js';
 import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
@@ -31,6 +32,9 @@ import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js
 import { createProjectComposeRouter } from './routes/project-compose.js';
 import { createProjectMigrationRouter } from './routes/project-migration.js';
 import { createProjectStorageRouter } from './routes/project-storage.js';
+import { createProjectDbIsolationRouter } from './routes/project-db-isolation.js';
+import { createDbProbeRouter } from './routes/db-probe.js';
+import { createDbLedgerRouter } from './routes/db-ledger.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
@@ -59,7 +63,13 @@ import { createLegacyCleanupRouter } from './routes/legacy-cleanup.js';
 import { createStorageModeRouter, type StorageModeContext } from './routes/storage-mode.js';
 import { createCommentTemplateRouter } from './routes/comment-template.js';
 import { createGithubOAuthRouter } from './routes/github-oauth.js';
-import { createGithubWebhookRouter } from './routes/github-webhook.js';
+import { createGithubWebhookRouter, getWebhookNoiseStats } from './routes/github-webhook.js';
+import { buildGateStatus } from './services/build-gate.js';
+import { getEventLoopLag } from './services/event-loop-lag.js';
+import { getWorkloadCgroupStatus } from './services/workload-cgroup.js';
+import { collectControlPlanePressure } from './services/control-plane-pressure.js';
+import type { UptimeCycleHealth } from './services/uptime-monitor.js';
+import type { OffHostAuditBreakerState } from './services/offhost-audit-log.js';
 import { GitHubAppClient } from './services/github-app-client.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { resolveGitAuthEnv } from './services/git-auth-env.js';
@@ -540,11 +550,20 @@ export interface ServerDeps {
    */
   gracefulShutdown?: GracefulShutdownController;
   /** Optional per-request persistent HTTP logger. Writes one Mongo document per request. */
+  /** 最近一次发布给 forwarder 的路由表（路由判定查询用） */
+  getPublishedRoutes?: () => import('./forwarder/types.js').RouteRecord[];
   httpLogStore?: HttpLogSink | null;
   /** Optional persistent diagnostics logger for container/docker/system events. */
   serverEventLogStore?: ServerEventLogSink | null;
   /** Serializes/fences branch container lifecycle writes. */
   branchOperationCoordinator?: BranchOperationCoordinator;
+  /**
+   * 探活监控（晚绑定：它在 createServer 之后才构造，index.ts 建好后回填）。
+   * /healthz 据此暴露「探活循环是否停摆」——2026-09-08 前它卡死 24 小时无人知晓。
+   */
+  uptimeMonitor?: { getCycleHealth(): UptimeCycleHealth } | null;
+  /** 离机审计熔断状态（healthz 暴露） */
+  offhostAudit?: { breakerState(): OffHostAuditBreakerState } | null;
 }
 
 function makeToken(user: string, pass: string): string {
@@ -831,6 +850,10 @@ export function resolveApiLabel(method: string, path: string): string {
     // 自建存活监控 / 状态页（2026-07-27）
     'GET /uptime/summary': '查看存活总览',
     'GET /uptime/incidents': '列出存活故障',
+    // 监控中心自定义监控（2026-09-08）
+    'GET /uptime/monitors': '列出自定义监控',
+    'POST /uptime/monitors': '新增自定义监控',
+    'POST /uptime/monitors/test': '试探自定义监控',
     // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
     'POST /bug-reports': '提交缺陷反馈',
     'GET /bug-reports': '列出缺陷反馈',
@@ -888,6 +911,19 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /deployment-versions': '列出部署版本',
     'GET /projects/:id/delivery': '查看项目交付模式',
     'PUT /projects/:id/delivery': '更新项目交付模式',
+    'GET /projects/:id/db-isolation': '查看数据库隔离',
+    'PUT /projects/:id/db-isolation': '设置数据库隔离',
+    'GET /branches/:id/db-probe': '实测数据库连接',
+    'GET /projects/:id/db-ledger': '查看数据台账',
+    'POST /projects/:id/db-ledger/scan': '扫描补录派生库',
+    'POST /projects/:id/db-ledger/:entryId/backup': '备份派生库',
+    'POST /projects/:id/db-ledger/:entryId/backups/:backupId/verify': '演练验证备份',
+    'DELETE /projects/:id/db-ledger/:entryId': '丢弃派生库',
+    'GET /branches/:id/db-ledger': '查看分支派生库',
+    'POST /branches/:id/db-init/:profileId': '克隆分支独立库',
+    'GET /projects/:id/db-ledger/:entryId/write-back/preview': '预览回写',
+    'POST /projects/:id/db-ledger/:entryId/write-back': '回写派生库',
+    'POST /projects/:id/db-ledger/:entryId/write-backs/:wbId/rollback': '回退回写',
     'POST /projects/:id/managed-plan': '生成托管部署计划',
     'GET /branches': '获取系统状态信息',
     'POST /branches': '注册新分支',
@@ -1031,6 +1067,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /projects': '列出项目',
     'POST /projects': '创建项目',
     'POST /cleanup-cross-project-services': '清理跨项目服务',
+    'POST /compose/lint': '对 compose 做拓扑体检',
+    'GET /branches/:id/service-graph': '分支服务关系图与体检',
+    'GET /branches/:id/route-lookup': '路由判定查询（转发器 vs master 兜底）',
+    'GET /branches/:id/references': '分支引用分区（地址类环境变量与跨项目引用）',
+    'GET /overview/topology': '全局概览：各项目关系与体检',
+    'PUT /branches/:id/references/:key': '切换某条引用指向的项目 / 服务 / 分支',
     'GET /pending-imports': '列出待导入项目',
     'POST /projects/:id/pending-import': '提交待导入配置',
     'GET /access-requests': '列出授权申请',
@@ -1108,6 +1150,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
     [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
+    [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
+    [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
+    [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
     // 站内信：read-all 是静态路径（上面 staticMap 已覆盖），这里只需 :id 那条。
     // segment-safe `[^/]+`，别用贪婪 `(.+)`（PR #522 的教训：会跨 `/` 截胡）。
     [/^POST \/notices\/[^/]+\/dismiss$/, '忽略站内信'],
@@ -1278,6 +1323,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/bridge\/handshake-status\/(.+)$/, '查询 Bridge 握手状态'],
     // 项目 (CRUD)
     [/^PUT \/projects\/(.+)\/paused$/, '暂停/恢复项目'],
+    [/^GET \/projects\/(.+)\/scope-options$/, '读构建范围候选'],
+    [/^POST \/projects\/(.+)\/scope-options\/apply$/, '采纳构建范围建议'],
     [/^GET \/projects\/(.+)\/agent-keys$/, '列出项目 Agent Keys'],
     [/^POST \/projects\/(.+)\/agent-keys$/, '创建项目 Agent Key'],
     [/^DELETE \/projects\/(.+)\/agent-keys\/(.+)$/, '删除项目 Agent Key'],
@@ -1300,6 +1347,19 @@ export function resolveApiLabel(method: string, path: string): string {
     // 「查询项目 / 更新项目」。必须在通配条目之前给出 segment-safe pattern。
     [/^GET \/projects\/[^/]+\/agent-profile$/, '获取项目 Agent 角色'],
     [/^PUT \/projects\/[^/]+\/agent-profile$/, '更新项目 Agent 角色'],
+    [/^GET \/projects\/[^/]+\/db-isolation$/, '查看数据库隔离'],
+    [/^PUT \/projects\/[^/]+\/db-isolation$/, '设置数据库隔离'],
+    [/^GET \/branches\/[^/]+\/db-probe$/, '实测数据库连接'],
+    [/^GET \/projects\/[^/]+\/db-ledger$/, '查看数据台账'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/scan$/, '扫描补录派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/backup$/, '备份派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/backups\/[^/]+\/verify$/, '演练验证备份'],
+    [/^DELETE \/projects\/[^/]+\/db-ledger\/[^/]+$/, '丢弃派生库'],
+    [/^GET \/branches\/[^/]+\/db-ledger$/, '查看分支派生库'],
+    [/^POST \/branches\/[^/]+\/db-init\/[^/]+$/, '克隆分支独立库'],
+    [/^GET \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back\/preview$/, '预览回写'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-back$/, '回写派生库'],
+    [/^POST \/projects\/[^/]+\/db-ledger\/[^/]+\/write-backs\/[^/]+\/rollback$/, '回退回写'],
     [/^GET \/projects\/(.+)$/, '查询项目'],
     [/^PUT \/projects\/(.+)$/, '更新项目'],
     [/^DELETE \/projects\/(.+)$/, '删除项目'],
@@ -1472,6 +1532,10 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 否则它永远执行不到、只会再回一句「未授权」。出参不含明文与哈希。
   // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
   if (method === 'GET' && path === '/api/credentials/self-check') return true;
+  // 公开状态页（2026-09-11）：token 自鉴权（16 字节随机串，不可枚举），
+  // 载荷由 public-status-board 白名单构造。只放行读取，不放行开关。
+  // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && /^\/api\/public\/status\/[a-f0-9]{32}$/.test(path)) return true;
   return false;
 }
 
@@ -2022,9 +2086,37 @@ export function createServer(deps: ServerDeps): express.Express {
       if (!probeOk) overallOk = false;
     }
 
+    // Check 6: 控制面压力（2026-09-08 宿主过载复盘）。宿主 load / 事件循环延迟 /
+    // 构建闸门限流 / 探活停摆 / 容器 cgroup 归属 / webhook 噪声 / 审计熔断一次给全。
+    // 只进 checks 与 pressure 字段，**不**翻转 ok：ok 表达「进程活着」，过载是 degraded。
+    let pressure: ReturnType<typeof collectControlPlanePressure> | null = null;
+    try {
+      pressure = collectControlPlanePressure({
+        eventLoop: getEventLoopLag(),
+        buildGate: (() => {
+          const g = buildGateStatus();
+          return { active: g.active, queued: g.queued, max: g.max, load: g.load };
+        })(),
+        uptimeMonitor: deps.uptimeMonitor?.getCycleHealth() ?? null,
+        workloadCgroup: getWorkloadCgroupStatus(),
+        webhookNoise: getWebhookNoiseStats(),
+        offhostAudit: deps.offhostAudit?.breakerState() ?? null,
+      });
+      checks.controlPlane = {
+        ok: true,
+        detail: pressure.warnings.length === 0
+          ? `正常（load ${pressure.host.loadAvg1}/${pressure.host.cores} 核，事件循环 p99 ${pressure.eventLoop.current.p99Ms}ms）`
+          : pressure.warnings.map((w) => `[${w.level}] ${w.message}`).join(' · '),
+      };
+    } catch (err) {
+      checks.controlPlane = { ok: true, detail: `压力快照失败: ${(err as Error).message}` };
+    }
+
     res.status(overallOk ? 200 : 503).json({
       ok: overallOk,
+      degraded: pressure?.degraded ?? false,
       checks,
+      pressure,
       timestamp: new Date().toISOString(),
     });
   });
@@ -2200,6 +2292,9 @@ export function createServer(deps: ServerDeps): express.Express {
 
     res.once('finish', () => {
       completeActiveRequest();
+      // 路由可声明本次请求不值得落 HTTP 日志（2026-09-08：webhook CI 噪声廉价 ack，
+      // 每条都写 Mongo 是宿主过载的一部分）。active 表照常收尾。
+      if (res.locals.cdsSkipHttpLog === true) return;
       const status = res.statusCode || 0;
       const capturedReqBody = requestCapture.snapshot(req.headers['content-type']);
       const parsedReqBody = suppressPreviewBody ? {} : bodyPreviewFromUnknown(req.body, req.headers['content-type']);
@@ -2597,6 +2692,8 @@ export function createServer(deps: ServerDeps): express.Express {
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
       // E6 验收报告匿名分享：`/r/:token` 由 token 自鉴权（不可枚举随机串），公开只读。
       if (req.method === 'GET' && /^\/r\/[^/]+$/.test(req.path)) return next();
+      // 公开状态页 `/s/:token`：同款 token 自鉴权，公开只读的 SPA 入口。
+      if (req.method === 'GET' && /^\/s\/[a-f0-9]{32}$/.test(req.path)) return next();
       // 验收报告图片资源：name 为内容寻址 sha256+扩展名（不可枚举），公开只读，
       // 供跨源（如 MAP 知识库）渲染报告时直接加载正文里的截图。
       if (req.method === 'GET' && req.path.startsWith('/api/reports/assets/')) return next();
@@ -4308,6 +4405,20 @@ export function createServer(deps: ServerDeps): express.Express {
     shell: deps.shell,
     assertProjectAccess: assertProjectAccess as any,
   }));
+  // 项目级数据库隔离（BuildProfile.dbScope 的项目设置入口 + 原子批量写，2026-09-02）
+  app.use('/api', createProjectDbIsolationRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  app.use('/api', createDbProbeRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+  }));
+  app.use('/api', createDbLedgerRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    repoRoot: deps.config.repoRoot,
+  }));
   // Cache diagnostics / repair / cross-server migration.
   // See routes/cache.ts for why this exists (挂载失效诊断 + 换机器预热).
   app.use('/api', createCacheRouter({ stateService: deps.stateService, shell: deps.shell }));
@@ -4666,6 +4777,19 @@ export function createServer(deps: ServerDeps): express.Express {
     dispatchVersion,
     getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
     rootDomains: deps.config.rootDomains || [],
+  }));
+
+  app.use('/api', createTopologyRouter({
+    stateService: deps.stateService,
+    assertProjectAccess: assertProjectAccess as any,
+    getPublishedRoutes: deps.getPublishedRoutes,
+    envConfig: { jwtIssuer: deps.config.jwt.issuer, previewHost: deps.config.previewDomain || deps.config.rootDomains?.[0] },
+    // 与复制集 isRemoteBranch 同口径：注册表查不到时保守视为远端
+    isRemoteExecutorBranch: (branch) => {
+      if (!isRemoteExecutorOwned(branch.executorId)) return false;
+      const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
+      return !node || node.role !== 'embedded';
+    },
   }));
 
   app.use('/api', createManagedProjectsRouter({

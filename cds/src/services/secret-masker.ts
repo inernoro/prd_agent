@@ -128,7 +128,12 @@ export function maskSecrets(input: string | null | undefined, opts: { mask?: boo
   if (opts.mask === false) return text;
   if (!text) return text;
 
-  const lines = text.split('\n');
+  // Multi-line blocks first (#1448): a PEM private key body spans ~27 lines and
+  // only the BEGIN line carries a `KEY=` prefix, so the line-mode pass below
+  // masks the header and leaks every following line of the key body. Replace
+  // the whole BEGIN..END span before splitting; an unterminated block (output
+  // truncated by maxBuffer / timeout) is masked through to end of text.
+  const lines = text.replace(PEM_PRIVATE_KEY_BLOCK, '***[masked]***').split('\n');
   const out: string[] = [];
   for (const line of lines) {
     out.push(maskLine(line));
@@ -308,6 +313,12 @@ const CONN_STRING_WITH_PASSWORD = /(^|;)\s*(password|pwd)\s*=[^;]/i;
  * so commit SHAs (40-hex), account ids (32-hex), and long public ids are never
  * caught — only unambiguous vendor secret shapes.
  */
+// Whole PEM private-key span (BEGIN header through matching END footer, or to
+// end of text when the footer never arrives). Covers RSA / EC / OPENSSH /
+// ENCRYPTED / PKCS#8 headers via the optional `[A-Z ]+ ` label.
+const PEM_PRIVATE_KEY_BLOCK =
+  /-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----[\s\S]*?(?:-----END (?:[A-Z ]+ )?PRIVATE KEY-----|$)/g;
+
 const SECRET_VALUE_PATTERNS: RegExp[] = [
   /\bghp_[A-Za-z0-9]{20,}/, // GitHub PAT (classic)
   /\bgithub_pat_[A-Za-z0-9_]{20,}/, // GitHub fine-grained PAT

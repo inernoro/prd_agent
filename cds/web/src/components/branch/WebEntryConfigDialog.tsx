@@ -355,23 +355,23 @@ export function WebEntryConfigDialog({
               <div key={row.serviceId} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/30 p-3">
                 <div className="mb-2 flex flex-wrap items-center gap-2">
                   <span className="text-sm font-semibold text-foreground">{service?.serviceName || row.serviceId}</span>
-                  <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                  <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">
                     {row.serviceId}
                   </span>
                   {service?.containerPort ? (
-                    <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                    <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">
                       容器端口 {service.containerPort}
                     </span>
                   ) : null}
                   {service?.origin === 'branch' ? (
-                    <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[10px] text-muted-foreground">分支临时服务</span>
+                    <span className="rounded bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">分支临时服务</span>
                   ) : null}
                   {service?.branchOverride ? (
-                    <span className="rounded border border-warn/40 px-1.5 py-0.5 text-[10px] text-warn">当前值来自本分支覆盖</span>
+                    <span className="rounded border border-warn/40 px-1.5 py-0.5 text-[0.625rem] text-warn">当前值来自本分支覆盖</span>
                   ) : null}
                   {/* primary 由 compose 声明、本表单不编辑，标出来是让用户知道改名不会换掉主入口 */}
                   {service?.effective.primary ? (
-                    <span className="rounded border border-ok/40 px-1.5 py-0.5 text-[10px] text-ok">主入口</span>
+                    <span className="rounded border border-ok/40 px-1.5 py-0.5 text-[0.625rem] text-ok">主入口</span>
                   ) : null}
                   <Button
                     variant="ghost"
@@ -398,7 +398,7 @@ export function WebEntryConfigDialog({
                       placeholder={service?.handlesRoot ? '可留空（主应用走主域名）' : 'llmgw'}
                     />
                     {service?.handlesRoot && row.subdomain ? (
-                      <div className="mt-1 text-[11px] text-muted-foreground">
+                      <div className="mt-1 text-[0.6875rem] text-muted-foreground">
                         主应用入口仍走主域名；这个子域会额外发一条命名路由
                       </div>
                     ) : null}
@@ -469,7 +469,7 @@ export function WebEntryConfigDialog({
               {remainingServices.map((s) => (
                 <Button key={s.serviceId} variant="outline" size="sm" onClick={() => addRow(s.serviceId)}>
                   {s.serviceName || s.serviceId}
-                  {s.containerPort ? <span className="ml-1 font-mono text-[10px] text-muted-foreground">:{s.containerPort}</span> : null}
+                  {s.containerPort ? <span className="ml-1 font-mono text-[0.625rem] text-muted-foreground">:{s.containerPort}</span> : null}
                 </Button>
               ))}
             </div>

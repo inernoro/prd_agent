@@ -26,6 +26,7 @@ import type { Socket } from 'node:net';
 import type { ProxyStats, RouteRecord } from './types.js';
 import { buildWidgetScript } from '../widget-script.js';
 import { buildForwarderWaitingPageHtml } from './waiting-page.js';
+import { PROBE_MARKER_HEADER } from '../services/probe-marker.js';
 import {
   classifyHttpRequestKind,
   createBodyCapture,
@@ -233,6 +234,25 @@ export class ProxyHandler {
       route = masterRoute;
     }
 
+    // 服务没在跑（building / starting / error）时不把请求打到死端口（plan.cds.service-relations 第二批）：
+    // 转给 master 让它按分支与服务状态出等待页 / 错误页。此前默认站重建期间用户看到的是上游错误，
+    // 或被发布器塞给碰巧在跑的另一个服务。healthState 缺省（老路由表 / 测试桩）按 running 对待。
+    if (route && route.healthState && route.healthState !== 'running'
+      && this.opts.unknownHostFallbackHost && this.opts.unknownHostFallbackPort) {
+      this.opts.logger?.info?.(
+        `[forward] ${req.method ?? 'GET'} ${req.url ?? '/'} → route ${route._id} 上游 ${route.healthState}，转 master 等待页`,
+      );
+      route = {
+        _id: 'master-service-waiting',
+        host: 'master',
+        upstreamHost: this.opts.unknownHostFallbackHost,
+        upstreamPort: this.opts.unknownHostFallbackPort,
+        weight: 100,
+        preserveHost: true,
+        profileId: route.profileId,
+      };
+    }
+
     if (!route) {
       // Unknown host fallback:转给 master worker proxy(5500),保留原 Host
       // 让 master.ProxyService.handleRequest 自己 detectBranch + serveStartingPageV2
@@ -377,6 +397,10 @@ export class ProxyHandler {
       if (v == null) continue;
       fwdHeaders[k] = v as string | string[];
     }
+    // 存活监控的探测令牌只给 CDS 自己看，不能带进分支容器（容器里的代码拿到它
+    // 就能回放到 master 代理上豁免 LRU）。master 的 ProxyService 会抹，这条数据面
+    // 直连容器的路也必须抹（Codex PR #1514 第三轮 P2）。
+    delete fwdHeaders[PROBE_MARKER_HEADER];
     // Hop-by-hop headers belong to the client↔forwarder connection and must
     // not be replayed upstream, otherwise a browser/client `Connection: close`
     // disables the forwarder's keepalive agent and defeats socket reuse.
@@ -469,6 +493,12 @@ export class ProxyHandler {
           respHeaders['x-cds-upstream'] = `${upstreamHost}:${upstreamPort}`;
           if (route.branchId) respHeaders['x-cds-branch'] = route.branchId;
           if (route._id) respHeaders['x-cds-route-id'] = route._id;
+          // 判定来源与落点服务（plan.cds.service-relations 第二批）：下次再出现「A 入口进 B 端口」，
+          // 一眼分清是转发器路由表选的，还是回落 master 兜底选的，落到了哪个服务。
+          // master 兜底路由的 host 占位都是 'master'（unknown-host / service-waiting / passthrough）
+          respHeaders['x-cds-resolver'] = route.host === 'master' ? 'master-fallback' : 'forwarder';
+          if (route.profileId) respHeaders['x-cds-profile'] = route.profileId;
+          else delete respHeaders['x-cds-profile'];
           // 副本身份头以**路由**为唯一权威（Codex 第二十四轮 P2）：respHeaders 从
           // 上游响应展开，应用/历史版本若自己发 X-CDS-Replica* 会盖掉 forwarder-main
           // 在代理前 setHeader 的可信值——分流探测统计的就成了应用伪造的落点。
@@ -709,6 +739,7 @@ export class ProxyHandler {
     for (const [k, v] of Object.entries(req.headers)) {
       if (v != null) fwdHeaders[k] = v as string | string[];
     }
+    delete fwdHeaders[PROBE_MARKER_HEADER]; // 同 handle()：探测令牌不进容器
     if (extraHeadersUp) {
       for (const [k, v] of Object.entries(extraHeadersUp)) fwdHeaders[k] = v;
     }

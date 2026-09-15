@@ -64,6 +64,7 @@ import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingInline, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
 
 const PROJECT_DOCK_BASE_SIZE = 56;
 const PROJECT_DOCK_MAGNIFIED_SIZE = 68;
@@ -113,6 +114,8 @@ interface ProjectSummary {
   pausedAt?: string | null;
   pauseReason?: string | null;
   resourceUsage?: ProjectResourceUsage | null;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 interface ProjectResourceUsage {
@@ -454,6 +457,11 @@ export function ProjectListPage(): JSX.Element {
   const lastKnownGoodProjectsRef = useRef<ProjectSummary[]>([]);
   const [toast, setToast] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  /** 建项目时填了个已被绑走的仓库：项目建好了但没绑上，这里当场问清楚。 */
+  const [repoSharePrompt, setRepoSharePrompt] = useState<
+    /** pendingClone：这个项目还没 clone，等用户对冲突拿定主意再开始 */
+    { project: ProjectSummary; info: RepoAlreadyLinked; pendingClone: ProjectSummary | null } | null
+  >(null);
   const [createAutoPickRepo, setCreateAutoPickRepo] = useState(false);
   const [sandboxOpen, setSandboxOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null);
@@ -625,14 +633,26 @@ export function ProjectListPage(): JSX.Element {
     }
     setQuickCreating(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: { name, gitRepoUrl },
       });
       setQuickRepoUrl('');
       setToast(`已创建 ${displayName(res.project)}`);
-      if (res.project.cloneStatus === 'pending') setCloneTarget(res.project);
+      const needsClone = res.project.cloneStatus === 'pending';
+      // 有冲突就先别开始 clone —— 见下面那条注释与完整表单里的同一处判断。
+      if (needsClone && !res.repoAlreadyLinked) setCloneTarget(res.project);
       await refresh(false);
+      // 顶栏这条是建项目的**主**路径，撞上已被绑走的仓库同样要当场问清楚。
+      // 只在完整表单里处理会让主路径静默建出一个没绑仓库的项目，
+      // 而用户看到的是「已创建」，之后推送永远到不了它（Codex P1）。
+      if (res.repoAlreadyLinked) {
+        setRepoSharePrompt({
+          project: res.project,
+          info: res.repoAlreadyLinked,
+          pendingClone: needsClone ? res.project : null,
+        });
+      }
     } catch (err) {
       setToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -835,12 +855,83 @@ export function ProjectListPage(): JSX.Element {
             if (!next) setCreateAutoPickRepo(false);
           }}
           autoOpenPicker={createAutoPickRepo}
-          onCreated={async (project) => {
+          onCreated={async (project, repoAlreadyLinked) => {
             setToast(`已创建 ${displayName(project)}`);
-            if (project.cloneStatus === 'pending') setCloneTarget(project);
+            // 有冲突就先别开始 clone —— 让用户先回答「是要共用还是填错了」。
+            // clone 会顺手做自动配置，而私有仓库这时还没拿到共享的 GitHub App
+            // 绑定，拉取本来就可能失败（2026-09-02 Codex P1）。
+            if (project.cloneStatus === 'pending' && !repoAlreadyLinked) setCloneTarget(project);
             await refresh(false);
           }}
+          onRepoAlreadyLinked={(project, info) => setRepoSharePrompt({
+            project,
+            info,
+            pendingClone: project.cloneStatus === 'pending' ? project : null,
+          })}
         />
+
+        {/*
+         * 建项目时填了一个已被绑走的仓库：项目建好了、仓库没绑上。默认不绑是对的
+         * （绝大多数是填错地址），但绝不能不说 —— 用户会一直等一个永远不会来的
+         * 自动部署。所以在这里当场问清楚是哪一种。
+         */}
+        <Dialog
+          open={repoSharePrompt !== null}
+          onOpenChange={(next) => { if (!next) setRepoSharePrompt(null); }}
+        >
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>仓库没有绑上</DialogTitle>
+              <DialogDescription>
+                {displayName(repoSharePrompt?.project || ({} as ProjectSummary))} 已创建，但仓库没有绑定。
+              </DialogDescription>
+            </DialogHeader>
+            {repoSharePrompt ? (
+              <>
+                <RepoSharingConfirmBody
+                  repoFullName={repoSharePrompt.info.repoFullName}
+                  siblings={repoSharePrompt.info.projects}
+                  siblingCount={repoSharePrompt.info.projectCount}
+                />
+                {/* 两条出口各自会发生什么，先说清楚，别让用户点完才猜 */}
+                <p className="text-xs text-muted-foreground">
+                  {repoSharePrompt.pendingClone
+                    ? '选「填错了」就先不克隆这个仓库，项目留在未克隆状态，可以在项目卡上重新开始或直接删掉；选「去绑定」会先把仓库绑上，绑好再克隆。'
+                    : '选「填错了」只是不绑仓库，项目本身保持不变。'}
+                </p>
+              </>
+            ) : null}
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => {
+                  /*
+                   * 「填错了」就是说这个仓库地址不对 —— 那就更不该去拉它
+                   * （2026-09-02 Codex P2）。上一版把推迟的 clone 接在这条出口上，
+                   * 等于用户刚说完「填错了」，系统立刻开始克隆并自动配置那个错仓库。
+                   * 这里只关掉弹窗；项目留在未克隆状态，用户可以在项目卡上改地址、
+                   * 手动开始克隆，或者直接删掉重来。
+                   */
+                  setRepoSharePrompt(null);
+                }}
+              >
+                填错了，先不绑
+              </Button>
+              <Button
+                onClick={() => {
+                  // 去绑定：先把仓库绑上再 clone —— 私有仓库的拉取凭据正是从那个
+                  // 绑定来的，反过来先拉多半会失败。clone 入口在项目卡上，绑完
+                  // 随时可以点。
+                  const target = repoSharePrompt?.project.id;
+                  setRepoSharePrompt(null);
+                  if (target) navigate(`/settings/${encodeURIComponent(target)}#github`);
+                }}
+              >
+                去绑定，确认共用
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
         <SandboxProjectDialog
           open={sandboxOpen}
           onOpenChange={setSandboxOpen}
@@ -1376,7 +1467,7 @@ function ProjectListSkeleton(): JSX.Element {
           label="加载项目列表"
           size="sm"
           mineral="iris"
-          className="text-[13px] font-medium text-muted-foreground"
+          className="text-[0.8125rem] font-medium text-muted-foreground"
         />
       </div>
       <div className="cds-card-grid">
@@ -1386,13 +1477,13 @@ function ProjectListSkeleton(): JSX.Element {
             className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
             <header className="px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-[18px]" style={{ width }} />
+              <div className="cds-loading-skeleton-line h-[1.125rem]" style={{ width }} />
             </header>
             <div
-              className="relative mx-3 my-3 h-[220px] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
+              className="relative mx-3 my-3 h-[13.75rem] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
               style={{
                 backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-                backgroundSize: '14px 14px',
+                backgroundSize: '0.875rem 0.875rem',
               }}
             >
               <div className="absolute inset-0 flex items-center justify-center gap-2.5">
@@ -1929,9 +2020,9 @@ function ProjectCard({
          * 给标题行留出让位的右内边距，其余状态维持原样不浪费横向空间。
          */}
         <header className={`flex items-start justify-between gap-3 px-5 pt-5 ${paused ? 'pr-[13.5rem]' : ''}`}>
-          <h2 className="min-w-0 truncate text-[17px] font-semibold tracking-tight">{title}</h2>
+          <h2 className="min-w-0 truncate text-[1.0625rem] font-semibold tracking-tight">{title}</h2>
           {!isReady && cloneLabel ? (
-            <span className="shrink-0 rounded border border-warn/30 bg-warn-soft px-2 py-0.5 text-[11px] font-medium text-warn">
+            <span className="shrink-0 rounded border border-warn/30 bg-warn-soft px-2 py-0.5 text-[0.6875rem] font-medium text-warn">
               {cloneLabel}
             </span>
           ) : null}
@@ -1940,15 +2031,15 @@ function ProjectCard({
         {/* Dot-grid canvas with tech-stack glyphs — gives the tile its
             "workspace" weight, mirroring Railway's project tiles. */}
         <div
-          className="relative mx-3 my-3 flex h-[220px] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
+          className="relative mx-3 my-3 flex h-[13.75rem] items-center justify-center overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4"
           style={{
             backgroundImage:
               'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-            backgroundSize: '14px 14px',
+            backgroundSize: '0.875rem 0.875rem',
             backgroundPosition: '0 0',
           }}
         >
-          <div className="flex w-full max-w-[430px] flex-col items-center pb-8">
+          <div className="flex w-full max-w-[26.875rem] flex-col items-center pb-8">
             <motion.div
               className="cds-project-node-row flex flex-nowrap items-center justify-center"
               onMouseMove={(event) => dockMouseX.set(event.clientX)}
@@ -1979,7 +2070,7 @@ function ProjectCard({
               {hiddenStackBrandCount > 0 ? (
                 <ProjectDockNode
                   mouseX={dockMouseX}
-                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[12px] font-semibold text-muted-foreground shadow-sm"
+                  className="cds-project-node flex items-center justify-center border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/80 text-[0.75rem] font-semibold text-muted-foreground shadow-sm"
                   title={`另有 ${hiddenStackBrandCount} 个技术栈`}
                   ariaLabel={`另有 ${hiddenStackBrandCount} 个技术栈`}
                 >
@@ -1988,7 +2079,7 @@ function ProjectCard({
               ) : null}
             </motion.div>
 
-            <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[13px] text-muted-foreground">
+            <div className="absolute bottom-4 left-4 right-4 flex min-w-0 items-center gap-2 text-[0.8125rem] text-muted-foreground">
               {/* On phones the meta row is width-constrained — hide the static
                   "production" prefix so live status / online count / CPU don't
                   get clipped (mobile-layout-fallback.md). Desktop keeps it. */}
@@ -2032,13 +2123,23 @@ function ProjectCard({
 
       </a>
 
+      {/*
+       * 同仓关系放在整块链接**之外**：兄弟项目名本身要能点，而卡片整体已经是
+       * 一个 <a>，套嵌 <a> 是非法结构，点击行为也会打架。
+       */}
+      {project.repoSharing ? (
+        <div className="border-t border-[hsl(var(--hairline))] px-5 py-2">
+          <RepoSharingInline sharing={project.repoSharing} selfId={project.id} />
+        </div>
+      ) : null}
+
       <div
         className={`pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1 transition-opacity duration-150 ${
           paused ? 'opacity-100' : 'opacity-0 group-focus-within:opacity-100 group-hover:opacity-100'
         }`}
       >
         {paused ? (
-          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[11px] font-semibold text-warn shadow-sm backdrop-blur">
+          <span className="pointer-events-none mr-0.5 inline-flex items-center gap-1 rounded-md border border-warn/40 bg-warn-soft px-2 py-1 text-[0.6875rem] font-semibold text-warn shadow-sm backdrop-blur">
             <Pause className="h-3 w-3" aria-hidden />
             已暂停
           </span>
@@ -2931,15 +3032,30 @@ function AgentKeyRevokeDialog({
   );
 }
 
+interface RepoAlreadyLinked {
+  repoFullName: string;
+  /** 兄弟项目明细。机器凭据拿不到，所以可能是空数组——用 projectCount 兜底显示。 */
+  projects: Array<{ id: string; name: string; scoped?: boolean }>;
+  projectCount: number;
+}
+
+interface CreateProjectResponse {
+  project: ProjectSummary;
+  /** 仓库已被别的项目绑走：本项目**没有**绑上，界面要当场说清楚。 */
+  repoAlreadyLinked?: RepoAlreadyLinked;
+}
+
 function CreateProjectDialog({
   open,
   onOpenChange,
   onCreated,
+  onRepoAlreadyLinked,
   autoOpenPicker = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (project: ProjectSummary) => Promise<void>;
+  onCreated: (project: ProjectSummary, repoAlreadyLinked?: RepoAlreadyLinked) => Promise<void>;
+  onRepoAlreadyLinked?: (project: ProjectSummary, info: RepoAlreadyLinked) => void;
   autoOpenPicker?: boolean;
 }): JSX.Element {
   const [name, setName] = useState('');
@@ -3113,7 +3229,7 @@ function CreateProjectDialog({
     }
     setSubmitting(true);
     try {
-      const res = await apiRequest<{ project: ProjectSummary }>('/api/projects', {
+      const res = await apiRequest<CreateProjectResponse>('/api/projects', {
         method: 'POST',
         body: {
           name: trimmedName,
@@ -3147,7 +3263,14 @@ function CreateProjectDialog({
       setAppServices(defaultOnboardingServices());
       setSelectedInfra([]);
       onOpenChange(false);
-      await onCreated(res.project);
+      // 冲突信息与项目一起交出去：父组件要据此决定「现在就开始 clone」还是
+      // 「等用户拿定主意再开始」——先开 clone 再问，用户还没回答，仓库已经在
+      // 拉了（2026-09-02 Codex P1）。
+      await onCreated(res.project, res.repoAlreadyLinked);
+      // 仓库已被别的项目绑走时，项目建好了但**仓库没绑上**（后端默认不绑，因为
+      // 绝大多数是填错了地址）。这件事必须当场说，否则用户会以为绑好了，直到
+      // 第一次 push 什么都没发生才发现。
+      if (res.repoAlreadyLinked) onRepoAlreadyLinked?.(res.project, res.repoAlreadyLinked);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -3305,7 +3428,7 @@ function CreateProjectDialog({
                       </label>
                       <div className="mt-2 text-xs leading-5 text-muted-foreground">{preset.description}</div>
                       {editableRuntime ? (
-                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_110px]">
+                        <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_6.875rem]">
                           <label className="block space-y-1.5">
                             <span className="text-xs font-medium text-muted-foreground">Docker 镜像</span>
                             <input
@@ -3337,7 +3460,7 @@ function CreateProjectDialog({
                               disabled={!service.enabled}
                               placeholder={preset.command || '填写容器启动命令'}
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               按所选运行时给的最佳努力默认，可直接改；想完全交给仓库识别就把运行环境选「自动识别」。
                             </span>
                           </label>
@@ -3441,7 +3564,7 @@ function CreateProjectDialog({
                               onChange={(event) => setInfraConfigField(preset.id, 'dbName', event.target.value)}
                               placeholder="app（默认）"
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               会写入容器初始化变量并拼进连接串（如 {preset.connectionEnvKeys[0] || 'DATABASE_URL'}）。
                             </span>
                           </label>
@@ -3455,7 +3578,7 @@ function CreateProjectDialog({
                               onChange={(event) => setInfraConfigField(preset.id, 'initSql', event.target.value)}
                               placeholder={'自动识别失败时再填，例如 CREATE TABLE items (id serial primary key, name text);'}
                             />
-                            <span className="block text-[11px] leading-4 text-muted-foreground">
+                            <span className="block text-[0.6875rem] leading-4 text-muted-foreground">
                               普通部署优先使用仓库扫描出的 Prisma / Django / Alembic / schema.sql 推荐方式；这里仅作为高级兜底，保存后可在拓扑页数据面板执行。
                             </span>
                           </label>
@@ -3894,7 +4017,7 @@ function GithubRepoPickerDialog({
                 没有匹配的仓库。
               </div>
             ) : (
-              <div className="max-h-[420px] space-y-2 overflow-y-auto pr-1">
+              <div className="max-h-[26.25rem] space-y-2 overflow-y-auto pr-1">
                 {visibleRepos.map((repo) => (
                   <button
                     key={repo.id}
@@ -4219,7 +4342,7 @@ function ResourceUsageDialog({
                         <div className="flex items-center gap-2">
                           <span className="truncate font-medium">{row.name}</span>
                           {row.paused ? (
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[10px] font-medium text-warn">
+                            <span className="inline-flex shrink-0 items-center gap-1 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] font-medium text-warn">
                               <Pause className="h-2.5 w-2.5" aria-hidden /> 已暂停
                             </span>
                           ) : null}

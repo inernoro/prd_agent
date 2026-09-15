@@ -189,3 +189,7 @@ GitHub App 授权也不是项目运行变量。
 - [GitHub App 接入](guide.cds.github-app.md)
 - [双层认证诊断](guide.cds.ai-auth.md)
 - [部署方式选择](guide.cds.deploy-three-paths.md)
+
+## 跨项目引用变量
+
+要调用别的项目的服务，不要手写它的预览域名。值里写 `${CDS_REF:项目/服务}`（可加 `@分支`），CDS 在部署时换成目标的公网入口，并在分支「配置 → 引用」分区显示目标现在活没活、可以切换指向哪条分支。手写的网址会被标为「建议改成引用变量」。

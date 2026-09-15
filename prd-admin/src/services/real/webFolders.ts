@@ -10,6 +10,7 @@ export type WebFolderGenerateTarget = 'web' | 'document-store';
 export interface WebFolder {
   id: string;
   name: string;
+  canonicalName: string;
   description?: string;
   sortOrder: number;
   generatorType: WebFolderGeneratorType;

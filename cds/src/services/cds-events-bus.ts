@@ -221,7 +221,7 @@ const CDS_EVENT_NOTICE_COPY: Record<CdsEventType, CdsEventNoticeCopy | null> = {
   'release.drift-cleared': null,
   'release.schedule.approval-required': { title: '定时发布待人工确认', source: 'release', level: 'warning', link: 'release', actionLabel: '前往发布中心' },
   'release.schedule.disabled': { title: '定时发布已自动停用', source: 'release', level: 'danger', link: 'release', actionLabel: '查看发布中心' },
-  'uptime.target.down': { title: '生产服务健康掉线', source: 'uptime', level: 'danger', link: 'status', actionLabel: '查看状态页' },
+  'uptime.target.down': { title: '监控目标健康掉线', source: 'uptime', level: 'danger', link: 'status', actionLabel: '打开监控中心' },
   'uptime.target.recovered': null,
   'notice.created': null,
   heartbeat: null,

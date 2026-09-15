@@ -82,7 +82,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 | 改动范围 | 必跑校验 |
 |----------|----------|
 | `prd-api/` `.cs` | `dotnet build --no-restore`（零 `error CS*`） |
-| `prd-admin/` `prd-desktop/` `.ts` `.tsx` | `pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警） |
+| `prd-admin/` `prd-desktop/` 前端源码 | `.ts` `.tsx`：`pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警）。改到 `.css` **另跑 `pnpm build`**——tsc/lint/vitest 一个都不解析 CSS（2026-08-30 tokens.css 多一个 `*/`，本地三样全绿、CI 构建炸、分支停 idle、预览 503） |
 | `llmgw/` | 见 `llmgw/AGENTS.md` 的模块校验表 |
 | 含测试的模块 | `pnpm test` / `dotnet test` 全绿 |
 | 本地缺 SDK | 走 `/cds-deploy` 远端编译，CDS 绿灯后才推送 |
@@ -199,7 +199,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ## 规则与技能
 
-- **架构规则** `.claude/rules/`：54 条，全体 Agent 共用。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
+- **架构规则** `.claude/rules/`：58 条，全体 Agent 共用。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
 - **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制，所以在此点名——
   - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
   - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。

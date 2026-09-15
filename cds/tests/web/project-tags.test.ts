@@ -143,8 +143,8 @@ describe('接线与配色', () => {
     expect(wrapperStart).toBeGreaterThan(0);
     // 名字可截断、标记不参与压缩，长名字不会把标记挤没；
     // 名字**不带 flex-1**——带了就会把标记顶到卡片最右边，那是另一列状态，不是名字的标签
-    expect(PAGE).toContain('min-w-0 truncate text-[13px] font-medium');
-    expect(PAGE).not.toContain('min-w-0 flex-1 truncate text-[13px] font-medium');
+    expect(PAGE).toContain('min-w-0 truncate text-[0.8125rem] font-medium');
+    expect(PAGE).not.toContain('min-w-0 flex-1 truncate text-[0.8125rem] font-medium');
     expect(PAGE).toContain('flex shrink-0 items-center gap-1');
   });
 

@@ -189,3 +189,34 @@ LLMGW 图片分层能力卡的「已验证」判据是：请求日志里存在�
 - 前端 PSD 组装与分层请求：`prd-admin/src/lib/layeredPsd.ts`
 - 图层归属与导出选层：`prd-admin/src/lib/semanticLayerFrame.ts`、`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx`
 - 网关侧能力判定与守卫：`llmgw/console-api/Provisioning/ImageLayeringCapabilityRules.cs`、`prd-api/tests/PrdAgent.Api.Tests/Gateway/ImageLayeringCapabilityRulesTests.cs`
+
+### 编辑器仍自带一份模型目录与尺寸联动，与首页各写各的
+
+2026-09-02 给首页工具行补模型选择器时，把「模型清单构建 → 查适配器拿可用尺寸 → 纠正当前尺寸」抽成了共享模块，首页走的是这一份。**编辑器没有跟着改**——它自己仍留着一份等价实现。
+
+不动它是当次的有意取舍：编辑器那份和智能兜底、严格模式、水印设置缠在一起，一并重构会让这个只为「首页看不到模型」而起的改动膨胀出好几倍，超出本次范围。
+
+代价是判据分裂：同一件事现在有两处实现，改一处忘一处就会漂移（比如尺寸纠正的排序口径，共享模块是「先比例后面积」，编辑器那份是另写的）。**下次动编辑器的模型或尺寸逻辑时，第一件事是把它切到共享模块**，而不是在原地再改一次。切完之后应补一条守卫，钉住这套判定只允许存在于共享模块里。
+
+两端目前靠两个共享存储位对齐：账号偏好 `visualAgentPreferences.modelId`（首页提交时写、编辑器挂载时读）和尺寸默认值的会话存储键。这两处是当前唯一的一致性来源，改动任一端都要确认另一端仍读得到。
+
+### 背景生成：跑到一半离开页面，那张图就找不回来了
+
+背景生成是服务端 run，前端只是轮询。用户在 40–60 秒里离开页面时，清理逻辑只中止了
+本地轮询，服务端仍然把图生完——但 `runId` 只活在 `generateBackdrop` 的调用栈里，
+没有落盘、重新进页面也不会去接。于是一张已经付过费的图既没进列表也没被取消，
+等于凭空消失（Codex PR #1476 P1）。
+
+要么把在跑的 runId 持久化、重进页面继续收；要么给它一条真正的服务端取消。
+现在这样「既不收也不取消」是两头不落地。本轮没做：它是一块功能（run 生命周期），
+不是当前 PR 目标（首页交接与画布落位）内的缺陷，硬塞进来会把这个 PR 撑成另一件事。
+
+同一处还有一条更小的：挑池成员时不看健康状态，默认池里若排在前面的成员不可用，
+每次背景生成都会失败——而模型目录是带健康状态的，视觉创作自己的选择器就按
+Healthy → Degraded 排。补的时候两条一起做。
+
+## 实现来源
+
+- 共享的模型清单与尺寸联动：`prd-admin/src/lib/visualModelSizes.ts`、`prd-admin/src/pages/ai-chat/visualAgentModelOptions.ts`
+- 编辑器里那份未切走的等价实现：`prd-admin/src/pages/ai-chat/AdvancedVisualAgentTab.tsx`
+- 背景生成的 run 轮询与挑池：`prd-admin/src/lib/backdropStudio.ts`

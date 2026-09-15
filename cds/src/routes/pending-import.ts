@@ -29,10 +29,12 @@
  */
 
 import { Router } from 'express';
+import { normalizeProjectProfileDependencies } from '../services/project-profile-dependencies.js';
 import { randomBytes } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { BuildProfile, InfraService, PendingImport } from '../types.js';
 import { parseCdsCompose } from '../services/compose-parser.js';
+import { lintComposeYaml } from '../services/topology-lint.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
@@ -238,6 +240,9 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       }
     } catch { /* parser already succeeded once above */ }
 
+    // 拓扑体检（plan.cds.service-relations 第一批）：提交时算好挂在记录上，审批页直接展示；
+    // error 级在审批时阻断（见 approve），提交本身不拒，让 Agent 能看到完整发现清单再改。
+    const lint = lintComposeYaml(composeYaml);
     const item: PendingImport = {
       id: newId(),
       projectId: project.id,
@@ -247,6 +252,7 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       summary,
       submittedAt: new Date().toISOString(),
       status: 'pending',
+      ...(lint ? { lint } : {}),
     };
     stateService.addPendingImport(item);
 
@@ -341,6 +347,17 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       return;
     }
 
+    // 体检 error 级阻断导入（已拍板：前缀冲突、探活前缀没有合法场景）。操作员可显式 force 放行。
+    const lint = lintComposeYaml(item.composeYaml);
+    const force = (req.body as { force?: boolean } | undefined)?.force === true;
+    if (lint && lint.summary.errors > 0 && !force) {
+      res.status(409).json({
+        error: 'topology_lint_blocked',
+        message: `拓扑体检有 ${lint.summary.errors} 个错误级问题，先按修法改 compose 再导入；确认要放行可带 force: true`,
+        lint,
+      });
+      return;
+    }
     const parsed = parseCdsCompose(item.composeYaml);
     if (!parsed) {
       res.status(400).json({
@@ -354,13 +371,14 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
     // the project slug so two projects can share "api" and "admin"
     // without colliding. This matches the /quickstart convention.
     const idSuffix = project.legacyFlag ? '' : `-${project.slug}`;
+    // depends_on / cds.calls 写的是 compose 服务名；id 加了项目后缀后由同一个助手对齐（与克隆导入、
+    // Quickstart 同一份规则），否则 `web` 调 `api` 会落成 `web-foo` 调不存在的 `api`，边被丢、服务被判游离。
+    const scopedProfiles: BuildProfile[] = normalizeProjectProfileDependencies(
+      (parsed.buildProfiles as BuildProfile[]).map((profile) => ({ ...profile, id: `${profile.id}${idSuffix}`, projectId: project.id })),
+      idSuffix,
+    );
     const appliedProfiles: string[] = [];
-    for (const profile of parsed.buildProfiles as BuildProfile[]) {
-      const scoped: BuildProfile = {
-        ...profile,
-        id: `${profile.id}${idSuffix}`,
-        projectId: project.id,
-      };
+    for (const scoped of scopedProfiles) {
       const existing = stateService.getBuildProfile(scoped.id);
       if (existing) {
         stateService.updateBuildProfile(scoped.id, scoped);

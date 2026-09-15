@@ -1,0 +1,20 @@
+[Unit]
+# CDS 托管工作负载 slice（2026-09-08 宿主过载复盘）。
+#
+# CDS 拉起的每个容器（分支 app / 共享 infra / 一次性构建 job）都通过
+# `docker run --cgroup-parent system-cdsworkloads.slice` 挂到这里。它是
+# system.slice 的子 slice，与 cds-master.service / cds-forwarder.service 同级
+# 竞争：空闲时容器照样用满整机（05-28「不给容器设上限」约定不变），争抢时
+# CDS 控制面按权重（1000 vs 100）先拿到 CPU 与磁盘 IO，不再和自己管的容器
+# 一起饿死。
+#
+# 安装：cds-master 启动时 systemd-sync 会自动写入 /etc/systemd/system/ 并
+# daemon-reload；`exec_cds.sh install-systemd` 也会一并拷贝。docker 必须用
+# systemd cgroup driver（`docker info -f '{{.CgroupDriver}}'`）本权重才生效。
+Description=CDS managed workload containers (branch previews, builds, infra)
+Documentation=file:///home/user/prd_agent/doc/design.cds.resilience.md
+Before=slices.target
+
+[Slice]
+CPUWeight=100
+IOWeight=100

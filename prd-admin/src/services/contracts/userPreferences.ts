@@ -1,3 +1,4 @@
+import type { AdminMenuItem } from '@/services/contracts/authz';
 import type { ApiResponse } from '@/types/api';
 import type { ThemeConfig } from '@/types/theme';
 
@@ -80,6 +81,8 @@ export type LiteraryAgentPreferences = {
 export type UserPreferences = {
   navOrder: string[];
   navHidden: string[];
+  /** 服务端是否明确持有过导航布局（空数组 + true = 被主动清空，前端不得用本地缓存回填） */
+  navLayoutSynced?: boolean;
   defaultNavOrder: string[];
   defaultNavHidden: string[];
   themeConfig?: ThemeConfigResponse;
@@ -127,3 +130,42 @@ export type UpdateDefaultNavLayoutContract = (payload: {
 }) => Promise<ApiResponse<DefaultNavLayout>>;
 
 export type ApplyDefaultNavToAllUsersContract = () => Promise<ApiResponse<ApplyDefaultNavToAllUsersResult>>;
+
+/** 全员导航总览里的一行：一个真人用户 + 他当前生效的个人导航 */
+export type UserNavLayoutItem = {
+  userId: string;
+  username: string;
+  displayName: string;
+  role: string;
+  status: string;
+  /** navOrder 或 navHidden 任一非空即为自定义过 */
+  customized: boolean;
+  navOrder: string[];
+  navHidden: string[];
+  updatedAt?: string | null;
+};
+
+export type UserNavLayoutsResult = {
+  items: UserNavLayoutItem[];
+  totalCount: number;
+  customizedCount: number;
+  /** 全量菜单目录（服务端不按调用者权限过滤），总览用它判「已下线」与复演侧栏自动补齐 */
+  catalog: AdminMenuItem[];
+};
+
+export type GetUserNavLayoutsContract = () => Promise<ApiResponse<UserNavLayoutsResult>>;
+
+/** 清空某个用户的个人导航，让其回退到「所有人的默认导航」 */
+export type ResetUserNavLayoutContract = (userId: string) => Promise<ApiResponse<UserNavLayoutItem>>;
+
+export type RemoveNavTokensResult = {
+  tokens: string[];
+  defaultRemovedCount: number;
+  defaultNavOrder: string[];
+  defaultNavHidden: string[];
+  usersMatchedCount: number;
+  usersModifiedCount: number;
+};
+
+/** 从所有人的默认导航 + 全部用户的个人导航里拔掉指定 token（菜单下线后的清理），不重置任何人的顺序 */
+export type RemoveNavTokensContract = (tokens: string[]) => Promise<ApiResponse<RemoveNavTokensResult>>;

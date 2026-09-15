@@ -87,6 +87,22 @@ public class ImageGenRun
     public bool CancelRequested { get; set; }
 
     /// <summary>
+    /// 整条 run 被拒时的错误码（如 VISUAL_MODEL_NOT_ALLOWED / INVALID_FORMAT）。
+    ///
+    /// 逐张失败有 ImageGenRunItem.ErrorCode 兜着，但「入队之后、还没排出任何一张就被驳回」
+    /// 这一类（模型被下架、items 不合法、超出单次上限、服务停机）一张 item 都不会建 ——
+    /// 原来这条信息只发进 Redis 事件流，靠轮询 runs/{runId} 的调用方（智能体走的就是这条）
+    /// 只能看到一个 Failed 加一个空 images 数组，既不知道为什么，也不知道下一步该做什么。
+    /// 落库才补得上这个洞：事件流是给盯着 SSE 的人看的，不是给轮询的人看的。
+    /// </summary>
+    public string? ErrorCode { get; set; }
+
+    /// <summary>
+    /// 整条 run 被拒时的原因。可能来自异常消息，对外必须先过一遍脱敏再回给调用方。
+    /// </summary>
+    public string? ErrorMessage { get; set; }
+
+    /// <summary>
     /// 用于 SSE afterSeq 续传的单调递增序号（由服务端原子递增）。
     /// </summary>
     public long LastSeq { get; set; }

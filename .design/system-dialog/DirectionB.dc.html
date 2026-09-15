@@ -1,0 +1,243 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600&family=Inter:wght@400;500;600;650&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Inter', -apple-system, 'PingFang SC', sans-serif; }
+    a { color: #D97757; } a:hover { color: #E8A87C; }
+    .sd-h1 { font-family: 'Space Grotesk', 'Inter', sans-serif; font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+    .sd-eyebrow { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
+    .sd-lede { font-size: 13px; line-height: 1.7; margin: 10px 0 0; max-width: 860px; }
+    .sd-colhead { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; }
+    .sd-spec td { padding: 7px 14px 7px 0; font-size: 12px; vertical-align: top; line-height: 1.6; }
+    .sd-spec td:first-child { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; }
+    .sd-kind { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: .2em; text-transform: uppercase; }
+  </style>
+</helmet>
+
+<div style="padding: 40px; background: #101014; color: #f7f7fb; min-height: 1180px; box-sizing: border-box;">
+
+  <div style="display: flex; align-items: baseline; gap: 14px;">
+    <span class="sd-eyebrow" style="color: #E8A87C;">方向 B</span>
+    <h1 class="sd-h1">印样条</h1>
+  </div>
+  <p class="sd-lede" style="color: rgba(247,247,251,0.68);">
+    弹窗是印样纸上的一格：左边一条齿孔边、右上一枚套准十字、类型用小号等宽标在顶上。
+    尺寸规格和方向 A 完全一样，差别只在这三处标记——它们让弹窗属于这个产品，而不是任何产品。
+  </p>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px; margin-top: 30px;">
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div class="sd-colhead" style="color: rgba(247,247,251,0.45);">暗色 · 默认</div>
+
+      <!-- ALERT -->
+      <div style="display: flex; border-radius: 8px; background: rgba(30,30,36,0.90); border: 1px solid rgba(255,255,255,0.12); box-shadow: inset 0 1px 0 rgba(255,236,222,0.13), 0 10px 34px rgba(0,0,0,0.30); overflow: hidden;">
+        <div style="width: 16px; flex: 0 0 16px; background: rgba(255,255,255,0.03); display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 9px 0;">
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+        </div>
+        <div style="flex: 1 1 auto; min-width: 0;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px 0;">
+            <div>
+              <div class="sd-kind" style="color: rgba(247,247,251,0.42);">Notice</div>
+              <div style="margin-top: 4px; font-size: 13px; font-weight: 650; color: #f7f7fb;">平台密钥自检失败</div>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,236,222,0.22)" stroke-width="1.2" style="flex: 0 0 auto; margin-top: 1px;">
+              <circle cx="12" cy="12" r="6"/><path d="M12 2v20M2 12h20"/>
+            </svg>
+          </div>
+          <div style="padding: 8px 14px 14px; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68);">
+            有 2 个平台的 API key 解密失败，模型池会跳过它们继续调度。多半是签名密钥轮换后存量密文没有一起迁移，去「模型平台」重新填一次密钥即可。
+          </div>
+          <div style="display: flex; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.08);">
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #f7f7fb; color: #141418;">知道了</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONFIRM -->
+      <div style="display: flex; border-radius: 8px; background: rgba(30,30,36,0.90); border: 1px solid rgba(255,255,255,0.12); box-shadow: inset 0 1px 0 rgba(255,236,222,0.13), 0 10px 34px rgba(0,0,0,0.30); overflow: hidden;">
+        <div style="width: 16px; flex: 0 0 16px; background: rgba(185,28,28,0.16); display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 9px 0;">
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(252,165,165,0.42);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(252,165,165,0.42);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(252,165,165,0.42);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(252,165,165,0.42);"></span>
+        </div>
+        <div style="flex: 1 1 auto; min-width: 0;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px 0;">
+            <div>
+              <div class="sd-kind" style="color: #fca5a5;">Destructive</div>
+              <div style="margin-top: 4px; font-size: 13px; font-weight: 650; color: #f7f7fb;">确认删除</div>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(252,165,165,0.34)" stroke-width="1.2" style="flex: 0 0 auto; margin-top: 1px;">
+              <circle cx="12" cy="12" r="6"/><path d="M12 2v20M2 12h20"/>
+            </svg>
+          </div>
+          <div style="padding: 8px 14px 14px; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68);">
+            删除后不可恢复，项目「白桃」下的 12 张图会一并移除。
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.08);">
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(247,247,251,0.80); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);">取消</div>
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #b91c1c; color: #fff;">删除</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROMPT -->
+      <div style="display: flex; border-radius: 8px; background: rgba(30,30,36,0.90); border: 1px solid rgba(255,255,255,0.12); box-shadow: inset 0 1px 0 rgba(255,236,222,0.13), 0 10px 34px rgba(0,0,0,0.30); overflow: hidden;">
+        <div style="width: 16px; flex: 0 0 16px; background: rgba(255,255,255,0.03); display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 9px 0;">
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(255,236,222,0.16);"></span>
+        </div>
+        <div style="flex: 1 1 auto; min-width: 0;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px 0;">
+            <div>
+              <div class="sd-kind" style="color: rgba(247,247,251,0.42);">Input</div>
+              <div style="margin-top: 4px; font-size: 13px; font-weight: 650; color: #f7f7fb;">重命名</div>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(255,236,222,0.22)" stroke-width="1.2" style="flex: 0 0 auto; margin-top: 1px;">
+              <circle cx="12" cy="12" r="6"/><path d="M12 2v20M2 12h20"/>
+            </svg>
+          </div>
+          <div style="padding: 8px 14px 0; font-size: 12px; line-height: 1.75; color: rgba(247,247,251,0.68);">请输入新名称</div>
+          <div style="padding: 10px 14px 14px;">
+            <div style="height: 34px; border-radius: 6px; background: #141418; box-shadow: inset 0 0 0 1px rgba(217,119,87,0.55); display: flex; align-items: center; padding: 0 10px; font-size: 13px; color: #f7f7fb;">
+              白桃<span style="width: 1px; height: 15px; background: #D97757; margin-left: 1px;"></span>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(255,255,255,0.08);">
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(247,247,251,0.80); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);">取消</div>
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #f7f7fb; color: #141418;">保存</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 18px;">
+      <div class="sd-colhead" style="color: rgba(247,247,251,0.45);">浅色</div>
+
+      <!-- ALERT light -->
+      <div style="display: flex; border-radius: 8px; background: #F8F5EF; border: 1px solid rgba(26,26,31,0.12); box-shadow: inset 0 1px 0 rgba(255,255,255,0.72), 0 10px 30px rgba(60,44,36,0.10); overflow: hidden;">
+        <div style="width: 16px; flex: 0 0 16px; background: rgba(26,26,31,0.04); display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 9px 0;">
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+        </div>
+        <div style="flex: 1 1 auto; min-width: 0;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px 0;">
+            <div>
+              <div class="sd-kind" style="color: rgba(15,23,42,0.45);">Notice</div>
+              <div style="margin-top: 4px; font-size: 13px; font-weight: 650; color: #0F172A;">平台密钥自检失败</div>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(60,44,36,0.26)" stroke-width="1.2" style="flex: 0 0 auto; margin-top: 1px;">
+              <circle cx="12" cy="12" r="6"/><path d="M12 2v20M2 12h20"/>
+            </svg>
+          </div>
+          <div style="padding: 8px 14px 14px; font-size: 12px; line-height: 1.75; color: rgba(15,23,42,0.68);">
+            有 2 个平台的 API key 解密失败，模型池会跳过它们继续调度。多半是签名密钥轮换后存量密文没有一起迁移，去「模型平台」重新填一次密钥即可。
+          </div>
+          <div style="display: flex; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid rgba(26,26,31,0.08);">
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #0F172A; color: #F8F5EF;">知道了</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- CONFIRM light -->
+      <div style="display: flex; border-radius: 8px; background: #F8F5EF; border: 1px solid rgba(26,26,31,0.12); box-shadow: inset 0 1px 0 rgba(255,255,255,0.72), 0 10px 30px rgba(60,44,36,0.10); overflow: hidden;">
+        <div style="width: 16px; flex: 0 0 16px; background: rgba(185,28,28,0.10); display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 9px 0;">
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(185,28,28,0.40);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(185,28,28,0.40);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(185,28,28,0.40);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(185,28,28,0.40);"></span>
+        </div>
+        <div style="flex: 1 1 auto; min-width: 0;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px 0;">
+            <div>
+              <div class="sd-kind" style="color: #b91c1c;">Destructive</div>
+              <div style="margin-top: 4px; font-size: 13px; font-weight: 650; color: #0F172A;">确认删除</div>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(185,28,28,0.32)" stroke-width="1.2" style="flex: 0 0 auto; margin-top: 1px;">
+              <circle cx="12" cy="12" r="6"/><path d="M12 2v20M2 12h20"/>
+            </svg>
+          </div>
+          <div style="padding: 8px 14px 14px; font-size: 12px; line-height: 1.75; color: rgba(15,23,42,0.68);">
+            删除后不可恢复，项目「白桃」下的 12 张图会一并移除。
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(26,26,31,0.08);">
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(15,23,42,0.78); box-shadow: inset 0 0 0 1px rgba(26,26,31,0.18);">取消</div>
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #b91c1c; color: #fff;">删除</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PROMPT light -->
+      <div style="display: flex; border-radius: 8px; background: #F8F5EF; border: 1px solid rgba(26,26,31,0.12); box-shadow: inset 0 1px 0 rgba(255,255,255,0.72), 0 10px 30px rgba(60,44,36,0.10); overflow: hidden;">
+        <div style="width: 16px; flex: 0 0 16px; background: rgba(26,26,31,0.04); display: flex; flex-direction: column; align-items: center; gap: 7px; padding: 9px 0;">
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+          <span style="width: 6px; height: 5px; border-radius: 1.5px; background: rgba(60,44,36,0.18);"></span>
+        </div>
+        <div style="flex: 1 1 auto; min-width: 0;">
+          <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 12px 14px 0;">
+            <div>
+              <div class="sd-kind" style="color: rgba(15,23,42,0.45);">Input</div>
+              <div style="margin-top: 4px; font-size: 13px; font-weight: 650; color: #0F172A;">重命名</div>
+            </div>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="rgba(60,44,36,0.26)" stroke-width="1.2" style="flex: 0 0 auto; margin-top: 1px;">
+              <circle cx="12" cy="12" r="6"/><path d="M12 2v20M2 12h20"/>
+            </svg>
+          </div>
+          <div style="padding: 8px 14px 0; font-size: 12px; line-height: 1.75; color: rgba(15,23,42,0.68);">请输入新名称</div>
+          <div style="padding: 10px 14px 14px;">
+            <div style="height: 34px; border-radius: 6px; background: #EEEAE3; box-shadow: inset 0 0 0 1px rgba(217,119,87,0.55); display: flex; align-items: center; padding: 0 10px; font-size: 13px; color: #0F172A;">
+              白桃<span style="width: 1px; height: 15px; background: #D97757; margin-left: 1px;"></span>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: flex-end; gap: 8px; padding: 10px 12px; border-top: 1px solid rgba(26,26,31,0.08);">
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; color: rgba(15,23,42,0.78); box-shadow: inset 0 0 0 1px rgba(26,26,31,0.18);">取消</div>
+            <div style="height: 32px; padding: 0 14px; border-radius: 6px; display: grid; place-items: center; font-size: 12px; font-weight: 600; background: #0F172A; color: #F8F5EF;">保存</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; margin-top: 34px; padding-top: 24px; border-top: 1px solid rgba(255,255,255,0.08);">
+    <table class="sd-spec" style="border-collapse: collapse;">
+      <tr><td style="color: rgba(247,247,251,0.45);">同 A</td><td style="color: rgba(247,247,251,0.80);">圆角 8 · 按钮 32/6/12 · 输入 34/6 · 动作条分隔线</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">齿孔边</td><td style="color: rgba(247,247,251,0.80);">宽 16px，孔 6x5 圆角 1.5，间距 7；危险态整条转红</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">类型标</td><td style="color: rgba(247,247,251,0.80);">等宽 9px 字距 .2em 全大写：Notice / Destructive / Input</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">套准十字</td><td style="color: rgba(247,247,251,0.80);">18px 线性图标，右上角，1.2 线宽，极低对比</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">材质</td><td style="color: rgba(247,247,251,0.80);">暗色走 .glass-pane（0.618 + 顶边高光）；浅色走纸面实底</td></tr>
+      <tr><td style="color: rgba(247,247,251,0.45);">遮罩</td><td style="color: rgba(247,247,251,0.80);">压暗 + 轻模糊，让底下的印相台透出来当景深</td></tr>
+    </table>
+    <div style="font-size: 12px; line-height: 1.85; color: rgba(247,247,251,0.68);">
+      <div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: #E8A87C; margin-bottom: 8px;">取舍</div>
+      牺牲的是**中立性**。这是 54 个调用点共用的系统弹窗，其中大多数出现在和暗房毫无关系的地方（权限、导航设置、周报）。在那些地方一枚套准十字是装饰，不是信息。<br><br>
+      齿孔边还吃掉 16px 横向空间，窄屏（<480px）下要退化成顶部一条。类型标全用英文也是个坑：这是中文界面，Destructive 对非英语用户不表意，落地时应换成中文或直接去掉。
+    </div>
+  </div>
+
+</div>
+</x-dc>
+</body>
+</html>

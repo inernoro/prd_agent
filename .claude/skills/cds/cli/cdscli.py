@@ -46,7 +46,7 @@ import urllib.request
 from collections.abc import Iterator
 from typing import Any, Optional
 
-VERSION = "0.16.0"  # ← bundled cli 变更时 bump；服务端自动读这一行
+VERSION = "0.16.5"  # ← bundled cli 变更时 bump；服务端自动读这一行
 
 # 页面批准换来的一次性建项目授权。写进凭据文件的 bootstrapSource，用来把它和
 # `init --yes` 迁移进来的静态 / 全权 key 区分开——两者存在同一个字段里，值也可能
@@ -460,6 +460,27 @@ def _maybe_warn_version_drift(headers: dict[str, str]) -> None:
             f"关闭提示: export CDSCLI_NO_DRIFT_CHECK=1",
             file=sys.stderr,
         )
+
+
+def _describe_trigger_failure(trigger: dict[str, Any]) -> str:
+    """把 `_request_stream_safe` 的触发失败结果转成给人看的原因。
+
+    issue #1433：423（如 project_paused）等结构化错误服务端其实已经在
+    body 里给出了 error/message（例如"项目已暂停，部署被拦截...不建议重试"），
+    但调用方一直只用裸 `http_<status>` 报错，把这条关键信息扔在地上——
+    Agent 只能瞎猜是不是排队锁，空转重试。body 已经被 `_request_stream_safe`
+    解析过，这里只是把它捞出来用，不需要额外请求。
+    """
+    status = trigger.get("status")
+    body = trigger.get("body")
+    if isinstance(body, dict):
+        message = body.get("message")
+        error = body.get("error")
+        if message:
+            return f"{error}: {message}" if error else str(message)
+        if error:
+            return str(error)
+    return trigger.get("error") or (f"http_{status}" if status is not None else "unknown")
 
 
 def _call(method: str, path: str, body: Any = None, timeout: int = 15,
@@ -1023,7 +1044,7 @@ def cmd_branch_deploy(args: argparse.Namespace) -> None:
     trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
     trigger_timed_out = (not trigger["triggered"]) and str(trigger.get("error") or "").startswith("timeout_")
     if trigger_http_error or (not trigger["triggered"] and not trigger_timed_out):
-        die(f"deploy 触发失败: {trigger.get('error') or f'http_{trigger_status}' or 'unknown'}",
+        die(f"deploy 触发失败: {_describe_trigger_failure(trigger)}",
             code=2 if trigger_status and trigger_status < 500 else 3,
             extra={
                 "data": {
@@ -2928,6 +2949,37 @@ def _find_build_profile(profile_id: str, project: str | None) -> dict[str, Any]:
     raise SystemExit(2)  # unreachable, satisfies type checker
 
 
+def _prebuilt_mode_ids(p: dict[str, Any]) -> list[str]:
+    """deployModes 里 prebuilt 为 true 的模式 id（极速版 / CI 预构建）。
+
+    模式名不是判据：本仓库叫 express，别的项目可以叫任何名字；接入口令要求 Agent
+    只认这个列表，而不是按名字猜。prebuilt 只认布尔 True——服务端门禁 isPrebuiltMode
+    用的是 `=== true`，compose 导入时字符串 'true' 已被规整成布尔，但直接 POST 建的
+    配置不会规整；这里若把字符串也当 True，会让 Agent 按提示切过去后反复吃 409
+    （Codex PR #1513 第七轮 P2）。
+    """
+    # 与服务端 isPrebuiltMode 同口径：带 managedBuild 的 profile 是宿主上的源码构建，
+    # 任何模式都不算极速版（Codex PR #1513 第六轮 P2）。
+    if p.get("managedBuild"):
+        return []
+    modes = p.get("deployModes") or {}
+    inherited = p.get("prebuiltImage") is True
+    out: list[str] = []
+    for mode_id, mode in modes.items():
+        if not isinstance(mode, dict):
+            continue
+        prebuilt = mode.get("prebuilt")
+        # 与服务端 isPrebuiltMode 同口径：mode.prebuilt ?? profile.prebuiltImage——镜像站点上
+        # 未声明 prebuilt 的模式继承 prebuiltImage，也是可切的极速版（Codex PR #1513 第五轮 P2）。
+        if prebuilt is None:
+            is_prebuilt = inherited
+        else:
+            is_prebuilt = prebuilt is True
+        if is_prebuilt:
+            out.append(str(mode_id))
+    return out
+
+
 def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
     rp = p.get("readinessProbe") or {}
     return {
@@ -2936,6 +2988,10 @@ def _profile_summary(p: dict[str, Any]) -> dict[str, Any]:
         "projectId": p.get("projectId"),
         "activeDeployMode": p.get("activeDeployMode") or None,
         "deployModes": list((p.get("deployModes") or {}).keys()),
+        # 极速版（CI 预构建）判据：Agent 分支必须从这里选模式，空列表 = 项目还没接 CI 预构建
+        "prebuiltModes": _prebuilt_mode_ids(p),
+        # 整个 profile 就是预构建镜像站点（cds.prebuilt-image），无需切模式；带 managedBuild 的不算
+        "prebuiltImage": p.get("prebuiltImage") is True and not p.get("managedBuild"),
         "readiness": {
             "timeoutSeconds": rp.get("timeoutSeconds"),
             "intervalSeconds": rp.get("intervalSeconds"),
@@ -2998,7 +3054,10 @@ def cmd_branch_set_mode(args: argparse.Namespace) -> None:
             if b.get("id") == args.id:
                 ov = (b.get("profileOverrides") or {}).get(args.profile)
                 if isinstance(ov, dict):
-                    existing = dict(ov)
+                    # GET 回来的覆盖对象把未设字段以 null 占位（dbScope: null 等），而 PUT 端
+                    # 对 dbScope / dbInit 做枚举校验时 null 不等于「未提供」，原样回传即 400
+                    # 「dbScope 非法」。只回传真正设过的字段；updatedAt 是服务端戳，不回传。
+                    existing = {k: v for k, v in ov.items() if v is not None and k != "updatedAt"}
                 break
     except Exception:
         existing = {}  # 取不到就退化为只设模式（与旧行为一致，至少不更糟）
@@ -6366,6 +6425,85 @@ def _detect_nacos_required_configs(root: str) -> list[str]:
     return found
 
 
+_PROBE_PREFIX_RE = re.compile(r"(?:^|/)(?:health|healthz|health-check|ready|readyz|readiness|live|livez|liveness|actuator|metrics)(?:/|\?|$)", re.I)
+
+
+def _is_probe_prefix(prefix: str) -> bool:
+    """探活语义的路径段（与 CDS 后端 topology-lint 同一份口径）。"""
+    return bool(_PROBE_PREFIX_RE.search(prefix.strip()))
+
+
+def _spring_context_path(module_root: str) -> str | None:
+    """application.yml / .properties 里的 server.servlet.context-path（有则整站都在它下面）。"""
+    res_dir = os.path.join(module_root, "src", "main", "resources")
+    if not os.path.isdir(res_dir):
+        return None
+    for name in ("application.yml", "application.yaml", "application.properties",
+                 "bootstrap.yml", "bootstrap.yaml"):
+        fp = os.path.join(res_dir, name)
+        if not os.path.isfile(fp):
+            continue
+        try:
+            with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        m = re.search(r"context-path\s*[:=]\s*['\"]?(/[A-Za-z0-9._~-]*)", text)
+        if m and m.group(1) and m.group(1) != "/":
+            return m.group(1).rstrip("/") + "/"
+    return None
+
+
+def _detect_spring_route_prefixes(module_root: str, max_files: int = 4000) -> list[str]:
+    """从模块源码扫出主域名路由前缀（plan.cds.service-relations 第一批）。
+
+    规则：
+      1. 有 server.servlet.context-path → 只返回它（整站都在它下面）；
+      2. 否则收集 @RestController / @Controller 类上的 @RequestMapping 第一段，
+         类上没写的看方法级 @XxxMapping 第一段；
+      3. 探活段（health / actuator / metrics ...）一律不进前缀；
+      4. 结果去重、按字典序，返回 `/seg/` 形态。扫不到返回 []，由调用方兜底 + TODO。
+    """
+    ctx = _spring_context_path(module_root)
+    if ctx:
+        return [ctx]
+    src = os.path.join(module_root, "src", "main", "java")
+    if not os.path.isdir(src):
+        return []
+    class_rm = re.compile(r"@RequestMapping\s*\(\s*(?:value\s*=|path\s*=)?\s*[\{]?\s*\"([^\"]*)\"")
+    method_rm = re.compile(r"@(?:Get|Post|Put|Delete|Patch|Request)Mapping\s*\(\s*(?:value\s*=|path\s*=)?\s*[\{]?\s*\"([^\"]*)\"")
+    prefixes: set[str] = set()
+    seen = 0
+    for dirpath, _dirs, files in os.walk(src):
+        for fn in files:
+            if not fn.endswith(".java"):
+                continue
+            seen += 1
+            if seen > max_files:
+                return sorted(prefixes)
+            fp = os.path.join(dirpath, fn)
+            try:
+                with open(fp, "r", encoding="utf-8", errors="replace") as f:
+                    text = f.read()
+            except OSError:
+                continue
+            if "@RestController" not in text and "@Controller" not in text:
+                continue
+            cls_idx = text.find("class ")
+            head = text[:cls_idx] if cls_idx > 0 else text
+            cls_maps = class_rm.findall(head)
+            candidates = cls_maps if cls_maps else method_rm.findall(text)
+            for raw in candidates:
+                seg = raw.strip().strip("/").split("/")[0].split("{")[0].strip()
+                if not seg:
+                    continue
+                prefix = f"/{seg}/"
+                if _is_probe_prefix(prefix):
+                    continue
+                prefixes.add(prefix)
+    return sorted(prefixes)
+
+
 def _yaml_from_modules(root: str, modules: list[dict],
                        infra_services: dict | None = None,
                        scan_signals: dict | None = None) -> str:
@@ -6509,6 +6647,7 @@ def _yaml_from_modules(root: str, modules: list[dict],
             primary_java_port = mod.get("port") or "8080"
             break
 
+    java_seen = 0  # 第几个 Java 模块（没扫到前缀时第一个兜底 /api/，其余按名字分前缀避免撞车）
     for i, mod in enumerate(modules):
         # Maven multi-module: use module name as service name, parent dir for volumes
         if mod.get("_service_name"):
@@ -6604,9 +6743,20 @@ def _yaml_from_modules(root: str, modules: list[dict],
         # Issue #560:Spring Boot 真实路由不是 /<module>/,而是 /api,/partner,/open,/actuator
         # 用 cds.path-prefixes 暴露完整列表,避免前端调 /api 打不到后端
         if kind == "java":
-            prefixes = "/api/,/partner/,/open/,/health,/actuator/"
-            lines.append(f"      cds.path-prefix: \"/api/\"  # 兼容:CDS 单 prefix 路由")
-            lines.append(f"      cds.path-prefixes: \"{prefixes}\"  # 多前缀:覆盖 Spring Boot 真实入口")
+            # plan.cds.service-relations 第一批：前缀按模块从源码扫控制器，不再给所有 Java 模块复制
+            # 同一份清单（那会让多个后端同时声明 /open/ /health，forwarder 只能按部署顺序二选一）。
+            # 探活路径（/health /actuator）永远不进前缀：探活只走 cds.readiness-path。
+            # 旧的 cds.path-prefixes（复数）从未被 CDS 解析，是死标签，不再输出。
+            module_root = os.path.join(root, mod["dir"]) if mod["dir"] != "." else root
+            if mod.get("maven_module"):
+                module_root = os.path.join(module_root, mod["maven_module"])
+            scanned = _detect_spring_route_prefixes(module_root)
+            if scanned:
+                lines.append(f"      cds.path-prefix: \"{','.join(scanned)}\"  # 从控制器 @RequestMapping / context-path 扫出")
+            else:
+                fallback = "/api/" if java_seen == 0 else f"/{clean_name}/"
+                lines.append(f"      cds.path-prefix: \"{fallback}\"  # TODO: 源码里没扫到路由前缀，请按真实入口填写，多个后端不能共用同一前缀")
+            java_seen += 1
             # v0.6.3:Maven 首次 build 要 3-5 分钟下依赖,CDS 默认 readiness 180s 不够
             # 写 600s(10min) — 单次部署足够,后续 .m2 缓存命中只需 30-60s
             lines.append(f"      cds.readiness-timeout: \"600\"  # v0.6.3:maven build 留 10min")
@@ -7581,6 +7731,142 @@ def _verify_autofix(compose_path: str, doc: dict, issues: list[dict]) -> dict:
     }
 
 
+def _verify_server_lint(compose_text: str) -> list[dict]:
+    """拓扑体检走 CDS 后端（SSOT：cds/src/services/topology-lint.ts）。
+
+    未连接 CDS 时不装作跑过：返回一条 INFO 说明跳过了哪些检查，让读者知道这份报告不完整。
+    网络或服务端错误同样降级为 INFO，不让 verify 因为体检接口不可达而整体失败。
+    """
+    if not compose_text.strip():
+        return []
+    if not os.environ.get("CDS_HOST", "").strip() or not _has_cds_auth():
+        return [{
+            "severity": "INFO",
+            "service": "(topology)",
+            "rule": "topology-lint-skipped",
+            "message": "未连接 CDS，拓扑体检（前缀冲突 / 探活前缀 / 子域抢根路径 / 游离服务）未运行",
+            "fix": "cdscli connect 完成项目授权后重跑 verify",
+        }]
+    status, body, _headers = _request("POST", "/api/compose/lint",
+                                      body={"composeYaml": compose_text},
+                                      timeout=20, fatal_network_errors=False)
+    if status != 200 or not isinstance(body, dict) or not isinstance(body.get("findings"), list):
+        msg = body.get("message") if isinstance(body, dict) else str(body)[:200]
+        return [{
+            "severity": "INFO",
+            "service": "(topology)",
+            "rule": "topology-lint-unavailable",
+            "message": f"拓扑体检接口不可用（HTTP {status}）：{msg}",
+            "fix": "检查 CDS_HOST 与 CDS 版本（需要含 POST /api/compose/lint 的版本）后重跑",
+        }]
+    sev_map = {"error": "ERROR", "warn": "WARNING", "info": "INFO"}
+    out: list[dict] = []
+    for f in body["findings"]:
+        if not isinstance(f, dict):
+            continue
+        out.append({
+            "severity": sev_map.get(str(f.get("severity")), "INFO"),
+            "service": ",".join(f.get("services") or []) or "(topology)",
+            "rule": f"topology/{f.get('rule')}",
+            "message": str(f.get("message") or ""),
+            "fix": str(f.get("fix") or ""),
+        })
+    return out
+
+
+def _resolve_branch_id_for_cwd() -> str:
+    """当前 git 分支 → CDS 分支 id（与 preview-url 同一套项目身份匹配，找不到就 die）。"""
+    try:
+        branch = subprocess.check_output(["git", "branch", "--show-current"], text=True, stderr=subprocess.DEVNULL).strip()
+        repo_root = subprocess.check_output(["git", "rev-parse", "--show-toplevel"], text=True, stderr=subprocess.DEVNULL).strip()
+    except subprocess.CalledProcessError:
+        die("当前目录不在 git 仓库内；请显式传分支 id", code=1)
+        return ""
+    if not branch:
+        die("当前没有分支（detached HEAD？）；请显式传分支 id", code=1)
+        return ""
+    body = _call_safe("GET", _branches_path(), timeout=10)
+    if not isinstance(body, dict) or body.get("__error__"):
+        die("调 /api/branches 失败，无法解析当前分支的 CDS id", code=3, extra={"response": body})
+        return ""
+    hints = _branch_lookup_project_slug_hints(repo_root)
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    matches = _match_branches_for_project(body.get("branches") or [], branch, hints, project_scoped)
+    if not matches:
+        die(f"CDS 上没有当前分支 '{branch}' 的记录；请显式传分支 id（cdscli branch list 可查）", code=2)
+        return ""
+    return str(matches[0].get("id"))
+
+
+def _topology_tree_lines(payload: dict) -> list[str]:
+    """把 GET /api/branches/:id/service-graph 的结果画成文字树（与运行画布同一份分层）。"""
+    graph = payload.get("graph") or {}
+    lint = payload.get("lint") or {}
+    nodes = {n.get("rawId"): n for n in (graph.get("nodes") or []) if n.get("kind") == "service"}
+    role_src = {"declared": "声明", "route": "路由事实", "name": "名字", "default": "默认"}
+    findings_by_svc: dict[str, list[str]] = {}
+    for f in lint.get("findings") or []:
+        tag = {"error": "错误", "warn": "警告", "info": "建议"}.get(f.get("severity"), "?")
+        for svc in f.get("services") or []:
+            findings_by_svc.setdefault(svc, []).append(f"{tag}: {f.get('rule')}")
+
+    def node_label(sid: str) -> str:
+        n = nodes.get(sid) or {}
+        role = (n.get("role") or "?").upper()
+        src = role_src.get(n.get("roleSource"), "?")
+        marks = findings_by_svc.get(sid) or []
+        tail = f"   <{'; '.join(marks)}>" if marks else ""
+        return f"{sid} ({role}, {src}){tail}"
+
+    out = [f"入口 {payload.get('branch')} · 分支 {payload.get('branchId')}"]
+    sites = graph.get("sites") or []
+    for si, site in enumerate(sites):
+        last_site = si == len(sites) - 1 and not graph.get("internal")
+        head = "└─" if last_site else "├─"
+        title = "主域名" if site.get("kind") == "main" else f"子域 {site.get('subdomain')}"
+        shell = site.get("shellId")
+        shell_note = "（按名兜底）" if site.get("shellSource") == "convention" else ""
+        out.append(f"{head} {title}  壳 {node_label(shell) if shell else '（无）'}{shell_note}")
+        indent = "   " if last_site else "│  "
+        members = site.get("members") or []
+        for mi, m in enumerate(members):
+            mh = "└─" if mi == len(members) - 1 else "├─"
+            conv = "（按名约定）" if m.get("viaConvention") else ""
+            out.append(f"{indent}{mh} {' '.join(m.get('prefixes') or [])}{conv} → {node_label(m.get('id'))}")
+    internal = graph.get("internal") or []
+    callers: dict[str, list[str]] = {}
+    for e in graph.get("edges") or []:
+        if str(e.get("from", "")).startswith("service:") and str(e.get("to", "")).startswith("service:"):
+            callers.setdefault(e["to"][8:], []).append(e["from"][8:])
+    for ii, sid in enumerate(internal):
+        ih = "└─" if ii == len(internal) - 1 else "├─"
+        who = callers.get(sid)
+        rel = f"被 {', '.join(who)} 调用" if who else "游离"
+        out.append(f"{ih} 内网 {rel} → {node_label(sid)}")
+    summ = lint.get("summary") or {}
+    out.append(f"体检：{summ.get('errors', 0)} 错误 · {summ.get('warnings', 0)} 警告 · {summ.get('infos', 0)} 建议")
+    for f in lint.get("findings") or []:
+        tag = {"error": "错误", "warn": "警告", "info": "建议"}.get(f.get("severity"), "?")
+        out.append(f"  [{tag}] {f.get('rule')}  {f.get('message')}")
+        if f.get("fix"):
+            out.append(f"         修法：{f.get('fix')}")
+    return out
+
+
+def cmd_topology(args: argparse.Namespace) -> None:
+    """打印某分支的服务关系树 + 拓扑体检（数据与运行画布同源：GET /api/branches/:id/service-graph）。"""
+    branch_id = getattr(args, "id", None) or _resolve_branch_id_for_cwd()
+    body = _call("GET", f"/api/branches/{urllib.parse.quote(branch_id, safe='')}/service-graph", timeout=20)
+    if not isinstance(body, dict):
+        die("service-graph 返回非 JSON 响应", code=3, extra={"response": body})
+        return
+    tree = "\n".join(_topology_tree_lines(body))
+    if _HUMAN:
+        print(tree)
+        sys.exit(0)
+    ok({"branchId": body.get("branchId"), "graph": body.get("graph"), "lint": body.get("lint"), "tree": tree})
+
+
 def cmd_verify(args: argparse.Namespace) -> None:
     """校验 cds-compose 文件:三级严重度(ERROR / WARNING / INFO)分级输出 + 评分 + 自愈。
 
@@ -7615,6 +7901,15 @@ def cmd_verify(args: argparse.Namespace) -> None:
     compose_path, doc = found
 
     issues = _verify_run_all(doc, root)
+    # 拓扑体检（前缀冲突 / 探活前缀 / 子域抢根路径 / 游离服务）：规则只在 CDS 后端写一份，
+    # 这里把 compose 原文交给 POST /api/compose/lint，发现合并进同一份 issues 参与门禁。
+    if not getattr(args, "no_server_lint", False):
+        try:
+            with open(compose_path, "r", encoding="utf-8") as f:
+                compose_text = f.read()
+        except OSError:
+            compose_text = ""
+        issues += _verify_server_lint(compose_text)
     summary = {
         "errors":   sum(1 for i in issues if i["severity"] == "ERROR"),
         "warnings": sum(1 for i in issues if i["severity"] == "WARNING"),
@@ -8356,7 +8651,7 @@ def cmd_deploy(args: argparse.Namespace) -> None:
     trigger_status = trigger.get("status")
     trigger_http_error = isinstance(trigger_status, int) and trigger_status >= 400
     if trigger_http_error or (not trigger["triggered"] and not str(trigger.get("error") or "").startswith("timeout_")):
-        trigger_error = trigger.get("error") or (f"http_{trigger_status}" if trigger_status is not None else "unknown")
+        trigger_error = _describe_trigger_failure(trigger)
         die(f"deploy 触发失败: {trigger_error}",
             code=2 if trigger_status and trigger_status < 500 else 3,
             extra={
@@ -8757,6 +9052,128 @@ def cmd_schedule_test(args: argparse.Namespace) -> None:
     }, note="动作检测通过")
 
 
+# ── 功能监控：一句话加一条「带逻辑的监控」 ────────────────────────────────
+#
+# 存活监控问「通不通」，功能监控问「返回的东西对不对」：发一次真业务请求，
+# 在响应上跑多条结构化判据。判据是 path:op:value 三元组，不是表达式——
+# 自由文本判据一旦开口，下一轮就会被要求加同义词和嵌套（CLAUDE.md 5.5）。
+
+
+ASSERT_OPS = ("eq", "ne", "lt", "lte", "gt", "gte", "exists", "absent")
+
+
+def _parse_assertion(raw: str) -> dict[str, str]:
+    """把 `image.height:eq:1024` 解析成判据。
+
+    冒号两头都可能出现冒号，所以不能简单地切两刀：
+
+      期望值里自带冒号（时间、URL、比例）—— 切多了把 `16:9` 拦腰截断；
+      **路径里也自带冒号** —— health+json 的 check 键按 IETF 规范就是
+      `组件:度量`（`checks.serving:requests[0].observedValue`），
+      从左边切第一刀会把路径切成 `checks.serving` + 一个不存在的运算。
+
+    所以判据是「找运算符」而不是「按位置切」：运算符是**有限枚举**（八个），
+    从左往右找第一个被冒号夹住的、且确实是枚举成员的片段，它就是运算符，
+    左边全是路径、右边全是期望值。只有当路径里某一段**恰好等于**一个运算符名
+    （如 `data.eq.x`）时才会歧义，那种字段名现实中不存在，也可以改写路径规避。
+    """
+    text = raw.strip()
+    for i, piece in enumerate(text.split(":")):
+        if i == 0 or piece.strip() not in ASSERT_OPS:
+            continue
+        head_len = len(":".join(text.split(":")[:i]))
+        path = text[:head_len].strip()
+        op = piece.strip()
+        rest = text[head_len + 1 + len(piece):]
+        value = rest[1:] if rest.startswith(":") else ""
+        if not path:
+            die(f"判据写法应为 path:op[:value]，收到 {raw!r}", code=2)
+        item: dict[str, str] = {"path": path, "op": op}
+        if value != "":
+            item["value"] = value
+        elif op not in ("exists", "absent"):
+            die(f"判据 {raw!r} 的运算 {op} 需要期望值", code=2)
+        return item
+    die(
+        f"判据写法应为 path:op[:value]，收到 {raw!r}"
+        f"（运算必须是 {' / '.join(ASSERT_OPS)} 之一）",
+        code=2,
+    )
+
+
+def _monitor_payload(args: argparse.Namespace) -> dict[str, Any]:
+    if not args.assert_:
+        die("至少要有一条判据（--assert path:op:value）——没有判据的功能监控任何返回都算通过", code=2)
+    payload: dict[str, Any] = {
+        "kind": "functional",
+        "url": args.url,
+        "requestMethod": args.method,
+        "assertions": [_parse_assertion(a) for a in args.assert_],
+    }
+    if args.name:
+        payload["name"] = args.name
+    if args.body:
+        payload["requestBody"] = args.body
+    if args.artifact_path:
+        payload["artifactUrlPath"] = args.artifact_path
+    if args.interval:
+        payload["intervalSeconds"] = args.interval
+    if args.timeout_ms:
+        payload["timeoutMs"] = args.timeout_ms
+    if args.environment:
+        payload["environment"] = args.environment
+    if args.observe_mode:
+        payload["observeMode"] = args.observe_mode
+    if args.sample_count_path:
+        payload["sampleCountPath"] = args.sample_count_path
+    # 被动观测必须说清样本量从哪读：读不到样本量时「零流量」与「全部成功」
+    # 长得一模一样，那条监控会永远绿着。服务端也会拒，这里先给一句人话。
+    if args.observe_mode == "passive" and not args.sample_count_path:
+        die(
+            "被动观测必须加 --sample-count-path：读不到样本量的话，零流量会被读成一切正常",
+            code=2,
+        )
+    project_id = args.project or os.environ.get("CDS_PROJECT_ID")
+    if project_id:
+        payload["projectId"] = project_id
+    return payload
+
+
+def cmd_monitor_add(args: argparse.Namespace) -> None:
+    """先试跑、通过了才登记。
+
+    这一步是整条命令的价值所在：跑不通就不写进去。否则加进来的监控从第一次探测
+    起就红，而红的原因是判据自己写错了——那种「一加就红」的噪音会很快让人
+    把整块面板静音，比没有监控更糟。
+    """
+    payload = _monitor_payload(args)
+    trial = _call("POST", "/api/uptime/monitors/test", body=payload, timeout=max(30, (args.timeout_ms or 15000) // 1000 + 15))
+    if not trial.get("up"):
+        die(
+            "试跑未通过，未登记。判据或地址先改对再加。",
+            code=2,
+            extra={"trial": trial, "payload": payload},
+        )
+    if args.dry_run:
+        ok({"trial": trial, "payload": payload}, note="试跑通过（--dry-run，未登记）")
+        return
+    created = _call("POST", "/api/uptime/monitors", body=payload, timeout=20)
+    ok({"trial": trial, "monitor": created.get("monitor", created)}, note="试跑通过并已登记")
+
+
+def cmd_monitor_list(args: argparse.Namespace) -> None:
+    data = _call("GET", "/api/uptime/monitors")
+    monitors = data.get("monitors", data) if isinstance(data, dict) else data
+    if args.functional_only and isinstance(monitors, list):
+        monitors = [m for m in monitors if m.get("kind") == "functional"]
+    ok({"monitors": monitors})
+
+
+def cmd_monitor_observations(args: argparse.Namespace) -> None:
+    data = _call("GET", f"/api/uptime/monitors/{urllib.parse.quote(args.id)}/observations")
+    ok(data)
+
+
 def cmd_schedule_create(args: argparse.Namespace) -> None:
     job = _build_schedule_job_from_prompt(args, require_project=True)
     checks: list[dict[str, Any]] = []
@@ -8958,6 +9375,61 @@ def _build_parser() -> argparse.ArgumentParser:
     dvd.add_argument("--wait", action="store_true", help="等待 DeploymentRun 进入终态")
     dvd.add_argument("--timeout", type=int, default=300)
     dvd.set_defaults(func=cmd_deployment_version_deploy)
+
+    mon = sub.add_parser(
+        "monitor",
+        help="功能监控: 一句话加一条带判据的监控（先试跑再登记）/ 列表 / 历史观测",
+    ).add_subparsers(dest="sub", required=True)
+
+    mona = mon.add_parser(
+        "add",
+        help="加一条功能监控。先试跑，通过了才登记——跑不通就不写进去，避免一加就红",
+    )
+    mona.add_argument("--name", help="展示名；留空由服务端按地址派生")
+    mona.add_argument("--url", required=True, help="要打的业务端点（必须是本项目分支的预览地址）")
+    mona.add_argument("--method", default="POST", choices=["GET", "POST"], help="请求方法，默认 POST")
+    mona.add_argument(
+        "--assert", dest="assert_", action="append", metavar="PATH:OP[:VALUE]",
+        help="判据，可重复。OP ∈ eq/ne/lt/lte/gt/gte/exists/absent。"
+             "例：image.height:eq:1024。路径与期望值都可以带冒号——"
+             "health+json 的 check 键按规范就是「组件:度量」，写成 "
+             "checks.serving:requests.0.observedValue:gt:0（数组下标用 .0，不是 [0]）",
+    )
+    mona.add_argument(
+        "--body",
+        help='请求体 JSON。可用 {{randomPrompt}} 占位，每次探测换一条随机提示词——'
+             '固定提示词会被上游缓存，跑一万次也证明不了链路今天还活着',
+    )
+    mona.add_argument("--artifact-path", help="产物地址在响应里的路径，如 image.url；配了详情页才有画廊")
+    mona.add_argument("--interval", type=int, help="探测间隔（秒），常设轻探针建议 21600（6 小时）")
+    mona.add_argument("--timeout-ms", type=int, help="单次超时（毫秒）；生成类接口给足，别用默认值卡它")
+    mona.add_argument("--project", help="项目 id（缺省读 CDS_PROJECT_ID）")
+    mona.add_argument(
+        "--environment", choices=["production", "staging", "other"],
+        help="这条监控盯的是哪个环境，默认 production。第一屏按环境把同一条业务并排摆，"
+             "只有一个环境红时问题就在那个环境的配置。"
+             "地址指着分支预览时服务端会覆盖成 preview——那是结构性事实，声明改不了它",
+    )
+    mona.add_argument(
+        "--observe-mode", choices=["active", "passive"], default=None,
+        help="active（默认）自己发一次真请求；passive 读被监控方统计好的真实流量窗口。"
+             "两种绿含义不同：主动绿 = 刚亲自跑通过；被动绿 = 最近没人用坏（前提是真有人用）",
+    )
+    mona.add_argument(
+        "--sample-count-path",
+        help="被动观测必填：样本量（窗口内真实调用次数）在响应里的字段路径。"
+             "0 样本时界面判「绿灯不作数」，不判正常",
+    )
+    mona.add_argument("--dry-run", action="store_true", help="只试跑、不登记")
+    mona.set_defaults(func=cmd_monitor_add)
+
+    monl = mon.add_parser("list", help="列出监控")
+    monl.add_argument("--functional-only", action="store_true", help="只看功能监控")
+    monl.set_defaults(func=cmd_monitor_list)
+
+    mono = mon.add_parser("observations", help="看一条功能监控的历史观测证据（判据逐条、产物地址）")
+    mono.add_argument("id")
+    mono.set_defaults(func=cmd_monitor_observations)
 
     sch = sub.add_parser("schedule", help="任务调度: 口令创建 / 测试动作 / 列表 / 手动执行").add_subparsers(dest="sub", required=True)
     sp = sch.add_parser("parse", help="解析口令,不请求 CDS")
@@ -9204,7 +9676,13 @@ def _build_parser() -> argparse.ArgumentParser:
                     help="输出自愈修补(diff + 建议),默认不落盘")
     vf.add_argument("--write", action="store_true",
                     help="配合 --fix:把可自动修复的改动写回文件(先备份 .bak)")
+    vf.add_argument("--no-server-lint", action="store_true",
+                    help="跳过 CDS 后端的拓扑体检（默认走 POST /api/compose/lint；未连接 CDS 时自动跳过并注明）")
     vf.set_defaults(func=cmd_verify)
+
+    tp = sub.add_parser("topology", help="打印分支的服务关系树与拓扑体检（与运行画布同源，零参数时解析当前 git 分支）")
+    tp.add_argument("id", nargs="?", help="CDS 分支 id（缺省用当前 git 分支解析）")
+    tp.set_defaults(func=cmd_topology)
 
     sm = sub.add_parser("smoke", help="分层冒烟（L1+L2+L3）")
     sm.add_argument("id", help="branchId")

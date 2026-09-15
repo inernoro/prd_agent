@@ -28,6 +28,15 @@ describe('normalizeProjectProfileDependencies', () => {
     expect(normalized[1].dependsOn).toEqual(['api-project-a', 'mongodb']);
   });
 
+  it('cds.calls 与 depends_on 同一规则：指向同批导入的服务时跟着加后缀，基础设施名保持原样', () => {
+    const out = normalizeProjectProfileDependencies([
+      { id: 'web-foo', calls: ['api', 'mongodb'] },
+      { id: 'api-foo', dependsOn: ['mongodb'] },
+    ], '-foo');
+    expect(out[0].calls).toEqual(['api-foo', 'mongodb']);
+    expect(out[1]).toEqual({ id: 'api-foo', dependsOn: ['mongodb'] });
+  });
+
   it('preserves dependencies that are already scoped', () => {
     const profiles = [
       profile('api-project-a'),

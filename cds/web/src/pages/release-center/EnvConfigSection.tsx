@@ -68,10 +68,10 @@ function draftOf(row: CenterRow): StrategyDraft {
 /** 开关。轨道 34×19、滑块 15、位移 2→17、.18s——尺寸照稿子。 */
 function Toggle({ on, onChange, label, hint }: { on: boolean; onChange: (next: boolean) => void; label: string; hint: string }): JSX.Element {
   return (
-    <div className="flex items-center justify-between gap-3 rounded-[11px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-3">
+    <div className="flex items-center justify-between gap-3 rounded-[0.6875rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-3">
       <div className="min-w-0">
-        <div className="text-[12.5px] font-semibold">{label}</div>
-        <div className="mt-0.5 text-[11px] text-muted-foreground">{hint}</div>
+        <div className="text-[0.7812rem] font-semibold">{label}</div>
+        <div className="mt-0.5 text-[0.6875rem] text-muted-foreground">{hint}</div>
       </div>
       <button
         type="button"
@@ -79,10 +79,10 @@ function Toggle({ on, onChange, label, hint }: { on: boolean; onChange: (next: b
         aria-checked={on}
         aria-label={label}
         onClick={() => onChange(!on)}
-        className={`relative h-[19px] w-[34px] shrink-0 rounded-[11px] transition-colors duration-[180ms] ${on ? 'bg-primary' : 'bg-[hsl(var(--hairline-strong))]'}`}
+        className={`relative h-[1.1875rem] w-[2.125rem] shrink-0 rounded-[0.6875rem] transition-colors duration-[180ms] ${on ? 'bg-primary' : 'bg-[hsl(var(--hairline-strong))]'}`}
       >
         <span
-          className="absolute top-[2px] h-[15px] w-[15px] rounded-full bg-white transition-[left] duration-[180ms] ease-out"
+          className="absolute top-[2px] h-[0.9375rem] w-[0.9375rem] rounded-full bg-white transition-[left] duration-[180ms] ease-out"
           style={{ left: on ? 17 : 2 }}
         />
       </button>
@@ -93,13 +93,13 @@ function Toggle({ on, onChange, label, hint }: { on: boolean; onChange: (next: b
 function Field({ label, span, children }: { label: string; span?: boolean; children: React.ReactNode }): JSX.Element {
   return (
     <label className={`flex min-w-0 flex-col gap-1.5 ${span ? 'sm:col-span-2' : ''}`}>
-      <span className="text-[11.5px] text-muted-foreground">{label}</span>
+      <span className="text-[0.7188rem] text-muted-foreground">{label}</span>
       {children}
     </label>
   );
 }
 
-const CONTROL = 'h-9 w-full rounded-[9px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-3 text-[12.5px] outline-none focus:border-primary/60';
+const CONTROL = 'h-9 w-full rounded-[0.5625rem] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-3 text-[0.7812rem] outline-none focus:border-primary/60';
 /** 命令类输入用代码底色。白天是浅底深字（cds-theme-tokens 最高原则）。 */
 const CODE_CONTROL = `${CONTROL} cds-ident bg-[hsl(var(--surface-base))]`;
 /**
@@ -111,7 +111,7 @@ const CODE_CONTROL = `${CONTROL} cds-ident bg-[hsl(var(--surface-base))]`;
  * 而且编译、类型、测试全都发现不了。稿子画的是「跨两列的宽输入框」，
  * 宽度照做，控件类型必须按真实数据选。
  */
-const CODE_AREA = 'min-h-[76px] w-full resize-y rounded-[9px] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] px-3 py-2 cds-ident text-[12.5px] leading-[1.7] outline-none focus:border-primary/60';
+const CODE_AREA = 'min-h-[4.75rem] w-full resize-y rounded-[0.5625rem] border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-base))] px-3 py-2 cds-ident text-[0.7812rem] leading-[1.7] outline-none focus:border-primary/60';
 
 export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvConfigSectionProps): JSX.Element {
   const mode = modeOf(row);
@@ -165,12 +165,12 @@ export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvCon
   ].join('\n');
 
   return (
-    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[14px] border">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[18px] py-4">
+    <section className="cds-surface-raised cds-hairline overflow-hidden rounded-[0.875rem] border">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-4">
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           <h2 className="truncate text-sm font-bold">{row.target.name} · 发布策略</h2>
-          <span className="rounded-[6px] bg-warn-soft px-1.5 py-0.5 text-[10px] text-warn">唯一写入口</span>
-          {dirty ? <span className="text-[11.5px] text-warn">有未保存更改</span> : null}
+          <span className="rounded-[0.375rem] bg-warn-soft px-1.5 py-0.5 text-[0.625rem] text-warn">唯一写入口</span>
+          {dirty ? <span className="text-[0.7188rem] text-warn">有未保存更改</span> : null}
         </div>
         <Button size="sm" className="h-8" disabled={!dirty || saving} onClick={() => void save()}>
           {saving ? <Loader2 className="animate-spin" /> : null}
@@ -179,10 +179,10 @@ export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvCon
       </div>
 
       {error ? (
-        <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-bad-soft px-[18px] py-2.5 text-xs text-bad">{error}</p>
+        <p className="border-b border-[hsl(var(--hairline)/0.6)] bg-bad-soft px-[1.125rem] py-2.5 text-xs text-bad">{error}</p>
       ) : null}
 
-      <div className="grid gap-x-[18px] gap-y-3.5 p-[18px] sm:grid-cols-2">
+      <div className="grid gap-x-[1.125rem] gap-y-3.5 p-[1.125rem] sm:grid-cols-2">
         <Field label="发布模式">
           {/* 只读 + 一个去向导的出口。理由见文件头：这张表单没有 generated 模式的必填字段，
               就地切换的结果一定是 400，不如把人送到真能填全的那张表单去。 */}
@@ -191,7 +191,7 @@ export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvCon
             <button
               type="button"
               onClick={onConfigure}
-              className="shrink-0 rounded-[6px] px-1.5 py-0.5 text-[11px] text-primary underline-offset-2 hover:underline"
+              className="shrink-0 rounded-[0.375rem] px-1.5 py-0.5 text-[0.6875rem] text-primary underline-offset-2 hover:underline"
             >
               改用其他模式
             </button>
@@ -248,11 +248,11 @@ export function EnvConfigSection({ row, onSaved, onReload, onConfigure }: EnvCon
         />
       </div>
 
-      <div className="border-t border-[hsl(var(--hairline)/0.6)] px-[18px] py-3.5">
-        <div className="mb-2 text-[11.5px] text-muted-foreground">生效序列预览（保存后按这个顺序执行）</div>
+      <div className="border-t border-[hsl(var(--hairline)/0.6)] px-[1.125rem] py-3.5">
+        <div className="mb-2 text-[0.7188rem] text-muted-foreground">生效序列预览（保存后按这个顺序执行）</div>
         {/* 限高：部署命令是整段脚本时，不限高会把这一块拉成几屏长，
             下面的内容全被挤没。脚本本身在上面的 textarea 里可以完整编辑。 */}
-        <pre className="m-0 max-h-[260px] overflow-auto whitespace-pre-wrap rounded-[9px] bg-[hsl(var(--surface-base))] px-3 py-2.5 cds-ident text-xs leading-[1.7]">
+        <pre className="m-0 max-h-[16.25rem] overflow-auto whitespace-pre-wrap rounded-[0.5625rem] bg-[hsl(var(--surface-base))] px-3 py-2.5 cds-ident text-xs leading-[1.7]">
           {sequence}
         </pre>
       </div>

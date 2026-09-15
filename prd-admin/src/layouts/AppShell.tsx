@@ -61,6 +61,7 @@ import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
 import { useNavOrderStore, NAV_DIVIDER_KEY } from '@/stores/navOrderStore';
 import { getLauncherCatalog } from '@/lib/launcherCatalog';
+import { resolveMobileDrawerUtilities } from '@/lib/mobileDrawerUtilities';
 import { getShortLabel } from '@/lib/shortLabel';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
@@ -581,6 +582,24 @@ export default function AppShell() {
       }))
       .filter((g) => g.items.length > 0);
   }, [visibleItems, effectiveNavOrder, effectiveNavHidden, permissions, isRoot]);
+
+  // 移动抽屉底部的实用工具入口：按 MOBILE_DRAWER_UTILITY_ROUTES 的顺序从目录里取，
+  // 目录已按权限过滤，所以这里查不到就是「该用户看不见」，直接不渲染。
+  // 再套一层导航偏好：用户隐藏的不露、已经画进主导航的不重复（与 groupedNav 同一份 effectiveNavHidden）。
+  const mobileDrawerUtilities = useMemo(
+    () =>
+      resolveMobileDrawerUtilities(getLauncherCatalog({ permissions, isRoot }), {
+        hiddenIds: effectiveNavHidden,
+        alreadyShown: groupedNav.flatMap((g) => g.items.map((it) => ({ appKey: it.appKey, route: it.key }))),
+      }).map(({ route, hint, item }) => {
+        const IconComp =
+          iconMap[item.icon] ??
+          ((LucideIcons as unknown as Record<string, LucideIcon | undefined>)[item.icon]) ??
+          Cpu;
+        return { route, hint, label: item.name, icon: <IconComp size={18} /> };
+      }),
+    [permissions, isRoot, effectiveNavHidden, groupedNav],
+  );
 
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
   const isHomePage = location.pathname === '/';
@@ -1240,6 +1259,24 @@ export default function AppShell() {
 
           {/* 底部操作 */}
           <div className="mt-auto px-4 py-4 flex flex-col gap-2">
+            {/* 实用工具直达（智能体接入台 / 授权健康中心）：桌面端这类入口在侧栏账号菜单或
+                首页搜索里，而账号菜单在小屏是 display:none 的（focusHideAside）、手机首页也没有搜索。
+                不在这里补，手机端就只剩「汉堡 → 百宝箱 → 在几十张卡片里找」这条三层路径。
+                清单见 lib/mobileDrawerUtilities.ts，条目本身来自 NAV_REGISTRY（#1479）。 */}
+            {mobileDrawerUtilities.map((it) => (
+              <button
+                key={it.route}
+                type="button"
+                data-mobile-drawer-utility={it.route}
+                onClick={() => { navigate(it.route); setMobileDrawerOpen(false); }}
+                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
+                style={{ color: 'var(--text-secondary)' }}
+              >
+                {it.icon}
+                <span className="text-sm">{it.label}</span>
+                <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>{it.hint}</span>
+              </button>
+            ))}
             {user?.role === 'ADMIN' && (
               <button
                 type="button"
@@ -1644,6 +1681,23 @@ export default function AppShell() {
                   className="h-px mx-2 my-1"
                   style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
+
+                {/* 智能体接入台：把平台接进用户自己的智能体（MCP）。放在最上面 ——
+                    这是「让 agent 替我干活」的总入口，比设置类条目更常用。 */}
+                <DropdownMenu.Item
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
+                  style={{ color: 'var(--text-secondary)' }}
+                  onSelect={() => navigate('/mcp-console')}
+                >
+                  <Plug size={16} className="shrink-0" />
+                  <span className="text-[13px]">智能体接入台</span>
+                  <span
+                    className="ml-auto text-[10px]"
+                    style={{ color: 'var(--text-muted)' }}
+                  >
+                    连接 / 记录
+                  </span>
+                </DropdownMenu.Item>
 
                 {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account。 */}
                 <DropdownMenu.Item

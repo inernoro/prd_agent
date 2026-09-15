@@ -241,7 +241,7 @@ export function BugReportDialog(): JSX.Element | null {
       role="presentation"
     >
       <div
-        className="flex w-full max-w-[680px] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
+        className="flex w-full max-w-[42.5rem] flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-xl"
         style={{ maxHeight: '86vh' }}
         onClick={(event) => event.stopPropagation()}
         role="dialog"
@@ -252,7 +252,7 @@ export function BugReportDialog(): JSX.Element | null {
           <div className="flex items-center gap-2 text-sm font-medium">
             <Bug className="size-5 text-primary" />
             提交缺陷
-            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{hint}</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.625rem] text-muted-foreground">{hint}</span>
           </div>
           <button
             type="button"
@@ -294,7 +294,7 @@ export function BugReportDialog(): JSX.Element | null {
             onPaste={handlePaste}
             placeholder={'描述你遇到的问题…\n\n第一行将作为标题\n支持粘贴截图或把文件拖进来\n页面地址、路由、主题、浏览器信息会自动带上，不用手写'}
             className="w-full resize-none rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
-            style={{ minHeight: 180 }}
+            style={{ minHeight: '11.25rem' }}
           />
 
           <div className="flex flex-wrap items-center gap-2">
@@ -327,7 +327,7 @@ export function BugReportDialog(): JSX.Element | null {
                   ) : (
                     <Paperclip className="size-4" />
                   )}
-                  <span className="max-w-[140px] truncate">{item.name}</span>
+                  <span className="max-w-[8.75rem] truncate">{item.name}</span>
                   <button
                     type="button"
                     onClick={() => removeAttachment(index)}

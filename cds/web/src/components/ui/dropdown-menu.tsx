@@ -42,7 +42,7 @@ export function DropdownMenu({
     const el = triggerRef.current;
     if (!el) return;
     const rect = el.getBoundingClientRect();
-    const top = rect.bottom + 6; // 6px gap below the trigger (was mt-1.5)
+    const top = rect.bottom + 6; // 0.375rem gap below the trigger (was mt-1.5)
     const left = align === 'end' ? rect.right - width : rect.left;
     setCoords({ top, left });
   };
@@ -163,7 +163,7 @@ export function DropdownDivider(): JSX.Element {
 
 export function DropdownLabel({ children }: { children: ReactNode }): JSX.Element {
   return (
-    <div className="px-3 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+    <div className="px-3 pb-1 pt-2 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
       {children}
     </div>
   );

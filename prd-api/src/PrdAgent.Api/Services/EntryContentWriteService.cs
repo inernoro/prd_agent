@@ -92,7 +92,8 @@ public class EntryContentWriteService
         string? contentTypeOverride = null,
         DateTime? expectedUpdatedAt = null,
         EntryFields? entryFields = null,
-        string? derivedStateMetadataKey = null)
+        string? derivedStateMetadataKey = null,
+        FilterDefinition<DocumentEntry>? extraGuard = null)
     {
         // 更新或创建 ParsedPrd（内容寻址 + 共享保护；乐观并发模式不就地覆盖旧文档）
         var (newDocId, oldContent) = await WriteEntryContentDocAsync(entry, content, reuseExclusiveDocId: expectedUpdatedAt == null);
@@ -139,13 +140,18 @@ public class EntryContentWriteService
         // 乐观并发：条件更新（Id + UpdatedAt），检查与写入是同一条原子操作。
         // 未命中说明期间有人保存过 → 整次写入放弃（评论/账本/快照都不动），
         // 新落的 ParsedPrd 成为无引用的内容寻址文档，无害。
-        var entryFilter = expectedUpdatedAt == null
-            ? Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id)
-            : Builders<DocumentEntry>.Filter.And(
-                Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id),
+        // extraGuard 让调用方把**自己那一条的身份**也放进这条原子写。
+        // 时间戳只回答「有没有被人动过」，答不了「这还是不是我那条」：确定性 id 会被重用，
+        // 而 BSON 只到毫秒 —— 同一毫秒内被删掉再重建的话，两条在 Id + UpdatedAt 上完全一样，
+        // 这次写入就会把正文落进**别人那一代**里，还接着参与它的收尾。
+        var entryFilter = Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id);
+        if (expectedUpdatedAt != null)
+            entryFilter = Builders<DocumentEntry>.Filter.And(entryFilter,
                 Builders<DocumentEntry>.Filter.Eq(e => e.UpdatedAt, expectedUpdatedAt.Value));
+        if (extraGuard != null)
+            entryFilter = Builders<DocumentEntry>.Filter.And(entryFilter, extraGuard);
         var updateResult = await _db.DocumentEntries.UpdateOneAsync(entryFilter, contentUpdate);
-        if (expectedUpdatedAt != null && updateResult.MatchedCount == 0)
+        if ((expectedUpdatedAt != null || extraGuard != null) && updateResult.MatchedCount == 0)
             return new WriteResult(now, 0, 0, 0, entry.DocumentId!, Conflicted: true);
 
         try

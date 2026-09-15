@@ -601,7 +601,7 @@ export function ReleaseCenterPage(): JSX.Element {
           left={(
             <span className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1">
               <Crumb items={[{ label: 'CDS', href: '/project-list' }, { label: '发布中心' }]} />
-              <span className="cds-ident text-[11.5px] text-muted-foreground">release center · 环境生命周期</span>
+              <span className="cds-ident text-[0.7188rem] text-muted-foreground">release center · 环境生命周期</span>
               {/* 项目胶囊：这一页所有数字都在某个项目的语境里，项目必须一眼可见可换。 */}
               {projects.length > 0 ? (
                 <select
@@ -613,7 +613,7 @@ export function ReleaseCenterPage(): JSX.Element {
                     setSelectedTargetId('');
                     setDraft((current) => ({ ...current, projectId: next }));
                   }}
-                  className="h-7 max-w-[220px] rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-[12.5px] outline-none focus:border-[hsl(var(--hairline-strong))]"
+                  className="h-7 max-w-[13.75rem] rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-[0.7812rem] outline-none focus:border-[hsl(var(--hairline-strong))]"
                 >
                   {!projects.some((project) => project.id === projectId) ? (
                     <option value={projectId}>{projectId}（未知项目）</option>
@@ -667,14 +667,14 @@ export function ReleaseCenterPage(): JSX.Element {
                   type="button"
                   aria-pressed={section === item.id}
                   onClick={() => setSection(item.id)}
-                  className={`flex h-8 items-center gap-1.5 rounded-lg px-3 text-[12.5px] transition-colors duration-150 ${
+                  className={`flex h-8 items-center gap-1.5 rounded-lg px-3 text-[0.7812rem] transition-colors duration-150 ${
                     section === item.id
                       ? 'bg-primary/[0.12] font-semibold text-primary'
                       : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'
                   }`}
                 >
                   {item.label}
-                  {badge ? <span className="cds-ident text-[10.5px] opacity-70">{badge}</span> : null}
+                  {badge ? <span className="cds-ident text-[0.6562rem] opacity-70">{badge}</span> : null}
                 </button>
               );
             })}
@@ -682,7 +682,7 @@ export function ReleaseCenterPage(): JSX.Element {
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-7 pt-5">
             {toast ? (
-              <div className="mb-4 rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-2.5 text-sm">
+              <div className="mb-4 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3.5 py-2.5 text-sm">
                 {toast}
               </div>
             ) : null}
@@ -695,18 +695,18 @@ export function ReleaseCenterPage(): JSX.Element {
             ) : null}
 
             {state.status === 'ok' && rows.length > 0 ? (
-              <div className="flex flex-col gap-[18px]">
+              <div className="flex flex-col gap-[1.125rem]">
                 {/* ══ 监控条：常驻所有分区，页面第一块 ══ */}
-                <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[14px] border px-[26px] py-[22px] max-lg:px-4">
-                  <div className="flex min-w-0 flex-1 basis-[320px] items-start gap-3">
+                <section className="cds-surface-raised cds-hairline flex flex-wrap items-start gap-4 rounded-[0.875rem] border px-[1.625rem] py-[1.375rem] max-lg:px-4">
+                  <div className="flex min-w-0 flex-1 basis-[20rem] items-start gap-3">
                     <span
-                      className={`mt-2 h-[9px] w-[9px] shrink-0 rounded-full ${
+                      className={`mt-2 h-[0.5625rem] w-[0.5625rem] shrink-0 rounded-full ${
                         verdict.tone === 'bad' ? 'bg-bad cds-verdict-pulse'
                           : verdict.tone === 'warn' ? 'bg-warn cds-verdict-pulse' : 'bg-ok'
                       }`}
                     />
                     <div className="min-w-0">
-                      <p className="text-[18px] font-bold leading-[1.45] max-2xl:text-[16.5px] max-lg:text-[15px]">
+                      <p className="text-[1.125rem] font-bold leading-[1.45] max-2xl:text-[1.0312rem] max-lg:text-[0.9375rem]">
                         {verdict.segments.map((seg, index) => (seg.envId ? (
                           <button
                             key={`${seg.text}-${index}`}
@@ -732,9 +732,9 @@ export function ReleaseCenterPage(): JSX.Element {
                       {metrics.map((metric) => (
                         <div
                           key={metric.key}
-                          className="min-w-[132px] flex-1 rounded-[10px] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 max-lg:basis-[120px]"
+                          className="min-w-[8.25rem] flex-1 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 max-lg:basis-[7.5rem]"
                         >
-                          <div className="text-[10.5px] text-muted-foreground">{metric.label}</div>
+                          <div className="text-[0.6562rem] text-muted-foreground">{metric.label}</div>
                           <div className={`cds-ident text-base font-bold ${
                             metric.tone === 'bad' ? 'text-bad'
                               : metric.tone === 'warn' ? 'text-warn' : ''
@@ -744,7 +744,7 @@ export function ReleaseCenterPage(): JSX.Element {
                           {/* 名字可截、数字不可截：省略号从尾巴吃起，先吃掉的会是
                               「占 25 次」这半句——而那才是归因句里唯一有信息的部分。 */}
                           <div
-                            className="flex items-baseline gap-1 text-[10.5px] text-muted-foreground"
+                            className="flex items-baseline gap-1 text-[0.6562rem] text-muted-foreground"
                             title={`${metric.attributionName} ${metric.attributionDetail}`.trim()}
                           >
                             <span className="min-w-0 truncate">{metric.attributionName}</span>
@@ -783,7 +783,7 @@ export function ReleaseCenterPage(): JSX.Element {
 
                 {/* ══ 分区二~五：都落到单个环境上，左边一列选环境 ══ */}
                 {section !== 'fleet' ? (
-                  <div className={wide ? 'grid grid-cols-[260px_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
+                  <div className={wide ? 'grid grid-cols-[16.25rem_minmax(0,1fr)] items-start gap-4' : 'flex flex-col gap-4'}>
                     <EnvironmentSidebar
                       sections={sections}
                       selectedTargetId={effectiveTargetId}

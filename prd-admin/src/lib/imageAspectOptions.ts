@@ -115,6 +115,36 @@ export function detectAspectFromSize(size: string): AspectOptionId | null {
 // 按分辨率分组的尺寸类型
 export type SizesByResolution = Record<'1k' | '2k' | '4k', Array<{ size: string; aspectRatio: string }>>;
 
+/**
+ * 当前尺寸对应的比例 —— **唯一判定**。
+ *
+ * 先认后端目录，认不出来再退静态表，最后才是 '1:1'。
+ * 顺序不能反：`ASPECT_OPTIONS` 只收了常见的几档，后端真实返回的 `1344x768`
+ * 不在里面，`detectAspectFromSize` 判 null，于是当前比例被当成 1:1 ——
+ * 用户明明选的 16:9，一换分辨率档就被静默改成方图，重开面板也高亮错那一格
+ *（Codex PR #1476 P2）。
+ *
+ * 抽出来是因为这个判断本来就有三份：编辑器与 ImageSizePicker 各写了一遍
+ * 「先查目录再退静态表」，都是对的；SizePickerPanel 漏掉了前半句，就成了那个 bug。
+ * 同一个判断散成三份必然漂（判据纪律形状 3），所以收敛到这里。
+ * 编辑器里还有九处内联写法（`sizeToAspectMap.get(...) || detectAspectFromSize(...)`），
+ * 行为与本函数一致，属于既有代码，本次不动。
+ */
+export function resolveAspectRatio(
+  size: string,
+  catalog?: SizesByResolution | null,
+): string {
+  const key = String(size ?? '').trim().toLowerCase();
+  if (catalog) {
+    for (const tier of ['1k', '2k', '4k'] as const) {
+      for (const opt of catalog[tier] ?? []) {
+        if (opt?.size?.toLowerCase() === key && opt.aspectRatio) return opt.aspectRatio;
+      }
+    }
+  }
+  return detectAspectFromSize(key) || '1:1';
+}
+
 // 将扁平尺寸数组转换为按分辨率分组的格式
 export function sizesToSizesByResolution(sizes: string[]): SizesByResolution {
   const result: SizesByResolution = { '1k': [], '2k': [], '4k': [] };

@@ -289,12 +289,12 @@ function RuleRow({
         }`}
       >
         <span
-          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${job.enabled ? 'left-[18px]' : 'left-0.5'}`}
+          className={`absolute top-0.5 h-4 w-4 rounded-full bg-white transition-all ${job.enabled ? 'left-[1.125rem]' : 'left-0.5'}`}
         />
       </button>
       <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="truncate text-[13px] font-semibold">{job.name}</span>
+          <span className="truncate text-[0.8125rem] font-semibold">{job.name}</span>
           <Chip>{scheduleText(job)}</Chip>
           {action.requireApproval ? <Chip tone="warn">需人工确认</Chip> : null}
           {action.dryRun ? <Chip>仅预检</Chip> : null}
@@ -312,7 +312,7 @@ function RuleRow({
             : ''}
         </div>
         {job.autoDisabledReason ? (
-          <div className="mt-1.5 rounded-md border border-warn/35 bg-warn-soft px-2.5 py-1.5 text-[11.5px] text-warn">
+          <div className="mt-1.5 rounded-md border border-warn/35 bg-warn-soft px-2.5 py-1.5 text-[0.7188rem] text-warn">
             已被系统自动停用：{job.autoDisabledReason}
           </div>
         ) : null}
@@ -348,18 +348,18 @@ function JobRuns({ jobId }: { jobId: string }): JSX.Element {
 
   return (
     <details className="mt-2" onToggle={(event) => setOpen((event.target as HTMLDetailsElement).open)}>
-      <summary className="inline-flex cursor-pointer items-center gap-1 text-[11.5px] text-muted-foreground">
+      <summary className="inline-flex cursor-pointer items-center gap-1 text-[0.7188rem] text-muted-foreground">
         <ChevronDown className="h-3.5 w-3.5" />
         运行记录
       </summary>
       {runs === null ? (
-        <div className="mt-1.5 text-[11.5px] text-muted-foreground">正在读取…</div>
+        <div className="mt-1.5 text-[0.7188rem] text-muted-foreground">正在读取…</div>
       ) : runs.length === 0 ? (
-        <div className="mt-1.5 text-[11.5px] text-muted-foreground">还没有运行记录。</div>
+        <div className="mt-1.5 text-[0.7188rem] text-muted-foreground">还没有运行记录。</div>
       ) : (
         <ul className="mt-1.5 flex flex-col gap-1">
           {runs.map((run) => (
-            <li key={run.id} className="text-[11.5px] text-muted-foreground">
+            <li key={run.id} className="text-[0.7188rem] text-muted-foreground">
               {formatDateTime(run.startedAt || run.queuedAt)} · {run.status}
               {run.releaseStatus ? ` · 发布 ${run.releaseStatus}` : ''}
               {run.error ? ` · ${run.error}` : ''}

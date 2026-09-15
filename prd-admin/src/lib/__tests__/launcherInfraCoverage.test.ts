@@ -30,15 +30,27 @@ const KNOWN_MISSING = new Set([
   '/admin-web-pages',
 ]);
 
-function readInfraRoutesFromRegistry(): string[] {
+/** 已知未接进 buildStaticUtilities 的 utility 路由。只许删，不许加。 */
+const KNOWN_MISSING_UTILITY = new Set([
+  // 存量欠债：智能体接入台在桌面走账号菜单、手机走抽屉底部直达，首页「全部能力」未列；
+  // 与 #1479 无关，记在 debt.frontend.md，走到时再补。
+  '/mcp-console',
+]);
+
+function readRoutesFromRegistry(section: 'infra' | 'utility', atLeast: number): string[] {
   const source = fs.readFileSync(path.join(SRC, 'app/navRegistry.tsx'), 'utf8');
   // 一个条目从 path 到它自己的 section，中间不允许跨过下一个 path——
   // 否则会把后一条的 section 认到前一条头上（形状 6：取值取错了那一份）。
+  const sectionRe = new RegExp(`section:\\s*'${section}'`);
   const entries = [...source.matchAll(/path:\s*'([^']+)'([\s\S]*?)(?=\n\s*\{\s*\n\s*(?:\/\/[^\n]*\n\s*)*path:\s*'|$)/g)]
-    .filter(([, , body]) => /section:\s*'infra'/.test(body))
+    .filter(([, , body]) => sectionRe.test(body))
     .map(([, p]) => p);
-  expect(entries.length, 'navRegistry 里一条 section=infra 都没解析出来，正则多半失效了').toBeGreaterThan(5);
+  expect(entries.length, `navRegistry 里一条 section=${section} 都没解析出来，正则多半失效了`).toBeGreaterThan(atLeast);
   return entries;
+}
+
+function readInfraRoutesFromRegistry(): string[] {
+  return readRoutesFromRegistry('infra', 5);
 }
 
 function readLauncherRoutes(): Set<string> {
@@ -70,5 +82,26 @@ describe('全部能力页的基础设施入口覆盖', () => {
     // 这一条是本次的具体标的：它曾经只登记在 NAV_REGISTRY，
     // 全量测试绿、真人在「全部能力」页搜不到。
     expect(readLauncherRoutes().has('/data-sync')).toBe(true);
+  });
+});
+
+describe('全部能力页的实用工具入口覆盖', () => {
+  // 同一个洞第二次开在 utility 组：授权健康中心登记在 NAV_REGISTRY（section:'utility'），
+  // 首页搜索「授权健康」却显示「无匹配」（#1479）。守法与 infra 组一样：棘轮只收不放。
+  it('新增的 utility 入口必须同时接进 buildStaticUtilities，否则首页搜不到', () => {
+    const inLauncher = readLauncherRoutes();
+    const missing = readRoutesFromRegistry('utility', 3).filter((p) => !inLauncher.has(p) && !KNOWN_MISSING_UTILITY.has(p));
+    expect(
+      missing,
+      '下列路由在 NAV_REGISTRY 登记为 section:\'utility\'，但 homeLauncherItems.ts 的 buildStaticUtilities 里没有，'
+        + '首页搜索与「全部能力」页都不会出现它们。请在 buildStaticUtilities 补一条：\n  '
+        + missing.join('\n  '),
+    ).toEqual([]);
+  });
+
+  it('棘轮只许收紧：豁免名单里不能留已经接好的路由', () => {
+    const inLauncher = readLauncherRoutes();
+    const stale = [...KNOWN_MISSING_UTILITY].filter((p) => inLauncher.has(p));
+    expect(stale, `这些路由已经接进 buildStaticUtilities，请把它们从 KNOWN_MISSING_UTILITY 里删掉：${stale.join(', ')}`).toEqual([]);
   });
 });

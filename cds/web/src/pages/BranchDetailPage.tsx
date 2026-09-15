@@ -30,6 +30,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { postSse } from '@/lib/sse';
 import { multiPreviewUrl, resolveWebEntryPresentation, resolveWebEntryUrl, simplePreviewUrl, type PreviewMode } from '@/lib/previewUrl';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
@@ -378,69 +379,6 @@ function eventMessage(event: string, data: unknown): string {
   }
   if (typeof data === 'string') return data;
   return event;
-}
-
-function parseSseBlock(raw: string): { event: string; data: unknown } | null {
-  let event = 'message';
-  let data = '';
-  for (const line of raw.split('\n')) {
-    if (line.startsWith('event: ')) event = line.slice(7).trim();
-    if (line.startsWith('data: ')) data += line.slice(6);
-  }
-  if (!data) return { event, data: null };
-  try {
-    return { event, data: JSON.parse(data) };
-  } catch {
-    return { event, data };
-  }
-}
-
-async function postSse(
-  path: string,
-  body: unknown,
-  onEvent: (event: string, data: unknown) => void,
-): Promise<void> {
-  const res = await fetch(path, {
-    method: 'POST',
-    credentials: 'include',
-    headers: { Accept: 'text/event-stream', 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    let parsed: unknown = text;
-    try { parsed = JSON.parse(text); } catch { /* keep text */ }
-    const message =
-      typeof parsed === 'object' && parsed !== null && 'message' in parsed && (parsed as { message: unknown }).message
-        ? String((parsed as { message: unknown }).message)
-        : typeof parsed === 'object' && parsed !== null && 'error' in parsed
-          ? String((parsed as { error: unknown }).error)
-          : `${path} -> ${res.status}`;
-    throw new ApiError(res.status, parsed, message);
-  }
-
-  if (!res.body) return;
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (value) {
-      buffer += decoder.decode(value, { stream: !done });
-      let index = buffer.indexOf('\n\n');
-      while (index >= 0) {
-        const block = buffer.slice(0, index);
-        buffer = buffer.slice(index + 2);
-        if (block.trim() && !block.startsWith(':')) {
-          const parsed = parseSseBlock(block);
-          if (parsed) onEvent(parsed.event, parsed.data);
-        }
-        index = buffer.indexOf('\n\n');
-      }
-    }
-    if (done) break;
-  }
 }
 
 function branchProxyLabels(branch: BranchSummary, aliases: AliasResponse): Set<string> {
@@ -1057,18 +995,21 @@ export function BranchDetailPage(): JSX.Element {
         : `/api/branches/${encodeURIComponent(state.branch.id)}/deploy`;
       // 同分支已有在途操作时部署请求会被合并（SSE complete 带 operationStatus='merged'）：
       // 只是排进待部署队列，不能报「已部署」（Codex P2，2026-07-16）。
-      let mergedIntoPending = false;
+      // 2026-09-08 另加 joined：同一提交已在部署中，本次并入在途操作，同样不能报「已部署」。
+      let acceptedStatus: 'merged' | 'joined' | null = null;
       await postSse(path, {}, (event, data) => {
         appendActionLog(eventMessage(event, data));
-        if (event === 'complete' && typeof data === 'object' && data !== null
-          && (data as { operationStatus?: unknown }).operationStatus === 'merged') {
-          mergedIntoPending = true;
+        if (event === 'complete' && typeof data === 'object' && data !== null) {
+          const status = (data as { operationStatus?: unknown }).operationStatus;
+          if (status === 'merged' || status === 'joined') acceptedStatus = status;
         }
       });
       updateAction(null);
-      setToast(mergedIntoPending
-        ? '部署请求已合并，当前部署完成后自动执行'
-        : (profileId ? `${profileId} 已部署` : '分支已部署'));
+      setToast(acceptedStatus === 'joined'
+        ? '同一提交的部署已在进行中，本次请求已并入在途部署'
+        : acceptedStatus === 'merged'
+          ? '部署请求已合并，当前部署完成后自动执行'
+          : (profileId ? `${profileId} 已部署` : '分支已部署'));
       await load(false);
     } catch (err) {
       const message = err instanceof ApiError ? err.message : String(err);
@@ -1214,7 +1155,7 @@ export function BranchDetailPage(): JSX.Element {
                   </span>
                   {state.project ? (
                     <span className="cds-stat">
-                      <span className="cds-stat-value truncate max-w-[180px]">{displayName(state.project)}</span>
+                      <span className="cds-stat-value truncate max-w-[11.25rem]">{displayName(state.project)}</span>
                       <span className="cds-stat-label">项目</span>
                     </span>
                   ) : null}
@@ -1329,7 +1270,7 @@ export function BranchDetailPage(): JSX.Element {
         ) : null}
 
         {state.status === 'ok' ? (
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22.5rem]">
             <section className="min-w-0 space-y-5">
               <Card className="rounded-md">
                 <CardHeader className="p-5">
@@ -1754,7 +1695,7 @@ export function BranchDetailPage(): JSX.Element {
                   {containerLogs.status === 'loading' ? <LoadingBlock label="加载容器日志" /> : null}
                   {containerLogs.status === 'error' ? <ErrorBlock message={containerLogs.message} /> : null}
                   {containerLogs.status === 'ok' ? (
-                    <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
+                    <pre className="max-h-[26.25rem] overflow-auto whitespace-pre-wrap rounded-md bg-muted p-3 font-mono text-xs leading-5">
                       {containerLogs.logs.trim() || '还没有日志输出'}
                     </pre>
                   ) : null}
@@ -2135,7 +2076,7 @@ function LogPanel({ title, lines, status = 'running' }: { title: string; lines: 
           下一步：{suggestion}
         </div>
       ) : null}
-      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5 text-muted-foreground">
+      <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap font-mono text-[0.6875rem] leading-5 text-muted-foreground">
         {lines.slice(-24).join('\n') || '等待日志输出...'}
       </pre>
     </div>

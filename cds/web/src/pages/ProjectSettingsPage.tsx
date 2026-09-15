@@ -9,6 +9,7 @@ import {
   ChevronRight,
   Copy,
   Database,
+  DatabaseZap,
   Download,
   Eye,
   FileText,
@@ -50,7 +51,11 @@ import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { CodePill, ErrorBlock, LoadingBlock, MetricTile, Section } from '@/pages/cds-settings/components';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { BackupTab } from '@/pages/project-settings/BackupTab';
+import { DbIsolationTab } from '@/pages/project-settings/DbIsolationTab';
+import type { SettingsGroupLabel } from '@/lib/settingsTaxonomy';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
+import { RepoSharingBanner, RepoSharingConfirmBody, type RepoSharing } from '@/components/project/RepoSharing';
+import { BuildScopeDialog } from '@/components/project/BuildScopeDialog';
 
 interface ProjectSummary {
   id: string;
@@ -69,6 +74,7 @@ interface ProjectSummary {
   createdAt?: string;
   updatedAt?: string;
   autoSmokeEnabled?: boolean;
+  agentPrebuiltOnly?: boolean;
   inheritGlobalEnv?: boolean;
   branchCount?: number;
   runningBranchCount?: number;
@@ -94,6 +100,8 @@ interface ProjectSummary {
   autoPublishAfterMinutes?: number;
   /** Deprecated: 项目级自动停止已收敛到系统调度器，保存生命周期时会清零。 */
   autoStopAfterMinutes?: number;
+  /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
+  repoSharing?: RepoSharing | null;
 }
 
 type ResourceChipDisplay = {
@@ -287,6 +295,7 @@ type TabValue =
   | 'runtime-defaults'
   | 'delivery'
   | 'compose'
+  | 'db-isolation'
   | 'infra'
   | 'storage'
   | 'backup'
@@ -303,10 +312,17 @@ interface TabItem {
 }
 
 interface TabGroup {
-  label: string;
+  /** 只能用 settingsTaxonomy 词表里的组名；写别的编译不过。 */
+  label: SettingsGroupLabel;
   items: TabItem[];
 }
 
+/*
+ * 分组按「用户来这里要回答的问题」切，组名与顺序来自 settingsTaxonomy（与系统设置共用）。
+ * 2026-09-02 之前 11 个页签全塞在「运行时」里，环境变量、备份、统计混在一起；现在
+ * 运行 = 它怎么跑起来，数据 = 它的数据放哪 / 分不分 / 备不备 / 搬不搬，观测 = 它跑得怎么样。
+ * 新增页签先回答它属于哪个问题，再落组（见 web/src/lib/settingsTaxonomy.ts）。
+ */
 const tabGroups: TabGroup[] = [
   {
     label: '接入',
@@ -317,17 +333,28 @@ const tabGroups: TabGroup[] = [
     ],
   },
   {
-    label: '运行时',
+    label: '运行',
     items: [
+      { value: 'compose', label: '项目配置', icon: FileText },
       { value: 'env', label: '项目环境变量', icon: TerminalSquare },
       { value: 'runtime-defaults', label: '新分支默认', icon: Rocket },
       { value: 'delivery', label: '交付模式', icon: Server },
-      { value: 'compose', label: '项目配置', icon: FileText },
+    ],
+  },
+  {
+    label: '数据',
+    items: [
+      { value: 'db-isolation', label: '数据库隔离', icon: DatabaseZap },
       { value: 'infra', label: '基础设施', icon: Plug },
       { value: 'storage', label: '存储', icon: Database },
       { value: 'backup', label: '周期备份', icon: ShieldCheck },
       { value: 'migration', label: '迁移', icon: Send },
       { value: 'cache', label: '缓存诊断', icon: HardDrive },
+    ],
+  },
+  {
+    label: '观测',
+    items: [
       { value: 'stats', label: '统计', icon: BarChart3 },
       { value: 'activity', label: '活动日志', icon: Activity },
     ],
@@ -394,6 +421,25 @@ function messageFromError(err: unknown): string {
   return err instanceof ApiError ? err.message : String(err);
 }
 
+/**
+ * 保存接口回的项目对象没有 `repoSharing`（那是 GET 才做的富化），直接拿它替换页面
+ * 状态会让同仓横幅在保存之后凭空消失。这里只做一件事：新对象没带这段富化时，把上
+ * 一次的值原样留着，别让它掉。权威值由调用方随后静默重取。
+ *
+ * 单独抽出来是为了能直接断言这个行为——它藏在 useState 的更新函数里就只能靠源码扫描
+ * 证明「写在那儿」，证明不了「算得对」。
+ */
+export function preserveRepoSharing(
+  prev: ProjectSummary | null,
+  next: ProjectSummary,
+): ProjectSummary {
+  if (!prev || prev.id !== next.id) return next;
+  // 新对象自己带了（哪怕是 undefined 以外的空值）就以它为准，不要拿旧的盖新的
+  if (next.repoSharing !== undefined) return next;
+  if (prev.repoSharing === undefined) return next;
+  return { ...next, repoSharing: prev.repoSharing };
+}
+
 function useProject(projectId: string | undefined): {
   state: ProjectState;
   refresh: () => Promise<void>;
@@ -415,6 +461,28 @@ function useProject(projectId: string | undefined): {
     }
   }, [projectId]);
 
+  /**
+   * 静默重取「只有 GET 才带」的富化字段（`repoSharing`）。
+   *
+   * 各个保存接口回的是裸 Project / toSummary，没有这一段——直接拿它整体替换页面状态，
+   * 同仓横幅就会在保存之后凭空消失，直到用户手动刷新（2026-09-02 Codex P2）。绑仓库
+   * 那条更糟：正是「这一刻该出现横幅」的操作，把横幅弄没了。
+   *
+   * 不走 `refresh()`：那会把状态打回 loading，整页闪一下（expectation-management
+   * 里的「变化必须可感知」反面：凭空消失再凭空出现）。这里只补差，不动 status。
+   */
+  const reloadSharing = useCallback(async () => {
+    if (!projectId) return;
+    try {
+      const fresh = await apiRequest<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`);
+      setState((prev) => (prev.status === 'ok' && prev.project.id === fresh.id
+        ? { status: 'ok', project: { ...prev.project, repoSharing: fresh.repoSharing } }
+        : prev));
+    } catch {
+      // 富化字段取不到就维持现状，不要因此打断刚刚成功的那次保存
+    }
+  }, [projectId]);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -422,7 +490,18 @@ function useProject(projectId: string | undefined): {
   return {
     state,
     refresh,
-    setProject: (project) => setState({ status: 'ok', project }),
+    /*
+     * 收在这一处，而不是让每个保存回调各自记得补 —— 保存路径有十来条，
+     * 「同一份处理抄十遍、改一处忘九处」在这个 PR 里已经栽过好几次。
+     * 先带着旧值落地（不闪），再静默取权威值（绑/解绑之后事实变了也能跟上）。
+     */
+    setProject: (project) => {
+      setState((prev) => ({
+        status: 'ok',
+        project: preserveRepoSharing(prev.status === 'ok' ? prev.project : null, project),
+      }));
+      void reloadSharing();
+    },
   };
 }
 
@@ -431,6 +510,29 @@ export function ProjectSettingsPage(): JSX.Element {
   const { state, refresh, setProject } = useProject(projectId);
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
+  const [scopeDialogOpen, setScopeDialogOpen] = useState(false);
+  const [applyingScope, setApplyingScope] = useState(false);
+
+  /**
+   * 一键采纳系统给的范围建议。系统看得出本项目待在哪个目录，也说得出凭什么，
+   * 所以这里只要一次确认，不必让用户去对话框里再挑一遍。
+   */
+  async function applyScopeSuggestion(): Promise<void> {
+    if (!projectId) return;
+    setApplyingScope(true);
+    try {
+      const res = await apiRequest<{ applied: Array<{ profileId: string }>; scope: string[] }>(
+        `/api/projects/${encodeURIComponent(projectId)}/scope-options/apply`,
+        { method: 'POST' },
+      );
+      setToast(`已固定为 ${res.scope.join('、')}；下次推送生效`);
+      await refresh();
+    } catch (err) {
+      setToast(messageFromError(err));
+    } finally {
+      setApplyingScope(false);
+    }
+  }
 
   useEffect(() => {
     window.history.replaceState(null, '', `#${activeTab}`);
@@ -546,11 +648,11 @@ export function ProjectSettingsPage(): JSX.Element {
               <TabsList aria-label="项目设置分区" className="cds-settings-nav cds-settings-rail">
                 <div className="cds-settings-rail-head">
                   <div className="text-sm font-semibold">项目设置</div>
-                  <div className="truncate font-mono text-[11px] text-muted-foreground">{project.slug || project.id}</div>
+                  <div className="truncate font-mono text-[0.6875rem] text-muted-foreground">{project.slug || project.id}</div>
                 </div>
                 {tabGroups.map((group, groupIdx) => (
                   <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-3'}`}>
-                    <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
+                    <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground/80">
                       {group.label}
                     </div>
                     {group.items.map((tab) => {
@@ -568,6 +670,21 @@ export function ProjectSettingsPage(): JSX.Element {
 
               <div className="cds-settings-content min-w-0">
                 <div className="cds-settings-section-body">
+                {/*
+                 * 同仓关系放在所有分区之上、每个分区都看得见：用户是在这个项目里
+                 * 干活时才需要知道「改这里会连累谁」，切到哪个 tab 都成立。
+                 */}
+                {project.repoSharing ? (
+                  <div className="mb-4">
+                    <RepoSharingBanner
+                      sharing={project.repoSharing}
+                      selfId={project.id}
+                      onDeclareScope={() => setScopeDialogOpen(true)}
+                      onApplySuggestion={() => void applyScopeSuggestion()}
+                      applying={applyingScope}
+                    />
+                  </div>
+                ) : null}
                 <TabsContent value="general">
                   <GeneralTab project={project} projectId={project.id} onSaved={setProject} onToast={setToast} />
                 </TabsContent>
@@ -585,6 +702,9 @@ export function ProjectSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="compose">
                   <ProjectComposeTab projectId={project.id} onToast={setToast} />
+                </TabsContent>
+                <TabsContent value="db-isolation">
+                  <DbIsolationTab projectId={project.id} onToast={setToast} />
                 </TabsContent>
                 <TabsContent value="infra">
                   <ProjectInfraTab projectId={project.id} onToast={setToast} />
@@ -617,6 +737,15 @@ export function ProjectSettingsPage(): JSX.Element {
               </div>
             </div>
           </Tabs>
+        ) : null}
+
+        {project ? (
+          <BuildScopeDialog
+            open={scopeDialogOpen}
+            onOpenChange={setScopeDialogOpen}
+            projectId={project.id}
+            onSaved={(message) => { setToast(message); void refresh(); }}
+          />
         ) : null}
 
         {toast ? (
@@ -848,7 +977,7 @@ function RuntimeDefaultsTab({
                   <div className="mt-1 font-mono text-xs text-muted-foreground">{profile.id}</div>
                 </div>
                 <select
-                  className="h-9 min-w-[180px] rounded-md border border-input bg-background px-3 text-sm"
+                  className="h-9 min-w-[11.25rem] rounded-md border border-input bg-background px-3 text-sm"
                   value={modes[profile.id] || ''}
                   onChange={(event) => setModes((current) => ({ ...current, [profile.id]: event.target.value }))}
                   disabled={entries.length === 0}
@@ -1114,6 +1243,7 @@ function GeneralTab({
   const [description, setDescription] = useState(project.description || '');
   const [gitRepoUrl, setGitRepoUrl] = useState(project.gitRepoUrl || '');
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
+  const [agentPrebuiltOnly, setAgentPrebuiltOnly] = useState(Boolean(project.agentPrebuiltOnly));
   const [resourceChipDisplay, setResourceChipDisplay] = useState<Required<ResourceChipDisplay>>(
     normalizeResourceChipDisplay(project.resourceChipDisplay),
   );
@@ -1151,6 +1281,7 @@ function GeneralTab({
     setDescription(project.description || '');
     setGitRepoUrl(project.gitRepoUrl || '');
     setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
+    setAgentPrebuiltOnly(Boolean(project.agentPrebuiltOnly));
     setResourceChipDisplay(normalizeResourceChipDisplay(project.resourceChipDisplay));
   }, [project]);
 
@@ -1177,6 +1308,7 @@ function GeneralTab({
           description: description.trim(),
           gitRepoUrl: gitRepoUrl.trim(),
           autoSmokeEnabled,
+          agentPrebuiltOnly,
           resourceChipDisplay,
         },
       });
@@ -1265,6 +1397,20 @@ function GeneralTab({
               <span className="block text-muted-foreground">需要项目可访问 AI access key 后才会执行。</span>
             </span>
           </label>
+          <label className="flex max-w-3xl items-start gap-3 cds-surface-raised cds-hairline px-3 py-3">
+            <input
+              className="mt-1 h-4 w-4"
+              type="checkbox"
+              checked={agentPrebuiltOnly}
+              onChange={(event) => setAgentPrebuiltOnly(event.target.checked)}
+            />
+            <span className="text-sm leading-6">
+              <span className="font-medium">Agent 只允许极速版（CI 预构建）部署</span>
+              <span className="block text-muted-foreground">
+                开启后，Agent 凭据发起的部署只要有服务会在 CDS 宿主上源码编译就被拦下，Agent 也不能把分支或项目默认切成 dev / static。真人在页面上的操作不受限。默认关闭，不影响其它项目。
+              </span>
+            </span>
+          </label>
           <div className="max-w-3xl space-y-3 cds-surface-raised cds-hairline px-3 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-medium">分支资源标签</div>
@@ -1310,7 +1456,7 @@ function GeneralTab({
 
           <aside className="cds-settings-aside-col">
             <div className="cds-surface-raised cds-hairline rounded-lg p-4">
-              <div className="pb-3 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              <div className="pb-3 text-[0.6875rem] font-semibold uppercase tracking-wider text-muted-foreground">
                 当前生效
               </div>
               <dl className="grid gap-2.5 text-xs">
@@ -1483,7 +1629,7 @@ function RecentAutoDeploys({ projectId }: { projectId: string }): JSX.Element | 
               </a>
             </div>
             <span
-              className={`rounded border px-1.5 py-0.5 text-[10px] ${
+              className={`rounded border px-1.5 py-0.5 text-[0.625rem] ${
                 it.status === 'running' ? 'border-ok/40 bg-ok-soft text-ok'
                 : it.status === 'error' ? 'border-destructive/40 bg-destructive/10 text-destructive'
                 : 'border-[hsl(var(--hairline))] text-muted-foreground'
@@ -1798,6 +1944,18 @@ function GithubProjectTab({
               解除后，GitHub webhook 不再把该仓库事件路由到此项目。已有分支和 Check Run 不会被删除。
             </DialogDescription>
           </DialogHeader>
+          {/*
+           * 共用同一个仓库时，用户最容易担心的是「我解绑会不会把别人也断了」。
+           * 答案是不会 —— 但这句话必须写出来，让人敢按下去。
+           */}
+          {project.repoSharing && project.repoSharing.siblings.length > 1 ? (
+            <p className="text-sm text-muted-foreground">
+              这个仓库还绑着
+              {' '}
+              {project.repoSharing.siblings.filter((s) => s.id !== project.id).map((s) => s.name).join('、')}
+              。解绑只影响本项目，它们照常收 push。
+            </p>
+          ) : null}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setUnlinkOpen(false)}>
               取消
@@ -1876,6 +2034,21 @@ function GithubRepoPickerDialog({
   const [selectedRepo, setSelectedRepo] = useState<GithubRepo | null>(null);
   const [autoDeploy, setAutoDeploy] = useState(true);
   const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState('');
+  /**
+   * 仓库已被别的项目绑走：非空时弹窗切到「确认共用」那一屏。
+   *
+   * 必须把**被确认的那个目标**整个存下来（仓库 + 安装），不能等按下去再回头读当前
+   * 选择：用户完全可以在看到警告之后又去点另一个仓库，那时按钮上的「知道了」说的是
+   * 前一个仓库，绑上的却是新选的那个，而且绕过了它自己那道 409（Codex P2）。
+   */
+  const [sharedConfirm, setSharedConfirm] = useState<
+    {
+      repoFullName: string;
+      installationId: number;
+      siblings: Array<{ id: string; name: string; scoped?: boolean }>;
+    } | null
+  >(null);
 
   const loadInstallations = useCallback(async () => {
     setInstallationsState({ status: 'loading' });
@@ -1893,6 +2066,15 @@ function GithubRepoPickerDialog({
     if (open) void loadInstallations();
   }, [open, loadInstallations]);
 
+  /*
+   * 选择一变就清掉确认态 —— 收在这一处，而不是散在「点仓库」「换安装」「重载列表」
+   * 三个调用点上：同一个判断抄三份，改一处忘两处是迟早的事。
+   */
+  useEffect(() => {
+    setSharedConfirm(null);
+    setLinkError('');
+  }, [selectedRepo]);
+
   async function loadRepos(installation: GithubInstallation): Promise<void> {
     setRepoState({ status: 'loading', installation });
     setSelectedRepo(null);
@@ -1904,34 +2086,63 @@ function GithubRepoPickerDialog({
     }
   }
 
-  async function linkRepo(): Promise<void> {
-    if (!selectedRepo || repoState.status !== 'ok') return;
+  /**
+   * 绑仓库。仓库已被别的项目绑走时后端回 409 —— 那不是错误，是一个必须由人当场
+   * 回答的问题（「你是要共用，还是填错了仓库」）。所以这里把 409 转成弹窗里的
+   * 一次确认，而不是一句红字报错。
+   */
+  async function linkRepo(
+    /** 显式目标：确认共用时传的是**被确认的那一个**，不是当前选择 */
+    target?: { repoFullName: string; installationId: number },
+  ): Promise<void> {
+    const effective = target
+      || (selectedRepo && repoState.status === 'ok'
+        ? { repoFullName: selectedRepo.fullName, installationId: repoState.installation.id }
+        : null);
+    if (!effective) return;
     setLinking(true);
+    setLinkError('');
     try {
       const result = await apiRequest<GithubLinkResponse>(`/api/projects/${encodeURIComponent(projectId)}/github/link`, {
         method: 'POST',
         body: {
-          installationId: repoState.installation.id,
-          repoFullName: selectedRepo.fullName,
+          installationId: effective.installationId,
+          repoFullName: effective.repoFullName,
           autoDeploy,
+          ...(target ? { allowShared: true } : {}),
         },
       });
       onLinked(result.project);
+      setSharedConfirm(null);
       onOpenChange(false);
+    } catch (err) {
+      const body = err instanceof ApiError ? (err.body as { error?: string; siblings?: Array<{ id: string; name: string; scoped?: boolean }> } | null) : null;
+      if (body?.error === 'already_linked') {
+        setSharedConfirm({ ...effective, siblings: body.siblings || [] });
+      } else {
+        setLinkError(messageFromError(err));
+      }
     } finally {
       setLinking(false);
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        // Esc / 点遮罩关闭也要清确认态，否则下次打开还端着上一个仓库的警告
+        if (!next) { setSharedConfirm(null); setLinkError(''); }
+        onOpenChange(next);
+      }}
+    >
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>绑定 GitHub 仓库</DialogTitle>
           <DialogDescription>先选择 GitHub App 安装，再选择仓库并确认绑定到当前项目。</DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-5 md:grid-cols-[240px_minmax(0,1fr)]">
+        <div className="grid gap-5 md:grid-cols-[15rem_minmax(0,1fr)]">
           <div className="space-y-2">
             <div className="text-sm font-medium">安装</div>
             {installationsState.status === 'loading' ? <LoadingBlock label="加载安装" /> : null}
@@ -2007,14 +2218,37 @@ function GithubRepoPickerDialog({
           </span>
         </label>
 
+        {linkError ? <ErrorBlock message={linkError} /> : null}
+
+        {/*
+         * 打断这一档只留给「正要把仓库绑给第二个项目」这一刻：从这里往后，一次
+         * 推送会变成两个项目各构建一遍，用户有权在按下去之前知道。
+         */}
+        {sharedConfirm ? (
+          <div className="rounded-lg border border-warn/40 bg-warn-soft px-4 py-3">
+            <div className="mb-2 text-sm font-semibold text-warn">这个仓库已经绑给别的项目了</div>
+            <RepoSharingConfirmBody
+              repoFullName={sharedConfirm.repoFullName}
+              siblings={sharedConfirm.siblings}
+            />
+          </div>
+        ) : null}
+
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="outline" onClick={() => { setSharedConfirm(null); onOpenChange(false); }}>
             取消
           </Button>
-          <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
-            {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
-            确认绑定
-          </Button>
+          {sharedConfirm ? (
+            <Button type="button" onClick={() => void linkRepo(sharedConfirm)} disabled={linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              知道了，共用这个仓库
+            </Button>
+          ) : (
+            <Button type="button" onClick={() => void linkRepo()} disabled={!selectedRepo || linking}>
+              {linking ? <Loader2 className="animate-spin" /> : <Link2 />}
+              确认绑定
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -2178,7 +2412,7 @@ function CommentTemplateTab({
             <button
               key={variable.key}
               type="button"
-              className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[180px_180px_minmax(0,1fr)] md:items-center"
+              className="grid gap-2 cds-surface-raised cds-hairline px-3 py-3 text-left transition-colors hover:bg-accent hover:text-accent-foreground md:grid-cols-[11.25rem_11.25rem_minmax(0,1fr)] md:items-center"
               onClick={() => insertVariable(variable.key)}
             >
               <code className="rounded bg-muted px-2 py-1 font-mono text-xs text-foreground">{`{{${variable.key}}}`}</code>
@@ -2366,7 +2600,7 @@ function CacheDiagnosticTab({ onToast }: { onToast: (message: string) => void })
         description="迁移服务器时，可把旧 CDS 导出的 tar.gz 缓存包导入到当前缓存根目录。"
       >
         <div className="max-w-3xl cds-surface-raised cds-hairline px-4 py-4">
-          <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-end">
+          <div className="grid gap-3 md:grid-cols-[11.25rem_minmax(0,1fr)_auto] md:items-end">
             <label className="block space-y-1.5">
               <span className="text-sm font-medium">缓存名称</span>
               <input
@@ -2448,7 +2682,7 @@ function CacheTable({
 
   return (
     <div className="overflow-x-auto rounded-md border border-border">
-      <table className="w-full min-w-[920px] border-collapse text-sm">
+      <table className="w-full min-w-[57.5rem] border-collapse text-sm">
         <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
           <tr>
             <th className="px-3 py-2 font-medium">名称</th>
@@ -2490,16 +2724,16 @@ function CacheRow({
           {cache.orphan ? <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">孤儿</span> : null}
         </div>
       </td>
-      <td className="max-w-[260px] truncate px-3 py-2 font-mono text-xs" title={cache.hostPath}>
+      <td className="max-w-[16.25rem] truncate px-3 py-2 font-mono text-xs" title={cache.hostPath}>
         {cache.hostPath}
       </td>
-      <td className="max-w-[180px] truncate px-3 py-2 font-mono text-xs" title={cache.containerPath}>
+      <td className="max-w-[11.25rem] truncate px-3 py-2 font-mono text-xs" title={cache.containerPath}>
         {cache.containerPath}
       </td>
       <td className="px-3 py-2 text-right">{formatBytes(cache.sizeBytes)}</td>
       <td className="px-3 py-2 text-right">{cache.fileCount == null ? '暂无' : cache.fileCount.toLocaleString()}</td>
       <td className="px-3 py-2 text-muted-foreground">{formatDate(cache.lastModified)}</td>
-      <td className="max-w-[180px] truncate px-3 py-2 text-muted-foreground" title={cache.usedByProfiles.join(', ')}>
+      <td className="max-w-[11.25rem] truncate px-3 py-2 text-muted-foreground" title={cache.usedByProfiles.join(', ')}>
         {cache.usedByProfiles.length ? cache.usedByProfiles.join(', ') : '暂无'}
       </td>
       <td className="px-3 py-2">
@@ -2618,7 +2852,7 @@ function BranchStats({ projectId }: { projectId: string }): JSX.Element {
       ) : null}
       {state.status === 'ok' && state.branches.length > 0 ? (
         <div className="overflow-x-auto rounded-md border border-border">
-          <table className="w-full min-w-[720px] border-collapse text-sm">
+          <table className="w-full min-w-[45rem] border-collapse text-sm">
             <thead className="bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">分支</th>
@@ -2758,7 +2992,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[20px_160px_120px_minmax(0,1fr)_140px] md:items-center hover:bg-muted/10"
+        className="grid w-full gap-2 px-3 py-3 text-left text-sm md:grid-cols-[1.25rem_10rem_7.5rem_minmax(0,1fr)_8.75rem] md:items-center hover:bg-muted/10"
         aria-expanded={expanded}
       >
         {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
@@ -2773,7 +3007,7 @@ function ActivityItem({ entry }: { entry: ActivityLogEntry }): JSX.Element {
         </div>
         <div className="flex justify-end">
           <span
-            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] ${actor.tone}`}
+            className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[0.6875rem] ${actor.tone}`}
             title={entry.actor || '系统'}
           >
             {actor.label}
@@ -3057,7 +3291,7 @@ function ProjectDeliveryTab({ projectId, onToast }: { projectId: string; onToast
                       <CodePill>{profile.workDir}</CodePill>
                       <span className="text-xs text-muted-foreground">端口 {profile.containerPort}</span>
                     </div>
-                    <dl className="mt-3 grid gap-2 text-xs md:grid-cols-[100px_minmax(0,1fr)]">
+                    <dl className="mt-3 grid gap-2 text-xs md:grid-cols-[6.25rem_minmax(0,1fr)]">
                       <dt className="text-muted-foreground">构建</dt>
                       <dd className="break-all font-mono">{[profile.managedBuild?.installCommand, profile.managedBuild?.buildCommand].filter(Boolean).join(' && ') || '无需构建'}</dd>
                       <dt className="text-muted-foreground">启动</dt>
@@ -3232,7 +3466,7 @@ function ProjectComposeTab({
         rows={20}
         spellCheck={false}
         disabled={busy}
-        style={{ minHeight: 320, overflowY: 'auto' }}
+        style={{ minHeight: '20rem', overflowY: 'auto' }}
       />
 
       {/* 字段权威明细 */}
@@ -3504,15 +3738,15 @@ function ProjectMigrationTab({
         <div className="mb-3 flex flex-wrap items-end gap-2">
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">名称(可选)</label>
-            <input className={inputClass} style={{ width: 180 }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="生产 CDS" />
+            <input className={inputClass} style={{ width: '11.25rem' }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="生产 CDS" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">节点地址</label>
-            <input className={monoInputClass} style={{ width: 280 }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
+            <input className={monoInputClass} style={{ width: '17.5rem' }} value={newUrl} onChange={(e) => setNewUrl(e.target.value)} placeholder="noroenrn.com" />
           </div>
           <div className="flex flex-col gap-1">
             <label className="text-xs text-muted-foreground">Access Key(可选,留空用本机同款)</label>
-            <input className={monoInputClass} style={{ width: 240 }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
+            <input className={monoInputClass} style={{ width: '15rem' }} type="password" autoComplete="off" value={newKey} onChange={(e) => setNewKey(e.target.value)} placeholder="目标 AI Access Key" />
           </div>
           <Button type="button" size="sm" onClick={() => void addPeer()} disabled={adding}>
             {adding ? <Loader2 className="animate-spin" /> : <Plus />} 添加目标
@@ -3534,7 +3768,7 @@ function ProjectMigrationTab({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 text-sm font-medium">
                     {p.name}
-                    {p.remoteLabel ? <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[11px] text-ok">{p.remoteLabel}</span> : null}
+                    {p.remoteLabel ? <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] text-ok">{p.remoteLabel}</span> : null}
                   </div>
                   <div className="truncate font-mono text-xs text-muted-foreground">
                     {p.baseUrl} · key {p.keyMasked || '本机回退'}{p.lastVerifiedAt ? ` · 验证于 ${new Date(p.lastVerifiedAt).toLocaleString()}` : ''}
@@ -3577,7 +3811,7 @@ function ProjectMigrationTab({
           <textarea
             readOnly value={preview.yaml}
             className="mb-3 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-xs"
-            rows={12} spellCheck={false} style={{ minHeight: 200, overflowY: 'auto' }}
+            rows={12} spellCheck={false} style={{ minHeight: '12.5rem', overflowY: 'auto' }}
           />
         ) : null}
 
@@ -3636,7 +3870,7 @@ function ProjectMigrationTab({
                         <Download /> 下载源库快照
                       </a>
                     </Button>
-                    <code className="self-center font-mono text-[11px] text-muted-foreground">恢复到 → {b.restore}</code>
+                    <code className="self-center font-mono text-[0.6875rem] text-muted-foreground">恢复到 → {b.restore}</code>
                   </div>
                 </div>
               ))
@@ -3944,7 +4178,7 @@ function ProjectInfraTab({
           <p className="text-xs text-muted-foreground mt-1">
             mongodb / redis / postgres 等 infra 容器,跟随项目独立部署。审批 cds-compose.yml 时自动创建,这里可启停/删除。
           </p>
-          <p className="text-[11px] text-muted-foreground/80 mt-1">
+          <p className="text-[0.6875rem] text-muted-foreground/80 mt-1">
             <span className="font-medium text-foreground/80">数据卷不丢失</span>:删除/停止容器不影响 docker named volume,
             下次同名 infra 创建会自动挂回原数据。
           </p>
@@ -3998,7 +4232,7 @@ function ProjectInfraTab({
                       <span className="font-semibold text-foreground">{svc.name}</span>
                       <CodePill>{svc.id}</CodePill>
                       <span className={
-                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] ` +
+                        `inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] ` +
                         (svc.status === 'running'
                           ? 'bg-ok-soft text-ok'
                           : svc.status === 'error'
@@ -4014,12 +4248,12 @@ function ProjectInfraTab({
                       :{svc.hostPort}→{svc.containerPort}
                     </div>
                     {cmdText ? (
-                      <div className="mt-1 text-[11px] text-foreground/70 font-mono break-all">
+                      <div className="mt-1 text-[0.6875rem] text-foreground/70 font-mono break-all">
                         cmd: {cmdText}
                       </div>
                     ) : null}
                     {svc.errorMessage ? (
-                      <div className="mt-1.5 text-[11px] text-bad">
+                      <div className="mt-1.5 text-[0.6875rem] text-bad">
                         {svc.errorMessage}
                       </div>
                     ) : null}
@@ -4275,7 +4509,7 @@ function InfraResyncDialog({
               rows={8}
               placeholder={`x-cds-project:\n  name: my-project\nservices:\n  mongodb:\n    image: mongo:7\n    ports: ["27017"]\n    volumes: [mongodb-data:/data/db]\n`}
               disabled={busy}
-              style={{ minHeight: 160, maxHeight: 280, overflowY: 'auto' }}
+              style={{ minHeight: '10rem', maxHeight: '17.5rem', overflowY: 'auto' }}
             />
           </div>
 
@@ -4316,7 +4550,7 @@ function InfraResyncDialog({
                   {diff.updates.map((u) => (
                     <div key={`upd-${u.id}`} className="mt-1 rounded border border-info/30 bg-info-soft px-2 py-1 text-xs">
                       <code className="font-mono">{u.id}</code>
-                      <ul className="mt-0.5 list-disc pl-4 text-[11px] text-foreground/80">
+                      <ul className="mt-0.5 list-disc pl-4 text-[0.6875rem] text-foreground/80">
                         {u.reasons.map((r, i) => <li key={i}>{r}</li>)}
                       </ul>
                     </div>

@@ -665,7 +665,8 @@ public sealed class DesignArtifactRunRecoveryTests
                 run.Id,
                 It.IsAny<List<string>?>(),
                 It.IsAny<string?>(),
-                It.IsAny<CancellationToken>()))
+                It.IsAny<CancellationToken>(),
+                It.IsAny<int?>()))
             .Returns(async () =>
             {
                 writeStarted.TrySetResult(true);

@@ -51,17 +51,20 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     private readonly IFileContentExtractor _extractor;
     private readonly IMemoryCache _cache;
     private readonly ILogger<SiteContentSnapshotService> _logger;
+    private readonly IHttpClientFactory? _httpClientFactory;
 
     public SiteContentSnapshotService(
         IAssetStorage storage,
         IFileContentExtractor extractor,
         IMemoryCache cache,
-        ILogger<SiteContentSnapshotService> logger)
+        ILogger<SiteContentSnapshotService> logger,
+        IHttpClientFactory? httpClientFactory = null)
     {
         _storage = storage;
         _extractor = extractor;
         _cache = cache;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
     }
 
     public async Task<SiteContentSnapshot> GetAsync(HostedSite site, CancellationToken ct = default)
@@ -124,6 +127,12 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             try
             {
                 bytes = await _storage.TryDownloadBytesAsync(file.CosKey, ct);
+                // 存量站点可能仍指向旧 COS，而当前环境已经切到 R2。Mongo 里的 CosKey
+                // 在当前 Provider 下会 404，但入口 SiteUrl 仍然可读。只对入口文件走这条
+                // 有界公网回退：它是系统创建时落库的地址，不接受访客请求传入 URL；其余
+                // 文件仍坚持从当前存储读取，避免把任意站点资源下载扩大成外连面。
+                if (bytes == null && IsEntryFile(site, file))
+                    bytes = await TryDownloadLegacyEntryAsync(site, file, ct);
             }
             catch (Exception ex)
             {
@@ -144,9 +153,15 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
             if (string.IsNullOrWhiteSpace(text)) continue;
 
             totalChars += text.Length;
-            if (text.Length > PerFileBudget)
+            // 单文件站点就是一个完整长页面，不能仍按 8000 字截断：用户问到页面后半段时，
+            // 模型虽然“读到了正文”，实际却永远看不到答案。多文件站按文件数公平分配总预算，
+            // 至少保留原有 8000 字下限，既用满上下文，又不让一个大文件吞掉其它文件。
+            var perFileBudget = picked.Count == 1
+                ? TotalBudget
+                : Math.Max(PerFileBudget, TotalBudget / picked.Count);
+            if (text.Length > perFileBudget)
             {
-                text = text[..PerFileBudget];
+                text = text[..perFileBudget];
                 result.Truncated = true;
             }
 
@@ -186,6 +201,70 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
         }
 
         return result;
+    }
+
+    private static bool IsEntryFile(HostedSite site, HostedSiteFile file)
+        => !string.IsNullOrWhiteSpace(site.EntryFile)
+           && string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 当前 Provider 找不到存量入口对象时，从站点落库的旧公网地址读取一次。
+    /// 下载前后都执行 2MB 上限，并使用独立短超时；失败返回 null，让调用方继续按暂时故障处理。
+    /// </summary>
+    private async Task<byte[]?> TryDownloadLegacyEntryAsync(
+        HostedSite site,
+        HostedSiteFile file,
+        CancellationToken ct)
+    {
+        if (_httpClientFactory == null || file.Size > MaxFileDownloadBytes)
+            return null;
+        if (!Uri.TryCreate(site.SiteUrl, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+            return null;
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            // 历史 SiteUrl 不是当前请求直接传入，但其 CDN/DNS 状态仍可能在落库后变化。
+            // 必须走 SafeOutbound：它在建连时拒绝内网/保留地址，并关闭自动重定向，
+            // 避免旧 CDN 通过 DNS 或 3xx 把正文读取导向内部服务或云元数据地址。
+            using var response = await _httpClientFactory.CreateClient("SafeOutbound")
+                .GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, timeout.Token);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentLength is > MaxFileDownloadBytes)
+                return null;
+
+            await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
+            using var buffered = new MemoryStream();
+            var chunk = new byte[8192];
+            while (true)
+            {
+                var read = await stream.ReadAsync(chunk, timeout.Token);
+                if (read <= 0) break;
+                if (buffered.Length + read > MaxFileDownloadBytes)
+                    return null;
+                await buffered.WriteAsync(chunk.AsMemory(0, read), timeout.Token);
+            }
+
+            var bytes = buffered.ToArray();
+            if (bytes.Length > 0)
+            {
+                _logger.LogInformation(
+                    "站点正文快照：当前存储缺少入口对象，已从存量站点地址读取 site={SiteId} key={Key}",
+                    site.Id,
+                    file.CosKey);
+            }
+            return bytes.Length > 0 ? bytes : null;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException)
+        {
+            _logger.LogWarning(
+                ex,
+                "站点正文快照：存量入口地址读取失败 site={SiteId} key={Key}",
+                site.Id,
+                file.CosKey);
+            return null;
+        }
     }
 
     /// <summary>
@@ -267,15 +346,159 @@ public class SiteContentSnapshotService : ISiteContentSnapshotService
     /// </summary>
     internal static string HtmlToPlainText(string html)
     {
-        var s = Regex.Replace(html, @"<(script|style|noscript)\b[^>]*>[\s\S]*?</\1>", " ",
-            RegexOptions.IgnoreCase);
-        s = Regex.Replace(s, @"<!--[\s\S]*?-->", " ");
+        var staticText = ExtractStaticMarkupText(html);
+        // 只有“空挂载节点 + module 脚本 + body 没有可见正文”三个条件同时成立，
+        // 才确认它是纯客户端壳子并从 bundle 补文案。服务端已渲染页面即使带 hydration
+        // 脚本也不读取脚本字符串，避免隐藏错误、管理文案或重复 hydration 数据混进正文。
+        var bundledText = IsConfirmedClientRenderedShell(html)
+            ? ExtractHumanReadableScriptText(html)
+            : string.Empty;
+
+        if (string.IsNullOrWhiteSpace(bundledText)) return staticText;
+        if (string.IsNullOrWhiteSpace(staticText)) return bundledText;
+        return Collapse($"{staticText}\n{bundledText}");
+    }
+
+    private static string ExtractStaticMarkupText(string html)
+    {
+        var s = StripInertMarkup(html);
         // 块级标签转换行，保住段落感；否则整页会被压成一行，模型很难引用"某一段"
         s = Regex.Replace(s, @"<(br|/p|/div|/li|/h[1-6]|/tr|/section|/article)\s*>", "\n",
             RegexOptions.IgnoreCase);
         s = Regex.Replace(s, @"<[^>]+>", " ");
         s = System.Net.WebUtility.HtmlDecode(s);
         return Collapse(s);
+    }
+
+    private static string StripInertMarkup(string html)
+    {
+        var stripped = Regex.Replace(html, @"<(script|style|noscript|template)\b[^>]*>[\s\S]*?</\1>", " ",
+            RegexOptions.IgnoreCase);
+        return Regex.Replace(stripped, @"<!--[\s\S]*?-->", " ");
+    }
+
+    private static bool IsConfirmedClientRenderedShell(string html)
+    {
+        var bodyMatch = Regex.Match(html, @"<body\b[^>]*>([\s\S]*?)</body>", RegexOptions.IgnoreCase);
+        if (!bodyMatch.Success) return false;
+
+        var body = bodyMatch.Groups[1].Value;
+        var activeMarkup = StripInertMarkup(body);
+        var hasKnownMount = ContainsKnownMountNode(activeMarkup);
+        var hasModuleScript = Regex.IsMatch(
+            html,
+            @"<script\b[^>]*\btype\s*=\s*(?:""module""|'module'|module\b)",
+            RegexOptions.IgnoreCase);
+        var visibleBodyText = ExtractStaticMarkupText(body);
+
+        return hasKnownMount && hasModuleScript && string.IsNullOrWhiteSpace(visibleBodyText);
+    }
+
+    private static bool ContainsKnownMountNode(string html)
+    {
+        var index = 0;
+        while (index < html.Length)
+        {
+            var tagStart = html.IndexOf('<', index);
+            if (tagStart < 0) return false;
+
+            var cursor = tagStart + 1;
+            if (cursor >= html.Length || html[cursor] is '/' or '!' or '?')
+            {
+                index = cursor;
+                continue;
+            }
+
+            while (cursor < html.Length && !char.IsWhiteSpace(html[cursor]) && html[cursor] is not '>' and not '/')
+                cursor++;
+
+            while (cursor < html.Length)
+            {
+                while (cursor < html.Length && char.IsWhiteSpace(html[cursor])) cursor++;
+                if (cursor >= html.Length || html[cursor] == '>') break;
+                if (html[cursor] == '/')
+                {
+                    cursor++;
+                    continue;
+                }
+
+                var nameStart = cursor;
+                while (cursor < html.Length && !char.IsWhiteSpace(html[cursor]) && html[cursor] is not '=' and not '>' and not '/')
+                    cursor++;
+                var attributeName = html[nameStart..cursor];
+
+                while (cursor < html.Length && char.IsWhiteSpace(html[cursor])) cursor++;
+                if (cursor >= html.Length || html[cursor] != '=') continue;
+                cursor++;
+                while (cursor < html.Length && char.IsWhiteSpace(html[cursor])) cursor++;
+
+                var quote = cursor < html.Length && html[cursor] is '"' or '\'' ? html[cursor++] : '\0';
+                var valueStart = cursor;
+                if (quote == '\0')
+                {
+                    while (cursor < html.Length && !char.IsWhiteSpace(html[cursor]) && html[cursor] is not '>' and not '/') cursor++;
+                }
+                else
+                {
+                    while (cursor < html.Length && html[cursor] != quote) cursor++;
+                }
+
+                var attributeValue = System.Net.WebUtility.HtmlDecode(html[valueStart..cursor]);
+                if (quote != '\0' && cursor < html.Length) cursor++;
+
+                if (attributeName.Equals("id", StringComparison.OrdinalIgnoreCase) &&
+                    (attributeValue.Equals("root", StringComparison.OrdinalIgnoreCase) ||
+                     attributeValue.Equals("app", StringComparison.OrdinalIgnoreCase) ||
+                     attributeValue.Equals("__next", StringComparison.OrdinalIgnoreCase)))
+                    return true;
+            }
+
+            index = cursor + 1;
+        }
+
+        return false;
+    }
+
+    private static string ExtractHumanReadableScriptText(string html)
+    {
+        var output = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        // 只读真正承载客户端页面的 module 脚本。hydration JSON、兼容脚本、
+        // 埋点和错误处理脚本不是可见正文，不得被混入快照。
+        var scripts = Regex.Matches(
+            html,
+            @"<script\b(?=[^>]*\btype\s*=\s*(?:""module""|'module'|module\b))[^>]*>([\s\S]*?)</script>",
+            RegexOptions.IgnoreCase);
+
+        foreach (Match script in scripts)
+        {
+            var source = script.Groups[1].Value;
+            // 带路由的 bundle 同时包含多个页面，服务端不知道浏览器当前渲染了哪一条。
+            // 这种形态宁可拒绝自动补文案，也不把其它路由的内容说成当前页正文。
+            if (Regex.IsMatch(
+                    source,
+                    @"\b(?:createBrowserRouter|BrowserRouter|HashRouter|MemoryRouter|useRoutes)\b|\blocation\s*\.\s*pathname\b",
+                    RegexOptions.IgnoreCase))
+                continue;
+
+            // 只提取 React 元素 children 属性中的文本节点，不再扫描任意 JS 字符串。
+            // 这会排除路由表元数据、对话框配置、隐藏错误和管理员文案常量。
+            var children = Regex.Matches(
+                source,
+                @"\bchildren\s*:\s*(?:\[\s*)?(?<quote>[""'`])(?<text>(?:\\.|(?!\k<quote>)[\s\S]){2,1000}?)\k<quote>");
+            foreach (Match child in children)
+            {
+                var value = child.Groups["text"].Value;
+                if (string.IsNullOrWhiteSpace(value)
+                    || !Regex.IsMatch(value, @"[\u3400-\u9fff]"))
+                    continue;
+
+                value = Collapse(System.Net.WebUtility.HtmlDecode(value));
+                if (value.Length > 0 && seen.Add(value)) output.Add(value);
+            }
+        }
+
+        return string.Join('\n', output);
     }
 
     /// <summary>压掉多余空白：行内连续空白压成一个空格，连续空行压成一个。</summary>

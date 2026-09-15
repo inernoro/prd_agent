@@ -85,6 +85,8 @@ public sealed class WebPagesDeletionControllerTests
     {
         var controller = new WebPagesController(
             sites,
+            // 主干把站点优化服务并进了控制器构造：这条用例不测优化，给个空替身即可。
+            Mock.Of<IHostedSiteOptimizationService>(),
             Mock.Of<IUploadProgressService>(),
             new MongoDbContext(
                 "mongodb://127.0.0.1:27017",

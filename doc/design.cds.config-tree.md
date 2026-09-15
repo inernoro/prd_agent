@@ -121,7 +121,8 @@ CDS 全局默认(_global 变量层)
 | 能力 | API | CLI | UI |
 |---|---|---|---|
 | 分支临时服务 | GET/PUT `/branches/:id/extra-services[?redeploy=1]` | `cdscli branch extra-services list/set/remove` | 分支抽屉「设置」tab + 详情页面板(预设:Nacos/Kafka/RabbitMQ/Redis/MinIO) |
-| per-branch DB 开关 | PUT `/branches/:id/profile-overrides/:pid`(dbScope) | — | 分支抽屉运行模式区选择器 |
+| per-branch DB 项目默认 | GET/PUT `/projects/:id/db-isolation`(原子批量写 `BuildProfile.dbScope`) | — | 项目设置 → 数据 → 数据库隔离 |
+| per-branch DB 分支覆盖 | PUT `/branches/:id/profile-overrides/:pid`(dbScope) | — | 分支抽屉运行模式区（标「项目默认 / 本分支覆盖」，可恢复继承） |
 | 生效配置检查器 | GET `/branches/:id/effective-config` | — | 抽屉「配置」tab / 详情页「生效配置」 |
 | 派生建分支 | POST `/branches`(sourceBranchId) | `branch create --from <id>` | 分支列表页搜索下拉「配置来源」选择器(默认项目模板,不派生) |
 | 显式拉取配置 | POST `/branches/:id/copy-config-from/:sourceId[?redeploy=1]` | — | 检查器派生行按钮 |

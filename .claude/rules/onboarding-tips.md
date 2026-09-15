@@ -16,7 +16,8 @@ paths:
 
 ## 〇、触达机制（2026-06-02 重做，最高优先）
 
-- **入口位置**：右上角常驻 pill（文字「本页教程 / 新手指引」），始终可见、不可贴边隐藏。**禁止**改回右下角匿名图标（用户原话：像个小广告，没人点）。
+- **入口位置**：常驻 pill（文字「本页教程 / 新手指引」），始终可见、不可贴边隐藏。**禁止**改回右下角匿名图标（用户原话：像个小广告，没人点）。默认右上角；**右上角已被浮层占住的全屏页放左上角**（见下条）。
+- **全屏画布页的例外（2026-09-02）**：视觉创作编辑器的 pill 在**左上角、返回钮正下方**（`VisualAgentFullscreenPage`）。原因：该页右上角是一叠宽度随开关变化的浮层（对话面板 420 + AI 分层面板 300），pill 曾用 `md:right-[436px]` 去躲对话面板，分层面板一上线就被 z-50 的 pill 压住了收起按钮。**任何用固定像素偏移去躲浮层的写法都会在布局变动时静默漂移**，且不会有测试变红——所以这类页面一律避开那个角，不要再调那个数字。守卫见 `semanticLayerWiringGuard.test.ts`「教程 pill 不再用写死的 right 偏移」。飞回动画按 `[data-tour-entry]` 选择器取位，不依赖具体角落，换边不影响。
 - **移动端例外（2026-06-22 用户要求）**：手机端（`<768px`）**隐藏** TabBar/PageHeader 内嵌的教程 pill，把顶部空间让给页面操作（控制条过载治理）。教程入口改由「我的 → 学习中心」（`/learning-center`）承载；新人未走完的本页 `*-page-guide` 仍由 `SpotlightOverlay` 自动开讲（不依赖 pill）。即"桌面常驻 pill、手机收进学习中心 + 自动开讲"。
 - **自动开讲只此一次（2026-07-12 改，用户反馈「教程有点烦人，不要反复弹出」）**：`TipsDrawer` 有一个 effect——进入任意路由，若存在 `actionUrl` 匹配当前页、且 `sourceId` 以 `-page-guide` 结尾的 tip 还在 `tips` 里（后端已过滤掉「已学会」的），就用 `writeSpotlightPayload` 自动开讲。**每条教程每台设备一生只自动开讲一次**（`localStorage` 的 `tipsAutoStartedGuidesForever`，弹过即记，走没走完都不再自动弹）——废除旧的「每个新 session 重弹直到走完最后一步」强制机制。没走完的教程入口 pill 仍保持强调态，学习中心可随时重看；`sessionStorage` 的 `tipsAutoStartedGuides` 仍同步写一份，仅供「更新提醒不紧跟整套教程弹」的同 session 判断（§5.9.3 约束 1）。更新教程抽屉自动展开同理：`tipsBookAutoOpenedIds` 也改 localStorage，每条每台设备只自动展开一次。**新增页面教程时务必用 `*-page-guide` 后缀的 sourceId，否则不会自动开讲。**
 - **全局唯一挂载**：`<TipsDrawer/>` 与 `<SpotlightOverlay/>` 挂在 **App 根**（`src/app/App.tsx`，Router 内、Routes 外），跨任意路由（含 shell→全屏编辑器）**不卸载**。这样本页教程的 `NavigateTo` / 自动点击「新建」进编辑器的步骤不会因路由切换丢 state。**禁止**再在 `AppShell` 或某个页面里单独挂这两个组件（会重复实例 + 跨页丢 state）。
@@ -29,7 +30,7 @@ paths:
   | 页面 | route | seed id | 步数 |
   |------|-------|---------|------|
   | 网页托管 | `/web-pages` | `webpages-page-guide` | 14 |
-  | 视觉创作 | `/visual-agent` | `visual-page-guide` | 11（+ 进编辑器步骤见下） |
+  | 视觉创作 | `/visual-agent` | `visual-page-guide` | 12（+ 进编辑器步骤见下） |
   | 知识库 | `/document-store` | `document-store-page-guide` | 8 |
   | 文学创作 | `/literary-agent` | `literary-page-guide` | 8（+ 进编辑器步骤见下） |
   | 海鲜市场 | `/marketplace` | `marketplace-page-guide` | 6 |

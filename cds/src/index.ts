@@ -14,15 +14,17 @@ import {
   resolveCommandTemplate,
 } from './services/compose-parser.js';
 import fs from 'node:fs';
-import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq } from './server.js';
+import { createServer, installSpaFallback, broadcastActivity, nextActivitySeq, type ServerDeps } from './server.js';
 import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
+import { isAutoWakeEligible } from './services/branch-wake-eligibility.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
-import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
+import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv, resolveBranchPublishedEntrypoints } from './services/preview-entrypoints.js';
+import { parseCdsRefs, resolveCdsRef, cdsRefResolverDepsFromState } from './services/cross-project-refs.js';
 import { describeListenDecision, resolveListenHost, type ListenHostDecision } from './services/listen-host.js';
 import {
   auditInfraExposure, detectInfraKind, renderExposureReport, resolveRuntimeFirewallGuard,
@@ -73,6 +75,9 @@ import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
+import { createPublicStatusRouter, createStatusPageAdminRouter } from './routes/public-status.js';
+import { runMonitorDiscovery, type DiscoveryRunSummary } from './services/monitor-discovery-runner.js';
+import { customProbeTargetId } from './services/uptime-custom-monitor.js';
 import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
 import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
@@ -85,6 +90,8 @@ import { createGracefulShutdownController } from './services/graceful-shutdown.j
 import { ForwarderRoutePublisher } from './services/forwarder-route-publisher.js';
 import { PreviewCanaryService, type PreviewCanaryTarget } from './services/preview-canary.js';
 import { syncAllSystemdUnits } from './services/systemd-sync.js';
+import { resolveWorkloadCgroup } from './services/workload-cgroup.js';
+import { startEventLoopLagMonitor } from './services/event-loop-lag.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
@@ -129,6 +136,7 @@ import { parseCsv } from './util/parse-csv.js';
 import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
+import { MapNotifier, mapNotifierConfigFromEnv } from './services/map-notifier.js';
 
 
 const configPath = process.argv[2] || undefined;
@@ -2514,10 +2522,26 @@ const containerService = new ContainerService(shell, config, {
     entry,
     branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
   ),
+  // 跨项目引用（plan.cds.service-relations 第三批）：`${CDS_REF:项目/服务[@分支]}` → 目标公网入口
+  resolveCdsRef: (_entry, raw) => {
+    const [ref] = parseCdsRefs(raw);
+    if (!ref) return null;
+    return resolveCdsRef(cdsRefResolverDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]), ref).url;
+  },
   // infra 端口的绑定地址必须与注入给应用的 CDS_HOST 同源（都来自
   // StateService 的网桥地址解析），否则连接串指向的地址上根本没有监听。
   getInfraPublishHosts: () => stateService.getInfraPublishHosts(),
 }, activeServerEventLogStore);
+
+// 2026-09-08 宿主过载复盘：托管容器挂低权重 slice。探测一次 docker cgroup driver，
+// 决定 docker run 要不要带 --cgroup-parent（systemd driver 才有权重效果）。
+// 探测失败安全退化为不追加，只打日志。
+//
+// executor 节点同样要跑：它用的是同一个 ContainerService 在**自己那台宿主**上构建和
+// 起容器，那些负载照样会和 executor API 抢 CPU（Codex 八轮 P2）。跳过的只有预览实例
+// ——它跑在容器里，不接管宿主 cgroup，这个判断在 resolveWorkloadCgroup 内部做。
+const cg = await resolveWorkloadCgroup(shell);
+console.log(`  [workload-cgroup] ${cg.enabled ? `启用 --cgroup-parent ${cg.parent}` : '未启用'}（driver=${cg.driver}，权重${cg.weightManaged ? '由 systemd 接管' : '未接管'}）：${cg.reason}`);
 
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次
 // docker stats 并按项目汇总，供「资源占用」面板揪出 CPU 大户 / 反复构建大户。
@@ -2547,7 +2571,9 @@ const dockerEventMonitor = new DockerEventMonitor(shell, activeServerEventLogSto
   const previousStatus = svc.status;
   if (!['running', 'starting', 'building', 'restarting'].includes(String(previousStatus || ''))) return;
 
-  const classified = classifyDockerLifecycleEvent(event);
+  // 分支名只有 state 这边有（docker label 只带 cds.branch.id），传进去让停止原因
+  // 能说「分支 xxx」而不是一串容器名 —— 外因要说给人听（external-cause-first）。
+  const classified = classifyDockerLifecycleEvent({ ...event, branchName: branch.branch });
   svc.status = classified.nextServiceStatus;
   svc.errorMessage = classified.reason;
   if (allBranchServicesInactive(branch)) {
@@ -2817,6 +2843,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopping';
       try {
         await containerService.stop(svc.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+          kind: 'cds-stop-idle',
           projectId: branch.projectId,
           branchId: branch.id,
           profileId: svc.profileId,
@@ -2843,6 +2870,7 @@ schedulerService.setCoolFn(async (slug: string) => {
       if (member.containerName) {
         try {
           await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+            kind: 'cds-stop-idle',
             projectId: branch.projectId,
             branchId: branch.id,
             profileId: `${replicaSet.profileId}--${member.id}`,
@@ -3040,26 +3068,24 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
   proxyService.setOnReviveCooled(async (slug: string) => {
     const branch = stateService.getBranch(slug);
     if (!branch) return;
-    // Re-check eligibility on this side: only scheduler-cooled, still idle, with
-    // preserved containers. Guards against a status change between the proxy's
-    // check and this async entry.
-    if (branch.lastStopSource !== 'scheduler') return;
-    if (branch.status !== 'idle') return;
+    // Re-check eligibility on this side against the SAME single predicate the
+    // proxy used — guards against a status change between the proxy's check and
+    // this async entry. 曾经这里另写一份 lastStopSource 判断，两份都只认
+    // 'scheduler'，改一处忘一处的风险白送（判据纪律形状 3）。
+    //
+    // 项目暂停是**项目级**意图，停机来源那一档答不了它，必须把项目状态一起递进去。
+    // 上一版给 proxy 侧的 shouldAutoWakeCooled 加了这个参数，却没给这里加——
+    // 判据是一份了，喂给它的料却只喂了一处，等于这条复检对暂停完全不设防
+    // （判据纪律形状 2：接线只建一半，删掉不会红）。
+    const isProjectPaused = () =>
+      stateService.getProjects?.().find((p) => p.id === branch.projectId)?.paused === true;
+    if (!isAutoWakeEligible(branch, { projectPaused: isProjectPaused() })) return;
     const services = Object.values(branch.services);
-    if (services.length === 0) return;
 
-    // Executor-owned branches can't be revived by a LOCAL docker restart. A
-    // resolved deploy clears executorId to undefined for embedded/local runs
-    // (branches.ts: `stillRemote?.role==='embedded' || !stillRemote` → undefined),
-    // so a truthy executorId always means a REMOTE executor — whether currently
-    // registered OR temporarily absent from the registry (coordinator restart /
-    // missed heartbeat). In both cases the container runs off-master and the
-    // local `restartServiceInPlace` is a doomed no-op that would flip the branch
-    // to `error` and stop future retries. Skip without touching state so the
-    // diagnostic page stays and a later visit retries once the executor
-    // re-registers. Mirrors the auto-lifecycle stop path's
-    // `if (branch.executorId && !remoteExecutor)` remote-unavailable handling.
-    if (branch.executorId) return;
+    // executorId（远端执行器）那一条已经在 isAutoWakeEligible 里了，不在这里重复判——
+    // 理由是本机 restartServiceInPlace 对跑在别处的容器是注定失败的空操作，失败还会把
+    // 分支翻成 error、断掉后续重试；跳过时不碰状态，等执行器重新注册后下次访问再试。
+    // 一份判据一处定义，见 services/branch-wake-eligibility.ts。
 
     // Acquire the operation lease BEFORE mutating state — throws on conflict
     // (a deploy / cooling already owns the branch), in which case we abort
@@ -3168,6 +3194,104 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
           svc.errorMessage = `容器 ${svc.containerName} 就绪探测超时，请改用「重新部署」`;
           failed.push(svc.containerName);
         }
+      }
+
+      // 唤醒跑到一半，项目被暂停了——这条路租约拦不住，必须自己问一次。
+      //
+      // 暂停路由（PUT /api/projects/:id/paused）会给每个在跑的分支发一次
+      // POST /stop，带 X-CDS-Trigger: system。那次 stop 的优先级是 10，而我们此刻
+      // 正握着 'auto-restart' 租约（35），协调器只在**严格更高**优先级时才抢占，
+      // 于是它被拒了；而暂停路由发的是 void fetch(...).catch(...)，只看得到网络异常，
+      // 非 2xx 响应它根本不读。两边都「没报错」，结果是项目显示已暂停、容器却在跑，
+      // 而且是我们自己把它标成 running 的（Codex PR #1476 P1）。
+      //
+      // 所以落 running 之前再问一次项目状态：暂停了就把刚拉起来的容器停回去，
+      // 按 system 来源记账（与暂停路由那次 stop 同一档），本次操作记 cancelled。
+      // 这里只负责「不要由我们制造出一个跑着的暂停项目」；至于让低优先级的暂停 stop
+      // 反过来抢占高优先级操作，那是操作优先级仲裁的语义，不在本次改动范围内。
+      if (isProjectPaused()) {
+        // 先确认租约还是我们的：被更高优先级操作接管时，状态机已经不归我们管，
+        // 这里再去 stop 就是和新主人对打。assertCurrent 抛出后由下面的 catch
+        // 按 superseded 处理（不碰状态）。
+        lease?.assertCurrent('auto-wake project-paused recheck');
+        branchOperationFinalStatus = 'cancelled';
+        /** 停完复核仍在跑的容器。非空 = 这次回滚没做干净，不能记成「已停」。 */
+        const stillRunning: string[] = [];
+        for (const svc of services) {
+          // 每个 await 前后都要重新确认租约还在我们手上。
+          //
+          // 入口判一次不够：stop 与随后的存活复核都是 await，中间项目可能被恢复、
+          // 又被一次手动部署接管（优先级 80，抢得动我们的 35）。那之后这个循环再往下走，
+          // 停的就是**新主人刚拉起来的容器**，最后还会拿 idle / error 覆盖掉它的分支状态
+          //（Codex PR #1476 P1）。上面那条重启循环每个服务前后都 assertCurrent，
+          // 这段回滚是后加的，漏了同一道。
+          lease?.assertCurrent(`auto-wake revert before ${svc.profileId}`);
+          try {
+            await containerService.stop(svc.containerName, '项目已暂停，撤销本次自动唤醒', {
+              kind: 'cds-stop-idle',
+              projectId: branch.projectId,
+              branchId: branch.id,
+              profileId: svc.profileId,
+              operationId: lease?.operationId || null,
+              actor: 'scheduler',
+              trigger: 'scheduler',
+              operation: 'branch-auto-wake-revert',
+              source: 'proxy.preview-auto-wake',
+            });
+          } catch (stopErr) {
+            console.warn(`[auto-wake] revert stop failed for "${svc.containerName}": ${(stopErr as Error).message}`);
+          }
+          // **停完必须核实再落状态**。`containerService.stop` 在 `docker stop`
+          // 非零退出时只记一条 error 事件、**不抛异常**，所以上面那个 catch 一次都不会进；
+          // 无条件写 'stopped' 就是「账上停了、进程还在跑」——而这正是这段回滚要防的
+          // 资源泄漏，等于用一条假记录把它藏起来（Codex PR #1476 P1）。
+          //
+          // 判定复用 services/replica-stop 那一份：同样的坑在副本停止链路上已经踩过
+          // （Codex 第三十五轮 P1），那份的注释就写着「以后新增停止路径也只调它」——
+          // 这里就是新增的那条路径。用 shim 适配是因为分支服务把提示写在 errorMessage，
+          // 而那个接口用的是 statusMessage；判定逻辑一份，落盘字段各自负责。
+          const shim = { containerName: svc.containerName, status: String(svc.status) };
+          const settled = await settleMemberAfterStop(shim, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '项目已暂停，自动唤醒已撤销',
+            onStillRunning: (name, message) => {
+              svc.errorMessage = message;
+              stillRunning.push(name);
+            },
+          });
+          lease?.assertCurrent(`auto-wake revert after ${svc.profileId}`);
+          svc.status = settled === 'error' ? 'error' : 'stopped';
+        }
+        // 落盘之前再确认一次：最后一个 await 到 save 之间同样可能被接管，
+        // 那时这几行就是拿我们的结论覆盖新主人的状态。
+        lease?.assertCurrent('auto-wake revert before save');
+        branch.lastStoppedAt = new Date().toISOString();
+        branch.lastStopReason = '项目已暂停，自动唤醒已撤销';
+        branch.lastStopSource = 'system';
+        if (stillRunning.length > 0) {
+          // 有容器没停下来：分支不能记成 idle（那会让它从「需要处理」的视野里消失），
+          // 事件也不能说「已停回容器」——那句话此刻是假的。
+          branchOperationFinalStatus = 'failed';
+          branch.status = 'error';
+          branch.errorMessage = `项目已暂停，但 ${stillRunning.length} 个容器未能停止：${stillRunning.join(', ')}，请手动检查 docker`;
+        } else {
+          branch.status = 'idle';
+        }
+        stateService.save();
+        activeServerEventLogStore?.record({
+          category: 'system',
+          severity: stillRunning.length > 0 ? 'error' : 'warn',
+          source: 'proxy.preview-auto-wake',
+          action: stillRunning.length > 0
+            ? 'branch.auto-wake.revert-stop-failed'
+            : 'branch.auto-wake.reverted-project-paused',
+          message: stillRunning.length > 0
+            ? `项目暂停，撤销 ${slug} 的自动唤醒时有容器未停止：${stillRunning.join(', ')}`
+            : `项目暂停，已撤销 ${slug} 的自动唤醒并停回容器`,
+          projectId: branch.projectId,
+          branchId: branch.id,
+        });
+        return;
       }
 
       if (failed.length === 0) {
@@ -3422,6 +3546,7 @@ const autoLifecycleService = new AutoLifecycleService(
           svc.status = 'stopping';
           try {
             await containerService.stop(svc.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+              kind: 'cds-stop-idle',
               projectId: branch.projectId,
               branchId: branch.id,
               profileId: svc.profileId,
@@ -3448,6 +3573,7 @@ const autoLifecycleService = new AutoLifecycleService(
           if (member.containerName) {
             try {
               await containerService.stop(member.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+                kind: 'cds-stop-idle',
                 projectId: branch.projectId,
                 branchId: branch.id,
                 profileId: `${replicaSet.profileId}--${member.id}`,
@@ -5202,8 +5328,13 @@ function stateStorageLabel(): string {
   return `state.json (${stateFile})`;
 }
 
+// 事件循环延迟采样（2026-09-08）：/healthz 的 pressure.eventLoop 数据源。
+startEventLoopLagMonitor();
+
 // ── Master server (dashboard + API on masterPort) ──
-const app = createServer({
+// serverDeps 保留引用：uptimeMonitor 在下面才构造，建好后回填给 /healthz 用。
+const serverDeps: ServerDeps = {
+  getPublishedRoutes: () => forwarderRoutePublisher?.getPublishedRoutes() ?? [],
   stateService,
   worktreeService,
   containerService,
@@ -5222,7 +5353,9 @@ const app = createServer({
   httpLogStore: activeHttpLogStore,
   serverEventLogStore: activeServerEventLogStore,
   branchOperationCoordinator,
-});
+  offhostAudit: activeServerEventLogStore instanceof OffHostAuditLogSink ? activeServerEventLogStore : null,
+};
+const app = createServer(serverDeps);
 
 // ── Helper: kill process on port so CDS can bind ──
 // force=true → kill any process (used for masterPort which belongs exclusively to CDS)
@@ -5720,6 +5853,61 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // proxy / forwarder —— 后者每转发一次就会 scheduler.touch()，会把 idleTTL
   // 降温彻底废掉。详见 services/uptime-monitor.ts 顶部纪律 1。
   // CDS_UPTIME_ENABLED=0 可一刀关停（start() 变 no-op）。
+  // 告警的第二个出口：MAP 站内通知。
+  //
+  // 只 publish 到 cdsEventsBus 等于「告警躺在 CDS 自己的台账里」，没人打开状态页
+  // 就等于没发生——而本仓库刚因为「后台在炸、前台看着正常」吃过一次亏
+  // （规则 degradation-must-alarm）。铃要响在人会看的地方。
+  //
+  // 没配齐凭据时**必须把这件事印出来**：静默禁用就是装了个永远不会响的铃，
+  // 那正是这条链路要治的病。
+  const mapNotifierConfig = mapNotifierConfigFromEnv();
+  const mapNotifier = mapNotifierConfig
+    ? new MapNotifier(mapNotifierConfig, {
+        warn: (m) => console.warn(m),
+        info: (m) => console.log(m),
+      })
+    : null;
+  if (mapNotifier) {
+    console.log('  [map-notifier] 存活告警将投递到 MAP 站内通知（source=uptime-alert）');
+  } else {
+    console.log('  [map-notifier] 未配置，存活告警只进 CDS 事件总线，不会有人被通知'
+      + '（需要 CDS_MAP_NOTIFY_ENDPOINT / _KEY_ID / _USERNAME / _PRIVATE_KEY）');
+  }
+
+  /**
+   * 项目级地址台账：某个项目名下所有分支预览的主机名。
+   *
+   * 走 resolveBranchPublishedEntrypoints —— 与容器注入 CDS_SERVICE_URLS、
+   * /api/branches 下发 previewUrls 是同一份组装。自己按「slug + 子域」拼一份
+   * 会立刻变成第二个判定源：命名子域规则一改，合法地址被判非法（或反过来），
+   * 而两边都「看着对」。
+   *
+   * 三个消费方共用这一份：写入门（地址必须属于本项目，堵 SSRF）、
+   * 分支绑定（分支删除时随之清理，不留死地址）、环境判定（地址指着分支预览的
+   * 监控一律算分支预览，不管它自称什么）。
+   */
+  const listProjectPreviewHosts = (projectId: string): Array<{ branchId: string; host: string }> => {
+    const previewHost = config.previewDomain || config.rootDomains?.[0];
+    if (!previewHost) return [];
+    const entrypointDeps = branchEntrypointDepsFromState(stateService, previewHost);
+    const hosts: Array<{ branchId: string; host: string }> = [];
+    for (const branch of stateService.getAllBranches()) {
+      if (branch.projectId !== projectId) continue;
+      const published = resolveBranchPublishedEntrypoints(branch, entrypointDeps);
+      for (const url of [published.previewUrl, ...Object.values(published.serviceUrls)]) {
+        if (!url) continue;
+        try {
+          hosts.push({ branchId: branch.id, host: new URL(url).host.toLowerCase() });
+        } catch {
+          // 拼不出合法 URL 的入口直接跳过：宁可少列一个，也不要把一个畸形 host
+          // 放进白名单当成「本项目的地址」。
+        }
+      }
+    }
+    return hosts;
+  };
+
   const uptimeMonitor = new UptimeMonitorService({
     state: {
       getAllBranches: () => stateService.getAllBranches(),
@@ -5730,15 +5918,130 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 故障归因到发布。少了这一行，生产站点宕机时状态页只会说「宕了」，
       // 答不出「是哪次发布引入的」——而这是排障时第一个要问的问题。
       getReleaseRuns: (targetId: string) => stateService.getReleaseRuns({ targetId }),
+      // 监控中心手动添加的目标。少了这一行，「添加监控」保存成功但永远不会被探——
+      // 守卫测试 uptime-custom-monitors 盯着它。
+      getUptimeMonitors: () => stateService.listUptimeMonitors(),
+      // 功能监控每次观测留下的证据（产物地址、判据逐条、本次请求体）。
+      // 少了这一行，探测照跑、判定照常，但详情页永远没有画廊——
+      // 而「这次生成出来长什么样」正是这类监控存在的理由。
+      recordMonitorObservation: (monitorId, observation) =>
+        stateService.recordMonitorObservation(monitorId, observation),
+      // 用户视角探测的地址：与预览入口探测、PR 评论里的预览链接同一个拼法。
+      // 少了这一行，分支目标只有进程视角，「用户视角 ●」永远不会出现。
+      getPreviewUrl: (branch) => {
+        const previewHost = config.previewDomain || config.rootDomains?.[0];
+        if (!previewHost || !branch.branch) return '';
+        return buildPreviewUrlForProject(previewHost, branch.branch, stateService.getProject(branch.projectId), branch.projectId).url;
+      },
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    // 环境判定的结构性证据来源：地址指着一条分支预览的监控一律算分支预览，
+    // 不管它自称什么。少了这一行，一条临时分支的监控只要 environment 填成
+    // production 就能混进项目负责人的第一屏。
+    listProjectPreviewHosts,
     // 掉线/恢复上总线。少了这一行，生产健康掉线只会躺在 incidents 台账里，
     // 没人盯着状态页就等于没发生——服务端站内信账本正是订阅总线拿到它的。
     // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
-    onAlert: (type, data) => { cdsEventsBus.publish(type, data); },
+    onAlert: (type, data) => {
+      cdsEventsBus.publish(type, data);
+      // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
+      // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
+      // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
+      void mapNotifier?.send({
+        type,
+        targetId: data.targetId,
+        targetName: data.targetName,
+        projectId: data.projectId,
+        branchId: data.branchId,
+        probeUrl: data.probeUrl,
+        message: data.message,
+        consecutiveFailures: data.consecutiveFailures,
+        detectedAt: data.detectedAt,
+      }).catch((err) => console.warn(`[map-notifier] 未捕获的投递异常: ${(err as Error).message}`));
+    },
   });
-  app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
+  // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
+  // 不让状态页把已删的目标和它的故障再挂一个探测间隔（Codex PR #1517 P2）。
+  stateService.onProjectRemoved((summary) => {
+    uptimeMonitor.forgetTargets(summary.uptimeMonitors.map((id) => customProbeTargetId({ id })));
+  });
+  // 分支删除的同款级联：Agent 自助登记的监控绑在某条分支上，分支没了监控也得走，
+  // 否则留下一条永远红着的死地址，把真告警淹掉。
+  stateService.onUptimeMonitorsOrphaned((monitorIds) => {
+    uptimeMonitor.forgetTargets(monitorIds.map((id) => customProbeTargetId({ id })));
+    console.log(`  [uptime] 分支删除，级联清理 ${monitorIds.length} 条绑定监控`);
+  });
+  // 公开状态页。两条路分开注册：读取那条匿名（token 自鉴权，已在
+  // github-auth PUBLIC_PATHS / isPublicAccessRequestRoute 双白名单里），
+  // 开关那条走登录网关。合成一个 router 挂同一个前缀，等于把开关也放出去了。
+  const publicStatusDeps = {
+    state: {
+      getProjectByStatusPageToken: (token: string) => stateService.getProjectByStatusPageToken(token),
+      getProject: (id: string) => stateService.getProject(id),
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      openProjectStatusPage: (projectId: string) => stateService.openProjectStatusPage(projectId),
+      closeProjectStatusPage: (projectId: string) => stateService.closeProjectStatusPage(projectId),
+    },
+    monitor: {
+      getSummary: (barSegments?: number) => uptimeMonitor.getSummary(barSegments),
+      getHistory: (targetId: string, rangeMs: number, bucketCount: number) =>
+        uptimeMonitor.getHistory(targetId, rangeMs, bucketCount),
+    },
+    refreshHintSeconds: uptimeMonitor.config.intervalMs
+      ? Math.round(uptimeMonitor.config.intervalMs / 1000)
+      : 60,
+  };
+  app.use('/api', createPublicStatusRouter(publicStatusDeps));
+  app.use('/api', createStatusPageAdminRouter(publicStatusDeps));
+
+  /*
+   * 监控自发现（2026-09-11）。
+   *
+   * 声明不再放在仓库里等人导入——实现了协议的自检端点自己说「该怎么监控我」，
+   * CDS 插上一个地址就行（心智是 USB 描述符）。这里只管「什么时候跑」：
+   * 插上 / 拔掉时当场跑一轮，之后跟着探测轮次的节奏定时跑。
+   */
+  let lastDiscoveryRun: DiscoveryRunSummary | null = null;
+  let discoveryInFlight: Promise<DiscoveryRunSummary> | null = null;
+  const runDiscovery = async (): Promise<DiscoveryRunSummary> => {
+    // 并发合流：插上端点会立刻触发一轮，而定时那一轮可能正跑着。
+    // 两轮同时对账会互相覆盖写入，还会把「新增」重复记两次。
+    if (discoveryInFlight) return discoveryInFlight;
+    discoveryInFlight = runMonitorDiscovery({
+      listProjects: () => stateService.getProjects(),
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
+      removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    }).then((summary) => {
+      lastDiscoveryRun = summary;
+      return summary;
+    }).finally(() => { discoveryInFlight = null; });
+    return discoveryInFlight;
+  };
+  const discoveryIntervalMs = Math.max(60_000, uptimeMonitor.config.intervalMs || 60_000);
+  setInterval(() => { void runDiscovery().catch(() => undefined); }, discoveryIntervalMs).unref?.();
+  void runDiscovery().catch(() => undefined);
+
+  app.use('/api', createUptimeRouter({
+    monitor: uptimeMonitor,
+    listProjectPreviewHosts,
+    listMonitorEndpoints: (projectId: string) => stateService.listMonitorEndpoints(projectId),
+    addMonitorEndpoint: (projectId: string, url: string) => stateService.addMonitorEndpoint(projectId, url),
+    removeMonitorEndpoint: (projectId: string, url: string) => stateService.removeMonitorEndpoint(projectId, url),
+    runDiscovery,
+    lastDiscoveryRun: () => lastDiscoveryRun,
+    store: {
+      listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
+      getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
+      upsertUptimeMonitor: (monitor) => stateService.upsertUptimeMonitor(monitor),
+      removeUptimeMonitor: (id: string) => stateService.removeUptimeMonitor(id),
+      getProject: (projectId: string) => stateService.getProject(projectId),
+    },
+  }));
+  // 回填给 /healthz：探活循环停摆必须在健康端点上可见（2026-09-08）。
+  serverDeps.uptimeMonitor = uptimeMonitor;
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()
   // 在模块顶层就跑完了，而 uptimeMonitor 到这一行才存在——闭包捕获不到。
   // 没接上这一行不会报错，只会让发布中心的健康列恒为「存活监控未启用」：

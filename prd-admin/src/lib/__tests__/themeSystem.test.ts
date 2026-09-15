@@ -207,9 +207,69 @@ describe('主题系统契约', () => {
     };
     walkSrc(path.resolve(TEST_DIR, '../..'));
 
+    /*
+     * 消费关系不止 `var()` 一种写法。
+     *
+     * 上一版只数岛内文件里直接写的 var(--x)，于是**经由 CSS 类**的消费全看不见：
+     * 视觉创作首页用的是 className="glass-pane" / "glass-sub"，真正读 --glass-surface
+     * 的是 globals.css 里那两条规则。结果 --glass-surface 在暗岛里没覆盖，
+     * 浅色档下近白字压在浅色玻璃底上（Codex PR #1476 P1）。
+     * 判据自己的注释写着「族名清单是猜的，会漏；消费关系是真的」——但它只认了
+     * 消费关系的一种形态，还是太窄（形状 1，同一个坑第三次）。
+     *
+     * 所以先从样式文件里建一张「类名 → 它读了哪些 token」的表，
+     * 岛内文件提到某个类名，就算它消费了那些 token。
+     */
+    const classTokens = new Map<string, string[]>();
+    const stylesDir = path.resolve(TEST_DIR, '../../styles');
+    for (const name of fs.readdirSync(stylesDir)) {
+      if (!name.endsWith('.css')) continue;
+      const full = path.join(stylesDir, name);
+      if (full === TOKENS_PATH) continue;
+      const text = fs.readFileSync(full, 'utf8');
+      for (const m of text.matchAll(/\.([\w-]+)[^{]*\{([^}]*)\}/g)) {
+        // 只认带连字符的类名。单词类名有两类噪音：这个粗糙的 CSS 解析会把
+        // `0.01ms` `.ts` 这种小数与后缀也当成类名；更要紧的是 Tailwind 的
+        // `group` —— 它出现在几乎每个文件里，会把它那两个 token 报成「处处在用」。
+        // 我们自己承载主题 token 的类一律是复合名（glass-pane / button-primary /
+        // surface-popover…），这条收窄不误伤。代价：将来若出现单词命名的自有类会漏，
+        // 那时把它显式列进来，别把这条放宽回去。
+        if (!m[1].includes('-')) continue;
+        const used = [...m[2].matchAll(/var\((--[\w-]+)/g)].map((v) => v[1]);
+        if (!used.length) continue;
+        classTokens.set(m[1], [...(classTokens.get(m[1]) ?? []), ...used]);
+      }
+    }
+    /*
+     * 还有一种消费关系，扫类名字面量永远看不见：**类名是算出来的**。
+     *
+     * design/Button 的 className 是 `button-${variant}` 拼出来的，所以岛内文件里
+     * 只有 `<Button variant="secondary">`，从头到尾不会出现 "button-secondary"
+     * 这七个字。判据于是判「没人在用」，而真机上那颗「模型设置」按钮在浅色档下
+     * 白字压白底、整个读不出来（2026-09-03 真视觉验收拍到）。
+     *
+     * 这是形状 6 的老形态：扫的是源码字面量，不是求值结果。凡是这样拼类名的组件
+     * 都得在这里点名——名单短，且加新组件时忘了点名只会漏报、不会误报。
+     */
+    const COMPUTED_CLASSES: Array<[RegExp, string[]]> = [
+      [/<Button[\s/>]/, ['button-primary', 'button-secondary', 'button-ghost', 'button-danger',
+        'map-btn', 'map-btn-primary', 'map-btn-secondary', 'map-btn-ghost', 'map-btn-danger']],
+    ];
+
+    const consumedViaClass = new Set<string>();
+    for (const text of islandFiles) {
+      for (const [cls, toks] of classTokens) {
+        if (new RegExp(`[\\s"'\`]${cls}[\\s"'\`]`).test(text)) toks.forEach((t) => consumedViaClass.add(t));
+      }
+      for (const [probe, classes] of COMPUTED_CLASSES) {
+        if (!probe.test(text)) continue;
+        for (const cls of classes) (classTokens.get(cls) ?? []).forEach((t) => consumedViaClass.add(t));
+      }
+    }
+
     const missing = themed
       .filter((t) => !island.has(t))
-      .filter((t) => islandFiles.some((text) => text.includes(`var(${t}`)))
+      .filter((t) => consumedViaClass.has(t) || islandFiles.some((text) => text.includes(`var(${t}`)))
       .sort();
 
     expect(
@@ -262,8 +322,16 @@ describe('主题系统契约', () => {
      * 浅色档禁止近白值——但纸面类介质（缩略图假页渐变、预览窗、二维码底）在设计稿里
      * 本来就是纯白纸，那不是「浅字压浅底」的来源。所以只放行显式点名的介质 token，
      * 其余一律照旧拦下：把这几行注释掉再跑，仍会因为别处的 #fff 变红。
+     *
+     * --glass-edge 同理：它是磨砂玻璃**顶边那道 1px 高光**（inset box-shadow），
+     * 是光打在玻璃厚度上的镜面反射，浅色下本来就该是接近纯白的一条线。
+     * 它永远不承载文字，也永远不做背景填充，不可能变成「浅字压浅底」。
+     *
+     * --skeleton-sheen 同理：骨架上那道扫光。浅色档的骨架底是**深**的
+     * （rgba(60,44,36,0.075)），扫光要把它提回纸白才有「扫过去」的效果，
+     * 所以近白是对的方向，不是漏改。它同样只在骨架期出现、不承载任何文字。
      */
-    const PAPER_MEDIA_TOKENS = ['--thumb-gradient'];
+    const PAPER_MEDIA_TOKENS = ['--thumb-gradient', '--glass-edge', '--skeleton-sheen'];
     const lightBlockWithoutPaper = lightBlock
       .split('\n')
       .filter((line) => !PAPER_MEDIA_TOKENS.some((t) => line.trim().startsWith(t)))

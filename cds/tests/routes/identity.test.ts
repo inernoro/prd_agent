@@ -116,7 +116,7 @@ describe('身份层路由', () => {
 
   afterEach(async () => {
     await new Promise<void>((r) => server.close(() => r()));
-    flushAllJsonStateStores();
+    await flushAllJsonStateStores();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 
@@ -258,8 +258,8 @@ describe('接入申请批准 = 写授权，不只是发钥匙', () => {
     });
   });
 
-  afterEach(() => {
-    flushAllJsonStateStores();
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
@@ -360,7 +360,7 @@ describe('身份管理只认人，不认机器钥匙', () => {
 
   afterEach(async () => {
     await new Promise<void>((r) => server.close(() => r()));
-    flushAllJsonStateStores();
+    await flushAllJsonStateStores();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 

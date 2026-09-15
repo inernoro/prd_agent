@@ -160,6 +160,22 @@ legacy 栈已建立的 `--bg-*` token 对：
 
 ---
 
+## 尺寸单位：rem 唯一，px 只留给 1–3px 细线（2026-09-08）
+
+用户实测浏览器缩到 80–85% 时 CDS 最好看，于是整站改为**根字号 85%**（`html { font-size: 85% }`）呈现。
+这条路成立的前提是尺寸全部用 rem——任何 >3px 的 px 字面量都不会跟着缩，会在页面里「独自变大」。
+
+- 写尺寸一律 rem（`px / 16`）：`text-[13px]` 写成 `text-[0.8125rem]`，`h-[52px]` 写成 `h-[3.25rem]`，CSS 变量同理。
+- 1–3px 保留 px：hairline、focus ring、当前项竖条这类要像素级清晰的东西。
+- 媒体查询与 Tailwind 断点保持原始 px，不随尺度走：断点读不到根字号，三档尺度共用一套视口断点。要「多宽切几栏」随尺度走，用 rem 列宽下限 + auto-fill 推导列数（分支卡网格的写法），不要写媒体查询。
+- React 的 `style={{ width: 360 }}` 会按 px 序列化，同样不缩；写 `'22.5rem'` 字符串。几何量出来的画布组件（RelationGraph / ReplicaSetPanel）整文件用画布 px 单位，在守卫里登记。
+- 不用 CSS `zoom`：Chromium 141 实测它让 `h-screen` 只铺 85% 视口、Radix 浮层定位偏移，已被否决。
+- 逃生阀 `html[data-ui-scale='100']` 回到 16px 基准，预留给密度设置。
+
+守卫：`cds/tests/web/rem-scale-guard.test.ts` 扫 index.css 与全部 tsx/ts，出现 >3px 字面量或 style 里 >3 的数字型长度即红；例外写进它的 `ALLOW` / `CANVAS_FILES` 并说明原因。
+
+---
+
 ## 测试要求
 
 任何改动 modal/弹窗/`background`/`color` 的 PR，**必须**：

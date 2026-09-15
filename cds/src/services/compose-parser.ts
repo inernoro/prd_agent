@@ -14,9 +14,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import yaml from 'js-yaml';
-import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig } from '../types.js';
+import type { InfraService, InfraVolume, InfraHealthCheck, BuildProfile, RoutingRule, DeployModeOverride, ResourceLimits, WebEntryConfig, ServiceRole } from '../types.js';
+import { SERVICE_ROLES } from '../types.js';
 import { isValidServiceSubdomain } from './branch-extra-services.js';
 import { parseWebEntryLabels } from './web-entry.js';
+import { isProbePrefix } from './topology-lint.js';
 import { normalizeBuildScope } from './prebuilt-reuse.js';
 
 /** Parsed infrastructure service from a compose file */
@@ -494,6 +496,15 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const containerPort = extractContainerPort(entry.ports) || 8080;
         const labels = extractLabels(entry.labels);
         const pathPrefix = labels['cds.path-prefix'];
+        // 探活路径不该进公网路由（plan.cds.service-relations 第一批）：这里只告警、原样保留，
+        // 让拓扑体检（topology-lint）能按 error 报出并阻断导入；解析器若静默剔除，体检就看不见了。
+        const probePrefixes = (pathPrefix || '').split(',').map((x) => x.trim()).filter((x) => x && x !== '/' && isProbePrefix(x));
+        if (probePrefixes.length > 0) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.path-prefix 含探活路径 ${probePrefixes.join('、')}，探活只走 cds.readiness-path，导入会被体检阻断`);
+        }
+        // cds.calls：显式声明「我调用哪些服务」（环境变量推不出调用关系时用）。逗号分隔的服务 id。
+        const callsRaw = (labels['cds.calls'] || '').trim();
+        const calls = callsRaw ? Array.from(new Set(callsRaw.split(',').map((x) => x.trim()).filter(Boolean))) : undefined;
         const dependsOn = extractDependsOn(entry.depends_on);
         const command = extractCommand(entry.command);
 
@@ -524,6 +535,13 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
         const hasWebEntryLabels = Object.keys(labels).some((key) => key.startsWith('cds.web-entry-'));
         if (hasWebEntryLabels && !webEntry) {
           console.warn(`[compose-parser] service "${serviceId}" 的 cds.web-entry-* 声明不完整或指向探活路径，已忽略用户入口`);
+        }
+        // cds.role label → BuildProfile.role：显式服务角色（web / api / worker）。非法值忽略并告警，
+        // 交给 service-graph 按路由事实 + 服务名推断（画布会标「推断」）。
+        const roleRaw = (labels['cds.role'] || '').trim().toLowerCase();
+        const role = (SERVICE_ROLES as readonly string[]).includes(roleRaw) ? (roleRaw as ServiceRole) : undefined;
+        if (roleRaw && !role) {
+          console.warn(`[compose-parser] service "${serviceId}" 的 cds.role "${roleRaw}" 不在 ${SERVICE_ROLES.join(' / ')} 之内，已忽略，改为自动推断`);
         }
         // cds.build-scope label → BuildProfile.buildScope（逗号分隔）。
         //
@@ -585,6 +603,8 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(entry.fallbackImage ? { fallbackImage: entry.fallbackImage } : {}),
           ...(subdomain ? { subdomain } : {}),
           ...(webEntry ? { webEntry } : {}),
+          ...(role ? { role } : {}),
+          ...(calls && calls.length ? { calls } : {}),
           ...(buildScope ? { buildScope } : {}),
         });
       } else {
@@ -782,6 +802,13 @@ export function toCdsCompose(
       entryLabels['cds.web-entry-name'] = p.webEntry.name;
       entryLabels['cds.web-entry-path'] = p.webEntry.path;
       if (p.webEntry.primary) entryLabels['cds.web-entry-primary'] = 'true';
+    }
+    // 显式角色 round-trip（推断结果不回写：那是运行时算出来的，不是配置）。
+    if (p.role) {
+      entryLabels['cds.role'] = p.role;
+    }
+    if (p.calls && p.calls.length > 0) {
+      entryLabels['cds.calls'] = p.calls.join(',');
     }
     // Phase 7 fix(B17):prebuiltImage → cds.prebuilt-image label(round-trip)
     if (p.prebuiltImage) {

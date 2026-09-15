@@ -175,6 +175,10 @@ export const api = {
     },
   },
 
+  authorizationHealth: {
+    overview: () => '/api/authorization-health',
+  },
+
   // ============ Team Activity 团队动态 ============
   teamActivity: {
     logs: () => '/api/team-activity/logs',
@@ -847,6 +851,14 @@ export const api = {
     byId: (id: string) => `/api/agent-api-keys/${id}`,
   },
 
+  // ============ 智能体接入台（MCP）—— 给人看的那一面，智能体侧走 /api/mcp ============
+  mcpConsole: {
+    overview: () => '/api/mcp-console/overview',
+    calls: (queryString: string) => `/api/mcp-console/calls${queryString}`,
+    callDetail: (id: string) => `/api/mcp-console/calls/${id}`,
+    visibleTools: (keyId: string) => `/api/mcp-console/keys/${keyId}/visible-tools`,
+  },
+
   // ============ Infra Connections 基础设施连接（剪贴板配对密钥与 CDS 等部署平台建立信任） ============
   infraConnections: {
     list: () => '/api/infra-connections',
@@ -961,6 +973,9 @@ export const api = {
   settings: {
     defaultNav: () => '/api/settings/default-nav',
     applyDefaultNavToAllUsers: () => '/api/settings/default-nav/apply-to-all-users',
+    userNavLayouts: () => '/api/settings/default-nav/user-layouts',
+    removeNavTokens: () => '/api/settings/default-nav/remove-tokens',
+    userNavLayout: (userId: string) => `/api/settings/default-nav/user-layouts/${encodeURIComponent(userId)}`,
     init: {
       defaultGroups: () => '/api/settings/init/default-groups',
       migrateModels: () => '/api/settings/init/migrate-models',
@@ -1189,6 +1204,13 @@ export const api = {
   // ============ Web Hosting 网页托管 ============
   webPages: {
     upload: () => '/api/web-pages/upload',
+    optimizationUploads: () => '/api/web-pages/optimization/uploads',
+    optimizationUploadChunk: (sessionId: string, chunkIndex: number) => `/api/web-pages/optimization/uploads/${sessionId}/chunks/${chunkIndex}`,
+    optimizationUploadComplete: (sessionId: string) => `/api/web-pages/optimization/uploads/${sessionId}/complete`,
+    optimizationUploadStatus: (sessionId: string) => `/api/web-pages/optimization/uploads/${sessionId}`,
+    optimizationPreview: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/preview`,
+    optimizationConfirm: (sessionId: string) => `/api/web-pages/optimization/${sessionId}/confirm`,
+    optimizationCancel: (sessionId: string) => `/api/web-pages/optimization/${sessionId}`,
     uploadProgress: (uploadId: string) => `/api/web-pages/upload-progress/${uploadId}`,
     fromContent: () => '/api/web-pages/from-content',
     list: () => '/api/web-pages',

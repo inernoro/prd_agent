@@ -581,6 +581,12 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
             reason = "owned_hosted_site_file";
             return true;
         }
+
+        if (AssetStorageDeletePolicy.IsHostedSiteOptimizationTemporaryKey(normalizedKey, _prefix))
+        {
+            reason = "owned_hosted_site_optimization_temp";
+            return true;
+        }
         if (!_enableSafeDelete) { reason = "disabled"; return false; }
         if (_safeDeleteAllowPrefixes.Length == 0) { reason = "empty_allowlist"; return false; }
 

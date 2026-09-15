@@ -605,7 +605,7 @@ export function evaluateCdsReadiness(branch, expectedCommit, runtimeExpectation 
   const reasons = [];
   const services = Object.values(branch?.services || {});
   if (branch?.status !== 'running') reasons.push(`分支状态为 ${branch?.status || 'unknown'}`);
-  if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到本地目标提交');
+  if (branch?.commitSha !== expectedCommit) reasons.push('CDS 分支提交尚未同步到目标提交');
   if (!runtimeEquivalent && branch?.ciTargetSha !== expectedCommit) reasons.push('CDS 镜像目标尚未锁定本地目标提交');
   if (!runtimeEquivalent && branch?.ciImageStatus !== 'ready') reasons.push(`CDS 镜像状态为 ${branch?.ciImageStatus || 'unknown'}`);
   if (branch?.lastDeployDispatchCommitSha !== runtimeCommit) reasons.push('CDS 尚未对运行时目标提交完成部署调度');
@@ -710,7 +710,74 @@ function runPlaywright(environment, values, runDir, grep = '') {
   return { status: result.status ?? 1, resultPath, htmlPath, testResultPath };
 }
 
-const smokeCaseIdPattern = /((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|REG-[a-z0-9-]+)-\d+)/gi;
+const folderRegressionCaseIds = [
+  'REG-web-folder-canonical-001',
+  'REG-web-folder-fence-001',
+  'REG-web-folder-create-rename-001',
+];
+
+export function runFolderRegressionTests(runDir, commandRunner = command) {
+  const clientArtifactPath = resolve(runDir, 'web-folder-client-regressions.xml');
+  const clientResult = commandRunner('pnpm', [
+    '--dir', 'prd-admin', 'exec', 'vitest', 'run',
+    'src/components/web-hosting/folderDrop.test.ts',
+    '--reporter=junit', `--outputFile=${clientArtifactPath}`,
+  ], {
+    env: { ...process.env },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  const serverArtifactPath = resolve(runDir, 'web-folder-regressions.trx');
+  const serverResult = commandRunner('dotnet', [
+    'test', 'prd-api/tests/PrdAgent.Api.Tests/PrdAgent.Api.Tests.csproj',
+    '--no-restore', '-m:1',
+    '--filter', 'FullyQualifiedName~WebFolderRenameFenceTests',
+    '--logger', 'trx;LogFileName=web-folder-regressions.trx',
+    '--results-directory', runDir,
+  ], {
+    env: { ...process.env, DOTNET_ROLL_FORWARD: 'Major' },
+    stdio: 'inherit',
+    encoding: undefined,
+  });
+  const clientPassed = clientResult.status === 0;
+  const serverPassed = serverResult.status === 0;
+  const resultsByCaseId = new Map([
+    ['REG-web-folder-canonical-001', clientPassed],
+    ['REG-web-folder-fence-001', serverPassed],
+    ['REG-web-folder-create-rename-001', serverPassed],
+  ]);
+  return {
+    execution: {
+      environment: 'cds-folder-regressions',
+      status: clientPassed && serverPassed ? 'passed' : 'failed',
+      // resultPath 专用于 Playwright JSON；TRX 另存，避免汇总器按 JSON 误读。
+      resultPath: null,
+      artifactPath: serverArtifactPath,
+      artifactPaths: [clientArtifactPath, serverArtifactPath],
+      policy: 'deterministic-integration',
+      gateReasons: [],
+    },
+    rows: folderRegressionCaseIds.map((caseId) => {
+      const passed = resultsByCaseId.get(caseId) === true;
+      const area = caseId === 'REG-web-folder-canonical-001' ? '前端权威键归一化' : 'MongoDB 重命名并发围栏';
+      const error = `${area}回归失败`;
+      return {
+        caseId,
+        environment: 'cds',
+        title: `[${caseId}] ${area}回归`,
+        tags: [],
+        status: passed ? 'pass' : 'fail',
+        durationMs: 0,
+        error: passed ? '' : error,
+        retryCount: 0,
+        hadFailedAttempt: !passed,
+        attemptErrors: passed ? [] : [error],
+      };
+    }),
+  };
+}
+
+const smokeCaseIdPattern = /((?:COMMON|CORE|REC|FILE|PARSE|VIDEO|LIT|VIS|MVIS|GW|WEB|REG-[a-z0-9-]+)-\d+)/gi;
 
 function grepCaseIds(grepExpression) {
   return [...String(grepExpression || '').replaceAll('\\', '').matchAll(smokeCaseIdPattern)]
@@ -1624,6 +1691,16 @@ async function main() {
     const productionVisualPlanMarkdownPath = resolve(runDir, 'visual-plan-production.md');
     const productionVisualUnlockPath = resolve(runDir, 'production-visual-unlock.json');
     let cdsVisualGate = null;
+    let supplementalRows = [];
+
+    const selectedCdsCases = selected.includes('cds')
+      ? selectedCaseIdsForEnvironment(plan, 'cds', grep)
+      : [];
+    if (selectedCdsCases.some((caseId) => folderRegressionCaseIds.includes(caseId))) {
+      const folderRegressions = runFolderRegressionTests(runDir);
+      executions.push(folderRegressions.execution);
+      supplementalRows = folderRegressions.rows;
+    }
 
     for (const environment of selected) {
       if (environment === 'production' && selected.includes('cds')) {
@@ -1631,6 +1708,7 @@ async function main() {
         const cdsRows = cdsExecution?.resultPath
           ? collectPlaywrightCases(readJson(cdsExecution.resultPath), 'cds')
           : [];
+        cdsRows.push(...supplementalRows);
         cdsRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
         productionSafetyGate = evaluateProductionSafetyGate(
           cdsExecution,
@@ -1754,6 +1832,7 @@ async function main() {
       if (!execution.resultPath) return [];
       return collectPlaywrightCases(readJson(execution.resultPath), execution.environment);
     });
+    environmentRows.push(...supplementalRows);
     environmentRows.push(...gatewayPersistenceEvidenceRow(gatewayPersistenceProbe));
     const requiredCaseIds = selectCoverageCaseIdsByEnvironment(
       plan,

@@ -20,6 +20,45 @@ function escapeHtmlAttr(value: string) {
     .replace(/>/g, '&gt;');
 }
 
+/**
+ * 解码 href 分类所需的 HTML 字符引用。
+ *
+ * 属性扫描拿到的是源文本，但浏览器会在 URL 解析前解码字符引用。因此
+ * `href="&#35;risk"`、`href="&#x23;risk"` 和 `href="&num;risk"`
+ * 在浏览器里都等价于 `#risk`，必须按同一条页内锚点规则处理。
+ */
+function decodeHtmlCharacterReferences(value: string): string {
+  // 生产路径交给浏览器的 HTML 解析器，覆盖完整 named character reference 集合。
+  // textarea 是 raw-text 元素，不会把用户内容当标签或脚本执行。
+  if (typeof document !== 'undefined') {
+    const decoder = document.createElement('textarea');
+    decoder.innerHTML = value;
+    return decoder.value;
+  }
+
+  // Node 单测环境没有 DOM；覆盖 URL 分类会用到的字符，其余数字引用由通用分支处理。
+  const named: Record<string, string> = {
+    amp: '&',
+    apos: "'",
+    colon: ':',
+    gt: '>',
+    lt: '<',
+    num: '#',
+    quot: '"',
+    sol: '/',
+  };
+
+  return value.replace(/&(?:#([0-9]+)|#x([0-9a-f]+)|([a-z][a-z0-9]+));?/gi, (match, decimal, hex, entity) => {
+    if (decimal || hex) {
+      const codePoint = Number.parseInt(decimal || hex, decimal ? 10 : 16);
+      return Number.isSafeInteger(codePoint) && codePoint > 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : match;
+    }
+    return named[String(entity).toLowerCase()] ?? match;
+  });
+}
+
 function isHtmlEntry(siteUrl: string, entryFile?: string) {
   const target = entryFile || siteUrl.split('?')[0].split('#')[0];
   return /\.html?$/i.test(target);
@@ -164,19 +203,233 @@ function isAbsoluteBaseHref(href: string): boolean {
   return v.startsWith('//') || /^[a-z][a-z0-9+.-]*:/i.test(v);
 }
 
+type HtmlAttributeMatch = {
+  start: number;
+  end: number;
+  value: string;
+};
+
+type HtmlStartTag = {
+  start: number;
+  end: number;
+  name: string;
+  text: string;
+};
+
+type HtmlTag = HtmlStartTag & {
+  closing: boolean;
+};
+
+const RAW_OR_RCDATA_ELEMENTS = new Set([
+  'iframe',
+  'noembed',
+  'noframes',
+  'noscript',
+  'script',
+  'style',
+  'textarea',
+  'title',
+  'xmp',
+]);
+
+function findClosingTagStart(html: string, name: string, from: number): number {
+  const lower = html.toLowerCase();
+  const prefix = `</${name}`;
+  let cursor = from;
+  while (cursor < html.length) {
+    const start = lower.indexOf(prefix, cursor);
+    if (start < 0) return -1;
+    const boundary = lower[start + prefix.length] ?? '';
+    if (!boundary || /[\s/>]/.test(boundary)) return start;
+    cursor = start + prefix.length;
+  }
+  return -1;
+}
+
+/**
+ * 扫描完整 HTML 开始标签，结束位置必须在引号外的 `>`。
+ *
+ * 不能再用 `<a\b[^>]*>`：`title="score > 0"` 里的大于号是合法属性值，
+ * 正则会把标签截成半截，后面的真实 href 永远看不到。这个扫描器是开始标签
+ * 边界的唯一来源，a/area/base/head 都复用它。
+ */
+function scanHtmlTags(html: string, acceptedNames?: ReadonlySet<string>): HtmlTag[] {
+  const tags: HtmlTag[] = [];
+  let cursor = 0;
+
+  while (cursor < html.length) {
+    const start = html.indexOf('<', cursor);
+    if (start < 0) break;
+    if (html.startsWith('<!--', start)) {
+      const commentEnd = html.indexOf('-->', start + 4);
+      cursor = commentEnd < 0 ? html.length : commentEnd + 3;
+      continue;
+    }
+    const closing = html[start + 1] === '/';
+    const nameStart = start + (closing ? 2 : 1);
+    if (!/[a-z]/i.test(html[nameStart] ?? '')) {
+      cursor = start + 1;
+      continue;
+    }
+
+    let nameEnd = nameStart + 1;
+    while (nameEnd < html.length && /[a-z0-9:-]/i.test(html[nameEnd])) nameEnd += 1;
+    const name = html.slice(nameStart, nameEnd).toLowerCase();
+    let quote: '"' | "'" | null = null;
+    let end = nameEnd;
+    for (; end < html.length; end += 1) {
+      const char = html[end];
+      if (quote) {
+        if (char === quote) quote = null;
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+        continue;
+      }
+      if (char === '>') {
+        end += 1;
+        break;
+      }
+    }
+
+    if (end > html.length || html[end - 1] !== '>') break;
+    if (!acceptedNames || acceptedNames.has(name)) {
+      tags.push({ start, end, name, text: html.slice(start, end), closing });
+    }
+    cursor = end;
+    if (!closing && RAW_OR_RCDATA_ELEMENTS.has(name)) {
+      const rawTextEnd = findClosingTagStart(html, name, cursor);
+      if (rawTextEnd >= 0) cursor = rawTextEnd;
+    }
+    if (!closing && name === 'plaintext') cursor = html.length;
+  }
+
+  return tags;
+}
+
+function scanHtmlStartTags(html: string, acceptedNames?: ReadonlySet<string>): HtmlStartTag[] {
+  return scanHtmlTags(html, acceptedNames).filter((tag) => !tag.closing);
+}
+
+/** 只认真实 head 上下文里的首个 base；模板、RCDATA 与 raw-text 中的字样均为惰性文本。 */
+function findActiveHeadBase(html: string): HtmlStartTag | undefined {
+  const tags = scanHtmlTags(html, new Set(['base', 'body', 'head', 'template']));
+  const hasExplicitHead = tags.some((tag) => tag.name === 'head' && !tag.closing);
+  let inHead = !hasExplicitHead;
+  let templateDepth = 0;
+
+  for (const tag of tags) {
+    if (tag.name === 'template') {
+      templateDepth = Math.max(0, templateDepth + (tag.closing ? -1 : 1));
+      continue;
+    }
+    if (templateDepth > 0) continue;
+    if (tag.name === 'head') {
+      inHead = !tag.closing;
+      continue;
+    }
+    if (tag.name === 'body' && !tag.closing) {
+      inHead = false;
+      continue;
+    }
+    if (tag.name === 'base' && !tag.closing && inHead) return tag;
+  }
+  return undefined;
+}
+
+/**
+ * 在一个开始标签里按 HTML 属性边界查找属性。
+ *
+ * `\bhref` 会命中 data-href，`\shref` 仍可能命中带引号属性值内部的文本。
+ * 这里逐段跳过属性值，只在属性名位置比较，返回可原地替换的精确范围。
+ */
+function findHtmlAttribute(tag: string, targetName: string): HtmlAttributeMatch | null {
+  let cursor = 1;
+  if (tag[cursor] === '/') cursor += 1;
+  while (cursor < tag.length && !/[\s/>]/.test(tag[cursor])) cursor += 1;
+
+  while (cursor < tag.length) {
+    while (cursor < tag.length && /\s/.test(tag[cursor])) cursor += 1;
+    if (cursor >= tag.length || tag[cursor] === '>' || tag[cursor] === '/') break;
+
+    const nameStart = cursor;
+    while (cursor < tag.length && !/[\s=/>]/.test(tag[cursor])) cursor += 1;
+    const name = tag.slice(nameStart, cursor);
+    while (cursor < tag.length && /\s/.test(tag[cursor])) cursor += 1;
+
+    if (tag[cursor] !== '=') {
+      if (name.toLowerCase() === targetName.toLowerCase()) return null;
+      continue;
+    }
+
+    cursor += 1;
+    while (cursor < tag.length && /\s/.test(tag[cursor])) cursor += 1;
+    const quote = tag[cursor] === '"' || tag[cursor] === "'" ? tag[cursor] : null;
+    let value = '';
+
+    if (quote) {
+      cursor += 1;
+      const valueStart = cursor;
+      while (cursor < tag.length && tag[cursor] !== quote) cursor += 1;
+      value = tag.slice(valueStart, cursor);
+      if (tag[cursor] === quote) cursor += 1;
+    } else {
+      const valueStart = cursor;
+      while (cursor < tag.length && !/[\s>]/.test(tag[cursor])) cursor += 1;
+      value = tag.slice(valueStart, cursor);
+    }
+
+    if (name.toLowerCase() === targetName.toLowerCase()) {
+      return { start: nameStart, end: cursor, value };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * srcDoc 中的纯片段链接必须继续指向当前文档。
+ *
+ * 浏览器会用 `<base href>` 解析 `href="#section"`，结果变成对象存储目录
+ * `.../site-id/#section`。对象存储没有目录对象，最终显示 NoSuchKey。
+ * `about:srcdoc#section` 是绝对地址，不受 base 影响，同时仍在当前 iframe 内完成页内跳转。
+ *
+ * 只处理 a / area 的纯片段 href；SVG 的 `<use href="#icon">` 等资源引用不能改。
+ */
+export function preserveSrcDocFragmentLinks(html: string): string {
+  if (!html) return html;
+  const tags = scanHtmlStartTags(html, new Set(['a', 'area']));
+  if (tags.length === 0) return html;
+
+  let output = '';
+  let lastEnd = 0;
+  for (const tag of tags) {
+    output += html.slice(lastEnd, tag.start);
+    const hrefAttr = findHtmlAttribute(tag.text, 'href');
+    const href = hrefAttr ? decodeHtmlCharacterReferences(hrefAttr.value).trim() : '';
+    output += !hrefAttr || !href.startsWith('#')
+      ? tag.text
+      : `${tag.text.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(`about:srcdoc${href}`)}"${tag.text.slice(hrefAttr.end)}`;
+    lastEnd = tag.end;
+  }
+  return output + html.slice(lastEnd);
+}
+
 export function withPreviewBase(html: string, siteUrl: string) {
   // 同一处剥干净：srcDoc 里留着一条注定加载不了的第三方 beacon 没有意义，
   // 还会在访客的控制台里刷一条 CORS 报错，让真问题更难被看见。
-  html = stripInjectedTelemetry(html);
+  html = preserveSrcDocFragmentLinks(stripInjectedTelemetry(html));
   const baseHref = new URL('.', siteUrl).toString();
 
   // 先找到那个 <base> 标签本身，再看它有没有 href —— 两件事分开判。
   // 合成一条正则要求 href 必须存在，会让 `<base target="_blank">` 这种「有标签、没 href」
   // 的页面整个漏过去：不改写，也不注入，相对资源在 srcDoc 下全部解析到 MAP 自己的页面。
-  const tag = html.match(/<base\b[^>]*>/i)?.[0];
-  if (tag) {
-    const hrefAttr = tag.match(/\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/i);
-    const href = hrefAttr ? (hrefAttr[1] ?? hrefAttr[2] ?? hrefAttr[3] ?? '') : null;
+  const baseTagMatch = findActiveHeadBase(html);
+  if (baseTagMatch) {
+    const tag = baseTagMatch.text;
+    const hrefAttr = findHtmlAttribute(tag, 'href');
+    const href = hrefAttr ? decodeHtmlCharacterReferences(hrefAttr.value).trim() : null;
 
     // 已经是绝对地址：人家指的就是别处，不该动
     if (href !== null && isAbsoluteBaseHref(href)) return html;
@@ -184,16 +437,17 @@ export function withPreviewBase(html: string, siteUrl: string) {
     // 相对值按站点地址重解析；压根没写 href 就直接补上站点目录。
     // 原地改写而不是另插一个 <base>：浏览器只认第一个 base，追加的那个不生效。
     // 其余属性（target 等）原样保留。
-    const resolved = href ? new URL(href.trim() || '.', baseHref).toString() : baseHref;
+    const resolved = href ? new URL(href || '.', baseHref).toString() : baseHref;
     const rewritten = hrefAttr
-      ? tag.replace(hrefAttr[0], `href="${escapeHtmlAttr(resolved)}"`)
+      ? `${tag.slice(0, hrefAttr.start)}href="${escapeHtmlAttr(resolved)}"${tag.slice(hrefAttr.end)}`
       : tag.replace(/^<\s*base\b/i, (m) => `${m} href="${escapeHtmlAttr(resolved)}"`);
-    return html.replace(tag, rewritten);
+    return `${html.slice(0, baseTagMatch.start)}${rewritten}${html.slice(baseTagMatch.end)}`;
   }
 
   const baseTag = `<base href="${escapeHtmlAttr(baseHref)}">`;
-  if (/<head\b[^>]*>/i.test(html)) {
-    return html.replace(/<head\b([^>]*)>/i, `<head$1>${baseTag}`);
+  const headTag = scanHtmlStartTags(html, new Set(['head']))[0];
+  if (headTag) {
+    return `${html.slice(0, headTag.end)}${baseTag}${html.slice(headTag.end)}`;
   }
   return `${baseTag}${html}`;
 }

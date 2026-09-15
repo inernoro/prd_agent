@@ -54,8 +54,8 @@ describe('身份层零回归 —— 升级前的 state.json', () => {
     svc.load();
   });
 
-  afterEach(() => {
-    flushAllJsonStateStores();
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmp, { recursive: true, force: true });
   });
 

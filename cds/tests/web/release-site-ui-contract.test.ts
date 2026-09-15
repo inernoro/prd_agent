@@ -66,7 +66,7 @@ describe('release site publishing UI contract', () => {
     expect(releaseCenterSource).toContain('选择目标版本');
     expect(releaseCenterSource).toContain('确认回滚');
     expect(releaseCenterSource).toContain('重试发布');
-    expect(releaseCenterSource).toContain('calc(100vw - 32px)');
+    expect(releaseCenterSource).toContain('calc(100vw - 2rem)');
   });
 
   it('keeps raw SSH target terminology out of visible release center copy', () => {
@@ -106,7 +106,7 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('上线地址');
     expect(branchListSource).toContain('开始发布');
     expect(branchListSource).toContain('等待发布日志');
-    expect(branchListSource).toContain('calc(100vw - 32px)');
+    expect(branchListSource).toContain('calc(100vw - 2rem)');
   });
 
   it('keeps the default release center entry clean while retaining project scoping', () => {

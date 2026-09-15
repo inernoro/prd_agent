@@ -60,14 +60,14 @@ function HighlightedLogBlock({
     <div className={`relative min-h-0 ${hasHeightClass ? className : `h-full ${className}`}`}>
       <button
         type="button"
-        className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-black/80 px-2 py-1 text-[11px] text-slate-200 shadow hover:border-[hsl(var(--hairline-strong))]"
+        className="absolute right-3 top-3 z-10 inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-black/80 px-2 py-1 text-[0.6875rem] text-slate-200 shadow hover:border-[hsl(var(--hairline-strong))]"
         onClick={scrollToBottom}
         title="跳到容器日志底部"
       >
         <ArrowDownToLine className="h-3 w-3" />
         底部
       </button>
-      <div ref={viewportRef} className="h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[11px] leading-5">
+      <div ref={viewportRef} className="h-full overflow-auto rounded border border-[hsl(var(--hairline))] bg-black/80 p-3 pr-20 font-mono text-[0.6875rem] leading-5">
         {lines.map((line, index) => (
           <div key={`${index}-${line.slice(0, 24)}`} className={`whitespace-pre-wrap break-words ${logLineClass(line)}`}>
             {line || ' '}
@@ -113,7 +113,7 @@ function PrimaryContainerLogPanel({
         {containerLogControls?.onMaximize ? (
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[11px] hover:border-[hsl(var(--hairline-strong))]"
+            className="inline-flex items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 py-0.5 text-[0.6875rem] hover:border-[hsl(var(--hairline-strong))]"
             onClick={() => setMaximized(true)}
             title="在弹窗中查看完整容器日志"
           >
@@ -136,7 +136,7 @@ function PrimaryContainerLogPanel({
                 key={svc.profileId}
                 type="button"
                 onClick={() => containerLogControls!.onSelect(svc.profileId)}
-                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] transition-colors ${
+                className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[0.6875rem] transition-colors ${
                   active
                     ? 'border-primary bg-primary/10 text-foreground'
                     : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-muted-foreground hover:text-foreground'
@@ -246,7 +246,7 @@ function PrimaryContainerLogPanel({
                   {state.message || '容器日志加载失败'}
                 </div>
               ) : logs.trim() ? (
-                <HighlightedLogBlock logs={logs} className="h-full text-[12px] leading-6" autoScrollToBottom />
+                <HighlightedLogBlock logs={logs} className="h-full text-[0.75rem] leading-6" autoScrollToBottom />
               ) : (
                 <div className="rounded border border-[hsl(var(--hairline))] px-3 py-6 text-center text-sm text-muted-foreground">
                   暂无容器日志。
@@ -373,7 +373,7 @@ export function ActiveDeployment({
         </span>
         <span className="text-sm font-semibold">{deploymentKindLabel(deployment.kind)}</span>
         {triggerText ? (
-          <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 text-[0.625rem] text-muted-foreground">
             {triggerText}
           </span>
         ) : null}

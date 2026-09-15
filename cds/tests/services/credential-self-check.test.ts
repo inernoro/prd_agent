@@ -208,8 +208,8 @@ describe('与真实鉴权路径不漂移', () => {
     stateFile = path.join(tmpDir, 'state.json');
   });
 
-  afterEach(() => {
-    flushAllJsonStateStores();
+  afterEach(async () => {
+    await flushAllJsonStateStores();
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
