@@ -8229,7 +8229,7 @@ def cmd_help_me_check(args: argparse.Namespace) -> None:
 
     # 根因模式匹配
     patterns = [
-        (r"error CS\d+", "C# 编译错误", "本地有 SDK 就 `dotnet build --no-restore` 复现（最快）；没有就看本仓库负责编译的那条 CI 的 Build 步骤日志，按行号修改后重新 push"),
+        (r"error CS\d+", "C# 编译错误", "错误行号就在上面这段日志里，直接按它改；要复现的话，本地有 SDK 就 `dotnet build --no-restore`（最快），没有就翻这条部署自己的构建日志（`cdscli branch logs`）或本仓库负责编译的那条流水线"),
         (r"connection refused", "下游服务拒接", "检查 infra 服务（MongoDB/Redis）是否 running: cdscli branch status <id>"),
         (r"ENOENT.*node_modules", "前端依赖缺失", "容器里跑 pnpm install 或重新触发 deploy"),
         (r"port \d+ already in use", "端口冲突", "POST /api/cleanup-orphans 清理孤儿容器"),
