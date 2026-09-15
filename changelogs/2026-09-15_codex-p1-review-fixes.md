@@ -37,3 +37,6 @@
 | fix | prd-admin | 生成弹窗的 sessionStorage 访问全部收敛进带 try 的封装：那次写入夹在「服务端任务已创建」与「进入流式 try」之间，隐私窗口/配额用尽时会抛异常并就地中断——服务端继续生成，弹窗永远停在「正在校验所选知识」 |
 | fix | prd-admin | PPT 页不再把知识正文写进 session（正文可达数兆且同一份存两遍）：超配额时 saveSession 静默吞掉、快照停在上一版，刷新后连 runId 都恢复不出来；恢复只需身份，正文不落盘 |
 | test | prd-admin | 终态分支守卫改断言行为而非 sessionStorage.removeItem 的字面拼写——收敛进封装后它会红而代码更对（形状 4a，今日第二次同形） |
+| security | cds | 旧版迁移日志里「紧跟密码旗标的那一个值」不看长度一律掩掉：创建接口对口令长度没有下限，一两位的口令会跳过 length>=3 的整串脱敏，而密封紧接着拿走明文，那串密码从此永久留在 GET /data-migrations/:id/log 里 |
+| refactor | cds | 旧版迁移遗留文本（log / progressMessage / errorMessage）的脱敏收敛成唯一口径 redactLegacyMigrationText，升级与对外投影两处共用，不再各写一套 |
+| fix | prd-admin | 生成任务恢复不到（NOT_FOUND）时不再谎称「原来的知识与要求仍保留，可以直接重新生成」：打开弹窗已清空要求、无 initialSource 时连知识也清空，生成按钮此刻是禁用的；文案改为按真实状态分两种说法 |

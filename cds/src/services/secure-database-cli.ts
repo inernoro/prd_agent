@@ -132,6 +132,45 @@ export function redactSecretValues(text: string, secrets: readonly string[]): st
   ), String(text || ''));
 }
 
+/** 旧管线把密码写成参数时用过的三种旗标，外加连接串里的 user:pass@host。 */
+const PASSWORD_ARGUMENT_FLAGS = ['--password', '-p', '-a'] as const;
+
+function escapeForRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * 掩掉「紧跟在密码旗标后面」的那一个值，不看长度。
+ *
+ * redactSecretValues 的 `length >= 3` 不是可以随手放宽的阈值：单字母口令整串替换会把
+ * 一整份日志抹成星号，脱敏反而毁掉了日志。但同一个短口令出现在 `--password ab` 这种
+ * 位置时含义是确定的，必须掩掉——而创建接口对口令长度没有下限，这种任务是合法存量。
+ * 旧管线写进日志的形态有三种（mongodump/mongorestore 的 --password、mongosh 的 -p、
+ * redis-cli 的 -a），另加连接串里的 user:pass@host。
+ */
+function redactPasswordArguments(text: string, secrets: readonly string[]): string {
+  const flags = PASSWORD_ARGUMENT_FLAGS.map(escapeForRegExp).join('|');
+  return secrets.reduce((masked, secret) => {
+    if (!secret) return masked;
+    const quoted = escapeForRegExp(secret);
+    return masked
+      // 旗标前必须是行首或空白/引号，避免 `-a` 命中某个单词的尾巴。
+      .replace(
+        new RegExp(`(^|[\\s'"])(${flags})([ =]+)('${quoted}'|"${quoted}"|${quoted})`, 'g'),
+        '$1$2$3******',
+      )
+      .replace(new RegExp(`:${quoted}@`, 'g'), ':******@');
+  }, String(text || ''));
+}
+
+/**
+ * 旧版迁移遗留文本（log / progressMessage / errorMessage）的唯一脱敏口径。
+ * 升级与对外投影两处共用它——两处各写一套正是判据分裂的起点。
+ */
+export function redactLegacyMigrationText(text: string, secrets: readonly string[]): string {
+  return redactPasswordArguments(redactSecretValues(text, secrets), secrets);
+}
+
 interface MigrationCredentialPayload {
   sourcePassword?: string;
   targetPassword?: string;
@@ -247,12 +286,12 @@ export function migrateLegacyDataMigrationCredentials(migrations: DataMigration[
       migration.target.sshTunnel?.password,
     ].filter((value): value is string => Boolean(value));
     if (legacySecrets.length > 0) {
-      if (migration.log) migration.log = redactSecretValues(migration.log, legacySecrets);
+      if (migration.log) migration.log = redactLegacyMigrationText(migration.log, legacySecrets);
       if (migration.progressMessage) {
-        migration.progressMessage = redactSecretValues(migration.progressMessage, legacySecrets);
+        migration.progressMessage = redactLegacyMigrationText(migration.progressMessage, legacySecrets);
       }
       if (migration.errorMessage) {
-        migration.errorMessage = redactSecretValues(migration.errorMessage, legacySecrets);
+        migration.errorMessage = redactLegacyMigrationText(migration.errorMessage, legacySecrets);
       }
     }
 
@@ -277,9 +316,9 @@ export function publicDataMigration(migration: DataMigration): DataMigration {
     ...rest,
     source: withoutConnectionSecrets(rest.source),
     target: withoutConnectionSecrets(rest.target),
-    progressMessage: rest.progressMessage ? redactSecretValues(rest.progressMessage, legacySecrets) : undefined,
-    errorMessage: rest.errorMessage ? redactSecretValues(rest.errorMessage, legacySecrets) : undefined,
-    log: rest.log ? redactSecretValues(rest.log, legacySecrets) : undefined,
+    progressMessage: rest.progressMessage ? redactLegacyMigrationText(rest.progressMessage, legacySecrets) : undefined,
+    errorMessage: rest.errorMessage ? redactLegacyMigrationText(rest.errorMessage, legacySecrets) : undefined,
+    log: rest.log ? redactLegacyMigrationText(rest.log, legacySecrets) : undefined,
   };
 }
 

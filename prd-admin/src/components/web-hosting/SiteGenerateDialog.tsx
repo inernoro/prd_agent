@@ -96,10 +96,18 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
     return () => window.clearInterval(timer);
   }, [generating, runStartedAtMs]);
   const onCreatedRef = useRef(onCreated);
+  // 恢复失败时要如实说清「现在表单里还剩什么」。打开弹窗会清空 instruction、
+  // 并且只有带 initialSource 时才预选知识——用 ref 是为了不把 initialSource 塞进
+  // recoverActiveRun 的依赖里（那会让它在恢复途中被重建）。
+  const initialSourceRef = useRef(initialSource);
 
   useEffect(() => {
     onCreatedRef.current = onCreated;
   }, [onCreated]);
+
+  useEffect(() => {
+    initialSourceRef.current = initialSource;
+  }, [initialSource]);
 
   const finishGeneration = useCallback((siteId: string, siteUrl?: string) => {
     const finalPreview = previewableAiStreamHtml(streamRef.current);
@@ -127,7 +135,12 @@ export default function SiteGenerateDialog({ open, initialSource, onClose, onCre
           setGenerating(false);
           setActiveRunId(null);
           setStopRequested(false);
-          setPhase('上次的网页生成任务已经不在了，原来的知识与要求仍保留，可以直接重新生成');
+          // 不许承诺「直接重新生成」：打开弹窗那一步已经把要求清空了，没有
+          // initialSource 时连知识也清空了，生成按钮此刻是禁用的。说了能直接重来，
+          // 用户点下去却点不动，就是又制造一次「白做一场」。
+          setPhase(initialSourceRef.current
+            ? '上次的网页生成任务已经不在了。这一篇知识仍选着，再写一次要求就能重新生成'
+            : '上次的网页生成任务已经不在了。重新选择知识、写明要求，就能再生成一次');
           forgetActiveRun();
           return;
         }

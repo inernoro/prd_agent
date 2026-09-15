@@ -47,6 +47,45 @@ describe('密封旧版迁移凭据的顺序', () => {
     expect(pub.log ?? '').not.toContain('p@ss-TARGET');
   });
 
+  it('短口令也要掩掉——旗标后面那一个值不看长度', () => {
+    // 创建接口对口令长度没有下限（POST /data-migrations 只校验必填字段），
+    // 所以一两位的口令是合法存量。它一旦跳过脱敏，密封又把可比对的明文拿走，
+    // 日志里那串密码就永久留在 GET .../log 里了（Codex P2，2026-09-15）。
+    const migration = legacy();
+    migration.source.password = 'ab';
+    migration.target.password = 'x';
+    migration.log = [
+      'mongodump --username u --password ab --uri mongodb://h/db',
+      "mongorestore --password 'ab'",
+      'mongosh -p x --quiet',
+      'redis-cli -a x --no-auth-warning',
+      'connect mongodb://u:ab@h/db',
+      // 自由文本里的短串不许被牵连——单字母整串替换会把整份日志抹成星号，
+      // 那种「脱敏」等于毁掉日志。
+      'restored 12 collections from ab-cluster into xanadu',
+    ].join('\n');
+
+    // companion：夹具确实带着短口令与含口令的命令行。
+    expect(migration.log).toContain('--password ab');
+
+    expect(migrateLegacyDataMigrationCredentials([migration])).toBe(true);
+
+    const log = migration.log ?? '';
+    expect(log, '短口令跳过脱敏，密封之后这串密码就永久暴露了').not.toContain('--password ab');
+    expect(log).not.toContain("--password 'ab'");
+    expect(log).not.toContain('-p x ');
+    expect(log).not.toContain('-a x ');
+    expect(log).not.toContain('mongodb://u:ab@h/db');
+    expect(log).toContain('--password ******');
+    expect(log).toContain(':******@');
+    // 没有旗标的那一行原样保留。
+    expect(log).toContain('restored 12 collections from ab-cluster into xanadu');
+
+    // 对外投影同样干净（两处共用同一个脱敏口径，不许各写一套）。
+    const pub = publicDataMigration(migration);
+    expect(pub.log ?? '').not.toContain('--password ab');
+  });
+
   it('落盘顺序是备份在前、主文件在后——崩在中途仍可续', () => {
     const source = fs.readFileSync(
       path.join(process.cwd(), 'src/services/state.ts'),
