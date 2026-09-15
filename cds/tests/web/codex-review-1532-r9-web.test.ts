@@ -45,3 +45,32 @@ describe('静默保留只对同一档成立', () => {
       .toMatch(/recentDays/);
   });
 });
+
+/**
+ * Codex review 第十轮：上一轮那个修复只修了失败路径，成功路径原样直写。
+ * 连点两下档位时两个请求在飞，慢的那个后回来会把新结果盖掉——按钮停在 30 天、
+ * 数字却是 7 天的，而且不报错、没有陈旧提示。
+ */
+describe('后发的请求让先发的作废', () => {
+  it('成功路径带了代次判断，不再无条件直写', () => {
+    expect(loadPipeline, '成功路径仍然无条件 setPipelineState，慢响应会盖掉新结果')
+      .toMatch(/if \(superseded\(\)\) return;\s*\n\s*setPipelineState\(\{ status: 'ok'/);
+  });
+
+  it('失败路径也丢弃过期响应（早已无关的报错不许盖掉新数据）', () => {
+    const catchBody = loadPipeline.slice(loadPipeline.indexOf('} catch (err) {'));
+    expect(catchBody).toMatch(/if \(superseded\(\)\) return;/);
+  });
+
+  it('代次来自 ref 且每次请求自增，不是拿档位当身份', () => {
+    // 两次都选同一档时（删报告触发的重算恰好与一次换档并发），按档位分不出先后，
+    // 仍会用旧数据盖新数据。所以身份必须是单调自增的代次。
+    expect(page).toMatch(/const pipelineReqRef = useRef\(0\);/);
+    expect(loadPipeline).toMatch(/const gen = \(pipelineReqRef\.current \+= 1\);/);
+    expect(loadPipeline).toMatch(/pipelineReqRef\.current !== gen/);
+  });
+
+  it('请求用的是这一次抓下来的档位，不是渲染时刻的闭包值', () => {
+    expect(loadPipeline).toMatch(/fetchReportsPipeline\(\{ recentDays: wantDays \}\)/);
+  });
+});

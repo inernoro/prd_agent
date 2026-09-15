@@ -175,6 +175,8 @@ export function ReportsPage(): JSX.Element {
   // 结论优先主页（2026-09-08 重做）：聚合与列表分开加载，聚合失败不拖垮台账。
   const [overviewState, setOverviewState] = useState<OverviewState>({ status: 'loading' });
   const [pipelineState, setPipelineState] = useState<PipelineState>({ status: 'loading' });
+  /** 流水线请求的代次。后发的请求让先发的作废，防止慢响应盖掉新结果。 */
+  const pipelineReqRef = useRef(0);
   const [overviewDays, setOverviewDays] = useState<OverviewWindow>(readOverviewWindow);
   useEffect(() => { sessionStorage.setItem('cds-report-overview-days', String(overviewDays)); }, [overviewDays]);
 
@@ -223,13 +225,27 @@ export function ReportsPage(): JSX.Element {
   const loadPipeline = useCallback(async (quiet = false) => {
     // 这一次请求要的是哪一档。失败时用它判「静默保留」还不成立——见下面那段。
     const wantDays = overviewDays;
+    /*
+     * 代次号：**后发的请求一旦发出，先发的那个就作废**，无论它先回还是后回。
+     *
+     * 连点两下档位时会有两个请求在飞。慢的那个（7 天）如果后回来，会把快的那个
+     * （30 天）的结果盖掉——按钮停在 30 天、数字却是 7 天的，而且不报错、没有任何
+     * 陈旧提示（Codex review 抓到）。上一轮我只给失败路径加了「同档才保留」，
+     * 成功路径原样直写，等于同一条判断只修了一面。
+     *
+     * 判据用代次而不是「回来的 recentDays 等不等于当前选中」：后者在两次都选同一档
+     * （删报告触发的重算恰好与一次换档并发）时分不出先后，仍会用旧数据盖新数据。
+     */
+    const gen = (pipelineReqRef.current += 1);
+    const superseded = (): boolean => pipelineReqRef.current !== gen;
     if (!quiet) setPipelineState({ status: 'loading' });
     try {
       // 时间窗要真的传下去。首页渲染的是流水线，不是 overview——只把 days 喂给
       // fetchReportsOverview 的话，那三个按钮在首页只会换个选中底色，数字一个都不动
       // （Codex review 抓到）。口径与 overview 一致：只筛「最近完成」（墓碑），
       // 在途改动永远算在内。走向图是独立的 90 天层，各自在卡片上写明自己的区间。
-      const { pipeline, series } = await fetchReportsPipeline({ recentDays: overviewDays });
+      const { pipeline, series } = await fetchReportsPipeline({ recentDays: wantDays });
+      if (superseded()) return;
       setPipelineState({ status: 'ok', pipeline, series });
     } catch (err) {
       /*
@@ -240,6 +256,8 @@ export function ReportsPage(): JSX.Element {
        *（Codex review 抓到）。所以再加一条：这次请求要的档位必须等于屏幕上那份数据
        * 实际所用的档位（后端在 pipeline.recentDays 里如实回传），否则一律把错误顶上来。
        */
+      // 过期的失败同样不许盖掉新请求的结果：读者已经换到别的档，这条报错早已无关。
+      if (superseded()) return;
       const sameWindow = (prev: PipelineState): boolean => prev.status === 'ok'
         && (prev.pipeline.recentDays ?? null) === (wantDays ?? null);
       setPipelineState((prev) => (quiet && sameWindow(prev)
@@ -1004,16 +1022,22 @@ function ReportsHome({
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[60rem] border-collapse text-[0.8125rem]">
+            <table className="w-full min-w-[72rem] table-fixed border-collapse text-[0.8125rem]">
               <thead>
                 <tr className="bg-[hsl(var(--surface-sunken))] text-left text-[0.6875rem] uppercase tracking-[0.04em] text-muted-foreground">
-                  <th className="px-3 py-2.5 font-medium">结论</th>
-                  <th className="px-3 py-2.5 font-medium">报告 · 前缀 / 对象 / 目标日</th>
-                  <th className="px-3 py-2.5 font-medium">档位</th>
-                  <th className="px-3 py-2.5 font-medium">缺陷</th>
-                  <th className="px-3 py-2.5 font-medium">验收对象</th>
-                  <th className="px-3 py-2.5 font-medium">归档时间</th>
-                  <th className="px-3 py-2.5 font-medium" aria-label="操作" />
+                  {/*
+                    列宽在表头一次定死，配 table-fixed。
+                    此前只有标题列没写宽度，而表是 w-full——于是「谁没写宽度谁吃掉全部富余」：
+                    宽屏下固定列合计约 50rem，剩下的一千多像素全灌进标题列，标题文字只占三分之一，
+                    中间空出一大块（用户截图圈出来的就是它）。百分比之和恒为 100，富余按比例摊开。
+                  */}
+                  <th className="w-[9%] px-3 py-2.5 font-medium">结论</th>
+                  <th className="w-[30%] px-3 py-2.5 font-medium">报告 · 前缀 / 对象 / 目标日</th>
+                  <th className="w-[5%] px-3 py-2.5 font-medium">档位</th>
+                  <th className="w-[10%] px-3 py-2.5 font-medium">缺陷</th>
+                  <th className="w-[22%] px-3 py-2.5 font-medium">验收对象</th>
+                  <th className="w-[18%] px-3 py-2.5 font-medium">归档时间</th>
+                  <th className="w-[6%] px-3 py-2.5 font-medium" aria-label="操作" />
                 </tr>
               </thead>
               <tbody>
@@ -1035,19 +1059,19 @@ function ReportsHome({
                       tabIndex={0}
                       title={reportTooltip(r, projectLabel)}
                     >
-                      <td className="w-[6rem] whitespace-nowrap px-3 py-3">
+                      <td className="whitespace-nowrap px-3 py-3">
                         <span className="inline-flex items-center gap-1.5 text-[0.78125rem] font-semibold"><VerdictIcon verdict={r.verdict} />{r.verdict === 'pass' ? '通过' : r.verdict === 'fail' ? '未通过' : r.verdict === 'conditional' ? '原则性通过' : <span className="text-muted-foreground">无结论</span>}</span>
                       </td>
                       <td className="px-3 py-3">
-                        <div className="font-semibold text-foreground">{r.title}</div>
+                        <div className="break-words font-semibold text-foreground">{r.title}</div>
                         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[0.71875rem] text-muted-foreground">
                           {superseded ? <span>已被更新的版本取代</span> : ref && ref.version > 1 ? <span>v{ref.version} · 取代 {ref.supersedes.length} 份早期版本</span> : null}
                           {projectLabel ? <span>{projectLabel}</span> : null}
                           <FormatBadge format={r.format} />
                         </div>
                       </td>
-                      <td className="w-[4rem] px-3 py-3">{r.tier ? <span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[0.6875rem] font-semibold">{r.tier}</span> : null}</td>
-                      <td className="w-[9.375rem] whitespace-nowrap px-3 py-3">
+                      <td className="px-3 py-3">{r.tier ? <span className="inline-flex h-5 items-center rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 text-[0.6875rem] font-semibold">{r.tier}</span> : null}</td>
+                      <td className="whitespace-nowrap px-3 py-3">
                         {r.defectCounts ? (
                           <span className="inline-flex gap-1 font-mono text-[0.6875rem]">
                             <span className={`rounded px-1.5 py-0.5 ${p0 ? 'bg-[hsl(var(--bad-soft))] text-bad' : 'bg-[hsl(var(--surface-sunken))] text-muted-foreground'}`}>P0 {p0}</span>
@@ -1056,7 +1080,7 @@ function ReportsHome({
                           </span>
                         ) : <span className="text-[0.6875rem] text-muted-foreground">未记录</span>}
                       </td>
-                      <td className="w-[18.75rem] px-3 py-3">
+                      <td className="px-3 py-3">
                         <div className="flex flex-wrap gap-1">
                           {r.branch ? <ChangeKeyChip icon={GitBranch} text={r.branch} /> : null}
                           {r.commitSha ? <ChangeKeyChip icon={GitCommitHorizontal} text={r.commitSha.slice(0, 8)} /> : null}
@@ -1064,11 +1088,11 @@ function ReportsHome({
                           {!r.branch && !r.commitSha && r.prNumber == null ? <span className="text-[0.6875rem] text-muted-foreground">未记录部署上下文</span> : null}
                         </div>
                       </td>
-                      <td className="w-[9.375rem] whitespace-nowrap px-3 py-3 font-mono text-[0.71875rem] text-muted-foreground">
+                      <td className="whitespace-nowrap px-3 py-3 font-mono text-[0.71875rem] text-muted-foreground">
                         {formatTime(r.createdAt)}
                         {r.shareToken ? <Share2 className="ml-1.5 inline h-3.5 w-3.5 text-info" aria-label="已分享" /> : null}
                       </td>
-                      <td className="w-[2.75rem] px-2 py-2 text-right" onClick={(event) => event.stopPropagation()}>
+                      <td className="px-2 py-2 text-right" onClick={(event) => event.stopPropagation()}>
                         <ReportRowActions
                           report={r}
                           folders={folders}

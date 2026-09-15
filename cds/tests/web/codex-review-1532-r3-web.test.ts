@@ -24,8 +24,12 @@ const loadPipeline = (() => {
 
 describe('时间窗按钮必须真的改变首页看到的数', () => {
   it('按钮改的那个值（overviewDays）进了流水线请求', () => {
-    expect(loadPipeline, 'fetchReportsPipeline 还是空参数，按钮在首页什么都不改')
-      .toMatch(/fetchReportsPipeline\(\{\s*recentDays:\s*overviewDays\s*\}\)/);
+    // 第十轮起请求传的是 wantDays——它就是这次请求发出时抓下来的 overviewDays
+    //（抓下来是为了让并发的响应能分辨先后，见 r9-web 那份守卫）。
+    // 所以这里钉两件事：抓的是 overviewDays，且传下去的就是它抓到的那个值。
+    expect(loadPipeline, '没有把当前档位抓下来').toMatch(/const wantDays = overviewDays;/);
+    expect(loadPipeline, 'fetchReportsPipeline 还是空参数或传了别的值，按钮在首页什么都不改')
+      .toMatch(/fetchReportsPipeline\(\{\s*recentDays:\s*wantDays\s*\}\)/);
   });
 
   it('依赖数组带上它，换档才会重新请求', () => {
