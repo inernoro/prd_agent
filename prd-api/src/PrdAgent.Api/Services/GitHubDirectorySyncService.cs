@@ -585,21 +585,60 @@ public class GitHubDirectorySyncService
     /// 只看一件事：是不是 404。因为走到这一步时，**本轮必然是按已解析的提交号列的**——
     /// 解析不出提交号那一轮已经中止了。提交号不可变：在它上面拿到 404，
     /// 就证明那一刻该目录确实不存在；而解析这一步本身已经证明仓库与分支都够得着。
-    ///
-    /// 这条不变量由控制流保证，不靠调用方多传一个布尔：多一个参数就多一种传错的方式，
-    /// 而传错的后果是把一次权限变动变成一次数据清空。
+    /// <summary>
+    /// 这个目录到底在不在——只认**正面证据**：上一级目录在同一个提交上列得出来，
+    /// 而它的清单里没有这一级。不接受「404 多半就是删了」这种推断。
     /// </summary>
-    /// <summary>删之前那一刻，这个仓库到底还读不读得到——由一次真实探测得出，不许靠推断。</summary>
-    internal enum RemoteAccess
+    internal enum PathAbsence
     {
-        /// <summary>刚刚确认过：此刻仍读得到。</summary>
-        Confirmed,
-        /// <summary>没能确认（权限没了 / 仓库没了 / 网络不通）。</summary>
-        Unconfirmed,
+        /// <summary>上一级列得出来，清单里没有它：确实没了。</summary>
+        ProvenAbsent,
+        /// <summary>上一级列得出来，清单里有它：那条 404 另有来路，不许删。</summary>
+        ProvenPresent,
+        /// <summary>没能取得证据（读不到、清单可能被截断、网络不通）：一律不许删。</summary>
+        Unproven,
     }
 
-    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, RemoteAccess accessAfterNotFound)
-        => directoryStatus == HttpStatusCode.NotFound && accessAfterNotFound == RemoteAccess.Confirmed;
+    /// <summary>
+    /// 「远端删光了」的唯一判据：列目录拿到 404，**并且**有正面证据说明它确实不在。
+    ///
+    /// 为什么不能只看 404：GitHub 对「无权访问的私有仓」回的也是 404，和「目录真没了」逐字一样。
+    /// 为什么不能只补一次「此刻还读得到吗」：那证明的是「仓库读得到」，不是「这个路径不存在」——
+    /// 两次请求之间授权抖一下，探测照样成功，而那条 404 其实是权限造成的。
+    /// 所以证据必须和结论说的是同一件事：**上一级的清单里没有它**。
+    /// </summary>
+    internal static bool ShouldReconcileAsEmpty(HttpStatusCode directoryStatus, PathAbsence absence)
+        => directoryStatus == HttpStatusCode.NotFound && absence == PathAbsence.ProvenAbsent;
+
+    /// <summary>父路径：`a/b` → `a`，`a` → 仓库根（空串），仓库根本身 → null（无处可上溯）。</summary>
+    internal static string? ParentPathOf(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        var i = path.LastIndexOf('/');
+        return i < 0 ? "" : path[..i];
+    }
+
+    /// <summary>路径最后一段的名字：`a/b` → `b`。</summary>
+    internal static string NameOf(string path)
+    {
+        var i = path.LastIndexOf('/');
+        return i < 0 ? path : path[(i + 1)..];
+    }
+
+    /// <summary>解析 ref 的请求地址。纯函数：测试直接断言它吐出来的地址，不去扫源码字面量。</summary>
+    internal static string BuildRefResolveUrl(string owner, string repo, string reference)
+        // /commits/{ref} 对分支、标签、提交号一视同仁；/branches/{ref} 只认分支，
+        // 那会让按标签或提交号订阅的目录再也同步不了。
+        => $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+         + $"/commits/{Uri.EscapeDataString(reference)}";
+
+    /// <summary>列目录的请求地址。路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串。</summary>
+    internal static string BuildContentsUrl(string owner, string repo, string path, string reference)
+    {
+        var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
+        return $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
+             + $"/contents/{safePath}?ref={Uri.EscapeDataString(reference)}";
+    }
 
     /// <summary>
     /// 把一个 ref 解析成它此刻指向的提交号，顺带证明这个仓库此刻读得到。
@@ -607,7 +646,12 @@ public class GitHubDirectorySyncService
     /// 允许是其中任意一种，只认分支会让按标签订阅的目录再也同步不了。
     /// 拿不到提交号（状态码非 200、响应缺字段、网络出错）一律回 null，调用方据此决定停还是走。
     /// </summary>
-    private readonly record struct RefResolution(string? CommitSha, HttpStatusCode? Status)
+    /// <summary>
+    /// 解析 ref 的结果。带着限额信息一起走：限额耗尽时上游回的是 403/429，
+    /// 只把状态码传下去会被说成「没有读取权限」，而正确的下一步是「等到几点几分再试」。
+    /// </summary>
+    private readonly record struct RefResolution(
+        string? CommitSha, HttpStatusCode? Status, bool RateLimited = false, string? ResetHint = null)
     {
         /// <summary>上游明确答复了（有状态码），只是没给出可用的提交号。</summary>
         public bool AnsweredButUnusable => CommitSha == null && Status.HasValue;
@@ -619,16 +663,15 @@ public class GitHubDirectorySyncService
         try
         {
             // /commits/{ref} 对分支、标签、提交号一视同仁；/branches/{ref} 只认分支。
-            var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}"
-                    + $"/commits/{Uri.EscapeDataString(reference)}";
-            using var request = BuildApiRequest(url, accessToken);
+            using var request = BuildApiRequest(BuildRefResolveUrl(owner, repo, reference), accessToken);
             using var response = await Http.SendAsync(request, ct);
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning(
                     "[GitHubSync] 解析 {Owner}/{Repo}@{Ref} 的提交号失败：{Status}",
                     owner, repo, reference, (int)response.StatusCode);
-                return new RefResolution(null, response.StatusCode);
+                return new RefResolution(null, response.StatusCode,
+                    GitHubRateLimit.IsExhausted(response), GitHubRateLimit.ResetHint(response));
             }
 
             var json = await response.Content.ReadAsStringAsync(ct);
@@ -637,6 +680,7 @@ public class GitHubDirectorySyncService
                 ? shaElement.GetString()
                 : null;
             return new RefResolution(string.IsNullOrWhiteSpace(sha) ? null : sha, response.StatusCode);
+
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
@@ -650,6 +694,80 @@ public class GitHubDirectorySyncService
             // 网络层出错：上游一个字都没答，所以没有状态码可交。
             _logger.LogWarning(ex, "[GitHubSync] 解析 {Owner}/{Repo}@{Ref} 的提交号失败", owner, repo, reference);
             return new RefResolution(null, null);
+        }
+    }
+
+    /// <summary>
+    /// 取「这个路径确实不在」的正面证据：从目标逐级上溯，找第一个**在同一个提交上列得出来**的祖先，
+    /// 看它的清单里有没有下一级。
+    ///
+    /// 为什么这样才算证据：祖先列得出来，说明此刻确实读得到这个仓库的内容、读的又是同一个提交，
+    /// 于是「清单里没有它」说的就是「它不存在」，而不是「我们看不见」。
+    /// 一路上溯到仓库根都列不出来，那只能说明读不到——仓库根不会「被删掉」。
+    ///
+    /// 清单可能被上游截断（一次最多一千条且不明说）时一律判为没有结论：
+    /// 没看见 ≠ 不存在，而这条结论下一步就是删东西。
+    /// </summary>
+    private async Task<PathAbsence> ProvePathAbsentAsync(
+        string owner, string repo, string path, string commitSha, string? accessToken, CancellationToken ct)
+    {
+        var target = path;
+        while (true)
+        {
+            var parent = ParentPathOf(target);
+            if (parent == null) return PathAbsence.Unproven;
+
+            var (status, names, complete) =
+                await TryListEntryNamesAsync(owner, repo, parent, commitSha, accessToken, ct);
+
+            if (status == HttpStatusCode.NotFound)
+            {
+                // 上一级也不在：接着往上找一个列得出来的。
+                target = parent;
+                continue;
+            }
+
+            if (names == null || !complete) return PathAbsence.Unproven;
+
+            return names.Contains(NameOf(target), StringComparer.Ordinal)
+                ? PathAbsence.ProvenPresent
+                : PathAbsence.ProvenAbsent;
+        }
+    }
+
+    /// <summary>
+    /// 列出某个目录下每一项的名字。只为取证用，所以失败一律如实回空，不抛也不猜。
+    /// complete 复用与主清单同一条完整性判据（看过滤前的原始条数），免得两处各判一次然后漂。
+    /// </summary>
+    private async Task<(HttpStatusCode? Status, List<string>? Names, bool Complete)> TryListEntryNamesAsync(
+        string owner, string repo, string path, string reference, string? accessToken, CancellationToken ct)
+    {
+        try
+        {
+            using var request = BuildApiRequest(BuildContentsUrl(owner, repo, path, reference), accessToken);
+            using var response = await Http.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode) return (response.StatusCode, null, false);
+
+            var json = await response.Content.ReadAsStringAsync(ct);
+            using var doc = JsonDocument.Parse(json);
+            // 目标是目录时上游回数组；回对象说明这一级是文件，那它就没有「下一级」可言。
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return (response.StatusCode, null, false);
+
+            var names = doc.RootElement.EnumerateArray()
+                .Select(e => e.TryGetProperty("name", out var n) ? n.GetString() : null)
+                .Where(n => !string.IsNullOrEmpty(n))
+                .Select(n => n!)
+                .ToList();
+            return (response.StatusCode, names, IsListingComplete(doc.RootElement.GetArrayLength()));
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
+        {
+            _logger.LogWarning(ex, "[GitHubSync] 取证时列 {Owner}/{Repo}/{Path} 失败", owner, repo, path);
+            return (null, null, false);
         }
     }
 
@@ -676,19 +794,15 @@ public class GitHubDirectorySyncService
             // 和「匿名访问私有仓」，在这儿另写一句必然和它漂。上游连状态码都没给（网络层出错）
             // 才用兜底那句——那种情况下没有任何可归因的上游答复。
             throw new GitHubSyncUserFacingException(resolved.AnsweredButUnusable
-                ? DescribeListFailure(resolved.Status!.Value, accessToken, owner, repo, path, branch)
+                ? DescribeListFailure(resolved.Status!.Value, accessToken, owner, repo, path, branch,
+                    rateLimited: resolved.RateLimited, resetHint: resolved.ResetHint)
                 : "暂时连不上 GitHub，本轮先不同步以免存进不一致的内容。稍后点「重试同步」即可。");
         }
 
         var commitSha = resolved.CommitSha!;
         var reference = commitSha;
 
-        // 路径要逐段转义：目录名里合法的 # 会被当成片段、? 会被当成查询串，
-        // 结果是扫描器列得出来的目录，同步时打到另一个地址上必然失败。
-        var safePath = Uri.EscapeDataString(path).Replace("%2F", "/", StringComparison.Ordinal);
-        var url = $"https://api.github.com/repos/{Uri.EscapeDataString(owner)}/{Uri.EscapeDataString(repo)}/contents/{safePath}?ref={Uri.EscapeDataString(reference)}";
-
-        using var request = BuildApiRequest(url, accessToken);
+        using var request = BuildApiRequest(BuildContentsUrl(owner, repo, path, reference), accessToken);
         var response = await Http.SendAsync(request, ct);
         if (!response.IsSuccessStatusCode)
         {
@@ -699,27 +813,24 @@ public class GitHubDirectorySyncService
             // 否则一次权限变动就会把用户已导入的文档全删掉。
             if (response.StatusCode == HttpStatusCode.NotFound)
             {
-                // 定住提交号只定住了**内容的版本**，定不住**授权**：两次请求之间被移出组织、
-                // 被收回授权、仓库被删，GitHub 回的同样是 404。删之前再探一次「此刻还读不读得到」，
-                // 探不通就按失败处理——一次权限变动换一次全量删除，是这条链路上最贵的错。
-                // 探测拿的是已经定住的提交号，所以它只回答「读得到吗」，不会把分支的移动掺进来。
-                var probe = await ResolveRefCommitAsync(owner, repo, commitSha, accessToken, ct);
-                var accessAfterNotFound = probe.CommitSha != null
-                    ? RemoteAccess.Confirmed
-                    : RemoteAccess.Unconfirmed;
+                // 这条 404 有两种来路，长得一模一样：目录真没了，或者我们读不到这个仓库。
+                // 分辨它不能靠「再确认一次仓库读得到」——那证明的是仓库，不是这个路径：
+                // 两次请求之间授权抖一下，确认照样通过，而那条 404 其实是权限造成的。
+                // 所以去取一份说的是同一件事的**正面证据**：上一级目录的清单里有没有它。
+                var absence = await ProvePathAbsentAsync(owner, repo, path, commitSha, accessToken, ct);
 
-                if (ShouldReconcileAsEmpty(response.StatusCode, accessAfterNotFound))
+                if (ShouldReconcileAsEmpty(response.StatusCode, absence))
                 {
                     _logger.LogInformation(
-                        "[GitHubSync] {Owner}/{Repo}/{Path} 在提交 {Commit} 上不存在且此刻仍读得到该仓库：按「远端删光了」调和",
+                        "[GitHubSync] {Owner}/{Repo}/{Path} 已不在提交 {Commit} 的上级清单里：按「远端删光了」调和",
                         owner, repo, path, commitSha);
                     // 目录在那个提交上压根不存在，不存在「只回了一部分」的可能，所以这份空清单是完整的
                     return new DirectoryListing(new List<GitHubFile>(), Complete: true, Reference: reference);
                 }
 
                 _logger.LogWarning(
-                    "[GitHubSync] {Owner}/{Repo}/{Path} 列目录 404，但此刻读不到该仓库：不调和、按失败处理",
-                    owner, repo, path);
+                    "[GitHubSync] {Owner}/{Repo}/{Path} 列目录 404，但拿不到「它确实没了」的证据（{Absence}）：不调和、按失败处理",
+                    owner, repo, path, absence);
                 throw new GitHubSyncUserFacingException(DescribeListFailure(
                     HttpStatusCode.NotFound, accessToken, owner, repo, path, branch));
             }

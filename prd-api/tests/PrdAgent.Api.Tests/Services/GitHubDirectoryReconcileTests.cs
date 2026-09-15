@@ -138,52 +138,80 @@ public class GitHubDirectoryReconcileTests
     }
 
     [Fact]
-    public void 列目录404且此刻仍读得到才算远端删光()
+    public void 列目录404且上级清单里没有它才算远端删光()
     {
         // Git 里没有空目录：删光最后一个文件，目录本身就不存在了，列目录拿到的是 404
-        // 而不是「200 + 空清单」。这是最常见的一种删除，必须走调和。
+        // 而不是「200 + 空清单」。这是最常见的一种删除，必须走调和——
+        // 但要有正面证据：上一级在同一个提交上列得出来，清单里确实没有它。
         Assert.True(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, GitHubDirectorySyncService.RemoteAccess.Confirmed));
+            HttpStatusCode.NotFound, GitHubDirectorySyncService.PathAbsence.ProvenAbsent));
     }
 
     [Fact]
-    public void 读不到仓库时的404一律不许当真()
+    public void 拿不到它确实没了的证据时404一律不许当真()
     {
         // GitHub 对「无权访问的私有仓」回的也是 404，和「目录真没了」逐字一样。
-        // 定住提交号只定住了内容的版本、定不住授权：列目录前那次解析只能证明
-        // **那一刻**读得到，中间被收回授权、被移出组织、仓库被删，这里照样是 404。
-        // 所以删之前必须另外探一次，探不通就不删——一次权限变动换一次全量删除，代价最贵。
+        // 证据取不到（读不到仓库、清单可能被截断、网络不通）就不许删；
+        // 上一级清单里明明还有它，那条 404 更是另有来路，同样不许删。
         Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
-            HttpStatusCode.NotFound, GitHubDirectorySyncService.RemoteAccess.Unconfirmed));
+            HttpStatusCode.NotFound, GitHubDirectorySyncService.PathAbsence.Unproven));
+        Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(
+            HttpStatusCode.NotFound, GitHubDirectorySyncService.PathAbsence.ProvenPresent));
     }
 
     [Fact]
     public void 目录不是404时与本判据无关()
     {
         // 限额、权限不足、GitHub 故障各有各的处置，不能借道这条判据去删东西。
-        // 连「读得到」都不能让它们借道。
-        foreach (var access in new[]
-                 {
-                     GitHubDirectorySyncService.RemoteAccess.Confirmed,
-                     GitHubDirectorySyncService.RemoteAccess.Unconfirmed,
-                 })
+        // 连「证明了它不存在」都不能让它们借道。
+        foreach (var absence in Enum.GetValues<GitHubDirectorySyncService.PathAbsence>())
         {
-            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.Forbidden, access));
-            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.InternalServerError, access));
-            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.OK, access));
+            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.Forbidden, absence));
+            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.InternalServerError, absence));
+            Assert.False(GitHubDirectorySyncService.ShouldReconcileAsEmpty(HttpStatusCode.OK, absence));
         }
     }
 
+    [Theory]
+    [InlineData("doc/design/a", "doc/design")]
+    [InlineData("doc", "")]           // 上一级是仓库根
+    [InlineData("", null)]            // 仓库根本身无处可上溯：它不会「被删掉」，只会「读不到」
+    public void 上溯一级(string path, string? expected)
+    {
+        Assert.Equal(expected, GitHubDirectorySyncService.ParentPathOf(path));
+    }
+
+    [Theory]
+    [InlineData("doc/design/a", "a")]
+    [InlineData("doc", "doc")]
+    public void 取最后一段名字(string path, string expected)
+    {
+        Assert.Equal(expected, GitHubDirectorySyncService.NameOf(path));
+    }
+
     [Fact]
-    public void 解析ref走通吃分支标签提交号的端点()
+    public void 解析ref的地址对分支标签提交号一视同仁()
     {
         // 订阅地址 /tree/<ref>/<path> 里那一段允许是标签或提交号（`/tree/v1.2/docs`）。
         // 用只认分支的 /branches/{ref} 去解析，这类订阅会解析失败 → 整轮中止 → 永远同步不了。
-        // 这条退化不会让任何行为测试变红（判据照绿、编译照过），只能靠守卫盯住端点选型。
-        var source = SyncServiceSource();
+        // 断言的是这个纯函数吐出来的地址本身，不是源码里有没有某几个字：
+        // 前者换个写法照样成立，后者一重构就假红、一写错又可能假绿。
+        var url = GitHubDirectorySyncService.BuildRefResolveUrl("inernoro", "prd_agent", "v1.2");
 
-        Assert.DoesNotContain("/branches/{Uri.EscapeDataString(", source, StringComparison.Ordinal);
-        Assert.Contains("/commits/{Uri.EscapeDataString(reference)}", source, StringComparison.Ordinal);
+        Assert.Equal("https://api.github.com/repos/inernoro/prd_agent/commits/v1.2", url);
+        // 带斜杠的分支名（feature/foo）转义成 %2F，实测 GitHub 照样解析得出来
+        Assert.EndsWith("/commits/feature%2Ffoo",
+            GitHubDirectorySyncService.BuildRefResolveUrl("o", "r", "feature/foo"),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 列目录的地址逐段转义路径且带上ref()
+    {
+        // 目录名里合法的 # 会被当成片段、? 会被当成查询串；斜杠是分隔符必须留着。
+        var url = GitHubDirectorySyncService.BuildContentsUrl("o", "r", "doc/a b#c", "abc123");
+
+        Assert.Equal("https://api.github.com/repos/o/r/contents/doc/a%20b%23c?ref=abc123", url);
     }
 
     [Fact]
