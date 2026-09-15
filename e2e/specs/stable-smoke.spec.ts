@@ -304,9 +304,14 @@ const gatewayFailoverBackupNote = 'stable-smoke-failover-backup';
 const gatewayInjectedEndpointPattern = /^stable-smoke-(?:primary|all)-failure\//;
 const isGatewayInjectedEndpoint = (offering: GatewayOffering) => gatewayInjectedEndpointPattern.test(offering.endpointPath || '');
 const isGatewayFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').includes(gatewayFailoverBackupNote);
-const buildGatewayInjectedEndpoint = (kind: 'primary' | 'all', originalEndpointPath: string, index?: number) => (
-  `stable-smoke-${kind}-failure/${Date.now()}${index === undefined ? '' : `-${index}`}~${Buffer.from(originalEndpointPath, 'utf8').toString('base64url')}`
-);
+// 网关对 Endpoint 的上限是 500 字符：原值经 base64url 放大后装不下时退回不带原值的旧格式，
+// 硬中断后只能靠相同路由契约的捐出方还原（或人工处理），但故障注入本身照常执行，不会因为路径太长而验不了切换。
+const gatewayEndpointPathLimit = 500;
+const buildGatewayInjectedEndpoint = (kind: 'primary' | 'all', originalEndpointPath: string, index?: number) => {
+  const stem = `stable-smoke-${kind}-failure/${Date.now()}${index === undefined ? '' : `-${index}`}`;
+  const embedded = `${stem}~${Buffer.from(originalEndpointPath, 'utf8').toString('base64url')}`;
+  return embedded.length <= gatewayEndpointPathLimit ? embedded : stem;
+};
 const decodeGatewayInjectedEndpoint = (endpointPath: string): string | null => {
   const match = /^stable-smoke-(?:primary|all)-failure\/[^~]*~([A-Za-z0-9_-]*)$/.exec(endpointPath);
   return match ? Buffer.from(match[1], 'base64url').toString('utf8') : null;
@@ -383,6 +388,29 @@ async function recoverInjectedGatewayOfferings(
 const describeGatewayRecovery = (items: GatewayFixtureRecovery[]) => items
   .map((item) => `${item.logicalId}/${item.offeringId}: ${item.from} -> ${item.to || '(协议默认)'} [${item.source}]`)
   .join('; ');
+
+/** 把所有逻辑模型上仍在启用的带标记备用停掉（GW-007 之外它们只能是停用），返回处理过的记录描述。 */
+async function disableStrayGatewayBackups(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+  items: GatewayLogicalModel[],
+): Promise<string[]> {
+  const handled: string[] = [];
+  for (const item of items) {
+    for (const offering of item.offerings) {
+      if (!offering.enabled || !isGatewayFailoverBackup(offering)) continue;
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${item.id}/offerings/${offering.id}/enabled`, {
+        headers: gateway.headers,
+        data: { enabled: false },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `停用遗留备用 Offering ${offering.id} 失败`).toBe(true);
+      Object.assign(offering, body.data);
+      handled.push(`${item.id}/${offering.id}`);
+    }
+  }
+  return handled;
+}
 
 type GatewayLogicalModel = {
   id: string;
@@ -3113,6 +3141,13 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       leftovers.filter((item) => item.source === 'unrecoverable'),
       '上一轮遗留的注入态既没有自带原值、也找不到相同路由契约的捐出方，不能猜着写：请人工恢复这些 Offering 的 Endpoint 后再跑',
     ).toEqual([]);
+    // 带标记备用在一轮 GW-007 之外只能是停用：不论挂在哪个逻辑模型上（包括本轮不会选中的），
+    // 启用着的一律先停掉，否则上一轮夭折留下的备用会一直参与 CDS 真实流量的路由。
+    const straySummary = await disableStrayGatewayBackups(request, gateway, logicalBody.data.items);
+    if (straySummary.length > 0) {
+      testInfo.annotations.push({ type: 'gateway-fixture-stray-backup', description: straySummary.join('; ') });
+      console.warn(`[GW-007] 发现上一轮遗留的已启用备用并已停用：${straySummary.join('; ')}`);
+    }
     const upstreamResponse = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, {
       headers: gateway.headers,
     });
@@ -3224,7 +3259,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       logical = candidates.find((item) => distinctUpstreams(item).size >= 2);
       if (logical) {
-        // 上一轮夭折时留下的已启用标记备用：本轮认领，结束时一并停用。
+        // 开始前已把所有启用着的带标记备用停掉，这里通常为空；留着只为防御同名标记被人手工启用的情形。
         provisionedBackup = logical.offerings.find((offering) => offering.enabled && isFailoverBackup(offering));
       } else {
         const preferred = candidates[0];
@@ -3371,28 +3406,43 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           for (const offering of owner?.offerings || []) {
             if (offering.enabled && isFailoverBackup(offering)) backupIds.add(offering.id);
           }
+          // 其它逻辑模型上若还有启用着的带标记备用（本轮没选中它们），同样一并停掉。
+          await disableStrayGatewayBackups(
+            request,
+            gateway,
+            body.data.items.filter((item) => item.id !== backupOwnerId),
+          );
         })()])
         : [];
       const backupRestore = backupOwnerId
         ? await Promise.allSettled([...backupIds].map((offeringId) => toggleOffering(backupOwnerId, offeringId, false)))
         : [];
-      if (workspaceId) {
+      // 工作区与探针 run 的清理也走 allSettled：它们失败时要把服务端的错误原文带出来（此前是 data 为 null
+      // 直接抛 TypeError，把服务端的 409 原因和前面真正的断言失败一起遮住了），并且不能挡住网关复原结果的核对。
+      const workspaceCleanup = await Promise.allSettled([(async () => {
+        if (!workspaceId) return;
         const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspaceId}`, {
           headers: {
             ...authHeaders(token),
             'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspaceId}-gateway-failover-delete`,
           },
         });
-        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
-      }
-      for (const runId of runIds) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-          headers: authHeaders(token),
-        })).status()).toBe(404);
-      }
+        const envelope = await deleted.json() as ApiEnvelope<{ deleted: boolean }>;
+        expect(
+          envelope.data?.deleted,
+          `清理故障切换工作区失败：HTTP ${deleted.status()} ${envelope.error?.message || ''}`,
+        ).toBe(true);
+        for (const runId of runIds) {
+          expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+            headers: authHeaders(token),
+          })).status()).toBe(404);
+        }
+      })()]);
       expect(
-        [...restoreResults, ...strategyRestore, ...rediscover, ...backupRestore].filter((result) => result.status === 'rejected'),
-        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用',
+        [...restoreResults, ...strategyRestore, ...rediscover, ...backupRestore, ...workspaceCleanup]
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => String(result.reason?.message || result.reason)),
+        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用，工作区与探针 run 必须删除',
       ).toEqual([]);
     }
   });
@@ -3472,6 +3522,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       ).toEqual([`${owner!.id}:${backup!.targetId}`]);
       return recovered[0];
     };
+
+    // 注入路径构造器本身的边界：短路径（含多字节）可逆，超过网关 500 字符上限时退回不带原值的旧格式。
+    expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('all', 'v1/图片/generations?x=1', 2))).toBe('v1/图片/generations?x=1');
+    expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('primary', ''))).toBe('');
+    const longInjected = buildGatewayInjectedEndpoint('all', 'a'.repeat(480), 3);
+    expect(longInjected.length).toBeLessThanOrEqual(gatewayEndpointPathLimit);
+    expect(gatewayInjectedEndpointPattern.test(longInjected)).toBe(true);
+    expect(decodeGatewayInjectedEndpoint(longInjected)).toBeNull();
 
     try {
       // 情形一：本 PR 起的注入格式自带原值，精确还原，不依赖任何别的 Offering。
