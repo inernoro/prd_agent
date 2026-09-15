@@ -225,6 +225,7 @@ public static class DataSyncScope
         new DataSyncGroup("pm", "项目管理", new[]
         {
             new DataSyncCollection("active_task_entries", System.Array.Empty<string>()),
+            new DataSyncCollection("active_task_suggestions", System.Array.Empty<string>()),
             new DataSyncCollection("pm_briefings", new[] { "ShareToken" }),
             new DataSyncCollection("pm_decisions", System.Array.Empty<string>()),
             new DataSyncCollection("pm_goal_checkins", System.Array.Empty<string>()),
@@ -353,6 +354,7 @@ public static class DataSyncScope
     public static readonly IReadOnlyDictionary<string, string> Excluded = new Dictionary<string, string>
     {
         ["account_data_transfers"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
+        ["active_task_absorb_preferences"] = "个人偏好（吸取建议时上次引用了哪几个知识库）：那几个知识库 Id 在目标站根本不存在，复制过去只会让人对着一堆空引用发愣",
         ["active_task_board_settings"] = "本站自己的对外开放开关（匿名看板开不开、给到哪一档粒度、卡住多久升级）。这是每个站点自己该做的决定，复制过去等于替目标站把匿名看板打开了",
         ["activity_logs"] = "日志与埋点：量大且只对源站有意义",
         ["admin_idempotency"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",

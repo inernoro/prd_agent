@@ -400,6 +400,8 @@ public class MongoDbContext
     // 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）
     public IMongoCollection<ActiveTaskEntry> ActiveTaskEntries => _database.GetCollection<ActiveTaskEntry>("active_task_entries");
     public IMongoCollection<ActiveTaskBoardSettings> ActiveTaskBoardSettingsCollection => _database.GetCollection<ActiveTaskBoardSettings>("active_task_board_settings");
+    public IMongoCollection<ActiveTaskSuggestion> ActiveTaskSuggestions => _database.GetCollection<ActiveTaskSuggestion>("active_task_suggestions");
+    public IMongoCollection<ActiveTaskAbsorbPreference> ActiveTaskAbsorbPreferences => _database.GetCollection<ActiveTaskAbsorbPreference>("active_task_absorb_preferences");
 
     // Project Management 项目管理
     public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
@@ -1028,6 +1030,14 @@ public class MongoDbContext
         ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
             Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.DoneAt),
             new CreateIndexOptions { Name = "idx_active_tasks_user_done" }));
+
+        // ActiveTaskSuggestions：收件箱按 target + state + 时间倒序；发件回溯按 from
+        ActiveTaskSuggestions.Indexes.CreateOne(new CreateIndexModel<ActiveTaskSuggestion>(
+            Builders<ActiveTaskSuggestion>.IndexKeys.Ascending(x => x.TargetUserId).Ascending(x => x.State).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_active_task_suggestions_target_state" }));
+        ActiveTaskSuggestions.Indexes.CreateOne(new CreateIndexModel<ActiveTaskSuggestion>(
+            Builders<ActiveTaskSuggestion>.IndexKeys.Ascending(x => x.FromUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_active_task_suggestions_from" }));
 
         // DefectReports：按 reporterId + status 查询；按 assigneeId + status 查询
         DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(

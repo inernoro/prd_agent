@@ -14,10 +14,30 @@
 .atb-page {
   display: flex;
   justify-content: center;
+  padding: 40px 20px 48px;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+/*
+ * 带左栏的外壳。用两条**定宽**轨道，不是 flex 居中。
+ *
+ * flex 居中的问题是：整组的宽度由内容列决定，而三个视图的内容列宽度不一样
+ * （我的任务 640、大家在做什么 720），于是每切一次视图，被居中的那一组整体左右平移，
+ * 左栏跟着晃 —— 用户看到的就是「导航一摇一摆」。轨道定宽之后整组宽度恒定，左栏一动不动。
+ *
+ * scrollbar-gutter 治的是同一个病的另一半：短页面没滚动条、长页面有，
+ * 一切换又平移 15px。永远留出滚动条的位置。
+ */
+.atb-shell {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 680px);
+  justify-content: center;
   gap: 32px;
   padding: 40px 20px 48px;
   min-height: 100%;
   box-sizing: border-box;
+  scrollbar-gutter: stable;
 }
 
 /* 桌面左栏：macOS 上提醒事项 / 邮件 / 备忘录都有，装的是这里的三个路由 */
@@ -59,6 +79,10 @@
 }
 
 .atb-col--wide { max-width: 720px; }
+
+/* 在外壳里宽度由轨道决定，--wide 不再生效，免得又把整组宽度弄成两个值 */
+.atb-shell .atb-col,
+.atb-shell .atb-col--wide { max-width: none; }
 
 .atb-head {
   display: flex;
@@ -622,6 +646,104 @@ select.atb-input { cursor: pointer; }
   font-size: 0.8125rem;
 }
 
+/* 标题右边的一小撮动作 */
+.atb-headact { display: flex; align-items: baseline; gap: 14px; flex-shrink: 0; }
+
+/* 点行进去改这条。是个按钮，但看起来就是那一行。 */
+.atb-row__open {
+  background: none;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  align-items: flex-start;
+}
+
+/* 拖着排：拖起来的那行浮一点，其余行让位 */
+.atb-row--dragging {
+  position: relative;
+  z-index: 2;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-glass-panel);
+  border-radius: 10px;
+  cursor: grabbing;
+}
+
+/* 收件箱横幅：有建议才出现，没建议一个像素都不占 */
+.atb-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-radius: 14px;
+  border: none;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  background: rgba(var(--accent-primary-rgb), 0.12);
+}
+
+.atb-banner__icon { color: var(--accent-primary); flex-shrink: 0; }
+.atb-banner__text { flex: 1; font-size: 0.9375rem; color: var(--text-primary); }
+
+/* AI 拆出来的候选：勾选框是方圆角，和「做完了」的圆圈刻意长得不一样 —— 
+   一个是「要不要」，一个是「做完没」，两件事不该共用一个符号。 */
+.atb-check-circle {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  border: 2px solid var(--border-default);
+  background: transparent;
+  color: var(--accent-on-solid);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.atb-check-circle::before { content: ''; position: absolute; inset: -11px; border-radius: 10px; }
+
+.atb-check-circle--on {
+  border-color: var(--accent-primary-solid);
+  background: var(--accent-primary-solid);
+}
+
+.atb-check-circle--ghost { border-style: dashed; cursor: default; }
+
+.atb-draft { align-items: flex-start; padding-top: 4px; padding-bottom: 4px; }
+.atb-draft--off { opacity: 0.45; }
+.atb-draft--off .atb-inline-input { text-decoration: line-through; }
+
+/* 流式还没吐完时垫一行，别让人以为没了 */
+.atb-skeleton {
+  display: block;
+  height: 1rem;
+  width: 60%;
+  border-radius: 6px;
+  background: var(--bg-input);
+  animation: atb-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes atb-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
+
+/* 建议正文可以是一整段，不截断 */
+.atb-suggest__text {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* 浮层里的一组：一行小标题 + 内容 */
+.atb-field { display: flex; flex-direction: column; gap: 8px; }
+.atb-field__label { font-size: 0.8125rem; color: var(--text-muted); }
+
 /* ── 新人指引：一屏三行，只出现一次 ───────── */
 .atb-welcome { display: flex; flex-direction: column; gap: 18px; padding: 4px 0 8px; }
 .atb-welcome__row { display: flex; gap: 14px; align-items: flex-start; }
@@ -660,11 +782,15 @@ select.atb-input { cursor: pointer; }
   .atb-rowact { opacity: 0; transition: opacity 120ms ease; }
   .atb-row:hover .atb-rowact,
   .atb-row:focus-within .atb-rowact { opacity: 1; }
+  /* 浮层里那些行的操作是主路径，不藏 */
+  .atb-draft .atb-rowact { opacity: 1; }
 }
 
 /* 手机：不需要左栏，单栏铺开；命中区靠圆圈的伪元素撑到 44px（视觉仍是 22px） */
 @media (max-width: 767px) {
-  .atb-page { padding: 20px 14px 32px; gap: 0; }
+  .atb-page,
+  .atb-shell { padding: 20px 14px 32px; gap: 0; }
+  .atb-shell { grid-template-columns: minmax(0, 1fr); }
   .atb-title { font-size: 1.5rem; }
   .atb-row { padding: 0 15px; gap: 12px; min-height: 56px; }
   .atb-done-row { padding: 13px 15px; gap: 12px; }
@@ -681,4 +807,5 @@ select.atb-input { cursor: pointer; }
   .atb-row--going { transition: none; }
   .atb-circle:hover,
   .atb-circle:active { transform: none; }
+  .atb-skeleton { animation: none; }
 }

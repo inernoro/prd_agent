@@ -51,7 +51,7 @@ export function TaskShell({ title, trailing, headline, wide, children }: TaskShe
   );
 
   return (
-    <div className="atb-page">
+    <div className="atb-shell">
       {!isMobile && (
         <nav className="atb-sidebar" aria-label="任务台">
           {sources.map((s) => (

@@ -149,3 +149,47 @@ export interface PublicBoard {
   headline?: string;
   serverNow?: string;
 }
+
+// ── 建议（和派活是两码事：提了不会变成任务，等收件人自己吸取）──
+
+export interface TaskSuggestion {
+  id: string;
+  text: string;
+  fromUserId: string;
+  fromUserName?: string | null;
+  state: 'pending' | 'absorbed' | 'dismissed';
+  absorbedTaskIds: string[];
+  emergenceTreeId?: string | null;
+  createdAt: string;
+  resolvedAt?: string | null;
+}
+
+export interface SuggestionInbox {
+  items: TaskSuggestion[];
+  /** 上次引用了哪几个知识库 —— 服务端记着，换台电脑也还在 */
+  lastStoreIds: string[];
+  lastExtraHint?: string | null;
+}
+
+export interface SuggestPerson {
+  userId: string;
+  displayName: string;
+  username: string;
+  standbyCount: number;
+}
+
+export interface KnowledgeStoreRef {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+/** AI 拆出来的一条候选任务 —— 还没入库，等人勾 */
+export interface DraftTask {
+  title: string;
+  dueAt?: string | null;
+  /** 哪个人提的（吸取建议时才有） */
+  from?: string | null;
+  /** 原文里哪句让它这么判的 */
+  why?: string | null;
+}

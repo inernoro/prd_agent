@@ -2032,6 +2032,36 @@ public static class MdToPptAgent
         public const string Extract = "md-to-ppt-agent.template-extract::vision";
     }
 }
+
+/// <summary>
+/// 活动任务清单 —— 一键导入：把一段自由文本拆成一条条任务
+/// </summary>
+public static class ActiveTasks
+{
+    public const string AppName = "任务台";
+
+    public static class Import
+    {
+        [AppCallerMetadata(
+            "任务台-一键导入",
+            "把会议纪要、聊天记录、需求段落这类自由文本拆成一条条任务，并认出每条的截止时间",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string Split = "active-tasks.import::chat";
+    }
+
+    public static class Absorb
+    {
+        [AppCallerMetadata(
+            "任务台-吸取建议",
+            "把别人提的几条建议（可叠加知识库上下文）整理成收件人自己的一条条待办",
+            ModelTypes = new[] { ModelTypes.Chat },
+            Category = "Agent"
+        )]
+        public const string Suggestions = "active-tasks.absorb::chat";
+    }
+}
 }
 
 /// <summary>

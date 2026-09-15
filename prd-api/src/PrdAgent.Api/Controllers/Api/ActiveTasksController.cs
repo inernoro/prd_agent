@@ -99,7 +99,8 @@ public class ActiveTasksController : ControllerBase
             Source = ActiveTaskSource.IsValid(req.Source) ? req.Source! : ActiveTaskSource.Manual,
             SourceRefType = req.SourceRefType,
             SourceRefId = req.SourceRefId,
-            OrderKey = await ActiveTaskShared.NextTailOrderKeyAsync(_db, userId, ct),
+            // 撤销删除时带着原来的位置回来；正常新建一律排队尾
+            OrderKey = req.OrderKey ?? await ActiveTaskShared.NextTailOrderKeyAsync(_db, userId, ct),
             CreatedAt = now,
             UpdatedAt = now,
         };
@@ -194,6 +195,59 @@ public class ActiveTasksController : ControllerBase
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { id, promoted = true }));
+    }
+
+    /// <summary>
+    /// 拖拽排序：把 id 挪到 beforeId 的前面（beforeId 为空 = 挪到队尾）。
+    /// 「提前」只能置顶，挪不了第 5 条到第 2 条 —— 队列一长就完全失控。
+    ///
+    /// 用「挪到谁前面」而不是「挪到第几位」：前端拖完知道的就是落在谁上面，
+    /// 传下标要前后两边各算一次索引，两边算法一旦错开，看到的顺序和存的顺序就不是一回事。
+    /// </summary>
+    [HttpPost("{id}/reorder")]
+    public async Task<IActionResult> Reorder(string id, [FromBody] ActiveTaskReorderRequest? req = null, CancellationToken ct = default)
+    {
+        var userId = GetUserId();
+        var entry = await ActiveTaskShared.FindOwnedAsync(_db, id, userId, ct);
+        if (entry == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
+        if (entry.State != ActiveTaskState.Standby)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "只有备用队列里的任务可以排序"));
+
+        var queue = await _db.ActiveTaskEntries
+            .Find(x => x.UserId == userId && x.State == ActiveTaskState.Standby)
+            .SortBy(x => x.OrderKey)
+            .ToListAsync(ct);
+
+        var moving = queue.FirstOrDefault(x => x.Id == id);
+        if (moving == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不在备用队列里"));
+        queue.Remove(moving);
+
+        var beforeId = req?.BeforeId;
+        var at = queue.Count;
+        if (!string.IsNullOrWhiteSpace(beforeId))
+        {
+            var idx = queue.FindIndex(x => x.Id == beforeId);
+            // 落点找不到（那条刚被别处改了状态）就放队尾，不报错 —— 拖拽是个高频动作，
+            // 为了一个已经不存在的落点弹一个错误框，比放到队尾更烦人
+            at = idx >= 0 ? idx : queue.Count;
+        }
+        queue.Insert(at, moving);
+
+        // 整队重排成连续序号。队列本来就只有几十条，省下「算一个中间值、迟早算到
+        // 浮点精度尽头」那套麻烦。
+        var now = DateTime.UtcNow;
+        var writes = new List<WriteModel<ActiveTaskEntry>>();
+        for (var i = 0; i < queue.Count; i++)
+        {
+            var target = queue[i];
+            if (target.OrderKey == i) continue;
+            writes.Add(new UpdateOneModel<ActiveTaskEntry>(
+                Builders<ActiveTaskEntry>.Filter.Eq(x => x.Id, target.Id),
+                Builders<ActiveTaskEntry>.Update.Set(x => x.OrderKey, i).Set(x => x.UpdatedAt, now)));
+        }
+        if (writes.Count > 0) await _db.ActiveTaskEntries.BulkWriteAsync(writes, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { id, order = queue.Select(x => x.Id).ToList() }));
     }
 
     /// <summary>把某条设为「此刻正在做」。原本在做的那条退回备用队首，累计时长不丢。</summary>
@@ -407,6 +461,12 @@ public class ActiveTaskCreateRequest
     public string? SourceRefId { get; set; }
     /// <summary>true = 建完直接开始做（原本在做的退回备用队首）</summary>
     public bool StartNow { get; set; }
+
+    /// <summary>
+    /// 排在队列的哪个位置。只服务一个场景：撤销删除 —— 删掉的那条要回到它原来待着的地方，
+    /// 而不是排到队尾去。正常新建不传，由服务端算队尾。
+    /// </summary>
+    public int? OrderKey { get; set; }
 }
 
 public class ActiveTaskPasteRequest
@@ -426,6 +486,12 @@ public class ActiveTaskUpdateRequest
 
     /// <summary>true = 把时间去掉（DueAt 传 null 无法与「不改」区分，所以单给一个开关）</summary>
     public bool? ClearDue { get; set; }
+}
+
+public class ActiveTaskReorderRequest
+{
+    /// <summary>挪到这条的前面；为空表示挪到队尾</summary>
+    public string? BeforeId { get; set; }
 }
 
 public class ActiveTaskBlockRequest

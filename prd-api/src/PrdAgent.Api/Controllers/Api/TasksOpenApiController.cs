@@ -141,6 +141,46 @@ public class TasksOpenApiController : ControllerBase
         }));
     }
 
+    /// <summary>
+    /// 给某人提一条建议 —— 只需要 use 档。
+    ///
+    /// 和 assign 的区别是这个开放接口里最值得说清的一条：assign 直接进对方队列，
+    /// 所以它要管理档；建议提了**什么都不会发生**，对方自己决定要不要吸取，
+    /// 所以任何智能体都能提。想让机器给人「安排活」，走 assign 并承担那份权限；
+    /// 想让机器「提个醒」，走这里。
+    /// </summary>
+    [HttpPost("suggest")]
+    [RequireScope(ScopeUse, ScopeManage)]
+    public async Task<IActionResult> Suggest([FromBody] OpenTaskSuggestRequest req, CancellationToken ct = default)
+    {
+        if (req == null || string.IsNullOrWhiteSpace(req.Text))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "建议内容不能为空"));
+        if (string.IsNullOrWhiteSpace(req.UserId))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "要提给谁"));
+
+        var me = GetUserId();
+        var target = await _db.Users.Find(x => x.UserId == req.UserId).FirstOrDefaultAsync(ct);
+        if (target == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "这个人不在"));
+
+        var text = req.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(req.SourceUrl)) text = $"{text}\n{req.SourceUrl.Trim()}";
+
+        var now = DateTime.UtcNow;
+        var entry = new ActiveTaskSuggestion
+        {
+            TargetUserId = req.UserId!,
+            TargetUserName = await ActiveTaskShared.ResolveDisplayNameAsync(_db, req.UserId!, ct),
+            FromUserId = me,
+            FromUserName = await ActiveTaskShared.ResolveDisplayNameAsync(_db, me, ct),
+            Text = text,
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
+        await _db.ActiveTaskSuggestions.InsertOneAsync(entry, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new { id = entry.Id, suggestedTo = entry.TargetUserName }));
+    }
+
     /// <summary>入队公共路径：永远排队尾。智能体不许插队 —— 打断谁的活是人的决定。</summary>
     private async Task<ActiveTaskEntry> AddToQueueAsync(
         string ownerId, string actorId, OpenTaskAddRequest req, string source, CancellationToken ct)
@@ -196,4 +236,16 @@ public class OpenTaskAssignRequest : OpenTaskAddRequest
 {
     /// <summary>派给谁的 userId，从 map_tasks_team 拿</summary>
     public string UserId { get; set; } = string.Empty;
+}
+
+public class OpenTaskSuggestRequest
+{
+    /// <summary>提给谁（取自 map_tasks_team 的 people[].userId）</summary>
+    public string? UserId { get; set; }
+
+    /// <summary>建议正文</summary>
+    public string Text { get; set; } = string.Empty;
+
+    /// <summary>来源链接（可选），会附在正文后面</summary>
+    public string? SourceUrl { get; set; }
 }

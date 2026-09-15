@@ -11,6 +11,10 @@ import type {
   AssignableMember,
   MyActiveTasks,
   PublicBoard,
+  KnowledgeStoreRef,
+  SuggestPerson,
+  SuggestionInbox,
+  TaskSuggestion,
   TeamBoard,
 } from '@/services/contracts/activeTasks';
 
@@ -28,6 +32,8 @@ export const createActiveTask = (body: {
   source?: string;
   sourceRefType?: string;
   sourceRefId?: string;
+  /** 只服务撤销删除：把那条放回它原来待着的位置，而不是排到队尾 */
+  orderKey?: number;
 }) => apiRequest<ActiveTaskDto>(base, { method: 'POST', body });
 
 export const pasteActiveTasks = (text: string) =>
@@ -40,6 +46,13 @@ export const updateActiveTask = (
 
 export const promoteActiveTask = (id: string) =>
   apiRequest<{ id: string; promoted: boolean }>(`${base}/${id}/promote`, { method: 'POST' });
+
+/** 拖拽排序：把 id 挪到 beforeId 前面；beforeId 为空 = 挪到队尾 */
+export const reorderActiveTask = (id: string, beforeId: string | null) =>
+  apiRequest<{ id: string; order: string[] }>(`${base}/${id}/reorder`, {
+    method: 'POST',
+    body: { beforeId },
+  });
 
 export const startActiveTask = (id: string) =>
   apiRequest<ActiveTaskDto>(`${base}/${id}/start`, { method: 'POST' });
@@ -103,3 +116,29 @@ export const saveBoardSettings = (body: {
 
 // ── 匿名侧（不带鉴权） ─────────────────────
 export const getPublicBoard = () => apiRequest<PublicBoard>('/api/public/active-tasks/board', { auth: false });
+
+// ── 建议 ───────────────────────────────────
+const sugBase = '/api/active-tasks/suggestions';
+
+export const getSuggestionInbox = () => apiRequest<SuggestionInbox>(sugBase);
+
+export const createSuggestion = (body: { targetUserId: string; text: string }) =>
+  apiRequest<TaskSuggestion>(sugBase, { method: 'POST', body });
+
+export const dismissSuggestion = (id: string) =>
+  apiRequest<{ id: string; dismissed: boolean }>(`${sugBase}/${id}/dismiss`, { method: 'POST' });
+
+export const getSuggestPeople = () => apiRequest<SuggestPerson[]>(`${sugBase}/people`);
+
+export const getKnowledgeStores = () => apiRequest<KnowledgeStoreRef[]>(`${sugBase}/knowledge-stores`);
+
+export const markSuggestionsAbsorbed = (body: { suggestionIds: string[]; taskIds: string[] }) =>
+  apiRequest<{ marked: number }>(`${sugBase}/mark-absorbed`, { method: 'POST', body });
+
+/** 记下这条建议被拿去涌现了，长出了哪棵树（回溯用） */
+export const linkSuggestionEmergence = (id: string, treeId: string) =>
+  apiRequest<{ id: string; treeId: string }>(`${sugBase}/${id}/emergence`, { method: 'POST', body: { treeId } });
+
+/** 两条 SSE 的地址 —— 走 useSseStream，不走 apiRequest */
+export const ACTIVE_TASK_IMPORT_STREAM = '/api/active-tasks/import/stream';
+export const ACTIVE_TASK_ABSORB_STREAM = `${sugBase}/absorb-stream`;

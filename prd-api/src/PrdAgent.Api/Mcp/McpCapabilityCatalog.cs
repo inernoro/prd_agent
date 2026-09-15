@@ -119,7 +119,7 @@ public static class McpCapabilityCatalog
         {
             Key = "tasks",
             Title = "任务台",
-            Summary = "让智能体读你在做什么、队列里堆着什么，也能把缺陷、PR、告警写成任务排进队尾。管理档还能读全员、派活给人。结案不给智能体——那句「做成了什么样」是人对结果的认领。",
+            Summary = "让智能体读你在做什么、队列里堆着什么，也能把缺陷、PR、告警写成任务排进队尾，或者只给别人提一条建议（提了不进对方队列，由他自己吸取）。管理档还能读全员、派活给人。结案不给智能体——那句「做成了什么样」是人对结果的认领。",
             ReadScope = ScopeTasksUse,
             WriteScope = ScopeTasksManage,
             WriteNeedsApproval = true,

@@ -260,10 +260,24 @@ public static class McpBuiltinTools
             Params = new List<McpToolParam>
             {
                 new() { Name = "userId", In = "body", Required = true, Description = "派给谁，取自 map_tasks_team 的 people[].userId" },
-                new() { Name = "title", In = "body", Required = true, Description = "让他做什么，一句话" },
+                new() { Name = "title", In = "body", Required = true, Description = "要做的是什么，一句话" },
                 new() { Name = "note", In = "body", Description = "为什么派这件，可选" },
                 new() { Name = "sourceUrl", In = "body", Description = "来源链接，可选" },
                 new() { Name = "dueAt", In = "body", Description = "什么时候要，ISO 8601 时间，可选" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_suggest",
+            Description = "给某人提一条建议。和 map_tasks_assign 的区别：派活直接进对方队列（要管理档），建议提了什么都不会发生，由对方自己决定要不要吸取成任务，所以只要 use 档。想提醒别人一件事、又不想替他排队，用这个。userId 先用 map_tasks_team 拿。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/suggest",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "userId", In = "body", Required = true, Description = "提给谁，取自 map_tasks_team 的 people[].userId" },
+                new() { Name = "text", In = "body", Required = true, Description = "建议内容。不用写成任务的样子——吸取那一步会把它整理成可以动手做的事" },
+                new() { Name = "sourceUrl", In = "body", Description = "来源链接（缺陷/PR/告警地址），可选" },
             },
         },
         // ── 视觉创作（scope visual-agent:use）──

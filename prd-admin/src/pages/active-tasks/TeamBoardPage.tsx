@@ -15,6 +15,8 @@ import type { AssignableMember, TeamBoard } from '@/services/contracts/activeTas
 import { DuePicker } from './DuePicker';
 import { TaskSheet } from './TaskSheet';
 import { TaskShell } from './TaskShell';
+import { SuggestSheet } from './SuggestSheet';
+import { useVisiblePolling } from './usePolling';
 import { whenLabel } from './taskTime';
 import './activeTasks.css';
 
@@ -29,6 +31,8 @@ export function TeamBoardPage() {
   const [assignTitle, setAssignTitle] = useState('');
   const [assignNext, setAssignNext] = useState(false);
   const [assignDue, setAssignDue] = useState<string | null>(null);
+  // 提建议和派活是两码事：派活直接进对方队列，建议要对方自己吸取才算数
+  const [suggestTo, setSuggestTo] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -41,13 +45,8 @@ export function TeamBoardPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  // 每分钟自己看一眼。切到别的标签页就停 —— 没人在看的时候还每分钟打一次接口是白烧。
-  useEffect(() => {
-    const tick = () => { if (document.visibilityState === 'visible') void load(true); };
-    const t = window.setInterval(tick, 60_000);
-    document.addEventListener('visibilitychange', tick);
-    return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', tick); };
-  }, [load]);
+  const refresh = useCallback(() => { void load(true); }, [load]);
+  useVisiblePolling(refresh);
 
   const openAssign = useCallback((userId?: string) => {
     setAssignTo(userId ?? '');
@@ -90,7 +89,12 @@ export function TeamBoardPage() {
       title="大家在做什么"
       wide
       headline={board?.headline}
-      trailing={<button className="atb-link" onClick={() => openAssign()}>派一件</button>}
+      trailing={
+        <div className="atb-headact">
+          <button className="atb-link" onClick={() => setSuggestTo('')}>提建议</button>
+          <button className="atb-link" onClick={() => openAssign()}>派一件</button>
+        </div>
+      }
     >
       {people.length === 0 && <div className="atb-empty">还没有人在做什么</div>}
 
@@ -117,6 +121,12 @@ export function TeamBoardPage() {
                 <span className={`atb-stack${stackAlert ? ' atb-stack--alert' : ''}`}>
                   {p.standbyCount === 0 ? '空了' : `堆 ${p.standbyCount} 件`}
                 </span>
+                <div className="atb-rowact">
+                  <button className="atb-link" onClick={() => setSuggestTo(p.userId)}>提建议</button>
+                  {p.status !== 'empty' && (
+                    <button className="atb-link" onClick={() => openAssign(p.userId)}>派活</button>
+                  )}
+                </div>
                 {p.status === 'empty' && (
                   <button className="atb-pill" onClick={() => openAssign(p.userId)}>派一件</button>
                 )}
@@ -178,6 +188,9 @@ export function TeamBoardPage() {
             <span>排在最前</span>
           </label>
         </TaskSheet>
+      )}
+      {suggestTo !== null && (
+        <SuggestSheet presetUserId={suggestTo || undefined} onClose={() => setSuggestTo(null)} />
       )}
     </TaskShell>
   );

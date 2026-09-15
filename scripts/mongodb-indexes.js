@@ -1560,6 +1560,25 @@ db.active_task_entries.createIndex(
 )
 // end collection: active_task_entries
 
+// collection: active_task_suggestions
+// 建议收件箱（和派活是两码事：提了不会变成任务，等收件人自己吸取）。两条读路径：
+// 1) 我的收件箱：按 TargetUserId + State 取待处理，按时间倒序
+// 2) 发件回溯：按 FromUserId 看我提出去的那些后来怎么了
+db.active_task_suggestions.createIndex(
+  { "TargetUserId": 1, "State": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_target_state" }
+)
+db.active_task_suggestions.createIndex(
+  { "FromUserId": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_from" }
+)
+// end collection: active_task_suggestions
+
+// collection: active_task_absorb_preferences
+// 吸取建议时的个人偏好（上次引用了哪几个知识库）。一人一行，_id 就是 UserId，
+// 只按主键读，不需要额外索引。
+// end collection: active_task_absorb_preferences
+
 // collection: active_task_board_settings
 // 面板设置是全局单行（_id 固定为 "active-task-board"），按主键定位，不需要查询索引。
 // end collection: active_task_board_settings
