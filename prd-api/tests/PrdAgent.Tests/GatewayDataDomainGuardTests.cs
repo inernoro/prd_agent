@@ -567,8 +567,10 @@ public class GatewayDataDomainGuardTests
         // 「只给 appCallerCode、不点名模型」那条路必须被单独回答，不能混在别的话里
         Assert.Contains("call-trace-unnamed", panel);
         Assert.Contains("只给 appCallerCode", panel);
-        Assert.Contains("ServesUnnamed", consoleProgram);
-        Assert.Contains("不点名模型时", consoleProgram);
+        // 断言的是**接线**不是措辞：上一版这里逐字要求一句文案存在，结果这次把那句话
+        // 改得更准确（补上主语）反而让守卫变红——谁修谁的 CI 红，正是形状 4a 该避免的写法。
+        Assert.Contains("Unnamed = new CallTraceUnnamed", consoleProgram);
+        Assert.Contains("ServesUnnamed = servesUnnamed", consoleProgram);
 
         // 按权重分配时不许指名道姓（运行时 seed 由 requestId 派生，说「会落到 A」就是编的）
         Assert.Contains("按权重分到", planner);
@@ -605,6 +607,55 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("bool TargetUsable(ModelOfferingItem offering)", consoleProgram);
         Assert.Contains("platformById.TryGetValue(platformId, out var platform)", consoleProgram);
         Assert.Contains("上游那个模型被停用了", planner);
+
+        // 「不点名会落到它」必须有主语。
+        //
+        // 2026-09-15 对抗审查抓到的 P1：这句话此前只判模型这一侧（是默认、启用着、有能接的线路），
+        // 全程不问「谁在调」。而运行时那道门是 `!StrictPoolContract || 目录例外`——调用方一旦配了
+        // 专属池，对外模型这一档整个被跳过，不点名的请求落在它自己的池上。冒烟之所以没抓到，
+        // 是因为只跑了一个调用方，用一个样本判绿了一句全称命题（形状 1）。
+        //
+        // 判据本身的两侧一致由 GatewayCallTraceMirrorTests 钉住；这里钉的是**接线**：
+        // 运行时真的走共享判据、端点真的逐个调用方算、面板真的逐个调用方渲染、冒烟真的逐个跑。
+        Assert.Contains("GatewayRouteSelection.Reach(new GatewayRouteSelection.CallerBinding(", resolver);
+        Assert.Contains("callerReach == GatewayRouteSelection.CallerReach.UsesModelCatalog", resolver);
+        // 名单只许有一份：解析器那个方法必须转发到权威集合，不许自己再列一遍。
+        Assert.Contains("GatewayRouteSelection.ModelCatalogExceptions.Contains(appCallerCode)", resolver);
+        Assert.DoesNotContain("appCallerCode is AppCallerRegistry.VisualAgent.Image.Text2Img", resolver);
+
+        Assert.Contains("CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(", consoleProgram);
+        Assert.Contains("CallTracePlanner.AllowsTraffic", consoleProgram);
+        Assert.Contains("fb.Eq(\"RequestType\", item.ModelType)", consoleProgram);
+        Assert.Contains("ReachesThisModel = reach == CallTracePlanner.CallerReach.UsesModelCatalog && servesUnnamed", consoleProgram);
+
+        Assert.Contains("call-trace-unnamed-callers", panel);
+        Assert.Contains("data.unnamed.callers.map", panel);
+        Assert.Contains("走自己的专属池", panel);
+
+        // 冒烟必须逐个调用方跑。写死成「挑一个样本」的那种写法正是这次漏检的成因。
+        var smoke = ReadRepoFile("scripts/llmgw-call-trace-smoke.py");
+        Assert.Contains("for caller in callers:", smoke);
+        Assert.Contains("app_caller=code", smoke);
+        Assert.Contains("TrafficRejected", smoke);
+
+        // 判定流程图：图最容易被人当真，所以每条岔路的状态必须由后端下发，前端一句判断都不做。
+        // 「前端自己判这支走不走」就是第二份判据（形状 3），而且是最难被发现的那一份。
+        var flowPanel = ReadRepoFile("llmgw/web/src/components/CallTraceFlow.tsx");
+        Assert.Contains("Flow = flow", consoleProgram);
+        Assert.Contains("string StateOf(bool certain, bool possible)", consoleProgram);
+        Assert.Contains("CallTraceFlow", panel);
+        Assert.Contains("STATE_STYLE[branch.state]", flowPanel);
+        // 三档齐全：少了 possible 就会把「取决于请求或调用方」硬画成一条确定路径，那是在编。
+        Assert.Contains("taken:", flowPanel);
+        Assert.Contains("possible:", flowPanel);
+        Assert.Contains("blocked:", flowPanel);
+        Assert.Contains("call-trace-flow", flowPanel);
+
+        // 文档里那张静态图与面板这张是同构的，改一边忘另一边就会对不上。
+        var architecture = ReadRepoFile("doc/design.platform.llm-gateway.model-architecture.md");
+        Assert.Contains("```mermaid", architecture);
+        Assert.Contains("认对外模型目录吗", architecture);
+        Assert.Contains("认对外模型目录吗", consoleProgram);
     }
 
     [Fact]

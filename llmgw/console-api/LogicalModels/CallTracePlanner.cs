@@ -130,4 +130,82 @@ public static class CallTracePlanner
         var tail = rest > 0 ? $"，它失败了再往下换，还有 {rest} 条后备" : "，它是唯一一条，失败就没有后备了";
         return $"现在发一个请求，会落到 {describeRoute(head.Id)}{tail}。";
     }
+
+    /// <summary>
+    /// 一个调用方在这一刻还认不认「对外模型」这张目录。
+    /// 与 GatewayRouteSelection.CallerReach 逐项相同（含顺序，行为对照按值比）。
+    /// </summary>
+    public enum CallerReach
+    {
+        /// <summary>认对外模型目录：点名走目录，不点名落到该用途的默认对外模型。</summary>
+        UsesModelCatalog,
+
+        /// <summary>配了专属池，对外模型这一档被跳过——不点名落到它自己的池上。</summary>
+        DedicatedPoolOnly,
+
+        /// <summary>这个调用方当前不放行，请求根本发不出去，谈不上落到谁。</summary>
+        TrafficRejected,
+    }
+
+    /// <param name="AppCallerCode">调用方代码。</param>
+    /// <param name="TrafficAllowed">这个调用方当前放不放行。</param>
+    /// <param name="HasDedicatedPools">调用方记录里写没写 AllowedModelPoolIds。</param>
+    public readonly record struct CallerBinding(
+        string AppCallerCode,
+        bool TrafficAllowed,
+        bool HasDedicatedPools);
+
+    /// <summary>
+    /// 与 GatewayRouteSelection.ModelCatalogExceptions 逐字相同。
+    ///
+    /// 这份名单在权威侧是 AppCallerRegistry 的常量，这边只能写字面量——console-api 不引用
+    /// PrdAgent.*。行为对照测试逐个元素比对两侧集合，改一边忘另一边会红。
+    /// </summary>
+    public static readonly IReadOnlySet<string> ModelCatalogExceptions =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            "visual-agent.image.text2img::generation",
+            "visual-agent.image.img2img::generation",
+            "visual-agent.image.vision::generation",
+        };
+
+    /// <summary>
+    /// 调用方状态放行与否，与 GatewayAppCallerPolicy.AllowsTraffic 逐字相同。
+    ///
+    /// 镜像这一份的理由和上面那张名单一样：console-api 不引用 PrdAgent.*。
+    /// 行为对照测试拿一组真实出现过的状态串逐个比两侧答案。
+    /// </summary>
+    public static readonly IReadOnlySet<string> TrafficAllowedStatuses =
+        new HashSet<string>(StringComparer.Ordinal) { "discovered", "configured", "active" };
+
+    /// <summary>状态串归一：空白按 discovered 算，其余去空格转小写。</summary>
+    public static string NormalizeStatus(string? status)
+        => string.IsNullOrWhiteSpace(status) ? "discovered" : status.Trim().ToLowerInvariant();
+
+    /// <summary>这个状态放不放行流量。</summary>
+    public static bool AllowsTraffic(string? status) => TrafficAllowedStatuses.Contains(NormalizeStatus(status));
+
+    /// <summary>这个调用方还认不认对外模型目录。</summary>
+    public static CallerReach Reach(in CallerBinding caller)
+    {
+        if (!caller.TrafficAllowed) return CallerReach.TrafficRejected;
+        if (caller.HasDedicatedPools && !ModelCatalogExceptions.Contains(caller.AppCallerCode))
+            return CallerReach.DedicatedPoolOnly;
+        return CallerReach.UsesModelCatalog;
+    }
+
+    /// <summary>
+    /// 「不点名时这个调用方会不会落到这个模型」——面板那格里每一行调用方的结论。
+    ///
+    /// 模型这一侧的条件（是不是该用途的默认、启用了没、有没有一条能接的线路）与调用方这一侧
+    /// 的条件（认不认对外模型目录）缺一不可。此前面板只判前者，于是那句话没有主语。
+    /// </summary>
+    public static string UnnamedVerdict(CallerReach reach, bool modelServesUnnamed)
+        => reach switch
+        {
+            CallerReach.TrafficRejected => "这个调用方当前不放行，请求发不出去",
+            CallerReach.DedicatedPoolOnly => "它配了专属池，不点名的请求落在自己的池上，走不到这里",
+            _ when modelServesUnnamed => "不点名会落到这个模型",
+            _ => "不点名不会落到这个模型（这个用途的默认不是它）",
+        };
 }

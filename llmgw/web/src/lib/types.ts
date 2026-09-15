@@ -961,6 +961,31 @@ export type ModelOfferingItem = {
   queuePosition: number;
 };
 
+/** 「不点名时会不会落到这个模型」在某一个调用方身上的答案。 */
+export type CallTraceUnnamedCaller = {
+  appCallerCode: string;
+  /** UsesModelCatalog 认对外模型目录 / DedicatedPoolOnly 配了专属池 / TrafficRejected 不放行 */
+  reach: 'UsesModelCatalog' | 'DedicatedPoolOnly' | 'TrafficRejected';
+  reachesThisModel: boolean;
+  verdict: string;
+};
+
+/** 判定流程图上的一条岔路。状态由后端下发，前端不推断。 */
+export type CallTraceFlowBranch = {
+  label: string;
+  outcome: string;
+  /** taken 确定走这支 / possible 取决于请求或调用方 / blocked 当前走不到 */
+  state: 'taken' | 'possible' | 'blocked';
+  note?: string | null;
+};
+
+/** 判定流程图上的一个节点；question 为空表示顺序节点，不分叉。 */
+export type CallTraceFlowNode = {
+  id: string;
+  question: string;
+  branches: CallTraceFlowBranch[];
+};
+
 /** 一个对外模型的调用全貌：点名它之后会发生什么，用当前真实状态回答。 */
 export type CallTraceData = {
   publicId: string;
@@ -973,13 +998,19 @@ export type CallTraceData = {
   conclusion: string;
   gate: { enabled: boolean; openToAllCallers: boolean; allowedAppCallerCodes: string[]; summary: string };
   unnamed: {
-    serversUnnamed?: boolean;
+    /** 模型这一侧的条件（是本用途的默认、启用着、有一条能接的线路）。不是「会落到它」的完整答案。 */
     servesUnnamed: boolean;
     currentDefaultPublicId?: string | null;
     currentDefaultName?: string | null;
     summary: string;
+    /** 这句话的主语：逐个调用方的结论。后端算好下发，前端不推断。 */
+    callers: CallTraceUnnamedCaller[];
+    callerCount: number;
+    reachingCallerCount: number;
   };
   routes: ModelOfferingItem[];
+  /** 判定流程图：架构文档第 3 节那张图，按这个模型此刻的状态点亮。 */
+  flow: CallTraceFlowNode[];
   routeExtras: Array<{
     offeringId: string;
     weightPercent?: number | null;

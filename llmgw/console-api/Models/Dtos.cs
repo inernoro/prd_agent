@@ -1478,6 +1478,14 @@ public sealed class CallTraceData
     public List<ModelOfferingItem> Routes { get; set; } = new();
     public List<CallTraceRouteExtra> RouteExtras { get; set; } = new();
     public CallTraceLedger Ledger { get; set; } = new();
+
+    /// <summary>
+    /// 判定流程图：每个菱形一个节点，每条岔路带当前状态（走 / 可能走 / 走不到）。
+    ///
+    /// 与 doc/design.platform.llm-gateway.model-architecture.md 第 3 节那张图同构——
+    /// 那张是静态的，这份是这个模型此刻的样子。
+    /// </summary>
+    public List<CallTraceFlowNode> Flow { get; set; } = new();
 }
 
 /// <summary>目录闸：谁能点名它。</summary>
@@ -1494,13 +1502,87 @@ public sealed class CallTraceGate
 /// <summary>「只给 appCallerCode、不点名模型」那条路会不会落到它。</summary>
 public sealed class CallTraceUnnamed
 {
-    /// <summary>不点名时会不会落到它。</summary>
+    /// <summary>
+    /// 模型这一侧的条件成不成立：是本用途的默认、自己启用着、而且真有一条线路能接。
+    ///
+    /// 注意它**不是**「会落到它」的完整答案——那句话还要看是谁在调。
+    /// 2026-09-15 之前面板只有这一半，于是那句结论没有主语：配了专属池的调用方
+    /// 在运行时根本走不到对外模型这一档，面板却照样说「会落到它」。
+    /// </summary>
     public bool ServesUnnamed { get; set; }
 
     /// <summary>这个用途现在的默认是谁；没有默认时为 null。</summary>
     public string? CurrentDefaultPublicId { get; set; }
     public string? CurrentDefaultName { get; set; }
     public string Summary { get; set; } = "";
+
+    /// <summary>
+    /// 逐个调用方的结论——这句话的主语。
+    ///
+    /// 按本用途登记的调用方逐条算：认对外模型目录的才可能落到这里，
+    /// 配了专属池的走自己的池，状态不放行的请求根本发不出去。
+    /// </summary>
+    public List<CallTraceUnnamedCaller> Callers { get; set; } = new();
+
+    /// <summary>这个用途登记了几个调用方；0 表示还没有人按这个用途调过。</summary>
+    public int CallerCount { get; set; }
+
+    /// <summary>其中有几个不点名时会落到这个模型。</summary>
+    public int ReachingCallerCount { get; set; }
+}
+
+/// <summary>「不点名时会不会落到这个模型」在某一个调用方身上的答案。</summary>
+public sealed class CallTraceUnnamedCaller
+{
+    public string AppCallerCode { get; set; } = "";
+
+    /// <summary>UsesModelCatalog / DedicatedPoolOnly / TrafficRejected。</summary>
+    public string Reach { get; set; } = "";
+
+    /// <summary>不点名时会不会落到这个模型（调用方与模型两侧条件都成立才为真）。</summary>
+    public bool ReachesThisModel { get; set; }
+
+    /// <summary>一句人话结论，由后端下发，前端不另行推断。</summary>
+    public string Verdict { get; set; } = "";
+}
+
+/// <summary>
+/// 判定流程图上的一个节点。
+///
+/// 为什么流程图的每一支也由后端下发状态：前端一旦自己判「这支走不走」，就是第二份判据
+/// （形状 3）——而画出来的那张图恰恰是最容易被人当真的东西，它错了比列表错了更糟。
+/// </summary>
+public sealed class CallTraceFlowNode
+{
+    public string Id { get; set; } = "";
+
+    /// <summary>菱形里的问题；顺序节点（不分叉）留空。</summary>
+    public string Question { get; set; } = "";
+
+    public List<CallTraceFlowBranch> Branches { get; set; } = new();
+}
+
+/// <summary>判定流程图上的一条岔路。</summary>
+public sealed class CallTraceFlowBranch
+{
+    /// <summary>这一支的条件。</summary>
+    public string Label { get; set; } = "";
+
+    /// <summary>走这一支会怎样。</summary>
+    public string Outcome { get; set; } = "";
+
+    /// <summary>
+    /// taken   —— 当前状态下确定会走这一支；
+    /// possible —— 取决于请求本身或调用方，可能走；
+    /// blocked —— 当前状态下走不到。
+    ///
+    /// 有 possible 这一档是刻意的：同一个模型对不同调用方、点名与不点名走的不是同一条路，
+    /// 硬画成一条确定路径就是在编（按权重时尤其明显）。
+    /// </summary>
+    public string State { get; set; } = "";
+
+    /// <summary>一句补充，例如「3 个调用方」。没有就留 null。</summary>
+    public string? Note { get; set; }
 }
 
 /// <summary>线路上那些只有全貌面板要用的附加值，按 OfferingId 对上。</summary>

@@ -5,9 +5,13 @@
 镜像对照测试证明两份判据在**同一组输入**上算出同一个答案；这里证明的是另一半——
 面板读到的那组输入，就是运行时真的会用的那组。两件事都成立，面板才不是一份好看的假话。
 
-两条真实路径各解析一次：
-  1. 点名模型：expectedModel = <publicId>
-  2. 只给 appCallerCode 不点名：expectedModel 留空，走该用途的默认
+两条真实路径：
+  1. 点名模型：expectedModel = <publicId>，用 LLMGW_APP_CALLER 打一次
+  2. 只给 appCallerCode 不点名：**逐个调用方**跑，不是挑一个样本
+
+第 2 条为什么要逐个跑：2026-09-15 抓到的 P1 就栽在这里——面板那句「不点名会落到它」
+此前没有主语，而这个脚本只跑了一个调用方，于是用一个样本判绿了一句全称命题。
+运行时对配了专属池的调用方整个跳过对外模型这一档，那句话对他们从来就是假的。
 
 判据不是「HTTP 200」，是**运行时解析出的上游模型，等于面板推演的那一条**。
 用 /gw/v1/resolve 而不是真发一次 chat：它走的是同一条 ModelResolver 判据，
@@ -86,8 +90,8 @@ def predicted(trace):
     return {head["id"]: label_of(head)}, f"按顺位，面板说队首是第 {head.get('queuePosition')} 位"
 
 
-def resolve(model_type, expected_model):
-    body = {"appCallerCode": APP_CALLER, "modelType": model_type}
+def resolve(model_type, expected_model, app_caller=None):
+    body = {"appCallerCode": app_caller or APP_CALLER, "modelType": model_type}
     if expected_model:
         body["expectedModel"] = expected_model
     return http("POST", f"{BASE}/gw/v1/resolve", {"Authorization": f"Bearer {SERVICE_KEY}"}, body)
@@ -130,6 +134,8 @@ def main():
     print(f"面板结论 : {trace['conclusion']}")
     print(f"推演落点 : {sorted(accepted.values()) or '(无)'}  —— {why}")
     print(f"不点名   : {trace['unnamed']['summary']}")
+    print(f"调用方   : 登记 {trace['unnamed'].get('callerCount', 0)} 个，"
+          f"其中 {trace['unnamed'].get('reachingCallerCount', 0)} 个不点名会落到它")
     skipped = [r for r in trace["routes"] if r.get("skipReason")]
     if skipped:
         reasons = {}
@@ -139,33 +145,67 @@ def main():
     print()
 
     failures = []
-    cases = [("点名模型", trace["publicId"])]
-    # 不点名那条路只有在面板声称「会落到它」时才验落点归属；否则验的是别的模型，不是这一屏的事。
-    if trace["unnamed"]["servesUnnamed"]:
-        cases.append(("只给 appCallerCode 不点名", None))
 
-    for case, expected_model in cases:
-        status, payload = resolve(model_type, expected_model)
+    # 点名那条路：用配置里给的调用方打一次。
+    status, payload = resolve(model_type, trace["publicId"])
+    offering, got_label = actual_route(payload)
+    succeeded = status == 200 and bool(payload.get("Success", payload.get("success", True)))
+    if not accepted:
+        ok = not succeeded
+        verdict = "按面板说法这次解析应当失败" if ok else f"面板说调不通，运行时却解析到 {got_label}"
+    elif not succeeded:
+        ok, verdict = False, f"解析失败：{str(payload)[:220]}"
+    elif offering is None:
+        ok, verdict = False, f"响应里找不到线路标识，无法核对：{str(payload)[:220]}"
+    else:
+        ok = offering in accepted
+        verdict = ("与面板推演一致" if ok
+                   else f"面板说会落到 {sorted(accepted.values())}，运行时解析到 {got_label}（{offering}）")
+    print(f"[{'通过' if ok else '失败'}] 点名模型（{APP_CALLER}） — status={status} 运行时落点={got_label} · {verdict}")
+    if not ok:
+        failures.append(f"点名模型：{verdict}")
+
+    # 不点名那条路：**逐个调用方**跑，不是挑一个样本。
+    #
+    # 2026-09-15 抓到的 P1 就栽在这里：面板那句「不点名会落到它」此前没有主语，
+    # 而这个脚本只跑了一个调用方，于是用一个样本判绿了一句全称命题。
+    # 现在面板逐个调用方给结论，这里就逐个调用方去对——面板说谁会落到它，就拿谁去解析一次。
+    callers = trace["unnamed"].get("callers") or []
+    if not callers:
+        print("[跳过] 不点名 —— 这个用途下没有登记调用方，没有可对照的对象")
+    for caller in callers:
+        code = caller["appCallerCode"]
+        reach = caller.get("reach")
+        status, payload = resolve(model_type, None, app_caller=code)
         offering, got_label = actual_route(payload)
         succeeded = status == 200 and bool(payload.get("Success", payload.get("success", True)))
-        if not accepted:
-            ok = not succeeded
-            verdict = "按面板说法这次解析应当失败" if ok else f"面板说调不通，运行时却解析到 {got_label}"
-        elif not succeeded:
-            ok, verdict = False, f"解析失败：{str(payload)[:220]}"
-        elif offering is None:
-            ok, verdict = False, f"响应里找不到线路标识，无法核对：{str(payload)[:220]}"
-        else:
-            ok = offering in accepted
-            verdict = ("与面板推演一致" if ok
-                       else f"面板说会落到 {sorted(accepted.values())}，运行时解析到 {got_label}（{offering}）")
-        print(f"[{'通过' if ok else '失败'}] {case} — status={status} 运行时落点={got_label} · {verdict}")
-        if not ok:
-            failures.append(f"{case}：{verdict}")
 
-    if not trace["unnamed"]["servesUnnamed"]:
-        print("[跳过] 只给 appCallerCode 不点名 —— 面板声称不点名不会落到这个模型，"
-              "落点归属属于另一个模型的全貌，不在这一屏的断言范围内")
+        if caller.get("reachesThisModel"):
+            # 面板说这个调用方不点名会落到这个模型 —— 那就必须真的落到它的某条线路上。
+            if not succeeded:
+                ok, verdict = False, f"面板说会落到这个模型，运行时却解析失败：{str(payload)[:180]}"
+            elif offering is None:
+                ok, verdict = False, f"响应里找不到线路标识：{str(payload)[:180]}"
+            else:
+                ok = offering in accepted
+                verdict = ("与面板推演一致" if ok
+                           else f"面板说会落到 {sorted(accepted.values())}，运行时落到 {got_label}（{offering}）")
+        elif reach == "TrafficRejected":
+            ok = not succeeded
+            verdict = "面板说这个调用方不放行，运行时确实解析不出来" if ok else f"面板说未放行，运行时却解析到 {got_label}"
+        else:
+            # 面板说走不到这个模型（配了专属池，或本用途的默认不是它）。
+            # 这里**不断言它落到哪**——那是另一个模型的全貌；只断言它没落到这个模型的线路上。
+            landed_here = succeeded and offering is not None and offering in accepted
+            ok = not landed_here
+            verdict = ("确实没落到这个模型" if ok
+                       else f"面板说走不到这里，运行时却落到了这个模型的 {got_label}（{offering}）")
+
+        label = {"DedicatedPoolOnly": "配了专属池", "TrafficRejected": "未放行"}.get(reach, "认对外模型目录")
+        print(f"[{'通过' if ok else '失败'}] 不点名 · {code}（{label}） — status={status} "
+              f"运行时落点={got_label or '(无)'} · {verdict}")
+        if not ok:
+            failures.append(f"不点名 {code}：{verdict}")
 
     if failures:
         print("\n推演与运行时不一致，说明判据漂了：", file=sys.stderr)

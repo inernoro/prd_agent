@@ -535,7 +535,17 @@ public class ModelResolver : IModelResolver
 
         // 旧 AppCaller 在迁移完成前保留逻辑模型目录兼容路径。新 AppCaller 一旦写入
         // AllowedModelPoolIds 就启用严格模型池契约，逻辑模型不得越过该边界。
-        if ((!gatewayRegistry.StrictPoolContract || UsesVisualLogicalModelCatalog(appCallerCode))
+        //
+        // 判据走 GatewayRouteSelection 那一份共享定义，不在这里就地拼：控制台的「调用全貌」
+        // 面板要回答同一个问题（不点名时这个调用方会不会落到这个对外模型），两边各写一遍
+        // 就会漂，而漂了之后面板给的是一份看着很确定的假话（形状 3）。
+        // TrafficAllowed 恒传 true 是有依据的：不放行的调用方在上面 TrafficRejected 那一档
+        // 已经带着结构化原因返回了，走不到这里。
+        var callerReach = GatewayRouteSelection.Reach(new GatewayRouteSelection.CallerBinding(
+            appCallerCode,
+            TrafficAllowed: true,
+            HasDedicatedPools: gatewayRegistry.StrictPoolContract));
+        if (callerReach == GatewayRouteSelection.CallerReach.UsesModelCatalog
             && string.IsNullOrWhiteSpace(pinnedPlatformId)
             && string.IsNullOrWhiteSpace(pinnedModelId))
         {
@@ -1612,10 +1622,15 @@ public class ModelResolver : IModelResolver
 
     #region Private Methods
 
+    /// <summary>
+    /// 即便配了专属池也仍然认对外模型目录的那几个调用方。
+    ///
+    /// 名单本身收在 <see cref="GatewayRouteSelection.ModelCatalogExceptions"/>：控制台面板要回答
+    /// 同一个问题（不点名时这个调用方会不会落到这个模型），两边各存一份名单就会漂
+    /// （形状 3）。这里只做转发，保留方法名是因为另外三处调用点读起来更顺。
+    /// </summary>
     internal static bool UsesVisualLogicalModelCatalog(string appCallerCode)
-        => appCallerCode is AppCallerRegistry.VisualAgent.Image.Text2Img
-            or AppCallerRegistry.VisualAgent.Image.Img2Img
-            or AppCallerRegistry.VisualAgent.Image.VisionGen;
+        => GatewayRouteSelection.ModelCatalogExceptions.Contains(appCallerCode);
 
     internal static bool IsLogicalOfferingAllowed(
         ModelResolutionResult resolution,

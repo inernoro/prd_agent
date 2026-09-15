@@ -11,6 +11,7 @@ import { useEffect, useState } from 'react';
 import { getCallTrace } from '@/lib/api';
 import type { CallTraceData } from '@/lib/types';
 import { Chip, SectionLoader } from '@/components/ui';
+import { CallTraceFlow } from '@/components/CallTraceFlow';
 import { BODY_TEXT, HINT_TEXT, MONO_META } from '@/lib/typography';
 import { CARD_BODY, GAP, INSET_BLOCK } from '@/lib/surface';
 
@@ -54,6 +55,15 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
         </span>
       </div>
 
+      {/* 先给图，再给逐步细节。图回答「在哪一步会拐走」——这条链路的难点从来不是谁调用谁。
+          每条岔路的状态由后端下发，这里只按状态上色。 */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
+        <span style={{ fontSize: 'var(--fs-heading)', fontWeight: 'var(--fw-strong)' as unknown as number }}>
+          这一刻，这条链路在它身上走成什么样
+        </span>
+        <CallTraceFlow nodes={data.flow} />
+      </div>
+
       <Step index={1} title="调用方发一个请求">
         <p style={BODY_TEXT}>
           按用途发，形状统一。可以点名 <code style={MONO_META}>{data.publicId}</code>，也可以不点名。
@@ -61,14 +71,54 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
       </Step>
 
       {/* 「只给 appCallerCode 不点名」这条路必须单独占一格：它是调用方最常走、
-          却最看不懂的一条——不点名的人根本不知道自己用到了哪个模型。 */}
+          却最看不懂的一条——不点名的人根本不知道自己用到了哪个模型。
+
+          这一格必须**逐个调用方**说，不能只说一句总结。2026-09-15 之前这里只有一句
+          「会落到它 / 不会落到它」，而那句话没有主语：判据只看模型自己（是不是默认、
+          启用了没、有没有能接的线路），全程不问谁在调。运行时对配了专属池的调用方
+          整个跳过对外模型这一档，于是那句话对他们就是假的。 */}
       <Step index={2} title="只给 appCallerCode、不点名模型时" testId="call-trace-unnamed">
         <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>
-          {data.unnamed.servesUnnamed
-            ? <Chip label="会落到它" color="var(--ok)" bg="var(--ok-bg)" />
-            : <Chip label="不会落到它" color="var(--text-muted)" bg="var(--bg-elevated)" />}
+          {data.unnamed.reachingCallerCount > 0
+            ? <Chip
+                label={`${data.unnamed.reachingCallerCount}/${data.unnamed.callerCount} 个调用方会落到它`}
+                color="var(--ok)"
+                bg="var(--ok-bg)"
+              />
+            : <Chip label="没有调用方会落到它" color="var(--text-muted)" bg="var(--bg-elevated)" />}
           <span style={{ ...BODY_TEXT, flex: 1, minWidth: 220 }}>{data.unnamed.summary}</span>
         </div>
+        {data.unnamed.callers.length > 0 ? (
+          <div
+            data-testid="call-trace-unnamed-callers"
+            style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, paddingTop: GAP.tight }}
+          >
+            {data.unnamed.callers.map((caller) => (
+              <div key={caller.appCallerCode} style={{
+                ...INSET_BLOCK,
+                display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap',
+                border: `1px solid ${caller.reachesThisModel ? 'var(--accent)' : 'var(--border-subtle)'}`,
+                opacity: caller.reachesThisModel ? 1 : 0.7,
+              }}>
+                <code style={{ ...MONO_META, flex: 1, minWidth: 200 }}>{caller.appCallerCode}</code>
+                {caller.reachesThisModel
+                  ? <Chip label="落到它" color="var(--ok)" bg="var(--ok-bg)" />
+                  : caller.reach === 'DedicatedPoolOnly'
+                    ? <Chip label="走自己的专属池" color="var(--warn)" bg="var(--warn-bg)" />
+                    : caller.reach === 'TrafficRejected'
+                      ? <Chip label="未放行" color="var(--warn)" bg="var(--warn-bg)" />
+                      : <Chip label="不落到它" color="var(--text-muted)" bg="var(--bg-elevated)" />}
+                <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)', flex: 2, minWidth: 240 }}>
+                  {caller.verdict}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)', paddingTop: GAP.tight }}>
+            这个用途下还没有登记任何调用方，所以现在没有人会不点名地落到它。
+          </p>
+        )}
       </Step>
 
       <Step index={3} title="过目录闸" testId="call-trace-gate">

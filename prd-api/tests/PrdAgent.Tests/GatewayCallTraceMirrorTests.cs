@@ -255,4 +255,110 @@ public sealed class GatewayCallTraceMirrorTests
         Assert.Contains("唯一一条", text);
         Assert.Contains("没有后备", text);
     }
+
+    // ---- 调用方这一维：不点名时「会不会落到这个模型」必须有主语 ----
+    //
+    // 2026-09-15 对抗审查抓到的 P1：面板那句「只给 appCallerCode 不点名时会落到它」此前只看
+    // 模型自己（是不是默认、启用了没、有没有能接的线路），全程不问「谁在调」。而运行时
+    // ModelResolver 对配了专属池的调用方**整个跳过**对外模型这一档。冒烟之所以全过，
+    // 是因为只跑了一个调用方，而它恰好不是严格池契约——一个样本判了一句全称命题（形状 1）。
+
+    /// <summary>
+    /// 两侧的 CallerReach 在全部输入组合上给同一个答案。
+    ///
+    /// 输入只有三个布尔量级的维度，索性穷举：放行与否 × 有没有专属池 × 在不在例外名单。
+    /// 穷举才能证明「两边算出同一个答案」，挑几组样本证明不了。
+    /// </summary>
+    [Theory]
+    [InlineData("chat-caller", true, false)]
+    [InlineData("chat-caller", true, true)]
+    [InlineData("chat-caller", false, false)]
+    [InlineData("chat-caller", false, true)]
+    [InlineData("visual-agent.image.text2img::generation", true, false)]
+    [InlineData("visual-agent.image.text2img::generation", true, true)]
+    [InlineData("visual-agent.image.img2img::generation", true, true)]
+    [InlineData("visual-agent.image.vision::generation", true, true)]
+    [InlineData("visual-agent.image.text2img::generation", false, true)]
+    public void 调用方判据两侧一致(string code, bool trafficAllowed, bool hasDedicatedPools)
+    {
+        var core = GatewayRouteSelection.Reach(
+            new GatewayRouteSelection.CallerBinding(code, trafficAllowed, hasDedicatedPools));
+        var mirror = CallTracePlanner.Reach(
+            new CallTracePlanner.CallerBinding(code, trafficAllowed, hasDedicatedPools));
+        Assert.Equal(core.ToString(), mirror.ToString());
+    }
+
+    /// <summary>
+    /// 例外名单两侧逐个元素相同。
+    ///
+    /// 权威侧是 AppCallerRegistry 的常量，镜像侧只能写字面量（console-api 不引用 PrdAgent.*）。
+    /// 任一侧加减一个调用方而另一侧没跟上，这条会红——这正是名单允许存在两份的唯一条件。
+    /// </summary>
+    [Fact]
+    public void 目录例外名单两侧逐字相同()
+    {
+        Assert.Equal(
+            GatewayRouteSelection.ModelCatalogExceptions.OrderBy(x => x, StringComparer.Ordinal),
+            CallTracePlanner.ModelCatalogExceptions.OrderBy(x => x, StringComparer.Ordinal));
+    }
+
+    /// <summary>
+    /// 枚举值两侧逐项相同（名称与顺序）。
+    ///
+    /// 上面那条 Theory 比的是字符串名，所以加一个值漏在一侧不会被它抓到——
+    /// 那种漏法正好是「新增一种去向，面板不认识」，必须单独钉。
+    /// </summary>
+    [Fact]
+    public void 调用方去向的枚举两侧逐项相同()
+    {
+        Assert.Equal(
+            Enum.GetNames<GatewayRouteSelection.CallerReach>(),
+            Enum.GetNames<CallTracePlanner.CallerReach>());
+    }
+
+    /// <summary>
+    /// 配了专属池的调用方，不点名时不会落到对外模型——哪怕这个模型是该用途的默认、
+    /// 启用着、而且有一条健康线路。这就是那个 P1 的最小复现。
+    /// </summary>
+    [Fact]
+    public void 专属池调用方不点名时不落到默认对外模型()
+    {
+        var reach = CallTracePlanner.Reach(
+            new CallTracePlanner.CallerBinding("pool-bound-caller", TrafficAllowed: true, HasDedicatedPools: true));
+        Assert.Equal(CallTracePlanner.CallerReach.DedicatedPoolOnly, reach);
+
+        // 模型这一侧的条件全部成立，结论仍然必须是「走不到这里」。
+        var verdict = CallTracePlanner.UnnamedVerdict(reach, modelServesUnnamed: true);
+        Assert.Contains("走不到这里", verdict);
+        Assert.DoesNotContain("会落到这个模型", verdict);
+    }
+
+    /// <summary>
+    /// 状态放行判据两侧一致。
+    ///
+    /// 取值刻意包含真实库里出现过的四种、大小写与空白的变体、以及一个没见过的串——
+    /// 归一化少做一步（比如忘了 ToLower），这里就会红。
+    /// </summary>
+    [Theory]
+    [InlineData("discovered")]
+    [InlineData("configured")]
+    [InlineData("active")]
+    [InlineData("disabled")]
+    [InlineData("Active")]
+    [InlineData("  active  ")]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("something-new")]
+    public void 调用方状态放行判据两侧一致(string? status)
+        => Assert.Equal(
+            GatewayAppCallerPolicy.AllowsTraffic(status),
+            CallTracePlanner.AllowsTraffic(status));
+
+    /// <summary>不放行的调用方要单独说清，不能混进「不会落到它」里——两者的下一步完全不同。</summary>
+    [Fact]
+    public void 不放行的调用方单独成一档()
+    {
+        var verdict = CallTracePlanner.UnnamedVerdict(CallTracePlanner.CallerReach.TrafficRejected, true);
+        Assert.Contains("不放行", verdict);
+    }
 }

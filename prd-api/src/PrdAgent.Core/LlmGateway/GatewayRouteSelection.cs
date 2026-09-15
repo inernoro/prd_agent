@@ -1,3 +1,5 @@
+using PrdAgent.Core.Models;
+
 namespace PrdAgent.Core.LlmGateway;
 
 /// <summary>
@@ -124,4 +126,59 @@ public static class GatewayRouteSelection
     /// <summary>是不是按权重分配。策略串只有这一个值触发，其余一律按顺位。</summary>
     public static bool IsWeighted(string? routingStrategy)
         => string.Equals(routingStrategy, "weighted", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 一个调用方在这一刻，还认不认「对外模型」这张目录。
+    ///
+    /// 为什么这件事必须有主语：面板此前那句「只给 appCallerCode、不点名模型时会落到它」
+    /// 是一句**没有主语的话**——判据只看模型自己（是不是默认、启用了没、有没有能接的线路），
+    /// 全程不问「谁在调」。而运行时对不同调用方走的根本不是同一条路：调用方一旦配了专属池
+    /// （AllowedModelPoolIds 非空），对外模型这一档**整个被跳过**，不点名的请求落到它自己的
+    /// 池上，和这个模型没有关系。
+    ///
+    /// 拿一个调用方的样本判一句全称命题，正是 predicate-and-wiring-discipline 形状 1（判据太窄）。
+    /// </summary>
+    public enum CallerReach
+    {
+        /// <summary>认对外模型目录：点名走目录，不点名落到该用途的默认对外模型。</summary>
+        UsesModelCatalog,
+
+        /// <summary>配了专属池，对外模型这一档被跳过——不点名落到它自己的池上。</summary>
+        DedicatedPoolOnly,
+
+        /// <summary>这个调用方当前不放行，请求根本发不出去，谈不上落到谁。</summary>
+        TrafficRejected,
+    }
+
+    /// <param name="AppCallerCode">调用方代码。</param>
+    /// <param name="TrafficAllowed">这个调用方当前放不放行（状态判定的结果）。</param>
+    /// <param name="HasDedicatedPools">调用方记录里写没写 AllowedModelPoolIds，写了就是严格池契约。</param>
+    public readonly record struct CallerBinding(
+        string AppCallerCode,
+        bool TrafficAllowed,
+        bool HasDedicatedPools);
+
+    /// <summary>
+    /// 即便配了专属池、也仍然认对外模型目录的那几个调用方。
+    ///
+    /// 这是一份**调用方特例漏进代码**的活标本（架构文档第 4 节：调用方与能力那两条轴不该进代码）。
+    /// 把它收在这里而不是散在解析器里，至少保证只有一份、且被镜像对照钉住；
+    /// 真正的解法是让它变成调用方记录上的一个字段，那是后续的事。
+    /// </summary>
+    public static readonly IReadOnlySet<string> ModelCatalogExceptions =
+        new HashSet<string>(StringComparer.Ordinal)
+        {
+            AppCallerRegistry.VisualAgent.Image.Text2Img,
+            AppCallerRegistry.VisualAgent.Image.Img2Img,
+            AppCallerRegistry.VisualAgent.Image.VisionGen,
+        };
+
+    /// <summary>这个调用方还认不认对外模型目录。运行时与面板共用这一份。</summary>
+    public static CallerReach Reach(in CallerBinding caller)
+    {
+        if (!caller.TrafficAllowed) return CallerReach.TrafficRejected;
+        if (caller.HasDedicatedPools && !ModelCatalogExceptions.Contains(caller.AppCallerCode))
+            return CallerReach.DedicatedPoolOnly;
+        return CallerReach.UsesModelCatalog;
+    }
 }

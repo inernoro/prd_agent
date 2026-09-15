@@ -4078,8 +4078,55 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
     // 运行时解析失败后回落到模型池——人照着面板去查，查的是一条根本没走的路。
     var hasEligibleRoute = candidates.Any(x => CallTracePlanner.SkipReason(x) is null);
     var servesUnnamed = item.IsDefaultForType && item.Enabled && hasEligibleRoute;
+
+    // 这句话的主语：逐个调用方算一遍。
+    //
+    // 上面那三个条件全是**模型这一侧**的。运行时还有**调用方这一侧**的一道门
+    // （ModelResolver 里那句 `!StrictPoolContract || 目录例外`）：调用方一旦配了专属池，
+    // 对外模型这一档整个被跳过，不点名的请求落在它自己的池上，跟这个模型没关系。
+    // 2026-09-15 之前面板只判前一半，于是那句「不点名会落到它」没有主语——
+    // 对配了专属池的调用方就是一句假话，而冒烟只跑了一个调用方，没抓到（形状 1）。
+    var callerDocs = await gwAppCallers
+        .Find(TenantAccess.Filter(http, fb.Eq("RequestType", item.ModelType)))
+        .Project(Builders<BsonDocument>.Projection
+            .Include("AppCallerCode").Include("Status").Include("AllowedModelPoolIds"))
+        .ToListAsync();
+    var unnamedCallers = callerDocs
+        .Select(d => new
+        {
+            Code = d.GetStringOrEmpty("AppCallerCode"),
+            Status = d.AsNullableString("Status"),
+            HasPools = GetStringArray(d, "AllowedModelPoolIds").Any(x => !string.IsNullOrWhiteSpace(x)),
+        })
+        .Where(x => x.Code.Length > 0)
+        // 同一个 appCallerCode 在同一用途下可能有多条记录（历史写入），去重后按代码排序，
+        // 免得同一屏每次刷新顺序都不一样。
+        .GroupBy(x => x.Code, StringComparer.Ordinal)
+        .Select(g => g.First())
+        .OrderBy(x => x.Code, StringComparer.Ordinal)
+        .Select(x =>
+        {
+            var reach = CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(
+                x.Code, CallTracePlanner.AllowsTraffic(x.Status), x.HasPools));
+            return new CallTraceUnnamedCaller
+            {
+                AppCallerCode = x.Code,
+                Reach = reach.ToString(),
+                ReachesThisModel = reach == CallTracePlanner.CallerReach.UsesModelCatalog && servesUnnamed,
+                Verdict = CallTracePlanner.UnnamedVerdict(reach, servesUnnamed),
+            };
+        })
+        .ToList();
+    var reachingCount = unnamedCallers.Count(x => x.ReachesThisModel);
+
     var unnamedSummary = servesUnnamed
-        ? $"调用方只给 appCallerCode、不点名模型时，{item.ModelType} 这个用途会落到它。"
+        ? unnamedCallers.Count == 0
+            ? $"它是 {item.ModelType} 这个用途的默认，但这个用途下还没有登记任何调用方——现在没有人会不点名地落到它。"
+            : reachingCount == unnamedCallers.Count
+                ? $"这个用途下 {unnamedCallers.Count} 个调用方不点名时都会落到它。"
+                : reachingCount == 0
+                    ? $"它是 {item.ModelType} 的默认，但这个用途下 {unnamedCallers.Count} 个调用方都走不到这一档（配了专属池或未放行）——现在没有人会不点名地落到它。"
+                    : $"这个用途下 {unnamedCallers.Count} 个调用方里，{reachingCount} 个不点名时会落到它；其余的配了专属池或未放行，走的是别的路。"
         : item.IsDefaultForType && !item.Enabled
             ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——运行时会跳过它回落到模型池。先启用它，或改设别的模型为默认。"
             : item.IsDefaultForType && !hasEligibleRoute
@@ -4115,6 +4162,125 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
     var window = Math.Clamp(days ?? 30, 1, 90);
     var ledger = await BuildCallTraceLedgerAsync(logs, http, item.PublicId, window);
 
+    // 判定流程图：与架构文档第 3 节那张静态图同构，但每条岔路带上这个模型此刻的状态。
+    //
+    // 三档状态（走 / 可能走 / 走不到）是刻意的：同一个模型对不同调用方、点名与不点名
+    // 走的根本不是同一条路，硬画成一条确定路径就是在编。前端只负责按状态上色，
+    // 一句判断都不做——画出来的图最容易被人当真，它错了比列表错了更糟。
+    string StateOf(bool certain, bool possible) => certain ? "taken" : possible ? "possible" : "blocked";
+    var usesCatalogCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.UsesModelCatalog));
+    var dedicatedCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.DedicatedPoolOnly));
+    var rejectedCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.TrafficRejected));
+    var eligibleCount = candidates.Count(x => CallTracePlanner.SkipReason(x) is null);
+    var queue = CallTracePlanner.Queue(candidates, weighted, 0);
+    var headLabel = queue.Count > 0 && nameById.TryGetValue(queue[0].Id, out var headName) ? headName : null;
+    var protocols = item.Offerings
+        .Where(x => CallTracePlanner.SkipReason(new CallTracePlanner.RouteCandidate(
+            x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled, x.TargetUsable)) is null)
+        .Select(x => string.IsNullOrWhiteSpace(x.Protocol) ? "跟着目标模型走" : x.Protocol!)
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(x => x, StringComparer.Ordinal)
+        .ToList();
+
+    var flow = new List<CallTraceFlowNode>
+    {
+        new()
+        {
+            Id = "caller-reach",
+            Question = "这个调用方认对外模型目录吗",
+            Branches =
+            [
+                new() { Label = "认", Outcome = "继续往下走", State = StateOf(false, usesCatalogCount > 0),
+                        Note = unnamedCallers.Count == 0 ? "这个用途还没登记调用方" : $"{usesCatalogCount} 个调用方" },
+                new() { Label = "配了专属池", Outcome = "落到它自己的专属池，与这张目录无关",
+                        State = StateOf(false, dedicatedCount > 0), Note = dedicatedCount > 0 ? $"{dedicatedCount} 个调用方" : null },
+                new() { Label = "状态未放行", Outcome = "拒绝：请求发不出去",
+                        State = StateOf(false, rejectedCount > 0), Note = rejectedCount > 0 ? $"{rejectedCount} 个调用方" : null },
+            ],
+        },
+        new()
+        {
+            Id = "named",
+            Question = "点名了吗",
+            Branches =
+            [
+                new() { Label = $"点名 {item.PublicId}", Outcome = "走目录闸", State = "possible" },
+                new()
+                {
+                    Label = "没点名",
+                    Outcome = servesUnnamed
+                        ? "它是这个用途的默认，落到它"
+                        : defaultPublicId is { Length: > 0 }
+                            ? $"落到这个用途现在的默认 {defaultPublicId}"
+                            : "这个用途没有启用的默认，回落到模型池",
+                    State = StateOf(false, servesUnnamed),
+                    Note = servesUnnamed && reachingCount > 0 ? $"{reachingCount} 个调用方会这样落到它" : null,
+                },
+            ],
+        },
+        new()
+        {
+            Id = "gate",
+            Question = "过目录闸：在不在表里 · 授权了吗 · 启用了吗",
+            Branches =
+            [
+                new() { Label = "通过", Outcome = "按能力筛出候选线路", State = StateOf(item.Enabled, item.Enabled), Note = gateSummary },
+                new() { Label = "不满足", Outcome = "当场拒绝，并说清是哪一条不满足", State = StateOf(!item.Enabled, true) },
+            ],
+        },
+        new()
+        {
+            Id = "eligible",
+            Question = "还有线路参与吗（停用 / 熔断的先剔掉）",
+            Branches =
+            [
+                new() { Label = $"有 {eligibleCount} 条", Outcome = "排队：健康优先 → 顺位 → 标识",
+                        State = StateOf(hasEligibleRoute, hasEligibleRoute), Note = $"共 {candidates.Count} 条线路" },
+                new() { Label = "一条都没有", Outcome = "拒绝：全被停用或摘掉",
+                        State = StateOf(!hasEligibleRoute, !hasEligibleRoute) },
+            ],
+        },
+        new()
+        {
+            Id = "pick",
+            Question = weighted ? "按权重分配" : "按顺位挑一条",
+            Branches = weighted
+                ?
+                [
+                    new() { Label = "分到各条线路", Outcome = "落点由请求本身派生，只给比例不指名",
+                            State = StateOf(hasEligibleRoute, hasEligibleRoute), Note = $"{eligibleCount} 条参与分配" },
+                ]
+                :
+                [
+                    new() { Label = "队首", Outcome = headLabel is { Length: > 0 } ? $"落到 {headLabel}" : "没有队首",
+                            State = StateOf(headLabel is { Length: > 0 }, hasEligibleRoute) },
+                    new() { Label = "队首失败", Outcome = eligibleCount > 1 ? $"往下换，还有 {eligibleCount - 1} 条后备" : "没有后备，这次调用失败",
+                            State = "possible" },
+                ],
+        },
+        new()
+        {
+            Id = "adapter",
+            Question = "",
+            Branches =
+            [
+                new() { Label = "翻译成这家上游的方言", Outcome = "全链路唯一按上游分叉的地方，分叉键是协议不是模型名",
+                        State = StateOf(protocols.Count > 0, true),
+                        Note = protocols.Count > 0 ? string.Join(" · ", protocols) : "没有参与的线路，谈不上协议" },
+            ],
+        },
+        new()
+        {
+            Id = "ledger",
+            Question = "",
+            Branches =
+            [
+                new() { Label = "记账", Outcome = "点名的名字 · 实际线路 · 上游 · token · 耗时 · 成本",
+                        State = "taken", Note = $"近 {window} 天 {ledger.Calls} 次" },
+            ],
+        },
+    };
+
     return Json(ApiEnvelope<CallTraceData>.Ok(new CallTraceData
     {
         PublicId = item.PublicId,
@@ -4137,10 +4303,14 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
             CurrentDefaultPublicId = defaultPublicId is { Length: > 0 } ? defaultPublicId : null,
             CurrentDefaultName = defaultDoc?.AsNullableString("Name"),
             Summary = unnamedSummary,
+            Callers = unnamedCallers,
+            CallerCount = unnamedCallers.Count,
+            ReachingCallerCount = reachingCount,
         },
         Routes = item.Offerings,
         RouteExtras = extras,
         Ledger = ledger,
+        Flow = flow,
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
