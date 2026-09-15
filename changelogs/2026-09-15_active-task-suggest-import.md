@@ -12,3 +12,4 @@
 | feat | prd-api | 新增建议实体与收件箱/吸取/放下/涌现回写端点，吸取走 SSE |
 | feat | prd-api | 开放接口与 MCP 新增 map_tasks_suggest（use 档即可提建议） |
 | polish | prd-api | MCP 派活工具描述去掉「让他做什么」的支配语气 |
+| docs | doc | 设计文档补「建议和派活是两码事」与「一段话进来 AI 拆成一条条」两节；债务台账关掉补完的四条、新增四条 |
