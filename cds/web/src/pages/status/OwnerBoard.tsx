@@ -10,7 +10,7 @@
  * 判据全在 lib/ownerBoard.ts，这里只负责摆放与着色。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, BellRing, Cable, CheckCircle2, ChevronRight, FlaskConical, Globe, Grid2x2, Info, LineChart, Waves } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, BellRing, Cable, CheckCircle2, ChevronDown, ChevronRight, FlaskConical, Globe, Grid2x2, Info, LineChart, Waves } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { ApiError, apiRequest } from '@/lib/api';
@@ -19,6 +19,7 @@ import { DiscoveryStrip } from './DiscoveryStrip';
 import { AlarmChannelsPanel } from '../cds-settings/AlarmChannelsPanel';
 import { judgeAlarm, type AlarmChannelStatus } from '@/lib/alarmVerdict';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { AvailabilityBar } from './primitives';
 import { PulseWall } from './PulseWall';
 import { BlindspotMap } from './BlindspotMap';
@@ -72,14 +73,6 @@ const LIVE_TONE: Record<'danger' | 'warn' | 'ok' | 'empty', string> = {
   empty: 'text-muted-foreground',
 };
 
-/** 通知判定的着色。四档与 judgeAlarm 的 tone 一一对应。 */
-const VERDICT_TONE: Record<'ok' | 'warn' | 'bad' | 'unknown', string> = {
-  ok: 'border-ok/30 bg-ok-soft/40',
-  warn: 'border-warn/40 bg-warn-soft/50',
-  bad: 'border-destructive/40 bg-destructive/10',
-  unknown: 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]',
-};
-
 const BANNER_TONE = {
   danger: 'border-destructive/40 bg-destructive/10 text-destructive',
   warn: 'border-warn/40 bg-warn-soft text-warn',
@@ -118,6 +111,83 @@ const ms = (v: number | null): string => (v === null ? '—' : `${Math.round(v)}
  * 这几样一直都在 target 上，只是没端出来（和之前「对照层」那次同一个病）。
  * 监控卡之所以看着专业，靠的就是这几样——密度、真实数字、一条会动的条带。
  */
+/**
+ * 右上角的状态芯片。
+ *
+ * 它们回答三个「接线」问题：接进来了吗（自检端点）、对外开着吗（公开面板）、
+ * 出事有人收到吗（通知）。每一枚都**有状态可读**，点开才是配置——配置不进阅读流。
+ * 用户 2026-09-15：「应该放在这里？」——此前这三块各占一整行堆在底部，
+ * 每次读结论都得先跳过三段跟结论无关的东西。
+ *
+ * 判定口诀：这一屏从上到下读一遍，有没有哪一行是「我现在不打算改任何东西」的人
+ * 可以跳过的？有，就该收起来。
+ */
+type ChipTone = 'ok' | 'info' | 'warn' | 'bad' | 'off';
+
+const CHIP_DOT: Record<ChipTone, string> = {
+  ok: 'bg-ok',
+  info: 'bg-info',
+  warn: 'bg-warn',
+  bad: 'bg-bad animate-pulse',
+  off: 'bg-[hsl(var(--hairline-strong))]',
+};
+
+function StatusChip({ icon: Icon, label, tone, value, title, onClick }: {
+  icon: LucideIcon;
+  label: string;
+  tone: ChipTone;
+  value: string;
+  title: string;
+  onClick: () => void;
+}): JSX.Element {
+  const bad = tone === 'bad';
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      className={cn(
+        'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[0.6875rem] transition-colors',
+        bad
+          ? 'border-bad/55 bg-bad-soft text-bad hover:border-bad'
+          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-primary/50',
+      )}
+    >
+      <Icon className={cn('h-3 w-3 shrink-0', bad ? 'text-bad' : 'text-muted-foreground')} />
+      <span className={bad ? 'text-bad' : 'text-muted-foreground'}>{label}</span>
+      <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', CHIP_DOT[tone])} />
+      <span className="font-mono">{value}</span>
+    </button>
+  );
+}
+
+/** 自检端点的摘要，只给芯片用；完整面板在弹窗里由 DiscoveryStrip 自己拉。 */
+interface EndpointSummary { endpoints: number; discovered: number; unreachable: number }
+
+function useEndpointSummary(projectId: string | null, reloadKey: number): EndpointSummary | null {
+  const [summary, setSummary] = useState<EndpointSummary | null>(null);
+  useEffect(() => {
+    if (!projectId) { setSummary(null); return; }
+    let alive = true;
+    apiRequest<{ endpoints: string[]; lastRun: { endpoints: Array<{ discovered: number; reachable: boolean }> } | null }>(
+      `/api/projects/${encodeURIComponent(projectId)}/monitor-endpoints`,
+    )
+      .then((res) => {
+        if (!alive) return;
+        const outcomes = res.lastRun?.endpoints ?? [];
+        setSummary({
+          endpoints: res.endpoints.length,
+          discovered: outcomes.reduce((n, o) => n + o.discovered, 0),
+          unreachable: outcomes.filter((o) => !o.reachable).length,
+        });
+      })
+      // 拿不到就不装知道：芯片显示「?」而不是 0。
+      .catch(() => { if (alive) setSummary(null); });
+    return () => { alive = false; };
+  }, [projectId, reloadKey]);
+  return summary;
+}
+
 /** 演练标。小、但每张被扰动的卡上都有——截图裁出来也认得出这不是真的。 */
 function RehearsalMark(): JSX.Element {
   return (
@@ -360,62 +430,6 @@ const DOT_TONE: Record<CellHealth, string> = {
  * 四档文案各自回答同一个问题，一档都不许省成「未知」——除了服务端真没下发的那种
  * 未知，那时也要明说「不知道」，而不是假装通着。
  */
-function AlarmRow({ alarm, channels, onOpen }: {
-  alarm: AlarmChannelView | undefined;
-  /** 多通道状态。undefined = 服务端没下发 = **不知道**，不许兜一个空数组当「一条都没有」。 */
-  channels: ReadonlyArray<AlarmChannelStatus> | undefined;
-  onOpen: () => void;
-}): JSX.Element {
-  const [busy, setBusy] = useState(false);
-  const [drill, setDrill] = useState<{ ok: boolean; reason?: string } | null>(null);
-  const runDrill = useCallback(async (): Promise<void> => {
-    setBusy(true);
-    try {
-      const r = await apiRequest<{ ok: boolean; reason?: string }>('/api/uptime/alarm-drill', { method: 'POST', body: {} });
-      setDrill(r);
-    } catch (err) {
-      setDrill({ ok: false, reason: err instanceof ApiError ? err.message : String(err) });
-    } finally {
-      setBusy(false);
-    }
-  }, []);
-
-  // 判定只许有一份，且必须把两个来源一起看：曾经这里只认识早先那条单一 MAP 通道，
-  // 于是 Bark 配好、演练通过之后，面板照旧写着「出问题时不会有任何人被通知」——
-  // 一条关于铃的谎，比没有这一行更糟。
-  const verdict = judgeAlarm(alarm, channels);
-  const tone = VERDICT_TONE[verdict.tone];
-  const text = verdict.text;
-
-  return (
-    <div className={cn('flex flex-wrap items-center gap-2 rounded-lg border px-3.5 py-2.5', tone)}>
-      <BellRing className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-      <span className="text-xs text-muted-foreground">通知</span>
-      <span className="text-[0.6875rem] text-foreground">{text}</span>
-      <div className="flex-grow" />
-      {drill ? (
-        <span className={cn('text-[0.6875rem]', drill.ok ? 'text-ok' : 'text-destructive')}>
-          {drill.ok ? '演练已送达' : `演练失败：${drill.reason || '原因不明'}`}
-        </span>
-      ) : null}
-      <button
-        type="button"
-        onClick={onOpen}
-        className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-primary/50"
-      >
-        {verdict.live > 0 ? '通道设置' : '去配一条'}
-      </button>
-      <button
-        type="button"
-        onClick={() => void runDrill()}
-        disabled={busy}
-        className="shrink-0 rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-primary/50 disabled:opacity-60"
-      >
-        {busy ? '演练中' : '演练一次通知'}
-      </button>
-    </div>
-  );
-}
 
 interface StatusPageState {
   open: boolean;
@@ -466,8 +480,14 @@ export function OwnerBoard({
    * 理由写在 lib/rehearsal.ts 顶部。默认 `live`，刷新页面即回真实。
    */
   const [rehearsal, setRehearsal] = useState<RehearsalId>('live');
-  /** 通知设置。开在这一屏而不是让人去翻系统设置——「会不会有人被通知」是这一屏的问题。 */
-  const [notifyOpen, setNotifyOpen] = useState(false);
+  /**
+   * 右上角三枚芯片各自的弹窗。配置在弹窗里做，做完关掉，阅读流不被打断；
+   * 开在这一屏而不是让人去翻系统设置——「接进来了吗 / 对外开着吗 / 会不会有人被通知」
+   * 都是这一屏的问题。
+   */
+  const [panel, setPanel] = useState<'endpoints' | 'public' | 'notify' | null>(null);
+  /** 端点插拔之后让芯片摘要重拉一次 */
+  const [endpointReload, setEndpointReload] = useState(0);
   /**
    * 排布：卡片 / 图。
    *
@@ -562,6 +582,9 @@ export function OwnerBoard({
   );
 
   const BannerIcon = BANNER_ICON[global_?.tone ?? board.tone];
+  // 「出问题会不会有人被通知」只许有一份判定（alarmVerdict.ts），这里只拿来着色与出话。
+  const verdict = judgeAlarm(alarm, alarmChannels);
+  const endpointSummary = useEndpointSummary(scope.projectId, endpointReload);
   const rehearsalNote = rehearsalById(rehearsal);
 
   return (
@@ -627,35 +650,67 @@ export function OwnerBoard({
           })}
         </div>
 
-        {/* 主动操作靠右（左上是「我在哪」，右上是「我要做什么」）。
-            通知排在演练前面：出问题会不会有人被通知，比演练更常被问起。 */}
-        <button
-          type="button"
-          onClick={() => setNotifyOpen(true)}
-          className="ml-auto inline-flex items-center gap-1 rounded-md border border-[hsl(var(--hairline))] px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:border-primary/50 hover:text-foreground"
-        >
-          <BellRing className="h-3 w-3" />通知设置
-        </button>
-        <div className="inline-flex flex-wrap items-center gap-1">
-          <FlaskConical className="h-3 w-3 text-muted-foreground" />
-          <span className="mr-0.5 text-[0.6875rem] text-muted-foreground">演练</span>
-          {REHEARSALS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              title={item.proves}
-              onClick={() => setRehearsal(item.id)}
-              aria-pressed={rehearsal === item.id}
-              className={cn(
-                'rounded-md border px-2 py-1 text-[0.6875rem] transition-colors',
-                rehearsal === item.id
-                  ? 'border-primary/50 bg-primary-soft text-primary-ink'
-                  : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {item.label}
-            </button>
-          ))}
+        {/* 右上角：三枚状态芯片 + 演练下拉。左上是「我在哪」，右上是「我要做什么」。
+            芯片每一枚都有状态可读，点开才是配置——配置不进阅读流。 */}
+        <div className="ml-auto flex flex-wrap items-center gap-1.5">
+          <StatusChip
+            icon={Cable}
+            label="自检端点"
+            tone={!scope.projectId ? 'off' : endpointSummary === null ? 'off' : endpointSummary.unreachable > 0 ? 'warn' : endpointSummary.endpoints > 0 ? 'ok' : 'off'}
+            value={!scope.projectId ? '—' : endpointSummary === null ? '?' : endpointSummary.endpoints === 0 ? '没插' : `${endpointSummary.endpoints} · 自报 ${endpointSummary.discovered} 条`}
+            title={!scope.projectId ? '按项目走，先选一个项目' : '把服务的自检地址插上，监控项由端点自己申报'}
+            onClick={() => setPanel('endpoints')}
+          />
+          <StatusChip
+            icon={Globe}
+            label="公开面板"
+            tone={!scope.projectId ? 'off' : statusPage?.open ? 'info' : 'off'}
+            value={!scope.projectId ? '—' : statusPage?.open ? `开 · ${publicCount} 条对外` : '关'}
+            title={!scope.projectId ? '按项目走，先选一个项目' : '一个免登录只读的对外地址，只出业务名与红绿'}
+            onClick={() => setPanel('public')}
+          />
+          {/* 铃哑了芯片整枚变红并跳动，文字直说后果——「可见」的义务不靠占一整行来履行 */}
+          <StatusChip
+            icon={BellRing}
+            label="通知"
+            tone={verdict.tone === 'ok' ? 'ok' : verdict.tone === 'warn' ? 'warn' : verdict.tone === 'bad' ? 'bad' : 'off'}
+            value={verdict.tone === 'unknown' ? '?' : verdict.live === 0 ? '出事没人会收到' : `${verdict.live} 条通着`}
+            title={verdict.text}
+            onClick={() => setPanel('notify')}
+          />
+
+          <span className="mx-0.5 h-4 w-px bg-[hsl(var(--hairline))]" />
+
+          {/* 演练：一个下拉，不再五个常驻按钮。它是取证工具，一个月用两次，不配霸着顶栏。 */}
+          <DropdownMenu
+            width={300}
+            trigger={(
+              <button
+                type="button"
+                title={rehearsalNote.proves}
+                className={cn(
+                  'inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[0.6875rem] transition-colors',
+                  rehearsing ? 'border-primary/50 bg-primary-soft text-primary-ink' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] text-foreground hover:border-primary/50',
+                )}
+              >
+                <FlaskConical className={cn('h-3 w-3', rehearsing ? 'text-primary-ink' : 'text-muted-foreground')} />
+                <span className={rehearsing ? 'text-primary-ink' : 'text-muted-foreground'}>演练</span>
+                <span className="font-mono">{rehearsalNote.label}</span>
+                <ChevronDown className="h-3 w-3 text-muted-foreground" />
+              </button>
+            )}
+          >
+            <DropdownLabel>按结论的优先级阶梯排列</DropdownLabel>
+            {REHEARSALS.map((item) => (
+              <DropdownItem key={item.id} onSelect={() => setRehearsal(item.id)}>
+                <span className={cn('w-3 shrink-0 text-primary-ink', rehearsal === item.id ? '' : 'invisible')}>·</span>
+                <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="text-xs font-medium">{item.label}</span>
+                  <span className="text-[0.6875rem] leading-4 text-muted-foreground">{item.proves}</span>
+                </span>
+              </DropdownItem>
+            ))}
+          </DropdownMenu>
         </div>
       </div>
 
@@ -703,17 +758,27 @@ export function OwnerBoard({
         <div className="flex min-w-0 flex-col gap-1">
           <div className="text-sm font-semibold leading-5">{headline.headline}</div>
           {headline.detail ? <div className="text-xs leading-5 opacity-90">{headline.detail}</div> : null}
+          {/* 绿的仍然绿，但「出了事谁也不知道」这个前提得摆在结论旁边：
+              一屏全绿而没人盯着，和一屏全绿有人盯着，是两件事。 */}
+          {verdict.tone === 'bad' ? (
+            <div className="text-xs leading-5 text-bad">
+              但这一屏没人盯着的时候出了事，不会有任何人被通知 ——{' '}
+              <button type="button" className="underline underline-offset-2" onClick={() => setPanel('notify')}>
+                点右上角「通知」配一条，粘一个 Bark key 就够
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
 
       {/* 业务网格 */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span className="text-[0.8125rem] font-medium">{global_ ? '我盯的项目' : '我盯的业务'}</span>
-        <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary-ink">
+        <span className="inline-flex items-center gap-1 text-[0.6875rem] text-primary-ink" title="主动看的是「能不能用」：定时真发一次请求，按判据验收返回值。分支预览默认不在这一屏，去「全部目标」看。">
           <ArrowRight className="h-3 w-3" />主动
           <span className="text-muted-foreground">定时真发一次，有产物</span>
         </span>
-        <span className="inline-flex items-center gap-1 text-[0.6875rem] text-info">
+        <span className="inline-flex items-center gap-1 text-[0.6875rem] text-info" title="被动看的是「有没有人用坏」：读真实流量的窗口统计。被动绿而样本为 0，只说明没人用过，不算正常。">
           <Waves className="h-3 w-3" />被动
           <span className="text-muted-foreground">读真实流量的窗口，无产物</span>
         </span>
@@ -834,70 +899,6 @@ export function OwnerBoard({
         </div>
       )}
 
-      {/* 自检端点：插上即可，监控项由端点自报 */}
-      {scope.projectId ? (
-        <DiscoveryStrip projectId={scope.projectId} onChanged={onReload} />
-      ) : (
-        <NeedsProjectRow
-          icon={Cable}
-          title="自检端点"
-          what="把服务的自检地址插上，监控项由端点自己申报"
-          projects={projects}
-          onPick={(id) => onScope({ ...scope, projectId: id })}
-        />
-      )}
-
-      {/* 公开面板：同一批观测的另一个出口，对外只出业务名与红绿 */}
-      {scope.projectId ? (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-info/25 bg-info-soft/40 px-3.5 py-2.5">
-          <Globe className="h-3.5 w-3.5 text-info" />
-          <span className="text-xs text-muted-foreground">公开面板</span>
-          {statusPage?.open && statusPage.path ? (
-            <>
-              <a
-                href={statusPage.path}
-                target="_blank"
-                rel="noreferrer"
-                className="truncate font-mono text-xs text-info hover:underline"
-              >
-                {statusPage.path}
-              </a>
-              <span className="text-[0.6875rem] text-muted-foreground">
-                免登录只读 · {publicCount} 条业务对外 · 只出业务名与红绿，不出地址、判据、日志
-              </span>
-            </>
-          ) : (
-            <span className="text-[0.6875rem] text-muted-foreground">
-              未开启。开了之后拿到链接的人不用登录就能看到这几条业务的红绿，随时可撤销
-            </span>
-          )}
-          <div className="flex-grow" />
-          {statusPageError ? <span className="text-[0.6875rem] text-destructive">{statusPageError}</span> : null}
-          <button
-            type="button"
-            onClick={() => void toggleStatusPage()}
-            disabled={statusPageBusy || rehearsing}
-            title={rehearsing ? '演练中不能改真实配置 —— 先点「回到真实」' : undefined}
-            className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-info/50 disabled:opacity-60"
-          >
-            {statusPageBusy ? '处理中' : statusPage?.open ? '关闭并撤销链接' : '开启公开面板'}
-          </button>
-        </div>
-      ) : (
-        <NeedsProjectRow
-          icon={Globe}
-          title="公开面板"
-          what="开一个免登录只读的对外地址，只出业务名与红绿"
-          projects={projects}
-          onPick={(id) => onScope({ ...scope, projectId: id })}
-        />
-      )}
-
-      {/* 通知通道：出问题时会不会有人被通知。
-          这一行是整条链上最容易静默失效的一环——没配凭据时投递是一次 no-op，
-          启动日志里那句「不会有人被通知」没有任何验收会去读。所以它必须长在这一屏上。 */}
-      <AlarmRow alarm={alarm} channels={alarmChannels} onOpen={() => setNotifyOpen(true)} />
-
       {/* 基础设施：要能一眼确认没塌，但不占主视觉 */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3.5 py-2.5">
         <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
@@ -912,24 +913,79 @@ export function OwnerBoard({
         </span>
       </div>
 
-      <Dialog open={notifyOpen} onOpenChange={setNotifyOpen}>
+      {/* 三枚芯片共用一个弹窗：配置在弹窗里做，做完关掉。 */}
+      <Dialog open={panel !== null} onOpenChange={(open) => { if (!open) setPanel(null); }}>
         <DialogContent className="max-w-3xl">
           <DialogHeader>
-            <DialogTitle>通知设置 —— 哪些出问题、通知谁</DialogTitle>
+            <DialogTitle>
+              {panel === 'endpoints' ? '自检端点 —— 把服务的自检地址插上，监控项由端点自己申报'
+                : panel === 'public' ? '公开面板 —— 一个免登录只读的对外地址'
+                  : '通知设置 —— 哪些出问题、通知谁'}
+            </DialogTitle>
           </DialogHeader>
-          <div className="max-h-[70vh] overflow-y-auto pr-1">
-            <AlarmChannelsPanel projects={projects.map((p) => ({ id: p.id, name: p.name }))} />
+          <div className="flex max-h-[70vh] flex-col gap-3 overflow-y-auto pr-1">
+            {panel === 'endpoints' ? (
+              scope.projectId ? (
+                <DiscoveryStrip projectId={scope.projectId} onChanged={() => { onReload(); setEndpointReload((n) => n + 1); }} />
+              ) : (
+                <NeedsProjectRow
+                  icon={Cable}
+                  title="自检端点"
+                  what="把服务的自检地址插上，监控项由端点自己申报"
+                  projects={projects}
+                  onPick={(id) => onScope({ ...scope, projectId: id })}
+                />
+              )
+            ) : null}
+
+            {panel === 'public' ? (
+              scope.projectId ? (
+                <div className="flex flex-col gap-3 rounded-lg border border-info/25 bg-info-soft/40 px-3.5 py-3">
+                  {statusPage?.open && statusPage.path ? (
+                    <>
+                      <a href={statusPage.path} target="_blank" rel="noreferrer" className="truncate font-mono text-xs text-info hover:underline">
+                        {statusPage.path}
+                      </a>
+                      <span className="text-[0.6875rem] text-muted-foreground">
+                        免登录只读 · {publicCount} 条业务对外 · 只出业务名与红绿，不出地址、判据、日志。
+                        哪几条对外由各自的自检端点声明（publicVisible），这里改不了。
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-[0.6875rem] text-muted-foreground">
+                      未开启。开了之后拿到链接的人不用登录就能看到这几条业务的红绿，随时可撤销。
+                    </span>
+                  )}
+                  {statusPageError ? <span className="text-[0.6875rem] text-destructive">{statusPageError}</span> : null}
+                  <div>
+                    <button
+                      type="button"
+                      onClick={() => void toggleStatusPage()}
+                      disabled={statusPageBusy || rehearsing}
+                      title={rehearsing ? '演练中不能改真实配置 —— 先点「回到真实」' : undefined}
+                      className="rounded-md border border-[hsl(var(--hairline-strong))] px-2.5 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-info/50 disabled:opacity-60"
+                    >
+                      {statusPageBusy ? '处理中' : statusPage?.open ? '关闭并撤销链接' : '开启公开面板'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <NeedsProjectRow
+                  icon={Globe}
+                  title="公开面板"
+                  what="开一个免登录只读的对外地址，只出业务名与红绿"
+                  projects={projects}
+                  onPick={(id) => onScope({ ...scope, projectId: id })}
+                />
+              )
+            ) : null}
+
+            {panel === 'notify' ? (
+              <AlarmChannelsPanel projects={projects.map((p) => ({ id: p.id, name: p.name }))} />
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
-
-      <div className="flex items-start gap-2 text-[0.6875rem] leading-4 text-muted-foreground">
-        <Info className="mt-0.5 h-3 w-3 shrink-0" />
-        <span>
-          主动看的是「能不能用」，被动看的是「有没有人用坏」。两个都绿才叫正常；
-          被动绿而样本为 0，只说明没人用过。分支预览默认不在这一屏，去「全部目标」看。
-        </span>
-      </div>
     </div>
   );
 }

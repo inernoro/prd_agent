@@ -79,7 +79,7 @@ describe('这一句只许有一份', () => {
   const src = readFileSync(fileURLToPath(new URL('../../web/src/pages/status/OwnerBoard.tsx', import.meta.url)), 'utf8');
 
   it('面板走 judgeAlarm，不自己再拼一遍', () => {
-    expect(src).toMatch(/judgeAlarm\(alarm, channels\)/);
+    expect(src).toMatch(/judgeAlarm\(alarm, alarmChannels\)/);
     // 自己拼的那一版有这句字面量；它必须只存在于 alarmVerdict 里。
     expect(src).not.toContain('的凭据没配齐');
   });
