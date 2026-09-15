@@ -380,6 +380,7 @@ export function StatusPage(): JSX.Element {
                     now={now}
                     prober={summary?.prober ?? null}
                     alarm={summary?.alarm}
+                    intervalSeconds={summary?.intervalSeconds}
                     scope={scope}
                     onScope={onScope}
                     onOpenTarget={(targetId) => { setBoardView('all'); openTarget(targetId); }}

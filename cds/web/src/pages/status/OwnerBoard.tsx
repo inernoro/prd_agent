@@ -10,7 +10,7 @@
  * 判据全在 lib/ownerBoard.ts，这里只负责摆放与着色。
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, AlertTriangle, ArrowRight, BellRing, Cable, CheckCircle2, ChevronRight, FlaskConical, Globe, Info, Waves } from 'lucide-react';
+import { Activity, AlertTriangle, ArrowRight, BellRing, Cable, CheckCircle2, ChevronRight, FlaskConical, Globe, Grid2x2, Info, LineChart, Waves } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
 import { ApiError, apiRequest } from '@/lib/api';
@@ -19,6 +19,9 @@ import { DiscoveryStrip } from './DiscoveryStrip';
 import { AlarmChannelsPanel } from '../cds-settings/AlarmChannelsPanel';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { AvailabilityBar } from './primitives';
+import { PulseWall } from './PulseWall';
+import { BlindspotMap } from './BlindspotMap';
+import { buildBlindspotMap, describeBlindspots } from '@/lib/pulseWall';
 import { formatDuration, formatRelative } from '@/lib/monitorCenter';
 import type { AlarmChannelView, MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
@@ -415,6 +418,7 @@ export function OwnerBoard({
   now,
   prober,
   alarm,
+  intervalSeconds,
   onScope,
   onOpenTarget,
   onAddMonitor,
@@ -433,6 +437,8 @@ export function OwnerBoard({
    * 这里同样不许兜一个「通着」：铃哑了还替它说好话，比没有这一行更糟。
    */
   alarm: AlarmChannelView | undefined;
+  /** 一轮探测的间隔（秒）。脉搏墙用它说「多久扫一遍」；拿不到就不说，不猜。 */
+  intervalSeconds?: number;
   scope: OwnerScope;
   onScope: (next: OwnerScope) => void;
   onOpenTarget: (targetId: string) => void;
@@ -449,6 +455,14 @@ export function OwnerBoard({
   const [rehearsal, setRehearsal] = useState<RehearsalId>('live');
   /** 通知设置。开在这一屏而不是让人去翻系统设置——「会不会有人被通知」是这一屏的问题。 */
   const [notifyOpen, setNotifyOpen] = useState(false);
+  /**
+   * 排布：卡片 / 图。
+   *
+   * 一个开关管两个视角，因为它们问的是同一类问题的两面：业务视角下「图」是脉搏墙
+   * （这一屏还是不是活的），全局视角下是盲区地图（哪里根本没人盯）。
+   * 不另开两个开关——同一个位置换语义，比多一个按钮好记。
+   */
+  const [layout, setLayout] = useState<'cards' | 'chart'>('cards');
   const rehearsing = rehearsal !== 'live';
   const stage = useMemo(
     () => applyRehearsal(rehearsal, { targets, ctx: { now, prober } }),
@@ -468,6 +482,14 @@ export function OwnerBoard({
     [rehearsing, targets, now, prober, scope],
   );
   const { projectTargets, scoped, board, global_, headline } = bundle;
+  /**
+   * 盲区地图用**未经环境筛选**的那一份。
+   *
+   * 覆盖度不该被当前筛选裁掉：默认筛选只看非预览环境，而多数没人盯的项目恰恰
+   * 只有分支预览——按筛选算会把这张图要喊的那件事直接过滤没了。
+   * 同一个理由让 buildOwnerBoard 的基础设施统计也走 unfiltered。
+   */
+  const blindspots = useMemo(() => buildBlindspotMap(projectTargets, now), [projectTargets, now]);
   const environments = useMemo(() => listEnvironments(projectTargets), [projectTargets]);
 
   const activeEnvs = new Set(scope.environments ?? environments);
@@ -682,19 +704,44 @@ export function OwnerBoard({
           <Waves className="h-3 w-3" />被动
           <span className="text-muted-foreground">读真实流量的窗口，无产物</span>
         </span>
+        {/* 排布切换。图这一档在两个视角下是两张图，但问的是同一类问题的两面。 */}
+        <div className="ml-auto inline-flex items-center gap-0.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-0.5">
+          {([
+            ['cards', '卡片', Grid2x2],
+            ['chart', global_ ? '盲区地图' : '脉搏墙', LineChart],
+          ] as const).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setLayout(value)}
+              aria-pressed={layout === value}
+              className={cn(
+                'inline-flex items-center gap-1 rounded px-2 py-1 text-[0.6875rem] transition-colors',
+                layout === value ? 'bg-[hsl(var(--surface-raised))] font-medium text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              <Icon className="h-3 w-3" />{label}
+            </button>
+          ))}
+        </div>
         {/* 演练中禁用一切真实写操作：面板上是假数据，此时点下去的每一步都在对着假前提做真事。 */}
         <button
           type="button"
           disabled={rehearsing}
           title={rehearsing ? '演练中不能改真实配置 —— 先点「回到真实」' : undefined}
-          className="ml-auto text-[0.6875rem] text-primary-ink hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
+          className="text-[0.6875rem] text-primary-ink hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground disabled:no-underline"
           onClick={onAddMonitor}
         >
           加一条业务监控
         </button>
       </div>
 
-      {global_ ? (
+      {global_ && layout === 'chart' ? (
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
+          <div className="shrink-0 text-[0.8125rem] text-foreground">{describeBlindspots(blindspots)}</div>
+          <BlindspotMap map={blindspots} onOpen={(id) => onScope({ ...scope, projectId: id })} />
+        </div>
+      ) : global_ ? (
         <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
           {global_.rows.length > 0 ? (
             <div className="grid auto-rows-min gap-2.5 md:grid-cols-2 xl:grid-cols-3">
@@ -728,6 +775,14 @@ export function OwnerBoard({
             </div>
           ) : null}
         </div>
+      ) : board.rows.length > 0 && layout === 'chart' ? (
+        <PulseWall
+          rows={board.rows}
+          now={now}
+          prober={stage.ctx.prober}
+          intervalSeconds={intervalSeconds}
+          onOpen={onOpenTarget}
+        />
       ) : board.rows.length > 0 ? (
         <div className="grid min-h-0 flex-1 auto-rows-min gap-2.5 overflow-y-auto md:grid-cols-2 xl:grid-cols-3">
           {board.rows.map((row) => <BusinessCard key={row.key} row={row} now={now} rehearsing={rehearsing} onOpen={onOpenTarget} />)}

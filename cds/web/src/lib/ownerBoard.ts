@@ -356,8 +356,16 @@ function cellReason(
   return undefined;
 }
 
+/**
+ * 一组档位里最差的那一档。SEVERITY 是唯一的排序依据，任何地方要「取最差」
+ * 都必须走这个函数——自己写一遍比较就是第二个判定源，而两边都「看着对」。
+ */
+export function worstHealth(healths: ReadonlyArray<CellHealth>): CellHealth {
+  return healths.reduce<CellHealth>((acc, h) => (SEVERITY[h] < SEVERITY[acc] ? h : acc), 'up');
+}
+
 function worstOf(cells: ReadonlyArray<EnvironmentCell>): CellHealth {
-  return cells.reduce<CellHealth>((acc, c) => (SEVERITY[c.health] < SEVERITY[acc] ? c.health : acc), 'up');
+  return worstHealth(cells.map((c) => c.health));
 }
 
 /**
