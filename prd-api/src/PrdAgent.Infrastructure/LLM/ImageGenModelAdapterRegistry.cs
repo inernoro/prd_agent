@@ -230,6 +230,18 @@ public static class ImageGenModelAdapterRegistry
             var scale = Math.Sqrt((double)config.MaxPixels.Value / ((long)w * h));
             w = (int)(w * scale);
             h = (int)(h * scale);
+
+            // 缩放之后必须**重新套一遍边界**。
+            //
+            // 缩放是按长宽比等比做的，它不认识最小值：4096x512 在 1M 像素上限下缩成约
+            // 2896x362，而契约声明的最小高是 512——发出去的尺寸违反了这条契约自己写的规矩，
+            // 而没有任何地方会报错（形状 8：声明在那儿，运行时并不遵守它）。
+            // 契约本身是否有解在写入侧已经拦过（最小宽高的乘积不得超过像素上限），
+            // 所以这里重新套边界不会把两条约束推成互相矛盾。
+            if (config.MinWidth.HasValue) w = Math.Max(w, config.MinWidth.Value);
+            if (config.MaxWidth.HasValue) w = Math.Min(w, config.MaxWidth.Value);
+            if (config.MinHeight.HasValue) h = Math.Max(h, config.MinHeight.Value);
+            if (config.MaxHeight.HasValue) h = Math.Min(h, config.MaxHeight.Value);
         }
 
         // 应用整除要求
@@ -243,6 +255,14 @@ public static class ImageGenModelAdapterRegistry
                 w = ((config.MinWidth.Value + div - 1) / div) * div;
             if (config.MinHeight.HasValue && h < config.MinHeight.Value)
                 h = ((config.MinHeight.Value + div - 1) / div) * div;
+            // 向下取整可能把边长抹成 0（请求边小于除数时），向上取整又可能越过最大值。
+            // 两头都要兜：没有最小值托底时至少给一个除数，越过最大值就退到不超过它的最大倍数。
+            if (w <= 0) w = div;
+            if (h <= 0) h = div;
+            if (config.MaxWidth.HasValue && w > config.MaxWidth.Value)
+                w = Math.Max(div, (config.MaxWidth.Value / div) * div);
+            if (config.MaxHeight.HasValue && h > config.MaxHeight.Value)
+                h = Math.Max(div, (config.MaxHeight.Value / div) * div);
         }
 
         result.Size = $"{w}x{h}";

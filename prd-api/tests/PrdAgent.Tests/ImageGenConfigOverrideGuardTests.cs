@@ -383,6 +383,11 @@ public class ImageGenConfigOverrideGuardTests
         // 几项单独合法、合起来无解的也要拦：整除向上取整超过最大值，
         // 或最小边长与像素上限打架（运行时先套最小值再按像素缩放，缩完反而违反最小值）。
         Assert.Contains("这套范围无解", console);
+        // 同模式唯一升成库级约束：端点里的「先查有没有同模式」拦不住两个人同时建，
+        // 两条都进库后同步器把两条都装进按模式索引的表，TryMatch 取先返回的那条，
+        // 生图的尺寸与参数翻译于是每次刷新可能不一样。
+        Assert.Contains("uniq_llmgw_imagegen_tenant_pattern", console);
+        Assert.Contains("刚刚由别人建的", console);
         Assert.Contains("SmallestSide", console);
 
         // 配了整除就必须两个最小值都给：运行时对宽高各做一次向下取整，

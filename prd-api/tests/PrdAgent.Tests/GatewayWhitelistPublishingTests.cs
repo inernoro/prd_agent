@@ -181,6 +181,39 @@ public class GatewayWhitelistPublishingTests
     }
 
     /// <summary>
+    /// serving 的 readiness 也要认「对外模型」这条路，不能只按池算。
+    ///
+    /// 池退场之后，正确迁移的部署一个池都不绑——不点名的请求由认领或用途默认接住。
+    /// 而 router 组件只按池数判可路由，于是对一个完全健康的部署报 503、被编排摘掉。
+    /// 判据没跟上现实，灯就开始说谎（与 2026-08-13 那次同形，只是反了个方向）。
+    /// </summary>
+    [Fact]
+    public void serving就绪探针认对外模型这条路()
+    {
+        var probe = ReadRepoFile("llmgw/serving/GatewayServingReadinessProbe.cs");
+        var start = probe.IndexOf("private async Task<GatewayServingReadinessComponent> CheckRouterAsync", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        var end = probe.IndexOf("private async Task<GatewayServingReadinessComponent> CheckScenarioCapabilityAsync", start, StringComparison.Ordinal);
+        Assert.True(end > start, "router 组件的边界变了，守卫取值口径需要更新");
+        var body = probe[start..end];
+
+        Assert.Contains("HasLogicalCatcher", body);
+
+        // 两层同序：先认领、后用途默认。
+        // 取值范围必须收在 HasLogicalCatcher 里——router 组件上半段查旧池默认时也会出现
+        // IsDefaultForType，拿整段找会匹配到池那一侧，判出来的先后与要测的东西无关。
+        var catcherAt = body.IndexOf("bool HasLogicalCatcher", StringComparison.Ordinal);
+        Assert.True(catcherAt > 0);
+        var catcherBody = body[catcherAt..];
+        var claimAt = catcherBody.IndexOf("DefaultForAppCallerCodes", StringComparison.Ordinal);
+        var typeDefaultAt = catcherBody.IndexOf("IsDefaultForType", StringComparison.Ordinal);
+        Assert.True(claimAt > 0 && typeDefaultAt > claimAt, "就绪探针的两层判据必须与运行时同序");
+        // 池那条不删：还没搬迁的部署仍然靠它，两条是或的关系
+        Assert.Contains("IsCallerRoutable(", body);
+        Assert.Contains("|| HasLogicalCatcher(x)", body);
+    }
+
+    /// <summary>
     /// 对外报价与实际计价必须同一个口径：有按次价时只报按次价。
     ///
     /// 计价那一侧在有按次价时完全不看 token 单价。清单若把两套价一起报出去，

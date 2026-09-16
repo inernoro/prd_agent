@@ -221,12 +221,55 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             var enabledExchanges = await exchanges.Find(x => x.Enabled).ToListAsync(cancellationToken);
             var poolById = boundPools.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
+            /*
+              池退场之后，「可路由」不再只有池这一条路。
+
+              这个组件原来只按池算：调用方绑的池、或该用途的默认池。而正确迁移过来的部署
+              一个池都不绑——不点名的请求由「对外模型认领」或「用途默认模型」接住。
+              于是 routableCallers 恒为 0，readyz 对一个完全健康的部署报 503，
+              编排会把它摘掉。判据没跟上现实，灯就开始说谎（与 2026-08-13 那次同形，只是反了个方向）。
+
+              判据与运行时的两层同序：先看有没有对外模型认领了这个调用方，没有才看用途默认；
+              两层都要求模型启用、且至少有一条启用且非 Unavailable 的线路。
+              池那条留着不动：还没搬迁的部署仍然靠它，两条是或的关系。
+            */
+            var logicalModels = _gatewayDb.Database.GetCollection<GatewayLogicalModel>(LogicalModelCollection);
+            var offeringsCollection = _gatewayDb.Database.GetCollection<GatewayModelOffering>(OfferingCollection);
+            var enabledLogicalModels = await logicalModels.Find(x => x.Enabled).ToListAsync(cancellationToken);
+            var usableOfferingModelIds = (await offeringsCollection
+                    .Find(Builders<GatewayModelOffering>.Filter.And(
+                        Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
+                        Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
+                    .Project(x => x.LogicalModelId)
+                    .ToListAsync(cancellationToken))
+                .ToHashSet(StringComparer.Ordinal);
+
+            bool HasLogicalCatcher(GatewayAppCallerRecord caller)
+            {
+                if (string.IsNullOrWhiteSpace(caller.RequestType)) return false;
+                var candidates = enabledLogicalModels
+                    .Where(x => string.Equals(x.ModelType, caller.RequestType, StringComparison.Ordinal)
+                        && usableOfferingModelIds.Contains(x.Id))
+                    .ToList();
+                if (candidates.Count == 0) return false;
+                // 第一层：谁认领了它。
+                if (candidates.Any(x => x.DefaultForAppCallerCodes
+                        .Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase)))
+                {
+                    return true;
+                }
+                // 第二层：这个用途的默认；授权名单非空时它得放行这个调用方。
+                return candidates.Any(x => x.IsDefaultForType
+                    && (x.AllowedAppCallerCodes.Count == 0
+                        || x.AllowedAppCallerCodes.Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase)));
+            }
+
             var routableCallers = governed.Count(x => IsCallerRoutable(
                 x,
                 poolById,
                 defaultPools,
                 enabledPlatformIds,
-                enabledExchanges));
+                enabledExchanges) || HasLogicalCatcher(x));
             var invalidCallers = governed.Count - routableCallers;
             // Readiness is instance-scoped. A single invalid caller is configuration degradation,
             // which the config-authority release gate blocks; taking every serving instance out
@@ -234,7 +277,8 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             if (governed.Count > 0 && routableCallers == 0)
             {
                 throw new InvalidOperationException(
-                    $"no governed appCaller has a usable model pool: invalid={invalidCallers}");
+                    "no governed appCaller can be routed: neither a usable model pool nor a logical model "
+                    + $"(claim or type default) with a usable offering; invalid={invalidCallers}");
             }
 
             return $"{routableCallers}/{governed.Count} governed appCallers routable, invalid={invalidCallers}";

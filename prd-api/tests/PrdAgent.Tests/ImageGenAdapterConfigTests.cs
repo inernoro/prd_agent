@@ -273,4 +273,51 @@ public class ImageGenAdapterConfigTests
 
         Assert.True(target.ContainsKey("size"));
     }
+
+    /// <summary>
+    /// 范围模式：像素上限缩放之后必须重新套边界。
+    ///
+    /// 缩放是按长宽比等比做的，它不认识最小值——4096x512 在 1M 像素上限下缩成约 2896x362，
+    /// 而契约声明的最小高是 512。发出去的尺寸违反了这条契约自己写的规矩，
+    /// 而没有任何地方会报错：声明在那儿，运行时并不遵守它。
+    /// </summary>
+    [Fact]
+    public void 范围模式_像素缩放后仍然满足最小边长()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MinWidth = 512,
+            MinHeight = 512,
+            MaxPixels = 1_048_576,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "4096x512");
+
+        Assert.True(result.Height >= 512, $"缩放后高变成了 {result.Height}，低于契约声明的最小高 512");
+        Assert.True(result.Width >= 512, $"缩放后宽变成了 {result.Width}，低于契约声明的最小宽 512");
+    }
+
+    /// <summary>
+    /// 整除向下取整不许把边长抹成 0，也不许越过最大值。
+    /// </summary>
+    [Fact]
+    public void 范围模式_整除取整不产生零边长也不越过最大值()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "divisor-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MustBeDivisibleBy = 512,
+            MaxWidth = 1020,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "1024x256");
+
+        Assert.True(result.Height > 0, "高被向下取整抹成了 0，发出去就是 WxH 里的 0");
+        Assert.True(result.Width > 0 && result.Width <= 1020, $"宽 {result.Width} 越过了最大宽 1020");
+    }
 }

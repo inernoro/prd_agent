@@ -326,8 +326,13 @@ public class PoolMigrationPlannerTests
         // 没人设过限制就不写名单：那才是今天的真实行为
         Assert.Contains("restrictedCallers.Count == 0", handler);
 
-        // 复用已有模型时不动它的名单，但要报出来——不然「授权边界搬过来了」是句半真的话
+        // 复用已有模型时不动它的名单，但**任何不一致**都要报出来。
+        // 只报「已有名单为空」那一种的话，两边都非空且不等时两个方向的偏差同时存在
+        // 且都没有提示：多出来的调用方越权用到本池线路，缺少的调用方够不到它本有权用的上游。
         Assert.Contains("搬迁没有改它的授权名单", handler);
+        Assert.Contains("allowlistMatches", handler);
+        Assert.Contains("这些调用方将能用到本池的线路", handler);
+        Assert.Contains("这些调用方将用不到它们本来有权用的上游", handler);
     }
 
     /// <summary>

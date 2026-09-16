@@ -4003,6 +4003,29 @@ static CatalogEntryItem MapCatalogEntry(BsonDocument d) => new()
 // 这个代价要写在界面上，不能让人保存完盯着屏幕猜（expectation-management）。
 var gwImageModelConfigs = gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_model_configs");
 
+/*
+  生图契约的模式也是同一类不变量：同租户下一个匹配模式最多一条契约。
+
+  端点里的「先查有没有同模式」拦不住两个管理员同时建：两边都查完、都没看到对方，
+  然后各插一条。同步器会把两条都装进那张按模式索引的表，TryMatch 取先返回的那一条——
+  生图的尺寸与参数翻译于是每次刷新可能不一样，而两个人的界面都显示保存成功。
+*/
+try
+{
+    await gwImageModelConfigs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ModelIdPattern"),
+        new CreateIndexOptions { Name = "uniq_llmgw_imagegen_tenant_pattern", Unique = true }));
+}
+catch (MongoCommandException ex)
+{
+    Console.WriteLine(
+        "[llmgw] 建不出「同租户模式唯一」索引（uniq_llmgw_imagegen_tenant_pattern）："
+        + ex.Message
+        + " —— 多半是存量里同一个模式已经有两条契约。先在生图契约页删掉多余的那条，"
+        + "重启控制台即可自动补建；在那之前并发新建仍有竞态。");
+}
+
+
 app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
 {
     var docs = await gwImageModelConfigs.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty))
@@ -4160,7 +4183,17 @@ app.MapPost("/gw/imagegen-configs", async (HttpContext http, [FromBody] UpsertIm
         return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS", dupMessage), jsonOptions, 409);
 
     var doc = BuildImageGenConfigDocument(body, tenantId, http, existing: null);
-    await gwImageModelConfigs.InsertOneAsync(doc);
+    try
+    {
+        await gwImageModelConfigs.InsertOneAsync(doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        // 上面那次查重与这次插入之间，别人插了同一个模式。库级唯一索引兜住了，
+        // 这里把它翻成与查重同一个回答——不要报成「保存失败」，那会让人反复重试。
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS",
+            $"已经有一条 {pattern} 的契约（刚刚由别人建的），去改它而不是再加一条"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http,
         action: "imagegen_config.create", targetType: "llmgw_imagegen_model_config",
         targetId: doc.GetStringOrEmpty("_id"), targetName: pattern, success: true, reason: null,
@@ -4190,7 +4223,15 @@ app.MapPut("/gw/imagegen-configs/{id}", async (HttpContext http, string id, [Fro
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var doc = BuildImageGenConfigDocument(body, tenantId, http, existing);
-    await gwImageModelConfigs.ReplaceOneAsync(filter, doc);
+    try
+    {
+        await gwImageModelConfigs.ReplaceOneAsync(filter, doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS",
+            $"已经有一条 {pattern} 的契约（刚刚由别人建的），去改它而不是把这条改成同一个模式"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http,
         action: "imagegen_config.update", targetType: "llmgw_imagegen_model_config",
         targetId: id, targetName: doc.GetStringOrEmpty("ModelIdPattern"), success: true, reason: null,
@@ -5008,18 +5049,35 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             // 覆盖过去会把它们悄悄摘掉。
             if (claimsToTransfer.Count > 0)
                 reuseUpdate = reuseUpdate.AddToSetEach("DefaultForAppCallerCodes", claimsToTransfer);
-            // 复用已有模型时**不动**它的授权名单：那个模型可能是别人建的、名单也可能是人工调过的，
-            // 搬迁没有资格替它收紧或放宽。这一条要报出来，否则「授权边界搬过来了」是句半真的话。
-            if (poolAllowlist.Count > 0
-                && existing is not null
-                && existing.AsStringList("AllowedAppCallerCodes").Count == 0)
+            /*
+              复用已有模型时**不动**它的授权名单：那个模型可能是别人建的、名单也可能是人工调过的，
+              搬迁没有资格替它收紧或放宽。但只要两边不一致就必须报出来——
+              上一版只报了「已有名单为空」这一种，那只是不一致里最显眼的一个特例（形状 1）。
+
+              两边都非空且不相等时，两个方向的偏差同时存在，而且都不会有任何提示：
+                · 已有名单里、池名单外的调用方 → 能够到这个池搬过来的线路（越权）；
+                · 池名单里、已有名单外的调用方 → 够不到它本来有权用的上游（失权）。
+              所以判的是「相等与否」，不是「空与否」。
+            */
+            var existingAllowlist = existing?.AsStringList("AllowedAppCallerCodes") ?? [];
+            var allowlistMatches = poolAllowlist.Count == existingAllowlist.Count
+                && poolAllowlist.All(x => existingAllowlist.Contains(x, StringComparer.Ordinal));
+            if (poolAllowlist.Count > 0 && !allowlistMatches)
             {
+                var extra = existingAllowlist.Where(x => !poolAllowlist.Contains(x, StringComparer.Ordinal)).ToList();
+                var missing = poolAllowlist.Where(x => !existingAllowlist.Contains(x, StringComparer.Ordinal)).ToList();
+                var detail = existingAllowlist.Count == 0
+                    ? "它当前对所有调用方开放"
+                    : $"两边名单不一致：{(extra.Count > 0 ? $"多出 {string.Join("、", extra)}（这些调用方将能用到本池的线路）" : string.Empty)}"
+                      + $"{(extra.Count > 0 && missing.Count > 0 ? "；" : string.Empty)}"
+                      + $"{(missing.Count > 0 ? $"缺少 {string.Join("、", missing)}（这些调用方将用不到它们本来有权用的上游）" : string.Empty)}";
                 result.Skipped.Add(new PoolMigrationSkip
                 {
                     PoolId = poolId,
                     PoolName = poolName,
-                    Reason = $"这个池有池级授权限制，但它映射到的对外模型「{publicId}」已经存在且当前对所有调用方开放，"
-                        + "搬迁没有改它的授权名单（那可能是人工调过的）。需要这道边界的话，去白名单页手动设",
+                    Reason = $"这个池有池级授权限制，但它映射到的对外模型「{publicId}」已经存在，{detail}。"
+                        + "搬迁没有改它的授权名单（那可能是人工调过的），线路照常挂上去了。"
+                        + "确认这道边界该是什么样，再去白名单页手动设",
                 });
             }
             if (!dryRun)
