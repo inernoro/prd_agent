@@ -29,6 +29,10 @@ public sealed class ModelCatalogGateBehaviorTests
 {
     private const string Caller = "catalog-gate-test.chat::chat";
     private const string PoolId = "catalog-gate-pool";
+    private const string LogicalModelId = "catalog-gate-logical";
+    /// <summary>两条物理模型文档的 _id，线路按 id 指向它们（与 SeedAsync 里的命名同一套）。</summary>
+    private const string CatalogModelId = "catalog-gate-gpt-4o";
+    private const string OutsideModelId = "catalog-gate-some-vendor-experimental-model-x";
     private const string PlatformId = "catalog-gate-platform";
     /// <summary>名录内：内置名录第一条就是它，走「查名录」那一支放行。</summary>
     private const string CatalogModel = "gpt-4o";
@@ -140,36 +144,29 @@ public sealed class ModelCatalogGateBehaviorTests
 
         try
         {
-            // 池里两个成员：优先级高的那个是名录外未放行（要被拦），低的那个在名录内（该顶上来）。
+            // 两条线路：顺位在前的那条是名录外未放行（要被拦），在后的那条在名录内（该顶上来）。
+            // Seed 默认把名录内那条排在前面，这里把顺位对调，让被拦的成为主选。
             await SeedAsync(gatewayData.Database, configuration);
-            await gatewayData.Database.GetCollection<BsonDocument>("llmgw_model_pools").UpdateOneAsync(
-                Builders<BsonDocument>.Filter.Eq("_id", PoolId),
-                Builders<BsonDocument>.Update.Set("Models", new BsonArray
-                {
-                    new BsonDocument
-                    {
-                        { "ModelId", OutsideModel }, { "PlatformId", PlatformId }, { "Priority", 1 },
-                        { "HealthStatus", 0 }, { "IsMain", true },
-                    },
-                    new BsonDocument
-                    {
-                        { "ModelId", CatalogModel }, { "PlatformId", PlatformId }, { "Priority", 2 },
-                        { "HealthStatus", 0 }, { "IsMain", false },
-                    },
-                }));
+            var offerings = gatewayData.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
+            await offerings.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", "catalog-gate-offering-out"),
+                Builders<BsonDocument>.Update.Set("Priority", 10));
+            await offerings.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", "catalog-gate-offering-in"),
+                Builders<BsonDocument>.Update.Set("Priority", 20));
 
             var resolver = new ModelResolver(
                 mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
-            // 不钉成员：走池调度，主选会是优先级最高的那个（名录外未放行）。
+            // 不点名：走对外模型的顺位，主选是排在最前的那条（名录外未放行）。
             var routed = await resolver.ResolveAsync(Caller, ModelTypes.Chat);
 
             routed.FailureCode.ShouldNotBe(
                 GatewayRouteFailure.ModelNotInCatalog,
-                "池里还有过门的成员，却让整条请求失败——一个成员的问题被放大成整条 appCaller 不可用");
+                "这条模型下还有过门的线路，却让整条请求失败——一个成员的问题被放大成整条 appCaller 不可用");
             routed.Success.ShouldBeTrue(routed.ErrorMessage);
             routed.ActualModel.ShouldBe(
                 CatalogModel,
-                "顶上来的必须是过门的那个成员，不能把被拦下的那个原样放出去");
+                "顶上来的必须是过门的那条线路，不能把被拦下的那个原样放出去");
         }
         finally
         {
@@ -446,29 +443,42 @@ public sealed class ModelCatalogGateBehaviorTests
                 ModelPoolId = PoolId,
             });
 
-        var pool = new ModelGroup
+        // 一个对外模型 + 两条线路：名录内的顺位在前，名录外未放行的在后。
+        // 这里原本建的是模型池；池退场后，「一条链上混进一个过不了名录门的成员」
+        // 换成「一个对外模型下挂着一条过不了门的线路」——要防的事没变。
+        await InsertAsync(database, "llmgw_logical_models", new GatewayLogicalModel
         {
-            Id = PoolId,
-            Name = "名录门用例池",
-            Code = "catalog-gate",
+            Id = LogicalModelId,
+            PublicId = "catalog-gate",
+            PublicIdNormalized = "catalog-gate",
+            Name = "名录门用例",
             ModelType = ModelTypes.Chat,
-            Models =
-            [
-                new ModelGroupItem
-                {
-                    PlatformId = PlatformId, ModelId = CatalogModel,
-                    Priority = 0, HealthStatus = ModelHealthStatus.Healthy,
-                },
-                new ModelGroupItem
-                {
-                    PlatformId = PlatformId, ModelId = OutsideModel,
-                    Priority = 1, HealthStatus = ModelHealthStatus.Healthy,
-                },
-            ],
-        };
-        var poolDocument = pool.ToBsonDocument();
-        poolDocument["TenantId"] = GatewayTenantDefaults.InternalTenantId;
-        await database.GetCollection<BsonDocument>("llmgw_model_pools").InsertOneAsync(poolDocument);
+            Capabilities = ["chat"],
+            IsDefaultForType = true,
+            Enabled = true,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-offering-in",
+            LogicalModelId = LogicalModelId,
+            TargetId = CatalogModelId,
+            TargetKind = "model",
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 10,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-offering-out",
+            LogicalModelId = LogicalModelId,
+            TargetId = OutsideModelId,
+            TargetKind = "model",
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 20,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
 
         var encryptedKey = ApiKeyCryptoKeyRing.Encrypt("sk-catalog-gate-test", configuration);
         await InsertAsync(database, "llmgw_platforms", new LLMPlatform

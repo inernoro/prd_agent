@@ -518,6 +518,30 @@ public class ModelResolver : IModelResolver
                 appCallerCode);
         }
 
+        /*
+          还带着模型池绑定的调用方：照常按对外模型解析，但**绝不静默**。
+
+          池路由已经退场，`AllowedModelPoolIds` / `DefaultModelPoolId` / `ModelPoolId`
+          这几个字段没有任何运行时消费方了。可控制台的 appCaller 页还留着那几个控件，
+          页面写着「下次请求生效」——运维保存成功、以为自己把流量指到了某个池，实际
+          这次解析走的是别的路。一次成功的保存变成了一个静默的空操作（Codex 第 53 轮 P1）。
+
+          这里不改成 fail closed：池退场不该反过来把还在跑的调用方打挂（线上仍有两个
+          带着这种残留字段）。要消灭的是「静默」而不是「放行」——所以照常解析，同时
+          说清是谁的什么配置不再生效、于是这次按什么解析、下一步该做什么
+          （external-cause-first：第一句给外因，技术细节靠后）。
+        */
+        var stalePoolBinding = caller?.StalePoolBinding;
+        if (!string.IsNullOrWhiteSpace(stalePoolBinding))
+        {
+            _logger.LogWarning(
+                "调用方 {AppCallerCode} 的配置里还绑着模型池 {PoolId}，而模型池路由已经退场："
+                + "这次解析按「对外模型」走，那条绑定不起作用，无需处理；"
+                + "要让它固定走某个模型，去模型页把那个模型「指定调用方」认领它。"
+                + "技术细节：ModelType={ModelType} · 残留字段来自 llmgw_app_callers",
+                appCallerCode, stalePoolBinding, modelType);
+        }
+
         // 第二档：对外模型目录。钉死了具体上游模型时不走目录——那是精确语义，见第三档。
         if (string.IsNullOrWhiteSpace(pinnedPlatformId) && string.IsNullOrWhiteSpace(pinnedModelId))
         {
@@ -1616,10 +1640,14 @@ public class ModelResolver : IModelResolver
             // 没登记过不等于不放行：这类调用方照样能点名一个公开的对外模型。
             if (record is null) return new GatewayCallerStatus(false, null, null);
 
+            var stalePool = new[] { record.ModelPoolId, record.DefaultModelPoolId }
+                .Concat(record.AllowedModelPoolIds ?? [])
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+
             var status = GatewayAppCallerPolicy.NormalizeStatus(record.Status);
             return GatewayAppCallerPolicy.AllowsTraffic(status)
-                ? new GatewayCallerStatus(false, status, null)
-                : new GatewayCallerStatus(true, status, $"appcaller-status-{status}");
+                ? new GatewayCallerStatus(false, status, null, StalePoolBinding: stalePool)
+                : new GatewayCallerStatus(true, status, $"appcaller-status-{status}", StalePoolBinding: stalePool);
         }
         catch (Exception ex)
         {
@@ -1638,7 +1666,13 @@ public class ModelResolver : IModelResolver
         bool TrafficRejected,
         string? Status,
         string? BlockReason,
-        bool ConfigPlaneUnavailable = false);
+        bool ConfigPlaneUnavailable = false,
+        /// <summary>
+        /// 这条 appCaller 还留着的模型池绑定。**只用来告警，不参与任何判定**——
+        /// 池路由已经退场，留着它是为了把「你配的那个绑定不再生效」说出口，
+        /// 而不是让它重新影响解析。
+        /// </summary>
+        string? StalePoolBinding = null);
 
 
 
