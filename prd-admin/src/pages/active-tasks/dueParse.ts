@@ -7,7 +7,7 @@
  * 认不出来就老老实实认不出来，让人点胶囊 —— 猜错比不猜更烦人。
  */
 
-import { endOfDay } from './dueTime';
+import { addDays, dayOf, endOfDay, monthOf, teamDate, teamDay, weekdayOf, yearOf } from './dueTime';
 
 export interface DueMatch {
   /** 识别到的时间，ISO 字符串 */
@@ -20,9 +20,7 @@ export interface DueMatch {
 
 
 function plusDays(n: number): Date {
-  const d = new Date();
-  d.setDate(d.getDate() + n);
-  return endOfDay(d);
+  return endOfDay(addDays(teamDay(), n));
 }
 
 const WEEKDAYS: Record<string, number> = {
@@ -31,18 +29,16 @@ const WEEKDAYS: Record<string, number> = {
 
 /** 本周的周 X；今天已过就取下周同一天（和日历 App 的直觉一致） */
 function thisWeekday(target: number): Date {
-  const d = new Date();
-  const delta = (target - d.getDay() + 7) % 7;
-  d.setDate(d.getDate() + (delta === 0 ? 7 : delta));
-  return endOfDay(d);
+  const today = teamDay();
+  const delta = (target - weekdayOf(today) + 7) % 7;
+  return endOfDay(addDays(today, delta === 0 ? 7 : delta));
 }
 
 /** 下周的周 X */
 function nextWeekday(target: number): Date {
-  const d = new Date();
-  const toNextMonday = ((1 - d.getDay() + 7) % 7) || 7;
-  d.setDate(d.getDate() + toNextMonday + ((target === 0 ? 7 : target) - 1));
-  return endOfDay(d);
+  const today = teamDay();
+  const toNextMonday = ((1 - weekdayOf(today) + 7) % 7) || 7;
+  return endOfDay(addDays(today, toNextMonday + ((target === 0 ? 7 : target) - 1)));
 }
 
 /** 规则表：一行一条，按先长后短排 —— 「大后天」必须排在「后天」前面，否则永远匹配不到 */
@@ -52,26 +48,24 @@ const RULES: { re: RegExp; when: (m: RegExpMatchArray) => Date }[] = [
   { re: /今天|今日|今晚/, when: () => plusDays(0) },
   { re: /明天|明日/, when: () => plusDays(1) },
   { re: /这?个?(?:周|礼拜)末|本周末/, when: () => {
-    const d = new Date();
-    const delta = (6 - d.getDay() + 7) % 7 || 7;
-    d.setDate(d.getDate() + delta);
-    return endOfDay(d);
+    const today = teamDay();
+    return endOfDay(addDays(today, (6 - weekdayOf(today) + 7) % 7 || 7));
   } },
   { re: /下(?:个)?(?:周|星期|礼拜)([一二三四五六日天])/, when: (m) => nextWeekday(WEEKDAYS[m[1]]) },
   { re: /(?:本|这)?(?:周|星期|礼拜)([一二三四五六日天])/, when: (m) => thisWeekday(WEEKDAYS[m[1]]) },
   { re: /(\d{1,2})\s*天(?:后|内|之后)/, when: (m) => plusDays(Number(m[1])) },
   { re: /(\d{1,2})\s*月\s*(\d{1,2})\s*[日号]/, when: (m) => {
-    const now = new Date();
+    const today = teamDay();
     const month = Number(m[1]) - 1;
     const day = Number(m[2]);
-    let year = now.getFullYear();
+    let year = yearOf(today);
     // 已经过去的月份按明年算 —— 12 月写「1月5日」指的是下一年
-    if (month < now.getMonth() || (month === now.getMonth() && day < now.getDate())) year += 1;
-    return endOfDay(new Date(year, month, day));
+    if (month < monthOf(today) || (month === monthOf(today) && day < dayOf(today))) year += 1;
+    return endOfDay(teamDate(year, month, day));
   } },
   { re: /月底/, when: () => {
-    const d = new Date();
-    return endOfDay(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+    const today = teamDay();
+    return endOfDay(teamDate(yearOf(today), monthOf(today) + 1, 0));
   } },
 ];
 

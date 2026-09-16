@@ -40,7 +40,7 @@ public class ActiveTaskBoardInvariantTests
     [Fact]
     public void 脱敏之后不许剩下任何原文字符()
     {
-        // 匿名面板默认就是开的，而任务标题开头最常见的正是客户名、项目代号、缺陷编号。
+        // 匿名面板一旦打开就是对着公网的，而任务标题开头最常见的正是客户名、项目代号、缺陷编号。
         // 「留个首字有形状」和「看不到标题正文」这两件事不能同时要 —— 留一个字就是漏一个字。
         var 敏感 = new[]
         {
@@ -194,6 +194,43 @@ public class ActiveTaskBoardInvariantTests
     /// 按路由属性切出某个端点的方法体（到下一个 [Http… 为止）。
     /// 关键字定位会命中别的方法里同名的字符串，判据必须锚在唯一的东西上。
     /// </summary>
+    [Fact]
+    public void 匿名看板默认必须是关的()
+    {
+        // 这一屏对着的是不需要登录的任何人，端出去的是同事真名与此刻在做什么。
+        // 默认开过一版：部署那一刻起，只要有人知道地址就能看到全公司谁在忙谁卡住，
+        // 而当时前端连关掉它的入口都还没接上。安全默认只能是关，由管理员显式打开。
+        Assert.False(new ActiveTaskBoardSettings().AnonymousEnabled);
+
+        // 顺带钉住另外三项的默认值：它们现在有界面可改了，改不动的那一版不能再回来
+        var d = new ActiveTaskBoardSettings();
+        Assert.Equal(AnonymousVisibility.Masked, d.AnonymousMode);
+        Assert.Equal(120, d.BlockedEscalateMinutes);
+        Assert.Equal(8, d.HeavyStackThreshold);
+    }
+
+    [Fact]
+    public void 要你看一下的那几个人_与这一屏标红的那几个人必须是同一批()
+    {
+        // 事故形状：needsYou 只数了「卡够时长的」和「没活的」，堆超阈值的只进排序不进计数。
+        // 于是结论句写着「N 个人都在推进，没有要你管的」，底下明晃晃标着两个堆红了的人 ——
+        // 结论和它总结的那些行自相矛盾（conclusion-before-numbers）。
+        var shared = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskShared.cs"));
+
+        // 判定只许有一处定义：排序与计数各写一份 x.StandbyCount >= threshold，
+        // 就是下一次「改了一边忘了另一边」的温床（判据分裂）。
+        var 定义处 = shared.Split("StandbyCount >= ").Length - 1;
+        Assert.True(定义处 == 1, $"「堆太多」的判定被写了 {定义处} 处，必须收敛成 Overloaded 一处");
+
+        var at = shared.IndexOf("var needsYou = ", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到 needsYou 的计算");
+        var line = shared[at..shared.IndexOf(';', at)];
+        Assert.Contains("Escalated", line);
+        Assert.Contains("\"empty\"", line);
+        Assert.Contains("Overloaded", line);
+    }
+
     private static string Endpoint(string routeAttribute)
     {
         var src = Controller();

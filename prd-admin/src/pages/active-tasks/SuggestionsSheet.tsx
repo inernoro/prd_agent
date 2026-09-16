@@ -92,9 +92,22 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     if (checked.length === 0) { toast.error('先勾几条'); return; }
     setRows([]);
     setSkipped(null);
+    // 行号从头开始数，那么「哪几行已经建过」也必须跟着清掉：这两个 ref 是拿行号当键的，
+    // 只清 seq 会让新拆出来的第一行顶着上一代的 s1，被下面的过滤当成「已经建过」跳过，
+    // 然后拿上一代的任务 id 去标记这批建议 —— 任务没建、来源却记成了已吸取。
     seq.current = 0;
+    builtKeys.current.clear();
+    doneIds.current = [];
     void start({ body: { suggestionIds: checked, storeIds, extraHint: hint.trim() || null } });
   }, [checked, storeIds, hint, start]);
+
+  // 建任务那几秒不许关窗：abort() 只掐得断 SSE，掐不断底下正在排队跑的 createActiveTask
+  // 与最后那次标记已吸取。窗关了活照建、建议照了结，用户以为自己取消了，其实没有。
+  const onRequestClose = useCallback(() => {
+    if (busy) { toast.error('正在建任务，先等这几秒'); return; }
+    abort();
+    onClose();
+  }, [busy, abort, onClose]);
 
   const onConfirm = useCallback(async () => {
     // 按钮已经禁用了，这里是第二道 —— 禁用状态被别的改动碰掉时不至于直接丢数据
@@ -191,7 +204,7 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
       // 它们的来源建议也一并从收件箱消失。ImportSheet 那边同理。
       confirmDisabled={busy || loading || streaming || (!hasDrafts && checked.length === 0)}
       onConfirm={() => void onConfirm()}
-      onClose={() => { abort(); onClose(); }}
+      onClose={onRequestClose}
     >
       {hasDrafts ? (
         <>

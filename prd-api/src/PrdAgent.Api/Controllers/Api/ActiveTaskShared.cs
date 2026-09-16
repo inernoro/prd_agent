@@ -232,8 +232,8 @@ public static class ActiveTaskShared
     /// <summary>
     /// 脱敏标题：只留长度感，一个字都不留。
     ///
-    /// 这里曾经保留开头一到两个字（理由是「有点形状，不至于像空行」）。但匿名面板
-    /// <see cref="ActiveTaskBoardSettings.AnonymousEnabled"/> 默认就是开的，而任务标题
+    /// 这里曾经保留开头一到两个字（理由是「有点形状，不至于像空行」）。但匿名面板一旦
+    /// <see cref="ActiveTaskBoardSettings.AnonymousEnabled"/> 被打开就是对着公网的，而任务标题
     /// 开头最常见的恰恰是客户名、项目代号、缺陷编号 —— 留两个字就等于把这一屏
     /// 「看不到标题正文」的承诺撕掉一角。长度感用点的个数给就够了，不需要真字符。
     /// 不返回空串，否则前端会渲染成空行。
@@ -324,7 +324,7 @@ public static class ActiveTaskShared
         // 只是需要知道，不是需要现在动手。
         var sorted = people
             .OrderBy(TeamRowRank)
-            .ThenByDescending(p => p.Status == "running" && p.StandbyCount >= settings.HeavyStackThreshold ? 1 : 0)
+            .ThenByDescending(p => Overloaded(p, settings.HeavyStackThreshold) ? 1 : 0)
             .ThenBy(p => p.DisplayName, StringComparer.Ordinal)
             .ToList();
 
@@ -334,7 +334,10 @@ public static class ActiveTaskShared
             .Limit(8)
             .ToListAsync(ct);
 
-        var needsYou = sorted.Count(p => p.Escalated || p.Status == "empty");
+        // 「要你看一下」的三种人必须与这一屏标出来的三种人是同一批：卡够时长的、没活的、
+        // 以及堆超阈值的。漏掉最后一种，就会出现「N 个人都在推进，没有要你管的」这句话
+        // 底下明晃晃标着两个堆红了的人 —— 结论句和它总结的那些行自相矛盾。
+        var needsYou = sorted.Count(p => p.Escalated || p.Status == "empty" || Overloaded(p, settings.HeavyStackThreshold));
 
         return new
         {
@@ -364,6 +367,13 @@ public static class ActiveTaskShared
     }
 
     /// <summary>团队头条：一句话，只说有没有要他管的，不报数字堆。</summary>
+    /// <summary>
+    /// 堆太多 —— 排序与结论句共用这一个判定，不许各写一份。
+    /// 只对正在推进的人成立：卡住和没活各有各的名目，不该再被算一遍。
+    /// </summary>
+    internal static bool Overloaded(TeamRow p, int heavyStackThreshold)
+        => p.Status == "running" && p.StandbyCount >= heavyStackThreshold;
+
     private static string BuildTeamHeadline(int total, int needsYou)
     {
         if (total == 0) return "还没有人汇报在做什么。";

@@ -11,7 +11,7 @@
  */
 import { useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { dayKey, endOfDay, isSameDay } from './dueTime';
+import { addDays, dayKey, dayOf, endOfDay, isSameDay, monthOf, teamDate, teamDay, weekdayOf, yearOf } from './dueTime';
 
 export interface DuePickerProps {
   /** 已选的时间，ISO 字符串；null 表示没设 */
@@ -20,44 +20,43 @@ export interface DuePickerProps {
 }
 
 function shift(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() + days);
-  return endOfDay(d).toISOString();
+  return endOfDay(addDays(teamDay(), days)).toISOString();
 }
 
 /** 本周末 = 最近的周六；今天已是周六或周日就取下一个周六 */
 function weekendISO(): string {
-  const d = new Date();
-  return shift((6 - d.getDay() + 7) % 7 || 7);
+  return shift((6 - weekdayOf(teamDay()) + 7) % 7 || 7);
 }
 
+/** 两个 ISO 瞬间是不是落在团队日历的同一天 */
 function sameDay(iso: string | null, other: string): boolean {
   if (!iso) return false;
-  return dayKey(new Date(iso)) === dayKey(new Date(other));
+  return dayKey(teamDay(new Date(iso))) === dayKey(teamDay(new Date(other)));
 }
 
 const WEEK = ['一', '二', '三', '四', '五', '六', '日'];
 
-/** 某个月要画几格：从当月 1 号所在那一周的周一起，补满整周 */
+/**
+ * 某个月要画几格：从当月 1 号所在那一周的周一起，补满整周。
+ * anchor 与返回的格子都是团队日历的坐标 Date（见 dueTime）。
+ */
 function gridOf(anchor: Date): Date[] {
-  const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-  const lead = (first.getDay() + 6) % 7; // 周一为一周之首
-  const start = new Date(first);
-  start.setDate(1 - lead);
+  const first = teamDate(yearOf(anchor), monthOf(anchor), 1);
+  const lead = (weekdayOf(first) + 6) % 7; // 周一为一周之首
+  const start = addDays(first, -lead);
   const cells: Date[] = [];
   for (let i = 0; i < 42; i += 1) {
-    const d = new Date(start);
-    d.setDate(start.getDate() + i);
+    const d = addDays(start, i);
     cells.push(d);
     // 已经画完当月且走完整周就收手，不必固定六行
-    if (i >= 27 && d.getDay() === 0 && d.getMonth() !== anchor.getMonth()) break;
+    if (i >= 27 && weekdayOf(d) === 0 && monthOf(d) !== monthOf(anchor)) break;
   }
   return cells;
 }
 
 function MonthGrid({ value, onPick }: { value: string | null; onPick: (d: Date) => void }) {
-  const today = new Date();
-  const [anchor, setAnchor] = useState(() => (value ? new Date(value) : today));
+  const today = teamDay();
+  const [anchor, setAnchor] = useState(() => (value ? teamDay(new Date(value)) : today));
   const cells = gridOf(anchor);
 
   return (
@@ -67,16 +66,16 @@ function MonthGrid({ value, onPick }: { value: string | null; onPick: (d: Date) 
           type="button"
           className="atb-cal__nav"
           aria-label="上个月"
-          onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() - 1, 1))}
+          onClick={() => setAnchor(teamDate(yearOf(anchor), monthOf(anchor) - 1, 1))}
         >
           <ChevronLeft size={16} />
         </button>
-        <span className="atb-cal__month">{anchor.getFullYear()} 年 {anchor.getMonth() + 1} 月</span>
+        <span className="atb-cal__month">{yearOf(anchor)} 年 {monthOf(anchor) + 1} 月</span>
         <button
           type="button"
           className="atb-cal__nav"
           aria-label="下个月"
-          onClick={() => setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + 1, 1))}
+          onClick={() => setAnchor(teamDate(yearOf(anchor), monthOf(anchor) + 1, 1))}
         >
           <ChevronRight size={16} />
         </button>
@@ -84,18 +83,18 @@ function MonthGrid({ value, onPick }: { value: string | null; onPick: (d: Date) 
       <div className="atb-cal__grid" role="grid">
         {WEEK.map((w) => <span className="atb-cal__wd" key={w}>{w}</span>)}
         {cells.map((d) => {
-          const outside = d.getMonth() !== anchor.getMonth();
-          const on = !!value && isSameDay(d, new Date(value));
+          const outside = monthOf(d) !== monthOf(anchor);
+          const on = !!value && isSameDay(d, teamDay(new Date(value)));
           return (
             <button
               type="button"
               key={dayKey(d)}
               className={`atb-cal__day${outside ? ' atb-cal__day--out' : ''}${on ? ' atb-cal__day--on' : ''}${isSameDay(d, today) ? ' atb-cal__day--today' : ''}`}
               aria-pressed={on}
-              aria-label={`${d.getMonth() + 1}月${d.getDate()}日`}
+              aria-label={`${monthOf(d) + 1}月${dayOf(d)}日`}
               onClick={() => onPick(d)}
             >
-              {d.getDate()}
+              {dayOf(d)}
             </button>
           );
         })}

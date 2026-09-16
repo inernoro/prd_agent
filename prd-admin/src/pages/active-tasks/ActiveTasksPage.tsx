@@ -164,14 +164,23 @@ export function ActiveTasksPage() {
     await run(() => reopenActiveTask(id));
   }, [justDone, run]);
 
-  /** 补那句「做成了什么样」。停手 600ms 就存，不需要按任何按钮。 */
+  /**
+   * 补那句「做成了什么样」。停手 600ms 就存，不需要按任何按钮。
+   *
+   * 存失败必须说出来：这是这句话**唯一**的落盘动作，没有第二次机会。
+   * 原来只 `.then(() => load())`，连 res.success 都不看 —— 网络抖一下，用户接着关掉
+   * 这条提示或者走开，那句话就没了，而他全程以为存上了（自动保存本来就不给回执）。
+   */
   const onNoteChange = useCallback((next: string) => {
     setNote(next);
     if (!justDone) return;
     const id = justDone.id;
     if (noteTimer.current) window.clearTimeout(noteTimer.current);
     noteTimer.current = window.setTimeout(() => {
-      void updateActiveTask(id, { closingNote: next.trim() }).then(() => void load(true));
+      void updateActiveTask(id, { closingNote: next.trim() }).then((res) => {
+        if (!res.success) { toast.error(res.error?.message ?? '这句话没存上，再改一个字会重试'); return; }
+        void load(true);
+      });
     }, 600);
   }, [justDone, load]);
 

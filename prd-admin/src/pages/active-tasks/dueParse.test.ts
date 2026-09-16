@@ -1,13 +1,17 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { parseDueFromTitle } from './dueParse';
+import { dayKey, teamDay } from './dueTime';
 
-/** 固定在 2026-09-14（周一）12:00，否则「周五」「月底」这类断言会随真实日期漂 */
-const NOW = new Date(2026, 8, 14, 12, 0, 0);
+/**
+ * 固定在团队日历 2026-09-14（周一）12:00，否则「周五」「月底」这类断言会随真实日期漂。
+ * 写成绝对瞬间而不是 `new Date(2026, 8, 14, 12)`：后者是**本机**时区的 12 点，
+ * 于是这批断言在 CI（UTC）与开发机上根本不是同一个团队日 —— 而这正是被测代码要治的病。
+ */
+const NOW = new Date('2026-09-14T04:00:00Z');
 
+/** 按团队日历读一个 ISO 落在哪一天。不许用 getFullYear/getDate —— 那读的是本机日历 */
 function dayOf(iso: string): string {
-  const d = new Date(iso);
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return dayKey(teamDay(new Date(iso)));
 }
 
 describe('从标题里认「什么时候要」', () => {
@@ -54,9 +58,24 @@ describe('从标题里认「什么时候要」', () => {
     expect(dayOf(parseDueFromTitle('月底出账')!.iso)).toBe('2026-09-30');
   });
 
-  it('时间统一落在当天 18:00 —— 「今天要」指今天下班前，不是此刻', () => {
-    const d = new Date(parseDueFromTitle('今天发出去')!.iso);
-    expect(d.getHours()).toBe(18);
+  it('时间统一落在团队日历当天 18:00 —— 「今天要」指今天下班前，不是此刻', () => {
+    // 断言绝对瞬间，不是 getHours()：后者读本机时区，在 UTC 的 CI 上读出 10 也「对」，
+    // 于是这条断言就永远测不出「按谁的 18 点」这个问题。团队 18:00 = 10:00Z，恒成立。
+    expect(parseDueFromTitle('今天发出去')!.iso).toBe('2026-09-14T10:00:00.000Z');
+  });
+
+  it('日期按团队日历算，不按浏览器所在时区 —— 人在美西点「明天」，不该落成团队的后天', () => {
+    // 这条是上一版的红绿判据：旧实现用 new Date() + setDate()（本机日历）+ setHours(18)
+    // （本机 18 点），只有运行在东八区时才恰好产出这个瞬间。
+    expect(parseDueFromTitle('明天交周报')!.iso).toBe('2026-09-15T10:00:00.000Z');
+  });
+
+  it('团队日已经翻页、UTC 还没翻页的那一小时里，「今天」跟团队走', () => {
+    // 2026-09-14T16:30Z = 团队 09-15 00:30（团队已是 15 号），而 UTC 仍是 14 号、
+    // 美西仍是 13 号。三本日历在这一刻互不相同，只有跟团队走才对。
+    vi.setSystemTime(new Date('2026-09-14T16:30:00Z'));
+    expect(dayOf(parseDueFromTitle('今天发出去')!.iso)).toBe('2026-09-15');
+    expect(dayOf(parseDueFromTitle('明天发出去')!.iso)).toBe('2026-09-16');
   });
 
   it('连接词只剥整词，不啃掉标题第一个字', () => {

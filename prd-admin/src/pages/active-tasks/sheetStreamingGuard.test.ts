@@ -59,3 +59,68 @@ describe('两个浮层的批量建任务', () => {
     expect(body, `${file} 没有在有失败时提前返回（会继续走到关窗）`).toMatch(/if \(failed\.length > 0\)[\s\S]*?return;/);
   });
 });
+
+/**
+ * 建任务那几秒不许关窗。
+ *
+ * 事故形状：`abort()` 只掐得断 SSE，掐不断底下正在排队跑的 `createActiveTask` 与最后
+ * 那次标记已吸取。用户按取消 / 点遮罩 / 敲 ESC，窗关了，活照建、建议照了结 ——
+ * 他以为自己取消了，其实没有。三条关闭路径在 TaskSheet 里走的是同一个 onClose，
+ * 所以只要传进去的那个函数先看一眼写入状态就够。
+ */
+describe('两个浮层的关闭按钮', () => {
+  const read = (f: string) => readFileSync(resolve(__dirname, f), 'utf-8');
+
+  it.each([
+    ['SuggestionsSheet.tsx', 'busy'],
+    ['ImportSheet.tsx', 'saving'],
+  ])('%s 在写入进行中不许关闭', (file, flag) => {
+    const src = read(file);
+
+    // 传给 TaskSheet 的必须是那个带守卫的函数，不是原来的内联 abort+onClose
+    expect(src, `${file} 的 onClose 没走 onRequestClose`).toContain('onClose={onRequestClose}');
+
+    const at = src.indexOf('const onRequestClose');
+    expect(at, `${file} 里找不到 onRequestClose`).toBeGreaterThan(-1);
+    const body = src.slice(at, at + 320);
+    expect(body, `${file} 的 onRequestClose 没看写入状态 ${flag}`).toContain(`if (${flag})`);
+    expect(body, `${file} 的 onRequestClose 写入中没有提前返回`).toMatch(/if \([a-z]+\) \{[^}]*return;/);
+  });
+
+  it('重新生成时把「哪几行已经建过」一起清掉', () => {
+    // 这两个 ref 拿行号当键。只清 seq 会让新拆出来的第一行顶着上一代的 s1，
+    // 被「已经建过」的过滤跳过，然后拿上一代的任务 id 去标记这批建议。
+    const src = read('SuggestionsSheet.tsx');
+    const at = src.indexOf('const onAbsorb');
+    const body = src.slice(at, at + 700);
+    expect(body).toContain('seq.current = 0');
+    expect(body, 'onAbsorb 没清 builtKeys').toContain('builtKeys.current.clear()');
+    expect(body, 'onAbsorb 没清 doneIds').toContain('doneIds.current = []');
+  });
+});
+
+/**
+ * 看板设置必须有人调用。
+ *
+ * 事故形状（`predicate-and-wiring-discipline` 形状 2）：`getBoardSettings` /
+ * `saveBoardSettings` 封装好了、后端端点也在，但全前端没有一处调用它。于是
+ * 「匿名看板三档可见性、可以整个关掉」这句承诺只兑现了后端那一半 —— 管理员既关不掉
+ * 它，也改不了档位。这种缺陷不会报错、页面照常渲染、测试照常绿，
+ * 只有真去找这个开关的人才会发现它不存在。
+ */
+describe('看板设置的接线', () => {
+  it('两个设置接口都有页面在用，不是只建了一半', () => {
+    const sheet = readFileSync(resolve(__dirname, 'BoardSettingsSheet.tsx'), 'utf-8');
+    expect(sheet).toContain('getBoardSettings');
+    expect(sheet).toContain('saveBoardSettings');
+    // 四项设置都要给得出来，少一项就等于那一项仍然只能打接口改
+    for (const field of ['anonymousEnabled', 'anonymousMode', 'blockedEscalateMinutes', 'heavyStackThreshold']) {
+      expect(sheet, `设置面板没给 ${field}`).toContain(field);
+    }
+
+    // 而这张面板自己也得有人挂上去 —— 否则只是把「建了一半」挪了个位置
+    const team = readFileSync(resolve(__dirname, 'TeamBoardPage.tsx'), 'utf-8');
+    expect(team, '团队页没有挂设置面板').toContain('<BoardSettingsSheet');
+    expect(team, '团队页没有打开设置面板的入口').toContain('setSettingsOpen(true)');
+  });
+});

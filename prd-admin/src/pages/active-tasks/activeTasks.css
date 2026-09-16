@@ -448,6 +448,21 @@
 
 .atb-sheet__body { display: flex; flex-direction: column; gap: 14px; }
 
+/*
+ * 浮层里的说明字：模型名、跳过了哪几条、某项设置意味着什么。
+ *
+ * 这个类名此前有六处在用而样式一直不存在 —— 类名写了、规则没写，页面照常渲染，
+ * 只是那几行字跟正文一样大一样黑，挤成一团。CSS 不进 tsc/lint/vitest 的判据，
+ * 所以这种「引用了一个不存在的类」从头到尾不会红，只有人真看那一屏才发现。
+ * 行高松一档：它经常是一整句话，不是一个标签。
+ */
+.atb-sheet__hint {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin-top: -4px;
+}
+
 .atb-grabber {
   width: 36px;
   height: 5px;

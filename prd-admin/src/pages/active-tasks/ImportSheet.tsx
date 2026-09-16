@@ -94,6 +94,13 @@ export function ImportSheet({ onClose, onCreated }: ImportSheetProps) {
   const hasDrafts = rows.length > 0;
   const confirmLabel = hasDrafts ? (picked.length > 0 ? `加 ${picked.length} 件` : '重拆') : '拆开看看';
 
+  // 与 SuggestionsSheet 同一口径：建任务那几秒不许关窗，abort() 掐不断已经在跑的创建循环
+  const onRequestClose = useCallback(() => {
+    if (saving) { toast.error('正在加任务，先等这几秒'); return; }
+    abort();
+    onClose();
+  }, [saving, abort, onClose]);
+
   return (
     <TaskSheet
       title="粘一段话进来"
@@ -101,7 +108,7 @@ export function ImportSheet({ onClose, onCreated }: ImportSheetProps) {
       // 与 SuggestionsSheet 同一口径：流没完不许确认（那边点下去会丢掉后面才生成的条目）
       confirmDisabled={saving || streaming || (!hasDrafts && !text.trim())}
       onConfirm={() => void onConfirm()}
-      onClose={() => { abort(); onClose(); }}
+      onClose={onRequestClose}
     >
       {!hasDrafts && (
         <textarea

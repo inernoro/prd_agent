@@ -16,6 +16,7 @@ import { DuePicker } from './DuePicker';
 import { TaskSheet } from './TaskSheet';
 import { TaskShell } from './TaskShell';
 import { SuggestSheet } from './SuggestSheet';
+import { BoardSettingsSheet } from './BoardSettingsSheet';
 import { useVisiblePolling } from './usePolling';
 import { whenLabel } from './taskTime';
 import './activeTasks.css';
@@ -33,6 +34,7 @@ export function TeamBoardPage() {
   const [assignDue, setAssignDue] = useState<string | null>(null);
   // 提建议和派活是两码事：派活直接进对方队列，建议要对方自己吸取才算数
   const [suggestTo, setSuggestTo] = useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
@@ -93,6 +95,7 @@ export function TeamBoardPage() {
         <div className="atb-headact">
           <button className="atb-link" onClick={() => setSuggestTo('')}>提建议</button>
           <button className="atb-link" onClick={() => openAssign()}>派一件</button>
+          <button className="atb-link" onClick={() => setSettingsOpen(true)}>看板设置</button>
         </div>
       }
     >
@@ -191,6 +194,9 @@ export function TeamBoardPage() {
       )}
       {suggestTo !== null && (
         <SuggestSheet presetUserId={suggestTo || undefined} onClose={() => setSuggestTo(null)} />
+      )}
+      {settingsOpen && (
+        <BoardSettingsSheet onClose={() => setSettingsOpen(false)} onSaved={refresh} />
       )}
     </TaskShell>
   );

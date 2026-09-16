@@ -191,8 +191,15 @@ public class ActiveTaskBoardSettings
     /// <summary>匿名可见粒度：masked / full / headline，取值见 <see cref="AnonymousVisibility"/></summary>
     public string AnonymousMode { get; set; } = AnonymousVisibility.Masked;
 
-    /// <summary>匿名面板是否开放（关掉则公开地址直接 404）</summary>
-    public bool AnonymousEnabled { get; set; } = true;
+    /// <summary>
+    /// 匿名面板是否开放（关掉则公开地址直接 404）。
+    ///
+    /// 默认关。这一屏对着的是**不需要登录的任何人**，端出去的是同事的真名与此刻在做什么 ——
+    /// 这种东西的安全默认只能是关，由管理员在「大家在做什么」页显式打开。
+    /// 默认开过一版：部署那一刻起，只要有人知道地址就能看到全公司谁在忙谁卡住，
+    /// 而当时前端连关掉它的入口都还没接上。
+    /// </summary>
+    public bool AnonymousEnabled { get; set; }
 
     /// <summary>卡住多久自动升到管理侧的「需要你出手」（分钟）</summary>
     public int BlockedEscalateMinutes { get; set; } = 120;

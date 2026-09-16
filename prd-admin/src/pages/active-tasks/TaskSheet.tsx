@@ -72,8 +72,8 @@ export function TaskSheet({
       document.body.style.overflow = prevOverflow;
       restoreTo.current?.focus?.();
     };
-    // 故意只跑一次：这段是「浮层打开/关闭」的一次性布置，不是每次渲染的同步
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // 故意只跑一次：这段是「浮层打开/关闭」的一次性布置，不是每次渲染的同步。
+    // 上面那个转发函数不进依赖，所以这里不需要 eslint-disable —— 留着会被报成失效指令
   }, []);
 
   const sheet = (
