@@ -487,8 +487,20 @@ export class StateService {
       if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
-      if (migrateLegacyDataMigrationCredentials(this.state.dataMigrations)) {
+      const legacyUpgrade = migrateLegacyDataMigrationCredentials(this.state.dataMigrations);
+      if (legacyUpgrade.changed) {
         this.persistLegacyDataMigrationCredentialUpgrade();
+      }
+      if (legacyUpgrade.deferred.length > 0) {
+        // 外因在前：说清是谁、少了什么、要不要紧、下一步做什么。
+        // 推迟必须喊出来——不喊就是静默降级：管理员会以为凭据已经密封了。
+        console.warn(
+          `  [sealed-storage] 本实例还没有配置密封密钥（CDS_SECRET_KEY），` +
+            `${legacyUpgrade.deferred.length} 个数据迁移任务里的旧明文凭据暂时保持原样：` +
+            `${legacyUpgrade.deferred.join('、')}。` +
+            `这不是故障，服务照常启动；请用管理员身份调用 POST /cds-system/sealed-storage/initialize ` +
+            `装上密钥并重启，届时这些凭据会自动完成脱敏与密封。`,
+        );
       }
       if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];

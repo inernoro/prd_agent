@@ -248,7 +248,16 @@ describe('sealed data migration credentials', () => {
     }
   });
 
-  it('refuses to load legacy plaintext migration state without a sealing key', async () => {
+  // 曾经这条叫「没有密钥就拒绝加载」。改了（Codex P1，2026-09-16）：那个 fail-closed
+  // 造的是死锁——迁移跑在 initStateService 里、HTTP 服务起来之前，而唯一能装钥匙的入口
+  // POST /cds-system/sealed-storage/initialize 正是那个起不来的服务。一台存着旧明文、
+  // 又没配钥匙的实例会永远开不了机，连来装钥匙都做不到。
+  //
+  // 而它买到的东西是零：明文本来就躺在 state.json 里，拒绝启动并没有让它少躺一秒；
+  // 真正要守住的是「别在没钥匙时把它重写一遍」，这一条现在由「推迟时一个字节都不写」
+  // 保证（见 migration-credential-sealing-order.test.ts）。推迟会打一条外因在前的告警，
+  // 不是静默降级。
+  it('boots without a sealing key and leaves the legacy plaintext exactly where it was', async () => {
     delete process.env.CDS_SECRET_KEY;
     const box = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-migration-fail-closed-test-'));
     const statePath = path.join(box, 'state.json');
@@ -268,7 +277,16 @@ describe('sealed data migration credentials', () => {
     await state.flush();
 
     try {
-      expect(() => new StateService(statePath, box).load()).toThrow(/CDS_SECRET_KEY/);
+      const reloaded = new StateService(statePath, box);
+      expect(() => reloaded.load()).not.toThrow();
+
+      // 明文原样保留：推迟不改写状态，等装上钥匙重启再按原顺序脱敏加密封。
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8')) as {
+        dataMigrations?: Array<{ id: string; source?: { password?: string }; credentialsEncrypted?: unknown }>;
+      };
+      const entry = persisted.dataMigrations?.find((item) => item.id === 'legacy-without-key');
+      expect(entry?.source?.password).toBe('legacy-no-key-canary');
+      expect(entry?.credentialsEncrypted).toBeUndefined();
     } finally {
       fs.rmSync(box, { recursive: true, force: true });
     }

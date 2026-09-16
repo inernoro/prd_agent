@@ -262,16 +262,39 @@ export function unsealMigrationConnections(migration: DataMigration): {
   };
 }
 
+export interface LegacyMigrationUpgrade {
+  /** 有条目被升级；调用方必须立刻落盘。 */
+  changed: boolean;
+  /** 因为还没有密封密钥而被推迟的任务 id。状态原样不动，等有钥匙再升。 */
+  deferred: string[];
+}
+
 /** Upgrade persisted pre-sealing migrations in place. Callers must save the
- * state immediately when this returns true. Without a sealing key it throws,
- * so a legacy plaintext credential can never be silently loaded and re-saved. */
-export function migrateLegacyDataMigrationCredentials(migrations: DataMigration[]): boolean {
+ * state immediately when `changed` is true.
+ *
+ * 没有密封密钥时**推迟**而不是抛错。抛错的后果是死锁：这个迁移跑在
+ * `initStateService` 里、HTTP 服务起来之前，而唯一能装上密钥的入口
+ * （`POST /cds-system/sealed-storage/initialize`）正是那个起不来的 HTTP 服务——
+ * 一台存着旧明文凭据、又没配密钥的实例会永远开不了机，连来装钥匙都做不到
+ *（判据与接线纪律 形状 5：用变更前的状态去 gate 那个会修好它的变更）。
+ *
+ * 推迟不写入任何东西：明文留在它本来就在的地方，不多不少。等密钥装上、进程重启，
+ * 这个函数会照原顺序（先脱敏、再密封）把它升上去。推迟的条目由调用方喊出来，
+ * 不许无声无息（degradation-must-alarm）。
+ *
+ * 「同时存在明文与密封凭据」仍然抛错：那是状态损坏，不是缺钥匙，装钥匙也修不好。 */
+export function migrateLegacyDataMigrationCredentials(migrations: DataMigration[]): LegacyMigrationUpgrade {
   let changed = false;
+  const deferred: string[] = [];
   for (const migration of migrations) {
     const legacy = migrationCredentialPayload(migration.source, migration.target);
     if (!hasCredentialPayload(legacy)) continue;
     if (migration.credentialsEncrypted !== undefined) {
       throw new Error(`数据迁移任务 ${migration.id} 同时包含明文与密封凭据，拒绝启动`);
+    }
+    if (!isSealingEnabled()) {
+      deferred.push(migration.id);
+      continue;
     }
     // 先脱敏，再密封：publicDataMigration 是拿 source/target 上的明文密码去比对着
     // 抹掉 log / progressMessage / errorMessage 里的密码的。密封会把明文拿走，
@@ -301,7 +324,7 @@ export function migrateLegacyDataMigrationCredentials(migrations: DataMigration[
     migration.credentialsEncrypted = sealed.credentialsEncrypted;
     changed = true;
   }
-  return changed;
+  return { changed, deferred };
 }
 
 export function publicDataMigration(migration: DataMigration): DataMigration {

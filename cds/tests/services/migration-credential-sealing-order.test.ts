@@ -32,7 +32,7 @@ describe('密封旧版迁移凭据的顺序', () => {
     // companion：夹具确实带着明文密码与含密码的日志，否则下面的断言无意义。
     expect(migration.log).toContain('p@ss-SOURCE');
 
-    expect(migrateLegacyDataMigrationCredentials([migration])).toBe(true);
+    expect(migrateLegacyDataMigrationCredentials([migration]).changed).toBe(true);
 
     // 密封之后明文已不在 source/target 上。
     expect(migration.source.password).toBeUndefined();
@@ -68,7 +68,7 @@ describe('密封旧版迁移凭据的顺序', () => {
     // companion：夹具确实带着短口令与含口令的命令行。
     expect(migration.log).toContain('--password ab');
 
-    expect(migrateLegacyDataMigrationCredentials([migration])).toBe(true);
+    expect(migrateLegacyDataMigrationCredentials([migration]).changed).toBe(true);
 
     const log = migration.log ?? '';
     expect(log, '短口令跳过脱敏，密封之后这串密码就永久暴露了').not.toContain('--password ab');
@@ -108,5 +108,72 @@ describe('密封旧版迁移凭据的顺序', () => {
       .toBeGreaterThan(pushBackup);
     // 声明处不得直接把主文件塞进初值（那等于又排到了第一个）。
     expect(body.slice(declared, pushBackup)).not.toContain('this.filePath');
+  });
+});
+
+/**
+ * 没有密封密钥时必须能开得了机（Codex P1，2026-09-16）。
+ *
+ * 这个迁移跑在 initStateService 里、HTTP 服务起来之前，而唯一能装上密钥的入口
+ * （POST /cds-system/sealed-storage/initialize）正是那个还没起来的 HTTP 服务。
+ * 在这里抛错，等于让一台「存着旧明文凭据、又没配密钥」的实例永远开不了机，
+ * 连来装钥匙都做不到——用变更前的状态去 gate 那个正好能修好它的变更。
+ */
+describe('没有密封密钥时的启动路径', () => {
+  const previousKey = process.env.CDS_SECRET_KEY;
+  beforeAll(() => { delete process.env.CDS_SECRET_KEY; });
+  afterAll(() => {
+    if (previousKey === undefined) delete process.env.CDS_SECRET_KEY;
+    else process.env.CDS_SECRET_KEY = previousKey;
+  });
+
+  const legacy = (id: string): DataMigration => ({
+    id,
+    source: { kind: 'mongodb', uri: 'mongodb://h/db', username: 'u', password: 'p@ss-SOURCE' },
+    target: { kind: 'mongodb', uri: 'mongodb://h2/db', username: 'u', password: 'p@ss-TARGET' },
+    status: 'completed',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  } as unknown as DataMigration);
+
+  it('推迟而不是抛错，实例照常起得来', () => {
+    const migrations = [legacy('dm_a'), legacy('dm_b')];
+
+    const result = migrateLegacyDataMigrationCredentials(migrations);
+
+    expect(result.changed).toBe(false);
+    expect(result.deferred).toEqual(['dm_a', 'dm_b']);
+  });
+
+  it('推迟时一个字节都不写：明文留在它本来就在的地方，等有钥匙再按原顺序升', () => {
+    const migration = legacy('dm_a');
+
+    migrateLegacyDataMigrationCredentials([migration]);
+
+    expect(migration.source.password).toBe('p@ss-SOURCE');
+    expect(migration.target.password).toBe('p@ss-TARGET');
+    expect(migration.credentialsEncrypted).toBeUndefined();
+  });
+
+  it('装上密钥之后，同一份状态能正常升上去', () => {
+    const migration = legacy('dm_a');
+    migrateLegacyDataMigrationCredentials([migration]);
+
+    process.env.CDS_SECRET_KEY = 'test-sealing-key';
+    try {
+      const result = migrateLegacyDataMigrationCredentials([migration]);
+      expect(result.changed).toBe(true);
+      expect(result.deferred).toEqual([]);
+      expect(migration.source.password).toBeUndefined();
+      expect(migration.credentialsEncrypted).toBeDefined();
+    } finally {
+      delete process.env.CDS_SECRET_KEY;
+    }
+  });
+
+  it('明文与密封凭据同时存在仍然抛错：那是状态损坏，装钥匙也修不好', () => {
+    const migration = legacy('dm_corrupt');
+    (migration as unknown as { credentialsEncrypted: unknown }).credentialsEncrypted = { v: 1 };
+
+    expect(() => migrateLegacyDataMigrationCredentials([migration])).toThrow(/同时包含明文与密封凭据/);
   });
 });

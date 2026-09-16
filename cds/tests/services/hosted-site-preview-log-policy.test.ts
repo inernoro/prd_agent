@@ -24,9 +24,26 @@ describe('hosted site preview logging boundary', () => {
     expect(isHostedSitePreviewRequest(value)).toBe(true);
     expect(redactHostedSitePreviewLog(value)).toBe('/api/hosted-site-preview-files/[redacted]');
   });
-  it.each(['/api/hosted-site-preview-files-other/value', '/other/api/hosted-site-preview-files/value', '/api/hosted-site-preview-access-other', '/api/other?file=abc'])('leaves unrelated endpoints unchanged: %s', (value) => {
+  it.each(['/api/hosted-site-preview-files-other/value', '/api/hosted-site-preview-access-other', '/api/other?file=abc'])('leaves unrelated endpoints unchanged: %s', (value) => {
     expect(isHostedSitePreviewRequest(value)).toBe(false);
     expect(redactHostedSitePreviewLog(value)).toBe(value);
+  });
+  // 受保护的那一段可以排在任意外部前缀之后：API 支持子路径部署，到代理这里就是
+  // /platform/api/hosted-site-preview-files/bootstrap/<票据>。本文件本来就在特判 /_cds，
+  // 说明「/api 之前可以有前缀」是认的，只是此前只认那一个写死的值——于是这条安全加固
+  // 恰好漏在它自己要防的那种部署上，票据会原样留在记录下来的 URL 里（Codex P2）。
+  // 漏脱敏是永久的凭据泄漏，多脱敏只是日志少了一段路径：两边代价不对等，宁可宽。
+  it.each([
+    '/platform/api/hosted-site-preview-files/bootstrap/secret-ticket',
+    '/other/api/hosted-site-preview-files/value',
+  ])('redacts the protected route behind an external path base: %s', (value) => {
+    expect(isHostedSitePreviewRequest(value)).toBe(true);
+    expect(redactHostedSitePreviewLog(value)).not.toContain('secret-ticket');
+    expect(redactHostedSitePreviewLog(value)).toContain('/api/hosted-site-preview-files/[redacted]');
+  });
+  it('keeps the external prefix in the redacted copy so the log still says where it went', () => {
+    expect(redactHostedSitePreviewLog('/platform/api/hosted-site-preview-access/abc'))
+      .toBe('/platform/api/hosted-site-preview-access');
   });
   it('suppresses access descendant error paths using the same route boundary as MAP', () => {
     const value = `/API/%68osted-site-preview-access/${ticket}?extra=secret`;
