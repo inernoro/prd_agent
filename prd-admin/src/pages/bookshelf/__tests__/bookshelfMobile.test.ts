@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { AS_TYPE, AS_SPACE, AS_SIZE } from '@/lib/appStoreTokens';
 import { VOLUMES } from '@/lib/bookshelf/catalog';
-import { selectedVolumeFromUrl } from '../mobile/BookshelfMobile';
+import { selectedVolumeFromUrl, examIsActive } from '../mobile/BookshelfMobile';
 
 const DIR = path.resolve(__dirname, '..');
 const read = (rel: string) => fs.readFileSync(path.join(DIR, rel), 'utf-8');
@@ -284,5 +284,31 @@ describe('桌面档没有被改动', () => {
     expect(src).toContain('GRID_BG');
     expect(src, '桌面根容器不该再带手机断点类名（手机走的是另一棵树）')
       .not.toContain('sm:w-full sm:ml-0');
+  });
+});
+
+describe('考试屏必须绑在卷上（治浏览器返回把它甩下）', () => {
+  /*
+   * 考试不进 URL，所以手势返回只改 ?vol=、不经过 MobileExam 的 onBack。
+   * 判据若只是一个「点过开始考」的布尔量，它会一直挂着：接着点开另一卷，
+   * 那一卷会直接渲染成考试屏，而且带着上一卷的作答与交卷结果——
+   * 用户还没开始考，屏幕上已经有答案和成绩了。
+   *
+   * 把 examIsActive 改回 `examOfVolumeId !== null`，这里第二条必红。
+   */
+  it('在哪一卷上开的考，就只在那一卷上成立', () => {
+    expect(examIsActive('vol-boot', 'vol-boot')).toBe(true);
+  });
+
+  it('换到另一卷，考试屏不许跟过去', () => {
+    expect(examIsActive('vol-ai', 'vol-boot')).toBe(false);
+  });
+
+  it('返回落地页（没有 ?vol=）时考试屏一律不成立', () => {
+    expect(examIsActive(null, 'vol-boot')).toBe(false);
+  });
+
+  it('没开过考就是没开过', () => {
+    expect(examIsActive('vol-boot', null)).toBe(false);
   });
 });

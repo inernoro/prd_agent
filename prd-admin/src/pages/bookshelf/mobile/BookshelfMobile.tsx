@@ -17,10 +17,11 @@
  * 两个问题不一样（「选中哪一卷」vs「选中了吗」），所以是两个函数，但住在同一个
  * 文件里、由同一组守卫覆盖——不是各写一份散在两处（形状 3：判据分裂后各自漂移）。
  *
- * 考试是卷页之上的第三层（同一个 ?vol= 加一个本地状态），不进 URL：
- * 考到一半的卷子不该被分享出去，刷新重来才是对的。
+ * 考试是卷页之上的第三层，不进 URL：考到一半的卷子不该被分享出去，刷新重来才是对的。
+ * 但「不进 URL」不等于「与 URL 无关」——它记的是**在哪一卷上**开的考（examIsActive），
+ * 只记一个布尔量会被浏览器返回甩下（见那个函数的注释）。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { VOLUMES, findVolume } from '@/lib/bookshelf/catalog';
 import type { Volume, BookEntry } from '@/lib/bookshelf/types';
@@ -51,15 +52,36 @@ export function selectedBookFromUrl(volume: Volume | null, raw: string | null): 
   return volume.books.find((b) => b.id === raw) ?? null;
 }
 
+/**
+ * 考试这一屏现在开着吗。
+ *
+ * 判据不是「有没有点过开始考」，是「**这一卷**上点过开始考」。
+ * 只留一个布尔量会漏掉浏览器返回：考试不进 URL（考到一半的卷子不该被分享出去），
+ * 于是手势返回只改 ?vol=、不经过 MobileExam 的 onBack，那个布尔量就一直挂着。
+ * 接着从落地页点开另一卷 —— 它会直接渲染成那一卷的考试屏，而且带着上一卷的
+ * 作答与交卷结果：用户还没开始考，屏幕上已经有答案和成绩了。
+ *
+ * 所以把它绑在卷上，让「离开这一卷」这件事自动把考试关掉，不必再去记得手工清。
+ */
+export function examIsActive(volumeId: string | null, examOfVolumeId: string | null): boolean {
+  return volumeId !== null && volumeId === examOfVolumeId;
+}
+
 export function BookshelfMobile({ skinOf }: { skinOf: (volumeId: string) => { fg: string; box: string } }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [role, setRole] = useState<RoleFilter>('all');
-  const [examing, setExaming] = useState(false);
+  const [examOfVolume, setExamOfVolume] = useState<string | null>(null);
 
   const volume = selectedVolumeFromUrl(searchParams.get('vol'));
+  const volumeId = volume?.id ?? null;
   const book = selectedBookFromUrl(volume, searchParams.get('book'));
   const onBoard = searchParams.get('board') === '1';
+  const examing = examIsActive(volumeId, examOfVolume);
   const session = useExamSession(examing ? volume : null);
+
+  // 换卷（含返回到落地页）即散场。上面那个判据已经保证不会画错一帧，
+  // 这里只是把记号擦掉，免得原路返回时半张旧卷子又冒出来。
+  useEffect(() => { setExamOfVolume(null); }, [volumeId]);
 
   function setParam(key: string, value: string | null) {
     const next = new URLSearchParams(searchParams);
@@ -91,7 +113,7 @@ export function BookshelfMobile({ skinOf }: { skinOf: (volumeId: string) => { fg
         volume={volume}
         skin={skinOf(volume.id)}
         session={session}
-        onBack={() => { setExaming(false); session.reset(); }}
+        onBack={() => { setExamOfVolume(null); session.reset(); }}
       />
     );
   }
@@ -103,7 +125,7 @@ export function BookshelfMobile({ skinOf }: { skinOf: (volumeId: string) => { fg
         skin={skinOf(volume.id)}
         onBack={backToLanding}
         onOpenBook={openBook}
-        onStartExam={() => { session.reset(); setExaming(true); }}
+        onStartExam={() => { session.reset(); setExamOfVolume(volume.id); }}
       />
     );
   }
