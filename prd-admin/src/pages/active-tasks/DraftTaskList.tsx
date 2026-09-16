@@ -45,11 +45,23 @@ export function DraftTaskList({ rows, onToggle, onRename, streaming }: DraftTask
             )}
           </button>
           <div className="atb-row__body">
-            <input
-              className="atb-inline-input"
+            {/*
+              标题用自适应高度的 textarea，不是 input。
+              input 天生单行：文字比框宽就只能裁掉尾巴，而这一屏的用途正是「让人看清楚
+              再决定要不要」—— 看不全标题就没法判断。2026-09-16 验收实测 9 条里 6 条被裁，
+              上一轮给 input 加 min-width:0 + ellipsis 是修错了方向（反而更容易被压缩）。
+            */}
+            <textarea
+              className="atb-inline-input atb-inline-input--wrap"
+              rows={1}
               value={r.title}
               aria-label="任务标题"
-              onChange={(e) => onRename(r.key, e.target.value)}
+              ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = `${el.scrollHeight}px`; } }}
+              onChange={(e) => {
+                e.target.style.height = 'auto';
+                e.target.style.height = `${e.target.scrollHeight}px`;
+                onRename(r.key, e.target.value);
+              }}
             />
             {(r.from || r.why) && (
               <span className="atb-row__sub">

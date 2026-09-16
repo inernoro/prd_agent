@@ -422,7 +422,8 @@
 .atb-sheet-backdrop--bottom { align-items: flex-end; padding: 0; }
 
 .atb-sheet {
-  width: min(420px, 100%);
+  /* 460 而不是 420：候选任务标题动辄二十几个字，420 下大半要换行或被裁 */
+  width: min(460px, 100%);
   background: var(--bg-elevated);
   border-radius: 14px;
   box-shadow: var(--shadow-glass-panel);
@@ -717,11 +718,19 @@ select.atb-input { cursor: pointer; }
 .atb-check-circle--ghost { border-style: dashed; cursor: default; }
 
 .atb-draft { align-items: flex-start; padding-top: 4px; padding-bottom: 4px; }
-/* 候选行的标题被右边的日期挤掉尾巴 —— input 在 flex 里默认 min-width:auto，
-   按内容撑，撑不下就把自己的文字裁掉。实测「…录音转文字功能」显示到「功」就没了，
-   而 input 的 value 是完整的：值对、看不见。必须显式给 0 才肯收缩。 */
+/* 候选行的标题：可换行、看得全。
+   上一版是 input + min-width:0 + ellipsis，那是修错了方向 —— input 天生单行，
+   压缩之后只会把尾巴裁掉，而这一屏的用途恰恰是「让人看清楚再决定要不要」。
+   现在是自适应高度的 textarea（见 DraftTaskList），这里只负责让它长得像一行文字。 */
 .atb-draft .atb-row__body { min-width: 0; }
-.atb-draft .atb-inline-input { min-width: 0; text-overflow: ellipsis; }
+
+.atb-inline-input--wrap {
+  resize: none;
+  overflow: hidden;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .atb-draft--off { opacity: 0.45; }
 .atb-draft--off .atb-inline-input { text-decoration: line-through; }
 
