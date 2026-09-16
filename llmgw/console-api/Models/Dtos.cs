@@ -2175,6 +2175,15 @@ public sealed class ImportUpstreamModelsResult
     /// </summary>
     public List<string> BlockedOutsideCatalog { get; set; } = new();
 
+    /// <summary>
+    /// 公开名撞上了一条**别的用途**的已有对外模型，因此没挂线路的那些。
+    ///
+    /// 与「已存在」分开列：已存在是正常的幂等结果，这个是要人去处理的冲突——
+    /// 挂过去会让运行时按那条模型的用途走（一条生图线路被当成 chat 发出去），
+    /// 而导入这边还会报「已挂到已有模型」。
+    /// </summary>
+    public List<string> CrossTypePublicIdConflicts { get; set; } = new();
+
     /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
     public bool PoolSyncFailed { get; set; }
 

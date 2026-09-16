@@ -137,11 +137,15 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         // 没有这一步，界面只能说「最长 60 秒生效」然后让人盯着屏幕猜——而猜错的代价是
         // 去查一个根本没坏的东西。同步状态回写之后，那一屏能说的是「服务端 09:41 同步过，
         // 认到 5 条」，这是一句可核对的话（expectation-management：别让用户白等一场）。
+        // 一租户一行。共用同一个网关库的多个 prd-api 实例若都写 `_id: "prd-api"`，
+        // 最后一个写的会让别的租户的控制台显示错的同步时间与模式清单——
+        // 运维据此以为自己那条契约生效了，其实没有。
+        var statusId = $"prd-api::{_tenantId}";
         await _gateway!.Database.GetCollection<BsonDocument>("llmgw_imagegen_sync_status").ReplaceOneAsync(
-            Builders<BsonDocument>.Filter.Eq("_id", "prd-api"),
+            Builders<BsonDocument>.Filter.Eq("_id", statusId),
             new BsonDocument
             {
-                { "_id", "prd-api" },
+                { "_id", statusId },
                 { "TenantId", _tenantId },
                 { "SyncedAt", DateTime.UtcNow },
                 { "OverrideCount", ordered.Count },

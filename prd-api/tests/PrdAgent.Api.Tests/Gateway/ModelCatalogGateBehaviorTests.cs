@@ -287,9 +287,10 @@ public sealed class ModelCatalogGateBehaviorTests
                 mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
 
             // 兑换所声明了它，但条目上没有放行标记 → 必须被这道门拦下并点名错误码。
-            var blocked = await resolver.ResolveAsync(
-                Caller, ModelTypes.Chat,
-                expectedModel: exchangeAlias, pinnedPlatformId: exchangeId, pinnedModelId: exchangeAlias);
+            // 走对外模型那条线路（池退场后兑换所只剩这个入口），不再用 pinned 参数：
+            // pinned 会先查 llmgw_platforms，而兑换所不在那张表里，于是在名录门之前
+            // 就以「平台不存在」失败——那条用例会变成一条测不到门的绿灯（形状 4b）。
+            var blocked = await resolver.ResolveAsync(Caller, ModelTypes.Chat);
             blocked.Success.ShouldBeFalse("兑换所里没盖过放行标记的别名不该被解析出来");
             blocked.FailureCode.ShouldBe(
                 GatewayRouteFailure.ModelNotInCatalog,
@@ -302,9 +303,7 @@ public sealed class ModelCatalogGateBehaviorTests
                 Builders<BsonDocument>.Filter.Eq("_id", exchangeId),
                 Builders<BsonDocument>.Update.Set("Models.0.AllowedOutsideCatalog", true));
 
-            var afterStamp = await resolver.ResolveAsync(
-                Caller, ModelTypes.Chat,
-                expectedModel: exchangeAlias, pinnedPlatformId: exchangeId, pinnedModelId: exchangeAlias);
+            var afterStamp = await resolver.ResolveAsync(Caller, ModelTypes.Chat);
             afterStamp.FailureCode.ShouldNotBe(
                 GatewayRouteFailure.ModelNotInCatalog,
                 "盖过放行标记之后，名录门不该再拦它——拦的依据必须是标记本身");
@@ -345,29 +344,46 @@ public sealed class ModelCatalogGateBehaviorTests
                 ModelPoolId = PoolId,
             });
 
-        var pool = new ModelGroup
+        // 一个对外模型 + 两条指向兑换所的线路（新旧两种兑换所形态各一条）。
+        //
+        // 这里原本建的是模型池，靠池成员的 PlatformId 指到兑换所。池退场后兑换所的入口
+        // 只剩「对外模型挂一条 TargetKind=exchange 的线路」，所以构造跟着换——
+        // 要验的事没变：兑换所里没盖过放行标记的别名，名录门必须拦下并点名是它拦的。
+        await InsertAsync(database, "llmgw_logical_models", new GatewayLogicalModel
         {
-            Id = PoolId,
-            Name = "兑换所用例池",
-            Code = "catalog-gate-exchange",
+            Id = LogicalModelId,
+            PublicId = "catalog-gate-exchange",
+            PublicIdNormalized = "catalog-gate-exchange",
+            Name = "名录门兑换所用例",
             ModelType = ModelTypes.Chat,
-            Models =
-            [
-                new ModelGroupItem
-                {
-                    PlatformId = exchangeId, ModelId = alias,
-                    Priority = 0, HealthStatus = ModelHealthStatus.Healthy,
-                },
-                new ModelGroupItem
-                {
-                    PlatformId = LegacyExchangeId, ModelId = LegacyAlias,
-                    Priority = 1, HealthStatus = ModelHealthStatus.Healthy,
-                },
-            ],
-        };
-        var poolDocument = pool.ToBsonDocument();
-        poolDocument["TenantId"] = GatewayTenantDefaults.InternalTenantId;
-        await database.GetCollection<BsonDocument>("llmgw_model_pools").InsertOneAsync(poolDocument);
+            Capabilities = ["chat"],
+            IsDefaultForType = true,
+            Enabled = true,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-exchange-offering",
+            LogicalModelId = LogicalModelId,
+            TargetId = exchangeId,
+            TargetKind = "exchange",
+            UpstreamModelId = alias,
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 10,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-legacy-offering",
+            LogicalModelId = LogicalModelId,
+            TargetId = LegacyExchangeId,
+            TargetKind = "exchange",
+            UpstreamModelId = LegacyAlias,
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 20,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
 
         // TargetUrl 与可解密的 TargetApiKeyEncrypted 是**必填**：缺任一项，解析在名录门之前
         // 就以 OfferingUnresolvable 失败了，这条用例会变成一条测不到门的绿灯（形状 4b）。

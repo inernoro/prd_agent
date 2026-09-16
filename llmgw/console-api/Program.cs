@@ -3905,8 +3905,12 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
 
     // prd-api 上一轮同步拉到了什么。没有这一段，界面只能说「最长 60 秒生效」然后让人
     // 盯着屏幕猜；有了它，那一屏能说出一句可核对的话：服务端几点同步的、认到哪几条。
+    // 按租户取：同步状态一租户一行（prd-api 侧以 `prd-api::{tenantId}` 为键）。
+    // 取全局那一行的话，共用网关库的另一个租户的同步时间会显示成你的，
+    // 于是「我配的那条生效了没有」这句可核对的话变成了一句假话。
+    var syncTenantId = TenantAccess.GetRequired(http).TenantId;
     var syncDoc = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_sync_status")
-        .Find(Builders<BsonDocument>.Filter.Eq("_id", "prd-api")).FirstOrDefaultAsync();
+        .Find(Builders<BsonDocument>.Filter.Eq("_id", $"prd-api::{syncTenantId}")).FirstOrDefaultAsync();
 
     return Json(ApiEnvelope<ImageGenConfigsData>.Ok(new ImageGenConfigsData
     {
@@ -11302,6 +11306,10 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
                         { "PublicId", publicId }, { "PublicIdNormalized", normalizedPublicId },
                         { "Name", publicId }, { "ModelType", modelType },
                         { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, capabilityCodes).Persisted) },
+                        // 能力口径的版本戳。漏了它，capability-audit 会把这条算成「未迁移」——
+                        // 而迁移只在控制台启动时跑一次，于是启动后第一次成功导入就把发布门禁弄红，
+                        // 得重启控制台才恢复。单条创建与更新那两条路径一直在盖，这里跟上。
+                        { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
                         // 授权范围刻意留空 = 当前租户全部 appCaller 可用。
                         // 导入这一步不替用户决定「谁能用」：收紧是治理动作，要有人明确拍板。
                         { "AllowedAppCallerCodes", new BsonArray() },
@@ -11312,6 +11320,16 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
                 }
                 else
                 {
+                    // 公开名撞上了，但那条已有模型是**别的用途**——不能把线路挂过去。
+                    // 挂过去的后果是运行时按那条模型的用途走：一条生图线路被当成 chat 发出去，
+                    // 请求契约整个错位，而导入这边还报「已挂到已有模型」。
+                    var existingType = logical.GetStringOrEmpty("ModelType");
+                    if (!string.Equals(existingType, modelType, StringComparison.OrdinalIgnoreCase))
+                    {
+                        result.CrossTypePublicIdConflicts.Add(
+                            $"{publicId}（已存在的是「{existingType}」用途，这次导入的是「{modelType}」）");
+                        continue;
+                    }
                     logicalId = logical.GetStringOrEmpty("_id");
                     result.LinkedToExistingCount++;
                 }
