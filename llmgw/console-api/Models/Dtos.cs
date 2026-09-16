@@ -2195,3 +2195,113 @@ public sealed class ImportUpstreamModelsResult
     /// <summary>需要额外告诉用户的话（目前只有池同步失败时非空）。</summary>
     public string? Message { get; set; }
 }
+
+// ── 生图模型契约（可在控制台里改，不用改代码不用发版）──────────────────────────
+//
+// 这几个词表是**写入侧与运行时的共同约定**：控制台只让填这些值，prd-api 那边
+// ImageGenModelAdapterConfig 也只认这些值。写死在两边各一份就是判据分裂（形状 3），
+// 所以这里是唯一的一份，`ImageGenConfigOverrideGuardTests` 逐项比对它与 prd-api 侧
+// SizeParamFormats / SizeConstraintTypes 常量类，改一边忘另一边会红。
+
+/// <summary>控制台这一侧允许填的值。改这里之前先看那条守卫。</summary>
+public static class ImageGenConfigVocabulary
+{
+    public static readonly IReadOnlySet<string> SizeParamFormats =
+        new HashSet<string>(StringComparer.Ordinal) { "WxH", "{width,height}", "aspect_ratio", "none" };
+
+    public static readonly IReadOnlySet<string> SizeConstraintTypes =
+        new HashSet<string>(StringComparer.Ordinal) { "whitelist", "range", "aspect_ratio", "adaptive" };
+
+    public static readonly IReadOnlySet<string> ResolutionBuckets =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "1k", "2k", "4k" };
+
+    /// <summary>尺寸只认「宽x高」。写成 1024*1024 或 1024 x 1024 都拦下来，别让它进库。</summary>
+    public static readonly System.Text.RegularExpressions.Regex SizePattern =
+        new(@"^\d{2,5}x\d{2,5}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+}
+
+public sealed class ImageGenConfigsData
+{
+    public List<ImageGenConfigItem> Items { get; set; } = new();
+    public int Total { get; set; }
+
+    /// <summary>
+    /// 代码内置的契约（prd-api 启动时发布进 `llmgw_imagegen_builtin_catalog`）。
+    ///
+    /// 这里刻意**不手抄一份**：我第一版抄了，抄成 26 条、内容还对不上真表的 19 条——
+    /// 手抄的清单就是 no-rootless-tree 说的那种「看起来有根、根是硬编码快照」。
+    /// 现在它由运行时发布，代码改了它自动跟着改。
+    ///
+    /// 有了它，控制台能回答两件事：「这个模型是不是已经有内置契约」，
+    /// 以及「照着内置那条改一份」——比让人从零填二十个字段现实得多。
+    /// </summary>
+    public int BuiltinCount { get; set; }
+
+    public List<ImageGenConfigItem> Builtin { get; set; } = new();
+
+    /// <summary>内置快照是什么时候发布的。太旧说明 prd-api 没起来或版本对不上。</summary>
+    public string? BuiltinPublishedAt { get; set; }
+
+    /// <summary>改完多久生效。界面上要如实写出来，别让人保存完盯着屏幕猜。</summary>
+    public int RefreshSeconds { get; set; }
+}
+
+public sealed class ImageGenConfigItem
+{
+    public string Id { get; set; } = "";
+    public string ModelIdPattern { get; set; } = "";
+    public int MatchOrder { get; set; }
+    public bool Enabled { get; set; }
+    public string DisplayName { get; set; } = "";
+    public string Provider { get; set; } = "";
+    public string? PlatformType { get; set; }
+    public string? OfficialDocUrl { get; set; }
+    public string SizeConstraintType { get; set; } = "";
+    public string SizeConstraintDescription { get; set; } = "";
+    public Dictionary<string, List<string>> SizesByResolution { get; set; } = new();
+    public bool SizesNotApplicable { get; set; }
+    public string SizeParamFormat { get; set; } = "";
+    public bool InjectSizePrompt { get; set; }
+    public int? MustBeDivisibleBy { get; set; }
+    public int? MaxWidth { get; set; }
+    public int? MaxHeight { get; set; }
+    public int? MinWidth { get; set; }
+    public int? MinHeight { get; set; }
+    public long? MaxPixels { get; set; }
+    public Dictionary<string, string> ParamRenames { get; set; } = new();
+    public bool RequiresResolutionParam { get; set; }
+    public bool SupportsImageToImage { get; set; }
+    public bool SupportsInpainting { get; set; }
+    public bool SupportsResponseFormat { get; set; }
+    public List<string> Notes { get; set; } = new();
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class UpsertImageGenConfigRequest
+{
+    public string? ModelIdPattern { get; set; }
+    public int? MatchOrder { get; set; }
+    public bool? Enabled { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Provider { get; set; }
+    public string? PlatformType { get; set; }
+    public string? OfficialDocUrl { get; set; }
+    public string? SizeConstraintType { get; set; }
+    public string? SizeConstraintDescription { get; set; }
+    public Dictionary<string, List<string>>? SizesByResolution { get; set; }
+    public bool? SizesNotApplicable { get; set; }
+    public string? SizeParamFormat { get; set; }
+    public bool? InjectSizePrompt { get; set; }
+    public int? MustBeDivisibleBy { get; set; }
+    public int? MaxWidth { get; set; }
+    public int? MaxHeight { get; set; }
+    public int? MinWidth { get; set; }
+    public int? MinHeight { get; set; }
+    public long? MaxPixels { get; set; }
+    public Dictionary<string, string>? ParamRenames { get; set; }
+    public bool? RequiresResolutionParam { get; set; }
+    public bool? SupportsImageToImage { get; set; }
+    public bool? SupportsInpainting { get; set; }
+    public bool? SupportsResponseFormat { get; set; }
+    public List<string>? Notes { get; set; }
+}

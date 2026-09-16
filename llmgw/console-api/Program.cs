@@ -3631,6 +3631,254 @@ app.MapGet("/gw/logical-models/capability-audit", async (HttpContext http) =>
 }).RequireAuthorization("LogsRead");
 
 // 逻辑模型目录：调用方只看到 PublicId；Offerings 展示实际 Provider/Endpoint 供运维维护。
+// ───────────────────── 生图模型契约：配在这里，不用改代码不用发版 ─────────────────────
+//
+// 此前这份契约（尺寸档位、参数格式、重命名映射、能不能图生图）写死在
+// prd-api 的 ImageGenModelConfigs.cs 里，26 条、777 行。上游每出一个新生图模型，
+// 就要改那个文件、重新编译、走一次发布——「上游动一下、我们发一次版」。
+//
+// 现在它是数据。合并规则只有一条，且只在 ImageGenModelAdapterRegistry.TryMatch 里实现：
+// **同一个匹配模式，这里配的赢；这里没有的，回落到代码内置那 26 条。**
+// 所以这套东西是纯增量的：库里一行都没有时，生图行为与 2026-09-16 之前逐字节相同。
+//
+// 生效不是即时的：prd-api 每 60 秒刷一次覆盖表，所以保存后最长 60 秒生效。
+// 这个代价要写在界面上，不能让人保存完盯着屏幕猜（expectation-management）。
+var gwImageModelConfigs = gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_model_configs");
+
+app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
+{
+    var docs = await gwImageModelConfigs.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty))
+        .ToListAsync();
+    var items = docs
+        .OrderBy(d => d.AsNullableInt("MatchOrder") ?? 100)
+        .ThenByDescending(d => d.GetStringOrEmpty("ModelIdPattern").Length)
+        .Select(MapImageGenConfig)
+        .ToList();
+    // 代码内置那份由 prd-api 启动时发布进来（llmgw_imagegen_builtin_catalog）。
+    // 控制台不另抄一份：抄的那份改了代码不会跟着改，而且不会有任何东西变红。
+    var builtinDoc = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_builtin_catalog")
+        .Find(Builders<BsonDocument>.Filter.Eq("_id", "builtin")).FirstOrDefaultAsync();
+    var builtin = builtinDoc?.TryGetValue("Items", out var rawItems) == true && rawItems is BsonArray arr
+        ? arr.OfType<BsonDocument>().Select(MapImageGenConfig).ToList()
+        : [];
+
+    return Json(ApiEnvelope<ImageGenConfigsData>.Ok(new ImageGenConfigsData
+    {
+        Items = items,
+        Total = items.Count,
+        BuiltinCount = builtin.Count,
+        Builtin = builtin,
+        BuiltinPublishedAt = builtinDoc?.AsNullableUtcDateTime("PublishedAt").ToIso(),
+        RefreshSeconds = 60,
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/imagegen-configs", async (HttpContext http, [FromBody] UpsertImageGenConfigRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateImageGenConfig(body);
+    if (error is not null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var pattern = body.ModelIdPattern!.Trim().ToLowerInvariant();
+
+    // 同一租户下同一个模式只许有一条：两条同模式的行，谁赢取决于排序里的兜底比较，
+    // 那是「判据比它该管的范围窄」的经典温床（形状 1）。当场拒绝，别让它进库。
+    var dup = await gwImageModelConfigs
+        .Find(Builders<BsonDocument>.Filter.And(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+            Builders<BsonDocument>.Filter.Eq("ModelIdPattern", pattern)))
+        .FirstOrDefaultAsync();
+    if (dup is not null)
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS", $"已经有一条 {pattern} 的契约，去改它而不是再加一条"), jsonOptions, 409);
+
+    var doc = BuildImageGenConfigDocument(body, tenantId, http, existing: null);
+    await gwImageModelConfigs.InsertOneAsync(doc);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "imagegen_config.create", targetType: "llmgw_imagegen_model_config",
+        targetId: doc.GetStringOrEmpty("_id"), targetName: pattern, success: true, reason: null,
+        changes: new BsonDocument { { "modelIdPattern", pattern } });
+    return Json(ApiEnvelope<ImageGenConfigItem>.Ok(MapImageGenConfig(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/imagegen-configs/{id}", async (HttpContext http, string id, [FromBody] UpsertImageGenConfigRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateImageGenConfig(body);
+    if (error is not null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwImageModelConfigs.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("NOT_FOUND", "这条契约不存在"), jsonOptions, 404);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var doc = BuildImageGenConfigDocument(body, tenantId, http, existing);
+    await gwImageModelConfigs.ReplaceOneAsync(filter, doc);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "imagegen_config.update", targetType: "llmgw_imagegen_model_config",
+        targetId: id, targetName: doc.GetStringOrEmpty("ModelIdPattern"), success: true, reason: null,
+        changes: new BsonDocument { { "modelIdPattern", doc.GetStringOrEmpty("ModelIdPattern") } });
+    return Json(ApiEnvelope<ImageGenConfigItem>.Ok(MapImageGenConfig(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapDelete("/gw/imagegen-configs/{id}", async (HttpContext http, string id) =>
+{
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwImageModelConfigs.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "这条契约不存在"), jsonOptions, 404);
+    await gwImageModelConfigs.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "imagegen_config.delete", targetType: "llmgw_imagegen_model_config",
+        targetId: id, targetName: existing.GetStringOrEmpty("ModelIdPattern"), success: true, reason: null,
+        changes: new BsonDocument { { "modelIdPattern", existing.GetStringOrEmpty("ModelIdPattern") } });
+    return Json(ApiEnvelope<object>.Ok(new { deleted = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+/// <summary>
+/// 契约的写入校验。这几条都是「填错了不会当场报错、只会在某次生图时悄悄给出错尺寸」的那种，
+/// 所以拦在写入侧——运行时再发现就晚了。
+/// </summary>
+static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
+{
+    var pattern = (body.ModelIdPattern ?? string.Empty).Trim();
+    if (pattern.Length == 0) return "模型匹配模式不能为空";
+    if (pattern.Length > 200) return "模型匹配模式过长";
+    if (pattern.IndexOf('*') >= 0 && !pattern.EndsWith('*'))
+        return "通配符只能放在结尾，如 nano-banana*";
+
+    var format = (body.SizeParamFormat ?? "WxH").Trim();
+    if (!ImageGenConfigVocabulary.SizeParamFormats.Contains(format))
+        return $"尺寸参数格式只支持：{string.Join(" / ", ImageGenConfigVocabulary.SizeParamFormats)}";
+
+    var constraint = (body.SizeConstraintType ?? "whitelist").Trim();
+    if (!ImageGenConfigVocabulary.SizeConstraintTypes.Contains(constraint))
+        return $"尺寸约束类型只支持：{string.Join(" / ", ImageGenConfigVocabulary.SizeConstraintTypes)}";
+
+    // 「没有选尺寸这件事」与「配了尺寸档位」不能同时成立：编几个假尺寸出来，
+    // 选择器会展示这个模型根本不接受的选项。
+    var hasSizes = body.SizesByResolution?.Any(kv => kv.Value?.Count > 0) == true;
+    if (body.SizesNotApplicable == true && hasSizes)
+        return "既然勾了「这个模型没有选尺寸这件事」，就不能再配尺寸档位";
+
+    foreach (var (bucket, list) in body.SizesByResolution ?? [])
+    {
+        if (!ImageGenConfigVocabulary.ResolutionBuckets.Contains(bucket))
+            return $"分辨率档位只支持：{string.Join(" / ", ImageGenConfigVocabulary.ResolutionBuckets)}（收到 {bucket}）";
+        foreach (var size in list ?? [])
+        {
+            if (!ImageGenConfigVocabulary.SizePattern.IsMatch(size ?? string.Empty))
+                return $"尺寸要写成「宽x高」，如 1024x1024（收到 {size}）";
+        }
+    }
+    return null;
+}
+
+static BsonDocument BuildImageGenConfigDocument(
+    UpsertImageGenConfigRequest body, string tenantId, HttpContext http, BsonDocument? existing)
+{
+    var sizes = new BsonDocument();
+    foreach (var (bucket, list) in body.SizesByResolution ?? [])
+        sizes[bucket] = new BsonArray((list ?? []).Select(x => x.Trim()));
+
+    var renames = new BsonDocument();
+    foreach (var (from, to) in body.ParamRenames ?? [])
+    {
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to)) continue;
+        renames[from.Trim()] = to.Trim();
+    }
+
+    var doc = new BsonDocument
+    {
+        { "_id", existing?.GetStringOrEmpty("_id") ?? Guid.NewGuid().ToString("N") },
+        { "TenantId", tenantId },
+        { "ModelIdPattern", body.ModelIdPattern!.Trim().ToLowerInvariant() },
+        { "MatchOrder", body.MatchOrder ?? 100 },
+        { "Enabled", body.Enabled ?? true },
+        { "DisplayName", body.DisplayName ?? string.Empty },
+        { "Provider", body.Provider ?? string.Empty },
+        { "PlatformType", (BsonValue?)body.PlatformType ?? BsonNull.Value },
+        { "OfficialDocUrl", (BsonValue?)body.OfficialDocUrl ?? BsonNull.Value },
+        { "SizeConstraintType", (body.SizeConstraintType ?? "whitelist").Trim() },
+        { "SizeConstraintDescription", body.SizeConstraintDescription ?? string.Empty },
+        { "SizesByResolution", sizes },
+        { "SizesNotApplicable", body.SizesNotApplicable ?? false },
+        { "SizeParamFormat", (body.SizeParamFormat ?? "WxH").Trim() },
+        { "InjectSizePrompt", body.InjectSizePrompt ?? false },
+        { "MustBeDivisibleBy", (BsonValue?)body.MustBeDivisibleBy ?? BsonNull.Value },
+        { "MaxWidth", (BsonValue?)body.MaxWidth ?? BsonNull.Value },
+        { "MaxHeight", (BsonValue?)body.MaxHeight ?? BsonNull.Value },
+        { "MinWidth", (BsonValue?)body.MinWidth ?? BsonNull.Value },
+        { "MinHeight", (BsonValue?)body.MinHeight ?? BsonNull.Value },
+        { "MaxPixels", (BsonValue?)body.MaxPixels ?? BsonNull.Value },
+        { "ParamRenames", renames },
+        { "RequiresResolutionParam", body.RequiresResolutionParam ?? false },
+        { "SupportsImageToImage", body.SupportsImageToImage ?? false },
+        { "SupportsInpainting", body.SupportsInpainting ?? false },
+        { "SupportsResponseFormat", body.SupportsResponseFormat ?? true },
+        { "Notes", new BsonArray((body.Notes ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim())) },
+        { "CreatedAt", existing?.AsNullableUtcDateTime("CreatedAt") ?? DateTime.UtcNow },
+        { "UpdatedAt", DateTime.UtcNow },
+        { "UpdatedBy", TenantAccess.GetRequired(http).TenantId },
+    };
+    return doc;
+}
+
+static ImageGenConfigItem MapImageGenConfig(BsonDocument d)
+{
+    var sizes = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+    if (d.TryGetValue("SizesByResolution", out var raw) && raw is BsonDocument bucketDoc)
+    {
+        foreach (var element in bucketDoc)
+        {
+            sizes[element.Name] = element.Value is BsonArray arr
+                ? [.. arr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
+                : [];
+        }
+    }
+    var renames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    if (d.TryGetValue("ParamRenames", out var rawRenames) && rawRenames is BsonDocument renameDoc)
+    {
+        foreach (var element in renameDoc)
+            renames[element.Name] = element.Value.IsString ? element.Value.AsString : string.Empty;
+    }
+    return new ImageGenConfigItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        ModelIdPattern = d.GetStringOrEmpty("ModelIdPattern"),
+        MatchOrder = d.AsNullableInt("MatchOrder") ?? 100,
+        Enabled = d.AsNullableBool("Enabled") ?? true,
+        DisplayName = d.GetStringOrEmpty("DisplayName"),
+        Provider = d.GetStringOrEmpty("Provider"),
+        PlatformType = d.AsNullableString("PlatformType"),
+        OfficialDocUrl = d.AsNullableString("OfficialDocUrl"),
+        SizeConstraintType = d.GetStringOrEmpty("SizeConstraintType"),
+        SizeConstraintDescription = d.GetStringOrEmpty("SizeConstraintDescription"),
+        SizesByResolution = sizes,
+        SizesNotApplicable = d.AsNullableBool("SizesNotApplicable") ?? false,
+        SizeParamFormat = d.GetStringOrEmpty("SizeParamFormat"),
+        InjectSizePrompt = d.AsNullableBool("InjectSizePrompt") ?? false,
+        MustBeDivisibleBy = d.AsNullableInt("MustBeDivisibleBy"),
+        MaxWidth = d.AsNullableInt("MaxWidth"),
+        MaxHeight = d.AsNullableInt("MaxHeight"),
+        MinWidth = d.AsNullableInt("MinWidth"),
+        MinHeight = d.AsNullableInt("MinHeight"),
+        MaxPixels = d.AsNullableLong("MaxPixels"),
+        ParamRenames = renames,
+        RequiresResolutionParam = d.AsNullableBool("RequiresResolutionParam") ?? false,
+        SupportsImageToImage = d.AsNullableBool("SupportsImageToImage") ?? false,
+        SupportsInpainting = d.AsNullableBool("SupportsInpainting") ?? false,
+        SupportsResponseFormat = d.AsNullableBool("SupportsResponseFormat") ?? true,
+        Notes = d.TryGetValue("Notes", out var notes) && notes is BsonArray noteArr
+            ? [.. noteArr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
+            : [],
+        UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+    };
+}
+
 app.MapGet("/gw/logical-models", async (HttpContext http, string? modelType, bool? enabled) =>
 {
     var fb = Builders<BsonDocument>.Filter;

@@ -8,6 +8,7 @@ import { ProviderModelsPanel, collectProviderModels, summarizeProviderModels } f
 import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
+import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
 import { RowActions } from '@/components/RowActions';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
@@ -759,6 +760,10 @@ export function PlatformsPage() {
         </table>
       </div>
       )}
+
+      {/* 第三段：生图契约。放这一页是因为配它的时机就是「刚接了个上游、里面有新生图模型」；
+          匹配键是模型名而不是上游，所以它不挂在某个 Provider 下面。 */}
+      <ImageGenContractsSection canWrite={canWrite} />
     </div>
   );
 }

@@ -113,6 +113,9 @@ import type {
   UpstreamModelsData,
   ImportUpstreamModelEntry,
   ImportUpstreamModelsResult,
+  ImageGenConfigsData,
+  ImageGenConfigItem,
+  UpsertImageGenConfigRequest,
 } from './types';
 import { getDefaultApiBase } from './runtimeBase';
 import { setPlatformMapHome } from './mapNavigation';
@@ -999,4 +1002,18 @@ export function saveSystemSettings(req: UpdateSystemSettingsRequest): Promise<Ap
 }
 export function testSystemSettings(): Promise<ApiResponse<SystemGatewayTestResult>> {
   return apiRequest<SystemGatewayTestResult>('/system-settings/test', { method: 'POST' });
+}
+
+// ── 生图模型契约 ──────────────────────────────────────────────────────────────
+export function getImageGenConfigs(): Promise<ApiResponse<ImageGenConfigsData>> {
+  return apiRequest<ImageGenConfigsData>('/imagegen-configs');
+}
+export function createImageGenConfig(req: UpsertImageGenConfigRequest): Promise<ApiResponse<ImageGenConfigItem>> {
+  return apiRequest<ImageGenConfigItem>('/imagegen-configs', { method: 'POST', body: req });
+}
+export function updateImageGenConfig(id: string, req: UpsertImageGenConfigRequest): Promise<ApiResponse<ImageGenConfigItem>> {
+  return apiRequest<ImageGenConfigItem>(`/imagegen-configs/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function deleteImageGenConfig(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest<{ deleted: boolean }>(`/imagegen-configs/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

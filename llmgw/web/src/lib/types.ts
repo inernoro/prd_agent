@@ -1653,3 +1653,56 @@ export type SystemGatewayTestResult = {
   servedModel?: string;
   message: string;
 };
+
+// ── 生图模型契约（配在控制台，不用改代码不用发版）──────────────────────────────
+//
+// 这份契约（尺寸档位、参数格式、重命名映射）此前写死在 prd-api 的 ImageGenModelConfigs.cs 里，
+// 上游每出一个新生图模型就要改代码、发一次版。现在它是数据：这里配的赢，没配的回落到代码内置那份。
+
+export interface ImageGenConfigItem {
+  id: string;
+  /** 模型名匹配模式，通配符只能放结尾，如 nano-banana* */
+  modelIdPattern: string;
+  /** 匹配顺序，小的先匹配；同序时模式长的先匹配（长的更具体） */
+  matchOrder: number;
+  enabled: boolean;
+  displayName: string;
+  provider: string;
+  platformType?: string | null;
+  officialDocUrl?: string | null;
+  sizeConstraintType: string;
+  sizeConstraintDescription: string;
+  /** 键是 1k / 2k / 4k，值是该档位下的尺寸，写成「宽x高」 */
+  sizesByResolution: Record<string, string[]>;
+  /** 这个模型压根没有「选尺寸」这件事；勾了它就不能再配尺寸档位 */
+  sizesNotApplicable: boolean;
+  sizeParamFormat: string;
+  injectSizePrompt: boolean;
+  mustBeDivisibleBy?: number | null;
+  maxWidth?: number | null;
+  maxHeight?: number | null;
+  minWidth?: number | null;
+  minHeight?: number | null;
+  maxPixels?: number | null;
+  paramRenames: Record<string, string>;
+  requiresResolutionParam: boolean;
+  supportsImageToImage: boolean;
+  supportsInpainting: boolean;
+  supportsResponseFormat: boolean;
+  notes: string[];
+  updatedAt?: string | null;
+}
+
+export interface ImageGenConfigsData {
+  items: ImageGenConfigItem[];
+  total: number;
+  /** 代码内置的条数。配 0 条不等于没有契约 */
+  builtinCount: number;
+  /** 内置那份的完整内容，由 prd-api 启动时发布；用来显示与「照这条建一份」 */
+  builtin: ImageGenConfigItem[];
+  builtinPublishedAt?: string | null;
+  /** 改完多久生效。界面要如实写出来，别让人保存完盯着屏幕猜 */
+  refreshSeconds: number;
+}
+
+export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;

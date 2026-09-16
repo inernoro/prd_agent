@@ -21,13 +21,51 @@ public static class ImageGenModelAdapterRegistry
     private static readonly Regex SizeRegex = new(@"^\s*(\d+)\s*[xX×＊*]\s*(\d+)\s*$", RegexOptions.Compiled);
 
     /// <summary>
-    /// 根据模型名匹配适配配置（纯粹基于模型名，不检查平台）
+    /// 控制台里配的那份契约（<c>llmgw_imagegen_model_configs</c>）的内存快照。
+    ///
+    /// 静态可变状态，因为这个注册表的 18 个调用点全是静态方法、拿不到 DI 容器；
+    /// 改成实例要动 18 处，收益只有「看起来更规范」。所以走**整表原子替换**：
+    /// 刷新器算好一份新列表后一次性赋值，读侧永远看到某一版完整的表，
+    /// 不会读到改了一半的中间态。绝不就地改这个列表。
+    /// </summary>
+    private static volatile IReadOnlyList<ImageGenModelAdapterConfig> _overrides = [];
+
+    /// <summary>
+    /// 换上一份新的覆盖表。只由 <c>ImageGenModelConfigSyncWorker</c> 调用。
+    ///
+    /// 传空列表 = 回到纯代码内置那 26 条，这也是库里一行都没有时的状态——
+    /// 所以这套机制是纯增量的：不配任何东西，行为与 2026-09-16 之前逐字节相同。
+    /// </summary>
+    public static void ReplaceOverrides(IReadOnlyList<ImageGenModelAdapterConfig>? configs)
+        => _overrides = configs is null ? [] : [.. configs];
+
+    /// <summary>当前生效的覆盖条数。控制台与自检端点用它回答「我配的那条到底生效没有」。</summary>
+    public static int OverrideCount => _overrides.Count;
+
+    /// <summary>
+    /// 根据模型名匹配适配配置（纯粹基于模型名，不检查平台）。
+    ///
+    /// **这是全链路唯一的判定入口**，合并规则收在这里面：先走控制台配的覆盖表，
+    /// 没命中才回落到代码内置的那 26 条。谁都不许绕过它去直接遍历
+    /// <c>ImageGenModelConfigs.Configs</c>——那样同一个问题就有了两个答案
+    /// （predicate-and-wiring-discipline 形状 3），守卫
+    /// `ImageGenConfigOverrideGuardTests` 钉住这一条。
     /// </summary>
     public static ImageGenModelAdapterConfig? TryMatch(string? modelName)
     {
         if (string.IsNullOrWhiteSpace(modelName)) return null;
 
         var name = modelName.Trim().ToLowerInvariant();
+
+        // 覆盖表优先。它已经由刷新器按 MatchOrder、再按模式长度降序排好，
+        // 这里只按顺序取第一个命中的，与代码表用的是同一个 MatchPattern。
+        foreach (var config in _overrides)
+        {
+            if (MatchPattern(config.ModelIdPattern, name))
+            {
+                return config;
+            }
+        }
 
         foreach (var config in ImageGenModelConfigs.Configs)
         {
