@@ -3709,6 +3709,56 @@ app.MapGet("/gw/logical-models/capability-audit", async (HttpContext http) =>
 // 这份只有 console-api 自己读，所以端点每次现查现传，**改完立刻生效**。
 var gwCatalogEntries = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_catalog_entries");
 
+/*
+  补登的键空间也升成库级不变量。
+
+  端点里的「先查一遍有没有人占了这个键、再写」在单个请求里是对的，两个管理员同时补登同一个
+  标识时却都能查空、都写成功——库里于是有两条补登抢同一个键，而运行时按哪条算全看排序，
+  两个人的界面都显示「已保存」。应用层补不了这个洞：任何「查一下有没有别人」都在竞态窗口里。
+
+  规范标识与等价写法共用一个键空间，所以走**多键**唯一索引：Keys 数组的每个元素各生成一个
+  (TenantId, 某个键)，跨文档唯一——正好是要的那条不变量。部分过滤器判「数组里至少有一个
+  字符串元素」，否则空数组在多键索引里记成 undefined，所有空补登会互相撞车。
+
+  存量文档没有 Keys 字段，先按 CanonicalId + Aliases 补齐再建索引；补不齐或建不出来都如实
+  报出来，端点仍按老样子工作（degradation-must-alarm：降级要响铃，不许静默）。
+*/
+try
+{
+    var legacyEntries = await gwCatalogEntries
+        .Find(Builders<BsonDocument>.Filter.Exists("Keys", false))
+        .ToListAsync();
+    foreach (var legacy in legacyEntries)
+    {
+        var legacyKeys = new[] { legacy.GetStringOrEmpty("CanonicalId") }
+            .Concat(GetStringArray(legacy, "Aliases"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        await gwCatalogEntries.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", legacy.GetStringOrEmpty("_id")),
+            Builders<BsonDocument>.Update.Set("Keys", new BsonArray(legacyKeys)));
+    }
+
+    await gwCatalogEntries.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Keys"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_catalog_entry_key",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("Keys", BsonType.String),
+        }));
+}
+catch (MongoCommandException ex)
+{
+    Console.WriteLine(
+        "[llmgw] 建不出「补登键空间唯一」索引（uniq_llmgw_catalog_entry_key）："
+        + ex.Message
+        + " —— 多半是存量里两条补登抢同一个标识或等价写法。先在目录补登页把多余的那条删掉，"
+        + "重启控制台即可自动补建；在那之前并发补登仍有竞态。");
+}
+
 // 读补登表并建成索引。上游清单那一屏每次都现查，所以补完刷新页面就能看见。
 async Task<ModelCatalog.CatalogOverrides> LoadCatalogOverridesAsync(HttpContext http)
 {
@@ -3775,7 +3825,19 @@ app.MapPost("/gw/catalog-entries", async (HttpContext http, [FromBody] UpsertCat
         return Json(ApiEnvelope<CatalogEntryItem>.Fail("ENTRY_EXISTS", conflict), jsonOptions, 409);
 
     var doc = BuildCatalogEntryDocument(body, tenantId, existing: null);
-    await gwCatalogEntries.InsertOneAsync(doc);
+    try
+    {
+        await gwCatalogEntries.InsertOneAsync(doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        // 上面查过一遍没人占，写的时候还是撞上了：说明在这几毫秒里另一个管理员补登了同一个键。
+        // 索引挡住了，端点就得如实说是冲突，而不是把它变成 500。
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail(
+            "ENTRY_EXISTS",
+            "这个标识刚刚被另一条补登占用了——规范标识与等价写法共用同一个键空间。刷新一下看看那条，别再加一条"),
+            jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http,
         action: "catalog_entry.create", targetType: "llmgw_model_catalog_entry",
         targetId: doc.GetStringOrEmpty("_id"), targetName: canonical, success: true, reason: null,
@@ -3802,7 +3864,17 @@ app.MapPut("/gw/catalog-entries/{id}", async (HttpContext http, string id, [From
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var doc = BuildCatalogEntryDocument(body, tenantId, existing);
-    await gwCatalogEntries.ReplaceOneAsync(filter, doc);
+    try
+    {
+        await gwCatalogEntries.ReplaceOneAsync(filter, doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail(
+            "ENTRY_EXISTS",
+            "这个标识刚刚被另一条补登占用了——规范标识与等价写法共用同一个键空间。刷新一下看看那条，改那一条"),
+            jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http,
         action: "catalog_entry.update", targetType: "llmgw_model_catalog_entry",
         targetId: id, targetName: doc.GetStringOrEmpty("CanonicalId"), success: true, reason: null,
@@ -3893,14 +3965,7 @@ static async Task<string?> FindCatalogKeyConflictAsync(
     UpsertCatalogEntryRequest body,
     string? excludeId)
 {
-    var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        body.CanonicalId!.Trim().ToLowerInvariant(),
-    };
-    foreach (var alias in body.Aliases ?? [])
-    {
-        if (!string.IsNullOrWhiteSpace(alias)) keys.Add(alias.Trim().ToLowerInvariant());
-    }
+    var keys = new HashSet<string>(CatalogEntryKeys(body), StringComparer.OrdinalIgnoreCase);
 
     var docs = await entries.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty)).ToListAsync();
     foreach (var doc in docs)
@@ -3956,6 +4021,20 @@ static string? ValidateCatalogEntry(UpsertCatalogEntryRequest body)
     return null;
 }
 
+/// <summary>
+/// 一条补登占用的全部键：规范标识 + 每个等价写法，统一小写去重。
+///
+/// 读检查与落库必须用同一份口径，否则「查的时候按 A 算、存的时候按 B 算」，
+/// 索引盖住的键和端点判过的键不是一批（形状 3：同一个判据分裂成两份各自漂移）。
+/// </summary>
+static List<string> CatalogEntryKeys(UpsertCatalogEntryRequest body)
+    => new[] { body.CanonicalId ?? string.Empty }
+        .Concat(body.Aliases ?? [])
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim().ToLowerInvariant())
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
 static BsonDocument BuildCatalogEntryDocument(UpsertCatalogEntryRequest body, string tenantId, BsonDocument? existing)
     => new()
     {
@@ -3968,6 +4047,9 @@ static BsonDocument BuildCatalogEntryDocument(UpsertCatalogEntryRequest body, st
         { "AcceptsImageInput", body.AcceptsImageInput ?? false },
         { "RequiresImageInput", body.RequiresImageInput ?? false },
         { "Aliases", new BsonArray((body.Aliases ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()).Distinct()) },
+        // 规范标识与等价写法共用一个键空间，这里把它们合成一个数组落库，好让唯一索引能一次盖住两者。
+        // 不落这一份，索引就只能盖住 CanonicalId，别名撞车照样能两条一起写进去。
+        { "Keys", new BsonArray(CatalogEntryKeys(body)) },
         { "Notes", (BsonValue?)body.Notes ?? BsonNull.Value },
         { "Enabled", body.Enabled ?? true },
         { "CreatedAt", existing?.AsNullableUtcDateTime("CreatedAt") ?? DateTime.UtcNow },

@@ -45,6 +45,7 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
     private const string ExchangeCollection = "llmgw_model_exchanges";
     private const string LogicalModelCollection = "llmgw_logical_models";
     private const string OfferingCollection = "llmgw_model_offerings";
+    private const string ModelCollection = "llmgw_models";
 
     private readonly LlmGatewayDataContext _gatewayDb;
     private readonly IAssetStorage _assetStorage;
@@ -235,13 +236,57 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             */
             var logicalModels = _gatewayDb.Database.GetCollection<GatewayLogicalModel>(LogicalModelCollection);
             var offeringsCollection = _gatewayDb.Database.GetCollection<GatewayModelOffering>(OfferingCollection);
+            var physicalModels = _gatewayDb.Database.GetCollection<LLMModel>(ModelCollection);
             var enabledLogicalModels = await logicalModels.Find(x => x.Enabled).ToListAsync(cancellationToken);
-            var usableOfferingModelIds = (await offeringsCollection
-                    .Find(Builders<GatewayModelOffering>.Filter.And(
-                        Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
-                        Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
-                    .Project(x => x.LogicalModelId)
-                    .ToListAsync(cancellationToken))
+            var candidateOfferings = await offeringsCollection
+                .Find(Builders<GatewayModelOffering>.Filter.And(
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
+                    Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
+                .ToListAsync(cancellationToken);
+
+            /*
+              线路「启用且没被熔断」只是它自己的状态，**不代表它指向的东西还在**。
+
+              上一版只看到这一层，于是一条指向已删除或已停用的物理模型 / 平台 / 兑换所的线路
+              也被算成可用——两个就绪组件都报绿，而运行时把每一条都拒掉。
+              这正是池那一侧早就做对的事（IsPoolRoutableForRequestType → HasEnabledBackend），
+              我加对外模型这条路时没把它一起带过来。
+
+              目标可用性用池那条路径已经加载好的同一批数据判（平台、兑换所），
+              物理模型另查一次：判据要一致，数据就不能各取各的。
+            */
+            var offeringModelTargetIds = candidateOfferings
+                .Where(x => !string.Equals(x.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.TargetId)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var enabledOfferingModels = offeringModelTargetIds.Count == 0
+                ? new List<LLMModel>()
+                : await physicalModels
+                    .Find(Builders<LLMModel>.Filter.And(
+                        Builders<LLMModel>.Filter.In(x => x.Id, offeringModelTargetIds),
+                        Builders<LLMModel>.Filter.Eq(x => x.Enabled, true)))
+                    .ToListAsync(cancellationToken);
+            var enabledOfferingModelPlatformById = enabledOfferingModels
+                .Where(x => !string.IsNullOrWhiteSpace(x.Id))
+                .ToDictionary(x => x.Id, x => x.PlatformId ?? string.Empty, StringComparer.Ordinal);
+            var enabledExchangeIds = enabledExchanges
+                .Select(x => x.Id)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .ToHashSet(StringComparer.Ordinal);
+
+            bool OfferingTargetUsable(GatewayModelOffering offering)
+                => string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase)
+                    ? enabledExchangeIds.Contains(offering.TargetId)
+                    : enabledOfferingModelPlatformById.TryGetValue(offering.TargetId, out var platformId)
+                      && platformId.Length > 0
+                      && enabledPlatformIds.Contains(platformId);
+
+            var routableLogicalModelIds = candidateOfferings
+                .Where(OfferingTargetUsable)
+                .Select(x => x.LogicalModelId)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
                 .ToHashSet(StringComparer.Ordinal);
 
             bool HasLogicalCatcher(GatewayAppCallerRecord caller)
@@ -249,19 +294,28 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                 if (string.IsNullOrWhiteSpace(caller.RequestType)) return false;
                 var candidates = enabledLogicalModels
                     .Where(x => string.Equals(x.ModelType, caller.RequestType, StringComparison.Ordinal)
-                        && usableOfferingModelIds.Contains(x.Id))
+                        && routableLogicalModelIds.Contains(x.Id))
                     .ToList();
                 if (candidates.Count == 0) return false;
-                // 第一层：谁认领了它。
-                if (candidates.Any(x => x.DefaultForAppCallerCodes
-                        .Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase)))
-                {
-                    return true;
-                }
-                // 第二层：这个用途的默认；授权名单非空时它得放行这个调用方。
-                return candidates.Any(x => x.IsDefaultForType
-                    && (x.AllowedAppCallerCodes.Count == 0
-                        || x.AllowedAppCallerCodes.Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase)));
+
+                // 被选中的那个候选还得满足这个调用方的场景能力要求。
+                //
+                // 不判的话会出现这种组合：模型 A 认领了这个调用方但不具备它要的能力，
+                // 模型 B 具备能力却没认领它。router 组件看 A 判绿、场景组件看 B 也判绿，
+                // 而运行时按认领选中 A，回一个能力不匹配——两个组件各自为真，合起来是假的。
+                // 判据用的是运行时那一份（GatewayCapabilityContract），不另写近似。
+                bool Serves(GatewayLogicalModel model)
+                    => GatewayCapabilityContract.SupportsAppCallerScenario(
+                        model.Capabilities, model.AllowedAppCallerCodes, caller.AppCallerCode);
+
+                // 第一层：谁认领了它。认领是排他的，所以只看被认领的那个候选，不看别人。
+                var claimed = candidates.FirstOrDefault(x => x.DefaultForAppCallerCodes
+                    .Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase));
+                if (claimed is not null) return Serves(claimed);
+
+                // 第二层：这个用途的默认。
+                var typeDefault = candidates.FirstOrDefault(x => x.IsDefaultForType);
+                return typeDefault is not null && Serves(typeDefault);
             }
 
             var routableCallers = governed.Count(x => IsCallerRoutable(

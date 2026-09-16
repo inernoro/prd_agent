@@ -6153,4 +6153,44 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("function neutralBrand(", visuals);
     }
 
+    /// <summary>
+    /// 目录补登的键空间必须由库级唯一索引兜住，且读检查与落库共用同一份键。
+    ///
+    /// 端点里的「先查有没有人占了这个键、再写」在单个请求里是对的，两个管理员同时补登同一个
+    /// 标识时却都能查空、都写成功——库里两条补登抢同一个键，运行时按哪条算全看排序，
+    /// 而两个人的界面都显示「已保存」。Mongo 没有跨文档原子性，应用层补不了这个洞。
+    ///
+    /// 规范标识与等价写法共用一个键空间，所以键要合成一个数组落库，走多键唯一索引一次盖住两者；
+    /// 只盖 CanonicalId 的话，别名撞车照样能两条一起写进去。
+    /// </summary>
+    [Fact]
+    public void 目录补登的键空间有库级唯一索引且键只算一份()
+    {
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 键的算法只许有一处，读检查与落库都从它取——两份口径会让「查过的键」与
+        // 「索引盖住的键」不是同一批（形状 3：判据分裂成两份各自漂移）。
+        Assert.Contains("static List<string> CatalogEntryKeys(", consoleProgram);
+        var keyFnCount = System.Text.RegularExpressions.Regex
+            .Matches(consoleProgram, @"CatalogEntryKeys\(body\)").Count;
+        Assert.True(keyFnCount >= 2,
+            $"读检查与落库都要走同一个键算法，实际只有 {keyFnCount} 处引用它");
+
+        // 落库要有这份键数组，否则索引无处可建
+        Assert.Contains("{ \"Keys\", new BsonArray(CatalogEntryKeys(body)) }", consoleProgram);
+
+        // 多键唯一索引 + 部分过滤器：空数组在多键索引里记成 undefined，
+        // 不排除的话所有空补登会互相撞车，索引根本建不起来。
+        Assert.Contains("uniq_llmgw_catalog_entry_key", consoleProgram);
+        Assert.Contains("Filter.Type(\"Keys\", BsonType.String)", consoleProgram);
+
+        // 存量文档没有 Keys 字段，建索引前要补齐，否则它们一条都不受索引保护
+        Assert.Contains("Builders<BsonDocument>.Filter.Exists(\"Keys\", false)", consoleProgram);
+
+        // 撞上索引要如实回冲突，不能变成 500：两处写入路径都得接住
+        var duplicateHandled = System.Text.RegularExpressions.Regex
+            .Matches(consoleProgram, @"ENTRY_EXISTS").Count;
+        Assert.True(duplicateHandled >= 4,
+            $"新建与更新各自的「读检查」与「撞索引」都要回 ENTRY_EXISTS，实际只有 {duplicateHandled} 处");
+    }
 }

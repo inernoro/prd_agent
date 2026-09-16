@@ -215,55 +215,12 @@ public static class ImageGenModelAdapterRegistry
     {
         var result = new SizeAdaptationResult();
 
-        var w = reqW;
-        var h = reqH;
+        // 除数是边长的最小刻度：没声明就是 1。一旦声明，套边界与像素压缩全程都按它对齐——
+        // 两件事各做各的再互相纠正，就会出现「对齐把边界推翻、边界又把对齐推翻」。
+        var step = config.MustBeDivisibleBy is int declared && declared > 1 ? declared : 1;
 
-        // 应用范围限制
-        if (config.MinWidth.HasValue) w = Math.Max(w, config.MinWidth.Value);
-        if (config.MaxWidth.HasValue) w = Math.Min(w, config.MaxWidth.Value);
-        if (config.MinHeight.HasValue) h = Math.Max(h, config.MinHeight.Value);
-        if (config.MaxHeight.HasValue) h = Math.Min(h, config.MaxHeight.Value);
-
-        // 应用像素总量限制
-        if (config.MaxPixels.HasValue && (long)w * h > config.MaxPixels.Value)
-        {
-            var scale = Math.Sqrt((double)config.MaxPixels.Value / ((long)w * h));
-            w = (int)(w * scale);
-            h = (int)(h * scale);
-
-            // 缩放之后必须**重新套一遍边界**。
-            //
-            // 缩放是按长宽比等比做的，它不认识最小值：4096x512 在 1M 像素上限下缩成约
-            // 2896x362，而契约声明的最小高是 512——发出去的尺寸违反了这条契约自己写的规矩，
-            // 而没有任何地方会报错（形状 8：声明在那儿，运行时并不遵守它）。
-            // 契约本身是否有解在写入侧已经拦过（最小宽高的乘积不得超过像素上限），
-            // 所以这里重新套边界不会把两条约束推成互相矛盾。
-            if (config.MinWidth.HasValue) w = Math.Max(w, config.MinWidth.Value);
-            if (config.MaxWidth.HasValue) w = Math.Min(w, config.MaxWidth.Value);
-            if (config.MinHeight.HasValue) h = Math.Max(h, config.MinHeight.Value);
-            if (config.MaxHeight.HasValue) h = Math.Min(h, config.MaxHeight.Value);
-        }
-
-        // 应用整除要求
-        if (config.MustBeDivisibleBy.HasValue && config.MustBeDivisibleBy.Value > 1)
-        {
-            var div = config.MustBeDivisibleBy.Value;
-            w = (w / div) * div;
-            h = (h / div) * div;
-            // 确保不小于最小值
-            if (config.MinWidth.HasValue && w < config.MinWidth.Value)
-                w = ((config.MinWidth.Value + div - 1) / div) * div;
-            if (config.MinHeight.HasValue && h < config.MinHeight.Value)
-                h = ((config.MinHeight.Value + div - 1) / div) * div;
-            // 向下取整可能把边长抹成 0（请求边小于除数时），向上取整又可能越过最大值。
-            // 两头都要兜：没有最小值托底时至少给一个除数，越过最大值就退到不超过它的最大倍数。
-            if (w <= 0) w = div;
-            if (h <= 0) h = div;
-            if (config.MaxWidth.HasValue && w > config.MaxWidth.Value)
-                w = Math.Max(div, (config.MaxWidth.Value / div) * div);
-            if (config.MaxHeight.HasValue && h > config.MaxHeight.Value)
-                h = Math.Max(div, (config.MaxHeight.Value / div) * div);
-        }
+        var (w, h) = ClampSidesToBounds(config, reqW, reqH, step);
+        (w, h) = FitPixelBudget(config, w, h, step);
 
         result.Size = $"{w}x{h}";
         result.Width = w;
@@ -275,6 +232,86 @@ public static class ImageGenModelAdapterRegistry
 
         return result;
     }
+
+    /// <summary>两条边各自套一遍「最小/最大/整除」，不涉及像素总量。</summary>
+    private static (int Width, int Height) ClampSidesToBounds(ImageGenModelAdapterConfig config, int w, int h, int step)
+        => (ClampSide(w, config.MinWidth, config.MaxWidth, step),
+            ClampSide(h, config.MinHeight, config.MaxHeight, step));
+
+    /// <summary>
+    /// 单边取值：先夹进 [min, max]，再对齐到刻度。
+    /// 对齐是向下取整，所以要兜两头——掉到最小值以下向上补一格，补过头越过最大值就退回去。
+    /// </summary>
+    private static int ClampSide(int value, int? min, int? max, int step)
+    {
+        if (min.HasValue) value = Math.Max(value, min.Value);
+        if (max.HasValue) value = Math.Min(value, max.Value);
+        if (step <= 1) return Math.Max(1, value);
+
+        var aligned = value / step * step;
+        if (min.HasValue && aligned < min.Value) aligned = CeilToStep(min.Value, step);
+        // 请求边小于除数时向下取整会把边抹成 0，发出去的 WxH 里带 0 一定报错，至少给一格。
+        if (aligned <= 0) aligned = step;
+        // 向上补格可能越过最大值，退到不超过它的最大刻度；最大值本身不足一格时仍保一格。
+        if (max.HasValue && aligned > max.Value) aligned = Math.Max(step, max.Value / step * step);
+        return aligned;
+    }
+
+    /// <summary>
+    /// 把尺寸压进像素总量预算。
+    ///
+    /// 只做「等比缩放 + 重新套边界」是不够的：缩放按长宽比走、不认识最小边长，套边界认最小边长、
+    /// 不认识像素上限。两步各自正确，合起来却能把上限重新顶破——minHeight=512、上限 1M、
+    /// 请求 4096x512 时，缩放得到 2896x362，套回最小高 512 之后是 148 万像素，比上限还多四成
+    /// （形状 1：判据只覆盖了「等比缩放」这一种输入，换成「缩放后被最小值顶回来」就给出相反答案）。
+    ///
+    /// 所以两条边要一起解：被最小值顶住的那条钉死，剩下的超额由还能动的那条独自消化。
+    /// </summary>
+    private static (int Width, int Height) FitPixelBudget(ImageGenModelAdapterConfig config, int w, int h, int step)
+    {
+        if (config.MaxPixels is not long budget || budget <= 0) return (w, h);
+        if ((long)w * h <= budget) return (w, h);
+
+        var scale = Math.Sqrt(budget / (double)((long)w * h));
+        (w, h) = ClampSidesToBounds(
+            config,
+            Math.Max(1, (int)(w * scale)),
+            Math.Max(1, (int)(h * scale)),
+            step);
+        if ((long)w * h <= budget) return (w, h);
+
+        var floorW = LowerBoundSide(config.MinWidth, step);
+        var floorH = LowerBoundSide(config.MinHeight, step);
+        h = ShrinkSide(h, floorH, AllowedSide(budget, w), step);
+        if ((long)w * h > budget) w = ShrinkSide(w, floorW, AllowedSide(budget, h), step);
+
+        // 仍然超标只有一种可能：契约自己的最小宽 x 最小高就越过了像素上限。写入侧已经拦过这种
+        // 契约，这里只兜底——保最小边长，因为上游对低于最小边长通常直接报错，而超出像素上限
+        // 多半只是被裁或降质。
+        return (w, h);
+    }
+
+    /// <summary>在另一条边已经定死的前提下，这条边最多能到多少（按预算整除，再压回 int 值域）。</summary>
+    private static int AllowedSide(long budget, int otherSide)
+        => (int)Math.Min(int.MaxValue, budget / Math.Max(1, otherSide));
+
+    /// <summary>这条边无论如何都不能低于的值（最小值对齐到刻度之后）。</summary>
+    private static int LowerBoundSide(int? min, int step)
+    {
+        var floor = Math.Max(1, min ?? 1);
+        return step <= 1 ? floor : Math.Max(step, CeilToStep(floor, step));
+    }
+
+    /// <summary>把一条边压到 allowed 以内，但不越过它的下限，并保持刻度对齐。</summary>
+    private static int ShrinkSide(int value, int floor, int allowed, int step)
+    {
+        if (allowed >= value) return value;
+        var target = Math.Max(floor, allowed);
+        if (step > 1) target = Math.Max(floor, target / step * step);
+        return Math.Min(value, Math.Max(1, target));
+    }
+
+    private static int CeilToStep(int value, int step) => (value + step - 1) / step * step;
 
     /// <summary>
     /// 比例模式：只返回比例和分辨率档位

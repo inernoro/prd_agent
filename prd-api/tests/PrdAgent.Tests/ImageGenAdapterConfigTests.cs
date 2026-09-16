@@ -320,4 +320,59 @@ public class ImageGenAdapterConfigTests
         Assert.True(result.Height > 0, "高被向下取整抹成了 0，发出去就是 WxH 里的 0");
         Assert.True(result.Width > 0 && result.Width <= 1020, $"宽 {result.Width} 越过了最大宽 1020");
     }
+
+    /// <summary>
+    /// 范围模式：把最小边长补回来之后，像素总量不许重新越过上限。
+    ///
+    /// 「等比缩放」与「重新套边界」各自都对，合起来却能把上限顶破：缩放按长宽比走、不认识
+    /// 最小边长；套边界认最小边长、不认识像素上限。minHeight=512、上限 1M、请求 4096x512
+    /// 时，缩放得到 2896x362，补回最小高之后是 148 万像素——比上限还多四成，而两条规矩
+    /// 看上去都遵守了。
+    /// </summary>
+    [Fact]
+    public void 范围模式_补回最小边长后不越过像素上限()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-budget-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MinHeight = 512,
+            MaxPixels = 1_048_576,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "4096x512");
+
+        Assert.True(result.Height >= 512, $"高 {result.Height} 低于契约声明的最小高 512");
+        Assert.True(
+            (long)result.Width * result.Height <= 1_048_576,
+            $"{result.Width}x{result.Height} 合计 {(long)result.Width * result.Height} 像素，越过了上限 1048576");
+    }
+
+    /// <summary>
+    /// 同一件事在「带整除刻度」时也要成立：压进像素预算之后仍然整除。
+    /// 分开处理「对齐」与「压预算」会互相推翻对方的结论，所以两者必须同一条路径。
+    /// </summary>
+    [Fact]
+    public void 范围模式_整除刻度下压进像素预算仍然对齐()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-budget-divisor-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MinHeight = 512,
+            MustBeDivisibleBy = 64,
+            MaxPixels = 1_048_576,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "4096x512");
+
+        Assert.True(result.Height >= 512, $"高 {result.Height} 低于契约声明的最小高 512");
+        Assert.True(
+            (long)result.Width * result.Height <= 1_048_576,
+            $"{result.Width}x{result.Height} 合计 {(long)result.Width * result.Height} 像素，越过了上限 1048576");
+        Assert.True(result.Width % 64 == 0, $"宽 {result.Width} 不是 64 的倍数");
+        Assert.True(result.Height % 64 == 0, $"高 {result.Height} 不是 64 的倍数");
+    }
 }
