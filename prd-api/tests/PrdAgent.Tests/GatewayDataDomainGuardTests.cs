@@ -582,17 +582,48 @@ public class GatewayDataDomainGuardTests
         // 是「不点名的请求有没有人接」——不然调用方一改成 active 就开始静默失败。
         Assert.DoesNotContain("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
         Assert.Contains("FindUnnamedCatcherAsync", consoleProgram);
-        Assert.Contains("也没有对外模型接得住它", consoleProgram);
+        Assert.Contains("没有对外模型接得住它", consoleProgram);
         // 写入侧那份判据必须与运行时的两层同序：先认领、后用途默认。
         var catcherAt = consoleProgram.IndexOf("static async Task<string?> FindUnnamedCatcherAsync", StringComparison.Ordinal);
         Assert.True(catcherAt > 0);
-        var catcherBody = consoleProgram[catcherAt..Math.Min(consoleProgram.Length, catcherAt + 2600)];
+        var catcherEnd = consoleProgram.IndexOf(
+            "static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync", catcherAt, StringComparison.Ordinal);
+        Assert.True(catcherEnd > catcherAt, "「接得住」判据的边界变了，守卫取值口径需要更新");
+        var catcherBody = consoleProgram[catcherAt..catcherEnd];
         var claimLayer = catcherBody.IndexOf("AnyEq(\"DefaultForAppCallerCodes\"", StringComparison.Ordinal);
         var typeLayer = catcherBody.IndexOf("fb.Eq(\"IsDefaultForType\", true)", StringComparison.Ordinal);
         Assert.True(claimLayer > 0 && typeLayer > claimLayer,
             "写入侧的「接得住」判据必须与运行时同序：先认领、后用途默认");
-        // 只挂着名字接不住请求：必须真有一条启用的线路。
-        Assert.Contains("gwModelOfferings.CountDocumentsAsync", consoleProgram);
+
+        // 「有一条线路」要按运行时的口径判，不能只看 Offering 的 Enabled 开关。
+        //
+        // 运行时还会拒掉：健康档 Unavailable 的、目标模型或它的平台停用/不存在的、
+        // 以及授权名单不含这个调用方的。只看 Enabled 的后果是闸门放行、请求全灭——
+        // 发布门禁说「都有人接」，每条真实请求回 MODEL_NOT_FOUND。那比没有闸门更糟：
+        // 它让人以为这件事已经验过了（形状 8：拿一份不成立的证据当证明）。
+        Assert.Contains("fb.Ne(\"HealthStatus\", 2)", catcherBody);
+        Assert.Contains("enabledModelPlatformById", catcherBody);
+        Assert.Contains("enabledExchangeIds", catcherBody);
+        Assert.Contains("AllowsCaller", catcherBody);
+
+        // 残留的池字段不许让这道判断整个被跳过。
+        //
+        // 运行时早就不读 ModelPoolId / AllowedModelPoolIds / DefaultModelPoolId 了，
+        // 跳过去校验旧池会两头都错：健康的旧池替「其实没人接得住」的调用方背书（假绿），
+        // 被删掉的旧池又拦住与它无关的治理改动（误伤），而它指的那个页面已经 302 走了。
+        var validateAt = consoleProgram.IndexOf(
+            "static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync", StringComparison.Ordinal);
+        var validateEnd = consoleProgram.IndexOf(
+            "static async Task<bool> HasUsableGatewayPoolMemberAsync", validateAt, StringComparison.Ordinal);
+        Assert.True(validateEnd > validateAt, "调用方校验的边界变了，守卫取值口径需要更新");
+        var validateBody = consoleProgram[validateAt..validateEnd];
+        var catcherCallAt = validateBody.IndexOf("await FindUnnamedCatcherAsync(", StringComparison.Ordinal);
+        var poolBranchAt = validateBody.IndexOf("var strictPoolIds", StringComparison.Ordinal);
+        Assert.True(catcherCallAt > 0 && poolBranchAt > catcherCallAt,
+            "「谁接得住」必须无条件先判，不能因为调用方身上还留着池字段就整个跳过");
+        // 还带着池绑定时，校验的是它的后继（对外模型记着 MigratedFromPoolIds），不是那个已退场的池。
+        Assert.Contains("AnyEq(\"MigratedFromPoolIds\", effectivePoolId)", validateBody);
+        Assert.DoesNotContain("HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool)", validateBody);
 
         // 「其余那些为什么没落到它」必须按真实构成说，不许写死成某几种原因。
         // 上一版写死了「配了专属池或未放行」，断流之后原因变成「被别的模型认领了」，

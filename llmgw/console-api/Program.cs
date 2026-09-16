@@ -6472,6 +6472,9 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         var catcher = await FindUnnamedCatcherAsync(
             gwLogicalModels,
             gwModelOfferings,
+            gwModels,
+            gwPlatforms,
+            gwModelExchanges,
             TenantAccess.GetRequired(http).TenantId,
             caller.AsNullableString("RequestType"),
             caller.AsNullableString("AppCallerCode"));
@@ -17354,7 +17357,12 @@ static string DescribeMissReasons(IReadOnlyList<CallTraceUnnamedCaller> callers)
 /// 判据与运行时 <c>TryResolveDefaultLogicalModelAsync</c> **两层逐条对齐**：
 ///   1. 有没有模型认领了这个调用方（DefaultForAppCallerCodes）
 ///   2. 没有，才看这个用途标了默认的那个
-/// 两层都要求启用着、而且真有一条启用的线路——只挂着名字接不住任何请求。
+///
+/// 「有一条线路」这件事同样要按运行时的口径判，不能只看 Offering 的 Enabled 开关。
+/// 运行时还会拒掉：健康档是 Unavailable 的、目标模型或它的平台已停用或压根不在了的、
+/// 以及这个对外模型的授权名单不含该调用方的。只看 Enabled 的后果是**闸门放行、请求全灭**——
+/// 发布门禁说「都有人接」，而每一条真实请求回 MODEL_NOT_FOUND，
+/// 那比没有闸门更糟：它让人以为这件事已经验过了（形状 8：拿一份不成立的证据当成证明）。
 ///
 /// 为什么这个判据必须在写入侧也有一份：把调用方改成 active 却没人接得住，它不会当场报错，
 /// 而是等到第一个真实请求才静默失败。守卫钉住两边的顺序一致。
@@ -17362,16 +17370,85 @@ static string DescribeMissReasons(IReadOnlyList<CallTraceUnnamedCaller> callers)
 static async Task<string?> FindUnnamedCatcherAsync(
     IMongoCollection<BsonDocument> gwLogicalModels,
     IMongoCollection<BsonDocument> gwModelOfferings,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModelExchanges,
     string tenantId,
     string? requestType,
     string? appCallerCode)
 {
     if (string.IsNullOrWhiteSpace(requestType)) return null;
     var fb = Builders<BsonDocument>.Filter;
-    var basics = fb.And(
-        fb.Eq("TenantId", tenantId),
-        fb.Eq("Enabled", true),
-        fb.Eq("ModelType", requestType));
+    var tenantFilter = fb.Eq("TenantId", tenantId);
+    var basics = fb.And(tenantFilter, fb.Eq("Enabled", true), fb.Eq("ModelType", requestType));
+
+    // 目标可用性要查三张表，但一次调用里只查一遍——候选模型通常不止一个，
+    // 逐个去打库会把一次发布门禁变成几十次往返。
+    HashSet<string>? enabledPlatformIds = null;
+    Dictionary<string, string>? enabledModelPlatformById = null;
+    HashSet<string>? enabledExchangeIds = null;
+
+    async Task EnsureTargetsLoadedAsync()
+    {
+        if (enabledPlatformIds is not null) return;
+        enabledPlatformIds = (await gwPlatforms.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync())
+            .Select(x => x.GetStringOrEmpty("_id"))
+            .Where(x => x.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        enabledModelPlatformById = (await gwModels.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id").Include("PlatformId"))
+                .ToListAsync())
+            .Where(x => x.GetStringOrEmpty("_id").Length > 0)
+            .ToDictionary(x => x.GetStringOrEmpty("_id"), x => x.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal);
+        enabledExchangeIds = (await gwModelExchanges.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync())
+            .Select(x => x.GetStringOrEmpty("_id"))
+            .Where(x => x.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    async Task<bool> HasRuntimeUsableRouteAsync(string logicalId)
+    {
+        var offerings = await gwModelOfferings.Find(fb.And(
+            tenantFilter,
+            fb.Eq("LogicalModelId", logicalId),
+            fb.Eq("Enabled", true),
+            // 健康档 2 = Unavailable。运行时会跳过它，闸门也必须跳过——
+            // 全部线路都是 Unavailable 的模型接不住任何请求。
+            fb.Ne("HealthStatus", 2))).ToListAsync();
+        if (offerings.Count == 0) return false;
+
+        await EnsureTargetsLoadedAsync();
+        foreach (var offering in offerings)
+        {
+            var targetId = offering.GetStringOrEmpty("TargetId");
+            if (targetId.Length == 0) continue;
+            if (string.Equals(offering.AsNullableString("TargetKind"), "exchange", StringComparison.OrdinalIgnoreCase))
+            {
+                if (enabledExchangeIds!.Contains(targetId)) return true;
+                continue;
+            }
+            // 目标模型在不在、启用没有，以及它挂的平台启用没有——运行时这三样缺一条都解析不出来。
+            if (enabledModelPlatformById!.TryGetValue(targetId, out var platformId)
+                && platformId.Length > 0
+                && enabledPlatformIds!.Contains(platformId))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // 授权名单：空 = 对所有调用方开放；非空时不含它就接不住（运行时同判）。
+    static bool AllowsCaller(BsonDocument logical, string? code)
+    {
+        var allowed = GetStringArray(logical, "AllowedAppCallerCodes");
+        if (allowed.Count == 0) return true;
+        return code is { Length: > 0 } && allowed.Contains(code, StringComparer.Ordinal);
+    }
 
     async Task<string?> FirstWithRouteAsync(FilterDefinition<BsonDocument> filter)
     {
@@ -17380,11 +17457,9 @@ static async Task<string?> FindUnnamedCatcherAsync(
             .ToListAsync();
         foreach (var doc in docs)
         {
-            var routes = await gwModelOfferings.CountDocumentsAsync(fb.And(
-                fb.Eq("TenantId", tenantId),
-                fb.Eq("LogicalModelId", doc.GetStringOrEmpty("_id")),
-                fb.Eq("Enabled", true)));
-            if (routes > 0) return doc.AsNullableString("PublicId") ?? doc.GetStringOrEmpty("_id");
+            if (!AllowsCaller(doc, appCallerCode)) continue;
+            if (await HasRuntimeUsableRouteAsync(doc.GetStringOrEmpty("_id")))
+                return doc.AsNullableString("PublicId") ?? doc.GetStringOrEmpty("_id");
         }
         return null;
     }
@@ -17428,6 +17503,28 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
         return "active appCaller 必须使用 modelPolicy=auto/pool/pinned；auto 使用调用方默认池，pool 使用指定池，pinned 保留精确模型意图。";
     }
 
+    /*
+      「谁接得住不点名的请求」**无条件**要判，不看调用方身上还留着什么池字段。
+
+      原来的写法是：有残留池绑定就整个跳过这道判断，转而去校验那个池。而运行时早就不读
+      ModelPoolId / AllowedModelPoolIds / DefaultModelPoolId 了，于是这个分支两头都错——
+      一个健康的旧池能替一个「其实没有对外模型接得住」的调用方背书（假绿）；
+      一个已被删掉的旧池又会拦住与它无关的治理改动（误伤），而它指的那个 /pools 页面
+      现在 302 到对外模型页、写端点全删了，那条错误信息给不出任何可执行的下一步。
+
+      判据换成真正在跑的那一条：不点名的请求得有人接得住（认领 → 用途默认，两层都要求
+      启用、授权放行、且真有一条运行时可用的线路）。
+    */
+    var catcher = await FindUnnamedCatcherAsync(
+        gwLogicalModels, gwModelOfferings, gwModels, gwPlatforms, gwModelExchanges,
+        tenantId, requestType, appCallerCode);
+    if (catcher is null)
+    {
+        return $"active appCaller 在 {requestType} 这个用途下没有对外模型接得住它："
+            + "要么在模型页给某个对外模型「指定调用方」认领它，要么给这个用途设一个默认模型"
+            + "（它得启用、授权放行、并且至少有一条健康的线路指向启用的上游）。";
+    }
+
     var strictPoolIds = (allowedModelPoolIds ?? [])
         .Where(value => !string.IsNullOrWhiteSpace(value))
         .Select(value => value.Trim())
@@ -17441,46 +17538,32 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     }
     if (string.IsNullOrWhiteSpace(effectivePoolId))
     {
-        // 不绑池是允许的——**只要有对外模型接得住它**。
-        //
-        // 这条校验原来写的是「active appCaller 必须绑定 GW 权威模型池」，那是旧世界的
-        // 不变量：池是必需品。断流（把还在走池的调用方切到对外模型目录）第一次撞上的
-        // 就是这堵墙——架构上池早已可替换，写入侧却还把它当必需品。
-        //
-        // 换成真正该守的那件事：不点名的请求得有人接。判据与运行时那两层逐条对齐——
-        // 先看有没有模型认领了这个调用方，没有才看这个用途的默认；两层都要启用且真有
-        // 一条能接的线路，否则这个调用方一改成 active 就会开始静默失败。
-        var catcher = await FindUnnamedCatcherAsync(
-            gwLogicalModels, gwModelOfferings, tenantId, requestType, appCallerCode);
-        if (catcher is null)
-        {
-            return $"active appCaller 既没绑模型池，{requestType} 这个用途也没有对外模型接得住它："
-                + "要么在模型页给某个对外模型「指定调用方」认领它，要么给这个用途设一个默认模型（且它得有能接的线路）。";
-        }
         return null;
     }
 
-    var pool = await gwModelPools
-        .Find(Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-            Builders<BsonDocument>.Filter.Eq("_id", effectivePoolId)))
-        .FirstOrDefaultAsync();
-    if (pool is null)
+    /*
+      还带着池绑定的调用方，点名发的是**池 ID**（model_policy=pool 那套契约还在外面活着）。
+      池路由已经删了，那条请求现在靠「对外模型记住了自己是从哪个池搬来的」接住
+      （MigratedFromPoolIds）。所以这里要校验的不再是那个池文档本身，而是它的后继——
+      去查已经不参与解析的旧池，只能得出一个与真实行为无关的结论。
+    */
+    var successor = await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+        Builders<BsonDocument>.Filter.AnyEq("MigratedFromPoolIds", effectivePoolId))).FirstOrDefaultAsync();
+    if (successor is null)
     {
-        return $"active appCaller 绑定的模型池 {effectivePoolId} 不是 GW 权威模型池；请先在 /pools 认领或创建。";
+        return $"active appCaller 还绑着模型池 {effectivePoolId}，但没有任何对外模型记着它是从这个池搬来的："
+            + "池路由已经退场，按池 ID 点名的请求会解析不到。先跑一次 POST /gw/pools/migrate-to-models "
+            + "把这个池搬成对外模型，或把这个调用方改成不点名（由认领或用途默认接住）。";
     }
 
-    var poolType = pool.AsNullableString("ModelType");
-    if (!string.IsNullOrWhiteSpace(poolType)
+    var successorType = successor.AsNullableString("ModelType");
+    if (!string.IsNullOrWhiteSpace(successorType)
         && !string.IsNullOrWhiteSpace(requestType)
-        && !string.Equals(poolType, requestType, StringComparison.OrdinalIgnoreCase))
+        && !string.Equals(successorType, requestType, StringComparison.OrdinalIgnoreCase))
     {
-        return $"active appCaller 绑定的 GW 模型池类型 {poolType} 与调用类型 {requestType} 不一致。";
-    }
-
-    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
-    {
-        return $"active appCaller 默认使用的 GW 模型池 {effectivePoolId} 没有可解析、非 unavailable 的成员；请先在 /pools 补齐 enabled 模型或 Exchange。";
+        return $"active appCaller 绑定的池搬迁成的对外模型是 {successorType} 用途，与调用类型 {requestType} 不一致。";
     }
 
     return null;
