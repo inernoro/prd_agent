@@ -63,8 +63,7 @@ public class ModelResolver : IModelResolver
             : GatewayTenantDefaults.InternalTenantId;
         // 只认 "observe" 这一个降档值；拼错、留空、写别的都落回 enforce——
         // 一道安全门不该因为配置写错就悄悄敞开。
-        _catalogGateEnforces = !string.Equals(
-            config["LlmGateway:ModelCatalogGate"]?.Trim(), "observe", StringComparison.OrdinalIgnoreCase);
+        _catalogGateEnforces = GatewayCatalogGate.ConfiguredToEnforce(config);
         _catalogMigrationRecheckInterval =
             int.TryParse(config["LlmGateway:ModelCatalogGateRecheckSeconds"], out var recheckSeconds) && recheckSeconds >= 0
                 ? TimeSpan.FromSeconds(recheckSeconds)
@@ -247,13 +246,7 @@ public class ModelResolver : IModelResolver
         var complete = false;
         try
         {
-            var migrations = _gatewayDb.Database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName);
-            var done = await migrations.CountDocumentsAsync(
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.In("_id", GatewayCatalogMigrations.RequiredIds),
-                    Builders<BsonDocument>.Filter.Exists(GatewayCatalogMigrations.CompletedAtField)),
-                cancellationToken: ct);
-            complete = done >= GatewayCatalogMigrations.RequiredIds.Length;
+            complete = await GatewayCatalogGate.MigrationsCompleteAsync(_gatewayDb.Database, ct);
         }
         catch (Exception ex)
         {
@@ -478,7 +471,7 @@ public class ModelResolver : IModelResolver
     }
 
     private static bool IsAllowedOutsideCatalog(BsonDocument doc)
-        => doc.TryGetValue("AllowedOutsideCatalog", out var value) && value.IsBoolean && value.AsBoolean;
+        => GatewayCatalogGate.IsAllowedOutsideCatalog(doc);
 
     /// <summary>
     /// 解析主流程：一个请求最终落到哪条线路。

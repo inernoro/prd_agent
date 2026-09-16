@@ -99,41 +99,55 @@ public static class ImageGenModelAdapterRegistry
             };
         }
 
-        var result = new SizeAdaptationResult();
         var allSizes = GetAllSizesFromConfig(config);
         var allRatios = GetAllRatiosFromConfig(config);
 
         // 解析请求尺寸
         if (!TryParseSize(requestedSize, out var reqW, out var reqH))
         {
-            // 无法解析：使用默认尺寸
+            /*
+              请求没给尺寸、或者给了一个读不出来的值，退回默认尺寸——但**不能就此返回**。
+
+              默认值是「白名单第一条，没有就 1024x1024」，它未必落在这份契约声明的范围里：
+              一个只配了范围（没有白名单尺寸）的契约，最大边写 768、像素上限写 40 万，
+              这条路径照样会发出 1024x1024。声明在那儿，运行时并不遵守它，而且不报错
+              （形状 8：不成立的证据——契约看上去生效了，实际只在「请求带了尺寸」那条路上生效）。
+
+              所以默认值也要走同一条规整路径，与带尺寸的请求一字不差。
+            */
             var defaultSize = allSizes.FirstOrDefault() ?? "1024x1024";
-            TryParseSize(defaultSize, out var dw, out var dh);
-            result.Size = defaultSize;
-            result.Width = dw;
-            result.Height = dh;
-            result.AspectRatio = DetectAspectRatio(dw, dh, allRatios);
-            result.Resolution = DetectResolution(dw, dh);
-            result.SizeAdjusted = true;
-            return result;
+            if (!TryParseSize(defaultSize, out reqW, out reqH))
+            {
+                reqW = 1024;
+                reqH = 1024;
+            }
+
+            var normalized = NormalizeByConstraint(config, reqW, reqH, allSizes, allRatios);
+            // 用户本来就没给尺寸，这一项恒为真：规整结果碰巧等于默认值也是「替他定的」。
+            normalized.SizeAdjusted = true;
+            return normalized;
         }
 
-        switch (config.SizeConstraintType)
-        {
-            case SizeConstraintTypes.Whitelist:
-                return NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios);
-
-            case SizeConstraintTypes.Range:
-                return NormalizeSizeRange(config, reqW, reqH, allRatios);
-
-            case SizeConstraintTypes.AspectRatio:
-                return NormalizeSizeAspectRatio(config, reqW, reqH, allSizes, allRatios);
-
-            default:
-                // 回退到白名单模式
-                return NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios);
-        }
+        return NormalizeByConstraint(config, reqW, reqH, allSizes, allRatios);
     }
+
+    /// <summary>
+    /// 按契约声明的约束类型规整一对宽高。带尺寸的请求与退回默认值的请求都走这里，
+    /// 两条路不许各走各的——分开写就会出现「契约只对其中一条路生效」。
+    /// </summary>
+    private static SizeAdaptationResult NormalizeByConstraint(
+        ImageGenModelAdapterConfig config,
+        int reqW,
+        int reqH,
+        List<string> allSizes,
+        List<string> allRatios)
+        => config.SizeConstraintType switch
+        {
+            SizeConstraintTypes.Range => NormalizeSizeRange(config, reqW, reqH, allRatios),
+            SizeConstraintTypes.AspectRatio => NormalizeSizeAspectRatio(config, reqW, reqH, allSizes, allRatios),
+            // 白名单是默认，认不出来的约束类型也退回它。
+            _ => NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios),
+        };
 
     /// <summary>
     /// 白名单模式：选择最接近的尺寸

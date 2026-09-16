@@ -375,4 +375,36 @@ public class ImageGenAdapterConfigTests
         Assert.True(result.Width % 64 == 0, $"宽 {result.Width} 不是 64 的倍数");
         Assert.True(result.Height % 64 == 0, $"高 {result.Height} 不是 64 的倍数");
     }
+
+    /// <summary>
+    /// 请求没给尺寸时退回的默认值，同样要落在契约声明的范围里。
+    ///
+    /// 默认值是「白名单第一条，没有就 1024x1024」。一个只配了范围、没有白名单尺寸的契约，
+    /// 最大边写 768、像素上限写 40 万，旧路径照样发 1024x1024 出去——契约看上去生效了，
+    /// 实际只在「请求带了尺寸」那条路上生效，而上游会把这个请求拒掉。
+    /// </summary>
+    [Fact]
+    public void 范围模式_请求没给尺寸时默认值也要落在范围里()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-default-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MaxWidth = 768,
+            MaxHeight = 768,
+            MaxPixels = 400_000,
+        };
+
+        foreach (var requested in new[] { (string?)null, "", "不是一个尺寸" })
+        {
+            var result = ImageGenModelAdapterRegistry.NormalizeSize(config, requested);
+
+            Assert.True(result.Width <= 768, $"请求「{requested}」退回的默认宽 {result.Width} 越过了最大宽 768");
+            Assert.True(result.Height <= 768, $"请求「{requested}」退回的默认高 {result.Height} 越过了最大高 768");
+            Assert.True(
+                (long)result.Width * result.Height <= 400_000,
+                $"请求「{requested}」退回的默认尺寸 {result.Width}x{result.Height} 越过了像素上限 400000");
+        }
+    }
 }

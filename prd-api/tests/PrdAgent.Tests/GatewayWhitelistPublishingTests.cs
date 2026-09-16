@@ -158,15 +158,18 @@ public class GatewayWhitelistPublishingTests
     {
         var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
 
-        // 判据本身：名录内直接过，名录外要有显式放行的戳
-        Assert.Contains("GatewayModelCatalog.Contains", endpoint);
-        Assert.Contains("AllowedOutsideCatalog", endpoint);
+        // 判据与生效条件都取自那一份共享实现，端点自己不再复述一遍。
+        //
+        // 这里刻意**不**断言 GatewayModelCatalog.Contains 之类的具体调用：那是在要求判据
+        // 长成某个样子，而要钉住的是「两边用的是同一份」。判据后来收进 GatewayCatalogGate
+        // 时，端点里那几个调用一个都不剩，而不变量完好无损——按字面量写的守卫会在这种时候
+        // 变红，那种红说的是实现变了，不是契约破了（形状 4a）。
+        Assert.Contains("GatewayCatalogGate.EnforcesAsync", endpoint);
+        Assert.Contains("!catalogGateEnforces || GatewayCatalogGate.Passes(x)", endpoint);
 
-        // 生效条件与运行时同源：配置 + 迁移完成，缺一不拦
-        Assert.Contains("LlmGateway:ModelCatalogGate", endpoint);
-        Assert.Contains("GatewayCatalogMigrations.RequiredIds", endpoint);
-        Assert.Contains("GatewayCatalogMigrations.CompletedAtField", endpoint);
-        Assert.Contains("!catalogGateEnforces || PassesCatalogGate(x)", endpoint);
+        // 端点不许自己再判一遍「配置是不是 observe」「迁移跑完没有」——判据分家就是从这里开始的。
+        Assert.DoesNotContain("\"observe\", StringComparison.OrdinalIgnoreCase", endpoint);
+        Assert.DoesNotContain("GatewayCatalogMigrations.RequiredIds", endpoint);
 
         // 应用侧那条清单（选择器读的那份）是同类，也要过这道门：
         // 少了它，选择器里列出来的模型选中即失败（MODEL_NOT_IN_CATALOG），而用户没做错任何事。
@@ -208,9 +211,10 @@ public class GatewayWhitelistPublishingTests
         var claimAt = catcherBody.IndexOf("DefaultForAppCallerCodes", StringComparison.Ordinal);
         var typeDefaultAt = catcherBody.IndexOf("IsDefaultForType", StringComparison.Ordinal);
         Assert.True(claimAt > 0 && typeDefaultAt > claimAt, "就绪探针的两层判据必须与运行时同序");
-        // 池那条不删：还没搬迁的部署仍然靠它，两条是或的关系
+        // 池那条不删：还没搬迁的部署仍然靠它，两条是或的关系。
+        // 断言的是这个「或」还在，不是它写成了哪个形参名。
         Assert.Contains("IsCallerRoutable(", body);
-        Assert.Contains("|| HasLogicalCatcher(x)", body);
+        Assert.Matches(@"\|\|\s*HasLogicalCatcher\(\w+\)", body);
     }
 
     /// <summary>

@@ -172,11 +172,20 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         // 不报的话，人在控制台配了 3 条、这边一条都没装，界面只会显示「生效 0 条」，
         // 而「为什么是 0」无处可查——降级被沉默吞掉（degradation-must-alarm）。
         var skippedTenantScoped = 0;
+        var skippedByTenant = new Dictionary<string, int>(StringComparer.Ordinal);
         if (_tenancy == ImageGenContractHostTenancy.MultiTenant)
         {
-            skippedTenantScoped = (int)await collection.CountDocumentsAsync(
-                fb.And(fb.Eq(x => x.Enabled, true), fb.Ne(x => x.TenantId, string.Empty)),
-                cancellationToken: ct);
+            var skippedDocs = await collection
+                .Find(fb.And(fb.Eq(x => x.Enabled, true), fb.Ne(x => x.TenantId, string.Empty)))
+                .ToListAsync(ct);
+            skippedTenantScoped = skippedDocs.Count;
+            // 逐个租户记一份：跳过的条数是**那个租户**要看的数字，合成一个总数它看不懂
+            // （「跳过了 7 条」里有几条是我的？）。写回时一租户一行，见下面那段。
+            foreach (var group in skippedDocs.GroupBy(x => x.TenantId.Trim(), StringComparer.Ordinal))
+            {
+                if (group.Key.Length == 0) continue;
+                skippedByTenant[group.Key] = group.Count();
+            }
         }
 
         // 排序就是「哪条先匹配」的判据，必须在这里定死一次，而不是指望写入顺序：
@@ -229,28 +238,73 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
             ? "0:0"
             : $"{ordered.Count}:{docs.Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern)).Max(x => x.UpdatedAt).Ticks}";
 
-        var statusId = $"{_hostRole}::{_tenantId}";
-        await _gateway!.Database.GetCollection<BsonDocument>("llmgw_imagegen_sync_status").ReplaceOneAsync(
-            Builders<BsonDocument>.Filter.Eq("_id", statusId),
-            new BsonDocument
+        var statusCollection = _gateway!.Database.GetCollection<BsonDocument>("llmgw_imagegen_sync_status");
+
+        BsonDocument BuildStatus(string tenantId, int skippedForTenant) => new()
+        {
+            { "_id", $"{_hostRole}::{tenantId}" },
+            { "TenantId", tenantId },
+            { "HostRole", _hostRole },
+            { "SyncedAt", DateTime.UtcNow },
+            { "OverrideCount", ordered.Count },
+            { "BuiltinCount", ImageGenModelConfigs.Configs.Count },
+            // 这个宿主服务几个租户，以及因此跳过了几条。控制台据此回答
+            // 「我配的那条为什么在网关那一侧没生效」。
+            { "HostTenancy", _tenancy.ToString() },
+            { "SkippedTenantScopedCount", skippedForTenant },
+            { "ContentVersion", contentVersion },
+            // 生效的那几个模式，逐条列出来。只报数字的话，「我配了 3 条它说 3 条」
+            // 仍然答不出「生效的是不是我刚改的那条」。
+            { "Patterns", new BsonArray(ordered.Select(x => x.ModelIdPattern)) },
+        };
+
+        async Task WriteStatusAsync(string tenantId, int skippedForTenant)
+        {
+            var doc = BuildStatus(tenantId, skippedForTenant);
+            await statusCollection.ReplaceOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", doc["_id"]),
+                doc,
+                new ReplaceOptions { IsUpsert = true },
+                ct);
+        }
+
+        // 宿主自己那一行（单租户宿主就只有这一行）。
+        await WriteStatusAsync(_tenantId, skippedTenantScoped);
+
+        /*
+          多租户宿主还要**逐个租户**各写一行。
+
+          不写的话，这套「告诉人为什么没生效」的东西恰好漏掉了唯一需要它的那批人：
+          状态行的 _id 是 `{宿主}::{租户}`，而控制台按登录租户去查。多租户宿主只写自己
+          内部租户那一行，于是每个外部租户查到的是「没有记录」，界面据此说「同步从未发生、
+          这个进程可能挂了」——一个正常运转、只是刻意跳过了他那几条契约的进程，
+          被报成疑似宕机。真原因（跳过了你的 N 条，因为这张表是进程全局的）就写在那一行里，
+          只是写到了他看不见的地方（degradation-must-alarm：降级要响铃，而且要响给当事人听）。
+
+          跳过条数按租户各算各的：合成一个总数，外部租户读到「跳过 7 条」也答不出
+          「其中几条是我的」。
+
+          已经有行的租户即使这一轮一条契约都不剩也要刷一次，否则它停在上一轮的数字上
+          不动，变成一条越来越旧的假话。
+        */
+        if (_tenancy == ImageGenContractHostTenancy.MultiTenant)
+        {
+            var knownTenantIds = (await statusCollection
+                    .Find(Builders<BsonDocument>.Filter.Eq("HostRole", _hostRole))
+                    .Project(Builders<BsonDocument>.Projection.Include("TenantId"))
+                    .ToListAsync(ct))
+                .Select(x => x.GetValue("TenantId", BsonNull.Value) is { IsString: true } v ? v.AsString : string.Empty)
+                .Where(x => x.Length > 0);
+
+            foreach (var tenantId in skippedByTenant.Keys
+                         .Concat(knownTenantIds)
+                         .Distinct(StringComparer.Ordinal)
+                         .Where(x => !string.Equals(x, _tenantId, StringComparison.Ordinal))
+                         .ToList())
             {
-                { "_id", statusId },
-                { "TenantId", _tenantId },
-                { "HostRole", _hostRole },
-                { "SyncedAt", DateTime.UtcNow },
-                { "OverrideCount", ordered.Count },
-                { "BuiltinCount", ImageGenModelConfigs.Configs.Count },
-                // 这个宿主服务几个租户，以及因此跳过了几条。控制台据此回答
-                // 「我配的那条为什么在网关那一侧没生效」。
-                { "HostTenancy", _tenancy.ToString() },
-                { "SkippedTenantScopedCount", skippedTenantScoped },
-                { "ContentVersion", contentVersion },
-                // 生效的那几个模式，逐条列出来。只报数字的话，「我配了 3 条它说 3 条」
-                // 仍然答不出「生效的是不是我刚改的那条」。
-                { "Patterns", new BsonArray(ordered.Select(x => x.ModelIdPattern)) },
-            },
-            new ReplaceOptions { IsUpsert = true },
-            ct);
+                await WriteStatusAsync(tenantId, skippedByTenant.GetValueOrDefault(tenantId, 0));
+            }
+        }
     }
 
     private bool _builtinPublished;

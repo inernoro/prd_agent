@@ -276,10 +276,13 @@ public class ImageGenConfigOverrideGuardTests
         var console = Read("llmgw/console-api/Program.cs");
         var section = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
 
-        // 状态键带宿主角色，且角色是必填构造参数——新增第三个宿主时不传就编译不过
-        Assert.Contains("$\"{_hostRole}::{_tenantId}\"", worker);
+        // 状态键带宿主角色 + 租户两个维度，且角色是必填构造参数——新增第三个宿主时不传就编译不过。
+        // 断言的是这个键的**构成**，不是某一次写法：租户那一段从字段换成参数（多租户宿主要逐个
+        // 租户写行）时，键的形状一个字都没变，而按字面量断言的守卫会当场红——那种红说明
+        // 守卫测的是实现长什么样，不是它做到了什么（形状 4a）。
+        Assert.Matches(@"\$""\{_hostRole\}::\{\w+\}""", worker);
         Assert.Contains("string hostRole,", worker);
-        Assert.DoesNotContain("$\"prd-api::{_tenantId}\"", worker);
+        Assert.DoesNotContain("$\"prd-api::", worker);
 
         // 两处注册各自表明身份
         Assert.Contains("hostRole: \"prd-api\"", Read("prd-api/src/PrdAgent.Api/Program.cs"));
@@ -432,5 +435,45 @@ public class ImageGenConfigOverrideGuardTests
         Assert.True(catchStart > 0);
         var catchBlock = worker[catchStart..worker.IndexOf("await Task.Delay(Interval", catchStart, StringComparison.Ordinal)];
         Assert.DoesNotContain("ReplaceOverrides", catchBlock);
+    }
+
+    /// <summary>
+    /// 多租户宿主的同步状态必须逐个租户各写一行。
+    ///
+    /// 状态行的 _id 是 `{宿主}::{租户}`，控制台按登录租户去查。多租户宿主只写自己内部租户
+    /// 那一行的话，每个外部租户查到的都是「没有记录」，界面据此说「同步从未发生、进程可能挂了」
+    /// ——一个正常运转、只是刻意跳过了他那几条契约的进程被报成疑似宕机。而真原因就写在
+    /// 那一行里，只是写到了他看不见的地方：降级响了铃，却没响给当事人听。
+    ///
+    /// 跳过条数也要按租户各算各的：一个合计数答不出「其中几条是我的」。
+    /// </summary>
+    [Fact]
+    public void 多租户宿主逐个租户写同步状态且跳过条数按租户算()
+    {
+        var worker = Read("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+
+        // 跳过的那些要按租户分组，而不是只数一个总数。
+        Assert.Contains("skippedByTenant", worker);
+        Assert.Contains("GroupBy(x => x.TenantId.Trim()", worker);
+
+        // 写状态收敛成一个函数，宿主自己那一行与各租户那几行走同一条路——
+        // 两处各拼一份文档，迟早出现「外部租户那行少了个字段」。
+        Assert.Contains("BsonDocument BuildStatus(string tenantId, int skippedForTenant)", worker);
+        Assert.Contains("async Task WriteStatusAsync(string tenantId, int skippedForTenant)", worker);
+
+        // 逐租户那一段只在多租户宿主发生，且跳过条数取的是这个租户自己的数。
+        var perTenantAt = worker.IndexOf("skippedByTenant.Keys", StringComparison.Ordinal);
+        var multiTenantGateAt = worker.LastIndexOf(
+            "if (_tenancy == ImageGenContractHostTenancy.MultiTenant)",
+            perTenantAt,
+            StringComparison.Ordinal);
+        Assert.True(
+            perTenantAt > 0 && multiTenantGateAt > 0,
+            "逐租户写状态那一段必须挂在「这是多租户宿主」这个判断下面");
+        Assert.Contains("skippedByTenant.GetValueOrDefault(tenantId, 0)", worker);
+
+        // 已经有行的租户即使这一轮一条契约都不剩也要刷一次，否则它停在上一轮的数字上，
+        // 变成一条越来越旧的假话。
+        Assert.Contains("knownTenantIds", worker);
     }
 }

@@ -6,6 +6,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
 
 namespace PrdAgent.LlmGatewayHost;
 
@@ -131,31 +132,12 @@ public static class GatewayModelCatalogEndpoint
           「要不要拦」与运行时同源：配置没降到 observe，且控制台那几条补标记迁移都跑完了。
           降档或迁移没跑完时运行时只记录不拦，这里也就不能少列——否则又走到另一边去了。
         */
-        var catalogGateEnforces = !string.Equals(
-            config["LlmGateway:ModelCatalogGate"]?.Trim(), "observe", StringComparison.OrdinalIgnoreCase);
-        if (catalogGateEnforces)
-        {
-            var migrationsDone = await db.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName)
-                .CountDocumentsAsync(
-                    bf.And(
-                        bf.In("_id", GatewayCatalogMigrations.RequiredIds),
-                        bf.Exists(GatewayCatalogMigrations.CompletedAtField)),
-                    cancellationToken: ct);
-            catalogGateEnforces = migrationsDone >= GatewayCatalogMigrations.RequiredIds.Length;
-        }
-
-        static bool PassesCatalogGate(BsonDocument model)
-        {
-            var name = model.GetValue("ModelName", BsonNull.Value) is { IsString: true } n ? n.AsString : string.Empty;
-            if (name.Length > 0 && GatewayModelCatalog.Contains(name)) return true;
-            // 名录外的要有管理员显式放行的戳，判据与运行时那一处逐字同源。
-            return model.GetValue("AllowedOutsideCatalog", BsonNull.Value) is { IsBoolean: true } flag && flag.AsBoolean;
-        }
+        var catalogGateEnforces = await GatewayCatalogGate.EnforcesAsync(config, db, ct);
 
         var priceByModelId = enabledModels
             .Where(x => x.GetValue("PlatformId", BsonNull.Value) is { IsString: true } pid
                 && enabledPlatformIds.Contains(pid.AsString))
-            .Where(x => !catalogGateEnforces || PassesCatalogGate(x))
+            .Where(x => !catalogGateEnforces || GatewayCatalogGate.Passes(x))
             .ToDictionary(x => x.GetValue("_id", BsonNull.Value).AsString, x => x, StringComparer.Ordinal);
 
         // 兑换所目标：同样要在且启用。

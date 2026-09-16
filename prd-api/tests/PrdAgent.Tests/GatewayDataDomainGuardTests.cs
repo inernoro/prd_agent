@@ -6193,4 +6193,75 @@ public class GatewayDataDomainGuardTests
         Assert.True(duplicateHandled >= 4,
             $"新建与更新各自的「读检查」与「撞索引」都要回 ENTRY_EXISTS，实际只有 {duplicateHandled} 处");
     }
+
+    /// <summary>
+    /// 就绪探针的可路由判据必须与运行时同范围：带租户、过名录门。
+    ///
+    /// 运行时解析每一次查询都带 `TenantId == 当前租户`，还要再过一道名录门
+    /// （名录外且没有放行标记的模型回 MODEL_NOT_IN_CATALOG）。探针少判任一层，
+    /// 结果都是同一种谎：别人租户的模型、或一条会被名录门拦死的线路，把一个
+    /// 「没有任何调用方能用」的部署报成绿的。
+    /// </summary>
+    [Fact]
+    public void 就绪探针的可路由判据带租户且过名录门()
+    {
+        var readiness = ReadRepoFile("llmgw/serving/GatewayServingReadinessProbe.cs");
+
+        // 按调用方自己的租户分组，逐组拿那个租户的数据判。
+        Assert.Contains("governed.GroupBy(CallerTenantId", readiness);
+        Assert.Contains("BuildTenantRouterViewAsync", readiness);
+
+        // 每一类数据都带租户过滤：池、平台、兑换所、物理模型（字段名过滤），
+        // 对外模型与线路（强类型属性）。少一类就有一条跨租户的缝。
+        foreach (var scoped in new[]
+                 {
+                     "Builders<ModelGroup>.Filter.Eq(\"TenantId\", tenantId)",
+                     "Builders<LLMPlatform>.Filter.Eq(\"TenantId\", tenantId)",
+                     "Builders<ModelExchange>.Filter.Eq(\"TenantId\", tenantId)",
+                     "Builders<BsonDocument>.Filter.Eq(\"TenantId\", tenantId)",
+                     "Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, tenantId)",
+                     "Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, tenantId)",
+                 })
+        {
+            Assert.Contains(scoped, readiness);
+        }
+
+        // 名录门：要不要拦与运行时同一处判据，不另写近似。
+        Assert.Contains("GatewayCatalogGate.EnforcesAsync", readiness);
+        Assert.Contains("GatewayCatalogGate.Passes", readiness);
+
+        // 场景能力那条也带租户，且租户是必填参数——忘了传编译不过，
+        // 这条不变量用类型表达，不靠守卫抽查。
+        Assert.Contains("string internalTenantId)", readiness);
+        Assert.Contains("string.Equals(model.TenantId, callerTenant, StringComparison.Ordinal)", readiness);
+    }
+
+    /// <summary>
+    /// 名录门的判据只许有一处。
+    ///
+    /// 它此前在运行时解析、对外模型目录端点、就绪探针三处各写了一遍：三份逐字相同的判据，
+    /// 意味着三份各自漂移的可能，而漂移后的表现最难查——目录说可调、探针说可路由、
+    /// 真调用回 MODEL_NOT_IN_CATALOG，三处各自为真。
+    /// </summary>
+    [Fact]
+    public void 名录门判据只有一处()
+    {
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+        Assert.Contains("ConfiguredToEnforce", gate);
+        Assert.Contains("MigrationsCompleteAsync", gate);
+        Assert.Contains("AllowedOutsideCatalog", gate);
+
+        // 三个消费方都走它，没人自己再判一遍「配置是不是 observe」。
+        foreach (var consumer in new[]
+                 {
+                     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs",
+                     "llmgw/serving/GatewayModelCatalogEndpoint.cs",
+                     "llmgw/serving/GatewayServingReadinessProbe.cs",
+                 })
+        {
+            var source = ReadRepoFile(consumer);
+            Assert.Contains("GatewayCatalogGate.", source);
+            Assert.DoesNotContain("\"observe\", StringComparison.OrdinalIgnoreCase", source);
+        }
+    }
 }
