@@ -37,6 +37,23 @@ describe('从标题里认「什么时候要」', () => {
     expect(m!.rest).toBe('把网关比对跑完');
   });
 
+  it('说到的那天就是那天：周一早上写「周一」指今天，不是下周一', () => {
+    // NOW 是团队日历周一 12:00，18:00 还没到
+    expect(dayOf(parseDueFromTitle('周一交周报')!.iso)).toBe('2026-09-14');
+  });
+
+  it('过了当天 18:00 再写「周一」，还是今天，只是退到 23:59（不跳到下周）', () => {
+    vi.setSystemTime(new Date('2026-09-14T12:00:00Z')); // 团队 20:00，已过 18:00
+    const m = parseDueFromTitle('周一交周报')!;
+    expect(dayOf(m.iso)).toBe('2026-09-14');
+    expect(m.iso).toBe('2026-09-14T15:59:00.000Z'); // 团队 23:59
+  });
+
+  it('周六说「这周末」指今天，与「周 X」同一口径', () => {
+    vi.setSystemTime(new Date('2026-09-19T02:00:00Z')); // 团队 09-19 10:00 是周六
+    expect(dayOf(parseDueFromTitle('这周末上线')!.iso)).toBe('2026-09-19');
+  });
+
   it('「下周三」跨到下一周', () => {
     const m = parseDueFromTitle('下周三评审');
     expect(dayOf(m!.iso)).toBe('2026-09-23');

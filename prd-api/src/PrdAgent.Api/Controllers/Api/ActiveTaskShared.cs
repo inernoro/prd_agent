@@ -353,6 +353,10 @@ public static class ActiveTaskShared
                 standbyCount = p.StandbyCount,
                 assignedByName = p.AssignedByName,
                 blockedSeconds = p.BlockedSeconds,
+                // 「卡够时长了吗」由这里下发，前端不要拿阈值自己再算一遍：
+                // 那就是同一个判据的第二份实现，改了这边忘了那边，
+                // 一屏之内会出现「头条说没有要你管的、底下这一行标着红」
+                escalated = p.Escalated,
             }).ToList(),
             recentlyClosed = closed.Select(c => new
             {
@@ -365,6 +369,15 @@ public static class ActiveTaskShared
             serverNow = now,
         };
     }
+
+    /// <summary>
+    /// 模型这一趟没成时给用户看的那句话。
+    ///
+    /// 网关的原始错误（HTTP 状态与响应体、供应商与模型名、异常文本）只进服务端日志，
+    /// 不往浏览器吐：它对用户没有一个可执行的下一步，却会把内部拓扑摊开给任何能点这个按钮的人。
+    /// 两条 SSE（粘一段话拆解 / 吸取建议）共用这一句，别各写各的。
+    /// </summary>
+    internal const string ModelFailedHint = "模型这一趟没回上来，稍等一下再试一次";
 
     /// <summary>
     /// 堆太多 —— 排序与结论句共用这一个判定，不许各写一份。

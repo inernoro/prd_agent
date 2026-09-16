@@ -28,6 +28,13 @@ public class ActiveTaskDebtsController : ControllerBase
 {
     private readonly MongoDbContext _db;
 
+
+    /// <summary>这一个调用方有没有某项权限。超管一律放行，与其它控制器同一口径。</summary>
+    private bool HasPermission(string perm)
+    {
+        var permissions = User.FindAll("permissions").Select(c => c.Value).ToList();
+        return permissions.Contains(perm) || permissions.Contains(AdminPermissionCatalog.Super);
+    }
     public ActiveTaskDebtsController(MongoDbContext db)
     {
         _db = db;
@@ -128,10 +135,18 @@ public class ActiveTaskDebtsController : ControllerBase
     ///
     /// 只覆盖正文三件套（标题 / 现状 / 补的条件）与来源路径，**绝不碰归属与状态**：
     /// 那两样是任务台这一侧的事实，被同步覆盖掉就等于每次跑一次脚本把认领记录抹一遍。
+    ///
+    /// 这条要管理档，和这个控制器其余端点不同。其余都是「对我自己名下那条做点什么」
+    /// （认领、放回、转成我的活），谁都该能做；而它按调用方给的 Key 覆写**整块共享台账**，
+    /// 一次调用能改动所有人看到的内容。使用档已发到 operator / viewer 这些普通角色，
+    /// 把这条留在使用档里等于让任何登录用户都能重写全公司的债务台账。
     /// </summary>
     [HttpPost("sync")]
     public async Task<IActionResult> Sync([FromBody] DebtSyncRequest req, CancellationToken ct = default)
     {
+        if (!HasPermission(AdminPermissionCatalog.ActiveTasksManage))
+            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "同步整块债务台账要管理权限"));
+
         if (req?.Items == null || req.Items.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有要同步的债务条目"));
         if (req.Items.Count > 1000)
@@ -337,6 +352,11 @@ public class ActiveTaskDebtsController : ControllerBase
         var me = GetUserId();
         var debt = await _db.ActiveTaskDebts.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (debt == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "这条债务不在"));
+
+        // 别人认领的不许替他了结 —— 与 Claim / Convert 同一道门。
+        // 少这一句的话，认领就只挡得住「抢走」，挡不住「替你宣布做完了」。
+        if (OwnedBySomeoneElse(debt, me))
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, TakenByMessage(debt)));
 
         await _db.ActiveTaskDebts.UpdateOneAsync(
             x => x.Id == id,

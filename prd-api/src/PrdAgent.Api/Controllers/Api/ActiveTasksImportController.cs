@@ -207,7 +207,9 @@ public class ActiveTasksImportController : ControllerBase
                 {
                     var err = chunk.Error ?? chunk.Content ?? "拆解失败";
                     _logger.LogError("[ActiveTasks-Import] gateway error userId={UserId}: {Error}", userId, err);
-                    await WriteEventAsync("error", new { message = err });
+                    // err 只进上面那行日志：它可能带着网关的 HTTP 状态与响应体、
+                    // 供应商与模型名、异常文本，对用户没有一个可执行的下一步
+                    await WriteEventAsync("error", new { message = ActiveTaskShared.ModelFailedHint });
                     return;
                 }
             }

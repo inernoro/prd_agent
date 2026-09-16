@@ -23,9 +23,12 @@ function shift(days: number): string {
   return endOfDay(addDays(teamDay(), days)).toISOString();
 }
 
-/** 本周末 = 最近的周六；今天已是周六或周日就取下一个周六 */
+/**
+ * 本周末 = 最近的周六。周六当天点它指的就是今天 —— 与 dueParse 同一口径。
+ * 过了当天 18:00 的情况由 endOfDay 兜（退到 23:59），不需要在这里 +7。
+ */
 function weekendISO(): string {
-  return shift((6 - weekdayOf(teamDay()) + 7) % 7 || 7);
+  return shift((6 - weekdayOf(teamDay()) + 7) % 7);
 }
 
 /** 两个 ISO 瞬间是不是落在团队日历的同一天 */

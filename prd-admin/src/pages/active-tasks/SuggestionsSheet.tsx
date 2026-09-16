@@ -131,7 +131,11 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
       else failed.push(r);
     }
     doneIds.current = created;
-    setBusy(false);
+
+    // 注意 busy 不在这里放开 —— 下面还有一次 markSuggestionsAbsorbed 要等。
+    // 提前放开等于把「不许关窗」的保护只盖住建任务那几秒，标记那几秒又露出来了，
+    // 而恰恰是标记没落地时关窗最伤：任务已进队列，来源建议却还挂在收件箱里。
+    // 每条 return 之前各自放开。
 
     // 有一条没建上就先别收摊：把没成的留在这张表上等重试。
     // 原来只看 created.length > 0 就把**全部**选中的建议标记成已吸取并关窗，
@@ -142,6 +146,7 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
         ? `建上了 ${created.length} 件，还有 ${failed.length} 件没成，留在这儿了，可以再试一次`
         : '一条都没建上');
       if (created.length > 0) onCreated();
+      setBusy(false);
       return;
     }
 
@@ -151,9 +156,11 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     const marked = await markSuggestionsAbsorbed({ suggestionIds: checked, taskIds: created });
     if (!marked.success) {
       onCreated();
+      setBusy(false);
       toast.error(`${created.length} 件已经进队列了，但这几条建议没能标记成已吸取，留在这儿别重复吸`);
       return;
     }
+    setBusy(false);
 
     doneIds.current = [];
     builtKeys.current.clear();

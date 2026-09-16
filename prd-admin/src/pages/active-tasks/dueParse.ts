@@ -27,11 +27,16 @@ const WEEKDAYS: Record<string, number> = {
   一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 0, 天: 0,
 };
 
-/** 本周的周 X；今天已过就取下周同一天（和日历 App 的直觉一致） */
+/**
+ * 本周的周 X。说到的那天就是那天 —— 周一早上写「周一交周报」指的是今天，不是下周一。
+ *
+ * 原来 delta 为 0 时无条件 +7，于是当天永远被推到下周，注释写的「今天已过才取下周」
+ * 也不是实现在做的事。「已经过点了」这件事 endOfDay 自己兜着：当天 18:00 过了就退到
+ * 23:59，不会生成一个过去的时间。
+ */
 function thisWeekday(target: number): Date {
   const today = teamDay();
-  const delta = (target - weekdayOf(today) + 7) % 7;
-  return endOfDay(addDays(today, delta === 0 ? 7 : delta));
+  return endOfDay(addDays(today, (target - weekdayOf(today) + 7) % 7));
 }
 
 /** 下周的周 X */
@@ -48,8 +53,9 @@ const RULES: { re: RegExp; when: (m: RegExpMatchArray) => Date }[] = [
   { re: /今天|今日|今晚/, when: () => plusDays(0) },
   { re: /明天|明日/, when: () => plusDays(1) },
   { re: /这?个?(?:周|礼拜)末|本周末/, when: () => {
+    // 与 thisWeekday 同一口径：周六当天说「这周末」指的就是今天
     const today = teamDay();
-    return endOfDay(addDays(today, (6 - weekdayOf(today) + 7) % 7 || 7));
+    return endOfDay(addDays(today, (6 - weekdayOf(today) + 7) % 7));
   } },
   { re: /下(?:个)?(?:周|星期|礼拜)([一二三四五六日天])/, when: (m) => nextWeekday(WEEKDAYS[m[1]]) },
   { re: /(?:本|这)?(?:周|星期|礼拜)([一二三四五六日天])/, when: (m) => thisWeekday(WEEKDAYS[m[1]]) },

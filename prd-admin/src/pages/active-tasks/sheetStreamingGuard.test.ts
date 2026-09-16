@@ -124,3 +124,46 @@ describe('看板设置的接线', () => {
     expect(team, '团队页没有打开设置面板的入口').toContain('setSettingsOpen(true)');
   });
 });
+
+/**
+ * 写入期的保护要盖到最后一步。
+ *
+ * 事故形状：`setBusy(false)` 放在建任务循环之后、`markSuggestionsAbsorbed` 之前，
+ * 于是「不许关窗」只盖住了建任务那几秒，标记那几秒又露出来了 —— 而恰恰是标记
+ * 没落地时关窗最伤：任务已进队列，来源建议却还挂在收件箱里，再吸一次就是重复任务。
+ * 这是上一轮那条修复没修干净的地方。
+ */
+describe('吸取浮层的写入保护范围', () => {
+  it('busy 一直盖到标记已吸取结束，不在中途放开', () => {
+    const src = readFileSync(resolve(__dirname, 'SuggestionsSheet.tsx'), 'utf-8');
+    const at = src.indexOf('const onConfirm');
+    const mark = src.indexOf('markSuggestionsAbsorbed(', at);
+    expect(mark, '找不到标记调用').toBeGreaterThan(at);
+
+    // 建任务循环结束到标记调用之间，不许出现 setBusy(false)——
+    // 那几行里出现它，就等于保护在标记开始前就撤了
+    const loopEnd = src.indexOf('doneIds.current = created;', at);
+    const between = src.slice(loopEnd, mark);
+    const 提前放开 = between.split('setBusy(false)').length - 1;
+    // 允许的只有「提前 return 的那两条分支各自放开」，它们都在 return 之前
+    const returns = between.split('return;').length - 1;
+    expect(提前放开, 'busy 在标记开始前就被放开了').toBeLessThanOrEqual(returns);
+  });
+});
+
+/**
+ * 匿名面板的「没有开放」要能撤回来。
+ *
+ * 事故形状（形状 10）：这一屏每分钟轮询一次，中间任何一次网络抖动都会把 closed 置上，
+ * 而它原来再也不会被放下 —— 面板明明开着，这一屏却永久停在「这个面板没有开放」，
+ * 只能靠用户自己刷新页面。一次抖动换来一个看起来像「管理员关掉了」的永久状态。
+ */
+describe('匿名面板的恢复', () => {
+  it('轮询成功要把「没有开放」撤回来', () => {
+    const src = readFileSync(resolve(__dirname, 'PublicBoardPage.tsx'), 'utf-8');
+    const at = src.indexOf('const load = useCallback');
+    const body = src.slice(at, at + 700);
+    expect(body).toContain('setClosed(true)');
+    expect(body, '成功分支没有把 closed 复位').toContain('setClosed(false)');
+  });
+});

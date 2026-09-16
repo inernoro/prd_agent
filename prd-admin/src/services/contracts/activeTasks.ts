@@ -88,6 +88,8 @@ export interface TeamPerson {
   standbyCount: number;
   assignedByName?: string | null;
   blockedSeconds: number;
+  /** 卡够 blockedEscalateMinutes 了吗 —— 后端算好下发，前端别自己拿阈值再算一遍 */
+  escalated: boolean;
 }
 
 export interface ClosedItem {

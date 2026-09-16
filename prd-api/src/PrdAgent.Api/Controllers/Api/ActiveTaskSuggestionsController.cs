@@ -356,7 +356,9 @@ public class ActiveTaskSuggestionsController : ControllerBase
                 {
                     var err = chunk.Error ?? chunk.Content ?? "吸取失败";
                     _logger.LogError("[ActiveTasks-Absorb] gateway error userId={UserId}: {Error}", me, err);
-                    await WriteEventAsync("error", new { message = err });
+                    // err 只进上面那行日志：它可能带着网关的 HTTP 状态与响应体、
+                    // 供应商与模型名、异常文本，对用户没有一个可执行的下一步
+                    await WriteEventAsync("error", new { message = ActiveTaskShared.ModelFailedHint });
                     return;
                 }
             }

@@ -17,7 +17,10 @@ export function PublicBoardPage() {
   const load = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     const res = await getPublicBoard();
-    if (res.success && res.data) setData(res.data);
+    // 成功要把「没有开放」撤回来：这一屏每分钟轮询一次，中间任何一次网络抖动
+    // 都会把 closed 置上，而它原来再也不会被放下 —— 面板明明开着，
+    // 这一屏却永久停在「这个面板没有开放」，只能靠用户自己刷新页面。
+    if (res.success && res.data) { setData(res.data); setClosed(false); }
     else setClosed(true);
     setLoading(false);
   }, []);
@@ -58,7 +61,8 @@ export function PublicBoardPage() {
           <div className="atb-list" role="list">
             {board.people.length === 0 && <div className="atb-empty">还没有人在做什么</div>}
             {board.people.map((p) => {
-              const alert = p.status === 'blocked' || p.status === 'empty';
+              // 与「大家在做什么」同一口径：卡够时长才算要人管，判定由后端下发
+              const alert = (p.status === 'blocked' && p.escalated) || p.status === 'empty';
               const stackAlert = p.standbyCount === 0 || p.standbyCount >= heavy;
               return (
                 <div className="atb-row atb-row--person" role="listitem" key={p.userId}>

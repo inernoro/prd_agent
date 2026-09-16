@@ -104,7 +104,10 @@ export function TeamBoardPage() {
       {people.length > 0 && (
         <div className="atb-list" role="list">
           {people.map((p) => {
-            const alert = p.status === 'blocked' || p.status === 'empty';
+            // 卡住要卡够升级阈值才算「要你管」—— 与后端 needsYou 同一口径。
+            // 少这个条件的话，刚点下「卡住了」的那一秒这一行就变红加感叹号，
+            // 而头条那句「N 个人要你看一下」里并没有他，一屏之内两个说法。
+            const alert = (p.status === 'blocked' && p.escalated) || p.status === 'empty';
             const stackAlert = p.standbyCount === 0 || p.standbyCount >= heavy;
             return (
               <div className="atb-row atb-row--person" role="listitem" key={p.userId}>

@@ -218,6 +218,79 @@ public class ActiveTaskDebtsTests
         Assert.Contains("ActiveTaskDebtsController.BuildBoard(", openApi, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 改整块共享台账要管理档_不能跟认领一条共用使用档()
+    {
+        // Codex 2026-09-16 抓到的一条真口子：这个控制器整体挂的是 active-tasks.use，
+        // 而使用档在本 PR 里发到了 operator / viewer 这些普通角色。其余端点都是
+        // 「对某一条做点什么」，谁都该能做；只有 sync 按调用方给的 Key 覆写整块共享台账，
+        // 一次调用改动所有人看到的内容。留在使用档里等于任何登录用户都能重写全公司的债务台账。
+        var src = File.ReadAllText(Path.Combine(
+            LocateRepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskDebtsController.cs"));
+
+        var at = src.IndexOf("public async Task<IActionResult> Sync(", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到 Sync 端点");
+        var body = src[at..(at + 600)];
+        Assert.Contains("ActiveTasksManage", body, StringComparison.Ordinal);
+
+        // 反向钉一次：认领这类单条操作**不许**被顺手提到管理档，
+        // 否则「谁都能认领一条欠着的事」这个设计就没了
+        var claimAt = src.IndexOf("public async Task<IActionResult> Claim(", StringComparison.Ordinal);
+        Assert.True(claimAt > 0, "找不到 Claim 端点");
+        Assert.DoesNotContain("ActiveTasksManage", src[claimAt..(claimAt + 600)], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 了结一条也要过归属门_不许替别人宣布做完了()
+    {
+        // 与 Claim / Convert 同一道门。少这一句的话，认领就只挡得住「抢走」，
+        // 挡不住「替你宣布做完了」—— 同一族判据漏掉一个入口，和没有这道门差不多。
+        var src = File.ReadAllText(Path.Combine(
+            LocateRepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskDebtsController.cs"));
+
+        foreach (var 端点 in new[] { "Claim(", "Convert(", "Close(" })
+        {
+            var at = src.IndexOf($"public async Task<IActionResult> {端点}", StringComparison.Ordinal);
+            Assert.True(at > 0, $"找不到端点 {端点}");
+            Assert.Contains("OwnedBySomeoneElse", src[at..(at + 900)], StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void 模型报错只进日志_不许把网关原文吐给浏览器()
+    {
+        // 网关的原始错误带着 HTTP 状态与响应体、供应商与模型名、异常文本。
+        // 它对用户没有一个可执行的下一步，却会把内部拓扑摊开给任何能点这个按钮的人。
+        // 两条 SSE 共用一句文案，别各写各的。
+        var dir = Path.Combine(LocateRepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api");
+        foreach (var f in new[] { "ActiveTasksImportController.cs", "ActiveTaskSuggestionsController.cs" })
+        {
+            var src = File.ReadAllText(Path.Combine(dir, f));
+            Assert.DoesNotContain("new { message = err }", src, StringComparison.Ordinal);
+            Assert.Contains("ActiveTaskShared.ModelFailedHint", src, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void 卡够时长了吗由后端下发_前端不许拿阈值自己再算一遍()
+    {
+        // 后端 needsYou 已经按 BlockedEscalateMinutes 判，前端若自己拿阈值再算一次，
+        // 就是同一判据的第二份实现：改了这边忘了那边，一屏之内会出现
+        // 「头条说没有要你管的、底下这一行标着红」。
+        var root = LocateRepoRoot();
+        var shared = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskShared.cs"));
+        Assert.Contains("escalated = p.Escalated", shared, StringComparison.Ordinal);
+
+        foreach (var f in new[] { "TeamBoardPage.tsx", "PublicBoardPage.tsx" })
+        {
+            var page = File.ReadAllText(Path.Combine(root, "prd-admin", "src", "pages", "active-tasks", f));
+            Assert.Contains("p.escalated", page, StringComparison.Ordinal);
+            // 前端拿到分钟阈值自己换算，就是又开了一份实现
+            Assert.DoesNotContain("blockedEscalateMinutes", page, StringComparison.Ordinal);
+        }
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
