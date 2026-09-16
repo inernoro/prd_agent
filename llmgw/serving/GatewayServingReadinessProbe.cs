@@ -367,14 +367,21 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             .Where(x => x.Id.Length > 0)
             .GroupBy(x => x.Id, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.First().PlatformId, StringComparer.Ordinal);
-        var enabledExchangeIds = enabledExchanges
-            .Select(x => x.Id)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .ToHashSet(StringComparer.Ordinal);
+        var enabledExchangeById = enabledExchanges
+            .Where(x => !string.IsNullOrWhiteSpace(x.Id))
+            .ToDictionary(x => x.Id, StringComparer.Ordinal);
 
+        // 兑换所那一支要判到**别名**这一层，不能只判兑换所文档启用。
+        //
+        // 线路打给上游的是哪一个别名由 UpstreamModelId 决定（没写就回落到兑换所主别名）。
+        // 别名被摘掉之后兑换所照样启用着，而运行时按名录门把它判死——一个所有兑换所线路
+        // 都已失效的部署会在这里报绿，而每一次真实请求都失败。
+        // 判据用共享那一份，与运行时和对外模型清单同源；上一轮补清单那一处时漏了这里
+        // （形状 6 的老毛病：补洞只补被点名的那一处，没把同族的其余出口扫完）。
         bool OfferingTargetUsable(GatewayModelOffering offering)
             => string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase)
-                ? enabledExchangeIds.Contains(offering.TargetId)
+                ? enabledExchangeById.TryGetValue(offering.TargetId, out var exchange)
+                  && GatewayCatalogGate.ExchangeRoutePasses(exchange, offering.UpstreamModelId, catalogGateEnforces)
                 : enabledOfferingModelPlatformById.TryGetValue(offering.TargetId, out var platformId)
                   && platformId.Length > 0
                   && enabledPlatformIds.Contains(platformId);

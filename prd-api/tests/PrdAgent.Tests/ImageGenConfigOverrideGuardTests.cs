@@ -500,8 +500,36 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("body.SizesNotApplicable != true", body);
         Assert.Contains("!hasSizes", body);
 
+        // 比例模式是同一族的第三个：它的可选比例就是从尺寸档位里推出来的，
+        // 一行都不填时兜底回 1024x1024 与 1:1，请求会被静默改写成一个比例都不对的方图。
+        // 三种约束类型一个都不许漏——漏掉的那一种就是「表单默认档 + 全空」的下一个入口。
+        Assert.Contains("\"aspect_ratio\", StringComparison.OrdinalIgnoreCase", body);
+        var constraintTypesGuarded = new[] { "whitelist", "range", "aspect_ratio" }
+            .Count(x => body.Contains($"\"{x}\"", StringComparison.Ordinal));
+        Assert.Equal(3, constraintTypesGuarded);
+
         // 拒的那句话要给下一步（勾「没有选尺寸这件事」或改用别的约束），
         // 不是只说「不合法」——拒绝没有下一步等于把问题丢回给人。
         Assert.Contains("这个模型没有选尺寸这件事", body);
+    }
+
+    /// <summary>
+    /// 「谁最后改的」问的是人，不是租户。
+    ///
+    /// 写租户 id 的话，同一个租户里所有管理员产出的归属一模一样，这个字段等于没有——
+    /// 而它存在的唯一理由就是回答这个问题。查一条被改坏的契约时，它是唯一的文档级线索。
+    /// </summary>
+    [Fact]
+    public void 生图契约记的是改它的那个人()
+    {
+        var console = Read("llmgw/console-api/Program.cs");
+        var start = console.IndexOf("static BsonDocument BuildImageGenConfigDocument", StringComparison.Ordinal);
+        Assert.True(start > 0, "生图契约文档构造函数找不到了，守卫取值口径需要更新");
+        var end = console.IndexOf("\nstatic ", start + 10, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var body = console[start..end];
+
+        Assert.Contains("{ \"UpdatedBy\", TenantAccess.GetRequired(http).UserId }", body);
+        Assert.DoesNotContain("{ \"UpdatedBy\", TenantAccess.GetRequired(http).TenantId }", body);
     }
 }

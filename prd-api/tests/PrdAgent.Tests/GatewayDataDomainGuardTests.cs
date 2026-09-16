@@ -6230,6 +6230,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GatewayCatalogGate.EnforcesAsync", readiness);
         Assert.Contains("GatewayCatalogGate.Passes", readiness);
 
+        // 兑换所那一支要判到**别名**这一层。只判兑换所文档启用的话，别名被摘掉之后
+        // 兑换所照样启用着，而运行时按名录门把它判死——探针报绿、请求全失败。
+        // 三处消费方（运行时、对外清单、就绪探针）必须是同一份判据。
+        Assert.Contains("GatewayCatalogGate.ExchangeRoutePasses", readiness);
+        Assert.Contains("offering.UpstreamModelId", readiness);
+
         // 场景能力那条也带租户，且租户是必填参数——忘了传编译不过，
         // 这条不变量用类型表达，不靠守卫抽查。
         Assert.Contains("string internalTenantId)", readiness);

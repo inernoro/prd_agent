@@ -4362,6 +4362,19 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
     if (body.SizesNotApplicable == true && hasSizes)
         return "既然勾了「这个模型没有选尺寸这件事」，就不能再配尺寸档位";
 
+    // 比例模式的比例是从尺寸档位里推出来的，所以它同样必须有尺寸档位。
+    //
+    // 一行都不填时 NormalizeSizeAspectRatio 既选不出比例、也选不出尺寸，兜底回 1024x1024
+    // 与 1:1——请求 1536x1024 会被静默改写成一个**比例都不对**的方图。这是白名单与范围
+    // 那两条的第三个同族成员，前两轮各补了一个，这一个没扫到（形状 6：修完要横扫同类）。
+    if (string.Equals(constraint, "aspect_ratio", StringComparison.OrdinalIgnoreCase)
+        && body.SizesNotApplicable != true
+        && !hasSizes)
+    {
+        return "比例模式的可选比例是从尺寸档位里推出来的，至少要配一个尺寸档位；"
+            + "这个模型如果没有选尺寸这件事，就勾上「这个模型没有选尺寸这件事」";
+    }
+
     // 白名单模式必须至少有一个尺寸，否则这条契约等于「把 1024x1024 钉死」。
     //
     // 白名单是表单默认档，尺寸一个都不填照样能存。存进去之后它**压过**代码内置那条契约，
@@ -4517,7 +4530,9 @@ static BsonDocument BuildImageGenConfigDocument(
         { "Notes", new BsonArray((body.Notes ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim())) },
         { "CreatedAt", existing?.AsNullableUtcDateTime("CreatedAt") ?? DateTime.UtcNow },
         { "UpdatedAt", DateTime.UtcNow },
-        { "UpdatedBy", TenantAccess.GetRequired(http).TenantId },
+        // 「谁最后改的」问的是人，不是租户。写租户 id 的话，同一个租户里所有管理员产出的
+        // 归属一模一样，这个字段等于没有——而它存在的唯一理由就是回答这个问题。
+        { "UpdatedBy", TenantAccess.GetRequired(http).UserId },
     };
     return doc;
 }
