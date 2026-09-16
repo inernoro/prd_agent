@@ -1645,3 +1645,21 @@ mdimp 仓库切到 `dbScope=per-branch` 并下线脚本，属跨仓库迁移，�
 
 **绕过办法（当前）**：再推一个改到 `cds/src/**` 的提交，让 analyze 看见后端文件、
 走全量路径。别指望 `self restart`——它不重编。
+
+### 追加：self-update 的「重启」两次没换进程（2026-09-16）
+
+同一天两次 `self update`（a992a7e4、372ab9e2）都走了全量路径、后端 dist 重编成功、
+记录写着 `updateMode: restart` / `status: success`，但 `pidStartedAt` 一直是旧值、
+`restartStatus` 停在 incomplete——派生守护进程那一步没有换来新进程，
+而它自己不知道。随后手动 `self restart` 两次都能换，但从调用到新进程起来各花了
+两分二十秒与三分二十秒，中间旧进程还在答请求，`self status` 看不出「正在换」。
+
+**后果**：旧进程带着新 dist 继续跑，新代码里的路由白名单、修复全部不生效，
+而每一处状态都写着 success。这次是靠新加的免登录自检端点回 401 才发现的。
+
+**判据**：更新记录写 success 之前，必须等到新进程的 `pidStartedAt` 晚于更新时刻；
+等不到就把记录写成 `restart-unconfirmed`，并把派生失败的原因（守护进程那份错误日志）
+带回自更新状态接口。重启中的那几分钟，`self status` 要能说「正在换进程，第 N 秒」。
+
+**绕过办法（当前）**：`self update` 之后看 `self status` 的 `restartStatus`，
+不是 completed 就再跑一次 `self restart`，然后等三分钟再验。

@@ -36,6 +36,12 @@ export const SELF_MONITOR_INTERVAL_SECONDS = 300;
 
 /** 一次部署在途多久算「卡住」。CDS 自己的硬超时是 45 分钟，超过它还没终态就是卡了。 */
 export const DEPLOY_STUCK_AFTER_MS = 45 * 60 * 1000;
+/**
+ * 在途部署的心跳停了多久算「死了」。2026-09-16 线上实测：CDS 重启把七个 building 的部署
+ * 打断，它们的心跳全停在重启那一刻，状态却一直是 building——按年龄要等 45 分钟才报，
+ * 按心跳 10 分钟就该报。
+ */
+export const DEPLOY_HEARTBEAT_STALE_MS = 10 * 60 * 1000;
 /** 24 小时内失败率超过这个百分比，说明坏的不是某个提交，是 CDS 自己。 */
 export const DEPLOY_FAILURE_RATE_MAX_PERCENT = 50;
 /** 构建队列积压上限。2026-07-16 事故：queued=54，agent 排队 50 分钟以上。 */
@@ -71,7 +77,7 @@ const DEPLOY_IN_FLIGHT = new Set(['pending', 'queued', 'preparing', 'building', 
 
 export interface SelfCheckDeps {
   now: () => number;
-  deploymentRuns: () => ReadonlyArray<{ status: string; startedAt: string; finishedAt?: string }>;
+  deploymentRuns: () => ReadonlyArray<{ status: string; startedAt: string; finishedAt?: string; heartbeatAt?: string; updatedAt?: string }>;
   webhookDeliveries: (limit: number) => ReadonlyArray<{ receivedAt: string; signatureValid: boolean; dispatchAction: string }>;
   buildGate: () => { active: number; queued: number; max: number; waiters: ReadonlyArray<{ enqueuedAt: string }> };
   /**
@@ -172,13 +178,22 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
 
   // ── 部署 ───────────────────────────────────────────────────────────
   const runs = deps.deploymentRuns();
-  const stuck = runs.filter((r) => DEPLOY_IN_FLIGHT.has(r.status) && now - Date.parse(r.startedAt) > DEPLOY_STUCK_AFTER_MS);
+  const inFlight = runs.filter((r) => DEPLOY_IN_FLIGHT.has(r.status));
+  const tooOld = inFlight.filter((r) => now - Date.parse(r.startedAt) > DEPLOY_STUCK_AFTER_MS);
+  // 心跳以 heartbeatAt 为准，没有就退回 updatedAt；两个都没有的老记录不按心跳判（不假定）。
+  const heartbeatDead = inFlight.filter((r) => {
+    const beat = r.heartbeatAt || r.updatedAt;
+    return Boolean(beat) && now - Date.parse(beat as string) > DEPLOY_HEARTBEAT_STALE_MS;
+  });
+  const stuck = new Set([...tooOld, ...heartbeatDead]);
   checks.push(monitored(
     {
       componentId: 'deploy.stuck', componentType: 'deploy',
-      observedValue: stuck.length, observedUnit: 'count',
-      status: stuck.length === 0 ? 'pass' : 'fail',
-      output: stuck.length === 0 ? '没有在途超过 45 分钟的部署' : `${stuck.length} 个部署在途超过 45 分钟还没终态`,
+      observedValue: stuck.size, observedUnit: 'count',
+      status: stuck.size === 0 ? 'pass' : 'fail',
+      output: stuck.size === 0
+        ? `没有卡住的部署（在途 ${inFlight.length} 个，心跳都在）`
+        : `${stuck.size} 个部署卡住：${tooOld.length} 个在途超过 45 分钟，${heartbeatDead.length} 个心跳停了超过 10 分钟（多半是 CDS 重启把它们打断了，状态没收尸）`,
     },
     { name: 'CDS · 部署卡住', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
     time,

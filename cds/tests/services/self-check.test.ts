@@ -138,6 +138,28 @@ describe('部署 / 构建 / 页面', () => {
     expect(doc.checks['deploy.stuck']).toMatchObject({ observedValue: 0, status: 'pass' });
   });
 
+  it('在途才 20 分钟但心跳停了 15 分钟：算卡住——被重启打断的部署就长这样', async () => {
+    const doc = await buildSelfCheck(healthyDeps({
+      deploymentRuns: () => [
+        { status: 'building', startedAt: iso(-20 * MIN), heartbeatAt: iso(-15 * MIN) },
+        // 心跳 2 分钟前还在：不算
+        { status: 'building', startedAt: iso(-20 * MIN), heartbeatAt: iso(-2 * MIN) },
+        // 没有心跳字段的老记录不按心跳判
+        { status: 'building', startedAt: iso(-20 * MIN) },
+      ],
+    }));
+    const c = doc.checks['deploy.stuck'];
+    expect(c).toMatchObject({ observedValue: 1, status: 'fail' });
+    expect(c.output).toContain('心跳停了');
+  });
+
+  it('既超 45 分钟又心跳停了的同一个部署只算一次', async () => {
+    const doc = await buildSelfCheck(healthyDeps({
+      deploymentRuns: () => [{ status: 'building', startedAt: iso(-50 * MIN), heartbeatAt: iso(-30 * MIN) }],
+    }));
+    expect(doc.checks['deploy.stuck'].observedValue).toBe(1);
+  });
+
   it('近 24 小时没有部署结束：失败率写 0 但样本量是 0，被动观测不会读成一切正常', async () => {
     const doc = await buildSelfCheck(healthyDeps({ deploymentRuns: () => [] }));
     expect(doc.checks['deploy.finished-24h'].observedValue).toBe(0);
@@ -328,9 +350,10 @@ describe('接线守卫：删掉任何一根线都不会有别的测试变红', (
   const uptime = codeOf(read('../../src/routes/uptime.ts'));
   const strip = codeOf(read('../../web/src/pages/status/DiscoveryStrip.tsx'));
 
-  it('index.ts 真挂了自检路由，且用的是共享路径常量', () => {
+  it('index.ts 真挂了自检路由，且用的是共享路径常量；路由走短缓存，不让 13 条监控各算一份', () => {
     expect(index).toMatch(/app\.get\(SELF_CHECK_PATH,/);
     expect(index).toContain('buildSelfCheck(selfCheckDeps)');
+    expect(index).toMatch(/app\.get\(SELF_CHECK_PATH,[\s\S]{0,200}cachedSelfCheck\(\)/);
   });
 
   it('启动引导必须发生在第一轮发现之前——否则第一轮把内置端点漏掉，要等下一轮才补', () => {

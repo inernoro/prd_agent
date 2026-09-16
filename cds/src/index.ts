@@ -6096,7 +6096,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         return {
           ok: result.exitCode === 0,
           ms: Date.now() - startedAt,
-          detail: result.exitCode === 0 ? result.stdout.trim() : result.stderr.trim(),
+          // 超时被杀时 stderr 是空的——空原因等于没说，补上退出码与「3 秒内没回」。
+          detail: result.exitCode === 0
+            ? result.stdout.trim()
+            : (result.stderr.trim() || `退出码 ${result.exitCode}，3 秒内没有回应`),
         };
       } catch (err) {
         return { ok: false, ms: Date.now() - startedAt, detail: (err as Error).message };
@@ -6131,9 +6134,21 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     },
     storeBackend: () => stateService.getBackingStore().kind,
   };
+  // 13 条监控各自打一次这个端点，一轮就是 13 次 docker version + 13 次 Mongo 查询。
+  // 短缓存让同一轮里的探测共用一份文档：15 秒内的重复请求拿同一个 promise。
+  const SELF_CHECK_CACHE_MS = 15_000;
+  let selfCheckCache: { at: number; doc: Promise<Awaited<ReturnType<typeof buildSelfCheck>>> } | null = null;
+  const cachedSelfCheck = () => {
+    const at = Date.now();
+    if (selfCheckCache && at - selfCheckCache.at < SELF_CHECK_CACHE_MS) return selfCheckCache.doc;
+    const doc = buildSelfCheck(selfCheckDeps);
+    selfCheckCache = { at, doc };
+    doc.catch(() => { selfCheckCache = null; });
+    return doc;
+  };
   app.get(SELF_CHECK_PATH, async (_req, res) => {
     try {
-      const doc = await buildSelfCheck(selfCheckDeps);
+      const doc = await cachedSelfCheck();
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
       res.status(200).json(doc);
     } catch (err) {
