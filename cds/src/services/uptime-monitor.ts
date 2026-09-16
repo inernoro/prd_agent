@@ -197,6 +197,12 @@ export interface UptimeAlertEventData {
   branchId: string;
   /** 站内信渲染直接用它当主语，字段名与发布漂移事件对齐（targetName）。 */
   targetName: string;
+  /**
+   * 目标来源。通知路由拿它分「业务故障」还是「基础设施故障」——两者的下一步
+   * 完全不同，混成一个开关会逼人要么被分支预览刷屏、要么连真故障一起关掉。
+   * 给状态而不是让下游去切 targetId 前缀：前缀是 id 生成函数的实现细节。
+   */
+  source: ProbeSource;
   probeKind: ProbeKind;
   probeUrl?: string;
   message: string;
@@ -569,13 +575,16 @@ export function selectReleaseProbeTargets(
 export function selectCustomProbeTargets(
   monitors: ReadonlyArray<UptimeCustomMonitor>,
   excludePatterns: ReadonlyArray<string> = [],
-  options: { globalIntervalMs?: number } = {},
+  options: { globalIntervalMs?: number; getProject?: (projectId: string) => Project | null | undefined } = {},
 ): ProbeTarget[] {
   const targets: ProbeTarget[] = [];
   for (const monitor of monitors) {
     if (!monitor || !monitor.id) continue;
     const id = customProbeTargetId(monitor);
     const name = monitor.name || monitor.id;
+    // 项目名跟着目标走：没有分支预览的项目（比如内置的「CDS 自身」）只有自定义监控，
+    // 这里不带名字，面板与盲区地图就只能拿 id 当名字。
+    const project = monitor.projectId ? options.getProject?.(monitor.projectId) : undefined;
     const excludedBy = matchExcludePattern(
       { id, branchId: '', projectId: monitor.projectId || '', profileId: monitor.id, name },
       excludePatterns,
@@ -589,6 +598,7 @@ export function selectCustomProbeTargets(
       projectId: monitor.projectId || '',
       profileId: monitor.id,
       name,
+      projectName: project?.name || undefined,
       hostPort: 0,
       probeKind: monitor.kind === 'tcp' ? 'tcp' : monitor.kind === 'keyword' ? 'keyword' : 'url',
       url: monitor.url,
@@ -626,6 +636,7 @@ export function selectAllProbeTargets(
   const branchTargets = selectProbeTargets(branches, excludePatterns, options);
   const customTargets = selectCustomProbeTargets(options.customMonitors || [], excludePatterns, {
     globalIntervalMs: options.globalIntervalMs,
+    getProject: options.getProject,
   });
   if (options.releaseTargetsEnabled === false) return [...branchTargets, ...customTargets];
   return [...branchTargets, ...selectReleaseProbeTargets(releaseTargets, excludePatterns), ...customTargets];
@@ -1753,6 +1764,7 @@ export class UptimeMonitorService {
         projectId: target.projectId,
         branchId: target.branchId,
         targetName: target.name,
+        source: target.source,
         probeKind: target.probeKind,
         ...(target.url ? { probeUrl: target.url } : {}),
         message,
@@ -1895,6 +1907,7 @@ export class UptimeMonitorService {
     }
 
     const intervalMs = this.deps.config.intervalMs;
+    const cycle = this.getCycleHealth();
     return {
       enabled: this.deps.config.enabled,
       generatedAt: now,
@@ -1903,7 +1916,7 @@ export class UptimeMonitorService {
       failureThreshold: this.deps.config.failureThreshold,
       firstDataEtaSeconds: Math.round(this.deps.config.intervalMs / 1000),
       lastCycleAt: this.lastCycleAt,
-      cycle: this.getCycleHealth(),
+      cycle,
       excludePatterns: [...(this.deps.config.excludePatterns || [])],
       overall: tallyTargetSummaries(targets),
       targets,
@@ -1913,7 +1926,10 @@ export class UptimeMonitorService {
         lastCycleDurationMs: this.lastCycleDurationMs,
         lastCycleProbed: this.lastCycleProbed,
         lastCycleTargets: this.lastCycleTargets,
-        stalled: this.deps.config.enabled && this.lastCycleAt !== null && now - this.lastCycleAt > intervalMs * 2,
+        // 停摆 = 上一轮完成得太久（两个间隔）**或** cycle 健康判 stale——后者按启动时刻判得出
+        // 「第一轮从来没跑完」。只看 lastCycleAt 时首轮卡死永远是 false，前端拿着落盘的旧绿样本
+        // 说「全部正常」（Codex #1543 P1）。
+        stalled: cycle.stale || (this.deps.config.enabled && this.lastCycleAt !== null && now - this.lastCycleAt > intervalMs * 2),
         userViewEnabled: this.deps.config.userViewEnabled !== false,
       },
     };

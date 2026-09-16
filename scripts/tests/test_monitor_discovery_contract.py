@@ -36,11 +36,20 @@ ASSERTIONS = REPO / "cds/src/services/monitor-assertions.ts"
 SPEC = REPO / "doc/spec.platform.monitor-discovery.md"
 
 DISCOVERY_KEY = "cds:monitor"
-# 解析器认得的字段。改解析器时这里要同步——它就是「协议有哪些字段」的清单。
-KNOWN_FIELDS = {
-    "name", "field", "op", "value", "intervalSeconds", "failuresToAlarm",
-    "severity", "observeMode", "sampleComponentId", "publicVisible", "publicName",
-}
+
+
+def known_fields(parser_src: str) -> set[str]:
+    """协议有哪些字段，**从解析器源码里推**，不在这里另抄一份。
+
+    原先这里是一份手写清单，注释还写着「改解析器时这里要同步」——那就是
+    判据分裂成两份各自漂移的经典形状：解析器加了字段而清单没跟上时，
+    守卫会把一条**合法**声明判成非法（2026-09-14 加 environment 时当场撞上）。
+    改成扫 `spec.<字段>` 之后，解析器是唯一真相，清单不可能落后于它。
+    """
+    fields = set(re.findall(r"\bspec\.([A-Za-z][A-Za-z0-9_]*)", parser_src))
+    if not fields:
+        raise SystemExit("从解析器里一个字段都没扫到——正则该跟着解析器写法改了")
+    return fields
 
 
 def fail(errors: list[str]) -> int:
@@ -62,6 +71,7 @@ def main() -> int:
     endpoint = "\n".join(sources.values())
     # 解析器认什么，看它自己加上它 import 的枚举 SSOT。
     parser = PARSER.read_text(encoding="utf-8") + ASSERTIONS.read_text(encoding="utf-8")
+    fields = known_fields(PARSER.read_text(encoding="utf-8"))
 
     # 1. 键名两边一致
     if f"'{DISCOVERY_KEY}'" not in parser:
@@ -81,13 +91,13 @@ def main() -> int:
     declared_ops: set[str] = set()
     for i, block in enumerate(blocks):
         used = set(re.findall(r"^\s*(\w+)\s*=", block, flags=re.M))
-        unknown = used - KNOWN_FIELDS
+        unknown = used - fields
         if unknown:
             errors.append(
                 f"第 {i + 1} 段自描述用了解析器不认的字段 {sorted(unknown)}"
                 f"——写了也不生效，而且两边都不会报错"
             )
-        for key in ("op", "severity", "field", "observeMode"):
+        for key in ("op", "severity", "field", "observeMode", "environment"):
             for value in re.findall(rf'{key}\s*=\s*"([^"]+)"', block):
                 if f'"{value}"' not in parser and f"'{value}'" not in parser:
                     errors.append(f"第 {i + 1} 段声明的 {key}=\"{value}\" 解析器不认")

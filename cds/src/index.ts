@@ -67,6 +67,7 @@ import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
 import crypto from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { BranchDispatcher, HttpSnapshotFetcher } from './scheduler/dispatcher.js';
 import { ExecutorAgent } from './executor/agent.js';
 import { createExecutorRouter } from './executor/routes.js';
@@ -135,6 +136,15 @@ import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
 import { MapNotifier, mapNotifierConfigFromEnv } from './services/map-notifier.js';
+import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
+import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
+import { sendAlarm } from './services/alarm-dispatch.js';
+import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
+import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
+import { buildSelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
+import { selfStatusCache } from './services/self-status-cache.js';
+import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
 
 
 const configPath = process.argv[2] || undefined;
@@ -5828,19 +5838,58 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   //
   // 没配齐凭据时**必须把这件事印出来**：静默禁用就是装了个永远不会响的铃，
   // 那正是这条链路要治的病。
-  const mapNotifierConfig = mapNotifierConfigFromEnv();
-  const mapNotifier = mapNotifierConfig
-    ? new MapNotifier(mapNotifierConfig, {
-        warn: (m) => console.warn(m),
-        info: (m) => console.log(m),
-      })
-    : null;
+  /**
+   * 每次用的时候现解析：**设置优先、env 兜底**。
+   *
+   * 不在启动时定死一个实例的原因很实在：凭据配好之后不该还要重启一次 CDS 才生效——
+   * 那等于把「接上铃」这件事又变回一件需要运维在场的事。
+   */
+  const resolveMapNotifier = (): MapNotifier | null => {
+    const stored = stateService.getAlarmNotify();
+    // 设置里存的是 privateKey（与 githubApp 同名法），MapNotifier 要的是 privateKeyPem。
+    // 在这一处显式转换，而不是让两个名字在下游各自漂。
+    const cfg = stored
+      ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, privateKeyPem: stored.privateKey }
+      : mapNotifierConfigFromEnv();
+    return cfg
+      ? new MapNotifier(cfg, { warn: (m) => console.warn(m), info: (m) => console.log(m) })
+      : null;
+  };
+  const mapNotifier = resolveMapNotifier();
   if (mapNotifier) {
     console.log('  [map-notifier] 存活告警将投递到 MAP 站内通知（source=uptime-alert）');
   } else {
     console.log('  [map-notifier] 未配置，存活告警只进 CDS 事件总线，不会有人被通知'
       + '（需要 CDS_MAP_NOTIFY_ENDPOINT / _KEY_ID / _USERNAME / _PRIVATE_KEY）');
   }
+  // 光打一行启动日志不够：没有任何一条验收会去读 CDS 的 stdout。
+  // 通道自身的状态必须跟着 uptime 摘要一起下发，让面板能说出「出事了有没有人被通知」。
+  // configured 传 getter 而不是布尔快照：配置是随时可改的，
+  // 定死一个启动时的布尔值会让「刚配好」和「压根没配」在面板上长得一模一样。
+  const alarmChannel = new AlarmChannel(
+    () => Boolean(stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv()),
+    'MAP 站内通知',
+    () => (stateService.getAlarmNotify() ? [] : missingAlarmEnvKeys()),
+  );
+  /**
+   * 多通道的投递记账本（2026-09-15）。
+   *
+   * 上面那条 alarmChannel 是单一 MAP 通道，先于本表存在且仍在工作；它接不上的原因
+   * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
+   * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
+   */
+  const alarmLedger = new AlarmLedger({
+    // 最近一次投递结果写回通道配置：进程重启后台账清空，已验证过的通道不该退回「未知」。
+    persist: (channelId, last) => {
+      const channel = stateService.listAlarmChannels().find((c) => c.id === channelId);
+      if (channel) stateService.upsertAlarmChannel({ ...channel, lastDelivery: last });
+    },
+  });
+  const alarmBoardUrl = (): string | undefined => {
+    const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
+    // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
+    return base ? `${base}/status` : undefined;
+  };
 
   /**
    * 项目级地址台账：某个项目名下所有分支预览的主机名。
@@ -5915,7 +5964,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
-      void mapNotifier?.send({
+      void resolveMapNotifier()?.send({
         type,
         targetId: data.targetId,
         targetName: data.targetName,
@@ -5925,7 +5974,40 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,
-      }).catch((err) => console.warn(`[map-notifier] 未捕获的投递异常: ${(err as Error).message}`));
+      })
+        // 每一次投递都记账：面板上「铃通不通」这句话的唯一数据源。
+        .then((r) => alarmChannel.record(r, 'alert', Date.now()))
+        .catch((err) => {
+          const reason = `未捕获的投递异常: ${(err as Error).message}`;
+          alarmChannel.record({ ok: false, reason }, 'alert', Date.now());
+          console.warn(`[map-notifier] ${reason}`);
+        });
+
+      // 第三个出口：用户自己配的通知通道（Bark / Webhook / MAP）。
+      // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
+      // 上游已去抖，重试会把一次翻转变成多条通知）。
+      const event = {
+        kind: classifyAlert(type, data.source),
+        projectId: data.projectId,
+        targetName: data.targetName,
+        message: data.message,
+        detectedAt: data.detectedAt,
+        ...(data.probeUrl ? { probeUrl: data.probeUrl } : {}),
+        consecutiveFailures: data.consecutiveFailures,
+      };
+      const boardUrl = alarmBoardUrl();
+      for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
+        void sendAlarm(channel, event, boardUrl ? { boardUrl } : {})
+          .then((r) => {
+            alarmLedger.record(channel.id, r, 'alert', Date.now());
+            if (!r.ok) console.warn(`[alarm] 通道「${channel.name}」投递失败: ${r.reason ?? '原因不明'}`);
+          })
+          .catch((err) => {
+            const reason = `未捕获的投递异常: ${(err as Error).message}`;
+            alarmLedger.record(channel.id, { ok: false, reason }, 'alert', Date.now());
+            console.warn(`[alarm] 通道「${channel.name}」${reason}`);
+          });
+      }
     },
   });
   // 删项目时级联删掉的自定义监控，运行态台账也立刻抹掉——与单条删除路由同款，
@@ -5987,6 +6069,118 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     }).finally(() => { discoveryInFlight = null; });
     return discoveryInFlight;
   };
+  /**
+   * CDS 自检端点 —— CDS 用同一套协议监控自己（2026-09-16）。
+   *
+   * 用户：「先加上自己的吧，以代码初始化的方式来驱动，方便 CDS 迁移部署在其他服务器上。」
+   * 所以这里两件事都在代码里：① 挂一个自带 `cds:monitor` 声明的 health+json 端点；
+   * ② 启动时把它插进内置项目「CDS 自身」。搬到哪台机器，这套监控都跟着起来，
+   * 不用任何人手配，删掉了下次启动也会回来。
+   *
+   * 端点不走登录门（server.ts 的公开路由白名单 + github-auth 的 PUBLIC_PATHS 都放行了它），
+   * 但**不是公开的**：只认本机回环 + 本进程内存里的一次性令牌（self-check-auth.ts）。
+   * 探测器与发现器在同一个进程里，打它时自动带令牌；从外面打，回环不满足或令牌不对，
+   * 一律 401，文档一个字都不吐。用户 2026-09-16：「免登录不行，泄漏数据。」
+   */
+  const selfCheckDeps: SelfCheckDeps = {
+    now: () => Date.now(),
+    deploymentRuns: () => stateService.getDeploymentRuns(),
+    webhookDeliveries: (limit) => stateService.getGithubWebhookDeliveries(limit),
+    buildGate: () => buildGateStatus(),
+    cycleHealth: () => {
+      const c = uptimeMonitor.getCycleHealth();
+      return { sinceLastCycleMs: c.sinceLastCycleMs, stale: c.stale, running: c.running, watchdogResets: c.watchdogResets };
+    },
+    processStartedAt: () => {
+      const iso = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT;
+      const ms = iso ? Date.parse(iso) : Number.NaN;
+      return Number.isFinite(ms) ? ms : null;
+    },
+    diskUsage: () => defaultDiskUsage(config.repoRoot),
+    dockerPing: async () => {
+      const startedAt = Date.now();
+      try {
+        const result = await shell.exec('docker version --format "{{.Server.Version}}"', { timeout: 3000 });
+        return {
+          ok: result.exitCode === 0,
+          ms: Date.now() - startedAt,
+          // 超时被杀时 stderr 是空的——空原因等于没说，补上退出码与「3 秒内没回」。
+          detail: result.exitCode === 0
+            ? result.stdout.trim()
+            : (result.stderr.trim() || `退出码 ${result.exitCode}，3 秒内没有回应`),
+        };
+      } catch (err) {
+        return { ok: false, ms: Date.now() - startedAt, detail: (err as Error).message };
+      }
+    },
+    httpStats: async (sinceMs) => {
+      const store = activeHttpLogStore;
+      if (!store?.findRecent) return null;
+      // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
+      // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
+      const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
+      const branches = rows
+        .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
+        .map((r) => r.durationMs)
+        .filter((ms) => Number.isFinite(ms));
+      const sorted = [...branches].sort((a, b) => a - b);
+      const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
+      return {
+        requests: rows.length,
+        serverErrors: rows.filter((r) => r.status >= 500).length,
+        branchesP95Ms: p95,
+      };
+    },
+    // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
+    liveAlarmChannels: () => countLiveAlarmChannels(
+      stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),
+      alarmChannel.snapshot(),
+    ),
+    selfStatus: () => {
+      const snap = selfStatusCache.getSnapshot();
+      // lastRefreshAt 为空 = 缓存还没算过一次（刚起来的进程），此时 bundleStale 是默认值不是结论。
+      return { ready: snap.lastRefreshAt !== null, bundleStale: snap.bundleStale, headSha: snap.headSha, currentBranch: snap.currentBranch };
+    },
+    storeBackend: () => stateService.getBackingStore().kind,
+  };
+  // 13 条监控各自打一次这个端点，一轮就是 13 次 docker version + 13 次 Mongo 查询。
+  // 短缓存让同一轮里的探测共用一份文档：15 秒内的重复请求拿同一个 promise。
+  const SELF_CHECK_CACHE_MS = 15_000;
+  let selfCheckCache: { at: number; doc: Promise<Awaited<ReturnType<typeof buildSelfCheck>>> } | null = null;
+  const cachedSelfCheck = () => {
+    const at = Date.now();
+    if (selfCheckCache && at - selfCheckCache.at < SELF_CHECK_CACHE_MS) return selfCheckCache.doc;
+    const doc = buildSelfCheck(selfCheckDeps);
+    selfCheckCache = { at, doc };
+    doc.catch(() => { selfCheckCache = null; });
+    return doc;
+  };
+  app.get(SELF_CHECK_PATH, async (req, res) => {
+    // 鉴权在任何计算之前：不给未授权请求消耗 docker / Mongo 的机会，也不泄漏一个字。
+    if (!selfCheckAuth.verify({ remoteAddress: req.socket.remoteAddress, header: req.get(SELF_CHECK_HEADER) })) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
+    try {
+      const doc = await cachedSelfCheck();
+      res.setHeader('content-type', 'application/health+json; charset=utf-8');
+      res.status(200).json(doc);
+    } catch (err) {
+      // 自检本身炸了（比如 Mongo 抖一下）回 503，让发现器按「端点打不通」处理——已登记的
+      // 13 条监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
+      // 一条声明都没有」，把全部自监控当场下线（Codex #1543 P1）。
+      res.setHeader('content-type', 'application/health+json; charset=utf-8');
+      res.status(503).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message });
+    }
+  });
+  try {
+    const outcome = ensureSelfMonitoring(stateService, config.masterPort, Date.now());
+    console.log(`  [self-monitor] CDS 自身监控已就位：${outcome.url}`
+      + `${outcome.createdProject ? '（内置项目刚建立）' : ''}${outcome.addedEndpoint ? '（端点刚插上）' : ''}`
+      + `${outcome.retiredEndpoints.length > 0 ? `（退掉旧端口的端点：${outcome.retiredEndpoints.join('、')}）` : ''}`);
+  } catch (err) {
+    console.warn(`  [self-monitor] CDS 自身监控引导失败：${(err as Error).message}`);
+  }
   const discoveryIntervalMs = Math.max(60_000, uptimeMonitor.config.intervalMs || 60_000);
   setInterval(() => { void runDiscovery().catch(() => undefined); }, discoveryIntervalMs).unref?.();
   void runDiscovery().catch(() => undefined);
@@ -5999,6 +6193,53 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     removeMonitorEndpoint: (projectId: string, url: string) => stateService.removeMonitorEndpoint(projectId, url),
     runDiscovery,
     lastDiscoveryRun: () => lastDiscoveryRun,
+    alarmChannel: () => alarmChannel.snapshot(),
+    alarmChannels: () => stateService.listAlarmChannels()
+      .map((c) => alarmLedger.view(c, channelConfigured(c))),
+    readAlarmNotify: () => {
+      const stored = stateService.getAlarmNotify();
+      const env = mapNotifierConfigFromEnv();
+      const eff = stored
+        ? { endpoint: stored.endpoint, keyId: stored.keyId, username: stored.username, key: stored.privateKey, source: 'settings' as const }
+        : env
+          ? { endpoint: env.endpoint, keyId: env.keyId, username: env.username, key: env.privateKeyPem, source: 'env' as const }
+          : null;
+      if (!eff) return { configured: false, source: null, missingEnv: missingAlarmEnvKeys() };
+      return {
+        configured: true,
+        source: eff.source,
+        endpoint: eff.endpoint,
+        keyId: eff.keyId,
+        username: eff.username,
+        // 指纹而不是私钥：够用来核对「配的是不是我给的那把」，又不构成泄漏面。
+        privateKeyFingerprint: createHash('sha256').update(eff.key).digest('hex').slice(0, 16),
+      };
+    },
+    writeAlarmNotify: (next) => {
+      stateService.setAlarmNotify(next);
+      // 换了凭据（或清掉）就是换了目的地：旧的投递证明作废，回到「没发过」，演练成功一次再算通
+      alarmChannel.reset();
+    },
+    // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
+    // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。
+    runAlarmDrill: async (note: string) => {
+      const notifier = resolveMapNotifier();
+      if (!notifier) {
+        const reason = '通知通道没配齐，演练发不出去（这本身就是结论：现在出问题不会有人被通知）';
+        alarmChannel.record({ ok: false, reason }, 'drill', Date.now());
+        return { ok: false, reason };
+      }
+      const result = await notifier.send({
+        type: 'uptime.target.recovered',
+        targetId: 'drill',
+        targetName: '通知通道演练',
+        message: note || '这是一次人工演练，用来确认「出问题时铃会响」。看到它说明通道是通的。',
+        consecutiveFailures: 0,
+        detectedAt: new Date().toISOString(),
+      });
+      alarmChannel.record(result, 'drill', Date.now());
+      return result;
+    },
     store: {
       listUptimeMonitors: (projectId?: string) => stateService.listUptimeMonitors(projectId),
       getUptimeMonitor: (id: string) => stateService.getUptimeMonitor(id),
@@ -6007,6 +6248,18 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       getProject: (projectId: string) => stateService.getProject(projectId),
     },
   }));
+  // 通知通道的读写与演练。挂在同一个 /api 前缀下，与监控摘要同一条身份闸。
+  app.use('/api', (() => {
+    const r = express.Router();
+    registerAlarmChannelRoutes(r, {
+      list: () => stateService.listAlarmChannels(),
+      upsert: (channel) => stateService.upsertAlarmChannel(channel),
+      remove: (id: string) => stateService.removeAlarmChannel(id),
+      ledger: alarmLedger,
+      boardUrl: alarmBoardUrl,
+    });
+    return r;
+  })());
   // 回填给 /healthz：探活循环停摆必须在健康端点上可见（2026-09-08）。
   serverDeps.uptimeMonitor = uptimeMonitor;
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()

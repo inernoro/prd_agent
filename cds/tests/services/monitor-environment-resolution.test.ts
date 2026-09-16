@@ -149,3 +149,31 @@ describe('index.ts 真的把地址台账注给了监控服务', () => {
     expect(definitions).toHaveLength(1);
   });
 });
+
+/*
+ * W2（2026-09-14）：端点自称的环境什么时候算数。
+ *
+ * 命门：**自称压不过地址**。一条临时分支的自检端点只要写上 production，
+ * 就能混进项目负责人的第一屏——所以结构性证据必须排在声明前面。
+ */
+describe('自称的环境 vs 地址给出的事实', () => {
+  it('地址指着分支预览时，自称 production 也算分支预览', () => {
+    expect(resolveMonitorEnvironment({
+      source: 'custom',
+      declared: 'production',
+      boundBranchId: 'br-1',
+    })).toBe('preview');
+  });
+
+  it('没有结构性证据时，自称算数', () => {
+    expect(resolveMonitorEnvironment({ source: 'custom', declared: 'production' })).toBe('production');
+    expect(resolveMonitorEnvironment({ source: 'custom', declared: 'staging' })).toBe('staging');
+  });
+
+  it('什么都没说时落到 production —— 钉住这个默认，别让它悄悄改', () => {
+    // 这不是瞎猜：没绑分支、没自称的监控，地址通常就指着正式服务，
+    // 默认成 other 反而会让它从负责人该看的那一格里消失。
+    // 但它是个**有后果的默认**，所以单独钉一条，改的时候必须先看见这一行。
+    expect(resolveMonitorEnvironment({ source: 'custom' })).toBe('production');
+  });
+});

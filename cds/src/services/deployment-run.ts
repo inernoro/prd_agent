@@ -205,6 +205,33 @@ export class DeploymentRunService {
     };
   }
 
+  /**
+   * 启动收尸：心跳早于本进程启动时刻的非终态 run，一定是被上一个进程带走的——
+   * 心跳只由本进程写（分支侧部署循环），进程一换，没有任何人会再推它往前走。
+   * 周期收割按「心跳停跳 15 分钟」判，重启后前 15 分钟这些 run 会一直挂着 building；
+   * 2026-09-16 自检第一轮就抓到七个。这里不看停了多久，只看「是不是上一个进程的」。
+   */
+  reconcileOrphanedByRestart(processStartedAt: Date): DeploymentRun[] {
+    const boundary = processStartedAt.getTime();
+    if (!Number.isFinite(boundary)) return [];
+    const reconciled: DeploymentRun[] = [];
+    for (const run of this.stateService.getDeploymentRuns()) {
+      if (TERMINAL_STATUSES.has(run.status)) continue;
+      const heartbeat = Date.parse(run.heartbeatAt || run.updatedAt || run.startedAt);
+      if (!Number.isFinite(heartbeat) || heartbeat >= boundary) continue;
+      reconciled.push(this.fail(run.id, {
+        code: 'cds.run.interrupted-by-restart',
+        owner: 'cds',
+        retryable: true,
+        summary: 'CDS 进程重启把这次部署打断了，已收敛为失败；重新部署即可',
+        phase: run.phase,
+        evidenceRefs: [],
+        suggestedAction: '重新部署（push 一次或在分支面板点部署）',
+      }));
+    }
+    return reconciled;
+  }
+
   reconcileInterrupted(now = this.now(), staleAfterMs = 15 * 60 * 1000): DeploymentRun[] {
     const reconciled: DeploymentRun[] = [];
     for (const run of this.stateService.getDeploymentRuns()) {

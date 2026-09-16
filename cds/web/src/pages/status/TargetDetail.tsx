@@ -277,11 +277,11 @@ export function TargetDetail({
               <SegmentedControl<HistoryRange> value={range} options={HISTORY_RANGES} onChange={setRange} ariaLabel="时间范围" />
             </div>
             {range === '24h' ? (
-              <div className="overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
+              <div className="overflow-x-auto" style={{ overscrollBehaviorX: 'contain' }}>
                 <AvailabilityBar buckets={target.buckets} segments={90} className="min-w-[20rem]" label={`${target.name} 最近 24 小时可用率分布`} />
               </div>
             ) : rangeBuckets ? (
-              <div className="overflow-x-auto" style={{ overscrollBehavior: 'contain' }}>
+              <div className="overflow-x-auto" style={{ overscrollBehaviorX: 'contain' }}>
                 <AvailabilityBar buckets={rangeBuckets} segments={rangeBuckets.length} className="min-w-[20rem]" label={`${target.name} 最近 ${range} 可用率分布`} />
               </div>
             ) : null}
@@ -314,7 +314,9 @@ export function TargetDetail({
               <h3 className="text-sm font-semibold">原始采样（最近 {recentSamples.length} 次）</h3>
               <span className="text-[0.6875rem] text-muted-foreground">判定就是从这些数据来的，可自行核对；每 {target.intervalSeconds} 秒一次，连续失败达阈值判故障，一次成功即恢复</span>
             </div>
-            <div className="overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]" style={{ overscrollBehavior: 'contain' }}>
+            {/* 只拦 x 轴。overflow-x:auto 会把 y 轴也变成滚动容器，两轴一起 contain 就把纵向滚轮
+                吃在这张表里、不再往上冒——鼠标停在采样表上整个详情页就滚不动（2026-09-15 用户截图）。 */}
+            <div className="overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]" style={{ overscrollBehaviorX: 'contain' }}>
               <div className="min-w-[32.5rem]">
                 <div className="grid grid-cols-[6.25rem_3.75rem_4.375rem_5rem_minmax(0,1fr)] gap-3 bg-[hsl(var(--surface-sunken))] px-3 py-1.5 text-[0.6875rem] font-semibold uppercase text-muted-foreground">
                   <span>时间</span><span>结果</span><span>状态码</span><span>耗时</span><span>原因</span>

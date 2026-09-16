@@ -60,3 +60,23 @@ describe('第一屏不许有「默认视图下功能凭空消失」的分支', (
     expect(uses.length, '自检端点与公开面板两块都要有「先选项目」的占位').toBeGreaterThanOrEqual(2);
   });
 });
+
+describe('全局视角要真的被接上（删掉不会红的那种线）', () => {
+  const code = codeOf(readFileSync(SOURCE, 'utf8'));
+
+  it('没选项目时走全局面板，不是把所有业务卡拍平成一堵墙', () => {
+    expect(code).toContain('buildGlobalBoard(');
+    // 判据：全局结果必须真的进了渲染，而不是算完没人用（形状 2）
+    expect(code).toContain('<ProjectCard');
+  });
+
+  it('「没人盯的项目」那一块必须在场 —— 它是全局视角存在的理由', () => {
+    expect(code).toMatch(/unwatched/);
+  });
+
+  it('结论条读的是全局结论，不是被项目筛选后的那个', () => {
+    // headline 变量把两种视角合一；直接读 board.headline 会在全局视角下
+    // 显示「6 项业务…」这种被筛过的结论，与上面的项目卡对不上。
+    expect(code).toContain('headline.headline');
+  });
+});
