@@ -3763,6 +3763,33 @@ app.MapDelete("/gw/catalog-entries/{id}", async (HttpContext http, string id) =>
 }).RequireAuthorization("ConfigWrite");
 
 /// <summary>
+/// 生图契约的模式冲突检查：同一租户下同一个模式只许有一条。
+///
+/// 两条同模式的行进了库，同步 worker 会把它们装进同一张按模式索引的表，
+/// 谁赢取决于剩下那些排序键——而它们可能完全一样，于是取决于 Mongo 返回顺序。
+/// 生图尺寸和参数翻译因此会在两套配置之间无规律地跳。
+///
+/// create 与 update 共用这一份：只在 create 那边查等于留了一扇后门，
+/// 把 A 的模式改成 B 占着的那个照样进得去（predicate-and-wiring-discipline 形状 3）。
+/// </summary>
+static async Task<string?> FindImageGenPatternConflictAsync(
+    IMongoCollection<BsonDocument> configs,
+    HttpContext http,
+    string pattern,
+    string? excludeId)
+{
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("ModelIdPattern", pattern));
+    if (!string.IsNullOrEmpty(excludeId))
+        filter &= Builders<BsonDocument>.Filter.Ne("_id", excludeId);
+    var dup = await configs.Find(filter).FirstOrDefaultAsync();
+    return dup is null
+        ? null
+        : $"已经有一条 {pattern} 的契约，去改它而不是再加一条";
+}
+
+/// <summary>
 /// 补登的标识冲突检查：规范标识与等价写法是**同一个键空间**。
 ///
 /// 查重只看 CanonicalId 是不够的：别名同样是查找键（<see cref="ModelCatalog.CatalogOverrides"/>
@@ -3936,15 +3963,9 @@ app.MapPost("/gw/imagegen-configs", async (HttpContext http, [FromBody] UpsertIm
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var pattern = body.ModelIdPattern!.Trim().ToLowerInvariant();
 
-    // 同一租户下同一个模式只许有一条：两条同模式的行，谁赢取决于排序里的兜底比较，
-    // 那是「判据比它该管的范围窄」的经典温床（形状 1）。当场拒绝，别让它进库。
-    var dup = await gwImageModelConfigs
-        .Find(Builders<BsonDocument>.Filter.And(
-            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
-            Builders<BsonDocument>.Filter.Eq("ModelIdPattern", pattern)))
-        .FirstOrDefaultAsync();
-    if (dup is not null)
-        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS", $"已经有一条 {pattern} 的契约，去改它而不是再加一条"), jsonOptions, 409);
+    var dupMessage = await FindImageGenPatternConflictAsync(gwImageModelConfigs, http, pattern, excludeId: null);
+    if (dupMessage is not null)
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS", dupMessage), jsonOptions, 409);
 
     var doc = BuildImageGenConfigDocument(body, tenantId, http, existing: null);
     await gwImageModelConfigs.InsertOneAsync(doc);
@@ -3961,11 +3982,19 @@ app.MapPut("/gw/imagegen-configs/{id}", async (HttpContext http, string id, [Fro
     var error = ValidateImageGenConfig(body);
     if (error is not null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
 
+    var pattern = body.ModelIdPattern!.Trim().ToLowerInvariant();
     var filter = Builders<BsonDocument>.Filter.And(
         TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
         Builders<BsonDocument>.Filter.Eq("_id", id));
     var existing = await gwImageModelConfigs.Find(filter).FirstOrDefaultAsync();
     if (existing is null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("NOT_FOUND", "这条契约不存在"), jsonOptions, 404);
+
+    // 更新端点原本一条都不查，等于留了一扇后门：把 A 的模式改成 B 已经占着的那个，
+    // 库里就出现两条同模式的行，同步 worker 装进同一张按模式索引的表，
+    // 谁赢取决于 Mongo 返回顺序——生图尺寸和参数翻译因此每次部署可能不一样。
+    var conflict = await FindImageGenPatternConflictAsync(gwImageModelConfigs, http, pattern, excludeId: id);
+    if (conflict is not null)
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS", conflict), jsonOptions, 409);
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var doc = BuildImageGenConfigDocument(body, tenantId, http, existing);
@@ -4312,6 +4341,26 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
 
         var existing = await gwLogicalModels.Find(fb.And(
             fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized))).FirstOrDefaultAsync();
+
+        // 复用同名模型之前必须核对用途：标识撞上不等于是同一个东西。
+        //
+        // 只按 PublicIdNormalized 找的话，一个叫 default-chat 的 generation 模型会被当成
+        // 这个 chat 池的搬迁目标，池的物理线路就挂到了那个不相干的模型上；而运行时按
+        // ModelType 查目录，原用途的请求根本解析不到它——搬迁报「已关联」，实际两头落空。
+        if (existing is not null
+            && !string.Equals(existing.GetStringOrEmpty("ModelType"), modelType, StringComparison.Ordinal))
+        {
+            result.Skipped.Add(new PoolMigrationSkip
+            {
+                PoolId = poolId,
+                PoolName = poolName,
+                Reason = $"标识「{publicId}」已经被一个 {existing.GetStringOrEmpty("ModelType")} 用途的模型占着，"
+                    + $"而这个池是 {modelType}——标识撞上不代表是同一个东西，这个池整个没搬。"
+                    + "先把池改名或把那个模型改名，再重跑搬迁",
+            });
+            continue;
+        }
+
         var logicalId = existing?.GetStringOrEmpty("_id") ?? $"gw-logical-{Guid.NewGuid():N}";
         entry.CreatedNewModel = existing is null;
 
@@ -4357,6 +4406,10 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     // 能力门一律不放行——搬迁报成功、调用方却调不到它，请求默默回落到池。
                     { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy
                         .NormalizeDetailed(modelType, PoolMigrationPlanner.CollectCapabilities(pool)).Persisted) },
+                    // 写入即打契约版本，与 create / update 两条路一致。
+                    // 漏掉它的话，capability-audit 会把每一条刚搬过来的模型都算成「未版本化」，
+                    // 一次成功的搬迁当场把发布闸判成不干净，而且要等控制台重启跑迁移才消。
+                    { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
                     // 池没有 AllowedAppCallerCodes——它靠 appCaller 反向绑定池 id。
                     // 留空 = 当前租户全部 appCaller 可用，与池的实际可见范围一致；
                     // 搬迁不替用户收紧授权，收紧是治理动作要有人拍板。
@@ -4396,6 +4449,8 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                             fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
                             Builders<BsonDocument>.Update
                                 .Set("Capabilities", new BsonArray(repaired))
+                                // 补了能力就得同时补版本，否则这条修复自己又留下一个未版本化文档。
+                                .Set(LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion)
                                 .Set("UpdatedAt", DateTime.UtcNow));
                     }
                     entry.RepairedCapabilities = true;
@@ -4416,9 +4471,16 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             // 池成员记的是「模型名 + 平台 id」，Offering 指的是物理模型文档的 _id，要换算一次。
             // 换不出来说明这个成员指向的模型已经不在库里了，跳过并报出来——搬一条指向空气的
             // 线路，只会让这个模型在真调用时才炸。
+            // 成员的 ModelId 可能对应物理文档的三种字段之一：早期入库的模型没有 ModelName，
+            // 供给侧当时是从 Name 或 _id 取的标识写进池成员的。只查 ModelName 会把那些
+            // 完全合法的成员报成「找不到」，搬过去的模型于是少线路——池退役之后就再也没有
+            // 别的路能接住它们了（形状 1：判据比它该管的范围窄）。
             var physical = await gwModels.Find(fb.And(
                 fb.Eq("TenantId", tenantId),
-                fb.Eq("ModelName", memberModelId),
+                fb.Or(
+                    fb.Eq("ModelName", memberModelId),
+                    fb.Eq("Name", memberModelId),
+                    fb.Eq("_id", memberModelId)),
                 memberPlatformId.Length > 0 ? fb.Eq("PlatformId", memberPlatformId) : fb.Empty)).FirstOrDefaultAsync();
             if (physical is null)
             {
@@ -4431,6 +4493,12 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             }
 
             var physicalId = physical.GetStringOrEmpty("_id");
+            // 上游调用名取物理文档登记的 ModelName，不沿用池成员记的那个标识。
+            // 放宽匹配之后两者可能不是一回事（成员记的是 Name 或 _id），
+            // 照抄过去就是拿一个上游不认识的名字去调它。
+            var upstreamModelId = physical.AsNullableString("ModelName") is { Length: > 0 } registered
+                ? registered
+                : memberModelId;
             var duplicate = await gwModelOfferings.Find(fb.And(
                 fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
                 fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).AnyAsync();
@@ -4444,7 +4512,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                 {
                     { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
                     { "LogicalModelId", logicalId }, { "TargetKind", "model" }, { "TargetId", physicalId },
-                    { "UpstreamModelId", memberModelId },
+                    { "UpstreamModelId", upstreamModelId },
                     { "Protocol", member.AsNullableString("Protocol") is { Length: > 0 } mp ? mp : BsonNull.Value },
                     { "EndpointPath", BsonNull.Value },
                     { "Priority", PoolMigrationPlanner.MemberPriority(member) },
@@ -4542,7 +4610,7 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
 
     // 「会落到它」要三件事同时成立：是本用途的默认、自己启用着、而且真有一条线路能接。
     // 少最后一条就会出现这种谎：面板说不点名会落到它，实际所有线路都被摘了，
-    // 运行时解析失败后回落到模型池——人照着面板去查，查的是一条根本没走的路。
+    // 运行时当场解析失败——人照着面板去查，查的是一条根本没走的路。
     var hasEligibleRoute = candidates.Any(x => CallTracePlanner.SkipReason(x) is null);
 
     // 不点名时落到谁，是**两层**：先看有没有模型认领了这个调用方，没有才回落到用途默认。
@@ -4645,13 +4713,16 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
                 : reachingCount == 0
                     ? $"它够格接不点名的请求，但这个用途下 {unnamedCallers.Count} 个调用方没有一个会落到它（{DescribeMissReasons(unnamedCallers)}）。"
                     : $"这个用途下 {unnamedCallers.Count} 个调用方里，{reachingCount} 个不点名时会落到它；其余 {unnamedCallers.Count - reachingCount} 个走的是别的路（{DescribeMissReasons(unnamedCallers)}）。"
+        // 这三句此前都写着「回落到模型池」。模型池路由已经退场，ResolveCoreAsync 里没有那条分支了：
+        // 解析不到就是结构化失败（AppCallerPoolUnbound / no-logical-model），不会再落到任何池。
+        // 让面板指着一条走不到的路，运维会照它去排查一条不存在的链路——比不说更糟。
         : item.IsDefaultForType && !item.Enabled
-            ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——运行时会跳过它回落到模型池。先启用它，或改设别的模型为默认。"
+            ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——运行时会跳过它，这个用途的不点名请求会解析失败。先启用它，或改设别的模型为默认。"
             : item.IsDefaultForType && !hasEligibleRoute
-                ? $"它是 {item.ModelType} 的默认，但一条能接的线路都没有——不点名的请求会解析失败并回落到模型池。先把上面那些线路修好。"
+                ? $"它是 {item.ModelType} 的默认，但一条能接的线路都没有——不点名的请求会当场解析失败。先把上面那些线路修好。"
                 : defaultPublicId is { Length: > 0 }
                     ? $"不点名时不会落到它；{item.ModelType} 这个用途现在的默认是 {defaultPublicId}。"
-                    : $"不点名时不会落到它，而且 {item.ModelType} 这个用途现在没有启用的默认——这类请求会回落到模型池。";
+                    : $"不点名时不会落到它，而且 {item.ModelType} 这个用途现在没有启用的默认——这类请求会当场解析失败。给这个用途设一个默认模型，或让某个模型认领那些调用方。";
 
     var openToAll = item.AllowedAppCallerCodes.Count == 0;
     var gateSummary = !item.Enabled
@@ -4727,7 +4798,7 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
                         ? "它是这个用途的默认，落到它"
                         : defaultPublicId is { Length: > 0 }
                             ? $"落到这个用途现在的默认 {defaultPublicId}"
-                            : "这个用途没有启用的默认，回落到模型池",
+                            : "这个用途没有启用的默认，请求当场解析失败",
                     State = StateOf(false, servesUnnamed),
                     Note = servesUnnamed && reachingCount > 0 ? $"{reachingCount} 个调用方会这样落到它" : null,
                 },
@@ -4851,6 +4922,36 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
             Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalized))).AnyAsync())
         return Json(ApiEnvelope<LogicalModelItem>.Fail("DUPLICATE_LOGICAL_MODEL", "当前租户已存在相同模型标识"), jsonOptions, 409);
 
+    // 认领唯一性：同一用途下一个调用方最多被一个模型认领。
+    //
+    // 更新端点会顶替旧的认领者并把「摘掉了谁」如实回报，创建端点原本一条都不查——
+    // 于是两个模型同时认领同一个调用方，运行时按 DisplayOrder / PublicId 排序取第一个，
+    // 刚建的这个可能根本不控制流量，而界面显示它认领成功了（形状 3：同一个不变量，
+    // 两条写入路径给出两个结果）。
+    //
+    // 这里选拒绝而不是顶替：更新是显式编辑那个模型的认领列表，顶替是用户的意图；
+    // 创建只是新增一个模型，没有「把别人的抢过来」这层意思，悄悄抢走是最大的惊讶。
+    var declaredClaims = (body?.DefaultForAppCallerCodes ?? new())
+        .Select(x => x.Trim()).Where(x => x.Length > 0)
+        .Distinct(StringComparer.Ordinal).ToList();
+    if (declaredClaims.Count > 0)
+    {
+        var rival = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("ModelType", modelType),
+            Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", declaredClaims)))).FirstOrDefaultAsync();
+        if (rival is not null)
+        {
+            var taken = rival.AsStringList("DefaultForAppCallerCodes")
+                .Where(x => declaredClaims.Contains(x, StringComparer.Ordinal)).ToList();
+            var rivalName = rival.AsNullableString("PublicId") ?? rival.GetStringOrEmpty("_id");
+            return Json(ApiEnvelope<LogicalModelItem>.Fail(
+                "CLAIM_TAKEN",
+                $"调用方 {string.Join("、", taken)} 已经被模型 {rivalName} 认领了——同一个用途下一个调用方只能被一个模型认领。" +
+                "先建这个模型（不填指定调用方），再去编辑它的指定调用方，那条路会如实告诉你摘掉了谁"),
+                jsonOptions, 409);
+        }
+    }
+
     var now = DateTime.UtcNow;
     var id = $"gw-logical-{Guid.NewGuid():N}";
     var capabilityNormalization = LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, body?.Capabilities);
@@ -4863,9 +4964,7 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
         // 写入即打契约版本：没有版本的文档一律被迁移当成存量重算，避免新写入的数据也要靠迁移兜底。
         { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
         { "AllowedAppCallerCodes", new BsonArray(appCallers) },
-        { "DefaultForAppCallerCodes", new BsonArray(
-            (body?.DefaultForAppCallerCodes ?? new()).Select(x => x.Trim()).Where(x => x.Length > 0)
-                .Distinct(StringComparer.Ordinal)) },
+        { "DefaultForAppCallerCodes", new BsonArray(declaredClaims) },
         { "RoutingStrategy", strategy },
         { "Enabled", true }, { "DisplayOrder", Math.Clamp(body?.DisplayOrder ?? 100, 0, 10000) },
         { "Description", string.IsNullOrWhiteSpace(body?.Description) ? BsonNull.Value : body.Description.Trim() },
@@ -11272,9 +11371,20 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
     {
         try
         {
+            // 按规范化名查，不按提交的拼写查。
+            //
+            // 上面判「已存在」用的是大小写不敏感的集合，所以换个大小写重试时，那些模型会被
+            // 判成 Skipped 并把**提交的拼写**放进 publishTargets；而库里存的是首次导入的拼写，
+            // 精确匹配一条都查不到——那条写给用户的「稍后重试导入」于是第三次变成一句照做也没用的话。
+            // 身份与唯一索引本来就用 ModelNameNormalized（见上面建索引那段），这里对齐它。
+            var publishTargetKeys = publishTargets.Select(x => x.ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToList();
+            // 两条都查：ModelNameNormalized 是后加的字段，存量文档不一定有它
+            // （那个唯一索引也是 partial 的，只覆盖有该字段的文档）。只查规范化名会漏掉存量。
             var createdDocs = await gwModels.Find(TenantAccess.Filter(http, fb.And(
                 fb.Eq("PlatformId", id),
-                fb.In("ModelName", publishTargets)))).ToListAsync();
+                fb.Or(
+                    fb.In("ModelNameNormalized", publishTargetKeys),
+                    fb.In("ModelName", publishTargets))))).ToListAsync();
 
             foreach (var model in createdDocs)
             {

@@ -57,25 +57,80 @@ public static class GatewayModelCatalogEndpoint
 
         var logicalIds = visible.Select(x => x.Id).ToList();
         var of = Builders<GatewayModelOffering>.Filter;
+
+        // 可用判据必须与运行时解析对齐，不能只看 Enabled。
+        //
+        // 这个端点的契约是「列出来的都能调」——它自己的注释就写着「列出来就是让对方白调一次」，
+        // 但判据此前只过滤 Enabled：熔断掉的线路（HealthStatus=Unavailable）、指向已停用或
+        // 已删除的物理模型 / 平台 / 兑换所的线路，全都被当成可用发布出去。对方照着清单调一次，
+        // 立刻拿到失败——而我们这边看不出任何异常（predicate-and-wiring-discipline 形状 1：
+        // 判据比它该管的范围窄）。
+        //
+        // 运行时那一侧的判据在 ModelResolver：候选线路 Ne(HealthStatus, Unavailable)，
+        // 且目标模型与平台都必须 Enabled，兑换所同理。这里逐条对齐。
         var routes = await offerings
             .Find(of.And(
                 of.Eq(x => x.TenantId, tenantId),
                 of.In(x => x.LogicalModelId, logicalIds),
-                of.Eq(x => x.Enabled, true)))
+                of.Eq(x => x.Enabled, true),
+                of.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
             .ToListAsync(ct);
+
+        // 目标可用性：物理模型与它的平台都得在且启用。
+        var targetIds = routes.Where(x => x.TargetKind == "model").Select(x => x.TargetId).Distinct(StringComparer.Ordinal).ToList();
+        var bf = Builders<BsonDocument>.Filter;
+        var enabledModels = targetIds.Count == 0
+            ? new List<BsonDocument>()
+            : await physicalModels
+                .Find(bf.And(
+                    bf.Eq("TenantId", tenantId),
+                    bf.In("_id", targetIds),
+                    bf.Eq("Enabled", true)))
+                .ToListAsync(ct);
+        var platformIds = enabledModels
+            .Select(x => x.GetValue("PlatformId", BsonNull.Value))
+            .Where(x => x.IsString)
+            .Select(x => x.AsString)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var enabledPlatformIds = platformIds.Count == 0
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : (await db.GetCollection<BsonDocument>("llmgw_platforms")
+                .Find(bf.And(
+                    bf.Eq("TenantId", tenantId),
+                    bf.In("_id", platformIds),
+                    bf.Eq("Enabled", true)))
+                .ToListAsync(ct))
+                .Select(x => x.GetValue("_id", BsonNull.Value))
+                .Where(x => x.IsString)
+                .Select(x => x.AsString)
+                .ToHashSet(StringComparer.Ordinal);
+        var priceByModelId = enabledModels
+            .Where(x => x.GetValue("PlatformId", BsonNull.Value) is { IsString: true } pid
+                && enabledPlatformIds.Contains(pid.AsString))
+            .ToDictionary(x => x.GetValue("_id", BsonNull.Value).AsString, x => x, StringComparer.Ordinal);
+
+        // 兑换所目标：同样要在且启用。
+        var exchangeIds = routes.Where(x => x.TargetKind == "exchange").Select(x => x.TargetId).Distinct(StringComparer.Ordinal).ToList();
+        var enabledExchangeIds = exchangeIds.Count == 0
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : (await db.GetCollection<BsonDocument>("llmgw_model_exchanges")
+                .Find(bf.And(
+                    bf.Eq("TenantId", tenantId),
+                    bf.In("_id", exchangeIds),
+                    bf.Eq("Enabled", true)))
+                .ToListAsync(ct))
+                .Select(x => x.GetValue("_id", BsonNull.Value))
+                .Where(x => x.IsString)
+                .Select(x => x.AsString)
+                .ToHashSet(StringComparer.Ordinal);
+
         var routesByLogical = routes
+            .Where(route => string.Equals(route.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase)
+                ? enabledExchangeIds.Contains(route.TargetId)
+                : priceByModelId.ContainsKey(route.TargetId))
             .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.OrderBy(r => r.Priority).ToList(), StringComparer.Ordinal);
-
-        var targetIds = routes.Where(x => x.TargetKind == "model").Select(x => x.TargetId).Distinct(StringComparer.Ordinal).ToList();
-        var priceByModelId = targetIds.Count == 0
-            ? new Dictionary<string, BsonDocument>(StringComparer.Ordinal)
-            : (await physicalModels
-                .Find(Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-                    Builders<BsonDocument>.Filter.In("_id", targetIds)))
-                .ToListAsync(ct))
-                .ToDictionary(x => x.GetValue("_id", BsonNull.Value).AsString, x => x, StringComparer.Ordinal);
 
         var data_ = new JsonArray();
         foreach (var logical in visible)

@@ -123,6 +123,49 @@ public sealed class GatewayCallTraceMirrorTests
     /// 跳过原因的文案也要对齐：它是产品语义，会直接出现在面板上。
     /// 两边各写各的文案不会让排序出错，但会让人在两个地方看到两种说法。
     /// </summary>
+    /// <summary>
+    /// 加权分配不许跨健康档：降级线路无论权重多大，都不该被旋到健康线路前面。
+    ///
+    /// 这条不是镜像对照（那种只保证两边一样，一起错也算一致），是**行为**断言。
+    /// 它断的是上一步的健康排序不会被下一步的权重旋转吃掉：主流量继续打向一条
+    /// 已经在累积失败的上游，而排序代码单看完全正确。
+    ///
+    /// 判据遍历全部 seed 落点：只测一个 seed 的话，恰好没旋到降级那条就会判绿。
+    /// </summary>
+    [Fact]
+    public void 加权分配不许把降级线路旋到健康线路前面()
+    {
+        // 降级那条权重压倒性地大（999 : 1）——跨档旋转的话它几乎必然占据队首。
+        var rows = new[]
+        {
+            ("healthy", 50, 1, 0, true, true),
+            ("degraded", 10, 999, 1, true, true),
+        };
+        var authoritative = rows
+            .Select(x => new GatewayRouteSelection.RouteCandidate(x.Item1, x.Item2, x.Item3, x.Item4, x.Item5, x.Item6))
+            .ToList();
+        var mirrored = rows
+            .Select(x => new CallTracePlanner.RouteCandidate(x.Item1, x.Item2, x.Item3, x.Item4, x.Item5, x.Item6))
+            .ToList();
+
+        for (uint seed = 0; seed < 1200; seed++)
+        {
+            Assert.Equal("healthy", GatewayRouteSelection.Queue(authoritative, weighted: true, seed)[0].Id);
+            Assert.Equal("healthy", CallTracePlanner.Queue(mirrored, weighted: true, seed)[0].Id);
+        }
+
+        // 降级那条仍然在队列里当后备——这条规则是「不分流给它」，不是「把它摘掉」。
+        var queue = GatewayRouteSelection.Queue(authoritative, weighted: true, seed: 0);
+        Assert.Equal(2, queue.Count);
+        Assert.Equal("degraded", queue[1].Id);
+
+        // 面板报的分配比例，范围必须与真实旋转范围一致：降级那条不参与分配，就不该出现在比例里。
+        var share = GatewayRouteSelection.WeightShare(authoritative);
+        Assert.Single(share);
+        Assert.Equal("healthy", share[0].Id);
+        Assert.Equal(100.0, share[0].Percent);
+    }
+
     [Fact]
     public void 跳过原因的文案两边逐字相同()
     {

@@ -83,42 +83,67 @@ public static class GatewayRouteSelection
     /// 权重大的被旋到队首的概率大，而后备顺序仍然保留（失败了照样往下走）。
     /// seed 由调用方给（运行时用 requestId 派生，面板用固定值），
     /// 这样这个函数本身没有随机性，可测。
+    ///
+    /// 旋转**只在最健康的那一档里**做。跨档旋转会把降级线路旋到队首，
+    /// 把上一步刚排好的健康顺序原样抵消掉——主流量继续打向一条已经在累积失败的上游，
+    /// 而排序代码看着完全正确（predicate-and-wiring-discipline 形状 1：
+    /// 判据的作用范围比它该管的宽，健康档这个维度被权重吃掉了）。
+    /// 降级的那些仍然在队列里，只是排在后面当后备——它们是兜底，不是分流对象。
     /// </summary>
     public static List<RouteCandidate> Queue(IReadOnlyList<RouteCandidate> all, bool weighted, uint seed)
     {
         var ordered = Eligible(all)
-            .OrderBy(x => x.HealthStatus == 0 ? 0 : 1)
+            .OrderBy(x => HealthTier(x))
             .ThenBy(x => x.Priority)
             .ThenBy(x => x.Id, StringComparer.Ordinal)
             .ToList();
         if (!weighted || ordered.Count < 2) return ordered;
 
-        var totalWeight = ordered.Sum(x => Math.Max(1, x.Weight));
+        // 最健康那一档的条数。排序已经把它们放在最前面，所以取前 N 条即可。
+        var bestTier = HealthTier(ordered[0]);
+        var tierCount = ordered.Count(x => HealthTier(x) == bestTier);
+        if (tierCount < 2) return ordered;
+
+        var head = ordered.Take(tierCount).ToList();
+        var totalWeight = head.Sum(x => Math.Max(1, x.Weight));
         var cursor = (int)(seed % (uint)totalWeight);
         var firstIndex = 0;
-        for (var i = 0; i < ordered.Count; i++)
+        for (var i = 0; i < head.Count; i++)
         {
-            cursor -= Math.Max(1, ordered[i].Weight);
+            cursor -= Math.Max(1, head[i].Weight);
             if (cursor < 0)
             {
                 firstIndex = i;
                 break;
             }
         }
-        return ordered.Skip(firstIndex).Concat(ordered.Take(firstIndex)).ToList();
+        return head.Skip(firstIndex)
+            .Concat(head.Take(firstIndex))
+            .Concat(ordered.Skip(tierCount))
+            .ToList();
     }
+
+    /// <summary>健康档：0 = 健康，1 = 降级。Unavailable 已被 <see cref="Eligible"/> 挡在外面。</summary>
+    private static int HealthTier(RouteCandidate candidate) => candidate.HealthStatus == 0 ? 0 : 1;
 
     /// <summary>
     /// 按权重分配时，每条线路被排到队首的概率（百分比，四舍五入到一位小数）。
     ///
     /// 面板不能在按权重分配时谎称「会落到 A」——那是编的。它给的是分配比例。
+    ///
+    /// 分配范围与 <see cref="Queue"/> 的旋转范围必须是同一个：最健康的那一档。
+    /// 两边取不同范围就是同一个判据分裂成两份（形状 3），面板报的比例和真实分流对不上，
+    /// 而且要等到有人拿日志去核才发现。降级线路不参与分配，所以不在返回值里。
     /// </summary>
     public static IReadOnlyList<(string Id, double Percent)> WeightShare(IReadOnlyList<RouteCandidate> all)
     {
         var eligible = Eligible(all);
-        var total = eligible.Sum(x => Math.Max(1, x.Weight));
+        if (eligible.Count == 0) return [];
+        var bestTier = eligible.Min(HealthTier);
+        var share = eligible.Where(x => HealthTier(x) == bestTier).ToList();
+        var total = share.Sum(x => Math.Max(1, x.Weight));
         if (total <= 0) return [];
-        return eligible
+        return share
             .Select(x => (x.Id, Percent: Math.Round(Math.Max(1, x.Weight) * 100.0 / total, 1)))
             .ToList();
     }

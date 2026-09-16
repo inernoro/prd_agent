@@ -54,38 +54,59 @@ public static class CallTracePlanner
     public static List<RouteCandidate> Eligible(IReadOnlyList<RouteCandidate> all)
         => all.Where(x => SkipReason(x) is null).ToList();
 
-    /// <summary>排成这次真实的发送顺序；队首就是会落到的那一条。</summary>
+    /// <summary>
+    /// 排成这次真实的发送顺序；队首就是会落到的那一条。
+    /// 权重旋转只在最健康的那一档里做——跨档旋转会把降级线路旋到队首，抵消健康排序。
+    /// 这是权威判据 GatewayRouteSelection.Queue 的镜像，逐字对齐，行为对照测试钉着不许漂。
+    /// </summary>
     public static List<RouteCandidate> Queue(IReadOnlyList<RouteCandidate> all, bool weighted, uint seed)
     {
         var ordered = Eligible(all)
-            .OrderBy(x => x.HealthStatus == 0 ? 0 : 1)
+            .OrderBy(x => HealthTier(x))
             .ThenBy(x => x.Priority)
             .ThenBy(x => x.Id, StringComparer.Ordinal)
             .ToList();
         if (!weighted || ordered.Count < 2) return ordered;
 
-        var totalWeight = ordered.Sum(x => Math.Max(1, x.Weight));
+        var bestTier = HealthTier(ordered[0]);
+        var tierCount = ordered.Count(x => HealthTier(x) == bestTier);
+        if (tierCount < 2) return ordered;
+
+        var head = ordered.Take(tierCount).ToList();
+        var totalWeight = head.Sum(x => Math.Max(1, x.Weight));
         var cursor = (int)(seed % (uint)totalWeight);
         var firstIndex = 0;
-        for (var i = 0; i < ordered.Count; i++)
+        for (var i = 0; i < head.Count; i++)
         {
-            cursor -= Math.Max(1, ordered[i].Weight);
+            cursor -= Math.Max(1, head[i].Weight);
             if (cursor < 0)
             {
                 firstIndex = i;
                 break;
             }
         }
-        return ordered.Skip(firstIndex).Concat(ordered.Take(firstIndex)).ToList();
+        return head.Skip(firstIndex)
+            .Concat(head.Take(firstIndex))
+            .Concat(ordered.Skip(tierCount))
+            .ToList();
     }
 
-    /// <summary>按权重分配时每条被排到队首的概率（百分比，一位小数）。</summary>
+    /// <summary>健康档：0 = 健康，1 = 降级。Unavailable 已被 Eligible 挡在外面。</summary>
+    private static int HealthTier(RouteCandidate candidate) => candidate.HealthStatus == 0 ? 0 : 1;
+
+    /// <summary>
+    /// 按权重分配时每条被排到队首的概率（百分比，一位小数）。
+    /// 范围与 Queue 的旋转范围必须一致：只有最健康那一档参与分配。
+    /// </summary>
     public static IReadOnlyList<(string Id, double Percent)> WeightShare(IReadOnlyList<RouteCandidate> all)
     {
         var eligible = Eligible(all);
-        var total = eligible.Sum(x => Math.Max(1, x.Weight));
+        if (eligible.Count == 0) return [];
+        var bestTier = eligible.Min(HealthTier);
+        var share = eligible.Where(x => HealthTier(x) == bestTier).ToList();
+        var total = share.Sum(x => Math.Max(1, x.Weight));
         if (total <= 0) return [];
-        return eligible
+        return share
             .Select(x => (x.Id, Percent: Math.Round(Math.Max(1, x.Weight) * 100.0 / total, 1)))
             .ToList();
     }

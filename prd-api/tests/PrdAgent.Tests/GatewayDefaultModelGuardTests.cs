@@ -85,7 +85,7 @@ public class GatewayDefaultModelGuardTests
         // 行上要看得见谁是默认，否则「没点名走哪个」只能靠猜
         Assert.Contains("item.isDefaultForType", Page);
         Assert.Contains("没点名时用它", Page);
-        // 取消默认时要说清后果：回落到模型池，而不是「没有模型可用」
+        // 取消默认时要说清后果：这类请求会当场失败，而不是含糊的「没有模型可用」
         Assert.Contains("会失败，直到你给它设一个新的默认", Page);
         // 同用途旧默认被服务端清掉后，本地列表要跟着改，否则会同时显示两个默认
         Assert.Contains("x.modelType === item.modelType && x.isDefaultForType", Page);
