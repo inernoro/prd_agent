@@ -70,8 +70,16 @@ public sealed class HostedSiteRevisionConsistencyTests
         Assert.Equal(1, await fixture.Db.HostedSiteRevisions.CountDocumentsAsync(_ => true));
     }
 
+    /// <summary>
+    /// 认领基线时该拒的是「内容对不上」与「已经归属别的任务」。
+    ///
+    /// 原本还有一个 other-owner 变体，逐字要求「创建者不是调用方就拒」——那正是本轮复审
+    /// 报出来的缺陷本身：站点主人建完基线，团队编辑者就再也认领不到（形状 4a，反向锁死住
+    /// 缺陷的断言）。换成 other-site：基线属于**另一个站点**才是真正该拒的越界。
+    /// 调用方有没有权限动这个站点，在拿 entry 时就由 CanEditSiteAsync 判过了。
+    /// </summary>
     [Theory]
-    [InlineData("other-owner")]
+    [InlineData("other-site")]
     [InlineData("different-hash")]
     [InlineData("other-source-run")]
     [Trait("Category", TestCategories.Integration)]
@@ -86,7 +94,7 @@ public sealed class HostedSiteRevisionConsistencyTests
         var ordinary = await service.EnsureCurrentSnapshotAsync(site.Id, site.OwnerUserId, entry);
         var update = mutation switch
         {
-            "other-owner" => Builders<HostedSiteRevision>.Update.Set(item => item.CreatedByUserId, "other-user"),
+            "other-site" => Builders<HostedSiteRevision>.Update.Set(item => item.SiteId, "another-site"),
             "different-hash" => Builders<HostedSiteRevision>.Update.Set(
                 item => item.Html,
                 "<!doctype html><html>different</html>"),
@@ -857,6 +865,43 @@ public sealed class HostedSiteRevisionConsistencyTests
             .Find(item => item.SiteId == site.Id && item.Source == HostedSiteRevisionSources.Rollback)
             .ToListAsync();
         Assert.Empty(drafts);
+    }
+
+    /// <summary>
+    /// 基线是站点这一版的事实，不是「谁先把它建出来的」。站点主人打开一次版本历史建了基线之后，
+    /// 团队编辑者再发起 AI 微调，曾经会在**模型跑完之后**被按创建者比对拒掉——任务判失败、
+    /// 草稿存不下来（Codex P2，2026-09-15）。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task ATeamEditorCanClaimTheBaselineAnotherEditorCreated()
+    {
+        await using var fixture = await RevisionMongoFixture.CreateAsync();
+        var version = MongoTime(DateTime.UtcNow);
+        var site = Site(null, version);
+        const string html = "<!doctype html><html>collaborative</html>";
+        var entry = new HostedSiteEditableEntry(site, html, version);
+        var service = new HostedSiteRevisionService(fixture.Db, Mock.Of<IHostedSiteService>());
+
+        // 站点主人先打开版本历史，建下基线。
+        var baseline = await service.EnsureCurrentSnapshotAsync(site.Id, "user-1", entry);
+        Assert.Equal("user-1", baseline.CreatedByUserId);
+
+        // 另一位有编辑权的团队成员发起 AI 微调，落到同一条基线上。
+        var claimed = await service.EnsureGeneratedSnapshotAsync(
+            site.Id,
+            "teammate-2",
+            entry,
+            HostedSiteEditRuntimes.OpenDesign,
+            "run-teammate",
+            []);
+
+        Assert.Equal(baseline.Id, claimed.Id);
+        Assert.Equal("run-teammate", claimed.SourceRunId);
+        Assert.Equal(HostedSiteEditRuntimes.OpenDesign, claimed.Runtime);
+        var persisted = await fixture.Db.HostedSiteRevisions
+            .Find(item => item.Id == baseline.Id).SingleAsync();
+        Assert.Equal("run-teammate", persisted.SourceRunId);
     }
 
     private static HostedSite Site(string? revisionId, DateTime contentVersion) => new()

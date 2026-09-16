@@ -188,7 +188,8 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         var claimFilter = Builders<HostedSiteRevision>.Filter.And(
             Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Id, existing.Id),
             Builders<HostedSiteRevision>.Filter.Eq(revision => revision.SiteId, entry.Site.Id),
-            Builders<HostedSiteRevision>.Filter.Eq(revision => revision.CreatedByUserId, userId),
+            // 同上：认领的是这个站点这一版的基线，不按创建者比对，否则团队编辑者认领不到
+            // 站点主人建的那条基线，认领落空后走「重读胜者」再撞同一道校验。
             Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Status, HostedSiteRevisionStatuses.Published),
             Builders<HostedSiteRevision>.Filter.Eq(revision => revision.Source, HostedSiteRevisionSources.Baseline),
             Builders<HostedSiteRevision>.Filter.Eq(revision => revision.SourceRunId, null),
@@ -242,8 +243,14 @@ public sealed class HostedSiteRevisionService : IHostedSiteRevisionService
         IReadOnlyList<string> expectedKnowledge,
         bool allowMissingVerifiedFiles = false)
     {
+        // 判的是「这条基线是不是这个站点这一版的基线」，不是「谁先把它建出来的」。
+        // 曾经还要求 CreatedByUserId 等于调用方：站点主人打开一次版本历史建了基线之后，
+        // 团队编辑者再发起 AI 微调就会在**模型跑完之后**被这条拒掉，任务判失败、草稿存不下来
+        //（Codex P2，2026-09-15）。调用方能不能动这个站点，在拿 entry 时就由
+        // GetEditableEntryHtmlAsync 的 CanEditSiteAsync 判过了，这里再按创建者比一次，
+        // 比的是一个与内容无关的量。
+        _ = userId;
         if (!string.Equals(existing.SiteId, entry.Site.Id, StringComparison.Ordinal)
-            || !string.Equals(existing.CreatedByUserId, userId, StringComparison.Ordinal)
             || existing.Status != HostedSiteRevisionStatuses.Published
             || existing.Source != HostedSiteRevisionSources.Baseline
             || existing.BasedOnContentVersion != entry.ContentVersion
