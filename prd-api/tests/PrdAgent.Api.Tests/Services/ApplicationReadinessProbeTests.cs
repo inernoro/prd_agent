@@ -212,6 +212,43 @@ public sealed class ApplicationReadinessProbeTests
         started.ShouldBe(2);
     }
 
+    [Fact]
+    public async Task HangingRedis_ShouldEventuallyBeReprobedSoReadinessCanRecoverWithoutARestart()
+    {
+        // 合并本身会变成第二个故障：PingAsync 挂死后那条任务永远不完成，之后每一次就绪检查
+        // 都复用它、都超时——Redis 恢复了也没人再去 ping，只能靠重启 API 才能重新变健康
+        //（Codex P2，2026-09-16）。并发闸纪律第四条：卡住的持有者必须有人来收。
+        var started = 0;
+        var firstAttempt = new TaskCompletionSource();
+        var probe = CreateProbe(
+            mongo: _ => Task.CompletedTask,
+            redis: _ =>
+            {
+                // 第一条永远挂着（模拟半失活的 multiplexer）；之后的立刻成功（Redis 恢复了）。
+                return Interlocked.Increment(ref started) == 1 ? firstAttempt.Task : Task.CompletedTask;
+            },
+            asset: (_, _) => Task.FromResult(HealthyAsset()),
+            dependencyTimeout: TimeSpan.FromMilliseconds(10));
+
+        (await probe.CheckAsync(force: true)).ErrorCode.ShouldBe(ApplicationReadinessProbe.RedisUnavailable);
+        started.ShouldBe(1);
+
+        // 过期窗口之内仍然合并：这正是它存在的理由，不能为了能恢复就退回一次请求一条。
+        (await probe.CheckAsync(force: true)).ErrorCode.ShouldBe(ApplicationReadinessProbe.RedisUnavailable);
+        started.ShouldBe(1);
+
+        // 熬过窗口（10ms x 12 = 120ms）之后必须重新发起，于是 Redis 一恢复就能重新变健康。
+        await Task.Delay(TimeSpan.FromMilliseconds(10 * SingleFlightProbe.StaleProbeTimeoutMultiplier + 60));
+
+        var recovered = await probe.CheckAsync(force: true);
+        recovered.Status.ShouldBe("healthy");
+        started.ShouldBe(2);
+
+        // 那条挂死的探测仍然挂着——PingAsync 停不掉是它的性质；关键是它不再挡着后来者。
+        firstAttempt.Task.IsCompleted.ShouldBeFalse();
+        firstAttempt.SetResult();
+    }
+
     private static ApplicationReadinessProbe CreateProbe(
         Func<CancellationToken, Task> mongo,
         Func<CancellationToken, Task> redis,

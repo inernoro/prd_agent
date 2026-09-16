@@ -55,7 +55,7 @@ public sealed class ApplicationReadinessProbe
         // 不合并的话，Redis 挂住期间每一次 /health/ready（编排每几秒来一次）都会再起一次，
         // 攒成一堆谁也停不掉的在途操作。Mongo 与对象存储不需要：它们真的收令牌，
         // 超时一到下游就被取消，每次探测都干净结束。
-        _redisProbe = new SingleFlightProbe(redisProbe).RunAsync;
+        _redisProbe = new SingleFlightProbe(redisProbe, dependencyTimeout ?? DefaultDependencyTimeout).RunAsync;
         _assetProbe = assetProbe;
         _logger = logger;
         // 显式传入只为把这条 5 秒上限缩短到可测。
@@ -182,22 +182,49 @@ public sealed class ApplicationReadinessProbe
 /// </summary>
 internal sealed class SingleFlightProbe
 {
+    /// <summary>
+    /// 在途探测活过这个倍数的依赖超时之后就当它没救了，下一次调用重新发起。
+    ///
+    /// 不设上限的话，合并本身会变成第二个故障：`PingAsync` 挂死后 `_inFlight` 永远不完成，
+    /// 之后每一次就绪检查都复用这条死任务、每一次都超时——**Redis 恢复了也没人再去 ping**，
+    /// 只能靠重启 API 才能重新变健康（Codex P2，2026-09-16）。这正是并发闸纪律第四条说的
+    /// 「周期收敛」：卡住的持有者必须有人来收。
+    ///
+    /// 倍数取得够大，是因为过期窗口必须显著长于单次超时：编排每几秒来一次，每次都等满超时
+    /// 才走人，窗口若等于超时，下一次轮询看到的必然是「过期」，合并就被打散回一次一条。
+    /// 十二倍对默认 5 秒即一分钟——跨十几次轮询仍然只有一条在途，而 Redis 一旦恢复，
+    /// 最多一分钟就重新探到，不必重启。
+    ///
+    /// 代价是明说的：故障期每个窗口会多留一条谁也停不掉的孤儿探测（`PingAsync` 不收令牌，
+    /// 停不掉是它的性质，不是这里的选择）。一分钟一条，比一次请求一条好一个量级。
+    /// </summary>
+    internal const int StaleProbeTimeoutMultiplier = 12;
+
     private readonly Func<CancellationToken, Task> _probe;
+    private readonly TimeSpan _staleAfter;
     private readonly object _gate = new();
     private Task? _inFlight;
+    private long _startedAtTicks;
 
-    internal SingleFlightProbe(Func<CancellationToken, Task> probe) => _probe = probe;
+    internal SingleFlightProbe(Func<CancellationToken, Task> probe, TimeSpan dependencyTimeout)
+    {
+        _probe = probe;
+        _staleAfter = dependencyTimeout * StaleProbeTimeoutMultiplier;
+    }
 
     internal Task RunAsync(CancellationToken cancellationToken)
     {
         lock (_gate)
         {
-            if (_inFlight is { IsCompleted: false }) return _inFlight;
+            if (_inFlight is { IsCompleted: false }
+                && Stopwatch.GetElapsedTime(_startedAtTicks) < _staleAfter) return _inFlight;
             // 令牌不往下传：这一次是共享的，第一个调用方走人不该把后来者的探测一起取消掉。
             // 各自的上限仍由 ProbeAsync 的 WaitAsync 施加。
             var started = _probe(CancellationToken.None);
             // 所有调用方都超时走人之后这个 Task 可能没人 await，异常会变成未观察异常。
+            // 被判过期的上一条就此不再被引用：它还在跑（停不掉），但不再挡着后来者。
             _inFlight = started;
+            _startedAtTicks = Stopwatch.GetTimestamp();
             _ = started.ContinueWith(
                 task => _ = task.Exception,
                 CancellationToken.None,
