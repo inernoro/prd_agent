@@ -1,6 +1,8 @@
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
 
@@ -27,8 +29,49 @@ public static class BookshelfDigestPrompt
     /// <summary>
     /// 提示词版本。改了下面任何一段文案都要跟着升——存量稿子是用旧版写的，
     /// 没有这个字段就只能靠人记得「哪些该重生成」，而人不会记得。
+    ///
+    /// 注意它只管 system prompt 那一半。材料那一半（这本书挂了哪几条规则、规则正文改没改）
+    /// 由 <see cref="ComputeMaterialFingerprint"/> 管，两者合起来才是完整的 staleness 判据。
     /// </summary>
     public const string Version = "v2";
+
+    /// <summary>
+    /// 这一份材料的内容指纹。
+    ///
+    /// 为什么直接对 <see cref="BuildUserPrompt"/> 的输出算，而不是挑几个字段拼起来算：
+    /// user prompt 就是真正喂给模型的全部材料，一个字不多一个字不少。手工列字段的写法
+    /// 会在「将来给 user prompt 加一节材料」时静默漏掉——判据读的值和真正生效的值分了家，
+    /// 那正是 predicate-and-wiring-discipline 形状 6 说的那种错：判据确实读到了一个真实
+    /// 存在的值，只是那不是系统实际用的那个。
+    ///
+    /// 取 16 字节（32 个 hex）：这不是防篡改用的，只需要「材料变了它几乎必然跟着变」。
+    /// </summary>
+    public static string ComputeMaterialFingerprint(Material material)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(BuildUserPrompt(material)));
+        return Convert.ToHexString(bytes.AsSpan(0, 16)).ToLowerInvariant();
+    }
+
+    /// <summary>
+    /// 这一篇还新鲜吗：提示词版本与材料指纹都得对得上。
+    ///
+    /// 唯一判定源。取稿（GET）与生成（SSE 的复用分支）必须都走这里——两边各写一遍
+    /// 就是 predicate-and-wiring-discipline 形状 3：同一个判断分裂成两份，改一处忘一处，
+    /// 于是接口说「这篇旧了」而生成那边照旧复用，或者反过来。
+    ///
+    /// `material` 为 null（书单里已经没有这本书了）时一律判不新鲜：材料都取不到，
+    /// 没有任何依据说它还对得上。
+    /// </summary>
+    public static bool IsFresh(BookDigest? digest, Material? material)
+    {
+        if (digest == null || string.IsNullOrWhiteSpace(digest.Content)) return false;
+        if (!string.Equals(digest.PromptVersion, Version, StringComparison.Ordinal)) return false;
+        if (material == null) return false;
+        return string.Equals(
+            digest.MaterialFingerprint,
+            ComputeMaterialFingerprint(material),
+            StringComparison.Ordinal);
+    }
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private static readonly Lazy<ContextFile> Context = new(Load, LazyThreadSafetyMode.ExecutionAndPublication);

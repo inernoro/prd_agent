@@ -33,6 +33,18 @@ public class BookDigest
     /// </summary>
     public string PromptVersion { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 生成时那份材料的内容指纹（`BookshelfDigestPrompt.ComputeMaterialFingerprint`）。
+    ///
+    /// 光有 PromptVersion 不够：第三段「我们在哪儿栽过」整段来自这本书挂的 relatedRules，
+    /// 给它改挂一条规则、或者规则正文本身改了，提示词一个字没动、版本号照旧，
+    /// 于是库里那篇用旧材料写的稿子会一直被当成新鲜的端给读者——第三段和当前挂的规则对不上，
+    /// 还没有任何东西提示它过期。
+    ///
+    /// 空字符串表示这篇是加这个字段之前写的，一律当过期处理（下次点开重生成一篇）。
+    /// </summary>
+    public string MaterialFingerprint { get; set; } = string.Empty;
+
     /// <summary>实际出稿的模型与平台（`ai-model-visibility`：用户会因为换了模型感知到差异，得让他看得见）</summary>
     public string? Model { get; set; }
 

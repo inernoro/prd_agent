@@ -240,8 +240,9 @@ public class BookshelfController : ControllerBase
             platform = doc.Platform,
             citedRules = doc.CitedRules,
             generatedAt = doc.GeneratedAt,
-            // 提示词升版之后，前端据此提示「这篇是旧版写法，可以重生成」
-            stale = !string.Equals(doc.PromptVersion, BookshelfDigestPrompt.Version, StringComparison.Ordinal),
+            // 提示词升版、或这本书的材料变了（改挂规则、规则正文改了）之后，前端据此不吃缓存。
+            // 判据只此一处（BookshelfDigestPrompt.IsFresh），与生成那边复用的是同一个函数。
+            stale = !BookshelfDigestPrompt.IsFresh(doc, BookshelfDigestPrompt.Find(id)),
         }));
     }
 
@@ -271,17 +272,16 @@ public class BookshelfController : ControllerBase
 
         // 已经有稿子就直接吐出去，不重复烧一次生成。force=true 是「重新生成」那个按钮走的路径。
         //
-        // 提示词改版后旧稿子不再复用：PromptVersion 这个字段如果没人读，它就只是一条
-        // 记下来给人看的备注，改了提示词还得靠人记得「哪些该重生成」——而人不会记得。
-        // 判据放在服务端是因为稿子是公共内容，只有这里能保证所有入口口径一致。
+        // 提示词改版、或这本书的材料变了（改挂 relatedRules、规则正文改了）之后，旧稿子不再复用。
+        // 这两个字段如果没人读，它们就只是记下来给人看的备注，还得靠人记得「哪些该重生成」
+        // ——而人不会记得。判据放在服务端是因为稿子是公共内容，只有这里能保证所有入口口径一致，
+        // 且与 GetDigest 的 stale 走同一个函数（形状 3：判据不许分裂成两份各自漂移）。
         // 无论走不走复用都要先读一次：重写那一篇必须沿用库里那份的 _id（见文末保存处）。
         var existing = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
 
         if (!force)
         {
-            var fresh = existing != null
-                && string.Equals(existing.PromptVersion, BookshelfDigestPrompt.Version, StringComparison.Ordinal);
-            if (fresh && !string.IsNullOrWhiteSpace(existing!.Content))
+            if (existing != null && BookshelfDigestPrompt.IsFresh(existing, material))
             {
                 await WriteDigestEventAsync("cached", new
                 {
@@ -385,6 +385,8 @@ public class BookshelfController : ControllerBase
             BookId = id,
             Content = content,
             PromptVersion = BookshelfDigestPrompt.Version,
+            // 不写这一笔，下一次点开又会判过期、又重烧一篇，无限循环
+            MaterialFingerprint = BookshelfDigestPrompt.ComputeMaterialFingerprint(material),
             Model = model,
             Platform = platform,
             GeneratedByUserId = userId,
