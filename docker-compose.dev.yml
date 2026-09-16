@@ -139,6 +139,9 @@ services:
       - StableSmokeAuthentication__Keys__0__AllowedHost=${STABLE_SMOKE_ALLOWED_HOST:-}
       - StableSmokeAuthentication__Keys__0__PublicKey=${STABLE_SMOKE_PUBLIC_KEY:-}
       - StableSmokeAuthentication__Keys__0__AutoProvision=${STABLE_SMOKE_AUTO_PROVISION:-false}
+      # 是否由平台按 StableSmokeIdentityPolicy 托管巡检账号的权限（开号写入放行清单、存量缺项补齐）。
+      # 正式与本地默认关闭，只有 CDS 验证环境需要开启；关闭时账号权限完全由管理员手工决定。
+      - StableSmokeAuthentication__Keys__0__ManagePermissions=${STABLE_SMOKE_MANAGE_PERMISSIONS:-false}
       # GitHub OAuth Device Flow（PR Review Agent 使用）
       # 与生产 docker-compose.yml 保持一致：宿主机 export 或写入同目录 .env 即可。
       - GitHubOAuth__ClientId=${GitHubOAuth__ClientId:-}

@@ -36,6 +36,8 @@ import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { buildZip } from '../utils/zip.js';
+import { buildPipelineSeries, buildPipelineOverview } from '../services/acceptance-pipeline.js';
+import { buildReportsOverview, effectiveVerdict } from '../services/acceptance-overview.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -86,7 +88,7 @@ const VERDICT_CONCLUSION: Record<'pass' | 'conditional' | 'fail', 'success' | 'n
 };
 const VERDICT_CN: Record<'pass' | 'conditional' | 'fail', string> = {
   pass: '通过',
-  conditional: '有条件通过',
+  conditional: '原则性通过',
   fail: '不通过',
 };
 
@@ -648,6 +650,60 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     res.json({ reports });
   });
 
+  // GET /api/reports/overview — 验收主页聚合（结论优先，2026-09-08）。
+  // 纯函数在 services/acceptance-overview.ts；这里只做作用域与参数规范化。
+  // 注册在 `/reports/:id` 之前，避免 overview 被当成报告 id。
+  router.get('/reports/overview', (req: Request, res: Response) => {
+    let projectId = typeof req.query.projectId === 'string' && req.query.projectId
+      ? req.query.projectId
+      : undefined;
+    if (projectId) projectId = stateService.getProject(projectId)?.id ?? projectId;
+    const key = projectKeyOf(req);
+    if (key) projectId = key.projectId;
+    const daysRaw = Number(req.query.days);
+    const days = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(90, Math.floor(daysRaw)) : 7;
+    const tzRaw = Number(req.query.tzOffset);
+    const tzOffsetMinutes = Number.isFinite(tzRaw) && Math.abs(tzRaw) <= 14 * 60 ? tzRaw : 0;
+    const toRaw = typeof req.query.to === 'string' ? Date.parse(req.query.to) : Number.NaN;
+    const to = Number.isFinite(toRaw) ? new Date(toRaw) : new Date();
+    // `__self__` = 只看无项目归属（CDS 自身）的报告；这类报告没有主干合并记录。
+    const selfOnly = projectId === '__self__' && !key;
+    const reports = selfOnly
+      ? stateService.listAcceptanceReports(null).filter((r) => !r.projectId)
+      : stateService.listAcceptanceReports(projectId ?? null);
+    const tombstones = selfOnly ? [] : stateService.listRemovedBranches(projectId ?? null);
+    const overview = buildReportsOverview(reports, tombstones, { days, tzOffsetMinutes, to, projectId: selfOnly ? null : projectId ?? null });
+    res.json({ overview });
+  });
+
+  /**
+   * GET /api/reports/pipeline — 验收流水线总览（跨项目，一行一个项目）。
+   *
+   * 服务对象是老板 / 观察者 / 架构师：他们要「纵观全局和流水线」，不动手处理单条待办。
+   * 所以这里返回的是**环与环之间的落差**（漏在哪），不是报告列表，也不给通过率。
+   *
+   * 口径是「当前在途 + 最近完成」，`recentDays` 只筛后者（不给则不限）。
+   * 项目级凭证只看得到自己那个项目——可见范围等于授权范围，与 /reports/overview 同一条。
+   */
+  router.get('/reports/pipeline', (req: Request, res: Response) => {
+    const key = projectKeyOf(req);
+    const daysRaw = Number(req.query.recentDays);
+    const recentDays = Number.isFinite(daysRaw) && daysRaw > 0 ? Math.min(365, Math.floor(daysRaw)) : null;
+    const scoped = key?.projectId ?? null;
+    const projects = stateService.getProjects().filter((p) => !scoped || p.id === scoped);
+    const branches = stateService.getAllBranches().filter((b) => !scoped || b.projectId === scoped);
+    const tombstones = stateService.listRemovedBranches(scoped);
+    const reports = stateService.listAcceptanceReports(scoped);
+    const pipeline = buildPipelineOverview(projects, branches, tombstones, reports, { recentDays });
+    // 走向和存量一起给：首屏两者都要，分两次请求会让曲线比数字晚到，读者看见的是半张图。
+    const seriesDaysRaw = Number(req.query.seriesDays);
+    const seriesDays = Number.isFinite(seriesDaysRaw) && seriesDaysRaw > 0
+      ? Math.min(365, Math.floor(seriesDaysRaw))
+      : 90;
+    const series = buildPipelineSeries(projects, branches, reports, { days: seriesDays });
+    res.json({ pipeline, series });
+  });
+
   // GET /api/reports/assets/:name — 内容寻址的报告图片资源（PNG/JPG/...）。
   // 公开只读：name 是 sha256(内容)+扩展名，不可枚举；正文里的截图通过它加载，跨源
   // （如 MAP 知识库）渲染报告时也能直接取到图片。内容寻址永不变，长缓存。
@@ -693,7 +749,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (mismatch) return res.status(mismatch.status).json(mismatch.body);
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+        // 说清「为什么没了」：没配对象存储 / 归档于改动之前 / 对象也确实不在，
+        // 三种成因的下一步动作完全不同，压成一句「已丢失」等于什么都没说。
+        const why = stateService.describeAcceptanceReportStorage(meta, { bodyMissing: true });
+        return res.status(404).json({
+          error: 'content_missing',
+          message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,
+          hint: why.durable ? undefined : '正文进对象存储后归档的报告不会再出现这种情况',
+        });
       }
       return sendReportContent(res, meta.format, content);
     } catch (err) {
@@ -710,7 +773,11 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       if (mismatch) return res.status(mismatch.status).json(mismatch.body);
       const content = await stateService.readAcceptanceReportContentAsync(meta.id);
       if (content === undefined) {
-        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+        const why = stateService.describeAcceptanceReportStorage(meta, { bodyMissing: true });
+        return res.status(404).json({
+          error: 'content_missing',
+          message: `报告正文已丢失${why.reason ? `：${why.reason}` : ''}`,
+        });
       }
 
       const assetNames = new Set<string>();
@@ -797,7 +864,14 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       ? `${base}/reports?${meta.projectId ? `project=${encodeURIComponent(meta.projectId)}&` : ''}${meta.folderId ? `folder=${encodeURIComponent(meta.folderId)}&` : ''}report=${encodeURIComponent(meta.id)}`
       : '';
     const shareLink = base && meta.shareToken ? `${base}/r/${meta.shareToken}` : '';
-    const vCn = VERDICT_CN[meta.verdict];
+    /*
+     * 回写 GitHub 用的是**生效结论**，不是报告自己写的那个。一份标着通过却记了 P0 的报告，
+     * CDS 这边（首屏、发布闸、台账、跨项目流水线）一律按未通过算，回写却按原始 verdict 发，
+     * 结果是 PR Checks 面板挂一个绿色的「CDS 验收」，而同一份报告在 CDS 上是红的——
+     * 对外发假绿灯比内部口径不一致更糟（Codex review 抓到）。
+     */
+    const effVerdict = effectiveVerdict(meta) ?? meta.verdict;
+    const vCn = VERDICT_CN[effVerdict];
 
     // 评论正文（markdown）。HTML 注释标记便于以后识别/去重 CDS 验收评论。
     const lines: string[] = [];
@@ -832,7 +906,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
           name: 'CDS 验收',
           headSha: meta.commitSha,
           status: 'completed',
-          conclusion: VERDICT_CONCLUSION[meta.verdict],
+          conclusion: VERDICT_CONCLUSION[effVerdict],
           detailsUrl: deeplink || undefined,
           externalId: meta.id,
           completedAt: new Date().toISOString(),
@@ -890,6 +964,13 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
     const hasFolder = Object.prototype.hasOwnProperty.call(body, 'folderId');
     if (title === undefined && content === undefined && !hasFormat && !hasFolder && !hasMeta) {
       return res.status(400).json({ error: 'nothing_to_update', message: '没有可更新的字段' });
+    }
+    // 空正文与创建路由同一口径：那边拒，这边也拒。
+    // 放行的话，配了对象存储的实例上会走成「put 收不下空正文 → objectKey 被清掉 →
+    // 标成 local」——元数据还在、正文只剩一个空的本地文件，容器一重建就是又一条
+    // 点不开的幽灵记录，而接口回的是 200（Codex review 抓到）。
+    if (content !== undefined && !String(content).trim()) {
+      return res.status(400).json({ error: 'missing_content', message: '报告内容为空（请粘贴内容或上传文件）' });
     }
     if (content !== undefined && exceedsCap(content)) {
       return res.status(413).json({ error: 'content_too_large', message: `报告内容超过上限（${MAX_CONTENT_BYTES / 1024 / 1024}MB）` });

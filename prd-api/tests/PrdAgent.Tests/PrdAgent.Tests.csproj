@@ -42,6 +42,13 @@
          就是为了能这样 link 进来跑；worker 本体拖着 BackgroundService/Mongo，搬不动。 -->
     <Compile Include="..\..\src\PrdAgent.Api\Services\CdsReportSyncTargets.cs" Link="Services\CdsReportSyncTargets.cs" />
     <Compile Include="..\..\src\PrdAgent.Api\Filters\MdsWriteRetiredFilter.cs" Link="Filters\MdsWriteRetiredFilter.cs" />
+    <!-- arena.ai 榜单的解析器与分榜目录。同 CdsReportSyncTargets 的理由：这两个只依赖
+         Core + HttpClient，link 进来就能直接跑；Worker 本体拖着 BackgroundService/Mongo，
+         搬不动（守卫改为扫它的源码，见 ArenaLeaderboardFetcherTests）。 -->
+    <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ArenaLeaderboardFetcher.cs" Link="Services\ModelLeaderboard\ArenaLeaderboardFetcher.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLeaderboardCatalog.cs" Link="Services\ModelLeaderboard\ModelLeaderboardCatalog.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLeaderboardScope.cs" Link="Services\ModelLeaderboard\ModelLeaderboardScope.cs" />
+    <Compile Include="..\..\src\PrdAgent.Api\Services\ModelLeaderboard\ModelLicenseClassifier.cs" Link="Services\ModelLeaderboard\ModelLicenseClassifier.cs" />
   </ItemGroup>
 
 </Project>

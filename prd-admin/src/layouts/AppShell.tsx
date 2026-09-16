@@ -43,7 +43,6 @@ import {
   HardDrive,
   Home,
   BarChart3,
-  GraduationCap,
   Droplets,
   ExternalLink,
   type LucideIcon,
@@ -55,7 +54,6 @@ import { cn } from '@/lib/cn';
 import { PA_SECRETARY_ICON, PaSecretary } from '@/lib/paSecretaryIconRegistry';
 import { glassPanel, glassSidebar, glassFloatingButton, glassMobileHeader } from '@/lib/glassStyles';
 import { useAuthStore } from '@/stores/authStore';
-import { useDailyTipsStore } from '@/stores/dailyTipsStore';
 import { useAgentSwitcherStore } from '@/stores/agentSwitcherStore';
 import { useThemeStore } from '@/stores/themeStore';
 import { useLayoutStore } from '@/stores/layoutStore';
@@ -79,6 +77,7 @@ import { resolveAvatarUrl } from '@/lib/avatar';
 import { isMenuKeyboardActivation, resolveAccountAvatarAction } from './accountAvatarAction';
 import { UserAvatar } from '@/components/ui/UserAvatar';
 import { AvatarProgressRing } from '@/components/daily-tips/AvatarProgressRing';
+import { LearningCenterMenuBody } from '@/components/daily-tips/LearningCenterTeaser';
 import { createLlmGatewaySsoTicket, getAdminNotifications, handleAdminNotification, handleAllAdminNotifications, uploadMyAvatar } from '@/services';
 import type { AdminNotificationItem } from '@/services/contracts/notifications';
 import { getNotificationType, isEscalationNotification } from '@/lib/notificationTypeRegistry';
@@ -199,7 +198,6 @@ export default function AppShell() {
   const location = useLocation();
   const logout = useAuthStore((s) => s.logout);
   const user = useAuthStore((s) => s.user);
-  const tutorialProgress = useDailyTipsStore((s) => s.progress);
   const patchUser = useAuthStore((s) => s.patchUser);
   const menuCatalog = useAuthStore((s) => s.menuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
@@ -1715,19 +1713,20 @@ export default function AppShell() {
                   </span>
                 </DropdownMenu.Item>
 
-                {/* 学习中心:全部官方教程 + 完成进度(诉求 11) */}
+                {/* 教程中心:全部官方教程 + 等级与掌握进度。
+                    2026-09-14 从首页右上角搬来(那一格换成了模型排行榜挂件),
+                    与菜单里原有的「我的学习进度」纯文字项**合并成这一条**,不并排两个入口。 */}
                 <DropdownMenu.Item
                   className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/learning-center')}
                 >
-                  <GraduationCap size={16} className="shrink-0" />
-                  <span className="text-[13px]">我的学习进度</span>
+                  <LearningCenterMenuBody />
                   <span
-                    className="ml-auto text-[10px]"
+                    className="ml-auto text-[10px] shrink-0"
                     style={{ color: 'var(--text-muted)' }}
                   >
-                    {tutorialProgress ? `${tutorialProgress.learned}/${tutorialProgress.total} 已掌握` : '学习中心'}
+                    继续
                   </span>
                 </DropdownMenu.Item>
 

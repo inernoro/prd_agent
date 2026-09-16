@@ -164,9 +164,16 @@ const SESSION_AUTH_FAILURE_CODES = new Set([
   'AUTH_SESSION_REVOKED',
 ]);
 
-/** 只有会话类 401 才允许刷新 Token 或退出登录；服务 Key、Agent Key 等 401 必须保留当前用户会话。 */
+/**
+ * 第三方连接（GitHub 等）的凭据失效同样带 401，但那是**上游**凭据的事，
+ * 跟当前用户的后台会话没有关系。不排除的话，GitHub token 一过期就把人踢回登录页。
+ */
+const THIRD_PARTY_CREDENTIAL_CODE_PREFIXES = ['GITHUB_'];
+
+/** 只有会话类 401 才允许刷新 Token 或退出登录；服务 Key、Agent Key、第三方连接凭据等 401 必须保留当前用户会话。 */
 export function isSessionAuthenticationFailure(status: number, code?: string): boolean {
   if (code && code.startsWith('AUTH_')) return SESSION_AUTH_FAILURE_CODES.has(code);
+  if (code && THIRD_PARTY_CREDENTIAL_CODE_PREFIXES.some((p) => code.startsWith(p))) return false;
   return status === 401 || (code != null && SESSION_AUTH_FAILURE_CODES.has(code));
 }
 

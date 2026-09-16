@@ -157,6 +157,21 @@ public static class DeploymentAuthority
             : null;
 
     /// <summary>
+    /// 这个部署是否**显式退出了共享状态归属**（`ManageGlobalNotification=false`）。
+    ///
+    /// 它是一票否决的总开关：standby / canary 用它宣告「我不拥有任何共享状态」。
+    /// 抽成一个具名判据，是因为它此前在 <see cref="CanRotateSharedCiphertext"/> 与
+    /// <see cref="CanRunSharedScheduledWork"/> 里各写了一遍，而第三个消费方
+    /// （榜单的手动同步入口）又要用它——同一判断抄成三份必然漂
+    /// （predicate-and-wiring-discipline 形状 3）。
+    ///
+    /// 注意它与「是不是权威部署」不是一回事：<see cref="IsAuthoritativeDeployment"/> 里
+    /// 显式 true / false 都算数；这里只认 false，因为软开关只能收紧、不能放宽。
+    /// </summary>
+    public static bool HasOptedOutOfSharedState(IConfiguration configuration)
+        => bool.TryParse(configuration[ManageGlobalNotificationKey], out var forced) && !forced;
+
+    /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。
     /// 与通知授权**独立且更严**，同时满足两条才允许：
     /// 1. 未被显式关停共享状态归属——`ManageGlobalNotification=false` 是「我不拥有任何共享状态」的
@@ -171,9 +186,7 @@ public static class DeploymentAuthority
     public static bool CanRotateSharedCiphertext(IConfiguration configuration)
     {
         // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决，连密文都不动。
-        var explicitFlag = configuration[ManageGlobalNotificationKey];
-        if (bool.TryParse(explicitFlag, out var forced) && !forced)
-            return false;
+        if (HasOptedOutOfSharedState(configuration)) return false;
 
         // 条件 2：rotation 只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
         return !IsCdsBranchPreview(configuration);
@@ -199,9 +212,7 @@ public static class DeploymentAuthority
     public static bool CanRunSharedScheduledWork(IConfiguration configuration)
     {
         // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决。
-        var explicitFlag = configuration[ManageGlobalNotificationKey];
-        if (bool.TryParse(explicitFlag, out var forced) && !forced)
-            return false;
+        if (HasOptedOutOfSharedState(configuration)) return false;
 
         // 条件 2：只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
         return !IsCdsBranchPreview(configuration);

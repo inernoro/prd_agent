@@ -8,12 +8,256 @@
 
 ## [未发布]
 
+### 2026-09-12
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 处理 5 条历史 changelog（cds 监控第一屏/map 深度自检/文档标题漂移/前两轮 entropy-cleanup 均已由既有 spec.platform.monitor-discovery.md、debt.cds.md 覆盖，manifest 补登记，无需追加新章节），D5 codebase-snapshot（2026-05-31）仍过期，留人工审查 |
+
+### 2026-09-11
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | doc | 监控自发现协议文档的 H1 与两份索引登记的标题对齐，修掉 docs-readability 闸的标题漂移 |
+| chore | doc | 熵清理：D1-D4/D7 全绿，D6 处理 5 条历史 changelog（内容均已由既有规则/债务文档覆盖，登记 manifest），D5 codebase-snapshot（2026-05-31）明显过期，留人工审查 |
+| feat | prd-api | 新增 /api/healthz/deep 深度自检：真跑一次 Mongo 往返，加进程级异常与流量计数，每条 check 自报怎么监控 |
+| refactor | platform | 滚动计数口径搬进 PrdAgent.Core 由 llmgw 与 prd-api 共用，不再两份几乎一样的实现各自漂移 |
+| feat | cds | 自发现契约守卫覆盖两个端点，新增端点必须登记 |
+| feat | cds | 监控自发现：服务在自检响应里申报「该怎么监控我」，CDS 插上一个地址即建监控项，端点改了自动跟上、没了自动下线 |
+| feat | llmgw | serving 深度自检的两条 check 补 cds:monitor 自描述段 |
+| refactor | cds | 删掉 cds-monitors.yml 与它的导入契约守卫——声明改由端点自报，两处声明只会各自漂移 |
+| docs | platform | 新增 spec.platform.monitor-discovery.md（协议字段表 + 三条命门 + 谁能插） |
+| fix | cds | 拔掉自检端点后，它名下的监控当场下线（此前成了孤儿，永远轮不到对账） |
+| fix | cds | 业务卡片的样本量读数与判据同源：读不到就说读不到，不再用 ?? 0 显示成「0 次真实调用」却判正常 |
+| fix | cds | 监控第一屏空白时不再谎报「还没有一条业务监控」：业务监控全被环境筛选挡住时说清它们在哪个环境并给一键切换 |
+| fix | cds | 默认环境集改按业务监控人口计算，不再被基础设施容器的生产实例带偏 |
+| fix | cds | 未选项目时自检端点与公开面板不再渲染成空，改为给出「先选一个项目」的可操作占位 |
+| test | cds | 新增守卫：默认环境人口、空态真假判定、第一屏不许有条件渲染成 null 的功能块 |
+
+### 2026-09-10
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| refactor | cds | 停机原因的判断收敛成类型：新增唯一构造器 cause-statement（Verdict / Initiator 判别联合 + renderCause），八条分支只填结构体不再自由拼句；「忘了给下一步」「新增意图不补结论」从测试断言升级为编译错误 |
+| feat | cds | 停止意图按语义拆开：新增 cds-stop-idle（自动降温）、cds-stop-after-failure（失败收尾）、cds-infra-remove（删除，登记一并删），删除路径的下一步不再是「重新启动」而是「重新添加」 |
+| fix | cds | stop() 的 context 补上 kind：调用方本来就知道自己在主动停/降温/失败收尾，状态原先在这一层被降级成字符串；分支停止主路径改用已算出的 source 枚举决定意图 |
+| test | cds | 守卫从 15 条 / 40 处写死措辞压到 20 条结构断言：句子形状只测唯一渲染器，另留调用点表态、匹配表覆盖、展示面接线三类类型管不到的判据 |
+| rule | 全局 | external-cause-first 补第四节「让它不可能写错」：判断类输出必须收敛到唯一构造器 + 有限枚举；能用状态就用状态，拿不到才关键字匹配且匹配表要有覆盖守卫；守卫只留类型表达不了的 |
+| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 处理 5 条 changelog（cds 监控中心重做/review第五轮/测试修复、daily-acceptance-repair、上一轮 entropy-cleanup 均已由各自 PR 自带 debt.cds.md/debt.acceptance.daily-anchors.md 覆盖，manifest 补登记，无需追加新章节） |
+| fix | cds | 修复响应曲线只画一半、悬浮竖线与鼠标错位（viewBox 宽高比与元素不等，改为实测像素） |
+| feat | cds | 可用率柱条新增读数区：指到故障段直接给出当时的缩写日志（首次失败时刻、状态码、原因） |
+| feat | cds | 监控中心新增「我的业务」第一屏：按项目与环境看业务能不能用，异常置顶、同一业务多环境并排即归因 |
+| feat | cds | 监控新增环境（生产/预发/其他/分支预览）与观测方式（主动/被动）两维，判定收进 monitor-environment 单一源 |
+| feat | cds | 被动监控必须声明样本量来源：窗口内零真实调用时判「绿灯不作数」，不判正常 |
+| feat | llmgw | serving 深度自检补 serving.requests：给「零未处理异常」这条判据加上分母，探针自身请求不计入 |
+| fix | cds | 第一屏改为撑满画布；基础设施行统计不再被业务环境筛选滤掉分支预览，并标出其中多少项是分支预览 |
+| fix | cds | cdscli 判据支持路径带冒号：health+json 的 check 键按规范就是「组件:度量」，此前这类判据根本加不进来 |
+| fix | cds | 地址落在分支预览上的监控一律判为分支预览环境（新增 previewBranchId），不再只对 Agent 自助登记生效 |
+| fix | cds | 摘要按地址反查分支预览：存量监控没有 previewBranchId 戳也能判对环境，地址台账收成一份三方共用 |
+| feat | cds | 公开状态页：项目可开一个匿名只读面板（/s/<token>），对外只出业务名、红黄绿、7 天条带与更新时间，随时可撤销 |
+
+### 2026-09-09
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 修复首页打开即死机：IntersectionObserver 的 rootMargin 被 px→rem 批量转换误伤成非法单位，构造抛异常导致 React 无限重挂载吃满浏览器主线程 |
+| fix | cds | 复制用的屏幕外 textarea 定位常量 -9999px 同批被误转成 rem，改回 px（不是设计尺寸，不该随根字号缩） |
+| test | cds | rem 守卫新增反向断言：rootMargin 只许 px 与 %，写 rem 直接判红（红绿闭环已验证） |
+| chore | doc | 熵清理：D1-D5/D7 全绿，D6 处理 5 条历史 changelog（2 条补充设计/债务文档新章节，3 条内容已由既有文档覆盖，均登记 manifest） |
+| rule | 全局 | 新增「先说外因再说内因」规则：日志/报错/告警/排障回复第一句必须说清是谁的什么动作引起的、要不要紧，signal/异常/函数名下沉为附注 |
+| refactor | cds | 容器停止原因按「先说外因再说内因」重写：八条 reason 第一句改为「谁做了什么、影响了谁、要不要紧」，signal/exitCode/operation/requestId 全部保留但下沉到「技术细节：」之后；停止原因新增分支名称呼，追不到施动者时如实说「未记录触发者/追不到是谁干的」并给出下一步 |
+| fix | cds | OOM 停止原因改掉错误归因：CDS 默认不给分支服务容器下发 --memory，原文案「超过分配给它的上限、调大上限」会把宿主级内存压力指错地方，改为两种可能都点名并要求对照宿主内存记录判断 |
+| fix | cds | 拆分基础设施容器的停止与重建意图（新增 cds-infra-stop）：停止/删除/远端停止三条路径不会起新容器，原先一律记 cds-infra-recreate 会让停机原因叫用户干等一个永远不来的新容器；含接线守卫扫真实调用点 |
+| fix | cds | 停机原因把「要不要紧」并进第一句，并原样带出上游记录的停止原因：cds-stop 同时承接手动停止与 replica-member-not-ready 这类失败收尾，原先一律说「无需处理」会把就绪失败盖掉 |
+| fix | cds | 项目基础设施重同步的删除路径补传停止意图，并把接线守卫扩到全部调用点（原先只扫两个文件，漏掉的那处带着重建意图溜过守卫） |
+| docs | cds | debt.cds.md 补两条已知边界：基础设施类操作未记施动者、cds-stop 一个种类承接三类语义 |
+| fix | cds | 基础设施容器的停机结论接进展示面：infra 事件不带分支/服务标签，走不到写 reason 的那条同步分支，结论原先只躺在 details 里没人看得见；docker-events 的 message 改用结论首句 |
+| fix | cds | 收敛越界措辞：没匹配到停止意图只说明「没有匹配到 CDS 的停止/替换/清理操作」，不再断言「不是任何人在 CDS 上的操作」——自动重启刚 docker start 拉起来的进程崩了也走这里 |
+| fix | cds | 展示面按「技术细节：」切人话段而不是按第一个句号：OOM/正常退出/destroy 的结论与下一步在后面的句子里，按句号截会让这些事件又只剩症状；另加人话段自足守卫（八条路径逐条断言） |
+| fix | llmgw | serving 启动装载全局 BSON 约定：console-api 往 llmgw_app_callers 写的 SystemManaged 字段不再让 serving 强类型读取抛 FormatException，鉴权路径 500、Quickstart 退回本地关键词判定的根因消除 |
+| fix | prd-api | BsonClassMapRegistration 全局约定新增 IgnoreExtraElements 并暴露 RegisterConventionsOnly()，多进程共库时写方加字段不再炸掉尚未更新的读方 |
+| fix | prd-api | GatewayAppCallerRecord 补 SystemManaged（bool? 三态，与弱类型写方语义对齐，不替它下结论） |
+| rule | platform | 新增 degradation-must-alarm 规则：有降级兜底的链路必须有常设探针，走了降级就响铃，治理「后端崩溃被降级吃掉、前台看着正常、全部验收判绿」这一类错误 |
+| feat | platform | 新增 cds-monitors.yml 监控声明协议（ServiceMonitor 声明形态 + IETF health+json 响应格式 + Alertmanager 去抖 + SRE 症状告警），含三条定量监控项与永久凭据约定；当前状态 declared-not-wired，CDS 侧消费逻辑待接线 |
+| test | prd-api | 新增 GatewayRecordSchemaToleranceTests 跨读写两侧守卫：多出来的未知字段不许打崩强类型读、SystemManaged 保持三态、serving 必须在 Mongo context 之前装载全局约定、类映射必须忽略额外字段（写方守卫早已齐全，读方一条都没有——补的就是那一半） |
+| fix | platform | 根目录布局契约登记 cds-monitors.yml：它与 cds-compose.yml 对称（一个声明怎么跑起来、一个声明怎么被盯着），监控项跨 llmgw 与 prd-api 不归单一模块，属仓库级入口 |
+| refactor | platform | 监控协议鉴权改照 StableSmokeAuthenticationHandler 的 RSA 签名模式（验证方只存公钥、私钥不过网络、nonce 防重放、配对永久而单次签名短时效），替换原设计的静态 probeToken；告警回流复用 stable-smoke 已在用的 POST /api/dashboard/notifications/events 定向通知通道，不另造 |
+| feat | cds | 存活告警接第二个出口：状态翻转除进事件总线外，投递 MAP 站内通知（source=uptime-alert，admin 分区，dedupKey 幂等）。复用 stable-smoke 已有的 RSA-PSS 签名通道，不另造鉴权；未配置凭据时启动日志明说「不会有人被通知」，不静默禁用 |
+| feat | prd-api | AdminNotificationSourceCatalog 登记 uptime-alert 来源（管理员分区：CDS 常设探针的服务降级、后台未处理异常与不可用告警） |
+| test | cds | 新增 map-notifier 用例 12 条：canonical 逐字节格式、RSA-PSS 签名可被公钥验证、载荷映射（掉线 error 带下一步 / 恢复 info）、幂等键区分方向与时刻、配置缺项返回 null、onAlert 接线守卫；断掉接线守卫变红已实测 |
+| test | prd-api | 新增 CanonicalRequestCrossLanguageContractTests：签名载荷有 C# 与 Node 两份实现，用固定向量逐字节钉死跨语言契约，任一侧改格式两边都红（原有用例只验签名往返，锁不住格式） |
+| feat | cds | 存活监控新增第四种探测方式 health-json：打自检端点、按 IETF health+json 的 checks 定位 componentId、用结构化判据（field/op/value 有限枚举，不做表达式解析）判定。接口 200 但结论是坏的时判 down——现有 http/keyword/tcp 三种都抓不到这种故障 |
+| test | cds | 新增 uptime-health-json 用例 25 条：checks 三种形态定位、check 不存在必须判失败（接线断了不等于没问题）、期望值 0 不被真值判断吃掉、0 与 "0" 不制造假故障、大小比较拒非数字、真实 HTTP 下 200-但-判据不成立判 down |
+| feat | platform | 新增 cds-monitors.yml 契约守卫（scripts/tests/test_cds_monitors_contract.py）：校验结构与枚举、probe=light 必须是 6 小时常设、health-json 三件套齐全、notify.source 必须已在 MAP SourceCatalog 登记（跨文件接线）。枚举从 CDS 源码读取而非另抄一份，挂在 CI 无 path filter 的 job 上 |
+| rule | platform | stable-smoke 技能新增规则 25：矩阵里的轻用例（一次请求、只读、无副作用）必须同时登记为 6 小时常设监控，48 小时全量与高频探针共用同一份判据、只是频率不同，禁止各写一份后漂移 |
+| feat | llmgw | serving 新增未处理异常滚动计数（ServingFaultTracker + 最外层中间件，只记不吞）与深度自检端点 GET /gw/v1/healthz/deep，按 IETF health+json 端出 serving.unhandled-exceptions 定量观测值；端点免鉴权且只含计数与窗口、不含异常文本（CDS 探针刻意不携带密钥，要鉴权就永远打不进来）；始终返回 200，让判据由 checks 内容决定而不是退化成「HTTP 503 不在期望范围」 |
+| test | prd-api | 新增 ServingFaultTrackerTests 8 条：窗口内计数、窗口外丢弃而累计数保留、默认窗口必须 ≥ 6 小时探测间隔（短于它探针恒读 0 是个假判据）、中间件只记不吞、端点 componentId 与 cds-monitors.yml 一致、免鉴权名单不许被撤 |
+| fix | platform | cds-monitors.yml 只保留端点已存在的监控项，另两条移入 plannedMonitors 并写明 blockedBy——声明一条打不通的监控会一直红，假故障比没有监控更糟；守卫同步校验待生效项必须说清卡在哪、且不许带 intervalSeconds/notify 伪装成已配好 |
+| docs | platform | cds-monitors.yml 按真实拓扑修正探测地址：serving 在 CDS 里是内网服务、没有独立对外域名，经 llmgw 子域路由（cdscli topology 事实），原占位符 {llmgw_serving} 会让人去找一个不存在的域名；同时记录端到端实测证据 |
+| feat | cds | 存活监控开放项目级 Key 自助登记：Agent 可用项目 accesskey 追加自己项目、自己分支的 health-json 监控。原先对项目级 Key 一律 403 的两个理由（借主机扫内网 SSRF、关键字探测当 oracle）由三条规则分别堵死——只能写本项目、kind 只能 health-json、地址必须落在本项目分支的预览入口台账里（地址由服务端从 resolveBranchPublishedEntrypoints 反查，与容器注入 CDS_SERVICE_URLS 同源） |
+| feat | cds | 监控绑定分支生命周期：自助登记时服务端反查出所属分支钉进 boundBranchId，分支删除时级联清理并通知运行态台账（观察者模式，避免 5 个 removeBranch 调用点漏接）。临时分支登记的地址不会在分支消失后变成永远红着的死地址 |
+| security | cds | 项目级 Key 只能改/删**自己登记的**监控（origin=agent-api）：管理员手动加的一律 403。此问题由既有用例 uptime-codex-r1514 在本次改动中变红抓出——只判「同项目」会让一把项目 Key 删掉管理员盯着的东西 |
+| feat | cds | 监控中心可见归属：摘要新增 addedBy（谁加的 / 人工还是 Agent 自助 / 绑定哪条分支），详情页展示添加者与来源徽标 |
+| refactor | cds | preview-entrypoints 提取 resolveBranchPublishedEntrypoints（零行为变化）：入口清单此前只以 env 字符串形式暴露，自助登记的地址校验需要结构化结果；另拼一份枚举会成为第二判定源，命名子域规则一改就把合法地址判成非法 |
+| test | cds | 新增 uptime-agent-selfservice（14 条：允许的窄路 + 每一种绕过——换 kind / 换外部地址 / 回环 / 换项目 / 用试探绕开写路由 / 改删管理员的 / 未接台账时 fail-closed）与 uptime-monitor-branch-cascade（6 条：级联、不误伤人工监控、观察者通知、观察者抛异常不影响删分支） |
+| feat | cds | 新增功能监控（kind=functional）：按定义发一次真业务请求（POST + 可带随机提示词模板），在响应上跑多条结构化判据（path/op/value，全部跑完不短路），判据不通过即故障——抓的是「接口通但产出不对」，与 health-json 的「后台在炸」互补 |
+| feat | cds | 功能监控每次观测留证据：产物地址、判据逐条结果、本次真正发出去的请求体，随监控定义保留最近 20 条，供详情页画廊与排障用；判据不通过时产物照样留（那张不该是 512×512 的图正是要看的东西） |
+| refactor | cds | 抽出 monitor-assertions 作为判据比较的唯一实现，health-json 与功能监控共用；各写一份迟早在「0 与 '0' 算不算相等」上分叉，同一个值判出相反结论 |
+| fix | cds | notice-ledger 接线守卫改为扫整个 UptimeMonitorService 构造块而非固定 1400 字符窗口——构造块每加一条依赖注入就变长，定长窗口会在无关新增后把 onAlert 挤出去、红得莫名其妙 |
+| test | cds | 新增 functional-monitor 用例 25 条：取值与比较（数组下标、0 与 "0"、字段缺失判失败、大小比较拒非数字、不短路）、随机提示词展开后仍是合法 JSON、无判据存不进来、期望值 0 不被真值判断吃掉、真实 HTTP 下产物留存与 500 仍走判据、两条落账接线守卫 |
+| feat | cds | 可观测列表把功能监控与存活监控分开成组，功能监控行直接显示最新产物缩略图与判据通过数——两者问的不是同一个问题，混在一列会让人把「存活全绿」读成「一切正常」 |
+| feat | cds | 功能监控详情新增证据区（排在时序图之前）：本次判定的产物大图 + 判据逐条（含实际值）+ 本次真正发出去的请求体，下方历史产物画廊可点开回看任意一次；失败那次的产物红框标出 |
+| feat | cds | 新增 GET /api/uptime/monitors/:id/observations 读完整观测证据（摘要只带最新一条精简版，避免列表接口被 20 条证据 × N 个监控撑肥）；项目级 Key 越权访问回 403 而非 404，不做枚举 oracle |
+| test | cds | 新增 monitor-center-functional 用例 9 条：功能监控单独成组且排在前、无功能监控时行为不变、分组标识唯一（两个 custom 组共用 source，拿 source 当 React key 会撞）、故障计数各算各的，以及四条接线守卫 |
+| feat | cds | cdscli 新增 monitor 子命令：`monitor add` 一条命令加功能监控，**先试跑、通过了才登记**（跑不通直接拒绝并回判据结果，避免加进来就红把面板逼到静音）；另有 list --functional-only 与 observations 看历史证据 |
+| docs | cds | cds 技能补「加一条功能监控」段：判据写法、随机提示词为什么必须随机、产物路径为什么要配、超时为什么要给足，以及接到这类需求时该自己去代码里查的几件事 |
+| test | platform | 新增 test_cdscli_monitor 判据解析自检（6 正例 4 反例）：期望值带冒号不被截断（16:9 是完整的）、exists/absent 不强制期望值、期望值 0 不被当成没填；挂在 CI 无 path filter 的 job 上 |
+
+### 2026-09-08
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | cds | 分支卡片页脚重叠修复：构建期间进度改为页脚背景填充（方案 B），排队 / 无样本走斜纹等待，页脚只剩两列，sha chip 不再溢出叠在排队信息上 |
+| polish | cds | 左侧导航：工具组（Agent / 缺陷 / 设置）沉回栏底贴账号（方案 S1），项距 2px 改 6px |
+| test | cds | 新增分支卡页脚进度守卫，侧栏账号契约测试改为「工具组在 spacer 之后」 |
+| feat | cds | 整站按 85% 呈现：根字号 85%，全部尺寸 px 转 rem（1–3px 细线保留），断点保持原始 px 不随尺度走，左栏两字标签保底 10px |
+| test | cds | 新增 rem 棘轮守卫：index.css 与 tsx 出现 >3px 字面量即红 |
+| rule | cds | 主题 token 规则补「尺寸单位 rem 唯一」一节 |
+| feat | cds | 账号浮层新增「界面尺度」三档（紧凑 80 / 标准 85 / 宽松 100），全站唯一的大小杠杆，首帧前落地不闪 |
+| polish | cds | 分支卡网格列数契约：列宽下限 20.5rem 随尺度走，五等分宽度算进下限、auto-fill 自然封顶五列（不走媒体查询） |
+| fix | cds | React 数字型 style 长度改为 rem 字符串（错误浮层、报告树缩进、压测图表），守卫补数字型长度检查；RelationGraph / ReplicaSetPanel 按画布 px 单位整体保留 |
+| perf | cds | 托管容器（分支 app / 共享 infra / 构建 job）统一挂到低权重 system-cdsworkloads.slice（--cgroup-parent，按 docker cgroup driver 探测），cds-master / cds-forwarder systemd 单元加 CPUWeight/IOWeight=1000 与 Nice=-5：不给容器设上限，只让 CDS 控制面在宿主争抢时先拿 CPU 与 IO；systemd-sync 首次自动安装 slice 单元 |
+| fix | cds | 同一 commit 的手动部署撞上在途 webhook 部署（或反之）改为并入在途操作（joined，202），不再取代重跑、同一批容器被拆两遍 |
+| perf | cds | GitHub webhook 噪声分流：不在处理范围的事件、check_run 非 rerequested、workflow_run 非 completed 一律廉价 ack，不再写投递日志 / 服务器事件 / 离机审计 / HTTP 日志，只按 10 分钟聚合上报一条计数 |
+| fix | cds | 离机审计外发加熔断：连续失败 5 次后每 5 分钟只探路一条，期间事件只留本地；失败事件限频 60 秒一条，恢复时补带跳过数的恢复事件（此前每秒 2 条错误事件刷爆事件表） |
+| fix | cds | 探活监控单目标加硬 deadline、整轮加看门狗强制复位，摘要与 /healthz 暴露循环停摆（此前一个 await 卡死让状态页 24 小时零数据且无告警） |
+| perf | cds | 构建闸门负载自适应：load1 超过核数 1.2 倍时新构建只在没有构建在跑时放行，队列每 15 秒随负载回落按 FIFO 放行，上限不变（CDS_BUILD_LOAD_FACTOR 可调/关闭） |
+| feat | cds | /healthz 新增 pressure 与 degraded：宿主 load 比、事件循环 p50/p99 延迟、构建闸门限流、探活循环健康、容器 cgroup 归属、webhook 噪声计数、审计熔断状态一次给全；perf-health 同步加事件循环与构建限流告警 |
+| fix | cds | 并入在途部署时把 X-CDS-Deployment-Run-Id 改指向在途那条 run（按协调器给的在途操作 id 匹配），指不准就摘掉该响应头：此前 cdscli 跟着被取消的占位 run 判「部署失败」，正好把 push 后紧跟 deploy 这条路径治反了 |
+| perf | cds | managed 构建容器（装依赖 + 打包，本机最吃 CPU 的一段）也挂低权重 slice，此前只有服务容器挂了 |
+| fix | cds | 同 commit 并入在途部署再加一道判据：有效配置指纹（有效 profiles + 合并后 env）必须一致才并入，缺指纹或指纹不同回落既有语义合并为 pending 在其后重放——否则两次部署之间改的环境变量或构建配置会既不生效也不排队 |
+| fix | cds | webhook 噪声计数补记「被压掉的请求仍花掉的 master 时间」并在 /healthz 与聚合事件里透出，度量尺同步区分「记录在案的」与「被压掉的」两行：廉价 ack 不写 HTTP 日志，只看日志口径会把「不再观测」误读成「不再耗时」 |
+| fix | cds | 构建闸门：pumpWaiters 在「还有人排队且未触上限」时补开负载复查定时器——此前 waiter 因上限入队（该路径不开定时器）、运维随后调高上限而宿主仍饱和，队列要等下一次 release 才被重新考虑，新增容量空转 |
+| fix | cds | 度量尺显式标注部署次数被接口 200 条上限截断（数字标成下界），并把截断判据抽成纯函数 + `--self-test` 自检，避免长窗口复测静默少算 |
+| fix | cds | 同 commit 并入只认「请求自己钉住了提交」的部署（webhook 的 head sha / 显式 commitSha）：不带 commitSha 的部署落地的是届时的分支 HEAD，拿分支上缓存的旧 SHA 判同一提交会把「要部署 B」并进「正在部署 A」，B 就此不再被部署 |
+| fix | cds | 并入的提交比较改为身份归一（7-40 位 SHA 前缀匹配，大小写无关）：`--commit abc1234` 与 webhook 的 40 位全长 SHA 是同一提交，字符串直判不等会让手动部署顶掉在途 webhook 重建同一份代码 |
+| security | cds | `CDS_WORKLOAD_CGROUP_PARENT` 按字符集拒收非法值并在拼进宿主 shell 前加引号：此前含空格会让此后所有部署命令行错位，含分号可在宿主上追加执行另一条命令 |
+| fix | cds | 并入的提交判据收敛为「两边都是 40 位全长且完全相等」：短 SHA 前缀在同一仓库可能对应两个提交，按前缀并入等于可能并进碰巧同前缀的那次部署；代价是短 SHA 手动部署不参与并入 |
+| fix | cds | 度量尺对 forwarder 5xx 行同样标注接口 5000 条上限截断（重连风暴时最容易撑满，不标会让改前改后对比虚高） |
+| fix | cds | executor 节点也探测并挂载低权重 slice：它用同一个 ContainerService 在自己那台宿主上构建和起容器，此前被按运行模式跳过，那些负载照旧和 executor API 同权抢 CPU；配套加启动接线守卫 |
+| fix | cds | 度量尺的 master 日志改为翻到窗口边界（原固定 4 页），撞到页数上限时把由日志派生的指标标成下界：固定页数会在高流量窗口静默只分析最新子集，而那正是要对比的过载时段 |
+| fix | cds | executor 模式如实报「容器已归组、控制面未受保护」：executor 由 nohup 启动、不走 systemd 单元，拿不到 CPUWeight/IOWeight 提权，1000:100 的保护比不成立；此前 healthz 仍报 weightManaged=true 是谎报 |
+| fix | cds | 「控制面有没有被提权」改为读进程自己的 cgroup 归属来判，不再按运行模式猜：后台启动、前台直跑、执行器接入几条路径都不经过控制面 systemd 单元，按模式猜会漏报成「已保护」 |
+| fix | cds | webhook 噪声累计值带出它覆盖的时长（进程启动至今），度量尺据此提示能否与按小时窗查询的那一行相加：两者口径不同，直接相加会高估或少算 |
+| fix | cds | 归组状态声明覆盖面只到「此后新建的容器」：--cgroup-parent 是建容器时的参数，升级前就在跑的容器（尤其长命的共享基础设施）不会自己迁进来，此前状态报「已接管」会让人以为是全量 |
+| fix | cds | 数据库隔离克隆助手与定时命令作业的容器也挂低权重 slice：前者在部署期间自动跑（dump/import 是 CPU 与磁盘密集的一段），后者无人值守跑，此前都不带归组参数 |
+| feat | cds | Agent 接入口令新增第六节：分支部署一律走极速版（CI 预构建），判据是 profile list 的 prebuiltModes、切换只写分支覆盖、生效看 deployRuntime.prebuilt；push 后自己循环验证到冒烟与预览通过，不把测试甩回用户 |
+| feat | cds | 「分支部署与预览」任务卡的步骤、边界与完成标准同步写入极速版要求 |
+| feat | cds | cdscli 0.16.1：profile list 摘要新增 prebuiltModes / prebuiltImage，Agent 按 prebuilt 标志而不是模式名识别极速版 |
+| feat | cds | 项目设置新增「Agent 只允许极速版（CI 预构建）部署」门禁（默认关闭）：开启后机器凭据的部署、分支模式覆盖、项目默认模式写入只要落到源码编译就被 409 agent_prebuilt_only 拒绝，开关本身只能由真人修改；内部系统派发豁免 |
+| fix | cds | cdscli 0.16.2：branch set-mode 回传覆盖对象时剔除 null 占位字段，修复老分支切换模式时被 dbScope 枚举校验 400 拒绝 |
+| fix | cds | 极速版门禁补齐四条绕过路径（Codex review）：门禁下的 Agent 部署不再在镜像拉不到时回退源码编译；单服务部署端点、通用构建配置 PUT（activeDeployMode / deployModes / prebuiltImage）、项目 defaultDeployModes 写入与 align-deploy-modes 同受门禁 |
+| fix | cds | 极速版门禁第二轮补强：去掉可伪造的 X-CDS-Trigger 豁免（内部自调本就不带机器凭据）；模式级 prebuilt 声明优先于 profile 级 prebuiltImage；未存 projectId 的老分支归 default 项目判；项目 defaultDeployModes 按全部 profile 判，空表不能把安全默认换掉；bulk-set-modes 批量改模式定义同受门禁 |
+| fix | cds | 极速版门禁：远端执行器派发的 profile 清单在门禁下同样摘掉源码回退，执行器侧镜像拉不到不再回退源码编译 |
+| fix | cds | 极速版门禁：分支覆盖与项目默认里的显式空串按「不选模式 = 源码基线」判，不再拿基线模式顶替；拒绝响应里的可切模式与门禁同判据，镜像站点上继承 prebuilt 的模式也列出 |
+| docs | cds | 债务台账记入门禁未覆盖的 import-and-init、copy-config-from 两条入口与「机器自建 prebuilt 配置」的核实结论 |
+| fix | cds | 极速版门禁：分支覆盖 PUT 按替换后的生效模式判（不带模式的部分写入也不能抹掉 express 覆盖）；带 managedBuild 的配置一律不算极速版；bulk-set-modes 按实际命中的目标判项目 |
+| fix | cds | cdscli 0.16.3：profile list 的 prebuiltModes 与服务端同口径，镜像站点上未声明 prebuilt 的模式继承 prebuiltImage |
+| fix | cds | cdscli 0.16.4：带 managedBuild 的构建配置在 profile list 里不再报任何极速版信号，与服务端判据一致 |
+| fix | cds | 极速版门禁：整分支部署改按真正要部署的清单判（带 versionId 时是版本物化后的不可变镜像清单），分支基线已切回源码模式时重放合规历史版本不再被误拦 |
+| fix | cds | cdscli 0.16.5：prebuiltModes 只认布尔 true，与服务端门禁同判据，不再把字符串 'true' 报成可切 |
+| docs | cds | 债务台账里门禁未覆盖入口的段落改为只写边界、影响与验收判据，去掉接口签名与实现细节 |
+| fix | cds | 极速版门禁：整分支部署在同一 commit 命中可复用版本时按物化清单判（managed 配置有产物版本不再被误拦）；版本重放不套分支覆盖；managedBuild 加入 Agent 不得改动的定义字段 |
+| fix | cds | 极速版门禁：新建构建配置入口在门禁下拒绝机器凭据带 managedBuild（与通用 PUT 同口径），堵住新建后 push 走 webhook 派发在宿主编译的路径 |
+| fix | cds | 极速版门禁：分支覆盖与通用 PUT 的 activeDeployMode 按将要落盘的原值判、不再先 trim，带空白的模式名不会被判成极速版放行后落回源码基线 |
+| fix | cds | db-clone-pipeline 测试 afterEach 补 await flushAllJsonStateStores，解除 await-flush 守卫在 main 上的红灯 |
+| fix | cds | 项目级 Key 的故障时间线改为在 getIncidents 内部先按项目过滤再截断，别的项目故障多时不再一条都分不到 |
+| fix | cds | 删除项目时级联删除挂在该项目名下的自定义监控，不再留下指向不存在项目、无人能管却还在探测的定义 |
+| fix | cds | 探测器健康的自定义通道完成数只记本轮：上一轮的通道在新一轮开始后才结束时不再把完成数算到新一轮头上 |
+| fix | cds | 监控中心「待确认」筛选认「实测但未判定」的分支（unconfirmed），未实测分支照旧一并收入 |
+| fix | cds | 删项目时通过 StateService.onProjectRemoved 观察者让存活监控立刻抹掉被删自定义监控的运行态台账，与单条删除路由同款，不再挂到下一轮 |
+| perf | cds | 删项目级联抹掉自定义监控台账改为批量一次持久化（forgetTargets），项目名下监控多时不再逐条重写整份台账文件 |
+| feat | cds | 监控中心重做：/status 改为「结论横幅 + 关键数 + 可搜索筛选的目标列表 + 目标详情」三段式，详情含 24h/7d/30d 可用率、响应时间曲线、本目标故障、探测配置与操作，故障时间线独立页签，桌面填满画布、手机在列表与详情间切换 |
+| feat | cds | 新增自定义监控：可手动添加 HTTP 网址 / 关键字 / TCP 端口三种探测目标，支持期望状态码规则、单目标间隔与超时、归属项目、标签、暂停恢复、保存前试探测与「立即探测」；定义落 CdsState.uptimeMonitors，探测与分支 / 生产目标同一轮次、同一去抖与告警链路 |
+| feat | cds | uptime API 扩展：GET/POST/PUT/DELETE /api/uptime/monitors、POST /api/uptime/monitors/test、POST /api/uptime/targets/:id/probe；摘要新增 source / statusSince / incidentCount / probeDescription / 生效间隔与超时 |
+| fix | cds | 存活告警标题由「生产服务健康掉线」改为「监控目标健康掉线」，对分支、生产、自定义三类目标都成立 |
+| test | cds | 新增 uptime-custom-monitors（校验 / 目标推导 / 间隔闸 / 立即探测 / 真实 HTTP、TCP 探测 / 接线守卫）与 monitor-center-view（结论、筛选、分组、默认选中、格式化）用例；状态页守卫改指向新文件结构 |
+| feat | cds | 监控中心按设计稿一比一落地第二版：主列表默认只展示主站（生产目标 + 自定义），分支按项目折成汇总行、点开「全部分支」模态窗（存活的排前面：运行中 → 未实测 → 已降温），关键数改为「正常（实测）/ 故障 / 待确认 / 未实测 / 暂停 / 可用率」，新增覆盖面条与「覆盖面与判定手段」弹窗，详情加视角标与原始采样表，图表提对比度 |
+| feat | cds | 存活监控客观性：分支目标新增「用户视角」第二判定（经预览域名整条链路探，5xx / 超时折进主判定，探测器够不着预览域名只标暂不可用）；按容器状态判定的目标标「未实测」不再算正常、不计可用率；摘要新增 coverage（谁没被盯、为什么、能怎么办）与 prober（探测器自身健康）；history 附最近 20 次原始采样；探测范围默认改为全部分支（CDS_UPTIME_SCOPE=trunk 可收窄） |
+| fix | cds | 预览代理对带 x-cds-poll 头的探测请求不再刷新分支 LRU、不记访问事件，用户视角探测不会让分支永不降温 |
+| test | cds | 新增 uptime-objectivity（未实测、用户视角折入 / 不折、覆盖面、探测器健康、原始采样、代理豁免守卫）与分支按项目汇总 / 排序 / 筛选用例 |
+| security | cds | 自定义监控的新增 / 修改 / 删除 / 试探只给管理员身份（登录会话或全局 AI key），项目级 Key 一律 403、只读；项目级摘要的覆盖面与总览计数按本项目收窄（未实测不再被算成正常）；「立即探测」与时序详情的归属从当前目标定义解析，刚保存未进轮次的别人目标也拦 |
+| fix | cds | 「立即探测」同样折入用户视角：进程在答但预览域名 5xx 时不再把目标翻绿、收尾故障 |
+| fix | cds | 预览代理的探测豁免改认进程级探测令牌（probe-marker），伪造 x-cds-poll 头不再能让在用的分支被当成闲置 |
+| fix | cds | 编辑自定义监控时清空状态码规则 / 间隔 / 超时能真正回到默认；详情页读时序失败后「重试」真的重发请求 |
+| test | cds | 新增 uptime-codex-r1514 回归（令牌、立即探测折用户视角、计数口径、作用域覆盖面与归属、管理员限定、null 重置、重试） |
+| security | cds | 探测令牌只随经预览域名的用户视角探测发出；直连分支容器的进程视角探测与打任意外部地址的自定义探测不再携带，对端拿不到令牌回放豁免 |
+| fix | cds | 管理员可以修改自定义监控的归属项目（系统级与项目之间、项目之间互挪），不再被跨项目覆盖守卫误拦成 409 |
+| fix | cds | 监控中心结论句「24 小时内恢复」按恢复时刻统计并取最近恢复的一次，长时间故障刚修复不会被报成「24 小时内没有故障」 |
+| fix | cds | 自定义监控改走独立探测通道并带自己的重入锁：一个挂在长超时上的自定义地址不再拖住分支 / 生产目标的轮次 |
+| security | cds | forwarder 数据面在转发给分支容器前抹掉探测令牌（与 master 代理同款），容器内代码拿不到令牌回放 |
+| fix | cds | 修改自定义监控归属项目后台账立刻同步，不等下一轮探测；旧项目 Key 立即看不到、新项目 Key 立即看得到 |
+| fix | cds | 全部分支模态窗的 24h 迷你条按各实测服务逐段合并，与旁边的可用率 / 响应数字同一口径 |
+| perf | cds | 存活监控轮次预算：用户视角探测并发放宽到 32 且最多占间隔四成，直连探测整体不超过九成，超预算的目标留到下一轮、用户视角只标「本轮未探」，全站超时也拖不住下一轮 |
+| fix | cds | 探测器健康的「目标完成」只计真正探完的目标；自定义通道还在跑或被跳过时不再先记成完成 |
+| fix | cds | 通过 API 停用自定义监控时台账立刻转 paused、开着的故障就地收尾，不等下一轮 |
+| fix | cds | 监控中心整体可用率 / 平均响应不再把暂停目标算进去；分支里有实测但尚未判定的服务时不报绿，显示「状态确认中」并与「未实测」分开说 |
+| fix | scripts | 每日验收的 readScoped 改为参数传 scope（柯里化闭包在 page.evaluate 里取不到，五条用例全打哑） |
+| fix | scripts | checkPageAlive 把 goto 与取证纳入 try/finally 关页，避免一条失败滚成后续 goto 超时 |
+| fix | scripts | 视觉创作锚点跟随改版更新为「今天做什么图？」，旧文案已在改版时删除 |
+| refactor | scripts | readScoped 拆到 scripts/smoke/lib/scoped-text.mjs，让守卫能真的执行它而不是扫源码 |
+| test | scripts | 取证守卫改为按 page.evaluate 的真实机制重建并执行（可测红，且不因改写法误红） |
+| ci | scripts | release_scripts 过滤器补登记 scripts/smoke/lib/** 与 WebPagesPage.tsx（只改被守文件的 PR 原本会跳过守卫） |
+| test | scripts | 新增自检：守卫解析 ci.yml 过滤器，断言自己每个输入都在册（可测红） |
+| docs | doc | 新增 debt.acceptance.daily-anchors 台账：五条锚点与归属页面无机械关联，记为 B 类不在本 PR 展开 |
+| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 处理 5 条 changelog（#1433/#1463/#1448 补记 debt.cds.md 与 design.cds.web-entry.md，manifest 补登记） |
+
+### 2026-09-07
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| security | cds | container-exec 命令改单引号传入容器 sh，宿主 shell 不再展开 `$VAR` / `$(...)`，堵住 CDS 主进程环境泄露与宿主命令注入 (#1448) |
+| security | cds | 脱敏器新增 PEM 私钥整块识别（BEGIN 到 END，未闭合时到文末），printenv / cat 多行私钥体不再原样输出 (#1448) |
+| fix | daily-report-summary | 日报/周报模板证据图尺寸规则从 `.story figure img` 收窄为无作用域 `figure img{width:100%}`：`{{IMG:}}` 展开成裸 figure、可放任何章节，放在 .story 之外的截图曾按 2880x1800 原始像素平铺撑破页面 |
+| fix | daily-report-summary | publish.py 新增两道发布闸：占位塞进标签属性（`<img src="{{IMG:x}}">`）拒发；带 manifest 发布时校验模板有无作用域的 figure img 规则且胜出 width 为 100%（取胜者不取第一条、@media 内不算）；单张截图 >1.5MB 告警提示改 1x 采集 |
+| test | daily-report-summary | 新增 CI 守卫 scripts/tests/test_report_evidence_figure.py：跑 publish.py 真函数校验两份模板，把展开物放到 .story 之外再过闸，红绿闭环（收回 .story / 删 width / 后写覆盖 / 只在 @media 声明 均判红），并自查 release-script-test 的 path filter 覆盖模板、publish.py 与守卫本身 |
+| rule | doc | report-design-system.md 新增 §1.6 证据图契约；predicate-and-wiring-discipline.md 新增形状 9「契约挂在容器上而不是挂在展开物上」及自查项；daily-report-summary SKILL.md Phase 4.5 补占位四条写法纪律；debt.report-agent.md 记 EVF-1/2、KBS-1（同名日报知识库按名查找的风险） |
+| fix | cds | 移植主干 CI 修复：db-clone-pipeline 测试的 afterEach 补 await flushAllJsonStateStores（主干自 09-04 起 CDS Build & Test 全红，lint 守卫 await-flush-state-stores 点名此处；本 PR 因改 ci.yml 触发该 job 而撞上） |
+| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 处理 3 条 changelog（内容已随同批提交覆盖，manifest 补登记） |
+| refactor | prd-admin | 接入台客户端卡改成「视觉编码」：五块能力压成五个色点（形状分档、颜色分能力），自动/手动改成左侧 3px 色带，两句通用解释收进整屏只出现一次的图例。一把正常在用的钥匙，卡片上常驻的固定文案从 266 字降到 18 字（名字、数字、摘要另计）；解释没有删掉，收进点一下就展开的详情里 |
+| feat | prd-admin | 新增 `signalEncoding` 纯函数：把一把钥匙的授权算成「一行色点 + 一句带数字的摘要」。档位判据复用既有的 `isReadOnlyTier`，不另写一份——两个反直觉形状各自都出过事：视觉/文学**只有写档**（拿到那一个 scope 就是完整权限）、海鲜市场**只有读档**（同样是完整权限，标成「只能看」等于暗示还有一档不存在的权限） |
+| feat | prd-admin | 无障碍冗余三道，因为**颜色不做唯一通道**：三档用三种形状（实心 / 圆环 / 虚线圈，灰度屏也分得开）、每个点自带可读名字（读屏与长按都拿得到）、点一下展开逐块文字清单。设计稿上写明这个方向的代价是「对色觉障碍不友好」，所以落地时把它当硬约束而不是注意事项 |
+| test | prd-admin | 新增 `signalContract` 守卫钉住上面那条：三档必须用三种形状（退回「半透明实心」即红）、色点必须有 aria-label、颜色必须按能力 key 查（按 title 查会全部落到兜底中性色，颜色通道当场作废而界面照常渲染——写这个组件时当场犯过一次）。红绿闭环做过 |
+| test | prd-admin | 档位接线守卫改钉性质不钉位置：上一版断言 `client.scopeMode` 这个字面量出现在页面文件里，而读取它的那一步这次收进了纯函数。字面量是实现位置，不是性质；改成「纯函数从 scopeMode 推出档位 + 页面渲染它算出的结果」两头都断言 |
+| docs | doc | 债务 #35 记下这个方向的已知边界：形状那一路无障碍，颜色那一路不是——色觉障碍用户分不出「哪个点是哪块能力」，信息一条不少但要多点一下。写明取舍（给每块能力配形状会把视觉重量加回去，等于退回改版前的密度）与验收标准 |
+| fix | prd-admin | 色点旁那句摘要不再自相矛盾：三块能写 + 两块只读原来会说成「5 块全开 · 2 块只能看」——`granted` 把只读也算了进去，而「全开」只在一块只读都没有时才成立。改成有只读时把两档分开说（「3 块已开 · 2 块只能看」；这里说「已开」不说「能写」，因为拿满的那几块可能含只有读档的海鲜市场）。**这条是真机上看出来的**：改动当时 113 条用例全绿，因为没有一条问过「这句话自洽吗」；补的用例钉的是性质（说了「全开」就不能同时说「只能看」），不是某个措辞 |
+| fix | prd-admin | 手动档一块能力都没给时，提示不再把五块名字列一遍。色点与摘要已经说了「5 块都没开」，再列一遍是同一件事说两次，而那是这张卡上最长的一段字（49 字）；只留要用户去做的那半句。部分缺失时照旧列出缺哪几块——那种情况下名字才是新信息 |
+| polish | prd-admin | 结论卡在「接着但今天没动」这一档不再补第二句。原来那句「不是坏了，就是今天还没使唤它…」没有信息量，判断句已经把事说完了；从来没用过的那种仍然给一句能照着做的下一步（重启客户端 + 第一句话怎么说）。`detail` 改成可空，没有就不占位置 |
+| polish | prd-admin | 「连着的客户端」下面那行提示压到只剩「「今天」按 UTC 自然日算」。「一台一把钥匙，断哪台都不影响别的」是常识，图例和每张卡上的断开钮已经把它说清了；UTC 那半句留着是因为数字在早上 8 点归零这件事真的会让人以为数据错了，review 里专门要求过它要看得见 |
+| fix | prd-admin | 只有一档的能力（视觉/文学只有写档、海鲜市场只有读档）拿满了单独成一档「已开」，与「能写」分开：海鲜市场拿到读 scope 原来会念成「海鲜市场 · 能写」，而后端没给它任何写接口（review 抓出来的）。形状仍是实心，摘要里的「N 块能写」改成「N 块已开」 |
+| fix | prd-admin | 展开区逐块清单里的色点改成装饰点：旁边已经有名字与档位的文字，点再自带可读标签，读屏会把每块能力念两遍（review 抓出来的）。折叠态色点行上没有那段文字，那里的点保留标签；守卫钉住「两处色点恰好一处是装饰点」 |
+| test | prd-admin | 色点契约守卫改成真渲染：用 react-dom 把四档各画一遍，断言落到 DOM 上的 role / aria-label / title / 填充与描边样式，以及装饰点确实对读屏隐藏且形状不变。原来是匹配源码正则，改个样式写法就红、写个不用的表达式就绿，钉的是拼法不是契约（review 抓出来的，仓库自己的判据纪律也这么要求）。红绿闭环：圆环改半透明实心、去掉 aria-label、按 title 查色三种变异各自变红 |
+| fix | prd-admin | 图例手机端收起（`hidden sm:flex`），按 `mobile-first-density` 的控制条收纳表：手机上进内容前不再多一条独占的图例行。说明仍拿得到——每张卡的色点行本身就是展开钮，点开是逐块能力的名字与档位文字、以及自动/手动档的那句说明；桌面端图例照旧只出现一次 |
+| fix | prd-admin | 客户端卡折叠态露出钥匙前缀：名字不唯一（发钥匙时不查重），两把同名的折叠后只靠前缀分得开，而「断开」收不回来；断开与调额度两个弹窗的描述也带上前缀，最后一步再核对一次。展开区里原来那份前缀去掉，不重复 |
+| fix | prd-admin | 从来没用过的钥匙在折叠态就标「还没用过」（占的是「0 次」那个位置，不多一行）：今天 0 次与从来没连上是两件事，后者要用户去做点什么。结论卡的引导判据同步改成「有没有一台从来没用过」，一台老的用过、一台新的没连上时，新的那台照样拿到「重启客户端」那句 |
+| docs | doc | 债务 #36：色点「折叠态带标签、展开区做装饰」的守卫仍是源码扫描，改成渲染断言需要 jsdom 或把客户端卡改成受控组件，记为后续单独一笔 |
+| fix | prd-admin | 手机端色点行（展开钮）最小 44px 高、同一行的调额度与断开按钮手机端 44px 见方：图例收起后展开钮是看文字说明的唯一入口，原来约 20px 高手指按不准；断开是收不回来的动作，32px 见方容易按错。桌面端尺寸不变 |
+| refactor | prd-admin | 档位的说法与形状收进一张注册表（能写/已开/只能看/未开 各登记标签与形状），色点组件按形状画，新增一档时类型检查逼着补登记，标签与形状不会各漂各的 |
+| docs | doc | 债务 #37：档位注册表只登记形状名，画法在色点与图例各一份；按范围熔断记为后续单独一笔 |
+| docs | cds | 发布系统债务台账补两条未取证项（三种 SSH 认证真连 / 运行态三块真实 run 取证）；「存量密码主机 fingerprint 轮换」经按认证方式盘点核实无存量（4 台主机全为私钥认证），记为已结清、无需迁移。#1287 #1288 固化后关闭 |
+| docs | cds | 极速版台账补第 13 条（静态前端运行期配置注入缺口，吸收 #1437 后关闭）；CDS 台账补「分支库供应已由 CDS 原生提供、mdimp 反向驱动脚本未下线」（吸收 #1436 后关闭） |
+| docs | prd-api | 通用对话设计文档「尚未验证」两条补 2026-09-08 定性：共享运行时池系 07-02 人为暂停、不恢复（#1337 关闭，债务 CHAT-1 登记恢复只能走共享服务流程）；generation 默认池经真实网关解析已存在（#1338 关闭，成员抖动登记为网关债务，影响面限对话出图工具） |
+| fix | prd-admin | 授权健康中心补齐首页搜索与移动端导航入口：首页静态实用工具清单按 logs.read 权限门补条目，移动抽屉底部实用工具直达改为从 NAV_REGISTRY 派生目录取条目 (#1479) |
+| test | prd-admin | 首页「全部能力」实用工具组新增与 NAV_REGISTRY 的覆盖棘轮；新增授权健康中心桌面搜索命中与移动抽屉接线守卫 |
+| fix | prd-api | DataSyncRun 补 BsonIgnoreExtraElements，旧构建读共享库新字段文档不再反序列化崩 (#1499) |
+
 ### 2026-09-06
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
 | docs | doc | 新增 2026-W36 周报（08-31 ~ 09-06）：37 个 PR、471 次主干提交、33 份验收报告；主线为「验收第一次挪到合并之前」，并点名认证迁移 09-17 到期仅剩 11 天 |
 | chore | doc | 归档本周 changelog 碎片到 CHANGELOG.md [未发布] 段 |
+| chore | doc | 熵清理：D1-D4 无欠账，D6 处理 5 条 changelog（网页托管文件夹并发安全 + CDS 总览/仓库共享补章节） |
 
 ### 2026-09-05
 
@@ -710,6 +954,7 @@
 | fix | prd-api | 对齐无引号根资源改写、非文件 URI 判定与队列排序索引 |
 | security | prd-api | 限制私有预览外联，并保留本地导航页面且只改写真实标签属性 |
 | fix | prototype-export | 统一识别非文件 URI，避免审计误报本地资源缺失 |
+| fix | cds | 分支档隐藏入口后重新启用不再丢失项目档 primary（#1463） |
 
 ### 2026-09-02
 
@@ -1514,6 +1759,7 @@
 | test | prd-api | 名录守卫补后缀合成用例（`gpt-4o-20990101` / `gpt-4o-2099-01-01` / `openai/gpt-4o-20990101` / `o3-mini-latest` 两侧都必须落空，登记过的 `claude-3-5-sonnet-20241022` / `gpt-4o-latest` 照旧命中）；等价写法用例改成「每一条都靠逐条登记的别名」；迁移守卫升到三个影响面判据。红绿闭环已跑（把剥后缀放回去即红） |
 | fix | llmgw | 服务网关设置的读回按代次丢弃：连着敲几个关键字就有几条读在路上，先发的那条后回来会把清单盖成上一个关键字的结果（搜索框写着 B、下拉里装着 A 的模型）；保存前发出的那条回来还会把 data 盖回保存前那份，让刚存好的配置显示成「未保存」、连测试连接都被禁用 |
 | test | llmgw | 设置页验收补三条：桩把某个关键字的读拖慢 1.5s，断言后发先回的清单不被晚到的那条盖掉、也不混进上一个关键字的模型。红绿闭环已跑（去掉代次判断即红，且确认过产物重建） |
+| fix | cds | cdscli deploy 触发失败（如 423 项目暂停）改为透出服务端 body 里的结构化原因，不再只报裸 http_423 (#1433) |
 
 ### 2026-08-28
 
