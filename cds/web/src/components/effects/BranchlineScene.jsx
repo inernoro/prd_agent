@@ -66,11 +66,11 @@ function buildScene(canvas) {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, narrow ? 1.5 : 2));
   renderer.setClearColor(BG, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 0.98;
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(BG.getHex(), 0.017);
+  scene.fog = new THREE.FogExp2(BG.getHex(), 0.021);
   const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 260);
 
   const disposables = [];
@@ -102,12 +102,12 @@ function buildScene(canvas) {
 
   const coreMat = track(new THREE.MeshStandardMaterial({ color: 0xff8a2a, emissive: 0xff6a12, emissiveIntensity: 2.4, roughness: 0.32, metalness: 0.05 }));
   scene.add(new THREE.Mesh(track(new THREE.TubeGeometry(curve, 640, 0.065, 20, false)), coreMat));
-  const haloMat = track(new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false }));
+  const haloMat = track(new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.05, blending: THREE.AdditiveBlending, depthWrite: false }));
   scene.add(new THREE.Mesh(track(new THREE.TubeGeometry(curve, 320, 0.26, 12, false)), haloMat));
 
   // 提交珠：清漆球体，核心发光
   const beadGeo = track(new THREE.SphereGeometry(0.34, 48, 48));
-  const beadMat = track(new THREE.MeshPhysicalMaterial({ color: 0xfff1e6, emissive: 0xff7a1a, emissiveIntensity: 1.3, roughness: 0.18, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.12 }));
+  const beadMat = track(new THREE.MeshPhysicalMaterial({ color: 0xfff1e6, emissive: 0xff7a1a, emissiveIntensity: 0.95, roughness: 0.18, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.12 }));
   const beads = BEADS.map((t) => {
     const m = new THREE.Mesh(beadGeo, beadMat);
     m.position.copy(curve.getPointAt(t));
@@ -120,11 +120,12 @@ function buildScene(canvas) {
     const a = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) { a[i * 3] = (Math.random() - 0.5) * spread[0]; a[i * 3 + 1] = (Math.random() - 0.5) * spread[1]; a[i * 3 + 2] = (Math.random() - 0.5) * spread[2]; }
     const g = track(new THREE.BufferGeometry()); g.setAttribute('position', new THREE.BufferAttribute(a, 3));
-    const m = track(new THREE.PointsMaterial({ map: dot, color: 0xfff4ea, size, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+    const m = track(new THREE.PointsMaterial({ map: dot, color: 0xffd6b8, size, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
     const p = new THREE.Points(g, m); scene.add(p); return p;
   }
-  dust(2400, [170, 80, 90], 0.42, 0.34);
-  const motes = dust(360, [120, 40, 50], 0.7, 0.22);
+  // 星尘要少、要暗：2400 颗白点叠辉光会把整个背景抬成灰雾（第三版验收截图就是）
+  dust(1500, [170, 80, 90], 0.34, 0.15);
+  const motes = dust(200, [120, 40, 50], 0.6, 0.11);
 
   // ── Push：脉冲彗星（头 + 三节尾巴）──
   const pulseMat = track(new THREE.MeshBasicMaterial({ color: 0xffffff }));
@@ -225,7 +226,7 @@ function buildScene(canvas) {
   // ── 后期：Bloom（HalfFloat 帧缓冲，让 emissive > 1 真的发光）+ SMAA ──
   const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType });
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new BloomEffect({ intensity: 1.15, luminanceThreshold: 0.55, luminanceSmoothing: 0.3, mipmapBlur: true, radius: 0.72 });
+  const bloom = new BloomEffect({ intensity: 0.95, luminanceThreshold: 0.74, luminanceSmoothing: 0.25, mipmapBlur: true, radius: 0.64 });
   composer.addPass(new EffectPass(camera, bloom));
   composer.addPass(new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.MEDIUM })));
 
