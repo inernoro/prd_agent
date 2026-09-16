@@ -232,6 +232,33 @@ public class ActiveTaskBoardInvariantTests
         Assert.Contains("Overloaded", line);
     }
 
+    [Fact]
+    public void 已经结案的不许被激活成正在做()
+    {
+        // Codex 2026-09-16 抓到的：A 在做、B 备用，两条几乎同时被勾掉 —— A 的结案挑中 B
+        // 当下一件，而 B 自己的结案先落地把它写成了 done，激活那一步再无条件设回 active，
+        // 于是一条带着结案时间和结案说明的任务又回到「正在做」并继续计时。
+        // 页面上两次快速点击就够了，不需要真的并发压测。
+        var shared = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskShared.cs"));
+
+        var at = shared.IndexOf("Set(x => x.State, ActiveTaskState.Active)", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到激活那一步");
+        // 往前找它的过滤条件：必须限定「还没结案」，不能只有 Id
+        var filter = shared[Math.Max(0, at - 400)..at];
+        Assert.Contains("x.State == ActiveTaskState.Standby", filter, StringComparison.Ordinal);
+
+        // 配套：撤销结案必须先把状态放回 standby，否则上面那个条件会让撤销失效。
+        // 这两处是一对，改一个忘另一个就会悄悄废掉撤销按钮。
+        var reopen = Endpoint("[HttpPost(\"{id}/reopen\")]");
+        var setStandby = reopen.IndexOf("Set(x => x.State, ActiveTaskState.Standby)", StringComparison.Ordinal);
+        // 找的是**调用**，不是这三个字：上面那段注释里也写了 MakeActiveAsync，
+        // 按词去找会命中注释，判据读到的就不是它以为的那个位置
+        var makeActive = reopen.IndexOf("await ActiveTaskShared.MakeActiveAsync(", StringComparison.Ordinal);
+        Assert.True(setStandby > 0, "撤销没有把状态放回 standby");
+        Assert.True(makeActive > setStandby, "撤销必须先放回 standby 再激活，否则激活那一步不认它");
+    }
+
     private static string Endpoint(string routeAttribute)
     {
         var src = Controller();

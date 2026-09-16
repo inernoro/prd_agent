@@ -13,10 +13,18 @@ import { TaskShell } from './TaskShell';
 import { whenLabel } from './taskTime';
 import './activeTasks.css';
 
+/**
+ * 档位是「往回数多少天」，标签就得这么写。
+ *
+ * 原来叫「本周 / 本月 / 本季」，而发出去的是滚动 7 / 30 / 90 天：9 月 16 号点「本月」
+ * 会带出八月的记录，周一点「本周」带出的大半是上一周 —— 列表跟标签说的不是一回事。
+ * 要么按自然周月季去查，要么把标签改成它真正在做的事。这里选后者：
+ * 「最近 30 天」本身就是更有用的那个口径，而自然月在月初几乎是空的。
+ */
 const RANGES = [
-  { days: 7, label: '本周' },
-  { days: 30, label: '本月' },
-  { days: 90, label: '本季' },
+  { days: 7, label: '近 7 天' },
+  { days: 30, label: '近 30 天' },
+  { days: 90, label: '近 90 天' },
 ];
 
 export function ActiveTaskHistoryPage() {

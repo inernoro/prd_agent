@@ -205,9 +205,13 @@ export function ActiveTasksPage() {
   const onUndoGone = useCallback(async () => {
     if (!justGone) return;
     const g = justGone;
-    setJustGone(null);
-    if (g.dropped) { await run(() => reopenActiveTask(g.id)); return; }
-    await run(() => createActiveTask({ title: g.title, dueAt: g.dueAt ?? null, orderKey: g.orderKey }));
+    // 成功了才把这条提示收起来。真删那条已经不在库里了，justGone 是它的标题、
+    // 时间和位置仅存的一份副本 —— 先清掉再去重建，请求一失败它就没了，
+    // 用户连再点一次撤销的机会都没有。
+    const ok = g.dropped
+      ? await run(() => reopenActiveTask(g.id))
+      : await run(() => createActiveTask({ title: g.title, dueAt: g.dueAt ?? null, orderKey: g.orderKey }));
+    if (ok) setJustGone(null);
   }, [justGone, run]);
 
   const onAddConfirm = useCallback(async () => {

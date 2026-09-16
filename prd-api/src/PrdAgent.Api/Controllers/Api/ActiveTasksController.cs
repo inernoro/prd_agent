@@ -324,9 +324,13 @@ public class ActiveTasksController : ControllerBase
             return Ok(ApiResponse<object>.Ok(new { id, reopened = false, alreadyOpen = true }));
 
         var now = DateTime.UtcNow;
+        // 先脱离结案态再决定放哪一档。顺序是有意的：MakeActiveAsync 只肯激活
+        // 「还没结案」的那条（防的是并发结案把 done 复活成 active），
+        // 所以撤销必须先把状态放回 standby，它才认。
         await _db.ActiveTaskEntries.UpdateOneAsync(
             x => x.Id == id,
             Builders<ActiveTaskEntry>.Update
+                .Set(x => x.State, ActiveTaskState.Standby)
                 .Set(x => x.DoneAt, (DateTime?)null)
                 .Set(x => x.ClosingNote, (string?)null)
                 .Set(x => x.DropReason, (string?)null)
@@ -340,14 +344,8 @@ public class ActiveTasksController : ControllerBase
             // MakeActiveAsync 会把当前在做的那条退回备用队首，正好还原结案前的样子
             await ActiveTaskShared.MakeActiveAsync(_db, userId, id, now, ct);
         }
-        else
-        {
-            // OrderKey 结案时没被动过，所以只翻状态就回到原来那个位置，不用重排
-            await _db.ActiveTaskEntries.UpdateOneAsync(
-                x => x.Id == id,
-                Builders<ActiveTaskEntry>.Update.Set(x => x.State, ActiveTaskState.Standby),
-                cancellationToken: ct);
-        }
+        // else 分支不用再做什么：OrderKey 结案时没被动过，上面那次更新已经把状态
+        // 放回 standby，它就回到了原来那个位置，不用重排
         var saved = await _db.ActiveTaskEntries.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<object>.Ok(ActiveTaskShared.ToDto(saved!, now)));
     }

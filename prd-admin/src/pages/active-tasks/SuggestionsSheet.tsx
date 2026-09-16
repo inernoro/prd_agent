@@ -190,7 +190,13 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     });
     setBusy(false);
     if (res.success && res.data?.tree?.id) {
-      await linkSuggestionEmergence(s.id, res.data.tree.id);
+      // 链接失败不许静默跳走：树建出来了，建议却还挂在收件箱里没有 emergenceTreeId，
+      // 用户再吸一次就会长出第二棵孤树。与标记已吸取那一步同一口径。
+      const linked = await linkSuggestionEmergence(s.id, res.data.tree.id);
+      if (!linked.success) {
+        toast.error('涌现树建好了，但没能挂到这条建议上，先别重复点 —— 树在涌现里找得到');
+        return;
+      }
       onClose();
       nav(`/emergence/${res.data.tree.id}`);
     } else {

@@ -105,8 +105,14 @@ public static class ActiveTaskShared
                 cancellationToken: ct);
         }
 
+        // 只激活「还没结案」的那条。少这个条件的话：A 在做、B 备用，两条几乎同时被勾掉 ——
+        // A 的结案挑中 B 当下一件，而 B 自己的结案先落地把它写成了 done，
+        // 这一步再无条件把它设回 active，于是一条带着结案时间和结案说明的任务
+        // 又回到了「正在做」，还在继续计时。页面上两次快速点击就够了。
+        // 撤销结案那条路会先把状态放回 standby 再走到这里，所以不受影响。
         await db.ActiveTaskEntries.UpdateOneAsync(
-            x => x.Id == id,
+            x => x.Id == id
+                 && (x.State == ActiveTaskState.Standby || x.State == ActiveTaskState.Active),
             Builders<ActiveTaskEntry>.Update
                 .Set(x => x.State, ActiveTaskState.Active)
                 .Set(x => x.StartedAt, now)
