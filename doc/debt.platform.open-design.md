@@ -1133,3 +1133,22 @@ Redis 的 `PingAsync` 不收取消令牌，半失活时会直接挂住，所以�
 
 - 收尾链：`prd-api/src/PrdAgent.Api/Services/DesignArtifactExecutor.cs` 的 `DisposeRemoteSessionAsync`
 - 登记接口的身份校验：`prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs` 的 `ScheduleStopAsync`
+
+## PPT 发布：先建站再校验团队归属（2026-09-16，B 类）
+
+发布协调器的顺序是「幂等建站 → 设置共享团队」。用户对冻结下来的目标团队若是只读、非成员、
+或中途丢了编辑权，站已经建好了才被拒，异常被归类成可重试的发布失败：接口反复回 503，
+最终把发布意图打进死信，而那个站留在用户个人空间里没有归属。
+
+**为什么不在本 PR 顺手改**：修法要在建站**之前**新增一道「不改状态地校验每个冻结目标团队的
+编辑权」的前置步骤，同时**保留**建站之后那道授权校验（竞态时它仍是唯一正确的兜底）——
+一次改动要同时引入新的前置契约并维持后置契约，比同批另外两条（补一个字段、探针多探一个库）
+重一档，属于新的产品行为边界。按 AGENTS.md 5.5 记 B 类。
+
+**现状影响有界**：PPT 本身已经发布成功、内容没丢，只是留在个人空间没进团队；用户重新分享
+即可恢复。要命的是那段 503 重试与死信会让人以为发布彻底失败，所以真修时**顺带把这类
+「授权拒绝」从可重试类里摘出去**——它重试多少次都不会变成成功。
+
+### 实现来源
+
+- 发布顺序：`prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptPublishCoordinator.cs`（建站与设置共享团队那两步）

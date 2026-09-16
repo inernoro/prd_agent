@@ -101,7 +101,7 @@ var mapDatabase = mapMongoClient.GetDatabase(mongoDb);
 var gatewayDatabase = gatewayMongoClient.GetDatabase(gatewayDbName);
 builder.Services.AddSingleton(mapMongoClient);
 builder.Services.AddSingleton(mapDatabase);
-builder.Services.AddSingleton(new GatewayConsoleReadinessProbe(gatewayDatabase));
+builder.Services.AddSingleton(new GatewayConsoleReadinessProbe(gatewayDatabase, mapDatabase));
 
 // ── JWT 签发器（独立密钥）──
 // 会话默认 30 天且用后自动续期（响应头 X-Gw-Token 换发），只要在用就不会掉登录。

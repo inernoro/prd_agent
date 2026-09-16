@@ -714,11 +714,16 @@ public sealed class DesignArtifactsController : ControllerBase
                     var revisionId = snapshot.ArtifactRevisionId ?? snapshot.ProducedArtifactRevisionId;
                     if (!string.IsNullOrWhiteSpace(siteId))
                     {
+                        // destinationApplyError 必须跟着走：正常路径的 done 带着它，
+                        // 前端据此提醒「页面留在了个人空间」。兜底这条漏掉它，
+                        // 就是把一次「站建好了但没归到目标团队」报成完全成功——
+                        // 降级路径产出的结果与正常结果分不开，正是这份代码上面那段注释在防的事。
                         await WriteEventAsync(null, "done", JsonSerializer.Serialize(new
                         {
                             siteId,
                             revisionId,
                             status = HostedSiteRevisionStatuses.Draft,
+                            destinationApplyError = snapshot.DestinationApplyError,
                         }), ct);
                     }
                     else

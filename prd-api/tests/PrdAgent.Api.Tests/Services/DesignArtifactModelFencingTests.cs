@@ -73,4 +73,30 @@ public sealed class DesignArtifactModelFencingTests
         Assert.True(source.Contains("snapshot.ResolvedPlatform", StringComparison.Ordinal),
             $"{label}的 Mongo 兜底只补了模型名、没带平台");
     }
+
+    /// <summary>
+    /// 同一段兜底还漏了另一个字段：正常路径的 done 事件带 destinationApplyError，
+    /// 前端据此提醒「页面留在了个人空间」。兜底这条不带，就是把一次「站建好了、
+    /// 但没归到目标团队」报成完全成功——降级路径产出的结果与正常结果分不开
+    /// （形状 10；Codex P2，2026-09-16）。
+    /// </summary>
+    [Fact]
+    public void MongoFallbackKeepsTheDestinationFailureOnTheTerminalEvent()
+    {
+        var source = ReadApiFile("Controllers", "Api", "DesignArtifactsController.cs");
+
+        // companion：先锚定到兜底里那条 done，而不是别处的 done。
+        var marker = source.IndexOf("status = HostedSiteRevisionStatuses.Draft,", StringComparison.Ordinal);
+        Assert.True(marker > 0, "找不到兜底的终态事件，判据可能已经挂错地方");
+        var window = source.Substring(
+            Math.Max(0, marker - 600),
+            Math.Min(900, source.Length - Math.Max(0, marker - 600)));
+
+        Assert.True(
+            window.Contains("destinationApplyError", StringComparison.Ordinal),
+            "Mongo 兜底的 done 没带 destinationApplyError，归属失败会被报成完全成功");
+        Assert.True(
+            window.Contains("snapshot.DestinationApplyError", StringComparison.Ordinal),
+            "destinationApplyError 必须取自快照，值本来就在库里");
+    }
 }
