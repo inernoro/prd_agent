@@ -521,7 +521,7 @@ export const VOLUMES: Volume[] = [
         level: 2,
         why: '中文社区最好的入门实践书，代码可跑。想从「会用 API」进到「知道里面发生了什么」，从这本开始。',
         takeaway: '看懂模型训练与推理的基本流程，能判断一个 AI 需求的技术可行性。',
-        relatedRules: ['capability-is-not-model'],
+        relatedRules: ['capability-is-not-model', 'agent-runtime-sdk-boundary'],
       },
       {
         id: 'b-llm-cn',

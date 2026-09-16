@@ -635,7 +635,8 @@
           "why": "中文社区最好的入门实践书，代码可跑。想从「会用 API」进到「知道里面发生了什么」，从这本开始。",
           "takeaway": "看懂模型训练与推理的基本流程，能判断一个 AI 需求的技术可行性。",
           "relatedRules": [
-            "capability-is-not-model"
+            "capability-is-not-model",
+            "agent-runtime-sdk-boundary"
           ]
         },
         {
@@ -795,6 +796,13 @@
       "oneLine": "prd-admin 的颜色只能来自主题 token 或双皮肤分支，裸写的白透明与深色 hex 会被棘轮测试拦下。",
       "whenHit": "改 prd-admin 里任何带颜色的组件或样式文件。",
       "history": "2026-07-12 用户在浅色主题下打开海鲜市场，半高密度卡的信息板是硬编码 `rgba(8,12,22,0.9)` 深色渐变、无浅色覆盖，整页「白底浮暗卡」；此前底部 TabBar、百宝箱移动版也因同类硬编码逐个返工。用户提出「做一个系统级的双皮肤，从根上解决这类问题」。本规则与棘轮测试同 PR 落地：token 早已齐备，根治手段是**让绕过 token 的行为在 CI 里现形**。"
+    },
+    {
+      "name": "agent-runtime-sdk-boundary",
+      "title": "Agent Runtime SDK Boundary",
+      "oneLine": "写 Agent 运行时集成时别让「官方 SDK」四个字盖住自建部分，必须逐层说清哪层是官方的、哪层是自己搭的。",
+      "whenHit": "写或评审 Agent 运行时设计文档、要给「集成到什么程度」下结论时。",
+      "history": ""
     },
     {
       "name": "ai-model-visibility",
