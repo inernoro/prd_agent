@@ -213,7 +213,7 @@ public class ImageGenConfigOverrideGuardTests
     [Fact]
     public void 同步状态回写让界面答得出生效了没有()
     {
-        var worker = Read("prd-api/src/PrdAgent.Api/Services/ImageGenModelConfigSyncWorker.cs");
+        var worker = Read("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
         Assert.Contains("llmgw_imagegen_sync_status", worker);
         Assert.Contains("\"SyncedAt\"", worker);
         Assert.Contains("ordered.Select(x => x.ModelIdPattern)", worker);
@@ -244,7 +244,7 @@ public class ImageGenConfigOverrideGuardTests
         var console = Read("llmgw/console-api/Program.cs");
         Assert.Contains("llmgw_imagegen_builtin_catalog", console);
 
-        var worker = Read("prd-api/src/PrdAgent.Api/Services/ImageGenModelConfigSyncWorker.cs");
+        var worker = Read("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
         Assert.Contains("llmgw_imagegen_builtin_catalog", worker);
         Assert.Contains("ImageGenModelConfigs.Configs.Select(ImageGenConfigTranslation.BuiltinToBson)", worker);
     }
@@ -259,10 +259,18 @@ public class ImageGenConfigOverrideGuardTests
     [Fact]
     public void 刷新器接上了线且失败时不清空()
     {
+        // 两个进程都得注册。
+        //
+        // ImageGenModelAdapterRegistry 是进程全局的静态表，而 serving 自己处理
+        // /v1/images/generations 并直接读它。只在 MAP 注册的话，控制台配的契约在 MAP 里生效、
+        // 在网关里完全不生效，而控制台那一屏照样显示「已同步」（它读的是 MAP 写的状态行）——
+        // 外部走网关的生图请求全程用代码内置那份，没有任何地方会报错。
         var program = Read("prd-api/src/PrdAgent.Api/Program.cs");
-        Assert.Contains("AddHostedService<PrdAgent.Api.Services.ImageGenModelConfigSyncWorker>", program);
+        Assert.Contains("AddHostedService<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>", program);
+        var serving = Read("llmgw/serving/Program.cs");
+        Assert.Contains("AddHostedService<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>", serving);
 
-        var worker = Read("prd-api/src/PrdAgent.Api/Services/ImageGenModelConfigSyncWorker.cs");
+        var worker = Read("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
         Assert.Contains("while (!stoppingToken.IsCancellationRequested)", worker);
         Assert.Contains("await Task.Delay(Interval, stoppingToken)", worker);
 

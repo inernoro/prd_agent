@@ -4616,6 +4616,40 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("bundle.key", preview);
     }
 
+    /// <summary>
+    /// 模型编辑抽屉的判据必须是「动没动过」，不是「填没填」。
+    ///
+    /// 这两件事混作一谈时会长出两种形态，都不会红：
+    ///   - 五个价格框全清空 → 判成「没动过」，一个字段都不发，旧价原样留着，
+    ///     而界面显示保存成功——过期价格在这个抽屉里根本删不掉；
+    ///   - 只改名字或备注 → 框里还摆着旧价，判成「动过」，把五个价原样重发一遍，
+    ///     服务端当成人工改价，把上游抓来的价贴上「人刚填的」标签，观测时间也刷成现在。
+    /// 最大输出 token 是同一个形状：清空发出去是个被 JSON 省掉的字段，
+    /// 服务端分不清它和「这次没动」，「留空表示不限制」于是兑现不了。
+    ///
+    /// 两侧都钉：前端要按初始值比对并发显式清空标志，服务端要认那两个标志。
+    /// </summary>
+    [Fact]
+    public void Console_ModelEditor_DistinguishesClearedFromUntouched()
+    {
+        var drawer = ReadRepoFile("llmgw/web/src/components/ModelPricingDrawer.tsx");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 判据按初始值比对，而不是「有没有填」
+        Assert.Contains("initialPrices", drawer);
+        Assert.Contains("pricingChanged", drawer);
+        Assert.Contains("maxTokensChanged", drawer);
+
+        // 清空走显式标志
+        Assert.Contains("req.clearPricing = true", drawer);
+        Assert.Contains("req.clearMaxTokens = true", drawer);
+
+        // 服务端认这两个标志，且清空是 Unset 而不是写 0
+        Assert.Contains("body.ClearMaxTokens == true", console);
+        Assert.Contains("update.Unset(\"MaxTokens\")", console);
+        Assert.Contains("var clearPricing = body.ClearPricing == true", console);
+    }
+
     [Fact]
     public void Console_GenerationDetails_PrioritizesResultsAndProgressivelyDisclosesAuditFields()
     {

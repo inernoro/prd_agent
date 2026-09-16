@@ -11828,7 +11828,18 @@ app.MapPut("/gw/models/{id}", async (HttpContext http, string id, [FromBody] Upd
         }
     }
 
-    if (body.MaxTokens is int maxTokens)
+    if (body.ClearMaxTokens == true)
+    {
+        // 显式清空：改回「不限制」。没有这一支的话，界面上那句「留空表示不限制」
+        // 兑现不了——清空发出去是个被省略的字段，服务端分不清它和「这次没动」。
+        update = update.Unset("MaxTokens");
+        changes.Add("maxTokens", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableInt("MaxTokens")) },
+            { "to", BsonNull.Value },
+        });
+    }
+    else if (body.MaxTokens is int maxTokens)
     {
         if (maxTokens <= 0)
             return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "最大输出 token 必须大于 0"), jsonOptions, 400);

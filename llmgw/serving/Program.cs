@@ -314,6 +314,25 @@ builder.Services.AddScoped<LiveAsrSessionOrchestrator>();
 // 把「serving 能不能解密」从盲区变成容器日志里一眼可见的 [ServingKeyIntegrity] 行。
 builder.Services.AddHostedService<ServingKeyIntegrityCheck>();
 
+/*
+  生图契约的覆盖表刷新器——serving 这一侧必须也跑一份。
+
+  ImageGenModelAdapterRegistry 是**进程全局**的静态表。serving 自己处理
+  /v1/images/generations 并直接读它，却一直没有这个 Worker：于是控制台里配好的契约
+  在 MAP 进程里生效、在网关进程里完全不生效，而控制台那一屏照样显示「已同步」
+  （它读的是 MAP 写的那行状态）。外部走网关发的生图请求全程用代码内置那 26 条，
+  尺寸和参数翻译都是旧的，没有任何地方会报错——链路只建了一半（形状 2），
+  而且那一半还在替另一半说话（形状 10：静默降级说谎）。
+
+  Worker 因此从 PrdAgent.Api.Services 搬进了 PrdAgent.Infrastructure.LLM，
+  两个进程注册同一个类型，不做第二份实现。
+
+  已知边界：这张表按模型名索引、没有租户维度，Worker 只能按本实例的
+  LlmGateway:InternalTenantId 刷一份。serving 同时服务多个租户时，非内部租户配的契约
+  不会进这张表——那是注册表本身的形状，不是这次接线引入的，已记台账。
+*/
+builder.Services.AddHostedService<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>();
+
 // JSON：PascalCase（PropertyNamingPolicy = null），与既有 DTO 属性名一一对应，
 // MAP 侧 HttpLlmGatewayClient 用相同口径序列化/反序列化。
 builder.Services.ConfigureHttpJsonOptions(o =>

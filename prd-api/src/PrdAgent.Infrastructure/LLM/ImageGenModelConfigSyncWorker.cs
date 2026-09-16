@@ -1,11 +1,13 @@
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.LLM;
 
-namespace PrdAgent.Api.Services;
+namespace PrdAgent.Infrastructure.LLM;
 
 /// <summary>
 /// 把控制台里配的生图模型契约（<c>llmgw_imagegen_model_configs</c>）刷进

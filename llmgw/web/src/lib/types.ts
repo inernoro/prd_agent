@@ -944,6 +944,8 @@ export type UpdateModelRequest = {
   pricePerCall?: number;
   priceCurrency?: 'USD';
   clearPricing?: boolean;
+  /** true 表示清掉最大输出 token 限制（改回不限制）；不能靠传 null，JSON 会把它省掉。 */
+  clearMaxTokens?: boolean;
   syncPoolIds?: string[];
 };
 export type CreateModelRequest = {

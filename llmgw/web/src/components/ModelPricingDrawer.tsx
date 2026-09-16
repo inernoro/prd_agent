@@ -54,28 +54,39 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
     return () => { alive = false; };
   }, [model.id]);
 
-  const hasAnyPriceInput = useMemo(
-    () => [inputPrice, outputPrice, cachedInputPrice, cacheWritePrice, pricePerCall].some((x) => x.trim().length > 0),
-    [inputPrice, outputPrice, cachedInputPrice, cacheWritePrice, pricePerCall],
-  );
+  /*
+    价格的判据是「动没动过」，不是「填没填」。
 
-  // 模型本来就有价、而现在五个输入框全被清空 → 这是「把价格删掉」，不是「没动价格」。
-  //
-  // 判据原先只看「有没有填」：全清空时它判为没动过，保存请求一个价格字段都不发，
-  // 服务端于是原样保留旧价——过期价格在这个抽屉里根本删不掉，而界面看起来保存成功了。
-  // 服务端本来就支持 clearPricing，缺的是前端这一句（predicate-and-wiring-discipline
-  // 形状 1：判据比它该管的范围窄，「清空」这种输入让它给出了相反答案）。
-  const hadPricing = useMemo(
+    这两件事此前被混作一谈，于是同一个 bug 长出两种形态：
+      - 五个框全清空 → 判成「没动过」，一个价格字段都不发，旧价原样留着。
+        过期价格在这个抽屉里根本删不掉，而界面显示保存成功。
+      - 只改名字或备注 → 框里还摆着旧价，判成「动过」，于是把五个价原样重发一遍。
+        服务端当成一次人工改价，把 PriceSource 改写成 admin、PriceObservedAt 刷成现在——
+        一个从上游抓来的价被贴上「人刚填的」标签，而三十天后没人说得清它到底可不可信。
+
+    正确判据只有一个：和进来时的初始值比，变了才发（形状 1：判据比它该管的范围窄，
+    「清空」和「没碰」这两种输入都让它给出了相反答案）。
+  */
+  const initialPrices = useMemo(
     () => [
-      model.inputPricePerMillion,
-      model.outputPricePerMillion,
-      model.cachedInputPricePerMillion,
-      model.cacheWritePricePerMillion,
-      model.pricePerCall,
-    ].some((x) => x != null),
+      numText(model.inputPricePerMillion),
+      numText(model.outputPricePerMillion),
+      numText(model.cachedInputPricePerMillion),
+      numText(model.cacheWritePricePerMillion),
+      numText(model.pricePerCall),
+    ],
     [model],
   );
-  const clearPricing = hadPricing && !hasAnyPriceInput;
+  const currentPrices = [inputPrice, outputPrice, cachedInputPrice, cacheWritePrice, pricePerCall];
+  const pricingChanged = currentPrices.some((x, i) => x.trim() !== initialPrices[i].trim());
+  const hasAnyPriceInput = currentPrices.some((x) => x.trim().length > 0);
+  const clearPricing = pricingChanged && !hasAnyPriceInput;
+
+  // 最大输出 token 同理：清空要发显式标志，否则那个字段被序列化省掉，
+  // 服务端分不清「清空」与「这次没动它」，界面上「留空表示不限制」就兑现不了。
+  const initialMaxTokens = model.maxTokens != null ? String(model.maxTokens) : '';
+  const maxTokensChanged = maxTokens.trim() !== initialMaxTokens.trim();
+  const clearMaxTokens = maxTokensChanged && maxTokens.trim().length === 0;
 
   const staleNotice = model.priceStale && model.priceAgeDays != null
     ? `这份价格已经 ${model.priceAgeDays} 天没复核了`
@@ -86,13 +97,17 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
     setError(null);
     const req: UpdateModelRequest = {
       name: name.trim() || undefined,
-      maxTokens: maxTokens.trim() ? Number(maxTokens) : undefined,
       remark,
       syncPoolIds,
     };
+    if (clearMaxTokens) {
+      req.clearMaxTokens = true;
+    } else if (maxTokensChanged && maxTokens.trim()) {
+      req.maxTokens = Number(maxTokens);
+    }
     if (clearPricing) {
       req.clearPricing = true;
-    } else if (hasAnyPriceInput) {
+    } else if (pricingChanged) {
       req.inputPricePerMillion = optionalNumber(inputPrice);
       req.outputPricePerMillion = optionalNumber(outputPrice);
       req.cachedInputPricePerMillion = optionalNumber(cachedInputPrice);

@@ -1172,6 +1172,14 @@ public sealed class UpdateModelRequest
     public string? PriceCurrency { get; set; }
     /// <summary>true 表示清空这条模型的全部价格字段。</summary>
     public bool? ClearPricing { get; set; }
+    /// <summary>
+    /// true 表示清掉这条模型的最大输出 token 限制（改回「不限制」）。
+    ///
+    /// 为什么不能靠传 null：MaxTokens 本身就是可空的，而 JSON 序列化会把 undefined/null
+    /// 整个省掉，服务端只在收到整数时才更新——于是「清空」与「这次没动它」在线上完全
+    /// 分不开，旧限制永远留着，而界面写着「留空表示不限制」。同 ClearPricing 的处境。
+    /// </summary>
+    public bool? ClearMaxTokens { get; set; }
     /// <summary>保存后要把新价格同步过去的模型池 ID；不在表里的池保留它自己的覆盖价。</summary>
     public List<string>? SyncPoolIds { get; set; }
 }
