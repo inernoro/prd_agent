@@ -1,4 +1,5 @@
 import express from 'express';
+import { describeRestartWait, getRestartWait, resolveRestartStatus } from './services/self-restart-wait.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -3428,17 +3429,27 @@ export function createServer(deps: ServerDeps): express.Express {
       }
       const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
       const lastUpdate = history[0] || null;
-      // 与 branches.ts computeSelfStatusSnapshot 的判定保持一致：重启"已确认" =
-      // 当前进程的启动时刻晚于本次更新的开始时刻（pidStartedAt >= update.ts）。
-      // web-only 更新无需重启 → not_required，不再因 pidStartedAt 恒真而误报 completed。
-      const updateMs = lastUpdate?.ts ? Date.parse(lastUpdate.ts) : Number.NaN;
-      const pidMs = pidStartedAt ? Date.parse(pidStartedAt) : Number.NaN;
-      const restartStatus =
-        lastUpdate?.status === 'success' && lastUpdate.updateMode !== 'web-only'
-          ? (Number.isFinite(pidMs) && Number.isFinite(updateMs) && pidMs >= updateMs ? 'completed' : 'incomplete')
-          : lastUpdate?.status === 'deferred'
-            ? 'pending'
-            : 'not_required';
+      // 判定只在 self-restart-wait.ts 一处：这里是 cdscli 与维护页真正打的那个 /api/self-status，
+      // 以前自己比 pid 与更新时刻，排空等待期间会说 incomplete 而不是 pending，也没有 restartWait
+      // （Codex #1543 P2）。
+      const restartWaitState = getRestartWait();
+      const restartWait = restartWaitState
+        ? {
+            phase: restartWaitState.phase,
+            source: restartWaitState.source,
+            waitedMs: restartWaitState.waitedMs,
+            timeoutMs: restartWaitState.timeoutMs,
+            pendingRuns: restartWaitState.pendingRuns,
+            message: describeRestartWait(restartWaitState),
+          }
+        : null;
+      const restartStatus = resolveRestartStatus({
+        activeSelfUpdate: deps.stateService.getActiveSelfUpdate(),
+        restartWait: restartWaitState,
+        lastSelfUpdate: lastUpdate as { status?: string; updateMode?: string; ts?: string } | null,
+        daemonReadyAt: deps.stateService.getState().daemonReadyAt || null,
+        pidStartedAt,
+      });
 
       res.json({
         currentBranch,
@@ -3455,6 +3466,7 @@ export function createServer(deps: ServerDeps): express.Express {
         runningPid: process.pid,
         pidStartedAt,
         restartStatus,
+        restartWait,
         lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,

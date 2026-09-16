@@ -48,6 +48,10 @@ describe('restartStatus 判定矩阵', () => {
     expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: success, daemonReadyAt: null, pidStartedAt: null })).toBe('incomplete');
   });
 
+  it('deferred（更新已接受、推迟执行）→ pending', () => {
+    expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: { status: 'deferred', updateMode: 'restart', ts: T0 }, daemonReadyAt: null, pidStartedAt: before })).toBe('pending');
+  });
+
   it('web-only 更新 / 失败记录 / 没有记录 → not_required', () => {
     expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: { ...success, updateMode: 'web-only' }, daemonReadyAt: null, pidStartedAt: before })).toBe('not_required');
     expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: { ...success, status: 'failed' }, daemonReadyAt: null, pidStartedAt: before })).toBe('not_required');
@@ -83,10 +87,15 @@ describe('接线守卫', () => {
   const cli = read('../../../.claude/skills/cds/cli/cdscli.py');
   const tab = codeOf(read('../../web/src/pages/cds-settings/tabs/MaintenanceTab.tsx'));
 
-  it('restartStatus 只在 self-restart-wait.ts 判一次：路由里不再自己比 pid 与更新时刻', () => {
+  it('restartStatus 只在 self-restart-wait.ts 判一次：两条 self-status 路由都不再自己比 pid 与更新时刻', () => {
     expect(branches).toContain('resolveRestartStatus({');
     expect(branches).not.toMatch(/confirmedByPid\s*=/);
     expect(branches).toContain('restartWait,');
+    // 普通 GET /api/self-status 在 server.ts，cdscli 与维护页打的是它（Codex #1543 P2）
+    const server = codeOf(read('../../src/server.ts'));
+    expect(server).toContain('resolveRestartStatus({');
+    expect(server).toContain('restartWait,');
+    expect(server).not.toMatch(/pidMs >= updateMs \? 'completed' : 'incomplete'/);
   });
 
   it('三条重启路由都把排空进度接到了 SSE（自更新 / 仅重启 / 强制同步）', () => {

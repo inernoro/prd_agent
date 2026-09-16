@@ -5878,7 +5878,13 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * 很具体——要先定「发给哪个 MAP 账号、用哪个 MAP 实例」两件只有人能定的事，
    * 于是铃一直没接。Bark key 是一个人当场就能粘进来的东西，这条路不等任何决定。
    */
-  const alarmLedger = new AlarmLedger();
+  const alarmLedger = new AlarmLedger({
+    // 最近一次投递结果写回通道配置：进程重启后台账清空，已验证过的通道不该退回「未知」。
+    persist: (channelId, last) => {
+      const channel = stateService.listAlarmChannels().find((c) => c.id === channelId);
+      if (channel) stateService.upsertAlarmChannel({ ...channel, lastDelivery: last });
+    },
+  });
   const alarmBoardUrl = (): string | undefined => {
     const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
     // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
@@ -6160,10 +6166,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
       res.status(200).json(doc);
     } catch (err) {
-      // 自检本身炸了也要按协议回：status=fail + 原因。回 500 探测器会记成「端点打不通」，
-      // 那是另一件事（网络），不该和「CDS 自己坏了」混成一个结论。
+      // 自检本身炸了（比如 Mongo 抖一下）回 503，让发现器按「端点打不通」处理——已登记的
+      // 13 条监控保持不动、探测器记一次失败。回 200 + 空 checks 会被发现器读成「这个端点
+      // 一条声明都没有」，把全部自监控当场下线（Codex #1543 P1）。
       res.setHeader('content-type', 'application/health+json; charset=utf-8');
-      res.status(200).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message, checks: {} });
+      res.status(503).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message });
     }
   });
   try {

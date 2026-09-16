@@ -268,11 +268,12 @@ describe('接入 / 通知 / 自身', () => {
     expect(doc.checks['webhook.signature-failures-24h'].status).toBe('pass');
   });
 
-  it('一条通知通道都没通：fail，文案说清「不会有人被通知」', async () => {
+  it('没有一条通道有成功投递记录：fail，文案说清「配了但没发成功过的也不算」并给下一步', async () => {
     const doc = await buildSelfCheck(healthyDeps({ liveAlarmChannels: () => 0 }));
     const c = doc.checks['alarm.live-channels'];
     expect(c).toMatchObject({ observedValue: 0, status: 'fail' });
-    expect(c.output).toContain('不会有人被通知');
+    expect(c.output).toContain('没发成功过的也不算');
+    expect(c.output).toContain('演练一次');
   });
 
   it('前端产物落后于代码：flag 写 1，fail；拿不到自身状态也算 fail', async () => {

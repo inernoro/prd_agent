@@ -87,6 +87,14 @@ export interface AlarmMapConfig {
   privateKey: string;
 }
 
+export interface AlarmLastDelivery {
+  at: number;
+  ok: boolean;
+  kind: 'alert' | 'drill';
+  reason?: string;
+  status?: number;
+}
+
 export interface AlarmChannelConfig {
   id: string;
   /** 给人看的名字：「我的手机」「运维群」。出现在面板与投递记录里。 */
@@ -100,6 +108,11 @@ export interface AlarmChannelConfig {
   bark?: AlarmBarkConfig;
   webhook?: AlarmWebhookConfig;
   map?: AlarmMapConfig;
+  /**
+   * 最近一次投递的结果，随配置持久化。台账在内存里，进程一重启全部通道都退回
+   * 「没发过」；没有这一份，每次自更新之后自检都会把已经验证过的通道当成未知（Codex #1543）。
+   */
+  lastDelivery?: AlarmLastDelivery;
   createdAt: number;
   updatedAt: number;
 }

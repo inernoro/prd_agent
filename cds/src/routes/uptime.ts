@@ -18,7 +18,7 @@
  *   POST   /api/uptime/targets/:id/probe        对任一目标立刻探一次并记入台账
  */
 
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import type { AlarmChannelSnapshot, AlarmChannelStatusView } from '../services/alarm-channel.js';
 
 import type { UptimeCustomMonitor } from '../types.js';
@@ -41,6 +41,7 @@ import {
 } from '../services/uptime-custom-monitor.js';
 import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.js';
 import { isSelfCheckEndpoint } from '../services/self-monitoring-bootstrap.js';
+import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 
 /**
  * 取本次请求的项目作用域：项目级 cdsp_ / 单项目 cdsg_ key 会被 server.ts 的
@@ -210,6 +211,18 @@ export function createUptimeRouter(deps: {
 }): Router {
   const router = Router();
 
+  /**
+   * 通知通道凭据（旧 MAP 通道）与演练：系统级配置，只许管理员会话或全权全局 Key。
+   * 读接口回 MAP 端点、keyId、用户名与私钥指纹；create-only 的全局 Key 被全局网关放行了 GET，
+   * 光拦项目级 Key 拦不住它（Codex #1543 P1，第二轮）。与 alarm-channels 路由同一份判定。
+   */
+  const denySystemAlarmAccess = (req: Request, res: Response): boolean => {
+    const guard = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]);
+    if (!guard) return false;
+    res.status(guard.status).json({ ...guard.body, hint: '通知通道属于 CDS 系统设置，项目级 / 带作用域的 Key 不可读写' });
+    return true;
+  };
+
   const withAlarm = <T extends object>(summary: T): T & { alarm?: AlarmChannelSnapshot; alarmChannels?: AlarmChannelStatusView[] } => {
     const alarm = deps.alarmChannel?.();
     const channels = deps.alarmChannels?.();
@@ -255,11 +268,8 @@ export function createUptimeRouter(deps: {
       res.status(501).json({ error: '这个实例没有接通知通道，演练无从谈起' });
       return;
     }
-    // 项目级 Key 不许借它往外发通知（和监控写接口同一条边界）。
-    if (projectScopeOf(req)) {
-      res.status(403).json({ error: '演练通知只能由管理员发起' });
-      return;
-    }
+    // 只许非作用域管理员借它往外发通知（和通知通道接口同一道门）。
+    if (denySystemAlarmAccess(req, res)) return;
     const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 200) : '';
     const result = await deps.runAlarmDrill(note);
     // 演练失败不是服务器错误，是**一条有用的结论**：铃现在是哑的。
@@ -274,10 +284,7 @@ export function createUptimeRouter(deps: {
    * 一种「看起来只是个设置页」的泄漏面（同 /api/env 2026-05-09 那次 P1.5）。
    */
   router.get('/cds-system/alarm-notify', (req, res) => {
-    if (projectScopeOf(req)) {
-      res.status(403).json({ error: '通知通道属于 CDS 系统设置，项目级 Key 不可读写' });
-      return;
-    }
+    if (denySystemAlarmAccess(req, res)) return;
     if (!deps.readAlarmNotify) {
       res.status(501).json({ error: '这个实例没有接通知通道配置' });
       return;
@@ -286,10 +293,7 @@ export function createUptimeRouter(deps: {
   });
 
   router.put('/cds-system/alarm-notify', (req, res) => {
-    if (projectScopeOf(req)) {
-      res.status(403).json({ error: '通知通道属于 CDS 系统设置，项目级 Key 不可读写' });
-      return;
-    }
+    if (denySystemAlarmAccess(req, res)) return;
     if (!deps.writeAlarmNotify) {
       res.status(501).json({ error: '这个实例没有接通知通道配置' });
       return;

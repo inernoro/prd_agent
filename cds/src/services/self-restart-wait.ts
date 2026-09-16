@@ -53,6 +53,8 @@ export interface RestartStatusInput {
 export function resolveRestartStatus(input: RestartStatusInput): RestartStatus {
   if (input.activeSelfUpdate || input.restartWait) return 'pending';
   const last = input.lastSelfUpdate;
+  // deferred：更新已接受但推迟执行（等窗口），重启还没轮到——是 pending 不是 not_required。
+  if (last?.status === 'deferred') return 'pending';
   if (!last || last.status !== 'success' || last.updateMode === 'web-only') return 'not_required';
   const updateMs = last.ts ? Date.parse(last.ts) : Number.NaN;
   const readyMs = input.daemonReadyAt ? Date.parse(input.daemonReadyAt) : Number.NaN;

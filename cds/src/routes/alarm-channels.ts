@@ -147,6 +147,8 @@ export function parseChannel(
     id: previous?.id ?? crypto.randomUUID(),
     name, kind, projects, events,
     enabled: body.enabled === undefined ? (previous?.enabled ?? true) : Boolean(body.enabled),
+    // 最近一次投递记录跟着配置走：改名、改事件不该把「验证过」抹掉。
+    ...(previous?.lastDelivery ? { lastDelivery: previous.lastDelivery } : {}),
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
   };

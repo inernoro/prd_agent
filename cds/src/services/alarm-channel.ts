@@ -168,20 +168,30 @@ interface LedgerEntry { delivered: number; failed: number; last?: AlarmDeliveryR
 
 /**
  * 「真的会响」的通道数——自监控与面板都用这一份判定。
- * 只看「配齐了」不够：最近一次投递（真告警或演练）失败的通道，台账已经标成 failing，
- * 自检若还把它算成活的，就是在铃已经哑了的时候报「1 条通道通着」（Codex #1543 P1）。
- * untested（配齐了、从没发过）算活：它没有失败的证据，只是还没被验证过。
+ * 只认 healthy：有一次成功投递的证据才算通着。「配齐了但没发过」不算——它没有失败的
+ * 证据，也没有成功的证据，面板上写的就是「未知」，自检不能替它下「通着」的结论
+ * （Codex #1543 P1，两轮）。最近一次投递失败的更不算。
+ * 为了不让每次进程重启把已验证的通道打回未知，最近一次投递结果随通道配置持久化（见 AlarmLedger）。
  */
 export function countLiveAlarmChannels(
   views: ReadonlyArray<{ enabled: boolean; status: AlarmChannelStatus }>,
   legacy: { status: AlarmChannelStatus } | null | undefined,
 ): number {
-  const alive = (status: AlarmChannelStatus): boolean => status === 'healthy' || status === 'untested';
-  return views.filter((v) => v.enabled && alive(v.status)).length + (legacy && alive(legacy.status) ? 1 : 0);
+  return views.filter((v) => v.enabled && v.status === 'healthy').length + (legacy?.status === 'healthy' ? 1 : 0);
+}
+
+export interface AlarmLedgerOptions {
+  /** 每次记账后把最近一次结果交给外面持久化（写回通道配置），重启不丢。 */
+  persist?: (channelId: string, last: AlarmDeliveryRecord) => void;
 }
 
 export class AlarmLedger {
   private readonly byId = new Map<string, LedgerEntry>();
+  private readonly persist: AlarmLedgerOptions['persist'];
+
+  constructor(options: AlarmLedgerOptions = {}) {
+    this.persist = options.persist;
+  }
 
   record(channelId: string, result: { ok: boolean; status?: number; reason?: string }, kind: 'alert' | 'drill', now: number): void {
     const entry = this.byId.get(channelId) ?? { delivered: 0, failed: 0 };
@@ -195,6 +205,11 @@ export class AlarmLedger {
       ...(result.reason === undefined ? {} : { reason: result.reason }),
     };
     this.byId.set(channelId, entry);
+    try {
+      this.persist?.(channelId, entry.last);
+    } catch (err) {
+      console.warn(`[alarm-ledger] 持久化最近一次投递失败（不影响本次记账）: ${(err as Error).message}`);
+    }
   }
 
   forget(channelId: string): void {
@@ -204,13 +219,16 @@ export class AlarmLedger {
   view(channel: {
     id: string; name: string; kind: string; enabled: boolean;
     events: ReadonlyArray<string>; projects: ReadonlyArray<string>;
+    lastDelivery?: AlarmDeliveryRecord;
   }, configured: boolean): AlarmChannelStatusView {
     const entry = this.byId.get(channel.id);
+    // 内存里没有（刚重启）就用配置里持久化的那一条：已验证过的通道不因重启退回「未知」。
+    const last = entry?.last ?? channel.lastDelivery;
     const status: AlarmChannelStatus = !configured
       ? 'unconfigured'
-      : entry?.last === undefined
+      : last === undefined
         ? 'untested'
-        : entry.last.ok ? 'healthy' : 'failing';
+        : last.ok ? 'healthy' : 'failing';
     return {
       id: channel.id,
       name: channel.name,
@@ -218,7 +236,7 @@ export class AlarmLedger {
       status,
       delivered: entry?.delivered ?? 0,
       failed: entry?.failed ?? 0,
-      ...(entry?.last ? { last: entry.last } : {}),
+      ...(last ? { last } : {}),
       events: [...channel.events],
       projects: [...channel.projects],
       enabled: channel.enabled,

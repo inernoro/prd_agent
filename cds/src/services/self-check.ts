@@ -364,7 +364,9 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       componentId: 'alarm.live-channels', componentType: 'alarm',
       observedValue: live, observedUnit: 'count',
       status: live >= 1 ? 'pass' : 'fail',
-      output: live >= 1 ? `${live} 条通知通道通着` : '一条通知通道都没通 —— 现在出问题不会有人被通知（搬到新机器后通道不会跟着来）',
+      output: live >= 1
+        ? `${live} 条通知通道有成功投递的记录`
+        : '没有一条通知通道有成功投递的记录 —— 配了但从没发成功过的也不算；现在出问题不确定有没有人会被通知（去演练一次，成功一次就算通）',
     },
     { name: 'CDS · 通知通道', op: 'gte', value: 1, failuresToAlarm: 1, severity: 'P1' },
     time,
