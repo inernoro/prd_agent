@@ -396,7 +396,12 @@ public static class GatewayHttpEndpoints
 
         // 单个模型。OpenAI SDK 的 client.models.retrieve(id) 走这里；
         // 名单外一律 404，这就是白名单那道门在对外接口上的样子。
-        app.MapGet("/v1/models/{modelId}", async (
+        //
+        // 路由参数是 catch-all（`{**modelId}`）而不是单段：对外模型的 PublicId 明确允许
+        // 斜杠（创建端点的字符集里有 `/`，`/v1/models` 也会把 `vendor/model` 这样的标识
+        // 列出去）。单段路由接不住它——字面斜杠会被当成另一个路径段直接 404，
+        // 于是清单里列得出来的模型有一部分取不回来，而对方没有任何办法看出是为什么。
+        app.MapGet("/v1/models/{**modelId}", async (
             HttpContext http,
             string modelId,
             [Microsoft.AspNetCore.Mvc.FromServices] LlmGatewayDataContext data,
@@ -407,12 +412,15 @@ public static class GatewayHttpEndpoints
                 GetVerifiedTenantId(http),
                 ResolveVerifiedAppCaller(http, string.Empty) is { Length: > 0 } code ? code : null,
                 ct);
+            // 两种写法都要认：字面斜杠由 catch-all 接住，而百分号编码的斜杠不会被
+            // Kestrel 当作分段，原样落到这里——两条路都是合法客户端会发出来的。
+            var requestedId = modelId.Contains('%') ? Uri.UnescapeDataString(modelId) : modelId;
             var match = catalog["data"]?.AsArray()
-                .FirstOrDefault(x => string.Equals(x?["id"]?.GetValue<string>(), modelId, StringComparison.OrdinalIgnoreCase));
+                .FirstOrDefault(x => string.Equals(x?["id"]?.GetValue<string>(), requestedId, StringComparison.OrdinalIgnoreCase));
             if (match is null)
             {
                 return Results.Content(
-                    GatewayModelCatalogEndpoint.Serialize(GatewayModelCatalogEndpoint.BuildNotFound(modelId), jsonOpts),
+                    GatewayModelCatalogEndpoint.Serialize(GatewayModelCatalogEndpoint.BuildNotFound(requestedId), jsonOpts),
                     "application/json; charset=utf-8",
                     statusCode: 404);
             }

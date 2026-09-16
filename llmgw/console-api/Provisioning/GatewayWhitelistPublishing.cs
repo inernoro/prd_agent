@@ -62,7 +62,14 @@ public static class GatewayWhitelistPublishing
         if (codes.Contains("rerank")) return "rerank";
         if (codes.Contains("asr")) return "asr";
         if (codes.Contains("tts")) return "tts";
-        if (codes.Contains("vision")) return "vision";
+        // vision 与 chat 同时声明时判 chat（多模态对话模型的常态，gpt-4o 就是）。
+        //
+        // 上面那句「宁可窄不可宽」对生图成立——入参完全不同，打错端点就是硬失败。
+        // 对 vision 不成立：带图对话走的就是 /v1/chat/completions，入参兼容。
+        // 判成 vision 的后果是它接不了最常用的那类请求：普通文本对话用 ModelTypes.Chat
+        // 解析，而目录查询按 ModelType 精确匹配；又因为 PublicId 跨用途唯一，
+        // 同一个标识没法再补一条 chat 的。一次导入把 gpt-4o 变成一个只能看图的模型。
+        if (codes.Contains("vision") && !codes.Contains("chat")) return "vision";
         // 认不出就按对话：这是唯一一个「猜错也只是少了个可选项」的落点，
         // 而且导入后用户在白名单页能看到并改。
         return "chat";

@@ -222,4 +222,55 @@ public class ImageGenAdapterConfigTests
             _output.WriteLine("  ],");
         }
     }
+
+    /// <summary>
+    /// 声明了「没有尺寸概念」的模型，一个尺寸参数都不该发出去。
+    ///
+    /// 这条守卫针对的是一个不会红的组合：SizesNotApplicable 勾上了，而 SizeParamFormat
+    /// 与 SizeConstraintType 还留着表单默认值（WxH + whitelist），白名单又是空的。
+    /// NormalizeSize 在空白名单上兜底回 1024x1024，ApplySizeParams 照发——
+    /// 界面写着「这个模型没有尺寸选择」，请求里却带着一个尺寸，上游可能直接拒掉。
+    ///
+    /// 三种参数格式各验一遍：短路必须在 switch 之前，而不是某一支里。
+    /// </summary>
+    [Theory]
+    [InlineData(SizeParamFormats.WxH)]
+    [InlineData(SizeParamFormats.WidthHeight)]
+    [InlineData(SizeParamFormats.AspectRatio)]
+    public void 没有尺寸概念的模型不发任何尺寸参数(string format)
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "no-size-model",
+            SizesNotApplicable = true,
+            SizeParamFormat = format,
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            RequiresResolutionParam = true,
+        };
+
+        var sizeResult = ImageGenModelAdapterRegistry.NormalizeSize(config, "1024x1024");
+        var target = new Dictionary<string, object>();
+        ImageGenModelAdapterRegistry.ApplySizeParams(config, sizeResult, target);
+
+        Assert.Empty(target);
+    }
+
+    /// <summary>反面：没勾 SizesNotApplicable 的照常发，证明上面那条拦的是标记不是别的。</summary>
+    [Fact]
+    public void 普通模型照常发尺寸参数()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "normal-model",
+            SizesNotApplicable = false,
+            SizeParamFormat = SizeParamFormats.WxH,
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+        };
+
+        var sizeResult = ImageGenModelAdapterRegistry.NormalizeSize(config, "1024x1024");
+        var target = new Dictionary<string, object>();
+        ImageGenModelAdapterRegistry.ApplySizeParams(config, sizeResult, target);
+
+        Assert.True(target.ContainsKey("size"));
+    }
 }

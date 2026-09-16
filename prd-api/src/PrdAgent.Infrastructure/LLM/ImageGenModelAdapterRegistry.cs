@@ -319,6 +319,22 @@ public static class ImageGenModelAdapterRegistry
         SizeAdaptationResult sizeResult,
         Dictionary<string, object> targetParams)
     {
+        // 声明了「这个模型没有尺寸概念」就一个尺寸参数都不发。
+        //
+        // 短路放在这里而不是写入侧：SizesNotApplicable 与 SizeParamFormat / SizeConstraintType
+        // 是三个独立字段，写入侧要拦就得穷举它们的组合，漏一种就又回到「界面说没有尺寸、
+        // 实际发了 1024x1024」——而那个值还是 NormalizeSize 在白名单为空时兜出来的默认值，
+        // 上游可能直接拒掉（形状 3：同一个不变量散在多处各自判，不如收在唯一的出口）。
+        if (config.SizesNotApplicable)
+        {
+            targetParams.Remove("size");
+            targetParams.Remove("width");
+            targetParams.Remove("height");
+            targetParams.Remove("aspect_ratio");
+            targetParams.Remove("resolution");
+            return;
+        }
+
         switch (config.SizeParamFormat)
         {
             case SizeParamFormats.WxH:

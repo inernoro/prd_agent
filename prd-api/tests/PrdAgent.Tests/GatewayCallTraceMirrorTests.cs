@@ -269,7 +269,7 @@ public sealed class GatewayCallTraceMirrorTests
         };
         var text = CallTracePlanner.Conclusion(allQuarantined, weighted: false, id => id);
         Assert.Contains("现在调它会失败", text);
-        Assert.Contains("2 条全被摘掉", text);
+        Assert.Contains("2 条已被摘掉", text);
 
         var mixed = new List<CallTracePlanner.RouteCandidate>
         {
@@ -279,6 +279,29 @@ public sealed class GatewayCallTraceMirrorTests
         var mixedText = CallTracePlanner.Conclusion(mixed, weighted: false, id => id);
         Assert.Contains("1 条被停用", mixedText);
         Assert.Contains("1 条已被摘掉", mixedText);
+
+        // 目标被停用是第三种跳过原因，此前结论整个漏掉了它：两个计数都是 0，
+        // 于是输出「0 条全被停用」——一句病句，还把运维真正要修的那条原因藏了起来。
+        var targetDisabled = new List<CallTracePlanner.RouteCandidate>
+        {
+            Mirror("a", 10, 100, 0, true, false),
+            Mirror("b", 20, 100, 0, true, false),
+        };
+        var targetText = CallTracePlanner.Conclusion(targetDisabled, weighted: false, id => id);
+        Assert.Contains("2 条的上游模型被停用", targetText);
+        Assert.DoesNotContain("0 条", targetText);
+
+        // 三种混在一起时逐项都要出现，不能只报其中两种。
+        var allThree = new List<CallTracePlanner.RouteCandidate>
+        {
+            Mirror("a", 10, 100, 0, false, true),
+            Mirror("b", 20, 100, 0, true, false),
+            Mirror("c", 30, 100, CallTracePlanner.HealthUnavailable, true, true),
+        };
+        var allThreeText = CallTracePlanner.Conclusion(allThree, weighted: false, id => id);
+        Assert.Contains("1 条被停用", allThreeText);
+        Assert.Contains("1 条的上游模型被停用", allThreeText);
+        Assert.Contains("1 条已被摘掉", allThreeText);
     }
 
     /// <summary>一条线路都没有时不许说「会落到」什么——没有根就别长树。</summary>

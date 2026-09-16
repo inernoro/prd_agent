@@ -132,12 +132,30 @@ public static class CallTracePlanner
         var eligible = Eligible(all);
         if (eligible.Count == 0)
         {
-            var quarantined = all.Count(x => SkipReason(x) == SkipQuarantined);
-            var disabled = all.Count(x => SkipReason(x) == SkipDisabled);
-            var why = quarantined > 0 && disabled > 0
-                ? $"{disabled} 条被停用、{quarantined} 条已被摘掉"
-                : quarantined > 0 ? $"{quarantined} 条全被摘掉" : $"{disabled} 条全被停用";
-            return $"现在调它会失败：{all.Count} 条线路{why}。";
+            // 三种跳过原因逐项计数，一种都不能漏。
+            //
+            // 原先只数了「停用」与「摘掉」两种：目标被停用时两个计数都是 0，
+            // else 分支照样输出「0 条全被停用」——一句病句，而且把运维真正要修的那条
+            // 原因（上游模型或平台被停用了）整个藏了起来。
+            // 写成「逐项列出非零的」而不是 if/else 穷举组合，是为了下一种跳过原因加进来时
+            // 不会再漏一次（形状 1：判据只覆盖了想得到的那几种输入）。
+            var reasons = new (string Reason, int Count)[]
+            {
+                (SkipDisabled, all.Count(x => SkipReason(x) == SkipDisabled)),
+                (SkipTargetDisabled, all.Count(x => SkipReason(x) == SkipTargetDisabled)),
+                (SkipQuarantined, all.Count(x => SkipReason(x) == SkipQuarantined)),
+            };
+            var described = reasons
+                .Where(x => x.Count > 0)
+                .Select(x => x.Reason switch
+                {
+                    SkipDisabled => $"{x.Count} 条被停用",
+                    SkipTargetDisabled => $"{x.Count} 条的上游模型被停用",
+                    _ => $"{x.Count} 条已被摘掉",
+                })
+                .ToList();
+            var why = described.Count > 0 ? string.Join("、", described) : $"{all.Count} 条都用不了";
+            return $"现在调它会失败：{all.Count} 条线路里{why}。";
         }
         if (weighted && eligible.Count > 1)
         {

@@ -150,9 +150,15 @@ public static class GatewayModelCatalogEndpoint
             foreach (var route in logicalRoutes)
             {
                 if (route.TargetKind != "model" || !priceByModelId.TryGetValue(route.TargetId, out var model)) continue;
+                // 只有**显式**声明 USD 的才报价。
+                //
+                // 判据原先写成「是字符串且不是 USD 才跳过」——缺币种、null、或存成非字符串的
+                // 那几种全都落进了「报价」这一支，而整个 pricing 段的 label 是写死的 "USD"。
+                // 那些数字实际可能是人民币（记账侧的存量归一就把缺币种当 CNY），
+                // 对方拿去算账差一个数量级（形状 1：判据比它该管的范围窄，「缺失」这种输入
+                // 让它给出了相反答案）。宁可这条线路不报价——缺价是看得见的，报错价不是。
                 var currency = model.GetValue("PriceCurrency", BsonNull.Value);
-                // 非美金的价不当美金报：对方拿去算账会差一个数量级，宁可这条线路不报价。
-                if (currency.IsString && !string.Equals(currency.AsString, "USD", StringComparison.OrdinalIgnoreCase)) continue;
+                if (!currency.IsString || !string.Equals(currency.AsString.Trim(), "USD", StringComparison.OrdinalIgnoreCase)) continue;
 
                 var prompt = ReadDecimal(model, "InputPricePerMillion");
                 var completion = ReadDecimal(model, "OutputPricePerMillion");

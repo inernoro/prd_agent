@@ -63,6 +63,14 @@ public class GatewayWhitelistPublishingTests
         // 认不出落到 chat：这是唯一一个猜错也只是少个可选项的落点
         Assert.Equal("chat", GatewayWhitelistPublishing.ResolveModelType(new[] { "wat" }));
         Assert.Equal("chat", GatewayWhitelistPublishing.ResolveModelType(System.Array.Empty<string>()));
+
+        // 但 vision 是例外：带图对话走的就是 /v1/chat/completions，入参兼容，
+        // 判成 vision 只会让它接不了最常用的那类请求（gpt-4o 正是 chat+vision）。
+        // 而 PublicId 跨用途唯一，同一个标识补不出第二条 chat 的。
+        Assert.Equal("chat", GatewayWhitelistPublishing.ResolveModelType(new[] { "chat", "vision" }));
+        Assert.Equal("vision", GatewayWhitelistPublishing.ResolveModelType(new[] { "vision" }));
+        // 生图那条仍然压过一切：它的入参真的不兼容。
+        Assert.Equal("generation", GatewayWhitelistPublishing.ResolveModelType(new[] { "chat", "vision", "image_generation" }));
     }
 
     [Fact]
@@ -70,7 +78,12 @@ public class GatewayWhitelistPublishingTests
     {
         // 接线：建了没人调等于没做
         Assert.Contains("app.MapGet(\"/v1/models\"", Serving);
-        Assert.Contains("app.MapGet(\"/v1/models/{modelId}\"", Serving);
+        // catch-all 而不是单段：PublicId 允许斜杠（创建端点的字符集里有 `/`，
+        // 清单也会把 vendor/model 这样的标识列出去），单段路由接不住它——
+        // 字面斜杠会被当成另一个路径段直接 404，清单里列得出来的模型有一部分取不回来。
+        Assert.Contains("app.MapGet(\"/v1/models/{**modelId}\"", Serving);
+        // 百分号编码的斜杠不会被 Kestrel 当分段，原样落到处理函数，也要认。
+        Assert.Contains("Uri.UnescapeDataString(modelId)", Serving);
         Assert.Contains("GatewayModelCatalogEndpoint.BuildAsync", Serving);
 
         // 列清单同样要凭 key：白名单本身就是授权面，匿名可读等于白送
@@ -106,8 +119,12 @@ public class GatewayWhitelistPublishingTests
         // 不折算成一个统一价：走官网和走中转单价不同，取平均会让对方算出来的账对不上
         Assert.Contains("[\"routes\"] = pricedRoutes", Catalog);
         Assert.Contains("[\"currency\"] = \"USD\"", Catalog);
-        // 非美金的价整条跳过，不按美金报——差一个数量级
-        Assert.Contains("!string.Equals(currency.AsString, \"USD\", StringComparison.OrdinalIgnoreCase)", Catalog);
+        // 只有**显式** USD 才报价。判据原先写成「是字符串且不是 USD 才跳过」，
+        // 于是缺币种、null、存成非字符串的那几种全都落进了报价这一支，
+        // 而 pricing 段的 label 是写死的 USD——那些数字实际可能是人民币，
+        // 对方拿去算账差一个数量级。缺价是看得见的，报错价不是。
+        Assert.Contains("!currency.IsString", Catalog);
+        Assert.Contains("!string.Equals(currency.AsString.Trim(), \"USD\", StringComparison.OrdinalIgnoreCase)", Catalog);
         // 一条都算不出价时写 null 而不是省略：省略读起来像免费
         Assert.Contains("pricedRoutes.Count == 0\n                ? null", Catalog.Replace("\r\n", "\n"));
         // 授权范围非空时必须点名命中，且没带 appCaller 只回不限授权的那部分
