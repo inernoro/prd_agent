@@ -423,6 +423,7 @@ public static class DataSyncScope
         ["model_lab_experiments"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["model_lab_run_items"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["model_lab_runs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
+        ["model_leaderboard_snapshots"] = "外站公开数据的本地缓存：arena.ai 榜单每天重抓一次，搬过去的当天就会被目标站自己的同步覆盖，且带着源站抓取时间会让人误以为是目标站抓的",
         ["model_test_stubs"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["open_api_request_logs"] = "日志与埋点：量大且只对源站有意义",
         ["openplatformapps"] = "凭据/票据/分享令牌：跨实例复制等于复制访问权",

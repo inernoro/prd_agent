@@ -39,6 +39,9 @@ public class MongoDbContext
     /// <summary>本站作为「目标站」执行的跨实例同步记录</summary>
     public IMongoCollection<DataSyncRun> DataSyncRuns =>
         _database.GetCollection<DataSyncRun>("data_sync_runs");
+    /// <summary>模型排行榜快照，一个榜单一条文档，由 ModelLeaderboardSyncWorker 每天覆盖写</summary>
+    public IMongoCollection<ModelLeaderboardSnapshot> ModelLeaderboardSnapshots =>
+        _database.GetCollection<ModelLeaderboardSnapshot>("model_leaderboard_snapshots");
     public IMongoCollection<Group> Groups => _database.GetCollection<Group>("groups");
     public IMongoCollection<GroupMember> GroupMembers => _database.GetCollection<GroupMember>("groupmembers");
     // PRD 文档长期存储（原文 + 解析结构）
