@@ -4,7 +4,7 @@ import { BeatNarration, SceneIcon, SceneMono } from './SceneFrame';
 import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline, useTypewriter } from './useSceneTimeline';
 import { useLanguage } from '../contexts/LanguageContext';
-import { useLandingAsset } from '../hooks/useLandingAssets';
+import { useImageryAsset } from '@/hooks/useImagery';
 import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 
 /**
@@ -677,7 +677,7 @@ const CURSOR_AT: Record<number, CursorSpot> = {
 
 /** 对话里「已落在画布」那枚缩略片：直接引用雾天那张真图。 */
 function LandedThumb() {
-  const photo = useLandingAsset('landing.visual.fog');
+  const photo = useImageryAsset('landing.visual.fog');
   return (
     <span
       className="shrink-0 overflow-hidden block"
@@ -705,7 +705,7 @@ function LandedThumb() {
  */
 function CanvasArt({ id, slot, hue, fog }: { id: string; slot: string; hue: number; fog: boolean }) {
   const gid = `mapCanvasArt-${id}`;
-  const photo = useLandingAsset(slot);
+  const photo = useImageryAsset(slot);
   if (photo) {
     return (
       <img

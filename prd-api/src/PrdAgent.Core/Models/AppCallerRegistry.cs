@@ -113,6 +113,22 @@ public static class Desktop
 }
 
 /// <summary>
+/// 公共藏书阁。刻意不放进 Desktop —— 它是 Web 侧的功能，
+/// 上一版顺手插在 Skill 后面就成了 Desktop 的嵌套类，编译直接报
+/// 「AppCallerRegistry 不含 Bookshelf」。
+/// </summary>
+public static class Bookshelf
+{
+    [AppCallerMetadata(
+        "公共藏书阁-精读稿",
+        "给书单里的一本书生成精读稿：核心论点、怎么用在我们身上、我们在哪条规则上栽过",
+        ModelTypes = new[] { ModelTypes.Chat },
+        Category = "Bookshelf"
+    )]
+    public const string Digest = "prd-agent.bookshelf.digest::chat";
+}
+
+/// <summary>
 /// 产品管理智能体
 /// </summary>
 public static class Product

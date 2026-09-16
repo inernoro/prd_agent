@@ -165,6 +165,8 @@ interface SelfStatusResponse {
   runningPid?: number;
   pidStartedAt?: string | null;
   restartStatus?: 'not_required' | 'pending' | 'completed' | 'incomplete';
+  /** 重启前的等待：在等哪几个部署、等了多久。不在等时为 null。 */
+  restartWait?: { phase: string; message: string; waitedMs: number; timeoutMs: number; pendingRuns: string[] } | null;
   lastSelfUpdate: SelfUpdateRecord | null;
   selfUpdateHistory: SelfUpdateRecord[];
 }
@@ -720,6 +722,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       runningPid: snap.runningPid,
       pidStartedAt: snap.pidStartedAt ?? null,
       restartStatus: snap.restartStatus,
+      restartWait: (snap.restartWait ?? null) as SelfStatusResponse['restartWait'],
       lastSelfUpdate: (snap.lastSelfUpdate ?? null) as SelfUpdateRecord | null,
       selfUpdateHistory: (snap.selfUpdateHistory ?? []) as SelfUpdateRecord[],
     };
@@ -1578,6 +1581,16 @@ function SelfUpdateStatusPanel({
             那条 chip 只是小字「重启未确认」，用户根本不会当回事。
             2026-07-30 真实发生：强制同步换完产物没重启，生产半吊子跑了几分钟。
             所以这里给整条横幅 + 一键重启，而不是让人自己去猜下一步。 */}
+        {/* 「更新成功但还没重启」以前是一段完全不可见的等待（最多 5 分钟等在途部署排空），
+            人只看到 chip 上一句「重启未确认」，于是去手动再重启一次，结果排的是同一道闸。
+            2026-09-16 两次自更新都是这样。现在把它摆成一条横幅：在等谁、等了多久、最多等多久。 */}
+        {data.restartStatus === 'pending' && data.restartWait ? (
+          <div className="mt-2 flex w-full flex-wrap items-center gap-3 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs text-warn" data-restart-wait-phase={data.restartWait.phase}>
+            <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" />
+            <span className="min-w-0 flex-1">{data.restartWait.message}</span>
+          </div>
+        ) : null}
+
         {data.restartStatus === 'incomplete' ? (
           <div className="mt-2 flex w-full flex-wrap items-center gap-3 rounded-md border border-bad/40 bg-bad-soft px-3 py-2 text-xs text-bad">
             <span className="min-w-0 flex-1">

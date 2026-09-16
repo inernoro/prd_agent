@@ -45,7 +45,8 @@
 | `severity` | 否 | `P0` / `P1`（默认） / `P2` |
 | `observeMode` | 否 | `active`（默认）自己发一次真请求；`passive` 读真实流量的窗口统计 |
 | `sampleComponentId` | `passive` 时必填 | 样本量取哪条 check 的 `observedValue` |
-| `publicVisible` / `publicName` | 否 | 是否上公开状态页、对外叫什么 |
+| `environment` | 否 | 自称属于哪个环境：`production` / `staging` / `other`。**不许写 `preview`** —— 分支预览是 CDS 按地址推出来的事实，不需要也不该由服务自称 |
+| `publicVisible` / `publicName` | 否 | 是否上公开状态页、对外叫什么。默认 `false`，公开必须是端点显式说的 |
 
 判据刻意是**结构化三元组**而不是一句可解析的表达式：自由文本判据一旦开口，下一轮就会被要求加同义词和嵌套语法。
 
@@ -60,11 +61,30 @@
       "name": "网关 serving 近期未处理异常数",
       "op": "eq", "value": 0,
       "intervalSeconds": 21600, "failuresToAlarm": 1, "severity": "P0",
-      "observeMode": "passive", "sampleComponentId": "serving.requests"
+      "observeMode": "passive", "sampleComponentId": "serving.requests",
+      "environment": "production", "publicVisible": true, "publicName": "AI 网关"
     }
   }]
 }
 ```
+
+### `environment` 是一句自称，不是事实
+
+服务说自己是 `production`，CDS 不一定采信：**地址指着一条分支预览的监控，
+无论它自称什么都算分支预览**。结构性证据压过声明，否则一条临时分支的自检端点
+只要写上 `production`，就能混进项目负责人的第一屏。
+
+所以这个字段只在拿不到结构性证据时才生效；写坏了（不在三个枚举里、或写了
+`preview`）**整条拒掉**，不落默认值——默认成 `production` 会把一条写错的声明
+直接推上第一屏，默认成 `other` 又会让它从该在的那一格里消失，两种都比拒掉糟。
+
+### `publicVisible` 的授权方向
+
+公开与否由**端点**说了算，不是 CDS 替它决定，也不是管理员在面板上勾一下就改得动——
+自发现监控由端点维护，人在面板上改完，下一轮对账会按端点的声明覆盖回去。
+要让一条上公开页，就在它自己的 `cds:monitor` 里写 `publicVisible: true`。
+
+只有严格 `true` 才算：`"true"` 这种字符串不算，免得一个手滑把内部判据推上对外页。
 
 ---
 
@@ -88,6 +108,33 @@
 ### 三、一条写坏不连累其它条，也不许拿默认值蒙混
 
 非法声明**跳过并记下原因**，摆在监控中心上给人看。既不整份作废（其余条目本来是好的），也不落默认值——那会把一条写坏的声明变成一条永远绿的假判据，比没有更糟。静默跳过同样不行：那条监控凭空消失，没人会发现。
+
+---
+
+## CDS 自己也吃这份协议（2026-09-16）
+
+用户：「先加上自己的吧，以代码初始化的方式来驱动，方便 CDS 迁移部署在其他服务器上。」
+
+CDS 暴露 `GET /api/self-check`，每条 check 自带 `cds:monitor`；启动时把它插进一个 id 固定的
+内置项目「CDS 自身」，地址走本机回环。于是：
+
+- **搬到哪台机器都一样**：不依赖域名、不依赖任何人手配；项目被删了下次启动会回来；
+  内置端点在面板上标「内置 · CDS 自身」，拔不掉（接口 400）。
+- **分类按用户在意什么**，不按内部模块：部署（卡住、失败率）、构建（排队、最久等待）、
+  页面（首屏最重接口 P95、5xx 比例）、探测器（上一轮距今）、接入（webhook 签名 / 派发）、
+  宿主（磁盘、Docker）、通知（还有没有通道通着）、自身（前端产物是否落后于代码）。
+- **量不到就说量不到**：磁盘读不到写 null、Docker 打不通写哨兵值、探测器一轮没跑写哨兵值；
+  三处任何一处缺省成 0 都会被读成「一切正常」。页面三条是被动观测，半夜没人访问显示
+  「没人用过」而不是「一切正常」。
+
+**它不是公开端点**（用户 2026-09-16：「免登录不行，泄漏数据」）。它不走登录门，但只认
+「本机回环 + 本进程内存里的一次性令牌」两个条件同时成立：令牌进程起来时随机生成，不落盘、
+不进日志、不进任何接口，探测器与发现器在同一个进程里打它时自动带上，而且只对自检端点
+自己的地址带——外部地址一律不带，内部令牌带出去就是泄漏。从外面打，无论走不走 nginx，
+一律 401，文档一个字都不吐。
+
+协议一致性不靠扫源码：守卫把自检文档喂给真解析器，断言 13 条全收零拒收。
+这是「协议作者自己吃得下自己协议」的唯一证据（守卫位置见文末「实现来源」）。
 
 ---
 
@@ -126,4 +173,7 @@
 - `cds/src/services/monitor-discovery.ts` —— 解析（判据在这）
 - `cds/src/services/monitor-reconcile.ts` —— 对账（命门二在这）
 - `cds/src/services/monitor-discovery-runner.ts` —— 什么时候跑、打完写哪
+- `cds/src/services/self-check.ts` / `self-monitoring-bootstrap.ts` —— CDS 监控自己：自检文档与启动引导
+- `cds/src/services/self-check-auth.ts` —— 自检端点的令牌门：只发给自己、只认回环
+- `cds/tests/services/self-check.test.ts` —— CDS 自检文档喂真解析器的一致性守卫
 - `scripts/tests/test_monitor_discovery_contract.py` —— 跨语言契约自检

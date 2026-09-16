@@ -16,6 +16,7 @@
  */
 
 import net from 'node:net';
+import { internalProbeHeaders } from './self-check-auth.js';
 import type { MonitorObservation, UptimeCustomMonitor, UptimeCustomMonitorKind } from '../types.js';
 import { normalizeMonitorEnvironment, type MonitorEnvironment } from './monitor-environment.js';
 import {
@@ -778,10 +779,12 @@ async function functionalProbe(
       signal: ctrl.signal,
       redirect: 'manual',
       // 与其它自定义探测同款：绝不把探测令牌发给外部地址，只带公开的 polling 分类头。
+      // internalProbeHeaders 只对 CDS 自己的自检地址返回令牌，外部地址返回空。
       headers: {
         'user-agent': 'cds-uptime-monitor',
         'x-cds-poll': 'true',
         ...(requestBody ? { 'content-type': 'application/json' } : {}),
+        ...internalProbeHeaders(monitor.url || ''),
       },
       ...(requestBody && method !== 'GET' ? { body: requestBody } : {}),
     });
@@ -881,7 +884,7 @@ async function httpProbe(
       redirect: 'manual',
       // 自定义目标是任意外部地址，探测令牌绝不能发出去（会被对端记下并回放到预览
       // 域名上豁免 LRU）；只带公开的 polling 分类头。
-      headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true' },
+      headers: { 'user-agent': 'cds-uptime-monitor', 'x-cds-poll': 'true', ...internalProbeHeaders(monitor.url || '') },
     });
     const code = res.status;
     if (!statusMatches(code, monitor.expectedStatus)) {
