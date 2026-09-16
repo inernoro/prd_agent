@@ -318,11 +318,8 @@ public class ActiveTaskDebtsTests
         Assert.False(ActiveTaskDebtsController.OwnedBySomeoneElse(没人管的, "我"));
         Assert.Contains("甲", ActiveTaskDebtsController.TakenByMessage(别人的));
 
-        // 接线：两个会改写归属的入口都必须过这道门，少一个就是又开了一条绕行路
-        var src = File.ReadAllText(Path.Combine(
-            LocateRepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api",
-            "ActiveTaskDebtsController.cs"));
-        var 过门次数 = src.Split("OwnedBySomeoneElse(debt, me)").Length - 1;
-        Assert.Equal(2, 过门次数);
+        // 接线不在这里数个数了 —— 数字写死的判据，每加一个入口都得回来改一次数，
+        // 而它红的时候看不出是「漏了一个入口」还是「又对了一个入口」。
+        // 改由「了结一条也要过归属门」按端点名逐个查，加入口不用动判据。
     }
 }
