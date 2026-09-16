@@ -824,6 +824,16 @@ select.atb-input { cursor: pointer; }
 
   /* 底部 TabBar 会压住列表最后一行（实测「实现网页托管能提问并产生内容」被盖住）*/
   .atb-shell { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+
+  /*
+   * 光有 padding 只救了「手动滚到底」。浏览器自己发起的滚动（聚焦某个输入框、
+   * scrollIntoView、锚点跳转）对齐的是滚动口底边，不认那 96px，于是目标行正好停在
+   * TabBar 底下 —— 2026-09-16 验收实测：滚动容器停在 3043/3139，末行底边 664 贴着
+   * 视口底，而 TabBar 顶边在 608，压掉 56px。scroll-margin 是专门告诉浏览器
+   * 「滚到这个元素时下面要留多少」的那个属性。
+   */
+  .atb-row,
+  .atb-done-row { scroll-margin-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
 }
 
 /* 详情浮层里的那一排操作：手机端是唯一入口，桌面端是行尾按钮的等价路径 */
