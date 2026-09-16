@@ -23,12 +23,17 @@ const BOOKSHELF_STORE = path.join(REPO, 'src/stores/bookshelfStore.ts');
 describe('per-user 持久化数据的登出清理', () => {
   const auth = fs.readFileSync(AUTH_STORE, 'utf-8');
 
-  it('authStore 的 logout 里调了 clearUserScopedStorage', () => {
-    const logoutAt = auth.indexOf('logout: () => {');
-    expect(logoutAt, '找不到 logout，守卫判据已过期，请修守卫').toBeGreaterThan(-1);
+  it('清 per-user 持久化数据的那段真的会在换人时跑到', () => {
+    /*
+     * 断言的是**行为**不是某个调用点：logout 早先直接调 clearUserScopedStorage()，
+     * 后来收敛成共用的 runUserScopedCleanup()，写死调用点的判据会在重构时假红。
+     * 这里只要求「共用函数里清了盘，且 logout 走了它」。
+     */
+    const fnAt = auth.indexOf('function runUserScopedCleanup()');
+    expect(fnAt, '找不到 runUserScopedCleanup，守卫判据已过期，请修守卫').toBeGreaterThan(-1);
     expect(
-      auth.slice(logoutAt).includes('clearUserScopedStorage()'),
-      'logout 没有清 per-user 持久化数据：懒加载 store 没被求值时，上一个人的数据会留在盘上',
+      auth.slice(fnAt, fnAt + 1600).includes('clearUserScopedStorage()'),
+      '共用清理里没有清盘：懒加载 store 没被求值时，上一个人的数据会留在盘上',
     ).toBe(true);
   });
 
@@ -46,5 +51,45 @@ describe('per-user 持久化数据的登出清理', () => {
       'bookshelfStore 自己手写了 persist name：清单与实际键一漂移，登出就清不掉了（形状 3）',
     ).toBe(true);
     expect(USER_SCOPED_STORAGE_KEYS).toContain('bookshelf-progress');
+  });
+});
+
+/**
+ * 守卫：换号（不经过 logout）也要清。
+ *
+ * 跨账号串数据在这个 PR 里前后修了四次，每次都是「又发现一条没覆盖到的路径」：
+ * 登出没清 → 在途保存没作废 → 在途拉取没作废 → 清理代码挂在懒加载模块上 →
+ * 最后是这条：`/synthetic-login` 直接调 login() 换掉当前用户，根本不经过 logout。
+ *
+ * 所以判据不再是「logout 里有没有清」，而是**换人这件事有没有唯一的咽喉**。
+ */
+describe('换号路径的清理', () => {
+  const auth = fs.readFileSync(AUTH_STORE, 'utf-8');
+
+  it('清理逻辑收敛成一个函数，登出与换号共用', () => {
+    expect(
+      /function runUserScopedCleanup\(\)/.test(auth),
+      '清理没有收成唯一入口：每条换人路径各写一份，必然又漏一条',
+    ).toBe(true);
+  });
+
+  it('login 在用户变化时调用它', () => {
+    const at = auth.indexOf('login: (user, token)');
+    expect(at, '找不到 login，守卫判据已过期').toBeGreaterThan(-1);
+    const body = auth.slice(at, at + 420);
+    expect(
+      body.includes('runUserScopedCleanup()'),
+      'login 换掉另一个人时不清理：synthetic-login 这类不经过 logout 的入口会把上一个人的数据留给下一个人',
+    ).toBe(true);
+    expect(
+      body.includes('userId'),
+      'login 无条件清理会把同一个人续期时未推送的本地改动也抹掉——必须只在 userId 变化时清',
+    ).toBe(true);
+  });
+
+  it('logout 也走同一个函数', () => {
+    const at = auth.indexOf('logout: () => {');
+    expect(at).toBeGreaterThan(-1);
+    expect(auth.slice(at, at + 300).includes('runUserScopedCleanup()')).toBe(true);
   });
 });
