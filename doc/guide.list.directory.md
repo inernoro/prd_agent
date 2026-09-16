@@ -53,6 +53,7 @@
 - [AI 百宝箱 · 设计](./design.ai-toolbox.md) `design.ai-toolbox`
 - [AI 竞技场 · 设计](./design.arena.md) `design.arena`
 - [赋码采集关联智能体（CCAS Agent） · 设计](./design.ccas-agent.md) `design.ccas-agent`
+- [CDS 验收报告首页的聚合口径 · 设计](./design.cds.acceptance-overview.md) `design.cds.acceptance-overview`
 - [CDS Agent API · 设计](./design.cds.agent.api.md) `design.cds.agent.api`
 - [CDS Agent 商业级架构与路线图 · 设计](./design.cds.agent.commercial-architecture-and-roadmap.md) `design.cds.agent.commercial-architecture-and-roadmap`
 - [CDS Agent 托管运行时事实源设计 · 设计](./design.cds.agent.managed-runtime-fact-source.md) `design.cds.agent.managed-runtime-fact-source`
