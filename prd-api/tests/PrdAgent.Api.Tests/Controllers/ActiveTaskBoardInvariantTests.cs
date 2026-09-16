@@ -140,6 +140,22 @@ public class ActiveTaskBoardInvariantTests
         Assert.True(activate > 0 && sweep > activate, "收尾清扫必须排在激活目标之后");
     }
 
+    [Fact]
+    public void 放下的那条撤销时也要放回原来那一档()
+    {
+        // 放下和结案一样会腾出「正在做」，所以它也得落戳。只给 Finish 落戳的话，
+        // 放下一条正在做的活再撤销，它会被还原成备用，手上那件反而留着 ——
+        // 「撤销等于什么都没发生过」这句承诺在放下那条路上不成立。
+        var src = Controller();
+        var dropAt = src.IndexOf("ActiveTaskState.Dropped", StringComparison.Ordinal);
+        Assert.True(dropAt > 0, "找不到放弃那一段");
+
+        // 放弃那一段里必须既取了 wasActive 也落了戳
+        var dropBlock = src.Substring(Math.Max(dropAt - 900, 0), Math.Min(1400, src.Length - Math.Max(dropAt - 900, 0)));
+        Assert.Contains("ShouldAdvanceQueue(entry.State)", dropBlock, StringComparison.Ordinal);
+        Assert.Contains("Set(x => x.FinishedFromActive, wasActive)", dropBlock, StringComparison.Ordinal);
+    }
+
     private static string Controller() => File.ReadAllText(Path.Combine(
         RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTasksController.cs"));
 

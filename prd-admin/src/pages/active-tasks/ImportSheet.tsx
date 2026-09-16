@@ -65,19 +65,30 @@ export function ImportSheet({ onClose, onCreated }: ImportSheetProps) {
     if (picked.length === 0) { onSplit(); return; }
     setSaving(true);
     let ok = 0;
+    const failed: typeof picked = [];
     // 逐条建，走既有的创建接口，不为导入另造一条批量写入路径
     for (const r of picked) {
       const res = await createActiveTask({ title: r.title.trim(), dueAt: r.dueAt ?? null });
       if (res.success) ok += 1;
+      else failed.push(r);
     }
     setSaving(false);
-    if (ok > 0) {
-      toast.success(`加了 ${ok} 件`);
-      onCreated();
-      onClose();
-    } else {
-      toast.error('一条都没加上');
+
+    // 和 SuggestionsSheet 同一口径：有一条没加上就先别收摊。
+    // 原来只看 ok > 0 就关窗，于是没加上的那几条连同 AI 刚拆出来的结果一起消失，
+    // 用户既没看到失败、也没有重试的路（这段拆解是花了几十秒生成出来的）。
+    if (failed.length > 0) {
+      setRows((p) => p.map((r) => ({ ...r, picked: failed.some((f) => f.key === r.key) })));
+      toast.error(ok > 0
+        ? `加上了 ${ok} 件，还有 ${failed.length} 件没成，留在这儿了，可以再试一次`
+        : '一条都没加上');
+      if (ok > 0) onCreated();
+      return;
     }
+
+    toast.success(`加了 ${ok} 件`);
+    onCreated();
+    onClose();
   }, [streaming, picked, onSplit, onCreated, onClose]);
 
   const hasDrafts = rows.length > 0;

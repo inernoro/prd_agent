@@ -407,11 +407,17 @@ public class ActiveTasksController : ControllerBase
         var entry = await ActiveTaskShared.FindOwnedAsync(_db, id, userId, ct);
         if (entry == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "任务不存在"));
 
+        // 和 Finish 一样要先取、后结算：结算会把 State 改掉，之后再判就永远是 false。
+        // 放下的也能撤销，撤销同样要照它当时那一档还原。
+        var wasActive = ActiveTaskShared.ShouldAdvanceQueue(entry.State);
+
         var now = DateTime.UtcNow;
         await ActiveTaskShared.SettleAndSetStateAsync(_db, entry, ActiveTaskState.Dropped, now, ct);
         await _db.ActiveTaskEntries.UpdateOneAsync(
             x => x.Id == id,
-            Builders<ActiveTaskEntry>.Update.Set(x => x.DropReason, req?.Reason?.Trim()),
+            Builders<ActiveTaskEntry>.Update
+                .Set(x => x.DropReason, req?.Reason?.Trim())
+                .Set(x => x.FinishedFromActive, wasActive),
             cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { id, dropped = true }));

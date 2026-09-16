@@ -284,13 +284,31 @@ public class ActiveTaskDebtsController : ControllerBase
         };
         await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: ct);
 
-        var taskIds = new List<string>(debt.ConvertedTaskIds) { entry.Id };
+        // 用追加而不是整表覆盖：两个人同时转同一条没人认领的债务时，
+        // 各自手上的 ConvertedTaskIds 都是转之前的快照，谁后写谁把对方那条 id 抹掉。
+        // 追加是幂等安全的，$push 由数据库自己合并。
+        //
+        // 归属那一半带条件：只在「还没人认领」或「本来就是我」时才改写。
+        // 前面的 OwnedBySomeoneElse 是顺序执行下的门，挡不住并发窗口里两个人同时进来；
+        // 这个条件让后到者改不动归属，但它转出去的那条活仍然记进 ConvertedTaskIds ——
+        // 活已经建出来了，抹掉链接比归属不对更糟。
         await _db.ActiveTaskDebts.UpdateOneAsync(
             x => x.Id == id,
             Builders<ActiveTaskDebt>.Update
-                .Set(x => x.ConvertedTaskIds, taskIds)
+                .Push(x => x.ConvertedTaskIds, entry.Id)
                 .Set(x => x.State, ActiveTaskDebtState.Converted)
-                // 转的人就是认领的人 —— 动手了还说没人管，那是自欺
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        // 转的人就是认领的人 —— 动手了还说没人管，那是自欺
+        await _db.ActiveTaskDebts.UpdateOneAsync(
+            Builders<ActiveTaskDebt>.Filter.And(
+                Builders<ActiveTaskDebt>.Filter.Eq(x => x.Id, id),
+                Builders<ActiveTaskDebt>.Filter.Or(
+                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, null),
+                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, ""),
+                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, me))),
+            Builders<ActiveTaskDebt>.Update
                 .Set(x => x.OwnerUserId, me)
                 .Set(x => x.OwnerUserName, display)
                 .Set(x => x.UpdatedAt, now),

@@ -36,3 +36,26 @@ describe('两个浮层的确认按钮', () => {
     expect(body.slice(0, 400)).toContain('if (streaming) return;');
   });
 });
+
+/**
+ * 一条没建上就别收摊。
+ *
+ * 事故形状：只看「成了几条 > 0」就关窗，于是没建上的那几条连同 AI 刚拆出来的结果
+ * 一起消失 —— 用户既看不到失败、也没有重试的路，而那段拆解是花了几十秒生成的。
+ * 两个浮层是同一个形状，所以钉在一起：先修了其中一个、另一个漏掉，正是第三轮 review
+ * 又把它捞出来的原因。
+ */
+describe('两个浮层的批量建任务', () => {
+  const read = (f: string) => readFileSync(resolve(__dirname, f), 'utf-8');
+
+  it.each([
+    ['SuggestionsSheet.tsx'],
+    ['ImportSheet.tsx'],
+  ])('%s 有一条没成就把它留在表上，不关窗', (file) => {
+    const src = read(file);
+    const body = src.slice(src.indexOf('const onConfirm'), src.indexOf('const onConfirm') + 1600);
+
+    expect(body, `${file} 没有把失败的那几条收集起来`).toContain('failed');
+    expect(body, `${file} 没有在有失败时提前返回（会继续走到关窗）`).toMatch(/if \(failed\.length > 0\)[\s\S]*?return;/);
+  });
+});

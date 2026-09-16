@@ -156,6 +156,9 @@ export function ActiveTasksPage() {
   const onUndoDone = useCallback(async () => {
     if (!justDone) return;
     const id = justDone.id;
+    // 先撤掉还没落地的那次「做成了什么样」自动保存：用户敲完字 600ms 内点撤销的话，
+    // 那次保存会在 reopen 之后才发出去，把结案说明又写回这条已经回到「正在做」的活上。
+    if (noteTimer.current) { window.clearTimeout(noteTimer.current); noteTimer.current = null; }
     setJustDone(null);
     setNote('');
     await run(() => reopenActiveTask(id));
