@@ -58,6 +58,30 @@ public class BookshelfExamScoringTests
         BookshelfExamScoring.IsBetter(passed, 7, 7, 0).ShouldBeFalse();
     }
 
+    [Fact(DisplayName = "卷子改版后比的是得分率，不是答对数")]
+    public void AcrossRevisions_ComparesRate()
+    {
+        // 旧卷 6 题答对 5 题（83%），新卷 10 题答对 6 题（60%）。
+        // 按答对数算 6 > 5 会把水平更高的那次盖掉——分数涨了，人退步了。
+        var oldBetter = Prev(5, 6, 11);
+        BookshelfExamScoring.IsBetter(oldBetter, 6, 10, 11).ShouldBeFalse(
+            customMessage: "5/6 被 6/10 盖掉了：比的还是答对数");
+
+        // 反过来：新卷 5 题全对（100%）必须盖得过旧卷的 6/10（60%）
+        var oldWorse = Prev(6, 10, 11);
+        BookshelfExamScoring.IsBetter(oldWorse, 5, 5, 11).ShouldBeTrue(
+            customMessage: "满分盖不过一次 60%：比的还是答对数");
+    }
+
+    [Fact(DisplayName = "同一份卷子下，比率与比答对数完全等价")]
+    public void SameRevision_RateIsEquivalentToCount()
+    {
+        var prev = Prev(5, 7, 11);
+        BookshelfExamScoring.IsBetter(prev, 6, 7, 11).ShouldBeTrue();
+        BookshelfExamScoring.IsBetter(prev, 5, 7, 11).ShouldBeFalse();
+        BookshelfExamScoring.IsBetter(prev, 4, 7, 11).ShouldBeFalse();
+    }
+
     [Fact(DisplayName = "及格线是服务端自己算的，六成为界")]
     public void PassRate_IsSixTenths()
     {

@@ -31,10 +31,17 @@ public static class BookshelfExamScoring
     /// <summary>
     /// 这一次成绩要不要盖掉库里那份。
     ///
-    /// 先比「算不算通关」，同档再比正确数。只比正确数会把裸考满分的人锁死：
-    /// 一本没读先摸底考了满分，读完整卷再考一次还是满分，正确数没涨于是这一次被丢弃，
-    /// ReadAtExam 永远停在 0——书读完了、试也考过了，看板上却永远不通关。
-    /// 反过来（已通关的人再裸考一次）不会把记录降级。
+    /// 先比「算不算通关」，同档再比**得分率**。
+    ///
+    /// 为什么先比通关：只比分数会把裸考满分的人锁死——一本没读先摸底考了满分，
+    /// 读完整卷再考一次还是满分，分数没涨于是这一次被丢弃，ReadAtExam 永远停在 0，
+    /// 书读完了、试也考过了，看板上却永远不通关。反过来（已通关的人再裸考一次）
+    /// 不会把记录降级。
+    ///
+    /// 为什么比率不比绝对数：题目是策展内容，改版会增减。拿答对数当分数，
+    /// 一旦某卷从 6 题改到 10 题，存量的 5/6（83%）会被新的 6/10（60%）盖掉——
+    /// 绝对数涨了，水平掉了；而之后的 5/5 满分反而盖不过那个 6/10。
+    /// 同一份卷子下两种写法完全等价（分母相同），所以这是只赚不赔的换法。
     /// </summary>
     public static bool IsBetter(BookshelfExamResult? prev, int correct, int total, int readAtExam)
     {
@@ -42,6 +49,10 @@ public static class BookshelfExamScoring
         var incomingCounts = CountsAsPassed(correct, total, readAtExam);
         var prevCounts = CountsAsPassed(prev.Correct, prev.Total, prev.ReadAtExam);
         if (incomingCounts != prevCounts) return incomingCounts;
-        return correct > prev.Correct;
+        return ScoreRate(correct, total) > ScoreRate(prev.Correct, prev.Total);
     }
+
+    /// <summary>得分率。题数为零（存量脏数据）一律算 0，不让它靠除零冒充高分。</summary>
+    private static double ScoreRate(int correct, int total)
+        => total > 0 ? (double)correct / total : 0d;
 }

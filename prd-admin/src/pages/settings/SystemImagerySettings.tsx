@@ -98,6 +98,14 @@ const HATCH =
 export default function SystemImagerySettings() {
   const [assets, setAssets] = useState<Record<string, HomepageAssetDto>>({});
   const [loading, setLoading] = useState(true);
+  /*
+   * 清单有没有真的拿到手。不记这一笔就会掉进一个花钱的坑：
+   * 清单请求失败时 assets 停在空 map、loading 却被 finally 照常清掉，
+   * 于是这一屏认为**每一个图位都缺图**，「生成缺失的 N 张」亮起来变成全量重画。
+   * 管理员点下去，钱花了，本来好好的图被覆盖了一遍——而他看到的界面
+   * 一个错字都没有（`predicate-and-wiring-discipline` 形状 10）。
+   */
+  const [inventoryFailed, setInventoryFailed] = useState(false);
   const [pools, setPools] = useState<ModelGroupForApp[]>([]);
   const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
   const [states, setStates] = useState<Record<string, SlotState>>({});
@@ -186,7 +194,13 @@ export default function SystemImagerySettings() {
       const map: Record<string, HomepageAssetDto> = {};
       (res.data ?? []).forEach((a) => { map[a.slot] = a; });
       setAssets(map);
+      setInventoryFailed(false);
+      return;
     }
+    // 拿不到清单就把「缺了几张」这个判断整个作废——宁可什么都不让点，
+    // 也不能让人照着一份空清单去花钱重画一遍已经有的图。
+    console.error('[SystemImagerySettings] 配图清单拉取失败:', res.error?.message);
+    setInventoryFailed(true);
   }, []);
 
   useEffect(() => {
@@ -467,7 +481,7 @@ export default function SystemImagerySettings() {
         <Button
           variant="primary"
           onClick={() => void generate(missingTargets)}
-          disabled={anyRunning || !hasModel || missingTargets.length === 0}
+          disabled={anyRunning || !hasModel || inventoryFailed || missingTargets.length === 0}
           className="shrink-0"
         >
           {anyRunning ? <MapSpinner size={14} /> : <Sparkles size={14} />}
@@ -481,6 +495,16 @@ export default function SystemImagerySettings() {
           style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
         >
           当前没有可用的文生图模型，生成按钮不可用。请先到 LLM Gateway 控制台（左下角「模型网关」→ 模型池）配置一个 text2img 池。
+        </div>
+      )}
+
+      {inventoryFailed && (
+        <div
+          className="text-xs"
+          style={{ padding: '10px 12px', borderRadius: '10px', background: 'var(--bg-secondary)', color: 'var(--accent-fg-amber)' }}
+        >
+          配图清单没拉到，这一屏现在不知道哪些图位真的缺图，生成按钮已停用。
+          刷新重试即可；在拉到清单之前不要生成，否则会把已经有的图重画一遍。
         </div>
       )}
 
