@@ -11,3 +11,7 @@
 | fix | prd-admin | 进度保存加在途序号守卫，先发后到的响应不再改错同步状态 |
 | fix | prd-admin | 藏书阁对错标记改用 SVG icon，去掉勾叉字形 |
 | chore | prd-api | 精读稿生成补上 LlmRequestContext 作用域，请求日志可归因到具体点击 |
+| fix | prd-api | 精读稿认网关的 Error 块，中断的半篇不再落库成公共稿子 |
+| fix | prd-api | 材料整份载入失败与「书单里没有这本书」分开报，不再压成同一句 404 |
+| fix | prd-api | book_digests 的 BookId 唯一索引进 DBA 清单，并发首次生成不再写出两篇 |
+| fix | prd-api | 精读稿提示词给第一段补逃生口，模型对这本书没把握时明说而不是编 |

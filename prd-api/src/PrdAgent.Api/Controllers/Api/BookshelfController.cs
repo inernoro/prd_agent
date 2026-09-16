@@ -278,6 +278,25 @@ public class BookshelfController : ControllerBase
         var material = BookshelfDigestPrompt.Find(id);
         if (material == null)
         {
+            /*
+             * 这两种情形在用户那里看起来一模一样，下一步却完全相反：
+             *   - 材料整份没载进来 → 这个部署的内嵌资源坏了，51 本全打不开，去查构建
+             *   - 材料好好的、就是没有这本书 → 内容侧删了它，无需处理
+             * 压成同一句「书单里没有这本书」，运维只会照着后者去查，永远查不到
+             * （`predicate-and-wiring-discipline` 形状 10）。
+             */
+            if (BookshelfDigestPrompt.IsContextUnavailable)
+            {
+                _logger.LogError(
+                    "精读稿材料整份不可用，全部书目都会打不开：{Reason}",
+                    BookshelfDigestPrompt.LoadFailureReason);
+                await WriteDigestEventAsync("error", new
+                {
+                    code = "CONTEXT_UNAVAILABLE",
+                    message = "这个部署的书目材料没有载入，所有书都打不开——这是部署问题，不是这本书的问题",
+                }, ct);
+                return;
+            }
             await WriteDigestEventAsync("error", new { code = "NOT_FOUND", message = "书单里没有这本书" }, ct);
             return;
         }
@@ -351,6 +370,7 @@ public class BookshelfController : ControllerBase
         var buffer = new StringBuilder();
         string? model = null;
         string? platform = null;
+        string? streamError = null;
 
         try
         {
@@ -377,6 +397,26 @@ public class BookshelfController : ControllerBase
                     buffer.Append(chunk.Content);
                     await WriteDigestEventAsync("text", new { content = chunk.Content }, ct);
                 }
+                else if (chunk.Type == GatewayChunkType.Error)
+                {
+                    /*
+                     * 网关的失败是**一个块**，不是一个异常：`LlmGateway` 在流中途断开时
+                     * 走的是 `yield return Fail(...)` 然后 `yield break`，`await foreach`
+                     * 正常结束，catch 一个都不会进。
+                     *
+                     * 不认这个块的后果比「这次没生成出来」严重得多：buffer 里那半篇
+                     * 会被当成写完了，落库成这本书的公共稿子，此后每个点进来的人都读到
+                     * 一篇断在半句话上的东西，而且判据认为它是新鲜的——除非有人想到去点
+                     * 「重新生成」，否则它会一直在那里。
+                     *
+                     * Error 块之后不会再有 Done，所以记下来跳出即可。
+                     */
+                    streamError = chunk.Error;
+                    _logger.LogError(
+                        "精读稿生成中断 BookId={BookId} ErrorCode={Code} Error={Error} 已收到 {Len} 字，不落库",
+                        id, chunk.ErrorCode, chunk.Error, buffer.Length);
+                    break;
+                }
             }
         }
         catch (OperationCanceledException)
@@ -390,6 +430,18 @@ public class BookshelfController : ControllerBase
         {
             _logger.LogError(ex, "生成精读稿失败 BookId={BookId}", id);
             await WriteDigestEventAsync("error", new { code = "GEN_FAILED", message = "生成失败，稍后再试" }, ct);
+            return;
+        }
+
+        if (streamError != null)
+        {
+            // 半篇稿子不落库。库里那份（如果有）原样留着，读者下次点开读到的仍是完整的旧稿，
+            // 而不是这次断掉的半篇。
+            await WriteDigestEventAsync("error", new
+            {
+                code = "STREAM_FAILED",
+                message = "生成中断了，稿子没有写完，没有保存。重试一次",
+            }, ct);
             return;
         }
 
@@ -434,6 +486,15 @@ public class BookshelfController : ControllerBase
                 digest,
                 new ReplaceOptions { IsUpsert = true },
                 CancellationToken.None);
+        }
+        catch (MongoWriteException mwe) when (mwe.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            /*
+             * 撞上 BookId 的唯一索引：两个人同时点开这本还没有稿子的书，对方先写成了。
+             * 这不是故障——公共稿子本来就是一本一篇，谁先写完算谁的。我们这一篇丢掉，
+             * 读者手上流式看到的内容与库里那篇出自同一份材料，不必让他看到一句报错。
+             */
+            _logger.LogInformation("精读稿并发生成，另一方先落库 BookId={BookId}，本次不覆盖", id);
         }
         catch (Exception ex)
         {

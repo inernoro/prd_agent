@@ -1559,6 +1559,25 @@ ensureTightenedUniqueIndex("bookshelf_progress",
 // end collection: bookshelf_progress
 
 
+// collection: book_digests
+// 藏书阁精读稿：一本书一篇，全队读同一份。
+// 唯一索引同样是为了兜住并发首次生成：两个人同时点开一本还没有稿子的书，
+// 两条 SSE 都查到「库里没有」，随后两个 upsert 都走 insert 分支，库里就有了
+// 两篇。之后 FirstOrDefault 读到哪一篇是随机的，「重新生成」替换的可能是
+// 另一篇——那篇公共稿子从此不确定。
+//
+// 有了这条索引，后落地的那一方会撞 E11000，代码把它当成「别人已经写好了」
+// 处理（见 BookshelfController 的保存处），不再写第二篇。
+ensureTightenedUniqueIndex("book_digests",
+  { "BookId": 1 },
+  {
+    name: "idx_book_digests_book",
+    unique: true
+  }
+)
+// end collection: book_digests
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

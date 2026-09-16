@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using PrdAgent.Core.Models;
 
 namespace PrdAgent.Api.Services;
@@ -33,7 +34,7 @@ public static class BookshelfDigestPrompt
     /// 注意它只管 system prompt 那一半。材料那一半（这本书挂了哪几条规则、规则正文改没改）
     /// 由 <see cref="ComputeMaterialFingerprint"/> 管，两者合起来才是完整的 staleness 判据。
     /// </summary>
-    public const string Version = "v2";
+    public const string Version = "v3";
 
     /// <summary>
     /// 这一份材料的内容指纹。
@@ -80,6 +81,10 @@ public static class BookshelfDigestPrompt
     {
         public List<VolumeCtx> Volumes { get; set; } = new();
         public List<RuleCtx> Rules { get; set; } = new();
+
+        /// <summary>材料没载进来的原因；正常载入时为 null。不参与 JSON 反序列化的语义，只在本进程内标记。</summary>
+        [JsonIgnore]
+        public string? FailureReason { get; set; }
     }
 
     public sealed class VolumeCtx
@@ -123,6 +128,21 @@ public static class BookshelfDigestPrompt
         public List<RuleCtx> Rules { get; set; } = new();
     }
 
+    /// <summary>
+    /// 材料为什么没载进来。`null` = 载入正常。
+    ///
+    /// 这个字段存在，是因为不写它就会掉进「静默降级」那个形状
+    /// （`predicate-and-wiring-discipline` 形状 10）：材料整份没载进来时，每一本书都
+    /// 查不到，调用方一律回「书单里没有这本书」。那句话在两种截然不同的情形下一字不差——
+    /// 一种是用户点了一本真的被删掉的书（内容问题，无需处理），另一种是这个部署的
+    /// 内嵌资源坏了、51 本全都打不开（部署问题，要去查构建）。运维看到的却是同一句话，
+    /// 于是照着内容问题去查，永远查不到。
+    /// </summary>
+    public static string? LoadFailureReason => Context.Value.FailureReason;
+
+    /// <summary>材料整份不可用（资源缺失或解析失败），不是「这一本不在书单里」。</summary>
+    public static bool IsContextUnavailable => Context.Value.FailureReason != null;
+
     private static ContextFile Load()
     {
         try
@@ -131,20 +151,35 @@ public static class BookshelfDigestPrompt
             // 按后缀找，不拼命名空间 —— 根命名空间改一次，拼出来的名字就静默失效了
             var resName = asm.GetManifestResourceNames()
                 .FirstOrDefault(n => n.EndsWith("bookshelf-context.json", StringComparison.OrdinalIgnoreCase));
-            if (resName == null) return new ContextFile();
+            if (resName == null)
+            {
+                return Unavailable("内嵌资源 bookshelf-context.json 不在程序集里（构建时没打进去）");
+            }
 
             using var stream = asm.GetManifestResourceStream(resName);
-            if (stream == null) return new ContextFile();
+            if (stream == null)
+            {
+                return Unavailable($"内嵌资源 {resName} 打不开");
+            }
+
             using var reader = new StreamReader(stream);
-            return JsonSerializer.Deserialize<ContextFile>(reader.ReadToEnd(), JsonOptions) ?? new ContextFile();
+            var parsed = JsonSerializer.Deserialize<ContextFile>(reader.ReadToEnd(), JsonOptions);
+            if (parsed == null || parsed.Volumes.Count == 0)
+            {
+                return Unavailable("内嵌资源解析出来是空的（JSON 结构对不上或文件为空）");
+            }
+            return parsed;
         }
-        catch
+        catch (Exception ex)
         {
-            // 读不到就当没有这本书，调用方会回 404。配图那条链路是同样的取舍：
-            // 缺内容不该把整个藏书阁拖垮。
-            return new ContextFile();
+            // 仍然不抛——缺内容不该把整个藏书阁拖垮（配图那条链路是同样的取舍）。
+            // 但降级必须留痕：原因记下来，调用方据此把「部署坏了」和「这本书不在书单里」
+            // 分开报，而不是一律回 404 让人去查内容。
+            return Unavailable($"{ex.GetType().Name}: {ex.Message}");
         }
     }
+
+    private static ContextFile Unavailable(string reason) => new() { FailureReason = reason };
 
     /// <summary>按书 id 取材料；书不在书单里返回 null</summary>
     public static Material? Find(string bookId)
@@ -182,6 +217,18 @@ public static class BookshelfDigestPrompt
         论点必须来自**这本书本身**：这本书讨论的是什么问题、作者主张怎么做、书里举了什么例子。
         编者的推荐语只是提示这本书为什么被选进来，不是这本书的论点——不要把它当成书的内容复述一遍。
         展开里要有书中的具体做法、术语或例子，不要停在抽象概括上。
+
+        这里有一条比「写得充实」更优先的约束：**材料里没有书的正文，你只能依靠自己对这本书
+        已有的了解**。所以——
+
+        - 你确实读过、记得清楚的书，照上面写，给具体的章节主张、术语和例子。
+        - 记不清的部分，写你确实有把握的那几条就收尾，宁可只有 3 条。
+        - 整本书你都没有可靠印象时，**不要编**。直接写一句「这本书的具体内容我没有可靠的
+          把握，下面只能按编者给的定位来谈，建议以原书为准」，然后只依据编者给的推荐理由
+          与收获谈这本书在这一卷里的位置，并且**明说这是编者视角不是书的论点**。
+
+        编造书里没有的章节、术语、案例或数字，比少写几条严重得多：读者拿它当原书的替代品，
+        照着去引用，错的东西会顺着他传出去。
 
         ## 怎么用在我们身上
 
