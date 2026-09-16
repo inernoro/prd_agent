@@ -1482,8 +1482,11 @@ export async function streamDesignArtifactRun(input: {
   onEvent: (event: SseEvent) => void;
 }): Promise<void> {
   const suffix = input.afterSeq && input.afterSeq > 0 ? `?afterSeq=${input.afterSeq}` : '';
+  // 必须过 buildApiUrl：connectSse 内部是裸 fetch，不会套 API 基址。前后端分开部署时
+  // 相对路径会打到前端自己身上，拿回一坨 HTML——前端立刻报「进度连接中断」，而服务端
+  // 那边任务照跑，用户看到的是一次并不存在的失败。
   const result = await connectSse({
-    url: `${api.designArtifacts.stream(input.runId)}${suffix}`,
+    url: buildApiUrl(`${api.designArtifacts.stream(input.runId)}${suffix}`),
     method: 'GET',
     signal: input.signal,
     onEvent: input.onEvent,
@@ -1536,8 +1539,9 @@ export async function streamHostedSiteEditRun(input: {
   onEvent: (event: SseEvent) => void;
 }): Promise<void> {
   const suffix = input.afterSeq && input.afterSeq > 0 ? `?afterSeq=${input.afterSeq}` : '';
+  // 同上：裸 fetch 必须自己拼基址。
   const result = await connectSse({
-    url: `${api.webPages.editRunStream(input.siteId, input.runId)}${suffix}`,
+    url: buildApiUrl(`${api.webPages.editRunStream(input.siteId, input.runId)}${suffix}`),
     method: 'GET',
     signal: input.signal,
     onEvent: input.onEvent,
