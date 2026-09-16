@@ -3763,6 +3763,33 @@ app.MapDelete("/gw/catalog-entries/{id}", async (HttpContext http, string id) =>
 }).RequireAuthorization("ConfigWrite");
 
 /// <summary>
+/// 「指定调用方」必须落在授权名单里——名单非空时。
+///
+/// 这两个字段刻意分工：授权名单回答「能不能点名我」，指定调用方回答「不点名时是不是我」。
+/// 但后者是前者的子集：解析时先过 SupportsAppCallerScenario（看授权名单），过不了就直接
+/// 返回 null，**而且不再回落到用途默认**——于是那个调用方的不点名请求整条失败。
+///
+/// 写入侧不拦的话，界面会说「不点名的请求现在会用这个模型」，运行时却一次都落不到，
+/// 而且是静默的（形状 8：写入侧接受了一份在运行条件下根本不成立的配置，
+/// 还让它看起来像生效了）。
+///
+/// 名单为空 = 对所有调用方开放，此时任何认领都成立，不需要校验。
+/// </summary>
+static string? ValidateClaimsWithinAllowlist(
+    IReadOnlyCollection<string> allowedAppCallerCodes,
+    IReadOnlyCollection<string> claims)
+{
+    if (allowedAppCallerCodes.Count == 0 || claims.Count == 0) return null;
+    var allowed = allowedAppCallerCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var outside = claims.Where(x => !allowed.Contains(x)).ToList();
+    return outside.Count == 0
+        ? null
+        : $"调用方 {string.Join("、", outside)} 不在这个模型的授权名单里，不能把它设成「指定调用方」——"
+          + "解析时会先被授权名单拒掉，那些请求一次都落不到这里。"
+          + "要么把它加进授权名单，要么把授权名单清空（清空 = 对所有调用方开放）。";
+}
+
+/// <summary>
 /// 生图契约的模式冲突检查：同一租户下同一个模式只许有一条。
 ///
 /// 两条同模式的行进了库，同步 worker 会把它们装进同一张按模式索引的表，
@@ -4477,6 +4504,9 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     { "RoutingStrategy", entry.RoutingStrategy },
                     { "Enabled", true },
                     { "IsDefaultForType", entry.IsDefaultForType },
+                    // 记住来源：`model_policy=pool` 契约还活着，那些请求带的是池文档 ID
+                    // 而不是这里的 PublicId。不记的话它们在池退场后一律解析不到。
+                    { "MigratedFromPoolIds", new BsonArray(new[] { poolId }) },
                     { "DisplayOrder", pool.AsNullableInt("Priority") ?? 100 },
                     { "Description", $"由模型池「{poolName}」搬迁而来" },
                     { "CreatedAt", now }, { "UpdatedAt", now },
@@ -4515,6 +4545,16 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     }
                     entry.RepairedCapabilities = true;
                 }
+            }
+            // 复用已有模型时也要把这个池 id 并进来源里：它同样会收到带池 ID 的请求。
+            // AddToSet 而不是 Set——一个模型可能被多个同 Code 的池先后搬过来。
+            if (!dryRun)
+            {
+                await gwLogicalModels.UpdateOneAsync(
+                    fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                    Builders<BsonDocument>.Update
+                        .AddToSet("MigratedFromPoolIds", poolId)
+                        .Set("UpdatedAt", DateTime.UtcNow));
             }
             result.LinkedToExisting++;
         }
@@ -5049,6 +5089,10 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
     var declaredClaims = (body?.DefaultForAppCallerCodes ?? new())
         .Select(x => x.Trim()).Where(x => x.Length > 0)
         .Distinct(StringComparer.Ordinal).ToList();
+    var createdAllowlist = (body?.AllowedAppCallerCodes ?? new())
+        .Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+    if (ValidateClaimsWithinAllowlist(createdAllowlist, declaredClaims) is { } claimOutsideAllowlist)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", claimOutsideAllowlist), jsonOptions, 400);
     if (declaredClaims.Count > 0)
     {
         var rival = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
@@ -5159,6 +5203,19 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (body.AllowedAppCallerCodes is not null)
     {
         var appCallers = body.AllowedAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        // 校验要按「改完之后的值」判，不是按这次提交的那一个字段判。
+        //
+        // 两个字段可以分开改：这次只收窄授权名单、认领沿用库里的旧值时，组合照样可能不成立。
+        // 只看本次请求里的字段就会放过它——而放过的后果是那个调用方的不点名请求整条静默失败。
+        var claimsAfterUpdate = body.DefaultForAppCallerCodes is not null
+            ? body.DefaultForAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
+            : (await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+                .Project(Builders<BsonDocument>.Projection.Include("DefaultForAppCallerCodes"))
+                .FirstOrDefaultAsync())?.AsStringList("DefaultForAppCallerCodes") ?? [];
+        if (ValidateClaimsWithinAllowlist(appCallers, claimsAfterUpdate) is { } allowlistConflict)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", allowlistConflict), jsonOptions, 400);
+
         updates.Add(Builders<BsonDocument>.Update.Set("AllowedAppCallerCodes", new BsonArray(appCallers)));
     }
     if (body.DisplayOrder is not null)
@@ -5210,6 +5267,14 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
             .FirstOrDefaultAsync();
         if (current is null)
             return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+
+        // 同上：按改完之后的授权名单判。这次只改认领、名单沿用库里旧值时也要成立。
+        var allowlistAfterUpdate = body.AllowedAppCallerCodes is not null
+            ? body.AllowedAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
+            : current.AsStringList("AllowedAppCallerCodes");
+        if (ValidateClaimsWithinAllowlist(allowlistAfterUpdate, claims) is { } claimConflict)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", claimConflict), jsonOptions, 400);
+
         var claimType = current.GetStringOrEmpty("ModelType");
 
         if (claims.Count > 0)

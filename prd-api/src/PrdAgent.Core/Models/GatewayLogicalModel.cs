@@ -49,6 +49,21 @@ public sealed class GatewayLogicalModel
     /// </summary>
     public List<string> DefaultForAppCallerCodes { get; set; } = new();
 
+    /// <summary>
+    /// 这个模型是从哪几个模型池搬过来的（池文档 _id）。
+    ///
+    /// 为什么必须记下来：`model_policy=pool` 这条对外契约还活着——serving 收到它时会把
+    /// `model_pool_id` 塞进 expectedModel 往下传（系统设置里的连通性测试就走这条路）。
+    /// 而客户端与设置里存的是**池文档 ID**，不是搬迁后对外模型的 PublicId。
+    /// 点名解析只按 PublicId 查的话，这些请求一律查不到，又因为 expectedModel 非空而跳过
+    /// 默认那一支，配置权威的租户直接拿到 MODEL_NOT_FOUND——池退场把它们整条打断了。
+    ///
+    /// 记下来源之后，那些请求仍然落到同一个上游：池 ID 就是这个模型的一个别名。
+    /// 这不是永久契约，是搬迁期的桥；等所有生产方都改用 PublicId 之后可以连同
+    /// `model_policy=pool` 一起退场。
+    /// </summary>
+    public List<string> MigratedFromPoolIds { get; set; } = new();
+
     public int DisplayOrder { get; set; } = 100;
     public string? Description { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;

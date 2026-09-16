@@ -91,6 +91,45 @@ public class GatewayDefaultModelGuardTests
         Assert.Contains("x.modelType === item.modelType && x.isDefaultForType", Page);
     }
 
+    /// <summary>
+    /// 两条搬迁期的接线，都是「删池之后旧契约还活着」这件事的后果。
+    ///
+    /// 一、`model_policy=pool` 契约仍在（系统设置的连通性测试就走它）：serving 把
+    ///     model_pool_id 塞进 expectedModel，而客户端存的是**池文档 ID**、不是搬迁后的
+    ///     PublicId。点名解析只按 PublicId 查的话一律查不到，又因为 expectedModel 非空
+    ///     跳过默认那一支，配置权威租户直接 MODEL_NOT_FOUND——整条打断。
+    ///     所以搬迁要记下来源，解析要认这个来源。
+    ///
+    /// 二、「指定调用方」必须落在授权名单里：解析先过授权名单，过不了就返回 null 且
+    ///     **不再回落用途默认**。写入侧不拦的话，界面说「不点名会用它」而运行时一次都落不到。
+    /// </summary>
+    [Fact]
+    public void 池退场后旧契约仍有落点且认领不许越过授权名单()
+    {
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var entity = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/GatewayLogicalModel.cs");
+
+        // 搬迁期的桥：实体有来源字段，解析把它当查询键之一
+        Assert.Contains("MigratedFromPoolIds", entity);
+        Assert.Contains("AnyEq(x => x.MigratedFromPoolIds, key)", resolver);
+
+        // 搬迁两条路径都盖来源：新建写进文档，复用已有用 AddToSet 并进去
+        Assert.Contains("{ \"MigratedFromPoolIds\", new BsonArray(new[] { poolId }) }", Console);
+        Assert.Contains("AddToSet(\"MigratedFromPoolIds\", poolId)", Console);
+
+        // 认领必须在授权名单内，且 create / update 两条写入路径共用同一份判据
+        Assert.Contains("ValidateClaimsWithinAllowlist", Console);
+        Assert.Contains("CLAIM_OUTSIDE_ALLOWLIST", Console);
+        var checks = System.Text.RegularExpressions.Regex.Matches(
+            Console, @"ValidateClaimsWithinAllowlist\(").Count;
+        Assert.True(checks >= 4,
+            $"定义 1 处 + create 1 处 + update 两支各 1 处，至少 4 处引用；当前 {checks} 处");
+
+        // update 要按「改完之后的值」判，不是只看本次提交的那个字段
+        Assert.Contains("claimsAfterUpdate", Console);
+        Assert.Contains("allowlistAfterUpdate", Console);
+    }
+
     private static string HandlerSource(string mapCall)
     {
         var start = Console.IndexOf(mapCall, StringComparison.Ordinal);

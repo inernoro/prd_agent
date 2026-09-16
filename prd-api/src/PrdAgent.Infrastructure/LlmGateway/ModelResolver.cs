@@ -1037,7 +1037,13 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType),
                 Builders<GatewayLogicalModel>.Filter.Or(
                     Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicIdNormalized, normalized),
-                    Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicId, key))))
+                    Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicId, key),
+                    // 搬迁期的桥：`model_policy=pool` 这条契约还活着，serving 会把
+                    // model_pool_id 塞进 expectedModel，而客户端存的是**池文档 ID**、
+                    // 不是搬迁后的 PublicId。不认它的话这些请求一律查不到，又因为
+                    // expectedModel 非空而跳过默认那一支，直接 MODEL_NOT_FOUND——
+                    // 池退场把它们整条打断了。见 GatewayLogicalModel.MigratedFromPoolIds。
+                    Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.MigratedFromPoolIds, key))))
             .FirstOrDefaultAsync(ct);
         if (logical is null)
             return null;
