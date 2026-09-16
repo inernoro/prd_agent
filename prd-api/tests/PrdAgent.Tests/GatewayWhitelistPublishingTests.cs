@@ -167,6 +167,17 @@ public class GatewayWhitelistPublishingTests
         Assert.Contains("GatewayCatalogMigrations.RequiredIds", endpoint);
         Assert.Contains("GatewayCatalogMigrations.CompletedAtField", endpoint);
         Assert.Contains("!catalogGateEnforces || PassesCatalogGate(x)", endpoint);
+
+        // 应用侧那条清单（选择器读的那份）是同类，也要过这道门：
+        // 少了它，选择器里列出来的模型选中即失败（MODEL_NOT_IN_CATALOG），而用户没做错任何事。
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var listStart = resolver.IndexOf("GetAvailableLogicalModelsAsPoolsAsync", StringComparison.Ordinal);
+        Assert.True(listStart > 0);
+        var listEnd = resolver.IndexOf("private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync", listStart, StringComparison.Ordinal);
+        Assert.True(listEnd > listStart, "应用侧清单的边界变了，守卫取值口径需要更新");
+        var listBody = resolver[listStart..listEnd];
+        Assert.Contains("CatalogVerdict.Blocked", listBody);
+        Assert.Contains("CatalogGateEnforcesAsync", listBody);
     }
 
     /// <summary>

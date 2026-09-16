@@ -330,6 +330,22 @@ public class PoolMigrationPlannerTests
         Assert.Contains("搬迁没有改它的授权名单", handler);
     }
 
+    /// <summary>
+    /// 两条唯一索引都可能在插入时撞上，处置不一样，所以必须先看是哪一条。
+    ///
+    /// 把所有 duplicate key 都当默认冲突处理的话，认领撞车时会带着**同一份认领数组**重插，
+    /// 必然再抛一次——一次可报告的并发冲突变成 500，而前面几个池可能已经搬完了。
+    /// </summary>
+    [Fact]
+    public void 搬迁按索引名区分默认冲突与认领冲突()
+    {
+        var handler = MigrationHandler();
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", handler);
+        Assert.Contains("document[\"DefaultForAppCallerCodes\"] = new BsonArray()", handler);
+        Assert.Contains("document[\"IsDefaultForType\"] = false", handler);
+        Assert.Contains("没有带上认领", handler);
+    }
+
     private static string MigrationHandler()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");

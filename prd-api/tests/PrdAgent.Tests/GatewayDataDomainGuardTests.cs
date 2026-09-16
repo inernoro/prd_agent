@@ -592,6 +592,15 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("claimRollbacks", consoleProgram);
         Assert.Contains("没能还原", consoleProgram);
 
+        // 补偿要覆盖**所有**失败路径，不是只有并发冲突那一条。
+        //
+        // 摘和置是两次写，中间任何原因导致置失败——撞唯一索引、目标被别人删掉（404）、
+        // 连接抖动（异常）——摘掉的就留在库里。摘的是默认时后果最重：这个用途一个默认都不剩，
+        // 所有不点名的请求当场解析失败，而操作者只看到一句「模型不存在」。
+        Assert.Contains("defaultRollbacks", consoleProgram);
+        Assert.Contains("CompensateAsync(restoreDefaults: true)", consoleProgram);
+        Assert.Contains("CompensateAsync(restoreDefaults: false)", consoleProgram);
+
         Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
         Assert.Contains("claimedBy", consoleProgram);
         Assert.Contains("它被 {claimedBy[x.Code]} 认领了", consoleProgram);

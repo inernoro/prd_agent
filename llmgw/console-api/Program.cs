@@ -4287,12 +4287,17 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
         // 只配整除、不配最小值：运行时 (side / divisor) * divisor 是**向下取整**，
         // 比除数小的边长会被抹成 0——除数 512 撞上 1024x256 的请求，发出去的是 1024x0。
         // 没有最小值把它托住，所以这种组合不许保存。
+        // 两个轴都要有最小值托底，只给一个不够：
+        // 运行时对宽高各做一次向下取整，没被托住的那一个轴照样会被抹成 0——
+        // 最小宽 512、整除 512、不配最小高，遇到 1024x256 发出去的是 1024x0。
+        // 上一版写成「两个都没配才拦」，等于只拦住了两个轴同时出问题的那一种（形状 1）。
         if (body.MustBeDivisibleBy is not null
-            && body.MinWidth is null && body.MinHeight is null)
+            && (body.MinWidth is null || body.MinHeight is null))
         {
-            return "只配「边长必须整除」而不配最小宽高是不安全的：运行时向下取整，"
-                + "比整除值小的边长会被抹成 0（例如整除 512 遇到 256 的高，发出去就是 0）。"
-                + "请同时给出最小宽高，或改用白名单尺寸";
+            return "配了「边长必须整除」就必须同时给出最小宽和最小高：运行时对宽高各做一次向下取整，"
+                + "没有最小值托底的那一个轴，比整除值小的边长会被抹成 0"
+                + "（例如整除 512、不配最小高，遇到 256 的高发出去就是 0）。"
+                + "补齐两个最小值，或改用白名单尺寸";
         }
 
         var smallestWidth = SmallestSide(body.MinWidth, effectiveDivisor);
@@ -4889,16 +4894,40 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                 }
                 catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
                 {
-                    document["IsDefaultForType"] = false;
-                    await gwLogicalModels.InsertOneAsync(document);
-                    entry.IsDefaultForType = false;
-                    result.Skipped.Add(new PoolMigrationSkip
+                    /*
+                      两条唯一索引都可能在这里撞上，处置不一样，所以必须先看是哪一条：
+                        · 默认那条 → 去掉默认标记重插，这个池搬成普通模型；
+                        · 认领那条 → 去掉被抢走的那几个认领重插。
+                      上一版把所有 duplicate key 都当成默认冲突，于是认领撞车时带着**同一份认领数组**
+                      重插，必然再抛一次——一次可报告的并发冲突变成 500，而前面几个池可能已经搬完了。
+                    */
+                    var message = ex.WriteError?.Message ?? ex.Message;
+                    if (message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal))
                     {
-                        PoolId = poolId,
-                        PoolName = poolName,
-                        Reason = $"这个池是 {modelType} 的默认，但搬迁进行期间这个用途的默认被别人占了，"
-                            + "所以它搬成了普通模型。确认哪一个才该当默认，再去白名单页改",
-                    });
+                        document["DefaultForAppCallerCodes"] = new BsonArray();
+                        await gwLogicalModels.InsertOneAsync(document);
+                        entry.ClaimedAppCallerCodes = [];
+                        result.Skipped.Add(new PoolMigrationSkip
+                        {
+                            PoolId = poolId,
+                            PoolName = poolName,
+                            Reason = "搬迁进行期间，绑着这个池的调用方被别的模型认领了，所以这个池搬过来时没有带上认领。"
+                                + "确认那几个调用方该归谁，再去白名单页改",
+                        });
+                    }
+                    else
+                    {
+                        document["IsDefaultForType"] = false;
+                        await gwLogicalModels.InsertOneAsync(document);
+                        entry.IsDefaultForType = false;
+                        result.Skipped.Add(new PoolMigrationSkip
+                        {
+                            PoolId = poolId,
+                            PoolName = poolName,
+                            Reason = $"这个池是 {modelType} 的默认，但搬迁进行期间这个用途的默认被别人占了，"
+                                + "所以它搬成了普通模型。确认哪一个才该当默认，再去白名单页改",
+                        });
+                    }
                 }
             }
             result.ModelsCreated++;
@@ -5686,6 +5715,8 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     // 顺序是判据：**先把同用途的旧默认清掉，再置新的**。反过来会出现一瞬间两个默认，
     // 恰好落在那一瞬的请求解析到哪个全看运气。清掉谁要回给用户，不能让兜底模型悄悄换人。
     var displacedDefaults = new List<string>();
+    // 被清掉默认标记的那些模型 id。与认领那本账一样，最终写入没成功就要还回去。
+    var defaultRollbacks = new List<string>();
     if (body.IsDefaultForType == true)
     {
         var current = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
@@ -5700,6 +5731,10 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
         foreach (var other in sameTypeDefaults)
         {
             displacedDefaults.Add(other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id"));
+            // 记进回滚账本：最终写入失败时要还回去。不还的话这个用途会**一个默认都不剩**，
+            // 所有不点名的请求当场解析失败——而操作者看到的只是一句「没找到」或「保存失败」，
+            // 完全不会想到自己刚刚把这个用途的兜底拆了。
+            defaultRollbacks.Add(other.GetStringOrEmpty("_id"));
             await gwLogicalModels.UpdateOneAsync(
                 Builders<BsonDocument>.Filter.Eq("_id", other.GetStringOrEmpty("_id")),
                 Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
@@ -5768,6 +5803,56 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (updates.Count == 0)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
+
+    /*
+      位移的补偿收在这一个函数里，**所有**失败路径都走它，不是只有并发冲突那一条。
+
+      这段代码的形状是「先把别人的默认/认领摘掉，再置自己」。摘和置是两次写，
+      中间任何原因导致置失败——并发撞唯一索引、目标模型刚被别人删掉（404）、
+      连接抖动（异常）——摘掉的那些就留在了库里。后果按摘的是什么分两种：
+        · 摘的是认领 → 那几个调用方从「由对手模型接住」掉成「走用途默认」；
+        · 摘的是默认 → 这个用途**一个默认都不剩**，所有不点名的请求当场解析失败。
+      两种都是「一次失败的保存改了线上路由」，而操作者只看到一句失败。
+
+      默认要不要还，取决于失败原因：撞唯一索引说明已经有赢家占着，还回去会再撞一次；
+      其余失败没有赢家，必须还。认领两种情况都要还。
+    */
+    var compensationWarnings = new List<string>();
+    async Task CompensateAsync(bool restoreDefaults)
+    {
+        foreach (var rollback in claimRollbacks)
+        {
+            // 条件更新：值还是我刚写进去的那个才还。期间被第三方改过就不动它——
+            // 盲目覆盖会把别人的改动一起抹掉，那是用一个错换另一个错。
+            var restored = await gwLogicalModels.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", rollback.RivalId),
+                    Builders<BsonDocument>.Filter.Eq("DefaultForAppCallerCodes", new BsonArray(rollback.AfterWrite))),
+                Builders<BsonDocument>.Update
+                    .Set("DefaultForAppCallerCodes", new BsonArray(rollback.Before))
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            if (restored.ModifiedCount == 0) compensationWarnings.Add($"{rollback.RivalId}（调用方认领）");
+        }
+        if (!restoreDefaults) return;
+        foreach (var rivalId in defaultRollbacks)
+        {
+            var restored = await gwLogicalModels.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", rivalId),
+                    Builders<BsonDocument>.Filter.Eq("IsDefaultForType", false)),
+                Builders<BsonDocument>.Update
+                    .Set("IsDefaultForType", true)
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            if (restored.ModifiedCount == 0) compensationWarnings.Add($"{rivalId}（用途默认）");
+        }
+    }
+
+    string WithCompensationNote(string message)
+        => compensationWarnings.Count == 0
+            ? message
+            : message + $" 另外：这次没保存成功，但有 {compensationWarnings.Count} 处位移没能还原"
+                + $"（{string.Join("、", compensationWarnings)}），它们在这期间被别人改过。去这几个模型上核对一下。";
+
     BsonDocument? updated;
     try
     {
@@ -5778,44 +5863,30 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     }
     catch (MongoCommandException ex) when (ex.Code == 11000)
     {
-        /*
-          撞上唯一索引：另一个人在这一瞬抢先了。这次保存整体失败，所以**前面已经摘掉的认领
-          必须还回去**——不还的话，一次被拒绝的保存照样改了线上路由：那几个调用方从
-          「由对手模型接住」掉成「走用途默认」，而操作者看到的是一句失败，根本不知道
-          自己刚刚动了别人的东西。
-
-          还原用条件更新（值还是我刚写进去的那个才还），期间被第三方改过就不动它：
-          盲目覆盖会把别人的改动一起抹掉，那是用一个错换另一个错。
-          还不回去的逐条报给操作者，让他知道要去看哪几个模型（no-rootless-tree：不假装都还原了）。
-        */
-        var unrestored = new List<string>();
-        foreach (var rollback in claimRollbacks)
-        {
-            var restored = await gwLogicalModels.UpdateOneAsync(
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("_id", rollback.RivalId),
-                    Builders<BsonDocument>.Filter.Eq("DefaultForAppCallerCodes", new BsonArray(rollback.AfterWrite))),
-                Builders<BsonDocument>.Update
-                    .Set("DefaultForAppCallerCodes", new BsonArray(rollback.Before))
-                    .Set("UpdatedAt", DateTime.UtcNow));
-            if (restored.ModifiedCount == 0) unrestored.Add(rollback.RivalId);
-        }
-
+        // 撞上唯一索引：另一个人在这一瞬抢先了。默认不还——赢家占着，还回去会再撞一次。
+        await CompensateAsync(restoreDefaults: false);
         // 两条不变量共用这一个 catch，但要分开说：下一步不一样。
         var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
         var conflictMessage = claimRace
             ? "这几个调用方里有一个刚刚被另一个模型认领了。刷新看一眼它现在归谁，确认之后再改。"
             : "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。";
-        if (unrestored.Count > 0)
-        {
-            conflictMessage += $" 另外：这次没保存成功，但有 {unrestored.Count} 个模型的调用方认领没能还原"
-                + $"（{string.Join("、", unrestored)}），它们在这期间被别人改过。去这几个模型上核对一下认领名单。";
-        }
         return Json(ApiEnvelope<LogicalModelItem>.Fail(
-            claimRace ? "CLAIM_CONFLICT" : "DEFAULT_CONFLICT", conflictMessage), jsonOptions, 409);
+            claimRace ? "CLAIM_CONFLICT" : "DEFAULT_CONFLICT", WithCompensationNote(conflictMessage)), jsonOptions, 409);
+    }
+    catch
+    {
+        // 别的失败（连接抖动、写入被拒）同样不能把摘掉的东西留在库里。
+        // 补偿完把原异常抛出去，不吞——吞掉等于把一次真实故障变成一句无从排查的沉默。
+        await CompensateAsync(restoreDefaults: true);
+        throw;
     }
     if (updated is null)
-        return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+    {
+        // 目标在这中间被别人删了。这时「摘掉的默认」必须还回去：没有赢家，
+        // 不还的话这个用途就此没有默认，而返回的只是一句「模型不存在」。
+        await CompensateAsync(restoreDefaults: true);
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", WithCompensationNote("逻辑模型不存在")), jsonOptions, 404);
+    }
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.update", "llmgw_logical_model", id, updated.GetStringOrEmpty("Name"), true, null,
         new BsonDocument
         {

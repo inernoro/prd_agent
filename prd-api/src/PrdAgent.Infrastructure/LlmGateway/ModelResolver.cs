@@ -991,11 +991,21 @@ public class ModelResolver : IModelResolver
             foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
-                if (candidate is not null && IsLogicalOfferingAllowed(candidate, allowedGroups))
+                if (candidate is null || !IsLogicalOfferingAllowed(candidate, allowedGroups)) continue;
+                // 名录门也要过一遍。
+                //
+                // 上面那句注释说的是「目录与执行链路采用同一规则」，但它只覆盖了「解析得出来」
+                // 这一半。执行链路还有第二道门：名录外又没盖放行标记的物理模型，
+                // ApplyCatalogGateAsync 会拒掉。少了这一道，选择器里列出来的模型选中即失败
+                // （MODEL_NOT_IN_CATALOG），而用户没做错任何事。
+                // 对外的 /v1/models 上一轮已经补了这一道，应用侧这条清单是它的同类，一起补。
+                if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct) == CatalogVerdict.Blocked
+                    && await CatalogGateEnforcesAsync(ct))
                 {
-                    hasResolvableOffering = true;
-                    break;
+                    continue;
                 }
+                hasResolvableOffering = true;
+                break;
             }
             if (!hasResolvableOffering)
                 continue;
