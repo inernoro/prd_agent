@@ -168,10 +168,49 @@ describe('这句判断必须真的出现在页面上', () => {
   it('引用它的那个页面真的把句子渲染出来了', () => {
     const src = read('web/src/pages/reports/PipelinePanel.tsx');
     // 光 import 不算：得有组件真的读 sentence 并渲染。
-    // 2026-09-14：紧凑态换成 CompactStrip（数字领衔，没有句子），
-    // 这句判断只在放大态出现，所以要求 >= 1 而不是 >= 2。
+    // 2026-09-14：紧凑态一度换成只有图的 CompactStrip，这句判断只在放大态出现。
+    // 2026-09-16 改回来：两态都要有——紧凑态那一支此前根本没引用 Headline，
+    // 而 Headline 的紧凑变体（只渲染句子）早就写好了，是一条建了一半的接线。
     expect(src).toMatch(/h\.sentence/);
-    expect([...src.matchAll(/<Headline\b/g)].length, '放大态必须有这句判断').toBeGreaterThanOrEqual(1);
+    expect([...src.matchAll(/<Headline\b/g)].length, '两态都必须有这句判断').toBeGreaterThanOrEqual(2);
+  });
+
+  it('紧凑态那一支真的渲染了判断句，不是只在放大态', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    // 只数 <Headline 的出现次数会被「放大态里写了两处」蒙混过去，
+    // 所以这里锚到三元的**否则分支**：紧凑态那一段里必须有它。
+    const branch = src.split(/\) : \(/)[1] ?? '';
+    expect(branch, '找不到紧凑态那一支').not.toBe('');
+    expect(branch).toMatch(/<Headline\b/);
+    expect(branch).toMatch(/<CompactStrip\b|\{strip\}/);
+  });
+
+  it('紧凑态只给一句：不带支撑点与下一步', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    // full 这个开关就是「要不要铺开支撑点与下一步」。紧凑态那一支不许传它，
+    // 否则第一屏又变成「左边一堆字、右边一张图」，与少字多图正好相反。
+    const branch = src.split(/\) : \(/)[1] ?? '';
+    expect(branch).not.toMatch(/<Headline[^>]*\bfull\b/);
+    // 反面：放大态那一支必须传 full，否则这条断言测不到任何东西。
+    const zoomBranch = src.split(/\) : \(/)[0];
+    expect(zoomBranch).toMatch(/<Headline[^>]*\bfull\b/);
+  });
+
+  it('范围条在两态都有，且标出的是总览条分段用的那两环', () => {
+    const src = read('web/src/pages/reports/PipelinePanel.tsx');
+    // 五步都要列出来，读者才知道这一屏在整条流水线的哪一段。
+    for (const step of ['开分支', '起预览', '跑验收', '出结论', '合并主干']) {
+      expect(src, `范围条缺少「${step}」`).toContain(step);
+    }
+    // counted 必须恰好是起预览与跑验收——splitFunnel 就是按这两级夹取分段的。
+    const flow = src.match(/const SCOPE_FLOW = \[[\s\S]*?\] as const;/);
+    expect(flow, '找不到 SCOPE_FLOW').not.toBeNull();
+    const counted = [...flow![0].matchAll(/'([^']+)', counted: true/g)].map((m) => m[1]);
+    expect(counted).toEqual(['起预览', '跑验收']);
+    // 渲染在三元之外 = 两态共用；写进任一支就只有一半的人看得到。
+    const idx = src.indexOf('<ScopeRail />');
+    expect(idx, 'ScopeRail 没有被渲染').toBeGreaterThan(-1);
+    expect(idx, 'ScopeRail 必须在 zoom 三元之前，两态才都有').toBeLessThan(src.indexOf('{zoom ? ('));
   });
 
   it('第一眼是紧凑态，细节要点「放大」才铺开', () => {

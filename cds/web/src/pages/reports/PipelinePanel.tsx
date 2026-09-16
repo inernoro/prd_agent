@@ -33,7 +33,48 @@ const PANEL_CSS = `
   box-shadow:0 0.625rem 1.75rem hsl(var(--foreground) / 0.14);}
 .pp-root .pp-tip-h{font-size:0.8125rem;font-weight:600;line-height:1.5;word-break:break-all;}
 .pp-root .pp-tip-l{font-size:0.75rem;line-height:1.6;color:hsl(var(--muted-foreground));word-break:break-all;}
+.pp-root .pp-scope{display:flex;flex-wrap:wrap;align-items:center;gap:0.375rem 0.5rem;
+  font-size:0.75rem;line-height:1.6;}
+.pp-root .pp-scope-off{color:hsl(var(--muted-foreground));}
+.pp-root .pp-scope-on{color:hsl(var(--foreground));font-weight:600;
+  border-bottom:0.125rem solid hsl(var(--info));padding-bottom:0.0625rem;}
+.pp-root .pp-scope-sep{color:hsl(var(--muted-foreground) / 0.55);}
+.pp-root .pp-scope-note{color:hsl(var(--muted-foreground));
+  padding-left:0.5rem;border-left:1px solid hsl(var(--hairline));}
+@media (max-width:40rem){.pp-root .pp-scope-note{padding-left:0;border-left:none;flex-basis:100%;}}
 `;
+
+/**
+ * 范围条：这一屏的数说的是五步里的哪两步。
+ *
+ * 为什么必须有它：首页最大的那个数是「改动总量」，不交代口径的话，读者会把它当成
+ * 全量工作量。早先有一条五步流程条讲这件事，放大态改成与紧凑态同一套视觉语言那一次
+ * 被一并删掉了，于是「进来的人不知道这个页面在做什么」原样复发。
+ *
+ * 标出的是**总览条按哪两环分段**（起预览、跑验收），不是「整页只统计这两环」——
+ * 结论三档与合并的漏点也在这一屏上，说成「只统计两环」是另一种不准确。
+ */
+const SCOPE_FLOW = [
+  { label: '开分支', counted: false },
+  { label: '起预览', counted: true },
+  { label: '跑验收', counted: true },
+  { label: '出结论', counted: false },
+  { label: '合并主干', counted: false },
+] as const;
+
+function ScopeRail(): JSX.Element {
+  return (
+    <div className="pp-scope" aria-label="这一屏统计的范围">
+      {SCOPE_FLOW.map((step, i) => (
+        <span key={step.label} className="flex items-center gap-2">
+          {i ? <span className="pp-scope-sep" aria-hidden="true">›</span> : null}
+          <span className={step.counted ? 'pp-scope-on' : 'pp-scope-off'}>{step.label}</span>
+        </span>
+      ))}
+      <span className="pp-scope-note">总览条按这两环分段</span>
+    </div>
+  );
+}
 
 /** 把几行文字编成 data-tip。空行自动丢掉，省得调用方到处写条件。 */
 export function tip(...lines: Array<string | false | null | undefined>): string {
@@ -247,6 +288,8 @@ export function PipelinePanel({ pipeline, series, onOpenProject }: PipelinePanel
         </div>
       </div>
 
+      <ScopeRail />
+
       {/*
         第一眼只占一小块：整屏铺开的图是「好看但不知道在讲什么」。
         放大之后铺开的仍是同一套编码 —— 判断句 → 那条总览 → 逐项目明细，
@@ -271,6 +314,13 @@ export function PipelinePanel({ pipeline, series, onOpenProject }: PipelinePanel
         </>
       ) : (
         <>
+          {/*
+            紧凑态也要有这句判断——它是「先给结论再给数」的那个结论。
+            Headline 的紧凑变体早就写好了（只渲染句子，不带支撑点与下一步），
+            但这一支一直没有引用它，于是第一屏只有图、没有结论：
+            链路建了一半，句子照样算得出来，测试照样绿。
+          */}
+          <Headline h={headline} />
           {strip}
           {trends}
         </>
