@@ -2262,14 +2262,41 @@ public sealed class ImageGenConfigsData
     /// <summary>改完多久生效。界面上要如实写出来，别让人保存完盯着屏幕猜。</summary>
     public int RefreshSeconds { get; set; }
 
-    /// <summary>prd-api 上一轮同步的时间。空 = 它还没拉过，配了也还没生效。</summary>
+    /// <summary>
+    /// 上一轮同步的时间，取**所有消费进程里最旧的那个**。
+    ///
+    /// 取最新的那个会撒谎：两个进程各有一份进程全局的注册表（prd-api 与 llmgw-serving），
+    /// 一个同步不上、另一个照常写时，取最新就等于让健康的那个替失败的那个作答——
+    /// 界面报「刚同步过」，而走失败那个进程的请求还在用旧契约。
+    /// 取最旧的，这一屏说的就是「所有进程都至少同步到了这个时刻」。
+    /// 有任何一个进程从没同步过时为空。
+    /// </summary>
     public string? SyncedAt { get; set; }
 
     /// <summary>
     /// 上一轮真正生效的那几个模式。只报数字答不出「生效的是不是我刚改的那条」，
     /// 所以逐条列出来，让界面能对着自己刚填的模式打勾。
+    /// 多进程时取**交集**：只有每个进程都认到的那几条才算真生效。
     /// </summary>
     public List<string> SyncedPatterns { get; set; } = new();
+
+    /// <summary>
+    /// 逐个消费进程的同步状态。界面要能答「是哪个进程没跟上」，而不只是一个汇总时间。
+    /// </summary>
+    public List<ImageGenSyncHost> SyncHosts { get; set; } = new();
+}
+
+/// <summary>一个消费进程的同步状态。</summary>
+public sealed class ImageGenSyncHost
+{
+    /// <summary>进程角色：prd-api / llmgw-serving。</summary>
+    public string HostRole { get; set; } = string.Empty;
+
+    /// <summary>它上一轮同步的时间。空 = 这个进程还没拉过，走它的请求仍用代码内置那份。</summary>
+    public string? SyncedAt { get; set; }
+
+    /// <summary>它这一轮认到几条覆盖。</summary>
+    public int OverrideCount { get; set; }
 }
 
 public sealed class ImageGenConfigItem

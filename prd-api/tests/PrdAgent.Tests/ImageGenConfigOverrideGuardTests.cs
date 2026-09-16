@@ -256,6 +256,43 @@ public class ImageGenConfigOverrideGuardTests
     /// 只跑一次就等于「改完要重启」；失败清空则会让配好的契约在一次网络抖动后消失，
     /// 生图尺寸突然变回旧档位而没人收到消息。
     /// </summary>
+    /// <summary>
+    /// 两个进程的同步状态必须分行记，汇总必须取最保守的那一端。
+    ///
+    /// 生图契约是**进程全局**的注册表，prd-api 与 llmgw-serving 各跑一份同步器。
+    /// 合成一行的话，健康的那个会不断覆盖失败的那个：控制台报「刚同步过、N 条生效」，
+    /// 而走失败那个进程的请求还在用旧契约——降级被另一半的成功盖住，没有任何地方会响。
+    ///
+    /// 所以状态键带宿主角色、汇总时间取最旧、生效清单取交集，并逐进程给出明细，
+    /// 让界面能答「是哪个进程没跟上」。
+    /// </summary>
+    [Fact]
+    public void 同步状态按进程分行且汇总取最保守那一端()
+    {
+        var worker = Read("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        var console = Read("llmgw/console-api/Program.cs");
+        var section = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
+
+        // 状态键带宿主角色，且角色是必填构造参数——新增第三个宿主时不传就编译不过
+        Assert.Contains("$\"{_hostRole}::{_tenantId}\"", worker);
+        Assert.Contains("string hostRole,", worker);
+        Assert.DoesNotContain("$\"prd-api::{_tenantId}\"", worker);
+
+        // 两处注册各自表明身份
+        Assert.Contains("hostRole: \"prd-api\"", Read("prd-api/src/PrdAgent.Api/Program.cs"));
+        Assert.Contains("hostRole: \"llmgw-serving\"", Read("llmgw/serving/Program.cs"));
+
+        // 控制台逐进程读，汇总取最旧 + 交集，不是读一行
+        Assert.Contains("expectedSyncHosts", console);
+        Assert.Contains("allHostsSynced", console);
+        Assert.Contains(".Min().ToIso()", console);
+        Assert.Contains("Intersect", console);
+
+        // 界面点名没跟上的那个进程
+        Assert.Contains("syncHosts", section);
+        Assert.Contains("还没同步过这份契约", section);
+    }
+
     [Fact]
     public void 刷新器接上了线且失败时不清空()
     {
@@ -265,10 +302,15 @@ public class ImageGenConfigOverrideGuardTests
         // /v1/images/generations 并直接读它。只在 MAP 注册的话，控制台配的契约在 MAP 里生效、
         // 在网关里完全不生效，而控制台那一屏照样显示「已同步」（它读的是 MAP 写的状态行）——
         // 外部走网关的生图请求全程用代码内置那份，没有任何地方会报错。
+        // 断言的是「两个进程都注册了这个 Worker」这件事，不是某一种注册写法——
+        // 写法后来从泛型改成工厂（要传宿主角色），判据跟着退化成「某段代码字面存在」
+        // 就会在下一次重构时再红一次（形状 4a：断言实现的字面存在而不是行为）。
         var program = Read("prd-api/src/PrdAgent.Api/Program.cs");
-        Assert.Contains("AddHostedService<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>", program);
+        Assert.Contains("ImageGenModelConfigSyncWorker(", program);
+        Assert.Contains("AddHostedService", program);
         var serving = Read("llmgw/serving/Program.cs");
-        Assert.Contains("AddHostedService<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>", serving);
+        Assert.Contains("ImageGenModelConfigSyncWorker(", serving);
+        Assert.Contains("AddHostedService", serving);
 
         var worker = Read("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
         Assert.Contains("while (!stoppingToken.IsCancellationRequested)", worker);

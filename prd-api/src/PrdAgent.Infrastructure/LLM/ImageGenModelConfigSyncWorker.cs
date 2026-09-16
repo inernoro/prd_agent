@@ -45,13 +45,31 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
     /// </summary>
     private readonly string _tenantId;
 
+    /// <summary>
+    /// 跑这个 Worker 的进程是谁（`prd-api` / `llmgw-serving`）。
+    ///
+    /// 必填，没有默认值：两个进程各自有一份进程全局的注册表，同步状态就必须分行记。
+    /// 合成一行的后果是「健康的那个不断覆盖失败的那个」——一个进程同步不上（读不到库、
+    /// 注册表还是旧的），另一个照常写，控制台读到的是那条新鲜记录，报「刚同步过、N 条生效」，
+    /// 而走失败那个进程的请求仍在用旧契约。降级被另一半的成功盖住，没有任何地方会响
+    /// （degradation-must-alarm：有降级的地方必须有铃，而这里的铃被按掉了）。
+    ///
+    /// 做成必填构造参数而不是可选项：新增第三个宿主时**不传就编译不过**，
+    /// 比留个默认值再靠守卫抽查可靠。
+    /// </summary>
+    private readonly string _hostRole;
+
     public ImageGenModelConfigSyncWorker(
         ILogger<ImageGenModelConfigSyncWorker> logger,
         IConfiguration configuration,
+        string hostRole,
         LlmGatewayDataContext? gateway = null)
     {
         _logger = logger;
         _gateway = gateway;
+        _hostRole = string.IsNullOrWhiteSpace(hostRole)
+            ? throw new ArgumentException("必须说清是哪个进程在跑这个同步器，否则两边的状态会互相覆盖", nameof(hostRole))
+            : hostRole.Trim();
         _tenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
             ? tenantId
             : GatewayTenantDefaults.InternalTenantId;
@@ -139,16 +157,17 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         // 没有这一步，界面只能说「最长 60 秒生效」然后让人盯着屏幕猜——而猜错的代价是
         // 去查一个根本没坏的东西。同步状态回写之后，那一屏能说的是「服务端 09:41 同步过，
         // 认到 5 条」，这是一句可核对的话（expectation-management：别让用户白等一场）。
-        // 一租户一行。共用同一个网关库的多个 prd-api 实例若都写 `_id: "prd-api"`，
-        // 最后一个写的会让别的租户的控制台显示错的同步时间与模式清单——
-        // 运维据此以为自己那条契约生效了，其实没有。
-        var statusId = $"prd-api::{_tenantId}";
+        // 一进程一租户一行。合并任一维度都会出现「后写的盖掉先写的」：
+        // 合并租户 → 别的租户看到错的同步时间；合并进程 → 健康的那个盖掉失败的那个，
+        // 而走失败那个进程的请求还在用旧契约（见 _hostRole 的注释）。
+        var statusId = $"{_hostRole}::{_tenantId}";
         await _gateway!.Database.GetCollection<BsonDocument>("llmgw_imagegen_sync_status").ReplaceOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", statusId),
             new BsonDocument
             {
                 { "_id", statusId },
                 { "TenantId", _tenantId },
+                { "HostRole", _hostRole },
                 { "SyncedAt", DateTime.UtcNow },
                 { "OverrideCount", ordered.Count },
                 { "BuiltinCount", ImageGenModelConfigs.Configs.Count },

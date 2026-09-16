@@ -58,16 +58,25 @@ function itemToDraft(item: ImageGenConfigItem | null): Draft {
  * 配了但服务端还没认到的，点名说出来，而不是让人保存完盯着屏幕猜（expectation-management）。
  */
 function syncNote(data: ImageGenConfigsData): string {
+  // 两个进程各跑一份同步器（prd-api 与 llmgw-serving），各有一份进程全局的注册表。
+  // 没跟上的那个要被点名：只给一个汇总时间的话，健康的那个就替失败的那个作答了，
+  // 而走失败那个进程的请求还在用旧契约（degradation-must-alarm）。
+  const missing = (data.syncHosts ?? []).filter((x) => !x.syncedAt).map((x) => x.hostRole);
+  if (missing.length > 0) {
+    return `${missing.join('、')} 还没同步过这份契约——走它的请求仍用代码内置那份。`
+      + `每 ${data.refreshSeconds} 秒拉一次，稍等再看；一直是这句说明那个进程没起来。`;
+  }
   if (!data.syncedAt) {
-    return `服务端还没同步过这份契约——它每 ${data.refreshSeconds} 秒拉一次，稍等再看；一直是这句说明 prd-api 没起来。`;
+    return `服务端还没同步过这份契约——它每 ${data.refreshSeconds} 秒拉一次，稍等再看。`;
   }
   const synced = new Set(data.syncedPatterns);
   const pending = data.items.filter((x) => x.enabled && !synced.has(x.modelIdPattern)).map((x) => x.modelIdPattern);
   const when = new Date(data.syncedAt).toLocaleTimeString();
+  const scope = (data.syncHosts ?? []).length > 1 ? `全部 ${data.syncHosts.length} 个进程都在 ${when} 之后同步过` : `服务端 ${when} 同步过`;
   if (pending.length === 0) {
-    return `服务端 ${when} 同步过，${data.syncedPatterns.length} 条已生效。`;
+    return `${scope}，${data.syncedPatterns.length} 条已生效。`;
   }
-  return `服务端 ${when} 同步过，${data.syncedPatterns.length} 条已生效；${pending.join('、')} 还没被认到，最长 ${data.refreshSeconds} 秒后再看。`;
+  return `${scope}，${data.syncedPatterns.length} 条已生效；${pending.join('、')} 还没被认到，最长 ${data.refreshSeconds} 秒后再看。`;
 }
 
 function summarizeSizes(item: ImageGenConfigItem): string {

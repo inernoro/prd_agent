@@ -3936,8 +3936,53 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
     // 取全局那一行的话，共用网关库的另一个租户的同步时间会显示成你的，
     // 于是「我配的那条生效了没有」这句可核对的话变成了一句假话。
     var syncTenantId = TenantAccess.GetRequired(http).TenantId;
-    var syncDoc = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_sync_status")
-        .Find(Builders<BsonDocument>.Filter.Eq("_id", $"prd-api::{syncTenantId}")).FirstOrDefaultAsync();
+    // 逐个消费进程读，不是读一行。
+    //
+    // 生图契约是**进程全局**的注册表，prd-api 与 llmgw-serving 各跑一份同步器。
+    // 读单行（或取最新那行）等于让健康的那个进程替失败的那个作答：一个同步不上、
+    // 另一个照常写，界面报「刚同步过、N 条生效」，而走失败那个进程的请求还在用旧契约——
+    // 降级被另一半的成功盖住，没有任何地方会响（degradation-must-alarm）。
+    //
+    // 汇总口径因此取**最保守**的那一端：时间取最旧（有一个没同步过就为空），
+    // 模式取交集（只有每个进程都认到的才算真生效）。逐进程明细另外给，
+    // 界面要能答「是哪个进程没跟上」。
+    const string prdApiHostRole = "prd-api";
+    const string servingHostRole = "llmgw-serving";
+    var expectedSyncHosts = new[] { prdApiHostRole, servingHostRole };
+    var syncDocs = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_sync_status")
+        .Find(Builders<BsonDocument>.Filter.In("_id", expectedSyncHosts.Select(role => $"{role}::{syncTenantId}")))
+        .ToListAsync();
+    var syncByHost = syncDocs.ToDictionary(
+        x => x.AsNullableString("HostRole") ?? x.GetStringOrEmpty("_id"),
+        x => x,
+        StringComparer.Ordinal);
+
+    List<string> PatternsOf(BsonDocument doc)
+        => doc.TryGetValue("Patterns", out var raw) && raw is BsonArray arr
+            ? [.. arr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
+            : [];
+
+    var syncHosts = expectedSyncHosts.Select(role =>
+    {
+        syncByHost.TryGetValue(role, out var doc);
+        return new ImageGenSyncHost
+        {
+            HostRole = role,
+            SyncedAt = doc?.AsNullableUtcDateTime("SyncedAt").ToIso(),
+            OverrideCount = doc is null ? 0 : (int)(doc.AsNullableInt("OverrideCount") ?? 0),
+        };
+    }).ToList();
+
+    // 有任何一个进程没同步过 → 汇总时间为空、生效清单为空。这一屏宁可说「还没生效」，
+    // 也不能拿另一个进程的成功替它背书。
+    var allHostsSynced = expectedSyncHosts.All(syncByHost.ContainsKey);
+    var aggregateSyncedAt = allHostsSynced
+        ? syncDocs.Select(x => x.AsNullableUtcDateTime("SyncedAt")).Min().ToIso()
+        : null;
+    var aggregatePatterns = allHostsSynced && syncDocs.Count > 0
+        ? syncDocs.Select(PatternsOf)
+            .Aggregate((a, b) => [.. a.Intersect(b, StringComparer.Ordinal)])
+        : [];
 
     return Json(ApiEnvelope<ImageGenConfigsData>.Ok(new ImageGenConfigsData
     {
@@ -3947,10 +3992,9 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
         Builtin = builtin,
         BuiltinPublishedAt = builtinDoc?.AsNullableUtcDateTime("PublishedAt").ToIso(),
         RefreshSeconds = 60,
-        SyncedAt = syncDoc?.AsNullableUtcDateTime("SyncedAt").ToIso(),
-        SyncedPatterns = syncDoc?.TryGetValue("Patterns", out var syncPatterns) == true && syncPatterns is BsonArray patternArr
-            ? [.. patternArr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
-            : [],
+        SyncedAt = aggregateSyncedAt,
+        SyncedPatterns = aggregatePatterns,
+        SyncHosts = syncHosts,
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
@@ -4321,6 +4365,11 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
     var result = new PoolMigrationResult { DryRun = dryRun };
 
     var pools = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
+    // 兑换所成员要照搬成 TargetKind=exchange 的线路，先把启用的兑换所取出来一次，
+    // 不在每个成员上重查（一个池几十个成员，逐个打库没必要）。
+    var enabledExchangesForMigration = await gwModelExchanges
+        .Find(TenantAccess.Filter(http, fb.Eq("Enabled", true)))
+        .ToListAsync();
     if (pools.Count > PoolMigrationPlanner.MaxBatch)
         return Json(ApiEnvelope<PoolMigrationResult>.Fail("TOO_MANY",
             $"当前租户有 {pools.Count} 个池，一次最多搬 {PoolMigrationPlanner.MaxBatch} 个，请先按 modelType 分批"), jsonOptions, 400);
@@ -4486,6 +4535,61 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             // 供给侧当时是从 Name 或 _id 取的标识写进池成员的。只查 ModelName 会把那些
             // 完全合法的成员报成「找不到」，搬过去的模型于是少线路——池退役之后就再也没有
             // 别的路能接住它们了（形状 1：判据比它该管的范围窄）。
+            // 先看它是不是兑换所成员。两种合法写法：PlatformId 直接写兑换所 _id，
+            // 或写成 __exchange__ 由中继按模型名匹配（判据与 IsResolvablePoolMemberKey 同源）。
+            //
+            // 漏掉这一支的后果不是少一条线路，是**整个池搬成零线路**：一个纯 Exchange 的池
+            // 里每个成员都被报成「模型库里找不到」，搬过去的对外模型一条线路都没有，
+            // 而池路由此时已经删了——那些流量再也没有别的路可走。
+            // 上一轮把「成员按三种标识匹配」补上时只扫了物理模型这一族，兑换所这一族没跟着扫。
+            BsonDocument? memberExchange = null;
+            if (memberPlatformId.Length > 0)
+            {
+                memberExchange = string.Equals(memberPlatformId, "__exchange__", StringComparison.Ordinal)
+                    ? enabledExchangesForMigration.FirstOrDefault(x => GatewayExchangeSupportsModel(x, memberModelId))
+                    : enabledExchangesForMigration.FirstOrDefault(x =>
+                        string.Equals(x.GetStringOrEmpty("_id"), memberPlatformId, StringComparison.Ordinal)
+                        && GatewayExchangeSupportsModel(x, memberModelId));
+            }
+
+            if (memberExchange is not null)
+            {
+                var exchangeId = memberExchange.GetStringOrEmpty("_id");
+                var duplicateExchangeRoute = await gwModelOfferings.Find(fb.And(
+                    fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                    fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId))).AnyAsync();
+                if (duplicateExchangeRoute) continue;
+
+                var carryExchangeUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
+                if (carryExchangeUnavailable) entry.CarriedUnavailableRoutes++;
+                if (!dryRun)
+                {
+                    await gwModelOfferings.InsertOneAsync(new BsonDocument
+                    {
+                        { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
+                        { "LogicalModelId", logicalId }, { "TargetKind", "exchange" }, { "TargetId", exchangeId },
+                        { "UpstreamModelId", memberModelId },
+                        { "Protocol", member.AsNullableString("Protocol") is { Length: > 0 } ep ? ep : BsonNull.Value },
+                        { "EndpointPath", BsonNull.Value },
+                        { "Priority", PoolMigrationPlanner.MemberPriority(member) },
+                        { "Weight", member.AsNullableInt("Weight") ?? 100 },
+                        { "Enabled", true },
+                        { "HealthStatus", carryExchangeUnavailable ? 2 : 0 },
+                        { "ConsecutiveFailures", carryExchangeUnavailable ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
+                        { "ConsecutiveSuccesses", 0 },
+                        { "LastFailedAt", carryExchangeUnavailable && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } elf
+                            ? elf : BsonNull.Value },
+                        { "MaxConcurrency", member.AsNullableInt("MaxConcurrency") is { } emc && emc > 0 ? emc : BsonNull.Value },
+                        { "RateLimitPerMinute", BsonNull.Value },
+                        { "Notes", BsonNull.Value },
+                        { "CreatedAt", now }, { "UpdatedAt", now },
+                    });
+                }
+                entry.RouteCount++;
+                result.RoutesCreated++;
+                continue;
+            }
+
             var physical = await gwModels.Find(fb.And(
                 fb.Eq("TenantId", tenantId),
                 fb.Or(

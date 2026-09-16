@@ -331,7 +331,11 @@ builder.Services.AddHostedService<ServingKeyIntegrityCheck>();
   LlmGateway:InternalTenantId 刷一份。serving 同时服务多个租户时，非内部租户配的契约
   不会进这张表——那是注册表本身的形状，不是这次接线引入的，已记台账。
 */
-builder.Services.AddHostedService<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>();
+builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
+    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
+    sp.GetRequiredService<IConfiguration>(),
+    hostRole: "llmgw-serving",
+    sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // JSON：PascalCase（PropertyNamingPolicy = null），与既有 DTO 属性名一一对应，
 // MAP 侧 HttpLlmGatewayClient 用相同口径序列化/反序列化。

@@ -1749,10 +1749,19 @@ export interface ImageGenConfigsData {
   builtinPublishedAt?: string | null;
   /** 改完多久生效。界面要如实写出来，别让人保存完盯着屏幕猜 */
   refreshSeconds: number;
-  /** prd-api 上一轮同步的时间；空 = 它还没拉过，配了也还没生效 */
+  /** 所有消费进程里**最旧**的那个同步时间；有任一进程没同步过时为空 */
   syncedAt?: string | null;
-  /** 上一轮真正生效的那几个模式。只报数字答不出「生效的是不是我刚改的那条」 */
+  /** 每个进程都认到的那几个模式（交集）。只报数字答不出「生效的是不是我刚改的那条」 */
   syncedPatterns: string[];
+  /** 逐个消费进程的同步状态——界面要能答「是哪个进程没跟上」 */
+  syncHosts: ImageGenSyncHost[];
 }
+
+/** 一个消费进程的同步状态。生图契约是进程全局的注册表，prd-api 与 llmgw-serving 各跑一份。 */
+export type ImageGenSyncHost = {
+  hostRole: string;
+  syncedAt?: string | null;
+  overrideCount: number;
+};
 
 export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;
