@@ -81,6 +81,9 @@ function toMonitor(
     enabled: true,
     observeMode: item.observeMode,
     ...(item.sampleComponentId ? { sampleCountPath: item.sampleComponentId } : {}),
+    // 自称的环境透传下去；它是不是算数由 resolveMonitorEnvironment 定
+    // （地址指着分支预览的，无论自称什么都算分支预览）。
+    ...(item.environment ? { environment: item.environment } : {}),
     publicVisible: item.publicVisible,
     ...(item.publicName ? { publicName: item.publicName } : {}),
     // 自发现的监控由端点维护，人改了下一轮会被覆盖——所以来源必须标明，
@@ -100,7 +103,7 @@ function toMonitor(
 function sameShape(a: UptimeCustomMonitor, b: UptimeCustomMonitor): boolean {
   const pick = (m: UptimeCustomMonitor) => JSON.stringify([
     m.name, m.url, m.healthComponentId, m.healthField, m.healthOp, m.healthValue,
-    m.intervalSeconds, m.observeMode, m.sampleCountPath, m.publicVisible, m.publicName, m.enabled,
+    m.intervalSeconds, m.observeMode, m.sampleCountPath, m.publicVisible, m.publicName, m.enabled, m.environment,
   ]);
   return pick(a) === pick(b);
 }

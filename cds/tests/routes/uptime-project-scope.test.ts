@@ -29,15 +29,24 @@ function fakeMonitor() {
   } as unknown as Parameters<typeof createUptimeRouter>[0]['monitor'];
 }
 
-function appWith(projectId?: string) {
+function appWith(projectId?: string, extra: Partial<Parameters<typeof createUptimeRouter>[0]> = {}) {
   const app = express();
   app.use((req, _res, next) => {
     if (projectId) (req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey = { projectId, keyId: 'k' };
     next();
   });
-  app.use('/api', createUptimeRouter({ monitor: fakeMonitor() }));
+  app.use('/api', createUptimeRouter({ monitor: fakeMonitor(), ...extra }));
   return app;
 }
+
+/** 系统级通知通道：带别的项目的通道名、项目清单、投递计数与最近失败原因。 */
+const alarmDeps: Partial<Parameters<typeof createUptimeRouter>[0]> = {
+  alarmChannel: () => ({ status: 'healthy', channel: 'MAP 站内通知', delivered: 3, failed: 0 }) as never,
+  alarmChannels: () => [
+    { id: 'c1', name: '运维群', kind: 'webhook', status: 'failing', delivered: 1, failed: 2, events: ['business-down'], projects: ['proj-b'], enabled: true,
+      last: { at: 1, ok: false, kind: 'alert', reason: 'HTTP 500' } },
+  ] as never,
+};
 
 async function get(app: express.Express, url: string) {
   const server = app.listen(0);
@@ -54,6 +63,17 @@ describe('存活监控项目作用域', () => {
   it('无 cdsProjectKey（人类/全局 Key）看全量', async () => {
     const res = await get(appWith(), '/api/uptime/summary');
     expect((res.body.targets as unknown[]).length).toBe(2);
+  });
+
+  it('通知通道是系统级配置：管理员会话的摘要带、项目级 Key 的摘要不带（Codex #1543 P1）', async () => {
+    const admin = await get(appWith(undefined, alarmDeps), '/api/uptime/summary');
+    expect(admin.body.alarm).toBeDefined();
+    expect(admin.body.alarmChannels).toHaveLength(1);
+    const scoped = await get(appWith('proj-a', alarmDeps), '/api/uptime/summary');
+    expect(scoped.body.projectScope).toBe('proj-a');
+    expect(scoped.body.alarm).toBeUndefined();
+    expect(scoped.body.alarmChannels).toBeUndefined();
+    expect(JSON.stringify(scoped.body)).not.toContain('运维群');
   });
 
   it('项目级 Key 只看得到本项目目标，且总览计数按收窄后重算', async () => {
