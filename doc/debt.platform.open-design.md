@@ -577,3 +577,29 @@ AGENTS.md 9 要求的是**新 Agent** 在通过 8 验收之前带 `wip: true`。
 **这条是错的**：`IAssetStorage` 有 `TryDownloadBytesAsync(key, ct)`，`GetEntryHtmlAsync`
 读入口 HTML 用的正是它。那条后续工作因此比当时估的便宜，拦路的只剩 Mongo 单文档 16MB、
 既有包体上限，以及「每条基线都全量快照」这个存储成本决策。判定仍是 B 类，但理由要如实。
+
+## 沙箱预览里的 ES 模块取不到票据（2026-09-16，B 类，等「允许带脚本的产物」那天一起做）
+
+复审（P1）指出：已验证包预览的 iframe 是 `allow-scripts allow-forms allow-modals
+allow-downloads`，**没有 `allow-same-origin`**，文档因此是 opaque origin；而
+`<script type="module">` 及其 import 图是按 CORS 模式、`same-origin` 凭据取的——opaque
+origin 与任何 URL 都不同源，cookie 一律不带。预览资源路由 `Read` 恰恰以
+`MapVerifiedPreview_*` cookie 为门，于是模块及其依赖一律 404，而 `Access-Control-Allow-Origin: *`
+是在那之后才加的，救不了。经典 `<script src>`、CSS、图片走的是 no-cors 子资源请求，cookie
+照常携带——所以这个洞只对模块生效。
+
+**技术判断成立，但当前没有生产路径**：已验证包的唯一生产者是 OpenDesign 生成链路，而它的
+系统提示词明写「首版产物只允许声明式 HTML 与内联 CSS，不得输出任何 `<script>`、内联事件
+处理器、外部脚本、字体、追踪器或远程资源」。上传型多文件站点没有 `VerifiedFiles`（这正是
+回退保真那条的由来），也进不了这条预览。所以今天的包里一个 `<script>` 都没有，更没有模块。
+包校验器允许 `.js` / `.mjs` 是格式层面的宽容，不是生成侧的行为。
+
+**为什么不在本 PR 顺手修**：能修好它的做法都要换掉预览的凭据传输方式——把票据从 cookie 挪进
+URL 路径段（`/{accessId}/{ticket}/index.html`，相对子资源与模块 import 会自动带上它，对所有
+取用模式一视同仁）。那是一个安全面的新语义：票据会进入同源子资源的 `Referer`（需同时补
+`Referrer-Policy: no-referrer`），并且会退掉上一轮复审专门塑形过的 cookie + SameSite 协商
+（跨源嵌入时降 None 那套）。属于 AGENTS.md 5.5 的 B 类。
+
+**触发条件写在这里，免得下一个人踩**：哪天放开「产物可以带脚本」，**必须在同一次改动里**
+先把票据传输换成路径段，否则那一版预览会对模块入口静默空白——CSP 与 CORS 都看不出问题，
+只有真的打开一次带模块的包才会发现。

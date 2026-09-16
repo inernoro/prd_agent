@@ -105,3 +105,4 @@
 | fix | prd-api | 基线按「这个站点这一版」判定，不再按创建者比对：站点主人打开一次版本历史建了基线之后，团队编辑者再发起 AI 微调会在模型跑完之后被拒，任务判失败、草稿存不下来；调用方能不能动这个站点在拿 entry 时已由 CanEditSiteAsync 判过 |
 | test | prd-api | 认领基线的拒绝变体把 other-owner 换成 other-site：前者逐字要求「创建者不是调用方就拒」，正是这条缺陷本身（形状 4a）；另加一条协作编辑守卫（主人建基线、队友认领成功），还原创建者比对当场变红 |
 | docs | doc | 更正 debt 台账里一处事实错误：IAssetStorage 有 TryDownloadBytesAsync，历史版本存字节不需要新增存储抽象，那条后续工作比当时估的便宜 |
+| docs | doc | debt 台账记下「沙箱预览里的 ES 模块取不到票据」：opaque origin 下模块按 CORS + same-origin 凭据取，cookie 一律不带，而预览资源路由以 cookie 为门；当前生成链路被提示词禁止输出任何 script，故无生产路径，判 B 类并写明「放开带脚本产物时必须同批把票据挪进 URL 路径段」 |
