@@ -31,7 +31,8 @@ export interface RelationLayout {
   pos: Map<string, Pos>;
   frames: Frame[];
   entry: Pos;
-  edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string }>;
+  /** inferred：这条关系是按名约定推断出来的（compose 里没声明），画虚线；其余一律实线 */
+  edges: Array<{ from: Pos; to: Pos; kind: 'entry' | 'prefix' | 'call' | 'ref' | 'broken' | 'infra'; label?: string; key: string; inferred?: boolean }>;
   externals: Array<{ id: string; label: string; sub: string; status: string; pos: Pos; broken: boolean }>;
   /** 同一个服务同时是主域名壳和子域壳（double-public-surface）时，后一个站点里用别名节点，这里映射回真实 id */
   aliasOf: Map<string, string>;
@@ -121,7 +122,8 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
       pos.set(b.attached[0], { x: cp ? cp.x : inner, y: attachedY, w: CARD_W, h: CARD_H });
     } else place(b.attached, attachedY);
     const last = b.attached.length > 0 ? attachedY + CARD_H : b.members.length > 0 ? memberY + CARD_H : shellY + CARD_H;
-    frames.push({ key: b.site.id, label: b.site.kind === 'main' ? '主域名' : `子域 ${b.site.subdomain}`, sub: b.site.kind === 'main' ? (b.site.shellSource === 'convention' ? '默认站按名兜底 · 前缀分流' : '壳在上 · 前缀成员在下') : '整站归壳', x, y, w: bw + SITE_PAD * 2, h: last + SITE_PAD - y, tone: 'site' });
+    // 框角写用户语言，不写实现术语（「壳在上 · 前缀成员在下」「forwarder」这类字读的人接不上）
+    frames.push({ key: b.site.id, label: b.site.kind === 'main' ? '同一个域名' : `子域 ${b.site.subdomain}`, sub: b.site.kind === 'main' ? (b.site.shellSource === 'convention' ? '壳是按名兜底出来的，其余按前缀分流' : '壳承接根路径，其余按前缀分流') : '整站归这一个服务', x, y, w: bw + SITE_PAD * 2, h: last + SITE_PAD - y, tone: 'site' });
     bottom = Math.max(bottom, last + SITE_PAD);
     x += bw + SITE_PAD * 2 + SITE_GAP;
   }
@@ -131,7 +133,7 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
     const ex = x, ey = y;
     externals.forEach((e, i) => { e.pos = { x: ex + SITE_PAD, y: ey + SITE_LABEL + i * (CARD_H + 16), w: CARD_W + 60, h: CARD_H }; });
     const eh = SITE_LABEL + externals.length * (CARD_H + 16) - 16 + SITE_PAD;
-    frames.push({ key: 'external', label: '外部项目', sub: '跨项目引用 · 走公网入口', x: ex, y: ey, w: extW, h: eh, tone: 'external' });
+    frames.push({ key: 'external', label: '外部项目', sub: '跨项目引用，走公网入口', x: ex, y: ey, w: extW, h: eh, tone: 'external' });
     bottom = Math.max(bottom, ey + eh);
   }
   y = bottom + GAP_Y;
@@ -147,7 +149,7 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
     const iw = rowW(infra.length) + SITE_PAD * 2;
     const ix = Math.max(12, (width - iw) / 2);
     infra.forEach((n, i) => pos.set(n.id, { x: ix + SITE_PAD + i * (CARD_W + GAP_X), y: y + SITE_LABEL, w: CARD_W, h: CARD_H }));
-    frames.push({ key: 'infra', label: '共享基础设施', sub: '同项目所有分支共用', x: ix, y, w: iw, h: SITE_LABEL + CARD_H + SITE_PAD, tone: 'infra' });
+    frames.push({ key: 'infra', label: '共享基础设施 · 同项目所有分支共用同一实例', sub: '', x: ix, y, w: iw, h: SITE_LABEL + CARD_H + SITE_PAD, tone: 'infra' });
     y += SITE_LABEL + CARD_H + SITE_PAD + 24;
   }
 
@@ -155,13 +157,13 @@ export function layoutRelations(payload: RelationPayload, minWidth = 900): Relat
   for (const b of blocks) {
     const head = b.shell ?? b.members[0];
     const hp = head ? pos.get(head) : undefined;
-    if (hp) edges.push({ from: entry, to: hp, kind: 'entry', key: `entry-${b.site.id}` });
+    if (hp) edges.push({ from: entry, to: hp, kind: 'entry', key: `entry-${b.site.id}`, inferred: b.site.kind === 'main' && b.site.shellSource === 'convention' });
     if (b.shell) {
       const sp = pos.get(b.shell)!;
       for (const m of b.members) {
         const mp = pos.get(m); if (!mp) continue;
         const info = b.site.members.find((x) => x.id === real(m));
-        edges.push({ from: sp, to: mp, kind: 'prefix', label: (info?.prefixes ?? []).join(' ') + (info?.viaConvention ? ' · 按名约定' : ''), key: `prefix-${m}` });
+        edges.push({ from: sp, to: mp, kind: 'prefix', label: (info?.prefixes ?? []).join(' ') + (info?.viaConvention ? ' · 按名推断' : ''), key: `prefix-${m}`, inferred: Boolean(info?.viaConvention) });
       }
     }
   }
@@ -186,16 +188,19 @@ function edgePath(a: Pos, b: Pos): string {
   return `M${sx},${sy} C${mx},${sy} ${mx},${ty} ${tx},${ty}`;
 }
 
-const EDGE_STYLE: Record<RelationLayout['edges'][number]['kind'], { stroke: string; dash: string; width: number; marker?: boolean }> = {
-  entry: { stroke: 'hsl(var(--muted-foreground))', dash: '5 5', width: 1.4, marker: true },
-  prefix: { stroke: 'hsl(var(--muted-foreground))', dash: '2 4', width: 1.4, marker: true },
-  call: { stroke: 'hsl(var(--graph-call))', dash: '5 5', width: 1.6, marker: true },
-  ref: { stroke: 'hsl(var(--info))', dash: '4 4', width: 1.5, marker: true },
-  broken: { stroke: 'hsl(var(--bad))', dash: '4 4', width: 1.6, marker: true },
-  infra: { stroke: 'hsl(var(--muted-foreground))', dash: '5 5', width: 1.2 },
+// 线型有语义：声明的关系一律实线，只有「按名推断」才画虚线（`inferred`）。
+// 此前六种线全是虚线，整张图读起来像草稿——那正是「第一眼不专业」的来源之一。
+const EDGE_STYLE: Record<RelationLayout['edges'][number]['kind'], { stroke: string; width: number; marker?: boolean }> = {
+  entry: { stroke: 'hsl(var(--hairline-strong))', width: 1.5, marker: true },
+  prefix: { stroke: 'hsl(var(--hairline-strong))', width: 1.5, marker: true },
+  call: { stroke: 'hsl(var(--graph-call))', width: 1.6, marker: true },
+  ref: { stroke: 'hsl(var(--info))', width: 1.5, marker: true },
+  broken: { stroke: 'hsl(var(--bad))', width: 1.6, marker: true },
+  infra: { stroke: 'hsl(var(--graph-call))', width: 1.3, marker: true },
 };
+const INFERRED_DASH = '3 4';
 
-export function RelationGraph({ payload, compact = false, highlight, className, style }: { payload: RelationPayload; compact?: boolean; highlight?: string | null; className?: string; style?: CSSProperties }): JSX.Element {
+export function RelationGraph({ payload, compact = false, highlight, className, style, entryHost }: { payload: RelationPayload; compact?: boolean; highlight?: string | null; className?: string; style?: CSSProperties; /** 入口卡第二行写的域名；没有就写分支名 */ entryHost?: string }): JSX.Element {
   const layout = layoutRelations(payload, compact ? 720 : 960);
   const nodeById = new Map(payload.graph.nodes.map((n) => [n.kind === 'service' ? (n.rawId ?? svc(n.id)) : n.id, n]));
   const findingsOf = (id: string) => payload.lint.findings.filter((f) => f.services.includes(id) && f.severity !== 'info');
@@ -219,14 +224,16 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
       <div style={{ position: 'relative', width: layout.width, height: layout.height, transform: scale !== 1 ? `scale(${scale})` : undefined, transformOrigin: 'top left', marginBottom: scale !== 1 ? -(layout.height * (1 - scale)) : undefined, marginLeft: compact ? 4 : Math.max(0, (hostW - layout.width * scale) / 2), marginRight: scale !== 1 ? -(layout.width * (1 - scale)) : undefined, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
         <svg width={layout.width} height={layout.height} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
           <defs>
-            <marker id="rgArr" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--muted-foreground))" /></marker>
+            <marker id="rgArr" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--hairline-strong))" /></marker>
+            <marker id="rgArrCall" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--graph-call))" /></marker>
+            <marker id="rgArrRef" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--info))" /></marker>
             <marker id="rgArrBad" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="hsl(var(--bad))" /></marker>
           </defs>
           {layout.frames.map((f) => (
             <g key={f.key}>
               <rect x={f.x} y={f.y} width={f.w} height={f.h} rx={14} fill={f.tone === 'external' ? 'hsl(var(--info-soft))' : 'hsl(var(--surface-raised))'} fillOpacity={f.tone === 'external' ? 0.5 : 0.35}
-                stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1.2" strokeDasharray="6 5" />
-              <text x={f.x + 12} y={f.y + 15} fontSize="10" fontWeight="700" fill={f.tone === 'external' ? 'hsl(var(--info))' : 'hsl(var(--muted-foreground))'}>{f.label}</text>
+                stroke={f.tone === 'external' ? 'hsl(var(--info) / .5)' : 'hsl(var(--hairline))'} strokeWidth="1.2" />
+              <text x={f.x + 12} y={f.y + 15} fontSize="10" fontWeight="700" fill={f.tone === 'external' ? 'hsl(var(--info))' : 'hsl(var(--muted-foreground))'}>{f.key === 'main' && entryHost ? `${f.label} · ${entryHost}` : f.label}</text>
               <text x={f.x + f.w - 12} y={f.y + 15} fontSize="9" textAnchor="end" fill="hsl(var(--muted-foreground))" opacity="0.8">{f.sub}</text>
             </g>
           ))}
@@ -238,11 +245,11 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
             const label = e.label && e.label.length > 26 ? `${e.label.slice(0, 25)}…` : e.label;
             return (
               <g key={e.key} opacity={dim(!highlight || e.key.includes(highlight))}>
-                <path d={edgePath(e.from, e.to)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={st.dash} opacity="0.8" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : 'url(#rgArr)') : undefined} />
+                <path d={edgePath(e.from, e.to)} fill="none" stroke={st.stroke} strokeWidth={st.width} strokeDasharray={e.inferred ? INFERRED_DASH : undefined} opacity="0.9" markerEnd={st.marker ? (e.kind === 'broken' ? 'url(#rgArrBad)' : e.kind === 'call' || e.kind === 'infra' ? 'url(#rgArrCall)' : e.kind === 'ref' ? 'url(#rgArrRef)' : 'url(#rgArr)') : undefined} />
                 {label ? (
                   <>
                     <rect x={lx - 4 - label.length * 2.8} y={ly - 9} width={label.length * 5.6 + 8} height={13} rx={3} fill="hsl(var(--surface-sunken))" opacity="0.92" />
-                    <text x={lx} y={ly} textAnchor="middle" fontSize="9" fill={e.kind === 'broken' ? 'hsl(var(--bad))' : 'hsl(var(--muted-foreground))'} className="font-mono">{label}</text>
+                    <text x={lx} y={ly} textAnchor="middle" fontSize="9" fill={e.kind === 'broken' ? 'hsl(var(--bad))' : e.inferred ? 'hsl(var(--warn))' : 'hsl(var(--muted-foreground))'} className="font-mono">{label}</text>
                   </>
                 ) : null}
               </g>
@@ -251,7 +258,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
         </svg>
         <div className="cds-surface-raised cds-hairline" style={{ position: 'absolute', left: layout.entry.x, top: layout.entry.y, width: layout.entry.w, height: layout.entry.h, borderRadius: 12, padding: '8px 10px', fontSize: 12 }}>
           <div className="flex items-center gap-2 font-bold"><span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[9px] font-extrabold text-primary-foreground" style={{ background: tone('--graph-call') }}>GW</span>入口</div>
-          <div className="mt-1 truncate text-[10px] text-muted-foreground">{payload.branch} · forwarder 按 host 与前缀分流</div>
+          <div className={`mt-1 truncate text-[10px] text-muted-foreground ${entryHost ? 'font-mono' : ''}`} title={entryHost ?? payload.branch}>{entryHost ?? `分支 ${payload.branch}`}</div>
         </div>
         {Array.from(layout.pos.entries()).map(([id, p]) => {
           const realId = layout.aliasOf.get(id) ?? id;
@@ -260,7 +267,8 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
           const isInfra = n.kind === 'infra';
           const role = n.role ?? 'api';
           const bad = findingsOf(realId);
-          const token = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '--bad' : '--ok') : ROLE_TOKEN[role];
+          // 基础设施徽标不占语义色：redis 不用 --bad（红色只在「坏了」时出现）、mongo 不用 --ok
+          const token = isInfra ? (/redis/i.test(n.dockerImage || n.id) ? '--series-5' : '--series-2') : ROLE_TOKEN[role];
           const color = tone(token);
           return (
             <div key={id} className="bg-background" data-node={id} data-role={isInfra ? 'infra' : role}
@@ -273,7 +281,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
                 {bad.length > 0 ? <span className={`inline-flex h-[16px] shrink-0 items-center rounded-full border px-1.5 text-[9px] font-semibold ${bad.some((f) => f.severity === 'error') ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`} title={bad.map((f) => f.message).join('\n')}>{bad.length} 问题</span> : null}
               </div>
               <div className="truncate px-2.5 pb-1 text-[10px] text-muted-foreground">
-                {isInfra ? '共享实例' : n.subdomain ? `子域 ${n.subdomain}` : (n.pathPrefixes ?? []).join(' ') || '内网'}
+                {isInfra ? '共享实例 · 所有分支共用' : n.subdomain ? `子域 ${n.subdomain}` : (n.pathPrefixes ?? []).join(' ') || '内网 · 不对外'}
               </div>
             </div>
           );
@@ -291,7 +299,12 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
       </div>
       {!compact ? (
         <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex items-center gap-4 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground">
-          <span>虚线框 = 同一 host</span><span>灰线 = 入口分流 / 前缀分流</span><span style={{ color: tone('--graph-call') }}>紫线 = 环境变量引用 / 调用</span><span className="text-info">蓝线 = 跨项目引用</span><span className="text-destructive">红线 = 断裂</span><span>徽标虚边 = 角色是推断的</span>
+          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" /></svg>声明的关系</span>
+          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" strokeDasharray={INFERRED_DASH} /></svg>按名推断，建议写进声明</span>
+          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke={tone('--graph-call')} strokeWidth="1.5" /></svg>环境变量引用 / 调用</span>
+          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--info))" strokeWidth="1.5" /></svg>跨项目引用</span>
+          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--bad))" strokeWidth="1.5" /></svg>断裂</span>
+          <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[3px] border border-dashed border-foreground-muted" aria-hidden />角色是推断的</span>
         </div>
       ) : null}
     </div>
@@ -309,8 +322,10 @@ export function relationHeadline(payload: RelationPayload): string {
   if (subs) parts.push(`${subs} 个子域各成一站`);
   const errs = payload.lint.findings.filter((f) => f.severity === 'error');
   const warns = payload.lint.findings.filter((f) => f.severity === 'warn');
-  if (errs[0]) parts.push(errs[0].message);
-  else if (warns[0]) parts.push(warns[0].message);
+  // 体检文案自带句号时去掉，免得拼出「。。」
+  const trim = (m: string): string => m.replace(/[。.]+$/, '');
+  if (errs[0]) parts.push(trim(errs[0].message));
+  else if (warns[0]) parts.push(trim(warns[0].message));
   else parts.push('体检无错误');
   return parts.join('。') + '。';
 }

@@ -2303,8 +2303,8 @@ export function BranchDetailDrawer({
               {/* 入口卡已并入总览面板（OverviewPanel）——原先它常驻在页签之上，
                   和总览里的「入口 N 个」计数各说各话；现在只有一处。 */}
 
-              {/* 关系缩略卡（plan.cds.service-relations 第四批）：先写结论再画缩略图，半屏 / 全屏看细节 */}
-              {activeTab === 'overview' && branchId ? <RelationCard branchId={branchId} /> : null}
+              {/* 关系卡已并入总览面板（OverviewPanel 的 relationSlot，判断行之下、入口之上）——
+                  原先常驻页签之上等于给每次打开抽屉加 350px 的「头图」，而它的信息量不配那个位置（2026-09-16）。 */}
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
@@ -2789,6 +2789,7 @@ export function BranchDetailDrawer({
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={() => setWebEntryConfigOpen(true)}
                     onOpenDeployments={() => setActiveTab('deployments')}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={() => setActiveTab('config')} /> : null}
                   />
                 ) : null}
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { ExternalLink, RefreshCw, Rocket, Server, Settings } from 'lucide-react';
 import { isTransitioning, overviewCopy } from '@/lib/overview-state';
 
@@ -263,15 +263,31 @@ function formatDuration(ms: number): string {
   return `${Math.floor(s / 60)}m${String(s % 60).padStart(2, '0')}s`;
 }
 
-function formatUptime(fromIso: string, now: number): string {
+/**
+ * 已运行时长。不满 1 分钟按秒计：刚部署完的分支顶着一个大大的「0 分钟」，读起来像故障
+ * （2026-09-16 用户截图里正是这一幕）；秒数每秒跳，数字用等宽 + tabular-nums 免得抖。
+ */
+export function formatUptime(fromIso: string, now: number): string {
   const ms = now - new Date(fromIso).getTime();
   if (!Number.isFinite(ms) || ms < 0) return '—';
+  if (ms < 60_000) return `${Math.floor(ms / 1000)} 秒`;
   const mins = Math.floor(ms / 60000);
   if (mins < 60) return `${mins} 分钟`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours} 小时 ${mins % 60} 分`;
   return `${Math.floor(hours / 24)} 天 ${hours % 24} 小时`;
 }
+
+/** 「N 前部署」：不满 1 分钟写「刚刚部署」，不写「0 分钟前部署」。 */
+export function formatDeployedAgo(fromIso: string, now: number): string {
+  const ms = now - new Date(fromIso).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return '部署时间未知';
+  if (ms < 60_000) return '刚刚部署';
+  return `${formatUptime(fromIso, now)}前部署`;
+}
+
+/** 曲线「有参考价值」的门槛：就绪不满这个时长时，图里明说正在积累，左侧空白不是掉线。 */
+export const ACCUMULATING_MS = 5 * 60_000;
 
 // ── 分段健康环 ────────────────────────────────────────────────────────────
 
@@ -995,9 +1011,11 @@ export function OverviewPanel({
   entries, deployments, metricSeries, liveStats, metricsReady, metricsError, seriesError,
   replicaSummary, infraSummary,
   now, windowMinutes, bucketSeconds, rangeStart, rangeEnd,
-  onRefreshMetrics, onConfigureEntries, onOpenDeployments,
+  onRefreshMetrics, onConfigureEntries, onOpenDeployments, relationSlot,
 }: {
   services: OverviewService[];
+  /** 「关系」卡：放在判断行之下、入口之上——它回答「这些服务怎么接在一起」，先于「地址是什么」 */
+  relationSlot?: ReactNode;
   running: boolean;
   /**
    * 分支的原始生命周期状态（Codex P2，核对属实）。
@@ -1393,7 +1411,7 @@ export function OverviewPanel({
               </>
             ) : null}
             {commitMessage ? <span className="max-w-[28rem] truncate text-foreground-muted" title={commitMessage}>{commitMessage}</span> : null}
-            {lastDeployAt ? <><span aria-hidden>·</span><span>{formatUptime(lastDeployAt, now)}前部署</span></> : null}
+            {lastDeployAt ? <><span aria-hidden>·</span><span>{formatDeployedAgo(lastDeployAt, now)}</span></> : null}
             {deployDurationMs ? <><span aria-hidden>·</span><span>耗时 {formatDuration(deployDurationMs)}</span></> : null}
             <span aria-hidden>·</span>
             <span className="font-mono">{branchName}</span>
@@ -1402,13 +1420,16 @@ export function OverviewPanel({
         {lastReadyAt && running ? (
           <div className="flex flex-col items-end gap-1 border-l border-[hsl(var(--hairline))] pl-6">
             <span className="text-[0.625rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">已运行</span>
-            <span className="font-mono text-[1.625rem] font-bold leading-none tracking-tight text-foreground">
+            <span className="font-mono text-[1.625rem] font-bold leading-none tracking-tight text-foreground tabular-nums">
               {formatUptime(lastReadyAt, now)}
             </span>
-            <span className="text-[0.6875rem] text-muted-foreground">自容器就绪起算</span>
+            <span className="text-[0.6875rem] text-muted-foreground">{now - new Date(lastReadyAt).getTime() < 60_000 ? '刚就绪 · 满 1 分钟改按分钟计' : '自容器就绪起算'}</span>
           </div>
         ) : null}
       </section>
+
+      {/* 1.5 关系 —— 这些服务怎么接在一起（结论 + 事实 + 流向条），由抽屉注入 */}
+      {relationSlot ?? null}
 
       {/* 2. 入口 —— 大多数人打开这个抽屉就是为了拿地址 */}
       {entries.length > 0 ? (
@@ -1537,7 +1558,22 @@ export function OverviewPanel({
                 ? [clockLabel(rangeStart), clockLabel(rangeEnd)]
                 : [windowText.replace('近 ', '') + '前', '现在']}
             >
-              <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} present={axisPresent} token={dataToken} />
+              <div className="relative">
+                <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} present={axisPresent} token={dataToken} />
+                {/*
+                  刚部署的分支：30 分钟窗口里只有右边一小段有数据，图上是一根孤零零的尖峰、
+                  左边一大片空白，读起来像「之前掉线了」。就绪不满 5 分钟时把话说在图里：
+                  正在积累，左侧空白是还没到的时间，不是掉线（2026-09-16 微调）。
+                */}
+                {lastReadyAt && anyRunning && now - new Date(lastReadyAt).getTime() < ACCUMULATING_MS ? (
+                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center" data-testid="metrics-accumulating">
+                    <div className="flex items-center gap-2.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-[0.75rem] text-foreground-muted shadow-[0_1px_2px_rgb(0_0_0/.2)]">
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-primary ring-[3px] ring-primary/20 motion-safe:animate-pulse" aria-hidden />
+                      正在积累：自就绪起已采 {formatUptime(lastReadyAt, now)}，满 5 分钟曲线才有参考价值；左侧空白是还没到的时间，不是掉线。
+                    </div>
+                  </div>
+                ) : null}
+              </div>
             </PlotFrame>
           </ChartShell>
 
