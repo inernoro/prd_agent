@@ -366,14 +366,14 @@ public static class ActiveTaskShared
         };
     }
 
-    /// <summary>团队头条：一句话，只说有没有要他管的，不报数字堆。</summary>
     /// <summary>
     /// 堆太多 —— 排序与结论句共用这一个判定，不许各写一份。
     /// 只对正在推进的人成立：卡住和没活各有各的名目，不该再被算一遍。
     /// </summary>
-    internal static bool Overloaded(TeamRow p, int heavyStackThreshold)
+    private static bool Overloaded(TeamRow p, int heavyStackThreshold)
         => p.Status == "running" && p.StandbyCount >= heavyStackThreshold;
 
+    /// <summary>团队头条：一句话，只说有没有要他管的，不报数字堆。</summary>
     private static string BuildTeamHeadline(int total, int needsYou)
     {
         if (total == 0) return "还没有人汇报在做什么。";

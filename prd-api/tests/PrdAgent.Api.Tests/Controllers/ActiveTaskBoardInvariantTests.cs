@@ -220,8 +220,9 @@ public class ActiveTaskBoardInvariantTests
 
         // 判定只许有一处定义：排序与计数各写一份 x.StandbyCount >= threshold，
         // 就是下一次「改了一边忘了另一边」的温床（判据分裂）。
+        // 一处 = Overloaded 自己那行。两处就说明排序或计数又各写了一份
         var 定义处 = shared.Split("StandbyCount >= ").Length - 1;
-        Assert.True(定义处 == 1, $"「堆太多」的判定被写了 {定义处} 处，必须收敛成 Overloaded 一处");
+        Assert.Equal(1, 定义处);
 
         var at = shared.IndexOf("var needsYou = ", StringComparison.Ordinal);
         Assert.True(at > 0, "找不到 needsYou 的计算");
