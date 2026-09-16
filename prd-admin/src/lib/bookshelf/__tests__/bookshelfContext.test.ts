@@ -112,7 +112,7 @@ describe('书目上下文（后端精读稿用）', () => {
     expect(
       current === serialized,
       '后端的书目上下文与 catalog.ts / 规则文件不一致了。\n'
-        + '跑：UPDATE_BOOKSHELF_CONTEXT=1 npx vitest run src/lib/bookshelf/__tests__/bookshelfContext.test.ts\n'
+        + '跑：UPDATE_BOOKSHELF_CONTEXT=1 pnpm vitest run src/lib/bookshelf/__tests__/bookshelfContext.test.ts\n'
         + '并把生成的 JSON 一起提交。',
     ).toBe(true);
   });
