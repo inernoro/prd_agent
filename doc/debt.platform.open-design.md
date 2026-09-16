@@ -674,3 +674,37 @@ state 还装着上一条的正文。`SitePreviewModal` 拿它当「有没有正�
 前端没有 `@testing-library/react`，为一条守卫引入测试依赖属于扩范围，所以按本仓库既有做法
 拆成两半：判据抽成纯函数配四条行为用例，接线走 `sitePreviewWiring.test.ts`（那个文件本来就
 为「删掉不会红」的接线而设）。撤掉判据与接线，四条当场变红。
+
+## 第二十八轮复审（2026-09-16，head `f43b55c35`）
+
+一条 P2，A 类修掉。
+
+### 单文件站点每发布一次，就在对象存储里多留一份永不回收的旧正文
+
+`ReplaceEntryHtmlAsync` 的孤儿键判据写成了「这次删没删 sidecar」的分支：
+
+```
+removeGeneratedSidecars = IsSelfContainedHtml(site) && site.Files.Count > 1
+obsoleteKeys = removeGeneratedSidecars ? 旧表全部键 : 空
+```
+
+普通单文件 HTML 站点 `Files.Count` 恒为 1，永远走不进那一支，`obsoleteKeys` 恒为空。
+而入口每次发布都会 `BuildVersionedEntryKey` 写一个带新 GUID 的 key，CAS 换完指针后，
+旧入口对象既不再被 `site.Files` 引用、也没进 `PendingAssetCleanupKeys`——回收器扫不到它，
+谁也不会再删它。微调一次留一份，用得越多攒得越多。
+
+这条是本 PR 自己引进来的：`ReplaceEntryHtmlAsync` 在 `origin/main` 上不存在。
+
+判据错在**按动作分支，而不是按事实判定**。事实只有一条：旧文件表里有、新文件表里没有的键，
+就是孤儿。于是收敛成一个 `ComputeObsoleteAssetKeys(previousFiles, nextFiles)`，
+三条发布路径（重传、换入口、整包发布）全部改走它。另外两条路径行为不变——它们的新 key
+都写在新版本目录下，旧键本来一个都不保留——但从此不会再各自漂移（形状 3）。
+
+反向也一并管住了：局部换入口时原样留下的 sidecar 仍被新文件表引用，不能入队；
+两条路径指向同一个对象、只换掉其中一条时，那个对象同样不能删。
+
+守卫八条：六条判据行为用例、一条接线守卫（文件里每一处 `var obsoleteKeys =` 都必须是
+`ComputeObsoleteAssetKeys(`）、一条真跑 Mongo 的行为守卫（单文件站点发布一次后，
+`DeleteByKeyAsync(旧入口键)` 必须真的被调到）。改回分支写法，接线守卫与行为守卫当场变红。
+
+只测纯判据是不够的——判据留着、调用点改回去，纯用例照样全绿（形状 2）。所以这两条必须并存。

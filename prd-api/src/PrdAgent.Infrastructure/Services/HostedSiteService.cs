@@ -811,10 +811,7 @@ public class HostedSiteService : IHostedSiteService
         var normalizedReuploadRef = string.IsNullOrWhiteSpace(reuploadRef)
             ? null : reuploadRef.Trim();
 
-        var obsoleteKeys = oldFiles.Select(file => file.CosKey)
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var obsoleteKeys = ComputeObsoleteAssetKeys(oldFiles, siteFiles);
         var update = Builders<HostedSite>.Update
             .Set(x => x.EntryFile, entryFile)
             .Set(x => x.SiteUrl, siteUrl)
@@ -998,12 +995,7 @@ public class HostedSiteService : IHostedSiteService
                 string.Equals(file.Path, site.EntryFile, StringComparison.OrdinalIgnoreCase)
                     ? nextEntry
                     : file).ToList();
-        var obsoleteKeys = removeGeneratedSidecars
-            ? site.Files.Select(file => file.CosKey)
-                .Where(key => !string.IsNullOrWhiteSpace(key) && key != nextEntryKey)
-                .Distinct(StringComparer.Ordinal)
-                .ToList()
-            : new List<string>();
+        var obsoleteKeys = ComputeObsoleteAssetKeys(site.Files, updatedFiles);
         var totalSize = updatedFiles.Sum(file => file.Size);
         var siteUrl = AppendVersion(_storage.BuildUrlForKey(nextEntryKey), now);
 
@@ -1051,7 +1043,7 @@ public class HostedSiteService : IHostedSiteService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "网页发布已切换到新入口，旧系统 sidecar 将由持久清理器重试: siteId={SiteId}", siteId);
+                _logger.LogWarning(ex, "网页发布已切换到新入口，旧入口与随之作废的 sidecar 将由持久清理器重试: siteId={SiteId}", siteId);
             }
         }
 
@@ -1104,10 +1096,7 @@ public class HostedSiteService : IHostedSiteService
             Size = file.Content.LongLength,
             MimeType = file.MimeType,
         }).ToList();
-        var obsoleteKeys = current.Site.Files.Select(file => file.CosKey)
-            .Where(key => !string.IsNullOrWhiteSpace(key))
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
+        var obsoleteKeys = ComputeObsoleteAssetKeys(current.Site.Files, hostedFiles);
         var filter = BuildExpectedContentVersionFilter(siteId, expectedContentVersion)
                      & Builders<HostedSite>.Filter.All(x => x.AssetPublishInProgressKeys, newKeys);
         var updates = new List<UpdateDefinition<HostedSite>>
@@ -1122,7 +1111,7 @@ public class HostedSiteService : IHostedSiteService
                 .Set(x => x.PublishedRevisionId, publishedRevisionId)
                 .Set(x => x.UpdatedAt, now)
         };
-        if (obsoleteKeys.Length > 0)
+        if (obsoleteKeys.Count > 0)
         {
             updates.Add(Builders<HostedSite>.Update.AddToSetEach(x => x.PendingAssetCleanupKeys, obsoleteKeys));
             updates.Add(Builders<HostedSite>.Update.Set(x => x.AssetCleanupNextAttemptAt, now));
@@ -1296,6 +1285,29 @@ public class HostedSiteService : IHostedSiteService
                 throw new InvalidOperationException("设计产物入口与最终安全版本不一致，请重新生成");
         }
         return ordered;
+    }
+
+    /// <summary>
+    /// 换版之后不再被站点引用的对象键。
+    ///
+    /// 判据只有一条：旧文件表里有、新文件表里没有。不要按「这次删没删 sidecar」去分支——
+    /// 单文件站点每次发布也会换一个带版本号的新入口 key，旧入口同样成了孤儿；
+    /// 漏掉它就等于每发布一次，就在对象存储里留下一份永远不会被回收的旧正文。
+    /// 反过来，仍被新文件表引用的键（局部换入口时原样留下的 sidecar）一律不能排进回收队列。
+    /// </summary>
+    internal static List<string> ComputeObsoleteAssetKeys(
+        IEnumerable<HostedSiteFile> previousFiles,
+        IEnumerable<HostedSiteFile> nextFiles)
+    {
+        var retained = nextFiles
+            .Select(file => file.CosKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .ToHashSet(StringComparer.Ordinal);
+        return previousFiles
+            .Select(file => file.CosKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key) && !retained.Contains(key))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     private static string BuildVersionedEntryKey(string currentKey, string entryFile)
