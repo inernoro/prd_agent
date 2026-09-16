@@ -579,6 +579,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("PartialFilterExpression = Builders<BsonDocument>.Filter.Eq(\"IsDefaultForType\", true)", consoleProgram);
         Assert.Contains("DEFAULT_CONFLICT", consoleProgram);
 
+        // 认领是同一类不变量，同样要库级唯一——认领存在数组里，所以走多键唯一索引，
+        // 每个元素各生成一个 (租户, 用途, 调用方) 键，跨文档唯一。
+        // 部分过滤器判「数组里至少有一个字符串」：空数组在多键索引里记成 undefined，
+        // 那样所有「一个都没认领」的模型会互相撞车，索引根本建不起来。
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", consoleProgram);
+        Assert.Contains("Filter.Type(\"DefaultForAppCallerCodes\", BsonType.String)", consoleProgram);
+        Assert.Contains("CLAIM_CONFLICT", consoleProgram);
+
+        // 冲突时前面已经摘掉的认领要还回去：一次**被拒绝的保存**不许改线上路由。
+        // 还原走条件更新（值还是我写的那个才还），还不回去的逐条报出来，不假装都还原了。
+        Assert.Contains("claimRollbacks", consoleProgram);
+        Assert.Contains("没能还原", consoleProgram);
+
         Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
         Assert.Contains("claimedBy", consoleProgram);
         Assert.Contains("它被 {claimedBy[x.Code]} 认领了", consoleProgram);

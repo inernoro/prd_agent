@@ -368,6 +368,37 @@ catch (MongoCommandException ex)
         + "重启控制台即可自动补建；在那之前并发改默认仍有竞态。");
 }
 
+/*
+  认领也是同一类不变量：同用途下一个调用方最多被一个模型认领，而端点里的
+  「先摘别人、再置自己」同样挡不住两个管理员同时改。
+
+  认领存在数组里，所以走**多键**唯一索引：数组的每个元素各生成一个键
+  (TenantId, ModelType, 某个调用方 code)，跨文档唯一——正好是要的那条不变量。
+
+  部分过滤器判的是「数组里至少有一个字符串元素」：空数组在多键索引里会被记成
+  undefined，那样所有「一个都没认领」的模型会互相撞车，索引根本建不起来。
+*/
+try
+{
+    await gwLogicalModels.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys
+            .Ascending("TenantId").Ascending("ModelType").Ascending("DefaultForAppCallerCodes"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_logical_claim_per_type",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("DefaultForAppCallerCodes", BsonType.String),
+        }));
+}
+catch (MongoCommandException ex)
+{
+    Console.WriteLine(
+        "[llmgw] 建不出「同用途唯一认领」索引（uniq_llmgw_logical_claim_per_type）："
+        + ex.Message
+        + " —— 多半是存量里同一个调用方被两个模型认领着。先在白名单页把多余的那个摘掉，"
+        + "重启控制台即可自动补建；在那之前并发改认领仍有竞态。");
+}
+
 await GatewayRecoveryOperations.RepairExpiredAsync(gatewayDatabase);
 await TenantOwnerAuthority.BackfillAsync(tenants, memberships);
 await users.Indexes.CreateOneAsync(new CreateIndexModel<LlmGwUser>(
@@ -4233,6 +4264,38 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
             return "范围模式的最小宽不能大于最大宽";
         if (body.MinHeight is { } minH && body.MaxHeight is { } maxH && minH > maxH)
             return "范围模式的最小高不能大于最大高";
+
+        /*
+          几项单独看都合法，合起来可能一个尺寸都不成立。
+
+          两种真实形态：
+            · 整除与最大值打架——最小宽 1000、整除 512，向上取整到 1024 就超了最大宽 1020；
+            · 最小边长与像素总量打架——1024x1024 起步却限 262144 像素，运行时先套最小值
+              再按像素缩放，缩出来的 512x512 反过来违反了刚刚套上的最小值。
+          都属于「保存时说没问题、运行时给出一个不满足自己契约的尺寸」，而没有任何地方会报错。
+
+          判据是构造一个最小可行尺寸：各边取「不小于最小值的最小合法值」（带整除就向上取整到
+          整除的倍数），它超出最大值或像素上限，就说明这套约束无解。
+        */
+        var effectiveDivisor = body.MustBeDivisibleBy ?? 1;
+        static long SmallestSide(int? min, int divisorValue)
+        {
+            var floor = min is { } m && m > 0 ? m : divisorValue;
+            if (divisorValue <= 1) return floor;
+            return ((floor + divisorValue - 1) / divisorValue) * (long)divisorValue;
+        }
+        var smallestWidth = SmallestSide(body.MinWidth, effectiveDivisor);
+        var smallestHeight = SmallestSide(body.MinHeight, effectiveDivisor);
+        if (body.MaxWidth is { } widthCap && smallestWidth > widthCap)
+            return $"这套范围无解：宽最小只能取到 {smallestWidth}（受最小宽与整除约束），已经超过最大宽 {widthCap}";
+        if (body.MaxHeight is { } heightCap && smallestHeight > heightCap)
+            return $"这套范围无解：高最小只能取到 {smallestHeight}（受最小高与整除约束），已经超过最大高 {heightCap}";
+        if (body.MaxPixels is { } pixelCap && smallestWidth * smallestHeight > pixelCap)
+        {
+            return $"这套范围无解：最小可行尺寸是 {smallestWidth}x{smallestHeight}，"
+                + $"共 {smallestWidth * smallestHeight} 像素，已经超过最大像素总量 {pixelCap}。"
+                + "运行时会先套最小值再按像素缩放，缩完反而违反最小值，而没有任何地方会报错";
+        }
         if (body.MinWidth is null && body.MaxWidth is null
             && body.MinHeight is null && body.MaxHeight is null
             && body.MaxPixels is null && body.MustBeDivisibleBy is null)
@@ -5589,6 +5652,10 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     // 反过来会出现一瞬间两个模型都认领同一个调用方，那一瞬的请求落到谁全看运气。
     // 摘掉了谁要如实回给用户——这同样是会改变线上行为的动作，不能悄悄换人。
     var displacedClaims = new List<string>();
+    // 摘认领的回滚账本：(对手 id, 摘之前的值, 摘之后写进去的值)。
+    // 最终写入失败时按「值还是我写的那个」条件还原——期间被别人改过就不动它，
+    // 盲目覆盖会把别人的改动一起抹掉。
+    var claimRollbacks = new List<(string RivalId, List<string> Before, List<string> AfterWrite)>();
     if (body.DefaultForAppCallerCodes is not null)
     {
         var claims = body.DefaultForAppCallerCodes
@@ -5617,12 +5684,15 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
                 Builders<BsonDocument>.Filter.Ne("_id", id)))).ToListAsync();
             foreach (var other in rivals)
             {
-                var kept = other.AsStringList("DefaultForAppCallerCodes")
-                    .Where(x => !claims.Contains(x, StringComparer.Ordinal)).ToList();
-                var taken = other.AsStringList("DefaultForAppCallerCodes")
-                    .Where(x => claims.Contains(x, StringComparer.Ordinal));
+                var before = other.AsStringList("DefaultForAppCallerCodes");
+                var kept = before.Where(x => !claims.Contains(x, StringComparer.Ordinal)).ToList();
+                var taken = before.Where(x => claims.Contains(x, StringComparer.Ordinal));
                 var rivalId = other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id");
                 foreach (var code in taken) displacedClaims.Add($"{code} 原本由 {rivalId} 认领");
+                // 摘之前把原值记下来：下面那次最终写入可能因为并发冲突失败，
+                // 那时这些摘除必须还回去，否则一次**被拒绝的保存**照样改了线上路由——
+                // 那几个调用方从「由对手模型接住」掉成「走用途默认」，而操作者看到的是失败。
+                claimRollbacks.Add((other.GetStringOrEmpty("_id"), before, kept));
                 await gwLogicalModels.UpdateOneAsync(
                     Builders<BsonDocument>.Filter.Eq("_id", other.GetStringOrEmpty("_id")),
                     Builders<BsonDocument>.Update
@@ -5646,10 +5716,41 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     }
     catch (MongoCommandException ex) when (ex.Code == 11000)
     {
-        // 撞上「同用途唯一默认」那个部分唯一索引：另一个人在这一瞬也把自己设成了默认。
-        // 如实说是并发，不要报成「保存失败」——后者会让人反复重试同一个必然失败的动作。
-        return Json(ApiEnvelope<LogicalModelItem>.Fail("DEFAULT_CONFLICT",
-            "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。"), jsonOptions, 409);
+        /*
+          撞上唯一索引：另一个人在这一瞬抢先了。这次保存整体失败，所以**前面已经摘掉的认领
+          必须还回去**——不还的话，一次被拒绝的保存照样改了线上路由：那几个调用方从
+          「由对手模型接住」掉成「走用途默认」，而操作者看到的是一句失败，根本不知道
+          自己刚刚动了别人的东西。
+
+          还原用条件更新（值还是我刚写进去的那个才还），期间被第三方改过就不动它：
+          盲目覆盖会把别人的改动一起抹掉，那是用一个错换另一个错。
+          还不回去的逐条报给操作者，让他知道要去看哪几个模型（no-rootless-tree：不假装都还原了）。
+        */
+        var unrestored = new List<string>();
+        foreach (var rollback in claimRollbacks)
+        {
+            var restored = await gwLogicalModels.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", rollback.RivalId),
+                    Builders<BsonDocument>.Filter.Eq("DefaultForAppCallerCodes", new BsonArray(rollback.AfterWrite))),
+                Builders<BsonDocument>.Update
+                    .Set("DefaultForAppCallerCodes", new BsonArray(rollback.Before))
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            if (restored.ModifiedCount == 0) unrestored.Add(rollback.RivalId);
+        }
+
+        // 两条不变量共用这一个 catch，但要分开说：下一步不一样。
+        var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
+        var conflictMessage = claimRace
+            ? "这几个调用方里有一个刚刚被另一个模型认领了。刷新看一眼它现在归谁，确认之后再改。"
+            : "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。";
+        if (unrestored.Count > 0)
+        {
+            conflictMessage += $" 另外：这次没保存成功，但有 {unrestored.Count} 个模型的调用方认领没能还原"
+                + $"（{string.Join("、", unrestored)}），它们在这期间被别人改过。去这几个模型上核对一下认领名单。";
+        }
+        return Json(ApiEnvelope<LogicalModelItem>.Fail(
+            claimRace ? "CLAIM_CONFLICT" : "DEFAULT_CONFLICT", conflictMessage), jsonOptions, 409);
     }
     if (updated is null)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);

@@ -380,6 +380,11 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("边长整除必须大于 1", console);
         Assert.Contains("最小宽不能大于最大宽", console);
 
+        // 几项单独合法、合起来无解的也要拦：整除向上取整超过最大值，
+        // 或最小边长与像素上限打架（运行时先套最小值再按像素缩放，缩完反而违反最小值）。
+        Assert.Contains("这套范围无解", console);
+        Assert.Contains("SmallestSide", console);
+
         var section = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
         Assert.Contains("editing.draft.sizeConstraintType === 'range'", section);
         foreach (var field in new[] { "minWidth", "maxWidth", "minHeight", "maxHeight", "maxPixels", "mustBeDivisibleBy" })
