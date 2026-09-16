@@ -386,6 +386,7 @@ public static class GatewayHttpEndpoints
         {
             var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
                 data,
+                app.Configuration,
                 GetVerifiedTenantId(http),
                 ResolveVerifiedAppCaller(http, string.Empty) is { Length: > 0 } code ? code : null,
                 ct);
@@ -409,6 +410,7 @@ public static class GatewayHttpEndpoints
         {
             var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
                 data,
+                app.Configuration,
                 GetVerifiedTenantId(http),
                 ResolveVerifiedAppCaller(http, string.Empty) is { Length: > 0 } code ? code : null,
                 ct);

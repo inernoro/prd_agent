@@ -4176,6 +4176,22 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
     if (body.SizesNotApplicable == true && hasSizes)
         return "既然勾了「这个模型没有选尺寸这件事」，就不能再配尺寸档位";
 
+    // 范围模式必须至少有一项边界，否则这条契约保存成功却什么都不约束。
+    //
+    // NormalizeSizeRange 只在这几个字段有值时才动尺寸；一个都不填就等于原样把用户要的
+    // 尺寸发给上游——界面显示「已按范围约束」，实际没有任何约束，被上游拒时看不出是
+    // 这里没配（形状 8：一份不成立的声明被当成了「已经配好」的证明）。
+    // 拦在写入侧，不指望界面记得填：契约也可能从别的写入方进来。
+    if (string.Equals((body.SizeConstraintType ?? string.Empty).Trim(), "range", StringComparison.OrdinalIgnoreCase)
+        && body.SizesNotApplicable != true
+        && body.MinWidth is null && body.MaxWidth is null
+        && body.MinHeight is null && body.MaxHeight is null
+        && body.MaxPixels is null && body.MustBeDivisibleBy is null)
+    {
+        return "范围模式至少要填一项边界（最小/最大宽高、最大像素总量、边长整除），"
+            + "否则这条契约什么都不约束，尺寸会原样发给上游";
+    }
+
     foreach (var (bucket, list) in body.SizesByResolution ?? [])
     {
         if (!ImageGenConfigVocabulary.ResolutionBuckets.Contains(bucket))
@@ -11512,9 +11528,41 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_SHAPE",
             "上游返回里没有 data 数组，这个地址可能不是 OpenAI 兼容的模型列表接口"), jsonOptions, 502);
 
-    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
+    var existingDocs = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync();
+    var existing = existingDocs
         .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
         .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /*
+      「已导入」不等于「已登记」。
+
+      能力认不出来的模型会被导入成物理模型、但不登白名单（认不出用途就不猜，见
+      GatewayWhitelistPublishing.TryResolveModelType）。此时服务端给的下一步是
+      「去模型页补能力，再重新导入一次」——可这一屏把「已导入」的行整个禁选了，
+      那句话于是没法照做，用户只能手工去建对外模型和线路。
+      自己给出的下一步必须走得通，所以这里把两件事分开报。
+
+      判据是「有没有线路指向这个物理模型」，不是「有没有同名的对外模型」：
+      同名可能是别人建的，而真正决定它能不能被调到的是那条线路。
+    */
+    var existingIdByName = existingDocs
+        .Where(m => (m.AsNullableString("ModelName") ?? string.Empty).Length > 0)
+        .GroupBy(m => m.AsNullableString("ModelName")!, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.First().GetStringOrEmpty("_id"), StringComparer.OrdinalIgnoreCase);
+    var publishedTargetIds = existingIdByName.Count == 0
+        ? new HashSet<string>(StringComparer.Ordinal)
+        : (await gwModelOfferings.Find(TenantAccess.Filter(http, fb.And(
+                fb.Eq("TargetKind", "model"),
+                fb.In("TargetId", existingIdByName.Values.Where(x => x.Length > 0)))))
+            .Project(Builders<BsonDocument>.Projection.Include("TargetId"))
+            .ToListAsync())
+            .Select(x => x.GetStringOrEmpty("TargetId"))
+            .Where(x => x.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+    var publishedNames = existingIdByName
+        .Where(kv => publishedTargetIds.Contains(kv.Value))
+        .Select(kv => kv.Key)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     // 8MB 的字节上限管不住**条目数**：几十万个 {"id":"x"} 这样的小对象照样塞得进那个预算，
@@ -11558,6 +11606,7 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
             PriceCurrency = pricing?.Currency,
             PriceSource = pricing is null ? null : "upstream",
             AlreadyImported = existing.Contains(modelId),
+            AlreadyPublished = publishedNames.Contains(modelId),
         });
     }
 

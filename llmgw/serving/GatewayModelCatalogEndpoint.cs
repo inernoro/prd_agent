@@ -1,7 +1,9 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using Microsoft.Extensions.Configuration;
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 
@@ -29,6 +31,7 @@ public static class GatewayModelCatalogEndpoint
 
     public static async Task<JsonObject> BuildAsync(
         LlmGatewayDataContext data,
+        IConfiguration config,
         string tenantId,
         string? appCallerCode,
         CancellationToken ct)
@@ -117,9 +120,42 @@ public static class GatewayModelCatalogEndpoint
                 .Where(x => x.IsString)
                 .Select(x => x.AsString)
                 .ToHashSet(StringComparer.Ordinal);
+        /*
+          名录门是运行时的第二道闸，这里也得过一遍。
+
+          它拦的是「绕过控制台进来的模型」——直接写库、历史遗留、别的写入方。那种模型
+          启用着、平台也启用着，上面的可用判据一条都拦不住它，于是被当成可调的发布出去；
+          而真调用时 ApplyCatalogGateAsync 回 MODEL_NOT_IN_CATALOG。对方照着清单调一次
+          必然失败，这正是这个端点的注释说要避免的事（「列出来就是让对方白调一次」）。
+
+          「要不要拦」与运行时同源：配置没降到 observe，且控制台那几条补标记迁移都跑完了。
+          降档或迁移没跑完时运行时只记录不拦，这里也就不能少列——否则又走到另一边去了。
+        */
+        var catalogGateEnforces = !string.Equals(
+            config["LlmGateway:ModelCatalogGate"]?.Trim(), "observe", StringComparison.OrdinalIgnoreCase);
+        if (catalogGateEnforces)
+        {
+            var migrationsDone = await db.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName)
+                .CountDocumentsAsync(
+                    bf.And(
+                        bf.In("_id", GatewayCatalogMigrations.RequiredIds),
+                        bf.Exists(GatewayCatalogMigrations.CompletedAtField)),
+                    cancellationToken: ct);
+            catalogGateEnforces = migrationsDone >= GatewayCatalogMigrations.RequiredIds.Length;
+        }
+
+        static bool PassesCatalogGate(BsonDocument model)
+        {
+            var name = model.GetValue("ModelName", BsonNull.Value) is { IsString: true } n ? n.AsString : string.Empty;
+            if (name.Length > 0 && GatewayModelCatalog.Contains(name)) return true;
+            // 名录外的要有管理员显式放行的戳，判据与运行时那一处逐字同源。
+            return model.GetValue("AllowedOutsideCatalog", BsonNull.Value) is { IsBoolean: true } flag && flag.AsBoolean;
+        }
+
         var priceByModelId = enabledModels
             .Where(x => x.GetValue("PlatformId", BsonNull.Value) is { IsString: true } pid
                 && enabledPlatformIds.Contains(pid.AsString))
+            .Where(x => !catalogGateEnforces || PassesCatalogGate(x))
             .ToDictionary(x => x.GetValue("_id", BsonNull.Value).AsString, x => x, StringComparer.Ordinal);
 
         // 兑换所目标：同样要在且启用。

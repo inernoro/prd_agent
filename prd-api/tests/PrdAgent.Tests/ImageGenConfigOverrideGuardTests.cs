@@ -356,6 +356,32 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("再等也不会变", section);
     }
 
+    /// <summary>
+    /// 范围模式必须真的有边界，空的范围契约不许保存。
+    ///
+    /// NormalizeSizeRange 只在最小/最大宽高、最大像素、整除这几个字段有值时才动尺寸。
+    /// 一个都不填的「范围」契约保存成功、界面显示「已按范围约束」，实际什么都不约束：
+    /// 尺寸原样发给上游，被拒时看不出是这里没配（形状 8：一份不成立的声明被当成已配好）。
+    ///
+    /// 拦在写入侧而不是只靠界面记得填：契约也可能从别的写入方进来。
+    /// 界面那一侧同时要给出这几个输入框——只拦不给填，等于把这个选项变成一个死选项。
+    /// </summary>
+    [Fact]
+    public void 范围模式必须至少填一项边界()
+    {
+        var console = Read("llmgw/console-api/Program.cs");
+        Assert.Contains("范围模式至少要填一项边界", console);
+        Assert.Contains("body.MinWidth is null && body.MaxWidth is null", console);
+        Assert.Contains("body.MaxPixels is null && body.MustBeDivisibleBy is null", console);
+
+        var section = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        Assert.Contains("editing.draft.sizeConstraintType === 'range'", section);
+        foreach (var field in new[] { "minWidth", "maxWidth", "minHeight", "maxHeight", "maxPixels", "mustBeDivisibleBy" })
+        {
+            Assert.Contains($"'{field}'", section);
+        }
+    }
+
     [Fact]
     public void 刷新器接上了线且失败时不清空()
     {

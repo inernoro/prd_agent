@@ -383,6 +383,43 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
             </div>
           ) : null}
 
+          {!editing.draft.sizesNotApplicable && editing.draft.sizeConstraintType === 'range' ? (
+            <>
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                {([
+                  ['minWidth', '最小宽'],
+                  ['maxWidth', '最大宽'],
+                  ['minHeight', '最小高'],
+                  ['maxHeight', '最大高'],
+                  ['maxPixels', '最大像素总量'],
+                  ['mustBeDivisibleBy', '边长必须整除'],
+                ] as const).map(([key, label]) => (
+                  <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 130 }}>
+                    <span style={FIELD_LABEL}>{label}</span>
+                    <input
+                      id={`imagegen-${key}`}
+                      type="number"
+                      min={0}
+                      style={FIELD_INPUT}
+                      value={editing.draft[key] ?? ''}
+                      onChange={(e) => setEditing({
+                        ...editing,
+                        draft: {
+                          ...editing.draft,
+                          [key]: e.target.value.trim() === '' ? undefined : Number(e.target.value),
+                        },
+                      })}
+                    />
+                  </label>
+                ))}
+              </div>
+              <p style={HINT_TEXT}>
+                范围模式靠这几个值把请求尺寸夹到上游接受的区间里。一个都不填，这条契约保存成功但什么都不约束：
+                原样把用户要的尺寸发给上游，被拒的时候看不出是这里没配。至少填一项。
+              </p>
+            </>
+          ) : null}
+
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             {([
               ['supportsImageToImage', '支持图生图'],

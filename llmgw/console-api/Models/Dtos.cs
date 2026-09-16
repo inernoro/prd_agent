@@ -2132,6 +2132,14 @@ public sealed class UpstreamModelItem
     public string? PriceSource { get; set; }
     /// <summary>该模型标识是否已经在本租户登记过，避免重复导入。</summary>
     public bool AlreadyImported { get; set; }
+
+    /// <summary>
+    /// 已经登上白名单：有线路指向这个物理模型，调用方按公开模型名请求找得到它。
+    ///
+    /// 与 <see cref="AlreadyImported"/> 分开报，因为能力认不出来的模型会被导入成物理模型、
+    /// 却不登白名单。两件事混成一个「已导入」，那条「补能力后重新导入」的下一步就走不通了。
+    /// </summary>
+    public bool AlreadyPublished { get; set; }
 }
 
 public sealed class UpstreamModelsData

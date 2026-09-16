@@ -764,6 +764,8 @@ export type UpstreamModelItem = {
   priceCurrency?: string | null;
   priceSource?: string | null;
   alreadyImported: boolean;
+  /** 已登上白名单：有线路指向它，调用方按公开模型名请求找得到。与「已导入」是两件事 */
+  alreadyPublished: boolean;
   /** 用途来源：catalog = 内置名录查到的、upstream = 上游声明的、guess = 按标识猜的。 */
   capabilitySource: string;
   /** 是否在内置名录里。不在名录的要显式放行才准导入。 */

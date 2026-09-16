@@ -142,6 +142,55 @@ public class GatewayWhitelistPublishingTests
         Assert.Contains("publicId", page);
     }
 
+    /// <summary>
+    /// 对外清单要过名录门：运行时会拒的，这里就不该列出来。
+    ///
+    /// 名录门拦的是绕过控制台进来的模型（直接写库、历史遗留、别的写入方）。那种模型
+    /// 启用着、平台也启用着，可用判据一条都拦不住，于是被当成可调的发布出去；
+    /// 真调用时回 MODEL_NOT_IN_CATALOG。对方照着清单调一次必然失败——
+    /// 而这个端点的注释自己写着「列出来就是让对方白调一次」。
+    ///
+    /// 「要不要拦」必须与运行时同源：配置降到 observe、或补标记迁移没跑完时，
+    /// 运行时只记录不拦，这里也不能少列，否则从漏判走到了误判。
+    /// </summary>
+    [Fact]
+    public void 对外清单与运行时共用名录门的判据()
+    {
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+
+        // 判据本身：名录内直接过，名录外要有显式放行的戳
+        Assert.Contains("GatewayModelCatalog.Contains", endpoint);
+        Assert.Contains("AllowedOutsideCatalog", endpoint);
+
+        // 生效条件与运行时同源：配置 + 迁移完成，缺一不拦
+        Assert.Contains("LlmGateway:ModelCatalogGate", endpoint);
+        Assert.Contains("GatewayCatalogMigrations.RequiredIds", endpoint);
+        Assert.Contains("GatewayCatalogMigrations.CompletedAtField", endpoint);
+        Assert.Contains("!catalogGateEnforces || PassesCatalogGate(x)", endpoint);
+    }
+
+    /// <summary>
+    /// 「已导入」与「已登上白名单」是两件事，界面要分开，且未登记的仍可再导一次。
+    ///
+    /// 能力认不出来的模型会被导入成物理模型、却不登白名单。若这一屏把「已导入」的行
+    /// 整个禁选，服务端给的那句「补完能力再导一次」就没法照做——自己给出、自己堵死的路。
+    /// 导入本身幂等（已存在的走 Skipped，只补名单），所以重勾一次是安全的。
+    /// </summary>
+    [Fact]
+    public void 已导入但没登上白名单的模型仍能再导一次补登()
+    {
+        // 后端把两件事分开报，判据是「有没有线路指向这个物理模型」
+        Assert.Contains("AlreadyPublished", Console);
+        Assert.Contains("publishedTargetIds", Console);
+        Assert.Contains("fb.Eq(\"TargetKind\", \"model\")", Console);
+
+        // 界面据此放行选择，并把状态说清楚
+        var setup = ReadRepoFile("llmgw/web/src/components/ProviderSetup.tsx");
+        Assert.Contains("needsRegistration", setup);
+        Assert.Contains("已导入·未登记", setup);
+        Assert.DoesNotContain("const disabled = m.alreadyImported || blocked;", setup);
+    }
+
     [Fact]
     public void 列模型要的是读权限不是调用权限()
     {

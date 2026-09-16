@@ -203,9 +203,15 @@ export function UpstreamModelPicker({
     onRegistered?.();
   }
 
-  const visible = onlyNew ? data.items.filter((m) => !m.alreadyImported) : data.items;
+  // 「已导入但没登上白名单」的仍然可选：它正是服务端那句「补完能力再导一次」要走的路。
+  //
+  // 能力认不出来的模型会被导入成物理模型、却不登白名单。把这类行也禁掉的话，
+  // 那句下一步就没法照做，用户只能手工去建对外模型和线路——一条自己给出、自己堵死的路。
+  // 导入本身是幂等的（已存在的模型走 Skipped，再补名单），所以重勾一次是安全的。
+  const needsRegistration = (m: UpstreamModelItem) => m.alreadyImported && !m.alreadyPublished;
+  const visible = onlyNew ? data.items.filter((m) => !m.alreadyImported || needsRegistration(m)) : data.items;
   const isBlocked = (m: UpstreamModelItem) => !m.inCatalog && !allowOutside;
-  const selectable = visible.filter((m) => !m.alreadyImported && !isBlocked(m));
+  const selectable = visible.filter((m) => (!m.alreadyImported || needsRegistration(m)) && !isBlocked(m));
   const selectedCount = selectable.filter((m) => selected.has(m.modelId)).length;
   // 用户可以手动继续勾，勾过上限就在按钮上拦住并说清怎么办，别等服务端甩个 400 回来
   const overBatchLimit = selectedCount > MAX_IMPORT_BATCH;
@@ -269,7 +275,7 @@ export function UpstreamModelPicker({
       <div style={modelListStyle}>
         {visible.map((m) => {
           const blocked = isBlocked(m);
-          const disabled = m.alreadyImported || blocked;
+          const disabled = (m.alreadyImported && !needsRegistration(m)) || blocked;
           return (
             <label
               key={m.modelId}
@@ -284,7 +290,18 @@ export function UpstreamModelPicker({
               />
               <span style={{ fontFamily: 'var(--font-mono)', minWidth: 0, overflowWrap: 'anywhere' }}>{m.modelId}</span>
               <span style={{ display: 'flex', gap: 5, flexWrap: 'wrap', marginLeft: 'auto' }}>
-                {m.alreadyImported ? <Chip label="已导入" color="var(--text-muted)" bg="var(--bg-elevated)" /> : null}
+                {m.alreadyImported ? (
+                  needsRegistration(m) ? (
+                    <Chip
+                      label="已导入·未登记"
+                      color="var(--warn)"
+                      bg="var(--warn-bg)"
+                      title="模型已经在库里，但没有登上白名单——调用方按公开模型名请求找不到它。补齐能力后勾上再导一次即可补登，不会重复建"
+                    />
+                  ) : (
+                    <Chip label="已导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
+                  )
+                ) : null}
                 {/* 用途是查出来的还是猜出来的，必须一眼分得清——它决定了用户要不要去核对 */}
                 {m.inCatalog ? (
                   <Chip
