@@ -40,6 +40,7 @@ import {
   type UptimeMonitorInput,
 } from '../services/uptime-custom-monitor.js';
 import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.js';
+import { isSelfCheckEndpoint } from '../services/self-monitoring-bootstrap.js';
 
 /**
  * 取本次请求的项目作用域：项目级 cdsp_ / 单项目 cdsg_ key 会被 server.ts 的
@@ -417,8 +418,11 @@ export function createUptimeRouter(deps: {
       res.status(403).json({ error: '项目级 Key 只能看自己项目的自检端点' });
       return;
     }
+    const endpoints = deps.listMonitorEndpoints?.(projectId) || [];
     res.json({
-      endpoints: deps.listMonitorEndpoints?.(projectId) || [],
+      endpoints,
+      // 内置的那条是 CDS 监控自己：由服务端认定，前端只认这份名单，不自己再判一遍地址。
+      builtin: endpoints.filter(isSelfCheckEndpoint),
       lastRun: deps.lastDiscoveryRun?.() || null,
     });
   });
@@ -470,6 +474,12 @@ export function createUptimeRouter(deps: {
       return;
     }
     const url = String((req.query.url as string | undefined) || '').trim();
+    // 内置端点拔不掉：它是代码初始化插进来的，拔了下次启动又回来，
+    // 中间那段空窗只会让「CDS 自身」的监控凭空消失一阵——不给这个口子。
+    if (isSelfCheckEndpoint(url)) {
+      res.status(400).json({ error: 'CDS 自身的自检端点是内置的，不能拔掉', field: 'url' });
+      return;
+    }
     if (!deps.removeMonitorEndpoint?.(projectId, url)) {
       res.status(404).json({ error: '项目不存在' });
       return;

@@ -141,6 +141,9 @@ import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-r
 import { sendAlarm } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
+import { buildSelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
+import { selfStatusCache } from './services/self-status-cache.js';
 
 
 const configPath = process.argv[2] || undefined;
@@ -6059,6 +6062,88 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     }).finally(() => { discoveryInFlight = null; });
     return discoveryInFlight;
   };
+  /**
+   * CDS 自检端点 —— CDS 用同一套协议监控自己（2026-09-16）。
+   *
+   * 用户：「先加上自己的吧，以代码初始化的方式来驱动，方便 CDS 迁移部署在其他服务器上。」
+   * 所以这里两件事都在代码里：① 挂一个自带 `cds:monitor` 声明的 health+json 端点；
+   * ② 启动时把它插进内置项目「CDS 自身」。搬到哪台机器，这套监控都跟着起来，
+   * 不用任何人手配，删掉了下次启动也会回来。
+   *
+   * 端点免登录（server.ts 的公开路由白名单 + github-auth 的 PUBLIC_PATHS 都放行了它）：
+   * 探测器打它不带任何凭据，跟打 MAP / llmgw 的自检一模一样。它只暴露聚合数字，
+   * 不暴露任何密钥、地址或分支明细。
+   */
+  const selfCheckDeps: SelfCheckDeps = {
+    now: () => Date.now(),
+    deploymentRuns: () => stateService.getDeploymentRuns(),
+    webhookDeliveries: (limit) => stateService.getGithubWebhookDeliveries(limit),
+    buildGate: () => buildGateStatus(),
+    cycleHealth: () => {
+      const c = uptimeMonitor.getCycleHealth();
+      return { sinceLastCycleMs: c.sinceLastCycleMs, running: c.running, watchdogResets: c.watchdogResets };
+    },
+    diskUsage: () => defaultDiskUsage(config.repoRoot),
+    dockerPing: async () => {
+      const startedAt = Date.now();
+      try {
+        const result = await shell.exec('docker version --format "{{.Server.Version}}"', { timeout: 3000 });
+        return {
+          ok: result.exitCode === 0,
+          ms: Date.now() - startedAt,
+          detail: result.exitCode === 0 ? result.stdout.trim() : result.stderr.trim(),
+        };
+      } catch (err) {
+        return { ok: false, ms: Date.now() - startedAt, detail: (err as Error).message };
+      }
+    },
+    httpStats: async (sinceMs) => {
+      const store = activeHttpLogStore;
+      if (!store?.findRecent) return null;
+      // 上限 5000 条：30 分钟里超过这个量的实例，统计会截到最近 5000 条，
+      // 比例仍然成立，只是样本量少报——宁可少报也不拉整个集合。
+      const rows = await store.findRecent({ layer: 'master', since: new Date(sinceMs), limit: 5000, sort: 'recent' });
+      const branches = rows
+        .filter((r) => r.method === 'GET' && (r.path === '/api/branches' || r.path.startsWith('/api/branches?')))
+        .map((r) => r.durationMs)
+        .filter((ms) => Number.isFinite(ms));
+      const sorted = [...branches].sort((a, b) => a - b);
+      const p95 = sorted.length === 0 ? null : sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(0.95 * sorted.length) - 1))];
+      return {
+        requests: rows.length,
+        serverErrors: rows.filter((r) => r.status >= 500).length,
+        branchesP95Ms: p95,
+      };
+    },
+    // 与面板同一份判定：旧的 MAP 站内通知算一条，用户配的通道里 enabled 且填全的各算一条。
+    liveAlarmChannels: () =>
+      ((stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv()) ? 1 : 0)
+      + stateService.listAlarmChannels().filter((c) => c.enabled && channelConfigured(c)).length,
+    selfStatus: () => {
+      const snap = selfStatusCache.getSnapshot();
+      return { bundleStale: snap.bundleStale, headSha: snap.headSha, currentBranch: snap.currentBranch };
+    },
+    storeBackend: () => stateService.getBackingStore().kind,
+  };
+  app.get(SELF_CHECK_PATH, async (_req, res) => {
+    try {
+      const doc = await buildSelfCheck(selfCheckDeps);
+      res.setHeader('content-type', 'application/health+json; charset=utf-8');
+      res.status(200).json(doc);
+    } catch (err) {
+      // 自检本身炸了也要按协议回：status=fail + 原因。回 500 探测器会记成「端点打不通」，
+      // 那是另一件事（网络），不该和「CDS 自己坏了」混成一个结论。
+      res.setHeader('content-type', 'application/health+json; charset=utf-8');
+      res.status(200).json({ status: 'fail', serviceId: 'cds', description: '自检本身失败', output: (err as Error).message, checks: {} });
+    }
+  });
+  try {
+    const outcome = ensureSelfMonitoring(stateService, config.masterPort, Date.now());
+    console.log(`  [self-monitor] CDS 自身监控已就位：${outcome.url}`
+      + `${outcome.createdProject ? '（内置项目刚建立）' : ''}${outcome.addedEndpoint ? '（端点刚插上）' : ''}`);
+  } catch (err) {
+    console.warn(`  [self-monitor] CDS 自身监控引导失败：${(err as Error).message}`);
+  }
   const discoveryIntervalMs = Math.max(60_000, uptimeMonitor.config.intervalMs || 60_000);
   setInterval(() => { void runDiscovery().catch(() => undefined); }, discoveryIntervalMs).unref?.();
   void runDiscovery().catch(() => undefined);

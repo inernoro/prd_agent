@@ -979,6 +979,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /me': '获取当前用户',
     'GET /status': '获取系统状态',
     'GET /healthz': '健康检查',
+    'GET /self-check': 'CDS 自检',
     'GET /host-stats': '获取主机状态',
     'GET /cds-system/perf-health': '运维健康观测',
     'GET /state-stream': '订阅状态流',
@@ -1465,6 +1466,9 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 载荷由 public-status-board 白名单构造。只放行读取，不放行开关。
   // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
   if (method === 'GET' && /^\/api\/public\/status\/[a-f0-9]{32}$/.test(path)) return true;
+  // CDS 自检（2026-09-16）：CDS 用监控自发现协议监控自己，探测器从本机回环打这条。
+  // 出参只有数字与结论，不含地址、凭据、持有者身份。与 github-auth.ts PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/self-check') return true;
   return false;
 }
 

@@ -1629,7 +1629,7 @@ mdimp 仓库切到 `dbScope=per-branch` 并下线脚本，属跨仓库迁移，�
 ## self-update 的 no-op 判定漏看后端产物（2026-09-15）
 
 **症状**：`/api/self-status` 报的 `headSha` 是新提交，而后端跑的还是上一版代码。
-本次实测：提交 `449f3447` 改了 `cds/src/services/alarm-route.ts`，部署后接口返回的
+本次实测：提交 `449f3447` 改了通知路由那个后端模块，部署后接口返回的
 事件枚举仍是改之前那三个；`self restart` 也救不回来（它按同一份 stale `dist/` 重启）。
 
 **成因链**：

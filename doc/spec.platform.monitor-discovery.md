@@ -111,6 +111,27 @@
 
 ---
 
+## CDS 自己也吃这份协议（2026-09-16）
+
+用户：「先加上自己的吧，以代码初始化的方式来驱动，方便 CDS 迁移部署在其他服务器上。」
+
+CDS 暴露 `GET /api/self-check`（免登录、只回聚合数字），每条 check 自带 `cds:monitor`；
+启动时把它插进一个 id 固定的内置项目「CDS 自身」，地址走本机回环。于是：
+
+- **搬到哪台机器都一样**：不依赖域名、不依赖任何人手配；项目被删了下次启动会回来；
+  内置端点在面板上标「内置 · CDS 自身」，拔不掉（接口 400）。
+- **分类按用户在意什么**，不按内部模块：部署（卡住、失败率）、构建（排队、最久等待）、
+  页面（首屏最重接口 P95、5xx 比例）、探测器（上一轮距今）、接入（webhook 签名 / 派发）、
+  宿主（磁盘、Docker）、通知（还有没有通道通着）、自身（前端产物是否落后于代码）。
+- **量不到就说量不到**：磁盘读不到写 null、Docker 打不通写哨兵值、探测器一轮没跑写哨兵值；
+  三处任何一处缺省成 0 都会被读成「一切正常」。页面三条是被动观测，半夜没人访问显示
+  「没人用过」而不是「一切正常」。
+
+协议一致性不靠扫源码：守卫把自检文档喂给真解析器，断言 13 条全收零拒收。
+这是「协议作者自己吃得下自己协议」的唯一证据（守卫位置见文末「实现来源」）。
+
+---
+
 ## 谁能插
 
 与登记监控同一道闸，不新造语义：
@@ -144,4 +165,6 @@
 - `cds/src/services/monitor-discovery.ts` —— 解析（判据在这）
 - `cds/src/services/monitor-reconcile.ts` —— 对账（命门二在这）
 - `cds/src/services/monitor-discovery-runner.ts` —— 什么时候跑、打完写哪
+- `cds/src/services/self-check.ts` / `self-monitoring-bootstrap.ts` —— CDS 监控自己：自检文档与启动引导
+- `cds/tests/services/self-check.test.ts` —— CDS 自检文档喂真解析器的一致性守卫
 - `scripts/tests/test_monitor_discovery_contract.py` —— 跨语言契约自检

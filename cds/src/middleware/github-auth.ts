@@ -21,6 +21,8 @@ import { GH_SESSION_COOKIE, buildSessionCookie } from '../routes/auth.js';
 /** Paths that bypass the auth gate entirely. */
 const PUBLIC_PATHS: (string | RegExp)[] = [
   '/healthz',
+  // CDS 自检端点：探测器从本机回环打它。与 server.ts isPublicAccessRequestRoute 保持同步。
+  '/api/self-check',
   '/login',
   '/auth/sso',
   // Compatibility URL: installSpaFallback redirects it to the React login
