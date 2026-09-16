@@ -4362,6 +4362,21 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
     if (body.SizesNotApplicable == true && hasSizes)
         return "既然勾了「这个模型没有选尺寸这件事」，就不能再配尺寸档位";
 
+    // 白名单模式必须至少有一个尺寸，否则这条契约等于「把 1024x1024 钉死」。
+    //
+    // 白名单是表单默认档，尺寸一个都不填照样能存。存进去之后它**压过**代码内置那条契约，
+    // 而 NormalizeSizeWhitelist 没有候选，兜底直接吐 1024x1024——匹配到的上游未必支持它。
+    // 界面显示「已配好白名单」，实际是把所有请求都改写成了同一个写死的尺寸，
+    // 而且不报错（形状 8：一份不成立的声明被当成了「已经配好」的证明）。
+    // 这条与下面范围模式那条是同一族，上一轮只补了范围那一半。
+    if (string.Equals(constraint, "whitelist", StringComparison.OrdinalIgnoreCase)
+        && body.SizesNotApplicable != true
+        && !hasSizes)
+    {
+        return "白名单模式至少要配一个尺寸档位；这个模型如果没有选尺寸这件事，就勾上「这个模型没有选尺寸这件事」，"
+            + "或者改用范围 / 比例约束";
+    }
+
     // 范围模式必须至少有一项边界，否则这条契约保存成功却什么都不约束。
     //
     // NormalizeSizeRange 只在这几个字段有值时才动尺寸；一个都不填就等于原样把用户要的
@@ -5219,11 +5234,22 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             if (memberExchange is not null)
             {
                 var exchangeId = memberExchange.GetStringOrEmpty("_id");
-                var exchangeRouteKey = $"{logicalId}::exchange::{exchangeId}";
+                /*
+                  去重键必须带上**打给兑换所的那个模型标识**，不能只到兑换所为止。
+
+                  一个兑换所底下挂着多个别名，池里也常常同时放着好几个（claude-3-opus 与
+                  claude-3-sonnet 都走同一个中继）。线路真正调的是哪一个由 UpstreamModelId
+                  决定，所以它们是**不同的**线路；键只到兑换所的话，第一个成员占住键，
+                  后面每一个别名都被静默 continue 掉——不报错、不进 Skipped，
+                  而池路由已经删了，那些别名搬完就此消失（形状 1：判据比它该管的范围窄，
+                  「同一个兑换所的不同别名」这种输入让它给出了相反答案）。
+                */
+                var exchangeRouteKey = $"{logicalId}::exchange::{exchangeId}::{memberModelId}";
                 var duplicateExchangeRoute = plannedOfferingKeys.Contains(exchangeRouteKey)
                     || await gwModelOfferings.Find(fb.And(
                         fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
-                        fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId))).AnyAsync();
+                        fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId),
+                        fb.Eq("UpstreamModelId", memberModelId))).AnyAsync();
                 if (duplicateExchangeRoute) continue;
                 plannedOfferingKeys.Add(exchangeRouteKey);
 
@@ -5825,6 +5851,36 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
     var doc = await gwLogicalModels.Find(filter).FirstOrDefaultAsync();
     if (doc is null)
         return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("NOT_FOUND", $"逻辑模型不存在：{id}"), jsonOptions, 404);
+
+    /*
+      还在接流量的模型不许直接删。
+
+      池退场之后，不点名的请求全靠这两样接住：这个用途的默认模型，以及点名认领了某几个
+      调用方的模型。删掉前者，那个用途一个默认都不剩，所有不点名的请求当场解析失败；
+      删掉后者更隐蔽——被认领的调用方不会报错，它们会**悄悄改走用途默认**，换了个模型
+      还没人知道（2026-09-15 盘线上数据就见过这个形状：document-store 那条用的是自己池里的
+      gpt-4.1-mini，而 chat 的全局默认是 gpt-3.5-turbo，两者的产出不是一回事）。
+
+      而确认框只说了「会一起删掉 N 条线路」，一个字都没提这件事。所以拦在这里：
+      先把默认或认领转给另一条模型，再回来删。转移的入口就在同一个模型的编辑里
+      （PUT 支持把 IsDefaultForType 置 false、把认领改到别人名下），不是死路。
+    */
+    var blockingRoles = new List<string>();
+    if (doc.AsNullableBool("IsDefaultForType") == true)
+        blockingRoles.Add($"它是「{doc.AsNullableString("ModelType") ?? "这个用途"}」的默认模型");
+    var activeClaims = GetStringArray(doc, "DefaultForAppCallerCodes");
+    if (activeClaims.Count > 0)
+        blockingRoles.Add($"它认领着 {activeClaims.Count} 个调用方（{string.Join("、", activeClaims.Take(5))}"
+            + (activeClaims.Count > 5 ? " 等" : string.Empty) + "）");
+    if (blockingRoles.Count > 0)
+    {
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_STILL_CATCHES_TRAFFIC",
+            $"这条模型还在接不点名的请求：{string.Join("；", blockingRoles)}。"
+            + "直接删会让那些请求当场失败，或者悄悄换成另一个模型。"
+            + "先在模型编辑里把默认与认领转给别的模型，再回来删"),
+            jsonOptions, 409);
+    }
 
     var offeringFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id));
     var offeringCount = (int)await gwModelOfferings.CountDocumentsAsync(offeringFilter);

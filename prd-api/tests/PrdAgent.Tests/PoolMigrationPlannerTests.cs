@@ -414,4 +414,63 @@ public class PoolMigrationPlannerTests
         Assert.True(end > start);
         return console[start..end];
     }
+
+    /// <summary>
+    /// 同一个兑换所底下的不同别名，搬迁时必须各成一条线路。
+    ///
+    /// 线路真正打给上游的是哪一个别名由 UpstreamModelId 决定，所以它们是不同的线路。
+    /// 去重键只到兑换所为止的话，第一个成员占住键，后面每个别名都被静默跳过——
+    /// 不报错、不进 Skipped 清单，而池路由已经删了，那些别名搬完就此消失。
+    /// </summary>
+    [Fact]
+    public void 兑换所线路的身份要带上游模型标识()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 计划内去重键带上游模型标识
+        Assert.Contains("$\"{logicalId}::exchange::{exchangeId}::{memberModelId}\"", console);
+
+        // 查库那一侧同口径：只按 (模型, 兑换所) 查会把不同别名判成已存在。
+        // 断言的是这条查询把上游模型标识也算进了身份，而不是某一行的写法。
+        var dupAt = console.IndexOf("var duplicateExchangeRoute", StringComparison.Ordinal);
+        Assert.True(dupAt > 0, "兑换所去重那一段找不到了，守卫取值口径需要更新");
+        var dupEnd = console.IndexOf("plannedOfferingKeys.Add(exchangeRouteKey);", dupAt, StringComparison.Ordinal);
+        Assert.True(dupEnd > dupAt);
+        var dupBody = console[dupAt..dupEnd];
+        Assert.Contains("fb.Eq(\"UpstreamModelId\", memberModelId)", dupBody);
+    }
+
+    /// <summary>
+    /// 还在接不点名请求的对外模型不许直接删。
+    ///
+    /// 池退场之后，不点名的请求全靠「用途默认」与「按调用方认领」接住。删掉默认，
+    /// 那个用途一个默认都不剩，所有不点名的请求当场失败；删掉认领方更隐蔽——
+    /// 被认领的调用方不报错，它们会悄悄改走用途默认，换了个模型还没人知道。
+    /// </summary>
+    [Fact]
+    public void 还在接流量的对外模型不许直接删()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 服务端拦：两种身份都要判，且回的是可识别的冲突码而不是笼统失败。
+        Assert.Contains("MODEL_STILL_CATCHES_TRAFFIC", console);
+        var deleteAt = console.IndexOf("app.MapDelete(\"/gw/logical-models/{id}\"", StringComparison.Ordinal);
+        Assert.True(deleteAt > 0);
+        var deleteEnd = console.IndexOf("await gwLogicalModels.DeleteOneAsync(filter);", deleteAt, StringComparison.Ordinal);
+        Assert.True(deleteEnd > deleteAt);
+        var deleteBody = console[deleteAt..deleteEnd];
+        Assert.Contains("IsDefaultForType", deleteBody);
+        Assert.Contains("DefaultForAppCallerCodes", deleteBody);
+        // 拦必须发生在删线路之前：先删后拦等于把线路删了再说不许删。
+        var blockAt = deleteBody.IndexOf("MODEL_STILL_CATCHES_TRAFFIC", StringComparison.Ordinal);
+        var deleteOfferingsAt = deleteBody.IndexOf("gwModelOfferings.DeleteManyAsync", StringComparison.Ordinal);
+        Assert.True(
+            blockAt > 0 && deleteOfferingsAt > blockAt,
+            "拦截必须排在删线路之前，否则拒绝的那次删除已经把线路删掉了");
+
+        // 前端先行拦一道：不要把人放进「输 publicId 确认」之后再拒，那是白走一趟。
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        Assert.Contains("item.isDefaultForType", page);
+        Assert.Contains("item.defaultForAppCallerCodes.length", page);
+    }
 }

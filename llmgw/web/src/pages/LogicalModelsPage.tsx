@@ -252,6 +252,23 @@ export function LogicalModelsPage() {
   // Offering 是逻辑模型自己的下挂路由，没有别处引用，所以删除是连带删而不是阻挡。
   // 但连带删对运维是「一次点击删掉 N 条」，必须先把 N 报出来再让他确认。
   async function removeLogical(item: LogicalModelItem) {
+    // 还在接不点名请求的模型，服务端会拒（409）。但把人放进「输 publicId 确认」那一步
+    // 再拒，等于让他白走一趟——在这里先说清它挡在哪、下一步做什么。
+    // 判据与服务端同一对字段，不另写近似。
+    const catching: string[] = [];
+    if (item.isDefaultForType) catching.push(`它是「${item.modelType}」的默认模型`);
+    if (item.defaultForAppCallerCodes.length > 0) {
+      catching.push(`它认领着 ${item.defaultForAppCallerCodes.length} 个调用方`);
+    }
+    if (catching.length > 0) {
+      failNotice(
+        `「${item.name}」还在接不点名的请求：${catching.join('；')}。`
+        + '直接删会让那些请求当场失败，或者悄悄换成另一个模型。'
+        + '先把默认与认领转给别的模型，再回来删',
+      );
+      return;
+    }
+
     const typed = await promptText({
       title: `删除逻辑模型「${item.name}」`,
       description: `${item.publicId}\n它名下 ${item.offerings.length} 条 Offering 会一并删除，无法撤销。`,

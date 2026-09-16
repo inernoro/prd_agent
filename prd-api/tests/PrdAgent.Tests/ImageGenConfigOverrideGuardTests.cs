@@ -476,4 +476,32 @@ public class ImageGenConfigOverrideGuardTests
         // 变成一条越来越旧的假话。
         Assert.Contains("knownTenantIds", worker);
     }
+
+    /// <summary>
+    /// 白名单模式一个尺寸都不配的契约不许存进来。
+    ///
+    /// 白名单是表单默认档。尺寸全空也能存的话，这条契约会压过代码内置那条，而
+    /// NormalizeSizeWhitelist 没有候选，兜底直接吐 1024x1024——匹配到的上游未必支持它。
+    /// 界面显示「已配好白名单」，实际是把所有请求改写成同一个写死的尺寸，而且不报错。
+    /// 这与「范围模式至少要有一项有效边界」是同一族，上一轮只补了范围那一半。
+    /// </summary>
+    [Fact]
+    public void 白名单模式一个尺寸都不配的契约存不进来()
+    {
+        var console = Read("llmgw/console-api/Program.cs");
+        var start = console.IndexOf("static string? ValidateImageGenConfig(", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        var end = console.IndexOf("\n}", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var body = console[start..end];
+
+        // 判据挂在「白名单 + 没勾没有尺寸这件事 + 一个尺寸都没有」三者同时成立上。
+        Assert.Contains("\"whitelist\", StringComparison.OrdinalIgnoreCase", body);
+        Assert.Contains("body.SizesNotApplicable != true", body);
+        Assert.Contains("!hasSizes", body);
+
+        // 拒的那句话要给下一步（勾「没有选尺寸这件事」或改用别的约束），
+        // 不是只说「不合法」——拒绝没有下一步等于把问题丢回给人。
+        Assert.Contains("这个模型没有选尺寸这件事", body);
+    }
 }
