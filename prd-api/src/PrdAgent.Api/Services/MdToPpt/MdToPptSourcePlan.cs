@@ -146,15 +146,51 @@ internal sealed class MdToPptSourcePlan
         if (pageOfBlock.Count == 0 || pageOfBlock.Count == Blocks.Count) return;
 
         MdToPptOutlinePageDto? previous = null;
+        SourceBlock? previousBlock = null;
         var firstClaimed = Blocks.Select(block => pageOfBlock.GetValueOrDefault(block.Id)).First(page => page != null)!;
         foreach (var block in Blocks)
         {
-            if (pageOfBlock.TryGetValue(block.Id, out var owner)) { previous = owner; continue; }
+            if (pageOfBlock.TryGetValue(block.Id, out var owner))
+            {
+                previous = owner;
+                previousBlock = block;
+                continue;
+            }
             var target = previous ?? firstClaimed;
-            (target.SourceBlockIds ??= new List<string>()).Add(block.Alias);
+            var list = target.SourceBlockIds ??= new List<string>();
+            // 补回去的块要插在「上一个已定位的块」后面，不能一律追加到末尾。
+            // 追加会把它排到同页更靠后的块之后（认领 b1,b3 而漏了 b2，就成了 b1,b3,b2；
+            // 页上第一个认领的是 b3 时更会成 b3,b1,b2），而 Bind 原样保留这个顺序，
+            // 于是正文渲染到了下一节标题后面——与本方法自己承诺的「按原文顺序」相反
+            //（Codex P2，2026-09-16）。
+            // previousBlock 为空表示本块排在全部认领块之前，插到最前。
+            var at = previousBlock == null ? 0 : IndexOfBlock(list, lookup, previousBlock.Id) + 1;
+            if (at < 0 || at > list.Count) at = list.Count;
+            list.Insert(at, block.Alias);
             pageOfBlock[block.Id] = target;
             previous = target;
+            previousBlock = block;
         }
+    }
+
+    /// <summary>
+    /// 这一页的来源清单里，某个块写在第几位。清单存的是模型写下的字面量（短代号或完整 Id），
+    /// 所以要逐条解析成内容寻址 Id 再比；找不到返回 -1。
+    /// </summary>
+    private static int IndexOfBlock(
+        List<string> ids,
+        IReadOnlyDictionary<string, SourceBlock> lookup,
+        string blockId)
+    {
+        for (var index = 0; index < ids.Count; index++)
+        {
+            var value = ids[index];
+            if (value != null
+                && lookup.TryGetValue(value, out var resolved)
+                && string.Equals(resolved.Id, blockId, StringComparison.Ordinal))
+                return index;
+        }
+        return -1;
     }
 
     internal IReadOnlyList<PagePlan> Bind(IReadOnlyList<MdToPptOutlinePageDto>? pages, int expectedPages)

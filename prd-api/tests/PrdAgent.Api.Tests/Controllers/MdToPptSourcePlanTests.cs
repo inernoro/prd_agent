@@ -353,6 +353,55 @@ public class MdToPptSourcePlanCoverageRepairTests
         Assert.Equal(new[] { plan.Blocks[2].Id, plan.Blocks[3].Id, plan.Blocks[4].Id }, bound[1].Blocks.Select(x => x.Id));
     }
 
+    /// <summary>
+    /// 补回去的块要插在它在原文里该在的位置，不能一律追加到页尾。
+    /// 追加会让「认领了 b1、b3 而漏了 b2」变成 b1,b3,b2，Bind 原样保留这个顺序，
+    /// 于是正文渲染到了下一节标题后面——与 RepairCoverage 自己承诺的「按原文顺序」相反
+    /// （Codex P2，2026-09-16）。
+    /// </summary>
+    [Fact]
+    public void RepairedBlockLandsInDocumentOrder_NotAppendedAfterALaterClaimedBlock()
+    {
+        var plan = Plan();
+        // 一页认领了块1 与块3，漏掉中间的块2；块4、块5 在另一页。
+        var pages = new List<MdToPptOutlinePageDto>
+        {
+            new() { Title = "一", SourceBlockIds = new List<string> { plan.Blocks[0].Alias, plan.Blocks[2].Alias } },
+            new() { Title = "二", SourceBlockIds = new List<string> { plan.Blocks[3].Alias, plan.Blocks[4].Alias } },
+        };
+
+        plan.RepairCoverage(pages);
+        var bound = plan.Bind(pages, 2);
+
+        Assert.Equal(
+            new[] { plan.Blocks[0].Id, plan.Blocks[1].Id, plan.Blocks[2].Id },
+            bound[0].Blocks.Select(x => x.Id));
+        Assert.Equal(new[] { plan.Blocks[3].Id, plan.Blocks[4].Id }, bound[1].Blocks.Select(x => x.Id));
+    }
+
+    /// <summary>
+    /// 漏掉的块排在全部认领块之前时，要插到页首而不是页尾：
+    /// 页上第一个认领的是块3，追加会得到 b3,b1,b2。
+    /// </summary>
+    [Fact]
+    public void BlocksBeforeEveryClaimedBlockGoToTheFrontOfThePage()
+    {
+        var plan = Plan();
+        var pages = new List<MdToPptOutlinePageDto>
+        {
+            new() { Title = "一", SourceBlockIds = new List<string> { plan.Blocks[2].Alias } },
+            new() { Title = "二", SourceBlockIds = new List<string> { plan.Blocks[3].Alias, plan.Blocks[4].Alias } },
+        };
+
+        plan.RepairCoverage(pages);
+        var bound = plan.Bind(pages, 2);
+
+        Assert.Equal(
+            new[] { plan.Blocks[0].Id, plan.Blocks[1].Id, plan.Blocks[2].Id },
+            bound[0].Blocks.Select(x => x.Id));
+        Assert.Equal(new[] { plan.Blocks[3].Id, plan.Blocks[4].Id }, bound[1].Blocks.Select(x => x.Id));
+    }
+
     [Fact]
     public void AlreadyComplete_RepairChangesNothing()
     {
