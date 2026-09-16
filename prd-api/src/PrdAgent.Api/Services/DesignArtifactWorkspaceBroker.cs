@@ -6,6 +6,7 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -823,17 +824,27 @@ public sealed class DesignArtifactWorkspaceBroker : IDesignArtifactWorkspaceBrok
         return message.Length <= 500 ? message : message[..500];
     }
 
+    /// <summary>
+    /// 这里解析的是 **API 自己的对外地址**：CDS 侧的 OpenDesign 容器拿它回调
+    /// <c>DesignArtifactRuntimeController</c> 取工作区输入、提交结果、访问模型代理。
+    ///
+    /// 所以它只认「API 一侧声明的公网基址」，绝不能掺进前端地址。此前列表里排着
+    /// <c>App:FrontendBaseUrl</c>——那个键按定义指向 admin 那一端（<c>docker-compose.dev.yml</c>
+    /// 里默认就是 <c>http://localhost:5500</c>，而 API 在 5000）。admin 与 API 分域部署时
+    /// 它是个合法值、又排在 <c>CDS_PREVIEW_URL</c> 前面，于是回调地址被发到 admin 服务器，
+    /// OpenDesign 在真正执行之前就断掉；只有当那个前端恰好把全部 API 路由都反代过去时才看不出来
+    /// （形状 1：判据比它该管的范围宽——「某个对外地址」不等于「API 的对外地址」）。
+    ///
+    /// 中间两个键直接引用 <see cref="RequestOriginExtensions.DeclaredBaseUrlKeys"/>：仓库里
+    /// 「API 声明的公网基址」本来就只有那一份定义，抄一份到这里就是等着它们各自漂移（形状 3）。
+    /// 一个都解析不出来时返回 null，调用方当场抛出可读原因——比发出一条打不通的回调地址强
+    /// （形状 10：降级不许静默）。
+    /// </summary>
     internal static string? ResolvePublicBaseUrl(IConfiguration configuration)
     {
-        foreach (var key in new[]
-                 {
-                     "DesignArtifactRuntime:PublicBaseUrl",
-                     "ServerUrl",
-                     "App:FrontendBaseUrl",
-                     "CDS_PREVIEW_URL",
-                     "PUBLIC_BASE_URL",
-                     "APP_PUBLIC_BASE_URL",
-                 })
+        foreach (var key in new[] { "DesignArtifactRuntime:PublicBaseUrl" }
+                     .Concat(RequestOriginExtensions.DeclaredBaseUrlKeys)
+                     .Concat(["PUBLIC_BASE_URL", "APP_PUBLIC_BASE_URL"]))
         {
             var value = configuration[key]?.Trim().TrimEnd('/');
             if (Uri.TryCreate(value, UriKind.Absolute, out var uri)
