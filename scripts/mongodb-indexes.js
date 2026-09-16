@@ -1541,6 +1541,58 @@ db.mcp_usage_counters.createIndex(
 // db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
 
 
+// collection: bookshelf_progress
+// 藏书阁的阅读进度：一个人一行（已读书目、书摘笔记、结业考结果）。
+// 唯一索引不是为了查得快，是为了兜住并发首存：保存走的是 upsert，
+// 两个请求同时为同一个人插入时，代码路径挡不住两行都写进去——之后
+// FirstOrDefault 读到哪一行是随机的，团队看板还会把同一个人数两遍。
+//
+// 用 ensureTightenedUniqueIndex 而不是直接 createIndex：库里若已经有
+// 重复行，它会先把重复组报出来让人清理，而不是抛一个没头没尾的建索引失败。
+ensureTightenedUniqueIndex("bookshelf_progress",
+  { "UserId": 1 },
+  {
+    name: "idx_bookshelf_progress_user",
+    unique: true
+  }
+)
+// end collection: bookshelf_progress
+
+
+// collection: book_digests
+// 藏书阁精读稿：一本书一篇，全队读同一份。
+// 唯一索引同样是为了兜住并发首次生成：两个人同时点开一本还没有稿子的书，
+// 两条 SSE 都查到「库里没有」，随后两个 upsert 都走 insert 分支，库里就有了
+// 两篇。之后 FirstOrDefault 读到哪一篇是随机的，「重新生成」替换的可能是
+// 另一篇——那篇公共稿子从此不确定。
+//
+// 有了这条索引，后落地的那一方会撞 E11000，代码把它当成「别人已经写好了」
+// 处理（见 BookshelfController 的保存处），不再写第二篇。
+// 复合而不是只按 BookId：同一个 CDS 项目下所有分支共用一个 Mongo，
+// 一本书在每个部署作用域各有一行（权威部署那行的 DeploymentSlug 是 null）。
+// 只按 BookId 唯一的话，第二条分支第一次生成就会撞键，永远存不下自己那篇。
+//
+// **名字必须沿用 idx_book_digests_book，不能另起一个。** 这一版之前先落过一版
+// 只按 BookId 的同名索引；换个名字建复合索引不会动到旧的那条，于是已经执行过
+// 早先清单的环境里旧索引还在，换一个 DeploymentSlug 插同一本书照样 E11000——
+// 而代码把撞键当成「别人先写成了」判成功，那条分支的稿子就永远存不下、
+// 每次点开都重烧一篇。一个把永久失败伪装成正常的组合。
+//
+// 第四个参数是这个 helper 专为此设的：同名但定义不同时，若命中已知的旧定义，
+// 就走 replaceLegacyUniqueIndex 迁移，而不是报「定义与清单不符」。
+ensureTightenedUniqueIndex("book_digests",
+  { "BookId": 1, "DeploymentSlug": 1 },
+  {
+    name: "idx_book_digests_book",
+    unique: true
+  },
+  [{
+    keys: { "BookId": 1 }
+  }]
+)
+// end collection: book_digests
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

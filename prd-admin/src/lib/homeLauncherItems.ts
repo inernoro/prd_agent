@@ -133,6 +133,14 @@ export function buildStaticUtilities(p: LauncherPerms): ToolboxItem[] {
 export function buildStaticInfra(p: LauncherPerms): ToolboxItem[] {
   const items: ToolboxItem[] = [
     {
+      id: '__bookshelf__',
+      name: '公共藏书阁',
+      description: '从新手到高手的心路历程书目，七卷 + 结业考，开发与产品各一条线',
+      icon: 'Library',
+      tags: ['书单', '成长', '读书', '考试', '新人', '规范'],
+      routePath: '/bookshelf',
+    } as ToolboxItem,
+    {
       id: '__document-store__',
       name: '知识库',
       description: '文档存储与知识管理，支持文件夹、GitHub 同步',

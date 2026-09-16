@@ -139,6 +139,8 @@
 - [CLI Agent 工作空间 · 设计](./design.platform.workspace.md) `design.platform.workspace`
 - [PR Review V2 设计（OAuth 最小可审查工作台） · 设计](./design.pr-review.v2.md) `design.pr-review.v2`
 - [头像沉浸式编辑器 · 设计](./design.prd-agent.avatar-editor.md) `design.prd-agent.avatar-editor`
+- [公共藏书阁 · 精读稿 · 设计](./design.prd-agent.bookshelf-digest.md) `design.prd-agent.bookshelf-digest`
+- [公共藏书阁 · 结业考 · 判定口径](./design.prd-agent.bookshelf.exam.md) `design.prd-agent.bookshelf.exam`
 - [文档再加工智能体调用路由 · 设计](./design.prd-agent.reprocess-chat-routing.md) `design.prd-agent.reprocess-chat-routing`
 - [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`

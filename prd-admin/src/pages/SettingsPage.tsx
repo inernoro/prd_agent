@@ -14,7 +14,7 @@ import { NavLayoutEditor } from '@/pages/settings/NavLayoutEditor';
 import { UserNavOverview } from '@/pages/settings/UserNavOverview';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
 import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
-import LandingPreviewSettings from '@/pages/settings/LandingPreviewSettings';
+import SystemImagerySettings from '@/pages/settings/SystemImagerySettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -296,6 +296,18 @@ function NavOrderSettings() {
   );
 }
 
+/**
+ * 改过名的 tab 在这里留一条别名。
+ *
+ * 「首页预览图」并进「系统配图」之后，老书签与老文档里的 `?tab=landing-preview`
+ * 会认不出来，被 visibleTab 那道兜底退回第一屏——人点开自己存的链接，落到一个不相干的屏，
+ * 而且没有任何提示说它搬到哪去了。一行映射就能免掉这件事。
+ *
+ * 放在模块顶层而不是组件里：组件内的对象字面量每次渲染都是新的，进 useEffect 依赖
+ * 就是一次无意义的重跑。
+ */
+const TAB_ALIASES: Record<string, string> = { 'landing-preview': 'system-imagery' };
+
 export default function SettingsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const perms = useAuthStore((s) => s.permissions);
@@ -315,7 +327,7 @@ export default function SettingsPage() {
     // 调生图（visual-agent.use，ImageGenController 就是这个门）。只给写权限的话，
     // 入口露出来了、列表拉不到、模型也拉不到，用户看到的是「没配模型」+ 一点就失败。
     if (hasPerm('assets.read') && hasPerm('assets.write') && hasPerm('visual-agent.use')) {
-      list.push({ key: 'landing-preview', label: '首页预览图', icon: <ImagePlus size={14} /> });
+      list.push({ key: 'system-imagery', label: '系统配图', icon: <ImagePlus size={14} /> });
     }
     if (hasPerm('authz.manage')) list.push({ key: 'authz', label: '权限管理', icon: <UserCog size={14} /> });
     if (hasPerm('data.read')) list.push({ key: 'data', label: '数据管理', icon: <Database size={14} /> });
@@ -326,11 +338,13 @@ export default function SettingsPage() {
     return list;
   }, [isRoot, perms]);
 
-  const tabFromUrl = searchParams.get('tab') || 'user-space';
+  const rawTabFromUrl = searchParams.get('tab') || 'user-space';
+  const tabFromUrl = TAB_ALIASES[rawTabFromUrl] ?? rawTabFromUrl;
   const [activeTab, setActiveTab] = useState(tabFromUrl);
 
   useEffect(() => {
-    const currentTab = searchParams.get('tab');
+    const raw = searchParams.get('tab');
+    const currentTab = raw ? (TAB_ALIASES[raw] ?? raw) : raw;
     if (currentTab && currentTab !== activeTab) {
       setActiveTab(currentTab);
     }
@@ -339,8 +353,8 @@ export default function SettingsPage() {
   /*
    * 渲染的那一屏必须也在**这个人能看的清单**里。
    *
-   * 上面按权限筛的是 tab 条，地址栏没经过这道筛：`?tab=landing-preview` 直接打开，
-   * 组件照样挂。首页预览图那一屏尤其亏——生图只要 visual-agent.use，
+   * 上面按权限筛的是 tab 条，地址栏没经过这道筛：`?tab=system-imagery` 直接打开，
+   * 组件照样挂。系统配图那一屏尤其亏——生图只要 visual-agent.use，
    * 于是没有 assets 权限的人也能按下「全部重新生成」，七次计费的生图跑起来，
    * 最后卡在挂槽位那一步全部失败。
    *
@@ -365,7 +379,7 @@ export default function SettingsPage() {
         {visibleTab === 'skin' && <SkinSettings />}
         {visibleTab === 'nav-order' && <NavOrderSettings />}
         {visibleTab === 'assets' && <AssetsManagePage />}
-        {visibleTab === 'landing-preview' && <LandingPreviewSettings />}
+        {visibleTab === 'system-imagery' && <SystemImagerySettings />}
         {visibleTab === 'authz' && <AuthzPage />}
         {visibleTab === 'data' && <DataManagePage />}
         {visibleTab === 'infra-services' && <InfraServicesPage />}
