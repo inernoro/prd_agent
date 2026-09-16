@@ -569,7 +569,9 @@ export default function SystemImagerySettings() {
                   variant="secondary"
                   size="sm"
                   onClick={() => void generate(module.slots.map((s) => targetOf(module, s)))}
-                  disabled={moduleRunning || !hasModel}
+                  // 清单没拉到时三个生成入口都要停：上一版只守住了顶部那个批量按钮，
+                  // 另外两个照常可点——守卫只接了三分之一（形状 2）。
+                  disabled={moduleRunning || !hasModel || inventoryFailed}
                 >
                   {moduleRunning ? <MapSpinner size={13} /> : <RefreshCw size={13} />}
                   整组重生成
@@ -662,7 +664,7 @@ export default function SystemImagerySettings() {
                         variant="secondary"
                         size="sm"
                         onClick={() => openDialog(module, slot)}
-                        disabled={running || !hasModel}
+                        disabled={running || !hasModel || inventoryFailed}
                       >
                         <Sparkles size={13} />
                         {src ? '重新生成' : '生成'}

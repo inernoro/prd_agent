@@ -4,6 +4,7 @@ import type { AdminMenuItem } from '@/services/contracts/authz';
 import type { UserRole } from '@/types/admin';
 // 这个模块自身零依赖，直接 import 不会造成上面那条注释里说的循环引用
 import { clearAllOfflineEdits } from '@/pages/document-store/recordingOfflineQueue';
+import { clearUserScopedStorage } from '@/lib/userScopedStorageKeys';
 
 const AUTH_STORAGE_KEY = 'prd-admin-auth';
 
@@ -125,6 +126,12 @@ export const useAuthStore = create<AuthState>()(
          * 所以登出这一下必须把它们清掉——正文不该在人已经走了之后还留在盘上。
          */
         clearAllOfflineEdits();
+        /*
+         * 各 store 自己注册的那些回调只在它被求值过时才存在，而多数 store 挂在
+         * 懒加载路由上——没进过那个页面就等于没注册。属于某个人的持久化数据
+         * 不能靠那条路清，必须由这里（一定会被加载）动手。
+         */
+        clearUserScopedStorage();
         set({ ...INITIAL_STATE });
       },
     }),

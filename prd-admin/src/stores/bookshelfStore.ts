@@ -26,6 +26,7 @@ import {
   saveMyBookshelfProgress,
 } from '@/services/real/bookshelf';
 import { isBetterExam } from '@/lib/bookshelf/examContext';
+import { USER_SCOPED_STORAGE_KEYS } from '@/lib/userScopedStorageKeys';
 
 export interface ExamResult {
   volumeId: string;
@@ -106,6 +107,9 @@ let pushSeq = 0;
  */
 let loadSeq = 0;
 
+/** 本地改动的代次。每改一次 +1，用来判断「在途那一发送出去之后有没有新改动」。 */
+let mutationRev = 0;
+
 /** 导出给测试用：让用例能确定性地等一次防抖窗口，而不是靠 sleep 猜。 */
 export const __pushDebounceMs = PUSH_DEBOUNCE_MS;
 
@@ -135,12 +139,22 @@ export const useBookshelfStore = create<BookshelfState>()(
       async function flush(): Promise<void> {
         const { readBookIds, examResults, bookNotes } = get();
         const seq = ++pushSeq;
+        // 发出去这一刻的改动代次。请求在路上时用户又改了，代次就会往前走，
+        // 那这一发的成功只能说明「旧快照进去了」，不能说明手上这份干净了。
+        const revAtSend = mutationRev;
         set({ syncState: 'saving' });
         try {
           const res = await saveMyBookshelfProgress(toPayload(readBookIds, examResults, bookNotes));
           if (seq !== pushSeq) return;                 // 已经有更新的一发在飞，这次的结果作废
           if (res.success) {
-            set({ syncState: 'synced', dirty: false, failedAttempts: 0 });
+            // dirty 只有在这期间没有新改动时才清。否则会出现：旧请求成功 → dirty 清掉
+            // → 用户此刻重进页面 → 手上那份更新的被判成「干净的」→ loadFromServer
+            // 拿服务端那份旧的整份盖掉，最后一笔编辑无声消失。
+            set({
+              syncState: 'synced',
+              failedAttempts: 0,
+              ...(revAtSend === mutationRev ? { dirty: false } : {}),
+            });
           } else {
             console.error('[bookshelfStore] 保存进度失败:', res.error?.message);
             set({ syncState: 'failed', failedAttempts: get().failedAttempts + 1 });
@@ -154,6 +168,7 @@ export const useBookshelfStore = create<BookshelfState>()(
 
       /** 防抖入口。用户每次操作都走它。 */
       function schedulePush() {
+        mutationRev += 1;
         set({ dirty: true });
         if (pushTimer) clearTimeout(pushTimer);
         pushTimer = setTimeout(() => { pushTimer = null; void flush(); }, PUSH_DEBOUNCE_MS);
@@ -262,7 +277,9 @@ export const useBookshelfStore = create<BookshelfState>()(
       };
     },
     {
-      name: 'bookshelf-progress',
+      // 键名与 userScopedStorageKeys 的清单共用一份：authStore 登出时按那张表清盘，
+      // 两处各写一个字符串就是下一次「登出没清干净」的温床（形状 3）。
+      name: USER_SCOPED_STORAGE_KEYS[0],
       version: 1,
       // syncState 不持久化：它是「此刻与服务端的关系」，存进去再读回来就是过期的谎
       // （上次是 synced，这次可能已经断网了）。
