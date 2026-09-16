@@ -53,9 +53,6 @@ public static class ActiveTaskShared
     }
 
     /// <summary>
-    /// 把某条设为「此刻正在做」。WIP=1：同一个人原本在做的那条先结算时长、退回备用队首。
-    /// </summary>
-    /// <summary>
     /// 结案之后要不要把队首顶上来。
     ///
     /// 只有「正在做」那个位置被腾出来了才要。备用行上也有圆圈，勾掉一条备用任务
@@ -65,6 +62,17 @@ public static class ActiveTaskShared
     public static bool ShouldAdvanceQueue(string finishedStateBefore)
         => finishedStateBefore == ActiveTaskState.Active;
 
+    /// <summary>
+    /// 把某条设为「此刻正在做」。WIP=1：同一个人原本在做的那条先结算时长、退回备用队首。
+    ///
+    /// 关于并发：两次切换若同时发生，各自读到的「当前在做」是同一条，于是可能各自
+    /// 激活自己的目标，留下两条 active —— 之后 <c>FirstOrDefault</c> 只看得见一条，
+    /// 另一条藏着继续计时，投入时长从此就是错的。这里做两件事把它收敛掉：
+    /// 每次降级都带上「它当时还真的是 active」这个条件（CAS，重复降级不会二次结算），
+    /// 最后再扫一遍把除目标外的 active 全部降级（后到者赢，末态恒为一条）。
+    /// 这不是真正的原子性——真原子要么上事务、要么给 (UserId, State=active) 建唯一部分索引，
+    /// 而本仓库禁止应用自建索引。残留边界记在 doc/debt.platform.active-tasks.md 第 19 条。
+    /// </summary>
     public static async Task MakeActiveAsync(MongoDbContext db, string userId, string id, DateTime now, CancellationToken ct = default)
     {
         var current = await db.ActiveTaskEntries
@@ -75,7 +83,9 @@ public static class ActiveTaskShared
         {
             var head = await HeadOrderKeyAsync(db, userId, ct);
             await db.ActiveTaskEntries.UpdateOneAsync(
-                x => x.Id == old.Id,
+                // 带上 State 条件：并发下别人可能已经把它降级了，再降一次会拿旧的
+                // StartedAt 重算一遍时长，把投入算多
+                x => x.Id == old.Id && x.State == ActiveTaskState.Active,
                 Builders<ActiveTaskEntry>.Update
                     .Set(x => x.AccumulatedSeconds, old.ElapsedSecondsAt(now))
                     .Set(x => x.BlockedSeconds, old.BlockedSecondsAt(now))
@@ -95,6 +105,16 @@ public static class ActiveTaskShared
                 .Set(x => x.StartedAt, now)
                 .Set(x => x.Blocked, false)
                 .Set(x => x.BlockedSince, (DateTime?)null)
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: ct);
+
+        // 收尾清扫：并发窗口里可能又冒出来一条 active（它读到的「当前」是降级前的快照）。
+        // 这一扫保证末态恒为一条，刚被激活几毫秒的那条按零投入退回队列。
+        await db.ActiveTaskEntries.UpdateManyAsync(
+            x => x.UserId == userId && x.State == ActiveTaskState.Active && x.Id != id,
+            Builders<ActiveTaskEntry>.Update
+                .Set(x => x.State, ActiveTaskState.Standby)
+                .Set(x => x.StartedAt, (DateTime?)null)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
     }
@@ -291,13 +311,18 @@ public static class ActiveTaskShared
                 StandbyCount = standby,
                 AssignedByName = masked ? null : active?.AssignedByName,
                 BlockedSeconds = active?.BlockedSecondsAt(now) ?? 0,
+                // 卡住要卡够配置的时长才升到管理侧 —— 否则 BlockedEscalateMinutes（5-1440）
+                // 这个旋钮转了等于没转：卡住一秒就顶到看板最上面并计进「几个人要你看一下」。
+                // 「卡住了」这个状态照常显示，升不升级是另一回事。
+                Escalated = active?.Blocked == true
+                    && (active.BlockedSecondsAt(now) >= settings.BlockedEscalateMinutes * 60),
             });
         }
 
-        // 排序：卡住 > 没活 > 堆太多 > 其余
-        var order = new Dictionary<string, int> { ["blocked"] = 0, ["empty"] = 1, ["silent"] = 3, ["running"] = 2 };
+        // 要你管的排最上面。刚卡住的排在「没活」之后 —— 它还没够到升级门槛，
+        // 只是需要知道，不是需要现在动手。
         var sorted = people
-            .OrderBy(p => order.TryGetValue(p.Status, out var o) ? o : 9)
+            .OrderBy(TeamRowRank)
             .ThenByDescending(p => p.Status == "running" && p.StandbyCount >= settings.HeavyStackThreshold ? 1 : 0)
             .ThenBy(p => p.DisplayName, StringComparer.Ordinal)
             .ToList();
@@ -308,7 +333,7 @@ public static class ActiveTaskShared
             .Limit(8)
             .ToListAsync(ct);
 
-        var needsYou = sorted.Count(p => p.Status == "blocked" || p.Status == "empty");
+        var needsYou = sorted.Count(p => p.Escalated || p.Status == "empty");
 
         return new
         {
@@ -346,6 +371,19 @@ public static class ActiveTaskShared
             : $"{needsYou} 个人要你看一下，其余 {total - needsYou} 个正常。";
     }
 
+    /// <summary>
+    /// 团队视图的排序档。要你现在动手的在最前，其余按「需要知道的程度」递减。
+    /// 抽成函数是因为它和 needsYou 必须对同一件事表态：卡住但没卡够时长的那档
+    /// 既不计进「几个人要你看一下」，也不该顶到最上面。
+    /// </summary>
+    private static int TeamRowRank(TeamRow p) => p.Status switch
+    {
+        "blocked" => p.Escalated ? 0 : 2,   // 卡够了要你动手；刚卡住只是要你知道
+        "empty" => 1,
+        "running" => 3,
+        _ => 4,                              // silent：还没说在做什么
+    };
+
     private sealed class TeamRow
     {
         public string UserId { get; set; } = string.Empty;
@@ -355,5 +393,8 @@ public static class ActiveTaskShared
         public int StandbyCount { get; set; }
         public string? AssignedByName { get; set; }
         public int BlockedSeconds { get; set; }
+
+        /// <summary>卡够了配置的时长，该升到管理侧「需要你出手」了。只参与排序与计数，不上线。</summary>
+        public bool Escalated { get; set; }
     }
 }

@@ -107,6 +107,39 @@ public class ActiveTaskBoardInvariantTests
             "wasActive 必须在 SettleAndSetStateAsync 之前取，否则 entry.State 已经是 done 了");
     }
 
+    [Fact]
+    public void 卡住要卡够配置的时长才升到管理侧()
+    {
+        // 形状 2：BlockedEscalateMinutes（5-1440）登记进了设置页、也传进了看板聚合，
+        // 却没有任何一处读它 —— 卡住一秒就顶到最上面并计进「几个人要你看一下」，
+        // 那个旋钮转了等于没转。判据锚在两处：排序档与 needsYou 必须都认 Escalated。
+        var shared = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskShared.cs"));
+
+        Assert.Contains("settings.BlockedEscalateMinutes * 60", shared, StringComparison.Ordinal);
+        Assert.Contains("p.Escalated || p.Status == \"empty\"", shared, StringComparison.Ordinal);
+        Assert.Contains("p.Escalated ? 0 : 2", shared, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 切换正在做的那条必须收敛回一条()
+    {
+        // 两次切换同时发生时，各自读到的「当前在做」是同一条，于是可能各自激活自己的
+        // 目标，留下两条 active —— FirstOrDefault 只看得见一条，另一条藏着继续计时。
+        // 两道兜底缺一不可：降级带 CAS（否则重复降级会拿旧 StartedAt 把投入算多），
+        // 末尾清扫（否则末态真的会留下两条）。
+        var shared = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskShared.cs"));
+
+        Assert.Contains("x.Id == old.Id && x.State == ActiveTaskState.Active", shared, StringComparison.Ordinal);
+        Assert.Contains("UpdateManyAsync", shared, StringComparison.Ordinal);
+
+        // 清扫必须排在激活之后，排在前面等于没扫
+        var activate = shared.IndexOf("Set(x => x.State, ActiveTaskState.Active)", StringComparison.Ordinal);
+        var sweep = shared.IndexOf("UpdateManyAsync", StringComparison.Ordinal);
+        Assert.True(activate > 0 && sweep > activate, "收尾清扫必须排在激活目标之后");
+    }
+
     private static string Controller() => File.ReadAllText(Path.Combine(
         RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTasksController.cs"));
 

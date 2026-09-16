@@ -85,11 +85,33 @@ def main() -> int:
     empty = [i["key"] for i in items if not (i.get("title") or "").strip()]
     check("每条都有标题", not empty, f"{len(empty)} 条无标题，例如 {empty[:3]}")
 
-    # 5. 被测脚本登记进了 CI 的 path filter（形状 7：守卫自己没接上线）
+    # 4.5 表格行不许折行。
+    #     markdown 表格一行必须是一行：中间换一次行，解析器从那行起就停了，
+    #     后面的条目**静默消失**，而上面几条判据全绿（少 7 条既不算空、也不撞车、
+    #     也不缺标题）。2026-09-16 我自己给第 13 条补说明时把一行拆成两行，
+    #     总数从 108 掉到 101，一条判据都没红 —— 这条就是补那个洞的。
+    #     判法：非空行以 | 结尾却不以 | 开头 = 上一行的续行。
+    wrapped = []
+    for path in sorted((REPO / "doc").glob("debt.*.md")):
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            t = line.strip()
+            if t.endswith("|") and not t.startswith("|"):
+                wrapped.append(f"{path.name}:{lineno}")
+    check("台账里没有折行的表格行", not wrapped,
+          f"{len(wrapped)} 处折行，例如 {wrapped[:3]} —— 折行之后的条目会被静默丢掉")
+
+    # 5. 被测输入都登记进了 CI 的 path filter（形状 7：守卫自己没接上线）。
+    #    被测输入是两样：解析器本身，和它读的那些台账。只登记解析器的话，
+    #    「只改一份台账」的 PR 照样跳过这道闸 —— 而撞车的标识、认不出的表头、
+    #    解析成空，恰恰都是在台账那边长出来的（2026-09-16 Codex 抓到，这条守卫
+    #    自己就有它要防的那个洞）。
     ci = (REPO / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    check("被测脚本登记进了 ci.yml 的 path filter",
+    check("解析器登记进了 ci.yml 的 path filter",
           "scripts/sync-debt-ledger.py" in ci,
           "只改 sync-debt-ledger.py 的 PR 不会触发这道闸")
+    check("台账本身也登记进了 ci.yml 的 path filter",
+          "doc/debt.*.md" in ci,
+          "只改一份 doc/debt.*.md 的 PR 不会触发这道闸，而它正是撞车与表头漂移的来源")
 
     print(f"\n扫到 {len(items)} 条债务，来自 {len(by_module)} 份台账")
     if failures:

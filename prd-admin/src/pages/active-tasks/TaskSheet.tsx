@@ -47,21 +47,34 @@ export function TaskSheet({
     else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
   }, [onClose]);
 
+  // 键盘监听挂的是一个**永不变身**的转发函数，真正的处理逻辑从 ref 里取最新的。
+  // 为什么不能直接把 onKeyDown 当依赖：调用方普遍传内联的 onClose
+  // （`onClose={() => { abort(); onClose(); }}`），每次父组件渲染都是新函数，
+  // onKeyDown 跟着变身，effect 重跑，于是下面那段「焦点落到第一个可输入的东西上」
+  // 每敲一个字就重放一次。派活弹窗里 select 排在标题输入框前面，
+  // querySelector('input,textarea,select') 取的是文档序第一个 —— 也就是那个 select，
+  // 结果就是打第一个字焦点被弹回选择框，这张表根本填不进去。
+  const latestKeyDown = useRef(onKeyDown);
+  latestKeyDown.current = onKeyDown;
+
   useEffect(() => {
+    const listener = (e: KeyboardEvent) => latestKeyDown.current(e);
     restoreTo.current = document.activeElement as HTMLElement | null;
-    document.addEventListener('keydown', onKeyDown, true);
+    document.addEventListener('keydown', listener, true);
     const prevOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    // 焦点落到第一个可输入的东西上；没有就落到面板自己身上
+    // 焦点落到第一个可输入的东西上；没有就落到面板自己身上。只在打开时做一次。
     const panel = panelRef.current;
     const target = panel?.querySelector<HTMLElement>('input,textarea,select') ?? panel;
     target?.focus();
     return () => {
-      document.removeEventListener('keydown', onKeyDown, true);
+      document.removeEventListener('keydown', listener, true);
       document.body.style.overflow = prevOverflow;
       restoreTo.current?.focus?.();
     };
-  }, [onKeyDown]);
+    // 故意只跑一次：这段是「浮层打开/关闭」的一次性布置，不是每次渲染的同步
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const sheet = (
     <div

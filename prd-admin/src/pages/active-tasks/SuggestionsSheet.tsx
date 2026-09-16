@@ -99,22 +99,31 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     if (picked.length === 0) { onAbsorb(); return; }
     setBusy(true);
     const created: string[] = [];
+    const failed: typeof picked = [];
     for (const r of picked) {
       const res = await createActiveTask({ title: r.title.trim(), dueAt: r.dueAt ?? null });
       if (res.success && res.data) created.push(res.data.id);
-    }
-    if (created.length > 0) {
-      // 这几条建议就此了结，并记下它们长出了哪几条任务
-      await markSuggestionsAbsorbed({ suggestionIds: checked, taskIds: created });
+      else failed.push(r);
     }
     setBusy(false);
-    if (created.length > 0) {
-      toast.success(`吸取了 ${created.length} 件`);
-      onCreated();
-      onClose();
-    } else {
-      toast.error('一条都没建上');
+
+    // 有一条没建上就先别收摊：把没成的留在这张表上等重试。
+    // 原来只看 created.length > 0 就把**全部**选中的建议标记成已吸取并关窗，
+    // 于是没建上的那条连同它的来源建议一起消失 —— 用户既看不到失败，也找不回来源。
+    if (failed.length > 0) {
+      setRows((p) => p.map((r) => ({ ...r, picked: failed.some((f) => f.key === r.key) })));
+      toast.error(created.length > 0
+        ? `建上了 ${created.length} 件，还有 ${failed.length} 件没成，留在这儿了，可以再试一次`
+        : '一条都没建上');
+      if (created.length > 0) onCreated();
+      return;
     }
+
+    // 全都建上了才算吸取完：这几条建议就此了结，并记下它们长出了哪几条任务
+    await markSuggestionsAbsorbed({ suggestionIds: checked, taskIds: created });
+    toast.success(`吸取了 ${created.length} 件`);
+    onCreated();
+    onClose();
   }, [streaming, hasDrafts, picked, checked, onAbsorb, onCreated, onClose]);
 
   const onDismiss = useCallback(async (id: string) => {
