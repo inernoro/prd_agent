@@ -11685,6 +11685,10 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Distinct(StringComparer.OrdinalIgnoreCase)
         .ToList();
+    // 认不出用途、因此没登上白名单的那几个。必须点名报出来：
+    // 这条路正是「管理员放行名录外模型」的出口，而名录外模型的能力往往是空的。
+    // 不说的话，用户看到「导入成功 N 个」，那几个却既不在白名单里、也没人告诉他为什么。
+    var unknownTypeSkips = new List<string>();
     if ((body?.PublishToWhitelist ?? true) && publishTargets.Count > 0)
     {
         try
@@ -11711,10 +11715,15 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
                 var published = await PublishGatewayModelToWhitelistAsync(
                     gwLogicalModels, gwModelOfferings, model, tenantId, now);
                 if (published is not { } outcome) continue;
-                if (outcome.CrossTypeConflict is { Length: > 0 } conflict)
+                if (outcome.BlockedMessage is { Length: > 0 } blocked)
                 {
-                    // 公开名撞上了，但那条已有模型是**别的用途**——线路没挂上去，要点名说清。
-                    result.CrossTypePublicIdConflicts.Add(conflict);
+                    // 两种没登上要分开说，下一步不一样：
+                    // 撞用途 → 改名或去白名单页决定这条线路挂给谁；
+                    // 认不出用途 → 去模型管理给它标能力再登记。
+                    if (string.Equals(outcome.BlockedKind, "cross-type", StringComparison.Ordinal))
+                        result.CrossTypePublicIdConflicts.Add(blocked);
+                    else
+                        unknownTypeSkips.Add(blocked);
                     continue;
                 }
                 if (outcome.CreatedLogical) result.WhitelistedPublicIds.Add(outcome.PublicId);
@@ -11728,6 +11737,16 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
                 + "这批模型暂时不在白名单里，调用方按公开模型名请求会找不到它们。"
                 + "可以在「模型白名单」页手动添加，或稍后重新导入（已存在的模型会被跳过，只补名单）。";
         }
+    }
+
+    if (unknownTypeSkips.Count > 0 && result.WhitelistMessage is null)
+    {
+        result.WhitelistMessage = $"有 {unknownTypeSkips.Count} 个模型没能登上白名单，因为认不出它们是哪种用途："
+            + $"{string.Join("、", unknownTypeSkips.Take(5))}"
+            + (unknownTypeSkips.Count > 5 ? " 等" : string.Empty)
+            + "。模型本身已经导入，只是不在白名单里，调用方按公开模型名请求会找不到它们。"
+            + "认不出用途就兜底当对话模型的话，它们会被列进对话默认面、被普通对话调用方选中并按对话契约调走，"
+            + "而这些上游可能是生图或视频。去「模型」页给它们勾上能力，再重新导入一次即可补上名单。";
     }
 
     // 被白名单拦下的要给可执行的下一步，不能只报一个数字。
@@ -11870,12 +11889,16 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
         {
             publicId = outcome.PublicId;
             linkedToExistingLogical = outcome.LinkedToExisting;
-            if (outcome.CrossTypeConflict is { Length: > 0 } conflict)
+            if (outcome.BlockedMessage is { Length: > 0 } blocked)
             {
                 publicId = null;
-                whitelistMessage = $"模型已保存，但没能登上白名单：{conflict}。"
-                    + "把一条别的用途的线路挂到同名对外模型底下，运行时会按那条模型的用途发请求、契约整个错位，"
-                    + "所以这里拒绝挂靠。改个模型名，或去「模型白名单」页手动决定这条线路挂给谁。";
+                whitelistMessage = string.Equals(outcome.BlockedKind, "cross-type", StringComparison.Ordinal)
+                    ? $"模型已保存，但没能登上白名单：{blocked}。"
+                      + "把一条别的用途的线路挂到同名对外模型底下，运行时会按那条模型的用途发请求、契约整个错位，"
+                      + "所以这里拒绝挂靠。改个模型名，或去「模型白名单」页手动决定这条线路挂给谁。"
+                    : $"模型已保存，但没能登上白名单：{blocked}。"
+                      + "认不出用途就兜底当对话模型的话，它会被列进对话默认面、被普通对话调用方选中并按对话契约调走，"
+                      + "而这个上游可能是生图或视频。去「模型」页给它勾上能力，再登记白名单。";
             }
         }
         else
@@ -15703,9 +15726,10 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
 /// </summary>
 /// <returns>
 /// 模型名或公开名算不出来时回 null（这条跳过）；否则给出公开名、是不是新建的、
-/// 是不是挂到了已有的公开名、以及跨用途冲突的说明（有冲突时线路不会挂上去）。
+/// 是不是挂到了已有的公开名，以及没登上时的原因。原因分两种，调用方要分开说：
+/// <c>cross-type</c> 公开名撞上了别的用途，<c>unknown-type</c> 认不出它是哪种用途。
 /// </returns>
-static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, string? CrossTypeConflict)?>
+static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, string? BlockedKind, string? BlockedMessage)?>
     PublishGatewayModelToWhitelistAsync(
         IMongoCollection<BsonDocument> logicalModels,
         IMongoCollection<BsonDocument> offerings,
@@ -15729,7 +15753,15 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
             : Enumerable.Empty<string>())
         .Where(x => x.Length > 0)
         .ToList();
-    var modelType = GatewayWhitelistPublishing.ResolveModelType(capabilityCodes);
+    var modelType = GatewayWhitelistPublishing.TryResolveModelType(capabilityCodes);
+    if (modelType is null)
+    {
+        // 一个模态都认不出来就不登白名单。兜底成 chat 的话，这个上游会被列进对话默认面、
+        // 被普通对话调用方选中、按对话契约调走——而它可能是生图或视频。
+        // 物理模型已经入库，不动它；这里把「为什么没登上、下一步做什么」交回调用方说出口。
+        return (publicId, false, false, "unknown-type",
+            $"{publicId}（认不出它是哪种用途：这个模型没有可识别的能力声明）");
+    }
 
     string logicalId;
     var createdLogical = false;
@@ -15760,7 +15792,8 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
         var existingType = logical.GetStringOrEmpty("ModelType");
         if (!string.Equals(existingType, modelType, StringComparison.OrdinalIgnoreCase))
         {
-            return (publicId, false, false, $"{publicId}（已存在的是「{existingType}」用途，这次是「{modelType}」用途）");
+            return (publicId, false, false, "cross-type",
+                $"{publicId}（已存在的是「{existingType}」用途，这次是「{modelType}」用途）");
         }
         logicalId = logical.GetStringOrEmpty("_id");
         linkedToExisting = true;
@@ -15772,7 +15805,7 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
         Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId),
         Builders<BsonDocument>.Filter.Eq("TargetKind", "model"),
         Builders<BsonDocument>.Filter.Eq("TargetId", modelId))).AnyAsync();
-    if (duplicate) return (publicId, createdLogical, linkedToExisting, null);
+    if (duplicate) return (publicId, createdLogical, linkedToExisting, null, null);
 
     // 后来的线路排在已有线路之后：先登记的那条继续扛流量，新增不该悄悄改变谁是主路。
     var existingRoutes = (int)await offerings.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
@@ -15794,7 +15827,7 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
         { "CreatedAt", now }, { "UpdatedAt", now },
     });
 
-    return (publicId, createdLogical, linkedToExisting, null);
+    return (publicId, createdLogical, linkedToExisting, null, null);
 }
 
 static async Task<(int TypesCreated, int PoolsCreated, int ModelsAppended)> EnsureGatewayModelPoolTypesAsync(

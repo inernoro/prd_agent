@@ -57,20 +57,28 @@ public class GatewayWhitelistPublishingTests
     {
         // 顺序是判据不是偏好：同时声明 image_generation 与 chat 时判成对话，
         // 会拿它当对话模型调度，请求带着错误入参打到生图端点。宁可窄不可宽。
-        Assert.Equal("generation", GatewayWhitelistPublishing.ResolveModelType(new[] { "chat", "image_generation" }));
-        Assert.Equal("video-gen", GatewayWhitelistPublishing.ResolveModelType(new[] { "chat", "video_generation" }));
-        Assert.Equal("embedding", GatewayWhitelistPublishing.ResolveModelType(new[] { "embedding" }));
+        Assert.Equal("generation", GatewayWhitelistPublishing.TryResolveModelType(new[] { "chat", "image_generation" }));
+        Assert.Equal("video-gen", GatewayWhitelistPublishing.TryResolveModelType(new[] { "chat", "video_generation" }));
+        Assert.Equal("embedding", GatewayWhitelistPublishing.TryResolveModelType(new[] { "embedding" }));
         // 认不出落到 chat：这是唯一一个猜错也只是少个可选项的落点
-        Assert.Equal("chat", GatewayWhitelistPublishing.ResolveModelType(new[] { "wat" }));
-        Assert.Equal("chat", GatewayWhitelistPublishing.ResolveModelType(System.Array.Empty<string>()));
+        // 认不出来就回 null，不兜底成 chat。
+        //
+        // 兜底成 chat 的那一版写着「猜错也只是少了个可选项」，而这条路正是
+        // 「管理员放行名录外模型」的出口——那类模型提交上来的能力常常是空的。
+        // publish 成 chat 之后它就是一个货真价实的对话模型：普通对话调用方不要求任何
+        // 场景能力，于是它会被列出、被选中、按对话契约调走，而那个上游可能是生图或视频。
+        Assert.Null(GatewayWhitelistPublishing.TryResolveModelType(new[] { "wat" }));
+        Assert.Null(GatewayWhitelistPublishing.TryResolveModelType(System.Array.Empty<string>()));
+        // 明说自己是对话模型的才判对话
+        Assert.Equal("chat", GatewayWhitelistPublishing.TryResolveModelType(new[] { "chat" }));
 
         // 但 vision 是例外：带图对话走的就是 /v1/chat/completions，入参兼容，
         // 判成 vision 只会让它接不了最常用的那类请求（gpt-4o 正是 chat+vision）。
         // 而 PublicId 跨用途唯一，同一个标识补不出第二条 chat 的。
-        Assert.Equal("chat", GatewayWhitelistPublishing.ResolveModelType(new[] { "chat", "vision" }));
-        Assert.Equal("vision", GatewayWhitelistPublishing.ResolveModelType(new[] { "vision" }));
+        Assert.Equal("chat", GatewayWhitelistPublishing.TryResolveModelType(new[] { "chat", "vision" }));
+        Assert.Equal("vision", GatewayWhitelistPublishing.TryResolveModelType(new[] { "vision" }));
         // 生图那条仍然压过一切：它的入参真的不兼容。
-        Assert.Equal("generation", GatewayWhitelistPublishing.ResolveModelType(new[] { "chat", "vision", "image_generation" }));
+        Assert.Equal("generation", GatewayWhitelistPublishing.TryResolveModelType(new[] { "chat", "vision", "image_generation" }));
     }
 
     [Fact]
@@ -108,7 +116,7 @@ public class GatewayWhitelistPublishingTests
     public void 手工新增的模型也登白名单且与批量导入共用一份发布规则()
     {
         // 发布规则只有一处实现
-        Assert.Contains("static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, string? CrossTypeConflict)?>", Console);
+        Assert.Contains("static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, string? BlockedKind, string? BlockedMessage)?>", Console);
         Assert.Contains("PublishGatewayModelToWhitelistAsync(", Console);
 
         // 两个入口都调它：批量导入 + 手工新增

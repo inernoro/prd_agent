@@ -41,13 +41,23 @@ public static class GatewayWhitelistPublishing
     }
 
     /// <summary>
-    /// 能力码 -> 逻辑模型的 ModelType。
+    /// 能力码 -> 逻辑模型的 ModelType；一个模态都认不出来时回 <c>null</c>。
     ///
     /// 顺序是判据不是偏好：一个模型同时声明 image_generation 与 chat 时（多模态很常见），
     /// 必须判成生图——拿它当对话模型调度，请求会带着错误的入参打到生图端点。
     /// 反过来把对话模型判成生图只会少用一个模型，代价小得多。宁可窄，不可宽。
+    ///
+    /// **认不出来时回 null，不兜底成 chat。** 兜底成 chat 曾经写着「猜错也只是少了个可选项」，
+    /// 那句话只在模型确实是对话模型时成立。管理员放行一个名录外模型、而它的名字又推不出
+    /// 任何能力时，提交上来的能力是空的；publish 成 chat 之后它就是一个货真价实的对话模型：
+    /// 普通对话调用方不要求任何场景能力，于是它会被列出、被选中、被按对话契约调用，
+    /// 而那个上游可能是生图、视频或别的东西。猜错的代价不是「少一个选项」，
+    /// 是「一个不该被选中的模型进了对话默认面」（no-rootless-tree：认不出就说认不出，不编）。
+    ///
+    /// 返回 null 不等于模型不能用：物理模型照常入库，只是不登白名单。
+    /// 补法是去模型管理给它标能力，再登记——那是一个人拍板的动作，不是这里猜的。
     /// </summary>
-    public static string ResolveModelType(IReadOnlyCollection<string> capabilityCodes)
+    public static string? TryResolveModelType(IReadOnlyCollection<string> capabilityCodes)
     {
         var codes = capabilityCodes
             .Select(x => (x ?? string.Empty).Trim().ToLowerInvariant())
@@ -70,8 +80,9 @@ public static class GatewayWhitelistPublishing
         // 解析，而目录查询按 ModelType 精确匹配；又因为 PublicId 跨用途唯一，
         // 同一个标识没法再补一条 chat 的。一次导入把 gpt-4o 变成一个只能看图的模型。
         if (codes.Contains("vision") && !codes.Contains("chat")) return "vision";
-        // 认不出就按对话：这是唯一一个「猜错也只是少了个可选项」的落点，
-        // 而且导入后用户在白名单页能看到并改。
-        return "chat";
+        // 明说自己是对话模型的才判对话。
+        if (codes.Contains("chat")) return "chat";
+        // 一个模态都认不出来：如实回 null，由调用方决定怎么说这件事。
+        return null;
     }
 }
