@@ -3662,6 +3662,11 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
         ? arr.OfType<BsonDocument>().Select(MapImageGenConfig).ToList()
         : [];
 
+    // prd-api 上一轮同步拉到了什么。没有这一段，界面只能说「最长 60 秒生效」然后让人
+    // 盯着屏幕猜；有了它，那一屏能说出一句可核对的话：服务端几点同步的、认到哪几条。
+    var syncDoc = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_sync_status")
+        .Find(Builders<BsonDocument>.Filter.Eq("_id", "prd-api")).FirstOrDefaultAsync();
+
     return Json(ApiEnvelope<ImageGenConfigsData>.Ok(new ImageGenConfigsData
     {
         Items = items,
@@ -3670,6 +3675,10 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
         Builtin = builtin,
         BuiltinPublishedAt = builtinDoc?.AsNullableUtcDateTime("PublishedAt").ToIso(),
         RefreshSeconds = 60,
+        SyncedAt = syncDoc?.AsNullableUtcDateTime("SyncedAt").ToIso(),
+        SyncedPatterns = syncDoc?.TryGetValue("Patterns", out var syncPatterns) == true && syncPatterns is BsonArray patternArr
+            ? [.. patternArr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
+            : [],
     }), jsonOptions);
 }).RequireAuthorization("LogsRead");
 

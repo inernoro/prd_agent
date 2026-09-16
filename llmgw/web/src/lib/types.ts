@@ -1703,6 +1703,10 @@ export interface ImageGenConfigsData {
   builtinPublishedAt?: string | null;
   /** 改完多久生效。界面要如实写出来，别让人保存完盯着屏幕猜 */
   refreshSeconds: number;
+  /** prd-api 上一轮同步的时间；空 = 它还没拉过，配了也还没生效 */
+  syncedAt?: string | null;
+  /** 上一轮真正生效的那几个模式。只报数字答不出「生效的是不是我刚改的那条」 */
+  syncedPatterns: string[];
 }
 
 export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;

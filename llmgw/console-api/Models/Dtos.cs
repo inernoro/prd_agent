@@ -2244,6 +2244,15 @@ public sealed class ImageGenConfigsData
 
     /// <summary>改完多久生效。界面上要如实写出来，别让人保存完盯着屏幕猜。</summary>
     public int RefreshSeconds { get; set; }
+
+    /// <summary>prd-api 上一轮同步的时间。空 = 它还没拉过，配了也还没生效。</summary>
+    public string? SyncedAt { get; set; }
+
+    /// <summary>
+    /// 上一轮真正生效的那几个模式。只报数字答不出「生效的是不是我刚改的那条」，
+    /// 所以逐条列出来，让界面能对着自己刚填的模式打勾。
+    /// </summary>
+    public List<string> SyncedPatterns { get; set; } = new();
 }
 
 public sealed class ImageGenConfigItem

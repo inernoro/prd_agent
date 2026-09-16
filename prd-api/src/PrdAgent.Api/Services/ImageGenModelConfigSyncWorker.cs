@@ -108,6 +108,26 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
                 "[ImageGenConfigSync] 生图契约覆盖表 {Before} 条 → {After} 条（代码内置 {Builtin} 条兜底）。",
                 before, ordered.Count, ImageGenModelConfigs.Configs.Count);
         }
+
+        // 把「我这一轮拉到了什么」写回库，让控制台能如实回答「我配的那条生效了没有」。
+        //
+        // 没有这一步，界面只能说「最长 60 秒生效」然后让人盯着屏幕猜——而猜错的代价是
+        // 去查一个根本没坏的东西。同步状态回写之后，那一屏能说的是「服务端 09:41 同步过，
+        // 认到 5 条」，这是一句可核对的话（expectation-management：别让用户白等一场）。
+        await _gateway!.Database.GetCollection<BsonDocument>("llmgw_imagegen_sync_status").ReplaceOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", "prd-api"),
+            new BsonDocument
+            {
+                { "_id", "prd-api" },
+                { "SyncedAt", DateTime.UtcNow },
+                { "OverrideCount", ordered.Count },
+                { "BuiltinCount", ImageGenModelConfigs.Configs.Count },
+                // 生效的那几个模式，逐条列出来。只报数字的话，「我配了 3 条它说 3 条」
+                // 仍然答不出「生效的是不是我刚改的那条」。
+                { "Patterns", new BsonArray(ordered.Select(x => x.ModelIdPattern)) },
+            },
+            new ReplaceOptions { IsUpsert = true },
+            ct);
     }
 
     private bool _builtinPublished;

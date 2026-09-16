@@ -5,3 +5,4 @@
 | feat | llmgw | 控制台上游页新增「生图契约」一段：列表、增删改、看内置那 19 条、照内置那条建一份；界面如实写明「保存后最长 60 秒生效」 |
 | test | prd-api | 新增 `ImageGenConfigOverrideGuardTests` 七条：覆盖真的赢过内置（红绿闭环验证过）、空覆盖回到内置、没人绕过唯一判定入口、实体每个字段都真的接进运行时、控制台词表与运行时常量一致、内置清单由运行时发布而非手抄、刷新器接上线且失败不清空 |
 | refactor | prd-api | 「数据行 ↔ 运行时配置」的翻译从 Api 的 worker 搬进 `PrdAgent.Infrastructure/LLM/ImageGenConfigTranslation.cs`——守卫项目不引用 Api，留在 worker 里「漏接一个字段」这种静默坏法没有任何东西够得着 |
+| feat | llmgw | 生图契约补同步状态回写：刷新器每轮把「几点同步的、认到了哪几个模式」写进 `llmgw_imagegen_sync_status`，控制台读它，界面逐条对着刚填的模式说「已生效」或「还没被认到」——不再只说一句「最长 60 秒」让人盯着屏幕猜 |

@@ -51,6 +51,25 @@ function itemToDraft(item: ImageGenConfigItem | null): Draft {
   return { ...item, sizeText };
 }
 
+/**
+ * 「我配的那条到底生效了没有」——这一句必须是可核对的，不能只说「最长 60 秒」。
+ *
+ * 服务端每轮同步会回写「几点同步的、认到了哪几个模式」，所以这里能逐条对：
+ * 配了但服务端还没认到的，点名说出来，而不是让人保存完盯着屏幕猜（expectation-management）。
+ */
+function syncNote(data: ImageGenConfigsData): string {
+  if (!data.syncedAt) {
+    return `服务端还没同步过这份契约——它每 ${data.refreshSeconds} 秒拉一次，稍等再看；一直是这句说明 prd-api 没起来。`;
+  }
+  const synced = new Set(data.syncedPatterns);
+  const pending = data.items.filter((x) => x.enabled && !synced.has(x.modelIdPattern)).map((x) => x.modelIdPattern);
+  const when = new Date(data.syncedAt).toLocaleTimeString();
+  if (pending.length === 0) {
+    return `服务端 ${when} 同步过，${data.syncedPatterns.length} 条已生效。`;
+  }
+  return `服务端 ${when} 同步过，${data.syncedPatterns.length} 条已生效；${pending.join('、')} 还没被认到，最长 ${data.refreshSeconds} 秒后再看。`;
+}
+
 function summarizeSizes(item: ImageGenConfigItem): string {
   if (item.sizesNotApplicable) return '不选尺寸';
   const parts = BUCKETS
@@ -113,8 +132,8 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
           <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>
             新生图模型的尺寸档位与参数格式配在这里就生效，不用改代码也不用发版。
             这里配的赢；没配的回落到代码内置的 {data.builtinCount} 条。
-            保存后最长 {data.refreshSeconds} 秒生效。
           </p>
+          <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>{syncNote(data)}</p>
         </div>
         {canWrite ? (
           <Button variant="primary" size="sm" onClick={() => setEditing({ id: null, draft: itemToDraft(null) })}>

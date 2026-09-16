@@ -201,6 +201,35 @@ public class ImageGenConfigOverrideGuardTests
     }
 
     /// <summary>
+    /// 「我配的那条生效了没有」这个问题答得上来。
+    ///
+    /// 没有同步状态回写，界面只能说一句「最长 60 秒生效」然后让人盯着屏幕猜，
+    /// 而猜错的代价是去查一个根本没坏的东西。所以刷新器每轮要回写「几点同步的、
+    /// 认到了哪几个模式」，控制台读它，界面逐条对着自己刚填的模式打勾。
+    ///
+    /// 只回写数字是不够的：「我配了 3 条它说 3 条」仍然答不出「生效的是不是我刚改的那条」，
+    /// 所以模式清单也要回写（形状 1：判据比它该管的范围窄）。
+    /// </summary>
+    [Fact]
+    public void 同步状态回写让界面答得出生效了没有()
+    {
+        var worker = Read("prd-api/src/PrdAgent.Api/Services/ImageGenModelConfigSyncWorker.cs");
+        Assert.Contains("llmgw_imagegen_sync_status", worker);
+        Assert.Contains("\"SyncedAt\"", worker);
+        Assert.Contains("ordered.Select(x => x.ModelIdPattern)", worker);
+
+        var console = Read("llmgw/console-api/Program.cs");
+        Assert.Contains("llmgw_imagegen_sync_status", console);
+        Assert.Contains("SyncedPatterns", console);
+
+        // 界面得真的用它下结论，而不是只把字段接过来放着。
+        var panel = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        Assert.Contains("syncNote", panel);
+        Assert.Contains("data.syncedPatterns", panel);
+        Assert.Contains("还没被认到", panel);
+    }
+
+    /// <summary>
     /// 内置清单是发布出来的，不是手抄的。
     ///
     /// 本轮第一版就是手抄的：抄成 26 条、内容还对不上真表的 19 条，而且不会有任何东西变红——
