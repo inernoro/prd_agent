@@ -4604,7 +4604,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Provider 接口预览", platforms);
         Assert.Contains("查看接口", platforms);
         Assert.Contains("查看 Provider", models);
-        Assert.Contains("预览模型池", appCallers);
+        // appCaller 页那个「预览模型池」抽屉随模型池路由一起退役了（2026-09-16）。
+        // 它展示的池健康、成员顺位、选择策略都已不再决定这个 appCaller 走哪个上游，
+        // 留着就是指着一条走不到的路（degradation-must-alarm 的反面：不是不响铃，是响错铃）。
+        // 反向钉住：它不许回来，否则下一个人会照着那些数字排查一条不存在的链路。
+        Assert.DoesNotContain("预览模型池", appCallers);
         Assert.Contains("Exchange 路由预览", exchanges);
         Assert.Contains("查看路由", exchanges);
 

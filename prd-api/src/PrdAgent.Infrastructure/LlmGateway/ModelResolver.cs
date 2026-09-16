@@ -1276,6 +1276,21 @@ public class ModelResolver : IModelResolver
             item.ModelId = model.ModelName;
         if (string.IsNullOrWhiteSpace(item.Protocol))
             item.Protocol = model.Protocol;
+
+        // 价格从物理模型搬进这个合成条目。
+        //
+        // 池退场之前价格挂在池成员上，解析走池成员那条路，这一步不存在。现在线路指向的是
+        // 物理模型文档，价格的唯一载体是它——不搬过来，ModelResolutionResult 的价格字段
+        // （它读的是这个 item）就全是空，于是每一次调用都按「没配价」记账：币种判为过期、
+        // 不进美元成本、不进预算，而日志里一个字都不会说（degradation-must-alarm）。
+        item.InputPricePerMillion = model.InputPricePerMillion;
+        item.OutputPricePerMillion = model.OutputPricePerMillion;
+        item.CachedInputPricePerMillion = model.CachedInputPricePerMillion;
+        item.CacheWritePricePerMillion = model.CacheWritePricePerMillion;
+        item.PricePerCall = model.PricePerCall;
+        item.PriceCurrency = model.PriceCurrency;
+        item.PriceSource = model.PriceSource;
+        item.PriceObservedAt = model.PriceObservedAt;
         var endpointPlatform = new LLMPlatform
         {
             Id = platform.Id,
