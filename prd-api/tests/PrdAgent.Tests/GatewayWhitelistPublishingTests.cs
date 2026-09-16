@@ -363,4 +363,89 @@ public class GatewayWhitelistPublishingTests
         Assert.True(File.Exists(full), $"找不到文件: {full}");
         return File.ReadAllText(full);
     }
+
+    /// <summary>
+    /// 兑换所线路能不能列进对外清单，判据要与运行时同一份。
+    ///
+    /// 只判兑换所文档启用是不够的：线路真正打给上游的是哪一个别名由 UpstreamModelId 决定
+    /// （没写就回落到兑换所主别名）。管理员把一条别名从兑换所里摘掉之后，兑换所照样启用着，
+    /// 而运行时按名录门把这条别名判死——清单于是列出一个「选中即失败」的模型。
+    /// </summary>
+    [Fact]
+    public void 对外清单的兑换所线路要判到别名这一层()
+    {
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+
+        // 判据取自共享那一份，端点不自己写「别名在不在」。
+        Assert.Contains("GatewayCatalogGate.ExchangeRoutePasses", endpoint);
+        // 判的是这条线路的上游别名，不只是兑换所 id。
+        Assert.Contains("route.UpstreamModelId", endpoint);
+
+        // 运行时那一侧也走同一份，两处不许各写各的。
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("GatewayCatalogGate.ExchangeDeclares", resolver);
+        Assert.Contains("GatewayCatalogGate.ExchangeAliasAllowedOutsideCatalog", resolver);
+
+        // 回落口径必须一致：线路没写覆盖时运行时会用兑换所主别名，判据也得认这个回落，
+        // 否则「线路没写覆盖」这一种输入就整个绕过了这道门。
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+        Assert.Contains("EffectiveExchangeModelId", gate);
+        Assert.Contains("exchange.ModelAlias", gate);
+    }
+
+    /// <summary>
+    /// 对外报价要覆盖计价真的会收的每一档，缓存写入那一档不许漏。
+    ///
+    /// 计价侧按 CacheWritePricePerMillion 真的收 cache-creation token 的钱（没配就按输入全价算）。
+    /// 清单不报它，对方照这份报价估出来的费用会系统性地少一截——提示词缓存正是
+    /// 「第一次写贵、后面读便宜」的形状，漏掉写入那一半估出来的数最不准。
+    /// </summary>
+    [Fact]
+    public void 对外报价覆盖缓存写入那一档()
+    {
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        Assert.Contains("CacheWritePricePerMillion", endpoint);
+        Assert.Contains("cache_write", endpoint);
+
+        // 计价那一侧确实按它收钱——两边说的是同一件事，守卫才有意义。
+        var calculator = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostCalculator.cs");
+        Assert.Contains("cacheWritePricePerMillion", calculator);
+
+        // 按次计费时一档 token 价都不报，缓存写入也在这条规矩里（在 else 分支内）。
+        var perCallAt = endpoint.IndexOf("routeNode[\"call\"]", StringComparison.Ordinal);
+        var cacheWriteAt = endpoint.IndexOf("routeNode[\"cache_write\"]", StringComparison.Ordinal);
+        Assert.True(perCallAt > 0 && cacheWriteAt > perCallAt,
+            "缓存写入价必须落在「不是按次计费」那一支里，否则按次模型会同时报出两套价");
+    }
+
+    /// <summary>
+    /// Quickstart 的模型选择器只列真的会被用上的模型，修复入口要指向还活着的页面。
+    ///
+    /// 「有一条线路 enabled」不等于「这条线路会被用上」：熔断中、指向已停用物理模型或兑换所的
+    /// 线路照样 enabled。服务端已经按唯一那份排队判据算好了名次，前端读它就行，不自己重写。
+    /// 而修复入口指着 /pools——那个地址现在无条件重定向，按钮上写着「打开模型池」，
+    /// 点过去是另一个页面，名录补登那一屏根本没被指出来。
+    /// </summary>
+    [Fact]
+    public void Quickstart只列可用模型且修复入口指向活着的页面()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
+
+        // 候选按服务端算好的排队名次筛，不是只看 enabled。
+        Assert.Contains("route.queuePosition > 0", page);
+
+        // 修复入口不许再指 /pools（它已经是一个重定向）。
+        Assert.DoesNotContain("to: '/pools'", page);
+        Assert.Contains("to: '/logical-models'", page);
+        Assert.Contains("to: '/platforms'", page);
+
+        // /pools 仍然是重定向，这条守卫的前提才成立。
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        Assert.Contains("path=\"/pools\" element={<Navigate to=\"/logical-models\"", app);
+
+        // 管理员侧的处置提示同样不许停在池的世界里。
+        var failure = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayRouteFailure.cs");
+        Assert.DoesNotContain("AllowedModelPoolIds", failure);
+        Assert.DoesNotContain("为该 appCaller 绑定模型池", failure);
+    }
 }

@@ -447,13 +447,11 @@ public class ModelResolver : IModelResolver
 
         // 兑换所里没有这条别名 = 它不是这个兑换所声明过的东西，一律拦下。
         // （解析器正常走下来不该出现这种情况；出现了说明有人在别处拼了个 PlatformId。）
-        var declared = exchange.GetEffectiveModels().FirstOrDefault(item =>
-            string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
-        if (declared is null) return CatalogVerdict.Blocked;
+        //
+        // 判据本体在 GatewayCatalogGate：对外模型目录端点要拿同一套口径判「这条线路能不能列出来」，
+        // 两边各写一份的话，清单会把一条运行时必拒的线路报成可调（形状 3）。
+        if (!GatewayCatalogGate.ExchangeDeclares(exchange, modelId)) return CatalogVerdict.Blocked;
 
-        // 旧形态没有地方盖逐条标记（别名是两个字符串字段合成出来的，不是文档数组），
-        // 而它们同样是管理员在逐条放行落地**之前**声明的——与名录门上线前已入库的模型
-        // 同一处境，按同一条口径放行。控制台下一次写这个兑换所时会把它落成带标记的 Models。
         if (exchange.Models is null || exchange.Models.Count == 0)
         {
             _logger.LogDebug(
@@ -465,7 +463,7 @@ public class ModelResolver : IModelResolver
 
         // 名录内的在方法开头就放行了，走到这里的一定是名录外的：所以只看放行标记。
         // （不在这里再判一次名录——那一档永远为假，读的人会以为它在起作用。）
-        return declared.AllowedOutsideCatalog == true
+        return GatewayCatalogGate.ExchangeAliasAllowedOutsideCatalog(exchange, modelId)
             ? CatalogVerdict.Allowed
             : CatalogVerdict.Blocked;
     }

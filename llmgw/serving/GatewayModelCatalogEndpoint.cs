@@ -140,24 +140,35 @@ public static class GatewayModelCatalogEndpoint
             .Where(x => !catalogGateEnforces || GatewayCatalogGate.Passes(x))
             .ToDictionary(x => x.GetValue("_id", BsonNull.Value).AsString, x => x, StringComparer.Ordinal);
 
-        // 兑换所目标：同样要在且启用。
+        /*
+          兑换所目标：兑换所要在且启用，**而且它真的声明过这条线路要打的那个别名**。
+
+          只判兑换所文档 _id 是不够的。线路打给上游的是哪一个别名由 UpstreamModelId 决定
+          （没写就回落到兑换所主别名），管理员把一条别名从兑换所里摘掉之后，兑换所照样启用着，
+          而运行时的 JudgeExchangeModelAsync 会按名录门把这条别名判死。清单于是列出一个
+          「选中即失败」的模型——正是这个端点的注释说要避免的事（形状 3：同一个判据在两处
+          各写各的，一处说可调、另一处必拒）。判据取自 GatewayCatalogGate，与运行时同一份。
+        */
         var exchangeIds = routes.Where(x => x.TargetKind == "exchange").Select(x => x.TargetId).Distinct(StringComparer.Ordinal).ToList();
-        var enabledExchangeIds = exchangeIds.Count == 0
-            ? new HashSet<string>(StringComparer.Ordinal)
-            : (await db.GetCollection<BsonDocument>("llmgw_model_exchanges")
-                .Find(bf.And(
-                    bf.Eq("TenantId", tenantId),
-                    bf.In("_id", exchangeIds),
-                    bf.Eq("Enabled", true)))
-                .ToListAsync(ct))
-                .Select(x => x.GetValue("_id", BsonNull.Value))
-                .Where(x => x.IsString)
-                .Select(x => x.AsString)
-                .ToHashSet(StringComparer.Ordinal);
+        var enabledExchanges = exchangeIds.Count == 0
+            ? new List<ModelExchange>()
+            : await db.GetCollection<ModelExchange>("llmgw_model_exchanges")
+                .Find(Builders<ModelExchange>.Filter.And(
+                    Builders<ModelExchange>.Filter.Eq("TenantId", tenantId),
+                    Builders<ModelExchange>.Filter.In(x => x.Id, exchangeIds),
+                    Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)))
+                .ToListAsync(ct);
+        var enabledExchangeById = enabledExchanges
+            .Where(x => !string.IsNullOrWhiteSpace(x.Id))
+            .ToDictionary(x => x.Id, StringComparer.Ordinal);
+
+        bool ExchangeRouteUsable(GatewayModelOffering route)
+            => enabledExchangeById.TryGetValue(route.TargetId, out var exchange)
+                && GatewayCatalogGate.ExchangeRoutePasses(exchange, route.UpstreamModelId, catalogGateEnforces);
 
         var routesByLogical = routes
             .Where(route => string.Equals(route.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase)
-                ? enabledExchangeIds.Contains(route.TargetId)
+                ? ExchangeRouteUsable(route)
                 : priceByModelId.ContainsKey(route.TargetId))
             .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.OrderBy(r => r.Priority).ToList(), StringComparer.Ordinal);
@@ -193,6 +204,7 @@ public static class GatewayModelCatalogEndpoint
                 var prompt = ReadDecimal(model, "InputPricePerMillion");
                 var completion = ReadDecimal(model, "OutputPricePerMillion");
                 var cached = ReadDecimal(model, "CachedInputPricePerMillion");
+                var cacheWrite = ReadDecimal(model, "CacheWritePricePerMillion");
                 var perCall = ReadDecimal(model, "PricePerCall");
                 if (prompt is null && completion is null && perCall is null) continue;
 
@@ -224,6 +236,13 @@ public static class GatewayModelCatalogEndpoint
                     if (prompt is not null) routeNode["prompt"] = prompt.Value.ToString("0.####");
                     if (completion is not null) routeNode["completion"] = completion.Value.ToString("0.####");
                     if (cached is not null) routeNode["cached_prompt"] = cached.Value.ToString("0.####");
+                    // 缓存写入（cache creation）那一档也要报。
+                    //
+                    // 计价那一侧按 CacheWritePricePerMillion 真的收这笔钱（没配就按输入全价算），
+                    // 清单不报的话，对方照这份报价估出来的费用会系统性地少一截——提示词缓存
+                    // 正是「第一次写贵、后面读便宜」的形状，漏掉写入那一半估出来的数最不准。
+                    // 报价与收费同一个口径，不同口径的两份数字必然有一份是假的。
+                    if (cacheWrite is not null) routeNode["cache_write"] = cacheWrite.Value.ToString("0.####");
                 }
                 var source = model.GetValue("PriceSource", BsonNull.Value);
                 if (source.IsString) routeNode["source"] = source.AsString;

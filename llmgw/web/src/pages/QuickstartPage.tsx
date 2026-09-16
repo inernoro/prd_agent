@@ -202,10 +202,13 @@ const FAILURE_RULES: Record<string, FailureRule> = {
   GATEWAY_KEY_SOURCE_IP_DENIED: { brokenLink: 'scope', title: '来源 IP 不在密钥允许的网段', reason: '密钥限制了来源 CIDR，当前出口 IP 不在其中。', to: '/service-keys', actionLabel: '核对来源 CIDR' },
   APP_CALLER_DISABLED: { brokenLink: 'scope', title: '调用用途已被禁用', reason: '这条调用用途当前状态不允许调用。', to: '/app-callers', actionLabel: '打开调用方' },
   APP_CALLER_NOT_FOUND: { brokenLink: 'scope', title: '调用用途尚未登记', reason: '这条调用用途在当前租户里查不到，试跑要求它已登记。', to: '/app-callers', actionLabel: '打开调用方' },
-  APPCALLER_POOL_UNBOUND: { brokenLink: 'model', title: '安全试跑通过，真实模型调不通', reason: '这条调用用途还没有绑定模型池，Gateway 无处解析实际模型，因此只有 dry-run 能通过。', action: 'bind-pool', actionLabel: '给这个调用用途绑定模型池' },
+  // 2026-09-16：池退场之后这三条的修复入口都得跟着搬。
+  // 旧文案指着 /pools，而那个地址现在无条件重定向到 /logical-models——按钮上写着「打开模型池」，
+  // 点过去是另一个页面，而名录补登那一屏根本没被指出来。承诺的修复面不存在，等于没给下一步。
+  APPCALLER_POOL_UNBOUND: { brokenLink: 'model', title: '安全试跑通过，真实模型调不通', reason: '没有对外模型接得住这条调用用途：它既没有被哪个模型认领，这个用途也没有默认模型，Gateway 因此无处解析实际模型，只有 dry-run 能通过。', action: 'bind-pool', actionLabel: '给这个调用用途接一个模型' },
   GATEWAY_CONFIG_UNAVAILABLE: { brokenLink: 'model', title: '网关配置面暂时读不到', reason: '这次不是配置错，是配置面短暂不可读；稍后重试通常就好。', to: '/app-callers', actionLabel: '打开调用方' },
-  ROUTE_CONFIG_INCOMPATIBLE: { brokenLink: 'model', title: '所选模型与这次请求不兼容', reason: '模型池类型或成员能力与这次请求的调用类型对不上。', to: '/pools', actionLabel: '打开模型池' },
-  MODEL_NOT_IN_CATALOG: { brokenLink: 'model', title: '选中的模型不在名录里', reason: '这个模型既不在内置名录，也没有被管理员放行——正常从 Provider 页导入的模型不会这样，先确认它是怎么进库的。', to: '/pools', actionLabel: '打开模型池' },
+  ROUTE_CONFIG_INCOMPATIBLE: { brokenLink: 'model', title: '所选模型与这次请求不兼容', reason: '这个模型的用途或能力与这次请求的调用类型对不上。', to: '/logical-models', actionLabel: '打开模型' },
+  MODEL_NOT_IN_CATALOG: { brokenLink: 'model', title: '选中的模型不在名录里', reason: '这个模型既不在内置名录，也没有被管理员放行——正常从上游页导入的模型不会这样，先确认它是怎么进库的。', to: '/platforms', actionLabel: '打开上游与模型名录' },
   GATEWAY_KEY_RATE_LIMITED: { brokenLink: null, title: '触发了这把密钥的限流', reason: '密钥默认限制 60 次/分钟，稍后再试即可。', actionLabel: '' },
 };
 
@@ -411,10 +414,16 @@ export function QuickstartPage() {
       //
       // 只列这个用途下、启用着、而且真有一条线路能接的——挂着名字接不住请求的列出来
       // 也是白跑一次。
+      // 「有一条线路 enabled」不等于「这条线路真的会被用上」。
+      //
+      // 服务端已经按**唯一那份**排队判据算好了每条线路的名次（queuePosition）：熔断中、
+      // 指向已停用物理模型或兑换所的，名次是 0、不参与排队。前端只看 enabled 的话，
+      // 会把这些模型照样摆进选择器，而用户选中它、点「真实路由测试」当场就失败。
+      // 判据不自己重写一遍——前端零份，这是它在这一页的落地。
       const usable = response.data.items.filter((item) =>
         item.modelType === bundle.requestType
         && item.enabled
-        && (item.offerings ?? []).some((route) => route.enabled));
+        && (item.offerings ?? []).some((route) => route.queuePosition > 0));
       setPoolModels(usable.map((item) => ({ modelId: item.publicId, platformId: '' })));
       setPoolName(`${requestTypeLabel(bundle.requestType)} 对外模型`);
       setPoolMemberCount(response.data.items.filter((item) => item.modelType === bundle.requestType).length);

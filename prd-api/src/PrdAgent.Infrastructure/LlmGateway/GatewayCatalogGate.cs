@@ -74,4 +74,49 @@ public static class GatewayCatalogGate
     /// <summary>放行标记只认真正的布尔 true，缺字段与别的类型一律不算放行。</summary>
     public static bool IsAllowedOutsideCatalog(BsonDocument document)
         => document.TryGetValue("AllowedOutsideCatalog", out var value) && value.IsBoolean && value.AsBoolean;
+
+    /// <summary>
+    /// 一条兑换所线路实际打给上游的那个别名。
+    ///
+    /// 线路自己覆盖的优先；没覆盖时运行时会回落到兑换所的主别名（ModelAlias），
+    /// 所以判据也必须认同一个回落，否则「线路没写覆盖」这一种输入就绕过了整道门。
+    /// </summary>
+    public static string EffectiveExchangeModelId(ModelExchange exchange, string? upstreamModelId)
+        => !string.IsNullOrWhiteSpace(upstreamModelId) ? upstreamModelId.Trim() : exchange.ModelAlias ?? string.Empty;
+
+    /// <summary>这个兑换所声明过这条别名吗。没声明的一律不算数——它不是这个兑换所的东西。</summary>
+    public static bool ExchangeDeclares(ModelExchange exchange, string? modelId)
+        => !string.IsNullOrWhiteSpace(modelId)
+            && exchange.GetEffectiveModels().Any(item =>
+                string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 名录外的这条别名有没有被放行。
+    ///
+    /// 旧形态兑换所（别名由 ModelAlias/ModelAliases 两个字符串字段合成，没有地方盖逐条标记）
+    /// 整体视为放行：它们同样是管理员在逐条放行落地**之前**声明的，与名录门上线前已入库的
+    /// 模型同一处境。控制台下一次写这个兑换所时会把它落成带标记的 Models。
+    /// </summary>
+    public static bool ExchangeAliasAllowedOutsideCatalog(ModelExchange exchange, string? modelId)
+    {
+        if (exchange.Models is null || exchange.Models.Count == 0) return true;
+        var declared = exchange.GetEffectiveModels().FirstOrDefault(item =>
+            string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        return declared?.AllowedOutsideCatalog == true;
+    }
+
+    /// <summary>
+    /// 一条兑换所线路过不过得了这道门：兑换所声明过这条别名，且别名在名录里或被放行。
+    /// 名录门降档时只要求「声明过」——没声明的那种在任何档位下都不是这个兑换所的东西。
+    /// </summary>
+    public static bool ExchangeRoutePasses(
+        ModelExchange exchange,
+        string? upstreamModelId,
+        bool gateEnforces)
+    {
+        var modelId = EffectiveExchangeModelId(exchange, upstreamModelId);
+        if (!ExchangeDeclares(exchange, modelId)) return false;
+        return !gateEnforces
+            || Passes(modelId, ExchangeAliasAllowedOutsideCatalog(exchange, modelId));
+    }
 }
