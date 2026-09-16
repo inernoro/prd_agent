@@ -1,3 +1,62 @@
+| feat | prd-api | 新增活动任务清单：人维度的此刻/接下来/做成了什么，含结案说明、委派、堆积量与匿名脱敏三档 |
+| feat | prd-admin | 新增我的任务、大家在做什么、做成了什么三个页面，以及 /board/active-tasks 匿名只读看板 |
+| feat | prd-api | 任务台接入 MCP：map_tasks_mine / add / team / assign 四个工具，智能体可读可填不可结案 |
+| feat | prd-api | 新增 active-tasks.use / active-tasks.manage 权限点与两个同名 scope |
+| feat | prd-api | 任务可选带「什么时候要」，含日期人话标签与过期标记；MCP 两个写工具同步支持 dueAt |
+| feat | prd-admin | 时间输入照提醒事项做四个快捷胶囊，并从标题里认出「明天」「周五之前」自动填时间 |
+| refactor | prd-api | 删掉上一版遗留的预估耗时与超期判定（前端已无入口，且超期判定属于被否掉的 KPI） |
+| refactor | prd-admin | 任务台圆圈语义统一为「做完了」，切换当前任务移到行尾「开始」 |
+| feat | prd-admin | 任务台点圆圈改为乐观完成 + 底部补写「做成了什么样」+ 撤销 |
+| feat | prd-admin | 任务台「加一件」改为行内新增，回车提交后接着敲下一条 |
+| feat | prd-admin | 任务台桌面两栏（左侧 source list）/ 手机单栏 + 分段控件，救活历史页孤儿路由 |
+| feat | prd-admin | 任务台浮层两端分形态：桌面贴顶按钮右对齐 / 手机底部升起，补 createPortal + ESC + 焦点陷阱 |
+| feat | prd-admin | 任务台首次进入一次性新人指引（一屏三行，不做逐步高亮导览） |
+| fix | prd-admin | DuePicker 过 18:00 后点「今天」会生成过去时间导致立刻逾期 |
+| fix | prd-admin | DuePicker「自定」选中后展开状态收不起来 |
+| refactor | prd-admin | DuePicker 自定日期改自绘月历网格，替掉 input type=date |
+| fix | prd-admin | 任务台三处 whenLabel 拷贝合一并改用 serverNow |
+| fix | prd-admin | 任务台 hover 规则收进 @media (hover:hover)，补 :active 与 reduce-motion |
+| fix | prd-admin | 任务台字号全面改 rem，标题改换行不截断 |
+| fix | prd-admin | 任务台过期时间补感叹号角标，不再只靠颜色表达状态 |
+| fix | prd-admin | 任务台删除按钮不再隐形消失，投入过时间的显示为「放下」 |
+| fix | prd-admin | 团队页轮询在标签页不可见时停跑 |
+| feat | prd-api | 任务台新增撤销结案 POST {id}/reopen，PUT 支持补写 closingNote |
+| polish | prd-admin | 任务台界面文案去掉「老板 / 让他」语气与解释性长句 |
+| docs | doc | 任务台设计文档补两端分化与新人上手两节，债务台账补 4 条（拖拽排序 / 不可编辑 / 删除无撤销 / 我的任务不自刷新） |
+| fix | prd-admin | 任务台列表分隔线在带头像的行上左缘偏移到文字左缘（真机截图抓出） |
+| polish | prd-admin | 匿名看板空态文案与另外三页对齐，人员行补 role=listitem |
+| docs | doc | 新增《活动任务清单 · 指南》：一分钟上手、一天怎么用、建议与派活的区别、智能体四个工具、常见疑问 |
+| docs | doc | 设计文档补联动总览图、AI 两步的外部依赖图、任务状态机、建议时序图（四张图均经真浏览器渲染验证） |
+| feat | prd-admin | 正在做的那一行补「放下」入口，不必先切到别的任务再回头放下 |
+| fix | prd-admin | 放下/删除按状态判而不按秒数判，避免刚开始计时的任务走到「真删」被后端 400 |
+| fix | prd-api | AI 导入/吸取：原文没有时间词时硬性丢弃模型给的 dueAt，并不再给日期对照表当诱饵 |
+| fix | prd-api | AI 导入/吸取：skipped 截断到 80 字，模型抄整段原文时不再占掉半个浮层 |
+| fix | prd-admin | 候选任务行标题被右侧日期挤掉尾巴（input 在 flex 里缺 min-width:0） |
+| docs | doc | 台账记两条实测发现：未注册百宝箱（欠卡片插画）、截止日靠规则兜底不靠模型自觉 |
+| fix | prd-admin | 任务台切换视图时左栏左右平移（三个视图内容列宽度不同 + 滚动条有无），改定宽双轨 + scrollbar-gutter |
+| feat | prd-admin | 任务台备用队列支持拖拽排序，不再只能「提前」置顶 |
+| feat | prd-admin | 任务台点行进去改标题、时间、备注（note 字段终于接上渲染） |
+| feat | prd-admin | 任务台删除/放下可撤销，删掉的按原位置建回来 |
+| feat | prd-admin | 我的任务页加可见性感知轮询，别人派活提建议会自己跟上 |
+| feat | prd-admin | 任务台「粘一段话，AI 帮你拆」：流式吐候选任务，勾选后才入库 |
+| feat | prd-admin | 任务台新增「建议」：任何人可提，提了不进对方队列，收件人自己吸取 |
+| feat | prd-admin | 吸取建议可引用知识库（服务端记住上次选的）与补一句额外要求 |
+| feat | prd-admin | 建议可拿去涌现派生，回写涌现树 Id 便于回溯 |
+| feat | prd-api | 任务台新增拖拽排序 POST {id}/reorder，创建支持 orderKey 还原位置 |
+| feat | prd-api | 任务台新增 AI 一键导入 SSE 端点，含日期对照表与逾期日期兜底 |
+| feat | prd-api | 新增建议实体与收件箱/吸取/放下/涌现回写端点，吸取走 SSE |
+| feat | prd-api | 开放接口与 MCP 新增 map_tasks_suggest（use 档即可提建议） |
+| polish | prd-api | MCP 派活工具描述去掉「让他做什么」的支配语气 |
+| docs | doc | 设计文档补「建议和派活是两码事」与「一段话进来 AI 拆成一条条」两节；债务台账关掉补完的四条、新增四条 |
+| polish | prd-admin | 任务台文案不再出现「老板」，结案与卡住两条提示按苹果文案习惯砍短 |
+| polish | prd-api | 任务台后端注释与报错文案同步改用中性称呼 |
+| fix | prd-admin | AI 候选任务标题改自适应换行（input 天生单行，上一版加 min-width:0 反而更容易被裁） |
+| polish | prd-admin | 桌面浮层宽度 420 → 460，二十几字的任务标题不再被迫换行 |
+| fix | prd-admin | 手机端行上撤掉常驻操作（挤得标题五条腰斩四条），收进「点行进入」的详情浮层 |
+| fix | prd-admin | 手机端列表底部补 TabBar 高度，最后一行不再被底部导航压住 |
+| feat | prd-admin | 任务详情浮层新增操作排：现在就做 / 排到最前 / 放下或删除 |
+| fix | prd-admin | 手机端任务行补 scroll-margin-bottom，浏览器自己发起的滚动不再把末行停在底部导航底下 |
+| fix | prd-admin | AI 候选行的来源标签与理由不再连读成一句话 |
 | feat | prd-api | 债务接进任务台：稳定标识 + 幂等同步端点 + 认领/转成任务/放回/了结 |
 | feat | prd-api | 开放接口与 MCP 新增 map_debt_list / map_debt_sync 两个工具 |
 | feat | prd-admin | 任务台下半屏新增「欠着的」：折叠展示、展开看现状与补的条件、一键转成我的活 |

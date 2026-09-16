@@ -226,7 +226,6 @@ public static class DataSyncScope
         {
             new DataSyncCollection("active_task_entries", System.Array.Empty<string>()),
             new DataSyncCollection("active_task_suggestions", System.Array.Empty<string>()),
-            new DataSyncCollection("active_task_debts", System.Array.Empty<string>()),
             new DataSyncCollection("pm_briefings", new[] { "ShareToken" }),
             new DataSyncCollection("pm_decisions", System.Array.Empty<string>()),
             new DataSyncCollection("pm_goal_checkins", System.Array.Empty<string>()),
@@ -356,6 +355,7 @@ public static class DataSyncScope
     {
         ["account_data_transfers"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["active_task_absorb_preferences"] = "个人偏好（吸取建议时上次引用了哪几个知识库）：那几个知识库 Id 在目标站根本不存在，复制过去只会让人对着一堆空引用发愣",
+        ["active_task_debts"] = "仓库派生数据：正文来自 doc/debt.*.md，目标站自己跑一次同步脚本就有，不需要搬。而且它的 Key 是业务唯一索引、_id 是随机 GUID —— 两个站各自同步过同一份台账时 Key 相同 _id 不同，同步引擎只按 _id 对账、撞业务唯一索引会中止整轮（见 DataSyncApply.IsIdCollision 的注释），搬它等于让跨实例同步在第一条共享债务上失败。归属与状态本就是各站自己的事实（设计上的 SSOT 划分），复制过去只会制造两本账",
         ["active_task_board_settings"] = "本站自己的对外开放开关（匿名看板开不开、给到哪一档粒度、卡住多久升级）。这是每个站点自己该做的决定，复制过去等于替目标站把匿名看板打开了",
         ["activity_logs"] = "日志与埋点：量大且只对源站有意义",
         ["admin_idempotency"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",

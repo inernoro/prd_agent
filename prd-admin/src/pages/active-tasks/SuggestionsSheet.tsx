@@ -47,6 +47,8 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
   const seq = useRef(0);
   /** 已经建成的任务 id —— 跨重试累积，否则重试那趟会把上一趟建成的来源链接丢掉 */
   const doneIds = useRef<string[]>([]);
+  /** 已经建成的那几行的 key —— 重试时跳过它们，否则会把已进队列的任务重复建一遍 */
+  const builtKeys = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     const [inbox, ks] = await Promise.all([getSuggestionInbox(), getKnowledgeStores()]);
@@ -105,9 +107,14 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     // A 与这些建议的来源链接就永久断了。
     const created: string[] = [...doneIds.current];
     const failed: typeof picked = [];
-    for (const r of picked) {
+
+    // 只重建**还没建成的**那几条。上一趟建成的行 key 记在 builtKeys 里 ——
+    // 少了这一步，「任务全建成了但标记已吸取失败」之后再点一次确认，
+    // 会把已经进队列的那几条原样再建一遍（重复任务），然后才去重试标记。
+    const todo = picked.filter((r) => !builtKeys.current.has(r.key));
+    for (const r of todo) {
       const res = await createActiveTask({ title: r.title.trim(), dueAt: r.dueAt ?? null });
-      if (res.success && res.data) created.push(res.data.id);
+      if (res.success && res.data) { created.push(res.data.id); builtKeys.current.add(r.key); }
       else failed.push(r);
     }
     doneIds.current = created;
@@ -136,6 +143,7 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     }
 
     doneIds.current = [];
+    builtKeys.current.clear();
     toast.success(`吸取了 ${created.length} 件`);
     onCreated();
     onClose();

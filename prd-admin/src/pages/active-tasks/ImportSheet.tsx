@@ -114,8 +114,20 @@ export function ImportSheet({ onClose, onCreated }: ImportSheetProps) {
         />
       )}
 
+      {/* 第一条拆出来之前那段等待往往是最长的一段（模型还在读全文），
+          而骨架住在 DraftTaskList 里、要等有行了才挂上。只留一句静止的话
+          就是规则 #6 说的「静止的加载中超过 2 秒即为体验缺陷」。 */}
       {streaming && !hasDrafts && (
-        <span className="atb-sheet__hint">正在读这段话{model ? ` · ${model}` : ''}</span>
+        <>
+          <span className="atb-sheet__hint">正在读这段话{model ? ` · ${model}` : ''}</span>
+          <div className="atb-list" role="list" aria-hidden="true">
+            {[0, 1, 2].map((i) => (
+              <div className="atb-row" key={i}>
+                <div className="atb-row__body"><span className="atb-skeleton" /></div>
+              </div>
+            ))}
+          </div>
+        </>
       )}
 
       {hasDrafts && (

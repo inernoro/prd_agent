@@ -319,8 +319,22 @@ public class ActiveTaskSuggestionsController : ControllerBase
 
         try
         {
+            // 心跳：事件只在模型凑满一整行 JSONL 时才发，而一整行可能要等几十秒。
+            // 这中间一个字节都不写，代理的空闲超时就可能把连接掐掉 —— 而模型那边
+            // 还在跑，生成出来的候选就此丢掉，用户只看到「断了」。所以每收到任何
+            // 上游动静就按节流写一条 SSE 注释，它不带语义、前端会忽略，只为占住管道。
+            var lastBeat = DateTime.UtcNow;
+            async Task BeatAsync()
+            {
+                if ((DateTime.UtcNow - lastBeat).TotalSeconds < 10) return;
+                lastBeat = DateTime.UtcNow;
+                await Response.WriteAsync(": keepalive\n\n", CancellationToken.None);
+                await Response.Body.FlushAsync(CancellationToken.None);
+            }
+
             await foreach (var chunk in _gateway.StreamAsync(gatewayRequest, CancellationToken.None))
             {
+                await BeatAsync();
                 if (chunk.Type == GatewayChunkType.Start && chunk.Resolution != null && !sawModel)
                 {
                     sawModel = true;
