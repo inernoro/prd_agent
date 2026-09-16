@@ -106,3 +106,5 @@
 | test | prd-api | 认领基线的拒绝变体把 other-owner 换成 other-site：前者逐字要求「创建者不是调用方就拒」，正是这条缺陷本身（形状 4a）；另加一条协作编辑守卫（主人建基线、队友认领成功），还原创建者比对当场变红 |
 | docs | doc | 更正 debt 台账里一处事实错误：IAssetStorage 有 TryDownloadBytesAsync，历史版本存字节不需要新增存储抽象，那条后续工作比当时估的便宜 |
 | docs | doc | debt 台账记下「沙箱预览里的 ES 模块取不到票据」：opaque origin 下模块按 CORS + same-origin 凭据取，cookie 一律不带，而预览资源路由以 cookie 为门；当前生成链路被提示词禁止输出任何 script，故无生产路径，判 B 类并写明「放开带脚本产物时必须同批把票据挪进 URL 路径段」 |
+| fix | cds | .cds.env 的读取按写入的真实格式解码：env_upsert 用单引号包裹并把内部单引号写成转义序列，read_env_value 却只剥双引号，读回来的是带引号字符的字面量；那些值正是 init 重跑时「回车保持原样」的默认值，会被原样再写一遍，引号从此成为密码、用户名、JWT Secret、根域名本身的一部分，重启后仪表盘登不进去、路由也对不上。双引号那一支保留以读旧版本存量文件 |
+| test | cds | 新增 .cds.env 往返行为守卫七条：把 env_upsert 与 read_env_value 从脚本取出在 bash 里真跑一遍，覆盖普通值、含单引号、含双引号、含空格与等号、域名列表，外加双引号与裸值两种存量形态；撤掉解码五条当场变红 |

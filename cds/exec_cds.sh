@@ -469,13 +469,27 @@ ensure_cds_mongo_running() {
 }
 
 # Read an individual value from .cds.env without sourcing it.
+#
+# 必须按 env_upsert 实际写出的格式解码：它用单引号包裹、内部单引号写成 '\'' 。
+# 这里原先只剥双引号，于是读回来的是带着引号字符的字面量。init 重跑时这些值正是
+# 「回车保持原样」的默认值，会被原样再写一遍——引号从此变成密码/用户名/JWT/根域名
+# 本身的一部分，重启后仪表盘登不进去、路由也对不上（Codex P1，2026-09-16；
+# 写入侧的单引号格式来自主干，不是本 PR 引入，但两半判据分裂在这里，形状 3）。
+# 双引号那一支保留，用来读旧版本写下的存量文件。
+# 已知边界：仍是按行读，多行值（PEM 私钥）只能靠 source 取，这条不变。
 read_env_value() {
   local key="$1"
   [ -f "$ENV_FILE" ] || { printf ''; return; }
   awk -F'=' -v k="$key" '
+    BEGIN { q = sprintf("%c", 39) }
     $0 ~ "^export "k"=" {
       sub("^export "k"=","")
-      gsub("^\"|\"$","")
+      if (length($0) >= 2 && substr($0,1,1) == q && substr($0,length($0),1) == q) {
+        $0 = substr($0, 2, length($0) - 2)
+        gsub(q "\\\\" q q, q)
+      } else {
+        gsub("^\"|\"$","")
+      }
       last=$0
     }
     END { printf "%s", last }
