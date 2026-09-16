@@ -569,6 +569,16 @@ public class GatewayDataDomainGuardTests
         Assert.True(claimAt > 0 && typeDefaultAt > claimAt,
             "按调用方认领必须查在用途默认之前，否则那个字段等于不存在");
 
+        // 「同用途最多一个默认」是库级不变量，不能只靠端点里的「先清后置」。
+        //
+        // 两个管理员同时改时，两边都能清完各自看到的旧默认再各自置上自己那个：两次写都成功，
+        // 库里有两个默认，而不点名的请求解析到哪个全看排序，两人的界面都显示「已生效」。
+        // 应用层补不了——Mongo 没有跨文档原子性，任何「查一下有没有别人」都在竞态窗口里。
+        // 部分唯一索引把第二个写变成 E11000，端点如实回 409 而不是笼统的「保存失败」。
+        Assert.Contains("uniq_llmgw_logical_default_per_type", consoleProgram);
+        Assert.Contains("PartialFilterExpression = Builders<BsonDocument>.Filter.Eq(\"IsDefaultForType\", true)", consoleProgram);
+        Assert.Contains("DEFAULT_CONFLICT", consoleProgram);
+
         Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
         Assert.Contains("claimedBy", consoleProgram);
         Assert.Contains("它被 {claimedBy[x.Code]} 认领了", consoleProgram);

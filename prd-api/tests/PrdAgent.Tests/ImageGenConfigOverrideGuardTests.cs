@@ -374,6 +374,12 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("body.MinWidth is null && body.MaxWidth is null", console);
         Assert.Contains("body.MaxPixels is null && body.MustBeDivisibleBy is null", console);
 
+        // 「填了」不等于「起作用」：0 与 1 这些值运行时会跳过（最小值、整除），
+        // 而 0 作为最大值更糟——把请求夹成 0x0 发出去。所以判的是有效边界，不是有没有值。
+        Assert.Contains("范围模式的宽高边界必须大于 0", console);
+        Assert.Contains("边长整除必须大于 1", console);
+        Assert.Contains("最小宽不能大于最大宽", console);
+
         var section = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
         Assert.Contains("editing.draft.sizeConstraintType === 'range'", section);
         foreach (var field in new[] { "minWidth", "maxWidth", "minHeight", "maxHeight", "maxPixels", "mustBeDivisibleBy" })

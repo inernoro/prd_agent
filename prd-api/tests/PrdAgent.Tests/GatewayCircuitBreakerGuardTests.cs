@@ -95,6 +95,15 @@ public class GatewayCircuitBreakerGuardTests
         Assert.Contains("ReturnDocument = ReturnDocument.After", failure);
         Assert.Equal(2, CountOccurrences(failure, "ReturnDocument = ReturnDocument.After"));
         Assert.Contains("GatewayCircuitBreakerPolicy.IsEscalation", failure);
+
+        // 升级那一步还要带上「失败数还是当初那么多」。
+        //
+        // 自增与升级是两次写，中间可能挤进一次成功：它把 ConsecutiveFailures 清零、
+        // 健康档写回 Healthy。若升级只判「当前档位比我低」，就会把一个基于已经作废的
+        // 失败数算出来的档位重新写回去——一条刚刚成功的线路被隔离整个冷却期。
+        // 两条路径都要有这个条件；只有 Lt(HealthStatus) 是不够的。
+        Assert.Contains("Filter.Gte(x => x.ConsecutiveFailures, afterInc.ConsecutiveFailures)", failure);
+        Assert.Contains("m.ConsecutiveFailures >= newFailures", failure);
     }
 
     [Fact]

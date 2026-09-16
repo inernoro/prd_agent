@@ -780,10 +780,20 @@ public class ModelResolver : IModelResolver
             var status = GatewayCircuitBreakerPolicy.ClassifyByFailures(afterInc.ConsecutiveFailures);
             if (!GatewayCircuitBreakerPolicy.IsEscalation(afterInc.HealthStatus, status))
                 return;
+            // 升级这一步要带上「失败数还是当初那么多」这个条件。
+            //
+            // 自增与升级是两次写，中间可能挤进一次**成功**：成功那一路把 ConsecutiveFailures
+            // 清零、把健康档写回 Healthy，而这里若只判 HealthStatus < status，就会把一个
+            // 基于已经作废的失败数算出来的档位重新写回去——一条刚刚成功的线路被隔离整个冷却期，
+            // 而它其实是好的（形状 5 的近亲：拿变更前的状态去 gate 一个会改变该状态的写）。
+            //
+            // 判据用 Gte 而不是等于：期间又失败了几次的话计数只会更高，这次升级照样该落；
+            // 而清零过就一定小于它，条件不成立、这次写自然作废。降档由 Lt 那一条挡住，两者互补。
             await offerings.UpdateOneAsync(
                 Builders<GatewayModelOffering>.Filter.And(
                     filter,
-                    Builders<GatewayModelOffering>.Filter.Lt(x => x.HealthStatus, status)),
+                    Builders<GatewayModelOffering>.Filter.Lt(x => x.HealthStatus, status),
+                    Builders<GatewayModelOffering>.Filter.Gte(x => x.ConsecutiveFailures, afterInc.ConsecutiveFailures)),
                 Builders<GatewayModelOffering>.Update
                     .Set(x => x.HealthStatus, status)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow),
@@ -833,13 +843,15 @@ public class ModelResolver : IModelResolver
             var newStatus = GatewayCircuitBreakerPolicy.ClassifyByFailures(newFailures);
             if (GatewayCircuitBreakerPolicy.IsEscalation(updated.HealthStatus, newStatus))
             {
+                // 同一个竞态，同一个条件：期间若有一次成功把计数清零，这次升级就不该落。
                 await modelGroups.UpdateOneAsync(
                     Builders<ModelGroup>.Filter.And(
                         Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
                         Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
                             m => m.PlatformId == resolution.ActualPlatformId
                                  && m.ModelId == resolution.ActualModel
-                                 && m.HealthStatus < newStatus)),
+                                 && m.HealthStatus < newStatus
+                                 && m.ConsecutiveFailures >= newFailures)),
                     Builders<ModelGroup>.Update.Set("Models.$.HealthStatus", newStatus),
                     cancellationToken: ct);
             }

@@ -336,6 +336,38 @@ await recoveryOperations.Indexes.CreateManyAsync(new[]
         Builders<GatewayRecoveryOperation>.IndexKeys.Ascending(x => x.TenantId).Descending(x => x.CreatedAt),
         new CreateIndexOptions { Name = "idx_llmgw_recovery_tenant_created" }),
 });
+/*
+  「同租户同用途最多一个默认」升成库级不变量。
+
+  端点里的「先清旧默认、再置新的」在单个请求内是对的，但两个管理员同时改时，
+  两边都能清完各自看到的旧默认、再各自置上自己那个——两次写都成功，库里于是有两个默认，
+  而不点名的请求解析到哪个全看排序，两个人的界面都显示「已生效」。
+  应用层补不了这个洞：Mongo 没有跨文档的原子性可用，任何「查一下有没有别人」都在竞态窗口里。
+
+  部分唯一索引把它变成 DB 层的事：第二个写直接撞 E11000，端点如实回 409。
+  存量里已经有两个默认时建不出来——那不是崩溃的理由，如实报出来让人去清理，
+  在那之前端点仍按老样子工作（degradation-must-alarm：降级要响铃，不许静默）。
+*/
+try
+{
+    await gwLogicalModels.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
+        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ModelType"),
+        new CreateIndexOptions<BsonDocument>
+        {
+            Name = "uniq_llmgw_logical_default_per_type",
+            Unique = true,
+            PartialFilterExpression = Builders<BsonDocument>.Filter.Eq("IsDefaultForType", true),
+        }));
+}
+catch (MongoCommandException ex)
+{
+    Console.WriteLine(
+        "[llmgw] 建不出「同用途唯一默认」索引（uniq_llmgw_logical_default_per_type）："
+        + ex.Message
+        + " —— 多半是存量里某个用途已经有两个默认模型。先在白名单页把多余的那个取消默认，"
+        + "重启控制台即可自动补建；在那之前并发改默认仍有竞态。");
+}
+
 await GatewayRecoveryOperations.RepairExpiredAsync(gatewayDatabase);
 await TenantOwnerAuthority.BackfillAsync(tenants, memberships);
 await users.Indexes.CreateOneAsync(new CreateIndexModel<LlmGwUser>(
@@ -4183,13 +4215,31 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
     // 这里没配（形状 8：一份不成立的声明被当成了「已经配好」的证明）。
     // 拦在写入侧，不指望界面记得填：契约也可能从别的写入方进来。
     if (string.Equals((body.SizeConstraintType ?? string.Empty).Trim(), "range", StringComparison.OrdinalIgnoreCase)
-        && body.SizesNotApplicable != true
-        && body.MinWidth is null && body.MaxWidth is null
-        && body.MinHeight is null && body.MaxHeight is null
-        && body.MaxPixels is null && body.MustBeDivisibleBy is null)
+        && body.SizesNotApplicable != true)
     {
-        return "范围模式至少要填一项边界（最小/最大宽高、最大像素总量、边长整除），"
-            + "否则这条契约什么都不约束，尺寸会原样发给上游";
+        // 「填了」不等于「起作用」。
+        //
+        // minWidth=0 与 Math.Max 之后完全等价于没填；mustBeDivisibleBy 要大于 1 运行时才理它
+        // （0 和 1 都被跳过）；而 maxWidth=0 更糟——它不是没约束，是把请求夹成 0x0 发出去。
+        // 只判「有没有值」的话，这三种写法都能存进来，而那条「至少填一项」的承诺变成空话
+        // （形状 8：一份不成立的声明被当成已经配好的证明）。所以判的是**有效**边界。
+        if (body.MinWidth is <= 0 || body.MaxWidth is <= 0 || body.MinHeight is <= 0 || body.MaxHeight is <= 0)
+            return "范围模式的宽高边界必须大于 0：填 0 等于没填（最小值），或者把请求夹成 0x0（最大值）";
+        if (body.MaxPixels is <= 0)
+            return "范围模式的最大像素总量必须大于 0";
+        if (body.MustBeDivisibleBy is { } divisor && divisor <= 1)
+            return "边长整除必须大于 1：填 0 或 1 时运行时会直接跳过这一项，等于没配";
+        if (body.MinWidth is { } minW && body.MaxWidth is { } maxW && minW > maxW)
+            return "范围模式的最小宽不能大于最大宽";
+        if (body.MinHeight is { } minH && body.MaxHeight is { } maxH && minH > maxH)
+            return "范围模式的最小高不能大于最大高";
+        if (body.MinWidth is null && body.MaxWidth is null
+            && body.MinHeight is null && body.MaxHeight is null
+            && body.MaxPixels is null && body.MustBeDivisibleBy is null)
+        {
+            return "范围模式至少要填一项边界（最小/最大宽高、最大像素总量、边长整除），"
+                + "否则这条契约什么都不约束，尺寸会原样发给上游";
+        }
     }
 
     foreach (var (bucket, list) in body.SizesByResolution ?? [])
@@ -4687,7 +4737,10 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
         {
             if (!dryRun)
             {
-                await gwLogicalModels.InsertOneAsync(new BsonDocument
+                // 「同用途唯一默认」现在是库级约束（部分唯一索引）。上面那道预检拦得住
+                // 本轮与已持久化的冲突，拦不住另一个人在这一瞬也设了默认——那时插入会撞
+                // E11000。一次并发不该让整趟搬迁 500：降级成非默认再插一次，并如实报出来。
+                var document = new BsonDocument
                 {
                     { "_id", logicalId }, { "TenantId", tenantId },
                     { "PublicId", publicId }, { "PublicIdNormalized", normalized },
@@ -4718,7 +4771,24 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     { "DisplayOrder", pool.AsNullableInt("Priority") ?? 100 },
                     { "Description", $"由模型池「{poolName}」搬迁而来" },
                     { "CreatedAt", now }, { "UpdatedAt", now },
-                });
+                };
+                try
+                {
+                    await gwLogicalModels.InsertOneAsync(document);
+                }
+                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                {
+                    document["IsDefaultForType"] = false;
+                    await gwLogicalModels.InsertOneAsync(document);
+                    entry.IsDefaultForType = false;
+                    result.Skipped.Add(new PoolMigrationSkip
+                    {
+                        PoolId = poolId,
+                        PoolName = poolName,
+                        Reason = $"这个池是 {modelType} 的默认，但搬迁进行期间这个用途的默认被别人占了，"
+                            + "所以它搬成了普通模型。确认哪一个才该当默认，再去白名单页改",
+                    });
+                }
             }
             result.ModelsCreated++;
         }
@@ -5566,10 +5636,21 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (updates.Count == 0)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
-    var updated = await gwLogicalModels.FindOneAndUpdateAsync(
-        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
-        Builders<BsonDocument>.Update.Combine(updates),
-        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    BsonDocument? updated;
+    try
+    {
+        updated = await gwLogicalModels.FindOneAndUpdateAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+            Builders<BsonDocument>.Update.Combine(updates),
+            new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    }
+    catch (MongoCommandException ex) when (ex.Code == 11000)
+    {
+        // 撞上「同用途唯一默认」那个部分唯一索引：另一个人在这一瞬也把自己设成了默认。
+        // 如实说是并发，不要报成「保存失败」——后者会让人反复重试同一个必然失败的动作。
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("DEFAULT_CONFLICT",
+            "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。"), jsonOptions, 409);
+    }
     if (updated is null)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.update", "llmgw_logical_model", id, updated.GetStringOrEmpty("Name"), true, null,
