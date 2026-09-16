@@ -145,3 +145,32 @@ describe('总览判断行的时长文案', () => {
     expect(formatDeployedAgo(new Date(t0).toISOString(), t0 + 5 * 60_000)).toBe('5 分钟前部署');
   });
 });
+
+describe('零服务的空态（2026-09-16 真站截图：master 分支一个 service 都没有）', () => {
+  const empty = (): RelationPayload => ({ ...payload(), graph: { nodes: [{ id: 'infra:mongo', name: 'mongo', kind: 'infra' }], edges: [], layers: [], sites: [], internal: [] }, lint: { findings: [], summary: { errors: 0, warnings: 0, infos: 0 } } });
+  it('结论不再说「体检无错误」，而是明说没有服务', async () => {
+    const { relationHeadline, RELATION_EMPTY_HEADLINE } = await import('../../web/src/components/branch/RelationGraph.js');
+    expect(relationHeadline(empty())).toBe(RELATION_EMPTY_HEADLINE);
+  });
+  it('关系图不开画布、不出图例，改出空态', async () => {
+    const { RelationGraph } = await import('../../web/src/components/branch/RelationGraph.js');
+    const html = renderToStaticMarkup(createElement(RelationGraph, { payload: empty() }));
+    expect(html).toContain('data-testid="relation-graph-empty"');
+    expect(html).not.toContain('data-testid="relation-legend"');
+    expect(html).not.toContain('data-node=');
+  });
+  it('关系卡零服务时不出事实行与流向条（源码守卫：空态分支在 layoutFlow 之前返回）', () => {
+    const card = fs.readFileSync(path.join(SRC, 'components/branch/RelationCard.tsx'), 'utf8');
+    const emptyAt = card.indexOf("every((n) => n.kind !== 'service')");
+    expect(emptyAt).toBeGreaterThan(0);
+    expect(emptyAt).toBeLessThan(card.indexOf('const model = layoutFlow'));
+    expect(card.slice(emptyAt, card.indexOf('const model = layoutFlow'))).toContain('<RelationEmptyState');
+  });
+  it('图例每一项不换行：窄抽屉里不许把「声明的关系」折成两行', () => {
+    const graph = fs.readFileSync(path.join(SRC, 'components/branch/RelationGraph.tsx'), 'utf8');
+    const legend = graph.slice(graph.indexOf('data-testid="relation-legend"'), graph.indexOf('角色是推断的'));
+    const items = legend.match(/<span className="inline-flex items-center gap-1\.5[^"]*"/g) ?? [];
+    expect(items.length).toBeGreaterThanOrEqual(5);
+    for (const it of items) expect(it).toContain('whitespace-nowrap');
+  });
+});

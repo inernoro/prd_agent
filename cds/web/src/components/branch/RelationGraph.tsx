@@ -219,6 +219,15 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
   const fit = hostW > 0 ? (hostW - (compact ? 8 : 16)) / layout.width : (compact ? 640 / layout.width : 1);
   const scale = compact ? Math.min(1, fit) : Math.min(1, Math.max(0.6, fit));
   const dim = (touch: boolean): number => (!highlight ? 1 : touch ? 1 : 0.28);
+  // 一个 service 都没有：一枚入口节点漂在整张空画布上，比什么都不画更难看（2026-09-16 用户截图）。
+  // 这里直接给空态，画布、图例都不出。
+  if (payload.graph.nodes.every((n) => n.kind !== 'service')) {
+    return (
+      <div ref={hostRef} className={`${className ?? ''} flex items-center justify-center p-6`} style={style} data-testid="relation-graph-empty">
+        <RelationEmptyState branch={payload.branch} />
+      </div>
+    );
+  }
   return (
     <div ref={hostRef} className={className} style={{ position: 'relative', overflow: compact ? 'hidden' : 'auto', ...style }} data-testid="relation-graph">
       <div style={{ position: 'relative', width: layout.width, height: layout.height, transform: scale !== 1 ? `scale(${scale})` : undefined, transformOrigin: 'top left', marginBottom: scale !== 1 ? -(layout.height * (1 - scale)) : undefined, marginLeft: compact ? 4 : Math.max(0, (hostW - layout.width * scale) / 2), marginRight: scale !== 1 ? -(layout.width * (1 - scale)) : undefined, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
@@ -298,15 +307,38 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
         ))}
       </div>
       {!compact ? (
-        <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex items-center gap-4 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" /></svg>声明的关系</span>
-          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" strokeDasharray={INFERRED_DASH} /></svg>按名推断，建议写进声明</span>
-          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke={tone('--graph-call')} strokeWidth="1.5" /></svg>环境变量引用 / 调用</span>
-          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--info))" strokeWidth="1.5" /></svg>跨项目引用</span>
-          <span className="inline-flex items-center gap-1.5"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--bad))" strokeWidth="1.5" /></svg>断裂</span>
-          <span className="inline-flex items-center gap-1.5"><span className="inline-block h-3 w-3 rounded-[3px] border border-dashed border-foreground-muted" aria-hidden />角色是推断的</span>
+        /* 图例：每一项自己不换行（窄抽屉里「声明的关系」曾被折成两行三个字一坨），整行按项折行 */
+        <div className="cds-surface-raised cds-hairline sticky bottom-2 left-2 mt-2 inline-flex max-w-[calc(100%-1rem)] flex-wrap items-center gap-x-4 gap-y-1 rounded-md px-3 py-1.5 text-[10px] text-muted-foreground" data-testid="relation-legend">
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" /></svg>声明的关系</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--hairline-strong))" strokeWidth="1.5" strokeDasharray={INFERRED_DASH} /></svg>按名推断</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke={tone('--graph-call')} strokeWidth="1.5" /></svg>环境变量引用 / 调用</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--info))" strokeWidth="1.5" /></svg>跨项目引用</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><svg width="22" height="6" aria-hidden><path d="M0 3H22" stroke="hsl(var(--bad))" strokeWidth="1.5" /></svg>断裂</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span className="inline-block h-3 w-3 rounded-[3px] border border-dashed border-foreground-muted" aria-hidden />角色是推断的</span>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+export const RELATION_EMPTY_HEADLINE = '这个分支还没有任何 service，关系无从画起。';
+
+/** 零服务的空态：卡片、半屏抽屉、全屏页共用一份，不各写各的。 */
+export function RelationEmptyState({ branch, onConfigure }: { branch?: string; onConfigure?: () => void }): JSX.Element {
+  return (
+    <div className="flex max-w-[26rem] flex-col items-center gap-2 text-center" data-testid="relation-empty">
+      <svg width="88" height="40" viewBox="0 0 88 40" aria-hidden className="text-muted-foreground/70">
+        <rect x="1" y="12" width="26" height="16" rx="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M27 20 H38" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 3" />
+        <rect x="38" y="12" width="26" height="16" rx="5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 3" />
+        <path d="M64 20 H75" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 3" />
+        <rect x="75" y="12" width="12" height="16" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 3" />
+      </svg>
+      <div className="text-sm font-semibold text-foreground">{RELATION_EMPTY_HEADLINE}</div>
+      <div className="text-xs leading-relaxed text-muted-foreground">
+        在 compose 里声明服务并部署{branch ? `分支 ${branch}` : ''}之后，这里会画出入口、壳、前缀成员与共享基础设施之间的流向，并给出体检结论。
+      </div>
+      {onConfigure ? <button type="button" className="mt-1 inline-flex h-7 items-center rounded-md border border-[hsl(var(--hairline-strong))] px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]" onClick={onConfigure}>去配置服务</button> : null}
     </div>
   );
 }
@@ -314,6 +346,7 @@ export function RelationGraph({ payload, compact = false, highlight, className, 
 /** 一句话结论：先给判断再给数字（conclusion-before-numbers）。 */
 export function relationHeadline(payload: RelationPayload): string {
   const services = payload.graph.nodes.filter((n) => n.kind === 'service');
+  if (services.length === 0) return RELATION_EMPTY_HEADLINE;
   const main = payload.graph.sites.find((s) => s.kind === 'main');
   const subs = payload.graph.sites.filter((s) => s.kind === 'subdomain').length;
   const parts: string[] = [];

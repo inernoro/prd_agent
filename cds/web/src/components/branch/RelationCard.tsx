@@ -13,7 +13,7 @@ import { useNavigate } from 'react-router-dom';
 import { Maximize2, PanelRightOpen, Wrench, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { apiRequest, ApiError } from '@/lib/api';
-import { RelationGraph, relationHeadline, type LintFindingView, type RelationPayload } from './RelationGraph';
+import { RelationEmptyState, RelationGraph, relationHeadline, type LintFindingView, type RelationPayload } from './RelationGraph';
 import { FlowFacts, RelationFlowSkeleton, RelationFlowStrip, layoutFlow } from './RelationFlowStrip';
 
 export function useRelationPayload(branchId: string | undefined): { state: { status: 'loading' } | { status: 'ok'; data: RelationPayload } | { status: 'error'; message: string }; reload: () => void } {
@@ -88,6 +88,15 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
     ));
   }
   const data = state.data;
+  // 零服务：不出事实行、不出流向条、不给半屏 / 全屏按钮——全零的数字和一枚孤零零的入口 chip 只会显得没做完
+  if (data.graph.nodes.every((n) => n.kind !== 'service')) {
+    return shell('border-[hsl(var(--hairline))]', (
+      <>
+        <div className="flex items-center gap-2 text-sm font-bold">关系<span className="inline-flex h-[1.125rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-1.5 text-[0.625rem] font-semibold text-muted-foreground">还没有服务</span></div>
+        <div className="flex justify-center py-2"><RelationEmptyState branch={data.branch} onConfigure={onConfigure} /></div>
+      </>
+    ));
+  }
   const { errors, warnings } = data.lint.summary;
   const tone = errors ? 'border-destructive/50' : warnings ? 'border-warn/50' : 'border-[hsl(var(--hairline))]';
   const model = layoutFlow(data, entryHost);
