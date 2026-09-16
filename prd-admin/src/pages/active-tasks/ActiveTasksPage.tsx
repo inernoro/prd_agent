@@ -387,6 +387,13 @@ export function ActiveTasksPage() {
         </button>
       </div>
 
+      {/*
+        下半屏：我们欠着什么。
+        位置在「做完的」之前 —— 债务是还能动手的，做完的是存档，能动手的东西不该排在存档后面。
+        第一版放在了最后，真机截图里它掉到了六屏之外（队列 111 条 + 做完的 8 条全在它上面）。
+      */}
+      <DebtSection onConverted={refresh} />
+
       {done.length > 0 && (
         <div className="atb-group">
           <div className="atb-group__head">
@@ -411,9 +418,6 @@ export function ActiveTasksPage() {
           </div>
         </div>
       )}
-
-      {/* 下半屏：我们欠着什么。正文在仓库里，这里只管归属与状态 */}
-      <DebtSection onConverted={refresh} />
 
       {/* 刚做完那条：补一句，或者反悔 */}
       {justDone && (

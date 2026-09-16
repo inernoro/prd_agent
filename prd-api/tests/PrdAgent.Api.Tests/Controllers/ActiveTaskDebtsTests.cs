@@ -93,6 +93,22 @@ public class ActiveTaskDebtsTests
     }
 
     [Fact]
+    public void 认领与放回是同一个判断的两侧_不许各写一份()
+    {
+        // 事故形状：Claim 按「转出去过没有」决定落 converted 还是 claimed，
+        // Release 却无条件退回 open —— 于是界面上出现「还没人管」配「已转成 1 条活」
+        // 这种自相矛盾（2026-09-16 真机截图当场照出来的）。两处必须走同一个判定源。
+        var fresh = new ActiveTaskDebt();
+        Assert.Equal(ActiveTaskDebtState.Claimed, ActiveTaskDebtsController.StateForClaimed(fresh));
+        Assert.Equal(ActiveTaskDebtState.Open, ActiveTaskDebtsController.StateForUnclaimed(fresh));
+
+        var converted = new ActiveTaskDebt { ConvertedTaskIds = { "任务id" } };
+        Assert.Equal(ActiveTaskDebtState.Converted, ActiveTaskDebtsController.StateForClaimed(converted));
+        // 关键那条：放回认领之后，转出去的那条活还在队列里，所以状态不能退回「还没人管」
+        Assert.Equal(ActiveTaskDebtState.Converted, ActiveTaskDebtsController.StateForUnclaimed(converted));
+    }
+
+    [Fact]
     public void 同步工具走读档_读债务这件事不该只有管理档看得见()
     {
         var sync = Assert.Single(McpBuiltinTools.All.Where(t => t.Name == "map_debt_sync"));

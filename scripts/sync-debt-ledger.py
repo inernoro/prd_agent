@@ -180,6 +180,10 @@ def push(base: str, key: str, items: list[dict], batch: int = 200) -> int:
         req = urllib.request.Request(url, data=body, method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Authorization", f"Bearer {key}")
+        # 站点前面挂着 CDN，默认的 Python-urllib/x.y 会被当成爬虫直接 403（error code: 1010），
+        # 而且那个 403 是 CDN 返的、根本没到后端 —— 报错里看不出这一点，所以在这里写死一个
+        # 说得清自己是谁的 UA。实测同一份载荷用 curl 能过、用默认 UA 过不去。
+        req.add_header("User-Agent", "prd-agent-debt-sync/1.0 (+scripts/sync-debt-ledger.py)")
         try:
             with urllib.request.urlopen(req, timeout=60) as resp:
                 payload = json.loads(resp.read().decode("utf-8"))

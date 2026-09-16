@@ -174,7 +174,7 @@ public class ActiveTaskDebtsController : ControllerBase
             Builders<ActiveTaskDebt>.Update
                 .Set(x => x.OwnerUserId, me)
                 .Set(x => x.OwnerUserName, await ActiveTaskShared.ResolveDisplayNameAsync(_db, me, ct))
-                .Set(x => x.State, debt.ConvertedTaskIds.Count > 0 ? ActiveTaskDebtState.Converted : ActiveTaskDebtState.Claimed)
+                .Set(x => x.State, StateForClaimed(debt))
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
 
@@ -182,7 +182,14 @@ public class ActiveTaskDebtsController : ControllerBase
         return Ok(ApiResponse<object>.Ok(ToDto(saved!, me)));
     }
 
-    /// <summary>放回去：取消认领，状态退回 open。已经转出去的任务不动 —— 那是独立的一条活了。</summary>
+    /// <summary>
+    /// 放回去：取消认领。已经转出去的任务不动 —— 那是独立的一条活了。
+    ///
+    /// 状态退到哪一档要看有没有转出去过：转过就退回 converted，没转过才退回 open。
+    /// 无条件退回 open 会让界面出现「还没人管」和「已转成 1 条活」并排的自相矛盾
+    /// （2026-09-16 真机截图当场照出来的），而且 Claim 那边本来就是按这个判的 ——
+    /// 同一个判断两处不一致，就是 predicate-and-wiring-discipline 形状 3。
+    /// </summary>
     [HttpPost("{id}/release")]
     public async Task<IActionResult> Release(string id, CancellationToken ct = default)
     {
@@ -197,7 +204,7 @@ public class ActiveTaskDebtsController : ControllerBase
             Builders<ActiveTaskDebt>.Update
                 .Set(x => x.OwnerUserId, (string?)null)
                 .Set(x => x.OwnerUserName, (string?)null)
-                .Set(x => x.State, ActiveTaskDebtState.Open)
+                .Set(x => x.State, StateForUnclaimed(debt))
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: ct);
 
@@ -301,6 +308,18 @@ public class ActiveTaskDebtsController : ControllerBase
         if (!int.TryParse(m.Groups[2].Value, out var num) || num <= 0) return null;
         return (m.Groups[1].Value, num);
     }
+
+    /// <summary>
+    /// 有人认领时该落哪一档：转出去过就是 converted，没转过才是 claimed。
+    /// 和 <see cref="StateForUnclaimed"/> 是同一个判断的两侧，所以摆在一起 ——
+    /// 分开写两份，改一处忘一处就会出现「还没人管」配「已转成 1 条活」那种自相矛盾。
+    /// </summary>
+    internal static string StateForClaimed(ActiveTaskDebt d)
+        => d.ConvertedTaskIds.Count > 0 ? ActiveTaskDebtState.Converted : ActiveTaskDebtState.Claimed;
+
+    /// <summary>没人认领时该落哪一档：转出去过的活还在，所以仍是 converted。</summary>
+    internal static string StateForUnclaimed(ActiveTaskDebt d)
+        => d.ConvertedTaskIds.Count > 0 ? ActiveTaskDebtState.Converted : ActiveTaskDebtState.Open;
 
     internal static string? Clip(string? s, int max)
     {
