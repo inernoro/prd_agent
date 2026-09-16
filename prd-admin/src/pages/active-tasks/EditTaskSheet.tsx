@@ -7,7 +7,9 @@
  */
 import { useCallback, useState } from 'react';
 import { toast } from '@/lib/toast';
-import { updateActiveTask } from '@/services/real/activeTasks';
+import {
+  deleteActiveTask, dropActiveTask, promoteActiveTask, startActiveTask, updateActiveTask,
+} from '@/services/real/activeTasks';
 import type { ActiveTaskDto } from '@/services/contracts/activeTasks';
 import { TaskSheet } from './TaskSheet';
 import { DuePicker } from './DuePicker';
@@ -23,6 +25,21 @@ export function EditTaskSheet({ task, onClose, onSaved }: EditTaskSheetProps) {
   const [note, setNote] = useState(task.note ?? '');
   const [due, setDue] = useState<string | null>(task.dueAt ?? null);
   const [busy, setBusy] = useState(false);
+
+  /**
+   * 这一排操作在手机端是**唯一**入口。
+   * 390px 上一行塞不下「圆圈 + 标题 + 日期 + 开始/提前/删除」—— 2026-09-16 真机验收实测，
+   * 五条里四条标题被腰斩成「解决同一个项目部署为多个项…」，用户根本不知道那是什么任务。
+   * 桌面端那三个按钮是悬停才出来的，手机端没有悬停，当时写成了常驻，于是把标题挤没了。
+   * 现在手机端行上只留圆圈 + 标题 + 日期，操作收进这里（点行就进来）。
+   */
+  const act = useCallback(async (fn: () => Promise<{ success: boolean; error?: { message?: string } | null }>) => {
+    setBusy(true);
+    const res = await fn();
+    setBusy(false);
+    if (res.success) { onSaved(); onClose(); }
+    else toast.error(res.error?.message ?? '没能完成');
+  }, [onSaved, onClose]);
 
   const onSave = useCallback(async () => {
     if (!title.trim()) return;
@@ -63,6 +80,31 @@ export function EditTaskSheet({ task, onClose, onSaved }: EditTaskSheetProps) {
         onChange={(e) => setNote(e.target.value)}
       />
       {task.assignedByName && <span className="atb-sheet__hint">{task.assignedByName} 派的</span>}
+
+      {task.state === 'standby' && (
+        <div className="atb-rowops">
+          <button className="atb-link" disabled={busy} onClick={() => void act(() => startActiveTask(task.id))}>
+            现在就做
+          </button>
+          <button className="atb-link" disabled={busy} onClick={() => void act(() => promoteActiveTask(task.id))}>
+            排到最前
+          </button>
+          <button
+            className="atb-link atb-link--quiet"
+            disabled={busy}
+            onClick={() => void act(() => (task.elapsedSeconds > 0 ? dropActiveTask(task.id) : deleteActiveTask(task.id)))}
+          >
+            {task.elapsedSeconds > 0 ? '放下' : '删除'}
+          </button>
+        </div>
+      )}
+      {task.state === 'active' && (
+        <div className="atb-rowops">
+          <button className="atb-link atb-link--quiet" disabled={busy} onClick={() => void act(() => dropActiveTask(task.id))}>
+            放下这件
+          </button>
+        </div>
+      )}
     </TaskSheet>
   );
 }

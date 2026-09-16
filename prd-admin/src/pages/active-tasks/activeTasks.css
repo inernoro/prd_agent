@@ -810,6 +810,28 @@ select.atb-input { cursor: pointer; }
   .atb-done-row { padding: 13px 15px; gap: 12px; }
   .atb-list > * + *::before { left: 49px; }
   .atb-undo { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+  /*
+   * 手机端行上不摆操作 —— 2026-09-16 真机验收实测：390px 上一行塞「圆圈 + 标题 + 日期
+   * + 开始/提前/删除」，那三个按钮横占约 190px，标题只剩 150px，五条里四条被腰斩成
+   * 「解决同一个项目部署为多个项…」。桌面端它们是悬停才出来的，手机端没有悬停，
+   * 当时写成常驻，于是把这一屏最该看清的东西挤没了。
+   * 现在收进「点行进入」的详情浮层；正在做那行只留「卡住了」，它高频且唯一。
+   */
+  .atb-rowact:not(.atb-rowact--now) { display: none; }
+  .atb-rowact--now .atb-link--quiet { display: none; }
+  .atb-row__title { -webkit-line-clamp: 2; line-clamp: 2; }
+
+  /* 底部 TabBar 会压住列表最后一行（实测「实现网页托管能提问并产生内容」被盖住）*/
+  .atb-shell { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* 详情浮层里的那一排操作：手机端是唯一入口，桌面端是行尾按钮的等价路径 */
+.atb-rowops {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-top: 4px;
 }
 
 /* 关掉动效偏好：过渡全部去掉，状态直接切换 */

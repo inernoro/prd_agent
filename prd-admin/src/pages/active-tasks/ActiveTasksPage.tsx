@@ -280,7 +280,7 @@ export function ActiveTasksPage() {
       )}
 
       {now ? (
-        <div className="atb-rowact">
+        <div className="atb-rowact atb-rowact--now">
           <button
             className="atb-link"
             disabled={busy}
