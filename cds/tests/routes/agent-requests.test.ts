@@ -848,9 +848,15 @@ describe('Agent requests observability routes', () => {
       async bootstrapAndVerify() {
         await recoveryGate.promise;
       },
-      async stop() {},
+      // 真的清理失败——这条用例断言的是「清理确实失败时账本保持可重试」。
+      // 早前它的 stop 是空实现却仍然期待 503，那是因为旧代码在 resourceCleanupPending
+      // 分支提前返回、压根没调用过 stop：用例名写着 on stop failure，而 stop failure
+      // 从未发生，等于把「重试永远空转」这个缺陷反向锁死了。
+      async stop() {
+        throw new Error('cleanup still unavailable');
+      },
       has() {
-        return false;
+        return true;
       },
     } as unknown as AgentWorkspaceSessionRuntime;
     const restartedApp = express();
@@ -904,6 +910,94 @@ describe('Agent requests observability routes', () => {
       status: 'failed',
       resourceCleanupPending: true,
     });
+  });
+
+  it('lets a cleanup-pending session be reclaimed by retrying stop, without restarting CDS', async () => {
+    // 启动恢复一个进程只跑一次。它若因 Docker 还没就绪这类瞬时原因 bootstrap 失败，
+    // 就会把 OpenDesign 预约持久化成 resourceCleanupPending；此后若 stop 提前返回，
+    // 重试永远到不了真正的清理，孤儿容器占着容量直到重启 CDS——而响应还写着 retryable。
+    // 这条守卫钉住：pending 的会话重试 stop 必须真的去清，清成功就释放。
+    await startServer();
+    const { projectId, longToken } = authorizeSharedServiceProject();
+    const clientRequestId = 'request-restart-pending-retry-001';
+    const first = await request(server, 'POST', `/api/projects/${projectId}/agent-sessions`, longToken, {
+      runtime: 'fake',
+      clientRequestId,
+    });
+    expect(first.status).toBe(201);
+    const reservation = stateService.listAgentSessionReservations()
+      .find((candidate) => candidate.id === first.body.item.id)!;
+    stateService.upsertAgentSessionReservation({
+      ...reservation,
+      item: {
+        ...reservation.item,
+        runtime: 'open-design',
+        status: 'creating',
+        resourceCleanupPending: true,
+      },
+      updatedAt: new Date().toISOString(),
+    });
+    await stateService.flush();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+
+    stateService = new StateService(path.join(tmpDir, 'state.json'), tmpDir);
+    stateService.load();
+    vi.resetModules();
+    const { createRemoteHostsRouter: createFreshRemoteHostsRouter } = await import('../../src/routes/remote-hosts.js');
+    let stopCalls = 0;
+    let cleaned = false;
+    const workspaceRuntime = {
+      async bootstrapAndVerify() {
+        // 恢复那一刻 Docker 还没起来：整批预约被盖成 resourceCleanupPending
+        throw new Error('docker not ready during recovery');
+      },
+      async stop() {
+        stopCalls += 1;
+        cleaned = true;
+      },
+      has() {
+        return !cleaned;
+      },
+    } as unknown as AgentWorkspaceSessionRuntime;
+    const restartedApp = express();
+    restartedApp.use(express.json());
+    restartedApp.use('/api', createFreshRemoteHostsRouter({
+      stateService,
+      agentWorkspaceSessionRuntime: workspaceRuntime,
+    }));
+    await new Promise<void>((resolve) => {
+      server = restartedApp.listen(0, '127.0.0.1', () => resolve());
+    });
+
+    const stopped = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${first.body.item.id}/stop`,
+      longToken,
+      {},
+    );
+    expect(stopCalls).toBe(1);
+    expect(stopped.status).toBe(200);
+    expect(stopped.body.item).toMatchObject({
+      id: first.body.item.id,
+      status: 'stopped',
+      resourceCleanupPending: false,
+    });
+    const settled = stateService.listAgentSessionReservations()
+      .find((candidate) => candidate.id === first.body.item.id);
+    expect(settled?.item).toMatchObject({ status: 'stopped', resourceCleanupPending: false });
+
+    // 清干净之后再 stop 才配走幂等回放；pending 期间走回放等于拿 200 盖住孤儿容器。
+    const replay = await request(
+      server,
+      'POST',
+      `/api/projects/${projectId}/agent-sessions/${first.body.item.id}/stop`,
+      longToken,
+      {},
+    );
+    expect(replay.status).toBe(200);
+    expect(replay.body.idempotentReplay).toBe(true);
+    expect(stopCalls).toBe(1);
   });
 
   it('waits the real runtime bootstrap reaper before stopping a persisted session with no handle', async () => {

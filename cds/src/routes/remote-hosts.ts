@@ -2009,19 +2009,18 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
         return;
       }
       const persistedItem = persistedReservation.item;
-      if (persistedItem.resourceCleanupPending === true) {
-        res.status(503).json({
-          item: persistedItem,
-          error: {
-            code: 'workspace_cleanup_pending',
-            message: 'agent session resources have not been proven cleaned; retry stop after recovery',
-            retryable: true,
-          },
-          recovered: true,
-        });
-        return;
-      }
-      if (persistedItem.status === 'stopped') {
+      // resourceCleanupPending 这里**不能**提前返回。启动恢复一个进程只跑一次
+      // （agentSessionRecoveryPromise 在路由构造时创建），它若因为 Docker 还没就绪这类
+      // 瞬时原因 bootstrap 失败，就会把所有 OpenDesign 预约持久化成 pending；此处一旦
+      // 提前返回，之后每次 stop 都到不了下面真正的 agentWorkspaceSessionRuntime.stop，
+      // 而恢复又永远不会重跑——响应写着 retryable，重试却可证明是空转，容器一直占着容量，
+      // 只有重启 CDS 才解得开。所以这条路径直接落到下面的真实清理尝试：
+      // 成功就把 pending 清掉并回 200，仍然失败才回 503（那时候它才是一句真话）。
+      // stop() 走 docker 不依赖 bootstrap 状态，因此 Docker 恢复后这条重试是真能成功的。
+      //
+      // 幂等回放必须排除 pending：pending 意味着资源没被证明清干净，
+      // 这时回 200 idempotentReplay 等于拿一条谎言把孤儿容器盖过去。
+      if (persistedItem.status === 'stopped' && persistedItem.resourceCleanupPending !== true) {
         res.json({ item: persistedItem, idempotentReplay: true });
         return;
       }

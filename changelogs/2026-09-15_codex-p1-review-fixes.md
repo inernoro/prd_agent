@@ -152,3 +152,6 @@
 | fix | cds | `exec_cds.sh init` 的四个凭据键整组原子：本 PR 早前把主干的单次整文件替换（`cat > "$ENV_FILE"`，天然保证四个值是同一组）改成了四次独立 `env_upsert`，而目录写锁是各抢各放——两个 init 并发就能交错出「A 的用户名配 B 的密码与 JWT」这种谁都登不进去的组合。拆出假定已持锁的 `env_upsert_locked`（目录锁不可重入，重入即 fail-closed 死锁），备份与四次写入共用一次取锁，任一步失败即报错退出并保留备份 |
 | test | cds | 补两条守卫：`env_upsert_locked` 自己不得碰锁；init 的凭据段全程只取一次锁、四次写入全走已持锁那一版、备份在同一把锁内。把任一次退回自带抢锁的 `env_upsert` 当场变红 |
 | style | changelogs | 换掉一条更新记录里的 U+2194：该码点在 Unicode emoji-data 里标为 `Emoji=Yes`，撞 AGENTS.md 第 0 条（最高优先级，全系统禁 emoji），改用「对应」二字 |
+| fix | cds | 清理待处理的 OpenDesign 会话改为每次 stop 都真的重试清理：启动恢复一个进程只跑一次，它若因 Docker 还没就绪这类瞬时原因 bootstrap 失败，就把整批 OpenDesign 预约盖成 `resourceCleanupPending`；而 stop 路径在这个标志上提前返回，于是此后每次重试都到不了真正的 `agentWorkspaceSessionRuntime.stop`，恢复又永远不会重跑——响应写着 `retryable: true`，重试却可证明是空转，孤儿容器占着容量直到重启 CDS。删掉提前返回，落到下面本来就完整的清理尝试（真去 stop、用 `has()` 复核、成功清标志回 200、失败才留可重试账本）。`stop()` 走 docker 不依赖 bootstrap 状态，所以 Docker 恢复后这条重试是真能成功的 |
+| fix | cds | 幂等回放收紧为「已 stopped **且** 不在清理待处理」：pending 意味着资源没被证明清干净，这时回 200 `idempotentReplay` 等于拿一条谎言把孤儿容器盖过去 |
+| test | cds | 两条既有用例在反向锁死这个缺陷，按新契约重写并说明原委：一条的 mock `stop` 是空实现却期待 503（旧代码提前返回、stop 从没被调用过，用例名写着 on stop failure 而 stop failure 从未发生），改成让清理真的失败；另一条最后一行 `expect(stop).not.toHaveBeenCalled()` 字面要求「清理待处理时不许去清」，改为断言无论成败每次 stop 都必须真尝试过清理。新增一条守卫覆盖缺陷本体：瞬时失败后重试 stop 必须就地回收、不必重启 CDS，且清干净之后才配走幂等回放。退回提前返回当场变红 |

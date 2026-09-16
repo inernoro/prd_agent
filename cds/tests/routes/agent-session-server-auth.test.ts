@@ -206,7 +206,18 @@ describe('Agent sessions through the real basic-auth server', () => {
     expect((await request(server, 'GET', `${base}/stream`, headers('bearer'))).status).toBe(200);
   });
 
-  it.each([false, true])('reconciles cleanup on a second restart, repeated failure=%s', async (stillFails) => {
+  // 契约在 2026-09-16 变了一次，改的是「靠什么和解」而不是「失败要不要留账本」：
+  //
+  // 旧契约：恢复期 bootstrap 失败 -> 盖上 resourceCleanupPending -> 此后 stop 一律提前返回，
+  //         要等下一次**重启** CDS 才可能和解。旧用例最后一行 `stop).not.toHaveBeenCalled()`
+  //         把这一点写成了需求——而那正是缺陷：响应写着 retryable，重试却到不了清理，
+  //         孤儿容器一直占着容量。
+  // 新契约：pending 的会话每次 stop 都真的去清一次。清成功就地释放（同一个进程内，不必重启）；
+  //         仍然失败才留下可重试账本——那时 503 才是一句真话。
+  //
+  // 所以下面用 stop 本身的成败来驱动，而不是用 bootstrap 的成败：清理能不能做成，
+  // 取决于 docker 此刻通不通，不取决于恢复那一刻 bootstrap 有没有成功。
+  it.each([false, true])('reclaims a cleanup-pending session by retrying stop in-process, repeated failure=%s', async (stillFails) => {
     const id = `persisted-${crypto.randomUUID()}`;
     const now = new Date().toISOString();
     state.upsertAgentSessionReservation({ id, routerInstanceId: 'previous-process', projectId,
@@ -215,23 +226,32 @@ describe('Agent sessions through the real basic-auth server', () => {
     await state.flush();
     const bootstrap = vi.mocked(AgentWorkspaceSessionRuntime.prototype.bootstrapAndVerify);
     bootstrap.mockRejectedValueOnce(new AgentWorkspaceRuntimeError('workspace_cleanup_failed', 'synthetic cleanup failure', true));
+    // 第一次：恢复期 bootstrap 失败，且此刻清理确实也做不成 -> 503 + 账本留住
+    const stopSpy = vi.spyOn(AgentWorkspaceSessionRuntime.prototype, 'stop')
+      .mockRejectedValueOnce(new AgentWorkspaceRuntimeError('workspace_cleanup_failed', 'docker unreachable', true));
     const firstServer = await start();
     const first = await request(firstServer, 'POST', `/api/projects/${projectId}/agent-sessions/${id}/stop`, headers('bearer'));
     expect(first.status).toBe(503);
     expect(first.body.item).toMatchObject({ status: 'failed', resourceCleanupPending: true });
+    expect(stopSpy).toHaveBeenCalledOnce();
     await state.flush();
     const reloaded = new StateService(path.join(root, 'state.json'), root);
     reloaded.load();
     if (stillFails) bootstrap.mockRejectedValueOnce(new AgentWorkspaceRuntimeError('workspace_cleanup_failed', 'synthetic cleanup failure again', true));
     else bootstrap.mockResolvedValueOnce();
-    vi.spyOn(AgentWorkspaceSessionRuntime.prototype, 'stop').mockResolvedValue();
+    if (stillFails) {
+      stopSpy.mockRejectedValueOnce(new AgentWorkspaceRuntimeError('workspace_cleanup_failed', 'docker still unreachable', true));
+    } else {
+      stopSpy.mockResolvedValueOnce();
+    }
     const secondServer = await start(reloaded);
     const second = await request(secondServer, 'POST', `/api/projects/${projectId}/agent-sessions/${id}/stop`, headers('bearer'));
     expect(bootstrap).toHaveBeenCalledTimes(2);
     expect(second.status).toBe(stillFails ? 503 : 200);
     expect(second.body.item).toMatchObject({ status: stillFails ? 'failed' : 'stopped', resourceCleanupPending: stillFails });
     expect(reloaded.listAgentSessionReservations().find((x) => x.id === id)?.item.resourceCleanupPending).toBe(stillFails);
-    if (stillFails) expect(AgentWorkspaceSessionRuntime.prototype.stop).not.toHaveBeenCalled();
-    else expect(AgentWorkspaceSessionRuntime.prototype.stop).toHaveBeenCalledOnce();
+    // 关键：无论成败，pending 的会话每次 stop 都必须真的尝试过清理。
+    // 退回「pending 就提前返回」的写法，这一条立刻变红。
+    expect(stopSpy).toHaveBeenCalledTimes(2);
   });
 });
