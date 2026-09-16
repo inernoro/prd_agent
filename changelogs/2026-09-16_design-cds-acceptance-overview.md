@@ -2,3 +2,4 @@
 | rule | platform | 新增 doc-authorial-voice：doc 与规则的主语必须是我们自己，禁止把提需求的人写成「用户」再转述其言论；AGENTS.md #10 加同名条款 |
 | docs | cds | design.cds.acceptance-overview 按该规则改写，去掉转述体 |
 | rule | platform | 转述体接进 doc 可读性棘轮（第七项）：doc/ 里「用户当时的原话是……」这类写法只许降不许升，report 类按规则豁免，存量 53 处作基线不批量改 |
+| docs | cds | design.cds.acceptance-overview 与代码对照审查：修正紧凑态渲染内容、首屏范围说明、守卫覆盖三处不实描述；新记 3 笔债务（首屏不交代统计范围、紧凑态没有判断句、三条口径是约定不是闸门） |
