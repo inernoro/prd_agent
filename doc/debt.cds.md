@@ -1664,6 +1664,16 @@ mdimp 仓库切到 `dbScope=per-branch` 并下线脚本，属跨仓库迁移，�
 **绕过办法（当前）**：`self update` 之后看 `self status` 的 `restartStatus`，
 不是 completed 就再跑一次 `self restart`，然后等三分钟再验。
 
+**已处理（同日，根因与上面的猜测不同）**：对着时间线一算，两次「没换进程」其实都在
+更新记录之后整整 5 分钟才换——不是派生失败，是重启前那道「等在途部署排空」的闸
+（最多 5 分钟）在等当时正在构建的七个部署，而这段等待对谁都不可见：SSE 没有事件、
+cdscli 读流 30 秒没动静就断开并按 healthz 200 报「restarted: true」（旧进程照样 200）、
+状态接口只说 incomplete、记录早写成了 success。手动 `self restart` 也只是排进了同一道闸。
+现在：等待做成显式状态（在等哪几个部署、等了多久、最多等多久），排空每 10 秒推一条
+SSE 进度，`self status` 多出 restartWait 字段、维护页摆成横幅，restartStatus 的判定
+收成唯一一个函数，cdscli 只在 restartStatus=completed 后才报重启完成、incomplete 如实
+报失败。仍留的取舍：排空超时后照常重启，被打断的部署由启动收尸收成失败，需重新触发。
+
 ### 追加：重启打断的部署没人收尸（2026-09-16，自检第一轮抓到）
 
 CDS 重启那一刻有七个部署处于 building，它们的心跳全停在重启时刻，二十多分钟后状态

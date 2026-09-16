@@ -7,3 +7,5 @@
 | docs | cds | 债务台账追加：self-update 两次「重启」没换进程、self restart 能换但要两三分钟且状态看不出正在换 |
 | security | cds | 自检端点不再免登录：只认「本机回环 + 进程内一次性令牌」，令牌不落盘不进日志、只发给自检端点自己的地址，从外面打一律 401 不吐一个字；探测器与发现器在进程内自动带令牌 |
 | fix | cds | 启动收尸：心跳早于本进程启动时刻的在途部署一律收敛为失败（可重试），不再等 15 分钟周期收割；重启打断的部署不会再挂着 building |
+| fix | cds | 自更新「重启没换进程」根因是重启前等在途部署排空（最多 5 分钟）全程不可见：排空每 10 秒推 SSE 进度，self-status 新增 restartWait（在等谁、等了多久、最多等多久），restartStatus 判定收成唯一函数，维护页摆出等待横幅 |
+| fix | cdscli | self update / self restart 只在 restartStatus=completed 后才报 restarted，不再靠 healthz 200（旧进程照样 200）；incomplete 如实报失败并给出下一步 |

@@ -3424,7 +3424,9 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
     terminal_error: dict[str, Any] | None = None
     correlation: dict[str, str] = {"agentSessionId": _AGENT_SESSION_ID}
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # 读超时 60s：服务端在等在途部署排空时每 10s 推一条 drain-deploys 进度，
+        # 所以正常情况下流不会安静超过 60s；真安静了就是断了，下面按状态接口收尾。
+        with urllib.request.urlopen(req, timeout=60) as resp:
             request_id = resp.headers.get("X-CDS-Request-Id")
             operation_id = resp.headers.get("X-CDS-Operation-Id")
             if request_id:
@@ -3466,20 +3468,45 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
     if terminal_error is not None:
         message = str(terminal_error.get("message") or terminal_error.get("code") or f"{path} 被服务端拒绝")
         die(message, code=2, extra={"events": events, **correlation})
-    if not no_wait:
-        # Poll healthz until CDS is back (max 60s)
-        for _ in range(12):
-            time.sleep(5)
-            # Use the lightweight probe for post-restart readiness. The full
-            # /healthz intentionally checks Docker and can exceed 5s while CDS
-            # is building containers, which makes self-update report a false
-            # outage even when the control plane is already serving traffic.
-            status, _b, _h = _request("GET", "/healthz?lightweight=1", timeout=10)
-            if status == 200:
-                break
-        else:
-            die("CDS 未能在 60s 内恢复", code=3, extra={"events": events})
-    ok({"events": events, "restarted": not no_wait, **correlation}, note=note)
+    if no_wait:
+        ok({"events": events, "restarted": False, "restartStatus": "not-waited", **correlation}, note=note)
+        return
+    # 等到「进程真的换了」才算重启完成。2026-09-16 之前这里只探 healthz 200 就报
+    # restarted:true——旧进程照样能回 200，两次自更新都被报成完成，其实还在等
+    # 在途部署排空（最多 5 分钟）。现在以 /api/self-status 的 restartStatus 为准：
+    #   pending    → 还在等（restartWait 里写着在等谁、等了多久），继续轮询
+    #   completed  → 新进程已起来（pidStartedAt 晚于更新时刻）
+    #   incomplete → 记录成功但进程没换，如实报失败
+    deadline = time.time() + 9 * 60
+    last_wait_msg = None
+    wait_log: list[str] = []
+    final_status = None
+    while time.time() < deadline:
+        time.sleep(5)
+        status_code, body, _h = _request("GET", "/api/self-status", timeout=10, fatal_network_errors=False)
+        if status_code != 200 or not isinstance(body, dict):
+            # 换进程那几秒会 502 / 连接失败，属正常，继续等
+            continue
+        rs = body.get("restartStatus")
+        wait = body.get("restartWait") or None
+        if isinstance(wait, dict) and wait.get("message") and wait.get("message") != last_wait_msg:
+            last_wait_msg = str(wait.get("message"))
+            wait_log.append(last_wait_msg)
+            sys.stderr.write(f"[self] {last_wait_msg}\n")
+        if rs == "completed":
+            final_status = rs
+            break
+        if rs == "incomplete":
+            final_status = rs
+            break
+    if final_status == "completed":
+        ok({"events": events, "restarted": True, "restartStatus": "completed", "restartWaitLog": wait_log, **correlation}, note=note)
+        return
+    if final_status == "incomplete":
+        die("CDS 记录了更新成功，但进程没有换：新代码没在跑。看 self status 的 restartWait / 守护进程错误日志",
+            code=3, extra={"events": events, "restartStatus": "incomplete", "restartWaitLog": wait_log, **correlation})
+    die("等了 9 分钟 CDS 还没确认换进程（restartStatus 仍非 completed）",
+        code=3, extra={"events": events, "restartStatus": final_status or "unknown", "restartWaitLog": wait_log, **correlation})
 
 
 def cmd_self_update(args: argparse.Namespace) -> None:
