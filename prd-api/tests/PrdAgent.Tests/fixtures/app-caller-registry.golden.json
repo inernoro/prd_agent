@@ -1,5 +1,17 @@
 [
   {
+    "code": "active-tasks.absorb::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
+    "code": "active-tasks.import::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "admin.platforms.available-models::chat",
     "modelTypes": [
       "chat"

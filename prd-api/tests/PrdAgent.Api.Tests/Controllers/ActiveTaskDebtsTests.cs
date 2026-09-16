@@ -111,8 +111,8 @@ public class ActiveTaskDebtsTests
     [Fact]
     public void 同步工具走读档_读债务这件事不该只有管理档看得见()
     {
-        var sync = Assert.Single(McpBuiltinTools.All.Where(t => t.Name == "map_debt_sync"));
-        var list = Assert.Single(McpBuiltinTools.All.Where(t => t.Name == "map_debt_list"));
+        var sync = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_sync");
+        var list = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_list");
 
         Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, sync.RequiredScope);
         Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, list.RequiredScope);
