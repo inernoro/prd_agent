@@ -118,7 +118,7 @@
 | refactor | prd-api | 重传与整包发布两条路径一并接到同一判据上，行为不变（两者的新 key 都在新版本目录下，本来就不保留旧键），避免三份近似判据各自漂移 |
 | test | prd-api | 新增孤儿键守卫八条：单文件换入口、局部换入口保留 sidecar、自包含重写回收全部旁挂、整包换版、两条路径共用同一对象时不得删、空键不入队，外加一条接线守卫（三条发布路径必须都走共享判据）与一条真跑 Mongo 的行为守卫（单文件站点发布后旧入口对象必须真的被删）；改回分支写法后接线守卫与行为守卫当场变红 |
 | perf | prd-api | 版本面板的查询补上索引 `idx_hosted_site_revisions_site_created`（`{SiteId:1, CreatedAt:-1}`）：`hosted_site_revisions` 是全局一张表，站点越多它越长，而唯一那条回退幂等索引带 partial filter、第二段也不是 CreatedAt，服务不了这个排序——没有本索引，打开任意站点的版本面板都是整表扫 + 内存排序。索引在 MongoDbContext 与 DBA 清单 `scripts/mongodb-indexes.js` 两处同时登记（前者从不执行，只在后者生效） |
-| test | prd-api | 新增一条守卫把查询形状与索引键钉在一起（按 SiteId 过滤、按 CreatedAt 倒序 ↔ 清单里 `{SiteId:1, CreatedAt:-1}`）；从清单里撤掉该索引，这条与既有的索引清单覆盖守卫双双变红 |
+| test | prd-api | 新增一条守卫把查询形状与索引键钉在一起（按 SiteId 过滤、按 CreatedAt 倒序 对应 清单里 `{SiteId:1, CreatedAt:-1}`）；从清单里撤掉该索引，这条与既有的索引清单覆盖守卫双双变红 |
 | fix | prd-admin | 网页托管的百宝箱条目补回 `wip: true`：两份计划都写着没验收（设计生成的产物质量与最终盲验未通过、OpenDesign 六步全部未验收），按 navigation-registry 的注册流程，百宝箱工具默认带 wip，规则 #8 真人验收通过后才删。注释里写清了它管得到什么——`ToolboxItem.wip` 目前没有任何渲染方，是登记账不是用户可见标记；真正渲染「施工中」的 navRegistry 那条 `/web-pages` 是主干既有的正式导航项，本 PR 不动它 |
 | docs | prd-agent | 台账更正一条自己的错判：上一轮把补 wip 的理由写成「不挂标等于替用户宣布能用」，查清后不成立（该字段无渲染方）；同时记下 `ToolboxItem.wip` 是只建了一半的链路（形状 2），十几条内置工具挂着它却渲染不出来 |
 | test | prd-admin | 新增一条 wip 守卫并在注释里写明何时可以连同字段一起删；撤掉 `wip: true` 当场变红 |
@@ -149,3 +149,6 @@
 | fix | cds | 凭据轮换不再要求就绪声明等于它的深检路径：同一个 `cds.readiness-path` 被两个要求相反的消费者共用——容器就绪门控要匿名只看状态码，轮换要带密钥读逐组件明细判 gateway-mongo。上一版用 `contract_mismatch` 把两件事焊死，于是就绪声明一改轮换就炸。改为认得的形态按形态取自己那条深检路径；认不得的形态没有深检契约，仍只打它声明的那条到 200 为止 |
 | test | cds | 补守卫：serving 声明脱敏就绪路径时，轮换深检仍必须打带密钥的 `/gw/v1/readyz`。原先 `contract_mismatch` 那条分支没有任何测试引用，是个没守卫的分支 |
 | test | prd-api | 就绪契约守卫改成断言新不变量：就绪声明必须指向匿名那条且不得指回 readyz；脱敏路由必须存在、必须按状态码表态、且不得端出组件明细；白名单必须精确匹配（退化成前缀放行会让 401 重新冒充就绪）。三处分别撤回都当场变红 |
+| fix | cds | `exec_cds.sh init` 的四个凭据键整组原子：本 PR 早前把主干的单次整文件替换（`cat > "$ENV_FILE"`，天然保证四个值是同一组）改成了四次独立 `env_upsert`，而目录写锁是各抢各放——两个 init 并发就能交错出「A 的用户名配 B 的密码与 JWT」这种谁都登不进去的组合。拆出假定已持锁的 `env_upsert_locked`（目录锁不可重入，重入即 fail-closed 死锁），备份与四次写入共用一次取锁，任一步失败即报错退出并保留备份 |
+| test | cds | 补两条守卫：`env_upsert_locked` 自己不得碰锁；init 的凭据段全程只取一次锁、四次写入全走已持锁那一版、备份在同一把锁内。把任一次退回自带抢锁的 `env_upsert` 当场变红 |
+| style | changelogs | 换掉一条更新记录里的 U+2194：该码点在 Unicode emoji-data 里标为 `Emoji=Yes`，撞 AGENTS.md 第 0 条（最高优先级，全系统禁 emoji），改用「对应」二字 |

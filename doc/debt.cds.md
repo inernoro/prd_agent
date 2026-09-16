@@ -2075,3 +2075,19 @@ PATCH 写入了新正文与新缓存，回填的重命名就会把旧字节盖�
 按协作规则 §5.5 不在当前 PR 展开。
 
 **做完算数的判据**：在桶 A 归档一份报告，把配置换到桶 B，清掉本地读缓存后仍能读出正文。
+
+## `exec_cds.sh init` 的 MongoDB 阶段仍是逐键各抢各放锁（2026-09-16，B 类）
+
+修凭据那组整组原子性时顺带扫出来：`init_cmd` 后半段的 MongoDB 阶段有 5 个
+`env_upsert`（`CDS_MONGO_URI` / `CDS_MONGO_DB` / `CDS_STORAGE_MODE` /
+`CDS_AUTH_BACKEND` / `CDS_MONGO_CONTAINER`），每个各抢各放一次写锁，
+两个 init 并发时同样可以交错。
+
+**为什么不在那个 PR 里一起修**：这 5 条主干上本来就是这么写的，不是那次改动引入的回归
+（凭据那组是——主干原本是一次整文件替换）。而且风险不是一个量级：这 5 个值是确定性的
+（固定 URI 与端口、字面量 `mongo-split` / `mongo`、按规则拼的容器名），两个 init 并发
+写出来基本是同一组；凭据那组每次 init 都重新随机，交错才会产生真正无法登录的混合态。
+
+按 AGENTS.md 5.5 记为 B 类。要修的话现在很便宜：`env_upsert_locked` 这个助手已经存在，
+照凭据段的写法把这 5 条包进一次 `env_lock_acquire` / `env_lock_release` 即可，
+并把 `exec-cds-env-lock.test.ts` 里那条守卫的切片从「凭据段」放宽到整个 `init_cmd`。

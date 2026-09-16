@@ -25,6 +25,9 @@ function roundTrip(value: string): string {
   const envFile = path.join(workdir, `probe-${Math.random().toString(36).slice(2)}.env`);
   const program = [
     'set -u',
+    // env_upsert 现在是薄壳（抢锁 -> env_upsert_locked -> 放锁），读改写的本体在后者，
+    // 两个都要取出来，否则 eval 出的 env_upsert 会调到一个不存在的函数。
+    `eval "$(sed -n '/^env_upsert_locked() {/,/^}/p' "$1")"`,
     `eval "$(sed -n '/^env_upsert() {/,/^}/p' "$1")"`,
     `eval "$(sed -n '/^read_env_value() {/,/^}/p' "$1")"`,
     // 锁不是本条判据，用空实现顶掉。

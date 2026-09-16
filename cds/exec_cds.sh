@@ -166,15 +166,16 @@ iso_offset_seconds() {
     || python3 -c "import datetime;print((datetime.datetime.utcnow()+datetime.timedelta(seconds=${offset})).strftime('%Y-%m-%dT%H:%M:%SZ'))"
 }
 
-# Atomically upsert or remove a `export KEY="value"` line in .cds.env.
-# Usage: env_upsert KEY VALUE   (VALUE="" removes the line)
-env_upsert() {
+# 单键读改写，**假定调用方已持有 .cds.env 写锁**。
+# 单独存在是因为目录锁不可重入（已存在即 fail-closed），而「一次 init 写四个键」
+# 这类改动必须整组原子：逐键各抢各放的话，两个 init 并发就能交错出
+# 「A 的用户名配 B 的密码与 JWT」这种谁也登不进去的组合。
+# 只写一个键时用下面的 env_upsert，它负责抢锁与放锁。
+env_upsert_locked() {
   local key="$1" value="$2"
   local tmp=""
   local rc=0
-  env_lock_acquire || return 1
   if ! tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"; then
-    env_lock_release
     return 1
   fi
   chmod 600 "$tmp"
@@ -205,6 +206,15 @@ env_upsert() {
     python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open((os.path.dirname(sys.argv[1]) or "."), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE" || rc=$?
   fi
   rm -f "$tmp"
+  return "$rc"
+}
+
+# Atomically upsert or remove a `export KEY="value"` line in .cds.env.
+# Usage: env_upsert KEY VALUE   (VALUE="" removes the line)
+env_upsert() {
+  local rc=0
+  env_lock_acquire || return 1
+  env_upsert_locked "$1" "$2" || rc=$?
   env_lock_release
   return "$rc"
 }
@@ -2139,16 +2149,27 @@ init_cmd() {
     exit 0
   fi
 
+  # 逐键合并而不是整文件重写，是为了保留 CDS_SECRET_KEY 与其他既有系统配置——
+  # 重跑 init 绝不能让已密封状态失去解密根密钥。
+  #
+  # 但「逐键」不等于可以逐键各抢各放锁：主干原来的整文件替换天然保证四个值是**同一组**，
+  # 换成四次独立加解锁之后，两个 init 并发就能交错成「A 的用户名配 B 的密码与 JWT」，
+  # 谁都登不进去。所以整段（备份 + 四次写入）只取一次锁，用假定已持锁的 env_upsert_locked。
+  env_lock_acquire || { err "获取 .cds.env 写锁失败，已取消初始化"; exit 1; }
+  local init_rc=0
   if [ -f "$ENV_FILE" ]; then
     local init_backup="${ENV_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
-    env_backup_secure "$ENV_FILE" "$init_backup"
+    env_backup_secure "$ENV_FILE" "$init_backup" || init_rc=$?
   fi
-  # 逐键原子合并，保留 CDS_SECRET_KEY 与其他既有系统配置。每次更新都走
-  # Node 共用的跨进程写锁；重跑 init 绝不能让已密封状态失去解密根密钥。
-  env_upsert CDS_USERNAME "$new_user"
-  env_upsert CDS_PASSWORD "$new_pass"
-  env_upsert CDS_JWT_SECRET "$new_jwt"
-  env_upsert CDS_ROOT_DOMAINS "$new_doms"
+  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_USERNAME "$new_user" || init_rc=$?; }
+  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_PASSWORD "$new_pass" || init_rc=$?; }
+  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_JWT_SECRET "$new_jwt" || init_rc=$?; }
+  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_ROOT_DOMAINS "$new_doms" || init_rc=$?; }
+  env_lock_release
+  if [ "$init_rc" -ne 0 ]; then
+    err "写入 $ENV_FILE 失败（已保留备份），请检查后重试"
+    exit 1
+  fi
   ok "已写入 $ENV_FILE"
 
   # ── Phase 3: MongoDB (默认，持久化所有 CDS state) ──────────────────
