@@ -3496,14 +3496,15 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
         if rs == "completed":
             final_status = rs
             break
-        if rs == "incomplete":
-            final_status = rs
-            break
+        # incomplete 不是终态：旧版服务端在「等在途部署排空」的那几分钟里就报 incomplete，
+        # 新版在等待时报 pending。两种都可能在几分钟后翻成 completed，所以等到 deadline
+        # 仍不是 completed 才判失败，不在第一眼看到 incomplete 时就下结论。
+        final_status = rs
     if final_status == "completed":
         ok({"events": events, "restarted": True, "restartStatus": "completed", "restartWaitLog": wait_log, **correlation}, note=note)
         return
     if final_status == "incomplete":
-        die("CDS 记录了更新成功，但进程没有换：新代码没在跑。看 self status 的 restartWait / 守护进程错误日志",
+        die("等了 9 分钟，CDS 记录了更新成功但进程一直没换：新代码没在跑。看 self status 的 restartWait / 守护进程错误日志",
             code=3, extra={"events": events, "restartStatus": "incomplete", "restartWaitLog": wait_log, **correlation})
     die("等了 9 分钟 CDS 还没确认换进程（restartStatus 仍非 completed）",
         code=3, extra={"events": events, "restartStatus": final_status or "unknown", "restartWaitLog": wait_log, **correlation})
