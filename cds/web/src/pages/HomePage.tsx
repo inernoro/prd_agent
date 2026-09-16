@@ -1,10 +1,12 @@
 /*
  * HomePage — CDS 落地页(2026-07-02 由"单屏 demo"升级为多分区滚动叙事)。
  *
- * 结构对标 Railway 落地页骨架:
- *   sticky nav → hero(文案 + 实况 board) → 分隔字条 → Workflow 三步
- *   → 产品事实带 → Features bento → Observability 实况终端
- *   → Final CTA → 页脚
+ * 结构（2026-09-16 第二屏起改为滚动叙事）:
+ *   sticky nav → hero(文案 + 实况 board)
+ *   → Branchline 叙事区:一条分支线贯穿、镜头沿线推进,五章 Push / Build / Preview / Observe / Ship
+ *     各发生一件事(脉冲、容器弹出、域名转绿、集群抬升、收束),文案 sticky 在视口里随进度淡入淡出
+ *   → 页脚
+ * 参照 Corn Revolution 的连续场景语法:没有"屏",只有镜头在一个东西上的停留。
  *
  * 纪律:内容全部来自 CDS 已文档化的真实能力(不编造用户数/star 数);
  * 品牌橙只用于"活着的东西"(状态点/数据流/光束);所有滚动显现与打字动效
@@ -13,7 +15,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import ShapeGrid from '@/components/effects/ShapeGrid';
-import { ShinyText } from '@/components/effects/ShinyText';
+import BranchlineScene from '@/components/effects/BranchlineScene';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
@@ -24,30 +26,6 @@ const FEED_LINES = [
   'build api :5000 · admin :5500 ......  ok',
   'container.observed · health checks passing',
   'preview live · auth-flow.example.test',
-];
-
-/* Observability 段的实况部署终端脚本(节选自真实构建输出的形态)。 */
-const OBS_LINES: Array<{ ts: string; text: string; kind?: 'ok' | 'url' }> = [
-  { ts: '12:04:01', text: 'git pull origin feature/auth-flow · 3 commits' },
-  { ts: '12:04:03', text: 'detect stack · .NET 8 + React + mongo + redis' },
-  { ts: '12:04:04', text: 'build profile · api :5000 · admin :5500' },
-  { ts: '12:04:29', text: 'docker build api ............ done (25.1s)', kind: 'ok' },
-  { ts: '12:04:47', text: 'docker build admin .......... done (17.4s)', kind: 'ok' },
-  { ts: '12:04:52', text: 'network up · mongo replica · redis cache' },
-  { ts: '12:05:08', text: 'containers started · 4/4 running' },
-  { ts: '12:05:20', text: 'health checks ............... passing', kind: 'ok' },
-  { ts: '12:05:21', text: 'check-run → GitHub PR · CDS Deploy: success', kind: 'ok' },
-  { ts: '12:05:22', text: 'auth-flow.example.test', kind: 'url' },
-];
-
-/* Bento A 格的迷你构建日志。 */
-const BUILD_LINES = [
-  '$ cds build feature/auth-flow',
-  'detect stack · .NET 8 + React',
-  'restore · compile · publish ... ok',
-  'vite build · 2.31s · 412 modules',
-  'image api:auth-flow · 214 MB',
-  'health probe :5000/health · 200',
 ];
 
 const BranchIcon = (props: { className?: string }) => (
@@ -88,40 +66,6 @@ function useRevealOnScroll(): void {
   }, []);
 }
 
-/*
- * 进入视口后逐行"打出"日志:每 stepMs 一行,播完 hold 若干拍后清空重播。
- * reduced-motion:直接静态全量渲染,不循环。
- */
-function useTypedLines(total: number, stepMs: number, holdTicks: number): [React.RefObject<HTMLDivElement>, number] {
-  const ref = useRef<HTMLDivElement>(null);
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return undefined;
-    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      setTick(total);
-      return undefined;
-    }
-    let timer: number | undefined;
-    const io = new IntersectionObserver(
-      (entries) => {
-        if (!entries[0]?.isIntersecting) return;
-        io.disconnect();
-        timer = window.setInterval(() => setTick((t) => t + 1), stepMs);
-      },
-      { threshold: 0.3 },
-    );
-    io.observe(el);
-    return () => {
-      io.disconnect();
-      if (timer !== undefined) window.clearInterval(timer);
-    };
-  }, [total, stepMs]);
-  const cycle = total + holdTicks;
-  const shown = tick <= total ? tick : Math.min(tick % cycle, total);
-  return [ref, shown];
-}
-
 /* 卡片鼠标跟随高光:相对坐标写入 --mx/--my(直接改 style,不走 setState)。 */
 function trackPointer(event: React.PointerEvent<HTMLElement>): void {
   const rect = event.currentTarget.getBoundingClientRect();
@@ -129,44 +73,103 @@ function trackPointer(event: React.PointerEvent<HTMLElement>): void {
   event.currentTarget.style.setProperty('--my', `${event.clientY - rect.top}px`);
 }
 
-function DeployTerminal(): JSX.Element {
-  const [ref, shown] = useTypedLines(OBS_LINES.length, 420, 14);
-  const done = shown === OBS_LINES.length;
-  return (
-    <div ref={ref} className={`cdsh-term${done ? ' is-done' : ''}`}>
-      <div className="cdsh-term-head">
-        <span className="cdsh-term-dots" aria-hidden><i /><i /><i /></span>
-        <span className="cdsh-mono">cds · deploy feature/auth-flow</span>
-        <span className="cdsh-live" style={{ marginLeft: 'auto' }}><span className="cdsh-pulse" />live</span>
+/*
+ * 叙事区五章。顺序就是真实流程(push → build → preview → observe → ship),
+ * 所以进度轨上的编号是信息不是装饰。id 沿用顶栏锚点(workflow / features / observability)。
+ */
+const STORY: Array<{
+  id: string; rail: string; eyebrow: string; side: 'left' | 'right' | 'center';
+  title: JSX.Element; sub: string; extra?: JSX.Element;
+}> = [
+  {
+    id: 'workflow', rail: '01 Push', eyebrow: '01 · Push', side: 'left',
+    title: <>一次 push，<br />控制面就<em>醒了</em>。</>,
+    sub: 'GitHub webhook 即刻唤醒 CDS。不用登录面板，不用点部署——那道亮光就是你的提交在往前跑。',
+    extra: (
+      <div className="cdsh-ch-term cdsh-mono">
+        <span className="is-cmd">git push origin feature/auth-flow</span>
+        <span className="is-ok"><CheckIcon />webhook received · 38 ms</span>
       </div>
-      <div className="cdsh-term-body cdsh-mono" role="log">
-        {OBS_LINES.slice(0, shown).map((line, idx) => (
-          <div key={idx} className={`cdsh-term-line${line.kind ? ` is-${line.kind}` : ''}`}>
-            <span className="cdsh-term-ts">{line.ts}</span>
-            {line.kind === 'url' ? (
-              <span className="cdsh-term-url">
-                <span className="cdsh-pulse" />
-                {line.text}
-              </span>
-            ) : (
-              <span>{line.text}</span>
-            )}
-          </div>
-        ))}
-        {!done ? <span className="cdsh-caret" aria-hidden /> : null}
+    ),
+  },
+  {
+    id: 'features', rail: '02 Build', eyebrow: '02 · Build', side: 'left',
+    title: <>容器在分支旁边<br /><em>长出来</em>。</>,
+    sub: '自动识别技术栈、构建镜像，一套隔离的运行时围着这次提交成形：api、admin、mongo、redis，各归各位。',
+    extra: (
+      <div className="cdsh-ch-term cdsh-mono">
+        <span>detect stack · .NET 8 + React</span>
+        <span>build api :5000 · admin :5500 … ok</span>
+        <span className="is-ok"><CheckIcon />health checks passing</span>
       </div>
-    </div>
-  );
-}
+    ),
+  },
+  {
+    id: 'preview', rail: '03 Preview', eyebrow: '03 · Preview', side: 'left',
+    title: <>分钟级，一个只属于<br />这条分支的<em>域名</em>。</>,
+    sub: '健康检查转绿的那一刻，预览地址就能打开；构建状态同时写回 PR，评论区拿到直达链。',
+    extra: (
+      <div className="cdsh-ch-chips">
+        <span className="cdsh-ch-chip cdsh-mono"><i /><b>auth-flow.example.test</b>ready</span>
+        <span className="cdsh-ch-chip cdsh-mono">CDS Deploy · <b>passed</b></span>
+      </div>
+    ),
+  },
+  {
+    id: 'observability', rail: '04 Observe', eyebrow: '04 · Observe', side: 'right',
+    title: <>退后一步，<br />整个集群都在<em>眼前</em>。</>,
+    sub: '每条分支一套独立运行时，互不污染。构建日志、容器健康、Agent 的每次调用回执——全部实时可读，不用翻服务器。',
+    extra: (
+      <div className="cdsh-ch-chips">
+        <span className="cdsh-ch-chip cdsh-mono"><b>1</b>分支<b>1</b>域名</span>
+        <span className="cdsh-ch-chip cdsh-mono"><b>8</b>种技术栈自动识别</span>
+        <span className="cdsh-ch-chip cdsh-mono"><i />health checks live</span>
+      </div>
+    ),
+  },
+  {
+    id: 'ship', rail: '05 Ship', eyebrow: '05 · Ship', side: 'center',
+    title: <>Every branch,<br />ready to <em>ship</em>.</>,
+    sub: '打开控制台，把下一个分支变成一套在线环境。',
+  },
+];
 
-function BuildLogCell(): JSX.Element {
-  const [ref, shown] = useTypedLines(BUILD_LINES.length, 700, 6);
+function BranchlineStory({ onEnter }: { onEnter: () => void }): JSX.Element {
+  const rootRef = useRef<HTMLDivElement>(null);
   return (
-    <div ref={ref} className="cdsh-bento-log cdsh-mono">
-      {BUILD_LINES.slice(0, shown).map((line, idx) => (
-        <div key={idx} className={`cdsh-term-line${idx === 0 ? ' is-cmd' : ''}`}>{line}</div>
-      ))}
-      {shown < BUILD_LINES.length ? <span className="cdsh-caret" aria-hidden /> : null}
+    <div className="cdsh-story" ref={rootRef}>
+      <div className="cdsh-stage">
+        <BranchlineScene rootRef={rootRef} />
+        <div className="cdsh-stage-vignette" aria-hidden />
+        <nav className="cdsh-rail" aria-label="章节">
+          {STORY.map((c, i) => (
+            <a key={c.id} href={`#${c.id}`} data-cdsh-rail={i}><i /><span>{c.rail}</span></a>
+          ))}
+        </nav>
+      </div>
+      <div className="cdsh-chapters">
+        {STORY.map((c) => (
+          <section key={c.id} id={c.id} className="cdsh-ch" data-side={c.side}>
+            <div className="cdsh-ch-pin">
+              <div className="cdsh-ch-copy" data-cdsh-chapter>
+                <span className="cdsh-ch-eyebrow cdsh-mono">{c.eyebrow}</span>
+                <h2 className="cdsh-ch-title">{c.title}</h2>
+                <p className="cdsh-ch-sub">{c.sub}</p>
+                {c.extra}
+                {c.id === 'ship' ? (
+                  <div className="cdsh-cta cdsh-ch-cta">
+                    <button className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" type="button" onClick={onEnter}>
+                      Enter Console
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
+                    </button>
+                    <button className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" type="button" onClick={onEnter}>System Access</button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 }
@@ -467,172 +470,9 @@ export function HomePage(): JSX.Element {
           </div>
         </section>
 
-        {/* 分隔字条 — hero 蜂窝渐隐区与叙事区的视觉焊缝 */}
-        <section className="cdsh-strip cdsh-rise" style={{ animationDelay: '.7s' }}>
-          <p>One control plane for the whole stack</p>
-        </section>
-
-        {/* WORKFLOW — Push. Build. Preview. */}
-        <section id="workflow" className="cdsh-section cdsh-reveal">
-          <div className="cdsh-sec-head">
-            <span className="cdsh-sec-eyebrow">Workflow</span>
-            <h2 className="cdsh-sec-title">Push. Build. Preview.</h2>
-            <p className="cdsh-sec-sub">从 git push 到可访问的在线环境，全程无人值守。</p>
-          </div>
-          <div className="cdsh-flow">
-            <div className="cdsh-flow-card cdsh-reveal" style={{ transitionDelay: '0ms' }}>
-              <span className="cdsh-flow-badge cdsh-mono">01</span>
-              <h3>Push</h3>
-              <p>推一个分支，GitHub webhook 即刻唤醒 CDS，无需任何手动操作。</p>
-              <div className="cdsh-flow-visual cdsh-mono">
-                <div className="cdsh-term-line is-cmd">$ git push origin feature/auth-flow</div>
-                <span className="cdsh-flow-chip">
-                  <CheckIcon />
-                  webhook received
-                </span>
-              </div>
-            </div>
-            <div className="cdsh-flow-card cdsh-reveal" style={{ transitionDelay: '70ms' }}>
-              <span className="cdsh-flow-badge cdsh-mono">02</span>
-              <h3>Build</h3>
-              <p>自动识别技术栈，构建镜像并启动隔离的分支运行时。</p>
-              <div className="cdsh-flow-visual cdsh-mono">
-                <div className="cdsh-term-line">detect stack · .NET 8 + React</div>
-                <div className="cdsh-term-line">build api :5000 · admin :5500 ... ok</div>
-                <div className="cdsh-term-line is-ok">health checks passing</div>
-              </div>
-            </div>
-            <div className="cdsh-flow-card cdsh-reveal" style={{ transitionDelay: '140ms' }}>
-              <span className="cdsh-flow-badge cdsh-mono">03</span>
-              <h3>Preview</h3>
-              <p>专属预览域名分钟级就绪，打开即验收，评论区自动回帖。</p>
-              <div className="cdsh-flow-visual">
-                <span className="cdsh-flow-url cdsh-mono">
-                  <span className="cdsh-pulse" />
-                  auth-flow.example.test
-                </span>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* 产品事实带 — 全部来自已文档化的真实能力 */}
-        <div className="cdsh-facts cdsh-reveal">
-          <div className="cdsh-fact" style={{ transitionDelay: '0ms' }}>
-            <div className="cdsh-fact-num cdsh-mono"><em>1</em> 条命令</div>
-            <div className="cdsh-fact-sub">启动整套控制面 · ./exec_cds.sh start</div>
-          </div>
-          <div className="cdsh-fact" style={{ transitionDelay: '70ms' }}>
-            <div className="cdsh-fact-num cdsh-mono"><em>8</em> 种技术栈</div>
-            <div className="cdsh-fact-sub">自动识别 · .NET / Node / Go / Rust …</div>
-          </div>
-          <div className="cdsh-fact" style={{ transitionDelay: '140ms' }}>
-            <div className="cdsh-fact-num cdsh-mono"><em>2-5</em> 分钟</div>
-            <div className="cdsh-fact-sub">push 到预览就绪 · webhook 自动部署</div>
-          </div>
-          <div className="cdsh-fact" style={{ transitionDelay: '210ms' }}>
-            <div className="cdsh-fact-num cdsh-mono"><em>1</em> 分支 <em>1</em> 域名</div>
-            <div className="cdsh-fact-sub">独立预览地址 · 互不干扰</div>
-          </div>
-        </div>
-
-        {/* FEATURES — bento 网格,素材全部是真实能力 */}
-        <section id="features" className="cdsh-section cdsh-reveal">
-          <div className="cdsh-sec-head">
-            <span className="cdsh-sec-eyebrow">Features</span>
-            <h2 className="cdsh-sec-title">The whole runtime, in one plane.</h2>
-            <p className="cdsh-sec-sub">构建、隔离、观测、恢复——分支预览需要的一切，都在一块控制面里。</p>
-          </div>
-          <div className="cdsh-bento">
-            <div className="cdsh-bento-card cdsh-bento-a cdsh-reveal" style={{ transitionDelay: '0ms' }} onPointerMove={trackPointer}>
-              <div className="cdsh-bento-head cdsh-mono">build · feature/auth-flow</div>
-              <BuildLogCell />
-              <h3>实时构建日志</h3>
-              <p>每一步构建输出实时回传，失败当场可见，不用翻服务器。</p>
-            </div>
-            <div className="cdsh-bento-card cdsh-reveal" style={{ transitionDelay: '70ms' }} onPointerMove={trackPointer}>
-              <div className="cdsh-bento-nodes">
-                <span className="cdsh-bento-node cdsh-mono">api<i /></span>
-                <span className="cdsh-bento-node cdsh-mono">mongo<i /></span>
-                <span className="cdsh-bento-node cdsh-mono">redis<i /></span>
-              </div>
-              <h3>隔离分支运行时</h3>
-              <p>每个分支一套独立网络与容器组，互不污染。</p>
-            </div>
-            <div className="cdsh-bento-card cdsh-reveal" style={{ transitionDelay: '140ms' }} onPointerMove={trackPointer}>
-              <div className="cdsh-bento-url cdsh-mono">
-                <em>{'{tail}'}</em>-<span>{'{prefix}'}</span>-<span className="dim">{'{project}'}</span>.example.test
-              </div>
-              <h3>Per-branch 预览域名</h3>
-              <p>分支名即地址，重要的信息永远排在最前。</p>
-            </div>
-            <div className="cdsh-bento-card cdsh-reveal" style={{ transitionDelay: '210ms' }} onPointerMove={trackPointer}>
-              <div className="cdsh-bento-checks">
-                <span><CheckIcon />CDS Build · passed</span>
-                <span><CheckIcon />CDS Deploy · passed</span>
-                <span><CheckIcon />Preview · ready</span>
-              </div>
-              <h3>PR Checks 回传</h3>
-              <p>构建状态实时写回 GitHub PR，评论区拿到预览直达链。</p>
-            </div>
-            <div className="cdsh-bento-card cdsh-reveal" style={{ transitionDelay: '280ms' }} onPointerMove={trackPointer}>
-              <div className="cdsh-bento-mono cdsh-mono">
-                <div className="cdsh-term-line is-cmd">POST /api/factory-reset</div>
-                <div className="cdsh-term-line is-ok">runtime restored · 12s</div>
-              </div>
-              <h3>一键恢复</h3>
-              <p>控制面出问题？复活接口把系统拉回可用态。</p>
-            </div>
-            <div className="cdsh-bento-card cdsh-reveal" style={{ transitionDelay: '350ms' }} onPointerMove={trackPointer}>
-              <div className="cdsh-bento-agent">
-                <span><i />列出远程分支<b className="cdsh-mono">2s</b></span>
-                <span><i />部署分支<b className="cdsh-mono">14s</b></span>
-                <span><i />获取容器日志<b className="cdsh-mono">31s</b></span>
-              </div>
-              <h3>Agent 请求观测台</h3>
-              <p>AI 对系统的每一次调用都有可读的中文回执，实时可查。</p>
-            </div>
-          </div>
-        </section>
-
-        {/* OBSERVABILITY — sticky 叙事 + 实况部署终端 */}
-        <section id="observability" className="cdsh-section cdsh-reveal">
-          <div className="cdsh-obs">
-            <div className="cdsh-obs-copy">
-              <span className="cdsh-sec-eyebrow">Observability</span>
-              <h2 className="cdsh-sec-title">From push to reachable,<br />every step observable.</h2>
-              <p className="cdsh-sec-sub">部署不是黑盒。构建、容器、健康检查——每一步都在你眼前发生。</p>
-              <ul className="cdsh-obs-points">
-                <li><span className="cdsh-obs-check"><CheckIcon /></span>构建日志实时回传，逐行可读</li>
-                <li><span className="cdsh-obs-check"><CheckIcon /></span>容器健康持续探测，异常即刻可见</li>
-                <li><span className="cdsh-obs-check"><CheckIcon /></span>Agent 的每次 API 调用都有中文回执</li>
-              </ul>
-            </div>
-            <DeployTerminal />
-          </div>
-        </section>
-
-        {/* FINAL CTA */}
-        <section className="cdsh-final cdsh-reveal">
-          <h2 className="cdsh-final-title">
-            <ShinyText
-              text="Every branch, ready to ship."
-              speed={3}
-              spread={110}
-              color="#9a9aa4"
-              shineColor="#fff7ee"
-            />
-          </h2>
-          <p className="cdsh-final-sub">打开控制台，把下一个分支变成一套在线环境。</p>
-          <div className="cdsh-cta" style={{ justifyContent: 'center' }}>
-            <button className="cdsh-btn cdsh-btn-primary cdsh-btn-lg" type="button" onClick={openAccessMode}>
-              Enter Console
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            </button>
-            <button className="cdsh-btn cdsh-btn-ghost cdsh-btn-lg" type="button" onClick={openAccessMode}>System Access</button>
-          </div>
-        </section>
       </div>
+
+      <BranchlineStory onEnter={openAccessMode} />
 
       {/* FOOTER — 官网级页脚,全部真实内部链接 */}
       <footer className="cdsh-footer">
