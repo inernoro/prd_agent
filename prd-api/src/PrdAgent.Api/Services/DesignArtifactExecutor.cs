@@ -534,6 +534,12 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                                     "OpenDesign 已生成产物，但无法登记远程资源清理，请重试");
                             }
                             cleanupScheduled = true;
+                            // 这里不产出 `model` 分片，是已知边界不是遗漏：`ai-model-visibility` 第 2 条要求
+                            // 模型值来自网关 `Start` 分片的 Resolution（见本文件内置执行器那一段），而 OpenDesign
+                            // 的模型调用发生在 CDS 容器内部，MAP 这一侧结构上收不到那个分片。容器自报一个字符串
+                            // 属于推断不是解析，不够格当证据。正解是按会话反查网关自己的调用记录，那是跨容器 →
+                            // CDS daemon → 工作区结果包 → MAP 会话接口的新契约。
+                            // 台账与下一步：doc/debt.platform.open-design.md「OpenDesign 运行时的实际模型无法可信上报」。
                             yield return new DesignArtifactExecutorChunk(
                                 "delta",
                                 package.IndexHtml,
