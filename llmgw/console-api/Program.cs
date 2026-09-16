@@ -4234,9 +4234,20 @@ app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
                 new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
                 0,
             })) },
+        // 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
+        //
+        // stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——
+        // 它和 unpriced 一样不进 USD 合计、不进预算。只数字面的 unpriced 会让这一屏
+        // 报「0 笔未计价」，而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外，
+        // 于是成本看起来偏低、而缺价治理这件事看起来已经做完了（形状 1：判据比它该管的范围窄）。
+        // 判据取值与 GatewayCostStatusNames 那张表同源，见 2861 行那处过滤——那里两种都算。
         { "unpriced", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
             {
-                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Unpriced }),
+                new BsonDocument("$in", new BsonArray
+                {
+                    "$CostStatus",
+                    new BsonArray { GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency },
+                }),
                 1,
                 0,
             })) },
@@ -16097,14 +16108,26 @@ static string? DescribeRoutePrice(ModelOfferingItem route, IReadOnlyDictionary<s
 {
     if (!string.Equals(route.TargetKind, "model", StringComparison.OrdinalIgnoreCase)) return null;
     if (!modelById.TryGetValue(route.TargetId, out var model)) return null;
-    var currency = model.AsNullableString("PriceCurrency") ?? "USD";
+    // 缺币种不当 USD。
+    //
+    // 这里原先写着 `?? "USD"`——存量模型只有数字没有币种时，面板照样给它贴上 USD。
+    // 而记账那一侧对同一份数据判的是 stale_currency（不计入任何成本），存量归一又把
+    // 缺币种当 CNY：同一个数字在三个地方有三种读法，面板给的还是最不该错的那一种，
+    // 因为运维会照着它算账。
+    //
+    // 这是上一轮修 /v1/models 时该一起扫掉的同类（形状 6 的自查第三条：修完要横扫同类，
+    // 同一个取值口径在别处还有没有）。当时只改了那一处，于是同一个病在这里原样留着。
+    var currency = model.AsNullableString("PriceCurrency")?.Trim();
+    var hasCurrency = !string.IsNullOrEmpty(currency);
+    string Money(decimal value) => hasCurrency ? $"{currency} {value}" : $"{value}（币种未登记）";
+
     var perCall = model.AsNullableDecimal("PricePerCall");
-    if (perCall is not null) return $"{currency} {perCall} / 次";
+    if (perCall is not null) return $"{Money(perCall.Value)} / 次";
     var input = model.AsNullableDecimal("InputPricePerMillion");
     var output = model.AsNullableDecimal("OutputPricePerMillion");
     if (input is null && output is null) return null;
-    var inputText = input is null ? "未登记" : $"{currency} {input}";
-    var outputText = output is null ? "未登记" : $"{currency} {output}";
+    var inputText = input is null ? "未登记" : Money(input.Value);
+    var outputText = output is null ? "未登记" : Money(output.Value);
     return $"入 {inputText} / 出 {outputText} 每百万 token";
 }
 
@@ -16139,9 +16162,20 @@ static async Task<CallTraceLedger> BuildCallTraceLedgerAsync(
                 new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
                 0,
             })) },
+        // 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
+        //
+        // stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——
+        // 它和 unpriced 一样不进 USD 合计、不进预算。只数字面的 unpriced 会让这一屏
+        // 报「0 笔未计价」，而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外，
+        // 于是成本看起来偏低、而缺价治理这件事看起来已经做完了（形状 1：判据比它该管的范围窄）。
+        // 判据取值与 GatewayCostStatusNames 那张表同源，见 2861 行那处过滤——那里两种都算。
         { "unpriced", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
             {
-                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Unpriced }),
+                new BsonDocument("$in", new BsonArray
+                {
+                    "$CostStatus",
+                    new BsonArray { GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency },
+                }),
                 1,
                 0,
             })) },

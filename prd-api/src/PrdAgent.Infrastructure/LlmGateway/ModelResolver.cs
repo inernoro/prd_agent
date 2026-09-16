@@ -764,7 +764,16 @@ public class ModelResolver : IModelResolver
                     .Set(x => x.ConsecutiveSuccesses, 0)
                     .Set(x => x.LastFailedAt, DateTime.UtcNow)
                     .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                    .Unset(x => x.HalfOpenLeaseUntil),
+                    .Unset(x => x.HalfOpenLeaseUntil)
+                    // 人工恢复的那张通行证，一次失败就作废——池成员那条路径一直是这么做的
+                    // （见下面 Models.$.ManualRecoveryAt 那处），Offering 这条漏了。
+                    //
+                    // 漏掉的后果不是「多试一次」：半开认领的条件里 ManualRecoveryAt <= now
+                    // 是一条**独立**的放行项，与冷却时间并列。它留着，这条刚被证明还是坏的线路
+                    // 就对**每一个**后续请求都满足认领条件，被反复抢去当队首探针，
+                    // 配置的冷却期形同虚设——运维在控制台点一次「恢复」，等于把这条坏线路
+                    // 永久钉在了队首，直到有人再去改一次配置。
+                    .Unset(x => x.ManualRecoveryAt),
                 new FindOneAndUpdateOptions<GatewayModelOffering> { ReturnDocument = ReturnDocument.After },
                 ct);
             if (afterInc is null) return;

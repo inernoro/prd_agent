@@ -43,12 +43,24 @@ public static class GatewayModelCatalogEndpoint
             .Find(lf.And(lf.Eq(x => x.TenantId, tenantId), lf.Eq(x => x.Enabled, true)))
             .ToListAsync(ct);
 
+        // 两道门都要过：授权名单 + 场景能力。
+        //
         // 授权范围为空 = 当前租户全部 appCaller 可用；非空就必须点名命中这把 key 的 appCaller。
         // 请求没带 appCaller 时只回不限授权的那部分——宁可少列，不可把受限模型透给不该看的人。
+        //
+        // 只查授权名单是不够的：一个 image-layering 这样的**动作能力**模型授权名单是空的，
+        // 于是它对普通生图调用方也「可见」，而运行时 SupportsAppCallerScenario 会拒掉同一个
+        // 调用方——清单里列出来、一调就失败（capability-is-not-model：那种能力需要特定输入、
+        // 不吃提示词，它是动作不是模型）。判据本体在 GatewayCapabilityContract，
+        // 那份契约的注释自己就写着「serving 也要引用它，禁止任何调用方另写一套」——
+        // 这里补上引用，而不是在这里再判一次（形状 3：判据分裂成两份各自漂移）。
         var visible = logicals
             .Where(x => x.AllowedAppCallerCodes.Count == 0
                 || (appCallerCode is { Length: > 0 }
                     && x.AllowedAppCallerCodes.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase)))
+            .Where(x => appCallerCode is not { Length: > 0 }
+                || GatewayCapabilityContract.SupportsAppCallerScenario(
+                    x.Capabilities, x.AllowedAppCallerCodes, appCallerCode))
             .OrderBy(x => x.DisplayOrder)
             .ThenBy(x => x.PublicId, StringComparer.Ordinal)
             .ToList();

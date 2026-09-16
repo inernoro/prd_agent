@@ -4629,6 +4629,36 @@ public class GatewayDataDomainGuardTests
     ///
     /// 两侧都钉：前端要按初始值比对并发显式清空标志，服务端要认那两个标志。
     /// </summary>
+    /// <summary>
+    /// 「缺币种」与「算不出钱」这两件事，三处判据必须一致。
+    ///
+    /// 同一份数据此前有三种读法：/v1/models 把缺币种的当 USD 发出去、调用全貌面板把它标成 USD、
+    /// 而记账那一侧判它 stale_currency 一分钱都不计。最不该错的是面板那一种——运维照着它算账。
+    ///
+    /// 「算不出钱的笔数」同理：stale_currency 与 unpriced 一样不进 USD 合计、不进预算，
+    /// 只数字面的 unpriced 会让这一屏报「0 笔未计价」，而实际有一批存量流量正被静悄悄排除。
+    /// </summary>
+    [Fact]
+    public void Console_Pricing_TreatsMissingCurrencyAndStaleCurrencyConsistently()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var catalog = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+
+        // 面板不把缺币种的价标成 USD
+        Assert.Contains("币种未登记", console);
+        Assert.DoesNotContain("model.AsNullableString(\"PriceCurrency\") ?? \"USD\"", console);
+
+        // 对外清单只报显式 USD
+        Assert.Contains("!currency.IsString", catalog);
+
+        // 两处「算不出钱」的计数都要含 stale_currency，且是同一种写法
+        var occurrences = System.Text.RegularExpressions.Regex.Matches(
+            console,
+            @"GatewayCostStatusNames\.Unpriced, GatewayCostStatusNames\.StaleCurrency").Count;
+        Assert.True(occurrences >= 2,
+            $"「算不出钱」的笔数在模型卡与调用全貌账两处都要含 stale_currency，当前只有 {occurrences} 处");
+    }
+
     [Fact]
     public void Console_ModelEditor_DistinguishesClearedFromUntouched()
     {
