@@ -49,3 +49,37 @@ describe('藏书阁进度的登出清理', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * 守卫：在途的**拉取**也要能被登出作废。
+ *
+ * 上一版只堵了保存那一侧。读这一侧的后果更重：A 打开藏书阁、GET 还在路上就登出，
+ * 响应落地时把 A 的整份进度写回那个持久化的 store（登出清空已经跑完了），
+ * B 登录先看到 A 的记录，一动手还会把 A 的快照 PUT 进 B 的账号。
+ */
+describe('藏书阁在途拉取的作废', () => {
+  const src = fs.readFileSync(STORE, 'utf-8');
+
+  it('loadFromServer 取了序号', () => {
+    expect(
+      /loadFromServer:\s*async[\s\S]{0,200}?\+\+loadSeq/.test(src),
+      'loadFromServer 没有取 loadSeq：登出后落地的响应会把上一个人的进度写回来',
+    ).toBe(true);
+  });
+
+  it('响应落地前比对过序号', () => {
+    expect(
+      src.includes('seq !== loadSeq'),
+      '拿到响应后没有比对 loadSeq，作废机制等于没接上',
+    ).toBe(true);
+  });
+
+  it('登出重置里把拉取那一侧也作废了', () => {
+    const resetAt = src.indexOf('registerLogoutReset(');
+    expect(resetAt).toBeGreaterThan(-1);
+    expect(
+      src.slice(resetAt).includes('loadSeq += 1'),
+      '登出只作废了保存那一侧，在途的拉取仍会把上一个人的进度写回来',
+    ).toBe(true);
+  });
+});

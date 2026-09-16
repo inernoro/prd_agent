@@ -50,9 +50,29 @@ export function MobileBook({
   const [error, setError] = useState('');
   const [elapsed, setElapsed] = useState(0);
   const [draft, setDraft] = useState(bookNotes[book.id] ?? '');
+  // 用户有没有真的动过这个输入框。区分「还没写」与「写了又清空」——
+  // 后者是一次真实的删除意图，不该被服务端那份盖回去。
+  const draftTouchedRef = useRef(false);
 
   const abortRef = useRef<AbortController | null>(null);
   const aliveRef = useRef(true);
+
+  const serverNote = bookNotes[book.id] ?? '';
+
+  /*
+   * 服务端那份笔记是在这一屏挂载**之后**才到的（深链直接进书页、或刚登录就进来时，
+   * loadFromServer 还在路上），useState 的初值只取了当时的空值，之后不会自己跟上。
+   *
+   * 不跟上的后果不是「少显示一条」，是**删数据**：输入框显示空的，用户一个字没打，
+   * 只要聚焦再失焦，onBlur 那句 `draft !== 服务端那份` 就成立，于是把已有的笔记
+   * 用空串覆盖掉并同步出去。用户没做任何事，笔记没了。
+   *
+   * 所以只在「用户还没动过这个框」时跟随服务端；动过之后他手上那份优先。
+   */
+  useEffect(() => {
+    if (draftTouchedRef.current) return;
+    setDraft(serverNote);
+  }, [serverNote]);
 
   const run = useCallback(async (force: boolean) => {
     abortRef.current?.abort();
@@ -228,8 +248,8 @@ export function MobileBook({
           value={draft}
           maxLength={200}
           rows={2}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => { if (draft !== (bookNotes[book.id] ?? '')) setNote(book.id, draft); }}
+          onChange={(e) => { draftTouchedRef.current = true; setDraft(e.target.value); }}
+          onBlur={() => { if (draft !== serverNote) setNote(book.id, draft); }}
           placeholder="打算在哪用它？一句话就够。"
           style={{
             marginTop: AS_SPACE.titleGap, width: '100%', minHeight: 64, boxSizing: 'border-box',

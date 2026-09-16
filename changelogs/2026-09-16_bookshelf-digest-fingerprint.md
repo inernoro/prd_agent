@@ -15,3 +15,5 @@
 | fix | prd-api | 材料整份载入失败与「书单里没有这本书」分开报，不再压成同一句 404 |
 | fix | prd-api | book_digests 的 BookId 唯一索引进 DBA 清单，并发首次生成不再写出两篇 |
 | fix | prd-api | 精读稿提示词给第一段补逃生口，模型对这本书没把握时明说而不是编 |
+| fix | prd-admin | 在途的进度拉取也随登出作废，堵住换账号串数据的另一半 |
+| fix | prd-admin | 书页笔记跟随服务端 hydration，修复聚焦失焦即删掉已有笔记 |

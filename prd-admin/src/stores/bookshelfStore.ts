@@ -90,6 +90,17 @@ let pushTimer: ReturnType<typeof setTimeout> | null = null;
  */
 let pushSeq = 0;
 
+/*
+ * 在途**拉取**的序号。上一版只给保存那一侧加了守卫，读这一侧没加——而这一侧的
+ * 后果更重：A 打开藏书阁、GET 还在路上就登出，响应落地时 `set()` 把 A 的已读、
+ * 笔记与成绩原样写回那个持久化的 store（登出清空已经跑完了），接着 B 登录，
+ * 先看到的是 A 的记录；B 一动手，下一次 PUT 还会把 A 的快照提交进 B 的账号。
+ *
+ * 登出与切账号都要让在途的那一发作废，两侧用各自的序号，别共用一个——
+ * 一次保存不该让同时在飞的那次拉取失效。
+ */
+let loadSeq = 0;
+
 /** 导出给测试用：让用例能确定性地等一次防抖窗口，而不是靠 sleep 猜。 */
 export const __pushDebounceMs = PUSH_DEBOUNCE_MS;
 
@@ -160,8 +171,11 @@ export const useBookshelfStore = create<BookshelfState>()(
         failedAttempts: 0,
 
         loadFromServer: async () => {
+          const seq = ++loadSeq;
           try {
             const res = await getMyBookshelfProgress();
+            // 这一发出去之后登出过 / 换过账号：响应属于上一个人，一个字都不许写回来
+            if (seq !== loadSeq) return;
             if (!res.success || !res.data) return;   // 拉不到就保留本地那份，停在 local
             const results: Record<string, ExamResult> = {};
             Object.entries(res.data.examResults ?? {}).forEach(([volumeId, r]) => {
@@ -264,7 +278,10 @@ export const useBookshelfStore = create<BookshelfState>()(
  */
 registerLogoutReset(() => {
   if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
-  pushSeq += 1;   // 作废在途请求：上一个人的响应不许再改动已经清空的状态
+  // 两侧的在途请求一起作废：上一个人的响应不许再改动已经清空的状态。
+  // 读那一侧尤其要紧——它会把上一个人的整份进度写回来。
+  pushSeq += 1;
+  loadSeq += 1;
   useBookshelfStore.setState({
     readBookIds: [],
     bookNotes: {},
