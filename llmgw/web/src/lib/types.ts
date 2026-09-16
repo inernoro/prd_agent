@@ -1749,9 +1749,11 @@ export interface ImageGenConfigsData {
   builtinPublishedAt?: string | null;
   /** 改完多久生效。界面要如实写出来，别让人保存完盯着屏幕猜 */
   refreshSeconds: number;
-  /** 所有消费进程里**最旧**的那个同步时间；有任一进程没同步过时为空 */
+  /** 一个进程多久没回写就判「没跟上」。停掉的 Worker 的陈年状态行不能替现在作答 */
+  staleAfterSeconds: number;
+  /** 承载本租户契约的那些进程里**最旧**的同步时间；有任一个没跟上时为空 */
   syncedAt?: string | null;
-  /** 每个进程都认到的那几个模式（交集）。只报数字答不出「生效的是不是我刚改的那条」 */
+  /** 那些进程都认到的模式（交集）。只报数字答不出「生效的是不是我刚改的那条」 */
   syncedPatterns: string[];
   /** 逐个消费进程的同步状态——界面要能答「是哪个进程没跟上」 */
   syncHosts: ImageGenSyncHost[];
@@ -1766,6 +1768,11 @@ export type ImageGenSyncHost = {
   hostTenancy?: string | null;
   /** 它因为「服务多个租户」跳过了几条带租户的契约。大于 0 必须显示，否则「生效 0 条」无处可查。 */
   skippedTenantScopedCount: number;
+  /**
+   * 跟上了没有，由服务端判好：never 从没回写过 / stale 太久没动（Worker 多半停了）
+   * / behind 还活着但装的不是当前这一版 / current 装的就是当前这一版。
+   */
+  syncState: 'never' | 'stale' | 'behind' | 'current' | string;
 };
 
 export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;

@@ -3975,6 +3975,10 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
     // 界面要能答「是哪个进程没跟上」。
     const string prdApiHostRole = "prd-api";
     const string servingHostRole = "llmgw-serving";
+    const int refreshSeconds = 60;
+    // 多久没回写就算「没跟上」。取刷新周期的 5 倍：一次网络抖动不该报警，
+    // 而一个停掉的 Worker 五分钟内必须现形。
+    const int staleAfterSeconds = refreshSeconds * 5;
     var expectedSyncHosts = new[] { prdApiHostRole, servingHostRole };
     var syncDocs = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_sync_status")
         .Find(Builders<BsonDocument>.Filter.In("_id", expectedSyncHosts.Select(role => $"{role}::{syncTenantId}")))
@@ -3989,27 +3993,78 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
             ? [.. arr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
             : [];
 
+    // 各个进程**应该**装到哪一版。
+    //
+    // 只比模式名答不出「我刚改的那条生效了没有」：改尺寸档位时模式名一个字都不变。
+    // 所以两边各自从同一批行算一个「条数 : 最后修改时间」的版本号来比——
+    // 这个值要和 ImageGenModelConfigSyncWorker 里算的那个逐字对齐（同一个定义，两处求值）。
+    var versionSource = await gwImageModelConfigs
+        .Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("Enabled", true),
+            Builders<BsonDocument>.Filter.In("TenantId", new[] { syncTenantId, string.Empty })))
+        .ToListAsync();
+    string VersionOf(IEnumerable<BsonDocument> rows)
+    {
+        var usable = rows.Where(x => !string.IsNullOrWhiteSpace(x.GetStringOrEmpty("ModelIdPattern"))).ToList();
+        if (usable.Count == 0) return "0:0";
+        var newest = usable.Max(x => x.AsNullableUtcDateTime("UpdatedAt") ?? DateTime.MinValue);
+        return $"{usable.Count}:{newest.Ticks}";
+    }
+    // 单租户进程装「本租户 + 平台级」，多租户进程只装平台级——期望值因此不是同一个。
+    var expectedForSingleTenant = VersionOf(versionSource);
+    var expectedForMultiTenant = VersionOf(versionSource.Where(x => x.GetStringOrEmpty("TenantId").Length == 0));
+
+    var now = DateTime.UtcNow;
     var syncHosts = expectedSyncHosts.Select(role =>
     {
         syncByHost.TryGetValue(role, out var doc);
+        var tenancy = doc?.AsNullableString("HostTenancy");
+        var syncedAt = doc?.AsNullableUtcDateTime("SyncedAt");
+        // 四态，按「先问它还活着吗、再问它装的是不是这一版」的顺序判。
+        // 合成一个 bool 会让「停了半天的进程」和「刚好慢一拍的进程」显示成同一句话。
+        var state =
+            doc is null || syncedAt is null ? "never"
+            : (now - syncedAt.Value).TotalSeconds > staleAfterSeconds ? "stale"
+            // 认不出它是哪种进程（旧构建写的状态行还没有这个字段）→ 不替它担保，
+            // 按「没装到这一版」报，等它下一轮写出新字段自然转正（no-rootless-tree：不编）。
+            : tenancy is null ? "behind"
+            : doc.AsNullableString("ContentVersion")
+                != (string.Equals(tenancy, "MultiTenant", StringComparison.Ordinal)
+                    ? expectedForMultiTenant
+                    : expectedForSingleTenant) ? "behind"
+            : "current";
         return new ImageGenSyncHost
         {
             HostRole = role,
-            SyncedAt = doc?.AsNullableUtcDateTime("SyncedAt").ToIso(),
+            SyncedAt = syncedAt.ToIso(),
             OverrideCount = doc is null ? 0 : (int)(doc.AsNullableInt("OverrideCount") ?? 0),
-            HostTenancy = doc?.AsNullableString("HostTenancy"),
+            HostTenancy = tenancy,
             SkippedTenantScopedCount = doc is null ? 0 : (int)(doc.AsNullableInt("SkippedTenantScopedCount") ?? 0),
+            SyncState = state,
         };
     }).ToList();
 
-    // 有任何一个进程没同步过 → 汇总时间为空、生效清单为空。这一屏宁可说「还没生效」，
-    // 也不能拿另一个进程的成功替它背书。
-    var allHostsSynced = expectedSyncHosts.All(syncByHost.ContainsKey);
-    var aggregateSyncedAt = allHostsSynced
-        ? syncDocs.Select(x => x.AsNullableUtcDateTime("SyncedAt")).Min().ToIso()
+    // 汇总只看「会装本租户契约的那些进程」（单租户进程）。
+    //
+    // 多租户进程一条带租户的契约都不装，把它算进交集的话交集恒为空，
+    // 这一屏就永远显示「0 条已生效」——一句永远不会兑现的话，比不说更糟。
+    // 它自己的状态照样逐进程列出来，跳过的原因另有一句专门的说明。
+    var tenantCarryingHosts = syncHosts
+        .Where(x => !string.Equals(x.HostTenancy, "MultiTenant", StringComparison.Ordinal))
+        .ToList();
+    var carriersCurrent = tenantCarryingHosts.Count > 0
+        && tenantCarryingHosts.All(x => string.Equals(x.SyncState, "current", StringComparison.Ordinal));
+    // 取最旧那一个的时间：汇总这句话只能由跟得最慢的那个进程来背书。
+    // 比的是时间不是字符串——ISO 文本的字典序在格式有出入时会给出错的先后。
+    var aggregateSyncedAt = carriersCurrent
+        ? tenantCarryingHosts
+            .Select(x => syncByHost[x.HostRole].AsNullableUtcDateTime("SyncedAt"))
+            .Min()
+            .ToIso()
         : null;
-    var aggregatePatterns = allHostsSynced && syncDocs.Count > 0
-        ? syncDocs.Select(PatternsOf)
+    var aggregatePatterns = carriersCurrent
+        ? tenantCarryingHosts
+            .Select(x => PatternsOf(syncByHost[x.HostRole]))
             .Aggregate((a, b) => [.. a.Intersect(b, StringComparer.Ordinal)])
         : [];
 
@@ -4020,7 +4075,8 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
         BuiltinCount = builtin.Count,
         Builtin = builtin,
         BuiltinPublishedAt = builtinDoc?.AsNullableUtcDateTime("PublishedAt").ToIso(),
-        RefreshSeconds = 60,
+        RefreshSeconds = refreshSeconds,
+        StaleAfterSeconds = staleAfterSeconds,
         SyncedAt = aggregateSyncedAt,
         SyncedPatterns = aggregatePatterns,
         SyncHosts = syncHosts,

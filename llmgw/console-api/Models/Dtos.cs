@@ -2263,6 +2263,14 @@ public sealed class ImageGenConfigsData
     public int RefreshSeconds { get; set; }
 
     /// <summary>
+    /// 一个进程多久没回写就判「没跟上」。
+    ///
+    /// 有这道判据，一个停掉的 Worker 才会现形：它上一次回写的那行状态会一直躺在库里，
+    /// 只看「有没有这一行」的话，界面会永远拿它那次陈年的成功替现在作答。
+    /// </summary>
+    public int StaleAfterSeconds { get; set; }
+
+    /// <summary>
     /// 上一轮同步的时间，取**所有消费进程里最旧的那个**。
     ///
     /// 取最新的那个会撒谎：两个进程各有一份进程全局的注册表（prd-api 与 llmgw-serving），
@@ -2313,6 +2321,16 @@ public sealed class ImageGenSyncHost
     /// 而「为什么是 0」无处可查。
     /// </summary>
     public int SkippedTenantScopedCount { get; set; }
+
+    /// <summary>
+    /// 这个进程跟上了没有，四取一：
+    /// <c>never</c> 从没回写过 / <c>stale</c> 有回写但已经太久没动（Worker 多半停了或读不到库）
+    /// / <c>behind</c> 还活着但装的不是当前这一版 / <c>current</c> 装的就是当前这一版。
+    ///
+    /// 判断收在服务端一处算好，前端只负责把它说成人话——
+    /// 让前端拿时间戳和版本号自己再判一次，就是同一个判据的第二份实现。
+    /// </summary>
+    public string SyncState { get; set; } = "never";
 }
 
 public sealed class ImageGenConfigItem

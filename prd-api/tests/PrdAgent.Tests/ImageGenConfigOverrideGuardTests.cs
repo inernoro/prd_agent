@@ -222,11 +222,14 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("llmgw_imagegen_sync_status", console);
         Assert.Contains("SyncedPatterns", console);
 
-        // 界面得真的用它下结论，而不是只把字段接过来放着。
+        // 界面得真的用它下结论，而不是只把字段接过来放着；
+        // 而且「跟没跟上」这个判断要用服务端算好的那个（syncState），不要拿时间戳和版本号
+        // 在前端再判一次——那就是同一个判据的第二份实现，两份迟早对不上（形状 3）。
         var panel = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
         Assert.Contains("syncNote", panel);
         Assert.Contains("data.syncedPatterns", panel);
-        Assert.Contains("还没被认到", panel);
+        Assert.Contains("syncState", panel);
+        Assert.Contains("已生效", panel);
     }
 
     /// <summary>
@@ -284,13 +287,29 @@ public class ImageGenConfigOverrideGuardTests
 
         // 控制台逐进程读，汇总取最旧 + 交集，不是读一行
         Assert.Contains("expectedSyncHosts", console);
-        Assert.Contains("allHostsSynced", console);
-        Assert.Contains(".Min().ToIso()", console);
         Assert.Contains("Intersect", console);
 
-        // 界面点名没跟上的那个进程
+        // 「有这一行状态」不等于「它还在跑」：停掉的 Worker 上次回写的那行会一直躺在库里，
+        // 只判存在的话，界面会永远拿它那次陈年的成功替现在作答。所以要判新鲜度。
+        Assert.Contains("staleAfterSeconds", console);
+        Assert.Contains("\"stale\"", console);
+
+        // 也不等于「它装的是我刚存的那一版」：改一条契约的尺寸档位，模式名一个字都不变，
+        // 只比模式名的话改前改后都判「已生效」。所以两边各算一个内容版本号来比。
+        Assert.Contains("ContentVersion", console);
+        Assert.Contains("ContentVersion", worker);
+        Assert.Contains("\"behind\"", console);
+
+        // 汇总只由「会装本租户契约的那些进程」背书。把只装平台级契约的多租户进程
+        // 算进交集的话，交集恒为空，这一屏就永远显示「0 条已生效」——一句不会兑现的话。
+        Assert.Contains("tenantCarryingHosts", console);
+        Assert.Contains("carriersCurrent", console);
+
+        // 界面点名没跟上的那个进程，并且三种「没跟上」分开说（下一步完全不同）
         Assert.Contains("syncHosts", section);
-        Assert.Contains("还没同步过这份契约", section);
+        Assert.Contains("还没回写过同步状态", section);
+        Assert.Contains("秒没动", section);
+        Assert.Contains("装的还不是当前这一版", section);
     }
 
     /// <summary>

@@ -22,6 +22,18 @@ type Draft = UpsertImageGenConfigRequest & { sizeText?: Record<string, string> }
 /** 尺寸在表单里是一行一个，存回去是数组——这里只做这一件事，不顺手改别的。 */
 function draftToRequest(draft: Draft): UpsertImageGenConfigRequest {
   const sizes: Record<string, string[]> = {};
+  // 勾了「没有选尺寸这件事」就一个档位都不提交。
+  //
+  // 勾选只是把输入框藏起来，草稿里原来那几行尺寸还在；照原样提交的话，服务端的
+  // 「不能既说没有尺寸又配尺寸档位」会把它挡回来——于是一条**已经配过尺寸**的契约
+  // 在界面上根本改不成「不选尺寸」，而报错信息说的是一个用户看不见的字段
+  // （藏起来的输入框里的值）。判据收在这一处的出口，不靠勾选时去清草稿：
+  // 清草稿的话用户一勾一取消，原来填的尺寸就没了。
+  if (draft.sizesNotApplicable) {
+    const { sizeText, ...rest } = draft;
+    void sizeText;
+    return { ...rest, sizesByResolution: {} };
+  }
   for (const bucket of BUCKETS) {
     const lines = (draft.sizeText?.[bucket] ?? '')
       .split(/[\n,，]/)
@@ -58,27 +70,14 @@ function itemToDraft(item: ImageGenConfigItem | null): Draft {
  * 配了但服务端还没认到的，点名说出来，而不是让人保存完盯着屏幕猜（expectation-management）。
  */
 function syncNote(data: ImageGenConfigsData): string {
-  // 两个进程各跑一份同步器（prd-api 与 llmgw-serving），各有一份进程全局的注册表。
-  // 没跟上的那个要被点名：只给一个汇总时间的话，健康的那个就替失败的那个作答了，
-  // 而走失败那个进程的请求还在用旧契约（degradation-must-alarm）。
-  const missing = (data.syncHosts ?? []).filter((x) => !x.syncedAt).map((x) => x.hostRole);
-  if (missing.length > 0) {
-    return `${missing.join('、')} 还没同步过这份契约——走它的请求仍用代码内置那份。`
-      + `每 ${data.refreshSeconds} 秒拉一次，稍等再看；一直是这句说明那个进程没起来。`;
-  }
-  if (!data.syncedAt) {
-    return `服务端还没同步过这份契约——它每 ${data.refreshSeconds} 秒拉一次，稍等再看。`;
-  }
-  const synced = new Set(data.syncedPatterns);
-  const pending = data.items.filter((x) => x.enabled && !synced.has(x.modelIdPattern)).map((x) => x.modelIdPattern);
-  const when = new Date(data.syncedAt).toLocaleTimeString();
-  const scope = (data.syncHosts ?? []).length > 1 ? `全部 ${data.syncHosts.length} 个进程都在 ${when} 之后同步过` : `服务端 ${when} 同步过`;
+  const hosts = data.syncHosts ?? [];
 
-  // 多租户进程（llmgw-serving）按请求密钥判定租户，而覆盖表是进程全局的、没有租户维度，
-  // 所以它一条带租户的契约都不装。这句话必须说出口：不说的话，这一屏只会显示
-  // 「0 条已生效……稍等再看」，而那是一句永远不会兑现的话——人会去查一个没坏的东西
-  // （degradation-must-alarm：降级必须响铃，不能被另一半的成功盖住）。
-  const skipped = (data.syncHosts ?? []).filter((x) => x.skippedTenantScopedCount > 0);
+  // 跳过说明单独成句，和「跟没跟上」是两件事：一个进程可以既是最新的、又一条本租户契约都不装。
+  //
+  // 多租户进程（llmgw-serving）按请求密钥判租户，而覆盖表是进程全局的、没有租户维度，
+  // 所以它一条带租户的契约都不装。不说出口的话，人只会看到自己配的契约没生效而无从查起
+  // （degradation-must-alarm：降级必须响铃）。
+  const skipped = hosts.filter((x) => x.skippedTenantScopedCount > 0);
   const skipNote = skipped.length > 0
     ? ` ${skipped.map((x) => `${x.hostRole} 跳过了 ${x.skippedTenantScopedCount} 条`).join('、')}`
       + `：它按请求密钥判定租户、可能同时服务多个租户，而这张覆盖表是进程全局的、没有租户维度，`
@@ -86,13 +85,33 @@ function syncNote(data: ImageGenConfigsData): string {
       + `再等也不会变——要让契约在网关那一侧生效，得先给注册表补上租户维度。`
     : '';
 
-  if (pending.length === 0) {
-    return `${scope}，${data.syncedPatterns.length} 条已生效。${skipNote}`;
+  // 没跟上的逐个点名，且三种「没跟上」要分开说——它们的下一步完全不同：
+  // 从没回写过 / 停了太久 / 还活着但慢一拍。压成一句「未同步」，人只能干等。
+  const never = hosts.filter((x) => x.syncState === 'never').map((x) => x.hostRole);
+  const stale = hosts.filter((x) => x.syncState === 'stale');
+  const behind = hosts.filter((x) => x.syncState === 'behind').map((x) => x.hostRole);
+
+  const problems: string[] = [];
+  if (never.length > 0) {
+    problems.push(`${never.join('、')} 还没回写过同步状态——多半是进程没起来，走它的请求用代码内置那份。`);
   }
-  if (skipNote) {
-    return `${scope}，${data.syncedPatterns.length} 条在全部进程都已生效。${skipNote}`;
+  for (const host of stale) {
+    const last = host.syncedAt ? new Date(host.syncedAt).toLocaleTimeString() : '未知时间';
+    problems.push(
+      `${host.hostRole} 上一次回写还是 ${last}，已经超过 ${data.staleAfterSeconds} 秒没动——`
+      + `它的同步器多半停了或读不到库，走它的请求仍在用旧契约。`);
   }
-  return `${scope}，${data.syncedPatterns.length} 条已生效；${pending.join('、')} 还没被认到，最长 ${data.refreshSeconds} 秒后再看。`;
+  if (behind.length > 0) {
+    problems.push(`${behind.join('、')} 装的还不是当前这一版，最长 ${data.refreshSeconds} 秒后再看。`);
+  }
+  if (problems.length > 0) return problems.join(' ') + skipNote;
+
+  if (!data.syncedAt) {
+    return `还没有任何进程认领本租户的契约——走生图的请求用代码内置那份。${skipNote}`;
+  }
+
+  const when = new Date(data.syncedAt).toLocaleTimeString();
+  return `${when} 已生效，共 ${data.syncedPatterns.length} 条（承载本租户契约的进程全部装到了当前这一版）。${skipNote}`;
 }
 
 function summarizeSizes(item: ImageGenConfigItem): string {

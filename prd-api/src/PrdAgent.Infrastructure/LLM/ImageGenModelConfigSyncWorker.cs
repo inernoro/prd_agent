@@ -219,6 +219,16 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         // 一进程一租户一行。合并任一维度都会出现「后写的盖掉先写的」：
         // 合并租户 → 别的租户看到错的同步时间；合并进程 → 健康的那个盖掉失败的那个，
         // 而走失败那个进程的请求还在用旧契约（见 _hostRole 的注释）。
+        // 这一轮装进去的**内容**是哪一版。
+        //
+        // 只报模式名回答不了「我刚改的那条生效了没有」：改一条契约的尺寸档位，模式名一个字都不变，
+        // 于是控制台拿模式名比对，改之前改之后都判「已生效」——它其实只证明了「这个模式有人认」，
+        // 没证明「认的是我刚存的那一版」（形状 1：判据比它该管的范围窄）。
+        // 条数 + 最新一次修改时间就够：控制台手上有同一批行，能算出同一个值来比。
+        var contentVersion = ordered.Count == 0
+            ? "0:0"
+            : $"{ordered.Count}:{docs.Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern)).Max(x => x.UpdatedAt).Ticks}";
+
         var statusId = $"{_hostRole}::{_tenantId}";
         await _gateway!.Database.GetCollection<BsonDocument>("llmgw_imagegen_sync_status").ReplaceOneAsync(
             Builders<BsonDocument>.Filter.Eq("_id", statusId),
@@ -234,6 +244,7 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
                 // 「我配的那条为什么在网关那一侧没生效」。
                 { "HostTenancy", _tenancy.ToString() },
                 { "SkippedTenantScopedCount", skippedTenantScoped },
+                { "ContentVersion", contentVersion },
                 // 生效的那几个模式，逐条列出来。只报数字的话，「我配了 3 条它说 3 条」
                 // 仍然答不出「生效的是不是我刚改的那条」。
                 { "Patterns", new BsonArray(ordered.Select(x => x.ModelIdPattern)) },
