@@ -4587,9 +4587,20 @@ app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
   3. **可重复跑**。同名公开模型已存在就只补线路，同一条线路（同 targetId）已存在就跳过。
      搬到一半失败、或者新增了池要补搬，直接再跑一次即可，不会重复建。
 */
-app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply) =>
+// 参数名在方法里叫 scopeModelType 是为了避开循环里的同名局部变量；
+// 对外的 query key 仍然是 modelType——错误信息里让人加的就是它，两者必须一致。
+app.MapPost("/gw/pools/migrate-to-models", async (
+    HttpContext http,
+    bool? apply,
+    [FromQuery(Name = "modelType")] string? scopeModelType) =>
 {
     var dryRun = apply != true;
+    // 超过上限时的那句「请先按 modelType 分批」得真的做得到。
+    //
+    // 上一版只有 apply 一个参数，池多于上限的租户于是永远收到 TOO_MANY——
+    // 而池路由已经删了，那个租户**再也没有办法**把存量搬过来。
+    // 一句做不到的下一步比没有下一步更糟：它让人以为路是通的。
+    var modelTypeFilter = (scopeModelType ?? string.Empty).Trim();
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var fb = Builders<BsonDocument>.Filter;
     var result = new PoolMigrationResult { DryRun = dryRun };
@@ -4604,13 +4615,16 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
 
       合并口径与只读端点逐字一致：同 _id 时网关表赢。
     */
-    var gatewayPools = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
+    var poolScopeFilter = modelTypeFilter.Length > 0
+        ? fb.Eq("ModelType", modelTypeFilter)
+        : fb.Empty;
+    var gatewayPools = await gwModelPools.Find(TenantAccess.Filter(http, poolScopeFilter)).ToListAsync();
     var gatewayPoolIds = gatewayPools
         .Select(d => d.GetStringOrEmpty("_id"))
         .Where(x => x.Length > 0)
         .ToHashSet(StringComparer.Ordinal);
     var mapPools = tenantId == internalTenantId
-        ? (await modelGroups.Find(Builders<BsonDocument>.Filter.Empty).ToListAsync())
+        ? (await modelGroups.Find(poolScopeFilter).ToListAsync())
             .Where(d => !gatewayPoolIds.Contains(d.GetStringOrEmpty("_id")))
             .ToList()
         : new List<BsonDocument>();
@@ -4666,8 +4680,20 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
         .Find(TenantAccess.Filter(http, fb.Eq("Enabled", true)))
         .ToListAsync();
     if (pools.Count > PoolMigrationPlanner.MaxBatch)
+    {
+        var availableTypes = pools
+            .Select(x => x.AsNullableString("ModelType") ?? string.Empty)
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
         return Json(ApiEnvelope<PoolMigrationResult>.Fail("TOO_MANY",
-            $"当前租户有 {pools.Count} 个池，一次最多搬 {PoolMigrationPlanner.MaxBatch} 个，请先按 modelType 分批"), jsonOptions, 400);
+            $"这一批有 {pools.Count} 个池，一次最多搬 {PoolMigrationPlanner.MaxBatch} 个。"
+            + $"加 ?modelType=<用途> 分批搬，当前这批涉及的用途有：{string.Join("、", availableTypes)}"
+            + (modelTypeFilter.Length > 0
+                ? $"（你已经筛了 {modelTypeFilter}，这个用途本身就超了上限——先在模型池页把不再需要的池停用或删掉）"
+                : string.Empty)), jsonOptions, 400);
+    }
     result.PoolsScanned = pools.Count;
 
     /*
@@ -5061,6 +5087,18 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                 if (duplicateExchangeRoute) continue;
                 plannedOfferingKeys.Add(exchangeRouteKey);
 
+                var lostExchangePrices = DescribeLostMemberPrices(member, null);
+                if (lostExchangePrices.Count > 0)
+                {
+                    result.Skipped.Add(new PoolMigrationSkip
+                    {
+                        PoolId = poolId, PoolName = poolName,
+                        Reason = $"成员「{memberModelId}」（兑换所）在池里配了自己的价格（{string.Join("、", lostExchangePrices)}），"
+                            + "而线路没有价格字段、兑换所也没有物理模型可回落——搬过来之后这条线路会被判成未计价，"
+                            + "不进用量汇总也不参与限额。线路本身照常建好了，价格要另行安排",
+                    });
+                }
+
                 var carryExchangeUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
                 if (carryExchangeUnavailable) entry.CarriedUnavailableRoutes++;
                 if (!dryRun)
@@ -5144,6 +5182,19 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).AnyAsync();
             if (duplicate) continue;
             plannedOfferingKeys.Add(modelRouteKey);
+
+            var lostPrices = DescribeLostMemberPrices(member, physical);
+            if (lostPrices.Count > 0)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId, PoolName = poolName,
+                    Reason = $"成员「{memberModelId}」在池里配了自己的价格（{string.Join("、", lostPrices)}），"
+                        + $"与模型「{upstreamModelId}」文档上的价格不一致。搬过来之后计价只看模型文档，"
+                        + "这几项会按模型文档的值算（没配就判成未计价）。线路本身照常建好了，"
+                        + "要保持原价就去模型页把这几个值填到那个模型上",
+                });
+            }
 
             var carryUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
             if (carryUnavailable) entry.CarriedUnavailableRoutes++;
@@ -16223,6 +16274,40 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
 /// 是不是挂到了已有的公开名，以及没登上时的原因。原因分两种，调用方要分开说：
 /// <c>cross-type</c> 公开名撞上了别的用途，<c>unknown-type</c> 认不出它是哪种用途。
 /// </returns>
+/// <summary>
+/// 池成员身上自带的价格覆盖，与目标模型文档上的价格比一比，列出**会丢掉**的那几项。
+///
+/// 为什么会丢：池路由按池成员计价，而线路（Offering）没有价格字段——搬过来之后
+/// 计价只看物理模型文档。成员上配过、模型文档上没有或不一样的，搬完就变了：
+/// 要么按另一个价收，要么整条判成未计价而掉出用量与预算。
+/// 兑换所成员更彻底——它根本没有物理模型文档可回落，成员价一丢就是未计价。
+///
+/// 给线路加一层价格覆盖是另一套语义（新增字段 + 解析优先级），不在这一刀里做；
+/// 这里要做的是**不让它悄悄发生**：逐条列出来，说清值是多少、该填到哪儿去。
+/// </summary>
+static List<string> DescribeLostMemberPrices(BsonDocument member, BsonDocument? physical)
+{
+    var fields = new (string Field, string Label)[]
+    {
+        ("InputPricePerMillion", "输入单价"),
+        ("OutputPricePerMillion", "输出单价"),
+        ("CachedInputPricePerMillion", "缓存读单价"),
+        ("CacheWritePricePerMillion", "缓存写单价"),
+        ("PricePerCall", "每次调用固定费"),
+    };
+    var lost = new List<string>();
+    foreach (var (field, label) in fields)
+    {
+        var memberValue = member.GetValue(field, BsonNull.Value);
+        if (memberValue.IsBsonNull) continue;
+        var physicalValue = physical?.GetValue(field, BsonNull.Value) ?? BsonNull.Value;
+        // 目标模型上已经是同一个值就不算丢——那种情况搬完计价结果不变，报出来只是噪音。
+        if (!physicalValue.IsBsonNull && physicalValue.Equals(memberValue)) continue;
+        lost.Add($"{label} {memberValue}");
+    }
+    return lost;
+}
+
 static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, string? BlockedKind, string? BlockedMessage)?>
     PublishGatewayModelToWhitelistAsync(
         IMongoCollection<BsonDocument> logicalModels,

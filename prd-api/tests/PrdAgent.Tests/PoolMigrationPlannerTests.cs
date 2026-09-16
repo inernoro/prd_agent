@@ -346,6 +346,60 @@ public class PoolMigrationPlannerTests
         Assert.Contains("没有带上认领", handler);
     }
 
+    /// <summary>
+    /// 池成员自带的价格覆盖搬不过去，但必须逐条报出来，不许静默。
+    ///
+    /// 池路由按池成员计价，而线路没有价格字段——搬过来之后计价只看物理模型文档。
+    /// 成员上配过、模型文档上没有或不一样的，搬完就换了个价；兑换所成员更彻底，
+    /// 它没有物理模型可回落，直接判成未计价、掉出用量与限额。
+    /// 给线路加价格覆盖层是新语义（新增字段 + 解析优先级），不在这一刀里做，已记台账；
+    /// 这里钉住的是「不让它悄悄发生」。
+    /// </summary>
+    [Fact]
+    public void 搬迁报出会丢掉的池成员价格覆盖()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("DescribeLostMemberPrices", console);
+        // 五项价格都要看，漏一项就是漏一种改价
+        foreach (var field in new[]
+                 {
+                     "InputPricePerMillion", "OutputPricePerMillion",
+                     "CachedInputPricePerMillion", "CacheWritePricePerMillion", "PricePerCall",
+                 })
+        {
+            Assert.Contains($"(\"{field}\"", console);
+        }
+
+        var handler = MigrationHandler();
+        // 两条路径都要报：物理模型成员（回落到模型文档）与兑换所成员（无处可回落）
+        Assert.Contains("DescribeLostMemberPrices(member, physical)", handler);
+        Assert.Contains("DescribeLostMemberPrices(member, null)", handler);
+        Assert.Contains("会被判成未计价", handler);
+    }
+
+    /// <summary>
+    /// 池数超上限时那句「按 modelType 分批」必须真的做得到。
+    ///
+    /// 上一版只有 apply 一个参数，池多于上限的租户永远收到 TOO_MANY——而池路由已经删了，
+    /// 那个租户再也没有办法把存量搬过来。一句做不到的下一步比没有下一步更糟。
+    /// </summary>
+    [Fact]
+    public void 池数超上限时能按用途分批搬()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        // 对外的 query key 必须就是错误信息里让人加的那个
+        Assert.Contains("[FromQuery(Name = \"modelType\")]", console);
+
+        var handler = MigrationHandler();
+        Assert.Contains("modelTypeFilter", handler);
+        Assert.Contains("poolScopeFilter", handler);
+        // 两个数据域都要跟着筛，只筛一个域等于分批分了一半
+        Assert.Contains("gwModelPools.Find(TenantAccess.Filter(http, poolScopeFilter))", handler);
+        Assert.Contains("modelGroups.Find(poolScopeFilter)", handler);
+        // 超限时要说清有哪些用途可选，否则「分批」仍然是句猜谜
+        Assert.Contains("availableTypes", handler);
+    }
+
     private static string MigrationHandler()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
