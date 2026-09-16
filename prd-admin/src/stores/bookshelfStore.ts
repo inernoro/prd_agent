@@ -200,6 +200,7 @@ export const useBookshelfStore = create<BookshelfState>()(
 
         loadFromServer: async () => {
           const seq = ++loadSeq;
+          const revAtStart = mutationRev;
           try {
             const res = await getMyBookshelfProgress();
             // 这一发出去之后登出过 / 换过账号：响应属于上一个人，一个字都不许写回来
@@ -220,6 +221,24 @@ export const useBookshelfStore = create<BookshelfState>()(
               void flush();
               return;
             }
+
+            /*
+             * dirty 之外还剩一条同形状的路，它恰好落在 dirty 为 false 的那一瞬：
+             *
+             *   GET 出发（读到的是改动前那一版）
+             *     → 用户标了一本已读（dirty = true）
+             *     → 防抖到点，PUT 成功（dirty 被清回 false）
+             *     → 慢了半拍的 GET 这时才回来
+             *
+             * 上面那个 dirty 判据此刻是 false，于是这份**比本地旧**的快照照常整份替换：
+             * 用户刚标的那本在他眼前消失，而且下一次 flush 会把这份倒退回去的快照
+             * 原样写回服务端——本地和服务端一起退回去，两边都没有第二个副本。
+             *
+             * 所以判据不能只问「现在有没有未推上去的改动」，要问「这一发在飞的期间
+             * 有没有发生过改动」。mutationRev 每次改动 +1，比一下就知道。
+             */
+            if (mutationRev !== revAtStart) return;
+
             const results: Record<string, ExamResult> = {};
             Object.entries(res.data.examResults ?? {}).forEach(([volumeId, r]) => {
               results[volumeId] = {

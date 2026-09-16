@@ -234,3 +234,54 @@ describe('一句话心得同样要能往返', () => {
     expect(useBookshelfStore.getState().bookNotes).toEqual({});
   });
 });
+
+describe('慢回来的 GET 不许把手上更新的那份盖回去', () => {
+  /*
+   * 这条守的是 dirty 判据够不着的那一瞬：GET 在飞 → 用户改了一笔 → PUT 成功把 dirty
+   * 清回 false → GET 这才回来。此刻 dirty 是 false，可那份快照读的是改动之前的版本。
+   * 照常替换的后果是双向的：用户刚做的事在眼前消失，下一次 flush 还会把这份倒退的快照
+   * 写回服务端——本地和服务端一起退，两边都没有第二个副本。
+   *
+   * 把 loadFromServer 里那句 `mutationRev !== revAtStart` 删掉，这条必须红。
+   */
+  it('GET 在飞的期间改过东西，哪怕那笔改动已经推送成功，也不接受这份快照', async () => {
+    useBookshelfStore.setState({
+      readBookIds: ['b-old'], bookNotes: {}, examResults: {},
+      syncState: 'synced', dirty: false, failedAttempts: 0,
+    });
+
+    let resolveLoad!: (v: unknown) => void;
+    loadMock.mockReturnValue(new Promise((r) => { resolveLoad = r; }));
+    saveMock.mockResolvedValue({ success: true, data: {} });
+
+    const loading = useBookshelfStore.getState().loadFromServer();
+
+    // GET 还没回来，用户标了一本新的；防抖到点后 PUT 成功，dirty 被清回 false
+    useBookshelfStore.getState().toggleRead('b-new');
+    await settle();
+    expect(useBookshelfStore.getState().dirty).toBe(false);
+
+    // 慢了半拍的 GET 这时才回来，带的是改动之前那一版
+    resolveLoad({
+      success: true,
+      data: { readBookIds: ['b-old'], bookNotes: {}, examResults: {}, updatedAt: null },
+    });
+    await loading;
+
+    expect(useBookshelfStore.getState().readBookIds).toContain('b-new');
+  });
+
+  it('GET 在飞的期间什么都没改，该接受的还是要接受（判据不许一刀切）', async () => {
+    useBookshelfStore.setState({
+      readBookIds: [], bookNotes: {}, examResults: {},
+      syncState: 'local', dirty: false, failedAttempts: 0,
+    });
+    loadMock.mockResolvedValue({
+      success: true,
+      data: { readBookIds: ['b-server'], bookNotes: {}, examResults: {}, updatedAt: null },
+    });
+    await useBookshelfStore.getState().loadFromServer();
+    expect(useBookshelfStore.getState().readBookIds).toEqual(['b-server']);
+    expect(useBookshelfStore.getState().syncState).toBe('synced');
+  });
+});
