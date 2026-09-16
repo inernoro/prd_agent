@@ -60,36 +60,44 @@ public sealed class GatewayConsoleReadinessProbe
         CancellationToken cancellationToken = default)
     {
         var stopwatch = Stopwatch.StartNew();
-        // 超时必须真的把下游 Mongo 操作取消掉：只 WaitAsync(超时) 会让调用方走人、
-        // 探测本身留在后台跑，Mongo 掉线期间每次探测都堆一条在途操作。
-        // 仍然保留一层 WaitAsync(linked)，这样即使探测实现不认令牌，5 秒上限也成立。
-        using var probeScope = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        probeScope.CancelAfter(_probeTimeout);
-        var components = new List<GatewayConsoleReadinessComponent>(_probes.Count);
-        var allReady = true;
-        foreach (var (name, probe) in _probes)
-        {
-            try
-            {
-                await probe(probeScope.Token).WaitAsync(probeScope.Token);
-                components.Add(new GatewayConsoleReadinessComponent(name, true, null));
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch
-            {
-                allReady = false;
-                components.Add(new GatewayConsoleReadinessComponent(name, false, MongoUnavailable));
-            }
-        }
+        // 每条探测各自一个超时作用域，而且并发跑。共用一个作用域的话，第一条把上限耗光之后
+        // 令牌已经取消，后面几条会在**根本没被探过**的情况下直接判成不可用——网关库单挂
+        // 就顺带把 map-mongodb 报成挂了，运维被指向错误的依赖（形状 10：降级路径产出的
+        // 失败与另一种问题分不开）。并发还让总耗时保持在一条探测的上限内，不随库数线性增长。
+        var components = await Task.WhenAll(
+            _probes.Select(entry => RunProbeAsync(entry.Name, entry.Probe, cancellationToken)));
+        var allReady = Array.TrueForAll(components, x => x.Ready);
         return new GatewayConsoleReadinessSnapshot(
             Status: allReady ? "ready" : "not-ready",
             ErrorCode: allReady ? null : MongoUnavailable,
             Components: components,
             CheckedAt: DateTime.UtcNow,
             DurationMs: stopwatch.ElapsedMilliseconds);
+    }
+
+    private async Task<GatewayConsoleReadinessComponent> RunProbeAsync(
+        string name,
+        Func<CancellationToken, Task> probe,
+        CancellationToken cancellationToken)
+    {
+        // 超时必须真的把下游 Mongo 操作取消掉：只 WaitAsync(超时) 会让调用方走人、
+        // 探测本身留在后台跑，Mongo 掉线期间每次探测都堆一条在途操作。
+        // 仍然保留一层 WaitAsync(linked)，这样即使探测实现不认令牌，上限也成立。
+        using var probeScope = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeScope.CancelAfter(_probeTimeout);
+        try
+        {
+            await probe(probeScope.Token).WaitAsync(probeScope.Token);
+            return new GatewayConsoleReadinessComponent(name, true, null);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch
+        {
+            return new GatewayConsoleReadinessComponent(name, false, MongoUnavailable);
+        }
     }
 }
 

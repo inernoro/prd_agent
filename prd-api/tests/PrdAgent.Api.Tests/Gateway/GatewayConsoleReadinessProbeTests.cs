@@ -121,6 +121,42 @@ public sealed class GatewayConsoleReadinessProbeTests
     }
 
     /// <summary>
+    /// 每条探测必须有自己的超时作用域。共用一个的话，第一条把上限耗光就把令牌取消了，
+    /// 后面几条在**根本没被探过**的情况下直接判成不可用——网关库单挂会顺带把
+    /// map-mongodb 报成挂了，运维被指向错误的依赖（形状 10：降级产出的失败与
+    /// 另一种问题分不开。Codex P2，2026-09-16，指的是本 PR 上一轮刚加的多库循环）。
+    /// </summary>
+    [Fact]
+    public async Task CheckAsync_ShouldStillProbeTheSecondDatabaseAfterTheFirstOneTimesOut()
+    {
+        var healthyProbeEntered = false;
+        CancellationToken healthyToken = default;
+        var probe = new GatewayConsoleReadinessProbe(
+            [
+                // 网关库掉线：吃满整条超时，且认令牌（真 Mongo ping 就是这个形状）。
+                ("mongodb", token => Task.Delay(TimeSpan.FromSeconds(30), token)),
+                // MAP 库好着：同样认令牌，所以拿到一条已取消的令牌就会直接失败。
+                ("map-mongodb", async token =>
+                {
+                    healthyProbeEntered = true;
+                    healthyToken = token;
+                    await Task.Delay(TimeSpan.FromMilliseconds(20), token);
+                }),
+            ],
+            TimeSpan.FromMilliseconds(150));
+
+        var snapshot = await probe.CheckAsync();
+
+        healthyProbeEntered.ShouldBeTrue();
+        healthyToken.IsCancellationRequested.ShouldBeFalse(
+            customMessage: "好着的那条库拿到的令牌被另一条的超时取消了，说明两条探测共用同一个作用域");
+        snapshot.Components.Single(x => x.Name == "mongodb").Ready.ShouldBeFalse();
+        snapshot.Components.Single(x => x.Name == "map-mongodb").Ready.ShouldBeTrue(
+            customMessage: "网关库超时不得连带把 MAP 库判成不可用——那会把运维指向错误的依赖");
+        snapshot.Status.ShouldBe("not-ready");
+    }
+
+    /// <summary>
     /// 接线守卫：探针类支持两个库不等于应用真的两个都传了。
     /// 只测类不测接线的话，把 Program.cs 改回单库照样全绿（形状 2）。
     /// </summary>
