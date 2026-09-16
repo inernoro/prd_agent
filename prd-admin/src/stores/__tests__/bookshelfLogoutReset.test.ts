@@ -119,3 +119,24 @@ describe('未同步的本地改动', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * 守卫：联网恢复时的补推判据要看 dirty，不能只看 syncState。
+ *
+ * syncState 不持久化——断网时关掉页面再打开，它重置成 'local'，而那份没推上去的
+ * 数据还在盘上。只认 'failed' 的话这条路径下的 online 事件被忽略，那些改动永远
+ * 推不上去，而「本地」那个态界面上还不给重试按钮。
+ */
+describe('联网恢复后的补推', () => {
+  const src = fs.readFileSync(STORE, 'utf-8');
+
+  it('online 处理器看 dirty，不只看 syncState', () => {
+    const at = src.indexOf("addEventListener('online'");
+    expect(at, '找不到 online 处理器，守卫判据已过期').toBeGreaterThan(-1);
+    const body = src.slice(at, at + 220);
+    expect(
+      body.includes('dirty'),
+      'online 只认 syncState：断网重载后 syncState 被重置成 local，那些改动永远推不上去',
+    ).toBe(true);
+  });
+});

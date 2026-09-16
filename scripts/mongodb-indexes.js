@@ -1571,12 +1571,24 @@ ensureTightenedUniqueIndex("bookshelf_progress",
 // 复合而不是只按 BookId：同一个 CDS 项目下所有分支共用一个 Mongo，
 // 一本书在每个部署作用域各有一行（权威部署那行的 DeploymentSlug 是 null）。
 // 只按 BookId 唯一的话，第二条分支第一次生成就会撞键，永远存不下自己那篇。
+//
+// **名字必须沿用 idx_book_digests_book，不能另起一个。** 这一版之前先落过一版
+// 只按 BookId 的同名索引；换个名字建复合索引不会动到旧的那条，于是已经执行过
+// 早先清单的环境里旧索引还在，换一个 DeploymentSlug 插同一本书照样 E11000——
+// 而代码把撞键当成「别人先写成了」判成功，那条分支的稿子就永远存不下、
+// 每次点开都重烧一篇。一个把永久失败伪装成正常的组合。
+//
+// 第四个参数是这个 helper 专为此设的：同名但定义不同时，若命中已知的旧定义，
+// 就走 replaceLegacyUniqueIndex 迁移，而不是报「定义与清单不符」。
 ensureTightenedUniqueIndex("book_digests",
   { "BookId": 1, "DeploymentSlug": 1 },
   {
-    name: "idx_book_digests_book_scope",
+    name: "idx_book_digests_book",
     unique: true
-  }
+  },
+  [{
+    keys: { "BookId": 1 }
+  }]
 )
 // end collection: book_digests
 

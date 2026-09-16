@@ -174,11 +174,17 @@ export const useBookshelfStore = create<BookshelfState>()(
         pushTimer = setTimeout(() => { pushTimer = null; void flush(); }, PUSH_DEBOUNCE_MS);
       }
 
-      // 网络恢复时自动补一次 —— 用户断网时点的那些勾，不该等他再点一下才存上。
-      // 只在失败态才发，避免每次 online 都无谓打一发。
+      /*
+       * 网络恢复时自动补一次 —— 用户断网时点的那些勾，不该等他再点一下才存上。
+       *
+       * 判据看 dirty 而不是 syncState：syncState 不持久化，断网时关掉页面再打开，
+       * 它会重置成 'local'，而那份没推上去的数据还在盘上。只认 'failed' 的话，
+       * 这条路径下的 online 事件会被忽略，那些改动**永远**推不上去——
+       * 界面上「本地」那个态还不给重试按钮，用户只能靠再改一次来触发。
+       */
       try {
         window.addEventListener('online', () => {
-          if (get().syncState === 'failed') void flush();
+          if (get().dirty || get().syncState === 'failed') void flush();
         });
       } catch {
         /* 非浏览器环境（SSR / 测试）无 window，跳过即可 */

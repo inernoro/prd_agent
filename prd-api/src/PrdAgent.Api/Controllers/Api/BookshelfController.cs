@@ -597,11 +597,39 @@ public class BookshelfController : ControllerBase
         catch (MongoWriteException mwe) when (mwe.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
             /*
-             * 撞上 BookId 的唯一索引：两个人同时点开这本还没有稿子的书，对方先写成了。
-             * 这不是故障——公共稿子本来就是一本一篇，谁先写完算谁的。我们这一篇丢掉，
-             * 读者手上流式看到的内容与库里那篇出自同一份材料，不必让他看到一句报错。
+             * 撞上唯一索引。默认解释是「两个人同时点开这本还没有稿子的书，对方先写成了」——
+             * 公共稿子本来就是一本一篇，谁先写完算谁的，不必让读者看到报错。
+             *
+             * 但**不许直接认定是这种情况**。还有一种撞键长得一模一样、后果却完全相反：
+             * 库里若还留着只按 BookId 的旧唯一索引（本 PR 早先那一版清单建的），
+             * 换一个 DeploymentSlug 插同一本书永远会 E11000。那时这一段会把
+             * 「这条分支的稿子永远存不下」判成「别人写好了」，于是每次点开都重烧一篇，
+             * 钱一直在花而没有任何东西报错——一个把永久失败伪装成正常的组合。
+             *
+             * 所以回头确认一次：本作用域下真的有一篇了才算数，没有就如实报错。
              */
-            _logger.LogInformation("精读稿并发生成，另一方先落库 BookId={BookId}，本次不覆盖", id);
+            var afterConflict = await _db.BookDigests
+                .Find(x => x.BookId == id && x.DeploymentSlug == scope)
+                .FirstOrDefaultAsync(CancellationToken.None);
+
+            if (afterConflict != null && !string.IsNullOrWhiteSpace(afterConflict.Content))
+            {
+                _logger.LogInformation("精读稿并发生成，另一方先落库 BookId={BookId}，本次不覆盖", id);
+            }
+            else
+            {
+                _logger.LogError(
+                    mwe,
+                    "精读稿撞唯一索引但本作用域下没有稿子 BookId={BookId} Scope={Scope}——"
+                        + "多半是库里还留着只按 BookId 的旧唯一索引，请执行 scripts/mongodb-indexes.js 迁移",
+                    id, scope ?? "(权威部署)");
+                await WriteDigestEventAsync("error", new
+                {
+                    code = "INDEX_CONFLICT",
+                    message = "稿子写完了但存不下：数据库索引与当前版本不匹配，请联系管理员执行索引迁移",
+                }, ct);
+                return;
+            }
         }
         catch (Exception ex)
         {

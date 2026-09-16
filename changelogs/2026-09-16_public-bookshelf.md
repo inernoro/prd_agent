@@ -94,3 +94,6 @@
 | fix | prd-admin | 「再试一次」改为不强制重生成，连接断了不再多烧一篇并覆盖已落库的稿子 |
 | fix | prd-api | 精读稿按部署作用域隔离，兄弟分支不再互相判过期、互相覆盖、反复重烧 |
 | fix | prd-api | book_digests 唯一索引改为 BookId + DeploymentSlug 复合 |
+| fix | prd-api | book_digests 复合索引沿用原名并声明旧定义，迁移掉只按 BookId 的那条 |
+| fix | prd-api | 撞唯一索引后回头确认本作用域真有稿子，不再把永久失败当成「别人写好了」 |
+| fix | prd-admin | 联网恢复的补推判据改看 dirty，断网重载后的改动不再永远推不上去 |
