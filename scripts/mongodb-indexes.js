@@ -1568,10 +1568,13 @@ ensureTightenedUniqueIndex("bookshelf_progress",
 //
 // 有了这条索引，后落地的那一方会撞 E11000，代码把它当成「别人已经写好了」
 // 处理（见 BookshelfController 的保存处），不再写第二篇。
+// 复合而不是只按 BookId：同一个 CDS 项目下所有分支共用一个 Mongo，
+// 一本书在每个部署作用域各有一行（权威部署那行的 DeploymentSlug 是 null）。
+// 只按 BookId 唯一的话，第二条分支第一次生成就会撞键，永远存不下自己那篇。
 ensureTightenedUniqueIndex("book_digests",
-  { "BookId": 1 },
+  { "BookId": 1, "DeploymentSlug": 1 },
   {
-    name: "idx_book_digests_book",
+    name: "idx_book_digests_book_scope",
     unique: true
   }
 )

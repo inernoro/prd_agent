@@ -293,7 +293,10 @@ public class BookshelfController : ControllerBase
         if (string.IsNullOrWhiteSpace(id))
             return Ok(ApiResponse<object>.Ok(new { exists = false }));
 
-        var doc = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
+        // 同一个 CDS 项目下所有分支共用一个 Mongo，所以取本书全部候选再按作用域挑：
+        // 自己写的优先、权威部署的兜底（新预览分支没自己生成过时照旧有东西读）。
+        var candidates = await _db.BookDigests.Find(x => x.BookId == id).ToListAsync(ct);
+        var doc = BookshelfDigestScope.PickVisible(candidates, BookshelfDigestScope.Current);
         if (doc == null || string.IsNullOrWhiteSpace(doc.Content))
             return Ok(ApiResponse<object>.Ok(new { exists = false }));
 
@@ -361,7 +364,16 @@ public class BookshelfController : ControllerBase
         // ——而人不会记得。判据放在服务端是因为稿子是公共内容，只有这里能保证所有入口口径一致，
         // 且与 GetDigest 的 stale 走同一个函数（形状 3：判据不许分裂成两份各自漂移）。
         // 无论走不走复用都要先读一次：重写那一篇必须沿用库里那份的 _id（见文末保存处）。
-        var existing = await _db.BookDigests.Find(x => x.BookId == id).FirstOrDefaultAsync(ct);
+        var scope = BookshelfDigestScope.Current;
+        var existingCandidates = await _db.BookDigests.Find(x => x.BookId == id).ToListAsync(ct);
+        var existing = BookshelfDigestScope.PickVisible(existingCandidates, scope);
+        /*
+         * 复用看的是「本部署看得见的那一篇」（自己的优先、权威的兜底），
+         * 但**写只写自己那一行**：拿权威那份的 _id 去 Replace，就是分支预览改写了
+         * 权威数据——`cross-project-isolation` 通道 4 要防的正是这件事。
+         */
+        var ownExisting = existingCandidates.FirstOrDefault(
+            x => BookshelfDigestScope.IsOwnDocument(x.DeploymentSlug, scope));
 
         if (!force)
         {
@@ -557,7 +569,7 @@ public class BookshelfController : ControllerBase
              * 开始输出之后，ExceptionMiddleware 想改 header 再炸一次，于是前端只看到流
              * 无声断掉、库里还是旧的那篇。三次「重新生成」全部石沉大海，日志里才有真相。
              */
-            Id = existing?.Id ?? Guid.NewGuid().ToString("N"),
+            Id = ownExisting?.Id ?? Guid.NewGuid().ToString("N"),
             BookId = id,
             Content = content,
             PromptVersion = BookshelfDigestPrompt.Version,
@@ -568,6 +580,7 @@ public class BookshelfController : ControllerBase
             GeneratedByUserId = userId,
             GeneratedAt = DateTime.UtcNow,
             CitedRules = material.Rules.Select(r => r.Name).ToList(),
+            DeploymentSlug = scope,
         };
 
         // 一本书一篇，整篇替换。upsert 而不是 insert：「重新生成」走同一条路，
@@ -576,7 +589,7 @@ public class BookshelfController : ControllerBase
         try
         {
             await _db.BookDigests.ReplaceOneAsync(
-                x => x.BookId == id,
+                x => x.BookId == id && x.DeploymentSlug == scope,
                 digest,
                 new ReplaceOptions { IsUpsert = true },
                 CancellationToken.None);

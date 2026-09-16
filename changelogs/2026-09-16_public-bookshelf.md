@@ -92,3 +92,5 @@
 | fix | prd-admin | 配图清单失败时三个生成入口全部停用，上一版只守住了顶部那个 |
 | fix | prd-api | 精读稿 SSE 补 10 秒 keepalive 心跳与写入串行化，长静默不再被代理掐断 |
 | fix | prd-admin | 「再试一次」改为不强制重生成，连接断了不再多烧一篇并覆盖已落库的稿子 |
+| fix | prd-api | 精读稿按部署作用域隔离，兄弟分支不再互相判过期、互相覆盖、反复重烧 |
+| fix | prd-api | book_digests 唯一索引改为 BookId + DeploymentSlug 复合 |

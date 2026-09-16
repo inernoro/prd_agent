@@ -57,4 +57,19 @@ public class BookDigest
 
     /// <summary>这一稿引用了哪几条规则（`.claude/rules/` 的文件名）。前端据此渲染「延伸阅读」</summary>
     public List<string> CitedRules { get; set; } = new();
+
+    /// <summary>
+    /// 写下这一篇的部署。权威部署（生产 / 本地）为 null，CDS 分支预览为 "{projectId}::{branch}"。
+    ///
+    /// 不带作用域的后果不是「兄弟分支能看见」那么温和（`cross-project-isolation` 通道 4）：
+    /// 同一个 CDS 项目下所有分支共用一个 Mongo，而这个集合一本书只有一行。
+    /// 两条分支的提示词版本或规则材料一旦不同，各自的新鲜度判据都会判对方那篇过期，
+    /// 于是**互相覆盖、反复重烧**——钱一直在花，谁也验不准自己这条分支的产出
+    /// （通道 8 的「修了像没修」就是这个形状）。
+    ///
+    /// 取 CurrentDurable（分支级、不含 revision）：稿子怕的是跨分支互覆，
+    /// 不怕滚动发布抢单；带 revision 会让每次推送都丢掉自己刚生成的那篇。
+    /// 存量文档没有这个字段，读作 null，即当成权威部署写的——不需要迁移。
+    /// </summary>
+    public string? DeploymentSlug { get; set; }
 }
