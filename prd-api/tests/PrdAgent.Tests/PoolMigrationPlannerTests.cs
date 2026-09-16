@@ -209,4 +209,41 @@ public class PoolMigrationPlannerTests
         Assert.NotNull(empty);
         Assert.Contains("一个成员都没有", empty);
     }
+
+    /// <summary>
+    /// 搬迁的两条不变量，都只在「同一批里有两个池指向同一个标识」时才显形。
+    ///
+    /// 一、复用已有模型时也要搬兜底标记。一个**默认**池映射到已存在的对外模型，
+    ///     不设 IsDefaultForType 的话，池退场后不点名的请求就不会落到它——那条流量
+    ///     原本是池在接的，搬完反而接不住（要么整个失败，要么换了个模型）。
+    ///
+    /// 二、dry-run 必须把本轮已规划的行算进来。它自己从不插库，只查已持久化的，
+    ///     于是第二个同 Code 的池照样被报成「新建」，而 apply 那一趟第一个已经进去了，
+    ///     第二个走的是复用 / 线路去重 / 跨用途拒绝——预览说的和真写的是两回事，
+    ///     而 dry-run 的全部价值就是让人在写之前看清会发生什么。
+    /// </summary>
+    [Fact]
+    public void 搬迁复用已有模型时搬兜底标记且dryrun认本轮已规划的行()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = console.IndexOf("app.MapPost(\"/gw/pools/migrate-to-models\"", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到搬迁端点，判据的取值口径需要更新");
+        var end = console.IndexOf("}).RequireAuthorization", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var handler = console[start..end];
+
+        // 一：复用分支设兜底标记
+        Assert.Contains("reuseUpdate.Set(\"IsDefaultForType\", true)", handler);
+
+        // 二：本轮索引三件——标识、用途默认、线路
+        Assert.Contains("plannedByNormalizedPublicId", handler);
+        Assert.Contains("plannedDefaultByModelType", handler);
+        Assert.Contains("plannedOfferingKeys", handler);
+
+        // 三处消费点都要真的查它，不能只建不用（形状 2：建了一半）
+        Assert.Contains("plannedByNormalizedPublicId.TryGetValue(normalized", handler);
+        Assert.Contains("plannedDefaultByModelType.TryGetValue(modelType", handler);
+        Assert.Contains("plannedOfferingKeys.Contains(exchangeRouteKey)", handler);
+        Assert.Contains("plannedOfferingKeys.Contains(modelRouteKey)", handler);
+    }
 }

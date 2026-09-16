@@ -4402,6 +4402,23 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             $"当前租户有 {pools.Count} 个池，一次最多搬 {PoolMigrationPlanner.MaxBatch} 个，请先按 modelType 分批"), jsonOptions, 400);
     result.PoolsScanned = pools.Count;
 
+    /*
+      dry-run 必须把「本次已经规划过的行」也算进来，否则预览与实际不符。
+
+      两个池共用同一个规范化 Code 是旧模型允许的。dry-run 只查已持久化的对外模型，
+      而它自己从不插入，于是第二个池照样被报成「新建一个模型」；apply 那一趟里第一个已经
+      插进去了，第二个走的是复用、线路去重、甚至跨用途拒绝——预览说的和真写的是两回事。
+      而 dry-run 的全部价值就是让人在写之前看清会发生什么（形状 5 的近亲：
+      判据取的是「变更前」的状态，而这次变更自己会改变它）。
+
+      所以在循环里维护一份「本轮已规划」的索引，查已存在时先问它。
+    */
+    var plannedByNormalizedPublicId = new Dictionary<string, BsonDocument>(StringComparer.Ordinal);
+    var plannedDefaultByModelType = new Dictionary<string, string>(StringComparer.Ordinal);
+    // 已规划的线路：{logicalId}::{targetKind}::{targetId}。dry-run 不插库，
+    // 不记的话同一条线路会被两个池各报一次「新建」，而 apply 时第二次会被去重。
+    var plannedOfferingKeys = new HashSet<string>(StringComparer.Ordinal);
+
     foreach (var pool in pools)
     {
         var poolId = pool.GetStringOrEmpty("_id");
@@ -4428,6 +4445,9 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
 
         var existing = await gwLogicalModels.Find(fb.And(
             fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized))).FirstOrDefaultAsync();
+        // 本轮已经规划过同一个标识时，按「它已经在了」处理——dry-run 才能和 apply 说同一件事。
+        if (existing is null && plannedByNormalizedPublicId.TryGetValue(normalized, out var plannedExisting))
+            existing = plannedExisting;
 
         // 复用同名模型之前必须核对用途：标识撞上不等于是同一个东西。
         //
@@ -4465,9 +4485,22 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                 fb.Eq("ModelType", modelType),
                 fb.Eq("IsDefaultForType", true),
                 fb.Ne("_id", logicalId))).FirstOrDefaultAsync();
-            if (defaultTaken is not null)
+            // 本轮已经有别的池把这个用途的默认占了，也算占了——否则 dry-run 会说两个池都能当默认，
+            // 而 apply 那一趟第二个必然被降级。
+            string? plannedHolder = null;
+            if (defaultTaken is null
+                && plannedDefaultByModelType.TryGetValue(modelType, out var plannedDefaultId)
+                && !string.Equals(plannedDefaultId, logicalId, StringComparison.Ordinal))
             {
-                var holder = defaultTaken.AsNullableString("PublicId") ?? defaultTaken.GetStringOrEmpty("_id");
+                plannedHolder = plannedByNormalizedPublicId.Values
+                    .FirstOrDefault(x => string.Equals(x.GetStringOrEmpty("_id"), plannedDefaultId, StringComparison.Ordinal))
+                    ?.AsNullableString("PublicId") ?? plannedDefaultId;
+            }
+            if (defaultTaken is not null || plannedHolder is not null)
+            {
+                var holder = plannedHolder
+                    ?? defaultTaken!.AsNullableString("PublicId")
+                    ?? defaultTaken.GetStringOrEmpty("_id");
                 entry.IsDefaultForType = false;
                 result.Skipped.Add(new PoolMigrationSkip
                 {
@@ -4548,16 +4581,38 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             }
             // 复用已有模型时也要把这个池 id 并进来源里：它同样会收到带池 ID 的请求。
             // AddToSet 而不是 Set——一个模型可能被多个同 Code 的池先后搬过来。
+            //
+            // 兜底标记也要搬。一个**默认**池映射到已存在的对外模型时，这里不设 IsDefaultForType
+            // 的话，池退场后不点名的请求就不会落到它——那条流量原本是池在接的，搬完反而接不住了
+            // （要么整个失败，要么落到另一个用途默认上，换了模型）。
+            //
+            // entry.IsDefaultForType 走到这里时已经过了上面那道同用途唯一性检查：
+            // 被别人占着就已经降级成 false 并如实报进 Skipped，所以这里直接用它是安全的。
+            var reuseUpdate = Builders<BsonDocument>.Update
+                .AddToSet("MigratedFromPoolIds", poolId)
+                .Set("UpdatedAt", DateTime.UtcNow);
+            if (entry.IsDefaultForType)
+                reuseUpdate = reuseUpdate.Set("IsDefaultForType", true);
             if (!dryRun)
             {
                 await gwLogicalModels.UpdateOneAsync(
                     fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
-                    Builders<BsonDocument>.Update
-                        .AddToSet("MigratedFromPoolIds", poolId)
-                        .Set("UpdatedAt", DateTime.UtcNow));
+                    reuseUpdate);
             }
             result.LinkedToExisting++;
         }
+
+        // 记进本轮索引：下一个池若撞上同一个标识或同一个用途默认，dry-run 要和 apply 说同一件事。
+        plannedByNormalizedPublicId[normalized] = new BsonDocument
+        {
+            { "_id", logicalId },
+            { "PublicId", publicId },
+            { "PublicIdNormalized", normalized },
+            { "ModelType", modelType },
+            { "IsDefaultForType", entry.IsDefaultForType },
+        };
+        if (entry.IsDefaultForType)
+            plannedDefaultByModelType[modelType] = logicalId;
 
         var members = pool.GetValue("Models", BsonNull.Value) is { IsBsonArray: true } arr
             ? arr.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument).ToList()
@@ -4595,10 +4650,13 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             if (memberExchange is not null)
             {
                 var exchangeId = memberExchange.GetStringOrEmpty("_id");
-                var duplicateExchangeRoute = await gwModelOfferings.Find(fb.And(
-                    fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
-                    fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId))).AnyAsync();
+                var exchangeRouteKey = $"{logicalId}::exchange::{exchangeId}";
+                var duplicateExchangeRoute = plannedOfferingKeys.Contains(exchangeRouteKey)
+                    || await gwModelOfferings.Find(fb.And(
+                        fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                        fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId))).AnyAsync();
                 if (duplicateExchangeRoute) continue;
+                plannedOfferingKeys.Add(exchangeRouteKey);
 
                 var carryExchangeUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
                 if (carryExchangeUnavailable) entry.CarriedUnavailableRoutes++;
@@ -4654,10 +4712,13 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             var upstreamModelId = physical.AsNullableString("ModelName") is { Length: > 0 } registered
                 ? registered
                 : memberModelId;
-            var duplicate = await gwModelOfferings.Find(fb.And(
-                fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
-                fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).AnyAsync();
+            var modelRouteKey = $"{logicalId}::model::{physicalId}";
+            var duplicate = plannedOfferingKeys.Contains(modelRouteKey)
+                || await gwModelOfferings.Find(fb.And(
+                    fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                    fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).AnyAsync();
             if (duplicate) continue;
+            plannedOfferingKeys.Add(modelRouteKey);
 
             var carryUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
             if (carryUnavailable) entry.CarriedUnavailableRoutes++;
