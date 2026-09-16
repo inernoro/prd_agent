@@ -574,10 +574,15 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     usageCount: 0,
     createdAt: new Date().toISOString(),
   },
+  // 网页托管：先带 wip，按 CLAUDE.md 规则 #8 验收通过后再删这个字段转正式。
+  // 现状是两份计划都写着没验收（design-generation 的产物质量与最终盲验未通过、
+  // open-design 六步全部未验收），百宝箱却是全体用户共用的导航目录——
+  // 不挂这个标就等于替他们宣布这块已经能用了。
   {
     id: 'builtin-web-pages',
     name: '网页托管',
     description: '上传、管理和发布网页，支持评论、提问、AI 修改、版本预览与回退',
+    wip: true,
     icon: 'Globe',
     category: 'builtin',
     type: 'builtin',
