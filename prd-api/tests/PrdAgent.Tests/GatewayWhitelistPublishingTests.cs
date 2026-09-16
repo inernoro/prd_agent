@@ -113,6 +113,40 @@ public class GatewayWhitelistPublishingTests
         Assert.Contains("return \"route:read\";", body);
     }
 
+    /// <summary>
+    /// 兼容入口不接受客户端自带的「钉住某个上游」字段。
+    ///
+    /// 这两个字段是内部调度语义：绕过对外模型目录，按平台 id + 模型 id 直取上游。
+    /// 池退场之前，池成员检查恰好是它的调用方边界——pin 指到的成员必须在这个 appCaller
+    /// 获准的池里。池删掉之后那道边界跟着没了，而 TryResolvePinnedModelAsync 只验
+    /// 「平台与模型在本租户启用」：一把绑定某个 appCaller 的服务密钥，只要知道内部 id
+    /// 就能调本租户任何启用的物理模型，越过了它自己的授权名单。
+    ///
+    /// 拒绝而不是静默忽略：忽略会让对方以为自己钉住了某个上游，实际走的是另一条路。
+    /// 内部那条路（/gw/v1/*，gw-native）不受影响。
+    /// </summary>
+    [Fact]
+    public void 兼容入口拒绝客户端自带的钉住上游字段()
+    {
+        var endpoints = Serving;
+
+        // 判据函数改名成「拒绝」，语义写进名字里——留着 Resolve 这个名字，下一个人会以为它还在取值
+        Assert.Contains("RejectClientSuppliedPinnedTarget", endpoints);
+        Assert.DoesNotContain("ResolveCompatPinnedTarget", endpoints);
+
+        // 拒绝要给专属错误码，方便对方定位；不是笼统的 invalid_json
+        Assert.Contains("\"pinned_target_not_allowed\"", endpoints);
+
+        // 六个兼容入口逐个都要拒。少一个就是留了一扇后门，而它不会红。
+        var rejections = System.Text.RegularExpressions.Regex.Matches(
+            endpoints, @"RejectClientSuppliedPinnedTarget\(http,").Count;
+        Assert.True(rejections >= 6,
+            $"每个兼容入口都要拒绝客户端自带的 pin，当前只有 {rejections} 处");
+
+        // 拒完之后不许再把客户端的值往下传
+        Assert.DoesNotContain("PinnedPlatformId = pinnedPlatformId", endpoints);
+    }
+
     [Fact]
     public void 对外清单按线路逐条报价且非美金不当美金报()
     {

@@ -218,15 +218,17 @@ def build_report() -> dict[str, Any]:
             "IngressProtocol = body.Context?.IngressProtocol ?? \"gw-native\"",
             "ResolveCompatModelPolicy",
             "ResolveCompatModelPoolId",
-            "ResolveCompatPinnedTarget",
+            # 兼容入口不再接受客户端自带的 pin：它绕过白名单授权按内部 id 直取上游，
+            # 而池退场之后，池成员检查这道调用方边界跟着没了（2026-09-16）。
+            # 判据从「取值并透传」改成「当场拒绝」，函数名里也写清了是拒绝。
+            "RejectClientSuppliedPinnedTarget",
+            "pinned_target_not_allowed",
             "X-Gateway-Model-Policy",
             "X-Gateway-Model-Pool-Id",
             "X-Gateway-Pinned-Platform-Id",
             "X-Gateway-Pinned-Model-Id",
             "NormalizeModelPolicy",
             "ModelPoolId = modelPoolId",
-            "PinnedPlatformId = pinnedPlatformId",
-            "PinnedModelId = pinnedModelId",
         ],
     )
     checks.append(_check(
@@ -333,9 +335,11 @@ def build_report() -> dict[str, Any]:
             "missingRuntimeCoverageAppCallers",
             "coveredAppCallerCodes",
             "gateway_pool_member_readiness",
-            "HasUsablePoolMember",
-            "IsResolvablePoolMember",
-            "/gw/pools activeBoundPools=",
+            # 这条 gate 随模型池退场改成非 blocking，指路不再指向已删的 /pools 页面；
+            # 它原本守的「线路可用性」已并入 active_appcaller_pool_binding，
+            # 那条现在用 FindUnnamedCatcherAsync（与运行时两层判据逐层对齐）。
+            "FindUnnamedCatcherAsync",
+            "线路可用性已并入 active_appcaller_pool_binding",
             "active_appcaller_map_fallback_exit",
             "activeAppCallerMapFallbackExitReady",
             "disableMapFallbackForActiveAppCallers",

@@ -157,3 +157,5 @@
 | fix | prd-api | 半开探测失败时作废人工恢复通行证，否则坏线路被每个后续请求反复抢去当队首，冷却形同虚设 |
 | fix | llmgw | 「算不出钱的笔数」两处都补上 stale_currency，不再报「0 笔未计价」 |
 | fix | llmgw | 调用全貌面板不把缺币种的价标成 USD（上一轮只修了 /v1/models 那一处，同类没横扫） |
+| security | llmgw | 兼容入口拒绝客户端自带的 pinned_platform_id / pinned_model_id：池退场后那道调用方边界没了，一把 key 只要知道内部 id 就能调任何启用的物理模型 |
+| fix | llmgw | 发布门禁两条池判据换成对外模型可达性，不再让正确配置的调用方卡住发布且无处可修 |

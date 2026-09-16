@@ -6040,8 +6040,29 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Select(x => x!)
         .ToHashSet(StringComparer.Ordinal);
-    var activeMissingGatewayPool = activeAppCallers.Count(d =>
-        !AllReferencedModelPoolsExist(d, gwPoolIds));
+    // 「有没有人接得住这个 active 调用方」——判据换成对外模型，不再看池绑定。
+    //
+    // 池退场之后，正确配置的调用方（走 DefaultForAppCallerCodes / IsDefaultForType）根本没有
+    // 池绑定，而带着残留绑定的那几个指向的池文档已经被删——旧判据把它们判成 blocked，
+    // 并让人去 /pools 修，可那个页面现在 302 到对外模型页、写端点全删了：
+    // 一个配对的调用方能卡住发布，而且没有任何可执行的修复动作（形状 5 的近亲：
+    // 判据守的是一个已经不存在的状态，于是它只会误伤，不会拦住任何真问题）。
+    //
+    // 复用 FindUnnamedCatcherAsync：那份判据与运行时 TryResolveDefaultLogicalModelAsync
+    // 逐层对齐（先看谁认领、再看用途默认，两层都要求启用且真有一条启用的线路），
+    // 不在这里另写一套（形状 3）。
+    var activeAppCallersWithoutCatcher = 0;
+    foreach (var caller in activeAppCallers)
+    {
+        var catcher = await FindUnnamedCatcherAsync(
+            gwLogicalModels,
+            gwModelOfferings,
+            TenantAccess.GetRequired(http).TenantId,
+            caller.AsNullableString("RequestType"),
+            caller.AsNullableString("AppCallerCode"));
+        if (catcher is null) activeAppCallersWithoutCatcher++;
+    }
+    var activeMissingGatewayPool = activeAppCallersWithoutCatcher;
     var discoveredAppCallers = appCallerDocs.Count(d =>
         string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var governedAppCallers = appCallerDocs.Where(IsGovernedAppCaller).ToList();
@@ -6057,18 +6078,10 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .ToHashSet(StringComparer.Ordinal);
     var enabledGwModels = gwModelDocs.Where(d => d.AsNullableBool("Enabled") ?? true).ToList();
     var enabledGwExchanges = gwExchangeDocs.Where(d => d.AsNullableBool("Enabled") ?? true).ToList();
-    var activeBoundPoolIds = activeAppCallers
-        .SelectMany(GetReferencedModelPoolIds)
-        .Where(gwPoolIds.Contains)
-        .ToHashSet(StringComparer.Ordinal);
-    var activeBoundPools = gwPoolDocs.Where(d => activeBoundPoolIds.Contains(d.GetStringOrEmpty("_id"))).ToList();
-    var usablePoolIds = activeBoundPools
-        .Where(pool => HasUsablePoolMember(pool, enabledGwPlatformIds, enabledGwModels, enabledGwExchanges))
-        .Select(pool => pool.GetStringOrEmpty("_id"))
-        .ToHashSet(StringComparer.Ordinal);
-    var activeBoundPoolWithoutUsableMember = activeAppCallers.Count(d =>
-        AllReferencedModelPoolsExist(d, gwPoolIds)
-        && !IsAppCallerUsable(d, usablePoolIds));
+    // 「线路可用性」这一条已经被上面那个判据吸收了：FindUnnamedCatcherAsync 认一个模型的前提
+    // 就是它至少有一条启用的线路。再单独判一次池成员可用性，守的是一个已经不存在的对象，
+    // 而且两条判据会各自漂移（形状 3）。这里恒 0，对应的 gate 下面改成如实说明它已退场。
+    var activeBoundPoolWithoutUsableMember = 0;
     var mapFallbackObjectsRemaining =
         MapOnlyCount(mapPoolDocs, gwPoolIds)
         + MapOnlyCount(mapPlatformDocs, IdSet(gwPlatformDocs))
@@ -6368,14 +6381,17 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
 
     AddGate(
         "active_appcaller_pool_binding",
-        "active appCaller GW 池绑定",
+        "active appCaller 有对外模型接得住",
         activeMissingGatewayPool == 0 && discoveredAppCallers == 0 ? "pass" : "blocked",
         activeMissingGatewayPool > 0 || discoveredAppCallers > 0,
         activeMissingGatewayPool == 0 && discoveredAppCallers == 0
-            ? "active appCaller 均已绑定有效 GW 模型池，且无 discovered 调用方等待治理。"
-            : $"{activeMissingGatewayPool} 个 active 未绑定有效 GW 池，{discoveredAppCallers} 个 discovered 调用方尚未治理。",
-        $"/gw/config-authority/report activeMissingGatewayPool={activeMissingGatewayPool}; discoveredAppCallers={discoveredAppCallers}",
-        activeMissingGatewayPool == 0 && discoveredAppCallers == 0 ? "可进入 MAP fallback 退场复核。" : "在 /app-callers 治理调用方状态与模型池绑定。",
+            ? "每个 active appCaller 都有对外模型接得住，且无 discovered 调用方等待治理。"
+            : $"{activeMissingGatewayPool} 个 active 调用方没有对外模型接得住（没人认领它，这个用途的默认也接不住），"
+              + $"{discoveredAppCallers} 个 discovered 调用方尚未治理。",
+        $"/gw/config-authority/report activeWithoutCatcher={activeMissingGatewayPool}; discoveredAppCallers={discoveredAppCallers}",
+        activeMissingGatewayPool == 0 && discoveredAppCallers == 0
+            ? "可进入 MAP fallback 退场复核。"
+            : "去「模型」页把某个模型的「指定调用方」加上它，或给这个用途设一个默认模型；discovered 调用方在 /app-callers 治理。",
         new Dictionary<string, string>
         {
             ["activeAppCallers"] = activeAppCallers.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -6420,20 +6436,23 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             ["missingIngressProtocols"] = string.Join(",", missingRegistryProtocols),
         });
 
+    // 这一条已随模型池退场：它守的「绑定的池有没有可用成员」现在没有对象了，
+    // 而它真正关心的事——「接得住这个调用方的那个模型有没有一条能用的线路」——
+    // 已经被上面那条判据吸收（FindUnnamedCatcherAsync 认一个模型的前提就是它有启用的线路）。
+    // 保留这个 id 是为了不破坏消费这份报告的存量脚本，但它不再 blocking，也不再指向已删的页面。
     AddGate(
         "gateway_pool_member_readiness",
-        "GW 池成员可用性",
-        activeBoundPoolWithoutUsableMember == 0 ? "pass" : "blocked",
-        activeBoundPoolWithoutUsableMember > 0,
-        activeBoundPoolWithoutUsableMember == 0
-            ? $"active appCaller 绑定的 {activeBoundPools.Count} 个 GW 池均有可解析成员。"
-            : $"{activeBoundPoolWithoutUsableMember} 个 active appCaller 绑定的 GW 池没有可解析、非 unavailable 成员。",
-        $"/gw/pools activeBoundPools={activeBoundPools.Count}; withoutUsableMember={activeBoundPoolWithoutUsableMember}; enabledPlatforms={enabledGwPlatformIds.Count}; enabledModels={enabledGwModels.Count}; enabledExchanges={enabledGwExchanges.Count}",
-        activeBoundPoolWithoutUsableMember == 0 ? "保持池成员健康。" : "在 /pools 为相关 GW 池补充 enabled 模型或 Exchange，并确认 HealthStatus 不是 Unavailable。",
+        "GW 池成员可用性（已随模型池退场）",
+        "pass",
+        false,
+        "模型池路由已退场，这条判据不再有对象；线路可用性已并入「active appCaller 有对外模型接得住」那一条。",
+        "/logical-models 线路可用性已并入 active_appcaller_pool_binding",
+        "无需处理。要看某个模型的线路健康，去「模型」页打开它的调用全貌。",
         new Dictionary<string, string>
         {
-            ["activeBoundPools"] = activeBoundPools.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["withoutUsableMember"] = activeBoundPoolWithoutUsableMember.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            // 只留仍然成立的那几个计数；池相关的字段跟着判据一起退场，
+            // 留着会让读报告的人以为这条还在按池判。
+            ["retired"] = "model-pool-routing",
             ["enabledPlatforms"] = enabledGwPlatformIds.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["enabledModels"] = enabledGwModels.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["enabledExchanges"] = enabledGwExchanges.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
