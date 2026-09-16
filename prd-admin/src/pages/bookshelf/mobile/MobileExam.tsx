@@ -121,7 +121,12 @@ export function MobileExam({
       {submitted && suggestedBooks.length > 0 && (
         <>
           <div style={{ marginTop: AS_SPACE.sectionGap }}>
-            <SectionHead eyebrow="错的那几处，这两本正好治" title={`建议从这${suggestedBooks.length === 1 ? '本' : '两本'}开始`} />
+            {/* 满分的人也会看到推荐（只要还有没读的书），这时不能说「错的那几处」——
+                他一处都没错，这句话是在告诉他犯了不存在的错。 */}
+            <SectionHead
+              eyebrow={correctCount === questions.length ? '全对了，接着往下读' : '错的那几处，这两本正好治'}
+              title={`建议从这${suggestedBooks.length === 1 ? '本' : '两本'}开始`}
+            />
           </div>
           <GroupCard style={{ marginTop: AS_SPACE.titleGap }}>
             {suggestedBooks.map((b, i) => (

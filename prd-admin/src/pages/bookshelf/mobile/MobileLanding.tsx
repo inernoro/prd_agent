@@ -73,7 +73,9 @@ export function MobileLanding({
 
   const visible = ALL_BOOKS.filter((b) => matchRole(b.track, role));
   const readCount = visible.filter((b) => readBookIds.includes(b.id)).length;
-  const noteCount = Object.values(bookNotes).filter((v) => v.trim().length > 0).length;
+  // 心得条数要和 readCount 同一个分母：角色筛过之后只数这些书的心得，
+  // 否则「已读 3/12 · 心得 9 条」——分母按角色收了、分子还是全站，两个数对不上。
+  const noteCount = visible.filter((b) => (bookNotes[b.id] ?? '').trim().length > 0).length;
   const passedCount = VOLUMES.filter((v) => {
     const r = examResults[v.id];
     return r ? countsAsPassed(r.passed, r.readAtExam, r.totalAtExam) : false;

@@ -40,3 +40,37 @@ export function examEntryLabel(readAtExam: number, totalAtExam: number, question
     ? `先摸个底 · ${questionCount} 题`
     : `结业考 · ${questionCount} 题`;
 }
+
+/**
+ * 得分率。题数为零（存量脏数据）一律算 0，不让它靠除零冒充高分。
+ */
+function scoreRate(correct: number, total: number): number {
+  return total > 0 ? correct / total : 0;
+}
+
+/**
+ * 这一次成绩要不要盖掉手上那份。**前端这一侧的唯一判定源**，
+ * 与服务端 `BookshelfExamScoring.IsBetter` 逐条对应。
+ *
+ * 为什么先比通关：只比分数会把裸考满分的人锁死——一本没读先摸底考了满分，
+ * 读完整卷再考一次还是满分，分数没涨于是这次被丢弃，已读数永远停在 0，
+ * 书读完了、试也考过了，看板上却永远不通关。
+ *
+ * 为什么比率不比绝对数：题目是策展内容、改版会增减。拿答对数当分数，
+ * 某卷从 10 题改到 5 题之后，手上那份 6/10（60%）会挡住新的 5/5（100%）——
+ * 而前端这道挡下去是**直接 return**，服务端那个正确的比较连跑的机会都没有。
+ *
+ * 2026-09-16 的教训：这两处判据本来就是分开写的两份（形状 3）。
+ * 先改了服务端比率、忘了这一边，于是「两边口径一致」这句话在提交信息里
+ * 成了假话。现在前端这一侧收敛到这一个函数，别再在组件或 store 里手写第二份。
+ */
+export function isBetterExam(
+  prev: { correct: number; total: number; passed: boolean; readAtExam: number; totalAtExam: number } | undefined,
+  next: { correct: number; total: number; passed: boolean; readAtExam: number; totalAtExam: number },
+): boolean {
+  if (!prev) return true;
+  const prevCounts = countsAsPassed(prev.passed, prev.readAtExam, prev.totalAtExam);
+  const nextCounts = countsAsPassed(next.passed, next.readAtExam, next.totalAtExam);
+  if (nextCounts !== prevCounts) return nextCounts;
+  return scoreRate(next.correct, next.total) > scoreRate(prev.correct, prev.total);
+}

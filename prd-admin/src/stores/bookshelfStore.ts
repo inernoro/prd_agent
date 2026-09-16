@@ -25,7 +25,7 @@ import {
   getMyBookshelfProgress,
   saveMyBookshelfProgress,
 } from '@/services/real/bookshelf';
-import { countsAsPassed } from '@/lib/bookshelf/examContext';
+import { isBetterExam } from '@/lib/bookshelf/examContext';
 
 export interface ExamResult {
   volumeId: string;
@@ -220,17 +220,10 @@ export const useBookshelfStore = create<BookshelfState>()(
         },
 
         recordExam: (result) => {
-          const prev = get().examResults[result.volumeId];
-          // 「更好的那次」先比是否计入通关、同档再比正确数，与服务端 BookshelfController
-          // 的合并口径一致：裸考满分之后读完整卷再考满分，正确数没涨但那是一次升级，
-          // 按旧判据会被丢掉，于是书读完了也永远不通关。
-          if (prev) {
-            const prevCounts = countsAsPassed(prev.passed, prev.readAtExam, prev.totalAtExam);
-            const nextCounts = countsAsPassed(result.passed, result.readAtExam, result.totalAtExam);
-            const better = (nextCounts && !prevCounts)
-              || (nextCounts === prevCounts && result.correct > prev.correct);
-            if (!better) return;
-          }
+          // 判据在 examContext.isBetterExam，与服务端 BookshelfExamScoring.IsBetter 对应。
+          // 别在这里手写第二份——上一次手写的那份在服务端改成比得分率之后就漂了，
+          // 而这道挡下去是直接 return，服务端那个正确的比较连跑的机会都没有。
+          if (!isBetterExam(get().examResults[result.volumeId], result)) return;
           set({ examResults: { ...get().examResults, [result.volumeId]: result } });
           schedulePush();
         },

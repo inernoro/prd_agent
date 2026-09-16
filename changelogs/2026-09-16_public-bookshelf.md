@@ -79,3 +79,8 @@
 | fix | prd-admin | 书页笔记跟随服务端 hydration，修复聚焦失焦即删掉已有笔记 |
 | fix | prd-admin | 配图清单拉取失败时停用生成按钮，不再照着空清单花钱重画已有的图 |
 | fix | prd-api | 成绩合并改比得分率，卷子改版后不会被题数变化倒置好坏 |
+| fix | prd-admin | 本地成绩判据收敛到 examContext.isBetterExam，改比得分率，与服务端口径重新对齐 |
+| fix | prd-admin | 精读稿署名常驻并补上平台，库里那篇也看得见是谁写的 |
+| fix | prd-admin | 取稿等待期给产物形状的骨架与秒表，不再是一句不动的话 |
+| fix | prd-admin | 落地页心得条数按角色过滤，与已读数同一个分母 |
+| fix | prd-admin | 满分时不再显示「错的那几处」 |

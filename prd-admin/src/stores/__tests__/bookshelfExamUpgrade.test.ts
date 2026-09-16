@@ -53,6 +53,25 @@ describe('结业考成绩的本地合并', () => {
     expect(useBookshelfStore.getState().examResults.v1.correct).toBe(6);
   });
 
+  /*
+   * 2026-09-16 的回归：服务端改成比得分率之后，前端这一份还在比答对数。
+   * 而前端这道挡下去是直接 return，服务端那个正确的比较连跑的机会都没有——
+   * 判据分裂成两份、只改了一份（形状 3）。
+   */
+  it('卷子改版后比的是得分率：6/10 挡不住 5/5', () => {
+    useBookshelfStore.getState().recordExam({
+      volumeId: 'v1', correct: 6, total: 10, passed: true,
+      readAtExam: 11, totalAtExam: 11, takenAt: new Date().toISOString(),
+    });
+    useBookshelfStore.getState().recordExam({
+      volumeId: 'v1', correct: 5, total: 5, passed: true,
+      readAtExam: 11, totalAtExam: 11, takenAt: new Date().toISOString(),
+    });
+    const r = useBookshelfStore.getState().examResults.v1;
+    expect(r.total, '5/5（100%）被 6/10（60%）挡住了：这一侧比的还是答对数').toBe(5);
+    expect(r.correct).toBe(5);
+  });
+
   it('同一档里分数更低的那次照旧丢弃', () => {
     useBookshelfStore.getState().recordExam(makeResult(6, 11));
     useBookshelfStore.getState().recordExam(makeResult(4, 11));

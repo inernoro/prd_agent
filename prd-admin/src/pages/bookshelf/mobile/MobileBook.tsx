@@ -46,6 +46,12 @@ export function MobileBook({
   const [phase, setPhase] = useState<Phase>('loading');
   const [text, setText] = useState('');
   const [model, setModel] = useState<string | null>(null);
+  /*
+   * 平台后端三个出口（GET / cached / start）一直都在发，前端从来没接——
+   * 建了一半的链路，不报错也不变红（形状 2）。`ai-model-visibility` 要的是
+   * 「{模型} · {平台}」，缺一半就不算兑现。
+   */
+  const [platform, setPlatform] = useState<string | null>(null);
   const [citedRules, setCitedRules] = useState<string[]>([]);
   const [error, setError] = useState('');
   const [elapsed, setElapsed] = useState(0);
@@ -92,10 +98,12 @@ export function MobileBook({
         if (evt.type === 'cached') {
           setText(evt.content);
           setModel(evt.model ?? null);
+          setPlatform(evt.platform ?? null);
           setCitedRules(evt.citedRules ?? []);
           setPhase('ready');
         } else if (evt.type === 'start') {
           setModel(evt.model ?? null);
+          setPlatform(evt.platform ?? null);
         } else if (evt.type === 'text') {
           setText((prev) => prev + evt.content);
         } else if (evt.type === 'done') {
@@ -126,6 +134,7 @@ export function MobileBook({
       if (res.success && res.data?.exists && res.data.content && !res.data.stale) {
         setText(res.data.content);
         setModel(res.data.model ?? null);
+        setPlatform(res.data.platform ?? null);
         setCitedRules(res.data.citedRules ?? []);
         setPhase('ready');
         return;
@@ -139,9 +148,13 @@ export function MobileBook({
     };
   }, [book.id, run]);
 
-  /* 生成期间每秒走一下秒表：等待必须有「还要多久」的交代（expectation-management） */
+  /*
+   * 取稿与生成期间都要走秒表：等待必须有「还要多久」的交代（expectation-management）。
+   * 只覆盖 generating 是不够的——取稿那一下走的是网络，慢起来一样会超过两秒，
+   * 而那时屏幕上只有一句不动的话（AGENTS.md §6：静止的「加载中」超过 2 秒即缺陷）。
+   */
   useEffect(() => {
-    if (phase !== 'generating') return undefined;
+    if (phase !== 'loading' && phase !== 'generating') return undefined;
     const t = setInterval(() => setElapsed((n) => n + 1), 1000);
     return () => clearInterval(t);
   }, [phase]);
@@ -175,7 +188,29 @@ export function MobileBook({
       {/* 精读稿 */}
       <div style={{ marginTop: 24 }}>
         {phase === 'loading' && (
-          <p style={{ ...asStyle(AS_TYPE.itemSubtitle), color: 'var(--text-muted)' }}>正在看看有没有现成的稿子…</p>
+          /* 骨架用的是产物自己的形状（三段标题 + 段落），不是通用 spinner：
+             用户在等一篇文章，屏幕上动的就该是一篇文章的轮廓（artifact-is-experience）。 */
+          <div>
+            <p style={{ ...asStyle(AS_TYPE.itemSubtitle), color: 'var(--text-muted)' }}>
+              正在看看有没有现成的稿子{elapsed > 0 ? ` · 已等待 ${elapsed}s` : '…'}
+            </p>
+            <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[72, 100, 100, 88, 56, 100, 94].map((w, i) => (
+                <div
+                  key={i}
+                  style={{
+                    height: i === 0 || i === 4 ? 15 : 11,
+                    width: `${w}%`,
+                    borderRadius: 4,
+                    background: 'var(--shelf-inset)',
+                    animation: 'bookshelfDigestSkeleton 1.4s ease-in-out infinite',
+                    animationDelay: `${i * 0.12}s`,
+                  }}
+                />
+              ))}
+            </div>
+            <style>{`@keyframes bookshelfDigestSkeleton{0%,100%{opacity:.45}50%{opacity:.9}}`}</style>
+          </div>
         )}
 
         {phase === 'generating' && text.length === 0 && (
@@ -190,6 +225,24 @@ export function MobileBook({
               <br />
               已等待 {elapsed}s{model ? ` · ${model}` : ''}
             </div>
+          </div>
+        )}
+
+        {/*
+          * 署名常驻，不是只在第一个字到达之前露一下。
+          * 读者手上这篇是模型写的，他有权在读的全程知道是哪个模型、哪个平台写的——
+          * 尤其库里那篇（cached）以前一次都没显示过（`ai-model-visibility`）。
+          */}
+        {text.length > 0 && model && (
+          <div
+            style={{
+              marginBottom: 12,
+              ...asStyle(AS_TYPE.eyebrow),
+              color: 'var(--text-muted)',
+              fontFamily: 'var(--font-mono, ui-monospace, monospace)',
+            }}
+          >
+            {model}{platform ? ` · ${platform}` : ''}
           </div>
         )}
 
