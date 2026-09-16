@@ -321,7 +321,12 @@ export function assessCell(target: UptimeTargetSummary, freshness: ProbeFreshnes
   // 刻意只降级 overdue、不降级 never——刚建的监控还没探第一次，
   // 那是「还在等第一次判定」（走 unknown），不是「跑着跑着停了」。
   if (freshness === 'overdue') return 'overdue';
-  if (target.observeMode === 'passive' && target.sampleCount === 0) return 'stale';
+  if (target.observeMode === 'passive') {
+    if (target.sampleCount === 0) return 'stale';
+    // 声明的样本 componentId 不在了 / 不是数字 → 这一轮没读到样本数。不知道有没有流量，
+    // 就不知道「零错误」是真的还是没人用；判成 up 等于把读不到当成正常（Codex #1543 P1）。
+    if (target.sampleCount === undefined) return 'unknown';
+  }
   if (target.status === 'up' && target.measured) return 'up';
   return 'unknown';
 }
@@ -351,6 +356,7 @@ function cellReason(
     if (target.enabled === false) return '已暂停';
     if (target.excluded) return '未纳入监控';
     if (!target.measured) return '未实测（按容器状态判定）';
+    if (target.observeMode === 'passive' && target.sampleCount === undefined) return '被动观测，这一轮没读到样本量（声明的样本项不在了或不是数字）—— 零错误是真的还是没人用说不准';
     return '还在等第一次判定';
   }
   return undefined;
@@ -581,6 +587,21 @@ export function buildOwnerBoard(
     };
   }
 
+  // worst 是 unknown 的业务：新建、暂停、未实测、读不到样本数。它们既不坏也不算好——
+  // 不单独拎出来就会掉进下面那句「都正常」（Codex #1543 P1，与全局面板同一档）。
+  const unverified = rows.filter((r) => r.worst === 'unknown');
+  if (unverified.length > 0) {
+    const first = unverified[0].cells.find((c) => c.health === 'unknown');
+    return {
+      headline: `${unverified.length} 项业务还没有任何检查记录，它们不算正常`,
+      detail: `${unverified.map((r) => r.name).join('、')} —— ${first?.reason || '还在等第一次判定'}`,
+      tone: 'warn',
+      rows,
+      infra,
+      evidence,
+    };
+  }
+
   // 「全部正常」这句话必须自带证据：**什么时候检查的**。
   // 少了这半句，它和「探针三天没跑、页面照样绿」长得一模一样
   // （用户 2026-09-14：「我还得看到没有出现问题的证据，避免因为程序没有跑，而跳过了」）。
@@ -692,17 +713,30 @@ export interface GlobalBoard {
  * （Codex #1543 P2）。覆盖看全环境，读数看筛选后的；业务全落在被筛掉的环境里的项目，
  * 摆全环境那份读数，不藏。
  */
+export interface ProjectRegistryEntry { id: string; name: string }
+
 export function buildGlobalBoard(
   targets: ReadonlyArray<UptimeTargetSummary>,
   ctx: OwnerBoardContext,
   coverageTargets: ReadonlyArray<UptimeTargetSummary> = targets,
+  /**
+   * 项目登记表（/api/projects）。一个刚建的项目没有分支、没有发布目标、没有自定义监控，
+   * 就不会产出任何目标——按目标算它根本不存在，既不在「有人盯」也不在「没人盯」里，
+   * 一个只有这种项目的实例会被说成「没有任何项目」。登记表里有、目标里没有的，算没人盯（Codex #1543 P2）。
+   */
+  registry: ReadonlyArray<ProjectRegistryEntry> = [],
 ): GlobalBoard {
   const now = ctx.now;
   const scopedRows = new Map(buildProjectRows(targets, now).map((r) => [r.id, r]));
-  const all = sortProjectRows(buildProjectRows(coverageTargets, now).map((row) => {
+  const covered = buildProjectRows(coverageTargets, now).map((row) => {
     const scoped = scopedRows.get(row.id);
     return scoped && scoped.businessCount > 0 ? scoped : row;
-  }));
+  });
+  const coveredIds = new Set(covered.map((r) => r.id));
+  const targetless: ProjectRow[] = registry
+    .filter((p) => !coveredIds.has(p.id))
+    .map((p) => ({ id: p.id, name: p.name || p.id, businessCount: 0, worst: 'unknown', down: 0, overdue: 0, stale: 0, unknown: 0, environments: [] }));
+  const all = sortProjectRows([...covered, ...targetless]);
   const watched = all.filter((r) => r.businessCount > 0);
   const unwatched = all.filter((r) => r.businessCount === 0);
   const businessTotal = watched.reduce((n, r) => n + r.businessCount, 0);

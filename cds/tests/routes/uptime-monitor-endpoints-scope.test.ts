@@ -8,18 +8,22 @@ import { describe, it, expect } from 'vitest';
 import express from 'express';
 import { createUptimeRouter } from '../../src/routes/uptime.js';
 
+const SHARED = 'https://shared.example.test/api/self-check';
 const ENDPOINTS: Record<string, string[]> = {
-  'proj-a': ['https://a.example.test/api/self-check'],
-  'proj-b': ['https://b.example.test/api/self-check', 'https://b2.example.test/api/self-check'],
+  'proj-a': ['https://a.example.test/api/self-check', SHARED],
+  'proj-b': ['https://b.example.test/api/self-check', 'https://b2.example.test/api/self-check', SHARED],
 };
 
 const lastRun = {
   at: '2026-09-16T14:00:00.000Z',
   orphansRemoved: 0,
   endpoints: [
-    { url: 'https://a.example.test/api/self-check', reachable: true, discovered: 3, rejected: [], added: 0, updated: 3, removed: 0, heldBecauseUnreachable: false },
-    { url: 'https://b.example.test/api/self-check', reachable: false, err: 'ECONNREFUSED', discovered: 0, rejected: [], added: 0, updated: 0, removed: 0, heldBecauseUnreachable: true },
-    { url: 'https://b2.example.test/api/self-check', reachable: true, discovered: 5, rejected: [], added: 0, updated: 5, removed: 0, heldBecauseUnreachable: false },
+    { projectId: 'proj-a', url: 'https://a.example.test/api/self-check', reachable: true, discovered: 3, rejected: [], added: 0, updated: 3, removed: 0, heldBecauseUnreachable: false },
+    // 同一个 URL 被两个项目各登记一次：各有各的一条结果，A 那次通、B 那次没通
+    { projectId: 'proj-a', url: SHARED, reachable: true, discovered: 2, rejected: [], added: 0, updated: 2, removed: 0, heldBecauseUnreachable: false },
+    { projectId: 'proj-b', url: 'https://b.example.test/api/self-check', reachable: false, err: 'ECONNREFUSED', discovered: 0, rejected: [], added: 0, updated: 0, removed: 0, heldBecauseUnreachable: true },
+    { projectId: 'proj-b', url: 'https://b2.example.test/api/self-check', reachable: true, discovered: 5, rejected: [], added: 0, updated: 5, removed: 0, heldBecauseUnreachable: false },
+    { projectId: 'proj-b', url: SHARED, reachable: false, err: 'timeout', discovered: 0, rejected: [], added: 0, updated: 0, removed: 0, heldBecauseUnreachable: true },
   ],
 };
 
@@ -46,21 +50,25 @@ async function get(url: string): Promise<{ status: number; body: Record<string, 
 }
 
 describe('GET /api/projects/:id/monitor-endpoints 的 lastRun 按项目收窄', () => {
-  it('项目 A 只看到自己那条端点的结果：不带 B 打不通的端点，发现数也不是 B 的', async () => {
+  it('项目 A 只看到自己那几条端点的结果：不带 B 打不通的端点，发现数也不是 B 的', async () => {
     const res = await get('/api/projects/proj-a/monitor-endpoints');
     expect(res.status).toBe(200);
     const run = res.body.lastRun as typeof lastRun;
     expect(run.endpoints.map((e) => e.url)).toEqual(ENDPOINTS['proj-a']);
+    expect(run.endpoints.every((e) => e.projectId === 'proj-a')).toBe(true);
     expect(run.endpoints.every((e) => e.reachable)).toBe(true);
-    expect(run.endpoints.reduce((n, e) => n + e.discovered, 0)).toBe(3);
+    expect(run.endpoints.reduce((n, e) => n + e.discovered, 0)).toBe(5);
     expect(run.at).toBe(lastRun.at);
   });
 
-  it('项目 B 看到自己两条（含打不通的那条），看不到 A 的', async () => {
+  it('项目 B 看到自己三条（含两条打不通的），看不到 A 的；共用的那个 URL 只认 B 自己那次（Codex #1543 P2）', async () => {
     const res = await get('/api/projects/proj-b/monitor-endpoints');
     const run = res.body.lastRun as typeof lastRun;
     expect(run.endpoints.map((e) => e.url).sort()).toEqual([...ENDPOINTS['proj-b']].sort());
-    expect(run.endpoints.filter((e) => !e.reachable)).toHaveLength(1);
+    expect(run.endpoints).toHaveLength(3);
+    expect(run.endpoints.filter((e) => !e.reachable)).toHaveLength(2);
+    // 只认 URL 会把 A 那次通的结果也算给 B（双算）：这里必须是 B 自己那条 timeout
+    expect(run.endpoints.find((e) => e.url === SHARED)).toMatchObject({ projectId: 'proj-b', reachable: false, err: 'timeout' });
   });
 
   it('没插过端点的项目：清单空、上一轮结果也是空的，不是别人的', async () => {

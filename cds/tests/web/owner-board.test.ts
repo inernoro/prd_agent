@@ -152,6 +152,32 @@ describe('同名监控按环境并成一行业务', () => {
   });
 });
 
+describe('被动观测读不到样本数（Codex #1543 P1）', () => {
+  it('sampleCount 缺失 → unknown 而不是 up；0 → stale；有数 → up', () => {
+    const passive = (sampleCount: number | undefined): UptimeTargetSummary =>
+      target({ name: 'p', environment: 'production', observeMode: 'passive', ...(sampleCount === undefined ? {} : { sampleCount }) });
+    expect(assessCellAt(passive(undefined))).toBe('unknown');
+    expect(assessCellAt(passive(0))).toBe('stale');
+    expect(assessCellAt(passive(12))).toBe('up');
+    const board = buildOwnerBoardAt([passive(undefined)]);
+    expect(board.tone).not.toBe('ok');
+    expect(board.rows[0].cells[0].reason).toContain('没读到样本量');
+  });
+});
+
+describe('单项目视角：有业务还没有检查记录时不许说都正常（Codex #1543 P1）', () => {
+  it('新建 / 暂停的业务单独一档警告', () => {
+    const board = buildOwnerBoardAt([
+      target({ name: 'ok', environment: 'production' }),
+      target({ name: 'new', environment: 'production', lastSample: null, status: 'unknown' }),
+    ]);
+    expect(board.headline).not.toContain('都正常');
+    expect(board.headline).toContain('还没有任何检查记录');
+    expect(board.tone).toBe('warn');
+    expect(board.detail).toContain('new');
+  });
+});
+
 describe('归因：坏的与好的并排能说出什么', () => {
   const cell = (environment: MonitorEnvironment, health: 'up' | 'down') => ({
     environment, label: LABELS[environment], short: '?', health, targetId: 't',
@@ -257,10 +283,11 @@ describe('卡片读数与判据同源', () => {
     return buildBusinessRowsAt([t])[0];
   };
 
-  it('读不到样本量时照实说读不到，绝不显示成 0', () => {
+  it('读不到样本量时照实说读不到，绝不显示成 0；而且判据也不判它正常（Codex #1543 P1）', () => {
     const r = row(undefined);
-    expect(describeRow(r)).toBe('被动观测，这一轮没读到样本量');
+    expect(describeRow(r)).toContain('这一轮没读到样本量');
     expect(describeRow(r)).not.toContain('0 次');
+    expect(r.worst).toBe('unknown');
   });
 
   it('读到 0 时既显示 0，也判「绿灯不作数」—— 两边同一个值', () => {
@@ -568,6 +595,19 @@ describe('全局面板', () => {
     expect(board.headline).toContain('挂了');
     expect(board.tone).toBe('danger');
     expect(board.detail).toContain('还没有业务监控');
+  });
+
+  it('登记表里有、目标里没有的项目也算没人盯：一个只有空项目的实例不会被说成「没有任何项目」（Codex #1543 P2）', () => {
+    const registry = [{ id: 'A', name: 'A' }, { id: 'NEW', name: '刚建的项目' }];
+    const board = buildGlobalBoard([biz('A', 'a1')], ctx, [biz('A', 'a1')], registry);
+    expect(board.unwatched.map((r) => r.id)).toEqual(['NEW']);
+    expect(board.unwatched[0].worst).toBe('unknown');
+    expect(board.detail).toContain('刚建的项目');
+    // 只有空项目：不是「没有任何项目」，是「都没人盯」
+    const empty = buildGlobalBoard([], ctx, [], [{ id: 'NEW', name: '刚建的项目' }]);
+    expect(empty.headline).toContain('还没有任何一个项目装了业务监控');
+    expect(empty.detail).toContain('1 个项目');
+    expect(empty.detail).not.toContain('还没有任何项目');
   });
 
   it('有业务还没有任何检查记录时不许说「都正常」（Codex #1543 P1）', () => {

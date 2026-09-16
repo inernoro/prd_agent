@@ -6215,7 +6215,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         privateKeyFingerprint: createHash('sha256').update(eff.key).digest('hex').slice(0, 16),
       };
     },
-    writeAlarmNotify: (next) => stateService.setAlarmNotify(next),
+    writeAlarmNotify: (next) => {
+      stateService.setAlarmNotify(next);
+      // 换了凭据（或清掉）就是换了目的地：旧的投递证明作废，回到「没发过」，演练成功一次再算通
+      alarmChannel.reset();
+    },
     // 演练走**真实投递路径**：同一个 MapNotifier、同一条签名、同一个 source。
     // 造一条假的「发送成功」毫无意义——那正好是这条链要防的自欺。
     runAlarmDrill: async (note: string) => {

@@ -45,6 +45,7 @@ import {
   type OwnerScope,
   type ProjectRow,
   type ProjectOption,
+  type ProjectRegistryEntry,
 } from '@/lib/ownerBoard';
 import { REHEARSALS, applyRehearsal, rehearsalById, type RehearsalId } from '@/lib/rehearsal';
 
@@ -216,13 +217,15 @@ function buildBundle(
   targets: ReadonlyArray<UptimeTargetSummary>,
   ctx: OwnerBoardContext,
   scope: OwnerScope,
+  registry: ReadonlyArray<ProjectRegistryEntry>,
 ): BoardBundle {
   const projectTargets = scopeTargets(targets, { projectId: scope.projectId, environments: null });
   const scoped = scopeTargets(projectTargets, { projectId: null, environments: scope.environments });
   const board = buildOwnerBoard(scoped, projectTargets, ctx);
   // 没选项目 = 全局视角。同一个选择器，选了看业务、没选看项目。
-  // 覆盖按全环境（projectTargets）判，读数按环境筛选后（scoped）算——见 buildGlobalBoard 的注释。
-  const global_ = scope.projectId ? null : buildGlobalBoard(scoped, ctx, projectTargets);
+  // 覆盖按全环境（projectTargets）判，读数按环境筛选后（scoped）算，连一个目标都没有的项目
+  // 从登记表补进「没人盯」——见 buildGlobalBoard 的注释。
+  const global_ = scope.projectId ? null : buildGlobalBoard(scoped, ctx, projectTargets, registry);
   return { projectTargets, scoped, board, global_, headline: global_ ?? board };
 }
 
@@ -504,7 +507,19 @@ export function OwnerBoard({
   );
 
   const projects = useMemo(() => listProjects(stage.targets, now), [stage.targets, now]);
-  const bundle = useMemo(() => buildBundle(stage.targets, stage.ctx, scope), [stage.targets, stage.ctx, scope]);
+  /**
+   * 项目登记表：只为「没有任何目标的项目也算没人盯」这一件事拉一次。
+   * 拿不到就按空表算——那时这一屏退回按目标判覆盖，不装知道。
+   */
+  const [registry, setRegistry] = useState<ReadonlyArray<ProjectRegistryEntry>>([]);
+  useEffect(() => {
+    let alive = true;
+    apiRequest<{ projects?: Array<{ id: string; name?: string }> }>('/api/projects')
+      .then((res) => { if (alive) setRegistry((res.projects ?? []).map((p) => ({ id: p.id, name: p.name || p.id }))); })
+      .catch(() => { if (alive) setRegistry([]); });
+    return () => { alive = false; };
+  }, []);
+  const bundle = useMemo(() => buildBundle(stage.targets, stage.ctx, scope, registry), [stage.targets, stage.ctx, scope, registry]);
   /**
    * 真实那一份。演练期间它仍然算、仍然摆在横幅里。
    *
@@ -512,8 +527,8 @@ export function OwnerBoard({
    * 线上真的挂了，而屏幕上什么都看不出来。
    */
   const live = useMemo(
-    () => (rehearsing ? buildBundle(targets, { now, prober }, scope) : null),
-    [rehearsing, targets, now, prober, scope],
+    () => (rehearsing ? buildBundle(targets, { now, prober }, scope, registry) : null),
+    [rehearsing, targets, now, prober, scope, registry],
   );
   const { projectTargets, scoped, board, global_, headline } = bundle;
   /**

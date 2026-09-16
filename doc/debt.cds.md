@@ -1704,6 +1704,22 @@ CDS 监控自己那 13 条也是自发现来的，于是磁盘、Docker、探测
 的通道要响，订了 `business-down` 的通道不响；协议文档 [spec.platform.monitor-discovery.md](./spec.platform.monitor-discovery.md)
 要写明缺省值（不报就按业务）与允许的取值。
 
+### 追加：通知通道的凭据在状态里是明文（2026-09-16，Codex #1543 第五轮）
+
+Bark key、Webhook 的鉴权请求头与带 token 的地址、MAP 私钥（多通道与旧的单一 MAP 通道都是）
+随 `CdsState` 原样落盘 / 落库；仓库里可比的秘密（GitHub token、OAuth clientSecret）走的是
+`sealToken` / `unsealToken`（配了 `CDS_SECRET_KEY` 才真加密，没配就是明文、读取时短路）。
+后果：状态文件、Mongo 快照或备份一旦外泄，拿到的是能直接用的凭据。
+
+**为什么没有在这个 PR 里修**：要在写入与读出两侧给每种协议的秘密子字段各接一层封印
+并兼容存量明文，多通道那份的存储类型也得从「明文字符串」改成「明文或封印」——这是给
+新数据类型加一套静态加密，不是本 PR 目标内的直接缺陷；Webhook 地址里的 token 还没法只封
+一半。按 B 类记账。
+
+**判据**：配了 `CDS_SECRET_KEY` 时，写入后的状态里 `bark.key` / `webhook.headers` 的值 /
+`map.privateKey` / `alarmNotify.privateKey` 都是 `isSealedSecret` 为真的封印值；读出来能解回
+原文；存量明文记录不迁移也能读。
+
 ## 验收首页走向折线的两笔欠债（2026-09-14）
 
 ### 1. 「每日部署了几条」画不出来，流转链在折线里是断的

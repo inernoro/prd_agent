@@ -104,6 +104,16 @@ export class AlarmChannel {
     };
   }
 
+  /**
+   * 凭据换了 / 清了：之前的投递记录说的是旧目的地，不能拿来证明新目的地通着。
+   * 不清的话，换完凭据快照立刻又是 healthy、自检把它数成通着——而新凭据一次都没成功过（Codex #1543 P1）。
+   */
+  reset(): void {
+    this.delivered = 0;
+    this.failed = 0;
+    this.last = undefined;
+  }
+
   snapshot(): AlarmChannelSnapshot {
     // 顺序就是严重度：没配 > 没测过 > 上次失败 > 健康。
     // 「没配」排最前是因为它连失败都不会有——最安静的那种坏。

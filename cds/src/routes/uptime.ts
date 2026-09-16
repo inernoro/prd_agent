@@ -433,7 +433,8 @@ export function createUptimeRouter(deps: {
       builtin: endpoints.filter(isSelfCheckEndpoint),
       // 上一轮对账是全实例一起跑的；这里只摆本项目端点那几条结果。不然项目 A 的芯片会把
       // 项目 B 打不通的端点与发现数算进自己头上，健康的项目被显示成警告（Codex #1543 P2）。
-      lastRun: run ? { ...run, endpoints: run.endpoints.filter((o) => mine.has(o.url)) } : null,
+      // 按项目 + 地址一起筛：同一个 URL 被两个项目各登记一次时各有一条结果，只认 URL 会双算。
+      lastRun: run ? { ...run, endpoints: run.endpoints.filter((o) => o.projectId === projectId && mine.has(o.url)) } : null,
     });
   });
 

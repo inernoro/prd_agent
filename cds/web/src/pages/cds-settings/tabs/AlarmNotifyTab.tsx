@@ -73,6 +73,19 @@ export function AlarmNotifyTab(): JSX.Element {
     }
   }, []);
 
+  /**
+   * 项目清单给通道编辑器的「只管这些项目」选择器用。监控中心那一侧传的是按目标算出来的项目，
+   * 这里没有目标，直接拉登记表；拉不到就空——选择器藏起来，通道只能是「全部项目」，不装知道。
+   */
+  const [projects, setProjects] = useState<ReadonlyArray<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    let alive = true;
+    apiRequest<{ projects?: Array<{ id: string; name?: string }> }>('/api/projects')
+      .then((res) => { if (alive) setProjects((res.projects ?? []).map((p) => ({ id: p.id, name: p.name || p.id }))); })
+      .catch(() => { if (alive) setProjects([]); });
+    return () => { alive = false; };
+  }, []);
+
   const clear = useCallback(async (): Promise<void> => {
     setBusy(true);
     try {
@@ -87,7 +100,7 @@ export function AlarmNotifyTab(): JSX.Element {
     <div className="flex flex-col gap-6">
       {/* 多协议通道在前：它是现在该用的那条路。Bark 的 key 当场就能粘进来，
           不必先定「发给哪个 MAP 账号、用哪个 MAP 实例」那两件只有人能定的事。 */}
-      <AlarmChannelsPanel />
+      <AlarmChannelsPanel projects={projects} />
 
       {/* 存量的单一 MAP 通道。先于多通道存在，且可能已经在工作——删掉它等于让已经
           接好的铃在升级那天哑掉，所以留着，只是降到第二位并说清它和上面的关系。 */}
