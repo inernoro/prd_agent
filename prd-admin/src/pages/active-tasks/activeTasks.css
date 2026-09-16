@@ -216,7 +216,12 @@
 .atb-row__title--now { font-weight: 600; }
 .atb-row__title--quiet { color: var(--text-muted); }
 
-.atb-row__sub { font-size: 0.875rem; color: var(--text-muted); }
+/*
+ * 来源标签和模型给的理由是两段各自独立的话，紧挨着会连读成
+ * 「蒋云峰 提的提到了具体的文档内容」（2026-09-16 验收读图发现）。
+ * 用 inline-flex + gap 隔开，不往文案里塞分隔符 —— 少一段时也不会留下孤零零的点。
+ */
+.atb-row__sub { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 0.875rem; color: var(--text-muted); }
 .atb-row__sub--alert { color: var(--accent-primary); }
 
 .atb-tag { font-size: 0.8125rem; color: var(--text-muted); flex-shrink: 0; }

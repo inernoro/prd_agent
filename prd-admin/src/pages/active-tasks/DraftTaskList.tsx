@@ -66,7 +66,7 @@ export function DraftTaskList({ rows, onToggle, onRename, streaming }: DraftTask
             {(r.from || r.why) && (
               <span className="atb-row__sub">
                 {r.from && <span className="atb-tag">{r.from} 提的</span>}
-                {r.why}
+                {r.why && <span>{r.why}</span>}
               </span>
             )}
           </div>
