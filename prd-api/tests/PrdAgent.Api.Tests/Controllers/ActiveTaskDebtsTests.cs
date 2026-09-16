@@ -230,4 +230,26 @@ public class ActiveTaskDebtsTests
         }
         return AppContext.BaseDirectory;
     }
+    [Fact]
+    public void 认领与转成任务是同一道门_不许只拦一边()
+    {
+        // Codex 2026-09-16 抓到的：Claim 拦着「已经归别人」，Convert 却无条件把 owner 改成自己。
+        // 于是界面上点一下「转成我的活」，就把别人认领的那条悄悄划走了——
+        // 校验只做在其中一个入口上，等于给了一条绕过去的路。
+        var 别人的 = new ActiveTaskDebt { OwnerUserId = "甲", OwnerUserName = "甲" };
+        var 我的 = new ActiveTaskDebt { OwnerUserId = "我", OwnerUserName = "我" };
+        var 没人管的 = new ActiveTaskDebt();
+
+        Assert.True(ActiveTaskDebtsController.OwnedBySomeoneElse(别人的, "我"));
+        Assert.False(ActiveTaskDebtsController.OwnedBySomeoneElse(我的, "我"));
+        Assert.False(ActiveTaskDebtsController.OwnedBySomeoneElse(没人管的, "我"));
+        Assert.Contains("甲", ActiveTaskDebtsController.TakenByMessage(别人的));
+
+        // 接线：两个会改写归属的入口都必须过这道门，少一个就是又开了一条绕行路
+        var src = File.ReadAllText(Path.Combine(
+            LocateRepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api",
+            "ActiveTaskDebtsController.cs"));
+        var 过门次数 = src.Split("OwnedBySomeoneElse(debt, me)").Length - 1;
+        Assert.Equal(2, 过门次数);
+    }
 }

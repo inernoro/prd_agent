@@ -93,6 +93,8 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
   }, [checked, storeIds, hint, start]);
 
   const onConfirm = useCallback(async () => {
+    // 按钮已经禁用了，这里是第二道 —— 禁用状态被别的改动碰掉时不至于直接丢数据
+    if (streaming) return;
     if (!hasDrafts) { onAbsorb(); return; }
     if (picked.length === 0) { onAbsorb(); return; }
     setBusy(true);
@@ -113,7 +115,7 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     } else {
       toast.error('一条都没建上');
     }
-  }, [hasDrafts, picked, checked, onAbsorb, onCreated, onClose]);
+  }, [streaming, hasDrafts, picked, checked, onAbsorb, onCreated, onClose]);
 
   const onDismiss = useCallback(async (id: string) => {
     setBusy(true);
@@ -152,7 +154,10 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     <TaskSheet
       title={hasDrafts ? '整理成了这些' : '别人的建议'}
       confirmLabel={confirmLabel}
-      confirmDisabled={busy || loading || (!hasDrafts && checked.length === 0)}
+      // 流还没完就不许确认：点下去只会把「已经到的那几条」建成任务，却把全部选中的建议
+      // 都标记成已吸取、顺手 abort 掉剩下的流 —— 后面才生成的那几条从此找不回来，
+      // 它们的来源建议也一并从收件箱消失。ImportSheet 那边同理。
+      confirmDisabled={busy || loading || streaming || (!hasDrafts && checked.length === 0)}
       onConfirm={() => void onConfirm()}
       onClose={() => { abort(); onClose(); }}
     >

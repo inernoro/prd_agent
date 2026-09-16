@@ -126,13 +126,17 @@ export function DebtSection({ onConverted }: DebtSectionProps) {
               </div>
 
               <div className="atb-rowact">
-                <button
-                  className="atb-link"
-                  disabled={busyId === d.id}
-                  onClick={() => void onConvert(d)}
-                >
-                  转成我的活
-                </button>
+                {/* 归别人的那条不给「转成我的活」——它顺带改写归属，等于一键把别人认领的活划走。
+                    后端也拦（OwnedBySomeoneElse），这里是不给用户点了才被拒的那种挫败感。 */}
+                {(d.mine || !d.ownerUserName) && (
+                  <button
+                    className="atb-link"
+                    disabled={busyId === d.id}
+                    onClick={() => void onConvert(d)}
+                  >
+                    转成我的活
+                  </button>
+                )}
                 {d.mine
                   ? <button className="atb-link atb-link--quiet" disabled={busyId === d.id}
                       onClick={() => void act(d.id, () => releaseDebt(d.id), '放回去了')}>放回去</button>

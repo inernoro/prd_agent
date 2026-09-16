@@ -197,8 +197,8 @@ public class ActiveTaskDebtsController : ControllerBase
         var me = GetUserId();
         var debt = await _db.ActiveTaskDebts.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (debt == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "这条债务不在"));
-        if (!string.IsNullOrEmpty(debt.OwnerUserId) && debt.OwnerUserId != me)
-            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"这条已经归 {debt.OwnerUserName ?? "别人"} 了"));
+        if (OwnedBySomeoneElse(debt, me))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, TakenByMessage(debt)));
 
         var now = DateTime.UtcNow;
         await _db.ActiveTaskDebts.UpdateOneAsync(
@@ -257,6 +257,10 @@ public class ActiveTaskDebtsController : ControllerBase
         var me = GetUserId();
         var debt = await _db.ActiveTaskDebts.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         if (debt == null) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "这条债务不在"));
+        // 转出去顺带把归属写成自己，所以它和认领是同一道门。少这一道，别人点一下
+        // 「转成我的活」就能把你认领的那条悄悄划走，而 Claim 那边明明是拦着的。
+        if (OwnedBySomeoneElse(debt, me))
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, TakenByMessage(debt)));
 
         var now = DateTime.UtcNow;
         var title = string.IsNullOrWhiteSpace(req?.Title) ? debt.Title : req!.Title!.Trim();
@@ -352,6 +356,17 @@ public class ActiveTaskDebtsController : ControllerBase
     /// <summary>没人认领时该落哪一档：转出去过的活还在，所以仍是 converted。</summary>
     internal static string StateForUnclaimed(ActiveTaskDebt d)
         => d.ConvertedTaskIds.Count > 0 ? ActiveTaskDebtState.Converted : ActiveTaskDebtState.Open;
+
+    /// <summary>
+    /// 这条已经归别人了吗。认领与转成任务都会改写归属，所以它们必须过同一道门 ——
+    /// 只在认领那边拦、转换那边不拦，等于给了一条绕过去的路（2026-09-16 Codex 抓到）。
+    /// </summary>
+    internal static bool OwnedBySomeoneElse(ActiveTaskDebt d, string me)
+        => !string.IsNullOrEmpty(d.OwnerUserId) && d.OwnerUserId != me;
+
+    /// <summary>被别人占着时说的那句话 —— 两个入口共用一份措辞。</summary>
+    internal static string TakenByMessage(ActiveTaskDebt d)
+        => $"这条已经归 {d.OwnerUserName ?? "别人"} 了";
 
     /// <summary>
     /// 一块看板：计数按全量算，列表按筛选给。两者是不同的东西，混成一个就会说谎。

@@ -156,7 +156,7 @@ public class ActiveTaskSuggestionsController : ControllerBase
     {
         var me = GetUserId();
         var stores = await _db.DocumentStores
-            .Find(x => x.OwnerId == me)
+            .Find(await ReadableStoreFilterAsync(me, ct))
             .SortByDescending(x => x.UpdatedAt)
             .Limit(50)
             .ToListAsync(ct);
@@ -210,7 +210,7 @@ public class ActiveTaskSuggestionsController : ControllerBase
             chars = kb.Text.Length,
         });
 
-        var now = DateTime.UtcNow.AddHours(8);
+        var now = DateTime.UtcNow + ActiveTaskConclusion.TeamUtcOffset;
         // 和一键导入同一条硬门：建议原文里一个时间词都没有，模型给的任何日期都是编的。
         // 提示词里的「不许猜」是对模型的期望，不是不变量 —— 弱一点的模型压根压不住。
         var srcText = string.Join("\n", suggestions.Select(x => x.Text));
@@ -419,12 +419,35 @@ public class ActiveTaskSuggestionsController : ControllerBase
     /// 不做向量检索 —— 本仓库的 embedding 检索还没落地（见 codebase-snapshot），
     /// 假装有会变成无根之木。总量封顶，防止把上下文撑爆。
     /// </summary>
+    /// <summary>
+    /// 这个人读得到哪些知识库：自己的 + 分享给他所在团队的。
+    ///
+    /// 只按 OwnerId 过滤会漏掉团队共享库 —— 那些库在知识库页面里看得见、在这里却挑不到，
+    /// 而且挑选清单与取正文两处要是各写一份，就会出现「清单里有、引用时被悄悄丢掉」。
+    /// 所以判定只有这一处，两边都调它。
+    /// </summary>
+    private async Task<FilterDefinition<DocumentStore>> ReadableStoreFilterAsync(string userId, CancellationToken ct)
+    {
+        var myTeams = await _db.TeamMembers
+            .Find(m => m.UserId == userId)
+            .Project(m => m.TeamId)
+            .ToListAsync(ct);
+
+        var fb = Builders<DocumentStore>.Filter;
+        var mine = fb.Eq(x => x.OwnerId, userId);
+        return myTeams.Count == 0 ? mine : fb.Or(mine, fb.AnyIn(x => x.SharedTeamIds, myTeams));
+    }
+
     private async Task<KbContext> BuildKnowledgeContextAsync(string userId, List<string> storeIds)
     {
         if (storeIds.Count == 0) return new KbContext(string.Empty, 0, 0);
 
+        // 走和挑选清单同一个可读判定 —— 两处各写一份的后果是：清单里挑得到的库，
+        // 到了这里被静默丢掉，用户看到的是「引用了 0 个知识库」而没有任何解释。
         var stores = await _db.DocumentStores
-            .Find(x => storeIds.Contains(x.Id) && x.OwnerId == userId)
+            .Find(Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.In(x => x.Id, storeIds),
+                await ReadableStoreFilterAsync(userId, CancellationToken.None)))
             .Limit(10)
             .ToListAsync(CancellationToken.None);
         if (stores.Count == 0) return new KbContext(string.Empty, 0, 0);
@@ -461,7 +484,7 @@ public class ActiveTaskSuggestionsController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         if (!DateTime.TryParse(raw.Trim(), out var d)) return null;
-        var today = DateTime.UtcNow.AddHours(8).Date;
+        var today = ActiveTaskConclusion.TeamDate(DateTime.UtcNow);
         if (d.Date < today || d.Date > today.AddDays(180)) return null;
         return d.Date.AddHours(18).ToString("yyyy-MM-ddTHH:mm:ss");
     }

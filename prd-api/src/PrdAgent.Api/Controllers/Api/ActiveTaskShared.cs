@@ -55,6 +55,16 @@ public static class ActiveTaskShared
     /// <summary>
     /// 把某条设为「此刻正在做」。WIP=1：同一个人原本在做的那条先结算时长、退回备用队首。
     /// </summary>
+    /// <summary>
+    /// 结案之后要不要把队首顶上来。
+    ///
+    /// 只有「正在做」那个位置被腾出来了才要。备用行上也有圆圈，勾掉一条备用任务
+    /// 不该动手上那件 —— <see cref="MakeActiveAsync"/> 会把当前 active 退回队列
+    /// 并清掉它的卡住状态，等于用户勾了 C，手上的 A 被换成了 B（2026-09-16 Codex 抓到）。
+    /// </summary>
+    public static bool ShouldAdvanceQueue(string finishedStateBefore)
+        => finishedStateBefore == ActiveTaskState.Active;
+
     public static async Task MakeActiveAsync(MongoDbContext db, string userId, string id, DateTime now, CancellationToken ct = default)
     {
         var current = await db.ActiveTaskEntries
@@ -202,12 +212,19 @@ public static class ActiveTaskShared
         };
     }
 
-    /// <summary>脱敏标题：保留首字与长度感，其余打码。不返回空串，否则前端会渲染成空行。</summary>
+    /// <summary>
+    /// 脱敏标题：只留长度感，一个字都不留。
+    ///
+    /// 这里曾经保留开头一到两个字（理由是「有点形状，不至于像空行」）。但匿名面板
+    /// <see cref="ActiveTaskBoardSettings.AnonymousEnabled"/> 默认就是开的，而任务标题
+    /// 开头最常见的恰恰是客户名、项目代号、缺陷编号 —— 留两个字就等于把这一屏
+    /// 「看不到标题正文」的承诺撕掉一角。长度感用点的个数给就够了，不需要真字符。
+    /// 不返回空串，否则前端会渲染成空行。
+    /// </summary>
     public static string MaskTitle(string title)
     {
         if (string.IsNullOrWhiteSpace(title)) return "（无标题）";
-        var head = title.Length <= 2 ? title[..1] : title[..2];
-        return head + new string('·', Math.Min(Math.Max(title.Length - 2, 1), 8));
+        return new string('·', Math.Clamp(title.Length, 2, 10));
     }
 
     /// <summary>

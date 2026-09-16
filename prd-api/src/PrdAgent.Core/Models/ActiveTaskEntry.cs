@@ -85,6 +85,13 @@ public class ActiveTaskEntry
     public DateTime? DoneAt { get; set; }
 
     /// <summary>
+    /// 结案前它是不是「正在做」那一条。只服务撤销：撤销要把它放回原来待着的位置，
+    /// 而不是一律塞进「正在做」——后者会把用户手上那件换走，正是 Finish 那边刚修掉的同一个洞。
+    /// 结案之后这个字段就不再变，所以它记的是「当时」，不是「现在」。
+    /// </summary>
+    public bool FinishedFromActive { get; set; }
+
+    /// <summary>
     /// 结案说明 —— 「做成了什么样」。
     ///
     /// 这是结案与打勾的唯一区别：打勾只留下一个对号，一周后翻回来什么也看不出来。

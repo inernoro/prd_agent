@@ -65,7 +65,8 @@ public class ActiveTasksImportController : ControllerBase
         // 但**只在原文真的提到时间时才给**：2026-09-15 实测，原文一个日期都没有时，
         // 这张表会变成诱饵 —— 9 条任务被模型全部安上了本周五。不给诱饵是第一道防线，
         // 下面的 HasTimeCue 硬门是第二道。
-        var now = DateTime.UtcNow.AddHours(8); // 团队在东八区，按本地日历推算
+        // 团队日历只有一个判定源（ActiveTaskConclusion.TeamUtcOffset），这里不再自己写死 8
+        var now = DateTime.UtcNow + ActiveTaskConclusion.TeamUtcOffset;
         var textHasTime = HasTimeCue(text);
         var calendar = textHasTime ? BuildCalendarHint(now) : "原文没有提到任何时间，所有条目一律不要填 dueAt。\n";
 
@@ -270,7 +271,7 @@ public class ActiveTasksImportController : ControllerBase
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         if (!DateTime.TryParse(raw.Trim(), out var d)) return null;
-        var today = DateTime.UtcNow.AddHours(8).Date;
+        var today = ActiveTaskConclusion.TeamDate(DateTime.UtcNow);
         if (d.Date < today || d.Date > today.AddDays(180)) return null;
         // 「那天要」指那天下班前，和 DuePicker / dueParse 的口径一致
         return d.Date.AddHours(18).ToString("yyyy-MM-ddTHH:mm:ss");

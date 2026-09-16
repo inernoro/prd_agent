@@ -278,24 +278,29 @@ public class ActiveTasksController : ControllerBase
         if (entry.State == ActiveTaskState.Done)
             return Ok(ApiResponse<object>.Ok(new { id, alreadyDone = true }));
 
+        // 判定源在 ActiveTaskShared，别在这里另写一份（理由见那边的注释）
+        var wasActive = ActiveTaskShared.ShouldAdvanceQueue(entry.State);
+
         var now = DateTime.UtcNow;
         await ActiveTaskShared.SettleAndSetStateAsync(_db, entry, ActiveTaskState.Done, now, ct);
 
+        // 记下它从哪一档结案的 —— 撤销要照这个还原，不能一律塞回「正在做」
+        var stamp = Builders<ActiveTaskEntry>.Update.Set(x => x.FinishedFromActive, wasActive);
         var note = req?.ClosingNote?.Trim();
         if (!string.IsNullOrWhiteSpace(note))
-        {
-            await _db.ActiveTaskEntries.UpdateOneAsync(
-                x => x.Id == id,
-                Builders<ActiveTaskEntry>.Update.Set(x => x.ClosingNote, note),
-                cancellationToken: ct);
-        }
+            stamp = Builders<ActiveTaskEntry>.Update.Combine(stamp, Builders<ActiveTaskEntry>.Update.Set(x => x.ClosingNote, note));
+        await _db.ActiveTaskEntries.UpdateOneAsync(x => x.Id == id, stamp, cancellationToken: ct);
 
-        // 队首自动顶上来
-        var next = await _db.ActiveTaskEntries
-            .Find(x => x.UserId == userId && x.State == ActiveTaskState.Standby)
-            .SortBy(x => x.OrderKey)
-            .FirstOrDefaultAsync(ct);
-        if (next != null) await ActiveTaskShared.MakeActiveAsync(_db, userId, next.Id, now, ct);
+        // 队首自动顶上来 —— 只在刚才空出来的是「正在做」那个位置时
+        ActiveTaskEntry? next = null;
+        if (wasActive)
+        {
+            next = await _db.ActiveTaskEntries
+                .Find(x => x.UserId == userId && x.State == ActiveTaskState.Standby)
+                .SortBy(x => x.OrderKey)
+                .FirstOrDefaultAsync(ct);
+            if (next != null) await ActiveTaskShared.MakeActiveAsync(_db, userId, next.Id, now, ct);
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -328,8 +333,21 @@ public class ActiveTasksController : ControllerBase
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
 
-        // MakeActiveAsync 会把当前在做的那条退回备用队首，正好还原结案前的样子
-        await ActiveTaskShared.MakeActiveAsync(_db, userId, id, now, ct);
+        // 照它结案前那一档还原。一律塞回「正在做」会把用户手上那件换走 ——
+        // 那正是 Finish 刚修掉的洞，撤销这条路上同样通着（勾掉一条备用、再点撤销）。
+        if (entry.FinishedFromActive)
+        {
+            // MakeActiveAsync 会把当前在做的那条退回备用队首，正好还原结案前的样子
+            await ActiveTaskShared.MakeActiveAsync(_db, userId, id, now, ct);
+        }
+        else
+        {
+            // OrderKey 结案时没被动过，所以只翻状态就回到原来那个位置，不用重排
+            await _db.ActiveTaskEntries.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<ActiveTaskEntry>.Update.Set(x => x.State, ActiveTaskState.Standby),
+                cancellationToken: ct);
+        }
         var saved = await _db.ActiveTaskEntries.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
         return Ok(ApiResponse<object>.Ok(ActiveTaskShared.ToDto(saved!, now)));
     }

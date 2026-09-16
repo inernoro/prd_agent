@@ -87,7 +87,8 @@ export function ImportSheet({ onClose, onCreated }: ImportSheetProps) {
     <TaskSheet
       title="粘一段话进来"
       confirmLabel={confirmLabel}
-      confirmDisabled={saving || (!hasDrafts && !text.trim())}
+      // 与 SuggestionsSheet 同一口径：流没完不许确认（那边点下去会丢掉后面才生成的条目）
+      confirmDisabled={saving || streaming || (!hasDrafts && !text.trim())}
       onConfirm={() => void onConfirm()}
       onClose={() => { abort(); onClose(); }}
     >
