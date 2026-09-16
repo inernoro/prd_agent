@@ -128,7 +128,8 @@ public sealed class HttpLlmGatewayClient
                     _failoverNotifier,
                     structured.ErrorCode,
                     structured.ErrorMessage,
-                    structured.Resolution?.ActualPlatformName,
+                    structured.Resolution?.ActualPlatformName ?? structured.Resolution?.ActualPlatformId,
+                    structured.Resolution?.ActualModel,
                     _logger);
                 return structured;
             }
@@ -187,7 +188,12 @@ public sealed class HttpLlmGatewayClient
         if (earlyError != null)
         {
             await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                _failoverNotifier, null, earlyError, null, _logger);
+                _failoverNotifier,
+                null,
+                earlyError,
+                null,
+                request.PinnedModelId ?? request.ExpectedModel,
+                _logger);
             reader?.Dispose();
             stream?.Dispose();
             resp?.Dispose();
@@ -218,7 +224,12 @@ public sealed class HttpLlmGatewayClient
                     if (chunk.Type == GatewayChunkType.Error)
                     {
                         await GatewayQuotaAlertPolicy.NotifyIfNeededAsync(
-                            _failoverNotifier, null, chunk.Error, chunk.Resolution?.ActualPlatformName, _logger);
+                            _failoverNotifier,
+                            chunk.ErrorCode,
+                            chunk.Error,
+                            chunk.Resolution?.ActualPlatformName ?? chunk.Resolution?.ActualPlatformId,
+                            chunk.Resolution?.ActualModel ?? request.PinnedModelId ?? request.ExpectedModel,
+                            _logger);
                     }
                     yield return chunk;
                 }
@@ -343,7 +354,11 @@ public sealed class HttpLlmGatewayClient
                     _failoverNotifier,
                     structured.ErrorCode,
                     structured.ErrorMessage,
-                    structured.Resolution?.ActualPlatformName ?? resolution.ActualPlatformName,
+                    structured.Resolution?.ActualPlatformName
+                    ?? structured.Resolution?.ActualPlatformId
+                    ?? resolution.ActualPlatformName
+                    ?? resolution.ActualPlatformId,
+                    structured.Resolution?.ActualModel ?? resolution.ActualModel,
                     _logger);
                 return structured;
             }
@@ -379,7 +394,8 @@ public sealed class HttpLlmGatewayClient
                     _failoverNotifier,
                     structured.ErrorCode,
                     structured.ErrorMessage,
-                    structured.Resolution?.ActualPlatformName,
+                    structured.Resolution?.ActualPlatformName ?? structured.Resolution?.ActualPlatformId,
+                    structured.Resolution?.ActualModel ?? request.Model,
                     _logger);
                 return structured;
             }

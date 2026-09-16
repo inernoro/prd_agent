@@ -88,6 +88,28 @@ export function previewInstanceBlockedMessage(binary: string): string {
 const SECRET_ENV_KEY_PATTERN =
   /(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|MONGO|REDIS|DATABASE|CONNECTION|_URI$|_URL$|_DSN$)/i;
 
+/**
+ * 成组的凭据：**要么整组留、要么整组删**，不许按「哪个名字看着像密钥」逐个判。
+ *
+ * R2 的四件套里只有 `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` 命中上面那个模式，
+ * `R2_ENDPOINT` / `R2_BUCKET` 不命中。于是子实例被清洗成「四缺二」——那既不是
+ * 「有意只用本地」（四个全空），也不是「配全了」，而是**配置事故**那一档，
+ * 解析器按规矩当场抛错，`StateService` 一构造就炸，子实例根本开不了机
+ *（2026-09-15，Codex review 抓到；实测 /healthz 503）。
+ *
+ * 根因不在那个抛错——抛错是对的（durable-payload-storage：凭据不全必须拒绝）。
+ * 根因是**清洗把一组凭据拆散了**。所以这里按组补齐，而不是去放松那个判据。
+ * 顺带也更正确：子实例本来就不该往父实例的桶里写东西
+ *（见 cross-project-isolation.md）。
+ */
+const SECRET_GROUP_COMPANION_KEYS = new Set([
+  'R2_ENDPOINT',
+  'R2_BUCKET',
+  'R2_PREFIX',
+  'CDS_REPORTS_R2_BUCKET',
+  'CDS_REPORTS_R2_PREFIX',
+]);
+
 function normalizePreviewPublicBaseUrl(value: string | undefined): string {
   if (!value) return '';
   try {
@@ -145,7 +167,9 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   };
   const scrubbed: string[] = [];
   for (const key of Object.keys(env)) {
-    if (!SECRET_ENV_KEY_PATTERN.test(key) && !key.startsWith('CDS_SSO_')) continue;
+    if (!SECRET_ENV_KEY_PATTERN.test(key)
+      && !SECRET_GROUP_COMPANION_KEYS.has(key)
+      && !key.startsWith('CDS_SSO_')) continue;
     delete env[key];
     scrubbed.push(key);
   }

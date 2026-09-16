@@ -42,7 +42,7 @@ cd prd-video && pnpm start   # Remotion 4.0
 
 ### 2. C# 静态分析
 
-任何 `.cs` 改动后必须跑，`error CS*` 必须修复，`warning CS*` 评估是否本次引入：
+任何 `.cs` 改动后，`error CS*` 必须修复，`warning CS*` 评估是否本次引入。本地有 SDK 就先跑（`which dotnet || ls /opt/dotnet8/dotnet`，常装在 PATH 之外）——那是 push 前唯一能拿到的结论；权威判据都在 push 之后：Branch Image 绿**只**证明 API 项目编得出来（不编译 `PrdAgent.Tests`），sln 零 error 与 xUnit（`Category!=Integration&Category!=Manual` 那一档，不是全量）只能引 CI 的 `Server Build & Test`，而它在 feature 分支不自动跑（见 `cds-first-verification.md`）：
 
 ```bash
 cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | head -30
@@ -81,11 +81,11 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 | 改动范围 | 必跑校验 |
 |----------|----------|
-| `prd-api/` `.cs` | `dotnet build --no-restore`（零 `error CS*`） |
+| `prd-api/` `.cs` | push 前：本地有 SDK 就 `dotnet build --no-restore`（零 `error CS*`）。push 后必须回看 Branch Image 绿（= API 项目编得出来），红了当场修 |
 | `prd-admin/` `prd-desktop/` 前端源码 | `.ts` `.tsx`：`pnpm tsc --noEmit` + `pnpm lint`（改动文件零新增告警）。改到 `.css` **另跑 `pnpm build`**——tsc/lint/vitest 一个都不解析 CSS（2026-08-30 tokens.css 多一个 `*/`，本地三样全绿、CI 构建炸、分支停 idle、预览 503） |
 | `llmgw/` | 见 `llmgw/AGENTS.md` 的模块校验表 |
-| 含测试的模块 | `pnpm test` / `dotnet test` 全绿 |
-| 本地缺 SDK | 走 `/cds-deploy` 远端编译，CDS 绿灯后才推送 |
+| 含测试的模块 | `pnpm test` 全绿；`dotnet test` 只在 `ci.yml` 上跑，且只跑非集成非手工那一档——**已开 PR 到 main/develop 就已自动触发，没开才需手动 dispatch**。没跑就不许写「测试通过」。Integration/Manual 那一档要本地按 `FullyQualifiedName` 点名跑（有用例会真打外部服务） |
+| 新增/改动 `prd-api/tests/**` | 同上；另：`PrdAgent.Tests` 不引用 `PrdAgent.Api`，新被测源文件要在 csproj 里 `<Compile Include ... Link="..."/>` 链进去，否则编译不过而没人发现 |
 
 **5.3 禁止自动创建 PR**。除非用户明确说「提 PR / 创建 PR」，任务完成只做 commit + push。遇阻塞说明原因并等指示，禁止提交半成品。
 
@@ -127,7 +127,7 @@ cd prd-api && dotnet build --no-restore 2>&1 | grep -E "error CS|warning CS" | h
 
 ### 8. 「完成」标准
 
-声称完成前必须全部满足：后端编译零错误（本地 + CDS 双验证）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
+声称完成前必须全部满足：后端编译零错误（判据见 `cds-first-verification.md` 的权威位置表：Branch Image 绿 = API 编得出来，CI 的 `Server Build & Test` 绿 = sln 零 error + 非集成非手工 xUnit；CDS 只负责运行、不负责编译）／前端页面能通过预览地址打开并正常渲染／核心业务流程端到端跑通（不是只有 CRUD）／直连预览域名测试（container-exec 是诊断工具不是验收工具）／依赖的外部服务已确认可用。
 
 禁止：骨架完成就报「已实现」；绕过真实访问路径测试；不主动查系统能力。
 
@@ -199,7 +199,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 
 ## 规则与技能
 
-- **架构规则** `.claude/rules/`：58 条，全体 Agent 共用。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
+- **架构规则** `.claude/rules/`：全体 Agent 共用（条数以目录为准，此处不写死——写死必漂）。支持路径作用域的宿主（如 Claude Code 的 `paths` frontmatter）按命中文件自动加载。**不支持的宿主自己选**：`ls .claude/rules/`，每个文件开头两行导读就是选取依据——`**一句话**` 说它要求什么、`**什么时候撞上**` 说什么改动会触发它，读这两行判断要不要往下读全文。这两行由 CI 强制（缺了 `docs-readability` 会红），所以扫描永远有效；此处不再维护第二份索引表——上一份漂移到 33/52 才被发现。
 - **Codex 专属补充** `.Codex/rules/`：不与共用规则重复，Codex 侧没有按需加载机制，所以在此点名——
   - `local-debugging.md`：本地连调、视觉修复、接口排查、CDS 部署验证的工作方式。
   - `production-release-safety.md`：碰发布链路（`exec_dep.sh` / `fast.sh` / `deploy/nginx/**` / `docker-compose*.yml` / 发布类 workflow）前必读，它再指向 SSOT `doc/rule.platform.production-release-safety.md`。公网 HTML 与入口资源可用才算发布完成，容器或接口健康都不算数。
@@ -228,7 +228,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `bridge-ops.md` | `cds/src/**/*.ts` | Bridge 操作规范：鼠标轨迹 + spa-navigate + description 必填 |
 | `navigation-registry.md` | 新 Agent / 新功能入口 | SSOT 模型：路由信息写到 launcherCatalog/agentSwitcherStore/toolboxStore，「设置→导航顺序」+ Cmd+K 自动同步；CI 跑 `navCoverage` 测试，未登记或 phantom 路由直接 fail |
 | `quickstart-zero-friction.md` | 入口脚本 (`*init*`, `*quick*`, `*setup*`, `Dockerfile`) | 快启动大包大揽：假设用户是小白，自动检测+安装依赖，不能自动的给复制粘贴命令 |
-| `cds-first-verification.md` | 任何可执行代码改动 (`.cs`, `.ts`, `.tsx`, `.rs`, Dockerfile) | 本地无 SDK ≠ 无法验证：必须用 `/cds-deploy` 兜底，禁止把验证负担转嫁给用户 |
+| `cds-first-verification.md` | 任何可执行代码改动 (`.cs`, `.ts`, `.tsx`, `.rs`, Dockerfile) | 每种改动的验证有唯一权威位置（编译在 Actions、运行在 CDS）；交付只给判据与结论，不给「我本地有没有 SDK」 |
 | `cds-auto-deploy.md` | 已 link GitHub 的项目交付收尾 | push 即部署 — 不再提示用户手动跑 `/cds-deploy-pipeline`；CDS 通过 webhook 自动建分支 + 构建 + 部署；UI 开着时必须有"分支出现 + 构建中"动画 |
 | `gesture-unification.md` | 任何可平移/缩放的 2D 画布（ReactFlow / 自定义 DOM canvas / Konva 等） | 手势统一：两指拖动=平移、双指捏合或 ⌘/Ctrl+滚轮=缩放、禁止双击缩放；提供 ReactFlow + 自定义 canvas 两套标准配置 |
 | `compute-then-send.md` | `prd-api/src/**/*.cs` 里 LLM / 外部 API 调用类（ILlmGateway / OpenAIImageClient 等） | 外部调用必须分"算/发"两阶段：发送阶段接收已解析结果不得再 resolve；禁止用 DI 装饰器 / AsyncLocal / 实例字段 在兄弟调用间传递 state |
@@ -339,6 +339,4 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 10. **写文档时** → `/doc` 查看类型速查，或直接创建文档时自动套用模板
 11. **迁移/重构后** → `/hygiene`
 -->
-生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。
-
-常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解。首次开发 Agent 走 `/help`。
+生命周期主线（按顺序取用）：需求 `/validate` → 方案 `/plan-first` → 风险 `/risk` → 链路 `/trace` → 实现 → 交叉验证 `/verify` → 边界 `/scope-check` → 部署 `/cds-deploy` → 冒烟 `/smoke` → 预览 `/preview` → 验收 `/uat`（复杂场景先 `/验收场景` 再 `/验收`）→ 交接 `/handoff` → 周报 `/weekly`。常用辅助：`/resolve` 预合并解冲突、`/doc` 写文档、`/doc-sync` 对齐索引、`/entropy` 清理一致性欠债、`/hygiene` 清技术债、`/llm-trace` 排查模型调用不符、`/laowang` 卡住时强制拆解；首次开发 Agent 走 `/help`。

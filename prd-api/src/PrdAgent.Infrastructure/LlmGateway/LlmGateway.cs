@@ -726,8 +726,15 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                 var errorMsg = TryExtractErrorMessage(responseBody) ?? $"HTTP {(int)response.StatusCode}";
                 if (IsQuotaExceeded((int)response.StatusCode, errorMsg))
                 {
-                    var (qCode, qMsg) = await HandleQuotaExceededAsync(resolution.ActualPlatformName, errorMsg);
-                    return GatewayResponse.Fail(qCode, qMsg, (int)response.StatusCode);
+                    var (qCode, qMsg) = await HandleQuotaExceededAsync(
+                        activeResolution.ActualPlatformName ?? activeResolution.ActualPlatformId,
+                        activeResolution.ActualModel,
+                        errorMsg);
+                    return GatewayResponse.Fail(
+                        qCode,
+                        qMsg,
+                        (int)response.StatusCode,
+                        activeResolution.ToGatewayResolution());
                 }
                 return GatewayResponse.Fail("LLM_ERROR", errorMsg, (int)response.StatusCode);
             }
@@ -976,8 +983,14 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     _logWriter?.MarkError(logId, terminalError ?? "流式请求失败", terminalStatusCode);
                 if (terminalStatusCode.HasValue && IsQuotaExceeded(terminalStatusCode.Value, terminalError))
                 {
-                    var (_, qMsg) = await HandleQuotaExceededAsync(resolution.ActualPlatformName, terminalError ?? "");
-                    yield return GatewayStreamChunk.Fail(qMsg);
+                    var (_, qMsg) = await HandleQuotaExceededAsync(
+                        resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                        resolution.ActualModel,
+                        terminalError ?? "");
+                    yield return GatewayStreamChunk.Fail(
+                        qMsg,
+                        GatewayQuotaAlertPolicy.QuotaErrorCode,
+                        resolution.ToGatewayResolution());
                     yield break;
                 }
                 yield return GatewayStreamChunk.Fail(terminalError ?? "流式请求失败");
@@ -3009,7 +3022,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             {
                 var errorMsg = TryExtractErrorMessage(responseBody!) ?? $"HTTP {(int)response.StatusCode}";
                 var (rawCode, rawMsg) = IsQuotaExceeded((int)response.StatusCode, errorMsg)
-                    ? await HandleQuotaExceededAsync(resolution.ActualPlatformName, errorMsg)
+                    ? await HandleQuotaExceededAsync(
+                        resolution.ActualPlatformName ?? resolution.ActualPlatformId,
+                        resolution.ActualModel,
+                        errorMsg)
                     : ("LLM_ERROR", errorMsg);
                 return new GatewayRawResponse
                 {
@@ -3592,17 +3608,24 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
     /// request/stream scope 释放后 upsert 会被取消或 off-thread 失败，恰在 402/额度用尽时丢告警（Codex review）。
     /// 用 CancellationToken.None 确保 scope 存活期内写完，告警失败不阻断主流程。
     /// </summary>
-    private async Task<(string Code, string Message)> HandleQuotaExceededAsync(string? platformName, string rawMessage)
+    private async Task<(string Code, string Message)> HandleQuotaExceededAsync(
+        string? platformName,
+        string? modelName,
+        string rawMessage)
     {
         var raw = rawMessage.Length > 220 ? rawMessage.Substring(0, 220) + "…" : rawMessage;
         const string friendly = "部分 AI 创作暂时不可用，请稍后重试。管理员需要检查服务额度或切换可用配置，诊断信息已保留。";
         try
         {
             if (_failoverNotifier != null)
-                await _failoverNotifier.NotifyQuotaExceededAsync(platformName ?? "未知平台", friendly, CancellationToken.None);
+                await _failoverNotifier.NotifyQuotaExceededAsync(platformName, modelName, CancellationToken.None);
         }
         catch (Exception ex) { _logger.LogWarning(ex, "[LlmGateway] 额度告警写入失败（不阻断主流程）"); }
-        _logger.LogWarning("[LlmGateway] 检测到额度用尽/限额: platform={Platform} msg={Msg}", platformName, raw);
+        _logger.LogWarning(
+            "[LlmGateway] 检测到额度用尽/限额: platform={Platform} model={Model} msg={Msg}",
+            platformName,
+            modelName,
+            raw);
         return ("LLM_QUOTA_EXCEEDED", friendly);
     }
 

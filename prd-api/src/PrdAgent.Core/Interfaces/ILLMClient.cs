@@ -62,6 +62,8 @@ public class LLMStreamChunk
     public int? CacheCreationInputTokens { get; set; }
     public int? CacheReadInputTokens { get; set; }
     public string? ErrorMessage { get; set; }
+    public string? Model { get; set; }
+    public string? Platform { get; set; }
 
     /// <summary>
     /// 结构化失败原因（`GatewayRouteFailure` 常量；未分类时为 null）。

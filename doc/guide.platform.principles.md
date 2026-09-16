@@ -63,7 +63,7 @@
 | **AI 模型可见性** | 中大型用大模型的功能，UI 顶部展示当前模型名 + 平台，后端来源不硬编码 | `ai-model-visibility.md` |
 | **客户端存储选型** | 默认 sessionStorage，localStorage 仅限「非敏感 + 设备本地 + 发版后旧值无害」 | `no-localstorage.md` |
 | **禁止自动建索引** | 应用启动禁止自动创建 MongoDB 索引，由 DBA 手动建 | `no-auto-index.md` |
-| **CDS 优先验证** | 本地无 SDK ≠ 无法验证，必须走 `/cds-deploy` 远端编译，不转嫁验证负担给用户 | `cds-first-verification.md` |
+| **验证的权威位置** | 每种改动的验证有唯一权威位置：编译看 Actions（Branch Image 只覆盖 API 项目、CI 才覆盖 sln+测试且 feature 分支不自动跑），运行看 CDS 预览；交付只给判据与结论，不给本地环境状态 | `cds-first-verification.md` |
 | **CDS 自动部署** | 已 link 项目 push 即部署，不再提示手动跑 pipeline；UI 开着要有构建动画 | `cds-auto-deploy.md` |
 | **Agent Runtime SDK 边界** | 不让历史运行时名暗示更强的厂商集成，「官方 SDK」措辞必须核对实际依赖 | `agent-runtime-sdk-boundary.md` |
 

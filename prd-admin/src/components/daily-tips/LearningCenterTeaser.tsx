@@ -133,3 +133,68 @@ export function LearningCenterTeaser({ tourAnchor = true }: { tourAnchor?: boole
     </button>
   );
 }
+
+/**
+ * 左下角头像菜单里的教程入口（2026-09-14 起，教程从首页右上角搬到这里，
+ * 首页那一格换成了模型排行榜挂件）。
+ *
+ * 与上面的 <LearningCenterTeaser/> 共用同一套等级帽分级表与进度环算法，只是外壳不同：
+ * 这里不自带 button（外层是 DropdownMenu.Item，套 button 会产生嵌套交互元素），
+ * 也不自带卡片底色（菜单项自己有 hover 态）。
+ *
+ * 搬家后菜单里原有的「我的学习进度」纯文字项由它取代——不是并排两个教程入口。
+ */
+export function LearningCenterMenuBody() {
+  const isLight = useDataTheme() === 'light';
+  const progress = useDailyTipsStore((s) => s.progress);
+  const loadProgress = useDailyTipsStore((s) => s.loadProgress);
+
+  useEffect(() => {
+    void loadProgress();
+  }, [loadProgress]);
+
+  const level = progress?.level ?? 1;
+  const levelName = progress?.levelName ?? '新手';
+  const xp = progress?.xp ?? 0;
+  const total = progress?.total ?? 0;
+  const learned = progress?.learned ?? 0;
+  const pct = total > 0 ? Math.round((learned / total) * 100) : 0;
+  const tier = hatTier(level, isLight);
+
+  const R = 19;
+  const C = 2 * Math.PI * R;
+  const dash = total > 0 ? (pct / 100) * C : 0;
+
+  return (
+    <>
+      <span className="relative shrink-0" style={{ width: 30, height: 30 }}>
+        <svg width={30} height={30} viewBox="0 0 46 46" style={{ transform: 'rotate(-90deg)' }}>
+          <circle cx={23} cy={23} r={R} fill="none" stroke="var(--nested-block-bg)" strokeWidth={3.4} />
+          <circle
+            cx={23}
+            cy={23}
+            r={R}
+            fill="none"
+            stroke={tier.board}
+            strokeWidth={3.4}
+            strokeLinecap="round"
+            strokeDasharray={`${dash} ${C}`}
+            style={{ transition: 'stroke-dasharray 600ms cubic-bezier(.4,0,.2,1)' }}
+          />
+        </svg>
+        <span className="absolute inset-0 flex items-center justify-center">
+          <LevelHat level={level} size={17} isLight={isLight} />
+        </span>
+      </span>
+      <span className="min-w-0 flex flex-col gap-px">
+        <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          教程中心 · Lv.{level} {levelName}
+        </span>
+        <span className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
+          经验 {xp}
+          {total > 0 ? ` · ${learned}/${total} 套已掌握` : ''}
+        </span>
+      </span>
+    </>
+  );
+}

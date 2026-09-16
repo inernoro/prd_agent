@@ -50,7 +50,15 @@ function stripCss(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/@media[^{]*/g, '');
 }
 function stripTs(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/^[ \t]*\/\/.*$/gm, '')
+    // 和 stripCss 同口径剥掉媒体查询的**条件段**（@media 到 `{` 之前）。
+    // 组件里用模板字符串写 CSS（`<style>{XXX_CSS}</style>`）时，断点就落在 tsx 里，
+    // 而本守卫的前提是「断点读不到根字号，三档尺度共用原始 px」——只给 index.css
+    // 豁免、不给 tsx 豁免，等于同一条契约在两个位置判两套。条件段之外照扫，
+    // 所以媒体查询**块内**的 px 仍然会被抓（这是它该抓的）。
+    .replace(/@media[^{]*/g, '');
 }
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

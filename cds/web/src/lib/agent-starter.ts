@@ -158,7 +158,7 @@ export const AGENT_ROLE_PROFILES: readonly AgentRoleProfile[] = [
     ],
     cardTitle: '验收结论卡',
     fields: [
-      { label: '验收结论', rule: '只能写通过、有条件通过、未通过三选一，并给出一句话理由。' },
+      { label: '验收结论', rule: '只能写通过、原则性通过、未通过三选一，并给出一句话理由。' },
       { label: '已验场景与断言', rule: '按「场景 → 断言 → 实际结果」写，最多五条；产物类功能必须等产物真的出现才算通过。' },
       { label: '未覆盖或阻塞', rule: '列出没验到的场景和原因；没有写「无」。' },
       { label: '回归范围', rule: '说明这次改动可能影响的旧功能验没验、结论是什么。' },

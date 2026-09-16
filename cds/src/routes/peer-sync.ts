@@ -229,7 +229,7 @@ async function buildBundle(
 }
 
 function verdictTag(v: 'pass' | 'conditional' | 'fail'): string {
-  return v === 'pass' ? '通过' : v === 'conditional' ? '有条件通过' : '不通过';
+  return v === 'pass' ? '通过' : v === 'conditional' ? '原则性通过' : '不通过';
 }
 
 export interface PeerSyncRouterDeps {

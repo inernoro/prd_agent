@@ -17,6 +17,23 @@ export const DEFAULT_BOT_AVATAR_FILES: Record<string, string> = {
 export const DEFAULT_NOHEAD_FILE = 'nohead.png';
 
 /**
+ * 同源的轻量默认头像（128px WebP，几 KB）。
+ *
+ * 对象存储上的 nohead.png 是一张 1024×1536、3 MB 的原图，每个未设头像的用户、每一屏都要跨域拉一次；
+ * 2026-09-14 稳定冒烟在业务首页记到「头像备用资源加载失败两次」——慢链路下这张图要么超时、
+ * 要么被页面切换中断，浏览器里就是一枚碎图。默认头像不该依赖任何外部网络，所以它随前端一起打包。
+ */
+export const LOCAL_NOHEAD_AVATAR = `${(import.meta.env?.BASE_URL || '/').replace(/\/+$/, '')}/avatars/nohead.webp`;
+
+/** 服务端下发的地址是不是对象存储上的那张默认头像：是就换成同源轻量版，不再跨域拉 3 MB。 */
+export function isRemoteNoHeadAvatarUrl(value?: string | null): boolean {
+  const raw = (value ?? '').trim();
+  if (!raw) return false;
+  const path = raw.replace(/[?#].*$/, '');
+  return new RegExp(`/${AVATAR_PATH_PREFIX}/${DEFAULT_NOHEAD_FILE}$`, 'i').test(path);
+}
+
+/**
  * 用户头像信息接口
  * 
  * 【重要】在模型中存储用户信息时，必须使用 avatarFileName 而非 username 来获取头像！
@@ -78,6 +95,17 @@ export function normalizePublicAssetBaseUrl(value?: string | null): string {
   }
 }
 
+/**
+ * 资源基址的可渲染形态：绝对 http(s) 地址，或本地开发（ASSETS_PROVIDER=local）时后端下发的
+ * 同源相对前缀 `/local-assets`。协议相对的 `//host` 不算同源，照旧拒绝。
+ */
+export function normalizeRenderableAssetBaseUrl(value?: string | null): string {
+  const raw = (value ?? '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  if (raw.startsWith('/')) return raw.startsWith('//') ? '' : raw;
+  return normalizePublicAssetBaseUrl(raw);
+}
+
 function normalizeRenderableAssetUrl(value?: string | null): string {
   const raw = (value ?? '').trim();
   if (!raw) return '';
@@ -93,16 +121,17 @@ export function resolveAvatarUrl(args: {
   /** 服务端下发的完整 URL（若存在且非空，直接使用） */
   avatarUrl?: string | null;
 }): string {
-  // 1. 优先使用服务端下发的完整 URL（如果有）
+  // 1. 优先使用服务端下发的完整 URL（如果有）；默认头像例外，走同源轻量版
   const directUrl = normalizeRenderableAssetUrl(args.avatarUrl);
-  if (directUrl) return directUrl;
+  if (directUrl) return isRemoteNoHeadAvatarUrl(directUrl) ? LOCAL_NOHEAD_AVATAR : directUrl;
 
   // 头像 URL = TENCENT_COS_PUBLIC_BASE_URL + /icon/backups/head + /{file}
   // 不把域名/路径写入数据库；数据库只存 fileName。
   const cosBase = getAvatarBaseUrl();
+  const fileRaw = (args.avatarFileName ?? '').trim();
+  if (fileRaw.toLowerCase() === DEFAULT_NOHEAD_FILE) return LOCAL_NOHEAD_AVATAR;
   if (!cosBase) return DEFAULT_AVATAR_FALLBACK;
   const base = joinUrl(cosBase, AVATAR_PATH_PREFIX);
-  const fileRaw = (args.avatarFileName ?? '').trim();
   if (fileRaw) return joinUrl(base, fileRaw.toLowerCase());
 
   const isBot =
@@ -124,14 +153,24 @@ export function resolveAvatarUrl(args: {
     return joinUrl(base, DEFAULT_BOT_AVATAR_FILES.dev.toLowerCase());
   }
 
-  // 人类用户未设置头像：直接使用 nohead.png（避免拼接不存在的 {username}.png）
-  return joinUrl(base, DEFAULT_NOHEAD_FILE);
+  // 人类用户未设置头像：用同源轻量默认头像（不拼接不存在的 {username}.png，也不跨域拉原图）
+  return LOCAL_NOHEAD_AVATAR;
 }
 
 export function resolveNoHeadAvatarUrl(): string {
-  const cosBase = getAvatarBaseUrl();
-  if (!cosBase) return DEFAULT_AVATAR_FALLBACK;
-  const base = joinUrl(cosBase, AVATAR_PATH_PREFIX);
-  return joinUrl(base, DEFAULT_NOHEAD_FILE);
+  return LOCAL_NOHEAD_AVATAR;
+}
+
+/**
+ * 对象存储上由管理员托管的那张默认头像（资源管理页「无头像兜底」上传的目标）。
+ * 管理端页面自己已改用同源打包版，但服务端 `avatarUrl` 仍把它下发给桌面端等其它客户端，
+ * 所以上传流程与预览要继续指向真实的对象存储地址，不能拿打包版冒充「你刚上传的那张」。
+ */
+export function resolveManagedNoHeadAvatarUrl(): string {
+  // 这里要和后端 AvatarUrlBuilder.ResolvePublicBaseUrl 同口径：local 提供方下发的是相对前缀 /local-assets，
+  // 只认绝对地址会把本地开发环境的上传目标判成「未配置」，预览区永远空着。
+  const cosBase = normalizeRenderableAssetBaseUrl(useAuthStore.getState().cdnBaseUrl);
+  if (!cosBase) return '';
+  return joinUrl(joinUrl(cosBase, AVATAR_PATH_PREFIX), DEFAULT_NOHEAD_FILE);
 }
 
