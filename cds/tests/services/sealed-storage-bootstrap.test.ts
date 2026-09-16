@@ -64,9 +64,40 @@ describe('sealed-storage-bootstrap service', () => {
       },
     });
 
-    expect(after).toMatchObject({ enabled: true, persisted: true, restartRequired: false });
+    // 这个进程启动时没有密钥，所以 StateService.load() 把旧明文凭据的脱敏推迟了，
+    // 而本次初始化只是把磁盘上的 key 激活进 process.env，不会回头重跑那次迁移。
+    // 此前这里断言 restartRequired:false —— 那不是这条用例要保护的性质，是缺陷本身：
+    // 管理员据此以为已经好了，而凭据与滚动备份仍是明文（形状 4a：测试反向锁死缺陷）。
+    expect(after).toMatchObject({ enabled: true, persisted: true, restartRequired: true });
     expect(env.CDS_SECRET_KEY).toBe(diskSecret);
     expect(generated).toBe(0);
+  });
+
+  /**
+   * 反过来的那一半：带着密钥启动的进程，load 时迁移就已经跑过了，
+   * 这时把密钥落盘不该再要求重启——否则就是把「无需处理」谎报成「要动手」，
+   * 同样是一条不可信的结论。
+   */
+  it('已带密钥启动时把 key 落盘，不要求重启', () => {
+    const runtimeSecret = 'ef'.repeat(32);
+    const env: NodeJS.ProcessEnv = { CDS_SECRET_KEY: runtimeSecret };
+
+    const status = initializeSealedStorage({ env, envFilePath: () => envFile });
+
+    expect(status).toMatchObject({ enabled: true, persisted: true, restartRequired: false });
+    expect(fs.readFileSync(envFile, 'utf8')).toContain(runtimeSecret);
+  });
+
+  it('全新生成 key 时要求重启——启动时同样没有密钥', () => {
+    const env: NodeJS.ProcessEnv = {};
+
+    const status = initializeSealedStorage({
+      env,
+      envFilePath: () => envFile,
+      randomBytes: () => Buffer.alloc(32, 0x41),
+    });
+
+    expect(status).toMatchObject({ enabled: true, persisted: true, restartRequired: true });
   });
 
   it('持久化失败时不激活新 key，也不留下临时文件', () => {

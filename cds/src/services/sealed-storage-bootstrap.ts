@@ -66,14 +66,22 @@ function secretFromEnvFile(envFilePath: string): string | null {
   return normalizedSecret(line?.value);
 }
 
-function statusFrom(activeSecret: string | null, diskSecret: string | null): SealedStorageStatus {
+/**
+ * @param restartRequired 显式覆盖。缺省是「状态查询」那一问的答案：磁盘上有 key
+ *   而本进程没加载，重启才能用上。初始化那条路要回答的是另一问，见调用点。
+ */
+function statusFrom(
+  activeSecret: string | null,
+  diskSecret: string | null,
+  restartRequired?: boolean,
+): SealedStorageStatus {
   const enabled = activeSecret !== null;
   const persisted = diskSecret !== null && activeSecret === diskSecret;
   return {
     enabled,
     fingerprint: fingerprint(activeSecret ?? diskSecret),
     persisted,
-    restartRequired: !enabled && diskSecret !== null,
+    restartRequired: restartRequired ?? (!enabled && diskSecret !== null),
   };
 }
 
@@ -163,7 +171,14 @@ export function initializeSealedStorage(
       // Persist, fsync and verify first, then activate. A failed durable write
       // therefore never leaves this process using a key that cannot restart.
       env[SEALED_STORAGE_ENV_KEY] = chosenSecret;
-      const status = statusFrom(chosenSecret, verifiedDiskSecret);
+      // 本进程**启动时**没有密钥（activeSecret === null）就意味着 StateService.load()
+      // 把旧明文凭据的脱敏推迟了，而本次初始化只装密钥、不会回头重跑那次迁移——
+      // state.ts 打的那条警告说得很清楚：「装上密钥并重启，届时这些凭据会自动完成
+      // 脱敏与密封」。此时回 restartRequired:false 等于对管理员说「好了」，而凭据与
+      // 滚动备份仍是明文，且没有任何东西会再提醒他（形状 10：降级不许静默）。
+      // 已经带着密钥启动的那两种情况（unchanged / persisted）迁移在 load 时就跑过了，
+      // 照旧不需要重启。
+      const status = statusFrom(chosenSecret, verifiedDiskSecret, activeSecret === null);
       auditInitialization(deps.audit, status, result);
       return status;
     });

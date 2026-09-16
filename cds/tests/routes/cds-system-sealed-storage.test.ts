@@ -150,7 +150,12 @@ describe('CDS 系统级密封存储初始化', () => {
       'persisted',
       'restartRequired',
     ]);
-    expect(response.body).toMatchObject({ enabled: true, persisted: true, restartRequired: false });
+    // restartRequired 必须是 true：这个进程启动时没有密钥，StateService.load() 因此把
+    // 旧明文凭据的脱敏推迟了，而本次初始化只装密钥、不会回头重跑那次迁移。此前这里断言
+    // false —— 那不是本用例要保护的性质（它保的是「只返回四个安全字段」「立即热生效」
+    // 「不回显密钥」），是缺陷本身：管理员据此以为好了，而凭据与滚动备份仍是明文
+    // （形状 4a：测试反向锁死缺陷）。
+    expect(response.body).toMatchObject({ enabled: true, persisted: true, restartRequired: true });
     expect(response.body.fingerprint).toMatch(/^sha256:[a-f0-9]{16}$/);
     expect(JSON.stringify(response.body)).not.toContain(GENERATED_SECRET.toString('hex'));
     expect(env.CDS_SECRET_KEY).toBe(GENERATED_SECRET.toString('hex'));
