@@ -209,6 +209,66 @@ env_upsert_locked() {
   return "$rc"
 }
 
+# 多键**一次提交**：把全部键应用到同一份临时文件，最后只 rename 一次。
+# 它与 env_upsert_locked 解决的不是同一个问题：
+#   - 锁解决「别的进程别插进来」；
+#   - 单次 rename 解决「自己中途失败别留下半套」。
+# 四次各自 rename 的话，第二次失败、或进程恰好在两次之间退出，.cds.env 就停在
+# 「新用户名配旧口令」上——备份留着但没有任何人去恢复，下次启动直接登不进仪表盘。
+# config-runtime-drift.md 要求源头改动必须是原子的，这里就是那个「源头」。
+#
+# 调用方必须已持有写锁。用法：env_upsert_many_locked K1 V1 K2 V2 ...（VALUE="" 删除该行）
+env_upsert_many_locked() {
+  if [ "$#" -eq 0 ] || [ $(( $# % 2 )) -ne 0 ]; then
+    err "env_upsert_many_locked 需要成对的 KEY VALUE 参数"
+    return 2
+  fi
+  local tmp="" work="" rc=0
+  if ! work="$(mktemp "${ENV_FILE}.work.XXXXXX")"; then
+    return 1
+  fi
+  chmod 600 "$work"
+  if ! tmp="$(mktemp "${ENV_FILE}.tmp.XXXXXX")"; then
+    rm -f "$work"
+    return 1
+  fi
+  chmod 600 "$tmp"
+  if [ ! -f "$ENV_FILE" ]; then
+    touch "$ENV_FILE" || rc=$?
+    if [ "$rc" -eq 0 ]; then chmod 600 "$ENV_FILE" || rc=$?; fi
+  fi
+  if [ "$rc" -eq 0 ]; then
+    command cat "$ENV_FILE" > "$work" || rc=$?
+  fi
+  while [ "$rc" -eq 0 ] && [ "$#" -ge 2 ]; do
+    local key="$1" value="$2"
+    shift 2
+    awk -v k="$key" '$0 !~ "^export "k"=" { print }' "$work" > "$tmp" || { rc=$?; break; }
+    if [ -n "$value" ]; then
+      # 与 env_upsert_locked 同一套转义（#856）：单引号包裹并把内部 ' 写成 '\'' ，
+      # 保证含换行/$/反引号的多行 PEM 私钥被 source 时原样保留。
+      local escaped="${value//\'/\'\\\'\'}"
+      printf "export %s='%s'\n" "$key" "$escaped" >> "$tmp" || { rc=$?; break; }
+    fi
+    command cat "$tmp" > "$work" || { rc=$?; break; }
+  done
+  if [ "$rc" -eq 0 ]; then
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd)' "$work" || rc=$?
+  fi
+  # 唯一一次落地：到这里为止 .cds.env 一个字节都没被动过，失败即原样保留。
+  if [ "$rc" -eq 0 ]; then
+    mv -f "$work" "$ENV_FILE" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    chmod 600 "$ENV_FILE" || rc=$?
+  fi
+  if [ "$rc" -eq 0 ]; then
+    python3 -c 'import os,sys; fd=os.open(sys.argv[1], os.O_RDONLY); os.fsync(fd); os.close(fd); dd=os.open((os.path.dirname(sys.argv[1]) or "."), os.O_RDONLY); os.fsync(dd); os.close(dd)' "$ENV_FILE" || rc=$?
+  fi
+  rm -f "$tmp" "$work"
+  return "$rc"
+}
+
 # Atomically upsert or remove a `export KEY="value"` line in .cds.env.
 # Usage: env_upsert KEY VALUE   (VALUE="" removes the line)
 env_upsert() {
@@ -2152,19 +2212,25 @@ init_cmd() {
   # 逐键合并而不是整文件重写，是为了保留 CDS_SECRET_KEY 与其他既有系统配置——
   # 重跑 init 绝不能让已密封状态失去解密根密钥。
   #
-  # 但「逐键」不等于可以逐键各抢各放锁：主干原来的整文件替换天然保证四个值是**同一组**，
-  # 换成四次独立加解锁之后，两个 init 并发就能交错成「A 的用户名配 B 的密码与 JWT」，
-  # 谁都登不进去。所以整段（备份 + 四次写入）只取一次锁，用假定已持锁的 env_upsert_locked。
+  # 但「逐键」不等于可以把这四个值拆成四次独立落地。主干原来的整文件替换同时保证了两件事，
+  # 缺一个这四个值就可能停在「新用户名配旧口令」上、下次启动直接登不进仪表盘：
+  #   1. 别的进程别插进来 —— 整段（备份 + 写入）只取一次锁；
+  #   2. 自己中途失败别留下半套 —— 四个键应用到同一份临时文件，最后只 rename 一次。
+  # 第 2 条是 config-runtime-drift.md 说的「源头改动必须是原子的」：在 mv 之前，
+  # .cds.env 一个字节都没被动过，任何一步失败都原样保留，备份不必派上用场。
   env_lock_acquire || { err "获取 .cds.env 写锁失败，已取消初始化"; exit 1; }
   local init_rc=0
   if [ -f "$ENV_FILE" ]; then
     local init_backup="${ENV_FILE}.bak.$(date +%Y%m%d_%H%M%S)"
     env_backup_secure "$ENV_FILE" "$init_backup" || init_rc=$?
   fi
-  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_USERNAME "$new_user" || init_rc=$?; }
-  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_PASSWORD "$new_pass" || init_rc=$?; }
-  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_JWT_SECRET "$new_jwt" || init_rc=$?; }
-  [ "$init_rc" -eq 0 ] && { env_upsert_locked CDS_ROOT_DOMAINS "$new_doms" || init_rc=$?; }
+  if [ "$init_rc" -eq 0 ]; then
+    env_upsert_many_locked \
+      CDS_USERNAME "$new_user" \
+      CDS_PASSWORD "$new_pass" \
+      CDS_JWT_SECRET "$new_jwt" \
+      CDS_ROOT_DOMAINS "$new_doms" || init_rc=$?
+  fi
   env_lock_release
   if [ "$init_rc" -ne 0 ]; then
     err "写入 $ENV_FILE 失败（已保留备份），请检查后重试"

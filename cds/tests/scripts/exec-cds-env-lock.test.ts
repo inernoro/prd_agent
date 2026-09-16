@@ -28,17 +28,30 @@ describe('exec_cds.sh 环境文件共锁守卫', () => {
   });
 
   it('env_upsert_locked 自己不碰锁（目录锁不可重入，重入即 fail-closed 死锁）', () => {
-    const body = functionBody('env_upsert_locked', 'env_upsert');
+    const body = functionBody('env_upsert_locked', 'env_upsert_many_locked');
     expect(body).not.toContain('env_lock_acquire');
     expect(body).not.toContain('env_lock_release');
     expect(body).toContain('mktemp "${ENV_FILE}.tmp.XXXXXX"');
   });
 
+  it('env_upsert_many_locked 只落地一次：整组键共用一个 mv', () => {
+    // 这是「自己中途失败别留下半套」那一半（锁管的是「别的进程别插进来」）。
+    // 行为判据在 env-multi-key-atomicity.test.ts 真跑；这里钉结构，
+    // 防止日后有人把循环里的临时文件直接 mv 成 ENV_FILE 又拆回逐键落地。
+    const body = functionBody('env_upsert_many_locked', 'env_upsert');
+    expect(body).not.toContain('env_lock_acquire');
+    expect(body.match(/mv -f "\$work" "\$ENV_FILE"/g) ?? []).toHaveLength(1);
+    expect(body.match(/mv -f [^\n]*"\$ENV_FILE"/g) ?? []).toHaveLength(1);
+    // 循环体只许写临时文件，不许碰 ENV_FILE 本身
+    const loop = body.slice(body.indexOf('while ['), body.indexOf('done'));
+    expect(loop).not.toContain('"$ENV_FILE"');
+  });
+
   it('重跑 init 仅合并目标键，不再整文件删除 CDS_SECRET_KEY', () => {
     const body = functionBody('init_cmd', 'status_cmd');
     expect(body).not.toContain('cat > "$ENV_FILE"');
-    expect(body).toContain('env_upsert_locked CDS_USERNAME');
-    expect(body).toContain('env_upsert_locked CDS_ROOT_DOMAINS');
+    expect(body).toContain('CDS_USERNAME "$new_user"');
+    expect(body).toContain('CDS_ROOT_DOMAINS "$new_doms"');
   });
 
   it('init 的四个键整组原子：全程只取一次锁，不逐键各抢各放', () => {
@@ -54,11 +67,13 @@ describe('exec_cds.sh 环境文件共锁守卫', () => {
     expect(start).toBeGreaterThanOrEqual(0);
     expect(end).toBeGreaterThan(start);
     const credentialSection = body.slice(start, end);
-    // 四次写入都必须是「已持锁」那一版；出现任何一次自带抢锁的 env_upsert 就说明又拆开了
-    expect(credentialSection).not.toMatch(/env_upsert (?!_locked)/);
+    // 出现任何一次自带抢锁的 env_upsert 就说明又拆开了
+    expect(credentialSection).not.toMatch(/env_upsert (?!_locked|_many_locked)/);
     expect(credentialSection.match(/env_lock_acquire/g) ?? []).toHaveLength(1);
-    expect(credentialSection.match(/env_upsert_locked/g) ?? []).toHaveLength(4);
     expect(credentialSection).toContain('env_lock_release');
+    // 四个键必须走**一次**多键提交，而不是四次单键写入——后者中途失败会留下半套凭据
+    expect(credentialSection.match(/env_upsert_many_locked/g) ?? []).toHaveLength(1);
+    expect(credentialSection).not.toMatch(/env_upsert_locked\s+CDS_/);
     // 备份也必须在同一把锁内，否则备份到的是另一个 init 写了一半的中间态
     expect(credentialSection.indexOf('env_backup_secure')).toBeGreaterThan(0);
   });
