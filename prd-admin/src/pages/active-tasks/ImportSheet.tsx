@@ -54,7 +54,8 @@ export function ImportSheet({ onClose, onCreated }: ImportSheetProps) {
     if (!text.trim()) return;
     setRows([]);
     setSkipped(null);
-    seq.current = 0;
+    // 行号不重置，与 SuggestionsSheet 同一口径：键跨代唯一，
+    // 将来这边也加「哪几行已经建过」时不会重蹈那个洞
     void start({ body: { text: text.trim() } });
   }, [text, start]);
 

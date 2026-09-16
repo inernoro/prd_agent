@@ -92,12 +92,13 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     if (checked.length === 0) { toast.error('先勾几条'); return; }
     setRows([]);
     setSkipped(null);
-    // 行号从头开始数，那么「哪几行已经建过」也必须跟着清掉：这两个 ref 是拿行号当键的，
-    // 只清 seq 会让新拆出来的第一行顶着上一代的 s1，被下面的过滤当成「已经建过」跳过，
-    // 然后拿上一代的任务 id 去标记这批建议 —— 任务没建、来源却记成了已吸取。
-    seq.current = 0;
-    builtKeys.current.clear();
-    doneIds.current = [];
+    // 行号**不**重置 —— 这是这几个洞的根，不是补丁。
+    //
+    // 它原来每次重拆都从 0 数起，于是新一代的第一行又叫 s1，而 builtKeys 记的正是行号：
+    // 要么把它当成「已经建过」跳过（任务没建，来源却被标成已吸取），
+    // 要么连 doneIds 一起清掉（那就忘了上一趟真建出来的那几条，provenance 断掉）。
+    // 两边都不对，因为键本身会重复。让它一直往上加，两个问题同时消失，
+    // 而且 builtKeys 与 doneIds 都不必再清 —— 上一趟建成的那几条本来就该记着。
     void start({ body: { suggestionIds: checked, storeIds, extraHint: hint.trim() || null } });
   }, [checked, storeIds, hint, start]);
 

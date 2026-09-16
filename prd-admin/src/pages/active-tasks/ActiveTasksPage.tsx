@@ -216,12 +216,16 @@ export function ActiveTasksPage() {
 
   const onAddConfirm = useCallback(async () => {
     if (!addTitle.trim()) return;
+    // 上一条还在路上就别再发。输入框在请求期间是不禁用的（禁用会打断打字），
+    // 于是按住回车、或者网慢时多敲一下，就会连发几个 POST 建出几条一模一样的任务。
+    // 旁边那个按钮有 disabled={busy}，回车这条路没有 —— 同一个动作两个入口，只挡住了一个。
+    if (busy) return;
     const title = detected ? detected.rest : addTitle.trim();
     const dueAt = detected ? detected.iso : addDue;
     const ok = await run(() => createActiveTask({ title, dueAt }));
     // 回车之后不收起来，清空接着敲下一条
     if (ok) { setAddTitle(''); setAddDue(null); setDueTouched(false); addRef.current?.focus(); }
-  }, [addTitle, addDue, detected, run]);
+  }, [addTitle, addDue, detected, busy, run]);
 
   const onBlockConfirm = useCallback(async () => {
     if (!data?.active || !blockedOn.trim()) return;

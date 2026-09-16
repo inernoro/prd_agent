@@ -87,15 +87,19 @@ describe('两个浮层的关闭按钮', () => {
     expect(body, `${file} 的 onRequestClose 写入中没有提前返回`).toMatch(/if \([a-z]+\) \{[^}]*return;/);
   });
 
-  it('重新生成时把「哪几行已经建过」一起清掉', () => {
-    // 这两个 ref 拿行号当键。只清 seq 会让新拆出来的第一行顶着上一代的 s1，
-    // 被「已经建过」的过滤跳过，然后拿上一代的任务 id 去标记这批建议。
+  it('重新生成时行号不重置 —— 键跨代唯一，才不用去清那两个 ref', () => {
+    // 这两个 ref 拿行号当键，而行号原来每次重拆都从 0 数起。于是新一代的第一行
+    // 又叫 s1，两条路都错：把它当成「已经建过」跳过（任务没建、来源却标成已吸取），
+    // 或者连 doneIds 一起清掉（忘了上一趟真建出来的那几条，provenance 断掉）。
+    // 根在键会重复，不在清不清。行号一直往上加，两个问题同时消失。
     const src = read('SuggestionsSheet.tsx');
     const at = src.indexOf('const onAbsorb');
-    const body = src.slice(at, at + 700);
-    expect(body).toContain('seq.current = 0');
-    expect(body, 'onAbsorb 没清 builtKeys').toContain('builtKeys.current.clear()');
-    expect(body, 'onAbsorb 没清 doneIds').toContain('doneIds.current = []');
+    const body = src.slice(at, at + 900);
+    expect(body, 'onAbsorb 又把行号重置了，s1 会跨代重复').not.toContain('seq.current = 0');
+    expect(body, '行号不重置就不该再清 builtKeys').not.toContain('builtKeys.current.clear()');
+    expect(body, '行号不重置就不该再清 doneIds').not.toContain('doneIds.current = []');
+    // 行号确实在一直往上加
+    expect(src).toContain('seq.current += 1');
   });
 });
 

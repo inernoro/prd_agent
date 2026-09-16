@@ -291,6 +291,49 @@ public class ActiveTaskDebtsTests
         }
     }
 
+    [Fact]
+    public void 顺手清理悬空引用不许覆盖整个数组()
+    {
+        // Codex 2026-09-16 抓到的：这段跑在**读**路径上（列出债务时顺手清理），
+        // 原来用 Set 整个 ConvertedTaskIds。于是一次列表请求会拿着几十毫秒前的快照
+        // 去覆盖整个数组 —— 中间有人把一条债务转成了任务，刚追加的那个 id 就被抹掉，
+        // 状态也跟着退回去，任务与债务之间的来源链接永久断掉。
+        // 一个只是「看一眼列表」的请求，不该能删掉别人刚写进去的东西。
+        var src = File.ReadAllText(Path.Combine(
+            LocateRepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskDebtsController.cs"));
+
+        // 锚在**定义**上，不是按函数名找第一个匹配 —— 那会命中上面的调用点，
+        // 于是切出来的窗口落在定义开始之前，判据读的根本不是这个函数的函数体。
+        // （本文件其它几条守卫同理：找可执行的形态，别找名字。）
+        const string 定义 = "internal static async Task PruneDeadConversionsAsync(";
+        var at = src.IndexOf(定义, StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到清理函数的定义");
+        var body = src[at..];
+        var end = body.IndexOf("\n    internal static", 定义.Length, StringComparison.Ordinal);
+        if (end > 0) body = body[..end];
+
+        Assert.Contains("PullAll(x => x.ConvertedTaskIds", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("Set(x => x.ConvertedTaskIds", body, StringComparison.Ordinal);
+        // 状态是按「摘完还剩几条」算的，所以那一次写必须带上快照条件，
+        // 别人并发追加了就整个跳过（下一次列表请求自愈）
+        Assert.Contains("Filter.Eq(x => x.ConvertedTaskIds", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 历史按结案时间落窗口_不按最后修改时间()
+    {
+        // 改一句半年前那条的结案说明，它的 UpdatedAt 就是今天，于是它会出现在
+        // 「近 7 天」里、还被算进那一栏的合计 —— 列表跟档位说的不是一回事。
+        var src = File.ReadAllText(Path.Combine(
+            LocateRepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTasksController.cs"));
+
+        var at = src.IndexOf("[HttpGet(\"history\")]", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到历史端点");
+        var body = src[at..(at + 2000)];
+        Assert.Contains("x.DoneAt >= since", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("x.UpdatedAt >= since", body, StringComparison.Ordinal);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

@@ -453,9 +453,15 @@ public class ActiveTasksController : ControllerBase
         var since = DateTime.UtcNow.AddDays(-span);
         var now = DateTime.UtcNow;
 
+        // 结案的按**结案时间**落窗口，不按最后修改时间：改一句半年前那条的结案说明，
+        // 它的 UpdatedAt 就是今天，于是它会出现在「近 7 天」里、还被算进那一栏的合计。
+        // 正在做的那条没有结案时间，它本来就该一直在，单独放行。
+        // Drop 也落 DoneAt（SettleAndSetStateAsync 统一设的），所以两种终态同一个谓词。
         var items = await _db.ActiveTaskEntries
-            .Find(x => x.UserId == target && x.UpdatedAt >= since
-                       && (x.State == ActiveTaskState.Done || x.State == ActiveTaskState.Dropped || x.State == ActiveTaskState.Active))
+            .Find(x => x.UserId == target
+                       && (((x.State == ActiveTaskState.Done || x.State == ActiveTaskState.Dropped)
+                            && x.DoneAt >= since)
+                           || x.State == ActiveTaskState.Active))
             .SortByDescending(x => x.UpdatedAt)
             .Limit(200)
             .ToListAsync(ct);

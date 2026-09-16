@@ -115,13 +115,29 @@ public class ActiveTaskDebtsController : ControllerBase
             var pruned = PruneConversions(d, live);
             if (pruned == null) continue;
 
+            // 摘掉的是这几个确实不在了的 id，用 PullAll 只动它们。
+            //
+            // 这里曾经是 Set 整个列表 —— 而它跑在**读**路径上（列出债务时顺手清理），
+            // 于是一次列表请求会拿着几十毫秒前的快照去覆盖整个数组：
+            // 中间有人把一条债务转成了任务、刚追加的那个 id 就被这次覆盖抹掉，
+            // 状态也跟着退回去，任务与债务之间的来源链接永久断掉。
+            // 一个只是「看一眼列表」的请求不该能删掉别人刚写进去的东西。
+            var 快照 = d.ConvertedTaskIds;
+            var dead = 快照.Where(x => !live.Contains(x)).ToList();
+            if (dead.Count == 0) continue;
+
             d.ConvertedTaskIds = pruned.Value.Kept;
             d.State = pruned.Value.State;
             d.UpdatedAt = now;
             writes.Add(new UpdateOneModel<ActiveTaskDebt>(
-                Builders<ActiveTaskDebt>.Filter.Eq(x => x.Id, d.Id),
+                Builders<ActiveTaskDebt>.Filter.And(
+                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.Id, d.Id),
+                    // 状态那一栏是按「摘完还剩几条」算出来的，所以只在这条还是我读到的
+                    // 那个样子时才写。别人并发追加了新的任务 id，这次就整个跳过 ——
+                    // 下一次列表请求会再摘一遍，这件事本来就是自愈的，不必抢这一轮。
+                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.ConvertedTaskIds, 快照)),
                 Builders<ActiveTaskDebt>.Update
-                    .Set(x => x.ConvertedTaskIds, d.ConvertedTaskIds)
+                    .PullAll(x => x.ConvertedTaskIds, dead)
                     .Set(x => x.State, d.State)
                     .Set(x => x.UpdatedAt, now)));
         }
