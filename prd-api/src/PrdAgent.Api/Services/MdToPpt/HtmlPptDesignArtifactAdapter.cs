@@ -25,6 +25,15 @@ public interface IHtmlPptDesignArtifactAdapter
         CancellationToken ct = default);
 
     Task<int> RecoverPendingAsync(int limit = 100, CancellationToken ct = default);
+
+    /// <summary>
+    /// 回滚一个「专用任务已落库、公共账本还没建起来」的半成品，返回是否真的清掉了。
+    ///
+    /// 只清没有公共账本的那一种。有账本说明 BeginAsync 已经把身份建出来了（比如
+    /// CreateSessionAsync 成功、后面的一致性校验才失败），那条归恢复流程管，删了反而
+    /// 会把公共账本变成孤儿。
+    /// </summary>
+    Task<bool> TryDiscardUnstartedAsync(MdToPptRun run, CancellationToken ct = default);
 }
 
 /// <summary>
@@ -297,6 +306,21 @@ public sealed class HtmlPptDesignArtifactAdapter : IHtmlPptDesignArtifactAdapter
             return;
         }
         throw Conflict();
+    }
+
+    public async Task<bool> TryDiscardUnstartedAsync(MdToPptRun run, CancellationToken ct = default)
+    {
+        EnsureAdapterOwnedRun(run);
+        // 判据与 RecoverPendingAsync 同一条：有没有公共账本。那边跳过无账本孤儿
+        //（注释原话是「无账本孤儿的归属仍待明确」），所以这一种只能由创建方自己收拾——
+        // 不收拾的话它会永远停在 running，既不会被恢复、也不会被判过期（Codex P2，2026-09-16）。
+        if (await FindPublicRunAsync(run.Id) != null) return false;
+        var discarded = await _db.MdToPptRuns.DeleteOneAsync(
+            item => item.Id == run.Id
+                    && item.Status == "running"
+                    && item.ArtifactContractSynchronizedAt == null,
+            CancellationToken.None);
+        return discarded.DeletedCount > 0;
     }
 
     public async Task<int> RecoverPendingAsync(int limit = 100, CancellationToken ct = default)

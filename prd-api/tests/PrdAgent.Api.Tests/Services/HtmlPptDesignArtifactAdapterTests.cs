@@ -498,6 +498,68 @@ public sealed class HtmlPptDesignArtifactAdapterTests
             Times.Exactly(HtmlPptPublishCoordinator.MaxAttempts));
     }
 
+    [Fact]
+    public void CreateRun_ShouldCompensateWhenBeginFails()
+    {
+        // 接线守卫：补偿方法建好了没人调，就等于没建（形状 2）——而删掉那段 catch
+        // 不会让上面两条适配器用例变红，它们是直接调的。
+        var root = FindRepositoryRoot();
+        var controller = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "MdToPptController.cs"));
+
+        var insert = controller.IndexOf(
+            "await _db.MdToPptRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);",
+            StringComparison.Ordinal);
+        Assert.True(insert > 0, "专用任务的落库点不见了，契约可能被挪走了");
+        var body = controller[insert..Math.Min(insert + 1600, controller.Length)];
+
+        // companion：确实截到了那一段（它紧接着就 Begin）。
+        Assert.Contains("_designArtifactAdapter.BeginAsync(run, CancellationToken.None)", body, StringComparison.Ordinal);
+        Assert.True(body.Contains("TryDiscardUnstartedAsync", StringComparison.Ordinal),
+            "BeginAsync 失败后没有回滚半成品，它会永远停在 running：恢复流程不收无账本孤儿");
+        Assert.True(body.Contains("throw;", StringComparison.Ordinal),
+            "补偿不能把原始异常吞掉，调用方必须照样看到失败");
+    }
+
+    /// <summary>
+    /// 「专用任务已落库、公共账本还没建起来」的半成品谁都不管：恢复流程明确跳过无账本孤儿
+    /// （它自己的注释写着「归属仍待明确」），过期判定也要先有账本才轮得到。不收拾的话它
+    /// 永远停在 running——而调用方连这个 run 都没拿到（Codex P2，2026-09-16）。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task DiscardUnstarted_ShouldRemoveTheLedgerlessHalfCreatedRun()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        var adapter = Adapter(fixture, new InMemoryRunEventStore());
+        var orphan = Run("ledgerless-orphan", "convert", "running", string.Empty, null);
+        await fixture.Db.MdToPptRuns.InsertOneAsync(orphan);
+
+        // companion：恢复流程确实不收它——先证明这一点，否则下面的补偿就是多余的。
+        Assert.Equal(0, await adapter.RecoverPendingAsync());
+
+        Assert.True(await adapter.TryDiscardUnstartedAsync(orphan));
+        Assert.Null(await fixture.Db.MdToPptRuns.Find(item => item.Id == orphan.Id).FirstOrDefaultAsync());
+    }
+
+    /// <summary>
+    /// 账本已经建出来的那一种不能删：BeginAsync 可能是先建好身份、再在一致性校验上失败的，
+    /// 删掉专用任务只会把公共账本变成孤儿，而那一条本来就归恢复流程管。
+    /// </summary>
+    [Fact]
+    [Trait("Category", TestCategories.Integration)]
+    public async Task DiscardUnstarted_ShouldKeepTheRunOnceThePublicLedgerExists()
+    {
+        await using var fixture = await AdapterMongoFixture.CreateAsync();
+        var adapter = Adapter(fixture, new InMemoryRunEventStore());
+        var started = Run("ledger-exists", "convert", "running", string.Empty, null);
+        await fixture.Db.MdToPptRuns.InsertOneAsync(started);
+        await adapter.BeginAsync(started);
+
+        Assert.False(await adapter.TryDiscardUnstartedAsync(started));
+        Assert.NotNull(await fixture.Db.MdToPptRuns.Find(item => item.Id == started.Id).FirstOrDefaultAsync());
+    }
+
     private static HtmlPptDesignArtifactAdapter Adapter(AdapterMongoFixture fixture, IRunEventStore events) => new(
         fixture.Db,
         new DesignArtifactLifecycleService(fixture.Db, events),

@@ -2282,7 +2282,30 @@ public class MdToPptController : ControllerBase
             SourcePlanHash = sourcePlanHash,
         };
         await _db.MdToPptRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None);
-        await _designArtifactAdapter.BeginAsync(run, CancellationToken.None);
+        try
+        {
+            await _designArtifactAdapter.BeginAsync(run, CancellationToken.None);
+        }
+        catch
+        {
+            // 专用任务已经落库、公共账本还没建起来：这一种谁都不管。恢复流程明确跳过
+            // 无账本孤儿（它自己的注释写着「归属仍待明确」），过期判定也要先有账本才轮得到，
+            // 于是它会永远停在 running——调用方连这个 run 都没拿到，用户却看得见一个
+            // 永不结束的任务（Codex P2，2026-09-16）。
+            // 只回滚没有账本的那一种；有账本说明身份已经建出来了，那条归恢复流程，删了
+            // 反而把公共账本变成孤儿。补偿失败不能盖住原始异常，只记一条。
+            try
+            {
+                await _designArtifactAdapter.TryDiscardUnstartedAsync(run, CancellationToken.None);
+            }
+            catch (Exception cleanupError)
+            {
+                _logger.LogWarning(cleanupError,
+                    "[MdToPpt] 半成品任务回滚失败，可能留下一个无公共账本的 running 记录 runId={RunId}",
+                    run.Id);
+            }
+            throw;
+        }
         return run;
     }
 
