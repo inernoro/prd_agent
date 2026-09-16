@@ -185,15 +185,54 @@ for (const full of walk(SRC)) {
   }
 }
 
+/**
+ * Markdown 强调符漏进界面文案。
+ *
+ * 由来：2026-09-16「模型名录」一段写了「补完**立刻生效**」，JSX 文本节点不过 Markdown，
+ * 于是用户看到的就是带四颗星号的原文。tsc 绿、lint 绿、文字预算守卫绿（它只扫 pages/），
+ * 只有真人打开那一屏截图才看得见——正是那种「通读代码挑不出来」的形状。
+ *
+ * 判据剥掉注释之后扫全文，**不限于 JSX 文本节点**。第一版就是限在 `>…<` 里的，
+ * 而肇事的那一段恰好含 `{data.builtinCount}`，被花括号打断、一个字都没扫到——
+ * 写完跑红绿闭环才发现守卫在空转（形状 4：测试自己坏了）。
+ *
+ * 全文口径的误报风险很低：注释里的星号已经剥掉，JS 的幂运算 `a ** b` 两边有空格、
+ * 配不成 `**x**`。实测全仓零命中。真要往界面里送 Markdown 原文（交给渲染器的内容），
+ * 到时候再按文件登记豁免，而不是现在先把判据放宽。
+ *
+ * 扫描范围是 src 下全部 .tsx（不止 pages/），因为这类文案哪个组件里都可能写。
+ */
+const EMPHASIS = /\*\*[^*\n]{1,60}\*\*/g;
+for (const full of walk(SRC)) {
+  const rel = path.relative(SRC, full);
+  if (!/\.tsx$/.test(rel)) continue;
+  let source;
+  try {
+    source = fs.readFileSync(full, 'utf8')
+      .replace(/\/\*[^]*?\*\//g, blank)
+      .replace(/^[ \t]*\/\/.*$/gm, blank);
+  } catch (error) {
+    warnings.push(`${rel}  强调符扫描跳过：${error.message}`);
+    continue;
+  }
+  const lineOf = (index) => source.slice(0, index).split('\n').length;
+  for (const match of source.matchAll(EMPHASIS)) {
+    violations.push(
+      `${rel}:${lineOf(match.index)}  界面文案里有 Markdown 强调符 ${match[0].slice(0, 24)}`
+      + `  ← JSX 不过 Markdown，用户会原样看到星号；要加粗就用 <strong>`,
+    );
+  }
+}
+
 for (const warning of warnings) console.warn('文字预算守卫警告：' + warning);
 
 if (violations.length) {
   console.error('文字预算守卫未通过：\n');
   for (const violation of violations) console.error('  ' + violation);
-  console.error('\n把超出的解释挪进四个出口之一：');
+  console.error('\n超预算时，把解释挪进四个出口之一（强调符那条不适用，按上面那行改即可）：');
   console.error('  1) 字段旁的 <HelpPopover>   2) 空状态   3) 默认收起的 <DetailsBlock>   4) <TutorialLink> 深链教程');
   console.error('确有理由超预算时，在 scripts/check-prose.mjs 的 BUDGETS 里登记并写明原因。');
   process.exit(1);
 }
 
-console.log(`文字预算守卫通过：常驻正文 ≤${DEFAULT_BUDGET.maxParagraphs} 段 / ≤${DEFAULT_BUDGET.maxCjk} 汉字（出口内的解释不计入）。`);
+console.log(`文字预算守卫通过：常驻正文 ≤${DEFAULT_BUDGET.maxParagraphs} 段 / ≤${DEFAULT_BUDGET.maxCjk} 汉字（出口内的解释不计入）；界面文案里没有 Markdown 强调符。`);

@@ -288,7 +288,7 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
           </p>
           <p style={{ ...HINT_TEXT, margin: '4px 0 0' }}>
             这里补登的赢；没补登的回落到代码内置那 {data.builtinCount} 条。
-            补完**立刻生效**，上游清单那一屏刷新就能看见——不用发版，也不用等任何缓存。
+            补完<strong>立刻生效</strong>，上游清单那一屏刷新就能看见——不用发版，也不用等任何缓存。
           </p>
         </div>
         {canWrite ? (
