@@ -298,6 +298,189 @@ type GatewayUpstreamModel = {
 /** 多图引用只能走这些保留参考图语义的图片协议；聊天协议会把图片当文本丢掉（REG-multi-image-001）。 */
 const referencePreservingImageProtocols = ['openrouter-image', 'openai', 'openai-compatible'];
 const gatewayFailoverBackupNote = 'stable-smoke-failover-backup';
+// GW-007 故障注入写进 Offering 的 Endpoint 前缀：机读标记，也是硬中断后识别「上一轮遗留注入态」的唯一依据。
+// 注入路径自带原值：`stable-smoke-<kind>-failure/<时间戳>[-<序号>]~<base64url(原 Endpoint)>`，
+// 硬中断后不需要任何外部记录就能把它精确还原（网关只要求相对路径、无控制字符、无反斜杠、不超过 500 字符）。
+const gatewayInjectedEndpointPattern = /^stable-smoke-(?:primary|all)-failure\//;
+const isGatewayInjectedEndpoint = (offering: GatewayOffering) => gatewayInjectedEndpointPattern.test(offering.endpointPath || '');
+// 只认本夹具写入的精确格式（标记开头、紧跟冒号），管理员在别的 Offering 备注里顺带提到这串字也不会被当成夹具。
+const isGatewayFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').trimStart().startsWith(`${gatewayFailoverBackupNote}:`);
+// 网关对 Endpoint 的上限是 500 字符：原值经 base64url 放大后装不下时退回不带原值的旧格式，
+// 硬中断后只能靠相同路由契约的捐出方还原（或人工处理），但故障注入本身照常执行，不会因为路径太长而验不了切换。
+const gatewayEndpointPathLimit = 500;
+const buildGatewayInjectedEndpoint = (kind: 'primary' | 'all', originalEndpointPath: string, index?: number) => {
+  const stem = `stable-smoke-${kind}-failure/${Date.now()}${index === undefined ? '' : `-${index}`}`;
+  const embedded = `${stem}~${Buffer.from(originalEndpointPath, 'utf8').toString('base64url')}`;
+  return embedded.length <= gatewayEndpointPathLimit ? embedded : stem;
+};
+const decodeGatewayInjectedEndpoint = (endpointPath: string): string | null => {
+  const match = /^stable-smoke-(?:primary|all)-failure\/[^~]*~([A-Za-z0-9_-]*)$/.exec(endpointPath);
+  return match ? Buffer.from(match[1], 'base64url').toString('utf8') : null;
+};
+const sameGatewayRoutingContract = (left: GatewayOffering, right: GatewayOffering) => (
+  left.targetId === right.targetId
+  && (left.targetKind || 'model') === (right.targetKind || 'model')
+  && (left.protocol || '') === (right.protocol || '')
+  && (left.upstreamModelId || '') === (right.upstreamModelId || '')
+);
+
+type GatewayFixtureRecovery = {
+  logicalId: string;
+  offeringId: string;
+  targetId: string;
+  from: string;
+  to: string;
+  /** embedded：从注入路径自带的原值还原；donor：按完全相同路由契约的另一条 Offering 还原；unrecoverable：两者都没有，未改动，需人工处理。 */
+  source: 'embedded' | 'donor' | 'unrecoverable';
+};
+
+/**
+ * GW-007 遗留注入态自愈（issue #1536）。
+ * 全路故障注入之后 worker 若被硬杀，主路与带标记的备用 Offering 都会带着 `stable-smoke-*-failure/` Endpoint
+ * 留在网关上：健康仍为 0 时下一轮会把坏 Endpoint 记成基线，健康到 2 时又会在补备用时与既有 targetId 撞车。
+ * 这里在选择 / 补备用之前先扫一遍，按优先级还原：
+ *   1. 注入路径自带的原值（本 PR 起的注入格式，精确还原，主路与备用都适用）；
+ *   2. 路由契约（targetKind / targetId / protocol / upstreamModelId）完全相同的另一条未注入 Offering 的 Endpoint；
+ *   3. 都没有：不写任何猜测值（网关每次更新都会生成新的不可变版本，写错就永久替换了原契约），
+ *      标记 unrecoverable 交给调用方失败并报出需要人工处理的记录。
+ * 更新 Endpoint 会让网关把健康计数清零（GW-006 的判据），所以恢复后它重新成为可用上游。
+ * 只改注入态的记录，其它 Offering 一字不碰；重复执行是幂等的。
+ */
+async function recoverInjectedGatewayOfferings(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+  items: GatewayLogicalModel[],
+): Promise<GatewayFixtureRecovery[]> {
+  const recovered: GatewayFixtureRecovery[] = [];
+  for (const item of items) {
+    for (const offering of item.offerings) {
+      if (!isGatewayInjectedEndpoint(offering)) continue;
+      const from = offering.endpointPath || '';
+      const embedded = decodeGatewayInjectedEndpoint(from);
+      const donor = embedded === null
+        ? items
+          .flatMap((other) => other.offerings.filter((candidate) => (
+            candidate.id !== offering.id
+            && !isGatewayInjectedEndpoint(candidate)
+            && sameGatewayRoutingContract(candidate, offering)
+          )))
+          .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0]
+        : undefined;
+      const source: GatewayFixtureRecovery['source'] = embedded !== null ? 'embedded' : donor ? 'donor' : 'unrecoverable';
+      if (source === 'unrecoverable') {
+        recovered.push({ logicalId: item.id, offeringId: offering.id, targetId: offering.targetId, from, to: '', source });
+        continue;
+      }
+      const endpointPath = embedded !== null ? embedded : (donor!.endpointPath || '');
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${item.id}/offerings/${offering.id}`, {
+        headers: gateway.headers,
+        data: { endpointPath, priority: offering.priority },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `恢复遗留注入态 Offering ${offering.id} 失败`).toBe(true);
+      expect(body.data.endpointPath || '').toBe(endpointPath);
+      recovered.push({ logicalId: item.id, offeringId: offering.id, targetId: offering.targetId, from, to: endpointPath, source });
+      Object.assign(offering, body.data);
+    }
+  }
+  return recovered;
+}
+
+const describeGatewayRecovery = (items: GatewayFixtureRecovery[]) => items
+  .map((item) => `${item.logicalId}/${item.offeringId}: ${item.from} -> ${item.to || '(协议默认)'} [${item.source}]`)
+  .join('; ');
+
+/** 把传入的（读取时只取启用中的）逻辑模型上仍在启用的带标记备用停掉（GW-007 之外它们只能是停用），返回处理过的记录描述。 */
+async function disableStrayGatewayBackups(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+  items: GatewayLogicalModel[],
+): Promise<string[]> {
+  const handled: string[] = [];
+  for (const item of items) {
+    for (const offering of item.offerings) {
+      if (!offering.enabled || !isGatewayFailoverBackup(offering)) continue;
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${item.id}/offerings/${offering.id}/enabled`, {
+        headers: gateway.headers,
+        data: { enabled: false },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `停用遗留备用 Offering ${offering.id} 失败`).toBe(true);
+      Object.assign(offering, body.data);
+      handled.push(`${item.id}/${offering.id}`);
+    }
+  }
+  return handled;
+}
+
+type GatewayUpstreamIndex = { upstreamIds: Set<string>; upstreamById: Map<string, GatewayUpstreamModel> };
+
+async function readGatewayUpstreamIndex(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+): Promise<GatewayUpstreamIndex> {
+  const response = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers });
+  const body = await response.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
+  expect(response.ok(), body.error?.message || '无法读取网关模型目录').toBe(true);
+  return {
+    upstreamIds: new Set(body.data.items.map((item) => item.id)),
+    upstreamById: new Map(body.data.items.map((item) => [item.id, item])),
+  };
+}
+
+const isLiveGatewayUpstream = (offering: GatewayOffering, index: GatewayUpstreamIndex) => (
+  offering.enabled
+  && offering.healthStatus !== 2
+  && index.upstreamIds.has(offering.targetId)
+);
+
+/**
+ * 给只有单上游的逻辑模型补一条带标记的备用 Offering：从同类型其它逻辑模型挑一条在用的真实上游
+ * （优先同平台），照抄它的路由契约创建，priority 比主路低 10，正常流量不会走到它。创建即启用；
+ * 找不到捐出方返回 undefined。GW-007 与自愈回归用例共用这一份，谁先跑到谁建，另一方复用。
+ */
+async function provisionTaggedFailoverBackup(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+  items: GatewayLogicalModel[],
+  index: GatewayUpstreamIndex,
+  preferred: GatewayLogicalModel,
+  primary: GatewayOffering,
+): Promise<GatewayOffering | undefined> {
+  const primaryPlatform = index.upstreamById.get(primary.targetId)?.platformId || '';
+  // 逻辑模型上已经绑过的上游（含停用、未打标记的）都不能再挑：网关对未被替代的同 target 记录判重复。
+  const usedTargets = new Set(preferred.offerings.map((offering) => offering.targetId));
+  const donor = items
+    .filter((item) => item.enabled && item.modelType === preferred.modelType && item.id !== preferred.id)
+    .flatMap((item) => item.offerings.filter((offering) => isLiveGatewayUpstream(offering, index)))
+    .filter((offering) => {
+      if (usedTargets.has(offering.targetId)) return false;
+      usedTargets.add(offering.targetId);
+      return true;
+    })
+    .sort((left, right) => (
+      Number((index.upstreamById.get(right.targetId)?.platformId || '') === primaryPlatform)
+      - Number((index.upstreamById.get(left.targetId)?.platformId || '') === primaryPlatform)
+    ))[0];
+  if (!donor) return undefined;
+  const created = await request.post(`${gateway.baseUrl}/gw/logical-models/${preferred.id}/offerings`, {
+    headers: gateway.headers,
+    data: {
+      targetKind: donor.targetKind || 'model',
+      targetId: donor.targetId,
+      // 路由契约照抄捐出方：它在自己的逻辑模型上就是这么跑通的。
+      protocol: donor.protocol || undefined,
+      endpointPath: donor.endpointPath || undefined,
+      upstreamModelId: donor.upstreamModelId || undefined,
+      priority: primary.priority + 10,
+      weight: 100,
+      notes: `${gatewayFailoverBackupNote}: 稳定冒烟 GW-007 备用上游，验收后停用，可复用`,
+    },
+  });
+  const createdBody = await created.json() as ApiEnvelope<GatewayOffering>;
+  expect(created.ok(), createdBody.error?.message || `为 ${preferred.publicId} 创建备用 Offering 失败`).toBe(true);
+  return createdBody.data;
+}
 
 type GatewayLogicalModel = {
   id: string;
@@ -3007,7 +3190,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-006][GW-007] CDS 主路故障切换、全路故障提示与 requestId 日志可追踪', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[CORE-006][GW-007][REG-gateway-failover-fixture-001] CDS 主路故障切换、全路故障提示与 requestId 日志可追踪', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不主动注入网关故障，只在发布门禁观察自然切换');
     test.setTimeout(360_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
@@ -3017,13 +3200,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
     const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
     expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取网关逻辑模型').toBe(true);
-    const upstreamResponse = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, {
-      headers: gateway.headers,
-    });
-    const upstreamBody = await upstreamResponse.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
-    expect(upstreamResponse.ok(), upstreamBody.error?.message || '无法读取网关模型目录').toBe(true);
-    const upstreamIds = new Set(upstreamBody.data.items.map((item) => item.id));
-    const upstreamById = new Map(upstreamBody.data.items.map((item) => [item.id, item]));
+    // 带标记备用在一轮 GW-007 之外只能是停用：不论挂在哪个逻辑模型上（包括本轮不会选中的），
+    // 启用着的一律先停掉，否则上一轮夭折留下的备用会一直参与 CDS 真实流量的路由。
+    // 隔离排在自愈之前：自愈要发多次网关请求，任何一次失败（selfheal10 就遇到过共享 Mongo 断连）
+    // 都不能让带着注入态的备用继续在线。
+    const straySummary = await disableStrayGatewayBackups(request, gateway, logicalBody.data.items);
+    if (straySummary.length > 0) {
+      testInfo.annotations.push({ type: 'gateway-fixture-stray-backup', description: straySummary.join('; ') });
+      console.warn(`[GW-007] 发现上一轮遗留的已启用备用并已停用：${straySummary.join('; ')}`);
+    }
+    // 上一轮硬中断遗留的注入态自愈，再做任何判定（issue #1536）；发现了就写进报告，不静默。
+    const leftovers = await recoverInjectedGatewayOfferings(request, gateway, logicalBody.data.items);
+    if (leftovers.length > 0) {
+      const summary = describeGatewayRecovery(leftovers);
+      testInfo.annotations.push({ type: 'gateway-fixture-recovery', description: summary });
+      console.warn(`[GW-007] 发现上一轮遗留的网关注入态：${summary}`);
+    }
+    expect(
+      leftovers.filter((item) => item.source === 'unrecoverable'),
+      '上一轮遗留的注入态既没有自带原值、也找不到相同路由契约的捐出方，不能猜着写：请人工恢复这些 Offering 的 Endpoint 后再跑',
+    ).toEqual([]);
+    const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
+    const { upstreamIds, upstreamById } = upstreamIndex;
 
     const pools = await readEnvelope<ImageModelPool[]>(
       await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) }),
@@ -3033,12 +3231,8 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         .filter((pool) => pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')))
         .map((pool) => pool.code),
     );
-    const liveUpstream = (offering: GatewayOffering) => (
-      offering.enabled
-      && offering.healthStatus !== 2
-      && upstreamIds.has(offering.targetId)
-    );
-    const isFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').includes(gatewayFailoverBackupNote);
+    const liveUpstream = (offering: GatewayOffering) => isLiveGatewayUpstream(offering, upstreamIndex);
+    const isFailoverBackup = isGatewayFailoverBackup;
     const distinctUpstreams = (item: GatewayLogicalModel) => new Set(item.offerings.filter(liveUpstream).map((offering) => offering.targetId));
     const describeLogical = (item: GatewayLogicalModel) => (
       `${item.publicId}[${item.offerings.filter(liveUpstream).map((offering) => upstreamById.get(offering.targetId)?.name || offering.targetId).join(' / ') || '无可用上游'}]`
@@ -3059,9 +3253,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     // 备用上游照抄「捐出」它的那条 Offering 的路由契约（协议 / Endpoint / 上游模型名），不能拿主路的协议去配别人的上游。
     let logical: GatewayLogicalModel | undefined;
     let provisionedBackup: GatewayOffering | undefined;
-    // 备用上游挂在哪个逻辑模型上，在发出启用 / 创建请求之前就记下：响应丢失或断言失败时，
-    // finally 仍知道去哪里把带标记的备用找回来停掉。
-    let backupOwnerLogicalId = '';
     let offerings: GatewayOffering[] = [];
     const originals = new Map<GatewayOffering, { endpointPath: string; priority: number }>();
     let originalStrategy = '';
@@ -3128,61 +3319,30 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     try {
       logical = candidates.find((item) => distinctUpstreams(item).size >= 2);
       if (logical) {
-        // 上一轮夭折时留下的已启用标记备用：本轮认领，结束时一并停用。
+        // 开始前已把所有启用着的带标记备用停掉，这里通常为空；留着只为防御同名标记被人手工启用的情形。
         provisionedBackup = logical.offerings.find((offering) => offering.enabled && isFailoverBackup(offering));
       } else {
         const preferred = candidates[0];
         const primary = preferred.offerings.filter(liveUpstream).sort((left, right) => left.priority - right.priority)[0];
         expect(primary, `${preferred.publicId} 没有可用的主路上游，无法补双上游夹具`).toBeTruthy();
-        const primaryPlatform = upstreamById.get(primary!.targetId)?.platformId || '';
-        const dormantBackup = preferred.offerings.find((offering) => (
-          !offering.enabled
-          && offering.targetId !== primary!.targetId
+        // 带标记的备用不论启停都复用：已启用却不健康（上一轮遗留、上游真的坏了）的也先认领，
+        // 后面的双上游断言会把「备用不健康」说清楚，而不是走创建路径与既有 targetId 撞车。
+        const taggedBackup = preferred.offerings.find((offering) => (
+          offering.targetId !== primary!.targetId
           && upstreamIds.has(offering.targetId)
           && isFailoverBackup(offering)
         ));
-        backupOwnerLogicalId = preferred.id;
-        if (dormantBackup) {
+        if (taggedBackup) {
           // 先登记归属再等待启用：网关启用成功但响应丢失 / 断言失败时，finally 照样能停掉它。
-          provisionedBackup = dormantBackup;
-          provisionedBackup = await toggleOffering(preferred.id, dormantBackup.id, true);
+          provisionedBackup = taggedBackup;
+          if (!taggedBackup.enabled) provisionedBackup = await toggleOffering(preferred.id, taggedBackup.id, true);
         } else {
-          const usedTargets = new Set([primary!.targetId]);
-          const donors = logicalBody.data.items
-            .filter((item) => item.enabled && item.modelType === preferred.modelType && item.id !== preferred.id)
-            .flatMap((item) => item.offerings.filter(liveUpstream))
-            .filter((offering) => {
-              if (usedTargets.has(offering.targetId)) return false;
-              usedTargets.add(offering.targetId);
-              return true;
-            })
-            .sort((left, right) => (
-              Number((upstreamById.get(right.targetId)?.platformId || '') === primaryPlatform)
-              - Number((upstreamById.get(left.targetId)?.platformId || '') === primaryPlatform)
-            ));
+          provisionedBackup = await provisionTaggedFailoverBackup(request, gateway, logicalBody.data.items, upstreamIndex, preferred, primary!);
           expect(
-            donors.length,
+            provisionedBackup,
             `无法为 ${preferred.publicId} 补第二个真实上游：同类型逻辑模型没有其它可用上游。`
             + `候选：${candidates.map(describeLogical).join('、')}`,
-          ).toBeGreaterThan(0);
-          const donor = donors[0];
-          const created = await request.post(`${gateway.baseUrl}/gw/logical-models/${preferred.id}/offerings`, {
-            headers: gateway.headers,
-            data: {
-              targetKind: donor.targetKind || 'model',
-              targetId: donor.targetId,
-              // 路由契约照抄捐出方：它在自己的逻辑模型上就是这么跑通的。
-              protocol: donor.protocol || undefined,
-              endpointPath: donor.endpointPath || undefined,
-              upstreamModelId: donor.upstreamModelId || undefined,
-              priority: primary!.priority + 10,
-              weight: 100,
-              notes: `${gatewayFailoverBackupNote}: 稳定冒烟 GW-007 备用上游，验收后停用，可复用`,
-            },
-          });
-          const createdBody = await created.json() as ApiEnvelope<GatewayOffering>;
-          expect(created.ok(), createdBody.error?.message || `为 ${preferred.publicId} 创建备用 Offering 失败`).toBe(true);
-          provisionedBackup = createdBody.data;
+          ).toBeTruthy();
         }
         preferred.offerings = [
           ...preferred.offerings.filter((offering) => offering.id !== provisionedBackup!.id),
@@ -3208,7 +3368,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await updateOffering(offering, originals.get(offering)!.endpointPath, (index + 1) * 10);
         offering.priority = (index + 1) * 10;
       }
-      await updateOffering(offerings[0], `stable-smoke-primary-failure/${Date.now()}`, offerings[0].priority);
+      await updateOffering(offerings[0], buildGatewayInjectedEndpoint('primary', originals.get(offerings[0])!.endpointPath), offerings[0].priority);
       const failoverRunId = await createProbeRun('primary-failure');
       const failoverResult = await waitForImageRun(page, token, failoverRunId, 240_000);
       expect(failoverResult.detail.run.status).toBe('Completed');
@@ -3226,7 +3386,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       await updateOffering(offerings[0], originals.get(offerings[0])!.endpointPath, offerings[0].priority);
       for (const [index, offering] of offerings.entries()) {
-        await updateOffering(offering, `stable-smoke-all-failure/${Date.now()}-${index}`, offering.priority);
+        await updateOffering(offering, buildGatewayInjectedEndpoint('all', originals.get(offering)!.endpointPath, index), offering.priority);
       }
       const failedRunId = await createProbeRun('all-failure');
       const failedResult = await waitForImageRun(page, token, failedRunId, 240_000);
@@ -3254,43 +3414,215 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         )
       )));
       const strategyRestore = originalStrategy ? await Promise.allSettled([updateStrategy(originalStrategy)]) : [];
-      // 停用临时备用：已知的那条 + 重新拉一次逻辑模型、按标记找回仍在启用的（创建请求响应不确定时
-      // provisionedBackup 为空，但网关那边可能已经建好并启用了）。
-      const backupOwnerId = logical?.id || backupOwnerLogicalId;
-      const backupIds = new Set<string>();
-      if (provisionedBackup) backupIds.add(provisionedBackup.id);
-      const rediscover = backupOwnerId
-        ? await Promise.allSettled([(async () => {
-          const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
-          const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
-          expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
-          const owner = body.data.items.find((item) => item.id === backupOwnerId);
-          for (const offering of owner?.offerings || []) {
-            if (offering.enabled && isFailoverBackup(offering)) backupIds.add(offering.id);
-          }
-        })()])
-        : [];
-      const backupRestore = backupOwnerId
-        ? await Promise.allSettled([...backupIds].map((offeringId) => toggleOffering(backupOwnerId, offeringId, false)))
-        : [];
-      if (workspaceId) {
+      // 停用临时备用：不再攒 id——网关每次改路由都会换 id，先按当前列表把所有逻辑模型上启用着的带标记备用
+      // （含本轮 owner 上的那条，以及创建请求响应不确定时没登记到的那条）按当前 id 停掉，再自愈注入态；
+      // 停用状态随新版本延续，自愈之后不需要再追新 id。隔离排在自愈之前：自愈请求失败也不能让备用在线。
+      const backupRestore = await Promise.allSettled([(async () => {
+        const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
+        const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+        expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
+        await disableStrayGatewayBackups(request, gateway, body.data.items);
+        // 主路与备用的 Endpoint 已按 originals 复原；这里再按注入前缀扫一遍，把本轮没登记到的注入态也恢复。
+        const leftoverAfterRun = await recoverInjectedGatewayOfferings(request, gateway, body.data.items);
+        const unrecoverable = leftoverAfterRun.filter((item) => item.source === 'unrecoverable');
+        if (unrecoverable.length > 0) {
+          throw new Error(`清理阶段仍有无法还原的注入态 Offering，需要人工恢复 Endpoint：${describeGatewayRecovery(unrecoverable)}`);
+        }
+      })()]);
+      // 工作区与探针 run 的清理也走 allSettled：它们失败时要把服务端的错误原文带出来（此前是 data 为 null
+      // 直接抛 TypeError，把服务端的 409 原因和前面真正的断言失败一起遮住了），并且不能挡住网关复原结果的核对。
+      const workspaceCleanup = await Promise.allSettled([(async () => {
+        if (!workspaceId) return;
         const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspaceId}`, {
           headers: {
             ...authHeaders(token),
             'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspaceId}-gateway-failover-delete`,
           },
         });
-        expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
-      }
-      for (const runId of runIds) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-          headers: authHeaders(token),
-        })).status()).toBe(404);
-      }
+        const envelope = await deleted.json() as ApiEnvelope<{ deleted: boolean }>;
+        expect(
+          envelope.data?.deleted,
+          `清理故障切换工作区失败：HTTP ${deleted.status()} ${envelope.error?.message || ''}`,
+        ).toBe(true);
+        for (const runId of runIds) {
+          expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+            headers: authHeaders(token),
+          })).status()).toBe(404);
+        }
+      })()]);
       expect(
-        [...restoreResults, ...strategyRestore, ...rediscover, ...backupRestore].filter((result) => result.status === 'rejected'),
-        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用',
+        [...restoreResults, ...strategyRestore, ...backupRestore, ...workspaceCleanup]
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => String(result.reason?.message || result.reason)),
+        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用，工作区与探针 run 必须删除',
       ).toEqual([]);
+    }
+  });
+
+  test('[REG-gateway-failover-fixture-002] 上一轮硬中断遗留的注入态在下一轮开始前自愈', { tag: '@cleanup' }, async ({ request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不主动修改网关路由配置');
+    // issue #1536：人为构造「带标记备用已启用 + Endpoint 停在注入态」的遗留状态，断言自愈把 Endpoint
+    // 恢复成捐出方契约、健康计数清零，且重复执行不再有任何改动。
+    // 网关的 Offering 每次更新都会生成新版本（旧记录标记 SupersededByOfferingId，再改旧 id 会 409），
+    // 所以这里始终以「逻辑模型 + 标记 + targetId」重新定位当前版本，不拿进入前的 id 一路用到底。
+    const gateway = await loginGateway(request);
+    const readLogical = async () => {
+      const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
+      const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+      expect(response.ok(), body.error?.message || '无法读取网关逻辑模型').toBe(true);
+      return body.data.items;
+    };
+    let owner: GatewayLogicalModel | undefined;
+    let backup: GatewayOffering | undefined;
+    const put = async (offeringId: string, data: Record<string, unknown>) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${offeringId}`, {
+        headers: gateway.headers,
+        data,
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `Offering ${offeringId} 更新失败`).toBe(true);
+      return body.data;
+    };
+    const setEnabled = async (offeringId: string, enabled: boolean) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${offeringId}/enabled`, {
+        headers: gateway.headers,
+        data: { enabled },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `Offering ${offeringId} ${enabled ? '启用' : '停用'}失败`).toBe(true);
+      return body.data;
+    };
+    // 从补备用开始就进入清理作用域：创建成功但响应丢失、或紧接着的停用请求失败时，外层 finally 也要把
+    // 所有逻辑模型上启用着的带标记备用停掉，不让刚建的备用带着启用态留在 CDS 路由里。
+    try {
+      const index = await readGatewayUpstreamIndex(request, gateway);
+      // 进入时不看备用是否干净，一律先把所有逻辑模型上的注入态自愈、把启用着的带标记备用停掉，再选备用、取快照：
+      // 上一轮若只在主路注入之后就夭折，备用是干净的而主路不是，后面的「恰好只处理这一条」断言会被主路的遗留搅掉。
+      // 隔离排在自愈之前：自愈的网关请求失败也不能让备用带着注入态继续在线。
+      await disableStrayGatewayBackups(request, gateway, await readLogical());
+      const pre = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+      expect(
+        pre.filter((item) => item.source === 'unrecoverable'),
+        '进入用例时网关上有无法还原的注入态，请先人工恢复这些 Offering 的 Endpoint 再跑',
+      ).toEqual([]);
+      let items = await readLogical();
+      owner = items.find((item) => item.offerings.some(isGatewayFailoverBackup));
+      backup = owner?.offerings.find(isGatewayFailoverBackup);
+      if (!owner || !backup) {
+        // 干净的网关（业务逻辑模型本来就有双上游、GW-007 从未补过备用）：本用例自己造一条带标记备用，
+        // 与 GW-007 共用同一份创建逻辑，造完立刻停用；不依赖别的用例先跑，也不跳过。
+        const candidates = items
+          .filter((item) => item.enabled && item.offerings.some((offering) => isLiveGatewayUpstream(offering, index)))
+          .sort((left, right) => left.publicId.localeCompare(right.publicId));
+        let created: GatewayOffering | undefined;
+        for (const candidate of candidates) {
+          const primary = candidate.offerings
+            .filter((offering) => isLiveGatewayUpstream(offering, index))
+            .sort((left, right) => left.priority - right.priority)[0];
+          created = await provisionTaggedFailoverBackup(request, gateway, items, index, candidate, primary);
+          if (created) {
+            owner = candidate;
+            break;
+          }
+        }
+        expect(created, '没有任何逻辑模型能从同类型逻辑模型借到第二个真实上游，无法构造带标记备用').toBeTruthy();
+        await setEnabled(created!.id, false);
+        items = await readLogical();
+        backup = items.find((item) => item.id === owner!.id)?.offerings.find(isGatewayFailoverBackup);
+        expect(backup, '刚创建的带标记备用必须能在逻辑模型上读回').toBeTruthy();
+      }
+      expect(isGatewayInjectedEndpoint(backup!), '自愈之后备用 Offering 不应再是注入态').toBe(false);
+      // 路由契约完全相同的捐出方在有的环境里存在、有的不存在（CDS 上备用是 openai 协议、捐出方是协议默认），
+      // 旧格式注入路径的两种结局都要验：有捐出方就按它还原，没有就必须原样不动并标记 unrecoverable。
+      const donor = items
+        .flatMap((item) => item.offerings.filter((offering) => offering.id !== backup!.id && sameGatewayRoutingContract(offering, backup!)))
+        .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0];
+      // 带标记备用在 GW-007 之外的干净状态永远是「停用」：进入时若是启用的，那只能是上一轮夭折留下的，结束时一并停掉。
+      const original = { endpointPath: backup!.endpointPath || '', priority: backup!.priority };
+      const readBackup = async () => {
+        const current = (await readLogical()).find((item) => item.id === owner!.id)?.offerings
+          .find((offering) => isGatewayFailoverBackup(offering) && offering.targetId === backup!.targetId);
+        expect(current, '带标记备用 Offering 必须始终留在逻辑模型上').toBeTruthy();
+        return current!;
+      };
+
+      const poison = async (injectedEndpointPath: string) => {
+        // 模拟 worker 在全路故障注入之后被硬杀：备用启用、Endpoint 停在注入态。
+        const current = await readBackup();
+        const poisoned = await put(current.id, { endpointPath: injectedEndpointPath, priority: original.priority });
+        expect(isGatewayInjectedEndpoint(poisoned)).toBe(true);
+        await setEnabled(poisoned.id, true);
+      };
+      const recoverOnce = async () => {
+        const recovered = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+        expect(
+          recovered.map((item) => `${item.logicalId}:${item.targetId}`),
+          '自愈必须恰好处理这条遗留备用，不碰其它 Offering',
+        ).toEqual([`${owner!.id}:${backup!.targetId}`]);
+        return recovered[0];
+      };
+
+      // 注入路径构造器本身的边界：短路径（含多字节）可逆，超过网关 500 字符上限时退回不带原值的旧格式。
+      expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('all', 'v1/图片/generations?x=1', 2))).toBe('v1/图片/generations?x=1');
+      expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('primary', ''))).toBe('');
+      const longInjected = buildGatewayInjectedEndpoint('all', 'a'.repeat(480), 3);
+      expect(longInjected.length).toBeLessThanOrEqual(gatewayEndpointPathLimit);
+      expect(gatewayInjectedEndpointPattern.test(longInjected)).toBe(true);
+      expect(decodeGatewayInjectedEndpoint(longInjected)).toBeNull();
+
+      try {
+        // 情形一：本 PR 起的注入格式自带原值，精确还原，不依赖任何别的 Offering。
+        // 原 Endpoint 长到装不进 500 字符时构造器会退回不带原值的格式，那就按情形二的结局断言。
+        const embeddedPath = buildGatewayInjectedEndpoint('all', original.endpointPath, 0);
+        const embeddable = decodeGatewayInjectedEndpoint(embeddedPath) !== null;
+        await poison(embeddedPath);
+        const embedded = await recoverOnce();
+        const afterEmbedded = await readBackup();
+        if (embeddable) {
+          expect(embedded.source).toBe('embedded');
+          expect(embedded.to).toBe(original.endpointPath);
+          expect(isGatewayInjectedEndpoint(afterEmbedded)).toBe(false);
+          expect(afterEmbedded.endpointPath || '').toBe(original.endpointPath);
+          expect(afterEmbedded.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
+          expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+        } else if (donor) {
+          expect(embedded.source).toBe('donor');
+          expect(afterEmbedded.endpointPath || '').toBe(donor.endpointPath || '');
+        } else {
+          expect(embedded.source).toBe('unrecoverable');
+          expect(afterEmbedded.endpointPath || '').toBe(embeddedPath);
+        }
+
+        // 情形二：旧格式注入路径不带原值。有路由契约完全相同的捐出方就按它还原；没有就一个字都不许改。
+        const legacyEndpoint = `stable-smoke-all-failure/leftover-${Date.now()}`;
+        await poison(legacyEndpoint);
+        const legacy = await recoverOnce();
+        const afterLegacy = await readBackup();
+        if (donor) {
+          expect(legacy.source).toBe('donor');
+          expect(legacy.to).toBe(donor.endpointPath || '');
+          expect(afterLegacy.endpointPath || '').toBe(donor.endpointPath || '');
+          expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+        } else {
+          expect(legacy.source, '没有相同路由契约的捐出方时不能拿别的 Endpoint 顶上').toBe('unrecoverable');
+          expect(afterLegacy.endpointPath || '', 'unrecoverable 的记录必须原样不动').toBe(legacyEndpoint);
+          expect(afterLegacy.enabled, 'unrecoverable 的记录连启停状态都不动，交给人工处理').toBe(true);
+        }
+      } finally {
+        // 顺序恢复并逐步取新版本 id：同一条 Offering 的两次写不并发，也不拿旧 id 去改已被替代的版本。
+        const restore = await Promise.allSettled([(async () => {
+          // 快照在自愈之后才取，这里再守一道：任何情况下都不许把注入态写回网关。
+          if (gatewayInjectedEndpointPattern.test(original.endpointPath)) {
+            throw new Error(`快照里的 Endpoint 仍是注入态，拒绝写回：${original.endpointPath}`);
+          }
+          const latest = await readBackup();
+          const restored = await put(latest.id, { endpointPath: original.endpointPath, priority: original.priority });
+          await setEnabled(restored.id, false);
+        })()]);
+        expect(restore.filter((result) => result.status === 'rejected'), '用例结束必须把备用 Offering 恢复到进入前的状态').toEqual([]);
+      }
+    } finally {
+      await disableStrayGatewayBackups(request, gateway, await readLogical());
     }
   });
 
