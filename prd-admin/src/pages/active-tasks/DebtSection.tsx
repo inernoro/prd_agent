@@ -52,7 +52,9 @@ export function DebtSection({ onConverted }: DebtSectionProps) {
     } else toast.error(res.error?.message ?? '没转成');
   }, [load, onConverted]);
 
-  // 一条都没有就整块不出现 —— 没同步过的站点不该看见一个空壳分区
+  // 一条都没有就整块不出现 —— 没同步过的站点不该看见一个空壳分区。
+  // 注意 total 是**整块看板**的数，不跟着「只看我的」走：跟着走的话，
+  // 一条都没认领时这块会连同那个切回「看全部」的开关一起消失，用户走进去就出不来。
   if (!board || board.total === 0) return null;
 
   return (
@@ -78,7 +80,19 @@ export function DebtSection({ onConverted }: DebtSectionProps) {
         )}
       </div>
 
-      {open && (
+      {open && board.items.length === 0 && (
+        <div className="atb-list" role="list">
+          <div className="atb-row atb-debt-row atb-debt-row--empty" role="listitem">
+            <div className="atb-row__body">
+              <span className="atb-row__sub">
+                你还没认领任何一条。整块还欠着 {board.total} 条，点上面的「看全部」。
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {open && board.items.length > 0 && (
         <div className="atb-list" role="list">
           {board.items.map((d) => (
             <div className="atb-row atb-debt-row" role="listitem" key={d.id}>

@@ -38,6 +38,10 @@ public class ActiveTaskDebtsController : ControllerBase
     /// <summary>
     /// 债务清单。默认只给还没了结的（open / claimed / converted）——
     /// 了结的那些不该占着这半屏，跟收件箱一个道理。
+    ///
+    /// 计数与结论句按**整块看板**算，不跟着 module / mineOnly 走：
+    /// 跟着筛选走的结论是假结论（开「只看我的」时会说出「其余都有人管了」，
+    /// 而实际上还有一百多条没人管）。筛选只决定列出哪几条。
     /// </summary>
     [HttpGet]
     public async Task<IActionResult> List(
@@ -47,48 +51,76 @@ public class ActiveTaskDebtsController : ControllerBase
         CancellationToken ct = default)
     {
         var me = GetUserId();
-        var filters = new List<FilterDefinition<ActiveTaskDebt>>();
 
+        FilterDefinition<ActiveTaskDebt> scope;
         if (!string.IsNullOrWhiteSpace(state))
         {
             if (!ActiveTaskDebtState.IsValid(state))
                 return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "状态只能是 open / claimed / converted / closed"));
-            filters.Add(Builders<ActiveTaskDebt>.Filter.Eq(x => x.State, state));
+            scope = Builders<ActiveTaskDebt>.Filter.Eq(x => x.State, state);
         }
         else
         {
-            filters.Add(Builders<ActiveTaskDebt>.Filter.Ne(x => x.State, ActiveTaskDebtState.Closed));
+            scope = Builders<ActiveTaskDebt>.Filter.Ne(x => x.State, ActiveTaskDebtState.Closed);
         }
 
-        if (!string.IsNullOrWhiteSpace(module))
-            filters.Add(Builders<ActiveTaskDebt>.Filter.Eq(x => x.Module, module));
-        if (mineOnly)
-            filters.Add(Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, me));
+        // 500 是整块看板的上限，不是筛完之后的上限 —— 因为计数要按整块算，
+        // 就必须先把整块取回来。真到 500 条以上再谈分页，那时筛选也得跟着挪回 DB 侧。
+        var all = await _db.ActiveTaskDebts.Find(scope).Limit(500).ToListAsync(ct);
+        await PruneDeadConversionsAsync(_db, all, ct);
 
-        var items = await _db.ActiveTaskDebts
-            .Find(Builders<ActiveTaskDebt>.Filter.And(filters))
-            .Limit(500)
-            .ToListAsync(ct);
-
-        // 排序在内存里做：先「我认领的」，再没人认领的，最后别人认领的；组内按模块 + 编号
-        var sorted = items
-            .OrderBy(x => x.OwnerUserId == me ? 0 : string.IsNullOrEmpty(x.OwnerUserId) ? 1 : 2)
-            .ThenBy(x => x.Module, StringComparer.Ordinal)
-            .ThenBy(x => x.Num)
-            .ToList();
-
-        var mine = sorted.Count(x => x.OwnerUserId == me);
-        var unclaimed = sorted.Count(x => string.IsNullOrEmpty(x.OwnerUserId));
+        var board = BuildBoard(all, me, module, mineOnly);
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            headline = BuildHeadline(sorted.Count, mine, unclaimed),
-            total = sorted.Count,
-            mineCount = mine,
-            unclaimedCount = unclaimed,
-            items = sorted.Select(x => ToDto(x, me)).ToList(),
-            modules = sorted.Select(x => x.Module).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList(),
+            headline = BuildHeadline(board.Total, board.Mine, board.Unclaimed),
+            total = board.Total,
+            mineCount = board.Mine,
+            unclaimedCount = board.Unclaimed,
+            shownCount = board.Items.Count,
+            items = board.Items.Select(x => ToDto(x, me)).ToList(),
+            modules = board.Modules,
         }));
+    }
+
+    /// <summary>
+    /// 转出去的那条活可能已经被删掉了。悬空的 id 不能再充当「已转成 N 条活」的证据 ——
+    /// 否则界面上点过去是空气，而且状态永远回不到 open / claimed（<see cref="StateForClaimed"/>
+    /// 只数个数，不问那几条活还在不在）。所以读的时候对一遍活人名单，顺手把账本改回真值。
+    /// </summary>
+    internal static async Task PruneDeadConversionsAsync(
+        MongoDbContext db, List<ActiveTaskDebt> debts, CancellationToken ct)
+    {
+        var referenced = debts.SelectMany(d => d.ConvertedTaskIds).Distinct().ToList();
+        if (referenced.Count == 0) return;
+
+        var live = (await db.ActiveTaskEntries
+            .Find(Builders<ActiveTaskEntry>.Filter.In(x => x.Id, referenced))
+            .Project(x => x.Id)
+            .ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
+
+        if (live.Count == referenced.Count) return;
+
+        var now = DateTime.UtcNow;
+        var writes = new List<WriteModel<ActiveTaskDebt>>();
+        foreach (var d in debts)
+        {
+            var pruned = PruneConversions(d, live);
+            if (pruned == null) continue;
+
+            d.ConvertedTaskIds = pruned.Value.Kept;
+            d.State = pruned.Value.State;
+            d.UpdatedAt = now;
+            writes.Add(new UpdateOneModel<ActiveTaskDebt>(
+                Builders<ActiveTaskDebt>.Filter.Eq(x => x.Id, d.Id),
+                Builders<ActiveTaskDebt>.Update
+                    .Set(x => x.ConvertedTaskIds, d.ConvertedTaskIds)
+                    .Set(x => x.State, d.State)
+                    .Set(x => x.UpdatedAt, now)));
+        }
+
+        if (writes.Count > 0)
+            await db.ActiveTaskDebts.BulkWriteAsync(writes, cancellationToken: ct);
     }
 
     /// <summary>
@@ -320,6 +352,65 @@ public class ActiveTaskDebtsController : ControllerBase
     /// <summary>没人认领时该落哪一档：转出去过的活还在，所以仍是 converted。</summary>
     internal static string StateForUnclaimed(ActiveTaskDebt d)
         => d.ConvertedTaskIds.Count > 0 ? ActiveTaskDebtState.Converted : ActiveTaskDebtState.Open;
+
+    /// <summary>
+    /// 一块看板：计数按全量算，列表按筛选给。两者是不同的东西，混成一个就会说谎。
+    /// </summary>
+    internal readonly record struct DebtBoardView(
+        List<ActiveTaskDebt> Items,
+        int Total,
+        int Mine,
+        int Unclaimed,
+        List<string> Modules);
+
+    /// <summary>
+    /// 把一批债务整理成看板。<paramref name="module"/> / <paramref name="mineOnly"/> 只筛
+    /// <see cref="DebtBoardView.Items"/>，不影响计数与模块下拉 —— 模块下拉要是也跟着筛，
+    /// 选完一个模块就再也选不回别的了。
+    /// </summary>
+    internal static DebtBoardView BuildBoard(
+        IReadOnlyList<ActiveTaskDebt> all, string me, string? module, bool mineOnly)
+    {
+        var view = all.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(module))
+            view = view.Where(x => x.Module == module);
+        if (mineOnly)
+            view = view.Where(x => x.OwnerUserId == me);
+
+        // 排序在内存里做：先「我认领的」，再没人认领的，最后别人认领的；组内按模块 + 编号
+        var items = view
+            .OrderBy(x => x.OwnerUserId == me ? 0 : string.IsNullOrEmpty(x.OwnerUserId) ? 1 : 2)
+            .ThenBy(x => x.Module, StringComparer.Ordinal)
+            .ThenBy(x => x.Num)
+            .ToList();
+
+        return new DebtBoardView(
+            items,
+            all.Count,
+            all.Count(x => x.OwnerUserId == me),
+            all.Count(x => string.IsNullOrEmpty(x.OwnerUserId)),
+            all.Select(x => x.Module).Distinct().OrderBy(x => x, StringComparer.Ordinal).ToList());
+    }
+
+    /// <summary>
+    /// 对一遍活人名单，剔掉指向已删任务的 id 并把状态落回真值。
+    /// 没有需要剔的就返回 null（调用方据此跳过这一条，不做无谓的写）。
+    /// 已了结（closed）的那档不动状态 —— 它的了结跟转没转过没关系。
+    /// </summary>
+    internal static (List<string> Kept, string State)? PruneConversions(
+        ActiveTaskDebt d, ISet<string> liveTaskIds)
+    {
+        if (d.ConvertedTaskIds.Count == 0) return null;
+        var kept = d.ConvertedTaskIds.Where(liveTaskIds.Contains).ToList();
+        if (kept.Count == d.ConvertedTaskIds.Count) return null;
+
+        if (d.State == ActiveTaskDebtState.Closed) return (kept, d.State);
+
+        // 状态回落走既有的那两个判断，不在这里另写一份（写两份就会各自漂移）
+        var probe = new ActiveTaskDebt { ConvertedTaskIds = kept, OwnerUserId = d.OwnerUserId };
+        var state = string.IsNullOrEmpty(d.OwnerUserId) ? StateForUnclaimed(probe) : StateForClaimed(probe);
+        return (kept, state);
+    }
 
     internal static string? Clip(string? s, int max)
     {

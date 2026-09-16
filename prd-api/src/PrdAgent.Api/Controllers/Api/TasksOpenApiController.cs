@@ -300,25 +300,23 @@ public class TasksOpenApiController : ControllerBase
     public async Task<IActionResult> Debts([FromQuery] bool mineOnly = false, CancellationToken ct = default)
     {
         var me = GetUserId();
-        var filter = Builders<ActiveTaskDebt>.Filter.Ne(x => x.State, ActiveTaskDebtState.Closed);
-        if (mineOnly)
-            filter = Builders<ActiveTaskDebt>.Filter.And(
-                filter, Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, me));
 
-        var items = await _db.ActiveTaskDebts.Find(filter).Limit(500).ToListAsync(ct);
-        var sorted = items
-            .OrderBy(x => x.Module, StringComparer.Ordinal)
-            .ThenBy(x => x.Num)
-            .ToList();
+        // 走界面那一侧的同一个判定源。这里曾经自己抄了一遍计数，于是同一个
+        // mineOnly 在两条路上给出两句不一样的结论 —— 抄一遍就必然各自漂移。
+        var all = await _db.ActiveTaskDebts
+            .Find(Builders<ActiveTaskDebt>.Filter.Ne(x => x.State, ActiveTaskDebtState.Closed))
+            .Limit(500)
+            .ToListAsync(ct);
+        await ActiveTaskDebtsController.PruneDeadConversionsAsync(_db, all, ct);
 
-        var mine = sorted.Count(x => x.OwnerUserId == me);
-        var unclaimed = sorted.Count(x => string.IsNullOrEmpty(x.OwnerUserId));
+        var board = ActiveTaskDebtsController.BuildBoard(all, me, module: null, mineOnly: mineOnly);
 
         return Ok(ApiResponse<object>.Ok(new
         {
-            headline = ActiveTaskDebtsController.BuildHeadline(sorted.Count, mine, unclaimed),
-            total = sorted.Count,
-            items = sorted.Select(x => new
+            headline = ActiveTaskDebtsController.BuildHeadline(board.Total, board.Mine, board.Unclaimed),
+            total = board.Total,
+            shownCount = board.Items.Count,
+            items = board.Items.Select(x => new
             {
                 key = x.Key,
                 title = x.Title,

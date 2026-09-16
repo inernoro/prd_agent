@@ -230,12 +230,21 @@ export interface DebtItem {
   updatedAt: string;
 }
 
+/**
+ * 一块债务看板。
+ *
+ * 分清两种数：headline / total / mineCount / unclaimedCount 是**整块看板**的事实，
+ * 不跟着 module / mineOnly 走；items 才是筛过的那几条，个数看 shownCount。
+ * 混成一个的后果：开「只看我的」时结论句会说「其余都有人管了」，而实际还有一百多条没人管。
+ */
 export interface DebtBoard {
   /** 一句话结论，不是三个数字让人自己算 */
   headline: string;
   total: number;
   mineCount: number;
   unclaimedCount: number;
+  /** 当前筛选之后列出了几条 */
+  shownCount: number;
   items: DebtItem[];
   modules: string[];
 }

@@ -125,4 +125,109 @@ public class ActiveTaskDebtsTests
         Assert.Equal("/api/open/tasks/debts", list.PathTemplate);
         Assert.Equal("/api/open/tasks/debts/sync", sync.PathTemplate);
     }
+    [Fact]
+    public void 筛选只决定列出哪几条_不许顺手改掉结论句的分母()
+    {
+        // 事故形状：计数跟着 mineOnly 走，于是开「只看我的」时 unclaimed 被算成 0，
+        // 结论句说出「其余都有人管了」—— 而实际上还有一百多条没人管。
+        // 更糟的是 total 也跟着变 0，前端「total===0 就整块不渲染」的守卫一触发，
+        // 连那个切回「看全部」的开关都一起消失，用户走进去就出不来。
+        var me = "我";
+        var all = new List<ActiveTaskDebt>
+        {
+            new() { Key = "cds#1", Module = "cds", Num = 1, OwnerUserId = me },
+            new() { Key = "cds#2", Module = "cds", Num = 2 },
+            new() { Key = "platform.x#1", Module = "platform.x", Num = 1 },
+            new() { Key = "platform.x#2", Module = "platform.x", Num = 2, OwnerUserId = "别人" },
+        };
+
+        var mineOnly = ActiveTaskDebtsController.BuildBoard(all, me, module: null, mineOnly: true);
+        Assert.Single(mineOnly.Items);                 // 列表确实筛了
+        Assert.Equal(4, mineOnly.Total);               // 分母还是整块看板
+        Assert.Equal(1, mineOnly.Mine);
+        Assert.Equal(2, mineOnly.Unclaimed);           // 没人管的两条不会因为筛选而消失
+        Assert.Equal(new[] { "cds", "platform.x" }, mineOnly.Modules);  // 模块下拉也要给全量
+
+        // 同一句结论，在筛与不筛两种视图下必须一字不差
+        var openAll = ActiveTaskDebtsController.BuildBoard(all, me, module: null, mineOnly: false);
+        Assert.Equal(
+            ActiveTaskDebtsController.BuildHeadline(openAll.Total, openAll.Mine, openAll.Unclaimed),
+            ActiveTaskDebtsController.BuildHeadline(mineOnly.Total, mineOnly.Mine, mineOnly.Unclaimed));
+
+        var oneModule = ActiveTaskDebtsController.BuildBoard(all, me, module: "cds", mineOnly: false);
+        Assert.Equal(2, oneModule.Items.Count);
+        Assert.Equal(4, oneModule.Total);
+        Assert.Equal(new[] { "cds", "platform.x" }, oneModule.Modules);
+    }
+
+    [Fact]
+    public void 转出去的活被删掉之后_债务不许继续声称已转成N条活()
+    {
+        // 「已转成 1 条活」这句话的根是那条活本身。活被删了根就没了，
+        // 再挂着这句话就是指向空气：点过去打不开，状态也永远回不到 open/claimed
+        // ——因为 StateForClaimed 只数个数，不问那几条还在不在。
+        var live = new HashSet<string>(StringComparer.Ordinal) { "活着的" };
+
+        var dangling = new ActiveTaskDebt { ConvertedTaskIds = { "已删的" }, OwnerUserId = "我" };
+        var pruned = ActiveTaskDebtsController.PruneConversions(dangling, live);
+        Assert.NotNull(pruned);
+        Assert.Empty(pruned!.Value.Kept);
+        Assert.Equal(ActiveTaskDebtState.Claimed, pruned.Value.State);   // 有人认领 -> 退回 claimed
+
+        var unowned = new ActiveTaskDebt { ConvertedTaskIds = { "已删的" } };
+        Assert.Equal(ActiveTaskDebtState.Open, ActiveTaskDebtsController.PruneConversions(unowned, live)!.Value.State);
+
+        // 还剩活着的那条就仍是 converted，只是把死的那个 id 摘掉
+        var partial = new ActiveTaskDebt { ConvertedTaskIds = { "活着的", "已删的" }, OwnerUserId = "我" };
+        var half = ActiveTaskDebtsController.PruneConversions(partial, live);
+        Assert.Equal(new[] { "活着的" }, half!.Value.Kept);
+        Assert.Equal(ActiveTaskDebtState.Converted, half.Value.State);
+
+        // 没有需要摘的就别写库：null 是「这条跳过」
+        Assert.Null(ActiveTaskDebtsController.PruneConversions(
+            new ActiveTaskDebt { ConvertedTaskIds = { "活着的" } }, live));
+        Assert.Null(ActiveTaskDebtsController.PruneConversions(new ActiveTaskDebt(), live));
+
+        // 已了结的那档，状态跟转没转过无关，摘 id 但不改状态
+        var closed = new ActiveTaskDebt { ConvertedTaskIds = { "已删的" }, State = ActiveTaskDebtState.Closed };
+        Assert.Equal(ActiveTaskDebtState.Closed, ActiveTaskDebtsController.PruneConversions(closed, live)!.Value.State);
+    }
+    [Fact]
+    public void 债务看板的计数只许有一个判定源_不许第二处再抄一遍()
+    {
+        // 形状 3（判据分裂）：开放接口那条路曾经自己抄了一遍「谁认领了、几条没人管」，
+        // 于是同一个 mineOnly 在界面和 MCP 两条路上给出两句不一样的结论。
+        // 抄一遍不会报错、不会变红，只会在某天被人发现两边对不上。
+        var root = LocateRepoRoot();
+        var apiSrc = Path.Combine(root, "prd-api", "src", "PrdAgent.Api");
+        Assert.True(Directory.Exists(apiSrc), $"找不到后端源码目录：{apiSrc}");
+
+        // 「没人认领」这个判断的定义，全仓只许出现在债务控制器里
+        const string 判据 = "Count(x => string.IsNullOrEmpty(x.OwnerUserId))";
+        var offenders = Directory
+            .GetFiles(apiSrc, "*.cs", SearchOption.AllDirectories)
+            .Where(f => File.ReadAllText(f).Contains(判据, StringComparison.Ordinal))
+            .Select(f => Path.GetFileName(f))
+            .OrderBy(f => f, StringComparer.Ordinal)
+            .ToList();
+
+        Assert.Equal(new[] { "ActiveTaskDebtsController.cs" }, offenders);
+
+        // 反向再钉一次：开放接口必须真的走共享的那个入口，而不是绕开它另算
+        var openApi = File.ReadAllText(Path.Combine(apiSrc, "Controllers", "Api", "TasksOpenApiController.cs"));
+        Assert.Contains("ActiveTaskDebtsController.BuildBoard(", openApi, StringComparison.Ordinal);
+    }
+
+    private static string LocateRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (Directory.Exists(Path.Combine(dir.FullName, "doc"))
+                && Directory.Exists(Path.Combine(dir.FullName, "prd-api")))
+                return dir.FullName;
+            dir = dir.Parent;
+        }
+        return AppContext.BaseDirectory;
+    }
 }
