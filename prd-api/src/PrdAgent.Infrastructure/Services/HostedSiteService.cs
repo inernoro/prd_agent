@@ -1779,6 +1779,47 @@ public class HostedSiteService : IHostedSiteService
         }
     }
 
+    /// <summary>
+    /// 站点记录删除的原子围栏。
+    /// </summary>
+    /// <remarks>
+    /// 内容版本与更新时间只挡得住「删除期间内容被改写」。借用与发布登记
+    /// （<see cref="ReservePublishKeysAsync"/>）只写租约与两个键数组，**不碰**
+    /// ContentVersion 与 UpdatedAt，所以「读站点」与「登记键」一交错，删除就会拿着
+    /// 读取时那一刻的清单成功执行：发布方随后把对象传上去，站点已经没了，键也释放不掉，
+    /// 那批对象既不在删除任务的清单里也没有人认领。
+    ///
+    /// 读取时本来就有一道租约判断，它是对的，缺的只是「与删除在同一次原子操作里成立」——
+    /// 典型的 check-then-act。所以这里把那道判断原样并进围栏，判据逐字一致：
+    /// 租约未过期 **且** 有发布中的键，才算「正在进行中」。
+    ///
+    /// 刻意不改键清单：借用场景里那批键恰恰是源站自己的当前文件，把它们并进删除清单
+    /// 等于在别人读取途中删源文件。租约的语义是让删除**等**，不是让删除**跳过**这些键。
+    ///
+    /// <paramref name="now"/> 必须与读取时那道判断用同一个值：两者之间租约若恰好过期，
+    /// 用旧值会判成「仍在进行中」从而推迟删除——偏向推迟是安全的那一侧。
+    /// </remarks>
+    internal static FilterDefinition<HostedSite> BuildHostedSiteDeletionFence(
+        string siteId,
+        string ownerUserId,
+        DateTime contentVersion,
+        DateTime updatedAt,
+        DateTime now)
+    {
+        var fb = Builders<HostedSite>.Filter;
+        return fb.Eq(x => x.Id, siteId)
+               & fb.Eq(x => x.OwnerUserId, ownerUserId)
+               & fb.Eq(x => x.ContentVersion, contentVersion)
+               & fb.Eq(x => x.UpdatedAt, updatedAt)
+               & fb.Or(
+                   // 租约字段缺失或为空 = 从来没有人登记过
+                   fb.Eq(x => x.AssetPublishLeaseExpiresAt, null),
+                   fb.Lte(x => x.AssetPublishLeaseExpiresAt, now),
+                   // 释放登记只清空键数组、不回拨租约时间戳，所以「键空了」也算不在进行中
+                   fb.Size(x => x.AssetPublishInProgressKeys, 0),
+                   fb.Exists(x => x.AssetPublishInProgressKeys, false));
+    }
+
     private async Task EnsureHostedSiteRecordDeletedAsync(
         HostedSiteDeletionTask task,
         string leaseOwner)
@@ -1788,9 +1829,10 @@ public class HostedSiteService : IHostedSiteService
         var current = await _db.HostedSites
             .Find(x => x.Id == task.SiteId && x.OwnerUserId == task.SiteOwnerUserId)
             .FirstOrDefaultAsync(CancellationToken.None);
+        var fenceNow = DateTime.UtcNow;
         if (current != null)
         {
-            if (current.AssetPublishLeaseExpiresAt > DateTime.UtcNow
+            if (current.AssetPublishLeaseExpiresAt > fenceNow
                 && current.AssetPublishInProgressKeys.Count > 0)
                 throw new InvalidOperationException("站点仍有内容操作进行中，将在租约结束后重试删除");
 
@@ -1814,10 +1856,12 @@ public class HostedSiteService : IHostedSiteService
             task.ObjectKeys = mergedKeys;
 
             var deleted = await _db.HostedSites.DeleteOneAsync(
-                x => x.Id == task.SiteId
-                     && x.OwnerUserId == task.SiteOwnerUserId
-                     && x.ContentVersion == current.ContentVersion
-                     && x.UpdatedAt == current.UpdatedAt,
+                BuildHostedSiteDeletionFence(
+                    task.SiteId,
+                    task.SiteOwnerUserId,
+                    current.ContentVersion,
+                    current.UpdatedAt,
+                    fenceNow),
                 CancellationToken.None);
             if (deleted.DeletedCount != 1)
             {

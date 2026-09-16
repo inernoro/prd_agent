@@ -511,10 +511,19 @@ export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinat
     // 整体回滚（形状 3：同一件事两处判，规则不一样）。CDS 服务的是任意项目，
     // 名字不该是判据。认不得的形态退到我们真正有契约的那一层：声明的探针返回 200。
     const knownShape = isServing || isConsole || isApi;
-    if (knownShape) {
-      const expectedPath = isServing ? '/gw/v1/readyz' : isConsole ? '/gw/readyz' : '/health/ready';
-      if (readinessPath !== expectedPath) throw new Error('rotation.consumer_readiness_contract_mismatch');
-    }
+    // 就绪声明（cds.readiness-path）服务的是**容器就绪门控**，而那条探针是匿名 GET
+    //（container.ts 的 probeHttp），所以 serving 声明的必须是脱敏的 /gw/v1/healthz/ready。
+    // 轮换要的是另一件事：带密钥读逐组件明细，判 gateway-mongo 到底连上没有。
+    // 两个消费者对同一个字段的要求正好相反，谁也不该迁就谁——认得的形态按形态取自己
+    // 那条深检路径，不再要求声明与它相等（要求相等正是上一版把两件事焊死的地方）。
+    // 认不得的形态没有深检契约，仍然只能打它声明的那条，到 200 为止。
+    const probePath = isServing
+      ? '/gw/v1/readyz'
+      : isConsole
+        ? '/gw/readyz'
+        : isApi
+          ? '/health/ready'
+          : readinessPath;
     const headers: Record<string, string> = {};
     if (isServing) {
       const gatewayKey = env.LlmGwServe__ApiKey || env.LLMGW_SERVE_API_KEY || '';
@@ -524,7 +533,7 @@ export class CdsRotationConsumerCoordinator implements RotationConsumerCoordinat
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const response = await this.probeDeps.fetch(`http://127.0.0.1:${hostPort}${readinessPath}`, { headers, signal: controller.signal });
+      const response = await this.probeDeps.fetch(`http://127.0.0.1:${hostPort}${probePath}`, { headers, signal: controller.signal });
       if (response.status === 401) throw new Error('rotation.business_readiness_auth_failed');
       if (response.status !== 200) throw new Error('rotation.consumer_readiness_failed');
       // 认不得的形态：我们对它的响应体没有契约，就到 200 为止，不编一套校验去假装验过。

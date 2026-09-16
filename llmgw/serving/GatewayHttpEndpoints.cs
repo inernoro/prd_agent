@@ -64,7 +64,15 @@ public static class GatewayHttpEndpoints
                                        // （探测令牌绝不发给外部地址，见 uptime-custom-monitor 的 httpProbe），
                                        // 要鉴权它就永远打不进来。代价是可控的——这个端点只回计数与窗口，
                                        // 不含任何异常文本、路径或堆栈，泄漏面就是「这个网关最近崩没崩过」。
-                                       && !path.Equals("/gw/v1/healthz/deep", StringComparison.OrdinalIgnoreCase);
+                                       && !path.Equals("/gw/v1/healthz/deep", StringComparison.OrdinalIgnoreCase)
+                                       // 脱敏就绪（CDS 容器就绪门控打的就是这条）：同样匿名，同样只因为
+                                       // 带密钥就永远打不进来——CDS 的 HTTP 就绪探针是匿名 GET 且把一切
+                                       // < 500 当就绪，所以把带密钥门的 readyz 声明成就绪路径，等于让 401
+                                       // 冒充「就绪」，依赖状态一次都不会被评估。
+                                       // 代价与 healthz/deep 同一口径：这条只用状态码表态（200 / 503），
+                                       // 正文只有 status / commit / time，**不含组件名、耗时与摘要**，
+                                       // 泄漏面就是「这个网关此刻能不能干活」。要明细仍然只能走 readyz。
+                                       && !path.Equals("/gw/v1/healthz/ready", StringComparison.OrdinalIgnoreCase);
             var protectedCompatPath =
                 IsOpenAiCompatibleProtectedPath(path)
                 || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
@@ -221,6 +229,27 @@ public static class GatewayHttpEndpoints
             commit = gitCommit,
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
+
+        // 脱敏就绪：与 readyz 判据完全同源（同一个 IGatewayServingReadinessProbe），
+        // 区别只在**端出多少**——这里只有一个状态码加三个字段，readyz 才给逐组件明细。
+        // 探针自带缓存（LlmGateway:Readiness:CacheSeconds，默认 10 秒）与单飞锁，
+        // 所以匿名可达不构成打穿依赖的放大面：一个缓存窗口内最多真探一次。
+        app.MapGet("/gw/v1/healthz/ready", async (
+            HttpContext http,
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
+        {
+            var probe = services.GetService<IGatewayServingReadinessProbe>();
+            var ready = probe != null && (await probe.CheckAsync(http.RequestAborted)).Ready;
+            return Results.Content(
+                JsonSerializer.Serialize(new
+                {
+                    status = ready ? "ready" : "not-ready",
+                    commit = gitCommit,
+                    time = DateTime.UtcNow.ToString("o"),
+                }, jsonOpts),
+                "application/json",
+                statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+        });
 
         // 深度自检：把「最近有没有崩过」端出成 IETF draft-inadarei-api-health-check
         // 的 application/health+json，供 CDS 的 health-json 探针按结构化判据判定

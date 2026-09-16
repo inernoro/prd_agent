@@ -499,12 +499,13 @@ services:
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
       #
-      # 已知边界（不要以为这条声明真的在按依赖门控就绪）：readyz 带密钥门，而 CDS 的探针
-      # 是匿名 GET 且把一切 < 500 当就绪——401 也算。所以这条声明实际等价于「HTTP 起来了」，
-      # 依赖状态一次都没被评估过。两条既有契约（必须声明 readyz、readyz 不许脱离密钥门）
-      # 各自都是刻意的，合起来才造出这个状态，改哪一条都要作者拍板。
-      # 三个候选方案与取舍见 doc/debt.platform.open-design.md。
-      cds.readiness-path: "/gw/v1/readyz"
+      # 这条声明必须指向**匿名且脱敏**的那条就绪路由，不能指向 readyz：
+      # CDS 的 HTTP 就绪探针是匿名 GET 且把一切 < 500 当就绪（container.ts 的 probeHttp），
+      # 而 readyz 带密钥门 —— 声明成 readyz 的话 401 会被当成「就绪」，依赖状态一次都不会
+      # 被评估，等价于只探了「HTTP 端口起来了」。
+      # healthz/ready 与 readyz 判据同源（同一个就绪探针），区别只在端出多少：
+      # 它只用状态码表态（200 / 503），正文没有组件名、耗时与摘要；要明细仍然走带密钥的 readyz。
+      cds.readiness-path: "/gw/v1/healthz/ready"
 
   # 独立 LLM 网关前端控制台 llmgw-web。默认 CDS 源码模式由 Vite 承载当前分支，
   # /gw 与四协议入口分别反代到 console API 和 serving；express 模式仍使用 CI 的不可变 nginx 镜像。

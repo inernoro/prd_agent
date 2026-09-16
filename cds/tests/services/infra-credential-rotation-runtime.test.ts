@@ -232,6 +232,43 @@ describe('共享凭据轮换真实消费者适配', () => {
     }
   });
 
+  it('serving 声明脱敏就绪路径时，轮换深检仍必须打带密钥的 readyz', async () => {
+    // cds.readiness-path 声明的是**容器就绪门控**那条（匿名、脱敏、只有状态码），
+    // 因为 CDS 的就绪探针不带密钥。轮换要的是逐组件明细，两者不是同一条路径。
+    // 这条守卫钉住：轮换不跟着声明走，按形态打自己那条深检路径。
+    const branch = {
+      id: 'branch1', projectId: 'project-a', status: 'running', services: {
+        'llmgw-serve': { profileId: 'llmgw-serve', containerName: 'llmgw-serve-1', hostPort: 18091, status: 'running' },
+      },
+    } as unknown as BranchEntry;
+    const calls: Array<{ url: string; init?: RequestInit }> = [];
+    const probeDeps = {
+      inspectContainerEnv: vi.fn(async () => ({
+        MongoDB__ConnectionString: 'mongodb://next-secret@mongodb',
+        LlmGwServe__ApiKey: 'gateway-internal-key',
+      })),
+      fetch: vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({ url, init });
+        return new Response(JSON.stringify({
+          status: 'ready',
+          components: [{ name: 'gateway-mongo', ready: true }],
+        }), { status: 200 });
+      }),
+    };
+    const coordinator = new CdsRotationConsumerCoordinator({
+      getBranch: () => branch,
+      // 这里给的就是 compose 里真实声明的那条脱敏路径
+      getEffectiveProfilesForBranch: () => [{ id: 'llmgw-serve', readinessProbe: { path: '/gw/v1/healthz/ready' } }],
+    } as never, { masterPort: 9900 } as never, probeDeps);
+    await coordinator.verify(infra(), ['branch1/llmgw-serve'], {
+      runtime: 'mongodb', previousUser: 'old', previousSecret: 'old-secret', nextUser: 'next', nextSecret: 'next-secret',
+      originalServiceEnv: {}, originalProjectEnv: {}, resolvedServiceEnv: {},
+    } as never);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe('http://127.0.0.1:18091/gw/v1/readyz');
+    expect(calls[0].init?.headers).toMatchObject({ 'X-Gateway-Key': 'gateway-internal-key' });
+  });
+
   it.each([
     {
       label: 'serving 401', profileId: 'llmgw-serve', path: '/gw/v1/readyz', httpStatus: 401,

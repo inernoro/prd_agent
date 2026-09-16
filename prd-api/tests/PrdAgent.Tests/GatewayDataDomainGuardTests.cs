@@ -3112,10 +3112,21 @@ public class GatewayDataDomainGuardTests
             "正式 compose 的控制台与两份 serving 必须使用同一 GW Mongo 配置入口");
         Assert.Contains("config[\"LlmGateway:MongoConnectionString\"]", consoleProgram);
         Assert.Contains("gatewayMongoClient.GetDatabase(gatewayDbName)", consoleProgram);
-        Assert.Contains("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
+        // CDS 的就绪探针是匿名 GET 且把一切 < 500 当就绪，所以就绪声明必须指向匿名那条；
+        // 指回带密钥门的 readyz 会让 401 冒充「就绪」，依赖状态一次都不会被评估。
+        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz/ready\"", cdsServing);
+        Assert.DoesNotContain("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
+        // 脱敏就绪：必须存在、必须按状态码表态、且**不得**端出组件明细（它是匿名的）。
+        Assert.Contains("MapGet(\"/gw/v1/healthz/ready\"", endpoint);
+        var sanitizedReady = endpoint[endpoint.IndexOf("MapGet(\"/gw/v1/healthz/ready\"", StringComparison.Ordinal)..];
+        sanitizedReady = sanitizedReady[..sanitizedReady.IndexOf("MapGet(\"/gw/v1/healthz/deep\"", StringComparison.Ordinal)];
+        Assert.Contains("StatusCodes.Status503ServiceUnavailable", sanitizedReady);
+        Assert.DoesNotContain("snapshot.Components", sanitizedReady);
+        Assert.DoesNotContain("x.Summary", sanitizedReady);
+        Assert.DoesNotContain("durationMs", sanitizedReady);
         Assert.DoesNotContain("map-mongo", readiness);
         Assert.Contains("gateway-mongo", readiness);
         Assert.Contains("asset-storage", readiness);
@@ -5108,6 +5119,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("CleanupMultipartRefsAsync", endpoints);
         Assert.Contains("protectedGatewayPath", endpoints);
         Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);
+        // 脱敏就绪必须真的在免鉴权白名单里（精确匹配，不许退化成前缀放行），
+        // 否则 CDS 匿名探针拿到 401，而 401 < 500 会被当成「就绪」——依赖门控又变回摆设。
+        Assert.Contains("!path.Equals(\"/gw/v1/healthz/ready\", StringComparison.OrdinalIgnoreCase)", endpoints);
+        Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/healthz\"", endpoints);
         Assert.Contains("llmgw_multipart_objects", httpClient);
         Assert.Contains("X-Gateway-App-Caller", httpClient);
         Assert.Contains("TryDeserializeRawResponse", httpClient);
