@@ -107,7 +107,14 @@ export function MobileBook({
         } else if (evt.type === 'text') {
           setText((prev) => prev + evt.content);
         } else if (evt.type === 'done') {
-          setCitedRules(evt.citedRules ?? []);
+          /*
+           * 只在 done 真的带了规则时才覆盖。复用路径上顺序是
+           * `cached`（带 citedRules）→ `done`（只有 reused: true），
+           * 无条件 `?? []` 会把 cached 刚装好的那份清空——而复用是除第一个人之外
+           * 所有人走的路径，等于「这一篇对上的是我们自己的」那一整段对绝大多数读者
+           * 从来没出现过。
+           */
+          if (evt.citedRules && evt.citedRules.length > 0) setCitedRules(evt.citedRules);
           setPhase('ready');
         } else if (evt.type === 'error') {
           setError(evt.message);

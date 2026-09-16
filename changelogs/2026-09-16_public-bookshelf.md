@@ -97,3 +97,5 @@
 | fix | prd-api | book_digests 复合索引沿用原名并声明旧定义，迁移掉只按 BookId 的那条 |
 | fix | prd-api | 撞唯一索引后回头确认本作用域真有稿子，不再把永久失败当成「别人写好了」 |
 | fix | prd-admin | 联网恢复的补推判据改看 dirty，断网重载后的改动不再永远推不上去 |
+| fix | prd-admin | 桌面档笔记框也跟随 hydration，修复登录后立刻写一句会删掉已有笔记 |
+| fix | prd-admin | 复用已有稿子时不再清空引用规则，「这一篇对上的是我们自己的」不再消失 |

@@ -195,6 +195,25 @@ function BookshelfDesktop() {
   // 正在编辑哪本书的心得（同时只开一个，避免一屏十个输入框）
   const [notingBookId, setNotingBookId] = useState<string | null>(null);
   const [noteDraft, setNoteDraft] = useState('');
+  /*
+   * 用户有没有真的动过这个编辑框。手机档修过同一个 bug，桌面这一半当时没修：
+   *
+   *   刚登录就点「写一句」（此时 loadFromServer 还在路上，bookNotes 里没有这本书，
+   *   所以显示的是「写一句」而不是已有的那条）→ 草稿是空串
+   *   → hydration 落地，服务端那条笔记到了，而编辑框还是空的
+   *   → 点「记下」→ setNote(id, '') → 把那条笔记删了并同步出去
+   *
+   * 用户一个字没打，笔记没了。所以未编辑时跟随服务端；动过之后以他手上那份为准
+   * （「写了又清空」是真实的删除意图，不该被服务端那份盖回去）。
+   */
+  const noteDraftTouchedRef = useRef(false);
+
+  // 编辑框开着、用户还没动过时，跟随服务端那条（见上面的注释）
+  const notingServerNote = notingBookId ? (bookNotes[notingBookId] ?? '') : '';
+  useEffect(() => {
+    if (!notingBookId || noteDraftTouchedRef.current) return;
+    setNoteDraft(notingServerNote);
+  }, [notingBookId, notingServerNote]);
 
   const visibleBooks = useMemo(() => ALL_BOOKS.filter((b) => matchTrack(b, track)), [track]);
   const readCount = visibleBooks.filter((b) => readBookIds.includes(b.id)).length;
@@ -533,7 +552,7 @@ function BookshelfDesktop() {
                         autoFocus
                         value={noteDraft}
                         maxLength={200}
-                        onChange={(e) => setNoteDraft(e.target.value)}
+                        onChange={(e) => { noteDraftTouchedRef.current = true; setNoteDraft(e.target.value); }}
                         placeholder="打算在哪用它？一句话就够。"
                         className="w-full px-3 py-2 text-[12.5px] font-medium leading-[1.6] rounded-[12px] resize-none outline-none"
                         rows={2}
@@ -560,7 +579,7 @@ function BookshelfDesktop() {
                   ) : bookNotes[b.id] ? (
                     <button
                       type="button"
-                      onClick={() => { setNotingBookId(b.id); setNoteDraft(bookNotes[b.id]); }}
+                      onClick={() => { noteDraftTouchedRef.current = false; setNotingBookId(b.id); setNoteDraft(bookNotes[b.id] ?? ''); }}
                       className="mt-2.5 w-full text-left px-3 py-2 rounded-[12px]"
                       style={{ background: 'var(--bg-base)', border: EDGE_THIN }}
                     >
@@ -570,7 +589,7 @@ function BookshelfDesktop() {
                   ) : (
                     <button
                       type="button"
-                      onClick={() => { setNotingBookId(b.id); setNoteDraft(''); }}
+                      onClick={() => { noteDraftTouchedRef.current = false; setNotingBookId(b.id); setNoteDraft(''); }}
                       className="mt-2 text-[11.5px] font-bold underline underline-offset-[3px]"
                       style={{ color: 'var(--text-muted)' }}
                     >写一句：打算在哪用它</button>
