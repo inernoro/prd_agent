@@ -37,8 +37,22 @@ public sealed class DesignRuntimeProxyTimeoutTests
         Assert.True(timeoutBody.Contains("HttpContext.Abort()", StringComparison.Ordinal),
             "超时且已发头时没有中断下游，Kestrel 会把它收成一次干净的 200，超时被抹平");
 
-        var upstreamBody = source[upstream..];
+        var fallback = source.IndexOf("catch (Exception ex)\n        {\n            _logger.LogWarning(ex, \"远程设计模型代理失败",
+            StringComparison.Ordinal);
+        Assert.True(fallback > upstream, "兜底分支不见了，或它排到了前面，下面的截取会取错范围");
+
+        var upstreamBody = source[upstream..fallback];
         Assert.Contains("DESIGN_RUNTIME_MODEL_INTERRUPTED", upstreamBody, StringComparison.Ordinal);
         Assert.Contains("HttpContext.Abort()", upstreamBody, StringComparison.Ordinal);
+
+        // 兜底那一支漏了 Abort 才是最隐蔽的：它接的正是类型没被点名的那一类。
+        // HttpRequestException 不派生自 IOException，读 HTTP/2 响应体时抛出来就落到这里
+        //（Codex P1，2026-09-16）。此前这里只截到文件尾，上一支的 Abort 正好让断言判绿，
+        // 兜底有没有 Abort 根本没被测到——守卫自己漏扫了它要守的那一段（形状 7）。
+        var fallbackBody = source[fallback..];
+        Assert.Contains("DESIGN_RUNTIME_UNAVAILABLE", fallbackBody, StringComparison.Ordinal);
+        Assert.Contains("HttpContext.RequestAborted.IsCancellationRequested", fallbackBody, StringComparison.Ordinal);
+        Assert.True(fallbackBody.Contains("HttpContext.Abort()", StringComparison.Ordinal),
+            "兜底分支已发头时没有中断下游，传输失败会被收成一次干净的 200");
     }
 }

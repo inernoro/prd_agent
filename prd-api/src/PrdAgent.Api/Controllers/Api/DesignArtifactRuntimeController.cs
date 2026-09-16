@@ -279,7 +279,20 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 {
                     error = new { code = "DESIGN_RUNTIME_UNAVAILABLE", message = "设计模型服务暂时不可用，请稍后重试", runId },
                 }, responseDeadline.Token);
+                return;
             }
+            // 兜底这一支同样要中断。上面两支各自写了一遍「已发头就必须 Abort」，
+            // 唯独这里漏了——而漏掉的恰恰是类型没被点名的那一类：HttpRequestException
+            // 不派生自 IOException，读 HTTP/2 响应体时抛出来就落到这里，只记一条日志就返回，
+            // Kestrel 于是把下游收成一次干净的 200 EOF，传输失败被抹平，
+            // OpenDesign 读到的是「完整的成功」（形状 10 静默降级 + 形状 3 判据分裂）。
+            // 调用方自己走了不算失败：连接已经没了，终止权在它那边，照旧只记一条。
+            if (HttpContext.RequestAborted.IsCancellationRequested)
+            {
+                _logger.LogInformation("设计模型调用方已断开连接，本次代理提前结束 runId={RunId}", runId);
+                return;
+            }
+            HttpContext.Abort();
         }
     }
 
