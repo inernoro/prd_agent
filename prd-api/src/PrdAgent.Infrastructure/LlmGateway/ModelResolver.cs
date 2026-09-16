@@ -1306,6 +1306,14 @@ public class ModelResolver : IModelResolver
         item.PriceCurrency = model.PriceCurrency;
         item.PriceSource = model.PriceSource;
         item.PriceObservedAt = model.PriceObservedAt;
+        // 最大输出 token 上限同理：FromPool 只读这个合成条目，**刻意不回落到物理模型**
+        //（那条注释就在它上面：不覆盖池成员的价格与 MaxTokens）。不搬过来的话，
+        // 模型页上填的「最大输出」保存成功、界面回显正常，而走对外模型的流量一个都不受它约束——
+        // 又一个「填了不生效」的开关，比不能填更糟。
+        //
+        // 与价格是同一个形状，也是同一次疏忽：上一轮只搬了价格，没扫这个合成对象的其余字段
+        // （形状 6 的那句「修完要横扫同类」）。
+        item.MaxTokens = model.MaxTokens;
         var endpointPlatform = new LLMPlatform
         {
             Id = platform.Id,

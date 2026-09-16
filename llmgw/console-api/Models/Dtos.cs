@@ -1295,6 +1295,18 @@ public sealed class PoolMigrationEntry
 
     /// <summary>把近期的「不可用」一起搬过来的线路数。陈年旧账重置成健康，不算在内。</summary>
     public int CarriedUnavailableRoutes { get; set; }
+
+    /// <summary>
+    /// 从「调用方反向绑定这个池」转过来的认领。
+    ///
+    /// 池的专属绑定写在调用方那一侧（<c>ModelPoolId</c> / <c>DefaultModelPoolId</c>），
+    /// 而新解析器只看模型这一侧的认领。不转的话，这些调用方不点名的请求在池退场后
+    /// 会落到用途默认上——换了一个模型，而且没有任何提示。
+    /// </summary>
+    public List<string> ClaimedAppCallerCodes { get; set; } = new();
+
+    /// <summary>这个池来自 MAP 域（<c>model_groups</c>）而不是网关自己的池表。</summary>
+    public bool FromMapDomain { get; set; }
 }
 
 public sealed class PoolMigrationSkip

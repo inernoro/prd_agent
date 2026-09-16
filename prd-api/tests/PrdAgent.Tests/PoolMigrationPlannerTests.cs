@@ -246,4 +246,69 @@ public class PoolMigrationPlannerTests
         Assert.Contains("plannedOfferingKeys.Contains(exchangeRouteKey)", handler);
         Assert.Contains("plannedOfferingKeys.Contains(modelRouteKey)", handler);
     }
+
+    /// <summary>
+    /// 调用方对池的专属绑定要转成模型这一侧的认领。
+    ///
+    /// 绑定写在调用方那一侧（`ModelPoolId` / `DefaultModelPoolId`），而新解析器只看
+    /// 模型这一侧的 `DefaultForAppCallerCodes`。不转的话，一个绑了专属池的调用方在池退场后，
+    /// 不点名的请求会落到用途默认上——换了一个模型，而且没有任何提示。
+    /// 这正是这次搬迁要防的那种静默改变。
+    ///
+    /// 同时钉住不许硬抢：同用途下那个调用方已经被别的模型认领时，如实报出来，不覆盖。
+    /// 抢过来的话，别人的流量会被夺走，比不转更糟。
+    /// </summary>
+    [Fact]
+    public void 搬迁把调用方对池的专属绑定转成模型的认领()
+    {
+        var handler = MigrationHandler();
+
+        // 两个绑定字段都要认：专属绑定与「不点名时用它」，对新解析器是同一件事
+        Assert.Contains("\"ModelPoolId\"", handler);
+        Assert.Contains("\"DefaultModelPoolId\"", handler);
+        Assert.Contains("boundCallerCodes", handler);
+
+        // 创建与复用两条路都要写进去；复用用 AddToSetEach，覆盖会把已有认领悄悄摘掉
+        Assert.Contains("{ \"DefaultForAppCallerCodes\", new BsonArray(claimsToTransfer) }", handler);
+        Assert.Contains("AddToSetEach(\"DefaultForAppCallerCodes\", claimsToTransfer)", handler);
+
+        // 被别人认领的不硬抢，如实报出来
+        Assert.Contains("plannedClaims", handler);
+        Assert.Contains("认领没有转过来", handler);
+    }
+
+    /// <summary>
+    /// 搬迁要扫两个数据域的池，MAP 原生的成员要给出可执行的下一步。
+    ///
+    /// 只读的 `GET /gw/pools` 对内部租户把 MAP 的 `model_groups` 与网关自己的池表并起来，
+    /// 因为运行时（池退场之前）两边都认。搬迁只读网关那张表的话，MAP 原生的池一个都不会被搬，
+    /// 而池分支已经从解析路上删掉——那些路由直接消失，搬迁报告却显示「全部搬完」。
+    ///
+    /// 成员那一侧同理：线路只能指向网关自己的模型文档，MAP 域的成员要说清「先认领再重跑」，
+    /// 而不是报一句「模型库里找不到」——那是假话，而且没有下一步。
+    /// </summary>
+    [Fact]
+    public void 搬迁扫两个数据域且MAP原生成员给出下一步()
+    {
+        var handler = MigrationHandler();
+
+        Assert.Contains("mapPools", handler);
+        Assert.Contains("modelGroups.Find", handler);
+        Assert.Contains("gatewayPoolIds.Contains", handler);
+        Assert.Contains("FromMapDomain", handler);
+
+        Assert.Contains("mapNative", handler);
+        Assert.Contains("还在 MAP 域", handler);
+        Assert.Contains("再重跑一次搬迁", handler);
+    }
+
+    private static string MigrationHandler()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var start = console.IndexOf("app.MapPost(\"/gw/pools/migrate-to-models\"", StringComparison.Ordinal);
+        Assert.True(start >= 0, "找不到搬迁端点，判据的取值口径需要更新");
+        var end = console.IndexOf("}).RequireAuthorization", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        return console[start..end];
+    }
 }

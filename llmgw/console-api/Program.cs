@@ -4449,7 +4449,46 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
     var fb = Builders<BsonDocument>.Filter;
     var result = new PoolMigrationResult { DryRun = dryRun };
 
-    var pools = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
+    /*
+      池的来源有两个域，搬迁必须都扫。
+
+      只读的 GET /gw/pools 对内部租户是把 MAP 的 model_groups 与网关自己的 llmgw_model_pools
+      并起来的——因为运行时（池退场之前）两边都认。搬迁只读网关那一张表的话，MAP 原生的池
+      一个都不会被搬；而池分支已经从解析路上删掉，那些池所承载的路由**直接消失**，
+      搬迁报告却显示「全部搬完」（形状 1：判据比它该管的范围窄，这里窄在少看了一个数据域）。
+
+      合并口径与只读端点逐字一致：同 _id 时网关表赢。
+    */
+    var gatewayPools = await gwModelPools.Find(TenantAccess.Filter(http)).ToListAsync();
+    var gatewayPoolIds = gatewayPools
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.Ordinal);
+    var mapPools = tenantId == internalTenantId
+        ? (await modelGroups.Find(Builders<BsonDocument>.Filter.Empty).ToListAsync())
+            .Where(d => !gatewayPoolIds.Contains(d.GetStringOrEmpty("_id")))
+            .ToList()
+        : new List<BsonDocument>();
+    var mapPoolIds = mapPools.Select(d => d.GetStringOrEmpty("_id")).ToHashSet(StringComparer.Ordinal);
+    var pools = gatewayPools.Concat(mapPools).ToList();
+
+    /*
+      调用方对池的专属绑定写在**调用方那一侧**（ModelPoolId / DefaultModelPoolId），
+      而新解析器只看模型这一侧的认领（DefaultForAppCallerCodes）。
+
+      不转的话，一个绑了专属池的调用方在池退场后，不点名的请求会落到用途默认上——
+      换了一个模型、而且没有任何提示。这正是这次搬迁要防的那种静默改变。
+    */
+    var poolBoundCallers = await gwAppCallers
+        .Find(TenantAccess.Filter(http, fb.Empty))
+        .Project(Builders<BsonDocument>.Projection
+            .Include("AppCallerCode")
+            .Include("ModelPoolId")
+            .Include("DefaultModelPoolId"))
+        .ToListAsync();
+    // 本轮已经规划出去的认领：同一个调用方在同一个用途下只能被一个模型认领，
+    // dry-run 要和 apply 说同一件事（与上面标识、默认那两张本轮索引同一个道理）。
+    var plannedClaims = new Dictionary<string, string>(StringComparer.Ordinal);
     // 兑换所成员要照搬成 TargetKind=exchange 的线路，先把启用的兑换所取出来一次，
     // 不在每个成员上重查（一个池几十个成员，逐个打库没必要）。
     var enabledExchangesForMigration = await gwModelExchanges
@@ -4499,7 +4538,19 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             ModelType = modelType,
             RoutingStrategy = PoolMigrationPlanner.ToRoutingStrategy(pool),
             IsDefaultForType = PoolMigrationPlanner.IsDefaultForType(pool),
+            FromMapDomain = mapPoolIds.Contains(poolId),
         };
+
+        // 这个池被哪些调用方绑成了专属/默认。两个字段都要认：
+        // ModelPoolId 是专属绑定，DefaultModelPoolId 是「不点名时用它」，
+        // 对新解析器而言它们是同一件事——不点名的请求该落到这个模型上。
+        var boundCallerCodes = poolBoundCallers
+            .Where(d => string.Equals(d.AsNullableString("ModelPoolId"), poolId, StringComparison.Ordinal)
+                || string.Equals(d.AsNullableString("DefaultModelPoolId"), poolId, StringComparison.Ordinal))
+            .Select(d => d.GetStringOrEmpty("AppCallerCode"))
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
 
         var existing = await gwLogicalModels.Find(fb.And(
             fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized))).FirstOrDefaultAsync();
@@ -4528,6 +4579,51 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
 
         var logicalId = existing?.GetStringOrEmpty("_id") ?? $"gw-logical-{Guid.NewGuid():N}";
         entry.CreatedNewModel = existing is null;
+
+        /*
+          认领唯一性：同一个用途下，一个调用方最多被一个模型认领。
+
+          这条不变量在创建/更新端点有互斥，搬迁是直接写库，所以在这里把同一条规则再走一遍
+          （判据分裂成两份各自漂移，正是这项工程要消灭的形状）。被别人占着的不硬抢，
+          如实报出来——抢了的话，那个调用方的流量会从别人那里被夺过来，比不转更糟。
+        */
+        var claimsToTransfer = new List<string>();
+        foreach (var code in boundCallerCodes)
+        {
+            var plannedKey = $"{modelType}::{code}";
+            string? holder = null;
+            if (plannedClaims.TryGetValue(plannedKey, out var plannedHolderId)
+                && !string.Equals(plannedHolderId, logicalId, StringComparison.Ordinal))
+            {
+                holder = plannedHolderId;
+            }
+            else
+            {
+                var rival = await gwLogicalModels.Find(fb.And(
+                    fb.Eq("TenantId", tenantId),
+                    fb.Eq("ModelType", modelType),
+                    fb.AnyEq("DefaultForAppCallerCodes", code),
+                    fb.Ne("_id", logicalId))).FirstOrDefaultAsync();
+                if (rival is not null) holder = rival.AsNullableString("PublicId") ?? rival.GetStringOrEmpty("_id");
+            }
+
+            if (holder is not null)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"调用方「{code}」绑着这个池，但同用途下它已经被模型「{holder}」认领了，"
+                        + "认领没有转过来。池退场后这个调用方不点名的请求会落到那个模型上——"
+                        + "确认哪一个才是它该用的，然后在模型白名单页手动改认领",
+                });
+                continue;
+            }
+
+            claimsToTransfer.Add(code);
+            plannedClaims[plannedKey] = logicalId;
+        }
+        entry.ClaimedAppCallerCodes = claimsToTransfer;
 
         /*
           同用途最多一个默认——这条不变量在 PUT 端点有互斥，搬迁是直接 Insert，绕过了它。
@@ -4592,6 +4688,11 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     // 留空 = 当前租户全部 appCaller 可用，与池的实际可见范围一致；
                     // 搬迁不替用户收紧授权，收紧是治理动作要有人拍板。
                     { "AllowedAppCallerCodes", new BsonArray() },
+                    // 但「谁不点名时落到这里」必须转过来。那是池的专属绑定
+                    //（调用方那一侧的 ModelPoolId / DefaultModelPoolId），
+                    // 而新解析器只看模型这一侧的认领——不转的话，那些调用方在池退场后
+                    // 会静默改用用途默认，换了一个模型。
+                    { "DefaultForAppCallerCodes", new BsonArray(claimsToTransfer) },
                     { "RoutingStrategy", entry.RoutingStrategy },
                     { "Enabled", true },
                     { "IsDefaultForType", entry.IsDefaultForType },
@@ -4651,6 +4752,10 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                 .Set("UpdatedAt", DateTime.UtcNow);
             if (entry.IsDefaultForType)
                 reuseUpdate = reuseUpdate.Set("IsDefaultForType", true);
+            // 认领同样要搬。AddToSetEach 而不是 Set——这个模型可能已经认领了别的调用方，
+            // 覆盖过去会把它们悄悄摘掉。
+            if (claimsToTransfer.Count > 0)
+                reuseUpdate = reuseUpdate.AddToSetEach("DefaultForAppCallerCodes", claimsToTransfer);
             if (!dryRun)
             {
                 await gwLogicalModels.UpdateOneAsync(
@@ -4755,10 +4860,32 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                 memberPlatformId.Length > 0 ? fb.Eq("PlatformId", memberPlatformId) : fb.Empty)).FirstOrDefaultAsync();
             if (physical is null)
             {
+                /*
+                  查不到不代表这个成员不存在——它可能还在 MAP 域（`models` 集合）里。
+
+                  线路只能指向网关自己的模型文档：解析器查的是 llmgw_models，
+                  拿一个 MAP 文档的 _id 建线路，运行时一条都解析不到（建了等于没建）。
+                  所以这里不自动把它搬进网关——那要连密钥一起复制，是个该由人点头的动作。
+                  能做也必须做的是**说清楚**：这个成员在哪、为什么没搬、下一步点哪儿。
+                  报成「模型库里找不到」是假话，而且那句话没有下一步。
+                */
+                var mapNative = tenantId == internalTenantId
+                    ? await models.Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Or(
+                            Builders<BsonDocument>.Filter.Eq("ModelName", memberModelId),
+                            Builders<BsonDocument>.Filter.Eq("Name", memberModelId),
+                            Builders<BsonDocument>.Filter.Eq("_id", memberModelId)),
+                        memberPlatformId.Length > 0
+                            ? Builders<BsonDocument>.Filter.Eq("PlatformId", memberPlatformId)
+                            : Builders<BsonDocument>.Filter.Empty)).FirstOrDefaultAsync()
+                    : null;
                 result.Skipped.Add(new PoolMigrationSkip
                 {
                     PoolId = poolId, PoolName = poolName,
-                    Reason = $"成员「{memberModelId}」在模型库里找不到对应记录，这条线路没搬",
+                    Reason = mapNative is not null
+                        ? $"成员「{memberModelId}」还在 MAP 域，没有认领进网关——线路只能指向网关自己的模型，"
+                          + "所以这条没搬。先在「模型」页把它认领进网关，再重跑一次搬迁（已搬的不会重复建）"
+                        : $"成员「{memberModelId}」在模型库里找不到对应记录，这条线路没搬",
                 });
                 continue;
             }

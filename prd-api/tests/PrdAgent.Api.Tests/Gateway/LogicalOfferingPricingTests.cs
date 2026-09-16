@@ -80,6 +80,10 @@ public sealed class LogicalOfferingPricingTests
                 "币种丢了比单价丢了更隐蔽：记账侧会判成币种过期，把这笔调用整条排除在美元成本之外");
             result.PriceSource.ShouldBe("admin");
             result.PriceObservedAt.ShouldBe(observedAt);
+            result.MaxTokens.ShouldBe(
+                4096,
+                customMessage: "对外模型解析丢了最大输出上限——模型页上填的那个值保存成功、界面回显正常，"
+                               + "而走对外模型的流量一个都不受它约束");
         }
         finally
         {
@@ -130,6 +134,8 @@ public sealed class LogicalOfferingPricingTests
         modelDocument["PriceCurrency"] = "USD";
         modelDocument["PriceSource"] = "admin";
         modelDocument["PriceObservedAt"] = observedAt;
+        // 最大输出上限与价格走同一条路（都只存在物理模型文档上），所以放同一个用例里断言。
+        modelDocument["MaxTokens"] = 4096;
         await database.GetCollection<BsonDocument>("llmgw_models").InsertOneAsync(modelDocument);
 
         await InsertAsync(database, "llmgw_logical_models", new GatewayLogicalModel
