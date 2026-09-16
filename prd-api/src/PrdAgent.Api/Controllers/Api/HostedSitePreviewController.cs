@@ -165,7 +165,13 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
             // 票据都会附在打到本域名的所有请求上——用户连着翻几十个版本就能把 cookie 与
             // 请求头堆到上限，打坏的是与预览无关的普通接口，而且要等 cookie 过期才恢复
             //（Codex P2，2026-09-16）。accessId 是 32 位十六进制，可直接进路径。
-            Path = $"/{RoutePrefix}/{payload.AccessId}",
+            //
+            // 必须带上 PathBase：cookie 的 Path 是**浏览器看到的那条路径**，而子路径部署
+            // （API 挂在 /platform 之类前缀下）时浏览器打开的是 /platform/api/...。写死
+            // 从根开始就等于签了一张永远不会被带上的票，每个文件 404、预览全白——
+            // 比收窄之前更糟。下面那句 redirect 用的是相对路径，本来就是前缀安全的，
+            // 这里也必须跟它保持同一个口径（Codex P2，2026-09-16 第三十三轮）。
+            Path = $"{Request.PathBase}/{RoutePrefix}/{payload.AccessId}",
         });
         return Redirect($"../{payload.AccessId}/index.html");
     }

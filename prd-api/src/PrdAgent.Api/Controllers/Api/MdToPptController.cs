@@ -1497,29 +1497,23 @@ public class MdToPptController : ControllerBase
     public async Task<IActionResult> CancelPrewarm()
     {
         var userId = this.GetRequiredUserId();
-        var entry = await _db.InfraAgentSessions
-            .Find(item => item.UserId == userId
-                          && item.ClientApp == "md-to-ppt-prewarm"
-                          && item.PrewarmClaimedRunId == null
-                          && item.PrewarmKey != null
-                          && item.Status != InfraAgentSessionStatuses.Stopped)
-            .SortByDescending(item => item.CreatedAt)
-            .FirstOrDefaultAsync(CancellationToken.None);
-        if (entry == null)
-            return Ok(new { stopped = false });
-        try
-        {
-            await _sessions.StopAsync(userId, entry.Id, CancellationToken.None);
-            return Ok(new { stopped = true });
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "[MdToPpt-Prewarm] cancel failed userId={UserId} sessionId={Id}", userId, entry.Id);
-            return Ok(new { stopped = false, reason = "stop_failed" });
-        }
+        // 取消要把这个用户名下**全部**未认领的预热停掉，不是只停最新那一个。
+        // 用户在大纲确认前换几次模型运行配置，就会留下几个各自独立的未认领预热；
+        // 只停最新的，旧容器要占着 CDS 主体名额直到八分钟后自己过期，而默认并发上限
+        // 只有四个——于是界面明明已经「取消预热」，真正要转换时却被自己刚才那几次
+        // 换配置挤到没名额（Codex P2，2026-09-16）。
+        // 判据与 StopUnusedPrewarmAsync 共用一处：同一件事此前有两份实现，
+        // 一份停全部、一份只停最新（形状 3）。
+        var cleanup = await StopUnusedPrewarmAsync(userId);
+        if (cleanup.Failed > 0)
+            return Ok(new { stopped = cleanup.Stopped > 0, reason = "stop_failed" });
+        return Ok(new { stopped = cleanup.Stopped > 0 });
     }
 
-    private async Task StopUnusedPrewarmAsync(string userId)
+    /// <summary>停掉了几个、几个没停掉。取消接口要据此回话，其余调用点可以不看。</summary>
+    internal readonly record struct PrewarmCleanup(int Stopped, int Failed);
+
+    private async Task<PrewarmCleanup> StopUnusedPrewarmAsync(string userId)
     {
         var entries = await _db.InfraAgentSessions
             .Find(item => item.UserId == userId
@@ -1528,20 +1522,25 @@ public class MdToPptController : ControllerBase
                           && item.PrewarmKey != null
                           && item.Status != InfraAgentSessionStatuses.Stopped)
             .ToListAsync(CancellationToken.None);
+        var stopped = 0;
+        var failed = 0;
         foreach (var entry in entries)
         {
             try
             {
                 await _sessions.StopAsync(userId, entry.Id, CancellationToken.None);
+                stopped++;
             }
             catch (Exception ex)
             {
+                failed++;
                 _logger.LogWarning(ex,
                     "[MdToPpt-Prewarm] deterministic cleanup failed userId={UserId} sessionId={Id}",
                     userId,
                     entry.Id);
             }
         }
+        return new PrewarmCleanup(stopped, failed);
     }
 
     /// <summary>原子认领当前用户的预热会话并绑定根 Run；不可用返回 null 走全新创建路径。</summary>

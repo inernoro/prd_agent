@@ -241,6 +241,31 @@ public class MdToPptPrewarmProfileTests
         ContentHash = new string(hashChar, 64),
     };
 
+    [Fact]
+    public void CancelPrewarm_StopsEveryUnclaimedSession_NotJustTheNewest()
+    {
+        // 用户在确认大纲前换几次模型运行配置，就会留下几个各自独立的未认领预热。
+        // 取消只停最新那一个的话，旧容器要占着 CDS 主体名额直到八分钟后自己过期，
+        // 而默认并发上限只有四个——界面明明已经「取消预热」，真正要转换时却被自己
+        // 刚才那几次换配置挤到没名额。
+        var source = File.ReadAllText(ControllerPath());
+        var start = source.IndexOf("public async Task<IActionResult> CancelPrewarm()", StringComparison.Ordinal);
+        start.ShouldBeGreaterThanOrEqualTo(0);
+        var end = source.IndexOf("private async Task<PrewarmCleanup> StopUnusedPrewarmAsync", start, StringComparison.Ordinal);
+        end.ShouldBeGreaterThan(start);
+        var method = source[start..end];
+
+        method.ShouldContain(
+            "await StopUnusedPrewarmAsync(userId)",
+            customMessage: "取消必须走停全部的那条共享判据");
+        method.ShouldNotContain(
+            "SortByDescending",
+            customMessage: "取消不能再自己挑最新的一个停");
+        method.ShouldNotContain(
+            "FirstOrDefaultAsync",
+            customMessage: "取消不能只取一条未认领预热");
+    }
+
     private static string ControllerPath()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

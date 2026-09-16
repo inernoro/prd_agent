@@ -55,6 +55,34 @@ public sealed class HostedSitePreviewAccessTests
     }
 
     [Fact]
+    public async Task SubPathDeployment_ScopesTheTicketToTheExternallyVisiblePath()
+    {
+        // 子路径部署（API 挂在 /platform 之类前缀下）时，浏览器打开的是
+        // /platform/api/hosted-site-preview-files/...。cookie 的 Path 是浏览器那一侧的概念，
+        // 写死从根开始就等于签了一张永远不会被带上的票：每个文件 404、预览全白——
+        // 比不收窄还糟。同方法里的 redirect 用相对路径本来就是前缀安全的，两者必须同口径。
+        var revision = Revision();
+        var revisions = new Mock<IHostedSiteRevisionService>(MockBehavior.Strict);
+        var access = new HostedSitePreviewAccessService(new EphemeralDataProtectionProvider());
+        var issued = access.Issue(revision, "viewer-user");
+        var controller = Controller(
+            new HostedSitePreviewFilesController(revisions.Object, access), pathBase: "/platform");
+
+        var accessId = Bootstrap(controller, issued.Ticket);
+
+        var setCookie = controller.Response.Headers.SetCookie.ToString();
+        Assert.Contains(
+            $"path=/platform/api/hosted-site-preview-files/{accessId}",
+            setCookie,
+            StringComparison.OrdinalIgnoreCase);
+        // 没有前缀的那一档必须原样不变，前缀只是多出来的一段。
+        Assert.DoesNotContain(
+            $"path=/api/hosted-site-preview-files/{accessId}",
+            setCookie,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task HtmlResponseCarriesOpaqueSandboxPolicy()
     {
         var revision = Revision();
@@ -242,10 +270,12 @@ public sealed class HostedSitePreviewAccessTests
         };
     }
 
-    private static T Controller<T>(T controller, string? userId = null) where T : ControllerBase
+    private static T Controller<T>(T controller, string? userId = null, string pathBase = "")
+        where T : ControllerBase
     {
         var context = new DefaultHttpContext();
         context.Response.Body = new MemoryStream();
+        if (pathBase.Length > 0) context.Request.PathBase = pathBase;
         if (userId != null)
             context.User = new ClaimsPrincipal(new ClaimsIdentity(
                 [new Claim("sub", userId)],
@@ -272,8 +302,10 @@ public sealed class HostedSitePreviewAccessTests
         // 票据只跟着自己这条预览的资源请求走。Path=/ 时，15 分钟寿命内签发过的每一张票据都会
         // 附在打到本域名的所有请求上——翻几十个版本就能把 cookie 与请求头堆到上限，打坏的是
         // 与预览无关的普通接口，而且要等 cookie 过期才恢复（Codex P2，2026-09-16）。
+        // cookie 的 Path 是浏览器看到的那条路径：子路径部署时必须带上 PathBase，
+        // 否则签出去的票永远不会被带上，每个文件 404、预览全白。
         Assert.Contains(
-            $"path=/api/hosted-site-preview-files/{accessId}",
+            $"path={controller.Request.PathBase}/api/hosted-site-preview-files/{accessId}",
             setCookie,
             StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("path=/;", setCookie, StringComparison.OrdinalIgnoreCase);
