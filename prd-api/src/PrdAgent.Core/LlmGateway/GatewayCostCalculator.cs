@@ -108,13 +108,24 @@ public static class GatewayCostCalculator
         var cacheReadPrice = cachedInputPricePerMillion ?? inputPricePerMillion;
         var cacheWritePrice = cacheWritePricePerMillion ?? inputPricePerMillion;
 
-        var inputCost = PerMillion(billableInput, inputPricePerMillion);
-        var outputCost = PerMillion(output, outputPricePerMillion);
-        var cacheReadCost = PerMillion(cacheRead, cacheReadPrice);
-        var cacheWriteCost = PerMillion(cacheWrite, cacheWritePrice);
         var callCost = countCall && pricePerCall is decimal fixedFee
             ? Round(Math.Max(0, fixedFee))
             : (decimal?)null;
+
+        // 按次计费就只按次算，token 费用一分都不叠加。
+        //
+        // 两种价都填得进去（价格抽屉没拦），而「都填了」并不意味着「两种都收」——
+        // 它多半是填错了。叠加的后果是每一次成功调用都按两套价重复收费，Total 与 Usd
+        // 一起虚高，用量合计与预算闸跟着一起错，而配置看上去完全正常。
+        //
+        // 真要支持「按次 + 按 token」同时计费，那是一种新的计费模式，得显式存一个
+        // billing mode 让人明确表态，而不是靠「两个字段都非空」去猜
+        // （形状 6：判据读的值不是真正生效的那个——这里是「填了什么」被当成了「怎么收费」）。
+        var billedPerCall = callCost is not null;
+        var inputCost = billedPerCall ? null : PerMillion(billableInput, inputPricePerMillion);
+        var outputCost = billedPerCall ? null : PerMillion(output, outputPricePerMillion);
+        var cacheReadCost = billedPerCall ? null : PerMillion(cacheRead, cacheReadPrice);
+        var cacheWriteCost = billedPerCall ? null : PerMillion(cacheWrite, cacheWritePrice);
 
         var (status, reason) = Classify(
             normalizedCurrency,
@@ -191,8 +202,8 @@ public static class GatewayCostCalculator
         // 用量合计与预算之外——配置完全正确，账却对不上（形状 1：判据比它该管的范围窄，
         // 「按次计费」这种输入让它给出了相反答案）。
         //
-        // 只配了按次价就按按次算；若将来要支持「按次 + 按 token」同时计费，那是新的计费模式，
-        // 得显式存一个 billing mode，而不是靠「两种价都填了」去猜。
+        // 只配了按次价就按按次算。两种价都填了时同样只按次算——合计那一段也是这么做的，
+        // 两处必须同一个口径，否则会出现「判成按次计价、却按两套价收钱」。
         var billedPerCall = callCost is not null;
         var missing = new List<string>();
         if (!billedPerCall)

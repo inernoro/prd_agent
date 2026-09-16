@@ -11706,89 +11706,19 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
 
             foreach (var model in createdDocs)
             {
-                var modelName = model.GetStringOrEmpty("ModelName");
-                if (modelName.Length == 0) continue;
-
-                var publicId = GatewayWhitelistPublishing.ToPublicId(modelName);
-                if (publicId.Length == 0) continue;
-                var normalizedPublicId = publicId.ToLowerInvariant();
-
-                var logical = await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-                    Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalizedPublicId))).FirstOrDefaultAsync();
-
-                var capabilityCodes = (model.TryGetValue("Capabilities", out var capsValue) && capsValue.IsBsonArray
-                        ? capsValue.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument.GetStringOrEmpty("Type"))
-                        : Enumerable.Empty<string>())
-                    .Where(x => x.Length > 0)
-                    .ToList();
-                var modelType = GatewayWhitelistPublishing.ResolveModelType(capabilityCodes);
-
-                string logicalId;
-                if (logical is null)
+                // 发布规则（公开名怎么算、用途怎么判、跨用途怎么拒、线路排在第几）
+                // 全在这一个函数里。单模型新增走的是同一个函数，两个入口不会各自漂移。
+                var published = await PublishGatewayModelToWhitelistAsync(
+                    gwLogicalModels, gwModelOfferings, model, tenantId, now);
+                if (published is not { } outcome) continue;
+                if (outcome.CrossTypeConflict is { Length: > 0 } conflict)
                 {
-                    logicalId = $"gw-logical-{Guid.NewGuid():N}";
-                    await gwLogicalModels.InsertOneAsync(new BsonDocument
-                    {
-                        { "_id", logicalId }, { "TenantId", tenantId },
-                        { "PublicId", publicId }, { "PublicIdNormalized", normalizedPublicId },
-                        { "Name", publicId }, { "ModelType", modelType },
-                        { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, capabilityCodes).Persisted) },
-                        // 能力口径的版本戳。漏了它，capability-audit 会把这条算成「未迁移」——
-                        // 而迁移只在控制台启动时跑一次，于是启动后第一次成功导入就把发布门禁弄红，
-                        // 得重启控制台才恢复。单条创建与更新那两条路径一直在盖，这里跟上。
-                        { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
-                        // 授权范围刻意留空 = 当前租户全部 appCaller 可用。
-                        // 导入这一步不替用户决定「谁能用」：收紧是治理动作，要有人明确拍板。
-                        { "AllowedAppCallerCodes", new BsonArray() },
-                        { "RoutingStrategy", "priority" }, { "Enabled", true }, { "DisplayOrder", 100 },
-                        { "CreatedAt", now }, { "UpdatedAt", now },
-                    });
-                    result.WhitelistedPublicIds.Add(publicId);
+                    // 公开名撞上了，但那条已有模型是**别的用途**——线路没挂上去，要点名说清。
+                    result.CrossTypePublicIdConflicts.Add(conflict);
+                    continue;
                 }
-                else
-                {
-                    // 公开名撞上了，但那条已有模型是**别的用途**——不能把线路挂过去。
-                    // 挂过去的后果是运行时按那条模型的用途走：一条生图线路被当成 chat 发出去，
-                    // 请求契约整个错位，而导入这边还报「已挂到已有模型」。
-                    var existingType = logical.GetStringOrEmpty("ModelType");
-                    if (!string.Equals(existingType, modelType, StringComparison.OrdinalIgnoreCase))
-                    {
-                        result.CrossTypePublicIdConflicts.Add(
-                            $"{publicId}（已存在的是「{existingType}」用途，这次导入的是「{modelType}」）");
-                        continue;
-                    }
-                    logicalId = logical.GetStringOrEmpty("_id");
-                    result.LinkedToExistingCount++;
-                }
-
-                var modelId = model.GetStringOrEmpty("_id");
-                var duplicate = await gwModelOfferings.Find(Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-                    Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId),
-                    Builders<BsonDocument>.Filter.Eq("TargetKind", "model"),
-                    Builders<BsonDocument>.Filter.Eq("TargetId", modelId))).AnyAsync();
-                if (duplicate) continue;
-
-                // 后来的线路排在已有线路之后：先登记的那条继续扛流量，导入不该悄悄改变谁是主路。
-                var existingRoutes = (int)await gwModelOfferings.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-                    Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
-
-                await gwModelOfferings.InsertOneAsync(new BsonDocument
-                {
-                    { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
-                    { "LogicalModelId", logicalId }, { "TargetKind", "model" }, { "TargetId", modelId },
-                    { "UpstreamModelId", modelName },
-                    { "Protocol", model.AsNullableString("Protocol") is { Length: > 0 } p ? p : BsonNull.Value },
-                    { "EndpointPath", BsonNull.Value },
-                    { "Priority", 100 + existingRoutes * 10 }, { "Weight", 100 },
-                    { "Enabled", true }, { "HealthStatus", 0 },
-                    { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
-                    { "MaxConcurrency", BsonNull.Value }, { "RateLimitPerMinute", BsonNull.Value },
-                    { "Notes", BsonNull.Value },
-                    { "CreatedAt", now }, { "UpdatedAt", now },
-                });
+                if (outcome.CreatedLogical) result.WhitelistedPublicIds.Add(outcome.PublicId);
+                else if (outcome.LinkedToExisting) result.LinkedToExistingCount++;
             }
         }
         catch (Exception ex)
@@ -11920,6 +11850,46 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
         return Json(ApiEnvelope<CreateModelResult>.Fail("MODEL_POOL_SYNC_FAILED", "默认模型池同步失败，模型未保存，请稍后重试"), jsonOptions, 500);
     }
 
+    /*
+      登上白名单：建公开模型名 + 挂一条上游线路。批量导入一直这么做，这条手工新增的路
+      此前只同步进托管默认池就收工——而池路由已经删了，调用方按公开模型名请求找的是
+      对外模型 + 线路。结果是「保存成功」之后模型在库里、在池里，就是调不通，
+      要管理员再去白名单页把同一个模型手工建两遍（形状 2：链路只建了一半，而且不会红）。
+
+      失败不回滚已插入的模型：模型本身是有效配置，删掉反而更糟。如实降级——
+      照常返回创建结果，但把「没登上名单、去哪补」写进响应，不谎报全绿。
+    */
+    string? publicId = null;
+    string? whitelistMessage = null;
+    var linkedToExistingLogical = false;
+    try
+    {
+        var published = await PublishGatewayModelToWhitelistAsync(
+            gwLogicalModels, gwModelOfferings, document, tenantId, now);
+        if (published is { } outcome)
+        {
+            publicId = outcome.PublicId;
+            linkedToExistingLogical = outcome.LinkedToExisting;
+            if (outcome.CrossTypeConflict is { Length: > 0 } conflict)
+            {
+                publicId = null;
+                whitelistMessage = $"模型已保存，但没能登上白名单：{conflict}。"
+                    + "把一条别的用途的线路挂到同名对外模型底下，运行时会按那条模型的用途发请求、契约整个错位，"
+                    + "所以这里拒绝挂靠。改个模型名，或去「模型白名单」页手动决定这条线路挂给谁。";
+            }
+        }
+        else
+        {
+            whitelistMessage = "模型已保存，但算不出可用的公开模型名，没能登上白名单；"
+                + "调用方按公开模型名请求会找不到它，可在「模型白名单」页手动添加。";
+        }
+    }
+    catch (Exception ex)
+    {
+        whitelistMessage = $"模型已保存，但登记白名单失败（{ex.GetType().Name}）："
+            + "调用方按公开模型名请求会找不到它，可在「模型白名单」页手动添加。";
+    }
+
     await WriteOperationAuditAsync(
         operationAudits,
         http,
@@ -11940,6 +11910,8 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
             { "priceCurrency", ToBsonAuditValue(draft.PriceCurrency) },
             { "hasDedicatedKey", encryptedApiKey is not null },
             { "modelsAppended", ensured.ModelsAppended },
+            // 登没登上白名单要能查得到：调不通时第一个要排除的就是「它有没有公开名」。
+            { "publicId", publicId is { Length: > 0 } ? publicId : BsonNull.Value },
         });
     return Json(ApiEnvelope<CreateModelResult>.Ok(new CreateModelResult
     {
@@ -11947,6 +11919,9 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
         PoolTypesCreated = ensured.TypesCreated,
         PoolsCreated = ensured.PoolsCreated,
         ModelsAppended = ensured.ModelsAppended,
+        PublicId = publicId,
+        LinkedToExistingPublicId = linkedToExistingLogical,
+        WhitelistMessage = whitelistMessage,
     }), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
@@ -15708,6 +15683,118 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
     return type is null
         ? pool.AsNullableBool("IsDefaultForType") == true
         : string.Equals(type.AsNullableString("DefaultPoolId"), poolId, StringComparison.Ordinal);
+}
+
+/// <summary>
+/// 把一个上游模型登上白名单：没有同名公开模型就建一个，再给它挂一条指向这个上游的线路。
+///
+/// 为什么必须有这一步：池路由已经删了，调用方按**公开模型名**请求，找的是对外模型 + 线路。
+/// 只把模型写进 llmgw_models、再同步进托管默认池，得到的是一个库里看得见、界面报成功、
+/// 却怎么也调不通的模型——链路只建了一半，而且不会有任何东西变红
+/// （predicate-and-wiring-discipline 形状 2）。
+///
+/// 为什么抽成一个函数：批量导入与单模型新增是同一件事的两个入口。各写一份的话，
+/// 下一次改发布规则（用途判定、跨用途冲突、线路优先级）只会改到其中一份，
+/// 而另一份继续按旧规矩发布，谁赢取决于用户从哪个入口进来（形状 3：判据分裂各自漂移）。
+///
+/// 同名已存在时**不新建公开名，只多挂一条线路**：这正是「一个模型允许多个来源」的自然入口。
+/// 同名但用途不同则拒绝挂靠并把冲突交回调用方说明——把一条生图线路挂到 chat 模型底下，
+/// 运行时会按那条模型的用途发请求，请求契约整个错位。
+/// </summary>
+/// <returns>
+/// 模型名或公开名算不出来时回 null（这条跳过）；否则给出公开名、是不是新建的、
+/// 是不是挂到了已有的公开名、以及跨用途冲突的说明（有冲突时线路不会挂上去）。
+/// </returns>
+static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, string? CrossTypeConflict)?>
+    PublishGatewayModelToWhitelistAsync(
+        IMongoCollection<BsonDocument> logicalModels,
+        IMongoCollection<BsonDocument> offerings,
+        BsonDocument model,
+        string tenantId,
+        DateTime now)
+{
+    var modelName = model.GetStringOrEmpty("ModelName");
+    if (modelName.Length == 0) return null;
+
+    var publicId = GatewayWhitelistPublishing.ToPublicId(modelName);
+    if (publicId.Length == 0) return null;
+    var normalizedPublicId = publicId.ToLowerInvariant();
+
+    var logical = await logicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalizedPublicId))).FirstOrDefaultAsync();
+
+    var capabilityCodes = (model.TryGetValue("Capabilities", out var capsValue) && capsValue.IsBsonArray
+            ? capsValue.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument.GetStringOrEmpty("Type"))
+            : Enumerable.Empty<string>())
+        .Where(x => x.Length > 0)
+        .ToList();
+    var modelType = GatewayWhitelistPublishing.ResolveModelType(capabilityCodes);
+
+    string logicalId;
+    var createdLogical = false;
+    var linkedToExisting = false;
+    if (logical is null)
+    {
+        logicalId = $"gw-logical-{Guid.NewGuid():N}";
+        await logicalModels.InsertOneAsync(new BsonDocument
+        {
+            { "_id", logicalId }, { "TenantId", tenantId },
+            { "PublicId", publicId }, { "PublicIdNormalized", normalizedPublicId },
+            { "Name", publicId }, { "ModelType", modelType },
+            { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, capabilityCodes).Persisted) },
+            // 能力口径的版本戳。漏了它，capability-audit 会把这条算成「未迁移」——
+            // 而迁移只在控制台启动时跑一次，于是启动后第一次成功发布就把发布门禁弄红，
+            // 得重启控制台才恢复。
+            { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
+            // 授权范围刻意留空 = 当前租户全部 appCaller 可用。
+            // 这一步不替用户决定「谁能用」：收紧是治理动作，要有人明确拍板。
+            { "AllowedAppCallerCodes", new BsonArray() },
+            { "RoutingStrategy", "priority" }, { "Enabled", true }, { "DisplayOrder", 100 },
+            { "CreatedAt", now }, { "UpdatedAt", now },
+        });
+        createdLogical = true;
+    }
+    else
+    {
+        var existingType = logical.GetStringOrEmpty("ModelType");
+        if (!string.Equals(existingType, modelType, StringComparison.OrdinalIgnoreCase))
+        {
+            return (publicId, false, false, $"{publicId}（已存在的是「{existingType}」用途，这次是「{modelType}」用途）");
+        }
+        logicalId = logical.GetStringOrEmpty("_id");
+        linkedToExisting = true;
+    }
+
+    var modelId = model.GetStringOrEmpty("_id");
+    var duplicate = await offerings.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId),
+        Builders<BsonDocument>.Filter.Eq("TargetKind", "model"),
+        Builders<BsonDocument>.Filter.Eq("TargetId", modelId))).AnyAsync();
+    if (duplicate) return (publicId, createdLogical, linkedToExisting, null);
+
+    // 后来的线路排在已有线路之后：先登记的那条继续扛流量，新增不该悄悄改变谁是主路。
+    var existingRoutes = (int)await offerings.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+
+    await offerings.InsertOneAsync(new BsonDocument
+    {
+        { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
+        { "LogicalModelId", logicalId }, { "TargetKind", "model" }, { "TargetId", modelId },
+        { "UpstreamModelId", modelName },
+        { "Protocol", model.AsNullableString("Protocol") is { Length: > 0 } p ? p : BsonNull.Value },
+        { "EndpointPath", BsonNull.Value },
+        { "Priority", 100 + existingRoutes * 10 }, { "Weight", 100 },
+        { "Enabled", true }, { "HealthStatus", 0 },
+        { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
+        { "MaxConcurrency", BsonNull.Value }, { "RateLimitPerMinute", BsonNull.Value },
+        { "Notes", BsonNull.Value },
+        { "CreatedAt", now }, { "UpdatedAt", now },
+    });
+
+    return (publicId, createdLogical, linkedToExisting, null);
 }
 
 static async Task<(int TypesCreated, int PoolsCreated, int ModelsAppended)> EnsureGatewayModelPoolTypesAsync(

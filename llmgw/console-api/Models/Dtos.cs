@@ -1224,6 +1224,18 @@ public sealed class CreateModelResult
     public int PoolTypesCreated { get; set; }
     public int PoolsCreated { get; set; }
     public int ModelsAppended { get; set; }
+
+    /// <summary>
+    /// 这个模型登上白名单后的公开模型名——调用方就是按它来请求的。
+    /// 为空表示没登上（原因见 <see cref="WhitelistMessage"/>），此时模型在库里但调不通。
+    /// </summary>
+    public string? PublicId { get; set; }
+
+    /// <summary>公开名已存在，这次是给它多挂了一条线路，而不是新建了一个对外模型。</summary>
+    public bool LinkedToExistingPublicId { get; set; }
+
+    /// <summary>没登上白名单时的原因与下一步。为空表示登上了，不要拿它当成功标志的反面来用。</summary>
+    public string? WhitelistMessage { get; set; }
 }
 
 // ── 逻辑模型与上游 Offering ──

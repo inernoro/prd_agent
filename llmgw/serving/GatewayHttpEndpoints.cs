@@ -1976,6 +1976,13 @@ public static class GatewayHttpEndpoints
         // 固定形状匹配，不能让 path 子串把 cancel/status 错分到其它 scope。
         if (IsGatewayRequestControlPath(path, "cancel")) return "request:cancel";
         if (IsGatewayRequestControlPath(path, "status")) return "request:read";
+        // 取一个模型的详情也是**读**，而且它的 id 是用户可控的、允许带斜杠
+        // （名录里确实有 `vendor/model` 这种公开名）。所以必须排在下面那些按子串判的规则**之前**：
+        // 排在后面的话，一个叫 `vendor/raw-model` 或 `vendor/images/foo` 的合法模型，
+        // 取详情时会被子串判成 raw:invoke——一把只有 route:read 的发现型 key 列得出它、
+        // 却取不到它的详情。这与上面 requestId 那条是同一个道理：用户输入不许参与子串匹配。
+        if (path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/v1/models/", StringComparison.OrdinalIgnoreCase)) return "route:read";
         if (path.Contains("/raw", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return "raw:invoke";
         if (path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
@@ -1985,11 +1992,7 @@ public static class GatewayHttpEndpoints
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase)
-            // 列模型是**读**，不是调用。落到默认的 invoke 会把权限判反：一把只读的发现型
-            // key（只有 route:read）列不出可用模型，反而必须给能花钱的 invoke 才行。
-            // 它和 /gw/v1/pools、/gw/v1/image-models 是同一件事——都是「列出有什么」。
-            || path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWith("/v1/models/", StringComparison.OrdinalIgnoreCase)) return "route:read";
+            ) return "route:read";
         return "invoke";
     }
 

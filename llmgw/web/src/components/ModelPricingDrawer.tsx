@@ -152,6 +152,12 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
           <p style={hintStyle}>
             缓存价留空不等于免费，计价时按输入全价算：宁可高估催人来补，也不低估放大真实开销——限额靠的就是这个数。
           </p>
+          {optionalNumber(pricePerCall) !== undefined ? (
+            <p style={hintStyle}>
+              填了「每次调用固定费」就只按次收费，上面那几个 token 单价不参与计价。
+              两种价同时生效是另一种计费模式，这里不靠「两个字段都填了」去猜——真要那样，得先有一个明确的计费模式开关。
+            </p>
+          ) : null}
 
           <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>来源与时效</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap' }}>

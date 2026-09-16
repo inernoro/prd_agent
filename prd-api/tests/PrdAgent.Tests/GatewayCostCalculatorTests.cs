@@ -164,6 +164,31 @@ public sealed class GatewayCostCalculatorTests
         Assert.True(GatewayCostStatus.CountsTowardBudget(cost.Status));
     }
 
+    /// <summary>
+    /// 两种价都填了时只按次收，不叠加 token 费用。
+    ///
+    /// 价格抽屉两种价都填得进去，而「都填了」多半是填错了，不代表「两种都收」。
+    /// 叠加的话每一次成功调用都按两套价重复收费，Total 与 Usd 一起虚高，
+    /// 用量合计与预算闸跟着错，而配置看上去完全正常。
+    /// </summary>
+    [Fact]
+    public void 两种价都配了时只按次收不叠加token费用()
+    {
+        var cost = Calc(
+            inputPrice: 2.50m, outputPrice: 10.00m, cachedInputPrice: 0.625m,
+            pricePerCall: 0.04m,
+            inputTokens: 1_000_000, outputTokens: 1_000_000);
+
+        Assert.Equal(GatewayCostStatus.Priced, cost.Status);
+        Assert.Equal(0.04m, cost.Call);
+        Assert.Equal(0.04m, cost.Total);
+        Assert.Equal(0.04m, cost.Usd);
+        // 没收的那几笔不能报成「收了 0 元」——那是另一种谎。按次计费时它们压根不参与。
+        Assert.Null(cost.Input);
+        Assert.Null(cost.Output);
+        Assert.Null(cost.CacheRead);
+    }
+
     /// <summary>只有 priced 的金额允许进预算闸，其余三种状态一律不计入。</summary>
     [Fact]
     public void 只有已计价状态才计入预算()

@@ -144,7 +144,15 @@ export function ModelsPage() {
     const poolMessage = res.data.modelsAppended > 0
       ? `已加入 ${res.data.modelsAppended} 个匹配的默认池`
       : '没有匹配用途的默认池被改动';
-    setToast(`模型「${res.data.item.name || res.data.item.modelName}」已保存；${poolMessage}`);
+    // 「保存成功」不等于「能调通」：调用方按公开模型名请求，找的是对外模型 + 线路。
+    // 没登上白名单时必须当场说出口，否则用户拿着一个库里看得见、界面报成功、
+    // 实际调不通的模型去排查，而他没做错任何事。
+    const whitelistMessage = res.data.whitelistMessage
+      ? `；${res.data.whitelistMessage}`
+      : res.data.publicId
+        ? `；已登上白名单，公开模型名 ${res.data.publicId}${res.data.linkedToExistingPublicId ? '（挂到了已有的公开名下，多一条线路）' : ''}`
+        : '';
+    setToast(`模型「${res.data.item.name || res.data.item.modelName}」已保存；${poolMessage}${whitelistMessage}`);
   }
 
   function toggleCreateCapability(code: string) {

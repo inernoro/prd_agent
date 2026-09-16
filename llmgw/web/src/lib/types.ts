@@ -980,6 +980,12 @@ export type CreateModelResult = {
   poolTypesCreated: number;
   poolsCreated: number;
   modelsAppended: number;
+  /** 登上白名单后的公开模型名——调用方按它请求。为空表示没登上，模型在库里但调不通 */
+  publicId?: string | null;
+  /** 公开名已存在，这次是给它多挂了一条线路，不是新建了一个对外模型 */
+  linkedToExistingPublicId: boolean;
+  /** 没登上白名单时的原因与下一步；为空表示登上了 */
+  whitelistMessage?: string | null;
 };
 
 export type ModelOfferingItem = {
