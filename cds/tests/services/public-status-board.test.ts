@@ -80,6 +80,23 @@ describe('对外载荷', () => {
     expect(board.items.map((i) => i.name)).toEqual(['A', 'B']);
   });
 
+  it('有未知项（被动零样本 / 读不到样本数 / 暂停）时不许说全部正常（Codex #1543 P1）', () => {
+    const quiet = buildPublicStatusBoard({
+      title: 'MAP', now: T0, refreshHintSeconds: 60,
+      items: [item({ name: 'A' }), item({ name: 'AI 网关', observeMode: 'passive', sampleCount: 0 })],
+    });
+    expect(quiet.status).toBe('unknown');
+    expect(quiet.headline).toBe('1 项服务暂无数据，其余 1 项正常');
+    expect(quiet.headline).not.toContain('全部正常');
+    // 读不到样本数与零样本同档
+    const unreadable = buildPublicStatusBoard({
+      title: 'MAP', now: T0, refreshHintSeconds: 60,
+      items: [item({ name: 'AI 网关', observeMode: 'passive' })],
+    });
+    expect(unreadable.status).toBe('unknown');
+    expect(unreadable.headline).toBe('1 项服务暂无数据');
+  });
+
   it('一项都没公开时照实说，不冒充「全部正常」', () => {
     const board = buildPublicStatusBoard({ title: 'MAP', now: T0, refreshHintSeconds: 60, items: [] });
     expect(board.headline).toContain('还没有公开任何服务');

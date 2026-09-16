@@ -69,8 +69,12 @@ export function judgeAlarm(
   }
 
   const failing = list.filter((c) => c.status === 'failing').length + (legacy?.status === 'failing' ? 1 : 0);
+  const healthyNames = healthyList.map((c) => c.name).concat(legacyHealthy ? [legacy!.channel] : []).slice(0, 3).join('、');
   if (failing > 0) {
-    return { tone: 'bad', live, text: `${failing} 条通道上一次没送出去 —— 现在出问题也可能没人收到` };
+    // 还有通着的：是部分降级，不是全灭。说成「没人会收到」会和旁边「N 条通着」的计数打架（Codex #1543 P2）
+    return live > 0
+      ? { tone: 'warn', live, text: `${failing} 条通道上一次没送出去，仍有 ${live} 条通着（${healthyNames}）—— 出问题还有人会收到，但坏的那条要修` }
+      : { tone: 'bad', live, text: `${failing} 条通道上一次没送出去 —— 现在出问题也可能没人收到` };
   }
 
   const untested = list.filter((c) => c.status === 'untested').length + (legacy?.status === 'untested' ? 1 : 0);
@@ -79,10 +83,9 @@ export function judgeAlarm(
   }
 
   const delivered = healthyList.reduce((n, c) => n + c.delivered, 0) + (legacyHealthy ? (legacy?.delivered ?? 0) : 0);
-  const names = healthyList.map((c) => c.name).concat(legacyHealthy ? [legacy!.channel] : []).slice(0, 3).join('、');
   return {
     tone: untested > 0 ? 'warn' : 'ok',
     live,
-    text: `${live} 条通道通着（${names}）—— 已成功送出 ${delivered} 次${untested > 0 ? `，另有 ${untested} 条还没演练过` : ''}`,
+    text: `${live} 条通道通着（${healthyNames}）—— 已成功送出 ${delivered} 次${untested > 0 ? `，另有 ${untested} 条还没演练过` : ''}`,
   };
 }

@@ -71,7 +71,8 @@ export function publicStatusOf(item: PublicBoardSourceItem): PublicStatus {
   if (item.status === 'down') return 'down';
   if (item.status === 'paused') return 'unknown';
   if (!item.measured) return 'unknown';
-  if (item.observeMode === 'passive' && item.sampleCount === 0) return 'unknown';
+  // 零样本与「读不到样本数」对外都是暂无数据：不知道有没有流量，就不知道「零错误」是真的还是没人用
+  if (item.observeMode === 'passive' && (item.sampleCount === undefined || item.sampleCount === 0)) return 'unknown';
   if (item.status === 'up') return 'ok';
   return 'unknown';
 }
@@ -118,6 +119,13 @@ function headlineOf(items: ReadonlyArray<PublicBoardItem>): { text: string; stat
   }
   if (degraded > 0) {
     return { text: `${degraded} 项服务不稳定，其余 ${rest} 项正常`, status: 'degraded' };
+  }
+  // 未知（暂停 / 未实测 / 被动零样本）不算正常：一条被动 check 窗口里没流量时对外说「全部正常」
+  // 就是一块假绿的公开面板（Codex #1543 P1）。
+  const unknown = items.filter((i) => i.status === 'unknown').length;
+  if (unknown > 0) {
+    const ok = items.length - unknown;
+    return { text: ok > 0 ? `${unknown} 项服务暂无数据，其余 ${ok} 项正常` : `${unknown} 项服务暂无数据`, status: 'unknown' };
   }
   return { text: `${items.length} 项服务全部正常`, status: 'ok' };
 }

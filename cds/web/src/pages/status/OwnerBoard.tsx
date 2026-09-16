@@ -530,7 +530,7 @@ export function OwnerBoard({
     () => (rehearsing ? buildBundle(targets, { now, prober }, scope, registry) : null),
     [rehearsing, targets, now, prober, scope, registry],
   );
-  const { projectTargets, scoped, board, global_, headline } = bundle;
+  const { projectTargets, board, global_, headline } = bundle;
   /**
    * 盲区地图用**未经环境筛选**的那一份。
    *
@@ -592,9 +592,12 @@ export function OwnerBoard({
     }
   }, [scope.projectId, statusPage, statusPageBusy]);
 
+  // 对外页面摆的是整个项目里所有公开的监控，不受这一屏的环境筛选影响：按筛过的那批算会
+  // 把一个明明有服务的对外页面数成「0 条对外」（Codex #1543 P2）。摘要里没有对外名，按监控名并
+  // 同名（对外载荷按对外名并，对外名缺省就是监控名）。
   const publicCount = useMemo(
-    () => new Set(scoped.filter((t) => t.publicVisible).map((t) => t.name)).size,
-    [scoped],
+    () => new Set(projectTargets.filter((t) => t.publicVisible).map((t) => t.name)).size,
+    [projectTargets],
   );
 
   const BannerIcon = BANNER_ICON[global_?.tone ?? board.tone];

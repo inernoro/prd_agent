@@ -51,8 +51,13 @@ describe('通知判定', () => {
     expect(v.text).not.toContain('不会有任何人被通知');
   });
 
-  it('有一条上次没送出去就报红', () => {
-    expect(judgeAlarm(undefined, [ch(), ch({ id: 'c2', status: 'failing' })]).tone).toBe('bad');
+  it('唯一一条通道上次没送出去 → 红；一好一坏 → 黄，并说清仍有几条通着（Codex #1543 P2）', () => {
+    expect(judgeAlarm(undefined, [ch({ status: 'failing' })]).tone).toBe('bad');
+    const partial = judgeAlarm(undefined, [ch(), ch({ id: 'c2', name: '运维群', status: 'failing' })]);
+    expect(partial.tone).toBe('warn');
+    expect(partial.live).toBe(1);
+    expect(partial.text).toContain('仍有 1 条通着');
+    expect(partial.text).not.toContain('没人收到');
   });
 
   it('「通着」只数成功送出过的：唯一一条通道上次失败 → live 是 0，不是 1（Codex #1543 P2）', () => {
@@ -61,7 +66,7 @@ describe('通知判定', () => {
     expect(failed.tone).toBe('bad');
     const untested = judgeAlarm(undefined, [ch({ status: 'untested', delivered: 0 })]);
     expect(untested.live).toBe(0);
-    // 一好一坏：通着的是 1 条，语气仍是红
+    // 一好一坏：通着的是 1 条
     const mixed = judgeAlarm(undefined, [ch(), ch({ id: 'c2', status: 'failing' })]);
     expect(mixed.live).toBe(1);
     // 旧 MAP 通道同一口径
