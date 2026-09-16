@@ -4,9 +4,11 @@
 //   1. 地址、协议、并发是系统本来就知道的值 —— 选平台就带出来，不摆输入框；
 //   2. 模型清单与价格是上游查得到的 —— 系统去拉，用户勾选，不照抄文档；
 //   3. 少填的每一项都欠用户一个交代 —— 所以接完必须能当场测、看得见系统配了什么。
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { PlatformTestResult, ProviderPresetItem, UpstreamModelItem, UpstreamModelsData } from '@/lib/types';
 import { Button, Chip, InlineAlert, Spinner } from '@/components/ui';
+import { CatalogEntryEditor, draftFromEntry, draftToRequest, type CatalogDraft } from '@/components/ModelCatalogSection';
+import { createCatalogEntry, getCatalogEntries } from '@/lib/api';
 import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT } from '@/lib/typography';
 
 /** 预设卡片：搜索命中即可选。命中判据同时看名称、key 与别名（中英文/拼音都能搜到）。 */
@@ -135,11 +137,14 @@ export function UpstreamModelPicker({
   busy,
   onImport,
   onCancel,
+  onRegistered,
 }: {
   data: UpstreamModelsData;
   busy: boolean;
   onImport: (selected: UpstreamModelItem[]) => void;
   onCancel: () => void;
+  /** 就地补登保存成功后重新拉一次清单——那一行会当场从「名录外」翻成「名录内」。 */
+  onRegistered?: () => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => defaultSelection(data.items));
   const [onlyNew, setOnlyNew] = useState(true);
@@ -149,6 +154,54 @@ export function UpstreamModelPicker({
     而不是让系统替他赌一把。
   */
   const [allowOutside, setAllowOutside] = useState(false);
+  /*
+    就地补登：看到一个名录外的模型，当场登记它「是什么」，而不是另开一页、或者等下一次发版。
+    这里只需要一份「运行时认哪几种用途」的词表，所以进面板就拉一次名录。
+  */
+  const [knownCapabilities, setKnownCapabilities] = useState<string[] | null>(null);
+  const [registering, setRegistering] = useState<{ modelId: string; draft: CatalogDraft } | null>(null);
+  const [registerBusy, setRegisterBusy] = useState(false);
+  const [registerError, setRegisterError] = useState<string | null>(null);
+  const [registeredIds, setRegisteredIds] = useState<Set<string>>(() => new Set());
+
+  useEffect(() => {
+    let alive = true;
+    void getCatalogEntries().then((res) => {
+      if (alive && res.success) setKnownCapabilities(res.data.knownCapabilities);
+    });
+    return () => { alive = false; };
+  }, []);
+
+  function openRegister(m: UpstreamModelItem) {
+    setRegisterError(null);
+    setRegistering({
+      modelId: m.modelId,
+      draft: {
+        ...draftFromEntry(null),
+        canonicalId: m.modelId,
+        displayName: m.displayName || m.modelId,
+        // 猜出来的用途预填进去当起点，但界面上写清它是猜的、要核对——
+        // 直接当事实存下来，就是把一次猜测洗成了一条登记。
+        capabilities: [...m.inferredCapabilities],
+        acceptsImageInput: m.acceptsImageInput,
+        requiresImageInput: m.requiresImageInput,
+      },
+    });
+  }
+
+  async function saveRegister() {
+    if (!registering) return;
+    setRegisterBusy(true);
+    const res = await createCatalogEntry(draftToRequest(registering.draft));
+    setRegisterBusy(false);
+    if (!res.success) { setRegisterError(res.error?.message || '补登失败'); return; }
+    setRegisterError(null);
+    // 补完这一行当场就该翻成「名录内」。父层能重拉就重拉（那是真相）；
+    // 拿不到重拉回调时至少本地标记一下，绝不装作什么都没发生。
+    setRegisteredIds((prev) => new Set([...prev, registering.modelId]));
+    setRegistering(null);
+    onRegistered?.();
+  }
 
   const visible = onlyNew ? data.items.filter((m) => !m.alreadyImported) : data.items;
   const isBlocked = (m: UpstreamModelItem) => !m.inCatalog && !allowOutside;
@@ -240,9 +293,28 @@ export function UpstreamModelPicker({
                     bg="rgba(95,208,138,0.14)"
                     title={`内置名录登记：${m.catalogDisplayName || m.modelId}${m.catalogVendor ? ` · ${m.catalogVendor}` : ''}。用途是查出来的事实，不是猜的`}
                   />
+                ) : registeredIds.has(m.modelId) ? (
+                  <Chip
+                    label="已补登"
+                    color="#5fd08a"
+                    bg="rgba(95,208,138,0.14)"
+                    title="这条补登已经存下了。这一行的标记要等清单重新拉一次才会变成「名录内」"
+                  />
                 ) : (
                   <Chip label="名录外" color="#e0b341" bg="rgba(224,179,65,0.14)" title="不在内置名录里，用途只能按模型名猜；要用得显式放行并自行核对" />
                 )}
+                {/* 就地补登：看到它不认识，当场告诉它这是什么。按钮在 label 里，
+                    不拦住默认行为的话点它会顺手把这一行的勾选切掉。 */}
+                {!m.inCatalog && !registeredIds.has(m.modelId) && knownCapabilities ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    style={{ height: 22, padding: '0 8px' }}
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); openRegister(m); }}
+                  >
+                    补登
+                  </Button>
+                ) : null}
                 {m.requiresImageInput ? (
                   <Chip label="必须给图" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title="这个模型没有图片就调不动，界面会要求先给图再放行发送" />
                 ) : null}
@@ -273,6 +345,26 @@ export function UpstreamModelPicker({
         })}
         {visible.length === 0 ? <div style={{ ...HINT_TEXT, padding: 10 }}>没有可显示的模型。</div> : null}
       </div>
+
+      {registerError ? <InlineAlert tone="error">{registerError}</InlineAlert> : null}
+      {registering && knownCapabilities ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <span style={HINT_TEXT}>
+            补登 <code>{registering.modelId}</code>：告诉系统这个模型是什么。用途已按模型名预填，
+            <strong>那是猜的，保存前请核对</strong>。存下之后它就是登记在案的事实，立刻生效，不用发版。
+          </span>
+          <CatalogEntryEditor
+            draft={registering.draft}
+            onChange={(draft) => setRegistering({ ...registering, draft })}
+            knownCapabilities={knownCapabilities}
+            busy={registerBusy}
+            onSave={() => void saveRegister()}
+            onCancel={() => { setRegistering(null); setRegisterError(null); }}
+            idPrefix="upstream-catalog"
+            lockCanonicalId
+          />
+        </div>
+      ) : null}
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <Button

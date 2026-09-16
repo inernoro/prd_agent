@@ -2314,3 +2314,53 @@ public sealed class UpsertImageGenConfigRequest
     public bool? SupportsResponseFormat { get; set; }
     public List<string>? Notes { get; set; }
 }
+
+// ── 模型名录补登（让系统「认识」上游新出的模型，不用改代码）──────────────────────
+//
+// 名录回答「这个模型是什么」：算哪几种用途、能不能吃图、出品方是谁、有哪些等价写法。
+// 内置那张表只有二十来条，而线上两个上游共 573 个模型——其余 95% 走关键词猜测，
+// 一百多个连一条用途都猜不出来，导进来就是「哑」模型，不参与任何用途匹配。
+
+public sealed class CatalogEntriesData
+{
+    public List<CatalogEntryItem> Items { get; set; } = new();
+    public int Total { get; set; }
+
+    /// <summary>代码内置那张表。补登 0 条不等于系统什么都不认识，也给「照这条补一份」当模板。</summary>
+    public int BuiltinCount { get; set; }
+    public List<CatalogEntryItem> Builtin { get; set; } = new();
+
+    /// <summary>
+    /// 运行时真正认的那几种用途。界面只让从这里挑——填一个运行时不认的词，
+    /// 这条补登看着生效了、模型照样选不中，而且不会有任何东西报错。
+    /// </summary>
+    public List<string> KnownCapabilities { get; set; } = new();
+}
+
+public sealed class CatalogEntryItem
+{
+    public string Id { get; set; } = "";
+    public string CanonicalId { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Vendor { get; set; } = "";
+    public List<string> Capabilities { get; set; } = new();
+    public bool AcceptsImageInput { get; set; }
+    public bool RequiresImageInput { get; set; }
+    public List<string> Aliases { get; set; } = new();
+    public string? Notes { get; set; }
+    public bool Enabled { get; set; } = true;
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class UpsertCatalogEntryRequest
+{
+    public string? CanonicalId { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Vendor { get; set; }
+    public List<string>? Capabilities { get; set; }
+    public bool? AcceptsImageInput { get; set; }
+    public bool? RequiresImageInput { get; set; }
+    public List<string>? Aliases { get; set; }
+    public string? Notes { get; set; }
+    public bool? Enabled { get; set; }
+}

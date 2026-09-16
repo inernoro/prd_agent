@@ -773,6 +773,50 @@ export type UpstreamModelItem = {
   acceptsImageInput: boolean;
   requiresImageInput: boolean;
 };
+/**
+ * 模型名录里的一条登记：这个模型「是什么」（算哪几种用途、能不能吃图）。
+ *
+ * 代码内置那张表只有二十来条，上游一出新模型就得改代码发版。补登让同一件事
+ * 变成在控制台填一次——同一个标识补登的赢，补登里没有的回落到内置那张表。
+ */
+export type CatalogEntryItem = {
+  /** 内置那份没有 id（它不可编辑，只能「照这条建一份」）。 */
+  id?: string;
+  canonicalId: string;
+  displayName: string;
+  vendor: string;
+  capabilities: string[];
+  acceptsImageInput: boolean;
+  requiresImageInput: boolean;
+  /** 等价写法：厂商前缀、日期快照、各网关的改名。命中任一即认作同一个模型。 */
+  aliases: string[];
+  notes?: string | null;
+  enabled?: boolean;
+  updatedAt?: string | null;
+};
+
+export type CatalogEntriesData = {
+  items: CatalogEntryItem[];
+  total: number;
+  /** 代码内置那张表。补登 0 条不等于系统什么都不认识。 */
+  builtinCount: number;
+  builtin: CatalogEntryItem[];
+  /** 运行时真正认的那几种用途。界面只让从这里挑，填别的当场拒。 */
+  knownCapabilities: string[];
+};
+
+export type UpsertCatalogEntryRequest = {
+  canonicalId?: string;
+  displayName?: string;
+  vendor?: string;
+  capabilities?: string[];
+  acceptsImageInput?: boolean;
+  requiresImageInput?: boolean;
+  aliases?: string[];
+  notes?: string | null;
+  enabled?: boolean;
+};
+
 export type UpstreamModelsData = {
   probedUrl: string;
   total: number;

@@ -9,6 +9,7 @@ import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/comp
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
+import { ModelCatalogSection } from '@/components/ModelCatalogSection';
 import { RowActions } from '@/components/RowActions';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
@@ -491,6 +492,9 @@ export function PlatformsPage() {
             busy={busyId === discovery.platformId}
             onImport={(selected) => void runImport(discovery.platformId, selected)}
             onCancel={() => setDiscovery(null)}
+            /* 补登完重新拉一次：那一行当场从「名录外」翻成「名录内」，
+               证明补登真的生效了，而不是让人自己去别处确认。 */
+            onRegistered={() => void openDiscovery(items.find((x) => x.id === discovery.platformId)!)}
           />
         </section>
       ) : null}
@@ -761,7 +765,11 @@ export function PlatformsPage() {
       </div>
       )}
 
-      {/* 第三段：生图契约。放这一页是因为配它的时机就是「刚接了个上游、里面有新生图模型」；
+      {/* 第三段：模型名录。放这一页是因为发现「系统不认识这个模型」的时机就是在上游清单里；
+          名录的键是模型标识而不是上游（同一个模型在哪个平台上都是同一个模型）。 */}
+      <ModelCatalogSection canWrite={canWrite} />
+
+      {/* 第四段：生图契约。放这一页是因为配它的时机就是「刚接了个上游、里面有新生图模型」；
           匹配键是模型名而不是上游，所以它不挂在某个 Provider 下面。 */}
       <ImageGenContractsSection canWrite={canWrite} />
     </div>

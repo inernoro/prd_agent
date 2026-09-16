@@ -111,6 +111,9 @@ import type {
   ProviderPresetsData,
   PlatformTestResult,
   UpstreamModelsData,
+  CatalogEntriesData,
+  CatalogEntryItem,
+  UpsertCatalogEntryRequest,
   ImportUpstreamModelEntry,
   ImportUpstreamModelsResult,
   ImageGenConfigsData,
@@ -1002,6 +1005,22 @@ export function saveSystemSettings(req: UpdateSystemSettingsRequest): Promise<Ap
 }
 export function testSystemSettings(): Promise<ApiResponse<SystemGatewayTestResult>> {
   return apiRequest<SystemGatewayTestResult>('/system-settings/test', { method: 'POST' });
+}
+
+// ── 模型名录补登 ──────────────────────────────────────────────────────────────
+// 「这个模型是什么」（算哪几种用途、能不能吃图）。补完立刻生效：上游清单那一屏
+// 每次请求都现查这张表，不经过任何缓存，所以刷新一下就能看见那一行从「名录外」翻成「名录内」。
+export function getCatalogEntries(): Promise<ApiResponse<CatalogEntriesData>> {
+  return apiRequest<CatalogEntriesData>('/catalog-entries');
+}
+export function createCatalogEntry(req: UpsertCatalogEntryRequest): Promise<ApiResponse<CatalogEntryItem>> {
+  return apiRequest<CatalogEntryItem>('/catalog-entries', { method: 'POST', body: req });
+}
+export function updateCatalogEntry(id: string, req: UpsertCatalogEntryRequest): Promise<ApiResponse<CatalogEntryItem>> {
+  return apiRequest<CatalogEntryItem>(`/catalog-entries/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function deleteCatalogEntry(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest<{ deleted: boolean }>(`/catalog-entries/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
 // ── 生图模型契约 ──────────────────────────────────────────────────────────────

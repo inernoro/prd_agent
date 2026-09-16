@@ -3631,6 +3631,199 @@ app.MapGet("/gw/logical-models/capability-audit", async (HttpContext http) =>
 }).RequireAuthorization("LogsRead");
 
 // 逻辑模型目录：调用方只看到 PublicId；Offerings 展示实际 Provider/Endpoint 供运维维护。
+// ───────────────── 模型名录补登：让系统「认识」上游新出的模型，不用改代码 ─────────────────
+//
+// 名录回答的是「这个模型是什么」：算哪几种用途、能不能吃图、出品方是谁、有哪些等价写法。
+// 它此前只有写死在 ModelCatalog.cs 里的二十来条。实测线上两个上游共 573 个模型，
+// 落在名录里的只有 27 个——其余 95% 走关键词猜测，其中一百多个连一条用途都猜不出来，
+// 导进来就是「哑」模型：模型池选型时不参与任何用途匹配。
+//
+// 于是「上游出了个新模型」在此之前等于「改那个文件、重编、发一次版」。补登让它变成
+// 在导入那一屏填一次。合并规则只有一条，且只在 ModelCatalog.Find 里实现：
+// **同一个标识，补登的赢；补登里没有的，回落到代码内置那张表。**
+//
+// 与生图契约那份的区别：那份跨进程（console-api 写、prd-api 读）只能轮询、最长 60 秒生效；
+// 这份只有 console-api 自己读，所以端点每次现查现传，**改完立刻生效**。
+var gwCatalogEntries = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_catalog_entries");
+
+// 读补登表并建成索引。上游清单那一屏每次都现查，所以补完刷新页面就能看见。
+async Task<ModelCatalog.CatalogOverrides> LoadCatalogOverridesAsync(HttpContext http)
+{
+    var docs = await gwCatalogEntries
+        .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("Enabled", true)))
+        .ToListAsync();
+    return ModelCatalog.CatalogOverrides.From(docs.Select(ToCatalogModel).Where(x => x is not null)!);
+}
+
+static CatalogModel? ToCatalogModel(BsonDocument d)
+{
+    var canonical = d.GetStringOrEmpty("CanonicalId");
+    if (canonical.Length == 0) return null;
+    return new CatalogModel(
+        canonical,
+        d.GetStringOrEmpty("DisplayName"),
+        d.GetStringOrEmpty("Vendor"),
+        GetStringArray(d, "Capabilities"),
+        d.AsNullableBool("AcceptsImageInput") ?? false,
+        d.AsNullableBool("RequiresImageInput") ?? false,
+        GetStringArray(d, "Aliases"));
+}
+
+app.MapGet("/gw/catalog-entries", async (HttpContext http) =>
+{
+    var docs = await gwCatalogEntries.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty))
+        .ToListAsync();
+    var items = docs
+        .OrderBy(d => d.GetStringOrEmpty("CanonicalId"), StringComparer.Ordinal)
+        .Select(MapCatalogEntry)
+        .ToList();
+    return Json(ApiEnvelope<CatalogEntriesData>.Ok(new CatalogEntriesData
+    {
+        Items = items,
+        Total = items.Count,
+        // 内置那张表的条数与内容：让人知道「补登 0 条不等于系统什么都不认识」，
+        // 也让「照这条补一份」有个模板可抄。它直接来自代码，不是另抄的一份。
+        BuiltinCount = ModelCatalog.All.Count,
+        Builtin = ModelCatalog.All.Select(x => new CatalogEntryItem
+        {
+            CanonicalId = x.CanonicalId,
+            DisplayName = x.DisplayName,
+            Vendor = x.Vendor,
+            Capabilities = [.. x.Capabilities],
+            AcceptsImageInput = x.AcceptsImageInput,
+            RequiresImageInput = x.RequiresImageInput,
+            Aliases = [.. x.Aliases ?? []],
+        }).ToList(),
+        // 控制台只让填这些用途名；与运行时的能力词表同源（守卫钉住）。
+        KnownCapabilities = [.. LogicalModelCapabilityPolicy.CanonicalCapabilities.OrderBy(x => x, StringComparer.Ordinal)],
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/catalog-entries", async (HttpContext http, [FromBody] UpsertCatalogEntryRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateCatalogEntry(body);
+    if (error is not null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var canonical = body.CanonicalId!.Trim().ToLowerInvariant();
+    var dup = await gwCatalogEntries
+        .Find(Builders<BsonDocument>.Filter.And(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+            Builders<BsonDocument>.Filter.Eq("CanonicalId", canonical)))
+        .FirstOrDefaultAsync();
+    if (dup is not null)
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail("ENTRY_EXISTS", $"已经补登过 {canonical}，去改它而不是再加一条"), jsonOptions, 409);
+
+    var doc = BuildCatalogEntryDocument(body, tenantId, existing: null);
+    await gwCatalogEntries.InsertOneAsync(doc);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "catalog_entry.create", targetType: "llmgw_model_catalog_entry",
+        targetId: doc.GetStringOrEmpty("_id"), targetName: canonical, success: true, reason: null,
+        changes: new BsonDocument { { "canonicalId", canonical }, { "capabilities", new BsonArray(body.Capabilities ?? []) } });
+    return Json(ApiEnvelope<CatalogEntryItem>.Ok(MapCatalogEntry(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/catalog-entries/{id}", async (HttpContext http, string id, [FromBody] UpsertCatalogEntryRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateCatalogEntry(body);
+    if (error is not null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwCatalogEntries.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("NOT_FOUND", "这条补登不存在"), jsonOptions, 404);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var doc = BuildCatalogEntryDocument(body, tenantId, existing);
+    await gwCatalogEntries.ReplaceOneAsync(filter, doc);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "catalog_entry.update", targetType: "llmgw_model_catalog_entry",
+        targetId: id, targetName: doc.GetStringOrEmpty("CanonicalId"), success: true, reason: null,
+        changes: new BsonDocument { { "canonicalId", doc.GetStringOrEmpty("CanonicalId") } });
+    return Json(ApiEnvelope<CatalogEntryItem>.Ok(MapCatalogEntry(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapDelete("/gw/catalog-entries/{id}", async (HttpContext http, string id) =>
+{
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwCatalogEntries.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "这条补登不存在"), jsonOptions, 404);
+    await gwCatalogEntries.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "catalog_entry.delete", targetType: "llmgw_model_catalog_entry",
+        targetId: id, targetName: existing.GetStringOrEmpty("CanonicalId"), success: true, reason: null,
+        changes: new BsonDocument { { "canonicalId", existing.GetStringOrEmpty("CanonicalId") } });
+    return Json(ApiEnvelope<object>.Ok(new { deleted = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+/// <summary>
+/// 补登的写入校验。
+///
+/// 最要紧的一条是用途名：填了一个运行时不认的词，这条补登看着生效了、模型照样选不中，
+/// 而且不会有任何东西报错——「填了没用」是这套东西最难查的坏法。所以当场拒。
+/// </summary>
+static string? ValidateCatalogEntry(UpsertCatalogEntryRequest body)
+{
+    var canonical = (body.CanonicalId ?? string.Empty).Trim();
+    if (canonical.Length == 0) return "模型标识不能为空";
+    if (canonical.Length > 200) return "模型标识过长";
+    if (canonical.Contains('*')) return "名录是白名单，不支持通配符——每个模型逐条登记，别名写进「等价写法」";
+
+    var caps = (body.Capabilities ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+    if (caps.Count == 0) return "至少要填一种用途，否则这条补登不解决任何问题（模型仍然不参与用途匹配）";
+    var unknown = caps.Where(c => !LogicalModelCapabilityPolicy.CanonicalCapabilities.Contains(c.Trim().ToLowerInvariant())).ToList();
+    if (unknown.Count > 0)
+        return $"这些用途运行时不认：{string.Join("、", unknown)}。可用的是：{string.Join(" / ", LogicalModelCapabilityPolicy.CanonicalCapabilities.OrderBy(x => x, StringComparer.Ordinal))}";
+
+    if (body.RequiresImageInput == true && body.AcceptsImageInput != true)
+        return "勾了「必须给图才能调」就得同时勾「能接收图片输入」——不然这条登记自相矛盾";
+
+    foreach (var alias in body.Aliases ?? [])
+    {
+        if (string.IsNullOrWhiteSpace(alias)) continue;
+        if (alias.Contains('*')) return $"等价写法不支持通配符：{alias}";
+    }
+    return null;
+}
+
+static BsonDocument BuildCatalogEntryDocument(UpsertCatalogEntryRequest body, string tenantId, BsonDocument? existing)
+    => new()
+    {
+        { "_id", existing?.GetStringOrEmpty("_id") ?? Guid.NewGuid().ToString("N") },
+        { "TenantId", tenantId },
+        { "CanonicalId", body.CanonicalId!.Trim().ToLowerInvariant() },
+        { "DisplayName", (body.DisplayName ?? body.CanonicalId!).Trim() },
+        { "Vendor", (body.Vendor ?? string.Empty).Trim().ToLowerInvariant() },
+        { "Capabilities", new BsonArray((body.Capabilities ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()).Distinct()) },
+        { "AcceptsImageInput", body.AcceptsImageInput ?? false },
+        { "RequiresImageInput", body.RequiresImageInput ?? false },
+        { "Aliases", new BsonArray((body.Aliases ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()).Distinct()) },
+        { "Notes", (BsonValue?)body.Notes ?? BsonNull.Value },
+        { "Enabled", body.Enabled ?? true },
+        { "CreatedAt", existing?.AsNullableUtcDateTime("CreatedAt") ?? DateTime.UtcNow },
+        { "UpdatedAt", DateTime.UtcNow },
+    };
+
+static CatalogEntryItem MapCatalogEntry(BsonDocument d) => new()
+{
+    Id = d.GetStringOrEmpty("_id"),
+    CanonicalId = d.GetStringOrEmpty("CanonicalId"),
+    DisplayName = d.GetStringOrEmpty("DisplayName"),
+    Vendor = d.GetStringOrEmpty("Vendor"),
+    Capabilities = GetStringArray(d, "Capabilities"),
+    AcceptsImageInput = d.AsNullableBool("AcceptsImageInput") ?? false,
+    RequiresImageInput = d.AsNullableBool("RequiresImageInput") ?? false,
+    Aliases = GetStringArray(d, "Aliases"),
+    Notes = d.AsNullableString("Notes"),
+    Enabled = d.AsNullableBool("Enabled") ?? true,
+    UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+};
+
 // ───────────────────── 生图模型契约：配在这里，不用改代码不用发版 ─────────────────────
 //
 // 此前这份契约（尺寸档位、参数格式、重命名映射、能不能图生图）写死在
@@ -10733,6 +10926,8 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
     // 而不是让他以为这就是全部（no silent caps）。
     var truncatedFrom = dataArray.Count > MaxDiscoveredModels ? dataArray.Count : (int?)null;
 
+    // 补登的那批现查现用：补完刷新这一屏就能看见「已登记」，不用等任何缓存。
+    var catalogOverrides = await LoadCatalogOverridesAsync(http);
     var items = new List<UpstreamModelItem>();
     foreach (var node in dataArray.Take(MaxDiscoveredModels))
     {
@@ -10745,8 +10940,8 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         var declared = (obj["capabilities"] as System.Text.Json.Nodes.JsonArray)?
             .Select(n => (n as System.Text.Json.Nodes.JsonValue)?.ToString() ?? string.Empty)
             .Where(x => x.Length > 0).ToList();
-        var resolved = ModelCatalog.ResolveCapabilities(modelId, declared);
-        var catalogEntry = ModelCatalog.Find(modelId);
+        var resolved = ModelCatalog.ResolveCapabilities(modelId, declared, catalogOverrides);
+        var catalogEntry = ModelCatalog.Find(modelId, catalogOverrides);
         items.Add(new UpstreamModelItem
         {
             ModelId = modelId,
