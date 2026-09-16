@@ -436,6 +436,18 @@ public class BookshelfController : ControllerBase
         string? model = null;
         string? platform = null;
         string? streamError = null;
+        /*
+         * 见过终止块没有。网关正常收尾时一定会 yield 一个 Done
+         * （LlmGateway happy path 的最后一句），而 /gw/v1/stream 是
+         * `JsonSerializer.Serialize(chunk)` 逐块原样转发、不做任何过滤，
+         * 所以 http 模式下它一定到得了这里——这一点是读代码确认的，不是假设。
+         *
+         * 不认它的后果与不认 Error 块完全一样：API 与 serving 之间的 SSE
+         * 若在几个 Text 之后「干净地」关掉（没有异常、也没有 Error 块），
+         * await foreach 就这么正常结束了，半篇稿子会被当成写完了落库成
+         * 这本书的**公共**稿子。这是本 PR 里同一个形状的第六次。
+         */
+        var sawTerminalChunk = false;
 
         /*
          * 心跳（`server-authority` 规则 4：SSE 必须每 10 秒 keepalive）。
@@ -496,6 +508,10 @@ public class BookshelfController : ControllerBase
                     buffer.Append(chunk.Content);
                     await WriteDigestEventAsync("text", new { content = chunk.Content }, ct);
                 }
+                else if (chunk.Type == GatewayChunkType.Done)
+                {
+                    sawTerminalChunk = true;
+                }
                 else if (chunk.Type == GatewayChunkType.Error)
                 {
                     /*
@@ -547,6 +563,20 @@ public class BookshelfController : ControllerBase
             {
                 code = "STREAM_FAILED",
                 message = "生成中断了，稿子没有写完，没有保存。重试一次",
+            }, ct);
+            return;
+        }
+
+        if (!sawTerminalChunk)
+        {
+            // 流没有正常收尾（既没抛异常、也没发 Error 块，就是没了）。半篇不落库。
+            _logger.LogError(
+                "精读稿的上游流没有终止块就结束了 BookId={BookId}，已收到 {Len} 字，不落库",
+                id, buffer.Length);
+            await WriteDigestEventAsync("error", new
+            {
+                code = "STREAM_TRUNCATED",
+                message = "生成没有正常收尾，稿子没写完，没有保存。重试一次",
             }, ct);
             return;
         }

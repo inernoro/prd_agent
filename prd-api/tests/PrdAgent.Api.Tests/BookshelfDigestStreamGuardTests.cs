@@ -96,4 +96,24 @@ public class BookshelfDigestStreamGuardTests
             "_lastSseWriteTicks",
             customMessage: "心跳没有按「距上次写入多久」判断，会在正文流动时也插进去");
     }
+
+    [Fact(DisplayName = "没见过 Done 块就不许落库，且这道判断排在写库之前")]
+    public void DigestStream_MustRequireTerminalChunk()
+    {
+        var src = ControllerSource();
+
+        src.ShouldContain(
+            "GatewayChunkType.Done",
+            customMessage: "循环没有记录终止块：API 与 serving 之间的 SSE 干净断开时，"
+                + "await foreach 正常结束、没有异常也没有 Error 块，半篇稿子会被当成写完了落库");
+
+        var truncated = src.IndexOf("STREAM_TRUNCATED", StringComparison.Ordinal);
+        truncated.ShouldBeGreaterThan(-1, customMessage: "找不到「没有正常收尾」的提前返回分支");
+
+        var persist = src.IndexOf("BookDigests.ReplaceOneAsync", StringComparison.Ordinal);
+        persist.ShouldBeGreaterThan(-1, customMessage: "找不到写库调用，守卫判据已过期，请修守卫");
+        truncated.ShouldBeLessThan(
+            persist,
+            customMessage: "这道判断排在写库之后，挡不住半篇稿子落库");
+    }
 }
