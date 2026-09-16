@@ -25,7 +25,8 @@ import * as THREE from 'three';
 
 const CHAPTERS = 5; // Push / Build / Preview / Observe / Ship
 const SEGMENTS = CHAPTERS - 1;
-const BEADS = [0.18, 0.3, 0.38, 0.57, 0.72, 0.9];
+// 最后一颗放到镜头终点（camT 0.88 + 前视 0.07）之外，否则 Ship 章会有一颗贴着镜头的巨球
+const BEADS = [0.18, 0.3, 0.38, 0.57, 0.72, 0.985];
 
 const clamp01 = (x) => Math.max(0, Math.min(1, x));
 const smooth = (x) => x * x * (3 - 2 * x);
@@ -253,7 +254,7 @@ export default function BranchlineScene({ rootRef }) {
     const copies = Array.from(root.querySelectorAll('[data-cdsh-chapter]'));
     const rails = Array.from(root.querySelectorAll('[data-cdsh-rail]'));
 
-    let raf = 0; let prog = 0; let railOn = -1; let sized = false; let hidden = document.hidden;
+    let raf = 0; let prog = 0; let railOn = -1; let sized = false; let hidden = document.hidden; let last = 0;
 
     const onResize = () => { sized = false; };
     const onVis = () => { hidden = document.hidden; if (!hidden && !raf) raf = requestAnimationFrame(frame); };
@@ -267,7 +268,9 @@ export default function BranchlineScene({ rootRef }) {
       if (inView) {
         if (!sized) { built.resize(window.innerWidth, vh); sized = true; }
         const target = clamp01(-rect.top / Math.max(1, rect.height - vh));
-        prog += (target - prog) * (reduced ? 1 : 0.075);
+        // 按时间插值而不是按帧：低帧率设备（软渲染约 2–3fps）上按帧插值要十几秒才跟上
+        const dt = last ? Math.min(100, now - last) : 16; last = now;
+        prog += (target - prog) * (reduced ? 1 : 1 - Math.exp(-dt / 140));
         const p = prog;
         for (let i = 0; i < copies.length; i++) {
           const w = weight(p, i, 0.14);
