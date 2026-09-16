@@ -332,6 +332,33 @@ SSE 单连接存活超过 10 分钟不重连；宿主 load1 / 核数 在工作�
 **下一步不在本批范围内、需要人拍板的杠杆**：回收 54 条 error 分支的容器；给 pinned hot 列表设访问时效；
 mdimp 项目修它的 Flyway / 镜像问题；Agent self-update 加最小间隔。这些都是「减总量」，与本批「调优先级」互补。
 
+**减总量第一刀（2026-09-16 08:4x UTC，用户拍板「把报错分支的容器回收了」）**
+
+先修正 09-15 汇报里的一个数字：「54 条报错分支占着容器」不准。逐条数过之后，58 条 error 分支里
+**只有 10 条真的还有运行中的容器**（合计 50 个），其余 48 条早已没有容器——它们的 error 只是一个
+标签，回收释放不了任何东西；它们真正的代价在别处：每次 push 仍会触发一次注定失败的重建。
+
+这 10 条里又有 5 条在最近一小时内被人访问或部署过（`miduo-backend-dev-3-13-3` 07:57、
+`miduo-backend-master`（pinned）07:56、`mdimp-claude-zen-dijkstra` 07:32、`mdimp-claude-awesome-einstein` 08:23、
+`mdimp-codex-add-help-center-docs` 07:38），停了也会被立刻拉起，只会多一轮拆装——没动。
+只回收另外 5 条超过 6 小时无人访问的：
+
+| 分支 | 上次访问 | 走的接口 | 结果 |
+|---|---|---|---|
+| mdimp-claude-org-management-logic-ui-alignment | 09-05 | 调度器 cool | 干净：4 error + 5 stopped |
+| miduo-backend-zetengtest | 09-10 | 调度器 cool | 干净 |
+| mdimp-codex-assistant-six-screens-20260915 | 09-15 17:13 | 调度器 cool | 干净：7 error + 6 stopped |
+| mdimp-dev-impassisant | 09-15 17:26 | 调度器 cool → **8 个容器仍在跑** → 改走 branch stop | 停了 |
+| miduo-backend-dev-migration | 09-15 09:47 | 调度器 cool → **1 个仍在跑** → 改走 branch stop | 停了 |
+
+**新记一条 P2 债务（状态比实际乐观，`predicate-and-wiring-discipline` 形状 10 的近亲）**：
+`POST /api/scheduler/cool/:slug` 对上面两条分支返回 `ok:true, heatState:'cold'`，`markCold` 也把
+`heatState` 落成 cold，但 `services` 里 8 + 1 个容器状态仍是 running、docker 里也确实在跑。
+`markCold` 的合同是「coolFn 负责停容器并更新服务状态」，这里 coolFn 没抛错却也没停干净——要么它只停
+了某几类 profile，要么中途被并发的部署/访问唤醒又没有回写。后果是调度器的 hot/cold 账本与真实容器
+脱节：它以为已经腾出了槽位，实际内存一分没省。要治得让 coolFn 结束后核对一遍容器实况，不一致就把
+heatState 打回 hot 并留痕；本批只用 `branches/:id/stop` 把这两条补停了，根因没动。
+
 **对比时的口径提醒**（两处，不注意就会把改进算多）：
 
 1. **webhook 那一行改后不再是同一批请求**。被廉价 ack 的投递不写 HTTP 日志，于是从「按日志统计」里
