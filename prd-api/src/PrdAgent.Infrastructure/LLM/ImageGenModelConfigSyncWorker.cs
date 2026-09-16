@@ -25,6 +25,31 @@ namespace PrdAgent.Infrastructure.LLM;
 /// 失败不阻断：拉不到就保留上一版快照并记一条日志。配置面故障不许扩大到数据面
 /// （llm-gateway 规则 7）——生图请求照常按代码内置那 26 条跑。
 /// </summary>
+/// <summary>
+/// 跑这个同步器的宿主「服务几个租户」。
+///
+/// 这不是可有可无的元信息，它决定了一条带租户的契约能不能进
+/// <see cref="ImageGenModelAdapterRegistry"/>：那张表是**进程全局**的，键只有模型名，
+/// 没有租户维度，而全链路 20 来个调用点都是静态方法、拿不到请求的租户。
+/// 所以在一个会服务多个租户的宿主里，任何带租户的契约一旦装进去，就会作用到
+/// **所有**租户的请求上——A 租户配的 `nano-banana*` 改写 B 租户的出图尺寸，
+/// 而 B 自己配的那份反而不生效，两边都没有任何提示
+/// （cross-project-isolation：一份全局状态被多方共享）。
+/// </summary>
+public enum ImageGenContractHostTenancy
+{
+    /// <summary>
+    /// 宿主只服务一个固定租户（prd-api）。该租户的契约可以安全地装进进程全局表。
+    /// </summary>
+    SingleTenant,
+
+    /// <summary>
+    /// 宿主按请求携带的服务密钥判定租户，可能同时服务多个租户（llmgw-serving）。
+    /// 只装平台级契约（TenantId 为空串），带租户的一律跳过并留痕。
+    /// </summary>
+    MultiTenant,
+}
+
 public sealed class ImageGenModelConfigSyncWorker : BackgroundService
 {
     private static readonly TimeSpan Interval = TimeSpan.FromSeconds(60);
@@ -59,14 +84,25 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
     /// </summary>
     private readonly string _hostRole;
 
+    /// <summary>
+    /// 这个宿主服务几个租户。见 <see cref="ImageGenContractHostTenancy"/>。
+    ///
+    /// 同样做成必填构造参数：新增第四个宿主时**不表态就编译不过**。
+    /// 给个默认值再靠守卫抽查，等于默许下一个宿主悄悄把别人的契约装进全局表
+    /// （external-cause-first 第四节：调用点一律必须表态）。
+    /// </summary>
+    private readonly ImageGenContractHostTenancy _tenancy;
+
     public ImageGenModelConfigSyncWorker(
         ILogger<ImageGenModelConfigSyncWorker> logger,
         IConfiguration configuration,
         string hostRole,
+        ImageGenContractHostTenancy tenancy,
         LlmGatewayDataContext? gateway = null)
     {
         _logger = logger;
         _gateway = gateway;
+        _tenancy = tenancy;
         _hostRole = string.IsNullOrWhiteSpace(hostRole)
             ? throw new ArgumentException("必须说清是哪个进程在跑这个同步器，否则两边的状态会互相覆盖", nameof(hostRole))
             : hostRole.Trim();
@@ -121,14 +157,27 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
     private async Task RefreshAsync(CancellationToken ct)
     {
         var collection = _gateway!.Database.GetCollection<GatewayImageModelConfig>("llmgw_imagegen_model_configs");
-        // 只认这个实例服务的租户 + 平台内置（TenantId 为空串，对所有租户生效）。
-        // 拉全表会让别的租户的配置进这张进程全局表，见 _tenantId 的注释。
+        // 平台级契约（TenantId 为空串）对所有租户生效，哪个宿主都能装。
+        // 带租户的那些只有单租户宿主能装——多租户宿主装进去就会作用到别的租户，
+        // 见 ImageGenContractHostTenancy 的注释。
         var fb = Builders<GatewayImageModelConfig>.Filter;
+        var tenantScopeFilter = _tenancy == ImageGenContractHostTenancy.SingleTenant
+            ? fb.Or(fb.Eq(x => x.TenantId, _tenantId), fb.Eq(x => x.TenantId, string.Empty))
+            : fb.Eq(x => x.TenantId, string.Empty);
         var docs = await collection
-            .Find(fb.And(
-                fb.Eq(x => x.Enabled, true),
-                fb.Or(fb.Eq(x => x.TenantId, _tenantId), fb.Eq(x => x.TenantId, string.Empty))))
+            .Find(fb.And(fb.Eq(x => x.Enabled, true), tenantScopeFilter))
             .ToListAsync(ct);
+
+        // 多租户宿主跳过了多少条带租户的契约。这个数字必须一路报到控制台那一屏：
+        // 不报的话，人在控制台配了 3 条、这边一条都没装，界面只会显示「生效 0 条」，
+        // 而「为什么是 0」无处可查——降级被沉默吞掉（degradation-must-alarm）。
+        var skippedTenantScoped = 0;
+        if (_tenancy == ImageGenContractHostTenancy.MultiTenant)
+        {
+            skippedTenantScoped = (int)await collection.CountDocumentsAsync(
+                fb.And(fb.Eq(x => x.Enabled, true), fb.Ne(x => x.TenantId, string.Empty)),
+                cancellationToken: ct);
+        }
 
         // 排序就是「哪条先匹配」的判据，必须在这里定死一次，而不是指望写入顺序：
         // 数据行没有「书写顺序」，而代码内置那张表靠的正是书写顺序。
@@ -152,6 +201,16 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
                 before, ordered.Count, ImageGenModelConfigs.Configs.Count);
         }
 
+        if (skippedTenantScoped > 0)
+        {
+            _logger.LogWarning(
+                "[ImageGenConfigSync] {Host} 按请求密钥判定租户、可能同时服务多个租户，" +
+                "因此跳过了 {Skipped} 条带租户的生图契约：这张表是进程全局的、没有租户维度，" +
+                "装进去会让一个租户配的尺寸与参数改写另一个租户的请求。" +
+                "这些契约在这个进程里不生效，走网关的生图请求用代码内置那 {Builtin} 条。",
+                _hostRole, skippedTenantScoped, ImageGenModelConfigs.Configs.Count);
+        }
+
         // 把「我这一轮拉到了什么」写回库，让控制台能如实回答「我配的那条生效了没有」。
         //
         // 没有这一步，界面只能说「最长 60 秒生效」然后让人盯着屏幕猜——而猜错的代价是
@@ -171,6 +230,10 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
                 { "SyncedAt", DateTime.UtcNow },
                 { "OverrideCount", ordered.Count },
                 { "BuiltinCount", ImageGenModelConfigs.Configs.Count },
+                // 这个宿主服务几个租户，以及因此跳过了几条。控制台据此回答
+                // 「我配的那条为什么在网关那一侧没生效」。
+                { "HostTenancy", _tenancy.ToString() },
+                { "SkippedTenantScopedCount", skippedTenantScoped },
                 // 生效的那几个模式，逐条列出来。只报数字的话，「我配了 3 条它说 3 条」
                 // 仍然答不出「生效的是不是我刚改的那条」。
                 { "Patterns", new BsonArray(ordered.Select(x => x.ModelIdPattern)) },

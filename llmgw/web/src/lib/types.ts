@@ -1762,6 +1762,10 @@ export type ImageGenSyncHost = {
   hostRole: string;
   syncedAt?: string | null;
   overrideCount: number;
+  /** 这个进程服务几个租户：SingleTenant / MultiTenant。 */
+  hostTenancy?: string | null;
+  /** 它因为「服务多个租户」跳过了几条带租户的契约。大于 0 必须显示，否则「生效 0 条」无处可查。 */
+  skippedTenantScopedCount: number;
 };
 
 export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;

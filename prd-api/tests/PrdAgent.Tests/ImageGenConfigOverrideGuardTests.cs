@@ -293,6 +293,50 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("还没同步过这份契约", section);
     }
 
+    /// <summary>
+    /// 多租户宿主不把带租户的契约装进进程全局表，而且跳过了必须说出口。
+    ///
+    /// 这张覆盖表按模型名索引、没有租户维度，而全链路二十来个调用点都是静态方法、
+    /// 拿不到请求的租户。所以在一个按请求密钥判定租户的宿主（llmgw-serving）里，
+    /// 任何带租户的契约一旦装进去，就会作用到**所有**租户的请求上——A 租户配的尺寸
+    /// 改写 B 租户的出图，而 B 自己配的那份反而不生效，两边都没有提示
+    /// （cross-project-isolation：一份全局状态被多方共享）。
+    ///
+    /// 第二半同样要钉住：跳过之后控制台会显示「生效 0 条」，不把跳过条数与原因报上去，
+    /// 那句话就无从解释，人会去查一个没坏的东西（degradation-must-alarm）。
+    /// </summary>
+    [Fact]
+    public void 多租户宿主不装带租户的契约且跳过必须报出来()
+    {
+        var worker = Read("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+
+        // 租户形态是必填构造参数：新增宿主时不表态就编译不过，
+        // 而不是留个默认值再靠这条守卫抽查。
+        Assert.Contains("ImageGenContractHostTenancy tenancy,", worker);
+
+        // 过滤按租户形态分叉：单租户宿主才认自己那个租户的契约。
+        Assert.Contains("ImageGenContractHostTenancy.SingleTenant", worker);
+        Assert.Contains("tenantScopeFilter", worker);
+
+        // 跳过的条数要数出来并回写状态，不能只是悄悄少装几条。
+        Assert.Contains("SkippedTenantScopedCount", worker);
+        Assert.Contains("HostTenancy", worker);
+
+        // 两处注册都得表态，且 serving 必须是多租户那一档。
+        // 断言的是「这个宿主声明了哪种租户形态」，不是某一种写法——
+        // 它要是被改成 SingleTenant，serving 就会重新变成跨租户改写的通道。
+        Assert.Contains("ImageGenContractHostTenancy.SingleTenant", Read("prd-api/src/PrdAgent.Api/Program.cs"));
+        Assert.Contains("ImageGenContractHostTenancy.MultiTenant", Read("llmgw/serving/Program.cs"));
+        Assert.DoesNotContain("ImageGenContractHostTenancy.SingleTenant", Read("llmgw/serving/Program.cs"));
+
+        // 控制台把这两个字段读出来，界面把它说成人话。
+        var console = Read("llmgw/console-api/Program.cs");
+        Assert.Contains("SkippedTenantScopedCount", console);
+        var section = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        Assert.Contains("skippedTenantScopedCount", section);
+        Assert.Contains("再等也不会变", section);
+    }
+
     [Fact]
     public void 刷新器接上了线且失败时不清空()
     {

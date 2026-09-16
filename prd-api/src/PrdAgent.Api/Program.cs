@@ -158,6 +158,9 @@ builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGen
     sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
     sp.GetRequiredService<IConfiguration>(),
     hostRole: "prd-api",
+    // MAP 这一侧只服务自己那个租户（LlmGateway:InternalTenantId），
+    // 所以它配的契约可以安全地装进进程全局表。
+    tenancy: PrdAgent.Infrastructure.LLM.ImageGenContractHostTenancy.SingleTenant,
     sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md

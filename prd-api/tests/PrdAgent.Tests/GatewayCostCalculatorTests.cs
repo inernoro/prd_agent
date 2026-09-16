@@ -141,6 +141,29 @@ public sealed class GatewayCostCalculatorTests
         Assert.Equal(0.04m, cost.Usd);
     }
 
+    /// <summary>
+    /// 按次计费的模型**回了 token 用量**也照样算得出钱。
+    ///
+    /// 上一条用的是零用量，所以它绿着，而真实的生图/视频上游经常顺带回一份 usage——
+    /// token 数在这里是信息不是计费依据。此前只要 usage 非零就去查 token 单价，
+    /// 查不到便判 unpriced：按次的钱照样算进 Total，Usd 却变成 null，
+    /// 这笔调用于是被整个排除在用量合计与预算之外，而配置完全正确。
+    /// </summary>
+    [Fact]
+    public void 按次计费在上游回了token用量时仍然计价()
+    {
+        var cost = Calc(
+            inputPrice: null, outputPrice: null, cachedInputPrice: null,
+            pricePerCall: 0.04m,
+            inputTokens: 1200, outputTokens: 350);
+
+        Assert.Equal(GatewayCostStatus.Priced, cost.Status);
+        Assert.Equal(0.04m, cost.Call);
+        Assert.Equal(0.04m, cost.Total);
+        Assert.Equal(0.04m, cost.Usd);
+        Assert.True(GatewayCostStatus.CountsTowardBudget(cost.Status));
+    }
+
     /// <summary>只有 priced 的金额允许进预算闸，其余三种状态一律不计入。</summary>
     [Fact]
     public void 只有已计价状态才计入预算()

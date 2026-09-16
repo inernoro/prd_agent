@@ -3997,6 +3997,8 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
             HostRole = role,
             SyncedAt = doc?.AsNullableUtcDateTime("SyncedAt").ToIso(),
             OverrideCount = doc is null ? 0 : (int)(doc.AsNullableInt("OverrideCount") ?? 0),
+            HostTenancy = doc?.AsNullableString("HostTenancy"),
+            SkippedTenantScopedCount = doc is null ? 0 : (int)(doc.AsNullableInt("SkippedTenantScopedCount") ?? 0),
         };
     }).ToList();
 

@@ -327,14 +327,20 @@ builder.Services.AddHostedService<ServingKeyIntegrityCheck>();
   Worker 因此从 PrdAgent.Api.Services 搬进了 PrdAgent.Infrastructure.LLM，
   两个进程注册同一个类型，不做第二份实现。
 
-  已知边界：这张表按模型名索引、没有租户维度，Worker 只能按本实例的
-  LlmGateway:InternalTenantId 刷一份。serving 同时服务多个租户时，非内部租户配的契约
-  不会进这张表——那是注册表本身的形状，不是这次接线引入的，已记台账。
+  租户这一层因此要在这里就拦住：serving 按请求携带的服务密钥判定租户、可能同时服务
+  多个租户，而这张表按模型名索引、没有租户维度，全链路二十来个调用点又都是静态方法、
+  拿不到请求的租户。于是带租户的契约一旦装进来，就会作用到**所有**租户的请求上——
+  A 租户配的尺寸改写 B 租户的出图，B 自己那份反而不生效。
+  所以这一侧只装平台级契约（TenantId 为空串），带租户的跳过并把条数报给控制台。
+  代价是「控制台配的契约在网关这一侧不生效」，这句话必须显示在那一屏上，
+  不能让人配完看见「生效 0 条」去查一个没坏的东西（degradation-must-alarm）。
+  把租户维度补进注册表是另一件事，已记台账 doc/debt.platform.llm-gateway.md。
 */
 builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
     sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
     sp.GetRequiredService<IConfiguration>(),
     hostRole: "llmgw-serving",
+    tenancy: PrdAgent.Infrastructure.LLM.ImageGenContractHostTenancy.MultiTenant,
     sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // JSON：PascalCase（PropertyNamingPolicy = null），与既有 DTO 属性名一一对应，

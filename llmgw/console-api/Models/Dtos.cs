@@ -2297,6 +2297,22 @@ public sealed class ImageGenSyncHost
 
     /// <summary>它这一轮认到几条覆盖。</summary>
     public int OverrideCount { get; set; }
+
+    /// <summary>
+    /// 这个进程服务几个租户：SingleTenant / MultiTenant。
+    ///
+    /// 多租户进程（llmgw-serving）只装平台级契约，带租户的一条都不装——那张覆盖表是
+    /// 进程全局的、没有租户维度，装进去会让一个租户配的尺寸改写另一个租户的请求。
+    /// </summary>
+    public string? HostTenancy { get; set; }
+
+    /// <summary>
+    /// 它因为「服务多个租户」跳过了几条带租户的契约。
+    ///
+    /// 大于 0 就必须显示出来：没有这个数字，界面只会说「生效 0 条」，
+    /// 而「为什么是 0」无处可查。
+    /// </summary>
+    public int SkippedTenantScopedCount { get; set; }
 }
 
 public sealed class ImageGenConfigItem

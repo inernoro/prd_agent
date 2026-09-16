@@ -73,8 +73,24 @@ function syncNote(data: ImageGenConfigsData): string {
   const pending = data.items.filter((x) => x.enabled && !synced.has(x.modelIdPattern)).map((x) => x.modelIdPattern);
   const when = new Date(data.syncedAt).toLocaleTimeString();
   const scope = (data.syncHosts ?? []).length > 1 ? `全部 ${data.syncHosts.length} 个进程都在 ${when} 之后同步过` : `服务端 ${when} 同步过`;
+
+  // 多租户进程（llmgw-serving）按请求密钥判定租户，而覆盖表是进程全局的、没有租户维度，
+  // 所以它一条带租户的契约都不装。这句话必须说出口：不说的话，这一屏只会显示
+  // 「0 条已生效……稍等再看」，而那是一句永远不会兑现的话——人会去查一个没坏的东西
+  // （degradation-must-alarm：降级必须响铃，不能被另一半的成功盖住）。
+  const skipped = (data.syncHosts ?? []).filter((x) => x.skippedTenantScopedCount > 0);
+  const skipNote = skipped.length > 0
+    ? ` ${skipped.map((x) => `${x.hostRole} 跳过了 ${x.skippedTenantScopedCount} 条`).join('、')}`
+      + `：它按请求密钥判定租户、可能同时服务多个租户，而这张覆盖表是进程全局的、没有租户维度，`
+      + `装进去会让一个租户配的尺寸改写另一个租户的请求。走它的生图请求用代码内置那份，`
+      + `再等也不会变——要让契约在网关那一侧生效，得先给注册表补上租户维度。`
+    : '';
+
   if (pending.length === 0) {
-    return `${scope}，${data.syncedPatterns.length} 条已生效。`;
+    return `${scope}，${data.syncedPatterns.length} 条已生效。${skipNote}`;
+  }
+  if (skipNote) {
+    return `${scope}，${data.syncedPatterns.length} 条在全部进程都已生效。${skipNote}`;
   }
   return `${scope}，${data.syncedPatterns.length} 条已生效；${pending.join('、')} 还没被认到，最长 ${data.refreshSeconds} 秒后再看。`;
 }

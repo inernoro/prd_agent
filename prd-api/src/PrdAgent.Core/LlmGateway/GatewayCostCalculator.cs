@@ -183,11 +183,25 @@ public static class GatewayCostCalculator
                 $"这条模型的价格还是 {currency} 口径，计价只认美金。去模型管理把它换算成 USD 后才会计入用量与限额。");
         }
 
+        // 按次计价的模型不要求 token 单价。
+        //
+        // 生图、视频这类模型按张/次收费，token 用量是上游顺带回的**信息**，不是计费依据。
+        // 不排除它的话，一个价格配齐的按次计费模型会仅仅因为供应商回了非零 usage 就被判成
+        // unpriced：按次的钱照样算进 Total，但 Usd 变成 null，于是这笔调用被整个排除在
+        // 用量合计与预算之外——配置完全正确，账却对不上（形状 1：判据比它该管的范围窄，
+        // 「按次计费」这种输入让它给出了相反答案）。
+        //
+        // 只配了按次价就按按次算；若将来要支持「按次 + 按 token」同时计费，那是新的计费模式，
+        // 得显式存一个 billing mode，而不是靠「两种价都填了」去猜。
+        var billedPerCall = callCost is not null;
         var missing = new List<string>();
-        if (billableInput > 0 && inputPrice is null) missing.Add("输入单价");
-        if (outputTokens > 0 && outputPrice is null) missing.Add("输出单价");
-        if (cacheRead > 0 && cacheReadPrice is null) missing.Add("缓存读单价");
-        if (cacheWrite > 0 && cacheWritePrice is null) missing.Add("缓存写单价");
+        if (!billedPerCall)
+        {
+            if (billableInput > 0 && inputPrice is null) missing.Add("输入单价");
+            if (outputTokens > 0 && outputPrice is null) missing.Add("输出单价");
+            if (cacheRead > 0 && cacheReadPrice is null) missing.Add("缓存读单价");
+            if (cacheWrite > 0 && cacheWritePrice is null) missing.Add("缓存写单价");
+        }
 
         if (missing.Count > 0)
         {
