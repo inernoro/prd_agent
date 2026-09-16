@@ -3526,6 +3526,15 @@ export interface ManagedProjectSpec {
   capabilities?: ManagedCapabilityBinding[];
 }
 
+/**
+ * 项目级 Agent 部署策略。
+ *
+ * - prebuilt-only：所有 Agent 部署都必须走 CI 预构建；
+ * - prefer-prebuilt：有预构建能力的服务必须走预构建，尚未接入的服务允许源码构建；
+ * - unrestricted：不额外限制 Agent 的部署模式。
+ */
+export type AgentPrebuiltPolicy = 'prebuilt-only' | 'prefer-prebuilt' | 'unrestricted';
+
 export interface Project {
   /**
    * 监控自发现的端点清单（「插上」的那几个口）。
@@ -3813,13 +3822,14 @@ export interface Project {
    */
   autoSmokeEnabled?: boolean;
   /**
-   * Agent 只允许极速版（CI 预构建）部署（2026-09-08）。
+   * Agent 部署策略（2026-09-16）。缺省时从旧字段 agentPrebuiltOnly 兼容解析。
+   */
+  agentPrebuiltPolicy?: AgentPrebuiltPolicy;
+  /**
+   * @deprecated 改用 agentPrebuiltPolicy。保留给旧状态和旧客户端兼容：
+   * true = prebuilt-only，false / undefined = unrestricted。
    *
-   * 开启后，凡是机器凭据（项目 Agent Key / AI Access Key，判定见 machine-caller.ts）
-   * 发起的部署，若任一服务的生效部署模式不是 prebuilt，就在入口拒绝（409
-   * `agent_prebuilt_only`）；Agent 也不能把分支覆盖或项目默认写成非 prebuilt 模式，
-   * 更不能自己关掉这个开关。真人在页面上的操作不受限，内部系统派发
-   * （X-CDS-Trigger）不受限。默认关闭：老项目行为零变化，需要的项目自己打开。
+   * 机器凭据不能修改新旧任一策略字段。真人操作不受部署门禁约束。
    */
   agentPrebuiltOnly?: boolean;
   /**

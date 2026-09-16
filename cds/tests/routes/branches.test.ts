@@ -597,8 +597,10 @@ describe('Branch Routes', () => {
       const body = res.body as any;
       expect(body.error).toBe('agent_prebuilt_only');
       expect(body.message).toContain('API（当前 静态部署，可切 express）');
-      expect(body.message).toContain('cdscli branch set-mode b1');
+      expect(body.message).toContain('cdscli branch set-mode b1 api express');
       expect(body.violations).toMatchObject([{ profileId: 'api', modeId: 'static', prebuiltModes: ['express'] }]);
+      expect(body.settingsPath).toBe('/settings/proj-a#general');
+      expect(body.recovery).toMatchObject({ kind: 'switch-to-prebuilt', requiresHuman: false });
     });
 
     it('内部系统派发不带机器凭据（X-CDS-Internal 走 loopback 旁路），不受门禁；机器凭据自己加 X-CDS-Trigger 换不来豁免', async () => {
@@ -746,6 +748,28 @@ describe('Branch Routes', () => {
       expect(res.status).not.toBe(409);
     });
 
+    it('优先极速版允许尚无预构建能力的服务源码部署，能力补齐后源码模式立即受闸', async () => {
+      seedGateProject(false);
+      const gateProject = stateService.getProject('proj-a')!;
+      gateProject.agentPrebuiltPolicy = 'prefer-prebuilt';
+      const sourceOnly = stateService.getBuildProfile('api')!;
+      sourceOnly.activeDeployMode = 'dev';
+      sourceOnly.deployModes = { dev: { label: '开发模式', command: 'pnpm dev' } };
+
+      const allowed = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(allowed.status).not.toBe(409);
+
+      sourceOnly.deployModes.express = {
+        label: '极速版',
+        prebuilt: true,
+        dockerImage: 'ghcr.io/x/api:sha-${CDS_COMMIT_SHA}',
+      };
+      const blocked = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
+      expect(blocked.status).toBe(409);
+      expect((blocked.body as any).policy).toBe('prefer-prebuilt');
+      expect((blocked.body as any).violations).toMatchObject([{ profileId: 'api', prebuiltModes: ['express'] }]);
+    });
+
     it('机器凭据 set-mode：写 express 放行，写 dev 拒绝，清空回源码基线也拒绝', async () => {
       seedGateProject(true);
       const ok = await request(server, 'PUT', '/api/branches/b1/profile-overrides/api', { activeDeployMode: 'express' }, { 'X-Test-Key': 'A' });
@@ -851,7 +875,7 @@ describe('Branch Routes', () => {
 
       const gated = await request(server, 'POST', '/api/branches/b1/deploy', {}, { 'X-Test-Key': 'A' });
       expect(gated.status).toBe(200);
-      expect(String(gated.body)).toContain('极速版门禁：镜像缺失不回退源码编译');
+      expect(String(gated.body)).toContain('Agent 部署策略：镜像缺失不回退源码编译');
       expect(String(gated.body)).not.toContain('自动回退源码编译');
       expect(sourceRuns()).toBe(1);
       expect(stateService.getBranch('b1')?.status).toBe('error');
