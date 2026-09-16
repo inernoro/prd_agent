@@ -47,6 +47,19 @@ public class BookshelfController : ControllerBase
     /// <summary>最后一次写 SSE 的时刻（ticks）。心跳线程读、主循环写，故走 Volatile。</summary>
     private long _lastSseWriteTicks = DateTime.UtcNow.Ticks;
 
+    /*
+     * 这条连接还写得出去吗。
+     *
+     * 客户端关掉标签页或代理掐断之后，往 Response 写会抛 IOException。那不是错误，
+     * 是「读的人走了」——但稿子是**公共内容**，生成它的钱已经花了，模型也还在吐，
+     * 让这个异常冒出去会停掉对网关流的消费、连带把写库那一步一起跳过：
+     * 下一个人点开这本书，又从头生成一篇，再花一次钱。
+     *
+     * 所以断开只关掉「写」，不关掉「生成与落库」（`server-authority` 规则 2/3）。
+     * 置位之后心跳与后续事件都不再尝试写这个已经断掉的 socket。
+     */
+    private volatile bool _sseBroken;
+
     private static readonly JsonSerializerOptions SseJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -491,8 +504,10 @@ public class BookshelfController : ControllerBase
              * 模型调用白烧、库里什么都没落下，下一个点进来的人从零开始再等一遍。
              * 稿子是公共内容，它该写完——写完之后谁点进来都能直接读到。
              *
-             * 往断掉的连接写 SSE 不会炸：WriteDigestEventAsync 自己吞掉
-             * OperationCanceledException 与 ObjectDisposedException。
+             * 往断掉的连接写 SSE 不会炸：WriteDigestEventAsync 把「读的人走了」的三种
+             * 异常（取消、连接已释放、socket 被重置的 IOException）一律吞掉并置位，
+             * 之后只停止写，生成与落库照常走完。少认一种，异常就会从写的那一步冒回
+             * 这个循环，把「稿子该写完」这件事一起掐掉——而钱已经花了。
              */
             await foreach (var chunk in _gateway.StreamAsync(request, CancellationToken.None))
             {
@@ -684,6 +699,7 @@ public class BookshelfController : ControllerBase
 
     private async Task WriteDigestEventAsync(string eventName, object data, CancellationToken ct)
     {
+        if (_sseBroken) return;                 // 已经断了，别再往破 socket 上写
         await _sseWriteLock.WaitAsync(CancellationToken.None);
         try
         {
@@ -693,8 +709,10 @@ public class BookshelfController : ControllerBase
             await Response.Body.FlushAsync(ct);
             Volatile.Write(ref _lastSseWriteTicks, DateTime.UtcNow.Ticks);
         }
-        catch (OperationCanceledException) { /* 客户端断开 */ }
-        catch (ObjectDisposedException) { /* 连接已关闭 */ }
+        // 三种都是同一件事：读的人走了。一律吞掉并置位，让生成与落库照常走完。
+        catch (OperationCanceledException) { _sseBroken = true; }   // 客户端断开
+        catch (ObjectDisposedException) { _sseBroken = true; }      // 连接已关闭
+        catch (IOException) { _sseBroken = true; }                  // socket 被重置（Kestrel 实际抛的就是它）
         finally
         {
             _sseWriteLock.Release();

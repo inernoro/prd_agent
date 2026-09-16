@@ -116,4 +116,36 @@ public class BookshelfDigestStreamGuardTests
             persist,
             customMessage: "这道判断排在写库之后，挡不住半篇稿子落库");
     }
+
+    [Fact(DisplayName = "SSE 写入必须把「读的人走了」的三种异常都吞掉，包括 IOException")]
+    public void SseWrite_MustSwallowDisconnectExceptions()
+    {
+        var src = ControllerSource();
+
+        /*
+         * 少认哪一种都一样：异常从写的那一步冒回生成循环，停掉对网关流的消费，
+         * 连带跳过落库——钱花了、模型也吐完了，库里什么都没有，下一个人点进来再烧一次。
+         *
+         * IOException 是最容易漏的那个：规则原文只点了取消与释放两种，
+         * 而客户端关标签页时 Kestrel 实际抛的就是它。
+         */
+        foreach (var ex in new[] { "OperationCanceledException", "ObjectDisposedException", "IOException" })
+        {
+            src.ShouldContain(
+                $"catch ({ex})",
+                customMessage: $"SSE 写入没有捕获 {ex}：读者一断开就会把整篇生成连带落库一起掐掉");
+        }
+    }
+
+    [Fact(DisplayName = "连接断过之后不许再往那个 socket 写")]
+    public void SseWrite_MustStopWritingAfterBroken()
+    {
+        var src = ControllerSource();
+        src.ShouldContain(
+            "if (_sseBroken) return;",
+            customMessage: "断开后仍会继续尝试写：每个后续事件与每次心跳都要再撞一次已经破掉的连接");
+        src.ShouldContain(
+            "_sseBroken = true;",
+            customMessage: "捕获到断开却没有置位，那个短路判据永远不成立");
+    }
 }
