@@ -353,6 +353,21 @@ export default function SystemImagerySettings() {
       toast.error('没有可用的文生图模型，请先到 LLM Gateway 控制台（左下角「模型网关」）配置');
       return;
     }
+    /*
+     * 清单没拉到时一律不许生成——**判据放在这里，不放在各个按钮的 disabled 上**。
+     *
+     * 上一版就是逐个入口打补丁：顶部批量、整组重生成、单张生成各加了一次
+     * inventoryFailed，结果漏了第四条路（预览浮层的「换一张」→ openDialog → 提交），
+     * 绕过去照样花钱重画已经有的图。而且 reload() 在生成或删除之后还会再跑一次，
+     * 那次失败时缩略图还留着，用户更察觉不到清单已经不可信了。
+     *
+     * disabled 留着是给用户看的（按钮变灰 + 屏上说明），真正的闸在这里：
+     * 新入口不必记得加守卫，天然被挡住。
+     */
+    if (inventoryFailed) {
+      toast.error('配图清单没拉到，现在不知道哪些图位真的缺图，已暂停生成。刷新重试');
+      return;
+    }
     if (targets.length === 0) return;
 
     let pending = targets;
