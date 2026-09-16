@@ -964,8 +964,8 @@ export type ModelOfferingItem = {
 /** 「不点名时会不会落到这个模型」在某一个调用方身上的答案。 */
 export type CallTraceUnnamedCaller = {
   appCallerCode: string;
-  /** UsesModelCatalog 认对外模型目录 / DedicatedPoolOnly 配了专属池 / TrafficRejected 不放行 */
-  reach: 'UsesModelCatalog' | 'DedicatedPoolOnly' | 'TrafficRejected';
+  /** UsesModelCatalog 认对外模型目录 / TrafficRejected 不放行 */
+  reach: 'UsesModelCatalog' | 'TrafficRejected';
   reachesThisModel: boolean;
   verdict: string;
 };

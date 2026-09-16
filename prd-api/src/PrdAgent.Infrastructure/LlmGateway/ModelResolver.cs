@@ -868,14 +868,26 @@ public class ModelResolver : IModelResolver
     #region Private Methods
 
     /// <summary>
-    /// 即便配了专属池也仍然认对外模型目录的那几个调用方。
+    /// 视觉创作那三个调用方。它们在**模型选择器目录**上有两条特殊规则：只做操作的模型不列出来，
+    /// 且目录里第一条标成默认。
     ///
-    /// 名单本身收在 <see cref="GatewayRouteSelection.ModelCatalogExceptions"/>：控制台面板要回答
-    /// 同一个问题（不点名时这个调用方会不会落到这个模型），两边各存一份名单就会漂
-    /// （形状 3）。这里只做转发，保留方法名是因为另外三处调用点读起来更顺。
+    /// 这份名单曾经在 <c>GatewayRouteSelection</c> 里，因为那时它还兼着第二个职责——
+    /// 「即便配了专属池也仍然认对外模型目录」，而那个职责随模型池在 2026-09-15 一起退场。
+    /// 剩下的这一条纯粹是目录展示，解析判据不需要知道它，控制台面板也不需要，
+    /// 所以名单搬回唯一的消费方，份数从 2 份（权威 + 控制台镜像）降到 1 份。
+    ///
+    /// 它仍然是一份**调用方特例漏进代码**的活标本（架构文档第 4 节：调用方与能力那两条轴
+    /// 不该进代码）。真正的解法是让它变成调用方记录上的一个字段，那是后续的事。
     /// </summary>
+    private static readonly HashSet<string> VisualCatalogCallers = new(StringComparer.Ordinal)
+    {
+        AppCallerRegistry.VisualAgent.Image.Text2Img,
+        AppCallerRegistry.VisualAgent.Image.Img2Img,
+        AppCallerRegistry.VisualAgent.Image.VisionGen,
+    };
+
     internal static bool UsesVisualLogicalModelCatalog(string appCallerCode)
-        => GatewayRouteSelection.ModelCatalogExceptions.Contains(appCallerCode);
+        => VisualCatalogCallers.Contains(appCallerCode);
 
     internal static bool IsLogicalOfferingAllowed(
         ModelResolutionResult resolution,

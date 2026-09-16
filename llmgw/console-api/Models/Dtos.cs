@@ -1451,7 +1451,7 @@ public sealed class CallTraceUnnamedCaller
 {
     public string AppCallerCode { get; set; } = "";
 
-    /// <summary>UsesModelCatalog / DedicatedPoolOnly / TrafficRejected。</summary>
+    /// <summary>UsesModelCatalog / TrafficRejected。</summary>
     public string Reach { get; set; } = "";
 
     /// <summary>不点名时会不会落到这个模型（调用方与模型两侧条件都成立才为真）。</summary>

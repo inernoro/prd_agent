@@ -259,47 +259,36 @@ public sealed class GatewayCallTraceMirrorTests
     // ---- 调用方这一维：不点名时「会不会落到这个模型」必须有主语 ----
     //
     // 2026-09-15 对抗审查抓到的 P1：面板那句「只给 appCallerCode 不点名时会落到它」此前只看
-    // 模型自己（是不是默认、启用了没、有没有能接的线路），全程不问「谁在调」。而运行时
-    // ModelResolver 对配了专属池的调用方**整个跳过**对外模型这一档。冒烟之所以全过，
-    // 是因为只跑了一个调用方，而它恰好不是严格池契约——一个样本判了一句全称命题（形状 1）。
+    // 模型自己（是不是默认、启用了没、有没有能接的线路），全程不问「谁在调」——
+    // 一个样本判了一句全称命题（形状 1）。
 
     /// <summary>
     /// 两侧的 CallerReach 在全部输入组合上给同一个答案。
     ///
-    /// 输入只有三个布尔量级的维度，索性穷举：放行与否 × 有没有专属池 × 在不在例外名单。
-    /// 穷举才能证明「两边算出同一个答案」，挑几组样本证明不了。
+    /// 2026-09-16 判据从三档收到两档：模型池退场后运行时不再看 AllowedModelPoolIds，
+    /// 只要放行就认这张目录，所以输入只剩「放行与否」一个维度，穷举它。
+    /// 调用方代码仍然入参，是为了钉住「答案不许再跟调用方是谁有关」——
+    /// 一旦有人又往里塞一份名单，同一个布尔值会在不同代码上给出不同答案，这条会红。
     /// </summary>
     [Theory]
-    [InlineData("chat-caller", true, false)]
-    [InlineData("chat-caller", true, true)]
-    [InlineData("chat-caller", false, false)]
-    [InlineData("chat-caller", false, true)]
-    [InlineData("visual-agent.image.text2img::generation", true, false)]
-    [InlineData("visual-agent.image.text2img::generation", true, true)]
-    [InlineData("visual-agent.image.img2img::generation", true, true)]
-    [InlineData("visual-agent.image.vision::generation", true, true)]
-    [InlineData("visual-agent.image.text2img::generation", false, true)]
-    public void 调用方判据两侧一致(string code, bool trafficAllowed, bool hasDedicatedPools)
+    [InlineData("chat-caller", true)]
+    [InlineData("chat-caller", false)]
+    [InlineData("visual-agent.image.text2img::generation", true)]
+    [InlineData("visual-agent.image.text2img::generation", false)]
+    [InlineData("visual-agent.image.img2img::generation", true)]
+    [InlineData("visual-agent.image.vision::generation", true)]
+    public void 调用方判据两侧一致(string code, bool trafficAllowed)
     {
         var core = GatewayRouteSelection.Reach(
-            new GatewayRouteSelection.CallerBinding(code, trafficAllowed, hasDedicatedPools));
+            new GatewayRouteSelection.CallerBinding(code, trafficAllowed));
         var mirror = CallTracePlanner.Reach(
-            new CallTracePlanner.CallerBinding(code, trafficAllowed, hasDedicatedPools));
+            new CallTracePlanner.CallerBinding(code, trafficAllowed));
         Assert.Equal(core.ToString(), mirror.ToString());
-    }
 
-    /// <summary>
-    /// 例外名单两侧逐个元素相同。
-    ///
-    /// 权威侧是 AppCallerRegistry 的常量，镜像侧只能写字面量（console-api 不引用 PrdAgent.*）。
-    /// 任一侧加减一个调用方而另一侧没跟上，这条会红——这正是名单允许存在两份的唯一条件。
-    /// </summary>
-    [Fact]
-    public void 目录例外名单两侧逐字相同()
-    {
-        Assert.Equal(
-            GatewayRouteSelection.ModelCatalogExceptions.OrderBy(x => x, StringComparer.Ordinal),
-            CallTracePlanner.ModelCatalogExceptions.OrderBy(x => x, StringComparer.Ordinal));
+        // 放行与否是唯一的判据：同一个布尔值，换哪个调用方代码都必须是同一个答案。
+        var other = GatewayRouteSelection.Reach(
+            new GatewayRouteSelection.CallerBinding("some-other-caller", trafficAllowed));
+        Assert.Equal(core.ToString(), other.ToString());
     }
 
     /// <summary>
@@ -317,20 +306,27 @@ public sealed class GatewayCallTraceMirrorTests
     }
 
     /// <summary>
-    /// 配了专属池的调用方，不点名时不会落到对外模型——哪怕这个模型是该用途的默认、
-    /// 启用着、而且有一条健康线路。这就是那个 P1 的最小复现。
+    /// 走不到这张目录的只剩一种人：状态未放行的。
+    ///
+    /// 这条替代了原来那条「配了专属池的调用方不点名时不落到默认对外模型」。
+    /// 模型池 2026-09-15 退场之后那条断言变成了**反向锁死一个 bug**（形状 4a）：
+    /// 它逐字要求面板继续用一个运行时已经不读的历史字段下结论。实证——
+    /// `document-store.transcribe-summary::chat` 名下还留着 AllowedModelPoolIds，
+    /// 面板据此说它「点名与不点名都走不到 default-chat」，真打一次点名却落到了
+    /// default-chat 的队首。结论是反的，而那条测试还在保护它。
     /// </summary>
     [Fact]
-    public void 专属池调用方不点名时不落到默认对外模型()
+    public void 放行的调用方一律认这张目录()
     {
         var reach = CallTracePlanner.Reach(
-            new CallTracePlanner.CallerBinding("pool-bound-caller", TrafficAllowed: true, HasDedicatedPools: true));
-        Assert.Equal(CallTracePlanner.CallerReach.DedicatedPoolOnly, reach);
+            new CallTracePlanner.CallerBinding("any-caller", TrafficAllowed: true));
+        Assert.Equal(CallTracePlanner.CallerReach.UsesModelCatalog, reach);
+        Assert.Contains("会落到这个模型", CallTracePlanner.UnnamedVerdict(reach, modelServesUnnamed: true));
 
-        // 模型这一侧的条件全部成立，结论仍然必须是「走不到这里」。
-        var verdict = CallTracePlanner.UnnamedVerdict(reach, modelServesUnnamed: true);
-        Assert.Contains("走不到这里", verdict);
-        Assert.DoesNotContain("会落到这个模型", verdict);
+        var rejected = CallTracePlanner.Reach(
+            new CallTracePlanner.CallerBinding("any-caller", TrafficAllowed: false));
+        Assert.Equal(CallTracePlanner.CallerReach.TrafficRejected, rejected);
+        Assert.Contains("发不出去", CallTracePlanner.UnnamedVerdict(rejected, modelServesUnnamed: true));
     }
 
     /// <summary>

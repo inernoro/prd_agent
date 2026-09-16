@@ -103,11 +103,9 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
                 <code style={{ ...MONO_META, flex: 1, minWidth: 200 }}>{caller.appCallerCode}</code>
                 {caller.reachesThisModel
                   ? <Chip label="落到它" color="var(--ok)" bg="var(--ok-bg)" />
-                  : caller.reach === 'DedicatedPoolOnly'
-                    ? <Chip label="走自己的专属池" color="var(--warn)" bg="var(--warn-bg)" />
-                    : caller.reach === 'TrafficRejected'
-                      ? <Chip label="未放行" color="var(--warn)" bg="var(--warn-bg)" />
-                      : <Chip label="不落到它" color="var(--text-muted)" bg="var(--bg-elevated)" />}
+                  : caller.reach === 'TrafficRejected'
+                    ? <Chip label="未放行" color="var(--warn)" bg="var(--warn-bg)" />
+                    : <Chip label="不落到它" color="var(--text-muted)" bg="var(--bg-elevated)" />}
                 <span style={{ ...HINT_TEXT, fontSize: 'var(--fs-caption)', flex: 2, minWidth: 240 }}>
                   {caller.verdict}
                 </span>

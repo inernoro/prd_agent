@@ -134,14 +134,14 @@ public static class CallTracePlanner
     /// <summary>
     /// 一个调用方在这一刻还认不认「对外模型」这张目录。
     /// 与 GatewayRouteSelection.CallerReach 逐项相同（含顺序，行为对照按值比）。
+    ///
+    /// 2026-09-16 随权威侧一起从三档收到两档：模型池退场后运行时不再看 AllowedModelPoolIds，
+    /// 只要放行就认这张目录。详见权威侧那段注释里的实证。
     /// </summary>
     public enum CallerReach
     {
-        /// <summary>认对外模型目录：点名走目录，不点名落到该用途的默认对外模型。</summary>
+        /// <summary>认对外模型目录：点名走目录，不点名落到认领它的模型、否则该用途的默认。</summary>
         UsesModelCatalog,
-
-        /// <summary>配了专属池，对外模型这一档被跳过——不点名落到它自己的池上。</summary>
-        DedicatedPoolOnly,
 
         /// <summary>这个调用方当前不放行，请求根本发不出去，谈不上落到谁。</summary>
         TrafficRejected,
@@ -149,25 +149,9 @@ public static class CallTracePlanner
 
     /// <param name="AppCallerCode">调用方代码。</param>
     /// <param name="TrafficAllowed">这个调用方当前放不放行。</param>
-    /// <param name="HasDedicatedPools">调用方记录里写没写 AllowedModelPoolIds。</param>
     public readonly record struct CallerBinding(
         string AppCallerCode,
-        bool TrafficAllowed,
-        bool HasDedicatedPools);
-
-    /// <summary>
-    /// 与 GatewayRouteSelection.ModelCatalogExceptions 逐字相同。
-    ///
-    /// 这份名单在权威侧是 AppCallerRegistry 的常量，这边只能写字面量——console-api 不引用
-    /// PrdAgent.*。行为对照测试逐个元素比对两侧集合，改一边忘另一边会红。
-    /// </summary>
-    public static readonly IReadOnlySet<string> ModelCatalogExceptions =
-        new HashSet<string>(StringComparer.Ordinal)
-        {
-            "visual-agent.image.text2img::generation",
-            "visual-agent.image.img2img::generation",
-            "visual-agent.image.vision::generation",
-        };
+        bool TrafficAllowed);
 
     /// <summary>
     /// 调用方状态放行与否，与 GatewayAppCallerPolicy.AllowsTraffic 逐字相同。
@@ -187,12 +171,7 @@ public static class CallTracePlanner
 
     /// <summary>这个调用方还认不认对外模型目录。</summary>
     public static CallerReach Reach(in CallerBinding caller)
-    {
-        if (!caller.TrafficAllowed) return CallerReach.TrafficRejected;
-        if (caller.HasDedicatedPools && !ModelCatalogExceptions.Contains(caller.AppCallerCode))
-            return CallerReach.DedicatedPoolOnly;
-        return CallerReach.UsesModelCatalog;
-    }
+        => caller.TrafficAllowed ? CallerReach.UsesModelCatalog : CallerReach.TrafficRejected;
 
     /// <summary>
     /// 「不点名时这个调用方会不会落到这个模型」——面板那格里每一行调用方的结论。
@@ -204,7 +183,6 @@ public static class CallTracePlanner
         => reach switch
         {
             CallerReach.TrafficRejected => "这个调用方当前不放行，请求发不出去",
-            CallerReach.DedicatedPoolOnly => "它配了专属池，不点名的请求落在自己的池上，走不到这里",
             _ when modelServesUnnamed => "不点名会落到这个模型",
             _ => "不点名不会落到这个模型（这个用途的默认不是它）",
         };

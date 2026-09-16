@@ -4073,14 +4073,13 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
     var callerDocs = await gwAppCallers
         .Find(TenantAccess.Filter(http, fb.Eq("RequestType", item.ModelType)))
         .Project(Builders<BsonDocument>.Projection
-            .Include("AppCallerCode").Include("Status").Include("AllowedModelPoolIds"))
+            .Include("AppCallerCode").Include("Status"))
         .ToListAsync();
     var unnamedCallers = callerDocs
         .Select(d => new
         {
             Code = d.GetStringOrEmpty("AppCallerCode"),
             Status = d.AsNullableString("Status"),
-            HasPools = GetStringArray(d, "AllowedModelPoolIds").Any(x => !string.IsNullOrWhiteSpace(x)),
         })
         .Where(x => x.Code.Length > 0)
         // 同一个 appCallerCode 在同一用途下可能有多条记录（历史写入），去重后按代码排序，
@@ -4091,7 +4090,7 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
         .Select(x =>
         {
             var reach = CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(
-                x.Code, CallTracePlanner.AllowsTraffic(x.Status), x.HasPools));
+                x.Code, CallTracePlanner.AllowsTraffic(x.Status)));
             // 这个调用方走到目录之后，落到的是不是**这个**模型：
             //   认领了它 → 是（只要这个模型启用着且有能接的线路）
             //   被别人认领 → 不是，且说得出是谁
@@ -4124,16 +4123,17 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
 
     // 结论那一句同样需要主语，而且**点名与不点名都需要**。
     //
-    // 运行时那道门（`!严格池契约 || 目录例外`）罩的不只是「不点名」那一档——它罩着整个
-    // 对外模型目录。配了专属池的调用方哪怕点名这个模型，也走不到这里，请求落进它自己的池。
-    // 2026-09-15 的逐调用方冒烟就是这么抓到的：点名 document-store-transcribe-summary 时
-    // 运行时回的是 GatewayRegistryPool，压根没有线路标识可比。
+    // 2026-09-16 之前这里还数着「配了专属池」的调用方，说它们「点名与不点名都走不到这里」。
+    // 模型池退场后那句话变成了假的：运行时不再看 AllowedModelPoolIds，点名照样落到这里。
+    // 实证——`document-store.transcribe-summary::chat` 名下还留着那个历史字段，面板说它
+    // 走不到 default-chat，真打一次点名却落到了 default-chat 的队首。
+    // 现在走不到这张目录的只剩一种人：状态未放行的。
     var outsiderCount = unnamedCallers.Count(x => !string.Equals(
         x.Reach, nameof(CallTracePlanner.CallerReach.UsesModelCatalog), StringComparison.Ordinal));
     var conclusion = outsiderCount == 0
         ? conclusionCore
-        : $"{conclusionCore}这句话对认这张目录的 {unnamedCallers.Count - outsiderCount} 个调用方成立；"
-          + $"另外 {outsiderCount} 个配了专属池或未放行，点名与不点名都走不到这里。";
+        : $"{conclusionCore}这句话对放行中的 {unnamedCallers.Count - outsiderCount} 个调用方成立；"
+          + $"另外 {outsiderCount} 个当前未放行，请求根本发不出去。";
 
     var unnamedSummary = servesUnnamed
         ? unnamedCallers.Count == 0
@@ -4185,7 +4185,6 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
     // 一句判断都不做——画出来的图最容易被人当真，它错了比列表错了更糟。
     string StateOf(bool certain, bool possible) => certain ? "taken" : possible ? "possible" : "blocked";
     var usesCatalogCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.UsesModelCatalog));
-    var dedicatedCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.DedicatedPoolOnly));
     var rejectedCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.TrafficRejected));
     var eligibleCount = candidates.Count(x => CallTracePlanner.SkipReason(x) is null);
     var queue = CallTracePlanner.Queue(candidates, weighted, 0);
@@ -4203,13 +4202,11 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
         new()
         {
             Id = "caller-reach",
-            Question = "这个调用方认对外模型目录吗",
+            Question = "这个调用方放行吗",
             Branches =
             [
-                new() { Label = "认", Outcome = "继续往下走", State = StateOf(false, usesCatalogCount > 0),
+                new() { Label = "放行", Outcome = "认这张目录，继续往下走", State = StateOf(false, usesCatalogCount > 0),
                         Note = unnamedCallers.Count == 0 ? "这个用途还没登记调用方" : $"{usesCatalogCount} 个调用方" },
-                new() { Label = "配了专属池", Outcome = "落到它自己的专属池，与这张目录无关",
-                        State = StateOf(false, dedicatedCount > 0), Note = dedicatedCount > 0 ? $"{dedicatedCount} 个调用方" : null },
                 new() { Label = "状态未放行", Outcome = "拒绝：请求发不出去",
                         State = StateOf(false, rejectedCount > 0), Note = rejectedCount > 0 ? $"{rejectedCount} 个调用方" : null },
             ],
@@ -16072,16 +16069,17 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
 /// 上一版这句话写死了「配了专属池或未放行」。断流之后原因变成了「被别的模型认领了」，
 /// 那句总结就开始说不准——逐调用方那一栏是对的，总结却在撒一个小谎。
 /// 判据要么来自数据，要么就别下结论（形状 1：判据比它该管的范围窄）。
+///
+/// 2026-09-16 模型池退场，「配了专属池」这一档跟着消失：运行时不再看 AllowedModelPoolIds，
+/// 只要放行就认这张目录。剩下三种真实原因——被别的模型认领、未放行、这个用途的默认不是它。
 /// </summary>
 static string DescribeMissReasons(IReadOnlyList<CallTraceUnnamedCaller> callers)
 {
     var parts = new List<string>();
-    var pool = callers.Count(x => string.Equals(x.Reach, nameof(CallTracePlanner.CallerReach.DedicatedPoolOnly), StringComparison.Ordinal));
     var rejected = callers.Count(x => string.Equals(x.Reach, nameof(CallTracePlanner.CallerReach.TrafficRejected), StringComparison.Ordinal));
     var claimed = callers.Count(x => !x.ReachesThisModel && x.Verdict.Contains("认领了", StringComparison.Ordinal));
-    var other = callers.Count(x => !x.ReachesThisModel) - pool - rejected - claimed;
+    var other = callers.Count(x => !x.ReachesThisModel) - rejected - claimed;
     if (claimed > 0) parts.Add($"{claimed} 个被别的模型认领");
-    if (pool > 0) parts.Add($"{pool} 个配了专属池");
     if (rejected > 0) parts.Add($"{rejected} 个未放行");
     if (other > 0) parts.Add($"{other} 个这个用途的默认不是它");
     return parts.Count == 0 ? "没有别人" : string.Join("、", parts);

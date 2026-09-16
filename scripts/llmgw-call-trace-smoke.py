@@ -172,7 +172,7 @@ def main():
         ok = offering in accepted
         verdict = ("与面板推演一致" if ok
                    else f"面板说会落到 {sorted(accepted.values())}，运行时解析到 {got_label}（{offering}）")
-    reach_label = {"DedicatedPoolOnly": "配了专属池", "TrafficRejected": "未放行"}.get(named_reach, "认对外模型目录")
+    reach_label = {"TrafficRejected": "未放行"}.get(named_reach, "认对外模型目录")
     print(f"[{'通过' if ok else '失败'}] 点名模型（{APP_CALLER}，{reach_label}） — "
           f"status={status} 运行时落点={got_label} · {verdict}")
     if not ok:
@@ -207,14 +207,14 @@ def main():
             ok = not succeeded
             verdict = "面板说这个调用方不放行，运行时确实解析不出来" if ok else f"面板说未放行，运行时却解析到 {got_label}"
         else:
-            # 面板说走不到这个模型（配了专属池，或本用途的默认不是它）。
+            # 面板说走不到这个模型（被别的模型认领了，或本用途的默认不是它）。
             # 这里**不断言它落到哪**——那是另一个模型的全貌；只断言它没落到这个模型的线路上。
             landed_here = succeeded and offering is not None and offering in accepted
             ok = not landed_here
             verdict = ("确实没落到这个模型" if ok
                        else f"面板说走不到这里，运行时却落到了这个模型的 {got_label}（{offering}）")
 
-        label = {"DedicatedPoolOnly": "配了专属池", "TrafficRejected": "未放行"}.get(reach, "认对外模型目录")
+        label = {"TrafficRejected": "未放行"}.get(reach, "认对外模型目录")
         print(f"[{'通过' if ok else '失败'}] 不点名 · {code}（{label}） — status={status} "
               f"运行时落点={got_label or '(无)'} · {verdict}")
         if not ok:

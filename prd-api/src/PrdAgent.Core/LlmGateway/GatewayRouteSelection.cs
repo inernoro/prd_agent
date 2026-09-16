@@ -132,19 +132,21 @@ public static class GatewayRouteSelection
     ///
     /// 为什么这件事必须有主语：面板此前那句「只给 appCallerCode、不点名模型时会落到它」
     /// 是一句**没有主语的话**——判据只看模型自己（是不是默认、启用了没、有没有能接的线路），
-    /// 全程不问「谁在调」。而运行时对不同调用方走的根本不是同一条路：调用方一旦配了专属池
-    /// （AllowedModelPoolIds 非空），对外模型这一档**整个被跳过**，不点名的请求落到它自己的
-    /// 池上，和这个模型没有关系。
+    /// 全程不问「谁在调」。拿一个调用方的样本判一句全称命题，正是
+    /// predicate-and-wiring-discipline 形状 1（判据太窄）。
     ///
-    /// 拿一个调用方的样本判一句全称命题，正是 predicate-and-wiring-discipline 形状 1（判据太窄）。
+    /// 2026-09-16 从三档收到两档。此前还有一档 DedicatedPoolOnly：调用方配了专属池，
+    /// 对外模型这一档整个被跳过。模型池在 2026-09-15 退场之后，运行时再也不看
+    /// AllowedModelPoolIds 了，**只要放行就认这张目录**——留着那一档，面板会拿一个
+    /// 已经没有任何解析作用的历史字段去解释落点，而运行时压根不读它
+    /// （形状 6：判据读的值不是真正生效的那个值）。实证：`document-store.transcribe-summary::chat`
+    /// 名下还留着 AllowedModelPoolIds，面板据此说它「点名与不点名都走不到 default-chat」，
+    /// 而真打一次点名，它落到了 default-chat 的队首。结论是反的。
     /// </summary>
     public enum CallerReach
     {
-        /// <summary>认对外模型目录：点名走目录，不点名落到该用途的默认对外模型。</summary>
+        /// <summary>认对外模型目录：点名走目录，不点名落到认领它的模型、否则该用途的默认。</summary>
         UsesModelCatalog,
-
-        /// <summary>配了专属池，对外模型这一档被跳过——不点名落到它自己的池上。</summary>
-        DedicatedPoolOnly,
 
         /// <summary>这个调用方当前不放行，请求根本发不出去，谈不上落到谁。</summary>
         TrafficRejected,
@@ -152,33 +154,11 @@ public static class GatewayRouteSelection
 
     /// <param name="AppCallerCode">调用方代码。</param>
     /// <param name="TrafficAllowed">这个调用方当前放不放行（状态判定的结果）。</param>
-    /// <param name="HasDedicatedPools">调用方记录里写没写 AllowedModelPoolIds，写了就是严格池契约。</param>
     public readonly record struct CallerBinding(
         string AppCallerCode,
-        bool TrafficAllowed,
-        bool HasDedicatedPools);
-
-    /// <summary>
-    /// 即便配了专属池、也仍然认对外模型目录的那几个调用方。
-    ///
-    /// 这是一份**调用方特例漏进代码**的活标本（架构文档第 4 节：调用方与能力那两条轴不该进代码）。
-    /// 把它收在这里而不是散在解析器里，至少保证只有一份、且被镜像对照钉住；
-    /// 真正的解法是让它变成调用方记录上的一个字段，那是后续的事。
-    /// </summary>
-    public static readonly IReadOnlySet<string> ModelCatalogExceptions =
-        new HashSet<string>(StringComparer.Ordinal)
-        {
-            AppCallerRegistry.VisualAgent.Image.Text2Img,
-            AppCallerRegistry.VisualAgent.Image.Img2Img,
-            AppCallerRegistry.VisualAgent.Image.VisionGen,
-        };
+        bool TrafficAllowed);
 
     /// <summary>这个调用方还认不认对外模型目录。运行时与面板共用这一份。</summary>
     public static CallerReach Reach(in CallerBinding caller)
-    {
-        if (!caller.TrafficAllowed) return CallerReach.TrafficRejected;
-        if (caller.HasDedicatedPools && !ModelCatalogExceptions.Contains(caller.AppCallerCode))
-            return CallerReach.DedicatedPoolOnly;
-        return CallerReach.UsesModelCatalog;
-    }
+        => caller.TrafficAllowed ? CallerReach.UsesModelCatalog : CallerReach.TrafficRejected;
 }

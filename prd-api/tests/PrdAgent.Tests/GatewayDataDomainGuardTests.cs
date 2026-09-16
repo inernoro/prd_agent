@@ -521,14 +521,16 @@ public class GatewayDataDomainGuardTests
         // 「不点名会落到它」必须有主语。
         //
         // 2026-09-15 对抗审查抓到的 P1：这句话此前只判模型这一侧（是默认、启用着、有能接的线路），
-        // 全程不问「谁在调」。而运行时那道门是 `!StrictPoolContract || 目录例外`——调用方一旦配了
-        // 专属池，对外模型这一档整个被跳过，不点名的请求落在它自己的池上。冒烟之所以没抓到，
-        // 是因为只跑了一个调用方，用一个样本判绿了一句全称命题（形状 1）。
+        // 全程不问「谁在调」。冒烟之所以没抓到，是因为只跑了一个调用方，
+        // 用一个样本判绿了一句全称命题（形状 1）。
         //
         // 判据本身的两侧一致由 GatewayCallTraceMirrorTests 钉住；这里钉的是**接线**：
         // 运行时真的走共享判据、端点真的逐个调用方算、面板真的逐个调用方渲染、冒烟真的逐个跑。
-        // 名单只许有一份：解析器那个方法必须转发到权威集合，不许自己再列一遍。
-        Assert.Contains("GatewayRouteSelection.ModelCatalogExceptions.Contains(appCallerCode)", resolver);
+        //
+        // 视觉创作那份调用方名单 2026-09-16 从共享判据搬回解析器：它剩下的唯一职责是
+        // 模型选择器的目录展示，解析判据和控制台面板都不需要知道它，份数从 2 降到 1。
+        // 这里钉「名单在解析器里只许有一份集中的集合」，反向断言防它散成一串 if。
+        Assert.Contains("VisualCatalogCallers.Contains(appCallerCode)", resolver);
         Assert.DoesNotContain("appCallerCode is AppCallerRegistry.VisualAgent.Image.Text2Img", resolver);
 
         Assert.Contains("CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(", consoleProgram);
@@ -541,7 +543,10 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("call-trace-unnamed-callers", panel);
         Assert.Contains("data.unnamed.callers.map", panel);
-        Assert.Contains("走自己的专属池", panel);
+        // 2026-09-16 删掉「走自己的专属池」那个 chip：模型池退场后运行时不再看 AllowedModelPoolIds，
+        // 放行的调用方一律认这张目录，那个 chip 只会拿一个已经失效的理由解释落点。
+        Assert.DoesNotContain("走自己的专属池", panel);
+        Assert.DoesNotContain("DedicatedPoolOnly", panel);
 
         // 冒烟必须逐个调用方跑。写死成「挑一个样本」的那种写法正是这次漏检的成因。
         var smoke = ReadRepoFile("scripts/llmgw-call-trace-smoke.py");
@@ -622,8 +627,8 @@ public class GatewayDataDomainGuardTests
         // 文档里那张静态图与面板这张是同构的，改一边忘另一边就会对不上。
         var architecture = ReadRepoFile("doc/design.platform.llm-gateway.model-architecture.md");
         Assert.Contains("```mermaid", architecture);
-        Assert.Contains("认对外模型目录吗", architecture);
-        Assert.Contains("认对外模型目录吗", consoleProgram);
+        Assert.Contains("这个调用方<br/>放行吗", architecture);
+        Assert.Contains("这个调用方放行吗", consoleProgram);
     }
 
     [Fact]
@@ -1209,7 +1214,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("path=\"/learn\"", app);
         Assert.Contains("to: '/learn', label: '学习中心'", layout);
         Assert.Contains("to=\"/learn\"", layout);
-        foreach (var concept in new[] { "租户", "团队与用户", "appCaller", "租户接入密钥", "模型池", "模型", "Provider", "Exchange", "请求记录", "用量与费用" })
+        // 「模型池」2026-09-16 换成「对外模型」：那一页讲的就是调用方点名的那个名字，
+        // 而模型池已经整个退场，留着旧词等于教一个不存在的概念。
+        foreach (var concept in new[] { "租户", "团队与用户", "appCaller", "租户接入密钥", "对外模型", "模型", "Provider", "Exchange", "请求记录", "用量与费用" })
         {
             Assert.Contains(concept, learning);
         }
