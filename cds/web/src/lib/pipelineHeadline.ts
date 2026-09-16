@@ -1,0 +1,171 @@
+/**
+ * 验收首页的那句判断（2026-09-10）。
+ *
+ * 为什么单独抽出来：上一版首页是一排计数（改动 5 / 部署 4 / 验收 1 / 合并 0、漏 3、
+ * 另有 18 份无从核对），每个数字都对，合起来不告诉读者任何事——用户原话「我看不懂你的首页」。
+ * 按 conclusion-before-numbers.md，数据界面有三层：计数 → 对照 → 结论，上一版停在第二层。
+ *
+ * 所以这里产出**结论层**：一句挂着数字的判断 + 两三条同样挂着数字的支撑 + 一个下一步。
+ * 三条自律照抄那份规则：
+ *   1. 每句必须挂真实数字，「整体表现良好」这种放到任何团队都成立的话一律不出;
+ *   2. 算不出来就不出这句，不为凑版面降低标准;
+ *   3. 规则生成而非 LLM 生成——首页要秒开、要可复现、出错能定位到具体分支。
+ *
+ * 纯函数，不碰 React，好让守卫直接断言句子本身。
+ */
+import type { PipelineOverview } from './api';
+import { splitFunnel } from './pipelineFunnel';
+
+export type HeadlineTone = 'bad' | 'warn' | 'ok';
+
+export interface PipelineHeadline {
+  tone: HeadlineTone;
+  /** 第一眼那句判断。 */
+  sentence: string;
+  /** 支撑句，每条都挂着数字；按重要度排，最多三条。 */
+  points: string[];
+  /** 下一步该动谁；没有明确对象时为 null，绝不写「请关注」这种空话。 */
+  action: string | null;
+}
+
+/** 漏点最多的那个项目；并列时取改动多的。用来回答「这些集中在谁那里」。 */
+function worstProject(p: PipelineOverview): { name: string; leaks: number } | null {
+  let best: { name: string; leaks: number; changes: number } | null = null;
+  for (const row of p.projects) {
+    const leaks = Object.values(row.leaks).reduce((n, v) => n + v, 0);
+    if (leaks === 0) continue;
+    if (!best || leaks > best.leaks || (leaks === best.leaks && row.funnel.changes > best.changes)) {
+      best = { name: row.projectName, leaks, changes: row.funnel.changes };
+    }
+  }
+  return best ? { name: best.name, leaks: best.leaks } : null;
+}
+
+/** 取前 N 个某类漏点的主体名，用来把「下一步」指到具体分支上。 */
+function subjectsOf(p: PipelineOverview, kind: string, limit: number): string[] {
+  return p.leaks.filter((l) => l.kind === kind).slice(0, limit).map((l) => l.subject);
+}
+
+export function buildPipelineHeadline(p: PipelineOverview): PipelineHeadline {
+  const t = p.total;
+  const L = p.totalLeaks;
+  const points: string[] = [];
+
+  // 支撑句 1：这些集中在谁那里。只有一个项目时不说——废话。
+  const worst = worstProject(p);
+  if (worst && p.projects.length > 1) {
+    points.push(`最集中的是「${worst.name}」，占 ${worst.leaks} 条`);
+  }
+
+  // 支撑句 2：验过的那些，结论如何。全是通过就不单独说，避免凑数。
+  if (t.accepted > 0 && (t.fail > 0 || t.conditional > 0)) {
+    const parts: string[] = [];
+    if (t.fail > 0) parts.push(`未通过 ${t.fail} 条`);
+    if (t.conditional > 0) parts.push(`原则性通过 ${t.conditional} 条`);
+    points.push(`验过的 ${t.accepted} 条里，${parts.join('、')}`);
+  }
+
+  /*
+   * 支撑句 3：更危险的那一类是不是干净的。说「没有」也是结论，前提是查得到。
+   * 「查不到的部分」必须和它**同在一句**，不能拆成两条：下面每个分支都走
+   * points.slice(0, 3)，凑够四条时被切掉的正好是后一条，于是屏幕上只剩
+   * 「没有不安全的合并」——把「查得到的范围里没有」读成了「全场没有」，
+   * 一句假的保证（Codex review 抓到）。合成一句，截断就切不开它们。
+   */
+  const linked = p.projects.filter((r) => r.githubLinked).length;
+  const unlinked = p.projects.filter((r) => !r.githubLinked).length;
+  const mergeClean = linked > 0
+    && L['merged-not-accepted'] === 0 && L['merged-while-failing'] === 0;
+  if (mergeClean && unlinked > 0) {
+    points.push(
+      `接了 GitHub 的 ${linked} 个项目里没有「没验就合并」或「没过还合并」，`
+      + `另有 ${unlinked} 个项目没接，合并这一步查不到`,
+    );
+  } else if (mergeClean) {
+    points.push('没有「没验就合并」或「没过还合并」的情况');
+  } else if (unlinked > 0) {
+    points.push(`${unlinked} 个项目没接 GitHub，合并这一步查不到`);
+  }
+
+  const top = (kind: string, n: number): string => {
+    const names = subjectsOf(p, kind, n);
+    return names.length ? names.join('、') : '';
+  };
+
+  // 判断句本身：按严重度取第一条成立的，不叠加。
+  if (L['merged-not-accepted'] > 0) {
+    const n = L['merged-not-accepted'];
+    return {
+      tone: 'bad',
+      sentence: `${n} 条改动一次验收都没做，已经进了主干`,
+      points: points.slice(0, 3),
+      action: top('merged-not-accepted', 3) ? `补验：${top('merged-not-accepted', 3)}` : null,
+    };
+  }
+  if (L['merged-while-failing'] > 0) {
+    const n = L['merged-while-failing'];
+    return {
+      tone: 'bad',
+      sentence: `${n} 条改动验收没通过，仍然进了主干`,
+      points: points.slice(0, 3),
+      action: top('merged-while-failing', 3) ? `复查：${top('merged-while-failing', 3)}` : null,
+    };
+  }
+  if (L['deployed-not-accepted'] > 0) {
+    const n = L['deployed-not-accepted'];
+    return {
+      tone: 'warn',
+      sentence: `${t.changes} 条改动里，${n} 条部署了但没人验收`,
+      points: points.slice(0, 3),
+      action: top('deployed-not-accepted', 3) ? `先验：${top('deployed-not-accepted', 3)}` : null,
+    };
+  }
+  /*
+   * 这里的数说的是「这个窗口里开出来的改动」，其中一部分已经合并或撤下，所以不能叫
+   * 「在改的分支」——那是把已完成的也算成在办的工作量。措辞对齐同屏那条总览条的
+   * 「改动」标签；不换成逐项目 inFlight 之和，因为那会让头条的数和图上的数对不上，
+   * 正是下面那段注释在防的「同一屏两个数打架」。
+   */
+  if (t.changes === 0) {
+    return { tone: 'ok', sentence: '这个窗口里没有改动', points: [], action: null };
+  }
+  /*
+   * 下面两句必须和同屏那张分流图读同一份数字。
+   *
+   * 后端的 accepted 是独立累加的，挂在一条从未部署过的分支上的报告会让
+   * accepted > deployed；而图走 splitFunnel（逐级夹取），会把那条改动画在「没起预览」里。
+   * 各算各的话，屏幕上就出现「都验过了」配一张画着未验收方块的图——同一屏两个数打架，
+   * 最难查的那种（Codex review 抓到）。所以这里改用 splitFunnel 的三段。
+   */
+  /*
+   * 验过了不等于验过关。走到这里说明没有「合了没验」「验不过还合」「部署了没验」这三类漏，
+   * 但「已验完」那一段里仍然可能有未通过——同屏的总览条正把那几条画成红的，头条却绿着
+   * 说「都验过了」。覆盖率干净与结论干净是两件事，不能用前者盖掉后者（Codex review 抓到）。
+   * 未通过的具体是谁由支撑句 2 给（它挂着 accepted 与 fail 两个数），这里只负责把调子摆正。
+   */
+  if (t.fail > 0) {
+    return {
+      tone: 'bad',
+      sentence: `${t.changes} 条改动都验过了，其中 ${t.fail} 条没通过`,
+      points: points.slice(0, 3),
+      action: null,
+    };
+  }
+
+  const seg = splitFunnel(t);
+  if (seg.accepted >= Math.max(0, t.changes)) {
+    return {
+      tone: 'ok',
+      sentence: `${t.changes} 条改动都验过了`,
+      points: points.slice(0, 3),
+      action: null,
+    };
+  }
+  // 兜底：还有没部署因而谈不上验收的分支。不编判断，如实说构成。
+  return {
+    tone: 'ok',
+    sentence: `${t.changes} 条改动，${seg.accepted} 条验过、${seg.undeployed} 条还没部署`,
+    points: points.slice(0, 3),
+    action: null,
+  };
+}

@@ -91,6 +91,8 @@ export interface UptimeTargetSummary {
    * 0 是最要紧的那个值：判据过了但根本没人用过，绿灯不作数。
    */
   sampleCount?: number;
+  /** 这条业务是否出现在项目的公开面板上（服务端下发，前端只展示） */
+  publicVisible?: boolean;
   /** 最新一次观测的摘要；完整证据走 /uptime/monitors/:id/observations。 */
   lastObservation?: {
     at: string;
@@ -104,7 +106,7 @@ export interface UptimeTargetSummary {
   addedBy?: {
     by: string;
     kind: 'human' | 'project-key' | 'global-key';
-    origin: 'manual' | 'agent-api';
+    origin: 'manual' | 'agent-api' | 'discovered';
     boundBranchId?: string;
   };
   tags?: string[];
@@ -226,6 +228,12 @@ export interface CustomMonitor {
   observeMode?: ObserveMode;
   /** 被动观测的样本量从哪读（health-json 是 componentId，functional 是字段路径） */
   sampleCountPath?: string;
+  /** 是否出现在项目的公开状态页上 */
+  publicVisible?: boolean;
+  /** 公开页上的对外叫法；留空用 name */
+  publicName?: string;
+  /** 来源：discovered = 自检端点自报，定义由 CDS 每轮对账维护，人改了会被覆盖 */
+  origin?: 'manual' | 'agent-api' | 'discovered';
   tags?: string[];
   enabled: boolean;
   createdAt: string;
@@ -806,3 +814,14 @@ export function describeBucket(bucket: UptimeBucket): string[] {
   }
   return lines;
 }
+
+/**
+ * 监控来源的中文名。**用映射不用三元**：三元判断遇到新枚举值会静默落到 else 分支，
+ * 于是「自检端点自报」被显示成「人工添加」——枚举扩展最典型的漏法
+ * （enum-ripple-audit）。映射缺一个键至少还能看出来是空的。
+ */
+export const MONITOR_ORIGIN_LABEL: Record<'manual' | 'agent-api' | 'discovered', string> = {
+  manual: '人工添加',
+  'agent-api': 'Agent 自助登记',
+  discovered: '自检端点自报',
+};

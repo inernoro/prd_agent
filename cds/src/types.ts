@@ -1656,6 +1656,16 @@ export interface UptimeCustomMonitor {
    *   functional  —— 响应文档里的字段路径，如 `data.requestCount`。
    */
   sampleCountPath?: string;
+  /**
+   * 这条业务是否出现在项目的公开面板上。缺省 false —— 公开是显式动作，
+   * 不是默认值：默认公开会让一条刚加的内部探针在下一次部署后对全网可见。
+   */
+  publicVisible?: boolean;
+  /**
+   * 对外叫法。公开面板上用它替代 name——内部名常带环境、组件与缩写
+   * （「llmgw serving 未处理异常」），那是给自己人看的。留空就用 name。
+   */
+  publicName?: string;
   /** 自由标签，列表里用于分组与搜索 */
   tags?: string[];
   /** false = 手动暂停：不探测、不计故障、已开的故障就地收尾 */
@@ -1668,8 +1678,18 @@ export interface UptimeCustomMonitor {
    * 没人知道该找谁，最后的结局是被静音。
    */
   createdByKind?: 'human' | 'project-key' | 'global-key';
-  /** 从哪加的：manual = 人在面板上加；agent-api = Agent 用项目 Key 自助登记 */
-  origin?: 'manual' | 'agent-api';
+  /**
+   * 从哪来的：
+   *   manual     —— 人在面板上加的；
+   *   agent-api  —— Agent 用项目 Key 自助登记的；
+   *   discovered —— 自检端点自报的（监控自发现），由 CDS 每轮对账维护。
+   *
+   * discovered 的定义**不许人手改**：改了下一轮会被端点的声明覆盖，
+   * 那是漂移源。要改就去改服务自己的自描述。
+   */
+  origin?: 'manual' | 'agent-api' | 'discovered';
+  /** 自发现监控的稳定标识（端点 + componentId）。对账靠它，只有 discovered 才有。 */
+  discoveryKey?: string;
   /**
    * 绑定的分支。
    *
@@ -1679,6 +1699,14 @@ export interface UptimeCustomMonitor {
    * 分支删除时随之清理（state.removeBranch 的级联）。
    */
   boundBranchId?: string;
+  /**
+   * 这个地址落在哪条分支的预览域名上（纯事实，不含寿命语义）。
+   *
+   * 与 boundBranchId 分开：那个管「分支没了就一起删」，只有 Agent 自助登记的才有；
+   * 这个管「环境算不算分支预览」，**任何登记路径都要盖**——否则管理员手动加一条
+   * 指着临时分支的监控会被算成生产，混进项目负责人的第一屏。
+   */
+  previewBranchId?: string;
   createdAt: string;
   updatedAt: string;
   createdBy?: string;
@@ -2690,8 +2718,21 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
-  /** 稳定 ID（用于磁盘文件名 `<id>.<ext>` 与路由 `:id`）。 */
+  /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */
   id: string;
+  /**
+   * 正文在对象存储里的键（2026-09-10）。
+   *
+   * 元数据在 Mongo、正文在容器本地盘，曾经让整批报告在容器重建后变成点不开的
+   * 幽灵台账。现在正文进对象存储，本地盘只当读缓存，这个键是正文的唯一权威地址。
+   *
+   * 为 null 有两种含义，**必须靠 storage 区分**，不能只看这一个字段：
+   *   - storage='local'  → 归档时没配对象存储，正文只在本地，重建即失
+   *   - 历史报告（两者都缺）→ 本次改动之前归档的，正文多半已经不在了
+   */
+  objectKey?: string | null;
+  /** 正文实际落在哪一层。缺省视为历史数据（本地盘，且很可能已丢）。 */
+  storage?: 'object' | 'local';
   /** 报告标题（用户填写，列表/详情展示）。 */
   title: string;
   /** 报告格式：'html' 原样渲染，'md' 转 HTML 后渲染。 */
@@ -2704,7 +2745,7 @@ export interface AcceptanceReportMeta {
   folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
-  /** 验收结论：pass 通过 / conditional 有条件通过 / fail 不通过；未判定为 null。 */
+  /** 验收结论：pass 通过 / conditional 原则性通过 / fail 不通过；未判定为 null。 */
   verdict?: 'pass' | 'conditional' | 'fail' | null;
   /** 验收档位（如 P0 冒烟 / 视觉回归 / 完整验收等，自由文本，用于看板分组）；可空。 */
   tier?: string | null;
@@ -3486,6 +3527,24 @@ export interface ManagedProjectSpec {
 }
 
 export interface Project {
+  /**
+   * 监控自发现的端点清单（「插上」的那几个口）。
+   *
+   * CDS 每轮打这些地址，读它们自报的 `cds:monitor` 声明，对账出监控项。
+   * 端点自己说「判什么」，但**不说打哪**——CDS 打的永远是这里登记的地址。
+   */
+  monitorEndpoints?: string[];
+  /**
+   * 公开状态页的口令（不可枚举随机串）。有值 = 这个项目的公开面板已开，
+   * 匿名访问 `/s/<token>` 可见；置空 = 立刻关掉，旧链接当即 404。
+   *
+   * 与验收报告的 shareToken 同款：token 自鉴权、不挂在登录网关后面——
+   * 它的全部意义就是给没有账号的人看。
+   */
+  statusPageToken?: string | null;
+  /** 公开面板开启时间。面板上不展示，只做审计。 */
+  statusPageOpenedAt?: string;
+
   /** Stable identifier, used in URLs and routing filters. */
   id: string;
   /** URL-friendly slug (may equal id, usually kebab-case). */

@@ -31,6 +31,7 @@
 - [海鲜市场产品规格 · 规格](./spec.marketplace.md) `spec.marketplace`
 - [应用注册中心协议 · 规格](./spec.platform.app-registry.md) `spec.platform.app-registry`
 - [LLM 网关测试矩阵 · 规格](./spec.platform.llm-gateway.test-matrix.md) `spec.platform.llm-gateway.test-matrix`
+- [监控自发现协议 · 规格](./spec.platform.monitor-discovery.md) `spec.platform.monitor-discovery`
 - [统一短链系统 · 规格](./spec.platform.short-links.md) `spec.platform.short-links`
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
 - [给设计方的画板请求（录音交付页）](./spec.prd-admin.recording-design-demo-request.md) `spec.prd-admin.recording-design-demo-request`
@@ -100,6 +101,7 @@
 - [可复用组件产品 · 设计](./design.frontend.reusable-patterns.md) `design.frontend.reusable-patterns`
 - [Toast 通知系统 · 设计](./design.frontend.toast.md) `design.frontend.toast`
 - [CDS Agent 工作区基础设施模型 · 设计](./design.knowledge-base.agent-architecture.md) `design.knowledge-base.agent-architecture`
+- [知识库 GitHub 目录同步 · 设计](./design.knowledge-base.github-sync.md) `design.knowledge-base.github-sync`
 - [知识库引用网络（双链 + 反向链接 + 宇宙图） · 设计](./design.knowledge-base.mention-network.md) `design.knowledge-base.mention-network`
 - [录音交付流程与无 AI 纪要网页 · 设计](./design.knowledge-base.recording-delivery.md) `design.knowledge-base.recording-delivery`
 - [多文档知识库与文档类型系统 · 设计](./design.knowledge-base.multi-doc.md) `design.knowledge-base.multi-doc`
@@ -382,6 +384,7 @@
 - [周报 2026-W34 (2026-08-17 ~ 2026-08-23)](./report.2026-W34.md) `report.2026-W34`
 - [周报 2026-W35 (2026-08-24 ~ 2026-08-30)](./report.2026-W35.md) `report.2026-W35`
 - [周报 2026-W36 (2026-08-31 ~ 2026-09-06)](./report.2026-W36.md) `report.2026-W36`
+- [周报 2026-W37 (2026-09-07 ~ 2026-09-13)](./report.2026-W37.md) `report.2026-W37`
 - [CDS Agent 商业级可用闭环目标审计报告（grandfather 保留） · 报告](./report.cds.agent.goal-completion-audit.2026-05-19.md) `report.cds.agent.goal-completion-audit.2026-05-19`
 - [CDS Agent P4-1 远端发布前验收与试用入口报告（grandfather 保留） · 报告](./report.cds.agent.p4-1-remote-preflight.2026-05-19.md) `report.cds.agent.p4-1-remote-preflight.2026-05-19`
 - [CDS Agent P4-2 远端 Provider 闭环验收报告（grandfather 保留） · 报告](./report.cds.agent.p4-2-provider-closure.2026-05-19.md) `report.cds.agent.p4-2-provider-closure.2026-05-19`

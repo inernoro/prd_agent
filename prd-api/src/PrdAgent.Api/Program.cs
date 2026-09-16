@@ -469,6 +469,21 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Inf
 // 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
 builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
 
+// 模型排行榜：每天把 arena.ai 的公开榜单同步进本地库，页面只读库不打外站。
+// 超时给到 30 秒：榜单页是服务端渲染的大页面（agent 榜约 1.8MB、text 榜约 5.4MB），
+// 按 AiNews 那 8 秒配会稳定超时。出站仍走 SafeOutboundHttpHandler，不绕开 SSRF 防护。
+builder.Services.AddHttpClient(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker.HttpClientName, c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PrdAgent-ModelLeaderboard/1.0");
+})
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+// 同步逻辑的唯一实现，周期 Worker 与管理员手动端点共用，避免两份各自漂移。
+builder.Services.AddScoped<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncService>();
+// 只在权威部署上跑：快照是共享库里的全局单行状态，多个分支预览同时写会互相覆盖。
+builder.Services.AddHostedService<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker>();
+
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，ASR/vision 统一走 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
 // MCP 连接器网关：回环转发当前 sk-ak Bearer 到自身真实接口（McpGatewayController）。
@@ -1419,6 +1434,9 @@ foreach (var delegatable in PrdAgent.Core.Models.AgentUniverse.AgentCapabilityRe
             sp.GetRequiredService<ILogger<PrdAgent.Api.Services.Toolbox.AgentDelegateTool>>()));
 }
 
+// 进程级未处理异常 / 真实请求计数（自检端点的观测值来源，规则 degradation-must-alarm）。
+builder.Services.AddSingleton<PrdAgent.Api.Middleware.ApiFaultTracker>();
+
 // Agent Tools 注册表 + 反向调用入口（sidecar 收到 tool_use 后回调主服务）
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IAgentToolRegistry,
     PrdAgent.Infrastructure.Services.AgentTools.AgentToolRegistry>();
@@ -1469,6 +1487,9 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubOAuthService,
     PrdAgent.Infrastructure.GitHub.GitHubOAuthService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubClient,
     PrdAgent.Infrastructure.GitHub.GitHubPrClient>();
+// per-user GitHub 连接的唯一判定源（连接状态 / token 解密 / 仓库·分支·目录读取）。
+// 知识库 GitHub 同步、共用连接中心 /api/github/* 都走它，避免各应用再抄一份 Device Flow。
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.GitHubUserConnectionService>();
 
 // PR Review V2（pr-review）业务层服务 —— 消费上面的 GitHub 基础设施
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
@@ -1548,6 +1569,10 @@ if (string.Equals(
 }
 
 // 始终启用"单行 Request finished 摘要日志"（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
+// 观测：把穿透整个管道的异常与真实请求数变成机器读得到的数（规则 degradation-must-alarm）。
+// 必须在最外层——被内层组件处理掉的异常不会走到这里，而 2026-09-09 那次事故的异常
+// 正是一路穿透到 Kestrel 才被记录的。只记不吞。
+app.UseMiddleware<PrdAgent.Api.Middleware.ApiFaultTrackingMiddleware>();
 app.UseRequestResponseLogging();
 
 app.UseExceptionMiddleware();
@@ -1604,6 +1629,16 @@ app.MapControllers();
 app.MapGet("/health", HealthCheck);
 app.MapGet("/health/ready", AssetStorageReadiness);
 app.MapGet("/api/health/ready", AssetStorageReadiness);
+// 深度自检（2026-09-11，监控自发现协议 doc/spec.platform.monitor-discovery.md）。
+//
+// 与 /health 的分工：那个回「进程还活着」，这个**真把关键链路走一遍**，逐项给定量结论，
+// 并在每条 check 上自报「该怎么监控我」——CDS 插上这个地址就能把监控项建起来。
+//
+// 免鉴权：CDS 探针刻意不携带任何密钥（探测令牌绝不发给外部地址）。所以这里
+// 只回计数、耗时与口径，不回任何业务内容、地址或异常文本。
+// 始终回 200：回 503 会让 CDS 先撞上状态码规则，错误退化成「HTTP 503 不在期望范围」，
+// 而不是「observedValue=3，期望 eq 0」——后者才排得动障。
+app.MapGet("/api/healthz/deep", DeepHealth).AllowAnonymous();
 app.MapGet("/api/v", VersionInfo);
 app.MapGet("/api/version", VersionInfo);
 
@@ -1640,6 +1675,251 @@ static IResult HealthCheck()
         Timestamp = DateTime.UtcNow
     };
     return Results.Ok(response);
+}
+
+/// <summary>
+/// 深度自检：真跑一次 Mongo 往返，加上进程级的异常与流量计数，每条都自报怎么监控。
+/// </summary>
+static async Task<IResult> DeepHealth(
+    PrdAgent.Api.Middleware.ApiFaultTracker faults,
+    PrdAgent.Infrastructure.Database.MongoDbContext db,
+    CancellationToken cancellationToken)
+{
+    var now = DateTime.UtcNow;
+    var faultCount = faults.CountWithinWindow();
+    var requests = faults.RequestsWithinWindow();
+
+    // Mongo 往返：这是「后端还能不能干活」最便宜的那条真链路。
+    // 探不通时把耗时记成 -1 而不是 0——0 会被判据读成「快得惊人」，是个假绿。
+    long mongoMs;
+    string mongoOutput;
+    try
+    {
+        var started = System.Diagnostics.Stopwatch.StartNew();
+        await db.Database.RunCommandAsync<MongoDB.Bson.BsonDocument>(
+            new MongoDB.Bson.BsonDocument("ping", 1), cancellationToken: cancellationToken);
+        mongoMs = started.ElapsedMilliseconds;
+        mongoOutput = $"Mongo 往返 {mongoMs} 毫秒";
+    }
+    catch (Exception ex)
+    {
+        mongoMs = -1;
+        mongoOutput = $"Mongo 探不通：{ex.GetType().Name}";
+    }
+
+    // 榜单快照的陈旧度。这是「同步链路还活着吗」唯一不靠人去点就能读到的信号：
+    // 抓取失败时 SyncService 刻意保留旧快照（宁可旧也不写空），读端点照样 200，
+    // 页面上只有一个需要人打开才看得见的 stale 标签——降级把一次持续失败翻译成了一次
+    // 表面成功（degradation-must-alarm.md）。所以这里对**症状**（数据多旧）而不是
+    // 原因（哪次抓取失败）暴露一条机读判据。
+    //
+    // 两条命门（都是 Codex 在 PR #1538 指出的，两条都会让这个 check 变成一盏永远不亮的灯）：
+    //
+    // 1. **哨兵值必须判失败**。第一版在「一条快照都没有」时把值设成 -1，注释还写着
+    //    「判据会判失败」——而判据是 `lte 48`，-1 当然小于 48，于是同步从来没跑起来过的
+    //    部署会永远绿。哨兵值要选在判据的**失败侧**，不能凭直觉挑一个「看起来异常」的数。
+    //    这里统一用 UnhealthySentinel（远大于阈值），任何取不到数的分支都走它。
+    //
+    // 2. **要看覆盖，不只看最旧的那条**。每个榜的失败是各自 catch 的，成功的照写。
+    //    于是「十一个榜里只有一个同步成功」会让这条查询拿到一份很新的快照而判绿，
+    //    另外十个维度在页面上永远空着却无人告警。所以先比对目录里声明的榜是否都在库里，
+    //    缺了就直接判失败——覆盖不全比数据旧更严重。
+    const double leaderboardUnhealthySentinel = 9999;
+    double leaderboardStaleHours;
+    string leaderboardOutput;
+    try
+    {
+        // 只看「本部署该看的那些」：分支预览与权威部署各写各的文档
+        // （PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope），
+        // 自检要判的是**页面上实际显示的那份**陈不陈旧，不是库里所有部署的文档。
+        var snapshots = await db.ModelLeaderboardSnapshots
+            .Find(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.VisibleFilter())
+            .Project(x => new { x.Board, x.FetchedAt, x.DeploymentSlug })
+            .ToListAsync(cancellationToken);
+
+        var storedBoards = snapshots
+            .Select(x => x.Board)
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missingBoards = PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardCatalog.Keys
+            .Where(k => !storedBoards.Contains(k))
+            .ToArray();
+
+        if (snapshots.Count == 0)
+        {
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = "一个榜单快照都没有——周期同步从来没成功跑完过，"
+                + "整个模型排行榜页面是空的；去看容器日志里 ModelLeaderboardSync 的告警";
+        }
+        else if (missingBoards.Length > 0)
+        {
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = $"缺 {missingBoards.Length} 个榜的快照（{string.Join("、", missingBoards)}）——"
+                + "这些维度在页面上是空的；去看容器日志里这几个榜的同步告警";
+        }
+        else
+        {
+            // 每个榜取**它自己最新的那份**，再在这些里面挑最旧的。
+            //
+            // 不能直接对全量文档取最旧（Codex 在 PR #1538 指出）：首次写的并发窗口
+            // （已在本 PR 修掉，但可能已经在库里留下残留）会让同一个榜有两条文档，
+            // 而同步只更新其中一条、从不删另一条。覆盖判断用的是集合、不受影响，
+            // 但陈旧度会一直盯着那条永远不再更新的孤儿，48 小时后这条 check 就永久告警，
+            // 而实际上每个榜都在正常同步——一条永远响的铃和一条永远不响的铃同样没用。
+            // 挑「哪一份是这个榜当前生效的」用与三个读取点同一个函数，不再各写一遍排序。
+            // 一条都挑不出来时 First() 会抛，被外层 catch 接住落到失败侧哨兵——
+            // 这正是想要的：读不出「页面在显示哪一份」就不能判绿。
+            var oldest = snapshots
+                .GroupBy(x => x.Board, StringComparer.OrdinalIgnoreCase)
+                .Select(g => PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.PickVisible(
+                    g.ToList(), x => x.DeploymentSlug, x => x.FetchedAt))
+                .Where(x => x is not null)
+                .OrderBy(x => x!.FetchedAt)
+                .First()!;
+            leaderboardStaleHours = Math.Round((now - oldest.FetchedAt).TotalHours, 1);
+            leaderboardOutput = leaderboardStaleHours <= 48
+                ? $"{storedBoards.Count} 个榜都有快照，最旧的一份是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
+                : $"最旧的榜单快照已经 {leaderboardStaleHours} 小时没更新（{oldest.Board}）——"
+                  + "同步大概率连着失败了，去看容器日志里 ModelLeaderboardSync 的告警";
+        }
+    }
+    catch (Exception ex)
+    {
+        // 读不到就是读不到，不能判绿（同上：哨兵必须在失败侧）
+        leaderboardStaleHours = leaderboardUnhealthySentinel;
+        leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
+    }
+
+    var payload = new Dictionary<string, object?>
+    {
+        ["status"] = faultCount == 0 && mongoMs >= 0 ? "pass" : "fail",
+        ["version"] = "1",
+        ["serviceId"] = "prd-api",
+        ["description"] = "MAP 后端深度自检",
+        ["time"] = now.ToString("o"),
+        // check 用 Dictionary 而不是匿名对象：自描述段的键是 `cds:monitor`，带冒号，
+        // 匿名类型的属性名写不出来。
+        ["checks"] = new Dictionary<string, object[]>
+        {
+            ["api:unhandled-exceptions"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "api.unhandled-exceptions",
+                    ["componentType"] = "system",
+                    ["observedValue"] = faultCount,
+                    ["observedUnit"] = "count",
+                    ["status"] = faultCount == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = faultCount == 0
+                        ? $"最近 {faults.WindowMinutes} 分钟无未处理异常"
+                        : $"最近 {faults.WindowMinutes} 分钟出现 {faultCount} 次未处理异常，累计 {faults.TotalSinceStart} 次；详情见容器日志",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 后端近期未处理异常数",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        observeMode = "passive",
+                        sampleComponentId = "api.requests",
+                    },
+                },
+            },
+            ["model-leaderboard:staleness"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-leaderboard.staleness",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = leaderboardStaleHours,
+                    ["observedUnit"] = "h",
+                    // 与下面 cds:monitor 的 op/value 同一个判据，两处不许各写一遍：
+                    // 拿不到数的分支已经把值置成远大于阈值的哨兵，这里不必再判一次「是不是 -1」
+                    ["status"] = leaderboardStaleHours <= 48 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = leaderboardOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "模型榜快照陈旧度",
+                        field = "observedValue",
+                        // 同步是每天一轮，容忍连着两轮失败（48 小时）再响——与页面上 stale
+                        // 标签同一个阈值，两处不许各定一个
+                        op = "lte",
+                        value = 48,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 1,
+                        severity = "P2",
+                        // 不设 observeMode：这条是**主动读一次状态**，走默认的 active。
+                        //
+                        // 第一版照抄了上面那条未处理异常的 passive + sampleComponentId，但那两条的
+                        // 形状根本不同：那条判的是「窗口内出了几次异常」，要配一个**另一条 check**
+                        // 给出的请求量才有意义，所以 sampleComponentId 指向 api.requests。
+                        // 这条我却让它指向自己，于是 CDS 会把「快照多旧」同时当成判据值和样本量——
+                        // 刚同步完那一刻值是 0，面板上会显示「0 次真实调用」而拒绝判绿；平时显示
+                        // 12.4，又像是 12 次请求（Codex 在 PR #1538 指出）。
+                    },
+                },
+            },
+            ["api:requests"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "api.requests",
+                    ["componentType"] = "system",
+                    ["observedValue"] = requests,
+                    ["observedUnit"] = "count",
+                    ["status"] = requests > 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = requests > 0
+                        ? $"最近 {faults.WindowMinutes} 分钟有 {requests} 次真实调用"
+                        : $"最近 {faults.WindowMinutes} 分钟没有任何真实调用——上面那条零异常不作数",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 后端近期真实调用数",
+                        field = "observedValue",
+                        op = "gt",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 2,
+                        severity = "P2",
+                    },
+                },
+            },
+            ["db:roundtrip"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "db.roundtrip",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = mongoMs,
+                    ["observedUnit"] = "ms",
+                    ["status"] = mongoMs >= 0 && mongoMs < 2000 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = mongoOutput,
+                    // 这条按 5 分钟一次：它是会变的量（往返耗时），高频才看得出趋势；
+                    // 上面两条是计数器，6 小时一次足够。节奏由每条 check 自己说，
+                    // 不是整个端点一个频率——这正是把声明放在服务这一侧的好处。
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 数据库往返耗时",
+                        field = "observedValue",
+                        op = "lt",
+                        value = 2000,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 2,
+                        severity = "P1",
+                    },
+                },
+            },
+        },
+    };
+
+    return Results.Content(
+        System.Text.Json.JsonSerializer.Serialize(payload),
+        "application/health+json");
 }
 
 static async Task<IResult> AssetStorageReadiness(

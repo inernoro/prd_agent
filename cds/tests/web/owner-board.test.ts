@@ -19,6 +19,8 @@ import {
   buildAttribution,
   buildBusinessRows,
   buildOwnerBoard,
+  defaultEnvironments,
+  describeRow,
 } from '../../web/src/lib/ownerBoard.js';
 import type { MonitorEnvironment, UptimeTargetSummary } from '../../web/src/lib/monitorCenter.js';
 
@@ -209,5 +211,102 @@ describe('第一屏说什么', () => {
     expect(board.rows).toHaveLength(1);
     expect(board.infra.total).toBe(3);
     expect(board.infra.preview).toBe(2);
+  });
+});
+
+/**
+ * 卡片文案与判据必须用同一个样本量。
+ *
+ * 2026-09-11 真视觉验收在截图上抓到的：一张卡片写着「窗口内 0 次真实调用」，
+ * 判据却判它正常。因为文案用 `sampleCount ?? 0` 兜底，把「这一轮没读到」
+ * 显示成了 0，而判据把 undefined 当「没读到」——页面上的数和系统认的数
+ * 不是同一个（predicate-and-wiring-discipline 形状 6）。
+ */
+describe('卡片读数与判据同源', () => {
+  const row = (sampleCount: number | undefined) => {
+    const t = target({ name: 'X', environment: 'production', observeMode: 'passive', ...(sampleCount === undefined ? {} : { sampleCount }) });
+    return buildBusinessRows([t])[0];
+  };
+
+  it('读不到样本量时照实说读不到，绝不显示成 0', () => {
+    const r = row(undefined);
+    expect(describeRow(r)).toBe('被动观测，这一轮没读到样本量');
+    expect(describeRow(r)).not.toContain('0 次');
+  });
+
+  it('读到 0 时既显示 0，也判「绿灯不作数」—— 两边同一个值', () => {
+    const r = row(0);
+    expect(r.worst).toBe('stale');
+    expect(describeRow(r)).toContain('0 次真实调用，绿灯不作数');
+  });
+
+  it('读到正数时显示那个数', () => {
+    expect(describeRow(row(13))).toContain('窗口内 13 次真实调用');
+  });
+});
+
+/*
+ * 以下两组守卫来自 2026-09-11 的角色化人类验收（四个角色各走一遍真实路径）。
+ * 两个洞都是「编译过、测试绿、通读也挑不出」的形状，只有真人冷启动才撞得到。
+ */
+
+describe('默认环境集数的是业务监控，不是全部目标', () => {
+  // 现场：一个项目有两百多个基础设施容器（含生产实例），而 6 条业务监控全在
+  // 分支预览。defaultEnvironments 按全部目标数 → present=['production'] 非空 →
+  // 默认只勾生产 → 第一屏空白，还写着「还没有一条业务监控」，
+  // 而同一页的「全部目标」正列着这 6 条。判据读的人口不是画面渲染的人口
+  // （predicate-and-wiring-discipline 形状 6）。
+  it('业务监控只在分支预览时，默认就该勾分支预览（哪怕基础设施有生产实例）', () => {
+    const targets = [
+      target({ name: 'MAP 数据库往返耗时', environment: 'preview' }),
+      target({ name: '网关 serving 近期未处理异常数', environment: 'preview' }),
+      infra({ name: '容器 A', environment: 'production' } as never),
+      infra({ name: '容器 B', environment: 'production' } as never),
+      infra({ name: '容器 C', environment: 'preview' } as never),
+    ];
+    expect(defaultEnvironments(targets)).toEqual(['preview']);
+  });
+
+  it('业务监控有生产时照旧不勾分支预览', () => {
+    const targets = [
+      target({ name: '图片生成', environment: 'production' }),
+      target({ name: '图片生成', environment: 'preview' }),
+      infra({ name: '容器 A', environment: 'preview' } as never),
+    ];
+    expect(defaultEnvironments(targets)).toEqual(['production']);
+  });
+
+  it('一条业务监控都没有时退回全部目标，不许返回空集', () => {
+    const targets = [infra({ name: '容器 A', environment: 'production' } as never)];
+    expect(defaultEnvironments(targets)).toEqual(['production']);
+  });
+});
+
+describe('空白第一屏必须分清「真没有」和「被筛选挡住」', () => {
+  const hiddenOnes = [
+    target({ name: 'MAP 数据库往返耗时', environment: 'preview' }),
+    target({ name: '网关 serving 近期未处理异常数', environment: 'preview' }),
+  ];
+
+  it('业务监控全被环境筛选挡住时，不许说「还没有一条业务监控」', () => {
+    const board = buildOwnerBoard([], hiddenOnes);
+    expect(board.headline).not.toContain('还没有');
+    expect(board.headline).toContain('2');
+    expect(board.hiddenEnvironments).toEqual(['preview']);
+    // 只说「它们在分支预览」不够，得让 UI 给得出一键切换的那个值。
+    expect(board.tone).toBe('warn');
+  });
+
+  it('真的一条业务监控都没有时才说「还没有一条业务监控」', () => {
+    const board = buildOwnerBoard([], [infra({ name: '容器 A', environment: 'production' } as never)]);
+    expect(board.headline).toBe('还没有一条业务监控');
+    expect(board.hiddenEnvironments).toBeUndefined();
+  });
+
+  it('有行可画时永远不带 hiddenEnvironments（不留半态）', () => {
+    const rows = [target({ name: '图片生成', environment: 'production' })];
+    const board = buildOwnerBoard(rows, [...rows, ...hiddenOnes]);
+    expect(board.rows).toHaveLength(1);
+    expect(board.hiddenEnvironments).toBeUndefined();
   });
 });

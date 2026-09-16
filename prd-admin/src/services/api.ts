@@ -480,6 +480,37 @@ export const api = {
     },
   },
 
+  // ============ 共用 GitHub 连接中心（任何登录用户都能连自己的账号）============
+  github: {
+    auth: {
+      status: () => '/api/github/auth/status',
+      deviceStart: () => '/api/github/auth/device/start',
+      devicePoll: () => '/api/github/auth/device/poll',
+      disconnect: () => '/api/github/auth/connection',
+    },
+    repositories: (query?: string, page?: number, pageSize?: number) => {
+      const q = new URLSearchParams();
+      if (query) q.set('query', query);
+      if (page) q.set('page', String(page));
+      if (pageSize) q.set('pageSize', String(pageSize));
+      const qs = q.toString();
+      return `/api/github/repositories${qs ? `?${qs}` : ''}`;
+    },
+    branches: (owner: string, repo: string) =>
+      `/api/github/branches?owner=${encodeURIComponent(owner)}&repo=${encodeURIComponent(repo)}`,
+    tree: (owner: string, repo: string, path?: string, branch?: string) => {
+      const q = new URLSearchParams({ owner, repo });
+      if (path) q.set('path', path);
+      if (branch) q.set('branch', branch);
+      return `/api/github/tree?${q.toString()}`;
+    },
+    docDirectories: (owner: string, repo: string, branch?: string) => {
+      const q = new URLSearchParams({ owner, repo });
+      if (branch) q.set('branch', branch);
+      return `/api/github/doc-directories?${q.toString()}`;
+    },
+  },
+
   // ============ 技术分析文档格式校验 Agent ============
   techDocFormatAgent: {
     github: {
@@ -1362,6 +1393,7 @@ export const api = {
       replace: (entryId: string) => `/api/document-store/entries/${entryId}/replace`,
       subscribe: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe`,
       subscribeGithub: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github`,
+      subscribeGithubBatch: (storeId: string) => `/api/document-store/stores/${storeId}/subscribe-github/batch`,
       detail: (entryId: string) => `/api/document-store/entries/${entryId}`,
       content: (entryId: string) => `/api/document-store/entries/${entryId}/content`,
       creativePublish: (entryId: string) => `/api/document-store/entries/${entryId}/creative-publish`,

@@ -1451,7 +1451,8 @@ def _daily_conclusion_contract_errors(verdict, body):
     overall = re.sub(r"[`*_\s（）()/／·-]", "", values.get("综合结论", "")).lower()
     overall_matches = {
         "pass": overall in {"pass", "通过", "pass通过"},
-        "conditional": overall in {"conditional", "有条件通过", "conditional有条件通过"},
+        # 2026-09-09「原则性通过」转正：新旧两种写法都接受，存量与在途报告不因改词被拒收。
+        "conditional": overall in {"conditional", "原则性通过", "有条件通过", "conditional原则性通过", "conditional有条件通过"},
         "fail": overall in {"fail", "不通过", "fail不通过"},
     }
     if overall and not overall_matches.get(verdict, False):
@@ -2406,7 +2407,7 @@ def build_interactive_html(
     defect_section_anchor = section_anchor(r"^(?:\d+\.\s*)?缺陷清单(?:[（(]P0-P3[）)])?(?:\s|$)")
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
-        "conditional": ("有条件通过", "conditional"),
+        "conditional": ("原则性通过", "conditional"),
         "fail": ("不通过", "fail"),
     }.get(verdict, (verdict, "unknown"))
     row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
@@ -2722,7 +2723,7 @@ def build_interactive_html(
                 f'{fallback_link}</div>'
             )
         if verdict == "conditional":
-            focus_kicker = "有条件通过重点"
+            focus_kicker = "原则性通过重点"
             focus_title = "先看这里：风险证据和未覆盖项"
         else:
             focus_kicker = "不通过定位"
@@ -4645,7 +4646,7 @@ def main():
         raise SystemExit(str(error)) from error
     now = datetime.datetime.now().astimezone()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
-    verdict_cn = {"pass": "通过", "conditional": "有条件通过", "fail": "不通过"}.get(a.verdict, a.verdict)
+    verdict_cn = {"pass": "通过", "conditional": "原则性通过", "fail": "不通过"}.get(a.verdict, a.verdict)
     body = ensure_report_time(open(a.report_md, encoding="utf-8").read().lstrip(), dt)
     title, a.report_kind, a.report_date = build_report_title(a, cfg, now, body)
     # 项目由 projectId、状态由 verdict、操作方式与档位由 metadata/tags 表达，不再挤占标题。

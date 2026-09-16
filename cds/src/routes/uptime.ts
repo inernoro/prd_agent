@@ -31,11 +31,13 @@ import {
   customProbeTargetId,
   describeMonitorProbe,
   evaluateProjectScopedWrite,
+  matchPreviewHost,
   normalizeUptimeMonitorInput,
   probeCustomMonitor,
   type ProjectPreviewHost,
   type UptimeMonitorInput,
 } from '../services/uptime-custom-monitor.js';
+import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.js';
 
 /**
  * 取本次请求的项目作用域：项目级 cdsp_ / 单项目 cdsg_ key 会被 server.ts 的
@@ -88,6 +90,33 @@ function resolveWriteScope(
   }
   const keyId = (req as { cdsProjectKey?: { keyId?: string } }).cdsProjectKey?.keyId || '';
   return { admin: false, projectId: scope, keyId, boundBranchId: verdict.boundBranchId };
+}
+
+/**
+ * 盖「这个地址落在哪条分支的预览域名上」这个**纯事实**。
+ *
+ * 与 boundBranchId 刻意分开，它们是两件事：
+ *   boundBranchId  —— 寿命跟着那条分支走（分支删了监控一起消失）。
+ *                     只有 Agent 自助登记的才有，管理员明确要盯的东西不该被替他删掉。
+ *   previewBranchId —— 地址指着一条分支预览。**任何登记路径都要盖**，
+ *                     因为环境判定只认「地址指着谁」，不认「谁登记的」。
+ *
+ * 少了后者，管理员手动加一条指着临时分支的监控，会被算成生产环境混进项目负责人的
+ * 第一屏——那正是用户担心的「临时分支把自己的错误预览地址加进去」。
+ * 只在 agent-api 那条路上反查，就是把一条只在一条路径上成立的证据当成契约成立
+ * （predicate-and-wiring-discipline 形状 8）。
+ *
+ * 系统级监控（没有 projectId）查不了：那里没有可枚举的分支台账，如实留空。
+ */
+function stampPreviewBranch(
+  monitor: UptimeCustomMonitor,
+  listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[],
+): void {
+  const hit = monitor.projectId && listProjectPreviewHosts
+    ? matchPreviewHost(monitor.url, listProjectPreviewHosts(monitor.projectId))
+    : undefined;
+  // 编辑时把地址从分支预览改成正式地址，这个戳必须跟着消失，不能留着旧结论。
+  monitor.previewBranchId = hit ? hit.branchId : undefined;
 }
 
 /** 按写入主体盖审计字段：监控中心要答得出「谁加的、从哪加的、绑着哪条分支」。 */
@@ -145,6 +174,17 @@ export function createUptimeRouter(deps: {
    * 不注入则自助登记整体关闭（退回原来的管理员限定）。
    */
   listProjectPreviewHosts?: (projectId: string) => ProjectPreviewHost[];
+  /**
+   * 监控自发现的「插口」管理与执行。不注入则整个自发现关闭，端点相关路由退化成
+   * 空清单——刻意不 500：少接一行不该让监控中心整页打不开。
+   */
+  listMonitorEndpoints?: (projectId: string) => string[];
+  addMonitorEndpoint?: (projectId: string, url: string) => boolean;
+  removeMonitorEndpoint?: (projectId: string, url: string) => boolean;
+  /** 立刻跑一轮对账（插上 / 拔掉之后当场生效，不让人对着空列表等下一轮）。 */
+  runDiscovery?: () => Promise<DiscoveryRunSummary>;
+  /** 最近一轮的结果，含被拒的声明与原因。 */
+  lastDiscoveryRun?: () => DiscoveryRunSummary | null;
 }): Router {
   const router = Router();
 
@@ -254,6 +294,78 @@ export function createUptimeRouter(deps: {
     });
   });
 
+  // ── 监控自发现：插上一个自检端点，剩下的它自己说 ──
+
+  router.get('/projects/:id/monitor-endpoints', (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const projectId = String(req.params.id);
+    const scope = projectScopeOf(req);
+    if (scope && scope !== projectId) {
+      res.status(403).json({ error: '项目级 Key 只能看自己项目的自检端点' });
+      return;
+    }
+    res.json({
+      endpoints: deps.listMonitorEndpoints?.(projectId) || [],
+      lastRun: deps.lastDiscoveryRun?.() || null,
+    });
+  });
+
+  router.post('/projects/:id/monitor-endpoints', async (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const projectId = String(req.params.id);
+    const url = String((req.body as { url?: unknown })?.url || '').trim();
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw new Error('bad protocol');
+    } catch {
+      res.status(400).json({ error: '端点地址必须是合法的 http:// 或 https:// 网址', field: 'url' });
+      return;
+    }
+    // 与登记监控同一道闸：项目级 Key 只能插自己项目分支预览上的口。
+    // 管理员可以插任意地址（与他本来就能加任意监控一致）。
+    const scope = projectScopeOf(req);
+    if (scope) {
+      if (scope !== projectId) {
+        res.status(403).json({ error: '项目级 Key 只能给自己项目插自检端点' });
+        return;
+      }
+      const hosts = deps.listProjectPreviewHosts?.(projectId) || [];
+      if (!matchPreviewHost(url, hosts)) {
+        res.status(403).json({
+          error: `地址 ${parsed.host} 不属于本项目任何一条分支的预览域名`,
+          field: 'url',
+        });
+        return;
+      }
+    }
+    if (!deps.addMonitorEndpoint?.(projectId, url)) {
+      res.status(404).json({ error: '项目不存在' });
+      return;
+    }
+    // 插上就当场跑一轮：不让用户插完对着一个空列表等下一轮。
+    const run = await deps.runDiscovery?.();
+    res.status(201).json({ endpoints: deps.listMonitorEndpoints?.(projectId) || [], lastRun: run || null });
+  });
+
+  router.delete('/projects/:id/monitor-endpoints', async (req, res) => {
+    if (!store || storeUnavailable(res)) return;
+    const projectId = String(req.params.id);
+    const scope = projectScopeOf(req);
+    if (scope && scope !== projectId) {
+      res.status(403).json({ error: '项目级 Key 只能拔自己项目的自检端点' });
+      return;
+    }
+    const url = String((req.query.url as string | undefined) || '').trim();
+    if (!deps.removeMonitorEndpoint?.(projectId, url)) {
+      res.status(404).json({ error: '项目不存在' });
+      return;
+    }
+    // 拔掉之后立刻对账一轮，它名下的监控当场下线。
+    const run = await deps.runDiscovery?.();
+    res.json({ endpoints: deps.listMonitorEndpoints?.(projectId) || [], lastRun: run || null });
+  });
+
   /** 试探一次：只回结果，不落库。与轮次同一套探测实现，不另写一份判定。 */
   router.post('/uptime/monitors/test', async (req, res) => {
     const normalized = normalizeUptimeMonitorInput((req.body || {}) as UptimeMonitorInput);
@@ -299,6 +411,7 @@ export function createUptimeRouter(deps: {
       return;
     }
     stampAudit(monitor, req, writeScope);
+    stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
     try {
       const saved = store.upsertUptimeMonitor(monitor);
       res.status(201).json({ monitor: saved, description: describeMonitorProbe(saved) });
@@ -343,6 +456,7 @@ export function createUptimeRouter(deps: {
       return;
     }
     stampAudit(monitor, req, writeScope);
+    stampPreviewBranch(monitor, deps.listProjectPreviewHosts);
     try {
       const saved = store.upsertUptimeMonitor(monitor);
       // 台账立刻跟上新定义（尤其是归属项目），不等下一轮探测。

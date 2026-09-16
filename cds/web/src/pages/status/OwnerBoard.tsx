@@ -9,19 +9,24 @@
  *
  * 判据全在 lib/ownerBoard.ts，这里只负责摆放与着色。
  */
-import { useMemo } from 'react';
-import { Activity, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Info, Waves } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Activity, AlertTriangle, ArrowRight, Cable, CheckCircle2, ChevronRight, Globe, Info, Waves } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
+import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { DiscoveryStrip } from './DiscoveryStrip';
 import type { MonitorEnvironment, UptimeTargetSummary } from '@/lib/monitorCenter';
 import {
   buildOwnerBoard,
+  describeRow,
   listEnvironments,
   listProjects,
   scopeTargets,
   type BusinessRow,
   type CellHealth,
   type OwnerScope,
+  type ProjectOption,
 } from '@/lib/ownerBoard';
 
 const HEALTH_CELL: Record<CellHealth, string> = {
@@ -100,11 +105,7 @@ function BusinessCard({ row, onOpen }: { row: BusinessRow; onOpen: (targetId: st
         </div>
 
         <div className={cn('truncate font-mono text-[0.6875rem]', row.worst === 'down' ? 'text-destructive' : row.worst === 'stale' ? 'text-warn' : 'text-muted-foreground')}>
-          {worstCell?.reason
-            ? `${worstCell.label} ${worstCell.reason}`
-            : row.observeMode === 'passive'
-              ? `窗口内 ${row.cells[0]?.sampleCount ?? 0} 次真实调用，无异常`
-              : `${row.cells.length} 个环境都通过判据`}
+          {describeRow(row)}
         </div>
 
         {row.attribution ? (
@@ -115,18 +116,66 @@ function BusinessCard({ row, onOpen }: { row: BusinessRow; onOpen: (targetId: st
   );
 }
 
+/**
+ * 需要先选项目才能用的那两块（自检端点、公开面板）在「全部项目」下的占位。
+ *
+ * 之前这里直接 `: null`——功能对默认进来的人**等于不存在**：
+ * 编译过、测试过、通读也挑不出，只有真人冷启动走一遍才会发现死胡同
+ * （2026-09-11 角色验收：后端工程师和对外 PM 两个角色同时卡在这里）。
+ * 条件渲染是一种静默的功能消失，所以不许留空，要留一句话说清怎么把它打开。
+ */
+function NeedsProjectRow({ icon: Icon, title, what, projects, onPick }: {
+  icon: LucideIcon;
+  title: string;
+  what: string;
+  projects: ReadonlyArray<ProjectOption>;
+  onPick: (projectId: string) => void;
+}): JSX.Element {
+  // 只有一个项目时不该让人再去上面找一遍——直接给那一个的按钮（用户输入最小原则）。
+  const only = projects.length === 1 ? projects[0] : undefined;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] px-3.5 py-2.5">
+      <Icon className="h-3.5 w-3.5 text-muted-foreground" />
+      <span className="text-xs text-muted-foreground">{title}</span>
+      <span className="text-[0.6875rem] text-muted-foreground">
+        {what} —— 它是按项目走的，先选一个项目才能用
+      </span>
+      <div className="flex-grow" />
+      {only ? (
+        <button
+          type="button"
+          onClick={() => onPick(only.id)}
+          className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-primary/50"
+        >
+          选「{only.name}」
+        </button>
+      ) : (
+        <span className="text-[0.6875rem] text-muted-foreground">在上面「我的项目」里点一个</span>
+      )}
+    </div>
+  );
+}
+
+interface StatusPageState {
+  open: boolean;
+  path: string | null;
+}
+
 export function OwnerBoard({
   targets,
   scope,
   onScope,
   onOpenTarget,
   onAddMonitor,
+  onReload,
 }: {
   targets: ReadonlyArray<UptimeTargetSummary>;
   scope: OwnerScope;
   onScope: (next: OwnerScope) => void;
   onOpenTarget: (targetId: string) => void;
   onAddMonitor: () => void;
+  /** 插上 / 拔掉端点之后监控项会变，让页面重拉一次摘要 */
+  onReload: () => void;
 }): JSX.Element {
   const projects = useMemo(() => listProjects(targets), [targets]);
   const projectTargets = useMemo(
@@ -138,12 +187,60 @@ export function OwnerBoard({
   const board = useMemo(() => buildOwnerBoard(scoped, projectTargets), [scoped, projectTargets]);
 
   const activeEnvs = new Set(scope.environments ?? environments);
+  /**
+   * 把被环境筛选挡住的业务监控勾回来。
+   *
+   * 空白第一屏必须给得出这一步：只告诉用户「它们在分支预览」而不给切换，
+   * 等于让他自己去猜该点哪个 chip（本次角色验收里老板就是这么卡住的）。
+   */
+  const revealHidden = (): void => {
+    const hidden = board.hiddenEnvironments;
+    if (!hidden || hidden.length === 0) return;
+    const next = new Set([...activeEnvs, ...hidden]);
+    onScope({ ...scope, environments: environments.filter((e) => next.has(e)) });
+  };
   const toggleEnv = (env: MonitorEnvironment): void => {
     const next = new Set(activeEnvs);
     if (next.has(env)) next.delete(env);
     else next.add(env);
     onScope({ ...scope, environments: environments.filter((e) => next.has(e)) });
   };
+
+  // 公开面板的开关状态跟着选中的项目走：没选项目时无从谈起「公开哪个项目」。
+  const [statusPage, setStatusPage] = useState<StatusPageState | null>(null);
+  const [statusPageBusy, setStatusPageBusy] = useState(false);
+  const [statusPageError, setStatusPageError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!scope.projectId) { setStatusPage(null); return; }
+    let alive = true;
+    apiRequest<StatusPageState>(`/api/projects/${encodeURIComponent(scope.projectId)}/status-page`)
+      .then((res) => { if (alive) { setStatusPage(res); setStatusPageError(null); } })
+      .catch((err) => { if (alive) setStatusPageError(err instanceof ApiError ? err.message : String(err)); });
+    return () => { alive = false; };
+  }, [scope.projectId]);
+
+  const toggleStatusPage = useCallback(async (): Promise<void> => {
+    if (!scope.projectId || statusPageBusy) return;
+    setStatusPageBusy(true);
+    try {
+      const next = await apiRequest<StatusPageState>(
+        `/api/projects/${encodeURIComponent(scope.projectId)}/status-page`,
+        { method: statusPage?.open ? 'DELETE' : 'POST' },
+      );
+      setStatusPage(next);
+      setStatusPageError(null);
+    } catch (err) {
+      setStatusPageError(err instanceof ApiError ? err.message : String(err));
+    } finally {
+      setStatusPageBusy(false);
+    }
+  }, [scope.projectId, statusPage, statusPageBusy]);
+
+  const publicCount = useMemo(
+    () => new Set(scoped.filter((t) => t.publicVisible).map((t) => t.name)).size,
+    [scoped],
+  );
 
   const BannerIcon = BANNER_ICON[board.tone];
 
@@ -242,18 +339,94 @@ export function OwnerBoard({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] px-6 py-10 text-center">
-          <div className="max-w-xl text-xs leading-5 text-muted-foreground">
-            业务监控问的是「这条业务现在还能用吗」——发一次真请求，按你的判据验收返回值。
-            没有它，容器全绿也只说明服务活着。
-          </div>
+          {board.hiddenEnvironments && board.hiddenEnvironments.length > 0 ? (
+            <>
+              <div className="max-w-xl text-xs leading-5 text-muted-foreground">
+                这一屏默认只看非预览的环境——它要回答的是「线上业务今天有没有出事」，
+                十几条临时分支的红黄绿会把那句话淹掉。你的业务监控现在都在预览侧。
+              </div>
+              <button
+                type="button"
+                className="rounded-md border border-primary/45 bg-primary-soft px-3 py-1.5 text-xs text-primary-ink transition-colors hover:border-primary/70"
+                onClick={revealHidden}
+              >
+                看这些环境
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="max-w-xl text-xs leading-5 text-muted-foreground">
+                业务监控问的是「这条业务现在还能用吗」——发一次真请求，按你的判据验收返回值。
+                没有它，容器全绿也只说明服务活着。
+              </div>
+              <button
+                type="button"
+                className="rounded-md border border-primary/45 bg-primary-soft px-3 py-1.5 text-xs text-primary-ink transition-colors hover:border-primary/70"
+                onClick={onAddMonitor}
+              >
+                加第一条业务监控
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* 自检端点：插上即可，监控项由端点自报 */}
+      {scope.projectId ? (
+        <DiscoveryStrip projectId={scope.projectId} onChanged={onReload} />
+      ) : (
+        <NeedsProjectRow
+          icon={Cable}
+          title="自检端点"
+          what="把服务的自检地址插上，监控项由端点自己申报"
+          projects={projects}
+          onPick={(id) => onScope({ ...scope, projectId: id })}
+        />
+      )}
+
+      {/* 公开面板：同一批观测的另一个出口，对外只出业务名与红绿 */}
+      {scope.projectId ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-info/25 bg-info-soft/40 px-3.5 py-2.5">
+          <Globe className="h-3.5 w-3.5 text-info" />
+          <span className="text-xs text-muted-foreground">公开面板</span>
+          {statusPage?.open && statusPage.path ? (
+            <>
+              <a
+                href={statusPage.path}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate font-mono text-xs text-info hover:underline"
+              >
+                {statusPage.path}
+              </a>
+              <span className="text-[0.6875rem] text-muted-foreground">
+                免登录只读 · {publicCount} 条业务对外 · 只出业务名与红绿，不出地址、判据、日志
+              </span>
+            </>
+          ) : (
+            <span className="text-[0.6875rem] text-muted-foreground">
+              未开启。开了之后拿到链接的人不用登录就能看到这几条业务的红绿，随时可撤销
+            </span>
+          )}
+          <div className="flex-grow" />
+          {statusPageError ? <span className="text-[0.6875rem] text-destructive">{statusPageError}</span> : null}
           <button
             type="button"
-            className="rounded-md border border-primary/45 bg-primary-soft px-3 py-1.5 text-xs text-primary-ink transition-colors hover:border-primary/70"
-            onClick={onAddMonitor}
+            onClick={() => void toggleStatusPage()}
+            disabled={statusPageBusy}
+            className="rounded-md border border-[hsl(var(--hairline-strong))] px-2 py-1 text-[0.6875rem] text-foreground transition-colors hover:border-info/50 disabled:opacity-60"
           >
-            加第一条业务监控
+            {statusPageBusy ? '处理中' : statusPage?.open ? '关闭并撤销链接' : '开启公开面板'}
           </button>
         </div>
+      ) : (
+        <NeedsProjectRow
+          icon={Globe}
+          title="公开面板"
+          what="开一个免登录只读的对外地址，只出业务名与红绿"
+          projects={projects}
+          onPick={(id) => onScope({ ...scope, projectId: id })}
+        />
       )}
 
       {/* 基础设施：要能一眼确认没塌，但不占主视觉 */}

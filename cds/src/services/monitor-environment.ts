@@ -59,7 +59,11 @@ export interface MonitorEnvironmentInput {
   source: 'branch' | 'release' | 'custom';
   /** 自定义监控自己声明的环境 */
   declared?: unknown;
-  /** 自助登记时服务端反查出来的绑定分支；有值即证明它指着一条分支预览 */
+  /**
+   * 服务端反查出来的「地址落在哪条分支预览上」。有值即证明它指着一条分支预览。
+   * boundBranchId 也算数（Agent 自助登记的存量数据只有它）。
+   */
+  previewBranchId?: string | null;
   boundBranchId?: string | null;
   /** 发布目标上的环境字段（source = release 时才有意义） */
   releaseEnvironment?: unknown;
@@ -75,7 +79,7 @@ export interface MonitorEnvironmentInput {
  */
 export function resolveMonitorEnvironment(input: MonitorEnvironmentInput): MonitorEnvironment {
   if (input.source === 'branch') return 'preview';
-  if (input.boundBranchId) return 'preview';
+  if (input.previewBranchId || input.boundBranchId) return 'preview';
   if (input.source === 'release') return normalizeReleaseEnvironment(input.releaseEnvironment);
   return normalizeMonitorEnvironment(input.declared);
 }

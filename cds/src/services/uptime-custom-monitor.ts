@@ -131,6 +131,8 @@ export interface UptimeMonitorInput {
   environment?: unknown;
   observeMode?: unknown;
   sampleCountPath?: unknown;
+  publicVisible?: unknown;
+  publicName?: unknown;
 }
 
 export type NormalizeResult =
@@ -478,6 +480,20 @@ export function normalizeUptimeMonitorInput(
     monitor.sampleCountPath = undefined;
   }
 
+  // 公开面板：显式动作，缺省不公开。默认公开会让一条刚加的内部探针对全网可见。
+  monitor.publicVisible = input.publicVisible === undefined
+    ? Boolean(options.existing?.publicVisible)
+    : Boolean(input.publicVisible);
+  const publicName = input.publicName === undefined
+    ? options.existing?.publicName
+    : (input.publicName === null ? undefined : str(input.publicName));
+  if (publicName) {
+    if (publicName.length > MAX_NAME_LENGTH) {
+      return { ok: false, error: `对外名称不能超过 ${MAX_NAME_LENGTH} 个字符`, field: 'publicName' };
+    }
+    monitor.publicName = publicName;
+  }
+
   if (input.tags !== undefined) {
     if (!Array.isArray(input.tags)) return { ok: false, error: '标签必须是字符串数组', field: 'tags' };
     const tags = [...new Set(input.tags.map((t) => str(t)).filter(Boolean))].slice(0, MAX_TAGS);
@@ -612,6 +628,26 @@ export type ProjectScopedWriteVerdict =
  * 于是这条监控的寿命跟着那条分支走——临时分支删掉时监控一起消失，
  * 不会留下一条永远红着的死地址（这是用户最担心的那种失效）。
  */
+/**
+ * 地址落在哪条分支预览上。**唯一一处**主机名比对。
+ *
+ * 两个调用方：项目级 Key 的写入门（判「能不能登记」），以及任何写入路径上的
+ * 分支反查（判「这条监控其实盯的是一条分支预览」）。两处若各写一份，
+ * 「地址属于哪条分支」就有了两个答案（判据分裂，形状 3）。
+ */
+export function matchPreviewHost(
+  url: string | undefined,
+  previewHosts: ReadonlyArray<ProjectPreviewHost>,
+): ProjectPreviewHost | undefined {
+  let host = '';
+  try {
+    host = new URL(url || '').host.toLowerCase();
+  } catch {
+    return undefined;
+  }
+  return previewHosts.find((x) => x.host.toLowerCase() === host);
+}
+
 export function evaluateProjectScopedWrite(
   monitor: Pick<UptimeCustomMonitor, 'kind' | 'url' | 'projectId'>,
   scope: string,
@@ -646,7 +682,7 @@ export function evaluateProjectScopedWrite(
       field: 'url',
     };
   }
-  const hit = previewHosts.find((x) => x.host.toLowerCase() === host);
+  const hit = matchPreviewHost(monitor.url, previewHosts);
   if (!hit) {
     return {
       ok: false,

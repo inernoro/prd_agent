@@ -230,7 +230,7 @@ SSE 事件：
 
 | 风险 | 说明 | 缓解 |
 |------|------|------|
-| 后端无本地 SDK 验证 | 开发环境无 dotnet | 走 CDS 自动部署编译验证（`cds-first-verification.md`）|
+| 后端编译与测试怎么算验过 | 编译在 GitHub Actions、运行在 CDS 预览；Branch Image 不覆盖测试项目，CI 在 feature 分支不自动跑 | 按 `cds-first-verification.md` 的权威位置表逐项引判据 |
 | 生图依赖模型池 | 视觉创作需 ImageGen 模型池可用 | 池不可用时适配器返回 error，前端展示失败 |
 | 契约与适配器漂移 | generation 智能体若无对应适配器 | 控制器降级 chat + 告警日志；后续补注册表适配器一致性测试（见 debt）|
 | 多入口尚未接入 | 当前仅再加工抽屉接入信封 | @艾特 / 工作流节点为后续波次（见 debt）|

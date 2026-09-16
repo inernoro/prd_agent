@@ -245,20 +245,38 @@ public static class GatewayHttpEndpoints
                 commit = gitCommit,
                 checks = new Dictionary<string, object[]>
                 {
+                    // check 用 Dictionary 而不是匿名对象：自描述段的键是 `cds:monitor`，
+                    // 带冒号，匿名类型的属性名写不出来。键名带冒号是刻意的——
+                    // 与 health+json 里「组件:度量」的键同风格，不会与 IETF 草案的保留字相撞。
                     ["serving:unhandled-exceptions"] = new object[]
                     {
-                        new
+                        new Dictionary<string, object?>
                         {
-                            componentId = "serving.unhandled-exceptions",
-                            componentType = "system",
-                            observedValue = count,
-                            observedUnit = "count",
-                            status = pass ? "pass" : "fail",
-                            time = now.ToString("o"),
+                            ["componentId"] = "serving.unhandled-exceptions",
+                            ["componentType"] = "system",
+                            ["observedValue"] = count,
+                            ["observedUnit"] = "count",
+                            ["status"] = pass ? "pass" : "fail",
+                            ["time"] = now.ToString("o"),
                             // 只给数与口径，不给异常内容——这个端点是匿名的。
-                            output = pass
+                            ["output"] = pass
                                 ? $"最近 {faults.WindowMinutes} 分钟无未处理异常"
                                 : $"最近 {faults.WindowMinutes} 分钟出现 {count} 次未处理异常，累计 {faults.TotalSinceStart} 次；详情见容器日志",
+                            // 自描述：告诉 CDS 该怎么监控这一条（监控自发现协议）。
+                            // 它只说「判什么」——**打哪个地址由 CDS 侧登记的端点决定**，
+                            // 在这里写地址一律无效，那是这套协议的安全命门。
+                            ["cds:monitor"] = new
+                            {
+                                name = "网关 serving 近期未处理异常数",
+                                field = "observedValue",
+                                op = "eq",
+                                value = 0,
+                                intervalSeconds = 21600,
+                                failuresToAlarm = 1,   // 未处理异常不去抖：出现一次就是一次
+                                severity = "P0",
+                                observeMode = "passive",
+                                sampleComponentId = "serving.requests",
+                            },
                         },
                     },
                     // 「零异常」这条判据的分母。窗口里一次真实调用都没有时，
@@ -266,17 +284,27 @@ public static class GatewayHttpEndpoints
                     // 探针自己那几条路径不计入（见 ServingFaultTrackingMiddleware.IsProbePath）。
                     ["serving:requests"] = new object[]
                     {
-                        new
+                        new Dictionary<string, object?>
                         {
-                            componentId = "serving.requests",
-                            componentType = "system",
-                            observedValue = requests,
-                            observedUnit = "count",
-                            status = requests > 0 ? "pass" : "warn",
-                            time = now.ToString("o"),
-                            output = requests > 0
+                            ["componentId"] = "serving.requests",
+                            ["componentType"] = "system",
+                            ["observedValue"] = requests,
+                            ["observedUnit"] = "count",
+                            ["status"] = requests > 0 ? "pass" : "warn",
+                            ["time"] = now.ToString("o"),
+                            ["output"] = requests > 0
                                 ? $"最近 {faults.WindowMinutes} 分钟有 {requests} 次真实调用"
                                 : $"最近 {faults.WindowMinutes} 分钟没有任何真实调用——上面那条零异常不作数",
+                            ["cds:monitor"] = new
+                            {
+                                name = "网关 serving 近期真实调用数",
+                                field = "observedValue",
+                                op = "gt",
+                                value = 0,
+                                intervalSeconds = 21600,
+                                failuresToAlarm = 2,   // 一个安静的窗口不值得叫人，连着两个才值得问一句
+                                severity = "P2",
+                            },
                         },
                     },
                 },

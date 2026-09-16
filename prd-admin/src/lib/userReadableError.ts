@@ -27,10 +27,13 @@ const RECOVERY_WORDS = [
   '移除',
 ];
 
-const INTERNAL_DIAGNOSTIC_PATTERNS = [
+/**
+ * 永不放行的诊断片段：HTTP 状态码、协议正文、解析/网络异常、凭据词、密钥样式、IP、URL。
+ * 这些片段在任何用户文案里出现都是泄漏，没有「这是仓库名」这种正当解释。
+ */
+const HARD_DIAGNOSTIC_PATTERNS = [
   /\bHTTP\s*\d{3}\b/i,
-  /\b(?:traceId|requestId|runId|provider|offering|endpoint|model|protocol|token|stack|exception)\b/i,
-  /\/api\//i,
+  /\b(?:traceId|requestId|runId|stack|exception)\b/i,
   /<!doctype|<html|<body/i,
   /input must have at least/i,
   /unexpected token/i,
@@ -40,6 +43,17 @@ const INTERNAL_DIAGNOSTIC_PATTERNS = [
   /\b(?:sk|pk|rk)-[a-z0-9_-]{6,}\b/i,
   /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d{2,5})?\b/,
   /https?:\/\//i,
+];
+
+/**
+ * 只是「长得像技术标识符」的词：它们在上游异常里是诊断，在仓库名 / 目录名里却完全正当
+ * （`model-service`、`api/docs`、`token-service` 都是真实存在的命名）。
+ * 默认仍然拒绝；只有 GITHUB_CODES_MAY_NAME_IDENTIFIERS 里那几个「文案由我们自己写、
+ * 关键信息恰恰是标识符」的契约码可以带着它们通过——而上面那张硬名单对它们照样生效。
+ */
+const IDENTIFIER_DIAGNOSTIC_PATTERNS = [
+  /\b(?:provider|offering|endpoint|model|protocol|token)\b/i,
+  /\/api\//i,
 ];
 
 const USER_MESSAGE_ALLOWLIST = new Map<string, ReadonlySet<string>>([
@@ -141,6 +155,33 @@ const USER_FACING_CODE_MESSAGES = new Map<string, string>([
   ['DUPLICATE', '相同内容已存在，请刷新确认或修改后重试。'],
   ['ALREADY_EXISTS', '相同内容已存在，请返回列表刷新并查看已有内容。'],
   ['TEMPLATE_VALIDATION_FAILED', '提交内容不符合模板要求，请按页面提示补全后重试。'],
+  // GitHub 目录订阅的子文档不单独同步，得对目录条目触发。这句必须原样到达用户——
+  // 之前它挂在通用码 INVALID_FORMAT 上，被兜底文案吃成「操作未完成，请检查输入后重试」。
+  ['GITHUB_CHILD_ENTRY_SYNC', '这篇文档由所属的 GitHub 目录订阅统一同步，请在该目录条目上触发同步。'],
+  // 下面这几个码的后端文案要么本身就是泛化的，要么带 HTTP 码这类诊断信息，统一用固定中文替换。
+  // 带具体信息的那几个（限额重置时刻、仓库名）不在这里登记——见 GITHUB_CODES_MAY_NAME_IDENTIFIERS。
+  ['GITHUB_UPSTREAM_ERROR', 'GitHub 服务暂时异常，请稍后重试。'],
+  ['GITHUB_OAUTH_NOT_CONFIGURED', '管理员尚未配置 GitHub 应用，暂时无法连接 GitHub，请联系管理员。'],
+  ['DEVICE_FLOW_TOKEN_INVALID', '本次授权会话已失效，请重新发起 GitHub 授权。'],
+  ['DEVICE_FLOW_EXPIRED', '配对码已超时失效，请重新发起 GitHub 授权。'],
+  ['DEVICE_FLOW_ACCESS_DENIED', '你在 GitHub 页面拒绝了授权，如需继续请重新发起。'],
+  ['DEVICE_FLOW_REQUEST_FAILED', 'GitHub 授权服务暂时不可用，请稍后重试。'],
+]);
+
+/**
+ * 允许文案里出现拉丁标识符的错误码。
+ *
+ * 净化器默认拒绝含拉丁标识符的后端文案（防止把上游异常原文透给用户）。但 GitHub 这几个码的
+ * 文案是我们自己写的，且**关键信息恰恰是标识符**：哪个仓库看不见、限额几点恢复。
+ * 一刀切拒掉的结果是全部退化成「请检查输入后重试」——用户既不知道是哪个仓库，也不知道要等多久。
+ * 其余护栏（中文、有恢复动作、无换行、无 JSON、无 HTTP 码 / URL / 密钥等诊断片段）仍然生效。
+ */
+const GITHUB_CODES_MAY_NAME_IDENTIFIERS = new Set([
+  'GITHUB_RATE_LIMITED',
+  'GITHUB_REPO_NOT_VISIBLE',
+  'GITHUB_FORBIDDEN',
+  'GITHUB_NOT_CONNECTED',
+  'GITHUB_TOKEN_EXPIRED',
 ]);
 
 function registeredUserFacingMessage(code: string, message: string): string | null {
@@ -205,7 +246,13 @@ function isSafeUserMessage(message: string, code: string): boolean {
   if (/[\r\n]/u.test(text)) return false;
   if (/^[{[]/.test(text)) return false;
   if (!/[\u3400-\u9fff]/u.test(text)) return false;
-  if (INTERNAL_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) return false;
+  if (HARD_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) return false;
+  // 仓库名 / 目录路径会正当地撞上「像标识符」的那几个词（model-service、api/docs）。
+  // 这个放行必须排在硬名单之后：先拒诊断片段，再谈标识符。
+  const mayNameIdentifiers = GITHUB_CODES_MAY_NAME_IDENTIFIERS.has(normalizedCode);
+  if (!mayNameIdentifiers && IDENTIFIER_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(text))) {
+    return false;
+  }
 
   const isExplicitlyAllowed = USER_MESSAGE_ALLOWLIST.get(normalizedCode)?.has(text) === true;
   const isStableContractCode = /^[A-Z][A-Z0-9_]{2,80}$/u.test(normalizedCode);
@@ -219,7 +266,7 @@ function isSafeUserMessage(message: string, code: string): boolean {
     || isActionableInvalidFormatMessage(text, normalizedCode)
     || (!isRegisteredCode
       && isStableContractCode
-      && !containsUnregisteredTechnicalIdentifier
+      && (!containsUnregisteredTechnicalIdentifier || mayNameIdentifiers)
       && messageContainsRecovery(text));
 }
 
