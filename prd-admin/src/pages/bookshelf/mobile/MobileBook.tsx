@@ -265,7 +265,13 @@ export function MobileBook({
               {error}
             </div>
             <div style={{ marginTop: 12, display: 'flex' }}>
-              <Pill onClick={() => void run(true)} accent={skin.fg}>再试一次</Pill>
+              {/*
+                * force=false：失败多半只是这条 SSE 连接断了，而后端是拿
+                * CancellationToken.None 在跑的——那一篇很可能已经写完并落库了。
+                * 传 true 等于「无论如何再烧一篇」，既多花一次钱，又会把刚落库的
+                * 那篇公共稿子覆盖掉。想重写有下面那个「重写一篇」。
+                */}
+              <Pill onClick={() => void run(false)} accent={skin.fg}>再试一次</Pill>
             </div>
           </div>
         )}

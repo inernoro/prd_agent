@@ -76,4 +76,24 @@ public class BookshelfDigestStreamGuardTests
             notFound,
             customMessage: "材料不可用的判断排在 NOT_FOUND 之后，永远走不到");
     }
+
+    [Fact(DisplayName = "精读稿的 SSE 必须有 keepalive 心跳，且写入是串行的")]
+    public void DigestStream_MustHeartbeat()
+    {
+        var src = ControllerSource();
+
+        src.ShouldContain(
+            "\"heartbeat\"",
+            customMessage: "没有心跳：这条流开头解析模型池、推理模型吐首字之前都是长静默，"
+                + "nginx/CDN 会按空闲超时掐掉连接，而后端拿 CancellationToken.None 继续烧完并落库");
+
+        src.ShouldContain(
+            "_sseWriteLock",
+            customMessage: "心跳与主循环同时往一个 Response 写却没有锁：客户端会收到交织的半行");
+
+        // 心跳只在真静默时发：正文流起来之后不该继续插事件
+        src.ShouldContain(
+            "_lastSseWriteTicks",
+            customMessage: "心跳没有按「距上次写入多久」判断，会在正文流动时也插进去");
+    }
 }

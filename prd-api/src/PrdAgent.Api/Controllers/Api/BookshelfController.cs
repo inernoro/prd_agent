@@ -36,6 +36,17 @@ public class BookshelfController : ControllerBase
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<BookshelfController> _logger;
 
+    /*
+     * SSE 写入串行化 + 最后写入时刻。
+     *
+     * 心跳任务与主循环会同时往同一个 Response 写，没有锁就是两股字节交织，
+     * 客户端解析出来是半行。Controller 实例每请求一个，字段不会跨请求串。
+     */
+    private readonly SemaphoreSlim _sseWriteLock = new(1, 1);
+
+    /// <summary>最后一次写 SSE 的时刻（ticks）。心跳线程读、主循环写，故走 Volatile。</summary>
+    private long _lastSseWriteTicks = DateTime.UtcNow.Ticks;
+
     private static readonly JsonSerializerOptions SseJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -414,6 +425,40 @@ public class BookshelfController : ControllerBase
         string? platform = null;
         string? streamError = null;
 
+        /*
+         * 心跳（`server-authority` 规则 4：SSE 必须每 10 秒 keepalive）。
+         *
+         * 这条流有两段天然的长静默：开头解析模型池、以及推理模型吐第一个字之前。
+         * 静默期间一个字节都不发，nginx / CDN 按空闲超时把连接掐了——而后端拿的是
+         * CancellationToken.None，它会继续烧完这几分钟、继续把稿子落库。
+         * 于是用户看到「连接断了」，钱照花、稿子照写，两边对不上。
+         *
+         * 只在真的静默满 10 秒时才发，正文流起来之后它自然不作声。
+         */
+        using var heartbeatCts = new CancellationTokenSource();
+        var streamStartedAt = DateTime.UtcNow;
+        var heartbeatTask = Task.Run(async () =>
+        {
+            try
+            {
+                while (!heartbeatCts.IsCancellationRequested)
+                {
+                    try { await Task.Delay(TimeSpan.FromSeconds(2), heartbeatCts.Token); }
+                    catch (OperationCanceledException) { return; }
+                    if (heartbeatCts.IsCancellationRequested) return;
+                    var quietFor = DateTime.UtcNow.Ticks - Volatile.Read(ref _lastSseWriteTicks);
+                    if (quietFor < TimeSpan.TicksPerSecond * 10) continue;
+
+                    // 用 ct 而不是 None：客户端真断了就该停，没必要对着空管道写
+                    await WriteDigestEventAsync("heartbeat", new
+                    {
+                        elapsedMs = (int)(DateTime.UtcNow - streamStartedAt).TotalMilliseconds,
+                    }, ct);
+                }
+            }
+            catch { /* 心跳出任何问题都不许打断正文 */ }
+        }, CancellationToken.None);
+
         try
         {
             /*
@@ -463,6 +508,8 @@ public class BookshelfController : ControllerBase
         }
         catch (OperationCanceledException)
         {
+            heartbeatCts.Cancel();
+            try { await heartbeatTask; } catch { /* ignore */ }
             // 走到这里只剩一种情况：网关自己中断了（进程停机）。客户端断开已经
             // 不再能取消这条流。半篇稿子不落库——下一个人点开会读到一篇断在半句话
             // 上的东西，还以为它就是全部。
@@ -470,10 +517,15 @@ public class BookshelfController : ControllerBase
         }
         catch (Exception ex)
         {
+            heartbeatCts.Cancel();
+            try { await heartbeatTask; } catch { /* ignore */ }
             _logger.LogError(ex, "生成精读稿失败 BookId={BookId}", id);
             await WriteDigestEventAsync("error", new { code = "GEN_FAILED", message = "生成失败，稍后再试" }, ct);
             return;
         }
+
+        heartbeatCts.Cancel();
+        try { await heartbeatTask; } catch { /* 停心跳失败不影响落库 */ }
 
         if (streamError != null)
         {
@@ -561,15 +613,21 @@ public class BookshelfController : ControllerBase
 
     private async Task WriteDigestEventAsync(string eventName, object data, CancellationToken ct)
     {
+        await _sseWriteLock.WaitAsync(CancellationToken.None);
         try
         {
             var json = JsonSerializer.Serialize(data, SseJsonOptions);
             await Response.WriteAsync("event: " + eventName + "\n", ct);
             await Response.WriteAsync("data: " + json + "\n\n", ct);
             await Response.Body.FlushAsync(ct);
+            Volatile.Write(ref _lastSseWriteTicks, DateTime.UtcNow.Ticks);
         }
         catch (OperationCanceledException) { /* 客户端断开 */ }
         catch (ObjectDisposedException) { /* 连接已关闭 */ }
+        finally
+        {
+            _sseWriteLock.Release();
+        }
     }
 
 }
