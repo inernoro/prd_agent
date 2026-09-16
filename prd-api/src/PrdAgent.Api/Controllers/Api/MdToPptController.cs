@@ -766,15 +766,18 @@ public class MdToPptController : ControllerBase
                     ["clarify"] = metaObj?["clarify"]?.DeepClone(),
                     ["outline"] = outline,
                 };
+                var repairedPages = Array.Empty<int>() as IReadOnlyList<int>;
                 if (sourcePlan != null)
                 {
                     // 与 /outline 同一条修法：先把模型漏掉的来源块补回相邻页，再校验，
                     // 补齐结果写回 payload（落库与后续确认看的是这一份）。
-                    var streamedPages = outline.Deserialize<List<MdToPptOutlinePageDto>>(
-                        new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    var jsonOptions = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                    var beforeRepair = outline.Deserialize<List<MdToPptOutlinePageDto>>(jsonOptions);
+                    var streamedPages = outline.Deserialize<List<MdToPptOutlinePageDto>>(jsonOptions);
                     sourcePlan.RepairCoverage(streamedPages);
                     sourcePlan.Bind(streamedPages, targetPages);
                     WriteBackSourceBlockIds(payload, streamedPages);
+                    repairedPages = ChangedSourceBindingPages(beforeRepair, streamedPages);
                 }
                 run.Status = "done";
                 run.OutlineJson = payload.ToJsonString();
@@ -788,6 +791,27 @@ public class MdToPptController : ControllerBase
                     run,
                     cancellationToken: CancellationToken.None);
                 await _designArtifactAdapter.CompletePlanAsync(run, CancellationToken.None);
+
+                // 补齐只改了落库那一份，而 page 事件早就推完了：前端手里还是补齐前的
+                // sourceBlockIds，点「确认，生成 PPT」提交的就是那一份，与库里已修好的
+                // 计划对不上，直接吃一个 source_plan_binding_mismatch。所以补齐动过的页
+                // 必须在 done 之前按同一个 page 事件重发一遍——前端的 page 处理是按下标
+                // 覆盖（outline[idx] = slide），重发即替换，不需要新的事件类型。
+                foreach (var index in repairedPages)
+                {
+                    if (payload["outline"] is not JsonArray repairedOutline
+                        || index < 0 || index >= repairedOutline.Count
+                        || repairedOutline[index] is not JsonObject repairedPage) continue;
+                    await WriteEventAsync("page", new JsonObject
+                    {
+                        ["type"] = "page",
+                        ["index"] = index + 1,
+                        ["title"] = repairedPage["title"]?.DeepClone(),
+                        ["bullets"] = repairedPage["bullets"]?.DeepClone() ?? new JsonArray(),
+                        ["design"] = repairedPage["design"]?.DeepClone(),
+                        ["sourceBlockIds"] = repairedPage["sourceBlockIds"]?.DeepClone(),
+                    });
+                }
             }
             catch (MdToPptSourcePlanException) { throw; }
             catch (Exception) when (sourcePlan != null) { throw; }
@@ -1003,6 +1027,28 @@ public class MdToPptController : ControllerBase
     }
 
     /// <summary>把补齐后的来源绑定写回归一化大纲，让落库与后续确认看到的是同一份。</summary>
+    /// <summary>
+    /// 补齐把哪几页的来源绑定改了（返回 0 基页下标）。
+    ///
+    /// 只有这几页需要在 done 之前重发 page 事件：没被改过的页重发是噪音，
+    /// 会让前端的「新到的卡闪一下」对着没变的内容闪。
+    /// </summary>
+    internal static IReadOnlyList<int> ChangedSourceBindingPages(
+        IReadOnlyList<MdToPptOutlinePageDto>? before,
+        IReadOnlyList<MdToPptOutlinePageDto>? after)
+    {
+        if (after == null) return Array.Empty<int>();
+        var changed = new List<int>();
+        for (var index = 0; index < after.Count; index++)
+        {
+            var previous = before != null && index < before.Count ? before[index].SourceBlockIds : null;
+            var current = after[index].SourceBlockIds;
+            if (!(previous ?? new List<string>()).SequenceEqual(current ?? new List<string>(), StringComparer.Ordinal))
+                changed.Add(index);
+        }
+        return changed;
+    }
+
     internal static void WriteBackSourceBlockIds(JsonObject normalized, IReadOnlyList<MdToPptOutlinePageDto>? pages)
     {
         if (pages == null || normalized["outline"] is not JsonArray outline) return;

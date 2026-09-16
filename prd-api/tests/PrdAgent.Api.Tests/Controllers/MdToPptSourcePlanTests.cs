@@ -75,8 +75,14 @@ public class MdToPptSourcePlanTests
         Assert.Equal("source_plan_page_count", Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages.Take(3).ToList(), 4)).Code);
         pages[3].SourceBlockIds = new() { "forged" };
         Assert.Equal("source_plan_unknown_block", Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 4)).Code);
+        // 把第 0 页的块抄到第 3 页：这份输入同时犯了两条——块 0 跨页重复、块 3 没人认领。
+        // 四页四块且不许重复时，「漏块」不可能单独出现，所以这一步测不出纯粹的 incomplete；
+        // 先报重复是对的，它指着模型真正做错的那一下。纯 incomplete 的覆盖在
+        // MdToPptSourcePlanCoverageRepairTests 里（那里页数少于块数，漏块可以单独成立）。
         pages[3].SourceBlockIds = pages[0].SourceBlockIds;
-        Assert.Equal("source_plan_incomplete", Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 4)).Code);
+        var bothWrong = Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 4));
+        Assert.Equal("source_plan_unknown_block", bothWrong.Code);
+        Assert.Contains("只能出现在一页", bothWrong.Message);
         pages[3].SourceBlockIds = new() { plan.Blocks[3].Id, plan.Blocks[3].Id };
         Assert.Equal("source_plan_unknown_block", Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 4)).Code);
         Assert.Throws<MdToPptSourcePlanException>(() => MdToPptSourcePlan.Create(Sources("  \n")));
@@ -670,5 +676,148 @@ public class MdToPptClosingLayoutFitnessTests
     {
         // 非知识驱动、拿不到内容形状时不改变既有行为：收尾页还是收尾页。
         Assert.Equal("s-colophon", MdToPptAnchors.PickLayout(Anchor(), 5, 6, null).Layout);
+    }
+}
+
+/// <summary>
+/// 来源块的归属契约：每个块恰好属于一页，而且补齐的结果必须让前端也拿到。
+///
+/// 两条都属于「不报错、只是悄悄不对」的形状：跨页重复时 Bind 照样通过，两页各自把
+/// 同一份权威原文渲染一遍；补齐只改落库那一份时流程照常走完，直到用户点确认才吃一个
+/// 对不上的 422。
+/// </summary>
+public class MdToPptSourceBindingOwnershipTests
+{
+    private const string Doc = "# 标题\n\n## 一节\n\n一节正文。\n\n## 二节\n\n二节正文。\n";
+
+    private static MdToPptSourcePlan Plan() => MdToPptSourcePlan.Create(new List<DesignKnowledgeSnapshot>
+    {
+        new() { StoreId = "s", EntryId = "e", Content = Doc, ContentHash = MdToPptSourcePlan.Hash(Doc) },
+    });
+
+    private static List<MdToPptOutlinePageDto> Pages(MdToPptSourcePlan plan, params string[][] perPage) =>
+        perPage.Select(ids => new MdToPptOutlinePageDto
+        {
+            Title = "页",
+            SourceBlockIds = ids.ToList(),
+        }).ToList();
+
+    [Fact]
+    public void SameBlockOnTwoPages_IsRejected()
+    {
+        var plan = Plan();
+        var all = plan.Blocks.Select(x => x.Alias).ToArray();
+
+        // 每个块都被覆盖过（数量校验满足），但块 0 同时出现在两页。
+        var pages = Pages(plan,
+            all.Take(3).ToArray(),
+            all.Skip(3).Concat(new[] { all[0] }).ToArray());
+
+        var error = Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 2));
+        Assert.Equal("source_plan_unknown_block", error.Code);
+        Assert.Contains("只能出现在一页", error.Message);
+    }
+
+    [Fact]
+    public void SameBlockWrittenAsAliasOnOnePageAndIdOnAnother_IsAlsoRejected()
+    {
+        var plan = Plan();
+        var all = plan.Blocks.Select(x => x.Alias).ToArray();
+
+        // 换个写法不改变它是同一个块：判据按内容寻址 Id 算，不看字面。
+        var pages = Pages(plan,
+            all.Take(3).ToArray(),
+            all.Skip(3).Concat(new[] { plan.Blocks[0].Id }).ToArray());
+
+        Assert.Throws<MdToPptSourcePlanException>(() => plan.Bind(pages, 2));
+    }
+
+    [Fact]
+    public void EachBlockOnExactlyOnePage_StillPasses()
+    {
+        var plan = Plan();
+        var all = plan.Blocks.Select(x => x.Alias).ToArray();
+
+        var bound = plan.Bind(Pages(plan, all.Take(3).ToArray(), all.Skip(3).ToArray()), 2);
+
+        Assert.Equal(3, bound[0].Blocks.Count);
+        Assert.Equal(plan.Blocks.Count - 3, bound[1].Blocks.Count);
+    }
+
+    [Fact]
+    public void OutlinePromptTellsTheModelOneBlockBelongsToOnePage()
+    {
+        // 判据改严了就必须同时告诉模型，否则等于按一份没交代过的契约罚它。
+        Assert.Contains("每个ID只能出现在一页", Plan().OutlinePrompt());
+    }
+
+    [Fact]
+    public void RepairedPages_AreTheOnesReportedAsChanged()
+    {
+        var plan = Plan();
+        var before = Pages(plan,
+            new[] { plan.Blocks[0].Alias },
+            new[] { plan.Blocks[2].Alias });
+        var after = Pages(plan,
+            new[] { plan.Blocks[0].Alias },
+            new[] { plan.Blocks[2].Alias });
+        plan.RepairCoverage(after);
+
+        // 两页都被补齐动过（块1 跟到第一页，块3、4 跟到第二页），两页都要重发。
+        Assert.Equal(new[] { 0, 1 }, MdToPptController.ChangedSourceBindingPages(before, after));
+    }
+
+    [Fact]
+    public void UntouchedPages_AreNotReportedAsChanged()
+    {
+        var plan = Plan();
+        var all = plan.Blocks.Select(x => x.Alias).ToArray();
+        var before = Pages(plan, all.Take(3).ToArray(), all.Skip(3).ToArray());
+        var after = Pages(plan, all.Take(3).ToArray(), all.Skip(3).ToArray());
+        plan.RepairCoverage(after);
+
+        // 模型本来就写全了，补齐不该动任何一页——重发没变的页只会让前端白闪一下。
+        Assert.Empty(MdToPptController.ChangedSourceBindingPages(before, after));
+    }
+
+    [Fact]
+    public void RepairedPagesAreReEmittedBeforeDone()
+    {
+        // 接线守卫：判据算得再对，不发出去也白搭——而删掉那段重发不会让任何用例变红
+        // （SSE 这条路没有集成测试覆盖）。所以这里直接盯源码里的次序。
+        var source = File.ReadAllText(LocateController());
+        var repair = source.IndexOf("foreach (var index in repairedPages)", StringComparison.Ordinal);
+        Assert.True(repair > 0, "补齐后的页不再重发，前端手里会留着补齐前的来源绑定");
+
+        var computed = source.IndexOf("ChangedSourceBindingPages(beforeRepair", StringComparison.Ordinal);
+        Assert.True(computed > 0 && computed < repair, "重发的页必须来自补齐前后的实际差集");
+
+        var done = source.IndexOf("WriteEventAsync(\"done\", new { pages = emittedPages", StringComparison.Ordinal);
+        Assert.True(done > repair, "重发必须排在 done 之前，done 之后前端已经收尾了");
+    }
+
+    private static string LocateController()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null
+               && !Directory.Exists(Path.Combine(directory.FullName, "prd-api", "src")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        var path = Path.Combine(
+            directory!.FullName, "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "MdToPptController.cs");
+        Assert.True(File.Exists(path), $"找不到 {path}");
+        return path;
+    }
+
+    [Fact]
+    public void ReorderWithinAPage_CountsAsChanged()
+    {
+        var plan = Plan();
+        var all = plan.Blocks.Select(x => x.Alias).ToArray();
+        var before = Pages(plan, new[] { all[0], all[1] });
+        var after = Pages(plan, new[] { all[1], all[0] });
+
+        // 顺序就是正文的渲染顺序，换了序前端手里那份就不再等于库里那份。
+        Assert.Equal(new[] { 0 }, MdToPptController.ChangedSourceBindingPages(before, after));
     }
 }
