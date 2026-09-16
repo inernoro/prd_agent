@@ -28,6 +28,7 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
   buildMonitorHeadline,
+  proberLiveness,
   filterTargets,
   formatLatency,
   groupBranchesByProject,
@@ -378,7 +379,7 @@ export function StatusPage(): JSX.Element {
                   <OwnerBoard
                     targets={targets}
                     now={now}
-                    prober={summary?.prober ?? null}
+                    prober={summary ? proberLiveness(summary) : null}
                     alarm={summary?.alarm}
                     alarmChannels={summary?.alarmChannels}
                     intervalSeconds={summary?.intervalSeconds}

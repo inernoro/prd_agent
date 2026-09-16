@@ -425,11 +425,15 @@ export function createUptimeRouter(deps: {
       return;
     }
     const endpoints = deps.listMonitorEndpoints?.(projectId) || [];
+    const run = deps.lastDiscoveryRun?.() || null;
+    const mine = new Set(endpoints);
     res.json({
       endpoints,
       // 内置的那条是 CDS 监控自己：由服务端认定，前端只认这份名单，不自己再判一遍地址。
       builtin: endpoints.filter(isSelfCheckEndpoint),
-      lastRun: deps.lastDiscoveryRun?.() || null,
+      // 上一轮对账是全实例一起跑的；这里只摆本项目端点那几条结果。不然项目 A 的芯片会把
+      // 项目 B 打不通的端点与发现数算进自己头上，健康的项目被显示成警告（Codex #1543 P2）。
+      lastRun: run ? { ...run, endpoints: run.endpoints.filter((o) => mine.has(o.url)) } : null,
     });
   });
 

@@ -60,3 +60,8 @@
 | fix | cds | 通道存活只认「有成功投递记录」：配了但没发过的不算通着；最近一次投递结果随通道配置持久化，进程重启不再把已验证的通道打回未知（Codex P1） |
 | fix | cds | 普通 GET /api/self-status（cdscli 与维护页打的那条）改用同一份 restartStatus 判定并带 restartWait，排空等待期间说 pending 而不是 incomplete（Codex P2） |
 | chore | changelogs | 本 PR 的 22 个碎片合并为一个（一个 PR 一个碎片的约定，Codex P1） |
+| fix | cds | cdscli 的 self update / self restart：服务端在 done 里声明不换进程（web-only / doc-only）或状态接口回 not_required 时按成功收工、restarted=false，不再白等 9 分钟后报假失败（Codex P1） |
+| fix | cds | restartStatus 判定把「不换进程的档位」收成一份枚举（web-only / doc-only / noOp），强制同步走 doc-only 快路径之后 self-status 不再永远 incomplete；cdscli 那份清单与之同源并有守卫（Codex P2） |
+| fix | cds | 探测器停摆判定并入 cycle 健康：第一轮从来没跑完（lastCycleAt 为空）也算停摆，前端头条与「我的业务」第一屏不再拿落盘的旧绿样本说全部正常；前端只有一处读法 proberLiveness（Codex P1） |
+| fix | cds | 全局视角的项目覆盖按全环境判、健康读数按环境筛选算：只在分支预览上装了业务监控的项目不再从卡片上消失或被算成「没人盯」（Codex P2） |
+| fix | cds | 自检端点列表里的上一轮结果只摆本项目端点那几条，项目 A 的芯片不再把项目 B 打不通的端点与发现数算进自己头上（Codex P2） |

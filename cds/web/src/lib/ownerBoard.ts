@@ -654,7 +654,11 @@ export function buildProjectRows(targets: ReadonlyArray<UptimeTargetSummary>, no
     });
   }
 
-  // 有事的排前面；同档按「业务多的在前」，再按名字。没人盯的沉到最后单独说。
+  return sortProjectRows(rows);
+}
+
+/** 有事的排前面；同档按「业务多的在前」，再按名字。没人盯的沉到最后单独说。 */
+function sortProjectRows(rows: ProjectRow[]): ProjectRow[] {
   return rows.sort((a, b) =>
     SEVERITY[a.worst] - SEVERITY[b.worst]
     || b.businessCount - a.businessCount
@@ -674,16 +678,39 @@ export interface GlobalBoard {
   businessTotal: number;
 }
 
+/**
+ * @param targets 当前环境筛选之后的目标——业务读数（挂了几项、逾期几项）按它算
+ * @param coverageTargets 不做环境筛选的全部目标——「哪个项目有没有人盯」按它算。
+ *   缺省等于 targets（调用方没有环境筛选时两者本来就是一回事）。
+ *
+ * 两份分开是因为默认环境集会把分支预览筛掉：只在分支预览上装了业务监控的项目，
+ * 拿筛过的那批判覆盖，要么整个从卡片里消失，要么（它还有生产容器时）被判成「没人盯」——
+ * 而它明明装了监控，只是装在被筛掉的环境里。于是「没有项目缺业务监控」这句话说错了
+ * （Codex #1543 P2）。覆盖看全环境，读数看筛选后的；业务全落在被筛掉的环境里的项目，
+ * 摆全环境那份读数，不藏。
+ */
 export function buildGlobalBoard(
   targets: ReadonlyArray<UptimeTargetSummary>,
   ctx: OwnerBoardContext,
+  coverageTargets: ReadonlyArray<UptimeTargetSummary> = targets,
 ): GlobalBoard {
   const now = ctx.now;
-  const all = buildProjectRows(targets, now);
+  const scopedRows = new Map(buildProjectRows(targets, now).map((r) => [r.id, r]));
+  const all = sortProjectRows(buildProjectRows(coverageTargets, now).map((row) => {
+    const scoped = scopedRows.get(row.id);
+    return scoped && scoped.businessCount > 0 ? scoped : row;
+  }));
   const watched = all.filter((r) => r.businessCount > 0);
   const unwatched = all.filter((r) => r.businessCount === 0);
   const businessTotal = watched.reduce((n, r) => n + r.businessCount, 0);
-  const evidence = latestEvidence(buildBusinessRows(targets, now), now);
+  // 证据短板按卡片上真正摆出来的那些项目算：筛选后有读数的用筛选后的目标，
+  // 退回全环境读数的项目用它全环境的目标——不然它的格子在卡片上、却不在证据里。
+  const fallbackIds = new Set(watched.filter((r) => !(scopedRows.get(r.id)?.businessCount)).map((r) => r.id));
+  const evidenceTargets = [
+    ...targets.filter((t) => !t.projectId || !fallbackIds.has(t.projectId)),
+    ...coverageTargets.filter((t) => t.projectId && fallbackIds.has(t.projectId)),
+  ];
+  const evidence = latestEvidence(buildBusinessRows(evidenceTargets, now), now);
   const base = { rows: watched, unwatched, projectsWithBusiness: watched.length, businessTotal, ...(evidence ? { evidence } : {}) };
 
   // 「还有 N 个项目没人盯」这句话不分档，每一档都要带上——它是全局视角存在的理由。

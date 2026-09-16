@@ -11,8 +11,10 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  NO_RESTART_UPDATE_MODES,
   describeRestartWait,
   getRestartWait,
+  isNoRestartUpdateMode,
   resolveRestartStatus,
   setRestartWait,
   type RestartWaitState,
@@ -52,8 +54,14 @@ describe('restartStatus 判定矩阵', () => {
     expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: { status: 'deferred', updateMode: 'restart', ts: T0 }, daemonReadyAt: null, pidStartedAt: before })).toBe('pending');
   });
 
-  it('web-only 更新 / 失败记录 / 没有记录 → not_required', () => {
-    expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: { ...success, updateMode: 'web-only' }, daemonReadyAt: null, pidStartedAt: before })).toBe('not_required');
+  it('不换进程的档位（web-only / doc-only / noOp）/ 失败记录 / 没有记录 → not_required', () => {
+    // Codex #1543 P2：之前只豁免 web-only，强制同步走 doc-only 快路径之后 self-status 永远 incomplete
+    for (const updateMode of NO_RESTART_UPDATE_MODES) {
+      expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: { ...success, updateMode }, daemonReadyAt: null, pidStartedAt: before }), updateMode).toBe('not_required');
+    }
+    expect(isNoRestartUpdateMode('restart')).toBe(false);
+    expect(isNoRestartUpdateMode('prebuilt')).toBe(false);
+    expect(isNoRestartUpdateMode(undefined)).toBe(false);
     expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: { ...success, status: 'failed' }, daemonReadyAt: null, pidStartedAt: before })).toBe('not_required');
     expect(resolveRestartStatus({ activeSelfUpdate: null, restartWait: null, lastSelfUpdate: null, daemonReadyAt: null, pidStartedAt: before })).toBe('not_required');
   });
@@ -110,10 +118,29 @@ describe('接线守卫', () => {
   });
 
   it('cdscli 以 restartStatus=completed 为准才报 restarted:true，不再靠 healthz 200', () => {
-    expect(cli).toContain('rs == "completed"');
+    expect(cli).toContain('rs in ("completed", "not_required")');
     expect(cli).toContain('"restarted": True');
     expect(cli).not.toContain('"restarted": not no_wait');
     expect(cli).toContain('/api/self-status');
+  });
+
+  it('cdscli 把不需要重启的更新当成功（restarted:false），不等 9 分钟再报失败（Codex #1543 P1）', () => {
+    // done 事件里就带了 mode：不换进程的档位当场收工
+    expect(cli).toContain('if done_mode in _NO_RESTART_UPDATE_MODES:');
+    expect(cli).toMatch(/"restarted": False, "restartStatus": "not_required", "updateMode": done_mode/);
+    // 轮询里看到 not_required 也是终态，且是成功
+    expect(cli).toMatch(/if final_status == "not_required":\s*\n\s*ok\(/);
+  });
+
+  it('不换进程的档位清单：cdscli 与 TS 同源，且每一档都在 types.ts 的 updateMode 联合里', () => {
+    const m = cli.match(/_NO_RESTART_UPDATE_MODES = \(([^)]*)\)/);
+    expect(m, 'cdscli 里找不到 _NO_RESTART_UPDATE_MODES').toBeTruthy();
+    const pyModes = [...m![1].matchAll(/"([^"]+)"/g)].map((x) => x[1]);
+    expect(pyModes).toEqual([...NO_RESTART_UPDATE_MODES]);
+    const types = read('../../src/types.ts');
+    const union = types.match(/updateMode\?: ([^;]+);/);
+    expect(union).toBeTruthy();
+    for (const mode of NO_RESTART_UPDATE_MODES) expect(union![1], mode).toContain(`'${mode}'`);
   });
 
   it('维护页在 pending 时把等待文案摆成横幅', () => {

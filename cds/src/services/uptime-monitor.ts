@@ -1907,6 +1907,7 @@ export class UptimeMonitorService {
     }
 
     const intervalMs = this.deps.config.intervalMs;
+    const cycle = this.getCycleHealth();
     return {
       enabled: this.deps.config.enabled,
       generatedAt: now,
@@ -1915,7 +1916,7 @@ export class UptimeMonitorService {
       failureThreshold: this.deps.config.failureThreshold,
       firstDataEtaSeconds: Math.round(this.deps.config.intervalMs / 1000),
       lastCycleAt: this.lastCycleAt,
-      cycle: this.getCycleHealth(),
+      cycle,
       excludePatterns: [...(this.deps.config.excludePatterns || [])],
       overall: tallyTargetSummaries(targets),
       targets,
@@ -1925,7 +1926,10 @@ export class UptimeMonitorService {
         lastCycleDurationMs: this.lastCycleDurationMs,
         lastCycleProbed: this.lastCycleProbed,
         lastCycleTargets: this.lastCycleTargets,
-        stalled: this.deps.config.enabled && this.lastCycleAt !== null && now - this.lastCycleAt > intervalMs * 2,
+        // 停摆 = 上一轮完成得太久（两个间隔）**或** cycle 健康判 stale——后者按启动时刻判得出
+        // 「第一轮从来没跑完」。只看 lastCycleAt 时首轮卡死永远是 false，前端拿着落盘的旧绿样本
+        // 说「全部正常」（Codex #1543 P1）。
+        stalled: cycle.stale || (this.deps.config.enabled && this.lastCycleAt !== null && now - this.lastCycleAt > intervalMs * 2),
         userViewEnabled: this.deps.config.userViewEnabled !== false,
       },
     };

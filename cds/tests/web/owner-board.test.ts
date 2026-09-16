@@ -594,4 +594,45 @@ describe('全局面板', () => {
     ], NOW);
     expect(rows[0].id).toBe('坏');
   });
+
+  describe('覆盖按全环境判，读数按环境筛选算（Codex #1543 P2）', () => {
+    // 混合实例：A 在生产装了业务监控；B 只在分支预览装了；C 什么都没装。
+    // 默认环境集会筛掉分支预览——用筛过的那批判覆盖，B 要么整个消失，要么被判成没人盯。
+    const all = [
+      biz('A', 'a1'),
+      biz('B', 'b1', { environment: 'preview' }),
+      infraOf('C'),
+    ];
+    const scoped = all.filter((t) => t.environment !== 'preview');
+
+    it('只在分支预览上有业务监控的项目不从卡片上消失，也不被算成没人盯', () => {
+      const board = buildGlobalBoard(scoped, ctx, all);
+      expect(board.rows.map((r) => r.id).sort()).toEqual(['A', 'B']);
+      expect(board.unwatched.map((r) => r.id)).toEqual(['C']);
+      expect(board.projectsWithBusiness).toBe(2);
+      expect(board.businessTotal).toBe(2);
+      // B 摆的是它全环境那份读数：分支预览那一格在
+      expect(board.rows.find((r) => r.id === 'B')?.environments).toEqual(['preview']);
+    });
+
+    it('B 还有生产容器时也一样：不因为筛选后只剩容器就被判成「没人盯」', () => {
+      const withInfra = [...all, infraOf('B')];
+      const board = buildGlobalBoard(withInfra.filter((t) => t.environment !== 'preview'), ctx, withInfra);
+      expect(board.unwatched.map((r) => r.id)).toEqual(['C']);
+      expect(board.rows.map((r) => r.id).sort()).toEqual(['A', 'B']);
+    });
+
+    it('红绿闭环：不传全环境那份（旧行为）时 B 就消失了、只剩 C 没人盯', () => {
+      const board = buildGlobalBoard(scoped, ctx);
+      expect(board.rows.map((r) => r.id)).toEqual(['A']);
+      expect(board.unwatched.map((r) => r.id)).toEqual(['C']);
+    });
+
+    it('筛选后有读数的项目用筛选后的读数：A 分支预览挂了不该在默认视图里把 A 标红', () => {
+      const mixed = [...all, biz('A', 'a-preview', { environment: 'preview', status: 'down' })];
+      const board = buildGlobalBoard(mixed.filter((t) => t.environment !== 'preview'), ctx, mixed);
+      expect(board.rows.find((r) => r.id === 'A')?.down).toBe(0);
+      expect(board.rows.find((r) => r.id === 'A')?.businessCount).toBe(1);
+    });
+  });
 });

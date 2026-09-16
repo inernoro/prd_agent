@@ -194,6 +194,39 @@ export interface UptimeSummary {
   targets: UptimeTargetSummary[];
   coverage?: UptimeCoverage;
   prober?: UptimeProberHealth;
+  /** 探测循环健康（服务端 getCycleHealth）。stale 含「第一轮从来没跑完」这一档，prober 单独看不到它。 */
+  cycle?: UptimeCycleHealth;
+}
+
+export interface UptimeCycleHealth {
+  ok: boolean;
+  running: boolean;
+  lastCycleAt: number | null;
+  sinceLastCycleMs: number | null;
+  stale: boolean;
+  watchdogResets: number;
+  probeDeadlineHits: number;
+}
+
+export interface ProberLiveness {
+  stalled: boolean;
+  lastCycleAt: number | null;
+}
+
+/**
+ * 探测器活不活的唯一读法：prober.stalled 或 cycle.stale 任一成立即停摆。
+ *
+ * 服务端的 prober.stalled 曾要求 lastCycleAt 不为 null——第一轮卡死时它永远是 false，
+ * 而 cycle.stale 按启动时刻判得出这一档。前端只读 prober 就会拿着落盘的旧绿样本说
+ * 「全部正常」（Codex #1543 P1）。两个字段都没下发 → null（不知道），调用方不许兜成「没停」。
+ */
+export function proberLiveness(summary: Pick<UptimeSummary, 'prober' | 'cycle'>): ProberLiveness | null {
+  const { prober, cycle } = summary;
+  if (!prober && !cycle) return null;
+  return {
+    stalled: Boolean(prober?.stalled || cycle?.stale),
+    lastCycleAt: prober?.lastCycleAt ?? cycle?.lastCycleAt ?? null,
+  };
 }
 
 export interface UptimeIncidentView {
@@ -385,7 +418,7 @@ function joinNames(names: string[], max = 3): string {
 }
 
 export function buildMonitorHeadline(
-  summary: Pick<UptimeSummary, 'enabled' | 'overall' | 'targets'> & { prober?: UptimeProberHealth },
+  summary: Pick<UptimeSummary, 'enabled' | 'overall' | 'targets'> & { prober?: UptimeProberHealth; cycle?: UptimeCycleHealth },
   incidents: ReadonlyArray<UptimeIncidentView>,
   now: number,
 ): MonitorHeadline {
@@ -394,11 +427,14 @@ export function buildMonitorHeadline(
   }
   const { overall } = summary;
   const active = summary.targets.filter((t) => !t.excluded);
-  if (summary.prober?.stalled) {
+  const liveness = proberLiveness(summary);
+  if (liveness?.stalled) {
     return {
       tone: 'warn',
       title: '监测本身停了',
-      detail: `探测器上一轮在 ${summary.prober.lastCycleAt ? formatRelative(summary.prober.lastCycleAt, now) : '未知时刻'}，超过两个探测间隔没有跑完，下面的状态可能已经过期。`,
+      detail: liveness.lastCycleAt
+        ? `探测器上一轮在 ${formatRelative(liveness.lastCycleAt, now)}，超过两个探测间隔没有跑完，下面的状态可能已经过期。`
+        : '探测器第一轮一直没有跑完，下面看到的都是上次进程留下的旧状态。',
     };
   }
   if (active.length === 0) {

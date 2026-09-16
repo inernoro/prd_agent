@@ -221,7 +221,8 @@ function buildBundle(
   const scoped = scopeTargets(projectTargets, { projectId: null, environments: scope.environments });
   const board = buildOwnerBoard(scoped, projectTargets, ctx);
   // 没选项目 = 全局视角。同一个选择器，选了看业务、没选看项目。
-  const global_ = scope.projectId ? null : buildGlobalBoard(scoped, ctx);
+  // 覆盖按全环境（projectTargets）判，读数按环境筛选后（scoped）算——见 buildGlobalBoard 的注释。
+  const global_ = scope.projectId ? null : buildGlobalBoard(scoped, ctx, projectTargets);
   return { projectTargets, scoped, board, global_, headline: global_ ?? board };
 }
 

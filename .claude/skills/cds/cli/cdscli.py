@@ -3414,6 +3414,11 @@ def cmd_self_status(args: argparse.Namespace) -> None:
     ok(body)
 
 
+# 不换进程的更新档位。与 cds/src/services/self-restart-wait.ts 的 NO_RESTART_UPDATE_MODES 同源
+# （守卫测试逐项比对）。走到这几档的更新成功即成功，restarted=False，不等重启。
+_NO_RESTART_UPDATE_MODES = ("web-only", "doc-only", "noOp")
+
+
 def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note: str) -> None:
     """执行 CDS 自身 SSE 动作，并把 error 事件转换为非零退出码。"""
     url = _cds_base() + path
@@ -3422,6 +3427,8 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
     req = urllib.request.Request(url, method="POST", data=data, headers=headers)
     events: list[dict[str, Any]] = []
     terminal_error: dict[str, Any] | None = None
+    # done 事件里的 mode：web-only / doc-only 这类不换进程的档位在这里就说了
+    done_mode: str | None = None
     correlation: dict[str, str] = {"agentSessionId": _AGENT_SESSION_ID}
     try:
         # 读超时 60s：服务端在等在途部署排空时每 10s 推一条 drain-deploys 进度，
@@ -3448,6 +3455,8 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
                     events.append(parsed)
                     if cur_event == "error":
                         terminal_error = parsed
+                    if cur_event == "done" and isinstance(parsed.get("mode"), str):
+                        done_mode = parsed["mode"]
                     if cur_event in ("done", "error"):
                         break
     except urllib.error.HTTPError as e:
@@ -3471,12 +3480,19 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
     if no_wait:
         ok({"events": events, "restarted": False, "restartStatus": "not-waited", **correlation}, note=note)
         return
+    if done_mode in _NO_RESTART_UPDATE_MODES:
+        # 服务端在 done 里就说了这次不换进程（前端零停机更新 / 纯文档）：成功，不等重启。
+        # 之前这里也去等 completed，一次正常的 web-only 更新要白等 9 分钟再报失败（Codex #1543 P1）。
+        ok({"events": events, "restarted": False, "restartStatus": "not_required", "updateMode": done_mode, **correlation},
+           note=f"{note}（{done_mode}：不需要重启）")
+        return
     # 等到「进程真的换了」才算重启完成。2026-09-16 之前这里只探 healthz 200 就报
     # restarted:true——旧进程照样能回 200，两次自更新都被报成完成，其实还在等
     # 在途部署排空（最多 5 分钟）。现在以 /api/self-status 的 restartStatus 为准：
-    #   pending    → 还在等（restartWait 里写着在等谁、等了多久），继续轮询
-    #   completed  → 新进程已起来（pidStartedAt 晚于更新时刻）
-    #   incomplete → 记录成功但进程没换，如实报失败
+    #   pending      → 还在等（restartWait 里写着在等谁、等了多久），继续轮询
+    #   completed    → 新进程已起来（pidStartedAt 晚于更新时刻）
+    #   not_required → 这次更新不需要重启（不换进程的档位），成功但 restarted=False
+    #   incomplete   → 记录成功但进程没换，如实报失败
     deadline = time.time() + 9 * 60
     last_wait_msg = None
     wait_log: list[str] = []
@@ -3493,7 +3509,7 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
             last_wait_msg = str(wait.get("message"))
             wait_log.append(last_wait_msg)
             sys.stderr.write(f"[self] {last_wait_msg}\n")
-        if rs == "completed":
+        if rs in ("completed", "not_required"):
             final_status = rs
             break
         # incomplete 不是终态：旧版服务端在「等在途部署排空」的那几分钟里就报 incomplete，
@@ -3502,6 +3518,10 @@ def _run_self_action(path: str, payload: dict[str, Any], *, no_wait: bool, note:
         final_status = rs
     if final_status == "completed":
         ok({"events": events, "restarted": True, "restartStatus": "completed", "restartWaitLog": wait_log, **correlation}, note=note)
+        return
+    if final_status == "not_required":
+        ok({"events": events, "restarted": False, "restartStatus": "not_required", "restartWaitLog": wait_log, **correlation},
+           note=f"{note}（这次更新不需要重启）")
         return
     if final_status == "incomplete":
         die("等了 9 分钟，CDS 记录了更新成功但进程一直没换：新代码没在跑。看 self status 的 restartWait / 守护进程错误日志",

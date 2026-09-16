@@ -36,6 +36,18 @@ export function getRestartWait(): RestartWaitState | null {
 
 export type RestartStatus = 'not_required' | 'pending' | 'completed' | 'incomplete';
 
+/**
+ * 不换进程的更新档位（types.ts 的 updateMode 里注明「daemon 不重启 / 完全 noop / 啥都没做」那几档）。
+ * 记录写着 success 却不该等重启的，只有这几种；漏一种就会让 self-status 永远 incomplete、
+ * 等重启的客户端最后报假失败（Codex #1543 P2：之前只豁免了 web-only，doc-only 落网）。
+ * cdscli 里有一份同名清单，守卫测试保证两边一致。
+ */
+export const NO_RESTART_UPDATE_MODES = ['web-only', 'doc-only', 'noOp'] as const;
+
+export function isNoRestartUpdateMode(mode: string | undefined): boolean {
+  return mode !== undefined && (NO_RESTART_UPDATE_MODES as readonly string[]).includes(mode);
+}
+
 export interface RestartStatusInput {
   activeSelfUpdate: unknown;
   restartWait: RestartWaitState | null;
@@ -55,7 +67,7 @@ export function resolveRestartStatus(input: RestartStatusInput): RestartStatus {
   const last = input.lastSelfUpdate;
   // deferred：更新已接受但推迟执行（等窗口），重启还没轮到——是 pending 不是 not_required。
   if (last?.status === 'deferred') return 'pending';
-  if (!last || last.status !== 'success' || last.updateMode === 'web-only') return 'not_required';
+  if (!last || last.status !== 'success' || isNoRestartUpdateMode(last.updateMode)) return 'not_required';
   const updateMs = last.ts ? Date.parse(last.ts) : Number.NaN;
   const readyMs = input.daemonReadyAt ? Date.parse(input.daemonReadyAt) : Number.NaN;
   const pidMs = input.pidStartedAt ? Date.parse(input.pidStartedAt) : Number.NaN;

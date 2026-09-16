@@ -13,6 +13,7 @@ import {
   formatPercent,
   formatRelative,
   overallAvailability24h,
+  proberLiveness,
   type MonitorHeadline,
   type StatusFilter,
   type UptimeIncidentView,
@@ -62,8 +63,9 @@ function Kpi({ label, value, hint, active, onClick, tone }: {
 function proberLine(summary: UptimeSummary, now: number): string {
   const p = summary.prober;
   if (!p) return `每 ${summary.intervalSeconds} 秒探测 · 连续 ${summary.failureThreshold} 次失败判定故障`;
-  if (!p.lastCycleAt) return '探测器尚未跑完第一轮';
-  const head = p.stalled ? '探测器停了' : '探测器正常';
+  const stalled = proberLiveness(summary)?.stalled ?? p.stalled;
+  if (!p.lastCycleAt) return stalled ? '探测器第一轮一直没跑完（已超过停摆阈值）' : '探测器尚未跑完第一轮';
+  const head = stalled ? '探测器停了' : '探测器正常';
   const dur = p.lastCycleDurationMs !== null ? `，耗时 ${formatDuration(p.lastCycleDurationMs)}` : '';
   return `${head}：上一轮 ${formatRelative(p.lastCycleAt, now)}${dur}，${p.lastCycleProbed}/${p.lastCycleTargets} 目标完成`;
 }
