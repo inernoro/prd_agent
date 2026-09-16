@@ -519,10 +519,10 @@ export function PlatformsPage() {
         <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
+              {/* 主表只摆要拿来做决定的东西。接口类型、API 地址、并发都是选完平台就定下来的
+                  实现细节：用户读它们做不出任何决定，却占掉半张表的宽度。三项在「查看接口」
+                  预览里一个不少（minimal-user-input：有正确默认值的字段不摆在主路径上）。 */}
               <th style={th}>平台</th>
-              <th style={th}>类型</th>
-              <th style={th}>API URL</th>
-              <th style={th}>并发</th>
               <th style={th}>名下模型</th>
               <th style={th}>配置来源</th>
               <th style={th}>状态</th>
@@ -577,9 +577,6 @@ export function PlatformsPage() {
                       />
                     </div>
                   </td>
-                  <td style={td}>{p.platformType || '—'}</td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
-                  <td style={td}>{p.maxConcurrency || '—'}</td>
                   <td style={td}>
                     {/* 一句话结论而不是一个数字：「3 个模型」读不出该不该管，
                         「2 个没登记」读得出——没登记的模型调用方按名字请求找不到它。 */}
@@ -687,7 +684,7 @@ export function PlatformsPage() {
                   <tr>
                     {/* 名下模型占满整行：这是「模型属于上游」这件事的落地位置，
                         窄列里塞不下「登记为哪几个公开名」这句结论 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={9}>
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={6}>
                       <ProviderModelsPanel
                         rows={ownedRows(p.id)}
                         onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude'
@@ -700,7 +697,7 @@ export function PlatformsPage() {
                 {editId === p.id ? (
                   <tr>
                     {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={9}>
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={6}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
                           <input
@@ -710,36 +707,6 @@ export function PlatformsPage() {
                             placeholder="名称"
                             style={{ ...inputStyle, width: 150 }}
                           />
-                          <select
-                            aria-label="接口类型"
-                            value={editDraft.platformType ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
-                            style={inputStyle}>
-                            {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
-                                用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
-                            {editDraft.platformType
-                              && !['openai', 'claude'].includes(editDraft.platformType) ? (
-                                <option value={editDraft.platformType}>
-                                  {editDraft.platformType}（存量类型）
-                                </option>
-                              ) : null}
-                            <option value="openai">openai</option>
-                            <option value="claude">claude</option>
-                          </select>
-                          <input
-                            aria-label="API 地址"
-                            value={editDraft.apiUrl ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
-                            placeholder="https://…"
-                            style={{ ...inputStyle, width: 240 }}
-                          />
-                          <input
-                            aria-label="并发"
-                            type="number"
-                            value={editDraft.maxConcurrency ?? 0}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
-                            style={{ ...inputStyle, width: 80 }}
-                          />
                           <input
                             aria-label="备注"
                             value={editDraft.remark ?? ''}
@@ -747,6 +714,44 @@ export function PlatformsPage() {
                             placeholder="备注"
                             style={{ ...inputStyle, width: 160 }}
                           />
+                          {/* 接口类型、API 地址、并发收进折叠区：接上游时是选平台带出来的，
+                              改它们是例外不是常规。默认露在外面的话，每次只想改个备注
+                              都要从一排输入框里认出哪个是备注（minimal-user-input）。 */}
+                          <details style={{ width: '100%' }}>
+                            <summary style={advancedSummaryStyle}>高级：接口类型、API 地址、并发（换了上游地址或要调并发时才动）</summary>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                              <select
+                                aria-label="接口类型"
+                                value={editDraft.platformType ?? ''}
+                                onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
+                                style={inputStyle}>
+                                {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
+                                    用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
+                                {editDraft.platformType
+                                  && !['openai', 'claude'].includes(editDraft.platformType) ? (
+                                    <option value={editDraft.platformType}>
+                                      {editDraft.platformType}（存量类型）
+                                    </option>
+                                  ) : null}
+                                <option value="openai">openai</option>
+                                <option value="claude">claude</option>
+                              </select>
+                              <input
+                                aria-label="API 地址"
+                                value={editDraft.apiUrl ?? ''}
+                                onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
+                                placeholder="https://…"
+                                style={{ ...inputStyle, width: 240 }}
+                              />
+                              <input
+                                aria-label="并发"
+                                type="number"
+                                value={editDraft.maxConcurrency ?? 0}
+                                onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
+                                style={{ ...inputStyle, width: 80 }}
+                              />
+                            </div>
+                          </details>
                           <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
                             保存
                           </Button>

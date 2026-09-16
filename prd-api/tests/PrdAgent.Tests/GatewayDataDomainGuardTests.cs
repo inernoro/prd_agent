@@ -4094,6 +4094,35 @@ public class GatewayDataDomainGuardTests
     /// 开着 A 的清单再点 B 的「查看模型」时组件不卸载，A 的勾选原样留着，
     /// 撞上同名模型就会把用户没勾过的选择导进 B。key 一改，React 才会重建这个组件。
     /// </summary>
+    /// <summary>
+    /// 上游主表只摆拿来做决定的东西，接口细节收进预览与折叠区。
+    ///
+    /// 由来：2026-09-16 用户看这一页说「baseurl 其实不用暴露出来，一些常见的接口什么的，
+    /// 无需用户配置，默认的就好」。当时主表有「类型 / API URL / 并发」三列——选完平台就定下来的
+    /// 实现细节，用户读它们做不出任何决定，却占掉半张表宽（API URL 那一列自己就 360px）。
+    ///
+    /// 这条钉的是**收起来而不是删掉**：三项必须仍在「查看接口」预览里查得到，
+    /// 否则换 baseUrl 的上游就没地方看当前地址了——那是把一个啰嗦问题换成一个瞎子问题。
+    /// 判据认表头那一行的字面量，不认「API 地址」四个字，所以预览里的同名字段不会误伤。
+    /// </summary>
+    [Fact]
+    public void 上游主表不摆接口实现细节()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+
+        Assert.DoesNotContain("<th style={th}>API URL</th>", page);
+        Assert.DoesNotContain("<th style={th}>类型</th>", page);
+        Assert.DoesNotContain("<th style={th}>并发</th>", page);
+
+        // 收起来的三项必须还在，而且在同一个地方查得到。
+        Assert.Contains("label: '接口类型'", page);
+        Assert.Contains("label: 'API 地址'", page);
+        Assert.Contains("label: '最大并发'", page);
+
+        // 编辑时同理：默认只露名称与备注，接口细节在折叠区里。
+        Assert.Contains("高级：接口类型、API 地址、并发", page);
+    }
+
     [Fact]
     public void 换_Provider_必须重挂上游模型选择器()
     {
