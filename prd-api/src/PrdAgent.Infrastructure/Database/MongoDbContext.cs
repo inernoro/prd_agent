@@ -1640,6 +1640,14 @@ public class MongoDbContext
                 .Ascending(x => x.NextAttemptAt)
                 .Ascending(x => x.LeaseExpiresAt),
             new CreateIndexOptions { Name = "idx_hosted_site_deletion_due" }));
+        // HostedSiteRevisions：版本面板按站点取最近 100 条。版本记录是全局一张表，
+        // 站点越多它越长，而唯一那条回退幂等索引带着 partial filter、且第二段不是
+        // CreatedAt，服务不了这个排序——没有本索引就是整表扫 + 内存排序。
+        HostedSiteRevisions.Indexes.CreateOne(new CreateIndexModel<HostedSiteRevision>(
+            Builders<HostedSiteRevision>.IndexKeys
+                .Ascending(x => x.SiteId)
+                .Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_hosted_site_revisions_site_created" }));
         ShortVideoMaterialRuns.Indexes.CreateOne(new CreateIndexModel<ShortVideoMaterialRun>(
             Builders<ShortVideoMaterialRun>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_short_video_material_runs_user_created" }));

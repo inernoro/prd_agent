@@ -117,3 +117,5 @@
 | fix | prd-api | 换版后的孤儿对象键改由一条共享判据算出（旧文件表里有、新文件表里没有）：原先按「这次删没删 sidecar」分支，单文件站点因为 Files.Count 等于 1 走不进那一支，obsoleteKeys 恒为空，而入口每次发布都会写一个带版本号的新 key，旧入口既不再被站点引用也没进回收队列，于是每发布一次就在对象存储里留下一份永不回收的旧正文；局部换入口时仍被新文件表引用的 sidecar 一律不入队 |
 | refactor | prd-api | 重传与整包发布两条路径一并接到同一判据上，行为不变（两者的新 key 都在新版本目录下，本来就不保留旧键），避免三份近似判据各自漂移 |
 | test | prd-api | 新增孤儿键守卫八条：单文件换入口、局部换入口保留 sidecar、自包含重写回收全部旁挂、整包换版、两条路径共用同一对象时不得删、空键不入队，外加一条接线守卫（三条发布路径必须都走共享判据）与一条真跑 Mongo 的行为守卫（单文件站点发布后旧入口对象必须真的被删）；改回分支写法后接线守卫与行为守卫当场变红 |
+| perf | prd-api | 版本面板的查询补上索引 `idx_hosted_site_revisions_site_created`（`{SiteId:1, CreatedAt:-1}`）：`hosted_site_revisions` 是全局一张表，站点越多它越长，而唯一那条回退幂等索引带 partial filter、第二段也不是 CreatedAt，服务不了这个排序——没有本索引，打开任意站点的版本面板都是整表扫 + 内存排序。索引在 MongoDbContext 与 DBA 清单 `scripts/mongodb-indexes.js` 两处同时登记（前者从不执行，只在后者生效） |
+| test | prd-api | 新增一条守卫把查询形状与索引键钉在一起（按 SiteId 过滤、按 CreatedAt 倒序 ↔ 清单里 `{SiteId:1, CreatedAt:-1}`）；从清单里撤掉该索引，这条与既有的索引清单覆盖守卫双双变红 |

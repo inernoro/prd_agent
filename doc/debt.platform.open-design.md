@@ -708,3 +708,44 @@ obsoleteKeys = removeGeneratedSidecars ? 旧表全部键 : 空
 `DeleteByKeyAsync(旧入口键)` 必须真的被调到）。改回分支写法，接线守卫与行为守卫当场变红。
 
 只测纯判据是不够的——判据留着、调用点改回去，纯用例照样全绿（形状 2）。所以这两条必须并存。
+
+## 第二十九轮复审（2026-09-16，head `f11228724`）
+
+一条 P2，A 类修掉。
+
+### 版本面板的查询没有能服务它的索引
+
+`HostedSiteRevisionService.ListAsync` 的查询是「按 `SiteId` 过滤、按 `CreatedAt` 倒序、取 100 条」。
+`hosted_site_revisions` 是**全局一张表**——不是每个站点一张——所以它随全站版本数增长，
+而 DBA 清单里这个集合当时只有一条回退幂等索引：
+
+```
+{ SiteId: 1, CreatedByUserId: 1, RollbackIdempotencyKey: 1 }
+partialFilterExpression: { RollbackIdempotencyKey: { $type: "string" } }
+```
+
+partial filter 让它只在查询带 `RollbackIdempotencyKey` 时可用，且第二段不是 `CreatedAt`，
+排序也接不上。结论是：打开任意站点的版本面板都是整表扫 + 内存排序，而这个面板正是本 PR
+新引进来的，用得越久越慢。
+
+补 `{ SiteId: 1, CreatedAt: -1 }`，名为 `idx_hosted_site_revisions_site_created`。
+
+两处都要登记：代码侧的索引定义是 SSOT（按 `no-auto-index`，那段**从不执行**，只当参考），
+DBA 迁移清单才是真正生效的地方。只加前者等于什么都没加（形状 8：把不成立的证据当成证据），
+既有的索引清单覆盖守卫正是为这一点设的。
+
+守卫一条：把**查询形状**与**索引键**钉在一起——服务里仍按 `SiteId` 过滤、按 `CreatedAt`
+倒序，清单里就必须有对应的 `{ SiteId: 1, CreatedAt: -1 }`。谁改了排序字段而没动索引，
+这条会红并直接告诉他要加什么。从清单里撤掉索引，它与索引清单覆盖守卫双双变红。
+
+### 实现来源
+
+- `scripts/mongodb-indexes.js`
+- `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs`
+- `prd-api/tests/PrdAgent.Api.Tests/Services/HostedSiteRevisionListProjectionTests.cs`
+
+### 待 DBA 执行（本 PR 之外的动作）
+
+索引是迁移，不由应用启动时创建。合并后需要 DBA 在目标库执行上面那份迁移清单，
+其中本 PR 新增三条：`idx_hosted_sites_asset_cleanup_due`、`idx_hosted_site_deletion_due`、
+`idx_hosted_site_revisions_site_created`。执行前这三条对应的周期任务与版本面板都是全表扫描。

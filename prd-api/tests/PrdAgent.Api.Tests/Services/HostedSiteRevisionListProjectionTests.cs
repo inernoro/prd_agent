@@ -25,6 +25,18 @@ public sealed class HostedSiteRevisionListProjectionTests
         return File.ReadAllText(path);
     }
 
+    private static string ReadRepoRootFile(params string[] relative)
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null
+               && !Directory.Exists(Path.Combine(directory.FullName, "prd-api", "src")))
+            directory = directory.Parent;
+        Assert.NotNull(directory);
+        var path = Path.Combine(new[] { directory!.FullName }.Concat(relative).ToArray());
+        Assert.True(File.Exists(path), $"找不到 {path}");
+        return File.ReadAllText(path);
+    }
+
     [Fact]
     public void ListQueryExcludesTheHeavyFields()
     {
@@ -41,6 +53,31 @@ public sealed class HostedSiteRevisionListProjectionTests
             "版本列表没有排除整页 HTML，一次取 100 条会把它们全读进内存");
         Assert.True(body.Contains("Exclude(x => x.VerifiedFiles)", StringComparison.Ordinal),
             "版本列表没有排除文件字节数组");
+    }
+
+    [Fact]
+    public void ListQueryHasAnIndexThatActuallyServesIt()
+    {
+        var service = ReadRepoFile("PrdAgent.Infrastructure", "Services", "HostedSiteRevisionService.cs");
+        var start = service.IndexOf("public async Task<IReadOnlyList<HostedSiteRevision>> ListAsync(",
+            StringComparison.Ordinal);
+        Assert.True(start > 0, "ListAsync 不见了，契约可能被挪走了");
+        var body = service.Substring(start, Math.Min(1200, service.Length - start));
+
+        // 查询形状：按站点过滤、按创建时间倒序。索引键必须与这两件事逐字对齐，
+        // 对不上就等于没有索引——版本记录是全局一张表，站点越多这一屏越慢。
+        Assert.Contains("Find(x => x.SiteId == siteId)", body, StringComparison.Ordinal);
+        Assert.Contains("SortByDescending(x => x.CreatedAt)", body, StringComparison.Ordinal);
+
+        // 索引只在 DBA 清单里才真正生效：MongoDbContext.CreateIndexes() 从不执行
+        // （no-auto-index），只在那边加一条等于什么都没加（形状 8）。
+        var catalog = ReadRepoRootFile("scripts", "mongodb-indexes.js");
+        var entry = catalog.IndexOf("idx_hosted_site_revisions_site_created", StringComparison.Ordinal);
+        Assert.True(entry > 0,
+            "版本面板的查询没有对应索引：请在 scripts/mongodb-indexes.js 加 { SiteId: 1, CreatedAt: -1 }");
+        var block = catalog[Math.Max(0, entry - 400)..entry];
+        Assert.Contains("db.hosted_site_revisions.createIndex", block, StringComparison.Ordinal);
+        Assert.Contains("{ \"SiteId\": 1, \"CreatedAt\": -1 }", block, StringComparison.Ordinal);
     }
 
     [Fact]

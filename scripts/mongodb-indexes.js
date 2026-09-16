@@ -1196,6 +1196,14 @@ db.hosted_site_deletion_tasks.createIndex(
 )
 
 // 回退请求持久幂等；同一站点、操作者和请求键最多产生一个回退版本。
+// collection: hosted_site_revisions
+// 版本面板按站点取最近 100 条：版本记录是全局一张表，站点越多它越长，
+// 而下面那条回退幂等索引带 partial filter、第二段也不是 CreatedAt，服务不了这个排序。
+db.hosted_site_revisions.createIndex(
+  { "SiteId": 1, "CreatedAt": -1 },
+  { name: "idx_hosted_site_revisions_site_created" }
+)
+
 ensureTightenedUniqueIndex("hosted_site_revisions",
   { "SiteId": 1, "CreatedByUserId": 1, "RollbackIdempotencyKey": 1 },
   {
