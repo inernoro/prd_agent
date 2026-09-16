@@ -522,18 +522,35 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             completedTurnObserved = true;
                             completedCdsSessionId = item.CdsSourceSessionId ?? session.CdsSessionId;
                             completedMessageId = ReadPayloadString(item.PayloadJson, "clientMessageId");
-                            var scheduled = await _sessions.ScheduleStopAsync(
-                                run.UserId,
-                                session.Id,
-                                completedCdsSessionId ?? string.Empty,
-                                completedMessageId ?? string.Empty,
-                                CancellationToken.None);
-                            if (scheduled == null)
+                            // 走到这里产物**已经在手**：ReadResultAsync 读的是 CDS 早已提交完成的结果包。
+                            // 清理记账是我们这一侧的账，它失败绝不能把一次已完成、已经花过模型钱的生成丢掉——
+                            // 此前这里登记失败就抛，而 yield return 在抛点之后，于是 worker 把 run 判失败、
+                            // 不建版本，用户什么都拿不到，只因为记账没记上。
+                            // 兜底不缺：finally 的 DisposeRemoteSessionAsync 会再按「重试登记 → 直接停止」
+                            // 走一遍；真的全兜不住，代价也只是远程容器占到 CDS 自己的生存期上限，
+                            // 比丢产物轻一个量级。
+                            try
                             {
-                                throw new InvalidOperationException(
-                                    "OpenDesign 已生成产物，但无法登记远程资源清理，请重试");
+                                cleanupScheduled = await _sessions.ScheduleStopAsync(
+                                    run.UserId,
+                                    session.Id,
+                                    completedCdsSessionId ?? string.Empty,
+                                    completedMessageId ?? string.Empty,
+                                    CancellationToken.None) != null;
                             }
-                            cleanupScheduled = true;
+                            catch (Exception cleanupError)
+                            {
+                                _logger.LogWarning(
+                                    cleanupError,
+                                    "OpenDesign 已生成产物，登记远程资源清理失败，改由收尾兜底 session={SessionId}",
+                                    session.Id);
+                            }
+                            if (!cleanupScheduled)
+                            {
+                                _logger.LogWarning(
+                                    "OpenDesign 已生成产物，但清理账本未登记成功，改由收尾兜底 session={SessionId}",
+                                    session.Id);
+                            }
                             // 这里不产出 `model` 分片，是已知边界不是遗漏：`ai-model-visibility` 第 2 条要求
                             // 模型值来自网关 `Start` 分片的 Resolution（见本文件内置执行器那一段），而 OpenDesign
                             // 的模型调用发生在 CDS 容器内部，MAP 这一侧结构上收不到那个分片。容器自报一个字符串

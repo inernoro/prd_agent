@@ -776,8 +776,17 @@ public class DesignArtifactProviderCatalogTests
             CancellationToken.None), Times.Once);
     }
 
+    /// <summary>
+    /// 这条用例本来在保的是「finally 的重试确实生效」：登记第一次瞬时失败、第二次成功，
+    /// 两次登记、不落到直接停止。那三条断言原样保留。
+    ///
+    /// 改掉的是它顺带断言的「不交付产物」——那不是被保护的性质，是抛出顺序的附带后果，
+    /// 而且在这个场景里**清理明明重试成功了**，产物却还是被丢掉：模型已经跑完、钱已经花了，
+    /// 用户拿到的是一次失败的 run（Codex P1，2026-09-16）。记账是我们这侧的账，
+    /// 它不该有权处决一件已经完成的产物。
+    /// </summary>
     [Fact]
-    public async Task OpenDesignExecutorDoesNotDeliverArtifactWhenCleanupLedgerWriteFails()
+    public async Task OpenDesignExecutorStillDeliversArtifactWhenCleanupLedgerWriteFailsOnce()
     {
         var connection = BuildConnection();
         var remoteSession = BuildSession();
@@ -867,16 +876,14 @@ public class DesignArtifactProviderCatalogTests
             Title = "页面",
         };
         var chunks = new List<DesignArtifactExecutorChunk>();
-        var error = await Assert.ThrowsAsync<InfraAgentSessionException>(async () =>
+        await foreach (var chunk in executor.ExecuteAsync(run, currentHtml: null, CancellationToken.None))
         {
-            await foreach (var chunk in executor.ExecuteAsync(run, currentHtml: null, CancellationToken.None))
-            {
-                chunks.Add(chunk);
-            }
-        });
+            chunks.Add(chunk);
+        }
 
-        Assert.Equal(InfraAgentSessionErrorCodes.CdsRequestFailed, error.ErrorCode);
-        Assert.DoesNotContain(chunks, chunk => chunk.Type == "delta");
+        // 产物必须交付：第一次登记瞬时失败不该把它带走
+        Assert.Contains(chunks, chunk => chunk.Type == "delta");
+        // 下面三条是这条用例原本就在保的：登记重试生效，两次登记，不落到直接停止
         sessions.Verify(service => service.ScheduleStopAsync(
             "user-1",
             remoteSession.Id,
