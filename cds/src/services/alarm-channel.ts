@@ -166,6 +166,20 @@ export interface AlarmChannelStatusView {
 
 interface LedgerEntry { delivered: number; failed: number; last?: AlarmDeliveryRecord }
 
+/**
+ * 「真的会响」的通道数——自监控与面板都用这一份判定。
+ * 只看「配齐了」不够：最近一次投递（真告警或演练）失败的通道，台账已经标成 failing，
+ * 自检若还把它算成活的，就是在铃已经哑了的时候报「1 条通道通着」（Codex #1543 P1）。
+ * untested（配齐了、从没发过）算活：它没有失败的证据，只是还没被验证过。
+ */
+export function countLiveAlarmChannels(
+  views: ReadonlyArray<{ enabled: boolean; status: AlarmChannelStatus }>,
+  legacy: { status: AlarmChannelStatus } | null | undefined,
+): number {
+  const alive = (status: AlarmChannelStatus): boolean => status === 'healthy' || status === 'untested';
+  return views.filter((v) => v.enabled && alive(v.status)).length + (legacy && alive(legacy.status) ? 1 : 0);
+}
+
 export class AlarmLedger {
   private readonly byId = new Map<string, LedgerEntry>();
 

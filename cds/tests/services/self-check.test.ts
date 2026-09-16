@@ -398,8 +398,10 @@ describe('接线守卫：删掉任何一根线都不会有别的测试变红', (
     expect(orphan).toBeLessThan(periodic);
   });
 
-  it('通知通道数与面板同一份判定：enabled 且填全', () => {
-    expect(index).toMatch(/liveAlarmChannels:[\s\S]{0,400}c\.enabled && channelConfigured\(c\)/);
+  it('通知通道数按投递台账判：最近一次投递失败的通道不算活', () => {
+    expect(index).toMatch(/liveAlarmChannels: \(\) => countLiveAlarmChannels\(/);
+    expect(index).toMatch(/liveAlarmChannels:[\s\S]{0,300}alarmLedger\.view\(c, channelConfigured\(c\)\)/);
+    expect(index).toMatch(/liveAlarmChannels:[\s\S]{0,300}alarmChannel\.snapshot\(\)/);
   });
 
   it('端点列表由服务端标出内置那条，拔它被拒；前端只认名单不自己判地址', () => {

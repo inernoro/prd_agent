@@ -68,6 +68,8 @@ interface DraftState {
   id?: string;
   kind: ChannelKind;
   name: string;
+  /** 关掉 = 临时静音，配置全留着；界面文案一直这么说，开关本身现在才补上 */
+  enabled: boolean;
   events: EventKind[];
   projects: string[];
   barkKey: string; barkServerUrl: string; barkGroup: string; barkLevel: string; barkCall: boolean;
@@ -77,7 +79,7 @@ interface DraftState {
 
 function emptyDraft(kind: ChannelKind): DraftState {
   return {
-    kind, name: '',
+    kind, name: '', enabled: true,
     // 默认只订业务两档。基础设施那两档在有分支预览的实例上会刷屏——2026-09-15
     // 实测：配好一条通道 3 秒内就收到 5 条，全是预览容器的起落。
     // 一条刷屏的铃和一条不响的铃下场一样，都会被关掉。
@@ -92,7 +94,7 @@ function emptyDraft(kind: ChannelKind): DraftState {
 function draftOf(c: ChannelView): DraftState {
   const d = emptyDraft(c.kind);
   return {
-    ...d, id: c.id, name: c.name, events: c.events, projects: c.projects,
+    ...d, id: c.id, name: c.name, enabled: c.enabled, events: c.events, projects: c.projects,
     barkServerUrl: c.bark?.serverUrl ?? '', barkGroup: c.bark?.group ?? '',
     barkLevel: c.bark?.level ?? '', barkCall: Boolean(c.bark?.call),
     hookUrl: c.webhook?.url ?? '', hookMethod: c.webhook?.method ?? 'POST',
@@ -113,7 +115,7 @@ function parseHeaders(raw: string): Record<string, string> {
 }
 
 function bodyOf(d: DraftState): Record<string, unknown> {
-  const base = { name: d.name, kind: d.kind, events: d.events, projects: d.projects };
+  const base = { name: d.name, kind: d.kind, enabled: d.enabled, events: d.events, projects: d.projects };
   if (d.kind === 'bark') {
     return { ...base, bark: {
       key: d.barkKey, serverUrl: d.barkServerUrl, group: d.barkGroup, level: d.barkLevel, call: d.barkCall,
@@ -294,6 +296,12 @@ export function AlarmChannelsPanel({ projects = [] }: { projects?: ReadonlyArray
             <span className={LABEL}>通道名字（出问题时你要认得出是谁响了）</span>
             <input className={INPUT} placeholder="我的手机 / 运维群" value={draft.name}
               onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
+          </label>
+
+          <label className="flex items-center gap-2 text-xs text-foreground">
+            <input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />
+            <span>启用</span>
+            <span className={LABEL}>关掉就是临时静音：配置全留着，不会有任何通知从这条通道发出</span>
           </label>
 
           {draft.kind === 'bark' ? (

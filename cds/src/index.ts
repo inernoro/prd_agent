@@ -136,7 +136,7 @@ import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
 import { MapNotifier, mapNotifierConfigFromEnv } from './services/map-notifier.js';
-import { AlarmLedger } from './services/alarm-channel.js';
+import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
 import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
 import { sendAlarm } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
@@ -6125,10 +6125,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         branchesP95Ms: p95,
       };
     },
-    // 与面板同一份判定：旧的 MAP 站内通知算一条，用户配的通道里 enabled 且填全的各算一条。
-    liveAlarmChannels: () =>
-      ((stateService.getAlarmNotify() ?? mapNotifierConfigFromEnv()) ? 1 : 0)
-      + stateService.listAlarmChannels().filter((c) => c.enabled && channelConfigured(c)).length,
+    // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
+    liveAlarmChannels: () => countLiveAlarmChannels(
+      stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),
+      alarmChannel.snapshot(),
+    ),
     selfStatus: () => {
       const snap = selfStatusCache.getSnapshot();
       // lastRefreshAt 为空 = 缓存还没算过一次（刚起来的进程），此时 bundleStale 是默认值不是结论。

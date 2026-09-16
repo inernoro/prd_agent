@@ -9,3 +9,7 @@
 | fix | cds | 启动收尸：心跳早于本进程启动时刻的在途部署一律收敛为失败（可重试），不再等 15 分钟周期收割；重启打断的部署不会再挂着 building |
 | fix | cds | 自更新「重启没换进程」根因是重启前等在途部署排空（最多 5 分钟）全程不可见：排空每 10 秒推 SSE 进度，self-status 新增 restartWait（在等谁、等了多久、最多等多久），restartStatus 判定收成唯一函数，维护页摆出等待横幅 |
 | fix | cdscli | self update / self restart 只在 restartStatus=completed 后才报 restarted，不再靠 healthz 200（旧进程照样 200）；incomplete 如实报失败并给出下一步 |
+| security | cds | 通知通道接口（读 / 建 / 改 / 删 / 演练）改用「非作用域管理员」守卫：create-only 与带作用域的全局 Key 不再能读到 webhook 地址、Bark 密钥尾号、MAP 端点（Codex P1）；判定抽到独立模块与 projects.ts 共用一份 |
+| security | cds | 项目级 Key 的存活摘要不再附带系统级通知通道（含别的项目的通道名、投递计数、最近失败原因）（Codex P1） |
+| fix | cds | 自监控「通知通道」按投递台账判活：最近一次投递失败的通道不算通着，只看配齐了不够（Codex P1） |
+| fix | cds | 通知通道编辑器补启用开关：草稿与请求体带 enabled，关掉即临时静音、配置保留（Codex P2） |

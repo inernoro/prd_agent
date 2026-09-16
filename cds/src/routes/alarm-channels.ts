@@ -21,7 +21,7 @@ import type { Request, Response, Router } from 'express';
 import crypto from 'node:crypto';
 
 // 项目作用域判定只许有一份：这里直接用 uptime 路由那一个，不复制一条同款单行。
-import { projectScopeOf } from './uptime.js';
+import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 
 import { AlarmLedger, type AlarmChannelStatusView } from '../services/alarm-channel.js';
 import { BARK_LEVELS, drillEvent, sendAlarm } from '../services/alarm-dispatch.js';
@@ -215,9 +215,15 @@ export function parseChannel(
 }
 
 export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRoutesDeps): void {
-  const denySystemWrite = (req: Request, res: Response): boolean => {
-    if (!projectScopeOf(req)) return false;
-    res.status(403).json({ error: '通知通道属于 CDS 系统设置，项目级 Key 不可读写' });
+  /**
+   * 读写同一道门：通知通道属于 CDS 系统设置，只许管理员会话或全权全局 Key。
+   * 读接口也要拦——它回 webhook 地址（可能带 token）、Bark 密钥尾号、MAP 端点与用户名，
+   * create-only 的全局 Key 虽然被全局网关放行了 GET，但不该看到这些（Codex #1543 P1）。
+   */
+  const denySystemAccess = (req: Request, res: Response): boolean => {
+    const guard = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]);
+    if (!guard) return false;
+    res.status(guard.status).json({ ...guard.body, hint: '通知通道属于 CDS 系统设置，项目级 / 带作用域的 Key 不可读写' });
     return true;
   };
 
@@ -225,7 +231,7 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     deps.list().map((c) => deps.ledger.view(c, channelConfigured(c)));
 
   router.get('/cds-system/alarm-channels', (req, res) => {
-    if (denySystemWrite(req, res)) return;
+    if (denySystemAccess(req, res)) return;
     res.json({
       channels: deps.list().map(publicChannel),
       status: views(),
@@ -235,7 +241,7 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
   });
 
   const write = (req: Request, res: Response, id?: string): void => {
-    if (denySystemWrite(req, res)) return;
+    if (denySystemAccess(req, res)) return;
     const previous = id ? deps.list().find((c) => c.id === id) : undefined;
     if (id && !previous) { res.status(404).json({ error: '通道不存在' }); return; }
     try {
@@ -252,7 +258,7 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
   router.put('/cds-system/alarm-channels/:id', (req, res) => write(req, res, req.params.id));
 
   router.delete('/cds-system/alarm-channels/:id', (req, res) => {
-    if (denySystemWrite(req, res)) return;
+    if (denySystemAccess(req, res)) return;
     const gone = deps.remove(req.params.id);
     if (!gone) { res.status(404).json({ error: '通道不存在' }); return; }
     deps.ledger.forget(req.params.id);
@@ -267,7 +273,7 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
    * 测的是那条捷径。
    */
   router.post('/cds-system/alarm-channels/:id/drill', async (req, res) => {
-    if (denySystemWrite(req, res)) return;
+    if (denySystemAccess(req, res)) return;
     const channel = deps.list().find((c) => c.id === req.params.id);
     if (!channel) { res.status(404).json({ error: '通道不存在' }); return; }
     const now = Date.now();

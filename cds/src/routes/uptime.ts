@@ -232,13 +232,15 @@ export function createUptimeRouter(deps: {
     // 却显示全实例 139 个」这种对不上的数字；计数口径与全量同一个函数，未实测不会
     // 被算成正常；覆盖面的未纳入清单同样只给本项目的。
     const targets = summary.targets.filter((t) => t.projectId === scope);
-    res.json(withAlarm({
+    // 项目级 Key 不带通知通道：那是系统级配置，带着别的项目的通道名、项目清单、
+    // 投递计数与最近失败原因（Codex #1543 P1）。它要看「有没有人被通知」得用管理员会话。
+    res.json({
       ...summary,
       targets,
       overall: tallyTargetSummaries(targets),
       coverage: deps.monitor.getCoverage(scope),
       projectScope: scope,
-    }));
+    });
   });
 
   /**
