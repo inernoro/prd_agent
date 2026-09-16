@@ -201,8 +201,13 @@ public class ActiveTaskDebtsController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, TakenByMessage(debt)));
 
         var now = DateTime.UtcNow;
-        await _db.ActiveTaskDebts.UpdateOneAsync(
-            x => x.Id == id,
+        // 上面那道门是顺序执行下的判断，挡不住并发：两个人同时认领同一条没人管的债务，
+        // 都读到空 owner、都过了门，后写的把先写的悄悄顶掉。所以写入时把「我读到的归属」
+        // 也放进过滤条件，零匹配就说明有人抢先了 —— 如实告诉后到的那个人。
+        var res = await _db.ActiveTaskDebts.UpdateOneAsync(
+            Builders<ActiveTaskDebt>.Filter.And(
+                Builders<ActiveTaskDebt>.Filter.Eq(x => x.Id, id),
+                UnownedOrMineFilter(me)),
             Builders<ActiveTaskDebt>.Update
                 .Set(x => x.OwnerUserId, me)
                 .Set(x => x.OwnerUserName, await ActiveTaskShared.ResolveDisplayNameAsync(_db, me, ct))
@@ -211,6 +216,9 @@ public class ActiveTaskDebtsController : ControllerBase
             cancellationToken: ct);
 
         var saved = await _db.ActiveTaskDebts.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        if (res.MatchedCount == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, TakenByMessage(saved ?? debt)));
+
         return Ok(ApiResponse<object>.Ok(ToDto(saved!, me)));
     }
 
@@ -304,10 +312,7 @@ public class ActiveTaskDebtsController : ControllerBase
         await _db.ActiveTaskDebts.UpdateOneAsync(
             Builders<ActiveTaskDebt>.Filter.And(
                 Builders<ActiveTaskDebt>.Filter.Eq(x => x.Id, id),
-                Builders<ActiveTaskDebt>.Filter.Or(
-                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, null),
-                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, ""),
-                    Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, me))),
+                UnownedOrMineFilter(me)),
             Builders<ActiveTaskDebt>.Update
                 .Set(x => x.OwnerUserId, me)
                 .Set(x => x.OwnerUserName, display)
@@ -381,6 +386,17 @@ public class ActiveTaskDebtsController : ControllerBase
     /// </summary>
     internal static bool OwnedBySomeoneElse(ActiveTaskDebt d, string me)
         => !string.IsNullOrEmpty(d.OwnerUserId) && d.OwnerUserId != me;
+
+    /// <summary>
+    /// 写入时的归属条件：只在「还没人认领」或「本来就是我」时才改得动。
+    /// <see cref="OwnedBySomeoneElse"/> 是读到的那一刻的判断，挡不住并发窗口里
+    /// 两个人同时过门；把同一个条件放进 update 的过滤器，数据库那一侧才是唯一的裁判。
+    /// </summary>
+    internal static FilterDefinition<ActiveTaskDebt> UnownedOrMineFilter(string me)
+        => Builders<ActiveTaskDebt>.Filter.Or(
+            Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, null),
+            Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, ""),
+            Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, me));
 
     /// <summary>被别人占着时说的那句话 —— 两个入口共用一份措辞。</summary>
     internal static string TakenByMessage(ActiveTaskDebt d)

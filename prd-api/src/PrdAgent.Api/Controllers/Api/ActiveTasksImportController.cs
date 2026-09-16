@@ -267,14 +267,20 @@ public class ActiveTasksImportController : ControllerBase
     /// 模型给的日期必须落在「今天之后 180 天内」才收。它偶尔会吐出去年的日期或者
     /// 一个语义上不成立的年份 —— 那种日期一进来，任务建出来就是逾期红的，比没有时间更糟。
     /// </summary>
-    private static string? NormalizeDue(string? raw)
+    internal static string? NormalizeDue(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
         if (!DateTime.TryParse(raw.Trim(), out var d)) return null;
         var today = ActiveTaskConclusion.TeamDate(DateTime.UtcNow);
         if (d.Date < today || d.Date > today.AddDays(180)) return null;
-        // 「那天要」指那天下班前，和 DuePicker / dueParse 的口径一致
-        return d.Date.AddHours(18).ToString("yyyy-MM-ddTHH:mm:ss");
+
+        // 「那天要」指那天下班前，和 DuePicker / dueParse 的口径一致。
+        // **必须带上时区偏移**：不带偏移的 2026-09-19T18:00:00 会被当成 18:00 UTC，
+        // 而 TeamDate 再加八小时，于是模型给 9/19 的那条最后显示成 9/20。
+        // 18:00 是团队日历上的下班时间，所以偏移就是团队日历的偏移。
+        var local = new DateTimeOffset(
+            d.Year, d.Month, d.Day, 18, 0, 0, ActiveTaskConclusion.TeamUtcOffset);
+        return local.ToString("yyyy-MM-ddTHH:mm:sszzz");
     }
 
     private void SetSseHeaders()

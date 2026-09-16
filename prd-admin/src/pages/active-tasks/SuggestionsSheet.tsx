@@ -45,6 +45,8 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
   const [model, setModel] = useState<string | null>(null);
   const [skipped, setSkipped] = useState<string | null>(null);
   const seq = useRef(0);
+  /** 已经建成的任务 id —— 跨重试累积，否则重试那趟会把上一趟建成的来源链接丢掉 */
+  const doneIds = useRef<string[]>([]);
 
   const load = useCallback(async () => {
     const [inbox, ks] = await Promise.all([getSuggestionInbox(), getKnowledgeStores()]);
@@ -98,13 +100,17 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
     if (!hasDrafts) { onAbsorb(); return; }
     if (picked.length === 0) { onAbsorb(); return; }
     setBusy(true);
-    const created: string[] = [];
+    // 已建成的 id 跨重试累积（doneIds 存在组件上）：第一次建成了 A、B 留待重试，
+    // 第二次只会产出 B。若只拿这一趟的结果去 markSuggestionsAbsorbed，
+    // A 与这些建议的来源链接就永久断了。
+    const created: string[] = [...doneIds.current];
     const failed: typeof picked = [];
     for (const r of picked) {
       const res = await createActiveTask({ title: r.title.trim(), dueAt: r.dueAt ?? null });
       if (res.success && res.data) created.push(res.data.id);
       else failed.push(r);
     }
+    doneIds.current = created;
     setBusy(false);
 
     // 有一条没建上就先别收摊：把没成的留在这张表上等重试。
@@ -119,8 +125,17 @@ export function SuggestionsSheet({ onClose, onCreated }: SuggestionsSheetProps) 
       return;
     }
 
-    // 全都建上了才算吸取完：这几条建议就此了结，并记下它们长出了哪几条任务
-    await markSuggestionsAbsorbed({ suggestionIds: checked, taskIds: created });
+    // 全都建上了才算吸取完：这几条建议就此了结，并记下它们长出了哪几条任务。
+    // 这一步失败也不许报成功关窗 —— 任务已经进队列，建议却还挂在收件箱里，
+    // 用户再吸取一次就会建出一模一样的重复任务。
+    const marked = await markSuggestionsAbsorbed({ suggestionIds: checked, taskIds: created });
+    if (!marked.success) {
+      onCreated();
+      toast.error(`${created.length} 件已经进队列了，但这几条建议没能标记成已吸取，留在这儿别重复吸`);
+      return;
+    }
+
+    doneIds.current = [];
     toast.success(`吸取了 ${created.length} 件`);
     onCreated();
     onClose();

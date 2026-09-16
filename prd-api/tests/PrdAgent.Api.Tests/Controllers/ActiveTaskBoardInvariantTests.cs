@@ -122,22 +122,53 @@ public class ActiveTaskBoardInvariantTests
     }
 
     [Fact]
-    public void 切换正在做的那条必须收敛回一条()
+    public void 切换正在做的那条_降级要带CAS_但绝不许再加收尾清扫()
     {
-        // 两次切换同时发生时，各自读到的「当前在做」是同一条，于是可能各自激活自己的
-        // 目标，留下两条 active —— FirstOrDefault 只看得见一条，另一条藏着继续计时。
-        // 两道兜底缺一不可：降级带 CAS（否则重复降级会拿旧 StartedAt 把投入算多），
-        // 末尾清扫（否则末态真的会留下两条）。
+        // 降级带 CAS：并发下别人可能已经把它降级了，不带条件再降一次会拿旧的 StartedAt
+        // 重算一遍时长，把投入算多。
+        //
+        // 而「收尾扫一遍把除目标外的 active 全降级」是**试过并撤掉**的办法，不许再加：
+        // 两次切换各自激活完目标之后才轮到清扫，A 的清扫降掉 B、B 的清扫再降掉 A，
+        // 末态变成零条正在做 —— 用户点了开始却手上空空，两条都停止计时。
+        // 两条 active 至少还有一条在显示、都在计时；零条是纯粹的损失。
+        // （2026-09-16 我加过这一扫，合并前那轮 review 把它抓了出来。）
         var shared = File.ReadAllText(Path.Combine(
             RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskShared.cs"));
 
         Assert.Contains("x.Id == old.Id && x.State == ActiveTaskState.Active", shared, StringComparison.Ordinal);
-        Assert.Contains("UpdateManyAsync", shared, StringComparison.Ordinal);
+        Assert.DoesNotContain("UpdateManyAsync", shared, StringComparison.Ordinal);
+    }
 
-        // 清扫必须排在激活之后，排在前面等于没扫
-        var activate = shared.IndexOf("Set(x => x.State, ActiveTaskState.Active)", StringComparison.Ordinal);
-        var sweep = shared.IndexOf("UpdateManyAsync", StringComparison.Ordinal);
-        Assert.True(activate > 0 && sweep > activate, "收尾清扫必须排在激活目标之后");
+    [Fact]
+    public void 卡住升级量的是这一轮_不是累计()
+    {
+        // 用累计（BlockedSecondsAt）的话，之前卡过 110 分钟、这次刚卡 10 分钟，
+        // 在 120 分钟阈值下立刻就升级了 —— 而它这一次其实才卡了十分钟。
+        var shared = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskShared.cs"));
+
+        var escalated = shared[shared.IndexOf("Escalated =", StringComparison.Ordinal)..];
+        escalated = escalated[..escalated.IndexOf(",\n", StringComparison.Ordinal)];
+        Assert.Contains("BlockedSince", escalated, StringComparison.Ordinal);
+        Assert.DoesNotContain("BlockedSecondsAt", escalated, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AI给的截止日必须带时区偏移_而且只有一份判定源()
+    {
+        // 不带偏移的 2026-09-19T18:00:00 会被当成 18:00 UTC，TeamDate 再加八小时，
+        // 于是模型给 9/19 的那条最后显示成 9/20。18:00 是团队日历上的下班时间，
+        // 偏移就得是团队日历的偏移。
+        var import = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTasksImportController.cs"));
+        Assert.Contains("ActiveTaskConclusion.TeamUtcOffset", import, StringComparison.Ordinal);
+        Assert.Contains("yyyy-MM-ddTHH:mm:sszzz", import, StringComparison.Ordinal);
+
+        // 建议那边曾经抄了一份一模一样的 NormalizeDue，两份必然各自漂移（形状 3）
+        var suggest = File.ReadAllText(Path.Combine(
+            RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "ActiveTaskSuggestionsController.cs"));
+        Assert.DoesNotContain("string? NormalizeDue(", suggest, StringComparison.Ordinal);
+        Assert.Contains("ActiveTasksImportController.NormalizeDue(", suggest, StringComparison.Ordinal);
     }
 
     [Fact]

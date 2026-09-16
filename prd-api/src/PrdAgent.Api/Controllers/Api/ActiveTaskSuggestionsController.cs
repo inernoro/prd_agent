@@ -301,7 +301,7 @@ public class ActiveTaskSuggestionsController : ControllerBase
                     await WriteEventAsync("task", new
                     {
                         title,
-                        dueAt = NormalizeDue(textHasTime ? (root.TryGetProperty("dueAt", out var d) ? d.GetString() : null) : null),
+                        dueAt = ActiveTasksImportController.NormalizeDue(textHasTime ? (root.TryGetProperty("dueAt", out var d) ? d.GetString() : null) : null),
                         from = root.TryGetProperty("from", out var f) ? f.GetString() : null,
                         why = root.TryGetProperty("why", out var w) ? w.GetString() : null,
                     });
@@ -474,19 +474,6 @@ public class ActiveTaskSuggestionsController : ControllerBase
             used++;
         }
         return new KbContext(sb.ToString(), stores.Count, used);
-    }
-
-    /// <summary>
-    /// 模型给的日期必须落在「今天之后 180 天内」才收 —— 一个过去的日期会让任务
-    /// 刚建出来就是逾期红的，比没有时间更糟。
-    /// </summary>
-    private static string? NormalizeDue(string? raw)
-    {
-        if (string.IsNullOrWhiteSpace(raw)) return null;
-        if (!DateTime.TryParse(raw.Trim(), out var d)) return null;
-        var today = ActiveTaskConclusion.TeamDate(DateTime.UtcNow);
-        if (d.Date < today || d.Date > today.AddDays(180)) return null;
-        return d.Date.AddHours(18).ToString("yyyy-MM-ddTHH:mm:ss");
     }
 
     private static object ToDto(ActiveTaskSuggestion x) => new

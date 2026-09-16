@@ -67,11 +67,18 @@ public static class ActiveTaskShared
     ///
     /// 关于并发：两次切换若同时发生，各自读到的「当前在做」是同一条，于是可能各自
     /// 激活自己的目标，留下两条 active —— 之后 <c>FirstOrDefault</c> 只看得见一条，
-    /// 另一条藏着继续计时，投入时长从此就是错的。这里做两件事把它收敛掉：
-    /// 每次降级都带上「它当时还真的是 active」这个条件（CAS，重复降级不会二次结算），
-    /// 最后再扫一遍把除目标外的 active 全部降级（后到者赢，末态恒为一条）。
-    /// 这不是真正的原子性——真原子要么上事务、要么给 (UserId, State=active) 建唯一部分索引，
-    /// 而本仓库禁止应用自建索引。残留边界记在 doc/debt.platform.active-tasks.md 第 19 条。
+    /// 另一条藏着继续计时，投入时长从此就是错的。这里只做一件事：降级带上
+    /// 「它当时还真的是 active」这个条件（CAS），这样重复降级不会拿旧的 StartedAt
+    /// 把投入二次结算。
+    ///
+    /// **不要再加「收尾扫一遍把除目标外的 active 全降级」**。2026-09-16 试过，它更糟：
+    /// 两次切换各自激活完目标之后才轮到清扫，A 的清扫降掉 B、B 的清扫再降掉 A，
+    /// 末态变成**零条正在做**——用户点了开始，手上却什么都没有，而且两条都停止计时。
+    /// 两条 active 至少还有一条在显示、都在计时；零条是纯粹的损失。
+    ///
+    /// 真原子要么上事务、要么给 (UserId, State=active) 建唯一部分索引，而本仓库禁止
+    /// 应用自建索引。残留边界（并发下可能两条 active）记在
+    /// doc/debt.platform.active-tasks.md 第 19 条，不在这里用更坏的办法假装解决。
     /// </summary>
     public static async Task MakeActiveAsync(MongoDbContext db, string userId, string id, DateTime now, CancellationToken ct = default)
     {
@@ -105,16 +112,6 @@ public static class ActiveTaskShared
                 .Set(x => x.StartedAt, now)
                 .Set(x => x.Blocked, false)
                 .Set(x => x.BlockedSince, (DateTime?)null)
-                .Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
-
-        // 收尾清扫：并发窗口里可能又冒出来一条 active（它读到的「当前」是降级前的快照）。
-        // 这一扫保证末态恒为一条，刚被激活几毫秒的那条按零投入退回队列。
-        await db.ActiveTaskEntries.UpdateManyAsync(
-            x => x.UserId == userId && x.State == ActiveTaskState.Active && x.Id != id,
-            Builders<ActiveTaskEntry>.Update
-                .Set(x => x.State, ActiveTaskState.Standby)
-                .Set(x => x.StartedAt, (DateTime?)null)
                 .Set(x => x.UpdatedAt, now),
             cancellationToken: ct);
     }
@@ -314,8 +311,12 @@ public static class ActiveTaskShared
                 // 卡住要卡够配置的时长才升到管理侧 —— 否则 BlockedEscalateMinutes（5-1440）
                 // 这个旋钮转了等于没转：卡住一秒就顶到看板最上面并计进「几个人要你看一下」。
                 // 「卡住了」这个状态照常显示，升不升级是另一回事。
-                Escalated = active?.Blocked == true
-                    && (active.BlockedSecondsAt(now) >= settings.BlockedEscalateMinutes * 60),
+                //
+                // 量的是**这一轮**卡了多久，不是累计。用累计（BlockedSecondsAt）的话，
+                // 之前卡过 110 分钟、这次刚卡 10 分钟，在 120 分钟的阈值下立刻就升级了 ——
+                // 而它这一次其实才卡了十分钟。累计值留给历史那一栏。
+                Escalated = active?.Blocked == true && active.BlockedSince.HasValue
+                    && (now - active.BlockedSince.Value).TotalSeconds >= settings.BlockedEscalateMinutes * 60,
             });
         }
 
