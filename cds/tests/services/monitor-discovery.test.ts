@@ -293,3 +293,63 @@ describe('拔掉端点：孤儿清理', () => {
     expect(summary.endpoints[0].heldBecauseUnreachable).toBe(true);
   });
 });
+
+/*
+ * W2/W7（2026-09-14）：环境与对外可见由端点自报。
+ *
+ * 两个字段的性质完全不同，守卫也要分开：
+ *   - environment 是一句**自称**，地址指着分支预览时必须被结构性证据压过；
+ *   - publicVisible 是端点对「这条能不能给外人看」的授权，CDS 不替它决定。
+ */
+describe('端点自报环境（是自称，不是事实）', () => {
+  const doc = (spec: Record<string, unknown>): unknown => ({
+    status: 'pass',
+    checks: { 'x:y': [{ componentId: 'x.y', observedValue: 0, 'cds:monitor': { op: 'eq', value: 0, ...spec } }] },
+  });
+
+  it('三种合法环境都认', () => {
+    for (const env of ['production', 'staging', 'other']) {
+      const r = discoverMonitors(doc({ environment: env }), 'https://e/h');
+      expect(r.monitors[0]?.environment, env).toBe(env);
+    }
+  });
+
+  it('不声明就没有这个字段——不落默认值', () => {
+    const r = discoverMonitors(doc({}), 'https://e/h');
+    expect(r.monitors[0]).toBeDefined();
+    expect(r.monitors[0].environment).toBeUndefined();
+  });
+
+  it('写坏了整条拒掉，不蒙混成默认值', () => {
+    // 默认成 production 会把写错的声明直接推上负责人的第一屏；
+    // 默认成 other 又会让它从该在的那一格里消失。两种都比拒掉糟。
+    const r = discoverMonitors(doc({ environment: 'prod' }), 'https://e/h');
+    expect(r.monitors).toHaveLength(0);
+    expect(r.rejected[0]?.reason).toContain('environment');
+  });
+
+  it('preview 不许被自称——它是 CDS 按地址推出来的结构性事实', () => {
+    const r = discoverMonitors(doc({ environment: 'preview' }), 'https://e/h');
+    expect(r.monitors).toHaveLength(0);
+    expect(r.rejected[0]?.reason).toContain('environment');
+  });
+});
+
+describe('端点自报对外可见', () => {
+  const doc = (spec: Record<string, unknown>): unknown => ({
+    status: 'pass',
+    checks: { 'x:y': [{ componentId: 'x.y', observedValue: 0, 'cds:monitor': { op: 'eq', value: 0, ...spec } }] },
+  });
+
+  it('默认不公开——公开必须是端点显式说的', () => {
+    expect(discoverMonitors(doc({}), 'https://e/h').monitors[0].publicVisible).toBe(false);
+    // 只有严格 true 才算；'true' 字符串不算，免得一个手滑把内部判据推上对外页
+    expect(discoverMonitors(doc({ publicVisible: 'true' }), 'https://e/h').monitors[0].publicVisible).toBe(false);
+    expect(discoverMonitors(doc({ publicVisible: true }), 'https://e/h').monitors[0].publicVisible).toBe(true);
+  });
+
+  it('对外名跟着一起报，没报就用内部名兜底（由公开页负责）', () => {
+    const r = discoverMonitors(doc({ publicVisible: true, publicName: 'AI 网关' }), 'https://e/h');
+    expect(r.monitors[0].publicName).toBe('AI 网关');
+  });
+});

@@ -118,6 +118,36 @@ describe('DeploymentRunService', () => {
     });
   });
 
+  it('启动收尸：心跳早于本进程启动时刻的在途 run 一律收掉，不等 15 分钟；晚于启动的不动', async () => {
+    const service = createService();
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
+    service.transition('dr_test', 'preparing', { phase: 'pull', message: '正在准备' });
+    // 上一个进程在 01:04 写了最后一次心跳
+    clock = new Date('2026-07-10T01:04:00.000Z');
+    service.append('dr_test', { phase: 'build', level: 'info', status: 'info', message: '构建心跳' });
+
+    // 本进程 01:05 起来：心跳才停 1 分钟，周期收割不会碰它——但它已经没人推了
+    const processStartedAt = new Date('2026-07-10T01:05:00.000Z');
+    clock = new Date('2026-07-10T01:05:30.000Z');
+    expect(service.reconcileInterrupted(clock, 15 * 60 * 1000)).toHaveLength(0);
+    const orphaned = service.reconcileOrphanedByRestart(processStartedAt);
+    expect(orphaned).toHaveLength(1);
+    expect(orphaned[0].status).toBe('failed');
+    expect(orphaned[0].failure).toMatchObject({ code: 'cds.run.interrupted-by-restart', retryable: true });
+
+    // 重入幂等
+    expect(service.reconcileOrphanedByRestart(processStartedAt)).toHaveLength(0);
+  });
+
+  it('启动收尸不碰本进程起来之后才有心跳的 run', async () => {
+    const service = createService();
+    clock = new Date('2026-07-10T01:06:00.000Z');
+    await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });
+    service.transition('dr_test', 'preparing', { phase: 'pull', message: '正在准备' });
+    expect(service.reconcileOrphanedByRestart(new Date('2026-07-10T01:05:00.000Z'))).toHaveLength(0);
+    expect(service.get('dr_test')!.status).toBe('preparing');
+  });
+
   it('reconcileInterrupted 周期语义：心跳新鲜不收割、终态跳过、重入幂等', async () => {
     const service = createService();
     await service.begin({ projectId: 'p1', branchId: 'b1', trigger: 'manual' });

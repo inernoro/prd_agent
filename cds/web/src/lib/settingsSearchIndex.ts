@@ -54,6 +54,7 @@ export const SYSTEM_TAB_LABELS: Record<string, string> = {
   github: 'GitHub 集成',
   'github-whitelist': 'GitHub 白名单',
   'webhook-log': 'Webhook 日志',
+  'alarm-notify': '通知通道',
   storage: '存储后端',
   scheduler: '调度器',
   cluster: '集群',

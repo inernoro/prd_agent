@@ -210,6 +210,15 @@ describe('selectCustomProbeTargets 目标推导', () => {
     expect(customProbeTargetId(monitor())).toBe(`${CUSTOM_PROBE_ID_PREFIX}mon-1`);
   });
 
+  it('目标带项目名：没有分支预览的项目（如内置的「CDS 自身」）靠它在面板上显示成名字而不是 id', () => {
+    const [named] = selectCustomProbeTargets([monitor({ projectId: 'cds-self-monitor' })], [], {
+      getProject: (id) => (id === 'cds-self-monitor' ? ({ id, name: 'CDS 自身' } as never) : null),
+    });
+    expect(named.projectName).toBe('CDS 自身');
+    const [unnamed] = selectCustomProbeTargets([monitor({ projectId: 'ghost' })], [], { getProject: () => null });
+    expect(unnamed.projectName).toBeUndefined();
+  });
+
   it('停用的监控 → paused，原因说明怎么恢复', () => {
     const [t] = selectCustomProbeTargets([monitor({ enabled: false })]);
     expect(t.active).toBe(false);

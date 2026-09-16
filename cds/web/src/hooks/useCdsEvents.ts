@@ -82,6 +82,7 @@ export interface SelfStatusSnapshot {
   runningPid?: number;
   pidStartedAt?: string | null;
   restartStatus?: 'not_required' | 'pending' | 'completed' | 'incomplete';
+  restartWait?: unknown;
   activeSelfUpdate?: unknown;
   lastSelfUpdate?: unknown;
   selfUpdateHistory?: unknown[];

@@ -28,6 +28,7 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
   buildMonitorHeadline,
+  proberLiveness,
   filterTargets,
   formatLatency,
   groupBranchesByProject,
@@ -377,6 +378,11 @@ export function StatusPage(): JSX.Element {
                 <div className="flex min-h-0 flex-col lg:flex-1">
                   <OwnerBoard
                     targets={targets}
+                    now={now}
+                    prober={summary ? proberLiveness(summary) : null}
+                    alarm={summary?.alarm}
+                    alarmChannels={summary?.alarmChannels}
+                    intervalSeconds={summary?.intervalSeconds}
                     scope={scope}
                     onScope={onScope}
                     onOpenTarget={(targetId) => { setBoardView('all'); openTarget(targetId); }}
