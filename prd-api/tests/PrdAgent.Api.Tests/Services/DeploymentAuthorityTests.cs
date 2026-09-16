@@ -68,6 +68,49 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void HasOptedOutOfSharedState_OnlyExplicitFalseCounts()
+    {
+        // 这条判据是「退出共享状态归属」的唯一来源，三个消费方共用（密文轮换、周期任务、
+        // 榜单手动同步）。它只认显式 false——软开关只能收紧，不能放宽。
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        })).ShouldBeTrue();
+
+        // 显式 true 不是退出
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "true",
+        })).ShouldBeFalse();
+
+        // 没配 = 没退出（默认生产可写）
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new())).ShouldBeFalse();
+
+        // 配了但解析不出布尔值 = 没退出，不许把一个打错的值当成静默关停
+        DeploymentAuthority.HasOptedOutOfSharedState(Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "nope",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void OptOut_AppliesToEveryShareStateConsumer()
+    {
+        // 退出开关一票否决所有共享状态写入路径。榜单的手动同步入口读的就是
+        // HasOptedOutOfSharedState——非 CDS 的 standby 没有 CDS_PROJECT_ID、作用域为 null，
+        // 不挡它的话它一点同步就直接改写权威快照，而周期 worker 恰恰被同一个开关挡着
+        // （Codex 在 PR #1538 指出）。
+        var optedOut = Build(new()
+        {
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        });
+
+        DeploymentAuthority.HasOptedOutOfSharedState(optedOut).ShouldBeTrue();
+        DeploymentAuthority.CanRunSharedScheduledWork(optedOut).ShouldBeFalse();
+        DeploymentAuthority.CanRotateSharedCiphertext(optedOut).ShouldBeFalse();
+    }
+
+    [Fact]
     public void LegacyTranscriptAdoption_UsesOneBoundedAuthorityPerEnvironment()
     {
         var production = Build(new());

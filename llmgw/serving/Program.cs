@@ -45,7 +45,7 @@ builder.Services.AddSingleton<GatewayRequestExecutionStore>();
 builder.Services.AddSingleton<GatewayCancellationRegistry>();
 builder.Services.AddSingleton<GatewayProviderConcurrencyCoordinator>();
 // 未处理异常计数：让「最近有没有崩过」成为一个能被机器定量读取的数。
-// 窗口默认 360 分钟，与 cds-monitors.yml 里 6 小时的常设探测间隔对齐——
+// 窗口默认 360 分钟，与端点自描述里 6 小时的常设探测间隔对齐——
 // 窗口小于探测间隔会让异常落在窗口外，探针读到 0 误判成健康。
 builder.Services.AddSingleton(sp => new ServingFaultTracker(
     sp.GetRequiredService<IConfiguration>().GetValue("LlmGateway:FaultWindowMinutes", ServingFaultTracker.DefaultWindowMinutes)));

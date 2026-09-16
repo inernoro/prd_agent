@@ -119,6 +119,14 @@ export interface OwnerBoard {
   tone: 'danger' | 'warn' | 'ok' | 'empty';
   rows: BusinessRow[];
   infra: InfraSummary;
+  /**
+   * 当前环境筛选把业务监控**全部**挡在外面时，它们实际在哪些环境。
+   *
+   * 有值 = 空白第一屏不是「还没有业务监控」，而是「筛选挡住了」。UI 据此给一键切换。
+   * 只在 rows 为空时可能有值；正常有行时永远 undefined（没有「部分被挡」这种半态，
+   * 那会让这个字段变成一个谁都不敢信的可选提示）。
+   */
+  hiddenEnvironments?: MonitorEnvironment[];
 }
 
 /** 这条目标算「我的业务」还是「基础设施」。 */
@@ -251,15 +259,35 @@ function summarizeInfra(targets: ReadonlyArray<UptimeTargetSummary>): InfraSumma
 export function buildOwnerBoard(
   targets: ReadonlyArray<UptimeTargetSummary>,
   /**
-   * 基础设施的统计范围。默认与业务同范围；调用方传项目全量时，
-   * 被环境筛选挡掉的分支预览仍然计入——「塌了要知道」这件事不该被业务视角过滤掉。
+   * **未经环境筛选**的同一批目标（调用方按项目收窄后、按环境收窄前的那一份）。
+   *
+   * 两个用途，都必须是这一份而不是 `targets`：
+   *   - 基础设施统计：被环境筛选挡掉的分支预览仍然计入——「塌了要知道」不该被业务视角过滤掉；
+   *   - 空态判真假：业务监控全被环境筛选挡住时，第一屏不许说「还没有一条业务监控」。
    */
-  infraScope: ReadonlyArray<UptimeTargetSummary> = targets,
+  unfiltered: ReadonlyArray<UptimeTargetSummary> = targets,
 ): OwnerBoard {
   const rows = buildBusinessRows(targets);
-  const infra = summarizeInfra(infraScope);
+  const infra = summarizeInfra(unfiltered);
 
   if (rows.length === 0) {
+    // 空白第一屏有两种成因，说反了就是撒谎：真的一条都没建，还是建了但被筛选挡住。
+    // 2026-09-11 角色验收现场：6 条业务监控全在分支预览，默认筛选只看生产，
+    // 于是「我的业务」写着「还没有一条」，而同一页的「全部目标」正列着这 6 条。
+    const hidden = buildBusinessRows(unfiltered);
+    if (hidden.length > 0) {
+      const cells = hidden.flatMap((r) => r.cells);
+      const environments = ENVIRONMENT_ORDER.filter((env) => cells.some((c) => c.environment === env));
+      const labels = environments.map((env) => cells.find((c) => c.environment === env)?.label ?? env);
+      return {
+        headline: `${hidden.length} 项业务监控都不在当前环境筛选里`,
+        detail: `它们在「${labels.join('、')}」—— 这一屏默认只看非预览的环境，把那个环境勾上就能看到`,
+        tone: 'warn',
+        rows,
+        infra,
+        hiddenEnvironments: environments,
+      };
+    }
     return {
       headline: '还没有一条业务监控',
       detail: infra.total > 0
@@ -372,10 +400,22 @@ export function scopeTargets(
   });
 }
 
-/** 默认环境集：除分支预览外的全部。分支预览要看，去「全部目标」。 */
+/**
+ * 默认环境集：除分支预览外的全部。分支预览要看，去「全部目标」。
+ *
+ * **人口必须是业务监控，不是全部目标**（predicate-and-wiring-discipline 形状 6：
+ * 判据读的值不是真正生效的那个值）。第一屏只画业务监控，那么「有没有非预览的
+ * 东西可看」也只能按业务监控数。按全部目标数会被两百多个基础设施容器带偏：
+ * 它们有生产实例 → 默认只勾生产 → 而业务监控全在分支预览 → 第一屏空白。
+ * 兜底逻辑写得对、测试也绿，错的是它数的那批人。
+ */
 export function defaultEnvironments(targets: ReadonlyArray<UptimeTargetSummary>): MonitorEnvironment[] {
-  const present = listEnvironments(targets).filter((env) => env !== 'preview');
+  const business = targets.filter(isBusinessTarget);
+  // 一条业务监控都没有时退回全部目标：那一屏说的是「还没有业务监控」，
+  // 环境筛选至少得落在一组有意义的值上，不能是空集。
+  const population = business.length > 0 ? business : targets;
+  const present = listEnvironments(population).filter((env) => env !== 'preview');
   // 一个项目如果只有分支预览（还没上过生产），那就让它看分支预览——
   // 否则第一屏会是一片空白，而它其实有东西可看。
-  return present.length > 0 ? present : listEnvironments(targets);
+  return present.length > 0 ? present : listEnvironments(population);
 }

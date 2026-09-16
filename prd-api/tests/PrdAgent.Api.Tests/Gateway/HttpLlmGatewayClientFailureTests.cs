@@ -176,11 +176,7 @@ public class HttpLlmGatewayClientFailureTests
         raw.ErrorCode.ShouldBe("LLM_QUOTA_EXCEEDED");
         notifier.Verify(x => x.NotifyQuotaExceededAsync(
                 "openrouter.ai",
-                It.Is<string>(message =>
-                    message.Contains("请稍后重试")
-                    && message.Contains("诊断信息已保留")
-                    && !message.Contains("openrouter", StringComparison.OrdinalIgnoreCase)
-                    && !message.Contains("API Key", StringComparison.OrdinalIgnoreCase)),
+                "openai/gpt-audio",
                 CancellationToken.None),
             Times.Once);
     }
@@ -188,10 +184,10 @@ public class HttpLlmGatewayClientFailureTests
     [Fact]
     public async Task ClientStreamQuotaFailure_NotifiesAdminInHttpMode()
     {
-        const string body = "{\"ErrorCode\":\"LLM_QUOTA_EXCEEDED\",\"ErrorMessage\":\"Key limit exceeded (total limit)\"}";
+        const string body = "data: {\"Type\":\"error\",\"ErrorCode\":\"LLM_QUOTA_EXCEEDED\",\"ErrorMessage\":\"Key limit exceeded (total limit)\",\"Model\":\"anthropic/claude-sonnet\",\"Platform\":\"openrouter.ai\"}\n\n";
         var notifier = new Mock<IPoolFailoverNotifier>();
         var client = BuildClient(
-            new StaticResponseHttpClientFactory(HttpStatusCode.PaymentRequired, body),
+            new StaticResponseHttpClientFactory(HttpStatusCode.OK, body),
             failoverNotifier: notifier.Object);
 
         var chunks = await CollectAsync(client.CreateClient("demo.app::chat", "chat").StreamGenerateAsync(
@@ -201,11 +197,8 @@ public class HttpLlmGatewayClientFailureTests
         chunks.Count.ShouldBe(1);
         chunks[0].Type.ShouldBe("error");
         notifier.Verify(x => x.NotifyQuotaExceededAsync(
-                "独立 LLM 网关",
-                It.Is<string>(message =>
-                    message.Contains("请稍后重试")
-                    && message.Contains("诊断信息已保留")
-                    && !message.Contains("Key limit exceeded", StringComparison.OrdinalIgnoreCase)),
+                "openrouter.ai",
+                "anthropic/claude-sonnet",
                 CancellationToken.None),
             Times.Once);
     }

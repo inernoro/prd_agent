@@ -81,7 +81,7 @@ type AssetRow = {
 // 已被 Desktop 端硬编码/默认配置引用的 key（这些 key 不能删除）
 const USED_ASSET_KEYS = new Set<string>(['load', 'start_load', 'login_icon']);
 
-import { getAvatarBaseUrl, resolveNoHeadAvatarUrl } from '@/lib/avatar';
+import { getAvatarBaseUrl, resolveManagedNoHeadAvatarUrl } from '@/lib/avatar';
 
 function appendCacheBust(url: string, cacheBust: number): string {
   const u = String(url || '').trim();
@@ -516,7 +516,9 @@ export default function AssetsManagePage() {
     return b ? `${b}/icon/desktop` : '';
   }, []);
 
-  const noHeadPreviewUrl = useMemo(() => appendCacheBust(resolveNoHeadAvatarUrl(), cacheBust), [cacheBust]);
+  // 这里预览的是对象存储上那张托管图（上传的目标），不是管理端自己打包的同源轻量版：
+  // 管理端页面已改用打包版，但服务端 avatarUrl 仍把托管图下发给桌面端等其它客户端。
+  const noHeadPreviewUrl = useMemo(() => appendCacheBust(resolveManagedNoHeadAvatarUrl(), cacheBust), [cacheBust]);
   const isNoHeadBroken = Boolean(broken?.['__nohead__']);
   const isUploadingNoHead = uploadingId === '__nohead__';
 
@@ -779,6 +781,7 @@ export default function AssetsManagePage() {
           </div>
           <p className="mb-5 text-[12px] text-token-muted">
             固定路径 <code className="surface-inset rounded-[6px] px-1.5 py-0.5 font-mono text-[11px]">/icon/backups/head/nohead.png</code>
+            <span className="mt-1 block">这张图由服务端下发给桌面端等其它客户端；管理端网页已改用随前端打包的同源轻量版，不受这里上传的影响。</span>
           </p>
 
           <div className={cn('flex gap-5', isMobile ? 'flex-col items-stretch' : 'items-start')}>

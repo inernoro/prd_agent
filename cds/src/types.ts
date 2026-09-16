@@ -2718,8 +2718,21 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
-  /** 稳定 ID（用于磁盘文件名 `<id>.<ext>` 与路由 `:id`）。 */
+  /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */
   id: string;
+  /**
+   * 正文在对象存储里的键（2026-09-10）。
+   *
+   * 元数据在 Mongo、正文在容器本地盘，曾经让整批报告在容器重建后变成点不开的
+   * 幽灵台账。现在正文进对象存储，本地盘只当读缓存，这个键是正文的唯一权威地址。
+   *
+   * 为 null 有两种含义，**必须靠 storage 区分**，不能只看这一个字段：
+   *   - storage='local'  → 归档时没配对象存储，正文只在本地，重建即失
+   *   - 历史报告（两者都缺）→ 本次改动之前归档的，正文多半已经不在了
+   */
+  objectKey?: string | null;
+  /** 正文实际落在哪一层。缺省视为历史数据（本地盘，且很可能已丢）。 */
+  storage?: 'object' | 'local';
   /** 报告标题（用户填写，列表/详情展示）。 */
   title: string;
   /** 报告格式：'html' 原样渲染，'md' 转 HTML 后渲染。 */
@@ -2732,7 +2745,7 @@ export interface AcceptanceReportMeta {
   folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
-  /** 验收结论：pass 通过 / conditional 有条件通过 / fail 不通过；未判定为 null。 */
+  /** 验收结论：pass 通过 / conditional 原则性通过 / fail 不通过；未判定为 null。 */
   verdict?: 'pass' | 'conditional' | 'fail' | null;
   /** 验收档位（如 P0 冒烟 / 视觉回归 / 完整验收等，自由文本，用于看板分组）；可空。 */
   tier?: string | null;

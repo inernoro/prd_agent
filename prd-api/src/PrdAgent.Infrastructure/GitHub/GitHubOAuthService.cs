@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Security.Cryptography;
@@ -38,7 +39,7 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
     private const string TokenUrl = "https://github.com/login/oauth/access_token";
     private const string VerificationUriDefault = "https://github.com/login/device";
     private const string UserInfoUrl = "https://api.github.com/user";
-    private const string DefaultScopes = "repo,read:user";
+    private const string DefaultScopes = "repo read:user";
     private const int FlowTokenTtlSeconds = 900;
 
     private readonly IConfiguration _config;
@@ -56,6 +57,28 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
     }
 
     /// <summary>
+    /// 申请的 OAuth scope。
+    ///
+    /// 空串必须当成「没配」：docker-compose 里这一项写的是 `${GitHubOAuth__Scopes:-}`，
+    /// 没有在 .env 里显式给值时注入的是**空字符串**而不是缺失，`?? DefaultScopes` 因此不生效。
+    /// 结果是拿到一把没有任何 scope 的 token——公开仓照样能读，私有仓一律 404，
+    /// 而 GitHub 对无权访问的私有仓返回的就是 404，和「仓库不存在」无法区分。
+    /// </summary>
+    internal static string ResolveScopes(string? configured)
+    {
+        var raw = string.IsNullOrWhiteSpace(configured) ? DefaultScopes : configured;
+        // GitHub 的 scope 参数按**空格**分隔（OAuth 2.0 的定义，本仓库另一个 GitHub 客户端
+        // cds/src/services/github-oauth-client.ts 发的也是 `repo read:user`）。
+        // 写成逗号会被当成「一个没见过的 scope」而不是两项权限——授权可能被拒，
+        // 或者拿到一把不含 repo 的 token，私有仓依旧一律 404。
+        // 历史配置里逗号写法很常见，这里统一归一，不让部署方式决定成败。
+        var parts = raw.Split(
+            new[] { ',', ' ', '\t', '\n', '\r' },
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return string.Join(' ', parts);
+    }
+
+    /// <summary>
     /// 向 GitHub 请求 device code。
     /// 返回给前端的 flow_token 是签名后的 (device_code, userId, expiry) 三元组，
     /// 前端在 poll 时原样回传，后端验签后解出 device_code 继续和 GitHub 交互。
@@ -68,7 +91,7 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
             throw GitHubException.OAuthNotConfigured();
         }
 
-        var scopes = _config["GitHubOAuth:Scopes"] ?? DefaultScopes;
+        var scopes = ResolveScopes(_config["GitHubOAuth:Scopes"]);
         var client = _httpClientFactory.CreateClient("GitHubApi");
         using var req = new HttpRequestMessage(HttpMethod.Post, DeviceCodeUrl);
         req.Headers.Accept.Clear();
@@ -216,6 +239,63 @@ public sealed class GitHubOAuthService : IGitHubOAuthService
 
         return info;
     }
+
+    public async Task<GitHubTokenRevocation> RevokeTokenAsync(string accessToken, CancellationToken ct)
+    {
+        var clientId = _config["GitHubOAuth:ClientId"];
+        var clientSecret = _config["GitHubOAuth:ClientSecret"];
+
+        // 撤销接口用的是 Basic client_id:client_secret（不是用户 token 的 Bearer）。
+        // 没配 secret 就调不了——如实回 NotConfigured，不要吞掉当成功。
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+        {
+            return GitHubTokenRevocation.NotConfigured;
+        }
+
+        try
+        {
+            var client = _httpClientFactory.CreateClient("GitHubApi");
+            using var req = new HttpRequestMessage(HttpMethod.Delete, BuildRevokeGrantUrl(clientId!));
+            var basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{clientId}:{clientSecret}"));
+            req.Headers.Authorization = new AuthenticationHeaderValue("Basic", basic);
+            req.Headers.Accept.Clear();
+            req.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+            req.Content = JsonContent.Create(new { access_token = accessToken });
+
+            using var resp = await client.SendAsync(req, ct);
+            return MapRevocationStatus(resp.StatusCode);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+        {
+            // token 本身绝不进日志；只记下"撤销这一步没成"，让调用方去告诉用户下一步。
+            _logger.LogWarning(ex, "[GitHubConnect] revoke token failed (network)");
+            return GitHubTokenRevocation.Failed;
+        }
+    }
+
+    /// <summary>
+    /// 撤销授权的接口地址。
+    ///
+    /// 必须是 <c>/grant</c> 而不是 <c>/token</c>：后者只作废传进去的那一把令牌，
+    /// 应用依旧列在用户的「已授权应用」里——而按钮承诺的是收回授权。
+    /// <c>/grant</c> 删掉整份授权，连带作废本应用为该用户签发的所有令牌。
+    /// </summary>
+    internal static string BuildRevokeGrantUrl(string clientId)
+        => $"https://api.github.com/applications/{Uri.EscapeDataString(clientId)}/grant";
+
+    /// <summary>
+    /// GitHub 撤销接口的状态码判据。
+    ///
+    /// 204 = 确认撤销。404 **不能**当成功：GitHub 对「这把令牌不属于当前这个应用」也回 404，
+    /// 而本站换过应用凭据之后，旧令牌在旧应用名下可能仍然有效。连接记录没存签发它的应用身份，
+    /// 两种情形分不开，所以报「未确认」让用户自己去看一眼，而不是告诉他已经收回了。
+    /// </summary>
+    internal static GitHubTokenRevocation MapRevocationStatus(HttpStatusCode status) => status switch
+    {
+        HttpStatusCode.NoContent => GitHubTokenRevocation.Revoked,
+        HttpStatusCode.NotFound => GitHubTokenRevocation.Unverified,
+        _ => GitHubTokenRevocation.Failed,
+    };
 
     // ===== Flow token helpers =====
 

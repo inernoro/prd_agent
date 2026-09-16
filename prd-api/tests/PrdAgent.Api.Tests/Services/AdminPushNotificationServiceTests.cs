@@ -869,6 +869,28 @@ public sealed class AdminPushNotificationServiceTests
     }
 
     [Fact]
+    public void NotificationsController_NewQuotaAlert_ShouldKeepSafeEnvironmentAndModelDetails()
+    {
+        const string message = "上游 AI 服务因额度不足拒绝了本次调用，本次 AI 创作未完成。\n" +
+                               "环境：CDS 预览环境（分支：fix/quota-alert）\n" +
+                               "模型：anthropic/claude-sonnet\n" +
+                               "平台：OpenRouter\n" +
+                               "请稍后重试；管理员需要检查服务额度或切换可用配置。诊断信息已保留。";
+        var presentation = NotificationsController.ToUserReadablePresentation(new AdminNotification
+        {
+            Key = "llm-quota-exceeded:v2:0123456789abcdef",
+            Title = "AI 服务额度不足",
+            Message = message,
+            Source = "llm-gateway-quota",
+        });
+
+        Assert.Equal("AI 服务额度不足", presentation.Title);
+        Assert.Contains("环境：CDS 预览环境", presentation.Message);
+        Assert.Contains("模型：anthropic/claude-sonnet", presentation.Message);
+        Assert.Contains("平台：OpenRouter", presentation.Message);
+    }
+
+    [Fact]
     public async Task RealBarkSmoke_CreatesDefectsForInernoroAndSendsDifferentImages_WhenKeyIsConfigured()
     {
         var key = Environment.GetEnvironmentVariable("REAL_BARK_KEY");

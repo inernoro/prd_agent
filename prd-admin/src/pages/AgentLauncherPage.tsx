@@ -80,7 +80,7 @@ import { getAccent, glassTileStyle } from '@/lib/tileAccent';
 import { isoWeekNumber } from '@/lib/isoWeek';
 import { useHomePulse, formatCompactNumber } from '@/lib/homePulse';
 import { TipsRotator } from '@/components/daily-tips/TipsRotator';
-import { LearningCenterTeaser } from '@/components/daily-tips/LearningCenterTeaser';
+import { ModelRankWidget } from '@/components/model-leaderboard/ModelRankWidget';
 import { AgentCardArtwork, AgentCardFrame, AgentCardTask, hasAgentCardArtwork } from '@/components/agent-shell/AgentCardArtwork';
 
 /**
@@ -706,8 +706,8 @@ export default function AgentLauncherPage() {
             </span>
             <span className="home-desk-dateline">{dateLine}</span>
             <span className="home-desk-status-gap" />
-            <span className="home-desk-status-learning">
-              <LearningCenterTeaser />
+            <span className="home-desk-status-rank">
+              <ModelRankWidget />
             </span>
           </header>
 
