@@ -643,3 +643,34 @@ URL 路径段（`/{accessId}/{ticket}/index.html`，相对子资源与模块 imp
 那个子串，于是**一条都没跑到**，26 条全绿看起来像「撤掉修复也不红」。差点据此判定守卫无效。
 换成 `~MdToPptSourcePlan` 才覆盖两个类，撤掉修复两条当场变红。守卫自己没被跑到，
 和守卫写错一样致命（形状 7 的小号版本）。
+
+## 第二十七轮复审（2026-09-16，head `07194c20a`）
+
+两条 P2，都按 A 类修掉。
+
+### 一、预览票据 cookie 的 Path 是 `/`
+
+每次签发预览都建一个以新 accessId 命名的 cookie，而 `Path = "/"` 让 15 分钟寿命内签发过的
+**每一张**票据都附在打到本域名的所有请求上。用户连着翻几十个版本，就能把 cookie 与请求头
+堆到上限——打坏的是与预览无关的普通接口，而且要等 cookie 过期才恢复。
+
+改成 `Path = /api/hosted-site-preview-files/{accessId}`：资源请求的路径正好落在它下面，
+而别的接口一张票据都不带。accessId 是 `Guid.NewGuid().ToString("N")`，32 位十六进制，
+可直接进路径。顺带把路由前缀抽成常量，路由声明与 cookie 路径共用一份，不留两处会漂移的
+字面量。
+
+### 二、发布后预览按上一条正文闩成 srcDoc，随后白屏
+
+`useSitePreviewHtml` 的 effect 在渲染之后才跑，所以发布换掉 `siteUrl` 的那一次渲染里，
+state 还装着上一条的正文。`SitePreviewModal` 拿它当「有没有正文」的判据去闩渲染路径
+（那个 latch 有意只定一次），于是按旧正文闩成 srcDoc；等新键取回来发现走不了 srcDoc
+（代理失败，或这个站点本来就该走直链），`src` 与 `srcDoc` 同时为空——白屏，本该退回的
+直链再也走不到。`srcDoc={useSrcDoc ? srcDoc! : undefined}` 那个非空断言，断掉的正是这个
+会发生的情形。
+
+修法是派生判据而不是在 effect 里清：清要等下一次提交才生效，而 `entryForKey(entry, key)`
+在同一次渲染就成立。
+
+前端没有 `@testing-library/react`，为一条守卫引入测试依赖属于扩范围，所以按本仓库既有做法
+拆成两半：判据抽成纯函数配四条行为用例，接线走 `sitePreviewWiring.test.ts`（那个文件本来就
+为「删掉不会红」的接线而设）。撤掉判据与接线，四条当场变红。

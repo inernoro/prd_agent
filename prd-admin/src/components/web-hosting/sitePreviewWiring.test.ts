@@ -112,6 +112,17 @@ describe('网页微调与版本入口接线', () => {
     expect(source).toContain('版本记录');
   });
 
+  /**
+   * 判据建好了没人用，删掉一个测试都不会红——正是本文件存在的理由。
+   * entryForKey 是「正文只认当前这个键」的唯一判据；hook 不走它就等于没修：
+   * 发布换掉 siteUrl 之后又会按上一条的正文闩成 srcDoc，新键走不了 srcDoc 时白屏。
+   */
+  it('预览正文的取用走 entryForKey，不直接交出 state 里的上一条', () => {
+    const source = read('components/web-hosting/useSitePreviewHtml.ts');
+    expect(source).toContain('entryForKey(entry, key)');
+    expect(source).not.toMatch(/return\s*\{\s*srcDoc:\s*entry\.srcDoc/);
+  });
+
   it('修改与版本记录的高亮状态互斥', () => {
     const source = read('components/web-hosting/SitePreviewModal.tsx');
     expect(source.match(/rightPanel === 'edit' && editSection === 'compose'/g)?.length).toBeGreaterThanOrEqual(2);

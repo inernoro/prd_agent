@@ -110,13 +110,16 @@ public sealed class HostedSitePreviewEmbedOptions
 }
 
 [ApiController]
-[Route("api/hosted-site-preview-files")]
+[Route(HostedSitePreviewFilesController.RoutePrefix)]
 public sealed class HostedSitePreviewFilesController : ControllerBase
 {
     public const string CookieNamePrefix = "MapVerifiedPreview_";
     private const string PolicyWithoutFrameAncestors =
         "sandbox allow-scripts allow-forms allow-modals allow-downloads; " +
         HostedSiteRevisionRules.VerifiedPackageArtifactCsp;
+
+    /// <summary>路由前缀与 cookie 的 Path 必须同源：写死两遍就是两份会各自漂移的判据。</summary>
+    internal const string RoutePrefix = "api/hosted-site-preview-files";
 
     private readonly IHostedSiteRevisionService _revisions;
     private readonly HostedSitePreviewAccessService _access;
@@ -158,7 +161,11 @@ public sealed class HostedSitePreviewFilesController : ControllerBase
             SameSite = IsCrossSiteEmbed() ? SameSiteMode.None : SameSiteMode.Strict,
             IsEssential = true,
             Expires = payload.ExpiresAt,
-            Path = "/",
+            // 只跟着自己这条预览的资源请求走。Path="/" 时，15 分钟寿命内签发过的**每一张**
+            // 票据都会附在打到本域名的所有请求上——用户连着翻几十个版本就能把 cookie 与
+            // 请求头堆到上限，打坏的是与预览无关的普通接口，而且要等 cookie 过期才恢复
+            //（Codex P2，2026-09-16）。accessId 是 32 位十六进制，可直接进路径。
+            Path = $"/{RoutePrefix}/{payload.AccessId}",
         });
         return Redirect($"../{payload.AccessId}/index.html");
     }

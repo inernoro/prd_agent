@@ -269,6 +269,14 @@ public sealed class HostedSitePreviewAccessTests
         Assert.Contains("HttpOnly", setCookie, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("secure", setCookie, StringComparison.OrdinalIgnoreCase);
         Assert.Contains($"samesite={expectedSameSite}", setCookie, StringComparison.OrdinalIgnoreCase);
+        // 票据只跟着自己这条预览的资源请求走。Path=/ 时，15 分钟寿命内签发过的每一张票据都会
+        // 附在打到本域名的所有请求上——翻几十个版本就能把 cookie 与请求头堆到上限，打坏的是
+        // 与预览无关的普通接口，而且要等 cookie 过期才恢复（Codex P2，2026-09-16）。
+        Assert.Contains(
+            $"path=/api/hosted-site-preview-files/{accessId}",
+            setCookie,
+            StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("path=/;", setCookie, StringComparison.OrdinalIgnoreCase);
         controller.Request.Headers.Cookie = setCookie.Split(';', 2)[0];
         return accessId;
     }
