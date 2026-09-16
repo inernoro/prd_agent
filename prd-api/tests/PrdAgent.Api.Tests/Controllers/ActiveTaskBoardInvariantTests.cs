@@ -146,14 +146,30 @@ public class ActiveTaskBoardInvariantTests
         // 放下和结案一样会腾出「正在做」，所以它也得落戳。只给 Finish 落戳的话，
         // 放下一条正在做的活再撤销，它会被还原成备用，手上那件反而留着 ——
         // 「撤销等于什么都没发生过」这句承诺在放下那条路上不成立。
-        var src = Controller();
-        var dropAt = src.IndexOf("ActiveTaskState.Dropped", StringComparison.Ordinal);
-        Assert.True(dropAt > 0, "找不到放弃那一段");
+        // 按路由属性精确切出方法体，不按关键字找。
+        // 第一版写的是 IndexOf("ActiveTaskState.Dropped")，结果命中的是 Reopen 里那句
+        // `entry.State != ActiveTaskState.Dropped`，窗口整个落在别的方法上 ——
+        // 取了第一个匹配而不是该取的那个，正是 predicate-and-wiring-discipline 形状 6。
+        var drop = Endpoint("[HttpPost(\"{id}/drop\")]");
+        Assert.Contains("ShouldAdvanceQueue(entry.State)", drop, StringComparison.Ordinal);
+        Assert.Contains("Set(x => x.FinishedFromActive, wasActive)", drop, StringComparison.Ordinal);
 
-        // 放弃那一段里必须既取了 wasActive 也落了戳
-        var dropBlock = src.Substring(Math.Max(dropAt - 900, 0), Math.Min(1400, src.Length - Math.Max(dropAt - 900, 0)));
-        Assert.Contains("ShouldAdvanceQueue(entry.State)", dropBlock, StringComparison.Ordinal);
-        Assert.Contains("Set(x => x.FinishedFromActive, wasActive)", dropBlock, StringComparison.Ordinal);
+        // 顺带把结案那边也用同一种切法钉一次，免得两条判据用两种口径
+        var finish = Endpoint("[HttpPost(\"{id}/finish\")]");
+        Assert.Contains("Set(x => x.FinishedFromActive, wasActive)", finish, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 按路由属性切出某个端点的方法体（到下一个 [Http… 为止）。
+    /// 关键字定位会命中别的方法里同名的字符串，判据必须锚在唯一的东西上。
+    /// </summary>
+    private static string Endpoint(string routeAttribute)
+    {
+        var src = Controller();
+        var start = src.IndexOf(routeAttribute, StringComparison.Ordinal);
+        Assert.True(start > 0, $"控制器里找不到端点 {routeAttribute}");
+        var next = src.IndexOf("    [Http", start + routeAttribute.Length, StringComparison.Ordinal);
+        return next > start ? src[start..next] : src[start..];
     }
 
     private static string Controller() => File.ReadAllText(Path.Combine(
