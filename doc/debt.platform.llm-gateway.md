@@ -40,6 +40,21 @@ legacy 兜底），然后连同 `InMemoryModelResolver` 一起删。
 | 模型改价抽屉的「同步到池」 | 一个抽屉 + 一个只读端点 | 池已经没有流量，往池成员上同步价格是白做功；但它走的是模型写入端点不是池写入端点，删掉属于产品行为变更，不在这一刀的范围里 | 与上一行的历史字段清理一起做：调用方不再有池绑定之后，这个抽屉的池那一段直接去掉 |
 | `BuildPoolMemberFromModel` 的 `existing` 参数 | 1 个参数 + 一处三元死分支 | 唯一调用点在 `migrate-to-models` 里恒传 `null`，所以那个三元永远走 else。但**正式环境的存量池还没搬过**，这条路是它唯一的搬迁通道，删参数的收益小于碰它的风险 | 正式环境搬迁跑完之后，连同 `migrate-to-models` 一起删 |
 
+## 还写死在代码里的模型知识（2026-09-16）
+
+**状态**：部分已还
+
+生图那 777 行已经搬进数据（`llmgw_imagegen_model_configs` + 控制台「生图契约」一段），
+剩下两处还写死在代码里：
+
+| 尾巴 | 体量 | 现状 | 还债的样子 |
+|---|---|---|---|
+| `StrictParameterCapabilityKeys` | 12 个键 | `LlmGateway.cs` 里一份写死的参数名单（seed / stop / frequency_penalty / …）。上游出一个新参数（reasoning_effort、thinking_budget 之类），严格模式下它不在名单里就会被当成未知参数处理 | 与生图契约同一个做法：搬进数据、由刷新器整表替换、控制台可编辑。判据入口已经是唯一的（`TryBuildStrictParameterCapabilityFailure`），搬起来比生图那份简单 |
+| `ImageGenModelConfigs.cs` 内置 19 条 | 777 行 | **保留是有意的**：它是覆盖表的兜底，库里一行都没有时行为逐字节不变，删掉数据行就回到它。不是债，是回退路径 | 不还。真要减，是等控制台里配满之后逐条下线，而不是一次删掉 |
+
+新协议要写适配器（目前 openai / claude 两个）**不算债**：那是真正需要代码的地方，
+分叉键是协议不是模型名，符合架构第 4 节。
+
 ---
 > **关联设计**：[LLM Gateway 统一调用](./design.platform.llm-gateway.md)、[AppCaller 模型池选择与池内调度](./design.platform.model-pool.md)、[LLM 网关与模型池统一](./design.platform.llm-gateway.unification.md)
 > **整改计划**：[LLM Gateway 故障隔离与恢复](./plan.platform.llm-gateway.resilience.md)、[LLM 网关旧路径物理退场](./plan.platform.llm-gateway.full-cutover.md)
