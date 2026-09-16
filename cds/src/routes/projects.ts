@@ -423,30 +423,9 @@ export function assertNotMachineAgentKey(
  * 管理员」:人类 cookie / bootstrap 静态 key（无 stamp）或全权 'all' cdsg_ key。
  * 任何带作用域的机器 key（cdsp_ 或 projects!=='all' 的 cdsg_）一律 403。
  */
-export function assertUnscopedAdmin(
-  req: { cdsProjectKey?: unknown; cdsAccess?: { keyId: string; access: AgentKeyAccess } },
-): null | { status: number; body: Record<string, unknown> } {
-  if (req.cdsProjectKey) {
-    return {
-      status: 403,
-      body: {
-        error: 'project_key_forbidden',
-        message: '该操作借服务器级凭据且无项目语境，仅限管理员 / 控制台会话，项目级 key 不可用。',
-      },
-    };
-  }
-  const access = req.cdsAccess?.access;
-  if (access && access.projects !== 'all') {
-    return {
-      status: 403,
-      body: {
-        error: 'scoped_key_forbidden',
-        message: '该操作借服务器级凭据且无项目语境，带作用域的全局 Key 不可用；仅限管理员会话或全权全局 Key。',
-      },
-    };
-  }
-  return null;
-}
+import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
+
+export { assertUnscopedAdmin };
 
 /**
  * 跨项目「清扫型」路由的作用域门卫（Codex P1，2026-07-09）。用于那些「不带 ?project=

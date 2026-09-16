@@ -18,7 +18,9 @@
  *   POST   /api/uptime/targets/:id/probe        对任一目标立刻探一次并记入台账
  */
 
-import { Router } from 'express';
+import { Router, type Request, type Response } from 'express';
+import type { AlarmChannelSnapshot, AlarmChannelStatusView } from '../services/alarm-channel.js';
+
 import type { UptimeCustomMonitor } from '../types.js';
 import {
   DEFAULT_BAR_SEGMENTS,
@@ -38,6 +40,8 @@ import {
   type UptimeMonitorInput,
 } from '../services/uptime-custom-monitor.js';
 import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.js';
+import { isSelfCheckEndpoint } from '../services/self-monitoring-bootstrap.js';
+import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 
 /**
  * 取本次请求的项目作用域：项目级 cdsp_ / 单项目 cdsg_ key 会被 server.ts 的
@@ -47,7 +51,7 @@ import type { DiscoveryRunSummary } from '../services/monitor-discovery-runner.j
  * 否则一把项目 Key 就能枚举出全实例每个项目的分支名、服务名、故障原因与
  * 时间线（Codex PR #1273 P1）。与 cds-events.ts 的同款守卫口径一致。
  */
-function projectScopeOf(req: unknown): string | null {
+export function projectScopeOf(req: unknown): string | null {
   return (req as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId ?? null;
 }
 
@@ -185,21 +189,64 @@ export function createUptimeRouter(deps: {
   runDiscovery?: () => Promise<DiscoveryRunSummary>;
   /** 最近一轮的结果，含被拒的声明与原因。 */
   lastDiscoveryRun?: () => DiscoveryRunSummary | null;
+  /**
+   * 通知通道自身的状态。**不接就是不知道**——不接时摘要里不出 alarm 字段，
+   * 前端据此说「通道状态未知」，而不是默认渲染成「通着」。
+   */
+  alarmChannel?: () => AlarmChannelSnapshot;
+  /**
+   * 用户自己配的通知通道的状态。不接就是不知道——不接时摘要里不出这个字段，
+   * 面板据此说「这个实例没接通道配置」，而不是替它说「一条都没有」。
+   */
+  alarmChannels?: () => AlarmChannelStatusView[];
+  /**
+   * 演练：走**真实投递路径**发一条测试通知，返回真实结果。
+   * 不接则演练路由回 501——没有这条，「铃能不能响」永远只能靠等一次真故障。
+   */
+  runAlarmDrill?: (note: string) => Promise<{ ok: boolean; status?: number; reason?: string }>;
+  /** 读通道凭据的**打码视图**：配没配、端点、keyId、账号、私钥指纹。私钥本身不出。 */
+  readAlarmNotify?: () => Record<string, unknown>;
+  /** 写通道凭据；传 null 表示清除。 */
+  writeAlarmNotify?: (next: { endpoint: string; keyId: string; username: string; privateKey: string } | null) => void;
 }): Router {
   const router = Router();
+
+  /**
+   * 通知通道凭据（旧 MAP 通道）与演练：系统级配置，只许管理员会话或全权全局 Key。
+   * 读接口回 MAP 端点、keyId、用户名与私钥指纹；create-only 的全局 Key 被全局网关放行了 GET，
+   * 光拦项目级 Key 拦不住它（Codex #1543 P1，第二轮）。与 alarm-channels 路由同一份判定。
+   */
+  const denySystemAlarmAccess = (req: Request, res: Response): boolean => {
+    const guard = assertUnscopedAdmin(req as unknown as Parameters<typeof assertUnscopedAdmin>[0]);
+    if (!guard) return false;
+    res.status(guard.status).json({ ...guard.body, hint: '通知通道属于 CDS 系统设置，项目级 / 带作用域的 Key 不可读写' });
+    return true;
+  };
+
+  const withAlarm = <T extends object>(summary: T): T & { alarm?: AlarmChannelSnapshot; alarmChannels?: AlarmChannelStatusView[] } => {
+    const alarm = deps.alarmChannel?.();
+    const channels = deps.alarmChannels?.();
+    return {
+      ...summary,
+      ...(alarm ? { alarm } : {}),
+      ...(channels ? { alarmChannels: channels } : {}),
+    };
+  };
 
   router.get('/uptime/summary', (req, res) => {
     const segments = resolveBucketCount(req.query.segments, DEFAULT_BAR_SEGMENTS);
     const summary = deps.monitor.getSummary(segments);
     const scope = projectScopeOf(req);
     if (!scope) {
-      res.json(summary);
+      res.json(withAlarm(summary));
       return;
     }
     // 收窄到本项目，并按收窄后的集合重算总览计数与覆盖面，避免「只看得到 1 个目标
     // 却显示全实例 139 个」这种对不上的数字；计数口径与全量同一个函数，未实测不会
     // 被算成正常；覆盖面的未纳入清单同样只给本项目的。
     const targets = summary.targets.filter((t) => t.projectId === scope);
+    // 项目级 Key 不带通知通道：那是系统级配置，带着别的项目的通道名、项目清单、
+    // 投递计数与最近失败原因（Codex #1543 P1）。它要看「有没有人被通知」得用管理员会话。
     res.json({
       ...summary,
       targets,
@@ -207,6 +254,79 @@ export function createUptimeRouter(deps: {
       coverage: deps.monitor.getCoverage(scope),
       projectScope: scope,
     });
+  });
+
+  /**
+   * 通知演练：走真实投递路径发一条测试通知。
+   *
+   * 为什么需要它：这条链上最贵的一件事是「等一次真故障来证明铃会响」。
+   * 没有演练，通知通道只能在真出事那天第一次被检验——而那正是最不该出意外的时刻。
+   * 演练发的是同一个 MapNotifier、同一条签名路径、同一个 source，只是内容标明是演练。
+   */
+  router.post('/uptime/alarm-drill', async (req, res) => {
+    if (!deps.runAlarmDrill) {
+      res.status(501).json({ error: '这个实例没有接通知通道，演练无从谈起' });
+      return;
+    }
+    // 只许非作用域管理员借它往外发通知（和通知通道接口同一道门）。
+    if (denySystemAlarmAccess(req, res)) return;
+    const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 200) : '';
+    const result = await deps.runAlarmDrill(note);
+    // 演练失败不是服务器错误，是**一条有用的结论**：铃现在是哑的。
+    // 回 500 会让前端把它当成接口挂了，而不是当成答案。
+    res.json(result);
+  });
+
+  /**
+   * 通知通道凭据的读接口。
+   *
+   * **私钥永远不回显**：只说配没配、指纹是什么。读接口把密钥吐回去，是最常见的
+   * 一种「看起来只是个设置页」的泄漏面（同 /api/env 2026-05-09 那次 P1.5）。
+   */
+  router.get('/cds-system/alarm-notify', (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    if (!deps.readAlarmNotify) {
+      res.status(501).json({ error: '这个实例没有接通知通道配置' });
+      return;
+    }
+    res.json(deps.readAlarmNotify());
+  });
+
+  router.put('/cds-system/alarm-notify', (req, res) => {
+    if (denySystemAlarmAccess(req, res)) return;
+    if (!deps.writeAlarmNotify) {
+      res.status(501).json({ error: '这个实例没有接通知通道配置' });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    if (body.clear === true) {
+      deps.writeAlarmNotify(null);
+      res.json({ ...deps.readAlarmNotify?.(), message: '通知通道凭据已清除 —— 现在出问题不会有人被通知' });
+      return;
+    }
+    const str = (k: string): string => (typeof body[k] === 'string' ? (body[k] as string).trim() : '');
+    const endpoint = str('endpoint');
+    const keyId = str('keyId');
+    const username = str('username');
+    const privateKey = str('privateKey');
+    // 四项缺一即拒。半套凭据存进去只会在真出事那天以 401 的形式暴露，
+    // 而那正是最不该出意外的时刻。
+    const missing = (['endpoint', 'keyId', 'username', 'privateKey'] as const)
+      .filter((k) => !({ endpoint, keyId, username, privateKey })[k]);
+    if (missing.length > 0) {
+      res.status(400).json({ error: 'validation', message: `缺少 ${missing.join('、')}`, missing });
+      return;
+    }
+    if (!/^https:\/\//.test(endpoint)) {
+      res.status(400).json({ error: 'validation', message: '端点必须是 https —— 通知里带着业务名，不能走明文' });
+      return;
+    }
+    if (!/BEGIN [A-Z ]*PRIVATE KEY/.test(privateKey)) {
+      res.status(400).json({ error: 'validation', message: '私钥必须是 PEM 格式（BEGIN PRIVATE KEY）' });
+      return;
+    }
+    deps.writeAlarmNotify({ endpoint, keyId, username, privateKey });
+    res.json({ ...deps.readAlarmNotify?.(), message: '通知通道已配置 —— 建议立刻演练一次确认真能送到' });
   });
 
   router.get('/uptime/targets/:id/history', (req, res) => {
@@ -304,9 +424,17 @@ export function createUptimeRouter(deps: {
       res.status(403).json({ error: '项目级 Key 只能看自己项目的自检端点' });
       return;
     }
+    const endpoints = deps.listMonitorEndpoints?.(projectId) || [];
+    const run = deps.lastDiscoveryRun?.() || null;
+    const mine = new Set(endpoints);
     res.json({
-      endpoints: deps.listMonitorEndpoints?.(projectId) || [],
-      lastRun: deps.lastDiscoveryRun?.() || null,
+      endpoints,
+      // 内置的那条是 CDS 监控自己：由服务端认定，前端只认这份名单，不自己再判一遍地址。
+      builtin: endpoints.filter(isSelfCheckEndpoint),
+      // 上一轮对账是全实例一起跑的；这里只摆本项目端点那几条结果。不然项目 A 的芯片会把
+      // 项目 B 打不通的端点与发现数算进自己头上，健康的项目被显示成警告（Codex #1543 P2）。
+      // 按项目 + 地址一起筛：同一个 URL 被两个项目各登记一次时各有一条结果，只认 URL 会双算。
+      lastRun: run ? { ...run, endpoints: run.endpoints.filter((o) => o.projectId === projectId && mine.has(o.url)) } : null,
     });
   });
 
@@ -357,6 +485,12 @@ export function createUptimeRouter(deps: {
       return;
     }
     const url = String((req.query.url as string | undefined) || '').trim();
+    // 内置端点拔不掉：它是代码初始化插进来的，拔了下次启动又回来，
+    // 中间那段空窗只会让「CDS 自身」的监控凭空消失一阵——不给这个口子。
+    if (isSelfCheckEndpoint(url)) {
+      res.status(400).json({ error: 'CDS 自身的自检端点是内置的，不能拔掉', field: 'url' });
+      return;
+    }
     if (!deps.removeMonitorEndpoint?.(projectId, url)) {
       res.status(404).json({ error: '项目不存在' });
       return;
