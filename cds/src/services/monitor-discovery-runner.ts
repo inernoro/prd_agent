@@ -8,6 +8,7 @@
  */
 
 import crypto from 'node:crypto';
+import { internalProbeHeaders } from './self-check-auth.js';
 
 import type { Project, UptimeCustomMonitor } from '../types.js';
 import { discoverMonitors, type DiscoveryRejection } from './monitor-discovery.js';
@@ -35,7 +36,7 @@ export const defaultEndpointFetcher: EndpointFetcher = async (url) => {
       signal: ctrl.signal,
       redirect: 'manual',
       // 与其它自定义探测同款：探测令牌绝不发给外部地址。
-      headers: { 'user-agent': 'cds-monitor-discovery', 'x-cds-poll': 'true', accept: 'application/health+json, application/json' },
+      headers: { 'user-agent': 'cds-monitor-discovery', 'x-cds-poll': 'true', accept: 'application/health+json, application/json', ...internalProbeHeaders(url) },
     });
     if (res.status >= 400) {
       await res.body?.cancel().catch(() => undefined);

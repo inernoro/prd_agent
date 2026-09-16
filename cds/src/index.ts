@@ -144,6 +144,7 @@ import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
 import { buildSelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
 import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from './services/self-status-cache.js';
+import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
 
 
 const configPath = process.argv[2] || undefined;
@@ -6070,9 +6071,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
    * ② 启动时把它插进内置项目「CDS 自身」。搬到哪台机器，这套监控都跟着起来，
    * 不用任何人手配，删掉了下次启动也会回来。
    *
-   * 端点免登录（server.ts 的公开路由白名单 + github-auth 的 PUBLIC_PATHS 都放行了它）：
-   * 探测器打它不带任何凭据，跟打 MAP / llmgw 的自检一模一样。它只暴露聚合数字，
-   * 不暴露任何密钥、地址或分支明细。
+   * 端点不走登录门（server.ts 的公开路由白名单 + github-auth 的 PUBLIC_PATHS 都放行了它），
+   * 但**不是公开的**：只认本机回环 + 本进程内存里的一次性令牌（self-check-auth.ts）。
+   * 探测器与发现器在同一个进程里，打它时自动带令牌；从外面打，回环不满足或令牌不对，
+   * 一律 401，文档一个字都不吐。用户 2026-09-16：「免登录不行，泄漏数据。」
    */
   const selfCheckDeps: SelfCheckDeps = {
     now: () => Date.now(),
@@ -6146,7 +6148,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     doc.catch(() => { selfCheckCache = null; });
     return doc;
   };
-  app.get(SELF_CHECK_PATH, async (_req, res) => {
+  app.get(SELF_CHECK_PATH, async (req, res) => {
+    // 鉴权在任何计算之前：不给未授权请求消耗 docker / Mongo 的机会，也不泄漏一个字。
+    if (!selfCheckAuth.verify({ remoteAddress: req.socket.remoteAddress, header: req.get(SELF_CHECK_HEADER) })) {
+      res.status(401).json({ error: 'unauthorized' });
+      return;
+    }
     try {
       const doc = await cachedSelfCheck();
       res.setHeader('content-type', 'application/health+json; charset=utf-8');

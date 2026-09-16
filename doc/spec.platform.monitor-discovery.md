@@ -115,8 +115,8 @@
 
 用户：「先加上自己的吧，以代码初始化的方式来驱动，方便 CDS 迁移部署在其他服务器上。」
 
-CDS 暴露 `GET /api/self-check`（免登录、只回聚合数字），每条 check 自带 `cds:monitor`；
-启动时把它插进一个 id 固定的内置项目「CDS 自身」，地址走本机回环。于是：
+CDS 暴露 `GET /api/self-check`，每条 check 自带 `cds:monitor`；启动时把它插进一个 id 固定的
+内置项目「CDS 自身」，地址走本机回环。于是：
 
 - **搬到哪台机器都一样**：不依赖域名、不依赖任何人手配；项目被删了下次启动会回来；
   内置端点在面板上标「内置 · CDS 自身」，拔不掉（接口 400）。
@@ -126,6 +126,12 @@ CDS 暴露 `GET /api/self-check`（免登录、只回聚合数字），每条 ch
 - **量不到就说量不到**：磁盘读不到写 null、Docker 打不通写哨兵值、探测器一轮没跑写哨兵值；
   三处任何一处缺省成 0 都会被读成「一切正常」。页面三条是被动观测，半夜没人访问显示
   「没人用过」而不是「一切正常」。
+
+**它不是公开端点**（用户 2026-09-16：「免登录不行，泄漏数据」）。它不走登录门，但只认
+「本机回环 + 本进程内存里的一次性令牌」两个条件同时成立：令牌进程起来时随机生成，不落盘、
+不进日志、不进任何接口，探测器与发现器在同一个进程里打它时自动带上，而且只对自检端点
+自己的地址带——外部地址一律不带，内部令牌带出去就是泄漏。从外面打，无论走不走 nginx，
+一律 401，文档一个字都不吐。
 
 协议一致性不靠扫源码：守卫把自检文档喂给真解析器，断言 13 条全收零拒收。
 这是「协议作者自己吃得下自己协议」的唯一证据（守卫位置见文末「实现来源」）。
@@ -166,5 +172,6 @@ CDS 暴露 `GET /api/self-check`（免登录、只回聚合数字），每条 ch
 - `cds/src/services/monitor-reconcile.ts` —— 对账（命门二在这）
 - `cds/src/services/monitor-discovery-runner.ts` —— 什么时候跑、打完写哪
 - `cds/src/services/self-check.ts` / `self-monitoring-bootstrap.ts` —— CDS 监控自己：自检文档与启动引导
+- `cds/src/services/self-check-auth.ts` —— 自检端点的令牌门：只发给自己、只认回环
 - `cds/tests/services/self-check.test.ts` —— CDS 自检文档喂真解析器的一致性守卫
 - `scripts/tests/test_monitor_discovery_contract.py` —— 跨语言契约自检

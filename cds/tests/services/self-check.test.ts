@@ -349,11 +349,14 @@ describe('接线守卫：删掉任何一根线都不会有别的测试变红', (
   const auth = codeOf(read('../../src/middleware/github-auth.ts'));
   const uptime = codeOf(read('../../src/routes/uptime.ts'));
   const strip = codeOf(read('../../web/src/pages/status/DiscoveryStrip.tsx'));
+  const prober = codeOf(read('../../src/services/uptime-custom-monitor.ts'));
+  const runner = codeOf(read('../../src/services/monitor-discovery-runner.ts'));
+  const serverSrc = codeOf(read('../../src/server.ts'));
 
   it('index.ts 真挂了自检路由，且用的是共享路径常量；路由走短缓存，不让 13 条监控各算一份', () => {
     expect(index).toMatch(/app\.get\(SELF_CHECK_PATH,/);
     expect(index).toContain('buildSelfCheck(selfCheckDeps)');
-    expect(index).toMatch(/app\.get\(SELF_CHECK_PATH,[\s\S]{0,200}cachedSelfCheck\(\)/);
+    expect(index).toMatch(/app\.get\(SELF_CHECK_PATH,[\s\S]{0,800}cachedSelfCheck\(\)/);
   });
 
   it('启动引导必须发生在第一轮发现之前——否则第一轮把内置端点漏掉，要等下一轮才补', () => {
@@ -364,9 +367,35 @@ describe('接线守卫：删掉任何一根线都不会有别的测试变红', (
     expect(boot).toBeLessThan(firstRun);
   });
 
-  it('两处免登录白名单都放行了它：探测器打它不带任何凭据', () => {
+  it('两处登录门白名单都放行了它（它有自己的令牌门，不走 cookie）', () => {
     expect(server).toContain(`path === '${SELF_CHECK_PATH}'`);
     expect(auth).toContain(`'${SELF_CHECK_PATH}'`);
+  });
+
+  it('路由在任何计算之前先验令牌与回环：验不过就 401，不算文档', () => {
+    const route = index.slice(index.indexOf('app.get(SELF_CHECK_PATH,'));
+    const verifyAt = route.indexOf('selfCheckAuth.verify(');
+    const buildAt = route.indexOf('cachedSelfCheck()');
+    expect(verifyAt).toBeGreaterThan(0);
+    expect(buildAt).toBeGreaterThan(0);
+    expect(verifyAt).toBeLessThan(buildAt);
+    expect(route.slice(verifyAt, buildAt)).toContain('status(401)');
+    expect(route.slice(verifyAt, buildAt)).toContain('req.socket.remoteAddress');
+  });
+
+  it('探测器的两条 fetch 与发现器的 fetch 都带 internalProbeHeaders——少一处，那条链路打自检端点就 401', () => {
+    const proberFetches = prober.split('await fetch(').length - 1;
+    const proberWired = prober.split('...internalProbeHeaders(').length - 1;
+    expect(proberFetches).toBeGreaterThanOrEqual(2);
+    expect(proberWired).toBe(proberFetches);
+    expect(runner).toContain('...internalProbeHeaders(url)');
+  });
+
+  it('启动收尸接在 server.ts 里，且在周期收割之前', () => {
+    const orphan = serverSrc.indexOf('reconcileOrphanedByRestart(');
+    const periodic = serverSrc.indexOf('deploymentRunService.reconcileInterrupted()');
+    expect(orphan).toBeGreaterThan(0);
+    expect(orphan).toBeLessThan(periodic);
   });
 
   it('通知通道数与面板同一份判定：enabled 且填全', () => {

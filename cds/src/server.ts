@@ -1729,6 +1729,15 @@ export function createServer(deps: ServerDeps): express.Express {
         })
       : undefined,
   );
+  {
+    // 启动收尸：上一个进程留下的在途 run 一律收掉，不等 15 分钟心跳阈值。
+    const startedIso = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT;
+    const startedAt = startedIso ? new Date(startedIso) : new Date();
+    const orphaned = deploymentRunService.reconcileOrphanedByRestart(startedAt);
+    if (orphaned.length > 0) {
+      console.warn(`[deployment-run] 启动收尸：${orphaned.length} 个被上一次重启打断的 run 已收敛为失败 (${orphaned.map((r) => r.id).join(', ')})`);
+    }
+  }
   deploymentRunService.reconcileInterrupted();
   // 周期收割（2026-07-16 队列堵死复盘）：此前 reconcileInterrupted 只在启动时
   // 跑一次，重启前心跳仍新鲜的 run 会在重启后永远卡在 building（观测到 24h+
