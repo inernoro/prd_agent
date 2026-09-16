@@ -24,6 +24,8 @@ import {
   DOCKER_UNREACHABLE_MS,
   DOCKER_PING_MAX_MS,
   PROBER_STALE_AFTER_SECONDS,
+  PROBER_STALLED_SECONDS,
+  SELF_STATUS_GRACE_MS,
   SELF_CHECK_PATH,
   type SelfCheckDeps,
 } from '../../src/services/self-check.js';
@@ -55,12 +57,13 @@ function healthyDeps(overrides: Partial<SelfCheckDeps> = {}): SelfCheckDeps {
       { receivedAt: iso(-48 * HOUR), signatureValid: false, dispatchAction: 'error' },
     ],
     buildGate: () => ({ active: 1, queued: 0, max: 3, waiters: [] }),
-    cycleHealth: () => ({ sinceLastCycleMs: 40_000, running: false, watchdogResets: 0 }),
+    cycleHealth: () => ({ sinceLastCycleMs: 40_000, stale: false, running: false, watchdogResets: 0 }),
+    processStartedAt: () => NOW - 2 * HOUR,
     diskUsage: () => ({ totalBytes: 100, freeBytes: 60 }),
     dockerPing: async () => ({ ok: true, ms: 120, detail: '27.1.1' }),
     httpStats: async () => ({ requests: 400, serverErrors: 2, branchesP95Ms: 380 }),
     liveAlarmChannels: () => 1,
-    selfStatus: () => ({ bundleStale: false, headSha: 'abc1234', currentBranch: 'main' }),
+    selfStatus: () => ({ ready: true, bundleStale: false, headSha: 'abc1234', currentBranch: 'main' }),
     storeBackend: () => 'mongo-split',
     ...overrides,
   };
@@ -194,11 +197,27 @@ describe('量不到就说量不到（三个哨兵）', () => {
     expect(c.output).toContain('socket refused');
   });
 
-  it('探测器一轮都没跑完：写哨兵值而不是 0（0 会被读成「刚跑过」）', async () => {
-    const doc = await buildSelfCheck(healthyDeps({ cycleHealth: () => ({ sinceLastCycleMs: null, running: true, watchdogResets: 0 }) }));
+  it('探测器起来之后一轮都没跑完且已停摆：写哨兵值而不是 0（0 会被读成「刚跑过」）', async () => {
+    const doc = await buildSelfCheck(healthyDeps({ cycleHealth: () => ({ sinceLastCycleMs: null, stale: true, running: true, watchdogResets: 0 }) }));
     const c = doc.checks['prober.since-last-cycle-seconds'];
     expect(c.status).toBe('fail');
-    expect(c.observedValue as number).toBeGreaterThan(PROBER_STALE_AFTER_SECONDS);
+    expect(c.observedValue).toBe(PROBER_STALLED_SECONDS);
+    expect(PROBER_STALLED_SECONDS).toBeGreaterThan(PROBER_STALE_AFTER_SECONDS);
+  });
+
+  it('刚重启、首轮还在跑：写进程起来多久，不响铃——否则每次自更新都先响一次', async () => {
+    const doc = await buildSelfCheck(healthyDeps({
+      cycleHealth: () => ({ sinceLastCycleMs: null, stale: false, running: true, watchdogResets: 0 }),
+      processStartedAt: () => NOW - 20_000,
+    }));
+    const c = doc.checks['prober.since-last-cycle-seconds'];
+    expect(c).toMatchObject({ observedValue: 20, status: 'pass' });
+    expect(c.output).toContain('首轮还在跑');
+  });
+
+  it('停摆判定听探测器自己的：它说 stale，哪怕上一轮数字不大也 fail', async () => {
+    const doc = await buildSelfCheck(healthyDeps({ cycleHealth: () => ({ sinceLastCycleMs: 100_000, stale: true, running: true, watchdogResets: 2 }) }));
+    expect(doc.checks['prober.since-last-cycle-seconds'].status).toBe('fail');
   });
 
   it('拿不到探测器状态同样 fail', async () => {
@@ -235,11 +254,21 @@ describe('接入 / 通知 / 自身', () => {
   });
 
   it('前端产物落后于代码：flag 写 1，fail；拿不到自身状态也算 fail', async () => {
-    const stale = await buildSelfCheck(healthyDeps({ selfStatus: () => ({ bundleStale: true, headSha: 'deadbee', currentBranch: 'x' }) }));
+    const stale = await buildSelfCheck(healthyDeps({ selfStatus: () => ({ ready: true, bundleStale: true, headSha: 'deadbee', currentBranch: 'x' }) }));
     expect(stale.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
     const unknown = await buildSelfCheck(healthyDeps({ selfStatus: () => null }));
     expect(unknown.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
     expect(unknown.releaseId).toBeUndefined();
+  });
+
+  it('刚重启、自身状态缓存还没算完：宽限期内写 0 + warn 不响铃；过了宽限还不知道才 fail', async () => {
+    const notReady = () => ({ ready: false, bundleStale: false, headSha: '', currentBranch: '' });
+    const young = await buildSelfCheck(healthyDeps({ selfStatus: notReady, processStartedAt: () => NOW - 30_000 }));
+    expect(young.checks['self.bundle-stale']).toMatchObject({ observedValue: 0, status: 'warn' });
+    expect(young.checks['self.bundle-stale'].output).toContain('还没算完');
+    expect(young.releaseId).toBeUndefined();
+    const old = await buildSelfCheck(healthyDeps({ selfStatus: notReady, processStartedAt: () => NOW - SELF_STATUS_GRACE_MS - 1000 }));
+    expect(old.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
   });
 });
 

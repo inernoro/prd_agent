@@ -54,6 +54,14 @@ export const DISK_USED_MAX_PERCENT = 90;
 export const DOCKER_PING_MAX_MS = 3000;
 /** 读不到 Docker 时写进 observedValue 的哨兵值——它必须落在阈值之外，而不是缺省成 0。 */
 export const DOCKER_UNREACHABLE_MS = 99_999;
+/** 探测器停摆时写进 observedValue 的哨兵值，同上。 */
+export const PROBER_STALLED_SECONDS = 9_999;
+/**
+ * 进程刚起来的宽限期：自身状态缓存还没算完之前，不把「还不知道」当成「前端产物落后」。
+ * 没有这个宽限，每次自更新重启都会先响一次铃再自己恢复——铃响多了就没人听了。
+ * 过了宽限还不知道，那就是真的拿不到，照实 fail。
+ */
+export const SELF_STATUS_GRACE_MS = 5 * 60 * 1000;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HALF_HOUR_MS = 30 * 60 * 1000;
@@ -66,15 +74,22 @@ export interface SelfCheckDeps {
   deploymentRuns: () => ReadonlyArray<{ status: string; startedAt: string; finishedAt?: string }>;
   webhookDeliveries: (limit: number) => ReadonlyArray<{ receivedAt: string; signatureValid: boolean; dispatchAction: string }>;
   buildGate: () => { active: number; queued: number; max: number; waiters: ReadonlyArray<{ enqueuedAt: string }> };
-  /** 探测器活性。拿不到传 null——那是「不知道」，不是「健康」。 */
-  cycleHealth: () => { sinceLastCycleMs: number | null; running: boolean; watchdogResets: number } | null;
+  /**
+   * 探测器活性。拿不到传 null——那是「不知道」，不是「健康」。
+   * `stale` 是探测器自己的停摆判定（从未完成过一轮时它以进程启动时刻为基准），
+   * 这里直接复用，不另写一份「多久算停」。
+   */
+  cycleHealth: () => { sinceLastCycleMs: number | null; stale: boolean; running: boolean; watchdogResets: number } | null;
+  /** 进程启动时刻（毫秒）。拿不到传 null。 */
+  processStartedAt: () => number | null;
   diskUsage: () => { totalBytes: number; freeBytes: number } | null;
   dockerPing: () => Promise<{ ok: boolean; ms: number; detail?: string }>;
   /** 最近一段时间主进程的请求统计。没有日志存储时返回 null。 */
   httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null } | null>;
   /** 真的会响的通知通道数（与面板同一份判定）。 */
   liveAlarmChannels: () => number;
-  selfStatus: () => { bundleStale: boolean; headSha: string; currentBranch: string } | null;
+  /** `ready=false` 表示自身状态缓存还没算过一次——刚起来的进程会有几十秒这样。 */
+  selfStatus: () => { ready: boolean; bundleStale: boolean; headSha: string; currentBranch: string } | null;
   storeBackend: () => string;
 }
 
@@ -248,22 +263,36 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
 
   // ── 探测器 ─────────────────────────────────────────────────────────
   const cycle = deps.cycleHealth();
+  const startedAt = deps.processStartedAt();
+  const processAgeSec = startedAt === null ? null : Math.max(0, Math.round((now - startedAt) / 1000));
   const sinceSec = cycle?.sinceLastCycleMs === null || cycle?.sinceLastCycleMs === undefined
     ? null : Math.round(cycle.sinceLastCycleMs / 1000);
+  // 停摆与否听探测器自己的（它从未完成一轮时以启动时刻为基准）；这里只决定写什么数：
+  //   完成过 → 上一轮距今；没完成但没停摆 → 进程起来多久（刚重启的诚实答案）；
+  //   停摆 / 拿不到 → 哨兵值，它必须落在阈值外，缺省成 0 会被读成「刚跑过」。
+  const proberStalled = !cycle || cycle.stale;
+  const proberObserved = sinceSec !== null ? sinceSec : proberStalled ? PROBER_STALLED_SECONDS : (processAgeSec ?? PROBER_STALLED_SECONDS);
   checks.push(monitored(
     {
       componentId: 'prober.since-last-cycle-seconds', componentType: 'prober',
-      // 一轮都没跑完就写哨兵值：它必须落在阈值外，缺省成 0 会被读成「刚跑过」。
-      observedValue: sinceSec ?? 9_999, observedUnit: 'second',
-      status: sinceSec !== null && sinceSec <= PROBER_STALE_AFTER_SECONDS ? 'pass' : 'fail',
-      output: !cycle ? '拿不到探测器状态' : sinceSec === null ? '探测器一轮都没跑完' : `上一轮 ${sinceSec} 秒前${cycle.watchdogResets > 0 ? `，看门狗复位过 ${cycle.watchdogResets} 次` : ''}`,
+      observedValue: proberObserved, observedUnit: 'second',
+      status: !proberStalled && proberObserved <= PROBER_STALE_AFTER_SECONDS ? 'pass' : 'fail',
+      output: !cycle
+        ? '拿不到探测器状态'
+        : sinceSec === null
+          ? (cycle.stale ? '探测器起来之后一轮都没跑完 —— 停摆' : `进程刚起 ${processAgeSec ?? '?'} 秒，首轮还在跑`)
+          : `上一轮 ${sinceSec} 秒前${cycle.watchdogResets > 0 ? `，看门狗复位过 ${cycle.watchdogResets} 次` : ''}`,
     },
     { name: 'CDS · 探测器上一轮', op: 'lte', value: PROBER_STALE_AFTER_SECONDS, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
 
   // ── 接入（push 即部署）───────────────────────────────────────────────
-  const deliveries = deps.webhookDeliveries(500).filter((d) => now - Date.parse(d.receivedAt) <= DAY_MS);
+  const WEBHOOK_SAMPLE = 500;
+  const recentDeliveries = deps.webhookDeliveries(WEBHOOK_SAMPLE);
+  const deliveries = recentDeliveries.filter((d) => now - Date.parse(d.receivedAt) <= DAY_MS);
+  // 取到的条数顶到上限，说明 24 小时内不止这些——文案里如实说「最近 N 条」，不冒充全量。
+  const deliveryScope = recentDeliveries.length >= WEBHOOK_SAMPLE ? `最近 ${deliveries.length} 条` : `近 24 小时 ${deliveries.length} 条`;
   const badSig = deliveries.filter((d) => !d.signatureValid).length;
   const dispatchErrors = deliveries.filter((d) => d.dispatchAction === 'error').length;
   checks.push(monitored(
@@ -271,7 +300,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       componentId: 'webhook.signature-failures-24h', componentType: 'github',
       observedValue: badSig, observedUnit: 'count',
       status: badSig === 0 ? 'pass' : 'fail',
-      output: badSig === 0 ? `近 24 小时 ${deliveries.length} 条 webhook 签名都对` : `${badSig} 条 webhook 签名不对 —— 多半是 webhook secret 和 GitHub 那边不一致（迁移后最常坏的一条）`,
+      output: badSig === 0 ? `${deliveryScope} webhook 签名都对` : `${badSig} 条 webhook 签名不对 —— 多半是 webhook secret 和 GitHub 那边不一致（迁移后最常坏的一条）`,
     },
     { name: 'CDS · Webhook 签名', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
     time,
@@ -328,13 +357,18 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
 
   // ── 自身 ───────────────────────────────────────────────────────────
   const self = deps.selfStatus();
+  // 缓存还没算过一次 + 进程还在宽限期内 → 「还不知道」，不响铃；过了宽限还不知道才算真拿不到。
+  const selfWarming = Boolean(self && !self.ready && processAgeSec !== null && processAgeSec * 1000 < SELF_STATUS_GRACE_MS);
+  const selfKnown = Boolean(self && self.ready);
   checks.push(monitored(
     {
       componentId: 'self.bundle-stale', componentType: 'self',
       // 布尔写成 0/1：协议里期望值是字符串比较，数字最不容易被两边解读成不同的东西。
-      observedValue: self ? (self.bundleStale ? 1 : 0) : 1, observedUnit: 'flag',
-      status: self && !self.bundleStale ? 'pass' : 'fail',
-      output: !self ? '拿不到自身状态' : self.bundleStale ? `前端产物落后于代码 ${self.headSha}（${self.currentBranch}）—— 页面跑的是旧版` : `前端产物与 ${self.headSha} 一致`,
+      observedValue: selfKnown ? (self!.bundleStale ? 1 : 0) : selfWarming ? 0 : 1, observedUnit: 'flag',
+      status: selfKnown ? (self!.bundleStale ? 'fail' : 'pass') : selfWarming ? 'warn' : 'fail',
+      output: selfKnown
+        ? (self!.bundleStale ? `前端产物落后于代码 ${self!.headSha}（${self!.currentBranch}）—— 页面跑的是旧版` : `前端产物与 ${self!.headSha} 一致`)
+        : selfWarming ? `进程刚起 ${processAgeSec} 秒，自身状态还没算完` : '拿不到自身状态',
     },
     { name: 'CDS · 前端产物落后', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1' },
     time,
@@ -345,5 +379,5 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
     output: '状态存储后端（迁移后核对是不是还在 Mongo 上）',
   });
 
-  return assembleDoc(checks, self?.headSha || undefined);
+  return assembleDoc(checks, selfKnown ? self!.headSha || undefined : undefined);
 }

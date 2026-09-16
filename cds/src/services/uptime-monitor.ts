@@ -575,13 +575,16 @@ export function selectReleaseProbeTargets(
 export function selectCustomProbeTargets(
   monitors: ReadonlyArray<UptimeCustomMonitor>,
   excludePatterns: ReadonlyArray<string> = [],
-  options: { globalIntervalMs?: number } = {},
+  options: { globalIntervalMs?: number; getProject?: (projectId: string) => Project | null | undefined } = {},
 ): ProbeTarget[] {
   const targets: ProbeTarget[] = [];
   for (const monitor of monitors) {
     if (!monitor || !monitor.id) continue;
     const id = customProbeTargetId(monitor);
     const name = monitor.name || monitor.id;
+    // 项目名跟着目标走：没有分支预览的项目（比如内置的「CDS 自身」）只有自定义监控，
+    // 这里不带名字，面板与盲区地图就只能拿 id 当名字。
+    const project = monitor.projectId ? options.getProject?.(monitor.projectId) : undefined;
     const excludedBy = matchExcludePattern(
       { id, branchId: '', projectId: monitor.projectId || '', profileId: monitor.id, name },
       excludePatterns,
@@ -595,6 +598,7 @@ export function selectCustomProbeTargets(
       projectId: monitor.projectId || '',
       profileId: monitor.id,
       name,
+      projectName: project?.name || undefined,
       hostPort: 0,
       probeKind: monitor.kind === 'tcp' ? 'tcp' : monitor.kind === 'keyword' ? 'keyword' : 'url',
       url: monitor.url,
@@ -632,6 +636,7 @@ export function selectAllProbeTargets(
   const branchTargets = selectProbeTargets(branches, excludePatterns, options);
   const customTargets = selectCustomProbeTargets(options.customMonitors || [], excludePatterns, {
     globalIntervalMs: options.globalIntervalMs,
+    getProject: options.getProject,
   });
   if (options.releaseTargetsEnabled === false) return [...branchTargets, ...customTargets];
   return [...branchTargets, ...selectReleaseProbeTargets(releaseTargets, excludePatterns), ...customTargets];

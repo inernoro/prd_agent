@@ -6081,7 +6081,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     buildGate: () => buildGateStatus(),
     cycleHealth: () => {
       const c = uptimeMonitor.getCycleHealth();
-      return { sinceLastCycleMs: c.sinceLastCycleMs, running: c.running, watchdogResets: c.watchdogResets };
+      return { sinceLastCycleMs: c.sinceLastCycleMs, stale: c.stale, running: c.running, watchdogResets: c.watchdogResets };
+    },
+    processStartedAt: () => {
+      const iso = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT;
+      const ms = iso ? Date.parse(iso) : Number.NaN;
+      return Number.isFinite(ms) ? ms : null;
     },
     diskUsage: () => defaultDiskUsage(config.repoRoot),
     dockerPing: async () => {
@@ -6121,7 +6126,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       + stateService.listAlarmChannels().filter((c) => c.enabled && channelConfigured(c)).length,
     selfStatus: () => {
       const snap = selfStatusCache.getSnapshot();
-      return { bundleStale: snap.bundleStale, headSha: snap.headSha, currentBranch: snap.currentBranch };
+      // lastRefreshAt 为空 = 缓存还没算过一次（刚起来的进程），此时 bundleStale 是默认值不是结论。
+      return { ready: snap.lastRefreshAt !== null, bundleStale: snap.bundleStale, headSha: snap.headSha, currentBranch: snap.currentBranch };
     },
     storeBackend: () => stateService.getBackingStore().kind,
   };
