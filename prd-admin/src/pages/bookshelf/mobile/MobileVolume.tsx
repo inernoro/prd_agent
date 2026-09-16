@@ -8,6 +8,7 @@
  * 终稿的论证：七卷是七个并列项，用户要一眼扫完做对号入座，所以落地页只放清单；
  * 点进来才谈这一卷的细节。深链 ?vol= 天然对应这一层。
  */
+import { Check } from 'lucide-react';
 import { AS_TYPE, AS_SPACE, AS_SIZE } from '@/lib/appStoreTokens';
 import { questionsOf } from '@/lib/bookshelf/exams';
 import { stanceOf } from '@/lib/bookshelf/examContext';
@@ -69,7 +70,8 @@ function BookRow({
             fontSize: 13, fontWeight: 800, color: 'var(--bg-base)', lineHeight: 1,
           }}
         >
-          {read ? '✓' : ''}
+          {/* 同上：勾用 icon 不用字形 */}
+          {read ? <Check size={14} strokeWidth={3} /> : null}
         </button>
 
         <button

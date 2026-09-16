@@ -13,6 +13,7 @@
  * 分数、通关、推荐书一律问 `useExamSession`，这一层只负责画。
  */
 import { useEffect, useRef } from 'react';
+import { Check, X } from 'lucide-react';
 import { AS_TYPE, AS_SPACE, AS_SIZE } from '@/lib/appStoreTokens';
 import { PASS_RATE } from '@/lib/bookshelf/exams';
 import type { Volume, Track } from '@/lib/bookshelf/types';
@@ -166,7 +167,10 @@ export function MobileExam({
                     color: 'var(--bg-base)',
                   }}
                 >
-                  {submitted ? (right ? '✓' : '✕') : (chosen === undefined ? '' : qi + 1)}
+                  {/* 对错用 SVG icon，不用勾叉字形（AGENTS.md §0：状态一律走 icon） */}
+                  {submitted
+                    ? (right ? <Check size={14} strokeWidth={3} /> : <X size={14} strokeWidth={3} />)
+                    : (chosen === undefined ? '' : qi + 1)}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ ...asStyle(AS_TYPE.pill), fontWeight: 600, lineHeight: 1.4, textWrap: 'pretty' }}>{q.stem}</div>

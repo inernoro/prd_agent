@@ -25,6 +25,7 @@ import {
   getMyBookshelfProgress,
   saveMyBookshelfProgress,
 } from '@/services/real/bookshelf';
+import { countsAsPassed } from '@/lib/bookshelf/examContext';
 
 export interface ExamResult {
   volumeId: string;
@@ -80,6 +81,15 @@ interface BookshelfState {
 const PUSH_DEBOUNCE_MS = 400;
 let pushTimer: ReturnType<typeof setTimeout> | null = null;
 
+/*
+ * 在途请求的序号。防抖只挡住「连点」，挡不住「两次 flush 同时在飞」：
+ * 断网重连补发的那一次、离开页面前的那一次、正常防抖的那一次都可能撞在一起。
+ * 它们发的是各自的快照，数据本身不会错（服务端整包覆盖 + 考试取更好的那次），
+ * 但先发后到的那个会把状态灯改回去——最新一次明明失败了，屏幕上却写着「已同步」。
+ * 所以只认最后一次发出去的那个请求的结果，早于它的一律丢弃。
+ */
+let pushSeq = 0;
+
 /** 导出给测试用：让用例能确定性地等一次防抖窗口，而不是靠 sleep 猜。 */
 export const __pushDebounceMs = PUSH_DEBOUNCE_MS;
 
@@ -108,9 +118,11 @@ export const useBookshelfStore = create<BookshelfState>()(
       /** 立即推送当前快照。成功→synced，失败→failed（不回滚，只亮状态）。 */
       async function flush(): Promise<void> {
         const { readBookIds, examResults, bookNotes } = get();
+        const seq = ++pushSeq;
         set({ syncState: 'saving' });
         try {
           const res = await saveMyBookshelfProgress(toPayload(readBookIds, examResults, bookNotes));
+          if (seq !== pushSeq) return;                 // 已经有更新的一发在飞，这次的结果作废
           if (res.success) {
             set({ syncState: 'synced', failedAttempts: 0 });
           } else {
@@ -118,6 +130,7 @@ export const useBookshelfStore = create<BookshelfState>()(
             set({ syncState: 'failed', failedAttempts: get().failedAttempts + 1 });
           }
         } catch (err) {
+          if (seq !== pushSeq) return;
           console.error('[bookshelfStore] 保存进度异常:', err);
           set({ syncState: 'failed', failedAttempts: get().failedAttempts + 1 });
         }
@@ -194,7 +207,16 @@ export const useBookshelfStore = create<BookshelfState>()(
 
         recordExam: (result) => {
           const prev = get().examResults[result.volumeId];
-          if (prev && result.correct <= prev.correct) return;   // 只留更好的那次
+          // 「更好的那次」先比是否计入通关、同档再比正确数，与服务端 BookshelfController
+          // 的合并口径一致：裸考满分之后读完整卷再考满分，正确数没涨但那是一次升级，
+          // 按旧判据会被丢掉，于是书读完了也永远不通关。
+          if (prev) {
+            const prevCounts = countsAsPassed(prev.passed, prev.readAtExam, prev.totalAtExam);
+            const nextCounts = countsAsPassed(result.passed, result.readAtExam, result.totalAtExam);
+            const better = (nextCounts && !prevCounts)
+              || (nextCounts === prevCounts && result.correct > prev.correct);
+            if (!better) return;
+          }
           set({ examResults: { ...get().examResults, [result.volumeId]: result } });
           schedulePush();
         },
@@ -242,6 +264,7 @@ export const useBookshelfStore = create<BookshelfState>()(
  */
 registerLogoutReset(() => {
   if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+  pushSeq += 1;   // 作废在途请求：上一个人的响应不许再改动已经清空的状态
   useBookshelfStore.setState({
     readBookIds: [],
     bookNotes: {},

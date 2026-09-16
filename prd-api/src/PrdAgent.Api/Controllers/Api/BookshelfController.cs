@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Services;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -32,6 +33,7 @@ public class BookshelfController : ControllerBase
 
     private readonly MongoDbContext _db;
     private readonly ILlmGateway _gateway;
+    private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly ILogger<BookshelfController> _logger;
 
     private static readonly JsonSerializerOptions SseJsonOptions = new()
@@ -39,10 +41,15 @@ public class BookshelfController : ControllerBase
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
 
-    public BookshelfController(MongoDbContext db, ILlmGateway gateway, ILogger<BookshelfController> logger)
+    public BookshelfController(
+        MongoDbContext db,
+        ILlmGateway gateway,
+        ILLMRequestContextAccessor llmRequestContext,
+        ILogger<BookshelfController> logger)
     {
         _db = db;
         _gateway = gateway;
+        _llmRequestContext = llmRequestContext;
         _logger = logger;
     }
 
@@ -83,16 +90,21 @@ public class BookshelfController : ControllerBase
             if (incoming.Total <= 0) continue;                       // 空卷不入库
             if (incoming.Correct < 0 || incoming.Correct > incoming.Total) continue;  // 越界丢弃，不信任前端
 
-            var better = !merged.TryGetValue(volumeId, out var prev) || incoming.Correct > prev.Correct;
-            if (!better) continue;
+            // 读书数是快照，越界一律按 0（即裸考）——宁可少算通关，不许凭前端一句话虚增。
+            var readAtExam = incoming.ReadAtExam < 0 ? 0 : incoming.ReadAtExam;
+
+            // 「更好的那次」的判据在 BookshelfExamScoring，前后端同一套口径，别在这里再写一遍
+            merged.TryGetValue(volumeId, out var prev);
+            if (!BookshelfExamScoring.IsBetter(prev, incoming.Correct, incoming.Total, readAtExam)) continue;
 
             merged[volumeId] = new BookshelfExamResult
             {
                 Correct = incoming.Correct,
                 Total = incoming.Total,
-                Passed = incoming.Passed,
-                // 读书数是快照，越界一律按 0（即裸考）——宁可少算通关，不许凭前端一句话虚增。
-                ReadAtExam = incoming.ReadAtExam < 0 ? 0 : incoming.ReadAtExam,
+                // 及格与否服务端自己算。前端那份 passed 只管交卷那一屏的即时反馈，
+                // 落库的结论不能由它说了算（frontend-architecture：前端不持有业务判定）。
+                Passed = BookshelfExamScoring.IsPassed(incoming.Correct, incoming.Total),
+                ReadAtExam = readAtExam,
                 TotalAtExam = incoming.TotalAtExam < 0 ? 0 : incoming.TotalAtExam,
                 TakenAt = now,
             };
@@ -295,6 +307,24 @@ public class BookshelfController : ControllerBase
             }
         }
 
+        /*
+         * 网关执行前会读 ILLMRequestContextAccessor.Current 取 UserId（llm-gateway 规则）。
+         * GatewayRequest.Context 也能兜住这件事——所以这条链路一直是通的——但请求日志的
+         * requestId / requestType 归因只认这个作用域，缺了它 llmrequestlogs 里这条记录
+         * 认不回是哪一次点击。补上，别让下一个查日志的人对着一条没有出处的记录发呆。
+         */
+        using var _llmScope = _llmRequestContext.BeginScope(new LlmRequestContext(
+            RequestId: Guid.NewGuid().ToString("N"),
+            GroupId: null,
+            SessionId: null,
+            UserId: userId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            SystemPromptRedacted: null,
+            RequestType: "chat",
+            AppCallerCode: AppCallerRegistry.Bookshelf.Digest));
+
         var request = new GatewayRequest
         {
             AppCallerCode = AppCallerRegistry.Bookshelf.Digest,
@@ -450,11 +480,12 @@ public class SaveBookshelfProgressRequest
     public Dictionary<string, SaveBookshelfExamResult>? ExamResults { get; set; }
 }
 
-/// <summary>单卷成绩。Passed 由前端按 exams.ts 的及格线算好一并送上来。</summary>
+/// <summary>单卷成绩。Passed 字段仅为兼容旧客户端保留，服务端按自己的及格线重算，不采信它。</summary>
 public class SaveBookshelfExamResult
 {
     public int Correct { get; set; }
     public int Total { get; set; }
+    /// <summary>已废弃：服务端重算，读不读它都不影响落库结果。</summary>
     public bool Passed { get; set; }
     /// <summary>交卷时该卷已读 / 总本数。旧客户端不传，默认 0 即按裸考处理。</summary>
     public int ReadAtExam { get; set; }
