@@ -1862,3 +1862,7 @@
 @media (prefers-reduced-motion: reduce) {
   .cdsh-rail a i { transition: none; }
 }
+
+/* 舞台顶部往 hero 方向渐隐，hero 的蜂窝底纹与叙事区的黑之间不留硬边 */
+.cdsh-stage::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 18vh; z-index: 1; pointer-events: none;
+  background: linear-gradient(var(--cdsh-bg), transparent); }

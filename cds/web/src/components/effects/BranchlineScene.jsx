@@ -15,13 +15,23 @@
  *  - 只在叙事区进入视口时渲染；离开视口或标签页隐藏时不跑 rAF。
  *  - 文案的淡入淡出直接改 DOM style，不走 setState——60fps 下 React 重渲染是负担。
  *  - prefers-reduced-motion：进度不再插值（滚到哪就是哪），粒子爆开仍随进度、不自动播。
- *  - 卸载时释放 renderer 与几何体。
+ *  - 卸载时释放 renderer、后期合成器与几何体。
+ *
+ * 质感层（2026-09-16 第二版，用户看过第一版：「以为是 demo，没想到真是盒子」）：
+ *  - 一切发光的东西走 emissive 强度 > 1 + Bloom（HalfFloat 帧缓冲），不再用平涂色块假装发光；
+ *  - 容器是深色金属玻璃的圆角模块 + 橙色线框 + 内部发光核，不再是裸 BoxGeometry；
+ *  - 主线是有明暗的实体管 + 辉光，星尘是软圆点精灵而非方点；
+ *  - RoomEnvironment 做环境反射，ACES 色调映射，SMAA 抗锯齿；
+ *  - 镜头带极轻微的呼吸晃动，画面永远不是死的。
  *
  * 与 reactbits 下的 Hyperspeed 同一接入方式（.jsx + types/reactbits-js.d.ts 里声明），
  * 不为 three 额外引类型包。
  */
+import { BloomEffect, EffectComposer, EffectPass, RenderPass, SMAAEffect, SMAAPreset } from 'postprocessing';
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 const CHAPTERS = 5; // Push / Build / Preview / Observe / Ship
 const SEGMENTS = CHAPTERS - 1;
@@ -35,46 +45,69 @@ const weight = (p, i, w) => smooth(1 - clamp01(Math.abs(p - i / SEGMENTS) / w));
 // 弹出：带一点过冲再落定
 const pop = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : 1 - Math.pow(1 - u, 3) * Math.cos(u * 6.5));
 
+
+/** 软圆点精灵：星尘与粒子共用，否则 Points 默认是方块。 */
+function softDot() {
+  const c = document.createElement('canvas'); c.width = 64; c.height = 64; const x = c.getContext('2d');
+  const g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.35, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+}
+
 function buildScene(canvas) {
   const ACCENT = new THREE.Color('hsl(24, 100%, 60%)');
+  const ACCENT_HOT = new THREE.Color('#ffb070');
   const OK = new THREE.Color('hsl(152, 62%, 56%)');
   const BG = new THREE.Color('#120f17');
+  const narrow = window.innerWidth < 900;
 
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false, depth: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, narrow ? 1.5 : 2));
   renderer.setClearColor(BG, 1);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.05;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(BG.getHex(), 0.022);
-  const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 260);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const key = new THREE.PointLight(0xffb27a, 1.4, 60);
-  scene.add(key);
+  scene.fog = new THREE.FogExp2(BG.getHex(), 0.017);
+  const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 260);
 
   const disposables = [];
   const track = (obj) => { disposables.push(obj); return obj; };
 
-  // 主分支：一条贯穿全程的曲线
+  // 环境反射：金属与清漆没有它就是死的
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const envTex = track(pmrem.fromScene(new RoomEnvironment(), 0.04).texture);
+  pmrem.dispose();
+  scene.environment = envTex;
+  scene.environmentIntensity = 0.55;
+
+  // 灯：暖主光跟着镜头，冷轮廓光从后上方把边缘切出来
+  scene.add(new THREE.HemisphereLight(0x4a3a5c, 0x120f17, 0.5));
+  const key = new THREE.PointLight(0xffb27a, 18, 60, 1.6);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0x8a7cff, 1.2);
+  rim.position.set(-6, 10, -8);
+  scene.add(rim);
+
+  const dot = track(softDot());
+
+  // ── 主分支：有明暗的实体管 + 辉光壳 ──
   const pts = [];
   for (let i = 0; i <= 14; i++) {
     pts.push(new THREE.Vector3(-42 + i * 6, Math.sin(i * 0.85) * 2.4, Math.cos(i * 0.65) * 3.2));
   }
   const curve = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.5);
 
-  function filament(c, radius, color, opacity, segs) {
-    const g = track(new THREE.TubeGeometry(c, segs || 420, radius, 8, false));
-    const m = track(new THREE.MeshBasicMaterial({
-      color, transparent: opacity < 1, opacity,
-      blending: opacity < 1 ? THREE.AdditiveBlending : THREE.NormalBlending, depthWrite: opacity >= 1,
-    }));
-    const mesh = new THREE.Mesh(g, m);
-    scene.add(mesh);
-    return mesh;
-  }
-  filament(curve, 0.08, ACCENT, 1);
-  filament(curve, 0.32, ACCENT, 0.12);
+  const coreMat = track(new THREE.MeshStandardMaterial({ color: 0xff8a2a, emissive: 0xff6a12, emissiveIntensity: 2.4, roughness: 0.32, metalness: 0.05 }));
+  scene.add(new THREE.Mesh(track(new THREE.TubeGeometry(curve, 640, 0.065, 20, false)), coreMat));
+  const haloMat = track(new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.07, blending: THREE.AdditiveBlending, depthWrite: false }));
+  scene.add(new THREE.Mesh(track(new THREE.TubeGeometry(curve, 320, 0.26, 12, false)), haloMat));
 
-  const beadGeo = track(new THREE.SphereGeometry(0.34, 20, 20));
-  const beadMat = track(new THREE.MeshStandardMaterial({ color: 0xfff1e6, emissive: ACCENT, emissiveIntensity: 0.55, roughness: 0.35, metalness: 0.1 }));
+  // 提交珠：清漆球体，核心发光
+  const beadGeo = track(new THREE.SphereGeometry(0.34, 48, 48));
+  const beadMat = track(new THREE.MeshPhysicalMaterial({ color: 0xfff1e6, emissive: 0xff7a1a, emissiveIntensity: 1.3, roughness: 0.18, metalness: 0.05, clearcoat: 1, clearcoatRoughness: 0.12 }));
   const beads = BEADS.map((t) => {
     const m = new THREE.Mesh(beadGeo, beadMat);
     m.position.copy(curve.getPointAt(t));
@@ -82,52 +115,70 @@ function buildScene(canvas) {
     return m;
   });
 
-  // 星尘
-  {
-    const n = 2600; const a = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { a[i * 3] = (Math.random() - 0.5) * 160; a[i * 3 + 1] = (Math.random() - 0.5) * 70; a[i * 3 + 2] = (Math.random() - 0.5) * 80; }
+  // ── 星尘：远层静止 + 近层缓慢漂 ──
+  function dust(n, spread, size, opacity) {
+    const a = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { a[i * 3] = (Math.random() - 0.5) * spread[0]; a[i * 3 + 1] = (Math.random() - 0.5) * spread[1]; a[i * 3 + 2] = (Math.random() - 0.5) * spread[2]; }
     const g = track(new THREE.BufferGeometry()); g.setAttribute('position', new THREE.BufferAttribute(a, 3));
-    scene.add(new THREE.Points(g, track(new THREE.PointsMaterial({ color: 0xffffff, size: 0.09, transparent: true, opacity: 0.42 }))));
+    const m = track(new THREE.PointsMaterial({ map: dot, color: 0xfff4ea, size, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
+    const p = new THREE.Points(g, m); scene.add(p); return p;
   }
+  dust(2400, [170, 80, 90], 0.42, 0.34);
+  const motes = dust(360, [120, 40, 50], 0.7, 0.22);
 
-  // Push：脉冲
-  const pulse = new THREE.Mesh(track(new THREE.SphereGeometry(0.22, 14, 14)), track(new THREE.MeshBasicMaterial({ color: 0xffffff })));
-  const pulseGlow = new THREE.Mesh(track(new THREE.SphereGeometry(0.7, 14, 14)), track(new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false })));
+  // ── Push：脉冲彗星（头 + 三节尾巴）──
+  const pulseMat = track(new THREE.MeshBasicMaterial({ color: 0xffffff }));
+  const pulse = new THREE.Mesh(track(new THREE.SphereGeometry(0.19, 24, 24)), pulseMat);
+  const pulseGlow = new THREE.Mesh(track(new THREE.SphereGeometry(0.62, 20, 20)), track(new THREE.MeshBasicMaterial({ color: ACCENT_HOT, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false })));
   pulse.add(pulseGlow); scene.add(pulse);
+  const tail = [0.72, 0.5, 0.3].map((sz, i) => {
+    const m = new THREE.Mesh(track(new THREE.SphereGeometry(0.19 * sz, 16, 16)), track(new THREE.MeshBasicMaterial({ color: ACCENT_HOT, transparent: true, opacity: 0.55 - i * 0.15, blending: THREE.AdditiveBlending, depthWrite: false })));
+    scene.add(m); return m;
+  });
 
-  // Build / Preview：容器环
+  // ── 容器模块：圆角深色金属玻璃 + 橙色线框 + 内部发光核 ──
+  const modGeo = track(new RoundedBoxGeometry(0.66, 0.66, 0.66, 5, 0.09));
+  const edgeGeo = track(new THREE.EdgesGeometry(track(new THREE.BoxGeometry(0.68, 0.68, 0.68))));
+  const coreGeo = track(new THREE.BoxGeometry(0.3, 0.3, 0.3));
+  function module(color) {
+    const g = new THREE.Group();
+    const body = new THREE.Mesh(modGeo, track(new THREE.MeshPhysicalMaterial({ color: 0x1a1522, metalness: 0.78, roughness: 0.26, clearcoat: 0.7, clearcoatRoughness: 0.18, envMapIntensity: 1.6 })));
+    const frame = new THREE.LineSegments(edgeGeo, track(new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 })));
+    const core = new THREE.Mesh(coreGeo, track(new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 2.8, roughness: 1 })));
+    g.add(body, frame, core);
+    return g;
+  }
   function ring(center, color, radius, count, tiltX) {
     const grp = new THREE.Group();
-    const geo = track(new THREE.BoxGeometry(0.54, 0.54, 0.54));
-    const mat = track(new THREE.MeshStandardMaterial({ color: 0x2a2233, emissive: color, emissiveIntensity: 0.7, roughness: 0.45, metalness: 0.2 }));
     const cubes = [];
     for (let i = 0; i < count; i++) {
-      const c = new THREE.Mesh(geo, mat);
+      const c = module(color);
       c.userData.angle = (i / count) * Math.PI * 2;
       cubes.push(c); grp.add(c);
     }
-    const orbit = new THREE.Mesh(track(new THREE.TorusGeometry(radius, 0.02, 6, 80)), track(new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35 })));
-    grp.add(orbit);
+    const orbit = new THREE.Mesh(track(new THREE.TorusGeometry(radius, 0.016, 10, 220)), track(new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 1.7, roughness: 0.6 })));
+    const disc = new THREE.Mesh(track(new THREE.RingGeometry(radius - 0.4, radius + 0.4, 128)), track(new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.05, side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false })));
+    grp.add(orbit, disc);
     grp.position.copy(center);
     grp.rotation.x = tiltX;
-    grp.userData = { cubes, radius, scale: 0, spin: 0 };
+    grp.userData = { cubes, radius, scale: 0, spin: 0, orbit, disc };
     scene.add(grp);
     return grp;
   }
-  const ringBuild = ring(beads[2].position, ACCENT, 1.9, 4, 0);
-  const ringPreview = ring(beads[3].position, OK, 1.9, 4, Math.PI / 2);
+  const ringBuild = ring(beads[2].position, ACCENT, 2.05, 4, 0);
+  const ringPreview = ring(beads[3].position, OK, 2.05, 4, Math.PI / 2);
 
   function burst(center, color) {
-    const n = 220; const pos = new Float32Array(n * 3); const dir = [];
+    const n = 260; const pos = new Float32Array(n * 3); const dir = [];
     for (let i = 0; i < n; i++) {
-      dir.push(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(2 + Math.random() * 3));
+      dir.push(new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(2 + Math.random() * 3.5));
       pos[i * 3] = center.x; pos[i * 3 + 1] = center.y; pos[i * 3 + 2] = center.z;
     }
     const g = track(new THREE.BufferGeometry()); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    const p = new THREE.Points(g, track(new THREE.PointsMaterial({ color, size: 0.12, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false })));
+    const p = new THREE.Points(g, track(new THREE.PointsMaterial({ map: dot, color, size: 0.34, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false })));
     p.userData = { center, dir, n }; scene.add(p); return p;
   }
-  const burstBuild = burst(beads[2].position, ACCENT);
+  const burstBuild = burst(beads[2].position, ACCENT_HOT);
   const burstPreview = burst(beads[3].position, OK);
   function setBurst(b, life) {
     const a = b.geometry.attributes.position.array; const { center, dir, n } = b.userData;
@@ -137,102 +188,116 @@ function buildScene(canvas) {
     b.material.opacity = life <= 0 || life >= 1 ? 0 : (1 - life) * 0.9;
   }
 
-  // 域名牌：canvas 画字贴成 sprite
+  // 域名牌：canvas 画字贴成 sprite（文字压暗一点，免得被辉光糊掉）
   function label(text, dotCss) {
     const c = document.createElement('canvas'); c.width = 768; c.height = 128; const x = c.getContext('2d');
-    x.fillStyle = 'rgba(18,15,23,0.85)'; x.strokeStyle = 'rgba(255,255,255,0.14)'; x.lineWidth = 3;
+    x.fillStyle = 'rgba(18,15,23,0.86)'; x.strokeStyle = 'rgba(255,255,255,0.16)'; x.lineWidth = 3;
     const r = 40;
     x.beginPath(); x.moveTo(r, 8); x.lineTo(768 - r, 8); x.quadraticCurveTo(760, 8, 760, 8 + r); x.lineTo(760, 120 - r);
     x.quadraticCurveTo(760, 120, 760 - r, 120); x.lineTo(r, 120); x.quadraticCurveTo(8, 120, 8, 120 - r); x.lineTo(8, 8 + r);
     x.quadraticCurveTo(8, 8, r, 8); x.closePath(); x.fill(); x.stroke();
     x.fillStyle = dotCss; x.beginPath(); x.arc(60, 64, 10, 0, Math.PI * 2); x.fill();
-    x.fillStyle = '#f6f6f8'; x.font = '500 40px "JetBrains Mono", Menlo, monospace'; x.textBaseline = 'middle'; x.fillText(text, 96, 66);
-    const tex = track(new THREE.CanvasTexture(c)); tex.minFilter = THREE.LinearFilter;
+    x.fillStyle = '#d9d9df'; x.font = '500 40px "JetBrains Mono", Menlo, monospace'; x.textBaseline = 'middle'; x.fillText(text, 96, 66);
+    const tex = track(new THREE.CanvasTexture(c)); tex.minFilter = THREE.LinearFilter; tex.colorSpace = THREE.SRGBColorSpace;
     const s = new THREE.Sprite(track(new THREE.SpriteMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false })));
     s.scale.set(6, 1, 1); scene.add(s); return s;
   }
   const domain = label('auth-flow.example.test', 'hsl(152, 62%, 56%)');
   domain.position.copy(beads[3].position).add(new THREE.Vector3(0, 3.1, 0));
 
-  // Observe：集群视角的平行分支
+  // ── Observe：集群视角的平行分支 ──
   const cluster = new THREE.Group();
   const clusterMats = [];
   for (let k = 0; k < 8; k++) {
     const off = new THREE.Vector3(0, (k % 2 ? 1 : -1) * (2.5 + k * 0.9), (k < 4 ? 1 : -1) * (5 + k * 1.6));
     const cpts = pts.map((p, i) => p.clone().add(off).add(new THREE.Vector3(0, Math.sin(i * 0.5 + k) * 0.8, 0)));
     const cc = new THREE.CatmullRomCurve3(cpts, false, 'catmullrom', 0.5);
-    const g = track(new THREE.TubeGeometry(cc, 260, 0.05, 8, false));
-    const m = track(new THREE.MeshBasicMaterial({ color: 0x9a9aa4, transparent: true, opacity: 0 }));
-    cluster.add(new THREE.Mesh(g, m)); clusterMats.push(m);
+    const m = track(new THREE.MeshStandardMaterial({ color: 0x6f6a7c, emissive: 0x9a92b0, emissiveIntensity: 0.35, roughness: 0.5, transparent: true, opacity: 0 }));
+    cluster.add(new THREE.Mesh(track(new THREE.TubeGeometry(cc, 300, 0.05, 12, false)), m)); clusterMats.push(m);
     for (let j = 0; j < 2; j++) {
-      const bm = track(new THREE.MeshBasicMaterial({ color: j ? OK : ACCENT, transparent: true, opacity: 0 }));
-      const b = new THREE.Mesh(track(new THREE.SphereGeometry(0.22, 12, 12)), bm);
+      const bm = track(new THREE.MeshStandardMaterial({ color: j ? OK : ACCENT, emissive: j ? OK : ACCENT, emissiveIntensity: 1.6, roughness: 0.4, transparent: true, opacity: 0 }));
+      const b = new THREE.Mesh(track(new THREE.SphereGeometry(0.2, 24, 24)), bm);
       b.position.copy(cc.getPointAt(0.3 + j * 0.34 + (k % 3) * 0.05)); cluster.add(b); clusterMats.push(bm);
     }
   }
   scene.add(cluster);
 
+  // ── 后期：Bloom（HalfFloat 帧缓冲，让 emissive > 1 真的发光）+ SMAA ──
+  const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType });
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new BloomEffect({ intensity: 1.15, luminanceThreshold: 0.55, luminanceSmoothing: 0.3, mipmapBlur: true, radius: 0.72 });
+  composer.addPass(new EffectPass(camera, bloom));
+  composer.addPass(new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.MEDIUM })));
+
   const camPos = new THREE.Vector3(); const look = new THREE.Vector3(); const tmp = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0); const side = new THREE.Vector3(); const over = new THREE.Vector3();
 
   function resize(w, h) {
-    renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+    renderer.setSize(w, h, false); composer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix();
   }
 
-  function render(p, t) {
-    // 镜头沿曲线推进；Observe 那章抬起来看全局
+  function render(p, t, dt) {
+    // 镜头沿曲线推进；Observe 那章抬起来看全局；叠一层极轻的呼吸，画面不死
     const camT = 0.1 + p * 0.78;
     curve.getPointAt(camT, camPos);
     curve.getTangentAt(camT, tmp);
     side.crossVectors(tmp, up).normalize();
-    camPos.addScaledVector(side, 2.6).addScaledVector(up, 1.35);
+    camPos.addScaledVector(side, 2.6 + Math.sin(t * 0.31) * 0.12).addScaledVector(up, 1.35 + Math.sin(t * 0.23) * 0.09);
     curve.getPointAt(Math.min(1, camT + 0.07), look);
     const w4 = weight(p, 3, 0.16);
     over.set(0, 14, 0).addScaledVector(side, -6);
     camPos.addScaledVector(over, w4);
     tmp.copy(beads[4].position); look.lerp(tmp, w4 * 0.9);
     camera.position.copy(camPos); camera.lookAt(look);
-    key.position.copy(camPos);
+    key.position.copy(camPos).addScaledVector(up, 1.5);
 
-    beads.forEach((b, i) => b.scale.setScalar(1 + Math.sin(t * 2 + i) * 0.05));
+    beads.forEach((b, i) => b.scale.setScalar(1 + Math.sin(t * 2 + i) * 0.04));
+    motes.rotation.y = t * 0.012; motes.position.y = Math.sin(t * 0.2) * 0.4;
 
-    // Push
-    const pt = BEADS[0] + (BEADS[1] - BEADS[0]) * smooth(local(p, 0, 0.2));
+    // Push：彗星
+    const u1 = smooth(local(p, 0, 0.2));
+    const pt = BEADS[0] + (BEADS[1] - BEADS[0]) * u1;
     curve.getPointAt(pt, pulse.position);
-    pulse.visible = p < 0.24;
-    pulseGlow.scale.setScalar(1 + Math.sin(t * 9) * 0.18);
+    const pv = p < 0.24;
+    pulse.visible = pv;
+    tail.forEach((m, i) => { m.visible = pv && u1 > 0.02; curve.getPointAt(Math.max(0, pt - (i + 1) * 0.0075), m.position); });
+    pulseGlow.scale.setScalar(1 + Math.sin(t * 9) * 0.16);
 
     // Build
-    ringBuild.userData.scale = pop(local(p, 0.15, 0.3)); ringBuild.userData.spin = t * 0.5;
+    ringBuild.userData.scale = pop(local(p, 0.15, 0.3)); ringBuild.userData.spin = t * 0.32;
     setBurst(burstBuild, local(p, 0.16, 0.28));
 
     // Preview
-    ringPreview.userData.scale = pop(local(p, 0.4, 0.55)); ringPreview.userData.spin = -t * 0.35;
+    ringPreview.userData.scale = pop(local(p, 0.4, 0.55)); ringPreview.userData.spin = -t * 0.24;
     setBurst(burstPreview, local(p, 0.41, 0.53));
     domain.material.opacity = smooth(local(p, 0.45, 0.55)) * (1 - w4 * 0.7);
     domain.position.y = beads[3].position.y + 3.1 + Math.sin(t * 1.4) * 0.12;
 
     [ringBuild, ringPreview].forEach((g) => {
-      const { cubes, radius, scale, spin } = g.userData;
+      const { cubes, radius, scale, spin, orbit, disc } = g.userData;
       g.visible = scale > 0.001;
-      cubes.forEach((c) => {
+      cubes.forEach((c, i) => {
         const a = c.userData.angle + spin;
         c.position.set(Math.cos(a) * radius, Math.sin(a) * radius, 0);
-        c.rotation.set(spin, a, 0);
+        // 模块朝外站，自身只慢转——不是陀螺
+        c.rotation.set(0, 0, a);
+        c.rotation.y = t * 0.35 + i;
         c.scale.setScalar(Math.max(0.001, scale));
       });
-      g.children[cubes.length].scale.setScalar(Math.max(0.001, scale));
+      orbit.scale.setScalar(Math.max(0.001, scale));
+      disc.scale.setScalar(Math.max(0.001, scale));
     });
 
     // Observe
     const cw = smooth(local(p, 0.62, 0.78)) * (1 - smooth(local(p, 0.9, 1)) * 0.6);
-    clusterMats.forEach((m, i) => { m.opacity = cw * (i % 3 === 0 ? 0.55 : 0.9); });
+    clusterMats.forEach((m, i) => { m.opacity = cw * (i % 3 === 0 ? 0.6 : 0.95); });
     cluster.visible = cw > 0.01;
 
-    renderer.render(scene, camera);
+    composer.render(dt);
   }
 
   function dispose() {
+    composer.dispose();
     disposables.forEach((d) => { try { d.dispose(); } catch { /* 已释放 */ } });
     renderer.dispose();
   }
@@ -279,7 +344,7 @@ export default function BranchlineScene({ rootRef }) {
         }
         const nearest = Math.round(p * SEGMENTS);
         if (nearest !== railOn) { railOn = nearest; rails.forEach((a, i) => a.classList.toggle('is-on', i === nearest)); }
-        built.render(p, now * 0.001);
+        built.render(p, now * 0.001, dt / 1000);
       }
       raf = requestAnimationFrame(frame);
     }
