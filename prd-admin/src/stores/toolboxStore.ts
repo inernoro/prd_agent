@@ -575,9 +575,15 @@ export const BUILTIN_TOOLS: ToolboxItem[] = [
     createdAt: new Date().toISOString(),
   },
   // 网页托管：先带 wip，按 CLAUDE.md 规则 #8 验收通过后再删这个字段转正式。
-  // 现状是两份计划都写着没验收（design-generation 的产物质量与最终盲验未通过、
-  // open-design 六步全部未验收），百宝箱却是全体用户共用的导航目录——
-  // 不挂这个标就等于替他们宣布这块已经能用了。
+  // 挂它的依据是两份计划的状态——design-generation 的产物质量与最终盲验未通过、
+  // open-design 六步全部未验收。
+  //
+  // 说清它现在管得到什么，免得下一个人高估：ToolboxItem.wip 目前**没有任何渲染方**
+  // （`prd-admin/src/pages/ai-toolbox/` 里一处都不读），所以它是登记账，不是给用户看的标。
+  // 真正会渲染「施工中」的是 navRegistry 那份 `nav.wip`（经 launcherCatalog →
+  // unifiedNavCatalog → AgentSwitcher）。而 /web-pages 在 navRegistry 里是主干上早已存在
+  // 的正式导航项，本 PR 没有创建它——要不要给一条已上线的入口打施工中标，是产品决定，
+  // 不该由这条分支顺手做。相关欠账见 doc/debt.platform.open-design.md 第三十轮一节。
   {
     id: 'builtin-web-pages',
     name: '网页托管',

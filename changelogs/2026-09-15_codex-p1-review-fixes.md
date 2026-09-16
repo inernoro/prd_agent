@@ -119,6 +119,7 @@
 | test | prd-api | 新增孤儿键守卫八条：单文件换入口、局部换入口保留 sidecar、自包含重写回收全部旁挂、整包换版、两条路径共用同一对象时不得删、空键不入队，外加一条接线守卫（三条发布路径必须都走共享判据）与一条真跑 Mongo 的行为守卫（单文件站点发布后旧入口对象必须真的被删）；改回分支写法后接线守卫与行为守卫当场变红 |
 | perf | prd-api | 版本面板的查询补上索引 `idx_hosted_site_revisions_site_created`（`{SiteId:1, CreatedAt:-1}`）：`hosted_site_revisions` 是全局一张表，站点越多它越长，而唯一那条回退幂等索引带 partial filter、第二段也不是 CreatedAt，服务不了这个排序——没有本索引，打开任意站点的版本面板都是整表扫 + 内存排序。索引在 MongoDbContext 与 DBA 清单 `scripts/mongodb-indexes.js` 两处同时登记（前者从不执行，只在后者生效） |
 | test | prd-api | 新增一条守卫把查询形状与索引键钉在一起（按 SiteId 过滤、按 CreatedAt 倒序 ↔ 清单里 `{SiteId:1, CreatedAt:-1}`）；从清单里撤掉该索引，这条与既有的索引清单覆盖守卫双双变红 |
-| fix | prd-admin | 网页托管的百宝箱条目补回 `wip: true`：百宝箱是全体用户共用的导航目录，而两份计划都写着没验收（设计生成的产物质量与最终盲验未通过、OpenDesign 六步全部未验收），不挂这个标等于在目录里替用户宣布这块已经能用；按 navigation-registry 规则，百宝箱工具默认带 wip，规则 #8 真人验收通过后才删 |
+| fix | prd-admin | 网页托管的百宝箱条目补回 `wip: true`：两份计划都写着没验收（设计生成的产物质量与最终盲验未通过、OpenDesign 六步全部未验收），按 navigation-registry 的注册流程，百宝箱工具默认带 wip，规则 #8 真人验收通过后才删。注释里写清了它管得到什么——`ToolboxItem.wip` 目前没有任何渲染方，是登记账不是用户可见标记；真正渲染「施工中」的 navRegistry 那条 `/web-pages` 是主干既有的正式导航项，本 PR 不动它 |
+| docs | prd-agent | 台账更正一条自己的错判：上一轮把补 wip 的理由写成「不挂标等于替用户宣布能用」，查清后不成立（该字段无渲染方）；同时记下 `ToolboxItem.wip` 是只建了一半的链路（形状 2），十几条内置工具挂着它却渲染不出来 |
 | test | prd-admin | 新增一条 wip 守卫并在注释里写明何时可以连同字段一起删；撤掉 `wip: true` 当场变红 |
 | chore | prd-agent | 本 PR 的 11 份 changelog 碎片按日期收敛成 6 份（同一天的合成一份）：assemble 脚本按文件名里的日期分组，同日多份与一份产出完全一致，已用 dry-run 逐字比对证明；跨日期不合并，否则 13 天的条目会被塞进同一天，更新中心按天渲染会显示错误日期 |
