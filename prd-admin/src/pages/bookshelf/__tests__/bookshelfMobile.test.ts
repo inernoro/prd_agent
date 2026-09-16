@@ -312,3 +312,37 @@ describe('考试屏必须绑在卷上（治浏览器返回把它甩下）', () =
     expect(examIsActive('vol-boot', null)).toBe(false);
   });
 });
+
+describe('同步失败的告知条两档都要接上', () => {
+  /*
+   * 形状 2（链路只建一半）的典型：告知条画在桌面那一半，手机档忘了接。
+   * 删掉手机那一行不会红、页面照常渲染——渲染的是一个不会响的铃：
+   * 手机用户一路标着勾、写着心得，而那些改动只在这台设备上，一次提示都没有。
+   *
+   * 判据按 JSX 标签匹配，不按注释里的词——第 13 轮栽过一次：守卫断言的词
+   * 落在注释里，把被守的那段代码整块删掉照样绿。
+   */
+  const page = () => read('BookshelfPage.tsx');
+  const TAG = /<SyncStatusBar[\s/>]/;
+
+  it('手机档那一支渲染了告知条', () => {
+    const src = page();
+    const start = src.indexOf('if (isMobile)');
+    const end = src.indexOf('return <BookshelfDesktop');
+    expect(start, '找不到手机档分支，这条守卫的取值口径过期了').toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    expect(TAG.test(src.slice(start, end)), '手机档没接 SyncStatusBar，同步失败在手机上是静默的').toBe(true);
+  });
+
+  it('桌面档那一支也渲染了告知条', () => {
+    const src = page();
+    const desktop = src.slice(src.indexOf('function BookshelfDesktop'));
+    expect(TAG.test(desktop), '桌面档没接 SyncStatusBar').toBe(true);
+  });
+
+  it('文案与判据只有一份，两档都从组件里取', () => {
+    const copies = ['BookshelfPage.tsx', 'mobile/BookshelfMobile.tsx', 'mobile/MobileVolume.tsx']
+      .filter((f) => read(f).includes('本次改动没同步上'));
+    expect(copies, `这些文件自己又写了一份同步文案，判据会各自漂移：${copies.join('、')}`).toEqual([]);
+  });
+});

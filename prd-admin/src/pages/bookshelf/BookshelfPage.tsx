@@ -20,7 +20,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
-  BookOpen, Check, ArrowRight, CloudOff, RefreshCw, type LucideIcon,
+  BookOpen, Check, ArrowRight, type LucideIcon,
 } from 'lucide-react';
 import { VOLUMES, PAIN_REMEDIES, ALL_BOOKS, findVolume } from '@/lib/bookshelf/catalog';
 import { QUESTIONS, questionsOf } from '@/lib/bookshelf/exams';
@@ -35,6 +35,7 @@ import { bookshelfVolumeSlot } from '@/lib/imagery';
 import type { Track, Volume, BookEntry } from '@/lib/bookshelf/types';
 import { ExamDialog } from './ExamDialog';
 import { TeamBoard } from './TeamBoard';
+import { SyncStatusBar } from './SyncStatusBar';
 
 const VOLUME_ICON_MAP: Record<string, LucideIcon> = {
   Power, Ruler, Compass, Blocks, ShieldCheck, Cpu, Presentation,
@@ -130,6 +131,9 @@ export default function BookshelfPage() {
         className="w-screen ml-[calc(50%-50vw)] -my-3 min-h-full"
         style={{ background: 'var(--bg-base)', color: 'var(--text-primary)' }}
       >
+        {/* 手机档也要看得见同步失败：这条以前只画在桌面那一半，
+            手机用户会一路标着勾、写着心得，而那些改动只在这台设备上（见 SyncStatusBar 注释）。 */}
+        <SyncStatusBar className="mx-5 mt-3" />
         <BookshelfMobile skinOf={skinOf} />
       </div>
     );
@@ -178,16 +182,20 @@ function BookshelfDesktop() {
 
   // 别人改地址栏或从另一条深链跳进来时，跟着 URL 走
   useEffect(() => {
+    /*
+     * 判据是「URL 解析出来的那一卷」，不是「URL 上那一卷认得出吗」。
+     *
+     * 原先多守了一层 `volFromUrl && resolved === volFromUrl`，于是从侧栏点「藏书阁」
+     * 回到没有 ?vol= 的地址时，回落值到不了 state：地址栏显示的是默认入口，
+     * 屏幕上还停在上一次选的那一卷，两者对不上。?vol= 写了个认不出的值时同样如此。
+     * resolveVolumeFromUrl 本来就负责「缺省与认不出都回落首卷」，这里照用它的结论即可。
+     */
     const resolved = resolveVolumeFromUrl(volFromUrl);
-    if (volFromUrl && resolved === volFromUrl && resolved !== activeVolumeId) {
-      setActiveVolumeIdRaw(resolved);
-    }
+    if (resolved !== activeVolumeId) setActiveVolumeIdRaw(resolved);
   }, [volFromUrl, activeVolumeId]);
   const [examVolume, setExamVolume] = useState<Volume | null>(null);
 
   const readBookIds = useBookshelfStore((s) => s.readBookIds);
-  const syncState = useBookshelfStore((s) => s.syncState);
-  const retrySync = useBookshelfStore((s) => s.retrySync);
   const examResults = useBookshelfStore((s) => s.examResults);
   const toggleRead = useBookshelfStore((s) => s.toggleRead);
   const bookNotes = useBookshelfStore((s) => s.bookNotes);
@@ -274,33 +282,8 @@ function BookshelfDesktop() {
         </div>
       </div>
 
-      {/* 同步状态：只在没同步上时出现。沉默失败比报错更伤——页面显示打了勾、
-          实际只在本机，用户换台设备发现没了就再也不信这个功能了。 */}
-      {(syncState === 'failed' || syncState === 'local') && (
-        <div
-          className="mt-4 flex items-center gap-3 px-4 py-2.5 rounded-[16px] flex-wrap"
-          style={{ background: 'var(--shelf-surface)', border: EDGE_THIN }}
-        >
-          <CloudOff size={16} strokeWidth={2.6} style={{ color: 'var(--accent-fg-amber)' }} className="shrink-0" />
-          <span className="text-[12.5px] font-bold">
-            {syncState === 'failed' ? '本次改动没同步上，只存在这台设备' : '当前是本机记录，没连上服务端'}
-          </span>
-          <span className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
-            {syncState === 'failed' ? '网络恢复或下次操作会自动重试' : '登录后进度会跨设备保留'}
-          </span>
-          {syncState === 'failed' && (
-            <button
-              type="button"
-              onClick={() => { void retrySync(); }}
-              className="ml-auto shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12px] font-bold transition-transform duration-150 hover:-translate-y-[1px]"
-              style={{ background: 'var(--bg-base)', border: EDGE_THIN }}
-            >
-              <RefreshCw size={12} strokeWidth={2.8} />
-              立即重试
-            </button>
-          )}
-        </div>
-      )}
+      {/* 同步状态：只在没同步上时出现，判据与文案在 SyncStatusBar 里（手机档共用同一份）。 */}
+      <SyncStatusBar className="mt-4" />
 
       {/* ── Hero ── */}
       <section className="mt-6 sm:mt-10 flex flex-col lg:flex-row gap-6 sm:gap-10 items-start lg:items-center">
