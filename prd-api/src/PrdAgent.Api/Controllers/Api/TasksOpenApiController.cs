@@ -31,6 +31,9 @@ public class TasksOpenApiController : ControllerBase
     /// <summary>一次最多加几件。智能体重试成本低，别让它一口气把人的队列灌满。</summary>
     private const int MaxAddPerCall = 10;
 
+    /// <summary>一次最多同步几条债务。台账最大的那份也就百来条，分批推不是负担。</summary>
+    private const int MaxDebtSyncPerCall = 500;
+
     private readonly MongoDbContext _db;
 
     public TasksOpenApiController(MongoDbContext db)
@@ -214,6 +217,120 @@ public class TasksOpenApiController : ControllerBase
 
         await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: ct);
         return entry;
+    }
+
+    /// <summary>
+    /// 把仓库里的债务台账推过来 —— 债务接进任务台的那条单向管道。
+    ///
+    /// 为什么是「推」不是「拉」：债务正文的 SSOT 在仓库（<c>doc/debt.*.md</c>），
+    /// 它跟代码同生共死，改代码的那个人顺手改它才对。平台这一侧不该去读别人的仓库，
+    /// 而是由跑在仓库里的智能体在改完之后把当前快照推上来。
+    ///
+    /// 幂等：按 Key（形如 <c>platform.active-tasks#15</c>）更新或新建，重复推不会长出第二条。
+    /// **只覆盖正文**（标题 / 现状 / 补的条件）；谁认领了、转成了哪条任务，同步一律不碰。
+    /// </summary>
+    [HttpPost("debts/sync")]
+    [RequireScope(ScopeUse, ScopeManage)]
+    public async Task<IActionResult> SyncDebts([FromBody] DebtSyncRequest req, CancellationToken ct = default)
+    {
+        if (req?.Items == null || req.Items.Count == 0)
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "没有要同步的债务条目"));
+        if (req.Items.Count > MaxDebtSyncPerCall)
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT, $"一次最多同步 {MaxDebtSyncPerCall} 条，分批推"));
+
+        var now = DateTime.UtcNow;
+        var created = 0;
+        var updated = 0;
+        var skipped = new List<string>();
+
+        foreach (var item in req.Items)
+        {
+            var parsed = ActiveTaskDebtsController.ParseKey(item.Key);
+            if (parsed == null)
+            {
+                skipped.Add($"{item.Key}：标识格式应为 模块#编号，如 platform.active-tasks#15");
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(item.Title))
+            {
+                skipped.Add($"{item.Key}：债务标题为空");
+                continue;
+            }
+
+            var (module, num) = parsed.Value;
+            var key = item.Key.Trim();
+            var res = await _db.ActiveTaskDebts.UpdateOneAsync(
+                x => x.Key == key,
+                Builders<ActiveTaskDebt>.Update
+                    .Set(x => x.Module, module)
+                    .Set(x => x.Num, num)
+                    .Set(x => x.Title, ActiveTaskDebtsController.Clip(item.Title.Trim(), 300)!)
+                    .Set(x => x.Status, ActiveTaskDebtsController.Clip(item.Status?.Trim(), 2000))
+                    .Set(x => x.CloseCondition, ActiveTaskDebtsController.Clip(item.CloseCondition?.Trim(), 2000))
+                    .Set(x => x.SourcePath, item.SourcePath?.Trim() ?? $"doc/debt.{module}.md")
+                    .Set(x => x.SyncedAt, now)
+                    .Set(x => x.UpdatedAt, now)
+                    .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
+                    .SetOnInsert(x => x.Key, key)
+                    .SetOnInsert(x => x.State, ActiveTaskDebtState.Open)
+                    .SetOnInsert(x => x.ConvertedTaskIds, new List<string>())
+                    .SetOnInsert(x => x.CreatedAt, now),
+                new UpdateOptions { IsUpsert = true }, ct);
+
+            if (res.UpsertedId != null) created++;
+            else if (res.ModifiedCount > 0) updated++;
+        }
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            created,
+            updated,
+            skipped,
+            note = "只覆盖了正文；认领人与状态不受同步影响",
+        }));
+    }
+
+    /// <summary>
+    /// 读债务清单：还欠着什么、谁认领了、哪几条已经转成任务了。
+    /// 只读，任何档位都能看 —— 欠债这件事不该只有管理档看得见。
+    /// </summary>
+    [HttpGet("debts")]
+    [RequireScope(ScopeUse, ScopeManage)]
+    public async Task<IActionResult> Debts([FromQuery] bool mineOnly = false, CancellationToken ct = default)
+    {
+        var me = GetUserId();
+        var filter = Builders<ActiveTaskDebt>.Filter.Ne(x => x.State, ActiveTaskDebtState.Closed);
+        if (mineOnly)
+            filter = Builders<ActiveTaskDebt>.Filter.And(
+                filter, Builders<ActiveTaskDebt>.Filter.Eq(x => x.OwnerUserId, me));
+
+        var items = await _db.ActiveTaskDebts.Find(filter).Limit(500).ToListAsync(ct);
+        var sorted = items
+            .OrderBy(x => x.Module, StringComparer.Ordinal)
+            .ThenBy(x => x.Num)
+            .ToList();
+
+        var mine = sorted.Count(x => x.OwnerUserId == me);
+        var unclaimed = sorted.Count(x => string.IsNullOrEmpty(x.OwnerUserId));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            headline = ActiveTaskDebtsController.BuildHeadline(sorted.Count, mine, unclaimed),
+            total = sorted.Count,
+            items = sorted.Select(x => new
+            {
+                key = x.Key,
+                title = x.Title,
+                status = x.Status,
+                closeCondition = x.CloseCondition,
+                sourcePath = x.SourcePath,
+                owner = x.OwnerUserName,
+                mine = x.OwnerUserId == me,
+                state = x.State,
+                convertedTaskIds = x.ConvertedTaskIds,
+            }).ToList(),
+        }));
     }
 }
 

@@ -280,6 +280,31 @@ public static class McpBuiltinTools
                 new() { Name = "sourceUrl", In = "body", Description = "来源链接（缺陷/PR/告警地址），可选" },
             },
         },
+        new McpToolDef
+        {
+            Name = "map_debt_list",
+            Description = "读工程债务台账：还欠着什么、谁认领了、哪几条已经转成任务了。债务正文来自仓库的 doc/debt.*.md，认领人与状态来自任务台。mineOnly=true 只看我认领的。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "GET",
+            PathTemplate = "/api/open/tasks/debts",
+            WritesData = false,
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "mineOnly", In = "query", Type = "boolean", Description = "只看我认领的那几条，默认 false" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_debt_sync",
+            Description = "把仓库里 doc/debt.*.md 的债务台账推到任务台，按 key 幂等（重复推同一条只更新不新建）。key 形如 platform.active-tasks#15 —— 台账文件名去掉 debt. 前缀和 .md，加表格里的编号。**只覆盖正文**（标题/现状/补的条件）；谁认领了、转成了哪条任务一律不动，所以反复跑不会抹掉认领记录。改完 debt 文档顺手跑一次即可。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/debts/sync",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "items", In = "body", Required = true, Type = "array", Description = "债务条目数组，每项 {key, title, status?, closeCondition?, sourcePath?}。key 必须是「模块#编号」格式" },
+            },
+        },
         // ── 视觉创作（scope visual-agent:use）──
         new McpToolDef
         {

@@ -226,6 +226,7 @@ public static class DataSyncScope
         {
             new DataSyncCollection("active_task_entries", System.Array.Empty<string>()),
             new DataSyncCollection("active_task_suggestions", System.Array.Empty<string>()),
+            new DataSyncCollection("active_task_debts", System.Array.Empty<string>()),
             new DataSyncCollection("pm_briefings", new[] { "ShareToken" }),
             new DataSyncCollection("pm_decisions", System.Array.Empty<string>()),
             new DataSyncCollection("pm_goal_checkins", System.Array.Empty<string>()),

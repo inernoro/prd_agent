@@ -860,3 +860,92 @@ select.atb-input { cursor: pointer; }
   .atb-circle:active { transform: none; }
   .atb-skeleton { animation: none; }
 }
+
+/*
+ * 债务区：任务台的下半屏。
+ *
+ * 默认折起来 —— 它是「欠着的」不是「今天要做的」，天天摊开在队列底下只会变成背景噪音。
+ * 展开之后每行的重量刻意比任务行轻（标识小一号、正文灰一档）：这一屏的主角是上面的队列。
+ */
+.atb-debts { margin-top: 6px; }
+
+.atb-debts__head { align-items: center; flex-wrap: wrap; }
+
+.atb-debts__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.atb-debts__toggle:hover { color: var(--text-primary); }
+
+.atb-debts__caret { font-size: 0.6875rem; line-height: 1; }
+
+.atb-debts__count {
+  font-size: 0.75rem;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.atb-debts__headline { flex: 1; font-size: 0.8125rem; color: var(--text-muted); }
+
+.atb-debt-row { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
+
+.atb-debt-row__title {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+.atb-debt-row__title:hover { color: var(--accent-primary); }
+
+/* 稳定标识：等宽 + 小一号，它是给人对回台账用的，不是标题的一部分 */
+.atb-debt-row__key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-right: 8px;
+}
+
+.atb-debt-row__detail {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.atb-debt-row__detail p { margin: 0; }
+
+.atb-debt-row__label {
+  display: inline-block;
+  min-width: 4.5em;
+  color: var(--text-primary);
+  opacity: 0.75;
+}
+
+.atb-debt-row__src { font-size: 0.8125rem; opacity: 0.85; }
+.atb-debt-row__src code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.atb-link--on { color: var(--accent-primary); }
+
+@media (max-width: 767px) {
+  /* 手机端债务行的操作跟任务行一个待遇：不常驻，免得把标题挤没 */
+  .atb-debt-row { flex-direction: column; gap: 8px; }
+  .atb-debt-row .atb-rowact { display: flex; }
+  .atb-debts__headline { width: 100%; }
+}

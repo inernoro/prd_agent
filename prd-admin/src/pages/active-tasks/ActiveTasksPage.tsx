@@ -45,6 +45,7 @@ import { EditTaskSheet } from './EditTaskSheet';
 import { ImportSheet } from './ImportSheet';
 import { SuggestSheet } from './SuggestSheet';
 import { SuggestionsSheet } from './SuggestionsSheet';
+import { DebtSection } from './DebtSection';
 import { WelcomeSheet, useFirstRun } from './WelcomeSheet';
 import { useVisiblePolling } from './usePolling';
 import { whenLabel } from './taskTime';
@@ -410,6 +411,9 @@ export function ActiveTasksPage() {
           </div>
         </div>
       )}
+
+      {/* 下半屏：我们欠着什么。正文在仓库里，这里只管归属与状态 */}
+      <DebtSection onConverted={refresh} />
 
       {/* 刚做完那条：补一句，或者反悔 */}
       {justDone && (

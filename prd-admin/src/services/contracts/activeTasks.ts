@@ -193,3 +193,49 @@ export interface DraftTask {
   /** 原文里哪句让它这么判的 */
   why?: string | null;
 }
+
+// ── 债务 ───────────────────────────────────
+
+/**
+ * 一条工程债务。
+ *
+ * 正文（title / status / closeCondition）是仓库 doc/debt.*.md 推过来的快照；
+ * 归属与状态（owner / state / convertedTaskIds）是任务台这一侧的事实。
+ * 界面上别把这两半混成一个可编辑表单 —— 正文在这里改了也存不住。
+ */
+export interface DebtItem {
+  id: string;
+  /** 稳定标识，形如 platform.active-tasks#15 */
+  key: string;
+  /** 台账模块，如 platform.active-tasks */
+  module: string;
+  /** 台账表格里的编号 */
+  num: number;
+  title: string;
+  status?: string | null;
+  /** 什么条件下该补 */
+  closeCondition?: string | null;
+  /** 台账文件在仓库里的路径 */
+  sourcePath: string;
+  ownerUserId?: string | null;
+  ownerUserName?: string | null;
+  /** 是不是我认领的 */
+  mine: boolean;
+  /** open / claimed / converted / closed */
+  state: string;
+  /** 转成了哪几条任务 */
+  convertedTaskIds: string[];
+  syncedAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DebtBoard {
+  /** 一句话结论，不是三个数字让人自己算 */
+  headline: string;
+  total: number;
+  mineCount: number;
+  unclaimedCount: number;
+  items: DebtItem[];
+  modules: string[];
+}

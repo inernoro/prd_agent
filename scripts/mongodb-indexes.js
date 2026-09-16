@@ -1574,6 +1574,26 @@ db.active_task_suggestions.createIndex(
 )
 // end collection: active_task_suggestions
 
+// collection: active_task_debts
+// 债务（doc/debt.*.md 推过来的那一份）。三条读路径：
+// 1) Key 唯一 —— 同步靠它幂等，重复推同一条只更新不会长出第二条。这条是**唯一索引**，
+//    不是为了查得快，是为了让「撞车」在写入那一刻就失败，而不是静默互相覆盖
+// 2) 面板：按状态过滤掉已了结的，按模块 + 编号排
+// 3) 「我认领的」：按 owner + 状态
+db.active_task_debts.createIndex(
+  { "Key": 1 },
+  { name: "idx_active_task_debts_key", unique: true }
+)
+db.active_task_debts.createIndex(
+  { "State": 1, "Module": 1, "Num": 1 },
+  { name: "idx_active_task_debts_state_module" }
+)
+db.active_task_debts.createIndex(
+  { "OwnerUserId": 1, "State": 1 },
+  { name: "idx_active_task_debts_owner" }
+)
+// end collection: active_task_debts
+
 // collection: active_task_absorb_preferences
 // 吸取建议时的个人偏好（上次引用了哪几个知识库）。一人一行，_id 就是 UserId，
 // 只按主键读，不需要额外索引。

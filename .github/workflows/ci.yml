@@ -117,6 +117,9 @@ jobs:
               - 'scripts/assemble-changelog.sh'
               - 'scripts/lib/changelog_merge.py'
               - 'scripts/tests/test_*.py'
+              # 债务台账解析器：守卫读的是它 collect() 出来的真实结果，
+              # 不登记被测文件的话，只改解析器的 PR 完全跳过这道闸（形状 7）。
+              - 'scripts/sync-debt-ledger.py'
               # 周报浅克隆闸的被测文件。守卫读的是采集器的退出码 + SKILL.md 里
               # Phase 2.0 那段 shell，两者都得登记：只登记守卫自己，这道闸就只在
               # 「守卫被改」时开，而漂移恰恰发生在被测文件那边（形状 7）。

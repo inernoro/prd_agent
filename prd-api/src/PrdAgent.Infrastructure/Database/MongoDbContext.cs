@@ -402,6 +402,7 @@ public class MongoDbContext
     public IMongoCollection<ActiveTaskBoardSettings> ActiveTaskBoardSettingsCollection => _database.GetCollection<ActiveTaskBoardSettings>("active_task_board_settings");
     public IMongoCollection<ActiveTaskSuggestion> ActiveTaskSuggestions => _database.GetCollection<ActiveTaskSuggestion>("active_task_suggestions");
     public IMongoCollection<ActiveTaskAbsorbPreference> ActiveTaskAbsorbPreferences => _database.GetCollection<ActiveTaskAbsorbPreference>("active_task_absorb_preferences");
+    public IMongoCollection<ActiveTaskDebt> ActiveTaskDebts => _database.GetCollection<ActiveTaskDebt>("active_task_debts");
 
     // Project Management 项目管理
     public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
@@ -1038,6 +1039,18 @@ public class MongoDbContext
         ActiveTaskSuggestions.Indexes.CreateOne(new CreateIndexModel<ActiveTaskSuggestion>(
             Builders<ActiveTaskSuggestion>.IndexKeys.Ascending(x => x.FromUserId).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_active_task_suggestions_from" }));
+
+        // ActiveTaskDebts：Key 唯一（同步靠它幂等，重复推同一条只会更新不会长出第二条）；
+        // 面板按状态 + 模块排；「我认领的」按 owner 查
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.Key),
+            new CreateIndexOptions { Name = "idx_active_task_debts_key", Unique = true }));
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.State).Ascending(x => x.Module).Ascending(x => x.Num),
+            new CreateIndexOptions { Name = "idx_active_task_debts_state_module" }));
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.State),
+            new CreateIndexOptions { Name = "idx_active_task_debts_owner" }));
 
         // DefectReports：按 reporterId + status 查询；按 assigneeId + status 查询
         DefectReports.Indexes.CreateOne(new CreateIndexModel<DefectReport>(

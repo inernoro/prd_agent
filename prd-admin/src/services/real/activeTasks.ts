@@ -9,6 +9,8 @@ import type {
   ActiveTaskDto,
   ActiveTaskHistory,
   AssignableMember,
+  DebtBoard,
+  DebtItem,
   MyActiveTasks,
   PublicBoard,
   KnowledgeStoreRef,
@@ -142,3 +144,27 @@ export const linkSuggestionEmergence = (id: string, treeId: string) =>
 /** 两条 SSE 的地址 —— 走 useSseStream，不走 apiRequest */
 export const ACTIVE_TASK_IMPORT_STREAM = '/api/active-tasks/import/stream';
 export const ACTIVE_TASK_ABSORB_STREAM = `${sugBase}/absorb-stream`;
+
+// ── 债务 ───────────────────────────────────
+const debtBase = '/api/active-tasks/debts';
+
+export const getDebtBoard = (params?: { module?: string; mineOnly?: boolean }) => {
+  const q = new URLSearchParams();
+  if (params?.module) q.set('module', params.module);
+  if (params?.mineOnly) q.set('mineOnly', 'true');
+  const qs = q.toString();
+  return apiRequest<DebtBoard>(qs ? `${debtBase}?${qs}` : debtBase);
+};
+
+export const claimDebt = (id: string) =>
+  apiRequest<DebtItem>(`${debtBase}/${id}/claim`, { method: 'POST' });
+
+export const releaseDebt = (id: string) =>
+  apiRequest<DebtItem>(`${debtBase}/${id}/release`, { method: 'POST' });
+
+/** 转成我的活：建一条任务，两个方向都留得下链接 */
+export const convertDebt = (id: string, body?: { title?: string; note?: string; dueAt?: string | null }) =>
+  apiRequest<{ debt: DebtItem; task: ActiveTaskDto }>(`${debtBase}/${id}/convert`, { method: 'POST', body: body ?? {} });
+
+export const closeDebt = (id: string) =>
+  apiRequest<DebtItem>(`${debtBase}/${id}/close`, { method: 'POST' });
