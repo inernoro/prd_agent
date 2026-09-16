@@ -64,6 +64,11 @@ interface BookshelfState {
   bookNotes: Record<string, string>;
   examResults: Record<string, ExamResult>;
   syncState: SyncState;
+  /**
+   * 手上这份有没有还没推上去的改动。**要持久化**——它不是「此刻与服务端的关系」，
+   * 是「这台设备上有没有只存在于本地的数据」，而后者关机也不会消失。
+   */
+  dirty: boolean;
   /** 连续失败次数，用于退避与文案分级 */
   failedAttempts: number;
   loadFromServer: () => Promise<void>;
@@ -135,7 +140,7 @@ export const useBookshelfStore = create<BookshelfState>()(
           const res = await saveMyBookshelfProgress(toPayload(readBookIds, examResults, bookNotes));
           if (seq !== pushSeq) return;                 // 已经有更新的一发在飞，这次的结果作废
           if (res.success) {
-            set({ syncState: 'synced', failedAttempts: 0 });
+            set({ syncState: 'synced', dirty: false, failedAttempts: 0 });
           } else {
             console.error('[bookshelfStore] 保存进度失败:', res.error?.message);
             set({ syncState: 'failed', failedAttempts: get().failedAttempts + 1 });
@@ -149,6 +154,7 @@ export const useBookshelfStore = create<BookshelfState>()(
 
       /** 防抖入口。用户每次操作都走它。 */
       function schedulePush() {
+        set({ dirty: true });
         if (pushTimer) clearTimeout(pushTimer);
         pushTimer = setTimeout(() => { pushTimer = null; void flush(); }, PUSH_DEBOUNCE_MS);
       }
@@ -168,6 +174,7 @@ export const useBookshelfStore = create<BookshelfState>()(
         bookNotes: {},
         examResults: {},
         syncState: 'local',
+        dirty: false,
         failedAttempts: 0,
 
         loadFromServer: async () => {
@@ -177,6 +184,21 @@ export const useBookshelfStore = create<BookshelfState>()(
             // 这一发出去之后登出过 / 换过账号：响应属于上一个人，一个字都不许写回来
             if (seq !== loadSeq) return;
             if (!res.success || !res.data) return;   // 拉不到就保留本地那份，停在 local
+
+            /*
+             * 手上有只存在于本地的改动时，**不许拿服务端那份整份盖掉**。
+             *
+             * 真实路径：断网时标了几本已读 → PUT 失败 → 用户关掉页面 → 联网后重进。
+             * 持久化把数据读了回来，但那几本从没到过服务端；这里若照常替换，
+             * 它们在用户眼前消失，而他做过的事一次提示都没有。
+             *
+             * 先把手上这份推上去（服务端的成绩合并是「取更好的那次」，不会因此丢分），
+             * 这一轮就不接受服务端快照了——下一次进来读到的就是合并后的结果。
+             */
+            if (get().dirty) {
+              void flush();
+              return;
+            }
             const results: Record<string, ExamResult> = {};
             Object.entries(res.data.examResults ?? {}).forEach(([volumeId, r]) => {
               results[volumeId] = {
@@ -242,14 +264,20 @@ export const useBookshelfStore = create<BookshelfState>()(
     {
       name: 'bookshelf-progress',
       version: 1,
-      // 只持久化数据，不持久化同步状态：syncState 是「此刻与服务端的关系」，
-      // 存进 localStorage 再读回来就是过期的谎（上次是 synced，这次可能已经断网了）。
-      partialize: (s) => ({ readBookIds: s.readBookIds, bookNotes: s.bookNotes, examResults: s.examResults }),
+      // syncState 不持久化：它是「此刻与服务端的关系」，存进去再读回来就是过期的谎
+      // （上次是 synced，这次可能已经断网了）。
+      // dirty 要持久化：它是「这台设备上有没有只存在于本地的数据」，关机也不会消失。
+      partialize: (s) => ({
+        readBookIds: s.readBookIds, bookNotes: s.bookNotes, examResults: s.examResults, dirty: s.dirty,
+      }),
       onRehydrateStorage: () => (state) => {
         if (!state) return;
         if (!Array.isArray(state.readBookIds)) state.readBookIds = [];
         if (!state.examResults || typeof state.examResults !== 'object') state.examResults = {};
         if (!state.bookNotes || typeof state.bookNotes !== 'object') state.bookNotes = {};
+        // 加这个字段之前存下的那些快照没有它。默认 false（当成已同步）而不是 true：
+        // 存量数据绝大多数确实推上去过，默认 true 会让所有人第一次进来都跳过服务端那份。
+        if (typeof state.dirty !== 'boolean') state.dirty = false;
       },
     },
   ),
@@ -280,6 +308,7 @@ registerLogoutReset(() => {
     bookNotes: {},
     examResults: {},
     syncState: 'local',
+    dirty: false,
     failedAttempts: 0,
   });
 });

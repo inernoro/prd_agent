@@ -83,3 +83,39 @@ describe('藏书阁在途拉取的作废', () => {
     ).toBe(true);
   });
 });
+
+/**
+ * 守卫：本地有没推上去的改动时，不许拿服务端那份整份盖掉。
+ *
+ * 真实路径：断网标了几本已读 → PUT 失败 → 关掉页面 → 联网后重进。
+ * 持久化把数据读了回来，但 syncState 不持久化、会重置成 local，
+ * 于是 loadFromServer 照常替换——那几本在用户眼前消失，一次提示都没有。
+ */
+describe('未同步的本地改动', () => {
+  const src = fs.readFileSync(STORE, 'utf-8');
+
+  it('dirty 被持久化（syncState 不持久化，救不了这条路径）', () => {
+    expect(
+      /partialize:[\s\S]{0,200}?dirty: s\.dirty/.test(src),
+      'dirty 没进 partialize：关掉页面再回来就不知道有没有没推上去的改动',
+    ).toBe(true);
+  });
+
+  it('任何改动都会置 dirty', () => {
+    expect(
+      /function schedulePush\(\)\s*\{[\s\S]{0,120}?set\(\{ dirty: true \}\)/.test(src),
+      'schedulePush 没有置 dirty：改了却不算脏，守卫等于没接上',
+    ).toBe(true);
+  });
+
+  it('loadFromServer 在 dirty 时先推不覆盖', () => {
+    const load = src.slice(src.indexOf('loadFromServer:'));
+    const guard = load.indexOf('get().dirty');
+    const replace = load.indexOf('set({\n              readBookIds:');
+    expect(guard, 'loadFromServer 没有检查 dirty').toBeGreaterThan(-1);
+    expect(
+      replace === -1 || guard < replace,
+      'dirty 的判断排在整份替换之后，挡不住数据被盖掉',
+    ).toBe(true);
+  });
+});

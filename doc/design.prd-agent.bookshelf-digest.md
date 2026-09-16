@@ -107,20 +107,6 @@
 （最常犯的错是把「技能」当成「规则」），且同一本书不重复。第三条「对不上就留空」
 判不了，靠人。
 
-## 实现来源
-
-| 做什么的 | 在哪 |
-|---|---|
-| 书目 SSOT（含 relatedRules） | `prd-admin/src/lib/bookshelf/catalog.ts` |
-| 材料生成器兼守卫 | `prd-admin/src/lib/bookshelf/__tests__/bookshelfContext.test.ts` |
-| 规则名真实性守卫 | `prd-admin/src/lib/bookshelf/__tests__/relatedRules.test.ts` |
-| 生成出来的材料 | `prd-api/src/PrdAgent.Api/Resources/bookshelf-context.json` |
-| 提示词、指纹与新鲜度判据 | `prd-api/src/PrdAgent.Api/Services/BookshelfDigestPrompt.cs` |
-| 取稿与流式生成端点 | `prd-api/src/PrdAgent.Api/Controllers/Api/BookshelfController.cs` |
-| 稿子实体 | `prd-api/src/PrdAgent.Core/Models/BookDigest.cs` |
-| 新鲜度守卫 | `prd-api/tests/PrdAgent.Api.Tests/BookshelfDigestFreshnessTests.cs` |
-| 手机端书页 | `prd-admin/src/pages/bookshelf/mobile/MobileBook.tsx` |
-
 ## 相关
 
 - [debt.frontend.md](./debt.frontend.md) —— 藏书阁的已知边界台账

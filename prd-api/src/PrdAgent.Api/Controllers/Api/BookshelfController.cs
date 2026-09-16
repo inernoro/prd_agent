@@ -135,8 +135,50 @@ public class BookshelfController : ControllerBase
             .SetOnInsert(x => x.Id, Guid.NewGuid().ToString("N"))
             .SetOnInsert(x => x.CreatedAt, now);
 
-        await _db.BookshelfProgresses.UpdateOneAsync(
-            x => x.UserId == userId, update, new UpdateOptions { IsUpsert = true });
+        try
+        {
+            await _db.BookshelfProgresses.UpdateOneAsync(
+                x => x.UserId == userId, update, new UpdateOptions { IsUpsert = true });
+        }
+        catch (MongoWriteException mwe) when (mwe.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            /*
+             * 撞上 UserId 的唯一索引：这个人此前没有行，两个请求同时走到 insert 分支，
+             * 对方先建成了。
+             *
+             * 这条路径是本次加索引**新造出来**的——加索引之前两行都写得进去（那正是
+             * 索引要治的病），加完之后输的那一方会 E11000 冒到 ExceptionMiddleware 变成
+             * 500，把这一发的快照整个丢掉。把静默的数据错换成响亮的数据丢，不算修好。
+             *
+             * 输的一方重跑一次：此时对方的行已经在了，走的是 update 分支，
+             * 而且会重新读一次 existing 把两边的成绩按「更好的那次」合并进去。
+             */
+            _logger.LogInformation("藏书阁进度并发首存，另一方先建行 UserId={UserId}，重试一次合并", userId);
+
+            var winner = await _db.BookshelfProgresses.Find(x => x.UserId == userId).FirstOrDefaultAsync();
+            var remerged = winner?.ExamResults ?? new Dictionary<string, BookshelfExamResult>();
+            foreach (var (volumeId, mine) in merged)
+            {
+                if (!BookshelfExamScoring.IsBetter(
+                        remerged.TryGetValue(volumeId, out var theirs) ? theirs : null,
+                        mine.Correct, mine.Total, mine.ReadAtExam))
+                {
+                    continue;
+                }
+                remerged[volumeId] = mine;
+            }
+            merged = remerged;
+
+            await _db.BookshelfProgresses.UpdateOneAsync(
+                x => x.UserId == userId,
+                Builders<BookshelfProgress>.Update
+                    .Set(x => x.UserId, userId)
+                    .Set(x => x.ReadBookIds, readIds)
+                    .Set(x => x.BookNotes, notes)
+                    .Set(x => x.ExamResults, remerged)
+                    .Set(x => x.UpdatedAt, now),
+                new UpdateOptions { IsUpsert = true });
+        }
 
         return Ok(ApiResponse<object>.Ok(
             new { readBookIds = readIds, bookNotes = notes, examResults = ToPlainMap(merged), updatedAt = now }));
