@@ -27,7 +27,7 @@ export type AlarmVerdictTone = 'ok' | 'warn' | 'bad' | 'unknown';
 export interface AlarmVerdict {
   tone: AlarmVerdictTone;
   text: string;
-  /** 真的会响的通道数。0 = 现在出问题没有任何人会知道。 */
+  /** 真的会响的通道数（只数成功送出过的）。0 = 现在出问题没有任何人会知道。 */
   live: number;
 }
 
@@ -48,10 +48,15 @@ export function judgeAlarm(
   }
 
   const list = (channels ?? []).filter((c) => c.enabled && c.status !== 'unconfigured');
-  const legacyLive = legacy && legacy.status !== 'unconfigured';
-  const live = list.length + (legacyLive ? 1 : 0);
+  const legacyActive = legacy && legacy.status !== 'unconfigured';
+  const active = list.length + (legacyActive ? 1 : 0);
+  // 「通着」= 真的成功送出过一次。failing 与 untested 都不算——和服务端 countLiveAlarmChannels
+  // 同一口径；之前把它们也数进 live，芯片写「1 条通道通着」而提示却说上一次没送出去（Codex #1543 P2）。
+  const healthyList = list.filter((c) => c.status === 'healthy');
+  const legacyHealthy = legacy?.status === 'healthy';
+  const live = healthyList.length + (legacyHealthy ? 1 : 0);
 
-  if (live === 0) {
+  if (active === 0) {
     const missing = legacy?.missing?.length ? `（缺 ${legacy.missing.join('、')}）` : '';
     const configured = (channels ?? []).length;
     return {
@@ -69,15 +74,15 @@ export function judgeAlarm(
   }
 
   const untested = list.filter((c) => c.status === 'untested').length + (legacy?.status === 'untested' ? 1 : 0);
-  if (untested === live) {
-    return { tone: 'warn', live, text: `${live} 条通道已接上，但都还没真发过一次 —— 能不能送到仍然是未知数，点右边演练一次` };
+  if (live === 0) {
+    return { tone: 'warn', live, text: `${active} 条通道已接上，但都还没真发过一次 —— 能不能送到仍然是未知数，点右边演练一次` };
   }
 
-  const delivered = list.reduce((n, c) => n + c.delivered, 0) + (legacy?.delivered ?? 0);
-  const names = list.map((c) => c.name).concat(legacyLive ? [legacy!.channel] : []).slice(0, 3).join('、');
+  const delivered = healthyList.reduce((n, c) => n + c.delivered, 0) + (legacyHealthy ? (legacy?.delivered ?? 0) : 0);
+  const names = healthyList.map((c) => c.name).concat(legacyHealthy ? [legacy!.channel] : []).slice(0, 3).join('、');
   return {
     tone: untested > 0 ? 'warn' : 'ok',
     live,
-    text: `${live} 条通道通着（${names}）—— 已成功送出 ${delivered} 次${untested > 0 ? `，其中 ${untested} 条还没演练过` : ''}`,
+    text: `${live} 条通道通着（${names}）—— 已成功送出 ${delivered} 次${untested > 0 ? `，另有 ${untested} 条还没演练过` : ''}`,
   };
 }

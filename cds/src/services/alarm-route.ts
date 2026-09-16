@@ -117,6 +117,22 @@ export interface AlarmChannelConfig {
   updatedAt: number;
 }
 
+/**
+ * 投递目标的指纹：只看真正决定「发到哪、怎么发」的字段。
+ *
+ * 换了 Bark key、改了 Webhook 地址 / 请求头 / 模板、换了 MAP 凭据，就是换了一个从没验证过的
+ * 目的地；这时沿用旧的 lastDelivery 会让通道继续显示 healthy、自检的「通知通道」继续绿，
+ * 而新目的地一次都没通过（Codex #1543 P1）。改名、改事件、改项目不在指纹里——那些不影响投递。
+ */
+export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | 'bark' | 'webhook' | 'map'>): string {
+  const bark = c.bark ? { key: c.bark.key, serverUrl: c.bark.serverUrl ?? '' } : null;
+  const webhook = c.webhook
+    ? { url: c.webhook.url, method: c.webhook.method, contentType: c.webhook.contentType ?? '', bodyTemplate: c.webhook.bodyTemplate ?? '', headers: c.webhook.headers ?? {} }
+    : null;
+  const map = c.map ? { endpoint: c.map.endpoint, keyId: c.map.keyId, username: c.map.username, privateKey: c.map.privateKey } : null;
+  return JSON.stringify({ kind: c.kind, bark, webhook, map });
+}
+
 /** 一条要发出去的事。已经过分类，协议层只认它，不认 uptime 的原始事件。 */
 export interface AlarmEvent {
   kind: AlarmEventKind;

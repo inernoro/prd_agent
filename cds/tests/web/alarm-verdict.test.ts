@@ -55,6 +55,19 @@ describe('通知判定', () => {
     expect(judgeAlarm(undefined, [ch(), ch({ id: 'c2', status: 'failing' })]).tone).toBe('bad');
   });
 
+  it('「通着」只数成功送出过的：唯一一条通道上次失败 → live 是 0，不是 1（Codex #1543 P2）', () => {
+    const failed = judgeAlarm(undefined, [ch({ status: 'failing', delivered: 0, failed: 1 })]);
+    expect(failed.live).toBe(0);
+    expect(failed.tone).toBe('bad');
+    const untested = judgeAlarm(undefined, [ch({ status: 'untested', delivered: 0 })]);
+    expect(untested.live).toBe(0);
+    // 一好一坏：通着的是 1 条，语气仍是红
+    const mixed = judgeAlarm(undefined, [ch(), ch({ id: 'c2', status: 'failing' })]);
+    expect(mixed.live).toBe(1);
+    // 旧 MAP 通道同一口径
+    expect(judgeAlarm({ ...legacyUnconfigured, status: 'failing' }, []).live).toBe(0);
+  });
+
   it('全都没演练过是黄的，不是绿的', () => {
     const v = judgeAlarm(undefined, [ch({ status: 'untested', delivered: 0 })]);
     expect(v.tone).toBe('warn');
@@ -65,6 +78,7 @@ describe('通知判定', () => {
     const v = judgeAlarm(undefined, [ch(), ch({ id: 'c2', status: 'untested', delivered: 0 })]);
     expect(v.tone).toBe('warn');
     expect(v.text).toContain('通着');
+    expect(v.live).toBe(1);
     expect(v.text).toContain('1 条还没演练过');
   });
 

@@ -782,7 +782,7 @@ async function computeSelfStatusPayload(
   const restartStatus = resolveRestartStatus({
     activeSelfUpdate,
     restartWait: restartWaitState,
-    lastSelfUpdate: lastSelfUpdate as { status?: string; updateMode?: string; ts?: string } | null,
+    lastSelfUpdate: lastSelfUpdate as { status?: string; updateMode?: string; ts?: string; noOp?: boolean } | null,
     daemonReadyAt,
     pidStartedAt,
   });
@@ -23517,7 +23517,8 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         const shortHead = headFullSha.slice(0, 8);
         send('pull', 'done', `HEAD 已是 origin/${targetBranch} (${shortHead})`);
         send('no-op', 'done', `检测到 no-op:HEAD/web bundle 都已是最新,跳过 validate/restart`);
-        sendSSE(res, 'done', { message: `已是最新版本 (${shortHead}),无需重启` });
+        // mode 写进 done：cdscli 据此当场收工，不去等一次不会发生的重启（Codex #1543 P1）
+        sendSSE(res, 'done', { message: `已是最新版本 (${shortHead}),无需重启`, mode: 'noOp' });
         res.end();
         // 流水里也记一条,用 trigger='manual' status='success' duration=极短
         recordSelfUpdate({
@@ -23529,6 +23530,9 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           status: 'success',
           durationMs: Date.now() - startedAt,
           actor,
+          // updateMode 是 restartStatus 判定认的那个字段：不标，这条 success 记录会被当成
+          // 「该重启却没换进程」→ incomplete → cdscli 白等 9 分钟报假失败
+          ...({ updateMode: 'noOp', noOp: true } as Record<string, unknown>),
         });
         return;
       }
@@ -24360,7 +24364,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
       const noBuildErrors = !fs.existsSync(distErrFile) && !fs.existsSync(webErrFile);
       if (distMatches && webMatches && noBuildErrors && !forceMode) {
         send('no-op', 'done', `dist + web bundle 都已是 ${newHead} — 跳过 validate / 重 build / 重启`);
-        sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)` });
+        sendSSE(res, 'done', { message: `force-sync 已无操作(HEAD ${newHead} 与现行 dist 完全一致)`, mode: 'noOp' });
         res.end();
         recordSelfUpdate({
           ts: new Date().toISOString(),
@@ -24371,9 +24375,11 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
           status: 'success',
           durationMs: Date.now() - startedAt,
           actor,
-          // 标记 noOp 让 UI 历史区分"真重启"和"已是最新走快路径"
+          // 标记 noOp 让 UI 历史区分"真重启"和"已是最新走快路径"；
+          // updateMode 同时标上——restartStatus 判定认的是它（Codex #1543 P1）
           ...({
             noOp: true,
+            updateMode: 'noOp',
             transitionMode: forceSyncTransitionMode,
             transitionReason: forceSyncTransitionReason,
           } as Record<string, unknown>),

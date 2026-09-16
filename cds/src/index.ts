@@ -6176,7 +6176,8 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   try {
     const outcome = ensureSelfMonitoring(stateService, config.masterPort, Date.now());
     console.log(`  [self-monitor] CDS 自身监控已就位：${outcome.url}`
-      + `${outcome.createdProject ? '（内置项目刚建立）' : ''}${outcome.addedEndpoint ? '（端点刚插上）' : ''}`);
+      + `${outcome.createdProject ? '（内置项目刚建立）' : ''}${outcome.addedEndpoint ? '（端点刚插上）' : ''}`
+      + `${outcome.retiredEndpoints.length > 0 ? `（退掉旧端口的端点：${outcome.retiredEndpoints.join('、')}）` : ''}`);
   } catch (err) {
     console.warn(`  [self-monitor] CDS 自身监控引导失败：${(err as Error).message}`);
   }

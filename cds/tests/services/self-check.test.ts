@@ -308,6 +308,12 @@ describe('启动引导：幂等、可回生', () => {
         p.monitorEndpoints = [...(p.monitorEndpoints || []), url];
         return true;
       },
+      removeMonitorEndpoint: (projectId, url) => {
+        const p = projects.find((x) => x.id === projectId);
+        if (!p) return false;
+        p.monitorEndpoints = (p.monitorEndpoints || []).filter((u) => u !== url);
+        return true;
+      },
     };
   }
 

@@ -619,6 +619,8 @@ export interface ProjectRow {
   down: number;
   overdue: number;
   stale: number;
+  /** 还没有任何检查记录的业务（新建 / 暂停 / 未实测）。它们不算正常 */
+  unknown: number;
   /** 这个项目的证据短板（最旧一次检查）。一条都没检查过时没有 */
   evidence?: BoardEvidence;
   /** 覆盖到哪几个环境 */
@@ -649,6 +651,7 @@ export function buildProjectRows(targets: ReadonlyArray<UptimeTargetSummary>, no
       down: business.filter((r) => r.worst === 'down').length,
       overdue: business.filter((r) => r.worst === 'overdue').length,
       stale: business.filter((r) => r.worst === 'stale').length,
+      unknown: business.filter((r) => r.worst === 'unknown').length,
       ...(latestEvidence(business, now) ? { evidence: latestEvidence(business, now) } : {}),
       environments: ENVIRONMENT_ORDER.filter((env) => cells.some((c) => c.environment === env)),
     });
@@ -768,6 +771,19 @@ export function buildGlobalBoard(
     return {
       headline: `${idle.reduce((n, r) => n + r.stale, 0)} 项业务最近没有真实调用，它们的绿灯不作数`,
       detail: [`分布在 ${idle.map((r) => r.name).join('、')}`, blind].filter(Boolean).join('；'),
+      tone: 'warn',
+      ...base,
+    };
+  }
+
+  // worst 是 unknown 的项目：没有坏的，但有业务还没有任何检查记录（新建 / 暂停 / 未实测）。
+  // 它们既不在 down / overdue / stale 里，也不能算正常——不单独拎出来就会掉进下面那句
+  // 「都正常」，把一块新面板直接刷绿（Codex #1543 P1）。
+  const unverified = watched.filter((r) => r.unknown > 0);
+  if (unverified.length > 0) {
+    return {
+      headline: `${unverified.reduce((n, r) => n + r.unknown, 0)} 项业务还没有任何检查记录，它们不算正常`,
+      detail: [`分布在 ${unverified.map((r) => r.name).join('、')}（新建、暂停或未实测的监控）`, blind].filter(Boolean).join('；'),
       tone: 'warn',
       ...base,
     };

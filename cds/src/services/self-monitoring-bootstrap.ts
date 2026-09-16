@@ -21,6 +21,7 @@ export interface SelfMonitoringState {
   getProjects(): Project[];
   addProject(project: Project): void;
   addMonitorEndpoint(projectId: string, url: string): boolean;
+  removeMonitorEndpoint(projectId: string, url: string): boolean;
 }
 
 export function selfCheckUrl(port: number): string {
@@ -42,6 +43,8 @@ export interface SelfMonitoringOutcome {
   url: string;
   createdProject: boolean;
   addedEndpoint: boolean;
+  /** 端口换了之后被退掉的旧回环端点（它们的监控由下一轮对账当孤儿清掉） */
+  retiredEndpoints: string[];
 }
 
 export function ensureSelfMonitoring(state: SelfMonitoringState, port: number, now: number): SelfMonitoringOutcome {
@@ -63,6 +66,10 @@ export function ensureSelfMonitoring(state: SelfMonitoringState, port: number, n
     createdProject = true;
   }
   const before = state.getProjects().find((p) => p.id === SELF_PROJECT_ID)?.monitorEndpoints ?? [];
+  // 换了 masterPort 的迁移安装：旧端口那条回环端点永远打不通，而「打不通就保持监控不动」
+  // 会让十三条死监控一直挂着、拔掉接口又把所有回环自检地址都当内置拒掉。内置端点只有
+  // 当前这一条，别的回环自检地址在这里退掉（Codex #1543 P2）。
+  const retiredEndpoints = before.filter((u) => u !== url && isSelfCheckEndpoint(u) && state.removeMonitorEndpoint(SELF_PROJECT_ID, u));
   const addedEndpoint = !before.includes(url) && state.addMonitorEndpoint(SELF_PROJECT_ID, url);
-  return { projectId: SELF_PROJECT_ID, url, createdProject, addedEndpoint };
+  return { projectId: SELF_PROJECT_ID, url, createdProject, addedEndpoint, retiredEndpoints };
 }

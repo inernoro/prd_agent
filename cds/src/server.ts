@@ -3446,7 +3446,7 @@ export function createServer(deps: ServerDeps): express.Express {
       const restartStatus = resolveRestartStatus({
         activeSelfUpdate: deps.stateService.getActiveSelfUpdate(),
         restartWait: restartWaitState,
-        lastSelfUpdate: lastUpdate as { status?: string; updateMode?: string; ts?: string } | null,
+        lastSelfUpdate: lastUpdate as { status?: string; updateMode?: string; ts?: string; noOp?: boolean } | null,
         daemonReadyAt: deps.stateService.getState().daemonReadyAt || null,
         pidStartedAt,
       });

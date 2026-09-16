@@ -32,6 +32,7 @@ import {
   type AlarmChannelConfig,
   type AlarmChannelKind,
   type AlarmEventKind,
+  alarmTransportFingerprint,
 } from '../services/alarm-route.js';
 
 export interface AlarmChannelRoutesDeps {
@@ -112,6 +113,24 @@ export function parseChannel(
   previous: AlarmChannelConfig | undefined,
   now: number,
 ): AlarmChannelConfig {
+  const next = parseChannelConfig(body, previous, now);
+  // 最近一次投递记录跟着配置走：改名、改事件不该把「验证过」抹掉。
+  // 但换了投递目标（Bark key / Webhook 地址 / MAP 凭据）就是换了一个从没验证过的目的地，
+  // 旧证明不能沿用——否则通道继续 healthy、自检继续绿，而新目的地一次都没通过（Codex #1543 P1）。
+  if (previous?.lastDelivery && !alarmTransportChanged(previous, next)) next.lastDelivery = previous.lastDelivery;
+  return next;
+}
+
+/** 投递目标变了没有：新旧指纹比一下。 */
+export function alarmTransportChanged(previous: AlarmChannelConfig, next: AlarmChannelConfig): boolean {
+  return alarmTransportFingerprint(previous) !== alarmTransportFingerprint(next);
+}
+
+function parseChannelConfig(
+  body: Record<string, unknown>,
+  previous: AlarmChannelConfig | undefined,
+  now: number,
+): AlarmChannelConfig {
   const kind = str(body.kind) as AlarmChannelKind;
   if (!KINDS.includes(kind)) fail(`协议只能是 ${KINDS.join(' / ')}`);
   if (previous && previous.kind !== kind) fail('已有通道不能改协议 —— 换协议等于换一条通道，请新建');
@@ -147,8 +166,6 @@ export function parseChannel(
     id: previous?.id ?? crypto.randomUUID(),
     name, kind, projects, events,
     enabled: body.enabled === undefined ? (previous?.enabled ?? true) : Boolean(body.enabled),
-    // 最近一次投递记录跟着配置走：改名、改事件不该把「验证过」抹掉。
-    ...(previous?.lastDelivery ? { lastDelivery: previous.lastDelivery } : {}),
     createdAt: previous?.createdAt ?? now,
     updatedAt: now,
   };
@@ -248,6 +265,8 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     if (id && !previous) { res.status(404).json({ error: '通道不存在' }); return; }
     try {
       const next = parseChannel((req.body || {}) as Record<string, unknown>, previous, Date.now());
+      // 内存台账也要清：它按通道 id 记着上一次成功，换了目的地不清等于继续替新目的地说好话
+      if (previous && alarmTransportChanged(previous, next)) deps.ledger.forget(next.id);
       deps.upsert(next);
       res.json({ channel: publicChannel(next), status: deps.ledger.view(next, channelConfigured(next)) });
     } catch (err) {

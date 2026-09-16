@@ -65,3 +65,8 @@
 | fix | cds | 探测器停摆判定并入 cycle 健康：第一轮从来没跑完（lastCycleAt 为空）也算停摆，前端头条与「我的业务」第一屏不再拿落盘的旧绿样本说全部正常；前端只有一处读法 proberLiveness（Codex P1） |
 | fix | cds | 全局视角的项目覆盖按全环境判、健康读数按环境筛选算：只在分支预览上装了业务监控的项目不再从卡片上消失或被算成「没人盯」（Codex P2） |
 | fix | cds | 自检端点列表里的上一轮结果只摆本项目端点那几条，项目 A 的芯片不再把项目 B 打不通的端点与发现数算进自己头上（Codex P2） |
+| fix | cds | no-op 自更新 / 强制同步（HEAD 已是最新）的记录与 done 事件标上 noOp：restartStatus 不再把它当「该重启却没换进程」，cdscli 当场收工（Codex P1） |
+| fix | cds | 通知通道换了投递目标（Bark key / Webhook 地址、请求头、模板 / MAP 凭据）就丢掉旧的投递证明并清内存台账，改名改事件仍保留；新目的地在演练成功前不再显示 healthy（Codex P1） |
+| fix | cds | 全局视角：有业务还没有任何检查记录（新建 / 暂停 / 未实测）的项目不再落进「都正常」，单独一档警告（Codex P1） |
+| fix | cds | 第一屏「通着」的通道数只数成功送出过的，failing / untested 不算，与服务端同一口径（Codex P2） |
+| fix | cds | 换了 masterPort 的迁移安装：启动引导把旧端口的回环自检端点退掉，只留当前这一条，不再留一条永远打不通的端点和十三条死监控（Codex P2） |

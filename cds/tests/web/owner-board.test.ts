@@ -570,6 +570,18 @@ describe('全局面板', () => {
     expect(board.detail).toContain('还没有业务监控');
   });
 
+  it('有业务还没有任何检查记录时不许说「都正常」（Codex #1543 P1）', () => {
+    // 新建 / 暂停 / 未实测的监控：格子是 unknown，既不坏也不算好
+    const fresh = buildGlobalBoard([biz('A', 'a1'), biz('B', 'b-new', { lastSample: null, status: 'unknown' })], ctx);
+    expect(fresh.headline).not.toContain('都正常');
+    expect(fresh.headline).toContain('还没有任何检查记录');
+    expect(fresh.tone).toBe('warn');
+    expect(fresh.detail).toContain('B');
+    expect(fresh.rows.find((r) => r.id === 'B')?.unknown).toBe(1);
+    // 对照：都检查过才说都正常
+    expect(buildGlobalBoard([biz('A', 'a1')], ctx).headline).toContain('都正常');
+  });
+
   it('探测器停摆盖过一切，包括故障', () => {
     const board = buildGlobalBoard([biz('A', 'a1', { status: 'down' })],
       { now: NOW, prober: { stalled: true, lastCycleAt: NOW - 3_600_000 } });

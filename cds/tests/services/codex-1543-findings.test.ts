@@ -69,7 +69,7 @@ describe('P1 通道存活按投递台账判：只有成功投递过的才算', (
     const index = codeOf(read('../../src/index.ts'));
     expect(index).toMatch(/new AlarmLedger\(\{[\s\S]{0,400}upsertAlarmChannel\(\{ \.\.\.channel, lastDelivery: last \}\)/);
     const routes = codeOf(read('../../src/routes/alarm-channels.ts'));
-    expect(routes).toContain('lastDelivery: previous.lastDelivery');
+    expect(routes).toContain('next.lastDelivery = previous.lastDelivery');
   });
 });
 

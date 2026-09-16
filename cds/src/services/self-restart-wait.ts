@@ -51,7 +51,8 @@ export function isNoRestartUpdateMode(mode: string | undefined): boolean {
 export interface RestartStatusInput {
   activeSelfUpdate: unknown;
   restartWait: RestartWaitState | null;
-  lastSelfUpdate: { status?: string; updateMode?: string; ts?: string } | null;
+  /** noOp：存量记录只带 `noOp: true` 不带 updateMode（force-sync 的老写法），也要认 */
+  lastSelfUpdate: { status?: string; updateMode?: string; ts?: string; noOp?: boolean } | null;
   daemonReadyAt: string | null;
   pidStartedAt: string | null;
 }
@@ -67,7 +68,7 @@ export function resolveRestartStatus(input: RestartStatusInput): RestartStatus {
   const last = input.lastSelfUpdate;
   // deferred：更新已接受但推迟执行（等窗口），重启还没轮到——是 pending 不是 not_required。
   if (last?.status === 'deferred') return 'pending';
-  if (!last || last.status !== 'success' || isNoRestartUpdateMode(last.updateMode)) return 'not_required';
+  if (!last || last.status !== 'success' || isNoRestartUpdateMode(last.updateMode) || last.noOp === true) return 'not_required';
   const updateMs = last.ts ? Date.parse(last.ts) : Number.NaN;
   const readyMs = input.daemonReadyAt ? Date.parse(input.daemonReadyAt) : Number.NaN;
   const pidMs = input.pidStartedAt ? Date.parse(input.pidStartedAt) : Number.NaN;
