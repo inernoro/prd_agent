@@ -380,14 +380,6 @@ public class BookshelfController : ControllerBase
         var scope = BookshelfDigestScope.Current;
         var existingCandidates = await _db.BookDigests.Find(x => x.BookId == id).ToListAsync(ct);
         var existing = BookshelfDigestScope.PickVisible(existingCandidates, scope);
-        /*
-         * 复用看的是「本部署看得见的那一篇」（自己的优先、权威的兜底），
-         * 但**写只写自己那一行**：拿权威那份的 _id 去 Replace，就是分支预览改写了
-         * 权威数据——`cross-project-isolation` 通道 4 要防的正是这件事。
-         */
-        var ownExisting = existingCandidates.FirstOrDefault(
-            x => BookshelfDigestScope.IsOwnDocument(x.DeploymentSlug, scope));
-
         if (!force)
         {
             if (existing != null && BookshelfDigestPrompt.IsFresh(existing, material))
@@ -603,18 +595,43 @@ public class BookshelfController : ControllerBase
             return;
         }
 
+        /*
+         * 落库前再看一眼**本作用域**下现在有没有这一行。
+         *
+         * 按作用域过滤是硬要求：复用看的是「本部署看得见的那一篇」（自己的优先、权威的兜底），
+         * 但**写只写自己那一行**——拿权威那份的 _id 去 Replace，就是分支预览改写了权威数据，
+         * `cross-project-isolation` 通道 4 要防的正是这件事。
+         *
+         * 为什么放在这里而不是沿用生成前那一眼：那一眼是**三分钟以前**的，
+         * 生成期间另一个读者完全可能把这本书先写进来。
+         * 那时下面的 filter 会匹配上他那一行，而 digest.Id 若是新造的 Guid，Mongo 以
+         * code 66 拒绝（`_id` 不可变）。它**不是**撞唯一索引，下面那个 catch 原先接不住，
+         * 于是这个读者烧完一整篇之后只拿到一句 SAVE_FAILED。
+         *
+         * 用 None：读者退出页面不该让这一眼取消掉（server-authority 规则 1）。
+         */
+        var latestExisting = await _db.BookDigests
+            .Find(x => x.BookId == id && x.DeploymentSlug == scope)
+            .FirstOrDefaultAsync(CancellationToken.None);
+
         var digest = new BookDigest
         {
             /*
-             * 沿用库里那份的 _id。BookDigest 的 Id 默认是 Guid.NewGuid()，直接拿新对象去
-             * ReplaceOne 一份已存在的文档，Mongo 会以 code 66 拒绝：「_id 是不可变字段」。
+             * 沿用库里那份的 _id，且用的是**刚刚那一眼**（latestExisting）而不是生成前那一眼。
+             * BookDigest 的 Id 默认是 Guid.NewGuid()，拿新对象去 ReplaceOne 一份已存在的
+             * 文档，Mongo 以 code 66 拒绝：「_id 是不可变字段」。
              *
              * 这个洞从第一版就在，而且只在「重写」时才现形——首次生成走的是 upsert 的
              * insert 分支，_id 是新的没问题；第二次起每一次都炸，异常又发生在 SSE 已经
              * 开始输出之后，ExceptionMiddleware 想改 header 再炸一次，于是前端只看到流
              * 无声断掉、库里还是旧的那篇。三次「重新生成」全部石沉大海，日志里才有真相。
+             *
+             * 第二种触发方式更隐蔽：首次生成期间另一个读者先写成了，于是「本来该走 insert」
+             * 的这一次也撞上一行已存在的文档。窗口收窄靠上面那一眼，收不干净的那一丝
+             * 由下面的 catch 兜住——两个人同时点开一本没稿子的书，本来就该有一个人的
+             * 产物被丢弃，但他不该看到报错。
              */
-            Id = ownExisting?.Id ?? Guid.NewGuid().ToString("N"),
+            Id = latestExisting?.Id ?? Guid.NewGuid().ToString("N"),
             BookId = id,
             Content = content,
             PromptVersion = BookshelfDigestPrompt.Version,
@@ -639,10 +656,16 @@ public class BookshelfController : ControllerBase
                 new ReplaceOptions { IsUpsert = true },
                 CancellationToken.None);
         }
-        catch (MongoWriteException mwe) when (mwe.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        // 66 = ImmutableField（`_id` 不可变）。上面那一眼把窗口收到了毫秒级，
+        // 但收不干净：re-read 与 replace 之间仍可能被另一个人插进来。两种错码到这里
+        // 都只意味着一件事——「有人抢在前面写了」，处置方式完全相同。
+        catch (MongoWriteException mwe) when (
+            mwe.WriteError?.Category == ServerErrorCategory.DuplicateKey || mwe.WriteError?.Code == 66)
         {
+            var immutableId = mwe.WriteError?.Code == 66;
             /*
-             * 撞上唯一索引。默认解释是「两个人同时点开这本还没有稿子的书，对方先写成了」——
+             * 撞上唯一索引（或撞上别人刚写下的那一行的 _id）。
+             * 默认解释是「两个人同时点开这本还没有稿子的书，对方先写成了」——
              * 公共稿子本来就是一本一篇，谁先写完算谁的，不必让读者看到报错。
              *
              * 但**不许直接认定是这种情况**。还有一种撞键长得一模一样、后果却完全相反：
@@ -660,6 +683,21 @@ public class BookshelfController : ControllerBase
             if (afterConflict != null && !string.IsNullOrWhiteSpace(afterConflict.Content))
             {
                 _logger.LogInformation("精读稿并发生成，另一方先落库 BookId={BookId}，本次不覆盖", id);
+            }
+            else if (immutableId)
+            {
+                // 匹配到了一行、又说 _id 不可变，回头却读不到——那行在这中间被删掉了。
+                // 不是索引问题，别拿索引的说法去误导运维。
+                _logger.LogError(
+                    mwe,
+                    "精读稿落库撞 _id 不可变但回读为空 BookId={BookId} Scope={Scope}",
+                    id, scope ?? "(权威部署)");
+                await WriteDigestEventAsync("error", new
+                {
+                    code = "SAVE_FAILED",
+                    message = "稿子写完了但没能存下，重试一次",
+                }, ct);
+                return;
             }
             else
             {

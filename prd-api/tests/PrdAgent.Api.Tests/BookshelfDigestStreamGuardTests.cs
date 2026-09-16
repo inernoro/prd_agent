@@ -148,4 +148,40 @@ public class BookshelfDigestStreamGuardTests
             "_sseBroken = true;",
             customMessage: "捕获到断开却没有置位，那个短路判据永远不成立");
     }
+
+    [Fact(DisplayName = "落库前必须重新读一次本作用域那一行，否则并发首写会撞 _id 不可变")]
+    public void DigestPersist_MustReReadBeforeReplace()
+    {
+        var src = ControllerSource();
+
+        /*
+         * 生成要几分钟，而「库里有没有这一行」那一眼是生成**之前**取的。
+         * 期间另一个读者先写成了的话，Replace 的 filter 会匹配上他那一行，
+         * 而手上这份带的是新造的 Guid——Mongo 以 code 66 拒绝（_id 不可变）。
+         * 那不是撞唯一索引，撞键那个 catch 接不住，读者烧完一整篇只拿到 SAVE_FAILED。
+         *
+         * 判据要的是「那一眼在 Replace 之前」，不是「文件里有这个词」。
+         */
+        var reread = src.IndexOf("var latestExisting", StringComparison.Ordinal);
+        var persist = src.IndexOf("BookDigests.ReplaceOneAsync", StringComparison.Ordinal);
+        reread.ShouldBeGreaterThan(-1, customMessage: "落库前没有重新读一次，并发首写会撞 _id 不可变");
+        persist.ShouldBeGreaterThan(-1, customMessage: "找不到写库调用，守卫判据已过期，请修守卫");
+        reread.ShouldBeLessThan(persist, customMessage: "那一眼排在写库之后，挡不住并发首写");
+
+        src.ShouldContain(
+            "x.BookId == id && x.DeploymentSlug == scope",
+            customMessage: "这一眼没有按部署作用域过滤：拿权威那份的 _id 去 Replace 就是预览改写权威数据");
+    }
+
+    [Fact(DisplayName = "撞 _id 不可变（code 66）要和撞唯一索引同样当成「有人抢先写了」")]
+    public void DigestPersist_MustHandleImmutableIdRace()
+    {
+        var src = ControllerSource();
+
+        // re-read 与 replace 之间仍有一丝窗口收不干净，必须由 catch 兜住：
+        // 两个人同时点开一本没稿子的书，本来就该有一个人的产物被丢弃，但他不该看到报错。
+        src.ShouldContain(
+            "mwe.WriteError?.Code == 66",
+            customMessage: "没有把 _id 不可变当成并发写race：那个读者会烧完一整篇再拿到 SAVE_FAILED");
+    }
 }
