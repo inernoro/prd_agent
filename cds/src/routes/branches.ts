@@ -128,6 +128,7 @@ import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bo
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
 import { isPreviewInstance } from '../services/preview-instance.js';
+import { buildPreviewMirror, findMirrorLeaks, replayPreviewMirrorSeries, writePreviewMirror } from '../services/preview-mirror.js';
 import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
 import { preparePrebuiltImageClaim } from '../services/prebuilt-image-claim.js';
@@ -4872,7 +4873,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             aiOpCount: b.aiOpCount || derivedAi?.count,
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
-            subject: '',
+            subject: b.mirror?.subject || '',
             builder: buildGithubSenderBuilder(b),
             projectSlug,
             previewSlug,
@@ -4907,7 +4908,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             aiOpCount: b.aiOpCount || derivedAi?.count,
             lastAiOccupantAt: b.lastAiOccupantAt || derivedAi?.lastAt,
             commitSha: b.githubCommitSha || '',
-            subject: '',
+            subject: b.mirror?.subject || '',
             builder: buildGithubSenderBuilder(b),
             projectSlug,
             previewSlug,
@@ -4989,6 +4990,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
       b.previewEntries = entries;
       b.previewUrls = Array.from(new Set(entries.map((entry) => entry.url)));
       b.previewUrl = b.previewUrls[0] || '';
+      // 父实例镜像来的分支：地址用父实例算好的那份（本实例的域名算出来的是一个不存在的入口）
+      if (b.mirror?.previewUrl) {
+        b.previewUrl = b.mirror.previewUrl;
+        b.previewUrls = b.mirror.previewUrls?.length ? [...b.mirror.previewUrls] : [b.mirror.previewUrl];
+        // 入口卡也跟着换：名字沿用本实例按 compose 算出的入口名，地址换成父实例的
+        b.previewEntries = b.previewUrls.map((url, i) => ({ name: entries[i]?.name || (i === 0 ? '主应用入口' : `入口 ${i + 1}`), url, serviceId: entries[i]?.serviceId, primary: i === 0 }));
+      }
     }
     const profilesByProject = new Map<string, BuildProfile[]>();
     const infraByProject = new Map<string, InfraService[]>();
@@ -11364,16 +11372,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const services = Object.entries(branch.services || {});
     const byContainer = new Map(services.map(([profileId, svc]) => [svc.containerName, profileId]));
 
-    const result = queryContainerSeries({
-      containers: [...byContainer.keys()],
+    const seriesQuery = {
       after: num(req.query.after, -1800),
       before: num(req.query.before, 0),
       points: num(req.query.points, 120),
+    };
+    // 预览实例：没有容器可采，从父实例镜像里回放（点位锚到当下）；镜像里没有这些容器就走原路（空图）
+    const replayed = isPreviewInstance() ? replayPreviewMirrorSeries([...byContainer.keys()], seriesQuery) : null;
+    const result = replayed ?? queryContainerSeries({
+      containers: [...byContainer.keys()],
+      ...seriesQuery,
       group: req.query.group === 'max' ? 'max' : 'average',
     });
 
     res.json({
       branchId: branch.id,
+      mirror: replayed ? 'parent-cds' : undefined,
       after: result.after,
       before: result.before,
       groupSeconds: result.groupSeconds,
@@ -13395,6 +13409,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // 立刻让位（finally 会释放刚拿到的槽），不为已取消的部署跑构建。
             assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
             const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+            maybeWritePreviewMirror(entry, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
             await archiveBranchContainerLogs({
               stateService,
               containerService,
@@ -14418,6 +14433,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
+        maybeWritePreviewMirror(entry, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
         await archiveBranchContainerLogs({
           stateService,
           containerService,
@@ -15788,6 +15804,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // readiness endpoints and API-only services out of the browser entry list.
   //
   // SSOT for GET /api/branches and the subdomain-alias responses.
+  /**
+   * 部署 CDS 预览实例分支时，把本实例的脱敏镜像写进它的 worktree（CDS 托管 CDS，2026-09-16）。
+   * 判据看这次部署真正生效的 env（mergedEnv.CDS_PREVIEW_INSTANCE），与子实例自己的判定同源。
+   * 只写文件、不改本实例任何状态；失败只记一行日志，不让部署因此失败。
+   * 子实例自己（isPreviewInstance()）不导出——它手里的本来就是镜像，再导一层只会套娃。
+   */
+  function maybeWritePreviewMirror(entry: BranchEntry, mergedEnv: Record<string, string>, emit: (line: string) => void): void {
+    if (isPreviewInstance()) return;
+    if (!isPreviewInstance({ CDS_PREVIEW_INSTANCE: mergedEnv.CDS_PREVIEW_INSTANCE ?? '' } as NodeJS.ProcessEnv)) return;
+    try {
+      if (!entry.worktreePath || !fs.existsSync(entry.worktreePath)) {
+        emit('── 预览实例镜像：worktree 不在本机（远程执行器），本次不写 ──\n');
+        return;
+      }
+      const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')
+        .replace(/^https?:\/\//, '')
+        .replace(/\/+$/, '')
+        .trim();
+      const mirror = buildPreviewMirror(stateService, {
+        previewFor: (b) => {
+          const entries = previewHost ? computeBranchWebEntries(b, previewHost) : [];
+          const urls = Array.from(new Set(entries.map((e) => e.url)));
+          return { url: urls[0] || '', urls };
+        },
+        sourceLabel: previewHost ? `CDS（${previewHost}）` : '父实例',
+      });
+      const leaks = findMirrorLeaks(mirror);
+      if (leaks.length > 0) {
+        emit(`── 预览实例镜像自检发现 ${leaks.join('、')}，本次不写（子实例退回演示快照）──\n`);
+        return;
+      }
+      const file = writePreviewMirror(entry.worktreePath, mirror);
+      emit(`── 预览实例镜像已写入 ${file}：${mirror.projects.length} 个项目 / ${mirror.branches.length} 条分支 / ${Object.keys(mirror.metrics).length} 个容器的近 30 分钟指标（采集于 ${mirror.capturedAt}）──\n`);
+    } catch (err) {
+      emit(`── 预览实例镜像写入失败（不影响部署）：${(err as Error).message} ──\n`);
+    }
+  }
+
   function computeBranchWebEntries(
     entry: BranchEntry,
     primaryRoot: string,
@@ -16086,9 +16140,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Compute the full preview URLs so the UI can show them without
     // re-reading CDS config separately.
     const primaryRoot = config.previewDomain || config.rootDomains?.[0] || 'example.com';
-    const previewUrls = aliases.map(a => `https://${a}.${primaryRoot}`);
-    const defaultUrl = `https://${id}.${primaryRoot}`;
-    const webEntries = computeBranchWebEntries(entry, primaryRoot);
+    let previewUrls = aliases.map(a => `https://${a}.${primaryRoot}`);
+    let defaultUrl = `https://${id}.${primaryRoot}`;
+    let webEntries = computeBranchWebEntries(entry, primaryRoot);
+    // 父实例镜像来的分支：入口地址一律用父实例算好的那份，本实例的域名推不出它（与 GET /api/branches 同口径）
+    if (entry.mirror?.previewUrl) {
+      const urls = entry.mirror.previewUrls?.length ? [...entry.mirror.previewUrls] : [entry.mirror.previewUrl];
+      defaultUrl = urls[0];
+      previewUrls = urls.slice(1);
+      webEntries = urls.map((url, i) => ({ name: webEntries[i]?.name || (i === 0 ? '主应用入口' : `入口 ${i + 1}`), url, serviceId: webEntries[i]?.serviceId, subdomain: webEntries[i]?.subdomain, primary: i === 0 }));
+    }
 
     res.json({
       branchId: id,

@@ -65,6 +65,7 @@ SSOT:`cds/src/services/preview-instance.ts`。
 
 - **钉死 JSON store**(compose env `CDS_STORAGE_MODE=json`):绝不让子 CDS 连上父 CDS 的 mongo-split 库(隔离穿透通道 4)。state 落在分支 worktree 的 `.cds/state.json`(已 gitignore),分支删除随 worktree 一起回收。
 - **首启 seed 演示数据**(`preview-instance-seed.ts`):空库时生成 1 个演示项目 + 3 条分支(running / error / idle)+ 构建配置 + 活动日志,保证每个页面打开有内容可验(guided-exploration)。所有条目在名称/备注里写明"演示数据",不冒充真实部署(no-rootless-tree)。非空库(比如误配了 mongo)一律不碰。
+- **父实例数据镜像**（2026-09-16，`preview-mirror.ts`）：演示数据只有形状没有内容，每条分支都是停止态、空服务，关系卡 / 总览 / 部署页全是空态。现在父实例在部署预览实例分支时，把自己的数据脱敏后写成 `<worktree>/.cds/preview-mirror.json`（与子实例的 state.json 同目录，已 gitignore），子实例每次启动按它播种，静态形状快照退役为「没有镜像文件时」的兜底。镜像内容：项目（白名单字段）、构建配置（env 里敏感 key 与带凭据的值只留形状，URL 保留主机名让关系图还画得出基础设施连线）、分支（含 services 状态、部署时刻、提交 sha、父实例算好的预览地址与提交标题）、每条分支最近 3 条部署 run 与活动日志（过打码）、验收报告元数据、运行中容器近 30 分钟的指标点位（以「距采集多少秒」存，回放时锚到当下）。三条底线：**只读**（一律带 `mirror: { capturedAt, source }`，分支卡与抽屉标「镜像 · 采集于」，动作照旧禁用）；**不带凭据**（子实例不打父实例 API，纯文件单向；Agent Key / 凭据 / 授权表这些集合根本不进文件，写盘前 `findMirrorLeaks` 自检，命中即不写）；**不冒充**（状态按采集时刻原样搬，每处都能看出本实例上没有容器；托管 CDS 的项目自己不进镜像，免得套娃）。幂等：同一份镜像重复启动不动库，新镜像整体替换旧镜像播下的条目。
 
 ### 3.4 子实例对父实例的反向防护（2026-07-15 加固）
 
@@ -81,7 +82,7 @@ SSOT:`cds/src/services/preview-instance.ts`。
 ### 3.5 前端可感知
 
 - 公开端点 `GET /api/instance-mode` → `{ previewInstance: boolean }`(登录前后都可读,兼做就绪探针);
-- Shell 顶部居中常驻 pill:"CDS 预览实例 — 仅用于验收 CDS 自身改动,部署 / docker 操作已禁用",防止把演示实例当生产(expectation-management)。
+- 底部身份提示只剩一条（2026-09-16）：父实例经 forwarder 注入的徽章在托管态自己长成「CDS 托管 CDS」变体（深绿严肃配色，首段固定「CDS 托管 CDS」，随后 sha 与分支名，末尾「部署 / docker 已禁用」；展开面板不给部署按钮，只留日志）。判据是 compose 声明进 profile.env 的 `CDS_PREVIEW_INSTANCE`，与子实例自己的判定同源（`profileHostsPreviewInstance`）。子实例侦测到页面里有父徽章（`#cds-widget`）就不再画自己的 pill；直连端口、没有父徽章时才保留同一套绿色文案的 pill 兜底，并带上镜像摘要「数据镜像自 X，采集于 HH:mm」（`/api/instance-mode` 的 `mirror` 字段）。此前是两条并排：父实例的绿色 sha 徽章 + 子实例的橙色警告 pill。
 
 ## 四、部署方式(操作手册)
 
@@ -109,6 +110,7 @@ SSOT:`cds/src/services/preview-instance.ts`。
 
 - 子 CDS 认证默认 disabled(未配 CDS_PREVIEW_PASSWORD 时)——按 §四.3 配置 `CDS_PREVIEW_*` 专用凭据为**必做**(子实例接共享 infra 网、公网可达;secret 自清洗已消除密钥外溢面,但内网可达面仍在);
 - 演示分支的"运行中"状态是 seed 出来的形状数据,点它的预览链接不会有真页面(分支卡有备注说明);
+- 镜像来的分支「运行中」也是采集时刻的状态：日志、exec、实时 docker stats 在子实例上都拿不到（接口返回明确的预览实例说明），指标曲线是回放的镜像点位；镜像要**父实例**升级到带导出逻辑的版本之后、下一次部署预览实例分支时才会写入，在那之前子实例仍退回演示快照；
 - 冷构建(两次 pnpm install + tsc + vite build)约 3-6 分钟,readiness 窗口已放到 1200s;
 - 同仓库双项目会双份 clone(磁盘),janitor 只在父 CDS 生效,子实例无清理需求(无容器、state 随 worktree 回收)。
 

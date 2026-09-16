@@ -174,3 +174,10 @@ describe('零服务的空态（2026-09-16 真站截图：master 分支一个 ser
     for (const it of items) expect(it).toContain('whitespace-nowrap');
   });
 });
+
+describe('CPU 图的包裹层必须有高度', () => {
+  it('「正在积累」提示的包裹 div 带 h-full：里面的 svg 是 absolute inset-0，包裹层 0 高整张图就不见了', () => {
+    const panel = fs.readFileSync(path.join(SRC, 'components/branch/OverviewPanel.tsx'), 'utf8');
+    expect(panel).toMatch(/<div className="relative h-full" data-testid="cpu-plot-host">\s*<StackedAreaChart/);
+  });
+});

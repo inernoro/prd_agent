@@ -109,6 +109,7 @@ import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './service
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
 import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
+import { readPreviewMirror, registerLoadedPreviewMirror } from './services/preview-mirror.js';
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
 import { GitHubAppClient } from './services/github-app-client.js';
@@ -2427,8 +2428,20 @@ if (isPreviewInstance()) {
 // 预览实例首启 seed 演示数据（空库才 seed，幂等），保证 dashboard 各页有内容可验收。
 if (isPreviewInstance()) {
   try {
-    const seeded = seedPreviewInstanceDemoData(stateService);
-    if (seeded) console.log('  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
+    // 父实例部署本实例时写进 worktree 的脱敏镜像（.cds/preview-mirror.json）；有它就按它播，
+    // 静态形状快照退役。读不到 / 版本不认识都只记日志，退回快照——不让一份坏文件把实例起不来。
+    let mirror = null as ReturnType<typeof readPreviewMirror>;
+    try {
+      mirror = readPreviewMirror(config.repoRoot);
+    } catch (err) {
+      console.warn(`  [preview-instance] 父实例镜像读取失败，退回演示快照: ${(err as Error).message}`);
+    }
+    if (mirror) {
+      const summary = registerLoadedPreviewMirror(mirror);
+      console.log(`  [preview-instance] 已装入父实例镜像：采集于 ${summary.capturedAt}，${summary.projects} 个项目 / ${summary.branches} 条分支（${summary.runningBranches} 条采集时在运行）/ ${summary.containersWithMetrics} 个容器有指标`);
+    }
+    const seeded = seedPreviewInstanceDemoData(stateService, mirror);
+    if (seeded) console.log(mirror ? '  [preview-instance] 已按父实例镜像播种（只读，本实例无容器）' : '  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
   } catch (err) {
     console.warn(`  [preview-instance] 演示数据 seed 失败: ${(err as Error).message}`);
   }

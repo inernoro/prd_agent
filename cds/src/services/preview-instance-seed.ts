@@ -14,6 +14,7 @@
  */
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
+import type { PreviewMirrorFile } from './preview-mirror.js';
 
 export const PREVIEW_DEMO_PROJECT_ID = 'preview-demo';
 
@@ -30,12 +31,109 @@ function minutesAgoIso(minutes: number): string {
  * 活动日志）和补播（缺的演示分支 / 定时任务 / 验收报告）各自判各自的，
  * 补播还要按 id 逐条比对，不能只判「这一类有没有」。
  */
-export function seedPreviewInstanceDemoData(state: StateService): boolean {
+export function seedPreviewInstanceDemoData(state: StateService, mirror?: PreviewMirrorFile | null): boolean {
   const core = seedCoreDemoData(state);
   const extras = seedDemoExtras(state);
-  const snap = seedPreviewInstanceSnapshot(state);
-  if (core || extras || snap) state.save();
-  return core || extras || snap;
+  // 父实例镜像在手时静态形状快照退役：镜像是真实数据的脱敏副本，快照只是它的替身
+  const snap = mirror ? false : seedPreviewInstanceSnapshot(state);
+  const mirrored = mirror ? seedPreviewInstanceMirror(state, mirror) : false;
+  if (core || extras || snap || mirrored) state.save();
+  return core || extras || snap || mirrored;
+}
+
+/* ============================ 父实例镜像 ============================
+   2026-09-16。SSOT 与三条底线见 services/preview-mirror.ts 头注释。
+
+   幂等规则：
+   - 同一份镜像（capturedAt 相同）已播过 → 一条不动；
+   - 新镜像 → 先把旧镜像播下的条目整体删掉（项目级联分支 / 构建配置 / 日志），再按新镜像加，
+     镜像里消失的条目自然不再出现；
+   - 库里出现既不是演示、不是快照、也不带 mirror 标记的项目 → 说明挂着真实数据，一条不播。 */
+
+export const PREVIEW_MIRROR_CREATED_BY = 'preview-mirror';
+
+export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMirrorFile): boolean {
+  const foreign = state.getProjects().some((p) => p.id !== PREVIEW_DEMO_PROJECT_ID && !isSnapshotProjectId(p.id) && !p.mirror);
+  if (foreign) return false;
+  let changed = false;
+
+  // 1. 静态快照退役：只退快照播下的那批（项目按 snap- 前缀，报告按标题在快照里），
+  //    演示项目自己的三份报告不动——它们和快照共用 createdBy，按 createdBy 删会把演示报告
+  //    每次启动删一遍、补播再加一遍（实机验到：重启后报告清零、日志每次都说「已播种」）。
+  const snapshotTitles = new Set((snapshot.reports as Array<{ title: string }>).map((r) => r.title));
+  for (const p of state.getProjects()) {
+    if (isSnapshotProjectId(p.id)) { state.removeProject(p.id); changed = true; }
+  }
+  for (const r of state.listAcceptanceReports(null)) {
+    if (r.createdBy === 'preview-instance-seed' && snapshotTitles.has(r.title)) { state.deleteAcceptanceReport(r.id); changed = true; }
+  }
+
+  // 2. 同一份镜像已播过：不动
+  const stampedProjects = state.getProjects().filter((p) => p.mirror);
+  const stampedBranches = state.getAllBranches().filter((b) => b.mirror);
+  const sameCapture = stampedProjects.length > 0
+    && stampedProjects.every((p) => p.mirror?.capturedAt === mirror.capturedAt)
+    && stampedBranches.every((b) => b.mirror?.capturedAt === mirror.capturedAt)
+    && stampedProjects.length === mirror.projects.length
+    && stampedBranches.length === mirror.branches.length;
+  if (sameCapture) return changed;
+
+  // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志 / 部署 run）
+  for (const p of stampedProjects) state.removeProject(p.id);
+  for (const b of state.getAllBranches()) if (b.mirror) state.removeBranch(b.id);
+  for (const r of state.listAcceptanceReports(null)) {
+    if (r.createdBy === PREVIEW_MIRROR_CREATED_BY) state.deleteAcceptanceReport(r.id);
+  }
+
+  // 4. 按新镜像加。单条失败只记日志不中断：一条怪配置不该让整份镜像消失
+  const warn = (what: string, err: unknown): void => console.warn(`  [preview-mirror] ${what}: ${(err as Error).message}`);
+  const existingSlugs = new Set(state.getProjects().map((p) => p.slug));
+  for (const p of mirror.projects) {
+    try {
+      const slug = existingSlugs.has(p.slug) ? `${p.slug}-mirror` : p.slug;
+      state.addProject({ ...p, slug, legacyFlag: undefined } as Project);
+      existingSlugs.add(slug);
+    } catch (err) { warn(`项目 ${p.id}`, err); }
+  }
+  const projectIds = new Set(state.getProjects().filter((p) => p.mirror).map((p) => p.id));
+  for (const profile of mirror.buildProfiles) {
+    if (!projectIds.has(profile.projectId)) continue;
+    try { state.addBuildProfile({ ...profile } as BuildProfile); } catch (err) { warn(`构建配置 ${profile.id}`, err); }
+  }
+  const branchIds = new Set<string>();
+  for (const b of mirror.branches) {
+    if (!projectIds.has(b.projectId)) continue;
+    try {
+      state.addBranch({ ...b } as BranchEntry);
+      branchIds.add(b.id);
+      for (const log of mirror.logs?.[b.id] ?? []) state.appendLog(b.id, log);
+    } catch (err) { warn(`分支 ${b.id}`, err); }
+  }
+  for (const run of mirror.deploymentRuns ?? []) {
+    if (!branchIds.has(run.branchId) || state.getDeploymentRun(run.id)) continue;
+    try { state.addDeploymentRun(run); } catch (err) { warn(`部署 run ${run.id}`, err); }
+  }
+  const origin = `镜像自${mirror.source?.label || '父实例'}（采集于 ${mirror.capturedAt}）：只读，本实例上没有对应容器。`;
+  for (const r of mirror.reports ?? []) {
+    try {
+      state.createAcceptanceReport({
+        title: r.title,
+        format: r.format,
+        content: r.format === 'md' ? `# ${r.title}\n\n${origin}\n\n本页只保留标题、结论与归档时刻；原始正文不在镜像内。` : `<h1>${r.title}</h1><p>${origin}</p><p>本页只保留标题、结论与归档时刻；原始正文不在镜像内。</p>`,
+        projectId: r.projectId ?? null,
+        branchId: r.branchId && branchIds.has(r.branchId) ? r.branchId : null,
+        branch: r.branch ?? null,
+        commitSha: r.commitSha ?? null,
+        prNumber: r.prNumber ?? null,
+        verdict: r.verdict ?? null,
+        tier: r.tier ?? null,
+        defectCounts: r.defectCounts ?? null,
+        createdBy: PREVIEW_MIRROR_CREATED_BY,
+        createdAt: r.createdAt,
+      });
+    } catch (err) { warn(`报告「${r.title}」`, err); }
+  }
+  return true;
 }
 
 /** 首播：项目 + 构建配置 + 分支 + 活动日志。只在完全空库时执行。 */

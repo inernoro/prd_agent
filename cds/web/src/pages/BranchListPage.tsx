@@ -199,6 +199,8 @@ interface BranchSummary {
   id: string;
   projectId: string;
   branch: string;
+  /** 父实例镜像来的只读分支（预览实例专用）：状态是采集时刻的状态，本实例上没有容器 */
+  mirror?: { capturedAt: string; source: string; previewUrl?: string; subject?: string };
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   services: Record<string, ServiceState>;
   resources?: BranchResource[];
@@ -3596,6 +3598,8 @@ export function BranchListPage(): JSX.Element {
             if (state.status !== 'ok' || !detailDrawerBranchId) return '';
             const target = state.branches.find((b) => b.id === detailDrawerBranchId);
             if (!target) return '';
+            // 父实例镜像来的分支：地址是父实例算好的，本实例的域名推不出它
+            if (target.mirror?.previewUrl) return target.mirror.previewUrl;
             if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
             return multiPreviewUrl(target, state.config);
           })()}
@@ -5550,6 +5554,13 @@ const BranchCard = memo(function BranchCard({
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-warn" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
+              {branch.mirror ? (
+                <span
+                  className="shrink-0 rounded border border-info/40 bg-info-soft px-1 text-[0.5625rem] font-semibold leading-4 text-info"
+                  title={`父实例镜像：状态是采集时刻（${new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false })}）的状态，本实例上没有对应容器，只读`}
+                  data-testid="branch-mirror-badge"
+                >镜像</span>
+              ) : null}
               {/* PR 徽章 2026-08-05 收进右上角 ... 菜单：它挤占标题宽度，而标题
                   （分支名）才是这张卡最需要看清的东西。入口见 BranchMoreMenu。 */}
               {isAiOperated ? (

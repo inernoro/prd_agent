@@ -12,7 +12,7 @@ import {
   requestAgentAccess,
   resolveAgentPageContext,
 } from '@/lib/agent-onboarding';
-import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
+import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsInstance, type PreviewMirrorSummary } from '@/lib/api';
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
@@ -259,13 +259,29 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   // 立即生效、无探针竞态），仍用 /api/instance-mode 探针确认；探针失败按「非预览
   // 实例」处理，不打扰生产。
   const [previewInstance, setPreviewInstance] = useState(isChildPreviewCdsInstance());
+  const [mirrorSummary, setMirrorSummary] = useState<PreviewMirrorSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetchInstanceMode()
-      .then((mode) => { if (!cancelled) setPreviewInstance(Boolean(mode.previewInstance)); })
+      .then((mode) => { if (!cancelled) { setPreviewInstance(Boolean(mode.previewInstance)); setMirrorSummary(mode.mirror ?? null); } })
       .catch(() => { /* 老后端无此端点 / 网络抖动 → 视为生产实例 */ });
     return () => { cancelled = true; };
   }, []);
+  // 父实例经 forwarder 注入的徽章（#cds-widget）在托管态已经写着「CDS 托管 CDS · 部署 / docker
+  // 已禁用」，再画一条自己的 pill 就是底部两条并排（用户 2026-09-16：「这两个可以结合一下」）。
+  // 徽章脚本在 </body> 前注入、异步建节点，所以用 MutationObserver 盯 20 秒，出现即让位；
+  // 直连端口、没有父徽章时保留自己的 pill 兜底。
+  const [hostWidgetPresent, setHostWidgetPresent] = useState(false);
+  useEffect(() => {
+    if (!previewInstance || typeof document === 'undefined') return undefined;
+    const check = () => Boolean(document.getElementById('cds-widget'));
+    if (check()) { setHostWidgetPresent(true); return undefined; }
+    if (typeof MutationObserver === 'undefined') return undefined;
+    const mo = new MutationObserver(() => { if (check()) { setHostWidgetPresent(true); mo.disconnect(); } });
+    mo.observe(document.body, { childList: true });
+    const stop = window.setTimeout(() => mo.disconnect(), 20_000);
+    return () => { mo.disconnect(); window.clearTimeout(stop); };
+  }, [previewInstance]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
@@ -368,12 +384,13 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
           位置说明:顶部居中会遮住 TopBar 的快速部署输入框（真机截图实证），
           底部两侧有全局消息栈，底部居中保留给实例身份提示。
           遵守 mobile-layout-fallback:限宽 + truncate，不用 whitespace-nowrap 溢出。 */}
-      {previewInstance && (
-        <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2">
-          <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-1 shadow-sm">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-warn" aria-hidden />
-            <span className="truncate text-xs text-muted-foreground">
-              CDS 预览实例 — 仅用于验收 CDS 自身改动，部署 / docker 操作已禁用
+      {previewInstance && !hostWidgetPresent && (
+        <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2" data-testid="preview-instance-pill">
+          <div className="flex min-w-0 items-center gap-2 rounded-full border border-ok/40 bg-ok-soft px-3 py-1 shadow-sm">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-ok" aria-hidden />
+            <span className="truncate text-xs text-ok">
+              CDS 托管 CDS · 预览实例，只用于验收 CDS 自身改动；部署 / docker 操作已禁用
+              {mirrorSummary ? ` · 数据镜像自${mirrorSummary.label}，采集于 ${formatMirrorCapturedAt(mirrorSummary.capturedAt)}` : ''}
             </span>
           </div>
         </div>

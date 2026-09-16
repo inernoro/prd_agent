@@ -74,6 +74,8 @@ interface BranchDetailData {
   id: string;
   projectId: string;
   branch: string;
+  /** 父实例镜像来的只读分支（预览实例专用） */
+  mirror?: { capturedAt: string; source: string; previewUrl?: string; subject?: string };
   status: string;
   previewSlug?: string;
   previewUrl?: string;
@@ -2216,6 +2218,13 @@ export function BranchDetailDrawer({
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
                 {/* 2026-07-25 用户拍板：状态条并入标题行（不重要信息丢弃，不再单独占一格） */}
                 <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.625rem] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                {branch.mirror ? (
+                  <span
+                    className="shrink-0 rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[0.625rem] text-info"
+                    title="父实例镜像：这是采集时刻的状态，本实例上没有对应容器；日志、exec、实时 docker stats 在这里都拿不到"
+                    data-testid="drawer-mirror-badge"
+                  >镜像 · 采集于 {new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                ) : null}
                 {branch.commitSha ? <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
                 {(() => {
                   const svcList = Object.values(branch.services || {});

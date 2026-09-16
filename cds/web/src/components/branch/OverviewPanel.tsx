@@ -1558,7 +1558,9 @@ export function OverviewPanel({
                 ? [clockLabel(rangeStart), clockLabel(rangeEnd)]
                 : [windowText.replace('近 ', '') + '前', '现在']}
             >
-              <div className="relative">
+              {/* h-full 不能少：StackedAreaChart 的 svg 是 absolute inset-0，这层包裹没有高度它就是 0 高
+                  （本地起子实例截图抓到：path 数据都在、svgRect 高度 0，整张图不可见）。 */}
+              <div className="relative h-full" data-testid="cpu-plot-host">
                 <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} present={axisPresent} token={dataToken} />
                 {/*
                   刚部署的分支：30 分钟窗口里只有右边一小段有数据，图上是一根孤零零的尖峰、

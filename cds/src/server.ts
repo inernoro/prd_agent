@@ -123,6 +123,7 @@ import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } fro
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { isPreviewInstance } from './services/preview-instance.js';
+import { loadedPreviewMirrorSummary } from './services/preview-mirror.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import {
   recommendSelfUpdateTargetBranch,
@@ -2378,7 +2379,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // ── 实例模式（公开，登录前后都可读）──
   // 预览实例（CDS 托管 CDS）时前端据此渲染顶部提示，避免用户把演示实例当生产。
   app.get('/api/instance-mode', (_req, res) => {
-    res.json({ previewInstance: isPreviewInstance() });
+    // mirror：预览实例装入的父实例镜像摘要（采集时刻 / 来源 / 条数），生产实例恒为 null。
+    res.json({ previewInstance: isPreviewInstance(), mirror: isPreviewInstance() ? loadedPreviewMirrorSummary() : null });
   });
 
   // ── AI pairing endpoints (before auth, some are public) ──
