@@ -420,9 +420,20 @@ def analyze(
 
     changed_pages = sorted(path for path in files if fnmatch.fnmatch(path, PAGE_GLOB))
     mapped_pages = {str(surface["pagePath"]) for surface in surfaces}
+    tracked_page_set = set(tracked_files)
     for page_path in changed_pages:
-        if page_path not in mapped_pages:
-            _finding(findings, "P1", page_path, "页面发生变化，但双链图谱没有对应教程")
+        if page_path in mapped_pages:
+            continue
+        # 被这次改动**删掉**的页面不该再有教程映射——报「没有对应教程」等于要求
+        # 给一个不存在的页面登记教程。判据用 git 的在册清单而不是磁盘：语义是
+        # 「仓库里还有没有这个文件」，而不是「本地工作区当下有没有」。
+        #
+        # 这里不放宽任何约束：映射若还指着已删页面，上面那条 P0「映射页面不存在」
+        # 照旧红；它的教程章节若因此失去反链，requireTutorialReverseLink 照旧红；
+        # 在册却没登记的页面，_validate_graph 里那条扫全量在册文件的判据照旧红。
+        if page_path not in tracked_page_set:
+            continue
+        _finding(findings, "P1", page_path, "页面发生变化，但双链图谱没有对应教程")
 
     affected: list[dict[str, Any]] = []
     for surface in surfaces:

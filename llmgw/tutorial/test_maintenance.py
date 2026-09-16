@@ -130,11 +130,20 @@ class TutorialMaintenanceTests(unittest.TestCase):
         self.assertEqual("drift", report["status"])
         self.assertTrue(any(item["surface"] == "chapter-01" for item in report["findings"]))
 
-    def test_unmapped_page_is_p1_even_when_file_is_new(self) -> None:
-        report = self.run_scan(["llmgw/web/src/pages/NewSurfacePage.tsx"])
+    def test_unmapped_page_is_p1(self) -> None:
+        """在册却没登记教程的页面必须报 P1。
+
+        样本从虚构文件换成真实在册页面：判据现在要分辨「这个页面被删了」与
+        「这个页面在册但漏登记」，而一个 git 里根本不存在的路径在这两种读法下
+        长得一模一样——那样的样本测不准哪一种。
+        """
+        mapping = copy.deepcopy(self.mapping)
+        mapping["surfaces"] = [s for s in mapping["surfaces"] if s["id"] != "home"]
+        report = self.run_scan(["llmgw/web/src/pages/HomePage.tsx"], mapping=mapping)
 
         self.assertEqual("drift", report["status"])
         self.assertTrue(any(item["severity"] == "P1" for item in report["findings"]))
+        self.assertTrue(any("没有对应教程" in item["message"] for item in report["findings"]))
 
     def test_duplicate_route_fails_graph_loading(self) -> None:
         mapping = copy.deepcopy(self.mapping)
@@ -186,6 +195,27 @@ class TutorialMaintenanceTests(unittest.TestCase):
                 report = self.run_scan([], mapping=mapping, force_audit=True, seed=f"fault-{name}")
                 self.assertEqual("drift", report["status"])
                 self.assertTrue(report["findings"])
+
+    def test_deleted_page_in_the_diff_is_not_asked_for_a_tutorial(self) -> None:
+        """被这次改动删掉的页面不该再被要求有教程映射。
+
+        本轮真踩过：模型池那一屏退场后，它的路径仍在 PR 的变更集里，判据照旧要求
+        「给它登记教程」——而那是一个已经不存在的页面。放宽了什么？什么都没有：
+        反向用例证明另外两道闸照旧红。
+        """
+        deleted = "llmgw/web/src/pages/ModelPoolsPage.tsx"
+        self.assertFalse((REPO_ROOT / deleted).exists(), "这个页面又回来了，这条守卫在空跑")
+        report = self.run_scan([deleted])
+        self.assertEqual([], report["findings"])
+
+        # 反向一：映射还指着已删页面 → P0 照旧
+        stale = copy.deepcopy(self.mapping)
+        next(s for s in stale["surfaces"] if s["id"] == "logical-models")["pagePath"] = deleted
+        stale_report = self.run_scan([deleted], mapping=stale)
+        self.assertEqual("drift", stale_report["status"])
+        self.assertTrue(any(f["severity"] == "P0" for f in stale_report["findings"]))
+
+        # 反向二在 test_unmapped_page_is_p1：在册却没登记的页面照旧报 P1。
 
     def test_embedded_surface_needs_no_route_of_its_own(self) -> None:
         """「上游」是一页两段：外壳占路由，两段各自是 pages 文件但不占路由。

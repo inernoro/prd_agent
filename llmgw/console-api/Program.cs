@@ -3707,13 +3707,9 @@ app.MapPost("/gw/catalog-entries", async (HttpContext http, [FromBody] UpsertCat
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var canonical = body.CanonicalId!.Trim().ToLowerInvariant();
-    var dup = await gwCatalogEntries
-        .Find(Builders<BsonDocument>.Filter.And(
-            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
-            Builders<BsonDocument>.Filter.Eq("CanonicalId", canonical)))
-        .FirstOrDefaultAsync();
-    if (dup is not null)
-        return Json(ApiEnvelope<CatalogEntryItem>.Fail("ENTRY_EXISTS", $"已经补登过 {canonical}，去改它而不是再加一条"), jsonOptions, 409);
+    var conflict = await FindCatalogKeyConflictAsync(gwCatalogEntries, http, body, excludeId: null);
+    if (conflict is not null)
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail("ENTRY_EXISTS", conflict), jsonOptions, 409);
 
     var doc = BuildCatalogEntryDocument(body, tenantId, existing: null);
     await gwCatalogEntries.InsertOneAsync(doc);
@@ -3735,6 +3731,11 @@ app.MapPut("/gw/catalog-entries/{id}", async (HttpContext http, string id, [From
         Builders<BsonDocument>.Filter.Eq("_id", id));
     var existing = await gwCatalogEntries.Find(filter).FirstOrDefaultAsync();
     if (existing is null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("NOT_FOUND", "这条补登不存在"), jsonOptions, 404);
+
+    // 与新建同一份判据：改名或加别名同样可能撞上别人的键空间。
+    var conflict = await FindCatalogKeyConflictAsync(gwCatalogEntries, http, body, excludeId: id);
+    if (conflict is not null)
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail("ENTRY_EXISTS", conflict), jsonOptions, 409);
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
     var doc = BuildCatalogEntryDocument(body, tenantId, existing);
@@ -3760,6 +3761,53 @@ app.MapDelete("/gw/catalog-entries/{id}", async (HttpContext http, string id) =>
         changes: new BsonDocument { { "canonicalId", existing.GetStringOrEmpty("CanonicalId") } });
     return Json(ApiEnvelope<object>.Ok(new { deleted = true }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
+
+/// <summary>
+/// 补登的标识冲突检查：规范标识与等价写法是**同一个键空间**。
+///
+/// 查重只看 CanonicalId 是不够的：别名同样是查找键（<see cref="ModelCatalog.CatalogOverrides"/>
+/// 用它们建索引），两条补登各自的别名撞上时，索引按 Mongo 返回顺序覆盖——
+/// 同一个模型今天认出 A 的用途、明天认出 B 的，而且不报任何错。
+/// 更新端点原本一条都不查，等于留了一扇后门。
+/// </summary>
+static async Task<string?> FindCatalogKeyConflictAsync(
+    IMongoCollection<BsonDocument> entries,
+    HttpContext http,
+    UpsertCatalogEntryRequest body,
+    string? excludeId)
+{
+    var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        body.CanonicalId!.Trim().ToLowerInvariant(),
+    };
+    foreach (var alias in body.Aliases ?? [])
+    {
+        if (!string.IsNullOrWhiteSpace(alias)) keys.Add(alias.Trim().ToLowerInvariant());
+    }
+
+    var docs = await entries.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty)).ToListAsync();
+    foreach (var doc in docs)
+    {
+        var docId = doc.GetStringOrEmpty("_id");
+        if (!string.IsNullOrEmpty(excludeId) && string.Equals(docId, excludeId, StringComparison.Ordinal)) continue;
+        var taken = new List<string> { doc.GetStringOrEmpty("CanonicalId") };
+        taken.AddRange(GetStringArray(doc, "Aliases"));
+        foreach (var key in taken)
+        {
+            if (key.Length > 0 && keys.Contains(key))
+                return $"标识「{key}」已经被补登 {doc.GetStringOrEmpty("CanonicalId")} 占用了——" +
+                       "规范标识与等价写法共用同一个键空间，同一个键只能属于一条补登。去改那一条，别再加一条";
+        }
+    }
+
+    // 自己这条里面也不许重（canonicalId 与自己的某个别名同名，索引会自己盖自己）
+    var own = new List<string> { body.CanonicalId!.Trim().ToLowerInvariant() };
+    own.AddRange((body.Aliases ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()));
+    if (own.Count != own.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+        return "规范标识与等价写法里有重复的项，去掉重复的再保存";
+
+    return null;
+}
 
 /// <summary>
 /// 补登的写入校验。
@@ -11000,6 +11048,16 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             "PLATFORM_DISABLED", "Provider 已停用，请先启用后再导入模型"), jsonOptions, 409);
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
+    /*
+      名录门的判据必须和上游清单那一屏**同源**。
+
+      不同源的后果是这轮 Codex 抓到的那一条：管理员在清单里就地补登了一个模型，
+      刷新后那一行显示「名录内」，于是他不会去勾「放行名录外」，前端提交
+      allowOutsideCatalog:false——而这里若只查内置的 38 条，它立刻被拒，
+      用户看到的是「刚登记好的模型导不进来」，而且没有任何东西变红
+      （predicate-and-wiring-discipline 形状 3：同一个判断分裂成两份各自漂移）。
+    */
+    var importCatalogOverrides = await LoadCatalogOverridesAsync(http);
     var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
         .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
         .Where(x => x.Length > 0)
@@ -11057,7 +11115,8 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         // 拦在这里而不是拦在请求时，是因为请求只会打到池成员——进不了库就进不了池，
         // 「不允许请求白名单之外的模型」这件事由此成立，且用户在导入那一刻就知道，
         // 而不是等某次真实调用炸了才发现。
-        if (!ModelCatalog.Contains(modelId) && !entry.AllowOutsideCatalog)
+        var catalogEntry = ModelCatalog.Find(modelId, importCatalogOverrides);
+        if (catalogEntry is null && !entry.AllowOutsideCatalog)
         {
             result.Skipped++;
             result.BlockedOutsideCatalog.Add(modelId);
@@ -11065,7 +11124,8 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         }
 
         // 与发现端点同源：名录 > 上游声明 > 猜。用户在界面上勾过的用途仍然最优先。
-        var caps = (entry.Capabilities ?? ModelCatalog.ResolveCapabilities(modelId, null).Capabilities.ToList())
+        // 补登也必须喂进来——否则补登登记的用途白登记了，模型导进来用途还是猜的。
+        var caps = (entry.Capabilities ?? ModelCatalog.ResolveCapabilities(modelId, null, importCatalogOverrides).Capabilities.ToList())
             // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
             // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
             // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
@@ -11108,11 +11168,19 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
           否则运行时分不清「管理员显式放行的名录外模型」与「有人直接写库塞进来的」——
           两者在库里长得一模一样，那道门就只能一刀切，要么放过所有、要么拦死所有。
         */
+        //
+        // 判据是「在不在**内置**名录里」，不是「在不在名录里」——这一处刻意不带补登：
+        // 数据面那道门（ModelResolver.JudgeAsync）只认内置名录 + 这枚戳，它读不到
+        // 补登表（那是 console-api 自己的）。靠补登才算数的模型不盖戳的话，导进来了、
+        // 也进了池，第一次真实请求才被拦下——库里看得见、池里也在、就是调不通。
         if (!ModelCatalog.Contains(modelId))
         {
             doc["AllowedOutsideCatalog"] = true;
             doc["AllowedOutsideCatalogBy"] = TenantAccess.GetRequired(http).Username;
             doc["AllowedOutsideCatalogAt"] = now;
+            // 依据要分得清：补登是「已经登记过这个模型是什么」，勾放行是「明知没登记也要用」。
+            // 排障时「这个模型当初怎么进来的」得答得上来。
+            doc["AllowedOutsideCatalogReason"] = catalogEntry is not null ? "catalog-entry" : "admin-override";
         }
 
         if (entry.InputPricePerMillion is not null) doc["InputPricePerMillion"] = entry.InputPricePerMillion.Value;
@@ -11180,13 +11248,29 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
       同名已存在时**不新建公开名，只多挂一条线路**：这正是「一个模型允许多个来源」的自然入口，
       从另一个 Provider 再导一次 gpt-4o，得到的是 gpt-4o 的第二条线路，而不是第二个 gpt-4o。
     */
-    if ((body?.PublishToWhitelist ?? true) && result.Created > 0)
+    /*
+      发布范围是「这次请求点名的模型现在都在库里」，不是「这次新建了几个」。
+
+      写成 Created > 0 的后果，我自己的失败文案就踩过一次（见上面那段池同步的注释），
+      这里又踩了第二次：白名单发布抛异常时响应告诉用户「稍后重试导入」——可重试时
+      那些模型全部命中 Skipped、Created 归零，这个块整个被跳过，缺失的对外模型与线路
+      永远补不回来。又是一句用户照做也没用的话。
+
+      对已存在的模型重跑一遍是安全的：下面按 PublicIdNormalized 查已有对外模型，
+      线路也逐条判重，整段本来就是幂等的。
+    */
+    var publishTargets = result.CreatedModelIds
+        .Concat(result.SkippedModelIds)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    if ((body?.PublishToWhitelist ?? true) && publishTargets.Count > 0)
     {
         try
         {
             var createdDocs = await gwModels.Find(TenantAccess.Filter(http, fb.And(
                 fb.Eq("PlatformId", id),
-                fb.In("ModelName", result.CreatedModelIds)))).ToListAsync();
+                fb.In("ModelName", publishTargets)))).ToListAsync();
 
             foreach (var model in createdDocs)
             {

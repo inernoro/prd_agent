@@ -26,6 +26,16 @@ public class ModelCatalogOverrideGuardTests
 
     private static string Read(string relative) => File.ReadAllText(Path.Combine(RepoRoot(), relative));
 
+    /// <summary>切出一个端点的函数体。判据只看它自己那一段，别被同文件里别处的写法蒙混过去。</summary>
+    private static string Slice(string source, string endpointMarker)
+    {
+        var start = source.IndexOf(endpointMarker, StringComparison.Ordinal);
+        Assert.True(start > 0, $"找不到端点 {endpointMarker}，判据在空跑");
+        var end = source.IndexOf("RequireAuthorization", start, StringComparison.Ordinal);
+        Assert.True(end > start, $"端点 {endpointMarker} 没有闭合，切不出函数体");
+        return source[start..end];
+    }
+
     private static ModelCatalog.CatalogOverrides Overrides(params CatalogModel[] models)
         => ModelCatalog.CatalogOverrides.From(models);
 
@@ -199,6 +209,43 @@ public class ModelCatalogOverrideGuardTests
         var picker = Read("llmgw/web/src/components/ProviderSetup.tsx");
         Assert.Contains("getCatalogEntries()", picker);
         Assert.Contains("knownCapabilities={knownCapabilities}", picker);
+    }
+
+    /// <summary>
+    /// 补登喂给了**每一道**名录门，不是只喂给看得见的那一道。
+    ///
+    /// 这条是 2026-09-16 自动 review 抓出来的真缺陷，形状教科书级（形状 3：判据分裂）：
+    /// 我把补登接进了「上游清单那一屏」，却没接进同一页上的「导入」按钮。后果是
+    /// 管理员就地补登一个模型 → 那一行刷新后显示「名录内」→ 他不会去勾「放行名录外」
+    /// → 前端提交 allowOutsideCatalog:false → 导入端点只查内置的 38 条 → 当场拒掉。
+    /// 「刚登记好的模型导不进来」，而且不会有任何东西变红。
+    ///
+    /// 数据面那道门（prd-api 的 ModelResolver）读不到补登表，所以它换一种方式接上：
+    /// 靠补登才算数的模型入库时盖 AllowedOutsideCatalog 持久戳，那道门只认内置名录 + 这枚戳。
+    /// 不盖的话模型导进来了、也进了池，第一次真实请求才被拦——库里看得见、池里也在、就是调不通。
+    /// </summary>
+    [Fact]
+    public void 补登喂给了每一道名录门()
+    {
+        var console = Read("llmgw/console-api/Program.cs");
+        var import = Slice(console, "app.MapPost(\"/gw/platforms/{id}/models/import\"");
+
+        // 准入判定必须查补登，不能只查内置那 38 条
+        Assert.Contains("await LoadCatalogOverridesAsync(http)", import);
+        Assert.Contains("ModelCatalog.Find(modelId, importCatalogOverrides)", import);
+        Assert.DoesNotContain("!ModelCatalog.Contains(modelId) && !entry.AllowOutsideCatalog", import);
+
+        // 用途推断也得吃补登，否则补登登记的用途白登记
+        Assert.Contains("ModelCatalog.ResolveCapabilities(modelId, null, importCatalogOverrides)", import);
+
+        // 数据面那道门靠持久戳接上，且依据要分得清
+        Assert.Contains("doc[\"AllowedOutsideCatalog\"] = true", import);
+        Assert.Contains("\"catalog-entry\" : \"admin-override\"", import);
+
+        // 数据面那道门确实只认内置名录 + 这枚戳——上面那枚戳才有意义
+        var resolver = Read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("GatewayModelCatalog.Contains(modelName)", resolver);
+        Assert.Contains("IsAllowedOutsideCatalog", resolver);
     }
 
     /// <summary>

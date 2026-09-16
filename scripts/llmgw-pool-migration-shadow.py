@@ -78,27 +78,51 @@ def main() -> int:
     wanted = [x.strip() for x in args.model_types.split(",") if x.strip()]
     targets = [x for x in migrated if not wanted or x["modelType"] in wanted]
 
+    # 这个用途原来的默认是哪个模型——按用途记一份快照。
+    #
+    # 为什么不能只记「被测模型自己原来是不是默认」：把一个非默认模型设成 true 时，
+    # 服务端会把同用途的**原默认**清掉；只把被测模型设回 false，原默认就永远关着了。
+    # 跑一次「只读意图」的比对，线上路由被改了——这正是它最不该做的事。
+    default_of_type = {
+        x["modelType"]: x["id"]
+        for x in items
+        if x.get("isDefaultForType")
+    }
+
     print(f"比对 {len(targets)} 个用途，每个用途各解析两次（旧路走池、新路走模型）\n")
     mismatches: list[dict] = []
     for m in targets:
         model_type = m["modelType"]
         logical_id = m["id"]
         was_default = bool(m.get("isDefaultForType"))
+        original_default = default_of_type.get(model_type)
 
-        # 旧路：确保这个用途没有默认模型，解析必然回落到池
-        if was_default and not set_default(args.base, args.token, logical_id, False):
-            print(f"  [{model_type}] 无法临时关掉默认，跳过", file=sys.stderr)
-            continue
-        old = route_of(resolve(args.base, args.key, args.app_caller, model_type))
+        def restore() -> None:
+            """恢复到比对之前：被测模型设回原状态，再把这个用途原来的默认指回去。
 
-        # 新路：打开默认，解析走这个模型
-        if not set_default(args.base, args.token, logical_id, True):
-            print(f"  [{model_type}] 无法打开默认，跳过", file=sys.stderr)
-            continue
-        new = route_of(resolve(args.base, args.key, args.app_caller, model_type))
+            顺序要紧：先关被测的，再开原默认——反过来的话开原默认那一步会把被测的清掉，
+            结果一样，但中间有一瞬两个都是 true 的窗口。
+            """
+            set_default(args.base, args.token, logical_id, was_default)
+            if original_default and original_default != logical_id:
+                set_default(args.base, args.token, original_default, True)
 
-        # 恢复到比对之前的状态。比对是只读意图的动作，不该留下副作用。
-        set_default(args.base, args.token, logical_id, was_default)
+        try:
+            # 旧路：确保这个用途没有默认模型，解析必然回落到池
+            if was_default and not set_default(args.base, args.token, logical_id, False):
+                print(f"  [{model_type}] 无法临时关掉默认，跳过", file=sys.stderr)
+                continue
+            old = route_of(resolve(args.base, args.key, args.app_caller, model_type))
+
+            # 新路：打开默认，解析走这个模型
+            if not set_default(args.base, args.token, logical_id, True):
+                print(f"  [{model_type}] 无法打开默认，跳过", file=sys.stderr)
+                continue
+            new = route_of(resolve(args.base, args.key, args.app_caller, model_type))
+        finally:
+            # finally 而不是顺着往下写：上面任何一条 continue、任何一次网络异常，
+            # 都不能让线上默认停在比对中途的状态。
+            restore()
 
         # 三种结果要分开报，混成一句「不一致」会让最要紧的那种藏起来：
         #   新路没生效 —— 打开了默认，解析却仍然走池。多半是能力门没放行或者线路建歪了，

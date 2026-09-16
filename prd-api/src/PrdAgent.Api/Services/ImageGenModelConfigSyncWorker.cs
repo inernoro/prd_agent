@@ -1,5 +1,6 @@
 using MongoDB.Bson;
 using MongoDB.Driver;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
@@ -29,12 +30,29 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
     private readonly LlmGatewayDataContext? _gateway;
     private readonly ILogger<ImageGenModelConfigSyncWorker> _logger;
 
+    /// <summary>
+    /// 这个 prd-api 实例服务的租户。
+    ///
+    /// 为什么必须有它：<see cref="ImageGenModelAdapterRegistry"/> 是**进程全局**的一张表，
+    /// 键只有模型名。不按租户过滤就拉全表的话，A 租户配的 `nano-banana*` 会盖掉 B 租户的同名配置，
+    /// 而谁赢只取决于排序——一个租户改配置，另一个租户的生图尺寸就变了，没有任何提示
+    /// （cross-project-isolation：一份全局状态被多方共享）。
+    ///
+    /// 口径与 ModelResolver 的 CurrentTenantId 兜底同源（`LlmGateway:InternalTenantId`）：
+    /// 那边按请求取租户，这边是后台 Worker、没有请求上下文，能取的就是这个实例的归属。
+    /// </summary>
+    private readonly string _tenantId;
+
     public ImageGenModelConfigSyncWorker(
         ILogger<ImageGenModelConfigSyncWorker> logger,
+        IConfiguration configuration,
         LlmGatewayDataContext? gateway = null)
     {
         _logger = logger;
         _gateway = gateway;
+        _tenantId = configuration["LlmGateway:InternalTenantId"]?.Trim() is { Length: > 0 } tenantId
+            ? tenantId
+            : GatewayTenantDefaults.InternalTenantId;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -83,8 +101,13 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
     private async Task RefreshAsync(CancellationToken ct)
     {
         var collection = _gateway!.Database.GetCollection<GatewayImageModelConfig>("llmgw_imagegen_model_configs");
+        // 只认这个实例服务的租户 + 平台内置（TenantId 为空串，对所有租户生效）。
+        // 拉全表会让别的租户的配置进这张进程全局表，见 _tenantId 的注释。
+        var fb = Builders<GatewayImageModelConfig>.Filter;
         var docs = await collection
-            .Find(Builders<GatewayImageModelConfig>.Filter.Eq(x => x.Enabled, true))
+            .Find(fb.And(
+                fb.Eq(x => x.Enabled, true),
+                fb.Or(fb.Eq(x => x.TenantId, _tenantId), fb.Eq(x => x.TenantId, string.Empty))))
             .ToListAsync(ct);
 
         // 排序就是「哪条先匹配」的判据，必须在这里定死一次，而不是指望写入顺序：
@@ -119,6 +142,7 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
             new BsonDocument
             {
                 { "_id", "prd-api" },
+                { "TenantId", _tenantId },
                 { "SyncedAt", DateTime.UtcNow },
                 { "OverrideCount", ordered.Count },
                 { "BuiltinCount", ImageGenModelConfigs.Configs.Count },
