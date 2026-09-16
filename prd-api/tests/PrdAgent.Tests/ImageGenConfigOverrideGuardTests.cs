@@ -385,6 +385,10 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("这套范围无解", console);
         Assert.Contains("SmallestSide", console);
 
+        // 只配整除、不配最小值同样不许存：运行时向下取整，比除数小的边长会被抹成 0，
+        // 发出去是 1024x0 这种上游必拒的尺寸，而保存时什么都没说。
+        Assert.Contains("只配「边长必须整除」而不配最小宽高是不安全的", console);
+
         var section = Read("llmgw/web/src/components/ImageGenContractsSection.tsx");
         Assert.Contains("editing.draft.sizeConstraintType === 'range'", section);
         foreach (var field in new[] { "minWidth", "maxWidth", "minHeight", "maxHeight", "maxPixels", "mustBeDivisibleBy" })

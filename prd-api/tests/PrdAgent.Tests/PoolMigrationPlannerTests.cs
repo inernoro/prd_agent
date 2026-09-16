@@ -302,6 +302,34 @@ public class PoolMigrationPlannerTests
         Assert.Contains("再重跑一次搬迁", handler);
     }
 
+    /// <summary>
+    /// 池级授权边界也要搬，而且要说清它被冻结了。
+    ///
+    /// 旧世界 AllowedModelPoolIds 非空 = 这个调用方只能用这几个池，是一道硬边界；
+    /// 新世界的对应物挂在模型那一侧。搬迁此前只写空名单——空 = 对所有人开放，
+    /// 于是一个原本被限制在池 A 的调用方，搬完就能点名调用从池 B 搬来的模型：边界没了。
+    ///
+    /// 翻译方向相反，只能按当前这批调用方算一次，名单因此冻结在搬迁那一刻；
+    /// 而没有任何人设过限制时不许凭空造名单——那是用「更严」替换「没限制」，同样改了行为。
+    /// </summary>
+    [Fact]
+    public void 搬迁把池级授权限制翻译成模型的授权名单()
+    {
+        var handler = MigrationHandler();
+
+        Assert.Contains("\"AllowedModelPoolIds\"", handler);
+        Assert.Contains("restrictedCallers", handler);
+        Assert.Contains("unrestrictedCallerCodes", handler);
+        Assert.Contains("poolAllowlist", handler);
+        Assert.Contains("{ \"AllowedAppCallerCodes\", new BsonArray(poolAllowlist) }", handler);
+
+        // 没人设过限制就不写名单：那才是今天的真实行为
+        Assert.Contains("restrictedCallers.Count == 0", handler);
+
+        // 复用已有模型时不动它的名单，但要报出来——不然「授权边界搬过来了」是句半真的话
+        Assert.Contains("搬迁没有改它的授权名单", handler);
+    }
+
     private static string MigrationHandler()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");

@@ -4284,6 +4284,17 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
             if (divisorValue <= 1) return floor;
             return ((floor + divisorValue - 1) / divisorValue) * (long)divisorValue;
         }
+        // 只配整除、不配最小值：运行时 (side / divisor) * divisor 是**向下取整**，
+        // 比除数小的边长会被抹成 0——除数 512 撞上 1024x256 的请求，发出去的是 1024x0。
+        // 没有最小值把它托住，所以这种组合不许保存。
+        if (body.MustBeDivisibleBy is not null
+            && body.MinWidth is null && body.MinHeight is null)
+        {
+            return "只配「边长必须整除」而不配最小宽高是不安全的：运行时向下取整，"
+                + "比整除值小的边长会被抹成 0（例如整除 512 遇到 256 的高，发出去就是 0）。"
+                + "请同时给出最小宽高，或改用白名单尺寸";
+        }
+
         var smallestWidth = SmallestSide(body.MinWidth, effectiveDivisor);
         var smallestHeight = SmallestSide(body.MinHeight, effectiveDivisor);
         if (body.MaxWidth is { } widthCap && smallestWidth > widthCap)
@@ -4613,8 +4624,34 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
         .Project(Builders<BsonDocument>.Projection
             .Include("AppCallerCode")
             .Include("ModelPoolId")
-            .Include("DefaultModelPoolId"))
+            .Include("DefaultModelPoolId")
+            .Include("AllowedModelPoolIds"))
         .ToListAsync();
+
+    /*
+      授权边界也要搬，而且它和「默认绑定」不是一回事。
+
+      旧世界里 AllowedModelPoolIds 非空 = 这个调用方**只能用这几个池**，是一道硬边界。
+      新世界的对应物在模型那一侧（AllowedAppCallerCodes：谁能用这个模型）。
+      搬迁此前只写了空名单——空 = 对所有调用方开放，于是一个原本被限制在池 A 的调用方，
+      搬完就能点名调用从池 B 搬过来的模型。边界不是变松了，是没了。
+
+      翻译方向相反（一个挂在调用方、一个挂在模型），所以只能按当前这批调用方算一次：
+      允许用池 P 的 = 没设限制的所有人 + 显式把 P 写进自己名单的人。
+      这会把名单**冻结在此刻**——以后新增的调用方不在里面、需要人工加。代价要说出口，
+      不能让人以为它会自动跟着变（no-rootless-tree：不假装有一个会自己更新的根）。
+
+      没有任何调用方设过限制时不写名单：那才是今天的真实行为，凭空造一份名单
+      等于用「更严」替换「没限制」，同样是改行为。
+    */
+    var restrictedCallers = poolBoundCallers
+        .Where(d => GetStringArray(d, "AllowedModelPoolIds").Count > 0)
+        .ToList();
+    var unrestrictedCallerCodes = poolBoundCallers
+        .Where(d => GetStringArray(d, "AllowedModelPoolIds").Count == 0)
+        .Select(d => d.GetStringOrEmpty("AppCallerCode"))
+        .Where(x => x.Length > 0)
+        .ToList();
     // 本轮已经规划出去的认领：同一个调用方在同一个用途下只能被一个模型认领，
     // dry-run 要和 apply 说同一件事（与上面标识、默认那两张本轮索引同一个道理）。
     var plannedClaims = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -4669,6 +4706,17 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             IsDefaultForType = PoolMigrationPlanner.IsDefaultForType(pool),
             FromMapDomain = mapPoolIds.Contains(poolId),
         };
+
+        // 这个池的授权名单：只有当租户里确实有人设过池级限制时才写，否则保持「对所有人开放」。
+        var poolAllowlist = restrictedCallers.Count == 0
+            ? new List<string>()
+            : unrestrictedCallerCodes
+                .Concat(restrictedCallers
+                    .Where(d => GetStringArray(d, "AllowedModelPoolIds").Contains(poolId, StringComparer.Ordinal))
+                    .Select(d => d.GetStringOrEmpty("AppCallerCode")))
+                .Where(x => x.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
 
         // 这个池被哪些调用方绑成了专属/默认。两个字段都要认：
         // ModelPoolId 是专属绑定，DefaultModelPoolId 是「不点名时用它」，
@@ -4816,10 +4864,10 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
                     // 漏掉它的话，capability-audit 会把每一条刚搬过来的模型都算成「未版本化」，
                     // 一次成功的搬迁当场把发布闸判成不干净，而且要等控制台重启跑迁移才消。
                     { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
-                    // 池没有 AllowedAppCallerCodes——它靠 appCaller 反向绑定池 id。
-                    // 留空 = 当前租户全部 appCaller 可用，与池的实际可见范围一致；
-                    // 搬迁不替用户收紧授权，收紧是治理动作要有人拍板。
-                    { "AllowedAppCallerCodes", new BsonArray() },
+                    // 授权边界：租户里有人设过池级限制时把它翻译过来，没人设过就留空
+                    //（留空 = 对所有调用方开放，与「谁都没被限制」的今天一致）。
+                    // 见上面 restrictedCallers 那段：翻译会把名单冻结在此刻，代价已写在报告里。
+                    { "AllowedAppCallerCodes", new BsonArray(poolAllowlist) },
                     // 但「谁不点名时落到这里」必须转过来。那是池的专属绑定
                     //（调用方那一侧的 ModelPoolId / DefaultModelPoolId），
                     // 而新解析器只看模型这一侧的认领——不转的话，那些调用方在池退场后
@@ -4905,6 +4953,20 @@ app.MapPost("/gw/pools/migrate-to-models", async (HttpContext http, bool? apply)
             // 覆盖过去会把它们悄悄摘掉。
             if (claimsToTransfer.Count > 0)
                 reuseUpdate = reuseUpdate.AddToSetEach("DefaultForAppCallerCodes", claimsToTransfer);
+            // 复用已有模型时**不动**它的授权名单：那个模型可能是别人建的、名单也可能是人工调过的，
+            // 搬迁没有资格替它收紧或放宽。这一条要报出来，否则「授权边界搬过来了」是句半真的话。
+            if (poolAllowlist.Count > 0
+                && existing is not null
+                && existing.AsStringList("AllowedAppCallerCodes").Count == 0)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"这个池有池级授权限制，但它映射到的对外模型「{publicId}」已经存在且当前对所有调用方开放，"
+                        + "搬迁没有改它的授权名单（那可能是人工调过的）。需要这道边界的话，去白名单页手动设",
+                });
+            }
             if (!dryRun)
             {
                 await gwLogicalModels.UpdateOneAsync(

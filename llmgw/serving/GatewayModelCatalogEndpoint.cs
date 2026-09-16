@@ -227,10 +227,22 @@ public static class GatewayModelCatalogEndpoint
                     ["unit"] = perCall is not null ? "per_call" : "per_million_tokens",
                 };
                 if (via is { Length: > 0 }) routeNode["via"] = via;
-                if (perCall is not null) routeNode["call"] = perCall.Value.ToString("0.####");
-                if (prompt is not null) routeNode["prompt"] = prompt.Value.ToString("0.####");
-                if (completion is not null) routeNode["completion"] = completion.Value.ToString("0.####");
-                if (cached is not null) routeNode["cached_prompt"] = cached.Value.ToString("0.####");
+                if (perCall is not null)
+                {
+                    // 按次计费时只报按次价。
+                    //
+                    // 计价那一侧（GatewayCostCalculator）在有按次价时**完全不看** token 单价，
+                    // 这里若把两套价一起报出去，对方读到的是「两种都收」——他按这份清单估出来的
+                    // 费用比实际高，而清单与账单说的是两件事。报价要和收费同一个口径，
+                    // 不同口径的两份数字必然有一份是假的（形状 3：同一个判据分裂成两份）。
+                    routeNode["call"] = perCall.Value.ToString("0.####");
+                }
+                else
+                {
+                    if (prompt is not null) routeNode["prompt"] = prompt.Value.ToString("0.####");
+                    if (completion is not null) routeNode["completion"] = completion.Value.ToString("0.####");
+                    if (cached is not null) routeNode["cached_prompt"] = cached.Value.ToString("0.####");
+                }
                 var source = model.GetValue("PriceSource", BsonNull.Value);
                 if (source.IsString) routeNode["source"] = source.AsString;
                 var observedAt = model.GetValue("PriceObservedAt", BsonNull.Value);

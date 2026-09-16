@@ -170,6 +170,30 @@ public class GatewayWhitelistPublishingTests
     }
 
     /// <summary>
+    /// 对外报价与实际计价必须同一个口径：有按次价时只报按次价。
+    ///
+    /// 计价那一侧在有按次价时完全不看 token 单价。清单若把两套价一起报出去，
+    /// 对方读到的是「两种都收」，按它估出来的费用比实际高——清单与账单说的是两件事，
+    /// 而两份不同口径的数字里必然有一份是假的。
+    /// </summary>
+    [Fact]
+    public void 对外报价与计价同口径_按次计费不报token单价()
+    {
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        var start = endpoint.IndexOf("var routeNode = new JsonObject", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        var end = endpoint.IndexOf("pricedRoutes.Add(routeNode);", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var block = endpoint[start..end];
+
+        var callAt = block.IndexOf("routeNode[\"call\"]", StringComparison.Ordinal);
+        var promptAt = block.IndexOf("routeNode[\"prompt\"]", StringComparison.Ordinal);
+        Assert.True(callAt > 0 && promptAt > callAt,
+            "token 单价必须落在 perCall 的 else 分支里，不能与按次价并列报出去");
+        Assert.Contains("else", block);
+    }
+
+    /// <summary>
     /// 「已导入」与「已登上白名单」是两件事，界面要分开，且未登记的仍可再导一次。
     ///
     /// 能力认不出来的模型会被导入成物理模型、却不登白名单。若这一屏把「已导入」的行
