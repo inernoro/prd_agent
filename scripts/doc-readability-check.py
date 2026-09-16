@@ -11,6 +11,9 @@
 同时校验「引用可点击」：正文里提到另一篇 doc 文档时必须写成相对路径链接，
 不能写成一段不能点的行内代码；相对链接的目标必须真实存在（死链零容忍）。
 
+还校验「文档的主语是我们自己」：把提需求、下判断的那个人写成「用户」再转述他说了什么
+（「用户当时的原话是……」），属转述体，判据见 .claude/rules/doc-authorial-voice.md。
+
 本脚本只做机械判定（有没有、是不是人话形状），不判断内容好坏。
 存量欠账走棘轮：`scripts/fixtures/doc-readability-baseline.json` 记录当前欠账数，
 只许下降不许上升 —— 新文档必须合规，存量走到哪修到哪。
@@ -462,6 +465,7 @@ def per_file_debt() -> dict[str, dict[str, int]]:
             "bare": len(find_bare_refs(text, known)),
             "impl": impl,
             "src": src,
+            "voice": len(scan_voice(text, doc_type(name))),
         }
         if any(entry.values()):
             out[name] = entry
@@ -524,6 +528,52 @@ def body_lines(text: str):
             elif not raw.startswith((" ", "\t")):
                 in_list = False
         yield idx + 1, raw
+
+
+# 转述体：把提需求、下判断的那个人写成「用户」再转述他说了什么。判据与改写范例见
+# .claude/rules/doc-authorial-voice.md。这里只认三种最硬的形状，宁可窄不可误伤：
+#   A 「用户的原话 / 口述 / 说法」——直接点名是在转述
+#   B 「用户」+ 时间或次数修饰 +言语动词（当时说、又反馈、第 3 次指出、反复抱怨）
+#   C 「用户」+ 言语动词 + 紧跟引号或冒号——后面就是被转述的那句话
+# 「用户打开页面」「每个用户的数据互不可见」这类把用户当角色的写法一概不碰。
+_VOICE_SPEECH = "说|讲|提出|提了|提过|反馈|指出|点破|吐槽|抱怨|要求|追问|强调|纠正|批评"
+_VOICE_MOD = r"当时|后来|随后|又|再|也|当场|明确|连续|反复|多次|两次|三次|第\s*\d+\s*次|本人|亲自"
+VOICE_RE = re.compile(
+    rf"用户(?:{_VOICE_MOD})*(?:的)?(?:原话|口述|说法)"
+    rf"|用户(?:{_VOICE_MOD})+(?:的)?(?:{_VOICE_SPEECH})"
+    rf"|用户(?:{_VOICE_SPEECH})[^。；\n]{{0,6}}[：:「“]"
+)
+# 验收报告与周报本来就是写给别人看的交付物，出现「用户反馈」是正常叙事（规则里的例外）。
+VOICE_EXEMPT_TYPES = frozenset({"report"})
+
+
+def scan_voice(text: str, doc_t: str) -> list[str]:
+    """这篇里的转述体片段。复用 body_lines，所以围栏与缩进代码块里的示例不算。"""
+    if doc_t in VOICE_EXEMPT_TYPES:
+        return []
+    out: list[str] = []
+    for lineno, raw in body_lines(text):
+        for m in VOICE_RE.finditer(raw):
+            out.append(f"{lineno}:{m.group(0)}")
+    return out
+
+
+def scan_voices() -> tuple[dict[str, int], list[str]]:
+    """按类型统计转述体。"""
+    per_type = {t: 0 for t in TYPES}
+    detail: list[str] = []
+    for name in sorted(os.listdir(DOC_DIR)):
+        if not name.endswith(".md"):
+            continue
+        t = doc_type(name)
+        if t not in TYPES:
+            continue
+        with open(os.path.join(DOC_DIR, name), encoding="utf-8") as fh:
+            hits = scan_voice(fh.read(), t)
+        per_type[t] += len(hits)
+        if hits:
+            detail.append(f"doc/{name} — 转述体 {len(hits)} 处：{hits[0].split(':', 1)[1]}……")
+    return per_type, detail
 
 
 def link_spans(line: str) -> list[tuple[int, int]]:
@@ -1039,7 +1089,8 @@ def scan() -> tuple[dict[str, dict[str, int]], dict[str, list[str]]]:
     return stats, missing, bad_prefix
 
 
-_DEBT_WORDS = {"missing": "缺导读", "bare": "裸引用", "impl": "实现代码", "src": "散落源码路径"}
+_DEBT_WORDS = {"missing": "缺导读", "bare": "裸引用", "impl": "实现代码", "src": "散落源码路径",
+               "voice": "转述体"}
 
 
 def _debt_words(entry: dict[str, int]) -> str:
@@ -1050,6 +1101,7 @@ def _debt_words(entry: dict[str, int]) -> str:
 def _normalize_baseline(data: dict) -> dict:
     return {"missing": data.get("missing", {}), "bare_refs": data.get("bare_refs", {}),
             "impl_code": data.get("impl_code", {}), "source_refs": data.get("source_refs", {}),
+            "voice": data.get("voice", {}),
             "rules_missing": data.get("rules_missing", 0),
             "skills_missing": data.get("skills_missing", 0),
             "files": data.get("files", {})}
@@ -1113,7 +1165,7 @@ def baseline_regressions(base: dict, submitted: dict) -> list[str]:
     能让 CI 拿放宽后的基线跟自己比，判据形同虚设。所以先比基线本身。
     """
     bad: list[str] = []
-    for key in ("missing", "bare_refs", "impl_code", "source_refs"):
+    for key in ("missing", "bare_refs", "impl_code", "source_refs", "voice"):
         for doc_t, allowed in base.get(key, {}).items():
             now = submitted.get(key, {}).get(doc_t, 0)
             if now > allowed:
@@ -1133,8 +1185,15 @@ def baseline_regressions(base: dict, submitted: dict) -> list[str]:
             continue
         if isinstance(now_val, dict) and isinstance(base_val, dict):
             for k, v in now_val.items():
-                if v > base_val.get(k, 0):
-                    bad.append(f"{fname}.{k}: 目标分支 {base_val.get(k, 0)} → 本分支 {v}")
+                # 目标分支那条记录里**整个没有这个键**，说明这一维是本分支新引入的
+                # （逐篇明细是 per_file_debt 一次性写全的，不会漏键）。新维度的存量
+                # 一定是「从无到有」，拿 0 当上限会把引入它的那个 PR 自己判红。
+                # 这一维的存量只在引入时放行一次；等基线合进目标分支，往后每篇都带着
+                # 这个键，再涨就照常拦。
+                if k not in base_val:
+                    continue
+                if v > base_val[k]:
+                    bad.append(f"{fname}.{k}: 目标分支 {base_val[k]} → 本分支 {v}")
         elif isinstance(now_val, (int, float)) and isinstance(base_val, (int, float)):
             if now_val > base_val:
                 bad.append(f"{fname}: 目标分支 {base_val} → 本分支 {now_val}")
@@ -1144,14 +1203,17 @@ def baseline_regressions(base: dict, submitted: dict) -> list[str]:
 def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
                    impl: dict[str, int], srcs: dict[str, int],
                    rules_missing: int = 0, skills_missing: int = 0,
-                   files: dict[str, dict[str, int]] | None = None) -> None:
+                   files: dict[str, dict[str, int]] | None = None,
+                   voice: dict[str, int] | None = None) -> None:
     payload = {
         "_comment": (
             "doc/ 可读性棘轮基线。判据见 doc/rule.doc.readability.md。"
             "missing = 缺导读三行的篇数；bare_refs = 本该可点却写成行内代码的引用处数；"
             "impl_code = 正文里实现语言代码块的行数；source_refs = 正文里散落的源码路径引用数"
             "（集中列在「实现来源」小节里的不计）；rules_missing = .claude/rules 里缺导读两行的条数；"
-            "skills_missing = 技能 frontmatter 缺 name/description 的个数。"
+            "skills_missing = 技能 frontmatter 缺 name/description 的个数；"
+            "voice = 转述体处数（把提需求的人写成「用户」再转述他说了什么，判据见 "
+            ".claude/rules/doc-authorial-voice.md；report 类是交付物，按规则豁免）。"
             "files = 逐篇欠账明细（missing/bare/impl/src），用来拦住「修好一篇旧的、同时新增一篇新的」"
             "这种总数不变的偷换：不在这张表里的文件一旦欠账即判红。"
             "数值只许下降：修好存量就跑 --update-baseline "
@@ -1161,6 +1223,7 @@ def write_baseline(stats: dict[str, dict[str, int]], bare: dict[str, int],
         "bare_refs": {t: bare.get(t, 0) for t in TYPES},
         "impl_code": {t: impl.get(t, 0) for t in TYPES},
         "source_refs": {t: srcs.get(t, 0) for t in TYPES},
+        "voice": {t: (voice or {}).get(t, 0) for t in TYPES},
         "rules_missing": rules_missing,
         "skills_missing": skills_missing,
         "files": files or {},
@@ -1260,6 +1323,7 @@ def main() -> int:
     stats, missing, bad_prefix = scan()
     bare_per_type, bare_detail, dead_detail = scan_links()
     impl_per_type, src_per_type, body_detail = scan_bodies()
+    voice_per_type, voice_detail = scan_voices()
     rules_total, rules_missing, rules_detail = scan_rules()
     file_debt = per_file_debt()
     skills_total, skills_missing, skills_detail = scan_skills()
@@ -1268,19 +1332,22 @@ def main() -> int:
     total_bare = sum(bare_per_type.values())
     total_impl = sum(impl_per_type.values())
     total_src = sum(src_per_type.values())
+    total_voice = sum(voice_per_type.values())
 
     if args.update_baseline:
         write_baseline(stats, bare_per_type, impl_per_type, src_per_type,
-                       rules_missing, skills_missing, file_debt)
+                       rules_missing, skills_missing, file_debt, voice_per_type)
         print(f"基线已更新：{total_missing} / {total} 篇仍欠导读三行；裸引用 {total_bare} 处；"
               f"实现代码 {total_impl} 行；散落源码路径 {total_src} 处；"
-              f"规则欠导读 {rules_missing} 条；技能 frontmatter 欠账 {skills_missing} 个")
+              f"规则欠导读 {rules_missing} 条；技能 frontmatter 欠账 {skills_missing} 个；"
+              f"转述体 {total_voice} 处")
         return 0
 
     if args.json:
         print(json.dumps({"stats": stats, "missing": missing,
                           "bare_refs": bare_per_type, "dead_links": dead_detail,
                           "impl_code": impl_per_type, "source_refs": src_per_type,
+                          "voice": voice_per_type,
                           "rules": {"total": rules_total, "missing": rules_missing,
                                     "detail": rules_detail},
                           "skills": {"total": skills_total, "missing": skills_missing,
@@ -1298,6 +1365,7 @@ def main() -> int:
           f"{(total - total_missing) / total * 100:>7.0f}%")
     print(f"\n引用可点击：裸引用 {total_bare} 处，死链 {len(dead_detail)} 处")
     print(f"正文实现细节：实现语言代码 {total_impl} 行，散落源码路径 {total_src} 处")
+    print(f"文档口吻：转述体 {total_voice} 处（把提需求的人写成「用户」再转述）")
     print(f"规则与技能：{rules_total} 条规则欠导读 {rules_missing} 条；"
           f"{skills_total} 个技能 frontmatter 欠账 {skills_missing} 个")
 
@@ -1309,6 +1377,8 @@ def main() -> int:
         for line in bare_detail:
             print(line)
         for line in body_detail:
+            print(line)
+        for line in voice_detail:
             print(line)
         for line in dead_detail:
             print(line)
@@ -1402,11 +1472,25 @@ def main() -> int:
             print("    修法：python3 scripts/doc-readability-check.py --fix-links", file=sys.stderr)
             return 1
 
+        # 转述体的存量分布在 26 篇里，按字母序列前十篇的话，超标的那一篇多半根本不在
+        # 第一屏——读的人会跑去改一篇合规的旧文档。所以先按逐篇基线筛出真正涨了的。
+        _base_files = load_baseline().get("files", {})
+        voice_over_detail = [
+            line for line in voice_detail
+            if file_debt.get(line.split(" — ")[0][4:], {}).get("voice", 0)
+            > _base_files.get(line.split(" — ")[0][4:], {}).get("voice", 0)
+        ] or voice_detail
+        detail_of = {"impl_code": body_detail, "source_refs": body_detail,
+                     "voice": voice_over_detail}
         for key, actual_map, label, howto in (
             ("impl_code", impl_per_type, "正文实现代码",
              "实现代码不进文档——删掉，或换成契约表 / 数据流说明；AI 需要细节时直接读源码"),
             ("source_refs", src_per_type, "散落的源码路径引用",
              "把路径集中到文末「实现来源」小节，正文用人话讲清职责与数据流"),
+            ("voice", voice_per_type, "转述体",
+             "文档的主语是我们自己：把「用户当时的原话是……」换成我方判断，"
+             "事故与日期照留，去掉的只是引号和「用户说」"
+             "（改写范例见 .claude/rules/doc-authorial-voice.md）"),
         ):
             over = [(t, baseline[key].get(t, 0), actual_map[t])
                     for t in TYPES if actual_map[t] > baseline[key].get(t, 0)]
@@ -1415,7 +1499,7 @@ def main() -> int:
                       file=sys.stderr)
                 for t, allowed, actual in over:
                     print(f"  {t}: 基线 {allowed} → 当前 {actual}", file=sys.stderr)
-                for line in body_detail[:10]:
+                for line in detail_of[key][:10]:
                     print(f"    {line}", file=sys.stderr)
                 return 1
 
@@ -1427,7 +1511,7 @@ def main() -> int:
             if was is None:
                 newly.append(f"doc/{name} — {_debt_words(cur)}")
                 continue
-            up = [k for k in ("missing", "bare", "impl", "src") if cur[k] > was.get(k, 0)]
+            up = [k for k in ("missing", "bare", "impl", "src", "voice") if cur[k] > was.get(k, 0)]
             if up:
                 worse.append(f"doc/{name} — {_debt_words({k: cur[k] for k in up})}"
                              f"（基线 {_debt_words({k: was.get(k, 0) for k in up})}）")
@@ -1477,13 +1561,15 @@ def main() -> int:
         bare_improved = sum(baseline["bare_refs"].get(t, 0) for t in TYPES) - total_bare
         impl_improved = sum(baseline["impl_code"].get(t, 0) for t in TYPES) - total_impl
         src_improved = sum(baseline["source_refs"].get(t, 0) for t in TYPES) - total_src
-        gains = improved + bare_improved + impl_improved + src_improved
+        voice_improved = sum(baseline.get("voice", {}).get(t, 0) for t in TYPES) - total_voice
+        gains = improved + bare_improved + impl_improved + src_improved + voice_improved
         if gains > 0:
             print(f"\n[OK] 比基线少 {improved} 篇缺导读、少 {bare_improved} 处裸引用、"
-                  f"少 {impl_improved} 行实现代码、少 {src_improved} 处源码路径。"
+                  f"少 {impl_improved} 行实现代码、少 {src_improved} 处源码路径、"
+                  f"少 {voice_improved} 处转述体。"
                   f"修完记得跑 --update-baseline 把基线压低。")
         else:
-            print("\n[OK] 六项欠账均未上升，无死链。")
+            print("\n[OK] 七项欠账均未上升，无死链。")
 
     return 0
 

@@ -524,8 +524,8 @@ print("[3.55] 棘轮记到文件级，拦得住拆东墙补西墙")
 # Codex review #1311 P2：只比总数的话，「修好一篇旧的 + 新增一篇不合规的」总数持平、CI 照绿。
 debt = checker.per_file_debt()
 check(isinstance(debt, dict) and all(
-    set(v) == {"missing", "bare", "impl", "src"} for v in debt.values()),
-    "逐篇欠账明细结构正确（missing/bare/impl/src）")
+    set(v) == {"missing", "bare", "impl", "src", "voice"} for v in debt.values()),
+    "逐篇欠账明细结构正确（missing/bare/impl/src/voice）")
 check(all(any(v.values()) for v in debt.values()), "零欠账的文件不进明细表")
 
 baseline = json.load(open(os.path.join(REPO_ROOT, "scripts", "fixtures",
@@ -1276,6 +1276,57 @@ GUARDED_INPUTS = [
     "scripts/fixtures/doc-readability-baseline.json",
     "scripts/tests/doc-readability-ratchet.test.py",
 ]
+
+
+print("[7] 转述体判据（条款 9 / doc-authorial-voice）")
+
+# 判据本身：正反例各钉死。守卫不钉正例，下一个人把正则收窄一点就静默失效；
+# 不钉反例，「用户打开页面」这种合法角色主语会被误伤，规则第一天就会被绕开。
+_VOICE_HITS = [
+    "用户当时的原话是「我看不懂你的首页」。",   # 引发这条规则的那一句，必须命中
+    "用户原话：base64 只是当时没有别的办法",
+    "用户反复反馈按钮图标发虚",
+    "用户第 9 次指出这个问题",
+    "用户说：「这就很扯淡」",
+    "用户后来又反馈说这里还是不对",
+]
+_VOICE_PASSES = [
+    "用户打开页面后三秒内要知道这是什么",
+    "每个用户的私有数据互不可见",
+    "需要用户反馈真实试用问题",
+    "我们判定它不合格",
+    "用户名与密码分开存",
+]
+for _t in _VOICE_HITS:
+    check(bool(checker.VOICE_RE.search(_t)), f"转述体判据命中：{_t[:18]}")
+for _t in _VOICE_PASSES:
+    check(not checker.VOICE_RE.search(_t), f"合法角色主语不误伤：{_t[:18]}")
+
+# report 是交付物，按规则豁免；豁免必须落在扫描函数里，不能只写在文档上
+check(checker.scan_voice("用户原话：随便一句", "design"), "design 类要统计转述体")
+check(not checker.scan_voice("用户原话：随便一句", "report"), "report 类按规则豁免")
+
+# 围栏里的示例不算——规则文档要举反例，举例不该把自己判红
+_fenced = "```\n用户当时的原话是「随便一句」\n```\n"
+check(not checker.scan_voice(_fenced, "design"), "围栏里的转述体示例不计入")
+
+# 基线接线：这一维必须真的进了基线与逐篇明细，否则闸门只是打印一个数字
+_bl = json.load(open(checker.BASELINE_PATH, encoding="utf-8"))
+check(set(_bl.get("voice", {})) == set(checker.TYPES), "基线记录了转述体欠账（按七类分）")
+check(_bl.get("voice", {}).get("report", 0) == 0, "report 类在基线里恒为 0（豁免）")
+check(any("voice" in v for v in _bl.get("files", {}).values()),
+      "逐篇明细里带 voice 键（文件级棘轮才拦得住债务挪位）")
+check(sum(_bl.get("voice", {}).values()) == sum(checker.scan_voices()[0].values()),
+      "基线里的转述体总数与当前扫描一致（基线没漂）")
+
+# 新维度只放行一次：同一维度在目标分支已有记录时，涨了必须报出来
+_base = {"files": {"a.md": {"missing": 0, "bare": 0, "impl": 0, "src": 1, "voice": 2}}}
+_now = {"files": {"a.md": {"missing": 0, "bare": 0, "impl": 0, "src": 1, "voice": 3}}}
+check(any("voice" in r for r in checker.baseline_regressions(_base, _now)),
+      "目标分支已有 voice 记录时，涨了会被判红")
+_base_old = {"files": {"a.md": {"missing": 0, "bare": 0, "impl": 0, "src": 1}}}
+check(not any("voice" in r for r in checker.baseline_regressions(_base_old, _now)),
+      "目标分支还没有 voice 这一维时放行一次（引入维度的 PR 不会自己判红）")
 
 
 def _docs_filter_patterns() -> list[str]:
