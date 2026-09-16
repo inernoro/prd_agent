@@ -1541,6 +1541,24 @@ db.mcp_usage_counters.createIndex(
 // db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
 
 
+// collection: bookshelf_progress
+// 藏书阁的阅读进度：一个人一行（已读书目、书摘笔记、结业考结果）。
+// 唯一索引不是为了查得快，是为了兜住并发首存：保存走的是 upsert，
+// 两个请求同时为同一个人插入时，代码路径挡不住两行都写进去——之后
+// FirstOrDefault 读到哪一行是随机的，团队看板还会把同一个人数两遍。
+//
+// 用 ensureTightenedUniqueIndex 而不是直接 createIndex：库里若已经有
+// 重复行，它会先把重复组报出来让人清理，而不是抛一个没头没尾的建索引失败。
+ensureTightenedUniqueIndex("bookshelf_progress",
+  { "UserId": 1 },
+  {
+    name: "idx_bookshelf_progress_user",
+    unique: true
+  }
+)
+// end collection: bookshelf_progress
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

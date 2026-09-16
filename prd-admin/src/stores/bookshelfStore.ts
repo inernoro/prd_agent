@@ -20,6 +20,7 @@
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { registerLogoutReset } from '@/stores/authStore';
 import {
   getMyBookshelfProgress,
   saveMyBookshelfProgress,
@@ -224,3 +225,28 @@ export const useBookshelfStore = create<BookshelfState>()(
     },
   ),
 );
+
+/*
+ * 登出时清空。这份进度持久化在 localStorage（`bookshelf-progress`），而
+ * `authStore.logout()` 只 `sessionStorage.clear()`——清不掉它。不清的后果是
+ * A 登出、B 在同一台机器登录，B 先看到的是 A 的已读、笔记与考试成绩；
+ * 若首次 GET 还没回来 B 就动了手，A 的快照还会被 PUT 进 B 的账号。
+ *
+ * 排着的那次防抖推送也要一起掐掉：它送的是「当前完整快照」，在换号之后触发
+ * 就是把上一位用户的数据写进新账号——和上面那条是同一个事故的两个入口。
+ *
+ * 判据见 `no-localstorage.md`：服务器权威数据不进 localStorage。这份进度确实是
+ * 服务器权威的（有 GET/PUT 同步），留在 localStorage 是为了离线兜底那条路径，
+ * 所以补的是「登出即清」而不是换存储——换成 sessionStorage 会让「关掉浏览器
+ * 再回来还在」这句承诺失效。
+ */
+registerLogoutReset(() => {
+  if (pushTimer) { clearTimeout(pushTimer); pushTimer = null; }
+  useBookshelfStore.setState({
+    readBookIds: [],
+    bookNotes: {},
+    examResults: {},
+    syncState: 'local',
+    failedAttempts: 0,
+  });
+});
