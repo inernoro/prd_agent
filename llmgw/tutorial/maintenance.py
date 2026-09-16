@@ -200,6 +200,7 @@ def _validate_graph(
     seen_pages: set[str] = set()
     seen_routes: set[str] = set()
     mapped_pages: set[str] = set()
+    embedded_hosts: dict[str, str] = {}
 
     for surface in surfaces:
         surface_id = surface.get("id")
@@ -219,7 +220,21 @@ def _validate_graph(
         mapped_pages.add(page_path)
         if not (repo_root / page_path).is_file():
             _finding(findings, "P0", surface_id, f"映射页面不存在: {page_path}")
-        if not isinstance(routes, list) or not routes:
+
+        # 内嵌面：一个路由下摆着两段（「上游」那一页里的自有上游与转接上游），
+        # 每段自己是一个 pages/ 文件、有自己的教程章节，但它们不占路由——
+        # 路由归外壳。不认这种形状的话只有两条路：给内嵌页硬编一个不存在的路由
+        # （判据立刻说「未在应用注册」），或者干脆不登记它（判据立刻说「没有映射」）。
+        # 认它之后，「一个路由只有一个面」「每个页面文件都要登记」两条约束都不放宽。
+        embedded_in = surface.get("embeddedIn")
+        if embedded_in is not None and (not isinstance(embedded_in, str) or not embedded_in):
+            raise MaintenanceError(f"{surface_id}: embeddedIn 必须是非空的 surface id")
+        if embedded_in:
+            embedded_hosts[surface_id] = embedded_in
+            if routes:
+                raise MaintenanceError(
+                    f"{surface_id}: 内嵌面不声明自己的路由，路由归外壳 {embedded_in}")
+        elif not isinstance(routes, list) or not routes:
             _finding(findings, "P1", surface_id, "没有声明可验收路由")
         else:
             for route in routes:
@@ -262,6 +277,12 @@ def _validate_graph(
             for evidence_id in evidence_ids:
                 if evidence_id not in registered:
                     _finding(findings, "P1", surface_id, f"截图证据未注册到对应教程: {source_id}/{evidence_id}")
+
+    for embedded_id, host_id in embedded_hosts.items():
+        if host_id not in seen_ids:
+            raise MaintenanceError(f"{embedded_id}: embeddedIn 指向不存在的 surface {host_id}")
+        if host_id in embedded_hosts:
+            raise MaintenanceError(f"{embedded_id}: 外壳 {host_id} 自己也是内嵌面，路由没有落点")
 
     app_path = repo_root / "llmgw/web/src/App.tsx"
     if app_path.is_file():
@@ -315,7 +336,12 @@ def _random_audit(
         surface_id = str(surface["id"])
         page_path = str(surface["pagePath"])
         record(surface_id, "page-exists", (repo_root / page_path).is_file(), page_path)
+        # 内嵌面的路由归外壳，抽检就去外壳上取——否则它在抽检里永远是红的，
+        # 而那个红不指向任何真实缺陷。
         routes = surface.get("routes", [])
+        if not routes and surface.get("embeddedIn"):
+            host = next((x for x in surfaces if str(x.get("id")) == str(surface.get("embeddedIn"))), None)
+            routes = host.get("routes", []) if host else []
         record(surface_id, "routes", bool(routes) and all(str(route).startswith("/") for route in routes), ", ".join(routes))
         source_ids = surface.get("tutorialSourceIds", [])
         record(surface_id, "tutorial-sources", all(source_id in sources and sources[source_id].is_file() for source_id in source_ids), ", ".join(source_ids))

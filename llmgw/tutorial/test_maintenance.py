@@ -187,6 +187,44 @@ class TutorialMaintenanceTests(unittest.TestCase):
                 self.assertEqual("drift", report["status"])
                 self.assertTrue(report["findings"])
 
+    def test_embedded_surface_needs_no_route_of_its_own(self) -> None:
+        """「上游」是一页两段：外壳占路由，两段各自是 pages 文件但不占路由。
+
+        不认这种形状的话只有两条死路——给内嵌段硬编一个不存在的路由（判据立刻说
+        「未在应用注册」），或者不登记它（判据立刻说「没有映射」）。这条钉住那个
+        分支真的被走到了：内嵌段没有 routes，而整张图仍然干净。
+        """
+        embedded = [s for s in self.mapping["surfaces"] if s.get("embeddedIn")]
+        self.assertTrue(embedded, "映射里已经没有内嵌面了，这条守卫在空跑")
+        for surface in embedded:
+            self.assertNotIn("routes", surface, f"{surface['id']} 是内嵌面，不该自己声明路由")
+            host = next(x for x in self.mapping["surfaces"] if x["id"] == surface["embeddedIn"])
+            self.assertTrue(host.get("routes"), f"外壳 {host['id']} 必须占着路由")
+
+        report = self.run_scan([], force_audit=True, seed="embedded-clean")
+        self.assertEqual("skipped", report["status"])
+        self.assertEqual([], report["findings"])
+
+    def test_embedded_surface_faults_are_all_detected(self) -> None:
+        """内嵌这条分支自己的三种坏法，逐个必须报出来。"""
+        host_missing = copy.deepcopy(self.mapping)
+        next(s for s in host_missing["surfaces"] if s["id"] == "providers")["embeddedIn"] = "no-such-surface"
+
+        host_is_embedded = copy.deepcopy(self.mapping)
+        next(s for s in host_is_embedded["surfaces"] if s["id"] == "upstreams")["embeddedIn"] = "providers"
+
+        embedded_claims_route = copy.deepcopy(self.mapping)
+        next(s for s in embedded_claims_route["surfaces"] if s["id"] == "providers")["routes"] = ["/platforms"]
+
+        for name, mapping in [
+            ("host-missing", host_missing),
+            ("host-is-embedded", host_is_embedded),
+            ("embedded-claims-route", embedded_claims_route),
+        ]:
+            with self.subTest(name=name):
+                with self.assertRaises(MaintenanceError):
+                    self.run_scan([], mapping=mapping, force_audit=True, seed=f"embedded-{name}")
+
 
 if __name__ == "__main__":
     unittest.main()
