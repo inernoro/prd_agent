@@ -4655,12 +4655,7 @@ app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
                 new BsonDocument("$ifNull", new BsonArray { "$InputTokens", 0 }),
                 new BsonDocument("$ifNull", new BsonArray { "$OutputTokens", 0 }),
             })) },
-        { "usd", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
-            {
-                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Priced }),
-                new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
-                0,
-            })) },
+        { "usd", LogCostAggregation.UsdSum() },
         // 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
         //
         // stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——
@@ -4668,16 +4663,7 @@ app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
         // 报「0 笔未计价」，而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外，
         // 于是成本看起来偏低、而缺价治理这件事看起来已经做完了（形状 1：判据比它该管的范围窄）。
         // 判据取值与 GatewayCostStatusNames 那张表同源，见 2861 行那处过滤——那里两种都算。
-        { "unpriced", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
-            {
-                new BsonDocument("$in", new BsonArray
-                {
-                    "$CostStatus",
-                    new BsonArray { GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency },
-                }),
-                1,
-                0,
-            })) },
+        { "unpriced", LogCostAggregation.UnpricedCount() },
     });
 
     var pipeline = new EmptyPipelineDefinition<BsonDocument>()
@@ -4795,6 +4781,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
         .Find(TenantAccess.Filter(http, fb.Empty))
         .Project(Builders<BsonDocument>.Projection
             .Include("AppCallerCode")
+            .Include("RequestType")
             .Include("ModelPoolId")
             .Include("DefaultModelPoolId")
             .Include("AllowedModelPoolIds"))
@@ -4816,14 +4803,29 @@ app.MapPost("/gw/pools/migrate-to-models", async (
       没有任何调用方设过限制时不写名单：那才是今天的真实行为，凭空造一份名单
       等于用「更严」替换「没限制」，同样是改行为。
     */
-    var restrictedCallers = poolBoundCallers
+    /*
+      而且这份翻译必须**按用途分开算**。
+
+      一个调用方在不同用途下是不同的记录，各有各的池限制。全租户一锅算的话，
+      它那条「对话没设限制」的记录会让它进到一个**生图**池搬过来的模型的授权名单里，
+      而它那条生图记录其实把自己限制在别的池上——边界不是搬过去了，是被搬宽了
+      （形状 1：判据比它该管的范围窄，「同一个调用方有多条用途记录」这种输入让它给出相反答案）。
+      所以按用途索引，翻译某个池时只看与这个池同用途的那些记录。
+    */
+    string CallerRequestType(BsonDocument caller)
+        => caller.AsNullableString("RequestType")?.Trim() is { Length: > 0 } rt ? rt : string.Empty;
+
+    var restrictedCallersByType = poolBoundCallers
         .Where(d => GetStringArray(d, "AllowedModelPoolIds").Count > 0)
-        .ToList();
-    var unrestrictedCallerCodes = poolBoundCallers
+        .GroupBy(CallerRequestType, StringComparer.Ordinal)
+        .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+    var unrestrictedCallerCodesByType = poolBoundCallers
         .Where(d => GetStringArray(d, "AllowedModelPoolIds").Count == 0)
-        .Select(d => d.GetStringOrEmpty("AppCallerCode"))
-        .Where(x => x.Length > 0)
-        .ToList();
+        .GroupBy(CallerRequestType, StringComparer.Ordinal)
+        .ToDictionary(
+            g => g.Key,
+            g => g.Select(d => d.GetStringOrEmpty("AppCallerCode")).Where(x => x.Length > 0).ToList(),
+            StringComparer.Ordinal);
     // 本轮已经规划出去的认领：同一个调用方在同一个用途下只能被一个模型认领，
     // dry-run 要和 apply 说同一件事（与上面标识、默认那两张本轮索引同一个道理）。
     var plannedClaims = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -4891,11 +4893,14 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             FromMapDomain = mapPoolIds.Contains(poolId),
         };
 
-        // 这个池的授权名单：只有当租户里确实有人设过池级限制时才写，否则保持「对所有人开放」。
-        var poolAllowlist = restrictedCallers.Count == 0
+        // 这个池的授权名单：只看与它**同用途**的那些调用方记录，
+        // 而且只有当那一档里确实有人设过池级限制时才写，否则保持「对所有人开放」。
+        var restrictedSameType = restrictedCallersByType.GetValueOrDefault(modelType) ?? [];
+        var unrestrictedSameType = unrestrictedCallerCodesByType.GetValueOrDefault(modelType) ?? [];
+        var poolAllowlist = restrictedSameType.Count == 0
             ? new List<string>()
-            : unrestrictedCallerCodes
-                .Concat(restrictedCallers
+            : unrestrictedSameType
+                .Concat(restrictedSameType
                     .Where(d => GetStringArray(d, "AllowedModelPoolIds").Contains(poolId, StringComparer.Ordinal))
                     .Select(d => d.GetStringOrEmpty("AppCallerCode")))
                 .Where(x => x.Length > 0)
@@ -5028,6 +5033,8 @@ app.MapPost("/gw/pools/migrate-to-models", async (
         }
 
         var now = DateTime.UtcNow;
+        // 并发撞上同一个公开名时，这一趟不算「建了一个模型」——它挂到了别人刚建的那条上。
+        var linkedByRace = false;
         if (existing is null)
         {
             if (!dryRun)
@@ -5081,7 +5088,36 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                       重插，必然再抛一次——一次可报告的并发冲突变成 500，而前面几个池可能已经搬完了。
                     */
                     var message = ex.WriteError?.Message ?? ex.Message;
-                    if (message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal))
+                    if (message.Contains("uniq_llmgw_logical_model_tenant_public_id", StringComparison.Ordinal))
+                    {
+                        /*
+                          公开名撞车：另一个搬迁请求在这一瞬把同一个池搬完了。
+
+                          这一档**不能重插**——重插带着同一个公开名，必然再抛一次，
+                          而这一趟前面几个池可能已经搬好了，一次可报告的并发变成 500 加半批产物。
+                          正确的做法是认下对方那一条：把 logicalId 换成它的，后面的线路照常挂上去，
+                          等价于走「已存在同名模型」那条路。上一版把这种撞车当成默认冲突处理，
+                          只清了默认标记就重插，于是必炸（形状 1：判据只认了两种索引，
+                          第三种落进 else 得到一个与它无关的处置）。
+                        */
+                        var winner = await gwLogicalModels
+                            .Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized)))
+                            .FirstOrDefaultAsync();
+                        if (winner is null) throw;
+                        logicalId = winner.GetStringOrEmpty("_id");
+                        linkedByRace = true;
+                        entry.CreatedNewModel = false;
+                        entry.IsDefaultForType = winner.AsNullableBool("IsDefaultForType") ?? false;
+                        entry.ClaimedAppCallerCodes = GetStringArray(winner, "DefaultForAppCallerCodes");
+                        result.Skipped.Add(new PoolMigrationSkip
+                        {
+                            PoolId = poolId,
+                            PoolName = poolName,
+                            Reason = $"另一个搬迁请求在同一瞬间已经把「{publicId}」建好了，这个池的线路直接挂到那一条上，"
+                                + "没有重复建模型。确认那条模型的默认与认领是不是你要的",
+                        });
+                    }
+                    else if (message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal))
                     {
                         document["DefaultForAppCallerCodes"] = new BsonArray();
                         await gwLogicalModels.InsertOneAsync(document);
@@ -5109,7 +5145,8 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                     }
                 }
             }
-            result.ModelsCreated++;
+            if (linkedByRace) result.LinkedToExisting++;
+            else result.ModelsCreated++;
         }
         else
         {
@@ -5561,7 +5598,12 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
             //   没人认领 → 看这个模型是不是用途默认
             var mine = myClaims.Contains(x.Code, StringComparer.Ordinal);
             var claimedElsewhere = !mine && claimedBy.TryGetValue(x.Code, out var owner);
-            var usable = item.Enabled && hasEligibleRoute;
+            // 运行时在选中模型之后还要过一道「这个模型服不服务这个调用方」（授权名单 + 场景能力）。
+            // 面板不判的话，它会指着一条运行时必拒的路说「会落到这里」——排障的人照着它去查，
+            // 查的是一条根本走不到的路。判据走控制台这一侧的镜像，与权威侧逐条比对钉住。
+            var serves = LogicalModelCapabilityPolicy.SupportsAppCallerScenario(
+                item.Capabilities, item.AllowedAppCallerCodes, x.Code);
+            var usable = item.Enabled && hasEligibleRoute && serves;
             var landsHere = reach == CallTracePlanner.CallerReach.UsesModelCatalog
                 && usable
                 && (mine || (!claimedElsewhere && item.IsDefaultForType));
@@ -5570,10 +5612,14 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
                 : mine
                     ? (usable
                         ? "这个模型点名认领了它，不点名会落到这里"
-                        : "这个模型认领了它，但自己停用或没有能接的线路——请求会解析失败")
+                        : serves
+                            ? "这个模型认领了它，但自己停用或没有能接的线路——请求会解析失败"
+                            : "这个模型认领了它，但它的授权名单或能力不覆盖这个调用方——请求会被拒")
                     : claimedElsewhere
                         ? $"它被 {claimedBy[x.Code]} 认领了，不点名走那边"
-                        : CallTracePlanner.UnnamedVerdict(reach, servesUnnamed);
+                        : !serves && item.IsDefaultForType
+                            ? "它是这个用途的默认，但这个模型的授权名单或能力不覆盖这个调用方——请求会被拒"
+                            : CallTracePlanner.UnnamedVerdict(reach, servesUnnamed);
             return new CallTraceUnnamedCaller
             {
                 AppCallerCode = x.Code,
@@ -17438,12 +17484,7 @@ static async Task<CallTraceLedger> BuildCallTraceLedgerAsync(
     {
         { "_id", BsonNull.Value },
         { "calls", new BsonDocument("$sum", 1) },
-        { "usd", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
-            {
-                new BsonDocument("$eq", new BsonArray { "$CostStatus", GatewayCostStatusNames.Priced }),
-                new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
-                0,
-            })) },
+        { "usd", LogCostAggregation.UsdSum() },
         // 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
         //
         // stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——
@@ -17451,16 +17492,7 @@ static async Task<CallTraceLedger> BuildCallTraceLedgerAsync(
         // 报「0 笔未计价」，而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外，
         // 于是成本看起来偏低、而缺价治理这件事看起来已经做完了（形状 1：判据比它该管的范围窄）。
         // 判据取值与 GatewayCostStatusNames 那张表同源，见 2861 行那处过滤——那里两种都算。
-        { "unpriced", new BsonDocument("$sum", new BsonDocument("$cond", new BsonArray
-            {
-                new BsonDocument("$in", new BsonArray
-                {
-                    "$CostStatus",
-                    new BsonArray { GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency },
-                }),
-                1,
-                0,
-            })) },
+        { "unpriced", LogCostAggregation.UnpricedCount() },
         { "lastAt", new BsonDocument("$max", "$StartedAt") },
     });
     var pipeline = new EmptyPipelineDefinition<BsonDocument>()
@@ -19121,4 +19153,93 @@ static class GatewayCostStatusNames
     public const string Unpriced = "unpriced";
     public const string StaleCurrency = "stale_currency";
     public const string NoUsage = "no_usage";
+}
+
+/// <summary>
+/// 聚合侧的「这条调用算没算出钱」。它是 <see cref="ResolveLogCostStatus"/> 在 Mongo 表达式里的镜像。
+///
+/// 为什么非要镜像不可：2026-09 之前的存量日志没有 CostStatus 字段，而聚合里写
+/// `$eq CostStatus priced` 时 Mongo 对缺字段判 false——那批**算出过钱**的日志于是一律记 0，
+/// 模型卡与账本在上线当天就把历史花费报少了一截。`/gw/logs/summary` 那条路早就用
+/// ResolveLogCostStatus 回填了，两条路各判各的（形状 3：同一个判据分裂成两份然后各自漂移）。
+///
+/// 两个表达式都从这里取，调用点不许自己拼。
+/// </summary>
+static class LogCostAggregation
+{
+    /// <summary>显式判定为「算不出钱」的那几种状态：它们一律不进美金合计。</summary>
+    private static BsonArray NotPricedStatuses => new()
+    {
+        GatewayCostStatusNames.Unpriced,
+        GatewayCostStatusNames.StaleCurrency,
+        GatewayCostStatusNames.NoUsage,
+    };
+
+    /// <summary>这一档是不是存量日志（四种已知状态之外，含缺字段）。</summary>
+    private static BsonDocument IsLegacy => new("$not", new BsonArray
+    {
+        new BsonDocument("$in", new BsonArray
+        {
+            "$CostStatus",
+            new BsonArray
+            {
+                GatewayCostStatusNames.Priced,
+                GatewayCostStatusNames.Unpriced,
+                GatewayCostStatusNames.StaleCurrency,
+                GatewayCostStatusNames.NoUsage,
+            },
+        }),
+    });
+
+    /// <summary>
+    /// 累加进美金合计的那一部分。显式非计价的排除，其余按写入时算出的 EstimatedCostUsd 累加——
+    /// 那个字段本来就只在判定为已计价时才会有值（见 GatewayCostCalculator），存量日志同理。
+    /// </summary>
+    public static BsonDocument UsdSum() => new("$sum", new BsonDocument("$cond", new BsonArray
+    {
+        new BsonDocument("$in", new BsonArray { "$CostStatus", NotPricedStatuses }),
+        0,
+        new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
+    }));
+
+    /// <summary>
+    /// 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
+    ///
+    /// stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——它和 unpriced
+    /// 一样不进 USD 合计、不进预算。只数字面的 unpriced 会让这一屏报「0 笔未计价」，
+    /// 而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外。
+    /// 存量日志按 ResolveLogCostStatus 的同一条口径回退：有用量、却没算出钱的，算未计价。
+    /// </summary>
+    public static BsonDocument UnpricedCount() => new("$sum", new BsonDocument("$cond", new BsonArray
+    {
+        new BsonDocument("$in", new BsonArray
+        {
+            "$CostStatus",
+            new BsonArray { GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency },
+        }),
+        1,
+        new BsonDocument("$cond", new BsonArray
+        {
+            new BsonDocument("$and", new BsonArray
+            {
+                IsLegacy,
+                new BsonDocument("$gt", new BsonArray
+                {
+                    new BsonDocument("$add", new BsonArray
+                    {
+                        new BsonDocument("$ifNull", new BsonArray { "$InputTokens", 0 }),
+                        new BsonDocument("$ifNull", new BsonArray { "$OutputTokens", 0 }),
+                    }),
+                    0,
+                }),
+                new BsonDocument("$eq", new BsonArray
+                {
+                    new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", BsonNull.Value }),
+                    BsonNull.Value,
+                }),
+            }),
+            1,
+            0,
+        }),
+    }));
 }

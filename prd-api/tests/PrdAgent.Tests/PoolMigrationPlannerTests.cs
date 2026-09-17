@@ -333,12 +333,12 @@ public class PoolMigrationPlannerTests
 
         Assert.Contains("\"AllowedModelPoolIds\"", handler);
         Assert.Contains("restrictedCallers", handler);
-        Assert.Contains("unrestrictedCallerCodes", handler);
+        Assert.Contains("unrestrictedSameType", handler);
         Assert.Contains("poolAllowlist", handler);
         Assert.Contains("{ \"AllowedAppCallerCodes\", new BsonArray(poolAllowlist) }", handler);
 
         // 没人设过限制就不写名单：那才是今天的真实行为
-        Assert.Contains("restrictedCallers.Count == 0", handler);
+        Assert.Contains("restrictedSameType.Count == 0", handler);
 
         // 复用已有模型时不动它的名单，但**任何不一致**都要报出来。
         // 只报「已有名单为空」那一种的话，两边都非空且不等时两个方向的偏差同时存在
@@ -541,5 +541,104 @@ public class PoolMigrationPlannerTests
         var reported = System.Text.RegularExpressions.Regex
             .Matches(console, @"DescribeLostMemberMaxTokens\(member,").Count;
         Assert.True(reported >= 2, $"物理模型与兑换所两条线路都要报，实际只有 {reported} 处");
+    }
+
+    /// <summary>
+    /// 搬迁的授权名单要按用途分开算。
+    ///
+    /// 一个调用方在不同用途下是不同的记录，各有各的池限制。全租户一锅算的话，它那条
+    /// 「对话没设限制」的记录会让它进到一个**生图**池搬过来的模型的授权名单里，
+    /// 而它那条生图记录其实把自己限制在别的池上——边界不是搬过去了，是被搬宽了。
+    /// </summary>
+    [Fact]
+    public void 搬迁的授权名单按用途分开算()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 取数要带上用途，不带就没法分。
+        Assert.Contains("Include(\"RequestType\")", console);
+        // 两张表都按用途索引，翻译某个池时只看同用途的那些记录。
+        Assert.Contains("restrictedCallersByType", console);
+        Assert.Contains("unrestrictedCallerCodesByType", console);
+        Assert.Contains("restrictedCallersByType.GetValueOrDefault(modelType)", console);
+        Assert.Contains("unrestrictedCallerCodesByType.GetValueOrDefault(modelType)", console);
+        // 旧的全租户口径不许残留。
+        Assert.DoesNotContain("var unrestrictedCallerCodes = poolBoundCallers", console);
+    }
+
+    /// <summary>
+    /// 三条唯一索引撞车各有各的处置，公开名那一条不许落进「默认冲突」那个 else。
+    ///
+    /// 公开名撞车重插必然再抛一次（带着同一个公开名），而这一趟前面几个池可能已经搬好了——
+    /// 一次可报告的并发变成 500 加半批产物。正确处置是认下对方那一条，把线路挂上去。
+    /// </summary>
+    [Fact]
+    public void 公开名撞车认下对方那一条而不是重插()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("uniq_llmgw_logical_model_tenant_public_id", console);
+        Assert.Contains("linkedByRace", console);
+        // 认下对方之后，后面的线路要挂到它的 id 上，而不是那条根本没插进去的。
+        Assert.Contains("logicalId = winner.GetStringOrEmpty(\"_id\")", console);
+        // 这一趟不算「建了一个模型」。
+        Assert.Contains("if (linkedByRace) result.LinkedToExisting++;", console);
+
+        // 三条索引都要被点名判：少认一条，它就落进一个与它无关的处置。
+        var catchAt = console.IndexOf("两条唯一索引都可能在这里撞上", StringComparison.Ordinal);
+        Assert.True(catchAt > 0 || console.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal));
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", console);
+    }
+
+    /// <summary>
+    /// 聚合花费要认存量日志。
+    ///
+    /// 2026-09 之前的日志没有 CostStatus 字段，而聚合里写 `$eq CostStatus priced` 时
+    /// Mongo 对缺字段判 false——那批算出过钱的日志一律记 0，模型卡与账本在上线当天
+    /// 就把历史花费报少了一截。`/gw/logs/summary` 那条路早就用 ResolveLogCostStatus 回填了。
+    /// </summary>
+    [Fact]
+    public void 聚合花费认存量日志且判据只有一份()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("static class LogCostAggregation", console);
+        // 两个聚合点都走它，没人自己再拼一遍 $eq CostStatus priced。
+        var usdUses = System.Text.RegularExpressions.Regex
+            .Matches(console, @"LogCostAggregation\.UsdSum\(\)").Count;
+        var unpricedUses = System.Text.RegularExpressions.Regex
+            .Matches(console, @"LogCostAggregation\.UnpricedCount\(\)").Count;
+        Assert.True(usdUses >= 2, $"两个聚合点都要走共享表达式，实际只有 {usdUses} 处");
+        Assert.True(unpricedUses >= 2, $"未计价计数同上，实际只有 {unpricedUses} 处");
+        Assert.DoesNotContain(
+            "new BsonDocument(\"$eq\", new BsonArray { \"$CostStatus\", GatewayCostStatusNames.Priced })",
+            console);
+    }
+
+    /// <summary>
+    /// 调用全貌的落点判定要过「这个模型服不服务这个调用方」。
+    ///
+    /// 运行时在选中模型之后还要过授权名单与场景能力这道判据。面板不判的话，它会指着一条
+    /// 运行时必拒的路说「会落到这里」——排障的人照着它去查，查的是一条根本走不到的路。
+    /// </summary>
+    [Fact]
+    public void 调用全貌的落点判定过授权与能力()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var policy = ReadRepoFile("llmgw/console-api/LogicalModels/LogicalModelCapabilityPolicy.cs");
+
+        Assert.Contains("LogicalModelCapabilityPolicy.SupportsAppCallerScenario(", console);
+        Assert.Contains("var usable = item.Enabled && hasEligibleRoute && serves;", console);
+
+        // 镜像的顺序要与权威侧逐条相同，少一步就是一种输入被判反。
+        Assert.Contains("RequiredScenarioCapability", policy);
+        Assert.Contains("ImageLayeringAppCallerCode", policy);
+        // 权威侧不写字面量、引的是注册表常量；镜像这边没有那个注册表，只能写字面量，
+        // 所以断言的是「两处指的是同一个码」——注册表里那条常量的值必须与镜像逐字相同。
+        var registry = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/AppCallerRegistry.cs");
+        Assert.Contains("Layering = \"visual-agent.image.layering::generation\"", registry);
+        Assert.Contains("visual-agent.image.layering::generation", policy);
+        var authority = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/GatewayCapabilityContract.cs");
+        Assert.Contains("AppCallerRegistry.VisualAgent.Image.Layering", authority);
     }
 }

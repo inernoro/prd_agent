@@ -4716,12 +4716,16 @@ public class GatewayDataDomainGuardTests
         // 对外清单只报显式 USD
         Assert.Contains("!currency.IsString", catalog);
 
-        // 两处「算不出钱」的计数都要含 stale_currency，且是同一种写法
-        var occurrences = System.Text.RegularExpressions.Regex.Matches(
-            console,
-            @"GatewayCostStatusNames\.Unpriced, GatewayCostStatusNames\.StaleCurrency").Count;
-        Assert.True(occurrences >= 2,
-            $"「算不出钱」的笔数在模型卡与调用全貌账两处都要含 stale_currency，当前只有 {occurrences} 处");
+        // 两处「算不出钱」的计数都要含 stale_currency。
+        //
+        // 上一版靠数「这串字面量出现了两次」来保证，而两次意味着两份判据——它其实是在
+        // 要求那份重复存在。现在两处共用同一个表达式，不变量由结构保证：数的是「调用点够不够」，
+        // 判据本体只剩一处（形状 4a：别断言实现长什么样，断言它做到了什么）。
+        Assert.Contains("GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency", console);
+        var unpricedUses = System.Text.RegularExpressions.Regex
+            .Matches(console, @"LogCostAggregation\.UnpricedCount\(\)").Count;
+        Assert.True(unpricedUses >= 2,
+            $"模型卡与调用全貌账两处都要走同一个未计价计数，当前只有 {unpricedUses} 处");
     }
 
     [Fact]
