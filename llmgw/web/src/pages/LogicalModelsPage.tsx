@@ -734,8 +734,16 @@ function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[
 
   return ordered.map((offering) => {
     const model = offering.targetKind === 'model' ? models.find((x) => x.id === offering.targetId) : undefined;
+    /*
+      不参与排队有三种成因，下一步完全不同，所以不能合成一个「熔断」：
+        线路自己被停用  → 去把这条线路启用回来；
+        上游被停用      → 去把那个模型或 Provider 启用回来，**没有任何冷却能让它自愈**；
+        连续失败被摘掉  → 什么都不用做，冷却期满系统会自己拿一条真实请求去试探。
+      判的是状态（enabled / targetUsable），不是 skipReason 那句中文——匹配文案的话，
+      文案一改判据就悄悄失灵。顺序与服务端 CallTracePlanner.SkipReason 逐条对齐。
+    */
     const health: RouteHealth = offering.skipReason
-      ? (offering.enabled ? 'down' : 'disabled')
+      ? (!offering.enabled ? 'disabled' : offering.targetUsable === false ? 'blocked' : 'down')
       : offering.id === liveId ? 'live'
       : 'standby';
     return {
@@ -753,7 +761,7 @@ function describeRoutes(item: LogicalModelItem, models: ModelItem[]): RouteView[
       governance: offering.maxConcurrency ? `并发 ${offering.maxConcurrency}` : '并发继承上游',
       health,
       roleLabel: offering.skipReason
-        ? (offering.enabled ? '熔断' : '已停用')
+        ? (!offering.enabled ? '已停用' : offering.targetUsable === false ? '上游停用' : '熔断')
         : offering.id === liveId ? '主' : '备',
     };
   });
@@ -794,7 +802,18 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
     return { text: '没有上游', dot: 'var(--warn)', tone: 'warn', advice: '这个模型下面还没有上游线路，它不会承接任何请求。先添加一条上游。' };
   }
   const down = routes.filter((x) => x.health === 'down');
+  // 上游被停用要单独说：它不会自愈，等冷却是白等（第 60 轮 review）。
+  const blocked = routes.filter((x) => x.health === 'blocked');
   const live = routes.find((x) => x.health === 'live');
+  if (blocked.length > 0 && live) {
+    return {
+      text: '有线路等人处理',
+      dot: 'var(--warn)',
+      tone: 'warn',
+      advice: `${blocked.map((x) => x.label).join('、')} 指向的上游模型或 Provider 被停用了，流量正走 ${live.label}。`
+        + '这一条不会自己回来——去上游页把那个模型或它的 Provider 启用回来。',
+    };
+  }
   if (down.length > 0 && live) {
     return {
       text: '已自动切走',
@@ -804,7 +823,15 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
     };
   }
   if (!live) {
-    return { text: '无可用线路', dot: 'var(--err)', tone: 'warn', advice: '所有上游线路都不可用，这个模型当前会解析失败。检查上游密钥与配额，或在展开里手动恢复一条。' };
+    return blocked.length > 0
+      ? {
+          text: '无可用线路',
+          dot: 'var(--err)',
+          tone: 'warn',
+          advice: `所有上游线路都不可用，这个模型当前会解析失败。其中 ${blocked.map((x) => x.label).join('、')} `
+            + '是上游模型或 Provider 被停用了——去上游页把它启用回来，等冷却没有用。',
+        }
+      : { text: '无可用线路', dot: 'var(--err)', tone: 'warn', advice: '所有上游线路都不可用，这个模型当前会解析失败。检查上游密钥与配额，或在展开里手动恢复一条。' };
   }
   if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
   return { text: '正常', dot: 'var(--ok)', tone: 'ok' };

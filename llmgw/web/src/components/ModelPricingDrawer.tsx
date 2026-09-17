@@ -3,8 +3,13 @@
 // 在此之前模型建完就改不了——后端连 PUT 端点都没有，只能删了重建，而重建会丢掉池成员绑定。
 // 于是没人敢动，价格要么一直空着（OpenAI 官方清单根本不返回价格），要么一直是半年前那个数。
 //
-// 这一屏解决的是同一件事的两头：能改，以及改完知道影响谁。最下面「生效范围」那块是后者——
-// 真正参与计费的是模型池成员里的那份价格，只改档案不同步，线上会继续按旧价跑。
+// 这一屏解决的是同一件事的两头：能改，以及改完知道影响谁。最下面「生效范围」那块是后者。
+//
+// 2026-09-15 断流之后「生效范围」换了主语：线上计费读的是**这个模型文档自己**的价格
+// （运行时解析直接从物理模型取价，不再经过模型池）。下面那份池清单只剩一个用途——
+// 万一要回滚到池路由，那几个池里的价还得是对的。所以它是**回滚备份**，不是计费依据；
+// 原先那句「真正参与计费的是池成员里的那份价格」现在是假的，照着它去改池、以为改了线上账，
+// 是白改一场（第 60 轮 review）。
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
@@ -48,8 +53,14 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
       if (!alive) return;
       if (!res.success) { setUsageError(res.error?.message || '读取模型池引用失败'); return; }
       setUsage(res.data);
-      // 默认只勾继承的：覆盖价是有人特意设的，不该被一次改档案价顺手抹掉。
-      setSyncPoolIds(res.data.pools.filter((p) => p.inherits && !p.managed).map((p) => p.poolId));
+      /*
+        默认一个都不勾。
+
+        断流之后这几个池不参与计费，替人预先勾上等于替他做了一个「顺手写一批过时数据」的决定，
+        而界面还让他以为这是在改线上账。要回滚备份的人自己勾，勾的是明明白白的额外动作
+        （原先默认勾继承的那几个，理由是「不该被顺手抹掉」——那条理由在池还计费时成立）。
+      */
+      setSyncPoolIds([]);
     });
     return () => { alive = false; };
   }, [model.id]);
@@ -179,10 +190,19 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
           <p style={hintStyle}>改动任一价格后，来源会记成「人工录入」，观测时间刷成此刻。</p>
 
           <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>生效范围</div>
+          <p style={hintStyle}>
+            线上计费读的就是上面这份价——运行时解析直接从这条模型文档取价，保存即生效。
+          </p>
           {usageError ? <InlineAlert tone="error">{usageError}</InlineAlert> : null}
-          {usage && usage.pools.length === 0 ? (
-            <p style={hintStyle}>还没有模型池引用这条模型，改价只影响档案本身。</p>
-          ) : null}
+          {usage && usage.pools.length === 0 ? null : (
+            <>
+              <div style={{ ...SECTION_TITLE, marginTop: GAP.section }}>回滚备份 · 旧模型池（不参与计费）</div>
+              <p style={hintStyle}>
+                模型池已经不在计费链路上，勾选只是把这份价也写进那几个池，留给「万一要回滚到池路由」那一天。
+                不勾不影响线上任何一笔账。
+              </p>
+            </>
+          )}
           {syncablePools.map((pool) => (
             <label key={pool.poolId} style={poolRowStyle}>
               <input
@@ -208,7 +228,9 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
           {usage?.pools.some((p) => p.managed) ? (
             <p style={hintStyle}>托管的只追加池不接受从这里改价，已跳过。</p>
           ) : null}
-          <p style={hintStyle}>不勾的池保留它自己的价格，并在模型池页面显示为「与档案价不同」。</p>
+          {usage && usage.pools.length > 0 ? (
+            <p style={hintStyle}>不勾的池保留它自己的价格，并在模型池页面显示为「与档案价不同」——这不影响计费。</p>
+          ) : null}
         </div>
 
         <div className="lg-side-drawer-footer">
@@ -216,7 +238,7 @@ export function ModelPricingDrawer({ model, onClose, onSaved }: Props) {
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'nowrap' }}>
             <Button variant="ghost" size="sm" disabled={saving} onClick={onClose}>取消</Button>
             <Button variant="primary" size="sm" disabled={saving} onClick={() => void save()}>
-              {saving ? '保存中' : syncPoolIds.length > 0 ? `保存并同步 ${syncPoolIds.length} 个池` : '保存'}
+              {saving ? '保存中' : syncPoolIds.length > 0 ? `保存并回写 ${syncPoolIds.length} 个旧池` : '保存'}
             </Button>
           </span>
         </div>

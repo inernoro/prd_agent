@@ -55,13 +55,20 @@ export function UpstreamMark({ hints, size = 26 }: { hints: Array<string | null 
   );
 }
 
-export type RouteHealth = 'live' | 'standby' | 'down' | 'disabled';
+/**
+ * blocked 与 down 是两件事，不能合成一个。
+ * down 是熔断：连续失败被摘掉，冷却期满系统自己拿一条真实请求去试探，会自愈。
+ * blocked 是上游被停用：没有任何冷却能让它回来，必须有人去把那个模型或 Provider 启用回来。
+ * 合成一个的后果不是少一种颜色，是给出一个永远等不到的下一步（第 60 轮 review）。
+ */
+export type RouteHealth = 'live' | 'standby' | 'down' | 'blocked' | 'disabled';
 
 const HEALTH_DOT: Record<RouteHealth, CSSProperties> = {
   // 正在扛流量的那条带一圈光晕，扫一眼就知道现在谁在干活
   live: { background: 'var(--ok)', boxShadow: '0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent)' },
   standby: { background: 'var(--text-muted)' },
   down: { background: 'var(--warn)' },
+  blocked: { background: 'var(--err)' },
   disabled: { background: 'var(--border-strong)' },
 };
 

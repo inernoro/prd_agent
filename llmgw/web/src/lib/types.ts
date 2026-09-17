@@ -1011,6 +1011,12 @@ export type ModelOfferingItem = {
   notes?: string | null;
   /** 为什么不参与这次排队；null 表示参与。服务端按唯一判据算好，前端不再自己判。 */
   skipReason?: string | null;
+  /**
+   * 它指向的上游模型与所属 Provider 都还启用着吗。
+   * 分「熔断」与「上游被停用」两种状态要用它，而不是去匹配 skipReason 那句中文——
+   * 匹配文案的话，文案一改判据就悄悄失灵（用状态，不用渲染好的句子）。
+   */
+  targetUsable?: boolean;
   /** 排队名次，1 就是这次会落到的那一条；0 表示不参与。 */
   queuePosition: number;
 };

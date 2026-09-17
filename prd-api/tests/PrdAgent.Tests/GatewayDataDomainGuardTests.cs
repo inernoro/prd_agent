@@ -6579,6 +6579,66 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("draft: { ...editing.draft, enabled: e.target.checked }", section, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 不计入限额要说清是币种不对还是价没配齐()
+    {
+        /*
+          原先一律写「价格不是美金口径」。于是一个币种明明是 USD、只是缺了输出价的模型，
+          管理员照着这句话去改币种，改完还是不计入，而真正缺的那一项从头到尾没人提
+          （第 60 轮 review；external-cause-first：给读的人一个他能处置的结论）。
+        */
+        var page = ReadRepoFile("llmgw/web/src/pages/ModelsPage.tsx");
+        Assert.Contains("function unbillableReason(", page, StringComparison.Ordinal);
+        Assert.Contains("title={unbillableReason(model)}", page, StringComparison.Ordinal);
+        // 两种成因各有各的下一步，都要在。
+        Assert.Contains("不是美金口径", page, StringComparison.Ordinal);
+        Assert.Contains("只配了一半", page, StringComparison.Ordinal);
+        // 完整性判据与计价侧同源：有按次价就够，否则输入与输出都要有。
+        Assert.Contains("model.pricePerCall != null", page, StringComparison.Ordinal);
+        Assert.Contains("model.outputPricePerMillion == null", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 上游被停用与熔断要分成两种状态()
+    {
+        /*
+          熔断会自愈（冷却期满系统拿一条真实请求去试探），上游被停用不会——没有任何冷却能让它
+          回来，必须有人去把那个模型或 Provider 启用回来。合成一个的后果不是少一种颜色，
+          是给出一个永远等不到的下一步（第 60 轮 review）。
+        */
+        var visuals = ReadRepoFile("llmgw/web/src/components/ModelRouteVisuals.tsx");
+        Assert.Contains("'blocked'", visuals, StringComparison.Ordinal);
+
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        // 判的是状态不是那句中文：匹配文案的话，文案一改判据就悄悄失灵。
+        Assert.Contains("offering.targetUsable === false ? 'blocked'", page, StringComparison.Ordinal);
+        Assert.Contains("offering.targetUsable === false ? '上游停用'", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("skipReason === '上游那个模型被停用了'", page, StringComparison.Ordinal);
+        // 摘要要给对的下一步，不能把「等冷却」说给一个永远等不到的状态听。
+        Assert.Contains("这一条不会自己回来", page, StringComparison.Ordinal);
+        Assert.Contains("等冷却没有用", page, StringComparison.Ordinal);
+
+        // 前端类型要真的带着这个状态，否则上面那个判据恒为 undefined（链路只建一半）。
+        var types = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        Assert.Contains("targetUsable?: boolean;", types, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 计价抽屉不许把退场的模型池说成计费依据()
+    {
+        /*
+          断流之后线上计费读的是模型文档自己的价格，运行时不再经过模型池。抽屉里那句
+          「真正参与计费的是池成员里的那份价格」从此是假的——照着它去改池、以为改了线上账，
+          是白改一场；而默认替人勾上那几个池，等于替他写了一批过时数据（第 60 轮 review）。
+        */
+        var drawer = ReadRepoFile("llmgw/web/src/components/ModelPricingDrawer.tsx");
+        Assert.DoesNotContain("真正参与计费的是模型池成员里的那份价格", drawer, StringComparison.Ordinal);
+        Assert.Contains("线上计费读的就是上面这份价", drawer, StringComparison.Ordinal);
+        Assert.Contains("回滚备份", drawer, StringComparison.Ordinal);
+        // 默认一个都不勾：勾选是明明白白的额外动作。
+        Assert.Contains("setSyncPoolIds([]);", drawer, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);

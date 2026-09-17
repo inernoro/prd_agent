@@ -781,6 +781,41 @@ export function ModelsPage() {
  * 缺价不是「零成本」，是「这条模型的调用没计上钱」，所以它在这里是一条要行动的提示，
  * 而不是一个安静的破折号。
  */
+/**
+ * 「不计入限额」到底因为什么——币种不对，还是价配了一半。
+ *
+ * 这两件事要分开说：原先一律写「价格不是美金口径」，于是一个币种明明是 USD、只是缺了输出价的
+ * 模型，管理员照着这句话去改币种，改完还是不计入，而真正缺的那一项从头到尾没人提
+ * （第 60 轮 review；external-cause-first：给读的人一个他能处置的结论，不是一个笼统的名词）。
+ *
+ * 完整性判据与计价侧同源：有按次价就够（那时 token 价一分不叠），否则输入与输出都要有。
+ */
+function unbillableReason(model: {
+  priceCurrency?: string | null;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+}): string {
+  const currency = (model.priceCurrency ?? '').trim().toUpperCase();
+  if (currency !== 'USD') {
+    return currency.length > 0
+      ? `价格记的是 ${currency}，不是美金口径，这条模型的调用不会计入用量与限额。去把它换算成美金再填一次`
+      : '这份价格没有登记币种，无从判断是不是美金口径，所以不计入用量与限额。补上币种再看';
+  }
+
+  if (model.pricePerCall != null) return '按次价已配齐，却仍判为不计入——这多半是别的字段有问题，去看这条模型的完整价格配置';
+
+  const missing: string[] = [];
+  if (model.inputPricePerMillion == null) missing.push('输入价');
+  if (model.outputPricePerMillion == null) missing.push('输出价');
+  if (missing.length > 0) {
+    return `币种是美金，但价格只配了一半（缺${missing.join('与')}）。缺一项整笔就算不出钱，`
+      + '所以这条模型的调用不计入用量与限额。把缺的那一项补上即可';
+  }
+
+  return '这条模型的调用不会计入用量与限额，而价格看上去是配齐的——去看它的完整价格配置';
+}
+
 function ModelPriceCell({ model, canWrite, onEdit }: { model: ModelItem; canWrite: boolean; onEdit: () => void }) {
   const hasPrice = model.inputPricePerMillion != null
     || model.outputPricePerMillion != null
@@ -816,7 +851,7 @@ function ModelPriceCell({ model, canWrite, onEdit }: { model: ModelItem; canWrit
             />
           : <Chip label="来源不明" color="var(--warn)" bg="var(--warn-bg)" title="这份价格说不出从哪来，无从判断是否可信" />}
         {model.priceBillable === false
-          ? <Chip label="不计入限额" color="var(--warn)" bg="var(--warn-bg)" title="价格不是美金口径，这条模型的调用不会计入用量与限额" />
+          ? <Chip label="不计入限额" color="var(--warn)" bg="var(--warn-bg)" title={unbillableReason(model)} />
           : null}
         {model.cachedInputPricePerMillion != null
           ? <span style={{ color: 'var(--ok)', fontSize: 'var(--fs-caption)' }}>{`缓存读 ${model.cachedInputPricePerMillion}`}</span>
