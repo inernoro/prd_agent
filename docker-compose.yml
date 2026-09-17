@@ -29,6 +29,7 @@ services:
   mongodb:
     image: mongo:8.0
     container_name: prdagent-mongodb
+    command: ["mongod", "--auth"]
     volumes:
       - mongodb_data:/data/db
     environment:
@@ -40,8 +41,10 @@ services:
   redis:
     image: redis:7-alpine
     container_name: prdagent-redis
+    command: ["redis-server", "--aclfile", "/usr/local/etc/redis/users.acl"]
     volumes:
       - redis_data:/data
+      - /etc/prdagent/redis/users.acl:/usr/local/etc/redis/users.acl:ro
     networks:
       - prdagent-network
     restart: unless-stopped
@@ -63,9 +66,9 @@ services:
       - Deployment__AdoptLegacyBranchOwners=${ADOPT_LEGACY_BRANCH_OWNERS:-true}
       - Deployment__RetiredLegacyBranchOwnerIds=${RETIRED_LEGACY_BRANCH_OWNER_IDS:-main}
       - Deployment__LegacyOwnerCreatedBeforeUtc=${LEGACY_OWNER_CREATED_BEFORE_UTC:-2026-08-12T19:20:00Z}
-      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__ConnectionString=mongodb://prdagent_app:${MONGODB_PASSWORD:?use /usr/local/sbin/prdagent-secure-compose}@mongodb:27017/?authSource=admin
       - MongoDB__DatabaseName=prdagent
-      - Redis__ConnectionString=redis:6379
+      - Redis__ConnectionString=redis:6379,password=${REDIS_PASSWORD:?use /usr/local/sbin/prdagent-secure-compose}
       # 生产环境：必须显式设置 JWT_SECRET（禁止使用仓库内默认值）
       - Jwt__Secret=${JWT_SECRET}
       - Jwt__Issuer=prdagent
@@ -172,7 +175,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8091
-      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__ConnectionString=mongodb://prdagent_app:${MONGODB_PASSWORD:?use /usr/local/sbin/prdagent-secure-compose}@mongodb:27017/?authSource=admin
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
@@ -228,7 +231,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8091
-      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__ConnectionString=mongodb://prdagent_app:${MONGODB_PASSWORD:?use /usr/local/sbin/prdagent-secure-compose}@mongodb:27017/?authSource=admin
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
@@ -284,7 +287,7 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8090
-      - MongoDB__ConnectionString=mongodb://mongodb:27017
+      - MongoDB__ConnectionString=mongodb://prdagent_app:${MONGODB_PASSWORD:?use /usr/local/sbin/prdagent-secure-compose}@mongodb:27017/?authSource=admin
       - MongoDB__DatabaseName=prdagent
       - LlmGateway__MongoConnectionString=${LLMGW_MONGO_CONNECTION_STRING:-}
       - LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}
