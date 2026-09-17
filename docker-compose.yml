@@ -59,6 +59,9 @@ services:
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
       - ASPNETCORE_URLS=http://+:8080
+      # 生产发布脚本已强制要求公网根地址；注入后端统一生成 HTTPS 绝对链接，
+      # 避免 TLS 在宿主机终止后，容器内二次反代把协议误判成 http。
+      - ServerUrl=${PRD_AGENT_PUBLIC_BASE_URL:-}
       # 稳定部署域：与分支名共同组成后台任务 OwnerInstanceId；滚动发布期间保持不变。
       - Deployment__Identity=${DEPLOYMENT_IDENTITY:-prd-agent:production}
       # 首次引入部署域时，生产默认接管固定截止线前由旧 main owner 创建的任务。

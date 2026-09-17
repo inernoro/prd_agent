@@ -11,5 +11,6 @@ assert 'export LLMGW_MAP_HOME_URL="${LLMGW_MAP_HOME_URL:-$PRD_AGENT_PUBLIC_BASE_
 assert 'public_base="$PRD_AGENT_PUBLIC_BASE_URL"' in DEPLOY
 assert "PRD_AGENT_PUBLIC_BASE_URL:-https://" not in DEPLOY
 assert "LLMGW_MAP_HOME_URL=${LLMGW_MAP_HOME_URL:?" in COMPOSE
+assert "ServerUrl=${PRD_AGENT_PUBLIC_BASE_URL:-}" in COMPOSE
 
 print("Production runtime domain contract test: PASS")
