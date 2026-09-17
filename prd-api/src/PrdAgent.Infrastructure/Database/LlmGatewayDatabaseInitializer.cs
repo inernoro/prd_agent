@@ -583,17 +583,25 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             return;
         }
 
-        await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-            Builders<BsonDocument>.IndexKeys
-                .Ascending("TenantId")
-                .Ascending("LogicalModelId")
-                .Ascending("TargetKind")
-                .Ascending("TargetId")
-                .Ascending("UpstreamModelId")
-                .Ascending("SupersededByOfferingId"),
-            new CreateIndexOptions { Name = versionAwareIndexName, Unique = true }), cancellationToken: ct);
-        _logger.LogInformation(
-            "[LlmGatewayData] Offering 唯一索引升级为版本感知结构 index={Index}",
+        /*
+          一条等价索引都没有（全新库，或索引被人删了）。这里同样**只报不建**。
+
+          上一版在这条分支上建了索引，理由是「全新库没有存量、建它不阻塞」。那个理由站不住：
+          no-auto-index 禁的不是「危险的那几次建索引」，是「启动路径上建索引」这件事本身——
+          判据要是留着「什么时候算安全」的口子，下一个人照着这条分支再加一条就又是合规的，
+          而它真正的代价（副本集里滚动启动各建各的、建失败让进程起不来、以及最要命的
+          「库其实不新、只是索引被误删了」）恰好都出现在被判成安全的那一侧。
+          所以这里不再区分新库旧库：缺就如实报出来，附上该跑的命令，交给 DBA。
+
+          没有这条索引期间线路身份没有唯一约束，两次并发创建可能各插一条同身份线路。
+          创建端点会在撞键时翻成 409（见 console-api 的线路创建），没有索引时撞不上键，
+          于是退化成「后写的那条赢」——不丢数据，但需要人去看一眼，故报 Warning 不是 Information。
+        */
+        _logger.LogWarning(
+            "[LlmGatewayData] 线路身份唯一索引 {Expected} 不存在，线路身份当前没有唯一约束："
+            + "两次并发创建同身份线路都会插进去。启动不建索引（no-auto-index），"
+            + "请 DBA 按 doc/guide.platform.mongodb-indexes.md 里 {Expected} 那一条建索引",
+            versionAwareIndexName,
             versionAwareIndexName);
     }
 

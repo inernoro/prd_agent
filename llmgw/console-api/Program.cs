@@ -278,6 +278,8 @@ var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
 var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
 var models = mapDatabase.GetCollection<BsonDocument>("llmmodels");
 var modelExchanges = mapDatabase.GetCollection<BsonDocument>("model_exchanges");
+// 删线路前要问一句「还有没有在途任务等着它」，那批任务在 MAP 库里（见 OfferingReferencePolicy）。
+var videoGenRuns = mapDatabase.GetCollection<BsonDocument>(OfferingReferencePolicy.VideoRunCollectionName);
 var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
@@ -6095,6 +6097,46 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
     }
 
     /*
+      还有在途任务等着取结果的线路，也不许删。
+
+      线路是逻辑模型的从属子项，删模型会把它名下的线路一起删掉；而视频任务提交成功后
+      会把当时那条线路的 id 写进任务文档，轮询与下载都靠它精确回到同一个上游。删掉之后
+      那个任务在下一次轮询时找不到线路，一个已经被上游受理、甚至已经计费的任务就这么坏了，
+      而操作者只是删了一条「看起来没人用」的模型——没有任何地方会提示这件事。
+
+      所以先把它名下的线路列出来，去问在途任务有没有引用。判据在 OfferingReferencePolicy，
+      两种引用形态（direct 写在任务根、storyboard 逐镜写）都要查，漏一种等于没查。
+
+      两条已知边界，都是有意接受的：
+      其一，这是一次读，挡不住「读完到删之间刚好又提交了一个任务」的竞态——真正不漏的做法是
+      线路软删除（留墓碑到引用的任务跑完），那要改动每一处列线路的查询，属于另一件事，已记入
+      doc/debt.platform.llm-gateway.md。这道闸把绝大多数误删挡在门外，不声称它是原子的。
+      其二，任务库是同项目所有分支预览共用的（cross-project-isolation 通道 4），兄弟分支的
+      在途任务同样会拦住这次删除。方向是对的那一边：宁可多拦一次让人去看看。
+    */
+    var childOfferingIds = (await gwModelOfferings
+        .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id)))
+        .Project(Builders<BsonDocument>.Projection.Include("_id"))
+        .ToListAsync())
+        .Select(x => x.GetStringOrEmpty("_id"))
+        .Where(x => x.Length > 0)
+        .ToList();
+    var inFlightFilter = OfferingReferencePolicy.BuildInFlightVideoRunFilter(childOfferingIds);
+    if (inFlightFilter is not null)
+    {
+        var inFlightCount = await videoGenRuns.CountDocumentsAsync(inFlightFilter);
+        if (inFlightCount > 0)
+        {
+            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+                "MODEL_HAS_INFLIGHT_JOBS",
+                $"它名下的线路还有 {inFlightCount} 个没跑完的视频任务在用。"
+                + "现在删，那些任务下一次去取结果时会找不到上游而失败（有的已经计费了）。"
+                + "等它们跑完或取消之后再删"),
+                jsonOptions, 409);
+        }
+    }
+
+    /*
       上面那一读只是为了给人一句能看懂的拒绝理由，它挡不住竞态：读完到删之间，
       另一个管理员完全可能刚把这条模型设成用途默认、或者把一个调用方的认领转给它。
       所以真正的闸在删除语句的谓词上——**删的时候**再判一次「它没在接不点名的请求」，
@@ -6430,75 +6472,48 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
     var target = targetKind == "model"
         ? await gwModels.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync()
         : await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync();
-    if (target is null)
-        return Json(ApiEnvelope<ModelOfferingItem>.Fail("TARGET_NOT_FOUND", "上游目标不存在或不属于当前租户"), jsonOptions, 404);
-    if (target.AsNullableBool("Enabled") == false)
-        return Json(ApiEnvelope<ModelOfferingItem>.Fail("TARGET_DISABLED", "上游目标已停用"), jsonOptions, 409);
     if (body?.MaxConcurrency is < 1 or > 10000)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_MAX_CONCURRENCY", "最大并发必须为 1 到 10000"), jsonOptions, 400);
     if (body?.RateLimitPerMinute is < 1 or > 1000000)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body?.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
-    var targetPlatform = targetKind == "model" && !string.IsNullOrWhiteSpace(target.AsNullableString("PlatformId"))
-        ? await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", target.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
+    var targetPlatform = targetKind == "model" && !string.IsNullOrWhiteSpace(target?.AsNullableString("PlatformId"))
+        ? await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", target!.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
         : null;
     /*
-      物理模型自己启用着还不够，它挂的那个 Provider 也得在、也得启用。
-
-      运行时解析走 FindGatewayOwnedOrMapPlatformAsync(requireEnabled: true)：Provider 不在
-      或已停用时这条线路会被整条丢掉。这里不判的话，接口回 201、界面上多出一条线路，
-      而它一条流量都承接不了——又是「存得进去、跑不起来」（与系统级模型池、兑换所别名同形）。
-      兑换所那一支不判：它自己就是虚拟平台，没有单独的 Provider 文档。
+      上游目标够不够格承接流量，判据在 OfferingTargetEligibility：目标在不在、启不启用、
+      物理模型挂的 Provider 在不在启不启用、兑换所那条别名声明没声明。四条都对着运行时解析，
+      不判的话会出现「存得进去、跑不起来」——接口回 201、界面上多出一条线路，而它一条流量
+      都承接不了。**启用**一条早先停用的线路走的是另一个端点，它判的是同一件事，所以这几条
+      判据收在一处，两个入口共用（第 51 轮 review：启用那一侧原先只判了 ASR 契约）。
     */
-    if (targetKind == "model"
-        && (targetPlatform is null || targetPlatform.AsNullableBool("Enabled") == false))
+    var createTargetRejection = OfferingTargetEligibility.Evaluate(
+        targetKind, target, targetPlatform, body?.UpstreamModelId);
+    if (createTargetRejection is { } createRejection)
     {
-        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
-            "TARGET_PLATFORM_UNAVAILABLE",
-            targetPlatform is null
-                ? "这个模型没有挂在任何一个可用的 Provider 上（Provider 不存在，或不属于当前租户）。"
-                  + "去上游页确认它归属的 Provider，再回来挂线路——现在存下去的话，运行时会把这条线路整条丢掉。"
-                : "这个模型挂的 Provider 已停用。先在上游页把它启用，再回来挂线路——"
-                  + "停用状态下运行时会把这条线路整条丢掉。"), jsonOptions, 409);
+        return Json(
+            ApiEnvelope<ModelOfferingItem>.Fail(createRejection.Code, createRejection.Message),
+            jsonOptions,
+            createRejection.Code == "TARGET_NOT_FOUND" ? 404 : 409);
     }
+    // 上面那道闸判的第一条就是「目标不在」，走到这里 eligibleTarget 必有值；给编译器一个凭据，
+    // 而不是在这里再写一遍 null 判断（同一个判断第二份就是下一次漂移的起点）。
+    var eligibleTarget = target!;
     var createAsrContractError = AsrOfferingContractPolicy.Validate(
         logical.GetStringOrEmpty("ModelType"),
         targetKind,
         AsrOfferingContractPolicy.ResolvePhysicalModel(
             body?.UpstreamModelId,
-            target.AsNullableString("ModelName"),
-            target.AsNullableString("ModelId")),
+            eligibleTarget.AsNullableString("ModelName"),
+            eligibleTarget.AsNullableString("ModelId")),
         body?.EndpointPath,
-        body?.Protocol ?? target.AsNullableString("Protocol"),
+        body?.Protocol ?? eligibleTarget.AsNullableString("Protocol"),
         targetPlatform?.AsNullableString("PlatformType"));
     if (createAsrContractError is not null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail(
             AsrOfferingContractPolicy.ErrorCode,
             createAsrContractError), jsonOptions, 409);
-    /*
-      兑换所线路要在**保存这一刻**就确认那条别名真的存在且启用着。
-
-      不判的话：把 UpstreamModelId 打错一个字、或选了一条被单独停掉的别名，这条线路照样
-      存得进去、接口回 201；而运行时按 GatewayCatalogGate.ExchangeDeclares 把它整条跳过，
-      那个刚保存的模型立刻没有可用上游——「存得进去、跑不起来」，与第 39 轮那条系统级模型池
-      同形。判据是权威实现的镜像（ExchangeAliasPolicy，有逐例对照守卫），不另写近似。
-    */
-    if (targetKind == "exchange")
-    {
-        var createAlias = ExchangeAliasPolicy.EffectiveAlias(target, body?.UpstreamModelId);
-        if (!ExchangeAliasPolicy.Declares(target, createAlias))
-        {
-            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
-                "EXCHANGE_ALIAS_NOT_DECLARED",
-                createAlias.Length == 0
-                    ? "这个兑换所没有主别名，所以必须指定「上游模型」；不指定的话运行时会把这条线路整条跳过。"
-                    : $"兑换所里没有启用着的别名「{createAlias}」（不存在，或被单独停用了）。"
-                      + "去兑换所页确认这条别名的拼写与开关，再回来保存——现在存下去的话，"
-                      + "运行时会把这条线路跳过，这个模型等于没有上游。"), jsonOptions, 409);
-        }
-    }
-
     /*
       判重的身份必须与唯一索引 uniq_llmgw_offering_tenant_logical_target_v3 逐字相同。
 
@@ -6537,15 +6552,41 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         { "Notes", string.IsNullOrWhiteSpace(body?.Notes) ? BsonNull.Value : body.Notes.Trim() },
         { "CreatedAt", now }, { "UpdatedAt", now },
     };
-    await gwModelOfferings.InsertOneAsync(document);
+    /*
+      并发创建撞上线路身份唯一索引要翻成 409，不能漏成 500。
+
+      上面那句判重挡不住竞态：两个人同时给同一个对外模型挂同一条上游（含同一个上游模型）时，
+      两边的判重查询都能在对方插入之前通过，真正拦住的是唯一索引
+      uniq_llmgw_offering_tenant_logical_target_v3。不接这个异常的话，输的那一方拿到 500——
+      同一件事，不撞车时给的是说得出下一步的 409，撞车时给的却是一句「服务器错误」
+      （external-cause-first：内因当结论交出去，读的人无法处置）。
+
+      这条路径不只在并发下走得到：身份索引从 v2 升到 v3 要 DBA 手动做（no-auto-index，
+      见 LlmGatewayDatabaseInitializer 的警告），在那之前旧索引比新的更严——同一个兑换所下的
+      第二条别名会在这里撞键，而它其实是合法拓扑。所以这里的提示要把这种情况一并说出来。
+    */
+    try
+    {
+        await gwModelOfferings.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "DUPLICATE_OFFERING",
+            "这条上游（含指定的上游模型）刚刚已经被绑定到此逻辑模型了。"
+            + "刷新一下看看现在挂着哪几条；如果列表里并没有同样的一条，"
+            + "那就是线路身份唯一索引还停在旧版（它不认上游模型，所以同一个兑换所下的第二条别名会撞），"
+            + "让 DBA 按 doc/guide.platform.mongodb-indexes.md 升到 v3 之后再试"),
+            jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http, "model-offering.create", "llmgw_model_offering", offeringId, targetId, true, null,
         new BsonDocument { { "logicalModelId", id }, { "targetKind", targetKind }, { "targetId", targetId } });
     var platformsForMap = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
     var item = MapLogicalModel(
         logical,
         new List<BsonDocument> { document },
-        targetKind == "model" ? new List<BsonDocument> { target } : new List<BsonDocument>(),
-        targetKind == "exchange" ? new List<BsonDocument> { target } : new List<BsonDocument>(),
+        targetKind == "model" ? new List<BsonDocument> { eligibleTarget } : new List<BsonDocument>(),
+        targetKind == "exchange" ? new List<BsonDocument> { eligibleTarget } : new List<BsonDocument>(),
         platformsForMap).Offerings.Single();
     return Json(ApiEnvelope<ModelOfferingItem>.Ok(item), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
@@ -6903,6 +6944,20 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled", asyn
         var platform = targetKind == "model" && !string.IsNullOrWhiteSpace(target?.AsNullableString("PlatformId"))
             ? await gwPlatforms.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", target!.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
             : null;
+        /*
+          重新打开一条停用的线路，和新建一条线路要过同一道资格闸（判据见 OfferingTargetEligibility）。
+          原先这里只判 ASR 契约，于是指着已删模型、已停 Provider、已关别名的那条线路可以被重新
+          打开——接口回 200、界面上它是启用的，而运行时会把它整条丢掉。
+        */
+        var enableRejection = OfferingTargetEligibility.Evaluate(
+            targetKind, target, platform, existing.AsNullableString("UpstreamModelId"));
+        if (enableRejection is { } rejection)
+        {
+            return Json(
+                ApiEnvelope<ModelOfferingItem>.Fail(rejection.Code, rejection.Message),
+                jsonOptions,
+                rejection.Code == "TARGET_NOT_FOUND" ? 404 : 409);
+        }
         var contractError = ValidateAsrOfferingContract(logical, existing, target, platform);
         if (contractError is not null)
             return Json(ApiEnvelope<ModelOfferingItem>.Fail(

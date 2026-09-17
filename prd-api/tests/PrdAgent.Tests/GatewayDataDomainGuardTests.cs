@@ -1680,20 +1680,22 @@ public class GatewayDataDomainGuardTests
 
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
         Assert.Contains("EnsureOfferingIdentityIndexAsync", initializer);
-        Assert.Contains(".Ascending(\"SupersededByOfferingId\")", initializer);
+        // 身份的定义在 expectedKeys 里（启动只拿它判等价、不拿它建索引，见「线路身份唯一索引不在启动时建」）。
         // 身份里必须带上「打给上游的是哪一个模型」：同一个兑换所下的不同别名是不同的线路，
         // 少了它第二条插入撞 E11000，搬迁半途而废且重跑还是同样结果，那条线路永久丢。
+        var identityKeys = MethodBody(initializer, "private async Task EnsureOfferingIdentityIndexAsync");
+        Assert.Contains("\"SupersededByOfferingId\",", identityKeys, StringComparison.Ordinal);
+        Assert.Contains("\"UpstreamModelId\",", identityKeys, StringComparison.Ordinal);
         Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v3", initializer);
-        Assert.Contains(".Ascending(\"UpstreamModelId\")", initializer);
         // 旧名字要能被认出来（用来判断该不该提醒 DBA），但**不在启动时丢它**——
         // 丢一条正在生效的唯一索引再同步重建会阻塞写入，那一步归 DBA 的维护窗口。
         Assert.Contains("legacyVersionAwareIndexName", initializer);
         Assert.Contains("IsEquivalentOfferingIdentityIndex", initializer);
         Assert.Contains("MongoDB 不允许同一 key/options 仅以不同名称重复建索引", initializer);
-        // 先认等价索引、再谈别的：已经对了就什么都不做。
+        // 先认等价索引、再谈别的：已经对了就什么都不做，不去提醒一件已经做完的事。
         Assert.True(
             initializer.IndexOf("IsEquivalentOfferingIdentityIndex(index, expectedKeys)", StringComparison.Ordinal)
-            < initializer.IndexOf("Name = versionAwareIndexName", StringComparison.Ordinal));
+            < initializer.IndexOf("线路身份唯一索引 {Expected} 不存在", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -6078,6 +6080,85 @@ public class GatewayDataDomainGuardTests
     /// 往租户删除里加了几行，「必须挂 TenantOwner」这条断言就落到 4000 字之外报了「找不到」，
     /// 报的是缺失，实际是窗口太窄。判据的边界要跟着被判对象走，不能是一个拍出来的数字。
     /// </summary>
+    [Fact]
+    public void 删对外模型之前先问过在途任务()
+    {
+        /*
+          删对外模型会连着删掉它名下的全部线路，而视频任务提交成功后把线路 id 写进了自己的文档，
+          轮询与下载都靠它回到同一个上游。先删后问等于没问——所以判据不只是「有没有这段代码」，
+          还有「它在不在删除语句之前」（位置断言，与撞车补偿、首屏失败那两条同一形状）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/logical-models/{id}\"");
+        var asked = delete.IndexOf("OfferingReferencePolicy.BuildInFlightVideoRunFilter", StringComparison.Ordinal);
+        var deleted = delete.IndexOf("gwLogicalModels.DeleteOneAsync", StringComparison.Ordinal);
+        Assert.True(asked >= 0, "删对外模型时没有问过在途任务还在不在用它名下的线路");
+        Assert.True(deleted >= 0, "找不到删除语句，守卫的位置断言已经失去意义");
+        Assert.True(asked < deleted, "在途任务这道闸排在删除语句之后，等于没有拦");
+
+        // 两种引用形态都要查：direct 写在任务根上，storyboard 逐镜写。漏一种等于没查。
+        var policy = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingReferencePolicy.cs");
+        Assert.Contains("VideoRunRootOfferingField", policy, StringComparison.Ordinal);
+        Assert.Contains("VideoRunSceneOfferingField", policy, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 挂线路与开线路走同一道上游资格闸()
+    {
+        /*
+          「这条上游还承接得了流量吗」原先只长在新建线路那一个端点上，而重新启用一条停用的线路
+          走的是另一个端点——同一个不可用状态在一边拦得住、另一边拦不住（形状 3：判断在两个入口
+          各写一份然后各自漂移）。判据收进 OfferingTargetEligibility 之后，守卫盯两件事：
+          两个入口都真的调了它；Program.cs 里不许再留一份自己拼的同名判断。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var create = EndpointBody(console, "app.MapPost(\"/gw/logical-models/{id}/offerings\"");
+        var enable = EndpointBody(console, "app.MapPut(\"/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled\"");
+        Assert.Contains("OfferingTargetEligibility.Evaluate", create, StringComparison.Ordinal);
+        Assert.Contains("OfferingTargetEligibility.Evaluate", enable, StringComparison.Ordinal);
+
+        Assert.Equal(0, CountOccurrences(console, "\"TARGET_PLATFORM_UNAVAILABLE\""));
+        Assert.Equal(0, CountOccurrences(console, "\"TARGET_DISABLED\""));
+        var policy = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
+        foreach (var code in new[] { "TARGET_NOT_FOUND", "TARGET_DISABLED", "TARGET_PLATFORM_UNAVAILABLE", "EXCHANGE_ALIAS_NOT_DECLARED" })
+            Assert.Contains($"\"{code}\"", policy, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 线路身份唯一索引不在启动时建()
+    {
+        /*
+          no-auto-index：启动路径上不许建索引。上一版在「全新库」那条分支上留了个口子，
+          理由是新库没有存量所以安全——那个理由站不住，因为「库其实不新、只是索引被误删了」
+          长得一模一样。判据因此不看分支，只看这个文件里还有没有人去建这条索引：
+          身份索引的最后一个键是 SupersededByOfferingId，它出现在 IndexKeys 里就说明又建上了。
+        */
+        var initializer = ReadRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        Assert.Equal(0, CountOccurrences(initializer, "Ascending(\"SupersededByOfferingId\")"));
+
+        var method = MethodBody(initializer, "private async Task EnsureOfferingIdentityIndexAsync");
+        Assert.Equal(0, CountOccurrences(method, "Indexes.CreateOneAsync"));
+        Assert.Equal(0, CountOccurrences(method, "Indexes.CreateManyAsync"));
+        // 只报不建的前提是「真的报出来了」：缺索引与旧索引两种都要留下可读的告警。
+        Assert.Equal(2, CountOccurrences(method, "_logger.LogWarning"));
+    }
+
+    [Fact]
+    public void 并发挂线路撞唯一索引翻成冲突()
+    {
+        /*
+          判重那一读挡不住竞态，真正拦住的是唯一索引；不接这个异常，输的那一方拿到的是 500。
+          与对外模型创建同一形状（第 49 轮），这里补上线路这一侧。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var create = EndpointBody(console, "app.MapPost(\"/gw/logical-models/{id}/offerings\"");
+        var inserted = create.IndexOf("gwModelOfferings.InsertOneAsync(document)", StringComparison.Ordinal);
+        var caught = create.IndexOf("ServerErrorCategory.DuplicateKey", StringComparison.Ordinal);
+        Assert.True(inserted >= 0, "找不到线路插入语句");
+        Assert.True(caught > inserted, "线路插入没有接住撞键异常，并发创建会漏成 500");
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
@@ -6304,17 +6385,22 @@ public class GatewayDataDomainGuardTests
     public void 挂线路时物理模型的Provider也要可用()
     {
         var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var eligibility = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
 
-        Assert.Contains("TARGET_PLATFORM_UNAVAILABLE", program);
-        Assert.Contains("targetPlatform is null || targetPlatform.AsNullableBool(\"Enabled\") == false", program);
+        // 判据本身收在 OfferingTargetEligibility 里（新建与启用两个入口共用，见「挂线路与开线路
+        // 走同一道上游资格闸」）；这里盯的是它判的东西没被削掉。
+        Assert.Contains("TARGET_PLATFORM_UNAVAILABLE", eligibility);
+        Assert.Contains("targetPlatform is null", eligibility);
+        Assert.Contains("targetPlatform.AsNullableBool(\"Enabled\") == false", eligibility);
         // 两种成因要分开说，下一步不一样：Provider 不在 / Provider 停用。
-        Assert.Contains("去上游页确认它归属的 Provider", program);
-        Assert.Contains("先在上游页把它启用", program);
+        Assert.Contains("去上游页确认它归属的 Provider", eligibility);
+        Assert.Contains("先在上游页把它启用", eligibility);
 
         // 判在插入之前：这是纯查询，位移与写入之前判完（与本 PR 其它几处同一个思路）。
-        var checkAt = program.IndexOf("TARGET_PLATFORM_UNAVAILABLE", StringComparison.Ordinal);
+        var checkAt = program.IndexOf("OfferingTargetEligibility.Evaluate", StringComparison.Ordinal);
         var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(document);", StringComparison.Ordinal);
-        Assert.True(insertAt > checkAt, "Provider 可用性判在插入线路之后，那时已经写进库了");
+        Assert.True(checkAt > 0, "新建线路没有走上游资格闸");
+        Assert.True(insertAt > checkAt, "上游资格判在插入线路之后，那时已经写进库了");
     }
 
     /// <summary>
@@ -6589,20 +6675,31 @@ public class GatewayDataDomainGuardTests
     public void 兑换所线路保存时就要确认别名存在且启用()
     {
         var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var eligibility = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
 
         // 判据走镜像类，不在端点里现写一份近似。
+        Assert.Contains("ExchangeAliasPolicy.Declares(", eligibility);
+        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(", eligibility);
+        Assert.Contains("EXCHANGE_ALIAS_NOT_DECLARED", eligibility);
         Assert.Contains("ExchangeAliasPolicy.Declares(", program);
-        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(", program);
-        Assert.Contains("EXCHANGE_ALIAS_NOT_DECLARED", program);
 
-        // 创建与改动两个入口都要判：少一头就有一条缝。
-        var callSites = System.Text.RegularExpressions.Regex.Matches(
+        /*
+          三个入口都要判，少一头就有一条缝：新建线路、启用一条停用的线路（这两条走
+          OfferingTargetEligibility），以及只改上游别名的那次更新（它故意窄——不该因为
+          目标停用就挡住一次无关字段的编辑，所以直接调镜像类）。
+        */
+        var eligibilitySites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"OfferingTargetEligibility\.Evaluate\(").Count;
+        Assert.True(eligibilitySites >= 2,
+            $"OfferingTargetEligibility.Evaluate 只有 {eligibilitySites} 个调用点：新建与启用两条路都要判");
+        var directSites = System.Text.RegularExpressions.Regex.Matches(
             program, @"ExchangeAliasPolicy\.Declares\(").Count;
-        Assert.True(callSites >= 2,
-            $"ExchangeAliasPolicy.Declares 只有 {callSites} 个调用点：创建与改上游别名两条路都要判");
+        Assert.True(directSites >= 1,
+            "改上游别名那条路没有直接判别名，它不走 OfferingTargetEligibility");
 
         // 拒绝时要说得出下一步，不是一句「不合法」。
         Assert.Contains("去兑换所页确认这条别名的拼写与开关", program);
+        Assert.Contains("去兑换所页确认这条别名的拼写与开关", eligibility);
     }
 
     /// <summary>

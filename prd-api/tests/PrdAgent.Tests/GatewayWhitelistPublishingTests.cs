@@ -617,10 +617,16 @@ public class GatewayWhitelistPublishingTests
         Assert.Contains("LogWarning", body);
         Assert.Contains("dropIndex", body);
         Assert.Contains("doc/guide.platform.mongodb-indexes.md", body);
-        // 报完就返回，不往下建（建了也会和旧的撞）。
-        var warnAt = body.IndexOf("LogWarning", StringComparison.Ordinal);
-        var createAt = body.IndexOf("Indexes.CreateOneAsync", StringComparison.Ordinal);
-        Assert.True(warnAt > 0 && createAt > warnAt, "报出旧版之后要返回，不要接着建新的");
+        /*
+          这一段里也不许**建**索引（no-auto-index）。上一版只在「有旧索引」那条分支上返回，
+          留着「全新库」那条去建——那个口子的理由是新库没有存量所以安全，可是「库其实不新、
+          只是索引被误删了」长得一模一样。所以判据不再看分支：整段不许出现建索引。
+        */
+        Assert.DoesNotContain("Indexes.CreateOneAsync", body);
+        Assert.DoesNotContain("Indexes.CreateManyAsync", body);
+        // 两种缺口都要报出来：旧版索引还在、以及一条都没有。
+        Assert.Contains("线路身份唯一索引还是旧版", body);
+        Assert.Contains("线路身份唯一索引 {Expected} 不存在", body);
 
         // DBA 那一侧要查得到这条待办。
         var guide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
