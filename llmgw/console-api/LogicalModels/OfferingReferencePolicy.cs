@@ -45,6 +45,38 @@ public static class OfferingReferencePolicy
     /// 还没走到终态、且引用了这几条线路中任意一条的任务。
     /// 线路清单为空时返回 null——没有线路就没有引用，不必白跑一次查询。
     /// </summary>
+    /// <summary>直连视频任务的归属表。任务提交后把 OfferingId 记在这里，留 7 天。</summary>
+    public const string DirectVideoOwnershipCollectionName = "direct_video_job_ownerships";
+
+    public const string DirectVideoOwnershipOfferingField = "OfferingId";
+    public const string DirectVideoOwnershipExpiresField = "ExpiresAt";
+    public const string DirectVideoOwnershipRevokedField = "RevokedAt";
+
+    /// <summary>
+    /// 还能被取结果的**直连**视频任务：没过保留期、没被撤销，且它记着的正是这几条线路。
+    ///
+    /// 为什么非要单独一张表：走 videogen-direct 提交的任务不进 video_gen_runs，它的 OfferingId
+    /// 只落在这张归属表里。只查 run 表的话，这类任务对删除闸完全不可见——删掉之后，
+    /// 那些已经提交（有的已经计费）的任务再去查状态或取内容时，拿着保留下来的 OfferingId
+    /// 解析不到任何上游（第 74 轮 review；形状 1：判据只覆盖了两个来源里的一个）。
+    ///
+    /// 判据用「没过期且没撤销」而不是任务状态：这张表本来就只保留 7 天，过期或撤销之后
+    /// 那条取结果的路自己也走不通了，再拦就是无谓地挡住删除。
+    /// </summary>
+    public static FilterDefinition<BsonDocument>? BuildLiveDirectVideoJobFilter(
+        IReadOnlyCollection<string> offeringIds,
+        DateTime nowUtc)
+    {
+        if (offeringIds.Count == 0) return null;
+        var fb = Builders<BsonDocument>.Filter;
+        return fb.And(
+            fb.In(DirectVideoOwnershipOfferingField, offeringIds),
+            fb.Gt(DirectVideoOwnershipExpiresField, nowUtc),
+            fb.Or(
+                fb.Eq(DirectVideoOwnershipRevokedField, BsonNull.Value),
+                fb.Not(fb.Exists(DirectVideoOwnershipRevokedField))));
+    }
+
     public static FilterDefinition<BsonDocument>? BuildInFlightVideoRunFilter(IReadOnlyCollection<string> offeringIds)
     {
         if (offeringIds.Count == 0) return null;

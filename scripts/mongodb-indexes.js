@@ -1707,9 +1707,14 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
   )
   // end collection: llmgw_logical_models
 
-  // collection: llmgw_catalog_entries
+  // collection: llmgw_model_catalog_entries
   // 规范标识与等价写法共用一个键空间，同样走多键唯一索引 + 同样的部分过滤器。
-  ensureTightenedUniqueIndex("llmgw_catalog_entries",
+  //
+  // 集合名必须与控制台写入的那一个逐字相同。上一版写成 llmgw_catalog_entries（少了 model_），
+  // 而 CRUD 写的是 llmgw_model_catalog_entries：照文档跑一遍，真正那张表一条约束都没有，
+  // 并发补登可以写出两条抢同一个标识的记录（选哪一条看运气），而代码里那些撞键翻 409 的
+  // 恢复路径永远走不到；顺带还凭空建出一个空集合（第 74 轮 review）。
+  ensureTightenedUniqueIndex("llmgw_model_catalog_entries",
     { "TenantId": 1, "Keys": 1 },
     {
       name: "uniq_llmgw_catalog_entry_key",
@@ -1717,7 +1722,7 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
       partialFilterExpression: { "Keys": { $type: "string" } }
     }
   )
-  // end collection: llmgw_catalog_entries
+  // end collection: llmgw_model_catalog_entries
 
   // collection: llmgw_imagegen_model_configs
   // 同一个租户下一个匹配模式最多一条契约。

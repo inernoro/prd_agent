@@ -125,14 +125,14 @@ DBA 不应对这两个索引重复执行应用库脚本。若 CDS 改变索引�
 |---|---|---|
 | `llmgw_logical_models` | `uniq_llmgw_logical_default_per_type` | 两个管理员同时把不同模型设成同一个用途的默认，两次都成功，库里有两个默认，解析到哪个全看排序 |
 | `llmgw_logical_models` | `uniq_llmgw_logical_claim_per_type` | 同一个调用方被两条模型同时认领 |
-| `llmgw_catalog_entries` | `uniq_llmgw_catalog_entry_key` | 两条补登抢同一个标识或等价写法 |
+| `llmgw_model_catalog_entries` | `uniq_llmgw_catalog_entry_key` | 两条补登抢同一个标识或等价写法 |
 | `llmgw_imagegen_model_configs` | `uniq_llmgw_imagegen_tenant_pattern` | 同一个匹配模式两条契约，生图的尺寸与参数翻译每次刷新可能不一样 |
 
 | 集合 | 键（依次，全部升序） | 部分过滤器 |
 |---|---|---|
 | `llmgw_logical_models` | `TenantId`、`ModelType` | `IsDefaultForType` 等于 true |
 | `llmgw_logical_models` | `TenantId`、`ModelType`、`DefaultForAppCallerCodes` | `DefaultForAppCallerCodes` 的类型是字符串 |
-| `llmgw_catalog_entries` | `TenantId`、`Keys` | `Keys` 的类型是字符串 |
+| `llmgw_model_catalog_entries` | `TenantId`、`Keys` | `Keys` 的类型是字符串 |
 | `llmgw_imagegen_model_configs` | `TenantId`、`ModelIdPattern` | 无 |
 
 四条全部是唯一索引，名字见上一张表。同样**不用手敲**：它们都在那份可执行清单里，

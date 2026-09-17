@@ -6786,6 +6786,29 @@ public class GatewayDataDomainGuardTests
             Assert.Contains(name, manifest, StringComparison.Ordinal);
         }
 
+        /*
+          索引必须建在**真的有人写**的那个集合上。
+
+          这一条此前只断言索引名在清单里，而清单把补登那条建在了 llmgw_catalog_entries，
+          控制台写的却是 llmgw_model_catalog_entries（少了 model_）：照文档跑一遍，真正那张表
+          一条约束都没有，并发补登能写出两条抢同一个标识的记录，而代码里那些撞键翻 409 的
+          恢复路径永远走不到；顺带还凭空建出一个空集合（第 74 轮 review，形状 8：
+          名字对上了就当成建对了）。
+
+          判据换成交叉核对：清单里每一个 llmgw_ 集合，源码里必须真的有人 GetCollection 它。
+        */
+        var consoleSource = ReadRepoFile("llmgw/console-api/Program.cs");
+        var servingSource = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        foreach (Match m in Regex.Matches(manifest, @"ensureTightenedUniqueIndex\(""(llmgw_[a-z_]+)"""))
+        {
+            var collection = m.Groups[1].Value;
+            Assert.True(
+                consoleSource.Contains($"\"{collection}\"", StringComparison.Ordinal)
+                    || servingSource.Contains($"\"{collection}\"", StringComparison.Ordinal),
+                $"清单把索引建在 {collection} 上，而源码里没有任何地方读写这个集合——"
+                + "多半是名字写错了，真正那张表会一条约束都没有");
+        }
+
         // 只在确实是网关库时才建：对着应用库跑一次不许凭空建出一堆空的 llmgw_* 集合。
         Assert.Contains("$regex: \"^llmgw_\"", manifest, StringComparison.Ordinal);
 

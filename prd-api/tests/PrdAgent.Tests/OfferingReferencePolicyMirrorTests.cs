@@ -1,4 +1,7 @@
 using System.Reflection;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
 using PrdAgent.Core.Models;
 using PrdAgent.LlmGw.LogicalModels;
 using Xunit;
@@ -94,5 +97,59 @@ public class OfferingReferencePolicyMirrorTests
             dir = dir.Parent;
         Assert.NotNull(dir);
         return dir!.FullName;
+    }
+
+    [Fact]
+    public void 直连视频任务也要算进在途引用()
+    {
+        /*
+          走 videogen-direct 提交的任务不进 video_gen_runs，它的 OfferingId 只落在
+          direct_video_job_ownerships 里。只查 run 表的话，这类任务对删除闸完全不可见——
+          删掉之后那些已经提交（有的已经计费）的任务再去取结果，拿着保留下来的 OfferingId
+          解析不到任何上游（第 74 轮 review；形状 1：判据只覆盖了两个来源里的一个）。
+        */
+        Assert.Equal("direct_video_job_ownerships", OfferingReferencePolicy.DirectVideoOwnershipCollectionName);
+
+        // 没有线路要查时不构造条件：空 In 会把整张表判成命中，等于谁都删不掉
+        Assert.Null(OfferingReferencePolicy.BuildLiveDirectVideoJobFilter([], DateTime.UtcNow));
+
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var rendered = OfferingReferencePolicy
+            .BuildLiveDirectVideoJobFilter(["off-1"], now)!
+            .Render(new RenderArgs<BsonDocument>(
+                BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(),
+                BsonSerializer.SerializerRegistry))
+            .ToString();
+
+        // 三条都要在：这几条线路的、没过保留期的、没被撤销的
+        Assert.Contains("OfferingId", rendered);
+        Assert.Contains("ExpiresAt", rendered);
+        Assert.Contains("RevokedAt", rendered);
+        Assert.Contains("$gt", rendered);
+
+        // 字段名要与 DirectVideoJobOwnership 的实际落库名对得上，
+        // 对不上就是一个永远命中不到的条件——闸看着在，其实不设防（形状 8）。
+        var model = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/VideoGenModels.cs");
+        var at = model.IndexOf("class DirectVideoJobOwnership", StringComparison.Ordinal);
+        Assert.True(at > 0);
+        var body = model[at..(model.IndexOf("public static string BuildJobNamespace", at, StringComparison.Ordinal))];
+        Assert.Contains("public string? OfferingId", body, StringComparison.Ordinal);
+        Assert.Contains("public DateTime ExpiresAt", body, StringComparison.Ordinal);
+        Assert.Contains("public DateTime? RevokedAt", body, StringComparison.Ordinal);
+
+        // 端点那一侧真的查了这张表，不是只建了个函数（形状 2）
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("directVideoJobOwnerships.CountDocumentsAsync(directJobFilter)", console, StringComparison.Ordinal);
+    }
+
+    private static string ReadRepoFile(string relativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+        var full = Path.Combine(dir!.FullName, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.True(File.Exists(full), $"找不到文件: {full}");
+        return File.ReadAllText(full);
     }
 }

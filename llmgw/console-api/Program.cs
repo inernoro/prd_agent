@@ -280,6 +280,10 @@ var models = mapDatabase.GetCollection<BsonDocument>("llmmodels");
 var modelExchanges = mapDatabase.GetCollection<BsonDocument>("model_exchanges");
 // 删线路前要问一句「还有没有在途任务等着它」，那批任务在 MAP 库里（见 OfferingReferencePolicy）。
 var videoGenRuns = mapDatabase.GetCollection<BsonDocument>(OfferingReferencePolicy.VideoRunCollectionName);
+// 走 videogen-direct 提交的任务不进 run 表，它的 OfferingId 只落在这张归属表里。
+// 删线路的在途闸两张表都要查，只查一张等于对其中一类任务完全不设防（第 74 轮 review）。
+var directVideoJobOwnerships = mapDatabase.GetCollection<BsonDocument>(
+    OfferingReferencePolicy.DirectVideoOwnershipCollectionName);
 var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
@@ -6394,18 +6398,25 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
         .Where(x => x.Length > 0)
         .ToList();
     var inFlightFilter = OfferingReferencePolicy.BuildInFlightVideoRunFilter(childOfferingIds);
-    if (inFlightFilter is not null)
+    var inFlightCount = inFlightFilter is null ? 0 : await videoGenRuns.CountDocumentsAsync(inFlightFilter);
+    // 两类任务分开数，因为它们存在两张表里、判据也不同（一个看状态，一个看保留期与撤销）。
+    // 合成一个数字会让「等它跑完」这句话对直连任务说不通——那类任务等的是保留期到，不是跑完。
+    var directJobFilter = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter(childOfferingIds, DateTime.UtcNow);
+    var directJobCount = directJobFilter is null ? 0 : await directVideoJobOwnerships.CountDocumentsAsync(directJobFilter);
+    if (inFlightCount > 0 || directJobCount > 0)
     {
-        var inFlightCount = await videoGenRuns.CountDocumentsAsync(inFlightFilter);
-        if (inFlightCount > 0)
-        {
-            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
-                "MODEL_HAS_INFLIGHT_JOBS",
-                $"它名下的线路还有 {inFlightCount} 个没跑完的视频任务在用。"
-                + "现在删，那些任务下一次去取结果时会找不到上游而失败（有的已经计费了）。"
-                + "等它们跑完或取消之后再删"),
-                jsonOptions, 409);
-        }
+        var reasons = new List<string>();
+        if (inFlightCount > 0) reasons.Add($"{inFlightCount} 个没跑完的视频任务");
+        if (directJobCount > 0) reasons.Add($"{directJobCount} 个还在保留期内的直连视频任务");
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_HAS_INFLIGHT_JOBS",
+            $"它名下的线路还有{string.Join("、", reasons)}在用。"
+            + "现在删，那些任务下一次去取结果时会找不到上游而失败（有的已经计费了）。"
+            + (inFlightCount > 0 ? "等没跑完的那些跑完或取消" : string.Empty)
+            + (inFlightCount > 0 && directJobCount > 0 ? "，并且" : string.Empty)
+            + (directJobCount > 0 ? "等直连任务过了 7 天保留期" : string.Empty)
+            + "之后再删"),
+            jsonOptions, 409);
     }
 
     /*
