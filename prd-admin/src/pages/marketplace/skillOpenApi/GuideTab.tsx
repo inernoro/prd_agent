@@ -155,7 +155,8 @@ export function GuideTab() {
           <li>
             <strong>订阅技能：</strong>列表接口支持 <code className="font-mono">sort=new</code> + 你自己的时间戳比对，
             轮询 <code className="font-mono">GET /api/open/marketplace/skills?sort=new&amp;limit=50</code> 即可当作"订阅最新技能"。
-            在 AI Agent 里按 <code className="font-mono">items[0].createdAt</code> 对比本地 cursor 判断是否有新发布。
+            在 AI Agent 里取所有结果最大的 <code className="font-mono">createdAt</code> 与本地 cursor 对比；
+            不要假设第一条就是最新发布，因为旧技能更新后也会排到「最新」前面。
           </li>
           <li>
             <strong>修改技能：</strong>现阶段只支持"删除后重传"（调用方删除接口未开放给 Open API，请在 Web UI

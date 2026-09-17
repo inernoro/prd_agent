@@ -208,6 +208,28 @@ public class OfficialSkillCatalogTests
     }
 
     [Fact]
+    public void EveryOfficialMarketplaceEntry_HasStablePerEntryDates()
+    {
+        foreach (var entry in OfficialSkillCatalog.All)
+        {
+            Assert.NotEqual(default, entry.ReleasedAt);
+            Assert.NotEqual(default, entry.UpdatedAt);
+            Assert.True(entry.UpdatedAt >= entry.ReleasedAt, $"{entry.Key} 的更新时间早于上架时间");
+        }
+
+        foreach (var bundle in OfficialSkillCatalog.AllBundles)
+        {
+            Assert.NotEqual(default, bundle.ReleasedAt);
+            Assert.NotEqual(default, bundle.UpdatedAt);
+            Assert.True(bundle.UpdatedAt >= bundle.ReleasedAt, $"{bundle.Key} 的更新时间早于上架时间");
+        }
+
+        Assert.True(
+            OfficialSkillCatalog.All.Select(entry => entry.UpdatedAt).Distinct().Count() > 1,
+            "官方技能仍共用同一个伪更新时间");
+    }
+
+    [Fact]
     public void EveryBundledSkill_ExistsInCatalog()
     {
         foreach (var bundle in OfficialSkillCatalog.AllBundles)
@@ -280,7 +302,7 @@ public class OfficialSkillCatalogTests
 
         var dtos = OfficialMarketplaceSkillInjector.BuildAllDtos(
             request, config, currentUserId: "user-1",
-            keyword: null, tag: null, includeCatalogWhenUnfiltered: true);
+            keyword: null, tag: null);
 
         var kinds = dtos.Select(d => d.GetType().GetProperty("kind")?.GetValue(d) as string).ToList();
         var firstBundle = kinds.IndexOf("bundle");
@@ -290,6 +312,18 @@ public class OfficialSkillCatalogTests
         Assert.True(lastSkill >= 0, "官方技能未注入市场列表");
         // 套装排在散装技能之前：让用户先看到「一条命令装齐」，而不是从二十张卡里自己挑
         Assert.True(firstBundle < lastSkill, "套装应排在散装技能之前");
+    }
+
+    [Fact]
+    public void UnfilteredMarketplaceList_ContainsTheCompleteOfficialCatalog()
+    {
+        var request = BuildRequest("https://map.example.test");
+        var config = new ConfigurationBuilder().Build();
+
+        var dtos = OfficialMarketplaceSkillInjector.BuildAllDtos(
+            request, config, currentUserId: string.Empty, keyword: null, tag: null);
+
+        Assert.Equal(OfficialSkillCatalog.All.Count + OfficialSkillCatalog.AllBundles.Count, dtos.Count);
     }
 
     [Fact]
@@ -374,8 +408,7 @@ public class OfficialSkillCatalogTests
         Assert.NotNull(sharedTag);
 
         var official = OfficialMarketplaceSkillInjector.BuildAllDtos(
-            request, config, currentUserId: "user-1", keyword: null, tag: sharedTag,
-            includeCatalogWhenUnfiltered: false);
+            request, config, currentUserId: "user-1", keyword: null, tag: sharedTag);
 
         Assert.True(official.Count > 1,
             $"tag `{sharedTag}` 应命中多于 1 条官方条目（实际 {official.Count}），否则本用例失去意义");
@@ -426,7 +459,7 @@ public class OfficialSkillCatalogTests
 
         var dtos = OfficialMarketplaceSkillInjector.BuildAllDtos(
             request, config, currentUserId: "user-1",
-            keyword: null, tag: null, includeCatalogWhenUnfiltered: true);
+            keyword: null, tag: null);
 
         // findmapskills 既有专属特判 DTO，又进了 catalog —— 不去重就会出现两条同名条目
         var ids = dtos.Select(d => d.GetType().GetProperty("Id")?.GetValue(d) as string).ToList();

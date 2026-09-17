@@ -11,9 +11,10 @@
 //
 // 技能内容有变 / 新增技能 / 改角色套装（scripts/skill-bundles.json）时重跑本脚本并提交产物。
 //
-// 产物 schema v3：
+// 产物 schema v4：
 //   { version, generatedAt, count, roleLabels, skills[], bundles[] }
 //   skills[i]  += roles[]（角色归属，市场按角色筛选）、requires[]（硬依赖，下载时自动带上）
+//                releasedAt / updatedAt（稳定市场时间，禁止拿构建时间冒充）
 //   bundles[]   角色套装：一条 curl 装齐一个角色的全部技能（key/title/roles/includes/...）
 // 角色与套装的事实源是 scripts/skill-bundles.json，本脚本只做校验 + 合并。
 
@@ -25,6 +26,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SKILLS_DIR = join(ROOT, '.claude', 'skills');
 const BUNDLES_FILE = join(ROOT, 'scripts', 'skill-bundles.json');
+const MARKETPLACE_METADATA_FILE = join(ROOT, 'scripts', 'official-skill-marketplace-metadata.json');
 const OUT_FILE = join(ROOT, 'prd-api', 'src', 'PrdAgent.Api', 'OfficialSkills', 'official-skills.generated.json');
 
 // 散文类单文件上限（超大文本截断防 JSON 爆）。**只对散文生效**。
@@ -287,6 +289,88 @@ function shortDesc(description, fallbackName) {
   return oneLine.length > 200 ? oneLine.slice(0, 197) + '…' : oneLine;
 }
 
+function parseStableDate(value, where, errors) {
+  const time = Date.parse(value);
+  if (!value || !Number.isFinite(time)) {
+    errors.push(`${where} 不是合法 ISO 8601 时间`);
+    return null;
+  }
+  return new Date(time).toISOString();
+}
+
+/**
+ * 市场时间必须来自显式事实源，不能在构建时临时取当前时间。
+ * 这样重复构建不会把全部官方技能伪装成“刚更新”，订阅游标也保持稳定。
+ */
+function loadMarketplaceMetadata(skillKeys, bundles, skillRequires) {
+  if (!existsSync(MARKETPLACE_METADATA_FILE)) {
+    console.error(`[bundle-official-skills] 找不到市场时间事实源 ${MARKETPLACE_METADATA_FILE}`);
+    process.exit(1);
+  }
+
+  const raw = JSON.parse(readFileSync(MARKETPLACE_METADATA_FILE, 'utf8'));
+  const skillMeta = raw.skills || {};
+  const bundleMeta = raw.bundles || {};
+  const knownSkills = new Set(skillKeys);
+  const knownBundles = new Set(bundles.map((bundle) => bundle.key));
+  const errors = [];
+
+  const normalize = (entry, where) => {
+    if (!entry) {
+      errors.push(`${where} 缺少 releasedAt / updatedAt`);
+      return { releasedAt: null, updatedAt: null };
+    }
+    const releasedAt = parseStableDate(entry.releasedAt, `${where}.releasedAt`, errors);
+    const updatedAt = parseStableDate(entry.updatedAt, `${where}.updatedAt`, errors);
+    if (releasedAt && updatedAt && Date.parse(updatedAt) < Date.parse(releasedAt))
+      errors.push(`${where}.updatedAt 早于 releasedAt`);
+    return { releasedAt, updatedAt };
+  };
+
+  const skillDates = {};
+  for (const key of skillKeys)
+    skillDates[key] = normalize(skillMeta[key], `skills["${key}"]`);
+  for (const key of Object.keys(skillMeta)) {
+    if (!knownSkills.has(key)) errors.push(`市场时间表包含未上架技能 "${key}"`);
+  }
+
+  const bundleDates = {};
+  for (const bundle of bundles)
+    bundleDates[bundle.key] = normalize(bundleMeta[bundle.key], `bundles["${bundle.key}"]`);
+  for (const key of Object.keys(bundleMeta)) {
+    if (!knownBundles.has(key)) errors.push(`市场时间表包含不存在的套装 "${key}"`);
+  }
+
+  if (errors.length) {
+    console.error('[bundle-official-skills] 市场时间事实源校验失败：');
+    for (const error of errors) console.error(`  - ${error}`);
+    process.exit(1);
+  }
+
+  const expandedKeys = (keys) => {
+    const seen = new Set();
+    const visit = (key) => {
+      if (seen.has(key)) return;
+      seen.add(key);
+      for (const dependency of skillRequires[key] || []) visit(dependency);
+    };
+    for (const key of keys) visit(key);
+    return [...seen];
+  };
+
+  // 套装内容会随成员技能一起变化；更新时间必须自动跟随成员中的最大值。
+  for (const bundle of bundles) {
+    const memberUpdates = expandedKeys(bundle.includes || [])
+      .map((key) => skillDates[key].updatedAt);
+    bundleDates[bundle.key].updatedAt = [
+      bundleDates[bundle.key].updatedAt,
+      ...memberUpdates,
+    ].sort((a, b) => Date.parse(b) - Date.parse(a))[0];
+  }
+
+  return { skillDates, bundleDates };
+}
+
 /**
  * 读取角色/套装事实源，并对齐技能白名单做强校验。
  * 校验失败直接 exit(1) —— 生成物是要编进镜像的，宁可现在红，不要上线后 404。
@@ -359,6 +443,7 @@ function main() {
   if (missing.length) console.warn(`[bundle-official-skills] 警告：INCLUDE 里这些技能目录不存在，已跳过: ${missing.join(', ')}`);
 
   const { roleLabels, skillRoles, skillRequires, bundles } = loadBundleConfig(dirs);
+  const { skillDates, bundleDates } = loadMarketplaceMetadata(dirs, bundles, skillRequires);
 
   const skills = [];
   for (const key of dirs) {
@@ -376,12 +461,14 @@ function main() {
       tags: deriveTags(key, name, description),
       roles: skillRoles[key] || [],
       requires: skillRequires[key] || [],
+      releasedAt: skillDates[key].releasedAt,
+      updatedAt: skillDates[key].updatedAt,
       files, // 完整目录（含 SKILL.md + reference/ + scripts/ 等文本文件）
     });
   }
 
   const out = {
-    version: 3,
+    version: 4,
     generatedAt: new Date().toISOString(),
     count: skills.length,
     roleLabels,
@@ -395,6 +482,8 @@ function main() {
       roles: b.roles || [],
       includes: b.includes,
       firstStep: b.firstStep || null,
+      releasedAt: bundleDates[b.key].releasedAt,
+      updatedAt: bundleDates[b.key].updatedAt,
     })),
   };
   writeFileSync(OUT_FILE, JSON.stringify(out, null, 2) + '\n', 'utf8');

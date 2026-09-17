@@ -34,6 +34,12 @@ public static class OfficialSkillCatalog
         /// <summary>硬依赖的其他技能 key —— 下载本技能时自动一并打包（递归展开）。</summary>
         public List<string> Requires { get; set; } = new();
 
+        /// <summary>首次进入海鲜市场的稳定时间；不得使用进程启动或构建时间。</summary>
+        public DateTimeOffset ReleasedAt { get; set; }
+
+        /// <summary>当前版本最近一次实质更新时间；用于“最新”排序和卡片时间。</summary>
+        public DateTimeOffset UpdatedAt { get; set; }
+
         public List<SkillFile> Files { get; set; } = new();
     }
 
@@ -56,6 +62,9 @@ public static class OfficialSkillCatalog
 
         /// <summary>装完第一步该干什么（写进 zip 里的 INSTALL.md）。</summary>
         public string? FirstStep { get; set; }
+
+        public DateTimeOffset ReleasedAt { get; set; }
+        public DateTimeOffset UpdatedAt { get; set; }
     }
 
     private sealed class CatalogFile

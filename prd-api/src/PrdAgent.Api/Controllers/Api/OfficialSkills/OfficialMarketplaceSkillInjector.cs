@@ -19,6 +19,12 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 /// </summary>
 public static class OfficialMarketplaceSkillInjector
 {
+    public sealed record ListItem(
+        object Dto,
+        DateTimeOffset CreatedAt,
+        DateTimeOffset UpdatedAt,
+        long DownloadCount);
+
     /// <summary>官方 findmapskills 在海鲜市场里的虚拟 ID（固定值）</summary>
     public const string OfficialFindMapSkillsId = "official-findmapskills";
 
@@ -40,6 +46,8 @@ public static class OfficialMarketplaceSkillInjector
 
     public static object BuildFindMapSkillsDto(string baseUrl, string currentUserId)
     {
+        var catalogEntry = OfficialSkillCatalog.Find(OfficialSkillTemplates.FindMapSkillsKey)
+            ?? throw new InvalidOperationException("官方技能目录缺少 findmapskills，无法构造市场条目");
         var zipUrl = $"{baseUrl.TrimEnd('/')}/api/official-skills/{OfficialSkillTemplates.FindMapSkillsKey}/download";
         return new
         {
@@ -71,8 +79,8 @@ public static class OfficialMarketplaceSkillInjector
             ownerUserId = "official",
             ownerUserName = "PrdAgent 官方",
             ownerUserAvatar = (string?)null,
-            createdAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
-            updatedAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
+            createdAt = catalogEntry.ReleasedAt,
+            updatedAt = catalogEntry.UpdatedAt,
         };
     }
 
@@ -168,10 +176,9 @@ public static class OfficialMarketplaceSkillInjector
             ownerUserId = "official",
             ownerUserName = "PrdAgent 官方",
             ownerUserAvatar = (string?)null,
-            // 固定发布日期，绝不能用 DateTime.UtcNow —— 否则 findmapskills AI 的
-            // 「sort=new + createdAt>cursor」轮询每次都误报这些为新技能；"最新"排序也会乱
-            createdAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
-            updatedAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
+            // 稳定日期来自提交期目录，绝不能用 DateTime.UtcNow；否则订阅轮询会重复误报。
+            createdAt = e.ReleasedAt,
+            updatedAt = e.UpdatedAt,
         };
     }
 
@@ -214,18 +221,18 @@ public static class OfficialMarketplaceSkillInjector
             ownerUserId = "official",
             ownerUserName = "PrdAgent 官方",
             ownerUserAvatar = (string?)null,
-            createdAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
-            updatedAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
+            createdAt = b.ReleasedAt,
+            updatedAt = b.UpdatedAt,
         };
     }
 
-    private static bool CatalogMatches(OfficialSkillCatalog.SkillEntry e, string? keyword, string? tag, bool includeWhenUnfiltered)
-        => Matches(e.Title, e.Description, e.Tags, keyword, tag, includeWhenUnfiltered);
+    private static bool CatalogMatches(OfficialSkillCatalog.SkillEntry e, string? keyword, string? tag)
+        => Matches(e.Title, e.Description, e.Tags, keyword, tag);
 
-    private static bool BundleMatches(OfficialSkillCatalog.BundleEntry b, string? keyword, string? tag, bool includeWhenUnfiltered)
-        => Matches(b.Title, b.Description, b.Tags, keyword, tag, includeWhenUnfiltered);
+    private static bool BundleMatches(OfficialSkillCatalog.BundleEntry b, string? keyword, string? tag)
+        => Matches(b.Title, b.Description, b.Tags, keyword, tag);
 
-    private static bool Matches(string? title, string? description, List<string>? tags, string? keyword, string? tag, bool includeWhenUnfiltered)
+    private static bool Matches(string? title, string? description, List<string>? tags, string? keyword, string? tag)
     {
         var tagList = tags ?? new List<string>();
         if (!string.IsNullOrWhiteSpace(tag))
@@ -237,40 +244,49 @@ public static class OfficialMarketplaceSkillInjector
                 || (description ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
                 || tagList.Any(t => t.Contains(k, StringComparison.OrdinalIgnoreCase));
         }
-        // 无 keyword/tag：Web 浏览全展示；Open API（AI）不注入，避免每次列表/轮询被官方淹没
-        return includeWhenUnfiltered;
+        return true;
     }
 
     /// <summary>
-    /// 构造官方条目 DTO（findmapskills 在前，其余目录技能随后），用于 List prepend。
-    /// keyword/tag 筛选。<paramref name="includeCatalogWhenUnfiltered"/>：
-    ///   Web 传 true（无搜索词也全展示官方推荐）；
-    ///   Open API 传 false（无搜索词时目录技能不注入，只有 keyword/tag 命中才出现，
-    ///   防止 AI 每次 list/分页/轮询都被 15 个官方占满 budget、翻不到社区技能）。
-    /// findmapskills 始终按 ShouldInject 注入（它是 AI 的 bootstrap 入口）。
+    /// 构造官方条目及排序元数据（findmapskills 在前，其余目录技能随后）。
+    /// keyword/tag 筛选。站内与开放接口必须调用同一个完整目录，避免网页看得到、AI 却搜不到。
+    /// 响应体积由调用方的 limit 约束，不再通过隐藏官方条目来控制。
     /// </summary>
-    public static List<object> BuildAllDtos(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId, string? keyword, string? tag, bool includeCatalogWhenUnfiltered)
+    public static List<ListItem> BuildAllListItems(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId, string? keyword, string? tag)
     {
         var baseUrl = request.ResolveServerUrl(config);
-        var list = new List<object>();
+        var list = new List<ListItem>();
         if (ShouldInject(keyword, tag))
-            list.Add(BuildFindMapSkillsDto(baseUrl, currentUserId));
+        {
+            var entry = OfficialSkillCatalog.Find(OfficialSkillTemplates.FindMapSkillsKey)
+                ?? throw new InvalidOperationException("官方技能目录缺少 findmapskills，无法构造市场条目");
+            list.Add(new ListItem(
+                BuildFindMapSkillsDto(baseUrl, currentUserId),
+                entry.ReleasedAt,
+                entry.UpdatedAt,
+                0));
+        }
         // 套装排在散装技能之前：让用户先看到「一条命令装齐」，而不是从二十张卡里自己挑
         foreach (var b in OfficialSkillCatalog.AllBundles)
         {
-            if (BundleMatches(b, keyword, tag, includeCatalogWhenUnfiltered))
-                list.Add(BuildBundleDto(b, baseUrl));
+            if (BundleMatches(b, keyword, tag))
+                list.Add(new ListItem(BuildBundleDto(b, baseUrl), b.ReleasedAt, b.UpdatedAt, 0));
         }
         foreach (var e in OfficialSkillCatalog.All)
         {
             // findmapskills 上面已按特判注入（它有专属的标题/描述/图标），
             // catalog 里那条要跳过，否则市场列表会出现两条同名条目。
             if (e.Key == OfficialSkillTemplates.FindMapSkillsKey) continue;
-            if (CatalogMatches(e, keyword, tag, includeCatalogWhenUnfiltered))
-                list.Add(BuildCatalogDto(e, baseUrl));
+            if (CatalogMatches(e, keyword, tag))
+                list.Add(new ListItem(BuildCatalogDto(e, baseUrl), e.ReleasedAt, e.UpdatedAt, 0));
         }
         return list;
     }
+
+    public static List<object> BuildAllDtos(Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId, string? keyword, string? tag)
+        => BuildAllListItems(request, config, currentUserId, keyword, tag)
+            .Select(item => item.Dto)
+            .ToList();
 
     /// <summary>按 official-{key} 解析单个官方 DTO；找不到返回 null。</summary>
     public static object? BuildDtoById(string id, Microsoft.AspNetCore.Http.HttpRequest request, IConfiguration config, string currentUserId)

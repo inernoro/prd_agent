@@ -116,26 +116,26 @@ public class MarketplaceSkillsController : ControllerBase
         var query = _db.MarketplaceSkills.Find(filter);
         query = sort switch
         {
-            "new" => query.SortByDescending(x => x.CreatedAt),
-            _ => query.SortByDescending(x => x.DownloadCount).ThenByDescending(x => x.CreatedAt)
+            "new" => query.SortByDescending(x => x.UpdatedAt).ThenByDescending(x => x.CreatedAt),
+            _ => query.SortByDescending(x => x.DownloadCount)
+                .ThenByDescending(x => x.UpdatedAt)
+                .ThenByDescending(x => x.CreatedAt)
         };
 
-        // 官方条目（findmapskills + 目录技能，按 keyword/tag 过滤）永远置顶
-        // Web：无搜索词也展示全部官方（前端归到「官方推荐」独立行，不挤社区瀑布流）
-        var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: true);
-        // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限。
-        // 官方条目自身也要裁：只减 DB 条数的话，官方条目一旦超过 200 总长就会破上限。
-        // 现在离 200 还远，但按构造正确比靠「现在还不到」可靠。
+        // 官方与社区进入同一条排序管道，避免先各排各的再拼接导致“最新”第一条其实很旧。
+        var officialItems = OfficialMarketplaceSkillInjector.BuildAllListItems(Request, _config, userId, keyword, tag);
         const int webHardLimit = 200;
-        if (officialDtos.Count > webHardLimit)
-            officialDtos = officialDtos.Take(webHardLimit).ToList();
-        var dbLimit = Math.Max(webHardLimit - officialDtos.Count, 0);
-
-        var items = await query.Limit(dbLimit).ToListAsync(ct);
+        var items = await query.Limit(webHardLimit).ToListAsync(ct);
         var shareCounts = await LoadActiveShareCountsAsync(items.Select(x => x.Id), ct);
-        var dtos = items.Select(s => ToDto(s, userId, shareCounts.GetValueOrDefault(s.Id))).Cast<object>().ToList();
-
-        dtos.InsertRange(0, officialDtos);
+        var candidates = officialItems
+            .Select(item => new MarketplaceSkillListSorter.Candidate(
+                item.Dto, item.CreatedAt, item.UpdatedAt, item.DownloadCount))
+            .Concat(items.Select(skill => new MarketplaceSkillListSorter.Candidate(
+                ToDto(skill, userId, shareCounts.GetValueOrDefault(skill.Id)),
+                MarketplaceSkillListSorter.AsUtc(skill.CreatedAt),
+                MarketplaceSkillListSorter.AsUtc(skill.UpdatedAt),
+                skill.DownloadCount)));
+        var dtos = MarketplaceSkillListSorter.SortAndTake(candidates, sort, webHardLimit);
 
         return Ok(ApiResponse<object>.Ok(new { items = dtos }));
     }
