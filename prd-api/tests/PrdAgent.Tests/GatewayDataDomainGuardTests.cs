@@ -6356,7 +6356,14 @@ public class GatewayDataDomainGuardTests
             "else if (message.Contains(\"uniq_llmgw_logical_claim_per_type\"",
             StringComparison.Ordinal);
         Assert.True(branchAt > 0, "找不到认领撞车那条分支");
-        var branch = console[branchAt..(branchAt + 3000)];
+        /*
+          窗口用**结构边界**收尾，不用固定字符数。写死 3000 字的那一版在第 70 轮给这条分支
+          补了「重试也要看索引名」之后当场失灵：被测的那一行被挤出窗口，断言读到 -1 判红，
+          而代码其实是对的——固定窗口自己就是一个会漂的判据。
+        */
+        var branchEnd = console.IndexOf("entry.ClaimedAppCallerCodes = keptClaims;", branchAt, StringComparison.Ordinal);
+        Assert.True(branchEnd > branchAt, "认领撞车那条分支的收尾标记不见了，窗口取不住");
+        var branch = console[branchAt..branchEnd];
 
         // 回去读一遍现在谁认领着，只去掉真被占走的那几个。
         Assert.Contains("takenCodes", branch, StringComparison.Ordinal);
@@ -7702,6 +7709,51 @@ public class GatewayDataDomainGuardTests
         var listAt = catalog.IndexOf("var visible = logicals", StringComparison.Ordinal);
         Assert.True(recordsAt > 0, "清单没有取调用方记录");
         Assert.True(listAt > recordsAt, "调用方记录要在构造清单之前取到");
+    }
+
+    [Fact]
+    public void 模型页调用量只数业务操作()
+    {
+        /*
+          异步模型（视频、长任务）的 status / download / cancel 三种控制操作带着同一个
+          LogicalModelPublicId 落日志。不滤掉的话，一次用户生成会被数成好几次调用，
+          模型页那条 30 天曲线虚高（第 70 轮 review）。判据与逻辑模型日志、总览两处用的是
+          同一份，不许在这里另写一套（形状 3）。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var at = program.IndexOf("app.MapGet(\"/gw/logical-models/usage\"", StringComparison.Ordinal);
+        Assert.True(at > 0, "模型页用量端点不见了");
+        var end = program.IndexOf("var group = new BsonDocument(\"$group\"", at, StringComparison.Ordinal);
+        Assert.True(end > at);
+        Assert.Contains("BuildBusinessOperationFilter()", program[at..end], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 搬迁重试撞键也要先看撞的是哪一条索引()
+    {
+        /*
+          第一次插入撞键时外层已经按索引名分流了；而认领撞车那一档的**重试**仍是一刀切：
+          清空认领、拿同一个公开名再插一次。这几毫秒里另一个搬迁把这个公开名建掉的话，
+          第二次插入必然再抛，而它在 try 外面——异常一路出去变成 500，而这一趟前面几个池
+          可能已经搬好了（第 70 轮 review，与外层那次是同一个形状）。
+
+          「认下赢家」两个入口共用一份实现，不许各写一遍。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Equal(1, CountOccurrences(program, "async Task<string> TryLinkToRaceWinnerAsync()"));
+        // 两个入口都要调它：第一次插入撞公开名、重试又撞公开名
+        Assert.True(
+            CountOccurrences(program, "await TryLinkToRaceWinnerAsync()") >= 3,
+            "认下赢家的入口少于三处：第一次撞键、重试撞键、清空认领后再撞键");
+        // 重试那一档必须自己看索引名，不许把公开名撞车当成认领撞车
+        var retryAt = program.IndexOf("catch (MongoWriteException retry)", StringComparison.Ordinal);
+        Assert.True(retryAt > 0, "重试的撞键处置不见了");
+        var retryEnd = program.IndexOf("entry.ClaimedAppCallerCodes = keptClaims;", retryAt, StringComparison.Ordinal);
+        Assert.True(retryEnd > retryAt);
+        var retryBody = program[retryAt..retryEnd];
+        Assert.Contains("uniq_llmgw_logical_model_tenant_public_id", retryBody, StringComparison.Ordinal);
+        // 清空认领之后那次插入也要被接住，不能裸插
+        Assert.Contains("catch (MongoWriteException last)", retryBody, StringComparison.Ordinal);
     }
 
     [Fact]

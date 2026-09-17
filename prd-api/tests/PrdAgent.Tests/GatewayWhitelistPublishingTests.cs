@@ -38,21 +38,36 @@ public class GatewayWhitelistPublishingTests
     }
 
     [Fact]
-    public void 公开模型名剥掉供应商前缀否则同一个模型会变成两个()
+    public void 公开模型名只在名录认得出来时才剥供应商前缀()
     {
-        // openai/gpt-4o 与 gpt-4o 必须收敛到同一个公开名，否则从官网导一次、从中转再导一次，
-        // 白名单里就是两个条目，多来源永远合不起来。
+        /*
+          名录登记过的前缀写法要收敛：openai/gpt-4o 与 gpt-4o 必须落到同一个公开名，
+          否则从官网导一次、从中转再导一次，白名单里就是两个条目，多来源永远合不起来。
+
+          但**不许无条件剥**。上一版对任何带斜杠的名字都取最后一段，于是管理员显式导入一个
+          名录外的 private-provider/gpt-4o 会被算成公开名 gpt-4o，发布那一步按这个公开名找到
+          已存在的那条 gpt-4o、用途又恰好相同，就把这个私有上游当成它的又一条线路挂上去——
+          普通 gpt-4o 流量从此可能落到一个毫不相干的上游（第 70 轮 review）。
+
+          判据与 ModelCatalog.Find 完全一致（它的注释自己就写着「private-provider/gpt-4o
+          必须查不到」），而且是**直接问它**，不是照着它再写一遍。
+        */
         Assert.Equal("gpt-4o", GatewayWhitelistPublishing.ToPublicId("openai/gpt-4o"));
         Assert.Equal("gpt-4o", GatewayWhitelistPublishing.ToPublicId("gpt-4o"));
-        Assert.Equal("claude-sonnet-4", GatewayWhitelistPublishing.ToPublicId("anthropic/claude-sonnet-4"));
-        // 版本后缀是不同的模型，不许一起剥掉
-        Assert.Equal("gpt-4o-2024-08-06", GatewayWhitelistPublishing.ToPublicId("openai/gpt-4o-2024-08-06"));
+
+        // 名录外的厂商段一律整串保留：宁可多出一条 private-provider/gpt-4o，
+        // 也不要把它混进别人的模型里。
+        Assert.Equal("private-provider/gpt-4o", GatewayWhitelistPublishing.ToPublicId("private-provider/gpt-4o"));
+        // 拼出来的组合同样不认——openai 与 claude-3-opus 各自登记过，合在一起没人登记过。
+        Assert.Equal("openai/claude-3-opus", GatewayWhitelistPublishing.ToPublicId("openai/claude-3-opus"));
+
         // 剥完不合法就返回空，让调用方跳过而不是写一条建不出来的记录
         Assert.Equal(string.Empty, GatewayWhitelistPublishing.ToPublicId("openai/"));
         Assert.Equal(string.Empty, GatewayWhitelistPublishing.ToPublicId("   "));
 
-        // 源码侧：剥的是最后一段，不是第一个斜杠
-        Assert.Contains("LastIndexOf('/')", Publishing);
+        // 判据只有一份：这里不许再出现自己剥前缀的写法
+        Assert.Contains("ModelCatalog.Find(name, catalogOverrides)", Publishing);
+        Assert.DoesNotContain("name[(slash + 1)..]", Publishing);
     }
 
     [Fact]

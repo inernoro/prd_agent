@@ -4649,7 +4649,12 @@ app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
         fb.Gte("StartedAt", fromUtc),
         fb.Lte("StartedAt", toUtc),
         fb.Ne("LogicalModelPublicId", BsonNull.Value),
-        fb.Exists("LogicalModelPublicId")));
+        fb.Exists("LogicalModelPublicId"),
+        // 只数业务调用。异步模型（视频、长任务）的 status / download / cancel 三种控制操作
+        // 带着同一个 LogicalModelPublicId 落日志，不滤掉的话一次用户生成会被数成好几次调用，
+        // 模型页那条 30 天曲线于是虚高。判据与逻辑模型日志、总览两处用的是同一份
+        // （BuildBusinessOperationFilter），不在这里另写一套（第 70 轮 review，形状 3）。
+        BuildBusinessOperationFilter()));
 
     var group = new BsonDocument("$group", new BsonDocument
     {
@@ -5163,6 +5168,60 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                     { "Description", $"由模型池「{poolName}」搬迁而来" },
                     { "CreatedAt", now }, { "UpdatedAt", now },
                 };
+                /*
+                  「另一个搬迁请求抢先建好了同名模型，认下它」这一段有**两个**入口：
+                  第一次插入撞上公开名索引，以及认领撞车重试时又撞上公开名索引。
+                  两处各写一遍必然漂移，所以收在这里，返回值告诉调用方接下来怎么走。
+                */
+                async Task<string> TryLinkToRaceWinnerAsync()
+                {
+                    var winner = await gwLogicalModels
+                        .Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized)))
+                        .FirstOrDefaultAsync();
+                    if (winner is null) return "missing";
+
+                    // 认下对方之前要复核用途：正常那条「已存在同名模型」的路会查，
+                    // 这条恢复路不查的话，会把一个生图池的线路挂到一个对话模型下面——
+                    // 原来那个用途一条路都没搬到，而赢家收了一批它根本用不了的上游。
+                    var winnerType = winner.AsNullableString("ModelType") ?? string.Empty;
+                    if (!string.Equals(winnerType, modelType, StringComparison.Ordinal))
+                    {
+                        result.Skipped.Add(new PoolMigrationSkip
+                        {
+                            PoolId = poolId,
+                            PoolName = poolName,
+                            Reason = $"另一个搬迁请求在同一瞬间用「{publicId}」建了一个 {winnerType} 模型，"
+                                + $"而这个池是 {modelType}——同名不同用途不能合成一条，这个池没搬。"
+                                + "给它换一个对外标识再搬",
+                        });
+                        return "cross-type";
+                    }
+
+                    logicalId = winner.GetStringOrEmpty("_id");
+                    linkedByRace = true;
+                    entry.CreatedNewModel = false;
+                    entry.IsDefaultForType = winner.AsNullableBool("IsDefaultForType") ?? false;
+                    entry.ClaimedAppCallerCodes = GetStringArray(winner, "DefaultForAppCallerCodes");
+                    // 把这个池的 id 也记进去。不记的话，还带着 model_policy=pool 的存量客户端
+                    // 拿这个池的文档 ID 来点名时查不到任何模型，一律 MODEL_NOT_FOUND——
+                    // 正常那条「已存在同名模型」的路是会记的，这条恢复路漏了就是同一个洞。
+                    await gwModelOfferings.Database
+                        .GetCollection<BsonDocument>("llmgw_logical_models")
+                        .UpdateOneAsync(
+                            fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                            Builders<BsonDocument>.Update
+                                .AddToSet("MigratedFromPoolIds", poolId)
+                                .Set("UpdatedAt", DateTime.UtcNow));
+                    result.Skipped.Add(new PoolMigrationSkip
+                    {
+                        PoolId = poolId,
+                        PoolName = poolName,
+                        Reason = $"另一个搬迁请求在同一瞬间已经把「{publicId}」建好了，这个池的线路直接挂到那一条上，"
+                            + "没有重复建模型。确认那条模型的默认与认领是不是你要的",
+                    });
+                    return "linked";
+                }
+
                 try
                 {
                     await gwLogicalModels.InsertOneAsync(document);
@@ -5189,50 +5248,11 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                           只清了默认标记就重插，于是必炸（形状 1：判据只认了两种索引，
                           第三种落进 else 得到一个与它无关的处置）。
                         */
-                        var winner = await gwLogicalModels
-                            .Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized)))
-                            .FirstOrDefaultAsync();
-                        if (winner is null) throw;
-
-                        // 认下对方之前要复核用途：正常那条「已存在同名模型」的路会查，
-                        // 这条恢复路不查的话，会把一个生图池的线路挂到一个对话模型下面——
-                        // 原来那个用途一条路都没搬到，而赢家收了一批它根本用不了的上游。
-                        var winnerType = winner.AsNullableString("ModelType") ?? string.Empty;
-                        if (!string.Equals(winnerType, modelType, StringComparison.Ordinal))
-                        {
-                            result.Skipped.Add(new PoolMigrationSkip
-                            {
-                                PoolId = poolId,
-                                PoolName = poolName,
-                                Reason = $"另一个搬迁请求在同一瞬间用「{publicId}」建了一个 {winnerType} 模型，"
-                                    + $"而这个池是 {modelType}——同名不同用途不能合成一条，这个池没搬。"
-                                    + "给它换一个对外标识再搬",
-                            });
-                            continue;
-                        }
-
-                        logicalId = winner.GetStringOrEmpty("_id");
-                        linkedByRace = true;
-                        entry.CreatedNewModel = false;
-                        entry.IsDefaultForType = winner.AsNullableBool("IsDefaultForType") ?? false;
-                        entry.ClaimedAppCallerCodes = GetStringArray(winner, "DefaultForAppCallerCodes");
-                        // 把这个池的 id 也记进去。不记的话，还带着 model_policy=pool 的存量客户端
-                        // 拿这个池的文档 ID 来点名时查不到任何模型，一律 MODEL_NOT_FOUND——
-                        // 正常那条「已存在同名模型」的路是会记的，这条恢复路漏了就是同一个洞。
-                        await gwModelOfferings.Database
-                            .GetCollection<BsonDocument>("llmgw_logical_models")
-                            .UpdateOneAsync(
-                                fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
-                                Builders<BsonDocument>.Update
-                                    .AddToSet("MigratedFromPoolIds", poolId)
-                                    .Set("UpdatedAt", DateTime.UtcNow));
-                        result.Skipped.Add(new PoolMigrationSkip
-                        {
-                            PoolId = poolId,
-                            PoolName = poolName,
-                            Reason = $"另一个搬迁请求在同一瞬间已经把「{publicId}」建好了，这个池的线路直接挂到那一条上，"
-                                + "没有重复建模型。确认那条模型的默认与认领是不是你要的",
-                        });
+                        var linked = await TryLinkToRaceWinnerAsync();
+                        // 读不回赢家（它又被删了？）就把原异常抛出去：这时既没建成也认不下谁，
+                        // 编一个结论比报错更糟（no-rootless-tree）。
+                        if (string.Equals(linked, "missing", StringComparison.Ordinal)) throw;
+                        if (string.Equals(linked, "cross-type", StringComparison.Ordinal)) continue;
                     }
                     else if (message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal))
                     {
@@ -5284,9 +5304,41 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                         catch (MongoWriteException retry)
                             when (retry.WriteError?.Category == ServerErrorCategory.DuplicateKey)
                         {
-                            keptClaims = [];
-                            document["DefaultForAppCallerCodes"] = new BsonArray();
-                            await gwLogicalModels.InsertOneAsync(document);
+                            /*
+                              重试也撞了——**先看撞的是哪一条**，两种的处置相反。
+
+                              上一版把重试的撞键一律当成又一次认领撞车：清空认领、拿**同一个公开名**
+                              再插一次。可这几毫秒里另一个搬迁完全可能把这个公开名建掉，那时第二次插入
+                              必然再抛，而它在 try 外面——异常一路出去变成 500，而这一趟前面几个池
+                              可能已经搬好了（第 70 轮 review；与外层那次分流是同一个形状，
+                              外层已经按索引名分开了，重试这一档漏在外面）。
+                            */
+                            var retryMessage = retry.WriteError?.Message ?? retry.Message;
+                            if (retryMessage.Contains("uniq_llmgw_logical_model_tenant_public_id", StringComparison.Ordinal))
+                            {
+                                var relinked = await TryLinkToRaceWinnerAsync();
+                                if (string.Equals(relinked, "missing", StringComparison.Ordinal)) throw;
+                                if (string.Equals(relinked, "cross-type", StringComparison.Ordinal)) continue;
+                                // 认下了赢家：这个池的线路挂到它名下，认领一个都没带过来。
+                                keptClaims = [];
+                            }
+                            else
+                            {
+                                keptClaims = [];
+                                document["DefaultForAppCallerCodes"] = new BsonArray();
+                                try
+                                {
+                                    await gwLogicalModels.InsertOneAsync(document);
+                                }
+                                catch (MongoWriteException last)
+                                    when (last.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                                {
+                                    // 清空认领之后还撞，只可能是公开名被抢了。再认一次赢家；
+                                    // 认不下就报这个池没搬，而不是让异常把整趟搬迁变成 500。
+                                    var lastLinked = await TryLinkToRaceWinnerAsync();
+                                    if (!string.Equals(lastLinked, "linked", StringComparison.Ordinal)) continue;
+                                }
+                            }
                         }
 
                         entry.ClaimedAppCallerCodes = keptClaims;
@@ -13419,7 +13471,7 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
                 // 发布规则（公开名怎么算、用途怎么判、跨用途怎么拒、线路排在第几）
                 // 全在这一个函数里。单模型新增走的是同一个函数，两个入口不会各自漂移。
                 var published = await PublishGatewayModelToWhitelistAsync(
-                    gwLogicalModels, gwModelOfferings, model, tenantId, now);
+                    gwLogicalModels, gwModelOfferings, model, tenantId, now, importCatalogOverrides);
                 if (published is not { } outcome) continue;
                 if (outcome.BlockedMessage is { Length: > 0 } blocked)
                 {
@@ -13602,7 +13654,8 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
     try
     {
         var published = await PublishGatewayModelToWhitelistAsync(
-            gwLogicalModels, gwModelOfferings, document, tenantId, now);
+            gwLogicalModels, gwModelOfferings, document, tenantId, now,
+            await LoadCatalogOverridesAsync(http));
         if (published is { } outcome)
         {
             publicId = outcome.PublicId;
@@ -17539,12 +17592,16 @@ static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, 
         IMongoCollection<BsonDocument> offerings,
         BsonDocument model,
         string tenantId,
-        DateTime now)
+        DateTime now,
+        // 补登表要一路传进来：公开名是否收敛到名录的规范标识由它与内置名录一起决定。
+        // 两个入口（批量导入、手工新增）必须传同一份，否则同一个上游名在两条路上算出
+        // 两个公开名——而白名单的全部意义就是让它们合成一条。
+        ModelCatalog.CatalogOverrides? catalogOverrides)
 {
     var modelName = model.GetStringOrEmpty("ModelName");
     if (modelName.Length == 0) return null;
 
-    var publicId = GatewayWhitelistPublishing.ToPublicId(modelName);
+    var publicId = GatewayWhitelistPublishing.ToPublicId(modelName, catalogOverrides);
     if (publicId.Length == 0) return null;
     var normalizedPublicId = publicId.ToLowerInvariant();
 

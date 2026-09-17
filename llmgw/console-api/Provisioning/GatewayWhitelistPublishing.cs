@@ -15,14 +15,25 @@ public static class GatewayWhitelistPublishing
     /// 上游模型名 -> 公开模型名。
     ///
     /// 中转商的模型名普遍带供应商前缀（<c>openai/gpt-4o</c>、<c>anthropic/claude-sonnet-4</c>）。
-    /// 公开名必须**剥掉这层前缀**，否则从官网导一次得到 <c>gpt-4o</c>、从中转导一次得到
-    /// <c>openai/gpt-4o</c>，同一个模型在白名单里变成两个公开名——「一个模型多个来源」
-    /// 就永远合不起来，而这正是白名单存在的理由。
+    /// 这层前缀**在名录认得出来的时候**要剥掉，否则从官网导一次得到 <c>gpt-4o</c>、
+    /// 从中转导一次得到 <c>openai/gpt-4o</c>，同一个模型在白名单里变成两个公开名——
+    /// 「一个模型多个来源」就永远合不起来，而这正是白名单存在的理由。
     ///
-    /// 只剥最后一段：<c>a/b/c</c> 取 <c>c</c>。版本后缀（<c>:free</c>、<c>-2024-08-06</c>）保留，
-    /// 它们是不同的模型，不该被合成一个。
+    /// **但不许无条件剥。** 上一版对任何带斜杠的名字都取最后一段，于是管理员显式导入一个
+    /// 名录外的 <c>private-provider/gpt-4o</c> 会被算成公开名 <c>gpt-4o</c>，
+    /// 发布那一步按这个公开名找到**已存在的那条 gpt-4o**、用途又恰好相同，
+    /// 就把这个私有上游当成它的又一条线路挂了上去——普通的 <c>gpt-4o</c> 流量从此可能落到
+    /// 一个毫不相干的上游（第 70 轮 review）。
+    ///
+    /// 判据与 <c>ModelCatalog.Find</c> 完全一致，并且**直接问它**而不是照着它再写一遍：
+    /// 名录只在「剥掉的那一段正是命中那条登记自己的厂商段」时才认这种等价
+    /// （<c>openai/claude-3-opus</c> 这种拼出来的组合它是拒绝的）。名录认得出来 → 用它的规范
+    /// 标识当公开名；认不出来 → **整串保留**（PublicId 的字符集本来就允许斜杠），
+    /// 宁可多出一条 <c>private-provider/gpt-4o</c>，也不要把它混进别人的模型里。
+    ///
+    /// 版本后缀（<c>:free</c>、<c>-2024-08-06</c>）一律保留，它们是不同的模型。
     /// </summary>
-    public static string ToPublicId(string upstreamModelName)
+    public static string ToPublicId(string upstreamModelName, ModelCatalog.CatalogOverrides? catalogOverrides = null)
     {
         var name = (upstreamModelName ?? string.Empty).Trim();
         if (name.Length == 0) return string.Empty;
@@ -32,10 +43,16 @@ public static class GatewayWhitelistPublishing
             // 斜杠在末尾 = 上游名里根本没有模型段（"openai/"）。返回空让调用方跳过，
             // 而不是退回整串——那会拿供应商名当公开模型名，在白名单里凭空造一条 "openai"。
             if (slash == name.Length - 1) return string.Empty;
-            name = name[(slash + 1)..];
+            // 名录认得出这个完整标识（含它自己登记过的厂商前缀）才收敛到规范标识；
+            // 认不出来就整串保留，不替它假设这个前缀是可剥的。
+            name = ModelCatalog.Find(name, catalogOverrides) is { } known ? known.CanonicalId : name;
         }
         // 逻辑模型的 PublicId 校验：首字符必须是字母或数字，其余只允许 . _ : / -
-        var cleaned = new string(name.Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or ':' or '-').ToArray());
+        // 斜杠**要留着**：名录认不出来的标识整串保留，而它多半带着厂商段。
+        // 上一版这里漏了斜杠——反正那时前缀总会被剥掉，留不留看不出区别；
+        // 改成「认不出就不剥」之后，漏掉它会把 private-provider/gpt-4o 挤成
+        // private-providergpt-4o，一个谁也认不出的名字。
+        var cleaned = new string(name.Where(c => char.IsLetterOrDigit(c) || c is '.' or '_' or ':' or '/' or '-').ToArray());
         while (cleaned.Length > 0 && !char.IsLetterOrDigit(cleaned[0])) cleaned = cleaned[1..];
         return cleaned.Length is >= 2 and <= 160 ? cleaned : string.Empty;
     }
