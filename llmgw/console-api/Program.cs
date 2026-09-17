@@ -4184,6 +4184,9 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
             OverrideCount = doc is null ? 0 : (int)(doc.AsNullableInt("OverrideCount") ?? 0),
             HostTenancy = tenancy,
             SkippedTenantScopedCount = doc is null ? 0 : (int)(doc.AsNullableInt("SkippedTenantScopedCount") ?? 0),
+            UnusablePatterns = doc?.GetValue("UnusablePatterns", BsonNull.Value) is BsonArray unusableArr
+                ? unusableArr.OfType<BsonString>().Select(x => x.AsString).ToList()
+                : [],
             SyncState = state,
         };
     }).ToList();
@@ -6661,10 +6664,19 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     // 反过来会出现一瞬间两个模型都认领同一个调用方，那一瞬的请求落到谁全看运气。
     // 摘掉了谁要如实回给用户——这同样是会改变线上行为的动作，不能悄悄换人。
     var displacedClaims = new List<string>();
-    // 摘认领的回滚账本：(对手 id, 摘之前的值, 摘之后写进去的值)。
-    // 最终写入失败时按「值还是我写的那个」条件还原——期间被别人改过就不动它，
-    // 盲目覆盖会把别人的改动一起抹掉。
-    var claimRollbacks = new List<(string RivalId, List<string> Before, List<string> AfterWrite)>();
+    /*
+      摘认领的回滚账本：(对手 id, 这次从它身上摘走的那几个码)。
+
+      记「摘走了哪几个」而不是「摘之前/之后的整份值」，是因为位移这一步必须是**原子的加减**
+      而不是整份覆盖：整份覆盖的过滤器只认 _id，在「读出 before」与「写回 kept」之间，
+      另一个管理员给同一个对手模型加了别的认领的话，那一笔会被这份读旧了的数组盖掉——
+      两次保存都报成功，而第二个调用方悄悄丢了它的模型、掉回用途默认
+      （第 69 轮 review；形状 1 的并发形态：判据看的是一份已经过期的值）。
+
+      $pullAll 只减这几个、$addToSet 只加回这几个，中间别人加的一律不受影响，
+      也就不需要「值还是我写的那个」这种条件——那个条件本来就只是在为整份覆盖擦屁股。
+    */
+    var claimRollbacks = new List<(string RivalId, List<string> Taken)>();
     if (normalizedClaims is not null)
     {
         // 名单与认领的相容性上面已经判过（位移之前），这里只做位移。
@@ -6680,18 +6692,18 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
             foreach (var other in rivals)
             {
                 var before = other.AsStringList("DefaultForAppCallerCodes");
-                var kept = before.Where(x => !claims.Contains(x, StringComparer.Ordinal)).ToList();
-                var taken = before.Where(x => claims.Contains(x, StringComparer.Ordinal));
+                var taken = before.Where(x => claims.Contains(x, StringComparer.Ordinal)).ToList();
+                if (taken.Count == 0) continue;
                 var rivalId = other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id");
                 foreach (var code in taken) displacedClaims.Add($"{code} 原本由 {rivalId} 认领");
-                // 摘之前把原值记下来：下面那次最终写入可能因为并发冲突失败，
-                // 那时这些摘除必须还回去，否则一次**被拒绝的保存**照样改了线上路由——
+                // 摘走了哪几个要记下来：下面那次最终写入可能因为并发冲突失败，
+                // 那时这几个必须加回去，否则一次**被拒绝的保存**照样改了线上路由——
                 // 那几个调用方从「由对手模型接住」掉成「走用途默认」，而操作者看到的是失败。
-                claimRollbacks.Add((other.GetStringOrEmpty("_id"), before, kept));
+                claimRollbacks.Add((other.GetStringOrEmpty("_id"), taken));
                 await gwLogicalModels.UpdateOneAsync(
                     Builders<BsonDocument>.Filter.Eq("_id", other.GetStringOrEmpty("_id")),
                     Builders<BsonDocument>.Update
-                        .Set("DefaultForAppCallerCodes", new BsonArray(kept))
+                        .PullAll("DefaultForAppCallerCodes", taken)
                         .Set("UpdatedAt", DateTime.UtcNow));
             }
         }
@@ -6747,14 +6759,13 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     {
         foreach (var rollback in claimRollbacks)
         {
-            // 条件更新：值还是我刚写进去的那个才还。期间被第三方改过就不动它——
-            // 盲目覆盖会把别人的改动一起抹掉，那是用一个错换另一个错。
+            // 只把这次摘走的那几个加回去，不覆盖整份值——期间别人给这个对手加的认领要留着。
+            // 加不回去只有一种原因：那几个码已经归别人了（认领唯一索引会拦），
+            // 那时不该还也还不回去，记一条告警即可。
             var restored = await TryRestoreAsync(
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.Eq("_id", rollback.RivalId),
-                    Builders<BsonDocument>.Filter.Eq("DefaultForAppCallerCodes", new BsonArray(rollback.AfterWrite))),
+                Builders<BsonDocument>.Filter.Eq("_id", rollback.RivalId),
                 Builders<BsonDocument>.Update
-                    .Set("DefaultForAppCallerCodes", new BsonArray(rollback.Before))
+                    .AddToSetEach("DefaultForAppCallerCodes", rollback.Taken)
                     .Set("UpdatedAt", DateTime.UtcNow));
             if (!restored) compensationWarnings.Add($"{rollback.RivalId}（调用方认领）");
         }

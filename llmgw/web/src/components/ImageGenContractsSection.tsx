@@ -85,6 +85,15 @@ function syncNote(data: ImageGenConfigsData): string {
       + `再等也不会变——要让契约在网关那一侧生效，得先给注册表补上租户维度。`
     : '';
 
+  // 翻不过去的那几条单独成句：它与「按租户跳过」的下一步完全不同——那个要等注册表补上
+  // 租户维度，这个要去把那条契约本身改掉。不说出口的话，人只会看到条数对不上而无从查起。
+  const unusable = hosts.filter((x) => (x.unusablePatterns ?? []).length > 0);
+  const unusableNote = unusable.length > 0
+    ? ` ${unusable.map((x) => `${x.hostRole} 没装上 ${(x.unusablePatterns ?? []).join('、')}`).join('；')}`
+      + `：这几条契约本身翻不过去（多半是参数改名的键只差大小写，而运行时那张表不分大小写），`
+      + `其余契约照常生效。去下面把这几条改掉即可，再等不会变。`
+    : '';
+
   // 没跟上的逐个点名，且三种「没跟上」要分开说——它们的下一步完全不同：
   // 从没回写过 / 停了太久 / 还活着但慢一拍。压成一句「未同步」，人只能干等。
   const never = hosts.filter((x) => x.syncState === 'never').map((x) => x.hostRole);
@@ -104,14 +113,14 @@ function syncNote(data: ImageGenConfigsData): string {
   if (behind.length > 0) {
     problems.push(`${behind.join('、')} 装的还不是当前这一版，最长 ${data.refreshSeconds} 秒后再看。`);
   }
-  if (problems.length > 0) return problems.join(' ') + skipNote;
+  if (problems.length > 0) return problems.join(' ') + skipNote + unusableNote;
 
   if (!data.syncedAt) {
-    return `还没有任何进程认领本租户的契约——走生图的请求用代码内置那份。${skipNote}`;
+    return `还没有任何进程认领本租户的契约——走生图的请求用代码内置那份。${skipNote}${unusableNote}`;
   }
 
   const when = new Date(data.syncedAt).toLocaleTimeString();
-  return `${when} 已生效，共 ${data.syncedPatterns.length} 条（承载本租户契约的进程全部装到了当前这一版）。${skipNote}`;
+  return `${when} 已生效，共 ${data.syncedPatterns.length} 条（承载本租户契约的进程全部装到了当前这一版）。${skipNote}${unusableNote}`;
 }
 
 function summarizeSizes(item: ImageGenConfigItem): string {

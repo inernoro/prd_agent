@@ -2359,6 +2359,15 @@ public sealed class ImageGenSyncHost
     public string? HostTenancy { get; set; }
 
     /// <summary>
+    /// 它这一轮**翻不过去**、因而没装上的契约（模式名）。
+    ///
+    /// 与「按租户跳过」分开报：两者的下一步完全不同——那个要等注册表补上租户维度，
+    /// 这个要去把那条契约本身改掉（多半是参数改名的键只差大小写）。压成一个数字，
+    /// 读的人没法行动（external-cause-first：要不要紧 + 下一步必须说出口）。
+    /// </summary>
+    public List<string> UnusablePatterns { get; set; } = new();
+
+    /// <summary>
     /// 它因为「服务多个租户」跳过了几条带租户的契约。
     ///
     /// 大于 0 就必须显示出来：没有这个数字，界面只会说「生效 0 条」，

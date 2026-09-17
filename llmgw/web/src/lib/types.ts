@@ -1782,6 +1782,8 @@ export type ImageGenSyncHost = {
   hostTenancy?: string | null;
   /** 它因为「服务多个租户」跳过了几条带租户的契约。大于 0 必须显示，否则「生效 0 条」无处可查。 */
   skippedTenantScopedCount: number;
+  /** 它这一轮翻不过去、因而没装上的契约（模式名）。与「按租户跳过」的下一步不同，要分开说。 */
+  unusablePatterns?: string[];
   /**
    * 跟上了没有，由服务端判好：never 从没回写过 / stale 太久没动（Worker 多半停了）
    * / behind 还活着但装的不是当前这一版 / current 装的就是当前这一版。

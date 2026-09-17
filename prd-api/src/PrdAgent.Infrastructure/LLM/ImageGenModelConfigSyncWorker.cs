@@ -213,6 +213,7 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         */
         var ordered = new List<ImageGenModelAdapterConfig>();
         var unusable = new List<string>();
+        var unusablePatterns = new List<string>();
         foreach (var doc in docs
                      .Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern))
                      .OrderBy(x => x.MatchOrder)
@@ -227,6 +228,7 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
             catch (ArgumentException ex)
             {
                 unusable.Add($"{doc.ModelIdPattern}（{ex.Message}）");
+                unusablePatterns.Add(doc.ModelIdPattern.Trim());
             }
         }
 
@@ -272,9 +274,16 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         // 于是控制台拿模式名比对，改之前改之后都判「已生效」——它其实只证明了「这个模式有人认」，
         // 没证明「认的是我刚存的那一版」（形状 1：判据比它该管的范围窄）。
         // 条数 + 最新一次修改时间就够：控制台手上有同一批行，能算出同一个值来比。
-        var contentVersion = ordered.Count == 0
+        //
+        // 计数必须与控制台 VersionOf 数的是**同一批行**：它数的是「这个宿主该装的、模式非空的
+        // 那些行」，所以这里也数 docs，不数 ordered。数 ordered 的话，一条翻不过去的契约会让
+        // 两边的条数永远差 1——状态恒为 behind，界面永远在说「再等一个刷新周期」，而那一条
+        // 再等也不会变（第 69 轮 review：上一轮修「一条坏的不连累其余」时，把这个计数一起改了）。
+        // 翻不过去的那几条另有 UnusableCount / UnusablePatterns 如实报出去，不混进版本号。
+        var versionRows = docs.Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern)).ToList();
+        var contentVersion = versionRows.Count == 0
             ? "0:0"
-            : $"{ordered.Count}:{docs.Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern)).Max(x => x.UpdatedAt).Ticks}";
+            : $"{versionRows.Count}:{versionRows.Max(x => x.UpdatedAt).Ticks}";
 
         var statusCollection = _gateway!.Database.GetCollection<BsonDocument>("llmgw_imagegen_sync_status");
 
@@ -290,6 +299,10 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
             // 「我配的那条为什么在网关那一侧没生效」。
             { "HostTenancy", _tenancy.ToString() },
             { "SkippedTenantScopedCount", skippedForTenant },
+            // 翻不过去、这一轮没装上的那几条。与「按租户跳过」分开报：两者的下一步完全不同
+            // （那个要等换宿主，这个要去控制台把那条改掉），压成一个数字读的人没法行动。
+            { "UnusableCount", unusable.Count },
+            { "UnusablePatterns", new BsonArray(unusablePatterns) },
             { "ContentVersion", contentVersion },
             // 生效的那几个模式，逐条列出来。只报数字的话，「我配了 3 条它说 3 条」
             // 仍然答不出「生效的是不是我刚改的那条」。

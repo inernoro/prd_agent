@@ -7705,6 +7705,66 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void 认领位移是原子加减不是整份覆盖()
+    {
+        /*
+          位移写成「读出整份数组、去掉几个、整份写回」时，过滤器只认 _id：在读与写之间另一个
+          管理员给同一个对手模型加了别的认领，那一笔会被这份读旧了的数组盖掉。两次保存都报成功，
+          而第二个调用方悄悄丢了它的模型、掉回用途默认（第 69 轮 review）。
+
+          断言的是「摘与还都是只动这几个码的原子操作」这个性质。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 位移：只减这几个
+        Assert.Contains(".PullAll(\"DefaultForAppCallerCodes\", taken)", program, StringComparison.Ordinal);
+        // 补偿：只加回这几个
+        Assert.Contains(".AddToSetEach(\"DefaultForAppCallerCodes\", rollback.Taken)", program, StringComparison.Ordinal);
+        // 整份覆盖一处都不许剩（对外模型自己那一份认领是另一回事，它写的是 claims 不是 kept）
+        Assert.Equal(0, CountOccurrences(program, "new BsonArray(kept)"));
+        Assert.Equal(0, CountOccurrences(program, "new BsonArray(rollback.Before)"));
+
+        // 账本只记「摘走了哪几个」，不再记整份前后值——记了整份就还会有人拿它去覆盖
+        Assert.Contains("List<(string RivalId, List<string> Taken)>", program, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 同步版本号与控制台数同一批行()
+    {
+        /*
+          一条翻不过去的契约被跳过之后，若宿主的版本号按「装上了几条」算、而控制台按
+          「该装几条」算，两边永远差 1：状态恒为 behind，界面一直说「再等一个刷新周期」，
+          而那一条再等也不会变（第 69 轮 review——上一轮修「一条坏的不连累其余」时顺手把
+          这个计数一起改了，形状 1 的连带伤害）。
+
+          正解不是让版本号去迁就，而是两边数同一批行，坏行另有一条明路报出去。
+        */
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        Assert.Contains("var versionRows = docs.Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern))", worker, StringComparison.Ordinal);
+        Assert.Contains("$\"{versionRows.Count}:{versionRows.Max(x => x.UpdatedAt).Ticks}\"", worker, StringComparison.Ordinal);
+        // 按「装上了几条」算版本号的写法不许回来
+        Assert.Equal(0, CountOccurrences(worker, "$\"{ordered.Count}:"));
+
+        // 坏行要单独报出去，而不是混进版本号里悄悄消失
+        Assert.Contains("\"UnusablePatterns\"", worker, StringComparison.Ordinal);
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("UnusablePatterns =", console, StringComparison.Ordinal);
+        var section = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        Assert.Contains("unusablePatterns", section, StringComparison.Ordinal);
+        /*
+          每一条给用户的出口都要带上它。判据是「两句说明同进同出」而不是数出现次数：
+          说明句的拼法会变（模板串还是加号），数次数的断言下一次改写就失灵。
+        */
+        foreach (var line in section.Split('\n').Where(x => x.Contains("skipNote", StringComparison.Ordinal)))
+        {
+            if (line.Contains("const skipNote", StringComparison.Ordinal)) continue;
+            Assert.True(
+                line.Contains("unusableNote", StringComparison.Ordinal),
+                $"这一句只报了「按租户跳过」、没报「翻不过去」，用户在这一屏看不到后者：{line.Trim()}");
+        }
+    }
+
+    [Fact]
     public void 三处批量预取的同名谓词只有一份()
     {
         /*
