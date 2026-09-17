@@ -259,20 +259,28 @@ public class ActiveTaskBoardInvariantTests
         Assert.True(makeActive > setStandby, "撤销必须先放回 standby 再激活，否则激活那一步不认它");
     }
 
-    [Fact]
-    public void 结案那段写序列不许被客户端断开切一半()
+    [Theory]
+    // 第一个写操作的锚点：从它往后都算「已经开始写了」
+    [InlineData("[HttpPost(\"{id}/finish\")]", "SettleAndSetStateAsync")]
+    [InlineData("[HttpPost(\"{id}/reopen\")]", "UpdateOneAsync")]
+    public void 多步写序列不许被客户端断开切一半(string route, string 第一次写)
     {
-        // 结算 → 盖「从哪一档结案的」戳 → 队首顶上来，这三步是一个整体。
-        // 跟着请求的 ct 走会这样断：结算已落库（State 变 done），用户这时关掉页面，
-        // 后两步被取消 —— FinishedFromActive 永远是 false（撤销把它还原成备用而不是
-        // 正在做），队列也没人顶上来。而重试进不来：开头那句 State == Done 直接回
-        // alreadyDone。server-authority：客户端断开不取消服务器已经开始的写入。
-        var body = Endpoint("[HttpPost(\"{id}/finish\")]");
+        // 结案：结算 → 盖「从哪一档结案的」戳 → 队首顶上来。
+        // 撤销：状态放回 standby 并清结案字段 → 照原来那一档放回去。
+        // 两段都是一个整体，跟着请求的 ct 走都会被切一半：
+        // 结案那边断在中间 —— FinishedFromActive 永远是 false（撤销把它还原成备用
+        // 而不是正在做）、队列没人顶上来；撤销那边断在中间 —— 结案说明清掉了，
+        // 人却没回到手上那件事。两边重试都进不来（开头那句提前返回会挡掉）。
+        // server-authority：客户端断开不取消服务器已经开始的写入。
+        //
+        // 写成 Theory 是因为这两处是同一族：上一轮只修了结案那条，撤销这条原样留着，
+        // 被 review 当场抓出来。加新端点时照着补一行 InlineData，别再各写一份。
+        var body = Endpoint(route);
 
-        var settle = body.IndexOf("SettleAndSetStateAsync", StringComparison.Ordinal);
-        Assert.True(settle > 0, "找不到结算调用");
-        // 从结算那一步往后，不许再出现跟请求走的 ct
-        var tail = body[settle..];
+        var at = body.IndexOf(第一次写, StringComparison.Ordinal);
+        Assert.True(at > 0, $"{route} 里找不到 {第一次写}");
+        // 从第一次写往后，不许再出现跟请求走的 ct
+        var tail = body[at..];
         Assert.DoesNotContain(", ct)", tail, StringComparison.Ordinal);
         Assert.DoesNotContain("cancellationToken: ct", tail, StringComparison.Ordinal);
         Assert.Contains("CancellationToken.None", tail, StringComparison.Ordinal);

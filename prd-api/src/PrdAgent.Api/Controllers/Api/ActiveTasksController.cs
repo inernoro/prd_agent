@@ -333,6 +333,14 @@ public class ActiveTasksController : ControllerBase
             return Ok(ApiResponse<object>.Ok(new { id, reopened = false, alreadyOpen = true }));
 
         var now = DateTime.UtcNow;
+
+        // 和 Finish 那段一样，从这里往下是不能被切一半的写序列，所以一律
+        // CancellationToken.None。跟着请求的 ct 走会这样断：状态已经放回 standby、
+        // 结案字段也清了，用户这时关掉页面 —— 那条「把它放回正在做」的激活被取消，
+        // 于是撤销只撤了一半：结案说明没了，人却没回到手上那件事。
+        // 而重试进不来：开头那句「不在终态就直接返回 alreadyOpen」会把它挡掉。
+        // server-authority：客户端断开不取消服务器已经开始的写入。
+        //
         // 先脱离结案态再决定放哪一档。顺序是有意的：MakeActiveAsync 只肯激活
         // 「还没结案」的那条（防的是并发结案把 done 复活成 active），
         // 所以撤销必须先把状态放回 standby，它才认。
@@ -344,18 +352,18 @@ public class ActiveTasksController : ControllerBase
                 .Set(x => x.ClosingNote, (string?)null)
                 .Set(x => x.DropReason, (string?)null)
                 .Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         // 照它结案前那一档还原。一律塞回「正在做」会把用户手上那件换走 ——
         // 那正是 Finish 刚修掉的洞，撤销这条路上同样通着（勾掉一条备用、再点撤销）。
         if (entry.FinishedFromActive)
         {
             // MakeActiveAsync 会把当前在做的那条退回备用队首，正好还原结案前的样子
-            await ActiveTaskShared.MakeActiveAsync(_db, userId, id, now, ct);
+            await ActiveTaskShared.MakeActiveAsync(_db, userId, id, now, CancellationToken.None);
         }
         // else 分支不用再做什么：OrderKey 结案时没被动过，上面那次更新已经把状态
         // 放回 standby，它就回到了原来那个位置，不用重排
-        var saved = await _db.ActiveTaskEntries.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        var saved = await _db.ActiveTaskEntries.Find(x => x.Id == id).FirstOrDefaultAsync(CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(ActiveTaskShared.ToDto(saved!, now)));
     }
 
