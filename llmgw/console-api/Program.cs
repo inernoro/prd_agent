@@ -6023,7 +6023,28 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
         { "Description", string.IsNullOrWhiteSpace(body?.Description) ? BsonNull.Value : body.Description.Trim() },
         { "CreatedAt", now }, { "UpdatedAt", now },
     };
-    await gwLogicalModels.InsertOneAsync(document);
+    /*
+      并发创建撞上唯一索引要翻成 409，不能漏成 500。
+
+      两个人同时建同用途、同认领（或同标识）的模型时，两边的「有没有人占着」查询都能在
+      对方插入之前通过——真正拦住的是唯一索引。不接这个异常的话，输的那一方拿到 500：
+      同一件事，不撞车时给的是说得出下一步的 409（先建、再去编辑认领），撞车时给的却是
+      一句「服务器错误」。判据一样，回复不一样，这是外因没说清（external-cause-first）。
+    */
+    try
+    {
+        await gwLogicalModels.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
+        return Json(ApiEnvelope<LogicalModelItem>.Fail(
+            claimRace ? "CLAIM_TAKEN" : "PUBLIC_ID_TAKEN",
+            claimRace
+                ? "这几个调用方里有一个刚刚被另一个模型认领了（同一个用途下一个调用方只能被一个模型认领）。"
+                  + "先建这个模型（不填指定调用方），再去编辑它的指定调用方，那条路会如实告诉你摘掉了谁"
+                : "这个公开模型名刚刚被另一个人用掉了。换一个标识再试。"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.create", "llmgw_logical_model", id, name, true, null,
         new BsonDocument { { "publicId", publicId }, { "modelType", modelType }, { "routingStrategy", strategy } });
     return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(
@@ -6661,6 +6682,32 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         replacement["UpdatedAt"] = now;
         replacement.Remove("SupersededAt");
 
+        /*
+          先确认「换成这个上游之后，它的身份不会和另一条在跑的线路撞车」，再动任何一次写。
+
+          线路身份（唯一索引 v3）= 租户 + 对外模型 + 目标类型 + 目标 + 实际上游模型。
+          两条在跑的线路本来各用各的 UpstreamModelId，把其中一条改成另一条的值，
+          晋升那一步 Unset SupersededByOfferingId 时才会撞上索引——而那时原线路已经被退休、
+          替身还挂着 staging 标记，异常从 UpdateOneAsync 抛出去，直接越过下面那段回滚：
+          原线路停用、替身悬空，用户拿到一句 500。
+          所以判在最前面：这条是纯查询，位移之前判完，后面才不需要为它准备一条回滚路径。
+        */
+        var replacementUpstreamModelId = replacement.GetValue("UpstreamModelId", BsonNull.Value);
+        var identityRival = await gwModelOfferings.Find(TenantAccess.Filter(http, fb.And(
+            fb.Eq("LogicalModelId", logicalId),
+            fb.Eq("TargetKind", targetKind),
+            fb.Eq("TargetId", targetId),
+            fb.Eq("UpstreamModelId", replacementUpstreamModelId),
+            fb.Ne("_id", offeringId),
+            fb.Not(fb.Exists("SupersededByOfferingId"))))).FirstOrDefaultAsync();
+        if (identityRival is not null)
+        {
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "DUPLICATE_OFFERING",
+                "这个对外模型下已经有另一条线路指向同一个上游（含指定的上游模型），"
+                + "改成这个值会和它撞车。先把那一条删掉或改掉，再回来改这一条。"), jsonOptions, 409);
+        }
+
         await gwModelOfferings.InsertOneAsync(replacement);
         var retirementFilter = fb.And(filter, fb.Not(fb.Exists("SupersededByOfferingId")));
         var retired = await gwModelOfferings.FindOneAndUpdateAsync(
@@ -6681,15 +6728,11 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         }
 
         var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
-        var promoted = await gwModelOfferings.UpdateOneAsync(
-            TenantAccess.Filter(http, fb.And(
-                fb.Eq("_id", replacementId),
-                fb.Eq("SupersededByOfferingId", stagingMarker))),
-            Builders<BsonDocument>.Update
-                .Unset("SupersededByOfferingId")
-                .Set("Enabled", replacementEnabled)
-                .Set("UpdatedAt", DateTime.UtcNow));
-        if (promoted.ModifiedCount != 1)
+
+        // 晋升失败的回滚只写一次：把原线路复活、把悬空的替身删掉。
+        // 上一版只在 ModifiedCount != 1 这一条路上回滚，而撞唯一索引时异常从 UpdateOneAsync
+        // 抛出去，压根到不了那里——原线路停用、替身悬空，两样都留在库里。
+        async Task RollbackPromotionAsync()
         {
             await gwModelOfferings.UpdateOneAsync(
                 TenantAccess.Filter(http, fb.And(
@@ -6702,6 +6745,32 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                     .Set("UpdatedAt", DateTime.UtcNow));
             await gwModelOfferings.DeleteOneAsync(
                 TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+        }
+
+        UpdateResult promoted;
+        try
+        {
+            promoted = await gwModelOfferings.UpdateOneAsync(
+                TenantAccess.Filter(http, fb.And(
+                    fb.Eq("_id", replacementId),
+                    fb.Eq("SupersededByOfferingId", stagingMarker))),
+                Builders<BsonDocument>.Update
+                    .Unset("SupersededByOfferingId")
+                    .Set("Enabled", replacementEnabled)
+                    .Set("UpdatedAt", DateTime.UtcNow));
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 上面那道纯查询之后、这一步之前，有人新建了一条同身份的线路。回滚，如实说撞了谁。
+            await RollbackPromotionAsync();
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "DUPLICATE_OFFERING",
+                "就在这几毫秒里，这个对外模型下多了一条指向同一个上游（含指定的上游模型）的线路，"
+                + "改动没有生效，原线路已经恢复。刷新看一眼现在有哪些线路，再决定怎么改。"), jsonOptions, 409);
+        }
+        if (promoted.ModifiedCount != 1)
+        {
+            await RollbackPromotionAsync();
             return Json(ApiEnvelope<ModelOfferingItem>.Fail(
                 "OFFERING_PROMOTION_FAILED",
                 "新路由未能接管流量，原 Offering 已恢复，请重试"), jsonOptions, 503);

@@ -6294,6 +6294,66 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 换上游那条替换链上，撞唯一索引不能把库留在半截状态。
+    ///
+    /// 线路身份（唯一索引 v3）里带着实际上游模型。两条在跑的线路本来各用各的 UpstreamModelId，
+    /// 把其中一条改成另一条的值，晋升那一步 Unset SupersededByOfferingId 时才会撞索引——
+    /// 而那时原线路已经退休、替身还挂着 staging 标记，异常从 UpdateOneAsync 抛出去，
+    /// 直接越过 ModifiedCount != 1 那段回滚：原线路停用、替身悬空，用户拿到一句 500。
+    ///
+    /// 两道一起要：动写之前先用纯查询拦掉（能拦住绝大多数），以及晋升那一步接住 11000
+    /// 并走同一段回滚（拦不住的那几毫秒）。回滚只许有一份，两条路共用。
+    /// </summary>
+    [Fact]
+    public void 换上游撞身份索引时把原线路还回去()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 纯查询那道：判据与唯一索引同一套身份（含实际上游模型），且排在插入替身之前。
+        var precheckAt = program.IndexOf("var identityRival = await gwModelOfferings.Find(", StringComparison.Ordinal);
+        var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(replacement);", StringComparison.Ordinal);
+        Assert.True(precheckAt >= 0, "换上游那条路没有身份撞车的前置检查");
+        Assert.True(insertAt > precheckAt, "身份撞车检查排在插入替身之后，那时已经开始写库了");
+        Assert.Contains("fb.Eq(\"UpstreamModelId\", replacementUpstreamModelId)", program);
+
+        // 回滚只许有一份，晋升那一步的两种失败都走它。
+        Assert.Contains("async Task RollbackPromotionAsync()", program);
+        var rollbackCallSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"await RollbackPromotionAsync\(\);").Count;
+        Assert.True(rollbackCallSites >= 2,
+            $"RollbackPromotionAsync 只有 {rollbackCallSites} 个调用点：撞唯一索引与晋升没生效两种失败都要回滚");
+
+        // 撞索引那一支要接住，不能让异常越过回滚。
+        Assert.Contains("catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)", program);
+    }
+
+    /// <summary>
+    /// 并发创建对外模型撞唯一索引要翻成 409，不能漏成 500。
+    ///
+    /// 两边的「有没有人占着」查询都能在对方插入之前通过——真正拦住的是唯一索引。
+    /// 不接这个异常，输的那一方拿到的是一句「服务器错误」，而同一件事在不撞车时
+    /// 给的是说得出下一步的 409。
+    /// </summary>
+    [Fact]
+    public void 并发创建对外模型撞索引翻成冲突()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var insertAt = program.IndexOf("await gwLogicalModels.InsertOneAsync(document);", StringComparison.Ordinal);
+        Assert.True(insertAt >= 0, "没找到对外模型的插入");
+        // 插入那一段必须被 try 包住，且按撞的是哪条索引分开说。
+        // 窗口取到这个端点的返回语句为止：断言必须落在**这一处**的 catch 上，
+        // 而不是碰巧扫到文件别处同形的那一段。
+        var endAt = program.IndexOf("\"logical-model.create\"", insertAt, StringComparison.Ordinal);
+        Assert.True(endAt > insertAt, "没找到创建对外模型的审计写入，窗口定位不住");
+        var around = program[insertAt..endAt];
+        Assert.Contains("catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)", around);
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", around);
+        Assert.Contains("CLAIM_TAKEN", around);
+        Assert.Contains("PUBLIC_ID_TAKEN", around);
+    }
+
+    /// <summary>
     /// 位移之前一个 early return 都不剩。
     ///
     /// 位移（把别人的用途默认清掉、把别人手上的认领摘掉）是会改变线上路由的写操作，
