@@ -601,7 +601,11 @@ public class GatewayDataDomainGuardTests
         // 所有不点名的请求当场解析失败，而操作者只看到一句「模型不存在」。
         Assert.Contains("defaultRollbacks", consoleProgram);
         Assert.Contains("CompensateAsync(restoreDefaults: true)", consoleProgram);
-        Assert.Contains("CompensateAsync(restoreDefaults: false)", consoleProgram);
+        // 撞唯一索引那一支「还不还默认」不是常量，取决于撞的是哪条索引——
+        // 上一版这里钉的是写死 false 的那种写法，等于反向锁死了缺陷：
+        // 认领撞车时用途默认没有赢家，不还就把这个用途弄丢了。
+        // 判据见 撞车补偿先分清撞的是哪条索引。
+        Assert.Contains("CompensateAsync(restoreDefaults: claimRace)", consoleProgram);
 
         Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
         Assert.Contains("claimedBy", consoleProgram);
@@ -6256,6 +6260,54 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 撞车补偿要先分清撞的是哪一条索引。
+    ///
+    /// 「摘掉的用途默认要不要还回去」在两种撞车下答案相反：撞用途默认那条索引时有人赢了
+    /// 那个位子，还回去会再撞一次；而撞调用方认领那条索引时，用途默认这一档**根本没有赢家**，
+    /// 这次请求却已经把原来的默认摘掉了——不还的话这个用途就此没有默认，所有不点名的请求
+    /// 当场开始失败：一次被拒绝的保存，顺手弄坏了一整个用途。
+    ///
+    /// 判据用位置比较：claimRace 必须在补偿之前算出来，先补偿再判等于对两种撞车用同一个答案。
+    /// </summary>
+    [Fact]
+    public void 撞车补偿先分清撞的是哪条索引()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var decideAt = program.IndexOf("var claimRace = ex.Message.Contains(", StringComparison.Ordinal);
+        var compensateAt = program.IndexOf("await CompensateAsync(restoreDefaults: claimRace);", StringComparison.Ordinal);
+        Assert.True(decideAt >= 0, "没找到判「撞的是哪条索引」那一句");
+        Assert.True(compensateAt >= 0,
+            "补偿没有按撞车类型决定要不要还默认（应为 CompensateAsync(restoreDefaults: claimRace)）");
+        Assert.True(decideAt < compensateAt,
+            "claimRace 算在补偿之后：那等于对两种撞车用同一个答案，认领撞车会把这个用途的默认弄丢");
+
+        // 反向禁掉写死 false 的那版：它正是把两种输入压成一种的写法。
+        Assert.DoesNotContain("await CompensateAsync(restoreDefaults: false);", program);
+    }
+
+    /// <summary>
+    /// 「按权重分到 N 条」里的 N 必须是真正参与轮转的那几条。
+    ///
+    /// 权重轮转只在最健康的那一档里进行，健康档更低的线路是后备、不分流量。
+    /// 拿全部可用线路数当 N，面板就会说出「按权重分到 2 条线路：A 100%」——
+    /// 数字说两条、比例只列一条，而读者更信数字。
+    /// </summary>
+    [Fact]
+    public void 加权结论只数参与轮转的那一档()
+    {
+        var planner = ReadRepoFile("llmgw/console-api/LogicalModels/CallTracePlanner.cs");
+
+        // 结论里的数字与比例列表必须来自同一个集合。
+        Assert.Contains("weighted && weightShare.Count > 1", planner);
+        Assert.Contains("按权重分到 {weightShare.Count} 条线路", planner);
+        Assert.DoesNotContain("按权重分到 {eligible.Count} 条线路", planner);
+
+        // 没参与轮转的那几条要说出来，不能看起来像被弄丢了。
+        Assert.Contains("不参与分流，只在这几条都失败后才顶上", planner);
+    }
+
+    /// <summary>
     /// 首屏读失败要先把失败摆出来，再谈加载中。
     ///
     /// 顺序反了（先 `if (!data) return <SectionLoader/>`）的后果不是难看，是**不会结束**：
@@ -6305,6 +6357,17 @@ public class GatewayDataDomainGuardTests
         // 没落定就按**它自己报出来的**刷新周期再读，不是写死一个数字。
         Assert.Contains("window.setTimeout", source);
         Assert.Contains("data.refreshSeconds", source);
+
+        /*
+          一次失败的轮询不能让它就此停摆。
+
+          只拿 data 与 hostsSettled 当依赖的话，轮询失败时两者都没变（失败只写了 error），
+          那个已经用掉的 timeout 再也不会被重排——页面从此停在「装的还不是当前这一版」，
+          哪怕接口与 worker 早就恢复了。所以要有一格无论成败都会走的心跳。
+        */
+        Assert.Contains("const [pollTick, setPollTick]", source);
+        Assert.Contains(".finally(() => setPollTick((x) => x + 1))", source);
+        Assert.Contains("}, [data, hostsSettled, pollTick]);", source);
     }
 
     /// <summary>

@@ -315,7 +315,14 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
         ) : null}
       </header>
 
-      {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+      {error ? (
+        <InlineAlert tone="error">
+          {error}
+          <div style={{ marginTop: 8 }}>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>重试</Button>
+          </div>
+        </InlineAlert>
+      ) : null}
 
       {data.items.length === 0 ? (
         <p style={{ ...HINT_TEXT, margin: 0 }}>

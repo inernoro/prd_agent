@@ -130,6 +130,10 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   const [editing, setEditing] = useState<{ id: string | null; draft: Draft } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showBuiltin, setShowBuiltin] = useState(false);
+  // 轮询的心跳。只靠 data 当依赖的话，一次失败的轮询什么都不会变（data 原样、
+  // hostsSettled 原样），于是那个已经用掉的 timeout 再也不会被重排——页面从此停在
+  // 「装的还不是当前这一版」，哪怕接口与 worker 早就恢复了。失败也要让心跳走一格。
+  const [pollTick, setPollTick] = useState(0);
 
   const load = async () => {
     const res = await getImageGenConfigs();
@@ -154,9 +158,13 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
     || data.syncHosts.every((x) => x.syncState === 'current' || x.syncState === 'not-applicable');
   useEffect(() => {
     if (data === null || hostsSettled) return undefined;
-    const timer = window.setTimeout(() => { void load(); }, Math.max(5, data.refreshSeconds) * 1000);
+    const timer = window.setTimeout(
+      () => { void load().finally(() => setPollTick((x) => x + 1)); },
+      Math.max(5, data.refreshSeconds) * 1000);
     return () => window.clearTimeout(timer);
-  }, [data, hostsSettled]);
+    // pollTick 进依赖：成功时 data 换了新对象会重排，失败时 data 不变，
+    // 只有这一格心跳能把下一次排上。少了它，一次网络抖动就等于永久停摆。
+  }, [data, hostsSettled, pollTick]);
 
   const save = async () => {
     if (!editing) return;
@@ -218,7 +226,14 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
         ) : null}
       </header>
 
-      {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+      {error ? (
+        <InlineAlert tone="error">
+          {error}
+          <div style={{ marginTop: 8 }}>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>重试</Button>
+          </div>
+        </InlineAlert>
+      ) : null}
 
       {data.items.length === 0 ? (
         <p style={{ ...HINT_TEXT, margin: 0 }}>

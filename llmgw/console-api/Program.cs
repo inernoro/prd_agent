@@ -6317,10 +6317,20 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     }
     catch (MongoCommandException ex) when (ex.Code == 11000)
     {
-        // 撞上唯一索引：另一个人在这一瞬抢先了。默认不还——赢家占着，还回去会再撞一次。
-        await CompensateAsync(restoreDefaults: false);
-        // 两条不变量共用这一个 catch，但要分开说：下一步不一样。
+        /*
+          撞上唯一索引：另一个人在这一瞬抢先了。但**先要分清撞的是哪一条**，
+          因为「摘掉的用途默认要不要还回去」在两种撞车下答案相反：
+
+            · 撞的是用途默认那条索引 → 有人赢了那个位子，还回去会再撞一次，不还；
+            · 撞的是调用方认领那条索引 → 用途默认这一档**根本没有赢家**，
+              而这次请求已经把原来的默认摘掉了。不还的话，这个用途就此没有默认，
+              所有不点名的请求当场开始失败——一次被拒绝的保存，顺手弄坏了一整个用途。
+
+          上一版是先补偿再判 claimRace，等于对两种撞车用同一个答案（形状 1：
+          判据比它该管的范围窄，两种输入被压成一种）。
+        */
         var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
+        await CompensateAsync(restoreDefaults: claimRace);
         var conflictMessage = claimRace
             ? "这几个调用方里有一个刚刚被另一个模型认领了。刷新看一眼它现在归谁，确认之后再改。"
             : "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。";

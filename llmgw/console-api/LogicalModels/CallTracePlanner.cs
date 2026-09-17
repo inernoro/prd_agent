@@ -157,12 +157,24 @@ public static class CallTracePlanner
             var why = described.Count > 0 ? string.Join("、", described) : $"{all.Count} 条都用不了";
             return $"现在调它会失败：{all.Count} 条线路里{why}。";
         }
-        if (weighted && eligible.Count > 1)
+        /*
+          「按权重分到 N 条」里的 N 必须是**真正参与轮转的那几条**，不是全部可用线路。
+
+          权重轮转只在最健康的那一档里进行（见 WeightShare：先取 bestTier 再按权重分），
+          健康档更低的线路是后备、不分流量。拿 eligible.Count 当 N，就会说出
+          「按权重分到 2 条线路：A 100%」这种自相矛盾的话——数字说两条，比例只列一条。
+          比例列表本身一直是对的，错的是那个数字，而读者更信数字。
+        */
+        var weightShare = WeightShare(all).OrderByDescending(x => x.Percent).ToList();
+        if (weighted && weightShare.Count > 1)
         {
-            var share = WeightShare(all)
-                .OrderByDescending(x => x.Percent)
-                .Select(x => $"{describeRoute(x.Id)} {x.Percent}%");
-            return $"现在发一个请求，按权重分到 {eligible.Count} 条线路：{string.Join("、", share)}。";
+            var share = weightShare.Select(x => $"{describeRoute(x.Id)} {x.Percent}%");
+            // 没参与轮转的那几条要说出来，否则面板看起来像是把它们弄丢了。
+            var standby = eligible.Count - weightShare.Count;
+            var standbyNote = standby > 0
+                ? $"；另有 {standby} 条健康档更低的线路不参与分流，只在这几条都失败后才顶上"
+                : string.Empty;
+            return $"现在发一个请求，按权重分到 {weightShare.Count} 条线路：{string.Join("、", share)}{standbyNote}。";
         }
         var head = Queue(all, weighted, 0)[0];
         var rest = eligible.Count - 1;
