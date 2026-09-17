@@ -600,6 +600,12 @@
     ]
   },
   {
+    "code": "prd-agent.bookshelf.digest::chat",
+    "modelTypes": [
+      "chat"
+    ]
+  },
+  {
     "code": "prd-agent.guide::chat",
     "modelTypes": [
       "chat"

@@ -318,6 +318,10 @@ public static class DataSyncScope
         }),
         new DataSyncGroup("tutorial", "教程与引导", new[]
         {
+            // 藏书阁的个人进度：已读书目、一句话心得、结业考成绩。
+            // 归到可导出而不是排除，是因为它是**用户自己的学习痕迹**，换实例该跟着人走；
+            // 里面没有凭据，也不是派生数据（重新跑一次生不出别人读过哪些书）。
+            new DataSyncCollection("bookshelf_progress", System.Array.Empty<string>()),
             new DataSyncCollection("daily_tips", System.Array.Empty<string>()),
             new DataSyncCollection("tutorial_email_assets", System.Array.Empty<string>()),
             new DataSyncCollection("tutorial_email_enrollments", System.Array.Empty<string>()),
@@ -368,6 +372,7 @@ public static class DataSyncScope
         ["apirequestlogs"] = "日志与埋点：量大且只对源站有意义",
         ["behavior_events"] = "日志与埋点：量大且只对源站有意义",
         ["behavior_insight_states"] = "日志与埋点：量大且只对源站有意义",
+        ["book_digests"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["changelog_report_sources"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["changelog_snapshots"] = "运行时会话/缓存/派生数据：跨实例没有意义，重新跑一次即可",
         ["channel_request_logs"] = "日志与埋点：量大且只对源站有意义",

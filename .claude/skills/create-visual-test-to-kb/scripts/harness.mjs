@@ -35,6 +35,11 @@ export async function launch(cfg, opts = {}) {
     ],
   };
   if (process.env.ACC_BROWSER_PROXY) launchOpts.proxy = { server: process.env.ACC_BROWSER_PROXY };
+  // 镜像预装的 Chromium 与 playwright 包自带的版本号常常对不上（包要 chromium-1217，
+  // 镜像只有 chromium-1194），此时 launch 会让人去跑 `npx playwright install` —— 在受限
+  // 沙箱里那条路走不通，验收会卡在第一步。给一个与 ACC_BROWSER_PROXY 同构的 env 口子，
+  // 显式指到镜像里那个可执行文件即可，不设则维持原行为。
+  if (process.env.ACC_BROWSER_EXECUTABLE) launchOpts.executablePath = process.env.ACC_BROWSER_EXECUTABLE;
   const browser = await chromium.launch(launchOpts);
   // opts.viewport 允许调用方覆盖视口（手机端验收时传 {width:390,height:844}）。
   const vp = opts.viewport || { width: sc.width || 1440, height: sc.height || 900 };

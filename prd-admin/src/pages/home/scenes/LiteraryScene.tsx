@@ -4,7 +4,7 @@ import { SCENE, SCENE_HUE, inkTone } from './sceneTokens';
 import { enterAt, useSceneTimeline } from './useSceneTimeline';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { useLanguage } from '../contexts/LanguageContext';
-import { useLandingAsset } from '../hooks/useLandingAssets';
+import { useImageryAsset } from '@/hooks/useImagery';
 import { SceneCursor, type CursorSpot } from '../components/SceneCursor';
 import type { LiteraryStyleKey } from '../i18n/landing';
 
@@ -457,7 +457,7 @@ const INLINE_FIGURE_SLOT: Record<'ridge' | 'bridge', string> = {
 
 function InlineFigure({ tone, caption, variant }: { tone: Tone; caption: string; variant: 'ridge' | 'bridge' }) {
   const gid = `mapLitFig-${variant}`;
-  const photo = useLandingAsset(INLINE_FIGURE_SLOT[variant]);
+  const photo = useImageryAsset(INLINE_FIGURE_SLOT[variant]);
   return (
     <div
       style={{
@@ -560,7 +560,7 @@ function FigureCard({
   actions: string[];
   runningLabel: string;
 }) {
-  const photo = useLandingAsset(CARD_SLOT[index] ?? '');
+  const photo = useImageryAsset(CARD_SLOT[index] ?? '');
   const statusStyle =
     state === 'done' ? { background: pine.soft, color: pine.bright }
       : state === 'running' ? { background: amber.soft, color: amber.bright }
