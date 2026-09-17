@@ -18390,7 +18390,7 @@ static async Task<string?> FindUnnamedCatcherAsync(
     // 逐个去打库会把一次发布门禁变成几十次往返。
     HashSet<string>? enabledPlatformIds = null;
     Dictionary<string, string>? enabledModelPlatformById = null;
-    HashSet<string>? enabledExchangeIds = null;
+    Dictionary<string, BsonDocument>? enabledExchangeById = null;
 
     async Task EnsureTargetsLoadedAsync()
     {
@@ -18406,12 +18406,15 @@ static async Task<string?> FindUnnamedCatcherAsync(
                 .ToListAsync())
             .Where(x => x.GetStringOrEmpty("_id").Length > 0)
             .ToDictionary(x => x.GetStringOrEmpty("_id"), x => x.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal);
-        enabledExchangeIds = (await gwModelExchanges.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
-                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+        // 取整份兑换所文档而不只是 id：下面要判到**别名**那一层，
+        // 只判「兑换所启用着」会把一条别名已被摘掉或单独停用的线路算成可用。
+        enabledExchangeById = (await gwModelExchanges.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection
+                    .Include("_id").Include("ModelAlias").Include("ModelAliases").Include("Models"))
                 .ToListAsync())
-            .Select(x => x.GetStringOrEmpty("_id"))
-            .Where(x => x.Length > 0)
-            .ToHashSet(StringComparer.Ordinal);
+            .Where(x => x.GetStringOrEmpty("_id").Length > 0)
+            .GroupBy(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
     }
 
     async Task<bool> HasRuntimeUsableRouteAsync(string logicalId)
@@ -18432,7 +18435,22 @@ static async Task<string?> FindUnnamedCatcherAsync(
             if (targetId.Length == 0) continue;
             if (string.Equals(offering.AsNullableString("TargetKind"), "exchange", StringComparison.OrdinalIgnoreCase))
             {
-                if (enabledExchangeIds!.Contains(targetId)) return true;
+                /*
+                  判到**别名**那一层，不是只判兑换所文档启用。
+
+                  线路打给上游的是哪一个别名由 UpstreamModelId 决定（没写就回落到主别名）。
+                  管理员把一条别名从兑换所里摘掉、或单独停掉之后，兑换所照样启用着，
+                  而运行时按 ExchangeDeclares 把这条线路整条跳过。只判 id 的话，
+                  这道闸会说「有能用的线路」，而那个调用方一条路都走不通——闸门替一条
+                  不存在的路作了保。判据与写入侧、与运行时同一份（ExchangeAliasPolicy）。
+                */
+                if (enabledExchangeById!.TryGetValue(targetId, out var exchange)
+                    && ExchangeAliasPolicy.Declares(
+                        exchange,
+                        ExchangeAliasPolicy.EffectiveAlias(exchange, offering.AsNullableString("UpstreamModelId"))))
+                {
+                    return true;
+                }
                 continue;
             }
             // 目标模型在不在、启用没有，以及它挂的平台启用没有——运行时这三样缺一条都解析不出来。
@@ -18446,13 +18464,24 @@ static async Task<string?> FindUnnamedCatcherAsync(
         return false;
     }
 
-    // 授权名单：空 = 对所有调用方开放；非空时不含它就接不住（运行时同判）。
+    /*
+      这个模型接不接得住这个调用方——**授权名单与场景能力是同一道门**。
+
+      运行时走的是 ResolveFromLogicalModelAsync 里那句 SupportsAppCallerScenario：
+      它先看授权名单，再看这个调用方要的场景能力（text2img / img2img / vision_generation …）
+      模型具不具备。这道闸原来只判了前一半，于是一个只会文生图的模型会被判成
+      「接得住图生图调用方」，发布闸放行，而运行时对那个调用方的每一次请求都回能力不匹配。
+
+      判据走控制台这一侧的镜像（LogicalModelCapabilityPolicy，与权威实现有逐条对照守卫），
+      不在这里再写一份近似。
+    */
+    // 空 code 也原样交给它判，不在外面加一道自己的门：运行时就是这么判的
+    // （名单非空 → 拒；名单为空且没有场景要求 → 放行）。在这里额外拦一手就比运行时窄了。
     static bool AllowsCaller(BsonDocument logical, string? code)
-    {
-        var allowed = GetStringArray(logical, "AllowedAppCallerCodes");
-        if (allowed.Count == 0) return true;
-        return code is { Length: > 0 } && allowed.Contains(code, StringComparer.Ordinal);
-    }
+        => LogicalModelCapabilityPolicy.SupportsAppCallerScenario(
+            GetStringArray(logical, "Capabilities"),
+            GetStringArray(logical, "AllowedAppCallerCodes"),
+            code ?? string.Empty);
 
     /*
       挑选与「这一条能不能用」的顺序不能颠倒，这道闸和运行时、和 serving 就绪探针同序。

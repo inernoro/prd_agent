@@ -641,7 +641,29 @@ public class GatewayDataDomainGuardTests
         // 它让人以为这件事已经验过了（形状 8：拿一份不成立的证据当证明）。
         Assert.Contains("fb.Ne(\"HealthStatus\", 2)", catcherBody);
         Assert.Contains("enabledModelPlatformById", catcherBody);
-        Assert.Contains("enabledExchangeIds", catcherBody);
+
+        /*
+          兑换所那一支要判到**别名**这一层，不是只判兑换所文档启用。
+
+          线路打给上游的是哪一个别名由 UpstreamModelId 决定；别名被摘掉或单独停用之后，
+          兑换所照样启用着，而运行时把这条线路整条跳过。上一版这里钉的是只存 id 的那种写法
+          （enabledExchangeIds），等于反向锁死了缺陷：闸门说「有能用的线路」，
+          而那个调用方一条路都走不通。判据与写入侧、与运行时同一份。
+        */
+        Assert.Contains("enabledExchangeById", catcherBody);
+        Assert.Contains("ExchangeAliasPolicy.Declares(", catcherBody);
+        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(exchange, offering.AsNullableString(\"UpstreamModelId\"))", catcherBody);
+
+        /*
+          授权名单与场景能力是**同一道门**，不能只判前一半。
+
+          运行时走的是 SupportsAppCallerScenario：先看名单，再看这个调用方要的场景能力
+          （text2img / img2img / vision_generation …）模型具不具备。只判名单的话，
+          一个只会文生图的模型会被判成「接得住图生图调用方」，发布闸放行，
+          而运行时对那个调用方的每一次请求都回能力不匹配。
+        */
+        Assert.Contains("LogicalModelCapabilityPolicy.SupportsAppCallerScenario(", catcherBody);
+        Assert.Contains("GetStringArray(logical, \"Capabilities\")", catcherBody);
         Assert.Contains("AllowsCaller", catcherBody);
 
         // 残留的池字段不许让这道判断整个被跳过。
