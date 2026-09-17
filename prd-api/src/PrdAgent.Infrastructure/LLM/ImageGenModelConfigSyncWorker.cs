@@ -277,8 +277,19 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
                 ct);
         }
 
-        // 宿主自己那一行（单租户宿主就只有这一行）。
-        await WriteStatusAsync(_tenantId, skippedTenantScoped);
+        /*
+          宿主自己那一行（单租户宿主就只有这一行）。
+
+          多租户宿主上这个数要**按租户算**，不能填全局总数。控制台读的就是这一行，
+          填总数的话内部租户看到的是「跳过了 7 条」，而那 7 条里多数是别的租户的——
+          他按这个数去找自己的契约，一条都对不上（第 64 轮 review）。
+          单租户宿主两者本来就相等；全局总数留给日志，那里它才是有意义的量。
+        */
+        await WriteStatusAsync(
+            _tenantId,
+            _tenancy == ImageGenContractHostTenancy.MultiTenant
+                ? skippedByTenant.GetValueOrDefault(_tenantId, 0)
+                : skippedTenantScoped);
 
         /*
           多租户宿主还要**逐个租户**各写一行。

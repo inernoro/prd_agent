@@ -8275,7 +8275,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         !activeAppCallerMapFallbackExitReady && !activeAppCallerMapFallbackCutoverPrerequisitesReady,
         activeAppCallerMapFallbackExitReady
             ? httpFullLedgerEvidence.Ready
-                ? "当前运行态已禁止 active appCaller 使用 MAP 配置兜底，且 active 调用方绑定的 GW 池可用。"
+                ? "当前运行态已禁止 active appCaller 使用 MAP 配置兜底，且每个 active 调用方都有接得住的对外模型。"
                 : "active appCaller MAP fallback 退场前置条件已满足；http-full 阶段会开启运行态 fail-closed 开关。"
             : activeAppCallerMapFallbackCutoverPrerequisitesReady
             ? "active appCaller MAP fallback 退场前置条件已满足；等待 http-full 阶段开启运行态 fail-closed 开关。"
@@ -8287,7 +8287,13 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                 : "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
             : activeAppCallerMapFallbackCutoverPrerequisitesReady
             ? "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
-            : "先完成 MAP-only 配置认领、active appCaller 绑池和池成员健康复核，再在 full-http 发布进程中启用 DisableMapConfigFallbackForActiveAppCallers。",
+            // 前置条件早就改判「有没有对外模型接得住」（FindUnnamedCatcherAsync），
+            // 而这句处置还停在池的世界里——池路由与它的写入界面都已退场，照着做满足不了这道闸
+            // （第 64 轮 review：又一句走不通的下一步）。
+            : "先完成 MAP-only 配置认领，再给这几个 active 调用方找到接得住的对外模型："
+              + "要么在白名单页把某条模型的「认领」加上这个调用方，要么给这个用途设一个可用的默认模型"
+              + "（那条模型得启用、且至少有一条现在能接流量的线路）。都齐了再在 full-http 发布进程中"
+              + "启用 DisableMapConfigFallbackForActiveAppCallers。",
         new Dictionary<string, string>
         {
             ["disableMapConfigFallbackForActiveAppCallers"] = disableMapFallbackForActiveAppCallers ? "true" : "false",

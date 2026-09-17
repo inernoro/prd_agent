@@ -6808,6 +6808,43 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("hostsSettled ? Math.max(60, base * 10) : base", section, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 宿主自己那一行的跳过数要按租户算()
+    {
+        /*
+          多租户宿主上，控制台读的就是「宿主::租户」那一行。填全局总数的话，内部租户看到
+          「跳过了 7 条」，而那 7 条里多数是别的租户的——他按这个数去找自己的契约，一条都对不上
+          （第 64 轮 review）。单租户宿主两者本来相等；全局总数留给日志。
+        */
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        var at = worker.IndexOf("await WriteStatusAsync(", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到宿主自己那一行的写入");
+        var call = worker[at..(at + 320)];
+        Assert.Contains("ImageGenContractHostTenancy.MultiTenant", call, StringComparison.Ordinal);
+        Assert.Contains("skippedByTenant.GetValueOrDefault(_tenantId, 0)", call, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 退场闸的处置不许停在池的世界里()
+    {
+        /*
+          这道闸的前置条件早就改判「有没有对外模型接得住」（FindUnnamedCatcherAsync），
+          而处置文案还写着「绑池、复核池成员健康」。池路由与它的写入界面都已退场，
+          照着做满足不了这道闸——判据改了、说明没跟上（第 64 轮 review）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        // 锚在那句处置文案所在的分支上，不用「第一次出现 + 固定字符数」——
+        // 这个标识在文件里出现多次，第一次很可能是它的赋值处，截出来的窗口根本不含文案。
+        var at = console.IndexOf("先完成 MAP-only 配置认领", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到 MAP 兜底退场那道闸的处置文案");
+        var gate = console[Math.Max(0, at - 2500)..(at + 800)];
+        Assert.DoesNotContain("active appCaller 绑池", gate, StringComparison.Ordinal);
+        Assert.DoesNotContain("绑定的 GW 池可用", gate, StringComparison.Ordinal);
+        // 给的是当前判据下真能走通的两条路。
+        Assert.Contains("找到接得住的对外模型", gate, StringComparison.Ordinal);
+        Assert.Contains("给这个用途设一个可用的默认模型", gate, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
