@@ -235,14 +235,17 @@ public static class GatewayModelCatalogEndpoint
                 {
                     if (prompt is not null) routeNode["prompt"] = prompt.Value.ToString("0.####");
                     if (completion is not null) routeNode["completion"] = completion.Value.ToString("0.####");
-                    if (cached is not null) routeNode["cached_prompt"] = cached.Value.ToString("0.####");
-                    // 缓存写入（cache creation）那一档也要报。
+                    // 两档缓存价报的是**实际会收的那个数**，不是「配了才报」。
                     //
-                    // 计价那一侧按 CacheWritePricePerMillion 真的收这笔钱（没配就按输入全价算），
-                    // 清单不报的话，对方照这份报价估出来的费用会系统性地少一截——提示词缓存
-                    // 正是「第一次写贵、后面读便宜」的形状，漏掉写入那一半估出来的数最不准。
-                    // 报价与收费同一个口径，不同口径的两份数字必然有一份是假的。
-                    if (cacheWrite is not null) routeNode["cache_write"] = cacheWrite.Value.ToString("0.####");
+                    // 计价那一侧的口径是 `缓存价 ?? 输入全价`：没配缓存价不等于缓存免费，
+                    // 只等于「不知道」，于是按输入全价收。清单若只在显式配过时才报，
+                    // 一个没配缓存价的模型对外看起来是「缓存不收费」，而每一个缓存 token
+                    // 都在按提示词价计费——报价与收费又变成两件事（形状 3：同一个判据
+                    // 在两处各写各的）。回落那一档同样报出来，两边说的才是同一个数。
+                    var effectiveCacheRead = cached ?? prompt;
+                    var effectiveCacheWrite = cacheWrite ?? prompt;
+                    if (effectiveCacheRead is not null) routeNode["cached_prompt"] = effectiveCacheRead.Value.ToString("0.####");
+                    if (effectiveCacheWrite is not null) routeNode["cache_write"] = effectiveCacheWrite.Value.ToString("0.####");
                 }
                 var source = model.GetValue("PriceSource", BsonNull.Value);
                 if (source.IsString) routeNode["source"] = source.AsString;

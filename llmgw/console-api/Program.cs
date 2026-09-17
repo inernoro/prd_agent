@@ -5280,8 +5280,18 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                     });
                 }
 
-                var carryExchangeUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
-                if (carryExchangeUnavailable) entry.CarriedUnavailableRoutes++;
+                if (DescribeLostMemberMaxTokens(member, null) is { Length: > 0 } lostExchangeCap)
+                {
+                    result.Skipped.Add(new PoolMigrationSkip
+                    {
+                        PoolId = poolId, PoolName = poolName,
+                        Reason = $"成员「{memberModelId}」（兑换所）：{lostExchangeCap}。线路没有输出上限这个字段，"
+                            + "搬过来之后这条限制不再生效。线路本身照常建好了，上限要另行安排",
+                    });
+                }
+
+                var carriedExchangeHealth = PoolMigrationPlanner.CarryHealthStatus(member, now);
+                if (carriedExchangeHealth != 0) entry.CarriedUnhealthyRoutes++;
                 if (!dryRun)
                 {
                     await gwModelOfferings.InsertOneAsync(new BsonDocument
@@ -5294,10 +5304,10 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                         { "Priority", PoolMigrationPlanner.MemberPriority(member) },
                         { "Weight", member.AsNullableInt("Weight") ?? 100 },
                         { "Enabled", true },
-                        { "HealthStatus", carryExchangeUnavailable ? 2 : 0 },
-                        { "ConsecutiveFailures", carryExchangeUnavailable ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
+                        { "HealthStatus", carriedExchangeHealth },
+                        { "ConsecutiveFailures", carriedExchangeHealth != 0 ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
                         { "ConsecutiveSuccesses", 0 },
-                        { "LastFailedAt", carryExchangeUnavailable && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } elf
+                        { "LastFailedAt", carriedExchangeHealth != 0 && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } elf
                             ? elf : BsonNull.Value },
                         { "MaxConcurrency", member.AsNullableInt("MaxConcurrency") is { } emc && emc > 0 ? emc : BsonNull.Value },
                         { "RateLimitPerMinute", BsonNull.Value },
@@ -5377,8 +5387,19 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 });
             }
 
-            var carryUnavailable = PoolMigrationPlanner.ShouldCarryUnavailable(member, now);
-            if (carryUnavailable) entry.CarriedUnavailableRoutes++;
+            if (DescribeLostMemberMaxTokens(member, physical) is { Length: > 0 } lostCap)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId, PoolName = poolName,
+                    Reason = $"成员「{memberModelId}」：{lostCap}。线路没有输出上限这个字段，走线路解析时取的是"
+                        + "物理模型上的那个，搬过来之后成员原本的上限不再生效。线路本身照常建好了，"
+                        + "要么把这个值配到物理模型上，要么接受它改用模型的上限",
+                });
+            }
+
+            var carriedHealth = PoolMigrationPlanner.CarryHealthStatus(member, now);
+            if (carriedHealth != 0) entry.CarriedUnhealthyRoutes++;
             if (!dryRun)
             {
                 await gwModelOfferings.InsertOneAsync(new BsonDocument
@@ -5393,11 +5414,11 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                     { "Enabled", true },
                     // 近期的不可用照搬，陈年旧账重置成健康。两头都不对：全搬会让新路径带着
                     // 一个早就过期的判断少一条候选；全不搬会让新路径去用一个池正在主动避开的
-                    // 上游。判据见 PoolMigrationPlanner.ShouldCarryUnavailable。
-                    { "HealthStatus", carryUnavailable ? 2 : 0 },
-                    { "ConsecutiveFailures", carryUnavailable ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
+                    // 上游。判据见 PoolMigrationPlanner.CarryHealthStatus（降级那一档同样照搬）。
+                    { "HealthStatus", carriedHealth },
+                    { "ConsecutiveFailures", carriedHealth != 0 ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
                     { "ConsecutiveSuccesses", 0 },
-                    { "LastFailedAt", carryUnavailable && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } lf
+                    { "LastFailedAt", carriedHealth != 0 && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } lf
                         ? lf : BsonNull.Value },
                     { "MaxConcurrency", member.AsNullableInt("MaxConcurrency") is { } mc && mc > 0 ? mc : BsonNull.Value },
                     { "RateLimitPerMinute", BsonNull.Value },
@@ -16496,6 +16517,26 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
 /// 给线路加一层价格覆盖是另一套语义（新增字段 + 解析优先级），不在这一刀里做；
 /// 这里要做的是**不让它悄悄发生**：逐条列出来，说清值是多少、该填到哪儿去。
 /// </summary>
+/// <summary>
+/// 成员自己配的输出上限（MaxTokens）会不会在搬迁里丢掉，丢了就返回一句人话。
+///
+/// 线路（Offering）没有这个字段：走线路解析时输出上限取的是**物理模型**上的那个。
+/// 所以成员上配过一个不一样的值时，搬过去之后那条限制就不存在了——请求可能超过成员
+/// 原本的上限，或者继承一个完全不同的全局上限，而这件事不会有任何地方报错。
+/// 给线路加价格/上限覆盖层是新语义（§5.5 的 B 类），这里先如实报出来，与价格丢失同一口径。
+/// </summary>
+static string? DescribeLostMemberMaxTokens(BsonDocument member, BsonDocument? physical)
+{
+    var memberValue = member.GetValue("MaxTokens", BsonNull.Value);
+    if (memberValue.IsBsonNull) return null;
+    var physicalValue = physical?.GetValue("MaxTokens", BsonNull.Value) ?? BsonNull.Value;
+    // 目标模型上已经是同一个值就不算丢——搬完行为不变，报出来只是噪音。
+    if (!physicalValue.IsBsonNull && physicalValue.Equals(memberValue)) return null;
+    return physicalValue.IsBsonNull
+        ? $"成员自己配了输出上限 {memberValue}，而目标模型没有配"
+        : $"成员自己配了输出上限 {memberValue}，而目标模型配的是 {physicalValue}";
+}
+
 static List<string> DescribeLostMemberPrices(BsonDocument member, BsonDocument? physical)
 {
     var fields = new (string Field, string Label)[]

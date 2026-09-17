@@ -107,8 +107,15 @@ public class PoolMigrationPlannerTests
         Assert.Equal(new[] { "chat" }, PoolMigrationPlanner.CollectCapabilities(chat));
     }
 
+    /// <summary>
+    /// 近期的非健康状态照搬，陈年旧账重置。
+    ///
+    /// 这条用例的上一版把「降权重置成健康」写成了断言——它不是在测行为，是在**要求那个缺陷存在**：
+    /// 挑选判据把健康排在降级之前，一个刚刚在失败的高优先级成员搬成健康之后，切换那一刻
+    /// 就重新拿到了主流量。谁修这个 bug 谁的 CI 红，于是没人敢修（形状 4a：测试反向锁死缺陷）。
+    /// </summary>
     [Fact]
-    public void 近期的不可用照搬陈年旧账重置()
+    public void 近期的非健康状态照搬陈年旧账重置()
     {
         var now = new DateTime(2026, 9, 14, 8, 0, 0, DateTimeKind.Utc);
 
@@ -119,21 +126,24 @@ public class PoolMigrationPlannerTests
             return m;
         }
 
-        // 刚刚失败的：那个「不可用」说的是现在，照搬
-        Assert.True(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddMinutes(-5)), now));
-        Assert.True(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddHours(-23)), now));
+        // 刚刚失败的：那个状态说的是现在，原样照搬（熔断与降级同一口径）
+        Assert.Equal(2, PoolMigrationPlanner.CarryHealthStatus(M(2, now.AddMinutes(-5)), now));
+        Assert.Equal(2, PoolMigrationPlanner.CarryHealthStatus(M(2, now.AddHours(-23)), now));
+        Assert.Equal(1, PoolMigrationPlanner.CarryHealthStatus(M(1, now.AddMinutes(-5)), now));
+        Assert.Equal(1, PoolMigrationPlanner.CarryHealthStatus(M(1, now.AddHours(-23)), now));
 
         // 18 天前失败的：熔断冷却只有 120 秒，还停在不可用只能是这段时间没人用它，
         // 那个判断说的是过去。这正是 default-generation 的 chatgpt-image-latest 的真实处境。
-        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddDays(-18)), now));
-        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, now.AddHours(-25)), now));
+        Assert.Equal(0, PoolMigrationPlanner.CarryHealthStatus(M(2, now.AddDays(-18)), now));
+        Assert.Equal(0, PoolMigrationPlanner.CarryHealthStatus(M(2, now.AddHours(-25)), now));
+        Assert.Equal(0, PoolMigrationPlanner.CarryHealthStatus(M(1, now.AddDays(-18)), now));
 
-        // 健康与降权都不是「不可用」，一律从健康起步
-        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(0, now.AddMinutes(-1)), now));
-        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(1, now.AddMinutes(-1)), now));
+        // 本来就是健康的，没什么可搬
+        Assert.Equal(0, PoolMigrationPlanner.CarryHealthStatus(M(0, now.AddMinutes(-1)), now));
 
-        // 标了不可用却没有失败时间：说不清是什么时候的事，按过去处理而不是拿它去挡新路径
-        Assert.False(PoolMigrationPlanner.ShouldCarryUnavailable(M(2, null), now));
+        // 标了非健康却没有失败时间：说不清是什么时候的事，按过去处理而不是拿它去挡新路径
+        Assert.Equal(0, PoolMigrationPlanner.CarryHealthStatus(M(2, null), now));
+        Assert.Equal(0, PoolMigrationPlanner.CarryHealthStatus(M(1, null), now));
     }
 
     [Fact]
@@ -160,10 +170,14 @@ public class PoolMigrationPlannerTests
         Assert.Contains("if (duplicate) continue;", handler);
         Assert.Contains("result.LinkedToExisting++", handler);
 
-        // 近期的不可用照搬、陈年旧账重置：全搬会让新路径带着过期判断少一条候选，
+        // 近期的非健康状态照搬、陈年旧账重置：全搬会让新路径带着过期判断少一条候选，
         // 全不搬会让新路径去用一个池正在主动避开的上游。两种都在真实数据上见过。
-        Assert.Contains("carryUnavailable ? 2 : 0", handler);
-        Assert.Contains("PoolMigrationPlanner.ShouldCarryUnavailable(member, now)", handler);
+        //
+        // 断言的是「写进去的那个状态来自共享判据」，不是某一次的三元写法——上一版逐字要求
+        // `carryUnavailable ? 2 : 0`，而那个写法本身就只认熔断一档，守卫等于替它背书。
+        Assert.Contains("PoolMigrationPlanner.CarryHealthStatus(member, now)", handler);
+        Assert.Matches(@"\{ ""HealthStatus"", carried\w+ \}", handler);
+        Assert.Contains("PoolMigrationPlanner.CarryHealthStatus(member, now)", handler);
 
         // 跳过要给原因，不能静默吞掉
         Assert.Contains("result.Skipped.Add", handler);
@@ -472,5 +486,54 @@ public class PoolMigrationPlannerTests
         var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
         Assert.Contains("item.isDefaultForType", page);
         Assert.Contains("item.defaultForAppCallerCodes.length", page);
+    }
+
+    /// <summary>
+    /// 搬迁要保住的是「非健康」这件事本身，不只是熔断那一档。
+    ///
+    /// 挑选判据把健康排在降级之前。一个刚刚在失败、被池排在健康成员后面的高优先级成员，
+    /// 如果搬过去变成「健康 + 零失败」，切换的那一刻它立刻重新拿到主流量——这正是
+    /// 影子比对当初抓熔断那一条时的同一个形状，只是换了个档位。
+    /// </summary>
+    [Fact]
+    public void 搬迁保住近期的降级而不只是熔断()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var planner = ReadRepoFile("llmgw/console-api/Provisioning/PoolMigrationPlanner.cs");
+
+        // 判据返回的是状态而不是布尔：调用方要写的本来就是状态，返回布尔逼着每个调用方
+        // 自己拼一次 `? 2 : 0`，加第二个档位时漏掉哪一个都不会报错。
+        Assert.Contains("public static int CarryHealthStatus(", planner);
+        Assert.DoesNotContain("ShouldCarryUnavailable", planner);
+        Assert.DoesNotContain("ShouldCarryUnavailable", console);
+
+        // 降级与熔断两档都要认。
+        Assert.Contains("status is not (1 or 2)", planner);
+
+        // 两个写入点（物理模型线路、兑换所线路）都直接写这个状态，不再各自折算。
+        var writes = System.Text.RegularExpressions.Regex
+            .Matches(console, @"\{ ""HealthStatus"", carried\w+ \}").Count;
+        Assert.True(writes >= 2, $"两条线路写入都要直接写搬过来的状态，实际只有 {writes} 处");
+    }
+
+    /// <summary>
+    /// 成员自己配的输出上限在搬迁里会丢，必须如实报出来。
+    ///
+    /// 线路没有这个字段：走线路解析时输出上限取的是物理模型上的那个。成员上配过一个不一样的值时，
+    /// 搬过去之后那条限制就不存在了——请求可能超过成员原本的上限，或者继承一个完全不同的全局上限，
+    /// 而这件事不会有任何地方报错。给线路加覆盖层是新语义，先报出来，与价格丢失同一口径。
+    /// </summary>
+    [Fact]
+    public void 搬迁如实报出会丢掉的成员输出上限()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("static string? DescribeLostMemberMaxTokens(", console);
+        // 目标模型上已经是同一个值就不算丢，报出来只是噪音——与价格那一支同口径。
+        Assert.Contains("physicalValue.Equals(memberValue)", console);
+        // 两条线路都要报：兑换所那一侧没有物理模型可回落，成员配了就一定丢。
+        var reported = System.Text.RegularExpressions.Regex
+            .Matches(console, @"DescribeLostMemberMaxTokens\(member,").Count;
+        Assert.True(reported >= 2, $"物理模型与兑换所两条线路都要报，实际只有 {reported} 处");
     }
 }

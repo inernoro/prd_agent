@@ -407,6 +407,13 @@ public class GatewayWhitelistPublishingTests
         Assert.Contains("CacheWritePricePerMillion", endpoint);
         Assert.Contains("cache_write", endpoint);
 
+        // 报的是**实际会收的那个数**：计价侧的口径是「缓存价 ?? 输入全价」，
+        // 没配缓存价不等于缓存免费，只等于按提示词价收。清单只在显式配过时才报的话，
+        // 一个没配缓存价的模型对外看起来是「缓存不收费」，而每个缓存 token 都在计费。
+        // 两档缓存价都要回落，只做其中一档就是同一个洞换个位置。
+        Assert.Contains("var effectiveCacheRead = cached ?? prompt;", endpoint);
+        Assert.Contains("var effectiveCacheWrite = cacheWrite ?? prompt;", endpoint);
+
         // 计价那一侧确实按它收钱——两边说的是同一件事，守卫才有意义。
         var calculator = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostCalculator.cs");
         Assert.Contains("cacheWritePricePerMillion", calculator);

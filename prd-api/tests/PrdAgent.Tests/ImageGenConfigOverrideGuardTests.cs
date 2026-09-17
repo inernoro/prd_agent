@@ -532,4 +532,46 @@ public class ImageGenConfigOverrideGuardTests
         Assert.Contains("{ \"UpdatedBy\", TenantAccess.GetRequired(http).UserId }", body);
         Assert.DoesNotContain("{ \"UpdatedBy\", TenantAccess.GetRequired(http).TenantId }", body);
     }
+
+    /// <summary>
+    /// 尺寸档位必须是正数，`00x00` 这种存不进来。
+    ///
+    /// 运行时解析只收正数，一个全是零边长的白名单会被整个判成「解析不出来」，于是兜底回
+    /// 1024x1024——契约上写着那几档，实际一档都不生效，而且不报错。它与「白名单至少要有
+    /// 一个尺寸」是同一件事的两半：那一条管「有没有」，这一条管「有的那个算不算数」。
+    /// </summary>
+    [Fact]
+    public void 尺寸档位必须是正数()
+    {
+        var dtos = Read("llmgw/console-api/Models/Dtos.cs");
+        var pattern = System.Text.RegularExpressions.Regex.Match(
+            dtos, @"SizePattern\s*=\s*new\(@""([^""]+)""");
+        Assert.True(pattern.Success, "尺寸正则找不到了，守卫取值口径需要更新");
+
+        var regex = new System.Text.RegularExpressions.Regex(pattern.Groups[1].Value);
+        foreach (var good in new[] { "1024x1024", "512x768", "10x10", "12345x12345" })
+            Assert.True(regex.IsMatch(good), $"合法尺寸 {good} 被拦下了");
+        foreach (var bad in new[] { "00x00", "00x1024", "1024x00", "0x0", "1024*1024", "1024 x 1024" })
+            Assert.False(regex.IsMatch(bad), $"非法尺寸 {bad} 被放进来了");
+    }
+
+    /// <summary>
+    /// 教程里那几章「第一步就点左侧模型池」的，页面已经没了，必须当面说清而不是让人卡住。
+    /// </summary>
+    [Fact]
+    public void 教程里走不通的章节写明了待重拍()
+    {
+        foreach (var chapter in new[]
+                 {
+                     "llmgw/tutorial/chapters/08-default-pools.md",
+                     "llmgw/tutorial/chapters/17-pool-members.md",
+                     "llmgw/tutorial/chapters/18-health-priority-fallback.md",
+                 })
+        {
+            var text = Read(chapter);
+            Assert.Contains("本章待重拍", text);
+            // 光说「走不通」不够，要给新位置——拒绝没有下一步等于把问题丢回给读者。
+            Assert.Contains("模型", text);
+        }
+    }
 }

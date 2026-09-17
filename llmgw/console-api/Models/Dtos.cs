@@ -1293,8 +1293,12 @@ public sealed class PoolMigrationEntry
     /// <summary>已有模型的能力原本是空的（能力门不放行），这次补上了。</summary>
     public bool RepairedCapabilities { get; set; }
 
-    /// <summary>把近期的「不可用」一起搬过来的线路数。陈年旧账重置成健康，不算在内。</summary>
-    public int CarriedUnavailableRoutes { get; set; }
+    /// <summary>
+    /// 把近期的非健康状态（降级或熔断）一起搬过来的线路数。陈年旧账重置成健康，不算在内。
+    /// 名字里不再只说「不可用」：降级那一档同样会被搬，而挑选判据把健康排在降级之前，
+    /// 少搬它等于让一个正在失败的成员在切换那一刻重新拿到主流量。
+    /// </summary>
+    public int CarriedUnhealthyRoutes { get; set; }
 
     /// <summary>
     /// 从「调用方反向绑定这个池」转过来的认领。
@@ -2264,9 +2268,17 @@ public static class ImageGenConfigVocabulary
     public static readonly IReadOnlySet<string> ResolutionBuckets =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "1k", "2k", "4k" };
 
-    /// <summary>尺寸只认「宽x高」。写成 1024*1024 或 1024 x 1024 都拦下来，别让它进库。</summary>
+    /// <summary>
+    /// 尺寸只认「宽x高」，且两条边都必须是正数。
+    ///
+    /// 写成 1024*1024 或 1024 x 1024 拦下来，`00x00` / `00x1024` 同样拦下来：
+    /// 运行时解析只收正数，一个全是零边长的白名单会被整个判成「解析不出来」，
+    /// 于是兜底回 1024x1024——契约上写着那几档，实际一档都不生效，而且不报错
+    /// （形状 8：一份不成立的声明被当成了「已经配好」的证明）。
+    /// 首位不许是 0，长度仍限制在 5 位以内。
+    /// </summary>
     public static readonly System.Text.RegularExpressions.Regex SizePattern =
-        new(@"^\d{2,5}x\d{2,5}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+        new(@"^[1-9]\d{1,4}x[1-9]\d{1,4}$", System.Text.RegularExpressions.RegexOptions.Compiled);
 }
 
 public sealed class ImageGenConfigsData

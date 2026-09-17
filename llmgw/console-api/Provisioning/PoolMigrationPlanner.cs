@@ -118,7 +118,8 @@ public static class PoolMigrationPlanner
     public static readonly TimeSpan RecentFailureWindow = TimeSpan.FromHours(24);
 
     /// <summary>
-    /// 这个池成员的「不可用」要不要跟着搬过去。
+    /// 这个池成员的健康状态要不要跟着搬过去，以及搬成哪一档。返回搬过去应写入的状态
+    /// （0 健康 / 1 降级 / 2 熔断）。
     ///
     /// 两头都不对：
     ///   全搬 —— 18 天前失败过一次的线路，搬过去新路径一上来就少一条候选，而那个判断早就过期了。
@@ -128,13 +129,22 @@ public static class PoolMigrationPlanner
     /// 于是新旧两路解析不一致——这是影子比对抓出来的，不是想出来的。
     ///
     /// 判据取中间：失败发生在窗口内就照搬（它说的是现在），窗口外重置成健康（它说的是过去）。
+    ///
+    /// **降级那一档同样要搬**。上一版只认熔断，于是一个刚刚在失败、被池排在健康成员后面的
+    /// 高优先级成员，搬过去是「健康 + 零失败」——挑选判据把健康排在降级之前
+    /// （GatewayRouteSelection 的健康档），切换的那一刻它立刻重新拿到主流量。
+    /// 判据比它该管的范围窄：只覆盖了「熔断」这一种输入，换成「降级」就给出相反答案。
+    ///
+    /// 返回值是状态而不是布尔：调用方要写的本来就是状态，返回布尔逼着每个调用方自己再
+    /// 拼一次 `? 2 : 0`，第二种档位一加进来就得逐个改，而漏掉的那个不会报错。
     /// </summary>
-    public static bool ShouldCarryUnavailable(BsonDocument member, DateTime nowUtc)
+    public static int CarryHealthStatus(BsonDocument member, DateTime nowUtc)
     {
         var status = member.GetValue("HealthStatus", BsonNull.Value) is { IsInt32: true } h ? h.AsInt32 : 0;
-        if (status != 2) return false;
-        if (member.GetValue("LastFailedAt", BsonNull.Value) is not { IsValidDateTime: true } failedAt) return false;
-        return nowUtc - failedAt.ToUniversalTime() <= RecentFailureWindow;
+        if (status is not (1 or 2)) return 0;
+        // 判不出「这个状态是什么时候的」就按过期处理，与熔断那一档同口径。
+        if (member.GetValue("LastFailedAt", BsonNull.Value) is not { IsValidDateTime: true } failedAt) return 0;
+        return nowUtc - failedAt.ToUniversalTime() <= RecentFailureWindow ? status : 0;
     }
 
     /// <summary>
