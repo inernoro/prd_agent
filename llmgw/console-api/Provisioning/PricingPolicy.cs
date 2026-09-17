@@ -60,15 +60,37 @@ public static class PricingPolicy
         => inputPricePerMillion is not null || outputPricePerMillion is not null || pricePerCall is not null;
 
     /// <summary>
-    /// 这条模型的价格能不能用来记账：得有价、币种得是美金。
+    /// 这条模型的价格**配齐了**没有——按计价那一侧真正要求的口径，不是「配了一项就算」。
+    ///
+    /// 计价（GatewayCostCalculator.Classify）的规矩是：有按次价就只按次算，token 单价一概不问；
+    /// 否则每一种出现了用量的 token 都必须有单价，缺任何一种整笔调用判 unpriced，
+    /// EstimatedCostUsd 为 null、整笔掉出预算。一次正常的对话响应必然同时有输入与输出，
+    /// 所以模型这一侧的等价口径就是「有按次价，或者输入与输出两个单价都有」。
+    ///
+    /// 缓存那两档不要求：没配时计价按输入全价回落，算得出钱。
+    /// </summary>
+    public static bool HasCompletePrice(
+        decimal? inputPricePerMillion,
+        decimal? outputPricePerMillion,
+        decimal? pricePerCall)
+        => pricePerCall is not null
+           || (inputPricePerMillion is not null && outputPricePerMillion is not null);
+
+    /// <summary>
+    /// 这条模型的价格能不能用来记账：得配齐、币种得是美金。
     /// 两条里缺任何一条，它的调用在用量里都会显示为「没计上钱」而不是零成本。
+    ///
+    /// 这里判的是**配齐**而不是「配了任意一项」。只配了输入单价的对话模型，
+    /// 按「配了一项就算」会被标成可计费、模型页于是不显示那句「不计入限额」的提醒，
+    /// 而它的每一次正常调用都因为缺输出单价被判 unpriced——界面说算得出钱，账上一分没有
+    /// （形状 3：同一个判据在模型页与计价侧各写各的，两个都自称权威）。
     /// </summary>
     public static bool IsBillable(
         decimal? inputPricePerMillion,
         decimal? outputPricePerMillion,
         decimal? pricePerCall,
         string? currency)
-        => HasAnyPrice(inputPricePerMillion, outputPricePerMillion, pricePerCall)
+        => HasCompletePrice(inputPricePerMillion, outputPricePerMillion, pricePerCall)
            && string.Equals(NormalizeCurrency(currency), BillingCurrency, StringComparison.Ordinal);
 
     /// <summary>价格必须非负；负价是输入错误，不是「不计费」。</summary>

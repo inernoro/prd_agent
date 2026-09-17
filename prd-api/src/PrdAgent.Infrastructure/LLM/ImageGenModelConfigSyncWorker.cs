@@ -192,9 +192,18 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         // 数据行没有「书写顺序」，而代码内置那张表靠的正是书写顺序。
         // MatchOrder 小的先来；同序时模式长的先来——长的更具体，
         // 这样忘了设 MatchOrder 的两行也不会随机胜出（形状 1：判据比它该管的范围窄）。
+        // 同一个模式，租户自己那条要排在平台级那条前面。
+        //
+        // 平台级契约（TenantId 为空串）与租户自己的契约允许用同一个模式——按租户的唯一索引
+        // 不会拦。两条的 MatchOrder 与模式长度都一样时，上面那三个排序键全部打平，
+        // 谁在前面就由 Mongo 的返回顺序决定，而 TryMatch 取的是第一条命中的：
+        // 租户明明配了自己的覆盖，实际生效的却可能是平台默认，同步状态还显示「已是最新」。
+        // 加一个明确的作用域优先级，这件事就不再看运气（cross-project-isolation：
+        // 一份共享状态被多方使用时，谁覆盖谁必须是显式的）。
         var ordered = docs
             .Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern))
             .OrderBy(x => x.MatchOrder)
+            .ThenBy(x => string.IsNullOrEmpty(x.TenantId) ? 1 : 0)
             .ThenByDescending(x => x.ModelIdPattern.Trim().Length)
             .ThenBy(x => x.ModelIdPattern, StringComparer.Ordinal)
             .Select(ImageGenConfigTranslation.ToAdapterConfig)

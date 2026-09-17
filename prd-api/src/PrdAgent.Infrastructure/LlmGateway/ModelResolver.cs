@@ -1276,6 +1276,16 @@ public class ModelResolver : IModelResolver
             item.PlatformId = exchange.Id;
             if (string.IsNullOrWhiteSpace(item.ModelId))
                 item.ModelId = exchange.ModelAlias;
+            // 兑换所整体启用着，不代表这条线路要打的那个别名还开着：管理员可以把里面某一条单独停掉。
+            // 只判 Exchange.Enabled 的话，流量继续往一条被关掉的别名上发——「关了等于没关」。
+            // 判据与目录、就绪那两处共用同一份（GatewayCatalogGate），不另写近似。
+            if (requireEnabled && !GatewayCatalogGate.ExchangeDeclares(exchange, item.ModelId))
+            {
+                _logger.LogDebug(
+                    "[ModelResolver] 兑换所 {ExchangeId} 里没有启用着的别名 {Model}，这条线路跳过",
+                    exchange.Id, item.ModelId);
+                return null;
+            }
             var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
             return ModelResolutionResult.FromExchangePool(
                 "LogicalModel", expectedModel, item, logicalGroup, exchange, apiKey,

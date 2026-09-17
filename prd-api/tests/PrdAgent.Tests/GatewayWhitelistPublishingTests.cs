@@ -515,4 +515,74 @@ public class GatewayWhitelistPublishingTests
         var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
         Assert.Contains("SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)", resolver);
     }
+
+    /// <summary>
+    /// 兑换所里被单独停掉的那条别名，不许还被当成可用。
+    ///
+    /// 兑换所整体启用着，不代表里面每一条别名都开着。只判 Exchange.Enabled 的话，
+    /// 线路继续往一条被关掉的别名上发流量，而目录与就绪判据都说它可用——
+    /// 「关了等于没关」，比没有这个开关更糟。
+    /// </summary>
+    [Fact]
+    public void 被停掉的兑换所别名不算数()
+    {
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+
+        // 取那条别名的地方只有一处，启用判定长在它身上——两处各查一次迟早有一处忘了判。
+        Assert.Contains("private static ExchangeModel? FindDeclared(", gate);
+        Assert.Contains("item.Enabled && string.Equals(item.ModelId, modelId", gate);
+        var declaresAt = gate.IndexOf("public static bool ExchangeDeclares(", StringComparison.Ordinal);
+        var allowedAt = gate.IndexOf("public static bool ExchangeAliasAllowedOutsideCatalog(", StringComparison.Ordinal);
+        Assert.True(declaresAt > 0 && allowedAt > 0);
+        Assert.Contains("FindDeclared(exchange, modelId)", gate[declaresAt..]);
+        Assert.Contains("FindDeclared(exchange, modelId)", gate[allowedAt..]);
+
+        // 解析那一侧也要判：名录门降档时它是唯一还在看这件事的地方。
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("requireEnabled && !GatewayCatalogGate.ExchangeDeclares(exchange, item.ModelId)", resolver);
+
+        // 旧形态合成出来的别名一律启用，这条改动不影响它们。
+        var accessors = ReadRepoFile("prd-api/src/PrdAgent.Core/Models/ModelExchange.cs");
+        Assert.Contains("Enabled = true", accessors);
+    }
+
+    /// <summary>
+    /// 「这条模型能不能记账」要按计价那一侧真正的口径判，不是「配了一项就算」。
+    ///
+    /// 只配了输入单价的对话模型，按「配了任意一项」会被标成可计费、模型页于是不显示
+    /// 那句「不计入限额」的提醒，而它的每一次正常调用都因为缺输出单价被判 unpriced——
+    /// 界面说算得出钱，账上一分没有。
+    /// </summary>
+    [Fact]
+    public void 可计费判的是价格配齐而不是配了一项()
+    {
+        var policy = ReadRepoFile("llmgw/console-api/Provisioning/PricingPolicy.cs");
+
+        Assert.Contains("public static bool HasCompletePrice(", policy);
+        // 有按次价就够（计价那一侧按次时完全不看 token 单价）；否则输入与输出两个都要有。
+        Assert.Contains("pricePerCall is not null\n           || (inputPricePerMillion is not null && outputPricePerMillion is not null)", policy);
+        // 可计费走配齐那条，不再走「配了任意一项」。
+        var billableAt = policy.IndexOf("public static bool IsBillable(", StringComparison.Ordinal);
+        Assert.True(billableAt > 0);
+        Assert.Contains("HasCompletePrice(inputPricePerMillion, outputPricePerMillion, pricePerCall)", policy[billableAt..]);
+
+        // 计价那一侧的口径没变：按次只按次算，token 那几档逐项要求单价。
+        var calculator = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostCalculator.cs");
+        Assert.Contains("if (billableInput > 0 && inputPrice is null) missing.Add", calculator);
+        Assert.Contains("if (outputTokens > 0 && outputPrice is null) missing.Add", calculator);
+    }
+
+    /// <summary>
+    /// 同一个模式上，租户自己的生图契约要盖过平台级那条，而不是看 Mongo 的返回顺序。
+    /// </summary>
+    [Fact]
+    public void 生图契约租户的盖过平台级()
+    {
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        Assert.Contains("ThenBy(x => string.IsNullOrEmpty(x.TenantId) ? 1 : 0)", worker);
+        // 作用域优先级要排在模式长度之前：长度只决定「哪个更具体」，决定不了「谁的」。
+        var scopeAt = worker.IndexOf("string.IsNullOrEmpty(x.TenantId) ? 1 : 0", StringComparison.Ordinal);
+        var lengthAt = worker.IndexOf("ThenByDescending(x => x.ModelIdPattern.Trim().Length)", StringComparison.Ordinal);
+        Assert.True(scopeAt > 0 && lengthAt > scopeAt, "租户优先要排在模式长度之前");
+    }
 }

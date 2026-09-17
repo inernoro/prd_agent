@@ -84,11 +84,23 @@ public static class GatewayCatalogGate
     public static string EffectiveExchangeModelId(ModelExchange exchange, string? upstreamModelId)
         => !string.IsNullOrWhiteSpace(upstreamModelId) ? upstreamModelId.Trim() : exchange.ModelAlias ?? string.Empty;
 
-    /// <summary>这个兑换所声明过这条别名吗。没声明的一律不算数——它不是这个兑换所的东西。</summary>
+    /// <summary>
+    /// 这个兑换所声明过这条别名，**而且那一条是启用着的**吗。
+    ///
+    /// 只比 ModelId 不够：兑换所整体启用着，管理员照样可以把里面某一条别名单独停掉。
+    /// 不看那个开关的话，线路继续往一条已经被关掉的别名上发流量，而目录与就绪判据
+    /// 都说它可用——「关了等于没关」，比没有这个开关更糟。
+    /// 旧形态合成出来的条目一律 Enabled=true（见 ModelExchangeAccessors），所以这条不影响它们。
+    /// </summary>
     public static bool ExchangeDeclares(ModelExchange exchange, string? modelId)
-        => !string.IsNullOrWhiteSpace(modelId)
-            && exchange.GetEffectiveModels().Any(item =>
-                string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        => FindDeclared(exchange, modelId) is not null;
+
+    /// <summary>找出那条别名。没声明、或声明了但被单独停掉，都返回 null。</summary>
+    private static ExchangeModel? FindDeclared(ModelExchange exchange, string? modelId)
+        => string.IsNullOrWhiteSpace(modelId)
+            ? null
+            : exchange.GetEffectiveModels().FirstOrDefault(item =>
+                item.Enabled && string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// 名录外的这条别名有没有被放行。
@@ -100,9 +112,7 @@ public static class GatewayCatalogGate
     public static bool ExchangeAliasAllowedOutsideCatalog(ModelExchange exchange, string? modelId)
     {
         if (exchange.Models is null || exchange.Models.Count == 0) return true;
-        var declared = exchange.GetEffectiveModels().FirstOrDefault(item =>
-            string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
-        return declared?.AllowedOutsideCatalog == true;
+        return FindDeclared(exchange, modelId)?.AllowedOutsideCatalog == true;
     }
 
     /// <summary>
