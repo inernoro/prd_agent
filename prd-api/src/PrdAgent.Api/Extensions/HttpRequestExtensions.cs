@@ -116,6 +116,12 @@ public static class HttpRequestExtensions
             return $"{forwardedScheme}://{forwardedHost.Split(',')[0].Trim()}";
         }
 
+        // 生产网关会保留 Host 并传递 X-Forwarded-Proto，但不一定额外传 X-Forwarded-Host。
+        // 此时仍应使用外部协议构造绝对 URL，否则 HTTPS 页面会得到 http 下载地址并触发混合内容拦截。
+        var forwardedProto = request.Headers["X-Forwarded-Proto"].FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(forwardedProto))
+            return $"{forwardedProto.Split(',')[0].Trim()}://{request.Host}";
+
         // 4. Origin header (浏览器请求会带)
         var origin = request.Headers.Origin.FirstOrDefault();
         if (!string.IsNullOrWhiteSpace(origin))
