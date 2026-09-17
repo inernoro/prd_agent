@@ -3323,9 +3323,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("key-integrity", readiness);
         Assert.Contains("router", readiness);
         Assert.Contains("routableCallers", readiness);
-        Assert.Contains("IsPoolRoutableForRequestType", readiness);
-        Assert.Contains("pool.IsDefaultForType", readiness);
-        Assert.Contains("HasEnabledBackend", readiness);
+        // 深度就绪判的是「有对外模型接得住不点名的请求」。池那三个判据已随解析器的池分支一起删掉，
+        // 留着它们等于让 readyz 替一条运行时已经不存在的路作保。
+        Assert.Contains("HasLogicalCatcher", readiness);
+        Assert.DoesNotContain("IsPoolRoutableForRequestType", readiness);
+        Assert.DoesNotContain("HasEnabledBackend", readiness);
         Assert.Contains("governed.Count > 0 && routableCallers == 0", readiness);
         Assert.Contains("exceptionType={ExceptionType}", readiness);
         Assert.DoesNotContain("ex.Message", readiness);
@@ -6209,13 +6211,12 @@ public class GatewayDataDomainGuardTests
 
         // 按调用方自己的租户分组，逐组拿那个租户的数据判。
         Assert.Contains("governed.GroupBy(CallerTenantId", readiness);
-        Assert.Contains("BuildTenantRouterViewAsync", readiness);
+        Assert.Contains("BuildTenantRoutingViewAsync", readiness);
 
         // 每一类数据都带租户过滤：池、平台、兑换所、物理模型（字段名过滤），
         // 对外模型与线路（强类型属性）。少一类就有一条跨租户的缝。
         foreach (var scoped in new[]
                  {
-                     "Builders<ModelGroup>.Filter.Eq(\"TenantId\", tenantId)",
                      "Builders<LLMPlatform>.Filter.Eq(\"TenantId\", tenantId)",
                      "Builders<ModelExchange>.Filter.Eq(\"TenantId\", tenantId)",
                      "Builders<BsonDocument>.Filter.Eq(\"TenantId\", tenantId)",

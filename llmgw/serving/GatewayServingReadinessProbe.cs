@@ -40,7 +40,6 @@ public sealed record GatewayScenarioCapabilitySnapshot(
 public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
 {
     private const string AppCallerCollection = "llmgw_app_callers";
-    private const string PoolCollection = "llmgw_model_pools";
     private const string PlatformCollection = "llmgw_platforms";
     private const string ExchangeCollection = "llmgw_model_exchanges";
     private const string LogicalModelCollection = "llmgw_logical_models";
@@ -206,15 +205,20 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             var catalogGateEnforces = await GatewayCatalogGate.EnforcesAsync(
                 _configuration, _gatewayDb.Database, cancellationToken);
 
+            /*
+              池那条路已经删掉了，判据也必须跟着删。
+
+              运行时的 ResolveCoreAsync 里现在**没有任何池分支**（2026-09-15 断流后删的）。
+              而这个组件此前还写着「绑了一个健康的池也算可路由」，理由是「还没搬迁的部署仍然靠它」——
+              那句话在删掉池分支的那一刻就不成立了。后果是最坏的一种：一个调用方只绑着池、
+              没有任何模型认领它、这个用途也没有默认模型时，探针报绿，而它的每一次不点名请求
+              都回 MODEL_NOT_FOUND。判据留着一条运行时已经不存在的路，就是让灯替一条死路作保。
+            */
             var routableCallers = 0;
             foreach (var group in governed.GroupBy(CallerTenantId, StringComparer.Ordinal))
             {
-                var view = await BuildTenantRouterViewAsync(
-                    group.Key,
-                    group.ToList(),
-                    catalogGateEnforces,
-                    cancellationToken);
-                routableCallers += group.Count(view.IsRoutable);
+                var view = await BuildTenantRoutingViewAsync(group.Key, catalogGateEnforces, cancellationToken);
+                routableCallers += group.Count(caller => HasLogicalCatcher(caller, view));
             }
 
             var invalidCallers = governed.Count - routableCallers;
@@ -224,8 +228,8 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             if (governed.Count > 0 && routableCallers == 0)
             {
                 throw new InvalidOperationException(
-                    "no governed appCaller can be routed: neither a usable model pool nor a logical model "
-                    + $"(claim or type default) with a usable offering; invalid={invalidCallers}");
+                    "no governed appCaller can be routed: no logical model (claim or type default) "
+                    + $"with a usable offering; invalid={invalidCallers}");
             }
 
             return $"{routableCallers}/{governed.Count} governed appCallers routable, invalid={invalidCallers}";
@@ -246,79 +250,43 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             ? configured
             : GatewayTenantDefaults.InternalTenantId;
 
-    /// <summary>一个租户的路由判据快照：池那条路与对外模型那条路共用它。</summary>
-    private sealed record RouterTenantView(Func<GatewayAppCallerRecord, bool> IsRoutable);
+    /// <summary>
+    /// 一个租户里「谁接得住不点名的请求」所需的全部事实：启用着的对外模型，
+    /// 以及其中至少有一条**真能用**的线路的那些（线路启用、没被熔断、指向的东西还在、过得了名录门）。
+    ///
+    /// router 与 scenario-capability 两个组件共用它。此前两个组件各查各的、各判各的，
+    /// 于是同一份配置能让一个判绿、另一个判红——而它们问的本来就是同一件事的两个侧面。
+    /// </summary>
+    private sealed record TenantRoutingView(
+        IReadOnlyList<GatewayLogicalModel> EnabledLogicalModels,
+        IReadOnlySet<string> RoutableLogicalModelIds);
 
-    private async Task<RouterTenantView> BuildTenantRouterViewAsync(
+    private async Task<TenantRoutingView> BuildTenantRoutingViewAsync(
         string tenantId,
-        IReadOnlyList<GatewayAppCallerRecord> tenantCallers,
         bool catalogGateEnforces,
         CancellationToken cancellationToken)
     {
-        var pools = _gatewayDb.Database.GetCollection<ModelGroup>(PoolCollection);
         var platforms = _gatewayDb.Database.GetCollection<LLMPlatform>(PlatformCollection);
         var exchanges = _gatewayDb.Database.GetCollection<ModelExchange>(ExchangeCollection);
         var logicalModels = _gatewayDb.Database.GetCollection<GatewayLogicalModel>(LogicalModelCollection);
         var offeringsCollection = _gatewayDb.Database.GetCollection<GatewayModelOffering>(OfferingCollection);
         var physicalModels = _gatewayDb.Database.GetCollection<BsonDocument>(ModelCollection);
 
-        // 池、平台、兑换所、物理模型这几个类型上没有 TenantId 属性（它们是 MAP 侧的实体，
+        // 平台、兑换所、物理模型这几个类型上没有 TenantId 属性（它们是 MAP 侧的实体，
         // 租户是文档上的字段）。按字段名过滤，与 ModelResolver 里那几处逐字同形。
-        var poolTenant = Builders<ModelGroup>.Filter.Eq("TenantId", tenantId);
-        var platformTenant = Builders<LLMPlatform>.Filter.Eq("TenantId", tenantId);
-        var exchangeTenant = Builders<ModelExchange>.Filter.Eq("TenantId", tenantId);
-
-        var poolIds = tenantCallers
-            .Select(x => x.ModelPoolId)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Select(x => x!)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-        var boundPools = poolIds.Count == 0
-            ? new List<ModelGroup>()
-            : await pools.Find(Builders<ModelGroup>.Filter.And(
-                    poolTenant,
-                    Builders<ModelGroup>.Filter.In(x => x.Id, poolIds)))
-                .ToListAsync(cancellationToken);
-        var requestTypes = tenantCallers
-            .Select(x => x.RequestType)
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-        var defaultPools = requestTypes.Count == 0
-            ? new List<ModelGroup>()
-            : await pools.Find(
-                    Builders<ModelGroup>.Filter.And(
-                        poolTenant,
-                        Builders<ModelGroup>.Filter.Eq(x => x.IsDefaultForType, true),
-                        Builders<ModelGroup>.Filter.In(x => x.ModelType, requestTypes)))
-                .ToListAsync(cancellationToken);
         var enabledPlatformIds = (await platforms
                 .Find(Builders<LLMPlatform>.Filter.And(
-                    platformTenant,
+                    Builders<LLMPlatform>.Filter.Eq("TenantId", tenantId),
                     Builders<LLMPlatform>.Filter.Eq(x => x.Enabled, true)))
                 .Project(x => x.Id)
                 .ToListAsync(cancellationToken))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var enabledExchanges = await exchanges
             .Find(Builders<ModelExchange>.Filter.And(
-                exchangeTenant,
+                Builders<ModelExchange>.Filter.Eq("TenantId", tenantId),
                 Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)))
             .ToListAsync(cancellationToken);
-        var poolById = boundPools.ToDictionary(x => x.Id, StringComparer.OrdinalIgnoreCase);
 
-        /*
-          池退场之后，「可路由」不再只有池这一条路。
-
-          这个组件原来只按池算：调用方绑的池、或该用途的默认池。而正确迁移过来的部署
-          一个池都不绑——不点名的请求由「对外模型认领」或「用途默认模型」接住。
-          于是 routableCallers 恒为 0，readyz 对一个完全健康的部署报 503，
-          编排会把它摘掉。判据没跟上现实，灯就开始说谎（与 2026-08-13 那次同形，只是反了个方向）。
-
-          判据与运行时的两层同序：先看有没有对外模型认领了这个调用方，没有才看用途默认；
-          两层都要求模型启用、且至少有一条启用且非 Unavailable 的线路。
-          池那条留着不动：还没搬迁的部署仍然靠它，两条是或的关系。
-        */
         var enabledLogicalModels = await logicalModels
             .Find(Builders<GatewayLogicalModel>.Filter.And(
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, tenantId),
@@ -334,10 +302,8 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
         /*
           线路「启用且没被熔断」只是它自己的状态，**不代表它指向的东西还在**。
 
-          上一版只看到这一层，于是一条指向已删除或已停用的物理模型 / 平台 / 兑换所的线路
-          也被算成可用——两个就绪组件都报绿，而运行时把每一条都拒掉。
-          这正是池那一侧早就做对的事（IsPoolRoutableForRequestType → HasEnabledBackend），
-          我加对外模型这条路时没把它一起带过来。
+          只看这一层的话，一条指向已删除或已停用的物理模型 / 平台 / 兑换所的线路也被算成可用——
+          就绪组件报绿，而运行时把每一条都拒掉。
 
           物理模型还要多过一道名录门：启用着、平台也开着的模型，只要既不在名录里、
           又没有管理员显式放行的戳，运行时就回 MODEL_NOT_IN_CATALOG。不判这一层的话，
@@ -375,9 +341,7 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
         //
         // 线路打给上游的是哪一个别名由 UpstreamModelId 决定（没写就回落到兑换所主别名）。
         // 别名被摘掉之后兑换所照样启用着，而运行时按名录门把它判死——一个所有兑换所线路
-        // 都已失效的部署会在这里报绿，而每一次真实请求都失败。
-        // 判据用共享那一份，与运行时和对外模型清单同源；上一轮补清单那一处时漏了这里
-        // （形状 6 的老毛病：补洞只补被点名的那一处，没把同族的其余出口扫完）。
+        // 都已失效的部署会在这里报绿，而每一次真实请求都失败。判据用共享那一份。
         bool OfferingTargetUsable(GatewayModelOffering offering)
             => string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase)
                 ? enabledExchangeById.TryGetValue(offering.TargetId, out var exchange)
@@ -392,41 +356,40 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             .Where(x => !string.IsNullOrWhiteSpace(x))
             .ToHashSet(StringComparer.Ordinal);
 
-        bool HasLogicalCatcher(GatewayAppCallerRecord caller)
-        {
-            if (string.IsNullOrWhiteSpace(caller.RequestType)) return false;
-            var candidates = enabledLogicalModels
-                .Where(x => string.Equals(x.ModelType, caller.RequestType, StringComparison.Ordinal)
-                    && routableLogicalModelIds.Contains(x.Id))
-                .ToList();
-            if (candidates.Count == 0) return false;
+        return new TenantRoutingView(enabledLogicalModels, routableLogicalModelIds);
+    }
 
-            // 被选中的那个候选还得满足这个调用方的场景能力要求。
-            //
-            // 不判的话会出现这种组合：模型 A 认领了这个调用方但不具备它要的能力，
-            // 模型 B 具备能力却没认领它。router 组件看 A 判绿、场景组件看 B 也判绿，
-            // 而运行时按认领选中 A，回一个能力不匹配——两个组件各自为真，合起来是假的。
-            // 判据用的是运行时那一份（GatewayCapabilityContract），不另写近似。
-            bool Serves(GatewayLogicalModel model)
-                => GatewayCapabilityContract.SupportsAppCallerScenario(
-                    model.Capabilities, model.AllowedAppCallerCodes, caller.AppCallerCode);
+    /// <summary>
+    /// 不点名的请求有没有对外模型接得住，判据与运行时的两层同序：
+    /// 先看有没有模型认领了这个调用方，没有才看这个用途的默认；被选中的那一条还得支持它的场景。
+    /// </summary>
+    private static bool HasLogicalCatcher(GatewayAppCallerRecord caller, TenantRoutingView view)
+    {
+        if (string.IsNullOrWhiteSpace(caller.RequestType)) return false;
+        var candidates = view.EnabledLogicalModels
+            .Where(x => string.Equals(x.ModelType, caller.RequestType, StringComparison.Ordinal)
+                && view.RoutableLogicalModelIds.Contains(x.Id))
+            .ToList();
+        if (candidates.Count == 0) return false;
 
-            // 第一层：谁认领了它。认领是排他的，所以只看被认领的那个候选，不看别人。
-            var claimed = candidates.FirstOrDefault(x => x.DefaultForAppCallerCodes
-                .Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase));
-            if (claimed is not null) return Serves(claimed);
+        // 被选中的那个候选还得满足这个调用方的场景能力要求。
+        //
+        // 不判的话会出现这种组合：模型 A 认领了这个调用方但不具备它要的能力，
+        // 模型 B 具备能力却没认领它。router 组件看 A 判绿、场景组件看 B 也判绿，
+        // 而运行时按认领选中 A，回一个能力不匹配——两个组件各自为真，合起来是假的。
+        // 判据用的是运行时那一份（GatewayCapabilityContract），不另写近似。
+        bool Serves(GatewayLogicalModel model)
+            => GatewayCapabilityContract.SupportsAppCallerScenario(
+                model.Capabilities, model.AllowedAppCallerCodes, caller.AppCallerCode);
 
-            // 第二层：这个用途的默认。
-            var typeDefault = candidates.FirstOrDefault(x => x.IsDefaultForType);
-            return typeDefault is not null && Serves(typeDefault);
-        }
+        // 第一层：谁认领了它。认领是排他的，所以只看被认领的那个候选，不看别人。
+        var claimed = candidates.FirstOrDefault(x => x.DefaultForAppCallerCodes
+            .Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase));
+        if (claimed is not null) return Serves(claimed);
 
-        return new RouterTenantView(caller => IsCallerRoutable(
-            caller,
-            poolById,
-            defaultPools,
-            enabledPlatformIds,
-            enabledExchanges) || HasLogicalCatcher(caller));
+        // 第二层：这个用途的默认。
+        var typeDefault = candidates.FirstOrDefault(x => x.IsDefaultForType);
+        return typeDefault is not null && Serves(typeDefault);
     }
 
     /// <summary>
@@ -475,26 +438,40 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
         CancellationToken cancellationToken)
     {
         var callers = _gatewayDb.Database.GetCollection<GatewayAppCallerRecord>(AppCallerCollection);
-        var logicalModels = _gatewayDb.Database.GetCollection<GatewayLogicalModel>(LogicalModelCollection);
-        var offerings = _gatewayDb.Database.GetCollection<GatewayModelOffering>(OfferingCollection);
 
         var governed = await callers.Find(x => x.Status == "configured" || x.Status == "active")
             .ToListAsync(cancellationToken);
         if (governed.All(x => GatewayCapabilityContract.RequiredScenarioCapability(x.AppCallerCode) is null))
             return new GatewayScenarioCapabilitySnapshot(0, 0, []);
 
-        var enabledModels = await logicalModels.Find(x => x.Enabled).ToListAsync(cancellationToken);
-        var usableOfferings = await offerings
-            .Find(Builders<GatewayModelOffering>.Filter.And(
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
-                Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
-            .ToListAsync(cancellationToken);
+        /*
+          可用线路的判据与 router 组件共用同一份视图。
 
-        return EvaluateScenarioCapability(
-            governed,
-            enabledModels,
-            usableOfferings,
-            internalTenantId: InternalTenantId);
+          此前这里只问「线路 enabled 且没被熔断」，不问它指向的物理模型 / 平台 / 兑换所别名
+          还在不在、过不过得了名录门。于是同一份配置能让 router 判红、scenario 判绿——
+          两个组件问的本来就是同一件事的两个侧面，判据却是两份（形状 3）。
+          现在两边都从 BuildTenantRoutingViewAsync 取，那一份改了两边同时改。
+        */
+        var catalogGateEnforces = await GatewayCatalogGate.EnforcesAsync(
+            _configuration, _gatewayDb.Database, cancellationToken);
+
+        var scenarioCallers = 0;
+        var routable = 0;
+        var broken = new List<string>();
+        foreach (var group in governed.GroupBy(CallerTenantId, StringComparer.Ordinal))
+        {
+            var view = await BuildTenantRoutingViewAsync(group.Key, catalogGateEnforces, cancellationToken);
+            var part = EvaluateScenarioCapability(
+                group.ToList(),
+                view.EnabledLogicalModels,
+                view.RoutableLogicalModelIds,
+                internalTenantId: InternalTenantId);
+            scenarioCallers += part.ScenarioCallers;
+            routable += part.RoutableCallers;
+            broken.AddRange(part.BrokenCallers);
+        }
+
+        return new GatewayScenarioCapabilitySnapshot(scenarioCallers, routable, broken);
     }
 
     /// <summary>
@@ -509,7 +486,7 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
     public static GatewayScenarioCapabilitySnapshot EvaluateScenarioCapability(
         IReadOnlyCollection<GatewayAppCallerRecord> governedCallers,
         IReadOnlyCollection<GatewayLogicalModel> enabledLogicalModels,
-        IReadOnlyCollection<GatewayModelOffering> usableOfferings,
+        IReadOnlySet<string> routableLogicalModelIds,
         string internalTenantId)
     {
         var scenarioCallers = governedCallers
@@ -517,11 +494,6 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             .ToList();
         if (scenarioCallers.Count == 0)
             return new GatewayScenarioCapabilitySnapshot(0, 0, []);
-
-        var logicalIdsWithOffering = usableOfferings
-            .Where(x => x.Enabled && x.HealthStatus != ModelHealthStatus.Unavailable)
-            .Select(x => x.LogicalModelId)
-            .ToHashSet(StringComparer.Ordinal);
 
         var broken = new List<string>();
         var routable = 0;
@@ -537,7 +509,7 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                 model.Enabled
                 && string.Equals(model.TenantId, callerTenant, StringComparison.Ordinal)
                 && string.Equals(model.ModelType, caller.RequestType, StringComparison.OrdinalIgnoreCase)
-                && logicalIdsWithOffering.Contains(model.Id)
+                && routableLogicalModelIds.Contains(model.Id)
                 && GatewayCapabilityContract.SupportsAppCallerScenario(
                     model.Capabilities,
                     model.AllowedAppCallerCodes,
@@ -547,63 +519,6 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
         }
 
         return new GatewayScenarioCapabilitySnapshot(scenarioCallers.Count, routable, broken);
-    }
-
-    public static bool IsCallerRoutable(
-        GatewayAppCallerRecord caller,
-        IReadOnlyDictionary<string, ModelGroup> poolById,
-        IReadOnlyCollection<ModelGroup> defaultPools,
-        IReadOnlySet<string> enabledPlatformIds,
-        IReadOnlyCollection<ModelExchange> enabledExchanges)
-    {
-        if (!string.IsNullOrWhiteSpace(caller.ModelPoolId))
-        {
-            return poolById.TryGetValue(caller.ModelPoolId, out var boundPool) &&
-                   IsPoolRoutableForRequestType(
-                       boundPool,
-                       caller.RequestType,
-                       enabledPlatformIds,
-                       enabledExchanges);
-        }
-
-        return defaultPools.Any(pool =>
-            pool.IsDefaultForType &&
-            IsPoolRoutableForRequestType(
-                pool,
-                caller.RequestType,
-                enabledPlatformIds,
-                enabledExchanges));
-    }
-
-    private static bool IsPoolRoutableForRequestType(
-        ModelGroup pool,
-        string requestType,
-        IReadOnlySet<string> enabledPlatformIds,
-        IReadOnlyCollection<ModelExchange> enabledExchanges)
-        => pool.ModelType == requestType &&
-           pool.Models.Count > 0 &&
-           pool.Models.Any(model =>
-               model.HealthStatus != ModelHealthStatus.Unavailable &&
-               HasEnabledBackend(model, enabledPlatformIds, enabledExchanges));
-
-    private static bool HasEnabledBackend(
-        ModelGroupItem model,
-        IReadOnlySet<string> enabledPlatformIds,
-        IReadOnlyCollection<ModelExchange> enabledExchanges)
-    {
-        if (enabledPlatformIds.Contains(model.PlatformId))
-            return true;
-
-        if (model.PlatformId == ModelResolverConstants.ExchangePlatformId)
-        {
-            return enabledExchanges.Any(exchange => exchange.GetEffectiveModels().Any(candidate =>
-                candidate.Enabled && candidate.ModelId == model.ModelId));
-        }
-
-        return enabledExchanges.Any(exchange =>
-            exchange.Id == model.PlatformId &&
-            exchange.GetEffectiveModels().Any(candidate =>
-                candidate.Enabled && candidate.ModelId == model.ModelId));
     }
 
     private async Task<GatewayServingReadinessComponent> MeasureAsync(

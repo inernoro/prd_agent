@@ -211,10 +211,10 @@ public class GatewayWhitelistPublishingTests
         var claimAt = catcherBody.IndexOf("DefaultForAppCallerCodes", StringComparison.Ordinal);
         var typeDefaultAt = catcherBody.IndexOf("IsDefaultForType", StringComparison.Ordinal);
         Assert.True(claimAt > 0 && typeDefaultAt > claimAt, "就绪探针的两层判据必须与运行时同序");
-        // 池那条不删：还没搬迁的部署仍然靠它，两条是或的关系。
-        // 断言的是这个「或」还在，不是它写成了哪个形参名。
-        Assert.Contains("IsCallerRoutable(", body);
-        Assert.Matches(@"\|\|\s*HasLogicalCatcher\(\w+\)", body);
+        // 池那条已经删了：运行时的解析主流程里没有任何池分支，判据留着它就是替一条死路作保。
+        // 现在「可路由」只有对外模型这一条路，反向钉住池不许回来。
+        Assert.DoesNotContain("IsCallerRoutable", body);
+        Assert.DoesNotContain("ModelGroup", body);
     }
 
     /// <summary>
