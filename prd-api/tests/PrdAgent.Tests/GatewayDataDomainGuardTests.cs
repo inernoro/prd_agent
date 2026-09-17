@@ -7237,6 +7237,62 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("effectiveAllowlist.Contains(code, StringComparer.Ordinal)", program, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// 已受理任务的恢复路径不许套用「可变的调度策略」。
+    ///
+    /// 那条路径回答的是「一个已经被上游受理、可能已经付过费的任务，还能不能回到原线路查状态、
+    /// 下结果」，而授权名单与场景能力回答的是「能不能挑这个模型发新请求」——两个问题。
+    /// 套用的后果：管理员在任务跑着时把这个调用方从名单里摘掉，任务立刻不可恢复，
+    /// 而 Offering 与归属记录都还在（第 81 轮 review 的 P1）。
+    ///
+    /// 判据钉在恢复函数体内：不许出现 SupportsAppCallerScenario。
+    /// 同时钉住那句「只控制新任务调度」的注释所承诺的另一半——Enabled 与健康状态也不参与，
+    /// 所以这个函数体里不许再出现按 Enabled / HealthStatus 过滤 Offering 的条件。
+    /// </summary>
+    [Fact]
+    public void 任务恢复路径不许套用调度授权()
+    {
+        var root = LocateRepoRoot();
+        var resolver = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Infrastructure", "LlmGateway", "ModelResolver.cs"));
+
+        var bodyAt = resolver.IndexOf("private async Task<ModelResolutionResult> ResolveOfferingCoreAsync(", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到恢复路径那个函数");
+        // 结尾按结构取：下一个成员的 XML 文档注释开头。
+        var bodyEnd = resolver.IndexOf("    /// <inheritdoc />", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到恢复函数的结尾");
+        var body = resolver[bodyAt..bodyEnd];
+
+        Assert.DoesNotContain("SupportsAppCallerScenario", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("x => x.Enabled, true", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("x => x.HealthStatus", body, StringComparison.Ordinal);
+        // 租户隔离必须留着：去掉它就成了「拿着 id 谁都查得到」。
+        Assert.Contains("x => x.TenantId, CurrentTenantId", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 应用侧的模型选择器目录也要认半开候选——与 /v1/models 同一个自锁。
+    ///
+    /// 第 80 轮修的是对外清单那一侧，选择器这一侧漏在外面：只剩半开候选的模型从选择器消失，
+    /// 靠选择器挑模型的客户端从此发不出那次请求，也就永远触发不了能让它回来的试探。
+    /// </summary>
+    [Fact]
+    public void 选择器目录要认半开候选()
+    {
+        var root = LocateRepoRoot();
+        var resolver = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Infrastructure", "LlmGateway", "ModelResolver.cs"));
+
+        var bodyAt = resolver.IndexOf("var offeringCollection = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到选择器目录那一段");
+        var bodyEnd = resolver.IndexOf("var result = new List<AvailableModelPool>();", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到那一段的结尾");
+        var body = resolver[bodyAt..bodyEnd];
+
+        Assert.DoesNotContain("Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)", body, StringComparison.Ordinal);
+        Assert.Contains("GatewayCircuitBreakerPolicy.IsHalfOpenEligible", body, StringComparison.Ordinal);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

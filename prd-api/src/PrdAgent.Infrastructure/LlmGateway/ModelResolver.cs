@@ -634,7 +634,27 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.Id, offering.LogicalModelId),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
             .FirstOrDefaultAsync(ct);
-        if (logical is null || !SupportsAppCallerScenario(logical, appCallerCode))
+        /*
+          这里**不套用授权名单与场景能力**，那是「能不能挑这个模型发新请求」的调度策略，
+          而这条路径回答的是另一个问题：一个已经被上游受理、可能已经付过费的任务，
+          还能不能回到它当初那条线路上查状态、下结果。
+
+          套用的后果是：管理员在任务跑着的时候把这个调用方从 AllowedAppCallerCodes 里摘掉，
+          那个任务立刻变成不可恢复——Offering 还在、归属记录还在，只是被一条**事后才改的
+          调度策略**判了出局（第 81 轮 review 的 P1）。上面那句注释写着「Enabled 和健康状态
+          只控制新任务调度」，授权名单同样是新任务调度的东西，漏在了那句话外面。
+
+          那这条路径靠什么授权？靠**持久化的任务归属**，而且那道门在调用方那一层就已经关上了：
+          视频控制器的状态/下载/流三个入口都先走 FindOwnedDirectVideoJobAsync
+          （按 AppKey + OwnerAdminId + 恢复令牌匹配 direct_video_job_ownerships），
+          匹配不上根本走不到这里。本函数保留的是租户隔离与「这条线路确实属于这个用途的
+          某个对外模型」，而不是替调用方再判一次它有没有权限——它手里的 offeringId
+          本来就来自它自己那条已授权的任务记录。
+
+          三个调用点全是恢复路径（GetStatusForOffering / DownloadVideoBytesForOffering /
+          OpenVideoStreamForOffering），提交走的是 ResolveModelAsync，那一侧的授权判定不受影响。
+        */
+        if (logical is null)
         {
             return ModelResolutionResult.NotFound(
                 requiredOfferingId,
@@ -1004,12 +1024,27 @@ public class ModelResolver : IModelResolver
         if (logicalModels.Count == 0)
             return [];
         var ids = logicalModels.Select(x => x.Id).ToList();
-        var offerings = await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
+        // 「不可用」不等于「这次调不通」：解析在挑常规队列之前会先试着认领一条已摘掉、
+        // 过了冷却（或被人工点过恢复）的线路做半开试探。把这一档一并排除掉，选择器里
+        // 只剩这种线路的模型就整个消失——而靠选择器挑模型的客户端从此发不出那次请求，
+        // 也就永远触发不了能让它回来的试探（第 81 轮 review；与对外清单 /v1/models 同一个自锁，
+        // 第 80 轮修的是那一侧，这一侧漏在外面）。
+        //
+        // 与那一侧一样：库里不再排除不可用，取回来后按**同一个纯函数**在内存里过一遍，
+        // 不存在「Mongo 过滤器与纯函数各写一份然后漂移」的余地。
+        var nowUtc = DateTime.UtcNow;
+        var halfOpenCutoff = nowUtc.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
+        var offerings = (await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayModelOffering>.Filter.In(x => x.LogicalModelId, ids),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
-                Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
-            .ToListAsync(ct);
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true)))
+            .ToListAsync(ct))
+            .Where(x => x.HealthStatus != ModelHealthStatus.Unavailable
+                || GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                    x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt,
+                    nowUtc, halfOpenCutoff))
+            .ToList();
         var offeringsByLogicalModel = offerings
             .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
