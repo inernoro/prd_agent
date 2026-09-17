@@ -12,7 +12,38 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { chromium } from '/home/user/prd_agent/cds/node_modules/playwright/index.mjs';
+import { fileURLToPath } from 'node:url';
+
+// playwright 的位置按**这个脚本自己在哪**去找，不写死某台机器的绝对路径。
+//
+// 写死 /home/user/prd_agent 的后果不是「换台机器慢一点」，是换个 checkout（比如
+// /workspace/prd_agent）连模块都加载不进来：Node 在跑到任何一行之前就 ERR_MODULE_NOT_FOUND，
+// 于是这条本该是「真人路径视觉验收」的脚本在别处压根跑不起来（第 75 轮 review）。
+//
+// 三档依次试：环境变量指定 → 当前包的依赖（装过 playwright 的 checkout 直接命中）→
+// 仓库内 cds 的 node_modules（本仓库唯一装了 playwright 的地方，按相对路径推）。
+// 三档都不成就明说是哪几个位置都没有，不静默退化。
+const repoRoot = fileURLToPath(new URL('../../', import.meta.url));
+const playwrightCandidates = [
+  process.env.PLAYWRIGHT_MODULE,
+  'playwright',
+  new URL('../../cds/node_modules/playwright/index.mjs', import.meta.url).href,
+].filter(Boolean);
+let chromium;
+const playwrightErrors = [];
+for (const candidate of playwrightCandidates) {
+  try {
+    ({ chromium } = await import(candidate));
+    break;
+  } catch (err) {
+    playwrightErrors.push(`${candidate}: ${err.code || err.message}`);
+  }
+}
+if (!chromium) {
+  console.error(`找不到 playwright（仓库根 ${repoRoot}）。试过：\n  ${playwrightErrors.join('\n  ')}`);
+  console.error('装一个（pnpm --dir cds install）或用 PLAYWRIGHT_MODULE 指到 index.mjs。');
+  process.exit(2);
+}
 
 const BASE = process.env.LLMGW_BASE;
 const TOKEN = process.env.LLMGW_TOKEN;

@@ -74,6 +74,17 @@ def label_of(route):
     return f"{provider} / {name}" if provider else name
 
 
+def half_open_ids(trace):
+    """面板标出的半开试探候选：已摘掉，但下一条请求有可能先拿它去试探。
+
+    运行时在挑常规队列**之前**会先试着认领一条不可用线路顶到队首
+    （ModelResolver.TryClaimHalfOpenOfferingAsync），而推演那一侧把不可用线路整个排除。
+    不把这一档接进来，脚本就会在一次完全正常的半开试探上报失败——一个假失败比没断言更糟，
+    因为它会让人以为判据坏了，进而把判据放宽（第 75 轮 review）。
+    """
+    return {x["offeringId"] for x in (trace.get("routeExtras") or []) if x.get("halfOpenProbe")}
+
+
 def predicted(trace):
     """面板推演出的可接受落点 + 一句人话说明为什么是这些。
 
@@ -141,10 +152,27 @@ def main():
     trace = fetch_trace(logical_id)
     model_type = sys.argv[2] if len(sys.argv) > 2 else trace["modelType"]
     accepted, why = predicted(trace)
+    probes = half_open_ids(trace)
+    label_by_id = {r["id"]: label_of(r) for r in trace["routes"]}
+
+    def lands_here(offering):
+        """运行时这次落到的线路，算不算「落在这个模型面板说的范围里」。
+
+        两档都算：常规队列推演出的那几条，以及面板标了半开候选的那几条。
+        """
+        return offering is not None and (offering in accepted or offering in probes)
+
+    def mismatch(offering, got_label):
+        return (f"面板说会落到 {sorted(accepted.values())}"
+                + (f"（或半开试探 {sorted(label_by_id.get(i, i) for i in probes)}）" if probes else "")
+                + f"，运行时落到 {got_label}（{offering}）")
 
     print(f"对外模型 : {trace['publicId']}（{trace['modelType']}，{trace['routingStrategy']}）")
     print(f"面板结论 : {trace['conclusion']}")
     print(f"推演落点 : {sorted(accepted.values()) or '(无)'}  —— {why}")
+    if probes:
+        print(f"半开候选 : {sorted(label_by_id.get(i, i) for i in probes)}"
+              "  —— 已摘掉但过了冷却期，这次请求可能先拿其中一条试探，落到它也算对得上")
     print(f"不点名   : {trace['unnamed']['summary']}")
     print(f"调用方   : 登记 {trace['unnamed'].get('callerCount', 0)} 个，"
           f"其中 {trace['unnamed'].get('reachingCallerCount', 0)} 个不点名会落到它")
@@ -170,20 +198,23 @@ def main():
     succeeded = status == 200 and bool(payload.get("Success", payload.get("success", True)))
     if named_reach != "UsesModelCatalog":
         # 走不到这张目录的调用方：运行时不该给出这个模型的线路标识。
-        ok = offering is None or offering not in accepted
+        ok = not lands_here(offering)
         verdict = ("面板说它走不到这张目录，运行时确实没走（落到 %s）" % got_label if ok
                    else f"面板说它走不到这张目录，运行时却落到了这里的 {got_label}（{offering}）")
-    elif not accepted:
+    elif not accepted and not probes:
         ok = not succeeded
         verdict = "按面板说法这次解析应当失败" if ok else f"面板说调不通，运行时却解析到 {got_label}"
     elif not succeeded:
-        ok, verdict = False, f"解析失败：{str(payload)[:220]}"
+        # 一条常规线路都没有、只剩半开候选时，这次请求成不成功要看那次试探——
+        # 试探失败就真的没有后备了，所以这里不把失败判成缺陷。
+        ok = not accepted and bool(probes)
+        verdict = ("面板说只剩半开试探这一条路，这次试探没成" if ok
+                   else f"解析失败：{str(payload)[:220]}")
     elif offering is None:
         ok, verdict = False, f"响应里找不到线路标识，无法核对：{str(payload)[:220]}"
     else:
-        ok = offering in accepted
-        verdict = ("与面板推演一致" if ok
-                   else f"面板说会落到 {sorted(accepted.values())}，运行时解析到 {got_label}（{offering}）")
+        ok = lands_here(offering)
+        verdict = "与面板推演一致" if ok else mismatch(offering, got_label)
     reach_label = {"TrafficRejected": "未放行"}.get(named_reach, "认对外模型目录")
     print(f"[{'通过' if ok else '失败'}] 点名模型（{APP_CALLER}，{reach_label}） — "
           f"status={status} 运行时落点={got_label} · {verdict}")
@@ -208,20 +239,21 @@ def main():
         if caller.get("reachesThisModel"):
             # 面板说这个调用方不点名会落到这个模型 —— 那就必须真的落到它的某条线路上。
             if not succeeded:
-                ok, verdict = False, f"面板说会落到这个模型，运行时却解析失败：{str(payload)[:180]}"
+                ok = not accepted and bool(probes)
+                verdict = ("面板说只剩半开试探这一条路，这次试探没成" if ok
+                           else f"面板说会落到这个模型，运行时却解析失败：{str(payload)[:180]}")
             elif offering is None:
                 ok, verdict = False, f"响应里找不到线路标识：{str(payload)[:180]}"
             else:
-                ok = offering in accepted
-                verdict = ("与面板推演一致" if ok
-                           else f"面板说会落到 {sorted(accepted.values())}，运行时落到 {got_label}（{offering}）")
+                ok = lands_here(offering)
+                verdict = "与面板推演一致" if ok else mismatch(offering, got_label)
         elif reach == "TrafficRejected":
             ok = not succeeded
             verdict = "面板说这个调用方不放行，运行时确实解析不出来" if ok else f"面板说未放行，运行时却解析到 {got_label}"
         else:
             # 面板说走不到这个模型（被别的模型认领了，或本用途的默认不是它）。
             # 这里**不断言它落到哪**——那是另一个模型的全貌；只断言它没落到这个模型的线路上。
-            landed_here = succeeded and offering is not None and offering in accepted
+            landed_here = succeeded and lands_here(offering)
             ok = not landed_here
             verdict = ("确实没落到这个模型" if ok
                        else f"面板说走不到这里，运行时却落到了这个模型的 {got_label}（{offering}）")

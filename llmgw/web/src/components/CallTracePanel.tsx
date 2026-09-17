@@ -183,6 +183,11 @@ export function CallTracePanel({ logicalModelId }: { logicalModelId: string }) {
                     <span style={{ width: 220, flexShrink: 0, ...HINT_TEXT, fontSize: 'var(--fs-caption)' }}>
                       {extra?.priceSummary || '单价未登记'}
                     </span>
+                    {/* 半开候选要和「不参与」并排显示，不能只写进上面那句结论：
+                        行里孤零零一个「不参与」会被读成「这条这次用不到」，而它恰恰可能被先试探。 */}
+                    {skipped && extra?.halfOpenProbe ? (
+                      <Chip label="可能先试探它" color="var(--accent)" bg="var(--accent-soft)" />
+                    ) : null}
                     {skipped ? (
                       <Chip label={route.skipReason || '不参与'} color="var(--warn)" bg="var(--warn-bg)" />
                     ) : route.healthStatus === 1 ? (

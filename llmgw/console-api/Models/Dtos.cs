@@ -1547,6 +1547,14 @@ public sealed class CallTraceRouteExtra
     /// <summary>单价一句话；登记不全时为 null，面板如实说「单价未登记」。</summary>
     public string? PriceSummary { get; set; }
     public string? LastFailedAt { get; set; }
+
+    /// <summary>
+    /// 这条已被摘掉的线路，下一条请求有没有可能被拿去做半开试探。
+    ///
+    /// 运行时在挑常规队列之前会先试着认领一条不可用线路顶到队首，所以「被跳过」不等于
+    /// 「这次一定用不到它」。判据见 CallTracePlanner.IsHalfOpenProbeCandidate。
+    /// </summary>
+    public bool HalfOpenProbe { get; set; }
 }
 
 /// <summary>账本：近 N 天这个模型花了多少。</summary>

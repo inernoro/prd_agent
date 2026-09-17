@@ -123,12 +123,60 @@ public static class CallTracePlanner
     ///   - 按权重：**不许**指名道姓，只能给分配比例——说「会落到 A」在按权重时就是编的。
     ///   - 一条都不参与：直说这个模型现在调不通，以及为什么。
     /// </summary>
+    /// <summary>
+    /// 熔断后要冷却多久才允许半开试探。镜像 GatewayCircuitBreakerPolicy.DefaultHalfOpenAfterSeconds。
+    /// </summary>
+    public const int HalfOpenAfterSecondsDefault = 120;
+
+    /// <summary>
+    /// 这条已被摘掉的线路，下一条请求有没有可能先拿它去做半开试探。
+    ///
+    /// 为什么面板非说这一句不可：运行时在挑常规队列**之前**会先试着认领一条不可用线路
+    /// 放到发送队列首位（ModelResolver.TryClaimHalfOpenOfferingAsync）。而推演这一侧
+    /// 把所有不可用线路整个排除掉，于是面板指着一条健康线路说「下一跳是它」，
+    /// 实际那次请求先打的是另一条——面板的全部意义就是回答这一句，答错了比不答糟
+    /// （第 75 轮 review）。
+    ///
+    /// **只说「可能」，不指名道姓说一定是它**：认领是一次带租约的条件写，谁抢到看竞态，
+    /// 而且试探失败之后照样回落到下面那条队列。把它说成确定的下一跳，是拿一个猜测换另一个
+    /// （与按权重那一档同一条规矩：说不准就别装作说得准）。
+    ///
+    /// 判据逐条对齐 TryClaimHalfOpenOfferingAsync 的过滤器：启用着、当前是不可用、
+    /// 没有还没过期的半开租约、而且「人工点了恢复」或「上次失败已过冷却/根本没失败过」。
+    /// 其中除 Enabled 之外的三条与运行时的纯函数 ModelResolver.IsHalfOpenEligible 逐字相同，
+    /// 由 GatewayCallTraceMirrorTests 逐例对照。
+    /// </summary>
+    public static bool IsHalfOpenProbeCandidate(
+        int healthStatus,
+        bool enabled,
+        DateTime? halfOpenLeaseUntil,
+        DateTime? manualRecoveryAt,
+        DateTime? lastFailedAt,
+        DateTime nowUtc,
+        int cooldownSeconds = HalfOpenAfterSecondsDefault)
+    {
+        if (!enabled) return false;
+        if (healthStatus != 2) return false;
+        if (halfOpenLeaseUntil.HasValue && halfOpenLeaseUntil > nowUtc) return false;
+        var cutoff = nowUtc.AddSeconds(-cooldownSeconds);
+        return (manualRecoveryAt.HasValue && manualRecoveryAt <= nowUtc)
+               || !lastFailedAt.HasValue
+               || lastFailedAt <= cutoff;
+    }
+
     public static string Conclusion(
         IReadOnlyList<RouteCandidate> all,
         bool weighted,
-        Func<string, string> describeRoute)
+        Func<string, string> describeRoute,
+        IReadOnlyList<string>? halfOpenProbeLabels = null)
     {
-        if (all.Count == 0) return "这个模型下面还没有线路，现在调它一定失败。";
+        // 半开那一句排在最前面：运行时也是先试探再走常规队列，顺序说反了等于换了一个答案。
+        var probePrefix = halfOpenProbeLabels is { Count: > 0 }
+            ? $"有 {halfOpenProbeLabels.Count} 条已摘掉的线路过了冷却期"
+              + $"（{string.Join("、", halfOpenProbeLabels)}），下一条请求**可能**先拿其中一条做半开试探；"
+              + "试探失败才轮到下面这条队列。"
+            : string.Empty;
+        if (all.Count == 0) return probePrefix + "这个模型下面还没有线路，现在调它一定失败。";
         var eligible = Eligible(all);
         if (eligible.Count == 0)
         {
@@ -155,7 +203,7 @@ public static class CallTracePlanner
                 })
                 .ToList();
             var why = described.Count > 0 ? string.Join("、", described) : $"{all.Count} 条都用不了";
-            return $"现在调它会失败：{all.Count} 条线路里{why}。";
+            return probePrefix + $"现在调它会失败：{all.Count} 条线路里{why}。";
         }
         /*
           「按权重分到 N 条」里的 N 必须是**真正参与轮转的那几条**，不是全部可用线路。
@@ -174,12 +222,12 @@ public static class CallTracePlanner
             var standbyNote = standby > 0
                 ? $"；另有 {standby} 条健康档更低的线路不参与分流，只在这几条都失败后才顶上"
                 : string.Empty;
-            return $"现在发一个请求，按权重分到 {weightShare.Count} 条线路：{string.Join("、", share)}{standbyNote}。";
+            return probePrefix + $"现在发一个请求，按权重分到 {weightShare.Count} 条线路：{string.Join("、", share)}{standbyNote}。";
         }
         var head = Queue(all, weighted, 0)[0];
         var rest = eligible.Count - 1;
         var tail = rest > 0 ? $"，它失败了再往下换，还有 {rest} 条后备" : "，它是唯一一条，失败就没有后备了";
-        return $"现在发一个请求，会落到 {describeRoute(head.Id)}{tail}。";
+        return probePrefix + $"现在发一个请求，会落到 {describeRoute(head.Id)}{tail}。";
     }
 
     /// <summary>

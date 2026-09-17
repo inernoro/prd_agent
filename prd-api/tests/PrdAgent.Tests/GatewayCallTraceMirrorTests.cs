@@ -1,4 +1,6 @@
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGw.LogicalModels;
 using Xunit;
 
@@ -415,6 +417,90 @@ public sealed class GatewayCallTraceMirrorTests
         => Assert.Equal(
             GatewayAppCallerPolicy.AllowsTraffic(status),
             CallTracePlanner.AllowsTraffic(status));
+
+    /// <summary>
+    /// 半开试探判据两侧一致。
+    ///
+    /// 为什么必须对照：运行时在走常规队列**之前**会先试着认领一条已摘掉的线路顶到队首
+    /// （ModelResolver.TryClaimHalfOpenOfferingAsync），而面板那一侧把不可用线路整个排除了。
+    /// 两边对这句「这条线路有没有可能被拿去试探」的答案一旦分叉，面板就会指着一条健康线路
+    /// 说「下一跳是它」，实际那次请求先打的是另一条（第 75 轮 review）。
+    ///
+    /// 对照的是**除 Enabled 之外**的三条：Enabled 在运行时是写在 Mongo 认领过滤器里的
+    /// （fb.Eq(x =&gt; x.Enabled, true)），不在纯函数里，所以由下面那条单独钉。
+    /// </summary>
+    [Theory]
+    [InlineData(2, null, null, null, true)]            // 摘掉、从没失败过、无租约 → 可试探
+    [InlineData(0, null, null, null, false)]           // 健康的不进半开
+    [InlineData(1, null, null, null, false)]           // 降权的也不进
+    [InlineData(2, 30, null, null, false)]             // 租约还没过期
+    [InlineData(2, -1, null, null, true)]              // 租约过期了
+    [InlineData(2, null, null, -1, false)]             // 刚失败过，没过冷却
+    [InlineData(2, null, null, -999, true)]            // 失败已过冷却
+    [InlineData(2, null, -1, -1, true)]                // 人工点过恢复，冷却不再拦
+    [InlineData(2, null, 999, -1, false)]              // 人工恢复时间在未来，不算
+    [InlineData(2, 30, -1, -999, false)]               // 租约优先级最高，压过其余两条
+    public void 半开试探判据两侧一致(
+        int health, int? leaseOffsetSeconds, int? manualOffsetSeconds, int? failedOffsetSeconds, bool expected)
+    {
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        var cutoff = now.AddSeconds(-CallTracePlanner.HalfOpenAfterSecondsDefault);
+        DateTime? At(int? offset) => offset.HasValue ? now.AddSeconds(offset.Value) : null;
+
+        var member = new ModelGroupItem
+        {
+            HealthStatus = (ModelHealthStatus)health,
+            HalfOpenLeaseUntil = At(leaseOffsetSeconds),
+            ManualRecoveryAt = At(manualOffsetSeconds),
+            LastFailedAt = At(failedOffsetSeconds),
+        };
+        var authoritative = ModelResolver.IsHalfOpenEligible(member, now, cutoff);
+        var mirror = CallTracePlanner.IsHalfOpenProbeCandidate(
+            healthStatus: health,
+            enabled: true,
+            halfOpenLeaseUntil: At(leaseOffsetSeconds),
+            manualRecoveryAt: At(manualOffsetSeconds),
+            lastFailedAt: At(failedOffsetSeconds),
+            nowUtc: now);
+
+        Assert.Equal(expected, authoritative);
+        Assert.Equal(authoritative, mirror);
+    }
+
+    /// <summary>
+    /// 停用的线路不会被拿去试探。
+    ///
+    /// 运行时这一条写在 Mongo 认领过滤器里而不是纯函数里，所以上面那条对照够不着它；
+    /// 漏了它，面板会把一条被管理员停掉的线路报成「可能先试探它」——它永远不会被试探。
+    /// </summary>
+    [Fact]
+    public void 停用的线路不算半开候选()
+    {
+        var now = new DateTime(2026, 9, 17, 12, 0, 0, DateTimeKind.Utc);
+        Assert.False(CallTracePlanner.IsHalfOpenProbeCandidate(
+            healthStatus: 2, enabled: false,
+            halfOpenLeaseUntil: null, manualRecoveryAt: null, lastFailedAt: null, nowUtc: now));
+    }
+
+    /// <summary>
+    /// 有半开候选时，结论第一句就要说出来，而且只说「可能」。
+    ///
+    /// 位置与措辞都是判据的一部分：运行时也是先试探再走常规队列，把这句放到后面等于换了个答案；
+    /// 而认领是一次带租约的条件写，谁抢到看竞态、试探失败还会回落，说成确定的下一跳就是编的
+    /// （与按权重那一档同一条规矩）。
+    /// </summary>
+    [Fact]
+    public void 半开候选要写进结论且只说可能()
+    {
+        var all = new[] { Mirror("healthy", 10, 100, 0, true) };
+        var withProbe = CallTracePlanner.Conclusion(all, weighted: false, id => id, ["某平台的 x"]);
+        var without = CallTracePlanner.Conclusion(all, weighted: false, id => id);
+
+        Assert.StartsWith("有 1 条已摘掉的线路过了冷却期", withProbe);
+        Assert.Contains("可能", withProbe);
+        Assert.DoesNotContain("可能", without);
+        Assert.Contains("会落到 healthy", withProbe);
+    }
 
     /// <summary>不放行的调用方要单独说清，不能混进「不会落到它」里——两者的下一步完全不同。</summary>
     [Fact]

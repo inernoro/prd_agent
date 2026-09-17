@@ -5904,8 +5904,38 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
         x => x.Id,
         x => x.ProviderName is { Length: > 0 } p ? $"{p} 的 {x.UpstreamModelId ?? x.TargetName}" : x.TargetName,
         StringComparer.Ordinal);
+    /*
+      半开试探：运行时在挑常规队列**之前**先试着认领一条已摘掉的线路放到发送队列首位
+      （ModelResolver.TryClaimHalfOpenOfferingAsync）。推演那一侧把不可用线路整个排除，
+      所以不补这一句，面板就会指着一条健康线路说「下一跳是它」，而那次请求先打的是另一条。
+      面板的全部意义就是回答这一句（第 75 轮 review）。
+
+      判据放在 CallTracePlanner.IsHalfOpenProbeCandidate，与运行时的认领过滤器逐条对齐，
+      由行为对照测试钉死。这里只负责把三个只存在于库文档、没进 DTO 的时间字段读出来。
+
+      冷却秒数用镜像的默认值：运行时那边可以由 LlmGateway:CircuitBreaker:HalfOpenAfterSeconds
+      改，console-api 读不到那份配置。改过配置的部署这一句的**条数**可能偏多或偏少，
+      但它本来就只说「可能」，不说一定是谁——这一档误差不会把结论说反。
+    */
+    var nowUtc = DateTime.UtcNow;
+    var halfOpenProbeIds = offeringDocs
+        .Where(doc => CallTracePlanner.IsHalfOpenProbeCandidate(
+            healthStatus: doc.AsNullableInt("HealthStatus") ?? 0,
+            enabled: doc.AsNullableBool("Enabled") ?? true,
+            halfOpenLeaseUntil: doc.AsNullableUtcDateTime("HalfOpenLeaseUntil"),
+            manualRecoveryAt: doc.AsNullableUtcDateTime("ManualRecoveryAt"),
+            lastFailedAt: doc.AsNullableUtcDateTime("LastFailedAt"),
+            nowUtc: nowUtc))
+        .Select(doc => doc.GetStringOrEmpty("_id"))
+        .Where(routeId => routeId.Length > 0)
+        .ToHashSet(StringComparer.Ordinal);
+    var halfOpenProbeLabels = halfOpenProbeIds
+        .Select(routeId => nameById.TryGetValue(routeId, out var label) ? label : routeId)
+        .OrderBy(x => x, StringComparer.Ordinal)
+        .ToList();
     var conclusionCore = CallTracePlanner.Conclusion(candidates, weighted,
-        routeId => nameById.TryGetValue(routeId, out var label) ? label : routeId);
+        routeId => nameById.TryGetValue(routeId, out var label) ? label : routeId,
+        halfOpenProbeLabels);
 
     // 不点名那条路：本用途现在的默认是谁。不是自己就把对方点出来——
     // 「我不是默认」这句话没有下一步，「现在的默认是 X」才有。
@@ -6071,6 +6101,9 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
         LastFailedAt = offeringById.TryGetValue(route.Id, out var doc)
             ? doc.AsNullableUtcDateTime("LastFailedAt").ToIso()
             : null,
+        // 逐条透出，而不是只在结论那句话里提一嘴：冒烟脚本要拿它去判「运行时落到这条
+        // 已摘掉的线路」算不算对得上（不透出的话脚本只能把它判成不一致，报一个假失败）。
+        HalfOpenProbe = halfOpenProbeIds.Contains(route.Id),
     }).ToList();
 
     var window = Math.Clamp(days ?? 30, 1, 90);

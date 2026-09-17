@@ -1076,6 +1076,13 @@ export type CallTraceData = {
     weightPercent?: number | null;
     priceSummary?: string | null;
     lastFailedAt?: string | null;
+    /**
+     * 这条已摘掉的线路，下一条请求有没有可能被拿去做半开试探。
+     *
+     * 运行时在挑常规队列之前会先试着认领一条不可用线路顶到队首，所以「不参与」不等于
+     * 「这次一定用不到它」——不标出来，面板就在指着队首说「下一跳是它」而实际先打了别处。
+     */
+    halfOpenProbe?: boolean;
   }>;
   ledger: {
     windowDays: number;
