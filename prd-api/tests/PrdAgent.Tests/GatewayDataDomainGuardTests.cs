@@ -7053,6 +7053,29 @@ public class GatewayDataDomainGuardTests
             $"只扫到 {scanned} 处按认领值过滤的查询，少于已知的 5 处——是结构变了还是判据失灵了？扫不到就不许判绿。");
         Assert.True(offenders.Count == 0,
             "这些认领查询没带 appCaller 身份 collation，会悄悄退回按字节比：" + string.Join("、", offenders));
+
+        /*
+          计数配平兜底：上面那套只看得见「过滤器就拼在 .Find( 里」的写法。
+
+          第 78 轮漏的那一处正是另一种写法：过滤器在调用方拼好、传给一个局部函数
+          `FirstAsync(filter)` 去查，于是 .Find( 那一句里根本不出现认领字段名，
+          上面的扫描一个字都看不到它——守卫判绿，而那道闸按字节比了整整两轮
+          （形状 7 的又一次：守卫的边界罩不住真正会出事的那种写法）。
+
+          文本分析没法追一个过滤器被传去了哪儿，所以这里改用一条**会响的粗判据**：
+          console-api 里「按认领值过滤」的次数，必须等于身份 collation 出现的次数。
+          新加一处认领查询而忘了 collation，配平立刻不成立。
+          反过来，有人为别的用途多写一个 collation 也会让它红——那不是误报，
+          是「来看一眼这里」的信号，失败文案会说清两个数各是多少。
+        */
+        var consoleSource = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+        var claimPredicates = CountOccurrences(consoleSource, "AnyEq(\"DefaultForAppCallerCodes\"")
+                              + CountOccurrences(consoleSource, "AnyIn(\"DefaultForAppCallerCodes\"");
+        var collationUses = CountOccurrences(consoleSource, "AppCallerIdentityPolicy.Collation");
+        Assert.True(claimPredicates == collationUses,
+            $"console-api 里按认领值过滤了 {claimPredicates} 次，身份 collation 只出现 {collationUses} 次——"
+            + "两个数对不上就说明有一处认领查询在按字节比（或者有人把 collation 挪作它用，"
+            + "那也请顺手把这条断言改对）。");
     }
 
     private static string LocateRepoRoot()

@@ -59,6 +59,57 @@ public sealed class CatalogSameNameMirrorTests
             Render(CatalogGatePolicy.SameNameBatchFilter([])));
 
     /// <summary>
+    /// console-api 里不许再手拼同名判据——只许调共享谓词。
+    ///
+    /// 这个判断在本仓库被写坏过三次、手抄过四份，每次漏的都是同一支（存量文档没有
+    /// ModelNameNormalized，只能靠原样名那一支查到，而那一支按字节比就查不到换了大小写的
+    /// 同一个模型）。行为对照只能保证「共享的那一份是对的」，保证不了「没人再拼第五份」——
+    /// 那是形状 3 的防再修一边守卫，只能扫源码。
+    ///
+    /// 判据选的是**过滤器位置**的归一化名：`fb.Eq("ModelNameNormalized", …)` 这类。
+    /// 索引键、部分索引的类型判断、投影 Include、以及写文档时的字段赋值都不是比较，不在此列。
+    /// </summary>
+    [Fact]
+    public void 控制台不许再手拼同名判据()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        string[] forbidden =
+        [
+            "fb.Eq(\"ModelNameNormalized\"",
+            "fb.In(\"ModelNameNormalized\"",
+            "Filter.Eq(\"ModelNameNormalized\"",
+            "Filter.In(\"ModelNameNormalized\"",
+        ];
+        var hits = forbidden.Where(x => program.Contains(x, StringComparison.Ordinal)).ToList();
+        Assert.True(hits.Count == 0,
+            "这些是手拼的同名判据，请改调 CatalogGatePolicy.SameNameFilter / SameNameBatchFilter："
+            + string.Join("、", hits));
+
+        // 共享谓词确实有人在用——上面那条如果因为「一处都不查了」而判绿，等于什么都没守住。
+        var uses = program.Split("CatalogGatePolicy.SameName", StringSplitOptions.None).Length - 1;
+        Assert.True(uses >= 3, $"只看到 {uses} 处在用共享同名谓词，少于已知的 3 处——是被人换回手拼了吗？");
+    }
+
+    private static string LocateRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir != null)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "AGENTS.md"))
+                && Directory.Exists(Path.Combine(dir.FullName, "prd-api")))
+            {
+                return dir.FullName;
+            }
+
+            dir = dir.Parent;
+        }
+
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    }
+
+    /// <summary>
     /// 存量文档那一支真的忽略大小写：渲染出来的正则必须带 i 选项。
     ///
     /// 上面三条只保证「两边一样」——两边一起写错照样全绿（形状 4：测试测的不是它以为在测的事）。

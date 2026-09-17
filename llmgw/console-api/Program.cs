@@ -13685,12 +13685,12 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
     if (platform.AsNullableBool("Enabled") == false)
         return Json(ApiEnvelope<CreateModelResult>.Fail("PLATFORM_DISABLED", "Provider 已停用，请先启用后再添加模型"), jsonOptions, 409);
 
+    // 同名判据走共享谓词。这里原来手抄了一份一模一样的（规范化名 OR 忽略大小写的原样名），
+    // 行为是对的，但它是第四份——同一个判断多一份就多一次漂移的机会，而漂了不会有人发现。
     var duplicateFilter = fb.And(
         fb.Eq("TenantId", tenantId),
         fb.Eq("PlatformId", draft.PlatformId),
-        fb.Or(
-            fb.Eq("ModelNameNormalized", draft.ModelNameNormalized),
-            fb.Regex("ModelName", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.ModelName)}$", "i"))));
+        CatalogGatePolicy.SameNameFilter(draft.ModelName));
     if (await gwModels.Find(duplicateFilter).AnyAsync())
         return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
 
@@ -19351,14 +19351,17 @@ static async Task<string?> FindUnnamedCatcherAsync(
                 : targetModel.GetStringOrEmpty("ModelName");
             var gateEnforces = await CatalogGateEnforcesAsync();
             // 名录内零额外开销；只有名录外的才多一次带索引的读，与运行时同一个顺序。
+            // 同名判据走共享谓词，不在这里拼第四份：原样名那一支按字节比的话，存量文档
+            // （没有 ModelNameNormalized 的那种）库里存着 `Foo`、线路覆盖成 `foo` 时两支都查不到，
+            // PhysicalRoutePasses 把空结果读成「管不着」放行，于是这道闸给一条运行时会拒的线路发了证
+            // ——而运行时用的正是同一个判据的另一份，按不分大小写查得到、判 MODEL_NOT_IN_CATALOG。
+            // 闸说能接、运行时每次都拒（第 78 轮 review；形状 3 的第四次同一处）。
             var sameName = !gateEnforces || ModelCatalog.Contains(effectiveUpstream)
                 ? []
                 : await gwModels.Find(fb.And(
                     tenantFilter,
                     fb.Eq("PlatformId", targetPlatformId),
-                    fb.Or(
-                        fb.Eq("ModelName", effectiveUpstream),
-                        fb.Eq("ModelNameNormalized", effectiveUpstream.ToLowerInvariant())))).ToListAsync();
+                    CatalogGatePolicy.SameNameFilter(effectiveUpstream))).ToListAsync();
             if (CatalogGatePolicy.PhysicalRoutePasses(effectiveUpstream, sameName, gateEnforces))
             {
                 return true;
@@ -19397,8 +19400,13 @@ static async Task<string?> FindUnnamedCatcherAsync(
       循环接着去试用途默认，于是一个「认领坏了 + 默认健康」的调用方在这道闸上判绿——
       而它真实的不点名请求每一次都失败。闸门替另一条根本不会走的路作了保。
     */
+    // 认领那一层的过滤器由调用方拼好传进来，所以 collation 只能挂在这里。
+    // 不挂的话这道闸按字节比，而运行时（ModelResolver）按身份规则比：认领登记成 Foo、
+    // 调用方是 foo 时，闸挑的是用途默认、运行时挑的是认领它的那个模型——两边选中不同的模型，
+    // 闸于是替一条根本不会走的路作了保（第 78 轮 review）。
+    // 用途默认那一层不含字符串比较，多带一个 collation 无副作用，共用一个入口更不容易漏。
     async Task<BsonDocument?> FirstAsync(FilterDefinition<BsonDocument> filter)
-        => await gwLogicalModels.Find(filter)
+        => await gwLogicalModels.Find(filter, new FindOptions { Collation = AppCallerIdentityPolicy.Collation })
             .Sort(Builders<BsonDocument>.Sort.Ascending("DisplayOrder").Ascending("PublicId"))
             .FirstOrDefaultAsync();
 
