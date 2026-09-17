@@ -29,7 +29,16 @@ public sealed record GatewayKeyAuthorization(
     string? ClientCode = null,
     string? Environment = null,
     string? KeyPrefixSnapshot = null,
-    string? ResolvedAppCallerCode = null);
+    string? ResolvedAppCallerCode = null,
+    /// <summary>
+    /// 这把 key 授权了哪些调用方（空 = 不限）。
+    ///
+    /// 只读探针那一档**刻意不匹配调用方**（见 readOnlyProbe 那个判断），于是清单端点
+    /// 拿着请求头里的调用方直接出清单：一把 route:read 的 key 可以点名它根本调不动的调用方，
+    /// 清单照列，随后那次 POST 被拒——清单说能调、运行时说不能（第 72 轮 review）。
+    /// 把授权集合带出去，让清单端点自己判；鉴权那一档的豁免不动（预检本来就该放行）。
+    /// </summary>
+    IReadOnlyList<string>? AuthorizedAppCallerCodes = null);
 
 public interface IGatewayScopedKeyAuthorizer
 {
@@ -331,7 +340,11 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
             ClientCode: ResolveClientCode(record),
             Environment: ResolveEnvironment(record),
             KeyPrefixSnapshot: record.KeyPrefix,
-            ResolvedAppCallerCode: effectiveAppCallerCode);
+            ResolvedAppCallerCode: effectiveAppCallerCode,
+            AuthorizedAppCallerCodes: record.AppCallerCodes
+                .Select(x => (x ?? string.Empty).Trim())
+                .Where(x => x.Length > 0)
+                .ToList());
     }
 
     private static string? ResolveSingleAppCallerCode(GatewayServiceKeyRecord record)

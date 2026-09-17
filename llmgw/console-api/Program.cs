@@ -13216,8 +13216,22 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
 
     // 用途怎么算出来：名录 > 上游声明 > 猜，用户勾过的最优先。新建与「补空」两条路共用，
     // 各写一份的话补出来的能力与新建出来的会是两套（形状 3）。
-    List<string> DeriveCapabilityCodes(ImportUpstreamModelEntry entry, string modelId)
-        => (entry.Capabilities ?? ModelCatalog.ResolveCapabilities(modelId, null, importCatalogOverrides).Capabilities.ToList())
+    /*
+      推导用途，并**如实带上它是哪来的**。
+
+      来源此前被丢掉了，落库一律盖 "inferred"——于是名录明明登记过的事实，在库里也写着
+      「这是猜的」。而「是不是猜的」正是下面那条修复分支唯一能依据的判据：补登名录之后
+      重新导入，只有分得清「原来那份是猜的」才敢覆盖，分不清就只能连空的都不敢动
+      （第 72 轮 review）。
+    */
+    (List<string> Codes, string Source) DeriveCapabilities(ImportUpstreamModelEntry entry, string modelId)
+    {
+        var (raw, source) = entry.Capabilities is { } declared
+            ? (declared, ModelCatalog.SourceUpstream)
+            : ModelCatalog.ResolveCapabilities(modelId, null, importCatalogOverrides) is var resolved
+                ? (resolved.Capabilities.ToList(), resolved.Source)
+                : ([], ModelCatalog.SourceGuess);
+        var codes = raw
             // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
             // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
             // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
@@ -13225,6 +13239,17 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             .Select(c => c.Trim().ToLowerInvariant())
             .Distinct(StringComparer.Ordinal)
             .ToList();
+        return (codes, source);
+    }
+
+    List<string> DeriveCapabilityCodes(ImportUpstreamModelEntry entry, string modelId)
+        => DeriveCapabilities(entry, modelId).Codes;
+
+    /// <summary>落库时的来源标记：名录与上游声明都是事实，只有关键词匹配才是猜的。</summary>
+    static string StoredCapabilitySource(string resolvedSource)
+        => string.Equals(resolvedSource, ModelCatalog.SourceGuess, StringComparison.Ordinal)
+            ? "inferred"
+            : resolvedSource;
 
     /*
       价格与币种在**动第一次库之前**全批校验完。
@@ -13271,24 +13296,50 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
 
               只补空的，不动已经有能力的：那些可能是人在模型页勾过的，导入没有资格覆盖。
             */
+            /*
+              只补空的还不够：**猜出来的那一份也要让位给事实**。
+
+              名录这套机制存在的理由就是纠正按名字猜错的用途，而错得最多的恰恰不是「空」，
+              是「猜了一个错的」。上一版只修空数组，于是补登名录之后重新导入一次——用户照着
+              提示做完，库里那份猜错的用途原样留着，发布白名单时读的还是它，路由一点没变
+              （第 72 轮 review；上一轮补的是同一条恢复路的另一半，形状 1：判据只认了
+              「空」这一种输入）。
+
+              覆盖的边界靠**来源**划：每一条都标着 inferred 才动它（那是关键词匹配的产物），
+              只要有一条来自名录、上游声明或人在模型页勾过，就一个字都不改——导入没有资格
+              覆盖人写的东西。新的那份也必须真的是事实（名录或上游声明），拿一个猜的换另一个
+              猜的没有意义。
+            */
             var storedCaps = existingModel.GetValue("Capabilities", BsonNull.Value);
-            var hasStoredCaps = storedCaps.IsBsonArray && storedCaps.AsBsonArray.Count > 0;
-            if (!hasStoredCaps)
+            var storedCapDocs = storedCaps.IsBsonArray
+                ? storedCaps.AsBsonArray.OfType<BsonDocument>().ToList()
+                : [];
+            var hasStoredCaps = storedCapDocs.Count > 0;
+            var allStoredAreGuesses = hasStoredCaps && storedCapDocs.All(c =>
+                string.Equals(c.GetStringOrEmpty("Source"), "inferred", StringComparison.OrdinalIgnoreCase));
+            var (repairedCaps, repairedSource) = DeriveCapabilities(entry, modelId);
+            var repairedIsFact = !string.Equals(repairedSource, ModelCatalog.SourceGuess, StringComparison.Ordinal);
+            var storedCodes = storedCapDocs
+                .Select(c => c.GetStringOrEmpty("Type").Trim().ToLowerInvariant())
+                .Where(x => x.Length > 0)
+                .ToHashSet(StringComparer.Ordinal);
+            var shouldRepair = repairedCaps.Count > 0
+                && (!hasStoredCaps
+                    || (allStoredAreGuesses && repairedIsFact && !storedCodes.SetEquals(repairedCaps)));
+            if (shouldRepair)
             {
-                var repairedCaps = DeriveCapabilityCodes(entry, modelId);
-                if (repairedCaps.Count > 0)
-                {
-                    await gwModels.UpdateOneAsync(
-                        TenantAccess.Filter(http, fb.Eq("_id", existingModel.GetStringOrEmpty("_id"))),
-                        Builders<BsonDocument>.Update
-                            .Set("Capabilities", new BsonArray(repairedCaps.Select(c => new BsonDocument
-                            {
-                                { "Type", c },
-                                { "Source", "inferred" },
-                                { "Value", true },
-                            })))
-                            .Set("UpdatedAt", now));
-                }
+                await gwModels.UpdateOneAsync(
+                    TenantAccess.Filter(http, fb.Eq("_id", existingModel.GetStringOrEmpty("_id"))),
+                    Builders<BsonDocument>.Update
+                        .Set("Capabilities", new BsonArray(repairedCaps.Select(c => new BsonDocument
+                        {
+                            { "Type", c },
+                            // 来源如实写：名录登记过的事实不该在库里写成「这是猜的」，
+                            // 否则下一次修复就再也分不清哪一份可以覆盖。
+                            { "Source", StoredCapabilitySource(repairedSource) },
+                            { "Value", true },
+                        })))
+                        .Set("UpdatedAt", now));
             }
             continue;
         }
@@ -13319,7 +13370,7 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         // 与发现端点同源：名录 > 上游声明 > 猜。用户在界面上勾过的用途仍然最优先。
         // 补登也必须喂进来——否则补登登记的用途白登记了，模型导进来用途还是猜的。
         // 判据与上面「补空」那一支共用同一个函数。
-        var caps = DeriveCapabilityCodes(entry, modelId);
+        var (caps, capsSource) = DeriveCapabilities(entry, modelId);
 
         var doc = new BsonDocument
         {
@@ -13342,9 +13393,11 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             { "Capabilities", new BsonArray(caps.Select(c => new BsonDocument
                 {
                     { "Type", c },
-                    // source=inferred 让界面能区分「系统推断的」和「用户勾的」，
-                    // 对应 minimal-user-input.md 的第 3 条：自动填的值必须可见可改。
-                    { "Source", "inferred" },
+                    // 来源让界面能区分「名录登记的事实 / 上游自己声明的 / 系统按名字猜的 /
+                    // 用户勾的」，对应 minimal-user-input.md 第 3 条：自动填的值必须可见可改。
+                    // **只有关键词匹配才写 inferred**：把名录登记过的事实也写成 inferred，
+                    // 会让「补登之后重新导入」那条恢复路再也分不清哪一份可以覆盖（第 72 轮 review）。
+                    { "Source", StoredCapabilitySource(capsSource) },
                     { "Value", true },
                 })) },
         };

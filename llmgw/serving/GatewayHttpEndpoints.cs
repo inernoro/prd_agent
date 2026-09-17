@@ -384,11 +384,24 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] LlmGatewayDataContext data,
             CancellationToken ct) =>
         {
+            if (CatalogCallerDenied(http, out var catalogCaller))
+            {
+                return Results.Json(new
+                {
+                    error = new
+                    {
+                        code = "APP_CALLER_NOT_AUTHORIZED",
+                        message = "X-Gateway-App-Caller 指定的调用方不在这把 key 的授权范围内，"
+                            + "列出它的模型等于给出一份调不动的清单。去掉这个请求头按 key 自己的身份列，"
+                            + "或换一把授权了这个调用方的 key。",
+                    },
+                }, jsonOpts, statusCode: 403);
+            }
             var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
                 data,
                 app.Configuration,
                 GetVerifiedTenantId(http),
-                ResolveVerifiedAppCaller(http, string.Empty) is { Length: > 0 } code ? code : null,
+                catalogCaller,
                 ct);
             return Results.Content(
                 GatewayModelCatalogEndpoint.Serialize(catalog, jsonOpts),
@@ -408,11 +421,25 @@ public static class GatewayHttpEndpoints
             [Microsoft.AspNetCore.Mvc.FromServices] LlmGatewayDataContext data,
             CancellationToken ct) =>
         {
+            // 单模型详情读的是同一份清单，所以同一道门也要过：不判的话，越权点名从清单
+            // 那条路被拒之后换这条路照样查得到（形状 3：同一个判据两处只有一处有）。
+            if (CatalogCallerDenied(http, out var detailCaller))
+            {
+                return Results.Json(new
+                {
+                    error = new
+                    {
+                        code = "APP_CALLER_NOT_AUTHORIZED",
+                        message = "X-Gateway-App-Caller 指定的调用方不在这把 key 的授权范围内。"
+                            + "去掉这个请求头按 key 自己的身份查，或换一把授权了这个调用方的 key。",
+                    },
+                }, jsonOpts, statusCode: 403);
+            }
             var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
                 data,
                 app.Configuration,
                 GetVerifiedTenantId(http),
-                ResolveVerifiedAppCaller(http, string.Empty) is { Length: > 0 } code ? code : null,
+                detailCaller,
                 ct);
             // 两种写法都要认：字面斜杠由 catch-all 接住，而百分号编码的斜杠不会被
             // Kestrel 当作分段，原样落到这里——两条路都是合法客户端会发出来的。
@@ -1945,6 +1972,49 @@ public static class GatewayHttpEndpoints
         => context.Items["llmgw.key.authorization.inputs"] is GatewayAuthorizationInputs inputs
             ? inputs
             : throw new UnauthorizedAccessException("verified gateway authorization inputs are unavailable");
+
+    /// <summary>
+    /// 清单端点要用的调用方：请求头显式点名了一个**这把 key 不能调**的调用方时，直接拒。
+    ///
+    /// 鉴权那一层对只读探针刻意不匹配调用方（预检本来就该放行），于是不判的话，一把
+    /// route:read 的 key 点名任意调用方都能拿到它的清单，而随后那次 POST 会被拒——
+    /// 清单说能调、运行时说不能，正是这个端点反复在修的那件事（第 72 轮 review）。
+    ///
+    /// 只拒**显式点名且明确越权**的那一种：请求头没带调用方时照旧走 key 自己的身份，
+    /// 不在这里改那条路的行为（那一档另有台账：多调用方 key 的无头清单只按一个调用方出，
+    /// 见 doc/debt.platform.llm-gateway.md 的 2026-09-17-models-list-uses-one-caller）。
+    /// </summary>
+    private static bool CatalogCallerDenied(HttpContext context, out string? appCallerCode)
+    {
+        appCallerCode = null;
+        var header = ResolveHeader(context, "X-Gateway-App-Caller");
+        var authorized = context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization authorization
+            ? authorization.AuthorizedAppCallerCodes
+            : null;
+        if (RequestedCallerOutsideKeyScope(header, authorized)) return true;
+        var resolved = ResolveVerifiedAppCaller(context, string.Empty);
+        appCallerCode = resolved.Length > 0 ? resolved : null;
+        return false;
+    }
+
+    /// <summary>
+    /// 判断本体抽成纯函数，好让守卫直接断言行为：写成端点里的一句内联条件，守卫只能去扫
+    /// 「有没有提到那个函数名」，而把条件改成恒假它照样绿（第 67 轮踩过一次，形状 4）。
+    ///
+    /// 只在**显式点名且这把 key 明确授权过一个不含它的集合**时判越权：
+    ///   · 没带请求头 → 不判（走 key 自己的身份）；
+    ///   · 授权集合为空 = 不限调用方 → 不判。
+    /// </summary>
+    public static bool RequestedCallerOutsideKeyScope(
+        string? requestedCaller,
+        IReadOnlyList<string>? authorizedCallers)
+    {
+        var requested = (requestedCaller ?? string.Empty).Trim();
+        if (requested.Length == 0) return false;
+        if (authorizedCallers is not { Count: > 0 }) return false;
+        return !authorizedCallers.Any(x =>
+            string.Equals((x ?? string.Empty).Trim(), requested, StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string ResolveVerifiedAppCaller(HttpContext context, string fallback)
     {

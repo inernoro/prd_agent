@@ -7529,17 +7529,23 @@ public class GatewayDataDomainGuardTests
     {
         var program = ReadRepoFile("llmgw/console-api/Program.cs");
 
-        // 跳过那一支要拿得到文档本身，才谈得上看它的能力空不空。
+        // 跳过那一支要拿得到文档本身，才谈得上看它现在的用途是什么来源。
         Assert.Contains("existingByName.TryGetValue(modelId, out var existingModel)", program);
-        Assert.Contains("var hasStoredCaps = storedCaps.IsBsonArray && storedCaps.AsBsonArray.Count > 0;", program);
-        Assert.Contains("if (!hasStoredCaps)", program);
+        /*
+          修复范围必须同时覆盖「空」与「全是猜的」两种。上一版逐字钉住
+          `var hasStoredCaps = ...Count > 0;` 与 `if (!hasStoredCaps)`——那既钉死了写法，
+          又恰好把范围锁在了被证明太窄的那一档（第 72 轮 review：错得最多的不是空，
+          是猜了一个错的）。改成钉性质。
+        */
+        Assert.Contains("hasStoredCaps", program, StringComparison.Ordinal);
+        Assert.Contains("allStoredAreGuesses", program, StringComparison.Ordinal);
 
         // 补出来的用途与新建那条路必须同源，各算各的就是两套能力。
-        Assert.Contains("List<string> DeriveCapabilityCodes(", program);
+        Assert.Contains("(List<string> Codes, string Source) DeriveCapabilities(", program);
         var deriveCallSites = System.Text.RegularExpressions.Regex.Matches(
-            program, @"DeriveCapabilityCodes\(entry, modelId\)").Count;
+            program, @"DeriveCapabilities\(entry, modelId\)").Count;
         Assert.True(deriveCallSites >= 2,
-            $"DeriveCapabilityCodes 只有 {deriveCallSites} 个调用点：新建与补空两条路都要用它");
+            $"DeriveCapabilities 只有 {deriveCallSites} 个调用点：新建与修复两条路都要用它");
     }
 
     /// <summary>
@@ -7709,6 +7715,64 @@ public class GatewayDataDomainGuardTests
         var listAt = catalog.IndexOf("var visible = logicals", StringComparison.Ordinal);
         Assert.True(recordsAt > 0, "清单没有取调用方记录");
         Assert.True(listAt > recordsAt, "调用方记录要在构造清单之前取到");
+    }
+
+    [Fact]
+    public void 清单不许替这把key列出它调不动的调用方()
+    {
+        /*
+          鉴权那一层对只读探针**刻意不匹配调用方**（预检本来就该放行）。于是清单端点拿着
+          请求头里的调用方直接出清单：一把 route:read 的 key 点名它根本调不动的调用方，
+          清单照列，随后那次 POST 被拒——清单说能调、运行时说不能（第 72 轮 review）。
+
+          判据落在端点这一侧：鉴权的豁免不动，授权集合带出来由清单自己判。
+        */
+        var governance = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
+        Assert.Contains("AuthorizedAppCallerCodes", governance, StringComparison.Ordinal);
+        // 放行那一支必须真的把集合填进去，不能只在类型上挂一个永远为空的字段（形状 2）
+        Assert.Contains("AuthorizedAppCallerCodes: record.AppCallerCodes", governance, StringComparison.Ordinal);
+
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        // 判断本体的行为由 GatewayCatalogCallerScopeTests 逐例断言（它能直接引用 serving）。
+        // 这一条只管接线——上一版把两件事混在一起写成源码断言，红绿闭环里把条件改成恒假
+        // 它照样绿（第 67 轮那个教训的原样重演）。
+        Assert.Contains("public static bool RequestedCallerOutsideKeyScope(", endpoints, StringComparison.Ordinal);
+        Assert.Contains("private static bool CatalogCallerDenied(", endpoints, StringComparison.Ordinal);
+        // 清单与单模型详情读的是同一份数据，两处都要过同一道门
+        Assert.Equal(2, CountOccurrences(endpoints, "CatalogCallerDenied(http, out"));
+        // 不许再有绕过这道门、直接把请求头喂进构造的写法
+        Assert.Equal(0, CountOccurrences(
+            endpoints,
+            "GetVerifiedTenantId(http),\n                ResolveVerifiedAppCaller(http, string.Empty)"));
+        Assert.Contains("APP_CALLER_NOT_AUTHORIZED", endpoints, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 补登名录之后重新导入要能盖掉猜错的用途()
+    {
+        /*
+          名录这套机制存在的理由就是纠正按名字猜错的用途，而错得最多的不是「空」，
+          是「猜了一个错的」。上一版的修复只认空数组，于是补登之后重新导入一次，
+          库里那份猜错的用途原样留着、发布读的还是它，路由一点没变（第 72 轮 review）。
+
+          覆盖的边界靠**来源**划，所以来源必须先如实落库：名录与上游声明是事实，
+          只有关键词匹配才写 inferred。以前一律写 inferred，等于把事实也标成猜的，
+          于是这条判据根本无从建立。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 推导要带出来源，落库按来源写
+        Assert.Contains("(List<string> Codes, string Source) DeriveCapabilities(", console, StringComparison.Ordinal);
+        Assert.Contains("static string StoredCapabilitySource(", console, StringComparison.Ordinal);
+        // 一律写死 inferred 的两处都必须改掉
+        Assert.Equal(0, CountOccurrences(console, "{ \"Source\", \"inferred\" },"));
+
+        // 覆盖条件：全是猜的、而且新的那份是事实、而且确实不一样
+        Assert.Contains("allStoredAreGuesses", console, StringComparison.Ordinal);
+        Assert.Contains("repairedIsFact", console, StringComparison.Ordinal);
+        Assert.Contains("!storedCodes.SetEquals(repairedCaps)", console, StringComparison.Ordinal);
+        // 人写过的一个字都不许动
+        Assert.Contains("|| (allStoredAreGuesses && repairedIsFact", console, StringComparison.Ordinal);
     }
 
     [Fact]
