@@ -890,45 +890,64 @@ public class ModelResolver : IModelResolver
     /// <inheritdoc />
     public async Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
     {
-        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+        /*
+          隔离记账失败不许挡住故障转移，也不许把上游那次可诊断的失败变成一句 500。
+
+          这个方法和 RecordSuccess / RecordFailure 是同一件事的第三条路——上一轮把那两条包进
+          try/catch 时漏了它（形状 3 的老毛病：同一件事几个分支各写一套，其中一套没跟上）。
+          漏的代价一模一样：调用方那边正等着「这条线路确定不可用，换下一条」的结论，
+          一次 Mongo 写抖动从这里抛出去，网关走不到挑下一条候选那一步。
+          而这条路上游给的往往是**确定性**的配置错误（密钥无效、模型名不存在），
+          那种错误本该原样交给用户去修，不该被一次数据库问题换成「服务器错误」。
+        */
+        try
         {
-            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
-            var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
-            // 清掉半开痕迹与人工恢复标记：隔离是「这条线路当前确定不可用」的结论，
-            // 不能让上一轮的租约或某次人工恢复继续把它当成待试探的候选。
-            var offeringUpdate = Builders<GatewayModelOffering>.Update
-                .Inc(x => x.ConsecutiveFailures, 1)
-                .Set(x => x.ConsecutiveSuccesses, 0)
-                .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
-                .Set(x => x.LastFailedAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                .Unset(x => x.HalfOpenLeaseUntil)
-                .Unset(x => x.ManualRecoveryAt);
-            await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
-            return;
+            if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+            {
+                var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+                var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+                // 清掉半开痕迹与人工恢复标记：隔离是「这条线路当前确定不可用」的结论，
+                // 不能让上一轮的租约或某次人工恢复继续把它当成待试探的候选。
+                var offeringUpdate = Builders<GatewayModelOffering>.Update
+                    .Inc(x => x.ConsecutiveFailures, 1)
+                    .Set(x => x.ConsecutiveSuccesses, 0)
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                    .Unset(x => x.HalfOpenLeaseUntil)
+                    .Unset(x => x.ManualRecoveryAt);
+                await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
+                string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
+                string.IsNullOrWhiteSpace(resolution.ActualModel))
+                return;
+
+            var groupFilter = Builders<ModelGroup>.Filter.And(
+                Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
+                Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
+                    m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
+            // 同上：普通失败路径本来就清这两个字段，隔离路径漏清会让一个密钥彻底作废的成员
+            // 在被人工恢复过一次之后，每轮租约到期就重新抢占一次真实用户请求的首发名额。
+            var groupUpdate = Builders<ModelGroup>.Update
+                .Inc("Models.$.ConsecutiveFailures", 1)
+                .Set("Models.$.ConsecutiveSuccesses", 0)
+                .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
+                .Set("Models.$.LastFailedAt", DateTime.UtcNow)
+                .Unset("Models.$.HalfOpenLeaseUntil")
+                .Unset("Models.$.ManualRecoveryAt");
+            await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
         }
-
-        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
-            string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
-            string.IsNullOrWhiteSpace(resolution.ActualModel))
-            return;
-
-        var groupFilter = Builders<ModelGroup>.Filter.And(
-            Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
-            Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
-                m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
-        // 同上：普通失败路径本来就清这两个字段，隔离路径漏清会让一个密钥彻底作废的成员
-        // 在被人工恢复过一次之后，每轮租约到期就重新抢占一次真实用户请求的首发名额。
-        var groupUpdate = Builders<ModelGroup>.Update
-            .Inc("Models.$.ConsecutiveFailures", 1)
-            .Set("Models.$.ConsecutiveSuccesses", 0)
-            .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
-            .Set("Models.$.LastFailedAt", DateTime.UtcNow)
-            .Unset("Models.$.HalfOpenLeaseUntil")
-            .Unset("Models.$.ManualRecoveryAt");
-        await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[ModelResolver] 记录隔离状态失败 Offering={OfferingId} Model={Model}（不影响本次故障转移）",
+                resolution.OfferingId, resolution.ActualModel);
+        }
     }
 
     #region Private Methods

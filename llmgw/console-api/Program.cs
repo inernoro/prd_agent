@@ -17392,7 +17392,8 @@ static bool MigrationExistingRouteCountsAsUsable(
     OfferingTargetEligibility.Rejection? targetRejection)
     => MigrationRouteCountsAsUsable(
         offering.AsNullableInt("HealthStatus") ?? 0,
-        offering.AsNullableBool("Enabled") != false,
+        // 与运行时同口径：缺 Enabled 字段的线路运行时一条都查不到，这里也不算它能接流量。
+        offering.AsNullableBool("Enabled") == true,
         targetRejection);
 
 static string? DescribeLostMemberMaxTokens(BsonDocument member, BsonDocument? physical)
@@ -18966,15 +18967,25 @@ static async Task<string?> FindUnnamedCatcherAsync(
 
     async Task EnsureTargetsLoadedAsync()
     {
+        /*
+          启用判据要与运行时**逐字**相同：`Enabled == true`，不是「不等于 false」。
+
+          两者只在一种输入上分道扬镳：文档里压根没有 Enabled 这个字段（存量数据、直接写库）。
+          `Ne("Enabled", false)` 认它，而运行时那条 `Eq(x => x.Enabled, true)` 在服务端匹配，
+          缺字段的文档一条都匹配不上。于是这道闸说「这个调用方有人接得住」，而每一个请求都解析
+          不到——控制面替数据面打了包票，包票是假的（第 58 轮 review；形状 1：判据比它该管的
+          范围窄，「缺字段」这一种输入让两边给出相反答案）。
+          这里跟紧的一侧是运行时：控制面可以比运行时严，绝不能比它松。
+        */
         if (enabledPlatformIds is not null) return;
-        enabledPlatformIds = (await gwPlatforms.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+        enabledPlatformIds = (await gwPlatforms.Find(fb.And(tenantFilter, fb.Eq("Enabled", true)))
                 .Project(Builders<BsonDocument>.Projection.Include("_id"))
                 .ToListAsync())
             .Select(x => x.GetStringOrEmpty("_id"))
             .Where(x => x.Length > 0)
             .ToHashSet(StringComparer.Ordinal);
         // 取整份模型文档：名录门要判它的模型名与放行标记，不只是平台 id。
-        enabledModelById = (await gwModels.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+        enabledModelById = (await gwModels.Find(fb.And(tenantFilter, fb.Eq("Enabled", true)))
                 .Project(Builders<BsonDocument>.Projection
                     .Include("_id").Include("PlatformId").Include("ModelName")
                     .Include("ModelNameNormalized").Include("AllowedOutsideCatalog"))
@@ -18984,7 +18995,7 @@ static async Task<string?> FindUnnamedCatcherAsync(
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
         // 取整份兑换所文档而不只是 id：下面要判到**别名**那一层，
         // 只判「兑换所启用着」会把一条别名已被摘掉或单独停用的线路算成可用。
-        enabledExchangeById = (await gwModelExchanges.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+        enabledExchangeById = (await gwModelExchanges.Find(fb.And(tenantFilter, fb.Eq("Enabled", true)))
                 .Project(Builders<BsonDocument>.Projection
                     .Include("_id").Include("ModelAlias").Include("ModelAliases").Include("Models"))
                 .ToListAsync())

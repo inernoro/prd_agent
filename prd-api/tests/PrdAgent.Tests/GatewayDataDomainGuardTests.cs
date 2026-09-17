@@ -6490,6 +6490,64 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("pricedRoutes.Count == 0\n                ? null", catalog, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 三条记账路径都不许把库的抖动变成用户侧的失败()
+    {
+        /*
+          RecordSuccess / RecordFailure / RecordUnavailable 是同一件事的三条路。上一轮包了前两条、
+          漏了第三条（形状 3 的老毛病：同一件事几个分支各写一套，其中一套没跟上）。
+          漏的代价一模一样：调用方那边等着「换下一条线路」的结论，一次 Mongo 写抖动从这里抛出去，
+          网关走不到挑候选那一步；而隔离这条路上游给的往往是确定性的配置错误，
+          本该原样交给用户去修，不该被一次数据库问题换成「服务器错误」。
+
+          判据不点名某几个方法，而是**扫**这个接口的全部记账实现：新增第四条也逃不掉。
+        */
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var methods = System.Text.RegularExpressions.Regex
+            .Matches(resolver, @"public async Task (Record\w+Async)\(ModelResolutionResult")
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        Assert.True(methods.Count >= 3, $"只扫到 {methods.Count} 条记账实现，取值口径大概变了");
+
+        foreach (var method in methods)
+        {
+            var body = MethodBody(resolver, $"public async Task {method}(ModelResolutionResult");
+            var tryAt = body.IndexOf("try", StringComparison.Ordinal);
+            var writeAt = body.IndexOf("Async(", body.IndexOf('{') + 1, StringComparison.Ordinal);
+            Assert.True(tryAt > 0 && tryAt < writeAt,
+                $"{method} 把库操作放在了 try 之外，一次写抖动会变成用户侧的失败");
+            Assert.Contains("catch (Exception ex)", body, StringComparison.Ordinal);
+            Assert.Contains("_logger.LogWarning", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void 控制面判启用要与运行时逐字相同()
+    {
+        /*
+          两者只在一种输入上分道扬镳：文档里压根没有 Enabled 字段（存量数据、直接写库）。
+          「不等于 false」认它，而运行时那条 `Eq(x => x.Enabled, true)` 在服务端匹配、一条都匹配
+          不上。于是控制面的闸说「这个调用方有人接得住」，而每一个请求都解析不到——控制面替
+          数据面打了包票，包票是假的（第 58 轮 review）。控制面可以比运行时严，绝不能比它松。
+        */
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("Eq(x => x.Enabled, true)", resolver, StringComparison.Ordinal);
+
+        // 接得住判据那一段（EnsureTargetsLoadedAsync）三类目标都要用严的那一版。
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var loadAt = console.IndexOf("async Task EnsureTargetsLoadedAsync()", StringComparison.Ordinal);
+        Assert.True(loadAt > 0, "找不到接得住判据的目标加载段");
+        var load = console[loadAt..(loadAt + 2200)];
+        Assert.Equal(3, CountOccurrences(load, "fb.Eq(\"Enabled\", true)"));
+        Assert.Equal(0, CountOccurrences(load, "fb.Ne(\"Enabled\", false)"));
+
+        // 上游资格那一份镜像同理：缺字段一律判成不可用，不许放过一条运行时用不了的线路。
+        var eligibility = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
+        Assert.Equal(0, CountOccurrences(eligibility, "AsNullableBool(\"Enabled\") == false"));
+        Assert.Equal(2, CountOccurrences(eligibility, "AsNullableBool(\"Enabled\") != true"));
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
@@ -6728,7 +6786,9 @@ public class GatewayDataDomainGuardTests
         // 走同一道上游资格闸」）；这里盯的是它判的东西没被削掉。
         Assert.Contains("TARGET_PLATFORM_UNAVAILABLE", eligibility);
         Assert.Contains("targetPlatform is null", eligibility);
-        Assert.Contains("targetPlatform.AsNullableBool(\"Enabled\") == false", eligibility);
+        // 判的是 `!= true` 而不是「等于 false」：缺 Enabled 字段的 Provider 运行时也用不了
+        // （第 58 轮 review；「控制面判启用要与运行时逐字相同」那条守卫盯着两边不许再分家）。
+        Assert.Contains("targetPlatform.AsNullableBool(\"Enabled\") != true", eligibility);
         // 两种成因要分开说，下一步不一样：Provider 不在 / Provider 停用。
         Assert.Contains("去上游页确认它归属的 Provider", eligibility);
         Assert.Contains("先在上游页把它启用", eligibility);

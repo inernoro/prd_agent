@@ -34,8 +34,11 @@ public static class OfferingTargetEligibility
     {
         if (target is null)
             return new Rejection("TARGET_NOT_FOUND", "上游目标不存在或不属于当前租户");
-        if (target.AsNullableBool("Enabled") == false)
-            return new Rejection("TARGET_DISABLED", "上游目标已停用");
+        // 判的是 `== true` 而不是「不等于 false」：缺 Enabled 字段的文档（存量数据、直接写库）
+        // 在运行时那条 `Eq(x => x.Enabled, true)` 下一条都匹配不上，这里认它就会放过一条
+        // 运行时根本用不了的线路——控制面比运行时松，包票就是假的（第 58 轮 review）。
+        if (target.AsNullableBool("Enabled") != true)
+            return new Rejection("TARGET_DISABLED", "上游目标已停用，或它的启用状态没有登记");
 
         if (targetKind == "model")
         {
@@ -46,12 +49,12 @@ public static class OfferingTargetEligibility
                     "这个模型没有挂在任何一个可用的 Provider 上（Provider 不存在，或不属于当前租户）。"
                     + "去上游页确认它归属的 Provider——现在这条线路承接不了任何流量，运行时会把它整条丢掉。");
             }
-            if (targetPlatform.AsNullableBool("Enabled") == false)
+            if (targetPlatform.AsNullableBool("Enabled") != true)
             {
                 return new Rejection(
                     "TARGET_PLATFORM_UNAVAILABLE",
-                    "这个模型挂的 Provider 已停用。先在上游页把它启用——"
-                    + "停用状态下运行时会把这条线路整条丢掉。");
+                    "这个模型挂的 Provider 已停用，或者它的启用状态没有登记。先在上游页把它启用——"
+                    + "这两种情况下运行时都会把这条线路整条丢掉。");
             }
             return null;
         }
