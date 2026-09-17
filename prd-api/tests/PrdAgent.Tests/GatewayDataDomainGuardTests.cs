@@ -6691,6 +6691,51 @@ public class GatewayDataDomainGuardTests
         Assert.Equal(0, CountOccurrences(api, "pools/migrate-to-models"));
     }
 
+    [Fact]
+    public void 排队名次对兑换所线路要判到别名那一层()
+    {
+        /*
+          运行时按 GatewayCatalogGate.ExchangeDeclares 判：兑换所声明过这条别名、且那一条启用着。
+          控制面只判「兑换所整体启用着」的话，一条指向已被摘掉或单独停用的别名的线路会拿到一个
+          正的排队名次，Quickstart 与调用全貌都说「会落到它」，而真调用当场被拒
+          （第 62 轮 review；控制面比运行时松，包票就是假的）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var at = console.IndexOf("bool TargetUsable(ModelOfferingItem offering)", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到排队用的目标可用判据");
+        // 边界取到下一段（算 candidates）为止，不用固定字符数——窗口写死会随注释长短漂。
+        var end = console.IndexOf("var candidates = offerings", at, StringComparison.Ordinal);
+        Assert.True(end > at, "找不到 TargetUsable 之后那段，守卫取值口径需要更新");
+        var body = console[at..end];
+
+        Assert.Contains("ExchangeAliasPolicy.Declares(", body, StringComparison.Ordinal);
+        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(", body, StringComparison.Ordinal);
+        // 三处启用判据都要与运行时同口径（== true，不是「不等于 false」）。
+        // 三处目标（兑换所 / 物理模型 / Provider）都要判 `== true`，一处「不等于 false」都不许留：
+        // 缺字段的文档运行时那条查询一条都匹配不上，控制面认它就会报出一个运行时用不了的队首。
+        Assert.Equal(0, CountOccurrences(body, "?? true)"));
+        Assert.Equal(3,
+            CountOccurrences(body, "AsNullableBool(\"Enabled\") == true")
+            + CountOccurrences(body, "AsNullableBool(\"Enabled\") != true"));
+    }
+
+    [Fact]
+    public void 加权冒烟只接受最健康那一档的落点()
+    {
+        /*
+          权重轮转只在最健康的那一档里进行，降级线路留作故障转移、不参与首发。把所有没被跳过的
+          线路都当成可接受落点，等于把「错误地首发了降级线路」这件事也放了进去——断言宽到把要防的
+          那件事一起放行（第 62 轮 review）。
+        */
+        var smoke = ReadRepoFile("scripts/llmgw-call-trace-smoke.py");
+        Assert.Contains("def health_tier(route):", smoke, StringComparison.Ordinal);
+        Assert.Contains("best_tier = min(health_tier(r) for r in eligible)", smoke, StringComparison.Ordinal);
+        Assert.Contains("rotating = [r for r in eligible if health_tier(r) == best_tier]", smoke, StringComparison.Ordinal);
+        // 判的是轮转集合的大小，不是「没被跳过的有几条」。
+        Assert.Contains("len(rotating) > 1", smoke, StringComparison.Ordinal);
+        Assert.DoesNotContain("len(eligible) > 1", smoke, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);

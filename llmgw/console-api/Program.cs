@@ -18416,15 +18416,28 @@ static LogicalModelItem MapLogicalModel(
     {
         if (string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
         {
+            /*
+              兑换所启用着还不够，要判到**别名**那一层。
+
+              运行时按 GatewayCatalogGate.ExchangeDeclares 判：这个兑换所声明过这条别名、
+              而且那一条是启用着的。只判「兑换所整体启用着」的话，一条指向已被摘掉或单独停用的
+              别名的线路会拿到一个正的排队名次，Quickstart 与调用全貌都说「会落到它」，
+              而真调用当场就被拒（第 62 轮 review）。判据用镜像类，不在这儿现写一份近似。
+            */
             return exchangeById.TryGetValue(offering.TargetId, out var exchange)
-                && (exchange.AsNullableBool("Enabled") ?? true);
+                && exchange.AsNullableBool("Enabled") == true
+                && ExchangeAliasPolicy.Declares(
+                    exchange,
+                    ExchangeAliasPolicy.EffectiveAlias(exchange, offering.UpstreamModelId));
         }
+        // 判的是 `== true` 而不是「不等于 false」：缺字段的文档运行时那条查询一条都匹配不上，
+        // 控制面认它就会报出一个运行时用不了的队首（第 58 轮定的口径，这里同样适用）。
         if (!modelById.TryGetValue(offering.TargetId, out var target)) return false;
-        if (!(target.AsNullableBool("Enabled") ?? true)) return false;
+        if (target.AsNullableBool("Enabled") != true) return false;
         var platformId = target.AsNullableString("PlatformId");
         if (string.IsNullOrWhiteSpace(platformId)) return false;
         return platformById.TryGetValue(platformId, out var platform)
-            && (platform.AsNullableBool("Enabled") ?? true);
+            && platform.AsNullableBool("Enabled") == true;
     }
 
     var candidates = offerings

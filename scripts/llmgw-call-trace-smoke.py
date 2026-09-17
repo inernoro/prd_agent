@@ -83,9 +83,21 @@ def predicted(trace):
     eligible = [r for r in trace["routes"] if not r.get("skipReason")]
     if not eligible:
         return {}, "面板说一条能接的线路都没有，这次解析应当失败"
-    if trace["routingStrategy"] == "weighted" and len(eligible) > 1:
-        return ({r["id"]: label_of(r) for r in eligible},
-                f"按权重分配，落点由请求派生，只断言落在这 {len(eligible)} 条里")
+
+    # 权重轮转只在**最健康的那一档**里进行：运行时 GatewayRouteSelection.Queue 先按健康档
+    # 排序，再只在队首那一档内部按权重转，降级线路留作故障转移候选、不参与首发。
+    # 把所有没被跳过的线路都当成可接受落点的话，一个「错误地首发了降级线路」的回归照样能过
+    # ——断言宽到把要防的那件事也放了进去（第 62 轮 review）。
+    def health_tier(route):
+        return 0 if (route.get("healthStatus") or 0) == 0 else 1
+
+    best_tier = min(health_tier(r) for r in eligible)
+    rotating = [r for r in eligible if health_tier(r) == best_tier]
+    if trace["routingStrategy"] == "weighted" and len(rotating) > 1:
+        standby = len(eligible) - len(rotating)
+        note = f"，另有 {standby} 条降级线路只作故障转移、不参与首发" if standby else ""
+        return ({r["id"]: label_of(r) for r in rotating},
+                f"按权重分配，落点由请求派生，只断言落在最健康那一档的这 {len(rotating)} 条里{note}")
     head = min(eligible, key=lambda r: r.get("queuePosition") or 999)
     return {head["id"]: label_of(head)}, f"按顺位，面板说队首是第 {head.get('queuePosition')} 位"
 
