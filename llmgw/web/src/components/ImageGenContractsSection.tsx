@@ -139,6 +139,25 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   };
   useEffect(() => { void load(); }, []);
 
+  /*
+    没落定就按刷新周期再读一次。
+
+    同步是 60 秒一轮的后台动作，而保存之后这里立刻重读——那一读必然还是旧版本，
+    界面于是显示「装的还不是当前这一版」。只在挂载时读一次的话，它会一直停在那句话上，
+    而它自己刚说过「最长 N 秒后再看」：一句不会兑现的承诺，比不说更糟
+    （expectation-management：说到做到）。
+
+    落定 = 每个进程要么装到了当前这一版，要么压根不服务这个租户。只要还有没落定的，
+    就再读一次；读回来 data 换了新对象，这个 effect 自然接着排下一次，直到落定为止。
+  */
+  const hostsSettled = data === null
+    || data.syncHosts.every((x) => x.syncState === 'current' || x.syncState === 'not-applicable');
+  useEffect(() => {
+    if (data === null || hostsSettled) return undefined;
+    const timer = window.setTimeout(() => { void load(); }, Math.max(5, data.refreshSeconds) * 1000);
+    return () => window.clearTimeout(timer);
+  }, [data, hostsSettled]);
+
   const save = async () => {
     if (!editing) return;
     setBusy(true);
@@ -166,7 +185,20 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
     await load();
   };
 
-  if (!data) return <SectionLoader text="正在读生图契约…" />;
+  // 同上：读失败要先摆出来再谈加载中，否则首次失败就是一个不会结束的「正在读…」。
+  if (!data) {
+    if (error) {
+      return (
+        <InlineAlert tone="error">
+          {error}
+          <div style={{ marginTop: 8 }}>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>重试</Button>
+          </div>
+        </InlineAlert>
+      );
+    }
+    return <SectionLoader text="正在读生图契约…" />;
+  }
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

@@ -6256,6 +6256,58 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 首屏读失败要先把失败摆出来，再谈加载中。
+    ///
+    /// 顺序反了（先 `if (!data) return <SectionLoader/>`）的后果不是难看，是**不会结束**：
+    /// 首次读取失败时 data 恒为 null，下面那条 InlineAlert 永远到不了，人看到的是一个
+    /// 转不完的「正在读…」——既不知道发生了什么，也没有任何下一步。
+    /// 判据用位置比较而不是比文案：文案随时会改，而「谁排在前面」才是这条缺陷的形状。
+    /// </summary>
+    [Fact]
+    public void 首屏读失败先摆失败再谈加载中()
+    {
+        foreach (var relative in new[]
+                 {
+                     "llmgw/web/src/components/ModelCatalogSection.tsx",
+                     "llmgw/web/src/components/ImageGenContractsSection.tsx",
+                 })
+        {
+            var source = ReadRepoFile(relative);
+            var errorAt = source.IndexOf("InlineAlert tone=\"error\"", StringComparison.Ordinal);
+            var loaderAt = source.IndexOf("SectionLoader text=", StringComparison.Ordinal);
+            Assert.True(errorAt >= 0, $"{relative} 没有错误渲染");
+            Assert.True(loaderAt >= 0, $"{relative} 没有加载态");
+            Assert.True(errorAt < loaderAt,
+                $"{relative} 的加载态排在错误渲染之前：首次读取失败时 data 恒为 null，"
+                + "那条错误永远到不了，人会看到一个不会结束的「正在读…」");
+            // 失败要给得出下一步，不是只报一句错。
+            Assert.True(source.Contains("重试", StringComparison.Ordinal),
+                $"{relative} 的读失败没有给重试入口");
+        }
+    }
+
+    /// <summary>
+    /// 生图契约那一屏说了「最长 N 秒后再看」，就得自己再看一眼。
+    ///
+    /// 同步是后台 60 秒一轮的动作，而保存之后界面立刻重读——那一读必然还是旧版本，
+    /// 于是显示「装的还不是当前这一版」。只在挂载时读一次的话它会永远停在那句话上，
+    /// 而那句话是它自己许下的承诺（expectation-management：说到做到）。
+    /// </summary>
+    [Fact]
+    public void 同步没落定时界面自己再读一次()
+    {
+        var source = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+
+        // 落定 = 每个进程要么装到当前这一版，要么压根不服务这个租户。
+        Assert.Contains("const hostsSettled", source);
+        Assert.Contains("x.syncState === 'current' || x.syncState === 'not-applicable'", source);
+
+        // 没落定就按**它自己报出来的**刷新周期再读，不是写死一个数字。
+        Assert.Contains("window.setTimeout", source);
+        Assert.Contains("data.refreshSeconds", source);
+    }
+
+    /// <summary>
     /// 线路判重的身份必须与唯一索引逐字相同。
     ///
     /// 索引 uniq_llmgw_offering_tenant_logical_target_v3 里带着 UpstreamModelId——一个兑换所

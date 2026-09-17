@@ -275,7 +275,24 @@ export function ModelCatalogSection({ canWrite }: { canWrite: boolean }) {
     await load();
   };
 
-  if (!data) return <SectionLoader text="正在读模型名录…" />;
+  // 读失败时**先把失败摆出来**，再谈加载中。
+  //
+  // 顺序反了的话（先 `if (!data) return <SectionLoader/>`），首次读取失败就永远停在
+  // 「正在读…」：下面那条 InlineAlert 根本到不了，人看到的是一个不会结束的等待，
+  // 既不知道发生了什么，也没有任何下一步（expectation-management 的第四种失控：白等一场）。
+  if (!data) {
+    if (error) {
+      return (
+        <InlineAlert tone="error">
+          {error}
+          <div style={{ marginTop: 8 }}>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>重试</Button>
+          </div>
+        </InlineAlert>
+      );
+    }
+    return <SectionLoader text="正在读模型名录…" />;
+  }
 
   return (
     <section style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
