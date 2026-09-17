@@ -1541,6 +1541,68 @@ db.mcp_usage_counters.createIndex(
 // db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
 
 
+// collection: active_task_entries
+// 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）。三条读路径：
+// 1) 个人任务台：按 userId + state 取在途，再按 OrderKey 排备用队列
+// 2) 团队此刻：按 state 扫全员在途（人数量级，不分页）
+// 3) 走过的路：按 userId + DoneAt 倒序翻历史
+db.active_task_entries.createIndex(
+  { "UserId": 1, "State": 1, "OrderKey": 1 },
+  { name: "idx_active_tasks_user_state_order" }
+)
+db.active_task_entries.createIndex(
+  { "State": 1, "UpdatedAt": -1 },
+  { name: "idx_active_tasks_state_updated" }
+)
+db.active_task_entries.createIndex(
+  { "UserId": 1, "DoneAt": -1 },
+  { name: "idx_active_tasks_user_done" }
+)
+// end collection: active_task_entries
+
+// collection: active_task_suggestions
+// 建议收件箱（和派活是两码事：提了不会变成任务，等收件人自己吸取）。两条读路径：
+// 1) 我的收件箱：按 TargetUserId + State 取待处理，按时间倒序
+// 2) 发件回溯：按 FromUserId 看我提出去的那些后来怎么了
+db.active_task_suggestions.createIndex(
+  { "TargetUserId": 1, "State": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_target_state" }
+)
+db.active_task_suggestions.createIndex(
+  { "FromUserId": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_from" }
+)
+// end collection: active_task_suggestions
+
+// collection: active_task_debts
+// 债务（doc/debt.*.md 推过来的那一份）。三条读路径：
+// 1) Key 唯一 —— 同步靠它幂等，重复推同一条只更新不会长出第二条。这条是**唯一索引**，
+//    不是为了查得快，是为了让「撞车」在写入那一刻就失败，而不是静默互相覆盖
+// 2) 面板：按状态过滤掉已了结的，按模块 + 编号排
+// 3) 「我认领的」：按 owner + 状态
+db.active_task_debts.createIndex(
+  { "Key": 1 },
+  { name: "idx_active_task_debts_key", unique: true }
+)
+db.active_task_debts.createIndex(
+  { "State": 1, "Module": 1, "Num": 1 },
+  { name: "idx_active_task_debts_state_module" }
+)
+db.active_task_debts.createIndex(
+  { "OwnerUserId": 1, "State": 1 },
+  { name: "idx_active_task_debts_owner" }
+)
+// end collection: active_task_debts
+
+// collection: active_task_absorb_preferences
+// 吸取建议时的个人偏好（上次引用了哪几个知识库）。一人一行，_id 就是 UserId，
+// 只按主键读，不需要额外索引。
+// end collection: active_task_absorb_preferences
+
+// collection: active_task_board_settings
+// 面板设置是全局单行（_id 固定为 "active-task-board"），按主键定位，不需要查询索引。
+// end collection: active_task_board_settings
+
 // collection: bookshelf_progress
 // 藏书阁的阅读进度：一个人一行（已读书目、书摘笔记、结业考结果）。
 // 唯一索引不是为了查得快，是为了兜住并发首存：保存走的是 upsert，

@@ -411,6 +411,13 @@ public class MongoDbContext
     public IMongoCollection<TaskTree> TaskTrees => _database.GetCollection<TaskTree>("task_trees");
     public IMongoCollection<TaskNode> TaskNodes => _database.GetCollection<TaskNode>("task_nodes");
 
+    // 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）
+    public IMongoCollection<ActiveTaskEntry> ActiveTaskEntries => _database.GetCollection<ActiveTaskEntry>("active_task_entries");
+    public IMongoCollection<ActiveTaskBoardSettings> ActiveTaskBoardSettingsCollection => _database.GetCollection<ActiveTaskBoardSettings>("active_task_board_settings");
+    public IMongoCollection<ActiveTaskSuggestion> ActiveTaskSuggestions => _database.GetCollection<ActiveTaskSuggestion>("active_task_suggestions");
+    public IMongoCollection<ActiveTaskAbsorbPreference> ActiveTaskAbsorbPreferences => _database.GetCollection<ActiveTaskAbsorbPreference>("active_task_absorb_preferences");
+    public IMongoCollection<ActiveTaskDebt> ActiveTaskDebts => _database.GetCollection<ActiveTaskDebt>("active_task_debts");
+
     // Project Management 项目管理
     public IMongoCollection<PmProject> PmProjects => _database.GetCollection<PmProject>("pm_projects");
     public IMongoCollection<PmTask> PmTasks => _database.GetCollection<PmTask>("pm_tasks");
@@ -1028,6 +1035,36 @@ public class MongoDbContext
             Builders<DefectTemplate>.IndexKeys.Descending(x => x.IsDefault).Descending(x => x.CreatedAt),
             new CreateIndexOptions { Name = "idx_defect_templates_default" }));
 
+        // ActiveTaskEntries：团队视图按 state 扫全员；个人视图按 userId + state 排队；历史按 userId + 完成时间倒序
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.UserId).Ascending(x => x.State).Ascending(x => x.OrderKey),
+            new CreateIndexOptions { Name = "idx_active_tasks_user_state_order" }));
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.State).Descending(x => x.UpdatedAt),
+            new CreateIndexOptions { Name = "idx_active_tasks_state_updated" }));
+        ActiveTaskEntries.Indexes.CreateOne(new CreateIndexModel<ActiveTaskEntry>(
+            Builders<ActiveTaskEntry>.IndexKeys.Ascending(x => x.UserId).Descending(x => x.DoneAt),
+            new CreateIndexOptions { Name = "idx_active_tasks_user_done" }));
+
+        // ActiveTaskSuggestions：收件箱按 target + state + 时间倒序；发件回溯按 from
+        ActiveTaskSuggestions.Indexes.CreateOne(new CreateIndexModel<ActiveTaskSuggestion>(
+            Builders<ActiveTaskSuggestion>.IndexKeys.Ascending(x => x.TargetUserId).Ascending(x => x.State).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_active_task_suggestions_target_state" }));
+        ActiveTaskSuggestions.Indexes.CreateOne(new CreateIndexModel<ActiveTaskSuggestion>(
+            Builders<ActiveTaskSuggestion>.IndexKeys.Ascending(x => x.FromUserId).Descending(x => x.CreatedAt),
+            new CreateIndexOptions { Name = "idx_active_task_suggestions_from" }));
+
+        // ActiveTaskDebts：Key 唯一（同步靠它幂等，重复推同一条只会更新不会长出第二条）；
+        // 面板按状态 + 模块排；「我认领的」按 owner 查
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.Key),
+            new CreateIndexOptions { Name = "idx_active_task_debts_key", Unique = true }));
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.State).Ascending(x => x.Module).Ascending(x => x.Num),
+            new CreateIndexOptions { Name = "idx_active_task_debts_state_module" }));
+        ActiveTaskDebts.Indexes.CreateOne(new CreateIndexModel<ActiveTaskDebt>(
+            Builders<ActiveTaskDebt>.IndexKeys.Ascending(x => x.OwnerUserId).Ascending(x => x.State),
+            new CreateIndexOptions { Name = "idx_active_task_debts_owner" }));
         // BookshelfProgresses：一人一行，UserId 建唯一索引——并发写入时靠它兜底，
         // 只靠 upsert 的代码路径挡不住两个请求同时插入
         BookshelfProgresses.Indexes.CreateOne(new CreateIndexModel<BookshelfProgress>(
