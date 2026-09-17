@@ -5648,6 +5648,11 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                     .Set("Enabled", false)
                     .Set("IsDefaultForType", false)
                     .Set("DefaultForAppCallerCodes", new BsonArray())
+                    // 盖一个「这是搬迁停的」的戳，下一趟搬迁据此把它放回来（见下面那个分支）。
+                    // 没有这个戳的话，重跑搬迁分不清「搬迁停的」与「管理员刻意停的」，
+                    // 只能二选一：要么永远不放回来（我们上一版许下的修复路径其实走不通），
+                    // 要么一律放回来（把管理员刚关掉的模型又打开）。
+                    .Set("DisabledByMigrationAt", DateTime.UtcNow)
                     .Set("UpdatedAt", DateTime.UtcNow));
             var lostRoles = entry.ClaimedAppCallerCodes;
             entry.IsDefaultForType = false;
@@ -5662,8 +5667,45 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                           + $"{lostRoles.Count} 个调用方的认领）——带过来的话，那些请求会落到一个没有上游的模型上，"
                           + "当场失败。"
                         : string.Empty)
-                    + "先去上游页确认这些成员指向的物理模型还在不在、启没启用，再重跑一次搬迁",
+                    + "先去上游页确认这些成员指向的物理模型还在不在、启没启用，再重跑一次搬迁——"
+                    + "上游修好之后这一趟会把它自动启用回来",
             });
+        }
+        /*
+          上一趟因为零可用线路被搬迁停掉的模型，这一趟有能用的线路了就放回来。
+
+          不放回来的话，上面那句「修好上游再重跑一次搬迁」是一句走不通的话：重跑时这条模型
+          已经存在，不走新建那一支，而复用那一支只会补默认与认领，从不碰 Enabled——
+          于是它永久停在停用状态，除非有人手动去点一次。许下一个自己不兑现的修复路径，
+          比不许更糟（第 56 轮 review；expectation-management：说到要做到）。
+
+          只放回**带着搬迁那个戳**的：管理员刻意停掉的模型没有这个戳，重跑搬迁不会把它打开。
+          戳在有人手动改过启用状态时就清掉（见 logical-models/{id}/enabled 端点），
+          所以「先被搬迁停掉、后被管理员手动开过又关掉」的那条也不会被这里误开。
+        */
+        else if (!dryRun && usableRouteCount > 0 && logicalId is { Length: > 0 })
+        {
+            var revived = await gwLogicalModels.UpdateOneAsync(
+                fb.And(
+                    fb.Eq("TenantId", tenantId),
+                    fb.Eq("_id", logicalId),
+                    fb.Eq("Enabled", false),
+                    fb.Exists("DisabledByMigrationAt")),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", true)
+                    .Unset("DisabledByMigrationAt")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            if (revived.ModifiedCount > 0)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"模型「{publicId}」上一次搬迁时因为一条可用线路都没有被停用了，"
+                        + "这一次它有能用的线路了，已经自动启用回来。"
+                        + "它的默认与认领没有一起恢复——那是当时刻意摘掉的，去白名单页确认该给谁",
+                });
+            }
         }
 
         result.Entries.Add(entry);
@@ -7154,7 +7196,12 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
         }
     }
     var updated = await gwLogicalModels.FindOneAndUpdateAsync(filter,
-        Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),
+        Builders<BsonDocument>.Update
+            .Set("Enabled", enabled)
+            // 人手动碰过启用状态，就把「这是搬迁停的」那个戳清掉：从这一刻起这条模型的开关
+            // 归人管，重跑搬迁不该再替他改（见搬迁端点里那个复活分支）。
+            .Unset("DisabledByMigrationAt")
+            .Set("UpdatedAt", DateTime.UtcNow),
         new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
     return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(
         updated,

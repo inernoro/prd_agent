@@ -6419,6 +6419,58 @@ public class GatewayDataDomainGuardTests
         }
     }
 
+    [Fact]
+    public void 搬迁停掉的模型在上游修好后重跑会被放回来()
+    {
+        /*
+          上一轮那条「零可用线路就停用」留下了一句话：「修好上游再重跑一次搬迁」。而重跑时这条
+          模型已经存在，走的是复用那一支——它只补默认与认领，从不碰 Enabled，于是那句话走不通，
+          模型永久停在停用状态（第 56 轮 review）。许下一个自己不兑现的修复路径比不许更糟。
+
+          放回来要能区分「搬迁停的」与「管理员刻意停的」，所以停用时盖一个戳，只放回带戳的那种；
+          人手动碰过启用开关就把戳清掉，从那一刻起这个开关归人管。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var migrate = EndpointBody(console, "app.MapPost(\"/gw/pools/migrate-to-models\"");
+
+        // 停用时盖戳。
+        var disableAt = migrate.IndexOf(".Set(\"Enabled\", false)", StringComparison.Ordinal);
+        Assert.True(disableAt > 0, "找不到零可用线路时的停用");
+        Assert.Contains(".Set(\"DisabledByMigrationAt\"", migrate[disableAt..(disableAt + 600)], StringComparison.Ordinal);
+
+        // 有可用线路时把带戳的放回来，且条件里必须同时判「现在是停用的」与「戳还在」。
+        var reviveAt = migrate.IndexOf("usableRouteCount > 0", StringComparison.Ordinal);
+        Assert.True(reviveAt > disableAt, "没有「上游修好之后把它放回来」这一支");
+        var revive = migrate[reviveAt..(reviveAt + 900)];
+        Assert.Contains("fb.Eq(\"Enabled\", false)", revive, StringComparison.Ordinal);
+        Assert.Contains("fb.Exists(\"DisabledByMigrationAt\")", revive, StringComparison.Ordinal);
+        Assert.Contains(".Set(\"Enabled\", true)", revive, StringComparison.Ordinal);
+        Assert.Contains(".Unset(\"DisabledByMigrationAt\")", revive, StringComparison.Ordinal);
+
+        // 人手动碰过启用开关就清戳，否则「先被搬迁停、后被管理员开过又关」的那条会被误开。
+        var toggle = EndpointBody(console, "app.MapPut(\"/gw/logical-models/{id}/enabled\"");
+        Assert.Contains(".Unset(\"DisabledByMigrationAt\")", toggle, StringComparison.Ordinal);
+
+        // 那句承诺也要跟着改：不说「重跑就好了」，说清重跑会做什么。
+        Assert.Contains("上游修好之后这一趟会把它自动启用回来", migrate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 对外报价要说清盖没盖住全部可用线路()
+    {
+        /*
+          只有一部分线路算得出价时，光给那一部分是在说半句话：兑换所线路、价格缺失或只配了一半的
+          物理线路都不在这份 routes 里，而加权轮转与故障转移照样会挑中它们，对方照这份报价估出来的
+          数在那些线路上根本不成立（第 56 轮 review）。
+        */
+        var catalog = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        Assert.Contains("[\"covers_all_routes\"] = pricedRoutes.Count == logicalRoutes.Count", catalog, StringComparison.Ordinal);
+
+        // 一条都算不出价时仍然是 null，不是「covers_all_routes: false 的空报价」——
+        // 那读起来像「有报价，只是不全」，而实际是一分钱都算不出来。
+        Assert.Contains("pricedRoutes.Count == 0\n                ? null", catalog, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);

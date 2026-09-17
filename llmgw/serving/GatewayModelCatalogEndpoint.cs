@@ -306,11 +306,24 @@ public static class GatewayModelCatalogEndpoint
                 pricedRoutes.Add(routeNode);
             }
 
-            // 扩展字段，OpenAI SDK 遇到不认识的键直接忽略，兼容性不受影响。
-            // 一条线路都算不出价时写 null 而不是省略：省略读起来像「免费」，null 是「算不出」。
+            /*
+              扩展字段，OpenAI SDK 遇到不认识的键直接忽略，兼容性不受影响。
+              一条线路都算不出价时写 null 而不是省略：省略读起来像「免费」，null 是「算不出」。
+
+              只有一部分线路算得出价时，光给那一部分是在说半句话：兑换所线路、以及价格缺失或
+              配了一半的物理线路都不会出现在这份 routes 里，而加权轮转与故障转移照样会挑中它们。
+              对方照这份报价估出来的数，在那些线路上根本不成立，却没有任何地方告诉他这件事
+              （第 56 轮 review）。所以补一个 covers_all_routes：这份报价盖没盖住全部可用线路。
+              用布尔而不是「给两个数让他自己比」——要读者自己算的结论等于没给结论。
+            */
             entry["pricing"] = pricedRoutes.Count == 0
                 ? null
-                : new JsonObject { ["currency"] = "USD", ["routes"] = pricedRoutes };
+                : new JsonObject
+                {
+                    ["currency"] = "USD",
+                    ["routes"] = pricedRoutes,
+                    ["covers_all_routes"] = pricedRoutes.Count == logicalRoutes.Count,
+                };
             entry["capabilities"] = new JsonArray(logical.Capabilities.Select(x => (JsonNode)x!).ToArray());
             entry["model_type"] = logical.ModelType;
 
