@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from '@/lib/toast';
-import { claimDebt, convertDebt, getDebtBoard, releaseDebt } from '@/services/real/activeTasks';
+import { claimDebt, closeDebt, convertDebt, getDebtBoard, releaseDebt } from '@/services/real/activeTasks';
 import type { DebtBoard, DebtItem } from '@/services/contracts/activeTasks';
 import type { ApiResponse } from '@/types/api';
 
@@ -144,6 +144,18 @@ export function DebtSection({ onConverted }: DebtSectionProps) {
                     <button className="atb-link atb-link--quiet" disabled={busyId === d.id}
                       onClick={() => void act(d.id, () => claimDebt(d.id), '归你了')}>认领</button>
                   )}
+                {/* 了结。缺了这个按钮，这一块只进不出 —— 列表只隐藏已经 closed 的那些，
+                    而把一条标成 closed 的入口只有 REST 端点，界面上没有。
+                    只给自己认领的那条和没人管的那条：替别人宣布做完了，后端也拦。 */}
+                {(d.mine || !d.ownerUserName) && (
+                  <button
+                    className="atb-link atb-link--quiet"
+                    disabled={busyId === d.id}
+                    onClick={() => void act(d.id, () => closeDebt(d.id), '这条了了')}
+                  >
+                    了了
+                  </button>
+                )}
               </div>
             </div>
           ))}

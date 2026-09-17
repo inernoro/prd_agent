@@ -282,14 +282,23 @@ public class ActiveTasksController : ControllerBase
         var wasActive = ActiveTaskShared.ShouldAdvanceQueue(entry.State);
 
         var now = DateTime.UtcNow;
-        await ActiveTaskShared.SettleAndSetStateAsync(_db, entry, ActiveTaskState.Done, now, ct);
+
+        // 从这里往下是一段**不能被切一半**的写序列：结算 → 盖「从哪一档结案的」戳 →
+        // 队首顶上来。所以一律用 CancellationToken.None，不跟着请求的 ct 走。
+        //
+        // 跟着 ct 走会这样断：结算已经落库（State 变成 done），用户这时关掉页面或网断了，
+        // 后面两步被取消 —— FinishedFromActive 永远是 false（撤销把它还原成备用而不是正在做），
+        // 队列也没人顶上来（这个人从此「没有正在做的事」）。而重试进不来：
+        // 开头那句 State == Done 会直接回 alreadyDone。
+        // server-authority：客户端断开不取消服务器已经开始的写入。
+        await ActiveTaskShared.SettleAndSetStateAsync(_db, entry, ActiveTaskState.Done, now, CancellationToken.None);
 
         // 记下它从哪一档结案的 —— 撤销要照这个还原，不能一律塞回「正在做」
         var stamp = Builders<ActiveTaskEntry>.Update.Set(x => x.FinishedFromActive, wasActive);
         var note = req?.ClosingNote?.Trim();
         if (!string.IsNullOrWhiteSpace(note))
             stamp = Builders<ActiveTaskEntry>.Update.Combine(stamp, Builders<ActiveTaskEntry>.Update.Set(x => x.ClosingNote, note));
-        await _db.ActiveTaskEntries.UpdateOneAsync(x => x.Id == id, stamp, cancellationToken: ct);
+        await _db.ActiveTaskEntries.UpdateOneAsync(x => x.Id == id, stamp, cancellationToken: CancellationToken.None);
 
         // 队首自动顶上来 —— 只在刚才空出来的是「正在做」那个位置时
         ActiveTaskEntry? next = null;
@@ -298,8 +307,8 @@ public class ActiveTasksController : ControllerBase
             next = await _db.ActiveTaskEntries
                 .Find(x => x.UserId == userId && x.State == ActiveTaskState.Standby)
                 .SortBy(x => x.OrderKey)
-                .FirstOrDefaultAsync(ct);
-            if (next != null) await ActiveTaskShared.MakeActiveAsync(_db, userId, next.Id, now, ct);
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (next != null) await ActiveTaskShared.MakeActiveAsync(_db, userId, next.Id, now, CancellationToken.None);
         }
 
         return Ok(ApiResponse<object>.Ok(new
@@ -431,7 +440,19 @@ public class ActiveTasksController : ControllerBase
         if (entry.State != ActiveTaskState.Standby || entry.AccumulatedSeconds > 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "已经投入过时间的任务请走「放弃」，历史要留痕"));
 
-        await _db.ActiveTaskEntries.DeleteOneAsync(x => x.Id == id, ct);
+        // 条件带齐再删：上面那几行是**读到的那一刻**的判断，挡不住并发。
+        // 同一行上「开始」和「删除」挨着点，开始那一步先把它改成 active，
+        // 只按 Id 删就会把一条已经开始计时的任务永久删掉 —— 而这个端点自己的规矩是
+        // 「投入过时间的只能放下、历史要留痕」。零匹配说明它中途变了，如实回绝。
+        var res = await _db.ActiveTaskEntries.DeleteOneAsync(
+            x => x.Id == id
+                 && x.UserId == userId
+                 && x.State == ActiveTaskState.Standby
+                 && x.AccumulatedSeconds == 0,
+            CancellationToken.None);
+        if (res.DeletedCount == 0)
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "这条刚被动过（开始做了或换了位置），没有删；刷新看一眼再决定"));
+
         return Ok(ApiResponse<object>.Ok(new { id, deleted = true }));
     }
 

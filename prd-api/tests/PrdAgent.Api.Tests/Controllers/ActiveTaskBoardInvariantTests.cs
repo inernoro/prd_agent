@@ -259,6 +259,42 @@ public class ActiveTaskBoardInvariantTests
         Assert.True(makeActive > setStandby, "撤销必须先放回 standby 再激活，否则激活那一步不认它");
     }
 
+    [Fact]
+    public void 结案那段写序列不许被客户端断开切一半()
+    {
+        // 结算 → 盖「从哪一档结案的」戳 → 队首顶上来，这三步是一个整体。
+        // 跟着请求的 ct 走会这样断：结算已落库（State 变 done），用户这时关掉页面，
+        // 后两步被取消 —— FinishedFromActive 永远是 false（撤销把它还原成备用而不是
+        // 正在做），队列也没人顶上来。而重试进不来：开头那句 State == Done 直接回
+        // alreadyDone。server-authority：客户端断开不取消服务器已经开始的写入。
+        var body = Endpoint("[HttpPost(\"{id}/finish\")]");
+
+        var settle = body.IndexOf("SettleAndSetStateAsync", StringComparison.Ordinal);
+        Assert.True(settle > 0, "找不到结算调用");
+        // 从结算那一步往后，不许再出现跟请求走的 ct
+        var tail = body[settle..];
+        Assert.DoesNotContain(", ct)", tail, StringComparison.Ordinal);
+        Assert.DoesNotContain("cancellationToken: ct", tail, StringComparison.Ordinal);
+        Assert.Contains("CancellationToken.None", tail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 真删要带条件_不能只按标识删()
+    {
+        // 上面那几行 precheck 是**读到的那一刻**的判断，挡不住并发：同一行上「开始」和
+        // 「删除」挨着点，开始那一步先把它改成 active，只按 Id 删就会把一条已经开始计时的
+        // 任务永久删掉 —— 而这个端点自己的规矩是「投入过时间的只能放下、历史要留痕」。
+        var body = Endpoint("[HttpDelete(\"{id}\")]");
+
+        var at = body.IndexOf("DeleteOneAsync", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到删除调用");
+        var call = body[at..];
+        foreach (var 条件 in new[] { "x.UserId == userId", "ActiveTaskState.Standby", "x.AccumulatedSeconds == 0" })
+            Assert.Contains(条件, call, StringComparison.Ordinal);
+        // 零匹配要如实回绝，不能当成删成功了
+        Assert.Contains("DeletedCount == 0", call, StringComparison.Ordinal);
+    }
+
     private static string Endpoint(string routeAttribute)
     {
         var src = Controller();

@@ -171,3 +171,23 @@ describe('匿名面板的恢复', () => {
     expect(body, '成功分支没有把 closed 复位').toContain('setClosed(false)');
   });
 });
+
+/**
+ * 债务那一块得有出口。
+ *
+ * 事故形状（形状 2，与看板设置同一个）：`closeDebt` 封装好了、后端端点也在，
+ * 但全前端没有一处调用它。列表只隐藏已经 closed 的那些，而把一条标成 closed 的
+ * 入口只有 REST 端点 —— 于是下半屏只进不出，欠着的只会越堆越多。
+ */
+describe('债务的了结入口', () => {
+  it('了结这个动作真的接进了界面，不是只有封装', () => {
+    const src = readFileSync(resolve(__dirname, 'DebtSection.tsx'), 'utf-8');
+    expect(src, 'DebtSection 没引 closeDebt').toContain('closeDebt');
+    expect(src, 'closeDebt 没有被真的调用').toMatch(/closeDebt\(\s*d\.id\s*\)/);
+
+    // 认领、放回、转成我的活、了结 —— 四个动作都得在
+    for (const fn of ['claimDebt', 'releaseDebt', 'convertDebt', 'closeDebt']) {
+      expect(src, `${fn} 没接进界面`).toContain(fn);
+    }
+  });
+});
