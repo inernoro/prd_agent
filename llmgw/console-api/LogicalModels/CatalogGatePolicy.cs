@@ -58,6 +58,48 @@ public static class CatalogGatePolicy
     /// <paramref name="sameNameDocsOnPlatform"/> 是同一个 Provider 下、与实际上游名同名的那些文档。
     /// 一条都查不到属于「管不着」，与运行时的 OutOfJurisdiction 同档，照旧放行。
     /// </summary>
+    /// <summary>
+    /// 「同名模型」的库查询谓词——控制台这一侧的镜像。
+    ///
+    /// 权威定义在 <c>PrdAgent.Infrastructure.LlmGateway.GatewayCatalogGate.SameNameFilter</c>，
+    /// 由 PrdAgent.Tests 里的行为对照测试逐字段比渲染结果。
+    ///
+    /// 两支缺一不可，而且第二支必须忽略大小写：
+    ///   - ModelNameNormalized 是后加的字段，唯一索引也是 partial 的，**存量文档不一定有它**；
+    ///   - 于是存量文档只能靠原始名字那一支查到，而库里存着 `Foo`、这次提交的是 `foo` 时，
+    ///     逐字比对一条都查不到。
+    ///
+    /// 这个坑在本仓库已经填过两次（第 63 轮把运行时单查扳正、第 68 轮把预取那一侧补上），
+    /// 第三次出现在批量导入的白名单发布那一步：判「已存在」用的是不分大小写的集合，
+    /// 于是换个大小写重试时模型被判成 Skipped，而这一步按字节查回来是空——模型既没登上
+    /// 白名单，响应还告诉用户「稍后重试导入」，而重试永远走不到（第 76 轮 review）。
+    /// 收敛成一处的理由就在这里：同一个判断写第三遍，就会第三次漏掉同一支。
+    /// </summary>
+    public static FilterDefinition<BsonDocument> SameNameFilter(string modelName)
+    {
+        var trimmed = (modelName ?? string.Empty).Trim();
+        var fb = Builders<BsonDocument>.Filter;
+        return fb.Or(
+            fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
+            fb.Regex("ModelName", new BsonRegularExpression(
+                "^" + System.Text.RegularExpressions.Regex.Escape(trimmed) + "$", "i")));
+    }
+
+    /// <summary>
+    /// 一批名字的同名谓词：<see cref="SameNameFilter"/> 的并集。
+    /// 空集合返回恒不成立的谓词——空的 In 会把整张表判成命中。
+    /// </summary>
+    public static FilterDefinition<BsonDocument> SameNameBatchFilter(IEnumerable<string> modelNames)
+    {
+        var names = (modelNames ?? [])
+            .Select(x => (x ?? string.Empty).Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var fb = Builders<BsonDocument>.Filter;
+        return names.Count == 0 ? fb.Where(_ => false) : fb.Or(names.Select(SameNameFilter));
+    }
+
     public static bool PhysicalRoutePasses(
         string? effectiveModelName,
         IReadOnlyCollection<BsonDocument> sameNameDocsOnPlatform,

@@ -13578,20 +13578,18 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
     {
         try
         {
-            // 按规范化名查，不按提交的拼写查。
+            // 同名判据走共享的那一份，不在这里再拼一次。
             //
             // 上面判「已存在」用的是大小写不敏感的集合，所以换个大小写重试时，那些模型会被
-            // 判成 Skipped 并把**提交的拼写**放进 publishTargets；而库里存的是首次导入的拼写，
-            // 精确匹配一条都查不到——那条写给用户的「稍后重试导入」于是第三次变成一句照做也没用的话。
-            // 身份与唯一索引本来就用 ModelNameNormalized（见上面建索引那段），这里对齐它。
-            var publishTargetKeys = publishTargets.Select(x => x.ToLowerInvariant()).Distinct(StringComparer.Ordinal).ToList();
-            // 两条都查：ModelNameNormalized 是后加的字段，存量文档不一定有它
-            // （那个唯一索引也是 partial 的，只覆盖有该字段的文档）。只查规范化名会漏掉存量。
+            // 判成 Skipped 并把**提交的拼写**放进 publishTargets；而库里存的是首次导入的拼写。
+            // 原先这里拼的是 In(规范化名) || In(原样名)：前一支对存量文档无效（那个字段是后加的，
+            // 唯一索引也是 partial 的），后一支按字节比——两支都落空，模型既没登上白名单，
+            // 响应还告诉用户「稍后重试导入」，而重试永远走不到（第 76 轮 review）。
+            // 同一个坑此前已在运行时单查（第 63 轮）与预取（第 68 轮）各填过一次，
+            // 所以这次不再写第四份，直接用镜像过来的共享谓词。
             var createdDocs = await gwModels.Find(TenantAccess.Filter(http, fb.And(
                 fb.Eq("PlatformId", id),
-                fb.Or(
-                    fb.In("ModelNameNormalized", publishTargetKeys),
-                    fb.In("ModelName", publishTargets))))).ToListAsync();
+                CatalogGatePolicy.SameNameBatchFilter(publishTargets)))).ToListAsync();
 
             foreach (var model in createdDocs)
             {
