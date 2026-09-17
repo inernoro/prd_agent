@@ -45,12 +45,14 @@ public static class GatewayCostCalculator
     /// Anthropic 原生把 <c>cache_read_input_tokens</c> / <c>cache_creation_input_tokens</c> 与
     /// <c>input_tokens</c> 分三个数报；OpenAI 及其兼容层把命中缓存的部分**含在** <c>prompt_tokens</c> 里。
     /// 同一段代码在两种口径下会算出差一截的账，所以按协议分，而不是按经验猜。
+    ///
+    /// 「这个协议算不算 Claude」必须走 <see cref="GatewayProtocolAliases"/>——那张别名表同时决定
+    /// 用哪个适配器发请求。这里自己列一遍别名的话，只要两张表差一个写法就会静默算错账：
+    /// <c>claude-compatible</c> 选中的是 Claude 适配器（分开报三个数），而这里当成 OpenAI 口径
+    /// 把缓存读从输入里减一遍，成本报低、预算闸跟着松。
     /// </summary>
     public static bool CacheReadCountedInsideInput(string? protocol)
-    {
-        var normalized = protocol?.Trim().ToLowerInvariant();
-        return normalized is not ("anthropic" or "claude");
-    }
+        => !GatewayProtocolAliases.IsClaudeProtocol(protocol);
 
     /// <summary>按解析结果里的价格快照与上游返回的用量算一次账。</summary>
     public static GatewayCostBreakdown Calculate(

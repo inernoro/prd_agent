@@ -4337,17 +4337,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         return _adapters.GetValueOrDefault("openai");
     }
 
+    // 别名表本体在 PrdAgent.Core 的 GatewayProtocolAliases：计价那一侧也要按协议判用量口径，
+    // 两边各认一张表就会出现「适配器认得、计价不认得」的半边（2026-09-17 的 claude-compatible）。
     internal static string? NormalizeAdapterKey(string? platformType)
-    {
-        var normalized = platformType?.Trim().ToLowerInvariant();
-        return normalized switch
-        {
-            null or "" or "unknown" => null,
-            "anthropic" or "claude-compatible" => "claude",
-            "openai-compatible" or "openrouter" or "gemini-compatible" => "openai",
-            _ => normalized
-        };
-    }
+        => GatewayProtocolAliases.NormalizeAdapterKey(platformType);
 
     private async Task<string?> StartLogAsync(
         GatewayRequest request,
