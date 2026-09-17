@@ -398,26 +398,19 @@ public class ModelResolver : IModelResolver
 
     /// <summary>
     /// 从预取结果里挑出「这一条该管的那些」：两个名字字段都认、给了 Provider 就只留那个 Provider 的。
-    /// 与单条查询的谓词逐字对应，改一边就要改另一边——这也是它紧挨着放的原因。
+    /// 与单条查询的谓词逐字对应。
+    ///
+    /// 谓词本体在 <see cref="GatewayCatalogGate.SelectSameNameDocs"/>：对外清单与就绪探针
+    /// 也要挑同名文档才谈得上判门，各写一份的时候它们拼了个大小写敏感的键，
+    /// 与这里的归一化匹配得出过相反结论（形状 3 + 形状 6）。这里只负责那个上限。
     /// </summary>
     private static List<BsonDocument> SelectCatalogDocs(
         IReadOnlyList<BsonDocument> batch,
         string modelName,
         string? platformId)
-    {
-        var normalized = modelName.ToLowerInvariant();
-        return batch.Where(doc =>
-        {
-            var matchesName = Text(doc, "ModelNameNormalized") == normalized || Text(doc, "ModelName") == modelName;
-            if (!matchesName) return false;
-            return string.IsNullOrWhiteSpace(platformId) || Text(doc, "PlatformId") == platformId;
-        }).Take(CatalogPairDocumentCap).ToList();
-
-        // 字段不是字符串（历史脏数据）时当成空串，而不是抛——判据在请求路径上，
-        // 一条坏文档不该让整次调用炸掉。
-        static string Text(BsonDocument doc, string field)
-            => doc.TryGetValue(field, out var value) && value.IsString ? value.AsString : string.Empty;
-    }
+        => GatewayCatalogGate.SelectSameNameDocs(batch, modelName, platformId)
+            .Take(CatalogPairDocumentCap)
+            .ToList();
 
     /// <summary>
     /// 这条模型是兑换所里的吗？是的话它该不该放行？

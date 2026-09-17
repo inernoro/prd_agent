@@ -8438,6 +8438,18 @@ static bool AppCallerAcceptsTraffic(string? status)
 ///
 /// 归属团队不接受调用方传入：系统内部的消耗按系统团队记，跟当前是谁点的按钮无关。
 /// </summary>
+// 选中的池，下一次系统调用真的解析得到吗。
+//
+// 判据与运行时 TryResolveLogicalModelAsync 那一支逐条同源：本租户 + 启用 + 用途对得上
+// + MigratedFromPoolIds 里有这个池 ID。保存端点与取用路径共用这一份——两边各判各的话，
+// 存得进去、跑不起来，而页面两处都说正常。
+async Task<bool> SystemPoolResolvableAsync(string tenantId, string poolId)
+    => await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+        Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
+        Builders<BsonDocument>.Filter.AnyEq("MigratedFromPoolIds", poolId))).AnyAsync();
+
 async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolId, string Model, string Error)>
     EnsureSystemGatewayAccessAsync(string tenantId, string actorUsername)
 {
@@ -8473,6 +8485,20 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
                 "系统级模型池已经不可用了（被删除，或已不是对话类）。去「服务网关设置」重新选一个对话池——"
                 + "在那之前系统功能不会去跑默认池冒充你的选择。");
+        /*
+          「池文档还在」只证明它还在池表里，不证明**解析得到它**。
+
+          池路由已经退场：这条请求带的 model_policy=pool + 池文档 ID 会被顶进 expectedModel，
+          而解析器认池 ID 的唯一一条路是「某个对外模型的 MigratedFromPoolIds 里有它」。
+          没搬过的池在那条路上查不到，又因为 expectedModel 非空而跳过两层默认，
+          直接 MODEL_NOT_FOUND（或对内部租户静默落到不相干的 legacy 兜底）——
+          设置页写着这个池、就绪也显示正常，而 Quickstart 每一次都失败。
+        */
+        if (!await SystemPoolResolvableAsync(tenantId, poolId))
+            return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+                "系统级选中的这个模型池还没有搬成对外模型，解析不到它（池路由已经退场，"
+                + "认池 ID 的唯一一条路是它已经搬迁过）。去「模型池」页跑一次搬迁，"
+                + "或在「服务网关设置」改选「指定模型」——在那之前系统功能不会拿别的模型冒充你的选择。");
     }
     if (string.Equals(modelSource, "model", StringComparison.Ordinal))
     {
@@ -9088,6 +9114,14 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
             return Json(ApiEnvelope<object>.Fail(
                 "MODEL_POOL_NOT_FOUND",
                 "指定的模型池在当前租户下不可用（不存在或不是对话类）。回到「服务网关设置」重选一个。"), jsonOptions, 404);
+        // 池在不在只是第一层。池路由退场之后，认池 ID 的唯一一条路是它已经搬成了对外模型
+        // （MigratedFromPoolIds）；没搬过的池存得进去、页面显示正常，而每一次系统调用都
+        // MODEL_NOT_FOUND。判据与取用时、与运行时同一处，不许这里松那里紧。
+        if (!await SystemPoolResolvableAsync(tenant.TenantId, modelGroupId))
+            return Json(ApiEnvelope<object>.Fail(
+                "MODEL_POOL_NOT_MIGRATED",
+                "这个模型池还没有搬成对外模型，选了也解析不到（池路由已经退场）。"
+                + "去「模型池」页跑一次搬迁，或改选「指定模型」。"), jsonOptions, 409);
     }
     if (modelSource == "model")
     {

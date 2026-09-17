@@ -353,10 +353,8 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             .Where(x => x.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        var physicalDocsByPlatformAndName = new Dictionary<string, List<BsonDocument>>(StringComparer.Ordinal);
-        if (catalogGateEnforces && effectiveUpstreamNames.Count > 0)
-        {
-            var named = await physicalModels
+        var namedPhysicalDocs = catalogGateEnforces && effectiveUpstreamNames.Count > 0
+            ? await physicalModels
                 .Find(Builders<BsonDocument>.Filter.And(
                     Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
                     Builders<BsonDocument>.Filter.Or(
@@ -364,18 +362,8 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                         Builders<BsonDocument>.Filter.In(
                             "ModelNameNormalized",
                             effectiveUpstreamNames.Select(x => x.ToLowerInvariant())))))
-                .ToListAsync(cancellationToken);
-            foreach (var doc in named)
-            {
-                var docPlatformId = doc.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
-                var docModelName = doc.GetValue("ModelName", BsonNull.Value) is { IsString: true } n ? n.AsString : string.Empty;
-                if (docModelName.Length == 0) continue;
-                var key = $"{docPlatformId}::{docModelName}";
-                if (!physicalDocsByPlatformAndName.TryGetValue(key, out var bucket))
-                    physicalDocsByPlatformAndName[key] = bucket = [];
-                bucket.Add(doc);
-            }
-        }
+                .ToListAsync(cancellationToken)
+            : [];
 
         bool PhysicalRouteUsable(GatewayModelOffering route)
         {
@@ -383,7 +371,9 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             var targetPlatformId = target.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
             if (targetPlatformId.Length == 0 || !enabledPlatformIds.Contains(targetPlatformId)) return false;
             var effective = EffectiveUpstreamName(route);
-            var sameName = physicalDocsByPlatformAndName.GetValueOrDefault($"{targetPlatformId}::{effective}") ?? [];
+            // 挑同名文档走共享那一份，理由同对外清单：自己拼键会在大小写不一致时查空，
+            // 于是判成「管不着」报绿，而运行时判拦——探针替一条必失败的线路作保。
+            var sameName = GatewayCatalogGate.SelectSameNameDocs(namedPhysicalDocs, effective, targetPlatformId);
             return GatewayCatalogGate.PhysicalRoutePasses(effective, sameName, catalogGateEnforces);
         }
         var enabledExchangeById = enabledExchanges

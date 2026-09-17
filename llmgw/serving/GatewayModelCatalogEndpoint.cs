@@ -164,34 +164,25 @@ public static class GatewayModelCatalogEndpoint
             .Where(x => x.Length > 0)
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        var docsByPlatformAndName = new Dictionary<string, List<BsonDocument>>(StringComparer.Ordinal);
-        if (catalogGateEnforces && effectiveNames.Count > 0)
-        {
-            var named = await physicalModels
+        var namedPhysicalDocs = catalogGateEnforces && effectiveNames.Count > 0
+            ? await physicalModels
                 .Find(bf.And(
                     bf.Eq("TenantId", tenantId),
                     bf.Or(
                         bf.In("ModelName", effectiveNames),
                         bf.In("ModelNameNormalized", effectiveNames.Select(x => x.ToLowerInvariant())))))
-                .ToListAsync(ct);
-            foreach (var doc in named)
-            {
-                var platformId = doc.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
-                var modelName = doc.GetValue("ModelName", BsonNull.Value) is { IsString: true } n ? n.AsString : string.Empty;
-                if (modelName.Length == 0) continue;
-                var key = $"{platformId}::{modelName}";
-                if (!docsByPlatformAndName.TryGetValue(key, out var bucket))
-                    docsByPlatformAndName[key] = bucket = [];
-                bucket.Add(doc);
-            }
-        }
+                .ToListAsync(ct)
+            : [];
 
         bool PhysicalRouteUsable(GatewayModelOffering route)
         {
             if (!priceByModelId.TryGetValue(route.TargetId, out var target)) return false;
             var platformId = target.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
             var effective = EffectiveUpstreamName(route);
-            var sameName = docsByPlatformAndName.GetValueOrDefault($"{platformId}::{effective}") ?? [];
+            // 挑同名文档这一步也走共享那一份：自己拼 "{平台}::{名字}" 的键，
+            // 大小写与库里存的不一致时就查不到，判成「管不着」放行，而运行时按归一化字段
+            // 查得到、判拦——同一条线路两个结论。
+            var sameName = GatewayCatalogGate.SelectSameNameDocs(namedPhysicalDocs, effective, platformId);
             return GatewayCatalogGate.PhysicalRoutePasses(effective, sameName, catalogGateEnforces);
         }
 

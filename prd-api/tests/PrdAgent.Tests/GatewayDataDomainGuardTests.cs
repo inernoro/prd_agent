@@ -6254,6 +6254,37 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 系统级模型来源选「模型池」时，判据不是「池还在」而是「解析得到它」。
+    ///
+    /// 池路由已经退场：这条请求带 model_policy=pool + 池文档 ID，会被顶进 expectedModel，
+    /// 而解析器认池 ID 的唯一一条路是某个对外模型的 MigratedFromPoolIds 里有它。
+    /// 没搬过的池存得进去、页面显示正常，而每一次 Quickstart 调用都 MODEL_NOT_FOUND
+    /// （或对内部租户静默落到不相干的 legacy 兜底）——保存成功变成一个静默的坏配置。
+    ///
+    /// 保存端点与取用路径必须共用同一份判据：一边松一边紧，就是「存得进去、跑不起来」。
+    /// </summary>
+    [Fact]
+    public void 系统级模型池要判得到解析而不只是判它还在()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 判据只有一处，且与运行时 TryResolveLogicalModelAsync 那一支同源。
+        Assert.Contains("async Task<bool> SystemPoolResolvableAsync(string tenantId, string poolId)", program);
+        Assert.Contains("Builders<BsonDocument>.Filter.AnyEq(\"MigratedFromPoolIds\", poolId)", program);
+
+        // 两个消费方：保存端点、取用路径。少一个就有一条缝。
+        var callSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"await SystemPoolResolvableAsync\(").Count;
+        Assert.True(callSites >= 2,
+            $"SystemPoolResolvableAsync 只有 {callSites} 个调用点：保存端点与取用路径都要判，"
+            + "只判一头会出现「存得进去、跑不起来」或「存进去时好的、跑的时候已经不是」");
+
+        // 失败要说得出下一步，不是一句「不可用」。
+        Assert.Contains("MODEL_POOL_NOT_MIGRATED", program);
+        Assert.Contains("去「模型池」页跑一次搬迁", program);
+    }
+
+    /// <summary>
     /// 名录门的判据只许有一处。
     ///
     /// 它此前在运行时解析、对外模型目录端点、就绪探针三处各写了一遍：三份逐字相同的判据，

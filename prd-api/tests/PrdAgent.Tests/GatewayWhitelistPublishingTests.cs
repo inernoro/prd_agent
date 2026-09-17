@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using MongoDB.Bson;
+using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGw.Provisioning;
 using Xunit;
 
@@ -711,6 +713,11 @@ public class GatewayWhitelistPublishingTests
                 $"{mirror.Path} 没有算实际上游名");
             Assert.True(mirror.Text.Contains("ModelNameNormalized", StringComparison.Ordinal),
                 $"{mirror.Path} 找同名文档时只认一个名字字段，与运行时取值不同源");
+            // 挑同名文档这一步也不许自己写：两处各拼一个 "{平台}::{名字}" 的键，
+            // 大小写与库里存的不一致时查空、判成「管不着」放行，而运行时判拦。
+            Assert.True(mirror.Text.Contains("GatewayCatalogGate.SelectSameNameDocs(", StringComparison.Ordinal),
+                $"{mirror.Path} 自己挑同名文档而不是走共享的 SelectSameNameDocs——"
+                + "键怎么拼就是一道暗缝，上一次正是大小写不一致把线路放了过去");
         }
 
         // 判据本体在共享那一份，宿主只喂数据。
@@ -774,6 +781,67 @@ public class GatewayWhitelistPublishingTests
                 + "也没有「挑中认领 → 判定挑中那一条」这种写法。"
                 + "这一处会在认领坏掉时回落到用途默认，而运行时不会——它会如实失败。");
         }
+    }
+
+    /// <summary>
+    /// 同名文档的挑选必须与运行时逐条同口径：两个名字字段都认，其中归一化字段按小写比。
+    ///
+    /// 这是行为用例不是源码扫描——上一版两处镜像各自拼 `"{平台}::{名字}"` 的键、
+    /// 用原样大小写比，于是「库里存 GPT-4o、线路覆盖成 gpt-4o」这种再普通不过的组合
+    /// 查不到同名文档，判成「管不着」放行；而运行时按 ModelNameNormalized 查得到、判拦。
+    /// 同一条线路两个结论，清单与就绪都替它作了保。
+    /// </summary>
+    [Fact]
+    public void 挑同名文档时大小写不一致也要认得出来()
+    {
+        var docs = new[]
+        {
+            new BsonDocument
+            {
+                { "_id", "m1" },
+                { "PlatformId", "p1" },
+                { "ModelName", "GPT-4o" },
+                { "ModelNameNormalized", "gpt-4o" },
+            },
+            new BsonDocument
+            {
+                { "_id", "m2" },
+                { "PlatformId", "p2" },
+                { "ModelName", "GPT-4o" },
+                { "ModelNameNormalized", "gpt-4o" },
+            },
+        };
+
+        // 覆盖值与库里存的大小写不同：归一化字段那一支必须认出来。
+        Assert.Single(GatewayCatalogGate.SelectSameNameDocs(docs, "gpt-4o", "p1"));
+        // 原样大小写同样认。
+        Assert.Single(GatewayCatalogGate.SelectSameNameDocs(docs, "GPT-4o", "p1"));
+        // 前后空白不该改变结论（运行时是 Trim 过的）。
+        Assert.Single(GatewayCatalogGate.SelectSameNameDocs(docs, "  gpt-4o  ", "p1"));
+        // Provider 不同就不是这条线路该管的。
+        Assert.Empty(GatewayCatalogGate.SelectSameNameDocs(docs, "gpt-4o", "p3"));
+        // 不给 Provider 时不收窄。
+        Assert.Equal(2, GatewayCatalogGate.SelectSameNameDocs(docs, "gpt-4o", null).Count);
+        // 名字对不上一条都不该给。
+        Assert.Empty(GatewayCatalogGate.SelectSameNameDocs(docs, "claude-sonnet-4-6", "p1"));
+
+        // 挑出来之后这道门才谈得上判：名录外、又没盖放行标记的，拦。
+        Assert.False(GatewayCatalogGate.PhysicalRoutePasses(
+            "gpt-4o-private",
+            GatewayCatalogGate.SelectSameNameDocs(
+                new[]
+                {
+                    new BsonDocument
+                    {
+                        { "_id", "m3" },
+                        { "PlatformId", "p1" },
+                        { "ModelName", "GPT-4o-Private" },
+                        { "ModelNameNormalized", "gpt-4o-private" },
+                    },
+                },
+                "gpt-4o-private",
+                "p1"),
+            gateEnforces: true));
     }
 
     /// <summary>仓库里参与网关路由判据的 C# 源码（不含测试自身）。</summary>

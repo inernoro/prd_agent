@@ -143,6 +143,36 @@ public static class GatewayCatalogGate
     }
 
     /// <summary>
+    /// 从一批模型文档里挑出「这条线路该管的那几条」：同名（两个名字字段都认）、同一个 Provider。
+    ///
+    /// 这是运行时 <c>SelectCatalogDocs</c> 的同一套谓词，收在这里是因为消费方不止一个：
+    /// 对外清单与就绪探针都要先把同名文档挑出来才谈得上判门。两处各自拼一个
+    /// <c>"{平台}::{名字}"</c> 的键就已经出过事——键用原样大小写、查的时候用覆盖值的大小写，
+    /// 大小写不一致时查不到，于是判成「管不着」放行，而运行时按归一化字段查得到、判拦
+    /// （形状 6：判据读的值不是真正生效的那个）。挑选这一步一旦分家，键怎么拼就是一道暗缝。
+    /// </summary>
+    public static IReadOnlyList<BsonDocument> SelectSameNameDocs(
+        IEnumerable<BsonDocument> docs,
+        string? modelName,
+        string? platformId)
+    {
+        var trimmed = (modelName ?? string.Empty).Trim();
+        if (trimmed.Length == 0) return [];
+        var normalized = trimmed.ToLowerInvariant();
+        return docs.Where(doc =>
+        {
+            var matchesName = Text(doc, "ModelNameNormalized") == normalized || Text(doc, "ModelName") == trimmed;
+            if (!matchesName) return false;
+            return string.IsNullOrWhiteSpace(platformId) || Text(doc, "PlatformId") == platformId;
+        }).ToList();
+
+        // 字段不是字符串（历史脏数据）时当成空串而不是抛：判据在请求路径上，
+        // 一条坏文档不该让整次调用炸掉。与运行时同源。
+        static string Text(BsonDocument doc, string field)
+            => doc.TryGetValue(field, out var value) && value.IsString ? value.AsString : string.Empty;
+    }
+
+    /// <summary>
     /// 一条兑换所线路过不过得了这道门：兑换所声明过这条别名，且别名在名录里或被放行。
     /// 名录门降档时只要求「声明过」——没声明的那种在任何档位下都不是这个兑换所的东西。
     /// </summary>
