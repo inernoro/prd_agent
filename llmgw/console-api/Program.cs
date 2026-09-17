@@ -5104,11 +5104,39 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                             .Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized)))
                             .FirstOrDefaultAsync();
                         if (winner is null) throw;
+
+                        // 认下对方之前要复核用途：正常那条「已存在同名模型」的路会查，
+                        // 这条恢复路不查的话，会把一个生图池的线路挂到一个对话模型下面——
+                        // 原来那个用途一条路都没搬到，而赢家收了一批它根本用不了的上游。
+                        var winnerType = winner.AsNullableString("ModelType") ?? string.Empty;
+                        if (!string.Equals(winnerType, modelType, StringComparison.Ordinal))
+                        {
+                            result.Skipped.Add(new PoolMigrationSkip
+                            {
+                                PoolId = poolId,
+                                PoolName = poolName,
+                                Reason = $"另一个搬迁请求在同一瞬间用「{publicId}」建了一个 {winnerType} 模型，"
+                                    + $"而这个池是 {modelType}——同名不同用途不能合成一条，这个池没搬。"
+                                    + "给它换一个对外标识再搬",
+                            });
+                            continue;
+                        }
+
                         logicalId = winner.GetStringOrEmpty("_id");
                         linkedByRace = true;
                         entry.CreatedNewModel = false;
                         entry.IsDefaultForType = winner.AsNullableBool("IsDefaultForType") ?? false;
                         entry.ClaimedAppCallerCodes = GetStringArray(winner, "DefaultForAppCallerCodes");
+                        // 把这个池的 id 也记进去。不记的话，还带着 model_policy=pool 的存量客户端
+                        // 拿这个池的文档 ID 来点名时查不到任何模型，一律 MODEL_NOT_FOUND——
+                        // 正常那条「已存在同名模型」的路是会记的，这条恢复路漏了就是同一个洞。
+                        await gwModelOfferings.Database
+                            .GetCollection<BsonDocument>("llmgw_logical_models")
+                            .UpdateOneAsync(
+                                fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                                Builders<BsonDocument>.Update
+                                    .AddToSet("MigratedFromPoolIds", poolId)
+                                    .Set("UpdatedAt", DateTime.UtcNow));
                         result.Skipped.Add(new PoolMigrationSkip
                         {
                             PoolId = poolId,

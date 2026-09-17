@@ -509,14 +509,27 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
 
     private async Task EnsureOfferingIdentityIndexAsync(CancellationToken ct)
     {
+        /*
+          线路的身份里必须带上「打给上游的是哪一个模型」。
+
+          一个兑换所底下挂着多个别名，同一个对外模型完全可能同时指向其中好几个
+          （UpstreamModelId 决定真正调的是哪一个），它们是**不同的**线路。身份只到
+          TargetId 为止的话，第二条别名插入时撞 E11000——搬迁半途而废，而且重跑还是同样的结果，
+          那条线路就永久丢了（形状 1：判据比它该管的范围窄，「同一个目标的不同别名」这种
+          输入让它给出相反答案）。
+
+          往唯一索引里**加**一个字段只会让约束更松，不会让现存数据冲突，所以升级不需要预清理。
+        */
         const string legacyIndexName = "uniq_llmgw_offering_tenant_logical_target";
-        const string versionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v2";
+        const string legacyVersionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v2";
+        const string versionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v3";
         string[] expectedKeys =
         [
             "TenantId",
             "LogicalModelId",
             "TargetKind",
             "TargetId",
+            "UpstreamModelId",
             "SupersededByOfferingId",
         ];
         var collection = _data.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
@@ -543,12 +556,14 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
         }
 
         await DropIndexIfPresentAsync(collection, legacyIndexName, ct);
+        await DropIndexIfPresentAsync(collection, legacyVersionAwareIndexName, ct);
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
             Builders<BsonDocument>.IndexKeys
                 .Ascending("TenantId")
                 .Ascending("LogicalModelId")
                 .Ascending("TargetKind")
                 .Ascending("TargetId")
+                .Ascending("UpstreamModelId")
                 .Ascending("SupersededByOfferingId"),
             new CreateIndexOptions { Name = versionAwareIndexName, Unique = true }), cancellationToken: ct);
         _logger.LogInformation(

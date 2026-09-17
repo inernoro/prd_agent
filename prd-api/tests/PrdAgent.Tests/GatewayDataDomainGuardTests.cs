@@ -1641,7 +1641,12 @@ public class GatewayDataDomainGuardTests
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
         Assert.Contains("EnsureOfferingIdentityIndexAsync", initializer);
         Assert.Contains(".Ascending(\"SupersededByOfferingId\")", initializer);
-        Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v2", initializer);
+        // 身份里必须带上「打给上游的是哪一个模型」：同一个兑换所下的不同别名是不同的线路，
+        // 少了它第二条插入撞 E11000，搬迁半途而废且重跑还是同样结果，那条线路永久丢。
+        Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v3", initializer);
+        Assert.Contains(".Ascending(\"UpstreamModelId\")", initializer);
+        // 旧名字要显式丢弃，否则新索引建不出来（同 key 不同名会冲突）。
+        Assert.Contains("legacyVersionAwareIndexName", initializer);
         Assert.Contains("catch (MongoCommandException ex) when (ex.Code == 27)", initializer);
         Assert.Contains("IsEquivalentOfferingIdentityIndex", initializer);
         Assert.Contains("MongoDB 不允许同一 key/options 仅以不同名称重复建索引", initializer);

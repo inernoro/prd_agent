@@ -579,6 +579,12 @@ public class PoolMigrationPlannerTests
 
         Assert.Contains("uniq_llmgw_logical_model_tenant_public_id", console);
         Assert.Contains("linkedByRace", console);
+        // 认下对方之前要复核用途：同名不同用途合成一条的话，原来那个用途一条路都没搬到，
+        // 而赢家收了一批它根本用不了的上游。
+        Assert.Contains("winnerType", console);
+        Assert.Contains("同名不同用途不能合成一条", console);
+        // 这个池的 id 也要记进赢家，否则还带着 model_policy=pool 的存量客户端点名时一律查不到。
+        Assert.Contains("AddToSet(\"MigratedFromPoolIds\", poolId)", console);
         // 认下对方之后，后面的线路要挂到它的 id 上，而不是那条根本没插进去的。
         Assert.Contains("logicalId = winner.GetStringOrEmpty(\"_id\")", console);
         // 这一趟不算「建了一个模型」。
