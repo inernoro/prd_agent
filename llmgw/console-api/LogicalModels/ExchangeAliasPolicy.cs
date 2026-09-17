@@ -62,4 +62,27 @@ public static class ExchangeAliasPolicy
             && aliases.OfType<BsonString>().Any(x =>
                 x.AsString.Length > 0 && string.Equals(x.AsString, wanted, StringComparison.OrdinalIgnoreCase));
     }
+
+    /// <summary>
+    /// 名录外的这条别名有没有被显式放行（名录门要用）。
+    ///
+    /// 与权威实现 <c>GatewayCatalogGate.ExchangeAliasAllowedOutsideCatalog</c> 同序：
+    /// 旧形态兑换所（<c>Models</c> 为空、别名只在两个旧字段里，没有地方盖逐条标记）整体视为放行——
+    /// 它们同样是在逐条放行落地**之前**声明的，与名录门上线前已入库的模型同一处境；
+    /// 新形态则必须那一条自己带着 <c>AllowedOutsideCatalog</c> 标记。
+    /// </summary>
+    public static bool AliasAllowedOutsideCatalog(BsonDocument exchange, string? modelId)
+    {
+        if (exchange.GetValue("Models", BsonNull.Value) is not BsonArray { Count: > 0 } models) return true;
+
+        var wanted = (modelId ?? string.Empty).Trim();
+        if (wanted.Length == 0) return false;
+
+        return models.OfType<BsonDocument>().Any(item =>
+            (item.GetValue("Enabled", BsonNull.Value) is not BsonBoolean enabled || enabled.Value)
+            && item.GetValue("ModelId", BsonNull.Value) is BsonString id
+            && string.Equals(id.AsString, wanted, StringComparison.OrdinalIgnoreCase)
+            && item.GetValue("AllowedOutsideCatalog", BsonNull.Value) is BsonBoolean allowed
+            && allowed.Value);
+    }
 }

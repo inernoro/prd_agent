@@ -640,7 +640,8 @@ public class GatewayDataDomainGuardTests
         // 发布门禁说「都有人接」，每条真实请求回 MODEL_NOT_FOUND。那比没有闸门更糟：
         // 它让人以为这件事已经验过了（形状 8：拿一份不成立的证据当证明）。
         Assert.Contains("fb.Ne(\"HealthStatus\", 2)", catcherBody);
-        Assert.Contains("enabledModelPlatformById", catcherBody);
+        // 取整份模型文档而不只是平台 id：名录门要判它的模型名与放行标记。
+        Assert.Contains("enabledModelById", catcherBody);
 
         /*
           兑换所那一支要判到**别名**这一层，不是只判兑换所文档启用。
@@ -651,8 +652,9 @@ public class GatewayDataDomainGuardTests
           而那个调用方一条路都走不通。判据与写入侧、与运行时同一份。
         */
         Assert.Contains("enabledExchangeById", catcherBody);
-        Assert.Contains("ExchangeAliasPolicy.Declares(", catcherBody);
-        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(exchange, offering.AsNullableString(\"UpstreamModelId\"))", catcherBody);
+        // 别名这一层与名录门合在一个判据里（ExchangeRoutePasses 内部先 Declares 再判门），
+        // 它自己与运行时的对照在 ExchangeAliasPolicyMirrorTests。
+        Assert.Contains("offering.AsNullableString(\"UpstreamModelId\")", catcherBody);
 
         /*
           授权名单与场景能力是**同一道门**，不能只判前一半。
@@ -664,6 +666,16 @@ public class GatewayDataDomainGuardTests
         */
         Assert.Contains("LogicalModelCapabilityPolicy.SupportsAppCallerScenario(", catcherBody);
         Assert.Contains("GetStringArray(logical, \"Capabilities\")", catcherBody);
+
+        /*
+          名录门也要判：运行时在解析出口上会把名录外、又没盖放行标记的模型拒成
+          MODEL_NOT_IN_CATALOG。闸门不判的话，一条「模型启用、平台启用」却过不了名录门的线路
+          会被算成可用——发布放行，而经这条线路的每一次请求都失败。
+          两支（物理线路 / 兑换所别名）都要判，判据走镜像类（有逐例对照守卫）。
+        */
+        Assert.Contains("CatalogGatePolicy.PhysicalRoutePasses(", catcherBody);
+        Assert.Contains("CatalogGatePolicy.ExchangeRoutePasses(", catcherBody);
+        Assert.Contains("CatalogGatePolicy.EnforcesAsync(", catcherBody);
         Assert.Contains("AllowsCaller", catcherBody);
 
         // 残留的池字段不许让这道判断整个被跳过。

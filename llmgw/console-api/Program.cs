@@ -4972,7 +4972,15 @@ app.MapPost("/gw/pools/migrate-to-models", async (
           所以这一档不搬：报出来，等人给它一份显式名单再重跑。搬迁是幂等的，重跑不会重复建。
           （复用已有模型那条路不受影响：那条路本来就不动已有名单。）
         */
-        if (existing is null && restrictedSameType.Count > 0 && poolAllowlist.Count == 0)
+        /*
+          这道门不分新建与复用。
+
+          上一版只在 existing is null 时判，于是撞上「同标识的对外模型已经存在」就整个绕过去：
+          搬迁保留那个模型原有的授权名单，却把这个「谁都没被授权」的池的成员当线路挂上去——
+          一批原本谁都够不到的上游，一下子对所有获准使用那个模型的调用方开放
+          （那个模型名单为空时就是全租户）。比新建那条路更糟，因为它连一行新记录都不留。
+        */
+        if (restrictedSameType.Count > 0 && poolAllowlist.Count == 0)
         {
             result.Skipped.Add(new PoolMigrationSkip
             {
@@ -7119,6 +7127,7 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
             gwModels,
             gwPlatforms,
             gwModelExchanges,
+            gwMigrations,
             reportTenantId,
             caller.AsNullableString("RequestType"),
             caller.AsNullableString("AppCallerCode"));
@@ -7332,6 +7341,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             gwModels,
             gwPlatforms,
             gwModelExchanges,
+            gwMigrations,
             TenantAccess.GetRequired(http).TenantId,
             caller.AsNullableString("RequestType"),
             caller.AsNullableString("AppCallerCode"));
@@ -10096,6 +10106,7 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         gwModelExchanges,
         gwLogicalModels,
         gwModelOfferings,
+        gwMigrations,
         TenantAccess.GetRequired(http).TenantId,
         effectiveStatus,
         effectiveModelPoolId,
@@ -10478,6 +10489,7 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         gwModelExchanges,
         gwLogicalModels,
         gwModelOfferings,
+        gwMigrations,
         TenantAccess.GetRequired(http).TenantId,
         filter,
         targetStatus,
@@ -18290,6 +18302,7 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> gwModelExchanges,
     IMongoCollection<BsonDocument> gwLogicalModels,
     IMongoCollection<BsonDocument> gwModelOfferings,
+    IMongoCollection<BsonDocument> gwMigrations,
     string tenantId,
     FilterDefinition<BsonDocument> filter,
     string? targetStatus,
@@ -18316,6 +18329,7 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
             gwModelExchanges,
             gwLogicalModels,
             gwModelOfferings,
+            gwMigrations,
             tenantId,
             effectiveStatus,
             effectiveModelPoolId,
@@ -18377,6 +18391,7 @@ static async Task<string?> FindUnnamedCatcherAsync(
     IMongoCollection<BsonDocument> gwModels,
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> gwModelExchanges,
+    IMongoCollection<BsonDocument> gwMigrations,
     string tenantId,
     string? requestType,
     string? appCallerCode)
@@ -18389,8 +18404,24 @@ static async Task<string?> FindUnnamedCatcherAsync(
     // 目标可用性要查三张表，但一次调用里只查一遍——候选模型通常不止一个，
     // 逐个去打库会把一次发布门禁变成几十次往返。
     HashSet<string>? enabledPlatformIds = null;
-    Dictionary<string, string>? enabledModelPlatformById = null;
+    Dictionary<string, BsonDocument>? enabledModelById = null;
     Dictionary<string, BsonDocument>? enabledExchangeById = null;
+
+    /*
+      名录门这道闸也要判。
+
+      运行时在解析出口上还有一道 ApplyCatalogGateAsync：名录外、又没盖放行标记的模型
+      一律回 MODEL_NOT_IN_CATALOG。这道闸不判的话，一条「模型启用、平台启用」但过不了
+      名录门的线路会被算成可用——发布闸放行，而经这条线路的每一次请求都失败。
+
+      「要不要拦」的权威判据是两半：配置没降到 observe，且控制台那几条补标记迁移都跑完了。
+      控制台读不到数据面进程的配置（那是另一个容器的 IConfiguration），所以这里只能判后一半。
+      差别只在「有人用 observe 降过档」这一种紧急情况下出现，而那时这道闸会比运行时严
+      （报「没人接得住」）——宁可这样，也不能反过来放行一条必失败的线路。
+    */
+    bool? catalogGateEnforces = null;
+    async Task<bool> CatalogGateEnforcesAsync()
+        => catalogGateEnforces ??= await CatalogGatePolicy.EnforcesAsync(gwMigrations);
 
     async Task EnsureTargetsLoadedAsync()
     {
@@ -18401,11 +18432,15 @@ static async Task<string?> FindUnnamedCatcherAsync(
             .Select(x => x.GetStringOrEmpty("_id"))
             .Where(x => x.Length > 0)
             .ToHashSet(StringComparer.Ordinal);
-        enabledModelPlatformById = (await gwModels.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
-                .Project(Builders<BsonDocument>.Projection.Include("_id").Include("PlatformId"))
+        // 取整份模型文档：名录门要判它的模型名与放行标记，不只是平台 id。
+        enabledModelById = (await gwModels.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
+                .Project(Builders<BsonDocument>.Projection
+                    .Include("_id").Include("PlatformId").Include("ModelName")
+                    .Include("ModelNameNormalized").Include("AllowedOutsideCatalog"))
                 .ToListAsync())
             .Where(x => x.GetStringOrEmpty("_id").Length > 0)
-            .ToDictionary(x => x.GetStringOrEmpty("_id"), x => x.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal);
+            .GroupBy(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
         // 取整份兑换所文档而不只是 id：下面要判到**别名**那一层，
         // 只判「兑换所启用着」会把一条别名已被摘掉或单独停用的线路算成可用。
         enabledExchangeById = (await gwModelExchanges.Find(fb.And(tenantFilter, fb.Ne("Enabled", false)))
@@ -18444,19 +18479,38 @@ static async Task<string?> FindUnnamedCatcherAsync(
                   这道闸会说「有能用的线路」，而那个调用方一条路都走不通——闸门替一条
                   不存在的路作了保。判据与写入侧、与运行时同一份（ExchangeAliasPolicy）。
                 */
-                if (enabledExchangeById!.TryGetValue(targetId, out var exchange)
-                    && ExchangeAliasPolicy.Declares(
+                if (!enabledExchangeById!.TryGetValue(targetId, out var exchange)) continue;
+                var exchangeAlias = ExchangeAliasPolicy.EffectiveAlias(
+                    exchange, offering.AsNullableString("UpstreamModelId"));
+                if (CatalogGatePolicy.ExchangeRoutePasses(
                         exchange,
-                        ExchangeAliasPolicy.EffectiveAlias(exchange, offering.AsNullableString("UpstreamModelId"))))
+                        offering.AsNullableString("UpstreamModelId"),
+                        await CatalogGateEnforcesAsync()))
                 {
                     return true;
                 }
                 continue;
             }
             // 目标模型在不在、启用没有，以及它挂的平台启用没有——运行时这三样缺一条都解析不出来。
-            if (enabledModelPlatformById!.TryGetValue(targetId, out var platformId)
-                && platformId.Length > 0
-                && enabledPlatformIds!.Contains(platformId))
+            if (!enabledModelById!.TryGetValue(targetId, out var targetModel)) continue;
+            var targetPlatformId = targetModel.GetStringOrEmpty("PlatformId");
+            if (targetPlatformId.Length == 0 || !enabledPlatformIds!.Contains(targetPlatformId)) continue;
+            // 名录门判的是这条线路**实际打出去的那个名字**（UpstreamModelId 覆盖之后），
+            // 不是目标文档自己的名字——与对外清单、就绪探针、运行时同一个取值口径。
+            var effectiveUpstream = offering.AsNullableString("UpstreamModelId") is { Length: > 0 } overridden
+                ? overridden.Trim()
+                : targetModel.GetStringOrEmpty("ModelName");
+            var gateEnforces = await CatalogGateEnforcesAsync();
+            // 名录内零额外开销；只有名录外的才多一次带索引的读，与运行时同一个顺序。
+            var sameName = !gateEnforces || ModelCatalog.Contains(effectiveUpstream)
+                ? []
+                : await gwModels.Find(fb.And(
+                    tenantFilter,
+                    fb.Eq("PlatformId", targetPlatformId),
+                    fb.Or(
+                        fb.Eq("ModelName", effectiveUpstream),
+                        fb.Eq("ModelNameNormalized", effectiveUpstream.ToLowerInvariant())))).ToListAsync();
+            if (CatalogGatePolicy.PhysicalRoutePasses(effectiveUpstream, sameName, gateEnforces))
             {
                 return true;
             }
@@ -18526,6 +18580,7 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> gwModelExchanges,
     IMongoCollection<BsonDocument> gwLogicalModels,
     IMongoCollection<BsonDocument> gwModelOfferings,
+    IMongoCollection<BsonDocument> gwMigrations,
     string tenantId,
     string? status,
     string? modelPoolId,
@@ -18559,7 +18614,7 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
       启用、授权放行、且真有一条运行时可用的线路）。
     */
     var catcher = await FindUnnamedCatcherAsync(
-        gwLogicalModels, gwModelOfferings, gwModels, gwPlatforms, gwModelExchanges,
+        gwLogicalModels, gwModelOfferings, gwModels, gwPlatforms, gwModelExchanges, gwMigrations,
         tenantId, requestType, appCallerCode);
     if (catcher is null)
     {

@@ -305,7 +305,12 @@ public class PoolMigrationPlannerTests
         var handler = MigrationHandler();
 
         // 两种空集要分开：判的是「设过限制吗」而不只是「名单空不空」。
-        Assert.Contains("existing is null && restrictedSameType.Count > 0 && poolAllowlist.Count == 0", handler);
+        Assert.Contains("restrictedSameType.Count > 0 && poolAllowlist.Count == 0", handler);
+
+        // 这道门不分新建与复用。只在 existing is null 时判的话，撞上同标识的已有模型就整个绕过去：
+        // 保留那个模型原有的名单，却把「谁都没被授权」的池的成员当线路挂上去——
+        // 一批原本谁都够不到的上游对所有获准使用那个模型的调用方开放，比新建那条路更糟。
+        Assert.DoesNotContain("existing is null && restrictedSameType.Count > 0", handler);
 
         // 这一档不搬，而不是搬成一个空名单（空名单 = 对所有人开放）。
         Assert.Contains("这种「谁都不许用」落到对外模型上会变成「谁都能用」", handler);

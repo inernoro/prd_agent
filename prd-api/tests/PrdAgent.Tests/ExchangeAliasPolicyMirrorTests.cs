@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.LlmGw.LogicalModels;
@@ -84,6 +85,75 @@ public class ExchangeAliasPolicyMirrorTests
         Assert.Equal(
             GatewayCatalogGate.ExchangeDeclares(authority, probe),
             ExchangeAliasPolicy.Declares(mirror, probe));
+    }
+
+    /// <summary>
+    /// 「名录外的这条别名有没有被放行」也必须与权威实现逐例同结论。
+    ///
+    /// 旧形态兑换所（Models 为空）整体视为放行；新形态则必须那一条自己带着标记。
+    /// 差一点的后果是发布闸替一条运行时必拒的线路作保，或把一条能用的报成不可用。
+    /// </summary>
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(true, false, false)]
+    [InlineData(false, true, false)]
+    public void 名录外放行标记与运行时权威同结论(bool declared, bool allowed, bool expected)
+    {
+        var authority = new ModelExchange
+        {
+            Id = "ex-1",
+            Name = "ex",
+            Models = [new ExchangeModel
+            {
+                ModelId = declared ? "gpt-4o" : "other",
+                Enabled = true,
+                AllowedOutsideCatalog = allowed,
+            }],
+        };
+        var mirror = new BsonDocument
+        {
+            { "_id", "ex-1" },
+            { "ModelAlias", string.Empty },
+            { "ModelAliases", new BsonArray() },
+            {
+                "Models",
+                new BsonArray(new[]
+                {
+                    new BsonDocument
+                    {
+                        { "ModelId", declared ? "gpt-4o" : "other" },
+                        { "Enabled", true },
+                        { "AllowedOutsideCatalog", allowed },
+                    },
+                })
+            },
+        };
+
+        Assert.Equal(expected, GatewayCatalogGate.ExchangeAliasAllowedOutsideCatalog(authority, "gpt-4o"));
+        Assert.Equal(expected, ExchangeAliasPolicy.AliasAllowedOutsideCatalog(mirror, "gpt-4o"));
+    }
+
+    /// <summary>旧形态兑换所（Models 为空）整体视为放行，两侧同结论。</summary>
+    [Fact]
+    public void 旧形态兑换所整体视为放行()
+    {
+        var (authority, mirror) = Build("legacy-alias", ["legacy-2"], null);
+        Assert.True(GatewayCatalogGate.ExchangeAliasAllowedOutsideCatalog(authority, "legacy-alias"));
+        Assert.True(ExchangeAliasPolicy.AliasAllowedOutsideCatalog(mirror, "legacy-alias"));
+    }
+
+    /// <summary>
+    /// 名录门要的那几条补标记迁移，两侧必须是同一批——控制台少认一条，
+    /// 它就会在迁移还没跑完时提前开始拦，把存量模型集体报成不可用。
+    /// </summary>
+    [Fact]
+    public void 名录门的迁移清单两侧同一批()
+    {
+        Assert.Equal(
+            GatewayCatalogMigrations.RequiredIds.OrderBy(x => x, StringComparer.Ordinal).ToList(),
+            CatalogGatePolicy.RequiredMigrationIds.OrderBy(x => x, StringComparer.Ordinal).ToList());
+        Assert.Equal(GatewayCatalogMigrations.CollectionName, CatalogGatePolicy.MigrationCollectionName);
+        Assert.Equal(GatewayCatalogMigrations.CompletedAtField, CatalogGatePolicy.CompletedAtField);
     }
 
     [Theory]
