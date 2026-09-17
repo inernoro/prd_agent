@@ -1693,12 +1693,13 @@ public class ModelResolver : IModelResolver
         return claimed;
     }
 
+    /// <summary>
+    /// 判据本体已收到 <see cref="GatewayCircuitBreakerPolicy.IsHalfOpenEligible"/>：
+    /// 对外清单那一侧也要问同一个问题，两处各写一份必然漂（第 80 轮 review）。这里只做转发。
+    /// </summary>
     internal static bool IsHalfOpenEligible(ModelGroupItem member, DateTime now, DateTime cutoff)
-        => member.HealthStatus == ModelHealthStatus.Unavailable
-           && (!member.HalfOpenLeaseUntil.HasValue || member.HalfOpenLeaseUntil <= now)
-           && ((member.ManualRecoveryAt.HasValue && member.ManualRecoveryAt <= now)
-               || !member.LastFailedAt.HasValue
-               || member.LastFailedAt <= cutoff);
+        => GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+            member.HealthStatus, member.HalfOpenLeaseUntil, member.ManualRecoveryAt, member.LastFailedAt, now, cutoff);
 
     /// <summary>
     /// 这些模型类型在专属池不可用时必须**失败关闭**，不许降级到 legacy 直连兜底。

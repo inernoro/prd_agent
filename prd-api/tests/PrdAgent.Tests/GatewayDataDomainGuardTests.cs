@@ -7163,6 +7163,80 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("点「手动恢复」不等冷却", modelsPage);
     }
 
+    /// <summary>
+    /// 晋升回滚不许无条件删掉替身——它可能已经当过活的路由，被在途异步任务记下了 id。
+    ///
+    /// 第 79 轮把回滚顺序从「先复活再删」改成「先删再复活」，解决了撞唯一索引，
+    /// 却换来一个更坏的：晋升成功而客户端看到超时时，那条替身正被已受理的视频任务引用着，
+    /// 删掉之后按 id 再也查不回来，一次已经付费的任务轮询不到、下载不了——而
+    /// 「换线路要生成新 id」这整套机制存在的理由就是护住这一条（第 80 轮 review 的 P1）。
+    ///
+    /// 现在的判据：删只允许在「还挂着 staging 标记」这个条件下发生（那种替身从没进过调度），
+    /// 否则退休而不是删。两条一起钉：删是条件删、以及存在退休那一支。
+    /// </summary>
+    [Fact]
+    public void 晋升回滚不许无条件删掉已经活过的替身()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        var bodyAt = program.IndexOf("async Task RollbackPromotionAsync()", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到回滚函数");
+        var bodyEnd = program.IndexOf("UpdateResult promoted;", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到回滚函数的结尾");
+        var body = program[bodyAt..bodyEnd];
+
+        var deleteAt = body.IndexOf("DeleteOneAsync", StringComparison.Ordinal);
+        Assert.True(deleteAt > 0, "回滚里没有删除替身这一步");
+        // 删除那一句的条件里必须带 staging 标记：无条件删就是上面说的那种丢单。
+        var deleteEnd = body.IndexOf(";", deleteAt, StringComparison.Ordinal);
+        Assert.True(deleteEnd > deleteAt);
+        Assert.Contains("stagingMarker", body[deleteAt..deleteEnd], StringComparison.Ordinal);
+
+        // 删不掉的那一支要退休它，而不是放着不管：不退休的话它与原线路同身份，复活会撞索引。
+        Assert.Contains("DeletedCount == 0", body, StringComparison.Ordinal);
+        Assert.Contains("\"SupersededByOfferingId\", offeringId", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 对外清单不许把「已摘掉但过了冷却」的线路一并排除掉。
+    ///
+    /// 排除掉会形成死锁：只剩这种线路的模型从 /v1/models 消失 → 靠清单发现模型的客户端
+    /// 永远不会发出那次请求 → 而那次请求正是唯一能触发半开试探、让它回来的东西。
+    /// 连管理员点过手动恢复都救不回来（第 80 轮 review）。
+    ///
+    /// 判的是两件事：库查询里不再有「排除不可用」那一句，以及真的用了共享的半开判据。
+    /// 只判后者的话，两句同时留着也能绿——那时清单仍然看不见半开候选。
+    /// </summary>
+    [Fact]
+    public void 对外清单要认半开候选()
+    {
+        var root = LocateRepoRoot();
+        var endpoint = File.ReadAllText(Path.Combine(
+            root, "llmgw", "serving", "GatewayModelCatalogEndpoint.cs"));
+
+        Assert.DoesNotContain("of.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)", endpoint, StringComparison.Ordinal);
+        Assert.Contains("GatewayCircuitBreakerPolicy.IsHalfOpenEligible", endpoint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 池搬迁判「这个调用方在不在目标模型的授权名单里」要按 appCaller 身份比，不按字节。
+    ///
+    /// 运行时那一侧是 OrdinalIgnoreCase（GatewayCapabilityContract.SupportsAppCallerScenario）。
+    /// 按字节比的话：名单里写的是 Foo、绑池的调用方是 foo 时，搬迁判它「不在名单里」而跳过
+    /// 认领转移，可运行时明明认它——池退场之后这个调用方悄悄落到用途默认，而搬迁报告说的是
+    /// 「授权名单里没有它」，一句会把人带偏的假话（第 80 轮 review）。
+    /// </summary>
+    [Fact]
+    public void 搬迁的授权名单比对要按身份()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        Assert.Contains("effectiveAllowlist.Contains(code, AppCallerIdentityPolicy.Comparer)", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("effectiveAllowlist.Contains(code, StringComparer.Ordinal)", program, StringComparison.Ordinal);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

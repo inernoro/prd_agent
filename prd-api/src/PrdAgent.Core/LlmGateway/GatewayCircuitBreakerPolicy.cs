@@ -29,6 +29,33 @@ public static class GatewayCircuitBreakerPolicy
     public const string HalfOpenAfterSecondsKey = "LlmGateway:CircuitBreaker:HalfOpenAfterSeconds";
     public const string HalfOpenLeaseSecondsKey = "LlmGateway:CircuitBreaker:HalfOpenLeaseSeconds";
 
+    /// <summary>
+    /// 一条被摘掉的线路（或池成员），此刻还够不够格被拿去做半开试探。
+    ///
+    /// 收在这里而不是各写各的：这个判断至少有三个消费方，而它们的口径必须一模一样——
+    ///   - 解析时的认领（ModelResolver）：谁真的被顶到发送队列首位；
+    ///   - 对外清单 /v1/models：一个只剩半开候选的模型还算不算「能调」。
+    ///     漏了它会形成死锁：模型从清单里消失 → 靠清单发现模型的客户端永远不会发出
+    ///     那次请求 → 而那次请求正是唯一能触发试探、让它回来的东西。**连管理员点过
+    ///     手动恢复都救不回来**（第 80 轮 review）；
+    ///   - 控制台「调用全貌」面板：那句「下一条请求可能先拿它做试探」。
+    ///
+    /// 判据三条：没有还没过期的半开租约、而且「人工点了恢复」或「上次失败已过冷却/根本没失败过」。
+    /// Enabled 不在这里——它在各消费方自己的过滤条件里（认领那一侧写在 Mongo 过滤器上）。
+    /// </summary>
+    public static bool IsHalfOpenEligible(
+        ModelHealthStatus healthStatus,
+        DateTime? halfOpenLeaseUntil,
+        DateTime? manualRecoveryAt,
+        DateTime? lastFailedAt,
+        DateTime nowUtc,
+        DateTime cutoffUtc)
+        => healthStatus == ModelHealthStatus.Unavailable
+           && (!halfOpenLeaseUntil.HasValue || halfOpenLeaseUntil <= nowUtc)
+           && ((manualRecoveryAt.HasValue && manualRecoveryAt <= nowUtc)
+               || !lastFailedAt.HasValue
+               || lastFailedAt <= cutoffUtc);
+
     /// <summary>按连续失败次数判定健康状态。</summary>
     public static ModelHealthStatus ClassifyByFailures(int consecutiveFailures)
         => consecutiveFailures >= FailuresToUnavailable ? ModelHealthStatus.Unavailable

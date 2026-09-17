@@ -145,13 +145,30 @@ public static class GatewayModelCatalogEndpoint
         //
         // 运行时那一侧的判据在 ModelResolver：候选线路 Ne(HealthStatus, Unavailable)，
         // 且目标模型与平台都必须 Enabled，兑换所同理。这里逐条对齐。
-        var routes = await offerings
+        //
+        // 但「不可用」不等于「这次调不通」：运行时在挑常规队列之前会先试着认领一条已摘掉、
+        // 且过了冷却（或被人工点过恢复）的线路做半开试探。把这一档一并排除掉会形成死锁——
+        // 一个只剩这种线路的模型从清单里消失，靠清单发现模型的客户端就永远不会发出那次请求，
+        // 而那次请求正是唯一能触发试探、让它回来的东西；**连管理员点过手动恢复都救不回来**
+        // （第 80 轮 review）。
+        //
+        // 所以查询不再在库里排除不可用，改为取回来后按共享判据在内存里过一遍。
+        // 这么写是刻意的：半开资格与运行时认领用的是**同一个纯函数**，不存在「Mongo 过滤器
+        // 与纯函数各写一份然后漂移」的余地（形状 3）。多取回来的那几条是熔断线路，量很小。
+        var nowUtc = DateTime.UtcNow;
+        var halfOpenCutoff = nowUtc.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
+            config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
+        var routes = (await offerings
             .Find(of.And(
                 of.Eq(x => x.TenantId, tenantId),
                 of.In(x => x.LogicalModelId, logicalIds),
-                of.Eq(x => x.Enabled, true),
-                of.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
-            .ToListAsync(ct);
+                of.Eq(x => x.Enabled, true)))
+            .ToListAsync(ct))
+            .Where(x => x.HealthStatus != ModelHealthStatus.Unavailable
+                || GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                    x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt,
+                    nowUtc, halfOpenCutoff))
+            .ToList();
 
         // 目标可用性：物理模型与它的平台都得在且启用。
         var targetIds = routes.Where(x => x.TargetKind == "model").Select(x => x.TargetId).Distinct(StringComparer.Ordinal).ToList();

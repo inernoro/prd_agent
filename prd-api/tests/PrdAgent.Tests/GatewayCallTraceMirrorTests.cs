@@ -454,6 +454,9 @@ public sealed class GatewayCallTraceMirrorTests
             ManualRecoveryAt = At(manualOffsetSeconds),
             LastFailedAt = At(failedOffsetSeconds),
         };
+        // 权威侧已收敛到 GatewayCircuitBreakerPolicy（第 80 轮：对外清单也要问同一个问题）。
+        // 这里仍从 ModelResolver 那个入口调，是为了连「它真的转发过去了」一起钉住——
+        // 直接比 Core 那一份的话，有人把 ModelResolver 改回自带一份也测不出来。
         var authoritative = ModelResolver.IsHalfOpenEligible(member, now, cutoff);
         var mirror = CallTracePlanner.IsHalfOpenProbeCandidate(
             healthStatus: health,

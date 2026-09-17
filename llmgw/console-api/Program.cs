@@ -5077,7 +5077,12 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 continue;
             }
 
-            if (effectiveAllowlist.Count > 0 && !effectiveAllowlist.Contains(code, StringComparer.Ordinal))
+            // 授权名单的比对按 appCaller 身份走（不分大小写），与运行时那一侧
+            // （GatewayCapabilityContract.SupportsAppCallerScenario 用 OrdinalIgnoreCase）一致。
+            // 按字节比的话：名单里写的是 Foo、绑池的调用方是 foo 时，这里判它「不在名单里」
+            // 而跳过认领转移，可运行时明明认它——池退场之后这个调用方悄悄落到用途默认，
+            // 而搬迁报告说的是「授权名单里没有它」，一句会把人带偏的假话（第 80 轮 review）。
+            if (effectiveAllowlist.Count > 0 && !effectiveAllowlist.Contains(code, AppCallerIdentityPolicy.Comparer))
             {
                 result.Skipped.Add(new PoolMigrationSkip
                 {
@@ -7348,12 +7353,40 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
               OFFERING_PROMOTION_LEFT_PARTIAL，于是接口告诉管理员「改动没生效」，
               而实际上那次改动正活着（第 79 轮 review）。
 
-              先删替身就没有这个歧义：晋升没发生时它只是一条挂着 staging 标记的悬空文档，
-              晋升发生了它就是那条活的——两种情形删掉之后，身份都空了出来，
+              先处理替身就没有这个歧义：两种情形处理完之后身份都空了出来，
               复活原线路必然能过索引。「成功与否殊途同归」这句话要成立，就得是这个顺序。
+              至于「处理」是删还是退休，见下面那段——那是第 80 轮补的另一半。
             */
-            await gwModelOfferings.DeleteOneAsync(
-                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+            /*
+              第一步分两种情形，判据是**它还挂不挂着 staging 标记**，不需要先读一次：
+
+                - 还挂着 → 晋升那一句没生效过，这条替身从没进过调度，不可能有谁记下它的 id，
+                  直接删掉最干净；
+                - 挂不住了（条件删的 DeletedCount 为 0）→ 说明标记已被 Unset，它当过活的路由。
+                  **这时绝不能删**：晋升成功到客户端看到超时之间，已受理的异步任务
+                  （视频那一类）可能已经把这个 offeringId 持久化下来，删了之后
+                  ResolveOfferingAsync 再也查不回来，一次已经付费的任务就轮询不到、下载不了
+                  ——而那恰恰是整个「换线路生成新 id」机制存在的理由（第 80 轮 review 的 P1，
+                  正是上一轮我自己改出来的：把撞索引换成了丢单）。
+                  所以退休而不是删：停用 + 标成被原线路取代，它离开调度、但按 id 仍查得回来。
+
+              两种情形都让替身退出 v3 身份（那个索引把 SupersededByOfferingId 也算进键里），
+              所以下一步复活原线路必然过得了索引。
+            */
+            var removedStaging = await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.And(
+                    fb.Eq("_id", replacementId),
+                    fb.Eq("SupersededByOfferingId", stagingMarker))));
+            if (removedStaging.DeletedCount == 0)
+            {
+                await gwModelOfferings.UpdateOneAsync(
+                    TenantAccess.Filter(http, fb.Eq("_id", replacementId)),
+                    Builders<BsonDocument>.Update
+                        .Set("Enabled", false)
+                        .Set("SupersededByOfferingId", offeringId)
+                        .Set("SupersededAt", DateTime.UtcNow)
+                        .Set("UpdatedAt", DateTime.UtcNow));
+            }
             await gwModelOfferings.UpdateOneAsync(
                 TenantAccess.Filter(http, fb.And(
                     fb.Eq("_id", offeringId),
@@ -7409,7 +7442,7 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                 return Json(ApiEnvelope<ModelOfferingItem>.Fail(
                     "OFFERING_PROMOTION_LEFT_PARTIAL",
                     $"新路由没能接管流量（{ex.Message}），回滚也失败了（{rollbackFailure.Message}）。"
-                    + $"回滚是先删替身再复活原线路，所以替身 {replacementId} 可能已经删掉、"
+                    + $"回滚是先处理替身再复活原线路，所以替身 {replacementId} 可能已经删掉或退休、"
                     + $"而原线路 {offeringId} 还停用着——这个对外模型现在可能一条可用线路都没有。"
                     + "刷新看一眼，手动把原线路启用回来"),
                     jsonOptions, 500);
