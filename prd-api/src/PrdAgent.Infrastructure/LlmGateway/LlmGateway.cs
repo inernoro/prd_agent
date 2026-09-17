@@ -4889,11 +4889,19 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var answerText = responseForLog.Length > 10000
                 ? responseForLog.Substring(0, 10000) + "...[truncated]"
                 : responseForLog;
-            var tokenUsage = rawUsage.InputTokens is not null || rawUsage.OutputTokens is not null
+            // 缓存那两截也要带上：不带的话计价只看到输入/输出两个数，
+            // OpenAI 那边把命中缓存的部分含在 prompt_tokens 里、会按输入全价多收，
+            // Anthropic 那边分开报、那两截直接不进账。两种都让 EstimatedCostUsd 失真。
+            var tokenUsage = rawUsage.InputTokens is not null
+                || rawUsage.OutputTokens is not null
+                || rawUsage.CacheReadInputTokens is not null
+                || rawUsage.CacheCreationInputTokens is not null
                 ? new GatewayTokenUsage
                 {
                     InputTokens = rawUsage.InputTokens,
                     OutputTokens = rawUsage.OutputTokens,
+                    CacheReadInputTokens = rawUsage.CacheReadInputTokens,
+                    CacheCreationInputTokens = rawUsage.CacheCreationInputTokens,
                     Source = "response_body"
                 }
                 : null;
@@ -4915,8 +4923,8 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     },
                     InputTokens: rawUsage.InputTokens,
                     OutputTokens: rawUsage.OutputTokens,
-                    CacheCreationInputTokens: null,
-                    CacheReadInputTokens: null,
+                    CacheCreationInputTokens: rawUsage.CacheCreationInputTokens,
+                    CacheReadInputTokens: rawUsage.CacheReadInputTokens,
                     TokenUsageSource: tokenUsage?.Source ?? "missing",
                     ImageSuccessCount: rawUsage.ImageSuccessCount,
                     AnswerText: answerText,

@@ -11,6 +11,8 @@ internal sealed record RawGatewayOutputImage(
 internal sealed record RawGatewayUsage(
     int? InputTokens,
     int? OutputTokens,
+    int? CacheReadInputTokens,
+    int? CacheCreationInputTokens,
     int? ImageSuccessCount,
     string? FinishReason,
     decimal? ProviderReportedCost,
@@ -20,6 +22,8 @@ internal sealed record RawGatewayUsage(
     public bool HasReportedUsage =>
         InputTokens is not null
         || OutputTokens is not null
+        || CacheReadInputTokens is not null
+        || CacheCreationInputTokens is not null
         || ImageSuccessCount is not null
         || ProviderReportedCost is not null;
 }
@@ -48,6 +52,22 @@ internal static class RawGatewayUsageParser
             var outputTokens =
                 ReadInt(usage, "completion_tokens", "output_tokens", "candidatesTokenCount")
                 ?? ReadInt(usageMetadata, "candidatesTokenCount", "outputTokenCount");
+            /*
+              缓存 token 也要读出来，兼容入口这条路此前一律记 null。
+
+              后果分两头，都不是小数：OpenAI 把命中缓存的部分**含在** prompt_tokens 里，
+              不读出来就按输入全价收，账比实际高；Anthropic 分三个数报，不读出来那两截
+              直接不进账，账比实际低。两种都会让 EstimatedCostUsd 失真，而预算闸读的就是它。
+              判据与计价那一侧同源（GatewayCostCalculator.CacheReadCountedInsideInput 按协议分）。
+            */
+            var promptDetails = TryGetObject(usage ?? default, "prompt_tokens_details")
+                ?? TryGetObject(usage ?? default, "promptTokensDetails");
+            var cacheReadTokens =
+                ReadInt(usage, "cache_read_input_tokens")
+                ?? ReadInt(promptDetails, "cached_tokens", "cachedTokens")
+                ?? ReadInt(usageMetadata, "cachedContentTokenCount");
+            var cacheCreationTokens = ReadInt(usage, "cache_creation_input_tokens");
+
             var providerReportedCost =
                 ReadDecimal(usage, "cost", "cost_usd", "total_cost")
                 ?? ReadDecimal(root, "cost", "cost_usd", "total_cost");
@@ -65,6 +85,8 @@ internal static class RawGatewayUsageParser
             return new RawGatewayUsage(
                 inputTokens,
                 outputTokens,
+                cacheReadTokens,
+                cacheCreationTokens,
                 imageSuccessCount,
                 finishReason,
                 providerReportedCost,
@@ -93,7 +115,7 @@ internal static class RawGatewayUsageParser
         }
     }
 
-    private static RawGatewayUsage Empty() => new(null, null, null, null, null, null, []);
+    private static RawGatewayUsage Empty() => new(null, null, null, null, null, null, null, null, []);
 
     private static JsonElement? TryGetObject(JsonElement element, string name)
     {

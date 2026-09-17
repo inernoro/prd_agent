@@ -5918,10 +5918,34 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
             jsonOptions, 409);
     }
 
+    /*
+      上面那一读只是为了给人一句能看懂的拒绝理由，它挡不住竞态：读完到删之间，
+      另一个管理员完全可能刚把这条模型设成用途默认、或者把一个调用方的认领转给它。
+      所以真正的闸在删除语句的谓词上——**删的时候**再判一次「它没在接不点名的请求」，
+      没删到就说明状态在这几毫秒里变了，如实回冲突。
+
+      顺序也要对：先条件删模型，删成了才删它名下的线路。反过来做的话，一次被拒绝的删除
+      已经把线路删光了——拒绝还带着破坏，比不拒绝更糟。
+    */
+    var deleteFilter = Builders<BsonDocument>.Filter.And(
+        filter,
+        Builders<BsonDocument>.Filter.Ne("IsDefaultForType", true),
+        Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Exists("DefaultForAppCallerCodes", false),
+            Builders<BsonDocument>.Filter.Size("DefaultForAppCallerCodes", 0)));
+    var deleted = await gwLogicalModels.DeleteOneAsync(deleteFilter);
+    if (deleted.DeletedCount == 0)
+    {
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_STILL_CATCHES_TRAFFIC",
+            "这条模型在刚才这一瞬被设成了默认、或者被某个调用方认领了，所以没有删。"
+            + "刷新一下看看它现在接着什么，先把默认与认领转给别的模型，再回来删"),
+            jsonOptions, 409);
+    }
+
     var offeringFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id));
     var offeringCount = (int)await gwModelOfferings.CountDocumentsAsync(offeringFilter);
     await gwModelOfferings.DeleteManyAsync(offeringFilter);
-    await gwLogicalModels.DeleteOneAsync(filter);
 
     await WriteOperationAuditAsync(
         operationAudits, http,

@@ -455,4 +455,64 @@ public class GatewayWhitelistPublishingTests
         Assert.DoesNotContain("AllowedModelPoolIds", failure);
         Assert.DoesNotContain("为该 appCaller 绑定模型池", failure);
     }
+
+    /// <summary>
+    /// 兼容入口（raw）这条路也要把缓存 token 读出来，否则计价必然失真。
+    ///
+    /// 两头都不是小数：OpenAI 把命中缓存的部分**含在** prompt_tokens 里，不读出来就按输入
+    /// 全价收，账比实际高；Anthropic 分三个数报，不读出来那两截直接不进账，账比实际低。
+    /// 而预算闸读的就是 EstimatedCostUsd。
+    /// </summary>
+    [Fact]
+    public void 兼容入口也解析缓存token()
+    {
+        var parser = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/RawGatewayUsageParser.cs");
+
+        // 三家协议的字段名都要认，少认一家就是那一家的账错。
+        foreach (var field in new[]
+                 {
+                     "cache_read_input_tokens",
+                     "cache_creation_input_tokens",
+                     "cached_tokens",
+                     "cachedContentTokenCount",
+                 })
+        {
+            Assert.Contains(field, parser);
+        }
+
+        // 读出来还要真的接进计价与落库，不然就是读了个寂寞（形状 2：链路只建一半）。
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+        Assert.Contains("CacheReadInputTokens = rawUsage.CacheReadInputTokens", gateway);
+        Assert.Contains("CacheCreationInputTokens = rawUsage.CacheCreationInputTokens", gateway);
+        Assert.DoesNotContain("CacheCreationInputTokens: null,", gateway);
+    }
+
+    /// <summary>
+    /// 探针的两层挑选要与运行时同序同语义：先按认领选出那一条，再看它能不能用。
+    ///
+    /// 反过来做（先筛掉没有可用线路的，再找认领）会让「认领了这个调用方、但线路全挂」的模型
+    /// 从候选里消失，判据接着挑中一个健康的用途默认并报绿——而运行时按认领选中前者、
+    /// 解析不出来就如实失败，**不会**回头去试用途默认。
+    /// </summary>
+    [Fact]
+    public void 探针先按认领挑再看它能不能用()
+    {
+        var probe = ReadRepoFile("llmgw/serving/GatewayServingReadinessProbe.cs");
+        var start = probe.IndexOf("private static bool HasLogicalCatcher", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        var body = probe[start..];
+
+        // 候选集合按用途取全量，**不**在这里先按可用性筛。
+        var sameTypeAt = body.IndexOf("var sameType = view.EnabledLogicalModels", StringComparison.Ordinal);
+        var claimAt = body.IndexOf("DefaultForAppCallerCodes", StringComparison.Ordinal);
+        var usableAt = body.IndexOf("view.RoutableLogicalModelIds.Contains", StringComparison.Ordinal);
+        Assert.True(sameTypeAt > 0 && claimAt > sameTypeAt, "认领要在同用途全量里挑");
+        Assert.True(usableAt > sameTypeAt, "可用性判定不能排在挑选之前");
+
+        // 排序与运行时一致：存量里万一有两条，两边取的必须是同一条。
+        Assert.Contains("OrderBy(x => x.DisplayOrder)", body);
+        Assert.Contains("ThenBy(x => x.PublicId, StringComparer.Ordinal)", body);
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)", resolver);
+    }
 }

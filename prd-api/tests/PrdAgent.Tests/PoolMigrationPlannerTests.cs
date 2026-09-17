@@ -470,7 +470,7 @@ public class PoolMigrationPlannerTests
         Assert.Contains("MODEL_STILL_CATCHES_TRAFFIC", console);
         var deleteAt = console.IndexOf("app.MapDelete(\"/gw/logical-models/{id}\"", StringComparison.Ordinal);
         Assert.True(deleteAt > 0);
-        var deleteEnd = console.IndexOf("await gwLogicalModels.DeleteOneAsync(filter);", deleteAt, StringComparison.Ordinal);
+        var deleteEnd = console.IndexOf("logical-model.delete", deleteAt, StringComparison.Ordinal);
         Assert.True(deleteEnd > deleteAt);
         var deleteBody = console[deleteAt..deleteEnd];
         Assert.Contains("IsDefaultForType", deleteBody);
@@ -481,6 +481,12 @@ public class PoolMigrationPlannerTests
         Assert.True(
             blockAt > 0 && deleteOfferingsAt > blockAt,
             "拦截必须排在删线路之前，否则拒绝的那次删除已经把线路删掉了");
+
+        // 光靠「先读一遍再删」挡不住竞态：读完到删之间，另一个管理员完全可能刚把它设成默认、
+        // 或者把一个调用方的认领转给它。真正的闸要长在删除语句的谓词上，没删到就回冲突。
+        Assert.Contains("Builders<BsonDocument>.Filter.Ne(\"IsDefaultForType\", true)", deleteBody);
+        Assert.Contains("Builders<BsonDocument>.Filter.Size(\"DefaultForAppCallerCodes\", 0)", deleteBody);
+        Assert.Contains("deleted.DeletedCount == 0", deleteBody);
 
         // 前端先行拦一道：不要把人放进「输 publicId 确认」之后再拒，那是白走一趟。
         var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");

@@ -366,30 +366,47 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
     private static bool HasLogicalCatcher(GatewayAppCallerRecord caller, TenantRoutingView view)
     {
         if (string.IsNullOrWhiteSpace(caller.RequestType)) return false;
-        var candidates = view.EnabledLogicalModels
-            .Where(x => string.Equals(x.ModelType, caller.RequestType, StringComparison.Ordinal)
-                && view.RoutableLogicalModelIds.Contains(x.Id))
-            .ToList();
-        if (candidates.Count == 0) return false;
 
-        // 被选中的那个候选还得满足这个调用方的场景能力要求。
+        /*
+          挑选与「这一条能不能用」的顺序不能颠倒。
+
+          运行时是：先按认领选出**那一条**，再去解析它；解析不出来就如实失败，
+          **不会**回头去试用途默认（见 TryResolveDefaultLogicalModelAsync：第二层只在
+          第一层一条都没查到时才走，而不是在第一层那条不可用时才走）。
+
+          上一版先按「有可用线路」筛掉一批再找认领，于是一个「认领了这个调用方、但线路全挂」
+          的模型会从候选里消失，判据接着挑中一个健康的用途默认，报绿——而运行时那个调用方的
+          每一次不点名请求都失败。少一步筛选顺序，灯就替另一条路作了保。
+
+          排序也要跟运行时一致（DisplayOrder，再 PublicId）：存量里万一有两条，
+          取的必须是同一条，否则「哪一条被选中」在两边看运气。
+        */
+        var sameType = view.EnabledLogicalModels
+            .Where(x => string.Equals(x.ModelType, caller.RequestType, StringComparison.Ordinal))
+            .OrderBy(x => x.DisplayOrder)
+            .ThenBy(x => x.PublicId, StringComparer.Ordinal)
+            .ToList();
+        if (sameType.Count == 0) return false;
+
+        // 被选中的那个候选还得满足这个调用方的场景能力要求，且真的有一条能用的线路。
         //
-        // 不判的话会出现这种组合：模型 A 认领了这个调用方但不具备它要的能力，
+        // 能力不判的话会出现这种组合：模型 A 认领了这个调用方但不具备它要的能力，
         // 模型 B 具备能力却没认领它。router 组件看 A 判绿、场景组件看 B 也判绿，
         // 而运行时按认领选中 A，回一个能力不匹配——两个组件各自为真，合起来是假的。
         // 判据用的是运行时那一份（GatewayCapabilityContract），不另写近似。
-        bool Serves(GatewayLogicalModel model)
-            => GatewayCapabilityContract.SupportsAppCallerScenario(
-                model.Capabilities, model.AllowedAppCallerCodes, caller.AppCallerCode);
+        bool Usable(GatewayLogicalModel model)
+            => view.RoutableLogicalModelIds.Contains(model.Id)
+                && GatewayCapabilityContract.SupportsAppCallerScenario(
+                    model.Capabilities, model.AllowedAppCallerCodes, caller.AppCallerCode);
 
-        // 第一层：谁认领了它。认领是排他的，所以只看被认领的那个候选，不看别人。
-        var claimed = candidates.FirstOrDefault(x => x.DefaultForAppCallerCodes
+        // 第一层：谁认领了它。认领是排他的——挑中之后成败就看它自己，不再往下找。
+        var claimed = sameType.FirstOrDefault(x => x.DefaultForAppCallerCodes
             .Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase));
-        if (claimed is not null) return Serves(claimed);
+        if (claimed is not null) return Usable(claimed);
 
-        // 第二层：这个用途的默认。
-        var typeDefault = candidates.FirstOrDefault(x => x.IsDefaultForType);
-        return typeDefault is not null && Serves(typeDefault);
+        // 第二层：这个用途的默认。只有「一条认领都没有」时才走到这里。
+        var typeDefault = sameType.FirstOrDefault(x => x.IsDefaultForType);
+        return typeDefault is not null && Usable(typeDefault);
     }
 
     /// <summary>
