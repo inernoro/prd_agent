@@ -1645,18 +1645,15 @@ public class GatewayDataDomainGuardTests
         // 少了它第二条插入撞 E11000，搬迁半途而废且重跑还是同样结果，那条线路永久丢。
         Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v3", initializer);
         Assert.Contains(".Ascending(\"UpstreamModelId\")", initializer);
-        // 旧名字要显式丢弃，否则新索引建不出来（同 key 不同名会冲突）。
+        // 旧名字要能被认出来（用来判断该不该提醒 DBA），但**不在启动时丢它**——
+        // 丢一条正在生效的唯一索引再同步重建会阻塞写入，那一步归 DBA 的维护窗口。
         Assert.Contains("legacyVersionAwareIndexName", initializer);
-        Assert.Contains("catch (MongoCommandException ex) when (ex.Code == 27)", initializer);
         Assert.Contains("IsEquivalentOfferingIdentityIndex", initializer);
         Assert.Contains("MongoDB 不允许同一 key/options 仅以不同名称重复建索引", initializer);
+        // 先认等价索引、再谈别的：已经对了就什么都不做。
         Assert.True(
             initializer.IndexOf("IsEquivalentOfferingIdentityIndex(index, expectedKeys)", StringComparison.Ordinal)
-            < initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal));
-        Assert.True(
-            initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal)
             < initializer.IndexOf("Name = versionAwareIndexName", StringComparison.Ordinal));
-        Assert.Contains("Offering 唯一索引升级为版本感知结构", initializer);
     }
 
     [Fact]

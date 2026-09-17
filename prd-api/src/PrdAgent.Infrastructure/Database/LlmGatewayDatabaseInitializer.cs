@@ -555,8 +555,34 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             return;
         }
 
-        await DropIndexIfPresentAsync(collection, legacyIndexName, ct);
-        await DropIndexIfPresentAsync(collection, legacyVersionAwareIndexName, ct);
+        /*
+          有旧版身份索引在跑时，**启动时不动它**。
+
+          丢掉一条正在生效的唯一索引再同步重建，在大集合上可能阻塞写入、甚至让进程起不来；
+          而两次操作之间但凡失败一次，线路身份就完全失去保护。`no-auto-index` 规则明确禁止
+          在启动逻辑里做这种事，理由正是这个。
+          所以这里只做两件事：全新库（一条等价索引都没有）直接建对的那条；已有旧版的
+          如实报出来并给出该跑的那条命令，交给 DBA 在低峰期做（见
+          doc/guide.platform.mongodb-indexes.md）。在那之前旧索引继续生效——
+          它比新的更严，后果是「同一个兑换所的第二条别名建不出来」，会如实报错而不是静默走偏。
+        */
+        var legacy = indexes.FirstOrDefault(x =>
+            x.GetValue("name", "").AsString == legacyIndexName
+            || x.GetValue("name", "").AsString == legacyVersionAwareIndexName);
+        if (legacy is not null)
+        {
+            _logger.LogWarning(
+                "[LlmGatewayData] 线路身份唯一索引还是旧版 {Index}，它不认 UpstreamModelId："
+                + "同一个兑换所下的第二条别名会撞 E11000（搬迁会在那里半途停下并报错）。"
+                + "这一步不在启动时做——丢一条正在生效的唯一索引再重建会阻塞写入。"
+                + "请 DBA 在低峰期执行：db.llmgw_model_offerings.dropIndex(\"{Index}\") 然后按 "
+                + "doc/guide.platform.mongodb-indexes.md 里 {Expected} 那一条建新索引",
+                legacy.GetValue("name", "").AsString,
+                legacy.GetValue("name", "").AsString,
+                versionAwareIndexName);
+            return;
+        }
+
         await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
             Builders<BsonDocument>.IndexKeys
                 .Ascending("TenantId")

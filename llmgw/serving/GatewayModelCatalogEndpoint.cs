@@ -206,7 +206,13 @@ public static class GatewayModelCatalogEndpoint
                 var cached = ReadDecimal(model, "CachedInputPricePerMillion");
                 var cacheWrite = ReadDecimal(model, "CacheWritePricePerMillion");
                 var perCall = ReadDecimal(model, "PricePerCall");
-                if (prompt is null && completion is null && perCall is null) continue;
+                // 报价要么**配齐**，要么不报。
+                //
+                // 只配了一半（比如只有输入单价）时，计价那一侧对一次正常调用判的是 unpriced——
+                // 整笔算不出钱。而清单若把那半边报出去，对方会把缺的那一维当成免费，
+                // 照它估出来的账系统性偏低，而这个端点的契约写着「算不出就给 null」。
+                // 判据与计价侧同源：有按次价就够（那时 token 价一分不叠），否则输入与输出都要有。
+                if (perCall is null && (prompt is null || completion is null)) continue;
 
                 // via 是给对方看「这条线路走的是哪个上游模型」，必须是人和机器都能用的名字。
                 // 不许回落到 TargetId——那是我们的内部 Mongo id，对外既没有意义，也不该泄露。

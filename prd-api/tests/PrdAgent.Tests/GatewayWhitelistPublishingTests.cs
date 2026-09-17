@@ -585,4 +585,75 @@ public class GatewayWhitelistPublishingTests
         var lengthAt = worker.IndexOf("ThenByDescending(x => x.ModelIdPattern.Trim().Length)", StringComparison.Ordinal);
         Assert.True(scopeAt > 0 && lengthAt > scopeAt, "租户优先要排在模式长度之前");
     }
+
+    /// <summary>
+    /// 启动时不许丢掉正在生效的线路身份唯一索引。
+    ///
+    /// 丢一条正在生效的唯一索引再同步重建，在大集合上会阻塞写入、甚至让进程起不来；
+    /// 两次操作之间失败一次就让那条不变量彻底失去保护。`no-auto-index` 规则禁的正是这个。
+    /// 全新库直接建对的那条；已有旧版的如实报出来交给 DBA，在那之前旧索引继续生效——
+    /// 它比新的更严，后果是「第二条别名建不出来」，会如实报错而不是静默走偏。
+    /// </summary>
+    [Fact]
+    public void 启动不丢正在生效的线路身份索引()
+    {
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var start = initializer.IndexOf("private async Task EnsureOfferingIdentityIndexAsync", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        var end = initializer.IndexOf("private static bool IsEquivalentOfferingIdentityIndex", start, StringComparison.Ordinal);
+        Assert.True(end > start);
+        var body = initializer[start..end];
+
+        // 这一段里不许再丢索引。
+        Assert.DoesNotContain("DropIndexIfPresentAsync", body);
+        // 发现旧版要响铃，而且要给得出该跑什么——拒绝没有下一步等于把问题丢回去。
+        Assert.Contains("LogWarning", body);
+        Assert.Contains("dropIndex", body);
+        Assert.Contains("doc/guide.platform.mongodb-indexes.md", body);
+        // 报完就返回，不往下建（建了也会和旧的撞）。
+        var warnAt = body.IndexOf("LogWarning", StringComparison.Ordinal);
+        var createAt = body.IndexOf("Indexes.CreateOneAsync", StringComparison.Ordinal);
+        Assert.True(warnAt > 0 && createAt > warnAt, "报出旧版之后要返回，不要接着建新的");
+
+        // DBA 那一侧要查得到这条待办。
+        var guide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
+        Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v3", guide);
+        Assert.Contains("UpstreamModelId", guide);
+    }
+
+    /// <summary>
+    /// 对外报价要么配齐要么不报，与计价那一侧同口径。
+    ///
+    /// 只配了一半时，计价对一次正常调用判的是 unpriced——整笔算不出钱。清单若把那半边报出去，
+    /// 对方会把缺的那一维当成免费，照它估出来的账系统性偏低，而这个端点的契约写着
+    /// 「算不出就给 null」。
+    /// </summary>
+    [Fact]
+    public void 对外报价要么配齐要么不报()
+    {
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        Assert.Contains("if (perCall is null && (prompt is null || completion is null)) continue;", endpoint);
+        Assert.DoesNotContain("if (prompt is null && completion is null && perCall is null) continue;", endpoint);
+    }
+
+    /// <summary>
+    /// 计费模式看**配没配**按次价，不看这一次收不收那笔固定费。
+    ///
+    /// 一次失败的、或按约定不收固定费的调用，callCost 是 null，而这条模型仍然是按次计费的。
+    /// 从 callCost 反推模式就会在这种时候掉回按 token 收钱——恰恰违反这个方法自己写的规矩。
+    /// </summary>
+    [Fact]
+    public void 计费模式看配没配按次价()
+    {
+        var calculator = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostCalculator.cs");
+
+        // 两处判定（合计与 Classify）都从 pricePerCall 推，不从 callCost 推。
+        var derived = System.Text.RegularExpressions.Regex
+            .Matches(calculator, @"var billedPerCall = pricePerCall is not null;").Count;
+        Assert.True(derived >= 2, $"合计与状态判定都要从配没配按次价推，实际只有 {derived} 处");
+        Assert.DoesNotContain("var billedPerCall = callCost is not null;", calculator);
+
+        // 按次计费而这一次不收固定费：账是算出来了，就是零，不是「算不出」。
+        Assert.Contains("status == GatewayCostStatus.Priced && billedPerCall ? 0m", calculator);
+    }
 }

@@ -121,7 +121,13 @@ public static class GatewayCostCalculator
         // 真要支持「按次 + 按 token」同时计费，那是一种新的计费模式，得显式存一个
         // billing mode 让人明确表态，而不是靠「两个字段都非空」去猜
         // （形状 6：判据读的值不是真正生效的那个——这里是「填了什么」被当成了「怎么收费」）。
-        var billedPerCall = callCost is not null;
+        // 计费模式看**配没配按次价**，不看这一次收不收那笔固定费。
+        //
+        // 两者不是一回事：一次失败的、或者按约定不收固定费的调用，callCost 是 null，
+        // 而这条模型仍然是按次计费的。从 callCost 反推模式，就会在这种时候掉回按 token 收钱——
+        // 恰恰违反这个方法自己写的那条规矩（配了按次价就只按次算，token 价一分不叠）。
+        // countCall 只决定「这一次加不加那笔固定费」。
+        var billedPerCall = pricePerCall is not null;
         var inputCost = billedPerCall ? null : PerMillion(billableInput, inputPricePerMillion);
         var outputCost = billedPerCall ? null : PerMillion(output, outputPricePerMillion);
         var cacheReadCost = billedPerCall ? null : PerMillion(cacheRead, cacheReadPrice);
@@ -138,7 +144,7 @@ public static class GatewayCostCalculator
             outputPrice: outputPricePerMillion,
             cacheReadPrice: cacheReadPrice,
             cacheWritePrice: cacheWritePrice,
-            callCost: callCost);
+            pricePerCall: pricePerCall);
 
         var parts = new[] { inputCost, outputCost, cacheReadCost, cacheWriteCost, callCost }
             .Where(x => x is not null)
@@ -147,8 +153,12 @@ public static class GatewayCostCalculator
 
         if (parts.Count == 0)
         {
+            // 按次计费、而这一次不收固定费（失败、或这个操作按约定不计次）：账是算出来了，
+            // 就是零，不是「算不出」。写 null 会让它掉进未计价那一档，看起来像缺价。
+            var zeroTotal = status == GatewayCostStatus.Priced && billedPerCall ? 0m : (decimal?)null;
             return new GatewayCostBreakdown(
-                null, null, null, null, null, null, normalizedCurrency, null, status, reason);
+                null, null, null, null, null, zeroTotal, normalizedCurrency,
+                zeroTotal is null ? null : 0m, status, reason);
         }
 
         var total = Round(parts.Sum());
@@ -175,9 +185,9 @@ public static class GatewayCostCalculator
         decimal? outputPrice,
         decimal? cacheReadPrice,
         decimal? cacheWritePrice,
-        decimal? callCost)
+        decimal? pricePerCall)
     {
-        if (!hasUsage && callCost is null)
+        if (!hasUsage && pricePerCall is null)
         {
             return (GatewayCostStatus.NoUsage, "上游没有返回 token 用量，这次调用无法计价。");
         }
@@ -204,7 +214,7 @@ public static class GatewayCostCalculator
         //
         // 只配了按次价就按按次算。两种价都填了时同样只按次算——合计那一段也是这么做的，
         // 两处必须同一个口径，否则会出现「判成按次计价、却按两套价收钱」。
-        var billedPerCall = callCost is not null;
+        var billedPerCall = pricePerCall is not null;
         var missing = new List<string>();
         if (!billedPerCall)
         {
