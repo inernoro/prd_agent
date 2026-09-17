@@ -20,6 +20,7 @@ import { BranchDrawerSkeleton } from '../../web/src/components/branch/BranchDraw
 import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCard.js';
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
 import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
+import { branchNoticeVisible } from '../../web/src/components/BranchDetailDrawer.js';
 
 const SRC = path.resolve(__dirname, '../../web/src');
 const read = (rel: string): string => fs.readFileSync(path.join(SRC, rel), 'utf8');
@@ -59,10 +60,24 @@ describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () =
     expect(html).toContain('正在体检');
   });
 
-  it('未运行的分支骨架期给「服务未运行」说明留位，运行中的不留（就绪那一帧不许跳）', () => {
+  it('未运行的分支骨架期给「服务未运行」说明留位，运行中的连空 section 都不留（就绪那一帧不许跳）', () => {
     const idle = renderToStaticMarkup(createElement(BranchDrawerSkeleton, { status: 'idle' }));
     const running = renderToStaticMarkup(createElement(BranchDrawerSkeleton, { status: 'running' }));
     expect(idle.length).toBeGreaterThan(running.length);
+    // 运行中：页签之上没有任何 section（此前是一条 py-4 的空带，用户圈出）
+    expect(running.indexOf('<nav')).toBeLessThan(running.indexOf('<section'));
+    expect(idle.indexOf('<section')).toBeLessThan(idle.indexOf('<nav'));
+  });
+
+  it('抽屉本体的说明区只在有话说时渲染，判据收在 branchNoticeVisible 一处', () => {
+    expect(drawer).toMatch(/\{branchNoticeVisible\(branch, currentFailureReason\) \? \(\s*<section className="border-b/);
+    expect(branchNoticeVisible({ status: 'running' }, null)).toBe(false);
+    expect(branchNoticeVisible({ status: 'building' }, null)).toBe(false);
+    expect(branchNoticeVisible({ status: 'idle' }, null)).toBe(true);
+    expect(branchNoticeVisible({ status: 'stopped' }, null)).toBe(true);
+    expect(branchNoticeVisible({ status: 'running' }, 'boom')).toBe(true);
+    expect(branchNoticeVisible({ status: 'error', lastStoppedAt: '2026-09-17T00:00:00Z' }, null)).toBe(true);
+    expect(branchNoticeVisible({ status: 'running', lastStoppedAt: '2026-09-17T00:00:00Z' }, null)).toBe(false);
   });
 });
 
@@ -82,6 +97,15 @@ describe('控制台外壳：chunk 骨架与页面数据骨架是同一个组件'
     expect(branchList).not.toMatch(/function BranchListSkeleton/);
     expect(projectList).toContain("import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons'");
     expect(projectList).not.toMatch(/function ProjectListSkeleton/);
+  });
+
+  it('列表骨架顶上不再放一行「加载…」文案：它把骨架撑得比正文高，切换那一帧整片网格往上跳', () => {
+    const src = stripComments(read('components/skeletons/PageSkeletons.tsx'));
+    expect(src).not.toContain('CdsLogoLoader');
+    const branch = renderToStaticMarkup(pageSkeletonForPath('/branch-list'));
+    // 第一个子元素就是卡片网格，前面没有任何说明行
+    expect(branch).toMatch(/aria-live="polite"[^>]*><div class="cds-branch-card-grid"/);
+    expect(branch).not.toContain('加载项目与本地分支列表</');
   });
 
   it('路由 → 形状：分支页是分支卡网格，项目页是项目卡网格，其余是通用轮廓', () => {

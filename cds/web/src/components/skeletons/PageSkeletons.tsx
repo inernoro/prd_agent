@@ -12,8 +12,6 @@
  * 加页面时：给它的骨架在这里登记，并在 pageSkeletonForPath 里挂上路由；没有专属形状的
  * 页面落到 ConsoleGenericSkeleton。守卫：tests/web/single-skeleton-contract.test.ts。
  */
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
-
 /** 分支列表加载骨架:逐张镜像真实 BranchCard(min-h-244 + 头/身/尾三段),
  *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部一行品牌 loader
  *  说明"在加载什么"。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
@@ -21,15 +19,9 @@ const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] 
 
 export function BranchListSkeleton(): JSX.Element {
   return (
-    <div aria-busy="true" aria-live="polite">
-      <div className="mb-4 flex items-center">
-        <CdsLogoLoader
-          label="加载项目与本地分支列表"
-          size="sm"
-          mineral="iris"
-          className="text-[0.8125rem] font-medium text-muted-foreground"
-        />
-      </div>
+    <div aria-busy="true" aria-live="polite" aria-label="加载项目与本地分支列表">
+      {/* 不再在骨架顶上放一行「加载…」文案：它把骨架撑得比正文高，切换那一帧整片网格往上跳（2026-09-17 用户圈出）；
+          加载什么由 aria-label 给读屏，肉眼看骨架本身就知道在加载。 */}
       <div className="cds-branch-card-grid">
         {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
           <article
@@ -69,15 +61,7 @@ const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const
 
 export function ProjectListSkeleton(): JSX.Element {
   return (
-    <div aria-busy="true" aria-live="polite">
-      <div className="mb-5 flex items-center">
-        <CdsLogoLoader
-          label="加载项目列表"
-          size="sm"
-          mineral="iris"
-          className="text-[0.8125rem] font-medium text-muted-foreground"
-        />
-      </div>
+    <div aria-busy="true" aria-live="polite" aria-label="加载项目列表">
       <div className="cds-card-grid">
         {SKELETON_CARD_WIDTHS.map((width, index) => (
           <article

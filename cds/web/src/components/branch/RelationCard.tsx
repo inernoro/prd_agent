@@ -33,15 +33,15 @@ const SEV_LABEL: Record<LintFindingView['severity'], string> = { error: '错误'
 const SEV_CLS: Record<LintFindingView['severity'], string> = { error: 'border-destructive/60 text-destructive', warn: 'border-warn/60 bg-warn-soft text-warn', info: 'border-[hsl(var(--hairline-strong))] text-muted-foreground' };
 
 export function FindingsList({ findings, onPick, onConfigure }: { findings: LintFindingView[]; onPick?: (serviceId: string | null) => void; /** 给了就在每条后面放「去配置」，跳到能改它的地方 */ onConfigure?: () => void }): JSX.Element {
-  if (findings.length === 0) return <div className="rounded-md border border-ok/40 bg-ok-soft p-3 text-xs text-ok">体检无发现：关系清楚，配置没有冲突。</div>;
+  if (findings.length === 0) return <div className="rounded-md border border-ok/40 bg-ok-soft p-3 text-[0.92rem] text-ok">体检无发现：关系清楚，配置没有冲突。</div>;
   return (
     <div className="flex flex-col gap-2" data-testid="relation-findings">
       {findings.map((f, i) => (
         <div key={`${f.rule}-${i}`} className="cds-surface-sunken cds-hairline flex cursor-pointer items-start gap-2.5 rounded-md p-2.5 transition-colors duration-150" onMouseEnter={() => onPick?.(f.services[0] ?? null)} onMouseLeave={() => onPick?.(null)}>
-          <span className={`mt-px inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-1.5 text-[0.625rem] font-semibold ${SEV_CLS[f.severity]}`}>{SEV_LABEL[f.severity]}</span>
+          <span className={`mt-px inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-2 text-[0.75rem] font-semibold ${SEV_CLS[f.severity]}`}>{SEV_LABEL[f.severity]}</span>
           <div className="min-w-0 flex-1">
-            <div className="text-xs text-foreground-muted"><b className="font-mono text-[0.6875rem] text-foreground">{f.rule}</b> · {f.message}</div>
-            <div className="mt-1 text-[0.6875rem] text-muted-foreground">修法：{f.fix}</div>
+            <div className="text-[0.92rem] text-foreground-muted"><b className="font-mono text-[0.8125rem] text-foreground">{f.rule}</b> · {f.message}</div>
+            <div className="mt-1 text-[0.8125rem] text-muted-foreground">修法：{f.fix}</div>
           </div>
           {onConfigure ? <Button variant="outline" size="sm" className="h-[1.625rem] shrink-0" onClick={(e) => { e.stopPropagation(); onConfigure(); }} title="到配置页签改 compose 声明"><Wrench />去配置</Button> : null}
         </div>
@@ -58,8 +58,8 @@ export function FindingsList({ findings, onPick, onConfigure }: { findings: Lint
 export function RelationCardSkeleton({ badge = '正在体检', note = '正在算服务关系与体检，通常 1 秒内完成' }: { badge?: string; note?: string }): JSX.Element {
   return (
     <div className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-4 pt-3.5 transition-colors duration-150" data-testid="relation-card" data-loading="true">
-      <div className="flex items-center gap-2 text-sm font-bold">关系<span className="inline-flex h-[1.125rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-1.5 text-[0.625rem] font-semibold text-muted-foreground">{badge}</span></div>
-      <div className="text-xs text-muted-foreground">正在算服务关系、前缀归属与跨项目引用…</div>
+      <div className="flex items-center gap-2 text-base font-bold">关系<span className="inline-flex h-[1.3rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-2 text-[0.75rem] font-semibold text-muted-foreground">{badge}</span></div>
+      <div className="text-[0.92rem] text-foreground-muted">正在算服务关系、前缀归属与跨项目引用…</div>
       <RelationFlowSkeleton note={note} />
     </div>
   );
@@ -79,7 +79,7 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
   const entryHost = previewUrl ? previewUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : undefined;
   const fullHref = `/branch-relations/${encodeURIComponent(branchId)}`;
   const shell = (tone: string, children: JSX.Element) => (
-    <div className={`flex flex-col gap-2.5 rounded-xl border bg-[hsl(var(--surface-raised))] px-4 pb-4 pt-3.5 transition-colors duration-150 ${tone}`} data-testid="relation-card">
+    <div className={`flex flex-col gap-3 rounded-xl border bg-[hsl(var(--surface-raised))] px-5 pb-5 pt-4 transition-colors duration-150 ${tone}`} data-testid="relation-card">
       {children}
     </div>
   );
@@ -89,8 +89,8 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
   if (state.status === 'error') {
     return shell('border-destructive/50', (
       <>
-        <div className="flex items-center gap-2 text-sm font-bold">关系<span className="inline-flex h-[1.125rem] items-center rounded-full border border-destructive/60 px-1.5 text-[0.625rem] font-semibold text-destructive">读取失败</span><span className="flex-1" /><Button variant="ghost" size="sm" onClick={reload}>重试</Button></div>
-        <div className="text-xs text-destructive">关系图读取失败：{state.message}</div>
+        <div className="flex items-center gap-2 text-base font-bold">关系<span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">读取失败</span><span className="flex-1" /><Button variant="ghost" size="sm" onClick={reload}>重试</Button></div>
+        <div className="text-[0.92rem] text-destructive">关系图读取失败：{state.message}</div>
         <RelationFlowSkeleton note="拿不到服务图，流向条画不出来；重试或看容器日志" tone="bad" />
       </>
     ));
@@ -100,7 +100,7 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
   if (data.graph.nodes.every((n) => n.kind !== 'service')) {
     return shell('border-[hsl(var(--hairline))]', (
       <>
-        <div className="flex items-center gap-2 text-sm font-bold">关系<span className="inline-flex h-[1.125rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-1.5 text-[0.625rem] font-semibold text-muted-foreground">还没有服务</span></div>
+        <div className="flex items-center gap-2 text-base font-bold">关系<span className="inline-flex h-[1.3rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-2 text-[0.75rem] font-semibold text-muted-foreground">还没有服务</span></div>
         <div className="flex justify-center py-2"><RelationEmptyState branch={data.branch} onConfigure={onConfigure} /></div>
       </>
     ));
@@ -110,21 +110,21 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
   const model = layoutFlow(data, entryHost);
   const actionable = data.lint.findings.filter((f) => f.severity !== 'info');
   const pill = errors
-    ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-destructive/60 px-1.5 text-[0.625rem] font-semibold text-destructive">{errors} 处配置错误</span>
+    ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">{errors} 处配置错误</span>
     : warnings
-      ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[0.625rem] font-semibold text-warn">{warnings} 条警告</span>
-      : <span className="inline-flex h-[1.125rem] items-center rounded-full border border-ok/50 bg-ok-soft px-1.5 text-[0.625rem] font-semibold text-ok">无问题</span>;
+      ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 条警告</span>
+      : <span className="inline-flex h-[1.3rem] items-center rounded-full border border-ok/50 bg-ok-soft px-2 text-[0.75rem] font-semibold text-ok">无问题</span>;
   return (
     <>
       {shell(tone, (
         <>
-          <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
+          <div className="flex flex-wrap items-center gap-2 text-base font-bold">
             关系{pill}
             <span className="flex-1" />
             <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="半屏查看关系图与需要处理的事项"><PanelRightOpen />半屏查看</Button>
             <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
           </div>
-          <div className="text-xs leading-relaxed text-foreground-muted transition-colors duration-150">{relationHeadline(data)}</div>
+          <div className="text-[0.92rem] leading-relaxed text-foreground-muted transition-colors duration-150">{relationHeadline(data)}</div>
           <FlowFacts facts={model.facts} />
           <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击半屏查看">
             <RelationFlowStrip model={model} />
@@ -139,8 +139,8 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
             <div className="flex h-[3.25rem] items-center gap-2 border-b border-[hsl(var(--hairline))] px-4">
               <span className="text-sm font-bold">关系</span>
               <span className="font-mono text-[0.6875rem] text-muted-foreground">{data.branch}</span>
-              {errors ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-destructive/60 px-1.5 text-[0.625rem] font-semibold text-destructive">{errors} 错误</span> : null}
-              {warnings ? <span className="inline-flex h-[1.125rem] items-center rounded-full border border-warn/60 bg-warn-soft px-1.5 text-[0.625rem] font-semibold text-warn">{warnings} 警告</span> : null}
+              {errors ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-destructive/60 px-2 text-[0.75rem] font-semibold text-destructive">{errors} 错误</span> : null}
+              {warnings ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 警告</span> : null}
               <span className="flex-1" />
               <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)}><Maximize2 />全屏</Button>
               <Button variant="ghost" size="sm" onClick={() => setOpen(false)} aria-label="关闭"><X /></Button>

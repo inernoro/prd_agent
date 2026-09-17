@@ -535,6 +535,16 @@ function DrawerTabButton({
   );
 }
 
+/**
+ * 页签之上的说明区有没有东西可说。三种内容各自的显示条件抄自渲染处，收成一个判据，
+ * 让「不渲染空 section」和「里面画什么」不会各判各的（形状 3：判据分裂）。
+ */
+export function branchNoticeVisible(branch: Pick<BranchDetailData, 'status' | 'lastStoppedAt'>, failureReason: string | null | undefined): boolean {
+  const stoppedNote = Boolean(branch.lastStoppedAt) && !['running', 'building', 'starting', 'restarting'].includes(branch.status);
+  const idleNote = branch.status === 'idle' || branch.status === 'stopped';
+  return stoppedNote || Boolean(failureReason) || idleNote;
+}
+
 function statusLabel(s: string): string {
   return ({
     idle: '未运行', building: '构建中', starting: '启动中', running: '运行中',
@@ -2306,6 +2316,9 @@ export function BranchDetailDrawer({
 
               {/* 关系卡已并入总览面板（OverviewPanel 的 relationSlot，判断行之下、入口之上）——
                   原先常驻页签之上等于给每次打开抽屉加 350px 的「头图」，而它的信息量不配那个位置（2026-09-16）。 */}
+              {/* 说明区（上次停止 / 最近失败 / 服务未运行）只在真有话说时才渲染：
+                  运行中、构建中的分支此前也顶着一条空的 py-4 section，页签上方多出一条空带（2026-09-17 用户圈出）。 */}
+              {branchNoticeVisible(branch, currentFailureReason) ? (
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
@@ -2440,6 +2453,7 @@ export function BranchDetailDrawer({
                   </div>
                 ) : null}
               </section>
+              ) : null}
 
               <nav className={DRAWER_TAB_NAV_CLASS}>
                 {drawerTabs.map((tab) => (

@@ -350,7 +350,9 @@ export function relationHeadline(payload: RelationPayload): string {
   const main = payload.graph.sites.find((s) => s.kind === 'main');
   const subs = payload.graph.sites.filter((s) => s.kind === 'subdomain').length;
   const parts: string[] = [];
-  if (main?.shellId) parts.push(`主域名下 ${main.shellId} 是壳，${main.members.length} 个服务按前缀挂在它下面`);
+  // 用节点的显示名，和流向条 / 关系图上的 chip 一致；此前写 id，同一个服务在句子里叫 demo-web、在图上叫 web（演示）
+  const nameOf = (id: string): string => services.find((n) => (n.rawId ?? n.id.replace(/^service:/, '')) === id)?.name || id;
+  if (main?.shellId) parts.push(`主域名下 ${nameOf(main.shellId)} 是壳，${main.members.length} 个服务按前缀挂在它下面`);
   else if (services.length) parts.push(`${services.length} 个服务，主域名没有壳`);
   if (subs) parts.push(`${subs} 个子域各成一站`);
   const errs = payload.lint.findings.filter((f) => f.severity === 'error');

@@ -152,14 +152,17 @@ export function FlowFacts({ facts }: { facts: FlowModel['facts'] }): JSX.Element
   const item = (n: number, label: string) => <span className="whitespace-nowrap"><b className="font-semibold text-foreground-muted">{n}</b> {label}</span>;
   const dot = <span aria-hidden className="h-[3px] w-[3px] rounded-full bg-[hsl(var(--hairline-strong))]" />;
   return (
-    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[0.6875rem] text-muted-foreground" data-testid="relation-facts">
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[0.8125rem] text-muted-foreground" data-testid="relation-facts">
       {item(facts.sites, '站点')}{dot}{item(facts.services, '服务')}{dot}{item(facts.prefixes, '前缀')}{dot}{item(facts.infra, '共享基础设施')}{dot}{item(facts.refs, '跨项目引用')}{dot}
       <span className="whitespace-nowrap">体检 <b className={`font-semibold ${tone}`}>{facts.errors} 错 {facts.warnings} 警</b></span>
     </div>
   );
 }
 
-const ROW_H = 44, ROW_GAP = 10;
+// 设计稿（1440 画板、14px 基准）里 chip 高 44px；站点根字号是 85%，所以这里的画布 px 一律按 1/0.85 校回，
+// 否则整条流向条比设计稿矮一圈（2026-09-17 用户：「很矮小，大小不一」）。chip 的高度必须与连接器共用 ROW_H，
+// 此前 chip 用 h-11（2.75rem，85% 下 37px）而连接器按 44 算，多行列的箭头对不上 chip 中线。
+const ROW_H = 52, ROW_GAP = 12;
 const rowCy = (i: number): number => ROW_H / 2 + i * (ROW_H + ROW_GAP);
 const colH = (n: number): number => Math.max(1, n) * (ROW_H + ROW_GAP) - ROW_GAP;
 
@@ -190,20 +193,20 @@ function Chip({ chip, width, index }: { chip: FlowChip; width: number; index: nu
   const ring = chip.problem === 'bad' ? 'hsl(var(--bad) / .8)' : chip.problem === 'warn' ? 'hsl(var(--warn) / .75)' : 'hsl(var(--hairline))';
   return (
     <div
-      className="cds-relation-chip-in flex h-11 items-center gap-2 rounded-[0.625rem] bg-background pl-2 pr-2.5 shadow-[0_1px_2px_rgb(0_0_0/.25)] transition-colors duration-150"
-      style={{ width, border: `1.5px ${chip.inferred ? 'dashed' : 'solid'} ${ring}`, animationDelay: `${index * 40}ms` }}
+      className="cds-relation-chip-in flex items-center gap-2.5 rounded-[0.75rem] bg-background pl-2.5 pr-3 shadow-[0_1px_2px_rgb(0_0_0/.25)] transition-colors duration-150"
+      style={{ width, height: ROW_H, border: `1.5px ${chip.inferred ? 'dashed' : 'solid'} ${ring}`, animationDelay: `${index * 40}ms` }}
       data-node={chip.id}
       data-kind={chip.kind}
       data-problem={chip.problem}
       title={chip.problemCount ? `${chip.name} · ${chip.problemCount} 个问题` : chip.name}
     >
-      <span className="inline-flex h-[1.375rem] w-[1.375rem] shrink-0 items-center justify-center rounded-md text-[0.5625rem] font-extrabold text-primary-foreground" style={{ background: `hsl(var(${KIND_TOKEN[chip.kind]}))` }}>{KIND_LABEL[chip.kind]}</span>
+      <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] text-[0.66rem] font-extrabold tracking-wide text-primary-foreground" style={{ background: `hsl(var(${KIND_TOKEN[chip.kind]}))` }}>{KIND_LABEL[chip.kind]}</span>
       <div className="flex min-w-0 flex-1 flex-col justify-center">
-        <div className="truncate text-[0.78125rem] font-bold leading-tight">{chip.name}</div>
-        <div className="mt-0.5 truncate text-[0.65625rem] leading-tight text-muted-foreground">{chip.sub}</div>
+        <div className="truncate text-[0.92rem] font-bold leading-tight">{chip.name}</div>
+        <div className="mt-0.5 truncate text-[0.77rem] leading-tight text-muted-foreground">{chip.sub}</div>
       </div>
       {chip.problemCount ? (
-        <span className={`inline-flex h-4 shrink-0 items-center rounded-full border px-1.5 text-[0.5625rem] font-semibold ${chip.problem === 'bad' ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`}>{chip.problemCount} 问题</span>
+        <span className={`inline-flex h-[1.125rem] shrink-0 items-center rounded-full border px-1.5 text-[0.66rem] font-semibold ${chip.problem === 'bad' ? 'border-destructive/60 text-destructive' : 'border-warn/60 bg-warn-soft text-warn'}`}>{chip.problemCount} 问题</span>
       ) : null}
     </div>
   );
@@ -217,9 +220,9 @@ function Column({ chips, width, offset = 0 }: { chips: FlowChip[]; width: number
   );
 }
 
-const W = { entry: 236, shell: 200, member: 200, infra: 150, ext: 210, conn: 48 } as const;
+const W = { entry: 280, shell: 236, member: 236, infra: 176, ext: 248, conn: 56 } as const;
 /** 窄容器（< FLOW_NARROW_PX）下的一档：列折成计数 chip 之外，每枚 chip 与连接器也收窄 */
-const W_NARROW = { entry: 150, shell: 170, member: 170, infra: 140, ext: 170, conn: 36 } as const;
+const W_NARROW = { entry: 176, shell: 200, member: 200, infra: 164, ext: 200, conn: 42 } as const;
 
 /** 流向条本体。SSR / 首帧按宽版渲染，量到容器宽度后再决定要不要折叠。 */
 export function RelationFlowStrip({ model, className }: { model: FlowModel; className?: string }): JSX.Element {
@@ -251,8 +254,8 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
   return (
     <div
       ref={hostRef}
-      className={`overflow-x-auto rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3.5 ${className ?? ''}`}
-      style={{ backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '22px 22px' }}
+      className={`overflow-x-auto rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4 ${className ?? ''}`}
+      style={{ backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}
       data-testid="relation-strip"
       data-narrow={narrow ? 'true' : undefined}
     >
@@ -280,11 +283,11 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
 
 /** 加载 / 失败态用同一副骨架：卡片不会在算完那一刻突然长出 200px，把下面的入口卡顶跑。 */
 export function RelationFlowSkeleton({ note, tone = 'muted' }: { note: string; tone?: 'muted' | 'bad' }): JSX.Element {
-  const ghost = (w: number, i: number) => <div key={i} className="h-11 min-w-0 flex-1 rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-background/60 motion-safe:animate-pulse" style={{ maxWidth: w, animationDelay: `${i * 120}ms` }} />;
+  const ghost = (w: number, i: number) => <div key={i} className="min-w-0 flex-1 rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-background/60 motion-safe:animate-pulse" style={{ maxWidth: w, height: ROW_H, animationDelay: `${i * 120}ms` }} />;
   return (
-    <div className="relative flex items-center justify-center gap-8 overflow-hidden rounded-[0.625rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-3.5" data-testid="relation-strip-skeleton">
+    <div className="relative flex items-center justify-center gap-8 overflow-hidden rounded-[0.75rem] border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-4 py-4" data-testid="relation-strip-skeleton">
       {[W.entry, W.shell, W.member, W.infra].map((w, i) => ghost(w, i))}
-      <div className={`absolute inset-x-0 bottom-1.5 text-center text-[0.6875rem] ${tone === 'bad' ? 'text-destructive' : 'text-muted-foreground'}`}>{note}</div>
+      <div className={`absolute inset-x-0 bottom-1.5 text-center text-[0.8125rem] ${tone === 'bad' ? 'text-destructive' : 'text-muted-foreground'}`}>{note}</div>
     </div>
   );
 }

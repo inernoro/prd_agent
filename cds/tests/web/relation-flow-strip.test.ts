@@ -12,7 +12,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { layoutFlow, RelationFlowStrip, RelationFlowSkeleton } from '../../web/src/components/branch/RelationFlowStrip.js';
 import { formatDeployedAgo, formatUptime } from '../../web/src/components/branch/OverviewPanel.js';
-import type { RelationPayload } from '../../web/src/components/branch/RelationGraph.js';
+import { relationHeadline, type RelationPayload } from '../../web/src/components/branch/RelationGraph.js';
 
 const SRC = path.resolve(__dirname, '../../web/src');
 /** 扫源码只扫会执行的部分：注释里为讲病根会原样引用错误写法（predicate-and-wiring-discipline 形状 6）。 */
@@ -92,7 +92,7 @@ describe('RelationFlowStrip 渲染', () => {
   it('骨架与真实流向条同一副外形（同一 testid 前缀、同一圆角与底色），卡片高度不跳', () => {
     const real = renderToStaticMarkup(createElement(RelationFlowStrip, { model: layoutFlow(payload()) }));
     const ghost = renderToStaticMarkup(createElement(RelationFlowSkeleton, { note: '正在算' }));
-    for (const cls of ['rounded-[0.625rem]', 'bg-[hsl(var(--surface-sunken))]', 'py-3.5']) { expect(real).toContain(cls); expect(ghost).toContain(cls); }
+    for (const cls of ['rounded-[0.75rem]', 'bg-[hsl(var(--surface-sunken))]', 'py-4']) { expect(real).toContain(cls); expect(ghost).toContain(cls); }
   });
   it('徽标不占语义色：redis 不用 --bad，mongo 不用 --ok（红色只在「坏了」时出现）', () => {
     const src = fs.readFileSync(path.join(SRC, 'components/branch/RelationFlowStrip.tsx'), 'utf8');
@@ -179,5 +179,26 @@ describe('CPU 图的包裹层必须有高度', () => {
   it('「正在积累」提示的包裹 div 带 h-full：里面的 svg 是 absolute inset-0，包裹层 0 高整张图就不见了', () => {
     const panel = fs.readFileSync(path.join(SRC, 'components/branch/OverviewPanel.tsx'), 'utf8');
     expect(panel).toMatch(/<div className="relative h-full" data-testid="cpu-plot-host">\s*<StackedAreaChart/);
+  });
+});
+
+describe('尺寸校准（2026-09-17「很矮小，大小不一」）', () => {
+  it('chip 的高度是连接器用的同一个 ROW_H（画布 px），不再是随根字号缩的 h-11', () => {
+    const html = renderToStaticMarkup(createElement(RelationFlowStrip, { model: layoutFlow(payload(), 'main-waterx-2.geole.me') }));
+    const chips = html.match(/<div class="cds-relation-chip-in[^"]*" style="[^"]*"/g) ?? [];
+    expect(chips.length).toBeGreaterThan(3);
+    for (const c of chips) expect(c).toContain('height:52px');
+    expect(html).not.toContain('cds-relation-chip-in flex h-11');
+    // 连接器的 svg 高度按同一个 ROW_H 算：单行列就是 52
+    expect(html).toMatch(/<svg width="56" height="52"/);
+  });
+
+  it('结论句里的壳用节点显示名，与流向条上的 chip 一致', () => {
+    const p = payload();
+    const shell = p.graph.nodes.find((n) => n.id === 'service:admin-web')!;
+    (shell as { name: string }).name = 'admin-web（演示）';
+    const line = relationHeadline(p);
+    expect(line).toContain('admin-web（演示）');
+    expect(line).not.toMatch(/主域名下 admin-web 是壳/);
   });
 });
