@@ -112,6 +112,7 @@
 - [开放接口（OpenAI 兼容对外网关）技术设计 · 设计](./design.open-platform.open-api.md) `design.open-platform.open-api`
 - [开放平台功能概要 · 设计](./design.open-platform.md) `design.open-platform`
 - [Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计](./design.page-agent.bridge.md) `design.page-agent.bridge`
+- [活动任务清单 · 设计](./design.platform.active-tasks.md) `design.platform.active-tasks`
 - [账户数据共享 · 设计](./design.platform.account-data-sharing.md) `design.platform.account-data-sharing`
 - [MAP 核心业务稳定基线 · 设计](./design.platform.core-business-stability.md) `design.platform.core-business-stability`
 - [跨 MAP 实例数据同步（动态授权） · 设计](./design.platform.cross-instance-data-sync.md) `design.platform.cross-instance-data-sync`
@@ -209,6 +210,7 @@
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
 - [海鲜市场（配置市场）使用 · 指南](./guide.marketplace.md) `guide.marketplace`
 - [开放平台 Open API · 指南](./guide.open-platform.open-api.md) `guide.open-platform.open-api`
+- [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
@@ -330,6 +332,7 @@
 - [文档可读性 · 债务台账](./debt.doc.readability.md) `debt.doc.readability`
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
+- [活动任务清单 · 债务台账](./debt.platform.active-tasks.md) `debt.platform.active-tasks`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
 - [跨 MAP 实例数据同步 · 债务台账](./debt.platform.cross-instance-data-sync.md) `debt.platform.cross-instance-data-sync`
 - [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
