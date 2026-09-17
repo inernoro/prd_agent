@@ -577,8 +577,11 @@ public class GatewayDataDomainGuardTests
         // 库里有两个默认，而不点名的请求解析到哪个全看排序，两人的界面都显示「已生效」。
         // 应用层补不了——Mongo 没有跨文档原子性，任何「查一下有没有别人」都在竞态窗口里。
         // 部分唯一索引把第二个写变成 E11000，端点如实回 409 而不是笼统的「保存失败」。
+        // 索引由 DBA 建（no-auto-index），所以定义的落脚点是 DBA 指南，控制台只留巡检；两边都要在。
+        var indexGuide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
         Assert.Contains("uniq_llmgw_logical_default_per_type", consoleProgram);
-        Assert.Contains("PartialFilterExpression = Builders<BsonDocument>.Filter.Eq(\"IsDefaultForType\", true)", consoleProgram);
+        Assert.Contains("uniq_llmgw_logical_default_per_type", indexGuide, StringComparison.Ordinal);
+        Assert.Contains("`IsDefaultForType` 等于 true", indexGuide, StringComparison.Ordinal);
         Assert.Contains("DEFAULT_CONFLICT", consoleProgram);
 
         // 认领是同一类不变量，同样要库级唯一——认领存在数组里，所以走多键唯一索引，
@@ -586,7 +589,8 @@ public class GatewayDataDomainGuardTests
         // 部分过滤器判「数组里至少有一个字符串」：空数组在多键索引里记成 undefined，
         // 那样所有「一个都没认领」的模型会互相撞车，索引根本建不起来。
         Assert.Contains("uniq_llmgw_logical_claim_per_type", consoleProgram);
-        Assert.Contains("Filter.Type(\"DefaultForAppCallerCodes\", BsonType.String)", consoleProgram);
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", indexGuide, StringComparison.Ordinal);
+        Assert.Contains("`DefaultForAppCallerCodes` 的类型是字符串", indexGuide, StringComparison.Ordinal);
         Assert.Contains("CLAIM_CONFLICT", consoleProgram);
 
         // 冲突时前面已经摘掉的认领要还回去：一次**被拒绝的保存**不许改线上路由。
@@ -6159,6 +6163,96 @@ public class GatewayDataDomainGuardTests
         Assert.True(caught > inserted, "线路插入没有接住撞键异常，并发创建会漏成 500");
     }
 
+    [Fact]
+    public void 控制台启动只查索引不建索引()
+    {
+        /*
+          `no-auto-index` 在控制台这一侧的落地。本 PR 引入的四条唯一索引改成启动只查、缺了报警；
+          存量那批（启动时还在建）没动，已记债。
+
+          判据两条，缺一不可：
+          ① 这四条索引的名字只许出现在巡检调用里，不许再出现在 CreateIndexModel 里；
+          ② 建索引的处数是棘轮，只降不升——不写这一条的话，下一个人照着存量那批的样子
+             再加一条就又是「合规」的，而本 PR 修的正是这种「照着旧的抄一条」。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        string[] introducedHere =
+        [
+            "uniq_llmgw_logical_default_per_type",
+            "uniq_llmgw_logical_claim_per_type",
+            "uniq_llmgw_catalog_entry_key",
+            "uniq_llmgw_imagegen_tenant_pattern",
+        ];
+        var guide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
+        foreach (var name in introducedHere)
+        {
+            // `Name = "..."` 是 CreateIndexOptions 的写法：它出现就说明又在代码里建索引了。
+            // 索引名本身可以多处出现（撞键异常要按名字分辨撞的是哪一条），所以判的不是次数。
+            Assert.Equal(0, CountOccurrences(console, $"Name = \"{name}\""));
+
+            var at = console.IndexOf($"\"{name}\"", StringComparison.Ordinal);
+            Assert.True(at > 0, $"{name} 在控制台里一次都没出现，巡检大概被删了");
+            var callAt = console.LastIndexOf("IndexAdvisory.ReportIfMissingAsync", at, StringComparison.Ordinal);
+            Assert.True(callAt > 0 && at - callAt < 200,
+                $"{name} 不是通过 IndexAdvisory.ReportIfMissingAsync 巡检的");
+
+            // 只查不建的前提是 DBA 那一侧查得到该怎么建。查不到就等于把问题丢给了没有线索的人。
+            Assert.Contains(name, guide, StringComparison.Ordinal);
+        }
+
+        var creations = CountOccurrences(console, "Indexes.CreateOneAsync")
+                        + CountOccurrences(console, "Indexes.CreateManyAsync");
+        Assert.True(creations <= 24,
+            $"控制台启动建索引的处数升到了 {creations}（棘轮上限 24）：新索引走 IndexAdvisory 巡检 + DBA 迁移，不要在启动里建");
+
+        // 缺索引的后果必须说出来，不许只说「索引缺失」。这一条由类型强制：
+        // degradesTo 是必填参数，忘了给编译不过。这里只确认那个参数没被写成空话。
+        var advisory = ReadRepoFile("llmgw/console-api/Mongo/IndexAdvisory.cs");
+        Assert.Contains("degradesTo", advisory, StringComparison.Ordinal);
+        Assert.Contains("doc/guide.platform.mongodb-indexes.md", advisory, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 级联删线路失败时把对外模型放回去()
+    {
+        /*
+          两条删除不是一个事务。中间那一下失败，结果是对外模型没了、它名下的线路成了孤儿，
+          而孤儿不出现在任何一屏上（线路只在自己的对外模型底下列出），没人会发现。
+          补偿的方向必须是「把父放回去」——库回到删之前的样子，重试一次就行。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/logical-models/{id}\"");
+
+        var cascadeAt = delete.IndexOf("gwModelOfferings.DeleteManyAsync(offeringFilter)", StringComparison.Ordinal);
+        var restoreAt = delete.IndexOf("gwLogicalModels.InsertOneAsync(doc)", StringComparison.Ordinal);
+        Assert.True(cascadeAt > 0, "找不到级联删除语句");
+        Assert.True(restoreAt > cascadeAt, "级联删除失败时没有把对外模型放回去");
+
+        // 补偿自己也失败时不许吞：要如实说清「父已删、子还在」并给出能去查的标识。
+        Assert.Contains("MODEL_DELETE_ROLLED_BACK", delete, StringComparison.Ordinal);
+        Assert.Contains("MODEL_DELETE_LEFT_ORPHANS", delete, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 同步状态要写给每一个租户而不只是被跳过的那几个()
+    {
+        /*
+          状态行的 _id 是「宿主::租户」，控制台按登录租户查。名单若只取「这一轮被跳过的」
+          加「上一轮写过行的」，一个刚开的租户两边都不在，那一屏就永远说「同步从未发生」，
+          而且会一直轮询——一个正常运转的进程被报成疑似宕机。
+        */
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        Assert.Contains("GetCollection<BsonDocument>(\"llmgw_tenants\")", worker, StringComparison.Ordinal);
+        Assert.Contains(".Concat(allTenantIds)", worker, StringComparison.Ordinal);
+
+        // 不许退回成「只给有 override 的租户写」：三个来源都要并进去。
+        var loopAt = worker.IndexOf("foreach (var tenantId in skippedByTenant.Keys", StringComparison.Ordinal);
+        Assert.True(loopAt > 0, "找不到逐租户写状态的循环");
+        var loopTail = worker[loopAt..(loopAt + 400)];
+        Assert.Contains(".Concat(knownTenantIds)", loopTail, StringComparison.Ordinal);
+        Assert.Contains(".Concat(allTenantIds)", loopTail, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
@@ -6308,10 +6402,16 @@ public class GatewayDataDomainGuardTests
         // 落库要有这份键数组，否则索引无处可建
         Assert.Contains("{ \"Keys\", new BsonArray(CatalogEntryKeys(body)) }", consoleProgram);
 
-        // 多键唯一索引 + 部分过滤器：空数组在多键索引里记成 undefined，
-        // 不排除的话所有空补登会互相撞车，索引根本建不起来。
+        /*
+          多键唯一索引 + 部分过滤器：空数组在多键索引里记成 undefined，
+          不排除的话所有空补登会互相撞车，索引根本建不起来。
+          索引本身由 DBA 建（no-auto-index），所以这份定义的落脚点是 DBA 指南，
+          控制台这一侧只留巡检；两边都要在。
+        */
         Assert.Contains("uniq_llmgw_catalog_entry_key", consoleProgram);
-        Assert.Contains("Filter.Type(\"Keys\", BsonType.String)", consoleProgram);
+        var catalogGuide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
+        Assert.Contains("uniq_llmgw_catalog_entry_key", catalogGuide, StringComparison.Ordinal);
+        Assert.Contains("`Keys` 的类型是字符串", catalogGuide, StringComparison.Ordinal);
 
         // 存量文档没有 Keys 字段，建索引前要补齐，否则它们一条都不受索引保护
         Assert.Contains("Builders<BsonDocument>.Filter.Exists(\"Keys\", false)", consoleProgram);

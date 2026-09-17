@@ -305,8 +305,29 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
                 .Select(x => x.GetValue("TenantId", BsonNull.Value) is { IsString: true } v ? v.AsString : string.Empty)
                 .Where(x => x.Length > 0);
 
+            /*
+              名单要从**租户表**来，不能只取「这一轮被跳过的」加「上一轮写过行的」。
+
+              一个刚开的租户两边都不在：他没有自己的契约所以没被跳过，也从没被写过行。
+              于是控制台按 `{宿主}::{他}` 永远查不到记录，那一屏就永远说「同步从未发生、
+              这个进程可能挂了」，而且会一直轮询下去——一个正常运转的进程被报成疑似宕机，
+              恰好报给了最没有背景知识的那批人（形状 1：判据比它该管的范围窄，
+              「新租户」这一种输入让它给出相反答案）。
+
+              不筛状态：给一个停用租户多写一行状态没有任何代价，而少写一行就是上面那种假话。
+              这个方向上宁可宽。
+            */
+            var allTenantIds = (await _gateway!.Database
+                    .GetCollection<BsonDocument>("llmgw_tenants")
+                    .Find(Builders<BsonDocument>.Filter.Empty)
+                    .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                    .ToListAsync(ct))
+                .Select(x => x.GetValue("_id", BsonNull.Value) is { IsString: true } v ? v.AsString : string.Empty)
+                .Where(x => x.Length > 0);
+
             foreach (var tenantId in skippedByTenant.Keys
                          .Concat(knownTenantIds)
+                         .Concat(allTenantIds)
                          .Distinct(StringComparer.Ordinal)
                          .Where(x => !string.Equals(x, _tenantId, StringComparison.Ordinal))
                          .ToList())

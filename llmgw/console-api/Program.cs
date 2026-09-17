@@ -350,25 +350,11 @@ await recoveryOperations.Indexes.CreateManyAsync(new[]
   存量里已经有两个默认时建不出来——那不是崩溃的理由，如实报出来让人去清理，
   在那之前端点仍按老样子工作（degradation-must-alarm：降级要响铃，不许静默）。
 */
-try
-{
-    await gwLogicalModels.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ModelType"),
-        new CreateIndexOptions<BsonDocument>
-        {
-            Name = "uniq_llmgw_logical_default_per_type",
-            Unique = true,
-            PartialFilterExpression = Builders<BsonDocument>.Filter.Eq("IsDefaultForType", true),
-        }));
-}
-catch (MongoCommandException ex)
-{
-    Console.WriteLine(
-        "[llmgw] 建不出「同用途唯一默认」索引（uniq_llmgw_logical_default_per_type）："
-        + ex.Message
-        + " —— 多半是存量里某个用途已经有两个默认模型。先在白名单页把多余的那个取消默认，"
-        + "重启控制台即可自动补建；在那之前并发改默认仍有竞态。");
-}
+await IndexAdvisory.ReportIfMissingAsync(
+    gwLogicalModels,
+    "uniq_llmgw_logical_default_per_type",
+    "两个管理员同时把不同模型设成同一个用途的默认时，两次写都会成功，库里于是有两个默认，"
+    + "而不点名的请求解析到哪个全看排序，两个人的界面都显示「已生效」");
 
 /*
   认领也是同一类不变量：同用途下一个调用方最多被一个模型认领，而端点里的
@@ -380,26 +366,11 @@ catch (MongoCommandException ex)
   部分过滤器判的是「数组里至少有一个字符串元素」：空数组在多键索引里会被记成
   undefined，那样所有「一个都没认领」的模型会互相撞车，索引根本建不起来。
 */
-try
-{
-    await gwLogicalModels.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-        Builders<BsonDocument>.IndexKeys
-            .Ascending("TenantId").Ascending("ModelType").Ascending("DefaultForAppCallerCodes"),
-        new CreateIndexOptions<BsonDocument>
-        {
-            Name = "uniq_llmgw_logical_claim_per_type",
-            Unique = true,
-            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("DefaultForAppCallerCodes", BsonType.String),
-        }));
-}
-catch (MongoCommandException ex)
-{
-    Console.WriteLine(
-        "[llmgw] 建不出「同用途唯一认领」索引（uniq_llmgw_logical_claim_per_type）："
-        + ex.Message
-        + " —— 多半是存量里同一个调用方被两个模型认领着。先在白名单页把多余的那个摘掉，"
-        + "重启控制台即可自动补建；在那之前并发改认领仍有竞态。");
-}
+await IndexAdvisory.ReportIfMissingAsync(
+    gwLogicalModels,
+    "uniq_llmgw_logical_claim_per_type",
+    "两个管理员同时把同一个调用方认领到不同模型时，两次写都会成功，那个调用方于是被两条模型"
+    + "同时认领着，解析到哪个全看排序");
 
 await GatewayRecoveryOperations.RepairExpiredAsync(gatewayDatabase);
 await TenantOwnerAuthority.BackfillAsync(tenants, memberships);
@@ -3743,23 +3714,20 @@ try
             Builders<BsonDocument>.Update.Set("Keys", new BsonArray(legacyKeys)));
     }
 
-    await gwCatalogEntries.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("Keys"),
-        new CreateIndexOptions<BsonDocument>
-        {
-            Name = "uniq_llmgw_catalog_entry_key",
-            Unique = true,
-            PartialFilterExpression = Builders<BsonDocument>.Filter.Type("Keys", BsonType.String),
-        }));
 }
-catch (MongoCommandException ex)
+catch (MongoException ex)
 {
     Console.WriteLine(
-        "[llmgw] 建不出「补登键空间唯一」索引（uniq_llmgw_catalog_entry_key）："
-        + ex.Message
-        + " —— 多半是存量里两条补登抢同一个标识或等价写法。先在目录补登页把多余的那条删掉，"
-        + "重启控制台即可自动补建；在那之前并发补登仍有竞态。");
+        "[llmgw] 给存量补登补 Keys 字段时失败（" + ex.Message + "）："
+        + "缺 Keys 的那几条补登不受唯一索引保护，两条补登可以抢同一个标识。"
+        + "先确认控制台连得上网关库，再重启一次补齐");
 }
+
+await IndexAdvisory.ReportIfMissingAsync(
+    gwCatalogEntries,
+    "uniq_llmgw_catalog_entry_key",
+    "两个管理员同时给同一个标识（或它的等价写法）补登时，两条都会存进去，"
+    + "上游清单那一屏取到哪条全看排序，而两个人的界面都显示「已保存」");
 
 // 读补登表并建成索引。上游清单那一屏每次都现查，所以补完刷新页面就能看见。
 async Task<ModelCatalog.CatalogOverrides> LoadCatalogOverridesAsync(HttpContext http)
@@ -4094,20 +4062,11 @@ var gwImageModelConfigs = gatewayDatabase.GetCollection<BsonDocument>("llmgw_ima
   然后各插一条。同步器会把两条都装进那张按模式索引的表，TryMatch 取先返回的那一条——
   生图的尺寸与参数翻译于是每次刷新可能不一样，而两个人的界面都显示保存成功。
 */
-try
-{
-    await gwImageModelConfigs.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-        Builders<BsonDocument>.IndexKeys.Ascending("TenantId").Ascending("ModelIdPattern"),
-        new CreateIndexOptions { Name = "uniq_llmgw_imagegen_tenant_pattern", Unique = true }));
-}
-catch (MongoCommandException ex)
-{
-    Console.WriteLine(
-        "[llmgw] 建不出「同租户模式唯一」索引（uniq_llmgw_imagegen_tenant_pattern）："
-        + ex.Message
-        + " —— 多半是存量里同一个模式已经有两条契约。先在生图契约页删掉多余的那条，"
-        + "重启控制台即可自动补建；在那之前并发新建仍有竞态。");
-}
+await IndexAdvisory.ReportIfMissingAsync(
+    gwImageModelConfigs,
+    "uniq_llmgw_imagegen_tenant_pattern",
+    "两个管理员同时给同一个匹配模式建契约时，两条都会存进去，同步器把两条都装进那张按模式索引的表，"
+    + "TryMatch 取先返回的那一条——生图的尺寸与参数翻译于是每次刷新可能不一样");
 
 
 app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
@@ -6161,9 +6120,66 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
             jsonOptions, 409);
     }
 
+    /*
+      父删了、子没删掉，要把父放回去。
+
+      这两条删除不是一个事务（跨文档，而且这里也不该假设部署一定是副本集）。中间那一下
+      超时或重启，结果是：对外模型没了，它名下的线路全成了孤儿——它们不会出现在任何一屏上
+      （线路只在自己的对外模型底下列出），所以没人会发现，直到有人去数集合大小。
+
+      补偿的方向要选对：**把父放回去**，而不是接着重试删子。父文档还在手里（上面那一读），
+      放回去之后库回到删除之前的样子，操作者重试一次就行；反过来「父没了、先留着孤儿，
+      等下次再清」是把一个能自愈的状态拖成一个要人去数数据的状态。
+      这和换上游那条替换链的回滚是同一个形状（第 49 轮）。
+
+      补偿本身也可能失败（同一次库故障）。那时如实说清「父已删、子还在」，并把模型标识给出来，
+      让人能去查——不许吞掉（no-rootless-tree：追不到就说追不到，不拿一句「操作失败」顶上）。
+
+      还有一条补偿也管不着的缝：删父与删子之间有人新建了一条线路（创建端点校验父存在，
+      那一刻父还在）。它删完之后才落库，于是成为孤儿。彻底堵死要靠墓碑，已记入
+      doc/debt.platform.llm-gateway.md 的 2026-09-17-offering-delete-has-no-tombstone。
+    */
     var offeringFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id));
-    var offeringCount = (int)await gwModelOfferings.CountDocumentsAsync(offeringFilter);
-    await gwModelOfferings.DeleteManyAsync(offeringFilter);
+    int offeringCount;
+    try
+    {
+        offeringCount = (int)await gwModelOfferings.CountDocumentsAsync(offeringFilter);
+        await gwModelOfferings.DeleteManyAsync(offeringFilter);
+    }
+    catch (MongoException cascadeFailure)
+    {
+        try
+        {
+            await gwLogicalModels.InsertOneAsync(doc);
+        }
+        catch (MongoException restoreFailure)
+        {
+            await WriteOperationAuditAsync(
+                operationAudits, http,
+                action: "logical-model.delete", targetType: "llmgw_logical_model", targetId: id,
+                targetName: doc.AsNullableString("Name"), success: false,
+                reason: $"cascade-failed-and-restore-failed: {restoreFailure.Message}",
+                changes: new BsonDocument { { "publicId", ToBsonAuditValue(doc.AsNullableString("PublicId")) } });
+            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+                "MODEL_DELETE_LEFT_ORPHANS",
+                $"这条模型已经删掉了，但它名下的线路没删干净，而且没能把模型放回去（{restoreFailure.Message}）。"
+                + $"库里现在有一批指向 {id} 的线路，它们不会出现在任何一屏上。"
+                + "请 DBA 按这个 id 清理 llmgw_model_offerings，或把模型按原标识重建回来"),
+                jsonOptions, 500);
+        }
+
+        await WriteOperationAuditAsync(
+            operationAudits, http,
+            action: "logical-model.delete", targetType: "llmgw_logical_model", targetId: id,
+            targetName: doc.AsNullableString("Name"), success: false,
+            reason: $"cascade-failed-restored: {cascadeFailure.Message}",
+            changes: new BsonDocument { { "publicId", ToBsonAuditValue(doc.AsNullableString("PublicId")) } });
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_DELETE_ROLLED_BACK",
+            $"删它名下的线路时失败了（{cascadeFailure.Message}），已经把这条模型放回去，库里没有留下半截状态。"
+            + "刷新一下会看到它还在，稍后重试删除"),
+            jsonOptions, 503);
+    }
 
     await WriteOperationAuditAsync(
         operationAudits, http,

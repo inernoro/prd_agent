@@ -87,11 +87,15 @@ DBA 不应对这两个索引重复执行应用库脚本。若 CDS 改变索引�
 
 ## 5.1 网关自持数据库的一次性索引升级
 
-网关（llmgw）的库同样不是 PRD API 应用库，它的索引由 `LlmGatewayDatabaseInitializer` 在启动时
-**幂等创建**。启动路径只创建缺失的索引，**不丢弃正在生效的索引**——丢一条正在生效的唯一索引
-再同步重建，在大集合上会阻塞写入，而两次操作之间失败一次就让那条不变量彻底失去保护。
+网关（llmgw）的库同样不是 PRD API 应用库。这里的索引**不在启动时创建**：启动只查它在不在，
+缺了往日志写一条警告，说清缺席期间什么会退化，建索引这一步归 DBA。
 
-所以「收紧或改键」这一类动作留给 DBA。当前待办一条（2026-09-16 起）：
+为什么定这条线：在一个已经有数据的集合上建索引可能阻塞写入、拖慢就绪；副本集滚动重启时
+每个实例各建各的；而建失败若没被接住，整个进程起不来。这三种后果都发生在没人盯着的启动路径上。
+（历史上这几条曾在启动时自动建，2026-09-17 起改为只查不建。存量还有一批仍在启动时创建，
+见 [debt.platform.llm-gateway.md](./debt.platform.llm-gateway.md)，逐步搬到本节。）
+
+### 5.1.1 待办：线路身份索引换键
 
 | 集合 | 旧索引 | 要换成 | 为什么 |
 |---|---|---|---|
@@ -101,6 +105,39 @@ DBA 不应对这两个索引重复执行应用库脚本。若 CDS 改变索引�
 通例检查（备份、确认环境、评估大集合影响），在维护窗口里先删旧的再建新的——新索引比旧的**更松**
 （多一个字段只会让约束更宽），所以不需要预先清理重复数据。没做之前旧索引继续生效，后果是
 「同一个兑换所的第二条别名建不出来」，会如实报错而不是静默走偏。
+
+一条都没有时（全新库，或索引被误删）启动会报「线路身份唯一索引不存在」。那期间线路身份
+没有唯一约束，两次并发创建同身份线路都会插进去。
+
+它的定义：集合 `llmgw_model_offerings`，键依次是 `TenantId`、`LogicalModelId`、`TargetKind`、
+`TargetId`、`UpstreamModelId`、`SupersededByOfferingId`（全部升序），唯一，无部分过滤器。
+
+### 5.1.2 待办：控制台的四条唯一索引
+
+这四条是库级不变量——端点里的「先查有没有别人」在并发下挡不住，Mongo 没有跨文档原子性可用。
+缺哪一条，启动日志里就有对应的一行，写着缺席期间会退化成什么样。
+
+| 集合 | 索引 | 缺了会怎样 |
+|---|---|---|
+| `llmgw_logical_models` | `uniq_llmgw_logical_default_per_type` | 两个管理员同时把不同模型设成同一个用途的默认，两次都成功，库里有两个默认，解析到哪个全看排序 |
+| `llmgw_logical_models` | `uniq_llmgw_logical_claim_per_type` | 同一个调用方被两条模型同时认领 |
+| `llmgw_catalog_entries` | `uniq_llmgw_catalog_entry_key` | 两条补登抢同一个标识或等价写法 |
+| `llmgw_imagegen_model_configs` | `uniq_llmgw_imagegen_tenant_pattern` | 同一个匹配模式两条契约，生图的尺寸与参数翻译每次刷新可能不一样 |
+
+| 集合 | 键（依次，全部升序） | 部分过滤器 |
+|---|---|---|
+| `llmgw_logical_models` | `TenantId`、`ModelType` | `IsDefaultForType` 等于 true |
+| `llmgw_logical_models` | `TenantId`、`ModelType`、`DefaultForAppCallerCodes` | `DefaultForAppCallerCodes` 的类型是字符串 |
+| `llmgw_catalog_entries` | `TenantId`、`Keys` | `Keys` 的类型是字符串 |
+| `llmgw_imagegen_model_configs` | `TenantId`、`ModelIdPattern` | 无 |
+
+四条全部是唯一索引，名字见上一张表。
+
+后两条的部分过滤器不是可选项：认领与补登的键存在数组里，走多键唯一索引，而空数组在多键索引里
+记成 `undefined`，不加这个过滤器的话所有「一个都没认领」的文档会互相撞车，索引根本建不起来。
+
+建不出来通常说明存量里已经有冲突的两条。按上表那一列去界面上清掉多余的那条（取消默认 /
+摘掉认领 / 删掉重复补登或重复契约），再建。
 
 ## 6. 回滚
 
