@@ -680,19 +680,38 @@ public class ModelResolver : IModelResolver
     {
         if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
         {
-            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
-            var filter = Builders<GatewayModelOffering>.Filter.And(
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
-            var update = Builders<GatewayModelOffering>.Update
-                .Inc(x => x.ConsecutiveSuccesses, 1)
-                .Set(x => x.ConsecutiveFailures, 0)
-                .Set(x => x.HealthStatus, ModelHealthStatus.Healthy)
-                .Set(x => x.LastSuccessAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                .Unset(x => x.HalfOpenLeaseUntil)
-                .Unset(x => x.ManualRecoveryAt);
-            await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            /*
+              记账失败不许把一次**已经成功**的调用变成用户侧的失败。
+
+              这里写的是健康台账，不是业务结果——上游已经回了，响应就在调用方手上等着返回。
+              一次 Mongo 写抖动从这里抛出去，那次成功就成了 500。池成员那条路径一直是
+              try/catch + 日志，Offering 这条漏了；断流之后 Offering 是主路径，
+              于是这个洞从「兜底路径的边角」变成了「主路径的边角」（形状 10 的反面：
+              该降级的地方没降级，把一个不影响结果的失败升级成了影响结果的失败）。
+            */
+            try
+            {
+                var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+                var filter = Builders<GatewayModelOffering>.Filter.And(
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+                var update = Builders<GatewayModelOffering>.Update
+                    .Inc(x => x.ConsecutiveSuccesses, 1)
+                    .Set(x => x.ConsecutiveFailures, 0)
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Healthy)
+                    .Set(x => x.LastSuccessAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                    .Unset(x => x.HalfOpenLeaseUntil)
+                    .Unset(x => x.ManualRecoveryAt);
+                await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "[ModelResolver] 记录线路成功状态失败 Offering={OfferingId}（本次调用已成功，不受影响）",
+                    resolution.OfferingId);
+            }
+
             return;
         }
 
@@ -733,55 +752,73 @@ public class ModelResolver : IModelResolver
     {
         if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
         {
-            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
-            var filter = Builders<GatewayModelOffering>.Filter.And(
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
-            // 先原子自增并取回自增后的真值，再据此升级状态。
-            // 不能像以前那样先 Find 一次、拿旧快照 +1 算出状态再 Set：并发失败时各请求读到的
-            // 是同一个自增前的值，谁最后落笔谁说了算，计数冲到几十而状态被写回健康，断路器
-            // 就一直不跳，全部流量继续打向已经死掉的上游。
-            var afterInc = await offerings.FindOneAndUpdateAsync(
-                filter,
-                Builders<GatewayModelOffering>.Update
-                    .Inc(x => x.ConsecutiveFailures, 1)
-                    .Set(x => x.ConsecutiveSuccesses, 0)
-                    .Set(x => x.LastFailedAt, DateTime.UtcNow)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
-                    .Unset(x => x.HalfOpenLeaseUntil)
-                    // 人工恢复的那张通行证，一次失败就作废——池成员那条路径一直是这么做的
-                    // （见下面 Models.$.ManualRecoveryAt 那处），Offering 这条漏了。
-                    //
-                    // 漏掉的后果不是「多试一次」：半开认领的条件里 ManualRecoveryAt <= now
-                    // 是一条**独立**的放行项，与冷却时间并列。它留着，这条刚被证明还是坏的线路
-                    // 就对**每一个**后续请求都满足认领条件，被反复抢去当队首探针，
-                    // 配置的冷却期形同虚设——运维在控制台点一次「恢复」，等于把这条坏线路
-                    // 永久钉在了队首，直到有人再去改一次配置。
-                    .Unset(x => x.ManualRecoveryAt),
-                new FindOneAndUpdateOptions<GatewayModelOffering> { ReturnDocument = ReturnDocument.After },
-                ct);
-            if (afterInc is null) return;
-            var status = GatewayCircuitBreakerPolicy.ClassifyByFailures(afterInc.ConsecutiveFailures);
-            if (!GatewayCircuitBreakerPolicy.IsEscalation(afterInc.HealthStatus, status))
-                return;
-            // 升级这一步要带上「失败数还是当初那么多」这个条件。
-            //
-            // 自增与升级是两次写，中间可能挤进一次**成功**：成功那一路把 ConsecutiveFailures
-            // 清零、把健康档写回 Healthy，而这里若只判 HealthStatus < status，就会把一个
-            // 基于已经作废的失败数算出来的档位重新写回去——一条刚刚成功的线路被隔离整个冷却期，
-            // 而它其实是好的（形状 5 的近亲：拿变更前的状态去 gate 一个会改变该状态的写）。
-            //
-            // 判据用 Gte 而不是等于：期间又失败了几次的话计数只会更高，这次升级照样该落；
-            // 而清零过就一定小于它，条件不成立、这次写自然作废。降档由 Lt 那一条挡住，两者互补。
-            await offerings.UpdateOneAsync(
-                Builders<GatewayModelOffering>.Filter.And(
+            /*
+              记账失败不许挡住**故障转移**。
+
+              这里写的是健康台账，而调用方那边正等着「这条线路挂了，换下一条」的结论。
+              一次 Mongo 写抖动从这里抛出去，LlmGateway 根本走不到挑下一条候选那一步——
+              一次本来能自愈的失败，变成用户看到的失败。池成员那条路径一直是 try/catch + 日志，
+              Offering 这条漏了；断流之后 Offering 是主路径，这个洞也就从边角挪到了主干。
+            */
+            try
+            {
+                var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+                var filter = Builders<GatewayModelOffering>.Filter.And(
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+                // 先原子自增并取回自增后的真值，再据此升级状态。
+                // 不能像以前那样先 Find 一次、拿旧快照 +1 算出状态再 Set：并发失败时各请求读到的
+                // 是同一个自增前的值，谁最后落笔谁说了算，计数冲到几十而状态被写回健康，断路器
+                // 就一直不跳，全部流量继续打向已经死掉的上游。
+                var afterInc = await offerings.FindOneAndUpdateAsync(
                     filter,
-                    Builders<GatewayModelOffering>.Filter.Lt(x => x.HealthStatus, status),
-                    Builders<GatewayModelOffering>.Filter.Gte(x => x.ConsecutiveFailures, afterInc.ConsecutiveFailures)),
-                Builders<GatewayModelOffering>.Update
-                    .Set(x => x.HealthStatus, status)
-                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: ct);
+                    Builders<GatewayModelOffering>.Update
+                        .Inc(x => x.ConsecutiveFailures, 1)
+                        .Set(x => x.ConsecutiveSuccesses, 0)
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Unset(x => x.HalfOpenLeaseUntil)
+                        // 人工恢复的那张通行证，一次失败就作废——池成员那条路径一直是这么做的
+                        // （见下面 Models.$.ManualRecoveryAt 那处），Offering 这条漏了。
+                        //
+                        // 漏掉的后果不是「多试一次」：半开认领的条件里 ManualRecoveryAt <= now
+                        // 是一条**独立**的放行项，与冷却时间并列。它留着，这条刚被证明还是坏的线路
+                        // 就对**每一个**后续请求都满足认领条件，被反复抢去当队首探针，
+                        // 配置的冷却期形同虚设——运维在控制台点一次「恢复」，等于把这条坏线路
+                        // 永久钉在了队首，直到有人再去改一次配置。
+                        .Unset(x => x.ManualRecoveryAt),
+                    new FindOneAndUpdateOptions<GatewayModelOffering> { ReturnDocument = ReturnDocument.After },
+                    ct);
+                if (afterInc is null) return;
+                var status = GatewayCircuitBreakerPolicy.ClassifyByFailures(afterInc.ConsecutiveFailures);
+                if (!GatewayCircuitBreakerPolicy.IsEscalation(afterInc.HealthStatus, status))
+                    return;
+                // 升级这一步要带上「失败数还是当初那么多」这个条件。
+                //
+                // 自增与升级是两次写，中间可能挤进一次**成功**：成功那一路把 ConsecutiveFailures
+                // 清零、把健康档写回 Healthy，而这里若只判 HealthStatus < status，就会把一个
+                // 基于已经作废的失败数算出来的档位重新写回去——一条刚刚成功的线路被隔离整个冷却期，
+                // 而它其实是好的（形状 5 的近亲：拿变更前的状态去 gate 一个会改变该状态的写）。
+                //
+                // 判据用 Gte 而不是等于：期间又失败了几次的话计数只会更高，这次升级照样该落；
+                // 而清零过就一定小于它，条件不成立、这次写自然作废。降档由 Lt 那一条挡住，两者互补。
+                await offerings.UpdateOneAsync(
+                    Builders<GatewayModelOffering>.Filter.And(
+                        filter,
+                        Builders<GatewayModelOffering>.Filter.Lt(x => x.HealthStatus, status),
+                        Builders<GatewayModelOffering>.Filter.Gte(x => x.ConsecutiveFailures, afterInc.ConsecutiveFailures)),
+                    Builders<GatewayModelOffering>.Update
+                        .Set(x => x.HealthStatus, status)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "[ModelResolver] 记录线路失败状态失败 Offering={OfferingId}（不影响本次故障转移）",
+                    resolution.OfferingId);
+            }
+
             return;
         }
 

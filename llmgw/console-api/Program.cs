@@ -4812,6 +4812,10 @@ app.MapPost("/gw/pools/migrate-to-models", async (
     var enabledExchangesForMigration = await gwModelExchanges
         .Find(TenantAccess.Filter(http, fb.Eq("Enabled", true)))
         .ToListAsync();
+    // 判「这条线路现在承接得了流量吗」要用到物理模型挂的那个 Provider，同样先取一次。
+    var platformsForMigration = (await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync())
+        .Where(x => x.GetStringOrEmpty("_id").Length > 0)
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), x => x, StringComparer.Ordinal);
     if (pools.Count > PoolMigrationPlanner.MaxBatch)
     {
         var availableTypes = pools
@@ -4860,6 +4864,16 @@ app.MapPost("/gw/pools/migrate-to-models", async (
         var publicId = PoolMigrationPlanner.ToPublicId(pool);
         var normalized = publicId.ToLowerInvariant();
         var modelType = pool.AsNullableString("ModelType") ?? "chat";
+        /*
+          「建成了几条线路」与「其中几条现在承接得了流量」是两回事。
+
+          池成员可能指着一个已停用的物理模型、或者它挂的 Provider 不在了/被停用了。那种成员照样
+          搬成线路（拓扑要留着，模型页上会标出它为什么不可用），但它一条流量都接不了。
+          零线路那道闸若数的是前者，一个「每条线路的上游都不可用」的模型就躲过了它，
+          带着用途默认与认领留在库里，而运行时把每一条都拒掉（第 55 轮 review）。
+          所以闸门数的是后者，判据与新建线路那道闸同一份（OfferingTargetEligibility）。
+        */
+        var usableRouteCount = 0;
         var entry = new PoolMigrationEntry
         {
             PoolId = poolId,
@@ -5481,6 +5495,12 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 }
                 entry.RouteCount++;
                 result.RoutesCreated++;
+                if (OfferingTargetEligibility.Evaluate(
+                        "exchange", memberExchange, null, memberModelId) is null)
+                {
+                    usableRouteCount++;
+                }
+
                 continue;
             }
 
@@ -5592,6 +5612,12 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             }
             entry.RouteCount++;
             result.RoutesCreated++;
+            platformsForMigration.TryGetValue(
+                physical.AsNullableString("PlatformId") ?? string.Empty, out var memberPlatform);
+            if (OfferingTargetEligibility.Evaluate("model", physical, memberPlatform, upstreamModelId) is null)
+            {
+                usableRouteCount++;
+            }
         }
 
         /*
@@ -5611,7 +5637,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
         // 只管**这一趟新建的**那种模型。复用既有同名模型时那条模型本来就有自己的线路与身份，
         // 这一趟没给它加上线路不等于它没有线路——照着停用它会把一条好好在跑的模型打掉。
         // 撞车认领到别人那条的情形（linkedByRace）同理，更不能动。
-        if (!dryRun && entry.RouteCount == 0 && entry.CreatedNewModel && !linkedByRace
+        if (!dryRun && usableRouteCount == 0 && entry.CreatedNewModel && !linkedByRace
             && logicalId is { Length: > 0 })
         {
             var hadDefault = entry.IsDefaultForType;
@@ -6264,8 +6290,31 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
         }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            // 父其实没被删掉（那次删除的结果也是未知的），那就已经在库里了。
-            parentRestored = true;
+            /*
+              撞键不等于「原来那一条还在」。
+
+              公开名上也有唯一索引，所以另一个管理员在这几毫秒里用同一个公开名新建了一条模型时，
+              撞的是**那一条**、_id 完全不同。把它当成「原模型已恢复」，接着按原 _id 把线路放回去，
+              结果是一批挂在一个不存在的父下面的孤儿，藏在那条替身模型后面，而回复还说「全都放回去了」
+              （第 55 轮 review）。所以回去按 _id 查一眼，不拿撞键本身当证据
+              （形状 8：不成立的证据当成了证明）。
+            */
+            try
+            {
+                parentRestored = await gwLogicalModels
+                    .Find(Builders<BsonDocument>.Filter.Eq("_id", id))
+                    .AnyAsync();
+                if (!parentRestored)
+                {
+                    restoreErrors.Add(
+                        "模型没能放回去：它原来的公开名在这期间被另一条新建的模型占用了"
+                        + $"（{ex.WriteError?.Message ?? ex.Message}）");
+                }
+            }
+            catch (MongoException probeFailure)
+            {
+                restoreErrors.Add($"模型放回去没有，查不出来：{probeFailure.Message}");
+            }
         }
         catch (MongoException ex)
         {

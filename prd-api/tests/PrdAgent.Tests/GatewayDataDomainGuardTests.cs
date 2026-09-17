@@ -6303,6 +6303,17 @@ public class GatewayDataDomainGuardTests
         Assert.True(fullyAt > 0, "没有区分「全放回去了」与「只放回去一部分」");
         Assert.True(claimAt > fullyAt, "在还没判断放回去了多少之前就宣称库回到了删之前的样子");
         Assert.Contains("MODEL_DELETE_LEFT_ORPHANS", delete, StringComparison.Ordinal);
+
+        /*
+          撞键不等于「原来那一条还在」：公开名上也有唯一索引，另一个管理员在这几毫秒里用同一个
+          公开名新建一条，撞的是那一条、_id 完全不同。拿撞键本身当「已恢复」的证据，就会按原 _id
+          把线路放回去，造出一批藏在替身模型后面的孤儿，而回复还说全都放回去了（形状 8）。
+        */
+        var dupAt = delete.IndexOf("ServerErrorCategory.DuplicateKey", StringComparison.Ordinal);
+        Assert.True(dupAt > 0, "回滚没有区分撞键这一种失败");
+        var dupBranch = delete[dupAt..(dupAt + 900)];
+        Assert.Contains("parentRestored = await gwLogicalModels", dupBranch, StringComparison.Ordinal);
+        Assert.Contains("Filter.Eq(\"_id\", id)", dupBranch, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -6347,8 +6358,15 @@ public class GatewayDataDomainGuardTests
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var migrate = EndpointBody(console, "app.MapPost(\"/gw/pools/migrate-to-models\"");
 
-        var checkAt = migrate.IndexOf("entry.RouteCount == 0 && entry.CreatedNewModel", StringComparison.Ordinal);
-        Assert.True(checkAt > 0, "搬迁没有回头确认这个池到底建成了几条线路，或者没有限定在这一趟新建的模型上");
+        /*
+          数的必须是「现在承接得了流量的线路」，不是「建了几条」。池成员可能指着一个已停用的
+          物理模型、或者它挂的 Provider 不在了——那种线路照样建（拓扑要留着），但一条流量都接不了。
+          数前者的话，一个「每条线路的上游都不可用」的模型就躲过了这道闸（第 55 轮 review）。
+        */
+        Assert.Contains("OfferingTargetEligibility.Evaluate(", migrate, StringComparison.Ordinal);
+        Assert.Equal(2, CountOccurrences(migrate, "usableRouteCount++;"));
+        var checkAt = migrate.IndexOf("usableRouteCount == 0 && entry.CreatedNewModel", StringComparison.Ordinal);
+        Assert.True(checkAt > 0, "搬迁没有回头确认这个池到底有几条线路真的能接流量，或者没有限定在这一趟新建的模型上");
         Assert.Contains("!linkedByRace", migrate[checkAt..(checkAt + 200)], StringComparison.Ordinal);
 
         var fix = migrate[checkAt..(checkAt + 1200)];
@@ -6360,9 +6378,45 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("entry.IsDefaultForType = false;", fix, StringComparison.Ordinal);
         Assert.Contains("entry.ClaimedAppCallerCodes = [];", fix, StringComparison.Ordinal);
 
-        // 判在线路循环之后：循环里还在 RouteCount++ 的时候判等于没判。
-        var loopAt = migrate.IndexOf("entry.RouteCount++;", StringComparison.Ordinal);
+        // 判在线路循环之后：循环里还在计数的时候判等于没判。
+        var loopAt = migrate.IndexOf("usableRouteCount++;", StringComparison.Ordinal);
         Assert.True(loopAt > 0 && loopAt < checkAt, "零线路那道闸排在了建线路之前");
+    }
+
+    [Fact]
+    public void 线路健康记账失败不许变成用户侧的失败()
+    {
+        /*
+          RecordSuccess / RecordFailure 写的是健康台账，不是业务结果。成功那一路，响应已经在
+          调用方手上等着返回；失败那一路，调用方正等着「换下一条线路」的结论。一次 Mongo 写抖动
+          从这里抛出去，前者变成 500、后者根本走不到挑下一条候选那一步——一次本来能自愈的失败
+          变成用户看到的失败。
+
+          池成员那两条路径一直是 try/catch + 日志，Offering 这两条漏了；断流之后 Offering 是
+          主路径，这个洞也就从边角挪到了主干（第 55 轮 review）。
+        */
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+
+        foreach (var method in new[] { "RecordSuccessAsync", "RecordFailureAsync" })
+        {
+            var at = resolver.IndexOf($"public async Task {method}(", StringComparison.Ordinal);
+            Assert.True(at > 0, $"找不到 {method}");
+            var branchAt = resolver.IndexOf(
+                "if (!string.IsNullOrWhiteSpace(resolution.OfferingId)", at, StringComparison.Ordinal);
+            Assert.True(branchAt > at, $"{method} 里找不到线路那一支");
+
+            // 线路那一支进 try 之前不许有对库的写：try 必须紧跟在分支开头。
+            var tryAt = resolver.IndexOf("try", branchAt, StringComparison.Ordinal);
+            var writeAt = resolver.IndexOf("Async(", branchAt, StringComparison.Ordinal);
+            Assert.True(tryAt > branchAt && tryAt < writeAt,
+                $"{method} 的线路分支把库操作放在了 try 之外，一次写抖动会变成用户侧的失败");
+
+            var catchAt = resolver.IndexOf("catch (Exception ex)", branchAt, StringComparison.Ordinal);
+            Assert.True(catchAt > tryAt, $"{method} 的线路分支没有接住记账失败");
+            // 接住之后要留痕，不许静默吞掉（degradation-must-alarm）。
+            var tail = resolver[catchAt..(catchAt + 400)];
+            Assert.Contains("_logger.LogWarning", tail, StringComparison.Ordinal);
+        }
     }
 
     private static string EndpointBody(string source, string anchor)
