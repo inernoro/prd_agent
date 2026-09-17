@@ -147,7 +147,7 @@ function BranchListSkeleton(): JSX.Element {
         {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
           <article
             key={index}
-            className="flex min-h-[15.25rem] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
+            className="flex h-[15.25rem] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
           >
             {/* 头部:分支名 + 状态徽标 */}
             <div className="flex items-center justify-between gap-3 px-5 pt-5">
@@ -5107,7 +5107,7 @@ function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: 
   const bad = entries.some(([, m]) => m.status === 'error');
   const projectId = (branch as { projectId?: string }).projectId;
   return (
-    <div className={`relative flex min-h-[15.25rem] flex-col rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
+    <div className={`relative flex h-[15.25rem] flex-col rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
       title={`由 ${branch.branch} 复制出的项目级复制集实例组（非独立 git 分支）：每个容器的第 ${groupIndex + 1} 个副本，入口已按权重负载`}>
       <div className="flex items-center gap-2 px-5 pt-4">
         <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
@@ -5115,8 +5115,12 @@ function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: 
           {branch.branch}<span className="text-indigo-500">-replicaset-{groupIndex + 1}</span>
         </span>
       </div>
-      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
-        {entries.map(([pid, m]) => {
+      {/* 固定单行（2026-09-17 随「卡片定高」一起改）：这张派生卡也是定高的，
+          副本 chip 换行会把下面的按钮挤出卡片。最多摆 4 个，其余收进「+N」，
+          完整清单在卡片 title 里。 */}
+      <div className="px-5 pt-3">
+        <div className="flex h-7 max-w-full items-center gap-2 overflow-hidden">
+        {entries.slice(0, 4).map(([pid, m]) => {
           const color = m?.status === 'error' ? '#ef4444' : profileColor(pid);
           return (
             <span key={pid} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs"
@@ -5128,6 +5132,13 @@ function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: 
             </span>
           );
         })}
+        {entries.length > 4 ? (
+          <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-indigo-500/50 bg-indigo-500/10 px-2 text-xs font-medium text-indigo-500"
+            title={entries.slice(4).map(([pid]) => pid).join(', ')}>
+            +{entries.length - 4}
+          </span>
+        ) : null}
+        </div>
       </div>
       <div className="px-5 pt-3">
         <span className="inline-flex rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[0.625rem] font-semibold text-indigo-500">复制集成员 · 入口已负载 · 非独立分支</span>
@@ -5383,6 +5394,63 @@ const BranchCard = memo(function BranchCard({
     ? formatRelativeTime(branch.ciWaitingSince)
     : (branch.lastPushAt ? formatRelativeTime(branch.lastPushAt) : '');
   const ciImageErrorText = branch.ciImageError || 'CI 预构建镜像未就绪';
+  /*
+   * 页脚状态槽（2026-09-17 用户拍板「保持固定高度、不要堆积主面板高度」）。
+   *
+   * 「等待 CI 镜像 / CI 镜像未就绪 / 服务漂移」过去各占顶部那一行的一个 chip。
+   * 它们是**状态**不是容器：多一个 chip 就把端口挤到第二行、把整张卡撑高，
+   * 一排五张卡出现三种高度。页脚本来就在讲「现在什么状况 + 该做什么」，
+   * 挪进页脚的说明槽位后零额外高度，且与构建等待共用同一套斜纹视觉。
+   *
+   * 优先级：构建进度 > CI 镜像 > 服务漂移 > AI 动态 > 提交说明。
+   * 前两种整卡状态（isCiWaiting / isCiFailed）已有顶部整行状态条，这里不重复。
+   */
+  const footerNotice = (() => {
+    if (deployProgress) return null;
+    if (ciPrebuilt && branch.ciImageStatus === 'waiting' && !isCiWaiting) {
+      return {
+        kind: 'ci-waiting' as const,
+        tone: 'info' as const,
+        striped: true,
+        label: '等待 CI 镜像',
+        detail: branch.ciTargetSha ? `预构建 ${branch.ciTargetSha.slice(0, 7)}，就绪后自动部署` : '预构建中，就绪后自动部署',
+        title: `极速版（CI 预构建）：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像，完成后自动拉取部署`,
+        action: null as null | { label: string; disabled: boolean; run: () => void },
+      };
+    }
+    if (ciPrebuilt && branch.ciImageStatus === 'failed' && !isCiFailed) {
+      return {
+        kind: 'ci-failed' as const,
+        tone: 'warn' as const,
+        striped: false,
+        label: 'CI 镜像未就绪',
+        detail: ciImageErrorText,
+        title: `极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译，或重试 CI 后再部署。`,
+        action: { label: '切回源码编译', disabled: false, run: onDetail },
+      };
+    }
+    const drift = branch.deployRuntime?.drift;
+    if (drift?.hasDrift) {
+      const parts: string[] = [];
+      if (drift.missingProfileIds.length > 0) parts.push(`缺 ${drift.missingProfileIds.length} 个服务`);
+      if (drift.unhealthyProfileIds.length > 0) parts.push(`${drift.unhealthyProfileIds.length} 个服务异常`);
+      return {
+        kind: 'drift' as const,
+        tone: 'warn' as const,
+        striped: false,
+        label: parts.join(' · '),
+        detail: `期望 ${drift.expectedCount} 个 · 健康 ${drift.healthyCount} 个`,
+        title: [
+          `期望 ${drift.expectedCount} 个服务，实际健康 ${drift.healthyCount} 个`,
+          drift.missingProfileIds.length > 0 ? `缺失（从未部署或被移除）: ${drift.missingProfileIds.join(', ')}` : '',
+          drift.unhealthyProfileIds.length > 0 ? `异常（停止/错误）: ${drift.unhealthyProfileIds.join(', ')}` : '',
+          '点击重新部署：按项目最新构建配置重新部署，补齐缺失/异常的服务',
+        ].filter(Boolean).join('\n'),
+        action: { label: '重新部署', disabled: busy || isInterim, run: onDeploy },
+      };
+    }
+    return null;
+  })();
   const stopReasonText = branch.lastStopReason || '无停止记录';
   const failureAt = branch.lastDeployStartedAt || branch.lastDeployDispatchAt || branch.lastDeployAt || branch.lastPushAt || branch.createdAt;
   const statusTimeText = isError
@@ -5483,7 +5551,7 @@ const BranchCard = memo(function BranchCard({
   return (
     <article
       data-branch-card-id={branch.id}
-      className={`group relative flex min-h-[15.25rem] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
+      className={`group relative flex h-[15.25rem] cursor-pointer flex-col ${phase === 'leaving' ? 'cds-branch-card-leave overflow-hidden' : phase === 'entering' ? 'cds-branch-card-enter' : ''} ${tagEditorOpen || tagDeleteTarget || aiPanelOpen || commitMenuOpen || portsPopoverOpen ? 'z-40 overflow-visible' : isError ? 'z-20 overflow-visible hover:z-50 focus-within:z-50' : phase ? 'overflow-hidden' : 'overflow-hidden cds-cv-auto'} rounded-md border ${
         isError
           ? branchIssueCardClass(branch)
           : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
@@ -5716,10 +5784,17 @@ const BranchCard = memo(function BranchCard({
           - 启动中 / 异常 时,端口 chip 色统一跟 branch 状态(以前是
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
-      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
+      {/* 状态/服务分带（2026-09-17 用户拍板「保持固定高度、不要拉升」）。
+          原本这里是一个 flex-wrap 行：端口多一个、状态多一个 chip 就换行，卡片跟着长高，
+          一排五张卡出现三种高度。现在改成竖向分带，每条带自己固定单行高度：
+            复制集带（有才显示） / 服务带（端口，溢出进「+N」浮层） / 基础带（托盘 + 时间）
+          状态类 chip（CI 等待、CI 未就绪、服务漂移）下沉到页脚状态槽，不再占这里的宽度。 */}
+      <div className="flex max-w-full flex-col gap-1.5 px-5 pt-3">
         {/* 复制集标识（2026-07-25 用户拍板三改）：项目级复制集已在右侧显形为独立派生卡，
             主卡只标「已复制」不再列 xN；容器级仍是每容器专属色 chip + xN。健康态不用红
             （红色专属出错——有副本 error 才转红）。 */}
+        {/* 复制集带：无复制集时 IIFE 返回 null，:empty 让整条带不占位。 */}
+        <div className="flex h-7 items-center gap-2 overflow-hidden empty:hidden">
         {(() => {
           const replicaSets = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets;
           const entries = Object.entries(replicaSets ?? {})
@@ -5764,6 +5839,7 @@ const BranchCard = memo(function BranchCard({
             </>
           );
         })()}
+        </div>
         {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，
             在同一槽位单行显示「容器停止/出错」统一标识 + 信息提醒（停止来源/调度器降温原因/错误），
             让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。
@@ -5843,6 +5919,10 @@ const BranchCard = memo(function BranchCard({
           </div>
         ) : (
           <>
+        {/* 服务带（固定单行 h-7）：异常 chip + 应用端口。端口溢出收进右列「+N」浮层，
+            不换行——这一带高度是常数，卡片高度才可能是常数。 */}
+        <div className="grid h-7 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
         {/* status chip 仅在异常态显示;running 删除(冗余)。
             2026-07-26 用户拍板：构建中的「状态 + 计时 + 模式/耗时/预计进度」全部
             挪到卡片底部 footer 右下角——顶部这一行构建期间保持端口/容器信息不动。 */}
@@ -5854,63 +5934,11 @@ const BranchCard = memo(function BranchCard({
             {issueLabel}
           </span>
         ) : null}
-        {/*
-          2026-06-23 极速版（CI 预构建）状态。push 后不在 CDS 本机编译,等 GitHub Actions
-          把该 commit 编译成 ghcr 镜像;期间显示「等待 CI 镜像」(动效不静止,符合禁止空白
-          等待);CI 失败显示「CI 构建失败」并提供「切回源码编译」（打开详情切部署模式）。
-        */}
-        {/*
-          deployRuntime 仅由 GET /branches 汇总注入;SSE 的 branch.created/updated 推的是
-          原始 BranchEntry(无 deployRuntime)。若硬要 prebuilt===true,webhook 新建的极速版
-          分支卡在全量刷新前不显示 CI 徽章,丢失等待/失败反馈（Codex P2: show CI badges for
-          SSE-created express branches）。改用 `!== false`:deployRuntime 缺省(SSE)→显示;
-          有且 prebuilt=true→显示;有且明确非极速版(prebuilt=false,如已切回源码)→隐藏。
-          ciImageStatus 仅由极速版流程写入,其存在本身即极速版信号,故缺 deployRuntime 时安全。
-        */}
-        {branch.ciImageStatus === 'waiting' && branch.deployRuntime?.prebuilt !== false ? (
-          <span
-            className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
-            title={`极速版（CI 预构建）：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像,完成后自动拉取部署`}
-          >
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary/60" aria-hidden />
-            等待 CI 镜像
-            {branch.ciWorkflowRunUrl ? (
-              <a
-                href={branch.ciWorkflowRunUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="font-medium text-primary/80 underline-offset-2 hover:text-primary hover:underline"
-              >查看构建</a>
-            ) : null}
-          </span>
-        ) : null}
-        {branch.ciImageStatus === 'failed' && branch.deployRuntime?.prebuilt !== false ? (
-          <span
-            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs text-warn"
-            title={`极速版镜像未就绪（CI 结论：${branch.ciWorkflowConclusion || '未知'}）。可切回源码编译,或重试 CI 后再部署。`}
-          >
-            <span className="h-1.5 w-1.5 rounded-full bg-warn" aria-hidden />
-            CI 构建失败
-            {branch.ciWorkflowRunUrl ? (
-              <a
-                href={branch.ciWorkflowRunUrl}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(e) => e.stopPropagation()}
-                className="font-medium underline-offset-2 hover:underline"
-              >查看</a>
-            ) : null}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onDetail(); }}
-              className="font-medium underline-offset-2 hover:underline"
-            >切回源码编译</button>
-          </span>
-        ) : null}
+        {/* 极速版的「等待 CI 镜像 / CI 镜像未就绪」不再在这一带占 chip：它们是状态不是容器，
+            多一个 chip 就把端口挤到第二行、把卡片撑高。2026-09-17 起下沉到页脚状态槽
+            （footerNotice），等待态复用构建等待的斜纹底。 */}
         {portedResources.length > 0 ? (
-          <>
-            {visibleAppResources.map((resource) => {
+            visibleAppResources.map((resource) => {
               // 端口 chip 颜色优先跟 branch 整体态:isInterim/isError 时强制对齐
               // (端口监听了不代表流量已通,容易给用户"绿色=就绪"的错觉);
               // running 时才用 service 自身状态做精细化区分。
@@ -5946,7 +5974,18 @@ const BranchCard = memo(function BranchCard({
                   {showPort ? <span className="font-mono text-foreground/80">:{resource.port}</span> : null}
                 </button>
               );
-            })}
+            })
+        ) : (
+          // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
+          serviceCount(branch) > 0 ? (
+            <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
+              服务 {runningCount}/{serviceCount(branch)}
+            </span>
+          ) : null
+        )}
+          </div>
+          {/* 「+N」常驻右列、不参与左列裁剪：左列裁掉的端口都能从这个浮层里看到。 */}
+          <div className="flex shrink-0 items-center gap-2">
             {foldedAppCount > 0 ? (
               // 「+N」折叠气泡:悬浮 / 点击 / 键盘弹出浮层展开全部端口。浮层
               // position:absolute 浮在本卡之上,只展开当前卡、不推挤整行、不改网格高度。
@@ -6025,6 +6064,12 @@ const BranchCard = memo(function BranchCard({
                 ) : null}
               </span>
             ) : null}
+          </div>
+        </div>
+        {/* 基础带（固定单行 h-7）：基础托盘在左、时间在右。二者过去和端口挤在同一个
+            flex-wrap 行里，端口一多就被挤到第二、三行；现在各有固定位置。 */}
+        <div className="grid h-7 w-full grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2 overflow-hidden">
             {/* 方案 C「托盘胶囊」(2026-07-05):基础容器(Mongo/Redis 等分支间共享的
                 基础设施)装进虚线托盘,冠名「基础」+ 实名 + 端口 —— 物理包裹让
                 "它们是一伙的、和应用不是一个物种"不学即会;替换掉旧的"无边框暗图标"
@@ -6055,57 +6100,11 @@ const BranchCard = memo(function BranchCard({
                 ))}
               </span>
             ) : null}
-          </>
-        ) : (
-          // 没有 port 时显示概览(只有当至少有 service 才显示,否则啥都不显示)
-          serviceCount(branch) > 0 ? (
-            <span className="inline-flex h-6 shrink-0 items-center rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground">
-              服务 {runningCount}/{serviceCount(branch)}
-            </span>
-          ) : null
-        )}
-        {/*
-          P0 止血(2026-05-29):期望态 vs 实际态漂移徽标 + 一键收敛。
-          病根:branch.services 是上次部署的快照,项目新增 build profile 后已部署
-          分支不回灌 → main 3 个服务、PR 分支 2 个,卡片只显示数量看不出少了谁。
-          后端 summarizeBranchDeployRuntime 已算好 drift,这里显式化:
-            - 文案点名"缺 N 个 / M 个异常",hover 看具体哪几个 profile
-            - 点击 = onDeploy(走 /deploy 读全部 profile 补齐),而非 force-rebuild
-              (后者只 rebuild 快照里已有的,补不回缺失服务,正是病根本身)
-        */}
-        {branch.deployRuntime?.drift?.hasDrift ? (() => {
-          const drift = branch.deployRuntime!.drift!;
-          const missing = drift.missingProfileIds;
-          const unhealthy = drift.unhealthyProfileIds;
-          const parts: string[] = [];
-          if (missing.length > 0) parts.push(`缺 ${missing.length} 个服务`);
-          if (unhealthy.length > 0) parts.push(`${unhealthy.length} 个服务异常`);
-          const detailLines = [
-            `期望 ${drift.expectedCount} 个服务，实际健康 ${drift.healthyCount} 个`,
-            missing.length > 0 ? `缺失（从未部署或被移除）: ${missing.join(', ')}` : '',
-            unhealthy.length > 0 ? `异常（停止/错误）: ${unhealthy.join(', ')}` : '',
-            '点击重新部署：按项目最新构建配置重新部署，补齐缺失/异常的服务',
-          ].filter(Boolean);
-          return (
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDeploy();
-              }}
-              disabled={busy || isInterim}
-              className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-warn/40 bg-warn-soft px-2 text-xs font-medium text-warn transition-colors hover:bg-warn-soft disabled:opacity-50 "
-              title={detailLines.join('\n')}
-            >
-              <AlertTriangle className="h-3 w-3" aria-hidden />
-              <span>{parts.join(' · ')}</span>
-              <span className="text-warn/70 /70">重新部署</span>
-            </button>
-          );
-        })() : null}
-        <span className="ml-auto whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
-          {timeBadge.label} {timeBadge.text}
-        </span>
+          </div>
+          <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground" title={timeBadge.title}>
+            {timeBadge.label} {timeBadge.text}
+          </span>
+        </div>
           </>
         )}
       </div>
@@ -6120,13 +6119,18 @@ const BranchCard = memo(function BranchCard({
           - 只有 × / +N / +标签 这些明确按钮 stopPropagation。 */}
       {/* handlers 重构后标签回调恒定存在，原可选 prop 守卫移除 */}
       {(
-        <div className="relative flex flex-wrap items-center gap-1.5 px-5 pt-2 pb-3">
+        /* 标签带（固定单行）：过去是 flex-wrap，四个标签就多占一行、把卡片撑高。
+           现在恒为单行——标签自己可压缩（名字 truncate），「+N / + 标签」两个按钮
+           shrink-0 常驻，所以压的是标签不是入口。容器本身不裁：标签浮层是它的绝对定位
+           子元素，裁在容器上会把浮层一起裁掉，裁剪只加在内层这一条。 */
+        <div className="relative flex items-center gap-1.5 px-5 pt-2 pb-3">
+          <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           {(branch.tags || []).slice(0, 3).map((tag) => {
             const isActive = activeTagFilter === tag;
             return (
               <span
                 key={tag}
-                className={`group/tag inline-flex h-6 items-center gap-1 rounded-md border px-2 text-[0.6875rem] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors ${
+                className={`group/tag inline-flex h-6 min-w-0 shrink items-center gap-1 rounded-md border px-2 text-[0.6875rem] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.06)] transition-colors ${
                   isActive
                     ? 'border-primary/45 bg-primary/15 text-primary'
                     : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-foreground/75 hover:border-primary/40 hover:bg-primary/10 hover:text-primary'
@@ -6134,7 +6138,7 @@ const BranchCard = memo(function BranchCard({
                 title={`标签: ${tag}`}
               >
                 <Tags className="h-3 w-3 shrink-0" aria-hidden />
-                <span className="max-w-[7.5rem] truncate">{tag}</span>
+                <span className="min-w-0 max-w-[7.5rem] truncate">{tag}</span>
                 <button
                   type="button"
                   onClick={(event) => {
@@ -6158,7 +6162,7 @@ const BranchCard = memo(function BranchCard({
                 event.stopPropagation();
                 onEditTags();
               }}
-              className="inline-flex h-6 items-center rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[0.6875rem] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              className="inline-flex h-6 shrink-0 items-center rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[0.6875rem] text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
               title="编辑全部标签"
             >
               +{(branch.tags || []).length - 3}
@@ -6172,13 +6176,14 @@ const BranchCard = memo(function BranchCard({
               setTagDeleteTarget(null);
               setTagDraftError('');
             }}
-            className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+            className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md border border-dashed border-[hsl(var(--hairline))] bg-transparent px-2 text-[0.6875rem] font-medium text-muted-foreground transition-colors hover:border-primary/45 hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             title="添加标签"
             aria-expanded={tagEditorOpen}
           >
             <Plus className="h-3 w-3" />
             <span>标签</span>
           </button>
+          </div>
           {tagEditorOpen ? (
             <form
               className="absolute left-5 top-[calc(100%-0.25rem)] z-30 w-[min(17.5rem,calc(100%-2.5rem))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2.5 shadow-xl"
@@ -6286,6 +6291,9 @@ const BranchCard = memo(function BranchCard({
             data-progress={deployProgress.indeterminate ? 'indeterminate' : String(Math.round(deployProgress.ratio * 100))}
             aria-hidden
           />
+        ) : footerNotice?.striped ? (
+          // 等待 CI 镜像同样是「在等」：复用构建等待的斜纹底，语言一致、零额外高度。
+          <span className="cds-footer-progress-fill cds-footer-progress-fill--indeterminate" data-progress="indeterminate" aria-hidden />
         ) : null}
         <div className="relative min-w-0 pr-2 text-muted-foreground">
           <div className="flex min-w-0 items-center gap-3">
@@ -6349,6 +6357,32 @@ const BranchCard = memo(function BranchCard({
                       ) : null}
                     </span>
                   )}
+                </span>
+              ) : footerNotice ? (
+                <span
+                  className={`flex min-w-0 flex-1 items-center gap-2 text-[0.8125rem] ${footerNotice.tone === 'warn' ? 'text-warn' : 'text-foreground'}`}
+                  title={footerNotice.title}
+                  data-footer-notice={footerNotice.kind}
+                >
+                  {footerNotice.striped
+                    ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                    : <AlertTriangle className="h-3.5 w-3.5 shrink-0" aria-hidden />}
+                  {/* 标题与详情合成一段一起 truncate：分成两段各自 shrink-0 会把右侧
+                      操作按钮顶出页脚（实测「缺 1 个服务 · 1 个服务异常」压到「一键启动」上）。 */}
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium">{footerNotice.label}</span>
+                    <span className="text-muted-foreground"> · {footerNotice.detail}</span>
+                  </span>
+                  {footerNotice.action ? (
+                    <button
+                      type="button"
+                      disabled={footerNotice.action.disabled}
+                      onClick={(event) => { event.stopPropagation(); footerNotice.action?.run(); }}
+                      className="shrink-0 font-medium underline-offset-2 hover:underline disabled:opacity-50"
+                    >
+                      {footerNotice.action.label}
+                    </button>
+                  ) : null}
                 </span>
               ) : isAiActive ? (
                 <span
