@@ -6176,16 +6176,52 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     //
     // 顺序是判据：**先把同用途的旧默认清掉，再置新的**。反过来会出现一瞬间两个默认，
     // 恰好落在那一瞬的请求解析到哪个全看运气。清掉谁要回给用户，不能让兜底模型悄悄换人。
+    /*
+      纯判断全部走在**任何一次位移之前**。
+
+      位移（把别人的用途默认清掉、把别人手上的认领摘掉）是会改变线上路由的写操作，
+      而位移之后的每一个 early return 都必须自己记得补偿——漏一个，那个用途就此没有默认，
+      所有不点名的请求当场开始失败，而操作者只看到一句 400。本轮被报回来的正是这种漏：
+      「认领超出授权名单」那条 400 排在清掉旧默认之后。
+
+      与其给每个 early return 补一次补偿（下一个新增的分支又会漏），不如让位移之前
+      一个 return 都不剩：能纯判的在这里判完，后面只剩真写库失败那一档，那一档已经有 catch。
+    */
+    var currentModel = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+        .FirstOrDefaultAsync();
+    if (currentModel is null)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+
+    var normalizedClaims = body.DefaultForAppCallerCodes?
+        .Select(x => x.Trim()).Where(x => x.Length > 0)
+        .Distinct(StringComparer.Ordinal).ToList();
+    if (normalizedClaims is not null)
+    {
+        // 按**改完之后**的授权名单判：这次只改认领、名单沿用库里旧值时也要成立。
+        var allowlistAfterUpdate = body.AllowedAppCallerCodes is not null
+            ? body.AllowedAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
+            : currentModel.AsStringList("AllowedAppCallerCodes");
+        if (ValidateClaimsWithinAllowlist(allowlistAfterUpdate, normalizedClaims) is { } claimConflict)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", claimConflict), jsonOptions, 400);
+    }
+
+    /*
+      「一个字段都没给」也要在位移之前判掉。
+
+      这两个位移块只要 body 里给了对应字段就一定会往 updates 里加一条，所以位移之后
+      updates 不可能是空的——但那是一条靠推演成立的性质，下一个人加个分支就不成立了。
+      与其把它留在后面当一条「碰巧到不了」的 return，不如在这里显式判完：
+      位移之前一个 return 都不剩，这条不变量就不依赖任何推演。
+    */
+    if (updates.Count == 0 && body.IsDefaultForType is null && body.DefaultForAppCallerCodes is null)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
+
     var displacedDefaults = new List<string>();
     // 被清掉默认标记的那些模型 id。与认领那本账一样，最终写入没成功就要还回去。
     var defaultRollbacks = new List<string>();
     if (body.IsDefaultForType == true)
     {
-        var current = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
-            .FirstOrDefaultAsync();
-        if (current is null)
-            return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
-        var modelType = current.GetStringOrEmpty("ModelType");
+        var modelType = currentModel.GetStringOrEmpty("ModelType");
         var sameTypeDefaults = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
             Builders<BsonDocument>.Filter.Eq("ModelType", modelType),
             Builders<BsonDocument>.Filter.Eq("IsDefaultForType", true),
@@ -6215,25 +6251,11 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     // 最终写入失败时按「值还是我写的那个」条件还原——期间被别人改过就不动它，
     // 盲目覆盖会把别人的改动一起抹掉。
     var claimRollbacks = new List<(string RivalId, List<string> Before, List<string> AfterWrite)>();
-    if (body.DefaultForAppCallerCodes is not null)
+    if (normalizedClaims is not null)
     {
-        var claims = body.DefaultForAppCallerCodes
-            .Select(x => x.Trim()).Where(x => x.Length > 0)
-            .Distinct(StringComparer.Ordinal).ToList();
-
-        var current = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
-            .FirstOrDefaultAsync();
-        if (current is null)
-            return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
-
-        // 同上：按改完之后的授权名单判。这次只改认领、名单沿用库里旧值时也要成立。
-        var allowlistAfterUpdate = body.AllowedAppCallerCodes is not null
-            ? body.AllowedAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
-            : current.AsStringList("AllowedAppCallerCodes");
-        if (ValidateClaimsWithinAllowlist(allowlistAfterUpdate, claims) is { } claimConflict)
-            return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", claimConflict), jsonOptions, 400);
-
-        var claimType = current.GetStringOrEmpty("ModelType");
+        // 名单与认领的相容性上面已经判过（位移之前），这里只做位移。
+        var claims = normalizedClaims;
+        var claimType = currentModel.GetStringOrEmpty("ModelType");
 
         if (claims.Count > 0)
         {
@@ -6262,8 +6284,6 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
         updates.Add(Builders<BsonDocument>.Update.Set("DefaultForAppCallerCodes", new BsonArray(claims)));
     }
 
-    if (updates.Count == 0)
-        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
     updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
 
     /*
@@ -19438,9 +19458,21 @@ static string ResolveLogCostStatus(BsonDocument d)
         return GatewayCostStatusNames.Unpriced;
     }
 
-    return NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")) is null
-        ? GatewayCostStatusNames.StaleCurrency
-        : GatewayCostStatusNames.Priced;
+    /*
+      非美金的存量行一律算「口径待迁移」，不算已计价。
+
+      NormalizePriceCurrency 认 CNY 与 USD 两种（它的用途是校验入参），拿它当
+      「算没算出美金」的判据就会把一条 CNY 的存量行标成 priced——而计价器把一切非美金
+      判成 stale_currency、聚合那一侧又因为 EstimatedCostUsd 为空把同一行算进 unpriced。
+      同一行三处三个说法，摘要于是虚报覆盖率（形状 3：判据分裂各自漂移）。
+      这套账只认美金，判据也只认美金。
+    */
+    return string.Equals(
+        NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
+        GatewayCostStatusNames.BillingCurrency,
+        StringComparison.Ordinal)
+        ? GatewayCostStatusNames.Priced
+        : GatewayCostStatusNames.StaleCurrency;
 }
 
 /// <summary>
@@ -19450,6 +19482,9 @@ static string ResolveLogCostStatus(BsonDocument d)
 /// </summary>
 static class GatewayCostStatusNames
 {
+    /// <summary>这套账只认这一种币种，与 GatewayCostCalculator.BillingCurrency 同值（镜像守卫钉住）。</summary>
+    public const string BillingCurrency = "USD";
+
     public const string Priced = "priced";
     public const string Unpriced = "unpriced";
     public const string StaleCurrency = "stale_currency";

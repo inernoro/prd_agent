@@ -6294,6 +6294,58 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 位移之前一个 early return 都不剩。
+    ///
+    /// 位移（把别人的用途默认清掉、把别人手上的认领摘掉）是会改变线上路由的写操作，
+    /// 而位移之后的每一个 early return 都必须自己记得补偿——漏一个，那个用途就此没有默认，
+    /// 所有不点名的请求当场开始失败，而操作者只看到一句 400。
+    ///
+    /// 与其给每个 early return 补一次补偿（下一个新增的分支又会漏），不如让位移之前
+    /// 一个 return 都不剩：判据因此是**位置**——从第一次位移写库到最终写入之间，
+    /// 不许出现任何 return。新加一条校验只要放错位置，这里立刻红。
+    /// </summary>
+    [Fact]
+    public void 对外模型更新的位移之前判完所有纯校验()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var displaceAt = program.IndexOf("var displacedDefaults = new List<string>();", StringComparison.Ordinal);
+        var writeAt = program.IndexOf("updated = await gwLogicalModels.FindOneAndUpdateAsync(", StringComparison.Ordinal);
+        Assert.True(displaceAt >= 0, "没找到位移那一段");
+        Assert.True(writeAt > displaceAt, "没找到最终写入，或它排在位移之前");
+
+        var between = program[displaceAt..writeAt];
+        Assert.False(between.Contains("return Json(", StringComparison.Ordinal),
+            "位移与最终写入之间还有 early return：那条路径上摘掉的用途默认与认领没人还回去，"
+            + "一次被拒绝的保存会把这个用途的兜底拆掉。把这条校验挪到位移之前。");
+
+        // 纯校验确实提上去了：认领与名单的相容性、以及「一个字段都没给」。
+        var beforeDisplace = program[..displaceAt];
+        Assert.Contains("ValidateClaimsWithinAllowlist(allowlistAfterUpdate, normalizedClaims)", beforeDisplace);
+        Assert.Contains("body.IsDefaultForType is null && body.DefaultForAppCallerCodes is null", beforeDisplace);
+    }
+
+    /// <summary>
+    /// 存量日志的「算没算出钱」只认美金。
+    ///
+    /// NormalizePriceCurrency 认 CNY 与 USD 两种（它的用途是校验入参），拿它当这个判据
+    /// 就会把一条 CNY 的存量行标成 priced——而计价器把一切非美金判成 stale_currency、
+    /// 聚合那一侧又因为 EstimatedCostUsd 为空把同一行算进 unpriced。同一行三处三个说法。
+    /// </summary>
+    [Fact]
+    public void 存量日志的计价状态只认美金()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("GatewayCostStatusNames.BillingCurrency", program);
+        Assert.Contains("NormalizePriceCurrency(d.AsNullableString(\"EstimatedCostCurrency\")),", program);
+        // 反向禁掉「非空即已计价」那种写法。
+        Assert.DoesNotContain(
+            "return NormalizePriceCurrency(d.AsNullableString(\"EstimatedCostCurrency\")) is null",
+            program);
+    }
+
+    /// <summary>
     /// 撞车补偿要先分清撞的是哪一条索引。
     ///
     /// 「摘掉的用途默认要不要还回去」在两种撞车下答案相反：撞用途默认那条索引时有人赢了

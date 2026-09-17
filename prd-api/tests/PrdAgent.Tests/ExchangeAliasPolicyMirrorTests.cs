@@ -1,3 +1,4 @@
+using System.IO;
 using MongoDB.Bson;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -154,6 +155,39 @@ public class ExchangeAliasPolicyMirrorTests
             CatalogGatePolicy.RequiredMigrationIds.OrderBy(x => x, StringComparer.Ordinal).ToList());
         Assert.Equal(GatewayCatalogMigrations.CollectionName, CatalogGatePolicy.MigrationCollectionName);
         Assert.Equal(GatewayCatalogMigrations.CompletedAtField, CatalogGatePolicy.CompletedAtField);
+    }
+
+    /// <summary>
+    /// 这套账只认一种币种，控制台那份与计价器那份必须同值——差一个字，
+    /// 摘要与聚合会对同一条存量日志给出不同的「算没算出钱」。
+    /// </summary>
+    [Fact]
+    public void 计价币种两侧同值()
+        => Assert.Equal(GatewayCostCalculator.BillingCurrency, ConsoleBillingCurrency);
+
+    /// <summary>
+    /// 控制台那份币种常量（它是 Program.cs 里的 file-local 静态类，测试引用不到，
+    /// 所以从源码取值再比——取不到就红，不静默跳过）。
+    /// </summary>
+    private static string ConsoleBillingCurrency
+    {
+        get
+        {
+            var dir = new DirectoryInfo(AppContext.BaseDirectory);
+            while (dir is not null
+                   && !Directory.Exists(Path.Combine(dir.FullName, ".git"))
+                   && !File.Exists(Path.Combine(dir.FullName, ".git")))
+            {
+                dir = dir.Parent;
+            }
+            Assert.NotNull(dir);
+            var source = File.ReadAllText(Path.Combine(
+                dir!.FullName, "llmgw/console-api/Program.cs".Replace('/', Path.DirectorySeparatorChar)));
+            var match = System.Text.RegularExpressions.Regex.Match(
+                source, @"public const string BillingCurrency = ""(?<v>[A-Z]+)"";");
+            Assert.True(match.Success, "控制台那份 BillingCurrency 常量不见了");
+            return match.Groups["v"].Value;
+        }
     }
 
     [Theory]
