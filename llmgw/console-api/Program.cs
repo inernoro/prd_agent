@@ -4947,6 +4947,19 @@ app.MapPost("/gw/pools/migrate-to-models", async (
         entry.CreatedNewModel = existing is null;
 
         /*
+          这个模型搬完之后实际生效的授权名单。新建走池翻译过来的那份，复用走它自己那份——
+          复用时搬迁**刻意不动**已有名单（可能是人工调过的），所以那份就是最终值。
+
+          认领要按这份名单过一遍，否则会写出一个自相矛盾的模型：名单里没有这个调用方，
+          认领里却有它。运行时第一层按认领挑中它，第二步 SupportsAppCallerScenario 按名单
+          把它拒掉，而且**不会**回头去试用途默认——这个调用方原本还能走池，搬完直接断流。
+          报成功的搬迁把流量搬没了，比不转更糟。
+        */
+        var effectiveAllowlist = existing is null
+            ? poolAllowlist
+            : existing.AsStringList("AllowedAppCallerCodes") ?? [];
+
+        /*
           认领唯一性：同一个用途下，一个调用方最多被一个模型认领。
 
           这条不变量在创建/更新端点有互斥，搬迁是直接写库，所以在这里把同一条规则再走一遍
@@ -4982,6 +4995,20 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                     Reason = $"调用方「{code}」绑着这个池，但同用途下它已经被模型「{holder}」认领了，"
                         + "认领没有转过来。池退场后这个调用方不点名的请求会落到那个模型上——"
                         + "确认哪一个才是它该用的，然后在模型白名单页手动改认领",
+                });
+                continue;
+            }
+
+            if (effectiveAllowlist.Count > 0 && !effectiveAllowlist.Contains(code, StringComparer.Ordinal))
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"调用方「{code}」绑着这个池，但它映射到的对外模型「{publicId}」的授权名单里没有它，"
+                        + "认领没有转过来。转了的话不点名的请求会挑中这个模型、再被授权名单拒掉，"
+                        + "而且不会回落到用途默认——那是断流。"
+                        + "确认这道边界该是什么样：要么在白名单页把这个调用方加进授权名单，要么给它另指一个模型",
                 });
                 continue;
             }
@@ -5274,6 +5301,9 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             { "PublicIdNormalized", normalized },
             { "ModelType", modelType },
             { "IsDefaultForType", entry.IsDefaultForType },
+            // 名单也要记进本轮索引：下一个池若撞上同一个标识，认领该不该转得按同一份名单判，
+            // 否则 dry-run 与 apply 在「第二个池」上会说两件事。
+            { "AllowedAppCallerCodes", new BsonArray(effectiveAllowlist) },
         };
         if (entry.IsDefaultForType)
             plannedDefaultByModelType[modelType] = logicalId;
@@ -18235,30 +18265,40 @@ static async Task<string?> FindUnnamedCatcherAsync(
         return code is { Length: > 0 } && allowed.Contains(code, StringComparer.Ordinal);
     }
 
-    async Task<string?> FirstWithRouteAsync(FilterDefinition<BsonDocument> filter)
-    {
-        var docs = await gwLogicalModels.Find(filter)
+    /*
+      挑选与「这一条能不能用」的顺序不能颠倒，这道闸和运行时、和 serving 就绪探针同序。
+
+      运行时是：先按认领选出**那一条**，再去解析它；解析不出来就如实失败，
+      **不会**回头去试用途默认（TryResolveDefaultLogicalModelAsync 里第二层写的是
+      `logical ??=`——只在第一层一条都没查到时才走，而不是在第一层那条不可用时才走）。
+
+      上一版这里是「一边挑一边筛」：认领了这个调用方、但授权不通或线路全挂的模型被跳过，
+      循环接着去试用途默认，于是一个「认领坏了 + 默认健康」的调用方在这道闸上判绿——
+      而它真实的不点名请求每一次都失败。闸门替另一条根本不会走的路作了保。
+    */
+    async Task<BsonDocument?> FirstAsync(FilterDefinition<BsonDocument> filter)
+        => await gwLogicalModels.Find(filter)
             .Sort(Builders<BsonDocument>.Sort.Ascending("DisplayOrder").Ascending("PublicId"))
-            .ToListAsync();
-        foreach (var doc in docs)
-        {
-            if (!AllowsCaller(doc, appCallerCode)) continue;
-            if (await HasRuntimeUsableRouteAsync(doc.GetStringOrEmpty("_id")))
-                return doc.AsNullableString("PublicId") ?? doc.GetStringOrEmpty("_id");
-        }
-        return null;
+            .FirstOrDefaultAsync();
+
+    async Task<string?> NameIfUsableAsync(BsonDocument doc)
+    {
+        if (!AllowsCaller(doc, appCallerCode)) return null;
+        if (!await HasRuntimeUsableRouteAsync(doc.GetStringOrEmpty("_id"))) return null;
+        return doc.AsNullableString("PublicId") ?? doc.GetStringOrEmpty("_id");
     }
 
-    // 第一层：谁认领了它。
+    // 第一层：谁认领了它。认领是排他的——挑中之后成败就看它自己，不再往下找。
     if (!string.IsNullOrWhiteSpace(appCallerCode))
     {
-        var claimed = await FirstWithRouteAsync(
+        var claimed = await FirstAsync(
             fb.And(basics, fb.AnyEq("DefaultForAppCallerCodes", appCallerCode)));
-        if (claimed is not null) return claimed;
+        if (claimed is not null) return await NameIfUsableAsync(claimed);
     }
 
-    // 第二层：这个用途的默认。
-    return await FirstWithRouteAsync(fb.And(basics, fb.Eq("IsDefaultForType", true)));
+    // 第二层：这个用途的默认。只有「一条认领都没有」时才走到这里。
+    var typeDefault = await FirstAsync(fb.And(basics, fb.Eq("IsDefaultForType", true)));
+    return typeDefault is null ? null : await NameIfUsableAsync(typeDefault);
 }
 
 static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(

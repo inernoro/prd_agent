@@ -6235,7 +6235,11 @@ public class GatewayDataDomainGuardTests
 
         // 名录门：要不要拦与运行时同一处判据，不另写近似。
         Assert.Contains("GatewayCatalogGate.EnforcesAsync", readiness);
-        Assert.Contains("GatewayCatalogGate.Passes", readiness);
+        // 物理线路判的是它**实际打出去的那个名字**（UpstreamModelId 覆盖之后），
+        // 不是目标文档自己的名字——上一版这里钉的是拿目标文档判的那种写法，
+        // 等于反向锁死了缺陷：目标在名录里、覆盖成的那个不在时探针照样报绿。
+        Assert.Contains("GatewayCatalogGate.PhysicalRoutePasses", readiness);
+        Assert.DoesNotContain("GatewayCatalogGate.Passes(", readiness);
 
         // 兑换所那一支要判到**别名**这一层。只判兑换所文档启用的话，别名被摘掉之后
         // 兑换所照样启用着，而运行时按名录门把它判死——探针报绿、请求全失败。

@@ -305,9 +305,9 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
           只看这一层的话，一条指向已删除或已停用的物理模型 / 平台 / 兑换所的线路也被算成可用——
           就绪组件报绿，而运行时把每一条都拒掉。
 
-          物理模型还要多过一道名录门：启用着、平台也开着的模型，只要既不在名录里、
-          又没有管理员显式放行的戳，运行时就回 MODEL_NOT_IN_CATALOG。不判这一层的话，
-          一个所有线路都被名录门拦死的部署照样报绿，而每一次真实调用都失败。
+          物理线路还要多过一道名录门：启用着、平台也开着的线路，只要它实际打出去的那个
+          模型名既不在名录里、又没有管理员显式放行的戳，运行时就回 MODEL_NOT_IN_CATALOG。
+          不判这一层的话，一个所有线路都被名录门拦死的部署照样报绿，而每一次真实调用都失败。
           「要不要拦」与运行时同源（GatewayCatalogGate），降到 observe 或补标记没跑完时
           这里也跟着不拦——否则又走到另一边去了。
         */
@@ -325,14 +325,67 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                     Builders<BsonDocument>.Filter.In("_id", offeringModelTargetIds),
                     Builders<BsonDocument>.Filter.Eq("Enabled", true)))
                 .ToListAsync(cancellationToken);
-        var enabledOfferingModelPlatformById = enabledOfferingModels
-            .Where(x => !catalogGateEnforces || GatewayCatalogGate.Passes(x))
-            .Select(x => (
-                Id: x.GetValue("_id", BsonNull.Value) is { IsString: true } id ? id.AsString : string.Empty,
-                PlatformId: x.GetValue("PlatformId", BsonNull.Value) is { IsString: true } pid ? pid.AsString : string.Empty))
-            .Where(x => x.Id.Length > 0)
-            .GroupBy(x => x.Id, StringComparer.Ordinal)
-            .ToDictionary(x => x.Key, x => x.First().PlatformId, StringComparer.Ordinal);
+        var enabledOfferingModelById = enabledOfferingModels
+            .Where(x => x.GetValue("_id", BsonNull.Value) is { IsString: true })
+            .GroupBy(x => x.GetValue("_id").AsString, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+
+        /*
+          名录门判的是这条线路**实际打出去的那个模型名**，不是目标文档自己的名字。
+
+          线路可以用 UpstreamModelId 覆盖上游模型名，而运行时的 ApplyCatalogGateAsync
+          judge 的就是覆盖之后那个名字。只判目标文档会出现：目标模型在名录里、覆盖成的
+          那个不在，就绪照样报绿，而经这个接管者的每一次请求都回 MODEL_NOT_IN_CATALOG。
+          取值与对外清单、与运行时同一套（两个名字字段都认、不要求 Enabled），
+          判据本身收在 GatewayCatalogGate.PhysicalRoutePasses 那一份里。
+        */
+        string EffectiveUpstreamName(GatewayModelOffering route)
+            => route.UpstreamModelId is { Length: > 0 } overridden
+                ? overridden.Trim()
+                : enabledOfferingModelById.TryGetValue(route.TargetId ?? string.Empty, out var target)
+                  && target.GetValue("ModelName", BsonNull.Value) is { IsString: true } name
+                    ? name.AsString
+                    : string.Empty;
+
+        var effectiveUpstreamNames = candidateOfferings
+            .Where(x => !string.Equals(x.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
+            .Select(EffectiveUpstreamName)
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var physicalDocsByPlatformAndName = new Dictionary<string, List<BsonDocument>>(StringComparer.Ordinal);
+        if (catalogGateEnforces && effectiveUpstreamNames.Count > 0)
+        {
+            var named = await physicalModels
+                .Find(Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+                    Builders<BsonDocument>.Filter.Or(
+                        Builders<BsonDocument>.Filter.In("ModelName", effectiveUpstreamNames),
+                        Builders<BsonDocument>.Filter.In(
+                            "ModelNameNormalized",
+                            effectiveUpstreamNames.Select(x => x.ToLowerInvariant())))))
+                .ToListAsync(cancellationToken);
+            foreach (var doc in named)
+            {
+                var docPlatformId = doc.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
+                var docModelName = doc.GetValue("ModelName", BsonNull.Value) is { IsString: true } n ? n.AsString : string.Empty;
+                if (docModelName.Length == 0) continue;
+                var key = $"{docPlatformId}::{docModelName}";
+                if (!physicalDocsByPlatformAndName.TryGetValue(key, out var bucket))
+                    physicalDocsByPlatformAndName[key] = bucket = [];
+                bucket.Add(doc);
+            }
+        }
+
+        bool PhysicalRouteUsable(GatewayModelOffering route)
+        {
+            if (!enabledOfferingModelById.TryGetValue(route.TargetId ?? string.Empty, out var target)) return false;
+            var targetPlatformId = target.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
+            if (targetPlatformId.Length == 0 || !enabledPlatformIds.Contains(targetPlatformId)) return false;
+            var effective = EffectiveUpstreamName(route);
+            var sameName = physicalDocsByPlatformAndName.GetValueOrDefault($"{targetPlatformId}::{effective}") ?? [];
+            return GatewayCatalogGate.PhysicalRoutePasses(effective, sameName, catalogGateEnforces);
+        }
         var enabledExchangeById = enabledExchanges
             .Where(x => !string.IsNullOrWhiteSpace(x.Id))
             .ToDictionary(x => x.Id, StringComparer.Ordinal);
@@ -346,9 +399,7 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             => string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase)
                 ? enabledExchangeById.TryGetValue(offering.TargetId, out var exchange)
                   && GatewayCatalogGate.ExchangeRoutePasses(exchange, offering.UpstreamModelId, catalogGateEnforces)
-                : enabledOfferingModelPlatformById.TryGetValue(offering.TargetId, out var platformId)
-                  && platformId.Length > 0
-                  && enabledPlatformIds.Contains(platformId);
+                : PhysicalRouteUsable(offering);
 
         var routableLogicalModelIds = candidateOfferings
             .Where(OfferingTargetUsable)

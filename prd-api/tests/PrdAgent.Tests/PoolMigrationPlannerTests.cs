@@ -292,6 +292,36 @@ public class PoolMigrationPlannerTests
     }
 
     /// <summary>
+    /// 认领不许写成「名单里没有它、认领里却有它」这种自相矛盾的模型。
+    ///
+    /// 运行时第一层按认领挑中它，第二步 SupportsAppCallerScenario 按授权名单把它拒掉，
+    /// 而且**不会**回头去试用途默认——这个调用方原本还能走池，搬完直接断流。
+    /// 报成功的搬迁把流量搬没了，比不转更糟。
+    ///
+    /// 复用已有模型时搬迁刻意不动它的授权名单（那可能是人工调过的），所以这道检查
+    /// 必须落在认领这一侧：名单容不下的认领就不转，并如实报出下一步。
+    /// </summary>
+    [Fact]
+    public void 认领必须落在生效的授权名单之内()
+    {
+        var handler = MigrationHandler();
+
+        // 新建与复用两条路共用同一个「生效名单」，不许各判各的——那正是这一族缺陷的形状。
+        Assert.Contains("var effectiveAllowlist = existing is null", handler);
+        Assert.Contains("? poolAllowlist", handler);
+        Assert.Contains("existing.AsStringList(\"AllowedAppCallerCodes\")", handler);
+
+        // 名单非空且容不下这个调用方时，认领不转。
+        Assert.Contains("effectiveAllowlist.Count > 0 && !effectiveAllowlist.Contains(code", handler);
+
+        // 报出来的理由要说清后果与下一步，不是一句「跳过」。
+        Assert.Contains("那是断流", handler);
+
+        // 本轮索引也要带上名单：同一个标识被第二个池撞上时，dry-run 与 apply 得按同一份名单判。
+        Assert.Contains("{ \"AllowedAppCallerCodes\", new BsonArray(effectiveAllowlist) }", handler);
+    }
+
+    /// <summary>
     /// 搬迁要扫两个数据域的池，MAP 原生的成员要给出可执行的下一步。
     ///
     /// 只读的 `GET /gw/pools` 对内部租户把 MAP 的 `model_groups` 与网关自己的池表并起来，

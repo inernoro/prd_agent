@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PrdAgent.LlmGw.Provisioning;
 using Xunit;
 
@@ -662,32 +663,147 @@ public class GatewayWhitelistPublishingTests
     }
 
     /// <summary>
-    /// 物理线路要按它**实际会打出去的那个模型名**过名录门。
+    /// 物理线路要按它**实际会打出去的那个模型名**过名录门，而且**每一处**都要。
     ///
     /// 线路可以用 UpstreamModelId 覆盖上游模型名，运行时判的就是覆盖之后那个名字。
-    /// 只判目标文档自己的名字，就会出现「目标在名录里、覆盖成的那个不在」，清单照样列出来，
-    /// 而真调用回 MODEL_NOT_IN_CATALOG——列出来就是让对方白调一次。
+    /// 只判目标文档自己的名字，就会出现「目标在名录里、覆盖成的那个不在」：对外清单照样
+    /// 把它列出来、就绪照样报绿，而真调用回 MODEL_NOT_IN_CATALOG。
+    ///
+    /// 这条守卫刻意不钉某一个文件——上一轮就是只补了被点名的那一处（对外清单），
+    /// 同族的另一处（就绪探针）原样留着，第二天被原样报回来。所以判据是扫描式的：
+    /// **凡是自己算过「名录门要不要拦」又在判线路的文件，一个都不许自己判。**
+    /// 新写一处路由判据时它自动进入这张网，不需要有人记得回来改这条守卫。
     /// </summary>
     [Fact]
-    public void 物理线路按实际上游名过名录门()
+    public void 每一处线路判据都走共享的名录门()
     {
-        var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        // 权威实现只有一处：运行时按解析结果里的 ActualModel 自己判（ApplyCatalogGateAsync）。
+        // 其余任何地方都是镜像，必须走共享谓词。往这张表里加名字得是有意识的动作。
+        var authorities = new[] { "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs" };
+
+        var mirrors = EnumerateRepoSources()
+            .Where(x => !x.Path.EndsWith("GatewayCatalogGate.cs", StringComparison.Ordinal))
+            .Where(x => !authorities.Contains(x.Path, StringComparer.Ordinal))
+            .Where(x => x.Text.Contains("catalogGateEnforces", StringComparison.Ordinal)
+                && x.Text.Contains("GatewayModelOffering", StringComparison.Ordinal))
+            .ToList();
+
+        // 网不能是空的：判据文件要是被改名或挪走了，这条守卫会静默变成一条永远绿的空跑。
+        Assert.True(mirrors.Count >= 2,
+            $"扫到的线路判据宿主只有 {mirrors.Count} 个，判据的取值方式可能已经变了，这条守卫失效了");
+
+        foreach (var mirror in mirrors)
+        {
+            Assert.True(mirror.Text.Contains("GatewayCatalogGate.PhysicalRoutePasses(", StringComparison.Ordinal),
+                $"{mirror.Path} 在判线路却没走共享的 PhysicalRoutePasses——物理线路会按目标文档的名字判，"
+                + "而运行时判的是 UpstreamModelId 覆盖之后那个名字");
+            Assert.True(mirror.Text.Contains("GatewayCatalogGate.ExchangeRoutePasses(", StringComparison.Ordinal),
+                $"{mirror.Path} 在判线路却没走共享的 ExchangeRoutePasses");
+            Assert.False(mirror.Text.Contains("GatewayCatalogGate.Passes(", StringComparison.Ordinal),
+                $"{mirror.Path} 还在拿目标文档自己判一次名录门（GatewayCatalogGate.Passes）——"
+                + "判两次口径就会分家，线路这一层只许走 PhysicalRoutePasses / ExchangeRoutePasses");
+        }
+
+        // 两处镜像都要算出「实际会打出去的名字」，而不是拿目标文档的名字凑合。
+        foreach (var mirror in mirrors)
+        {
+            Assert.True(mirror.Text.Contains("string EffectiveUpstreamName(GatewayModelOffering route)", StringComparison.Ordinal),
+                $"{mirror.Path} 没有算实际上游名");
+            Assert.True(mirror.Text.Contains("ModelNameNormalized", StringComparison.Ordinal),
+                $"{mirror.Path} 找同名文档时只认一个名字字段，与运行时取值不同源");
+        }
+
+        // 判据本体在共享那一份，宿主只喂数据。
         var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
-
-        // 算出实际会打出去的名字，而不是拿目标文档的名字凑合。
-        Assert.Contains("string EffectiveUpstreamName(GatewayModelOffering route)", endpoint);
-        Assert.Contains("route.UpstreamModelId is { Length: > 0 }", endpoint);
-
-        // 按名字 + Provider 去库里找同名文档，与运行时同一套取值：两个名字字段都认。
-        Assert.Contains("bf.In(\"ModelName\", effectiveNames)", endpoint);
-        Assert.Contains("bf.In(\"ModelNameNormalized\"", endpoint);
-
-        // 判据本体在共享那一份，端点只喂数据。
         Assert.Contains("public static bool PhysicalRoutePasses(", gate);
         // 查不到同名文档时属于「管不着」，与运行时的 OutOfJurisdiction 同档，放行而不是拦。
         Assert.Contains("if (sameNameDocsOnPlatform.Count == 0) return true;", gate);
+    }
 
-        // 目标文档那一层不再自己判一次名录门——判两次口径就会分家。
-        Assert.DoesNotContain("!catalogGateEnforces || GatewayCatalogGate.Passes(x)", endpoint);
+    /// <summary>
+    /// 「不点名时落到谁」的每一处镜像都必须是**认领排他**的：先按认领挑出那一条，
+    /// 再判它能不能用；挑中的那条不可用就是失败，不许回头去试用途默认。
+    ///
+    /// 运行时写的是 <c>logical ??=</c>——第二层只在第一层一条都没查到时才走。
+    /// 镜像若写成「一边挑一边筛」，一个「认领坏了 + 用途默认健康」的调用方就会被判绿，
+    /// 而它真实的不点名请求每一次都失败：灯替一条根本不会走的路作了保。
+    /// </summary>
+    [Fact]
+    public void 每一处不点名镜像都是认领排他的()
+    {
+        // 这三处「不点名落到谁」的判据：运行时（权威）、serving 就绪探针、控制台发布闸。
+        // 扫描式而不是点名式——再多一处写同样判据的地方，它自动进这张网。
+        var mirrors = EnumerateRepoSources()
+            .Where(x => x.Text.Contains("DefaultForAppCallerCodes", StringComparison.Ordinal))
+            .Where(x => x.Text.Contains("IsDefaultForType", StringComparison.Ordinal))
+            .Where(x => x.Text.Contains("Ascending(\"DisplayOrder\")", StringComparison.Ordinal)
+                || x.Text.Contains("OrderBy(x => x.DisplayOrder)", StringComparison.Ordinal)
+                || x.Text.Contains("SortBy(x => x.DisplayOrder)", StringComparison.Ordinal))
+            .ToList();
+
+        // 网不能是空的、也不能只剩一处：判据挪走或改写之后这条守卫会静默退化成空跑。
+        Assert.True(mirrors.Count >= 3,
+            "扫到的「不点名落到谁」镜像只有 " + mirrors.Count
+            + " 个（预期至少运行时、就绪探针、发布闸三处）："
+            + string.Join("、", mirrors.Select(x => x.Path)));
+
+        foreach (var mirror in mirrors)
+        {
+            /*
+              认领是排他的：挑中之后成败就看它自己，不许回头去试用途默认。
+              代码里成立的写法只有两种——
+                · 用途默认那一层写成 `??=`（只在认领一条都没查到时才赋值）；
+                · 认领挑中后当场 return。
+              两种都不是，就说明这一处又变回了「一边挑一边筛」：认领坏了的调用方
+              被判绿，而运行时那个调用方的每一次不点名请求都失败。
+            */
+            // 写法一（运行时）：用途默认那一层写成 `logical ??=`，只在认领一条都没查到时才赋值。
+            var deferredDefault = mirror.Text.Contains("logical ??=", StringComparison.Ordinal);
+
+            // 写法二（镜像）：认领挑中后当场 return，且**返回的是对挑中那一条的可用性判定**。
+            //
+            // 这里刻意不接受 `return claimed;` 这种「返回一个已经筛过的结果」——
+            // 那正是被报回来的那版写法：挑选与可用性揉在同一个循环里，认领坏了的模型被跳过，
+            // 循环接着去试用途默认，于是判绿。挑选必须先于判定，判定必须作用在挑中的那一条上。
+            var returnsUsabilityOfClaim = Regex.IsMatch(
+                mirror.Text,
+                @"if \(claimed is not null\) return (await )?\w*Usable\w*\(claimed\)");
+
+            Assert.True(deferredDefault || returnsUsabilityOfClaim,
+                mirror.Path + " 的认领层不是排他的：既没有把用途默认写成 ??=，"
+                + "也没有「挑中认领 → 判定挑中那一条」这种写法。"
+                + "这一处会在认领坏掉时回落到用途默认，而运行时不会——它会如实失败。");
+        }
+    }
+
+    /// <summary>仓库里参与网关路由判据的 C# 源码（不含测试自身）。</summary>
+    private static IReadOnlyList<(string Path, string Text)> EnumerateRepoSources()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !Directory.Exists(Path.Combine(dir.FullName, ".git")) && !File.Exists(Path.Combine(dir.FullName, ".git")))
+            dir = dir.Parent;
+        Assert.NotNull(dir);
+        var root = dir!.FullName;
+
+        var roots = new[] { "llmgw", "prd-api/src" };
+        var files = new List<(string, string)>();
+        foreach (var relative in roots)
+        {
+            var full = Path.Combine(root, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (!Directory.Exists(full)) continue;
+            foreach (var file in Directory.EnumerateFiles(full, "*.cs", SearchOption.AllDirectories))
+            {
+                if (file.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}", StringComparison.Ordinal)
+                    || file.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                files.Add((
+                    Path.GetRelativePath(root, file).Replace(Path.DirectorySeparatorChar, '/'),
+                    File.ReadAllText(file)));
+            }
+        }
+        Assert.NotEmpty(files);
+        return files;
     }
 }
