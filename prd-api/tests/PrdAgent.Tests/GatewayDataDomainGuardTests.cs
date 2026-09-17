@@ -6256,6 +6256,91 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 线路判重的身份必须与唯一索引逐字相同。
+    ///
+    /// 索引 uniq_llmgw_offering_tenant_logical_target_v3 里带着 UpstreamModelId——一个兑换所
+    /// 底下挂着多个别名时，同一个对外模型指向其中好几个是合法拓扑。端点的判重少一个字段
+    /// 就比索引更严：同样的拓扑走搬迁建得出来、走这个端点却回 DUPLICATE_OFFERING。
+    ///
+    /// 这条守卫从索引那一侧**读出字段清单**再去比，不抄一份——抄的那份改了不会跟着变。
+    /// </summary>
+    [Fact]
+    public void 线路判重的身份与唯一索引逐字相同()
+    {
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var keysBlock = System.Text.RegularExpressions.Regex.Match(
+            initializer, @"string\[\] expectedKeys\s*=\s*\[(?<body>[^\]]*)\]");
+        Assert.True(keysBlock.Success, "没在初始化器里找到 expectedKeys，索引定义可能已经挪走，这条守卫失效了");
+        var indexKeys = System.Text.RegularExpressions.Regex.Matches(keysBlock.Groups["body"].Value, "\"(?<k>[A-Za-z]+)\"")
+            .Select(m => m.Groups["k"].Value)
+            .ToList();
+        Assert.True(indexKeys.Count >= 5, $"索引字段只解析到 {indexKeys.Count} 个：{string.Join("、", indexKeys)}");
+
+        var duplicateBlock = System.Text.RegularExpressions.Regex.Match(
+            program, @"var duplicate = fb\.And\((?<body>.*?)\);", System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(duplicateBlock.Success, "没在控制台里找到线路判重那段");
+        var duplicateText = duplicateBlock.Groups["body"].Value;
+
+        foreach (var key in indexKeys)
+        {
+            // SupersededByOfferingId 在索引里是身份的一部分（partial 语义），在判重里表现为
+            // 「只看还没被取代的那些」，所以判据形态不同，但必须出现。
+            Assert.True(duplicateText.Contains(key, StringComparison.Ordinal),
+                $"唯一索引的身份里有 {key}，而端点判重没有它：判重会比索引更严或更松，"
+                + "同一套拓扑在搬迁与手工配置两条路上会给出不同结论");
+        }
+    }
+
+    /// <summary>
+    /// 兑换所线路在**保存这一刻**就要确认别名真的存在且启用着，创建与改动两个入口都要判。
+    ///
+    /// 不判的话：打错一个字、或选了一条被单独停掉的别名，线路照样存得进去、接口回 201，
+    /// 而运行时按同一份判据把它整条跳过——那个刚保存的模型立刻没有可用上游，
+    /// 与第 39 轮那条系统级模型池同形（「存得进去、跑不起来」）。
+    /// </summary>
+    [Fact]
+    public void 兑换所线路保存时就要确认别名存在且启用()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 判据走镜像类，不在端点里现写一份近似。
+        Assert.Contains("ExchangeAliasPolicy.Declares(", program);
+        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(", program);
+        Assert.Contains("EXCHANGE_ALIAS_NOT_DECLARED", program);
+
+        // 创建与改动两个入口都要判：少一头就有一条缝。
+        var callSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"ExchangeAliasPolicy\.Declares\(").Count;
+        Assert.True(callSites >= 2,
+            $"ExchangeAliasPolicy.Declares 只有 {callSites} 个调用点：创建与改上游别名两条路都要判");
+
+        // 拒绝时要说得出下一步，不是一句「不合法」。
+        Assert.Contains("去兑换所页确认这条别名的拼写与开关", program);
+    }
+
+    /// <summary>
+    /// 同步状态只对**服务这个租户的进程**提要求。
+    ///
+    /// prd-api 的同步器注册成单租户，只为内部租户写状态行；其它租户下那一行永远不存在。
+    /// 把它写死进期望值，那一屏就永远显示它「从没回写过」、汇总永远到不了 current——
+    /// 一个好好的进程被报成停了，而人照着这句话去查根本查不到东西。
+    /// </summary>
+    [Fact]
+    public void 同步状态只对服务这个租户的进程提要求()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("bool SyncHostAppliesToTenant(string role)", program);
+        // 判据要拿内部租户比，而不是写死一个名字。
+        Assert.Contains("string.Equals(syncTenantId, internalTenantId, StringComparison.Ordinal)", program);
+        // 筛掉的那一个不是悄悄消失：显式一态，界面据此既不报警也不当它就绪。
+        Assert.Contains("\"not-applicable\"", program);
+        Assert.Contains("!string.Equals(x.SyncState, \"not-applicable\", StringComparison.Ordinal)", program);
+    }
+
+    /// <summary>
     /// 「这个 active 调用方有没有人接得住」在整个仓库里只许有一份判据。
     ///
     /// 池路由退场之后，配对的调用方根本没有池绑定；按池绑定判的话，一份完全正确的配置

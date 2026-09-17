@@ -4147,6 +4147,20 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
     // 多久没回写就算「没跟上」。取刷新周期的 5 倍：一次网络抖动不该报警，
     // 而一个停掉的 Worker 五分钟内必须现形。
     const int staleAfterSeconds = refreshSeconds * 5;
+    /*
+      prd-api 那个同步器注册成**单租户**：它只为内部租户写状态行。
+
+      于是对其它租户来说 `prd-api::{tenantId}` 这一行永远不存在——把它算进期望值，
+      那一屏就永远显示 prd-api「从没回写过」，汇总也永远到不了 current：一个好好的进程
+      被报成停了，而人照着这句话去查根本查不到东西（no-rootless-tree：不编一个不存在的根）。
+
+      所以按「这个进程服不服务这个租户」筛，而不是写死两个。筛掉的那一个不是悄悄消失：
+      它照样列在逐进程明细里，状态是显式的 not-applicable，界面据此既不报警也不当它就绪。
+    */
+    bool SyncHostAppliesToTenant(string role)
+        => !string.Equals(role, prdApiHostRole, StringComparison.Ordinal)
+           || string.Equals(syncTenantId, internalTenantId, StringComparison.Ordinal);
+
     var expectedSyncHosts = new[] { prdApiHostRole, servingHostRole };
     var syncDocs = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_sync_status")
         .Find(Builders<BsonDocument>.Filter.In("_id", expectedSyncHosts.Select(role => $"{role}::{syncTenantId}")))
@@ -4188,10 +4202,11 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
         syncByHost.TryGetValue(role, out var doc);
         var tenancy = doc?.AsNullableString("HostTenancy");
         var syncedAt = doc?.AsNullableUtcDateTime("SyncedAt");
-        // 四态，按「先问它还活着吗、再问它装的是不是这一版」的顺序判。
+        // 五态，按「它管不管这个租户 → 还活着吗 → 装的是不是这一版」的顺序判。
         // 合成一个 bool 会让「停了半天的进程」和「刚好慢一拍的进程」显示成同一句话。
         var state =
-            doc is null || syncedAt is null ? "never"
+            !SyncHostAppliesToTenant(role) ? "not-applicable"
+            : doc is null || syncedAt is null ? "never"
             : (now - syncedAt.Value).TotalSeconds > staleAfterSeconds ? "stale"
             // 认不出它是哪种进程（旧构建写的状态行还没有这个字段）→ 不替它担保，
             // 按「没装到这一版」报，等它下一轮写出新字段自然转正（no-rootless-tree：不编）。
@@ -4217,7 +4232,9 @@ app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
     // 多租户进程一条带租户的契约都不装，把它算进交集的话交集恒为空，
     // 这一屏就永远显示「0 条已生效」——一句永远不会兑现的话，比不说更糟。
     // 它自己的状态照样逐进程列出来，跳过的原因另有一句专门的说明。
+    // 同理，不服务这个租户的进程也不进汇总：它不装本租户的契约，让它替这句话背书就是胡说。
     var tenantCarryingHosts = syncHosts
+        .Where(x => !string.Equals(x.SyncState, "not-applicable", StringComparison.Ordinal))
         .Where(x => !string.Equals(x.HostTenancy, "MultiTenant", StringComparison.Ordinal))
         .ToList();
     var carriersCurrent = tenantCarryingHosts.Count > 0
@@ -6355,14 +6372,50 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         return Json(ApiEnvelope<ModelOfferingItem>.Fail(
             AsrOfferingContractPolicy.ErrorCode,
             createAsrContractError), jsonOptions, 409);
+    /*
+      兑换所线路要在**保存这一刻**就确认那条别名真的存在且启用着。
+
+      不判的话：把 UpstreamModelId 打错一个字、或选了一条被单独停掉的别名，这条线路照样
+      存得进去、接口回 201；而运行时按 GatewayCatalogGate.ExchangeDeclares 把它整条跳过，
+      那个刚保存的模型立刻没有可用上游——「存得进去、跑不起来」，与第 39 轮那条系统级模型池
+      同形。判据是权威实现的镜像（ExchangeAliasPolicy，有逐例对照守卫），不另写近似。
+    */
+    if (targetKind == "exchange")
+    {
+        var createAlias = ExchangeAliasPolicy.EffectiveAlias(target, body?.UpstreamModelId);
+        if (!ExchangeAliasPolicy.Declares(target, createAlias))
+        {
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "EXCHANGE_ALIAS_NOT_DECLARED",
+                createAlias.Length == 0
+                    ? "这个兑换所没有主别名，所以必须指定「上游模型」；不指定的话运行时会把这条线路整条跳过。"
+                    : $"兑换所里没有启用着的别名「{createAlias}」（不存在，或被单独停用了）。"
+                      + "去兑换所页确认这条别名的拼写与开关，再回来保存——现在存下去的话，"
+                      + "运行时会把这条线路跳过，这个模型等于没有上游。"), jsonOptions, 409);
+        }
+    }
+
+    /*
+      判重的身份必须与唯一索引 uniq_llmgw_offering_tenant_logical_target_v3 逐字相同。
+
+      那个索引里带着 UpstreamModelId——因为一个兑换所底下挂着多个别名时，同一个对外模型
+      完全可能同时指向其中好几个，那是合法拓扑。这里少一个字段就比索引更严：
+      同样的拓扑走搬迁建得出来、走这个端点却回 DUPLICATE_OFFERING（判据分裂）。
+    */
+    var createUpstreamModelId = string.IsNullOrWhiteSpace(body?.UpstreamModelId)
+        ? BsonNull.Value
+        : (BsonValue)body.UpstreamModelId.Trim();
     var duplicate = fb.And(
         fb.Eq("TenantId", tenantId),
         fb.Eq("LogicalModelId", id),
         fb.Eq("TargetKind", targetKind),
         fb.Eq("TargetId", targetId),
+        fb.Eq("UpstreamModelId", createUpstreamModelId),
         fb.Not(fb.Exists("SupersededByOfferingId")));
     if (await gwModelOfferings.Find(duplicate).AnyAsync())
-        return Json(ApiEnvelope<ModelOfferingItem>.Fail("DUPLICATE_OFFERING", "该上游已绑定到此逻辑模型"), jsonOptions, 409);
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "DUPLICATE_OFFERING",
+            "这条上游（含指定的上游模型）已经绑定到此逻辑模型"), jsonOptions, 409);
 
     var now = DateTime.UtcNow;
     var offeringId = $"gw-offering-{Guid.NewGuid():N}";
@@ -6370,7 +6423,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
     {
         { "_id", offeringId }, { "TenantId", tenantId }, { "LogicalModelId", id },
         { "TargetKind", targetKind }, { "TargetId", targetId },
-        { "UpstreamModelId", string.IsNullOrWhiteSpace(body?.UpstreamModelId) ? BsonNull.Value : body.UpstreamModelId.Trim() },
+        { "UpstreamModelId", createUpstreamModelId },
         { "Protocol", string.IsNullOrWhiteSpace(body?.Protocol) ? BsonNull.Value : body.Protocol.Trim().ToLowerInvariant() },
         { "EndpointPath", string.IsNullOrWhiteSpace(body?.EndpointPath) ? BsonNull.Value : body.EndpointPath.Trim() },
         { "Priority", Math.Clamp(body?.Priority ?? 100, 0, 10000) }, { "Weight", Math.Clamp(body?.Weight ?? 100, 1, 10000) },
@@ -6490,6 +6543,20 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         return Json(ApiEnvelope<ModelOfferingItem>.Fail(
             AsrOfferingContractPolicy.ErrorCode,
             updateAsrContractError), jsonOptions, 409);
+    // 改到上游别名时与创建同一道门：判据同一份，两个入口不许一严一松。
+    if (targetKind == "exchange" && target is not null && body.UpstreamModelId is not null)
+    {
+        var updatedAlias = ExchangeAliasPolicy.EffectiveAlias(target, body.UpstreamModelId);
+        if (!ExchangeAliasPolicy.Declares(target, updatedAlias))
+        {
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "EXCHANGE_ALIAS_NOT_DECLARED",
+                updatedAlias.Length == 0
+                    ? "这个兑换所没有主别名，所以必须指定「上游模型」；清空它的话运行时会把这条线路整条跳过。"
+                    : $"兑换所里没有启用着的别名「{updatedAlias}」（不存在，或被单独停用了）。"
+                      + "去兑换所页确认这条别名的拼写与开关，再回来保存。"), jsonOptions, 409);
+        }
+    }
     var updates = new List<UpdateDefinition<BsonDocument>>();
     if (body.UpstreamModelId is not null) updates.Add(SetOrUnset("UpstreamModelId", body.UpstreamModelId));
     if (body.Protocol is not null) updates.Add(SetOrUnset("Protocol", body.Protocol.ToLowerInvariant()));
