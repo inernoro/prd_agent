@@ -6714,32 +6714,61 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
       其余失败没有赢家，必须还。认领两种情况都要还。
     */
     var compensationWarnings = new List<string>();
+
+    /*
+      还原动作本身也会撞唯一索引，而且**这正是它最常被调用的那一刻**。
+
+      两个管理员同时把同一个调用方的认领从 A 移到各自的模型上：输的那一方走进撞车分支，
+      而它要还回去的那份认领，此刻已经归赢家了。还原的 UpdateOne 于是撞上认领唯一索引，
+      异常从补偿函数里抛出去、越过外面那个 catch，本该是一句说得清的 409 变成一句
+      「服务器错误」（第 67 轮 review；与 external-cause-first 同一个病：把内因当结论交出去）。
+
+      撞键在这里不是故障，是结论：那个位子已经有人了，不该还、也还不回去。按「没能还原」
+      记一条告警走原路返回即可——告警文案说的本来就是「它们在这期间被别人改过」。
+    */
+    async Task<bool> TryRestoreAsync(FilterDefinition<BsonDocument> filter, UpdateDefinition<BsonDocument> update)
+    {
+        try
+        {
+            var restored = await gwLogicalModels.UpdateOneAsync(filter, update);
+            return restored.ModifiedCount > 0;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return false;
+        }
+        catch (MongoCommandException ex) when (ex.Code == 11000)
+        {
+            return false;
+        }
+    }
+
     async Task CompensateAsync(bool restoreDefaults)
     {
         foreach (var rollback in claimRollbacks)
         {
             // 条件更新：值还是我刚写进去的那个才还。期间被第三方改过就不动它——
             // 盲目覆盖会把别人的改动一起抹掉，那是用一个错换另一个错。
-            var restored = await gwLogicalModels.UpdateOneAsync(
+            var restored = await TryRestoreAsync(
                 Builders<BsonDocument>.Filter.And(
                     Builders<BsonDocument>.Filter.Eq("_id", rollback.RivalId),
                     Builders<BsonDocument>.Filter.Eq("DefaultForAppCallerCodes", new BsonArray(rollback.AfterWrite))),
                 Builders<BsonDocument>.Update
                     .Set("DefaultForAppCallerCodes", new BsonArray(rollback.Before))
                     .Set("UpdatedAt", DateTime.UtcNow));
-            if (restored.ModifiedCount == 0) compensationWarnings.Add($"{rollback.RivalId}（调用方认领）");
+            if (!restored) compensationWarnings.Add($"{rollback.RivalId}（调用方认领）");
         }
         if (!restoreDefaults) return;
         foreach (var rivalId in defaultRollbacks)
         {
-            var restored = await gwLogicalModels.UpdateOneAsync(
+            var restored = await TryRestoreAsync(
                 Builders<BsonDocument>.Filter.And(
                     Builders<BsonDocument>.Filter.Eq("_id", rivalId),
                     Builders<BsonDocument>.Filter.Eq("IsDefaultForType", false)),
                 Builders<BsonDocument>.Update
                     .Set("IsDefaultForType", true)
                     .Set("UpdatedAt", DateTime.UtcNow));
-            if (restored.ModifiedCount == 0) compensationWarnings.Add($"{rivalId}（用途默认）");
+            if (!restored) compensationWarnings.Add($"{rivalId}（用途默认）");
         }
     }
 

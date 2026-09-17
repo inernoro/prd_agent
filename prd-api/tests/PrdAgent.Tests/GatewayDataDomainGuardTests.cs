@@ -7660,4 +7660,56 @@ public class GatewayDataDomainGuardTests
         // 跳过要点名，不能静默吞掉
         Assert.Contains("unusable", worker, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void 对外清单那道调用方状态门要真接在构造之前()
+    {
+        /*
+          行为本身由 GatewayCatalogCallerStatusTests 逐例断言（它能直接引用 serving）。
+          这一条只管接线：那道门要真的挡在「列什么」之前，且判据来自共享的那一份，
+          不是在清单这一侧另写一张状态表（第 67 轮 review，形状 3）。
+        */
+        var catalog = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        Assert.Contains("GatewayAppCallerPolicy.AllowsTraffic", catalog, StringComparison.Ordinal);
+        Assert.Equal(0, CountOccurrences(catalog, "\"archived\""));
+        Assert.Equal(0, CountOccurrences(catalog, "\"disabled\""));
+
+        var gateAt = catalog.IndexOf("if (!CallerMayList(callerRecords))", StringComparison.Ordinal);
+        var listAt = catalog.IndexOf("var visible = logicals", StringComparison.Ordinal);
+        Assert.True(gateAt > 0, "清单没有过调用方状态那道门");
+        Assert.True(listAt > gateAt, "调用方状态那道门要排在构造清单之前");
+    }
+
+    [Fact]
+    public void 补偿本身撞键不许把冲突变成服务器错误()
+    {
+        /*
+          两个管理员同时把同一个调用方的认领从 A 移到各自的模型上：输的那一方走进撞车分支，
+          而它要还回去的那份认领此刻已经归赢家了，还原的 UpdateOne 于是撞上认领唯一索引，
+          异常从补偿函数抛出去、越过外面那个 catch，本该是一句说得清的 409 变成
+          「服务器错误」（第 67 轮 review）。
+
+          撞键在这里不是故障是结论：位子已经有人了，不该还也还不回去，按「没能还原」记一条
+          告警走原路返回。断言的是「补偿里的还原是接得住撞键的」这个性质。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var compensateAt = program.IndexOf("async Task CompensateAsync(bool restoreDefaults)", StringComparison.Ordinal);
+        Assert.True(compensateAt > 0, "补偿函数不见了");
+        var compensateEnd = program.IndexOf("string WithCompensationNote(", compensateAt, StringComparison.Ordinal);
+        Assert.True(compensateEnd > compensateAt);
+        var compensate = program[compensateAt..compensateEnd];
+
+        // 两处还原都要走那个接得住撞键的入口，裸 UpdateOneAsync 一处都不许剩
+        Assert.Equal(2, CountOccurrences(compensate, "await TryRestoreAsync("));
+        Assert.Equal(0, CountOccurrences(compensate, "await gwLogicalModels.UpdateOneAsync("));
+
+        // 入口本身两种撞键形态都接（UpdateOne 抛 MongoWriteException，命令层抛 MongoCommandException）
+        var helperAt = program.IndexOf("async Task<bool> TryRestoreAsync(", StringComparison.Ordinal);
+        Assert.True(helperAt > 0 && helperAt < compensateAt, "还原入口要定义在补偿函数之前");
+        var helper = program[helperAt..compensateAt];
+        Assert.Contains("ServerErrorCategory.DuplicateKey", helper, StringComparison.Ordinal);
+        Assert.Contains("ex.Code == 11000", helper, StringComparison.Ordinal);
+        // 没还成要留痕，不能静默当作还成了
+        Assert.Contains("compensationWarnings.Add", compensate, StringComparison.Ordinal);
+    }
 }

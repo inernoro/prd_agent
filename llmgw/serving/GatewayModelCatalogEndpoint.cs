@@ -26,6 +26,22 @@ namespace PrdAgent.LlmGatewayHost;
 /// </summary>
 public static class GatewayModelCatalogEndpoint
 {
+    /// <summary>
+    /// 这个调用方现在还能不能列清单。判据本体是 <c>GatewayAppCallerPolicy.AllowsTraffic</c>，
+    /// 与运行时那道治理闸同一份，这里只决定「多行记录怎么合成一个答案」。
+    ///
+    /// 抽成纯函数是为了能被直接断言：写成端点里的一句内联条件，守卫只能去扫源码里有没有
+    /// 提到那个函数名——而把条件改成恒真它照样绿（形状 4：不会红的证据比没有证据更糟）。
+    /// </summary>
+    public static bool CallerMayList(IReadOnlyCollection<GatewayAppCallerRecord> records)
+        // 一条记录都没有 → 状态归一成 discovered，照运行时口径放行：
+        // 新接入的调用方第一次列清单不该是空的。
+        => records.Count == 0
+           // 记录按 (租户, 调用方码, 请求类型) 存，一个码可能有多行，而清单跨用途、没有单一
+           // 请求类型可比——所以判「有没有任何一行还允许」。全都不允许才清空：宁可在部分停用时
+           // 多列一点，也不要把一个还在正常工作的调用方的清单整个抹掉。
+           || records.Any(x => GatewayAppCallerPolicy.AllowsTraffic(x.Status));
+
     /// <summary>OpenAI 的 model 对象要求 created 是秒级时间戳。</summary>
     private static long ToUnixSeconds(DateTime value)
         => new DateTimeOffset(DateTime.SpecifyKind(value, DateTimeKind.Utc)).ToUnixTimeSeconds();
@@ -38,6 +54,38 @@ public static class GatewayModelCatalogEndpoint
         CancellationToken ct)
     {
         var db = data.Context.Database;
+
+        /*
+          这把 key 的 appCaller 现在还接不接流量——先问这一句，再谈列什么。
+
+          key 的鉴权只验到「这把 key 属于这个团队」；「这个调用方此刻允不允许调用」是另一道门，
+          在运行时的 CheckAppCallerGovernanceAsync 里（GatewayAppCallerPolicy.AllowsTraffic）。
+          清单端点此前没过这道门：调用方被停用或归档之后，`/v1/models` 照样把它授权范围内的
+          模型全列出来，而对方照着清单调一次立刻拿到 APP_CALLER_DISABLED——清单说能调、
+          运行时说不能，两处各自为真（形状 3：判据分裂；第 67 轮 review）。
+
+          判据不在这里重写，直接引用那一份。两点与运行时对齐：
+            · 一条记录都没有 → 状态归一成 discovered，照运行时口径放行（新接入的调用方
+              第一次列清单不该是空的）；
+            · 记录按 (租户, 调用方码, 请求类型) 存，一个码可能有多行，而清单跨用途、
+              没有单一请求类型可比——所以判「有没有任何一行还允许」。全都不允许才清空：
+              宁可在部分停用时多列一点，也不要把一个还在正常工作的调用方的清单整个抹掉。
+        */
+        if (appCallerCode is { Length: > 0 })
+        {
+            var callerRecords = await db.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+                .Find(Builders<GatewayAppCallerRecord>.Filter.And(
+                        Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, tenantId),
+                        Builders<GatewayAppCallerRecord>.Filter.Eq(
+                            x => x.AppCallerCode, GatewayAppCallerIdentity.NormalizePart(appCallerCode))),
+                    new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
+                .ToListAsync(ct);
+            if (!CallerMayList(callerRecords))
+            {
+                return new JsonObject { ["object"] = "list", ["data"] = new JsonArray() };
+            }
+        }
+
         var logicalModels = db.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
         var offerings = db.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
         var physicalModels = db.GetCollection<BsonDocument>("llmgw_models");
