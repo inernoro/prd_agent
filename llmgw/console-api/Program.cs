@@ -6986,26 +6986,48 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
     var gwPlatformIds = IdSet(gwPlatformDocs);
     var gwModelIds = IdSet(gwModelDocs);
     var gwExchangeIds = IdSet(gwExchangeDocs);
-    var usableGwPoolIds = new HashSet<string>(StringComparer.Ordinal);
-    foreach (var pool in gwPoolDocs)
-    {
-        var poolId = pool.GetStringOrEmpty("_id");
-        if (poolId.Length > 0 && await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
-        {
-            usableGwPoolIds.Add(poolId);
-        }
-    }
-
     var activeAppCallers = appCallerDocs
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))
         .ToList();
-    var activeWithGatewayPool = activeAppCallers.Count(d =>
-        AllReferencedModelPoolsExist(d, gwPoolIds));
-    var activeWithUsableGatewayPool = activeAppCallers.Count(d =>
-        AllReferencedModelPoolsExist(d, gwPoolIds)
-        && IsAppCallerUsable(d, usableGwPoolIds));
-    var activeMissingGatewayPool = activeAppCallers.Count - activeWithGatewayPool;
-    var activeBoundPoolWithoutUsableMember = activeWithGatewayPool - activeWithUsableGatewayPool;
+
+    /*
+      「这个 active 调用方有没有人接得住」——判据是**对外模型**，不是池绑定。
+
+      池路由退场之后，配对的调用方根本没有池绑定，而 AllReferencedModelPoolsExist 对
+      「一条池引用都没有」返回 false：于是一份完全正确的配置会被这份报告判成
+      activeMissingGatewayPool > 0、status=blocked，而 scripts/llmgw-release-gate.py 读的
+      正是这两个字段——这一刀砍完池，发布反而被自己的报告挡住了。反向也一样坏：
+      一个还留着健康池字段、却没有任何对外模型接得住的调用方会被判成就绪。
+
+      所以这里与发布闸那份用同一个 FindUnnamedCatcherAsync（它又与运行时
+      TryResolveDefaultLogicalModelAsync 逐层对齐）。两处各写一套正是形状 3。
+
+      DTO 的字段名保持不变：scripts/llmgw-release-gate.py 与 llmgw-rollout-ledger.py
+      按名读它们，改名等于同一轮里再断一条线。含义已随判据改写，注释与文案同步说明。
+    */
+    var reportTenantId = TenantAccess.GetRequired(http).TenantId;
+    var activeWithCatcher = 0;
+    var activeWithoutCatcherDocs = new List<BsonDocument>();
+    foreach (var caller in activeAppCallers)
+    {
+        var catcher = await FindUnnamedCatcherAsync(
+            gwLogicalModels,
+            gwModelOfferings,
+            gwModels,
+            gwPlatforms,
+            gwModelExchanges,
+            reportTenantId,
+            caller.AsNullableString("RequestType"),
+            caller.AsNullableString("AppCallerCode"));
+        if (catcher is null) activeWithoutCatcherDocs.Add(caller);
+        else activeWithCatcher++;
+    }
+    var activeWithGatewayPool = activeWithCatcher;
+    // 「接得住」这份判据里已经要求那条对外模型真有一条启用且解析得出来的线路，
+    // 所以「绑定了但成员不可用」这一档在新判据下不再是一个独立状态，恒为 0。
+    var activeWithUsableGatewayPool = activeWithCatcher;
+    var activeMissingGatewayPool = activeWithoutCatcherDocs.Count;
+    var activeBoundPoolWithoutUsableMember = 0;
     var discovered = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var configured = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "configured", StringComparison.OrdinalIgnoreCase));
     var disabled = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "disabled", StringComparison.OrdinalIgnoreCase));
@@ -7050,28 +7072,18 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
     AddMapOnlyGaps(mapPlatformDocs, gwPlatformIds, "platform", d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     AddMapOnlyGaps(mapModelDocs, gwModelIds, "model", d => d.AsNullableString("ModelName") ?? d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     AddMapOnlyGaps(mapExchangeDocs, gwExchangeIds, "exchange", d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
-    gaps.AddRange(activeAppCallers
-        .Where(d => !AllReferencedModelPoolsExist(d, gwPoolIds))
+    // 缺口也换成同一个判据：报「没绑池」会把人指向一个已经 302 走了的页面，
+    // 而真正要做的是给这个调用方找一个接得住的对外模型。
+    gaps.AddRange(activeWithoutCatcherDocs
         .Take(30)
         .Select(d => new ConfigAuthorityGapItem
         {
             ObjectType = "appCaller",
             Id = d.GetStringOrEmpty("_id"),
             Name = d.AsNullableString("AppCallerCode") ?? d.GetStringOrEmpty("_id"),
-            Status = "active-missing-gw-pool",
-            Detail = "active appCaller 未绑定有效 GW 模型池；删除 MAP fallback 前必须修复。",
-        }));
-    gaps.AddRange(activeAppCallers
-        .Where(d => AllReferencedModelPoolsExist(d, gwPoolIds)
-            && !IsAppCallerUsable(d, usableGwPoolIds))
-        .Take(30)
-        .Select(d => new ConfigAuthorityGapItem
-        {
-            ObjectType = "appCaller",
-            Id = d.GetStringOrEmpty("_id"),
-            Name = d.AsNullableString("AppCallerCode") ?? d.GetStringOrEmpty("_id"),
-            Status = "gw-pool-without-usable-member",
-            Detail = "active appCaller 已绑定 GW 模型池，但该池没有可解析、非 unavailable 的成员；MAP fallback 退场前必须修复。",
+            Status = "active-appcaller-without-catcher",
+            Detail = "active appCaller 没有对外模型接得住（没人认领它，这个用途的默认也接不住）："
+                + "去「模型」页把某个模型的「指定调用方」加上它，或给这个用途设一个默认模型。",
         }));
 
     var summary = new ConfigAuthoritySummary
@@ -12418,10 +12430,26 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
       （predicate-and-wiring-discipline 形状 3：同一个判断分裂成两份各自漂移）。
     */
     var importCatalogOverrides = await LoadCatalogOverridesAsync(http);
-    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
-        .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
-        .Where(x => x.Length > 0)
-        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    // 取整份文档而不只是名字：下面「已存在就跳过」那一支要看它的能力是不是空的。
+    var existingDocs = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync();
+    var existingByName = new Dictionary<string, BsonDocument>(StringComparer.OrdinalIgnoreCase);
+    foreach (var doc in existingDocs)
+    {
+        var name = doc.AsNullableString("ModelName") ?? string.Empty;
+        if (name.Length > 0) existingByName.TryAdd(name, doc);
+    }
+
+    // 用途怎么算出来：名录 > 上游声明 > 猜，用户勾过的最优先。新建与「补空」两条路共用，
+    // 各写一份的话补出来的能力与新建出来的会是两套（形状 3）。
+    List<string> DeriveCapabilityCodes(ImportUpstreamModelEntry entry, string modelId)
+        => (entry.Capabilities ?? ModelCatalog.ResolveCapabilities(modelId, null, importCatalogOverrides).Capabilities.ToList())
+            // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
+            // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
+            // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
+            .Where(c => GatewayConfigurationProvisioning.IsSupportedCapabilityCode(c))
+            .Select(c => c.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
 
     /*
       价格与币种在**动第一次库之前**全批校验完。
@@ -12453,10 +12481,40 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
     foreach (var entry in entries)
     {
         var modelId = entry.ModelId!.Trim();
-        if (existing.Contains(modelId))
+        if (existingByName.TryGetValue(modelId, out var existingModel))
         {
             result.Skipped++;
             result.SkippedModelIds.Add(modelId);
+
+            /*
+              能力为空的存量模型，在这里把名录算出来的用途补上。
+
+              「补登名录之后重新导入」是这条路上唯一写明的恢复动作（白名单那条提示就是
+              这么告诉用户的）。可这一支原来只记一笔 Skipped 就走，物理文档的空能力原样留着；
+              下面发布白名单时重新读的就是那份空能力，于是照样拒登——用户照着提示做了一遍，
+              什么都没变，而且没有任何地方告诉他为什么（形状 2：恢复路只建了一半）。
+
+              只补空的，不动已经有能力的：那些可能是人在模型页勾过的，导入没有资格覆盖。
+            */
+            var storedCaps = existingModel.GetValue("Capabilities", BsonNull.Value);
+            var hasStoredCaps = storedCaps.IsBsonArray && storedCaps.AsBsonArray.Count > 0;
+            if (!hasStoredCaps)
+            {
+                var repairedCaps = DeriveCapabilityCodes(entry, modelId);
+                if (repairedCaps.Count > 0)
+                {
+                    await gwModels.UpdateOneAsync(
+                        TenantAccess.Filter(http, fb.Eq("_id", existingModel.GetStringOrEmpty("_id"))),
+                        Builders<BsonDocument>.Update
+                            .Set("Capabilities", new BsonArray(repairedCaps.Select(c => new BsonDocument
+                            {
+                                { "Type", c },
+                                { "Source", "inferred" },
+                                { "Value", true },
+                            })))
+                            .Set("UpdatedAt", now));
+                }
+            }
             continue;
         }
 
@@ -12485,14 +12543,8 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
 
         // 与发现端点同源：名录 > 上游声明 > 猜。用户在界面上勾过的用途仍然最优先。
         // 补登也必须喂进来——否则补登登记的用途白登记了，模型导进来用途还是猜的。
-        var caps = (entry.Capabilities ?? ModelCatalog.ResolveCapabilities(modelId, null, importCatalogOverrides).Capabilities.ToList())
-            // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
-            // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
-            // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
-            .Where(c => GatewayConfigurationProvisioning.IsSupportedCapabilityCode(c))
-            .Select(c => c.Trim().ToLowerInvariant())
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+        // 判据与上面「补空」那一支共用同一个函数。
+        var caps = DeriveCapabilityCodes(entry, modelId);
 
         var doc = new BsonDocument
         {
@@ -12564,10 +12616,10 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             // 并发导入撞上唯一索引：对方已经建好了，按「已存在」计，不算失败
             result.Skipped++;
             result.SkippedModelIds.Add(modelId);
-            existing.Add(modelId);
+            existingByName.TryAdd(modelId, doc);
             continue;
         }
-        existing.Add(modelId);
+        existingByName.TryAdd(modelId, doc);
         result.Created++;
         result.CreatedModelIds.Add(modelId);
     }
@@ -18639,46 +18691,6 @@ static List<string> GetStringArray(BsonDocument d, string field)
         .Select(x => x.AsString)
         .Distinct(StringComparer.Ordinal)
         .ToList();
-}
-
-static List<string> GetReferencedModelPoolIds(BsonDocument d)
-{
-    var ids = new List<string>();
-    void Add(string? value)
-    {
-        if (!string.IsNullOrWhiteSpace(value) && !ids.Contains(value, StringComparer.Ordinal))
-            ids.Add(value);
-    }
-
-    Add(d.AsNullableString("ModelPoolId"));
-    Add(d.AsNullableString("DefaultModelPoolId"));
-    foreach (var id in GetStringArray(d, "AllowedModelPoolIds")) Add(id);
-    return ids;
-}
-
-static bool AllReferencedModelPoolsExist(BsonDocument d, HashSet<string> gatewayPoolIds)
-{
-    var references = GetReferencedModelPoolIds(d);
-    return references.Count > 0 && references.All(gatewayPoolIds.Contains);
-}
-
-static bool IsAppCallerUsable(BsonDocument d, HashSet<string> usablePoolIds)
-{
-    var references = GetReferencedModelPoolIds(d);
-    if (references.Count == 0) return false;
-
-    var defaultPoolId = d.AsNullableString("DefaultModelPoolId")
-        ?? d.AsNullableString("ModelPoolId");
-    if (string.IsNullOrWhiteSpace(defaultPoolId))
-        return references.Any(usablePoolIds.Contains);
-
-    // 默认关闭跨池回退：默认池不可用时，即使次选池健康，也不能把
-    // “可发布/可用”报告成 true，因为真实请求仍只会命中默认池。
-    if (usablePoolIds.Contains(defaultPoolId)) return true;
-    var allowCrossPoolFallback = d.AsNullableBool("AllowCrossPoolFallback") ?? false;
-    return allowCrossPoolFallback
-        && references.Any(poolId => !string.Equals(poolId, defaultPoolId, StringComparison.Ordinal)
-                                    && usablePoolIds.Contains(poolId));
 }
 
 static OperationAuditItem MapOperationAudit(BsonDocument d)

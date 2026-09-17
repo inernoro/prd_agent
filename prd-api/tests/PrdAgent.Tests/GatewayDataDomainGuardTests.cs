@@ -333,8 +333,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("HasUsableGatewayPoolMemberAsync", consoleProgram);
         Assert.Contains("m.AsNullableBool(\"Enabled\") ?? true", consoleProgram);
         Assert.Contains("string.Equals(m.AsNullableString(\"DisplayName\"), modelId, StringComparison.Ordinal)", consoleProgram);
+        // 这条状态与它的文案只属于 /gw/config-authority/bind-active-app-callers（还在写池绑定的老端点）。
+        // 配置权威报告那一处已经换成「有没有对外模型接得住」，对应的断言在
+        // 调用方有没有人接得住只许有一份判据 里——那条文案钉在这里会反向锁死已经修掉的判据。
         Assert.Contains("gw-pool-without-usable-member", consoleProgram);
-        Assert.Contains("没有可解析、非 unavailable 的成员", consoleProgram);
         Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
         Assert.Contains("ActiveBoundPoolWithoutUsableMember", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
         Assert.Contains("activeBoundPoolWithoutUsableMember == 0", consoleProgram);
@@ -6251,6 +6253,73 @@ public class GatewayDataDomainGuardTests
         // 这条不变量用类型表达，不靠守卫抽查。
         Assert.Contains("string internalTenantId)", readiness);
         Assert.Contains("string.Equals(model.TenantId, callerTenant, StringComparison.Ordinal)", readiness);
+    }
+
+    /// <summary>
+    /// 「这个 active 调用方有没有人接得住」在整个仓库里只许有一份判据。
+    ///
+    /// 池路由退场之后，配对的调用方根本没有池绑定；按池绑定判的话，一份完全正确的配置
+    /// 会被配置权威报告判成 blocked，而 `scripts/llmgw-release-gate.py` 读的正是那些字段——
+    /// 这一刀砍完池，发布反而被自己的报告挡住。反向也一样坏：还留着健康池字段、
+    /// 却没有任何对外模型接得住的调用方会被判成就绪。
+    ///
+    /// 所以发布闸与配置权威报告必须都走 FindUnnamedCatcherAsync，且那两个按池判的
+    /// 老函数不许留在文件里——留着就会有人再用一次。
+    /// </summary>
+    [Fact]
+    public void 调用方有没有人接得住只许有一份判据()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 两个消费方：发布闸、配置权威报告。都走同一个共享判据。
+        var callSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"await FindUnnamedCatcherAsync\(").Count;
+        Assert.True(callSites >= 2,
+            $"FindUnnamedCatcherAsync 只有 {callSites} 个调用点：发布闸与配置权威报告都要用它，"
+            + "少一头就会出现「闸说可发、报告说 blocked」或反过来");
+
+        // 按池绑定判「调用方可不可用」的老函数必须已经删掉，不是留着没人调。
+        Assert.DoesNotContain("static bool AllReferencedModelPoolsExist(", program);
+        Assert.DoesNotContain("static bool IsAppCallerUsable(", program);
+
+        // 报告里给人的下一步要指向对外模型，而不是一个已经 302 走了的池页面。
+        Assert.Contains("active-appcaller-without-catcher", program);
+        Assert.DoesNotContain("active-missing-gw-pool", program);
+        // 刻意不断言 gw-pool-without-usable-member 在全文件消失：那条状态还属于
+        // /gw/config-authority/bind-active-app-callers（仍在写池绑定的老端点，见台账
+        // 2026-09-17-bind-active-app-callers-still-writes-pools）。这条守卫管的是报告这一处，
+        // 而报告这一处已经拿不到那两个按池判的函数了——它们上面刚断言删掉了。
+
+        // 读这份报告的脚本也要说同一件事，否则失败信息会把人指去修池绑定。
+        var gateScript = ReadRepoFile("scripts/llmgw-release-gate.py");
+        Assert.Contains("没有对外模型接得住", gateScript);
+        Assert.DoesNotContain("缺 GW 池", gateScript);
+    }
+
+    /// <summary>
+    /// 「补登名录之后重新导入」这条恢复路必须真的能走通。
+    ///
+    /// 白名单那条提示就是这么写的：认不出用途的模型先补能力/补登名录，再重新导入一次
+    /// 即可补上名单。可「已存在就跳过」那一支原来只记一笔 Skipped 就走，物理文档的空能力
+    /// 原样留着；发布白名单时重新读的就是那份空能力，于是照样拒登——用户照做了一遍，
+    /// 什么都没变（形状 2：恢复路只建了一半）。
+    /// </summary>
+    [Fact]
+    public void 重新导入要把名录算出来的用途补给空能力的存量模型()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 跳过那一支要拿得到文档本身，才谈得上看它的能力空不空。
+        Assert.Contains("existingByName.TryGetValue(modelId, out var existingModel)", program);
+        Assert.Contains("var hasStoredCaps = storedCaps.IsBsonArray && storedCaps.AsBsonArray.Count > 0;", program);
+        Assert.Contains("if (!hasStoredCaps)", program);
+
+        // 补出来的用途与新建那条路必须同源，各算各的就是两套能力。
+        Assert.Contains("List<string> DeriveCapabilityCodes(", program);
+        var deriveCallSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"DeriveCapabilityCodes\(entry, modelId\)").Count;
+        Assert.True(deriveCallSites >= 2,
+            $"DeriveCapabilityCodes 只有 {deriveCallSites} 个调用点：新建与补空两条路都要用它");
     }
 
     /// <summary>
