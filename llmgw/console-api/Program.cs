@@ -6443,6 +6443,25 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
     var targetPlatform = targetKind == "model" && !string.IsNullOrWhiteSpace(target.AsNullableString("PlatformId"))
         ? await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", target.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
         : null;
+    /*
+      物理模型自己启用着还不够，它挂的那个 Provider 也得在、也得启用。
+
+      运行时解析走 FindGatewayOwnedOrMapPlatformAsync(requireEnabled: true)：Provider 不在
+      或已停用时这条线路会被整条丢掉。这里不判的话，接口回 201、界面上多出一条线路，
+      而它一条流量都承接不了——又是「存得进去、跑不起来」（与系统级模型池、兑换所别名同形）。
+      兑换所那一支不判：它自己就是虚拟平台，没有单独的 Provider 文档。
+    */
+    if (targetKind == "model"
+        && (targetPlatform is null || targetPlatform.AsNullableBool("Enabled") == false))
+    {
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "TARGET_PLATFORM_UNAVAILABLE",
+            targetPlatform is null
+                ? "这个模型没有挂在任何一个可用的 Provider 上（Provider 不存在，或不属于当前租户）。"
+                  + "去上游页确认它归属的 Provider，再回来挂线路——现在存下去的话，运行时会把这条线路整条丢掉。"
+                : "这个模型挂的 Provider 已停用。先在上游页把它启用，再回来挂线路——"
+                  + "停用状态下运行时会把这条线路整条丢掉。"), jsonOptions, 409);
+    }
     var createAsrContractError = AsrOfferingContractPolicy.Validate(
         logical.GetStringOrEmpty("ModelType"),
         targetKind,

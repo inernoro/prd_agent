@@ -6294,6 +6294,30 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
+    /// 挂线路时物理模型挂的那个 Provider 也得在、也得启用。
+    ///
+    /// 运行时解析走 FindGatewayOwnedOrMapPlatformAsync(requireEnabled: true)：Provider 不在
+    /// 或已停用时这条线路会被整条丢掉。写入侧不判的话，接口回 201、界面多出一条线路，
+    /// 而它一条流量都承接不了——与系统级模型池、兑换所别名同形的「存得进去、跑不起来」。
+    /// </summary>
+    [Fact]
+    public void 挂线路时物理模型的Provider也要可用()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("TARGET_PLATFORM_UNAVAILABLE", program);
+        Assert.Contains("targetPlatform is null || targetPlatform.AsNullableBool(\"Enabled\") == false", program);
+        // 两种成因要分开说，下一步不一样：Provider 不在 / Provider 停用。
+        Assert.Contains("去上游页确认它归属的 Provider", program);
+        Assert.Contains("先在上游页把它启用", program);
+
+        // 判在插入之前：这是纯查询，位移与写入之前判完（与本 PR 其它几处同一个思路）。
+        var checkAt = program.IndexOf("TARGET_PLATFORM_UNAVAILABLE", StringComparison.Ordinal);
+        var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(document);", StringComparison.Ordinal);
+        Assert.True(insertAt > checkAt, "Provider 可用性判在插入线路之后，那时已经写进库了");
+    }
+
+    /// <summary>
     /// 换上游那条替换链上，撞唯一索引不能把库留在半截状态。
     ///
     /// 线路身份（唯一索引 v3）里带着实际上游模型。两条在跑的线路本来各用各的 UpstreamModelId，
