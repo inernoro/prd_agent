@@ -105,12 +105,15 @@ public class ActiveTasksController : ControllerBase
             UpdatedAt = now,
         };
 
-        await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: ct);
+        // 插入之后还有一步「设成正在做」（勾了建完直接开始时），两步是一个整体：
+        // 断在中间会留下一条建好却没被开始的任务，用户以为那个勾没生效。
+        // 从这里往下一律 CancellationToken.None（server-authority）。
+        await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
 
         if (req.StartNow)
-            await ActiveTaskShared.MakeActiveAsync(_db, userId, entry.Id, now, ct);
+            await ActiveTaskShared.MakeActiveAsync(_db, userId, entry.Id, now, CancellationToken.None);
 
-        var saved = await _db.ActiveTaskEntries.Find(x => x.Id == entry.Id).FirstOrDefaultAsync(ct);
+        var saved = await _db.ActiveTaskEntries.Find(x => x.Id == entry.Id).FirstOrDefaultAsync(CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(ActiveTaskShared.ToDto(saved ?? entry, DateTime.UtcNow)));
     }
 
@@ -427,13 +430,18 @@ public class ActiveTasksController : ControllerBase
         var wasActive = ActiveTaskShared.ShouldAdvanceQueue(entry.State);
 
         var now = DateTime.UtcNow;
-        await ActiveTaskShared.SettleAndSetStateAsync(_db, entry, ActiveTaskState.Dropped, now, ct);
+        // 和结案、撤销那两段一样：从这里往下不能被切一半，所以 CancellationToken.None。
+        // 断在中间的样子：状态已经是 dropped，而 FinishedFromActive 与 DropReason 都没写上 ——
+        // 撤销时 wasActive 读出来是 false，于是一条原本正在做的活被还原成备用，
+        // 放弃的理由也丢了。重试救不回来：它已经是终态，再点一次 drop 会被开头挡掉。
+        // server-authority：客户端断开不取消服务器已经开始的写入。
+        await ActiveTaskShared.SettleAndSetStateAsync(_db, entry, ActiveTaskState.Dropped, now, CancellationToken.None);
         await _db.ActiveTaskEntries.UpdateOneAsync(
             x => x.Id == id,
             Builders<ActiveTaskEntry>.Update
                 .Set(x => x.DropReason, req?.Reason?.Trim())
                 .Set(x => x.FinishedFromActive, wasActive),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { id, dropped = true }));
     }

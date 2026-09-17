@@ -229,8 +229,14 @@ public class TasksOpenApiController : ControllerBase
     /// 幂等：按 Key（形如 <c>platform.active-tasks#15</c>）更新或新建，重复推不会长出第二条。
     /// **只覆盖正文**（标题 / 现状 / 补的条件）；谁认领了、转成了哪条任务，同步一律不碰。
     /// </summary>
+    // 要管理档，和界面那条同步端点同一道门。
+    //
+    // 这里曾经是 RequireScope(ScopeUse, ScopeManage)（二选一），于是只拿 tasks:use 的
+    // key 就能按自己给的 Key 覆写整块共享台账 —— 所有人看到的标题、现状、补的条件。
+    // 界面那条（ActiveTaskDebtsController.Sync）先补上了管理档，这条开放接口是同一个
+    // 能力的**第二个入口**，漏在外面等于那道门没关。同一族判据漏一个入口，和没有门差不多。
     [HttpPost("debts/sync")]
-    [RequireScope(ScopeUse, ScopeManage)]
+    [RequireScope(ScopeManage)]
     public async Task<IActionResult> SyncDebts([FromBody] DebtSyncRequest req, CancellationToken ct = default)
     {
         if (req?.Items == null || req.Items.Count == 0)

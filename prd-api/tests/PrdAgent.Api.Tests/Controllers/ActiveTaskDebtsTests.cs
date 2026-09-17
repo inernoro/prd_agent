@@ -334,6 +334,32 @@ public class ActiveTaskDebtsTests
         Assert.DoesNotContain("x.UpdatedAt >= since", body, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 改整块台账的每一个入口都要管理档_不只是界面那一个()
+    {
+        // 上一轮给界面那条同步端点加了管理档，而开放接口 /api/open/tasks/debts/sync 是
+        // **同一个能力的第二个入口**，当时写的是 RequireScope(ScopeUse, ScopeManage)（二选一），
+        // 于是只拿 tasks:use 的 key 照样能按自己给的 Key 覆写所有人看到的台账。
+        // 一道门开在两个地方，只关一个等于没关。MCP 的 map_debt_sync 打的也是这条路。
+        var root = LocateRepoRoot();
+
+        var open = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Api", "Controllers", "Api", "TasksOpenApiController.cs"));
+        var at = open.IndexOf("[HttpPost(\"debts/sync\")]", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到开放接口的同步端点");
+        // 它的 RequireScope 必须**只**认管理档
+        var attr = open[at..(at + 200)];
+        Assert.Contains("[RequireScope(ScopeManage)]", attr, StringComparison.Ordinal);
+        Assert.DoesNotContain("RequireScope(ScopeUse", attr, StringComparison.Ordinal);
+
+        // MCP 那个工具声明的 scope 也要一致，否则它会引着调用方拿 use 档来打这条路
+        var mcp = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Api", "Mcp", "McpBuiltinTools.cs"));
+        var tool = mcp.IndexOf("Name = \"map_debt_sync\"", StringComparison.Ordinal);
+        Assert.True(tool > 0, "找不到 map_debt_sync");
+        Assert.Contains("ScopeTasksManage", mcp[tool..(tool + 1200)], StringComparison.Ordinal);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

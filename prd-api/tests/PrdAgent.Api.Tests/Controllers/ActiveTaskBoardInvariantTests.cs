@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -259,31 +260,58 @@ public class ActiveTaskBoardInvariantTests
         Assert.True(makeActive > setStandby, "撤销必须先放回 standby 再激活，否则激活那一步不认它");
     }
 
-    [Theory]
-    // 第一个写操作的锚点：从它往后都算「已经开始写了」
-    [InlineData("[HttpPost(\"{id}/finish\")]", "SettleAndSetStateAsync")]
-    [InlineData("[HttpPost(\"{id}/reopen\")]", "UpdateOneAsync")]
-    public void 多步写序列不许被客户端断开切一半(string route, string 第一次写)
+    [Fact]
+    public void 任何多步写序列都不许被客户端断开切一半()
     {
-        // 结案：结算 → 盖「从哪一档结案的」戳 → 队首顶上来。
-        // 撤销：状态放回 standby 并清结案字段 → 照原来那一档放回去。
-        // 两段都是一个整体，跟着请求的 ct 走都会被切一半：
-        // 结案那边断在中间 —— FinishedFromActive 永远是 false（撤销把它还原成备用
-        // 而不是正在做）、队列没人顶上来；撤销那边断在中间 —— 结案说明清掉了，
-        // 人却没回到手上那件事。两边重试都进不来（开头那句提前返回会挡掉）。
-        // server-authority：客户端断开不取消服务器已经开始的写入。
+        // 判据故意写成**全扫**，不是逐个端点列举 —— 这一族我连着漏了三个入口
+        // （结案修了漏撤销、撤销修了漏放下、放下修了漏「建完直接开始」那两处），
+        // 每次都是「列举式守卫只护住了我记得的那几个」。改成扫控制器里所有端点：
+        // 只要一个方法里有两次以上写，第一次写之后就不许再出现跟请求走的 ct。
+        // 加新端点自动被覆盖，不必回来补名单。
         //
-        // 写成 Theory 是因为这两处是同一族：上一轮只修了结案那条，撤销这条原样留着，
-        // 被 review 当场抓出来。加新端点时照着补一行 InlineData，别再各写一份。
-        var body = Endpoint(route);
+        // 为什么这件事要紧：写序列被切一半留下的是**不可重试**的中间态。
+        // 结案断在中间，撤销会把原本正在做的那条还原成备用；放下断在中间，
+        // 放弃理由丢了；转债务断在中间，任务真建出来了而债务还显示没人认领，
+        // 用户再点一次就是第二条。而重试都进不来 —— 状态已经变了，开头那句提前返回
+        // 会把它挡掉。server-authority：客户端断开不取消服务器已经开始的写入。
+        string[] 写 = {
+            "InsertOneAsync", "UpdateOneAsync", "UpdateManyAsync", "DeleteOneAsync",
+            "ReplaceOneAsync", "BulkWriteAsync", "SettleAndSetStateAsync", "MakeActiveAsync",
+        };
+        var dir = Path.Combine(RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Controllers", "Api");
+        var 控制器 = new[]
+        {
+            "ActiveTasksController.cs", "ActiveTaskDebtsController.cs",
+            "ActiveTasksAdminController.cs", "ActiveTaskSuggestionsController.cs",
+        };
 
-        var at = body.IndexOf(第一次写, StringComparison.Ordinal);
-        Assert.True(at > 0, $"{route} 里找不到 {第一次写}");
-        // 从第一次写往后，不许再出现跟请求走的 ct
-        var tail = body[at..];
-        Assert.DoesNotContain(", ct)", tail, StringComparison.Ordinal);
-        Assert.DoesNotContain("cancellationToken: ct", tail, StringComparison.Ordinal);
-        Assert.Contains("CancellationToken.None", tail, StringComparison.Ordinal);
+        var 泄漏 = new List<string>();
+        foreach (var f in 控制器)
+        {
+            var src = File.ReadAllText(Path.Combine(dir, f));
+            foreach (Match m in Regex.Matches(src, @"public async Task<IActionResult> (\w+)\("))
+            {
+                var name = m.Groups[1].Value;
+                var start = m.Index + m.Length;
+                var ends = new[] { src.IndexOf("\n    [Http", start, StringComparison.Ordinal),
+                                   src.IndexOf("\n    /// <summary>", start, StringComparison.Ordinal) }
+                           .Where(x => x > 0).ToList();
+                var body = src[start..(ends.Count > 0 ? ends.Min() : src.Length)];
+
+                var 位置 = 写.Select(w => body.IndexOf(w, StringComparison.Ordinal)).Where(i => i >= 0).ToList();
+                var 次数 = 写.Sum(w => (body.Split(w).Length - 1));
+                if (次数 < 2) continue;   // 只有一次写，切不成一半
+
+                var tail = body[位置.Min()..];
+                if (tail.Contains(", ct)", StringComparison.Ordinal)
+                    || tail.Contains("cancellationToken: ct", StringComparison.Ordinal))
+                    泄漏.Add($"{f}::{name}");
+            }
+        }
+
+        Assert.True(泄漏.Count == 0,
+            "这些端点的多步写序列还跟着请求的 ct 走，客户端一断就会留下不可重试的中间态："
+            + string.Join("、", 泄漏));
     }
 
     [Fact]

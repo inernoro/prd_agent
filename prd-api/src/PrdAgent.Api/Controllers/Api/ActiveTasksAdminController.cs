@@ -82,12 +82,15 @@ public class ActiveTasksAdminController : ControllerBase
             UpdatedAt = now,
         };
 
-        await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: ct);
+        // 插入之后还有一步「设成正在做」（勾了建完直接开始时），两步是一个整体：
+        // 断在中间会留下一条建好却没被开始的任务，用户以为那个勾没生效。
+        // 从这里往下一律 CancellationToken.None（server-authority）。
+        await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
 
         if (req.StartNow)
-            await ActiveTaskShared.MakeActiveAsync(_db, req.UserId, entry.Id, now, ct);
+            await ActiveTaskShared.MakeActiveAsync(_db, req.UserId, entry.Id, now, CancellationToken.None);
 
-        var saved = await _db.ActiveTaskEntries.Find(x => x.Id == entry.Id).FirstOrDefaultAsync(ct);
+        var saved = await _db.ActiveTaskEntries.Find(x => x.Id == entry.Id).FirstOrDefaultAsync(CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(ActiveTaskShared.ToDto(saved ?? entry, DateTime.UtcNow)));
     }
 

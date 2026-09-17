@@ -321,7 +321,11 @@ public class ActiveTaskDebtsController : ControllerBase
             CreatedAt = now,
             UpdatedAt = now,
         };
-        await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: ct);
+        // 任务一旦插进去，后面那两步（把它的 id 记到债务上、写归属与状态）就不能被切一半：
+        // 断在中间会留下一条真实存在的任务，而债务那边既没有它的 id、也还显示没人认领 ——
+        // 用户看到「没转成」再点一次，于是建出第二条一模一样的活。
+        // 所以从这里往下一律 CancellationToken.None（server-authority）。
+        await _db.ActiveTaskEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
 
         // 用追加而不是整表覆盖：两个人同时转同一条没人认领的债务时，
         // 各自手上的 ConvertedTaskIds 都是转之前的快照，谁后写谁把对方那条 id 抹掉。
@@ -337,7 +341,7 @@ public class ActiveTaskDebtsController : ControllerBase
                 .Push(x => x.ConvertedTaskIds, entry.Id)
                 .Set(x => x.State, ActiveTaskDebtState.Converted)
                 .Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         // 转的人就是认领的人 —— 动手了还说没人管，那是自欺
         await _db.ActiveTaskDebts.UpdateOneAsync(
@@ -348,9 +352,9 @@ public class ActiveTaskDebtsController : ControllerBase
                 .Set(x => x.OwnerUserId, me)
                 .Set(x => x.OwnerUserName, display)
                 .Set(x => x.UpdatedAt, now),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
-        var saved = await _db.ActiveTaskDebts.Find(x => x.Id == id).FirstOrDefaultAsync(ct);
+        var saved = await _db.ActiveTaskDebts.Find(x => x.Id == id).FirstOrDefaultAsync(CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new
         {
             debt = ToDto(saved!, me),
