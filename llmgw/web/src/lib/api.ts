@@ -83,7 +83,6 @@ import type {
   ConfigAuthorityReportData,
   BulkClaimConfigAuthorityRequest,
   BulkClaimConfigAuthorityResult,
-  BindActiveAppCallerPoolsResult,
   RuntimeGatesData,
   ServiceKeyItem,
   CreateServiceKeyRequest,
@@ -688,9 +687,6 @@ export function getRuntimeGates(): Promise<ApiResponse<RuntimeGatesData>> {
 }
 export function bulkClaimConfigAuthority(req: BulkClaimConfigAuthorityRequest): Promise<ApiResponse<BulkClaimConfigAuthorityResult>> {
   return apiRequest<BulkClaimConfigAuthorityResult>('/config-authority/bulk-claim', { method: 'POST', body: req });
-}
-export function bindActiveAppCallerPools(): Promise<ApiResponse<BindActiveAppCallerPoolsResult>> {
-  return apiRequest<BindActiveAppCallerPoolsResult>('/config-authority/bind-active-app-callers', { method: 'POST' });
 }
 export function getGatewayAppCallers(params?: {
   page?: number;

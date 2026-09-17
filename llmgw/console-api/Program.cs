@@ -8184,7 +8184,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         {
             "config_authority_objects" => new()
             {
-                Link("模型池", "/pools"),
+                Link("对外模型", "/logical-models"),
                 Link("平台", "/platforms"),
                 Link("模型", "/models"),
                 Link("Exchange", "/exchanges"),
@@ -8198,7 +8198,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             {
                 Link("active 调用方", "/app-callers?status=active"),
                 Link("discovered 调用方", "/app-callers?status=discovered"),
-                Link("模型池", "/pools"),
+                Link("对外模型", "/logical-models"),
             },
             "appcaller_policy_drift" => new() { Link("漂移调用方", "/app-callers?drift=any") },
             "appcaller_ingress_registry_coverage" => new()
@@ -8206,11 +8206,11 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                 Link("协议覆盖", "/?protocolCoverage=1"),
                 Link("调用方", "/app-callers"),
             },
-            "gateway_pool_member_readiness" => new() { Link("检查模型池", "/pools") },
+            "gateway_pool_member_readiness" => new() { Link("检查对外模型的线路", "/logical-models") },
             "active_appcaller_map_fallback_exit" => new()
             {
                 Link("active 调用方", "/app-callers?status=active"),
-                Link("模型池", "/pools"),
+                Link("对外模型", "/logical-models"),
                 Link("平台密钥", "/platforms"),
             },
             "gateway_key_integrity" => new()
@@ -8818,7 +8818,11 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
                     Id = appCallerId,
                     Name = appCallerCode,
                     Status = "gw-pool-without-usable-member",
-                    Detail = $"active appCaller 当前绑定的 GW 模型池 {currentPoolId} 没有可解析成员；请先在 /pools 补齐 enabled 模型或 Exchange。",
+                    // 下一步不许指向 /pools：那个地址现在无条件重定向到对外模型列表，
+                    // 写端点也全删了，照着做走不通（第 71 轮 review）。
+                    Detail = $"active appCaller 的存量池绑定 {currentPoolId} 指向一个没有可解析成员的池。"
+                        + "池已退场、这条绑定不参与路由，不用去修它；"
+                        + "要让这个调用方被接住，去对外模型页给它设一条认领，或给这个用途设一个默认模型。",
                 });
                 continue;
             }
@@ -8908,7 +8912,15 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
                 Id = appCallerId,
                 Name = appCallerCode,
                 Status = "bound-to-gw-default-pool",
-                Detail = $"已绑定 requestType={requestType} 的 GW 默认池 {defaultPool.Name}，路由策略保留或补齐为 {targetModelPolicy}。",
+                // 池退场之后这条写入**不再影响路由**：解析器把 ModelPoolId /
+                // AllowedModelPoolIds / DefaultModelPoolId 当成残留字段，一个都不读。
+                // 保留这个端点是为了让还在调它的存量脚本拿到可读的回执，而不是 404；
+                // 但它报出来的话必须说清「这不是修复」，否则又是一次静默空操作
+                //（第 71 轮 review）。真正的修复在对外模型那一侧。
+                Detail = $"已写入 requestType={requestType} 的 GW 默认池 {defaultPool.Name} 作为存量字段"
+                    + $"（路由策略保留或补齐为 {targetModelPolicy}）。**这不会改变路由**：池已退场，"
+                    + "解析器不读这几个字段。要让这个调用方被接住，去对外模型页给它设一条认领，"
+                    + "或给这个用途设一个默认模型。",
             });
         }
         else

@@ -13,7 +13,7 @@
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { Server, GitCompare, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
-import { bindActiveAppCallerPools, bulkClaimConfigAuthority, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
+import { bulkClaimConfigAuthority, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
 import type { PlatformItem, ModelItem, ShadowSummary, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
@@ -118,26 +118,6 @@ export function GovernancePage() {
     setActionMessage(`已认领 ${res.data.claimedTotal} 个配置，跳过 ${res.data.skippedTotal} 个已存在配置`);
   }
 
-  async function bindActiveCallers() {
-    setBusyAction('bind-active-callers');
-    setActionMessage(null);
-    const res = await bindActiveAppCallerPools();
-    if (!res.success) {
-      setBusyAction(null);
-      setActionMessage(res.error?.message || 'active 调用方绑定失败');
-      return;
-    }
-    const [authorityRes, runtimeGatesRes, appCallersRes] = await Promise.all([
-      getConfigAuthorityReport(),
-      getRuntimeGates(),
-      getGatewayAppCallers({ page: 1, pageSize: 1 }),
-    ]);
-    if (authorityRes.success) setConfigAuthority(authorityRes.data.summary ?? emptyConfigAuthority());
-    if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data);
-    if (appCallersRes.success) setAppCallerTotal(appCallersRes.data.total);
-    setBusyAction(null);
-    setActionMessage(`已绑定 ${res.data.bound} 个 active 调用方，跳过 ${res.data.skipped} 个，缺默认池 ${res.data.missingDefaultPool} 个`);
-  }
 
   const loading = platforms === null || models === null || exchanges === null || keyHealth === null || configAuthority === null || runtimeGates === null || protocolCoverage === null || appCallerTotal === null;
   // 完全没加载出来（都还 null）时才整屏报错/转圈；有部分数据则进入下方渲染，用顶部横幅提示失败（不掩盖故障）。
@@ -154,7 +134,7 @@ export function GovernancePage() {
   const unusableActivePools = configAuthority!.activeBoundPoolWithoutUsableMember ?? 0;
   const activeFallbackStatus = configAuthority!.activeAppCallerMapFallbackReady
     ? 'active fallback 可关闭'
-    : `${configAuthority!.activeMissingGatewayPool} 未绑池 · ${unusableActivePools} 不可用池`;
+    : `${configAuthority!.activeMissingGatewayPool} 个 active 调用方没人接得住 · ${unusableActivePools} 条存量池绑定指向没有可用成员的池`;
 
   return (
     <PageShell>
@@ -224,21 +204,29 @@ export function GovernancePage() {
         <Card style={{ ...CARD_BODY, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
           <span style={SECTION_TITLE}>配置权威迁移</span>
           <span style={BODY_TEXT}>
-            把 MAP-only 配置复制到网关，并给 active 调用方绑定默认池。
+            把 MAP-only 配置复制到网关；调用方没人接得住时去对外模型页处理。
             <HelpPopover label="配置权威迁移">
-              认领会把 MAP 侧的模型池、平台、模型和 Exchange 复制到 llm_gateway 作为权威副本，已存在的对象直接跳过、不会覆盖。
-              绑定则把 active 调用方指到同类型的 GW 默认池；缺默认池或池内没有可用成员的调用方会被跳过，需要先去模型池补齐。
+              认领会把 MAP 侧的平台、模型和 Exchange 复制到 llm_gateway 作为权威副本，已存在的对象直接跳过、不会覆盖。
+              「没人接得住」说的是这个 active 调用方既没有被任何对外模型认领、它那个用途也没有默认模型，
+              于是它不点名的请求解析不出任何模型。修法在对外模型页：给它设一条认领，或给那个用途设一个默认。
+              池绑定已经退场，解析器不读那几个字段，改它不会让这个数字下降。
             </HelpPopover>
           </span>
           <Link to="/app-callers?status=active" style={{ textDecoration: 'none' }}>
-            <Chip label={`未绑池 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn)' : 'var(--ok)'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn-bg)' : 'var(--ok-bg)'} />
+            <Chip label={`没人接得住 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn)' : 'var(--ok)'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn-bg)' : 'var(--ok-bg)'} />
           </Link>
           {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null || mapOnlyTotal === 0} onClick={() => void claimMapOnlyConfig()} style={{ marginLeft: 'auto' }}>
             {busyAction === 'bulk-claim-authority' ? '处理中…' : '认领 MAP-only 配置'}
           </Button> : null}
-          {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null || configAuthority!.activeMissingGatewayPool === 0} onClick={() => void bindActiveCallers()}>
-            {busyAction === 'bind-active-callers' ? '处理中…' : '绑定 active 调用方'}
-          </Button> : null}
+          {/*
+            这里原本有一个把 active 调用方绑到池上的按钮，点了只写池绑定。池退场之后解析器一个字段
+            都不读，于是它点完显示成功、闸门照红、请求照样 MODEL_NOT_FOUND——一个假装能修的
+            按钮，比没有按钮糟（第 71 轮 review）。换成指向真正能修的那一屏：
+            去对外模型页给调用方设认领，或给用途设默认。
+          */}
+          <Link to="/logical-models" style={{ textDecoration: 'none' }}>
+            <Button size="sm" variant="secondary">去对外模型页设认领或默认</Button>
+          </Link>
         </Card>
         {!canWrite ? <ReadOnlyNotice>当前角色可以查看运行状态、配置权威和容器拓扑，但不能执行配置认领或绑定。</ReadOnlyNotice> : null}
 

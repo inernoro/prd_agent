@@ -7712,6 +7712,40 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void 池退场之后不许再有指向池页的下一步()
+    {
+        /*
+          `/pools` 这条路由现在无条件重定向到对外模型列表，写端点全删了。任何还写着
+          「去 /pools 修」的下一步，照着做都走不通——而给不出可走通的下一步，比不给更糟
+          （external-cause-first；第 71 轮 review，本 PR 第二次扫这一类）。
+
+          两类都要管：闸门给的跳转链接，和文案里写死的路径。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Equal(0, CountOccurrences(console, "\"/pools\")"));
+        Assert.Equal(0, CountOccurrences(console, "在 /pools 补齐"));
+
+        // 前端：详情页那条「模型池」不许再是可点的链接（点过去 focus 会被重定向丢掉）
+        var details = ReadRepoFile("llmgw/web/src/pages/EntityDetailsPages.tsx");
+        Assert.Equal(0, CountOccurrences(details, "/pools?focus="));
+
+        /*
+          总览页那个「绑定 active 调用方」按钮必须消失：它写的是池绑定，而解析器一个字段都不读，
+          点完显示成功、闸门照红、请求照样 MODEL_NOT_FOUND——一个假装能修的按钮。
+          配套的接口函数也要一起删，留着就是下一次有人接回去的引信。
+        */
+        var overview = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
+        Assert.Equal(0, CountOccurrences(overview, "bindActiveAppCallerPools"));
+        Assert.Equal(0, CountOccurrences(overview, "绑定 active 调用方"));
+        Assert.Equal(0, CountOccurrences(ReadRepoFile("llmgw/web/src/lib/api.ts"), "bind-active-app-callers"));
+        // 换成真能修的那一屏
+        Assert.Contains("去对外模型页设认领或默认", overview, StringComparison.Ordinal);
+
+        // 端点本身保留（存量脚本还可能在调），但它的回执必须说清「这不会改变路由」
+        Assert.Contains("这不会改变路由", console, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void 模型页调用量只数业务操作()
     {
         /*
