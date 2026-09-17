@@ -116,6 +116,33 @@ public static class GatewayCatalogGate
     }
 
     /// <summary>
+    /// 一条指向物理模型的线路，按它**实际会打出去的那个模型名**判这道门。
+    ///
+    /// 线路可以用 UpstreamModelId 覆盖上游模型名，而运行时判的就是覆盖之后那个名字
+    /// （ApplyCatalogGateAsync judge 的是解析结果里的 ActualModel）。只判目标文档自己的名字，
+    /// 就会出现：目标模型在名录里、覆盖成的那个不在，清单照样列出来，而真调用回
+    /// MODEL_NOT_IN_CATALOG——「列出来就是让对方白调一次」，正是这道门要防的。
+    ///
+    /// <paramref name="sameNameDocsOnPlatform"/> 是库里同名（且同一个 Provider）的那些模型文档。
+    /// 一条都查不到时属于「管不着」——那个名字不是网关模型库里的东西，这道门没有资格判它，
+    /// 与运行时的 OutOfJurisdiction 同档，照旧放行。
+    /// </summary>
+    public static bool PhysicalRoutePasses(
+        string? effectiveModelName,
+        IReadOnlyCollection<BsonDocument> sameNameDocsOnPlatform,
+        bool gateEnforces)
+    {
+        if (!gateEnforces) return true;
+        if (!string.IsNullOrWhiteSpace(effectiveModelName)
+            && GatewayModelCatalog.Contains(effectiveModelName))
+        {
+            return true;
+        }
+        if (sameNameDocsOnPlatform.Count == 0) return true;
+        return sameNameDocsOnPlatform.Any(IsAllowedOutsideCatalog);
+    }
+
+    /// <summary>
     /// 一条兑换所线路过不过得了这道门：兑换所声明过这条别名，且别名在名录里或被放行。
     /// 名录门降档时只要求「声明过」——没声明的那种在任何档位下都不是这个兑换所的东西。
     /// </summary>

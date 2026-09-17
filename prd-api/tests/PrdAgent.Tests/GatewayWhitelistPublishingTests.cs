@@ -165,7 +165,11 @@ public class GatewayWhitelistPublishingTests
         // 时，端点里那几个调用一个都不剩，而不变量完好无损——按字面量写的守卫会在这种时候
         // 变红，那种红说的是实现变了，不是契约破了（形状 4a）。
         Assert.Contains("GatewayCatalogGate.EnforcesAsync", endpoint);
-        Assert.Contains("!catalogGateEnforces || GatewayCatalogGate.Passes(x)", endpoint);
+        // 两类目标各有各的入口，但判据都在共享那一份里：
+        // 物理线路按它实际会打出去的那个模型名判（线路可以用 UpstreamModelId 覆盖），
+        // 兑换所线路判到别名这一层。都不在这个文件里自己拼判据。
+        Assert.Contains("GatewayCatalogGate.PhysicalRoutePasses(", endpoint);
+        Assert.Contains("GatewayCatalogGate.ExchangeRoutePasses(", endpoint);
 
         // 端点不许自己再判一遍「配置是不是 observe」「迁移跑完没有」——判据分家就是从这里开始的。
         Assert.DoesNotContain("\"observe\", StringComparison.OrdinalIgnoreCase", endpoint);
@@ -655,5 +659,35 @@ public class GatewayWhitelistPublishingTests
 
         // 按次计费而这一次不收固定费：账是算出来了，就是零，不是「算不出」。
         Assert.Contains("status == GatewayCostStatus.Priced && billedPerCall ? 0m", calculator);
+    }
+
+    /// <summary>
+    /// 物理线路要按它**实际会打出去的那个模型名**过名录门。
+    ///
+    /// 线路可以用 UpstreamModelId 覆盖上游模型名，运行时判的就是覆盖之后那个名字。
+    /// 只判目标文档自己的名字，就会出现「目标在名录里、覆盖成的那个不在」，清单照样列出来，
+    /// 而真调用回 MODEL_NOT_IN_CATALOG——列出来就是让对方白调一次。
+    /// </summary>
+    [Fact]
+    public void 物理线路按实际上游名过名录门()
+    {
+        var endpoint = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+
+        // 算出实际会打出去的名字，而不是拿目标文档的名字凑合。
+        Assert.Contains("string EffectiveUpstreamName(GatewayModelOffering route)", endpoint);
+        Assert.Contains("route.UpstreamModelId is { Length: > 0 }", endpoint);
+
+        // 按名字 + Provider 去库里找同名文档，与运行时同一套取值：两个名字字段都认。
+        Assert.Contains("bf.In(\"ModelName\", effectiveNames)", endpoint);
+        Assert.Contains("bf.In(\"ModelNameNormalized\"", endpoint);
+
+        // 判据本体在共享那一份，端点只喂数据。
+        Assert.Contains("public static bool PhysicalRoutePasses(", gate);
+        // 查不到同名文档时属于「管不着」，与运行时的 OutOfJurisdiction 同档，放行而不是拦。
+        Assert.Contains("if (sameNameDocsOnPlatform.Count == 0) return true;", gate);
+
+        // 目标文档那一层不再自己判一次名录门——判两次口径就会分家。
+        Assert.DoesNotContain("!catalogGateEnforces || GatewayCatalogGate.Passes(x)", endpoint);
     }
 }

@@ -134,11 +134,66 @@ public static class GatewayModelCatalogEndpoint
         */
         var catalogGateEnforces = await GatewayCatalogGate.EnforcesAsync(config, db, ct);
 
+        // 目标文档要在、要启用、它的平台也要启用。名录门**不在这里判**——
+        // 这道门要判的是这条线路实际会打出去的那个模型名，而不是目标文档自己的名字，
+        // 见下面 PhysicalRouteUsable。
         var priceByModelId = enabledModels
             .Where(x => x.GetValue("PlatformId", BsonNull.Value) is { IsString: true } pid
                 && enabledPlatformIds.Contains(pid.AsString))
-            .Where(x => !catalogGateEnforces || GatewayCatalogGate.Passes(x))
             .ToDictionary(x => x.GetValue("_id", BsonNull.Value).AsString, x => x, StringComparer.Ordinal);
+
+        /*
+          线路可以用 UpstreamModelId 覆盖上游模型名，而运行时的名录门判的就是覆盖之后那个名字。
+
+          只判目标文档自己的名字会出现：目标模型在名录里、覆盖成的那个不在，清单照样列出来，
+          而真调用回 MODEL_NOT_IN_CATALOG。所以先把每条线路实际会打出去的名字算出来，
+          再按名字 + Provider 去库里找同名文档（与运行时同一套取值：两个名字字段都认，
+          且不要求 Enabled——判的是「这个名字在这个 Provider 下有没有被放行」，不是它开没开）。
+        */
+        string EffectiveUpstreamName(GatewayModelOffering route)
+            => route.UpstreamModelId is { Length: > 0 } overridden
+                ? overridden.Trim()
+                : priceByModelId.TryGetValue(route.TargetId, out var target)
+                  && target.GetValue("ModelName", BsonNull.Value) is { IsString: true } name
+                    ? name.AsString
+                    : string.Empty;
+
+        var effectiveNames = routes
+            .Where(x => !string.Equals(x.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
+            .Select(EffectiveUpstreamName)
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var docsByPlatformAndName = new Dictionary<string, List<BsonDocument>>(StringComparer.Ordinal);
+        if (catalogGateEnforces && effectiveNames.Count > 0)
+        {
+            var named = await physicalModels
+                .Find(bf.And(
+                    bf.Eq("TenantId", tenantId),
+                    bf.Or(
+                        bf.In("ModelName", effectiveNames),
+                        bf.In("ModelNameNormalized", effectiveNames.Select(x => x.ToLowerInvariant())))))
+                .ToListAsync(ct);
+            foreach (var doc in named)
+            {
+                var platformId = doc.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
+                var modelName = doc.GetValue("ModelName", BsonNull.Value) is { IsString: true } n ? n.AsString : string.Empty;
+                if (modelName.Length == 0) continue;
+                var key = $"{platformId}::{modelName}";
+                if (!docsByPlatformAndName.TryGetValue(key, out var bucket))
+                    docsByPlatformAndName[key] = bucket = [];
+                bucket.Add(doc);
+            }
+        }
+
+        bool PhysicalRouteUsable(GatewayModelOffering route)
+        {
+            if (!priceByModelId.TryGetValue(route.TargetId, out var target)) return false;
+            var platformId = target.GetValue("PlatformId", BsonNull.Value) is { IsString: true } p ? p.AsString : string.Empty;
+            var effective = EffectiveUpstreamName(route);
+            var sameName = docsByPlatformAndName.GetValueOrDefault($"{platformId}::{effective}") ?? [];
+            return GatewayCatalogGate.PhysicalRoutePasses(effective, sameName, catalogGateEnforces);
+        }
 
         /*
           兑换所目标：兑换所要在且启用，**而且它真的声明过这条线路要打的那个别名**。
@@ -169,7 +224,7 @@ public static class GatewayModelCatalogEndpoint
         var routesByLogical = routes
             .Where(route => string.Equals(route.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase)
                 ? ExchangeRouteUsable(route)
-                : priceByModelId.ContainsKey(route.TargetId))
+                : PhysicalRouteUsable(route))
             .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.OrderBy(r => r.Priority).ToList(), StringComparer.Ordinal);
 
