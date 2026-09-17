@@ -5594,6 +5594,52 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             result.RoutesCreated++;
         }
 
+        /*
+          一条线路都没建成的池，不许把「接流量」这个身份带过来。
+
+          成员全被跳过是有可能的：只存在于 MAP 模型集合里、指向一个已经不在的物理模型、
+          或者别的过不了关的原因。而模型文档是在这之前插入的，那一刻还不知道最终会有几条线路，
+          于是一个 Enabled、带着认领、可能还带着用途默认、却**一条线路都没有**的模型留在库里。
+          解析器挑不点名的请求时会选中它，然后回 OfferingUnresolvable——搬迁之前还走得通的那些
+          调用方，搬完立刻断掉；如果它还成了用途默认，断的是整个用途（第 54 轮 review）。
+          这是本 PR 一直在修的那个形状的又一例：存得进去、跑不起来。
+
+          所以在这里回头看一眼真实结果：零线路就把身份摘掉并停用。留着这条模型不删，是因为
+          它记着 MigratedFromPoolIds——`model_policy=pool` 的存量客户端拿池 ID 点名时还要靠它
+          查得到；删掉等于把那条路也断了。停用的模型不会被解析器选中，也不会接不点名的请求。
+        */
+        // 只管**这一趟新建的**那种模型。复用既有同名模型时那条模型本来就有自己的线路与身份，
+        // 这一趟没给它加上线路不等于它没有线路——照着停用它会把一条好好在跑的模型打掉。
+        // 撞车认领到别人那条的情形（linkedByRace）同理，更不能动。
+        if (!dryRun && entry.RouteCount == 0 && entry.CreatedNewModel && !linkedByRace
+            && logicalId is { Length: > 0 })
+        {
+            var hadDefault = entry.IsDefaultForType;
+            var hadRoles = hadDefault || entry.ClaimedAppCallerCodes.Count > 0;
+            await gwLogicalModels.UpdateOneAsync(
+                fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", false)
+                    .Set("IsDefaultForType", false)
+                    .Set("DefaultForAppCallerCodes", new BsonArray())
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            var lostRoles = entry.ClaimedAppCallerCodes;
+            entry.IsDefaultForType = false;
+            entry.ClaimedAppCallerCodes = [];
+            result.Skipped.Add(new PoolMigrationSkip
+            {
+                PoolId = poolId,
+                PoolName = poolName,
+                Reason = $"这个池的成员一条都没能建成线路，所以搬过来的模型「{publicId}」是停用的，"
+                    + (hadRoles
+                        ? $"而且没有带上它原本要接的流量（{(hadDefault ? "这个用途的默认；" : string.Empty)}"
+                          + $"{lostRoles.Count} 个调用方的认领）——带过来的话，那些请求会落到一个没有上游的模型上，"
+                          + "当场失败。"
+                        : string.Empty)
+                    + "先去上游页确认这些成员指向的物理模型还在不在、启没启用，再重跑一次搬迁",
+            });
+        }
+
         result.Entries.Add(entry);
     }
 

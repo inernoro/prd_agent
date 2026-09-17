@@ -60,8 +60,17 @@ internal static class RawGatewayUsageParser
               直接不进账，账比实际低。两种都会让 EstimatedCostUsd 失真，而预算闸读的就是它。
               判据与计价那一侧同源（GatewayCostCalculator.CacheReadCountedInsideInput 按协议分）。
             */
+            /*
+              明细挂在哪个字段下要跟着接口形态走：Chat Completions 那套报 prompt_tokens_details，
+              Responses 那套报 input_tokens_details——上一版只认前者，于是走 Responses 的调用
+              拿不到缓存这一截，而 input_tokens 里**含着**它，结果是每个命中缓存的 token
+              都按输入全价收，账与预算一起虚高（形状 1：判据比它该管的范围窄，
+              同一个数换个字段名就读不到了）。两种形态、两种大小写都认。
+            */
             var promptDetails = TryGetObject(usage ?? default, "prompt_tokens_details")
-                ?? TryGetObject(usage ?? default, "promptTokensDetails");
+                ?? TryGetObject(usage ?? default, "promptTokensDetails")
+                ?? TryGetObject(usage ?? default, "input_tokens_details")
+                ?? TryGetObject(usage ?? default, "inputTokensDetails");
             var cacheReadTokens =
                 ReadInt(usage, "cache_read_input_tokens")
                 ?? ReadInt(promptDetails, "cached_tokens", "cachedTokens")

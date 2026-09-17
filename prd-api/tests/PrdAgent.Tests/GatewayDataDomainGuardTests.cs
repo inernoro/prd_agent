@@ -6332,6 +6332,39 @@ public class GatewayDataDomainGuardTests
         Assert.True(emptyAt > firstInsertAt, "认领撞车的第一反应还是把整份认领清空");
     }
 
+    [Fact]
+    public void 一条线路都没建成的池不许把接流量的身份带过来()
+    {
+        /*
+          模型文档在建线路之前就插进去了，那一刻还不知道最终会有几条线路。成员全被跳过时，
+          库里留下一个 Enabled、带着认领、可能还带着用途默认、却一条线路都没有的模型——
+          解析器会选中它然后回 OfferingUnresolvable，搬迁之前还走得通的调用方搬完立刻断掉；
+          它若成了用途默认，断的是整个用途。
+
+          判据盯三件事：真的回头看了 RouteCount；身份被摘掉且模型停用；而且只对**这一趟新建的**
+          那种模型动手——复用既有同名模型时那条模型本来就有自己的线路，照着停用会打掉一条在跑的模型。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var migrate = EndpointBody(console, "app.MapPost(\"/gw/pools/migrate-to-models\"");
+
+        var checkAt = migrate.IndexOf("entry.RouteCount == 0 && entry.CreatedNewModel", StringComparison.Ordinal);
+        Assert.True(checkAt > 0, "搬迁没有回头确认这个池到底建成了几条线路，或者没有限定在这一趟新建的模型上");
+        Assert.Contains("!linkedByRace", migrate[checkAt..(checkAt + 200)], StringComparison.Ordinal);
+
+        var fix = migrate[checkAt..(checkAt + 1200)];
+        Assert.Contains(".Set(\"Enabled\", false)", fix, StringComparison.Ordinal);
+        Assert.Contains(".Set(\"IsDefaultForType\", false)", fix, StringComparison.Ordinal);
+        Assert.Contains(".Set(\"DefaultForAppCallerCodes\", new BsonArray())", fix, StringComparison.Ordinal);
+
+        // 报告里也要如实：entry 上的身份跟着清掉，否则那一屏说它还接着流量。
+        Assert.Contains("entry.IsDefaultForType = false;", fix, StringComparison.Ordinal);
+        Assert.Contains("entry.ClaimedAppCallerCodes = [];", fix, StringComparison.Ordinal);
+
+        // 判在线路循环之后：循环里还在 RouteCount++ 的时候判等于没判。
+        var loopAt = migrate.IndexOf("entry.RouteCount++;", StringComparison.Ordinal);
+        Assert.True(loopAt > 0 && loopAt < checkAt, "零线路那道闸排在了建线路之前");
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
