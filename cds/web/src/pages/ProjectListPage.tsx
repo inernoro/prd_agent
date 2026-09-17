@@ -44,6 +44,7 @@ import redisIconUrl from 'devicon/icons/redis/redis-original.svg';
 import rustIconUrl from 'devicon/icons/rust/rust-original.svg';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { ProjectListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { Button } from '@/components/ui/button';
 import { DropdownDivider, DropdownItem, DropdownMenu } from '@/components/ui/dropdown-menu';
 import {
@@ -59,7 +60,6 @@ import { requestAgentAccess } from '@/lib/agent-onboarding';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
 import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
@@ -1451,61 +1451,7 @@ function LegacyBanner({
   );
 }
 
-/**
- * 项目列表骨架屏 —— 用「即将出现的内容形状」占位,而不是一个孤零零的居中 logo。
- * 骨架卡逐张镜像真实 ProjectCard(标题条 + 220px 点阵画布 + 底部状态行),
- * 加载完成时视觉无缝切换到真数据。节点分片错相位 shimmer,整片"活着"不发呆。
- * 顶部保留一行带品牌 loader 的说明,让用户明确"在加载什么"(预期管理)。
- */
-const SKELETON_CARD_WIDTHS = ['58%', '44%', '66%', '38%', '52%', '47%'] as const;
-
-function ProjectListSkeleton(): JSX.Element {
-  return (
-    <div aria-busy="true" aria-live="polite">
-      <div className="mb-5 flex items-center">
-        <CdsLogoLoader
-          label="加载项目列表"
-          size="sm"
-          mineral="iris"
-          className="text-[0.8125rem] font-medium text-muted-foreground"
-        />
-      </div>
-      <div className="cds-card-grid">
-        {SKELETON_CARD_WIDTHS.map((width, index) => (
-          <article
-            key={index}
-            className="flex min-w-0 flex-col overflow-hidden rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
-          >
-            <header className="px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-[1.125rem]" style={{ width }} />
-            </header>
-            <div
-              className="relative mx-3 my-3 h-[13.75rem] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
-              style={{
-                backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)',
-                backgroundSize: '0.875rem 0.875rem',
-              }}
-            >
-              <div className="absolute inset-0 flex items-center justify-center gap-2.5">
-                {[0, 1, 2, 3].map((node) => (
-                  <div
-                    key={node}
-                    className="cds-loading-skeleton-panel h-11 w-11 rounded-xl"
-                    style={{ animationDelay: `${node * 0.14}s` }}
-                  />
-                ))}
-              </div>
-              <div className="absolute bottom-4 left-4 right-4 flex items-center gap-2">
-                <div className="cds-loading-skeleton-line h-2.5 w-14" />
-                <div className="cds-loading-skeleton-line h-2.5 w-24" />
-              </div>
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
+// ProjectListSkeleton 的 SSOT 在 @/components/skeletons/PageSkeletons（路由切换骨架与本页数据骨架共用同一副）。
 
 function EmptyProjects({ onCreate }: { onCreate: () => void }): JSX.Element {
   return (

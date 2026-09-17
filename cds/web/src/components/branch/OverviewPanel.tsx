@@ -377,7 +377,7 @@ function LiveReadings({
   );
 }
 
-function MetricsSkeleton({
+export function MetricsSkeleton({
   filled, bucketSeconds, windowLabel, note,
 }: { filled: number; bucketSeconds?: number; windowLabel: string; note?: string }): JSX.Element {
   const need = Math.max(0, 2 - filled);
@@ -398,7 +398,7 @@ function MetricsSkeleton({
       ? `约还需 ${need * bucketSeconds} 秒出现曲线`
       : '攒够两帧就出现曲线';
   return (
-    <section className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-3 pt-3.5">
+    <section className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-3 pt-3.5" data-testid="metrics-skeleton">
       <header className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
         <h4 className="text-sm font-bold text-foreground">CPU 占用</h4>
         <span className="text-[0.6875rem] text-muted-foreground">% · 按服务堆叠 · {windowLabel}</span>

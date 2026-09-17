@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { LoadingBlock } from '@/pages/cds-settings/components';
 import {
   Activity,
   Boxes,
@@ -287,12 +287,9 @@ function getInitialTab(): TabValue {
 }
 
 function SettingsTabFallback(): JSX.Element {
-  // 2026-05-28:用品牌 loader 替换裸"加载设置..." 文本,跟 CDS 视觉调性一致。
-  return (
-    <div className="flex min-h-[12.5rem] items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4">
-      <CdsLogoLoader size="lg" inline={false} label={<span className="text-sm text-muted-foreground">加载设置…</span>} />
-    </div>
-  );
+  // 页签 chunk 未到时画的骨架，与页签自己等数据时的 LoadingBlock 是同一副横条：
+  // 之前这里是居中的品牌 logo，页签挂上后再换成横条——两段等待两副骨架（2026-09-17 用户反馈）。
+  return <LoadingBlock label="加载设置" />;
 }
 
 export function CdsSettingsPage(): JSX.Element {

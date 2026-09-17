@@ -8,6 +8,7 @@ import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import {
   requestAgentAccess,
   resolveAgentPageContext,
@@ -188,6 +189,7 @@ export function ConsoleLayout(): JSX.Element {
  * (artifact-is-experience: the wait state is the product's own silhouette).
  */
 function ConsoleRouteFallback(): JSX.Element {
+  const { pathname } = useLocation();
   return (
     <>
       <header className="cds-topbar" aria-hidden>
@@ -197,14 +199,13 @@ function ConsoleRouteFallback(): JSX.Element {
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
       </header>
       <main className="cds-main">
-        <div className="cds-workspace flex flex-col gap-4" role="status" aria-label="页面加载中">
-          <div className="cds-loading-skeleton-line h-7 w-64 max-w-[60vw]" />
-          <div className="cds-loading-skeleton-line h-4 w-96 max-w-full" />
-          <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {Array.from({ length: 6 }, (_, i) => (
-              <div key={i} className="cds-loading-skeleton-panel h-40 rounded-[0.625rem]" />
-            ))}
-          </div>
+        {/*
+          骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：
+          chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
+          此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
+        */}
+        <div className="cds-workspace cds-workspace--fluid" role="status" aria-label="页面加载中">
+          {pageSkeletonForPath(pathname)}
         </div>
       </main>
     </>

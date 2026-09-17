@@ -9,7 +9,9 @@ import { createLatestWinsGate } from '@/lib/latest-wins';
 import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { BranchDrawerSkeleton } from '@/components/branch/BranchDrawerSkeleton';
+import { DRAWER_TAB_BUTTON_CLASS, DRAWER_TAB_NAV_CLASS, drawerTabs, type DrawerTab } from '@/components/branch/drawerTabs';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
@@ -360,7 +362,6 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'run' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -387,22 +388,7 @@ type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
 const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto';
 const DETAIL_LOG_EMPTY_CLASS = 'flex min-h-0 flex-1 items-center px-5 text-sm leading-6 text-muted-foreground';
 
-/**
- * 方案 A「六问」分类（2026-07-26 用户拍板，9 页签收敛为 6）：每个页签回答一个问题。
- *   总览=现在怎么样（原详情 + 指标并入）；运行=跑着几个怎么分流；
- *   部署=发生过什么发布（构建日志内联到每条部署，不再跳页签）；
- *   日志=容器在说什么（只留持续流：容器/系统/Webhook/HTTP，构建模式移除归部署）；
- *   配置=下次怎么跑（生效变量 + 配置检查器 + 分支设置三分区）；资源=数据在哪。
- * 分类原则：一次性记录跟事件走、持续流水跟对象走、读与写同域合并。
- */
-const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
-  { key: 'overview', label: '总览' },
-  { key: 'run', label: '运行' },
-  { key: 'deployments', label: '部署' },
-  { key: 'logs', label: '日志' },
-  { key: 'config', label: '配置' },
-  { key: 'services', label: '资源' },
-];
+// drawerTabs / DrawerTab 的 SSOT 在 ./branch/drawerTabs.ts（与加载骨架共用同一张表）。
 
 /** 配置页签内三分区（方案 A：变量/检查器/设置读写同域合并） */
 type ConfigSection = 'variables' | 'references' | 'inspector' | 'settings';
@@ -537,7 +523,7 @@ function DrawerTabButton({
   return (
     <button
       type="button"
-      className={`relative inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap px-3 text-sm transition-colors ${
+      className={`${DRAWER_TAB_BUTTON_CLASS} ${
         active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
       }`}
       onClick={onClick}
@@ -2296,7 +2282,13 @@ export function BranchDetailDrawer({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
-          {loading && !branch ? <BranchDetailLoadingSkeleton className="min-h-full" /> : null}
+          {/*
+                加载骨架必须是总览的形状（2026-09-17 用户反馈「先出一幅老骨架、三秒后再出一幅更像真实的骨架」）：
+                通用的「四块指标 + 两块内容」和数据到达后的「判断行 / 关系 / 入口 / 曲线」根本不是一个轮廓，
+                于是用户看到的是两副骨架接力。现在骨架期与就绪期共用同一批部件（页签表、关系卡骨架、曲线骨架），
+                数据到了是「被填上」，不是「换一幅」。
+              */}
+              {loading && !branch ? <BranchDrawerSkeleton status={branchStatus} /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <div className={activeTab === 'logs' ? 'flex min-h-full flex-col' : undefined}>
@@ -2449,7 +2441,7 @@ export function BranchDetailDrawer({
                 ) : null}
               </section>
 
-              <nav className="cds-branch-detail-tabs sticky top-0 z-10 flex gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3">
+              <nav className={DRAWER_TAB_NAV_CLASS}>
                 {drawerTabs.map((tab) => (
                   <DrawerTabButton key={tab.key} tab={tab} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} />
                 ))}

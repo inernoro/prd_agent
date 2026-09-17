@@ -203,12 +203,21 @@ describe('ContainerService 多项目网络隔离', () => {
     it('门禁上线前登记的存量库：限期放行，不至于把平台停掉', async () => {
       // 2026-08-18 的教训：一刀切让五个项目十几个存量库全部起不来，
       // 连主分支预览都部署失败，而那些库本身活得好好的。
-      const service = new ContainerService(mock, makeConfig());
-      okDockerStubs(mock);
+      //
+      // 「限期」是绝对日期（INFRA_AUTH_GRACE_DEFAULT_UNTIL，2026-09-17），所以这条判据
+      // 必须钉在宽限期之内的某一天跑，否则日历翻过去它就自己红了（2026-09-17 当天真的红了，
+      // 与当次改动毫无关系）。只假 Date，不碰定时器。
+      vi.useFakeTimers({ now: new Date('2026-09-01T00:00:00.000Z'), toFake: ['Date'] });
+      try {
+        const service = new ContainerService(mock, makeConfig());
+        okDockerStubs(mock);
 
-      await expect(service.startInfraService(
-        makeInfraService('proj-a', { env: {}, createdAt: '2026-04-30T00:00:00Z' }),
-      )).resolves.not.toThrow();
+        await expect(service.startInfraService(
+          makeInfraService('proj-a', { env: {}, createdAt: '2026-04-30T00:00:00Z' }),
+        )).resolves.not.toThrow();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('infra 容器跟随 service.projectId 选 network', async () => {

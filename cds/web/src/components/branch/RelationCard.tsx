@@ -50,6 +50,21 @@ export function FindingsList({ findings, onPick, onConfigure }: { findings: Lint
   );
 }
 
+/**
+ * 关系卡的加载态。单独导出是为了让抽屉的整体加载骨架（BranchDrawerSkeleton）复用：
+ * 抽屉等接口时画的关系卡，和数据到达后 RelationCard 自己等 service-graph 时画的关系卡，
+ * 必须是同一个东西，否则用户会看到「骨架换了一副」。
+ */
+export function RelationCardSkeleton({ badge = '正在体检', note = '正在算服务关系与体检，通常 1 秒内完成' }: { badge?: string; note?: string }): JSX.Element {
+  return (
+    <div className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-4 pt-3.5 transition-colors duration-150" data-testid="relation-card" data-loading="true">
+      <div className="flex items-center gap-2 text-sm font-bold">关系<span className="inline-flex h-[1.125rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-1.5 text-[0.625rem] font-semibold text-muted-foreground">{badge}</span></div>
+      <div className="text-xs text-muted-foreground">正在算服务关系、前缀归属与跨项目引用…</div>
+      <RelationFlowSkeleton note={note} />
+    </div>
+  );
+}
+
 export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: string; /** 主入口地址：入口 chip 上写域名；没有就写分支名 */ previewUrl?: string; /** 「去配置」的落点（配置页签） */ onConfigure?: () => void }): JSX.Element | null {
   const { state, reload } = useRelationPayload(branchId);
   const [open, setOpen] = useState(false);
@@ -68,16 +83,9 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
       {children}
     </div>
   );
-  // 加载 / 失败态用同一副骨架，卡片高度不跳（微调 3）
-  if (state.status === 'loading') {
-    return shell('border-[hsl(var(--hairline))]', (
-      <>
-        <div className="flex items-center gap-2 text-sm font-bold">关系<span className="inline-flex h-[1.125rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-1.5 text-[0.625rem] font-semibold text-muted-foreground">正在体检</span></div>
-        <div className="text-xs text-muted-foreground">正在算服务关系、前缀归属与跨项目引用…</div>
-        <RelationFlowSkeleton note="正在算服务关系与体检，通常 1 秒内完成" />
-      </>
-    ));
-  }
+  // 加载 / 失败态用同一副骨架，卡片高度不跳（微调 3）。
+  // 加载态抽成 RelationCardSkeleton：抽屉整体的加载骨架也用它，两个阶段一个轮廓。
+  if (state.status === 'loading') return <RelationCardSkeleton />;
   if (state.status === 'error') {
     return shell('border-destructive/50', (
       <>
