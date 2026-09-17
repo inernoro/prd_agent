@@ -28,6 +28,7 @@ import {
   getModels,
   setLogicalModelEnabled,
   setModelOfferingEnabled,
+  recoverModelOffering,
   updateLogicalModel,
   updateModelOffering,
 } from '@/lib/api';
@@ -296,6 +297,22 @@ export function LogicalModelsPage() {
     setItems((prev) => prev?.map((x) => x.id === logical.id
       ? { ...x, offerings: x.offerings.map((o) => o.id === offeringId ? res.data : o) }
       : x) || null);
+  }
+
+  /**
+   * 手动恢复一条被熔断摘掉的线路：立刻给它进半开的资格，省掉冷却期的等待。
+   *
+   * 这个按钮存在的理由是一句话的兑现：所有线路都摘掉时那条提示写着「或在展开里手动恢复一条」，
+   * 而在它之前页面上根本没有这个动作——提示指向一个做不到的下一步（第 79 轮 review）。
+   * 端点回的不是线路对象（只有 offeringId 与 halfOpenPending），所以这里重拉一次列表，
+   * 而不是拿返回值就地改那一行：就地改会把健康状态写成一个我们没拿到的值。
+   */
+  async function recoverOffering(logical: LogicalModelItem, offeringId: string) {
+    setBusy(offeringId);
+    const res = await recoverModelOffering(logical.id, offeringId);
+    if (!res.success) { setBusy(null); failNotice(res.error?.message || '恢复失败'); return; }
+    await reload();
+    setBusy(null);
   }
 
   const offeringCount = items?.reduce((sum, x) => sum + x.offerings.length, 0) ?? 0;
@@ -647,6 +664,11 @@ export function LogicalModelsPage() {
                           {canWrite ? (
                             <>
                               <Button size="sm" variant="ghost" onClick={() => openOfferingEditor(item.id, route.offering)}>编辑</Button>
+                              {/* 只给「连续失败被摘掉」那一档：线路自己被停用要点启用，
+                                  上游被停用要去上游页——对那两种而言半开资格给了也没用。 */}
+                              {route.health === 'down' ? (
+                                <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void recoverOffering(item, route.id)}>手动恢复</Button>
+                              ) : null}
                               <Button size="sm" variant="ghost" disabled={busy === route.id} onClick={() => void toggleOffering(item, route.id, route.offering.enabled)}>{route.offering.enabled ? '停用' : '启用'}</Button>
                             </>
                           ) : null}
@@ -831,7 +853,14 @@ function summarizeHealth(item: LogicalModelItem, routes: RouteView[]): HealthSum
           advice: `所有上游线路都不可用，这个模型当前会解析失败。其中 ${blocked.map((x) => x.label).join('、')} `
             + '是上游模型或 Provider 被停用了——去上游页把它启用回来，等冷却没有用。',
         }
-      : { text: '无可用线路', dot: 'var(--err)', tone: 'warn', advice: '所有上游线路都不可用，这个模型当前会解析失败。检查上游密钥与配额，或在展开里手动恢复一条。' };
+      : {
+          text: '无可用线路',
+          dot: 'var(--err)',
+          tone: 'warn',
+          advice: '所有上游线路都被连续失败摘掉了，这个模型当前会解析失败。'
+            + '冷却期满系统会自己拿一条真实请求去试探；先去查上游密钥与配额，'
+            + '修好之后可以在展开里点「手动恢复」不等冷却。',
+        };
   }
   if (routes.length === 1) return { text: '正常 · 单线路', dot: 'var(--ok)', tone: 'ok' };
   return { text: '正常', dot: 'var(--ok)', tone: 'ok' };

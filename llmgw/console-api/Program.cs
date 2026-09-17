@@ -7252,6 +7252,40 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         replacement["UpdatedAt"] = now;
         replacement.Remove("SupersededAt");
 
+        // 这条替身将来是启用还是停用，跟着原线路走。下面那道资格闸与最后的晋升都要用它。
+        var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
+
+        /*
+          换上游之前先复检「这条线路指着的目标现在还承接得了流量吗」——与新建、启用同一道闸。
+
+          新建那个端点判了、启用那个端点判了（第 51 轮补的），**改路由这个端点没判**。
+          于是一条在跑的线路，它的目标模型早已被删、Provider 早已被停之后，改一下它的
+          上游模型名或协议，就会造出一条**启用着**的替身并晋升上去：接口回 200、界面上它是
+          启用的，而运行时解析立刻把它整条丢掉。又是「存得进去、跑不起来」，只是换了第三个
+          入口进来（第 79 轮 review；OfferingTargetEligibility 的类注释写的就是这件事，
+          而它自己漏掉了这一处）。
+
+          只在替身会被启用时判：停用的线路本来就不承接流量，拦它等于比运行时还严，
+          而且会把「先改好配置、回头再启用」这条正常路堵死（启用那一步会替我们判）。
+          放在所有写之前：这是纯查询，判完后面才不需要为它准备一条回滚路径。
+        */
+        if (replacementEnabled)
+        {
+            var replacementUpstreamForGate = replacement.GetValue("UpstreamModelId", BsonNull.Value);
+            var editTargetRejection = OfferingTargetEligibility.Evaluate(
+                targetKind,
+                target,
+                targetPlatform,
+                replacementUpstreamForGate.IsString ? replacementUpstreamForGate.AsString : null);
+            if (editTargetRejection is { } editRejection)
+            {
+                return Json(
+                    ApiEnvelope<ModelOfferingItem>.Fail(editRejection.Code, editRejection.Message),
+                    jsonOptions,
+                    editRejection.Code == "TARGET_NOT_FOUND" ? 404 : 409);
+            }
+        }
+
         /*
           先确认「换成这个上游之后，它的身份不会和另一条在跑的线路撞车」，再动任何一次写。
 
@@ -7299,13 +7333,27 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                 "该 Offering 已被其他管理员更新，请刷新后重试"), jsonOptions, 409);
         }
 
-        var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
-
         // 晋升失败的回滚只写一次：把原线路复活、把悬空的替身删掉。
         // 上一版只在 ModifiedCount != 1 这一条路上回滚，而撞唯一索引时异常从 UpdateOneAsync
         // 抛出去，压根到不了那里——原线路停用、替身悬空，两样都留在库里。
         async Task RollbackPromotionAsync()
         {
+            /*
+              顺序是**先删替身、再复活原线路**，反过来会在最需要它的那一种失败上自己撞死。
+
+              超时这类失败的结果是未知的：服务端可能已经晋升成功，替身此刻是活的、而且
+              （只改协议或 Endpoint 时）它与原线路的 v3 身份完全相同——上游模型没变。
+              这时若先去 Unset 原线路的 SupersededByOfferingId，等于要让两条同身份的线路
+              同时活着，唯一索引当场拒掉：回滚自己抛异常，被外面接住报成
+              OFFERING_PROMOTION_LEFT_PARTIAL，于是接口告诉管理员「改动没生效」，
+              而实际上那次改动正活着（第 79 轮 review）。
+
+              先删替身就没有这个歧义：晋升没发生时它只是一条挂着 staging 标记的悬空文档，
+              晋升发生了它就是那条活的——两种情形删掉之后，身份都空了出来，
+              复活原线路必然能过索引。「成功与否殊途同归」这句话要成立，就得是这个顺序。
+            */
+            await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
             await gwModelOfferings.UpdateOneAsync(
                 TenantAccess.Filter(http, fb.And(
                     fb.Eq("_id", offeringId),
@@ -7315,8 +7363,6 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                     .Unset("SupersededByOfferingId")
                     .Unset("SupersededAt")
                     .Set("UpdatedAt", DateTime.UtcNow));
-            await gwModelOfferings.DeleteOneAsync(
-                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
         }
 
         UpdateResult promoted;
@@ -7363,8 +7409,9 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                 return Json(ApiEnvelope<ModelOfferingItem>.Fail(
                     "OFFERING_PROMOTION_LEFT_PARTIAL",
                     $"新路由没能接管流量（{ex.Message}），回滚也失败了（{rollbackFailure.Message}）。"
-                    + $"这个对外模型现在可能一条可用线路都没有：原线路 {offeringId} 停用着、"
-                    + $"替身 {replacementId} 悬空着。刷新看一眼，手动把原线路启用回来"),
+                    + $"回滚是先删替身再复活原线路，所以替身 {replacementId} 可能已经删掉、"
+                    + $"而原线路 {offeringId} 还停用着——这个对外模型现在可能一条可用线路都没有。"
+                    + "刷新看一眼，手动把原线路启用回来"),
                     jsonOptions, 500);
             }
 

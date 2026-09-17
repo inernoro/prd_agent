@@ -659,6 +659,19 @@ export function setModelOfferingEnabled(logicalModelId: string, offeringId: stri
     { method: 'PUT', body: { enabled } },
   );
 }
+/**
+ * 手动恢复一条被熔断摘掉的线路。
+ *
+ * 语义不是「直接判它健康」，是「立刻给它进半开的资格」：下一条真实业务请求去验证，
+ * 成功才回到健康。所以它省掉的是冷却期的等待，不会凭空造一次付费探测。
+ * 返回的不是线路对象（后端只回 offeringId 与 halfOpenPending），所以调用方要自己重拉列表。
+ */
+export function recoverModelOffering(logicalModelId: string, offeringId: string): Promise<ApiResponse<{ offeringId: string; halfOpenPending: boolean }>> {
+  return apiRequest<{ offeringId: string; halfOpenPending: boolean }>(
+    `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}/recover`,
+    { method: 'POST' },
+  );
+}
 export function getParameterCapabilitiesMeta(): Promise<ApiResponse<ParameterCapabilitiesMetaData>> {
   return apiRequest<ParameterCapabilitiesMetaData>('/parameter-capabilities/meta');
 }

@@ -7078,6 +7078,91 @@ public class GatewayDataDomainGuardTests
             + "那也请顺手把这条断言改对）。");
     }
 
+    /// <summary>
+    /// 换线路（改上游模型 / 协议 / Endpoint）之前必须过目标资格闸，而且要排在第一次写之前。
+    ///
+    /// 这道闸原先只长在「新建线路」上，第 51 轮补到了「启用线路」，第 79 轮才发现
+    /// **改路由**这第三个入口一直没有：一条在跑的线路，目标模型早被删、Provider 早被停之后，
+    /// 改一下它的上游名就会造出一条启用着的替身并晋升上去，接口回 200 而运行时把它整条丢掉。
+    /// 「存得进去、跑不起来」换第三个入口进来（形状 3）。
+    ///
+    /// 判的是**顺序**不是「这几个字在不在」：判据排在 InsertOneAsync 之后就等于没判——
+    /// 那时原线路已经被退休，闸再拦也只剩一条要回滚的路。
+    /// </summary>
+    [Fact]
+    public void 换线路要在写之前过目标资格闸()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        var blockAt = program.IndexOf("if (routingConfigurationChanged)", StringComparison.Ordinal);
+        Assert.True(blockAt > 0, "找不到换线路那一段——结构变了就别判绿");
+        var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(replacement);", blockAt, StringComparison.Ordinal);
+        Assert.True(insertAt > blockAt, "找不到替身入库那一句");
+
+        var beforeFirstWrite = program[blockAt..insertAt];
+        Assert.Contains("OfferingTargetEligibility.Evaluate", beforeFirstWrite, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 晋升失败的回滚必须**先删替身、再复活原线路**。
+    ///
+    /// 反过来会在最需要它的那种失败上自己撞死：超时的结果是未知的，服务端可能已经晋升成功，
+    /// 而只改协议或 Endpoint 时替身与原线路的 v3 身份完全相同。这时先 Unset 原线路的
+    /// SupersededByOfferingId，等于要两条同身份的线路同时活着，唯一索引当场拒掉——
+    /// 回滚自己抛异常，接口告诉管理员「改动没生效」，而那次改动正活着（第 79 轮 review）。
+    /// </summary>
+    [Fact]
+    public void 晋升回滚要先删替身再复活原线路()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        var bodyAt = program.IndexOf("async Task RollbackPromotionAsync()", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到回滚函数");
+        var bodyEnd = program.IndexOf("UpdateResult promoted;", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到回滚函数的结尾");
+        var body = program[bodyAt..bodyEnd];
+
+        var deleteAt = body.IndexOf("DeleteOneAsync", StringComparison.Ordinal);
+        var restoreAt = body.IndexOf("UpdateOneAsync", StringComparison.Ordinal);
+        Assert.True(deleteAt > 0 && restoreAt > 0, "回滚要同时删替身与复活原线路，少一样都不叫回滚");
+        Assert.True(deleteAt < restoreAt,
+            "回滚顺序反了：必须先删替身再复活原线路，否则同身份的两条会一起活着、撞唯一索引");
+    }
+
+    /// <summary>
+    /// 「所有线路都被摘掉」那条提示里许下的动作，页面上必须真的有。
+    ///
+    /// 那句话原先写着「或在展开里手动恢复一条」，而全站前端一次都没调过 recover 端点——
+    /// 提示指向一个做不到的下一步，正是本 PR 已经修过三次的同一族
+    /// （external-cause-first：给出的下一步必须在当前状态下真走得通）。
+    ///
+    /// 三样一起钉：api 层有这个函数、页面调了它、行里渲染得出那个按钮。
+    /// 只钉文案的话，把按钮删掉文案留着照样绿；只钉按钮的话，文案改回去指向别处也照样绿。
+    /// </summary>
+    [Fact]
+    public void 线路全摘时许下的恢复动作页面上要真有()
+    {
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var modelsPage = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        // api 层：端点路径与方法都要对得上后端那一条
+        Assert.Contains("/recover", webApi);
+        Assert.Contains("recoverModelOffering", webApi);
+
+        // 页面：调用点 + 行内按钮。
+        //
+        // 按钮断的是**元素**不是「这四个字出现过」：提示语里也写着「手动恢复」，
+        // 只查这四个字的话，把按钮删掉、文案留着，断言照样绿——第一版就是这么写的，
+        // 红绿闭环当场把它抓了出来（形状 4：断言的是字面量的存在，不是行为）。
+        Assert.Contains("recoverOffering(item, route.id)", modelsPage);
+        Assert.Contains(">手动恢复</Button>", modelsPage);
+
+        // 提示语与按钮说的是同一件事
+        Assert.Contains("点「手动恢复」不等冷却", modelsPage);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
