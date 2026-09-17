@@ -776,10 +776,55 @@ public class GatewayWhitelistPublishingTests
                 mirror.Text,
                 @"if \(claimed is not null\) return (await )?\w*Usable\w*\(claimed\)");
 
-            Assert.True(deferredDefault || returnsUsabilityOfClaim,
+            // 写法三（镜像，更好的那种）：挑选整个收进一个只挑不判的函数，调用方拿到那一条再判。
+            // 同一个宿主里有第二个组件要问同一个问题时，只有这种写法能保证两边挑的是同一条。
+            var delegatesToSelector = mirror.Text.Contains("SelectUnnamedCatcher(", StringComparison.Ordinal);
+
+            Assert.True(deferredDefault || returnsUsabilityOfClaim || delegatesToSelector,
                 mirror.Path + " 的认领层不是排他的：既没有把用途默认写成 ??=，"
-                + "也没有「挑中认领 → 判定挑中那一条」这种写法。"
+                + "也没有「挑中认领 → 判定挑中那一条」，更没有把挑选收进一个只挑不判的函数。"
                 + "这一处会在认领坏掉时回落到用途默认，而运行时不会——它会如实失败。");
+
+            /*
+              收进了选择器的那个宿主，里面**每一个**要问「不点名落到谁」的组件都得用它。
+
+              serving 有两个（router 与 scenario-capability）：上一版只有 router 走了排他挑选，
+              scenario-capability 还在 Any(...) 扫遍同用途全部模型，于是「认领它的模型不具备
+              该场景能力、而另一条无关模型恰好具备」时那个组件判绿，而那个调用方每一次请求都失败。
+              判据是出现次数：新写一个组件却自己扫一遍，这里就红。
+            */
+            if (delegatesToSelector)
+            {
+                var selectorMentions = Regex.Matches(mirror.Text, @"SelectUnnamedCatcher\(").Count;
+                // 一次是定义，其余是调用点；serving 里至少两个组件要问这个问题。
+                Assert.True(selectorMentions >= 3,
+                    $"{mirror.Path} 里 SelectUnnamedCatcher 只出现 {selectorMentions} 次"
+                    + "（定义 + 调用点）：这个宿主里每一个要问「不点名落到谁」的组件都要用它，"
+                    + "自己扫一遍就会与运行时挑中的那一条分家");
+
+                // 选择器自己必须是排他的：挑中认领就返回，不再往下看用途默认。
+                Assert.Contains("if (claimed is not null) return claimed;", mirror.Text);
+            }
+
+            /*
+              能力判定必须作用在**挑中的那一条**上，不许挂在一个扫全表的 Any(...) 里。
+
+              这条与上面几条互补：上面管「认领层是不是排他的」，这条管「判能力时手里
+              拿的是哪一条」。serving 的 scenario-capability 组件曾经写成
+              enabledLogicalModels.Any(model => … SupportsAppCallerScenario(model …))——
+              router 那一侧已经是排他挑选了，这一侧照样扫遍同用途全部模型，
+              于是「认领它的模型不具备该场景能力、而另一条无关模型恰好具备」时判绿，
+              而那个调用方的每一次请求都失败。判据：每一处能力判定往前看一眼，
+              它所在的那条语句里不许出现 .Any(。
+            */
+            foreach (Match call in Regex.Matches(mirror.Text, @"SupportsAppCallerScenario\("))
+            {
+                var statementStart = mirror.Text.LastIndexOfAny([';', '{', '}'], call.Index);
+                var statement = mirror.Text[(statementStart + 1)..call.Index];
+                Assert.False(statement.Contains(".Any(", StringComparison.Ordinal),
+                    $"{mirror.Path} 把场景能力判定挂在了一个 .Any(...) 上：那是「同用途里有没有一条能接的」，"
+                    + "而运行时只会选中认领的那一条。判定要作用在挑中的那一条上。");
+            }
         }
     }
 

@@ -29,13 +29,22 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         string tenant = Tenant)
         => new() { AppCallerCode = code, RequestType = requestType, Status = status, TenantId = tenant };
 
+    /// <summary>
+    /// 默认 <paramref name="isDefaultForType"/> = true，因为不点名的请求只有两条路能落到一个模型上：
+    /// 被它认领，或者它是这个用途的默认。两样都没有的模型在运行时**一次都不会被选中**，
+    /// 拿它当「配置正常」的样本就是在描述一个跑不起来的环境。
+    /// 要构造「认领了这个调用方」的样本就传 <paramref name="claims"/>。
+    /// </summary>
     private static GatewayLogicalModel Logical(
         string id,
         string modelType,
         IEnumerable<string> capabilities,
         bool enabled = true,
         IEnumerable<string>? allowedCallers = null,
-        string tenant = Tenant)
+        string tenant = Tenant,
+        bool isDefaultForType = true,
+        IEnumerable<string>? claims = null,
+        int displayOrder = 100)
         => new()
         {
             Id = id,
@@ -45,6 +54,9 @@ public sealed class GatewayScenarioCapabilityReadinessTests
             Enabled = enabled,
             Capabilities = capabilities.ToList(),
             AllowedAppCallerCodes = (allowedCallers ?? []).ToList(),
+            IsDefaultForType = isDefaultForType,
+            DefaultForAppCallerCodes = (claims ?? []).ToList(),
+            DisplayOrder = displayOrder,
         };
 
     /// <summary>「这些对外模型至少有一条真能用的线路」——视图算好的那个集合。</summary>
@@ -83,6 +95,63 @@ public sealed class GatewayScenarioCapabilityReadinessTests
             [Caller(Text2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["some-unregistered-capability"])],
             Routable("logical-image"),
+            internalTenantId: Tenant);
+
+        snapshot.RoutableCallers.ShouldBe(0);
+        snapshot.BrokenCallers.ShouldBe([Text2ImgCaller]);
+    }
+
+    /// <summary>
+    /// 认领是排他的：被认领的那一条不具备场景能力时，**不许**拿另一条无关模型顶上。
+    ///
+    /// 运行时先按认领挑出那一条，挑中之后成败就看它自己，不会回头去试用途默认。
+    /// 这个组件曾经写成「同用途里有没有一条又能路由又满足能力的」——于是
+    /// 「认领它的模型不具备该能力、而另一条恰好具备」时判绿，而那个调用方每一次请求都失败。
+    /// </summary>
+    [Fact]
+    public void 认领的那一条不具备能力时_不拿别的模型顶上()
+    {
+        var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
+            [Caller(Text2ImgCaller, "generation")],
+            [
+                // 认领了这个调用方，但能力对不上——运行时会选中它并失败。
+                Logical(
+                    "logical-claimed",
+                    "generation",
+                    ["some-unregistered-capability"],
+                    isDefaultForType: false,
+                    claims: [Text2ImgCaller],
+                    displayOrder: 10),
+                // 能力齐、也能路由，但它既没认领这个调用方、也轮不到——运行时一次都不会选中它。
+                Logical("logical-capable", "generation", ["image_generation"], displayOrder: 20),
+            ],
+            Routable("logical-claimed", "logical-capable"),
+            internalTenantId: Tenant);
+
+        snapshot.RoutableCallers.ShouldBe(0);
+        snapshot.BrokenCallers.ShouldBe([Text2ImgCaller]);
+    }
+
+    /// <summary>
+    /// 同一条链的另一半：认领的那一条线路全挂时，同样不许由用途默认顶上。
+    /// </summary>
+    [Fact]
+    public void 认领的那一条线路全挂时_不拿用途默认顶上()
+    {
+        var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
+            [Caller(Text2ImgCaller, "generation")],
+            [
+                Logical(
+                    "logical-claimed",
+                    "generation",
+                    ["image_generation"],
+                    isDefaultForType: false,
+                    claims: [Text2ImgCaller],
+                    displayOrder: 10),
+                Logical("logical-default", "generation", ["image_generation"], displayOrder: 20),
+            ],
+            // 认领的那一条没有可用线路，用途默认有。
+            Routable("logical-default"),
             internalTenantId: Tenant);
 
         snapshot.RoutableCallers.ShouldBe(0);

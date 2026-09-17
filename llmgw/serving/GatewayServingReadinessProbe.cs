@@ -424,8 +424,6 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
         */
         var sameType = view.EnabledLogicalModels
             .Where(x => string.Equals(x.ModelType, caller.RequestType, StringComparison.Ordinal))
-            .OrderBy(x => x.DisplayOrder)
-            .ThenBy(x => x.PublicId, StringComparer.Ordinal)
             .ToList();
         if (sameType.Count == 0) return false;
 
@@ -440,14 +438,37 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
                 && GatewayCapabilityContract.SupportsAppCallerScenario(
                     model.Capabilities, model.AllowedAppCallerCodes, caller.AppCallerCode);
 
-        // 第一层：谁认领了它。认领是排他的——挑中之后成败就看它自己，不再往下找。
-        var claimed = sameType.FirstOrDefault(x => x.DefaultForAppCallerCodes
-            .Contains(caller.AppCallerCode, StringComparer.OrdinalIgnoreCase));
-        if (claimed is not null) return Usable(claimed);
+        // 挑选走共享那一份（SelectUnnamedCatcher）：场景能力那个组件也要挑同一条，
+        // 两处各写一遍就会出现「这个组件说健康、那个组件说坏」——而运行时只会选中其中一条。
+        var selected = SelectUnnamedCatcher(sameType, caller.AppCallerCode);
+        return selected is not null && Usable(selected);
+    }
 
-        // 第二层：这个用途的默认。只有「一条认领都没有」时才走到这里。
-        var typeDefault = sameType.FirstOrDefault(x => x.IsDefaultForType);
-        return typeDefault is not null && Usable(typeDefault);
+    /// <summary>
+    /// 不点名的请求会挑中**哪一条**对外模型。与运行时 TryResolveDefaultLogicalModelAsync 同序：
+    /// 先按认领挑（认领是排他的，挑中之后成败就看它自己），一条认领都没有才看这个用途的默认。
+    ///
+    /// 排序与匹配口径都跟着运行时：DisplayOrder 再 PublicId，认领按 Ordinal 比
+    /// （运行时那一层是 Mongo 的 AnyEq，大小写敏感）。
+    ///
+    /// 收成一个函数，是因为 serving 里有两个组件要问同一个问题（router 与 scenario-capability）。
+    /// 各写一遍的后果不是不一致的代码，是**不一致的结论**：一个组件扫遍全部同用途模型说
+    /// 「有能接的」，而运行时按认领只会选中那一条并失败——灯替一条根本不会走的路作了保。
+    /// </summary>
+    private static GatewayLogicalModel? SelectUnnamedCatcher(
+        IEnumerable<GatewayLogicalModel> sameTypeCandidates,
+        string appCallerCode)
+    {
+        var ordered = sameTypeCandidates
+            .OrderBy(x => x.DisplayOrder)
+            .ThenBy(x => x.PublicId, StringComparer.Ordinal)
+            .ToList();
+
+        var claimed = ordered.FirstOrDefault(x => x.DefaultForAppCallerCodes
+            .Contains(appCallerCode, StringComparer.Ordinal));
+        if (claimed is not null) return claimed;
+
+        return ordered.FirstOrDefault(x => x.IsDefaultForType);
     }
 
     /// <summary>
@@ -563,15 +584,27 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             var callerTenant = !string.IsNullOrWhiteSpace(caller.TenantId)
                 ? caller.TenantId.Trim()
                 : internalTenantId;
-            var capable = enabledLogicalModels.Any(model =>
-                model.Enabled
-                && string.Equals(model.TenantId, callerTenant, StringComparison.Ordinal)
-                && string.Equals(model.ModelType, caller.RequestType, StringComparison.OrdinalIgnoreCase)
-                && routableLogicalModelIds.Contains(model.Id)
+            /*
+              挑选必须先于能力判定，而且挑的是运行时会挑中的**那一条**。
+
+              上一版是 Any(...)：扫遍同用途的全部模型，只要有一条又能路由又满足场景能力就判健康。
+              可运行时不是这么选的——它先按认领挑出一条，挑中之后成败就看它自己，不会回头去试
+              别的。于是「认领这个调用方的模型不具备该场景能力（或线路全挂）、而另一条无关模型
+              恰好具备」时，这个组件判绿，而那个调用方的每一次请求都失败。
+              判据与 router 组件共用 SelectUnnamedCatcher，不在这里再写一遍。
+            */
+            var candidates = enabledLogicalModels
+                .Where(model => model.Enabled
+                    && string.Equals(model.TenantId, callerTenant, StringComparison.Ordinal)
+                    && string.Equals(model.ModelType, caller.RequestType, StringComparison.Ordinal))
+                .ToList();
+            var selected = SelectUnnamedCatcher(candidates, caller.AppCallerCode);
+            var capable = selected is not null
+                && routableLogicalModelIds.Contains(selected.Id)
                 && GatewayCapabilityContract.SupportsAppCallerScenario(
-                    model.Capabilities,
-                    model.AllowedAppCallerCodes,
-                    caller.AppCallerCode));
+                    selected.Capabilities,
+                    selected.AllowedAppCallerCodes,
+                    caller.AppCallerCode);
             if (capable) routable++;
             else broken.Add(caller.AppCallerCode);
         }

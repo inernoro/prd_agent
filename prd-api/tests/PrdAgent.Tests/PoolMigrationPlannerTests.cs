@@ -292,6 +292,28 @@ public class PoolMigrationPlannerTests
     }
 
     /// <summary>
+    /// 「一个人都不许用」不能被翻译成「谁都能用」。
+    ///
+    /// poolAllowlist 的空集有两种来源，落库之后长得一模一样：这一档没人设过池级限制
+    /// （本来就对所有人开放），与设过限制但没有任何调用方获准用这个池（一个人都不许用）。
+    /// 后者算出来也是空集，而 AllowedAppCallerCodes 为空在运行时的含义恰恰是「对所有调用方开放」——
+    /// 照直写下去，一个谁都调不到的池在搬迁之后变成整个租户都能调，一次静默的授权放大。
+    /// </summary>
+    [Fact]
+    public void 谁都没被授权的池不搬也不落成对所有人开放()
+    {
+        var handler = MigrationHandler();
+
+        // 两种空集要分开：判的是「设过限制吗」而不只是「名单空不空」。
+        Assert.Contains("existing is null && restrictedSameType.Count > 0 && poolAllowlist.Count == 0", handler);
+
+        // 这一档不搬，而不是搬成一个空名单（空名单 = 对所有人开放）。
+        Assert.Contains("这种「谁都不许用」落到对外模型上会变成「谁都能用」", handler);
+        // 要给得出下一步：去哪儿授权、然后怎么办。
+        Assert.Contains("再重跑一次搬迁", handler);
+    }
+
+    /// <summary>
     /// 认领不许写成「名单里没有它、认领里却有它」这种自相矛盾的模型。
     ///
     /// 运行时第一层按认领挑中它，第二步 SupportsAppCallerScenario 按授权名单把它拒掉，

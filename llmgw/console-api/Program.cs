@@ -4960,6 +4960,32 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             continue;
         }
 
+        /*
+          「一个人都不许用」不能被翻译成「谁都能用」。
+
+          poolAllowlist 的空集有两种来源，而落库之后长得一模一样：
+            · 这一档里没人设过池级限制 → 本来就对所有人开放（restrictedSameType 为空）；
+            · 设过限制，但没有任何调用方获准用这个池 → **一个人都不许用**。
+          后者算出来也是空集，而 AllowedAppCallerCodes 为空在运行时的含义是「对所有调用方开放」。
+          照直写下去，一个谁都调不到的池会在搬迁之后变成整个租户都能调——一次静默的授权放大。
+
+          所以这一档不搬：报出来，等人给它一份显式名单再重跑。搬迁是幂等的，重跑不会重复建。
+          （复用已有模型那条路不受影响：那条路本来就不动已有名单。）
+        */
+        if (existing is null && restrictedSameType.Count > 0 && poolAllowlist.Count == 0)
+        {
+            result.Skipped.Add(new PoolMigrationSkip
+            {
+                PoolId = poolId,
+                PoolName = poolName,
+                Reason = $"这个池在 {modelType} 这一档里一个调用方都没被授权使用（同用途的调用方都设了池级限制，"
+                    + "而它们的名单里都没有这个池）。这种「谁都不许用」落到对外模型上会变成「谁都能用」——"
+                    + "空的授权名单在运行时就是对所有调用方开放。所以这个池没有搬。"
+                    + "确认它该授权给谁：去 appCaller 页把这个池加进某个调用方的名单，再重跑一次搬迁",
+            });
+            continue;
+        }
+
         var logicalId = existing?.GetStringOrEmpty("_id") ?? $"gw-logical-{Guid.NewGuid():N}";
         entry.CreatedNewModel = existing is null;
 
