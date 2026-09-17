@@ -109,13 +109,20 @@ public class ActiveTaskDebtsTests
     }
 
     [Fact]
-    public void 同步工具走读档_读债务这件事不该只有管理档看得见()
+    public void 读债务走使用档_改整块台账走管理档()
     {
         var sync = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_sync");
         var list = Assert.Single(McpBuiltinTools.All, t => t.Name == "map_debt_list");
 
-        Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, sync.RequiredScope);
+        // 读：使用档。谁都该看得见我们欠着什么，这是这个功能的前提。
         Assert.Equal(McpCapabilityCatalog.ScopeTasksUse, list.RequiredScope);
+
+        // 写：管理档。这一行原来也是 use —— 那不是这条守卫想表达的意思（它的名字讲的是
+        // 「读」），是写的时候顺手带上的，而它恰好就是后来被 review 抓出来的那个洞：
+        // 同步按调用方给的 Key 覆写**所有人**看到的标题、现状、补的条件，一次调用改动
+        // 整块共享台账。use 档发到了 operator / viewer，留在 use 就等于任何登录用户
+        // 都能重写全公司的债务台账。
+        Assert.Equal(McpCapabilityCatalog.ScopeTasksManage, sync.RequiredScope);
 
         // 读的那个必须是 GET：POST 会被算进写入额度，读债务不该扣额度
         Assert.Equal("GET", list.Method);

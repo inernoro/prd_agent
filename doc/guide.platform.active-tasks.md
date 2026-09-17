@@ -100,7 +100,7 @@
 | `map_tasks_team` | 读全员在做什么 | manage |
 | `map_tasks_assign` | 派一件给别人 | manage |
 | `map_debt_list` | 读债务台账：还欠着什么、谁认领了 | use |
-| `map_debt_sync` | 把 `doc/debt.*.md` 推到任务台（幂等，只覆盖正文） | use |
+| `map_debt_sync` | 把 `doc/debt.*.md` 推到任务台（幂等，只覆盖正文） | **manage** |
 
 一条刻意的边界：**智能体不能结案**。
 「做成了什么样」是人对结果的认领，让机器代签，这个字段当天就会退化成「已完成」，
@@ -137,6 +137,8 @@ python3 scripts/sync-debt-ledger.py --base https://你的站点   # 真推（Age
 ```
 
 智能体那边是同一件事的两个工具：`map_debt_list` 读、`map_debt_sync` 推。
+两者的档位不同：读是 use（谁都该看得见我们欠着什么），推是 **manage** —— 它按 key
+覆写所有人看到的正文，一次调用改动整块共享台账，不是调用方自己名下那几条。
 同步是幂等的，反复跑只会更新正文，**不会抹掉谁认领了**。
 
 一条现状：45 份台账里目前只有 9 份接得进来（105 条）。同步只收「主表」——
