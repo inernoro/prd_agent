@@ -6314,6 +6314,11 @@ public class GatewayDataDomainGuardTests
         var dupBranch = delete[dupAt..(dupAt + 900)];
         Assert.Contains("parentRestored = await gwLogicalModels", dupBranch, StringComparison.Ordinal);
         Assert.Contains("Filter.Eq(\"_id\", id)", dupBranch, StringComparison.Ordinal);
+
+        // 父没放回去就不放子：放回去造出来的正好是上面那道复核要防的东西——
+        // 一批挂在不存在的父下面、谁也看不见的孤儿（第 57 轮 review）。
+        var guardAt = delete.IndexOf("if (parentRestored)", StringComparison.Ordinal);
+        Assert.True(guardAt > 0 && guardAt < childAt, "父没放回去时照样在放子，那是在造孤儿");
     }
 
     [Fact]
@@ -6364,7 +6369,21 @@ public class GatewayDataDomainGuardTests
           数前者的话，一个「每条线路的上游都不可用」的模型就躲过了这道闸（第 55 轮 review）。
         */
         Assert.Contains("OfferingTargetEligibility.Evaluate(", migrate, StringComparison.Ordinal);
-        Assert.Equal(2, CountOccurrences(migrate, "usableRouteCount++;"));
+        /*
+          判「能不能接流量」要三条齐：线路启用着、健康档不是熔断（池成员近期的不可用是照搬过来的，
+          而运行时把熔断态整条跳过）、上游够格。只判上游的话，一个「成员全在熔断里」的池照样
+          数出有可用线路（第 57 轮 review）。三条收在一个函数里，四个计数点都走它。
+        */
+        var usable = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("healthStatus != CallTracePlanner.HealthUnavailable", usable, StringComparison.Ordinal);
+        Assert.Contains("&& targetRejection is null", usable, StringComparison.Ordinal);
+        /*
+          四个计数点：新建的物理线路、新建的兑换所线路，以及**已经存在**的那两种。
+          后两个不算的话，上一趟被停用的模型在上游修好后重跑仍然数出零，那条「把它放回来」
+          的分支永远不触发——上一轮许下的恢复路径还是走不通。
+        */
+        Assert.Equal(4, CountOccurrences(migrate, "usableRouteCount++;"));
+        Assert.Equal(2, CountOccurrences(migrate, "MigrationExistingRouteCountsAsUsable("));
         var checkAt = migrate.IndexOf("usableRouteCount == 0 && entry.CreatedNewModel", StringComparison.Ordinal);
         Assert.True(checkAt > 0, "搬迁没有回头确认这个池到底有几条线路真的能接流量，或者没有限定在这一趟新建的模型上");
         Assert.Contains("!linkedByRace", migrate[checkAt..(checkAt + 200)], StringComparison.Ordinal);

@@ -166,8 +166,11 @@ public class PoolMigrationPlannerTests
         Assert.DoesNotContain("gwModelPools.InsertOne", handler);
         Assert.Contains("gwModelPools.Find(", handler);
 
-        // 可重复跑：同名模型只补线路，同一条线路不重复建
-        Assert.Contains("if (duplicate) continue;", handler);
+        // 可重复跑：同名模型只补线路，同一条线路不重复建。
+        // 判重从「查一下在不在」改成了「把那条读回来」——因为重跑时已经存在的线路也要算进
+        // 「有几条能接流量」，不然上一趟被停用的模型永远放不回来（第 57 轮 review）。
+        Assert.Contains("existingModelRoute is not null", handler);
+        Assert.Contains("plannedOfferingKeys.Contains(modelRouteKey) || existingModelRoute is not null", handler);
         Assert.Contains("result.LinkedToExisting++", handler);
 
         // 近期的非健康状态照搬、陈年旧账重置：全搬会让新路径带着过期判断少一条候选，
@@ -506,7 +509,7 @@ public class PoolMigrationPlannerTests
 
         // 查库那一侧同口径：只按 (模型, 兑换所) 查会把不同别名判成已存在。
         // 断言的是这条查询把上游模型标识也算进了身份，而不是某一行的写法。
-        var dupAt = console.IndexOf("var duplicateExchangeRoute", StringComparison.Ordinal);
+        var dupAt = console.IndexOf("var existingExchangeRoute", StringComparison.Ordinal);
         Assert.True(dupAt > 0, "兑换所去重那一段找不到了，守卫取值口径需要更新");
         var dupEnd = console.IndexOf("plannedOfferingKeys.Add(exchangeRouteKey);", dupAt, StringComparison.Ordinal);
         Assert.True(dupEnd > dupAt);

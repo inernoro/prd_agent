@@ -5438,12 +5438,31 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                   「同一个兑换所的不同别名」这种输入让它给出了相反答案）。
                 */
                 var exchangeRouteKey = $"{logicalId}::exchange::{exchangeId}::{memberModelId}";
-                var duplicateExchangeRoute = plannedOfferingKeys.Contains(exchangeRouteKey)
-                    || await gwModelOfferings.Find(fb.And(
-                        fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
-                        fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId),
-                        fb.Eq("UpstreamModelId", memberModelId))).AnyAsync();
-                if (duplicateExchangeRoute) continue;
+                var existingExchangeRoute = await gwModelOfferings.Find(fb.And(
+                    fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                    fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId),
+                    fb.Eq("UpstreamModelId", memberModelId))).FirstOrDefaultAsync();
+                if (plannedOfferingKeys.Contains(exchangeRouteKey) || existingExchangeRoute is not null)
+                {
+                    /*
+                      这条线路上一趟已经建过了，不重复建——但它照样要算进「有几条能接流量」。
+
+                      不算的话，上一趟因为上游坏了被停用的模型，这一趟即使上游修好了也数出零，
+                      于是那个「把它放回来」的分支永远不触发，上一轮许下的恢复路径还是走不通
+                      （第 57 轮 review：修复本身依赖一个数不全的计数器）。
+                    */
+                    if (existingExchangeRoute is not null
+                        && MigrationExistingRouteCountsAsUsable(
+                            existingExchangeRoute,
+                            OfferingTargetEligibility.Evaluate(
+                                "exchange", memberExchange, null, memberModelId)))
+                    {
+                        usableRouteCount++;
+                    }
+
+                    continue;
+                }
+
                 plannedOfferingKeys.Add(exchangeRouteKey);
 
                 var lostExchangePrices = DescribeLostMemberPrices(member, null);
@@ -5495,8 +5514,16 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 }
                 entry.RouteCount++;
                 result.RoutesCreated++;
-                if (OfferingTargetEligibility.Evaluate(
-                        "exchange", memberExchange, null, memberModelId) is null)
+                /*
+                  上游够格还不够：池成员近期的不可用是**照搬**过来的（CarryHealthStatus），
+                  而运行时把熔断态的线路整条跳过。只判上游的话，一个「成员全在熔断里」的池
+                  搬过来仍然数出有可用线路，模型带着默认与认领留在库里，池退场之后每一个请求
+                  都当场失败（第 57 轮 review：判据比它该管的范围窄）。
+                */
+                if (MigrationRouteCountsAsUsable(
+                        carriedExchangeHealth,
+                        enabled: true,
+                        OfferingTargetEligibility.Evaluate("exchange", memberExchange, null, memberModelId)))
                 {
                     usableRouteCount++;
                 }
@@ -5551,11 +5578,28 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 ? registered
                 : memberModelId;
             var modelRouteKey = $"{logicalId}::model::{physicalId}";
-            var duplicate = plannedOfferingKeys.Contains(modelRouteKey)
-                || await gwModelOfferings.Find(fb.And(
-                    fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
-                    fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).AnyAsync();
-            if (duplicate) continue;
+            var existingModelRoute = await gwModelOfferings.Find(fb.And(
+                fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).FirstOrDefaultAsync();
+            if (plannedOfferingKeys.Contains(modelRouteKey) || existingModelRoute is not null)
+            {
+                // 同上：已经存在的那条也要算进「有几条能接流量」，否则重跑搬迁数出来永远是零。
+                if (existingModelRoute is not null)
+                {
+                    platformsForMigration.TryGetValue(
+                        physical.AsNullableString("PlatformId") ?? string.Empty, out var existingPlatform);
+                    if (MigrationExistingRouteCountsAsUsable(
+                            existingModelRoute,
+                            OfferingTargetEligibility.Evaluate(
+                                "model", physical, existingPlatform, existingModelRoute.AsNullableString("UpstreamModelId"))))
+                    {
+                        usableRouteCount++;
+                    }
+                }
+
+                continue;
+            }
+
             plannedOfferingKeys.Add(modelRouteKey);
 
             var lostPrices = DescribeLostMemberPrices(member, physical);
@@ -5614,7 +5658,11 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             result.RoutesCreated++;
             platformsForMigration.TryGetValue(
                 physical.AsNullableString("PlatformId") ?? string.Empty, out var memberPlatform);
-            if (OfferingTargetEligibility.Evaluate("model", physical, memberPlatform, upstreamModelId) is null)
+            // 同上：照搬过来的熔断态会让运行时把这条线路整条跳过，它不算「能接流量」。
+            if (MigrationRouteCountsAsUsable(
+                    carriedHealth,
+                    enabled: true,
+                    OfferingTargetEligibility.Evaluate("model", physical, memberPlatform, upstreamModelId)))
             {
                 usableRouteCount++;
             }
@@ -6363,20 +6411,37 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
             restoreErrors.Add($"模型本身没能放回去：{ex.Message}");
         }
 
-        foreach (var child in childOfferings)
+        /*
+          父没放回去就**不放子**。
+
+          放回去的话，造出来的正好是上面那道撞键复核要防的东西：一批挂在一个不存在的父下面的
+          孤儿，而且它们不会出现在任何一屏上（第 57 轮 review）。父不在时把子留在删除状态，
+          库里少了东西是看得见的；放一批看不见的孤儿进去，没人会发现。
+          两种都不好，但前者可查、后者不可查。
+        */
+        if (parentRestored)
         {
-            try
+            foreach (var child in childOfferings)
             {
-                await gwModelOfferings.ReplaceOneAsync(
-                    Builders<BsonDocument>.Filter.Eq("_id", child.GetStringOrEmpty("_id")),
-                    child,
-                    new ReplaceOptions { IsUpsert = true });
-                childrenRestored++;
+                try
+                {
+                    await gwModelOfferings.ReplaceOneAsync(
+                        Builders<BsonDocument>.Filter.Eq("_id", child.GetStringOrEmpty("_id")),
+                        child,
+                        new ReplaceOptions { IsUpsert = true });
+                    childrenRestored++;
+                }
+                catch (MongoException ex)
+                {
+                    restoreErrors.Add($"线路 {child.GetStringOrEmpty("_id")} 没能放回去：{ex.Message}");
+                }
             }
-            catch (MongoException ex)
-            {
-                restoreErrors.Add($"线路 {child.GetStringOrEmpty("_id")} 没能放回去：{ex.Message}");
-            }
+        }
+        else if (childOfferings.Count > 0)
+        {
+            restoreErrors.Add(
+                $"它名下那 {childOfferings.Count} 条线路没有放回去——模型本身都不在了，"
+                + "放回去只会造出一批谁也看不见的孤儿");
         }
 
         var fullyRestored = parentRestored && childrenRestored == childOfferings.Count;
@@ -17304,6 +17369,32 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
 /// 原本的上限，或者继承一个完全不同的全局上限，而这件事不会有任何地方报错。
 /// 给线路加价格/上限覆盖层是新语义（§5.5 的 B 类），这里先如实报出来，与价格丢失同一口径。
 /// </summary>
+/// <summary>
+/// 搬迁时这条线路算不算「现在能接流量」。
+///
+/// 三个条件缺一不可，逐条对着运行时那一侧：线路自己启用着、健康档不是熔断
+/// （GatewayRouteSelection 把熔断态整条跳过）、上游够格（目标在且启用、Provider 可用、
+/// 兑换所别名声明过）。少判任何一条，「一条能接流量的线路都没有」这道闸就会漏放，
+/// 而漏放的后果是模型带着用途默认与认领留在库里，池退场后每个请求当场失败。
+/// </summary>
+static bool MigrationRouteCountsAsUsable(
+    int healthStatus,
+    bool enabled,
+    OfferingTargetEligibility.Rejection? targetRejection)
+    => enabled
+        && healthStatus != CallTracePlanner.HealthUnavailable
+        && targetRejection is null;
+
+/// <summary>库里已经有的那条线路，读它自己的启用与健康档再判。
+/// （顶层局部函数不能重载，所以换个名字，不是两套判据——它就是上面那个。）</summary>
+static bool MigrationExistingRouteCountsAsUsable(
+    BsonDocument offering,
+    OfferingTargetEligibility.Rejection? targetRejection)
+    => MigrationRouteCountsAsUsable(
+        offering.AsNullableInt("HealthStatus") ?? 0,
+        offering.AsNullableBool("Enabled") != false,
+        targetRejection);
+
 static string? DescribeLostMemberMaxTokens(BsonDocument member, BsonDocument? physical)
 {
     var memberValue = member.GetValue("MaxTokens", BsonNull.Value);
