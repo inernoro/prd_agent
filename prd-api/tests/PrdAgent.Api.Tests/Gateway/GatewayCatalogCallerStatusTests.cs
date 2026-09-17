@@ -15,45 +15,60 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// </summary>
 public class GatewayCatalogCallerStatusTests
 {
-    private static GatewayAppCallerRecord Caller(string status)
-        => new() { TenantId = "t1", AppCallerCode = "demo.app::chat", RequestType = "chat", Status = status };
+    private static GatewayAppCallerRecord Caller(string requestType, string status)
+        => new() { TenantId = "t1", AppCallerCode = "demo.app::" + requestType, RequestType = requestType, Status = status };
 
     [Fact]
-    public void 一条记录都没有时照运行时口径放行()
+    public void 找不到对应那一行时照运行时口径放行()
     {
         // 缺记录在运行时归一成 discovered、是放行的；清单不该比它严——
         // 严了的话，新接入的调用方第一次 client.models.list() 拿到空清单，无从下手。
-        GatewayModelCatalogEndpoint.CallerMayList([]).ShouldBeTrue();
-        GatewayModelCatalogEndpoint.CallerMayList([Caller("discovered")]).ShouldBeTrue();
-        GatewayModelCatalogEndpoint.CallerMayList([Caller("configured")]).ShouldBeTrue();
-        GatewayModelCatalogEndpoint.CallerMayList([Caller("active")]).ShouldBeTrue();
+        GatewayModelCatalogEndpoint.CallerMayListModelType([], "chat").ShouldBeTrue();
+        GatewayModelCatalogEndpoint.CallerMayListModelType([Caller("generation", "archived")], "chat").ShouldBeTrue();
+        GatewayModelCatalogEndpoint.CallerMayListModelType([Caller("chat", "discovered")], "chat").ShouldBeTrue();
+        GatewayModelCatalogEndpoint.CallerMayListModelType([Caller("chat", "configured")], "chat").ShouldBeTrue();
+        GatewayModelCatalogEndpoint.CallerMayListModelType([Caller("chat", "active")], "chat").ShouldBeTrue();
     }
 
     [Fact]
-    public void 全部记录都不接流量时清单为空()
+    public void 这个用途那一行不接流量就不列这个用途的模型()
     {
-        GatewayModelCatalogEndpoint.CallerMayList([Caller("disabled")]).ShouldBeFalse();
-        GatewayModelCatalogEndpoint.CallerMayList([Caller("archived")]).ShouldBeFalse();
-        GatewayModelCatalogEndpoint.CallerMayList([Caller("disabled"), Caller("archived")]).ShouldBeFalse();
+        GatewayModelCatalogEndpoint.CallerMayListModelType([Caller("chat", "disabled")], "chat").ShouldBeFalse();
+        GatewayModelCatalogEndpoint.CallerMayListModelType([Caller("chat", "archived")], "chat").ShouldBeFalse();
     }
 
     [Fact]
-    public void 还有一行接流量就照常列()
+    public void 一个用途停了不连累另一个用途()
     {
-        // 记录按 (租户, 调用方码, 请求类型) 存，一个码可能有多行，而清单跨用途、
-        // 没有单一请求类型可比。宁可在部分停用时多列一点，也不要把一个还在正常工作的
-        // 调用方的清单整个抹掉。
-        GatewayModelCatalogEndpoint.CallerMayList([Caller("archived"), Caller("active")]).ShouldBeTrue();
+        /*
+          记录按 (租户, 调用方码, 请求类型) 存，一个码在 chat 上 active、在 generation 上
+          被停用是常态。上一版把多行压成「有没有任何一行还允许」的一个布尔，于是这种配置下
+          两个用途的模型会一起发出去，而运行时查的是精确那一行（第 68 轮 review）。
+        */
+        GatewayAppCallerRecord[] mixed = [Caller("chat", "active"), Caller("generation", "archived")];
+        GatewayModelCatalogEndpoint.CallerMayListModelType(mixed, "chat").ShouldBeTrue();
+        GatewayModelCatalogEndpoint.CallerMayListModelType(mixed, "generation").ShouldBeFalse();
+        // 反过来也要成立，不许只对一个方向成立
+        GatewayAppCallerRecord[] flipped = [Caller("chat", "disabled"), Caller("generation", "active")];
+        GatewayModelCatalogEndpoint.CallerMayListModelType(flipped, "chat").ShouldBeFalse();
+        GatewayModelCatalogEndpoint.CallerMayListModelType(flipped, "generation").ShouldBeTrue();
+    }
+
+    [Fact]
+    public void 用途比对不分大小写与首尾空白()
+    {
+        GatewayAppCallerRecord[] records = [Caller(" CHAT ", "archived")];
+        GatewayModelCatalogEndpoint.CallerMayListModelType(records, "chat").ShouldBeFalse();
     }
 
     [Fact]
     public void 判据与运行时那道治理闸同一份()
     {
-        // 这里只决定「多行怎么合成一个答案」，放不放行本身必须问 GatewayAppCallerPolicy，
+        // 这里只负责「按用途挑出该问哪一行」，放不放行本身必须问 GatewayAppCallerPolicy，
         // 不许在清单这一侧另写一张状态表。
         foreach (var status in new[] { "discovered", "configured", "active", "disabled", "archived", "", "ACTIVE" })
         {
-            GatewayModelCatalogEndpoint.CallerMayList([Caller(status)])
+            GatewayModelCatalogEndpoint.CallerMayListModelType([Caller("chat", status)], "chat")
                 .ShouldBe(GatewayAppCallerPolicy.AllowsTraffic(status));
         }
     }

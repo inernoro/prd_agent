@@ -161,6 +161,27 @@ public static class GatewayCatalogGate
     }
 
     /// <summary>
+    /// 批量预取的同名谓词：<see cref="SameNameFilter"/> 的并集。
+    ///
+    /// 单独给一个入口，是因为预取那一步此前各写各的——两处都写成
+    /// <c>In("ModelName", names) || In("ModelNameNormalized", 小写)</c>，而存量文档
+    /// 没有 ModelNameNormalized、库里存着 `Foo` 而线路覆盖成 `foo` 时，两支都查不到：
+    /// 预取回来是空批，<see cref="PhysicalRoutePasses"/> 于是判成「管不着」放行，
+    /// 而运行时单查按不分大小写查得到、判拦——同一条线路两个结论（第 68 轮 review；
+    /// 第 63 轮只把单查那一侧扳正了，预取这一侧漏在外面，形状 3 的老地方）。
+    /// 空集合返回一个恒不成立的谓词，调用方不必再写一次「有没有名字要查」。
+    /// </summary>
+    public static FilterDefinition<BsonDocument> SameNameBatchFilter(IEnumerable<string> modelNames)
+    {
+        var names = (modelNames ?? []).Select(x => (x ?? string.Empty).Trim())
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var fb = Builders<BsonDocument>.Filter;
+        return names.Count == 0 ? fb.Where(_ => false) : fb.Or(names.Select(SameNameFilter));
+    }
+
+    /// <summary>
     /// 从一批模型文档里挑出「这条线路该管的那几条」：同名（两个名字字段都认）、同一个 Provider。
     ///
     /// 这是运行时 <c>SelectCatalogDocs</c> 的同一套谓词，收在这里是因为消费方不止一个：

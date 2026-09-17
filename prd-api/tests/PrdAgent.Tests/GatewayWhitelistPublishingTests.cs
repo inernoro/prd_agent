@@ -717,8 +717,11 @@ public class GatewayWhitelistPublishingTests
         {
             Assert.True(mirror.Text.Contains("string EffectiveUpstreamName(GatewayModelOffering route)", StringComparison.Ordinal),
                 $"{mirror.Path} 没有算实际上游名");
-            Assert.True(mirror.Text.Contains("ModelNameNormalized", StringComparison.Ordinal),
-                $"{mirror.Path} 找同名文档时只认一个名字字段，与运行时取值不同源");
+            // 预取那一步的同名谓词也要走共享那一份。上一版逐字要求源码里出现
+            // `ModelNameNormalized`——那是把「自己拼两支 In」这个写法钉死，而它恰好是
+            // 第 68 轮被证明太窄的那个（存量文档没有归一化字段时两支都查不到）。
+            Assert.True(mirror.Text.Contains("GatewayCatalogGate.SameNameBatchFilter(", StringComparison.Ordinal),
+                $"{mirror.Path} 预取同名文档时自己拼谓词，与运行时取值不同源");
             // 挑同名文档这一步也不许自己写：两处各拼一个 "{平台}::{名字}" 的键，
             // 大小写与库里存的不一致时查空、判成「管不着」放行，而运行时判拦。
             Assert.True(mirror.Text.Contains("GatewayCatalogGate.SelectSameNameDocs(", StringComparison.Ordinal),

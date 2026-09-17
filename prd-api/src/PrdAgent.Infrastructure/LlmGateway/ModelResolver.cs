@@ -391,7 +391,7 @@ public class ModelResolver : IModelResolver
                 fb.Eq("TenantId", CurrentTenantId),
                 // 逐个名字用同一份谓词 Or 起来：批量这一支此前用 In 逐字比原始名字，
                 // 与单条查询不同口径，存量文档换个大小写就只在其中一条路上查得到。
-                fb.Or(names.Select(GatewayCatalogGate.SameNameFilter))))
+                GatewayCatalogGate.SameNameBatchFilter(names)))
             .Limit(CatalogBatchDocumentCap + 1)
             .ToListAsync(ct);
         return docs.Count > CatalogBatchDocumentCap ? null : docs;

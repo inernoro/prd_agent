@@ -1118,16 +1118,34 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("payload.success ?? payload.Success", quickstart);
         Assert.Contains("normalizeRoutePreview(payload, checked)", quickstart);
         Assert.Contains("preview.checkedBaseUrl !== normalizeBaseUrl(baseUrl)", quickstart);
-        // 一次预检的结论钉着「哪一条路」：地址 + 钉住的成员。只比地址的话，换成员之后
-        // 上一个成员的结论仍算数，会替一条没验过的路放行——池里有成员指向开发桩时，
-        // 选中它的那一刻闸门还是绿的，正是这道闸要防的那件事。
-        Assert.Contains("routePreview.checkedModel === (activeProbePin?.model ?? 'auto')", quickstart);
-        Assert.Contains("routePreview.checkedPlatformId === (activeProbePin?.platformId ?? '')", quickstart);
+        // 一次预检的结论钉着「哪一条路」：地址 + 选中的那个模型 + 钉住的物理上游。
+        // 只比地址的话，换选中项之后上一个的结论仍算数，会替一条没验过的路放行。
+        //
+        // 上一版这两句逐字要求 `activeProbePin`，而那个名字背后的判断恰好是被证明太窄的
+        // 那一个（它把「选了一个对外模型」压成「什么都没选」）。改成钉性质：戳必须由
+        // 同一个选中判据派生，而不是钉住某一次的变量名（形状 4a）。
+        Assert.Contains("const activeProbeTarget = selectedTargetOf(testModel, testPlatformId);", quickstart);
+        Assert.Contains("routePreview.checkedModel === (activeProbeTarget?.model ?? 'auto')", quickstart);
+        Assert.Contains("routePreview.checkedPlatformId === (activeProbeTarget?.platformId ?? '')", quickstart);
         // 并发预检只认最后发起的那一代：先发的那条后到，会把旧结论盖到当前成员头上。
         Assert.Contains("const probeId = ++routeProbeSeq.current;", quickstart);
         Assert.Contains("if (superseded()) return;", quickstart);
-        // 钉住与否只许判一处，预检与真实调用必须问同一个函数，否则预检的不是会跑的那条路。
-        Assert.Equal(1, CountOccurrences(quickstart, "function pinnedTargetOf("));
+        /*
+          「这次要跑哪条路」只许判一处，预检与真实调用必须问同一个函数，否则预检的不是会跑的那条。
+
+          而且它必须分得开「选了一个对外模型（只有公开名）」与「钉到了具体物理上游」两种：
+          压成一个布尔的话，池退场之后选中对外模型会被判成「什么都没选」，预检发
+          modelPolicy:'auto'、真实调用发那个公开名——预检验的是默认路，放行的是另一条
+          （第 68 轮 review，形状 8：拿一份不成立的证据当证明）。
+        */
+        Assert.Equal(1, CountOccurrences(quickstart, "function selectedTargetOf("));
+        Assert.Equal(0, CountOccurrences(quickstart, "function pinnedTargetOf("));
+        Assert.Contains("kind: 'logical'", quickstart);
+        Assert.Contains("kind: 'pinned'", quickstart);
+        // 预检必须把选中的那个公开名发出去，否则它问的是「不点名会落到谁」。
+        Assert.Contains("expectedModel: selected.model", quickstart);
+        // 真实调用只在钉到物理上游时才带那两个 id，逻辑选中只发名字——两侧同构。
+        Assert.Contains("target?.kind === 'pinned'", quickstart);
         // 片段里的自由文本（输入框那句、上传的文本、模型名）要过 shell 转义：
         // 一个撇号就能让 -d 的参数提前收尾，后半句被当成命令跑。
         Assert.Contains("shellSingleQuoted(", quickstart);
@@ -6812,7 +6830,10 @@ public class GatewayDataDomainGuardTests
         // 两个调用点：单条查询与批量预取。数的是「至少两处」而不是精确条数——
         // 注释里提到它也会被数进去，把注释算成判据就是又一条会漂的断言。
         Assert.Contains("GatewayCatalogGate.SameNameFilter(trimmed)", resolver, StringComparison.Ordinal);
-        Assert.Contains("names.Select(GatewayCatalogGate.SameNameFilter)", resolver, StringComparison.Ordinal);
+        // 批量预取走共享那个入口。上一版逐字要求 `names.Select(GatewayCatalogGate.SameNameFilter)`,
+        // 那是把当时的写法钉死——第 68 轮把三处预取收敛成 SameNameBatchFilter 时它会红，
+        // 谁收敛谁的 CI 红（形状 4a）。
+        Assert.Contains("GatewayCatalogGate.SameNameBatchFilter(names)", resolver, StringComparison.Ordinal);
         Assert.Equal(0, CountOccurrences(resolver, "fb.Eq(\"ModelName\", trimmed)"));
         Assert.Equal(0, CountOccurrences(resolver, "fb.In(\"ModelName\", names)"));
     }
@@ -7674,10 +7695,41 @@ public class GatewayDataDomainGuardTests
         Assert.Equal(0, CountOccurrences(catalog, "\"archived\""));
         Assert.Equal(0, CountOccurrences(catalog, "\"disabled\""));
 
-        var gateAt = catalog.IndexOf("if (!CallerMayList(callerRecords))", StringComparison.Ordinal);
+        // 逐条按用途判，不是把多行压成一个布尔再一刀清空：同一个码在 chat 上 active、
+        // 在 generation 上停用是常态，压成一个布尔会把两个用途的模型一起发出去（第 68 轮 review）。
+        Assert.Contains("CallerMayListModelType(callerRecords, x.ModelType)", catalog, StringComparison.Ordinal);
+        var recordsAt = catalog.IndexOf("callerRecords = await db.GetCollection", StringComparison.Ordinal);
         var listAt = catalog.IndexOf("var visible = logicals", StringComparison.Ordinal);
-        Assert.True(gateAt > 0, "清单没有过调用方状态那道门");
-        Assert.True(listAt > gateAt, "调用方状态那道门要排在构造清单之前");
+        Assert.True(recordsAt > 0, "清单没有取调用方记录");
+        Assert.True(listAt > recordsAt, "调用方记录要在构造清单之前取到");
+    }
+
+    [Fact]
+    public void 三处批量预取的同名谓词只有一份()
+    {
+        /*
+          第 63 轮把「同名」的**单查**那一侧扳成了不分大小写，预取这一侧漏在外面：两处仍写成
+          `In("ModelName", names) || In("ModelNameNormalized", 小写)`。存量文档没有
+          ModelNameNormalized、库里存着 `Foo` 而线路覆盖成 `foo` 时两支都查不到，预取回来是空批，
+          PhysicalRoutePasses 于是判成「管不着」放行，而运行时单查判拦——同一条线路两个结论
+          （第 68 轮 review，形状 3 的老地方：修完没横扫同类）。
+        */
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+        Assert.Contains("SameNameBatchFilter(", gate, StringComparison.Ordinal);
+
+        foreach (var consumer in new[]
+                 {
+                     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs",
+                     "llmgw/serving/GatewayModelCatalogEndpoint.cs",
+                     "llmgw/serving/GatewayServingReadinessProbe.cs",
+                 })
+        {
+            var source = ReadRepoFile(consumer);
+            Assert.Contains("GatewayCatalogGate.SameNameBatchFilter(", source, StringComparison.Ordinal);
+            // 自己拼的那种逐字 In 一处都不许剩
+            Assert.Equal(0, CountOccurrences(source, "In(\"ModelName\", "));
+            Assert.Equal(0, CountOccurrences(source, "In(\"ModelNameNormalized\", "));
+        }
     }
 
     [Fact]

@@ -27,20 +27,33 @@ namespace PrdAgent.LlmGatewayHost;
 public static class GatewayModelCatalogEndpoint
 {
     /// <summary>
-    /// 这个调用方现在还能不能列清单。判据本体是 <c>GatewayAppCallerPolicy.AllowsTraffic</c>，
-    /// 与运行时那道治理闸同一份，这里只决定「多行记录怎么合成一个答案」。
+    /// 这个调用方在**这个用途上**现在还能不能调。判据本体是
+    /// <c>GatewayAppCallerPolicy.AllowsTraffic</c>，与运行时那道治理闸同一份，
+    /// 这里只负责「按用途挑出该问哪一行」。
+    ///
+    /// 逐条按用途判，不是把所有记录压成一个布尔：记录按 (租户, 调用方码, 请求类型) 存，
+    /// 一个码在 chat 上是 active、在 generation 上被停用完全正常。压成
+    /// 「有没有任何一行还允许」的话，清单会把两个用途的模型一起发出去，而运行时查的是
+    /// 精确那一行，调停用那个用途的模型立刻回 APP_CALLER_DISABLED（第 68 轮 review）。
+    ///
+    /// 与运行时逐条对齐：找不到对应那一行时状态归一成 discovered、放行——新接入的调用方
+    /// 第一次列清单不该是空的，而运行时对同一种输入也是放行的。
     ///
     /// 抽成纯函数是为了能被直接断言：写成端点里的一句内联条件，守卫只能去扫源码里有没有
     /// 提到那个函数名——而把条件改成恒真它照样绿（形状 4：不会红的证据比没有证据更糟）。
     /// </summary>
-    public static bool CallerMayList(IReadOnlyCollection<GatewayAppCallerRecord> records)
-        // 一条记录都没有 → 状态归一成 discovered，照运行时口径放行：
-        // 新接入的调用方第一次列清单不该是空的。
-        => records.Count == 0
-           // 记录按 (租户, 调用方码, 请求类型) 存，一个码可能有多行，而清单跨用途、没有单一
-           // 请求类型可比——所以判「有没有任何一行还允许」。全都不允许才清空：宁可在部分停用时
-           // 多列一点，也不要把一个还在正常工作的调用方的清单整个抹掉。
-           || records.Any(x => GatewayAppCallerPolicy.AllowsTraffic(x.Status));
+    public static bool CallerMayListModelType(
+        IReadOnlyCollection<GatewayAppCallerRecord> records,
+        string? modelType)
+    {
+        var wanted = GatewayAppCallerIdentity.NormalizePart(modelType ?? string.Empty);
+        var match = records.FirstOrDefault(x =>
+            string.Equals(
+                GatewayAppCallerIdentity.NormalizePart(x.RequestType ?? string.Empty),
+                wanted,
+                StringComparison.OrdinalIgnoreCase));
+        return GatewayAppCallerPolicy.AllowsTraffic(match?.Status);
+    }
 
     /// <summary>OpenAI 的 model 对象要求 created 是秒级时间戳。</summary>
     private static long ToUnixSeconds(DateTime value)
@@ -56,7 +69,7 @@ public static class GatewayModelCatalogEndpoint
         var db = data.Context.Database;
 
         /*
-          这把 key 的 appCaller 现在还接不接流量——先问这一句，再谈列什么。
+          这把 key 的 appCaller 在每个用途上还接不接流量——先取出来，下面逐条模型判。
 
           key 的鉴权只验到「这把 key 属于这个团队」；「这个调用方此刻允不允许调用」是另一道门，
           在运行时的 CheckAppCallerGovernanceAsync 里（GatewayAppCallerPolicy.AllowsTraffic）。
@@ -64,26 +77,22 @@ public static class GatewayModelCatalogEndpoint
           模型全列出来，而对方照着清单调一次立刻拿到 APP_CALLER_DISABLED——清单说能调、
           运行时说不能，两处各自为真（形状 3：判据分裂；第 67 轮 review）。
 
-          判据不在这里重写，直接引用那一份。两点与运行时对齐：
-            · 一条记录都没有 → 状态归一成 discovered，照运行时口径放行（新接入的调用方
-              第一次列清单不该是空的）；
-            · 记录按 (租户, 调用方码, 请求类型) 存，一个码可能有多行，而清单跨用途、
-              没有单一请求类型可比——所以判「有没有任何一行还允许」。全都不允许才清空：
-              宁可在部分停用时多列一点，也不要把一个还在正常工作的调用方的清单整个抹掉。
+          记录按 (租户, 调用方码, 请求类型) 存，所以这里只取这个码名下的全部行，
+          「该问哪一行」交给 CallerMayListModelType 按模型用途挑。第 67 轮那一版把它们压成了
+          「有没有任何一行还允许」的一个布尔——那在「chat 还活着、generation 已停用」这种
+          再正常不过的配置下会把两个用途的模型一起发出去（第 68 轮 review，形状 1：
+          判据比它该管的范围窄，两种输入被压成一种）。
         */
+        var callerRecords = new List<GatewayAppCallerRecord>();
         if (appCallerCode is { Length: > 0 })
         {
-            var callerRecords = await db.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+            callerRecords = await db.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
                 .Find(Builders<GatewayAppCallerRecord>.Filter.And(
                         Builders<GatewayAppCallerRecord>.Filter.Eq(x => x.TenantId, tenantId),
                         Builders<GatewayAppCallerRecord>.Filter.Eq(
                             x => x.AppCallerCode, GatewayAppCallerIdentity.NormalizePart(appCallerCode))),
                     new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
                 .ToListAsync(ct);
-            if (!CallerMayList(callerRecords))
-            {
-                return new JsonObject { ["object"] = "list", ["data"] = new JsonArray() };
-            }
         }
 
         var logicalModels = db.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
@@ -113,6 +122,10 @@ public static class GatewayModelCatalogEndpoint
             .Where(x => appCallerCode is not { Length: > 0 }
                 || GatewayCapabilityContract.SupportsAppCallerScenario(
                     x.Capabilities, x.AllowedAppCallerCodes, appCallerCode))
+            // 第三道门：这个调用方在这个模型的用途上此刻还接不接流量。
+            // 逐条按用途判，不是一刀清空——同一个码在 chat 上 active、在 generation 上停用是常态。
+            .Where(x => appCallerCode is not { Length: > 0 }
+                || CallerMayListModelType(callerRecords, x.ModelType))
             .OrderBy(x => x.DisplayOrder)
             .ThenBy(x => x.PublicId, StringComparer.Ordinal)
             .ToList();
@@ -214,11 +227,11 @@ public static class GatewayModelCatalogEndpoint
             .ToList();
         var namedPhysicalDocs = catalogGateEnforces && effectiveNames.Count > 0
             ? await physicalModels
+                // 预取的同名谓词走共享那一份：自己拼 In 在大小写不一致时查空，
+                // 空批会被 PhysicalRoutePasses 判成「管不着」放行，而运行时单查判拦。
                 .Find(bf.And(
                     bf.Eq("TenantId", tenantId),
-                    bf.Or(
-                        bf.In("ModelName", effectiveNames),
-                        bf.In("ModelNameNormalized", effectiveNames.Select(x => x.ToLowerInvariant())))))
+                    GatewayCatalogGate.SameNameBatchFilter(effectiveNames)))
                 .ToListAsync(ct)
             : [];
 

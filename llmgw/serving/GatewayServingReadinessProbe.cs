@@ -355,13 +355,11 @@ public sealed class GatewayServingReadinessProbe : IGatewayServingReadinessProbe
             .ToList();
         var namedPhysicalDocs = catalogGateEnforces && effectiveUpstreamNames.Count > 0
             ? await physicalModels
+                // 预取的同名谓词走共享那一份，理由同对外清单：自己拼 In 在大小写不一致时
+                // 查空，空批判成「管不着」报绿，而运行时判拦——探针替一条必失败的线路作保。
                 .Find(Builders<BsonDocument>.Filter.And(
                     Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-                    Builders<BsonDocument>.Filter.Or(
-                        Builders<BsonDocument>.Filter.In("ModelName", effectiveUpstreamNames),
-                        Builders<BsonDocument>.Filter.In(
-                            "ModelNameNormalized",
-                            effectiveUpstreamNames.Select(x => x.ToLowerInvariant())))))
+                    GatewayCatalogGate.SameNameBatchFilter(effectiveUpstreamNames)))
                 .ToListAsync(cancellationToken)
             : [];
 

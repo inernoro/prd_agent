@@ -472,13 +472,13 @@ export function QuickstartPage() {
     只有「对这一次真会跑的那条路」下过的结论才算数：地址要同一个，钉住的成员也要同一个。
     只比地址的话，上一个成员（或 auto 那条）的结论会替换成员后这条**没验过**的路放行——
     并发预检里先发后到的那条尤其容易造出这种错配。
-    钉住与否走 pinnedTargetOf 这一个判断，与预检、真实调用、cURL 片段同源。
+    选中与否走 selectedTargetOf 这一个判断，与预检、真实调用、cURL 片段同源。
   */
-  const activeProbePin = pinnedTargetOf(testModel, testPlatformId);
+  const activeProbeTarget = selectedTargetOf(testModel, testPlatformId);
   const currentRoutePreview = routePreview
     && routePreview.checkedBaseUrl === normalizeBaseUrl(baseUrl)
-    && routePreview.checkedModel === (activeProbePin?.model ?? 'auto')
-    && routePreview.checkedPlatformId === (activeProbePin?.platformId ?? '')
+    && routePreview.checkedModel === (activeProbeTarget?.model ?? 'auto')
+    && routePreview.checkedPlatformId === (activeProbeTarget?.platformId ?? '')
       ? routePreview
       : null;
   const realRouteReady = !routeChecking && canRunRealTest(currentRoutePreview, baseUrl);
@@ -751,12 +751,14 @@ export function QuickstartPage() {
       检查期间界面显示的也是 routeChecking 那一支，看不到旧结论。
     */
     if (resetTestResult) setTestResult(null);
-    const pin = pinnedTargetOf(pinModel, pinPlatform);
+    const selected = selectedTargetOf(pinModel, pinPlatform);
     // 结论连着「对哪一条路」一起落盘，消费侧才判得出它说的是不是当前这条。
+    // 落的是**选中的那个公开名**而不是 'auto'：不然换一个对外模型，戳还是同一个，
+    // 上一个模型的结论会原样替这一个放行。
     const checked: RouteProbeStamp = {
       checkedBaseUrl: normalizeBaseUrl(baseUrl),
-      checkedModel: pin?.model ?? 'auto',
-      checkedPlatformId: pin?.platformId ?? '',
+      checkedModel: selected?.model ?? 'auto',
+      checkedPlatformId: selected?.platformId ?? '',
     };
     try {
       const response = await fetch(new URL('/gw/v1/resolve', `${checked.checkedBaseUrl}/`).toString(), {
@@ -770,8 +772,16 @@ export function QuickstartPage() {
         body: JSON.stringify({
           appCallerCode: target.appCallerCode,
           modelType: target.requestType,
-          ...(pin
-            ? { modelPolicy: 'pinned', pinnedPlatformId: pin.platformId, pinnedModelId: pin.model, expectedModel: pin.model }
+          // 与真实调用逐字同构（见 dryRunBody）：点名了就按 pinned 发那个名字，
+          // 钉到物理上游时再带上两个 id。少发 expectedModel 等于预检了另一条路。
+          ...(selected
+            ? {
+                modelPolicy: 'pinned',
+                expectedModel: selected.model,
+                ...(selected.kind === 'pinned'
+                  ? { pinnedPlatformId: selected.platformId, pinnedModelId: selected.model }
+                  : {}),
+              }
             : { modelPolicy: 'auto' }),
           context: { sourceSystem: 'external' },
         }),
@@ -2025,10 +2035,11 @@ function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode:
     解析器认的是「ExpectedModel 与 PinnedModelId 相等 = 在已绑池内钉这个成员」，
     所以两处发同一个值、策略声明 pinned。
   */
-  const pinned = model !== 'auto';
-  const policy = pinned ? 'pinned' : 'auto';
-  const target = pinnedTargetOf(model, platformId);
-  const pin = target ? { pinned_platform_id: target.platformId, pinned_model_id: target.model } : {};
+  const target = selectedTargetOf(model, platformId);
+  const policy = target ? 'pinned' : 'auto';
+  const pin = target?.kind === 'pinned'
+    ? { pinned_platform_id: target.platformId, pinned_model_id: target.model }
+    : {};
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
@@ -2263,9 +2274,30 @@ function normalizeBaseUrl(value: string) {
   ROUTE_CONFIG_INCOMPATIBLE——与只发模型名时一模一样的失败。
   这条判断只许有这一处：预检判「钉住了」而发请求判「没钉住」（或反过来）时，
   预检验的就不是这一次会跑的那条路，而这正是这道闸本身要防的那件事。
+
+  **两种选中要分开，不能压成一个布尔。** 池退场之后候选来自对外模型目录，选中一个对外模型
+  只有公开名、没有物理上游 id（那正是对外模型的意义：走哪条线路由网关决定）。上一版把
+  「选了东西」与「钉住了物理上游」压成同一个判断，于是选中对外模型时它返回 null，预检发的是
+  modelPolicy:'auto'——而真实调用发的是那个公开名。预检验的是「不点名会落到谁」，
+  真实调用跑的是「点名这一个」，两条不是同一条路：默认那条健康就能把闸判绿，
+  而选中的那个模型可能解析到桩上或当场失败（第 68 轮 review，形状 8：拿一份不成立的证据当证明）。
+
+  分成三态之后，「这次要跑哪条路」有唯一一个来源，预检、真实调用、cURL 片段、
+  以及结论的时效戳全部由它派生：
+    · null          —— 没点名，走自动调度
+    · kind:'logical' —— 点名一个对外模型（只有公开名）
+    · kind:'pinned'  —— 点名到具体物理上游（公开名 + 平台 id）
 */
-function pinnedTargetOf(model: string, platformId: string) {
-  return model !== 'auto' && platformId ? { model, platformId } : null;
+type SelectedTarget =
+  | { kind: 'logical'; model: string; platformId: '' }
+  | { kind: 'pinned'; model: string; platformId: string };
+
+function selectedTargetOf(model: string, platformId: string): SelectedTarget | null {
+  const trimmed = (model ?? '').trim();
+  if (trimmed.length === 0 || trimmed === 'auto') return null;
+  return platformId
+    ? { kind: 'pinned', model: trimmed, platformId }
+    : { kind: 'logical', model: trimmed, platformId: '' };
 }
 
 /** 供 `'…'` 里嵌入的文本：单引号内无法转义，只能关引号、给字面撇号、再开引号。 */
