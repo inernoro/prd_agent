@@ -5186,14 +5186,71 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                     }
                     else if (message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal))
                     {
-                        document["DefaultForAppCallerCodes"] = new BsonArray();
-                        await gwLogicalModels.InsertOneAsync(document);
-                        entry.ClaimedAppCallerCodes = [];
+                        /*
+                          认领撞车：这个池绑着的调用方里，**有的**在这一瞬被别的模型认领走了。
+
+                          撞车的通常只是其中一个，而索引不会告诉你是哪一个（多键唯一索引只说撞了）。
+                          上一版因此把整份认领清空重插——于是没被抢的那几个调用方也一起失去了接得住
+                          它们的模型，池退场后它们会静默改用用途默认，换了一个模型没人知道。
+                          一次影响一个调用方的并发，被放大成影响这个池的全部调用方（第 53 轮 review）。
+
+                          所以回去读一遍现在谁认领着这几个 code，只去掉真被占走的那几个，其余照带。
+                          读回来之后仍可能再撞（又有人在这几毫秒里认领了），那时才退回清空——
+                          那是最后一道兜底，不是第一反应。两种情况报出来的话不一样：说清哪几个没带上。
+                        */
+                        var takenCodes = new HashSet<string>(StringComparer.Ordinal);
+                        try
+                        {
+                            var holders = await gwLogicalModels
+                                .Find(fb.And(
+                                    fb.Eq("TenantId", tenantId),
+                                    fb.Eq("ModelType", modelType),
+                                    fb.AnyIn("DefaultForAppCallerCodes", claimsToTransfer)))
+                                .ToListAsync();
+                            foreach (var holder in holders)
+                            {
+                                foreach (var code in GetStringArray(holder, "DefaultForAppCallerCodes"))
+                                {
+                                    if (claimsToTransfer.Contains(code, StringComparer.Ordinal))
+                                        takenCodes.Add(code);
+                                }
+                            }
+                        }
+                        catch (MongoException)
+                        {
+                            // 读不回来就当全被占了：宁可少带认领（去白名单页补得回来），
+                            // 也不要带着一份猜出来的认领再撞一次，把并发冲突变成 500。
+                            takenCodes.UnionWith(claimsToTransfer);
+                        }
+
+                        var keptClaims = claimsToTransfer
+                            .Where(code => !takenCodes.Contains(code))
+                            .ToList();
+                        document["DefaultForAppCallerCodes"] = new BsonArray(keptClaims);
+                        try
+                        {
+                            await gwLogicalModels.InsertOneAsync(document);
+                        }
+                        catch (MongoWriteException retry)
+                            when (retry.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                        {
+                            keptClaims = [];
+                            document["DefaultForAppCallerCodes"] = new BsonArray();
+                            await gwLogicalModels.InsertOneAsync(document);
+                        }
+
+                        entry.ClaimedAppCallerCodes = keptClaims;
+                        var lostClaims = claimsToTransfer
+                            .Where(code => !keptClaims.Contains(code, StringComparer.Ordinal))
+                            .ToList();
                         result.Skipped.Add(new PoolMigrationSkip
                         {
                             PoolId = poolId,
                             PoolName = poolName,
-                            Reason = "搬迁进行期间，绑着这个池的调用方被别的模型认领了，所以这个池搬过来时没有带上认领。"
+                            Reason = "搬迁进行期间，绑着这个池的调用方里有"
+                                + $"{lostClaims.Count} 个被别的模型认领了（{string.Join("、", lostClaims.Take(5))}"
+                                + (lostClaims.Count > 5 ? " 等" : string.Empty)
+                                + $"），这个池搬过来时没有带上它们；其余 {keptClaims.Count} 个照常带过来了。"
                                 + "确认那几个调用方该归谁，再去白名单页改",
                         });
                     }
@@ -6073,10 +6130,12 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
       其二，任务库是同项目所有分支预览共用的（cross-project-isolation 通道 4），兄弟分支的
       在途任务同样会拦住这次删除。方向是对的那一边：宁可多拦一次让人去看看。
     */
-    var childOfferingIds = (await gwModelOfferings
+    // 整份读回来，不只是 id：下面那道在途闸要 id，而级联删除失败时的补偿要把子文档原样放回去。
+    // 一个对外模型底下的线路是个位数，多读这一次不值得为省它而留两份查询。
+    var childOfferings = await gwModelOfferings
         .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id)))
-        .Project(Builders<BsonDocument>.Projection.Include("_id"))
-        .ToListAsync())
+        .ToListAsync();
+    var childOfferingIds = childOfferings
         .Select(x => x.GetStringOrEmpty("_id"))
         .Where(x => x.Length > 0)
         .ToList();
@@ -6121,64 +6180,101 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
     }
 
     /*
-      父删了、子没删掉，要把父放回去。
+      删到一半失败了，要把库放回删之前的样子——父和子都放。
 
-      这两条删除不是一个事务（跨文档，而且这里也不该假设部署一定是副本集）。中间那一下
-      超时或重启，结果是：对外模型没了，它名下的线路全成了孤儿——它们不会出现在任何一屏上
-      （线路只在自己的对外模型底下列出），所以没人会发现，直到有人去数集合大小。
+      这两条删除不是一个事务（跨文档，而且这里也不该假设部署一定是副本集）。中间那一下超时
+      或主从切换，结果是：对外模型没了，它名下的线路要么全在、要么删了一部分。两种都不会有人
+      发现——线路只在自己的对外模型底下列出，剩下的那些一屏都不出现，直到有人去数集合大小。
 
-      补偿的方向要选对：**把父放回去**，而不是接着重试删子。父文档还在手里（上面那一读），
-      放回去之后库回到删除之前的样子，操作者重试一次就行；反过来「父没了、先留着孤儿，
-      等下次再清」是把一个能自愈的状态拖成一个要人去数数据的状态。
-      这和换上游那条替换链的回滚是同一个形状（第 49 轮）。
+      所以补偿要两步都做，而且顺序是先父后子（父在，子才有归属）。子按 _id 逐条 upsert：
+      删掉的那些回来，没删掉的原样不动，这个动作重复执行结果一样——因为超时这一类失败**本身
+      就是结果未知的**，不能靠「猜它删没删」来决定补偿做什么。上一版只放回了父，然后告诉
+      操作者「库里没有留下半截状态」，而在删了一部分的那种失败里这句话是假的：模型回来了，
+      它的线路少了几条，路由从此变了样却没人知道（第 53 轮 review 指出）。
 
-      补偿本身也可能失败（同一次库故障）。那时如实说清「父已删、子还在」，并把模型标识给出来，
-      让人能去查——不许吞掉（no-rootless-tree：追不到就说追不到，不拿一句「操作失败」顶上）。
+      补偿自己也可能失败（同一次库故障）。那时如实说清哪一半没回来，并把模型标识给出来
+      让人能去查——不许吞掉，也不许含混成一句「操作失败」（no-rootless-tree、
+      external-cause-first：给读的人一个他能处置的结论）。
 
       还有一条补偿也管不着的缝：删父与删子之间有人新建了一条线路（创建端点校验父存在，
       那一刻父还在）。它删完之后才落库，于是成为孤儿。彻底堵死要靠墓碑，已记入
       doc/debt.platform.llm-gateway.md 的 2026-09-17-offering-delete-has-no-tombstone。
     */
     var offeringFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id));
-    int offeringCount;
+    var offeringCount = childOfferings.Count;
     try
     {
-        offeringCount = (int)await gwModelOfferings.CountDocumentsAsync(offeringFilter);
         await gwModelOfferings.DeleteManyAsync(offeringFilter);
     }
     catch (MongoException cascadeFailure)
     {
+        var parentRestored = false;
+        var childrenRestored = 0;
+        var restoreErrors = new List<string>();
         try
         {
             await gwLogicalModels.InsertOneAsync(doc);
+            parentRestored = true;
         }
-        catch (MongoException restoreFailure)
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            await WriteOperationAuditAsync(
-                operationAudits, http,
-                action: "logical-model.delete", targetType: "llmgw_logical_model", targetId: id,
-                targetName: doc.AsNullableString("Name"), success: false,
-                reason: $"cascade-failed-and-restore-failed: {restoreFailure.Message}",
-                changes: new BsonDocument { { "publicId", ToBsonAuditValue(doc.AsNullableString("PublicId")) } });
-            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
-                "MODEL_DELETE_LEFT_ORPHANS",
-                $"这条模型已经删掉了，但它名下的线路没删干净，而且没能把模型放回去（{restoreFailure.Message}）。"
-                + $"库里现在有一批指向 {id} 的线路，它们不会出现在任何一屏上。"
-                + "请 DBA 按这个 id 清理 llmgw_model_offerings，或把模型按原标识重建回来"),
-                jsonOptions, 500);
+            // 父其实没被删掉（那次删除的结果也是未知的），那就已经在库里了。
+            parentRestored = true;
+        }
+        catch (MongoException ex)
+        {
+            restoreErrors.Add($"模型本身没能放回去：{ex.Message}");
         }
 
+        foreach (var child in childOfferings)
+        {
+            try
+            {
+                await gwModelOfferings.ReplaceOneAsync(
+                    Builders<BsonDocument>.Filter.Eq("_id", child.GetStringOrEmpty("_id")),
+                    child,
+                    new ReplaceOptions { IsUpsert = true });
+                childrenRestored++;
+            }
+            catch (MongoException ex)
+            {
+                restoreErrors.Add($"线路 {child.GetStringOrEmpty("_id")} 没能放回去：{ex.Message}");
+            }
+        }
+
+        var fullyRestored = parentRestored && childrenRestored == childOfferings.Count;
         await WriteOperationAuditAsync(
             operationAudits, http,
             action: "logical-model.delete", targetType: "llmgw_logical_model", targetId: id,
             targetName: doc.AsNullableString("Name"), success: false,
-            reason: $"cascade-failed-restored: {cascadeFailure.Message}",
-            changes: new BsonDocument { { "publicId", ToBsonAuditValue(doc.AsNullableString("PublicId")) } });
+            reason: (fullyRestored ? "cascade-failed-restored: " : "cascade-failed-partial-restore: ")
+                + cascadeFailure.Message,
+            changes: new BsonDocument
+            {
+                { "publicId", ToBsonAuditValue(doc.AsNullableString("PublicId")) },
+                { "parentRestored", parentRestored },
+                { "offeringsRestored", childrenRestored },
+                { "offeringsBefore", childOfferings.Count },
+            });
+
+        if (fullyRestored)
+        {
+            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+                "MODEL_DELETE_ROLLED_BACK",
+                $"删它名下的线路时失败了（{cascadeFailure.Message}）。已经把这条模型和它的 "
+                + $"{childOfferings.Count} 条线路都放回去，库回到了删之前的样子。"
+                + "刷新一下会看到它还在，稍后重试删除"),
+                jsonOptions, 503);
+        }
+
         return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
-            "MODEL_DELETE_ROLLED_BACK",
-            $"删它名下的线路时失败了（{cascadeFailure.Message}），已经把这条模型放回去，库里没有留下半截状态。"
-            + "刷新一下会看到它还在，稍后重试删除"),
-            jsonOptions, 503);
+            "MODEL_DELETE_LEFT_ORPHANS",
+            $"删它名下的线路时失败了（{cascadeFailure.Message}），而且没能把库放回删之前的样子："
+            + string.Join("；", restoreErrors)
+            + $"。现在的状态是：模型{(parentRestored ? "在" : "不在")}，"
+            + $"它原有的 {childOfferings.Count} 条线路放回了 {childrenRestored} 条。"
+            + $"模型标识是 {id}，请 DBA 按它核对 llmgw_logical_models 与 llmgw_model_offerings"),
+            jsonOptions, 500);
     }
 
     await WriteOperationAuditAsync(
@@ -6843,6 +6939,39 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                 "DUPLICATE_OFFERING",
                 "就在这几毫秒里，这个对外模型下多了一条指向同一个上游（含指定的上游模型）的线路，"
                 + "改动没有生效，原线路已经恢复。刷新看一眼现在有哪些线路，再决定怎么改。"), jsonOptions, 409);
+        }
+        catch (MongoException ex)
+        {
+            /*
+              撞键之外的失败（超时、主从切换、连接断开）同样要回滚。
+
+              上一版只接了撞键那一种，于是一次超时会带着原线路停用、替身悬空一起留在库里——
+              这个对外模型从此一条可用线路都没有，而操作者拿到的是一句 500。
+              「只有想得到的那种失败才回滚」正是判据太窄（形状 1）：真实失败里最常见的那种
+              恰好不在名单上。
+
+              超时这一类失败的结果是**未知的**（服务端可能已经写成功）。回滚不去猜：它是条件更新
+              ——原线路仍带着指向这个替身的标记才复活——所以晋升真的成功了也照样回到改之前的样子，
+              成功与否两种情形殊途同归。
+            */
+            try
+            {
+                await RollbackPromotionAsync();
+            }
+            catch (MongoException rollbackFailure)
+            {
+                return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                    "OFFERING_PROMOTION_LEFT_PARTIAL",
+                    $"新路由没能接管流量（{ex.Message}），回滚也失败了（{rollbackFailure.Message}）。"
+                    + $"这个对外模型现在可能一条可用线路都没有：原线路 {offeringId} 停用着、"
+                    + $"替身 {replacementId} 悬空着。刷新看一眼，手动把原线路启用回来"),
+                    jsonOptions, 500);
+            }
+
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_PROMOTION_FAILED",
+                $"新路由没能接管流量（{ex.Message}），原线路已经恢复，改动没有生效。稍后重试"),
+                jsonOptions, 503);
         }
         if (promoted.ModifiedCount != 1)
         {

@@ -6253,6 +6253,85 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Concat(allTenantIds)", loopTail, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 晋升新线路失败时一律回滚不只撞键那一种()
+    {
+        /*
+          换上游那条替换链里，晋升是最后一步：原线路已经停用、替身还挂着 staging 标记。
+          这一步失败而不回滚，这个对外模型就一条可用线路都没有了。
+
+          上一版只接了撞键那一种失败，而真实失败里最常见的（超时、主从切换、连接断开）
+          恰好不在名单上——判据比它该管的范围窄（形状 1）。判据因此不数「接了几种异常」，
+          而是要求这一段里的每一条失败出口都先回滚。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var update = EndpointBody(console, "app.MapPut(\"/gw/logical-models/{logicalId}/offerings/{offeringId}\"");
+
+        Assert.Contains("catch (MongoException ex)", update, StringComparison.Ordinal);
+        // 撞键、其它异常、以及 ModifiedCount 不为 1，三条失败出口都要走同一段回滚。
+        Assert.True(CountOccurrences(update, "await RollbackPromotionAsync();") >= 3,
+            "晋升的失败出口没有全部走回滚：撞键、其它 Mongo 异常、ModifiedCount 不为 1，三条都要");
+
+        // 回滚自己失败时不许吞：这个模型可能一条可用线路都没有，得说清并给出两个 id。
+        Assert.Contains("OFFERING_PROMOTION_LEFT_PARTIAL", update, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 级联删除失败时父和子都要放回去()
+    {
+        /*
+          超时这一类失败的结果是**未知的**：线路可能一条没删、也可能删了一半。只放回父，
+          然后告诉操作者「库里没有留下半截状态」，在删了一半那种失败里就是一句假话——
+          模型回来了，它的线路少了几条，路由从此变了样却没人知道。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/logical-models/{id}\"");
+
+        // 要先有快照才谈得上放回去：子文档整份读回来，不能只取 id。
+        Assert.Contains("var childOfferings = await gwModelOfferings", delete, StringComparison.Ordinal);
+        Assert.Contains("IsUpsert = true", delete, StringComparison.Ordinal);
+
+        var cascadeAt = delete.IndexOf("gwModelOfferings.DeleteManyAsync(offeringFilter)", StringComparison.Ordinal);
+        var parentAt = delete.IndexOf("gwLogicalModels.InsertOneAsync(doc)", StringComparison.Ordinal);
+        var childAt = delete.IndexOf("gwModelOfferings.ReplaceOneAsync", StringComparison.Ordinal);
+        Assert.True(cascadeAt > 0 && parentAt > cascadeAt, "级联删除失败时没有把对外模型放回去");
+        Assert.True(childAt > parentAt, "级联删除失败时没有把线路放回去，或顺序反了（父在，子才有归属）");
+
+        // 「库回到了删之前的样子」这句话只许在真的全放回去了的时候说。
+        var fullyAt = delete.IndexOf("var fullyRestored = parentRestored", StringComparison.Ordinal);
+        var claimAt = delete.IndexOf("库回到了删之前的样子", StringComparison.Ordinal);
+        Assert.True(fullyAt > 0, "没有区分「全放回去了」与「只放回去一部分」");
+        Assert.True(claimAt > fullyAt, "在还没判断放回去了多少之前就宣称库回到了删之前的样子");
+        Assert.Contains("MODEL_DELETE_LEFT_ORPHANS", delete, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 认领撞车只去掉被抢走的那几个调用方()
+    {
+        /*
+          多键唯一索引只说「撞了」，不说撞的是哪一个 code。把整份认领清空重插，就把一次
+          影响一个调用方的并发放大成影响这个池的全部调用方——没被抢的那几个也失去了接得住
+          它们的模型，池退场后静默改用用途默认。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var branchAt = console.IndexOf(
+            "else if (message.Contains(\"uniq_llmgw_logical_claim_per_type\"",
+            StringComparison.Ordinal);
+        Assert.True(branchAt > 0, "找不到认领撞车那条分支");
+        var branch = console[branchAt..(branchAt + 3000)];
+
+        // 回去读一遍现在谁认领着，只去掉真被占走的那几个。
+        Assert.Contains("takenCodes", branch, StringComparison.Ordinal);
+        Assert.Contains("keptClaims", branch, StringComparison.Ordinal);
+        Assert.Contains("fb.AnyIn(\"DefaultForAppCallerCodes\", claimsToTransfer)", branch, StringComparison.Ordinal);
+
+        // 清空是重插又撞时的最后兜底，不是第一反应：它必须排在第一次插入之后。
+        var firstInsertAt = branch.IndexOf("document[\"DefaultForAppCallerCodes\"] = new BsonArray(keptClaims)", StringComparison.Ordinal);
+        var emptyAt = branch.IndexOf("document[\"DefaultForAppCallerCodes\"] = new BsonArray();", StringComparison.Ordinal);
+        Assert.True(firstInsertAt > 0, "重插时没有带上留下来的那几个认领");
+        Assert.True(emptyAt > firstInsertAt, "认领撞车的第一反应还是把整份认领清空");
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);

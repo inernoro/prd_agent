@@ -417,9 +417,12 @@ public class PoolMigrationPlannerTests
     {
         var handler = MigrationHandler();
         Assert.Contains("uniq_llmgw_logical_claim_per_type", handler);
-        Assert.Contains("document[\"DefaultForAppCallerCodes\"] = new BsonArray()", handler);
         Assert.Contains("document[\"IsDefaultForType\"] = false", handler);
-        Assert.Contains("没有带上认领", handler);
+        // 认领撞车那一档不再把整份认领清空（第 53 轮 review：那会把一次影响一个调用方的并发
+        // 放大成影响这个池的全部调用方）。它现在只去掉真被占走的那几个，报告里说清是哪几个。
+        // 「只去掉被抢走的」这条性质由 GatewayDataDomainGuardTests 那条同名守卫盯着位置关系。
+        Assert.Contains("document[\"DefaultForAppCallerCodes\"] = new BsonArray(keptClaims)", handler);
+        Assert.Contains("这个池搬过来时没有带上它们", handler);
     }
 
     /// <summary>
