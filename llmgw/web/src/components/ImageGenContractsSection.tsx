@@ -468,6 +468,21 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
           ) : null}
 
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
+            {/*
+              启用开关必须在这儿。列表里会把停用的契约标出来、接口也来回带着 enabled，
+              唯独表单没有这个控件——于是一条从接口建出来的停用契约在控制台永远开不回来，
+              而一条在跑的契约想暂停只能删掉重建（形状 2：链路只建了一半，另一半在界面上缺着）。
+              默认值判的是「不等于 false」而不是 Boolean(...)：字段缺失的存量契约是启用的。
+            */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input
+                id="imagegen-enabled"
+                type="checkbox"
+                checked={editing.draft.enabled !== false}
+                onChange={(e) => setEditing({ ...editing, draft: { ...editing.draft, enabled: e.target.checked } })}
+              />
+              <span>启用这条契约</span>
+            </label>
             {([
               ['supportsImageToImage', '支持图生图'],
               ['supportsInpainting', '支持局部重绘'],

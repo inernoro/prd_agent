@@ -4323,8 +4323,18 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
     var pattern = (body.ModelIdPattern ?? string.Empty).Trim();
     if (pattern.Length == 0) return "模型匹配模式不能为空";
     if (pattern.Length > 200) return "模型匹配模式过长";
-    if (pattern.IndexOf('*') >= 0 && !pattern.EndsWith('*'))
-        return "通配符只能放在结尾，如 nano-banana*";
+    /*
+      通配符：要么一个都没有，要么**只有结尾那一个**。
+
+      上一版只看最后一个字符，于是 `nano**` 与 `nano*banana*` 都存得进去。前者运行时按
+      TrimEnd('*') 归一之后等价于 `nano*`，却是唯一索引眼里的另一条模式——两条契约匹配同一批
+      模型，谁生效看排序，而界面上它们看着是两条不同的规则（悄悄遮住别人）。后者中间那个星号
+      被当成普通字符，这条契约通常一个模型都匹配不上，保存成功、永远不生效
+      （第 59 轮 review；形状 1：判据只覆盖了最直观的那一种输入）。
+    */
+    var starCount = pattern.Count(ch => ch == '*');
+    if (starCount > 1 || (starCount == 1 && !pattern.EndsWith('*')))
+        return "通配符只能有一个、且只能放在结尾，如 nano-banana*";
 
     var format = (body.SizeParamFormat ?? "WxH").Trim();
     if (!ImageGenConfigVocabulary.SizeParamFormats.Contains(format))

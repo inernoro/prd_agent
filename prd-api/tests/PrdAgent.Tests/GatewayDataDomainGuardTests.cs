@@ -6548,6 +6548,37 @@ public class GatewayDataDomainGuardTests
         Assert.Equal(2, CountOccurrences(eligibility, "AsNullableBool(\"Enabled\") != true"));
     }
 
+    [Fact]
+    public void 契约的通配符只许有一个且只能在结尾()
+    {
+        /*
+          只看最后一个字符的话，`nano**` 与 `nano*banana*` 都存得进去。前者运行时按
+          TrimEnd('*') 归一之后等价于 `nano*`，却是唯一索引眼里的另一条模式——两条契约匹配同一批
+          模型，谁生效看排序，而界面上它们看着是两条不同的规则；后者中间那个星号被当成普通字符，
+          这条契约通常一个模型都匹配不上，保存成功、永远不生效（第 59 轮 review）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var validate = MethodBody(console, "static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)");
+        Assert.Contains("pattern.Count(ch => ch == '*')", validate, StringComparison.Ordinal);
+        Assert.Contains("starCount > 1", validate, StringComparison.Ordinal);
+        Assert.Contains("!pattern.EndsWith('*')", validate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 契约编辑器要给得出启用开关()
+    {
+        /*
+          列表会把停用的契约标出来、接口也来回带着 enabled，唯独表单没有这个控件——
+          于是一条从接口建出来的停用契约在控制台永远开不回来，一条在跑的契约想暂停只能删掉重建
+          （形状 2：链路只建了一半，另一半在界面上缺着）。
+        */
+        var section = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        Assert.Contains("id=\"imagegen-enabled\"", section, StringComparison.Ordinal);
+        // 默认值判「不等于 false」：字段缺失的存量契约是启用的，用 Boolean(...) 会把它显示成停用。
+        Assert.Contains("checked={editing.draft.enabled !== false}", section, StringComparison.Ordinal);
+        Assert.Contains("draft: { ...editing.draft, enabled: e.target.checked }", section, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
