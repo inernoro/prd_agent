@@ -1,5 +1,9 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
+using PrdAgent.LlmGw.LogicalModels;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -7137,7 +7141,15 @@ public class GatewayDataDomainGuardTests
         var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(replacement);", StringComparison.Ordinal);
         Assert.True(precheckAt >= 0, "换上游那条路没有身份撞车的前置检查");
         Assert.True(insertAt > precheckAt, "身份撞车检查排在插入替身之后，那时已经开始写库了");
-        Assert.Contains("fb.Eq(\"UpstreamModelId\", replacementUpstreamModelId)", program);
+        // 身份必须带上「实际打给上游的是哪一个模型」这一维，且走那份共享判据。
+        // 上一版逐字要求 `fb.Eq("UpstreamModelId", replacementUpstreamModelId)`——那既钉死了写法，
+        // 又恰好是被证明太窄的那个写法（没写的线路运行时会回落到目标名字，逐字比看不见它）。
+        var precheckEnd = program.IndexOf("FirstOrDefaultAsync();", precheckAt, StringComparison.Ordinal);
+        Assert.True(precheckEnd > precheckAt);
+        Assert.Contains(
+            "OfferingIdentityPolicy.SameUpstreamFilter(",
+            program[precheckAt..precheckEnd],
+            StringComparison.Ordinal);
 
         // 回滚只许有一份，晋升那一步的两种失败都走它。
         Assert.Contains("async Task RollbackPromotionAsync()", program);
@@ -7565,5 +7577,87 @@ public class GatewayDataDomainGuardTests
             Assert.Contains("GatewayCatalogGate.", source);
             Assert.DoesNotContain("\"observe\", StringComparison.OrdinalIgnoreCase", source);
         }
+    }
+
+    private static BsonDocument RenderFilter(FilterDefinition<BsonDocument> filter)
+        => filter.Render(new RenderArgs<BsonDocument>(
+            BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(),
+            BsonSerializer.SerializerRegistry));
+
+    [Fact]
+    public void 线路身份按运行时实际打出去的名字比()
+    {
+        /*
+          没写 UpstreamModelId 的线路，运行时会回落到目标的名字（兑换所取 ModelAlias、
+          物理模型取 ModelName）。按原值逐字判重的话，「不写」与「写上同名」是两个身份、
+          一个上游：管理员先建一条不写的、再建一条写同名的，两条都进得去，加权路由把同一个
+          上游算两份权重，故障转移「换一条」换到的还是它（第 66 轮 review）。
+        */
+        var exchange = new BsonDocument { { "_id", "ex-1" }, { "ModelAlias", "gpt-4o" } };
+        var model = new BsonDocument { { "_id", "m-1" }, { "ModelName", "Qwen-Max" } };
+
+        Assert.Equal("gpt-4o", OfferingIdentityPolicy.FallbackUpstreamModelId("exchange", exchange));
+        Assert.Equal("Qwen-Max", OfferingIdentityPolicy.FallbackUpstreamModelId("model", model));
+        Assert.Equal("gpt-4o", OfferingIdentityPolicy.EffectiveUpstreamModelId("exchange", exchange, null));
+        Assert.Equal("gpt-4o-mini", OfferingIdentityPolicy.EffectiveUpstreamModelId("exchange", exchange, " gpt-4o-mini "));
+
+        // 显式写了主别名 → 必须同时认「库里那条没写的」
+        var sameAsFallback = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", exchange, "GPT-4O")).ToString();
+        Assert.Contains("UpstreamModelId", sameAsFallback);
+        Assert.Contains("null", sameAsFallback);
+        Assert.Contains("exists", sameAsFallback);
+
+        // 写的是另一条别名 → 那是合法的第二条线路，不能把「没写」的那条也算成它
+        var otherAlias = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", exchange, "gpt-4o-mini")).ToString();
+        Assert.DoesNotContain("exists", otherAlias);
+
+        // 不写 → 等价于主别名，同样要认显式同名的那条
+        var omitted = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", exchange, null)).ToString();
+        Assert.Contains("exists", omitted);
+        Assert.Contains("/^gpt-4o$/i", omitted);
+
+        // 目标连名字都没有：回落解析不出东西，退回逐字比对，不许凭空放宽
+        var nameless = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", new BsonDocument { { "_id", "ex-2" } }, null)).ToString();
+        Assert.DoesNotContain("exists", nameless);
+
+        // 三处判重都走这一份：创建、改上游的替身、池搬迁。少接一处就是判据分裂。
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.True(
+            CountOccurrences(console, "OfferingIdentityPolicy.SameUpstreamFilter(") >= 3,
+            "创建 / 替身 / 搬迁三处判重必须共用同一份身份判据");
+        Assert.Equal(0, CountOccurrences(console, "fb.Eq(\"UpstreamModelId\", createUpstreamModelId)"));
+        Assert.Equal(0, CountOccurrences(console, "fb.Eq(\"UpstreamModelId\", replacementUpstreamModelId)"));
+    }
+
+    [Fact]
+    public void 一条翻不过去的生图契约不许连累其余每一条()
+    {
+        /*
+          运行时那张参数改名表是 OrdinalIgnoreCase 的，同时写了 model 与 MODEL 就会在字典
+          构造处抛重复键。整条 LINQ 一起炸的话，同步器的兜底「沿用上一版」会把这条坏数据
+          放大成**全部契约永久停更**，每 60 秒重演一次，界面上只看得到一个不再前进的时间
+          （第 66 轮 review，形状 10）。
+
+          两头都要堵：写入侧当场拒（控制面比运行时严一档），读取侧逐条翻、坏的跳过并点名。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var validatorAt = console.IndexOf("static string? ValidateImageGenConfig(", StringComparison.Ordinal);
+        Assert.True(validatorAt > 0, "生图契约的写入校验不见了");
+        var validatorEnd = console.IndexOf("static BsonDocument BuildImageGenConfigDocument(", validatorAt, StringComparison.Ordinal);
+        Assert.True(validatorEnd > validatorAt);
+        var validator = console[validatorAt..validatorEnd];
+        Assert.Contains("ParamRenames", validator, StringComparison.Ordinal);
+        Assert.Contains("OrdinalIgnoreCase", validator, StringComparison.Ordinal);
+
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        // 一整条 LINQ 里直接 Select 翻译，就是「一条坏的炸掉全部」的那种写法
+        Assert.Equal(0, CountOccurrences(worker, ".Select(ImageGenConfigTranslation.ToAdapterConfig)"));
+        Assert.Contains("catch (ArgumentException", worker, StringComparison.Ordinal);
+        // 跳过要点名，不能静默吞掉
+        Assert.Contains("unusable", worker, StringComparison.Ordinal);
     }
 }

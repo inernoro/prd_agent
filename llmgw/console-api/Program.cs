@@ -4470,6 +4470,29 @@ static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
                 return $"尺寸要写成「宽x高」，如 1024x1024（收到 {size}）";
         }
     }
+
+    /*
+      参数改名的键只许**不分大小写**地各出现一次。
+
+      运行时那张表是 OrdinalIgnoreCase 的（ImageGenConfigTranslation.ToAdapterConfig），
+      同时写进 model 与 MODEL 的话，字典构造当场抛重复键——而同步器的兜底是「这一轮没拉到
+      就沿用上一版」，于是这一条契约与**其余每一条正确的契约**从此都不再生效，每 60 秒重演一次，
+      界面上只看得到一个不再前进的同步时间（第 66 轮 review）。
+
+      这里当场拒掉：控制面比运行时严一档，写不进去就不会有那一轮。
+    */
+    var renameKeySeen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var (from, _) in body.ParamRenames ?? [])
+    {
+        var key = (from ?? string.Empty).Trim();
+        if (key.Length == 0) continue;
+        if (renameKeySeen.TryGetValue(key, out var earlier) && !string.Equals(earlier, key, StringComparison.Ordinal))
+        {
+            return $"参数改名的键「{earlier}」与「{key}」只有大小写之差，运行时把它们当同一个键，"
+                + "两条一起存会让这张表整体装不进去（连带其它契约一起失效）。请只保留其中一条";
+        }
+        renameKeySeen[key] = key;
+    }
     return null;
 }
 
@@ -5451,7 +5474,11 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                 var existingExchangeRoute = await gwModelOfferings.Find(fb.And(
                     fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
                     fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId),
-                    fb.Eq("UpstreamModelId", memberModelId))).FirstOrDefaultAsync();
+                    // 与两个写入端点同一份判据：库里那条没写 UpstreamModelId 的线路，
+                    // 运行时回落到的正是兑换所主别名——它与本成员同名时就是同一条上游，
+                    // 逐字比会漏掉它、再建一条，同一个上游拿两份权重。
+                    OfferingIdentityPolicy.SameUpstreamFilter("exchange", memberExchange, memberModelId)))
+                    .FirstOrDefaultAsync();
                 if (plannedOfferingKeys.Contains(exchangeRouteKey) || existingExchangeRoute is not null)
                 {
                     /*
@@ -6844,6 +6871,11 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
       那个索引里带着 UpstreamModelId——因为一个兑换所底下挂着多个别名时，同一个对外模型
       完全可能同时指向其中好几个，那是合法拓扑。这里少一个字段就比索引更严：
       同样的拓扑走搬迁建得出来、走这个端点却回 DUPLICATE_OFFERING（判据分裂）。
+
+      **但只按原值比又比索引松**：没写 UpstreamModelId 的线路运行时会回落到目标的名字，
+      于是「不写」与「写上同名」是同一个上游、两个身份。判重按运行时打出去的那个名字比
+      （OfferingIdentityPolicy），控制面因此比索引严一档——控制面可以比运行时严，
+      绝不能比它松（第 66 轮 review）。
     */
     var createUpstreamModelId = string.IsNullOrWhiteSpace(body?.UpstreamModelId)
         ? BsonNull.Value
@@ -6853,7 +6885,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         fb.Eq("LogicalModelId", id),
         fb.Eq("TargetKind", targetKind),
         fb.Eq("TargetId", targetId),
-        fb.Eq("UpstreamModelId", createUpstreamModelId),
+        OfferingIdentityPolicy.SameUpstreamFilter(targetKind, eligibleTarget, body?.UpstreamModelId),
         fb.Not(fb.Exists("SupersededByOfferingId")));
     if (await gwModelOfferings.Find(duplicate).AnyAsync())
         return Json(ApiEnvelope<ModelOfferingItem>.Fail(
@@ -7081,7 +7113,9 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
             fb.Eq("LogicalModelId", logicalId),
             fb.Eq("TargetKind", targetKind),
             fb.Eq("TargetId", targetId),
-            fb.Eq("UpstreamModelId", replacementUpstreamModelId),
+            // 与创建那一侧同一份判据：按运行时实际打出去的名字比，不按原值逐字比。
+            OfferingIdentityPolicy.SameUpstreamFilter(
+                targetKind, target, replacementUpstreamModelId.IsString ? replacementUpstreamModelId.AsString : null),
             fb.Ne("_id", offeringId),
             fb.Not(fb.Exists("SupersededByOfferingId"))))).FirstOrDefaultAsync();
         if (identityRival is not null)

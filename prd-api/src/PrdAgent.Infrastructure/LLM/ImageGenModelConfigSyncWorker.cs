@@ -200,14 +200,43 @@ public sealed class ImageGenModelConfigSyncWorker : BackgroundService
         // 租户明明配了自己的覆盖，实际生效的却可能是平台默认，同步状态还显示「已是最新」。
         // 加一个明确的作用域优先级，这件事就不再看运气（cross-project-isolation：
         // 一份共享状态被多方使用时，谁覆盖谁必须是显式的）。
-        var ordered = docs
-            .Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern))
-            .OrderBy(x => x.MatchOrder)
-            .ThenBy(x => string.IsNullOrEmpty(x.TenantId) ? 1 : 0)
-            .ThenByDescending(x => x.ModelIdPattern.Trim().Length)
-            .ThenBy(x => x.ModelIdPattern, StringComparer.Ordinal)
-            .Select(ImageGenConfigTranslation.ToAdapterConfig)
-            .ToList();
+        /*
+          一条翻不过去的契约不许连累其余每一条。
+
+          翻译里那张参数改名表是 OrdinalIgnoreCase 的，库里若躺着一条同时写了 model 与 MODEL
+          的契约（控制台那道写入闸是这一版才加的，更早写进去的还在），字典构造会抛重复键。
+          整条 LINQ 一起炸的话，外层兜底是「这一轮没拉到就沿用上一版」——于是**所有**契约
+          从此停在旧快照上，每 60 秒重演一次，而界面只看得到一个不再前进的同步时间
+          （第 66 轮 review；形状 10：兜底把一条坏数据放大成了全局静默失效）。
+
+          逐条翻，坏的那条跳过并点名，其余照常装上。
+        */
+        var ordered = new List<ImageGenModelAdapterConfig>();
+        var unusable = new List<string>();
+        foreach (var doc in docs
+                     .Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern))
+                     .OrderBy(x => x.MatchOrder)
+                     .ThenBy(x => string.IsNullOrEmpty(x.TenantId) ? 1 : 0)
+                     .ThenByDescending(x => x.ModelIdPattern.Trim().Length)
+                     .ThenBy(x => x.ModelIdPattern, StringComparer.Ordinal))
+        {
+            try
+            {
+                ordered.Add(ImageGenConfigTranslation.ToAdapterConfig(doc));
+            }
+            catch (ArgumentException ex)
+            {
+                unusable.Add($"{doc.ModelIdPattern}（{ex.Message}）");
+            }
+        }
+
+        if (unusable.Count > 0)
+        {
+            _logger.LogWarning(
+                "[ImageGenConfigSync] 有 {Count} 条生图契约翻不过去、这一轮没装上，其余照常生效：{Details}。" +
+                "多半是参数改名的键只差大小写（运行时那张表不分大小写），去控制台把重复的那条删掉。",
+                unusable.Count, string.Join("；", unusable));
+        }
 
         var before = ImageGenModelAdapterRegistry.OverrideCount;
         ImageGenModelAdapterRegistry.ReplaceOverrides(ordered);

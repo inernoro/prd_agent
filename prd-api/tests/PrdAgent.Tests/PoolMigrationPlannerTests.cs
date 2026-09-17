@@ -562,7 +562,10 @@ public class PoolMigrationPlannerTests
         var dupEnd = console.IndexOf("plannedOfferingKeys.Add(exchangeRouteKey);", dupAt, StringComparison.Ordinal);
         Assert.True(dupEnd > dupAt);
         var dupBody = console[dupAt..dupEnd];
-        Assert.Contains("fb.Eq(\"UpstreamModelId\", memberModelId)", dupBody);
+        // 身份必须带上「打给兑换所的是哪一个别名」这一维，且走那份共享判据——
+        // 上一版逐字要求 `fb.Eq("UpstreamModelId", memberModelId)`，那是把当时的写法钉死：
+        // 判据收敛成共享函数之后它会红，谁收敛谁的 CI 红（形状 4a），而收敛正是要做的事。
+        Assert.Contains("OfferingIdentityPolicy.SameUpstreamFilter(\"exchange\", memberExchange, memberModelId)", dupBody);
     }
 
     /// <summary>
