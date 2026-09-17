@@ -4851,7 +4851,9 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             StringComparer.Ordinal);
     // 本轮已经规划出去的认领：同一个调用方在同一个用途下只能被一个模型认领，
     // dry-run 要和 apply 说同一件事（与上面标识、默认那两张本轮索引同一个道理）。
-    var plannedClaims = new Dictionary<string, string>(StringComparer.Ordinal);
+    // 键是 appCaller 码，所以按身份规则比（不分大小写）：按字节的话本轮规划里
+    // Foo 与 foo 会被当成两个调用方，dry-run 说得通、apply 撞唯一索引。
+    var plannedClaims = new Dictionary<string, string>(AppCallerIdentityPolicy.Comparer);
     // 兑换所成员要照搬成 TargetKind=exchange 的线路，先把启用的兑换所取出来一次，
     // 不在每个成员上重查（一个池几十个成员，逐个打库没必要）。
     var enabledExchangesForMigration = await gwModelExchanges
@@ -5049,11 +5051,16 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             }
             else
             {
-                var rival = await gwLogicalModels.Find(fb.And(
-                    fb.Eq("TenantId", tenantId),
-                    fb.Eq("ModelType", modelType),
-                    fb.AnyEq("DefaultForAppCallerCodes", code),
-                    fb.Ne("_id", logicalId))).FirstOrDefaultAsync();
+                // 认领比对一律走 appCaller 身份规则（不分大小写），与运行时那一句同一份：
+                // 这里按字节查的话，「已经被别人认领了」会漏判，搬迁带过来的认领与对手的
+                // 认领同时存在，而运行时只认得其中一个（第 76 轮 review）。
+                var rival = await gwLogicalModels.Find(
+                    fb.And(
+                        fb.Eq("TenantId", tenantId),
+                        fb.Eq("ModelType", modelType),
+                        fb.AnyEq("DefaultForAppCallerCodes", code),
+                        fb.Ne("_id", logicalId)),
+                    new FindOptions { Collation = AppCallerIdentityPolicy.Collation }).FirstOrDefaultAsync();
                 if (rival is not null) holder = rival.AsNullableString("PublicId") ?? rival.GetStringOrEmpty("_id");
             }
 
@@ -5272,20 +5279,23 @@ app.MapPost("/gw/pools/migrate-to-models", async (
                           读回来之后仍可能再撞（又有人在这几毫秒里认领了），那时才退回清空——
                           那是最后一道兜底，不是第一反应。两种情况报出来的话不一样：说清哪几个没带上。
                         */
-                        var takenCodes = new HashSet<string>(StringComparer.Ordinal);
+                        // 同上：占用判定按身份不按字节，否则「已被占」会漏判。
+                        var takenCodes = new HashSet<string>(AppCallerIdentityPolicy.Comparer);
                         try
                         {
                             var holders = await gwLogicalModels
-                                .Find(fb.And(
-                                    fb.Eq("TenantId", tenantId),
-                                    fb.Eq("ModelType", modelType),
-                                    fb.AnyIn("DefaultForAppCallerCodes", claimsToTransfer)))
+                                .Find(
+                                    fb.And(
+                                        fb.Eq("TenantId", tenantId),
+                                        fb.Eq("ModelType", modelType),
+                                        fb.AnyIn("DefaultForAppCallerCodes", claimsToTransfer)),
+                                    new FindOptions { Collation = AppCallerIdentityPolicy.Collation })
                                 .ToListAsync();
                             foreach (var holder in holders)
                             {
                                 foreach (var code in GetStringArray(holder, "DefaultForAppCallerCodes"))
                                 {
-                                    if (claimsToTransfer.Contains(code, StringComparer.Ordinal))
+                                    if (claimsToTransfer.Contains(code, AppCallerIdentityPolicy.Comparer))
                                         takenCodes.Add(code);
                                 }
                             }
@@ -5347,7 +5357,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
 
                         entry.ClaimedAppCallerCodes = keptClaims;
                         var lostClaims = claimsToTransfer
-                            .Where(code => !keptClaims.Contains(code, StringComparer.Ordinal))
+                            .Where(code => !keptClaims.Contains(code, AppCallerIdentityPolicy.Comparer))
                             .ToList();
                         result.Skipped.Add(new PoolMigrationSkip
                         {
@@ -5967,7 +5977,9 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
             .Include("PublicId").Include("DefaultForAppCallerCodes").Include("IsDefaultForType"))
         .ToListAsync();
     // 这个调用方被哪个模型认领了（同用途下最多一个，写入侧保证）。
-    var claimedBy = new Dictionary<string, string>(StringComparer.Ordinal);
+    // 同样按身份规则：按字节的话，认领登记成 Foo 而调用方列表里是 foo 时，
+    // 面板会说「没人认领它」，而运行时明明认得——面板与运行时各说一套。
+    var claimedBy = new Dictionary<string, string>(AppCallerIdentityPolicy.Comparer);
     foreach (var doc in sameTypeDocs)
     {
         var owner = doc.GetStringOrEmpty("PublicId");
@@ -6011,7 +6023,7 @@ app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string
             //   认领了它 → 是（只要这个模型启用着且有能接的线路）
             //   被别人认领 → 不是，且说得出是谁
             //   没人认领 → 看这个模型是不是用途默认
-            var mine = myClaims.Contains(x.Code, StringComparer.Ordinal);
+            var mine = myClaims.Contains(x.Code, AppCallerIdentityPolicy.Comparer);
             var claimedElsewhere = !mine && claimedBy.TryGetValue(x.Code, out var owner);
             // 运行时在选中模型之后还要过一道「这个模型服不服务这个调用方」（授权名单 + 场景能力）。
             // 面板不判的话，它会指着一条运行时必拒的路说「会落到这里」——排障的人照着它去查，
@@ -6289,22 +6301,25 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
     //
     // 这里选拒绝而不是顶替：更新是显式编辑那个模型的认领列表，顶替是用户的意图；
     // 创建只是新增一个模型，没有「把别人的抢过来」这层意思，悄悄抢走是最大的惊讶。
-    var declaredClaims = (body?.DefaultForAppCallerCodes ?? new())
-        .Select(x => x.Trim()).Where(x => x.Length > 0)
-        .Distinct(StringComparer.Ordinal).ToList();
+    // 去重与下面的比对都走 appCaller 身份规则（不分大小写），不走字节：
+    // 运行时认领查询带的是那份 collation，控制面按字节判就比运行时松——
+    // 同一个身份会被两个模型同时认领成功，而界面两边都显示认领成功（第 76 轮 review）。
+    var declaredClaims = AppCallerIdentityPolicy.NormalizeClaims(body?.DefaultForAppCallerCodes);
     var createdAllowlist = (body?.AllowedAppCallerCodes ?? new())
         .Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
     if (ValidateClaimsWithinAllowlist(createdAllowlist, declaredClaims) is { } claimOutsideAllowlist)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", claimOutsideAllowlist), jsonOptions, 400);
     if (declaredClaims.Count > 0)
     {
-        var rival = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("ModelType", modelType),
-            Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", declaredClaims)))).FirstOrDefaultAsync();
+        var rival = await gwLogicalModels.Find(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ModelType", modelType),
+                Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", declaredClaims))),
+            new FindOptions { Collation = AppCallerIdentityPolicy.Collation }).FirstOrDefaultAsync();
         if (rival is not null)
         {
             var taken = rival.AsStringList("DefaultForAppCallerCodes")
-                .Where(x => declaredClaims.Contains(x, StringComparer.Ordinal)).ToList();
+                .Where(x => declaredClaims.Contains(x, AppCallerIdentityPolicy.Comparer)).ToList();
             var rivalName = rival.AsNullableString("PublicId") ?? rival.GetStringOrEmpty("_id");
             return Json(ApiEnvelope<LogicalModelItem>.Fail(
                 "CLAIM_TAKEN",
@@ -6705,9 +6720,10 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (currentModel is null)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
 
-    var normalizedClaims = body.DefaultForAppCallerCodes?
-        .Select(x => x.Trim()).Where(x => x.Length > 0)
-        .Distinct(StringComparer.Ordinal).ToList();
+    // 与创建那一侧同一份身份规则，理由见那里：控制面不许比运行时松。
+    var normalizedClaims = body.DefaultForAppCallerCodes is null
+        ? null
+        : AppCallerIdentityPolicy.NormalizeClaims(body.DefaultForAppCallerCodes);
     if (normalizedClaims is not null)
     {
         // 按**改完之后**的授权名单判：这次只改认领、名单沿用库里旧值时也要成立。
@@ -6781,14 +6797,16 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
 
         if (claims.Count > 0)
         {
-            var rivals = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("ModelType", claimType),
-                Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", claims),
-                Builders<BsonDocument>.Filter.Ne("_id", id)))).ToListAsync();
+            var rivals = await gwLogicalModels.Find(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("ModelType", claimType),
+                    Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", claims),
+                    Builders<BsonDocument>.Filter.Ne("_id", id))),
+                new FindOptions { Collation = AppCallerIdentityPolicy.Collation }).ToListAsync();
             foreach (var other in rivals)
             {
                 var before = other.AsStringList("DefaultForAppCallerCodes");
-                var taken = before.Where(x => claims.Contains(x, StringComparer.Ordinal)).ToList();
+                var taken = before.Where(x => claims.Contains(x, AppCallerIdentityPolicy.Comparer)).ToList();
                 if (taken.Count == 0) continue;
                 var rivalId = other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id");
                 foreach (var code in taken) displacedClaims.Add($"{code} 原本由 {rivalId} 认领");

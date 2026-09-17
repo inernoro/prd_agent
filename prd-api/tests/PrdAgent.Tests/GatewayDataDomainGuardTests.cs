@@ -6988,6 +6988,73 @@ public class GatewayDataDomainGuardTests
         return File.ReadAllText(full);
     }
 
+    /// <summary>
+    /// 每一处**按认领值过滤**的库查询都必须带 appCaller 身份的那份 collation。
+    ///
+    /// 为什么要一条接线守卫：collation 是**查询选项**不是过滤器，漏了不会编译报错、
+    /// 不会抛异常，只会让这条查询悄悄退回按字节比——而按字节比的后果是请求换一个模型，
+    /// 没有任何一处会说话（第 76 轮 review）。真 Mongo 的行为用例
+    /// （GatewayClaimIdentityCaseTests）钉住的是运行时那一句；控制台这一侧还有四处同类查询，
+    /// 逐条写行为用例不现实，所以这里用接线守卫兜住「一处都不许漏」。
+    ///
+    /// 判据只认**按认领值过滤**（AnyEq / AnyIn），不认把这个字段列进投影的查询——
+    /// 后者按 _id 或用途查，压根没有字符串比较，要求它带 collation 是误判。
+    /// 第一版正是这么写宽了，当场误报了两处投影（形状 1：判据比它该管的范围宽也是窄的反面）。
+    ///
+    /// 边界按**结构**取，不按固定字符数：从 `.Find(` 到这条链路结尾的 `Async()`。
+    /// 固定窗口在本 PR 已经误判红过两次，一律不许再用。
+    /// </summary>
+    [Fact]
+    public void 认领查询一处都不许漏掉身份collation()
+    {
+        var root = LocateRepoRoot();
+        var sources = new[]
+        {
+            Path.Combine(root, "llmgw", "console-api", "Program.cs"),
+            Path.Combine(root, "prd-api", "src", "PrdAgent.Infrastructure", "LlmGateway", "ModelResolver.cs"),
+        };
+
+        var offenders = new List<string>();
+        var scanned = 0;
+        foreach (var path in sources)
+        {
+            var source = File.ReadAllText(path);
+            var name = Path.GetFileName(path);
+            var cursor = 0;
+            while (true)
+            {
+                var findAt = source.IndexOf(".Find(", cursor, StringComparison.Ordinal);
+                if (findAt < 0) break;
+                cursor = findAt + 6;
+                // 这条 fluent 链路的结尾：第一个 Async() 调用。找不到说明结构变了，跳过它
+                // 不算数——下面的下限断言会因为总数变少而判红，不会静默少扫。
+                var endAt = source.IndexOf("Async(", findAt, StringComparison.Ordinal);
+                if (endAt < 0) continue;
+                var statement = source[findAt..endAt];
+                if (!statement.Contains("DefaultForAppCallerCodes", StringComparison.Ordinal)) continue;
+                // 只管按认领值过滤的那几处；把字段列进投影的不是字符串比较。
+                var filtersOnClaim = statement.Contains("AnyEq(", StringComparison.Ordinal)
+                                     || statement.Contains("AnyIn(", StringComparison.Ordinal);
+                if (!filtersOnClaim) continue;
+                scanned++;
+                var hasCollation =
+                    statement.Contains("AppCallerIdentityPolicy.Collation", StringComparison.Ordinal)
+                    || statement.Contains("GatewayAppCallerIdentity.Collation", StringComparison.Ordinal)
+                    || statement.Contains("identityOptions", StringComparison.Ordinal);
+                if (!hasCollation)
+                {
+                    var line = source[..findAt].Count(c => c == '\n') + 1;
+                    offenders.Add($"{name}:{line}");
+                }
+            }
+        }
+
+        Assert.True(scanned >= 5,
+            $"只扫到 {scanned} 处按认领值过滤的查询，少于已知的 5 处——是结构变了还是判据失灵了？扫不到就不许判绿。");
+        Assert.True(offenders.Count == 0,
+            "这些认领查询没带 appCaller 身份 collation，会悄悄退回按字节比：" + string.Join("、", offenders));
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

@@ -1146,8 +1146,17 @@ public class ModelResolver : IModelResolver
         // 这一层是模型池那个「按调用方兜底」能力的落点。少了它，把最后一个走池的调用方
         // 切过来时它会掉到全局默认上——换了模型，那不是断流是换药。
         // 两层都按 DisplayOrder/PublicId 排序：存量数据里万一有两个，取值确定而不是看运气。
+        //
+        // 认领比对必须带 appCaller 身份的那份 collation，否则它就是这条解析链路上
+        // **唯一**一处区分大小写的 appCaller 比较：注册与治理读按 collation 认（不分大小写），
+        // 授权名单按 OrdinalIgnoreCase 认，偏偏认领这一句按字节认。于是认领登记成 Foo、
+        // 请求带 foo 时，授权照过、认领落空，请求悄悄掉到「这个用途的默认」——换了一个模型，
+        // 而没有任何一处会报错（第 76 轮 review；形状 1：判据比它该管的范围窄）。
+        // GatewayAppCallerIdentity 的类注释本来就写着这份比较要在注册、治理、路由、去重、
+        // 唯一索引之间保持一致，这里是那句话唯一没被兑现的地方。
+        var identityOptions = new FindOptions { Collation = GatewayAppCallerIdentity.Collation };
         var logical = await logicalModels
-            .Find(fb.And(basics, fb.AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)))
+            .Find(fb.And(basics, fb.AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)), identityOptions)
             .SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)
             .FirstOrDefaultAsync(ct);
 
