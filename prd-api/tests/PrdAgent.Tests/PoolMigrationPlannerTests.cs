@@ -107,6 +107,54 @@ public class PoolMigrationPlannerTests
         Assert.Equal(new[] { "chat" }, PoolMigrationPlanner.CollectCapabilities(chat));
     }
 
+    [Fact]
+    public void 混着动作能力的池不许搬过去()
+    {
+        /*
+          搬迁把成员能力**并**成模型的能力集。动作能力（目前只有分层）一旦落在模型上就独占这个
+          模型的服务对象——能力门第二句直接短路成「只认分层那个专用调用方」。于是「普通生图 +
+          分层」的混合池搬过去，模型有可用线路、搬迁报成功，而原本用这个池的每一个普通调用方
+          全部被拒：存得进去、跑不起来，没有任何地方会说为什么（第 65 轮 review）。
+
+          断言的是「这种池会被拒并给出原因」这个性质，不是某一句措辞。
+        */
+        BsonDocument Cap(string type) => new BsonDocument
+        {
+            { "ModelId", "m-" + type }, { "PlatformId", "p1" },
+            { "Capabilities", new BsonArray(new[] { new BsonDocument { { "Type", type }, { "Value", true } } }) },
+        };
+
+        // 混着：一个普通生图成员 + 一个分层成员 —— 必须拒
+        var mixed = Pool(members: new[] { Cap("image_generation"), Cap("image_layering") });
+        var mixedReason = PoolMigrationPlanner.SkipReason(mixed);
+        Assert.NotNull(mixedReason);
+        Assert.Equal(mixedReason, PoolMigrationPlanner.OperationOnlyConflictReason(mixed));
+        // 下一步必须是做得到的动作，不能只报「不行」
+        Assert.Contains("拆", mixedReason!);
+
+        // 历史别名走的是另一条路（kebab-case），一样要认出来——只认一种写法就漏
+        var mixedAlias = Pool(members: new[] { Cap("image-gen"), Cap("image-layering") });
+        Assert.NotNull(PoolMigrationPlanner.OperationOnlyConflictReason(mixedAlias));
+
+        // 没声明能力的成员同样算「不具备分层」：它搬过去照样会被分层独占掉
+        var mixedSilent = Pool(members: new[] { Member(), Cap("image_layering") });
+        Assert.NotNull(PoolMigrationPlanner.OperationOnlyConflictReason(mixedSilent));
+
+        // 整池都是分层：能力集是自洽的（模型本来就只服务分层那个调用方），照搬
+        var allLayering = Pool(members: new[] { Cap("image_layering"), Cap("image_layering") });
+        Assert.Null(PoolMigrationPlanner.OperationOnlyConflictReason(allLayering));
+        Assert.Null(PoolMigrationPlanner.SkipReason(allLayering));
+
+        // 普通池不受影响
+        var ordinary = Pool(members: new[] { Cap("image_generation"), Member() });
+        Assert.Null(PoolMigrationPlanner.OperationOnlyConflictReason(ordinary));
+        Assert.Null(PoolMigrationPlanner.SkipReason(ordinary));
+
+        // 判据必须接在唯一那道闸上：端点只调 SkipReason，冲突不进 SkipReason 就等于没接线
+        var handler = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("PoolMigrationPlanner.SkipReason(pool)", handler);
+    }
+
     /// <summary>
     /// 近期的非健康状态照搬，陈年旧账重置。
     ///

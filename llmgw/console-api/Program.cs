@@ -5083,7 +5083,7 @@ app.MapPost("/gw/pools/migrate-to-models", async (
             {
                 var holder = plannedHolder
                     ?? defaultTaken!.AsNullableString("PublicId")
-                    ?? defaultTaken.GetStringOrEmpty("_id");
+                    ?? defaultTaken!.GetStringOrEmpty("_id");
                 entry.IsDefaultForType = false;
                 result.Skipped.Add(new PoolMigrationSkip
                 {
@@ -7823,20 +7823,6 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         if (string.IsNullOrWhiteSpace(observed)) return false;
         return !string.Equals(configured, observed, StringComparison.Ordinal);
     }
-    static bool HasUsablePoolMember(BsonDocument pool, HashSet<string> enabledPlatformIds, List<BsonDocument> enabledModels, List<BsonDocument> enabledExchanges)
-    {
-        var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-        return modelsArr
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Any(member => IsResolvablePoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges));
-    }
-    // 这里原本抄了一份和 IsResolvableGatewayPoolMember 一模一样的判定（连中继匹配都抄了一遍）。
-    // 两份口径必然各自漂移：池健康统计说这成员是活的、默认池校验说它是死的，谁也说不清哪个对。
-    // 收敛成一个入口，下面这两个只是薄转发。
-    static bool IsResolvablePoolMember(BsonDocument member, HashSet<string> enabledPlatformIds, List<BsonDocument> enabledModels, List<BsonDocument> enabledExchanges)
-        => IsResolvableGatewayPoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges);
-
     var gwPoolIds = IdSet(gwPoolDocs);
     var activeAppCallers = appCallerDocs
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))

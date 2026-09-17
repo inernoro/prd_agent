@@ -1596,17 +1596,30 @@ ensureTightenedUniqueIndex("book_digests",
 // ── llmgw 网关库 ──
 //
 // 网关的库通常与应用库分开（llmgw 有自己的连接串与库名），所以这一段只在**当前库确实是
-// 网关库**时才跑：判据是库里已经有 llmgw_* 集合。不加这个判断的话，对着应用库跑一次脚本
-// 会凭空建出一堆空的 llmgw_* 集合，而真正的网关库反而还是没有索引。
+// 网关库**时才跑。不加这个判断的话，对着应用库跑一次脚本会凭空建出一堆空的 llmgw_* 集合，
+// 而真正的网关库反而还是没有索引。
+//
+// 判据有两个信号，满足其一即认：
+//   · 库里已经有 llmgw_* 集合——对着跑了一段时间的网关库跑，最常见的那种；
+//   · 操作者用环境变量明确点名。**第一次建网关库时库还是空的**，前一个信号必然不成立，
+//     只靠它的话照文档跑一遍会打印跳过、一条约束都建不出来（第 65 轮 review）。
+//     库是不是网关库只有操作者知道，脚本猜不出来，所以由他说：
+//       PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js
+//     下面这几条 createIndex 会顺带把缺的集合建出来，空库也能一次到位。
 //
 // 这五条以前由进程启动时自动创建，2026-09-17 起改成启动只查不建（no-auto-index），
 // 于是它们必须在这份可执行清单里有一份，否则「按文档跑一遍」跑不出这几条约束，
 // 而并发保存就会写出两个默认、两个认领、两条补登、两份契约，
 // 且代码里那些撞键翻 409 的恢复路径永远不会被走到。
 const gatewayCollectionInfos = db.getCollectionInfos({ name: { $regex: "^llmgw_" } })
-if (gatewayCollectionInfos.length === 0) {
-  print("[skip] 当前库里没有任何 llmgw_* 集合，判定不是网关库，跳过网关索引。" +
-    "网关库要单独跑一次：mongosh <uri>/<网关库名> scripts/mongodb-indexes.js")
+const gatewayDbDeclared = typeof process !== "undefined" && process.env
+  ? ["1", "true", "yes"].indexOf(String(process.env.PRD_GATEWAY_DB || "").trim().toLowerCase()) >= 0
+  : false
+if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
+  print("[skip] 当前库里没有任何 llmgw_* 集合，判定不是网关库，跳过网关索引。\n" +
+    "        网关库要单独跑一次：mongosh <uri>/<网关库名> scripts/mongodb-indexes.js\n" +
+    "        网关库是空的（第一次建）时集合还不存在，这时用环境变量点名：\n" +
+    "        PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js")
 } else {
   // collection: llmgw_logical_models
   // 同一个租户、同一个用途下最多一个默认模型。

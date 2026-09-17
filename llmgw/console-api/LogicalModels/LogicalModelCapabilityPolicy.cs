@@ -76,6 +76,28 @@ public static class LogicalModelCapabilityPolicy
     /// <summary>分层这个动作能力唯一允许的调用方码，与权威侧的 AppCallerRegistry 那一条相同。</summary>
     public const string ImageLayeringAppCallerCode = "visual-agent.image.layering::generation";
 
+    /// <summary>分层这个动作能力的对外标识。与 GatewayCapabilityContract.ImageLayeringPublicId 相同。</summary>
+    public const string ImageLayeringPublicId = "image-layering";
+
+    /// <summary>
+    /// 这是「用户可以在选择器里挑的模型」还是「只能被具体动作点名调用的能力」。
+    /// 镜像 GatewayCapabilityContract.IsOperationOnly：PublicId 与 Capabilities 两个信号都认——
+    /// 不同数据来源填的字段不一样（一个是 kebab-case 的 image-layering，一个是 snake_case 的
+    /// image_layering），只认一个，换条路进来就漏。
+    /// </summary>
+    public static bool IsOperationOnly(string? publicId, IEnumerable<string>? capabilities)
+    {
+        var id = (publicId ?? string.Empty).Trim();
+        if (id.Length > 0 && string.Equals(id, ImageLayeringPublicId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return (capabilities ?? [])
+            .Select(TryCanonicalize)
+            .Any(x => string.Equals(x, ImageLayering, StringComparison.Ordinal));
+    }
+
     /// <summary>
     /// 这个调用方要求哪一种生图场景能力。镜像 GatewayCapabilityContract.RequiredScenarioCapability。
     /// </summary>

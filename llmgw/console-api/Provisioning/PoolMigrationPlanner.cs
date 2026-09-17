@@ -1,4 +1,5 @@
 using MongoDB.Bson;
+using PrdAgent.LlmGw.LogicalModels;
 
 namespace PrdAgent.LlmGw.Provisioning;
 
@@ -84,22 +85,41 @@ public static class PoolMigrationPlanner
     /// 于是搬迁报成功、调用方却调不到它，请求默默回落到池。
     /// 这个洞是影子比对在真实环境上抓出来的，不是想出来的。
     /// </summary>
+    public static IEnumerable<BsonDocument> Members(BsonDocument pool)
+        => pool.GetValue("Models", BsonNull.Value) is { IsBsonArray: true } arr
+            ? arr.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument)
+            : Enumerable.Empty<BsonDocument>();
+
+    /// <summary>
+    /// 单个池成员自己声明的那一份能力快照（原值，未归一）。
+    ///
+    /// 抽出来是因为「并起来是什么」与「每个成员各自是什么」是两个问题：并集决定模型的能力集，
+    /// 而成员之间是否同质要逐个看。上一版只有并集，于是混着的池看不出来（第 65 轮 review）。
+    /// </summary>
+    public static List<string> MemberCapabilities(BsonDocument member)
+    {
+        var found = new List<string>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        if (member.GetValue("Capabilities", BsonNull.Value) is not { IsBsonArray: true } caps) return found;
+        foreach (var cap in caps.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument))
+        {
+            // Value=false 是「明确不具备」，不是「没说」——不能当成具备
+            if (cap.GetValue("Value", BsonNull.Value) is { IsBoolean: true } v && !v.AsBoolean) continue;
+            var type = cap.GetValue("Type", BsonNull.Value) is { IsString: true } t ? t.AsString.Trim().ToLowerInvariant() : string.Empty;
+            if (type.Length > 0 && seen.Add(type)) found.Add(type);
+        }
+        return found;
+    }
+
     public static List<string> CollectCapabilities(BsonDocument pool)
     {
         var found = new List<string>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
-        var members = pool.GetValue("Models", BsonNull.Value) is { IsBsonArray: true } arr
-            ? arr.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument)
-            : Enumerable.Empty<BsonDocument>();
-        foreach (var member in members)
+        foreach (var member in Members(pool))
         {
-            if (member.GetValue("Capabilities", BsonNull.Value) is not { IsBsonArray: true } caps) continue;
-            foreach (var cap in caps.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument))
+            foreach (var type in MemberCapabilities(member))
             {
-                // Value=false 是「明确不具备」，不是「没说」——不能当成具备
-                if (cap.GetValue("Value", BsonNull.Value) is { IsBoolean: true } v && !v.AsBoolean) continue;
-                var type = cap.GetValue("Type", BsonNull.Value) is { IsString: true } t ? t.AsString.Trim().ToLowerInvariant() : string.Empty;
-                if (type.Length > 0 && seen.Add(type)) found.Add(type);
+                if (seen.Add(type)) found.Add(type);
             }
         }
 
@@ -158,6 +178,37 @@ public static class PoolMigrationPlanner
         if (ToPublicId(pool).Length == 0) return "池没有合法的对外标识（Code），搬过去也没有调用方能请求到它";
         var models = pool.GetValue("Models", BsonNull.Value);
         var count = models.IsBsonArray ? models.AsBsonArray.Count(x => x.IsBsonDocument) : 0;
-        return count == 0 ? "池里一个成员都没有，搬过去只会多一条永远解析不出来的模型" : null;
+        if (count == 0) return "池里一个成员都没有，搬过去只会多一条永远解析不出来的模型";
+        return OperationOnlyConflictReason(pool);
+    }
+
+    /// <summary>
+    /// 池里混着「动作能力成员」与「不具备那条动作能力的成员」时，搬迁必须拒绝，并说清怎么办。
+    ///
+    /// 为什么非拒不可：搬迁把成员能力**并**成模型的能力集，而动作能力（目前只有分层）一旦出现在
+    /// 模型上就独占这个模型的服务对象——<see cref="LogicalModelCapabilityPolicy.SupportsAppCallerScenario"/>
+    /// 第二句直接短路成「只认分层那个专用调用方」。于是一个「普通生图 + 分层」的混合池搬过去，
+    /// 模型有可用线路、搬迁报成功，而原本能用这个池的每一个普通调用方全部被拒——
+    /// 「存得进去、跑不起来」，而且没有任何地方会说为什么。
+    ///
+    /// 为什么不是「把动作能力丢掉」：那会让分层成员变成普通生图路由的候选（它需要一张输入图、
+    /// 不吃提示词，选中即每次必败），同时悄悄弄丢分层这件事本身——静默降级换静默降级。
+    /// 为什么不是「自动拆成两个模型」：拆出来的第二个模型叫什么、谁是它的默认、认领怎么分，
+    /// 都不是搬迁能替人决定的。所以这里只拒绝并点名，拆由人做。
+    /// </summary>
+    public static string? OperationOnlyConflictReason(BsonDocument pool)
+    {
+        var members = Members(pool).ToList();
+        if (members.Count == 0) return null;
+
+        var perMember = members.Select(MemberCapabilities).ToList();
+        if (!perMember.Any(caps => LogicalModelCapabilityPolicy.IsOperationOnly(null, caps))) return null;
+
+        var without = perMember.Count(caps => !LogicalModelCapabilityPolicy.IsOperationOnly(null, caps));
+        if (without == 0) return null;
+
+        return $"池里混着动作能力成员与普通成员（不具备 {LogicalModelCapabilityPolicy.ImageLayering} 的成员有 {without} 个）："
+             + "搬过去这些能力会并成同一个模型的能力集，而动作能力一旦落在模型上就只认它自己那个专用调用方，"
+             + "原本用这个池的普通调用方会全部被拒。请先把动作能力成员拆到单独的池里，再重跑搬迁。";
     }
 }

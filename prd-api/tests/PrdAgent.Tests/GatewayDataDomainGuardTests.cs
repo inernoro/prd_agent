@@ -6760,6 +6760,25 @@ public class GatewayDataDomainGuardTests
         // 只在确实是网关库时才建：对着应用库跑一次不许凭空建出一堆空的 llmgw_* 集合。
         Assert.Contains("$regex: \"^llmgw_\"", manifest, StringComparison.Ordinal);
 
+        /*
+          但「库里有 llmgw_ 集合」这一个信号在**第一次建网关库**时必然不成立——库还是空的，
+          照文档跑一遍会打印跳过、五条约束一条都建不出来（第 65 轮 review：判据比它该管的范围窄）。
+          所以要有第二个信号让操作者点名，且跳过时打印的下一步必须是**真的走得通**的那条命令，
+          而不是刚刚已经跳过的那一条。
+        */
+        var gateAt = manifest.IndexOf("gatewayCollectionInfos.length === 0", StringComparison.Ordinal);
+        Assert.True(gateAt > 0, "网关段的库判据不见了");
+        var elseAt = manifest.IndexOf("} else {", gateAt, StringComparison.Ordinal);
+        Assert.True(elseAt > gateAt);
+        var gate = manifest[gateAt..elseAt];
+        Assert.Contains("gatewayDbDeclared", gate, StringComparison.Ordinal);
+        Assert.Contains("PRD_GATEWAY_DB=1 mongosh", gate, StringComparison.Ordinal);
+        // 指南里也得有这条命令，否则「按文档跑一遍」拿不到它。
+        Assert.Contains(
+            "PRD_GATEWAY_DB=1 mongosh",
+            ReadRepoFile("doc/guide.platform.mongodb-indexes.md"),
+            StringComparison.Ordinal);
+
         // 旧版身份索引更严，留着等于新索引白建；但必须**先建好 v3** 再丢，顺序反了会有一段
         // 时间线路身份完全没有唯一约束。
         var v3At = manifest.IndexOf("uniq_llmgw_offering_tenant_logical_target_v3", StringComparison.Ordinal);
