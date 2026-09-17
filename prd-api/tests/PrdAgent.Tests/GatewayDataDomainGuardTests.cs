@@ -6639,6 +6639,58 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("setSyncPoolIds([]);", drawer, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 旧模型池的回滚备份写不进去不许挡住模型创建()
+    {
+        /*
+          池路由已经退场：线上解析走对外模型 + 线路，这几个池只剩回滚备份的用途。
+          上一版在池同步失败时把刚插入的模型删掉、回 500——一次写「回滚备份」失败，挡住了一条
+          本来完全能跑的模型的创建（第 61 轮 review）。轻重反了：备份写不进去可以稍后补，
+          模型建不出来是当场就挡住人的。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var create = EndpointBody(console, "app.MapPost(\"/gw/models\"");
+
+        // 池同步失败不许回删模型、不许早退。
+        var syncAt = create.IndexOf("EnsureGatewayModelPoolTypesAsync(", StringComparison.Ordinal);
+        Assert.True(syncAt > 0, "找不到旧模型池同步");
+        var catchTail = create[syncAt..(syncAt + 1400)];
+        Assert.DoesNotContain("MODEL_POOL_SYNC_FAILED", catchTail, StringComparison.Ordinal);
+        Assert.Contains("poolSyncMessage =", catchTail, StringComparison.Ordinal);
+
+        // 白名单与线路仍要照常建：判在池同步之后。
+        var publishAt = create.IndexOf("PublishGatewayModelToWhitelistAsync(", StringComparison.Ordinal);
+        Assert.True(publishAt > syncAt, "池同步失败之后没有继续登白名单");
+
+        // 降级要如实回传，不谎报全绿。
+        Assert.Contains("whitelistMessage ?? poolSyncMessage", create, StringComparison.Ordinal);
+        Assert.Contains("poolSyncDegraded", create, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 拒绝文案不许把人指向已经下线的模型池页()
+    {
+        /*
+          模型池页已经下线并重定向到对外模型页，前端也没有任何地方调搬迁接口。
+          「去「模型池」页跑一次搬迁」因此是一句走不通的话——而这几处恰恰是人被拦住、
+          最需要一个能走通的下一步的时刻（第 61 轮 review）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Equal(0, CountOccurrences(console, "去「模型池」页跑一次搬迁"));
+        Assert.Equal(0, CountOccurrences(console, "可在「模型池」页面手动补齐"));
+
+        // 主路径给的是当场能走通的那条。
+        Assert.Contains("那一栏列的就是能解析到的对外模型", console, StringComparison.Ordinal);
+        // 搬迁没有控制台入口这件事要如实说，不含混。
+        Assert.Contains("控制台目前没有这个入口", console, StringComparison.Ordinal);
+
+        // 前端确实没有这个入口——这条断言保证上面那句话别在补了入口之后还挂着。
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        Assert.Contains("path=\"/pools\"", app, StringComparison.Ordinal);
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        Assert.Equal(0, CountOccurrences(api, "pools/migrate-to-models"));
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
@@ -7303,9 +7355,14 @@ public class GatewayDataDomainGuardTests
             $"SystemPoolResolvableAsync 只有 {callSites} 个调用点：保存端点与取用路径都要判，"
             + "只判一头会出现「存得进去、跑不起来」或「存进去时好的、跑的时候已经不是」");
 
-        // 失败要说得出下一步，不是一句「不可用」。
+        /*
+          失败要说得出下一步，而且那个下一步得**真能走通**。
+          原先钉的是「去「模型池」页跑一次搬迁」——那一页已经下线并重定向，前端也没有任何地方
+          调搬迁接口，所以那句话本身就是一条走不通的路（第 61 轮 review）。现在钉的是那条当场
+          能走通的：改选「指定模型」。搬迁没有控制台入口这件事另有守卫盯着。
+        */
         Assert.Contains("MODEL_POOL_NOT_MIGRATED", program);
-        Assert.Contains("去「模型池」页跑一次搬迁", program);
+        Assert.Contains("那一栏列的就是能解析到的对外模型", program);
     }
 
     /// <summary>

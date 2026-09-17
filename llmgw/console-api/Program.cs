@@ -9147,8 +9147,11 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
         if (!await SystemPoolResolvableAsync(tenantId, poolId))
             return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
                 "系统级选中的这个模型池还没有搬成对外模型，解析不到它（池路由已经退场，"
-                + "认池 ID 的唯一一条路是它已经搬迁过）。去「模型池」页跑一次搬迁，"
-                + "或在「服务网关设置」改选「指定模型」——在那之前系统功能不会拿别的模型冒充你的选择。");
+                + "认池 ID 的唯一一条路是它已经搬迁过）。"
+                + "去「服务网关设置」改选「指定模型」——那一栏列的就是能解析到的对外模型，选完即刻生效。"
+                + "在那之前系统功能不会拿别的模型冒充你的选择。"
+                + "（这个池要继续用的话得先搬成对外模型，而控制台目前没有这个入口，"
+                + "只有接口 POST /gw/pools/migrate-to-models，已记台账。）");
     }
     if (string.Equals(modelSource, "model", StringComparison.Ordinal))
     {
@@ -9771,7 +9774,9 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
             return Json(ApiEnvelope<object>.Fail(
                 "MODEL_POOL_NOT_MIGRATED",
                 "这个模型池还没有搬成对外模型，选了也解析不到（池路由已经退场）。"
-                + "去「模型池」页跑一次搬迁，或改选「指定模型」。"), jsonOptions, 409);
+                + "改选「指定模型」——那一栏列的就是能解析到的对外模型。"
+                + "（这个池要继续用的话得先搬成对外模型，而控制台目前没有这个入口，"
+                + "只有接口 POST /gw/pools/migrate-to-models，已记台账。）"), jsonOptions, 409);
     }
     if (modelSource == "model")
     {
@@ -13286,7 +13291,11 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         catch
         {
             result.PoolSyncFailed = true;
-            result.Message = "模型已导入，但默认模型池同步失败，这批模型暂时不会被池路由选中；可在「模型池」页面手动补齐或稍后重试导入。";
+            // 池不在解析与计费链路上了，这里只剩回滚备份的意义——别把它说成「这批模型选不中」，
+            // 那句话会让人以为线上出了问题（第 61 轮 review：文案指向一个不存在的页面，
+            // 而且把一件不影响线上的事说成了影响线上）。
+            result.Message = "模型已导入，线上调用不受影响；只是旧模型池那份回滚备份没写进去。"
+                + "池不在解析与计费链路上，稍后重试导入即可补上。";
         }
     }
 
@@ -13480,7 +13489,19 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
         return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
     }
 
-    (int TypesCreated, int PoolsCreated, int ModelsAppended) ensured;
+    /*
+      旧模型池同步失败，不许把模型一起赔进去。
+
+      池路由已经退场：线上解析走的是对外模型 + 线路，这几个池只剩回滚备份的用途。
+      而上一版在这里失败时会把刚插入的模型删掉、回 500——一次写「回滚备份」失败，
+      挡住了一条本来完全能跑的模型的创建（第 61 轮 review）。轻重反了：
+      备份写不进去是可以稍后补的，模型建不出来是当场就挡住人的。
+
+      改成尽力而为：失败就记下来，照常往下走建白名单与线路，并把这件事如实写进响应，
+      不谎报全绿（与下面「登白名单失败也不回滚」同一口径）。
+    */
+    (int TypesCreated, int PoolsCreated, int ModelsAppended) ensured = default;
+    string? poolSyncMessage = null;
     try
     {
         ensured = await EnsureGatewayModelPoolTypesAsync(
@@ -13494,10 +13515,10 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
             internalTenantId,
             appendModels: true);
     }
-    catch
+    catch (Exception poolSyncFailure)
     {
-        await gwModels.DeleteOneAsync(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", id)));
-        return Json(ApiEnvelope<CreateModelResult>.Fail("MODEL_POOL_SYNC_FAILED", "默认模型池同步失败，模型未保存，请稍后重试"), jsonOptions, 500);
+        poolSyncMessage = $"模型已保存，线上调用不受影响；只是旧模型池那份回滚备份没写进去（{poolSyncFailure.Message}）。"
+            + "池不在计费与解析链路上，这条可以稍后再补";
     }
 
     /*
@@ -13564,6 +13585,7 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
             { "priceCurrency", ToBsonAuditValue(draft.PriceCurrency) },
             { "hasDedicatedKey", encryptedApiKey is not null },
             { "modelsAppended", ensured.ModelsAppended },
+            { "poolSyncDegraded", poolSyncMessage is { Length: > 0 } },
             // 登没登上白名单要能查得到：调不通时第一个要排除的就是「它有没有公开名」。
             { "publicId", publicId is { Length: > 0 } ? publicId : BsonNull.Value },
         });
@@ -13575,7 +13597,11 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
         ModelsAppended = ensured.ModelsAppended,
         PublicId = publicId,
         LinkedToExistingPublicId = linkedToExistingLogical,
-        WhitelistMessage = whitelistMessage,
+        // 两件事都可能降级，都要如实说。谁也不掩盖谁：登白名单失败是「调不通」，
+        // 池备份失败是「回滚那天会少一份」，严重度不同，读的人要分得开。
+        WhitelistMessage = whitelistMessage is { Length: > 0 } && poolSyncMessage is { Length: > 0 }
+            ? $"{whitelistMessage}\n另外：{poolSyncMessage}"
+            : whitelistMessage ?? poolSyncMessage,
     }), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
