@@ -1,12 +1,12 @@
 ---
 name: findmapskills
-version: 1.3.0
+version: 1.3.1
 description: PrdAgent 海鲜市场（skill marketplace）操作技能。通过长效 API Key 搜索、下载、上传、订阅本平台的技能包。当用户说"找个海鲜市场的技能做 X"、"从市场装个技能"、"把这个技能发布到市场"、"订阅新技能"时触发。
 ---
 
 # 海鲜市场全操作（findmapskills）
 
-> **版本**：v1.3.0 | **状态**：已落地 | **触发**：`/findmapskills`、"海鲜市场"、"从市场装技能"、"发布到市场"、"订阅新技能"
+> **版本**：v1.3.1 | **状态**：已落地 | **触发**：`/findmapskills`、"海鲜市场"、"从市场装技能"、"发布到市场"、"订阅新技能"
 
 > **来源**：$PRD_AGENT_BASE —— PrdAgent 官方内置技能，持续跟随后端 API 契约更新
 > **最新版下载**：`curl -sSLo findmapskills.zip $PRD_AGENT_BASE/api/official-skills/findmapskills/download`
@@ -117,11 +117,14 @@ curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/$SKILL_ID/unfavori
 
 ```bash
 CURSOR=$(cat ~/.prd-agent/last_cursor 2>/dev/null || echo "1970-01-01T00:00:00Z")
-curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=new&limit=50" "${AUTH[@]}" \
-  | jq --arg since "$CURSOR" '.data.items | map(select(.createdAt > $since))'
+RESPONSE=$(curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=new&limit=50" "${AUTH[@]}")
+echo "$RESPONSE" | jq --arg since "$CURSOR" '.data.items | map(select(.createdAt > $since))'
+LATEST=$(echo "$RESPONSE" | jq -r '[.data.items[].createdAt] | max // empty')
+[ -z "$LATEST" ] || { mkdir -p ~/.prd-agent && printf '%s\n' "$LATEST" > ~/.prd-agent/last_cursor; }
 ```
 
-把结果里最新一条 `createdAt` 写回 `~/.prd-agent/last_cursor` 即可。
+游标必须取所有结果中最大的 `createdAt`，不能假设 `items[0]` 是最新发布：市场的“最新”按
+`updatedAt` 展示，旧技能刚更新时会排在前面，但它不应被误报成刚上架。
 
 ## Key 过期处理
 
@@ -149,12 +152,12 @@ curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=new&limit=50" "${AUTH
 REMOTE_VERSION=$(curl -sSLo - "$PRD_AGENT_BASE/api/official-skills/findmapskills/download" \
   | unzip -p - findmapskills/SKILL.md | grep -oE '\*\*版本\*\*：[^（]+' | head -1)
 echo "远端版本: $REMOTE_VERSION"
-echo "本地版本: 1.3.0"
+echo "本地版本: 1.3.1"
 ```
 
 不一样就告诉用户：
 
-> 你装的 findmapskills 版本是 **1.3.0**，平台上已经有更新。跑这条命令重装：
+> 你装的 findmapskills 版本是 **1.3.1**，平台上已经有更新。跑这条命令重装：
 >
 > ```bash
 > # 这一段必须自带宿主识别：换个 shell 跑时 $SKILLS_DIRS 是空的，

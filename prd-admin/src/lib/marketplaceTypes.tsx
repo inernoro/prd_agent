@@ -633,7 +633,9 @@ export function sortMarketplaceItems(
     if (sortBy === 'hot') {
       return b.data.forkCount - a.data.forkCount;
     } else {
-      return new Date(b.data.createdAt).getTime() - new Date(a.data.createdAt).getTime();
+      const bTime = b.data.updatedAt || b.data.createdAt;
+      const aTime = a.data.updatedAt || a.data.createdAt;
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
     }
   });
 }

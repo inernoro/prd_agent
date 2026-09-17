@@ -172,20 +172,7 @@ curl -sSLo ai-defect-resolve.zip {{BASE_URL}}/api/official-skills/ai-defect-reso
     /// 经打包脚本进入 catalog —— 改版本只改技能文件那一处，这里不再单独维护。
     /// </summary>
     public static string FindMapSkillsVersion =>
-        OfficialSkillCatalog.Find(FindMapSkillsKey)?.Version ?? "1.2.0";
-
-    /// <summary>
-    /// 发版日期（ISO 8601 字符串）—— 用户判断"要不要重装"的关键信号。
-    /// </summary>
-    public const string FindMapSkillsReleaseDate = "2026-05-01";
-
-    /// <summary>
-    /// 发版日期（强类型 UTC）—— 给 createdAt/updatedAt 等需要 DateTime 字段的地方用，
-    /// 避免在请求路径上反复 DateTime.Parse 引入文化敏感性 + 性能损耗。
-    /// 改版本时连同 FindMapSkillsReleaseDate 一起改。
-    /// </summary>
-    public static readonly DateTime FindMapSkillsReleaseDateUtc =
-        new(2026, 5, 1, 0, 0, 0, DateTimeKind.Utc);
+        OfficialSkillCatalog.Find(FindMapSkillsKey)?.Version ?? "1.3.1";
 
     // findmapskills 的 SKILL.md 与 README 已迁出本文件。
     // 唯一事实源 = `.claude/skills/findmapskills/`，由 scripts/bundle-official-skills.mjs
