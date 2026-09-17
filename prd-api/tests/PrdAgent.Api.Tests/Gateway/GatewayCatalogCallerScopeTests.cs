@@ -40,6 +40,19 @@ public class GatewayCatalogCallerScopeTests
     }
 
     [Fact]
+    public void 通配授权的key不许被判越权()
+    {
+        /*
+          鉴权那一份判据认 `*`（Matches 的第一句）。清单这一侧要是自己逐字比，通配 key 会被
+          判越权而调用路径放行——清单说不能调、运行时说能调，方向反过来的同一种谎
+          （第 73 轮 review）。所以这里复用的就是那一份，不另写。
+        */
+        GatewayHttpEndpoints.RequestedCallerOutsideKeyScope("x.y::generation", ["*"]).ShouldBeFalse();
+        GatewayHttpEndpoints.RequestedCallerOutsideKeyScope("x.y::generation", ["a.b::chat", "*"]).ShouldBeFalse();
+        GatewayHttpEndpoints.RequestedCallerOutsideKeyScope("x.y::generation", [" * "]).ShouldBeFalse();
+    }
+
+    [Fact]
     public void 点名了授权范围外的必须拒()
     {
         GatewayHttpEndpoints.RequestedCallerOutsideKeyScope("x.y::generation", ["a.b::chat"]).ShouldBeTrue();

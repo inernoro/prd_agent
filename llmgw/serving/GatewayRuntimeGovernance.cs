@@ -506,11 +506,22 @@ public sealed class GatewayScopedKeyAuthorizer : IGatewayScopedKeyAuthorizer
            && (configured.Trim() == "*"
                || string.Equals(configured.Trim(), actual.Trim(), StringComparison.OrdinalIgnoreCase));
 
-    private static bool MatchesAny(IEnumerable<string>? configured, string actual)
+    /// <summary>
+    /// key 上配的这份清单覆不覆盖这个值。`*` 是通配、比较不分大小写、空清单一律不覆盖。
+    ///
+    /// 公开出去是因为它有第二个消费方：对外清单端点要判「请求头点名的调用方在不在这把 key
+    /// 的授权里」，而它自己写一遍逐字比较的话，通配 key（`AppCallerCodes = ["*"]`）会被清单
+    /// 判成越权、被调用路径判成放行——清单说不能调、运行时说能调，方向反过来的同一种谎
+    /// （第 73 轮 review）。判据只许有一份。
+    /// </summary>
+    public static bool ListCoversValue(IEnumerable<string>? configured, string actual)
     {
         var values = configured?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? [];
         return values.Count > 0 && values.Any(x => Matches(x, actual));
     }
+
+    private static bool MatchesAny(IEnumerable<string>? configured, string actual)
+        => ListCoversValue(configured, actual);
 
     private static bool ContainsAddress(string cidr, IPAddress address)
     {

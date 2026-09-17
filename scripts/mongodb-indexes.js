@@ -1744,11 +1744,41 @@ if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
   // 旧版身份索引比新版**更严**（少一个字段），留着它等于新索引白建：同一个兑换所的第二条
   // 别名照样撞 E11000。所以在新索引确认建好之后再丢旧的——顺序不能反，反了会有一段时间
   // 线路身份完全没有唯一约束。
+  //
+  // 「确认建好」的判据**不能只看名字在不在**。上面那次 ensureTightenedUniqueIndex 可能没成：
+  // 同名但定义不同、prepareUnique 转换失败、存量还有重复组——这几种它都只往
+  // tightenedUniqueIndexMigrationFailures 里记一笔就返回，索引名照样在（那是失败前就存在的
+  // 那一条）。只认名字的话，这里会把货真价实的 v2 与更早那条丢掉，脚本最后再抛错退出，
+  // 而库里只剩一条定义不对或根本不唯一的 v3 ——线路身份从此没有有效约束，重复的在跑线路
+  // 能直接写进去（第 73 轮 review；形状 8：拿一份不成立的证据当证明）。
+  //
+  // 所以重新读一遍索引，逐项核对：键要逐字相同、unique 必须为 true、而且这一趟没有为
+  // 这个集合记下任何失败。三条都成立才谈得上丢旧的。
   const offerings = db.getCollection("llmgw_model_offerings")
-  const offeringIndexNames = db.getCollectionInfos({ name: "llmgw_model_offerings" }).length > 0
-    ? offerings.getIndexes().map(index => index.name)
+  const offeringIndexes = db.getCollectionInfos({ name: "llmgw_model_offerings" }).length > 0
+    ? offerings.getIndexes()
     : []
-  if (offeringIndexNames.includes("uniq_llmgw_offering_tenant_logical_target_v3")) {
+  const offeringIndexNames = offeringIndexes.map(index => index.name)
+  const offeringIdentityKeys = {
+    "TenantId": 1,
+    "LogicalModelId": 1,
+    "TargetKind": 1,
+    "TargetId": 1,
+    "UpstreamModelId": 1,
+    "SupersededByOfferingId": 1
+  }
+  const v3Index = offeringIndexes.find(index => index.name === "uniq_llmgw_offering_tenant_logical_target_v3")
+  const offeringMigrationFailed = tightenedUniqueIndexMigrationFailures
+    .some(message => String(message).indexOf("llmgw_model_offerings.") === 0)
+  const v3Verified = !!v3Index
+    && v3Index.unique === true
+    && JSON.stringify(v3Index.key) === JSON.stringify(offeringIdentityKeys)
+    && !offeringMigrationFailed
+  if (!v3Verified) {
+    print("[skip] v3 线路身份索引没有确认就绪（不存在 / 定义不符 / 不是唯一索引 / 本轮有迁移失败），" +
+      "旧索引原样留着——丢了它们而 v3 又不生效的话，线路身份会完全没有唯一约束。")
+  }
+  if (v3Verified) {
     for (const legacyName of [
       "uniq_llmgw_offering_tenant_logical_target_v2",
       "uniq_llmgw_offering_tenant_logical_target"

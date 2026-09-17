@@ -6814,6 +6814,21 @@ public class GatewayDataDomainGuardTests
         var dropAt = manifest.IndexOf("uniq_llmgw_offering_tenant_logical_target_v2", StringComparison.Ordinal);
         Assert.True(dropAt > v3At, "先丢旧索引再建新的，中间那段时间线路身份没有唯一约束");
 
+        /*
+          而且「v3 建好了」不能只看名字在不在：上面那次 ensureTightenedUniqueIndex 可能同名但
+          定义不同、可能 prepareUnique 转换失败、可能存量还有重复组——这几种它都只记一笔失败
+          就返回，名字照样在（那是失败前就存在的那一条）。只认名字就会把货真价实的旧索引丢掉，
+          库里只剩一条不生效的 v3，线路身份从此没有有效约束（第 73 轮 review，形状 8）。
+        */
+        Assert.Contains("v3Verified", manifest, StringComparison.Ordinal);
+        Assert.Contains("v3Index.unique === true", manifest, StringComparison.Ordinal);
+        Assert.Contains("JSON.stringify(v3Index.key) === JSON.stringify(offeringIdentityKeys)", manifest, StringComparison.Ordinal);
+        Assert.Contains("offeringMigrationFailed", manifest, StringComparison.Ordinal);
+        // 只认名字的那种写法不许回来
+        Assert.Equal(0, CountOccurrences(
+            manifest,
+            "if (offeringIndexNames.includes(\"uniq_llmgw_offering_tenant_logical_target_v3\"))"));
+
         // 两处部分过滤器不是可选项：空数组在多键索引里记成 undefined，不排除就建不起来。
         Assert.Contains("\"DefaultForAppCallerCodes\": { $type: \"string\" }", manifest, StringComparison.Ordinal);
         Assert.Contains("\"Keys\": { $type: \"string\" }", manifest, StringComparison.Ordinal);
@@ -7737,6 +7752,8 @@ public class GatewayDataDomainGuardTests
         // 这一条只管接线——上一版把两件事混在一起写成源码断言，红绿闭环里把条件改成恒假
         // 它照样绿（第 67 轮那个教训的原样重演）。
         Assert.Contains("public static bool RequestedCallerOutsideKeyScope(", endpoints, StringComparison.Ordinal);
+        // 覆盖与否必须问鉴权那一份（它认 `*`），在这里逐字比会把通配 key 判成越权
+        Assert.Contains("GatewayScopedKeyAuthorizer.ListCoversValue(", endpoints, StringComparison.Ordinal);
         Assert.Contains("private static bool CatalogCallerDenied(", endpoints, StringComparison.Ordinal);
         // 清单与单模型详情读的是同一份数据，两处都要过同一道门
         Assert.Equal(2, CountOccurrences(endpoints, "CatalogCallerDenied(http, out"));

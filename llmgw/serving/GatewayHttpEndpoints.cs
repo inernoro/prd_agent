@@ -2012,8 +2012,10 @@ public static class GatewayHttpEndpoints
         var requested = (requestedCaller ?? string.Empty).Trim();
         if (requested.Length == 0) return false;
         if (authorizedCallers is not { Count: > 0 }) return false;
-        return !authorizedCallers.Any(x =>
-            string.Equals((x ?? string.Empty).Trim(), requested, StringComparison.OrdinalIgnoreCase));
+        // 覆盖与否走鉴权那一份判据，不在这里逐字比：通配 key（AppCallerCodes = ["*"]）
+        // 会被逐字比判成越权，而同一把 key 的调用路径是放行的——清单说不能调、运行时说能调，
+        // 方向反过来的同一种谎（第 73 轮 review）。
+        return !GatewayScopedKeyAuthorizer.ListCoversValue(authorizedCallers, requested);
     }
 
     private static string ResolveVerifiedAppCaller(HttpContext context, string fallback)
