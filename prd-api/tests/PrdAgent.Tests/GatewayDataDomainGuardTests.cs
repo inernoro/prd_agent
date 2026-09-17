@@ -6736,6 +6736,78 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("len(eligible) > 1", smoke, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void 网关那五条索引要进可执行清单()
+    {
+        /*
+          启动改成只查不建之后，「按文档跑一遍」必须真的能跑出这几条约束。只写进指南的表格、
+          不进可执行清单的话，DBA 照着做完仍然没有唯一索引——并发保存写出两个默认、两个认领、
+          两条补登、两份契约，而代码里那些撞键翻 409 的恢复路径永远不会被走到（第 63 轮 review）。
+        */
+        var manifest = ReadRepoFile("scripts/mongodb-indexes.js");
+        foreach (var name in new[]
+                 {
+                     "uniq_llmgw_logical_default_per_type",
+                     "uniq_llmgw_logical_claim_per_type",
+                     "uniq_llmgw_catalog_entry_key",
+                     "uniq_llmgw_imagegen_tenant_pattern",
+                     "uniq_llmgw_offering_tenant_logical_target_v3",
+                 })
+        {
+            Assert.Contains(name, manifest, StringComparison.Ordinal);
+        }
+
+        // 只在确实是网关库时才建：对着应用库跑一次不许凭空建出一堆空的 llmgw_* 集合。
+        Assert.Contains("$regex: \"^llmgw_\"", manifest, StringComparison.Ordinal);
+
+        // 旧版身份索引更严，留着等于新索引白建；但必须**先建好 v3** 再丢，顺序反了会有一段
+        // 时间线路身份完全没有唯一约束。
+        var v3At = manifest.IndexOf("uniq_llmgw_offering_tenant_logical_target_v3", StringComparison.Ordinal);
+        var dropAt = manifest.IndexOf("uniq_llmgw_offering_tenant_logical_target_v2", StringComparison.Ordinal);
+        Assert.True(dropAt > v3At, "先丢旧索引再建新的，中间那段时间线路身份没有唯一约束");
+
+        // 两处部分过滤器不是可选项：空数组在多键索引里记成 undefined，不排除就建不起来。
+        Assert.Contains("\"DefaultForAppCallerCodes\": { $type: \"string\" }", manifest, StringComparison.Ordinal);
+        Assert.Contains("\"Keys\": { $type: \"string\" }", manifest, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 同名判据在库查询与内存挑选上同一份()
+    {
+        /*
+          存量文档没有 ModelNameNormalized，库里存着 `Foo` 而线路覆盖成 `foo` 时，逐字比对
+          一条都查不到——名录门判成「管不着」放行，一个名录外又没盖放行标记的模型就过去了
+          （第 63 轮 review）。名录门对名字本来就不分大小写，这里逐字比反而更严一档，
+          严到把该拦的漏了。
+        */
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+        Assert.Contains("public static FilterDefinition<BsonDocument> SameNameFilter(", gate, StringComparison.Ordinal);
+        Assert.Contains("StringComparison.OrdinalIgnoreCase", gate, StringComparison.Ordinal);
+
+        // 单条查询与批量预取都要走这一份，不许各拼各的。
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        // 两个调用点：单条查询与批量预取。数的是「至少两处」而不是精确条数——
+        // 注释里提到它也会被数进去，把注释算成判据就是又一条会漂的断言。
+        Assert.Contains("GatewayCatalogGate.SameNameFilter(trimmed)", resolver, StringComparison.Ordinal);
+        Assert.Contains("names.Select(GatewayCatalogGate.SameNameFilter)", resolver, StringComparison.Ordinal);
+        Assert.Equal(0, CountOccurrences(resolver, "fb.Eq(\"ModelName\", trimmed)"));
+        Assert.Equal(0, CountOccurrences(resolver, "fb.In(\"ModelName\", names)"));
+    }
+
+    [Fact]
+    public void 同步状态落定之后要降频继续看不是彻底停()
+    {
+        /*
+          「都跟上了」只是那一刻的事实。这一屏开着的时候某个进程完全可能停掉或连不上库，
+          而服务端要等下一次请求才把它算成 stale——没人再问，那句「所有进程都装着当前这一版」
+          就无限期地挂在屏幕上，而它早就不成立了（第 63 轮 review）。
+        */
+        var section = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        // 落定不再是「直接 return，不排下一次」。
+        Assert.DoesNotContain("if (data === null || hostsSettled) return undefined;", section, StringComparison.Ordinal);
+        Assert.Contains("hostsSettled ? Math.max(60, base * 10) : base", section, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);

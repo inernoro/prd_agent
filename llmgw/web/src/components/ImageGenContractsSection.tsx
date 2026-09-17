@@ -156,11 +156,24 @@ export function ImageGenContractsSection({ canWrite }: { canWrite: boolean }) {
   */
   const hostsSettled = data === null
     || data.syncHosts.every((x) => x.syncState === 'current' || x.syncState === 'not-applicable');
+  /*
+    落定之后**放慢**，不是停掉。
+
+    上一版落定就彻底取消轮询。可是「都跟上了」只是那一刻的事实：这一屏开着的时候，某个进程
+    完全可能停掉或连不上库，而服务端要等下一次请求才把它算成 stale——没人再问，那句
+    「所有进程都装着当前这一版」就无限期地挂在屏幕上，而它早就不成立了
+    （第 63 轮 review；同一类毛病：拿一个时刻的结论当成持续成立的结论）。
+
+    所以分两档：没落定时按服务端给的刷新周期追，落定之后降到十倍周期（至少一分钟）继续看着。
+    降频是为了别把一屏静态信息变成一个高频轮询器，而不是为了省那几次请求。
+  */
   useEffect(() => {
-    if (data === null || hostsSettled) return undefined;
+    if (data === null) return undefined;
+    const base = Math.max(5, data.refreshSeconds);
+    const seconds = hostsSettled ? Math.max(60, base * 10) : base;
     const timer = window.setTimeout(
       () => { void load().finally(() => setPollTick((x) => x + 1)); },
-      Math.max(5, data.refreshSeconds) * 1000);
+      seconds * 1000);
     return () => window.clearTimeout(timer);
     // pollTick 进依赖：成功时 data 换了新对象会重排，失败时 data 不变，
     // 只有这一格心跳能把下一次排上。少了它，一次网络抖动就等于永久停摆。

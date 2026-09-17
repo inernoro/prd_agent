@@ -143,6 +143,24 @@ public static class GatewayCatalogGate
     }
 
     /// <summary>
+    /// 「同名」在 Mongo 那一侧的谓词，与 <see cref="SelectSameNameDocs"/> 逐条对应。
+    ///
+    /// 原始名字那一支要忽略大小写：存量文档没有 ModelNameNormalized，库里存着 `Foo` 而线路
+    /// 覆盖成 `foo` 时逐字比对一条都查不到，这道门就判成「管不着」放行——该拦的漏了
+    /// （第 63 轮 review）。内存挑选与库查询必须同口径，否则预取走一条路、单查走另一条路，
+    /// 同一个输入两种结论（形状 3）。
+    /// </summary>
+    public static FilterDefinition<BsonDocument> SameNameFilter(string modelName)
+    {
+        var trimmed = modelName.Trim();
+        var fb = Builders<BsonDocument>.Filter;
+        return fb.Or(
+            fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
+            fb.Regex("ModelName", new BsonRegularExpression(
+                "^" + System.Text.RegularExpressions.Regex.Escape(trimmed) + "$", "i")));
+    }
+
+    /// <summary>
     /// 从一批模型文档里挑出「这条线路该管的那几条」：同名（两个名字字段都认）、同一个 Provider。
     ///
     /// 这是运行时 <c>SelectCatalogDocs</c> 的同一套谓词，收在这里是因为消费方不止一个：
@@ -161,7 +179,13 @@ public static class GatewayCatalogGate
         var normalized = trimmed.ToLowerInvariant();
         return docs.Where(doc =>
         {
-            var matchesName = Text(doc, "ModelNameNormalized") == normalized || Text(doc, "ModelName") == trimmed;
+            // 回落到原始名字这一支要忽略大小写。存量文档（没有 ModelNameNormalized 的那种）
+            // 里存着 `Foo`，而线路覆盖成 `foo` 时，逐字比对一条都匹配不上——于是这道门判成
+            // 「管不着」放行，一个名录外、又没盖放行标记的模型就这么过去了。名录门本身对名字
+            // 就是不分大小写的（GatewayModelCatalog.Contains 走归一化），这里逐字比反而更严
+            // 一档，严到把该拦的漏了（第 63 轮 review：还是「判据比它该管的范围窄」）。
+            var matchesName = Text(doc, "ModelNameNormalized") == normalized
+                || string.Equals(Text(doc, "ModelName"), trimmed, StringComparison.OrdinalIgnoreCase);
             if (!matchesName) return false;
             return string.IsNullOrWhiteSpace(platformId) || Text(doc, "PlatformId") == platformId;
         }).ToList();

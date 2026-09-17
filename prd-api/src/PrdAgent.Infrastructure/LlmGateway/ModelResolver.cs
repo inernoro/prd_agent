@@ -309,11 +309,12 @@ public class ModelResolver : IModelResolver
         // 决定这道门的结论：同名文档超过 20 条时，那一页里可能根本没有当前这个 Provider 的记录，
         // 于是过滤后为空、判成「管不着」——没盖放行标记的模型反而被放过去（形状 1：
         // 判据取的是任意一页，不是它该管的那条）。
+        // 同名谓词与内存挑选同一份（GatewayCatalogGate.SameNameFilter）：原始名字那一支忽略
+        // 大小写，否则存量文档（没有归一化字段）里的 `Foo` 配上覆盖值 `foo` 查不到，
+        // 判成「管不着」放行——该拦的漏了。
         var nameFilter = fb.And(
             fb.Eq("TenantId", CurrentTenantId),
-            fb.Or(
-                fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
-                fb.Eq("ModelName", trimmed)));
+            GatewayCatalogGate.SameNameFilter(trimmed));
         var scopedFilter = string.IsNullOrWhiteSpace(platformId)
             ? nameFilter
             : fb.And(nameFilter, fb.Eq("PlatformId", platformId));
@@ -388,9 +389,9 @@ public class ModelResolver : IModelResolver
         var docs = await _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_models")
             .Find(fb.And(
                 fb.Eq("TenantId", CurrentTenantId),
-                fb.Or(
-                    fb.In("ModelNameNormalized", names.Select(name => name.ToLowerInvariant())),
-                    fb.In("ModelName", names))))
+                // 逐个名字用同一份谓词 Or 起来：批量这一支此前用 In 逐字比原始名字，
+                // 与单条查询不同口径，存量文档换个大小写就只在其中一条路上查得到。
+                fb.Or(names.Select(GatewayCatalogGate.SameNameFilter))))
             .Limit(CatalogBatchDocumentCap + 1)
             .ToListAsync(ct);
         return docs.Count > CatalogBatchDocumentCap ? null : docs;

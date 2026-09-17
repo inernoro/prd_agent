@@ -1593,6 +1593,106 @@ ensureTightenedUniqueIndex("book_digests",
 // end collection: book_digests
 
 
+// ── llmgw 网关库 ──
+//
+// 网关的库通常与应用库分开（llmgw 有自己的连接串与库名），所以这一段只在**当前库确实是
+// 网关库**时才跑：判据是库里已经有 llmgw_* 集合。不加这个判断的话，对着应用库跑一次脚本
+// 会凭空建出一堆空的 llmgw_* 集合，而真正的网关库反而还是没有索引。
+//
+// 这五条以前由进程启动时自动创建，2026-09-17 起改成启动只查不建（no-auto-index），
+// 于是它们必须在这份可执行清单里有一份，否则「按文档跑一遍」跑不出这几条约束，
+// 而并发保存就会写出两个默认、两个认领、两条补登、两份契约，
+// 且代码里那些撞键翻 409 的恢复路径永远不会被走到。
+const gatewayCollectionInfos = db.getCollectionInfos({ name: { $regex: "^llmgw_" } })
+if (gatewayCollectionInfos.length === 0) {
+  print("[skip] 当前库里没有任何 llmgw_* 集合，判定不是网关库，跳过网关索引。" +
+    "网关库要单独跑一次：mongosh <uri>/<网关库名> scripts/mongodb-indexes.js")
+} else {
+  // collection: llmgw_logical_models
+  // 同一个租户、同一个用途下最多一个默认模型。
+  ensureTightenedUniqueIndex("llmgw_logical_models",
+    { "TenantId": 1, "ModelType": 1 },
+    {
+      name: "uniq_llmgw_logical_default_per_type",
+      unique: true,
+      partialFilterExpression: { "IsDefaultForType": true }
+    }
+  )
+  // 同一个租户、同一个用途下，一个调用方最多被一个模型认领。
+  // 认领存在数组里，走多键唯一索引；部分过滤器判「数组里至少有一个字符串元素」——
+  // 空数组在多键索引里记成 undefined，不排除的话所有「一个都没认领」的模型会互相撞车，
+  // 索引根本建不起来。
+  ensureTightenedUniqueIndex("llmgw_logical_models",
+    { "TenantId": 1, "ModelType": 1, "DefaultForAppCallerCodes": 1 },
+    {
+      name: "uniq_llmgw_logical_claim_per_type",
+      unique: true,
+      partialFilterExpression: { "DefaultForAppCallerCodes": { $type: "string" } }
+    }
+  )
+  // end collection: llmgw_logical_models
+
+  // collection: llmgw_catalog_entries
+  // 规范标识与等价写法共用一个键空间，同样走多键唯一索引 + 同样的部分过滤器。
+  ensureTightenedUniqueIndex("llmgw_catalog_entries",
+    { "TenantId": 1, "Keys": 1 },
+    {
+      name: "uniq_llmgw_catalog_entry_key",
+      unique: true,
+      partialFilterExpression: { "Keys": { $type: "string" } }
+    }
+  )
+  // end collection: llmgw_catalog_entries
+
+  // collection: llmgw_imagegen_model_configs
+  // 同一个租户下一个匹配模式最多一条契约。
+  ensureTightenedUniqueIndex("llmgw_imagegen_model_configs",
+    { "TenantId": 1, "ModelIdPattern": 1 },
+    { name: "uniq_llmgw_imagegen_tenant_pattern", unique: true }
+  )
+  // end collection: llmgw_imagegen_model_configs
+
+  // collection: llmgw_model_offerings
+  // 线路身份里必须带上「打给上游的是哪一个模型」：一个兑换所底下挂着多个别名时，
+  // 同一个对外模型可能同时指向其中好几个，那是合法拓扑。
+  ensureTightenedUniqueIndex("llmgw_model_offerings",
+    {
+      "TenantId": 1,
+      "LogicalModelId": 1,
+      "TargetKind": 1,
+      "TargetId": 1,
+      "UpstreamModelId": 1,
+      "SupersededByOfferingId": 1
+    },
+    { name: "uniq_llmgw_offering_tenant_logical_target_v3", unique: true }
+  )
+  // 旧版身份索引比新版**更严**（少一个字段），留着它等于新索引白建：同一个兑换所的第二条
+  // 别名照样撞 E11000。所以在新索引确认建好之后再丢旧的——顺序不能反，反了会有一段时间
+  // 线路身份完全没有唯一约束。
+  const offerings = db.getCollection("llmgw_model_offerings")
+  const offeringIndexNames = db.getCollectionInfos({ name: "llmgw_model_offerings" }).length > 0
+    ? offerings.getIndexes().map(index => index.name)
+    : []
+  if (offeringIndexNames.includes("uniq_llmgw_offering_tenant_logical_target_v3")) {
+    for (const legacyName of [
+      "uniq_llmgw_offering_tenant_logical_target_v2",
+      "uniq_llmgw_offering_tenant_logical_target"
+    ]) {
+      if (!offeringIndexNames.includes(legacyName)) continue
+      try {
+        offerings.dropIndex(legacyName)
+        print(`[ok] 已丢弃更严的旧线路身份索引 ${legacyName}（v3 已就位）`)
+      } catch (error) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `llmgw_model_offerings.${legacyName}: drop failed: ${error.message || error}`
+        )
+      }
+    }
+  }
+  // end collection: llmgw_model_offerings
+}
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`
