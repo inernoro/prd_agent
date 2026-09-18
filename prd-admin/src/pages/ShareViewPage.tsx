@@ -4,7 +4,8 @@ import { viewSiteShare, saveSharedSite } from '@/services';
 import type { ShareViewData } from '@/services';
 import { listShareComments, getShareSiteContent } from '@/services/real/webPages';
 import { useAuthStore } from '@/stores/authStore';
-import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
+import { Lock, ExternalLink, FileCode2, Eye, EyeOff, AlertCircle, ShieldCheck, Unlock, Download, FileDown, Check, LogIn, MessageSquare, X, Maximize, Minimize } from 'lucide-react';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import { BlackHoleVortex } from '@/components/effects/BlackHoleVortex';
 import { BlurText } from '@/components/reactbits';
 import { SHARE_FAILURE_REGISTRY, resolveShareFailure } from '@/components/web-hosting/shareFailure';
@@ -20,6 +21,11 @@ import {
   hasFetchableHtml,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
+import {
+  planSourceDownload,
+  describeDownloadResult,
+  saveTextAsFile,
+} from '@/components/web-hosting/sourceDownload';
 
 /**
  * 幻灯片邀请条：告诉访客这一页能用键盘翻。
@@ -155,6 +161,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   const inputRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saved' | 'already'>('idle');
+  /** 正在取源文件 */
+  const [downloading, setDownloading] = useState(false);
+  /**
+   * 下载之后要不要多说一句：多文件站下到的只是入口那一份，失败了要说清为什么。
+   * 不做成一闪而过的 toast——它是结论，用户得来得及读完。
+   */
+  const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
@@ -214,6 +227,46 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       setTimeout(() => setSaveStatus('idle'), 3000);
     }
   }, [token, password, isAuthenticated, navigate]);
+
+  /**
+   * 下载源文件。
+   *
+   * 正文走**服务端同源代理**再从 Blob 落盘，而不是给托管直链挂一个 a[download]：
+   * 托管内容在独立域名，跨域的 download 属性会被浏览器忽略、退化成导航打开——
+   * 而「导航打开一份 text/html」正是某些 App 内置浏览器弹「Download：(null)」的那条路径。
+   * 从同源拿内容，浏览器不必再为这份内容发一次跨域请求。
+   */
+  const handleDownloadSource = useCallback(async () => {
+    if (!token || !data || data.sites.length !== 1) return;
+    const site = data.sites[0];
+    const plan = planSourceDownload(site);
+
+    if (plan.kind === 'unavailable') {
+      setDownloadNote({ text: plan.reason, tone: 'error' });
+      return;
+    }
+    if (plan.kind === 'asset') {
+      // 独立资产（PDF 等）本来就是一份可下载的文件，交给浏览器自己处理
+      window.open(plan.url, '_blank', 'noopener');
+      setDownloadNote(null);
+      return;
+    }
+
+    setDownloading(true);
+    setDownloadNote(null);
+    const res = await getShareSiteContent(token, site.id, password || undefined);
+    setDownloading(false);
+    if (!res.success || !res.data?.html) {
+      setDownloadNote({
+        text: res.error?.message || '取源文件失败，请稍后再试或找分享者要原始文件。',
+        tone: 'error',
+      });
+      return;
+    }
+    saveTextAsFile(res.data.html, plan.fileName);
+    const note = describeDownloadResult(plan);
+    setDownloadNote(note ? { text: note, tone: 'info' } : null);
+  }, [token, data, password]);
 
   const fetchShare = async (pwd?: string) => {
     if (!token) return;
@@ -636,6 +689,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
     const fetchedHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
     const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
+    // 按钮的提示语在**按下之前**就说清会拿到什么：多文件站下到的只是入口那一份，
+    // 包装站根本不是网页。点一次换一个报错是最差的那种交代方式。
+    const downloadPlan = planSourceDownload(site);
+    const downloadHint =
+      downloadPlan.kind === 'unavailable' ? downloadPlan.reason
+        : downloadPlan.kind === 'asset' ? `下载源文件（${downloadPlan.fileName}）`
+        : downloadPlan.partial ? `下载入口文件 ${downloadPlan.fileName}（本站共 ${downloadPlan.fileCount} 个文件）`
+        : `下载源文件（${downloadPlan.fileName}）`;
     return (
       <div
         ref={singleViewRef}
@@ -649,90 +710,116 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           overflow: 'hidden',
         }}
       >
-        {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
-        <div className="border-b border-b-token-subtle" style={{ padding: isMobile ? '6px 10px' : '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
-          {/* 标题区必须可收缩（minWidth:0 + 省略号），否则手机端它会把右侧按钮挤扁 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0, flex: 1 }}>
-            <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" style={{ flexShrink: 0 }} />
+        {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏。
+            观感收在 styles/share-topbar.css：这条栏永远浮在访客上传的网页之上，所以带
+            surface-tone-dark 钉死深色，按钮一律走 token（admin-dual-theme）。原先四个按钮
+            各写一套内联 style、各自一个亮蓝、都没有 hover——顶栏比它托着的内容还抢眼。
+            现在只有「保存到我的托管」是实心主操作，其余一律安静。 */}
+        <div style={{ display: isFullscreen ? 'none' : 'block' }}>
+          <div className="share-topbar surface-tone-dark border-b border-b-token-subtle">
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
-            <span style={{ color: '#fff', fontSize: isMobile ? 13 : 14, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {data.title || site.title}
-            </span>
+            <div className="share-topbar-title">
+              <ShieldCheck size={14} color="var(--accent-fg-success)" style={{ flexShrink: 0 }} />
+              <span>{data.title || site.title}</span>
+            </div>
+            {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
+                这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
+            <div className="share-topbar-actions">
+              {!site.pdfAssetUrl && (
+                <button
+                  className="share-topbar-btn"
+                  onClick={togglePresentFullscreen}
+                  title="全屏演示（Esc 退出）"
+                  aria-label="全屏演示"
+                >
+                  {isFullscreen ? <Minimize size={isMobile ? 15 : 13} /> : <Maximize size={isMobile ? 15 : 13} />}
+                  {!isMobile && '全屏演示'}
+                </button>
+              )}
+              {!isOwner && (
+                <button
+                  onClick={handleSave}
+                  disabled={saving || saveStatus !== 'idle'}
+                  title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
+                  aria-label="保存到我的托管"
+                  className={
+                    saveStatus === 'saved' ? 'share-topbar-btn share-topbar-btn--success'
+                      : saveStatus === 'already' ? 'share-topbar-btn share-topbar-btn--warning'
+                      : 'share-topbar-btn share-topbar-btn--primary'
+                  }
+                >
+                  {saving ? (
+                    <><MapSpinner size={isMobile ? 15 : 13} /> {!isMobile && '保存中...'}</>
+                  ) : saveStatus === 'saved' ? (
+                    <><Check size={isMobile ? 15 : 13} /> {!isMobile && '已保存'}</>
+                  ) : saveStatus === 'already' ? (
+                    <><Check size={isMobile ? 15 : 13} /> {!isMobile && '你已经保存过了'}</>
+                  ) : !isAuthenticated ? (
+                    <><LogIn size={isMobile ? 15 : 13} /> {!isMobile && '登录并保存'}</>
+                  ) : (
+                    <><Download size={isMobile ? 15 : 13} /> {!isMobile && '保存到我的托管'}</>
+                  )}
+                </button>
+              )}
+              {/* 下载源文件：登录用户可见。
+                  为什么要有：拿到一个分享链接之后，想把这份 HTML 本身要回来（换个人发、
+                  存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
+                  存下来的常常不是那一份。
+                  为什么限登录：源文件就是这份内容的全部，门槛与「保存到我的托管」保持一致。 */}
+              {isAuthenticated && (
+                <button
+                  className="share-topbar-btn"
+                  onClick={handleDownloadSource}
+                  disabled={downloading}
+                  title={downloadHint}
+                  aria-label="下载源文件"
+                >
+                  {downloading ? <MapSpinner size={isMobile ? 15 : 13} /> : <FileDown size={isMobile ? 15 : 13} />}
+                  {!isMobile && (downloading ? '取源文件…' : '下载源文件')}
+                </button>
+              )}
+              <span className="share-topbar-divider" />
+              <a
+                className="share-topbar-btn"
+                href={site.pdfAssetUrl || site.siteUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="新窗口打开"
+                aria-label="新窗口打开"
+              >
+                <ExternalLink size={isMobile ? 15 : 13} />
+                {!isMobile && '新窗口打开'}
+              </a>
+              {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
+                  浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
+              {token && (
+                <button
+                  className="share-topbar-btn"
+                  onClick={() => setShowComments(true)}
+                  title="评论"
+                  aria-label="评论"
+                >
+                  <MessageSquare size={isMobile ? 15 : 13} />
+                  {isMobile
+                    ? (commentCount != null && commentCount > 0 ? commentCount : '')
+                    : `评论${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
+                </button>
+              )}
+            </div>
           </div>
-          {/* 手机端四个按钮并排会互相挤压（mobile-first-density：进内容前 ≤1 条控制条）。
-              这里不换行、不堆叠，改为「仅图标 + title 提示」，桌面端维持带文字的原样。 */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 2 : 12, flexShrink: 0 }}>
-            {!site.pdfAssetUrl && (
-              <button
-                onClick={togglePresentFullscreen}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none', background: isMobile ? 'transparent' : 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
-                title="全屏演示（Esc 退出）"
-                aria-label="全屏演示"
-              >
-                {isFullscreen ? <Minimize size={isMobile ? 15 : 12} /> : <Maximize size={isMobile ? 15 : 12} />}
-                {!isMobile && '全屏演示'}
-              </button>
-            )}
-            {!isOwner && (
-              <button
-                onClick={handleSave}
-                disabled={saving || saveStatus !== 'idle'}
-                title={saveStatus === 'saved' ? '已保存' : saveStatus === 'already' ? '你已经保存过了' : !isAuthenticated ? '登录并保存' : '保存到我的托管'}
-                aria-label="保存到我的托管"
-                style={{
-                  display: 'flex', alignItems: 'center', gap: 4,
-                  padding: isMobile ? '6px 8px' : '4px 10px', borderRadius: 6, border: 'none',
-                  fontSize: 13, cursor: saving || saveStatus !== 'idle' ? 'default' : 'pointer',
-                  background: isMobile ? 'transparent'
-                    : saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.2)'
-                    : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.2)'
-                    : 'rgba(59, 130, 246, 0.15)',
-                  color: saveStatus === 'saved' ? 'rgba(34, 197, 94, 0.9)'
-                    : saveStatus === 'already' ? 'rgba(234, 179, 8, 0.9)'
-                    : 'rgba(59, 130, 246, 0.9)',
-                  transition: 'all 0.2s',
-                }}
-              >
-                {saving ? (
-                  <><div style={{ ...styles.miniSpinner }} /> {!isMobile && '保存中...'}</>
-                ) : saveStatus === 'saved' ? (
-                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '已保存'}</>
-                ) : saveStatus === 'already' ? (
-                  <><Check size={isMobile ? 15 : 12} /> {!isMobile && '你已经保存过了'}</>
-                ) : !isAuthenticated ? (
-                  <><LogIn size={isMobile ? 15 : 12} /> {!isMobile && '登录并保存'}</>
-                ) : (
-                  <><Download size={isMobile ? 15 : 12} /> {!isMobile && '保存到我的托管'}</>
-                )}
-              </button>
-            )}
-            <a
-              href={site.pdfAssetUrl || site.siteUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="新窗口打开"
-              aria-label="新窗口打开"
-              style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, color: '#3b82f6', fontSize: 13, textDecoration: 'none' }}
+          {/* 下载的结论说明：多文件站下到的只是入口那一份、失败了为什么失败。
+              一闪而过的 toast 读不完，这里占一行，由用户自己关掉。 */}
+          {downloadNote && (
+            <div
+              className={`share-topbar-note surface-tone-dark${downloadNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}
+              role="status"
             >
-              <ExternalLink size={isMobile ? 15 : 12} />
-              {!isMobile && '新窗口打开'}
-            </a>
-            {/* 评论入口放在顶栏（MAP 自己的 chrome）：PPT/全屏页无滚动条，底部放评论区不可达；
-                浮动按钮又会盖住 PPT 右下角的翻页控件。顶栏按钮零侵入页面布局，点击从右侧抽屉打开。 */}
-            {token && (
-              <button
-                onClick={() => setShowComments(true)}
-                title="评论"
-                aria-label="评论"
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: isMobile ? '6px 8px' : 0, border: 'none', background: 'transparent', color: '#3b82f6', fontSize: 13, cursor: 'pointer' }}
-              >
-                <MessageSquare size={isMobile ? 15 : 12} />
-                {isMobile
-                  ? (commentCount != null && commentCount > 0 ? commentCount : '')
-                  : `评论${commentCount != null && commentCount > 0 ? ` ${commentCount}` : ''}`}
+              <span>{downloadNote.text}</span>
+              <button onClick={() => setDownloadNote(null)} title="知道了" aria-label="关闭说明">
+                <X size={14} />
               </button>
-            )}
-          </div>
+            </div>
+          )}
         </div>
         <div style={{ position: 'relative', minHeight: 0, background: '#fff' }}>
           {/* Iframe
