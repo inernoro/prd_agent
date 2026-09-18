@@ -41,7 +41,7 @@
   left: 0;
   right: 0;
   height: 140vh;
-  z-index: 0;
+  z-index: 1; /* 盖在叙事区舞台（z 0）之上，让蜂窝在 3D 上面淡出 */
   overflow: hidden;
   background: var(--cdsh-bg);
   -webkit-mask-image: linear-gradient(180deg, #000 68%, transparent 100%);
@@ -1807,10 +1807,11 @@
 /* ───────────────────────── Branchline 叙事区（2026-09-16）─────────────────────────
  * 一条分支线贯穿、镜头沿线推进。舞台 sticky 在视口里，五章从它上面滚过去（负外边距叠回一屏），
  * 文案的淡入淡出由场景组件按滚动进度直接写 style，这里只给静态默认（无 JS 时全部可读）。 */
-.cdsh-story { position: relative; z-index: 1; margin-top: 1rem; }
-.cdsh-stage { position: sticky; top: 0; height: 100vh; overflow: hidden; background: var(--cdsh-bg); }
+/* 叙事区从 hero 蜂窝层「下面」钻出来：负外边距把舞台顶到蜂窝渐隐区里，蜂窝层（z 1）盖在舞台（z 0）上淡出 */
+.cdsh-story { position: relative; z-index: 0; margin-top: -22vh; }
+.cdsh-story-stage { position: sticky; top: 0; height: 100vh; overflow: hidden; background: var(--cdsh-bg); }
 .cdsh-scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
-.cdsh-stage-vignette { position: absolute; inset: 0; pointer-events: none;
+.cdsh-story-vignette { position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(120% 90% at 50% 40%, transparent 40%, rgba(18, 15, 23, 0.55) 100%); }
 .cdsh-chapters { position: relative; z-index: 2; margin-top: -100vh; }
 .cdsh-ch { min-height: 100vh; position: relative; }
@@ -1864,5 +1865,11 @@
 }
 
 /* 舞台顶部往 hero 方向渐隐，hero 的蜂窝底纹与叙事区的黑之间不留硬边 */
-.cdsh-stage::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 18vh; z-index: 1; pointer-events: none;
-  background: linear-gradient(var(--cdsh-bg), transparent); }
+/* 舞台顶部：从 hero 的底色渐入，过渡拉到半屏；再叠一层极淡的同款六边形纹理让两段共用一种材质语言 */
+.cdsh-story-stage::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 46vh; z-index: 1; pointer-events: none;
+  background: linear-gradient(var(--cdsh-bg) 0%, rgba(18, 15, 23, 0.86) 34%, transparent 100%); }
+.cdsh-story-stage::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0.05;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='68' height='118' viewBox='0 0 68 118'><g fill='none' stroke='white' stroke-width='1'><path d='M34 2 66 20v36L34 74 2 56V20z'/><path d='M34 61 66 79v36L34 133 2 115V79z'/><path d='M0 -18 32 0v36L0 54'/><path d='M68 -18 36 0v36l32 18'/></g></svg>");
+  background-size: 4.25rem 7.375rem;
+  -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,0.6) 30%, transparent 70%);
+  mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,0.6) 30%, transparent 70%); }

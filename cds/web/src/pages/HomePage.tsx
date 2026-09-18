@@ -138,9 +138,9 @@ function BranchlineStory({ onEnter }: { onEnter: () => void }): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null);
   return (
     <div className="cdsh-story" ref={rootRef}>
-      <div className="cdsh-stage">
+      <div className="cdsh-story-stage">
         <BranchlineScene rootRef={rootRef} />
-        <div className="cdsh-stage-vignette" aria-hidden />
+        <div className="cdsh-story-vignette" aria-hidden />
         <nav className="cdsh-rail" aria-label="章节">
           {STORY.map((c, i) => (
             <a key={c.id} href={`#${c.id}`} data-cdsh-rail={i}><i /><span>{c.rail}</span></a>

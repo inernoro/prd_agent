@@ -45,8 +45,17 @@ describe('首页 Branchline 叙事区', () => {
     expect(scene).toContain("matchMedia('(prefers-reduced-motion: reduce)')");
   });
 
+  it('叙事区的类名在 HomePage 里只出现在叙事区（2026-09-18 撞车事故：cdsh-stage 与 hero 实况板列同名，hero 多出一块整屏黑）', () => {
+    for (const cls of ['cdsh-story', 'cdsh-story-stage', 'cdsh-story-vignette', 'cdsh-chapters', 'cdsh-rail', 'cdsh-ch-pin', 'cdsh-ch-copy']) {
+      const n = (home.match(new RegExp(`className="(?:[^"]* )?${cls}(?: [^"]*)?"`, 'g')) || []).length;
+      expect(n, `${cls} 应只在叙事区用一次，多于一次就是和 hero 撞名`).toBe(1);
+    }
+    expect(home, 'hero 自己的 cdsh-stage 必须还在，叙事区不得复用它').toContain('className="cdsh-stage"');
+    expect(css, '叙事区舞台的样式不得写在 .cdsh-stage 上').not.toMatch(/\.cdsh-stage \{[^}]*position: sticky/);
+  });
+
   it('舞台 sticky、章节负外边距叠回一屏——这对组合是滚动叙事成立的前提', () => {
-    expect(css).toMatch(/\.cdsh-stage \{[^}]*position: sticky;[^}]*height: 100vh;/);
+    expect(css).toMatch(/\.cdsh-story-stage \{[^}]*position: sticky;[^}]*height: 100vh;/);
     expect(css).toMatch(/\.cdsh-chapters \{[^}]*margin-top: -100vh;/);
     expect(css).toMatch(/\.cdsh-ch-pin \{[^}]*position: sticky;/);
   });

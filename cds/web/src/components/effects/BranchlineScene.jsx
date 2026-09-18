@@ -84,7 +84,7 @@ function buildScene(canvas) {
   scene.environmentIntensity = 0.55;
 
   // 灯：暖主光跟着镜头，冷轮廓光从后上方把边缘切出来
-  scene.add(new THREE.HemisphereLight(0x4a3a5c, 0x120f17, 0.5));
+  scene.add(new THREE.HemisphereLight(0x4a3a5c, 0x120f17, 0.32));
   const key = new THREE.PointLight(0xffb27a, 18, 60, 1.6);
   scene.add(key);
   const rim = new THREE.DirectionalLight(0x8a7cff, 1.2);
@@ -124,7 +124,7 @@ function buildScene(canvas) {
     const p = new THREE.Points(g, m); scene.add(p); return p;
   }
   // 星尘要少、要暗：2400 颗白点叠辉光会把整个背景抬成灰雾（第三版验收截图就是）
-  dust(1500, [170, 80, 90], 0.34, 0.15);
+  dust(1500, [170, 80, 90], 0.34, 0.12);
   const motes = dust(200, [120, 40, 50], 0.6, 0.11);
 
   // ── Push：脉冲彗星（头 + 三节尾巴）──
@@ -226,7 +226,7 @@ function buildScene(canvas) {
   // ── 后期：Bloom（HalfFloat 帧缓冲，让 emissive > 1 真的发光）+ SMAA ──
   const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType });
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new BloomEffect({ intensity: 0.95, luminanceThreshold: 0.74, luminanceSmoothing: 0.25, mipmapBlur: true, radius: 0.64 });
+  const bloom = new BloomEffect({ intensity: 0.95, luminanceThreshold: 0.74, luminanceSmoothing: 0.25, mipmapBlur: true, radius: 0.52 });
   composer.addPass(new EffectPass(camera, bloom));
   composer.addPass(new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.MEDIUM })));
 
