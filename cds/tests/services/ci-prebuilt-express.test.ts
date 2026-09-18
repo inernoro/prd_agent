@@ -678,6 +678,7 @@ describe('极速版 — dispatcher', () => {
     });
     expect(result.action).toBe('ci-image-waiting');
     expect(result.deployRequest).toBeUndefined();
+    expect(stateService.getBranch(pushed.branchId!)?.githubCommitSha).toBe(FULL_SHA);
   });
 
   it('新 push 重置 waiting 时清掉旧 ciWorkflowRunUrl（Bugbot: stale CI run link on wait）', async () => {
