@@ -125,6 +125,7 @@
 - [GitHub 基础设施层 · 设计](./design.platform.github-infrastructure.md) `design.platform.github-infrastructure`
 - [图片引用日志与消息持久化 · 设计](./design.platform.image-ref-and-persistence.md) `design.platform.image-ref-and-persistence`
 - [LLM Gateway 全量迁移与生产发布复盘 · 设计](./design.platform.llm-gateway.migration-retrospective.md) `design.platform.llm-gateway.migration-retrospective`
+- [网关模型架构：一个名字、一条路、一份账 · 设计](./design.platform.llm-gateway.model-architecture.md) `design.platform.llm-gateway.model-architecture`
 - [LLM 网关物理独立设计 · 设计](./design.platform.llm-gateway.physical-isolation.md) `design.platform.llm-gateway.physical-isolation`
 - [LLM Gateway 图片生成重构 · 设计](./design.platform.llm-gateway.refactor.md) `design.platform.llm-gateway.refactor`
 - [LLM 网关与模型池统一 · 设计](./design.platform.llm-gateway.unification.md) `design.platform.llm-gateway.unification`
@@ -303,6 +304,7 @@
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`
 - [LLM Gateway 外部平台化与控制台体验收口 · 计划](./plan.platform.llm-gateway.external-platform.md) `plan.platform.llm-gateway.external-platform`
 - [LLM 网关旧路径物理退场 · 计划](./plan.platform.llm-gateway.full-cutover.md) `plan.platform.llm-gateway.full-cutover`
+- [网关模型概念收敛（池并进模型、上游降一级） · 计划](./plan.platform.llm-gateway.model-consolidation.md) `plan.platform.llm-gateway.model-consolidation`
 - [LLM Gateway 故障隔离与恢复 · 计划](./plan.platform.llm-gateway.resilience.md) `plan.platform.llm-gateway.resilience`
 - [模型路由能力契约治理 · 状态看板](./plan.platform.llm-routing.capability-contract.md) `plan.platform.llm-routing.capability-contract`
 - [MCP 智能体接入台 · 计划](./plan.platform.mcp-agent-console.md) `plan.platform.mcp-agent-console`

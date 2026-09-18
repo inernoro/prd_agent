@@ -12,9 +12,9 @@
 //     否则浅色主题下这些为深色底调过的绿黄红会直接刺眼。
 import { useEffect, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
-import { Boxes, Server, GitCompare, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
-import { bindActiveAppCallerPools, bulkClaimConfigAuthority, getPools, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
-import type { ModelPool, PlatformItem, ModelItem, ShadowSummary, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
+import { Server, GitCompare, Cpu, Layers, Database, Tags, Shuffle, KeyRound, ShieldCheck } from 'lucide-react';
+import { bulkClaimConfigAuthority, getPlatforms, getModels, getShadowComparisons, getGatewayAppCallers, getExchanges, getKeyHealth, getConfigAuthorityReport, getRuntimeGates, getProtocolCoverage } from '@/lib/api';
+import type { PlatformItem, ModelItem, ShadowSummary, ExchangeItem, KeyHealthSummary, ConfigAuthoritySummary, RuntimeGatesData, ProtocolCoverageData } from '@/lib/types';
 import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, TutorialLink } from '@/components/PageShell';
 import { useAuth } from '@/lib/auth';
@@ -51,7 +51,6 @@ const GROUP_META: Record<TopoRole['group'], { label: string; color: string; bg: 
 export function GovernancePage() {
   const { tenant } = useAuth();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
-  const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [platforms, setPlatforms] = useState<PlatformItem[] | null>(null);
   const [models, setModels] = useState<ModelItem[] | null>(null);
   const [exchanges, setExchanges] = useState<ExchangeItem[] | null>(null);
@@ -71,10 +70,9 @@ export function GovernancePage() {
     // 每个 slice 失败也置空数组（而非留 null）→ loading 一定会收敛、不卡 spinner；成功的部分照常渲染局部数据。
     // 「success 但 body 缺字段」也要兜：否则 setX(undefined) 会绕过 `=== null` 的 loading 判定，
     // 直接渲染并在 keyHealth!.status 上抛错，整页白屏。
-    Promise.all([getPools(), getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
-      ([poolsRes, platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes, shadowRes]) => {
+    Promise.all([getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
+      ([platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes, shadowRes]) => {
         if (!alive) return;
-        if (poolsRes.success) setPools(poolsRes.data.items); else { setPools([]); setError((e) => e || poolsRes.error?.message || '加载失败'); }
         if (platformsRes.success) setPlatforms(platformsRes.data.items); else { setPlatforms([]); setError((e) => e || platformsRes.error?.message || '加载失败'); }
         if (modelsRes.success) setModels(modelsRes.data.items); else { setModels([]); setError((e) => e || modelsRes.error?.message || '加载失败'); }
         if (exchangesRes.success) setExchanges(exchangesRes.data.items); else { setExchanges([]); setError((e) => e || exchangesRes.error?.message || '加载失败'); }
@@ -88,7 +86,7 @@ export function GovernancePage() {
     ).catch((err) => {
       // Promise.all/then 里抛错也要收敛 loading（否则永远转圈）。
       if (!alive) return;
-      setPools((p) => p ?? []); setPlatforms((p) => p ?? []); setModels((p) => p ?? []); setExchanges((p) => p ?? []); setKeyHealth((p) => p ?? emptyKeyHealth()); setConfigAuthority((p) => p ?? emptyConfigAuthority()); setRuntimeGates((p) => p ?? emptyRuntimeGates()); setProtocolCoverage((p) => p ?? emptyProtocolCoverage()); setAppCallerTotal((p) => p ?? 0);
+      setPlatforms((p) => p ?? []); setModels((p) => p ?? []); setExchanges((p) => p ?? []); setKeyHealth((p) => p ?? emptyKeyHealth()); setConfigAuthority((p) => p ?? emptyConfigAuthority()); setRuntimeGates((p) => p ?? emptyRuntimeGates()); setProtocolCoverage((p) => p ?? emptyProtocolCoverage()); setAppCallerTotal((p) => p ?? 0);
       setShadow((s) => s ?? { total: 0, allMatch: 0, critical: 0, httpFail: 0 });
       setError((e) => e || (err instanceof Error ? err.message : '加载失败'));
     });
@@ -104,15 +102,13 @@ export function GovernancePage() {
       setActionMessage(res.error?.message || '批量认领失败');
       return;
     }
-    const [poolsRes, platformsRes, modelsRes, exchangesRes, authorityRes, runtimeGatesRes] = await Promise.all([
-      getPools(),
+    const [platformsRes, modelsRes, exchangesRes, authorityRes, runtimeGatesRes] = await Promise.all([
       getPlatforms(),
       getModels(),
       getExchanges(),
       getConfigAuthorityReport(),
       getRuntimeGates(),
     ]);
-    if (poolsRes.success) setPools(poolsRes.data.items);
     if (platformsRes.success) setPlatforms(platformsRes.data.items);
     if (modelsRes.success) setModels(modelsRes.data.items);
     if (exchangesRes.success) setExchanges(exchangesRes.data.items);
@@ -122,34 +118,13 @@ export function GovernancePage() {
     setActionMessage(`已认领 ${res.data.claimedTotal} 个配置，跳过 ${res.data.skippedTotal} 个已存在配置`);
   }
 
-  async function bindActiveCallers() {
-    setBusyAction('bind-active-callers');
-    setActionMessage(null);
-    const res = await bindActiveAppCallerPools();
-    if (!res.success) {
-      setBusyAction(null);
-      setActionMessage(res.error?.message || 'active 调用方绑定失败');
-      return;
-    }
-    const [authorityRes, runtimeGatesRes, appCallersRes] = await Promise.all([
-      getConfigAuthorityReport(),
-      getRuntimeGates(),
-      getGatewayAppCallers({ page: 1, pageSize: 1 }),
-    ]);
-    if (authorityRes.success) setConfigAuthority(authorityRes.data.summary ?? emptyConfigAuthority());
-    if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data);
-    if (appCallersRes.success) setAppCallerTotal(appCallersRes.data.total);
-    setBusyAction(null);
-    setActionMessage(`已绑定 ${res.data.bound} 个 active 调用方，跳过 ${res.data.skipped} 个，缺默认池 ${res.data.missingDefaultPool} 个`);
-  }
 
-  const loading = pools === null || platforms === null || models === null || exchanges === null || keyHealth === null || configAuthority === null || runtimeGates === null || protocolCoverage === null || appCallerTotal === null;
+  const loading = platforms === null || models === null || exchanges === null || keyHealth === null || configAuthority === null || runtimeGates === null || protocolCoverage === null || appCallerTotal === null;
   // 完全没加载出来（都还 null）时才整屏报错/转圈；有部分数据则进入下方渲染，用顶部横幅提示失败（不掩盖故障）。
   if (loading && error) return <Empty text={error} />;
   if (loading) return <SectionLoader text="正在加载网关概览…" />;
 
   const enabledPlatforms = platforms!.filter((p) => p.enabled).length;
-  const defaultPools = pools!.filter((p) => p.isDefaultForType).length;
   const enabledModels = models!.filter((m) => m.enabled).length;
   const enabledExchanges = exchanges!.filter((x) => x.enabled).length;
   const matchRate = shadow && shadow.total > 0 ? Math.round((shadow.allMatch / shadow.total) * 100) : null;
@@ -159,7 +134,7 @@ export function GovernancePage() {
   const unusableActivePools = configAuthority!.activeBoundPoolWithoutUsableMember ?? 0;
   const activeFallbackStatus = configAuthority!.activeAppCallerMapFallbackReady
     ? 'active fallback 可关闭'
-    : `${configAuthority!.activeMissingGatewayPool} 未绑池 · ${unusableActivePools} 不可用池`;
+    : `${configAuthority!.activeMissingGatewayPool} 个 active 调用方没人接得住 · ${unusableActivePools} 条存量池绑定指向没有可用成员的池`;
 
   return (
     <PageShell>
@@ -190,7 +165,6 @@ export function GovernancePage() {
         {/* 配置概览计数 */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: GAP.section }}>
           <StatCard icon={<Server size={16} />} label="平台" value={`${enabledPlatforms}/${platforms!.length}`} sub="启用/总数" to="/platforms" />
-          <StatCard icon={<Boxes size={16} />} label="模型池" value={`${pools!.length}`} sub={`${defaultPools} 个默认池`} to="/pools" />
           <StatCard icon={<Tags size={16} />} label="调用方" value={`${appCallerTotal}`} sub="GW 已发现注册项" to="/app-callers" />
           <StatCard icon={<Cpu size={16} />} label="模型" value={`${enabledModels}/${models!.length}`} sub="启用/总数" to="/models" />
           <StatCard icon={<Shuffle size={16} />} label="Exchange" value={`${enabledExchanges}/${exchanges!.length}`} sub="启用/总数" to="/exchanges" />
@@ -199,7 +173,7 @@ export function GovernancePage() {
             label="权威迁移"
             value={`${configAuthority!.readinessPercent}%`}
             sub={`${configAuthority!.mapFallbackObjectsRemaining ?? mapOnlyTotal} 个 MAP-only · ${activeFallbackStatus}`}
-            to="/pools"
+            to="/logical-models"
             color={authorityTone}
           />
           <StatCard
@@ -230,24 +204,29 @@ export function GovernancePage() {
         <Card style={{ ...CARD_BODY, display: 'flex', alignItems: 'center', gap: GAP.section, flexWrap: 'wrap' }}>
           <span style={SECTION_TITLE}>配置权威迁移</span>
           <span style={BODY_TEXT}>
-            把 MAP-only 配置复制到网关，并给 active 调用方绑定默认池。
+            把 MAP-only 配置复制到网关；调用方没人接得住时去对外模型页处理。
             <HelpPopover label="配置权威迁移">
-              认领会把 MAP 侧的模型池、平台、模型和 Exchange 复制到 llm_gateway 作为权威副本，已存在的对象直接跳过、不会覆盖。
-              绑定则把 active 调用方指到同类型的 GW 默认池；缺默认池或池内没有可用成员的调用方会被跳过，需要先去模型池补齐。
+              认领会把 MAP 侧的平台、模型和 Exchange 复制到 llm_gateway 作为权威副本，已存在的对象直接跳过、不会覆盖。
+              「没人接得住」说的是这个 active 调用方既没有被任何对外模型认领、它那个用途也没有默认模型，
+              于是它不点名的请求解析不出任何模型。修法在对外模型页：给它设一条认领，或给那个用途设一个默认。
+              池绑定已经退场，解析器不读那几个字段，改它不会让这个数字下降。
             </HelpPopover>
           </span>
           <Link to="/app-callers?status=active" style={{ textDecoration: 'none' }}>
-            <Chip label={`未绑池 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn)' : 'var(--ok)'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn-bg)' : 'var(--ok-bg)'} />
-          </Link>
-          <Link to="/pools" style={{ textDecoration: 'none' }}>
-            <Chip label={`不可用池 ${unusableActivePools}`} color={unusableActivePools > 0 ? 'var(--err)' : 'var(--ok)'} bg={unusableActivePools > 0 ? 'var(--err-bg)' : 'var(--ok-bg)'} />
+            <Chip label={`没人接得住 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn)' : 'var(--ok)'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'var(--warn-bg)' : 'var(--ok-bg)'} />
           </Link>
           {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null || mapOnlyTotal === 0} onClick={() => void claimMapOnlyConfig()} style={{ marginLeft: 'auto' }}>
             {busyAction === 'bulk-claim-authority' ? '处理中…' : '认领 MAP-only 配置'}
           </Button> : null}
-          {canWrite ? <Button size="sm" variant="secondary" disabled={busyAction !== null || configAuthority!.activeMissingGatewayPool === 0} onClick={() => void bindActiveCallers()}>
-            {busyAction === 'bind-active-callers' ? '处理中…' : '绑定 active 调用方'}
-          </Button> : null}
+          {/*
+            这里原本有一个把 active 调用方绑到池上的按钮，点了只写池绑定。池退场之后解析器一个字段
+            都不读，于是它点完显示成功、闸门照红、请求照样 MODEL_NOT_FOUND——一个假装能修的
+            按钮，比没有按钮糟（第 71 轮 review）。换成指向真正能修的那一屏：
+            去对外模型页给调用方设认领，或给用途设默认。
+          */}
+          <Link to="/logical-models" style={{ textDecoration: 'none' }}>
+            <Button size="sm" variant="secondary">去对外模型页设认领或默认</Button>
+          </Link>
         </Card>
         {!canWrite ? <ReadOnlyNotice>当前角色可以查看运行状态、配置权威和容器拓扑，但不能执行配置认领或绑定。</ReadOnlyNotice> : null}
 
@@ -465,7 +444,7 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
   switch (item.id) {
     case 'config_authority_objects':
       return [
-        { label: '模型池', to: '/pools' },
+        { label: '模型', to: '/logical-models' },
         { label: '平台', to: '/platforms' },
         { label: '模型', to: '/models' },
         { label: 'Exchange', to: '/exchanges' },
@@ -479,7 +458,7 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
       return [
         { label: 'active 调用方', to: '/app-callers?status=active' },
         { label: 'discovered 调用方', to: '/app-callers?status=discovered' },
-        { label: '模型池', to: '/pools' },
+        { label: '模型', to: '/logical-models' },
       ];
     case 'appcaller_policy_drift':
       return [{ label: '漂移调用方', to: '/app-callers?drift=any' }];
@@ -489,11 +468,11 @@ function runtimeGateActionLinks(item: { id: string; facts?: Record<string, strin
         { label: '调用方', to: '/app-callers' },
       ];
     case 'gateway_pool_member_readiness':
-      return [{ label: '检查模型池', to: '/pools' }];
+      return [{ label: '检查对外模型', to: '/logical-models' }];
     case 'active_appcaller_map_fallback_exit':
       return [
         { label: 'active 调用方', to: '/app-callers?status=active' },
-        { label: '模型池', to: '/pools' },
+        { label: '模型', to: '/logical-models' },
         { label: '平台密钥', to: '/platforms' },
       ];
     case 'gateway_key_integrity':

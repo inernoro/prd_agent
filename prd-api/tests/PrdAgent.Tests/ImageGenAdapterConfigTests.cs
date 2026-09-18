@@ -222,4 +222,189 @@ public class ImageGenAdapterConfigTests
             _output.WriteLine("  ],");
         }
     }
+
+    /// <summary>
+    /// 声明了「没有尺寸概念」的模型，一个尺寸参数都不该发出去。
+    ///
+    /// 这条守卫针对的是一个不会红的组合：SizesNotApplicable 勾上了，而 SizeParamFormat
+    /// 与 SizeConstraintType 还留着表单默认值（WxH + whitelist），白名单又是空的。
+    /// NormalizeSize 在空白名单上兜底回 1024x1024，ApplySizeParams 照发——
+    /// 界面写着「这个模型没有尺寸选择」，请求里却带着一个尺寸，上游可能直接拒掉。
+    ///
+    /// 三种参数格式各验一遍：短路必须在 switch 之前，而不是某一支里。
+    /// </summary>
+    [Theory]
+    [InlineData(SizeParamFormats.WxH)]
+    [InlineData(SizeParamFormats.WidthHeight)]
+    [InlineData(SizeParamFormats.AspectRatio)]
+    public void 没有尺寸概念的模型不发任何尺寸参数(string format)
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "no-size-model",
+            SizesNotApplicable = true,
+            SizeParamFormat = format,
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            RequiresResolutionParam = true,
+        };
+
+        var sizeResult = ImageGenModelAdapterRegistry.NormalizeSize(config, "1024x1024");
+        var target = new Dictionary<string, object>();
+        ImageGenModelAdapterRegistry.ApplySizeParams(config, sizeResult, target);
+
+        Assert.Empty(target);
+    }
+
+    /// <summary>反面：没勾 SizesNotApplicable 的照常发，证明上面那条拦的是标记不是别的。</summary>
+    [Fact]
+    public void 普通模型照常发尺寸参数()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "normal-model",
+            SizesNotApplicable = false,
+            SizeParamFormat = SizeParamFormats.WxH,
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+        };
+
+        var sizeResult = ImageGenModelAdapterRegistry.NormalizeSize(config, "1024x1024");
+        var target = new Dictionary<string, object>();
+        ImageGenModelAdapterRegistry.ApplySizeParams(config, sizeResult, target);
+
+        Assert.True(target.ContainsKey("size"));
+    }
+
+    /// <summary>
+    /// 范围模式：像素上限缩放之后必须重新套边界。
+    ///
+    /// 缩放是按长宽比等比做的，它不认识最小值——4096x512 在 1M 像素上限下缩成约 2896x362，
+    /// 而契约声明的最小高是 512。发出去的尺寸违反了这条契约自己写的规矩，
+    /// 而没有任何地方会报错：声明在那儿，运行时并不遵守它。
+    /// </summary>
+    [Fact]
+    public void 范围模式_像素缩放后仍然满足最小边长()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MinWidth = 512,
+            MinHeight = 512,
+            MaxPixels = 1_048_576,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "4096x512");
+
+        Assert.True(result.Height >= 512, $"缩放后高变成了 {result.Height}，低于契约声明的最小高 512");
+        Assert.True(result.Width >= 512, $"缩放后宽变成了 {result.Width}，低于契约声明的最小宽 512");
+    }
+
+    /// <summary>
+    /// 整除向下取整不许把边长抹成 0，也不许越过最大值。
+    /// </summary>
+    [Fact]
+    public void 范围模式_整除取整不产生零边长也不越过最大值()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "divisor-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MustBeDivisibleBy = 512,
+            MaxWidth = 1020,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "1024x256");
+
+        Assert.True(result.Height > 0, "高被向下取整抹成了 0，发出去就是 WxH 里的 0");
+        Assert.True(result.Width > 0 && result.Width <= 1020, $"宽 {result.Width} 越过了最大宽 1020");
+    }
+
+    /// <summary>
+    /// 范围模式：把最小边长补回来之后，像素总量不许重新越过上限。
+    ///
+    /// 「等比缩放」与「重新套边界」各自都对，合起来却能把上限顶破：缩放按长宽比走、不认识
+    /// 最小边长；套边界认最小边长、不认识像素上限。minHeight=512、上限 1M、请求 4096x512
+    /// 时，缩放得到 2896x362，补回最小高之后是 148 万像素——比上限还多四成，而两条规矩
+    /// 看上去都遵守了。
+    /// </summary>
+    [Fact]
+    public void 范围模式_补回最小边长后不越过像素上限()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-budget-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MinHeight = 512,
+            MaxPixels = 1_048_576,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "4096x512");
+
+        Assert.True(result.Height >= 512, $"高 {result.Height} 低于契约声明的最小高 512");
+        Assert.True(
+            (long)result.Width * result.Height <= 1_048_576,
+            $"{result.Width}x{result.Height} 合计 {(long)result.Width * result.Height} 像素，越过了上限 1048576");
+    }
+
+    /// <summary>
+    /// 同一件事在「带整除刻度」时也要成立：压进像素预算之后仍然整除。
+    /// 分开处理「对齐」与「压预算」会互相推翻对方的结论，所以两者必须同一条路径。
+    /// </summary>
+    [Fact]
+    public void 范围模式_整除刻度下压进像素预算仍然对齐()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-budget-divisor-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MinHeight = 512,
+            MustBeDivisibleBy = 64,
+            MaxPixels = 1_048_576,
+        };
+
+        var result = ImageGenModelAdapterRegistry.NormalizeSize(config, "4096x512");
+
+        Assert.True(result.Height >= 512, $"高 {result.Height} 低于契约声明的最小高 512");
+        Assert.True(
+            (long)result.Width * result.Height <= 1_048_576,
+            $"{result.Width}x{result.Height} 合计 {(long)result.Width * result.Height} 像素，越过了上限 1048576");
+        Assert.True(result.Width % 64 == 0, $"宽 {result.Width} 不是 64 的倍数");
+        Assert.True(result.Height % 64 == 0, $"高 {result.Height} 不是 64 的倍数");
+    }
+
+    /// <summary>
+    /// 请求没给尺寸时退回的默认值，同样要落在契约声明的范围里。
+    ///
+    /// 默认值是「白名单第一条，没有就 1024x1024」。一个只配了范围、没有白名单尺寸的契约，
+    /// 最大边写 768、像素上限写 40 万，旧路径照样发 1024x1024 出去——契约看上去生效了，
+    /// 实际只在「请求带了尺寸」那条路上生效，而上游会把这个请求拒掉。
+    /// </summary>
+    [Fact]
+    public void 范围模式_请求没给尺寸时默认值也要落在范围里()
+    {
+        var config = new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "range-default-probe",
+            SizeConstraintType = SizeConstraintTypes.Range,
+            SizeParamFormat = SizeParamFormats.WidthHeight,
+            MaxWidth = 768,
+            MaxHeight = 768,
+            MaxPixels = 400_000,
+        };
+
+        foreach (var requested in new[] { (string?)null, "", "不是一个尺寸" })
+        {
+            var result = ImageGenModelAdapterRegistry.NormalizeSize(config, requested);
+
+            Assert.True(result.Width <= 768, $"请求「{requested}」退回的默认宽 {result.Width} 越过了最大宽 768");
+            Assert.True(result.Height <= 768, $"请求「{requested}」退回的默认高 {result.Height} 越过了最大高 768");
+            Assert.True(
+                (long)result.Width * result.Height <= 400_000,
+                $"请求「{requested}」退回的默认尺寸 {result.Width}x{result.Height} 越过了像素上限 400000");
+        }
+    }
 }

@@ -182,6 +182,13 @@ jobs:
               - 'prd-admin/src/app/navRegistry.tsx'
               - 'prd-admin/src/pages/WebPagesPage.tsx'
               - 'deploy/nginx/**'
+              # 写死 checkout 绝对路径的守卫（test_no_hardcoded_checkout_path.py）扫的是
+              # e2e / scripts / .claude/skills 下所有可执行脚本。守卫扫到哪，闸门就得管到哪——
+              # 只登记守卫自己的话，「只新加一个写死路径的脚本」那种 PR 一路全绿，
+              # 而那正是这条守卫唯一要防的事（形状 7）。
+              - 'e2e/**'
+              - '.claude/skills/**'
+              - 'scripts/**'
               - '.github/workflows/ci.yml'
             acceptance_report:
               # 验收报告的归档门禁（结论语义分层 + 给你的一页结论 + HTML 模板契约）。

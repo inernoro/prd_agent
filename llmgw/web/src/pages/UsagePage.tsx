@@ -201,6 +201,13 @@ export function UsagePage() {
       <div className="lg-usage-grid">
         <Card><div className="lg-card-kicker"><CircleDollarSign size={15} /> 请求用量</div><strong className="lg-large-value">{fmtCompact(summary?.total)}</strong><p>{fmtCompact(summary?.totalTokens)} tokens</p></Card>
         <Card><div className="lg-card-kicker">价格覆盖率</div><strong className="lg-large-value">{summary?.total ? `${summary.priceCoveragePercent}%` : '暂无请求'}</strong><p>{fmtCompact(summary?.pricedRequests)} 可估算 · {fmtCompact(summary?.unknownCostRequests)} 未知</p></Card>
+        {summary?.cacheSavingsUsd != null ? (
+          <Card>
+            <div className="lg-card-kicker">缓存节省</div>
+            <strong className="lg-large-value">{fmtCost(summary.cacheSavingsUsd, 'USD')}</strong>
+            <p>命中缓存的输入按缓存价计，比全价省下这些</p>
+          </Card>
+        ) : null}
         {(summary?.estimatedCosts ?? []).map((item) => <Card key={item.currency}><div className="lg-card-kicker">{item.currency} 估算费用</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 个请求，未与其他币种相加</p></Card>)}
         {(reconciliation?.providerActualCosts ?? []).map((item) => <Card key={`actual-${item.currency}`}><div className="lg-card-kicker">{item.currency} 供应商实际费用</div><strong className="lg-large-value">{fmtCost(item.amount, item.currency)}</strong><p>{fmtCompact(item.requests)} 条供应商账单记录</p></Card>)}
       </div>
@@ -227,6 +234,39 @@ export function UsagePage() {
           <CostStateCard state="reconciled" kicker="可比较记录" title="已对账" value={reconciliationStateValue(reconciliation, reconciliationLoading, reconciliationError, () => reconciledCount)} />
         </div>
       </Card>
+      {(summary?.topUnpricedModels?.length ?? 0) > 0 ? (
+        <Card style={CARD_BODY} aria-labelledby="unpriced-title">
+          <div style={cardHeadStyle}>
+            <h2 id="unpriced-title" style={SECTION_TITLE}>这些调用没计上钱</h2>
+            <span style={countStyle}>
+              {fmtCompact(summary?.unpricedRequests)} 次缺价 · {fmtCompact(summary?.staleCurrencyRequests)} 次币种待换算
+            </span>
+          </div>
+          <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', lineHeight: 'var(--lh-body)' }}>
+            算不出钱的调用不进限额，补上价格才会计入。
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, marginTop: GAP.normal }}>
+            {(summary?.topUnpricedModels ?? []).map((item) => (
+              <div key={`${item.model}:${item.provider ?? ''}:${item.status}`} style={unpricedRowStyle}>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: 'block' }}>{item.model}</span>
+                  <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>
+                    {item.provider || '未知 Provider'}
+                    {item.reason ? ` · ${item.reason}` : ''}
+                  </span>
+                </span>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'nowrap' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>{fmtCompact(item.requests)} 次</span>
+                  <Link to="/models" style={{ color: 'var(--accent)', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                    {item.status === 'stale_currency' ? '去换算币种' : '去补价格'}
+                    <ArrowRight size={13} style={{ verticalAlign: 'middle', marginLeft: 3 }} />
+                  </Link>
+                </span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : null}
       {importResult ? <ImportResult item={importResult} canReadLogs={canReadLogs} /> : null}
       <Card style={CARD_BODY} aria-labelledby="reconciliation-title">
         <div style={cardHeadStyle}>
@@ -400,3 +440,13 @@ function reconciliationStatusMeta(status: string) {
 
 const labelStyle: React.CSSProperties = FIELD_LABEL;
 const inputStyle: React.CSSProperties = FIELD_INPUT;
+
+const unpricedRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.normal,
+  padding: 10,
+  borderRadius: 'var(--radius-sm)',
+  background: 'var(--bg-elevated)',
+  fontSize: 'var(--fs-body)',
+};

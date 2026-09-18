@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, Check, CheckCircle2, Copy, KeyRound, Play, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, ensurePoolTypes, getOrganization, getPools, getPoolTypes, updateGatewayAppCaller } from '@/lib/api';
+import { bulkClaimConfigAuthority, createGatewayAppCaller, createServiceKey, draftAppCallerIntent, getOrganization, getLogicalModels, updateGatewayAppCaller } from '@/lib/api';
 import type { OrganizationData } from '@/lib/types';
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader, Spinner } from '@/components/ui';
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
@@ -171,12 +171,12 @@ const REQUEST_TYPES: Array<{ id: RequestType; label: string }> = [
  * 未登记的码退化成「未归类」，只报原文并给出 requestId，绝不猜一个看起来像的环节
  * （`no-rootless-tree.md`：归因必须有根）。
  */
-type ChainLinkId = 'key' | 'scope' | 'pool';
+type ChainLinkId = 'key' | 'scope' | 'model';
 
 const CHAIN_LINKS: Array<{ id: ChainLinkId; label: string }> = [
   { id: 'key', label: '密钥鉴权' },
   { id: 'scope', label: '团队与作用域' },
-  { id: 'pool', label: '调用用途 → 模型池' },
+  { id: 'model', label: '调用用途 → 对外模型' },
 ];
 
 type FailureRule = {
@@ -202,10 +202,13 @@ const FAILURE_RULES: Record<string, FailureRule> = {
   GATEWAY_KEY_SOURCE_IP_DENIED: { brokenLink: 'scope', title: '来源 IP 不在密钥允许的网段', reason: '密钥限制了来源 CIDR，当前出口 IP 不在其中。', to: '/service-keys', actionLabel: '核对来源 CIDR' },
   APP_CALLER_DISABLED: { brokenLink: 'scope', title: '调用用途已被禁用', reason: '这条调用用途当前状态不允许调用。', to: '/app-callers', actionLabel: '打开调用方' },
   APP_CALLER_NOT_FOUND: { brokenLink: 'scope', title: '调用用途尚未登记', reason: '这条调用用途在当前租户里查不到，试跑要求它已登记。', to: '/app-callers', actionLabel: '打开调用方' },
-  APPCALLER_POOL_UNBOUND: { brokenLink: 'pool', title: '安全试跑通过，真实模型调不通', reason: '这条调用用途还没有绑定模型池，Gateway 无处解析实际模型，因此只有 dry-run 能通过。', action: 'bind-pool', actionLabel: '给这个调用用途绑定模型池' },
-  GATEWAY_CONFIG_UNAVAILABLE: { brokenLink: 'pool', title: '网关配置面暂时读不到', reason: '这次不是配置错，是配置面短暂不可读；稍后重试通常就好。', to: '/app-callers', actionLabel: '打开调用方' },
-  ROUTE_CONFIG_INCOMPATIBLE: { brokenLink: 'pool', title: '所选模型池与这次请求不兼容', reason: '模型池类型或成员能力与这次请求的调用类型对不上。', to: '/pools', actionLabel: '打开模型池' },
-  MODEL_NOT_IN_CATALOG: { brokenLink: 'pool', title: '选中的模型不在名录里', reason: '这个模型既不在内置名录，也没有被管理员放行——正常从 Provider 页导入的模型不会这样，先确认它是怎么进库的。', to: '/pools', actionLabel: '打开模型池' },
+  // 2026-09-16：池退场之后这三条的修复入口都得跟着搬。
+  // 旧文案指着 /pools，而那个地址现在无条件重定向到 /logical-models——按钮上写着「打开模型池」，
+  // 点过去是另一个页面，而名录补登那一屏根本没被指出来。承诺的修复面不存在，等于没给下一步。
+  APPCALLER_POOL_UNBOUND: { brokenLink: 'model', title: '安全试跑通过，真实模型调不通', reason: '没有对外模型接得住这条调用用途：它既没有被哪个模型认领，这个用途也没有默认模型，Gateway 因此无处解析实际模型，只有 dry-run 能通过。', action: 'bind-pool', actionLabel: '给这个调用用途接一个模型' },
+  GATEWAY_CONFIG_UNAVAILABLE: { brokenLink: 'model', title: '网关配置面暂时读不到', reason: '这次不是配置错，是配置面短暂不可读；稍后重试通常就好。', to: '/app-callers', actionLabel: '打开调用方' },
+  ROUTE_CONFIG_INCOMPATIBLE: { brokenLink: 'model', title: '所选模型与这次请求不兼容', reason: '这个模型的用途或能力与这次请求的调用类型对不上。', to: '/logical-models', actionLabel: '打开模型' },
+  MODEL_NOT_IN_CATALOG: { brokenLink: 'model', title: '选中的模型不在名录里', reason: '这个模型既不在内置名录，也没有被管理员放行——正常从上游页导入的模型不会这样，先确认它是怎么进库的。', to: '/platforms', actionLabel: '打开上游与模型名录' },
   GATEWAY_KEY_RATE_LIMITED: { brokenLink: null, title: '触发了这把密钥的限流', reason: '密钥默认限制 60 次/分钟，稍后再试即可。', actionLabel: '' },
 };
 
@@ -334,19 +337,19 @@ export function QuickstartPage() {
   const activeTeams = organization?.teams.filter((team) => team.status === 'active') ?? [];
   const selectedTeam = activeTeams.find((team) => team.id === teamId);
   const budgetPair = deriveBudgetPair(budgetUsd, holdCapUsd);
-  // 输入框空着就是 auto；填了就必须是这个池里的健康成员，否则不让执行（选了也是白跑）。
+  // 输入框空着就是 auto；填了就必须是目录里能接请求的对外模型，否则不让执行（选了也是白跑）。
   const testModel = modelQuery.trim() || 'auto';
   const modelValid = testModel === 'auto' || poolModels.some((model) => model.modelId === testModel);
-  // 钉成员时要一起发的上游 id。取不到就说明这个名字不在池里，上面那条判据已经拦下了。
+  // 删池之后点名的是对外模型的公开名，不再需要一起发上游 id；保留字段是为了不动下游签名。
   const testPlatformId = poolModels.find((model) => model.modelId === testModel)?.platformId ?? '';
   // 页面各处说「实际执行 X」时必须用这个，不能用输入框里那个：Gemini 钉不住的模型
-  // 会退回池调度，照着输入框声称就是在编造一个没发生的执行结果。
+  // 会退回目录调度，照着输入框声称就是在编造一个没发生的执行结果。
   const effectiveTestModel = pinnedTestModel(protocol, testModel);
   const modelHint = !modelValid
-    ? '这个模型不在池内健康成员里，换一个或清空走 auto。'
+    ? '这个名字不在对外模型目录里，换一个或清空走 auto。'
     : poolModels.length === 0
-      ? '池内暂无健康成员，走 auto。'
-      : `「${poolName || '默认池'}」${poolMemberCount} 个成员中 ${poolModels.length} 个健康，可搜索。`;
+      ? '这个用途还没有能接请求的对外模型，走 auto。'
+      : `${poolMemberCount} 个${poolName}里，${poolModels.length} 个能接请求，可搜索。`;
   /*
     调用用途码只从用户那句「我想做什么」来。首选让网关自己的模型推（它读得懂
     「接入小米音响，对接大模型网关指令集」这种关键词表覆盖不到的说法）；
@@ -401,25 +404,29 @@ export function QuickstartPage() {
     setPoolName('');
     setPoolMemberCount(0);
     if (!bundle) return;
-    void getPools(bundle.requestType).then((response) => {
+    void getLogicalModels().then((response) => {
       if (!active || !response.success) return;
-      const pools = response.data.items;
-      const routedPoolId = routePreview?.success ? routePreview.modelGroupId : undefined;
-      const target = pools.find((pool) => pool.id === routedPoolId)
-        ?? pools.find((pool) => pool.isDefaultForType)
-        ?? null;
-      const members = target?.models ?? [];
-      // 只列健康成员（healthStatus 0 = healthy）：降级或不可用的成员选了也是白跑一次，
-      // 真实租户上这个池有两百多个成员，把坏的也堆进候选只会让人更难挑。
-      const healthy = members
-        .filter((model) => model.healthStatus === 0 && model.modelId)
-        .sort((a, b) => a.priority - b.priority)
-        .map((model) => ({ modelId: model.modelId, platformId: model.platformId }));
-      // 同名成员可能挂在多个上游下：按模型名去重，保留优先级最高的那一条的上游。
-      const seen = new Set<string>();
-      setPoolModels(healthy.filter((model) => seen.has(model.modelId) ? false : (seen.add(model.modelId), true)));
-      setPoolMemberCount(members.length);
-      setPoolName(target?.name ?? '');
+      // 2026-09-15 删池之后，候选来自**对外模型目录**而不是池成员。
+      //
+      // 这其实比原来更对：这个输入框填的东西会作为 expectedModel 发出去，而运行时认的
+      // 就是对外模型的公开名。原来列池成员（上游模型名）等于让人填一个网关根本不收的名字，
+      // 真实租户上那个池还有两百多个成员，翻起来也没法看。
+      //
+      // 只列这个用途下、启用着、而且真有一条线路能接的——挂着名字接不住请求的列出来
+      // 也是白跑一次。
+      // 「有一条线路 enabled」不等于「这条线路真的会被用上」。
+      //
+      // 服务端已经按**唯一那份**排队判据算好了每条线路的名次（queuePosition）：熔断中、
+      // 指向已停用物理模型或兑换所的，名次是 0、不参与排队。前端只看 enabled 的话，
+      // 会把这些模型照样摆进选择器，而用户选中它、点「真实路由测试」当场就失败。
+      // 判据不自己重写一遍——前端零份，这是它在这一页的落地。
+      const usable = response.data.items.filter((item) =>
+        item.modelType === bundle.requestType
+        && item.enabled
+        && (item.offerings ?? []).some((route) => route.queuePosition > 0));
+      setPoolModels(usable.map((item) => ({ modelId: item.publicId, platformId: '' })));
+      setPoolName(`${requestTypeLabel(bundle.requestType)} 对外模型`);
+      setPoolMemberCount(response.data.items.filter((item) => item.modelType === bundle.requestType).length);
     });
     return () => { active = false; };
   }, [bundle?.appCallerId, bundle?.requestType, routePreview?.modelGroupId, routePreview?.success]);
@@ -465,13 +472,13 @@ export function QuickstartPage() {
     只有「对这一次真会跑的那条路」下过的结论才算数：地址要同一个，钉住的成员也要同一个。
     只比地址的话，上一个成员（或 auto 那条）的结论会替换成员后这条**没验过**的路放行——
     并发预检里先发后到的那条尤其容易造出这种错配。
-    钉住与否走 pinnedTargetOf 这一个判断，与预检、真实调用、cURL 片段同源。
+    选中与否走 selectedTargetOf 这一个判断，与预检、真实调用、cURL 片段同源。
   */
-  const activeProbePin = pinnedTargetOf(testModel, testPlatformId);
+  const activeProbeTarget = selectedTargetOf(testModel, testPlatformId);
   const currentRoutePreview = routePreview
     && routePreview.checkedBaseUrl === normalizeBaseUrl(baseUrl)
-    && routePreview.checkedModel === (activeProbePin?.model ?? 'auto')
-    && routePreview.checkedPlatformId === (activeProbePin?.platformId ?? '')
+    && routePreview.checkedModel === (activeProbeTarget?.model ?? 'auto')
+    && routePreview.checkedPlatformId === (activeProbeTarget?.platformId ?? '')
       ? routePreview
       : null;
   const realRouteReady = !routeChecking && canRunRealTest(currentRoutePreview, baseUrl);
@@ -744,12 +751,14 @@ export function QuickstartPage() {
       检查期间界面显示的也是 routeChecking 那一支，看不到旧结论。
     */
     if (resetTestResult) setTestResult(null);
-    const pin = pinnedTargetOf(pinModel, pinPlatform);
+    const selected = selectedTargetOf(pinModel, pinPlatform);
     // 结论连着「对哪一条路」一起落盘，消费侧才判得出它说的是不是当前这条。
+    // 落的是**选中的那个公开名**而不是 'auto'：不然换一个对外模型，戳还是同一个，
+    // 上一个模型的结论会原样替这一个放行。
     const checked: RouteProbeStamp = {
       checkedBaseUrl: normalizeBaseUrl(baseUrl),
-      checkedModel: pin?.model ?? 'auto',
-      checkedPlatformId: pin?.platformId ?? '',
+      checkedModel: selected?.model ?? 'auto',
+      checkedPlatformId: selected?.platformId ?? '',
     };
     try {
       const response = await fetch(new URL('/gw/v1/resolve', `${checked.checkedBaseUrl}/`).toString(), {
@@ -763,8 +772,16 @@ export function QuickstartPage() {
         body: JSON.stringify({
           appCallerCode: target.appCallerCode,
           modelType: target.requestType,
-          ...(pin
-            ? { modelPolicy: 'pinned', pinnedPlatformId: pin.platformId, pinnedModelId: pin.model, expectedModel: pin.model }
+          // 与真实调用逐字同构（见 dryRunBody）：点名了就按 pinned 发那个名字，
+          // 钉到物理上游时再带上两个 id。少发 expectedModel 等于预检了另一条路。
+          ...(selected
+            ? {
+                modelPolicy: 'pinned',
+                expectedModel: selected.model,
+                ...(selected.kind === 'pinned'
+                  ? { pinnedPlatformId: selected.platformId, pinnedModelId: selected.model }
+                  : {}),
+              }
             : { modelPolicy: 'auto' }),
           context: { sourceSystem: 'external' },
         }),
@@ -796,26 +813,16 @@ export function QuickstartPage() {
       setActionError(claim.error?.message || '复制现有可用上游配置失败');
       return;
     }
-    const ensured = await ensurePoolTypes();
-    if (!ensured.success) {
-      setPreparingRoute(false);
-      setActionError(ensured.error?.message || '准备默认模型池失败');
-      return;
-    }
-    const targetType = ensured.data.types.items.find((item) => item.code === bundle.requestType);
-    if (!targetType?.ready || !targetType.defaultPoolId) {
-      setPreparingRoute(false);
-      setActionError(`${requestTypeLabel(bundle.requestType)} 默认池仍没有可用真实模型。请在本页路由预览中确认缺口，再配置 Provider、模型和密钥。`);
-      return;
-    }
+    // 2026-09-15 删池之后这里不再「绑池」：调用方只要有对外模型接得住就行。
+    // 接不接得住由服务端判（判据与运行时的两层默认逐条同序），接不住时它回的那句话
+    // 本身就是下一步该做什么，所以这里原样转出去，不另编一句可能过时的指路。
     const updated = await updateGatewayAppCaller(bundle.appCallerId, {
       status: 'configured',
-      modelPoolId: targetType.defaultPoolId,
-      modelPolicy: 'pool',
+      modelPolicy: 'auto',
     });
     if (!updated.success) {
       setPreparingRoute(false);
-      setActionError(updated.error?.message || '绑定默认模型池失败');
+      setActionError(updated.error?.message || '开通失败');
       return;
     }
     await checkRealRoute(bundle);
@@ -823,40 +830,31 @@ export function QuickstartPage() {
   };
 
   /**
-   * 失败态主行动：把当前调用用途绑到该调用类型的默认池，然后就地重验。
+   * 失败态主行动：把这个调用用途开通，然后就地重验。
    *
-   * 两条分支在点击时按真实数据决定，不预先猜：读 `/gw/pool-types`（只读），
-   * 该类型有 ready 的默认池就一键绑（`AppCallerWrite` 外部租户自己就有），
-   * 没有池才降级成「去模型池建一个」——新租户的常态恰恰是后者，只做前者等于对新人失效。
+   * 2026-09-15 删池之前这里叫「绑定默认模型池」：先读池类型注册表、挑一个 ready 的默认池
+   * 再绑上去，没有池就降级成「去模型池建一个」。池删了之后这一步整个不需要——
+   * 调用方只要有对外模型接得住就能开通。
+   *
+   * 接不接得住由服务端判（判据与运行时那两层默认逐条同序），接不住时它回的那句话本身
+   * 就是下一步该做什么（给某个对外模型「指定调用方」，或给这个用途设默认），
+   * 所以这里原样转给用户，不另编一句。
    */
-  const bindDefaultPool = async () => {
+  const openThisCaller = async () => {
     if (!bundle || binding) return;
     setBinding(true);
     setBindNotice(null);
-    const types = await getPoolTypes();
-    if (!types.success) {
-      setBinding(false);
-      setBindNotice(types.error?.message || '读取模型池类型失败');
-      return;
-    }
-    const target = types.data.items.find((item) => item.code === bundle.requestType);
-    if (!target?.ready || !target.defaultPoolId) {
-      setBinding(false);
-      setBindNotice(`当前租户还没有可用的${requestTypeLabel(bundle.requestType)}默认池，先去模型池建一个再回来重试。`);
-      return;
-    }
     const updated = await updateGatewayAppCaller(bundle.appCallerId, {
       status: 'configured',
-      modelPoolId: target.defaultPoolId,
-      modelPolicy: 'pool',
+      modelPolicy: 'auto',
     });
     if (!updated.success) {
       setBinding(false);
-      setBindNotice(updated.error?.message || '绑定模型池失败');
+      setBindNotice(updated.error?.message || '开通失败');
       return;
     }
     setBinding(false);
-    setBindNotice(`已绑定「${target.name}」，正在重新验证。`);
+    setBindNotice('已开通，正在重新验证。');
     void checkRealRoute(bundle);
     await runTest(bundle, 'safe');
   };
@@ -1530,7 +1528,7 @@ export function QuickstartPage() {
                 </div>
                 <span className="lg-qs-failure-reason">{diagnosis.reason}</span>
                 <div className="lg-qs-failure-actions">
-                  {diagnosis.action === 'bind-pool' && canCreateAccess ? <Button size="sm" variant="secondary" disabled={binding} onClick={() => void bindDefaultPool()}>{binding ? '正在绑定' : diagnosis.actionLabel}</Button> : null}
+                  {diagnosis.action === 'bind-pool' && canCreateAccess ? <Button size="sm" variant="secondary" disabled={binding} onClick={() => void openThisCaller()}>{binding ? '正在绑定' : diagnosis.actionLabel}</Button> : null}
                   {diagnosis.to && diagnosis.actionLabel ? <Link className="lg-secondary-link" to={diagnosis.to}>{diagnosis.actionLabel}</Link> : null}
                   {canCreateAccess ? <Button size="sm" variant="ghost" disabled={testing} onClick={() => void runTest()}>重试验证</Button> : null}
                   {testResult?.requestId ? <Link className="lg-text-link" to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>{testResult.requestId}</Link> : null}
@@ -2037,10 +2035,11 @@ function dryRunBody(protocol: Protocol, requestType: RequestType, appCallerCode:
     解析器认的是「ExpectedModel 与 PinnedModelId 相等 = 在已绑池内钉这个成员」，
     所以两处发同一个值、策略声明 pinned。
   */
-  const pinned = model !== 'auto';
-  const policy = pinned ? 'pinned' : 'auto';
-  const target = pinnedTargetOf(model, platformId);
-  const pin = target ? { pinned_platform_id: target.platformId, pinned_model_id: target.model } : {};
+  const target = selectedTargetOf(model, platformId);
+  const policy = target ? 'pinned' : 'auto';
+  const pin = target?.kind === 'pinned'
+    ? { pinned_platform_id: target.platformId, pinned_model_id: target.model }
+    : {};
   if (protocol === 'native') return {
     appCallerCode,
     modelType: requestType,
@@ -2275,9 +2274,30 @@ function normalizeBaseUrl(value: string) {
   ROUTE_CONFIG_INCOMPATIBLE——与只发模型名时一模一样的失败。
   这条判断只许有这一处：预检判「钉住了」而发请求判「没钉住」（或反过来）时，
   预检验的就不是这一次会跑的那条路，而这正是这道闸本身要防的那件事。
+
+  **两种选中要分开，不能压成一个布尔。** 池退场之后候选来自对外模型目录，选中一个对外模型
+  只有公开名、没有物理上游 id（那正是对外模型的意义：走哪条线路由网关决定）。上一版把
+  「选了东西」与「钉住了物理上游」压成同一个判断，于是选中对外模型时它返回 null，预检发的是
+  modelPolicy:'auto'——而真实调用发的是那个公开名。预检验的是「不点名会落到谁」，
+  真实调用跑的是「点名这一个」，两条不是同一条路：默认那条健康就能把闸判绿，
+  而选中的那个模型可能解析到桩上或当场失败（第 68 轮 review，形状 8：拿一份不成立的证据当证明）。
+
+  分成三态之后，「这次要跑哪条路」有唯一一个来源，预检、真实调用、cURL 片段、
+  以及结论的时效戳全部由它派生：
+    · null          —— 没点名，走自动调度
+    · kind:'logical' —— 点名一个对外模型（只有公开名）
+    · kind:'pinned'  —— 点名到具体物理上游（公开名 + 平台 id）
 */
-function pinnedTargetOf(model: string, platformId: string) {
-  return model !== 'auto' && platformId ? { model, platformId } : null;
+type SelectedTarget =
+  | { kind: 'logical'; model: string; platformId: '' }
+  | { kind: 'pinned'; model: string; platformId: string };
+
+function selectedTargetOf(model: string, platformId: string): SelectedTarget | null {
+  const trimmed = (model ?? '').trim();
+  if (trimmed.length === 0 || trimmed === 'auto') return null;
+  return platformId
+    ? { kind: 'pinned', model: trimmed, platformId }
+    : { kind: 'logical', model: trimmed, platformId: '' };
 }
 
 /** 供 `'…'` 里嵌入的文本：单引号内无法转义，只能关引号、给字面撇号、再开引号。 */

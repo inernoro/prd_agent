@@ -54,7 +54,6 @@ const BUDGETS = [
   // Exchange 已迁移，常驻 JSX 正文为 0 段；超出的字来自 transformerType 等选项常量，
   // 它们实际渲染在 HelpPopover 里，但守卫看不出常量最终落到哪个出口（已知边界）。
   { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置；2026-08-10 +1 是新增的「删除」按钮文案（与图标同段，只多算一个汉字）' },
-  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 4, maxCjk: 582, reason: '2026-08-18 信息架构改版后重新登记。四段里只有副标题对所有人常驻，其余三段都有条件：补齐面板的写操作警告只在展开确认面板时出现、ReadOnlyNotice 只对只读角色出现、六种策略说明是常量（渲染在 HelpPopover 与新建向导的策略卡里）。汉字数上升的主体是**诊断信息本身**——池状态结论句、第1顺位连续失败与最近失败/成功时间、指标的窗口标签，它们是后端早就返回、此前一个都没显示的字段，正是这次改版要露出来的东西，收进折叠块就等于没改。守卫按 `>文本<` 计数，分不出「常驻说明」与「按数据渲染的结论」，这里如实登记而不是把结论藏起来凑数。2026-08-18 二次上调 558→582：与设计稿并排比对后，新建向导的两条字段说明改为逐字照抄设计稿（「类型决定这个池能承接哪些调用，创建后不可改。」「会显示在池详情标题下和列表悬浮提示里。」）。它们只在新建流程里出现、且正是出口 1「字段旁的说明」所鼓励的形态，但守卫按 hint= 属性计数，识别不出条件渲染。同批还删掉了两个 HelpPopover 里逐字重复的「补齐」语义与一条自己编的提示，净增只有这两句' },
   { file: 'pages/QuickstartPage.tsx', maxParagraphs: 1, maxCjk: 460, reason: '接入片段常量属产品内容（用户复制走的东西），不是页面解释。2026-08-27 二次改版 356→454：**上调的 98 字全部是新增的 systemPromptSnippet**——那是一段可直接粘进用户自己应用的系统提示词，与四协议 cURL/Agent Skill 片段同类，是产品交付物；它渲染在产物屏「提示词」页签的代码块里，不是常驻解释。同批把页面自己的解释继续压了：三档取用方式的说明各压到一句、第一屏副标题去掉半句、接入地址卡的注脚减半，常驻段落数仍是 1（主按钮旁那句密钥默认值说明）。守卫按常量字面量计数、看不出常量最终落到哪个出口，因此按实测值封顶登记；下次若删掉系统提示词或把它挪进 DetailsBlock，这个值要跟着降回去。2026-08-28 三次上调 454→459：**上调的 5 字全部是字段标签，不是解释**——试跑区改成「上输入 / 下输出」后新增「要发什么」「模型返回」两个字段标签，并把「请求片段」的复制按钮收进标题行（该行的结构变化让原本被 `{}` 打断、守卫数不到的「请求片段」标签也进了计数）。三者都是控件可供性（同 AppCallersPage 条目里「删除」按钮的情形），守卫的 `>文本<` 口径分辨不出标签与正文。同批**没有**新增任何解释句：新写的空态与计费提示都跟在 `{}` 表达式后、本来就不计数，计费提示按设计稿逐字回抄（复刻并排比对时发现实现把它压短了，属文案偏差）。459→460 的那 1 个字，是标签「要发什么」按设计稿改回「你要发什么」' },
 ];
 
@@ -186,15 +185,54 @@ for (const full of walk(SRC)) {
   }
 }
 
+/**
+ * Markdown 强调符漏进界面文案。
+ *
+ * 由来：2026-09-16「模型名录」一段写了「补完**立刻生效**」，JSX 文本节点不过 Markdown，
+ * 于是用户看到的就是带四颗星号的原文。tsc 绿、lint 绿、文字预算守卫绿（它只扫 pages/），
+ * 只有真人打开那一屏截图才看得见——正是那种「通读代码挑不出来」的形状。
+ *
+ * 判据剥掉注释之后扫全文，**不限于 JSX 文本节点**。第一版就是限在 `>…<` 里的，
+ * 而肇事的那一段恰好含 `{data.builtinCount}`，被花括号打断、一个字都没扫到——
+ * 写完跑红绿闭环才发现守卫在空转（形状 4：测试自己坏了）。
+ *
+ * 全文口径的误报风险很低：注释里的星号已经剥掉，JS 的幂运算 `a ** b` 两边有空格、
+ * 配不成 `**x**`。实测全仓零命中。真要往界面里送 Markdown 原文（交给渲染器的内容），
+ * 到时候再按文件登记豁免，而不是现在先把判据放宽。
+ *
+ * 扫描范围是 src 下全部 .tsx（不止 pages/），因为这类文案哪个组件里都可能写。
+ */
+const EMPHASIS = /\*\*[^*\n]{1,60}\*\*/g;
+for (const full of walk(SRC)) {
+  const rel = path.relative(SRC, full);
+  if (!/\.tsx$/.test(rel)) continue;
+  let source;
+  try {
+    source = fs.readFileSync(full, 'utf8')
+      .replace(/\/\*[^]*?\*\//g, blank)
+      .replace(/^[ \t]*\/\/.*$/gm, blank);
+  } catch (error) {
+    warnings.push(`${rel}  强调符扫描跳过：${error.message}`);
+    continue;
+  }
+  const lineOf = (index) => source.slice(0, index).split('\n').length;
+  for (const match of source.matchAll(EMPHASIS)) {
+    violations.push(
+      `${rel}:${lineOf(match.index)}  界面文案里有 Markdown 强调符 ${match[0].slice(0, 24)}`
+      + `  ← JSX 不过 Markdown，用户会原样看到星号；要加粗就用 <strong>`,
+    );
+  }
+}
+
 for (const warning of warnings) console.warn('文字预算守卫警告：' + warning);
 
 if (violations.length) {
   console.error('文字预算守卫未通过：\n');
   for (const violation of violations) console.error('  ' + violation);
-  console.error('\n把超出的解释挪进四个出口之一：');
+  console.error('\n超预算时，把解释挪进四个出口之一（强调符那条不适用，按上面那行改即可）：');
   console.error('  1) 字段旁的 <HelpPopover>   2) 空状态   3) 默认收起的 <DetailsBlock>   4) <TutorialLink> 深链教程');
   console.error('确有理由超预算时，在 scripts/check-prose.mjs 的 BUDGETS 里登记并写明原因。');
   process.exit(1);
 }
 
-console.log(`文字预算守卫通过：常驻正文 ≤${DEFAULT_BUDGET.maxParagraphs} 段 / ≤${DEFAULT_BUDGET.maxCjk} 汉字（出口内的解释不计入）。`);
+console.log(`文字预算守卫通过：常驻正文 ≤${DEFAULT_BUDGET.maxParagraphs} 段 / ≤${DEFAULT_BUDGET.maxCjk} 汉字（出口内的解释不计入）；界面文案里没有 Markdown 强调符。`);

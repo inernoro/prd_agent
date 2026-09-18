@@ -37,8 +37,8 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
             ModelTypes.Chat);
 
         result.Success.ShouldBeTrue(result.ErrorMessage);
-        result.ResolutionType.ShouldBe("GatewayRegistryPool");
-        result.ModelGroupId.ShouldBe(GatewayFixture.DefaultChatPoolId);
+        result.ResolutionType.ShouldBe("LogicalModel");
+        result.LogicalModelPublicId.ShouldBe("default-chat");
         result.ActualModel.ShouldBe(ChatModel);
     }
 
@@ -92,7 +92,7 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
             ModelTypes.Chat);
 
         result.Success.ShouldBeTrue(result.ErrorMessage);
-        result.ModelGroupId.ShouldBe(GatewayFixture.DefaultChatPoolId);
+        result.LogicalModelPublicId.ShouldBe("default-chat");
         result.ActualModel.ShouldBe(ChatModel);
         result.ActualModel.ShouldNotBe("legacy-main");
     }
@@ -133,10 +133,13 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
             ModelTypes.Chat,
             expectedModel: "outside-model");
 
-        result.Success.ShouldBeTrue(result.ErrorMessage);
-        result.ModelGroupId.ShouldBe(GatewayFixture.DefaultChatPoolId);
-        result.ActualModel.ShouldBe(ChatModel);
+        // 点名了目录里没有的模型：必须结构化失败，绝不能悄悄换一个给他。
+        // 旧行为是「回落到默认池」——那恰恰违反 llm-gateway 规则 3（显式未知时禁止静默落到全局默认），
+        // 池退场顺带把这个洞堵上了。不变量没变：点名了就不许换人。
+        result.Success.ShouldBeFalse();
         result.ActualModel.ShouldNotBe("outside-model");
+        result.ActualModel.ShouldNotBe(ChatModel);
+        result.ErrorMessage.ShouldContain("outside-model");
     }
 
     /// <summary>
@@ -151,11 +154,12 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
     public async Task UnregisteredFallback_ShouldFailClosedInsteadOfDroppingToLegacy()
     {
         await using var env = await GatewayFixture.CreateAsync();
+        // 「默认模型一条线路都接不住」——池退场后这是同一种处境的新表达。
         await env.GatewayData.Database
-            .GetCollection<BsonDocument>("llmgw_model_pools")
-            .UpdateOneAsync(
-                Builders<BsonDocument>.Filter.Eq("_id", GatewayFixture.DefaultChatPoolId),
-                Builders<BsonDocument>.Update.Set("Models", new BsonArray()));
+            .GetCollection<BsonDocument>("llmgw_model_offerings")
+            .UpdateManyAsync(
+                Builders<BsonDocument>.Filter.Eq("LogicalModelId", GatewayFixture.DefaultChatLogicalId),
+                Builders<BsonDocument>.Update.Set("Enabled", false));
         await env.MapData.LLMPlatforms.InsertOneAsync(new LLMPlatform
         {
             Id = "legacy-platform",
@@ -298,13 +302,21 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
             "document-store.reprocess::chat",
             ModelTypes.Chat);
 
-        result.Success.ShouldBeFalse();
-        result.FailureCode.ShouldBe(GatewayRouteFailure.AppCallerPoolUnbound);
+        // 池路由退场后，这条绑定没有任何运行时消费方了。
+        //
+        // 这里刻意**不**改成 fail closed：池退场不该反过来把还在跑的调用方打挂
+        // （线上确实还有两个带着这种残留字段）。要消灭的是「静默」不是「放行」——
+        // 所以照常按对外模型解析，同时 resolver 记一条点名那条绑定的告警，
+        // 控制台那几个控件也标成已退役（守卫 `残留池绑定不许静默生效`）。
+        result.Success.ShouldBeTrue(result.ErrorMessage);
+        result.ResolutionType.ShouldBe("LogicalModel");
+        result.LogicalModelPublicId.ShouldBe("default-chat");
     }
 
     private sealed class GatewayFixture : IAsyncDisposable
     {
         public const string DefaultChatPoolId = "gw-default-chat-pool";
+        public const string DefaultChatLogicalId = "gw-default-chat-logical";
 
         private readonly MongoClient _client;
         private readonly string _gatewayDatabaseName;
@@ -354,33 +366,42 @@ public sealed class GatewayUnregisteredAppCallerFallbackTests
                 })
                 .Build();
 
-            // GW 侧：一个 chat 默认池 + 一个可用平台与模型。MAP 侧刻意保持全空，
-            // 复现「模型管理写接口退场后 model_groups 恒为空」的真实生产状态。
-            var pool = new ModelGroup
-            {
-                Id = DefaultChatPoolId,
-                Name = "对话默认池",
-                Code = "default-chat",
-                ModelType = ModelTypes.Chat,
-                IsDefaultForType = true,
-                Priority = 10,
-                Models =
-                [
-                    new ModelGroupItem
-                    {
-                        PlatformId = PlatformId,
-                        ModelId = ChatModel,
-                        Priority = 0,
-                        HealthStatus = ModelHealthStatus.Healthy,
-                        ConsecutiveSuccesses = 10,
-                    },
-                ],
-            };
-            var poolDocument = pool.ToBsonDocument();
-            poolDocument["TenantId"] = GatewayTenantDefaults.InternalTenantId;
-            await gatewayData.Database
-                .GetCollection<BsonDocument>("llmgw_model_pools")
-                .InsertOneAsync(poolDocument);
+            // GW 侧：这个用途的默认对外模型 + 一条线路 + 一个可用平台与模型。
+            // MAP 侧刻意保持全空，复现「模型管理写接口退场后 model_groups 恒为空」的真实生产状态。
+            //
+            // 这里原本建的是模型池。池退场之后，「未登记的调用方有没有着落」这个不变量
+            // 换成由用途默认回答——事故要防的事没变（第一次被人用就报「未找到可用模型」），
+            // 换的是它在新架构里的落点。
+            await InsertTenantDocumentAsync(
+                gatewayData.Database,
+                "llmgw_logical_models",
+                new GatewayLogicalModel
+                {
+                    Id = DefaultChatLogicalId,
+                    PublicId = "default-chat",
+                    PublicIdNormalized = "default-chat",
+                    Name = "对话默认",
+                    ModelType = ModelTypes.Chat,
+                    Capabilities = ["chat"],
+                    IsDefaultForType = true,
+                    Enabled = true,
+                    DisplayOrder = 10,
+                });
+            await InsertTenantDocumentAsync(
+                gatewayData.Database,
+                "llmgw_model_offerings",
+                new GatewayModelOffering
+                {
+                    Id = "default-chat-offering",
+                    LogicalModelId = DefaultChatLogicalId,
+                    TargetId = "chat-model-id",
+                    TargetKind = "model",
+                    Protocol = "openai",
+                    Enabled = true,
+                    Priority = 10,
+                    HealthStatus = ModelHealthStatus.Healthy,
+                    ConsecutiveSuccesses = 10,
+                });
 
             var encryptedKey = ApiKeyCryptoKeyRing.Encrypt("sk-test-platform", configuration);
             await InsertTenantDocumentAsync(

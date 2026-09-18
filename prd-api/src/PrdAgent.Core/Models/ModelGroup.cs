@@ -129,27 +129,60 @@ public class ModelGroupItem
     public List<LLMModelCapability>? Capabilities { get; set; }
 
     /// <summary>
-    /// 输入 Token 单价（元/百万 Token）
-    /// - null: 未配置，成本中心不计算该模型的 Token 成本
+    /// 输入 Token 单价（USD/百万 Token）
+    /// - null: 未配置，这条模型的调用不计成本，并计入缺价统计
     /// </summary>
     public decimal? InputPricePerMillion { get; set; }
 
     /// <summary>
-    /// 输出 Token 单价（元/百万 Token）
-    /// - null: 未配置，成本中心不计算该模型的 Token 成本
+    /// 输出 Token 单价（USD/百万 Token）
+    /// - null: 未配置，这条模型的调用不计成本，并计入缺价统计
     /// </summary>
     public decimal? OutputPricePerMillion { get; set; }
 
     /// <summary>
-    /// 每次调用固定费用（元/次），适用于图片生成等按次计费的模型
+    /// 缓存命中的输入 Token 单价（USD/百万 Token）。
+    ///
+    /// null 不代表免费，代表「没配」：计价时这部分按 <see cref="InputPricePerMillion"/> 全价算。
+    /// 宁可高估也不低估——低估的成本会让限额失效，而限额正是这套计价存在的理由。
+    /// </summary>
+    public decimal? CachedInputPricePerMillion { get; set; }
+
+    /// <summary>
+    /// 写入缓存的输入 Token 单价（USD/百万 Token），Anthropic 一类按溢价收费的协议才用得上。
+    /// null 同样按全价算，理由同上。
+    /// </summary>
+    public decimal? CacheWritePricePerMillion { get; set; }
+
+    /// <summary>
+    /// 每次调用固定费用（USD/次），适用于图片生成等按次计费的模型
     /// - null: 不按次计费
     /// </summary>
     public decimal? PricePerCall { get; set; }
 
     /// <summary>
-    /// 价格币种（CNY/USD）。null 表示历史数据，按 CNY 解释。
+    /// 价格币种。计价口径统一为 USD：新写入一律 "USD"。
+    ///
+    /// 存量可能是 CNY 或 null（历史上 null 按 CNY 解释）。这类价格**不会**被当成 USD 记账——
+    /// 那会把成本低估一个数量级、把限额打穿。它们在计价时判为 stale_currency，
+    /// 计入缺价统计并在控制台要求先换算再启用。
     /// </summary>
     public string? PriceCurrency { get; set; }
+
+    /// <summary>
+    /// 这份价格是从哪来的：<c>upstream</c>（上游清单返回）/ <c>admin</c>（人工录入）/
+    /// <c>migrated</c>（由历史 CNY 价换算而来）。
+    ///
+    /// 必填不是形式主义：没有来源的价格没法判断该不该信，而「看起来是真的、其实早就过时」的价格
+    /// 比没有价格更危险——成本报表照算，没人会去核对。
+    /// </summary>
+    public string? PriceSource { get; set; }
+
+    /// <summary>这份价格是什么时候观测到的。超过复核期（30 天）在控制台标为陈旧。</summary>
+    public DateTime? PriceObservedAt { get; set; }
+
+    /// <summary>最后一次改动价格的人，便于追溯到具体那次操作。</summary>
+    public string? PriceUpdatedBy { get; set; }
 }
 
 /// <summary>

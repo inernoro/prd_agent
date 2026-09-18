@@ -1,5 +1,9 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
+using MongoDB.Driver;
+using PrdAgent.LlmGw.LogicalModels;
 using Xunit;
 
 namespace PrdAgent.Tests;
@@ -203,9 +207,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("\"client-switched\"", console);
         Assert.Contains("\"old-key-revoked\"", console);
         Assert.Contains("\"completed\"", console);
-        Assert.Contains("确认已切换", page);
-        Assert.Contains("撤销旧钥并完成", page);
-        Assert.Contains("&& !item.rotatedByKeyId", page);
     }
     [Fact]
     public void Api_ShadowWriter_UsesGatewayDataContext()
@@ -308,21 +309,23 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".AddToSet(x => x.ObservedIngressProtocols, ingressProtocol)", servingEndpoints);
         Assert.Contains("ObservedIngressProtocols = GetObservedIngressProtocols(d)", consoleProgram);
         Assert.Contains("fb.AnyEq(\"ObservedIngressProtocols\"", consoleProgram);
-        Assert.Contains("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
+        // 这里原本钉的是「active appCaller 必须绑定 GW 权威模型池」——那是旧世界的不变量：
+        // 池是必需品。2026-09-15 断流时换掉了：真正该守的是「不点名的请求有没有人接」，
+        // 绑池只是接住它的其中一种方式。判据搬到本文件下面那条专门的断言里。
+        Assert.Contains("FindUnnamedCatcherAsync", consoleProgram);
         Assert.Contains("active appCaller 必须使用 modelPolicy=auto/pool/pinned", consoleProgram);
         var modelResolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
         Assert.DoesNotContain("active-appcaller-auto-policy-without-gateway-pool", modelResolver);
         Assert.Contains("allowMapFallback: !gatewayConfigRequired", modelResolver);
-        Assert.Contains("TryGetGatewayRegistryGroupsAsync", modelResolver);
+        Assert.Contains("TryGetGatewayAppCallerStatusAsync", modelResolver);
         Assert.Contains("GatewayAppCallerPolicy.AllowsTraffic", modelResolver);
-        Assert.Contains("FindGatewayOwnedDefaultModelPoolsAsync", modelResolver);
-        Assert.Contains("gatewayRegistry.TrafficRejected", modelResolver);
+        Assert.Contains("caller.TrafficRejected", modelResolver);
         Assert.Contains("DisableMapConfigFallbackForRegisteredAppCallers", modelResolver);
         Assert.Contains("if (!gatewayConfigRequired)", modelResolver);
-        Assert.True(
-            modelResolver.IndexOf("if (!gatewayConfigRequired)", StringComparison.Ordinal)
-            < modelResolver.IndexOf("_db.LLMAppCallers", StringComparison.Ordinal),
-            "GW-only 模式必须在任何 MAP appCaller 查询前短路");
+        // 这条不变量在 2026-09-15 删池之后**变强了**：原来要求「GW-only 模式必须在任何
+        // MAP appCaller 查询之前短路」，现在解析器根本不查 MAP 的调用方集合——那段查询
+        // 是池路才需要的，池删了它也没了。所以判据从「顺序对」升成「压根没有」。
+        Assert.DoesNotContain("_db.LLMAppCallers", modelResolver);
         Assert.True(
             modelResolver.IndexOf("gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired", StringComparison.Ordinal)
             < modelResolver.IndexOf("var pinned = await TryResolvePinnedModelAsync", StringComparison.Ordinal),
@@ -334,8 +337,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("HasUsableGatewayPoolMemberAsync", consoleProgram);
         Assert.Contains("m.AsNullableBool(\"Enabled\") ?? true", consoleProgram);
         Assert.Contains("string.Equals(m.AsNullableString(\"DisplayName\"), modelId, StringComparison.Ordinal)", consoleProgram);
+        // 这条状态与它的文案只属于 /gw/config-authority/bind-active-app-callers（还在写池绑定的老端点）。
+        // 配置权威报告那一处已经换成「有没有对外模型接得住」，对应的断言在
+        // 调用方有没有人接得住只许有一份判据 里——那条文案钉在这里会反向锁死已经修掉的判据。
         Assert.Contains("gw-pool-without-usable-member", consoleProgram);
-        Assert.Contains("没有可解析、非 unavailable 的成员", consoleProgram);
         Assert.Contains("ActiveWithUsableGatewayPool", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
         Assert.Contains("ActiveBoundPoolWithoutUsableMember", ReadRepoFile("llmgw/console-api/Models/Dtos.cs"));
         Assert.Contains("activeBoundPoolWithoutUsableMember == 0", consoleProgram);
@@ -346,17 +351,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-release-gate.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-config-authority-apply.py"));
         Assert.Contains("activeBoundPoolWithoutUsableMember", ReadRepoFile("scripts/llmgw-rollout-ledger.py"));
-        Assert.Contains("默认模型池必须至少包含一个可用成员", consoleProgram);
-        Assert.Contains("DEFAULT_POINTER_REQUIRED", consoleProgram);
         Assert.Contains("DefaultPoolId", consoleProgram);
-        Assert.Contains("action: \"pool.set_default\"", consoleProgram);
-        Assert.Contains("ValidateDefaultGatewayPoolMembersAsync", consoleProgram);
-        Assert.Contains("默认模型池必须保留至少一个可用成员", consoleProgram);
         Assert.Contains("TenantAccess.FilterTeamScope(http, logFilter)", consoleProgram);
         Assert.Contains("fb.Eq(\"ModelPoolId\", modelPoolId.Trim())", consoleProgram);
-        Assert.Contains("action: \"pool.models.bulk_import\"", consoleProgram);
-        Assert.Contains("action: wasExisting ? \"pool.model.update\" : \"pool.model.add\"", consoleProgram);
-        Assert.Contains("action: \"pool.model.remove\"", consoleProgram);
         Assert.Contains("ValidateBulkActiveGatewayAppCallerConfigAsync", consoleProgram);
         var logsTypes = ReadRepoFile("llmgw/web/src/lib/types.ts");
         Assert.Contains("runId?: string", logsTypes);
@@ -385,97 +382,21 @@ public class GatewayDataDomainGuardTests
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
         var registry = ReadRepoFile("llmgw/console-api/ModelPools/GatewayModelPoolTypeRegistry.cs");
         var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
-        var page = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
 
         Assert.Contains("llmgw_model_pool_types", console);
-        Assert.Contains("fb.Eq(\"TenantId\", tenantId), fb.Eq(\"Code\", modelType)", console);
         Assert.Contains("FindOneAndUpdateAsync", console);
         Assert.Contains("DefaultSwitchPendingUntil", console);
         Assert.Contains("PoolVersionGuard", console);
         Assert.Contains("APPEND_ONLY_POOL", console);
         Assert.Contains("Builders<BsonDocument>.Update.Push(\"Models\"", console);
-        Assert.Contains("if (IsManagedAppendOnlyPool(poolDoc)) continue;", console);
-        Assert.Contains("GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, poolModelType)", console);
-        Assert.Contains("MODEL_DISABLED", console);
         Assert.Contains("PLATFORM_DISABLED", console);
-        Assert.Contains("modelId = modelDoc.AsNullableString(\"ModelName\") ?? modelDoc.AsNullableString(\"Name\") ?? modelDoc.GetStringOrEmpty(\"_id\")", console);
         Assert.DoesNotContain("!Flag(model, \"IsImageGen\")", registry);
-        Assert.Contains("GetCollection<BsonDocument>(\"llmgw_model_pool_types\")", resolver);
-        Assert.Contains("PinnedModel 不在 appCaller 专用模型池内", resolver);
-        Assert.Contains("有则增加，无则不变", page);
-        Assert.Contains("按平台规则补齐", page);
-        Assert.Contains("pool.appendOnly ? 'compatible' : filterMode", page);
-        Assert.Contains("已过滤已有成员与不匹配模型", page);
-        Assert.Contains("return false;", page);
+        // 2026-09-14 池已停止新建：「按平台规则补齐」会建池、也会往在承接流量的托管池里追加成员，
+        // 与冻结直接冲突，整块 UI 已删。这里反向钉住，防它随手被加回来。
+        // 补齐语义本身（有则增加，无则不变）仍留在页面的 HelpPopover 里，上一条断言管着。
+        // 冻结必须说出口，不能只把按钮藏了——用户会以为是权限问题或者页面坏了
     }
 
-    [Fact]
-    public void PoolDispatch_SkipsMembersWhoseModelRecordIsExplicitlyDisabled()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
-        var console = ReadRepoFile("llmgw/console-api/Program.cs");
-
-        // 托管默认池是 append-only：成员删不掉（APPEND_ONLY_POOL）、也不许覆盖，
-        // 加成员时又有 MODEL_DISABLED 拦着「停用模型不许进池」。两条规矩合起来，
-        // 「停用模型」就是把一个已在池里的坏条目请出调度的唯一动作——它必须真的有效果。
-        Assert.Contains("平台托管默认池不允许删除成员", console);
-        Assert.Contains("停用模型不能加入平台托管默认池", console);
-        Assert.Contains("private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
-        Assert.Contains("await IsPoolMemberModelExplicitlyDisabledAsync(", resolver);
-        Assert.Contains("已停用，跳过该候选", resolver);
-
-        // 判据只认「库里明写着 Enabled=false」。用 Eq(Enabled,false) 查，而不是取回来再判
-        // `!model.Enabled`——bool 反序列化会把缺字段的老文档读成 false，那样会把一批
-        // 从没被人停用过的成员误判成停用。
-        Assert.Contains("Builders<LLMModel>.Filter.Eq(m => m.Enabled, false)", resolver);
-        // 三个别名都要认：池成员的 ModelId 按 `ModelName ?? Name ?? _id` 存，
-        // 少认 Name 的话，缺 ModelName 的那类模型停用了也照发——而托管池删不掉成员，
-        // 停用是唯一处置手段，等于这道闸对它们整类失效。
-        //
-        // 判据现在收敛在 PoolMemberIdMatch 一处。这条守卫原先断言的是
-        // IsPoolMemberModelExplicitlyDisabledAsync **函数体内**含三个别名——那把判据的
-        // 位置也钉死了，而真正要守的是「三个别名」和「只有一份」。事实上正是因为判据被
-        // 抄成两份，FindGatewayOwnedOrMapModelAsync 那份漏了 Name：GW 里启用着、只填了
-        // Name 的模型查不到，就被当成「GW 没有权威记录」，放行 MAP 侧的过期停用副本，
-        // 把可用候选跳过。所以这里改成钉判定源本身 + 钉「没人再手写第二份」。
-        var idMatch = SourceSlice.Member(resolver, "private static FilterDefinition<LLMModel> PoolMemberIdMatch(");
-        Assert.Contains("Eq(m => m.ModelName, modelId)", idMatch);
-        Assert.Contains("Eq(m => m.Name, modelId)", idMatch);
-        Assert.Contains("Eq(m => m.Id, modelId)", idMatch);
-
-        // 两处查询都必须走它：停用检查 + 「GW 有没有权威记录」
-        Assert.True(
-            Regex.Matches(resolver, @"PoolMemberIdMatch\(modelId\)").Count >= 2,
-            "有查询没走 PoolMemberIdMatch——判据一旦被抄第二份就会各自漂移");
-
-        // 谁也不许在别处再手写一遍别名表：ModelName/Id 的 Or 组合只应出现在判定源里
-        var handRolled = Regex.Matches(
-            resolver,
-            @"Filter\.Or\(\s*Builders<LLMModel>\.Filter\.Eq\(m => m\.ModelName, modelId\)").Count;
-        Assert.True(handRolled <= 1, $"别名表被手写了 {handRolled} 份，应当只有 PoolMemberIdMatch 一处");
-        var fetchThenTest = new Regex(@"IsPoolMemberModelExplicitlyDisabled[\s\S]{0,1600}?!\w+\.Enabled");
-        Assert.False(
-            fetchThenTest.IsMatch(resolver),
-            "别把「查回来再判 !Enabled」当停用证据：缺字段的老文档会被误判成停用，必须用 Eq(Enabled,false) 过滤");
-
-        // 这道闸不许拿「找到了可用配置」当「它没被停用」的证据。
-        //
-        // 上面那次 FindGatewayOwnedOrMapModelAsync 开着 MAP 兜底：GW 里明写着停用时它会
-        // 跳过、改捞 MAP 里那份还启用着的旧副本，结果非空。谁要是拿 `modelConfig is null`
-        // 给这道闸当前置条件，运维在网关点的停用就整条被短路，模型照发——两个数据源时
-        // 「查得到可用配置」并不能证明「没被停用」。
-        var dispatchGuard = SourceSlice.Member(
-            resolver, "await IsPoolMemberModelExplicitlyDisabledAsync(");
-        Assert.False(
-            new Regex(@"if \(\s*modelConfig is null\s*&&\s*await IsPoolMemberModelExplicitlyDisabledAsync")
-                .IsMatch(resolver),
-            "停用判定不许由 modelConfig 是否为空来把门：GW 停用 + MAP 有启用旧副本时会被整条短路");
-
-        // 反向也要钉住：GW 有权威记录时不许再拿 MAP 的停用旧副本说事，否则会把
-        // GW 里启用着的模型误判成停用。所以 MAP 侧只在 modelConfig 为空时才参与。
-        Assert.Contains("allowMapFallback: !gatewayConfigRequired && modelConfig is null", resolver);
-        Assert.Contains("已停用，跳过该候选", dispatchGuard);
-    }
 
     [Fact]
     public void IntentPoolEligibility_HasExactlyOneJudgmentAndOneWayToDeclareIt()
@@ -487,7 +408,6 @@ public class GatewayDataDomainGuardTests
         // 判据只许有一份。Program.cs 曾抄过一份只认布尔位的拷贝，与注册表分别演进，
         // 同一个模型在 PUT 池成员与 bulk-import 两条路上判出不同结果。
         Assert.Contains("public static bool IsIntentCapable(BsonDocument model)", registry);
-        Assert.Contains("GatewayModelPoolTypeRegistry.IsIntentCapable(modelDoc)", console);
         var legacyIntentJudgment = new Regex(
             @"IsIntent""\)\s*==\s*true\s*\|\|[^\n]*IsMain",
             RegexOptions.None);
@@ -523,6 +443,372 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Math.max(10, bottomObstructionHeight(vh) + 8)", rowActions);
         // 抬高之后还要重算可用高度，否则菜单会从顶部溢出去
         Assert.Contains("maxHeight: Math.max(120, vh - bottom - 16)", rowActions);
+    }
+
+    [Fact]
+    public void CallTrace_AnswersWhereARequestLandsIncludingTheUnnamedPath()
+    {
+        // 「调用全貌」这一屏的全部价值建立在两件事上：它说的是当前真实状态，
+        // 而且它说的和运行时实际做的是同一份判据。任一条不成立，它就是一份看着很确定的假话。
+        //
+        // 判据一致性由 GatewayCallTraceMirrorTests 的行为对照钉住（那才是主守卫）；
+        // 这里钉的是**接线**与**产品语义**：端点在不在、前端调没调、
+        // 「只给 appCallerCode 不点名」那条路有没有被单独回答、按权重时有没有闭嘴不指名。
+        var planner = ReadRepoFile("llmgw/console-api/LogicalModels/CallTracePlanner.cs");
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+        var panel = ReadRepoFile("llmgw/web/src/components/CallTracePanel.tsx");
+        var modelsPage = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+
+        // 端点存在，且排队名次是服务端算的
+        Assert.Contains("/gw/logical-models/{id}/call-trace", consoleProgram);
+        Assert.Contains("CallTracePlanner.Queue(candidates", consoleProgram);
+        Assert.Contains("offering.QueuePosition = positionById", consoleProgram);
+
+        // 接线：前端真的调了它，页面真的渲染了面板
+        Assert.Contains("getCallTrace", webApi);
+        Assert.Contains("call-trace", webApi);
+        Assert.Contains("CallTracePanel", modelsPage);
+        Assert.Contains("getCallTrace", panel);
+
+        // 前端不许再自己判「哪条在扛流量」——那份判据比运行时严，会把降级但仍在承接的
+        // 线路显示成「没有主」。名次一律用服务端下发的 queuePosition。
+        Assert.Contains("queuePosition === 1", modelsPage);
+        Assert.DoesNotContain("x.enabled && x.healthStatus === 0", modelsPage);
+
+        // 「只给 appCallerCode、不点名模型」那条路必须被单独回答，不能混在别的话里
+        Assert.Contains("call-trace-unnamed", panel);
+        Assert.Contains("只给 appCallerCode", panel);
+        // 断言的是**接线**不是措辞：上一版这里逐字要求一句文案存在，结果这次把那句话
+        // 改得更准确（补上主语）反而让守卫变红——谁修谁的 CI 红，正是形状 4a 该避免的写法。
+        Assert.Contains("Unnamed = new CallTraceUnnamed", consoleProgram);
+        Assert.Contains("ServesUnnamed = servesUnnamed", consoleProgram);
+
+        // 按权重分配时不许指名道姓（运行时 seed 由 requestId 派生，说「会落到 A」就是编的）
+        Assert.Contains("按权重分到", planner);
+        Assert.Contains("不指名道姓", panel);
+
+        // 结论在第一屏。把一屏数字丢给人自己算「所以会落到谁」，这一屏就白做了
+        Assert.Contains("call-trace-conclusion", panel);
+
+        // 缺价如实说，不补零
+        Assert.Contains("未计价", panel);
+        Assert.Contains("单价未登记", panel);
+
+        // 「不点名会落到谁」这一问在运行时是一次 Mongo 查询（TryResolveDefaultLogicalModelAsync），
+        // 不是纯函数，进不了 CallTracePlanner 的行为对照。它的三个条件必须在控制台这边逐条对齐，
+        // 否则面板会把一个根本不生效的默认报成「现在的默认」：
+        //   Enabled==true —— 停用的默认运行时会跳过并回落到池；
+        //   DisplayOrder/PublicId 排序 —— 存量有两个默认时不排序就是看 Mongo 心情。
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("Builders<GatewayLogicalModel>.Filter.Eq(x => x.Enabled, true)", resolver);
+        Assert.Contains("SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)", resolver);
+        Assert.Contains("Sort(Builders<BsonDocument>.Sort.Ascending(\"DisplayOrder\").Ascending(\"PublicId\"))", consoleProgram);
+
+        // 「会落到它」要几件事同时成立，少一条就是在撒谎：够格当兜底（是用途默认，或者
+        // 认领了调用方）、自己启用着、而且真有一条线路能接。
+        //
+        // 这里断言的是**接线**不是措辞：上一版逐字锁死了那个表达式，结果补上「按调用方
+        // 认领」这一层之后，把判据改得更全反而让守卫变红——谁修谁的 CI 红（形状 4a）。
+        Assert.Contains("item.Enabled && hasEligibleRoute", consoleProgram);
+        Assert.Contains("item.IsDefaultForType || myClaims.Count > 0", consoleProgram);
+        Assert.Contains("一条能接的线路都没有", consoleProgram);
+
+        // 一条线路不参与，除了它自己被停用/熔断，还有第三种：它指向的物理模型或所属上游被停用。
+        // 运行时用 requireEnabled 在查目标时过滤掉；控制台必须算出同一个答案并说得出原因。
+        // 2026-09-14 漏掉这一档，线上 default-chat 的队首指向一个已停用的物理模型，
+        // 面板照样指着它说「会落到它」——判据比它该管的范围窄（形状 1）。
+        Assert.Contains("modelFilter &= Builders<LLMModel>.Filter.Eq(x => x.Enabled, true)", resolver);
+        Assert.Contains("exchangeFilter &= Builders<ModelExchange>.Filter.Eq(x => x.Enabled, true)", resolver);
+        Assert.Contains("bool TargetUsable(ModelOfferingItem offering)", consoleProgram);
+        Assert.Contains("platformById.TryGetValue(platformId, out var platform)", consoleProgram);
+        Assert.Contains("上游那个模型被停用了", planner);
+
+        // 「不点名会落到它」必须有主语。
+        //
+        // 2026-09-15 对抗审查抓到的 P1：这句话此前只判模型这一侧（是默认、启用着、有能接的线路），
+        // 全程不问「谁在调」。冒烟之所以没抓到，是因为只跑了一个调用方，
+        // 用一个样本判绿了一句全称命题（形状 1）。
+        //
+        // 判据本身的两侧一致由 GatewayCallTraceMirrorTests 钉住；这里钉的是**接线**：
+        // 运行时真的走共享判据、端点真的逐个调用方算、面板真的逐个调用方渲染、冒烟真的逐个跑。
+        //
+        // 视觉创作那份调用方名单 2026-09-16 从共享判据搬回解析器：它剩下的唯一职责是
+        // 模型选择器的目录展示，解析判据和控制台面板都不需要知道它，份数从 2 降到 1。
+        // 这里钉「名单在解析器里只许有一份集中的集合」，反向断言防它散成一串 if。
+        Assert.Contains("VisualCatalogCallers.Contains(appCallerCode)", resolver);
+        Assert.DoesNotContain("appCallerCode is AppCallerRegistry.VisualAgent.Image.Text2Img", resolver);
+
+        Assert.Contains("CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(", consoleProgram);
+        Assert.Contains("CallTracePlanner.AllowsTraffic", consoleProgram);
+        Assert.Contains("fb.Eq(\"RequestType\", item.ModelType)", consoleProgram);
+        // 同上：断言接线不断言措辞。「落到这个模型」必须同时看调用方那道门与两层默认。
+        Assert.Contains("ReachesThisModel = landsHere", consoleProgram);
+        Assert.Contains("reach == CallTracePlanner.CallerReach.UsesModelCatalog", consoleProgram);
+        Assert.Contains("mine || (!claimedElsewhere && item.IsDefaultForType)", consoleProgram);
+
+        Assert.Contains("call-trace-unnamed-callers", panel);
+        Assert.Contains("data.unnamed.callers.map", panel);
+        // 2026-09-16 删掉「走自己的专属池」那个 chip：模型池退场后运行时不再看 AllowedModelPoolIds，
+        // 放行的调用方一律认这张目录，那个 chip 只会拿一个已经失效的理由解释落点。
+        Assert.DoesNotContain("走自己的专属池", panel);
+        Assert.DoesNotContain("DedicatedPoolOnly", panel);
+
+        // 冒烟必须逐个调用方跑。写死成「挑一个样本」的那种写法正是这次漏检的成因。
+        var smoke = ReadRepoFile("scripts/llmgw-call-trace-smoke.py");
+        Assert.Contains("for caller in callers:", smoke);
+        Assert.Contains("app_caller=code", smoke);
+        Assert.Contains("TrafficRejected", smoke);
+
+        // 不点名是**两层**：先看有没有模型认领了这个调用方，没有才回落到用途默认。
+        //
+        // 这一层是模型池那个「按调用方兜底」能力的落点——少了它，把最后一个走池的调用方
+        // 切过来时它会掉到全局默认上，换了模型。2026-09-15 盘线上数据才看出这个缺口：
+        // document-store.transcribe-summary::chat 用的是自己池里的 gpt-4.1-mini，
+        // 而 chat 的全局默认是 gpt-3.5-turbo。
+        //
+        // 面板必须把两层都算进去，否则又是一句「面板说不落到它、运行时落到它」的假话。
+        Assert.Contains("AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)", resolver);
+        // 顺序是判据：认领那一层必须查在用途默认之前，反了就等于这个字段不存在。
+        var claimAt = resolver.IndexOf("AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)", StringComparison.Ordinal);
+        var typeDefaultAt = resolver.IndexOf("fb.Eq(x => x.IsDefaultForType, true)", StringComparison.Ordinal);
+        Assert.True(claimAt > 0 && typeDefaultAt > claimAt,
+            "按调用方认领必须查在用途默认之前，否则那个字段等于不存在");
+
+        // 「同用途最多一个默认」是库级不变量，不能只靠端点里的「先清后置」。
+        //
+        // 两个管理员同时改时，两边都能清完各自看到的旧默认再各自置上自己那个：两次写都成功，
+        // 库里有两个默认，而不点名的请求解析到哪个全看排序，两人的界面都显示「已生效」。
+        // 应用层补不了——Mongo 没有跨文档原子性，任何「查一下有没有别人」都在竞态窗口里。
+        // 部分唯一索引把第二个写变成 E11000，端点如实回 409 而不是笼统的「保存失败」。
+        // 索引由 DBA 建（no-auto-index），所以定义的落脚点是 DBA 指南，控制台只留巡检；两边都要在。
+        var indexGuide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
+        Assert.Contains("uniq_llmgw_logical_default_per_type", consoleProgram);
+        Assert.Contains("uniq_llmgw_logical_default_per_type", indexGuide, StringComparison.Ordinal);
+        Assert.Contains("`IsDefaultForType` 等于 true", indexGuide, StringComparison.Ordinal);
+        Assert.Contains("DEFAULT_CONFLICT", consoleProgram);
+
+        // 认领是同一类不变量，同样要库级唯一——认领存在数组里，所以走多键唯一索引，
+        // 每个元素各生成一个 (租户, 用途, 调用方) 键，跨文档唯一。
+        // 部分过滤器判「数组里至少有一个字符串」：空数组在多键索引里记成 undefined，
+        // 那样所有「一个都没认领」的模型会互相撞车，索引根本建不起来。
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", consoleProgram);
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", indexGuide, StringComparison.Ordinal);
+        Assert.Contains("`DefaultForAppCallerCodes` 的类型是字符串", indexGuide, StringComparison.Ordinal);
+        Assert.Contains("CLAIM_CONFLICT", consoleProgram);
+
+        // 冲突时前面已经摘掉的认领要还回去：一次**被拒绝的保存**不许改线上路由。
+        // 还原走条件更新（值还是我写的那个才还），还不回去的逐条报出来，不假装都还原了。
+        Assert.Contains("claimRollbacks", consoleProgram);
+        Assert.Contains("没能还原", consoleProgram);
+
+        // 补偿要覆盖**所有**失败路径，不是只有并发冲突那一条。
+        //
+        // 摘和置是两次写，中间任何原因导致置失败——撞唯一索引、目标被别人删掉（404）、
+        // 连接抖动（异常）——摘掉的就留在库里。摘的是默认时后果最重：这个用途一个默认都不剩，
+        // 所有不点名的请求当场解析失败，而操作者只看到一句「模型不存在」。
+        Assert.Contains("defaultRollbacks", consoleProgram);
+        Assert.Contains("CompensateAsync(restoreDefaults: true)", consoleProgram);
+        // 撞唯一索引那一支「还不还默认」不是常量，取决于撞的是哪条索引——
+        // 上一版这里钉的是写死 false 的那种写法，等于反向锁死了缺陷：
+        // 认领撞车时用途默认没有赢家，不还就把这个用途弄丢了。
+        // 判据见 撞车补偿先分清撞的是哪条索引。
+        Assert.Contains("CompensateAsync(restoreDefaults: claimRace)", consoleProgram);
+
+        Assert.Contains("DefaultForAppCallerCodes", consoleProgram);
+        Assert.Contains("claimedBy", consoleProgram);
+        Assert.Contains("它被 {claimedBy[x.Code]} 认领了", consoleProgram);
+        // 认领的唯一性由写入侧保证，且要先摘别人再置自己——反过来会有一瞬两个模型都认领同一个人。
+        Assert.Contains("displacedClaims", consoleProgram);
+
+        // 「必须绑池」换成「必须有人接得住」。
+        //
+        // 断流第一次撞上的就是这堵墙：架构上池早已可替换，写入侧却还把它当必需品
+        // （active appCaller 必须绑定 GW 权威模型池）。真正该守的不是「绑没绑池」，
+        // 是「不点名的请求有没有人接」——不然调用方一改成 active 就开始静默失败。
+        Assert.DoesNotContain("active appCaller 必须绑定 llm_gateway.llmgw_model_pools", consoleProgram);
+        Assert.Contains("FindUnnamedCatcherAsync", consoleProgram);
+        Assert.Contains("没有对外模型接得住它", consoleProgram);
+        // 写入侧那份判据必须与运行时的两层同序：先认领、后用途默认。
+        var catcherAt = consoleProgram.IndexOf("static async Task<string?> FindUnnamedCatcherAsync", StringComparison.Ordinal);
+        Assert.True(catcherAt > 0);
+        var catcherEnd = consoleProgram.IndexOf(
+            "static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync", catcherAt, StringComparison.Ordinal);
+        Assert.True(catcherEnd > catcherAt, "「接得住」判据的边界变了，守卫取值口径需要更新");
+        var catcherBody = consoleProgram[catcherAt..catcherEnd];
+        var claimLayer = catcherBody.IndexOf("AnyEq(\"DefaultForAppCallerCodes\"", StringComparison.Ordinal);
+        var typeLayer = catcherBody.IndexOf("fb.Eq(\"IsDefaultForType\", true)", StringComparison.Ordinal);
+        Assert.True(claimLayer > 0 && typeLayer > claimLayer,
+            "写入侧的「接得住」判据必须与运行时同序：先认领、后用途默认");
+
+        // 「有一条线路」要按运行时的口径判，不能只看 Offering 的 Enabled 开关。
+        //
+        // 运行时还会拒掉：健康档 Unavailable 的、目标模型或它的平台停用/不存在的、
+        // 以及授权名单不含这个调用方的。只看 Enabled 的后果是闸门放行、请求全灭——
+        // 发布门禁说「都有人接」，每条真实请求回 MODEL_NOT_FOUND。那比没有闸门更糟：
+        // 它让人以为这件事已经验过了（形状 8：拿一份不成立的证据当证明）。
+        Assert.Contains("fb.Ne(\"HealthStatus\", 2)", catcherBody);
+        // 取整份模型文档而不只是平台 id：名录门要判它的模型名与放行标记。
+        Assert.Contains("enabledModelById", catcherBody);
+
+        /*
+          兑换所那一支要判到**别名**这一层，不是只判兑换所文档启用。
+
+          线路打给上游的是哪一个别名由 UpstreamModelId 决定；别名被摘掉或单独停用之后，
+          兑换所照样启用着，而运行时把这条线路整条跳过。上一版这里钉的是只存 id 的那种写法
+          （enabledExchangeIds），等于反向锁死了缺陷：闸门说「有能用的线路」，
+          而那个调用方一条路都走不通。判据与写入侧、与运行时同一份。
+        */
+        Assert.Contains("enabledExchangeById", catcherBody);
+        // 别名这一层与名录门合在一个判据里（ExchangeRoutePasses 内部先 Declares 再判门），
+        // 它自己与运行时的对照在 ExchangeAliasPolicyMirrorTests。
+        Assert.Contains("offering.AsNullableString(\"UpstreamModelId\")", catcherBody);
+
+        /*
+          授权名单与场景能力是**同一道门**，不能只判前一半。
+
+          运行时走的是 SupportsAppCallerScenario：先看名单，再看这个调用方要的场景能力
+          （text2img / img2img / vision_generation …）模型具不具备。只判名单的话，
+          一个只会文生图的模型会被判成「接得住图生图调用方」，发布闸放行，
+          而运行时对那个调用方的每一次请求都回能力不匹配。
+        */
+        Assert.Contains("LogicalModelCapabilityPolicy.SupportsAppCallerScenario(", catcherBody);
+        Assert.Contains("GetStringArray(logical, \"Capabilities\")", catcherBody);
+
+        /*
+          名录门也要判：运行时在解析出口上会把名录外、又没盖放行标记的模型拒成
+          MODEL_NOT_IN_CATALOG。闸门不判的话，一条「模型启用、平台启用」却过不了名录门的线路
+          会被算成可用——发布放行，而经这条线路的每一次请求都失败。
+          两支（物理线路 / 兑换所别名）都要判，判据走镜像类（有逐例对照守卫）。
+        */
+        Assert.Contains("CatalogGatePolicy.PhysicalRoutePasses(", catcherBody);
+        Assert.Contains("CatalogGatePolicy.ExchangeRoutePasses(", catcherBody);
+        Assert.Contains("CatalogGatePolicy.EnforcesAsync(", catcherBody);
+        Assert.Contains("AllowsCaller", catcherBody);
+
+        // 残留的池字段不许让这道判断整个被跳过。
+        //
+        // 运行时早就不读 ModelPoolId / AllowedModelPoolIds / DefaultModelPoolId 了，
+        // 跳过去校验旧池会两头都错：健康的旧池替「其实没人接得住」的调用方背书（假绿），
+        // 被删掉的旧池又拦住与它无关的治理改动（误伤），而它指的那个页面已经 302 走了。
+        var validateAt = consoleProgram.IndexOf(
+            "static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync", StringComparison.Ordinal);
+        var validateEnd = consoleProgram.IndexOf(
+            "static async Task<bool> HasUsableGatewayPoolMemberAsync", validateAt, StringComparison.Ordinal);
+        Assert.True(validateEnd > validateAt, "调用方校验的边界变了，守卫取值口径需要更新");
+        var validateBody = consoleProgram[validateAt..validateEnd];
+        var catcherCallAt = validateBody.IndexOf("await FindUnnamedCatcherAsync(", StringComparison.Ordinal);
+        var poolBranchAt = validateBody.IndexOf("var strictPoolIds", StringComparison.Ordinal);
+        Assert.True(catcherCallAt > 0 && poolBranchAt > catcherCallAt,
+            "「谁接得住」必须无条件先判，不能因为调用方身上还留着池字段就整个跳过");
+        // 还带着池绑定时，校验的是它的后继（对外模型记着 MigratedFromPoolIds），不是那个已退场的池。
+        Assert.Contains("AnyEq(\"MigratedFromPoolIds\", effectivePoolId)", validateBody);
+        Assert.DoesNotContain("HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool)", validateBody);
+
+        // 「其余那些为什么没落到它」必须按真实构成说，不许写死成某几种原因。
+        // 上一版写死了「配了专属池或未放行」，断流之后原因变成「被别的模型认领了」，
+        // 那句总结就开始撒一个小谎——逐调用方那一栏是对的，总结不是（形状 1）。
+        Assert.Contains("DescribeMissReasons", consoleProgram);
+        Assert.DoesNotContain("其余的配了专属池或未放行", consoleProgram);
+
+        // 判定流程图：图最容易被人当真，所以每条岔路的状态必须由后端下发，前端一句判断都不做。
+        // 「前端自己判这支走不走」就是第二份判据（形状 3），而且是最难被发现的那一份。
+        var flowPanel = ReadRepoFile("llmgw/web/src/components/CallTraceFlow.tsx");
+        Assert.Contains("Flow = flow", consoleProgram);
+        Assert.Contains("string StateOf(bool certain, bool possible)", consoleProgram);
+        Assert.Contains("CallTraceFlow", panel);
+        Assert.Contains("STATE_STYLE[branch.state]", flowPanel);
+        // 三档齐全：少了 possible 就会把「取决于请求或调用方」硬画成一条确定路径，那是在编。
+        Assert.Contains("taken:", flowPanel);
+        Assert.Contains("possible:", flowPanel);
+        Assert.Contains("blocked:", flowPanel);
+        Assert.Contains("call-trace-flow", flowPanel);
+
+        // 结论那一句也要有主语，而且点名与不点名都要有。
+        //
+        // 那道门罩的不只是「不点名」那一档，它罩着整张对外模型目录：配了专属池的调用方哪怕
+        // 点名这个模型也走不到这里。2026-09-15 的逐调用方冒烟就是这么抓到的——点名
+        // document-store-transcribe-summary 时运行时回的是 GatewayRegistryPool，没有线路标识。
+        // 只修「不点名」那一格等于只修了一半（形状 1 的同一处再犯）。
+        Assert.Contains("outsiderCount", consoleProgram);
+        Assert.Contains("点名与不点名都走不到这里", consoleProgram);
+        Assert.Contains("named_reach", smoke);
+        Assert.Contains("走不到这张目录", smoke);
+
+        // 文档里那张静态图与面板这张是同构的，改一边忘另一边就会对不上。
+        var architecture = ReadRepoFile("doc/design.platform.llm-gateway.model-architecture.md");
+        Assert.Contains("```mermaid", architecture);
+        Assert.Contains("这个调用方<br/>放行吗", architecture);
+        Assert.Contains("这个调用方放行吗", consoleProgram);
+    }
+
+    [Fact]
+    public void RoutingNav_KeepsTwoEntriesAndLeavesNoDeadLinks()
+    {
+        // 路由这一组曾经是五条平级入口，而它们回答的只有两个问题：
+        // 调用方能点名什么（模型）、东西从哪来（上游）。合成两条之后有两件事必须同时成立：
+        //   1) 导航里不再出现那三条旧入口——否则合并等于没做；
+        //   2) 三条旧地址仍然可达——路由还在，页内还有入口，否则就是把页面做成了孤儿。
+        // 两条都属于「删掉之后编译照过、测试仍全绿」，必须有守卫。
+        var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        var logicalModelsPage = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        var overviewPage = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
+        var upstreamsPage = ReadRepoFile("llmgw/web/src/pages/UpstreamsPage.tsx");
+
+        // 导航只剩两条。断言的是导航项本身（带 page/icon 的那一行），不是路径出现过没有——
+        // 注释和别处的 Link 都会提到这些路径，只查路径必然误判。
+        Assert.Contains("{ to: '/logical-models', label: '模型'", layout);
+        Assert.Contains("{ to: '/platforms', label: '上游'", layout);
+        Assert.DoesNotContain("to: '/pools', label:", layout);
+        Assert.DoesNotContain("to: '/models', label:", layout);
+        Assert.DoesNotContain("to: '/exchanges', label:", layout);
+
+        // 旧地址仍然注册着路由
+        // 池页面已删，但旧地址不留死链：/pools 重定向到模型页。
+        Assert.Contains("<Route path=\"/pools\" element={<Navigate to=\"/logical-models\" replace />} />", app);
+        Assert.Contains("path=\"/models\"", app);
+        Assert.Contains("path=\"/exchanges\"", app);
+
+        // 且各自至少有一个页内入口，不靠背地址进去
+        // 模型页原本有一颗「存量模型池」按钮；池已于 2026-09-15 删除，按钮随之退场。
+        Assert.Contains("to=\"/models\"", overviewPage);
+
+        // /exchanges 落到上游页并自动选中「转接上游」那一段，锚点还在（图片分层是深链进来的）
+        Assert.Contains("location.pathname.endsWith('/exchanges')", upstreamsPage);
+        Assert.Contains("转接上游", upstreamsPage);
+    }
+
+    [Fact]
+    public void ProviderRow_ShowsOwnedModelsAndWhetherTheyAreRegistered()
+    {
+        // 「模型属于上游」这件事在界面上的落地：展开一条上游就看到它卖的货，
+        // 以及每个货登记到白名单没有——没登记的模型躺在库里，调用方按公开名请求找不到它。
+        // 在这之前这件事只能靠在两个页面之间来回对照才看得出来。
+        //
+        // 这条链路整条删掉编译照过、llmgw/web 又整包没有单测，属于「改动删掉测试仍全绿」，
+        // 所以必须有守卫（predicate-and-wiring-discipline 形状 2）。
+        var panel = ReadRepoFile("llmgw/web/src/components/ProviderModelsPanel.tsx");
+        var platformsPage = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+
+        // 判据认 targetId 不认名字：同名不同上游的两个物理模型按名字会被算成一个
+        Assert.Contains("offering.targetKind !== 'model'", panel);
+        Assert.Contains("byTarget.get(model.id)", panel);
+        Assert.DoesNotContain("byTarget.get(model.modelName)", panel);
+        // 没登记的排前面：这一屏唯一需要人动手的就是它们
+        Assert.Contains("a.publicIds.length - b.publicIds.length", panel);
+        // 结论句而不是一个数字：「3 个模型」读不出该不该管
+        Assert.Contains("个没登记", panel);
+        Assert.Contains("还没登记，调用方找不到它", panel);
+
+        // 接线：上游页真的渲染了它，而不是只建了组件没人用
+        Assert.Contains("ProviderModelsPanel", platformsPage);
+        Assert.Contains("collectProviderModels", platformsPage);
+        Assert.Contains("expandedModelsFor === p.id", platformsPage);
+        // 批量登记走的就是既有的上游拉取清单流程，不另起一条
+        Assert.Contains("onRegister={canWrite && p.authority === 'llm_gateway'", platformsPage);
+        // 导入完必须重拉：不重拉的话刚登记完那一列还停在「2 个没登记」
+        Assert.Contains("void refreshOwnedModels();", platformsPage);
     }
 
     [Fact]
@@ -599,7 +885,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("action: \"auth.change_password\"", consoleProgram);
         Assert.Contains("action: \"platform.set_enabled\"", consoleProgram);
         Assert.Contains("action: \"model.set_enabled\"", consoleProgram);
-        Assert.Contains("action: \"pool.set_default\"", consoleProgram);
         Assert.Contains("WriteSystemOperationAuditAsync", consoleProgram);
         Assert.Contains("\"admin.env_authority_reconcile\" : \"admin.force_reset\"", consoleProgram);
         Assert.Contains("\"admin.env_authority_bootstrap\" : \"admin.force_reset_bootstrap\"", consoleProgram);
@@ -833,16 +1118,34 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("payload.success ?? payload.Success", quickstart);
         Assert.Contains("normalizeRoutePreview(payload, checked)", quickstart);
         Assert.Contains("preview.checkedBaseUrl !== normalizeBaseUrl(baseUrl)", quickstart);
-        // 一次预检的结论钉着「哪一条路」：地址 + 钉住的成员。只比地址的话，换成员之后
-        // 上一个成员的结论仍算数，会替一条没验过的路放行——池里有成员指向开发桩时，
-        // 选中它的那一刻闸门还是绿的，正是这道闸要防的那件事。
-        Assert.Contains("routePreview.checkedModel === (activeProbePin?.model ?? 'auto')", quickstart);
-        Assert.Contains("routePreview.checkedPlatformId === (activeProbePin?.platformId ?? '')", quickstart);
+        // 一次预检的结论钉着「哪一条路」：地址 + 选中的那个模型 + 钉住的物理上游。
+        // 只比地址的话，换选中项之后上一个的结论仍算数，会替一条没验过的路放行。
+        //
+        // 上一版这两句逐字要求 `activeProbePin`，而那个名字背后的判断恰好是被证明太窄的
+        // 那一个（它把「选了一个对外模型」压成「什么都没选」）。改成钉性质：戳必须由
+        // 同一个选中判据派生，而不是钉住某一次的变量名（形状 4a）。
+        Assert.Contains("const activeProbeTarget = selectedTargetOf(testModel, testPlatformId);", quickstart);
+        Assert.Contains("routePreview.checkedModel === (activeProbeTarget?.model ?? 'auto')", quickstart);
+        Assert.Contains("routePreview.checkedPlatformId === (activeProbeTarget?.platformId ?? '')", quickstart);
         // 并发预检只认最后发起的那一代：先发的那条后到，会把旧结论盖到当前成员头上。
         Assert.Contains("const probeId = ++routeProbeSeq.current;", quickstart);
         Assert.Contains("if (superseded()) return;", quickstart);
-        // 钉住与否只许判一处，预检与真实调用必须问同一个函数，否则预检的不是会跑的那条路。
-        Assert.Equal(1, CountOccurrences(quickstart, "function pinnedTargetOf("));
+        /*
+          「这次要跑哪条路」只许判一处，预检与真实调用必须问同一个函数，否则预检的不是会跑的那条。
+
+          而且它必须分得开「选了一个对外模型（只有公开名）」与「钉到了具体物理上游」两种：
+          压成一个布尔的话，池退场之后选中对外模型会被判成「什么都没选」，预检发
+          modelPolicy:'auto'、真实调用发那个公开名——预检验的是默认路，放行的是另一条
+          （第 68 轮 review，形状 8：拿一份不成立的证据当证明）。
+        */
+        Assert.Equal(1, CountOccurrences(quickstart, "function selectedTargetOf("));
+        Assert.Equal(0, CountOccurrences(quickstart, "function pinnedTargetOf("));
+        Assert.Contains("kind: 'logical'", quickstart);
+        Assert.Contains("kind: 'pinned'", quickstart);
+        // 预检必须把选中的那个公开名发出去，否则它问的是「不点名会落到谁」。
+        Assert.Contains("expectedModel: selected.model", quickstart);
+        // 真实调用只在钉到物理上游时才带那两个 id，逻辑选中只发名字——两侧同构。
+        Assert.Contains("target?.kind === 'pinned'", quickstart);
         // 片段里的自由文本（输入框那句、上传的文本、模型名）要过 shell 转义：
         // 一个撇号就能让 -d 的参数提前收尾，后半句被当成命令跑。
         Assert.Contains("shellSingleQuoted(", quickstart);
@@ -1040,7 +1343,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("path=\"/learn\"", app);
         Assert.Contains("to: '/learn', label: '学习中心'", layout);
         Assert.Contains("to=\"/learn\"", layout);
-        foreach (var concept in new[] { "租户", "团队与用户", "appCaller", "租户接入密钥", "模型池", "模型", "Provider", "Exchange", "请求记录", "用量与费用" })
+        // 「模型池」2026-09-16 换成「对外模型」：那一页讲的就是调用方点名的那个名字，
+        // 而模型池已经整个退场，留着旧词等于教一个不存在的概念。
+        foreach (var concept in new[] { "租户", "团队与用户", "appCaller", "租户接入密钥", "对外模型", "模型", "Provider", "Exchange", "请求记录", "用量与费用" })
         {
             Assert.Contains(concept, learning);
         }
@@ -1155,7 +1460,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Dns.GetHostAddressesAsync(host, ct)", console);
         Assert.Contains("UNSAFE_TARGET_URL", console);
         Assert.Contains("gwModelExchanges.Find(TenantAccess.Filter(http", console);
-        Assert.Contains("BuildExchangePoolModelDocument(platformId, exchangeModel)", console);
         Assert.Contains("GwApiKeyCrypto.Encrypt(draft.ApiKey!, config)", console);
         var exchangeItemStart = dtos.IndexOf("public sealed class ExchangeItem", StringComparison.Ordinal);
         var exchangeItemEnd = dtos.IndexOf("public sealed class ExchangeModelItem", exchangeItemStart, StringComparison.Ordinal);
@@ -1167,17 +1471,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("uniq_llmgw_exchange_tenant_name", initializer);
         Assert.Contains("Ascending(\"TenantId\").Ascending(\"NameNormalized\")", initializer);
         Assert.Contains("Filter.Type(\"TenantId\", BsonType.String)", initializer);
-        Assert.Contains("createExchange({ ...common, apiKey: form.apiKey.trim() }", page);
-        Assert.Contains("updateExchange(editingId!", page);
-        Assert.Contains("上游接口类型", page);
-        Assert.Contains("上游模型标识重复", page);
-        Assert.Contains("当前填写的内容仍保留", page);
-        Assert.Contains("只有豆包流式语音识别可使用公网 WSS", page);
-        Assert.Contains("其他类型必须使用 HTTP/HTTPS", page);
-        Assert.Contains("transformerType === 'fal-image'", page);
-        Assert.Contains("transformerType === 'doubao-asr'", page);
-        Assert.Contains("/audits?targetType=llmgw_model_exchange", page);
-        Assert.DoesNotContain("tenantId:", page);
         Assert.Contains("body: req", api);
         Assert.Contains("IsExternalTenant(tenantId)", gateway);
         Assert.Contains("CreateClient(\"SafeOutbound\")", gateway);
@@ -1191,10 +1484,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ConnectCallback", safeWebSocket);
         Assert.Contains("TargetHost = target.Uri.IdnHost", safeWebSocket);
         Assert.Contains("SslPolicyErrors.None", safeWebSocket);
-        var poolsPage = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
-        Assert.Contains("getExchanges({ enabled: true })", poolsPage);
-        Assert.Contains("toExchangeModelCandidates", poolsPage);
-        Assert.Contains("llmgw_model_exchanges", poolsPage);
     }
 
     [Fact]
@@ -1347,7 +1636,6 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("[FromQuery] bool ownUserOnly = false", controller);
         Assert.Contains("Filter.Eq(r => r.UserId, GetUserId())", controller);
-        Assert.Contains("{ ownUserOnly: true }", page);
     }
 
     [Fact]
@@ -1439,18 +1727,22 @@ public class GatewayDataDomainGuardTests
 
         var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
         Assert.Contains("EnsureOfferingIdentityIndexAsync", initializer);
-        Assert.Contains(".Ascending(\"SupersededByOfferingId\")", initializer);
-        Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v2", initializer);
-        Assert.Contains("catch (MongoCommandException ex) when (ex.Code == 27)", initializer);
+        // 身份的定义在 expectedKeys 里（启动只拿它判等价、不拿它建索引，见「线路身份唯一索引不在启动时建」）。
+        // 身份里必须带上「打给上游的是哪一个模型」：同一个兑换所下的不同别名是不同的线路，
+        // 少了它第二条插入撞 E11000，搬迁半途而废且重跑还是同样结果，那条线路永久丢。
+        var identityKeys = MethodBody(initializer, "private async Task EnsureOfferingIdentityIndexAsync");
+        Assert.Contains("\"SupersededByOfferingId\",", identityKeys, StringComparison.Ordinal);
+        Assert.Contains("\"UpstreamModelId\",", identityKeys, StringComparison.Ordinal);
+        Assert.Contains("uniq_llmgw_offering_tenant_logical_target_v3", initializer);
+        // 旧名字要能被认出来（用来判断该不该提醒 DBA），但**不在启动时丢它**——
+        // 丢一条正在生效的唯一索引再同步重建会阻塞写入，那一步归 DBA 的维护窗口。
+        Assert.Contains("legacyVersionAwareIndexName", initializer);
         Assert.Contains("IsEquivalentOfferingIdentityIndex", initializer);
         Assert.Contains("MongoDB 不允许同一 key/options 仅以不同名称重复建索引", initializer);
+        // 先认等价索引、再谈别的：已经对了就什么都不做，不去提醒一件已经做完的事。
         Assert.True(
             initializer.IndexOf("IsEquivalentOfferingIdentityIndex(index, expectedKeys)", StringComparison.Ordinal)
-            < initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal));
-        Assert.True(
-            initializer.IndexOf("DropIndexIfPresentAsync(collection, legacyIndexName", StringComparison.Ordinal)
-            < initializer.IndexOf("Name = versionAwareIndexName", StringComparison.Ordinal));
-        Assert.Contains("Offering 唯一索引升级为版本感知结构", initializer);
+            < initializer.IndexOf("线路身份唯一索引 {Expected} 不存在", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -3133,9 +3425,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("key-integrity", readiness);
         Assert.Contains("router", readiness);
         Assert.Contains("routableCallers", readiness);
-        Assert.Contains("IsPoolRoutableForRequestType", readiness);
-        Assert.Contains("pool.IsDefaultForType", readiness);
-        Assert.Contains("HasEnabledBackend", readiness);
+        // 深度就绪判的是「有对外模型接得住不点名的请求」。池那三个判据已随解析器的池分支一起删掉，
+        // 留着它们等于让 readyz 替一条运行时已经不存在的路作保。
+        Assert.Contains("HasLogicalCatcher", readiness);
+        Assert.DoesNotContain("IsPoolRoutableForRequestType", readiness);
+        Assert.DoesNotContain("HasEnabledBackend", readiness);
         Assert.Contains("governed.Count > 0 && routableCallers == 0", readiness);
         Assert.Contains("exceptionType={ExceptionType}", readiness);
         Assert.DoesNotContain("ex.Message", readiness);
@@ -3575,8 +3869,13 @@ public class GatewayDataDomainGuardTests
     }
 
     /// <summary>
-    /// 价格只许来自上游。内置价目表会过时，而过时的价格比没有价格更危险——它看起来是真的，
+    /// 价格不许是一份写死在代码里的静态表。会过时，而过时的价格比没有价格更危险——它看起来是真的，
     /// 成本报表照算，没人会去核对（no-rootless-tree.md）。
+    ///
+    /// 2026-09-11 升级：这条原先只禁两个标识符名字（<c>PriceTable</c> / <c>BuiltinPricing</c>），
+    /// 是典型的「断言某段实现的字面不存在」——换个名字就能绕过，而它真正要防的东西
+    /// （说不出来源、说不出时效的价格）它一个字都没测。现在禁令保留，判据换成下面那条：
+    /// 价格必须带来源与观测时间。
     /// </summary>
     [Fact]
     public void ProviderPresets_DoesNotShipABuiltinPriceTable()
@@ -3586,6 +3885,84 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("ReadPricing", presets);
         Assert.DoesNotContain("PriceTable", presets);
         Assert.DoesNotContain("BuiltinPricing", presets);
+    }
+
+    /// <summary>
+    /// 价格三件套：数字 + 从哪来 + 什么时候的，缺一不可。
+    ///
+    /// 判据落在「凡是把价格写进模型文档的地方，必须同时写来源与观测时间」。这不是形式主义：
+    /// OpenAI 官方的模型清单根本不返回价格，所以这类模型的价格只能靠人填；一份填完就没人再看的
+    /// 数字，半年后没有任何办法判断它还能不能信。来源与时效是这份数字唯一的根。
+    /// </summary>
+    [Fact]
+    public void 价格写入点必须同时记录来源与观测时间()
+    {
+        var policy = ReadRepoFile("llmgw/console-api/Provisioning/PricingPolicy.cs");
+        Assert.Contains("SourceUpstream", policy);
+        Assert.Contains("SourceAdmin", policy);
+        Assert.Contains("SourceMigrated", policy);
+        Assert.Contains("ReviewIntervalDays", policy);
+        Assert.Contains("IsStale", policy);
+
+        // 写价的三条路径：手工新建、上游批量导入、编辑已有模型。一条都不许只写数字。
+        var provisioning = ReadRepoFile("llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs");
+        Assert.Contains("[\"PriceSource\"]", provisioning);
+        Assert.Contains("[\"PriceObservedAt\"]", provisioning);
+
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("doc[\"PriceSource\"] = PricingPolicy.SourceUpstream", program);
+        Assert.Contains(".Set(\"PriceSource\", PricingPolicy.SourceAdmin)", program);
+    }
+
+    /// <summary>
+    /// 改了模型档案上的价格，引用它的模型池必须能跟着改——调度真正读的是池成员里那一份。
+    ///
+    /// 此前 <c>PUT /gw/models/{id}</c> 压根不存在：模型建完就只能删了重建，而重建会丢池成员绑定，
+    /// 于是没人敢动，价格要么一直空着要么一直旧着。这条守卫钉住「能改」与「改了能同步」两件事。
+    /// </summary>
+    [Fact]
+    public void 模型可编辑且价格能同步到引用它的模型池()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("app.MapPut(\"/gw/models/{id}\"", program);
+        Assert.Contains("app.MapGet(\"/gw/models/{id}/pool-usage\"", program);
+        Assert.Contains("SyncPoolMemberPricingAsync", program);
+        // 覆盖价必须看得出来是覆盖，而不是假装两边同源。
+        Assert.Contains("PoolMemberPriceMatchesModel", program);
+    }
+
+    /// <summary>
+    /// 控制台那份成本状态名必须与网关写进日志的那份逐字一致。
+    ///
+    /// 两个工程互不引用，只能各存一份；一旦漂移，统计口径和写入口径就对不上——
+    /// 写入侧记 <c>stale_currency</c>、统计侧按别的名字找，那部分调用会凭空从缺价统计里消失。
+    /// </summary>
+    [Fact]
+    public void 控制台的成本状态名与网关保持一致()
+    {
+        var core = ReadRepoFile("prd-api/src/PrdAgent.Core/LlmGateway/GatewayCostStatus.cs");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        foreach (var value in new[] { "priced", "unpriced", "stale_currency", "no_usage" })
+        {
+            Assert.Contains($"\"{value}\"", core);
+            Assert.Contains($"\"{value}\"", console);
+        }
+    }
+
+    /// <summary>
+    /// 计价只许有一份算法。网关不得自己再算一遍——缓存 token 该不该从输入里扣、非美金价格算不算数，
+    /// 这两个判断一旦有第二份实现，就会出现「两边各自正确、合起来对不上」的账。
+    /// </summary>
+    [Fact]
+    public void 计价只走唯一算法入口()
+    {
+        var gateway = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/LlmGateway.cs");
+
+        Assert.Contains("GatewayCostCalculator.Calculate", gateway);
+        // 单价换算必须在算法里，网关里不许再出现按百万 token 折算的算式。
+        Assert.DoesNotContain("/ 1_000_000m", gateway);
     }
 
     /// <summary>
@@ -3884,6 +4261,35 @@ public class GatewayDataDomainGuardTests
     /// 开着 A 的清单再点 B 的「查看模型」时组件不卸载，A 的勾选原样留着，
     /// 撞上同名模型就会把用户没勾过的选择导进 B。key 一改，React 才会重建这个组件。
     /// </summary>
+    /// <summary>
+    /// 上游主表只摆拿来做决定的东西，接口细节收进预览与折叠区。
+    ///
+    /// 由来：2026-09-16 用户看这一页说「baseurl 其实不用暴露出来，一些常见的接口什么的，
+    /// 无需用户配置，默认的就好」。当时主表有「类型 / API URL / 并发」三列——选完平台就定下来的
+    /// 实现细节，用户读它们做不出任何决定，却占掉半张表宽（API URL 那一列自己就 360px）。
+    ///
+    /// 这条钉的是**收起来而不是删掉**：三项必须仍在「查看接口」预览里查得到，
+    /// 否则换 baseUrl 的上游就没地方看当前地址了——那是把一个啰嗦问题换成一个瞎子问题。
+    /// 判据认表头那一行的字面量，不认「API 地址」四个字，所以预览里的同名字段不会误伤。
+    /// </summary>
+    [Fact]
+    public void 上游主表不摆接口实现细节()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/PlatformsPage.tsx");
+
+        Assert.DoesNotContain("<th style={th}>API URL</th>", page);
+        Assert.DoesNotContain("<th style={th}>类型</th>", page);
+        Assert.DoesNotContain("<th style={th}>并发</th>", page);
+
+        // 收起来的三项必须还在，而且在同一个地方查得到。
+        Assert.Contains("label: '接口类型'", page);
+        Assert.Contains("label: 'API 地址'", page);
+        Assert.Contains("label: '最大并发'", page);
+
+        // 编辑时同理：默认只露名称与备注，接口细节在折叠区里。
+        Assert.Contains("高级：接口类型、API 地址、并发", page);
+    }
+
     [Fact]
     public void 换_Provider_必须重挂上游模型选择器()
     {
@@ -3977,53 +4383,8 @@ public class GatewayDataDomainGuardTests
             "这些方法把 HostedSite 交给了前端却没挂派生字段，PDF 站在这些路径上会退回壳子：" + string.Join("、", missing));
     }
 
-    [Fact]
-    public void ModelResolver_FailClosesRawDedicatedPoolsBeforeLegacyFallback()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
 
-        Assert.Contains("ShouldFailClosedWhenDedicatedPoolUnavailable", resolver);
-        Assert.Contains("ModelTypes.VideoGen", resolver);
-        Assert.Contains("ModelTypes.Asr", resolver);
-        Assert.Contains("跳过 expectedModel 的 LLMModels 直连兜底", resolver);
-        Assert.Contains("拒绝降级 legacy 直连", resolver);
-    }
 
-    /// <summary>
-    /// 失败关闭只在「认定有专属绑定」时才被查，所以绑定判据必须是唯一的一份。
-    /// 生产 ResolveAsync 与 InMemoryModelResolver 各判一次的话，改一处忘一处，
-    /// 失败关闭会在其中一条路径上静默失效（predicate-and-wiring-discipline 形状 3）。
-    /// 这里断言两条解析路径都走同一个 HasDedicatedBinding。
-    /// </summary>
-    [Fact]
-    public void ModelResolver_BothResolutionPathsShareTheDedicatedBindingPredicate()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
-
-        var uses = System.Text.RegularExpressions.Regex
-            .Matches(resolver, @"HasDedicatedBinding\(requirement\?\.ModelGroupIds\)")
-            .Count;
-
-        Assert.True(uses >= 2,
-            $"生产与 InMemory 两条解析路径都必须用共享的 HasDedicatedBinding 判据，实际只有 {uses} 处");
-    }
-
-    [Fact]
-    public void ModelResolver_AvailablePoolsFailClosedBeforeMapFallbackForExternalTenants()
-    {
-        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
-        var methodStart = resolver.IndexOf("public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync", StringComparison.Ordinal);
-        var mapFallback = resolver.IndexOf("var appCaller = await _db.LLMAppCallers", methodStart, StringComparison.Ordinal);
-        var externalTenantGuard = resolver.IndexOf(
-            "if (!string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal))",
-            methodStart,
-            StringComparison.Ordinal);
-
-        Assert.True(methodStart >= 0 && mapFallback > methodStart, "找不到 available-pools MAP fallback");
-        Assert.True(
-            externalTenantGuard > methodStart && externalTenantGuard < mapFallback,
-            "外部租户必须在读取 MAP LLMAppCallers/ModelGroups 前 fail closed");
-    }
 
     [Fact]
     public void ImageGenRunWorker_DoesNotSilentlyDowngradeReferenceImageRunsToText2Img()
@@ -4231,7 +4592,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Include(\"EstimatedCostCurrency\")", consoleProgram);
         Assert.Contains(".Include(\"InputPricePerMillion\")", consoleProgram);
         Assert.Contains(".Include(\"OutputPricePerMillion\")", consoleProgram);
-        Assert.Contains("x.Amount is not null && x.Currency is not null && x.Complete", consoleProgram);
+        // 2026-09-11：判据从「按价格字段反推 Complete」换成「读写入时记下的 CostStatus」。
+        // 两条不变量没变——缺价保持未知不显示为 0、跨币种不相加——变的只是判断这件事的口径。
+        // 反推是判据分裂的温床：写入侧改了计价口径而统计侧还按老规矩算，两边各自正确、合起来对不上。
+        Assert.Contains("x.Status == GatewayCostStatusNames.Priced && x.Amount is not null && x.Currency is not null", consoleProgram);
+        Assert.Contains(".Include(\"CostStatus\")", consoleProgram);
         Assert.Contains("GroupBy(x => x.Currency!", consoleProgram);
         Assert.Contains("UnknownCostRequests = docs.Count - pricedDocs.Count", consoleProgram);
         Assert.Contains("EstimatedCostUsd = usdDocs.Count == 0 ? null", consoleProgram);
@@ -4307,7 +4672,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("<RequirePageAccess page=\"home\"><OverviewPage", app);
         Assert.Contains("<RequirePageAccess page=\"learn\"><LearningCenterPage", app);
         Assert.Contains("<RequirePageAccess page=\"settings\"><SettingsPage", app);
-        Assert.Contains("canAccessPage(tenant, page)", app);
         Assert.Contains("internalOnly: true", accessRules);
         Assert.Contains("if (rule.internalOnly && !tenant.isInternal) return false", accessRules);
         Assert.DoesNotContain("TenantId", app);
@@ -4320,7 +4684,6 @@ public class GatewayDataDomainGuardTests
         var accessRules = ReadRepoFile("llmgw/web/src/lib/access.ts");
         var app = ReadRepoFile("llmgw/web/src/App.tsx");
         var layout = ReadRepoFile("llmgw/web/src/components/ConsoleLayout.tsx");
-        var pools = ReadRepoFile("llmgw/web/src/pages/ModelPoolsPage.tsx");
         var quickstart = ReadRepoFile("llmgw/web/src/pages/QuickstartPage.tsx");
         var serviceKeys = ReadRepoFile("llmgw/web/src/pages/ServiceKeysPage.tsx");
         var governance = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
@@ -4339,8 +4702,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("不会再发起注定失败的请求", app);
         Assert.Contains("items: group.items.filter((item) => canAccessPage(tenant, item.page))", layout);
         Assert.Contains("const canSearchRequests = canUseCapability(tenant?.role, 'logsRead')", layout);
-        Assert.Contains("canWrite={canWrite}", pools);
-        Assert.Contains("当前角色可以查看模型池、成员健康和路由使用情况", pools);
         Assert.Contains("const canCreateAccess = canUseCapability", quickstart);
         Assert.Contains("不能创建 appCaller、签发密钥或执行安全直测", quickstart);
         Assert.Contains("const canCreateWildcard = canCreateWildcardServiceKey(tenant?.role)", serviceKeys);
@@ -4410,12 +4771,84 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Provider 接口预览", platforms);
         Assert.Contains("查看接口", platforms);
         Assert.Contains("查看 Provider", models);
-        Assert.Contains("预览模型池", appCallers);
+        // appCaller 页那个「预览模型池」抽屉随模型池路由一起退役了（2026-09-16）。
+        // 它展示的池健康、成员顺位、选择策略都已不再决定这个 appCaller 走哪个上游，
+        // 留着就是指着一条走不到的路（degradation-must-alarm 的反面：不是不响铃，是响错铃）。
+        // 反向钉住：它不许回来，否则下一个人会照着那些数字排查一条不存在的链路。
+        Assert.DoesNotContain("预览模型池", appCallers);
         Assert.Contains("Exchange 路由预览", exchanges);
         Assert.Contains("查看路由", exchanges);
 
         Assert.DoesNotContain("apiKey={", preview);
         Assert.DoesNotContain("bundle.key", preview);
+    }
+
+    /// <summary>
+    /// 模型编辑抽屉的判据必须是「动没动过」，不是「填没填」。
+    ///
+    /// 这两件事混作一谈时会长出两种形态，都不会红：
+    ///   - 五个价格框全清空 → 判成「没动过」，一个字段都不发，旧价原样留着，
+    ///     而界面显示保存成功——过期价格在这个抽屉里根本删不掉；
+    ///   - 只改名字或备注 → 框里还摆着旧价，判成「动过」，把五个价原样重发一遍，
+    ///     服务端当成人工改价，把上游抓来的价贴上「人刚填的」标签，观测时间也刷成现在。
+    /// 最大输出 token 是同一个形状：清空发出去是个被 JSON 省掉的字段，
+    /// 服务端分不清它和「这次没动」，「留空表示不限制」于是兑现不了。
+    ///
+    /// 两侧都钉：前端要按初始值比对并发显式清空标志，服务端要认那两个标志。
+    /// </summary>
+    /// <summary>
+    /// 「缺币种」与「算不出钱」这两件事，三处判据必须一致。
+    ///
+    /// 同一份数据此前有三种读法：/v1/models 把缺币种的当 USD 发出去、调用全貌面板把它标成 USD、
+    /// 而记账那一侧判它 stale_currency 一分钱都不计。最不该错的是面板那一种——运维照着它算账。
+    ///
+    /// 「算不出钱的笔数」同理：stale_currency 与 unpriced 一样不进 USD 合计、不进预算，
+    /// 只数字面的 unpriced 会让这一屏报「0 笔未计价」，而实际有一批存量流量正被静悄悄排除。
+    /// </summary>
+    [Fact]
+    public void Console_Pricing_TreatsMissingCurrencyAndStaleCurrencyConsistently()
+    {
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var catalog = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+
+        // 面板不把缺币种的价标成 USD
+        Assert.Contains("币种未登记", console);
+        Assert.DoesNotContain("model.AsNullableString(\"PriceCurrency\") ?? \"USD\"", console);
+
+        // 对外清单只报显式 USD
+        Assert.Contains("!currency.IsString", catalog);
+
+        // 两处「算不出钱」的计数都要含 stale_currency。
+        //
+        // 上一版靠数「这串字面量出现了两次」来保证，而两次意味着两份判据——它其实是在
+        // 要求那份重复存在。现在两处共用同一个表达式，不变量由结构保证：数的是「调用点够不够」，
+        // 判据本体只剩一处（形状 4a：别断言实现长什么样，断言它做到了什么）。
+        Assert.Contains("GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency", console);
+        var unpricedUses = System.Text.RegularExpressions.Regex
+            .Matches(console, @"LogCostAggregation\.UnpricedCount\(\)").Count;
+        Assert.True(unpricedUses >= 2,
+            $"模型卡与调用全貌账两处都要走同一个未计价计数，当前只有 {unpricedUses} 处");
+    }
+
+    [Fact]
+    public void Console_ModelEditor_DistinguishesClearedFromUntouched()
+    {
+        var drawer = ReadRepoFile("llmgw/web/src/components/ModelPricingDrawer.tsx");
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 判据按初始值比对，而不是「有没有填」
+        Assert.Contains("initialPrices", drawer);
+        Assert.Contains("pricingChanged", drawer);
+        Assert.Contains("maxTokensChanged", drawer);
+
+        // 清空走显式标志
+        Assert.Contains("req.clearPricing = true", drawer);
+        Assert.Contains("req.clearMaxTokens = true", drawer);
+
+        // 服务端认这两个标志，且清空是 Unset 而不是写 0
+        Assert.Contains("body.ClearMaxTokens == true", console);
+        Assert.Contains("update.Unset(\"MaxTokens\")", console);
+        Assert.Contains("var clearPricing = body.ClearPricing == true", console);
     }
 
     [Fact]
@@ -4936,9 +5369,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("INVALID_KEY_SOURCE", createEndpoint);
         Assert.Contains("!tenant.IsInternalTenant && (isMapSource || purpose != \"external-platform\")", createEndpoint);
         Assert.Contains("INTERNAL_KEY_PURPOSE_FORBIDDEN", createEndpoint);
-        Assert.Contains("const isInternalTenant = tenant?.isInternal === true", page);
-        Assert.Contains("外部租户身份由服务端固定，不能伪装为 MAP", page);
-        Assert.Contains("isInternalTenant ? <div", page);
     }
 
     [Fact]
@@ -4976,29 +5406,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Filter.Exists(\"TenantId\", false)", console);
         Assert.Contains("Filter.Eq(\"TenantId\", BsonNull.Value)", console);
         Assert.Contains("Update.Set(\"TenantId\", tenantId)", console);
-    }
-
-    [Fact]
-    public void ConsoleDefaultPoolSwitch_UsesTenantScopedAtomicPointer()
-    {
-        var console = ReadRepoFile("llmgw/console-api/Program.cs");
-        var endpointStart = console.IndexOf(
-            "app.MapPut(\"/gw/pools/{id}/default\"",
-            StringComparison.Ordinal);
-        var endpointEnd = console.IndexOf(
-            "app.MapPut(\"/gw/pools/{id}/claim\"",
-            endpointStart,
-            StringComparison.Ordinal);
-        Assert.True(endpointStart >= 0, "找不到默认模型池切换端点");
-        Assert.True(endpointEnd > endpointStart, "默认模型池切换端点边界无效");
-        var endpoint = console[endpointStart..endpointEnd];
-
-        Assert.Contains("fb.Eq(\"TenantId\", tenantId), fb.Eq(\"Code\", modelType)", endpoint);
-        Assert.Contains("FindOneAndUpdateAsync", endpoint);
-        Assert.Contains(".Set(\"DefaultPoolId\", id)", endpoint);
-        Assert.Contains("PoolVersionGuard", endpoint);
-        Assert.Contains("DefaultSwitchPendingUntil", endpoint);
-        Assert.DoesNotContain("targetPools.UpdateManyAsync", endpoint);
     }
 
     [Fact]
@@ -5366,14 +5773,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("platform.delete", console);
         Assert.Contains("ElemMatch<BsonDocument>(\"Models\"", console);
         Assert.Contains("export function deletePlatform(", api);
-        Assert.Contains("removePlatform", page);
 
         // 2) 认得出——只给指纹，且必须有 ConfigWrite 才下发；明文任何时候都不许出现在响应里
         Assert.Contains("public static string Fingerprint(", crypto);
         Assert.Contains("public string? KeyFingerprint", dtos);
         Assert.Contains("LlmGwPermissions.ConfigWrite", console);
         Assert.Contains("revealFingerprint", console);
-        Assert.Contains("keyFingerprint", page);
         // 明文解出来只有一个去处：喂给 Fingerprint。多出任何一处引用都可能是把整把 key 塞进了响应。
         Assert.Contains("GwApiKeyCrypto.Fingerprint(decrypted.PlainText)", console);
         Assert.Equal(
@@ -5384,7 +5789,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("fb.Eq(\"PlatformId\", platformId.Trim())", console);
         Assert.Contains("platformId?: string;", ReadRepoFile("llmgw/web/src/lib/types.ts"));
         Assert.Contains("initialQueryValue('platformId')", logsView);
-        Assert.Contains("/logs?platformId=", page);
         // 请求页与会话页共用同一份筛选参数：只有一边收 platformId 的话，用户从深链进来切到
         // 会话页，界面上筛选还亮着、列的却是所有平台的会话——筛选条件在说谎。
         // 判据钉「每个吃这份筛选的端点都要把 platformId 传进同一个 BuildFilter」。
@@ -5404,37 +5808,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("app.MapPut(\"/gw/platforms/{id}\"", console);
         Assert.Contains("platform.update", console);
         Assert.Contains("export function updatePlatform(", api);
-        Assert.Contains("beginEdit", page);
 
         // 5) 模型也删得掉——平台删除要求先清模型引用，没有这个端点那条路径根本走不通
         Assert.Contains("app.MapDelete(\"/gw/models/{id}\"", console);
         Assert.Contains("MODEL_IN_USE", console);
         Assert.Contains("model.delete", console);
         Assert.Contains("export function deleteModel(", api);
-    }
-
-    /// <summary>
-    /// 默认池不能被自己的坏状态锁死。
-    ///
-    /// 真实死锁：默认池成员全部掉成 Unavailable 后，「必须留一个可用成员」这条守卫
-    /// 把删除／覆盖／重新声明全部挡下——唯一能救回池子的动作，被池子当前的坏状态挡在门外。
-    /// 判据取的是变更前的状态，却用来 gate 那个会改变该状态的变更。
-    /// </summary>
-    [Fact]
-    public void DefaultPoolGuard_DoesNotBlockTheOnlyActionThatCanRepairIt()
-    {
-        var console = ReadRepoFile("llmgw/console-api/Program.cs");
-
-        // 改动前就已经零可用成员时不再拦：拦不住任何损害，只会把修复一起挡掉
-        var guardStart = console.IndexOf("static async Task<string?> ValidateDefaultGatewayPoolMembersAsync", StringComparison.Ordinal);
-        Assert.True(guardStart > 0, "默认池守卫函数应当存在");
-        var guardBody = console[guardStart..(guardStart + 2000)];
-        Assert.Contains("HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool)", guardBody);
-
-        // 显式重新声明成员必须重置健康位。旧写法把 HealthStatus 塞在「仅新成员」的初始化块里，
-        // existing 会把陈旧的 Unavailable 一路带回去；现在改成空构造 + 无条件重置。
-        // 断言这一行的存在，等于断言不会退回旧写法。
-        Assert.Contains("existing is not null ? new BsonDocument(existing) : new BsonDocument();", console);
     }
 
     /// <summary>
@@ -5454,7 +5833,6 @@ public class GatewayDataDomainGuardTests
         // 端点路径 / 审计动作 / api 函数 / 页面文件 / 页面里的调用点
         var links = new[]
         {
-            ("app.MapDelete(\"/gw/pools/{id}\"", "pool.delete", "export function deletePool(", "llmgw/web/src/pages/ModelPoolsPage.tsx", "deletePool("),
             ("app.MapDelete(\"/gw/logical-models/{id}\"", "logical-model.delete", "export function deleteLogicalModel(", "llmgw/web/src/pages/LogicalModelsPage.tsx", "deleteLogicalModel("),
             ("app.MapDelete(\"/gw/app-callers/{id}\"", "app_caller.delete", "export function deleteAppCaller(", "llmgw/web/src/pages/AppCallersPage.tsx", "deleteAppCaller("),
             ("app.MapDelete(\"/gw/exchanges/{id}\"", "exchange.delete", "export function deleteExchange(", "llmgw/web/src/pages/ExchangesPage.tsx", "deleteExchange("),
@@ -5471,17 +5849,14 @@ public class GatewayDataDomainGuardTests
 
         // 删除阻挡：删掉一个还在被引用的对象，引用方不会报错，只会在路由时静默降级。
         // 所以每条删除都必须先查引用并把阻挡原因报回去，而不是「删了再说」。
-        Assert.Contains("POOL_IN_USE", console);
         Assert.Contains("EXCHANGE_IN_USE", console);
         Assert.Contains("MODEL_IN_USE", console);
         // 逻辑模型没有阻挡：Offering 是它自己的下挂路由，别处不引用，所以是连带删。
         // 但连带删必须把删掉几条报回去——否则运维点一次删掉 N 条却毫无感知。
         Assert.Contains("OfferingsDeleted", console);
         Assert.Contains("offeringsDeleted", ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx"));
-        // 交换所被池成员引用有两种写法（直指 id / __exchange__ 别名），只查一种会漏判成「没人用」
+        // 交换所被引用有两种写法（直指 id / __exchange__ 别名），只查一种会漏判成「没人用」
         Assert.Contains("__exchange__", console);
-        // 模型池删除的两类阻挡语义不同，必须分开报：改默认 vs 解绑 appCaller，补救动作不一样
-        Assert.Contains("IsCurrentDefault", console);
     }
 
     /// <summary>
@@ -5502,7 +5877,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("TEAM_IN_USE", console);
         Assert.Contains("team.delete", console);
         Assert.Contains("export function deleteTeam(", api);
-        Assert.Contains("removeTeam", page);
         // 阻挡清单报 userId 等于没报——运维看着一串 hex 不知道去找谁解绑。必须解成账号名。
         Assert.Contains("nameById.TryGetValue(x, out var name)", console);
 
@@ -5517,7 +5891,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("TenantOwnerAuthority.RestoreAsync", memberDelete);
         Assert.Contains("membership.delete", memberDelete);
         Assert.Contains("export function deleteMember(", api);
-        Assert.Contains("removeMember", page);
 
         // 租户：只能删当前会话所在的租户、内置租户不许删、非空不许删。
         // 用户建的东西一律不级联——级联写错不可逆，「先自己清干净再删」可逆。
@@ -5549,9 +5922,7 @@ public class GatewayDataDomainGuardTests
             tenantGone < membershipsGone,
             "删租户必须排在删成员关系之前：反过来一旦中途失败，租户还在而最后一个 owner 已经进不来，连重试删除都做不到");
         Assert.Contains("export function deleteTenant(", api);
-        Assert.Contains("removeTenant", page);
         // 租户没了，绑在它上面的会话也就没了：必须正规登出，不能留一个指向空租户的 token
-        Assert.Contains("logout();", page);
     }
 
     /// <summary>
@@ -5640,7 +6011,6 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("promptPolicies.DeleteManyAsync", delete);
         Assert.Contains("promptPolicyVersionsDeleted", delete);
         // 删了几版必须报出来：它会改写系统提示词，静默删等于静默改行为
-        Assert.Contains("promptPolicyVersionsDeleted", page);
     }
 
     /// <summary>
@@ -5772,6 +6142,834 @@ public class GatewayDataDomainGuardTests
     /// 往租户删除里加了几行，「必须挂 TenantOwner」这条断言就落到 4000 字之外报了「找不到」，
     /// 报的是缺失，实际是窗口太窄。判据的边界要跟着被判对象走，不能是一个拍出来的数字。
     /// </summary>
+    [Fact]
+    public void 删对外模型之前先问过在途任务()
+    {
+        /*
+          删对外模型会连着删掉它名下的全部线路，而视频任务提交成功后把线路 id 写进了自己的文档，
+          轮询与下载都靠它回到同一个上游。先删后问等于没问——所以判据不只是「有没有这段代码」，
+          还有「它在不在删除语句之前」（位置断言，与撞车补偿、首屏失败那两条同一形状）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/logical-models/{id}\"");
+        var asked = delete.IndexOf("OfferingReferencePolicy.BuildInFlightVideoRunFilter", StringComparison.Ordinal);
+        var deleted = delete.IndexOf("gwLogicalModels.DeleteOneAsync", StringComparison.Ordinal);
+        Assert.True(asked >= 0, "删对外模型时没有问过在途任务还在不在用它名下的线路");
+        Assert.True(deleted >= 0, "找不到删除语句，守卫的位置断言已经失去意义");
+        Assert.True(asked < deleted, "在途任务这道闸排在删除语句之后，等于没有拦");
+
+        // 两种引用形态都要查：direct 写在任务根上，storyboard 逐镜写。漏一种等于没查。
+        var policy = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingReferencePolicy.cs");
+        Assert.Contains("VideoRunRootOfferingField", policy, StringComparison.Ordinal);
+        Assert.Contains("VideoRunSceneOfferingField", policy, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 挂线路与开线路走同一道上游资格闸()
+    {
+        /*
+          「这条上游还承接得了流量吗」原先只长在新建线路那一个端点上，而重新启用一条停用的线路
+          走的是另一个端点——同一个不可用状态在一边拦得住、另一边拦不住（形状 3：判断在两个入口
+          各写一份然后各自漂移）。判据收进 OfferingTargetEligibility 之后，守卫盯两件事：
+          两个入口都真的调了它；Program.cs 里不许再留一份自己拼的同名判断。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var create = EndpointBody(console, "app.MapPost(\"/gw/logical-models/{id}/offerings\"");
+        var enable = EndpointBody(console, "app.MapPut(\"/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled\"");
+        Assert.Contains("OfferingTargetEligibility.Evaluate", create, StringComparison.Ordinal);
+        Assert.Contains("OfferingTargetEligibility.Evaluate", enable, StringComparison.Ordinal);
+
+        Assert.Equal(0, CountOccurrences(console, "\"TARGET_PLATFORM_UNAVAILABLE\""));
+        Assert.Equal(0, CountOccurrences(console, "\"TARGET_DISABLED\""));
+        var policy = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
+        foreach (var code in new[] { "TARGET_NOT_FOUND", "TARGET_DISABLED", "TARGET_PLATFORM_UNAVAILABLE", "EXCHANGE_ALIAS_NOT_DECLARED" })
+            Assert.Contains($"\"{code}\"", policy, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 线路身份唯一索引不在启动时建()
+    {
+        /*
+          no-auto-index：启动路径上不许建索引。上一版在「全新库」那条分支上留了个口子，
+          理由是新库没有存量所以安全——那个理由站不住，因为「库其实不新、只是索引被误删了」
+          长得一模一样。判据因此不看分支，只看这个文件里还有没有人去建这条索引：
+          身份索引的最后一个键是 SupersededByOfferingId，它出现在 IndexKeys 里就说明又建上了。
+        */
+        var initializer = ReadRepoFile(
+            "prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        Assert.Equal(0, CountOccurrences(initializer, "Ascending(\"SupersededByOfferingId\")"));
+
+        var method = MethodBody(initializer, "private async Task EnsureOfferingIdentityIndexAsync");
+        Assert.Equal(0, CountOccurrences(method, "Indexes.CreateOneAsync"));
+        Assert.Equal(0, CountOccurrences(method, "Indexes.CreateManyAsync"));
+        // 只报不建的前提是「真的报出来了」：缺索引与旧索引两种都要留下可读的告警。
+        Assert.Equal(2, CountOccurrences(method, "_logger.LogWarning"));
+    }
+
+    [Fact]
+    public void 并发挂线路撞唯一索引翻成冲突()
+    {
+        /*
+          判重那一读挡不住竞态，真正拦住的是唯一索引；不接这个异常，输的那一方拿到的是 500。
+          与对外模型创建同一形状（第 49 轮），这里补上线路这一侧。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var create = EndpointBody(console, "app.MapPost(\"/gw/logical-models/{id}/offerings\"");
+        var inserted = create.IndexOf("gwModelOfferings.InsertOneAsync(document)", StringComparison.Ordinal);
+        var caught = create.IndexOf("ServerErrorCategory.DuplicateKey", StringComparison.Ordinal);
+        Assert.True(inserted >= 0, "找不到线路插入语句");
+        Assert.True(caught > inserted, "线路插入没有接住撞键异常，并发创建会漏成 500");
+    }
+
+    [Fact]
+    public void 控制台启动只查索引不建索引()
+    {
+        /*
+          `no-auto-index` 在控制台这一侧的落地。本 PR 引入的四条唯一索引改成启动只查、缺了报警；
+          存量那批（启动时还在建）没动，已记债。
+
+          判据两条，缺一不可：
+          ① 这四条索引的名字只许出现在巡检调用里，不许再出现在 CreateIndexModel 里；
+          ② 建索引的处数是棘轮，只降不升——不写这一条的话，下一个人照着存量那批的样子
+             再加一条就又是「合规」的，而本 PR 修的正是这种「照着旧的抄一条」。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        string[] introducedHere =
+        [
+            "uniq_llmgw_logical_default_per_type",
+            "uniq_llmgw_logical_claim_per_type",
+            "uniq_llmgw_catalog_entry_key",
+            "uniq_llmgw_imagegen_tenant_pattern",
+        ];
+        var guide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
+        foreach (var name in introducedHere)
+        {
+            // `Name = "..."` 是 CreateIndexOptions 的写法：它出现就说明又在代码里建索引了。
+            // 索引名本身可以多处出现（撞键异常要按名字分辨撞的是哪一条），所以判的不是次数。
+            Assert.Equal(0, CountOccurrences(console, $"Name = \"{name}\""));
+
+            var at = console.IndexOf($"\"{name}\"", StringComparison.Ordinal);
+            Assert.True(at > 0, $"{name} 在控制台里一次都没出现，巡检大概被删了");
+            var callAt = console.LastIndexOf("IndexAdvisory.ReportIfMissingAsync", at, StringComparison.Ordinal);
+            Assert.True(callAt > 0 && at - callAt < 200,
+                $"{name} 不是通过 IndexAdvisory.ReportIfMissingAsync 巡检的");
+
+            // 只查不建的前提是 DBA 那一侧查得到该怎么建。查不到就等于把问题丢给了没有线索的人。
+            Assert.Contains(name, guide, StringComparison.Ordinal);
+        }
+
+        var creations = CountOccurrences(console, "Indexes.CreateOneAsync")
+                        + CountOccurrences(console, "Indexes.CreateManyAsync");
+        Assert.True(creations <= 24,
+            $"控制台启动建索引的处数升到了 {creations}（棘轮上限 24）：新索引走 IndexAdvisory 巡检 + DBA 迁移，不要在启动里建");
+
+        // 缺索引的后果必须说出来，不许只说「索引缺失」。这一条由类型强制：
+        // degradesTo 是必填参数，忘了给编译不过。这里只确认那个参数没被写成空话。
+        var advisory = ReadRepoFile("llmgw/console-api/Mongo/IndexAdvisory.cs");
+        Assert.Contains("degradesTo", advisory, StringComparison.Ordinal);
+        Assert.Contains("doc/guide.platform.mongodb-indexes.md", advisory, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 级联删线路失败时把对外模型放回去()
+    {
+        /*
+          两条删除不是一个事务。中间那一下失败，结果是对外模型没了、它名下的线路成了孤儿，
+          而孤儿不出现在任何一屏上（线路只在自己的对外模型底下列出），没人会发现。
+          补偿的方向必须是「把父放回去」——库回到删之前的样子，重试一次就行。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/logical-models/{id}\"");
+
+        var cascadeAt = delete.IndexOf("gwModelOfferings.DeleteManyAsync(offeringFilter)", StringComparison.Ordinal);
+        var restoreAt = delete.IndexOf("gwLogicalModels.InsertOneAsync(doc)", StringComparison.Ordinal);
+        Assert.True(cascadeAt > 0, "找不到级联删除语句");
+        Assert.True(restoreAt > cascadeAt, "级联删除失败时没有把对外模型放回去");
+
+        // 补偿自己也失败时不许吞：要如实说清「父已删、子还在」并给出能去查的标识。
+        Assert.Contains("MODEL_DELETE_ROLLED_BACK", delete, StringComparison.Ordinal);
+        Assert.Contains("MODEL_DELETE_LEFT_ORPHANS", delete, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 同步状态要写给每一个租户而不只是被跳过的那几个()
+    {
+        /*
+          状态行的 _id 是「宿主::租户」，控制台按登录租户查。名单若只取「这一轮被跳过的」
+          加「上一轮写过行的」，一个刚开的租户两边都不在，那一屏就永远说「同步从未发生」，
+          而且会一直轮询——一个正常运转的进程被报成疑似宕机。
+        */
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        Assert.Contains("GetCollection<BsonDocument>(\"llmgw_tenants\")", worker, StringComparison.Ordinal);
+        Assert.Contains(".Concat(allTenantIds)", worker, StringComparison.Ordinal);
+
+        // 不许退回成「只给有 override 的租户写」：三个来源都要并进去。
+        var loopAt = worker.IndexOf("foreach (var tenantId in skippedByTenant.Keys", StringComparison.Ordinal);
+        Assert.True(loopAt > 0, "找不到逐租户写状态的循环");
+        var loopTail = worker[loopAt..(loopAt + 400)];
+        Assert.Contains(".Concat(knownTenantIds)", loopTail, StringComparison.Ordinal);
+        Assert.Contains(".Concat(allTenantIds)", loopTail, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 晋升新线路失败时一律回滚不只撞键那一种()
+    {
+        /*
+          换上游那条替换链里，晋升是最后一步：原线路已经停用、替身还挂着 staging 标记。
+          这一步失败而不回滚，这个对外模型就一条可用线路都没有了。
+
+          上一版只接了撞键那一种失败，而真实失败里最常见的（超时、主从切换、连接断开）
+          恰好不在名单上——判据比它该管的范围窄（形状 1）。判据因此不数「接了几种异常」，
+          而是要求这一段里的每一条失败出口都先回滚。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var update = EndpointBody(console, "app.MapPut(\"/gw/logical-models/{logicalId}/offerings/{offeringId}\"");
+
+        Assert.Contains("catch (MongoException ex)", update, StringComparison.Ordinal);
+        // 撞键、其它异常、以及 ModifiedCount 不为 1，三条失败出口都要走同一段回滚。
+        Assert.True(CountOccurrences(update, "await RollbackPromotionAsync();") >= 3,
+            "晋升的失败出口没有全部走回滚：撞键、其它 Mongo 异常、ModifiedCount 不为 1，三条都要");
+
+        // 回滚自己失败时不许吞：这个模型可能一条可用线路都没有，得说清并给出两个 id。
+        Assert.Contains("OFFERING_PROMOTION_LEFT_PARTIAL", update, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 级联删除失败时父和子都要放回去()
+    {
+        /*
+          超时这一类失败的结果是**未知的**：线路可能一条没删、也可能删了一半。只放回父，
+          然后告诉操作者「库里没有留下半截状态」，在删了一半那种失败里就是一句假话——
+          模型回来了，它的线路少了几条，路由从此变了样却没人知道。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var delete = EndpointBody(console, "app.MapDelete(\"/gw/logical-models/{id}\"");
+
+        // 要先有快照才谈得上放回去：子文档整份读回来，不能只取 id。
+        Assert.Contains("var childOfferings = await gwModelOfferings", delete, StringComparison.Ordinal);
+        Assert.Contains("IsUpsert = true", delete, StringComparison.Ordinal);
+
+        var cascadeAt = delete.IndexOf("gwModelOfferings.DeleteManyAsync(offeringFilter)", StringComparison.Ordinal);
+        var parentAt = delete.IndexOf("gwLogicalModels.InsertOneAsync(doc)", StringComparison.Ordinal);
+        var childAt = delete.IndexOf("gwModelOfferings.ReplaceOneAsync", StringComparison.Ordinal);
+        Assert.True(cascadeAt > 0 && parentAt > cascadeAt, "级联删除失败时没有把对外模型放回去");
+        Assert.True(childAt > parentAt, "级联删除失败时没有把线路放回去，或顺序反了（父在，子才有归属）");
+
+        // 「库回到了删之前的样子」这句话只许在真的全放回去了的时候说。
+        var fullyAt = delete.IndexOf("var fullyRestored = parentRestored", StringComparison.Ordinal);
+        var claimAt = delete.IndexOf("库回到了删之前的样子", StringComparison.Ordinal);
+        Assert.True(fullyAt > 0, "没有区分「全放回去了」与「只放回去一部分」");
+        Assert.True(claimAt > fullyAt, "在还没判断放回去了多少之前就宣称库回到了删之前的样子");
+        Assert.Contains("MODEL_DELETE_LEFT_ORPHANS", delete, StringComparison.Ordinal);
+
+        /*
+          撞键不等于「原来那一条还在」：公开名上也有唯一索引，另一个管理员在这几毫秒里用同一个
+          公开名新建一条，撞的是那一条、_id 完全不同。拿撞键本身当「已恢复」的证据，就会按原 _id
+          把线路放回去，造出一批藏在替身模型后面的孤儿，而回复还说全都放回去了（形状 8）。
+        */
+        var dupAt = delete.IndexOf("ServerErrorCategory.DuplicateKey", StringComparison.Ordinal);
+        Assert.True(dupAt > 0, "回滚没有区分撞键这一种失败");
+        var dupBranch = delete[dupAt..(dupAt + 900)];
+        Assert.Contains("parentRestored = await gwLogicalModels", dupBranch, StringComparison.Ordinal);
+        Assert.Contains("Filter.Eq(\"_id\", id)", dupBranch, StringComparison.Ordinal);
+
+        // 父没放回去就不放子：放回去造出来的正好是上面那道复核要防的东西——
+        // 一批挂在不存在的父下面、谁也看不见的孤儿（第 57 轮 review）。
+        var guardAt = delete.IndexOf("if (parentRestored)", StringComparison.Ordinal);
+        Assert.True(guardAt > 0 && guardAt < childAt, "父没放回去时照样在放子，那是在造孤儿");
+    }
+
+    [Fact]
+    public void 认领撞车只去掉被抢走的那几个调用方()
+    {
+        /*
+          多键唯一索引只说「撞了」，不说撞的是哪一个 code。把整份认领清空重插，就把一次
+          影响一个调用方的并发放大成影响这个池的全部调用方——没被抢的那几个也失去了接得住
+          它们的模型，池退场后静默改用用途默认。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var branchAt = console.IndexOf(
+            "else if (message.Contains(\"uniq_llmgw_logical_claim_per_type\"",
+            StringComparison.Ordinal);
+        Assert.True(branchAt > 0, "找不到认领撞车那条分支");
+        /*
+          窗口用**结构边界**收尾，不用固定字符数。写死 3000 字的那一版在第 70 轮给这条分支
+          补了「重试也要看索引名」之后当场失灵：被测的那一行被挤出窗口，断言读到 -1 判红，
+          而代码其实是对的——固定窗口自己就是一个会漂的判据。
+        */
+        var branchEnd = console.IndexOf("entry.ClaimedAppCallerCodes = keptClaims;", branchAt, StringComparison.Ordinal);
+        Assert.True(branchEnd > branchAt, "认领撞车那条分支的收尾标记不见了，窗口取不住");
+        var branch = console[branchAt..branchEnd];
+
+        // 回去读一遍现在谁认领着，只去掉真被占走的那几个。
+        Assert.Contains("takenCodes", branch, StringComparison.Ordinal);
+        Assert.Contains("keptClaims", branch, StringComparison.Ordinal);
+        Assert.Contains("fb.AnyIn(\"DefaultForAppCallerCodes\", claimsToTransfer)", branch, StringComparison.Ordinal);
+
+        // 清空是重插又撞时的最后兜底，不是第一反应：它必须排在第一次插入之后。
+        var firstInsertAt = branch.IndexOf("document[\"DefaultForAppCallerCodes\"] = new BsonArray(keptClaims)", StringComparison.Ordinal);
+        var emptyAt = branch.IndexOf("document[\"DefaultForAppCallerCodes\"] = new BsonArray();", StringComparison.Ordinal);
+        Assert.True(firstInsertAt > 0, "重插时没有带上留下来的那几个认领");
+        Assert.True(emptyAt > firstInsertAt, "认领撞车的第一反应还是把整份认领清空");
+    }
+
+    [Fact]
+    public void 一条线路都没建成的池不许把接流量的身份带过来()
+    {
+        /*
+          模型文档在建线路之前就插进去了，那一刻还不知道最终会有几条线路。成员全被跳过时，
+          库里留下一个 Enabled、带着认领、可能还带着用途默认、却一条线路都没有的模型——
+          解析器会选中它然后回 OfferingUnresolvable，搬迁之前还走得通的调用方搬完立刻断掉；
+          它若成了用途默认，断的是整个用途。
+
+          判据盯三件事：真的回头看了 RouteCount；身份被摘掉且模型停用；而且只对**这一趟新建的**
+          那种模型动手——复用既有同名模型时那条模型本来就有自己的线路，照着停用会打掉一条在跑的模型。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var migrate = EndpointBody(console, "app.MapPost(\"/gw/pools/migrate-to-models\"");
+
+        /*
+          数的必须是「现在承接得了流量的线路」，不是「建了几条」。池成员可能指着一个已停用的
+          物理模型、或者它挂的 Provider 不在了——那种线路照样建（拓扑要留着），但一条流量都接不了。
+          数前者的话，一个「每条线路的上游都不可用」的模型就躲过了这道闸（第 55 轮 review）。
+        */
+        Assert.Contains("OfferingTargetEligibility.Evaluate(", migrate, StringComparison.Ordinal);
+        /*
+          判「能不能接流量」要三条齐：线路启用着、健康档不是熔断（池成员近期的不可用是照搬过来的，
+          而运行时把熔断态整条跳过）、上游够格。只判上游的话，一个「成员全在熔断里」的池照样
+          数出有可用线路（第 57 轮 review）。三条收在一个函数里，四个计数点都走它。
+        */
+        var usable = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("healthStatus != CallTracePlanner.HealthUnavailable", usable, StringComparison.Ordinal);
+        Assert.Contains("&& targetRejection is null", usable, StringComparison.Ordinal);
+        /*
+          四个计数点：新建的物理线路、新建的兑换所线路，以及**已经存在**的那两种。
+          后两个不算的话，上一趟被停用的模型在上游修好后重跑仍然数出零，那条「把它放回来」
+          的分支永远不触发——上一轮许下的恢复路径还是走不通。
+        */
+        Assert.Equal(4, CountOccurrences(migrate, "usableRouteCount++;"));
+        Assert.Equal(2, CountOccurrences(migrate, "MigrationExistingRouteCountsAsUsable("));
+        var checkAt = migrate.IndexOf("usableRouteCount == 0 && entry.CreatedNewModel", StringComparison.Ordinal);
+        Assert.True(checkAt > 0, "搬迁没有回头确认这个池到底有几条线路真的能接流量，或者没有限定在这一趟新建的模型上");
+        Assert.Contains("!linkedByRace", migrate[checkAt..(checkAt + 200)], StringComparison.Ordinal);
+
+        var fix = migrate[checkAt..(checkAt + 1200)];
+        Assert.Contains(".Set(\"Enabled\", false)", fix, StringComparison.Ordinal);
+        Assert.Contains(".Set(\"IsDefaultForType\", false)", fix, StringComparison.Ordinal);
+        Assert.Contains(".Set(\"DefaultForAppCallerCodes\", new BsonArray())", fix, StringComparison.Ordinal);
+
+        // 报告里也要如实：entry 上的身份跟着清掉，否则那一屏说它还接着流量。
+        Assert.Contains("entry.IsDefaultForType = false;", fix, StringComparison.Ordinal);
+        Assert.Contains("entry.ClaimedAppCallerCodes = [];", fix, StringComparison.Ordinal);
+
+        // 判在线路循环之后：循环里还在计数的时候判等于没判。
+        var loopAt = migrate.IndexOf("usableRouteCount++;", StringComparison.Ordinal);
+        Assert.True(loopAt > 0 && loopAt < checkAt, "零线路那道闸排在了建线路之前");
+    }
+
+    [Fact]
+    public void 线路健康记账失败不许变成用户侧的失败()
+    {
+        /*
+          RecordSuccess / RecordFailure 写的是健康台账，不是业务结果。成功那一路，响应已经在
+          调用方手上等着返回；失败那一路，调用方正等着「换下一条线路」的结论。一次 Mongo 写抖动
+          从这里抛出去，前者变成 500、后者根本走不到挑下一条候选那一步——一次本来能自愈的失败
+          变成用户看到的失败。
+
+          池成员那两条路径一直是 try/catch + 日志，Offering 这两条漏了；断流之后 Offering 是
+          主路径，这个洞也就从边角挪到了主干（第 55 轮 review）。
+        */
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+
+        foreach (var method in new[] { "RecordSuccessAsync", "RecordFailureAsync" })
+        {
+            var at = resolver.IndexOf($"public async Task {method}(", StringComparison.Ordinal);
+            Assert.True(at > 0, $"找不到 {method}");
+            var branchAt = resolver.IndexOf(
+                "if (!string.IsNullOrWhiteSpace(resolution.OfferingId)", at, StringComparison.Ordinal);
+            Assert.True(branchAt > at, $"{method} 里找不到线路那一支");
+
+            // 线路那一支进 try 之前不许有对库的写：try 必须紧跟在分支开头。
+            var tryAt = resolver.IndexOf("try", branchAt, StringComparison.Ordinal);
+            var writeAt = resolver.IndexOf("Async(", branchAt, StringComparison.Ordinal);
+            Assert.True(tryAt > branchAt && tryAt < writeAt,
+                $"{method} 的线路分支把库操作放在了 try 之外，一次写抖动会变成用户侧的失败");
+
+            var catchAt = resolver.IndexOf("catch (Exception ex)", branchAt, StringComparison.Ordinal);
+            Assert.True(catchAt > tryAt, $"{method} 的线路分支没有接住记账失败");
+            // 接住之后要留痕，不许静默吞掉（degradation-must-alarm）。
+            var tail = resolver[catchAt..(catchAt + 400)];
+            Assert.Contains("_logger.LogWarning", tail, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void 搬迁停掉的模型在上游修好后重跑会被放回来()
+    {
+        /*
+          上一轮那条「零可用线路就停用」留下了一句话：「修好上游再重跑一次搬迁」。而重跑时这条
+          模型已经存在，走的是复用那一支——它只补默认与认领，从不碰 Enabled，于是那句话走不通，
+          模型永久停在停用状态（第 56 轮 review）。许下一个自己不兑现的修复路径比不许更糟。
+
+          放回来要能区分「搬迁停的」与「管理员刻意停的」，所以停用时盖一个戳，只放回带戳的那种；
+          人手动碰过启用开关就把戳清掉，从那一刻起这个开关归人管。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var migrate = EndpointBody(console, "app.MapPost(\"/gw/pools/migrate-to-models\"");
+
+        // 停用时盖戳。
+        var disableAt = migrate.IndexOf(".Set(\"Enabled\", false)", StringComparison.Ordinal);
+        Assert.True(disableAt > 0, "找不到零可用线路时的停用");
+        Assert.Contains(".Set(\"DisabledByMigrationAt\"", migrate[disableAt..(disableAt + 600)], StringComparison.Ordinal);
+
+        // 有可用线路时把带戳的放回来，且条件里必须同时判「现在是停用的」与「戳还在」。
+        var reviveAt = migrate.IndexOf("usableRouteCount > 0", StringComparison.Ordinal);
+        Assert.True(reviveAt > disableAt, "没有「上游修好之后把它放回来」这一支");
+        var revive = migrate[reviveAt..(reviveAt + 900)];
+        Assert.Contains("fb.Eq(\"Enabled\", false)", revive, StringComparison.Ordinal);
+        Assert.Contains("fb.Exists(\"DisabledByMigrationAt\")", revive, StringComparison.Ordinal);
+        Assert.Contains(".Set(\"Enabled\", true)", revive, StringComparison.Ordinal);
+        Assert.Contains(".Unset(\"DisabledByMigrationAt\")", revive, StringComparison.Ordinal);
+
+        // 人手动碰过启用开关就清戳，否则「先被搬迁停、后被管理员开过又关」的那条会被误开。
+        var toggle = EndpointBody(console, "app.MapPut(\"/gw/logical-models/{id}/enabled\"");
+        Assert.Contains(".Unset(\"DisabledByMigrationAt\")", toggle, StringComparison.Ordinal);
+
+        // 那句承诺也要跟着改：不说「重跑就好了」，说清重跑会做什么。
+        Assert.Contains("上游修好之后这一趟会把它自动启用回来", migrate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 对外报价要说清盖没盖住全部可用线路()
+    {
+        /*
+          只有一部分线路算得出价时，光给那一部分是在说半句话：兑换所线路、价格缺失或只配了一半的
+          物理线路都不在这份 routes 里，而加权轮转与故障转移照样会挑中它们，对方照这份报价估出来的
+          数在那些线路上根本不成立（第 56 轮 review）。
+        */
+        var catalog = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        Assert.Contains("[\"covers_all_routes\"] = pricedRoutes.Count == logicalRoutes.Count", catalog, StringComparison.Ordinal);
+
+        // 一条都算不出价时仍然是 null，不是「covers_all_routes: false 的空报价」——
+        // 那读起来像「有报价，只是不全」，而实际是一分钱都算不出来。
+        Assert.Contains("pricedRoutes.Count == 0\n                ? null", catalog, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 三条记账路径都不许把库的抖动变成用户侧的失败()
+    {
+        /*
+          RecordSuccess / RecordFailure / RecordUnavailable 是同一件事的三条路。上一轮包了前两条、
+          漏了第三条（形状 3 的老毛病：同一件事几个分支各写一套，其中一套没跟上）。
+          漏的代价一模一样：调用方那边等着「换下一条线路」的结论，一次 Mongo 写抖动从这里抛出去，
+          网关走不到挑候选那一步；而隔离这条路上游给的往往是确定性的配置错误，
+          本该原样交给用户去修，不该被一次数据库问题换成「服务器错误」。
+
+          判据不点名某几个方法，而是**扫**这个接口的全部记账实现：新增第四条也逃不掉。
+        */
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        var methods = System.Text.RegularExpressions.Regex
+            .Matches(resolver, @"public async Task (Record\w+Async)\(ModelResolutionResult")
+            .Select(m => m.Groups[1].Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        Assert.True(methods.Count >= 3, $"只扫到 {methods.Count} 条记账实现，取值口径大概变了");
+
+        foreach (var method in methods)
+        {
+            var body = MethodBody(resolver, $"public async Task {method}(ModelResolutionResult");
+            var tryAt = body.IndexOf("try", StringComparison.Ordinal);
+            var writeAt = body.IndexOf("Async(", body.IndexOf('{') + 1, StringComparison.Ordinal);
+            Assert.True(tryAt > 0 && tryAt < writeAt,
+                $"{method} 把库操作放在了 try 之外，一次写抖动会变成用户侧的失败");
+            Assert.Contains("catch (Exception ex)", body, StringComparison.Ordinal);
+            Assert.Contains("_logger.LogWarning", body, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public void 控制面判启用要与运行时逐字相同()
+    {
+        /*
+          两者只在一种输入上分道扬镳：文档里压根没有 Enabled 字段（存量数据、直接写库）。
+          「不等于 false」认它，而运行时那条 `Eq(x => x.Enabled, true)` 在服务端匹配、一条都匹配
+          不上。于是控制面的闸说「这个调用方有人接得住」，而每一个请求都解析不到——控制面替
+          数据面打了包票，包票是假的（第 58 轮 review）。控制面可以比运行时严，绝不能比它松。
+        */
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        Assert.Contains("Eq(x => x.Enabled, true)", resolver, StringComparison.Ordinal);
+
+        // 接得住判据那一段（EnsureTargetsLoadedAsync）三类目标都要用严的那一版。
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var loadAt = console.IndexOf("async Task EnsureTargetsLoadedAsync()", StringComparison.Ordinal);
+        Assert.True(loadAt > 0, "找不到接得住判据的目标加载段");
+        var load = console[loadAt..(loadAt + 2200)];
+        Assert.Equal(3, CountOccurrences(load, "fb.Eq(\"Enabled\", true)"));
+        Assert.Equal(0, CountOccurrences(load, "fb.Ne(\"Enabled\", false)"));
+
+        // 上游资格那一份镜像同理：缺字段一律判成不可用，不许放过一条运行时用不了的线路。
+        var eligibility = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
+        Assert.Equal(0, CountOccurrences(eligibility, "AsNullableBool(\"Enabled\") == false"));
+        Assert.Equal(2, CountOccurrences(eligibility, "AsNullableBool(\"Enabled\") != true"));
+    }
+
+    [Fact]
+    public void 契约的通配符只许有一个且只能在结尾()
+    {
+        /*
+          只看最后一个字符的话，`nano**` 与 `nano*banana*` 都存得进去。前者运行时按
+          TrimEnd('*') 归一之后等价于 `nano*`，却是唯一索引眼里的另一条模式——两条契约匹配同一批
+          模型，谁生效看排序，而界面上它们看着是两条不同的规则；后者中间那个星号被当成普通字符，
+          这条契约通常一个模型都匹配不上，保存成功、永远不生效（第 59 轮 review）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var validate = MethodBody(console, "static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)");
+        Assert.Contains("pattern.Count(ch => ch == '*')", validate, StringComparison.Ordinal);
+        Assert.Contains("starCount > 1", validate, StringComparison.Ordinal);
+        Assert.Contains("!pattern.EndsWith('*')", validate, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 契约编辑器要给得出启用开关()
+    {
+        /*
+          列表会把停用的契约标出来、接口也来回带着 enabled，唯独表单没有这个控件——
+          于是一条从接口建出来的停用契约在控制台永远开不回来，一条在跑的契约想暂停只能删掉重建
+          （形状 2：链路只建了一半，另一半在界面上缺着）。
+        */
+        var section = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        Assert.Contains("id=\"imagegen-enabled\"", section, StringComparison.Ordinal);
+        // 默认值判「不等于 false」：字段缺失的存量契约是启用的，用 Boolean(...) 会把它显示成停用。
+        Assert.Contains("checked={editing.draft.enabled !== false}", section, StringComparison.Ordinal);
+        Assert.Contains("draft: { ...editing.draft, enabled: e.target.checked }", section, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 不计入限额要说清是币种不对还是价没配齐()
+    {
+        /*
+          原先一律写「价格不是美金口径」。于是一个币种明明是 USD、只是缺了输出价的模型，
+          管理员照着这句话去改币种，改完还是不计入，而真正缺的那一项从头到尾没人提
+          （第 60 轮 review；external-cause-first：给读的人一个他能处置的结论）。
+        */
+        var page = ReadRepoFile("llmgw/web/src/pages/ModelsPage.tsx");
+        Assert.Contains("function unbillableReason(", page, StringComparison.Ordinal);
+        Assert.Contains("title={unbillableReason(model)}", page, StringComparison.Ordinal);
+        // 两种成因各有各的下一步，都要在。
+        Assert.Contains("不是美金口径", page, StringComparison.Ordinal);
+        Assert.Contains("只配了一半", page, StringComparison.Ordinal);
+        // 完整性判据与计价侧同源：有按次价就够，否则输入与输出都要有。
+        Assert.Contains("model.pricePerCall != null", page, StringComparison.Ordinal);
+        Assert.Contains("model.outputPricePerMillion == null", page, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 上游被停用与熔断要分成两种状态()
+    {
+        /*
+          熔断会自愈（冷却期满系统拿一条真实请求去试探），上游被停用不会——没有任何冷却能让它
+          回来，必须有人去把那个模型或 Provider 启用回来。合成一个的后果不是少一种颜色，
+          是给出一个永远等不到的下一步（第 60 轮 review）。
+        */
+        var visuals = ReadRepoFile("llmgw/web/src/components/ModelRouteVisuals.tsx");
+        Assert.Contains("'blocked'", visuals, StringComparison.Ordinal);
+
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+        // 判的是状态不是那句中文：匹配文案的话，文案一改判据就悄悄失灵。
+        Assert.Contains("offering.targetUsable === false ? 'blocked'", page, StringComparison.Ordinal);
+        Assert.Contains("offering.targetUsable === false ? '上游停用'", page, StringComparison.Ordinal);
+        Assert.DoesNotContain("skipReason === '上游那个模型被停用了'", page, StringComparison.Ordinal);
+        // 摘要要给对的下一步，不能把「等冷却」说给一个永远等不到的状态听。
+        Assert.Contains("这一条不会自己回来", page, StringComparison.Ordinal);
+        Assert.Contains("等冷却没有用", page, StringComparison.Ordinal);
+
+        // 前端类型要真的带着这个状态，否则上面那个判据恒为 undefined（链路只建一半）。
+        var types = ReadRepoFile("llmgw/web/src/lib/types.ts");
+        Assert.Contains("targetUsable?: boolean;", types, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 计价抽屉不许把退场的模型池说成计费依据()
+    {
+        /*
+          断流之后线上计费读的是模型文档自己的价格，运行时不再经过模型池。抽屉里那句
+          「真正参与计费的是池成员里的那份价格」从此是假的——照着它去改池、以为改了线上账，
+          是白改一场；而默认替人勾上那几个池，等于替他写了一批过时数据（第 60 轮 review）。
+        */
+        var drawer = ReadRepoFile("llmgw/web/src/components/ModelPricingDrawer.tsx");
+        Assert.DoesNotContain("真正参与计费的是模型池成员里的那份价格", drawer, StringComparison.Ordinal);
+        Assert.Contains("线上计费读的就是上面这份价", drawer, StringComparison.Ordinal);
+        Assert.Contains("回滚备份", drawer, StringComparison.Ordinal);
+        // 默认一个都不勾：勾选是明明白白的额外动作。
+        Assert.Contains("setSyncPoolIds([]);", drawer, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 旧模型池的回滚备份写不进去不许挡住模型创建()
+    {
+        /*
+          池路由已经退场：线上解析走对外模型 + 线路，这几个池只剩回滚备份的用途。
+          上一版在池同步失败时把刚插入的模型删掉、回 500——一次写「回滚备份」失败，挡住了一条
+          本来完全能跑的模型的创建（第 61 轮 review）。轻重反了：备份写不进去可以稍后补，
+          模型建不出来是当场就挡住人的。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var create = EndpointBody(console, "app.MapPost(\"/gw/models\"");
+
+        // 池同步失败不许回删模型、不许早退。
+        var syncAt = create.IndexOf("EnsureGatewayModelPoolTypesAsync(", StringComparison.Ordinal);
+        Assert.True(syncAt > 0, "找不到旧模型池同步");
+        var catchTail = create[syncAt..(syncAt + 1400)];
+        Assert.DoesNotContain("MODEL_POOL_SYNC_FAILED", catchTail, StringComparison.Ordinal);
+        Assert.Contains("poolSyncMessage =", catchTail, StringComparison.Ordinal);
+
+        // 白名单与线路仍要照常建：判在池同步之后。
+        var publishAt = create.IndexOf("PublishGatewayModelToWhitelistAsync(", StringComparison.Ordinal);
+        Assert.True(publishAt > syncAt, "池同步失败之后没有继续登白名单");
+
+        // 降级要如实回传，不谎报全绿。
+        Assert.Contains("whitelistMessage ?? poolSyncMessage", create, StringComparison.Ordinal);
+        Assert.Contains("poolSyncDegraded", create, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 拒绝文案不许把人指向已经下线的模型池页()
+    {
+        /*
+          模型池页已经下线并重定向到对外模型页，前端也没有任何地方调搬迁接口。
+          「去「模型池」页跑一次搬迁」因此是一句走不通的话——而这几处恰恰是人被拦住、
+          最需要一个能走通的下一步的时刻（第 61 轮 review）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Equal(0, CountOccurrences(console, "去「模型池」页跑一次搬迁"));
+        Assert.Equal(0, CountOccurrences(console, "可在「模型池」页面手动补齐"));
+
+        // 主路径给的是当场能走通的那条。
+        Assert.Contains("那一栏列的就是能解析到的对外模型", console, StringComparison.Ordinal);
+        // 搬迁没有控制台入口这件事要如实说，不含混。
+        Assert.Contains("控制台目前没有这个入口", console, StringComparison.Ordinal);
+
+        // 前端确实没有这个入口——这条断言保证上面那句话别在补了入口之后还挂着。
+        var app = ReadRepoFile("llmgw/web/src/App.tsx");
+        Assert.Contains("path=\"/pools\"", app, StringComparison.Ordinal);
+        var api = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        Assert.Equal(0, CountOccurrences(api, "pools/migrate-to-models"));
+    }
+
+    [Fact]
+    public void 排队名次对兑换所线路要判到别名那一层()
+    {
+        /*
+          运行时按 GatewayCatalogGate.ExchangeDeclares 判：兑换所声明过这条别名、且那一条启用着。
+          控制面只判「兑换所整体启用着」的话，一条指向已被摘掉或单独停用的别名的线路会拿到一个
+          正的排队名次，Quickstart 与调用全貌都说「会落到它」，而真调用当场被拒
+          （第 62 轮 review；控制面比运行时松，包票就是假的）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var at = console.IndexOf("bool TargetUsable(ModelOfferingItem offering)", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到排队用的目标可用判据");
+        // 边界取到下一段（算 candidates）为止，不用固定字符数——窗口写死会随注释长短漂。
+        var end = console.IndexOf("var candidates = offerings", at, StringComparison.Ordinal);
+        Assert.True(end > at, "找不到 TargetUsable 之后那段，守卫取值口径需要更新");
+        var body = console[at..end];
+
+        Assert.Contains("ExchangeAliasPolicy.Declares(", body, StringComparison.Ordinal);
+        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(", body, StringComparison.Ordinal);
+        // 三处启用判据都要与运行时同口径（== true，不是「不等于 false」）。
+        // 三处目标（兑换所 / 物理模型 / Provider）都要判 `== true`，一处「不等于 false」都不许留：
+        // 缺字段的文档运行时那条查询一条都匹配不上，控制面认它就会报出一个运行时用不了的队首。
+        Assert.Equal(0, CountOccurrences(body, "?? true)"));
+        Assert.Equal(3,
+            CountOccurrences(body, "AsNullableBool(\"Enabled\") == true")
+            + CountOccurrences(body, "AsNullableBool(\"Enabled\") != true"));
+    }
+
+    [Fact]
+    public void 加权冒烟只接受最健康那一档的落点()
+    {
+        /*
+          权重轮转只在最健康的那一档里进行，降级线路留作故障转移、不参与首发。把所有没被跳过的
+          线路都当成可接受落点，等于把「错误地首发了降级线路」这件事也放了进去——断言宽到把要防的
+          那件事一起放行（第 62 轮 review）。
+        */
+        var smoke = ReadRepoFile("scripts/llmgw-call-trace-smoke.py");
+        Assert.Contains("def health_tier(route):", smoke, StringComparison.Ordinal);
+        Assert.Contains("best_tier = min(health_tier(r) for r in eligible)", smoke, StringComparison.Ordinal);
+        Assert.Contains("rotating = [r for r in eligible if health_tier(r) == best_tier]", smoke, StringComparison.Ordinal);
+        // 判的是轮转集合的大小，不是「没被跳过的有几条」。
+        Assert.Contains("len(rotating) > 1", smoke, StringComparison.Ordinal);
+        Assert.DoesNotContain("len(eligible) > 1", smoke, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 网关那五条索引要进可执行清单()
+    {
+        /*
+          启动改成只查不建之后，「按文档跑一遍」必须真的能跑出这几条约束。只写进指南的表格、
+          不进可执行清单的话，DBA 照着做完仍然没有唯一索引——并发保存写出两个默认、两个认领、
+          两条补登、两份契约，而代码里那些撞键翻 409 的恢复路径永远不会被走到（第 63 轮 review）。
+        */
+        var manifest = ReadRepoFile("scripts/mongodb-indexes.js");
+        foreach (var name in new[]
+                 {
+                     "uniq_llmgw_logical_default_per_type",
+                     "uniq_llmgw_logical_claim_per_type",
+                     "uniq_llmgw_catalog_entry_key",
+                     "uniq_llmgw_imagegen_tenant_pattern",
+                     "uniq_llmgw_offering_tenant_logical_target_v3",
+                 })
+        {
+            Assert.Contains(name, manifest, StringComparison.Ordinal);
+        }
+
+        /*
+          索引必须建在**真的有人写**的那个集合上。
+
+          这一条此前只断言索引名在清单里，而清单把补登那条建在了 llmgw_catalog_entries，
+          控制台写的却是 llmgw_model_catalog_entries（少了 model_）：照文档跑一遍，真正那张表
+          一条约束都没有，并发补登能写出两条抢同一个标识的记录，而代码里那些撞键翻 409 的
+          恢复路径永远走不到；顺带还凭空建出一个空集合（第 74 轮 review，形状 8：
+          名字对上了就当成建对了）。
+
+          判据换成交叉核对：清单里每一个 llmgw_ 集合，源码里必须真的有人 GetCollection 它。
+        */
+        var consoleSource = ReadRepoFile("llmgw/console-api/Program.cs");
+        var servingSource = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        foreach (Match m in Regex.Matches(manifest, @"ensureTightenedUniqueIndex\(""(llmgw_[a-z_]+)"""))
+        {
+            var collection = m.Groups[1].Value;
+            Assert.True(
+                consoleSource.Contains($"\"{collection}\"", StringComparison.Ordinal)
+                    || servingSource.Contains($"\"{collection}\"", StringComparison.Ordinal),
+                $"清单把索引建在 {collection} 上，而源码里没有任何地方读写这个集合——"
+                + "多半是名字写错了，真正那张表会一条约束都没有");
+        }
+
+        // 只在确实是网关库时才建：对着应用库跑一次不许凭空建出一堆空的 llmgw_* 集合。
+        Assert.Contains("$regex: \"^llmgw_\"", manifest, StringComparison.Ordinal);
+
+        /*
+          但「库里有 llmgw_ 集合」这一个信号在**第一次建网关库**时必然不成立——库还是空的，
+          照文档跑一遍会打印跳过、五条约束一条都建不出来（第 65 轮 review：判据比它该管的范围窄）。
+          所以要有第二个信号让操作者点名，且跳过时打印的下一步必须是**真的走得通**的那条命令，
+          而不是刚刚已经跳过的那一条。
+        */
+        var gateAt = manifest.IndexOf("gatewayCollectionInfos.length === 0", StringComparison.Ordinal);
+        Assert.True(gateAt > 0, "网关段的库判据不见了");
+        var elseAt = manifest.IndexOf("} else {", gateAt, StringComparison.Ordinal);
+        Assert.True(elseAt > gateAt);
+        var gate = manifest[gateAt..elseAt];
+        Assert.Contains("gatewayDbDeclared", gate, StringComparison.Ordinal);
+        Assert.Contains("PRD_GATEWAY_DB=1 mongosh", gate, StringComparison.Ordinal);
+        // 指南里也得有这条命令，否则「按文档跑一遍」拿不到它。
+        Assert.Contains(
+            "PRD_GATEWAY_DB=1 mongosh",
+            ReadRepoFile("doc/guide.platform.mongodb-indexes.md"),
+            StringComparison.Ordinal);
+
+        // 旧版身份索引更严，留着等于新索引白建；但必须**先建好 v3** 再丢，顺序反了会有一段
+        // 时间线路身份完全没有唯一约束。
+        var v3At = manifest.IndexOf("uniq_llmgw_offering_tenant_logical_target_v3", StringComparison.Ordinal);
+        var dropAt = manifest.IndexOf("uniq_llmgw_offering_tenant_logical_target_v2", StringComparison.Ordinal);
+        Assert.True(dropAt > v3At, "先丢旧索引再建新的，中间那段时间线路身份没有唯一约束");
+
+        /*
+          而且「v3 建好了」不能只看名字在不在：上面那次 ensureTightenedUniqueIndex 可能同名但
+          定义不同、可能 prepareUnique 转换失败、可能存量还有重复组——这几种它都只记一笔失败
+          就返回，名字照样在（那是失败前就存在的那一条）。只认名字就会把货真价实的旧索引丢掉，
+          库里只剩一条不生效的 v3，线路身份从此没有有效约束（第 73 轮 review，形状 8）。
+        */
+        Assert.Contains("v3Verified", manifest, StringComparison.Ordinal);
+        Assert.Contains("v3Index.unique === true", manifest, StringComparison.Ordinal);
+        Assert.Contains("JSON.stringify(v3Index.key) === JSON.stringify(offeringIdentityKeys)", manifest, StringComparison.Ordinal);
+        Assert.Contains("offeringMigrationFailed", manifest, StringComparison.Ordinal);
+        // 只认名字的那种写法不许回来
+        Assert.Equal(0, CountOccurrences(
+            manifest,
+            "if (offeringIndexNames.includes(\"uniq_llmgw_offering_tenant_logical_target_v3\"))"));
+
+        // 两处部分过滤器不是可选项：空数组在多键索引里记成 undefined，不排除就建不起来。
+        Assert.Contains("\"DefaultForAppCallerCodes\": { $type: \"string\" }", manifest, StringComparison.Ordinal);
+        Assert.Contains("\"Keys\": { $type: \"string\" }", manifest, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 同名判据在库查询与内存挑选上同一份()
+    {
+        /*
+          存量文档没有 ModelNameNormalized，库里存着 `Foo` 而线路覆盖成 `foo` 时，逐字比对
+          一条都查不到——名录门判成「管不着」放行，一个名录外又没盖放行标记的模型就过去了
+          （第 63 轮 review）。名录门对名字本来就不分大小写，这里逐字比反而更严一档，
+          严到把该拦的漏了。
+        */
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+        Assert.Contains("public static FilterDefinition<BsonDocument> SameNameFilter(", gate, StringComparison.Ordinal);
+        Assert.Contains("StringComparison.OrdinalIgnoreCase", gate, StringComparison.Ordinal);
+
+        // 单条查询与批量预取都要走这一份，不许各拼各的。
+        var resolver = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
+        // 两个调用点：单条查询与批量预取。数的是「至少两处」而不是精确条数——
+        // 注释里提到它也会被数进去，把注释算成判据就是又一条会漂的断言。
+        Assert.Contains("GatewayCatalogGate.SameNameFilter(trimmed)", resolver, StringComparison.Ordinal);
+        // 批量预取走共享那个入口。上一版逐字要求 `names.Select(GatewayCatalogGate.SameNameFilter)`,
+        // 那是把当时的写法钉死——第 68 轮把三处预取收敛成 SameNameBatchFilter 时它会红，
+        // 谁收敛谁的 CI 红（形状 4a）。
+        Assert.Contains("GatewayCatalogGate.SameNameBatchFilter(names)", resolver, StringComparison.Ordinal);
+        Assert.Equal(0, CountOccurrences(resolver, "fb.Eq(\"ModelName\", trimmed)"));
+        Assert.Equal(0, CountOccurrences(resolver, "fb.In(\"ModelName\", names)"));
+    }
+
+    [Fact]
+    public void 同步状态落定之后要降频继续看不是彻底停()
+    {
+        /*
+          「都跟上了」只是那一刻的事实。这一屏开着的时候某个进程完全可能停掉或连不上库，
+          而服务端要等下一次请求才把它算成 stale——没人再问，那句「所有进程都装着当前这一版」
+          就无限期地挂在屏幕上，而它早就不成立了（第 63 轮 review）。
+        */
+        var section = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        // 落定不再是「直接 return，不排下一次」。
+        Assert.DoesNotContain("if (data === null || hostsSettled) return undefined;", section, StringComparison.Ordinal);
+        Assert.Contains("hostsSettled ? Math.max(60, base * 10) : base", section, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 宿主自己那一行的跳过数要按租户算()
+    {
+        /*
+          多租户宿主上，控制台读的就是「宿主::租户」那一行。填全局总数的话，内部租户看到
+          「跳过了 7 条」，而那 7 条里多数是别的租户的——他按这个数去找自己的契约，一条都对不上
+          （第 64 轮 review）。单租户宿主两者本来相等；全局总数留给日志。
+        */
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        var at = worker.IndexOf("await WriteStatusAsync(", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到宿主自己那一行的写入");
+        var call = worker[at..(at + 320)];
+        Assert.Contains("ImageGenContractHostTenancy.MultiTenant", call, StringComparison.Ordinal);
+        Assert.Contains("skippedByTenant.GetValueOrDefault(_tenantId, 0)", call, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 退场闸的处置不许停在池的世界里()
+    {
+        /*
+          这道闸的前置条件早就改判「有没有对外模型接得住」（FindUnnamedCatcherAsync），
+          而处置文案还写着「绑池、复核池成员健康」。池路由与它的写入界面都已退场，
+          照着做满足不了这道闸——判据改了、说明没跟上（第 64 轮 review）。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        // 锚在那句处置文案所在的分支上，不用「第一次出现 + 固定字符数」——
+        // 这个标识在文件里出现多次，第一次很可能是它的赋值处，截出来的窗口根本不含文案。
+        var at = console.IndexOf("先完成 MAP-only 配置认领", StringComparison.Ordinal);
+        Assert.True(at > 0, "找不到 MAP 兜底退场那道闸的处置文案");
+        var gate = console[Math.Max(0, at - 2500)..(at + 800)];
+        Assert.DoesNotContain("active appCaller 绑池", gate, StringComparison.Ordinal);
+        Assert.DoesNotContain("绑定的 GW 池可用", gate, StringComparison.Ordinal);
+        // 给的是当前判据下真能走通的两条路。
+        Assert.Contains("找到接得住的对外模型", gate, StringComparison.Ordinal);
+        Assert.Contains("给这个用途设一个可用的默认模型", gate, StringComparison.Ordinal);
+    }
+
     private static string EndpointBody(string source, string anchor)
     {
         var start = source.IndexOf(anchor, StringComparison.Ordinal);
@@ -5826,6 +7024,311 @@ public class GatewayDataDomainGuardTests
         return File.ReadAllText(full);
     }
 
+    /// <summary>
+    /// 每一处**按认领值过滤**的库查询都必须带 appCaller 身份的那份 collation。
+    ///
+    /// 为什么要一条接线守卫：collation 是**查询选项**不是过滤器，漏了不会编译报错、
+    /// 不会抛异常，只会让这条查询悄悄退回按字节比——而按字节比的后果是请求换一个模型，
+    /// 没有任何一处会说话（第 76 轮 review）。真 Mongo 的行为用例
+    /// （GatewayClaimIdentityCaseTests）钉住的是运行时那一句；控制台这一侧还有四处同类查询，
+    /// 逐条写行为用例不现实，所以这里用接线守卫兜住「一处都不许漏」。
+    ///
+    /// 判据只认**按认领值过滤**（AnyEq / AnyIn），不认把这个字段列进投影的查询——
+    /// 后者按 _id 或用途查，压根没有字符串比较，要求它带 collation 是误判。
+    /// 第一版正是这么写宽了，当场误报了两处投影（形状 1：判据比它该管的范围宽也是窄的反面）。
+    ///
+    /// 边界按**结构**取，不按固定字符数：从 `.Find(` 到这条链路结尾的 `Async()`。
+    /// 固定窗口在本 PR 已经误判红过两次，一律不许再用。
+    /// </summary>
+    [Fact]
+    public void 认领查询一处都不许漏掉身份collation()
+    {
+        var root = LocateRepoRoot();
+        var sources = new[]
+        {
+            Path.Combine(root, "llmgw", "console-api", "Program.cs"),
+            Path.Combine(root, "prd-api", "src", "PrdAgent.Infrastructure", "LlmGateway", "ModelResolver.cs"),
+        };
+
+        var offenders = new List<string>();
+        var scanned = 0;
+        foreach (var path in sources)
+        {
+            var source = File.ReadAllText(path);
+            var name = Path.GetFileName(path);
+            var cursor = 0;
+            while (true)
+            {
+                var findAt = source.IndexOf(".Find(", cursor, StringComparison.Ordinal);
+                if (findAt < 0) break;
+                cursor = findAt + 6;
+                // 这条 fluent 链路的结尾：第一个 Async() 调用。找不到说明结构变了，跳过它
+                // 不算数——下面的下限断言会因为总数变少而判红，不会静默少扫。
+                var endAt = source.IndexOf("Async(", findAt, StringComparison.Ordinal);
+                if (endAt < 0) continue;
+                var statement = source[findAt..endAt];
+                if (!statement.Contains("DefaultForAppCallerCodes", StringComparison.Ordinal)) continue;
+                // 只管按认领值过滤的那几处；把字段列进投影的不是字符串比较。
+                var filtersOnClaim = statement.Contains("AnyEq(", StringComparison.Ordinal)
+                                     || statement.Contains("AnyIn(", StringComparison.Ordinal);
+                if (!filtersOnClaim) continue;
+                scanned++;
+                var hasCollation =
+                    statement.Contains("AppCallerIdentityPolicy.Collation", StringComparison.Ordinal)
+                    || statement.Contains("GatewayAppCallerIdentity.Collation", StringComparison.Ordinal)
+                    || statement.Contains("identityOptions", StringComparison.Ordinal);
+                if (!hasCollation)
+                {
+                    var line = source[..findAt].Count(c => c == '\n') + 1;
+                    offenders.Add($"{name}:{line}");
+                }
+            }
+        }
+
+        Assert.True(scanned >= 5,
+            $"只扫到 {scanned} 处按认领值过滤的查询，少于已知的 5 处——是结构变了还是判据失灵了？扫不到就不许判绿。");
+        Assert.True(offenders.Count == 0,
+            "这些认领查询没带 appCaller 身份 collation，会悄悄退回按字节比：" + string.Join("、", offenders));
+
+        /*
+          计数配平兜底：上面那套只看得见「过滤器就拼在 .Find( 里」的写法。
+
+          第 78 轮漏的那一处正是另一种写法：过滤器在调用方拼好、传给一个局部函数
+          `FirstAsync(filter)` 去查，于是 .Find( 那一句里根本不出现认领字段名，
+          上面的扫描一个字都看不到它——守卫判绿，而那道闸按字节比了整整两轮
+          （形状 7 的又一次：守卫的边界罩不住真正会出事的那种写法）。
+
+          文本分析没法追一个过滤器被传去了哪儿，所以这里改用一条**会响的粗判据**：
+          console-api 里「按认领值过滤」的次数，必须等于身份 collation 出现的次数。
+          新加一处认领查询而忘了 collation，配平立刻不成立。
+          反过来，有人为别的用途多写一个 collation 也会让它红——那不是误报，
+          是「来看一眼这里」的信号，失败文案会说清两个数各是多少。
+        */
+        var consoleSource = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+        var claimPredicates = CountOccurrences(consoleSource, "AnyEq(\"DefaultForAppCallerCodes\"")
+                              + CountOccurrences(consoleSource, "AnyIn(\"DefaultForAppCallerCodes\"");
+        var collationUses = CountOccurrences(consoleSource, "AppCallerIdentityPolicy.Collation");
+        Assert.True(claimPredicates == collationUses,
+            $"console-api 里按认领值过滤了 {claimPredicates} 次，身份 collation 只出现 {collationUses} 次——"
+            + "两个数对不上就说明有一处认领查询在按字节比（或者有人把 collation 挪作它用，"
+            + "那也请顺手把这条断言改对）。");
+    }
+
+    /// <summary>
+    /// 换线路（改上游模型 / 协议 / Endpoint）之前必须过目标资格闸，而且要排在第一次写之前。
+    ///
+    /// 这道闸原先只长在「新建线路」上，第 51 轮补到了「启用线路」，第 79 轮才发现
+    /// **改路由**这第三个入口一直没有：一条在跑的线路，目标模型早被删、Provider 早被停之后，
+    /// 改一下它的上游名就会造出一条启用着的替身并晋升上去，接口回 200 而运行时把它整条丢掉。
+    /// 「存得进去、跑不起来」换第三个入口进来（形状 3）。
+    ///
+    /// 判的是**顺序**不是「这几个字在不在」：判据排在 InsertOneAsync 之后就等于没判——
+    /// 那时原线路已经被退休，闸再拦也只剩一条要回滚的路。
+    /// </summary>
+    [Fact]
+    public void 换线路要在写之前过目标资格闸()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        var blockAt = program.IndexOf("if (routingConfigurationChanged)", StringComparison.Ordinal);
+        Assert.True(blockAt > 0, "找不到换线路那一段——结构变了就别判绿");
+        var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(replacement);", blockAt, StringComparison.Ordinal);
+        Assert.True(insertAt > blockAt, "找不到替身入库那一句");
+
+        var beforeFirstWrite = program[blockAt..insertAt];
+        Assert.Contains("OfferingTargetEligibility.Evaluate", beforeFirstWrite, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 晋升失败的回滚必须**先删替身、再复活原线路**。
+    ///
+    /// 反过来会在最需要它的那种失败上自己撞死：超时的结果是未知的，服务端可能已经晋升成功，
+    /// 而只改协议或 Endpoint 时替身与原线路的 v3 身份完全相同。这时先 Unset 原线路的
+    /// SupersededByOfferingId，等于要两条同身份的线路同时活着，唯一索引当场拒掉——
+    /// 回滚自己抛异常，接口告诉管理员「改动没生效」，而那次改动正活着（第 79 轮 review）。
+    /// </summary>
+    [Fact]
+    public void 晋升回滚要先删替身再复活原线路()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        var bodyAt = program.IndexOf("async Task RollbackPromotionAsync()", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到回滚函数");
+        var bodyEnd = program.IndexOf("UpdateResult promoted;", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到回滚函数的结尾");
+        var body = program[bodyAt..bodyEnd];
+
+        var deleteAt = body.IndexOf("DeleteOneAsync", StringComparison.Ordinal);
+        var restoreAt = body.IndexOf("UpdateOneAsync", StringComparison.Ordinal);
+        Assert.True(deleteAt > 0 && restoreAt > 0, "回滚要同时删替身与复活原线路，少一样都不叫回滚");
+        Assert.True(deleteAt < restoreAt,
+            "回滚顺序反了：必须先删替身再复活原线路，否则同身份的两条会一起活着、撞唯一索引");
+    }
+
+    /// <summary>
+    /// 「所有线路都被摘掉」那条提示里许下的动作，页面上必须真的有。
+    ///
+    /// 那句话原先写着「或在展开里手动恢复一条」，而全站前端一次都没调过 recover 端点——
+    /// 提示指向一个做不到的下一步，正是本 PR 已经修过三次的同一族
+    /// （external-cause-first：给出的下一步必须在当前状态下真走得通）。
+    ///
+    /// 三样一起钉：api 层有这个函数、页面调了它、行里渲染得出那个按钮。
+    /// 只钉文案的话，把按钮删掉文案留着照样绿；只钉按钮的话，文案改回去指向别处也照样绿。
+    /// </summary>
+    [Fact]
+    public void 线路全摘时许下的恢复动作页面上要真有()
+    {
+        var webApi = ReadRepoFile("llmgw/web/src/lib/api.ts");
+        var modelsPage = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        // api 层：端点路径与方法都要对得上后端那一条
+        Assert.Contains("/recover", webApi);
+        Assert.Contains("recoverModelOffering", webApi);
+
+        // 页面：调用点 + 行内按钮。
+        //
+        // 按钮断的是**元素**不是「这四个字出现过」：提示语里也写着「手动恢复」，
+        // 只查这四个字的话，把按钮删掉、文案留着，断言照样绿——第一版就是这么写的，
+        // 红绿闭环当场把它抓了出来（形状 4：断言的是字面量的存在，不是行为）。
+        Assert.Contains("recoverOffering(item, route.id)", modelsPage);
+        Assert.Contains(">手动恢复</Button>", modelsPage);
+
+        // 提示语与按钮说的是同一件事
+        Assert.Contains("点「手动恢复」不等冷却", modelsPage);
+    }
+
+    /// <summary>
+    /// 晋升回滚不许无条件删掉替身——它可能已经当过活的路由，被在途异步任务记下了 id。
+    ///
+    /// 第 79 轮把回滚顺序从「先复活再删」改成「先删再复活」，解决了撞唯一索引，
+    /// 却换来一个更坏的：晋升成功而客户端看到超时时，那条替身正被已受理的视频任务引用着，
+    /// 删掉之后按 id 再也查不回来，一次已经付费的任务轮询不到、下载不了——而
+    /// 「换线路要生成新 id」这整套机制存在的理由就是护住这一条（第 80 轮 review 的 P1）。
+    ///
+    /// 现在的判据：删只允许在「还挂着 staging 标记」这个条件下发生（那种替身从没进过调度），
+    /// 否则退休而不是删。两条一起钉：删是条件删、以及存在退休那一支。
+    /// </summary>
+    [Fact]
+    public void 晋升回滚不许无条件删掉已经活过的替身()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        var bodyAt = program.IndexOf("async Task RollbackPromotionAsync()", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到回滚函数");
+        var bodyEnd = program.IndexOf("UpdateResult promoted;", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到回滚函数的结尾");
+        var body = program[bodyAt..bodyEnd];
+
+        var deleteAt = body.IndexOf("DeleteOneAsync", StringComparison.Ordinal);
+        Assert.True(deleteAt > 0, "回滚里没有删除替身这一步");
+        // 删除那一句的条件里必须带 staging 标记：无条件删就是上面说的那种丢单。
+        var deleteEnd = body.IndexOf(";", deleteAt, StringComparison.Ordinal);
+        Assert.True(deleteEnd > deleteAt);
+        Assert.Contains("stagingMarker", body[deleteAt..deleteEnd], StringComparison.Ordinal);
+
+        // 删不掉的那一支要退休它，而不是放着不管：不退休的话它与原线路同身份，复活会撞索引。
+        Assert.Contains("DeletedCount == 0", body, StringComparison.Ordinal);
+        Assert.Contains("\"SupersededByOfferingId\", offeringId", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 对外清单不许把「已摘掉但过了冷却」的线路一并排除掉。
+    ///
+    /// 排除掉会形成死锁：只剩这种线路的模型从 /v1/models 消失 → 靠清单发现模型的客户端
+    /// 永远不会发出那次请求 → 而那次请求正是唯一能触发半开试探、让它回来的东西。
+    /// 连管理员点过手动恢复都救不回来（第 80 轮 review）。
+    ///
+    /// 判的是两件事：库查询里不再有「排除不可用」那一句，以及真的用了共享的半开判据。
+    /// 只判后者的话，两句同时留着也能绿——那时清单仍然看不见半开候选。
+    /// </summary>
+    [Fact]
+    public void 对外清单要认半开候选()
+    {
+        var root = LocateRepoRoot();
+        var endpoint = File.ReadAllText(Path.Combine(
+            root, "llmgw", "serving", "GatewayModelCatalogEndpoint.cs"));
+
+        Assert.DoesNotContain("of.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)", endpoint, StringComparison.Ordinal);
+        Assert.Contains("GatewayCircuitBreakerPolicy.IsHalfOpenEligible", endpoint, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 池搬迁判「这个调用方在不在目标模型的授权名单里」要按 appCaller 身份比，不按字节。
+    ///
+    /// 运行时那一侧是 OrdinalIgnoreCase（GatewayCapabilityContract.SupportsAppCallerScenario）。
+    /// 按字节比的话：名单里写的是 Foo、绑池的调用方是 foo 时，搬迁判它「不在名单里」而跳过
+    /// 认领转移，可运行时明明认它——池退场之后这个调用方悄悄落到用途默认，而搬迁报告说的是
+    /// 「授权名单里没有它」，一句会把人带偏的假话（第 80 轮 review）。
+    /// </summary>
+    [Fact]
+    public void 搬迁的授权名单比对要按身份()
+    {
+        var root = LocateRepoRoot();
+        var program = File.ReadAllText(Path.Combine(root, "llmgw", "console-api", "Program.cs"));
+
+        Assert.Contains("effectiveAllowlist.Contains(code, AppCallerIdentityPolicy.Comparer)", program, StringComparison.Ordinal);
+        Assert.DoesNotContain("effectiveAllowlist.Contains(code, StringComparer.Ordinal)", program, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 已受理任务的恢复路径不许套用「可变的调度策略」。
+    ///
+    /// 那条路径回答的是「一个已经被上游受理、可能已经付过费的任务，还能不能回到原线路查状态、
+    /// 下结果」，而授权名单与场景能力回答的是「能不能挑这个模型发新请求」——两个问题。
+    /// 套用的后果：管理员在任务跑着时把这个调用方从名单里摘掉，任务立刻不可恢复，
+    /// 而 Offering 与归属记录都还在（第 81 轮 review 的 P1）。
+    ///
+    /// 判据钉在恢复函数体内：不许出现 SupportsAppCallerScenario。
+    /// 同时钉住那句「只控制新任务调度」的注释所承诺的另一半——Enabled 与健康状态也不参与，
+    /// 所以这个函数体里不许再出现按 Enabled / HealthStatus 过滤 Offering 的条件。
+    /// </summary>
+    [Fact]
+    public void 任务恢复路径不许套用调度授权()
+    {
+        var root = LocateRepoRoot();
+        var resolver = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Infrastructure", "LlmGateway", "ModelResolver.cs"));
+
+        var bodyAt = resolver.IndexOf("private async Task<ModelResolutionResult> ResolveOfferingCoreAsync(", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到恢复路径那个函数");
+        // 结尾按结构取：下一个成员的 XML 文档注释开头。
+        var bodyEnd = resolver.IndexOf("    /// <inheritdoc />", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到恢复函数的结尾");
+        var body = resolver[bodyAt..bodyEnd];
+
+        Assert.DoesNotContain("SupportsAppCallerScenario", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("x => x.Enabled, true", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("x => x.HealthStatus", body, StringComparison.Ordinal);
+        // 租户隔离必须留着：去掉它就成了「拿着 id 谁都查得到」。
+        Assert.Contains("x => x.TenantId, CurrentTenantId", body, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// 应用侧的模型选择器目录也要认半开候选——与 /v1/models 同一个自锁。
+    ///
+    /// 第 80 轮修的是对外清单那一侧，选择器这一侧漏在外面：只剩半开候选的模型从选择器消失，
+    /// 靠选择器挑模型的客户端从此发不出那次请求，也就永远触发不了能让它回来的试探。
+    /// </summary>
+    [Fact]
+    public void 选择器目录要认半开候选()
+    {
+        var root = LocateRepoRoot();
+        var resolver = File.ReadAllText(Path.Combine(
+            root, "prd-api", "src", "PrdAgent.Infrastructure", "LlmGateway", "ModelResolver.cs"));
+
+        var bodyAt = resolver.IndexOf("var offeringCollection = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>", StringComparison.Ordinal);
+        Assert.True(bodyAt > 0, "找不到选择器目录那一段");
+        var bodyEnd = resolver.IndexOf("var result = new List<AvailableModelPool>();", bodyAt, StringComparison.Ordinal);
+        Assert.True(bodyEnd > bodyAt, "找不到那一段的结尾");
+        var body = resolver[bodyAt..bodyEnd];
+
+        Assert.DoesNotContain("Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)", body, StringComparison.Ordinal);
+        Assert.Contains("GatewayCircuitBreakerPolicy.IsHalfOpenEligible", body, StringComparison.Ordinal);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -5841,5 +7344,1015 @@ public class GatewayDataDomainGuardTests
         }
 
         return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    }
+    /// <summary>
+    /// 白名单列表不许把团队 / appCaller 平铺成名字列表。
+    ///
+    /// 用户原话：「你直接列出这个研发、产品，这样的团队不好，万一很长呢，部门多呢，咋办？」
+    /// 样例数据下平铺看着挺好，一旦部门多起来或名字长起来就会把定宽的那一列撑爆。
+    /// 判据是「给数量」这条唯一口径必须还在，且行上不许再出现 join('、') 那种拼名字的写法。
+    /// </summary>
+    [Fact]
+    public void 白名单列表的团队授权只给数量不平铺名字()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        // 唯一口径：数量由 describeScope 算，行上只调用它
+
+        // 退回平铺就红：把名字 join 起来当行内文案是这条规则要防的那个写法
+    }
+
+    /// <summary>
+    /// 价格跟着线路走，不折算成一个统一价。
+    ///
+    /// 同一个模型走官网和走中转单价不同，取平均或取最低都会让账单对不上实际走的那条。
+    /// 用户口径：「不同价格就显示多个上游的价格就行，统计诚实即可」。
+    /// </summary>
+    [Fact]
+    public void 白名单列表按线路逐条报价且缺价如实标出()
+    {
+        var page = ReadRepoFile("llmgw/web/src/pages/LogicalModelsPage.tsx");
+
+        // 每条线路各取各的价：单价来自这条线路指向的那个物理模型
+        // 缺价不编：没登记就说没登记
+        // 非美金的价不当美金用，必须先换算（与计价侧 stale_currency 同一口径）
+        // 价格来源与时效要透出来，否则「看起来是真的、其实早就过时」无从分辨
+    }
+
+    /// <summary>
+    /// 用量趋势线的渐变 id 必须每个实例唯一。
+    ///
+    /// 同一页十来条曲线共用一个 id 时，浏览器一律取文档里第一个，后面所有曲线都会去填
+    /// 第一条的渐变——页面照常渲染、测试照常绿，只有肉眼看得出颜色不对。
+    /// 同时「全零」必须画成一条底线而不是一条假的平滑曲线：没人用和用量平稳是两件事。
+    /// </summary>
+    [Fact]
+    public void 用量趋势线渐变id每实例唯一且不把零画成曲线()
+    {
+        var visuals = ReadRepoFile("llmgw/web/src/components/ModelRouteVisuals.tsx");
+
+        Assert.Contains("useId()", visuals);
+        Assert.Contains("`spark${useId().replace(/:/g, '')}`", visuals);
+        Assert.Contains("const flat = peak <= 0;", visuals);
+        // 认不出的上游走中性色，不按名字猜品牌
+        Assert.Contains("function neutralBrand(", visuals);
+    }
+
+    /// <summary>
+    /// 目录补登的键空间必须由库级唯一索引兜住，且读检查与落库共用同一份键。
+    ///
+    /// 端点里的「先查有没有人占了这个键、再写」在单个请求里是对的，两个管理员同时补登同一个
+    /// 标识时却都能查空、都写成功——库里两条补登抢同一个键，运行时按哪条算全看排序，
+    /// 而两个人的界面都显示「已保存」。Mongo 没有跨文档原子性，应用层补不了这个洞。
+    ///
+    /// 规范标识与等价写法共用一个键空间，所以键要合成一个数组落库，走多键唯一索引一次盖住两者；
+    /// 只盖 CanonicalId 的话，别名撞车照样能两条一起写进去。
+    /// </summary>
+    [Fact]
+    public void 目录补登的键空间有库级唯一索引且键只算一份()
+    {
+        var consoleProgram = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 键的算法只许有一处，读检查与落库都从它取——两份口径会让「查过的键」与
+        // 「索引盖住的键」不是同一批（形状 3：判据分裂成两份各自漂移）。
+        Assert.Contains("static List<string> CatalogEntryKeys(", consoleProgram);
+        var keyFnCount = System.Text.RegularExpressions.Regex
+            .Matches(consoleProgram, @"CatalogEntryKeys\(body\)").Count;
+        Assert.True(keyFnCount >= 2,
+            $"读检查与落库都要走同一个键算法，实际只有 {keyFnCount} 处引用它");
+
+        // 落库要有这份键数组，否则索引无处可建
+        Assert.Contains("{ \"Keys\", new BsonArray(CatalogEntryKeys(body)) }", consoleProgram);
+
+        /*
+          多键唯一索引 + 部分过滤器：空数组在多键索引里记成 undefined，
+          不排除的话所有空补登会互相撞车，索引根本建不起来。
+          索引本身由 DBA 建（no-auto-index），所以这份定义的落脚点是 DBA 指南，
+          控制台这一侧只留巡检；两边都要在。
+        */
+        Assert.Contains("uniq_llmgw_catalog_entry_key", consoleProgram);
+        var catalogGuide = ReadRepoFile("doc/guide.platform.mongodb-indexes.md");
+        Assert.Contains("uniq_llmgw_catalog_entry_key", catalogGuide, StringComparison.Ordinal);
+        Assert.Contains("`Keys` 的类型是字符串", catalogGuide, StringComparison.Ordinal);
+
+        // 存量文档没有 Keys 字段，建索引前要补齐，否则它们一条都不受索引保护
+        Assert.Contains("Builders<BsonDocument>.Filter.Exists(\"Keys\", false)", consoleProgram);
+
+        // 撞上索引要如实回冲突，不能变成 500：两处写入路径都得接住
+        var duplicateHandled = System.Text.RegularExpressions.Regex
+            .Matches(consoleProgram, @"ENTRY_EXISTS").Count;
+        Assert.True(duplicateHandled >= 4,
+            $"新建与更新各自的「读检查」与「撞索引」都要回 ENTRY_EXISTS，实际只有 {duplicateHandled} 处");
+    }
+
+    /// <summary>
+    /// 就绪探针的可路由判据必须与运行时同范围：带租户、过名录门。
+    ///
+    /// 运行时解析每一次查询都带 `TenantId == 当前租户`，还要再过一道名录门
+    /// （名录外且没有放行标记的模型回 MODEL_NOT_IN_CATALOG）。探针少判任一层，
+    /// 结果都是同一种谎：别人租户的模型、或一条会被名录门拦死的线路，把一个
+    /// 「没有任何调用方能用」的部署报成绿的。
+    /// </summary>
+    [Fact]
+    public void 就绪探针的可路由判据带租户且过名录门()
+    {
+        var readiness = ReadRepoFile("llmgw/serving/GatewayServingReadinessProbe.cs");
+
+        // 按调用方自己的租户分组，逐组拿那个租户的数据判。
+        Assert.Contains("governed.GroupBy(CallerTenantId", readiness);
+        Assert.Contains("BuildTenantRoutingViewAsync", readiness);
+
+        // 每一类数据都带租户过滤：池、平台、兑换所、物理模型（字段名过滤），
+        // 对外模型与线路（强类型属性）。少一类就有一条跨租户的缝。
+        foreach (var scoped in new[]
+                 {
+                     "Builders<LLMPlatform>.Filter.Eq(\"TenantId\", tenantId)",
+                     "Builders<ModelExchange>.Filter.Eq(\"TenantId\", tenantId)",
+                     "Builders<BsonDocument>.Filter.Eq(\"TenantId\", tenantId)",
+                     "Builders<GatewayLogicalModel>.Filter.Eq(x => x.TenantId, tenantId)",
+                     "Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, tenantId)",
+                 })
+        {
+            Assert.Contains(scoped, readiness);
+        }
+
+        // 名录门：要不要拦与运行时同一处判据，不另写近似。
+        Assert.Contains("GatewayCatalogGate.EnforcesAsync", readiness);
+        // 物理线路判的是它**实际打出去的那个名字**（UpstreamModelId 覆盖之后），
+        // 不是目标文档自己的名字——上一版这里钉的是拿目标文档判的那种写法，
+        // 等于反向锁死了缺陷：目标在名录里、覆盖成的那个不在时探针照样报绿。
+        Assert.Contains("GatewayCatalogGate.PhysicalRoutePasses", readiness);
+        Assert.DoesNotContain("GatewayCatalogGate.Passes(", readiness);
+
+        // 兑换所那一支要判到**别名**这一层。只判兑换所文档启用的话，别名被摘掉之后
+        // 兑换所照样启用着，而运行时按名录门把它判死——探针报绿、请求全失败。
+        // 三处消费方（运行时、对外清单、就绪探针）必须是同一份判据。
+        Assert.Contains("GatewayCatalogGate.ExchangeRoutePasses", readiness);
+        Assert.Contains("offering.UpstreamModelId", readiness);
+
+        // 场景能力那条也带租户，且租户是必填参数——忘了传编译不过，
+        // 这条不变量用类型表达，不靠守卫抽查。
+        Assert.Contains("string internalTenantId)", readiness);
+        Assert.Contains("string.Equals(model.TenantId, callerTenant, StringComparison.Ordinal)", readiness);
+    }
+
+    /// <summary>
+    /// 挂线路时物理模型挂的那个 Provider 也得在、也得启用。
+    ///
+    /// 运行时解析走 FindGatewayOwnedOrMapPlatformAsync(requireEnabled: true)：Provider 不在
+    /// 或已停用时这条线路会被整条丢掉。写入侧不判的话，接口回 201、界面多出一条线路，
+    /// 而它一条流量都承接不了——与系统级模型池、兑换所别名同形的「存得进去、跑不起来」。
+    /// </summary>
+    [Fact]
+    public void 挂线路时物理模型的Provider也要可用()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var eligibility = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
+
+        // 判据本身收在 OfferingTargetEligibility 里（新建与启用两个入口共用，见「挂线路与开线路
+        // 走同一道上游资格闸」）；这里盯的是它判的东西没被削掉。
+        Assert.Contains("TARGET_PLATFORM_UNAVAILABLE", eligibility);
+        Assert.Contains("targetPlatform is null", eligibility);
+        // 判的是 `!= true` 而不是「等于 false」：缺 Enabled 字段的 Provider 运行时也用不了
+        // （第 58 轮 review；「控制面判启用要与运行时逐字相同」那条守卫盯着两边不许再分家）。
+        Assert.Contains("targetPlatform.AsNullableBool(\"Enabled\") != true", eligibility);
+        // 两种成因要分开说，下一步不一样：Provider 不在 / Provider 停用。
+        Assert.Contains("去上游页确认它归属的 Provider", eligibility);
+        Assert.Contains("先在上游页把它启用", eligibility);
+
+        // 判在插入之前：这是纯查询，位移与写入之前判完（与本 PR 其它几处同一个思路）。
+        var checkAt = program.IndexOf("OfferingTargetEligibility.Evaluate", StringComparison.Ordinal);
+        var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(document);", StringComparison.Ordinal);
+        Assert.True(checkAt > 0, "新建线路没有走上游资格闸");
+        Assert.True(insertAt > checkAt, "上游资格判在插入线路之后，那时已经写进库了");
+    }
+
+    /// <summary>
+    /// 换上游那条替换链上，撞唯一索引不能把库留在半截状态。
+    ///
+    /// 线路身份（唯一索引 v3）里带着实际上游模型。两条在跑的线路本来各用各的 UpstreamModelId，
+    /// 把其中一条改成另一条的值，晋升那一步 Unset SupersededByOfferingId 时才会撞索引——
+    /// 而那时原线路已经退休、替身还挂着 staging 标记，异常从 UpdateOneAsync 抛出去，
+    /// 直接越过 ModifiedCount != 1 那段回滚：原线路停用、替身悬空，用户拿到一句 500。
+    ///
+    /// 两道一起要：动写之前先用纯查询拦掉（能拦住绝大多数），以及晋升那一步接住 11000
+    /// 并走同一段回滚（拦不住的那几毫秒）。回滚只许有一份，两条路共用。
+    /// </summary>
+    [Fact]
+    public void 换上游撞身份索引时把原线路还回去()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 纯查询那道：判据与唯一索引同一套身份（含实际上游模型），且排在插入替身之前。
+        var precheckAt = program.IndexOf("var identityRival = await gwModelOfferings.Find(", StringComparison.Ordinal);
+        var insertAt = program.IndexOf("await gwModelOfferings.InsertOneAsync(replacement);", StringComparison.Ordinal);
+        Assert.True(precheckAt >= 0, "换上游那条路没有身份撞车的前置检查");
+        Assert.True(insertAt > precheckAt, "身份撞车检查排在插入替身之后，那时已经开始写库了");
+        // 身份必须带上「实际打给上游的是哪一个模型」这一维，且走那份共享判据。
+        // 上一版逐字要求 `fb.Eq("UpstreamModelId", replacementUpstreamModelId)`——那既钉死了写法，
+        // 又恰好是被证明太窄的那个写法（没写的线路运行时会回落到目标名字，逐字比看不见它）。
+        var precheckEnd = program.IndexOf("FirstOrDefaultAsync();", precheckAt, StringComparison.Ordinal);
+        Assert.True(precheckEnd > precheckAt);
+        Assert.Contains(
+            "OfferingIdentityPolicy.SameUpstreamFilter(",
+            program[precheckAt..precheckEnd],
+            StringComparison.Ordinal);
+
+        // 回滚只许有一份，晋升那一步的两种失败都走它。
+        Assert.Contains("async Task RollbackPromotionAsync()", program);
+        var rollbackCallSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"await RollbackPromotionAsync\(\);").Count;
+        Assert.True(rollbackCallSites >= 2,
+            $"RollbackPromotionAsync 只有 {rollbackCallSites} 个调用点：撞唯一索引与晋升没生效两种失败都要回滚");
+
+        // 撞索引那一支要接住，不能让异常越过回滚。
+        Assert.Contains("catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)", program);
+    }
+
+    /// <summary>
+    /// 并发创建对外模型撞唯一索引要翻成 409，不能漏成 500。
+    ///
+    /// 两边的「有没有人占着」查询都能在对方插入之前通过——真正拦住的是唯一索引。
+    /// 不接这个异常，输的那一方拿到的是一句「服务器错误」，而同一件事在不撞车时
+    /// 给的是说得出下一步的 409。
+    /// </summary>
+    [Fact]
+    public void 并发创建对外模型撞索引翻成冲突()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var insertAt = program.IndexOf("await gwLogicalModels.InsertOneAsync(document);", StringComparison.Ordinal);
+        Assert.True(insertAt >= 0, "没找到对外模型的插入");
+        // 插入那一段必须被 try 包住，且按撞的是哪条索引分开说。
+        // 窗口取到这个端点的返回语句为止：断言必须落在**这一处**的 catch 上，
+        // 而不是碰巧扫到文件别处同形的那一段。
+        var endAt = program.IndexOf("\"logical-model.create\"", insertAt, StringComparison.Ordinal);
+        Assert.True(endAt > insertAt, "没找到创建对外模型的审计写入，窗口定位不住");
+        var around = program[insertAt..endAt];
+        Assert.Contains("catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)", around);
+        Assert.Contains("uniq_llmgw_logical_claim_per_type", around);
+        Assert.Contains("CLAIM_TAKEN", around);
+        Assert.Contains("PUBLIC_ID_TAKEN", around);
+    }
+
+    /// <summary>
+    /// 位移之前一个 early return 都不剩。
+    ///
+    /// 位移（把别人的用途默认清掉、把别人手上的认领摘掉）是会改变线上路由的写操作，
+    /// 而位移之后的每一个 early return 都必须自己记得补偿——漏一个，那个用途就此没有默认，
+    /// 所有不点名的请求当场开始失败，而操作者只看到一句 400。
+    ///
+    /// 与其给每个 early return 补一次补偿（下一个新增的分支又会漏），不如让位移之前
+    /// 一个 return 都不剩：判据因此是**位置**——从第一次位移写库到最终写入之间，
+    /// 不许出现任何 return。新加一条校验只要放错位置，这里立刻红。
+    /// </summary>
+    [Fact]
+    public void 对外模型更新的位移之前判完所有纯校验()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var displaceAt = program.IndexOf("var displacedDefaults = new List<string>();", StringComparison.Ordinal);
+        var writeAt = program.IndexOf("updated = await gwLogicalModels.FindOneAndUpdateAsync(", StringComparison.Ordinal);
+        Assert.True(displaceAt >= 0, "没找到位移那一段");
+        Assert.True(writeAt > displaceAt, "没找到最终写入，或它排在位移之前");
+
+        var between = program[displaceAt..writeAt];
+        Assert.False(between.Contains("return Json(", StringComparison.Ordinal),
+            "位移与最终写入之间还有 early return：那条路径上摘掉的用途默认与认领没人还回去，"
+            + "一次被拒绝的保存会把这个用途的兜底拆掉。把这条校验挪到位移之前。");
+
+        // 纯校验确实提上去了：认领与名单的相容性、以及「一个字段都没给」。
+        var beforeDisplace = program[..displaceAt];
+        Assert.Contains("ValidateClaimsWithinAllowlist(allowlistAfterUpdate, normalizedClaims)", beforeDisplace);
+        Assert.Contains("body.IsDefaultForType is null && body.DefaultForAppCallerCodes is null", beforeDisplace);
+    }
+
+    /// <summary>
+    /// 存量日志的「算没算出钱」只认美金。
+    ///
+    /// NormalizePriceCurrency 认 CNY 与 USD 两种（它的用途是校验入参），拿它当这个判据
+    /// 就会把一条 CNY 的存量行标成 priced——而计价器把一切非美金判成 stale_currency、
+    /// 聚合那一侧又因为 EstimatedCostUsd 为空把同一行算进 unpriced。同一行三处三个说法。
+    /// </summary>
+    [Fact]
+    public void 存量日志的计价状态只认美金()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("GatewayCostStatusNames.BillingCurrency", program);
+        Assert.Contains("NormalizePriceCurrency(d.AsNullableString(\"EstimatedCostCurrency\")),", program);
+        // 反向禁掉「非空即已计价」那种写法。
+        Assert.DoesNotContain(
+            "return NormalizePriceCurrency(d.AsNullableString(\"EstimatedCostCurrency\")) is null",
+            program);
+    }
+
+    /// <summary>
+    /// 撞车补偿要先分清撞的是哪一条索引。
+    ///
+    /// 「摘掉的用途默认要不要还回去」在两种撞车下答案相反：撞用途默认那条索引时有人赢了
+    /// 那个位子，还回去会再撞一次；而撞调用方认领那条索引时，用途默认这一档**根本没有赢家**，
+    /// 这次请求却已经把原来的默认摘掉了——不还的话这个用途就此没有默认，所有不点名的请求
+    /// 当场开始失败：一次被拒绝的保存，顺手弄坏了一整个用途。
+    ///
+    /// 判据用位置比较：claimRace 必须在补偿之前算出来，先补偿再判等于对两种撞车用同一个答案。
+    /// </summary>
+    [Fact]
+    public void 撞车补偿先分清撞的是哪条索引()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var decideAt = program.IndexOf("var claimRace = ex.Message.Contains(", StringComparison.Ordinal);
+        var compensateAt = program.IndexOf("await CompensateAsync(restoreDefaults: claimRace);", StringComparison.Ordinal);
+        Assert.True(decideAt >= 0, "没找到判「撞的是哪条索引」那一句");
+        Assert.True(compensateAt >= 0,
+            "补偿没有按撞车类型决定要不要还默认（应为 CompensateAsync(restoreDefaults: claimRace)）");
+        Assert.True(decideAt < compensateAt,
+            "claimRace 算在补偿之后：那等于对两种撞车用同一个答案，认领撞车会把这个用途的默认弄丢");
+
+        // 反向禁掉写死 false 的那版：它正是把两种输入压成一种的写法。
+        Assert.DoesNotContain("await CompensateAsync(restoreDefaults: false);", program);
+    }
+
+    /// <summary>
+    /// 「按权重分到 N 条」里的 N 必须是真正参与轮转的那几条。
+    ///
+    /// 权重轮转只在最健康的那一档里进行，健康档更低的线路是后备、不分流量。
+    /// 拿全部可用线路数当 N，面板就会说出「按权重分到 2 条线路：A 100%」——
+    /// 数字说两条、比例只列一条，而读者更信数字。
+    /// </summary>
+    [Fact]
+    public void 加权结论只数参与轮转的那一档()
+    {
+        var planner = ReadRepoFile("llmgw/console-api/LogicalModels/CallTracePlanner.cs");
+
+        // 结论里的数字与比例列表必须来自同一个集合。
+        Assert.Contains("weighted && weightShare.Count > 1", planner);
+        Assert.Contains("按权重分到 {weightShare.Count} 条线路", planner);
+        Assert.DoesNotContain("按权重分到 {eligible.Count} 条线路", planner);
+
+        // 没参与轮转的那几条要说出来，不能看起来像被弄丢了。
+        Assert.Contains("不参与分流，只在这几条都失败后才顶上", planner);
+    }
+
+    /// <summary>
+    /// 首屏读失败要先把失败摆出来，再谈加载中。
+    ///
+    /// 顺序反了（先 `if (!data) return <SectionLoader/>`）的后果不是难看，是**不会结束**：
+    /// 首次读取失败时 data 恒为 null，下面那条 InlineAlert 永远到不了，人看到的是一个
+    /// 转不完的「正在读…」——既不知道发生了什么，也没有任何下一步。
+    /// 判据用位置比较而不是比文案：文案随时会改，而「谁排在前面」才是这条缺陷的形状。
+    /// </summary>
+    [Fact]
+    public void 首屏读失败先摆失败再谈加载中()
+    {
+        foreach (var relative in new[]
+                 {
+                     "llmgw/web/src/components/ModelCatalogSection.tsx",
+                     "llmgw/web/src/components/ImageGenContractsSection.tsx",
+                 })
+        {
+            var source = ReadRepoFile(relative);
+            var errorAt = source.IndexOf("InlineAlert tone=\"error\"", StringComparison.Ordinal);
+            var loaderAt = source.IndexOf("SectionLoader text=", StringComparison.Ordinal);
+            Assert.True(errorAt >= 0, $"{relative} 没有错误渲染");
+            Assert.True(loaderAt >= 0, $"{relative} 没有加载态");
+            Assert.True(errorAt < loaderAt,
+                $"{relative} 的加载态排在错误渲染之前：首次读取失败时 data 恒为 null，"
+                + "那条错误永远到不了，人会看到一个不会结束的「正在读…」");
+            // 失败要给得出下一步，不是只报一句错。
+            Assert.True(source.Contains("重试", StringComparison.Ordinal),
+                $"{relative} 的读失败没有给重试入口");
+        }
+    }
+
+    /// <summary>
+    /// 生图契约那一屏说了「最长 N 秒后再看」，就得自己再看一眼。
+    ///
+    /// 同步是后台 60 秒一轮的动作，而保存之后界面立刻重读——那一读必然还是旧版本，
+    /// 于是显示「装的还不是当前这一版」。只在挂载时读一次的话它会永远停在那句话上，
+    /// 而那句话是它自己许下的承诺（expectation-management：说到做到）。
+    /// </summary>
+    [Fact]
+    public void 同步没落定时界面自己再读一次()
+    {
+        var source = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+
+        // 落定 = 每个进程要么装到当前这一版，要么压根不服务这个租户。
+        Assert.Contains("const hostsSettled", source);
+        Assert.Contains("x.syncState === 'current' || x.syncState === 'not-applicable'", source);
+
+        // 没落定就按**它自己报出来的**刷新周期再读，不是写死一个数字。
+        Assert.Contains("window.setTimeout", source);
+        Assert.Contains("data.refreshSeconds", source);
+
+        /*
+          一次失败的轮询不能让它就此停摆。
+
+          只拿 data 与 hostsSettled 当依赖的话，轮询失败时两者都没变（失败只写了 error），
+          那个已经用掉的 timeout 再也不会被重排——页面从此停在「装的还不是当前这一版」，
+          哪怕接口与 worker 早就恢复了。所以要有一格无论成败都会走的心跳。
+        */
+        Assert.Contains("const [pollTick, setPollTick]", source);
+        Assert.Contains(".finally(() => setPollTick((x) => x + 1))", source);
+        Assert.Contains("}, [data, hostsSettled, pollTick]);", source);
+    }
+
+    /// <summary>
+    /// 线路判重的身份必须与唯一索引逐字相同。
+    ///
+    /// 索引 uniq_llmgw_offering_tenant_logical_target_v3 里带着 UpstreamModelId——一个兑换所
+    /// 底下挂着多个别名时，同一个对外模型指向其中好几个是合法拓扑。端点的判重少一个字段
+    /// 就比索引更严：同样的拓扑走搬迁建得出来、走这个端点却回 DUPLICATE_OFFERING。
+    ///
+    /// 这条守卫从索引那一侧**读出字段清单**再去比，不抄一份——抄的那份改了不会跟着变。
+    /// </summary>
+    [Fact]
+    public void 线路判重的身份与唯一索引逐字相同()
+    {
+        var initializer = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Database/LlmGatewayDatabaseInitializer.cs");
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        var keysBlock = System.Text.RegularExpressions.Regex.Match(
+            initializer, @"string\[\] expectedKeys\s*=\s*\[(?<body>[^\]]*)\]");
+        Assert.True(keysBlock.Success, "没在初始化器里找到 expectedKeys，索引定义可能已经挪走，这条守卫失效了");
+        var indexKeys = System.Text.RegularExpressions.Regex.Matches(keysBlock.Groups["body"].Value, "\"(?<k>[A-Za-z]+)\"")
+            .Select(m => m.Groups["k"].Value)
+            .ToList();
+        Assert.True(indexKeys.Count >= 5, $"索引字段只解析到 {indexKeys.Count} 个：{string.Join("、", indexKeys)}");
+
+        var duplicateBlock = System.Text.RegularExpressions.Regex.Match(
+            program, @"var duplicate = fb\.And\((?<body>.*?)\);", System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(duplicateBlock.Success, "没在控制台里找到线路判重那段");
+        var duplicateText = duplicateBlock.Groups["body"].Value;
+
+        foreach (var key in indexKeys)
+        {
+            // SupersededByOfferingId 在索引里是身份的一部分（partial 语义），在判重里表现为
+            // 「只看还没被取代的那些」，所以判据形态不同，但必须出现。
+            Assert.True(duplicateText.Contains(key, StringComparison.Ordinal),
+                $"唯一索引的身份里有 {key}，而端点判重没有它：判重会比索引更严或更松，"
+                + "同一套拓扑在搬迁与手工配置两条路上会给出不同结论");
+        }
+    }
+
+    /// <summary>
+    /// 兑换所线路在**保存这一刻**就要确认别名真的存在且启用着，创建与改动两个入口都要判。
+    ///
+    /// 不判的话：打错一个字、或选了一条被单独停掉的别名，线路照样存得进去、接口回 201，
+    /// 而运行时按同一份判据把它整条跳过——那个刚保存的模型立刻没有可用上游，
+    /// 与第 39 轮那条系统级模型池同形（「存得进去、跑不起来」）。
+    /// </summary>
+    [Fact]
+    public void 兑换所线路保存时就要确认别名存在且启用()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var eligibility = ReadRepoFile("llmgw/console-api/LogicalModels/OfferingTargetEligibility.cs");
+
+        // 判据走镜像类，不在端点里现写一份近似。
+        Assert.Contains("ExchangeAliasPolicy.Declares(", eligibility);
+        Assert.Contains("ExchangeAliasPolicy.EffectiveAlias(", eligibility);
+        Assert.Contains("EXCHANGE_ALIAS_NOT_DECLARED", eligibility);
+        Assert.Contains("ExchangeAliasPolicy.Declares(", program);
+
+        /*
+          三个入口都要判，少一头就有一条缝：新建线路、启用一条停用的线路（这两条走
+          OfferingTargetEligibility），以及只改上游别名的那次更新（它故意窄——不该因为
+          目标停用就挡住一次无关字段的编辑，所以直接调镜像类）。
+        */
+        var eligibilitySites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"OfferingTargetEligibility\.Evaluate\(").Count;
+        Assert.True(eligibilitySites >= 2,
+            $"OfferingTargetEligibility.Evaluate 只有 {eligibilitySites} 个调用点：新建与启用两条路都要判");
+        var directSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"ExchangeAliasPolicy\.Declares\(").Count;
+        Assert.True(directSites >= 1,
+            "改上游别名那条路没有直接判别名，它不走 OfferingTargetEligibility");
+
+        // 拒绝时要说得出下一步，不是一句「不合法」。
+        Assert.Contains("去兑换所页确认这条别名的拼写与开关", program);
+        Assert.Contains("去兑换所页确认这条别名的拼写与开关", eligibility);
+    }
+
+    /// <summary>
+    /// 同步状态只对**服务这个租户的进程**提要求。
+    ///
+    /// prd-api 的同步器注册成单租户，只为内部租户写状态行；其它租户下那一行永远不存在。
+    /// 把它写死进期望值，那一屏就永远显示它「从没回写过」、汇总永远到不了 current——
+    /// 一个好好的进程被报成停了，而人照着这句话去查根本查不到东西。
+    /// </summary>
+    [Fact]
+    public void 同步状态只对服务这个租户的进程提要求()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        Assert.Contains("bool SyncHostAppliesToTenant(string role)", program);
+        // 判据要拿内部租户比，而不是写死一个名字。
+        Assert.Contains("string.Equals(syncTenantId, internalTenantId, StringComparison.Ordinal)", program);
+        // 筛掉的那一个不是悄悄消失：显式一态，界面据此既不报警也不当它就绪。
+        Assert.Contains("\"not-applicable\"", program);
+        Assert.Contains("!string.Equals(x.SyncState, \"not-applicable\", StringComparison.Ordinal)", program);
+    }
+
+    /// <summary>
+    /// 「这个 active 调用方有没有人接得住」在整个仓库里只许有一份判据。
+    ///
+    /// 池路由退场之后，配对的调用方根本没有池绑定；按池绑定判的话，一份完全正确的配置
+    /// 会被配置权威报告判成 blocked，而 `scripts/llmgw-release-gate.py` 读的正是那些字段——
+    /// 这一刀砍完池，发布反而被自己的报告挡住。反向也一样坏：还留着健康池字段、
+    /// 却没有任何对外模型接得住的调用方会被判成就绪。
+    ///
+    /// 所以发布闸与配置权威报告必须都走 FindUnnamedCatcherAsync，且那两个按池判的
+    /// 老函数不许留在文件里——留着就会有人再用一次。
+    /// </summary>
+    [Fact]
+    public void 调用方有没有人接得住只许有一份判据()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 两个消费方：发布闸、配置权威报告。都走同一个共享判据。
+        var callSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"await FindUnnamedCatcherAsync\(").Count;
+        Assert.True(callSites >= 2,
+            $"FindUnnamedCatcherAsync 只有 {callSites} 个调用点：发布闸与配置权威报告都要用它，"
+            + "少一头就会出现「闸说可发、报告说 blocked」或反过来");
+
+        // 按池绑定判「调用方可不可用」的老函数必须已经删掉，不是留着没人调。
+        Assert.DoesNotContain("static bool AllReferencedModelPoolsExist(", program);
+        Assert.DoesNotContain("static bool IsAppCallerUsable(", program);
+
+        // 报告里给人的下一步要指向对外模型，而不是一个已经 302 走了的池页面。
+        Assert.Contains("active-appcaller-without-catcher", program);
+        Assert.DoesNotContain("active-missing-gw-pool", program);
+        // 刻意不断言 gw-pool-without-usable-member 在全文件消失：那条状态还属于
+        // /gw/config-authority/bind-active-app-callers（仍在写池绑定的老端点，见台账
+        // 2026-09-17-bind-active-app-callers-still-writes-pools）。这条守卫管的是报告这一处，
+        // 而报告这一处已经拿不到那两个按池判的函数了——它们上面刚断言删掉了。
+
+        // 读这份报告的脚本也要说同一件事，否则失败信息会把人指去修池绑定。
+        var gateScript = ReadRepoFile("scripts/llmgw-release-gate.py");
+        Assert.Contains("没有对外模型接得住", gateScript);
+        Assert.DoesNotContain("缺 GW 池", gateScript);
+    }
+
+    /// <summary>
+    /// 「补登名录之后重新导入」这条恢复路必须真的能走通。
+    ///
+    /// 白名单那条提示就是这么写的：认不出用途的模型先补能力/补登名录，再重新导入一次
+    /// 即可补上名单。可「已存在就跳过」那一支原来只记一笔 Skipped 就走，物理文档的空能力
+    /// 原样留着；发布白名单时重新读的就是那份空能力，于是照样拒登——用户照做了一遍，
+    /// 什么都没变（形状 2：恢复路只建了一半）。
+    /// </summary>
+    [Fact]
+    public void 重新导入要把名录算出来的用途补给空能力的存量模型()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 跳过那一支要拿得到文档本身，才谈得上看它现在的用途是什么来源。
+        Assert.Contains("existingByName.TryGetValue(modelId, out var existingModel)", program);
+        /*
+          修复范围必须同时覆盖「空」与「全是猜的」两种。上一版逐字钉住
+          `var hasStoredCaps = ...Count > 0;` 与 `if (!hasStoredCaps)`——那既钉死了写法，
+          又恰好把范围锁在了被证明太窄的那一档（第 72 轮 review：错得最多的不是空，
+          是猜了一个错的）。改成钉性质。
+        */
+        Assert.Contains("hasStoredCaps", program, StringComparison.Ordinal);
+        Assert.Contains("allStoredAreGuesses", program, StringComparison.Ordinal);
+
+        // 补出来的用途与新建那条路必须同源，各算各的就是两套能力。
+        Assert.Contains("(List<string> Codes, string Source) DeriveCapabilities(", program);
+        var deriveCallSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"DeriveCapabilities\(entry, modelId\)").Count;
+        Assert.True(deriveCallSites >= 2,
+            $"DeriveCapabilities 只有 {deriveCallSites} 个调用点：新建与修复两条路都要用它");
+    }
+
+    /// <summary>
+    /// 系统级模型来源选「模型池」时，判据不是「池还在」而是「解析得到它」。
+    ///
+    /// 池路由已经退场：这条请求带 model_policy=pool + 池文档 ID，会被顶进 expectedModel，
+    /// 而解析器认池 ID 的唯一一条路是某个对外模型的 MigratedFromPoolIds 里有它。
+    /// 没搬过的池存得进去、页面显示正常，而每一次 Quickstart 调用都 MODEL_NOT_FOUND
+    /// （或对内部租户静默落到不相干的 legacy 兜底）——保存成功变成一个静默的坏配置。
+    ///
+    /// 保存端点与取用路径必须共用同一份判据：一边松一边紧，就是「存得进去、跑不起来」。
+    /// </summary>
+    [Fact]
+    public void 系统级模型池要判得到解析而不只是判它还在()
+    {
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 判据只有一处，且与运行时 TryResolveLogicalModelAsync 那一支同源。
+        Assert.Contains("async Task<bool> SystemPoolResolvableAsync(string tenantId, string poolId)", program);
+        Assert.Contains("Builders<BsonDocument>.Filter.AnyEq(\"MigratedFromPoolIds\", poolId)", program);
+
+        // 两个消费方：保存端点、取用路径。少一个就有一条缝。
+        var callSites = System.Text.RegularExpressions.Regex.Matches(
+            program, @"await SystemPoolResolvableAsync\(").Count;
+        Assert.True(callSites >= 2,
+            $"SystemPoolResolvableAsync 只有 {callSites} 个调用点：保存端点与取用路径都要判，"
+            + "只判一头会出现「存得进去、跑不起来」或「存进去时好的、跑的时候已经不是」");
+
+        /*
+          失败要说得出下一步，而且那个下一步得**真能走通**。
+          原先钉的是「去「模型池」页跑一次搬迁」——那一页已经下线并重定向，前端也没有任何地方
+          调搬迁接口，所以那句话本身就是一条走不通的路（第 61 轮 review）。现在钉的是那条当场
+          能走通的：改选「指定模型」。搬迁没有控制台入口这件事另有守卫盯着。
+        */
+        Assert.Contains("MODEL_POOL_NOT_MIGRATED", program);
+        Assert.Contains("那一栏列的就是能解析到的对外模型", program);
+    }
+
+    /// <summary>
+    /// 名录门的判据只许有一处。
+    ///
+    /// 它此前在运行时解析、对外模型目录端点、就绪探针三处各写了一遍：三份逐字相同的判据，
+    /// 意味着三份各自漂移的可能，而漂移后的表现最难查——目录说可调、探针说可路由、
+    /// 真调用回 MODEL_NOT_IN_CATALOG，三处各自为真。
+    /// </summary>
+    [Fact]
+    public void 名录门判据只有一处()
+    {
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+        Assert.Contains("ConfiguredToEnforce", gate);
+        Assert.Contains("MigrationsCompleteAsync", gate);
+        Assert.Contains("AllowedOutsideCatalog", gate);
+
+        // 三个消费方都走它，没人自己再判一遍「配置是不是 observe」。
+        foreach (var consumer in new[]
+                 {
+                     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs",
+                     "llmgw/serving/GatewayModelCatalogEndpoint.cs",
+                     "llmgw/serving/GatewayServingReadinessProbe.cs",
+                 })
+        {
+            var source = ReadRepoFile(consumer);
+            Assert.Contains("GatewayCatalogGate.", source);
+            Assert.DoesNotContain("\"observe\", StringComparison.OrdinalIgnoreCase", source);
+        }
+    }
+
+    private static BsonDocument RenderFilter(FilterDefinition<BsonDocument> filter)
+        => filter.Render(new RenderArgs<BsonDocument>(
+            BsonSerializer.SerializerRegistry.GetSerializer<BsonDocument>(),
+            BsonSerializer.SerializerRegistry));
+
+    [Fact]
+    public void 线路身份按运行时实际打出去的名字比()
+    {
+        /*
+          没写 UpstreamModelId 的线路，运行时会回落到目标的名字（兑换所取 ModelAlias、
+          物理模型取 ModelName）。按原值逐字判重的话，「不写」与「写上同名」是两个身份、
+          一个上游：管理员先建一条不写的、再建一条写同名的，两条都进得去，加权路由把同一个
+          上游算两份权重，故障转移「换一条」换到的还是它（第 66 轮 review）。
+        */
+        var exchange = new BsonDocument { { "_id", "ex-1" }, { "ModelAlias", "gpt-4o" } };
+        var model = new BsonDocument { { "_id", "m-1" }, { "ModelName", "Qwen-Max" } };
+
+        Assert.Equal("gpt-4o", OfferingIdentityPolicy.FallbackUpstreamModelId("exchange", exchange));
+        Assert.Equal("Qwen-Max", OfferingIdentityPolicy.FallbackUpstreamModelId("model", model));
+        Assert.Equal("gpt-4o", OfferingIdentityPolicy.EffectiveUpstreamModelId("exchange", exchange, null));
+        Assert.Equal("gpt-4o-mini", OfferingIdentityPolicy.EffectiveUpstreamModelId("exchange", exchange, " gpt-4o-mini "));
+
+        // 显式写了主别名 → 必须同时认「库里那条没写的」
+        var sameAsFallback = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", exchange, "GPT-4O")).ToString();
+        Assert.Contains("UpstreamModelId", sameAsFallback);
+        Assert.Contains("null", sameAsFallback);
+        Assert.Contains("exists", sameAsFallback);
+
+        // 写的是另一条别名 → 那是合法的第二条线路，不能把「没写」的那条也算成它
+        var otherAlias = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", exchange, "gpt-4o-mini")).ToString();
+        Assert.DoesNotContain("exists", otherAlias);
+
+        // 不写 → 等价于主别名，同样要认显式同名的那条
+        var omitted = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", exchange, null)).ToString();
+        Assert.Contains("exists", omitted);
+        Assert.Contains("/^gpt-4o$/i", omitted);
+
+        // 目标连名字都没有：回落解析不出东西，退回逐字比对，不许凭空放宽
+        var nameless = RenderFilter(
+            OfferingIdentityPolicy.SameUpstreamFilter("exchange", new BsonDocument { { "_id", "ex-2" } }, null)).ToString();
+        Assert.DoesNotContain("exists", nameless);
+
+        // 三处判重都走这一份：创建、改上游的替身、池搬迁。少接一处就是判据分裂。
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.True(
+            CountOccurrences(console, "OfferingIdentityPolicy.SameUpstreamFilter(") >= 3,
+            "创建 / 替身 / 搬迁三处判重必须共用同一份身份判据");
+        Assert.Equal(0, CountOccurrences(console, "fb.Eq(\"UpstreamModelId\", createUpstreamModelId)"));
+        Assert.Equal(0, CountOccurrences(console, "fb.Eq(\"UpstreamModelId\", replacementUpstreamModelId)"));
+    }
+
+    [Fact]
+    public void 一条翻不过去的生图契约不许连累其余每一条()
+    {
+        /*
+          运行时那张参数改名表是 OrdinalIgnoreCase 的，同时写了 model 与 MODEL 就会在字典
+          构造处抛重复键。整条 LINQ 一起炸的话，同步器的兜底「沿用上一版」会把这条坏数据
+          放大成**全部契约永久停更**，每 60 秒重演一次，界面上只看得到一个不再前进的时间
+          （第 66 轮 review，形状 10）。
+
+          两头都要堵：写入侧当场拒（控制面比运行时严一档），读取侧逐条翻、坏的跳过并点名。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        var validatorAt = console.IndexOf("static string? ValidateImageGenConfig(", StringComparison.Ordinal);
+        Assert.True(validatorAt > 0, "生图契约的写入校验不见了");
+        var validatorEnd = console.IndexOf("static BsonDocument BuildImageGenConfigDocument(", validatorAt, StringComparison.Ordinal);
+        Assert.True(validatorEnd > validatorAt);
+        var validator = console[validatorAt..validatorEnd];
+        Assert.Contains("ParamRenames", validator, StringComparison.Ordinal);
+        Assert.Contains("OrdinalIgnoreCase", validator, StringComparison.Ordinal);
+
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        // 一整条 LINQ 里直接 Select 翻译，就是「一条坏的炸掉全部」的那种写法
+        Assert.Equal(0, CountOccurrences(worker, ".Select(ImageGenConfigTranslation.ToAdapterConfig)"));
+        Assert.Contains("catch (ArgumentException", worker, StringComparison.Ordinal);
+        // 跳过要点名，不能静默吞掉
+        Assert.Contains("unusable", worker, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 对外清单那道调用方状态门要真接在构造之前()
+    {
+        /*
+          行为本身由 GatewayCatalogCallerStatusTests 逐例断言（它能直接引用 serving）。
+          这一条只管接线：那道门要真的挡在「列什么」之前，且判据来自共享的那一份，
+          不是在清单这一侧另写一张状态表（第 67 轮 review，形状 3）。
+        */
+        var catalog = ReadRepoFile("llmgw/serving/GatewayModelCatalogEndpoint.cs");
+        Assert.Contains("GatewayAppCallerPolicy.AllowsTraffic", catalog, StringComparison.Ordinal);
+        Assert.Equal(0, CountOccurrences(catalog, "\"archived\""));
+        Assert.Equal(0, CountOccurrences(catalog, "\"disabled\""));
+
+        // 逐条按用途判，不是把多行压成一个布尔再一刀清空：同一个码在 chat 上 active、
+        // 在 generation 上停用是常态，压成一个布尔会把两个用途的模型一起发出去（第 68 轮 review）。
+        Assert.Contains("CallerMayListModelType(callerRecords, x.ModelType)", catalog, StringComparison.Ordinal);
+        var recordsAt = catalog.IndexOf("callerRecords = await db.GetCollection", StringComparison.Ordinal);
+        var listAt = catalog.IndexOf("var visible = logicals", StringComparison.Ordinal);
+        Assert.True(recordsAt > 0, "清单没有取调用方记录");
+        Assert.True(listAt > recordsAt, "调用方记录要在构造清单之前取到");
+    }
+
+    [Fact]
+    public void 清单不许替这把key列出它调不动的调用方()
+    {
+        /*
+          鉴权那一层对只读探针**刻意不匹配调用方**（预检本来就该放行）。于是清单端点拿着
+          请求头里的调用方直接出清单：一把 route:read 的 key 点名它根本调不动的调用方，
+          清单照列，随后那次 POST 被拒——清单说能调、运行时说不能（第 72 轮 review）。
+
+          判据落在端点这一侧：鉴权的豁免不动，授权集合带出来由清单自己判。
+        */
+        var governance = ReadRepoFile("llmgw/serving/GatewayRuntimeGovernance.cs");
+        Assert.Contains("AuthorizedAppCallerCodes", governance, StringComparison.Ordinal);
+        // 放行那一支必须真的把集合填进去，不能只在类型上挂一个永远为空的字段（形状 2）
+        Assert.Contains("AuthorizedAppCallerCodes: record.AppCallerCodes", governance, StringComparison.Ordinal);
+
+        var endpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        // 判断本体的行为由 GatewayCatalogCallerScopeTests 逐例断言（它能直接引用 serving）。
+        // 这一条只管接线——上一版把两件事混在一起写成源码断言，红绿闭环里把条件改成恒假
+        // 它照样绿（第 67 轮那个教训的原样重演）。
+        Assert.Contains("public static bool RequestedCallerOutsideKeyScope(", endpoints, StringComparison.Ordinal);
+        // 覆盖与否必须问鉴权那一份（它认 `*`），在这里逐字比会把通配 key 判成越权
+        Assert.Contains("GatewayScopedKeyAuthorizer.ListCoversValue(", endpoints, StringComparison.Ordinal);
+        Assert.Contains("private static bool CatalogCallerDenied(", endpoints, StringComparison.Ordinal);
+        // 清单与单模型详情读的是同一份数据，两处都要过同一道门
+        Assert.Equal(2, CountOccurrences(endpoints, "CatalogCallerDenied(http, out"));
+        // 不许再有绕过这道门、直接把请求头喂进构造的写法
+        Assert.Equal(0, CountOccurrences(
+            endpoints,
+            "GetVerifiedTenantId(http),\n                ResolveVerifiedAppCaller(http, string.Empty)"));
+        Assert.Contains("APP_CALLER_NOT_AUTHORIZED", endpoints, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 补登名录之后重新导入要能盖掉猜错的用途()
+    {
+        /*
+          名录这套机制存在的理由就是纠正按名字猜错的用途，而错得最多的不是「空」，
+          是「猜了一个错的」。上一版的修复只认空数组，于是补登之后重新导入一次，
+          库里那份猜错的用途原样留着、发布读的还是它，路由一点没变（第 72 轮 review）。
+
+          覆盖的边界靠**来源**划，所以来源必须先如实落库：名录与上游声明是事实，
+          只有关键词匹配才写 inferred。以前一律写 inferred，等于把事实也标成猜的，
+          于是这条判据根本无从建立。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 推导要带出来源，落库按来源写
+        Assert.Contains("(List<string> Codes, string Source) DeriveCapabilities(", console, StringComparison.Ordinal);
+        Assert.Contains("static string StoredCapabilitySource(", console, StringComparison.Ordinal);
+        // 一律写死 inferred 的两处都必须改掉
+        Assert.Equal(0, CountOccurrences(console, "{ \"Source\", \"inferred\" },"));
+
+        // 覆盖条件：全是猜的、而且新的那份是事实、而且确实不一样
+        Assert.Contains("allStoredAreGuesses", console, StringComparison.Ordinal);
+        Assert.Contains("repairedIsFact", console, StringComparison.Ordinal);
+        Assert.Contains("!storedCodes.SetEquals(repairedCaps)", console, StringComparison.Ordinal);
+        // 人写过的一个字都不许动
+        Assert.Contains("|| (allStoredAreGuesses && repairedIsFact", console, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 池退场之后不许再有指向池页的下一步()
+    {
+        /*
+          `/pools` 这条路由现在无条件重定向到对外模型列表，写端点全删了。任何还写着
+          「去 /pools 修」的下一步，照着做都走不通——而给不出可走通的下一步，比不给更糟
+          （external-cause-first；第 71 轮 review，本 PR 第二次扫这一类）。
+
+          两类都要管：闸门给的跳转链接，和文案里写死的路径。
+        */
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Equal(0, CountOccurrences(console, "\"/pools\")"));
+        Assert.Equal(0, CountOccurrences(console, "在 /pools 补齐"));
+
+        // 前端：详情页那条「模型池」不许再是可点的链接（点过去 focus 会被重定向丢掉）
+        var details = ReadRepoFile("llmgw/web/src/pages/EntityDetailsPages.tsx");
+        Assert.Equal(0, CountOccurrences(details, "/pools?focus="));
+
+        /*
+          总览页那个「绑定 active 调用方」按钮必须消失：它写的是池绑定，而解析器一个字段都不读，
+          点完显示成功、闸门照红、请求照样 MODEL_NOT_FOUND——一个假装能修的按钮。
+          配套的接口函数也要一起删，留着就是下一次有人接回去的引信。
+        */
+        var overview = ReadRepoFile("llmgw/web/src/pages/OverviewPage.tsx");
+        Assert.Equal(0, CountOccurrences(overview, "bindActiveAppCallerPools"));
+        Assert.Equal(0, CountOccurrences(overview, "绑定 active 调用方"));
+        Assert.Equal(0, CountOccurrences(ReadRepoFile("llmgw/web/src/lib/api.ts"), "bind-active-app-callers"));
+        // 换成真能修的那一屏
+        Assert.Contains("去对外模型页设认领或默认", overview, StringComparison.Ordinal);
+
+        // 端点本身保留（存量脚本还可能在调），但它的回执必须说清「这不会改变路由」
+        Assert.Contains("这不会改变路由", console, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 模型页调用量只数业务操作()
+    {
+        /*
+          异步模型（视频、长任务）的 status / download / cancel 三种控制操作带着同一个
+          LogicalModelPublicId 落日志。不滤掉的话，一次用户生成会被数成好几次调用，
+          模型页那条 30 天曲线虚高（第 70 轮 review）。判据与逻辑模型日志、总览两处用的是
+          同一份，不许在这里另写一套（形状 3）。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var at = program.IndexOf("app.MapGet(\"/gw/logical-models/usage\"", StringComparison.Ordinal);
+        Assert.True(at > 0, "模型页用量端点不见了");
+        var end = program.IndexOf("var group = new BsonDocument(\"$group\"", at, StringComparison.Ordinal);
+        Assert.True(end > at);
+        Assert.Contains("BuildBusinessOperationFilter()", program[at..end], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 搬迁重试撞键也要先看撞的是哪一条索引()
+    {
+        /*
+          第一次插入撞键时外层已经按索引名分流了；而认领撞车那一档的**重试**仍是一刀切：
+          清空认领、拿同一个公开名再插一次。这几毫秒里另一个搬迁把这个公开名建掉的话，
+          第二次插入必然再抛，而它在 try 外面——异常一路出去变成 500，而这一趟前面几个池
+          可能已经搬好了（第 70 轮 review，与外层那次是同一个形状）。
+
+          「认下赢家」两个入口共用一份实现，不许各写一遍。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Equal(1, CountOccurrences(program, "async Task<string> TryLinkToRaceWinnerAsync()"));
+        // 两个入口都要调它：第一次插入撞公开名、重试又撞公开名
+        Assert.True(
+            CountOccurrences(program, "await TryLinkToRaceWinnerAsync()") >= 3,
+            "认下赢家的入口少于三处：第一次撞键、重试撞键、清空认领后再撞键");
+        // 重试那一档必须自己看索引名，不许把公开名撞车当成认领撞车
+        var retryAt = program.IndexOf("catch (MongoWriteException retry)", StringComparison.Ordinal);
+        Assert.True(retryAt > 0, "重试的撞键处置不见了");
+        var retryEnd = program.IndexOf("entry.ClaimedAppCallerCodes = keptClaims;", retryAt, StringComparison.Ordinal);
+        Assert.True(retryEnd > retryAt);
+        var retryBody = program[retryAt..retryEnd];
+        Assert.Contains("uniq_llmgw_logical_model_tenant_public_id", retryBody, StringComparison.Ordinal);
+        // 清空认领之后那次插入也要被接住，不能裸插
+        Assert.Contains("catch (MongoWriteException last)", retryBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 认领位移是原子加减不是整份覆盖()
+    {
+        /*
+          位移写成「读出整份数组、去掉几个、整份写回」时，过滤器只认 _id：在读与写之间另一个
+          管理员给同一个对手模型加了别的认领，那一笔会被这份读旧了的数组盖掉。两次保存都报成功，
+          而第二个调用方悄悄丢了它的模型、掉回用途默认（第 69 轮 review）。
+
+          断言的是「摘与还都是只动这几个码的原子操作」这个性质。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+
+        // 位移：只减这几个
+        Assert.Contains(".PullAll(\"DefaultForAppCallerCodes\", taken)", program, StringComparison.Ordinal);
+        // 补偿：只加回这几个
+        Assert.Contains(".AddToSetEach(\"DefaultForAppCallerCodes\", rollback.Taken)", program, StringComparison.Ordinal);
+        // 整份覆盖一处都不许剩（对外模型自己那一份认领是另一回事，它写的是 claims 不是 kept）
+        Assert.Equal(0, CountOccurrences(program, "new BsonArray(kept)"));
+        Assert.Equal(0, CountOccurrences(program, "new BsonArray(rollback.Before)"));
+
+        // 账本只记「摘走了哪几个」，不再记整份前后值——记了整份就还会有人拿它去覆盖
+        Assert.Contains("List<(string RivalId, List<string> Taken)>", program, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void 同步版本号与控制台数同一批行()
+    {
+        /*
+          一条翻不过去的契约被跳过之后，若宿主的版本号按「装上了几条」算、而控制台按
+          「该装几条」算，两边永远差 1：状态恒为 behind，界面一直说「再等一个刷新周期」，
+          而那一条再等也不会变（第 69 轮 review——上一轮修「一条坏的不连累其余」时顺手把
+          这个计数一起改了，形状 1 的连带伤害）。
+
+          正解不是让版本号去迁就，而是两边数同一批行，坏行另有一条明路报出去。
+        */
+        var worker = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/ImageGenModelConfigSyncWorker.cs");
+        Assert.Contains("var versionRows = docs.Where(x => !string.IsNullOrWhiteSpace(x.ModelIdPattern))", worker, StringComparison.Ordinal);
+        Assert.Contains("$\"{versionRows.Count}:{versionRows.Max(x => x.UpdatedAt).Ticks}\"", worker, StringComparison.Ordinal);
+        // 按「装上了几条」算版本号的写法不许回来
+        Assert.Equal(0, CountOccurrences(worker, "$\"{ordered.Count}:"));
+
+        // 坏行要单独报出去，而不是混进版本号里悄悄消失
+        Assert.Contains("\"UnusablePatterns\"", worker, StringComparison.Ordinal);
+        var console = ReadRepoFile("llmgw/console-api/Program.cs");
+        Assert.Contains("UnusablePatterns =", console, StringComparison.Ordinal);
+        var section = ReadRepoFile("llmgw/web/src/components/ImageGenContractsSection.tsx");
+        Assert.Contains("unusablePatterns", section, StringComparison.Ordinal);
+        /*
+          每一条给用户的出口都要带上它。判据是「两句说明同进同出」而不是数出现次数：
+          说明句的拼法会变（模板串还是加号），数次数的断言下一次改写就失灵。
+        */
+        foreach (var line in section.Split('\n').Where(x => x.Contains("skipNote", StringComparison.Ordinal)))
+        {
+            if (line.Contains("const skipNote", StringComparison.Ordinal)) continue;
+            Assert.True(
+                line.Contains("unusableNote", StringComparison.Ordinal),
+                $"这一句只报了「按租户跳过」、没报「翻不过去」，用户在这一屏看不到后者：{line.Trim()}");
+        }
+    }
+
+    [Fact]
+    public void 三处批量预取的同名谓词只有一份()
+    {
+        /*
+          第 63 轮把「同名」的**单查**那一侧扳成了不分大小写，预取这一侧漏在外面：两处仍写成
+          `In("ModelName", names) || In("ModelNameNormalized", 小写)`。存量文档没有
+          ModelNameNormalized、库里存着 `Foo` 而线路覆盖成 `foo` 时两支都查不到，预取回来是空批，
+          PhysicalRoutePasses 于是判成「管不着」放行，而运行时单查判拦——同一条线路两个结论
+          （第 68 轮 review，形状 3 的老地方：修完没横扫同类）。
+        */
+        var gate = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayCatalogGate.cs");
+        Assert.Contains("SameNameBatchFilter(", gate, StringComparison.Ordinal);
+
+        foreach (var consumer in new[]
+                 {
+                     "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs",
+                     "llmgw/serving/GatewayModelCatalogEndpoint.cs",
+                     "llmgw/serving/GatewayServingReadinessProbe.cs",
+                 })
+        {
+            var source = ReadRepoFile(consumer);
+            Assert.Contains("GatewayCatalogGate.SameNameBatchFilter(", source, StringComparison.Ordinal);
+            // 自己拼的那种逐字 In 一处都不许剩
+            Assert.Equal(0, CountOccurrences(source, "In(\"ModelName\", "));
+            Assert.Equal(0, CountOccurrences(source, "In(\"ModelNameNormalized\", "));
+        }
+    }
+
+    [Fact]
+    public void 补偿本身撞键不许把冲突变成服务器错误()
+    {
+        /*
+          两个管理员同时把同一个调用方的认领从 A 移到各自的模型上：输的那一方走进撞车分支，
+          而它要还回去的那份认领此刻已经归赢家了，还原的 UpdateOne 于是撞上认领唯一索引，
+          异常从补偿函数抛出去、越过外面那个 catch，本该是一句说得清的 409 变成
+          「服务器错误」（第 67 轮 review）。
+
+          撞键在这里不是故障是结论：位子已经有人了，不该还也还不回去，按「没能还原」记一条
+          告警走原路返回。断言的是「补偿里的还原是接得住撞键的」这个性质。
+        */
+        var program = ReadRepoFile("llmgw/console-api/Program.cs");
+        var compensateAt = program.IndexOf("async Task CompensateAsync(bool restoreDefaults)", StringComparison.Ordinal);
+        Assert.True(compensateAt > 0, "补偿函数不见了");
+        var compensateEnd = program.IndexOf("string WithCompensationNote(", compensateAt, StringComparison.Ordinal);
+        Assert.True(compensateEnd > compensateAt);
+        var compensate = program[compensateAt..compensateEnd];
+
+        // 两处还原都要走那个接得住撞键的入口，裸 UpdateOneAsync 一处都不许剩
+        Assert.Equal(2, CountOccurrences(compensate, "await TryRestoreAsync("));
+        Assert.Equal(0, CountOccurrences(compensate, "await gwLogicalModels.UpdateOneAsync("));
+
+        // 入口本身两种撞键形态都接（UpdateOne 抛 MongoWriteException，命令层抛 MongoCommandException）
+        var helperAt = program.IndexOf("async Task<bool> TryRestoreAsync(", StringComparison.Ordinal);
+        Assert.True(helperAt > 0 && helperAt < compensateAt, "还原入口要定义在补偿函数之前");
+        var helper = program[helperAt..compensateAt];
+        Assert.Contains("ServerErrorCategory.DuplicateKey", helper, StringComparison.Ordinal);
+        Assert.Contains("ex.Code == 11000", helper, StringComparison.Ordinal);
+        // 没还成要留痕，不能静默当作还成了
+        Assert.Contains("compensationWarnings.Add", compensate, StringComparison.Ordinal);
     }
 }

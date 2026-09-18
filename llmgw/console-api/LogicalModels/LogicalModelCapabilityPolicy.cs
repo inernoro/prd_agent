@@ -73,6 +73,83 @@ public static class LogicalModelCapabilityPolicy
         return LegacyAliases.TryGetValue(token, out var canonical) ? canonical : null;
     }
 
+    /// <summary>分层这个动作能力唯一允许的调用方码，与权威侧的 AppCallerRegistry 那一条相同。</summary>
+    public const string ImageLayeringAppCallerCode = "visual-agent.image.layering::generation";
+
+    /// <summary>分层这个动作能力的对外标识。与 GatewayCapabilityContract.ImageLayeringPublicId 相同。</summary>
+    public const string ImageLayeringPublicId = "image-layering";
+
+    /// <summary>
+    /// 这是「用户可以在选择器里挑的模型」还是「只能被具体动作点名调用的能力」。
+    /// 镜像 GatewayCapabilityContract.IsOperationOnly：PublicId 与 Capabilities 两个信号都认——
+    /// 不同数据来源填的字段不一样（一个是 kebab-case 的 image-layering，一个是 snake_case 的
+    /// image_layering），只认一个，换条路进来就漏。
+    /// </summary>
+    public static bool IsOperationOnly(string? publicId, IEnumerable<string>? capabilities)
+    {
+        var id = (publicId ?? string.Empty).Trim();
+        if (id.Length > 0 && string.Equals(id, ImageLayeringPublicId, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return (capabilities ?? [])
+            .Select(TryCanonicalize)
+            .Any(x => string.Equals(x, ImageLayering, StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// 这个调用方要求哪一种生图场景能力。镜像 GatewayCapabilityContract.RequiredScenarioCapability。
+    /// </summary>
+    public static string? RequiredScenarioCapability(string? appCallerCode)
+    {
+        var code = (appCallerCode ?? string.Empty).Trim();
+        if (code.Length == 0) return null;
+        if (code.EndsWith(".text2img::generation", StringComparison.OrdinalIgnoreCase)) return "text2img";
+        if (code.EndsWith(".img2img::generation", StringComparison.OrdinalIgnoreCase)) return "img2img";
+        if (code.EndsWith(".vision::generation", StringComparison.OrdinalIgnoreCase)) return "vision_generation";
+        return null;
+    }
+
+    /// <summary>
+    /// 这个对外模型能不能服务这个调用方。镜像 GatewayCapabilityContract.SupportsAppCallerScenario，
+    /// 顺序逐条相同：显式授权名单优先 → 分层动作能力只认专用调用方 → 无场景要求放行 →
+    /// 声明了所需场景放行 → 未声明任何图片场景但有通用 image_generation 时兜底放行 → 否则拒。
+    ///
+    /// 为什么控制台要有这一份：调用全貌面板回答的是「这个调用方不点名会不会落到这个模型」，
+    /// 而运行时在选中模型之后还要过这道判据。面板不判的话，它会指着一条运行时必拒的路说
+    /// 「会落到这里」——排障的人照着它去查，查的是一条根本走不到的路。
+    /// 两侧由 GatewayCallTraceMirrorTests 逐条比对，任一侧改了另一侧没跟上，CI 立刻红。
+    /// </summary>
+    public static bool SupportsAppCallerScenario(
+        IEnumerable<string>? capabilities,
+        IEnumerable<string>? allowedAppCallerCodes,
+        string appCallerCode)
+    {
+        var allowlist = (allowedAppCallerCodes ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+        if (allowlist.Count > 0
+            && !allowlist.Contains(appCallerCode, StringComparer.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var canonical = new HashSet<string>(
+            (capabilities ?? []).Select(TryCanonicalize).Where(x => x is not null).Select(x => x!),
+            StringComparer.Ordinal);
+
+        if (canonical.Contains(ImageLayering))
+        {
+            return string.Equals(appCallerCode, ImageLayeringAppCallerCode, StringComparison.OrdinalIgnoreCase);
+        }
+
+        var required = RequiredScenarioCapability(appCallerCode);
+        if (required is null || canonical.Contains(required)) return true;
+
+        var declaresAnyScenario = ImageScenarioCapabilities.Any(canonical.Contains)
+                                  || canonical.Contains(ImageLayering);
+        return !declaresAnyScenario && canonical.Contains(ImageGeneration);
+    }
+
     /// <summary>
     /// 归一化能力数组。落库值 = 规范能力（按首次出现次序）+ 生图场景补齐 + 未知原值。
     /// 未知能力**不丢弃**：原样保留，由 <see cref="Unknown"/> 报出来交给发布门禁点名阻断。
