@@ -55,9 +55,22 @@ export function FindingsList({ findings, onPick, onConfigure }: { findings: Lint
  * 抽屉等接口时画的关系卡，和数据到达后 RelationCard 自己等 service-graph 时画的关系卡，
  * 必须是同一个东西，否则用户会看到「骨架换了一副」。
  */
-export function RelationCardSkeleton({ badge = '正在体检', note = '正在算服务关系与体检，通常 1 秒内完成' }: { badge?: string; note?: string }): JSX.Element {
+export type RelationCardVariant = 'card' | 'row';
+
+export function RelationCardSkeleton({ badge = '正在体检', note = '正在算服务关系与体检，通常 1 秒内完成', variant = 'card' }: { badge?: string; note?: string; variant?: RelationCardVariant }): JSX.Element {
+  if (variant === 'row') {
+    return (
+      <div className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-3.5" data-testid="relation-card" data-loading="true" data-variant="row">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <div className="flex items-center gap-2 text-base font-bold">关系<span className="inline-flex h-[1.3rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-2 text-[0.75rem] font-semibold text-muted-foreground">{badge}</span></div>
+          <div className="min-w-[12rem] flex-1 truncate text-[0.8125rem] text-muted-foreground">正在算服务关系、前缀归属与跨项目引用…</div>
+        </div>
+        <RelationFlowSkeleton note={note} />
+      </div>
+    );
+  }
   return (
-    <div className="flex flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-4 pt-3.5 transition-colors duration-150" data-testid="relation-card" data-loading="true">
+    <div className="flex flex-col gap-3 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-5 pb-5 pt-4 transition-colors duration-150" data-testid="relation-card" data-loading="true">
       <div className="flex items-center gap-2 text-base font-bold">关系<span className="inline-flex h-[1.3rem] items-center rounded-full border border-[hsl(var(--hairline-strong))] px-2 text-[0.75rem] font-semibold text-muted-foreground">{badge}</span></div>
       <div className="text-[0.92rem] text-foreground-muted">正在算服务关系、前缀归属与跨项目引用…</div>
       <RelationFlowSkeleton note={note} />
@@ -65,7 +78,7 @@ export function RelationCardSkeleton({ badge = '正在体检', note = '正在算
   );
 }
 
-export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: string; /** 主入口地址：入口 chip 上写域名；没有就写分支名 */ previewUrl?: string; /** 「去配置」的落点（配置页签） */ onConfigure?: () => void }): JSX.Element | null {
+export function RelationCard({ branchId, previewUrl, onConfigure, variant = 'card' }: { branchId: string; /** 主入口地址：入口 chip 上写域名；没有就写分支名 */ previewUrl?: string; /** 「去配置」的落点（配置页签） */ onConfigure?: () => void; /** row = 指挥台底部的一行（标题、流向条、事实、按钮排成一排）；card = 独立卡片 */ variant?: RelationCardVariant }): JSX.Element | null {
   const { state, reload } = useRelationPayload(branchId);
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState<string | null>(null);
@@ -85,7 +98,7 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
   );
   // 加载 / 失败态用同一副骨架，卡片高度不跳（微调 3）。
   // 加载态抽成 RelationCardSkeleton：抽屉整体的加载骨架也用它，两个阶段一个轮廓。
-  if (state.status === 'loading') return <RelationCardSkeleton />;
+  if (state.status === 'loading') return <RelationCardSkeleton variant={variant} />;
   if (state.status === 'error') {
     return shell('border-destructive/50', (
       <>
@@ -114,24 +127,43 @@ export function RelationCard({ branchId, previewUrl, onConfigure }: { branchId: 
     : warnings
       ? <span className="inline-flex h-[1.3rem] items-center rounded-full border border-warn/60 bg-warn-soft px-2 text-[0.75rem] font-semibold text-warn">{warnings} 条警告</span>
       : <span className="inline-flex h-[1.3rem] items-center rounded-full border border-ok/50 bg-ok-soft px-2 text-[0.75rem] font-semibold text-ok">无问题</span>;
+  const body = variant === 'row' ? (
+    /* 行式（指挥台底部）：一行读完——标题与结论在左、流向条居中撑满、事实与按钮靠右；窄了自然折行 */
+    <div className={`flex flex-col gap-3 rounded-xl border bg-[hsl(var(--surface-raised))] px-[1.3rem] py-3.5 transition-colors duration-150 ${tone}`} data-testid="relation-card" data-variant="row">
+      {/* 第一行：标题、结论（截断带 title）、事实、动作；第二行：流向条满宽——抽屉宽度下三列并排放不下流向条，宁可两行也不裁 chip */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        <div className="flex items-center gap-2 text-base font-bold">关系{pill}</div>
+        <div className="min-w-[12rem] flex-1 truncate text-[0.8125rem] text-foreground-muted" title={relationHeadline(data)}>{relationHeadline(data)}</div>
+        <FlowFacts facts={model.facts} />
+        <div className="flex gap-1">
+          <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="半屏查看关系图与需要处理的事项"><PanelRightOpen />半屏</Button>
+          <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
+        </div>
+      </div>
+      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击半屏查看">
+        <RelationFlowStrip model={model} />
+      </div>
+      {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} /> : null}
+    </div>
+  ) : shell(tone, (
+    <>
+      <div className="flex flex-wrap items-center gap-2 text-base font-bold">
+        关系{pill}
+        <span className="flex-1" />
+        <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="半屏查看关系图与需要处理的事项"><PanelRightOpen />半屏查看</Button>
+        <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
+      </div>
+      <div className="text-[0.92rem] leading-relaxed text-foreground-muted transition-colors duration-150">{relationHeadline(data)}</div>
+      <FlowFacts facts={model.facts} />
+      <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击半屏查看">
+        <RelationFlowStrip model={model} />
+      </div>
+      {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} /> : null}
+    </>
+  ));
   return (
     <>
-      {shell(tone, (
-        <>
-          <div className="flex flex-wrap items-center gap-2 text-base font-bold">
-            关系{pill}
-            <span className="flex-1" />
-            <Button variant="ghost" size="sm" onClick={() => setOpen(true)} title="半屏查看关系图与需要处理的事项"><PanelRightOpen />半屏查看</Button>
-            <Button variant="ghost" size="sm" onClick={() => navigate(fullHref)} title="全屏关系图（独立链接，可分享）"><Maximize2 />全屏</Button>
-          </div>
-          <div className="text-[0.92rem] leading-relaxed text-foreground-muted transition-colors duration-150">{relationHeadline(data)}</div>
-          <FlowFacts facts={model.facts} />
-          <div className="cursor-pointer" onClick={() => setOpen(true)} title="点击半屏查看">
-            <RelationFlowStrip model={model} />
-          </div>
-          {actionable.length > 0 ? <FindingsList findings={actionable} onConfigure={onConfigure} /> : null}
-        </>
-      ))}
+      {body}
       {open ? (
         <div className="fixed inset-0 z-50" role="dialog" aria-label="关系图" data-testid="relation-drawer">
           <div className="absolute inset-0 bg-[hsl(var(--status-ink))]/40" onClick={() => setOpen(false)} />

@@ -9,7 +9,7 @@
  * 这里的部件与就绪期共用同一批实现：页签表（drawerTabs）、关系卡骨架（RelationCardSkeleton）、
  * 曲线骨架（MetricsSkeleton）。数据到了是每一块被「填上」，不是整屏「换掉」。
  *
- * 不画部署历史：它在少于 3 次部署时本来就不出现，骨架里先画再消失比不画更假。
+ * 轮廓跟着总览的「指挥台」布局走（2026-09-18）：六块等高指标砖（3 列两行，极宽时 6 列）→ 关系行 → CPU 图 + 两块并排 → 服务表。不画部署历史：它在少于 3 次部署时本来就不出现，骨架里先画再消失比不画更假。
  */
 import { MetricsSkeleton } from './OverviewPanel';
 import { RelationCardSkeleton } from './RelationCard';
@@ -18,7 +18,8 @@ import { DRAWER_TAB_BUTTON_CLASS, DRAWER_TAB_NAV_CLASS, drawerTabs } from './dra
 /** 抽屉在这些状态下会在页签之上放一块「服务未运行」说明，骨架期照样给它留位 */
 const STATUS_NOTE_STATES = new Set(['idle', 'stopped']);
 
-const ENV_SLOTS = ['复制集', '基础设施', '服务'] as const;
+const KPI_LABELS = ['状态', '服务就绪', '已运行', 'CPU 合计', '内存合计', '入口'] as const;
+const ENV_SLOTS = ['共享基础设施', '复制集'] as const;
 
 export function BranchDrawerSkeleton({ status }: { /** 父组件经 SSE 透传的实时状态，决定要不要给「服务未运行」说明留位 */ status?: string }): JSX.Element {
   const reserveStatusNote = status ? STATUS_NOTE_STATES.has(status) : false;
@@ -44,58 +45,54 @@ export function BranchDrawerSkeleton({ status }: { /** 父组件经 SSE 透传�
         ))}
       </nav>
 
-      <div className="flex flex-col gap-4 p-5">
-        {/* 1. 判断行：健康环 + 一句结论 + 版本行 */}
-        <section className="flex flex-wrap items-center gap-x-7 gap-y-4 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-6 py-5">
-          <div className="relative h-[11rem] w-[11rem] shrink-0" aria-hidden>
-            <div className="absolute inset-[0.8rem] rounded-full border-[0.8rem] border-[hsl(var(--surface-sunken))] motion-safe:animate-pulse" />
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
-              <div className="cds-loading-skeleton-line h-8 w-14" />
-              <span className="text-[0.8125rem] text-muted-foreground">服务就绪</span>
-            </div>
-          </div>
-          <div className="flex min-w-[16rem] flex-1 flex-col gap-2">
-            <div className="flex items-center gap-2.5">
-              <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-muted-foreground/40" aria-hidden />
-              <div className="cds-loading-skeleton-line h-7 w-48" />
-            </div>
-            <div className="cds-loading-skeleton-line h-4 w-64 max-w-full" style={{ animationDelay: '0.1s' }} />
-            <div className="cds-loading-skeleton-line h-3.5 w-80 max-w-full" style={{ animationDelay: '0.18s' }} />
-          </div>
-        </section>
-
-        {/* 1.5 关系：与 RelationCard 的加载态是同一个组件 */}
-        <RelationCardSkeleton badge="等分支详情" note="分支详情到了就开始体检，通常 1 秒内完成" />
-
-        {/* 2. 入口：标题 + 一张主入口卡的轮廓 */}
-        <section className="flex flex-col gap-2.5">
-          <header className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <h4 className="text-base font-bold text-foreground">入口</h4>
-            <div className="cds-loading-skeleton-line h-3.5 w-28" />
-          </header>
-          <div className="flex items-center gap-3.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3.5">
-            <div className="cds-loading-skeleton-panel h-11 w-11 shrink-0 rounded-[0.75rem]" />
-            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
-              <div className="cds-loading-skeleton-line h-3.5 w-32" />
-              <div className="cds-loading-skeleton-line h-3 w-72 max-w-full" style={{ animationDelay: '0.12s' }} />
-            </div>
-          </div>
-        </section>
-
-        {/* 3. 曲线：与总览出图前用的是同一个骨架 */}
-        <MetricsSkeleton filled={0} windowLabel="近 30 分钟" note="分支详情到了再读指标历史，曲线随之出现" />
-
-        {/* 5. 部署环境 */}
-        <section className="flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-5 py-3.5">
-          {ENV_SLOTS.map((label, i) => (
-            <span key={label} className="contents">
-              {i > 0 ? <span className="h-7 w-px bg-[hsl(var(--hairline))]" aria-hidden /> : null}
-              <span className="flex flex-col gap-1">
-                <span className="text-[0.75rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">{label}</span>
-                <div className="cds-loading-skeleton-line h-3.5 w-24" style={{ animationDelay: `${i * 0.1}s` }} />
-              </span>
-            </span>
+      <div className="flex flex-col gap-3 p-5">
+        {/* 1. 六块指标砖：与 KpiTile 同一副外壳（标签 / 大数 / 副标题 + 走势位） */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 min-[1920px]:grid-cols-6">
+          {KPI_LABELS.map((label, i) => (
+            <section key={label} className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-4">
+              <span className="text-[0.8125rem] font-bold uppercase tracking-[0.1em] text-muted-foreground">{label}</span>
+              <div className="cds-loading-skeleton-line h-[2.2rem] w-2/3" style={{ animationDelay: `${i * 0.08}s` }} />
+              <div className="flex min-h-[2.5rem] items-end"><div className="cds-loading-skeleton-line h-3.5 w-3/4" style={{ animationDelay: `${i * 0.08 + 0.1}s` }} /></div>
+            </section>
           ))}
+        </div>
+
+        {/* 1.5 关系：与 RelationCard 的行式加载态是同一个组件 */}
+        <RelationCardSkeleton variant="row" badge="等分支详情" note="分支详情到了就开始体检，通常 1 秒内完成" />
+
+        {/* 3. 曲线：CPU 图满宽 + 下面两块并排，与总览出图前用的是同一个骨架 */}
+        <div className="flex flex-col gap-3">
+          <MetricsSkeleton filled={0} windowLabel="近 30 分钟" note="分支详情到了再读指标历史，曲线随之出现" />
+          <div className="grid items-start gap-3 lg:grid-cols-[1.35fr_1fr]">
+            {['内存占用', '吞吐'].map((t, i) => (
+              <section key={t} className="flex flex-1 flex-col gap-3 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 pb-3 pt-3.5">
+                <h4 className="text-base font-bold text-foreground">{t}</h4>
+                <div className="cds-loading-skeleton-panel h-3.5 rounded-full" style={{ animationDelay: `${0.2 + i * 0.1}s` }} />
+                <div className="cds-loading-skeleton-line h-3 w-1/2" style={{ animationDelay: `${0.3 + i * 0.1}s` }} />
+              </section>
+            ))}
+          </div>
+        </div>
+
+        {/* 3.5 服务表：表头 + 两行 + 页脚（共享基础设施 / 复制集） */}
+        <section className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] pb-1 pt-1">
+          <div className="grid h-9 grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1.7fr)_minmax(0,1.6fr)] items-center gap-4 border-b border-[hsl(var(--hairline))] text-[0.75rem] font-bold uppercase tracking-[0.08em] text-muted-foreground">
+            <span>服务</span><span>状态</span><span>CPU</span><span>内存</span><span>容器</span>
+          </div>
+          {[0, 1].map((i) => (
+            <div key={i} className="grid h-14 grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1.7fr)_minmax(0,1.6fr)] items-center gap-4 border-b border-[hsl(var(--hairline))]/60 last:border-b-0">
+              <div className="flex items-center gap-3"><div className="cds-loading-skeleton-panel h-[1.625rem] w-[1.625rem] rounded-[0.4rem]" /><div className="cds-loading-skeleton-line h-3.5 w-24" /></div>
+              <div className="cds-loading-skeleton-line h-3.5 w-14" />
+              <div className="cds-loading-skeleton-line h-1.5 w-full rounded-full" />
+              <div className="cds-loading-skeleton-line h-1.5 w-full rounded-full" />
+              <div className="cds-loading-skeleton-line h-3.5 w-28" />
+            </div>
+          ))}
+          <div className="flex gap-6 border-t border-[hsl(var(--hairline))] py-2.5 text-[0.8125rem] text-muted-foreground">
+            {ENV_SLOTS.map((label, i) => (
+              <span key={label} className="flex items-center gap-2">{label}<div className="cds-loading-skeleton-line h-3 w-16" style={{ animationDelay: `${i * 0.1}s` }} /></span>
+            ))}
+          </div>
         </section>
       </div>
     </div>

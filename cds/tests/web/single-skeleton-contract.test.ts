@@ -41,15 +41,25 @@ describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () =
     expect(drawer).toContain('<nav className={DRAWER_TAB_NAV_CLASS}>');
   });
 
-  it('骨架含总览的每一段：说明区、六个页签、判断行、关系卡骨架、入口、曲线骨架、部署环境', () => {
+  it('骨架含总览「指挥台」的每一段：说明区、六个页签、六块指标砖、关系行、曲线骨架、服务表', () => {
     const html = renderToStaticMarkup(createElement(BranchDrawerSkeleton, { status: 'idle' }));
     for (const tab of drawerTabs) expect(html).toContain(`>${tab.label}<`);
-    expect(html).toContain('服务就绪');
+    for (const label of ['状态', '服务就绪', '已运行', 'CPU 合计', '内存合计', '入口']) expect(html).toContain(`>${label}<`);
     expect(html).toContain('data-testid="relation-card"');
+    expect(html).toContain('data-variant="row"');
     expect(html).toContain('data-testid="relation-strip-skeleton"');
-    expect(html).toContain('>入口<');
     expect(html).toContain('data-testid="metrics-skeleton"');
-    for (const label of ['复制集', '基础设施', '服务']) expect(html).toContain(`>${label}<`);
+    for (const label of ['服务', '状态', 'CPU', '内存', '容器']) expect(html).toContain(`<span>${label}</span>`);
+    expect(html).toContain('共享基础设施');
+    expect(html).toContain('复制集');
+  });
+
+  it('总览本体与骨架同一套轮廓：指标砖、关系行、指标网格、服务表按同一顺序出现', () => {
+    const panel = stripComments(read('components/branch/OverviewPanel.tsx'));
+    const order = ['data-testid="kpi-tiles"', '{relationSlot ?? null}', 'data-testid="metrics-grid"', '<ServiceTable'];
+    const idx = order.map((m) => panel.indexOf(m));
+    for (let i = 0; i < idx.length; i += 1) expect(idx[i], order[i]).toBeGreaterThan(i === 0 ? -1 : idx[i - 1]);
+    expect(drawer).toMatch(/<RelationCard [\s\S]{0,300}?variant="row"/);
   });
 
   it('关系卡的加载态是同一个导出：RelationCard 自己等 service-graph 时也渲染 RelationCardSkeleton', () => {

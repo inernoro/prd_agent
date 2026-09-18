@@ -112,7 +112,7 @@ describe('关系卡接进总览面板，不再常驻页签之上', () => {
     expect(drawer).toMatch(/<RelationCard[^>]*onConfigure=/);
     const panel = fs.readFileSync(path.join(SRC, 'components/branch/OverviewPanel.tsx'), 'utf8');
     // 判断行之下、入口之上
-    expect(panel.indexOf('{relationSlot ?? null}')).toBeGreaterThan(panel.indexOf('<HealthRing'));
+    expect(panel.indexOf('{relationSlot ?? null}')).toBeGreaterThan(panel.indexOf('data-testid="kpi-tiles"'));
     expect(panel.indexOf('{relationSlot ?? null}')).toBeLessThan(panel.indexOf('<EntryCards'));
   });
   it('关系卡不再给流向条一个固定高度的盒子（那正是被裁掉一半的根因）', () => {

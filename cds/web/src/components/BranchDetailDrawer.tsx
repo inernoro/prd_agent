@@ -2804,7 +2804,7 @@ export function BranchDetailDrawer({
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={() => setWebEntryConfigOpen(true)}
                     onOpenDeployments={() => setActiveTab('deployments')}
-                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={() => setActiveTab('config')} /> : null}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={() => setActiveTab('config')} variant="row" /> : null}
                   />
                 ) : null}
 

@@ -137,21 +137,6 @@ export interface OverviewDeployment {
 
 const VB_W = 1000;
 
-function arcPath(cx: number, cy: number, r: number, a0: number, a1: number): string {
-  const pt = (a: number): [number, number] => [
-    cx + r * Math.cos(((a - 90) * Math.PI) / 180),
-    cy + r * Math.sin(((a - 90) * Math.PI) / 180),
-  ];
-  const [x0, y0] = pt(a0);
-  const [x1, y1] = pt(a1);
-  return `M${x0.toFixed(2)},${y0.toFixed(2)} A${r},${r} 0 ${a1 - a0 > 180 ? 1 : 0} 1 ${x1.toFixed(2)},${y1.toFixed(2)}`;
-}
-
-/** 堆叠面积：返回每层的闭合路径（层间留 1 单位缝，避免糊成一坨） */
-/**
- * 把「有样本的桶」切成一段段连续区间。缺口不入几何——这是 Netdata 的画法：
- * 没有的值一律不画，线在那里断开，而不是补一个 0 连过去。
- */
 export function presentRuns(present: boolean[]): Array<[number, number]> {
   const runs: Array<[number, number]> = [];
   let start = -1;
@@ -290,52 +275,6 @@ export function formatDeployedAgo(fromIso: string, now: number): string {
 export const ACCUMULATING_MS = 5 * 60_000;
 
 // ── 分段健康环 ────────────────────────────────────────────────────────────
-
-function HealthRing({ states }: { states: Array<'ok' | 'bad' | 'idle'> }): JSX.Element {
-  // 设计稿健康环 150px（14px 基准画板）；站点根字号 85%，svg 不随字号缩，直接用设计稿像素
-  const size = 150;
-  const c = size / 2;
-  const r = 58;
-  const sw = 11;
-  const span = 260;
-  const gap = states.length > 1 ? 5 : 0;
-  const seg = (span - gap * (states.length - 1)) / Math.max(1, states.length);
-  const okCount = states.filter((s) => s === 'ok').length;
-  const allOk = states.length > 0 && okCount === states.length;
-  return (
-    <div className="relative shrink-0" style={{ width: size, height: size }}>
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden>
-        <path
-          d={arcPath(c, c, r, -130, 130)}
-          fill="none"
-          style={{ stroke: 'hsl(var(--surface-sunken))' }}
-          strokeWidth={sw}
-          strokeLinecap="round"
-        />
-        {states.map((s, i) => {
-          const a0 = -130 + i * (seg + gap);
-          return (
-            <path
-              key={`${s}-${i.toString()}`}
-              d={arcPath(c, c, r, a0, a0 + seg)}
-              fill="none"
-              style={{ stroke: s === 'ok' ? 'hsl(var(--ok))' : s === 'bad' ? 'hsl(var(--bad))' : 'hsl(var(--hairline-strong))' }}
-              strokeWidth={sw}
-              strokeLinecap="round"
-            />
-          );
-        })}
-      </svg>
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
-        <span className={`font-mono text-[2.2rem] font-bold leading-none tracking-tight ${allOk ? 'text-foreground' : 'text-bad'}`}>
-          {okCount}
-          <span className="text-lg text-muted-foreground">/{states.length}</span>
-        </span>
-        <span className="text-[0.8125rem] text-muted-foreground">服务就绪</span>
-      </div>
-    </div>
-  );
-}
 
 /**
  * 出图前的骨架，不是空盒子。
@@ -1004,6 +943,130 @@ function EntryCards({
   );
 }
 
+/** 指标砖右下角那条走势：只连有样本的点，缺口断开，不补 0。 */
+function Sparkline({ values, present, color }: { values: number[]; present: boolean[]; color: string }): JSX.Element | null {
+  const W = 120, H = 34, PAD = 2;
+  const pts = values.map((v, i) => ({ v, i, ok: present[i] ?? false })).filter((x) => x.ok);
+  if (pts.length < 2) return null;
+  const max = Math.max(1e-9, ...pts.map((x) => x.v));
+  const x = (i: number) => PAD + (i / Math.max(1, values.length - 1)) * (W - PAD * 2);
+  const y = (v: number) => H - PAD - (v / max) * (H - PAD * 2);
+  const segments: string[] = [];
+  let cur: string[] = [];
+  values.forEach((v, i) => {
+    if (present[i]) cur.push(`${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+    else if (cur.length) { segments.push(cur.join(' ')); cur = []; }
+  });
+  if (cur.length) segments.push(cur.join(' '));
+  return (
+    <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} className="shrink-0" aria-hidden>
+      {segments.map((d, i) => <polyline key={i} points={d} fill="none" stroke={color} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />)}
+    </svg>
+  );
+}
+
+/**
+ * 指标砖（方向 A「指挥台」，2026-09-18 用户拍板「还是 A 好一些，主要还是监控」）：
+ * 六块等高，每块一个大数、一句来路、一条走势。「统治感」来自等高与对齐的重复，
+ * 不来自任何单个元素——所以每块的结构必须一模一样，缺走势就留同样高的空位。
+ */
+function KpiTile({
+  label, value, sub, tone = 'plain', size = 'num', spark, action, testId,
+}: {
+  label: string;
+  value: ReactNode;
+  sub: ReactNode;
+  /** 大数的色调：状态砖按结论着色，其余一律前景色 */
+  tone?: 'plain' | 'ok' | 'bad' | 'muted';
+  /** num = 等宽大数；text = 一句话结论（允许两行） */
+  size?: 'num' | 'text';
+  spark?: ReactNode;
+  action?: ReactNode;
+  testId?: string;
+}): JSX.Element {
+  const toneCls = tone === 'ok' ? 'text-ok' : tone === 'bad' ? 'text-bad' : tone === 'muted' ? 'text-muted-foreground' : 'text-foreground';
+  return (
+    <section className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-4" data-testid={testId}>
+      <div className="flex min-h-[1.5rem] items-center justify-between gap-2">
+        <span className="text-[0.8125rem] font-bold uppercase tracking-[0.1em] text-muted-foreground">{label}</span>
+        {action ?? null}
+      </div>
+      <span className={`${size === 'num' ? 'font-mono text-[2.2rem] tabular-nums' : 'text-[1.3rem] leading-tight'} min-h-[2.2rem] font-bold leading-none tracking-tight ${toneCls}`}>{value}</span>
+      {/* 副标题行固定走势线的高度：有没有走势，六块砖都一样高（两行也一样高） */}
+      <div className="flex min-h-[2.5rem] items-end justify-between gap-3">
+        <span className="min-w-0 flex-1 truncate text-sm text-muted-foreground" title={typeof sub === 'string' ? sub : undefined}>{sub}</span>
+        {spark ?? null}
+      </div>
+    </section>
+  );
+}
+
+const STATUS_LABEL: Record<string, string> = { running: '运行中', stopped: '已停止', error: '异常', idle: '未运行', building: '构建中', starting: '启动中', restarting: '重启中', stopping: '停止中' };
+
+/**
+ * 服务表：每行一个服务，CPU 与内存都是「数字 + 相对条」——表比图更适合回答「谁在吃资源」。
+ * 数字与图例同一个口径（nowValue：实时优先），条的分母是同列最大值，最忙的那一行永远是满条。
+ */
+function ServiceTable({
+  services, cpuSeries, memSeries, liveStats, anyRunning, replicaSummary, infraSummary,
+}: {
+  services: OverviewService[];
+  cpuSeries: StackedSeries[];
+  memSeries: StackedSeries[];
+  liveStats?: Record<string, { cpuPercent: number; memUsedBytes: number }>;
+  anyRunning: boolean;
+  replicaSummary: string;
+  infraSummary: string;
+}): JSX.Element {
+  const cpuById = new Map(cpuSeries.map((x) => [x.id, x]));
+  const memById = new Map(memSeries.map((x) => [x.id, x]));
+  const rows = services.map((sv, i) => {
+    const live = liveStats?.[sv.profileId];
+    const on = anyRunning && sv.status === 'running';
+    const cpu = !on ? undefined : cpuById.get(sv.profileId)?.nowValue ?? live?.cpuPercent;
+    const mem = !on ? undefined : memById.get(sv.profileId)?.nowValue ?? live?.memUsedBytes;
+    const color = cpuById.get(sv.profileId)?.color ?? seriesColor(Math.min(i, SERIES_SLOTS - 1));
+    return { sv, on, cpu, mem, color };
+  });
+  const cpuMax = Math.max(1e-9, ...rows.map((r) => r.cpu ?? 0));
+  const memMax = Math.max(1e-9, ...rows.map((r) => r.mem ?? 0));
+  const COLS = 'grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1.7fr)_minmax(0,1.6fr)]';
+  return (
+    <section className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] pb-1 pt-1" data-testid="service-table">
+      <div className={`grid ${COLS} h-9 items-center gap-4 border-b border-[hsl(var(--hairline))] text-[0.75rem] font-bold uppercase tracking-[0.08em] text-muted-foreground`}>
+        <span>服务</span><span>状态</span><span>CPU</span><span>内存</span><span>容器</span>
+      </div>
+      {rows.length === 0 ? (
+        <div className="py-5 text-sm text-muted-foreground">还没有任何 service。</div>
+      ) : rows.map(({ sv, on, cpu, mem, color }) => (
+        <div key={sv.profileId} className={`grid ${COLS} h-14 items-center gap-4 border-b border-[hsl(var(--hairline))]/60 text-sm last:border-b-0`} data-service-row={sv.profileId}>
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] font-mono text-[0.66rem] font-extrabold uppercase text-primary-foreground" style={{ background: color }} aria-hidden>{sv.profileId.slice(0, 3)}</span>
+            <span className="truncate font-mono font-semibold text-foreground" title={sv.profileId}>{sv.profileId}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`h-2 w-2 shrink-0 rounded-full ${on ? 'bg-ok' : sv.status === 'error' ? 'bg-bad' : 'bg-muted-foreground/50'}`} aria-hidden />
+            <span className={on ? 'text-foreground' : 'text-muted-foreground'}>{STATUS_LABEL[sv.status] ?? sv.status}</span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <span className="w-[3.75rem] shrink-0 text-right font-mono tabular-nums text-foreground">{cpu == null ? '—' : `${cpu.toFixed(1)}%`}</span>
+            <span className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]"><span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${cpu == null ? 0 : (cpu / cpuMax) * 100}%`, background: 'hsl(var(--series-1))' }} /></span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <span className="w-[4.5rem] shrink-0 text-right font-mono tabular-nums text-foreground">{mem == null ? '—' : formatBytesShort(mem)}</span>
+            <span className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]"><span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${mem == null ? 0 : (mem / memMax) * 100}%`, background: 'hsl(var(--series-3))' }} /></span>
+          </div>
+          <span className="truncate font-mono text-[0.8125rem] text-muted-foreground" title={sv.containerName}>{sv.containerName}</span>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-[hsl(var(--hairline))] py-2.5 text-[0.8125rem] text-muted-foreground">
+        <span>共享基础设施 <b className="font-medium text-foreground-muted">{infraSummary}</b></span>
+        <span>复制集 <b className="font-medium text-foreground-muted">{replicaSummary}</b></span>
+      </div>
+    </section>
+  );
+}
+
 // ── 面板本体 ──────────────────────────────────────────────────────────────
 
 export function OverviewPanel({
@@ -1101,9 +1164,6 @@ export function OverviewPanel({
 
   const okCount = services.filter((s) => s.status === 'running').length;
   const badServices = services.filter((s) => s.status === 'error');
-  const ringStates = services.map((s): 'ok' | 'bad' | 'idle' => (
-    s.status === 'running' ? 'ok' : s.status === 'error' ? 'bad' : 'idle'
-  ));
 
   /**
    * 系列选取与赋色一律走 **服务名字典序**，不按当前用量排名。
@@ -1383,117 +1443,101 @@ export function OverviewPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const dataToken = useMemo(() => ({}), [metricSeries]);
 
+  // 指标砖的走势：全部服务的合计，按轴级掩码断开缺口（与 CPU 图同一套掩码）
+  const cpuTotals = Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, sv) => n + (sv.values[i] ?? 0), 0));
+  const memTotals = Array.from({ length: sampleCount }, (_, i) => memSeries.reduce((n, sv) => n + (sv.values[i] ?? 0), 0));
+  // 没历史可画时，合计退回实时快照（只算在跑的）；两者都没有就如实写「—」
+  const liveCpuTotal = anyRunning && liveStats ? services.filter((sv) => sv.status === 'running').reduce((n, sv) => n + (liveStats[sv.profileId]?.cpuPercent ?? 0), 0) : undefined;
+  const liveMemTotal = anyRunning && liveStats ? services.filter((sv) => sv.status === 'running').reduce((n, sv) => n + (liveStats[sv.profileId]?.memUsedBytes ?? 0), 0) : undefined;
+  const cpuTileValue = hasPlot ? `${cpuTotalNow.toFixed(1)}%` : liveCpuTotal != null ? `${liveCpuTotal.toFixed(1)}%` : '—';
+  const memTileValue = hasPlot ? formatBytesShort(memTotalNow) : liveMemTotal != null ? formatBytesShort(liveMemTotal) : '—';
+  const topOf = (series: StackedSeries[], fmt: (v: number) => string): string => series
+    .filter((sv) => !sv.stopped && !sv.id.startsWith('其他'))
+    .sort((x, y) => y.nowValue - x.nowValue)
+    .slice(0, 2)
+    .map((sv) => `${sv.id} ${fmt(sv.nowValue)}`)
+    .join(' · ');
+  const primaryEntry = entries.find((e) => e.primary) ?? entries[0];
+  const entryHost = primaryEntry ? primaryEntry.url.replace(/^https?:\/\//, '').replace(/\/.*$/, '') : undefined;
+  const uptime = lastReadyAt && running ? formatUptime(lastReadyAt, now) : undefined;
+
   return (
-    <div className="flex flex-col gap-4">
-      {/* 1. 判断行 —— 一句带数字的结论 + 稳定运行时长 */}
-      <section className="flex flex-wrap items-center gap-x-7 gap-y-4 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-6 py-5">
-        <HealthRing states={ringStates} />
-        <div className="flex min-w-[16rem] flex-1 flex-col gap-2">
-          <div className="flex items-center gap-2.5">
-            <span
-              className={`h-2.5 w-2.5 shrink-0 rounded-full ${verdictTone === 'ok' ? 'bg-ok' : verdictTone === 'bad' ? 'bg-bad' : 'bg-muted-foreground'}`}
-              aria-hidden
-            />
-            <h3 className="text-2xl font-extrabold tracking-tight text-foreground">{verdict}</h3>
-          </div>
-          <p className="text-base leading-7 text-foreground-muted">
-            {services.length > 0 ? `${okCount} / ${services.length} 个服务就绪` : '还没有任何 service'}
-            {entries.length > 0 ? <>，<strong className="font-bold text-foreground">{entries.length} 个入口</strong></> : null}
-            {hasPlot ? `，CPU 合计 ${cpuTotalNow.toFixed(1)}%、内存 ${formatBytesShort(memTotalNow)}` : ''}
-            {badServices.length > 0 ? `。异常服务：${badServices.map((s) => s.profileId).join('、')}` : '。'}
-          </p>
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm leading-6 text-muted-foreground">
-            {commitSha ? (
-              <>
-                <span>当前版本</span>
-                <span className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-px font-mono text-foreground-muted">
-                  {commitSha.slice(0, 7)}
-                </span>
-              </>
-            ) : null}
-            {commitMessage ? <span className="max-w-[28rem] truncate text-foreground-muted" title={commitMessage}>{commitMessage}</span> : null}
-            {lastDeployAt ? <><span aria-hidden>·</span><span>{formatDeployedAgo(lastDeployAt, now)}</span></> : null}
-            {deployDurationMs ? <><span aria-hidden>·</span><span>耗时 {formatDuration(deployDurationMs)}</span></> : null}
-            {/* 分隔点只在前面真有东西时才画：首次部署没有版本、没有时刻，此前这里孤零零一个「·」打头 */}
-            {commitSha || commitMessage || lastDeployAt || deployDurationMs ? <span aria-hidden>·</span> : null}
-            <span className="font-mono">{branchName}</span>
-          </div>
-        </div>
-        {lastReadyAt && running ? (
-          <div className="flex flex-col items-end gap-1 border-l border-[hsl(var(--hairline))] pl-6">
-            <span className="text-[0.75rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">已运行</span>
-            <span className="font-mono text-[1.9rem] font-bold leading-none tracking-tight text-foreground tabular-nums">
-              {formatUptime(lastReadyAt, now)}
-            </span>
-            <span className="text-[0.8125rem] text-muted-foreground">{now - new Date(lastReadyAt).getTime() < 60_000 ? '刚就绪 · 满 1 分钟改按分钟计' : '自容器就绪起算'}</span>
-          </div>
-        ) : null}
-      </section>
-
-      {/* 1.5 关系 —— 这些服务怎么接在一起（结论 + 事实 + 流向条），由抽屉注入 */}
-      {relationSlot ?? null}
-
-      {/* 2. 入口 —— 大多数人打开这个抽屉就是为了拿地址 */}
-      {entries.length > 0 ? (
-        <EntryCards
-          entries={entries}
-          reachable={entriesReachable}
-          statusLabel={copy.entryLabel}
-          onConfigure={onConfigureEntries}
+    <div className="flex flex-col gap-3" data-testid="overview-command-deck">
+      {/* 1. 指标砖 —— 六块等高，每块一个数、一句来路、一条走势（方向 A「指挥台」，2026-09-18 用户拍板） */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 min-[1920px]:grid-cols-6" data-testid="kpi-tiles">
+        <KpiTile
+          label="状态"
+          size="text"
+          tone={verdictTone === 'ok' ? 'ok' : verdictTone === 'bad' ? 'bad' : 'plain'}
+          value={<span className="flex items-start gap-2"><span className={`mt-[0.45rem] h-2.5 w-2.5 shrink-0 rounded-full ${verdictTone === 'ok' ? 'bg-ok' : verdictTone === 'bad' ? 'bg-bad' : 'bg-muted-foreground'}`} aria-hidden />{verdict}</span>}
+          sub={badServices.length > 0
+            ? `异常服务：${badServices.map((sv) => sv.profileId).join('、')}`
+            : commitSha
+              ? <><span className="font-mono text-foreground-muted">{commitSha.slice(0, 7)}</span>{lastDeployAt ? ` · ${formatDeployedAgo(lastDeployAt, now)}` : ''}{deployDurationMs ? ` · 耗时 ${formatDuration(deployDurationMs)}` : ''}{commitMessage ? ` · ${commitMessage}` : ''}</>
+              : <span className="font-mono">{branchName}</span>}
+          testId="kpi-status"
         />
-      ) : null}
+        <KpiTile
+          label="服务就绪"
+          value={<>{okCount}<span className="text-[1.125rem] text-muted-foreground"> / {services.length}</span></>}
+          sub={services.length > 0 ? `${okCount} / ${services.length} 个服务就绪` : '还没有任何 service'}
+          testId="kpi-services"
+        />
+        <KpiTile
+          label="已运行"
+          value={uptime ?? <span className="text-[1.3rem] text-muted-foreground">{transitioning ? '正在部署' : '未运行'}</span>}
+          sub={uptime ? (now - new Date(lastReadyAt as string).getTime() < 60_000 ? '刚就绪 · 满 1 分钟改按分钟计' : '自容器就绪起算') : copy.entryLabel.replace(/^\s*·\s*/, '')}
+          testId="kpi-uptime"
+        />
+        <KpiTile
+          label="CPU 合计"
+          value={cpuTileValue}
+          sub={hasPlot ? topOf(cpuSeries, (v) => `${v.toFixed(1)}%`) || `${totalledServiceCount} 个在跑服务合计` : anyRunning ? '曲线还在攒，数字来自实时快照' : '没有在跑的服务'}
+          spark={hasPlot ? <Sparkline values={cpuTotals} present={axisPresent} color="hsl(var(--series-1))" /> : undefined}
+          testId="kpi-cpu"
+        />
+        <KpiTile
+          label="内存合计"
+          value={memTileValue}
+          sub={hasPlot ? topOf(memSeries, formatBytesShort) || `${totalledServiceCount} 个在跑服务合计` : anyRunning ? '曲线还在攒，数字来自实时快照' : '没有在跑的服务'}
+          spark={hasPlot ? <Sparkline values={memTotals} present={axisPresent} color="hsl(var(--series-3))" /> : undefined}
+          testId="kpi-mem"
+        />
+        <KpiTile
+          label="入口"
+          value={<>{entries.length}<span className="text-[1.125rem] text-muted-foreground"> 个</span></>}
+          sub={primaryEntry
+            ? <a href={primaryEntry.url} target="_blank" rel="noreferrer" className={`font-mono ${entriesReachable ? 'text-ok hover:underline' : 'text-muted-foreground hover:text-foreground'}`} title={primaryEntry.url}>{entryHost}</a>
+            : copy.entryLabel.replace(/^\s*·\s*/, '') || '没有入口'}
+          action={onConfigureEntries ? (
+            <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.75rem] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground" onClick={onConfigureEntries} title="手动配置入口（新增子域入口 / 改名 / 改落地路径）">
+              <Settings className="h-3 w-3" />配置
+            </button>
+          ) : undefined}
+          testId="kpi-entries"
+        />
+      </div>
+
+      {/* 1.5 关系 —— 这些服务怎么接在一起，由抽屉注入（行式变体，一行读完） */}
+      {relationSlot ?? null}
 
       {/*
         3. 资源占用。
-
-        两个数据源就有两个错误面，别互相牵连（Codex P2，核对属实）：
-        - `metricsError` 是实时快照（docker stats）挂了 —— 历史图**照画**，
-          只在上面加一条提示。此前它会把整段还好好的历史图一起藏掉。
-        - `seriesError` 是历史端点挂了 —— 这时才没有曲线可画，但仍然把实时
-          数字端出来，并且**明说曲线来不了**；此前 catch 全吞，骨架屏会永远
-          承诺一条不会出现的曲线。
+        两个错误面（历史端点 / 实时快照）互不牵连：任一失败只出提示条，不把另一半藏掉。
       */}
-      {metricsError ? (
-        <section className="flex items-center gap-2 rounded-xl border border-warn/30 bg-warn-soft px-4 py-2.5 text-[0.92rem] text-warn">
-          <span className="flex-1">实时采样失败：{metricsError}。下面是历史曲线，数字可能不是最新的。</span>
-          <button type="button" className="inline-flex items-center gap-1.5 text-xs font-semibold hover:underline" onClick={onRefreshMetrics}>
-            <RefreshCw className="h-3.5 w-3.5" />重试
-          </button>
-        </section>
-      ) : null}
       {seriesError ? (
-        /*
-         * 这一条**不看 hasPlot**（Codex P2，核对属实）。
-         *
-         * 漏掉的是「先成功、后持续失败」那条路：`metricSeries` 还留着上一次的结果，
-         * `hasPlot` 仍为真，于是两个错误分支都被 `!hasPlot` 挡掉——一条过期的曲线
-         * 顶着「近 30 分钟」的标签无限期挂在那儿，一句提示都没有。
-         * 有图时说「这条曲线是旧的」，没图时说「画不出来了」，两句都得说。
-         */
-        <section className="flex flex-col gap-2 rounded-xl border border-bad/30 bg-bad-soft px-4 py-3 text-sm text-bad">
-          <span>读取指标历史失败：{seriesError}</span>
-          <span className="text-[0.75rem] text-foreground-muted">
-            {hasPlot
-              ? '下面那条曲线是最后一次成功拉取的结果，已经不再更新——它不是当前的 30 分钟。'
-              : '曲线画不出来了（不是还没攒够——这一项不会自己好）。'}
-            {!hasPlot && Object.keys(liveStats ?? {}).length > 0 ? '下面仍是实时读数。' : ''}
-          </span>
-        </section>
+        <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn" role="status">
+          <b className="font-semibold">指标历史服务暂时不可用</b>
+          {hasPlot ? '：下面这张图是失败前读到的旧曲线，已经不再更新。' : '：曲线画不出来了，它不会自己好。'}
+          <span className="ml-1 opacity-90">{seriesError}</span>
+        </div>
       ) : null}
-      {/*
-        没有曲线可画时，把手上**已经有的**实时读数端出来。
-        
-        两种情况都要端（Codex P2，核对属实）：历史端点挂了（seriesError），以及
-        历史还在攒（冷启动 / 刚部署的分支）。此前只端第一种——第二种下 `hasPlot`
-        为假就只剩一个骨架屏，而 `liveStats` 里明明已经有 CPU 与内存的真实读数。
-        那等于**为了等一条曲线，把手上已有的数字也藏起来**，比不做还差一档。
-
-        但前提是分支还在跑（Codex P2，第四次抓到同一个判据没接上）：分支停在
-        「还没攒够两桶」或「series 端点正挂着」的时候，`liveStats` 里留着停机前的
-        残值，这里照端不误，于是判断句写着「分支未运行」、下面并排摆着一组标着
-        「当前读数」的旧数字。头部大数、图例、构成条、吞吐都接了 `anyRunning`，
-        只有这条兜底路没接——又是「只改被指出的那一处」。
-      */}
+      {metricsError ? (
+        <div className="rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-xs leading-5 text-warn" role="status">
+          <b className="font-semibold">实时采样失败</b>：当前值退回最后一个桶的平均，历史曲线不受影响。
+          <span className="ml-1 opacity-90">{metricsError}</span>
+        </div>
+      ) : null}
       {!hasPlot && anyRunning && Object.keys(liveStats ?? {}).length > 0 ? (
         <LiveReadings
           services={services}
@@ -1503,22 +1547,10 @@ export function OverviewPanel({
       ) : null}
       {seriesError && !hasPlot ? null : !hasPlot ? (
         /*
-         * 闸门只看「有没有画得出来的历史」，**不看实时快照回来没有**。
-         *
-         * 2026-09-02 真人验收：「打开之后卡了很长时间」。原因是这里曾经写
-         * `!metricsReady || !hasPlot`——metricsReady 要等 /metrics 返回，而那个接口跑
-         * `docker stats --no-stream`，十个容器、超时上限 5 秒。与此同时纯内存的
-         * /metrics/series 早就把整段历史返回来了，图完全画得出来，却被按住不画，
-         * 干等一个只为了拿「此刻这一帧」的慢请求。
-         *
-         * 现在：有历史就立刻画，实时快照到了再把新点续在尾巴上。
+         * 闸门只看「有没有画得出来的历史」，**不看实时快照回来没有**（2026-09-02 真人验收：
+         * 「打开之后卡了很长时间」——曾经写 `!metricsReady || !hasPlot`，拿着历史干等 docker stats）。
          */
         services.length === 0 ? (
-          /*
-           * 一个 service 都没有时，「为什么没有曲线」这句话由状态表给：分支正在开通
-           * （执行器还没把服务集分配出来）和用户压根没配过，是两件事，前者不该被劝去
-           * 「先去构建配置」。
-           */
           <section className="rounded-xl border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-8 text-center text-sm text-muted-foreground">
             {copy.skeletonNote}
           </section>
@@ -1527,69 +1559,55 @@ export function OverviewPanel({
             filled={filledSamples}
             bucketSeconds={bucketSeconds}
             windowLabel={windowLabel}
-            /*
-             * metricsReady 只用来挑文案，**不参与是否出图的判断**——那正是「拿着历史
-             * 干等 docker stats」那个缺陷的成因，守卫钉着闸门里不许出现它。
-             *
-             * 这条注解回答的是「为什么现在没有曲线」，和顶上的判断句必须是同一套说法：
-             * 它曾经自己判 `!running`，于是首次部署时同屏一句「正在部署」、一句
-             * 「分支未运行」（Codex P2，核对属实）。`undefined` 表示交回骨架屏自己讲
-             * 「已攒 N 帧 · 约还需 X 秒」——有容器在跑时那才是真相。
-             */
             note={copy.skeletonNote}
           />
         )
       ) : (
-        <>
-          <ChartShell
-            title="CPU 占用"
-            unit={`% · 按服务堆叠 · ${windowLabel}`}
-            headline={`${cpuTotalNow.toFixed(1)}%`}
-            headlineSuffix={`${totalledServiceCount} 个在跑服务合计`}
-            aside={(
-              <button type="button" className="inline-flex items-center gap-1.5 text-[0.8125rem] text-muted-foreground hover:text-foreground" onClick={onRefreshMetrics}>
-                <RefreshCw className="h-3 w-3" />立即刷新
-              </button>
-            )}
-            legend={<SeriesLegend series={cpuSeries} />}
-          >
-            <PlotFrame
-              height={176}
-              yTicks={cpuScale.labels}
-              xLabels={rangeStart && rangeEnd
-                ? [clockLabel(rangeStart), clockLabel(rangeEnd)]
-                : [windowText.replace('近 ', '') + '前', '现在']}
+        /* CPU 图满宽，内存构成与吞吐并排在下（方向 A 的 8/4 分栏在抽屉宽度下右栏只剩 340px，吞吐图空一大截） */
+        <div className="flex flex-col gap-3" data-testid="metrics-grid">
+          <div className="min-w-0">
+            <ChartShell
+              title="CPU 占用"
+              unit={`% · 按服务堆叠 · ${windowLabel}`}
+              headline={`${cpuTotalNow.toFixed(1)}%`}
+              headlineSuffix={`${totalledServiceCount} 个在跑服务合计`}
+              aside={(
+                <button type="button" className="inline-flex items-center gap-1.5 text-[0.8125rem] text-muted-foreground hover:text-foreground" onClick={onRefreshMetrics}>
+                  <RefreshCw className="h-3 w-3" />立即刷新
+                </button>
+              )}
+              legend={<SeriesLegend series={cpuSeries} />}
             >
-              {/* h-full 不能少：StackedAreaChart 的 svg 是 absolute inset-0，这层包裹没有高度它就是 0 高
-                  （本地起子实例截图抓到：path 数据都在、svgRect 高度 0，整张图不可见）。 */}
-              <div className="relative h-full" data-testid="cpu-plot-host">
-                <StackedAreaChart height={176} max={cpuScale.max} series={cpuSeries} present={axisPresent} token={dataToken} />
-                {/*
-                  刚部署的分支：30 分钟窗口里只有右边一小段有数据，图上是一根孤零零的尖峰、
-                  左边一大片空白，读起来像「之前掉线了」。就绪不满 5 分钟时把话说在图里：
-                  正在积累，左侧空白是还没到的时间，不是掉线（2026-09-16 微调）。
-                */}
-                {lastReadyAt && anyRunning && now - new Date(lastReadyAt).getTime() < ACCUMULATING_MS ? (
-                  <div className="pointer-events-none absolute inset-0 flex items-center justify-center" data-testid="metrics-accumulating">
-                    <div className="flex items-center gap-2.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-[0.75rem] text-foreground-muted shadow-[0_1px_2px_rgb(0_0_0/.2)]">
-                      <span className="h-2 w-2 shrink-0 rounded-full bg-primary ring-[3px] ring-primary/20 motion-safe:animate-pulse" aria-hidden />
-                      正在积累：自就绪起已采 {formatUptime(lastReadyAt, now)}，满 5 分钟曲线才有参考价值；左侧空白是还没到的时间，不是掉线。
+              <PlotFrame
+                height={200}
+                yTicks={cpuScale.labels}
+                xLabels={rangeStart && rangeEnd
+                  ? [clockLabel(rangeStart), clockLabel(rangeEnd)]
+                  : [windowText.replace('近 ', '') + '前', '现在']}
+              >
+                {/* h-full 不能少：StackedAreaChart 的 svg 是 absolute inset-0，这层包裹没有高度它就是 0 高 */}
+                <div className="relative h-full" data-testid="cpu-plot-host">
+                  <StackedAreaChart height={200} max={cpuScale.max} series={cpuSeries} present={axisPresent} token={dataToken} />
+                  {lastReadyAt && anyRunning && now - new Date(lastReadyAt).getTime() < ACCUMULATING_MS ? (
+                    <div className="pointer-events-none absolute inset-0 flex items-center justify-center" data-testid="metrics-accumulating">
+                      <div className="flex items-center gap-2.5 rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-3 py-2 text-[0.75rem] text-foreground-muted shadow-[0_1px_2px_rgb(0_0_0/.2)]">
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-primary ring-[3px] ring-primary/20 motion-safe:animate-pulse" aria-hidden />
+                        正在积累：自就绪起已采 {formatUptime(lastReadyAt, now)}，满 5 分钟曲线才有参考价值；左侧空白是还没到的时间，不是掉线。
+                      </div>
                     </div>
-                  </div>
-                ) : null}
-              </div>
-            </PlotFrame>
-          </ChartShell>
-
-          {/* items-start：两张卡各按自身内容定高。拉伸对齐会在矮的那张里留出一大块空洞
-              （网络卡的图在顶、图例在底，中间空一截），空洞比高度不齐难看得多。 */}
-          <div className="grid items-start gap-4 lg:grid-cols-[1.35fr_1fr]">
+                  ) : null}
+                </div>
+              </PlotFrame>
+            </ChartShell>
+          </div>
+          {/* items-start：两张卡各按自身内容定高，拉伸对齐会在矮的那张里留一大块空洞 */}
+          <div className="grid items-start gap-3 lg:grid-cols-[1.35fr_1fr]">
             <ChartShell
               title="内存占用"
               unit="按服务构成 · 当前"
               headline={formatBytesShort(memTotalNow)}
               headlineSuffix={`${totalledServiceCount} 个在跑服务合计`}
-              footnote="不显示占比：没给容器配 mem_limit 时，Docker 报的限额是宿主机总量，除下来四舍五入全是 0.0%，读不出信息。要看水位先在项目设置里配 mem_limit。"
+              footnote="不显示占比：没给容器配 mem_limit 时，Docker 报的限额是宿主机总量，除下来四舍五入全是 0.0%。要看水位先在项目设置里配 mem_limit。"
             >
               <CompositionBar series={memSeries} />
             </ChartShell>
@@ -1599,29 +1617,32 @@ export function OverviewPanel({
               anyRunning={anyRunning}
             />
           </div>
-        </>
+        </div>
       )}
+
+      {/* 3.5 服务表 —— 谁在跑、谁在吃资源，一行一个 */}
+      <ServiceTable
+        services={services}
+        cpuSeries={cpuSeries}
+        memSeries={memSeries}
+        liveStats={liveStats}
+        anyRunning={anyRunning}
+        replicaSummary={replicaSummary}
+        infraSummary={infraSummary}
+      />
+
+      {/* 2. 入口 —— 单入口已在指标砖里可点；多入口才列全 */}
+      {entries.length > 1 ? (
+        <EntryCards
+          entries={entries}
+          reachable={entriesReachable}
+          statusLabel={copy.entryLabel}
+          onConfigure={onConfigureEntries}
+        />
+      ) : null}
 
       {/* 4. 部署历史 —— 柱子自己会说「构建在变慢」 */}
       <DeployHistoryChart items={deployments} onOpenDeployments={onOpenDeployments} />
-
-      {/* 5. 部署环境 —— 复制集 / 基础设施收成一条，不再各占一格 */}
-      <section className="flex flex-wrap items-center gap-x-7 gap-y-3 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-5 py-3.5">
-        <span className="flex flex-col gap-0.5">
-          <span className="text-[0.75rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">复制集</span>
-          <span className="text-[0.92rem] text-foreground-muted">{replicaSummary}</span>
-        </span>
-        <span className="h-7 w-px bg-[hsl(var(--hairline))]" aria-hidden />
-        <span className="flex flex-col gap-0.5">
-          <span className="text-[0.75rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">基础设施</span>
-          <span className="text-[0.92rem] text-foreground-muted">{infraSummary}</span>
-        </span>
-        <span className="h-7 w-px bg-[hsl(var(--hairline))]" aria-hidden />
-        <span className="flex flex-col gap-0.5">
-          <span className="text-[0.75rem] font-bold uppercase tracking-[0.09em] text-muted-foreground">服务</span>
-          <span className="text-[0.92rem] text-foreground-muted">{services.length} 个 · {okCount} 个在跑</span>
-        </span>
-      </section>
     </div>
   );
 }
