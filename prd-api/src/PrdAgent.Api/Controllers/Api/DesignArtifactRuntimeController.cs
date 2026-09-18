@@ -139,7 +139,9 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
             using var upstream = new HttpRequestMessage(
                 HttpMethod.Post,
-                responses ? $"{serveBaseUrl}/gw/v1/responses" : $"{serveBaseUrl}/v1/chat/completions")
+                // 两条都走 gw-native 面：这里送的 pin 是 MAP 冻结的快照（运行时自带的那份在
+                // ApplyToOpenAiRequest 里已经先剥掉了），而对外兼容面 /v1/* 一律拒绝请求自带 pin。
+                responses ? $"{serveBaseUrl}/gw/v1/responses" : $"{serveBaseUrl}/gw/v1/chat/completions")
             {
                 Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
             };

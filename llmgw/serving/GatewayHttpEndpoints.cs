@@ -849,105 +849,23 @@ public static class GatewayHttpEndpoints
 
         // OpenAI-compatible M2M 入口。用于 claude-sdk-sidecar 的 legacy/openai-compatible
         // 工具循环：sidecar 继续负责多轮 tool calls，模型请求统一穿过 llmgw-serve。
-        app.MapPost("/v1/chat/completions", async (
+        // 同一份 chat 实现挂两个面。
+        // /v1/chat/completions 是对外兼容面：客户端自带的 pin 一律拒（见 RejectClientSuppliedPinnedTarget）。
+        // /gw/v1/chat/completions 是内部 gw-native 面：MAP 的设计运行时代理会先剥掉运行时自带的
+        // pin，再盖上自己冻结的快照，所以这一面读到的是**服务端**的值，不是客户端的。
+        // 两面共用一份实现而不是抄第二份 handler——抄一份，下次只会改到其中一边。
+        app.MapPost("/v1/chat/completions", (
             HttpContext http,
             PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
-        {
-            var requestId = TrackGatewayRequestId(http);
-            var appCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.PageAgent.Generate);
-            var userId = ResolveHeader(http, "X-Gateway-User-Id");
-
-            // 已经通过 Key 鉴权的内部输出合同；缺省保留旧行为，不推断模型内部推理。
-            var includeThinking = true;
-            if (http.Request.Headers.TryGetValue("X-Gateway-Include-Thinking", out var thinkingHeader))
-            {
-                if (thinkingHeader.Count != 1 || thinkingHeader[0] is not ("true" or "false"))
-                {
-                    await WriteCompatErrorAsync(http, "思考输出选项无效，请检查请求设置",
-                        "invalid_request_error", "invalid_include_thinking", 400);
-                    return;
-                }
-                includeThinking = thinkingHeader[0] == "true";
-            }
-
-            var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
-            if (body == null)
-            {
-                http.Response.StatusCode = StatusCodes.Status400BadRequest;
-                http.Response.ContentType = "application/json";
-                await http.Response.WriteAsync(JsonSerializer.Serialize(new
-                {
-                    error = new { message = "请求体必须是合法 JSON object", type = "invalid_request_error", code = "invalid_json" }
-                }, SnakeJson));
-                return;
-            }
-
-            var requestedModel = ReadString(body, "model");
-            var runId = ResolveCompatRunId(http, body);
-            var modelPoolId = ResolveCompatModelPoolId(http, body);
-            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
-            if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
-            {
-                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
-                return;
-            }
-            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
-            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, null, null);
-            var stream = ReadBool(body, "stream");
-            body.Remove("model");
-            StripGatewayRoutingFields(body);
-            var droppedParameters = FindDroppedParameters(
-                body,
-                "messages", "max_tokens", "max_completion_tokens", "n", "temperature", "top_p", "reasoning_effort", "stream",
-                "tools", "tool_choice", "response_format", "metadata", "reasoning", "logprobs", "top_logprobs", "parallel_tool_calls",
-                "provider", "model_policy", "modelPolicy", "model_pool_id", "modelPoolId",
-                "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId");
-
-            var ingress = new GatewayIngressRequest
-            {
-                RequestId = requestId,
-                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
-                IngressProtocol = "openai-compatible",
-                AppCallerCode = appCallerCode,
-                AppCallerTitle = ResolveHeader(http, "X-OpenRouter-Title") ?? ResolveHeader(http, "X-Gateway-App-Title"),
-                RequestType = ModelTypes.Chat,
-                ModelPolicy = modelPolicy,
-                ModelPoolId = modelPoolId,
-                ParameterPolicy = ReadProviderRequireParameters(body) ? "strict-require" : "default-drop",
-                ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
-                PinnedPlatformId = null,
-                PinnedModelId = null,
-                RequestBody = body,
-                DroppedParameters = droppedParameters,
-                Context = new GatewayRequestContext
-                {
-                    RequestId = requestId,
-                    RunId = runId,
-                    UserId = userId,
-                    QuestionText = ExtractQuestionText(body),
-                    GatewayTransport = GatewayTransports.Http,
-                }
-            };
-
-            if (await TryRejectStrictDroppedParametersAsync(http, ingress))
-                return;
-
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
-            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
-            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream, includeThinking: includeThinking), CancellationToken.None);
-            if (!promptPolicy.Success)
-            {
-                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
-                return;
-            }
-            var gatewayRequest = promptPolicy.Request;
-            using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
-                ? StreamOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
-                : SendOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
-        });
+            HandleOpenAiChatCompletionsAsync(http, gateway, accessor, services, nativeSurface: false));
+        app.MapPost("/gw/v1/chat/completions", (
+            HttpContext http,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor,
+            IServiceProvider services) =>
+            HandleOpenAiChatCompletionsAsync(http, gateway, accessor, services, nativeSurface: true));
 
         // Claude-compatible 入口：接收 Anthropic Messages 形状，统一转成 GW IR 后进入同一个 router。
         app.MapPost("/v1/messages", async (
@@ -2357,6 +2275,7 @@ public static class GatewayHttpEndpoints
     private static bool ShouldInspectAuthorizationBody(string path)
         => path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/responses", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/send", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/raw", StringComparison.OrdinalIgnoreCase)
@@ -2623,6 +2542,122 @@ public static class GatewayHttpEndpoints
     /// 内部那条路（/gw/v1/*，IngressProtocol=gw-native）不受影响：它的 pin 由 MAP 侧
     /// 带着已验证的 appCaller 传进来，不是外部可写的字段。
     /// </summary>
+
+    /// <summary>
+    /// OpenAI chat 形状的统一实现，挂在两个面上（见两处 MapPost 注册）。
+    ///
+    /// <paramref name="nativeSurface"/> 是这两个面**唯一**的分叉点：
+    /// 兼容面（/v1/*）拒绝客户端自带的 pin，gw-native 面（/gw/v1/*）按内部调度语义读它。
+    /// 其余一切逐字相同——不复制第二份 handler，是因为复制出来的那份下次不会被一起改。
+    /// </summary>
+    private static async Task HandleOpenAiChatCompletionsAsync(
+        HttpContext http,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+        ILLMRequestContextAccessor accessor,
+        IServiceProvider services,
+        bool nativeSurface)
+    {
+            var requestId = TrackGatewayRequestId(http);
+            var appCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.PageAgent.Generate);
+            var userId = ResolveHeader(http, "X-Gateway-User-Id");
+
+            // 已经通过 Key 鉴权的内部输出合同；缺省保留旧行为，不推断模型内部推理。
+            var includeThinking = true;
+            if (http.Request.Headers.TryGetValue("X-Gateway-Include-Thinking", out var thinkingHeader))
+            {
+                if (thinkingHeader.Count != 1 || thinkingHeader[0] is not ("true" or "false"))
+                {
+                    await WriteCompatErrorAsync(http, "思考输出选项无效，请检查请求设置",
+                        "invalid_request_error", "invalid_include_thinking", 400);
+                    return;
+                }
+                includeThinking = thinkingHeader[0] == "true";
+            }
+
+            var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+            if (body == null)
+            {
+                http.Response.StatusCode = StatusCodes.Status400BadRequest;
+                http.Response.ContentType = "application/json";
+                await http.Response.WriteAsync(JsonSerializer.Serialize(new
+                {
+                    error = new { message = "请求体必须是合法 JSON object", type = "invalid_request_error", code = "invalid_json" }
+                }, SnakeJson));
+                return;
+            }
+
+            var requestedModel = ReadString(body, "model");
+            var runId = ResolveCompatRunId(http, body);
+            var modelPoolId = ResolveCompatModelPoolId(http, body);
+            // 两个面在这里分叉，也只在这里分叉。
+            string? surfacePinPlatform = null;
+            string? surfacePinModel = null;
+            if (nativeSurface)
+            {
+                // gw-native：调用方是 MAP 自己的设计运行时代理，pin 来自它冻结的快照。
+                (surfacePinPlatform, surfacePinModel) = ReadDeclaredPinnedTarget(http, body);
+            }
+            else if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
+            {
+                // 兼容面：外部请求不接受自带的 pin（越过白名单授权直取上游）。当场拒，不静默忽略。
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, surfacePinPlatform, surfacePinModel);
+            var stream = ReadBool(body, "stream");
+            body.Remove("model");
+            StripGatewayRoutingFields(body);
+            var droppedParameters = FindDroppedParameters(
+                body,
+                "messages", "max_tokens", "max_completion_tokens", "n", "temperature", "top_p", "reasoning_effort", "stream",
+                "tools", "tool_choice", "response_format", "metadata", "reasoning", "logprobs", "top_logprobs", "parallel_tool_calls",
+                "provider", "model_policy", "modelPolicy", "model_pool_id", "modelPoolId",
+                "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId");
+
+            var ingress = new GatewayIngressRequest
+            {
+                RequestId = requestId,
+                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? (nativeSurface ? "map" : "external"),
+                IngressProtocol = nativeSurface ? "gw-native" : "openai-compatible",
+                AppCallerCode = appCallerCode,
+                AppCallerTitle = ResolveHeader(http, "X-OpenRouter-Title") ?? ResolveHeader(http, "X-Gateway-App-Title"),
+                RequestType = ModelTypes.Chat,
+                ModelPolicy = modelPolicy,
+                ModelPoolId = modelPoolId,
+                ParameterPolicy = ReadProviderRequireParameters(body) ? "strict-require" : "default-drop",
+                ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
+                PinnedPlatformId = surfacePinPlatform,
+                PinnedModelId = surfacePinModel,
+                RequestBody = body,
+                DroppedParameters = droppedParameters,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId,
+                    RunId = runId,
+                    UserId = userId,
+                    QuestionText = ExtractQuestionText(body),
+                    GatewayTransport = GatewayTransports.Http,
+                }
+            };
+
+            if (await TryRejectStrictDroppedParametersAsync(http, ingress))
+                return;
+
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream, includeThinking: includeThinking), CancellationToken.None);
+            if (!promptPolicy.Success)
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
+                return;
+            }
+            var gatewayRequest = promptPolicy.Request;
+            using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
+                ? StreamOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
+                : SendOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
+    }
+
     /// <summary>
     /// 读出请求里声明的 pin 目标。**读出来不等于可以用**：兼容入口（/v1/*）读它是为了当场
     /// 拒绝（见 <see cref="RejectClientSuppliedPinnedTarget(HttpContext, JsonObject)"/>），

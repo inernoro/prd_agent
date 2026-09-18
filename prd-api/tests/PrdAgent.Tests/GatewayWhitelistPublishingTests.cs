@@ -400,6 +400,22 @@ public class GatewayWhitelistPublishingTests
         // 再按自己冻结的快照盖上去，所以这条读的是服务端的值，不是客户端的。
         var native = routes.Single(route => route.Path == "/gw/v1/responses").Body;
         Assert.Contains("ReadDeclaredPinnedTarget(http, nativeBody)", native);
+
+        // chat 那一份实现同时挂在两个面上（兼容 /v1/chat/completions 与内部 /gw/v1/chat/completions）。
+        // 共用实现是对的——抄第二份，下次只会改到其中一边——但它必须真的按面分叉：
+        // 读 pin 只能发生在 nativeSurface 那一支，拒绝只能发生在另一支。
+        // 把那个 if 拆掉（两面都读，或两面都拒），下面任一条就会红。
+        Assert.Contains("/gw/v1/chat/completions", endpoints);
+        Assert.Contains("nativeSurface: true", endpoints);
+        Assert.Contains("nativeSurface: false", endpoints);
+        Assert.Contains(
+            "if (nativeSurface)",
+            endpoints);
+        var chatPin = Regex.Match(
+            endpoints,
+            @"if \(nativeSurface\)\s*\{[^}]*ReadDeclaredPinnedTarget\(http, body\);\s*\}\s*else if \(RejectClientSuppliedPinnedTarget\(http, body\) is \{ \} pinRejection\)");
+        Assert.True(chatPin.Success,
+            "chat 的两面实现必须在同一个 if/else 上分叉：native 读 pin，兼容面拒 pin");
     }
 
     [Fact]
