@@ -121,7 +121,8 @@
 .cdsh-btn-primary:hover svg { transform: translateX(3px); }
 
 /* ---------- hero ---------- */
-.cdsh-hero { display: grid; grid-template-columns: minmax(0,1.02fr) minmax(0,0.98fr); gap: 3.5rem; align-items: center; padding: 3.375rem 0 5.25rem; }
+/* 首屏撑满视口（减去顶栏），内容居中；之前是叙事区撞名把右列撑成 100vh 才「看起来」满的 */
+.cdsh-hero { display: grid; grid-template-columns: minmax(0,1.02fr) minmax(0,0.98fr); gap: 3.5rem; align-items: center; padding: 3.375rem 0 5.25rem; min-height: calc(100vh - 4.5rem); }
 .cdsh-eyebrow { display: inline-flex; align-items: center; gap: 0.5625rem; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--cdsh-muted); padding: 0.4375rem 0.8125rem; border: 1px solid var(--cdsh-line); border-radius: 62.4375rem; background: var(--cdsh-panel); }
 .cdsh-eyebrow .cdsh-dot { width: 0.4375rem; height: 0.4375rem; border-radius: 50%; background: var(--cdsh-accent); box-shadow: 0 0 0 0 hsl(24 100% 60% / 0.5); animation: cdsh-breathe 2.4s ease-in-out infinite; }
 @keyframes cdsh-breathe { 0%,100% { box-shadow: 0 0 0 0 hsl(24 100% 60% / 0.5); } 50% { box-shadow: 0 0 0 0.375rem hsl(24 100% 60% / 0); } }
@@ -1807,8 +1808,10 @@
 /* ───────────────────────── Branchline 叙事区（2026-09-16）─────────────────────────
  * 一条分支线贯穿、镜头沿线推进。舞台 sticky 在视口里，五章从它上面滚过去（负外边距叠回一屏），
  * 文案的淡入淡出由场景组件按滚动进度直接写 style，这里只给静态默认（无 JS 时全部可读）。 */
-/* 叙事区从 hero 蜂窝层「下面」钻出来：负外边距把舞台顶到蜂窝渐隐区里，蜂窝层（z 1）盖在舞台（z 0）上淡出 */
-.cdsh-story { position: relative; z-index: 0; margin-top: -22vh; }
+/* 叙事区从 hero 蜂窝层「下面」钻出来：负外边距把舞台顶到蜂窝渐隐区里。
+ * 故意不给 z-index（不建层叠上下文）：舞台是 z auto 的 sticky，落在蜂窝层（z 1）之下让蜂窝在 3D 上淡出；
+ * 章节文字是 z 2，压在蜂窝之上——舞台在下、文字在上，两者不能同一层。 */
+.cdsh-story { position: relative; margin-top: -22vh; }
 .cdsh-story-stage { position: sticky; top: 0; height: 100vh; overflow: hidden; background: var(--cdsh-bg); }
 .cdsh-scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .cdsh-story-vignette { position: absolute; inset: 0; pointer-events: none;

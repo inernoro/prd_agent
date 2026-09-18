@@ -58,5 +58,9 @@ describe('首页 Branchline 叙事区', () => {
     expect(css).toMatch(/\.cdsh-story-stage \{[^}]*position: sticky;[^}]*height: 100vh;/);
     expect(css).toMatch(/\.cdsh-chapters \{[^}]*margin-top: -100vh;/);
     expect(css).toMatch(/\.cdsh-ch-pin \{[^}]*position: sticky;/);
+    // 舞台要落在 hero 蜂窝层之下、章节文字要压在其上：叙事区容器一旦有 z-index 就成了层叠上下文，两者被迫同层
+    expect(css, '.cdsh-story 不得声明 z-index').not.toMatch(/\.cdsh-story \{[^}]*z-index/);
+    expect(css).toMatch(/\.cdsh-chapters \{[^}]*z-index: 2;/);
+    expect(css, '蜂窝层要压在舞台之上').toMatch(/\.cdsh-bg\s*\{[^}]*z-index: 1;/);
   });
 });
