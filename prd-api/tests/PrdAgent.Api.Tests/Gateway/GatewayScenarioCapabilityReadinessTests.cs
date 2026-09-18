@@ -15,40 +15,53 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// </summary>
 public sealed class GatewayScenarioCapabilityReadinessTests
 {
+    /// <summary>这批用例默认都在同一个租户里；跨租户那条单独有用例。</summary>
+    private const string Tenant = "tenant-alpha";
+
     private const string Text2ImgCaller = "visual-agent.image.text2img::generation";
     private const string Img2ImgCaller = "visual-agent.image.img2img::generation";
     private const string ChatCaller = "prd-agent.chat::chat";
 
-    private static GatewayAppCallerRecord Caller(string code, string requestType, string status = "active")
-        => new() { AppCallerCode = code, RequestType = requestType, Status = status };
+    private static GatewayAppCallerRecord Caller(
+        string code,
+        string requestType,
+        string status = "active",
+        string tenant = Tenant)
+        => new() { AppCallerCode = code, RequestType = requestType, Status = status, TenantId = tenant };
 
+    /// <summary>
+    /// 默认 <paramref name="isDefaultForType"/> = true，因为不点名的请求只有两条路能落到一个模型上：
+    /// 被它认领，或者它是这个用途的默认。两样都没有的模型在运行时**一次都不会被选中**，
+    /// 拿它当「配置正常」的样本就是在描述一个跑不起来的环境。
+    /// 要构造「认领了这个调用方」的样本就传 <paramref name="claims"/>。
+    /// </summary>
     private static GatewayLogicalModel Logical(
         string id,
         string modelType,
         IEnumerable<string> capabilities,
         bool enabled = true,
-        IEnumerable<string>? allowedCallers = null)
+        IEnumerable<string>? allowedCallers = null,
+        string tenant = Tenant,
+        bool isDefaultForType = true,
+        IEnumerable<string>? claims = null,
+        int displayOrder = 100)
         => new()
         {
             Id = id,
             PublicId = id,
+            TenantId = tenant,
             ModelType = modelType,
             Enabled = enabled,
             Capabilities = capabilities.ToList(),
             AllowedAppCallerCodes = (allowedCallers ?? []).ToList(),
+            IsDefaultForType = isDefaultForType,
+            DefaultForAppCallerCodes = (claims ?? []).ToList(),
+            DisplayOrder = displayOrder,
         };
 
-    private static GatewayModelOffering Offering(
-        string logicalModelId,
-        bool enabled = true,
-        ModelHealthStatus health = ModelHealthStatus.Healthy)
-        => new()
-        {
-            Id = $"offering-{logicalModelId}-{health}",
-            LogicalModelId = logicalModelId,
-            Enabled = enabled,
-            HealthStatus = health,
-        };
+    /// <summary>「这些对外模型至少有一条真能用的线路」——视图算好的那个集合。</summary>
+    private static IReadOnlySet<string> Routable(params string[] logicalModelIds)
+        => new HashSet<string>(logicalModelIds, StringComparer.Ordinal);
 
     // ---------- E. 正式数据形态回放 ----------
 
@@ -63,7 +76,8 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation"), Caller(Img2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["image-gen"])],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
 
         snapshot.ScenarioCallers.ShouldBe(2);
         snapshot.RoutableCallers.ShouldBe(2);
@@ -80,7 +94,65 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["some-unregistered-capability"])],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
+
+        snapshot.RoutableCallers.ShouldBe(0);
+        snapshot.BrokenCallers.ShouldBe([Text2ImgCaller]);
+    }
+
+    /// <summary>
+    /// 认领是排他的：被认领的那一条不具备场景能力时，**不许**拿另一条无关模型顶上。
+    ///
+    /// 运行时先按认领挑出那一条，挑中之后成败就看它自己，不会回头去试用途默认。
+    /// 这个组件曾经写成「同用途里有没有一条又能路由又满足能力的」——于是
+    /// 「认领它的模型不具备该能力、而另一条恰好具备」时判绿，而那个调用方每一次请求都失败。
+    /// </summary>
+    [Fact]
+    public void 认领的那一条不具备能力时_不拿别的模型顶上()
+    {
+        var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
+            [Caller(Text2ImgCaller, "generation")],
+            [
+                // 认领了这个调用方，但能力对不上——运行时会选中它并失败。
+                Logical(
+                    "logical-claimed",
+                    "generation",
+                    ["some-unregistered-capability"],
+                    isDefaultForType: false,
+                    claims: [Text2ImgCaller],
+                    displayOrder: 10),
+                // 能力齐、也能路由，但它既没认领这个调用方、也轮不到——运行时一次都不会选中它。
+                Logical("logical-capable", "generation", ["image_generation"], displayOrder: 20),
+            ],
+            Routable("logical-claimed", "logical-capable"),
+            internalTenantId: Tenant);
+
+        snapshot.RoutableCallers.ShouldBe(0);
+        snapshot.BrokenCallers.ShouldBe([Text2ImgCaller]);
+    }
+
+    /// <summary>
+    /// 同一条链的另一半：认领的那一条线路全挂时，同样不许由用途默认顶上。
+    /// </summary>
+    [Fact]
+    public void 认领的那一条线路全挂时_不拿用途默认顶上()
+    {
+        var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
+            [Caller(Text2ImgCaller, "generation")],
+            [
+                Logical(
+                    "logical-claimed",
+                    "generation",
+                    ["image_generation"],
+                    isDefaultForType: false,
+                    claims: [Text2ImgCaller],
+                    displayOrder: 10),
+                Logical("logical-default", "generation", ["image_generation"], displayOrder: 20),
+            ],
+            // 认领的那一条没有可用线路，用途默认有。
+            Routable("logical-default"),
+            internalTenantId: Tenant);
 
         snapshot.RoutableCallers.ShouldBe(0);
         snapshot.BrokenCallers.ShouldBe([Text2ImgCaller]);
@@ -93,27 +165,34 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         var broken = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["nonsense"])],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
         var repaired = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["image_generation"])],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
 
         broken.RoutableCallers.ShouldBe(0);
         repaired.RoutableCallers.ShouldBe(1);
         repaired.BrokenCallers.ShouldBeEmpty();
     }
 
-    /// <summary>逻辑模型能力对，但没有任何可用 Offering，同样不算可路由。</summary>
-    [Theory]
-    [InlineData(false, ModelHealthStatus.Healthy)]
-    [InlineData(true, ModelHealthStatus.Unavailable)]
-    public void 能力匹配但无可用Offering_不算可路由(bool offeringEnabled, ModelHealthStatus health)
+    /// <summary>
+    /// 逻辑模型能力对，但没有一条线路真能用，同样不算可路由。
+    ///
+    /// 「哪些线路算可用」由 BuildTenantRoutingViewAsync 一处算（停用、熔断、指向已停用的
+    /// 物理模型或兑换所、过不了名录门，都不进这个集合），纯函数收到的已经是筛过的结果。
+    /// 这里刻意不再喂裸的线路集合——喂线路就等于把那个判据又交回给每个调用方各判一次。
+    /// </summary>
+    [Fact]
+    public void 能力匹配但没有可用线路_不算可路由()
     {
         var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["image_generation"])],
-            [Offering("logical-image", offeringEnabled, health)]);
+            Routable(),
+            internalTenantId: Tenant);
 
         snapshot.RoutableCallers.ShouldBe(0);
         snapshot.BrokenCallers.ShouldBe([Text2ImgCaller]);
@@ -126,7 +205,8 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["image_generation"], enabled: false)],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
 
         snapshot.RoutableCallers.ShouldBe(0);
     }
@@ -141,7 +221,8 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation"), Caller(Img2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["image_generation", "text2img"])],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
 
         snapshot.ScenarioCallers.ShouldBe(2);
         snapshot.RoutableCallers.ShouldBe(1);
@@ -155,7 +236,8 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(ChatCaller, "chat")],
             [Logical("logical-chat", "chat", ["chat"])],
-            [Offering("logical-chat")]);
+            Routable("logical-chat"),
+            internalTenantId: Tenant);
 
         snapshot.ScenarioCallers.ShouldBe(0);
         snapshot.BrokenCallers.ShouldBeEmpty();
@@ -172,7 +254,8 @@ public sealed class GatewayScenarioCapabilityReadinessTests
                 "generation",
                 ["image_generation"],
                 allowedCallers: ["someone.else.text2img::generation"])],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
 
         snapshot.RoutableCallers.ShouldBe(0);
     }
@@ -187,16 +270,64 @@ public sealed class GatewayScenarioCapabilityReadinessTests
         var legacyShape = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation")],
             [Logical("logical-image", "generation", ["image-gen"])],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
         var migratedShape = GatewayServingReadinessProbe.EvaluateScenarioCapability(
             [Caller(Text2ImgCaller, "generation")],
             [Logical(
                 "logical-image",
                 "generation",
                 GatewayCapabilityContract.Normalize("generation", ["image-gen"]).Persisted)],
-            [Offering("logical-image")]);
+            Routable("logical-image"),
+            internalTenantId: Tenant);
 
         legacyShape.RoutableCallers.ShouldBe(migratedShape.RoutableCallers);
         legacyShape.RoutableCallers.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// 别的租户的模型不许让这个租户的调用方显示成可路由。
+    ///
+    /// 运行时解析每一次查询都带 `TenantId == 当前租户`，所以租户 B 配了一个能力齐全的模型，
+    /// 租户 A 的请求一条都解析不到。就绪判据不带租户的话，一个「没有任何调用方能用」的
+    /// 多租户部署照样报绿——灯亮着，功能是死的，与 2026-08-13 那次同形。
+    /// </summary>
+    [Fact]
+    public void 别的租户的模型不算这个租户的可路由()
+    {
+        var snapshot = GatewayServingReadinessProbe.EvaluateScenarioCapability(
+            [Caller(Text2ImgCaller, "generation", tenant: "tenant-alpha")],
+            [Logical("logical-image", "generation", ["image_generation"], tenant: "tenant-beta")],
+            Routable("logical-image"),
+            internalTenantId: Tenant);
+
+        snapshot.ScenarioCallers.ShouldBe(1);
+        snapshot.RoutableCallers.ShouldBe(0);
+        snapshot.BrokenCallers.ShouldBe([Text2ImgCaller]);
+    }
+
+    /// <summary>
+    /// 调用方没写租户（存量记录）时落到宿主的内部租户，与运行时拿不到请求上下文时的兜底同源。
+    /// 模型侧**不做**同样的兜底：运行时是严格相等，一条 TenantId 为空的模型它一条都不选中，
+    /// 这里跟着严格，宽了就又回到「这里绿、那里红」。
+    /// </summary>
+    [Fact]
+    public void 调用方没写租户时落到内部租户()
+    {
+        var hosted = GatewayServingReadinessProbe.EvaluateScenarioCapability(
+            [Caller(Text2ImgCaller, "generation", tenant: "")],
+            [Logical("logical-image", "generation", ["image_generation"], tenant: "llmgw-internal")],
+            Routable("logical-image"),
+            internalTenantId: "llmgw-internal");
+        hosted.RoutableCallers.ShouldBe(1);
+
+        var emptyModelTenant = GatewayServingReadinessProbe.EvaluateScenarioCapability(
+            [Caller(Text2ImgCaller, "generation", tenant: "")],
+            [Logical("logical-image", "generation", ["image_generation"], tenant: "")],
+            Routable("logical-image"),
+            internalTenantId: "llmgw-internal");
+        emptyModelTenant.RoutableCallers.ShouldBe(
+            0,
+            "模型侧不许跟着兜底：运行时用的是严格相等，空租户模型一条都选不中");
     }
 }

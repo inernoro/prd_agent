@@ -150,12 +150,42 @@ public static class ModelCatalog
             AcceptsImageInput: true, Aliases: ["doubao-vision-pro"]),
     };
 
-    private static readonly Dictionary<string, CatalogModel> ByKey = BuildIndex();
+    private static readonly Dictionary<string, CatalogModel> ByKey = BuildIndex(null);
 
-    private static Dictionary<string, CatalogModel> BuildIndex()
+    /// <summary>
+    /// 控制台里补登的那批模型（`llmgw_model_catalog_entries`）的内存快照。
+    ///
+    /// **为什么需要它**：上面那张 All 是写死在代码里的，只有二十来条。实测线上两个上游共
+    /// 573 个模型，落在名录里的只有 27 个——其余 95% 走关键词猜测，其中一百多个连一条用途
+    /// 都猜不出来，导进来就是「哑」模型：模型池选型时不参与任何用途匹配。
+    /// 于是「上游出了个新模型」在此之前等于「改这个文件、重编、发一次版」。
+    ///
+    /// 合并规则只有一条：**同一个标识，补登的赢；补登里没有的，回落到代码内置那张 All。**
+    /// 所以是纯增量的——库里一行都没有时，行为与 2026-09-16 之前逐字节相同，删光就回退。
+    ///
+    /// 与生图契约那份的区别：那份跨进程（console-api 写、prd-api 读），只能轮询，最长 60 秒生效；
+    /// 这份只有 console-api 自己读，所以由端点每次请求现查现传，**改完立刻生效**。
+    /// </summary>
+    public sealed record CatalogOverrides(IReadOnlyDictionary<string, CatalogModel> ByKey)
+    {
+        public static readonly CatalogOverrides Empty =
+            new(new Dictionary<string, CatalogModel>(StringComparer.OrdinalIgnoreCase));
+
+        /// <summary>把补登的条目建成索引。与内置那张表用同一套别名展开规则，不另写一份。</summary>
+        public static CatalogOverrides From(IEnumerable<CatalogModel>? models)
+        {
+            if (models is null) return Empty;
+            var list = models.ToList();
+            return list.Count == 0 ? Empty : new CatalogOverrides(BuildIndex(list));
+        }
+
+        public int Count => ByKey.Values.Distinct().Count();
+    }
+
+    private static Dictionary<string, CatalogModel> BuildIndex(IReadOnlyList<CatalogModel>? source)
     {
         var index = new Dictionary<string, CatalogModel>(StringComparer.OrdinalIgnoreCase);
-        foreach (var model in All)
+        foreach (var model in source ?? All)
         {
             index[Normalize(model.CanonicalId)] = model;
             foreach (var alias in model.Aliases ?? Array.Empty<string>())
@@ -203,11 +233,25 @@ public static class ModelCatalog
     /// `o1-preview` 上，而 `private-provider/gpt-4o` 必须查不到——它跟 `gpt-4o`
     /// 不是同一个模型，认成同一个就等于让一个没登记过的别名继承了别人的能力登记。
     /// </summary>
-    public static CatalogModel? Find(string? modelId)
+    public static CatalogModel? Find(string? modelId) => Find(modelId, null);
+
+    /// <summary>
+    /// 查名录，控制台补登的那批优先。
+    ///
+    /// 补登与内置走**同一套查找规则**（完整标识 → 只剥自己登记过的厂商段），不另写一份：
+    /// 判据分裂成两份之后，「补登的模型为什么不被认」会变成一个查很久的玄学问题（形状 3）。
+    /// </summary>
+    public static CatalogModel? Find(string? modelId, CatalogOverrides? overrides)
     {
         var key = Normalize(modelId);
         if (key.Length == 0) return null;
-        if (ByKey.TryGetValue(key, out var direct)) return direct;
+        return Lookup(key, overrides?.ByKey) ?? Lookup(key, ByKey);
+    }
+
+    private static CatalogModel? Lookup(string key, IReadOnlyDictionary<string, CatalogModel>? index)
+    {
+        if (index is null || index.Count == 0) return null;
+        if (index.TryGetValue(key, out var direct)) return direct;
 
         // 只剥一层，而且剥掉的那一段必须是**命中的那条登记自己的**厂商段。
         // 用一张全局「见过的厂商段」白名单是不够的：`openai` 与 `claude-3-opus` 各自
@@ -216,7 +260,7 @@ public static class ModelCatalog
         // 别人的用途与能力，导入确认与数据面名录门一起放过它。
         var slash = key.IndexOf('/');
         if (slash <= 0 || slash >= key.Length - 1) return null;
-        if (!ByKey.TryGetValue(key[(slash + 1)..], out var stripped)) return null;
+        if (!index.TryGetValue(key[(slash + 1)..], out var stripped)) return null;
         return RegistersVendorSegment(stripped, key[..slash]) ? stripped : null;
     }
 
@@ -244,8 +288,13 @@ public static class ModelCatalog
     /// </summary>
     public static (IReadOnlyList<string> Capabilities, string Source) ResolveCapabilities(
         string? modelId, IReadOnlyList<string>? upstreamDeclared)
+        => ResolveCapabilities(modelId, upstreamDeclared, null);
+
+    /// <inheritdoc cref="ResolveCapabilities(string?, IReadOnlyList{string}?)"/>
+    public static (IReadOnlyList<string> Capabilities, string Source) ResolveCapabilities(
+        string? modelId, IReadOnlyList<string>? upstreamDeclared, CatalogOverrides? overrides)
     {
-        var entry = Find(modelId);
+        var entry = Find(modelId, overrides);
         if (entry is not null) return (entry.Capabilities, SourceCatalog);
 
         var declared = (upstreamDeclared ?? Array.Empty<string>())

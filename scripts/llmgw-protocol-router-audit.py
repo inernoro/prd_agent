@@ -218,15 +218,17 @@ def build_report() -> dict[str, Any]:
             "IngressProtocol = body.Context?.IngressProtocol ?? \"gw-native\"",
             "ResolveCompatModelPolicy",
             "ResolveCompatModelPoolId",
-            "ResolveCompatPinnedTarget",
+            # 兼容入口不再接受客户端自带的 pin：它绕过白名单授权按内部 id 直取上游，
+            # 而池退场之后，池成员检查这道调用方边界跟着没了（2026-09-16）。
+            # 判据从「取值并透传」改成「当场拒绝」，函数名里也写清了是拒绝。
+            "RejectClientSuppliedPinnedTarget",
+            "pinned_target_not_allowed",
             "X-Gateway-Model-Policy",
             "X-Gateway-Model-Pool-Id",
             "X-Gateway-Pinned-Platform-Id",
             "X-Gateway-Pinned-Model-Id",
             "NormalizeModelPolicy",
             "ModelPoolId = modelPoolId",
-            "PinnedPlatformId = pinnedPlatformId",
-            "PinnedModelId = pinnedModelId",
         ],
     )
     checks.append(_check(
@@ -278,14 +280,13 @@ def build_report() -> dict[str, Any]:
     ok, detail = _contains_all(
         resolver + "\n" + prod_stage + "\n" + compose + "\n" + cds_compose,
         [
-            "使用 GW appCaller 模型池",
+            # 2026-09-15 断流后删掉了模型池那一整套分支，所以这里不再要求池相关的符号存在。
+            # 仍然要守的是同一件事：GW 配置是权威，MAP 只是兼容退路，且退路能被开关关掉。
             "DisableMapConfigFallbackForRegisteredAppCallers",
             "DisableMapConfigFallbackForActiveAppCallers",
-            "GW appCaller 禁止 MAP fallback",
-            "TryGetGatewayRegistryGroupsAsync",
-            "FindGatewayOwnedOrMapModelPoolAsync",
-            "FindGatewayOwnedDefaultModelPoolsAsync",
-            "FindGatewayOwnedExchangeAsync",
+            "TryGetGatewayAppCallerStatusAsync",
+            "TryResolveLogicalModelAsync",
+            "TryResolveDefaultLogicalModelAsync",
             "allowMapFallback: !gatewayConfigRequired",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_REGISTERED_APP_CALLERS",
             "LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS",
@@ -323,8 +324,6 @@ def build_report() -> dict[str, Any]:
             "app.MapGet(\"/gw/app-callers\"",
             "app.MapPut(\"/gw/app-callers/{id}\"",
             "app.MapPost(\"/gw/app-callers/bulk-governance\"",
-            "app.MapPost(\"/gw/pools\"",
-            "app.MapPost(\"/gw/pools/bulk-claim\"",
             "app.MapGet(\"/gw/audits\"",
             "llmgw_operation_audits",
             "ReadyForHttpFull",
@@ -336,9 +335,11 @@ def build_report() -> dict[str, Any]:
             "missingRuntimeCoverageAppCallers",
             "coveredAppCallerCodes",
             "gateway_pool_member_readiness",
-            "HasUsablePoolMember",
-            "IsResolvablePoolMember",
-            "/gw/pools activeBoundPools=",
+            # 这条 gate 随模型池退场改成非 blocking，指路不再指向已删的 /pools 页面；
+            # 它原本守的「线路可用性」已并入 active_appcaller_pool_binding，
+            # 那条现在用 FindUnnamedCatcherAsync（与运行时两层判据逐层对齐）。
+            "FindUnnamedCatcherAsync",
+            "线路可用性已并入 active_appcaller_pool_binding",
             "active_appcaller_map_fallback_exit",
             "activeAppCallerMapFallbackExitReady",
             "disableMapFallbackForActiveAppCallers",

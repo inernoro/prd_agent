@@ -375,6 +375,89 @@ public static class GatewayHttpEndpoints
 
         // OpenAI Responses 兼容入口。外部仍按 OpenAI 心智传 input / instructions，
         // 内部统一转成 chat-style GatewayRequest，router、日志、appCaller registry 不分叉。
+        // OpenAI 标准的模型清单。对方把 base_url 指过来后，client.models.list() 直接可用。
+        //
+        // 这一条以前是缺的：四条 POST 兼容入口都有，唯独没有「列一下有哪些模型」，
+        // 于是对方能调却列不出可调什么，只能我们口头把模型名告诉他。
+        app.MapGet("/v1/models", async (
+            HttpContext http,
+            [Microsoft.AspNetCore.Mvc.FromServices] LlmGatewayDataContext data,
+            CancellationToken ct) =>
+        {
+            if (CatalogCallerDenied(http, out var catalogCaller))
+            {
+                return Results.Json(new
+                {
+                    error = new
+                    {
+                        code = "APP_CALLER_NOT_AUTHORIZED",
+                        message = "X-Gateway-App-Caller 指定的调用方不在这把 key 的授权范围内，"
+                            + "列出它的模型等于给出一份调不动的清单。去掉这个请求头按 key 自己的身份列，"
+                            + "或换一把授权了这个调用方的 key。",
+                    },
+                }, jsonOpts, statusCode: 403);
+            }
+            var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
+                data,
+                app.Configuration,
+                GetVerifiedTenantId(http),
+                catalogCaller,
+                ct);
+            return Results.Content(
+                GatewayModelCatalogEndpoint.Serialize(catalog, jsonOpts),
+                "application/json; charset=utf-8");
+        });
+
+        // 单个模型。OpenAI SDK 的 client.models.retrieve(id) 走这里；
+        // 名单外一律 404，这就是白名单那道门在对外接口上的样子。
+        //
+        // 路由参数是 catch-all（`{**modelId}`）而不是单段：对外模型的 PublicId 明确允许
+        // 斜杠（创建端点的字符集里有 `/`，`/v1/models` 也会把 `vendor/model` 这样的标识
+        // 列出去）。单段路由接不住它——字面斜杠会被当成另一个路径段直接 404，
+        // 于是清单里列得出来的模型有一部分取不回来，而对方没有任何办法看出是为什么。
+        app.MapGet("/v1/models/{**modelId}", async (
+            HttpContext http,
+            string modelId,
+            [Microsoft.AspNetCore.Mvc.FromServices] LlmGatewayDataContext data,
+            CancellationToken ct) =>
+        {
+            // 单模型详情读的是同一份清单，所以同一道门也要过：不判的话，越权点名从清单
+            // 那条路被拒之后换这条路照样查得到（形状 3：同一个判据两处只有一处有）。
+            if (CatalogCallerDenied(http, out var detailCaller))
+            {
+                return Results.Json(new
+                {
+                    error = new
+                    {
+                        code = "APP_CALLER_NOT_AUTHORIZED",
+                        message = "X-Gateway-App-Caller 指定的调用方不在这把 key 的授权范围内。"
+                            + "去掉这个请求头按 key 自己的身份查，或换一把授权了这个调用方的 key。",
+                    },
+                }, jsonOpts, statusCode: 403);
+            }
+            var catalog = await GatewayModelCatalogEndpoint.BuildAsync(
+                data,
+                app.Configuration,
+                GetVerifiedTenantId(http),
+                detailCaller,
+                ct);
+            // 两种写法都要认：字面斜杠由 catch-all 接住，而百分号编码的斜杠不会被
+            // Kestrel 当作分段，原样落到这里——两条路都是合法客户端会发出来的。
+            var requestedId = modelId.Contains('%') ? Uri.UnescapeDataString(modelId) : modelId;
+            var match = catalog["data"]?.AsArray()
+                .FirstOrDefault(x => string.Equals(x?["id"]?.GetValue<string>(), requestedId, StringComparison.OrdinalIgnoreCase));
+            if (match is null)
+            {
+                return Results.Content(
+                    GatewayModelCatalogEndpoint.Serialize(GatewayModelCatalogEndpoint.BuildNotFound(requestedId), jsonOpts),
+                    "application/json; charset=utf-8",
+                    statusCode: 404);
+            }
+            return Results.Content(
+                GatewayModelCatalogEndpoint.Serialize(match.DeepClone(), jsonOpts),
+                "application/json; charset=utf-8");
+        });
+
         app.MapPost("/v1/responses", async (
             HttpContext http,
             PrdAgent.Core.LlmGateway.ILlmGateway gateway,
@@ -392,8 +475,14 @@ public static class GatewayHttpEndpoints
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
-            var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
-            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
+            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
+            if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
+            {
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
+            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, null, null);
             var stream = ReadBool(body, "stream");
             StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
@@ -420,8 +509,8 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = modelPoolId,
                 ParameterPolicy = ReadProviderRequireParameters(body) ? "strict-require" : "default-drop",
                 ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
-                PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId,
+                PinnedPlatformId = null,
+                PinnedModelId = null,
                 RequestBody = openAiBody,
                 DroppedParameters = droppedParameters,
                 Context = new GatewayRequestContext
@@ -470,8 +559,14 @@ public static class GatewayHttpEndpoints
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
-            var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
-            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
+            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
+            if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
+            {
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
+            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, null, null);
             body.Remove("model");
             StripGatewayRoutingFields(body);
 
@@ -487,8 +582,8 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = modelPoolId,
                 ParameterPolicy = ReadProviderRequireParameters(body) ? "strict-require" : "default-drop",
                 ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
-                PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId,
+                PinnedPlatformId = null,
+                PinnedModelId = null,
                 RequestBody = body,
                 DroppedParameters = FindDroppedParameters(
                     body,
@@ -544,8 +639,14 @@ public static class GatewayHttpEndpoints
             var multipartFields = parsed.MultipartFields ?? new Dictionary<string, object>(StringComparer.Ordinal);
             var runId = ResolveCompatRunId(http, multipartFields);
             var modelPoolId = ResolveCompatModelPoolId(http, multipartFields);
-            var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, multipartFields);
-            var modelPolicy = ResolveCompatModelPolicy(http, multipartFields, requestedModel, pinnedPlatformId, pinnedModelId);
+            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
+            if (RejectClientSuppliedPinnedTarget(http, multipartFields) is { } pinRejection)
+            {
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
+            var modelPolicy = ResolveCompatModelPolicy(http, multipartFields, requestedModel, null, null);
             var ingress = new GatewayIngressRequest
             {
                 RequestId = requestId,
@@ -558,8 +659,8 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = modelPoolId,
                 ParameterPolicy = "default-drop",
                 ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
-                PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId,
+                PinnedPlatformId = null,
+                PinnedModelId = null,
                 RequestBody = new JsonObject
                 {
                     ["prompt"] = parsed.Prompt,
@@ -618,8 +719,14 @@ public static class GatewayHttpEndpoints
             var requestedModel = ReadString(body, "model");
             var runId = ResolveCompatRunId(http, body);
             var modelPoolId = ResolveCompatModelPoolId(http, body);
-            var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
-            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
+            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
+            if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
+            {
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
+            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, null, null);
             var stream = ReadBool(body, "stream");
             body.Remove("model");
             StripGatewayRoutingFields(body);
@@ -642,8 +749,8 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = modelPoolId,
                 ParameterPolicy = ReadProviderRequireParameters(body) ? "strict-require" : "default-drop",
                 ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
-                PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId,
+                PinnedPlatformId = null,
+                PinnedModelId = null,
                 RequestBody = body,
                 DroppedParameters = droppedParameters,
                 Context = new GatewayRequestContext
@@ -692,8 +799,14 @@ public static class GatewayHttpEndpoints
             var runId = ResolveCompatRunId(http, body);
             var requestedModel = ReadString(body, "model");
             var modelPoolId = ResolveCompatModelPoolId(http, body);
-            var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
-            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
+            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
+            if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
+            {
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
+            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, null, null);
             var stream = ReadBool(body, "stream");
             StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
@@ -720,8 +833,8 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = modelPoolId,
                 ParameterPolicy = "default-drop",
                 ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
-                PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId,
+                PinnedPlatformId = null,
+                PinnedModelId = null,
                 RequestBody = openAiBody,
                 DroppedParameters = droppedParameters,
                 Context = new GatewayRequestContext
@@ -811,8 +924,14 @@ public static class GatewayHttpEndpoints
                 if (!string.IsNullOrWhiteSpace(bodyModel)) requestedModel = bodyModel.Trim();
             }
             var modelPoolId = ResolveCompatModelPoolId(http, body);
-            var (pinnedPlatformId, pinnedModelId) = ResolveCompatPinnedTarget(http, body);
-            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, pinnedPlatformId, pinnedModelId);
+            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
+            if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
+            {
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
+            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, null, null);
             StripGatewayRoutingFields(body);
             var droppedParameters = FindDroppedParameters(
                 body,
@@ -839,8 +958,8 @@ public static class GatewayHttpEndpoints
                 ModelPoolId = modelPoolId,
                 ParameterPolicy = "default-drop",
                 ExpectedModel = requestedModel,
-                PinnedPlatformId = pinnedPlatformId,
-                PinnedModelId = pinnedModelId,
+                PinnedPlatformId = null,
+                PinnedModelId = null,
                 RequestBody = openAiBody,
                 DroppedParameters = droppedParameters,
                 Context = new GatewayRequestContext
@@ -1854,6 +1973,51 @@ public static class GatewayHttpEndpoints
             ? inputs
             : throw new UnauthorizedAccessException("verified gateway authorization inputs are unavailable");
 
+    /// <summary>
+    /// 清单端点要用的调用方：请求头显式点名了一个**这把 key 不能调**的调用方时，直接拒。
+    ///
+    /// 鉴权那一层对只读探针刻意不匹配调用方（预检本来就该放行），于是不判的话，一把
+    /// route:read 的 key 点名任意调用方都能拿到它的清单，而随后那次 POST 会被拒——
+    /// 清单说能调、运行时说不能，正是这个端点反复在修的那件事（第 72 轮 review）。
+    ///
+    /// 只拒**显式点名且明确越权**的那一种：请求头没带调用方时照旧走 key 自己的身份，
+    /// 不在这里改那条路的行为（那一档另有台账：多调用方 key 的无头清单只按一个调用方出，
+    /// 见 doc/debt.platform.llm-gateway.md 的 2026-09-17-models-list-uses-one-caller）。
+    /// </summary>
+    private static bool CatalogCallerDenied(HttpContext context, out string? appCallerCode)
+    {
+        appCallerCode = null;
+        var header = ResolveHeader(context, "X-Gateway-App-Caller");
+        var authorized = context.Items["llmgw.key.authorization"] is GatewayKeyAuthorization authorization
+            ? authorization.AuthorizedAppCallerCodes
+            : null;
+        if (RequestedCallerOutsideKeyScope(header, authorized)) return true;
+        var resolved = ResolveVerifiedAppCaller(context, string.Empty);
+        appCallerCode = resolved.Length > 0 ? resolved : null;
+        return false;
+    }
+
+    /// <summary>
+    /// 判断本体抽成纯函数，好让守卫直接断言行为：写成端点里的一句内联条件，守卫只能去扫
+    /// 「有没有提到那个函数名」，而把条件改成恒假它照样绿（第 67 轮踩过一次，形状 4）。
+    ///
+    /// 只在**显式点名且这把 key 明确授权过一个不含它的集合**时判越权：
+    ///   · 没带请求头 → 不判（走 key 自己的身份）；
+    ///   · 授权集合为空 = 不限调用方 → 不判。
+    /// </summary>
+    public static bool RequestedCallerOutsideKeyScope(
+        string? requestedCaller,
+        IReadOnlyList<string>? authorizedCallers)
+    {
+        var requested = (requestedCaller ?? string.Empty).Trim();
+        if (requested.Length == 0) return false;
+        if (authorizedCallers is not { Count: > 0 }) return false;
+        // 覆盖与否走鉴权那一份判据，不在这里逐字比：通配 key（AppCallerCodes = ["*"]）
+        // 会被逐字比判成越权，而同一把 key 的调用路径是放行的——清单说不能调、运行时说能调，
+        // 方向反过来的同一种谎（第 73 轮 review）。
+        return !GatewayScopedKeyAuthorizer.ListCoversValue(authorizedCallers, requested);
+    }
+
     private static string ResolveVerifiedAppCaller(HttpContext context, string fallback)
     {
         var header = ResolveHeader(context, "X-Gateway-App-Caller");
@@ -1886,6 +2050,13 @@ public static class GatewayHttpEndpoints
         // 固定形状匹配，不能让 path 子串把 cancel/status 错分到其它 scope。
         if (IsGatewayRequestControlPath(path, "cancel")) return "request:cancel";
         if (IsGatewayRequestControlPath(path, "status")) return "request:read";
+        // 取一个模型的详情也是**读**，而且它的 id 是用户可控的、允许带斜杠
+        // （名录里确实有 `vendor/model` 这种公开名）。所以必须排在下面那些按子串判的规则**之前**：
+        // 排在后面的话，一个叫 `vendor/raw-model` 或 `vendor/images/foo` 的合法模型，
+        // 取详情时会被子串判成 raw:invoke——一把只有 route:read 的发现型 key 列得出它、
+        // 却取不到它的详情。这与上面 requestId 那条是同一个道理：用户输入不许参与子串匹配。
+        if (path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith("/v1/models/", StringComparison.OrdinalIgnoreCase)) return "route:read";
         if (path.Contains("/raw", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return "raw:invoke";
         if (path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
@@ -1894,7 +2065,8 @@ public static class GatewayHttpEndpoints
             || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/pools", StringComparison.OrdinalIgnoreCase)
-            || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase)) return "route:read";
+            || path.Equals("/gw/v1/image-models", StringComparison.OrdinalIgnoreCase)
+            ) return "route:read";
         return "invoke";
     }
 
@@ -2083,7 +2255,10 @@ public static class GatewayHttpEndpoints
         => path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/v1/responses", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/v1/images/generations", StringComparison.OrdinalIgnoreCase)
-           || path.Equals("/v1/images/edits", StringComparison.OrdinalIgnoreCase);
+           || path.Equals("/v1/images/edits", StringComparison.OrdinalIgnoreCase)
+           // 列清单同样要凭 key：白名单本身就是「谁能用哪些模型」，匿名可读等于把授权面白送。
+           || path.Equals("/v1/models", StringComparison.OrdinalIgnoreCase)
+           || path.StartsWith("/v1/models/", StringComparison.OrdinalIgnoreCase);
 
     private static async Task<JsonObject?> ReadJsonBodyAsync(HttpRequest request, CancellationToken ct)
     {
@@ -2260,7 +2435,26 @@ public static class GatewayHttpEndpoints
             ReadFieldString(fields, "runId"));
     }
 
-    private static (string? PinnedPlatformId, string? PinnedModelId) ResolveCompatPinnedTarget(
+    /// <summary>
+    /// 兼容入口一律不接受客户端自带的「钉住某个上游」字段。
+    ///
+    /// 这两个字段是**内部调度**语义：它绕过对外模型目录，直接按平台 id + 模型 id 取上游。
+    /// 池退场之前，池成员检查恰好是它的调用方边界——pin 指到的成员必须在这个 appCaller
+    /// 获准的池里。池删掉之后那道边界跟着没了，而 TryResolvePinnedModelAsync 只验
+    /// 「平台与模型在本租户启用」：于是一把绑定某个 appCaller 的服务密钥，只要知道
+    /// 内部 id，就能调本租户任何启用的物理模型——越过了它自己的授权名单。
+    ///
+    /// 外部的正确接口是点名一个对外模型的 PublicId，那条路有完整的白名单授权
+    /// （AllowedAppCallerCodes + 场景能力）。可调的清单就是 GET /v1/models 返回的那些。
+    ///
+    /// 返回非 null = 请求带了这些字段，调用方必须当场拒绝。
+    /// **不静默忽略**：忽略会让对方以为自己钉住了某个上游，实际走的是另一条路——
+    /// 和 appCaller 页那个池控件一模一样的病（一次成功的调用是个静默的空操作）。
+    ///
+    /// 内部那条路（/gw/v1/*，IngressProtocol=gw-native）不受影响：它的 pin 由 MAP 侧
+    /// 带着已验证的 appCaller 传进来，不是外部可写的字段。
+    /// </summary>
+    private static string? RejectClientSuppliedPinnedTarget(
         HttpContext http,
         JsonObject body)
     {
@@ -2285,14 +2479,14 @@ public static class GatewayHttpEndpoints
                 ReadString(provider, "pinnedModelId"));
         }
 
-        return (pinnedPlatformId, pinnedModelId);
+        return DescribeRejectedPin(pinnedPlatformId, pinnedModelId);
     }
 
-    private static (string? PinnedPlatformId, string? PinnedModelId) ResolveCompatPinnedTarget(
+    /// <inheritdoc cref="RejectClientSuppliedPinnedTarget(HttpContext, JsonObject)"/>
+    private static string? RejectClientSuppliedPinnedTarget(
         HttpContext http,
         Dictionary<string, object> fields)
-    {
-        return (
+        => DescribeRejectedPin(
             FirstNonEmpty(
                 ResolveHeader(http, "X-Gateway-Pinned-Platform-Id"),
                 ReadFieldString(fields, "pinned_platform_id"),
@@ -2301,7 +2495,13 @@ public static class GatewayHttpEndpoints
                 ResolveHeader(http, "X-Gateway-Pinned-Model-Id"),
                 ReadFieldString(fields, "pinned_model_id"),
                 ReadFieldString(fields, "pinnedModelId")));
-    }
+
+    private static string? DescribeRejectedPin(string? pinnedPlatformId, string? pinnedModelId)
+        => string.IsNullOrWhiteSpace(pinnedPlatformId) && string.IsNullOrWhiteSpace(pinnedModelId)
+            ? null
+            : "pinned_platform_id / pinned_model_id 是内部调度字段，外部请求不接受："
+              + "它们绕过白名单授权直接按内部 id 取上游。请在 model 里点名一个对外模型标识，"
+              + "可调的清单见 GET /v1/models。";
 
     private static string? FirstNonEmpty(params string?[] values)
         => values.Select(v => v?.Trim()).FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));

@@ -86,4 +86,32 @@ public sealed class GatewayCapabilityContractMirrorGuardTests
         console.Unknown.ShouldBe(runtime.Unknown);
         console.Changed.ShouldBe(runtime.Changed);
     }
+
+    /// <summary>
+    /// 「这是模型还是动作」两侧必须同答。
+    ///
+    /// 控制台这一份是给池搬迁用的：混着动作能力与普通成员的池不许搬（搬过去动作能力会独占
+    /// 整个模型的服务对象）。判据要是与运行时漂开，控制台放行的池在运行时就是一个所有普通
+    /// 调用方都被拒的模型（第 65 轮 review）。
+    /// </summary>
+    [Theory]
+    [InlineData(null, new[] { "image_layering" })]
+    [InlineData(null, new[] { "image-layering" })]
+    [InlineData(null, new[] { "  IMAGE-LAYERING  " })]
+    [InlineData(null, new[] { "image_generation" })]
+    [InlineData(null, new[] { "image_generation", "image_layering" })]
+    [InlineData(null, new string[0])]
+    [InlineData("image-layering", new string[0])]
+    [InlineData("IMAGE-LAYERING", new string[0])]
+    [InlineData("image-layering", new[] { "image_generation" })]
+    [InlineData("default-generation", new[] { "image_generation" })]
+    [InlineData("", new string[0])]
+    public void IsOperationOnly_IsIdenticalOnBothSides(string? publicId, string[] capabilities)
+    {
+        LogicalModelCapabilityPolicy.IsOperationOnly(publicId, capabilities)
+            .ShouldBe(GatewayCapabilityContract.IsOperationOnly(publicId, capabilities));
+
+        LogicalModelCapabilityPolicy.ImageLayeringPublicId
+            .ShouldBe(GatewayCapabilityContract.ImageLayeringPublicId);
+    }
 }

@@ -1655,6 +1655,154 @@ ensureTightenedUniqueIndex("book_digests",
 // end collection: book_digests
 
 
+// ── llmgw 网关库 ──
+//
+// 网关的库通常与应用库分开（llmgw 有自己的连接串与库名），所以这一段只在**当前库确实是
+// 网关库**时才跑。不加这个判断的话，对着应用库跑一次脚本会凭空建出一堆空的 llmgw_* 集合，
+// 而真正的网关库反而还是没有索引。
+//
+// 判据有两个信号，满足其一即认：
+//   · 库里已经有 llmgw_* 集合——对着跑了一段时间的网关库跑，最常见的那种；
+//   · 操作者用环境变量明确点名。**第一次建网关库时库还是空的**，前一个信号必然不成立，
+//     只靠它的话照文档跑一遍会打印跳过、一条约束都建不出来（第 65 轮 review）。
+//     库是不是网关库只有操作者知道，脚本猜不出来，所以由他说：
+//       PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js
+//     下面这几条 createIndex 会顺带把缺的集合建出来，空库也能一次到位。
+//
+// 这五条以前由进程启动时自动创建，2026-09-17 起改成启动只查不建（no-auto-index），
+// 于是它们必须在这份可执行清单里有一份，否则「按文档跑一遍」跑不出这几条约束，
+// 而并发保存就会写出两个默认、两个认领、两条补登、两份契约，
+// 且代码里那些撞键翻 409 的恢复路径永远不会被走到。
+const gatewayCollectionInfos = db.getCollectionInfos({ name: { $regex: "^llmgw_" } })
+const gatewayDbDeclared = typeof process !== "undefined" && process.env
+  ? ["1", "true", "yes"].indexOf(String(process.env.PRD_GATEWAY_DB || "").trim().toLowerCase()) >= 0
+  : false
+if (gatewayCollectionInfos.length === 0 && !gatewayDbDeclared) {
+  print("[skip] 当前库里没有任何 llmgw_* 集合，判定不是网关库，跳过网关索引。\n" +
+    "        网关库要单独跑一次：mongosh <uri>/<网关库名> scripts/mongodb-indexes.js\n" +
+    "        网关库是空的（第一次建）时集合还不存在，这时用环境变量点名：\n" +
+    "        PRD_GATEWAY_DB=1 mongosh <uri>/<网关库名> scripts/mongodb-indexes.js")
+} else {
+  // collection: llmgw_logical_models
+  // 同一个租户、同一个用途下最多一个默认模型。
+  ensureTightenedUniqueIndex("llmgw_logical_models",
+    { "TenantId": 1, "ModelType": 1 },
+    {
+      name: "uniq_llmgw_logical_default_per_type",
+      unique: true,
+      partialFilterExpression: { "IsDefaultForType": true }
+    }
+  )
+  // 同一个租户、同一个用途下，一个调用方最多被一个模型认领。
+  // 认领存在数组里，走多键唯一索引；部分过滤器判「数组里至少有一个字符串元素」——
+  // 空数组在多键索引里记成 undefined，不排除的话所有「一个都没认领」的模型会互相撞车，
+  // 索引根本建不起来。
+  ensureTightenedUniqueIndex("llmgw_logical_models",
+    { "TenantId": 1, "ModelType": 1, "DefaultForAppCallerCodes": 1 },
+    {
+      name: "uniq_llmgw_logical_claim_per_type",
+      unique: true,
+      partialFilterExpression: { "DefaultForAppCallerCodes": { $type: "string" } }
+    }
+  )
+  // end collection: llmgw_logical_models
+
+  // collection: llmgw_model_catalog_entries
+  // 规范标识与等价写法共用一个键空间，同样走多键唯一索引 + 同样的部分过滤器。
+  //
+  // 集合名必须与控制台写入的那一个逐字相同。上一版写成 llmgw_catalog_entries（少了 model_），
+  // 而 CRUD 写的是 llmgw_model_catalog_entries：照文档跑一遍，真正那张表一条约束都没有，
+  // 并发补登可以写出两条抢同一个标识的记录（选哪一条看运气），而代码里那些撞键翻 409 的
+  // 恢复路径永远走不到；顺带还凭空建出一个空集合（第 74 轮 review）。
+  ensureTightenedUniqueIndex("llmgw_model_catalog_entries",
+    { "TenantId": 1, "Keys": 1 },
+    {
+      name: "uniq_llmgw_catalog_entry_key",
+      unique: true,
+      partialFilterExpression: { "Keys": { $type: "string" } }
+    }
+  )
+  // end collection: llmgw_model_catalog_entries
+
+  // collection: llmgw_imagegen_model_configs
+  // 同一个租户下一个匹配模式最多一条契约。
+  ensureTightenedUniqueIndex("llmgw_imagegen_model_configs",
+    { "TenantId": 1, "ModelIdPattern": 1 },
+    { name: "uniq_llmgw_imagegen_tenant_pattern", unique: true }
+  )
+  // end collection: llmgw_imagegen_model_configs
+
+  // collection: llmgw_model_offerings
+  // 线路身份里必须带上「打给上游的是哪一个模型」：一个兑换所底下挂着多个别名时，
+  // 同一个对外模型可能同时指向其中好几个，那是合法拓扑。
+  ensureTightenedUniqueIndex("llmgw_model_offerings",
+    {
+      "TenantId": 1,
+      "LogicalModelId": 1,
+      "TargetKind": 1,
+      "TargetId": 1,
+      "UpstreamModelId": 1,
+      "SupersededByOfferingId": 1
+    },
+    { name: "uniq_llmgw_offering_tenant_logical_target_v3", unique: true }
+  )
+  // 旧版身份索引比新版**更严**（少一个字段），留着它等于新索引白建：同一个兑换所的第二条
+  // 别名照样撞 E11000。所以在新索引确认建好之后再丢旧的——顺序不能反，反了会有一段时间
+  // 线路身份完全没有唯一约束。
+  //
+  // 「确认建好」的判据**不能只看名字在不在**。上面那次 ensureTightenedUniqueIndex 可能没成：
+  // 同名但定义不同、prepareUnique 转换失败、存量还有重复组——这几种它都只往
+  // tightenedUniqueIndexMigrationFailures 里记一笔就返回，索引名照样在（那是失败前就存在的
+  // 那一条）。只认名字的话，这里会把货真价实的 v2 与更早那条丢掉，脚本最后再抛错退出，
+  // 而库里只剩一条定义不对或根本不唯一的 v3 ——线路身份从此没有有效约束，重复的在跑线路
+  // 能直接写进去（第 73 轮 review；形状 8：拿一份不成立的证据当证明）。
+  //
+  // 所以重新读一遍索引，逐项核对：键要逐字相同、unique 必须为 true、而且这一趟没有为
+  // 这个集合记下任何失败。三条都成立才谈得上丢旧的。
+  const offerings = db.getCollection("llmgw_model_offerings")
+  const offeringIndexes = db.getCollectionInfos({ name: "llmgw_model_offerings" }).length > 0
+    ? offerings.getIndexes()
+    : []
+  const offeringIndexNames = offeringIndexes.map(index => index.name)
+  const offeringIdentityKeys = {
+    "TenantId": 1,
+    "LogicalModelId": 1,
+    "TargetKind": 1,
+    "TargetId": 1,
+    "UpstreamModelId": 1,
+    "SupersededByOfferingId": 1
+  }
+  const v3Index = offeringIndexes.find(index => index.name === "uniq_llmgw_offering_tenant_logical_target_v3")
+  const offeringMigrationFailed = tightenedUniqueIndexMigrationFailures
+    .some(message => String(message).indexOf("llmgw_model_offerings.") === 0)
+  const v3Verified = !!v3Index
+    && v3Index.unique === true
+    && JSON.stringify(v3Index.key) === JSON.stringify(offeringIdentityKeys)
+    && !offeringMigrationFailed
+  if (!v3Verified) {
+    print("[skip] v3 线路身份索引没有确认就绪（不存在 / 定义不符 / 不是唯一索引 / 本轮有迁移失败），" +
+      "旧索引原样留着——丢了它们而 v3 又不生效的话，线路身份会完全没有唯一约束。")
+  }
+  if (v3Verified) {
+    for (const legacyName of [
+      "uniq_llmgw_offering_tenant_logical_target_v2",
+      "uniq_llmgw_offering_tenant_logical_target"
+    ]) {
+      if (!offeringIndexNames.includes(legacyName)) continue
+      try {
+        offerings.dropIndex(legacyName)
+        print(`[ok] 已丢弃更严的旧线路身份索引 ${legacyName}（v3 已就位）`)
+      } catch (error) {
+        tightenedUniqueIndexMigrationFailures.push(
+          `llmgw_model_offerings.${legacyName}: drop failed: ${error.message || error}`
+        )
+      }
+    }
+  }
+  // end collection: llmgw_model_offerings
+}
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

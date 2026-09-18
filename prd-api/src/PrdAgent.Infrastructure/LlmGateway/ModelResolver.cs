@@ -63,8 +63,7 @@ public class ModelResolver : IModelResolver
             : GatewayTenantDefaults.InternalTenantId;
         // 只认 "observe" 这一个降档值；拼错、留空、写别的都落回 enforce——
         // 一道安全门不该因为配置写错就悄悄敞开。
-        _catalogGateEnforces = !string.Equals(
-            config["LlmGateway:ModelCatalogGate"]?.Trim(), "observe", StringComparison.OrdinalIgnoreCase);
+        _catalogGateEnforces = GatewayCatalogGate.ConfiguredToEnforce(config);
         _catalogMigrationRecheckInterval =
             int.TryParse(config["LlmGateway:ModelCatalogGateRecheckSeconds"], out var recheckSeconds) && recheckSeconds >= 0
                 ? TimeSpan.FromSeconds(recheckSeconds)
@@ -247,13 +246,7 @@ public class ModelResolver : IModelResolver
         var complete = false;
         try
         {
-            var migrations = _gatewayDb.Database.GetCollection<BsonDocument>(GatewayCatalogMigrations.CollectionName);
-            var done = await migrations.CountDocumentsAsync(
-                Builders<BsonDocument>.Filter.And(
-                    Builders<BsonDocument>.Filter.In("_id", GatewayCatalogMigrations.RequiredIds),
-                    Builders<BsonDocument>.Filter.Exists(GatewayCatalogMigrations.CompletedAtField)),
-                cancellationToken: ct);
-            complete = done >= GatewayCatalogMigrations.RequiredIds.Length;
+            complete = await GatewayCatalogGate.MigrationsCompleteAsync(_gatewayDb.Database, ct);
         }
         catch (Exception ex)
         {
@@ -316,11 +309,12 @@ public class ModelResolver : IModelResolver
         // 决定这道门的结论：同名文档超过 20 条时，那一页里可能根本没有当前这个 Provider 的记录，
         // 于是过滤后为空、判成「管不着」——没盖放行标记的模型反而被放过去（形状 1：
         // 判据取的是任意一页，不是它该管的那条）。
+        // 同名谓词与内存挑选同一份（GatewayCatalogGate.SameNameFilter）：原始名字那一支忽略
+        // 大小写，否则存量文档（没有归一化字段）里的 `Foo` 配上覆盖值 `foo` 查不到，
+        // 判成「管不着」放行——该拦的漏了。
         var nameFilter = fb.And(
             fb.Eq("TenantId", CurrentTenantId),
-            fb.Or(
-                fb.Eq("ModelNameNormalized", trimmed.ToLowerInvariant()),
-                fb.Eq("ModelName", trimmed)));
+            GatewayCatalogGate.SameNameFilter(trimmed));
         var scopedFilter = string.IsNullOrWhiteSpace(platformId)
             ? nameFilter
             : fb.And(nameFilter, fb.Eq("PlatformId", platformId));
@@ -395,9 +389,9 @@ public class ModelResolver : IModelResolver
         var docs = await _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_models")
             .Find(fb.And(
                 fb.Eq("TenantId", CurrentTenantId),
-                fb.Or(
-                    fb.In("ModelNameNormalized", names.Select(name => name.ToLowerInvariant())),
-                    fb.In("ModelName", names))))
+                // 逐个名字用同一份谓词 Or 起来：批量这一支此前用 In 逐字比原始名字，
+                // 与单条查询不同口径，存量文档换个大小写就只在其中一条路上查得到。
+                GatewayCatalogGate.SameNameBatchFilter(names)))
             .Limit(CatalogBatchDocumentCap + 1)
             .ToListAsync(ct);
         return docs.Count > CatalogBatchDocumentCap ? null : docs;
@@ -405,26 +399,19 @@ public class ModelResolver : IModelResolver
 
     /// <summary>
     /// 从预取结果里挑出「这一条该管的那些」：两个名字字段都认、给了 Provider 就只留那个 Provider 的。
-    /// 与单条查询的谓词逐字对应，改一边就要改另一边——这也是它紧挨着放的原因。
+    /// 与单条查询的谓词逐字对应。
+    ///
+    /// 谓词本体在 <see cref="GatewayCatalogGate.SelectSameNameDocs"/>：对外清单与就绪探针
+    /// 也要挑同名文档才谈得上判门，各写一份的时候它们拼了个大小写敏感的键，
+    /// 与这里的归一化匹配得出过相反结论（形状 3 + 形状 6）。这里只负责那个上限。
     /// </summary>
     private static List<BsonDocument> SelectCatalogDocs(
         IReadOnlyList<BsonDocument> batch,
         string modelName,
         string? platformId)
-    {
-        var normalized = modelName.ToLowerInvariant();
-        return batch.Where(doc =>
-        {
-            var matchesName = Text(doc, "ModelNameNormalized") == normalized || Text(doc, "ModelName") == modelName;
-            if (!matchesName) return false;
-            return string.IsNullOrWhiteSpace(platformId) || Text(doc, "PlatformId") == platformId;
-        }).Take(CatalogPairDocumentCap).ToList();
-
-        // 字段不是字符串（历史脏数据）时当成空串，而不是抛——判据在请求路径上，
-        // 一条坏文档不该让整次调用炸掉。
-        static string Text(BsonDocument doc, string field)
-            => doc.TryGetValue(field, out var value) && value.IsString ? value.AsString : string.Empty;
-    }
+        => GatewayCatalogGate.SelectSameNameDocs(batch, modelName, platformId)
+            .Take(CatalogPairDocumentCap)
+            .ToList();
 
     /// <summary>
     /// 这条模型是兑换所里的吗？是的话它该不该放行？
@@ -454,13 +441,11 @@ public class ModelResolver : IModelResolver
 
         // 兑换所里没有这条别名 = 它不是这个兑换所声明过的东西，一律拦下。
         // （解析器正常走下来不该出现这种情况；出现了说明有人在别处拼了个 PlatformId。）
-        var declared = exchange.GetEffectiveModels().FirstOrDefault(item =>
-            string.Equals(item.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
-        if (declared is null) return CatalogVerdict.Blocked;
+        //
+        // 判据本体在 GatewayCatalogGate：对外模型目录端点要拿同一套口径判「这条线路能不能列出来」，
+        // 两边各写一份的话，清单会把一条运行时必拒的线路报成可调（形状 3）。
+        if (!GatewayCatalogGate.ExchangeDeclares(exchange, modelId)) return CatalogVerdict.Blocked;
 
-        // 旧形态没有地方盖逐条标记（别名是两个字符串字段合成出来的，不是文档数组），
-        // 而它们同样是管理员在逐条放行落地**之前**声明的——与名录门上线前已入库的模型
-        // 同一处境，按同一条口径放行。控制台下一次写这个兑换所时会把它落成带标记的 Models。
         if (exchange.Models is null || exchange.Models.Count == 0)
         {
             _logger.LogDebug(
@@ -472,14 +457,27 @@ public class ModelResolver : IModelResolver
 
         // 名录内的在方法开头就放行了，走到这里的一定是名录外的：所以只看放行标记。
         // （不在这里再判一次名录——那一档永远为假，读的人会以为它在起作用。）
-        return declared.AllowedOutsideCatalog == true
+        return GatewayCatalogGate.ExchangeAliasAllowedOutsideCatalog(exchange, modelId)
             ? CatalogVerdict.Allowed
             : CatalogVerdict.Blocked;
     }
 
     private static bool IsAllowedOutsideCatalog(BsonDocument doc)
-        => doc.TryGetValue("AllowedOutsideCatalog", out var value) && value.IsBoolean && value.AsBoolean;
+        => GatewayCatalogGate.IsAllowedOutsideCatalog(doc);
 
+    /// <summary>
+    /// 解析主流程：一个请求最终落到哪条线路。
+    ///
+    /// 2026-09-15 断流完成后删掉了模型池那一整套分支（原本 767 行）。池唯一比对外模型多出来
+    /// 的能力是「按调用方兜底」，那一层已经落在 <see cref="GatewayLogicalModel.DefaultForAppCallerCodes"/>
+    /// 上；删之前先把最后一个还绑池的调用方切了过来，并在部署上验过落点一模一样。
+    ///
+    /// 现在只有四档，顺序就是判据：
+    ///   1. 调用方放不放行 —— 不放行当场结构化失败，不往下猜
+    ///   2. 走对外模型目录 —— 点名走点名的，不点名走两层默认（先谁认领了它，再这个用途的默认）
+    ///   3. 钉死了具体上游模型 —— 精确语义，不经目录，绝不静默换人
+    ///   4. legacy 直连兜底 —— 仅限还没切到配置权威的租户，是退路不是主路
+    /// </summary>
     private async Task<ModelResolutionResult> ResolveCoreAsync(
         string appCallerCode,
         string modelType,
@@ -488,744 +486,96 @@ public class ModelResolver : IModelResolver
         string? pinnedModelId = null,
         CancellationToken ct = default)
     {
-        var plan = new ModelResolutionPlan
-        {
-            AppCallerCode = appCallerCode,
-            ModelType = modelType,
-            ExpectedModel = expectedModel
-        };
-
-        List<ModelGroup>? candidateGroups = null;
-        var hasDedicatedBinding = false;
-        string resolutionType = "NotFound";
-        // 候选是不是「GW 默认池兜底」给的。给了就必须当边界用：
-        // 下面 expectedModel 的档 2（MAP 全量池）与档 3（LLMModels 直连）会把范围撑开到
-        // 该类型的任意池、乃至任意同名模型，那等于把「只回落到默认池」这句话作废
-        // （Codex 第五十轮 P1：ImageMasterController 会把用户选的 ModelId 当 expectedModel 传进来）。
-        var usedGatewayDefaultFallback = false;
-
         var gatewayConfigRequired = !string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal)
                                     || DisableMapConfigFallbackForRegisteredAppCallers();
-        var gatewayRegistry = await TryGetGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
-        if (gatewayRegistry.TrafficRejected)
+
+        // 第一档：调用方放不放行。
+        var caller = await TryGetGatewayAppCallerStatusAsync(appCallerCode, modelType, ct);
+        if (caller.TrafficRejected)
         {
             _logger.LogWarning(
                 "[ModelResolver] GW appCaller 状态拒绝真实流量: AppCallerCode={Code}, ModelType={Type}, Status={Status}, Reason={Reason}",
-                appCallerCode,
-                modelType,
-                gatewayRegistry.Status ?? "missing",
-                gatewayRegistry.BlockReason ?? "appcaller-traffic-rejected");
+                appCallerCode, modelType, caller.Status ?? "missing", caller.BlockReason ?? "appcaller-traffic-rejected");
             return ModelResolutionResult.NotFound(expectedModel,
-                $"GW appCaller 状态不允许真实流量: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}",
+                $"GW appCaller 状态不允许真实流量: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={caller.Status ?? "missing"}",
                 GatewayRouteFailure.AppCallerPoolUnbound,
                 "appcaller-registry-status",
-                appCallerCode,
-                modelPoolId: gatewayRegistry.ModelPoolId);
+                appCallerCode);
         }
 
-        // MAP appCaller 只属于兼容 fallback。配置权威开启后不触碰 MAP 配置集合，
-        // 因此 MAP 配置域故障不会阻断 GW-owned 路由。
-        LLMAppCaller? appCaller = null;
-        if (!gatewayConfigRequired)
-        {
-            appCaller = await _db.LLMAppCallers
-                .Find(a => a.AppCode == appCallerCode)
-                .FirstOrDefaultAsync(ct);
-        }
+        /*
+          还带着模型池绑定的调用方：照常按对外模型解析，但**绝不静默**。
 
-        // 旧 AppCaller 在迁移完成前保留逻辑模型目录兼容路径。新 AppCaller 一旦写入
-        // AllowedModelPoolIds 就启用严格模型池契约，逻辑模型不得越过该边界。
-        if ((!gatewayRegistry.StrictPoolContract || UsesVisualLogicalModelCatalog(appCallerCode))
-            && string.IsNullOrWhiteSpace(pinnedPlatformId)
-            && string.IsNullOrWhiteSpace(pinnedModelId))
-        {
-            var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct,
-                gatewayRegistry.StrictPoolContract ? gatewayRegistry.Groups : null);
-            if (logical is not null)
-                return logical;
-        }
+          池路由已经退场，`AllowedModelPoolIds` / `DefaultModelPoolId` / `ModelPoolId`
+          这几个字段没有任何运行时消费方了。可控制台的 appCaller 页还留着那几个控件，
+          页面写着「下次请求生效」——运维保存成功、以为自己把流量指到了某个池，实际
+          这次解析走的是别的路。一次成功的保存变成了一个静默的空操作（Codex 第 53 轮 P1）。
 
-        if (gatewayRegistry.Groups.Count == 0 && gatewayConfigRequired)
+          这里不改成 fail closed：池退场不该反过来把还在跑的调用方打挂（线上仍有两个
+          带着这种残留字段）。要消灭的是「静默」而不是「放行」——所以照常解析，同时
+          说清是谁的什么配置不再生效、于是这次按什么解析、下一步该做什么
+          （external-cause-first：第一句给外因，技术细节靠后）。
+        */
+        var stalePoolBinding = caller?.StalePoolBinding;
+        if (!string.IsNullOrWhiteSpace(stalePoolBinding))
         {
             _logger.LogWarning(
-                "[ModelResolver] GW appCaller 禁止 MAP fallback，但未命中有效 GW 模型池: AppCallerCode={Code}, ModelType={Type}, Status={Status}, ModelPoolId={PoolId}, Reason={Reason}",
-                appCallerCode, modelType, gatewayRegistry.Status ?? "missing",
-                gatewayRegistry.ModelPoolId ?? "(未绑定)", gatewayRegistry.BlockReason ?? "missing-gateway-pool");
-            // 配置面「读不到」与配置「配错了」必须分开：前者是基础设施故障（重试可能恢复），
-            // 后者是配置问题（重试无用）。混成一个码会让配置库抖动被误判成全站模型池报废。
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"GW appCaller 未绑定有效 GW 模型池，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}, Status={gatewayRegistry.Status ?? "missing"}",
-                gatewayRegistry.ConfigPlaneUnavailable
-                    ? GatewayRouteFailure.GatewayConfigUnavailable
-                    : GatewayRouteFailure.AppCallerPoolUnbound,
-                gatewayRegistry.ConfigPlaneUnavailable ? "gateway-config-plane" : "appcaller-registry-binding",
-                appCallerCode,
-                modelPoolId: gatewayRegistry.ModelPoolId);
+                "调用方 {AppCallerCode} 的配置里还绑着模型池 {PoolId}，而模型池路由已经退场："
+                + "这次解析按「对外模型」走，那条绑定不起作用，无需处理；"
+                + "要让它固定走某个模型，去模型页把那个模型「指定调用方」认领它。"
+                + "技术细节：ModelType={ModelType} · 残留字段来自 llmgw_app_callers",
+                appCallerCode, stalePoolBinding, modelType);
         }
 
-        // pinned 是精确模型语义，但不能越过 appCaller 的专用池治理边界。
-        // model_policy=pool 会把用户选中的池写入 ExpectedModel；保留这份池身份，
-        // 因为下面为了精确 Provider 匹配会把 ExpectedModel 改成 PinnedModelId。
-        var requestedPoolIdentity = expectedModel?.Trim();
-        if (gatewayRegistry.Groups.Count > 0
-            && (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId)))
+        // 第二档：对外模型目录。钉死了具体上游模型时不走目录——那是精确语义，见第三档。
+        if (string.IsNullOrWhiteSpace(pinnedPlatformId) && string.IsNullOrWhiteSpace(pinnedModelId))
         {
-            var requestedPool = gatewayRegistry.StrictPoolContract && !string.IsNullOrWhiteSpace(requestedPoolIdentity)
-                ? gatewayRegistry.Groups.FirstOrDefault(group =>
-                    string.Equals(group.Id, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(group.Code, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(group.Name, requestedPoolIdentity, StringComparison.OrdinalIgnoreCase))
-                : null;
+            var logical = await TryResolveLogicalModelAsync(appCallerCode, modelType, expectedModel, ct);
+            if (logical is not null)
+                return logical;
 
-            // GatewayIngressRequest 在 model_policy=pool 时把池身份写入 ExpectedModel；
-            // 精确 Provider 路由则通常把 ExpectedModel 设为同一个 PinnedModelId。
-            // 严格契约下，带 pin 的未知池身份不能降级成“任意允许池”，否则会绕过用户的池选择。
-            var looksLikeExplicitPoolSelection = !string.IsNullOrWhiteSpace(requestedPoolIdentity)
-                && !string.Equals(requestedPoolIdentity, pinnedModelId?.Trim(), StringComparison.OrdinalIgnoreCase);
-            if (gatewayRegistry.StrictPoolContract
-                && looksLikeExplicitPoolSelection
-                && requestedPool is null)
+            if (string.IsNullOrWhiteSpace(expectedModel))
             {
-                return ModelResolutionResult.NotFound(
-                    requestedPoolIdentity,
-                    $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPoolIdentity}",
-                    GatewayRouteFailure.RouteConfigIncompatible,
-                    "pinned-pool-contract",
-                    appCallerCode,
-                    modelPoolId: requestedPoolIdentity);
+                var byDefault = await TryResolveDefaultLogicalModelAsync(appCallerCode, modelType, ct);
+                if (byDefault is not null)
+                    return byDefault;
             }
-
-            var pinnedScope = requestedPool is null ? gatewayRegistry.Groups : [requestedPool];
-            var pinnedTarget = !string.IsNullOrWhiteSpace(pinnedPlatformId)
-                               && !string.IsNullOrWhiteSpace(pinnedModelId)
-                ? pinnedScope
-                    .SelectMany(group => group.Models.Select(model => (Group: group, Model: model)))
-                    .FirstOrDefault(candidate =>
-                        string.Equals(candidate.Model.PlatformId, pinnedPlatformId.Trim(), StringComparison.Ordinal)
-                        && string.Equals(candidate.Model.ModelId, pinnedModelId.Trim(), StringComparison.Ordinal))
-                : default;
-            if (pinnedTarget.Model is null)
-            {
-                return ModelResolutionResult.NotFound(
-                    expectedModel ?? pinnedModelId,
-                    $"PinnedModel 不在 appCaller 专用模型池内: AppCallerCode={appCallerCode}, ModelType={modelType}",
-                    GatewayRouteFailure.RouteConfigIncompatible,
-                    "pinned-pool-member",
-                    appCallerCode,
-                    modelPoolId: requestedPoolIdentity);
-            }
-            // compute-then-send 的第二次解析必须真正锁定第一次选中的物理模型。
-            // 过去这里只把 expectedModel 改成模型名，随后仍进入模型池健康调度；当 MAP 与
-            // serving 的健康快照不一致时，serving 会把已锁定的 gpt-audio 重新选成
-            // gpt-4o-transcribe，却继续沿用前者构造的 chat-audio 请求，最终把转写模型发到
-            // /v1/chat/completions。治理边界已由上面的池成员匹配完成，此处应直接
-            // 解析该平台与模型，找不到就失败关闭，绝不能静默换成池内另一个成员。
-            return await ResolvePinnedGatewayPoolMemberAsync(
-                appCallerCode,
-                pinnedTarget.Group,
-                pinnedTarget.Model,
-                pinnedModelId,
-                ct);
         }
+
+        // 第三档：钉死了具体上游模型。
         if (!string.IsNullOrWhiteSpace(pinnedPlatformId) || !string.IsNullOrWhiteSpace(pinnedModelId))
         {
             var pinned = await TryResolvePinnedModelAsync(
-                appCallerCode,
-                expectedModel,
-                pinnedPlatformId,
-                pinnedModelId,
-                ct,
+                appCallerCode, expectedModel, pinnedPlatformId, pinnedModelId, ct,
                 allowMapFallback: !gatewayConfigRequired);
-            if (pinned != null)
-            {
+            if (pinned is not null)
                 return pinned;
-            }
         }
 
-        if (gatewayRegistry.Groups.Count > 0)
+        // 第四档：legacy 直连兜底。配置权威开启的租户没有这一档——它们的配置全在 GW 库里，
+        // 读不到就该如实失败，而不是悄悄退回一份可能早就过时的 MAP 配置。
+        if (!gatewayConfigRequired)
         {
-            candidateGroups = gatewayRegistry.Groups;
-            if (gatewayRegistry.StrictPoolContract)
-            {
-                var requestedPool = string.IsNullOrWhiteSpace(expectedModel)
-                    ? gatewayRegistry.DefaultModelPoolId
-                    : expectedModel.Trim();
-                var strictCandidates = SelectStrictPoolCandidates(
-                    candidateGroups,
-                    requestedPool,
-                    gatewayRegistry.AllowCrossPoolFallback);
-                if (strictCandidates.Count == 0)
-                {
-                    return ModelResolutionResult.NotFound(expectedModel,
-                        $"所选模型池不在 appCaller 允许范围内: AppCallerCode={appCallerCode}, ModelType={modelType}, ModelPool={requestedPool ?? "(未指定)"}",
-                        GatewayRouteFailure.RouteConfigIncompatible,
-                        "strict-pool-contract",
-                        appCallerCode,
-                        modelPoolId: requestedPool);
-                }
-
-                candidateGroups = strictCandidates;
-                expectedModel = null;
-            }
-            resolutionType = "GatewayRegistryPool";
-            hasDedicatedBinding = true;
-            _logger.LogInformation(
-                "[ModelResolver] 使用 GW appCaller 模型池: AppCallerCode={Code}, Status={Status}, PoolCount={Count}, PoolNames={Names}",
-                appCallerCode, gatewayRegistry.Status ?? "unknown",
-                candidateGroups.Count,
-                string.Join(", ", candidateGroups.Select(g => g.Name)));
+            var legacyConfig = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
+            if (legacyConfig is not null)
+                return legacyConfig;
         }
 
-        if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller == null)
-        {
-            candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
-                gatewayRegistry, appCallerCode, modelType, hasDedicatedBinding, gatewayConfigRequired, ct);
-            if (candidateGroups.Count > 0)
-            {
-                resolutionType = "GatewayRegistryPool";
-                usedGatewayDefaultFallback = true;
-            }
-            else
-            {
-                _logger.LogWarning(
-                    "[ModelResolver] AppCallerCode 未在 MAP/GW 中配置: {Code}，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
-                    appCallerCode);
-                return ModelResolutionResult.NotFound(expectedModel,
-                    $"AppCallerCode '{appCallerCode}' 未在 MAP/GW 中配置，请在 GW 控制台激活或在 MAP 管理后台初始化应用",
-                    GatewayRouteFailure.AppCallerPoolUnbound,
-                    "appcaller-registry-missing",
-                    appCallerCode);
-            }
-        }
-
-        if ((candidateGroups == null || candidateGroups.Count == 0) && appCaller != null)
-        {
-            var requirement = appCaller.ModelRequirements
-                .FirstOrDefault(r => r.ModelType == modelType);
-            var modelGroupIds = requirement?.ModelGroupIds;
-
-            if (HasDedicatedBinding(requirement?.ModelGroupIds))
-            {
-                // 绑定看配置、不看查询结果，判据见 HasDedicatedBinding 的注释。
-                hasDedicatedBinding = true;
-
-                // ========== 第二步：查找专属模型池 ==========
-                candidateGroups = await _db.ModelGroups
-                    .Find(g => modelGroupIds!.Contains(g.Id))
-                    .SortBy(g => g.Priority)
-                    .ToListAsync(ct);
-
-                if (candidateGroups.Count > 0)
-                {
-                    resolutionType = "DedicatedPool";
-                    _logger.LogDebug(
-                        "[ModelResolver] 找到专属模型池: AppCallerCode={Code}, PoolCount={Count}, PoolNames={Names}",
-                        appCallerCode, candidateGroups.Count,
-                        string.Join(", ", candidateGroups.Select(g => g.Name)));
-                }
-            }
-        }
-
-        // ========== 第三步：回退到默认模型池 ==========
-        if (candidateGroups == null || candidateGroups.Count == 0)
-        {
-            candidateGroups = await _db.ModelGroups
-                .Find(g => g.ModelType == modelType && g.IsDefaultForType)
-                .SortBy(g => g.Priority)
-                .ToListAsync(ct);
-
-            if (candidateGroups.Count > 0)
-            {
-                resolutionType = "DefaultPool";
-                _logger.LogDebug(
-                    "[ModelResolver] 使用默认模型池: ModelType={Type}, PoolCount={Count}, PoolNames={Names}",
-                    modelType, candidateGroups.Count,
-                string.Join(", ", candidateGroups.Select(g => g.Name)));
-            }
-        }
-
-        // 池解析完成后的重试会携带 ModelGroupId 作为 expectedModel。即使是旧的
-        // MAP 兼容路径，也必须把池 ID 解释为“锁定该池”，不能退回按优先级重新选池，
-        // 否则同一个 Run 的第二次 resolve 可能漂移到另一个池。
-        if (!string.IsNullOrWhiteSpace(expectedModel)
-            && !string.Equals(resolutionType, "GatewayRegistryPool", StringComparison.Ordinal)
-            && candidateGroups is { Count: > 0 })
-        {
-            var poolCandidates = candidateGroups;
-            var requestedPool = poolCandidates.FirstOrDefault(group =>
-                string.Equals(group.Id, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase)
-                || string.Equals(group.Code, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase)
-                || string.Equals(group.Name, expectedModel.Trim(), StringComparison.OrdinalIgnoreCase));
-            if (requestedPool is not null)
-            {
-                candidateGroups = [requestedPool];
-                expectedModel = null;
-            }
-        }
-
-        // ========== 第五步：一个池都没解析出来 → 先 GW 默认池，再 legacy 直连 ==========
-        // 顺序是有讲究的：配置权威在 GW，所以只要该类型有 GW 默认池就该走它；
-        // legacy 直连（IsMain/IsIntent/IsVision/IsImageGen 标记的 enabled 模型）是给
-        // 「还没迁到模型池」的部署留的向后兼容，只在 GW 那边确实拿不出池时才轮到它。
-        // 两者顺序写反的话，一个既有 GW 默认池、又留着 legacy 存量行的已迁移部署，
-        // 会永远绕过它自己的权威配置走老路（Codex 第四十九轮 P1）。
-        if (candidateGroups == null || candidateGroups.Count == 0)
-        {
-            // 走到这里意味着「一个池都没解析出来」：要么没有任何绑定，要么 MAP 侧那条绑定指向的池
-            // 已经不存在了。后者在本仓库不是「配错了」而是退场残留——MAP 的模型管理写接口下线后，
-            // 启动同步给每个 chat 调用方自动绑的那个组已经随之消失，于是全部 200 条 MAP 登记
-            // 都指着同一个查不到的 id。把这种悬空绑定当成「显式池未知」去 fail closed，
-            // 等于让残留数据把所有功能一起判死。
-            //
-            // 这不放宽 llm-gateway 规则 #3：那条管的是「池找得到但不该给你/给不出候选」——
-            // 越权选池、类型不符、池内候选耗尽，各自有自己的失败码，都不经过这里。
-            if (hasDedicatedBinding)
-            {
-                _logger.LogWarning(
-                    "[ModelResolver] MAP 专属绑定指向的模型池都不存在（退场残留），改用 GW 默认池: AppCallerCode={Code}, ModelType={Type}",
-                    appCallerCode, modelType);
-            }
-            candidateGroups = await TryFallbackToGatewayDefaultPoolsAsync(
-                gatewayRegistry, appCallerCode, modelType, hasDedicatedBinding, gatewayConfigRequired, ct);
-            usedGatewayDefaultFallback = candidateGroups.Count > 0;
-            if (candidateGroups.Count == 0)
-            {
-                // 受保护类型（embedding / asr / video-gen）绑定还在、池没了：上面的兜底助手
-                // 已经按失败关闭拒绝给默认池，这里必须把话说完——否则控制流会接着去试两条
-                // legacy 退路，等于从背面绕开刚拒绝掉的那条边界（Codex 第五十二轮 P1）。
-                //
-                // 今天这两条退路对这三类恰好都返回 null（FindLegacyModelAsync 的 switch 没有
-                // 它们的分支，TryResolveLegacyConfigFallbackAsync 只认 chat / intent），
-                // 所以这里不改变任何现有行为。写出来是因为「靠另一个方法碰巧没写某个分支」
-                // 不是不变量：谁哪天给那个 switch 补一条 embedding，边界就会无声消失。
-                if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
-                {
-                    _logger.LogWarning(
-                        "[ModelResolver] {ModelType} 专属池已不存在，按失败关闭处理，拒绝降级 legacy: AppCallerCode={Code}",
-                        modelType, appCallerCode);
-                    return ModelResolutionResult.NotFound(expectedModel,
-                        $"专属模型池不存在且该类型禁止降级: AppCallerCode={appCallerCode}, ModelType={modelType}",
-                        GatewayRouteFailure.ModelPoolEmpty,
-                        "dedicated-pool-missing",
-                        appCallerCode);
-                }
-
-                var legacyModel = await FindLegacyModelAsync(modelType, ct);
-                if (legacyModel != null)
-                {
-                    var legacyPlatform = await _db.LLMPlatforms
-                        .Find(p => p.Id == legacyModel.PlatformId && p.Enabled)
-                        .FirstOrDefaultAsync(ct);
-                    if (legacyPlatform != null)
-                    {
-                        var legacyApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(legacyPlatform.ApiKeyEncrypted, _config);
-                        _logger.LogInformation(
-                            "[ModelResolver] 无池，使用 legacy 直连模型: ModelType={Type}, Model={Model}, Platform={Platform}",
-                            modelType, legacyModel.ModelName, legacyPlatform.Name);
-                        return ModelResolutionResult.FromLegacy(expectedModel, legacyModel, legacyPlatform, legacyApiKey);
-                    }
-                }
-
-                var legacyConfig = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
-                if (legacyConfig != null)
-                {
-                    return legacyConfig;
-                }
-
-                _logger.LogWarning(
-                    "[ModelResolver] 未找到可用模型（无池且 legacy 未命中）: AppCallerCode={Code}, ModelType={Type}",
-                    appCallerCode, modelType);
-
-                return ModelResolutionResult.NotFound(expectedModel,
-                    $"未找到可用模型: AppCallerCode={appCallerCode}, ModelType={modelType}",
-                    GatewayRouteFailure.ModelPoolEmpty,
-                    "pool-candidates-empty",
-                    appCallerCode);
-            }
-
-            resolutionType = "GatewayRegistryPool";
-        }
-
-        // ========== 第 5.5 步：旧契约若调用方指定了 expectedModel，优先尊重 ==========
-        // 搜索顺序（广度递增）：
-        //   1. 候选池（AppCaller 绑定的池）
-        //   2. 该 ModelType 下的所有池（AppCaller 未绑定但平台有配置的池）
-        //   3. LLMModels 直连（既不在任何池也可以按 ModelName 查到的单模型）
-        // 前两档命中都会把匹配到的池加入 candidateGroups 头部；第三档直接返回 Legacy 结果。
-        ModelGroup? preferredGroup = null;
-        ModelGroupItem? preferredItem = null;
-        if (!string.IsNullOrWhiteSpace(expectedModel))
-        {
-            // 档 1：候选池
-            var (g, m) = FindPreferredModel(candidateGroups, expectedModel);
-            if (g != null && m != null)
-            {
-                preferredGroup = g;
-                preferredItem = m;
-                _logger.LogInformation(
-                    "[ModelResolver] 命中 expectedModel（候选池）: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
-                    expectedModel, g.Name, m.ModelId);
-            }
-            else
-            {
-                // 档 2：该 ModelType 下的所有池（包括未绑定到 AppCaller 的）
-                if (gatewayConfigRequired || usedGatewayDefaultFallback)
-                {
-                    _logger.LogInformation(
-                            "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 MAP 全量池搜索: AppCallerCode={Code}, Expected={Expected}",
-                        appCallerCode, expectedModel);
-                }
-                else
-                {
-                    var allTypeGroups = await _db.ModelGroups
-                        .Find(x => x.ModelType == modelType)
-                        .ToListAsync(ct);
-                    var knownIds = candidateGroups.Select(x => x.Id).ToHashSet();
-                    var extraGroups = allTypeGroups.Where(x => !knownIds.Contains(x.Id)).ToList();
-                    if (extraGroups.Count > 0)
-                    {
-                        var (g2, m2) = FindPreferredModel(extraGroups, expectedModel);
-                        if (g2 != null && m2 != null)
-                        {
-                            preferredGroup = g2;
-                            preferredItem = m2;
-                            candidateGroups.Insert(0, g2); // 纳入主循环以便走统一的 Exchange / Platform 解析路径
-                            resolutionType = "DirectModel"; // 越出 AppCaller 绑定范围 → 直连语义
-                            _logger.LogInformation(
-                                "[ModelResolver] 命中 expectedModel（全量池兜底）: {Expected} → 池 {PoolName} 中的模型 {ModelId}",
-                                expectedModel, g2.Name, m2.ModelId);
-                        }
-                    }
-                }
-
-                // 档 3：LLMModels 直连（按 ModelName 查）
-                if (preferredGroup == null)
-                {
-                    if (gatewayConfigRequired || usedGatewayDefaultFallback)
-                    {
-                        _logger.LogInformation(
-                                "[ModelResolver] GW appCaller 已禁止 MAP fallback，跳过 expectedModel 的 LLMModels 直连兜底: AppCallerCode={Code}, Expected={Expected}",
-                            appCallerCode, expectedModel);
-                    }
-                    else if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
-                    {
-                        _logger.LogInformation(
-                            "[ModelResolver] {ModelType} 已绑定专属模型池，跳过 expectedModel 的 LLMModels 直连兜底: AppCallerCode={Code}, Expected={Expected}",
-                            modelType, appCallerCode, expectedModel);
-                    }
-                    else
-                    {
-                        var direct = await _db.LLMModels
-                            .Find(x => x.Enabled && x.ModelName == expectedModel.Trim())
-                            .FirstOrDefaultAsync(ct);
-                        if (direct != null)
-                        {
-                            var platform = await _db.LLMPlatforms
-                                .Find(p => p.Id == direct.PlatformId && p.Enabled)
-                                .FirstOrDefaultAsync(ct);
-                            if (platform != null)
-                            {
-                                var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-                                _logger.LogInformation(
-                                    "[ModelResolver] 命中 expectedModel（LLMModels 直连）: {Expected} → platform={Platform}",
-                                    expectedModel, platform.Name);
-                                return ModelResolutionResult.FromLegacy(expectedModel, direct, platform, apiKey);
-                            }
-                        }
-                    }
-
-                    _logger.LogInformation(
-                        "[ModelResolver] expectedModel '{Expected}' 在所有池和 LLMModels 都未找到匹配，将走默认调度（候选池：[{Pools}]）",
-                        expectedModel, string.Join(", ", candidateGroups.Select(x => x.Name)));
-                }
-            }
-        }
-
-        // ========== 第六步：从模型池中选择最佳模型 ==========
-        // 若上一步命中 expectedModel，将该池放在最前面优先尝试
-        var orderedGroups = preferredGroup != null
-            ? new[] { preferredGroup }.Concat(candidateGroups.Where(g => g.Id != preferredGroup.Id)).ToList()
-            : candidateGroups;
-
-        var resolvedPoolCandidates = new List<ModelResolutionResult>();
-        var allowProviderRetryCandidates = string.IsNullOrWhiteSpace(expectedModel);
-
-        foreach (var group in orderedGroups)
-        {
-            // 诊断：模型池内容
-            _logger.LogInformation(
-                "[ModelResolver] 检查模型池 {PoolName}: 模型数={Count}, 模型列表=[{Models}]",
-                group.Name,
-                group.Models?.Count ?? 0,
-                string.Join(", ", group.Models?.Select(m =>
-                    $"{m.ModelId}(Health={m.HealthStatus}, Platform={m.PlatformId})") ?? Array.Empty<string>()));
-
-            // expectedModel 命中的池：直接用命中的具体条目；否则按健康度选可用候选。
-            // auto 模式下保留完整候选序列，发送阶段可在可重试失败后换下一个候选；
-            // 用户明确 expectedModel/pinned 时不得换模型，避免“选 A 发 B”。
-            var selectedModels = (preferredGroup != null && group.Id == preferredGroup.Id)
-                ? (preferredItem is null ? [] : new List<ModelGroupItem> { preferredItem })
-                : await SelectProviderRetryCandidatesAsync(
-                    group,
-                    allowProviderRetryCandidates,
-                    gatewayOwned: string.Equals(resolutionType, "GatewayRegistryPool", StringComparison.Ordinal),
-                    ct);
-            if (selectedModels.Count == 0)
-            {
-                _logger.LogWarning(
-                    "[ModelResolver] 模型池 {PoolName} 中无可用模型（全部 Unavailable 或为空）",
-                    group.Name);
-                continue;
-            }
-
-            // ========== Exchange 中继检测 ==========
-            // 模型池中的 Exchange 条目有两种可能的 PlatformId：
-            //   A) "__exchange__"（旧数据，legacy virtual platform id）
-            //      → 按 ModelId 去 ModelExchanges 里找匹配 ModelAlias / ModelAliases / Models[].ModelId 的
-            //   B) 真实 Exchange.Id（新数据，虚拟平台作为一等公民）
-            //      → 按 Id 直接查 ModelExchange
-            // 找到 Exchange 则走中继路径；找不到则降级到下面的普通平台分支。
-            foreach (var selectedModel in selectedModels)
-            {
-                ModelExchange? exchange = await FindExchangeForPoolItemAsync(
-                    selectedModel,
-                    allowMapFallback: !gatewayConfigRequired,
-                    ct);
-
-                if (exchange != null)
-                {
-                    var exchangeApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
-
-                    _logger.LogInformation(
-                        "[ModelResolver] Exchange 中继候选已解析\n" +
-                        "  AppCallerCode: {AppCallerCode}\n" +
-                        "  ResolutionType: {ResolutionType}\n" +
-                        "  ModelGroup: {GroupName} ({GroupId})\n" +
-                        "  Exchange: {ExchangeName} ({ExchangeId})\n" +
-                        "  ModelId: {ModelId}\n" +
-                        "  TargetUrl: {TargetUrl}\n" +
-                        "  Transformer: {Transformer}",
-                        appCallerCode, resolutionType, group.Name, group.Id,
-                        exchange.Name, exchange.Id,
-                        selectedModel.ModelId, exchange.TargetUrl, exchange.TransformerType);
-
-                    resolvedPoolCandidates.Add(ModelResolutionResult.FromExchangePool(
-                        resolutionType, expectedModel, selectedModel, group, exchange, exchangeApiKey));
-                    if (!allowProviderRetryCandidates)
-                        return resolvedPoolCandidates[0];
-                    continue;
-                }
-
-                // 若 PlatformId 是 "__exchange__" 但找不到匹配 Exchange，记录后跳过
-                if (selectedModel.PlatformId == ModelResolverConstants.ExchangePlatformId)
-                {
-                    _logger.LogWarning(
-                        "[ModelResolver] Exchange 配置未找到或已禁用: ModelId={ModelId}",
-                        selectedModel.ModelId);
-                    continue;
-                }
-
-                // ========== 普通平台模型 ==========
-                var platform = await FindGatewayOwnedOrMapPlatformAsync(
-                    selectedModel.PlatformId,
-                    enabledOnly: true,
-                    ct,
-                    allowMapFallback: !gatewayConfigRequired);
-
-                if (platform == null)
-                {
-                    // 诊断：平台查找失败
-                    var platformById = await FindGatewayOwnedOrMapPlatformAsync(
-                        selectedModel.PlatformId,
-                        enabledOnly: false,
-                        ct,
-                        allowMapFallback: !gatewayConfigRequired);
-
-                    _logger.LogWarning(
-                        "[ModelResolver] 模型池 {PoolName} 中的模型 {ModelId} 平台不可用: PlatformId={PlatformId}, Exists={Exists}, Enabled={Enabled}",
-                        group.Name, selectedModel.ModelId, selectedModel.PlatformId,
-                        platformById != null, platformById?.Enabled);
-                    continue;
-                }
-
-                var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(platform.ApiKeyEncrypted, _config);
-
-                _logger.LogInformation(
-                    "[ModelResolver] 调度候选已解析\n" +
-                    "  AppCallerCode: {AppCallerCode}\n" +
-                    "  ResolutionType: {ResolutionType}\n" +
-                    "  ModelGroup: {GroupName} ({GroupId})\n" +
-                    "  ExpectedModel: {Expected}\n" +
-                    "  ActualModel: {Actual}\n" +
-                    "  Platform: {Platform}\n" +
-                    "  HealthStatus: {Health}",
-                    appCallerCode, resolutionType, group.Name, group.Id,
-                    expectedModel ?? "(无)", selectedModel.ModelId,
-                    platform.Name, selectedModel.HealthStatus);
-
-                // 并发治理需要真实模型级 MaxConcurrency；能力/协议字段仍沿用池快照优先级。
-                var modelConfig = await FindGatewayOwnedOrMapModelAsync(
-                    selectedModel.PlatformId,
-                    selectedModel.ModelId,
-                    ct,
-                    allowMapFallback: !gatewayConfigRequired);
-
-                // 上面这次查找本来就带 Enabled==true，却只把结果当 MaxConcurrency 的来源，
-                // 空值直接丢掉——于是「模型已停用」这个它明明查得到的事实从来没被用上：
-                // 平台停用会被 platform==null 挡下，模型停用却照发不误。
-                //
-                // 后果不只是少一道闸。托管默认池是 append-only（成员删不掉、也不许覆盖），
-                // 加成员时又有 MODEL_DISABLED 拦着「停用模型不许进池」；两条规矩合起来，
-                // 池里一旦混进一个不可调用的条目（批量导入很容易），控制台就再没有任何
-                // 一条路能让它别再被选中——停用模型是唯一剩下的动作，而它在这里没效果。
-                //
-                // 判据只认「库里明写着 Enabled=false」这一种证据：查不到不算（可能是纯池
-                // 快照成员、跨租户、或 MAP fallback 被关掉），字段缺失也不算（Mongo 的
-                // Eq(false) 不匹配缺字段的文档，正好挡住把「老数据没写这个字段」误判成停用）。
-                // 这道闸**不能**拿 `modelConfig is null` 当前置条件。上面那次查找开着 MAP
-                // 兜底：GW 里这条模型明写着 Enabled=false，它会跳过、转而捞出 MAP 里那份还
-                // 启用着的旧副本，于是 modelConfig 非空、闸门整条被短路——运维在网关里点了
-                // 停用，模型照发。判据本身没写错，错在拿一个「找到了可用配置」的结果去证明
-                // 「它没被停用」，而这两件事有两个数据源时并不等价。
-                //
-                // 反过来也要防：GW 里启用着、MAP 里躺着一份过期的停用副本时，不能被误判成
-                // 停用。所以 MAP 侧的停用记录只在「GW 压根没有权威记录」（modelConfig 为空）
-                // 时才算数；GW 有话说的时候一律以 GW 为准。
-                if (await IsPoolMemberModelExplicitlyDisabledAsync(
-                        selectedModel.PlatformId,
-                        selectedModel.ModelId,
-                        ct,
-                        allowMapFallback: !gatewayConfigRequired && modelConfig is null))
-                {
-                    _logger.LogWarning(
-                        "[ModelResolver] 模型池 {PoolName} 中的模型 {ModelId} 已停用，跳过该候选: PlatformId={PlatformId}",
-                        group.Name, selectedModel.ModelId, selectedModel.PlatformId);
-                    continue;
-                }
-
-                resolvedPoolCandidates.Add(ModelResolutionResult.FromPool(
-                    resolutionType, expectedModel, selectedModel, group, platform, apiKey, modelConfig));
-                if (!allowProviderRetryCandidates)
-                    return resolvedPoolCandidates[0];
-            }
-        }
-
-        if (resolvedPoolCandidates.Count > 0)
-        {
-            var selected = resolvedPoolCandidates[0];
-            if (resolvedPoolCandidates.Count > 1)
-                selected.RetryCandidates = resolvedPoolCandidates.Skip(1).ToList();
-            _logger.LogInformation(
-                "[ModelResolver] 调度完成: AppCallerCode={AppCallerCode}, Selected={Model}, RetryCandidates={RetryCount}",
-                appCallerCode, selected.ActualModel, selected.RetryCandidates?.Count ?? 0);
-            return selected;
-        }
-
-        // ========== 第七步：模型池全部不可用 → legacy 直连降级 ==========
-        // 池存在但池内模型全部 Unavailable 时，未迁移部署仍可降级到 legacy 直连（Codex P1）。
-        // 收集原始模型池状态用于诊断 + 降级结果的 OriginalModels 字段。
-        var originalPool = candidateGroups.FirstOrDefault();
-        // 「池是空的」和「成员全熔断」是两种处置动作：前者要去补成员，后者要去看上游。
-        // 合成一个错误码，管理员就只能从零复现——这正是本次事故里最贵的部分。
-        var poolFailureCode = candidateGroups.All(g => (g.Models?.Count ?? 0) == 0)
-            ? GatewayRouteFailure.ModelPoolEmpty
-            : GatewayRouteFailure.ModelPoolAllUnavailable;
-        var poolFailureStage = poolFailureCode == GatewayRouteFailure.ModelPoolEmpty
-            ? "pool-membership"
-            : "pool-health";
-        var originalModels = originalPool?.Models?.Select(m => new OriginalModelInfo
-        {
-            ModelId = m.ModelId,
-            PlatformId = m.PlatformId,
-            HealthStatus = m.HealthStatus.ToString(),
-            IsAvailable = m.HealthStatus != ModelHealthStatus.Unavailable,
-            ConsecutiveFailures = m.ConsecutiveFailures
-        }).ToList();
-
-        if (gatewayConfigRequired)
-        {
-            _logger.LogWarning(
-                "[ModelResolver] GW appCaller 模型池全部不可用，拒绝降级 MAP legacy: AppCallerCode={Code}, ModelType={Type}, Pool={Pool}",
-                appCallerCode, modelType, originalPool?.Name);
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"GW appCaller 模型池不可用，已禁止 MAP fallback: AppCallerCode={appCallerCode}, ModelType={modelType}",
-                poolFailureCode,
-                poolFailureStage,
-                appCallerCode,
-                modelPoolId: originalPool?.Id);
-        }
-
-        // usedGatewayDefaultFallback：候选是「只回落到默认池」给的，那这就是硬边界的第三个出口。
-        // 前两个（expectedModel 的全量池搜索与 LLMModels 直连）已经关掉了，这里是池选完之后
-        // 「一个成员都用不了」的退路——不挡的话，它照样会掉到下面的 legacy IsMain 直连，
-        // 把承诺过的边界从背面绕开（Codex 第五十一轮 P1）。池用不了就如实报池的失败码。
-        if ((hasDedicatedBinding && ModelResolver.ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
-            || usedGatewayDefaultFallback)
-        {
-            _logger.LogWarning(
-                "[ModelResolver] {ModelType} 模型池全部不可用，拒绝降级 legacy 直连: AppCallerCode={Code}, Pool={Pool}",
-                modelType, appCallerCode, originalPool?.Name);
-            return ModelResolutionResult.NotFound(expectedModel,
-                $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}",
-                poolFailureCode,
-                poolFailureStage,
-                appCallerCode,
-                modelPoolId: originalPool?.Id);
-        }
-
-        var fallbackLegacyModel = await FindLegacyModelAsync(modelType, ct);
-        if (fallbackLegacyModel != null)
-        {
-            var fallbackPlatform = await _db.LLMPlatforms
-                .Find(p => p.Id == fallbackLegacyModel.PlatformId && p.Enabled)
-                .FirstOrDefaultAsync(ct);
-            if (fallbackPlatform != null)
-            {
-                var fallbackApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(fallbackPlatform.ApiKeyEncrypted, _config);
-                _logger.LogWarning(
-                    "[ModelResolver] 池内全部不可用，降级 legacy 直连: Model={Model} @ {Platform}",
-                    fallbackLegacyModel.ModelName, fallbackPlatform.Name);
-                return new ModelResolutionResult
-                {
-                    Success = true,
-                    ResolutionType = "Legacy",
-                    ExpectedModel = expectedModel,
-                    ActualModel = fallbackLegacyModel.ModelName,
-                    ActualPlatformId = fallbackLegacyModel.PlatformId ?? string.Empty,
-                    ActualPlatformName = fallbackPlatform.Name,
-                    PlatformType = fallbackPlatform.PlatformType,
-                    ApiUrl = fallbackLegacyModel.ApiUrl ?? fallbackPlatform.ApiUrl,
-                    ApiKey = fallbackApiKey,
-                    HealthStatus = "Healthy",
-                    MaxTokens = fallbackLegacyModel.MaxTokens,
-                    PlatformMaxConcurrency = fallbackPlatform.MaxConcurrency,
-                    ModelMaxConcurrency = fallbackLegacyModel.MaxConcurrency,
-                    IsFallback = true,
-                    FallbackReason = $"模型池 '{originalPool?.Name}' 中所有模型不可用，回退到直连模型",
-                    OriginalPoolId = originalPool?.Id,
-                    OriginalPoolName = originalPool?.Name,
-                    OriginalModels = originalModels
-                };
-            }
-        }
-
-        var legacyConfigFallback = await TryResolveLegacyConfigFallbackAsync(modelType, expectedModel, ct);
-        if (legacyConfigFallback != null)
-        {
-            return legacyConfigFallback;
-        }
-
+        // 都没有。配置面「读不到」与配置「配错了」必须分开：前者是基础设施故障（重试可能恢复），
+        // 后者是配置问题（重试无用）。混成一个码会让配置库抖动被误判成全站模型报废。
         _logger.LogWarning(
-            "[ModelResolver] 模型池内所有模型不可用且 legacy 未命中: AppCallerCode={Code}, ModelType={Type}, 原始模型池={PoolName}, 模型状态={ModelStates}",
-            appCallerCode, modelType, originalPool?.Name ?? "(无)",
-            string.Join(", ", originalModels?.Select(m => $"{m.ModelId}={m.HealthStatus}") ?? Array.Empty<string>()));
-
+            "[ModelResolver] 没有任何对外模型能接住这次请求: AppCallerCode={Code}, ModelType={Type}, Expected={Expected}, Status={Status}",
+            appCallerCode, modelType, expectedModel ?? "(未点名)", caller.Status ?? "missing");
         return ModelResolutionResult.NotFound(expectedModel,
-            $"模型池内所有模型不可用: AppCallerCode={appCallerCode}, ModelType={modelType}",
-            poolFailureCode,
-            poolFailureStage,
-            appCallerCode,
-            modelPoolId: originalPool?.Id);
+            $"没有对外模型能接住这次请求: AppCallerCode={appCallerCode}, ModelType={modelType}"
+            + (string.IsNullOrWhiteSpace(expectedModel)
+                ? "；请给这个用途设一个默认对外模型，或让某个模型「指定调用方」认领它。"
+                : $"；请确认 {expectedModel} 在对外模型目录里、已启用、授权给了这个调用方，且有能接的线路。"),
+            caller.ConfigPlaneUnavailable
+                ? GatewayRouteFailure.GatewayConfigUnavailable
+                : GatewayRouteFailure.AppCallerPoolUnbound,
+            caller.ConfigPlaneUnavailable ? "gateway-config-plane" : "no-logical-model",
+            appCallerCode);
     }
 
     /// <inheritdoc />
@@ -1284,7 +634,27 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.Id, offering.LogicalModelId),
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType)))
             .FirstOrDefaultAsync(ct);
-        if (logical is null || !SupportsAppCallerScenario(logical, appCallerCode))
+        /*
+          这里**不套用授权名单与场景能力**，那是「能不能挑这个模型发新请求」的调度策略，
+          而这条路径回答的是另一个问题：一个已经被上游受理、可能已经付过费的任务，
+          还能不能回到它当初那条线路上查状态、下结果。
+
+          套用的后果是：管理员在任务跑着的时候把这个调用方从 AllowedAppCallerCodes 里摘掉，
+          那个任务立刻变成不可恢复——Offering 还在、归属记录还在，只是被一条**事后才改的
+          调度策略**判了出局（第 81 轮 review 的 P1）。上面那句注释写着「Enabled 和健康状态
+          只控制新任务调度」，授权名单同样是新任务调度的东西，漏在了那句话外面。
+
+          那这条路径靠什么授权？靠**持久化的任务归属**，而且那道门在调用方那一层就已经关上了：
+          视频控制器的状态/下载/流三个入口都先走 FindOwnedDirectVideoJobAsync
+          （按 AppKey + OwnerAdminId + 恢复令牌匹配 direct_video_job_ownerships），
+          匹配不上根本走不到这里。本函数保留的是租户隔离与「这条线路确实属于这个用途的
+          某个对外模型」，而不是替调用方再判一次它有没有权限——它手里的 offeringId
+          本来就来自它自己那条已授权的任务记录。
+
+          三个调用点全是恢复路径（GetStatusForOffering / DownloadVideoBytesForOffering /
+          OpenVideoStreamForOffering），提交走的是 ResolveModelAsync，那一侧的授权判定不受影响。
+        */
+        if (logical is null)
         {
             return ModelResolutionResult.NotFound(
                 requiredOfferingId,
@@ -1311,94 +681,19 @@ public class ModelResolver : IModelResolver
     }
 
     /// <inheritdoc />
+    /// <inheritdoc />
+    ///
+    /// 应用侧「我能选哪些模型」的清单。2026-09-15 断流之后这里只剩一件事：把对外模型目录端出去。
+    /// 原本 89 行里绝大多数是池的各级兜底（严格池 → GW 池 → MAP 专属池 → MAP 默认池），
+    /// 池上零流量之后它们再也不会被走到。
     public async Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
         string appCallerCode,
         string modelType,
         CancellationToken ct = default)
     {
-        var result = new List<AvailableModelPool>();
-        var gatewayRegistry = await TryGetGatewayRegistryGroupsAsync(appCallerCode, modelType, ct);
-        if (gatewayRegistry.TrafficRejected)
-            return result;
-
-        // 创作页选择业务模型，池只保留后台授权边界；无目录时不伪装成一个默认模型。
-        if (UsesVisualLogicalModelCatalog(appCallerCode))
-        {
-            var catalog = await GetAvailableLogicalModelsAsPoolsAsync(appCallerCode, modelType, ct,
-                gatewayRegistry.StrictPoolContract ? gatewayRegistry.Groups : null);
-            return catalog;
-        }
-
-        if (gatewayRegistry.StrictPoolContract)
-        {
-            foreach (var group in gatewayRegistry.Groups)
-            {
-                result.Add(await MapToAvailablePoolAsync(
-                    group,
-                    "GatewayRegistryPool",
-                    true,
-                    string.Equals(group.Id, gatewayRegistry.DefaultModelPoolId, StringComparison.Ordinal),
-                    ct));
-            }
-            return result;
-        }
-
-        // 有逻辑模型目录时，它就是应用侧模型列表的权威来源。每个逻辑模型只暴露一个稳定 PublicId，
-        // Provider/Endpoint/Offering 不泄漏到应用选择器；仅旧 AppCaller 继续使用此兼容目录。
-        var logicalModels = await GetAvailableLogicalModelsAsPoolsAsync(appCallerCode, modelType, ct);
-        if (logicalModels.Count > 0)
-            return logicalModels;
-
-        foreach (var group in gatewayRegistry.Groups)
-        {
-            result.Add(await MapToAvailablePoolAsync(group, "GatewayRegistryPool", true, false, ct));
-        }
-        if (result.Count > 0)
-            return result;
-        if (!string.Equals(CurrentTenantId, _internalTenantId, StringComparison.Ordinal))
-            return result;
-        if (DisableMapConfigFallbackForRegisteredAppCallers())
-            return result;
-
-        // 1. 查找专属模型池
-        var appCaller = await _db.LLMAppCallers
-            .Find(a => a.AppCode == appCallerCode)
-            .FirstOrDefaultAsync(ct);
-
-        if (appCaller != null)
-        {
-            var requirement = appCaller.ModelRequirements
-                .FirstOrDefault(r => r.ModelType == modelType);
-
-            if (requirement?.ModelGroupIds?.Count > 0)
-            {
-                var dedicatedGroups = await _db.ModelGroups
-                    .Find(g => requirement.ModelGroupIds.Contains(g.Id))
-                    .SortBy(g => g.Priority)
-                    .ToListAsync(ct);
-
-                foreach (var group in dedicatedGroups)
-                {
-                    result.Add(await MapToAvailablePoolAsync(group, "DedicatedPool", true, false, ct));
-                }
-
-                if (result.Count > 0)
-                    return result;
-            }
-        }
-
-        // 2. 查找默认模型池
-        var defaultGroups = await _db.ModelGroups
-            .Find(g => g.ModelType == modelType && g.IsDefaultForType)
-            .SortBy(g => g.Priority)
-            .ToListAsync(ct);
-
-        foreach (var group in defaultGroups)
-        {
-            result.Add(await MapToAvailablePoolAsync(group, "DefaultPool", false, true, ct));
-        }
-
-        return result;
+        var caller = await TryGetGatewayAppCallerStatusAsync(appCallerCode, modelType, ct);
+        if (caller.TrafficRejected) return [];
+        return await GetAvailableLogicalModelsAsPoolsAsync(appCallerCode, modelType, ct);
     }
 
     /// <inheritdoc />
@@ -1406,17 +701,38 @@ public class ModelResolver : IModelResolver
     {
         if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
         {
-            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
-            var filter = Builders<GatewayModelOffering>.Filter.And(
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
-            var update = Builders<GatewayModelOffering>.Update
-                .Inc(x => x.ConsecutiveSuccesses, 1)
-                .Set(x => x.ConsecutiveFailures, 0)
-                .Set(x => x.HealthStatus, ModelHealthStatus.Healthy)
-                .Set(x => x.LastSuccessAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow);
-            await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            /*
+              记账失败不许把一次**已经成功**的调用变成用户侧的失败。
+
+              这里写的是健康台账，不是业务结果——上游已经回了，响应就在调用方手上等着返回。
+              一次 Mongo 写抖动从这里抛出去，那次成功就成了 500。池成员那条路径一直是
+              try/catch + 日志，Offering 这条漏了；断流之后 Offering 是主路径，
+              于是这个洞从「兜底路径的边角」变成了「主路径的边角」（形状 10 的反面：
+              该降级的地方没降级，把一个不影响结果的失败升级成了影响结果的失败）。
+            */
+            try
+            {
+                var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+                var filter = Builders<GatewayModelOffering>.Filter.And(
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+                var update = Builders<GatewayModelOffering>.Update
+                    .Inc(x => x.ConsecutiveSuccesses, 1)
+                    .Set(x => x.ConsecutiveFailures, 0)
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Healthy)
+                    .Set(x => x.LastSuccessAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                    .Unset(x => x.HalfOpenLeaseUntil)
+                    .Unset(x => x.ManualRecoveryAt);
+                await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "[ModelResolver] 记录线路成功状态失败 Offering={OfferingId}（本次调用已成功，不受影响）",
+                    resolution.OfferingId);
+            }
+
             return;
         }
 
@@ -1457,23 +773,73 @@ public class ModelResolver : IModelResolver
     {
         if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
         {
-            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
-            var filter = Builders<GatewayModelOffering>.Filter.And(
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
-            var current = await offerings.Find(filter).FirstOrDefaultAsync(ct);
-            if (current is null) return;
-            var failures = current.ConsecutiveFailures + 1;
-            var status = failures >= 5 ? ModelHealthStatus.Unavailable
-                : failures >= 3 ? ModelHealthStatus.Degraded
-                : ModelHealthStatus.Healthy;
-            var update = Builders<GatewayModelOffering>.Update
-                .Inc(x => x.ConsecutiveFailures, 1)
-                .Set(x => x.ConsecutiveSuccesses, 0)
-                .Set(x => x.HealthStatus, status)
-                .Set(x => x.LastFailedAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow);
-            await offerings.UpdateOneAsync(filter, update, cancellationToken: ct);
+            /*
+              记账失败不许挡住**故障转移**。
+
+              这里写的是健康台账，而调用方那边正等着「这条线路挂了，换下一条」的结论。
+              一次 Mongo 写抖动从这里抛出去，LlmGateway 根本走不到挑下一条候选那一步——
+              一次本来能自愈的失败，变成用户看到的失败。池成员那条路径一直是 try/catch + 日志，
+              Offering 这条漏了；断流之后 Offering 是主路径，这个洞也就从边角挪到了主干。
+            */
+            try
+            {
+                var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+                var filter = Builders<GatewayModelOffering>.Filter.And(
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+                // 先原子自增并取回自增后的真值，再据此升级状态。
+                // 不能像以前那样先 Find 一次、拿旧快照 +1 算出状态再 Set：并发失败时各请求读到的
+                // 是同一个自增前的值，谁最后落笔谁说了算，计数冲到几十而状态被写回健康，断路器
+                // 就一直不跳，全部流量继续打向已经死掉的上游。
+                var afterInc = await offerings.FindOneAndUpdateAsync(
+                    filter,
+                    Builders<GatewayModelOffering>.Update
+                        .Inc(x => x.ConsecutiveFailures, 1)
+                        .Set(x => x.ConsecutiveSuccesses, 0)
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                        .Unset(x => x.HalfOpenLeaseUntil)
+                        // 人工恢复的那张通行证，一次失败就作废——池成员那条路径一直是这么做的
+                        // （见下面 Models.$.ManualRecoveryAt 那处），Offering 这条漏了。
+                        //
+                        // 漏掉的后果不是「多试一次」：半开认领的条件里 ManualRecoveryAt <= now
+                        // 是一条**独立**的放行项，与冷却时间并列。它留着，这条刚被证明还是坏的线路
+                        // 就对**每一个**后续请求都满足认领条件，被反复抢去当队首探针，
+                        // 配置的冷却期形同虚设——运维在控制台点一次「恢复」，等于把这条坏线路
+                        // 永久钉在了队首，直到有人再去改一次配置。
+                        .Unset(x => x.ManualRecoveryAt),
+                    new FindOneAndUpdateOptions<GatewayModelOffering> { ReturnDocument = ReturnDocument.After },
+                    ct);
+                if (afterInc is null) return;
+                var status = GatewayCircuitBreakerPolicy.ClassifyByFailures(afterInc.ConsecutiveFailures);
+                if (!GatewayCircuitBreakerPolicy.IsEscalation(afterInc.HealthStatus, status))
+                    return;
+                // 升级这一步要带上「失败数还是当初那么多」这个条件。
+                //
+                // 自增与升级是两次写，中间可能挤进一次**成功**：成功那一路把 ConsecutiveFailures
+                // 清零、把健康档写回 Healthy，而这里若只判 HealthStatus < status，就会把一个
+                // 基于已经作废的失败数算出来的档位重新写回去——一条刚刚成功的线路被隔离整个冷却期，
+                // 而它其实是好的（形状 5 的近亲：拿变更前的状态去 gate 一个会改变该状态的写）。
+                //
+                // 判据用 Gte 而不是等于：期间又失败了几次的话计数只会更高，这次升级照样该落；
+                // 而清零过就一定小于它，条件不成立、这次写自然作废。降档由 Lt 那一条挡住，两者互补。
+                await offerings.UpdateOneAsync(
+                    Builders<GatewayModelOffering>.Filter.And(
+                        filter,
+                        Builders<GatewayModelOffering>.Filter.Lt(x => x.HealthStatus, status),
+                        Builders<GatewayModelOffering>.Filter.Gte(x => x.ConsecutiveFailures, afterInc.ConsecutiveFailures)),
+                    Builders<GatewayModelOffering>.Update
+                        .Set(x => x.HealthStatus, status)
+                        .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex,
+                    "[ModelResolver] 记录线路失败状态失败 Offering={OfferingId}（不影响本次故障转移）",
+                    resolution.OfferingId);
+            }
+
             return;
         }
 
@@ -1495,25 +861,42 @@ public class ModelResolver : IModelResolver
 
             if (model == null) return;
 
-            var newFailures = model.ConsecutiveFailures + 1;
-            var newStatus = newFailures >= 5 ? ModelHealthStatus.Unavailable :
-                            newFailures >= 3 ? ModelHealthStatus.Degraded :
-                            ModelHealthStatus.Healthy;
-
             var filter = Builders<ModelGroup>.Filter.And(
                 Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
                 Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
                     m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
 
-            var update = Builders<ModelGroup>.Update
-                .Inc("Models.$.ConsecutiveFailures", 1)
-                .Set("Models.$.ConsecutiveSuccesses", 0)
-                .Set("Models.$.HealthStatus", newStatus)
-                .Set("Models.$.LastFailedAt", DateTime.UtcNow)
-                .Unset("Models.$.HalfOpenLeaseUntil")
-                .Unset("Models.$.ManualRecoveryAt");
+            // 与 Offering 分支同一口径：先原子自增拿真值，再单调升级状态。
+            var afterInc = await modelGroups.FindOneAndUpdateAsync(
+                filter,
+                Builders<ModelGroup>.Update
+                    .Inc("Models.$.ConsecutiveFailures", 1)
+                    .Set("Models.$.ConsecutiveSuccesses", 0)
+                    .Set("Models.$.LastFailedAt", DateTime.UtcNow)
+                    .Unset("Models.$.HalfOpenLeaseUntil")
+                    .Unset("Models.$.ManualRecoveryAt"),
+                new FindOneAndUpdateOptions<ModelGroup> { ReturnDocument = ReturnDocument.After },
+                ct);
+            var updated = afterInc?.Models?.FirstOrDefault(m =>
+                m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel);
+            if (updated == null) return;
 
-            await modelGroups.UpdateOneAsync(filter, update, cancellationToken: ct);
+            var newFailures = updated.ConsecutiveFailures;
+            var newStatus = GatewayCircuitBreakerPolicy.ClassifyByFailures(newFailures);
+            if (GatewayCircuitBreakerPolicy.IsEscalation(updated.HealthStatus, newStatus))
+            {
+                // 同一个竞态，同一个条件：期间若有一次成功把计数清零，这次升级就不该落。
+                await modelGroups.UpdateOneAsync(
+                    Builders<ModelGroup>.Filter.And(
+                        Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
+                        Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
+                            m => m.PlatformId == resolution.ActualPlatformId
+                                 && m.ModelId == resolution.ActualModel
+                                 && m.HealthStatus < newStatus
+                                 && m.ConsecutiveFailures >= newFailures)),
+                    Builders<ModelGroup>.Update.Set("Models.$.HealthStatus", newStatus),
+                    cancellationToken: ct);
+            }
 
             _logger.LogWarning(
                 "[ModelResolver] 记录失败: Model={Model}, Failures={Count}, Status={Status}",
@@ -1528,45 +911,89 @@ public class ModelResolver : IModelResolver
     /// <inheritdoc />
     public async Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
     {
-        if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+        /*
+          隔离记账失败不许挡住故障转移，也不许把上游那次可诊断的失败变成一句 500。
+
+          这个方法和 RecordSuccess / RecordFailure 是同一件事的第三条路——上一轮把那两条包进
+          try/catch 时漏了它（形状 3 的老毛病：同一件事几个分支各写一套，其中一套没跟上）。
+          漏的代价一模一样：调用方那边正等着「这条线路确定不可用，换下一条」的结论，
+          一次 Mongo 写抖动从这里抛出去，网关走不到挑下一条候选那一步。
+          而这条路上游给的往往是**确定性**的配置错误（密钥无效、模型名不存在），
+          那种错误本该原样交给用户去修，不该被一次数据库问题换成「服务器错误」。
+        */
+        try
         {
-            var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
-            var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
-            var offeringUpdate = Builders<GatewayModelOffering>.Update
-                .Inc(x => x.ConsecutiveFailures, 1)
-                .Set(x => x.ConsecutiveSuccesses, 0)
-                .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
-                .Set(x => x.LastFailedAt, DateTime.UtcNow)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow);
-            await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
-            return;
+            if (!string.IsNullOrWhiteSpace(resolution.OfferingId) && _gatewayDb is not null)
+            {
+                var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+                var offeringFilter = Builders<GatewayModelOffering>.Filter.And(
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
+                    Builders<GatewayModelOffering>.Filter.Eq(x => x.Id, resolution.OfferingId));
+                // 清掉半开痕迹与人工恢复标记：隔离是「这条线路当前确定不可用」的结论，
+                // 不能让上一轮的租约或某次人工恢复继续把它当成待试探的候选。
+                var offeringUpdate = Builders<GatewayModelOffering>.Update
+                    .Inc(x => x.ConsecutiveFailures, 1)
+                    .Set(x => x.ConsecutiveSuccesses, 0)
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow)
+                    .Unset(x => x.HalfOpenLeaseUntil)
+                    .Unset(x => x.ManualRecoveryAt);
+                await offerings.UpdateOneAsync(offeringFilter, offeringUpdate, cancellationToken: ct);
+                return;
+            }
+
+            if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
+                string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
+                string.IsNullOrWhiteSpace(resolution.ActualModel))
+                return;
+
+            var groupFilter = Builders<ModelGroup>.Filter.And(
+                Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
+                Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
+                    m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
+            // 同上：普通失败路径本来就清这两个字段，隔离路径漏清会让一个密钥彻底作废的成员
+            // 在被人工恢复过一次之后，每轮租约到期就重新抢占一次真实用户请求的首发名额。
+            var groupUpdate = Builders<ModelGroup>.Update
+                .Inc("Models.$.ConsecutiveFailures", 1)
+                .Set("Models.$.ConsecutiveSuccesses", 0)
+                .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
+                .Set("Models.$.LastFailedAt", DateTime.UtcNow)
+                .Unset("Models.$.HalfOpenLeaseUntil")
+                .Unset("Models.$.ManualRecoveryAt");
+            await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
         }
-
-        if (string.IsNullOrWhiteSpace(resolution.ModelGroupId) ||
-            string.IsNullOrWhiteSpace(resolution.ActualPlatformId) ||
-            string.IsNullOrWhiteSpace(resolution.ActualModel))
-            return;
-
-        var groupFilter = Builders<ModelGroup>.Filter.And(
-            Builders<ModelGroup>.Filter.Eq(g => g.Id, resolution.ModelGroupId),
-            Builders<ModelGroup>.Filter.ElemMatch(g => g.Models,
-                m => m.PlatformId == resolution.ActualPlatformId && m.ModelId == resolution.ActualModel));
-        var groupUpdate = Builders<ModelGroup>.Update
-            .Inc("Models.$.ConsecutiveFailures", 1)
-            .Set("Models.$.ConsecutiveSuccesses", 0)
-            .Set("Models.$.HealthStatus", ModelHealthStatus.Unavailable)
-            .Set("Models.$.LastFailedAt", DateTime.UtcNow);
-        await GetHealthModelGroups(resolution).UpdateOneAsync(groupFilter, groupUpdate, cancellationToken: ct);
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex,
+                "[ModelResolver] 记录隔离状态失败 Offering={OfferingId} Model={Model}（不影响本次故障转移）",
+                resolution.OfferingId, resolution.ActualModel);
+        }
     }
 
     #region Private Methods
 
+    /// <summary>
+    /// 视觉创作那三个调用方。它们在**模型选择器目录**上有两条特殊规则：只做操作的模型不列出来，
+    /// 且目录里第一条标成默认。
+    ///
+    /// 这份名单曾经在 <c>GatewayRouteSelection</c> 里，因为那时它还兼着第二个职责——
+    /// 「即便配了专属池也仍然认对外模型目录」，而那个职责随模型池在 2026-09-15 一起退场。
+    /// 剩下的这一条纯粹是目录展示，解析判据不需要知道它，控制台面板也不需要，
+    /// 所以名单搬回唯一的消费方，份数从 2 份（权威 + 控制台镜像）降到 1 份。
+    ///
+    /// 它仍然是一份**调用方特例漏进代码**的活标本（架构文档第 4 节：调用方与能力那两条轴
+    /// 不该进代码）。真正的解法是让它变成调用方记录上的一个字段，那是后续的事。
+    /// </summary>
+    private static readonly HashSet<string> VisualCatalogCallers = new(StringComparer.Ordinal)
+    {
+        AppCallerRegistry.VisualAgent.Image.Text2Img,
+        AppCallerRegistry.VisualAgent.Image.Img2Img,
+        AppCallerRegistry.VisualAgent.Image.VisionGen,
+    };
+
     internal static bool UsesVisualLogicalModelCatalog(string appCallerCode)
-        => appCallerCode is AppCallerRegistry.VisualAgent.Image.Text2Img
-            or AppCallerRegistry.VisualAgent.Image.Img2Img
-            or AppCallerRegistry.VisualAgent.Image.VisionGen;
+        => VisualCatalogCallers.Contains(appCallerCode);
 
     internal static bool IsLogicalOfferingAllowed(
         ModelResolutionResult resolution,
@@ -1597,12 +1024,27 @@ public class ModelResolver : IModelResolver
         if (logicalModels.Count == 0)
             return [];
         var ids = logicalModels.Select(x => x.Id).ToList();
-        var offerings = await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
+        // 「不可用」不等于「这次调不通」：解析在挑常规队列之前会先试着认领一条已摘掉、
+        // 过了冷却（或被人工点过恢复）的线路做半开试探。把这一档一并排除掉，选择器里
+        // 只剩这种线路的模型就整个消失——而靠选择器挑模型的客户端从此发不出那次请求，
+        // 也就永远触发不了能让它回来的试探（第 81 轮 review；与对外清单 /v1/models 同一个自锁，
+        // 第 80 轮修的是那一侧，这一侧漏在外面）。
+        //
+        // 与那一侧一样：库里不再排除不可用，取回来后按**同一个纯函数**在内存里过一遍，
+        // 不存在「Mongo 过滤器与纯函数各写一份然后漂移」的余地。
+        var nowUtc = DateTime.UtcNow;
+        var halfOpenCutoff = nowUtc.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
+        var offerings = (await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayModelOffering>.Filter.In(x => x.LogicalModelId, ids),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
-                Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
-            .ToListAsync(ct);
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true)))
+            .ToListAsync(ct))
+            .Where(x => x.HealthStatus != ModelHealthStatus.Unavailable
+                || GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+                    x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt,
+                    nowUtc, halfOpenCutoff))
+            .ToList();
         var offeringsByLogicalModel = offerings
             .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
@@ -1625,11 +1067,21 @@ public class ModelResolver : IModelResolver
             foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
-                if (candidate is not null && IsLogicalOfferingAllowed(candidate, allowedGroups))
+                if (candidate is null || !IsLogicalOfferingAllowed(candidate, allowedGroups)) continue;
+                // 名录门也要过一遍。
+                //
+                // 上面那句注释说的是「目录与执行链路采用同一规则」，但它只覆盖了「解析得出来」
+                // 这一半。执行链路还有第二道门：名录外又没盖放行标记的物理模型，
+                // ApplyCatalogGateAsync 会拒掉。少了这一道，选择器里列出来的模型选中即失败
+                // （MODEL_NOT_IN_CATALOG），而用户没做错任何事。
+                // 对外的 /v1/models 上一轮已经补了这一道，应用侧这条清单是它的同类，一起补。
+                if (await JudgeAsync(candidate.ActualModel, candidate.ActualPlatformId, ct) == CatalogVerdict.Blocked
+                    && await CatalogGateEnforcesAsync(ct))
                 {
-                    hasResolvableOffering = true;
-                    break;
+                    continue;
                 }
+                hasResolvableOffering = true;
+                break;
             }
             if (!hasResolvableOffering)
                 continue;
@@ -1683,10 +1135,90 @@ public class ModelResolver : IModelResolver
                 Builders<GatewayLogicalModel>.Filter.Eq(x => x.ModelType, modelType),
                 Builders<GatewayLogicalModel>.Filter.Or(
                     Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicIdNormalized, normalized),
-                    Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicId, key))))
+                    Builders<GatewayLogicalModel>.Filter.Eq(x => x.PublicId, key),
+                    // 搬迁期的桥：`model_policy=pool` 这条契约还活着，serving 会把
+                    // model_pool_id 塞进 expectedModel，而客户端存的是**池文档 ID**、
+                    // 不是搬迁后的 PublicId。不认它的话这些请求一律查不到，又因为
+                    // expectedModel 非空而跳过默认那一支，直接 MODEL_NOT_FOUND——
+                    // 池退场把它们整条打断了。见 GatewayLogicalModel.MigratedFromPoolIds。
+                    Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.MigratedFromPoolIds, key))))
             .FirstOrDefaultAsync(ct);
         if (logical is null)
             return null;
+
+        return await ResolveFromLogicalModelAsync(logical, appCallerCode, expectedModel, allowedGroups, ct);
+    }
+
+    /// <summary>
+    /// 请求没点名模型时该用哪个对外模型。**两层**：先问「有没有模型认领了这个调用方」，
+    /// 没有才回落到「这个用途的默认」。
+    ///
+    /// 这是「模型池并进模型」的接线点：池唯一比逻辑模型多出来的能力就是「当兜底」，
+    /// 补上它之后池不再是另一种东西，只是这一行多了个标记。
+    ///
+    /// 解析不出来（没挂线路、能力不匹配、线路全熔断）时返回 null 而不是失败结果，
+    /// 让调用方继续往下走（钉死的上游 / legacy 兜底）。
+    /// 2026-09-15 删池之前这里回落的是模型池；池删了之后，都走不通就是如实失败。
+    /// </summary>
+    private async Task<ModelResolutionResult?> TryResolveDefaultLogicalModelAsync(
+        string appCallerCode,
+        string modelType,
+        CancellationToken ct,
+        IReadOnlyCollection<ModelGroup>? allowedGroups = null)
+    {
+        if (_gatewayDb is null) return null;
+
+        var logicalModels = _gatewayDb.Context.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models");
+        var fb = Builders<GatewayLogicalModel>.Filter;
+        // 两层查询共用的那三个条件：同租户、启用着、用途对得上。
+        var basics = fb.And(
+            fb.Eq(x => x.TenantId, CurrentTenantId),
+            fb.Eq(x => x.Enabled, true),
+            fb.Eq(x => x.ModelType, modelType));
+
+        // 第一层：有没有哪个模型认领了这个调用方。
+        //
+        // 这一层是模型池那个「按调用方兜底」能力的落点。少了它，把最后一个走池的调用方
+        // 切过来时它会掉到全局默认上——换了模型，那不是断流是换药。
+        // 两层都按 DisplayOrder/PublicId 排序：存量数据里万一有两个，取值确定而不是看运气。
+        //
+        // 认领比对必须带 appCaller 身份的那份 collation，否则它就是这条解析链路上
+        // **唯一**一处区分大小写的 appCaller 比较：注册与治理读按 collation 认（不分大小写），
+        // 授权名单按 OrdinalIgnoreCase 认，偏偏认领这一句按字节认。于是认领登记成 Foo、
+        // 请求带 foo 时，授权照过、认领落空，请求悄悄掉到「这个用途的默认」——换了一个模型，
+        // 而没有任何一处会报错（第 76 轮 review；形状 1：判据比它该管的范围窄）。
+        // GatewayAppCallerIdentity 的类注释本来就写着这份比较要在注册、治理、路由、去重、
+        // 唯一索引之间保持一致，这里是那句话唯一没被兑现的地方。
+        var identityOptions = new FindOptions { Collation = GatewayAppCallerIdentity.Collation };
+        var logical = await logicalModels
+            .Find(fb.And(basics, fb.AnyEq(x => x.DefaultForAppCallerCodes, appCallerCode)), identityOptions)
+            .SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)
+            .FirstOrDefaultAsync(ct);
+
+        // 第二层：这个用途的默认。
+        logical ??= await logicalModels
+            .Find(fb.And(basics, fb.Eq(x => x.IsDefaultForType, true)))
+            .SortBy(x => x.DisplayOrder).ThenBy(x => x.PublicId)
+            .FirstOrDefaultAsync(ct);
+        if (logical is null) return null;
+
+        var resolved = await ResolveFromLogicalModelAsync(logical, appCallerCode, logical.PublicId, allowedGroups, ct);
+        if (resolved is null || resolved.Success) return resolved;
+
+        _logger.LogWarning(
+            "[ModelResolver] 默认模型解析失败: ModelType={Type}, Default={PublicId}, Reason={Reason}",
+            modelType, logical.PublicId, resolved.ErrorMessage);
+        return null;
+    }
+
+    private async Task<ModelResolutionResult?> ResolveFromLogicalModelAsync(
+        GatewayLogicalModel logical,
+        string appCallerCode,
+        string? expectedModel,
+        IReadOnlyCollection<ModelGroup>? allowedGroups,
+        CancellationToken ct)
+    {
+        if (_gatewayDb is null) return null;
 
         if (!SupportsAppCallerScenario(logical, appCallerCode))
         {
@@ -1701,11 +1233,14 @@ public class ModelResolver : IModelResolver
         }
 
         var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        // 刻意把「停用」「熔断」这两个条件从查询里拿掉，全量取回后交给
+        // GatewayRouteSelection.SkipReason 判。原来写在查询条件里，等于同一个判据存在两份：
+        // 一份是这里的 Mongo filter，一份是控制台面板要给人看的「为什么跳过这条」——
+        // 两份必然漂移，而且漂了没人发现（形状 3）。一个对外模型下的线路是几十条量级，
+        // 全量取回的代价可以忽略。
         var available = await offerings.Find(Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.LogicalModelId, logical.Id),
-                Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true),
-                Builders<GatewayModelOffering>.Filter.Ne(x => x.HealthStatus, ModelHealthStatus.Unavailable)))
+                Builders<GatewayModelOffering>.Filter.Eq(x => x.LogicalModelId, logical.Id)))
             .ToListAsync(ct);
 
         var ordered = OrderLogicalOfferings(logical, available);
@@ -1715,6 +1250,18 @@ public class ModelResolver : IModelResolver
             var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, expectedModel, ct);
             if (candidate is not null && IsLogicalOfferingAllowed(candidate, allowedGroups))
                 resolved.Add(candidate);
+        }
+
+        // 冷却期满后拿一条不可用 Offering 做半开试探，放在发送队列首位。
+        // 没有这一步，GatewayRouteSelection 把熔断线路剔出队列就是一扇单向门：Offering 被摘掉
+        // 之后再也拿不到一次成功来翻身，只能等人去控制台改密钥。租约保证同一时刻只有一个请求在试。
+        // 它刻意不进那个纯函数——要抢租约、要写库。面板也因此不把它当成确定的下一跳。
+        var halfOpen = await TryClaimHalfOpenOfferingAsync(logical, ct);
+        if (halfOpen is not null)
+        {
+            var probe = await TryBuildLogicalOfferingResolutionAsync(logical, halfOpen, expectedModel, ct);
+            if (probe is not null && IsLogicalOfferingAllowed(probe, allowedGroups))
+                resolved.Insert(0, probe);
         }
 
         if (resolved.Count == 0)
@@ -1748,35 +1295,35 @@ public class ModelResolver : IModelResolver
             logical.AllowedAppCallerCodes,
             appCallerCode);
 
+    /// <summary>
+    /// 这次该按什么顺序发。判据本体在 <see cref="GatewayRouteSelection"/>——控制台的
+    /// 「调用全貌」面板要回答同一个问题，两边必须是同一份判据，这里只做映射与转发。
+    /// </summary>
     private List<GatewayModelOffering> OrderLogicalOfferings(
         GatewayLogicalModel logical,
         List<GatewayModelOffering> offerings)
     {
-        var ordered = offerings
-            .OrderBy(x => x.HealthStatus == ModelHealthStatus.Healthy ? 0 : 1)
-            .ThenBy(x => x.Priority)
-            .ThenBy(x => x.Id, StringComparer.Ordinal)
-            .ToList();
-        if (!string.Equals(logical.RoutingStrategy, "weighted", StringComparison.OrdinalIgnoreCase)
-            || ordered.Count < 2)
-            return ordered;
-
         var seedText = $"{_requestContext?.Current?.RequestId ?? Guid.NewGuid().ToString("N")}::{logical.Id}";
         var seed = BitConverter.ToUInt32(SHA256.HashData(Encoding.UTF8.GetBytes(seedText)), 0);
-        var totalWeight = ordered.Sum(x => Math.Max(1, x.Weight));
-        var cursor = (int)(seed % (uint)totalWeight);
-        var firstIndex = 0;
-        for (var i = 0; i < ordered.Count; i++)
-        {
-            cursor -= Math.Max(1, ordered[i].Weight);
-            if (cursor < 0)
-            {
-                firstIndex = i;
-                break;
-            }
-        }
-        return ordered.Skip(firstIndex).Concat(ordered.Take(firstIndex)).ToList();
+        var byId = offerings.ToDictionary(x => x.Id, StringComparer.Ordinal);
+        var queue = GatewayRouteSelection.Queue(
+            offerings.Select(ToRouteCandidate).ToList(),
+            GatewayRouteSelection.IsWeighted(logical.RoutingStrategy),
+            seed);
+        return queue.Select(x => byId[x.Id]).ToList();
     }
+
+    /// <summary>
+    /// Offering 映射成判据认识的形状。字段对不齐时镜像对照测试会红。
+    ///
+    /// TargetUsable 这里恒传 true：目标模型与上游是否启用，本方法拿不到，
+    /// 由随后的 <see cref="TryBuildLogicalOfferingResolutionAsync"/> 用 requireEnabled 过滤
+    /// （目标不可用时它返回 null，那条线路照样进不了候选，最终集合与在这里过滤等价）。
+    /// 控制台那边拿得到，所以它会传真值——它必须说得出「为什么跳过这条」。
+    /// </summary>
+    internal static GatewayRouteSelection.RouteCandidate ToRouteCandidate(GatewayModelOffering offering)
+        => new(offering.Id, offering.Priority, offering.Weight, (int)offering.HealthStatus, offering.Enabled,
+            TargetUsable: true);
 
     private async Task<ModelResolutionResult?> TryBuildLogicalOfferingResolutionAsync(
         GatewayLogicalModel logical,
@@ -1823,6 +1370,16 @@ public class ModelResolver : IModelResolver
             item.PlatformId = exchange.Id;
             if (string.IsNullOrWhiteSpace(item.ModelId))
                 item.ModelId = exchange.ModelAlias;
+            // 兑换所整体启用着，不代表这条线路要打的那个别名还开着：管理员可以把里面某一条单独停掉。
+            // 只判 Exchange.Enabled 的话，流量继续往一条被关掉的别名上发——「关了等于没关」。
+            // 判据与目录、就绪那两处共用同一份（GatewayCatalogGate），不另写近似。
+            if (requireEnabled && !GatewayCatalogGate.ExchangeDeclares(exchange, item.ModelId))
+            {
+                _logger.LogDebug(
+                    "[ModelResolver] 兑换所 {ExchangeId} 里没有启用着的别名 {Model}，这条线路跳过",
+                    exchange.Id, item.ModelId);
+                return null;
+            }
             var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(exchange.TargetApiKeyEncrypted, _config);
             return ModelResolutionResult.FromExchangePool(
                 "LogicalModel", expectedModel, item, logicalGroup, exchange, apiKey,
@@ -1851,6 +1408,29 @@ public class ModelResolver : IModelResolver
             item.ModelId = model.ModelName;
         if (string.IsNullOrWhiteSpace(item.Protocol))
             item.Protocol = model.Protocol;
+
+        // 价格从物理模型搬进这个合成条目。
+        //
+        // 池退场之前价格挂在池成员上，解析走池成员那条路，这一步不存在。现在线路指向的是
+        // 物理模型文档，价格的唯一载体是它——不搬过来，ModelResolutionResult 的价格字段
+        // （它读的是这个 item）就全是空，于是每一次调用都按「没配价」记账：币种判为过期、
+        // 不进美元成本、不进预算，而日志里一个字都不会说（degradation-must-alarm）。
+        item.InputPricePerMillion = model.InputPricePerMillion;
+        item.OutputPricePerMillion = model.OutputPricePerMillion;
+        item.CachedInputPricePerMillion = model.CachedInputPricePerMillion;
+        item.CacheWritePricePerMillion = model.CacheWritePricePerMillion;
+        item.PricePerCall = model.PricePerCall;
+        item.PriceCurrency = model.PriceCurrency;
+        item.PriceSource = model.PriceSource;
+        item.PriceObservedAt = model.PriceObservedAt;
+        // 最大输出 token 上限同理：FromPool 只读这个合成条目，**刻意不回落到物理模型**
+        //（那条注释就在它上面：不覆盖池成员的价格与 MaxTokens）。不搬过来的话，
+        // 模型页上填的「最大输出」保存成功、界面回显正常，而走对外模型的流量一个都不受它约束——
+        // 又一个「填了不生效」的开关，比不能填更糟。
+        //
+        // 与价格是同一个形状，也是同一次疏忽：上一轮只搬了价格，没扫这个合成对象的其余字段
+        // （形状 6 的那句「修完要横扫同类」）。
+        item.MaxTokens = model.MaxTokens;
         var endpointPlatform = new LLMPlatform
         {
             Id = platform.Id,
@@ -1875,60 +1455,6 @@ public class ModelResolver : IModelResolver
             offering.RateLimitPerMinute, offering.EndpointPath);
     }
 
-    /// <summary>
-    /// 按模型池条目查找对应的 Exchange。支持两种 PlatformId:
-    ///   A) "__exchange__"（旧虚拟平台 id）— 用 ModelId 反查 Exchange.ModelAlias / ModelAliases / Models
-    ///   B) Exchange.Id（新虚拟平台 id）— 直接按 Id 查
-    /// 未匹配时返回 null，由调用方决定降级到普通平台还是跳过。
-    /// </summary>
-    private async Task<ModelExchange?> FindExchangeForPoolItemAsync(
-        ModelGroupItem selectedModel,
-        bool allowMapFallback,
-        CancellationToken ct)
-    {
-        if (selectedModel.PlatformId == ModelResolverConstants.ExchangePlatformId)
-        {
-            // A) 旧数据：按 ModelId 反查
-            var legacyFilter = Builders<ModelExchange>.Filter.And(
-                Builders<ModelExchange>.Filter.Eq(e => e.Enabled, true),
-                Builders<ModelExchange>.Filter.Or(
-                    Builders<ModelExchange>.Filter.Eq(e => e.ModelAlias, selectedModel.ModelId),
-                    Builders<ModelExchange>.Filter.AnyEq(e => e.ModelAliases, selectedModel.ModelId),
-                    Builders<ModelExchange>.Filter.ElemMatch(
-                        e => e.Models,
-                        Builders<ExchangeModel>.Filter.Eq(m => m.ModelId, selectedModel.ModelId))
-                )
-            );
-            var gatewayExchange = await FindGatewayOwnedExchangeAsync(legacyFilter, ct);
-            if (gatewayExchange is not null)
-                return gatewayExchange;
-            if (!allowMapFallback)
-                return null;
-            return await _db.ModelExchanges.Find(legacyFilter).FirstOrDefaultAsync(ct);
-        }
-
-        // B) 新数据：PlatformId 就是 Exchange.Id，直接按 Id 查
-        var byIdFilter = Builders<ModelExchange>.Filter.And(
-            Builders<ModelExchange>.Filter.Eq(e => e.Id, selectedModel.PlatformId),
-            Builders<ModelExchange>.Filter.Eq(e => e.Enabled, true)
-        );
-        var exchange = await FindGatewayOwnedExchangeAsync(byIdFilter, ct)
-                       ?? (allowMapFallback ? await _db.ModelExchanges.Find(byIdFilter).FirstOrDefaultAsync(ct) : null);
-        if (exchange == null) return null;
-
-        // 校验 ModelId 在 Exchange 的有效模型列表里
-        var effectiveModels = exchange.GetEffectiveModels();
-        var hit = effectiveModels.Any(m =>
-            m.Enabled && string.Equals(m.ModelId, selectedModel.ModelId, StringComparison.Ordinal));
-        if (!hit)
-        {
-            _logger.LogWarning(
-                "[ModelResolver] Exchange {ExchangeId} ({ExchangeName}) 下未找到启用的模型 {ModelId}",
-                exchange.Id, exchange.Name, selectedModel.ModelId);
-            return null;
-        }
-        return exchange;
-    }
 
     /// <summary>
     /// 在候选池列表中寻找用户期望的模型。
@@ -2017,20 +1543,6 @@ public class ModelResolver : IModelResolver
         return (null, null);
     }
 
-    // legacy 直连兜底：未迁移到 ModelGroups 的部署仍按 IsMain/IsIntent/IsVision/IsImageGen 标记选模型。
-    // 迁移自动化前保留；已建默认池的部署解析在前面就命中，不会走到这里。
-    private async Task<LLMModel?> FindLegacyModelAsync(string modelType, CancellationToken ct)
-    {
-        LLMModel? result = modelType.ToLowerInvariant() switch
-        {
-            "chat" => await _db.LLMModels.Find(m => m.IsMain && m.Enabled).FirstOrDefaultAsync(ct),
-            "intent" => await _db.LLMModels.Find(m => m.IsIntent && m.Enabled).FirstOrDefaultAsync(ct),
-            "vision" => await _db.LLMModels.Find(m => m.IsVision && m.Enabled).FirstOrDefaultAsync(ct),
-            "generation" => await _db.LLMModels.Find(m => m.IsImageGen && m.Enabled).FirstOrDefaultAsync(ct),
-            _ => null
-        };
-        return result;
-    }
 
     private async Task<ModelResolutionResult?> TryResolvePinnedModelAsync(
         string appCallerCode,
@@ -2111,157 +1623,6 @@ public class ModelResolver : IModelResolver
         return ModelResolutionResult.FromPinned(expectedModel ?? model.ModelName, model, platform, apiKey);
     }
 
-    private async Task<ModelResolutionResult> ResolvePinnedGatewayPoolMemberAsync(
-        string appCallerCode,
-        ModelGroup group,
-        ModelGroupItem member,
-        string? expectedModel,
-        CancellationToken ct)
-    {
-        var exchange = await FindExchangeForPoolItemAsync(
-            member,
-            allowMapFallback: false,
-            ct);
-        if (exchange is not null)
-        {
-            var exchangeApiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(
-                exchange.TargetApiKeyEncrypted,
-                _config);
-            if (string.IsNullOrWhiteSpace(exchange.TargetUrl))
-            {
-                return ModelResolutionResult.NotFound(
-                    expectedModel,
-                    $"PinnedModel Exchange API URL 配置不完整: exchange={exchange.Id}, model={member.ModelId}",
-                    GatewayRouteFailure.OfferingUnresolvable,
-                    "pinned-exchange-endpoint",
-                    appCallerCode,
-                    modelPoolId: group.Id);
-            }
-
-            if (string.IsNullOrWhiteSpace(exchangeApiKey))
-            {
-                return ModelResolutionResult.NotFound(
-                    expectedModel,
-                    $"PinnedModel Exchange API Key 配置不完整: exchange={exchange.Id}, model={member.ModelId}",
-                    GatewayRouteFailure.OfferingUnresolvable,
-                    "pinned-exchange-credential",
-                    appCallerCode,
-                    modelPoolId: group.Id);
-            }
-
-            return ModelResolutionResult.FromExchangePool(
-                "GatewayRegistryPool",
-                expectedModel,
-                member,
-                group,
-                exchange,
-                exchangeApiKey);
-        }
-
-        if (string.Equals(
-                member.PlatformId,
-                ModelResolverConstants.ExchangePlatformId,
-                StringComparison.Ordinal))
-        {
-            return ModelResolutionResult.NotFound(
-                expectedModel,
-                $"PinnedModel Exchange 配置不存在或未启用: model={member.ModelId}",
-                GatewayRouteFailure.OfferingUnresolvable,
-                "pinned-exchange-missing",
-                appCallerCode,
-                modelPoolId: group.Id);
-        }
-
-        var platform = await FindGatewayOwnedOrMapPlatformAsync(
-            member.PlatformId,
-            enabledOnly: true,
-            ct,
-            allowMapFallback: false);
-        if (platform is null)
-        {
-            return ModelResolutionResult.NotFound(
-                expectedModel,
-                $"PinnedModel 平台不存在或未启用: {member.PlatformId}",
-                GatewayRouteFailure.PlatformDisabled,
-                "pinned-pool-platform",
-                appCallerCode,
-                modelPoolId: group.Id);
-        }
-
-        var model = await FindGatewayOwnedOrMapModelAsync(
-            member.PlatformId,
-            member.ModelId,
-            ct,
-            allowMapFallback: false);
-        if (model is null)
-        {
-            return ModelResolutionResult.NotFound(
-                expectedModel,
-                $"PinnedModel 模型不存在或未启用: platform={member.PlatformId}, model={member.ModelId}",
-                GatewayRouteFailure.RouteConfigIncompatible,
-                "pinned-pool-model",
-                appCallerCode,
-                modelPoolId: group.Id);
-        }
-
-        var encryptedKey = string.IsNullOrWhiteSpace(model.ApiKeyEncrypted)
-            ? platform.ApiKeyEncrypted
-            : model.ApiKeyEncrypted;
-        var apiKey = ApiKeyCryptoKeyRing.DecryptPlainOrNull(encryptedKey, _config);
-        var effectiveApiUrl = string.IsNullOrWhiteSpace(model.ApiUrl)
-            ? platform.ApiUrl
-            : model.ApiUrl;
-        if (string.IsNullOrWhiteSpace(effectiveApiUrl))
-        {
-            return ModelResolutionResult.NotFound(
-                expectedModel,
-                $"PinnedModel API URL 配置不完整: platform={member.PlatformId}, model={member.ModelId}",
-                GatewayRouteFailure.RouteConfigIncompatible,
-                "pinned-pool-endpoint",
-                appCallerCode,
-                modelPoolId: group.Id);
-        }
-
-        if (string.IsNullOrWhiteSpace(apiKey))
-        {
-            return ModelResolutionResult.NotFound(
-                expectedModel,
-                $"PinnedModel API Key 配置不完整: platform={member.PlatformId}, model={member.ModelId}",
-                GatewayRouteFailure.RouteConfigIncompatible,
-                "pinned-pool-credential",
-                appCallerCode,
-                modelPoolId: group.Id);
-        }
-
-        var endpointPlatform = new LLMPlatform
-        {
-            Id = platform.Id,
-            Name = platform.Name,
-            PlatformType = platform.PlatformType,
-            ProviderId = platform.ProviderId,
-            ApiUrl = effectiveApiUrl,
-            ApiKeyEncrypted = platform.ApiKeyEncrypted,
-            Enabled = platform.Enabled,
-            MaxConcurrency = platform.MaxConcurrency,
-            Remark = platform.Remark,
-            CreatedAt = platform.CreatedAt,
-            UpdatedAt = platform.UpdatedAt
-        };
-        _logger.LogInformation(
-            "[ModelResolver] GW 模型池物理锁定完成: Pool={Pool}, Platform={Platform}, Model={Model}, Health={Health}",
-            group.Id,
-            member.PlatformId,
-            member.ModelId,
-            member.HealthStatus);
-        return ModelResolutionResult.FromPool(
-            "GatewayRegistryPool",
-            expectedModel,
-            member,
-            group,
-            endpointPlatform,
-            apiKey,
-            model);
-    }
 
     private async Task<ModelResolutionResult?> TryResolveLegacyConfigFallbackAsync(string modelType, string? expectedModel, CancellationToken ct)
     {
@@ -2314,145 +1675,66 @@ public class ModelResolver : IModelResolver
             envApiKey);
     }
 
-    private ModelGroupItem? SelectBestModel(ModelGroup group)
-    {
-        if (group.Models == null || group.Models.Count == 0)
-            return null;
 
-        // 优先选择健康的模型，按优先级排序
-        var healthy = group.Models
-            .Where(m => m.HealthStatus == ModelHealthStatus.Healthy)
-            .OrderBy(m => m.Priority)
-            .FirstOrDefault();
 
-        if (healthy != null)
-            return healthy;
 
-        // 其次选择降权的模型
-        var degraded = group.Models
-            .Where(m => m.HealthStatus == ModelHealthStatus.Degraded)
-            .OrderBy(m => m.Priority)
-            .FirstOrDefault();
-
-        if (degraded != null)
-            return degraded;
-
-        // 最后选择任意可用模型（排除 Unavailable）
-        return group.Models
-            .Where(m => m.HealthStatus != ModelHealthStatus.Unavailable)
-            .OrderBy(m => m.Priority)
-            .FirstOrDefault();
-    }
-
-    private async Task<List<ModelGroupItem>> SelectProviderRetryCandidatesAsync(
-        ModelGroup group,
-        bool includeAllAvailable,
-        bool gatewayOwned,
+    /// <summary>
+    /// 给逻辑模型认领一条半开 Offering。与模型池成员那套同源：条件写 + ModifiedCount 校验，
+    /// 租约自带过期，所以多实例安全，且拿到租约的实例挂掉也不会把 Offering 永久锁死。
+    /// </summary>
+    private async Task<GatewayModelOffering?> TryClaimHalfOpenOfferingAsync(
+        GatewayLogicalModel logical,
         CancellationToken ct)
     {
-        if (group.Models == null || group.Models.Count == 0)
-            return [];
+        if (_gatewayDb is null) return null;
 
-        var candidates = group.Models
-            .Where(m => m.HealthStatus != ModelHealthStatus.Unavailable)
-            .OrderBy(m => m.HealthStatus == ModelHealthStatus.Healthy ? 0 : 1)
-            .ThenBy(m => m.Priority)
-            .ToList();
-
-        if (includeAllAvailable)
-        {
-            var halfOpen = await TryClaimHalfOpenCandidateAsync(group, gatewayOwned, ct);
-            if (halfOpen is not null)
-                // 半开成员是本轮恢复探测的优先候选，必须真正占据发送队列首位，
-                // 否则先发送健康成员会让半开租约白占位而无法完成验证。
-                candidates.Insert(0, halfOpen);
-            return candidates;
-        }
-
-        return candidates.Count == 0 ? [] : [candidates[0]];
-    }
-
-    private async Task<ModelGroupItem?> TryClaimHalfOpenCandidateAsync(
-        ModelGroup group,
-        bool gatewayOwned,
-        CancellationToken ct)
-    {
         var now = DateTime.UtcNow;
-        var cooldownSeconds = Math.Clamp(
-            _config.GetValue<int?>("LlmGateway:CircuitBreaker:HalfOpenAfterSeconds") ?? 120,
-            10,
-            3600);
-        var leaseSeconds = Math.Clamp(
-            _config.GetValue<int?>("LlmGateway:CircuitBreaker:HalfOpenLeaseSeconds") ?? 30,
-            5,
-            300);
+        var cooldownSeconds = GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey));
+        var leaseSeconds = GatewayCircuitBreakerPolicy.ResolveHalfOpenLeaseSeconds(
+            _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenLeaseSecondsKey));
         var cutoff = now.AddSeconds(-cooldownSeconds);
-        var candidate = group.Models
-            .Where(member => IsHalfOpenEligible(member, now, cutoff))
-            .OrderBy(member => member.Priority)
-            .FirstOrDefault();
-        if (candidate is null)
-            return null;
 
-        var filters = new List<FilterDefinition<ModelGroup>>
-        {
-            Builders<ModelGroup>.Filter.Eq(item => item.Id, group.Id),
-            new BsonDocumentFilterDefinition<ModelGroup>(new BsonDocument("Models", new BsonDocument("$elemMatch", new BsonDocument
+        var offerings = _gatewayDb.Context.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+        var fb = Builders<GatewayModelOffering>.Filter;
+        var claimed = await offerings.FindOneAndUpdateAsync(
+            fb.And(
+                fb.Eq(x => x.TenantId, CurrentTenantId),
+                fb.Eq(x => x.LogicalModelId, logical.Id),
+                fb.Eq(x => x.Enabled, true),
+                fb.Eq(x => x.HealthStatus, ModelHealthStatus.Unavailable),
+                fb.Or(
+                    fb.Exists(x => x.HalfOpenLeaseUntil, false),
+                    fb.Eq(x => x.HalfOpenLeaseUntil, null),
+                    fb.Lte(x => x.HalfOpenLeaseUntil, now)),
+                fb.Or(
+                    fb.Lte(x => x.ManualRecoveryAt, now),
+                    fb.Exists(x => x.LastFailedAt, false),
+                    fb.Eq(x => x.LastFailedAt, null),
+                    fb.Lte(x => x.LastFailedAt, cutoff))),
+            Builders<GatewayModelOffering>.Update
+                .Set(x => x.HalfOpenLeaseUntil, now.AddSeconds(leaseSeconds)),
+            new FindOneAndUpdateOptions<GatewayModelOffering>
             {
-                { "ModelId", candidate.ModelId },
-                { "PlatformId", candidate.PlatformId },
-                { "HealthStatus", (int)ModelHealthStatus.Unavailable },
-                { "$or", new BsonArray
-                    {
-                        new BsonDocument("HalfOpenLeaseUntil", new BsonDocument("$exists", false)),
-                        new BsonDocument("HalfOpenLeaseUntil", BsonNull.Value),
-                        new BsonDocument("HalfOpenLeaseUntil", new BsonDocument("$lte", now)),
-                    }
-                },
-                { "$and", new BsonArray
-                    {
-                        new BsonDocument("$or", new BsonArray
-                        {
-                            new BsonDocument("ManualRecoveryAt", new BsonDocument("$lte", now)),
-                            new BsonDocument("LastFailedAt", new BsonDocument("$exists", false)),
-                            new BsonDocument("LastFailedAt", BsonNull.Value),
-                            new BsonDocument("LastFailedAt", new BsonDocument("$lte", cutoff)),
-                        }),
-                    }
-                },
-            })))
-        };
-        IMongoCollection<ModelGroup> collection;
-        if (gatewayOwned && _gatewayDb is not null)
-        {
-            filters.Add(new BsonDocumentFilterDefinition<ModelGroup>(new BsonDocument("TenantId", CurrentTenantId)));
-            collection = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
-        }
-        else
-        {
-            collection = _db.ModelGroups;
-        }
+                ReturnDocument = ReturnDocument.After,
+                Sort = Builders<GatewayModelOffering>.Sort.Ascending(x => x.Priority),
+            },
+            ct);
+        if (claimed is null) return null;
 
-        var result = await collection.UpdateOneAsync(
-            Builders<ModelGroup>.Filter.And(filters),
-            Builders<ModelGroup>.Update.Set("Models.$.HalfOpenLeaseUntil", now.AddSeconds(leaseSeconds)),
-            cancellationToken: ct);
-        if (result.ModifiedCount != 1)
-            return null;
-
-        candidate.HalfOpenLeaseUntil = now.AddSeconds(leaseSeconds);
         _logger.LogInformation(
-            "[ModelResolver] 不可用成员进入自动半开验证: Pool={PoolId}, Model={ModelId}, LeaseSeconds={LeaseSeconds}",
-            group.Id, candidate.ModelId, leaseSeconds);
-        return candidate;
+            "[ModelResolver] 不可用 Offering 进入自动半开验证: LogicalModel={PublicId}, Offering={OfferingId}, LeaseSeconds={LeaseSeconds}",
+            logical.PublicId, claimed.Id, leaseSeconds);
+        return claimed;
     }
 
+    /// <summary>
+    /// 判据本体已收到 <see cref="GatewayCircuitBreakerPolicy.IsHalfOpenEligible"/>：
+    /// 对外清单那一侧也要问同一个问题，两处各写一份必然漂（第 80 轮 review）。这里只做转发。
+    /// </summary>
     internal static bool IsHalfOpenEligible(ModelGroupItem member, DateTime now, DateTime cutoff)
-        => member.HealthStatus == ModelHealthStatus.Unavailable
-           && (!member.HalfOpenLeaseUntil.HasValue || member.HalfOpenLeaseUntil <= now)
-           && ((member.ManualRecoveryAt.HasValue && member.ManualRecoveryAt <= now)
-               || !member.LastFailedAt.HasValue
-               || member.LastFailedAt <= cutoff);
+        => GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
+            member.HealthStatus, member.HalfOpenLeaseUntil, member.ManualRecoveryAt, member.LastFailedAt, now, cutoff);
 
     /// <summary>
     /// 这些模型类型在专属池不可用时必须**失败关闭**，不许降级到 legacy 直连兜底。
@@ -2481,69 +1763,23 @@ public class ModelResolver : IModelResolver
            || string.Equals(modelType, ModelTypes.Asr, StringComparison.OrdinalIgnoreCase)
            || string.Equals(modelType, ModelTypes.Embedding, StringComparison.OrdinalIgnoreCase);
 
+
     /// <summary>
-    /// GW 里查无这条 appCaller 时，回落到该 ModelType 的 GW 默认池。
+    /// 这个调用方此刻放不放行流量。
     ///
-    /// 为什么需要：配置权威已经全部搬到 GW，MAP 侧 model_groups 自模型管理写接口退场后恒为空。
-    /// 于是「registry 里没有登记过」的 appCaller 会一路穿过 MAP 兼容分支、legacy 直连，最后落到
-    /// NotFound——用户看到的是「功能第一次被人用就报未找到可用模型」，而同类型的默认池明明是满的。
-    /// 已登记但没绑池的 appCaller 走的正是同一个默认池（见 TryGetGatewayRegistryGroupsAsync 末尾），
-    /// 「没登记」不该比「登记了但没绑」拿到更差的结果。
+    /// 2026-09-15 之前这个方法叫 TryGetGatewayRegistryGroupsAsync，除了读状态还顺手把调用方
+    /// 绑定的模型池全部加载出来（114 行）。断流之后没有调用方再绑池，它只剩下读状态这一件事。
     ///
-    /// 只在「记录确实不存在」这一种情况下兜底，其余三种仍然 fail closed，不能被这里悄悄放行：
-    ///   - 记录存在但被阻挡（绑的池不存在 / 默认池不在允许集合内）→ BlockReason 非空
-    ///   - 配置面读不到（基础设施故障）                          → ConfigPlaneUnavailable
-    ///   - 状态不允许真实流量                                     → 调用点更早就返回了
-    /// 另外要求 gatewayConfigRequired == false：外部租户与已切断 MAP fallback 的部署维持严格契约，
-    /// 未登记就是未授权，不给默认池。
+    /// 读不到（没有网关库、查库失败）一律按「配置面不可用」返回，而不是按「不放行」——
+    /// 这两件事的下一步完全不同：前者重试可能恢复，后者重试无用。
     /// </summary>
-    private async Task<List<ModelGroup>> TryFallbackToGatewayDefaultPoolsAsync(
-        GatewayRegistryLookup gatewayRegistry,
-        string appCallerCode,
-        string modelType,
-        bool hasDedicatedBinding,
-        bool gatewayConfigRequired,
-        CancellationToken ct)
-    {
-        if (gatewayConfigRequired
-            || _gatewayDb is null
-            || gatewayRegistry.Groups.Count > 0
-            || gatewayRegistry.BlockReason is not null
-            || gatewayRegistry.ConfigPlaneUnavailable)
-        {
-            return [];
-        }
-
-        // embedding / asr / video-gen 三类：绑定还在、池没了，正是 HasDedicatedBinding 那段注释
-        // 点名要拦的情形——换一个模型出来的东西根本不能用（向量维度对不上，写进库就是一批
-        // 认不出来的垃圾）。这条兜底救的是「功能被残留数据整片判死」，不该把这三类一起放行。
-        // 它们继续走原有的失败关闭，由人去把绑定改对（Codex 第五十轮 P1）。
-        if (hasDedicatedBinding && ShouldFailClosedWhenDedicatedPoolUnavailable(modelType))
-        {
-            _logger.LogWarning(
-                "[ModelResolver] {ModelType} 绑定的专属池已不存在，按失败关闭处理，不回落默认池: AppCallerCode={Code}",
-                modelType, appCallerCode);
-            return [];
-        }
-
-        var defaults = await FindGatewayOwnedDefaultModelPoolsAsync(modelType, ct);
-        if (defaults.Count == 0) return [];
-
-        _logger.LogInformation(
-            "[ModelResolver] appCaller 未在 GW 登记，回落到 GW 默认模型池: AppCallerCode={Code}, ModelType={Type}, PoolNames={Names}",
-            appCallerCode, modelType, string.Join(", ", defaults.Select(g => g.Name)));
-        return defaults;
-    }
-
-    private async Task<GatewayRegistryLookup> TryGetGatewayRegistryGroupsAsync(
+    private async Task<GatewayCallerStatus> TryGetGatewayAppCallerStatusAsync(
         string appCallerCode,
         string modelType,
         CancellationToken ct)
     {
         if (_gatewayDb is null || string.IsNullOrWhiteSpace(appCallerCode) || string.IsNullOrWhiteSpace(modelType))
-        {
-            return GatewayRegistryLookup.ConfigPlaneDown("gateway-registry-unavailable");
-        }
+            return new GatewayCallerStatus(false, null, "gateway-registry-unavailable", ConfigPlaneUnavailable: true);
 
         try
         {
@@ -2556,167 +1792,45 @@ public class ModelResolver : IModelResolver
                     new FindOptions { Collation = GatewayAppCallerIdentity.Collation })
                 .SortByDescending(x => x.UpdatedAt)
                 .FirstOrDefaultAsync(ct);
-            if (record is null)
-            {
-                return GatewayRegistryLookup.Empty();
-            }
+
+            // 没登记过不等于不放行：这类调用方照样能点名一个公开的对外模型。
+            if (record is null) return new GatewayCallerStatus(false, null, null);
+
+            var stalePool = new[] { record.ModelPoolId, record.DefaultModelPoolId }
+                .Concat(record.AllowedModelPoolIds ?? [])
+                .FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
 
             var status = GatewayAppCallerPolicy.NormalizeStatus(record.Status);
-            if (!GatewayAppCallerPolicy.AllowsTraffic(status))
-                return GatewayRegistryLookup.Rejected(record.ModelPoolId, $"appcaller-status-{status}", status);
-
-            var allowedPoolIds = (record.AllowedModelPoolIds ?? [])
-                .Where(id => !string.IsNullOrWhiteSpace(id))
-                .Select(id => id.Trim())
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-            if (allowedPoolIds.Count > 0)
-            {
-                var defaultPoolId = record.DefaultModelPoolId?.Trim();
-                if (string.IsNullOrWhiteSpace(defaultPoolId) || !allowedPoolIds.Contains(defaultPoolId, StringComparer.Ordinal))
-                {
-                    return GatewayRegistryLookup.BlockedStrict(
-                        defaultPoolId,
-                        "appcaller-default-pool-missing-or-outside-allowed-set",
-                        status);
-                }
-
-                var groups = new List<ModelGroup>(allowedPoolIds.Count);
-                foreach (var poolId in allowedPoolIds)
-                {
-                    var group = await FindGatewayOwnedOrMapModelPoolAsync(
-                        poolId,
-                        modelType,
-                        ct,
-                        allowMapFallback: false);
-                    if (group is null)
-                    {
-                        _logger.LogWarning(
-                            "[ModelResolver] GW appCaller 允许的模型池不存在或类型不匹配: AppCallerCode={Code}, ModelType={Type}, ModelPoolId={PoolId}",
-                            appCallerCode, modelType, poolId);
-                        return GatewayRegistryLookup.BlockedStrict(
-                            defaultPoolId,
-                            "appcaller-allowed-model-pool-not-found-in-gateway",
-                            status);
-                    }
-                    groups.Add(group);
-                }
-
-                return GatewayRegistryLookup.FoundStrict(
-                    defaultPoolId,
-                    groups,
-                    status,
-                    record.AllowCrossPoolFallback);
-            }
-
-            if (!string.IsNullOrWhiteSpace(record.ModelPoolId))
-            {
-                var group = await FindGatewayOwnedOrMapModelPoolAsync(
-                    record.ModelPoolId,
-                    modelType,
-                    ct,
-                    allowMapFallback: false);
-                if (group is null)
-                {
-                    _logger.LogWarning(
-                        "[ModelResolver] GW appCaller 绑定的模型池不存在或类型不匹配: AppCallerCode={Code}, ModelType={Type}, Status={Status}, ModelPoolId={PoolId}",
-                        appCallerCode, modelType, status, record.ModelPoolId);
-                    return GatewayRegistryLookup.Blocked(
-                        record.ModelPoolId,
-                        "appcaller-model-pool-not-found-in-gateway",
-                        status);
-                }
-
-                return GatewayRegistryLookup.Found(record.ModelPoolId, [group], status);
-            }
-
-            var defaultGroups = await FindGatewayOwnedDefaultModelPoolsAsync(modelType, ct);
-            if (defaultGroups.Count == 0)
-            {
-                return GatewayRegistryLookup.Blocked(
-                    null,
-                    $"{status}-appcaller-missing-gateway-default-pool",
-                    status);
-            }
-
-            return GatewayRegistryLookup.Found(defaultGroups[0].Id, defaultGroups, status);
+            return GatewayAppCallerPolicy.AllowsTraffic(status)
+                ? new GatewayCallerStatus(false, status, null, StalePoolBinding: stalePool)
+                : new GatewayCallerStatus(true, status, $"appcaller-status-{status}", StalePoolBinding: stalePool);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex,
-                "[ModelResolver] 读取 GW appCaller registry 失败: AppCallerCode={Code}, ModelType={Type}",
+                "[ModelResolver] 读 GW appCaller 状态失败: AppCallerCode={Code}, ModelType={Type}",
                 appCallerCode, modelType);
-            return GatewayRegistryLookup.ConfigPlaneDown("gateway-registry-read-failed");
+            return new GatewayCallerStatus(false, null, "gateway-registry-read-failed", ConfigPlaneUnavailable: true);
         }
     }
 
-    private async Task<List<ModelGroup>> FindGatewayOwnedDefaultModelPoolsAsync(
-        string modelType,
-        CancellationToken ct)
-    {
-        if (_gatewayDb is null)
-            return [];
+    /// <param name="TrafficRejected">明确不放行；配置面读不到时为 false，由 ConfigPlaneUnavailable 说明。</param>
+    /// <param name="Status">归一化后的状态串；没登记过为 null。</param>
+    /// <param name="BlockReason">不放行或读不到的原因码。</param>
+    /// <param name="ConfigPlaneUnavailable">配置面读不到——是基础设施故障，不是配置问题。</param>
+    private sealed record GatewayCallerStatus(
+        bool TrafficRejected,
+        string? Status,
+        string? BlockReason,
+        bool ConfigPlaneUnavailable = false,
+        /// <summary>
+        /// 这条 appCaller 还留着的模型池绑定。**只用来告警，不参与任何判定**——
+        /// 池路由已经退场，留着它是为了把「你配的那个绑定不再生效」说出口，
+        /// 而不是让它重新影响解析。
+        /// </summary>
+        string? StalePoolBinding = null);
 
-        var poolTypes = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmgw_model_pool_types");
-        var type = await poolTypes.Find(Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("TenantId", CurrentTenantId),
-                Builders<BsonDocument>.Filter.Eq("Code", modelType)))
-            .FirstOrDefaultAsync(ct);
-        var gatewayPools = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
-        if (type is not null)
-        {
-            var defaultPoolId = type.TryGetValue("DefaultPoolId", out var pointer) && pointer.IsString
-                ? pointer.AsString
-                : string.Empty;
-            if (string.IsNullOrWhiteSpace(defaultPoolId))
-                return [];
-            var authoritative = await gatewayPools.Find(Builders<ModelGroup>.Filter.And(
-                    Builders<ModelGroup>.Filter.Eq("TenantId", CurrentTenantId),
-                    Builders<ModelGroup>.Filter.Eq(g => g.Id, defaultPoolId),
-                    Builders<ModelGroup>.Filter.Eq(g => g.ModelType, modelType)))
-                .FirstOrDefaultAsync(ct);
-            return authoritative is null ? [] : [authoritative];
-        }
-        return await gatewayPools
-            .Find(Builders<ModelGroup>.Filter.And(
-                Builders<ModelGroup>.Filter.Eq("TenantId", CurrentTenantId),
-                Builders<ModelGroup>.Filter.Eq(g => g.ModelType, modelType),
-                Builders<ModelGroup>.Filter.Eq(g => g.IsDefaultForType, true)))
-            .SortBy(g => g.Priority)
-            .ToListAsync(ct);
-    }
 
-    private async Task<ModelGroup?> FindGatewayOwnedOrMapModelPoolAsync(
-        string modelPoolId,
-        string modelType,
-        CancellationToken ct,
-        bool allowMapFallback = true)
-    {
-        if (_gatewayDb is not null)
-        {
-            var gatewayPools = _gatewayDb.Context.Database.GetCollection<ModelGroup>("llmgw_model_pools");
-            var gatewayPool = await gatewayPools
-                .Find(Builders<ModelGroup>.Filter.And(
-                    Builders<ModelGroup>.Filter.Eq("TenantId", CurrentTenantId),
-                    Builders<ModelGroup>.Filter.Eq(g => g.Id, modelPoolId),
-                    Builders<ModelGroup>.Filter.Eq(g => g.ModelType, modelType)))
-                .FirstOrDefaultAsync(ct);
-            if (gatewayPool is not null)
-            {
-                _logger.LogDebug(
-                    "[ModelResolver] GW-owned model pool 命中: ModelPoolId={PoolId}, ModelType={ModelType}",
-                    modelPoolId, modelType);
-                return gatewayPool;
-            }
-        }
-
-        if (!allowMapFallback)
-            return null;
-
-        return await _db.ModelGroups
-            .Find(g => g.Id == modelPoolId && g.ModelType == modelType)
-            .FirstOrDefaultAsync(ct);
-    }
 
     private async Task<LLMPlatform?> FindGatewayOwnedOrMapPlatformAsync(
         string? platformId,
@@ -2780,36 +1894,6 @@ public class ModelResolver : IModelResolver
             Builders<LLMModel>.Filter.Eq(m => m.Name, modelId),
             Builders<LLMModel>.Filter.Eq(m => m.Id, modelId));
 
-    private async Task<bool> IsPoolMemberModelExplicitlyDisabledAsync(
-        string platformId,
-        string modelId,
-        CancellationToken ct,
-        bool allowMapFallback = true)
-    {
-        var idMatch = PoolMemberIdMatch(modelId);
-
-        if (_gatewayDb is not null)
-        {
-            var gatewayModels = _gatewayDb.Context.Database.GetCollection<LLMModel>("llmgw_models");
-            var disabled = await gatewayModels
-                .Find(Builders<LLMModel>.Filter.And(
-                    Builders<LLMModel>.Filter.Eq("TenantId", CurrentTenantId),
-                    Builders<LLMModel>.Filter.Eq(m => m.PlatformId, platformId),
-                    Builders<LLMModel>.Filter.Eq(m => m.Enabled, false),
-                    idMatch))
-                .AnyAsync(ct);
-            if (disabled) return true;
-        }
-
-        if (!allowMapFallback) return false;
-
-        return await _db.LLMModels
-            .Find(Builders<LLMModel>.Filter.And(
-                Builders<LLMModel>.Filter.Eq(m => m.PlatformId, platformId),
-                Builders<LLMModel>.Filter.Eq(m => m.Enabled, false),
-                idMatch))
-            .AnyAsync(ct);
-    }
 
     private async Task<LLMModel?> FindGatewayOwnedOrMapModelAsync(
         string platformId,
@@ -2872,62 +1956,7 @@ public class ModelResolver : IModelResolver
                "true",
                StringComparison.OrdinalIgnoreCase);
 
-    /// <param name="ConfigPlaneUnavailable">
-    /// 配置面本身读不到（网关配置库缺失或读取抛错），区别于「配置读到了但配错了」。
-    /// 两者混成一个失败原因，会让配置库一次抖动被报成「所有 AI 功能的模型池全报废」，
-    /// 管理员按配置错误去排查，方向从一开始就是错的。
-    /// </param>
-    private sealed record GatewayRegistryLookup(
-        List<ModelGroup> Groups,
-        string? ModelPoolId,
-        string? BlockReason,
-        string? Status,
-        bool TrafficRejected,
-        bool StrictPoolContract,
-        string? DefaultModelPoolId,
-        bool AllowCrossPoolFallback,
-        bool ConfigPlaneUnavailable = false)
-    {
-        public static GatewayRegistryLookup Empty() => new([], null, null, null, false, false, null, false);
-        public static GatewayRegistryLookup Found(string? modelPoolId, List<ModelGroup> groups, string status)
-            => new(groups, modelPoolId, null, status, false, false, modelPoolId, false);
-        public static GatewayRegistryLookup FoundStrict(
-            string defaultModelPoolId,
-            List<ModelGroup> groups,
-            string status,
-            bool allowCrossPoolFallback)
-            => new(groups, defaultModelPoolId, null, status, false, true, defaultModelPoolId, allowCrossPoolFallback);
-        public static GatewayRegistryLookup Blocked(string? modelPoolId, string reason, string? status)
-            => new([], modelPoolId, reason, status, false, false, modelPoolId, false);
-        public static GatewayRegistryLookup BlockedStrict(string? modelPoolId, string reason, string? status)
-            => new([], modelPoolId, reason, status, false, true, modelPoolId, false);
-        public static GatewayRegistryLookup Rejected(string? modelPoolId, string reason, string status)
-            => new([], modelPoolId, reason, status, true, false, modelPoolId, false);
 
-        /// <summary>配置面不可读：基础设施故障，不是配置错误。</summary>
-        public static GatewayRegistryLookup ConfigPlaneDown(string reason)
-            => new([], null, reason, null, false, false, null, false, ConfigPlaneUnavailable: true);
-    }
-
-    internal static List<ModelGroup> SelectStrictPoolCandidates(
-        IEnumerable<ModelGroup> groups,
-        string? requestedPool,
-        bool allowCrossPoolFallback)
-    {
-        if (string.IsNullOrWhiteSpace(requestedPool))
-            return [];
-        var orderedGroups = groups.ToList();
-        var key = requestedPool.Trim();
-        var selected = orderedGroups.FirstOrDefault(group =>
-            string.Equals(group.Id, key, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(group.Code, key, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(group.Name, key, StringComparison.OrdinalIgnoreCase));
-        if (selected is null)
-            return [];
-        return allowCrossPoolFallback
-            ? new[] { selected }.Concat(orderedGroups.Where(group => group.Id != selected.Id)).ToList()
-            : [selected];
-    }
 
     private async Task<ModelExchange?> FindGatewayOwnedExchangeAsync(
         FilterDefinition<ModelExchange> filter,
@@ -2952,112 +1981,6 @@ public class ModelResolver : IModelResolver
     private string CurrentTenantId
         => _requestContext?.Current?.TenantId is { Length: > 0 } tenantId ? tenantId : _internalTenantId;
 
-    private async Task<AvailableModelPool> MapToAvailablePoolAsync(
-        ModelGroup group,
-        string resolutionType,
-        bool isDedicated,
-        bool isDefault,
-        CancellationToken ct)
-    {
-        var models = new List<PoolModelInfo>();
-        long? averageDurationMs = null;
-        var recentTenRequests = 0;
-        decimal? recentTenSuccessRatePercent = null;
-
-        foreach (var model in group.Models ?? new List<ModelGroupItem>())
-        {
-            var platform = await FindGatewayOwnedOrMapPlatformAsync(model.PlatformId, enabledOnly: false, ct);
-
-            models.Add(new PoolModelInfo
-            {
-                ModelId = model.ModelId,
-                PlatformId = model.PlatformId,
-                PlatformName = platform?.Name,
-                Priority = model.Priority,
-                HealthStatus = model.HealthStatus.ToString(),
-                HealthScore = CalculateHealthScore(model)
-            });
-        }
-
-        if (_gatewayDb is not null)
-        {
-            try
-            {
-                var logs = _gatewayDb.Context.Database.GetCollection<BsonDocument>("llmrequestlogs");
-                var fb = Builders<BsonDocument>.Filter;
-                var since = DateTime.UtcNow.AddDays(-7);
-                var filter = fb.And(
-                    fb.Eq("TenantId", CurrentTenantId),
-                    fb.Eq("ModelPoolId", group.Id),
-                    fb.Gte("StartedAt", since),
-                    fb.In("Status", new[] { "succeeded", "failed" }));
-                var stats = await logs.Aggregate()
-                    .Match(filter)
-                    .Group(new BsonDocument
-                    {
-                        { "_id", BsonNull.Value },
-                        { "AverageDurationMs", new BsonDocument("$avg", "$DurationMs") },
-                    })
-                    .FirstOrDefaultAsync(ct);
-                if (stats is not null
-                    && stats.TryGetValue("AverageDurationMs", out var duration)
-                    && !duration.IsBsonNull)
-                {
-                    averageDurationMs = duration.BsonType switch
-                    {
-                        BsonType.Int32 => duration.AsInt32,
-                        BsonType.Int64 => duration.AsInt64,
-                        BsonType.Double => (long)Math.Round(duration.AsDouble),
-                        BsonType.Decimal128 => (long)Math.Round(Decimal128.ToDecimal(duration.AsDecimal128)),
-                        _ => null,
-                    };
-                }
-                var recentTen = await logs.Find(filter)
-                    .Sort(Builders<BsonDocument>.Sort.Descending("StartedAt"))
-                    .Project(Builders<BsonDocument>.Projection.Include("Status"))
-                    .Limit(10)
-                    .ToListAsync(ct);
-                recentTenRequests = recentTen.Count;
-                if (recentTenRequests > 0)
-                {
-                    recentTenSuccessRatePercent = Math.Round(
-                        recentTen.Count(log => string.Equals(
-                            log.TryGetValue("Status", out var status) && status.IsString ? status.AsString : null,
-                            "succeeded",
-                            StringComparison.Ordinal)) * 100m / recentTenRequests,
-                        1,
-                        MidpointRounding.AwayFromZero);
-                }
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                // 日志统计是目录的可选增强信息；统计库故障不能阻断模型池发现与恢复操作。
-                _logger.LogWarning(
-                    ex,
-                    "[ModelResolver] 模型池统计不可用，返回无统计指标的模型池: PoolId={PoolId}",
-                    group.Id);
-            }
-        }
-
-        return new AvailableModelPool
-        {
-            Id = group.Id,
-            Name = group.Name,
-            Code = group.Code,
-            Priority = group.Priority,
-            ResolutionType = resolutionType,
-            IsDedicated = isDedicated,
-            IsDefault = isDefault,
-            Models = models,
-            AverageDurationMs = averageDurationMs,
-            RecentTenRequests = recentTenRequests,
-            RecentTenSuccessRatePercent = recentTenSuccessRatePercent,
-        };
-    }
 
     private static int CalculateHealthScore(ModelGroupItem model)
     {
@@ -3069,11 +1992,6 @@ public class ModelResolver : IModelResolver
             _ => 50
         };
     }
-
-    internal static bool NeedsModelConfigFallback(ModelGroupItem model)
-        => string.IsNullOrWhiteSpace(model.Protocol)
-           || model.Capabilities is null
-           || model.Capabilities.Count == 0;
 
     #endregion
 }
@@ -3092,6 +2010,30 @@ public class InMemoryModelResolver : IModelResolver
     // InMemory 与生产 ModelResolver 共用同一个专属绑定判据，避免测试路径重新定义语义。
     private static bool HasDedicatedBinding(IReadOnlyCollection<string>? boundGroupIds)
         => ModelResolver.HasDedicatedBinding(boundGroupIds);
+
+    /// <summary>
+    /// 成员发送顺序——**委托给权威判据**，不在这里另写一遍。
+    ///
+    /// 生产侧的池解析在 2026-09-15 断流后已整体删除，这个内存实现是它留下的化石：
+    /// 150 条用例还挂在它身上，所以暂时留着（债务见 doc/debt.platform.llm-gateway.md）。
+    /// 留着可以，但判据不许再分叉——Id 传补零下标保住原数组顺序。
+    /// </summary>
+    private static List<ModelGroupItem> OrderMembers(IReadOnlyList<ModelGroupItem>? members)
+    {
+        if (members is null || members.Count == 0) return [];
+        var candidates = members
+            .Select((m, i) => new GatewayRouteSelection.RouteCandidate(
+                Id: i.ToString("D6"),
+                Priority: m.Priority,
+                Weight: 100,
+                HealthStatus: (int)m.HealthStatus,
+                Enabled: true))
+            .ToList();
+        return GatewayRouteSelection
+            .Queue(candidates, weighted: false, seed: 0)
+            .Select(x => members[int.Parse(x.Id)])
+            .ToList();
+    }
 
     /// <summary>
     /// 添加 AppCaller 配置
@@ -3256,11 +2198,7 @@ public class InMemoryModelResolver : IModelResolver
         {
             var selectedModels = preferredGroup != null && group.Id == preferredGroup.Id
                 ? (preferredItem is null ? [] : new List<ModelGroupItem> { preferredItem })
-                : group.Models?
-                    .Where(m => m.HealthStatus != ModelHealthStatus.Unavailable)
-                    .OrderBy(m => m.HealthStatus == ModelHealthStatus.Healthy ? 0 : 1)
-                    .ThenBy(m => m.Priority)
-                    .ToList() ?? [];
+                : OrderMembers(group.Models);
             if (!allowProviderRetryCandidates && selectedModels.Count > 1)
                 selectedModels = [selectedModels[0]];
 

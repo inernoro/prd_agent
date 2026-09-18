@@ -235,7 +235,7 @@ export function OverviewPage() {
       </section>
 
       <Card className="lg-learn-banner">
-        <div><BookOpen size={19} /><span><strong>第一次使用 Gateway？</strong><small>学习中心用一条完整链路解释租户、团队、用户、appCaller、密钥、模型池、Provider、请求记录与费用。</small></span></div>
+        <div><BookOpen size={19} /><span><strong>第一次使用 Gateway？</strong><small>学习中心用一条完整链路解释租户、团队、用户、appCaller、密钥、对外模型、Provider、请求记录与费用。</small></span></div>
         <Link className="lg-primary-link" to="/learn">打开学习中心 <ArrowRight size={14} /></Link>
       </Card>
     </div>

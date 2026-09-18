@@ -153,6 +153,15 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>(
 builder.Services.AddScoped<PrdAgent.Api.Services.HomepageAssetCopier>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
+// 生图模型契约的覆盖表刷新器：让「上游出了新生图模型」不再等于「改代码 + 发一次版」。
+builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
+    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
+    sp.GetRequiredService<IConfiguration>(),
+    hostRole: "prd-api",
+    // MAP 这一侧只服务自己那个租户（LlmGateway:InternalTenantId），
+    // 所以它配的契约可以安全地装进进程全局表。
+    tenancy: PrdAgent.Infrastructure.LLM.ImageGenContractHostTenancy.SingleTenant,
+    sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,

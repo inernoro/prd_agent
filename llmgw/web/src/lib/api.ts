@@ -35,11 +35,11 @@ import type {
   SessionsData,
   LlmLogDetail,
   PoolsData,
-  PoolTypesData,
-  EnsurePoolTypesResult,
   PlatformsData,
   ModelsData,
+  CallTraceData,
   LogicalModelsData,
+  LogicalModelUsageData,
   LogicalModelItem,
   ModelOfferingItem,
   CreateLogicalModelRequest,
@@ -54,11 +54,9 @@ import type {
   BulkUpdateGatewayAppCallersResult,
   OperationAuditsData,
   ShadowData,
-  ModelPool,
   PlatformItem,
   PlatformDeleteBlockers,
   ModelDeleteBlockers,
-  PoolDeleteBlockers,
   ExchangeDeleteBlockers,
   LogicalModelDeleteResult,
   AppCallerDeleteResult,
@@ -68,6 +66,8 @@ import type {
   CreateModelRequest,
   CreateModelResult,
   UpdateModelImageSizeControlRequest,
+  UpdateModelRequest,
+  ModelPoolUsageData,
   ParameterCapabilitiesMetaData,
   ExchangesData,
   ExchangeItem,
@@ -75,16 +75,7 @@ import type {
   ImageLayeringCapabilityStatus,
   CreateExchangeRequest,
   UpdateExchangeRequest,
-  UpsertPoolModelRequest,
   KeyHealthData,
-  CreatePoolRequest,
-  UpdatePoolRequest,
-  BulkClaimPoolsRequest,
-  BulkClaimPoolsResult,
-  BulkCalibratePoolPriceCurrencyRequest,
-  BulkCalibratePoolPriceCurrencyResult,
-  BulkImportPoolModelsRequest,
-  BulkImportPoolModelsResult,
   BulkRotateApiKeysRequest,
   BulkRotateApiKeysResult,
   BulkUpdateModelCapabilitiesRequest,
@@ -92,7 +83,6 @@ import type {
   ConfigAuthorityReportData,
   BulkClaimConfigAuthorityRequest,
   BulkClaimConfigAuthorityResult,
-  BindActiveAppCallerPoolsResult,
   RuntimeGatesData,
   ServiceKeyItem,
   CreateServiceKeyRequest,
@@ -120,8 +110,14 @@ import type {
   ProviderPresetsData,
   PlatformTestResult,
   UpstreamModelsData,
+  CatalogEntriesData,
+  CatalogEntryItem,
+  UpsertCatalogEntryRequest,
   ImportUpstreamModelEntry,
   ImportUpstreamModelsResult,
+  ImageGenConfigsData,
+  ImageGenConfigItem,
+  UpsertImageGenConfigRequest,
 } from './types';
 import { getDefaultApiBase } from './runtimeBase';
 import { setPlatformMapHome } from './mapNavigation';
@@ -610,13 +606,34 @@ export function getModels(params?: { platformId?: string; enabled?: boolean }): 
 export function createModel(req: CreateModelRequest): Promise<ApiResponse<CreateModelResult>> {
   return apiRequest<CreateModelResult>('/models', { method: 'POST', body: req });
 }
+/** 改一条已有模型（含价格四档与币种）。syncPoolIds 里的模型池会一并更新为新价格。 */
+export function updateModel(id: string, req: UpdateModelRequest): Promise<ApiResponse<ModelItem>> {
+  return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+/** 这条模型被哪些模型池引用，各自是继承档案价还是用了自己的覆盖价。 */
+export function getModelPoolUsage(id: string): Promise<ApiResponse<ModelPoolUsageData>> {
+  return apiRequest<ModelPoolUsageData>(`/models/${encodeURIComponent(id)}/pool-usage`);
+}
 export function updateModelImageSizeControl(id: string, req: UpdateModelImageSizeControlRequest): Promise<ApiResponse<ModelItem>> {
   return apiRequest<ModelItem>(`/models/${encodeURIComponent(id)}/image-size-control`, { method: 'PUT', body: req });
 }
+/**
+ * 一个对外模型的调用全貌。
+ *
+ * 列表能说清「有几条线路」，说不清「现在发一个请求会落到谁」——而后者才是人要的那份心安，
+ * 尤其在「只给 appCallerCode、不点名模型」这条路上，调用方连自己会用到哪个模型都不知道。
+ */
+export function getCallTrace(id: string): Promise<ApiResponse<CallTraceData>> {
+  return apiRequest<CallTraceData>(`/logical-models/${encodeURIComponent(id)}/call-trace`);
+}
+
 export function getLogicalModels(params?: { modelType?: string; enabled?: boolean }): Promise<ApiResponse<LogicalModelsData>> {
   return apiRequest<LogicalModelsData>('/logical-models', {
     query: { modelType: params?.modelType, enabled: params?.enabled === undefined ? undefined : String(params.enabled) },
   });
+}
+export function getLogicalModelUsage(days = 30): Promise<ApiResponse<LogicalModelUsageData>> {
+  return apiRequest<LogicalModelUsageData>('/logical-models/usage', { query: { days: String(days) } });
 }
 export function createLogicalModel(req: CreateLogicalModelRequest): Promise<ApiResponse<LogicalModelItem>> {
   return apiRequest<LogicalModelItem>('/logical-models', { method: 'POST', body: req });
@@ -640,6 +657,19 @@ export function setModelOfferingEnabled(logicalModelId: string, offeringId: stri
   return apiRequest<ModelOfferingItem>(
     `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}/enabled`,
     { method: 'PUT', body: { enabled } },
+  );
+}
+/**
+ * 手动恢复一条被熔断摘掉的线路。
+ *
+ * 语义不是「直接判它健康」，是「立刻给它进半开的资格」：下一条真实业务请求去验证，
+ * 成功才回到健康。所以它省掉的是冷却期的等待，不会凭空造一次付费探测。
+ * 返回的不是线路对象（后端只回 offeringId 与 halfOpenPending），所以调用方要自己重拉列表。
+ */
+export function recoverModelOffering(logicalModelId: string, offeringId: string): Promise<ApiResponse<{ offeringId: string; halfOpenPending: boolean }>> {
+  return apiRequest<{ offeringId: string; halfOpenPending: boolean }>(
+    `/logical-models/${encodeURIComponent(logicalModelId)}/offerings/${encodeURIComponent(offeringId)}/recover`,
+    { method: 'POST' },
   );
 }
 export function getParameterCapabilitiesMeta(): Promise<ApiResponse<ParameterCapabilitiesMetaData>> {
@@ -670,9 +700,6 @@ export function getRuntimeGates(): Promise<ApiResponse<RuntimeGatesData>> {
 }
 export function bulkClaimConfigAuthority(req: BulkClaimConfigAuthorityRequest): Promise<ApiResponse<BulkClaimConfigAuthorityResult>> {
   return apiRequest<BulkClaimConfigAuthorityResult>('/config-authority/bulk-claim', { method: 'POST', body: req });
-}
-export function bindActiveAppCallerPools(): Promise<ApiResponse<BindActiveAppCallerPoolsResult>> {
-  return apiRequest<BindActiveAppCallerPoolsResult>('/config-authority/bind-active-app-callers', { method: 'POST' });
 }
 export function getGatewayAppCallers(params?: {
   page?: number;
@@ -887,10 +914,6 @@ export function rotatePlatformApiKey(id: string, apiKey: string): Promise<ApiRes
 export function deletePlatformApiKey(id: string): Promise<ApiResponse<PlatformItem>> {
   return apiRequest<PlatformItem>(`/platforms/${encodeURIComponent(id)}/api-key`, { method: 'DELETE' });
 }
-/** 删除模型池。是当前默认池或仍有 appCaller 绑定时返回 409 + POOL_IN_USE。 */
-export function deletePool(id: string): Promise<ApiResponse<PoolDeleteBlockers>> {
-  return apiRequest<PoolDeleteBlockers>(`/pools/${encodeURIComponent(id)}`, { method: 'DELETE' });
-}
 /** 删除逻辑模型。名下 offering 是从属子项，跟着一起删，返回删除条数。 */
 export function deleteLogicalModel(id: string): Promise<ApiResponse<LogicalModelDeleteResult>> {
   return apiRequest<LogicalModelDeleteResult>(`/logical-models/${encodeURIComponent(id)}`, { method: 'DELETE' });
@@ -975,48 +998,6 @@ export function deleteExchangeApiKey(id: string): Promise<ApiResponse<ExchangeIt
 export function bulkRotateApiKeys(req: BulkRotateApiKeysRequest): Promise<ApiResponse<BulkRotateApiKeysResult>> {
   return apiRequest<BulkRotateApiKeysResult>('/api-keys/bulk-rotate', { method: 'POST', body: req });
 }
-export function setPoolDefault(id: string, isDefault: boolean): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/default`, { method: 'PUT', body: { isDefault } });
-}
-export function getPoolTypes(): Promise<ApiResponse<PoolTypesData>> {
-  return apiRequest<PoolTypesData>('/pool-types');
-}
-export function ensurePoolTypes(): Promise<ApiResponse<EnsurePoolTypesResult>> {
-  return apiRequest<EnsurePoolTypesResult>('/pool-types/ensure', { method: 'POST' });
-}
-export function claimPoolToGateway(id: string): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/claim`, { method: 'PUT' });
-}
-export function createPool(req: CreatePoolRequest): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>('/pools', { method: 'POST', body: req });
-}
-export function updatePool(id: string, req: UpdatePoolRequest): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
-}
-export function bulkClaimPools(req: BulkClaimPoolsRequest): Promise<ApiResponse<BulkClaimPoolsResult>> {
-  return apiRequest<BulkClaimPoolsResult>('/pools/bulk-claim', { method: 'POST', body: req });
-}
-export function bulkCalibratePoolPriceCurrency(req: BulkCalibratePoolPriceCurrencyRequest): Promise<ApiResponse<BulkCalibratePoolPriceCurrencyResult>> {
-  return apiRequest<BulkCalibratePoolPriceCurrencyResult>('/pools/price-currency/bulk-calibrate', { method: 'POST', body: req });
-}
-export function bulkImportPoolModels(id: string, req: BulkImportPoolModelsRequest): Promise<ApiResponse<BulkImportPoolModelsResult>> {
-  return apiRequest<BulkImportPoolModelsResult>(`/pools/${encodeURIComponent(id)}/models/bulk-import`, { method: 'POST', body: req });
-}
-export function upsertPoolModel(id: string, req: UpsertPoolModelRequest): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, { method: 'PUT', body: req });
-}
-export function recoverPoolModel(id: string, modelId: string, platformId: string): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models/recover`, {
-    method: 'POST',
-    body: { modelId, platformId },
-  });
-}
-export function removePoolModel(id: string, modelId: string, platformId?: string): Promise<ApiResponse<ModelPool>> {
-  return apiRequest<ModelPool>(`/pools/${encodeURIComponent(id)}/models`, {
-    method: 'DELETE',
-    query: { modelId, platformId },
-  });
-}
 
 // ── 服务网关设置：系统级功能（当前是 Quickstart 的一句话推导）用哪个模型 ──
 // 地址、appCaller、密钥都由后端自管，这里只读展示、只写模型选择。
@@ -1033,4 +1014,34 @@ export function saveSystemSettings(req: UpdateSystemSettingsRequest): Promise<Ap
 }
 export function testSystemSettings(): Promise<ApiResponse<SystemGatewayTestResult>> {
   return apiRequest<SystemGatewayTestResult>('/system-settings/test', { method: 'POST' });
+}
+
+// ── 模型名录补登 ──────────────────────────────────────────────────────────────
+// 「这个模型是什么」（算哪几种用途、能不能吃图）。补完立刻生效：上游清单那一屏
+// 每次请求都现查这张表，不经过任何缓存，所以刷新一下就能看见那一行从「名录外」翻成「名录内」。
+export function getCatalogEntries(): Promise<ApiResponse<CatalogEntriesData>> {
+  return apiRequest<CatalogEntriesData>('/catalog-entries');
+}
+export function createCatalogEntry(req: UpsertCatalogEntryRequest): Promise<ApiResponse<CatalogEntryItem>> {
+  return apiRequest<CatalogEntryItem>('/catalog-entries', { method: 'POST', body: req });
+}
+export function updateCatalogEntry(id: string, req: UpsertCatalogEntryRequest): Promise<ApiResponse<CatalogEntryItem>> {
+  return apiRequest<CatalogEntryItem>(`/catalog-entries/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function deleteCatalogEntry(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest<{ deleted: boolean }>(`/catalog-entries/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+// ── 生图模型契约 ──────────────────────────────────────────────────────────────
+export function getImageGenConfigs(): Promise<ApiResponse<ImageGenConfigsData>> {
+  return apiRequest<ImageGenConfigsData>('/imagegen-configs');
+}
+export function createImageGenConfig(req: UpsertImageGenConfigRequest): Promise<ApiResponse<ImageGenConfigItem>> {
+  return apiRequest<ImageGenConfigItem>('/imagegen-configs', { method: 'POST', body: req });
+}
+export function updateImageGenConfig(id: string, req: UpsertImageGenConfigRequest): Promise<ApiResponse<ImageGenConfigItem>> {
+  return apiRequest<ImageGenConfigItem>(`/imagegen-configs/${encodeURIComponent(id)}`, { method: 'PUT', body: req });
+}
+export function deleteImageGenConfig(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+  return apiRequest<{ deleted: boolean }>(`/imagegen-configs/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }

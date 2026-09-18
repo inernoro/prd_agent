@@ -31,6 +31,8 @@ public sealed record NormalizedModelDraft(
     int? MaxTokens,
     decimal? InputPricePerMillion,
     decimal? OutputPricePerMillion,
+    decimal? CachedInputPricePerMillion,
+    decimal? CacheWritePricePerMillion,
     decimal? PricePerCall,
     string? PriceCurrency,
     string? Remark);
@@ -238,7 +240,11 @@ public static class GatewayConfigurationProvisioning
         if (maxConcurrency is < 0 or > 10000) return Fail("最大并发必须在 0 到 10000 之间", out error);
         if (request.MaxTokens is < 1 or > 10000000) return Fail("最大 Token 数必须在 1 到 10000000 之间", out error);
 
-        var prices = new[] { request.InputPricePerMillion, request.OutputPricePerMillion, request.PricePerCall };
+        var prices = new[]
+        {
+            request.InputPricePerMillion, request.OutputPricePerMillion,
+            request.CachedInputPricePerMillion, request.CacheWritePricePerMillion, request.PricePerCall,
+        };
         if (prices.Any(x => x is < 0)) return Fail("价格不能为负数", out error);
         var hasPrice = prices.Any(x => x is not null);
         var currency = request.PriceCurrency?.Trim().ToUpperInvariant();
@@ -266,6 +272,8 @@ public static class GatewayConfigurationProvisioning
             request.MaxTokens,
             request.InputPricePerMillion,
             request.OutputPricePerMillion,
+            request.CachedInputPricePerMillion,
+            request.CacheWritePricePerMillion,
             request.PricePerCall,
             hasPrice ? currency : null,
             remark);
@@ -456,8 +464,14 @@ public static class GatewayConfigurationProvisioning
             ["MaxTokens"] = ToBsonValue(draft.MaxTokens),
             ["InputPricePerMillion"] = ToBsonValue(draft.InputPricePerMillion),
             ["OutputPricePerMillion"] = ToBsonValue(draft.OutputPricePerMillion),
+            ["CachedInputPricePerMillion"] = ToBsonValue(draft.CachedInputPricePerMillion),
+            ["CacheWritePricePerMillion"] = ToBsonValue(draft.CacheWritePricePerMillion),
             ["PricePerCall"] = ToBsonValue(draft.PricePerCall),
             ["PriceCurrency"] = ToBsonValue(draft.PriceCurrency),
+            // 手工建的模型，价格来源就是人工录入，观测时间是此刻。没有这两样的价格，
+            // 过一阵子谁都说不清它还能不能信——而看起来是真的、其实早已过时的价格，比没有价格更危险。
+            ["PriceSource"] = draft.PriceCurrency is null ? BsonNull.Value : PricingPolicy.SourceAdmin,
+            ["PriceObservedAt"] = draft.PriceCurrency is null ? BsonNull.Value : now,
             ["Remark"] = ToBsonValue(draft.Remark),
             ["Enabled"] = true,
             ["Priority"] = 100,

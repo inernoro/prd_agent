@@ -47,7 +47,7 @@ const TOPICS: Topic[] = [
   { id: 'team-user', title: '团队与用户', summary: '成员关系决定谁能改什么。', icon: <UsersRound size={17} />, link: '/organization', page: 'organization' },
   { id: 'app-caller', title: 'appCaller', summary: '代表哪个业务在调用模型。', icon: <Bot size={17} />, link: '/app-callers', page: 'appCallers' },
   { id: 'service-key', title: '租户接入密钥', summary: '外部系统调用网关的凭据。', icon: <KeyRound size={17} />, link: '/service-keys', page: 'serviceKeys' },
-  { id: 'model-pool', title: '模型池', summary: '一个业务需求对应一组模型。', icon: <Boxes size={17} />, link: '/pools', page: 'routeConfig' },
+  { id: 'logical-model', title: '对外模型', summary: '调用方点名的那个名字，下面挂着一到多条线路。', icon: <Boxes size={17} />, link: '/logical-models', page: 'routeConfig' },
   { id: 'model', title: '模型', summary: '可路由的具体模型配置。', icon: <Cpu size={17} />, link: '/models', page: 'routeConfig' },
   { id: 'provider', title: 'Provider', summary: '请求真正发往的上游平台。', icon: <Server size={17} />, link: '/platforms', page: 'routeConfig' },
   { id: 'exchange', title: 'Exchange', summary: '路由阶段的模型替换规则。', icon: <Shuffle size={17} />, link: '/exchanges', page: 'routeConfig' },
@@ -113,7 +113,7 @@ export function LearningCenterPage() {
                 <div style={{ display: 'grid', gap: GAP.normal }}>
                   <p style={popoverParaStyle}>每个条目直接跳到控制台里对应的那一页；成段的概念解释在权威教程里，点右上角的教程链接读。</p>
                   <p style={popoverParaStyle}>灰色条目对应当前角色不需要进入的页面。可见范围由租户角色决定，学习中心不改变它；需要进入时请让租户管理员调整角色。</p>
-                  <p style={popoverParaStyle}>排查请求时按索引的先后倒查：先在请求记录里拿到 requestId 与本次的路由结果，再回头看调用方、模型池、模型与上游平台的配置，最后确认替换规则。不要靠改 tenantId 或绕过网关来验证。</p>
+                  <p style={popoverParaStyle}>排查请求时按索引的先后倒查：先在请求记录里拿到 requestId 与本次的路由结果，再回头看调用方、对外模型、线路与上游平台的配置，最后确认替换规则。不要靠改 tenantId 或绕过网关来验证。</p>
                 </div>
               </HelpPopover>
             </div>

@@ -62,8 +62,6 @@ export interface ResolvedModelInfo {
   modelGroupId: string | null;
   /** 模型池名称（如果来自模型池） */
   modelGroupName: string | null;
-  /** 是否为该类型的默认模型池 */
-  isDefaultForType: boolean;
   /** 平台ID */
   platformId: string;
   /** 平台名称 */
