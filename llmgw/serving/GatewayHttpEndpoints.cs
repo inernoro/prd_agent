@@ -420,7 +420,10 @@ public static class GatewayHttpEndpoints
             var stream = ReadBool(nativeBody, "stream");
             var model = ReadString(nativeBody, "model");
             var pool = ResolveCompatModelPoolId(http, nativeBody);
-            var (platform, pinnedModel) = ResolveCompatPinnedTarget(http, nativeBody);
+            // gw-native 是内部路：MAP 侧代理先剥掉运行时自带的 pin，再按自己冻结的快照盖上去。
+            // 兼容入口（/v1/*）一律拒绝客户端自带 pin（见 RejectClientSuppliedPinnedTarget），
+            // 那条禁令按 gw-native / 兼容两分面划界，不覆盖这一条。
+            var (platform, pinnedModel) = ReadDeclaredPinnedTarget(http, nativeBody);
             var policy = ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel);
             var strict = ReadProviderRequireParameters(nativeBody);
             var runId = ResolveCompatRunId(http, nativeBody);
@@ -2620,7 +2623,13 @@ public static class GatewayHttpEndpoints
     /// 内部那条路（/gw/v1/*，IngressProtocol=gw-native）不受影响：它的 pin 由 MAP 侧
     /// 带着已验证的 appCaller 传进来，不是外部可写的字段。
     /// </summary>
-    private static string? RejectClientSuppliedPinnedTarget(
+    /// <summary>
+    /// 读出请求里声明的 pin 目标。**读出来不等于可以用**：兼容入口（/v1/*）读它是为了当场
+    /// 拒绝（见 <see cref="RejectClientSuppliedPinnedTarget(HttpContext, JsonObject)"/>），
+    /// 只有 gw-native（/gw/v1/*）那条内部路才真的按它路由。两边共用这一份别名清单——
+    /// 拆成两份的话，下次加一个别名必然只改得到其中一边，而漏掉的那边不会红。
+    /// </summary>
+    private static (string? PinnedPlatformId, string? PinnedModelId) ReadDeclaredPinnedTarget(
         HttpContext http,
         JsonObject body)
     {
@@ -2645,6 +2654,15 @@ public static class GatewayHttpEndpoints
                 ReadString(provider, "pinnedModelId"));
         }
 
+        return (pinnedPlatformId, pinnedModelId);
+    }
+
+    /// <summary>兼容入口用：读出客户端自带的 pin，带了就给一句拒绝理由，没带返回 null。</summary>
+    private static string? RejectClientSuppliedPinnedTarget(
+        HttpContext http,
+        JsonObject body)
+    {
+        var (pinnedPlatformId, pinnedModelId) = ReadDeclaredPinnedTarget(http, body);
         return DescribeRejectedPin(pinnedPlatformId, pinnedModelId);
     }
 
