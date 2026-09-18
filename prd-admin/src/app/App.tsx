@@ -77,6 +77,7 @@ const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
 const ShareViewPage = lazy(() => import('@/pages/ShareViewPage'));
 const ShortLinkRouter = lazy(() => import('@/pages/ShortLinkRouter'));
 const PublicProfilePage = lazy(() => import('@/pages/PublicProfilePage'));
+const PublicActiveTaskBoardPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.PublicBoardPage })));
 const ReportTeamShareViewPage = lazy(() => import('@/pages/ReportTeamShareViewPage'));
 const ShareLinkTesterPage = lazy(() => import('@/pages/labs/ShareLinkTesterPage'));
 const LiquidGlassDemoPage = lazy(() => import('@/pages/labs/LiquidGlassDemoPage'));
@@ -267,6 +268,8 @@ export default function App() {
         <Route path="/s/shortcut/:id" element={<ShortcutInstallPage />} />
         <Route path="/shared/toolbox/:shareId" element={<SharedConversation />} />
         <Route path="/u/:username" element={<PublicProfilePage />} />
+        {/* 活动任务面板匿名视图 —— 粒度由管理员配置，默认脱敏 */}
+        <Route path="/board/active-tasks" element={<PublicActiveTaskBoardPage />} />
         <Route path="/s/report-team/:token" element={<ReportTeamShareViewPage />} />
         <Route path="/s/skill/:token" element={<SkillShareViewPage />} />
         <Route path="/s/lib/:token" element={<LibraryShareViewPage />} />

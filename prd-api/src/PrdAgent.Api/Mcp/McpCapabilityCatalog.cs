@@ -71,6 +71,12 @@ public static class McpCapabilityCatalog
     public const string ScopeDocStoreRead = "document-store:read";
     public const string ScopeDocStoreWrite = "document-store:write";
 
+    /// <summary>任务台：读自己在做什么 + 往自己队列加一件。与后台权限位 active-tasks.use 同名（scope 的冒号映射成点）。</summary>
+    public const string ScopeTasksUse = "active-tasks:use";
+
+    /// <summary>任务台管理档：读全员 + 派活。与后台权限位 active-tasks.manage 同名。</summary>
+    public const string ScopeTasksManage = "active-tasks:manage";
+
     public static readonly IReadOnlyList<McpCapability> All = new List<McpCapability>
     {
         new()
@@ -111,6 +117,16 @@ public static class McpCapabilityCatalog
         },
         new()
         {
+            Key = "tasks",
+            Title = "任务台",
+            Summary = "让智能体读你在做什么、队列里堆着什么，也能把缺陷、PR、告警写成任务排进队尾，或者只给别人提一条建议（提了不进对方队列，由他自己吸取）。管理档还能读全员、派活给人。结案不给智能体——那句「做成了什么样」是人对结果的认领。",
+            ReadScope = ScopeTasksUse,
+            WriteScope = ScopeTasksManage,
+            WriteNeedsApproval = true,
+            WriteImpliesRead = true,   // /api/open/tasks 的 mine 端点是 [RequireScope(use, manage)]
+        },
+        new()
+        {
             Key = "market",
             // 只有读这一档。上传技能包走 multipart，MCP 传不了二进制，所以没有任何工具挂在
             // marketplace.skills:write 上 —— 之前把它摆成能力卡的写入档，等于让用户勾一个
@@ -146,6 +162,7 @@ public static class McpCapabilityCatalog
     public static readonly IReadOnlySet<string> PermissionCheckedScopes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
     {
         ScopeVisualUse, ScopeLiteraryUse, ScopeWebPagesRead, ScopeWebPagesWrite,
+        ScopeTasksUse, ScopeTasksManage,
     };
 
     /// <summary>

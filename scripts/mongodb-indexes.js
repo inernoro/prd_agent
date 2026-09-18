@@ -1757,6 +1757,121 @@ db.mcp_usage_counters.createIndex(
 // 不在这里替他定。库大到要治的时候由 DBA 按策略开这一行（示例 180 天）：
 // db.mcp_call_logs.createIndex({ "CreatedAt": 1 }, { expireAfterSeconds: 15552000 })
 
+
+// collection: active_task_entries
+// 活动任务清单（人维度：此刻在做什么 / 备用粮草 / 历史）。三条读路径：
+// 1) 个人任务台：按 userId + state 取在途，再按 OrderKey 排备用队列
+// 2) 团队此刻：按 state 扫全员在途（人数量级，不分页）
+// 3) 走过的路：按 userId + DoneAt 倒序翻历史
+db.active_task_entries.createIndex(
+  { "UserId": 1, "State": 1, "OrderKey": 1 },
+  { name: "idx_active_tasks_user_state_order" }
+)
+db.active_task_entries.createIndex(
+  { "State": 1, "UpdatedAt": -1 },
+  { name: "idx_active_tasks_state_updated" }
+)
+db.active_task_entries.createIndex(
+  { "UserId": 1, "DoneAt": -1 },
+  { name: "idx_active_tasks_user_done" }
+)
+// end collection: active_task_entries
+
+// collection: active_task_suggestions
+// 建议收件箱（和派活是两码事：提了不会变成任务，等收件人自己吸取）。两条读路径：
+// 1) 我的收件箱：按 TargetUserId + State 取待处理，按时间倒序
+// 2) 发件回溯：按 FromUserId 看我提出去的那些后来怎么了
+db.active_task_suggestions.createIndex(
+  { "TargetUserId": 1, "State": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_target_state" }
+)
+db.active_task_suggestions.createIndex(
+  { "FromUserId": 1, "CreatedAt": -1 },
+  { name: "idx_active_task_suggestions_from" }
+)
+// end collection: active_task_suggestions
+
+// collection: active_task_debts
+// 债务（doc/debt.*.md 推过来的那一份）。三条读路径：
+// 1) Key 唯一 —— 同步靠它幂等，重复推同一条只更新不会长出第二条。这条是**唯一索引**，
+//    不是为了查得快，是为了让「撞车」在写入那一刻就失败，而不是静默互相覆盖
+// 2) 面板：按状态过滤掉已了结的，按模块 + 编号排
+// 3) 「我认领的」：按 owner + 状态
+db.active_task_debts.createIndex(
+  { "Key": 1 },
+  { name: "idx_active_task_debts_key", unique: true }
+)
+db.active_task_debts.createIndex(
+  { "State": 1, "Module": 1, "Num": 1 },
+  { name: "idx_active_task_debts_state_module" }
+)
+db.active_task_debts.createIndex(
+  { "OwnerUserId": 1, "State": 1 },
+  { name: "idx_active_task_debts_owner" }
+)
+// end collection: active_task_debts
+
+// collection: active_task_absorb_preferences
+// 吸取建议时的个人偏好（上次引用了哪几个知识库）。一人一行，_id 就是 UserId，
+// 只按主键读，不需要额外索引。
+// end collection: active_task_absorb_preferences
+
+// collection: active_task_board_settings
+// 面板设置是全局单行（_id 固定为 "active-task-board"），按主键定位，不需要查询索引。
+// end collection: active_task_board_settings
+
+// collection: bookshelf_progress
+// 藏书阁的阅读进度：一个人一行（已读书目、书摘笔记、结业考结果）。
+// 唯一索引不是为了查得快，是为了兜住并发首存：保存走的是 upsert，
+// 两个请求同时为同一个人插入时，代码路径挡不住两行都写进去——之后
+// FirstOrDefault 读到哪一行是随机的，团队看板还会把同一个人数两遍。
+//
+// 用 ensureTightenedUniqueIndex 而不是直接 createIndex：库里若已经有
+// 重复行，它会先把重复组报出来让人清理，而不是抛一个没头没尾的建索引失败。
+ensureTightenedUniqueIndex("bookshelf_progress",
+  { "UserId": 1 },
+  {
+    name: "idx_bookshelf_progress_user",
+    unique: true
+  }
+)
+// end collection: bookshelf_progress
+
+
+// collection: book_digests
+// 藏书阁精读稿：一本书一篇，全队读同一份。
+// 唯一索引同样是为了兜住并发首次生成：两个人同时点开一本还没有稿子的书，
+// 两条 SSE 都查到「库里没有」，随后两个 upsert 都走 insert 分支，库里就有了
+// 两篇。之后 FirstOrDefault 读到哪一篇是随机的，「重新生成」替换的可能是
+// 另一篇——那篇公共稿子从此不确定。
+//
+// 有了这条索引，后落地的那一方会撞 E11000，代码把它当成「别人已经写好了」
+// 处理（见 BookshelfController 的保存处），不再写第二篇。
+// 复合而不是只按 BookId：同一个 CDS 项目下所有分支共用一个 Mongo，
+// 一本书在每个部署作用域各有一行（权威部署那行的 DeploymentSlug 是 null）。
+// 只按 BookId 唯一的话，第二条分支第一次生成就会撞键，永远存不下自己那篇。
+//
+// **名字必须沿用 idx_book_digests_book，不能另起一个。** 这一版之前先落过一版
+// 只按 BookId 的同名索引；换个名字建复合索引不会动到旧的那条，于是已经执行过
+// 早先清单的环境里旧索引还在，换一个 DeploymentSlug 插同一本书照样 E11000——
+// 而代码把撞键当成「别人先写成了」判成功，那条分支的稿子就永远存不下、
+// 每次点开都重烧一篇。一个把永久失败伪装成正常的组合。
+//
+// 第四个参数是这个 helper 专为此设的：同名但定义不同时，若命中已知的旧定义，
+// 就走 replaceLegacyUniqueIndex 迁移，而不是报「定义与清单不符」。
+ensureTightenedUniqueIndex("book_digests",
+  { "BookId": 1, "DeploymentSlug": 1 },
+  {
+    name: "idx_book_digests_book",
+    unique: true
+  },
+  [{
+    keys: { "BookId": 1 }
+  }]
+)
+// end collection: book_digests
+
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

@@ -20,6 +20,9 @@ const VisualAgentFullscreenPage = lazy(() => import('@/pages/visual-agent/Visual
 const VisualStoryboardPage = lazy(() => import('@/pages/visual-storyboard/VisualStoryboardPage'));
 const LiteraryAgentWorkspaceListPage = lazy(() => import('@/pages/literary-agent').then(m => ({ default: m.LiteraryAgentWorkspaceListPage })));
 const ChatPage = lazy(() => import('@/pages/chat').then(m => ({ default: m.ChatPage })));
+const ActiveTasksPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTasksPage })));
+const ActiveTasksTeamPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.TeamBoardPage })));
+const ActiveTaskHistoryPage = lazy(() => import('@/pages/active-tasks').then(m => ({ default: m.ActiveTaskHistoryPage })));
 const DefectAgentPage = lazy(() => import('@/pages/defect-agent').then(m => ({ default: m.DefectAgentPage })));
 const VideoAgentPage = lazy(() => import('@/pages/video-agent').then(m => ({ default: m.VideoAgentPage })));
 const ReportAgentPage = lazy(() => import('@/pages/report-agent').then(m => ({ default: m.ReportAgentPage })));
@@ -77,6 +80,7 @@ const SpeechAgentEditorPage = lazy(() => import('@/pages/speech-agent').then(m =
 const SpeechAgentPlayPage = lazy(() => import('@/pages/speech-agent').then(m => ({ default: m.SpeechAgentPlayPage })));
 const LearningCenterPage = lazy(() => import('@/pages/learning-center/LearningCenterPage'));
 const ModelLeaderboardPage = lazy(() => import('@/pages/model-leaderboard/ModelLeaderboardPage'));
+const BookshelfPage = lazy(() => import('@/pages/bookshelf/BookshelfPage'));
 const DataSyncPage = lazy(() => import('@/pages/data-sync/DataSyncPage'));
 
 // ── 类型定义 ──────────────────────────────────────────────
@@ -170,6 +174,45 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       statLabel: '画布',
       tags: ['视觉', '智能体', '图像', '生图', 'AI绘画'],
     },
+  },
+  {
+    path: '/active-tasks',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTasksPage />),
+    nav: {
+      label: '任务台',
+      shortLabel: '任务台',
+      description: '此刻在做什么、还剩几件、走过哪些',
+      icon: 'ListChecks',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '任务',
+      tags: ['任务', '活动任务', '在做什么', '备用', '汇报', 'active tasks'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/team',
+    permission: 'active-tasks.manage',
+    element: shellGuarded('active-tasks.manage', <ActiveTasksTeamPage />),
+    nav: {
+      label: '团队此刻',
+      shortLabel: '团队此刻',
+      description: '谁在做什么、谁卡住了、谁没活了',
+      icon: 'Users',
+      section: 'agent',
+      appKey: 'active-tasks',
+      accentColor: '#D97757',
+      statLabel: '成员',
+      tags: ['团队', '此刻', '委派', '派活', '管理', 'team board'],
+      wip: true,
+    },
+  },
+  {
+    path: '/active-tasks/history',
+    permission: 'active-tasks.use',
+    element: shellGuarded('active-tasks.use', <ActiveTaskHistoryPage />),
   },
   {
     path: '/chat',
@@ -412,6 +455,20 @@ export const NAV_REGISTRY: NavRegistryEntry[] = [
       section: 'infra',
       appKey: 'learning-center',
       tags: ['教程', '新手引导', '学习进度', '帮助'],
+    },
+  },
+  {
+    path: '/bookshelf',
+    permission: 'access',
+    element: shellGuarded('access', <BookshelfPage />),
+    nav: {
+      label: '公共藏书阁',
+      shortLabel: '藏书阁',
+      description: '从新手到高手的心路历程书目，七卷 + 结业考，开发与产品各一条线',
+      icon: 'Library',
+      section: 'infra',
+      appKey: 'bookshelf',
+      tags: ['书单', '成长', '读书', '考试', '新人', '规范'],
     },
   },
   {
