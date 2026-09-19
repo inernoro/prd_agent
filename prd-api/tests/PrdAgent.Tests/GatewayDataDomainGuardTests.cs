@@ -1491,6 +1491,7 @@ public class GatewayDataDomainGuardTests
     {
         var dockerCompose = ReadRepoFile("docker-compose.yml");
         var cdsCompose = ReadRepoFile("cds-compose.yml");
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
 
         Assert.Contains("LlmGateway__DatabaseName=${LLMGW_DATABASE_NAME:-llm_gateway}", dockerCompose);
         Assert.Contains("LlmGateway__Mode=${LLMGW_MODE}", dockerCompose);
@@ -1518,6 +1519,10 @@ public class GatewayDataDomainGuardTests
         var cdsAllowlist = Regex.Match(cdsCompose, "LlmGateway__HttpAppCallerAllowlist:\\s*\"([^\"]*)\"");
         Assert.True(cdsAllowlist.Success, "cds-compose.yml 必须显式声明 LlmGateway__HttpAppCallerAllowlist");
         Assert.Contains("transcript-agent.transcribe::asr", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("md-to-ppt-agent.outline::chat", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("md-to-ppt-agent.html-generate::chat", cdsAllowlist.Groups[1].Value);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.Outline)", program);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate)", program);
         Assert.DoesNotContain("LlmGateway__HttpAppCallerAllowlist: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: \"${", cdsCompose);
         Assert.DoesNotContain("LlmGateway__DisableMapConfigFallbackForActiveAppCallers: \"${", cdsCompose);
@@ -1533,6 +1538,22 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LlmGateway__DatabaseName: llm_gateway", cdsCompose);
         Assert.Contains("默认由 llm_gateway.llmgw_console_users 托管账号", cdsCompose);
         Assert.Contains("LLMGW_ADMIN_ENV_AUTHORITY: \"${LLMGW_ADMIN_ENV_AUTHORITY}\"", cdsCompose);
+    }
+
+    [Fact]
+    public void WebHostingGenerationAndEdit_RequireHttpBeforeGatewayModeSelection()
+    {
+        var program = ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs");
+        var allowlistStart = program.IndexOf("var httpAllowlist =", StringComparison.Ordinal);
+        var allowlistEnd = program.IndexOf("var shadowFullSampleAllowlist =", allowlistStart, StringComparison.Ordinal);
+        Assert.True(allowlistStart >= 0 && allowlistEnd > allowlistStart);
+        var unconditionalAllowlist = program[allowlistStart..allowlistEnd];
+
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.GenerateHtml);", unconditionalAllowlist);
+        Assert.Contains("httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.EditHtml);", unconditionalAllowlist);
+        Assert.DoesNotContain("if (", unconditionalAllowlist);
+        Assert.Contains("else if (isShadow || httpAllowlist.Count > 0 || logicalModelsRequireHttp)", program);
+        Assert.Contains("httpAllowlist: httpAllowlist", program);
     }
 
     [Fact]
@@ -3383,10 +3404,21 @@ public class GatewayDataDomainGuardTests
             "正式 compose 的控制台与两份 serving 必须使用同一 GW Mongo 配置入口");
         Assert.Contains("config[\"LlmGateway:MongoConnectionString\"]", consoleProgram);
         Assert.Contains("gatewayMongoClient.GetDatabase(gatewayDbName)", consoleProgram);
-        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz\"", cdsServing);
+        // CDS 的就绪探针是匿名 GET 且把一切 < 500 当就绪，所以就绪声明必须指向匿名那条；
+        // 指回带密钥门的 readyz 会让 401 冒充「就绪」，依赖状态一次都不会被评估。
+        Assert.Contains("cds.readiness-path: \"/gw/v1/healthz/ready\"", cdsServing);
+        Assert.DoesNotContain("cds.readiness-path: \"/gw/v1/readyz\"", cdsServing);
         Assert.Contains("LlmGateway__ServeBaseUrl=${LLMGW_SERVE_BASE_URL:-http://gateway}", compose);
         Assert.DoesNotContain("http://gateway/gw/v1", compose);
         Assert.Contains("MapGet(\"/gw/v1/readyz\"", endpoint);
+        // 脱敏就绪：必须存在、必须按状态码表态、且**不得**端出组件明细（它是匿名的）。
+        Assert.Contains("MapGet(\"/gw/v1/healthz/ready\"", endpoint);
+        var sanitizedReady = endpoint[endpoint.IndexOf("MapGet(\"/gw/v1/healthz/ready\"", StringComparison.Ordinal)..];
+        sanitizedReady = sanitizedReady[..sanitizedReady.IndexOf("MapGet(\"/gw/v1/healthz/deep\"", StringComparison.Ordinal)];
+        Assert.Contains("StatusCodes.Status503ServiceUnavailable", sanitizedReady);
+        Assert.DoesNotContain("snapshot.Components", sanitizedReady);
+        Assert.DoesNotContain("x.Summary", sanitizedReady);
+        Assert.DoesNotContain("durationMs", sanitizedReady);
         Assert.DoesNotContain("map-mongo", readiness);
         Assert.Contains("gateway-mongo", readiness);
         Assert.Contains("asset-storage", readiness);
@@ -4321,7 +4353,7 @@ public class GatewayDataDomainGuardTests
 
         static bool ReturnsHostedSite(string line)
             => System.Text.RegularExpressions.Regex.IsMatch(
-                line, @"public async Task<(HostedSite\??|List<HostedSite>|\(List<HostedSite>)");
+                line, @"public async Task<(HostedSite\??>|List<HostedSite>>|\(List<HostedSite>\s)");
 
         var memberStarts = new List<int>();
         for (var i = 0; i < lines.Length; i++)
@@ -5494,6 +5526,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("CleanupMultipartRefsAsync", endpoints);
         Assert.Contains("protectedGatewayPath", endpoints);
         Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/readyz\"", endpoints);
+        // 脱敏就绪必须真的在免鉴权白名单里（精确匹配，不许退化成前缀放行），
+        // 否则 CDS 匿名探针拿到 401，而 401 < 500 会被当成「就绪」——依赖门控又变回摆设。
+        Assert.Contains("!path.Equals(\"/gw/v1/healthz/ready\", StringComparison.OrdinalIgnoreCase)", endpoints);
+        Assert.DoesNotContain("!path.StartsWith(\"/gw/v1/healthz\"", endpoints);
         Assert.Contains("llmgw_multipart_objects", httpClient);
         Assert.Contains("X-Gateway-App-Caller", httpClient);
         Assert.Contains("TryDeserializeRawResponse", httpClient);

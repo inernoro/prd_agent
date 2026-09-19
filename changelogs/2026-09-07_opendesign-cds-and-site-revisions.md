@@ -1,0 +1,58 @@
+| fix | cds | 修复本地数据恢复跨异步步骤时上传正文被提前消费的问题 |
+| fix | cds | 让流式基础设施备份失败向下载端传递具体退出错误 |
+| test | cds | 固定任务调度轴测试的本地时刻基准，消除宿主时区依赖 |
+| fix | prd-api | 修复网页托管删除在对象清理失败时仍返回完整成功并遗留公开对象的问题 |
+| security | prd-api | 为站点单对象删除增加精确路径白名单、持久清理账本与跨实例重试租约 |
+| test | prd-api | 覆盖清理失败恢复、崩溃续作、并发认领和异步删除响应契约 |
+| fix | prd-api | 允许 Markdown 包装站以自包含入口 HTML 创建版本基线，同时保持直接微调与其他包装站限制 |
+| polish | prd-admin | 网页提问等待首字时显示已等待时长并允许主动停止 |
+| feat | prd-api | 为网页生成、网页微调与 HTML PPT 增加知识来源内容哈希强校验 |
+| feat | prd-admin | 创建设计任务前预检知识来源并携带权威内容哈希 |
+| security | prd-api | 在实际模型派发前复核冻结知识快照的权限与内容哈希，并隔离用户输入和服务端知识来源 |
+| fix | prd-api | HTML PPT 确认大纲时锁定原始来源哈希，拒绝静默采用已变化的知识版本 |
+| fix | prd-admin | 生成预检失败、HTTP 拒绝或连接提前中断时确定性停止未消费的预热会话 |
+| security | cds | 冻结 OpenDesign 容器后仅导出受控公开文件，并在导出时复核输入哈希与资源上限 |
+| security | prd-api | 统一阻断 TS 与 C# 的 SVG SMIL 导航向量并保证 CSP 硬化后的托管字节一致 |
+| fix | prd-api | 多资产网页编辑、回退与保存分享保留完整公开包，并以不可变对象和持久围栏处理并发清理 |
+| test | cds | 增加 C# 与 TS 共享 task 合同黄金文件及冻结导出故障矩阵回归 |
+| feat | prd-api | 增加网页草稿拒绝、发布与回退的幂等审计和恢复投影 |
+| feat | prd-admin | 在网页版本历史中增加草稿拒绝确认、原因展示与焦点恢复 |
+| fix | prd-api | HTML PPT 强绑定父大纲和根 Run 审计并持久回收未认领预热会话 |
+| ops | cds | 在 API 切流前幂等执行并校验关键 MongoDB 索引 |
+| refactor | prd-api | 收敛网页与 HTML PPT 的公共设计产物生命周期、版本边界和脱敏读取合同 |
+| feat | prd-api | 以 adapter-owned 公共会话映射 HTML PPT 大纲、生成、精修、编辑和兼容固化流程 |
+| security | prd-api | 为 HTML PPT 公共事件、单文件产物清单和模板视觉调用增加脱敏审计与非空 RunId |
+| fix | prd-api | 持久恢复 HTML PPT 专用 Run、公共账本和托管版本绑定之间的中断窗口 |
+| test | prd-api | 增加 HTML PPT 公共生命周期、UTF-8 哈希、失败恢复和发布归属回归 |
+| fix | cds | 收敛移动端分支诊断浮层并补充安全视口与关闭控制 |
+| polish | prd-admin | 收敛网页托管首屏并补充 OpenDesign 等待占位与 HTML PPT 触控热区 |
+| security | prd-api | 将 v2 设计产物状态与脱敏权威事件原子持久化并禁止 adapter 伪造终态事件 |
+| fix | prd-api | 发布绑定改用可重放操作标识并校验站点、版本、所有者和产物哈希 |
+| security | prd-api | 绑定工作区与 HTML PPT 权威校验事实并拆分入口、清单和整包哈希 |
+| test | prd-api | 增加 Redis 故障、路径绕过、事件伪造、Plan 绑定和发布恢复对抗回归 |
+| feat | prd-api | 将 OpenDesign 网页生成与微调接入共享工作区 v2 生命周期并绑定托管发布版本 |
+| fix | prd-api | 以租约围栏原子推进网页任务事件并恢复提交、完成、失败和发布中断窗口 |
+| test | prd-api | 增加网页生命周期并发认领、可信清单、失租拒写与生成编辑发布恢复回归 |
+| fix | prd-api | 将托管网页版本纳入数据同步并明确排除实例绑定的设计运行与删除任务 |
+| fix | prd-api | 仅从未绑定的 v2 运行恢复发布关系，防止旧版记录告警风暴与恢复饥饿 |
+| security | prd-api | 设计生成入口复用网页托管读写权限，并将 Redis 与即时队列降为可恢复兼容投影 |
+| security | prd-api | 隔离运行时仅返回稳定领域错误，不再透传 LLMGW 上游响应体或内部异常文本 |
+| fix | prd-api | 网页修改事件流在 Redis 不可用时回退 Mongo 权威状态并返回最终草稿 |
+| fix | prd-api | OpenDesign 已提交结果恢复时直接复用可信工作区产物，避免重复创建会话和模型调用 |
+| fix | prd-admin | HTML PPT 流式请求统一遵守可配置 API 基址与路径前缀 |
+| fix | prd-api | HTML PPT 发布改为持久意图、租约 CAS、确定性站点和真实托管版本绑定 |
+| ops | prd-api | HTML PPT 发布与公共生命周期恢复增加过期回收、退避和 dead-letter 上限 |
+| fix | prd-api | 网页生成公开事件流统一 MAP 与 OpenDesign 的增量事件并在投影中断时回退 Mongo 权威终态 |
+| fix | prd-admin | 网页生成弹窗在事件流中断后原位恢复进度并识别 OpenDesign 已产出的站点身份 |
+| feat | prd-api | 统一 MAP v1 与 OpenDesign v2 网页生成和微调的显式取消、租约围栏与权威终态 |
+| feat | prd-admin | 为网页生成与微调增加服务器权威停止入口并保留断线继续执行语义 |
+| test | prd-api | 增加生成编辑取消、提交竞态和 OpenDesign 已回传结果恢复回归 |
+| fix | prd-api | 发布恢复从可信版本原子认领产物身份，关闭版本已写而任务未回写的崩溃窗口 |
+| test | prd-admin | 对齐 HTML PPT 可配置 API 基址的静态接线闸门 |
+| fix | prd-api | 运行投影故障不再中断权威生成，并修复同毫秒续租误判失租 |
+| fix | prd-api | 发布重放认领已验证站点，按租约与上传批次隔离补偿并禁止清理期间绑定完成 |
+| fix | prd-api | HTML PPT 恢复时原子认领同身份基线版本，避免普通预览抢占导致永久发布失败 |
+| test | prd-api | 增加投影断流、发布重放、清理围栏与基线版本认领回归 |
+| fix | prd-api | 多文件站点恢复时验证真实对象包并原子认领普通基线，避免查看历史阻断生成发布 |
+| fix | prd-api | 区分上传账本与已启动补偿，接管过期清理租约后恢复可信产物且不误删正常发布 |
+| test | prd-api | 增加补偿中断、活跃租约保护、清理失败重试及恢复保留原站对象的集成回归 |

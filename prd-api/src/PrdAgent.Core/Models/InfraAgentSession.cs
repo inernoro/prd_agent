@@ -24,6 +24,15 @@ public class InfraAgentSession
 
     public string TraceId { get; set; } = string.Empty;
 
+    /// <summary>未认领预热会话的唯一键；认领或终止时清空，避免多副本重复创建。</summary>
+    public string? PrewarmKey { get; set; }
+
+    /// <summary>预热会话的硬过期时间；后台清理不依赖下一次用户请求。</summary>
+    public DateTime? PrewarmExpiresAt { get; set; }
+
+    /// <summary>原子认领该预热会话的根领域 Run，同时也是 TraceId 的权威来源。</summary>
+    public string? PrewarmClaimedRunId { get; set; }
+
     public string? RuntimeProfileId { get; set; }
 
     public string? ModelBaseUrl { get; set; }
@@ -39,6 +48,42 @@ public class InfraAgentSession
     public string? RuntimeAdapter { get; set; }
 
     public string? CurrentRuntimeRunId { get; set; }
+
+    /// <summary>当前已被 MAP 接纳但尚未投影终态的用户消息 ID；用于把 CDS 事件绑定到唯一一轮。</summary>
+    public string? ActiveMessageId { get; set; }
+
+    /// <summary>MAP 事件序号的数据库原子计数器；所有事件写入必须先从这里预留序号。</summary>
+    public long EventSeq { get; set; }
+
+    /// <summary>旧会话完成事件序号迁移后置为 true，避免从 0 与历史事件撞号。</summary>
+    public bool EventSeqInitialized { get; set; }
+
+    /// <summary>当前创建尝试的唯一标识，用于拒绝迟到回包覆盖后续尝试。</summary>
+    public string? StartAttemptId { get; set; }
+
+    /// <summary>停止租约所有者；只有持有者能提交 Failed/Stopped 终态。</summary>
+    public string? StopLeaseOwner { get; set; }
+
+    public DateTime? StopLeaseExpiresAt { get; set; }
+
+    /// <summary>
+    /// Durable cleanup ledger for one-shot sessions. A background worker keeps retrying until remote cleanup
+    /// reaches Stopped; successful business output is not coupled to this operational lifecycle.
+    /// </summary>
+    public DateTime? CleanupRequestedAt { get; set; }
+
+    public string? CleanupCdsSessionId { get; set; }
+
+    public string? CleanupMessageId { get; set; }
+
+    public int CleanupAttemptCount { get; set; }
+
+    public DateTime? CleanupNextAttemptAt { get; set; }
+
+    public string? CleanupLastError { get; set; }
+
+    /// <summary>创建回包迟到或补偿失败时仍需回收的 CDS 会话身份。</summary>
+    public List<string> PendingCdsSessionIds { get; set; } = [];
 
     public string? Model { get; set; }
 
@@ -61,6 +106,12 @@ public class InfraAgentSession
     /// <summary>调用方应用标识（CDS 观测台按 app 筛选用，如 md-to-ppt / infra-console）</summary>
     public string? ClientApp { get; set; }
 
+    /// <summary>CDS 运行时工作负载类别；由业务适配器声明，CDS 负责校验。</summary>
+    public string WorkloadKind { get; set; } = InfraAgentWorkloadKinds.General;
+
+    /// <summary>运行时隔离要求；MAP 只声明，容器分配与强制执行归 CDS。</summary>
+    public string IsolationMode { get; set; } = InfraAgentIsolationModes.SharedRuntime;
+
     public string Status { get; set; } = InfraAgentSessionStatuses.Idle;
 
     public bool IsArchived { get; set; }
@@ -72,6 +123,9 @@ public class InfraAgentSession
     public string? ManualTakeoverReason { get; set; }
 
     public string? LastError { get; set; }
+
+    /// <summary>最后一轮成功投影的稳定消息身份；用于把一次性会话清理绑定到准确轮次。</summary>
+    public string? LastCompletedMessageId { get; set; }
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
@@ -87,7 +141,21 @@ public static class InfraAgentRuntimes
     public const string ClaudeSdk = "claude-sdk";
     public const string OpenAiCompatible = "openai-compatible";
     public const string Codex = "codex";
+    public const string OpenDesign = "open-design";
     public const string Custom = "custom";
+}
+
+public static class InfraAgentWorkloadKinds
+{
+    public const string General = "general";
+    public const string RepositoryChange = "repository-change";
+    public const string DesignArtifact = "design-artifact";
+}
+
+public static class InfraAgentIsolationModes
+{
+    public const string SharedRuntime = "shared-runtime";
+    public const string SessionContainer = "session-container";
 }
 
 public static class InfraAgentSessionStatuses

@@ -94,6 +94,9 @@ import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
+import SiteGenerateDialog, { type SiteGenerateSource } from '@/components/web-hosting/SiteGenerateDialog';
+import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
+import { useLocation } from 'react-router-dom';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
 import {
   buildWebPageGroupSlot,
@@ -150,6 +153,7 @@ import {
   MessageCircleQuestion,
   EyeOff,
   FileArchive,
+  WandSparkles,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -361,6 +365,7 @@ export { SiteCard };
 export type { SiteCaps };
 
 export default function WebPagesPage() {
+  const location = useLocation();
   const { isMobile } = useBreakpoint();
   const username = useAuthStore(s => s.user?.username);
   const currentUserId = useAuthStore(s => s.user?.userId);
@@ -427,6 +432,9 @@ export default function WebPagesPage() {
   const [tags, setTags] = useState<TagCount[]>([]);
 
   const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [showGenerateDialog, setShowGenerateDialog] = useState(false);
+  const [generateSource, setGenerateSource] = useState<SiteGenerateSource | null>(null);
+  const consumedLaunchRef = useRef('');
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
   const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
   // 快照「打开新建上传弹窗时」的空间：弹窗内上传期间用户若切换空间，onSaved 仍按打开时的目标归属
@@ -436,6 +444,53 @@ export default function WebPagesPage() {
     setEditItem(null);
     setShowUploadDialog(true);
   };
+
+  /**
+   * 在团队空间里新建的站点必须归属该团队，否则会落到个人空间、从当前列表里消失。
+   *
+   * 上传这条路径归属发生在这里：请求是同步的，响应回来时用户一定还在。
+   * **生成那条路径不同**——它是长任务，用户很可能在终态之前就关掉页面或切走，
+   * 归属若只活在完成回调里就会丢。所以生成的目标空间随创建请求冻结到服务端，
+   * 由服务端建站时应用；这里只保留「分组」这一层（它依赖当前视图，且丢了也只是
+   * 没进文件夹、网页仍在团队空间里看得见）。
+   */
+  const assignNewSiteToDialogSpace = async (siteId: string, verb: string) => {
+    const dialogSpace = uploadDialogSpaceRef.current;
+    if (dialogSpace.kind !== 'team') return;
+    const assigned = await setSiteTeams(siteId, [dialogSpace.teamId]);
+    if (!assigned.success) {
+      toast.error(`已${verb}，但归属团队失败`, `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
+      return;
+    }
+    await groupNewSiteInDialogSpace(siteId, verb);
+  };
+
+  /** 分组归属：只在「弹窗空间就是当前视图空间且当前有分组」时成立，与团队归属分开。 */
+  const groupNewSiteInDialogSpace = async (siteId: string, verb: string) => {
+    const dialogSpace = uploadDialogSpaceRef.current;
+    if (dialogSpace.kind !== 'team') return;
+    if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeRealGroupId) {
+      const grouped = await setSiteGroup(siteId, activeRealGroupId);
+      if (!grouped.success) toast.error(`已${verb}，但归入分组失败`, grouped.error?.message || '可稍后通过批量操作移入分组');
+    }
+  };
+
+  useEffect(() => {
+    if (!location.search || consumedLaunchRef.current === location.search) return;
+    const launch = parseDesignArtifactLaunch(location.search);
+    if (!launch || launch.target !== 'web-page') return;
+    consumedLaunchRef.current = location.search;
+    setGenerateSource({
+      entryId: launch.sourceEntryId,
+      storeId: launch.sourceStoreId,
+      title: launch.sourceTitle,
+      storeName: launch.sourceStoreName,
+    });
+    // 深链直接开生成弹窗时也要快照空间：这条路径以前从不设 ref，
+    // 归属会用到上一次打开上传弹窗时的旧值（或默认的个人空间）。
+    uploadDialogSpaceRef.current = currentSpace;
+    setShowGenerateDialog(true);
+  }, [location.search, currentSpace]);
   // 上传成功的站点 ID 集合，触发"滑入 + 光环"入场动效。
   // 事件驱动（onSaved 回调）—— 不再用 sites diff 推断，避免筛选/排序变化误触发动效。
   const [freshIds, setFreshIds] = useState<Set<string>>(new Set());
@@ -455,6 +510,13 @@ export default function WebPagesPage() {
   const [viewersTarget, setViewersTarget] = useState<{ siteId: string; siteTitle: string } | null>(null);
   // 评论管理：点击站点卡「评论」按钮打开预览 + 评论面板（owner 可发表/删除 + 允许评论开关）
   const [commentSite, setCommentSite] = useState<HostedSite | null>(null);
+  const [previewInitialPanel, setPreviewInitialPanel] = useState<'none' | 'edit'>('none');
+  const [previewEditSection, setPreviewEditSection] = useState<'compose' | 'history'>('compose');
+  const openSiteEditor = (site: HostedSite, section: 'compose' | 'history') => {
+    setPreviewInitialPanel('edit');
+    setPreviewEditSection(section);
+    setCommentSite(site);
+  };
   // 提问设置：站点卡「更多设置」直达。原先只有大预览顶栏的齿轮一个入口，
   // 用户在列表里找遍菜单也找不到提问配置（形状 2：接线只建了一半）。
   const [askConfigSite, setAskConfigSite] = useState<HostedSite | null>(null);
@@ -563,6 +625,13 @@ export default function WebPagesPage() {
     if (!confirm('确定删除此站点？站点文件将同时被清理。')) return;
     const res = await deleteSite(id);
     if (res.success) {
+      // deleted=false 表示清理被发布租约推迟了，站点还在：抹掉卡片就是在说谎，
+      // 刷新之后它照样回来。如实留住卡片并说清在等什么。
+      if (res.data.deleted === false) {
+        toast.info('站点还在清理中', '页面正被发布流程占用，清理完成后列表里才会消失');
+        load();
+        return;
+      }
       setSites(prev => prev.filter(s => s.id !== id));
       setTotal(prev => prev - 1);
       loadMeta();
@@ -620,11 +689,17 @@ export default function WebPagesPage() {
     if (!confirm(`确定删除「${site.title}」？站点文件将同时被清理，此操作不可撤销。`)) return;
     const res = await deleteSite(site.id);
     if (res.success) {
+      // 与 handleDelete 同一判据：推迟清理时站点还在，不许乐观地把卡片抹掉。
+      if (res.data.deleted === false) {
+        toast.info('站点还在清理中', '页面正被发布流程占用，清理完成后列表里才会消失');
+        load();
+        return;
+      }
       setSites(prev => prev.filter(s => s.id !== site.id));
       setTotal(prev => prev - 1);
       loadMeta();
     }
-  }, [loadMeta]);
+  }, [load, loadMeta]);
 
   // 取消分享：撤销所有"仅指向该站点"的分享链接（单站点分享），多站点合集分享不动。
   const cancelShareForSite = useCallback(async (id: string) => {
@@ -1085,6 +1160,7 @@ export default function WebPagesPage() {
             onMove={() => setMovingSite(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
+            onAiEdit={() => openSiteEditor(site, 'compose')}
           />
         ))}
       </div>
@@ -1105,6 +1181,7 @@ export default function WebPagesPage() {
             onTogglePublic={() => handleMakePublic(site)}
             onComments={() => setCommentSite(site)}
             onAskConfig={siteCaps(site).canEdit ? () => setAskConfigSite(site) : undefined}
+            onAiEdit={() => openSiteEditor(site, 'compose')}
           />
         ))}
       </div>
@@ -1461,7 +1538,12 @@ export default function WebPagesPage() {
         />
       )}
 
-      {/* Toolbar（只属于资产库档；分享档有自己的三层切换与搜索） */}
+      {/* Toolbar（只属于资产库档；分享档有自己的三层切换与搜索）。
+          里面每一项都只在手机端渲染，桌面端这层是空的——而空的 flex item 仍然算一个
+          子元素，会和下一个子元素之间实打实吃掉根上的 gap-4，把整页内容往下推 16px。
+          看不出是谁干的：它自己高度为 0、不可见，页面却凭空多了一截顶部留白
+          （用户 2026-09-15 反馈「左窄上宽」）。所以桌面端整层不渲染。 */}
+      {isMobile && (
       <div className="flex flex-col gap-3" style={{ display: workspaceTab === 'library' ? undefined : 'none' }}>
         {/* 搜索 / 筛选：移动端从搜索开始；桌面端默认只保留一条工作台工具区。 */}
         {isMobile ? (
@@ -1474,7 +1556,7 @@ export default function WebPagesPage() {
                   placeholder="搜索站点名称、描述..."
                   value={keyword}
                   onChange={e => setKeyword(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
+                  className="min-h-11 w-full pl-9 pr-3 py-2 rounded-lg text-sm outline-none"
                   style={{
                     background: 'var(--bg-sunken)',
                     color: 'var(--text-primary)',
@@ -1486,7 +1568,7 @@ export default function WebPagesPage() {
                 type="button"
                 onClick={() => setShowMobileFilters(true)}
                 data-tour-id="webpages-mobile-filter"
-                className="h-10 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
+                className="h-11 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
                 style={{
                   background: filterCount > 0 ? 'var(--selection-bg)' : 'var(--bg-card)',
                   border: `1px solid ${filterCount > 0 ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
@@ -1695,7 +1777,7 @@ export default function WebPagesPage() {
                     <button
                       type="button"
                       onClick={() => setViewMode('grid')}
-                      className="h-9 px-4 inline-flex items-center gap-1.5 transition-colors"
+                      className="h-11 px-4 inline-flex items-center gap-1.5 transition-colors"
                       style={{ background: viewMode === 'grid' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
                     >
                       <Grid3X3 size={14} /> 网格
@@ -1703,7 +1785,7 @@ export default function WebPagesPage() {
                     <button
                       type="button"
                       onClick={() => setViewMode('list')}
-                      className="h-9 px-4 inline-flex items-center gap-1.5 transition-colors"
+                      className="h-11 px-4 inline-flex items-center gap-1.5 transition-colors"
                       style={{ background: viewMode === 'list' ? 'var(--bg-elevated)' : 'var(--bg-sunken)', color: 'var(--text-primary)' }}
                     >
                       <List size={14} /> 列表
@@ -1720,7 +1802,7 @@ export default function WebPagesPage() {
                         setShowMobileFilters(false);
                         setShowAnalytics(true);
                       }}
-                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
+                      className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
                     >
                       <BarChart3 size={15} /> 分享统计
                     </button>
@@ -1731,7 +1813,7 @@ export default function WebPagesPage() {
                         setShareTargetId(null);
                         setShowSharesPanel(true);
                       }}
-                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
+                      className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
                     >
                       <Link2 size={15} /> 分享管理
                     </button>
@@ -1742,7 +1824,7 @@ export default function WebPagesPage() {
                           setShowMobileFilters(false);
                           setShowCopyFromPersonal(true);
                         }}
-                        className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold col-span-2 bg-token-nested text-token-primary border border-token-subtle"
+                        className="h-11 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold col-span-2 bg-token-nested text-token-primary border border-token-subtle"
                       >
                         <FolderInput size={15} /> 从个人空间添加
                       </button>
@@ -1770,6 +1852,7 @@ export default function WebPagesPage() {
           </div>
         )}
       </div>
+      )}
 
       {/* 屏框（设计稿屏 1·A）：顶栏通栏 52px，其下三列贴边——左栏 212 / 中列（工具条 56 + 内容）/ 右栏 300。
           三列之间用竖分隔线而不是间隙，工具条属于中列、不横跨左右栏。 */}
@@ -1961,6 +2044,12 @@ export default function WebPagesPage() {
           item={editItem}
           folders={uploadFolderOptions}
           initialFile={pendingExternalFile}
+          onGenerate={() => {
+            setShowUploadDialog(false);
+            setPendingExternalFile(null);
+            setGenerateSource(null);
+            setShowGenerateDialog(true);
+          }}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
           onShareSite={(id) => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); setShareTargetId(id); setShowShareDialog(true); }}
           onSaved={async (saved, isCreate, keepOpen) => {
@@ -1972,19 +2061,8 @@ export default function WebPagesPage() {
               setPendingExternalFile(null);
             }
             // 串数据修复：在团队空间内新建的站点必须归属该团队空间，否则会落到个人空间。
-            // 用打开弹窗时快照的空间（uploadDialogSpaceRef），避免上传期间切换空间归错团队
-            const dialogSpace = uploadDialogSpaceRef.current;
-            if (saved && isCreate && dialogSpace.kind === 'team') {
-              const assigned = await setSiteTeams(saved.id, [dialogSpace.teamId]);
-              // 归属失败不能静默：告知用户站点暂在个人空间（与 dropzone 路径一致）
-              if (!assigned.success) {
-                toast.error('已上传，但归属团队失败', `${assigned.error?.message || '请稍后在卡片上手动移动到本团队'}（站点暂在个人空间）`);
-              } else if (currentSpace.kind === 'team' && currentSpace.teamId === dialogSpace.teamId && activeRealGroupId) {
-                // 仍停留在同一团队的专题/分类视图 → 新网页顺手归入该分组
-                const grouped = await setSiteGroup(saved.id, activeRealGroupId);
-                if (!grouped.success) toast.error('已上传，但归入分组失败', grouped.error?.message || '可稍后通过批量操作移入分组');
-              }
-            }
+            // 用打开弹窗时快照的空间（uploadDialogSpaceRef），避免上传期间切换空间归错团队。
+            if (saved && isCreate) await assignNewSiteToDialogSpace(saved.id, '上传');
             load();
             loadMeta();
             // 仅"新建上传"触发滑入 + 光环动效；编辑/重传现有站点不动
@@ -1992,6 +2070,23 @@ export default function WebPagesPage() {
           }}
         />
       )}
+
+      <SiteGenerateDialog
+        open={showGenerateDialog}
+        initialSource={generateSource}
+        // 团队归属随请求冻结到服务端，由它建站时应用——用户中途离开时这条回调不会执行。
+        // 传实时值即可：弹窗在打开那一刻自己冻结一次，与上传弹窗快照空间的口径一致。
+        destinationTeamId={currentSpace.kind === 'team' ? currentSpace.teamId : null}
+        onClose={() => setShowGenerateDialog(false)}
+        onCreated={(siteId) => {
+          void (async () => {
+            // 团队已由服务端归好，这里只补分组（它依赖当前视图，服务端不知道）。
+            await groupNewSiteInDialogSpace(siteId, '生成');
+            void load();
+            void loadMeta();
+          })();
+        }}
+      />
 
       {/* 拖文件替换网页 — 二次确认 */}
       <Dialog
@@ -2106,7 +2201,13 @@ export default function WebPagesPage() {
       {commentSite && (
         <SitePreviewModal
           site={commentSite}
-          onClose={() => setCommentSite(null)}
+          initialPanel={previewInitialPanel}
+          initialEditSection={previewEditSection}
+          onClose={() => {
+            setCommentSite(null);
+            setPreviewInitialPanel('none');
+            setPreviewEditSection('compose');
+          }}
           canToggleComments={siteCaps(commentSite).canEdit}
           onCommentsEnabledChange={(sid, enabled) => {
             // 同步父组件持有的 site 快照 + 列表，避免关闭再开开关回退到旧值
@@ -2116,6 +2217,10 @@ export default function WebPagesPage() {
           onAskEnabledChange={(sid, enabled) => {
             setCommentSite((prev) => (prev && prev.id === sid ? { ...prev, askEnabled: enabled } : prev));
             setSites((prev) => prev.map((x) => (x.id === sid ? { ...x, askEnabled: enabled } : x)));
+          }}
+          onSiteChange={(updated) => {
+            setCommentSite(updated);
+            setSites((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
           }}
         />
       )}
@@ -2796,7 +2901,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/38 text-token-primary shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+        className="inline-flex h-7 min-h-7 w-7 min-w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/38 text-token-primary shadow-md backdrop-blur-md transition-colors hover:bg-black/58 max-sm:h-11 max-sm:min-h-11 max-sm:w-11 max-sm:min-w-11"
         title="更多设置"
         aria-label="更多设置"
         data-no-drag
@@ -2816,7 +2921,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
             <button
               key={action.label}
               type="button"
-              className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft"
+              className="flex h-8 min-h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft max-sm:h-11 max-sm:min-h-11"
               style={{ color: action.color ?? (action.danger ? '#fecaca' : 'var(--text-secondary)') }}
               onClick={() => {
                 setOpen(false);
@@ -2835,7 +2940,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
 
 // ─── List View ───
 
-function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig }: {
+function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete, onShare, onQrCode, onTogglePublic, onComments, onAskConfig, onAiEdit }: {
   site: HostedSite;
   selected: boolean;
   shared?: boolean;
@@ -2850,6 +2955,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
   onComments?: () => void;
   /** 提问设置抽屉；仅 canEdit 时传入 */
   onAskConfig?: () => void;
+  onAiEdit?: () => void;
 }) {
   const c = caps ?? { canEdit: true, canDelete: true, canShare: true, canSetVisibility: true };
   const canDrag = canDragSiteCard(c);
@@ -2963,6 +3069,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
         )}
         <MoreActionsButton
           actions={[
+            c.canEdit && onAiEdit ? { label: '帮我修改', icon: <WandSparkles size={13} />, onClick: onAiEdit } : null,
             { label: '二维码', icon: <QrCode size={13} />, onClick: onQrCode },
             c.canSetVisibility
               ? isPublic
@@ -2987,7 +3094,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
 
 // ─── Upload / Edit Dialog ───
 
-function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initialFile }: {
+function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initialFile, onGenerate }: {
   item: HostedSite | null;
   folders: string[];
   onClose: () => void;
@@ -2996,6 +3103,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   /** 完成态「立即分享」：关掉本窗，直接拉起分享弹窗 */
   onShareSite: (siteId: string) => void;
   initialFile?: File | null;
+  onGenerate: () => void;
 }) {
   const isEdit = !!item;
   const [title, setTitle] = useState(item?.title ?? '');
@@ -3631,6 +3739,11 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
         ) : (
         <>
           <div className="flex flex-col gap-3 max-h-[65vh] overflow-y-auto pr-1">
+            {!isEdit && !file && !saving && (
+              <Button data-tour-id="webpages-knowledge-generate" size="sm" variant="secondary" onClick={onGenerate}>
+                <WandSparkles size={14} className="mr-1" /> 引用知识生成网页
+              </Button>
+            )}
 
             {/* File drop zone */}
             {(!isEdit || file !== null) ? (

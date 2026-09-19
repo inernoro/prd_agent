@@ -3,6 +3,8 @@ import type { WebHostingRole } from '@/services/real/teams';
 import { api } from '@/services/api';
 import { useAuthStore } from '@/stores/authStore';
 import type { ApiResponse } from '@/types/api';
+import { connectSse } from '@/lib/useSseStream';
+import type { SseEvent } from '@/lib/sse';
 
 // ─── Types ───
 
@@ -37,6 +39,8 @@ export interface HostedSite {
    */
   pdfAssetUrl: string | undefined;
   files: HostedSiteFile[];
+  /** 服务端依据文件角色判定：系统 sidecar 不会把自包含 HTML 误标成多文件站。 */
+  contentShape?: 'self-contained-html' | 'multi-file';
   totalSize: number;
   tags: string[];
   folder?: string;
@@ -68,6 +72,109 @@ export interface HostedSite {
   askAllowAnonymous?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface HostedSiteRevision {
+  id: string;
+  siteId: string;
+  status: 'draft' | 'publishing' | 'published' | 'rejected';
+  source: 'baseline' | 'ai-edit' | 'rollback';
+  parentRevisionId?: string | null;
+  rollbackTargetRevisionId?: string | null;
+  sourceRunId?: string | null;
+  instruction?: string | null;
+  runtime: 'map-gateway' | 'open-design' | 'codex' | 'manual';
+  knowledgeEntryIds: string[];
+  basedOnContentVersion: string;
+  publishedContentVersion?: string | null;
+  createdAt: string;
+  publishedAt?: string | null;
+  rejectedAt?: string | null;
+  rejectedByUserId?: string | null;
+  rejectionReason?: string | null;
+  isCurrent: boolean;
+}
+
+export interface HostedSiteRevisionMutation {
+  revision: HostedSiteRevision;
+  site: HostedSite;
+  changed: boolean;
+}
+
+export interface HostedSiteRevisionRejection {
+  revision: HostedSiteRevision;
+  changed: boolean;
+}
+
+export interface HostedSitePreviewAccess {
+  available: boolean;
+  previewUrl?: string;
+  expiresAt?: string;
+}
+
+export interface DesignRuntimeCapability {
+  id: string;
+  label: string;
+  adapterKind: 'in-process' | 'remote-agent' | string;
+  executionOwner: 'map' | 'cds-remote-agent' | string;
+  isolationMode: 'map-process' | 'session-container' | string;
+  artifactTypes: string[];
+  sourceSurfaces: string[];
+  enabled: boolean;
+  configured: boolean;
+  healthy: boolean;
+  operations: string[];
+  reason?: string;
+}
+
+export interface DesignKnowledgeReferenceInput {
+  entryId: string;
+  storeId: string;
+  contentHash?: string;
+}
+
+export interface ResolvedDesignKnowledgeReference extends DesignKnowledgeReferenceInput {
+  contentHash: string;
+  storeName: string;
+  title: string;
+}
+
+export interface DesignArtifactRunSummary {
+  runId: string;
+  status: string;
+  artifactType: 'web-page' | 'html-ppt';
+  operation: 'generate' | 'edit';
+  sourceSurface: 'web-hosting' | 'knowledge-base' | 'html-ppt';
+  runtime: string;
+  title?: string | null;
+  progress: number;
+  phase: string;
+  artifactSiteId?: string | null;
+  artifactRevisionId?: string | null;
+  producedArtifactSiteId?: string | null;
+  producedArtifactRevisionId?: string | null;
+  /** 发起时冻结的目标团队空间；个人空间为空。 */
+  destinationTeamId?: string | null;
+  /**
+   * 应用目标空间时的失败原因。站点已经建好了，所以这不是整轮失败——但也不能当成完全成功：
+   * 拿到它就提示「已生成，但归属团队失败」，与浏览器还在时的行为一致。
+   */
+  destinationApplyError?: string | null;
+  linkedRunId?: string | null;
+  resolvedModel?: string | null;
+  resolvedPlatform?: string | null;
+  error?: string | null;
+  cancelRequested?: boolean;
+  cancelRequestedAt?: string | null;
+  cancelledAt?: string | null;
+  createdAt: string;
+  knowledgeReferences: Array<{
+    entryId: string;
+    storeId?: string | null;
+    storeName?: string | null;
+    title: string;
+    contentHash: string;
+  }>;
 }
 
 export interface HostedSiteOptimizationAnalysis {
@@ -753,7 +860,12 @@ export async function updateSite(id: string, data: {
   return apiRequest(api.webPages.byId(encodeURIComponent(id)), { method: 'PUT', body: data });
 }
 
-export async function deleteSite(id: string): Promise<ApiResponse<{ deleted: boolean }>> {
+/**
+ * 删除站点。内容发布租约还占着时后端会推迟清理，返回 202 + deleted=false，
+ * 站点依旧存在——调用方必须看 deleted，不能只看 success（看 success 就会把一张
+ * 还在的卡片从列表里抹掉，刷新之后它又回来了）。
+ */
+export async function deleteSite(id: string): Promise<ApiResponse<{ deleted: boolean; cleanupPending?: boolean }>> {
   return apiRequest(api.webPages.byId(encodeURIComponent(id)), { method: 'DELETE' });
 }
 
@@ -1010,6 +1122,14 @@ export interface SharedSiteInfo {
   pdfAssetUrl?: string;
   /** 包装资产类型（pdf / video / markdown …），普通 HTML 站为空。包装站没有可读正文 */
   wrappedAssetType?: string | null;
+  /**
+   * 当前访问者能不能编辑这个站点，由后端用编辑端点那同一道角色门算出来。
+   *
+   * 不要再拿 createdBy 之类的代理量自己推：那是「谁建了这条分享链接」，而后端明确
+   * 允许团队编辑者建分享——两者一错位，真正的站点主人进不去编辑坞，只建过链接的人
+   * 反而看得见。匿名访问恒为 false。
+   */
+  viewerCanEdit?: boolean;
 }
 
 export interface ShareViewData {
@@ -1282,4 +1402,210 @@ export async function regenerateSiteAskQuestions(
   siteId: string,
 ): Promise<ApiResponse<AskQuestionRegenResult>> {
   return apiRequest(api.webPages.askRegenerateQuestions(siteId), { method: 'POST' });
+}
+
+// ─── 帮我修改 / 版本 ───
+
+export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
+  defaultRuntime: string;
+  runtimes: DesignRuntimeCapability[];
+}>> {
+  return apiRequest(api.designArtifacts.runtimeCapabilities());
+}
+
+/**
+ * 创建 Run 前向服务端取得当前权威内容哈希。这里只传来源身份，正文始终由服务端读取；
+ * 创建接口会再读一次并比较哈希，封住预检与入队之间的变更窗口。
+ */
+export async function resolveDesignKnowledgeReferences(
+  references: DesignKnowledgeReferenceInput[],
+): Promise<ApiResponse<{ items: ResolvedDesignKnowledgeReference[] }>> {
+  if (references.length === 0) {
+    return { success: true, data: { items: [] }, error: null };
+  }
+  return apiRequest('/api/design-artifacts/knowledge-references/resolve', {
+    method: 'POST',
+    body: {
+      knowledgeReferences: references.map(({ entryId, storeId }) => ({ entryId, storeId })),
+    },
+  });
+}
+
+export async function createDesignArtifactRun(input: {
+  instruction: string;
+  title?: string;
+  runtime?: string;
+  sourceSurface: 'web-hosting' | 'knowledge-base';
+  /**
+   * 目标团队空间，在发起这一刻冻结、由服务端建站时应用。
+   *
+   * 之前归属只发生在浏览器的完成回调里：用户在终态事件到达前关掉页面或切走，服务端照样
+   * 把站点生成完，但它会留在个人空间；换个标签页恢复也重建不出原来的目标。个人空间传空。
+   */
+  destinationTeamId?: string | null;
+  knowledgeReferences: DesignKnowledgeReferenceInput[];
+}): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
+  if (!resolved.success) return resolved;
+  return apiRequest(api.designArtifacts.runs(), {
+    method: 'POST',
+    body: {
+      artifactType: 'web-page',
+      operation: 'generate',
+      ...input,
+      knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
+        entryId,
+        storeId,
+        contentHash,
+      })),
+      runtime: input.runtime || 'map-gateway',
+    },
+  });
+}
+
+export async function getDesignArtifactRun(
+  runId: string,
+): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.designArtifacts.byId(runId));
+}
+
+export async function cancelDesignArtifactRun(
+  runId: string,
+): Promise<ApiResponse<{ runId: string; status: string; cancelRequested: boolean; changed: boolean }>> {
+  return apiRequest(api.designArtifacts.cancel(runId), { method: 'POST' });
+}
+
+export async function streamDesignArtifactRun(input: {
+  runId: string;
+  afterSeq?: number;
+  signal: AbortSignal;
+  onEvent: (event: SseEvent) => void;
+}): Promise<void> {
+  const suffix = input.afterSeq && input.afterSeq > 0 ? `?afterSeq=${input.afterSeq}` : '';
+  // 必须过 buildApiUrl：connectSse 内部是裸 fetch，不会套 API 基址。前后端分开部署时
+  // 相对路径会打到前端自己身上，拿回一坨 HTML——前端立刻报「进度连接中断」，而服务端
+  // 那边任务照跑，用户看到的是一次并不存在的失败。
+  const result = await connectSse({
+    url: buildApiUrl(`${api.designArtifacts.stream(input.runId)}${suffix}`),
+    method: 'GET',
+    signal: input.signal,
+    onEvent: input.onEvent,
+  });
+  if (!result.success && !input.signal.aborted)
+    throw new Error(result.errorMessage || '网页生成进度连接中断');
+}
+
+export async function createHostedSiteEditRun(
+  siteId: string,
+  instruction: string,
+  knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
+  runtime = 'map-gateway',
+): Promise<ApiResponse<{ runId: string; status: string; runtime: string }>> {
+  const resolved = await resolveDesignKnowledgeReferences(knowledgeReferences);
+  if (!resolved.success) return resolved;
+  return apiRequest(api.webPages.editRuns(siteId), {
+    method: 'POST',
+    body: {
+      instruction,
+      runtime,
+      knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
+        entryId,
+        storeId,
+        contentHash,
+      })),
+    },
+  });
+}
+
+export async function getHostedSiteEditRun(
+  siteId: string,
+  runId: string,
+): Promise<ApiResponse<DesignArtifactRunSummary>> {
+  return apiRequest(api.webPages.editRunById(siteId, runId));
+}
+
+export async function cancelHostedSiteEditRun(
+  siteId: string,
+  runId: string,
+): Promise<ApiResponse<{ runId: string; status: string; cancelRequested: boolean; changed: boolean }>> {
+  return apiRequest(api.webPages.cancelEditRun(siteId, runId), { method: 'POST' });
+}
+
+export async function streamHostedSiteEditRun(input: {
+  siteId: string;
+  runId: string;
+  afterSeq?: number;
+  signal: AbortSignal;
+  onEvent: (event: SseEvent) => void;
+}): Promise<void> {
+  const suffix = input.afterSeq && input.afterSeq > 0 ? `?afterSeq=${input.afterSeq}` : '';
+  // 同上：裸 fetch 必须自己拼基址。
+  const result = await connectSse({
+    url: buildApiUrl(`${api.webPages.editRunStream(input.siteId, input.runId)}${suffix}`),
+    method: 'GET',
+    signal: input.signal,
+    onEvent: input.onEvent,
+  });
+  if (!result.success && !input.signal.aborted)
+    throw new Error(result.errorMessage || '修改进度连接中断');
+}
+
+export async function listHostedSiteRevisions(
+  siteId: string,
+): Promise<ApiResponse<HostedSiteRevision[]>> {
+  return apiRequest(api.webPages.revisions(siteId));
+}
+
+export async function previewHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<{ revision: HostedSiteRevision; html: string }>> {
+  return apiRequest(api.webPages.revisionPreview(siteId, revisionId));
+}
+
+export async function createHostedSiteRevisionPreviewAccess(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<HostedSitePreviewAccess>> {
+  const response = await apiRequest<HostedSitePreviewAccess>(api.webPages.revisionPreviewAccess, {
+    method: 'POST',
+    body: { siteId, revisionId },
+  });
+  if (!response.success || !response.data.previewUrl) return response;
+  return {
+    ...response,
+    data: {
+      ...response.data,
+      previewUrl: buildApiUrl(response.data.previewUrl),
+    },
+  };
+}
+
+export async function publishHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+): Promise<ApiResponse<HostedSiteRevisionMutation>> {
+  return apiRequest(api.webPages.publishRevision(siteId, revisionId), { method: 'POST' });
+}
+
+export async function rollbackHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+  idempotencyKey: string,
+): Promise<ApiResponse<HostedSiteRevisionMutation>> {
+  return apiRequest(api.webPages.rollbackRevision(siteId, revisionId), {
+    method: 'POST',
+    headers: { 'Idempotency-Key': idempotencyKey },
+  });
+}
+
+export async function rejectHostedSiteRevision(
+  siteId: string,
+  revisionId: string,
+  reason?: string,
+): Promise<ApiResponse<HostedSiteRevisionRejection>> {
+  return apiRequest(api.webPages.rejectRevision(siteId, revisionId), {
+    method: 'POST',
+    body: { reason: reason?.trim() || null },
+  });
 }

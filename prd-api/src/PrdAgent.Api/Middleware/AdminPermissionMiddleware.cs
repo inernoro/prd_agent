@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Text.Json;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.Extensions.Logging;
 using PrdAgent.Api.Models;
 using PrdAgent.Core.Interfaces;
@@ -127,6 +128,15 @@ public sealed class AdminPermissionMiddleware
 
     public async Task Invoke(HttpContext context, IAdminPermissionService permissionService)
     {
+        // OpenDesign 运行时数据面由控制器用短期票据自鉴权，不能先被 AdminController 的
+        // 裸路径前缀误判为管理接口。这里只放行四条已知数据面路由及其既定方法；其他
+        // [AllowAnonymous] 端点、近似路径和额外后缀仍完整经过管理权限判定。
+        if (IsDesignArtifactRuntimeDataPlaneRequest(context))
+        {
+            await _next(context);
+            return;
+        }
+
         var path = context.Request.Path.Value ?? string.Empty;
         var method = context.Request.Method;
 
@@ -248,5 +258,38 @@ public sealed class AdminPermissionMiddleware
         }
 
         await _next(context);
+    }
+
+    internal static bool IsDesignArtifactRuntimeDataPlaneRequest(HttpContext context)
+    {
+        if (context.GetEndpoint()?.Metadata.GetMetadata<IAllowAnonymous>() == null)
+            return false;
+
+        var path = context.Request.Path.Value;
+        if (string.IsNullOrEmpty(path))
+            return false;
+
+        const string prefix = "/api/design-artifacts/runtime/";
+        if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var remainder = path[prefix.Length..];
+        var runIdSeparator = remainder.IndexOf('/');
+        if (runIdSeparator <= 0 || runIdSeparator == remainder.Length - 1)
+            return false;
+
+        var operationPath = remainder[(runIdSeparator + 1)..];
+        // 这份清单必须与 DesignArtifactRuntimeController 的路由逐条对齐：漏一条，那条就会落回
+        // 父级 /api/design-artifacts 的管理员门，在 run 级模型票据被校验之前先 401。
+        // `llm/v1/responses` 曾经漏掉（Codex P1，2026-09-15），而 OpenDesign 的 Codex 运行时
+        // 正是 wire_api = "responses"——于是每一次真实模型调用都失败。
+        // 防再漏一条的守卫：DesignArtifactRuntimeDataPlaneBypassTests 反射控制器路由逐条比对。
+        return (HttpMethods.IsGet(context.Request.Method)
+                && (string.Equals(operationPath, "workspace/input", StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(operationPath, "llm/v1/models", StringComparison.OrdinalIgnoreCase)))
+               || (HttpMethods.IsPost(context.Request.Method)
+                   && (string.Equals(operationPath, "workspace/result", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "llm/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "llm/v1/responses", StringComparison.OrdinalIgnoreCase)));
     }
 }

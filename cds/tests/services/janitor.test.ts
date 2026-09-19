@@ -51,6 +51,10 @@ describe('JanitorService', () => {
     worktreeTTLDays: 7,
     diskWarnPercent: 80,
     sweepIntervalSeconds: 3600,
+    // 基础用例只验证 TTL、磁盘水位与容器清理；新增回收器在各自用例中显式开启并注入桩。
+    // 否则这里会调用宿主真实 Docker/文件系统，超时后还会占住进程级回收锁，连锁污染后续断言。
+    imageRetention: false,
+    orphanWorktrees: false,
   };
 
   function setup(cfgOverride: Partial<JanitorConfig> = {}): void {

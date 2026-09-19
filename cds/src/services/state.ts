@@ -2,8 +2,58 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type {
-  DbLedgerEntry, CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, Principal, UserCredential, ProjectGrant, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, UptimeCustomMonitor, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot,
+  DbLedgerEntry,
+  CdsState,
+  BranchEntry,
+  BranchTombstone,
+  BuildProfile,
+  BuildProfileOverride,
+  RoutingRule,
+  OperationLog,
+  ContainerLogArchiveEntry,
+  InfraService,
+  ExecutorNode,
+  DataMigration,
+  CdsPeer,
+  Project,
+  AgentKey,
+  GlobalAgentKey,
+  AgentKeyAccess,
+  Principal,
+  UserCredential,
+  ProjectGrant,
+  AccessRequest,
+  CustomEnvStore,
+  ConfigSnapshot,
+  DestructiveOperationLog,
+  RemoteHost,
+  ServiceDeployment,
+  ServiceDeploymentLogEntry,
+  CdsConnection,
+  BugReportForwardingSettings,
+  ReleaseTarget,
+  ReleasePlan,
+  UptimeCustomMonitor,
+  ReleasePreflightRecord,
+  ReleaseRun,
+  ReleaseLogEntry,
+  ResourceExternalAccessPolicy,
+  ResourceCloneTask,
+  AcceptanceReportMeta,
+  ReportFolder,
+  PeerNodeRecord,
+  PeerPairingCode,
+  ScheduledJob,
+  ScheduledJobRun,
+  ScheduledJobAction,
+  DeploymentRun,
+  DeploymentVersion,
+  ContainerTeardownTombstone,
+  DeletedProjectWorktreeTombstone,
+  ReplicaDbSnapshot,
   MonitorObservation,
+  InfraMaintenanceJob,
+  InfraMaintenanceJobKind,
 } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
@@ -46,6 +96,7 @@ import {
 import { credentialUsability, hasActiveGrant, slideExpiry, PROJECT_CREDENTIAL_TTL_DAYS } from './identity.js';
 import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
+import { migrateLegacyDataMigrationCredentials } from './secure-database-cli.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -97,6 +148,12 @@ const SYSTEM_PROJECT_ID = '__system__';
  * 只在「本方法确定只改了 global rest」的 mutator 上使用。
  */
 const HINT_GLOBAL: StateSaveHint[] = [{ kind: 'global' }];
+
+/**
+ * 本 CDS 进程的代次。基础设施维护 job 的执行体只存在于进程内存里，所以「谁开的」
+ * 只需要区分到进程——进程一换，上一代留下的 active 就是遗留，可以就地收敛。
+ */
+const INFRA_MAINTENANCE_OWNER_GENERATION = `gen_${crypto.randomBytes(8).toString('hex')}`;
 
 /** 按「最新优先」裁剪一条分支的黑匣子列表：条数 ≤ MAX_ARCHIVES_PER_BRANCH 且累计字节 ≤ MAX_ARCHIVE_BYTES_PER_BRANCH。 */
 function trimArchiveList(list: ContainerLogArchiveEntry[]): ContainerLogArchiveEntry[] {
@@ -235,6 +292,7 @@ function emptyState(): CdsState {
     activityLogs: {},
     resourceExternalAccess: {},
     resourceCloneTasks: [],
+    infraMaintenanceJobs: [],
     removedBranches: {},
   };
 }
@@ -429,8 +487,24 @@ export class StateService {
       if (!this.state.activityLogs) this.state.activityLogs = {};
       if (!this.state.executors) this.state.executors = {};
       if (!this.state.dataMigrations) this.state.dataMigrations = [];
+      const legacyUpgrade = migrateLegacyDataMigrationCredentials(this.state.dataMigrations);
+      if (legacyUpgrade.changed) {
+        this.persistLegacyDataMigrationCredentialUpgrade();
+      }
+      if (legacyUpgrade.deferred.length > 0) {
+        // 外因在前：说清是谁、少了什么、要不要紧、下一步做什么。
+        // 推迟必须喊出来——不喊就是静默降级：管理员会以为凭据已经密封了。
+        console.warn(
+          `  [sealed-storage] 本实例还没有配置密封密钥（CDS_SECRET_KEY），` +
+            `${legacyUpgrade.deferred.length} 个数据迁移任务里的旧明文凭据暂时保持原样：` +
+            `${legacyUpgrade.deferred.join('、')}。` +
+            `这不是故障，服务照常启动；请用管理员身份调用 POST /cds-system/sealed-storage/initialize ` +
+            `装上密钥并重启，届时这些凭据会自动完成脱敏与密封。`,
+        );
+      }
       if (!this.state.resourceExternalAccess) this.state.resourceExternalAccess = {};
       if (!this.state.resourceCloneTasks) this.state.resourceCloneTasks = [];
+      if (!this.state.infraMaintenanceJobs) this.state.infraMaintenanceJobs = [];
       if (!this.state.acceptanceReports) this.state.acceptanceReports = [];
       if (!this.state.cdsPeers) this.state.cdsPeers = [];
       if (!this.state.scheduledJobs) this.state.scheduledJobs = [];
@@ -484,6 +558,64 @@ export class StateService {
       this.migrateProjects();
       // (nothing to scope on a fresh install — collections are empty)
     }
+  }
+
+  /**
+   * Plaintext migration passwords existed in state before sealed storage was
+   * introduced. JSON mode rewrites the primary file and every readable rolling
+   * backup synchronously before load returns, closing the crash window where a
+   * restarted CDS could continue to expose the old credential on disk. Other
+   * backends use the normal save/flush path; index.ts flushes startup migrations
+   * before the HTTP server is created.
+   */
+  private persistLegacyDataMigrationCredentialUpgrade(): void {
+    if (this.backingStore.kind !== 'json') {
+      this.save();
+      return;
+    }
+
+    const dir = path.dirname(this.filePath);
+    const base = path.basename(this.filePath);
+    const backupPaths = fs.existsSync(dir)
+      ? fs.readdirSync(dir)
+        .filter((name) => name.startsWith(`${base}.bak.`))
+        .map((name) => path.join(dir, name))
+      : [];
+    // 备份排在主文件之前，顺序是这件事的全部要害：本方法只在「主文件报告发生了变化」
+    // 时才被调用。先写主文件的话，崩在中途 = 主文件已密封、备份仍是明文，而重启时主文件
+    // 不再报 change，这些备份就永远不会被重扫，明文永久留在盘上。倒过来写，崩溃只会让
+    // 主文件仍是明文，下次启动照样检测得到、照样重跑一遍——中断可续。
+    const snapshots: Array<{ file: string; state: CdsState }> = [];
+    for (const backupPath of backupPaths) {
+      try {
+        const backupState = JSON.parse(fs.readFileSync(backupPath, 'utf8')) as CdsState;
+        if (!backupState.dataMigrations) backupState.dataMigrations = [];
+        migrateLegacyDataMigrationCredentials(backupState.dataMigrations);
+        snapshots.push({ file: backupPath, state: backupState });
+      } catch (error) {
+        throw new Error(`旧版数据迁移凭据备份无法安全升级：${path.basename(backupPath)}: ${(error as Error).message}`);
+      }
+    }
+    snapshots.push({ file: this.filePath, state: this.state });
+
+    for (const snapshot of snapshots) {
+      fs.mkdirSync(path.dirname(snapshot.file), { recursive: true });
+      const temp = `${snapshot.file}.credential-upgrade.${process.pid}`;
+      let fd: number | undefined;
+      try {
+        fd = fs.openSync(temp, 'w', 0o600);
+        fs.writeFileSync(fd, JSON.stringify(snapshot.state, null, 2));
+        fs.fsyncSync(fd);
+        fs.closeSync(fd);
+        fd = undefined;
+        fs.renameSync(temp, snapshot.file);
+        fs.chmodSync(snapshot.file, 0o600);
+      } finally {
+        if (fd !== undefined) fs.closeSync(fd);
+        try { fs.unlinkSync(temp); } catch { /* already renamed */ }
+      }
+    }
+    this.save();
   }
 
   private hasLegacyDefaultPayload(): boolean {
@@ -4095,6 +4227,44 @@ export class StateService {
     return this.state.agentRequestHistory || [];
   }
 
+  /** Agent session idempotency reservations and public recovery snapshots. */
+  static readonly AGENT_SESSION_RESERVATIONS_MAX = 500;
+
+  upsertAgentSessionReservation(record: import('../types.js').AgentSessionReservationRecord): void {
+    const previous = this.state.agentSessionReservations;
+    const reservations = { ...(previous || {}) };
+    reservations[record.id] = record;
+    const overflow = Object.values(reservations)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .slice(StateService.AGENT_SESSION_RESERVATIONS_MAX);
+    for (const stale of overflow) delete reservations[stale.id];
+    this.state.agentSessionReservations = reservations;
+    try {
+      this.save(HINT_GLOBAL);
+    } catch (error) {
+      this.state.agentSessionReservations = previous;
+      throw error;
+    }
+  }
+
+  removeAgentSessionReservation(id: string): void {
+    if (!this.state.agentSessionReservations?.[id]) return;
+    const previous = this.state.agentSessionReservations;
+    const reservations = { ...previous };
+    delete reservations[id];
+    this.state.agentSessionReservations = reservations;
+    try {
+      this.save(HINT_GLOBAL);
+    } catch (error) {
+      this.state.agentSessionReservations = previous;
+      throw error;
+    }
+  }
+
+  listAgentSessionReservations(): import('../types.js').AgentSessionReservationRecord[] {
+    return Object.values(this.state.agentSessionReservations || {});
+  }
+
   recordSelfUpdate(record: import('../types.js').SelfUpdateRecord): void {
     // 2026-05-07 用户反馈"以前的更新日志去哪了":在写历史前,把当前 active 的
     // logTail 转储到 record.steps,历史抽屉就能展开看完整步骤序列。
@@ -4751,6 +4921,129 @@ export class StateService {
     if (!task) throw new Error(`资源克隆任务 "${id}" 不存在`);
     Object.assign(task, updates, { updatedAt: new Date().toISOString() });
     return task;
+  }
+
+  // ── Infrastructure maintenance jobs ──
+
+  private isCredentialRotationTerminal(service: InfraService): boolean {
+    const rotation = service.credentialRotation;
+    if (!rotation) return true;
+    return rotation.stage === 'verified_after_revoke'
+      || (rotation.stage === 'failed' && rotation.rollback === 'completed');
+  }
+
+  canStartInfraMaintenance(projectId: string, serviceId: string): boolean {
+    const service = this.getInfraServiceForProjectAndId(projectId, serviceId);
+    return Boolean(service && this.isCredentialRotationTerminal(service));
+  }
+
+  hasActiveCredentialRotation(runtime?: 'mongodb' | 'redis'): boolean {
+    return this.state.infraServices.some((service) => {
+      if (this.isCredentialRotationTerminal(service)) return false;
+      if (!runtime) return true;
+      const label = `${service.id} ${service.basePresetId || ''} ${service.dockerImage}`.toLowerCase();
+      return runtime === 'mongodb' ? label.includes('mongo') : label.includes('redis');
+    });
+  }
+
+  /**
+   * 把短作业意图先耐久落盘再允许它接触数据库。轮换一旦写入非终态记录，新作业即被拒绝，
+   * 与撤销前的 active-job 枚举合起来封住「刚检查完又启动新备份」的竞态窗口。
+   */
+  async beginInfraMaintenanceJob(input: {
+    projectId: string;
+    serviceId: string;
+    runtime: InfraMaintenanceJob['runtime'];
+    kind: InfraMaintenanceJobKind;
+  }): Promise<InfraMaintenanceJob> {
+    const service = this.getInfraServiceForProjectAndId(input.projectId, input.serviceId);
+    if (!service) throw new Error('infra_maintenance.service_not_found');
+    if (!this.isCredentialRotationTerminal(service)) {
+      throw new Error('infra_maintenance.credential_rotation_in_progress');
+    }
+    if (!this.state.infraMaintenanceJobs) this.state.infraMaintenanceJobs = [];
+    const job: InfraMaintenanceJob = {
+      id: `imj_${crypto.randomBytes(12).toString('hex')}`,
+      projectId: input.projectId,
+      serviceId: input.serviceId,
+      runtime: input.runtime,
+      kind: input.kind,
+      status: 'active',
+      startedAt: new Date().toISOString(),
+      ownerGeneration: INFRA_MAINTENANCE_OWNER_GENERATION,
+    };
+    this.state.infraMaintenanceJobs.push(job);
+    this.state.infraMaintenanceJobs = [
+      ...this.state.infraMaintenanceJobs.filter((item) => item.status === 'active'),
+      ...this.state.infraMaintenanceJobs.filter((item) => item.status !== 'active').slice(-200),
+    ];
+    try {
+      this.save(HINT_GLOBAL);
+      await this.flush();
+    } catch (error) {
+      // 落盘失败时必须把这次预约摘掉再抛。它盖的是**当前**代次，而收割器只收上一代的
+      // 遗留（那是有意的：本代的 job 可能正在跑）。留着它，调用方又拿不到 handle 去
+      // finish，于是这个服务的凭据轮换到进程重启为止都进不来——一次写盘抖动换来一道
+      // 永久闸门。摘除本身也尽力落盘，但真正挡路的是内存态，闸读的就是它。
+      this.state.infraMaintenanceJobs = (this.state.infraMaintenanceJobs || [])
+        .filter((item) => item.id !== job.id);
+      try {
+        this.save(HINT_GLOBAL);
+        await this.flush();
+      } catch {
+        // 已经在失败路径上，落盘再失败也不改变结论：内存里那条已经摘掉了。
+      }
+      throw error;
+    }
+    return { ...job };
+  }
+
+  async finishInfraMaintenanceJob(id: string, status: 'completed' | 'failed'): Promise<void> {
+    const job = (this.state.infraMaintenanceJobs || []).find((item) => item.id === id);
+    if (!job || job.status !== 'active') return;
+    job.status = status;
+    job.finishedAt = new Date().toISOString();
+    this.save(HINT_GLOBAL);
+    await this.flush();
+  }
+
+  /**
+   * 把上一个进程遗留的 active job 收敛成 failed，返回收敛条数。
+   *
+   * 这些 job 的执行体只活在进程内存里：CDS 在 begin 与 finish 之间重启，就再也没人
+   * 能调 finishInfraMaintenanceJob，而这条记录会永远出现在 listActive 里，让此后每一次
+   * 凭据轮换都撞 rotation.active_jobs_in_progress，且没有任何途径清掉。
+   * 同 ReleaseService.reconcileInterruptedReleases 的思路：守卫本身是「卡死」的放大器，
+   * 所以在读取点先收割一次再判定（concurrency-gate-discipline 五件套之「周期收敛」）。
+   */
+  reconcileOrphanedInfraMaintenanceJobs(): number {
+    const jobs = this.state.infraMaintenanceJobs || [];
+    let reconciled = 0;
+    for (const job of jobs) {
+      if (job.status !== 'active') continue;
+      if (job.ownerGeneration === INFRA_MAINTENANCE_OWNER_GENERATION) continue;
+      job.status = 'failed';
+      job.finishedAt = new Date().toISOString();
+      reconciled += 1;
+    }
+    if (reconciled > 0) this.save(HINT_GLOBAL);
+    return reconciled;
+  }
+
+  listActiveInfraMaintenanceJobs(filter: {
+    projectId?: string;
+    serviceId?: string;
+    runtime?: InfraMaintenanceJob['runtime'];
+  } = {}): InfraMaintenanceJob[] {
+    // 先收割遗留，再判定——否则一次重启就能把凭据轮换永久钉死。
+    this.reconcileOrphanedInfraMaintenanceJobs();
+    return (this.state.infraMaintenanceJobs || []).filter((job) => {
+      if (job.status !== 'active') return false;
+      if (filter.projectId && job.projectId !== filter.projectId) return false;
+      if (filter.serviceId && job.serviceId !== filter.serviceId) return false;
+      if (filter.runtime && job.runtime !== filter.runtime) return false;
+      return true;
+    }).map((job) => ({ ...job }));
   }
 
   // ── CDS peers (remote CDS instances trusted for data migration) ──

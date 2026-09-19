@@ -9,6 +9,7 @@ using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Filters;
 using PrdAgent.Core.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -1331,9 +1332,27 @@ public class WebPagesController : ControllerBase
     [HttpDelete("{id}")]
     public async Task<IActionResult> Delete(string id)
     {
-        var ok = await _siteService.DeleteAsync(id, GetUserId());
-        if (!ok) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
-        return Ok(ApiResponse<object>.Ok(new { deleted = true }));
+        try
+        {
+            var ok = await _siteService.DeleteAsync(id, GetUserId());
+            if (!ok) return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "站点不存在"));
+            return Ok(ApiResponse<object>.Ok(new { deleted = true, cleanupPending = false }));
+        }
+        catch (HostedSiteDeletionPendingException ex)
+        {
+            // 202 也是 2xx，活动流会照 WebPages.Delete 记成「删除了站点」——而这里站点还在，
+            // 清理只是排进了队。用过滤器既有的抑制钩子不留痕，等真删掉再说删掉了。
+            ActivityLogActionFilter.Suppress(HttpContext);
+            return StatusCode(
+                StatusCodes.Status202Accepted,
+                ApiResponse<object>.Ok(new
+                {
+                    deleted = false,
+                    cleanupPending = true,
+                    retryAutomatic = true,
+                    attemptCount = ex.AttemptCount,
+                }));
+        }
     }
 
     /// <summary>批量删除站点</summary>
@@ -1343,8 +1362,26 @@ public class WebPagesController : ControllerBase
         if (req.Ids == null || req.Ids.Count == 0)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "请提供要删除的 ID 列表"));
 
-        var deletedCount = await _siteService.BatchDeleteAsync(req.Ids, GetUserId());
-        return Ok(ApiResponse<object>.Ok(new { deletedCount }));
+        try
+        {
+            var deletedCount = await _siteService.BatchDeleteAsync(req.Ids, GetUserId());
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                deletedCount,
+                cleanupPendingCount = 0,
+            }));
+        }
+        catch (HostedSiteDeletionPendingException ex)
+        {
+            return StatusCode(
+                StatusCodes.Status202Accepted,
+                ApiResponse<object>.Ok(new
+                {
+                    deletedCount = ex.CompletedCount,
+                    cleanupPendingCount = ex.PendingCount,
+                    retryAutomatic = true,
+                }));
+        }
     }
 
     /// <summary>切换站点可见性（public = 出现在 /u/:username 公开页 | private = 仅自己可见）</summary>

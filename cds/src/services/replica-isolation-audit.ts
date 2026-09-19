@@ -18,8 +18,9 @@
  */
 import type { ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
-import { runDockerExec } from '../routes/infra-data.js';
+import { maskSecretValues, runDockerExec } from '../routes/infra-data.js';
 import { mongoAdminEval, resolveReplicaDbTarget, dedicatedAuthFromContainer } from './replica-db-clone.js';
+import { buildSecureMongoDockerInvocation } from './secure-database-cli.js';
 import { resolveEffectiveProfile } from './container.js';
 
 export type AuditVerdict = 'pass' | 'fail' | 'skip' | 'boundary' | 'info';
@@ -81,21 +82,29 @@ const tcpProbe = async (port: number): Promise<boolean> => {
 /**
  * 专用隔离实例 eval 通道。带 `dedicatedAuth: 'source-infra'` 标记的实例复用
  * 源库 root 凭据（Codex P1 认证收紧）；历史无认证实例不发凭据。
- * 凭据经 docker exec -e 注入，不进 argv（宿主 ps 不可见）。
+ * 凭据经 mongosh stdin password prompt 注入，不进宿主或容器进程 argv。
  */
-function isoInstanceEval(
+async function isoInstanceEval(
   container: string,
   script: string,
   auth?: { user: string; pw: string },
 ): ReturnType<typeof runDockerExec> {
-  if (auth?.user) {
-    return runDockerExec([
-      'exec', '-i', '-e', `RS_ISO_USER=${auth.user}`, '-e', `RS_ISO_PW=${auth.pw}`,
-      container, 'sh', '-c',
-      `mongosh -u "$RS_ISO_USER" -p "$RS_ISO_PW" --authenticationDatabase admin --quiet --eval '${script.replace(/'/g, `'"'"'`)}'`,
-    ], '', 30_000, 16 * 1024);
-  }
-  return runDockerExec(['exec', '-i', container, 'mongosh', '--quiet', '--eval', script], '', 30_000, 16 * 1024);
+  const invocation = buildSecureMongoDockerInvocation(
+    container,
+    'mongosh',
+    [
+      '--quiet', '--eval', script,
+      ...(auth?.user ? ['--username', auth.user, '--authenticationDatabase', 'admin'] : []),
+    ],
+    auth?.pw || '',
+  );
+  const result = await runDockerExec(invocation.argv, invocation.stdinPrefix, 30_000, 16 * 1024);
+  const secrets = auth?.pw ? [auth.pw, encodeURIComponent(auth.pw)] : [];
+  return {
+    ...result,
+    stdout: maskSecretValues(result.stdout, secrets),
+    stderr: maskSecretValues(result.stderr, secrets),
+  };
 }
 
 function tailNumber(stdout: string): number {
