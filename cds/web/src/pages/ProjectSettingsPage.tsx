@@ -74,6 +74,7 @@ interface ProjectSummary {
   createdAt?: string;
   updatedAt?: string;
   autoSmokeEnabled?: boolean;
+  agentPrebuiltPolicy?: AgentPrebuiltPolicy;
   agentPrebuiltOnly?: boolean;
   inheritGlobalEnv?: boolean;
   branchCount?: number;
@@ -102,6 +103,35 @@ interface ProjectSummary {
   autoStopAfterMinutes?: number;
   /** 2026-09-02：这个仓库还喂着哪些别的项目（同仓 < 2 个时后端给 null）。 */
   repoSharing?: RepoSharing | null;
+}
+
+export type AgentPrebuiltPolicy = 'prebuilt-only' | 'prefer-prebuilt' | 'unrestricted';
+
+export const AGENT_PREBUILT_POLICY_OPTIONS = [
+  {
+    value: 'prefer-prebuilt',
+    title: '优先极速版（推荐）',
+    description: '服务已有 CI 预构建时必须使用；尚未接入的服务允许源码构建。',
+  },
+  {
+    value: 'prebuilt-only',
+    title: '仅极速版',
+    description: '任何会在 CDS 宿主编译源码的 Agent 部署都会被拒绝。',
+  },
+  {
+    value: 'unrestricted',
+    title: '不限制',
+    description: '允许 Agent 自行选择源码构建或 CI 预构建模式。',
+  },
+] as const satisfies ReadonlyArray<{
+  value: AgentPrebuiltPolicy;
+  title: string;
+  description: string;
+}>;
+
+export function resolveAgentPrebuiltPolicy(project: Pick<ProjectSummary, 'agentPrebuiltPolicy' | 'agentPrebuiltOnly'>): AgentPrebuiltPolicy {
+  if (project.agentPrebuiltPolicy) return project.agentPrebuiltPolicy;
+  return project.agentPrebuiltOnly ? 'prebuilt-only' : 'unrestricted';
 }
 
 type ResourceChipDisplay = {
@@ -1243,7 +1273,9 @@ function GeneralTab({
   const [description, setDescription] = useState(project.description || '');
   const [gitRepoUrl, setGitRepoUrl] = useState(project.gitRepoUrl || '');
   const [autoSmokeEnabled, setAutoSmokeEnabled] = useState(Boolean(project.autoSmokeEnabled));
-  const [agentPrebuiltOnly, setAgentPrebuiltOnly] = useState(Boolean(project.agentPrebuiltOnly));
+  const [agentPrebuiltPolicy, setAgentPrebuiltPolicy] = useState<AgentPrebuiltPolicy>(
+    resolveAgentPrebuiltPolicy(project),
+  );
   const [resourceChipDisplay, setResourceChipDisplay] = useState<Required<ResourceChipDisplay>>(
     normalizeResourceChipDisplay(project.resourceChipDisplay),
   );
@@ -1281,7 +1313,7 @@ function GeneralTab({
     setDescription(project.description || '');
     setGitRepoUrl(project.gitRepoUrl || '');
     setAutoSmokeEnabled(Boolean(project.autoSmokeEnabled));
-    setAgentPrebuiltOnly(Boolean(project.agentPrebuiltOnly));
+    setAgentPrebuiltPolicy(resolveAgentPrebuiltPolicy(project));
     setResourceChipDisplay(normalizeResourceChipDisplay(project.resourceChipDisplay));
   }, [project]);
 
@@ -1308,7 +1340,7 @@ function GeneralTab({
           description: description.trim(),
           gitRepoUrl: gitRepoUrl.trim(),
           autoSmokeEnabled,
-          agentPrebuiltOnly,
+          agentPrebuiltPolicy,
           resourceChipDisplay,
         },
       });
@@ -1397,20 +1429,37 @@ function GeneralTab({
               <span className="block text-muted-foreground">需要项目可访问 AI access key 后才会执行。</span>
             </span>
           </label>
-          <label className="flex max-w-3xl items-start gap-3 cds-surface-raised cds-hairline px-3 py-3">
-            <input
-              className="mt-1 h-4 w-4"
-              type="checkbox"
-              checked={agentPrebuiltOnly}
-              onChange={(event) => setAgentPrebuiltOnly(event.target.checked)}
-            />
-            <span className="text-sm leading-6">
-              <span className="font-medium">Agent 只允许极速版（CI 预构建）部署</span>
-              <span className="block text-muted-foreground">
-                开启后，Agent 凭据发起的部署只要有服务会在 CDS 宿主上源码编译就被拦下，Agent 也不能把分支或项目默认切成 dev / static。真人在页面上的操作不受限。默认关闭，不影响其它项目。
-              </span>
-            </span>
-          </label>
+          <fieldset className="max-w-3xl space-y-3 cds-surface-raised cds-hairline px-3 py-3">
+            <legend className="px-1 text-sm font-medium">Agent 部署策略</legend>
+            <p className="text-xs leading-5 text-muted-foreground">
+              这是项目级策略，只约束 Agent 凭据；真人在页面上的部署不受限。Agent 无权修改此策略。
+            </p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {AGENT_PREBUILT_POLICY_OPTIONS.map((option) => (
+                <label
+                  key={option.value}
+                  className={`flex min-w-0 cursor-pointer items-start gap-2 rounded-md border px-3 py-2.5 ${
+                    agentPrebuiltPolicy === option.value
+                      ? 'border-primary bg-primary/5'
+                      : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]'
+                  }`}
+                >
+                  <input
+                    className="mt-1 h-4 w-4 shrink-0"
+                    type="radio"
+                    name="agent-prebuilt-policy"
+                    value={option.value}
+                    checked={agentPrebuiltPolicy === option.value}
+                    onChange={() => setAgentPrebuiltPolicy(option.value)}
+                  />
+                  <span className="min-w-0 text-sm leading-5">
+                    <span className="block font-medium">{option.title}</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">{option.description}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
           <div className="max-w-3xl space-y-3 cds-surface-raised cds-hairline px-3 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-medium">分支资源标签</div>
