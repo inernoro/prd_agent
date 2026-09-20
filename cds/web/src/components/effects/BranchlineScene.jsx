@@ -32,16 +32,12 @@ import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { clamp01, createBranchlineLoop, smooth, weight } from './branchlineLoop';
 
-const CHAPTERS = 5; // Push / Build / Preview / Observe / Ship
-const SEGMENTS = CHAPTERS - 1;
 // 最后一颗放到镜头终点（camT 0.88 + 前视 0.07）之外，否则 Ship 章会有一颗贴着镜头的巨球
 const BEADS = [0.18, 0.3, 0.38, 0.57, 0.72, 0.985];
 
-const clamp01 = (x) => Math.max(0, Math.min(1, x));
-const smooth = (x) => x * x * (3 - 2 * x);
 const local = (p, a, b) => clamp01((p - a) / (b - a));
-const weight = (p, i, w) => smooth(1 - clamp01(Math.abs(p - i / SEGMENTS) / w));
 // 弹出：带一点过冲再落定
 const pop = (u) => (u <= 0 ? 0 : u >= 1 ? 1 : 1 - Math.pow(1 - u, 3) * Math.cos(u * 6.5));
 
@@ -318,74 +314,18 @@ export default function BranchlineScene({ rootRef }) {
     const root = rootRef && rootRef.current;
     if (!canvas || !root) return undefined;
 
-    // 构建推迟到叙事区第一次进入视口：停在 hero 的访客不为 renderer、PMREM、几何体、HalfFloat 后期缓冲买单
-    let built = null; let buildFailed = false;
-    const ensureBuilt = () => {
-      if (built) return true;
-      if (buildFailed) return false;
-      try { built = buildScene(canvas); } catch { buildFailed = true; } // 无 WebGL：退化成纯文字长页
-      return Boolean(built);
-    };
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const copies = Array.from(root.querySelectorAll('[data-cdsh-chapter]'));
-    const rails = Array.from(root.querySelectorAll('[data-cdsh-rail]'));
-
-    let raf = 0; let prog = 0; let railOn = -1; let sized = false; let hidden = document.hidden; let last = 0;
-
-    const schedule = () => { if (!raf && !hidden) raf = requestAnimationFrame(frame); };
-    const onResize = () => { sized = false; schedule(); };
-    const onVis = () => { hidden = document.hidden; last = 0; schedule(); };
-
-    function frame(now) {
-      raf = 0;
-      if (hidden) return;
-      const rect = root.getBoundingClientRect();
-      const vh = window.innerHeight;
-      const inView = rect.bottom > 0 && rect.top < vh;
-      // 离屏就真的停：不再重排帧。留在 hero 或页脚时一帧都不跑，由下面的 IntersectionObserver 叫醒
-      if (!inView) { last = 0; return; }
-      if (!ensureBuilt()) return;
-      if (!sized) { built.resize(window.innerWidth, vh); sized = true; }
-      const target = clamp01(-rect.top / Math.max(1, rect.height - vh));
-      // 按时间插值而不是按帧：低帧率设备（软渲染约 2–3fps）上按帧插值要十几秒才跟上
-      const dt = last ? Math.min(100, now - last) : 16; last = now;
-      prog += (target - prog) * (reduced ? 1 : 1 - Math.exp(-dt / 140));
-      const p = prog;
-      for (let i = 0; i < copies.length; i++) {
-        const w = weight(p, i, 0.14);
-        copies[i].style.opacity = (0.06 + 0.94 * w).toFixed(3);
-        copies[i].style.transform = `translateY(${((1 - w) * 1.4).toFixed(2)}rem)`;
-      }
-      const nearest = Math.round(p * SEGMENTS);
-      if (nearest !== railOn) { railOn = nearest; rails.forEach((a, i) => a.classList.toggle('is-on', i === nearest)); }
-      // reduced-motion：时钟冻结在 0，镜头呼吸、珠子脉动、星尘漂移、模块自转、域名牌浮动全部静止，只剩滚动本身驱动的变化
-      built.render(p, reduced ? 0 : now * 0.001, dt / 1000);
-      // reduced-motion 下时钟冻住、进度不插值，下一帧和这一帧一模一样，没必要再按刷新率重绘：
-      // 画完这帧就停，等滚动 / 缩放 / 可见性 / 进入视口的门铃再画一帧
-      if (!reduced) raf = requestAnimationFrame(frame);
-    }
-
-    // 只用它当「进入视口」的门铃；不带 rootMargin（2026-09-09 首页死机的根因就是它被转成 rem）
-    const io = typeof IntersectionObserver === 'function'
-      ? new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) schedule(); })
-      : null;
-    if (io) io.observe(root);
-    // 滚动叫醒：reduced-motion 下每次滚动都要重画一帧；没有 IntersectionObserver 的环境也靠它进场
-    const onScroll = (reduced || !io) ? () => schedule() : null;
-    if (onScroll) window.addEventListener('scroll', onScroll, { passive: true });
-
-    window.addEventListener('resize', onResize, { passive: true });
-    document.addEventListener('visibilitychange', onVis);
-    schedule();
-
-    return () => {
-      if (raf) cancelAnimationFrame(raf);
-      if (io) io.disconnect();
-      if (onScroll) window.removeEventListener('scroll', onScroll);
-      window.removeEventListener('resize', onResize);
-      document.removeEventListener('visibilitychange', onVis);
-      if (built) built.dispose();
-    };
+    // 帧循环在 branchlineLoop.ts：这里只负责把真边界接上，行为契约由那边的测试钉住
+    const loop = createBranchlineLoop({
+      root,
+      copies: Array.from(root.querySelectorAll('[data-cdsh-chapter]')),
+      rails: Array.from(root.querySelectorAll('[data-cdsh-rail]')),
+      build: () => buildScene(canvas),
+      reduced: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      win: window,
+      doc: document,
+      IntersectionObserver: typeof IntersectionObserver === 'function' ? IntersectionObserver : null,
+    });
+    return () => loop.dispose();
   }, [rootRef]);
 
   return <canvas ref={canvasRef} className="cdsh-scene" aria-hidden />;

@@ -4,8 +4,8 @@
  * 场景组件是 .jsx，tsc 不会因为它没被引用而红；这里钉住三件删掉不会红的事：
  *  1. HomePage 真的挂了叙事区（五章、顶栏锚点 id 仍在，导航链接不会指向空气）；
  *  2. 场景不用 IntersectionObserver 的 rootMargin（2026-09-09 首页死机的根因就是它被转成 rem）；
- *  3. 场景只在进入视口时渲染、卸载时释放 renderer、尊重 reduced-motion——这三条是性能与可访问性契约，
- *     任何一条被"顺手简化"掉，页面照常渲染、测试照常绿。
+ *  3. 场景把真边界接进帧循环（视口门 / reduced-motion / 可见性 / 释放的行为契约在
+ *     branchline-loop-behavior.test.ts 里用假边界驱动，不再靠源码拼写）。
  */
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 const WEB = path.join(path.dirname(fileURLToPath(import.meta.url)), '../../web/src');
 const home = fs.readFileSync(path.join(WEB, 'pages/HomePage.tsx'), 'utf-8');
 const scene = fs.readFileSync(path.join(WEB, 'components/effects/BranchlineScene.jsx'), 'utf-8');
+const loop = fs.readFileSync(path.join(WEB, 'components/effects/branchlineLoop.ts'), 'utf-8');
 const css = fs.readFileSync(path.join(WEB, 'pages/HomePage.css'), 'utf-8');
 
 describe('首页 Branchline 叙事区', () => {
@@ -36,25 +37,21 @@ describe('首页 Branchline 叙事区', () => {
   });
 
   it('场景由滚动进度驱动，不碰 IntersectionObserver 的 rootMargin', () => {
-    expect(scene, '只抓代码用法：注释里解释「为什么不用它」是允许的').not.toMatch(/rootMargin\s*:/);
-    expect(scene).toContain('getBoundingClientRect');
+    expect(scene + loop, '只抓代码用法：注释里解释「为什么不用它」是允许的').not.toMatch(/rootMargin\s*:/);
+    expect(loop, '进度由叙事区矩形算出').toContain('getBoundingClientRect');
     expect(scene, '文案与进度轨由 data 属性接线，改 DOM 不走 setState').toContain("querySelectorAll('[data-cdsh-chapter]')");
     expect(home).toContain('data-cdsh-chapter');
     expect(home).toContain('data-cdsh-rail={i}');
   });
 
-  it('只在视口内渲染、卸载即释放、尊重 reduced-motion', () => {
-    expect(scene).toMatch(/inView = rect\.bottom > 0 && rect\.top < vh/);
-    expect(scene).toContain("document.addEventListener('visibilitychange'");
-    expect(scene).toContain('built.dispose()');
-    expect(scene).toContain('renderer.dispose()');
+  it('场景把真边界接进帧循环，行为契约由 branchline-loop-behavior.test.ts 钉住', () => {
+    // 这里只认接线：循环模块的行为（视口门、reduced-motion、可见性、释放）在行为测试里用假边界驱动，
+    // 源码拼写不再是判据（Codex 2026-09-20 P1）。
+    expect(scene).toContain("from './branchlineLoop'");
+    expect(scene).toContain('createBranchlineLoop({');
     expect(scene).toContain("matchMedia('(prefers-reduced-motion: reduce)')");
-    // Codex 2026-09-20 两条 P2：离屏时不许再排帧；reduced-motion 下时钟必须冻结，不只是关掉滚动插值
-    expect(scene, '离屏的那一帧必须直接 return，不能再 requestAnimationFrame').toMatch(/if \(!inView\) \{[^}]*return; \}/);
-    expect(scene, 'WebGL 构建必须发生在 inView 判定之后，停在 hero 的访客不建场景').toMatch(/if \(!inView\) \{[^}]*return; \}\s*\n\s*if \(!ensureBuilt\(\)\) return;/);
-    expect(scene, '离屏后要有门铃把循环叫醒').toContain('new IntersectionObserver(');
-    expect(scene, 'reduced-motion 下传给 render 的时钟要冻结').toMatch(/built\.render\(p, reduced \? 0 : now \* 0\.001/);
-    expect(scene, 'reduced-motion 下画完一帧就停，不许按刷新率重绘相同画面').toMatch(/if \(!reduced\) raf = requestAnimationFrame\(frame\);/);
+    expect(scene).toContain('return () => loop.dispose();');
+    expect(scene).toContain('renderer.dispose()');
   });
 
   it('叙事区的类名在 HomePage 里只出现在叙事区（2026-09-18 撞车事故：cdsh-stage 与 hero 实况板列同名，hero 多出一块整屏黑）', () => {

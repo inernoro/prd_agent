@@ -267,9 +267,13 @@ describe('GitHubWebhookDispatcher', () => {
       }
       expect(findSkipMarker('feat: x\n\nskip-checks: true')).toBe('skip-checks: true');
       expect(findSkipMarker('feat: x\n\nSkip-Checks: TRUE')).toBe('skip-checks: true');
-      // 不是独立一行的 trailer、值不是 true、以及只是提到这个词的，都不算
+      expect(findSkipMarker('feat: x\r\n\r\nSigned-off-by: a <a@b.c>\r\nskip-checks: true\r\n')).toBe('skip-checks: true');
+      // 不是结尾 trailer 块里的行不算：正文里提到、后面还跟着散文、值不是 true、只有标题一段
       expect(findSkipMarker('feat: mention skip-checks: true in docs')).toBeNull();
+      expect(findSkipMarker('docs: explain the option\n\nskip-checks: true\nadditional prose')).toBeNull();
+      expect(findSkipMarker('docs: x\n\nskip-checks: true\n\nmore prose after the would-be trailer')).toBeNull();
       expect(findSkipMarker('feat: x\n\nskip-checks: false')).toBeNull();
+      expect(findSkipMarker('skip-checks: true')).toBeNull();
       expect(findSkipMarker('feat: skip ci integration')).toBeNull();
       expect(findSkipMarker('')).toBeNull();
       expect(findSkipMarker(undefined)).toBeNull();

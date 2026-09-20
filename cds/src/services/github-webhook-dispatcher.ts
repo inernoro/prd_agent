@@ -311,8 +311,24 @@ export interface GitHubPushEvent {
  * `[bot]` 账号，于是四天里建了 30 条一次性分支、每条都排队构建，把构建队列堵到 51 条。
  */
 const SKIP_MARKERS = ['[skip ci]', '[ci skip]', '[no ci]', '[skip actions]', '[actions skip]', '[skip cds]', '[cds skip]'] as const;
-/** GitHub 还认提交信息里的 git trailer：`skip-checks: true`（只认独立一行、值为 true）。 */
-const SKIP_CHECKS_TRAILER = /^skip-checks:\s*true\s*$/im;
+/** git trailer 行的形状：`Token: value`，token 只许字母数字和连字符（git interpret-trailers 的口径）。 */
+const TRAILER_LINE = /^[A-Za-z0-9-]+:\s*\S.*$/;
+
+/**
+ * 提交信息的 trailer 段：最后一个段落（空行分隔），且段落里每一行都是 `Token: value`。
+ * 正文里某一行碰巧长得像 trailer 不算——GitHub 也只认结尾的 trailer 块。
+ */
+function commitTrailers(message: string): Array<{ token: string; value: string }> {
+  const paragraphs = message.replace(/\r\n?/g, '\n').trimEnd().split(/\n\s*\n/);
+  const last = paragraphs[paragraphs.length - 1] ?? '';
+  const lines = last.split('\n').map((l) => l.trim()).filter(Boolean);
+  // 单段落的提交信息只有标题，没有 trailer 段
+  if (paragraphs.length < 2 || lines.length === 0 || !lines.every((l) => TRAILER_LINE.test(l))) return [];
+  return lines.map((l) => {
+    const i = l.indexOf(':');
+    return { token: l.slice(0, i).trim().toLowerCase(), value: l.slice(i + 1).trim().toLowerCase() };
+  });
+}
 
 export function findSkipMarker(message: string | null | undefined): string | null {
   if (typeof message !== 'string' || !message) return null;
@@ -320,7 +336,8 @@ export function findSkipMarker(message: string | null | undefined): string | nul
   for (const marker of SKIP_MARKERS) {
     if (lower.includes(marker)) return marker;
   }
-  if (SKIP_CHECKS_TRAILER.test(message)) return 'skip-checks: true';
+  // GitHub 还认 git trailer `skip-checks: true`——必须真的在结尾 trailer 块里
+  if (commitTrailers(message).some((t) => t.token === 'skip-checks' && t.value === 'true')) return 'skip-checks: true';
   return null;
 }
 
