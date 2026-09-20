@@ -1176,60 +1176,65 @@ MAP 容器重新部署的那几十秒里，egress 找不到上游，请求落到
 - 容器侧模型地址：`cds/src/services/agent-workspace-session-runtime.ts`（`modelBaseUrl` 注入）
 - 落到 CDS 的那条 401：`cds/src/server.ts` 的 AI 访问门
 
-## 最后一轮修复之后，收集/导出这一步静默挂住约 11 分钟（2026-09-20，未解决）
+## 修复轮次用尽后的终态错误送不到 MAP，用户看到的是「超时」（2026-09-20，未解决）
 
-**先纠正本文件此前的判断**：这一条原本写的是「产量不稳，剩下的是 15 分钟超时，
-下一步该调参数或改修复回路形态」。按那条建议去做会修错地方——真打了分段耗时之后，
-结论反过来了。
+**这一条纠正过两次，两次都是我判早了，过程记在这里免得下一个人重走**：
+第一版写「产量不稳，该调超时或改修复回路」——打了分段耗时，模型只占 17%，推翻。
+第二版写「收集/导出那一步挂了 11 分钟」——取了 CDS 会话日志，它根本没挂，推翻。
 
-### 实测（run fac5db2e，CDS 在 76a8c3bd2、MAP 预览在 cfbb33a8b）
+### 真相
 
-链路本身已经跑全：19 次模型调用、零错误事件、完整走完「首轮生成 → 终审 → 4 轮质量修复
-→ 5 次收集」。各阶段耗时：
-
-| 阶段 | 耗时 |
-|---|---|
-| 首轮生成 | 37 秒 |
-| 终审 | 34 秒 |
-| 质量修复 ×4 | 27 / 23 / 20 / 17 秒 |
-| **模型阶段合计** | **158 秒（2.6 分钟）** |
-
-而整条 run 跑满了 15 分钟。逐事件算时间差，空档只有一个，而且占掉几乎全部：
+CDS 在最后一轮修复之后**当场就失败了**，只是这条结论没走到 MAP：
 
 ```
-12:37:50  第 4 轮修复 succeeded
-12:37:50  workspace_collecting
-12:37:50  「CDS 正在校验生成文件与安全边界」
-          ← 669 秒（11.2 分钟）一个事件都没有
-12:49:00  session_stop_requested   ← MAP 的 15 分钟上限把它停掉
+12:37:50  第 4 轮修复 succeeded → workspace_collecting → 校验生成文件
+12:37:55  CDS 日志：OpenDesign workspace execution failed
+          code=design_output_quality_rejected
+          message=index.html still contains unreplaced template placeholders
+12:37:57  CDS 日志：session resources cleaned after execution failure
+          ← MAP 这边一个事件都没再收到
+12:49:00  MAP 的 15 分钟上限把会话停掉，用户看到「远端在 15 分钟内没有交出产物」
 ```
 
-**所以不是慢，是挂住。** 模型只占总时长的 17%，调大超时或砍修复轮次都不解决问题。
+**失败到用户看到，隔了 11 分钟，而且原因完全变了个样。**
 
-### 为什么它不该挂
+### 丢在哪一段
 
-那一步是 `copyOutputsFromContainer`，内部三个动作各自都有 30 秒上限
-（暂停容器 → 导出预检 → 恢复容器），加起来最多 90 秒。实际静默 669 秒，
-说明要么某个上限没真的生效，要么挂在这三步之外、没有任何超时保护的地方。
+不是发射：`cds/src/routes/remote-hosts.ts` 的失败回调在写日志行**之前**就
+`pushCdsAgentEvent(session, 'error', runtimeError)` 了，而日志行确实出现了，
+说明那段代码跑到了。是**投递**：MAP 侧在终态错误到达前就停止导入该会话的事件，
+`ListPersistedEventsAsync` 从此再也取不到新事件，执行器只能空转到自己的 15 分钟上限。
 
-**下一步的第一手动作**：取这次会话的 CDS 容器日志，确认 11 分钟耗在哪个动作上——
-是 `docker pause` 没返回、预检容器起不来，还是控制面那一侧在等一个永远不来的东西。
-在拿到这个之前不要动超时值：上一版就是这么猜错的。
+嫌疑落在 MAP 的跟随终止条件上（`CdsEventProjectionResult` 的 `EndFollow`）：
+一次 run 里有 1 次首轮生成 + 1 次终审 + 4 次修复，每一次都是一个 od run。
+若 MAP 在其中某个 od run 的终态上判定「这一轮结束了」而停止跟随，
+后续事件（包括最后那条真正的失败）就再也进不来。
 
-**关联线索**：run a22aebf1 曾以 `workspace_output_validation_failed` 死在同一步。
-当时那条兜底分支把真实诊断整个丢了（已在 7149fda3a 修好，现在会带退出码与诊断摘要），
-所以下一次撞上时应该能直接看到原因。
+**对照证据**：run e23e4cf8（同样跑满 4 轮修复）的错误**成功送达**，事件流里有
+`#74 error ... index.html is still the untouched starter template`，MAP 立刻如实报了出来。
+所以不是必然丢——是某个条件下才丢，先找出这两条 run 在跟随终止上的差异。
+
+### 下一步的第一手动作
+
+比对这两条 run 在 MAP 侧的事件导入记录，找出跟随在哪一个事件上终止、两者为何不同。
+**不要动 15 分钟这个值**：它不是病因，只是这个病的症状显示器。
 
 ### 验收判据（不变）
 
 连续十条真实生成里，至少八条在 15 分钟内交出**非空且通过全部闸门**的产物。
-两面都要看——run 9c5c1873 正是「闸门全绿、产物是空页」。
 
 ### 实现来源
 
-- `cds/src/services/agent-workspace-session-runtime.ts` 的 `copyOutputsFromContainer`
-  与 `validateOutputsInContainer`
-- `prd-api/src/PrdAgent.Api/Services/DesignArtifactExecutor.cs` 的 `RunTimeout`
+- CDS 侧发射：`cds/src/routes/remote-hosts.ts` 的 OpenDesign 执行失败回调
+- MAP 侧导入与跟随终止：`prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs`
+- MAP 侧等待：`prd-api/src/PrdAgent.Api/Services/DesignArtifactExecutor.cs`
+
+## Codex 在 76a8c3bd2 上报的两条 P2（B 类，待作者拍板）
+
+| # | 评论 | 哪一块 | 说的是什么 |
+|---|---|---|---|
+| P2 | 4056954678 | 容器出口的模型请求中继 | 客户端中途断开时只脱开了下游，没有销毁上游请求，模型调用会继续烧 token 并占住中继 16 个连接之一，直到 socket 超时。与 P1 4056791340 同源，建议一起修 |
+| P2 | 4056954679 | 网页回滚的重放 | 进程在写入回滚意图之后、发布之前退出，重放时真的执行了替换却仍报 `changed=false`，活动流因此漏记一次真实变更 |
 
 ## 四条资源上限类拒绝没有修复条目（2026-09-20，B 类）
 
