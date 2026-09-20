@@ -3419,21 +3419,39 @@ export function summarizeOutputPreflightDiagnostic(diagnostic: string): string {
   return flattened.length <= limit ? flattened : `...${flattened.slice(-limit)}`;
 }
 
-/** 空链接/无目标链接的位置提示。序号与总数由闸门给出，缺了就退回不带位置的说法，不编。 */
-function brokenAnchorLocationHint(details: Record<string, unknown> | undefined): string {
-  const count = typeof details?.brokenLinkCount === 'number'
-    && Number.isSafeInteger(details.brokenLinkCount)
-    && details.brokenLinkCount > 0
-    ? details.brokenLinkCount
+/**
+ * 「有几个、在哪」的位置提示，锚点与按钮共用一份。序号与总数由闸门给出，
+ * 缺了就退回不带位置的说法（`no-rootless-tree`：不编）。
+ */
+function brokenElementLocationHint(
+  details: Record<string, unknown> | undefined,
+  countKey: string,
+  ordinalsKey: string,
+  // 人读的词（anchor / button）与标签名（a / button）是两回事：共用一个会写出
+  // 「2 such a(s)」这种句子。分开传，模型读到的仍是它数得出来的那个东西。
+  noun: string,
+  tagName: string,
+): string {
+  const rawCount = details?.[countKey];
+  const count = typeof rawCount === 'number' && Number.isSafeInteger(rawCount) && rawCount > 0
+    ? rawCount
     : undefined;
-  const ordinals = Array.isArray(details?.brokenLinkOrdinals)
-    ? details.brokenLinkOrdinals.filter((value): value is number => (
+  const rawOrdinals = details?.[ordinalsKey];
+  const ordinals = Array.isArray(rawOrdinals)
+    ? rawOrdinals.filter((value): value is number => (
       typeof value === 'number' && Number.isSafeInteger(value) && value > 0
     )).slice(0, 24)
     : [];
   if (count === undefined || ordinals.length === 0) return '';
-  return ` There are ${count} such anchor(s); they are at document-order anchor position(s) ${ordinals.join(', ')} (counting every <a> element from the top of the file).`;
+  return ` There are ${count} such ${noun}(s); they are at document-order ${noun} position(s) `
+    + `${ordinals.join(', ')} (counting every <${tagName}> element from the top of the file).`;
 }
+
+const brokenAnchorLocationHint = (details: Record<string, unknown> | undefined): string =>
+  brokenElementLocationHint(details, 'brokenLinkCount', 'brokenLinkOrdinals', 'anchor', 'a');
+
+const inertButtonLocationHint = (details: Record<string, unknown> | undefined): string =>
+  brokenElementLocationHint(details, 'inertButtonCount', 'inertButtonOrdinals', 'button', 'button');
 
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
@@ -3507,7 +3525,7 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
   if (message === 'index.html contains an enabled button without provable declarative behavior') {
     return {
       code: 'inert_enabled_button',
-      instruction: 'Repair each enabled button to perform the requested behavior: drive a real popover via popovertarget, or rewrite it as an anchor to one of your own sections. Do not remove or disable a control the MAP instruction actually asked for; a bare [REPLACE] CTA copied from the web-prototype template was never requested, so turning that one into an anchor or plain text is the correct repair, not a degradation. If the current publication policy cannot support a requested behavior, report the incompatibility instead of degrading the deliverable.',
+      instruction: `${inertButtonLocationHint(error.details)}Repair each enabled button to perform the requested behavior: drive a real popover via popovertarget, or rewrite it as an anchor to one of your own sections. Do not remove or disable a control the MAP instruction actually asked for; a bare [REPLACE] CTA copied from the web-prototype template was never requested, so turning that one into an anchor or plain text is the correct repair, not a degradation. If the current publication policy cannot support a requested behavior, report the incompatibility instead of degrading the deliverable.`.trim(),
     };
   }
   if (message === 'index.html violates a visible text occurrence constraint') {
@@ -4264,29 +4282,45 @@ function validateArtifactQuality(
   // 同一套口径：整篇收齐，抛的时候带上文档序号与总数。抛哪一条消息仍按文档顺序的
   // 第一条决定，precedence 逐字不变。
   const brokenAnchors: Array<{ ordinal: number; kind: 'missing' | 'empty' }> = [];
+  // 按钮同理：此前也是撞上第一个就抛、不说位置不说条数。2026-09-20 实测空链接那条修好之后
+  // 立刻撞上这条，模型同样是盲修。收齐再报，口径与锚点一致。
+  const inertButtons: number[] = [];
+  let buttonOrdinal = 0;
   let anchorOrdinal = 0;
+  // precedence 必须按**文档顺序**判，不能拿「第 N 个按钮」去比「第 N 个锚点」——
+  // 那是两条各自独立的计数，比出来的先后与页面里的先后无关。共用一条位置序列决定谁先报，
+  // 报给模型的仍是各自的同类序号（模型数的是「第几个 <a>」「第几个 <button>」）。
+  let documentPosition = 0;
+  let firstInertButtonPosition = Number.POSITIVE_INFINITY;
+  let firstBrokenAnchorPosition = Number.POSITIVE_INFINITY;
   let retainedMissingLinkOrdinals = 0;
   for (const tag of iterateHtmlTags(html)) {
     if (tag.isClosing) continue;
+    documentPosition += 1;
     const tagName = tag.name.toLowerCase();
     if (tagName === 'button') {
       const attributes = tag.attributes;
+      buttonOrdinal += 1;
       if (hasHtmlAttribute(attributes, 'disabled')) continue;
       const popoverTarget = readHtmlAttribute(attributes, 'popovertarget')?.trim();
       if (popoverTarget && popoverTargets.has(popoverTarget)) continue;
       if (allowScriptedControls && hasScript) continue;
-      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains an enabled button without provable declarative behavior');
+      if (inertButtons.length < maxMissingLinkOrdinals) inertButtons.push(buttonOrdinal);
+      firstInertButtonPosition = Math.min(firstInertButtonPosition, documentPosition);
+      continue;
     }
     if (tagName !== 'a') continue;
     anchorOrdinal += 1;
     const href = readHtmlAttribute(tag.attributes, 'href');
     if (href === undefined) {
       if (brokenAnchors.length < maxMissingLinkOrdinals) brokenAnchors.push({ ordinal: anchorOrdinal, kind: 'missing' });
+      firstBrokenAnchorPosition = Math.min(firstBrokenAnchorPosition, documentPosition);
       continue;
     }
     const normalized = href?.trim() ?? '';
     if (!normalized || normalized === '#') {
       if (brokenAnchors.length < maxMissingLinkOrdinals) brokenAnchors.push({ ordinal: anchorOrdinal, kind: 'empty' });
+      firstBrokenAnchorPosition = Math.min(firstBrokenAnchorPosition, documentPosition);
       continue;
     }
     if (normalized.startsWith('#')) {
@@ -4312,6 +4346,15 @@ function validateArtifactQuality(
       }
     }
   }
+  // 逐个抛的年代，谁在标签流里先出现谁先抛。这里按同一条位置序列还原那个顺序。
+  if (inertButtons.length > 0 && firstInertButtonPosition <= firstBrokenAnchorPosition) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html contains an enabled button without provable declarative behavior',
+      false,
+      { inertButtonCount: inertButtons.length, inertButtonOrdinals: inertButtons.slice(0, 24) },
+    );
+  }
   if (brokenAnchors.length > 0) {
     // 抛哪一条按文档顺序的第一条决定（与逐个抛时完全一致），报的序号只列同一类的。
     const kind = brokenAnchors[0].kind;
@@ -4323,6 +4366,14 @@ function validateArtifactQuality(
         : 'index.html contains an empty link target',
       false,
       { brokenLinkCount: ordinals.length, brokenLinkOrdinals: ordinals.slice(0, 24) },
+    );
+  }
+  if (inertButtons.length > 0) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html contains an enabled button without provable declarative behavior',
+      false,
+      { inertButtonCount: inertButtons.length, inertButtonOrdinals: inertButtons.slice(0, 24) },
     );
   }
   if (missingFragments.size > 0) {

@@ -3597,3 +3597,58 @@ describe('broken anchors must be reported together with their positions', () => 
     expect(instruction).toContain('#section-id');
   });
 });
+
+/**
+ * 空链接那条修好之后，实跑（run baebbd68）立刻撞上按钮这条——同一个不对称还在：
+ * 撞上第一个就抛、不说几个不说在哪。这里守住按钮侧的对称，以及一条容易写错的判据：
+ * 两类故障的先后必须按**文档顺序**判，不能拿「第 N 个按钮」去比「第 N 个锚点」
+ * （那是两条互不相干的计数，第一版就这么写错过）。
+ * 红绿闭环：把 inertButtons 改回「撞上就抛」，或把 precedence 改回比较两个 ordinal，这几条会红。
+ */
+describe('inert buttons must be reported together with their positions', () => {
+  const page = (body: string) => `<!doctype html><html><body>${body}</body></html>`;
+  const text = '<p>真实内容段落，用于通过可见内容检查。</p>';
+  const reject = (body: string) => {
+    try {
+      createArtifactQualityGate('', [], '')(Buffer.from(page(body)));
+    } catch (error) {
+      return error as InstanceType<typeof AgentWorkspaceRuntimeError>;
+    }
+    throw new Error('expected the quality gate to reject this page');
+  };
+
+  it('counts every inert button, not just the first one', () => {
+    const error = reject(`${text}<button>一</button><button>二</button><button disabled>三</button>`);
+
+    expect(error.message).toBe('index.html contains an enabled button without provable declarative behavior');
+    expect(error.details?.inertButtonCount).toBe(2);
+    // 序号数的是「第几个 button」，被 disabled 放行的那个仍然占一个位置。
+    expect(error.details?.inertButtonOrdinals).toEqual([1, 2]);
+  });
+
+  it('hands those positions to the model in the repair instruction', () => {
+    const instruction = classifyQualityRepairReason(
+      reject(`${text}<button>一</button><button>二</button>`),
+    )?.instruction ?? '';
+
+    expect(instruction).toContain('2 such button(s)');
+    expect(instruction).toContain('position(s) 1, 2');
+    expect(instruction).toContain('popovertarget');
+  });
+
+  it('orders the two faults by document position, not by their separate ordinals', () => {
+    // 按钮在前：即便它是「第 1 个按钮」而坏锚点是「第 1 个锚点」，先出现的才先报。
+    expect(reject(`${text}<button>按钮</button><a href="#">链接</a>`).message)
+      .toBe('index.html contains an enabled button without provable declarative behavior');
+
+    // 锚点在前：同样只看文档顺序。
+    expect(reject(`${text}<a href="#">链接</a><button>按钮</button>`).message)
+      .toBe('index.html contains an empty link target');
+
+    // 锚点在前且前面还垫着三个合规按钮：坏按钮是「第 4 个按钮」、坏锚点是「第 1 个锚点」，
+    // 比较两个 ordinal 会得出「按钮在后」的错误结论，比较文档位置才对。
+    expect(reject(`${text}<button disabled>a</button><button disabled>b</button>`
+      + `<button disabled>c</button><a href="#">链接</a><button>坏</button>`).message)
+      .toBe('index.html contains an empty link target');
+  });
+});
