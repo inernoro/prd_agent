@@ -30,6 +30,26 @@ export interface SourceDownloadSite {
  */
 export const SOURCE_PROXY_MAX_BYTES = 2 * 1024 * 1024;
 
+/**
+ * CDN 注入余量：两个数量的**量纲不一样**，边界上必须留出这段差。
+ *
+ * `EntrySize` 量的是**存进对象存储的**那一份；后端那个 `maxBytes` 量的是**CDN 服务出来的**
+ * 那一份。中间隔着 CDN 往每份 HTML 里塞的遥测（见 previewHtml.ts 的
+ * `stripInjectedTelemetry`）。于是恰好压线、以及贴着上限的那一档，前端判「能下」、代理
+ * 读满即断，**确定性失败**（Codex 第七轮 P2）。
+ *
+ * 这个数是**上界估计，不是精确值**：能引的唯一一次实测是 2026-08-25 的验收记录——自己传的
+ * 200 字节纯 HTML 取回来 9336 字节。取 16KB 覆盖它并留一倍富余；宁可让 1.98MB 那一档多报
+ * 一次「装不下」（那一档有替代路径可走），也不要让人点一次必然失败。
+ *
+ * 真正的解法是一条不经过 CDN 的源文件端点，那样两个数量就是同一个量纲，这条余量可以删掉。
+ * 已记进 PR 的后续事项。
+ */
+export const CDN_INJECTION_HEADROOM_BYTES = 16 * 1024;
+
+/** 前端据以判「能不能下」的实际阈值：代理上限减去 CDN 注入余量。 */
+export const SOURCE_DOWNLOADABLE_MAX_BYTES = SOURCE_PROXY_MAX_BYTES - CDN_INJECTION_HEADROOM_BYTES;
+
 export type SourceDownloadPlan =
   /**
    * 源文件是一份独立资产（PDF 等），只能**在新窗口打开**，由浏览器内联显示、用户自己另存。
@@ -130,10 +150,11 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
    * 也不要凭一个不知道的数去拦掉本来下得动的站点。
    */
   const entrySize = site.entrySize ?? 0;
-  if (entrySize > SOURCE_PROXY_MAX_BYTES) {
+  if (entrySize > SOURCE_DOWNLOADABLE_MAX_BYTES) {
     return {
       kind: 'unavailable',
-      reason: `这份源文件 ${formatBytes(entrySize)}，超过服务端取回通道的 2MB 上限。`
+      reason: `这份源文件 ${formatBytes(entrySize)}，取回通道的上限是 2MB，`
+        + '而取回时 CDN 还会往 HTML 里塞几 KB 遥测，这一份装不下。'
         + '可以用顶栏的「新窗口打开」，在浏览器里另存。',
     };
   }

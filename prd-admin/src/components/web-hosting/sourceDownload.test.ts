@@ -7,6 +7,7 @@ import {
   sanitizeFileBaseName,
   extensionOf,
   SOURCE_PROXY_MAX_BYTES,
+  SOURCE_DOWNLOADABLE_MAX_BYTES,
 } from './sourceDownload';
 
 describe('源文件形态判定', () => {
@@ -77,10 +78,31 @@ describe('源文件形态判定', () => {
     expect(plan.reason, '只说不行不够，要给下一步').toContain('新窗口打开');
   });
 
-  it('刚好压线的不拦', () => {
+  /**
+   * 边界上两个数量的**量纲不一样**（Codex 第七轮 P2）。
+   *
+   * `entrySize` 是存进对象存储的字节，后端 `maxBytes` 量的是 CDN 服务出来的字节，中间隔着
+   * CDN 注入的遥测。所以「恰好压线」不是安全的——它取回来必然超，点一次必然失败。
+   * 判据因此改用 `SOURCE_DOWNLOADABLE_MAX_BYTES`（代理上限减去注入余量）。
+   */
+  it('恰好压在代理上限上的，取回时会被注入撑破，要拦', () => {
     expect(planSourceDownload({
       title: 't', entryFile: 'index.html', fileCount: 1, entrySize: SOURCE_PROXY_MAX_BYTES,
+    }).kind, '存储 2MB + CDN 注入 = 必然超代理上限').toBe('unavailable');
+  });
+
+  it('余量之内的照常能下，不因为留余量就把好站点误伤掉', () => {
+    expect(planSourceDownload({
+      title: 't', entryFile: 'index.html', fileCount: 1, entrySize: SOURCE_DOWNLOADABLE_MAX_BYTES,
     }).kind).toBe('html');
+    expect(planSourceDownload({
+      title: 't', entryFile: 'index.html', fileCount: 1, entrySize: SOURCE_DOWNLOADABLE_MAX_BYTES + 1,
+    }).kind).toBe('unavailable');
+  });
+
+  it('余量必须为正且小于代理上限（写反了会把所有站点都拦掉）', () => {
+    expect(SOURCE_DOWNLOADABLE_MAX_BYTES).toBeGreaterThan(0);
+    expect(SOURCE_DOWNLOADABLE_MAX_BYTES).toBeLessThan(SOURCE_PROXY_MAX_BYTES);
   });
 
   /**
