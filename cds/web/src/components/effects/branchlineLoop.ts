@@ -7,7 +7,8 @@
  *
  * 契约（每条都有行为测试，见 tests/web/branchline-loop-behavior.test.ts）：
  *  - 离屏不排帧、不建场景；由 IntersectionObserver（不带 rootMargin）叫醒
- *  - 第一次进入视口才构建 WebGL；构建失败只失败一次，之后静默退化成纯文字长页
+ *  - 第一次进入视口才构建 WebGL；构建失败只失败一次，之后退化成纯文字长页——但不静默：
+ *    错误交给 onSceneState 留痕，退化状态暴露在 state 里，坏掉的场景与刻意的降级分得开
  *  - reduced-motion：时钟冻结为 0、进度不插值、画完一帧即停，只由滚动 / 缩放 / 可见性 / 进入视口再画一帧
  *  - 标签页隐藏即停，回来即续
  *  - dispose：取消挂起的帧、断开观察者、卸掉监听、释放场景
@@ -55,12 +56,17 @@ export interface BranchlineLoopOptions {
   doc: ListenerHost & { hidden: boolean };
   /** 没有就传 null：退回滚动事件叫醒 */
   IntersectionObserver: ObserverCtor | null;
+  /**
+   * 场景建成 / 建失败的回执。失败只会报一次并带上原因（无 WebGL、PMREM 或后期链路回归……都在这里分开），
+   * 调用方拿它写日志、在 DOM 上标退化状态；不给就只是不留痕，不影响循环本身。
+   */
+  onSceneState?: (state: 'live' | 'fallback', error?: unknown) => void;
 }
 
 export interface BranchlineLoop {
   dispose(): void;
-  /** 只给测试与诊断看：当前有没有挂起的帧、场景建了没 */
-  readonly state: { pending: boolean; built: boolean };
+  /** 只给测试与诊断看：当前有没有挂起的帧、场景建了没、建失败的原因 */
+  readonly state: { pending: boolean; built: boolean; failure: unknown };
 }
 
 export function createBranchlineLoop(o: BranchlineLoopOptions): BranchlineLoop {
@@ -68,11 +74,20 @@ export function createBranchlineLoop(o: BranchlineLoopOptions): BranchlineLoop {
 
   // 构建推迟到叙事区第一次进入视口：停在 hero 的访客不为 renderer、PMREM、几何体、HalfFloat 后期缓冲买单
   let built: SceneApi | null = null;
+  let failure: unknown = null;
   let buildFailed = false;
   const ensureBuilt = (): boolean => {
     if (built) return true;
     if (buildFailed) return false;
-    try { built = o.build(); } catch { buildFailed = true; } // 无 WebGL：退化成纯文字长页
+    try {
+      built = o.build();
+      o.onSceneState?.('live');
+    } catch (err) {
+      // 退化成纯文字长页，但把原因交出去：无 WebGL 和后期链路回归不能长成同一个样子（predicate-and-wiring 形状 10）
+      buildFailed = true;
+      failure = err ?? new Error('scene build failed');
+      o.onSceneState?.('fallback', failure);
+    }
     return Boolean(built);
   };
 
@@ -125,7 +140,7 @@ export function createBranchlineLoop(o: BranchlineLoopOptions): BranchlineLoop {
   schedule();
 
   return {
-    get state() { return { pending: raf !== 0, built: built !== null }; },
+    get state() { return { pending: raf !== 0, built: built !== null, failure }; },
     dispose() {
       if (raf) { win.cancelAnimationFrame(raf); raf = 0; }
       if (io) io.disconnect();

@@ -18,6 +18,7 @@ function harness(over: Partial<{ reduced: boolean; io: boolean; hidden: boolean;
     removeEventListener: (type: string, fn: () => void) => { listeners[`${name}:${type}`] = (listeners[`${name}:${type}`] || []).filter((f) => f !== fn); },
   });
   const scene = { resize: [] as Array<[number, number]>, render: [] as Array<[number, number, number]>, disposed: 0, builds: 0 };
+  const states: Array<['live' | 'fallback', unknown]> = [];
   const build = (): SceneApi => {
     scene.builds += 1;
     if (over.buildThrows) throw new Error('no webgl');
@@ -49,10 +50,11 @@ function harness(over: Partial<{ reduced: boolean; io: boolean; hidden: boolean;
       cancelAnimationFrame: (id) => { cancelled.push(id); const i = rafQueue.findIndex((q) => q.id === id); if (i >= 0) rafQueue.splice(i, 1); },
     },
     doc, IntersectionObserver: IO,
+    onSceneState: (state, error) => { states.push([state, error]); },
   };
   const loop = createBranchlineLoop(opts);
   return {
-    loop, rect, scene, copies, rails, doc,
+    loop, rect, scene, copies, rails, doc, states,
     /** 跑掉当前挂起的所有帧（一帧内新排的帧留到下一次 tick） */
     tick(now = 16) { const batch = rafQueue.splice(0); batch.forEach((q) => q.cb(now)); return batch.length; },
     pending: () => rafQueue.length,
@@ -170,7 +172,7 @@ describe('Branchline 帧循环：可见性、构建失败、释放', () => {
     expect(h.pending()).toBe(0);
   });
 
-  it('构建抛错只尝试一次，之后退化成纯文字长页而不是每帧重试', () => {
+  it('构建抛错只尝试一次，之后退化成纯文字长页而不是每帧重试——但失败要留痕、退化状态要可读', () => {
     const h = harness({ buildThrows: true });
     h.setInView();
     h.tick(50);
@@ -179,6 +181,18 @@ describe('Branchline 帧循环：可见性、构建失败、释放', () => {
     h.intersect(); h.tick(66);
     expect(h.scene.builds, '不重试').toBe(1);
     expect(h.loop.state.built).toBe(false);
+    // 静默降级是形状 10：原因必须交出去，且只报一次
+    expect(h.states).toHaveLength(1);
+    expect(h.states[0][0]).toBe('fallback');
+    expect((h.states[0][1] as Error).message).toBe('no webgl');
+    expect(h.loop.state.failure).toBe(h.states[0][1]);
+  });
+
+  it('建成也回执一次 live，且没有 failure', () => {
+    const h = harness();
+    h.setInView(); h.tick(50); h.tick(66);
+    expect(h.states).toEqual([['live', undefined]]);
+    expect(h.loop.state.failure).toBeNull();
   });
 
   it('dispose：取消挂起的帧、断开观察者、卸掉全部监听、释放场景', () => {
@@ -192,7 +206,7 @@ describe('Branchline 帧循环：可见性、构建失败、释放', () => {
     expect(h.io().disconnected).toBe(1);
     expect(h.scene.disposed).toBe(1);
     for (const name of ['win:scroll', 'win:resize', 'doc:visibilitychange']) expect(h.listenerCount(name), name).toBe(0);
-    expect(h.loop.state).toEqual({ pending: false, built: false });
+    expect(h.loop.state).toEqual({ pending: false, built: false, failure: null });
   });
 
   it('resize 后下一帧重新量尺寸', () => {

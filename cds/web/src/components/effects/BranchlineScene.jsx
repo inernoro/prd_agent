@@ -73,8 +73,10 @@ function buildScene(canvas) {
 
   // 环境反射：金属与清漆没有它就是死的
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const envTex = track(pmrem.fromScene(new RoomEnvironment(), 0.04).texture);
-  pmrem.dispose();
+  // RoomEnvironment 自己持有几何体与材质，烘完 PMREM 就该释放，否则每次挂载都在 GPU 里多留一套
+  const room = new RoomEnvironment();
+  let envTex;
+  try { envTex = track(pmrem.fromScene(room, 0.04).texture); } finally { room.dispose(); pmrem.dispose(); }
   scene.environment = envTex;
   scene.environmentIntensity = 0.42;
 
@@ -324,6 +326,11 @@ export default function BranchlineScene({ rootRef }) {
       win: window,
       doc: document,
       IntersectionObserver: typeof IntersectionObserver === 'function' ? IntersectionObserver : null,
+      // 建成 / 建失败都在叙事区根元素上留一个机读状态；失败再把原因打进控制台，排查时能分清是无 WebGL 还是场景自己坏了
+      onSceneState: (state, error) => {
+        root.dataset.cdshScene = state;
+        if (state === 'fallback') console.warn('[branchline] WebGL 场景构建失败，退化成纯文字长页：', error);
+      },
     });
     return () => loop.dispose();
   }, [rootRef]);
