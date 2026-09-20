@@ -168,6 +168,24 @@ describe('ReleaseRun 步骤快照', () => {
     }
   });
 
+  it('回车刷新的传输进度拆成独立日志，界面能持续提取最新百分比', async () => {
+    let call = 0;
+    const service = createService(async (req) => {
+      call += 1;
+      if (call === 1) {
+        req.onOutput('warn', ' 10 1514k   10 151k\r 89 1514k   89 1352k\r');
+      }
+      return 'deployed';
+    });
+    const run = await start(service);
+    await waitFor(() => stateService.getReleaseRun(run.releaseId)?.status === 'success');
+
+    const messages = stateService.getReleaseRun(run.releaseId)!.logs.map((log) => log.message);
+    expect(messages).toContain(' 10 1514k   10 151k');
+    expect(messages).toContain(' 89 1514k   89 1352k');
+    expect(messages.some((message) => message.includes('\r'))).toBe(false);
+  });
+
   it('发布成功后所有步骤都是 done，且当前步落在最后一步', async () => {
     const service = createService(async () => 'deployed');
     const run = await start(service);

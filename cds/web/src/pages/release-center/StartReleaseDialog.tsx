@@ -203,7 +203,7 @@ export function StartReleaseDialog({
   const inFlight = Boolean(run && !isReleaseTerminal(run.status));
   const nowMs = useNowTick(inFlight);
   const etaText = inFlight ? releaseEtaText(run?.startedAt, intent?.row.releaseEstimate, nowMs) : '';
-  const progress = resolveReleaseSteps(run);
+  const progress = resolveReleaseSteps(run ? { ...run, logs } : run);
   const blocking = preflight ? preflight.checks.filter((check) => check.status === 'fail' && check.blocking) : [];
   const canStart = Boolean(branchId && preflight && blocking.length === 0 && !starting);
   const logText = logs.map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.message}`).join('\n');
@@ -301,13 +301,18 @@ export function StartReleaseDialog({
                 </div>
                 <div className="grid shrink-0 gap-2 sm:grid-cols-2">
                   {progress.steps.map((step, index) => (
-                    <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[0.8125rem]">
+                    <div key={step.id} className="flex min-w-0 items-start gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[0.8125rem]">
                       {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-ok" />
                         : step.state === 'failed' ? <XCircle className="h-4 w-4 shrink-0 text-bad" />
                           : step.state === 'running' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-info" />
                             : <span className="h-4 w-4 shrink-0 rounded-full border border-[hsl(var(--hairline-strong))]" />}
                       <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{index + 1}/{progress.total}</span>
-                      <span className="min-w-0 truncate">{step.label}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate">{step.label}</span>
+                        {step.state === 'running' && step.activity ? (
+                          <span className="mt-0.5 block break-words text-[0.7188rem] text-primary">{step.activity}</span>
+                        ) : null}
+                      </span>
                     </div>
                   ))}
                 </div>
