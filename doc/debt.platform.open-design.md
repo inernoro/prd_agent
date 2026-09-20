@@ -1231,3 +1231,21 @@ CDS 侧闸门全绿）。剩下的问题是**时间**：质量修复回路最多
 
 - 闸门与分类器：`cds/src/services/agent-workspace-session-runtime.ts` 的
   `createArtifactQualityGate` 与 `classifyQualityRepairReason`
+
+## Codex 在 2026-09-20 这一轮报出的五条未处理 findings（B 类，待作者拍板）
+
+同日 Codex 对这条分支连报七条。两条是我当轮引入的、直接卡住核心功能，已修（见
+`0ea500480`）。其余五条都落在本 PR 的 diff 里、但都不在「让 OpenDesign 跑起来」这个
+单一目标上，且没有一条被今天的十条真实 run 命中。按 AGENTS.md 5.5 记 B 类，逐条列在这里，
+由作者决定是否在本 PR 展开——**不以「清空所有机器评论」为完成标准**。
+
+| # | 评论 | 位置 | 说的是什么 |
+|---|---|---|---|
+| P1 | 4056653107 | `cds/src/services/sealed-storage-bootstrap.ts:84` | 初始化会改写 `env.CDS_SECRET_KEY`，于是随后的 GET status 从「当前环境」推出 `restartRequired: false`，而旧明文凭据与备份尚未封存。应改成进程启动时上闩、直到重启才落。 |
+| P1 | 4056739749 | `prd-admin/src/components/web-hosting/siteEditPreview.ts:72` | 预览沙箱给文档不透明来源，外链模块（`<script type="module" src="assets/app.js">`）的取数按跨域走、不带路径作用域的预览 cookie，于是多文件应用在预览里渲染成空白。要在不破坏隔离的前提下换一种授权方式。 |
+| P1 | 4056791340 | `cds/src/services/agent-workspace-session-runtime.ts:829` | MAP 在发完响应头之后中断 SSE 时，`pipe()` 不会关下游，`upstream.on('error')` 也接不到这类响应体故障，容器端要挂到 90 秒 socket 超时。应在 `aborted`/`error` 上 destroy 而不是 end。（今天撞到的 MAP 重启窗口故障与此同源） |
+| P2 | 4056681712 | `prd-api/.../MdToPptController.cs:805` | `RepairCoverage` 改绑定时会给已推送过的页面补发 `page` 事件，前端按事件数累加，8 页报成 10 页。应用 `done` 事件里已有的 `pages`。 |
+| P2 | 4056697512 | `prd-admin/.../SiteGenerateDialog.tsx:264` | 会话存储里的旧 run 在另一个知识入口/团队分组下被盲目恢复，表单显示错来源，完成时还可能把旧产物挪进当前分组。应把启动上下文随 runId 一起存取。 |
+
+判据一致：这五条都要么需要新的状态/契约（进程级闩、预览资源授权机制、启动上下文持久化），
+要么改的是与本 PR 目标无关的另一条链路。真要展开，建议按 P1 三条单开一个 PR。
