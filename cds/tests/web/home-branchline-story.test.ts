@@ -23,6 +23,9 @@ describe('首页 Branchline 叙事区', () => {
     expect(home, '场景必须 lazy 动态引入').toMatch(/lazy\(\(\) => import\('@\/components\/effects\/BranchlineScene'\)\)/);
     expect(home, '不许再静态引入').not.toMatch(/^import .*BranchlineScene/m);
     expect(home, '场景组件要等叙事区进入视口才挂载，否则 lazy 只是拆包不省下载').toMatch(/armed \? <BranchlineScene rootRef=\{rootRef\} \/> : null/);
+    // 叙事区被 -22vh 顶进首屏，桌面首帧就已相交，IntersectionObserver 看它等于没关门；改为首次滚动才挂载
+    expect(home, '挂载门是首次滚动').toMatch(/addEventListener\('scroll', arm, \{ once: true, passive: true \}\)/);
+    expect(home, '带锚点 / 恢复滚动位置进来的立即挂载').toContain('if (window.scrollY > 0) { setArmed(true);');
     expect(home).toContain('<BranchlineStory onEnter={openAccessMode} />');
     const ids = [...home.matchAll(/^\s+id: '([a-z]+)', rail: '0(\d) /gm)].map((m) => m[1]);
     expect(ids).toEqual(['workflow', 'features', 'preview', 'observability', 'ship']);

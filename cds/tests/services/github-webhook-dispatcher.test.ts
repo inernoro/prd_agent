@@ -260,6 +260,21 @@ describe('GitHubWebhookDispatcher', () => {
       expect(stateService.findBranchByProjectAndName('p1', 'chore/archive-changelogs-35330217990')).toBeUndefined();
     });
 
+    it('recognises every GitHub skip spelling, including the skip-checks trailer, and not look-alikes', async () => {
+      const { findSkipMarker } = await import('../../src/services/github-webhook-dispatcher.js');
+      for (const m of ['[skip ci]', '[CI SKIP]', '[no ci]', '[skip actions]', '[actions skip]', '[skip cds]', '[cds skip]']) {
+        expect(findSkipMarker(`chore: something ${m}`), m).not.toBeNull();
+      }
+      expect(findSkipMarker('feat: x\n\nskip-checks: true')).toBe('skip-checks: true');
+      expect(findSkipMarker('feat: x\n\nSkip-Checks: TRUE')).toBe('skip-checks: true');
+      // 不是独立一行的 trailer、值不是 true、以及只是提到这个词的，都不算
+      expect(findSkipMarker('feat: mention skip-checks: true in docs')).toBeNull();
+      expect(findSkipMarker('feat: x\n\nskip-checks: false')).toBeNull();
+      expect(findSkipMarker('feat: skip ci integration')).toBeNull();
+      expect(findSkipMarker('')).toBeNull();
+      expect(findSkipMarker(undefined)).toBeNull();
+    });
+
     it('only honours the skip marker on the head commit, not on earlier commits in the push', async () => {
       stateService.addProject({
         id: 'p1',

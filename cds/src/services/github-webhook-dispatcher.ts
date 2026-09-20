@@ -310,7 +310,9 @@ export interface GitHubPushEvent {
  * `chore/archive-changelogs-<run id>` 分支，提交信息写着 `[skip ci]`。机器人过滤只认
  * `[bot]` 账号，于是四天里建了 30 条一次性分支、每条都排队构建，把构建队列堵到 51 条。
  */
-const SKIP_MARKERS = ['[skip ci]', '[ci skip]', '[no ci]', '[skip cds]', '[cds skip]'] as const;
+const SKIP_MARKERS = ['[skip ci]', '[ci skip]', '[no ci]', '[skip actions]', '[actions skip]', '[skip cds]', '[cds skip]'] as const;
+/** GitHub 还认提交信息里的 git trailer：`skip-checks: true`（只认独立一行、值为 true）。 */
+const SKIP_CHECKS_TRAILER = /^skip-checks:\s*true\s*$/im;
 
 export function findSkipMarker(message: string | null | undefined): string | null {
   if (typeof message !== 'string' || !message) return null;
@@ -318,6 +320,7 @@ export function findSkipMarker(message: string | null | undefined): string | nul
   for (const marker of SKIP_MARKERS) {
     if (lower.includes(marker)) return marker;
   }
+  if (SKIP_CHECKS_TRAILER.test(message)) return 'skip-checks: true';
   return null;
 }
 

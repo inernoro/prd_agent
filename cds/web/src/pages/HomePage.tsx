@@ -137,16 +137,15 @@ const STORY: Array<{
 
 function BranchlineStory({ onEnter }: { onEnter: () => void }): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null);
-  // 叙事区第一次进入视口才挂载场景：lazy 只拆包，挂载即下载；停在 hero 的访客连那 690 kB 都不该下
+  // 访客第一次滚动才挂载场景：lazy 只拆包，挂载即下载；停在 hero 不动的访客连那 690 kB 都不该下。
+  // 不用 IntersectionObserver 看叙事区自己——它被 -22vh 负外边距顶进首屏，桌面首帧就已经「相交」，门等于没关
+  // （Codex 2026-09-20 第四轮）。带锚点 / 刷新恢复滚动位置进来的（scrollY 已 > 0）立即挂载。
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    const root = rootRef.current;
-    if (!root || typeof IntersectionObserver !== 'function') { setArmed(true); return undefined; }
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) { setArmed(true); io.disconnect(); }
-    });
-    io.observe(root);
-    return () => io.disconnect();
+    if (window.scrollY > 0) { setArmed(true); return undefined; }
+    const arm = () => setArmed(true);
+    window.addEventListener('scroll', arm, { once: true, passive: true });
+    return () => window.removeEventListener('scroll', arm);
   }, []);
   return (
     <div className="cdsh-story" ref={rootRef}>
