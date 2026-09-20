@@ -757,6 +757,27 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         : downloadPlan.kind === 'open' ? '在新窗口打开源文件，可在浏览器里另存'
         : downloadPlan.partial ? `下载入口文件 ${downloadPlan.fileName}（本站共 ${downloadPlan.fileCount} 个文件）`
         : `下载源文件（${downloadPlan.fileName}）`;
+    /**
+     * 顶栏说明条有两种来源，这里合成一条。
+     *
+     * 常驻的那一种（unavailable）：这一档根本取不到源文件（视频包装站、入口超过代理上限），
+     * 原因在**交互之前**就摆在这里，不必点任何东西。按钮那一档干脆不渲染。
+     *
+     * 为什么不是一个灰着的按钮：宣称 disabled、却必须点它才能知道为什么——屏读用户被告知
+     * 不可用会跳过，视觉用户看到禁用光标也会跳过，两边都拿不到那句原因，键盘激活还与宣称
+     * 的状态自相矛盾（Codex 第六轮 P2）。此前在「不渲染」与「可点的 aria-disabled」之间
+     * 来回过两轮，两版各丢一头：前者丢了原因，后者把原因锁在一次点击后面。真正该做的是
+     * 把原因从按钮里搬出来——交互前可见，于是那个假的可点控件不再需要存在。
+     *
+     * 一次性的那一种（downloadNote）：下载的结论或失败原因，用户可以关掉。常驻那条不给
+     * 关闭按钮——它是这一屏的状态，不是一次操作的回执。
+     */
+    const visibleNote: { text: string; tone: 'info' | 'error'; detail?: string; dismissible: boolean } | null =
+      downloadNote
+        ? { ...downloadNote, dismissible: true }
+        : isAuthenticated && downloadPlan.kind === 'unavailable'
+          ? { text: downloadPlan.reason, tone: 'info', dismissible: false }
+          : null;
     return (
       <div
         ref={singleViewRef}
@@ -826,18 +847,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
                   存下来的常常不是那一份。
                   为什么限登录：源文件就是这份内容的全部，门槛与「保存到我的托管」保持一致。 */}
-              {/* 取不到源文件的那一档（视频包装站、超过代理上限的大站）走 aria-disabled：
-                  **灰着**，交互前就看得出不可用（Codex 第一轮 P2）；但仍然可点，点了把原因
-                  摆进下面那条说明里——触屏上 title 露不出来，而这一档恰恰有替代路径要告诉他
-                  （去找分享者要 / 用「新窗口打开」另存）。
-                  一开始改成了「干脆不渲染」，那样 reason 就再没人看得到：算出来却送不到用户
-                  眼前，是形状 2（链路只建一半）。用原生 disabled 也不行——它连点击都不触发。 */}
-              {isAuthenticated && (
+              {/* 取不到源文件的那一档（视频包装站、超过代理上限的大站）不渲染按钮——
+                  原因由上面那条常驻说明在交互前就给出，不需要一个点了才肯说话的假控件。 */}
+              {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
                 <button
                   className="share-topbar-btn"
                   onClick={handleDownloadSource}
                   disabled={downloading}
-                  aria-disabled={downloadPlan.kind === 'unavailable' || undefined}
                   title={downloadHint}
                   aria-label={downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件'}
                 >
@@ -878,22 +894,23 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               )}
             </div>
           </div>
-          {/* 下载的结论说明：多文件站下到的只是入口那一份、失败了为什么失败。
-              一闪而过的 toast 读不完，这里占一行，由用户自己关掉。 */}
-          {downloadNote && (
+          {/* 一闪而过的 toast 读不完，所以两种说明都占一行。来源见 visibleNote 的注释。 */}
+          {visibleNote && (
             <div
-              className={`share-topbar-note surface-tone-dark${downloadNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}
+              className={`share-topbar-note surface-tone-dark${visibleNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}
               role="status"
             >
               <span>
-                {downloadNote.text}
-                {downloadNote.detail && (
-                  <span className="share-topbar-note-detail">{downloadNote.detail}</span>
+                {visibleNote.text}
+                {visibleNote.detail && (
+                  <span className="share-topbar-note-detail">{visibleNote.detail}</span>
                 )}
               </span>
-              <button onClick={() => setDownloadNote(null)} title="知道了" aria-label="关闭说明">
-                <X size={14} />
-              </button>
+              {visibleNote.dismissible && (
+                <button onClick={() => setDownloadNote(null)} title="知道了" aria-label="关闭说明">
+                  <X size={14} />
+                </button>
+              )}
             </div>
           )}
         </div>
