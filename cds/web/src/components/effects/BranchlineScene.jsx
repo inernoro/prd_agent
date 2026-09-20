@@ -82,6 +82,11 @@ function buildSceneInto(canvas, created) {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
+  // 底色必须走 scene.background，不能只靠 setClearColor：three 在 setClearColor 那一刻就按「当前目标 = 屏幕」
+  // 把清屏值预编码成 sRGB，postprocessing 随后拿这个已编码的值去清线性的 HalfFloat 缓冲，末端再编码一次，
+  // #120f17 就成了 #4a4256——前六版的「灰蒙蒙」全是它。scene.background 由 three 在渲染时按当前缓冲重算，
+  // 场景内容本来就只编码一次，末端 EffectPass 的输出编码必须保持开启（关掉会把中灰压成 #373737）。
+  scene.background = BG.clone();
   scene.fog = new THREE.FogExp2(BG.getHex(), 0.025);
   const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 260);
 
@@ -243,12 +248,7 @@ function buildSceneInto(canvas, created) {
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new BloomEffect({ intensity: 0.85, luminanceThreshold: 0.82, luminanceSmoothing: 0.2, mipmapBlur: true, radius: 0.4 });
   composer.addPass(new EffectPass(camera, bloom));
-  const finalPass = new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.MEDIUM }));
-  composer.addPass(finalPass);
-  // three 0.184 直出画布时自己做 sRGB 编码，postprocessing 6.39 的末端 EffectPass 默认再编码一次：
-  // 暗部被整体抬亮——清屏色 #120f17 出来是 #4a4256、中灰 #808080 出来是 #bcbcbc，整屏灰蒙蒙。
-  // 前六版把雾、环境光、半球光、星尘、辉光半径逐个压暗都没用，消融到最后只有这一处是根因。
-  finalPass.fullscreenMaterial.encodeOutput = false;
+  composer.addPass(new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.MEDIUM })));
 
   const camPos = new THREE.Vector3(); const look = new THREE.Vector3(); const tmp = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0); const side = new THREE.Vector3(); const over = new THREE.Vector3();
