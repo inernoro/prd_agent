@@ -17,6 +17,63 @@ const OPEN_DESIGN_CODEX_HOME = '/app/.od/sandbox/agent-home/.codex';
 const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
 const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-prototype';
 
+/**
+ * CDS 自己那几份 web-prototype 拷贝要改的地方。上游模板（0.21.1）示范的是发布闸必拒的
+ * 两种写法，而新建页面时它还就是起始页——不改，模型每次都从一张违规的页面开始编辑。
+ *
+ * 落点用的是模板本来就带的 id（topnav / content / hero / footer），所以改完仍然自洽：
+ * 导航真的跳到自己的章节，CTA 是一个有去处的锚点。改的是 CDS 的拷贝，上游镜像不动。
+ */
+const WEB_PROTOTYPE_TEMPLATE_FILES = [
+  '/app/design-templates/web-prototype/assets/template.html',
+  '/workspace/.od-skills/web-prototype/assets/template.html',
+];
+
+const WEB_PROTOTYPE_LAYOUT_FILES = [
+  '/app/design-templates/web-prototype/references/layouts.md',
+  '/workspace/.od-skills/web-prototype/references/layouts.md',
+];
+
+/**
+ * 模板里真正的 `id` 只有 `<main id="content">` 一个；hero 与 footer 挂的是 `data-od-id`，
+ * 闸门收锚点只认 `id` / `name`，不认它。所以先补两个真 id，导航才有地方可去——
+ * 否则「空链接」只会换成「锚点指向不存在的片段」，等于没修。
+ * （第一版就这么写错过：grep `id="hero"` 命中的其实是 `data-od-id="hero"` 的子串。）
+ */
+const WEB_PROTOTYPE_TEMPLATE_PATCH = [
+  `for f in ${WEB_PROTOTYPE_TEMPLATE_FILES.join(' ')}; do sed -i`,
+  `-e 's|<section class="section hero" data-od-id="hero">|<section class="section hero" id="hero" data-od-id="hero">|g'`,
+  `-e 's|<footer class="pagefoot" data-od-id="footer">|<footer class="pagefoot" id="footer" data-od-id="footer">|g'`,
+  `-e 's|<a href="#">\\[REPLACE\\] Link 1</a>|<a href="#hero">[REPLACE] Link 1</a>|g'`,
+  `-e 's|<a href="#">\\[REPLACE\\] Link 2</a>|<a href="#content">[REPLACE] Link 2</a>|g'`,
+  `-e 's|<a href="#">\\[REPLACE\\] Link 3</a>|<a href="#footer">[REPLACE] Link 3</a>|g'`,
+  `-e 's|<button class="btn btn-primary">\\[REPLACE\\] CTA</button>|<a class="btn btn-primary" href="#content">[REPLACE] CTA</a>|g'`,
+  `-e 's|<button class="btn btn-primary">\\[REPLACE\\] Primary CTA</button>|<a class="btn btn-primary" href="#content">[REPLACE] Primary CTA</a>|g'`,
+  `-e 's|<button class="btn btn-secondary">\\[REPLACE\\] Secondary</button>|<a class="btn btn-secondary" href="#footer">[REPLACE] Secondary</a>|g'`,
+  `-e 's|href="#"|href="#content"|g'`,
+  '"$f"; done',
+  `&& for f in ${WEB_PROTOTYPE_LAYOUT_FILES.join(' ')}; do sed -i -e 's|href="#"|href="#content"|g' "$f"; done`,
+].join(' ');
+
+/**
+ * 改完当场自证三件事，缺一即让准备步骤失败——上游哪天换了措辞、sed 一条都没命中时
+ * 必须在这里炸，而不是静默发回一张仍然违规的起始页，等四轮质量修复全灭才被发现
+ * （`predicate-and-wiring-discipline.md` 形状 8）。
+ *
+ * 第三条是这次真正吃过亏的那条：每个 `href="#x"` 都得能在同一份文件里找到一个**真的**
+ * `id="x"`。判据必须把 `data-od-id="x"` 排除掉，否则它自己就会被那个子串骗过去。
+ */
+const WEB_PROTOTYPE_TEMPLATE_ASSERT = [
+  ...WEB_PROTOTYPE_TEMPLATE_FILES.map((file) => `! grep -qE 'href="#"|href=""|<button' ${file}`),
+  // 这一条整体是**一个** shell 命令：循环体里不能再被 ' && ' 切开，否则拼出 `do && for`
+  // 这种语法错误，而语法错误会让整条 assert 失败——看起来像「模板没改对」，其实是判据自己坏了。
+  `for f in ${WEB_PROTOTYPE_TEMPLATE_FILES.join(' ')}; do `
+    + `for frag in $(grep -o 'href="#[^"]*"' "$f" | sed 's|href="#||; s|"||'); do `
+    + `grep -qE "(^|[[:space:]])id=\\"$frag\\"" "$f" || exit 1; `
+    + 'done; done',
+].join(' && ');
+
+
 export function buildOpenDesignCodexConfig(baseUrl: string, model: string): string {
   return [
     `model = ${JSON.stringify(model)}`,
@@ -2194,7 +2251,18 @@ export class AgentWorkspaceSessionRuntime {
           'mkdir -p /workspace/.od-skills/web-prototype',
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /app/design-templates/web-prototype/`,
           `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /workspace/.od-skills/web-prototype/`,
-          `if [ ! -f /workspace/index.html ]; then cp ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html /workspace/index.html; fi`,
+          // 上游模板示范的恰恰是发布闸必拒的两种写法：topnav 三个 `href="#"`、三个裸 CTA
+          // 按钮。而新建页面时它还**就是那张起始页**，模型在它上面改，导航整条留着不动——
+          // 2026-09-20 实测五条 run，失败的锚点序号稳定是 1,2,3，正是那三条导航。
+          // 光靠提示词说「别抄」压不住（试过一轮，照抄）。这里把 CDS 自己那几份拷贝改对：
+          // 导航指向模板本来就有的 #hero/#content/#footer，CTA 改成同样落点的锚点。
+          // 模板从此示范的是通得过闸门的写法，模型照抄也对。
+          WEB_PROTOTYPE_TEMPLATE_PATCH,
+          // 上游换了模板、sed 一条都没命中时必须当场失败，而不是静默放过一张仍然违规的起始页
+          // （`predicate-and-wiring-discipline.md` 形状 8：不成立的证据当成证据）。
+          WEB_PROTOTYPE_TEMPLATE_ASSERT,
+          // 起始页从**改好之后**的那份拷贝来，不从原始来源来——否则又把违规模板发回去。
+          'if [ ! -f /workspace/index.html ]; then cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html; fi',
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',
           'test -f /app/design-templates/web-prototype/references/layouts.md',

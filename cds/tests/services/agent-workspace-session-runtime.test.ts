@@ -1017,7 +1017,22 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
     expect(fs.readFileSync(path.join(shell.workspaceDir, 'index.html'))).toEqual(fs.readFileSync(path.join(shell.workspaceDir, 'current/index.html')));
-    expect(preparedDesignTemplate?.command).toContain('if [ ! -f /workspace/index.html ]; then cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html; fi');
+    // 起始页必须从**改好之后**的那份拷贝来。直接从上游来源 cp 就等于把一张
+    // 带 href="#" 与裸 button 的违规模板发回去当起始页——2026-09-20 五条 run
+    // 稳定死在锚点 1,2,3（模板 topnav 那三条）就是这么来的。
+    expect(preparedDesignTemplate?.command).toContain('if [ ! -f /workspace/index.html ]; then cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html; fi');
+    expect(preparedDesignTemplate?.command).not.toContain('cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html');
+    // 模板改写与它的自证必须都在这一条命令里；少了自证，上游换措辞时 sed 会静默不命中。
+    expect(preparedDesignTemplate?.command).toContain('<a href="#hero">[REPLACE] Link 1</a>');
+    expect(preparedDesignTemplate?.command).toContain('id="hero" data-od-id="hero"');
+    expect(preparedDesignTemplate?.command).toContain('<a class="btn btn-primary" href="#content">[REPLACE] CTA</a>');
+    // 命令是 shell-quote 过的，单引号在字符串里长成 '"'"'，所以这里只断言不含单引号的片段。
+    expect(preparedDesignTemplate?.command).toContain('href="#"|href=""|<button');
+    // 两份 HTML 模板各要一条自证，少一条就有一份没被守住。
+    expect(preparedDesignTemplate?.command.match(/! grep -qE/g)?.length).toBe(2);
+    // 片段自证：每个 href="#x" 都要在同一份文件里找到真的 id="x"。判据必须排除 data-od-id，
+    // 否则它自己会被那个子串骗过去（第一版就这么错过一次，把空链接换成了不存在的片段）。
+    expect(preparedDesignTemplate?.command).toContain('grep -qE "(^|[[:space:]])id=\\"$frag\\"" "$f" || exit 1');
     expect(preparedDesignTemplate?.command).toContain('test -f /workspace/index.html');
 
     const executed = await runtime.execute(
