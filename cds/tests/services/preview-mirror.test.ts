@@ -14,6 +14,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import {
   buildPreviewMirror, deepRedactForMirror, findMirrorLeaks, isHostingProject, readPreviewMirror, redactEnvForMirror, registerLoadedPreviewMirror,
   replayPreviewMirrorSeries, writePreviewMirror, __resetLoadedPreviewMirror, loadedPreviewMirrorSummary,
+  redactUrlUserinfo,
   type PreviewMirrorFile,
 } from '../../src/services/preview-mirror.js';
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
@@ -129,6 +130,12 @@ describe('脱敏（不带凭据）', () => {
     expect(worker.env?.AMQP_URL).toBe('amqp://***@rabbit:5672');
     expect(worker.env?.REDIS_URL).toBe('redis://***:***@redis:6379/0');
     expect(worker.env?.PUBLIC_URL).toBe('https://example.com/path');
+    // query / fragment 里的 @ 不是 userinfo：公开 URL 原样保留，自检也不判红（Codex P2）
+    expect(redactUrlUserinfo('https://example.com?email=a@b')).toBe('https://example.com?email=a@b');
+    expect(redactUrlUserinfo('https://example.com/#u@v')).toBe('https://example.com/#u@v');
+    expect(redactUrlUserinfo('https://ghp_x@example.com?email=a@b')).toBe('https://***@example.com?email=a@b');
+    const publicOnly = { ...m, buildProfiles: [{ env: { CALLBACK: 'https://example.com?email=a@b', ANCHOR: 'https://example.com/#u@v' } }] } as unknown as PreviewMirrorFile;
+    expect(findMirrorLeaks(publicOnly)).toEqual([]);
     expect(String(worker.command)).toContain('redis://***:***@redis:6379/0');
     expect(findMirrorLeaks(m)).toEqual([]);
   });

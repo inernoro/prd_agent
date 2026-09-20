@@ -96,7 +96,8 @@ export interface PreviewMirrorFile {
  * `redis://:pass@host` 归一，父实例每次部署都「自检发现泄露，本次不写」，子实例永远拿不到镜像。
  */
 export function redactUrlUserinfo(value: string): string {
-  return value.replace(/([a-z][a-z0-9+.-]*:\/\/)([^\s"'@/]*)@/gi, (_m, scheme: string, userinfo: string) =>
+  // userinfo 只能出现在 authority 段：碰到 / ? # 就停，`https://example.com?email=a@b` 里的 @ 不是凭据（Codex P2）
+  return value.replace(/([a-z][a-z0-9+.-]*:\/\/)([^\s"'@/?#]*)@/gi, (_m, scheme: string, userinfo: string) =>
     `${scheme}${userinfo.includes(':') ? '***:***' : '***'}@`);
 }
 
@@ -336,7 +337,7 @@ export function findMirrorLeaks(mirror: PreviewMirrorFile): string[] {
   if (/"(agentKeys|globalAgentKeys|principals|userCredentials|projectGrants|customEnv|githubCredentialUserId|statusPageToken)"\s*:/.test(text)) leaks.push('carries-credential-collections');
   // URL 的 userinfo 段无论 user:pass 还是只有 user（PAT 形式）都算凭据；自己打的码（***:***@ / ***@）先剥掉
   const stripped = text.replace(/:\/\/\*\*\*(?::\*\*\*)?@/g, '://');
-  if (/[a-z][a-z0-9+.-]*:\/\/[^\s"@/]+@/i.test(stripped)) leaks.push('url-with-inline-credentials');
+  if (/[a-z][a-z0-9+.-]*:\/\/[^\s"@/?#]+@/i.test(stripped)) leaks.push('url-with-inline-credentials');
   return leaks;
 }
 
