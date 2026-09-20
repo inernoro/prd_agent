@@ -1033,33 +1033,37 @@ function ServiceTable({
   });
   const cpuMax = Math.max(1e-9, ...rows.map((r) => r.cpu ?? 0));
   const memMax = Math.max(1e-9, ...rows.map((r) => r.mem ?? 0));
-  const COLS = 'grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1.7fr)_minmax(0,1.6fr)]';
+  // 窄屏（< sm）每个服务折成两行：名字 + 状态一行，CPU / 内存 / 容器一行；
+  // sm 起才铺成五列——390px 里五列硬挤会把「运行中」压成竖排（CDS CI 的离线冒烟抓到的）
+  const COLS = 'sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1.7fr)_minmax(0,1.7fr)_minmax(0,1.6fr)]';
   return (
     <section className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] pb-1 pt-1" data-testid="service-table">
-      <div className={`grid ${COLS} h-9 items-center gap-4 border-b border-[hsl(var(--hairline))] text-[0.75rem] font-bold uppercase tracking-[0.08em] text-muted-foreground`}>
+      <div className={`hidden ${COLS} h-9 items-center gap-4 border-b border-[hsl(var(--hairline))] text-[0.75rem] font-bold uppercase tracking-[0.08em] text-muted-foreground sm:grid`}>
         <span>服务</span><span>状态</span><span>CPU</span><span>内存</span><span>容器</span>
       </div>
       {rows.length === 0 ? (
         <div className="py-5 text-sm text-muted-foreground">还没有任何 service。</div>
       ) : rows.map(({ sv, name, on, cpu, mem, color }, i) => (
-        <div key={`${name}-${i}`} className={`grid ${COLS} h-14 items-center gap-4 border-b border-[hsl(var(--hairline))]/60 text-sm last:border-b-0`} data-service-row={name}>
+        <div key={`${name}-${i}`} className={`grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-2 border-b border-[hsl(var(--hairline))]/60 py-3 text-sm last:border-b-0 sm:h-14 ${COLS} sm:items-center sm:gap-4 sm:py-0`} data-service-row={name}>
           <div className="flex min-w-0 items-center gap-3">
             <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] font-mono text-[0.66rem] font-extrabold uppercase text-primary-foreground" style={{ background: color }} aria-hidden>{name.slice(0, 3)}</span>
             <span className="truncate font-mono font-semibold text-foreground" title={name}>{name}</span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 whitespace-nowrap">
             <span className={`h-2 w-2 shrink-0 rounded-full ${on ? 'bg-ok' : sv.status === 'error' ? 'bg-bad' : 'bg-muted-foreground/50'}`} aria-hidden />
             <span className={on ? 'text-foreground' : 'text-muted-foreground'}>{STATUS_LABEL[sv.status] ?? sv.status}</span>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="col-span-2 flex items-center gap-2.5 sm:col-span-1">
+            <span className="w-[2.5rem] shrink-0 text-[0.75rem] font-bold uppercase tracking-[0.08em] text-muted-foreground sm:hidden">CPU</span>
             <span className="w-[3.75rem] shrink-0 text-right font-mono tabular-nums text-foreground">{cpu == null ? '—' : `${cpu.toFixed(1)}%`}</span>
             <span className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]"><span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${cpu == null ? 0 : (cpu / cpuMax) * 100}%`, background: 'hsl(var(--series-1))' }} /></span>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="col-span-2 flex items-center gap-2.5 sm:col-span-1">
+            <span className="w-[2.5rem] shrink-0 text-[0.75rem] font-bold uppercase tracking-[0.08em] text-muted-foreground sm:hidden">内存</span>
             <span className="w-[4.5rem] shrink-0 text-right font-mono tabular-nums text-foreground">{mem == null ? '—' : formatBytesShort(mem)}</span>
             <span className="relative h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[hsl(var(--surface-sunken))]"><span className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${mem == null ? 0 : (mem / memMax) * 100}%`, background: 'hsl(var(--series-3))' }} /></span>
           </div>
-          <span className="truncate font-mono text-[0.8125rem] text-muted-foreground" title={sv.containerName}>{sv.containerName}</span>
+          <span className="col-span-2 truncate font-mono text-[0.8125rem] text-muted-foreground sm:col-span-1" title={sv.containerName}>{sv.containerName}</span>
         </div>
       ))}
       <div className="flex flex-wrap items-center gap-x-6 gap-y-1 border-t border-[hsl(var(--hairline))] py-2.5 text-[0.8125rem] text-muted-foreground">
