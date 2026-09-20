@@ -78,6 +78,57 @@ const NEW_PAGE_SEED_SCRIPT = [
 const NEW_PAGE_SEED = 'if [ ! -f /workspace/index.html ]; then '
   + `node --input-type=module -e ${JSON.stringify(NEW_PAGE_SEED_SCRIPT)}; fi`;
 
+
+/**
+ * 把 OpenDesign 的 live artifact 落成 `/workspace/index.html`。
+ *
+ * 为什么非有这一步不可：web-prototype 技能的 SKILL.md 明令禁止模型写
+ * `/workspace/index.html`——「Do not write a project-root HTML draft with file-write
+ * before emitting the final `<artifact>`」「OpenDesign derives the canonical HTML
+ * artifact from this identifier. Do not also write another root HTML file for the
+ * same generation turn.」模型把整张页面放在消息里的 `<artifact>` 块交给 OpenDesign，
+ * 而 CDS 的收件读的是那个文件。两条通道此前从来没有接上：2026-09-20 的十四条 run，
+ * 每一条收上来的都是 CDS 自己种下去的那张起始页，模型真正做出来的页面被丢掉了。
+ *
+ * 为什么在容器里调、而不是从宿主调：`/preview` 那条路由挂着 `requireLocalDaemonRequest`，
+ * 要求对端是回环地址。容器里本来就有 `OD_API_TOKEN` 与 `OD_PORT`，在里面调既满足回环，
+ * 又不必把令牌写到命令行上（`docker exec` 的 argv 在宿主 `ps` 里是可见的）。
+ *
+ * 为什么不读 daemon 的磁盘布局：`.live-artifacts/<id>/template.html` 是它的内部实现，
+ * 上游换一次目录结构我们就静默取空。走它自己的 HTTP 契约，换了会报错而不是取到旧东西。
+ *
+ * 取不到 artifact 时**不失败**：模型若真的直接写了 index.html（编辑路径就是这么要求的），
+ * 硬失败反而误伤。改为如实汇报走了哪条路（`live-artifact:<id>` 还是 `live-artifact:none`），
+ * 由既有的质量闸去判产物本身对不对——降级可以，静默不行
+ * （`degradation-must-alarm.md`、`predicate-and-wiring-discipline.md` 形状 10）。
+ */
+const LIVE_ARTIFACT_COLLECT_SCRIPT = [
+  'import fs from "node:fs";',
+  'const fail = (m) => { throw new Error("live artifact collect: " + m); };',
+  'const token = process.env.OD_API_TOKEN;',
+  'const port = process.env.OD_PORT;',
+  'const projectId = process.env.OD_COLLECT_PROJECT_ID;',
+  'if (!token || !port || !projectId) fail("daemon identity is incomplete");',
+  'const base = "http://127.0.0.1:" + port;',
+  'const headers = { Authorization: "Bearer " + token };',
+  'const listed = await fetch(base + "/api/live-artifacts?projectId=" + encodeURIComponent(projectId), { headers });',
+  'if (!listed.ok) fail("listing live artifacts failed with HTTP " + listed.status);',
+  'const artifacts = ((await listed.json()) || {}).artifacts || [];',
+  'if (artifacts.length === 0) { console.log("live-artifact:none"); process.exit(0); }',
+  'const stamp = (a) => String(a.updatedAt || a.createdAt || "");',
+  'const pick = artifacts.slice().sort((a, b) => stamp(b).localeCompare(stamp(a)))[0];',
+  'const id = pick.id || pick.artifactId;',
+  'if (!id) fail("the newest live artifact carries no id");',
+  'const url = base + "/api/live-artifacts/" + encodeURIComponent(id)',
+  '  + "/preview?projectId=" + encodeURIComponent(projectId) + "&variant=template";',
+  'const got = await fetch(url, { headers });',
+  'if (!got.ok) fail("reading live artifact " + id + " failed with HTTP " + got.status);',
+  'const html = await got.text();',
+  'if (!/<html[\\s>]/i.test(html)) fail("live artifact " + id + " is not an HTML document");',
+  'fs.writeFileSync("/workspace/index.html", html);',
+  'console.log("live-artifact:" + id + " bytes:" + html.length);',
+].join(' ');
+
 const WEB_PROTOTYPE_TEMPLATE_FILES = [
   '/app/design-templates/web-prototype/assets/template.html',
   '/workspace/.od-skills/web-prototype/assets/template.html',
@@ -2662,6 +2713,12 @@ export class AgentWorkspaceSessionRuntime {
       for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
         onStage('workspace_collecting');
         this.assertExecutionDeadline(executionDeadline);
+        if (!editingExistingPage) {
+          // 生成路径的产物在 OpenDesign 的 live artifact 里，不在 /workspace/index.html 上。
+          // 编辑路径不走这一步：那条提示词要求的就是直接改 index.html，此处未经验证，不动它。
+          await this.materializeLiveArtifact(handle, projectId, executionDeadline, onStage);
+          this.assertExecutionDeadline(executionDeadline);
+        }
         await this.copyOutputsFromContainer(handle, executionDeadline);
         this.assertExecutionDeadline(executionDeadline);
         collectedFiles = this.collectOutputs(handle);
@@ -3295,6 +3352,45 @@ export class AgentWorkspaceSessionRuntime {
       await delay(this.pollIntervalMs);
     }
     throw new AgentWorkspaceRuntimeError('open_design_not_ready', `OpenDesign health check timed out: ${last}`, true);
+  }
+
+  /**
+   * 在容器内以回环身份向 OpenDesign 要这一轮的 live artifact，写进 /workspace/index.html。
+   * 取不到就如实汇报 `none` 并原样放过，由既有的质量闸去判产物本身（理由见
+   * LIVE_ARTIFACT_COLLECT_SCRIPT 的注释）。artifact 存在但读不出来或不是 HTML 才算故障。
+   */
+  private async materializeLiveArtifact(
+    handle: RuntimeHandle,
+    projectId: string,
+    executionDeadline: number,
+    onStage: StageReporter,
+  ): Promise<void> {
+    const collected = await this.shell.exec([
+      'docker exec',
+      `-e ${shellQuote(`OD_COLLECT_PROJECT_ID=${projectId}`)}`,
+      shellQuote(handle.containerName),
+      'node --input-type=module -e',
+      shellQuote(LIVE_ARTIFACT_COLLECT_SCRIPT),
+    ].join(' '), { timeout: Math.max(5_000, Math.min(this.remainingExecutionMs(executionDeadline), 60_000)) });
+    if (collected.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_live_artifact_unavailable',
+        'OpenDesign produced a live artifact that could not be read back as the deliverable',
+        true,
+        {
+          stage: 'live_artifact_collect',
+          exitCode: collected.exitCode,
+          stderrPreview: runtimeDiagnosticPreview(collected.stderr, [handle.daemonApiToken]),
+          stdoutPreview: runtimeDiagnosticPreview(collected.stdout, [handle.daemonApiToken]),
+        },
+      );
+    }
+    const marker = /live-artifact:(\S+)(?: bytes:(\d+))?/.exec(collected.stdout || '');
+    onStage('live_artifact_collected', {
+      artifactId: marker && marker[1] !== 'none' ? marker[1] : null,
+      bytes: marker && marker[2] ? Number(marker[2]) : null,
+      source: marker && marker[1] !== 'none' ? 'open-design-live-artifact' : 'workspace-file',
+    });
   }
 
   private async waitForRun(

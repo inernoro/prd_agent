@@ -1556,6 +1556,26 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(provenanceText).not.toContain(workspacePackage.sha256);
     expect(provenanceText).not.toContain('knowledgeSourceCount');
     expect(provenanceText).not.toContain('sourceClasses');
+    // 接线守卫（形状 2：链路只建一半）。web-prototype 技能明令禁止模型写
+    // /workspace/index.html，它把整张页面作为 live artifact 交给 OpenDesign；CDS 此前
+    // 只读那个文件，于是十四条 run 收上来的全是自己种下去的起始页。生成路径必须先取件、
+    // 再冻结容器收件——把取件那一步删掉，下面三条会红。
+    const collectAt = shell.calls.findIndex((call) => (
+      call.command.includes('OD_COLLECT_PROJECT_ID=od-generate-project')
+    ));
+    const freezeAt = shell.calls.findIndex((call) => call.command.startsWith('docker pause '));
+    expect(collectAt).toBeGreaterThanOrEqual(0);
+    expect(freezeAt).toBeGreaterThan(collectAt);
+    const collectCommand = shell.calls[collectAt]?.command || '';
+    // 走 OpenDesign 自己的 HTTP 契约，不读它的磁盘布局（上游换目录要报错，不许静默取空）
+    expect(collectCommand).toContain('/api/live-artifacts?projectId=');
+    expect(collectCommand).toContain('variant=template');
+    expect(collectCommand).not.toContain('.live-artifacts/');
+    // 在容器内以回环身份调，令牌从环境读，不落到宿主可见的命令行上
+    expect(collectCommand).toContain('127.0.0.1');
+    expect(collectCommand).toContain('process.env.OD_API_TOKEN');
+    // 没有 artifact 时如实汇报走了哪条路，而不是静默放过，也不是硬失败
+    expect(collectCommand).toContain('live-artifact:none');
     expect(fs.existsSync(path.join(rootDir, 'session-generate', 'workspace', 'current', 'index.html'))).toBe(false);
     await runtime.stop('session-generate');
   });
