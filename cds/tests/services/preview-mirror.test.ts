@@ -168,6 +168,24 @@ describe('只读 + 幂等（子实例播种）', () => {
     expect(child.getBuildProfiles().some((p) => p.id === 'api')).toBe(true);
     expect(seedPreviewInstanceMirror(child, m)).toBe(false);
   });
+  it('一个项目的 run 超过保留上限时导出封顶，播种后幂等判据仍判「已播完」，不会每次重启整体重播（Codex P2）', () => {
+    const parent = parentState();
+    const now = Date.parse('2026-09-20T10:00:00Z');
+    for (let i = 0; i < 20; i += 1) {
+      const branchId = `map-b${i}`;
+      parent.addBranch({ id: branchId, projectId: 'map', branch: `feat/b${i}`, worktreePath: `/srv/wt/${branchId}`, status: 'idle', createdAt: new Date(now).toISOString(), services: {} } as unknown as BranchEntry);
+      for (let j = 0; j < 3; j += 1) {
+        parent.addDeploymentRun({ id: `run-${i}-${j}`, projectId: 'map', branchId, branch: `feat/b${i}`, status: 'succeeded', trigger: 'manual', startedAt: new Date(now - (i * 3 + j) * 60_000).toISOString(), finishedAt: new Date(now - (i * 3 + j) * 60_000 + 1000).toISOString(), commitSha: 'b'.repeat(40) } as unknown as Parameters<typeof parent.addDeploymentRun>[0]);
+      }
+    }
+    const m = buildPreviewMirror(parent, { nowMs: now });
+    expect(m.deploymentRuns.filter((r) => r.projectId === 'map').length).toBeLessThanOrEqual(50);
+    // 封顶留的是最新的那批
+    expect(m.deploymentRuns.some((r) => r.id === 'run-0-0')).toBe(true);
+    const child = freshState('child-runs');
+    expect(seedPreviewInstanceMirror(child, m)).toBe(true);
+    expect(seedPreviewInstanceMirror(child, m)).toBe(false);
+  });
   it('同一份镜像重复启动不动库；新镜像整体替换，镜像里消失的分支也消失', () => {
     const parent = parentState();
     const m1 = buildPreviewMirror(parent, { nowMs: Date.parse('2026-09-16T10:00:00Z') });

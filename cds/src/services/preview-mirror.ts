@@ -35,7 +35,7 @@ import type {
   PreviewMirrorTag,
   Project,
 } from '../types.js';
-import type { StateService } from './state.js';
+import { MAX_DEPLOYMENT_RUNS_PER_PROJECT, type StateService } from './state.js';
 import { isSensitiveKey, looksLikeSecretBearingValue, looksLikeUrlWithCredentials, maskSecrets } from './secret-masker.js';
 import { queryContainerSeries, type SeriesPoint, type SeriesResult } from './container-metrics-history.js';
 
@@ -267,6 +267,18 @@ export function buildPreviewMirror(state: StateService, opts: BuildPreviewMirror
     }
   }
 
+  // 每个项目最多带保留上限那么多条 run：子实例 addDeploymentRun 会按项目裁到上限，导出得比它多，
+  // 播种后的条数永远对不上「镜像里的条数」，逐集合幂等判据每次重启都判「没播完」而整体重播（Codex P2）
+  const runsByProject = new Map<string, DeploymentRun[]>();
+  for (const run of runs) {
+    const list = runsByProject.get(run.projectId) ?? [];
+    list.push(run);
+    runsByProject.set(run.projectId, list);
+  }
+  const cappedRuns = [...runsByProject.values()].flatMap((list) =>
+    [...list].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, MAX_DEPLOYMENT_RUNS_PER_PROJECT),
+  );
+
   const reports = state.listAcceptanceReports(null)
     .filter((r) => !r.projectId || projectIds.has(r.projectId))
     .map((r) => ({ ...r, shareToken: null, objectKey: null, storage: undefined }));
@@ -278,7 +290,7 @@ export function buildPreviewMirror(state: StateService, opts: BuildPreviewMirror
     projects: projects.map((p) => redactProject(p, base)),
     buildProfiles: state.getBuildProfiles().filter((p) => projectIds.has(p.projectId)).map(redactProfile),
     branches: mirroredBranches,
-    deploymentRuns: runs,
+    deploymentRuns: cappedRuns,
     reports,
     logs,
     metrics,

@@ -48,7 +48,7 @@ import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
-const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+export const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
 /* 定时任务运行记录：按任务各留 120 条（每 5 分钟的任务约 10 小时，日任务约 4 个月），
    全局 5000 条兜底防状态文件无限膨胀。 */
 const SCHEDULED_JOB_RUNS_PER_JOB = 120;
