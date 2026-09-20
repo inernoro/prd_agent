@@ -3126,9 +3126,13 @@ export class AgentWorkspaceSessionRuntime {
         'OpenDesign output changed while it was being exported',
       );
     }
+    // 这是兜底分支：上面每个已知标记都没命中。此前它把 validation 的 stdout/stderr 整个丢掉，
+    // 只留一句「could not be validated」——真实原因（预检脚本自己的报错、docker 起不来、
+    // 30 秒超时被杀）全在那两个流里，谁也看不到。2026-09-20 实跑撞上一次，排查从这里断掉。
+    // 诊断里可能夹着凭据，所以只带一段有界摘要，出容器时还会再过一次 sanitize。
     throw new AgentWorkspaceRuntimeError(
       'workspace_output_validation_failed',
-      'OpenDesign output could not be validated inside the managed workspace before transfer',
+      `OpenDesign output could not be validated inside the managed workspace before transfer (exit ${validation.exitCode}): ${summarizeOutputPreflightDiagnostic(diagnostic)}`,
       true,
     );
   }
@@ -3400,6 +3404,19 @@ export function canAcceptUntrackedWorkspaceEdit(
   return deliverableValidation === 'no_artifact'
     && outputHtml.length > 0
     && (currentHtml === undefined || !currentHtml.equals(outputHtml));
+}
+
+/**
+ * 输出预检兜底分支的诊断摘要。诊断是预检容器的 stdout+stderr，可能很长、可能带凭据，
+ * 也可能整个是空的（进程被超时杀掉时就什么都没有）。三条规矩：
+ * 压成一行、有界截断、空的时候明说空，不拿一句像模像样的话去顶替「不知道」。
+ */
+export function summarizeOutputPreflightDiagnostic(diagnostic: string): string {
+  const flattened = diagnostic.replace(/\s+/g, ' ').trim();
+  if (!flattened) return 'the preflight produced no diagnostic output (it was most likely killed by the 30s timeout)';
+  const limit = 400;
+  // 报错通常写在最后，截尾比截头有用。
+  return flattened.length <= limit ? flattened : `...${flattened.slice(-limit)}`;
 }
 
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {

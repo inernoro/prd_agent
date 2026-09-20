@@ -1152,3 +1152,26 @@ Redis 的 `PingAsync` 不收取消令牌，半失活时会直接挂住，所以�
 ### 实现来源
 
 - 发布顺序：`prd-api/src/PrdAgent.Api/Services/MdToPpt/HtmlPptPublishCoordinator.cs`（建站与设置共享团队那两步）
+
+## MAP 容器不在时，容器里的模型调用拿到的是 CDS 的 401（2026-09-20，B 类）
+
+OpenDesign 容器里的 Codex 打的是 `http://map-egress:8787/api/design-artifacts/runtime/{runId}/llm/v1/responses`。
+MAP 容器重新部署的那几十秒里，egress 找不到上游，请求落到 **CDS 自己的 API** 上，
+于是 Codex 收到的是 CDS 的鉴权提示：「请在请求头中提供 X-AI-Access-Key」。
+
+这条提示对排查是误导的：它读起来像「MAP 的模型凭据配错了」，实际是「MAP 这会儿不在」。
+2026-09-20 验证 OpenDesign 修复时踩到一次——推送触发预览重部署，正在跑的 run 因此失败，
+第一眼按凭据问题查了一轮才看出来。同一现象从外部也能复现：MAP 重启窗口里打预览域名的
+任何 MAP 路由，拿到的都是 CDS 的 401。
+
+**为什么不在本 PR 顺手改**：修法要给 egress 一条「上游不存在」与「上游拒绝」分得开的语义，
+属于转发层的新契约（`predicate-and-wiring-discipline.md` 形状 10：静默降级把一种失败
+伪装成另一种）。按 AGENTS.md 5.5 记 B 类。
+
+**现状影响有界**：只在 MAP 容器重启窗口内发生，重新发起即可；不会污染数据，
+也不会让已完成的产物丢失。真修时的判据是「MAP 不在」和「MAP 拒绝」在 Codex 侧读起来必须不同。
+
+### 实现来源
+
+- 容器侧模型地址：`cds/src/services/agent-workspace-session-runtime.ts`（`modelBaseUrl` 注入）
+- 落到 CDS 的那条 401：`cds/src/server.ts` 的 AI 访问门

@@ -17,6 +17,7 @@ import {
   buildGeneratedPublicArtifactPackage,
   canAcceptUntrackedWorkspaceEdit,
   classifyQualityRepairReason,
+  summarizeOutputPreflightDiagnostic,
   computePublicArtifactRevision,
   createArtifactQualityGate,
   hardenSelfContainedHtml,
@@ -3509,5 +3510,33 @@ describe('quality repair instructions must name a gate-passing alternative', () 
   it('marks the shipped reference material as the likely source so the model stops copying it', () => {
     const instruction = reason('index.html contains an empty link target')?.instruction ?? '';
     expect(instruction).toContain('web-prototype');
+  });
+});
+
+/**
+ * 输出预检的兜底分支此前把 validation 的 stdout/stderr 整个丢掉，只留一句
+ * 「could not be validated」。2026-09-20 实跑撞上一次：真实原因在那两个流里，
+ * 排查当场断掉——和上一层「请在 CDS 会话日志中查看原因」是同一种病，只是低一层。
+ * 红绿闭环：把摘要从错误文案里拿掉，这三条会红。
+ */
+describe('output preflight fallback must carry a real diagnostic', () => {
+  it('keeps the tail of a long diagnostic and bounds it', () => {
+    const summary = summarizeOutputPreflightDiagnostic(`${'x'.repeat(5000)} ENOSPC: no space left on device`);
+    expect(summary).toContain('ENOSPC: no space left on device');
+    expect(summary.length).toBeLessThan(500);
+  });
+
+  it('flattens multi-line container output into one readable line', () => {
+    expect(summarizeOutputPreflightDiagnostic('line one\n\n   line two\t\tline three'))
+      .toBe('line one line two line three');
+  });
+
+  it('says plainly that there was no output instead of inventing a cause', () => {
+    for (const empty of ['', '   ', '\n\t ']) {
+      const summary = summarizeOutputPreflightDiagnostic(empty);
+      expect(summary).toContain('no diagnostic output');
+      // 不许编一个具体原因当结论：只能点名最可能的那一种，并说清它是推测。
+      expect(summary).toContain('most likely');
+    }
   });
 });
