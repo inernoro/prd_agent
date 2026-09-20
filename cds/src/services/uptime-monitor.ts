@@ -1,3 +1,4 @@
+import { decideSelfMonitorAlarm, type SelfMonitorAlarmState } from './self-monitor-alarm-policy.js';
 /**
  * uptime-monitor — CDS 自建存活监控（Uptime Kuma 风格）的探测器。
  *
@@ -192,6 +193,8 @@ export interface UserViewState {
 export type UptimeAlertEventType = 'uptime.target.down' | 'uptime.target.recovered';
 
 export interface UptimeAlertEventData {
+  /** 自监控恢复只发给实际接收过本轮故障的通道。 */
+  recoveryChannelIds?: string[];
   targetId: string;
   projectId: string;
   branchId: string;
@@ -211,6 +214,7 @@ export interface UptimeAlertEventData {
 }
 
 export interface UptimeTargetRecord {
+  notification?: SelfMonitorAlarmState;
   id: string;
   /** 旧台账可缺省，load 时按 id 前缀回填 */
   source?: ProbeSource;
@@ -1193,6 +1197,7 @@ export class UptimeMonitorService {
        *
        * 不接不报错，只是掉线永远没人被通知——所以有源码守卫钉住这行接线。
        */
+      onAlarmSuppressed?: (data: { targetId: string; targetName: string; projectId: string; reason: string; at: number }) => void;
       onAlert?: (type: UptimeAlertEventType, data: UptimeAlertEventData) => void;
     },
   ) {
@@ -1708,6 +1713,17 @@ export class UptimeMonitorService {
     const record = this.records.get(target.id);
     if (!record) return;
     const sample = options.allowDegrade ? this.maybeDegrade(target, record, rawSample) : rawSample;
+    if (sample.noData) {
+      if (!record.lastSample?.noData && target.projectId === 'cds-self-monitor') this.deps.onAlarmSuppressed?.({
+        targetId: target.id, targetName: target.name, projectId: target.projectId, reason: 'no-data', at: sample.t,
+      });
+      record.lastSample = sample;
+      record.consecutiveFailures = 0;
+      record.consecutiveSuccesses = 0;
+      if (record.notification) decideSelfMonitorAlarm(record.notification, { at: sample.t, up: false, noData: true, down: record.status === 'down', intervalMs: target.intervalMs ?? this.deps.config.intervalMs });
+      // 无数据既不拉高可用率，也不解除上一条真实故障。
+      return;
+    }
     appendCapped(record.samples, sample, this.deps.config.maxSamples);
     applyDailyRollup(record.daily, sample, MAX_DAILY_ROLLUPS);
     record.lastSample = sample;
@@ -1738,7 +1754,15 @@ export class UptimeMonitorService {
     if (next.transition === 'to-down') this.attachReleaseAttribution(target, record, sample.t);
     // 状态翻转才外发：去抖已经在 nextDebounceState 做过，走到这里就是「真掉线 / 真恢复」，
     // 不会每轮探测都响一次。排除名单里的目标不算故障，不打扰人。
-    if (next.transition && !record.excluded) {
+    if (target.projectId === 'cds-self-monitor' && !record.excluded) {
+      const decision = decideSelfMonitorAlarm(record.notification ??= {}, {
+        at: sample.t, up: sample.up, down: next.status === 'down', intervalMs: target.intervalMs ?? this.deps.config.intervalMs,
+      });
+      if (decision.emit) this.emitAlert(decision.emit === 'down' ? 'uptime.target.down' : 'uptime.target.recovered', target, record, sample.t,
+        decision.emit === 'down' ? cause : '指标连续稳定 10 分钟');
+      else if (next.transition && decision.reason) this.deps.onAlarmSuppressed?.({ targetId: target.id, targetName: target.name,
+        projectId: target.projectId, reason: decision.reason, at: sample.t });
+    } else if (next.transition && !record.excluded) {
       this.emitAlert(
         next.transition === 'to-down' ? 'uptime.target.down' : 'uptime.target.recovered',
         target,
@@ -1747,6 +1771,15 @@ export class UptimeMonitorService {
         next.transition === 'to-down' ? cause : '探测已连续成功，服务恢复',
       );
     }
+  }
+
+  /** 投递成功后记下通道，失败/演练不会让后续恢复通知获得发送资格。 */
+  markAlarmDelivered(targetId: string, channelId: string, detectedAt: string): void {
+    const record = this.records.get(targetId);
+    if (!record?.notification?.open || record.notification.lastDownAttemptAt !== Date.parse(detectedAt)) return;
+    const channels = record.notification.acceptedChannels ??= [];
+    if (!channels.includes(channelId)) channels.push(channelId);
+    this.persist();
   }
 
   /** 把状态翻转转发给接线方（未接线时静默，见构造参数 onAlert 注释）。 */
@@ -1761,6 +1794,8 @@ export class UptimeMonitorService {
     try {
       this.deps.onAlert(type, {
         targetId: target.id,
+        ...(type === 'uptime.target.recovered' && target.projectId === 'cds-self-monitor'
+          ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),
         projectId: target.projectId,
         branchId: target.branchId,
         targetName: target.name,

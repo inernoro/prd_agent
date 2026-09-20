@@ -25,7 +25,7 @@ import {
 
 describe('单机部署', () => {
   it('默认只绑回环', () => {
-    const d = resolveListenHost({ mode: 'standalone', processEnv: {} });
+    const d = resolveListenHost({ containerized: false, mode: 'standalone', processEnv: {} });
     expect(d.host).toBe(DEFAULT_BIND_HOST);
     expect(d.exposed).toBe(false);
   });
@@ -33,13 +33,13 @@ describe('单机部署', () => {
   /** 本机自己那条 executor 记录不构成「别的机器要连过来」的理由。 */
   it('只有本机 executor 时仍然绑回环', () => {
     for (const n of [0]) {
-      expect(resolveListenHost({ mode: 'standalone', remoteExecutorCount: n, peerCount: 0, processEnv: {} }).exposed)
+      expect(resolveListenHost({ containerized: false, mode: 'standalone', remoteExecutorCount: n, peerCount: 0, processEnv: {} }).exposed)
         .toBe(false);
     }
   });
 
   it('原因里写清了怎么改回去，不让人对着 connection refused 猜', () => {
-    const d = resolveListenHost({ mode: 'standalone', processEnv: {} });
+    const d = resolveListenHost({ containerized: false, mode: 'standalone', processEnv: {} });
     expect(d.reason).toContain(BIND_HOST_ENV);
     expect(describeListenDecision(d)).toContain(DEFAULT_BIND_HOST);
   });
@@ -47,34 +47,34 @@ describe('单机部署', () => {
 
 describe('集群部署必须放开（安全不能做成故障）', () => {
   it('executor 模式绑全部网卡', () => {
-    const d = resolveListenHost({ mode: 'executor', processEnv: {} });
+    const d = resolveListenHost({ containerized: false, mode: 'executor', processEnv: {} });
     expect(d.host).toBe(ALL_INTERFACES_HOST);
     expect(d.exposed).toBe(true);
     expect(d.reason).toContain('master');
   });
 
   it('已注册远端 executor 时绑全部网卡', () => {
-    const d = resolveListenHost({ mode: 'standalone', remoteExecutorCount: 2, processEnv: {} });
+    const d = resolveListenHost({ containerized: false, mode: 'standalone', remoteExecutorCount: 2, processEnv: {} });
     expect(d.exposed).toBe(true);
     expect(d.reason).toContain('2');
   });
 
   it('已配置对等节点时绑全部网卡', () => {
-    expect(resolveListenHost({ mode: 'scheduler', peerCount: 1, processEnv: {} }).exposed).toBe(true);
+    expect(resolveListenHost({ containerized: false, mode: 'scheduler', peerCount: 1, processEnv: {} }).exposed).toBe(true);
   });
 });
 
 describe('逃生阀', () => {
   it('显式指定优先于一切推断', () => {
-    expect(resolveListenHost({ mode: 'standalone', processEnv: { [BIND_HOST_ENV]: '0.0.0.0' } }).host).toBe('0.0.0.0');
+    expect(resolveListenHost({ containerized: false, mode: 'standalone', processEnv: { [BIND_HOST_ENV]: '0.0.0.0' } }).host).toBe('0.0.0.0');
     // 反向：集群角色下也能被显式收窄（运维明确知道自己在做什么）
-    const narrowed = resolveListenHost({ mode: 'executor', processEnv: { [BIND_HOST_ENV]: '10.0.0.5' } });
+    const narrowed = resolveListenHost({ containerized: false, mode: 'executor', processEnv: { [BIND_HOST_ENV]: '10.0.0.5' } });
     expect(narrowed.host).toBe('10.0.0.5');
     expect(narrowed.exposed).toBe(false);
   });
 
   it('空白值不算指定，走推断', () => {
-    expect(resolveListenHost({ mode: 'standalone', processEnv: { [BIND_HOST_ENV]: '   ' } }).host)
+    expect(resolveListenHost({ containerized: false, mode: 'standalone', processEnv: { [BIND_HOST_ENV]: '   ' } }).host)
       .toBe(DEFAULT_BIND_HOST);
   });
 });

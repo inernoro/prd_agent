@@ -1,3 +1,4 @@
+import { SelfUpdateDeferredError } from '../services/webhook-maintenance-retry.js';
 /**
  * GitHub webhook receiver + GitHub App integration endpoints.
  *
@@ -594,6 +595,31 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           if (isPrimary) outcome.deployDispatched = true;
           else fanoutDeployDispatched += 1;
         } catch (err) {
+          if (err instanceof SelfUpdateDeferredError) {
+            const branch = stateService.getBranch(request.branchId);
+            if (branch && branch.lastDeployDispatchCommitSha === request.commitSha) {
+              const pending = { commitSha: request.commitSha, createdAt: new Date().toISOString(), attempts: 0 };
+              branch.maintenanceDeferredDeploy = pending;
+              branch.lastDeployDispatchStatus = 'failed';
+              branch.lastDeployDispatchError = 'CDS 自更新中，部署已排队等待有界补发';
+              try {
+                stateService.save();
+                await stateService.flush();
+              } catch {
+                const reason = '自更新补发队列保存失败，请在更新结束后手动重试部署';
+                if (branch.maintenanceDeferredDeploy === pending) {
+                  branch.maintenanceDeferredDeploy = undefined;
+                  branch.lastDeployDispatchError = reason;
+                  try { stateService.save(); } catch { /* 保留内存诊断，不把异步异常抛出 Express。 */ }
+                }
+                if (isPrimary) { outcome.deployDispatched = false; outcome.dispatchAction = 'error'; outcome.deployDispatchError = reason; outcome.dispatchReason = reason; }
+                else fanoutDeployFailed += 1;
+                return;
+              }
+            }
+            if (isPrimary) { outcome.deployDispatched = false; outcome.dispatchAction = 'skipped'; outcome.dispatchReason = 'CDS 自更新中，部署已排队，结束后自动补发（最多 3 次/30 分钟）'; }
+            return;
+          }
           const message = (err as Error).message;
           if (isPrimary) {
             outcome.deployDispatched = false;
@@ -1290,6 +1316,7 @@ function markWebhookDeployDispatch(
   // 钉首次派发时间（age 锚点）+ 归零重试计数，让新 commit 拿到干净的 N 次额度。
   // accepted/failed 是同一轮派发的终态，不动这两个字段。
   if (status === 'dispatching') {
+    branch.maintenanceDeferredDeploy = undefined;
     branch.deployDispatchFirstAt = ts;
     branch.deployDispatchRetryCount = 0;
   }
@@ -1354,7 +1381,7 @@ function markWebhookDeployDispatchFailed(stateService: StateService, branchId: s
   stateService.save();
 }
 
-function defaultLocalhostDeploy(config: CdsConfig, stateService: StateService): (branchId: string, commitSha: string) => Promise<void> {
+export function defaultLocalhostDeploy(config: CdsConfig, stateService: StateService): (branchId: string, commitSha: string) => Promise<void> {
   return async (branchId, commitSha) => {
     const url = `http://127.0.0.1:${config.masterPort}/api/branches/${encodeURIComponent(branchId)}/deploy`;
     const res = await fetch(url, {
@@ -1376,6 +1403,8 @@ function defaultLocalhostDeploy(config: CdsConfig, stateService: StateService): 
       body: JSON.stringify({ commitSha }),
     });
     if (!res.ok) {
+      const body = await res.clone().json().catch(() => null) as { error?: string } | null;
+      if (res.status === 503 && body?.error === 'self_update_draining') throw new SelfUpdateDeferredError('CDS 自更新中');
       throw new Error(`POST /api/branches/${branchId}/deploy -> ${await responseErrorSummary(res)}`);
     }
     // Drain the SSE stream so Node doesn't complain about unhandled

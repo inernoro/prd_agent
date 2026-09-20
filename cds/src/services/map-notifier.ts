@@ -1,3 +1,4 @@
+import { renderAlarmMessage } from './alarm-route.js';
 /**
  * map-notifier — 把存活监控的状态翻转送进 MAP 站内通知。
  *
@@ -102,6 +103,7 @@ export function signCanonical(privateKeyPem: string, canonical: string): string 
  */
 export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificationPayload {
   const down = alert.type === 'uptime.target.down';
+  const metricMessage = alert.projectId === 'cds-self-monitor' ? renderAlarmMessage({ ...alert, projectId: alert.projectId, kind: down ? 'business-down' : 'business-recovered' }) : null;
   const scope = [alert.projectId, alert.branchId].filter(Boolean).join(' / ');
   const title = down
     ? `监控告警：${alert.targetName} 不可用`
@@ -115,9 +117,9 @@ export function buildNotificationPayload(alert: MapNotifierAlert): MapNotificati
 
   return {
     source: 'uptime-alert',
-    title,
-    message: lines.join('\n'),
-    level: down ? 'error' : 'info',
+    title: metricMessage?.title ?? title,
+    message: metricMessage?.body ?? lines.join('\n'),
+    level: down ? (metricMessage ? 'warning' : 'error') : 'info',
     section: 'admin',
     dedupKey: `uptime:${alert.targetId}:${down ? 'down' : 'recovered'}:${alert.detectedAt}`,
     ...(alert.probeUrl ? { actionLabel: '打开被监控地址', actionUrl: alert.probeUrl } : {}),

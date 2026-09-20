@@ -1,3 +1,4 @@
+import { SelfUpdateDeferredError } from '../../src/services/webhook-maintenance-retry.js';
 /**
  * Integration tests for the /api/github/webhook receiver.
  *
@@ -493,6 +494,39 @@ describe('GitHub webhook route', () => {
     // No deploy should have been dispatched.
     await new Promise((r) => setTimeout(r, 20));
     expect(deployCalls).toHaveLength(0);
+  });
+
+  it('自更新拒绝派发持久化排队，返回已接收且不将分支伪装成部署失败', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    stateService.addProject({ id: 'pZ', slug: 'sample', name: 'Sample', kind: 'git', createdAt: '', updatedAt: '',
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42 });
+    server = startServer(undefined, async () => { throw new SelfUpdateDeferredError('draining'); });
+    const body = JSON.stringify({ ref: 'refs/heads/feature-deferred', after: 'a'.repeat(40), repository: { full_name: 'octocat/repo' }, installation: { id: 42 } });
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push', 'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    expect(res.status).toBe(200); expect(stateService.getGithubWebhookDeliveries(1)[0].dispatchAction, JSON.stringify(res.body)).toBe('skipped');
+    expect(stateService.getGithubWebhookDeliveries(1)[0].dispatchReason).toContain('自动补发');
+    const saved = JSON.parse(fs.readFileSync(path.join(tmp, 'state.json'), 'utf8'));
+    const savedBranch = Object.values(saved.branches)[0] as any;
+    expect(savedBranch.maintenanceDeferredDeploy).toMatchObject({ commitSha: 'a'.repeat(40), attempts: 0 });
+    expect(savedBranch.status).not.toBe('error');
+  });
+
+  it('补发队列落盘失败不谎报排队成功，也不抛出异步未处理异常', async () => {
+    stateService.setGithubAppWhitelistOwners(['octocat']);
+    stateService.addProject({ id: 'pZ', slug: 'sample', name: 'Sample', kind: 'git', createdAt: '', updatedAt: '',
+      githubRepoFullName: 'octocat/repo', githubInstallationId: 42 });
+    server = startServer(undefined, async () => { throw new SelfUpdateDeferredError('draining'); });
+    const body = JSON.stringify({ ref: 'refs/heads/feature-deferred', after: 'a'.repeat(40), repository: { full_name: 'octocat/repo' }, installation: { id: 42 } });
+    const flush = vi.spyOn(stateService, 'flush').mockRejectedValueOnce(new Error('store unavailable'));
+    const res = await request(server, 'POST', '/api/github/webhook', body, {
+      'X-GitHub-Event': 'push', 'X-Hub-Signature-256': sign('whsec-test', body),
+    });
+    flush.mockRestore();
+    expect(res.status).toBe(200);
+    expect(res.body.deployDispatchError).toContain('保存失败');
+    expect(stateService.getAllBranches()[0].maintenanceDeferredDeploy).toBeUndefined();
   });
 
   it('dedups repeated (branchId, sha) deploy dispatches within the window', async () => {

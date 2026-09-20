@@ -42,7 +42,7 @@ describe('通知通道的接线一根都不能少', () => {
     // 成功路径与失败路径必须各自在场。
     const records = [...index.matchAll(/alarmChannel\.record\([\s\S]{0,80}?'alert'/g)];
     expect(records.length, '成功与失败两条路径都要记账').toBeGreaterThanOrEqual(2);
-    expect(index).toMatch(/\.then\(\([^)]*\)\s*=>\s*alarmChannel\.record\([^)]*'alert'/);
+    expect(index).toMatch(/\.then\(\([^)]*\)\s*=>\s*(?:\{\s*)?alarmChannel\.record\([^)]*'alert'/);
   });
 
   it('演练要走真实投递路径，不许造一条假的成功', () => {
@@ -50,7 +50,10 @@ describe('通知通道的接线一根都不能少', () => {
     expect(index).toMatch(/alarmChannel\.record\([^)]*'drill'/);
     // 演练必须真的调 mapNotifier.send；只记账不发送等于自欺
     const drill = index.slice(index.indexOf('runAlarmDrill'), index.indexOf('runAlarmDrill') + 1200);
-    expect(drill).toContain('notifier.send(');
+    expect(drill).toContain('sendLegacyAlarm(');
+    const sender = index.slice(index.indexOf('const sendLegacyAlarm'), index.indexOf('const alarmBoardUrl'));
+    expect(sender).toContain('withAlarmDeliveryHistory(activeServerEventLogStore,');
+    expect(sender).toContain('notifier.send(alert)');
   });
 
   it('摘要要下发通道状态，前端要读它（两头都在才算通）', () => {
