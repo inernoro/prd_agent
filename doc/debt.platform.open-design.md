@@ -1519,3 +1519,57 @@ OpenDesign 在 run 状态的 `deliverableEntryFile` 里指名它，CDS 收件前
   的 NEW_PAGE_NO_SEED_NOTE、`cds/tests/services/agent-workspace-session-runtime.test.ts`
 - 交付文件搬运：同文件的 `DELIVERABLE_ENTRY_PATH` 与 `promoteDeliverableEntry`
 - OpenDesign 的判定：镜像内 `/app/apps/daemon/dist/run-deliverable-validation.js`
+
+## 取证定案：模型这一侧根本没有产出（2026-09-20，最终结论）
+
+### 证据（失败现场，机读）
+
+把种子拿掉之后，`design_output_missing` 那条失败带着现场交了出来：
+
+```
+collectedPaths: []
+workspaceRootEntries: [".od-skills", "brief", "knowledge"]
+deliverableValid: false
+deliverableValidation: "no_artifact"
+deliverableEntryFile: null
+```
+
+工作区根目录**只有我们放进去的三样输入**——技能拷贝、任务书、知识源。模型跑了
+8–10 次模型调用，**一个文件都没写，也没交出任何 artifact**（`no_artifact` 的判据是
+run 的 `artifactCount <= 0`）。
+
+### 这推翻了「产物落在别处」
+
+此前十六条 run 看起来像「交回起始页」，只是因为起始页在那儿。种子一拿掉，真相是空的：
+**不是产物被丢了，是产物从来没有过。**
+
+至此三条归因全部作废，按发现顺序记下来免得再走：
+1. 模型漏填占位 —— 错，那是整张未动的模板；
+2. 产物在 live artifact 里 —— 错，取错了库；
+3. 产物是按 slug 命名的项目文件、被种子劫持了交付判定 —— 判定劫持确有其事
+   （`inferredEntry` 优先认根目录 index.html，这条修正保留），但它不是本缺陷的成因：
+   没有种子时同样没有任何产物。
+
+### 仍然保留的三项修正
+
+它们各自修掉的是真问题，且正是它们把这次的真相逼了出来：
+- 不种 index.html（否则交付判定被劫持，且永远看不到「模型没产出」这个事实）；
+- 按 `deliverableEntryFile` 收件（成品本来就不叫 index.html）；
+- 失败带现场交出（否则这次仍然只能看到一句「没有 index.html」）。
+
+### 下一步的第一手动作
+
+查「模型跑了 8–10 次调用却零产出」：读 OpenDesign 对 `agentId: codex` 这条 run
+的最终消息与 artifact 抽取——技能的输出契约是把整页包在 `<artifact>` 标签里交出来，
+而 `artifactCount` 为 0 说明那一步没有发生（模型没按格式交，或这条 run 通道不抽取
+artifact）。判据是**那次 run 的最终消息里到底有没有 `<artifact>`**，先取到它再谈修法。
+
+顺带：本次还复现了「终态错误偶尔送不到 MAP」——CDS 侧已带现场失败，MAP 侧仍等满
+15 分钟报「远端没有回传原因」。那一条仍未定案，见上文「仍未定案」一节。
+
+### 实现来源
+
+- 失败现场：`cds/src/services/agent-workspace-session-runtime.ts` 的
+  `listWorkspaceRootEntries` 与 `design_output_missing` 那处 details
+- OpenDesign 的判定：镜像内 `/app/apps/daemon/dist/run-deliverable-validation.js`
+- 技能输出契约：镜像内 `/app/plugins/_official/examples/web-prototype/SKILL.md`
