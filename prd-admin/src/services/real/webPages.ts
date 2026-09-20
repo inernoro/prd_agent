@@ -1115,6 +1115,8 @@ export interface SharedSiteInfo {
   siteUrl: string;
   entryFile: string;
   totalSize: number;
+  /** 入口文件自己的字节数（不是 totalSize 那个所有文件之和）。后端取不到时为 0 */
+  entrySize: number;
   fileCount: number;
   coverImageUrl?: string;
   // 仅当本站点是「PDF 包装站」时填充。前端应直接 iframe 这个 URL，

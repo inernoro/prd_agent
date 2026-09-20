@@ -9,7 +9,9 @@ import { createLatestWinsGate } from '@/lib/latest-wins';
 import { resolveWebEntryPresentation, type PreviewMode, type WebEntryCollectionLike } from '@/lib/previewUrl';
 import { useNowTick } from '@/hooks/useNowTick';
 import { statusClass, statusRailClass } from '@/lib/statusStyle';
-import { BranchDetailLoadingSkeleton, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
+import { BranchDrawerSkeleton } from '@/components/branch/BranchDrawerSkeleton';
+import { DRAWER_TAB_BUTTON_CLASS, DRAWER_TAB_NAV_CLASS, drawerTabs, type DrawerTab } from '@/components/branch/drawerTabs';
 import { EnvEditor } from '@/pages/cds-settings/EnvEditor';
 import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
@@ -74,6 +76,8 @@ interface BranchDetailData {
   id: string;
   projectId: string;
   branch: string;
+  /** 父实例镜像来的只读分支（预览实例专用） */
+  mirror?: { capturedAt: string; source: string; previewUrl?: string; subject?: string };
   status: string;
   previewSlug?: string;
   previewUrl?: string;
@@ -107,6 +111,8 @@ interface BranchDetailData {
     title: string;
     pendingPublish?: boolean;
   };
+  /** 播种端的来路说明；以「演示数据」开头即为预览实例的演示分支（isDemoBranch） */
+  notes?: string;
 }
 
 interface BuildProfileOverride {
@@ -358,7 +364,6 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'run' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -385,22 +390,7 @@ type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
 const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto';
 const DETAIL_LOG_EMPTY_CLASS = 'flex min-h-0 flex-1 items-center px-5 text-sm leading-6 text-muted-foreground';
 
-/**
- * 方案 A「六问」分类（2026-07-26 用户拍板，9 页签收敛为 6）：每个页签回答一个问题。
- *   总览=现在怎么样（原详情 + 指标并入）；运行=跑着几个怎么分流；
- *   部署=发生过什么发布（构建日志内联到每条部署，不再跳页签）；
- *   日志=容器在说什么（只留持续流：容器/系统/Webhook/HTTP，构建模式移除归部署）；
- *   配置=下次怎么跑（生效变量 + 配置检查器 + 分支设置三分区）；资源=数据在哪。
- * 分类原则：一次性记录跟事件走、持续流水跟对象走、读与写同域合并。
- */
-const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
-  { key: 'overview', label: '总览' },
-  { key: 'run', label: '运行' },
-  { key: 'deployments', label: '部署' },
-  { key: 'logs', label: '日志' },
-  { key: 'config', label: '配置' },
-  { key: 'services', label: '资源' },
-];
+// drawerTabs / DrawerTab 的 SSOT 在 ./branch/drawerTabs.ts（与加载骨架共用同一张表）。
 
 /** 配置页签内三分区（方案 A：变量/检查器/设置读写同域合并） */
 type ConfigSection = 'variables' | 'references' | 'inspector' | 'settings';
@@ -535,7 +525,7 @@ function DrawerTabButton({
   return (
     <button
       type="button"
-      className={`relative inline-flex h-11 shrink-0 items-center gap-2 whitespace-nowrap px-3 text-sm transition-colors ${
+      className={`${DRAWER_TAB_BUTTON_CLASS} ${
         active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
       }`}
       onClick={onClick}
@@ -545,6 +535,25 @@ function DrawerTabButton({
       {active ? <span className="absolute inset-x-2 bottom-0 h-px bg-primary" /> : null}
     </button>
   );
+}
+
+/**
+ * 页签之上的说明区有没有东西可说。三种内容各自的显示条件抄自渲染处，收成一个判据，
+ * 让「不渲染空 section」和「里面画什么」不会各判各的（形状 3：判据分裂）。
+ */
+export function branchNoticeVisible(branch: Pick<BranchDetailData, 'status' | 'lastStoppedAt'>, failureReason: string | null | undefined): boolean {
+  const stoppedNote = Boolean(branch.lastStoppedAt) && !['running', 'building', 'starting', 'restarting'].includes(branch.status);
+  const idleNote = branch.status === 'idle' || branch.status === 'stopped';
+  return stoppedNote || Boolean(failureReason) || idleNote;
+}
+
+/**
+ * 预览实例的演示分支：没有真实容器，「构建中」永远不会变成「运行中」。
+ * 判据与播种端同一个标记词（notes 以「演示数据」开头，preview-instance-seed 的守卫扫的就是它），
+ * 不另发明一个字段——否则播种端改了标记这里就静默失效。
+ */
+function isDemoBranch(branch: Pick<BranchDetailData, 'notes'>): boolean {
+  return typeof branch.notes === 'string' && branch.notes.startsWith('演示数据');
 }
 
 function statusLabel(s: string): string {
@@ -2216,6 +2225,20 @@ export function BranchDetailDrawer({
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
                 {/* 2026-07-25 用户拍板：状态条并入标题行（不重要信息丢弃，不再单独占一格） */}
                 <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.625rem] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                {isDemoBranch(branch) ? (
+                  <span
+                    className="shrink-0 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] text-warn"
+                    title={branch.notes}
+                    data-testid="drawer-demo-badge"
+                  >演示数据 · 不会真的{branch.status === 'building' || branch.status === 'starting' ? '构建' : '运行'}</span>
+                ) : null}
+                {branch.mirror ? (
+                  <span
+                    className="shrink-0 rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[0.625rem] text-info"
+                    title="父实例镜像：这是采集时刻的状态，本实例上没有对应容器；日志、exec、实时 docker stats 在这里都拿不到"
+                    data-testid="drawer-mirror-badge"
+                  >镜像 · 采集于 {new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                ) : null}
                 {branch.commitSha ? <span className="shrink-0 font-mono text-[0.6875rem] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
                 {(() => {
                   const svcList = Object.values(branch.services || {});
@@ -2287,7 +2310,13 @@ export function BranchDetailDrawer({
         </header>
 
         <div className="min-h-0 flex-1 overflow-y-auto pb-24" style={{ overscrollBehavior: 'contain' }}>
-          {loading && !branch ? <BranchDetailLoadingSkeleton className="min-h-full" /> : null}
+          {/*
+                加载骨架必须是总览的形状（2026-09-17 用户反馈「先出一幅老骨架、三秒后再出一幅更像真实的骨架」）：
+                通用的「四块指标 + 两块内容」和数据到达后的「判断行 / 关系 / 入口 / 曲线」根本不是一个轮廓，
+                于是用户看到的是两副骨架接力。现在骨架期与就绪期共用同一批部件（页签表、关系卡骨架、曲线骨架），
+                数据到了是「被填上」，不是「换一幅」。
+              */}
+              {loading && !branch ? <BranchDrawerSkeleton status={branchStatus} /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
             <div className={activeTab === 'logs' ? 'flex min-h-full flex-col' : undefined}>
@@ -2303,8 +2332,11 @@ export function BranchDetailDrawer({
               {/* 入口卡已并入总览面板（OverviewPanel）——原先它常驻在页签之上，
                   和总览里的「入口 N 个」计数各说各话；现在只有一处。 */}
 
-              {/* 关系缩略卡（plan.cds.service-relations 第四批）：先写结论再画缩略图，半屏 / 全屏看细节 */}
-              {activeTab === 'overview' && branchId ? <RelationCard branchId={branchId} /> : null}
+              {/* 关系卡已并入总览面板（OverviewPanel 的 relationSlot，判断行之下、入口之上）——
+                  原先常驻页签之上等于给每次打开抽屉加 350px 的「头图」，而它的信息量不配那个位置（2026-09-16）。 */}
+              {/* 说明区（上次停止 / 最近失败 / 服务未运行）只在真有话说时才渲染：
+                  运行中、构建中的分支此前也顶着一条空的 py-4 section，页签上方多出一条空带（2026-09-17 用户圈出）。 */}
+              {branchNoticeVisible(branch, currentFailureReason) ? (
               <section className="border-b border-[hsl(var(--hairline))] px-5 py-4">
                 {(() => {
                   const origin = branchOriginInsight(branch);
@@ -2439,8 +2471,9 @@ export function BranchDetailDrawer({
                   </div>
                 ) : null}
               </section>
+              ) : null}
 
-              <nav className="cds-branch-detail-tabs sticky top-0 z-10 flex gap-1 overflow-x-auto border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3">
+              <nav className={DRAWER_TAB_NAV_CLASS}>
                 {drawerTabs.map((tab) => (
                   <DrawerTabButton key={tab.key} tab={tab} active={activeTab === tab.key} onClick={() => setActiveTab(tab.key)} />
                 ))}
@@ -2789,6 +2822,7 @@ export function BranchDetailDrawer({
                     onRefreshMetrics={() => void loadMetrics()}
                     onConfigureEntries={() => setWebEntryConfigOpen(true)}
                     onOpenDeployments={() => setActiveTab('deployments')}
+                    relationSlot={branchId ? <RelationCard branchId={branchId} previewUrl={primaryEntryUrl || undefined} onConfigure={() => setActiveTab('config')} variant="row" /> : null}
                   />
                 ) : null}
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { shouldMaskDirectPreview, PREVIEW_MASK_TIMEOUT_MS } from './ShareViewPage';
+import { shouldMaskDirectPreview, DIRECT_FALLBACK_TIMEOUT_MS } from './ShareViewPage';
 // 判据本体已抽到 web-hosting/previewHtml.ts，让缩略图、站内大预览、分享页共用同一份
 // （原先只长在分享页里，卡片缩略图另走一套，于是同一个「空白」在列表页复发）。
 import { canUseSrcDocPreview, hasFetchableHtml, withPreviewBase } from '@/components/web-hosting/previewHtml';
@@ -48,7 +48,7 @@ describe('分享页预览接线', () => {
    * 的异步回调里），所以在这里按源码守住：ref 要存在，且必须在写 srcDoc 之前真的拦一道。
    */
   it('迟到的原文要不要丢，判据必须冲着「用户攒了多少状态」去', () => {
-    expect(source).toContain('exposedDirectRef');
+    expect(source).toContain('directExposedAtRef');
 
     // 2026-08-25 这条曾收紧成「遮罩已让位 **且** 直链真的加载过」，用 iframe 的 onLoad 记账。
     // 2026-08-29 第十九轮 review 推翻了后半条：直链白屏时 load 照样触发，两条双双成立，
@@ -60,8 +60,8 @@ describe('分享页预览接线', () => {
     // 访客攒了多少状态也看不到。所以判据从「丢不丢」改成「换不换」：时间窗只决定
     // **要不要自动换**，原文一律留着并给出可见出口，由人自己点。
     const guard = source.search(
-      /if\s*\(\s*exposedDirectRef\.current\s*&&\s*elapsed\s*>\s*LATE_SWAP_GUARD_MS\s*\)/);
-    expect(guard, '自动换的门槛要按已过时间判，不能只看遮罩是否让位').toBeGreaterThan(-1);
+      /if\s*\(\s*exposedAt\s*>\s*0\s*&&\s*shownFor\s*>\s*LATE_SWAP_GUARD_MS\s*\)/);
+    expect(guard, '自动换的门槛要按「直链露出至今多久」判').toBeGreaterThan(-1);
 
     // 这一支必须是「存起来」而不是丢掉——丢掉会让「直链白屏 + 原文迟到」成为永远的白
     const branch = source.slice(guard, guard + 400);
@@ -73,9 +73,25 @@ describe('分享页预览接线', () => {
 
     // 不许再拿 iframe 的 load 当「已经画出来了」的证据
     expect(source).not.toContain('directLoadedRef');
+  });
 
-    // 每次重新取原文都要重置起点，否则第二次进来一开始就被算成迟到
-    expect(source).toContain('fetchStartedAtRef.current = Date.now();');
+  /**
+   * 宽限期必须从**直链露出那一刻**起算，不是从开始取正文起算（Codex 第三轮 P2）。
+   *
+   * 上一版两者都用 `fetchStartedAt`，而 LATE_SWAP_GUARD_MS 与 DIRECT_FALLBACK_TIMEOUT_MS
+   * 又同为 6000——fallback 一触发 elapsed 就已经 ≥ 门槛，于是**任何**回来的正文都被判成
+   * 「迟到」不自动换，哪怕直链才刚开始加载。宽限期实际是 0，与它的设计意图正好相反，
+   * 本该救场的那条路被自己关死。
+   *
+   * 所以这里钉两件事：起算点是露出时刻，且「还没露出」时一律直接换上（那时没有现场可保）。
+   */
+  it('迟到的宽限期按「直链露出至今多久」算，不按「取了多久」算', () => {
+    expect(source, '起算点必须是直链露出的时刻').toMatch(
+      /directExposedAtRef\.current\s*=\s*Date\.now\(\)/);
+    // 退回按「开始取正文」起算，就是那个宽限期为 0 的写法
+    expect(source, '不许再拿「开始取正文」当起算点').not.toContain('fetchStartedAtRef');
+    // 还没露出直链时不该走迟到分支
+    expect(source).toMatch(/exposedAt\s*>\s*0\s*\?\s*Date\.now\(\)\s*-\s*exposedAt\s*:\s*0/);
   });
 
   it('既没有原文也没有入口地址时，页面要说清为什么是空的，而不是摆一个空 iframe', () => {
@@ -188,34 +204,72 @@ describe('canUseSrcDocPreview', () => {
 });
 
 /**
- * 加载遮罩必须限时让位。
+ * 准备期不能变成无期。
  *
- * 由 PR #1351 第二轮 review 抓出：那层「正在准备预览...」是不透明全屏遮罩，而底下的直链
- * iframe 一直在正常加载。代理慢或不可达时，一个本来能显示的页面会被白屏盖住整个 HTTP 超时——
- * 这正是本 PR 立意要修的毛病（超时不等于坏了，别盖住已经画出来的页面），却在新加的遮罩上
- * 又犯了一次。核心断言：loading 永不结束时，遮罩不能永远盖着。
+ * 由 PR #1351 第二轮 review 立下：那层「正在准备预览」是不透明全屏，loading 永不结束时
+ * 不能永远盖着。2026-09-18 这条契约换了实现但**没有放松**——pending 期间 iframe 是空的
+ * （不向托管域名发文档请求，那一次请求正是某 App 弹「Download：(null)」的来源），
+ * 所以「让位」不再是露出底下已加载的直链，而是到点**才开始**走直链。
+ * 判据整个收敛进 resolvePreviewSource，这里只剩「pending 才遮」。
  */
 describe('shouldMaskDirectPreview', () => {
-  it('刚开始取原文时遮一下，避免先闪直链再跳 srcDoc 的跳变', () => {
-    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: false, maskExpired: false })).toBe(true);
+  it('还在等正文时显示准备中', () => {
+    expect(shouldMaskDirectPreview({ source: 'pending' })).toBe(true);
   });
 
-  it('短窗口到点后必须让位 —— 即使原文始终没回来', () => {
-    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: false, maskExpired: true })).toBe(false);
+  it('转成直链之后必须让位 —— 这一档正是「原文始终没回来」', () => {
+    expect(shouldMaskDirectPreview({ source: 'direct' })).toBe(false);
   });
 
   it('已经拿到 srcDoc 就不再需要遮罩', () => {
-    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: true, maskExpired: false })).toBe(false);
+    expect(shouldMaskDirectPreview({ source: 'srcdoc' })).toBe(false);
   });
 
-  it('没在加载就不该有遮罩', () => {
-    expect(shouldMaskDirectPreview({ loading: false, hasSrcDoc: false, maskExpired: false })).toBe(false);
+  it('等待窗口必须短于任何合理的 HTTP 超时，否则等于没限', () => {
+    expect(DIRECT_FALLBACK_TIMEOUT_MS).toBeGreaterThan(0);
+    // 服务端代理自己的超时以十秒计，转直链必须远早于它
+    expect(DIRECT_FALLBACK_TIMEOUT_MS).toBeLessThanOrEqual(10000);
+  });
+});
+
+/**
+ * 首帧不许向托管域名发文档请求（2026-09-18 事故的正题）。
+ *
+ * 旧写法 `src={iframeHtml ? undefined : site.siteUrl}`：首帧 iframeHtml 必然为 null，
+ * 于是**每一次打开分享页都先发一次跨域直链请求**，之后才切 srcDoc。桌面浏览器上它只是
+ * 闪一下白，没人注意；而某 App 的内置浏览器把那次 text/html 响应当成下载，弹出
+ * 「Download：(null) File Size：599KB」——599KB 正是那份 HTML 注入翻页垫片后的大小。
+ *
+ * 这条退化删掉之后不会有任何单测变红（它是 JSX 里的一个三元），所以按源码守住。
+ */
+describe('预览源接线', () => {
+  const source = stripComments(fs.readFileSync(SHARE_VIEW, 'utf8'));
+
+  it('iframe 的 src 由 previewSource 决定，不再是「有没有 srcDoc」的三元', () => {
+    expect(source).toContain('resolvePreviewSource');
+    // 钉「src 由 previewSource 决定」，不钉整句字面量——否则给空 siteUrl 加一道防护
+    // 这类正当改动也会把守卫打红，而它要防的其实只有「回到首帧无条件挂直链」那一种
+    expect(source).toMatch(/src=\{previewSource === 'direct'/);
+    // 这正是被替换掉的那个写法，不许回来
+    expect(source, '首帧又会发一次跨域直链请求').not.toMatch(/src=\{iframeHtml \? undefined : site\.siteUrl\}/);
+    expect(source).not.toMatch(/src=\{[^}]*\?\s*undefined\s*:\s*site\.siteUrl\}/);
   });
 
-  it('遮罩窗口必须短于任何合理的 HTTP 超时，否则等于没限', () => {
-    expect(PREVIEW_MASK_TIMEOUT_MS).toBeGreaterThan(0);
-    // 5s 是个宽松上界：真实代理超时以十秒计，遮罩必须远早于它让位
-    expect(PREVIEW_MASK_TIMEOUT_MS).toBeLessThanOrEqual(5000);
+  /**
+   * 「取到哪一步了」必须带上它说的是哪个 siteUrl。
+   *
+   * 两个坑叠在一起，缺一条都会让那次跨域请求回来：
+   * ① 布尔的 loading=false 在「还没开始」与「已经结束」上读起来一样，effect 又总晚一帧，
+   *    首帧把前者读成后者就判 direct；
+   * ② 就算改成三态，换密码重进 / data 刷新时那一帧读到的仍是**上一趟**的 settled，
+   *    照样判一次 direct。对不上 siteUrl 就当没开始，这两种都堵死（形状 1）。
+   */
+  it('取正文的进度必须按 siteUrl 归属，不能是一个全局布尔', () => {
+    expect(source).toContain('previewFetch');
+    expect(source).toMatch(/settled:\s*previewFetch\?\.siteUrl === site\.siteUrl/);
+    expect(source).toMatch(/waitedOut:\s*directFallbackFor === site\.siteUrl/);
+    // 退回裸布尔就等于把上一趟的结论泄给下一趟
+    expect(source).not.toMatch(/useState<boolean>\(false\);\s*\n\s*const \[directFallback\]/);
   });
 });
 

@@ -703,6 +703,20 @@ public class SharedSiteInfo
     public string SiteUrl { get; set; } = string.Empty;
     public string EntryFile { get; set; } = string.Empty;
     public long TotalSize { get; set; }
+
+    /// <summary>
+    /// 入口文件**自己**的字节数（不是 TotalSize 那个所有文件之和）。
+    ///
+    /// 前端拿它判「取正文的同源代理装不装得下这一份」：那条路由读满 2MB 就断
+    /// （见 WebPagesController.FetchSiteHtmlResultAsync 的 maxBytes），而托管上传允许到
+    /// 500MB。此前前端只能拿 TotalSize 近似，于是只对单文件站成立——多文件站里入口 HTML
+    /// 本身超过 2MB 的那一类就漏掉了，按钮看着能用、点下去必然失败（Codex 第四轮 P2）。
+    /// 给出入口自己的大小之后，判据对两种站点是同一条，不再有特例。
+    ///
+    /// 找不到入口文件条目时为 0（前端据此退回「不拦，失败时给受控文案」）。
+    /// </summary>
+    public long EntrySize { get; set; }
+
     public int FileCount { get; set; }
     public string? CoverImageUrl { get; set; }
 

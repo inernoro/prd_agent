@@ -880,7 +880,22 @@ export interface ProfileReplicaSet {
 }
 
 /** Branch entry — simplified for CDS */
+/**
+ * 预览实例数据镜像的来源标记（CDS 托管 CDS，2026-09-16）。
+ * 带这个字段的项目 / 分支是父实例脱敏后搬进子实例的只读数据：状态是采集时刻的状态，
+ * 本实例上没有对应容器。SSOT 见 services/preview-mirror.ts。
+ */
+export interface PreviewMirrorTag {
+  capturedAt: string;
+  source: 'parent-cds';
+  previewUrl?: string;
+  previewUrls?: string[];
+  subject?: string;
+}
+
 export interface BranchEntry {
+  /** 父实例镜像来的只读分支（预览实例专用），生产实例永远没有这个字段 */
+  mirror?: PreviewMirrorTag;
   id: string;
   /**
    * 删除进行中标记（Codex 第十六轮 P1）：删除路由在遍历快照台账/拆容器之前
@@ -3603,6 +3618,8 @@ export interface ManagedProjectSpec {
 }
 
 export interface Project {
+  /** 父实例镜像来的只读项目（预览实例专用） */
+  mirror?: PreviewMirrorTag;
   /**
    * 监控自发现的端点清单（「插上」的那几个口）。
    *

@@ -524,6 +524,17 @@
   .cds-branch-card-enter {
     animation: cds-branch-card-enter 440ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
   }
+  /* 关系流向条的 chip 错峰淡入（2026-09-16）：每枚延迟 40ms，尊重「减少动态效果」。 */
+  @keyframes cds-relation-chip-in {
+    0% { opacity: 0; transform: translateY(0.25rem); }
+    100% { opacity: 1; transform: translateY(0); }
+  }
+  .cds-relation-chip-in {
+    animation: cds-relation-chip-in 260ms cubic-bezier(0.16, 1, 0.3, 1) backwards;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cds-relation-chip-in { animation: none; }
+  }
   @keyframes cds-branch-card-leave {
     0% {
       opacity: 1;
