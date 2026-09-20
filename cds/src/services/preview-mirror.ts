@@ -23,6 +23,7 @@
  * 相同）重复启动不重写，新镜像整体替换旧镜像播下的条目，镜像里消失的条目一并删掉。
  */
 import fs from 'node:fs';
+import { profileHostsPreviewInstance } from './preview-instance.js';
 import path from 'node:path';
 import type {
   AcceptanceReportMeta,
@@ -97,10 +98,45 @@ export function redactEnvForMirror(env: Record<string, string> | undefined): Rec
   return out;
 }
 
+/**
+ * 字符串里内联的凭据：`scheme://user:pass@host` 与 `--password=xxx` / `TOKEN=xxx` 这类参数。
+ * command / entrypoint / 事件文案都可能带；子实例不跑容器，把它们抹掉不损失任何功能。
+ */
+function redactStringForMirror(value: string): string {
+  // 先过通用打码，再归一 URL 里的凭据：通用打码会把 user:pass 写成 `***:***[masked]***`，
+  // 自检认的形状是 `***:***@`，顺序反了自检就会把自己打的码当成泄露
+  return maskSecrets(value)
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s"'@/]+:[^\s"'@/]+@/gi, '$1***:***@')
+      // 参数里的凭据：--api-token=xxx / --password xxx / TOKEN=xxx（等号、冒号、空格三种写法）
+      .replace(/(\b[a-z][a-z0-9_-]*(?:token|password|passwd|pwd|secret|api[-_]?key|access[-_]?key|private[-_]?key)\s*[=:]\s*)[^\s"']+/gi, '$1***')
+      .replace(/(--?[a-z][a-z0-9-]*(?:token|password|passwd|pwd|secret|key)\s+)[^\s"'-][^\s"']*/gi, '$1***');
+}
+
+/**
+ * 深度脱敏：构建配置不止顶层 `env` 一处能放凭据——`deployModes[*].env`、`managedBuild.*`、
+ * `command` / `entrypoint` 都可能带（Codex P1）。镜像文件落在未合并分支的 worktree 里，
+ * 那条分支读得到，所以不能靠「拷一份再改 env」，要逐字段走一遍：
+ *   - 任何一层的 `env` 对象走 redactEnvForMirror；
+ *   - 敏感 key 下的字符串一律 `***`；
+ *   - 其余字符串抹掉内联凭据（URL 里的 user:pass、参数里的 password= / token=）。
+ */
+export function deepRedactForMirror<T>(value: T): T {
+  if (Array.isArray(value)) return value.map((v) => deepRedactForMirror(v)) as T;
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (k === 'env' && v && typeof v === 'object' && !Array.isArray(v)) out[k] = redactEnvForMirror(v as Record<string, string>);
+      else if (typeof v === 'string' && isSensitiveKey(k)) out[k] = '***';
+      else out[k] = deepRedactForMirror(v);
+    }
+    return out as T;
+  }
+  if (typeof value === 'string') return redactStringForMirror(value) as T;
+  return value;
+}
+
 function redactProfile(profile: BuildProfile): BuildProfile {
-  const copy: BuildProfile = { ...profile };
-  if (copy.env) copy.env = redactEnvForMirror(copy.env);
-  return copy;
+  return deepRedactForMirror(profile);
 }
 
 const PROJECT_KEYS: ReadonlyArray<keyof Project> = [
@@ -201,10 +237,10 @@ export function buildPreviewMirror(state: StateService, opts: BuildPreviewMirror
   const mirroredBranches = branches.map((b) => {
     const preview = opts.previewFor?.(b);
     const tag: PreviewMirrorTag = { ...base, previewUrl: preview?.url, previewUrls: preview?.urls, subject: opts.subjectFor?.(b) };
-    for (const run of state.getDeploymentRuns({ branchId: b.id }).slice(0, MAX_RUNS_PER_BRANCH)) runs.push(redactRun(run));
-    const branchLogs = state.getLogs(b.id).slice(-MAX_LOGS_PER_BRANCH).map(redactLog);
+    for (const run of state.getDeploymentRuns({ branchId: b.id }).slice(0, MAX_RUNS_PER_BRANCH)) runs.push(deepRedactForMirror(redactRun(run)));
+    const branchLogs = state.getLogs(b.id).slice(-MAX_LOGS_PER_BRANCH).map((l) => deepRedactForMirror(redactLog(l)));
     if (branchLogs.length) logs[b.id] = branchLogs;
-    return redactBranch(b, tag);
+    return deepRedactForMirror(redactBranch(b, tag));
   });
 
   const runningContainers = branches.flatMap((b) => Object.values(b.services || {}).filter((s) => s.status === 'running').map((s) => s.containerName));
@@ -236,9 +272,14 @@ export function buildPreviewMirror(state: StateService, opts: BuildPreviewMirror
   };
 }
 
-/** 「这个项目是不是用来托管 CDS 预览实例的」：任一构建配置声明了 CDS_PREVIEW_INSTANCE。 */
+/**
+ * 「这个项目是不是用来托管 CDS 预览实例的」：任一构建配置声明了 CDS_PREVIEW_INSTANCE。
+ * 判据与部署侧同一个谓词（profileHostsPreviewInstance）：那边看的是构建配置 env 与项目级 env 合并后的值，
+ * 这里若只看构建配置 env，CDS_PREVIEW_INSTANCE 写在项目环境变量里时就会把托管项目自己也导进镜像（Codex P2）。
+ */
 export function isHostingProject(state: StateService, projectId: string): boolean {
-  return state.getBuildProfiles().some((p) => p.projectId === projectId && /^(1|true|yes|on)$/i.test(String(p.env?.CDS_PREVIEW_INSTANCE ?? '').trim()));
+  const projectEnv = state.getCustomEnv(projectId);
+  return state.getBuildProfiles().some((p) => p.projectId === projectId && profileHostsPreviewInstance(p, projectEnv));
 }
 
 /** 写进子实例的 worktree（与它的 state.json 同目录）。返回写入路径。 */

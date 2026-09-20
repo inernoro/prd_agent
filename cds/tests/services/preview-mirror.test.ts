@@ -12,7 +12,7 @@ import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import {
-  buildPreviewMirror, findMirrorLeaks, readPreviewMirror, redactEnvForMirror, registerLoadedPreviewMirror,
+  buildPreviewMirror, deepRedactForMirror, findMirrorLeaks, isHostingProject, readPreviewMirror, redactEnvForMirror, registerLoadedPreviewMirror,
   replayPreviewMirrorSeries, writePreviewMirror, __resetLoadedPreviewMirror, loadedPreviewMirrorSummary,
   type PreviewMirrorFile,
 } from '../../src/services/preview-mirror.js';
@@ -76,6 +76,34 @@ describe('脱敏（不带凭据）', () => {
     expect(JSON.stringify(m)).not.toContain('hunter2');
     expect(JSON.stringify(m)).not.toContain('tok-secret');
   });
+  it('构建配置的嵌套字段也脱敏：deployModes[*].env、managedBuild、command 里的凭据一个都不进镜像（Codex P1）', () => {
+    const parent = parentState();
+    parent.addBuildProfile({
+      id: 'worker', projectId: 'map', name: 'worker', dockerImage: 'node:20', workDir: '.', containerPort: 5001,
+      command: 'node worker.js --mongo mongodb://root:nested-pass-1@mongo:27017/db --api-token=nested-tok-2',
+      deployModes: { image: { env: { DB_PASSWORD: 'nested-pass-3', PORT: '5001' } } },
+      managedBuild: { registryPassword: 'nested-pass-4', env: { NPM_TOKEN: 'nested-tok-5' } },
+    } as unknown as BuildProfile);
+    const m = buildPreviewMirror(parent, { nowMs: Date.now() });
+    const text = JSON.stringify(m);
+    for (const secret of ['nested-pass-1', 'nested-tok-2', 'nested-pass-3', 'nested-pass-4', 'nested-tok-5']) expect(text, secret).not.toContain(secret);
+    expect(text, '不敏感的值要留着，前缀与端口是图和面板要读的').toContain('"PORT":"5001"');
+    expect(findMirrorLeaks(m)).toEqual([]);
+    // 纯函数：任意深度的 env 与敏感 key 都被处理
+    const out = deepRedactForMirror({ a: { b: [{ env: { SECRET: 'x', KEEP: 'y' }, password: 'p', note: 'https://u:pw@h/x' }] } });
+    expect(out).toEqual({ a: { b: [{ env: { SECRET: '***', KEEP: 'y' }, password: '***', note: 'https://***:***@h/x' }] } });
+  });
+
+  it('托管判定与部署侧同一个谓词：CDS_PREVIEW_INSTANCE 写在项目级 env 里也算托管项目（Codex P2）', () => {
+    const parent = parentState();
+    const now = new Date().toISOString();
+    parent.addProject({ id: 'host2', slug: 'host2', name: 'Host 2', kind: 'git', createdAt: now, updatedAt: now } as Project);
+    parent.addBuildProfile({ id: 'h2', projectId: 'host2', name: 'cds', dockerImage: 'node:20-slim', workDir: '.', containerPort: 9900, env: {} } as BuildProfile);
+    parent.setCustomEnv({ CDS_PREVIEW_INSTANCE: '1' }, 'host2');
+    expect(isHostingProject(parent, 'host2')).toBe(true);
+    expect(buildPreviewMirror(parent, { nowMs: Date.now() }).projects.map((p) => p.id)).not.toContain('host2');
+  });
+
   it('自检能抓到内联凭据的 URL', () => {
     const m = { version: 1, capturedAt: 'x', source: { kind: 'parent-cds', label: 'p' }, projects: [], buildProfiles: [{ env: { X: 'redis://a:b@h' } }], branches: [], deploymentRuns: [], reports: [], logs: {}, metrics: {} } as unknown as PreviewMirrorFile;
     expect(findMirrorLeaks(m)).toContain('url-with-inline-credentials');
@@ -111,6 +139,23 @@ describe('只读 + 幂等（子实例播种）', () => {
     expect(child.getBranch('map-main')).toBeUndefined();
     expect(child.getBranch('map-dev')?.mirror?.capturedAt).toBe(m2.capturedAt);
     expect(child.getProject('map')?.mirror?.capturedAt).toBe(m2.capturedAt);
+  });
+
+  it('换镜像时旧分支的部署 run 一起退场，不再挂在重建出来的项目下（Codex P2）', () => {
+    const parent = parentState();
+    const now = new Date().toISOString();
+    parent.addDeploymentRun({ id: 'run-old', projectId: 'map', branchId: 'map-main', status: 'succeeded', startedAt: now, events: [] } as unknown as Parameters<StateService['addDeploymentRun']>[0]);
+    const m1 = buildPreviewMirror(parent, { nowMs: Date.parse('2026-09-16T10:00:00Z') });
+    const child = freshState('child-runs');
+    seedPreviewInstanceDemoData(child, m1);
+    expect(child.getDeploymentRuns({ branchId: 'map-main' }).map((r) => r.id)).toEqual(['run-old']);
+    // 父实例：那条分支没了，新分支带一条 run
+    parent.removeBranch('map-main');
+    parent.addBranch({ id: 'map-dev', projectId: 'map', branch: 'dev', worktreePath: '/srv/wt/map-dev', status: 'idle', createdAt: now, services: {} } as unknown as BranchEntry);
+    parent.addDeploymentRun({ id: 'run-new', projectId: 'map', branchId: 'map-dev', status: 'succeeded', startedAt: now, events: [] } as unknown as Parameters<StateService['addDeploymentRun']>[0]);
+    const m2 = buildPreviewMirror(parent, { nowMs: Date.parse('2026-09-16T11:00:00Z') });
+    expect(seedPreviewInstanceMirror(child, m2)).toBe(true);
+    expect(child.getDeploymentRuns({ projectId: 'map' }).map((r) => r.id), '旧 run 该跟着旧分支退场').toEqual(['run-new']);
   });
   it('库里有真实项目（既非演示、非快照、也不带 mirror）时一条不播', () => {
     const child = freshState('child3');

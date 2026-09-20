@@ -1021,12 +1021,15 @@ function ServiceTable({
   const cpuById = new Map(cpuSeries.map((x) => [x.id, x]));
   const memById = new Map(memSeries.map((x) => [x.id, x]));
   const rows = services.map((sv, i) => {
+    // 名字兜底：合成数据 / 旧库里的服务可能没有 profileId（CDS CI 的离线冒烟就是这么崩的），
+    // 退回容器名，再退回序号，表不因为一条缺字段的服务整块不渲染
+    const name = sv.profileId || sv.containerName || `service-${i + 1}`;
     const live = liveStats?.[sv.profileId];
     const on = anyRunning && sv.status === 'running';
     const cpu = !on ? undefined : cpuById.get(sv.profileId)?.nowValue ?? live?.cpuPercent;
     const mem = !on ? undefined : memById.get(sv.profileId)?.nowValue ?? live?.memUsedBytes;
     const color = cpuById.get(sv.profileId)?.color ?? seriesColor(Math.min(i, SERIES_SLOTS - 1));
-    return { sv, on, cpu, mem, color };
+    return { sv, name, on, cpu, mem, color };
   });
   const cpuMax = Math.max(1e-9, ...rows.map((r) => r.cpu ?? 0));
   const memMax = Math.max(1e-9, ...rows.map((r) => r.mem ?? 0));
@@ -1038,11 +1041,11 @@ function ServiceTable({
       </div>
       {rows.length === 0 ? (
         <div className="py-5 text-sm text-muted-foreground">还没有任何 service。</div>
-      ) : rows.map(({ sv, on, cpu, mem, color }) => (
-        <div key={sv.profileId} className={`grid ${COLS} h-14 items-center gap-4 border-b border-[hsl(var(--hairline))]/60 text-sm last:border-b-0`} data-service-row={sv.profileId}>
+      ) : rows.map(({ sv, name, on, cpu, mem, color }, i) => (
+        <div key={`${name}-${i}`} className={`grid ${COLS} h-14 items-center gap-4 border-b border-[hsl(var(--hairline))]/60 text-sm last:border-b-0`} data-service-row={name}>
           <div className="flex min-w-0 items-center gap-3">
-            <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] font-mono text-[0.66rem] font-extrabold uppercase text-primary-foreground" style={{ background: color }} aria-hidden>{sv.profileId.slice(0, 3)}</span>
-            <span className="truncate font-mono font-semibold text-foreground" title={sv.profileId}>{sv.profileId}</span>
+            <span className="inline-flex h-[1.625rem] w-[1.625rem] shrink-0 items-center justify-center rounded-[0.4rem] font-mono text-[0.66rem] font-extrabold uppercase text-primary-foreground" style={{ background: color }} aria-hidden>{name.slice(0, 3)}</span>
+            <span className="truncate font-mono font-semibold text-foreground" title={name}>{name}</span>
           </div>
           <div className="flex items-center gap-2">
             <span className={`h-2 w-2 shrink-0 rounded-full ${on ? 'bg-ok' : sv.status === 'error' ? 'bg-bad' : 'bg-muted-foreground/50'}`} aria-hidden />

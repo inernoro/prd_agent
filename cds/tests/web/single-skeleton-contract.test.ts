@@ -21,6 +21,7 @@ import { RelationCardSkeleton } from '../../web/src/components/branch/RelationCa
 import { drawerTabs } from '../../web/src/components/branch/drawerTabs.js';
 import { pageSkeletonForPath } from '../../web/src/components/skeletons/PageSkeletons.js';
 import { branchNoticeVisible } from '../../web/src/components/BranchDetailDrawer.js';
+import { OverviewPanel } from '../../web/src/components/branch/OverviewPanel.js';
 
 const SRC = path.resolve(__dirname, '../../web/src');
 const read = (rel: string): string => fs.readFileSync(path.join(SRC, rel), 'utf8');
@@ -77,6 +78,16 @@ describe('分支详情抽屉：骨架期与就绪期共用同一批部件', () =
     // 运行中：页签之上没有任何 section（此前是一条 py-4 的空带，用户圈出）
     expect(running.indexOf('<nav')).toBeLessThan(running.indexOf('<section'));
     expect(idle.indexOf('<section')).toBeLessThan(idle.indexOf('<nav'));
+  });
+
+  it('服务表对缺 profileId 的服务也能画（CDS CI 离线冒烟的合成数据就没有它，曾整块崩掉）', () => {
+    const html = renderToStaticMarkup(createElement(OverviewPanel, {
+      services: [{ containerName: 'c-legacy', status: 'running' } as unknown as { profileId: string; containerName: string; status: string }],
+      running: true, branchName: 'demo', entries: [], deployments: [], metricSeries: {}, metricsReady: true,
+      replicaSummary: '1 个副本', infraSummary: '无', now: Date.now(), windowMinutes: 30, onRefreshMetrics: () => {},
+    }));
+    expect(html).toContain('data-testid="service-table"');
+    expect(html).toContain('data-service-row="c-legacy"');
   });
 
   it('抽屉本体的说明区只在有话说时渲染，判据收在 branchNoticeVisible 一处', () => {

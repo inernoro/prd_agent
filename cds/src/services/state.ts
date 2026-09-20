@@ -1464,6 +1464,20 @@ export class StateService {
     return run;
   }
 
+  /**
+   * 删掉某条分支名下全部部署 run。
+   *
+   * removeBranch / removeProject 不动 run 账本（主实例上 run 是审计证据，分支没了也要留），
+   * 但预览实例换镜像时旧镜像的分支整体退场，run 若留着，同 id 的新 run 会被「已存在」跳过，
+   * 旧记录一直挂在重建出来的项目下（Codex P2）。删除检测靠 id 集，单实体 hint 足够覆盖。
+   */
+  removeDeploymentRunsForBranch(branchId: string): number {
+    const ids = Object.values(this.state.deploymentRuns || {}).filter((run) => run.branchId === branchId).map((run) => run.id);
+    for (const id of ids) delete this.state.deploymentRuns?.[id];
+    if (ids.length > 0) this.save([{ kind: 'deploymentRuns', id: ids[0] }]);
+    return ids.length;
+  }
+
   getDeploymentRun(id: string): DeploymentRun | undefined {
     return this.state.deploymentRuns?.[id];
   }

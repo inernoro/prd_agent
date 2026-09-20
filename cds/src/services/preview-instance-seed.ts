@@ -79,9 +79,12 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
     && stampedBranches.length === mirror.branches.length;
   if (sameCapture) return changed;
 
-  // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志 / 部署 run）
+  // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志；部署 run 要单独删——
+  //    removeBranch / removeProject 不动 run 账本，留着会让同 id 的新 run 被「已存在」跳过、
+  //    旧记录一直挂在重建出来的项目下，Codex P2）
+  for (const b of stampedBranches) state.removeDeploymentRunsForBranch(b.id);
   for (const p of stampedProjects) state.removeProject(p.id);
-  for (const b of state.getAllBranches()) if (b.mirror) state.removeBranch(b.id);
+  for (const b of state.getAllBranches()) if (b.mirror) { state.removeDeploymentRunsForBranch(b.id); state.removeBranch(b.id); }
   for (const r of state.listAcceptanceReports(null)) {
     if (r.createdBy === PREVIEW_MIRROR_CREATED_BY) state.deleteAcceptanceReport(r.id);
   }
