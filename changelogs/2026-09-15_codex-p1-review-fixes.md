@@ -210,3 +210,4 @@
 | revert | cds | 撤掉上一个提交里走 `/api/live-artifacts` 的取件：那是 OpenDesign 另一套带数据刷新的特性，不是模型 `<artifact>` 块的落点，取错了库。半条没接上的线留着只会误导下一个人 |
 | fix | cds | 新建页面不再种 `/workspace/index.html`：OpenDesign 判交付文件时第一条规则就是认根目录的 `index.html`，种了它就被认成交付物，模型按 slug 命名的那份真成品被晾成孤儿——技能里那句「Do not also write another root HTML file ... can be stranded beside it as an orphan」说的正是这件事，只是踩中它的是 CDS 不是模型。这解释了 2026-09-20 全部十六条 run：三种种子（整张模板 / 空白骨架 / 只留结构与槽位）换了个遍，收上来的永远是种子本身，此前两次归因（模型没填占位、模型没写文件）都不对。现在模型按契约交 `<artifact>`，OpenDesign 用 `deliverableEntryFile` 指名它，CDS 按名字搬成 index.html；模型什么都没产出时根本不会有 index.html，收件会以「缺产物」如实失败 |
 | test | cds | 守卫换成「准备命令里不许有任何往 index.html 写东西的动作」（写文件、shell 重定向、拷贝模板三种都拦），同时保留编辑路径「输入包带来的 index.html 缺了要当场发现」那条条件断言 |
+| fix | cds | 「没有 index.html」这条失败改为带现场交出：收到了哪些文件、工作区根目录实际有什么、OpenDesign 自己报的 `deliverableValid` / `deliverableValidation` / `deliverableEntryFile`。这几种成因（模型一个文件都没产出 / 产出了但没被指名 / 指名了但路径不在允许清单里）的下一步完全不同，只报一句「没有」等于把诊断转嫁给读的人（`external-cause-first.md`）。取证本身失败不许顶替原始故障 |

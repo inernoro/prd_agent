@@ -2671,7 +2671,24 @@ export class AgentWorkspaceSessionRuntime {
         this.assertExecutionDeadline(executionDeadline);
         indexFile = collectedFiles.find((file) => file.path === 'index.html');
         if (!indexFile) {
-          throw new AgentWorkspaceRuntimeError('design_output_missing', 'OpenDesign completed without index.html');
+          // 「没有 index.html」有好几种完全不同的成因：模型一个文件都没产出、产出了但
+          // OpenDesign 没指名、指名了但名字不在允许的输出路径里……只报一句「没有」，
+          // 读的人无从下手（`external-cause-first.md`：把内因当结论交出去）。
+          // 所以把这一刻的现场一起交出来：收到了哪些文件、工作区根目录实际有什么、
+          // OpenDesign 自己怎么判的。
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_missing',
+            'OpenDesign completed without index.html',
+            false,
+            {
+              stage: 'collect_outputs',
+              collectedPaths: collectedFiles.map((file) => file.path).slice(0, 40),
+              workspaceRootEntries: await this.listWorkspaceRootEntries(handle, executionDeadline),
+              deliverableValid: runOutcome.deliverableValid,
+              deliverableValidation: runOutcome.deliverableValidation || null,
+              deliverableEntryFile: deliverableEntryFile || null,
+            },
+          );
         }
         const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
         const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
@@ -3354,6 +3371,30 @@ export class AgentWorkspaceSessionRuntime {
       promoted: true,
       bytes: marker ? Number(marker[2]) : null,
     });
+  }
+
+  /**
+   * 失败取证用：工作区根目录实际有哪些条目。只在「没有 index.html」那条路径上调，
+   * 用来分清「模型一个文件都没产出」与「产出了但没被认成交付物」——这两件事的下一步
+   * 完全不同，压成一句「没有 index.html」等于把诊断工作转嫁给读的人。
+   */
+  private async listWorkspaceRootEntries(
+    handle: RuntimeHandle,
+    executionDeadline: number,
+  ): Promise<string[]> {
+    try {
+      const listed = await this.shell.exec([
+        'docker exec',
+        shellQuote(handle.containerName),
+        '/bin/sh -lc',
+        shellQuote('ls -1A /workspace 2>/dev/null | head -40'),
+      ].join(' '), { timeout: Math.max(3_000, Math.min(this.remainingExecutionMs(executionDeadline), 15_000)) });
+      if (listed.exitCode !== 0) return ['<listing failed>'];
+      return (listed.stdout || '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 40);
+    } catch {
+      // 取证失败不能把原始故障顶替掉——原始故障才是要报的那个。
+      return ['<listing unavailable>'];
+    }
   }
 
   private async waitForRun(
