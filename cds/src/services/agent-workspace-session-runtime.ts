@@ -25,75 +25,38 @@ const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-pr
  * 导航真的跳到自己的章节，CTA 是一个有去处的锚点。改的是 CDS 的拷贝，上游镜像不动。
  */
 /**
- * 新建页面的起始页：从改好之后的模板拷贝来，但**只留结构与槽位，不留样例文案**——
- * 页首导航、模板自带的示例 hero、页脚三块整段删掉，`<title>` 用 MAP 任务的标题填上。
+ * 新建页面**不种** `/workspace/index.html`（NEW_PAGE_NO_SEED_NOTE）。
  *
- * 为什么仍然用模板：OpenDesign 的 import 要的是一张有结构的页面。给它一张空白骨架，
- * 它就产出空白——2026-09-20 第八条 run 实测：六个文件收上来了、index.html 一字未动、
- * 所有闸门都「通过」，用户拿到一张空页。那是比失败更糟的一种成功。
+ * OpenDesign 判定「这一轮交付的是哪个文件」时，第一条就是认根目录的 index.html：
+ * `const rootIndex = files.find((f) => path(f) === "index.html"); if (rootIndex) return rootIndex;`
+ * 所以只要我们先种了一张 index.html，它就被认成交付物，而模型按 slug 命名的那份真成品
+ * 被晾在一边——技能里那句「Do not also write another root HTML file for the same
+ * generation turn ... can be stranded beside it as an orphan」说的正是这件事。
  *
- * 为什么不能整张模板照搬：模板 `<main>` 里那段注释写的是「把版式粘到这里」，模型就**只**
- * 干这一件事——2026-09-20 第十三条 run 的闸门明细：`placeholderCount: 13`，14 个占位残留
- * 13 个，连 hero 的大标题、副标题都原封不动，而它粘进来的版式一个占位都没有
- * （`references/layouts.md` 实测零个 `[REPLACE]`）。也就是说残留**全部**来自起始页自带的
- * 外壳，不是模型漏填。四轮修复也压不住：模型认为外壳不归它管，它按模板的指示办事。
+ * 这解释了 2026-09-20 那十六条 run 为什么失败得一模一样：整张模板、空白骨架、只留结构与
+ * 槽位，三种种子换了个遍，收上来的永远是种子本身。不是模型不写，是**种子的存在劫持了
+ * 交付判定**，模型真做出来的页面从来没被看见过。
  *
- * 更要命的是这和系统提示词直接打架——提示词说「模板只是参考材料，它的样例身份与文案不得
- * 出现在交付物里」，而交付物文件本身就是那张模板。初始状态和指令互相矛盾时，改初始状态。
+ * 所以这里什么都不种。模型按技能的契约把成品包在 `<artifact>` 里交出去，OpenDesign 在
+ * run 状态的 `deliverableEntryFile` 里指名它，CDS 收件前按那个名字搬成 index.html
+ * （见 DELIVERABLE_ENTRY_PATH）。模型什么都没产出时根本不会有 index.html，
+ * 收件那一步会以 `design_output_missing` 如实失败——比交回一张种子诚实得多。
  *
- * 为什么空掉占位文案的老做法也不行：试过（第九条 run），模型看见一张「看上去已经完成」的
- * 页面，一字未改就交了回来。本次的差别在于外壳整块拿掉——`<main>` 里只剩那段「粘到这里」
- * 的指示注释，页面不是「看上去已完成」，是「明摆着还没写」。而它一字不动地交回来也不再
- * 可能蒙混过关：指示注释留在页面里就会撞上 `untouched starter template` 那道闸。
- *
- * 种完当场自断言（`predicate-and-wiring-discipline.md` 形状 8）：三块有一块没删掉、标题槽
- * 没填上、或成品里还剩任何 `[REPLACE]`，一律当场失败——不许静默种下一张仍然违规的起始页。
+ * 模板仍然完整地放在 `/workspace/.od-skills/web-prototype/assets/template.html` 供它照抄
+ * （且已打过补丁：导航锚点、CTA、占位邮箱都改成通得过发布闸的写法）。
  */
-const NEW_PAGE_SEED_SCRIPT = [
-  'import fs from "node:fs";',
-  'const fail = (m) => { throw new Error("new page seed: " + m); };',
-  'let html = fs.readFileSync("/workspace/.od-skills/web-prototype/assets/template.html", "utf8");',
-  'const blocks = [',
-  '  ["topnav", /[ \\t]*<header class="topnav"[\\s\\S]*?<\\/header>\\n?/],',
-  '  ["sample hero", /[ \\t]*<section class="section hero"[\\s\\S]*?<\\/section>\\n?/],',
-  '  ["footer", /[ \\t]*<footer class="pagefoot"[\\s\\S]*?<\\/footer>\\n?/],',
-  '];',
-  'for (const block of blocks) {',
-  '  if (!block[1].test(html)) fail("template block not found: " + block[0]);',
-  '  html = html.replace(block[1], "");',
-  '}',
-  'const task = JSON.parse(fs.readFileSync("/workspace/brief/task.json", "utf8"));',
-  'const title = typeof task.title === "string" ? task.title.trim() : "";',
-  'if (!title) fail("brief/task.json carries no title");',
-  'const titleSlot = /<title>\\[REPLACE\\][^<]*<\\/title>/;',
-  'if (!titleSlot.test(html)) fail("template title slot not found");',
-  'const escaped = title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");',
-  'html = html.replace(titleSlot, "<title>" + escaped + "</title>");',
-  'if (/\\[\\s*REPLACE\\s*\\]/i.test(html)) fail("placeholders remain in the seeded page");',
-  'if (!html.includes("PASTE LAYOUTS FROM references/layouts.md HERE")) fail("paste marker missing");',
-  'if (!/<main id="content">/.test(html)) fail("main landmark missing");',
-  'fs.writeFileSync("/workspace/index.html", html);',
-].join(' ');
-
-const NEW_PAGE_SEED = 'if [ ! -f /workspace/index.html ]; then '
-  + `node --input-type=module -e ${JSON.stringify(NEW_PAGE_SEED_SCRIPT)}; fi`;
-
 
 /**
  * OpenDesign 自己认定的交付文件，不是 `index.html`（DELIVERABLE_ENTRY_NOTE）。
  *
  * web-prototype 技能要求模型「选一个 kebab-case 的 slug，把成品包在 `<artifact>` 里交出去」，
- * 并明令禁止它再写一份根目录 HTML——「Do not also write another root HTML file for the same
- * generation turn.」OpenDesign 于是把成品存成项目里以 slug 命名的那个文件，而 CDS 的收件
- * 一直写死读 `/workspace/index.html`，也就是它自己种下去的那张起始页。
+ * 并明令禁止它再写一份根目录 HTML。OpenDesign 于是把成品存成项目里以 slug 命名的那个文件，
+ * 并在 run 状态的 `deliverableEntryFile` 里指名它；而 CDS 的收件一直写死读
+ * `/workspace/index.html`。两边对不上，收上来的就永远是别的东西。
  *
- * 后果不是报错，是**默默交错东西**：2026-09-20 的十五条 run，模型每次都真的做出了页面
- * （14–21 次模型调用、各阶段耗时真实），收上来的却全是种子。闸门报的「占位没填」「起始页
- * 原样交回」都是这一件事的不同侧面。
- *
- * 判据用 OpenDesign 自己给的 `deliverableEntryFile`——它在 run 状态里，是同一个 daemon 的
- * `validateRunDeliverable` 算出来并校验过可读的那个文件。不去猜「根目录下那个不叫 index 的
- * html」，也不去读它的内部目录结构：猜法会在它换约定时静默取错，契约字段会当场不匹配。
+ * 判据用它自己给的那个字段——同一个 daemon 的 `validateRunDeliverable` 算出来、
+ * 并且校验过可读。不去猜「根目录下那个不叫 index 的 html」，也不去读它的内部目录结构：
+ * 猜法会在它换约定时静默取错，契约字段会当场不匹配。
  */
 const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
 
@@ -2364,11 +2327,8 @@ export class AgentWorkspaceSessionRuntime {
           // 上游换了模板、sed 一条都没命中时必须当场失败，而不是静默放过一张仍然违规的起始页
           // （`predicate-and-wiring-discipline.md` 形状 8：不成立的证据当成证据）。
           WEB_PROTOTYPE_TEMPLATE_ASSERT,
-          // 起始页从**改好之后**的那份拷贝来，不从原始来源来——否则又把违规模板发回去。
-          // 并且只留结构与槽位：页首导航、模板自带的示例 hero、页脚整段删掉，`<title>` 用
-          // MAP 任务的标题填上。详细理由与实测证据见 NEW_PAGE_SEED 的注释。
-          // 参考拷贝 .od-skills 保持完整（已打过补丁），模型照样看得到版式长什么样。
-          NEW_PAGE_SEED,
+          // 新建页面刻意不种 index.html：种了就会被 OpenDesign 认成交付物，
+          // 把模型真做出来的那份晾成孤儿（见 NEW_PAGE_NO_SEED_NOTE）。
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',
           'test -f /app/design-templates/web-prototype/references/layouts.md',
@@ -2376,7 +2336,9 @@ export class AgentWorkspaceSessionRuntime {
           'test -f /workspace/.od-skills/web-prototype/assets/template.html',
           'test -f /workspace/.od-skills/web-prototype/references/layouts.md',
           'test -f /workspace/.od-skills/web-prototype/references/checklist.md',
-          'test -f /workspace/index.html',
+          // 编辑路径的 index.html 由输入包带来，缺了就是传输坏了，必须当场发现；
+          // 新建路径本来就没有，不在这里断言它存在。
+          '{ [ ! -f /workspace/current/index.html ] || test -f /workspace/index.html; }',
         ].join(' && ')),
       ].join(' '), { timeout: 30_000 });
       if (preparedDesignTemplate.exitCode !== 0) {
@@ -2628,10 +2590,10 @@ export class AgentWorkspaceSessionRuntime {
       'Every anchor you emit must point at a fragment of this same page: href="#section-id" where that id exists here. That is the only link target the publication policy accepts - an absolute or relative URL fails the package validator instead, and that failure gets no repair pass. Make the navigation actually jump to your own sections. A label that is not meant to navigate is not an anchor at all - render it as span, li, or heading text. Every enabled button must either drive a real popover via popovertarget, or be rewritten as an anchor to one of your own sections; a caption that does nothing is plain text. None of this counts as removing a requested control, because the template never requested them - the rule about not removing controls protects what the MAP instruction asked for, not boilerplate you copied from the sketch.',
       editingExistingPage
         ? 'A starting /workspace/index.html already exists; it is the exact current published page and must remain the starting point. The generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.'
-        : 'This is a new page. Create /workspace/index.html from the MAP task and knowledge sources; the generic template is reference material only and its sample identity or copy must not appear in the deliverable.',
+        : 'This is a new page and /workspace/index.html deliberately does not exist. Deliver it exactly the way the web-prototype skill specifies: compose the page from the seed and the layout library, then emit it once inside <artifact identifier="kebab-case-slug" type="text/html" title="..."> tags. Do not write a root HTML file yourself - a root index.html written by hand is picked up as this run\'s deliverable and strands the artifact you actually authored. The generic template is reference material only; its sample identity or copy must not appear in the deliverable.',
       editingExistingPage
         ? 'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.'
-        : 'Build a complete responsive index.html, then reread task.json, every knowledge file, and the finished page. Remove every unresolved placeholder and verify every visible-language, source accuracy, navigation, control, and content constraint before claiming completion.',
+        : 'Build a complete responsive page, then reread task.json, every knowledge file, and the page you are about to emit. Remove every unresolved placeholder and verify every visible-language, source accuracy, navigation, control, and content constraint before emitting the artifact.',
       'Keep the final webpage in index.html and public resources under assets/. Preserve existing scripts, resources, and interactions unless the user explicitly requests their removal. Never delete scripts or assets to silence a validation gate. The current publication execution policy may reject interactive HTML; report that incompatibility rather than degrading the requested deliverable. Frozen current/ files are reference originals; modify only their editable copies. System reports and manifest.json are rebuilt by CDS and must not be authored.',
       'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
     ].join(' ');

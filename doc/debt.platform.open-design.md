@@ -1472,3 +1472,50 @@ OpenDesign 自己是有取件口的（`/api/live-artifacts/:artifactId`、
 - 技能契约：镜像内 `/app/plugins/_official/examples/web-prototype/SKILL.md`
 - CDS 侧只建 run 不取件：`cds/src/services/agent-workspace-session-runtime.ts` 的 `execute`
 - OpenDesign 取件口：daemon 的 `/api/live-artifacts/:artifactId`、`/api/projects/:id/export/html`
+
+## 那一族缺陷的真正源头：种子的存在劫持了交付判定（2026-09-20，第三次也是最后一次修正）
+
+### 证据
+
+OpenDesign 的 `validateRunDeliverable` 判「这一轮交付的是哪个文件」，第一条规则是：
+
+```
+const rootIndex = files.find((f) => path(f) === "index.html");
+if (rootIndex) return rootIndex;
+```
+
+只要根目录有 `index.html`，它就被认成交付物。而 CDS 一直在容器启动时先种一张下去。
+
+### 这解释了之前全部十六条 run
+
+三种种子换了个遍——整张模板、空白骨架、只留结构与槽位——失败形态各异，
+但收上来的永远是种子本身。此前两次归因都停在「模型没写 / 没填」，都不对：
+
+**不是模型不写，是种子的存在让 OpenDesign 把它认成了交付物，模型按 slug 命名的那份
+真成品被晾成孤儿。** 技能里那句「Do not also write another root HTML file for the same
+generation turn ... can be stranded beside it as an orphan」说的正是这件事，
+只是它是写给模型看的，而踩中它的是 CDS。
+
+### 修法
+
+新建页面不种 `index.html`。模型按技能契约把成品包在 `<artifact>` 里交出去，
+OpenDesign 在 run 状态的 `deliverableEntryFile` 里指名它，CDS 收件前按那个名字
+搬成 `index.html`，后续质量闸与收件一律不变。模型什么都没产出时根本不会有
+`index.html`，收件会以 `design_output_missing` 如实失败——比交回一张种子诚实得多。
+
+模板仍完整放在 `/workspace/.od-skills/web-prototype/assets/template.html` 供照抄，
+且已打过补丁（导航锚点、CTA、占位邮箱都改成通得过发布闸的写法）。
+
+### 一并撤回的两条旧结论
+
+1. 「残留 13 个占位 = 模型粘了版式只剩外壳」——错。质量闸里 `[REPLACE]` 排在
+   `untouched starter template` 之前，那 13 个就是整张未动的模板。
+2. 「产物在 live artifact 里」——错。那是 OpenDesign 另一套带数据刷新的特性，
+   不是模型 `<artifact>` 块的落点；那一版取件已整段撤掉。
+
+### 实现来源
+
+- 不种起始页与它的守卫：`cds/src/services/agent-workspace-session-runtime.ts`
+  的 NEW_PAGE_NO_SEED_NOTE、`cds/tests/services/agent-workspace-session-runtime.test.ts`
+- 交付文件搬运：同文件的 `DELIVERABLE_ENTRY_PATH` 与 `promoteDeliverableEntry`
+- OpenDesign 的判定：镜像内 `/app/apps/daemon/dist/run-deliverable-validation.js`

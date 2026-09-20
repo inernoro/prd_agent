@@ -1017,26 +1017,16 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
     expect(fs.readFileSync(path.join(shell.workspaceDir, 'index.html'))).toEqual(fs.readFileSync(path.join(shell.workspaceDir, 'current/index.html')));
-    // 起始页从改好之后的模板拷贝来（OpenDesign 的 import 要一张有结构的页面，给空白骨架
-    // 它就产出空白），但只留结构与槽位：页首导航、模板自带的示例 hero、页脚整段删掉，
-    // `<title>` 用 MAP 任务的标题填上。2026-09-20 第十三条 run 的闸门明细证明这是必须的——
-    // 整张模板照搬时模型只干「把版式粘进 <main>」这一件事，14 个占位残留 13 个，
-    // 而它粘进来的版式本身一个占位都没有，残留全部来自起始页自带的外壳。
-    expect(preparedDesignTemplate?.command).toContain('.od-skills/web-prototype/assets/template.html\\", \\"utf8\\")');
-    expect(preparedDesignTemplate?.command).toContain('class=\\"topnav\\"');
-    expect(preparedDesignTemplate?.command).toContain('class=\\"section hero\\"');
-    expect(preparedDesignTemplate?.command).toContain('class=\\"pagefoot\\"');
-    expect(preparedDesignTemplate?.command).toContain('/workspace/brief/task.json\\", \\"utf8\\")');
-    expect(preparedDesignTemplate?.command).toContain('fs.writeFileSync(\\"/workspace/index.html\\"');
-    // 种完当场自断言：三块有一块没删、标题槽没填上、成品里还剩 `[REPLACE]`，一律当场失败，
-    // 不许静默种下一张仍然违规的起始页（`predicate-and-wiring-discipline.md` 形状 8）。
-    expect(preparedDesignTemplate?.command).toContain('template block not found: ');
-    expect(preparedDesignTemplate?.command).toContain('carries no title');
-    expect(preparedDesignTemplate?.command).toContain('placeholders remain in the seeded page');
-    expect(preparedDesignTemplate?.command).toContain('paste marker missing');
-    // 起始页绝不能直接引原始来源——那份没打过补丁。
-    expect(preparedDesignTemplate?.command).not.toContain('cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html');
-    expect(preparedDesignTemplate?.command).not.toContain('cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html');
+    // 新建页面刻意**不种** index.html。OpenDesign 判交付文件时第一条就是认根目录的
+    // index.html，种了它就被认成交付物，模型按 slug 命名的那份真成品被晾成孤儿——
+    // 2026-09-20 十六条 run 换了三种种子（整张模板 / 空白骨架 / 只留结构与槽位）全都一样
+    // 地失败，根因就在这里。这几条守住「准备命令里不许出现任何往 index.html 写东西的动作」。
+    expect(preparedDesignTemplate?.command).not.toContain('fs.writeFileSync(\\"/workspace/index.html\\"');
+    expect(preparedDesignTemplate?.command).not.toMatch(/>\s*\/workspace\/index\.html/);
+    expect(preparedDesignTemplate?.command).not.toContain('cp /app/plugins/_official/examples/web-prototype/assets/template.html');
+    expect(preparedDesignTemplate?.command).not.toContain('cp /workspace/.od-skills/web-prototype/assets/template.html');
+    // 但编辑路径的 index.html 由输入包带来，缺了就是传输坏了，仍要当场发现。
+    expect(preparedDesignTemplate?.command).toContain('[ ! -f /workspace/current/index.html ] || test -f ');
     // 模板改写与它的自证必须都在这一条命令里；少了自证，上游换措辞时 sed 会静默不命中。
     expect(preparedDesignTemplate?.command).toContain('<a href="#hero">[REPLACE] Link 1</a>');
     expect(preparedDesignTemplate?.command).toContain('id="hero" data-od-id="hero"');
