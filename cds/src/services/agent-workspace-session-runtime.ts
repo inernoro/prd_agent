@@ -80,53 +80,33 @@ const NEW_PAGE_SEED = 'if [ ! -f /workspace/index.html ]; then '
 
 
 /**
- * 把 OpenDesign 的 live artifact 落成 `/workspace/index.html`。
+ * OpenDesign 自己认定的交付文件，不是 `index.html`（DELIVERABLE_ENTRY_NOTE）。
  *
- * 为什么非有这一步不可：web-prototype 技能的 SKILL.md 明令禁止模型写
- * `/workspace/index.html`——「Do not write a project-root HTML draft with file-write
- * before emitting the final `<artifact>`」「OpenDesign derives the canonical HTML
- * artifact from this identifier. Do not also write another root HTML file for the
- * same generation turn.」模型把整张页面放在消息里的 `<artifact>` 块交给 OpenDesign，
- * 而 CDS 的收件读的是那个文件。两条通道此前从来没有接上：2026-09-20 的十四条 run，
- * 每一条收上来的都是 CDS 自己种下去的那张起始页，模型真正做出来的页面被丢掉了。
+ * web-prototype 技能要求模型「选一个 kebab-case 的 slug，把成品包在 `<artifact>` 里交出去」，
+ * 并明令禁止它再写一份根目录 HTML——「Do not also write another root HTML file for the same
+ * generation turn.」OpenDesign 于是把成品存成项目里以 slug 命名的那个文件，而 CDS 的收件
+ * 一直写死读 `/workspace/index.html`，也就是它自己种下去的那张起始页。
  *
- * 为什么在容器里调、而不是从宿主调：`/preview` 那条路由挂着 `requireLocalDaemonRequest`，
- * 要求对端是回环地址。容器里本来就有 `OD_API_TOKEN` 与 `OD_PORT`，在里面调既满足回环，
- * 又不必把令牌写到命令行上（`docker exec` 的 argv 在宿主 `ps` 里是可见的）。
+ * 后果不是报错，是**默默交错东西**：2026-09-20 的十五条 run，模型每次都真的做出了页面
+ * （14–21 次模型调用、各阶段耗时真实），收上来的却全是种子。闸门报的「占位没填」「起始页
+ * 原样交回」都是这一件事的不同侧面。
  *
- * 为什么不读 daemon 的磁盘布局：`.live-artifacts/<id>/template.html` 是它的内部实现，
- * 上游换一次目录结构我们就静默取空。走它自己的 HTTP 契约，换了会报错而不是取到旧东西。
- *
- * 取不到 artifact 时**不失败**：模型若真的直接写了 index.html（编辑路径就是这么要求的），
- * 硬失败反而误伤。改为如实汇报走了哪条路（`live-artifact:<id>` 还是 `live-artifact:none`），
- * 由既有的质量闸去判产物本身对不对——降级可以，静默不行
- * （`degradation-must-alarm.md`、`predicate-and-wiring-discipline.md` 形状 10）。
+ * 判据用 OpenDesign 自己给的 `deliverableEntryFile`——它在 run 状态里，是同一个 daemon 的
+ * `validateRunDeliverable` 算出来并校验过可读的那个文件。不去猜「根目录下那个不叫 index 的
+ * html」，也不去读它的内部目录结构：猜法会在它换约定时静默取错，契约字段会当场不匹配。
  */
-const LIVE_ARTIFACT_COLLECT_SCRIPT = [
+const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
+
+/** 把 OpenDesign 指名的交付文件搬到 `index.html`，后续收件与质量闸一律不变。 */
+const promoteDeliverableEntryScript = (entryFile: string): string => [
   'import fs from "node:fs";',
-  'const fail = (m) => { throw new Error("live artifact collect: " + m); };',
-  'const token = process.env.OD_API_TOKEN;',
-  'const port = process.env.OD_PORT;',
-  'const projectId = process.env.OD_COLLECT_PROJECT_ID;',
-  'if (!token || !port || !projectId) fail("daemon identity is incomplete");',
-  'const base = "http://127.0.0.1:" + port;',
-  'const headers = { Authorization: "Bearer " + token };',
-  'const listed = await fetch(base + "/api/live-artifacts?projectId=" + encodeURIComponent(projectId), { headers });',
-  'if (!listed.ok) fail("listing live artifacts failed with HTTP " + listed.status);',
-  'const artifacts = ((await listed.json()) || {}).artifacts || [];',
-  'if (artifacts.length === 0) { console.log("live-artifact:none"); process.exit(0); }',
-  'const stamp = (a) => String(a.updatedAt || a.createdAt || "");',
-  'const pick = artifacts.slice().sort((a, b) => stamp(b).localeCompare(stamp(a)))[0];',
-  'const id = pick.id || pick.artifactId;',
-  'if (!id) fail("the newest live artifact carries no id");',
-  'const url = base + "/api/live-artifacts/" + encodeURIComponent(id)',
-  '  + "/preview?projectId=" + encodeURIComponent(projectId) + "&variant=template";',
-  'const got = await fetch(url, { headers });',
-  'if (!got.ok) fail("reading live artifact " + id + " failed with HTTP " + got.status);',
-  'const html = await got.text();',
-  'if (!/<html[\\s>]/i.test(html)) fail("live artifact " + id + " is not an HTML document");',
+  `const entry = ${JSON.stringify(entryFile)};`,
+  'const from = "/workspace/" + entry;',
+  'if (!fs.existsSync(from)) throw new Error("deliverable entry missing: " + entry);',
+  'const html = fs.readFileSync(from, "utf8");',
+  'if (!/<html[\\s>]/i.test(html)) throw new Error("deliverable entry is not an HTML document: " + entry);',
   'fs.writeFileSync("/workspace/index.html", html);',
-  'console.log("live-artifact:" + id + " bytes:" + html.length);',
+  'console.log("deliverable-entry:" + entry + " bytes:" + html.length);',
 ].join(' ');
 
 const WEB_PROTOTYPE_TEMPLATE_FILES = [
@@ -381,6 +361,8 @@ type StageReporter = (stage: string, detail?: Record<string, unknown>) => void;
 interface OpenDesignRunOutcome {
   deliverableValid: boolean;
   deliverableValidation?: string;
+  /** OpenDesign 自己认定的这一轮交付文件（相对工作区根）。见 DELIVERABLE_ENTRY_NOTE。 */
+  deliverableEntryFile?: string;
 }
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
@@ -2680,6 +2662,9 @@ export class AgentWorkspaceSessionRuntime {
     try {
       let finalRunId = runId;
       let runOutcome = await this.waitForRun(handle, runId, executionDeadline, signal, onStage);
+      // 交付文件由 OpenDesign 指名，一轮里只有产出的那几次会带上它——终审与修复常报
+      // no_artifact（它们没新建产物），那不等于上一轮指名的文件失效。所以只往前记，不清空。
+      let deliverableEntryFile = runOutcome.deliverableEntryFile;
       if (Date.now() >= executionDeadline) {
         throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
       }
@@ -2707,18 +2692,17 @@ export class AgentWorkspaceSessionRuntime {
       handle.activeRunId = finalRunId;
       onStage('open_design_reviewing', { runId: finalRunId });
       runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
+      deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
       let collectedFiles: WorkspacePackageFile[] = [];
       let indexFile: WorkspacePackageFile | undefined;
       let hardenedHtml = '';
       for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
         onStage('workspace_collecting');
         this.assertExecutionDeadline(executionDeadline);
-        if (!editingExistingPage) {
-          // 生成路径的产物在 OpenDesign 的 live artifact 里，不在 /workspace/index.html 上。
-          // 编辑路径不走这一步：那条提示词要求的就是直接改 index.html，此处未经验证，不动它。
-          await this.materializeLiveArtifact(handle, projectId, executionDeadline, onStage);
-          this.assertExecutionDeadline(executionDeadline);
-        }
+        // 成品未必叫 index.html：OpenDesign 在 run 状态里指名了这一轮的交付文件，
+        // 按它指的搬（见 DELIVERABLE_ENTRY_PATH）。没指名就什么都不做。
+        await this.promoteDeliverableEntry(handle, deliverableEntryFile, executionDeadline, onStage);
+        this.assertExecutionDeadline(executionDeadline);
         await this.copyOutputsFromContainer(handle, executionDeadline);
         this.assertExecutionDeadline(executionDeadline);
         collectedFiles = this.collectOutputs(handle);
@@ -2786,6 +2770,7 @@ export class AgentWorkspaceSessionRuntime {
             attempt: qualityRepairAttempt + 1,
           });
           runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
+          deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
         }
       }
       const hardenedBytes = Buffer.from(hardenedHtml);
@@ -3355,41 +3340,57 @@ export class AgentWorkspaceSessionRuntime {
   }
 
   /**
-   * 在容器内以回环身份向 OpenDesign 要这一轮的 live artifact，写进 /workspace/index.html。
-   * 取不到就如实汇报 `none` 并原样放过，由既有的质量闸去判产物本身（理由见
-   * LIVE_ARTIFACT_COLLECT_SCRIPT 的注释）。artifact 存在但读不出来或不是 HTML 才算故障。
+   * 把 OpenDesign 指名的交付文件（`deliverableEntryFile`）搬成 `/workspace/index.html`。
+   * 理由与判据见 DELIVERABLE_ENTRY_PATH 那段注释。
+   *
+   * 它没指名、或指名的就是 `index.html` 时什么都不做——那是模型直接改了根页面的情形
+   * （编辑路径的提示词要求的正是这个）。指名了却搬不动才算故障：文件不在、不是 HTML
+   * 文档、或路径形状不对，一律当场失败，不许把种子当成产物交出去
+   * （`predicate-and-wiring-discipline.md` 形状 10：降级可以，静默不行）。
    */
-  private async materializeLiveArtifact(
+  private async promoteDeliverableEntry(
     handle: RuntimeHandle,
-    projectId: string,
+    entryFile: string | undefined,
     executionDeadline: number,
     onStage: StageReporter,
   ): Promise<void> {
-    const collected = await this.shell.exec([
+    if (!entryFile || entryFile === 'index.html') {
+      onStage('deliverable_entry_resolved', { entryFile: entryFile || null, promoted: false });
+      return;
+    }
+    if (!DELIVERABLE_ENTRY_PATH.test(entryFile)) {
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_deliverable_entry_invalid',
+        'OpenDesign named a deliverable entry file that is not a workspace-relative .html path',
+        false,
+        { stage: 'deliverable_entry', entryFile },
+      );
+    }
+    const promoted = await this.shell.exec([
       'docker exec',
-      `-e ${shellQuote(`OD_COLLECT_PROJECT_ID=${projectId}`)}`,
       shellQuote(handle.containerName),
       'node --input-type=module -e',
-      shellQuote(LIVE_ARTIFACT_COLLECT_SCRIPT),
-    ].join(' '), { timeout: Math.max(5_000, Math.min(this.remainingExecutionMs(executionDeadline), 60_000)) });
-    if (collected.exitCode !== 0) {
+      shellQuote(promoteDeliverableEntryScript(entryFile)),
+    ].join(' '), { timeout: Math.max(5_000, Math.min(this.remainingExecutionMs(executionDeadline), 30_000)) });
+    if (promoted.exitCode !== 0) {
       throw new AgentWorkspaceRuntimeError(
-        'open_design_live_artifact_unavailable',
-        'OpenDesign produced a live artifact that could not be read back as the deliverable',
+        'open_design_deliverable_entry_unreadable',
+        'OpenDesign named a deliverable entry file that could not be read back as the page',
         true,
         {
-          stage: 'live_artifact_collect',
-          exitCode: collected.exitCode,
-          stderrPreview: runtimeDiagnosticPreview(collected.stderr, [handle.daemonApiToken]),
-          stdoutPreview: runtimeDiagnosticPreview(collected.stdout, [handle.daemonApiToken]),
+          stage: 'deliverable_entry',
+          entryFile,
+          exitCode: promoted.exitCode,
+          stderrPreview: runtimeDiagnosticPreview(promoted.stderr, []),
+          stdoutPreview: runtimeDiagnosticPreview(promoted.stdout, []),
         },
       );
     }
-    const marker = /live-artifact:(\S+)(?: bytes:(\d+))?/.exec(collected.stdout || '');
-    onStage('live_artifact_collected', {
-      artifactId: marker && marker[1] !== 'none' ? marker[1] : null,
-      bytes: marker && marker[2] ? Number(marker[2]) : null,
-      source: marker && marker[1] !== 'none' ? 'open-design-live-artifact' : 'workspace-file',
+    const marker = /deliverable-entry:(\S+) bytes:(\d+)/.exec(promoted.stdout || '');
+    onStage('deliverable_entry_resolved', {
+      entryFile,
+      promoted: true,
+      bytes: marker ? Number(marker[2]) : null,
     });
   }
 
@@ -3442,6 +3443,9 @@ export class AgentWorkspaceSessionRuntime {
           deliverableValid: status.deliverableValid !== false,
           deliverableValidation: typeof status.deliverableValidation === 'string'
             ? status.deliverableValidation
+            : undefined,
+          deliverableEntryFile: typeof status.deliverableEntryFile === 'string'
+            ? status.deliverableEntryFile
             : undefined,
         };
       }

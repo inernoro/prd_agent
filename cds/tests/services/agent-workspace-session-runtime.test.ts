@@ -1467,7 +1467,13 @@ describe('AgentWorkspaceSessionRuntime', () => {
           return Response.json({ runId: runCreates === 1 ? 'od-generate-build' : 'od-generate-review' }, { status: 202 });
         }
         if (url.pathname === '/api/runs/od-generate-build') {
-          return Response.json({ status: 'succeeded', deliverableValid: true });
+          // OpenDesign 指名这一轮的交付文件。技能要求模型按 slug 命名成品、
+          // 并且不许再写一份根目录 HTML，所以这里天然不是 index.html。
+          return Response.json({
+            status: 'succeeded',
+            deliverableValid: true,
+            deliverableEntryFile: 'od-generate-artifact.html',
+          });
         }
         if (url.pathname === '/api/runs/od-generate-review') {
           return Response.json({ status: 'succeeded', deliverableValid: false, deliverableValidation: 'no_artifact' });
@@ -1556,26 +1562,22 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(provenanceText).not.toContain(workspacePackage.sha256);
     expect(provenanceText).not.toContain('knowledgeSourceCount');
     expect(provenanceText).not.toContain('sourceClasses');
-    // 接线守卫（形状 2：链路只建一半）。web-prototype 技能明令禁止模型写
-    // /workspace/index.html，它把整张页面作为 live artifact 交给 OpenDesign；CDS 此前
-    // 只读那个文件，于是十四条 run 收上来的全是自己种下去的起始页。生成路径必须先取件、
-    // 再冻结容器收件——把取件那一步删掉，下面三条会红。
-    const collectAt = shell.calls.findIndex((call) => (
-      call.command.includes('OD_COLLECT_PROJECT_ID=od-generate-project')
-    ));
+    // 接线守卫（形状 2：链路只建一半）。成品未必叫 index.html——web-prototype 技能要求模型
+    // 把成品包在 <artifact> 里、按 slug 命名，并明令禁止它再写一份根目录 HTML；OpenDesign
+    // 在 run 状态里用 deliverableEntryFile 指名那个文件。CDS 此前写死读 index.html，于是
+    // 2026-09-20 的十五条 run 收上来的全是自己种下去的起始页，而且不报错。
+    // 指名了就必须搬，且必须在冻结容器收件之前搬——把那一步删掉，下面三条会红。
+    const promoteAt = shell.calls.findIndex((call) => call.command.includes('deliverable-entry:'));
     const freezeAt = shell.calls.findIndex((call) => call.command.startsWith('docker pause '));
-    expect(collectAt).toBeGreaterThanOrEqual(0);
-    expect(freezeAt).toBeGreaterThan(collectAt);
-    const collectCommand = shell.calls[collectAt]?.command || '';
-    // 走 OpenDesign 自己的 HTTP 契约，不读它的磁盘布局（上游换目录要报错，不许静默取空）
-    expect(collectCommand).toContain('/api/live-artifacts?projectId=');
-    expect(collectCommand).toContain('variant=template');
-    expect(collectCommand).not.toContain('.live-artifacts/');
-    // 在容器内以回环身份调，令牌从环境读，不落到宿主可见的命令行上
-    expect(collectCommand).toContain('127.0.0.1');
-    expect(collectCommand).toContain('process.env.OD_API_TOKEN');
-    // 没有 artifact 时如实汇报走了哪条路，而不是静默放过，也不是硬失败
-    expect(collectCommand).toContain('live-artifact:none');
+    expect(promoteAt).toBeGreaterThanOrEqual(0);
+    expect(freezeAt).toBeGreaterThan(promoteAt);
+    const promoteCommand = shell.calls[promoteAt]?.command || '';
+    // 搬的是 OpenDesign 指名的那个文件，不是我们自己猜出来的
+    expect(promoteCommand).toContain('od-generate-artifact.html');
+    expect(promoteCommand).toContain('/workspace/index.html');
+    // 指名了却搬不动要当场失败，不许把种子当产物交出去
+    expect(promoteCommand).toContain('deliverable entry missing: ');
+    expect(promoteCommand).toContain('is not an HTML document: ');
     expect(fs.existsSync(path.join(rootDir, 'session-generate', 'workspace', 'current', 'index.html'))).toBe(false);
     await runtime.stop('session-generate');
   });
