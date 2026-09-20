@@ -1564,6 +1564,12 @@ public class HostedSiteService : IHostedSiteService
             SiteUrl = s.SiteUrl,
             EntryFile = s.EntryFile,
             TotalSize = s.TotalSize,
+            // 入口那一份自己的大小。前端拿它判「取正文的代理装不装得下」——
+            // 拿 TotalSize 近似只对单文件站成立，多文件站里入口超 2MB 的会漏（Codex 第四轮 P2）。
+            // 路径比对要忽略大小写：Files 里的 Path 与 EntryFile 都来自上传时的相对路径，
+            // 同一条链路上的大小写差异在别处已经按 OrdinalIgnoreCase 处理过。
+            EntrySize = s.Files.FirstOrDefault(f =>
+                string.Equals(f.Path, s.EntryFile, StringComparison.OrdinalIgnoreCase))?.Size ?? 0,
             FileCount = s.Files.Count,
             CoverImageUrl = s.CoverImageUrl,
             PdfAssetUrl = TryBuildPdfAssetUrl(s),
