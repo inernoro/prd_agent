@@ -48,7 +48,7 @@ describe('分享页预览接线', () => {
    * 的异步回调里），所以在这里按源码守住：ref 要存在，且必须在写 srcDoc 之前真的拦一道。
    */
   it('迟到的原文要不要丢，判据必须冲着「用户攒了多少状态」去', () => {
-    expect(source).toContain('exposedDirectRef');
+    expect(source).toContain('directExposedAtRef');
 
     // 2026-08-25 这条曾收紧成「遮罩已让位 **且** 直链真的加载过」，用 iframe 的 onLoad 记账。
     // 2026-08-29 第十九轮 review 推翻了后半条：直链白屏时 load 照样触发，两条双双成立，
@@ -60,8 +60,8 @@ describe('分享页预览接线', () => {
     // 访客攒了多少状态也看不到。所以判据从「丢不丢」改成「换不换」：时间窗只决定
     // **要不要自动换**，原文一律留着并给出可见出口，由人自己点。
     const guard = source.search(
-      /if\s*\(\s*exposedDirectRef\.current\s*&&\s*elapsed\s*>\s*LATE_SWAP_GUARD_MS\s*\)/);
-    expect(guard, '自动换的门槛要按已过时间判，不能只看遮罩是否让位').toBeGreaterThan(-1);
+      /if\s*\(\s*exposedAt\s*>\s*0\s*&&\s*shownFor\s*>\s*LATE_SWAP_GUARD_MS\s*\)/);
+    expect(guard, '自动换的门槛要按「直链露出至今多久」判').toBeGreaterThan(-1);
 
     // 这一支必须是「存起来」而不是丢掉——丢掉会让「直链白屏 + 原文迟到」成为永远的白
     const branch = source.slice(guard, guard + 400);
@@ -73,9 +73,25 @@ describe('分享页预览接线', () => {
 
     // 不许再拿 iframe 的 load 当「已经画出来了」的证据
     expect(source).not.toContain('directLoadedRef');
+  });
 
-    // 每次重新取原文都要重置起点，否则第二次进来一开始就被算成迟到
-    expect(source).toContain('fetchStartedAtRef.current = Date.now();');
+  /**
+   * 宽限期必须从**直链露出那一刻**起算，不是从开始取正文起算（Codex 第三轮 P2）。
+   *
+   * 上一版两者都用 `fetchStartedAt`，而 LATE_SWAP_GUARD_MS 与 DIRECT_FALLBACK_TIMEOUT_MS
+   * 又同为 6000——fallback 一触发 elapsed 就已经 ≥ 门槛，于是**任何**回来的正文都被判成
+   * 「迟到」不自动换，哪怕直链才刚开始加载。宽限期实际是 0，与它的设计意图正好相反，
+   * 本该救场的那条路被自己关死。
+   *
+   * 所以这里钉两件事：起算点是露出时刻，且「还没露出」时一律直接换上（那时没有现场可保）。
+   */
+  it('迟到的宽限期按「直链露出至今多久」算，不按「取了多久」算', () => {
+    expect(source, '起算点必须是直链露出的时刻').toMatch(
+      /directExposedAtRef\.current\s*=\s*Date\.now\(\)/);
+    // 退回按「开始取正文」起算，就是那个宽限期为 0 的写法
+    expect(source, '不许再拿「开始取正文」当起算点').not.toContain('fetchStartedAtRef');
+    // 还没露出直链时不该走迟到分支
+    expect(source).toMatch(/exposedAt\s*>\s*0\s*\?\s*Date\.now\(\)\s*-\s*exposedAt\s*:\s*0/);
   });
 
   it('既没有原文也没有入口地址时，页面要说清为什么是空的，而不是摆一个空 iframe', () => {

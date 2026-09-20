@@ -104,15 +104,20 @@ function fmtSize(b: number) {
  */
 export const DIRECT_FALLBACK_TIMEOUT_MS = 6000;
 /**
- * 迟到多久之后就不再换文档了。
+ * 直链露出之后，还有多久可以把原文换上去。
  *
- * 只对「已经转成直链」的那一档有意义：访客眼前已经是直链页面，这时原文姗姗来迟，
- * 换成 srcDoc 就是换一个文档——滚动位置、输入、PPT 翻到第几页全部清零。
- * 窗口之内他还没来得及攒下什么，宁可换文档也要把内容显示出来（直链白屏时这是唯一的
- * 救场机会）；超过了才保他的现场，把原文留在手里并给一个看得见的出口。
+ * **起算点是「直链露出的那一刻」，不是「开始取正文的那一刻」**——这两者差一个
+ * DIRECT_FALLBACK_TIMEOUT_MS，写错就等于把宽限期变成 0。
  *
- * 与 DIRECT_FALLBACK_TIMEOUT_MS 取值相同不是巧合：转直链之后才谈得上「迟到」，
- * 所以这一档的计时起点天然落在那个窗口之后。
+ * 上一版正是这么错的（Codex 第三轮 P2）：那时判据写成 `Date.now() - fetchStartedAt >
+ * LATE_SWAP_GUARD_MS`，而两个常量都是 6000、都从取正文开始算。于是 fallback 一触发，
+ * elapsed 就已经 ≥ 6000，此后**任何**回来的正文都判成「迟到」不自动换——哪怕直链才刚
+ * 开始加载、访客一秒钟状态都没攒下。本该救场的那条路（用原文顶掉可能白屏的直链）
+ * 被自己关死了。我还在 commit message 里把它当成「设计得当」，判断反了。
+ *
+ * 语义本身没变：访客眼前已经是直链页面时，换成 srcDoc 就是换一个文档，滚动位置、输入、
+ * PPT 翻到第几页全部清零。窗口之内他还没来得及攒下什么，宁可换文档也要把内容显示出来；
+ * 超过了才保他的现场，把原文留在手里并给一个看得见的出口。
  */
 export const LATE_SWAP_GUARD_MS = 6000;
 
@@ -208,10 +213,14 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   /** 直链 iframe 是否**真的加载出了内容**（有真实 src 且 load 事件到过）。
    *  丢弃迟到 srcDoc 的前提是「用户已经在用底下那一页」——如果底下那页压根没加载
    *  （站点没有入口地址、或直链本身就白屏），丢掉迟到的 srcDoc 等于让用户一直盯着空白。 */
-  // 这一发原文是什么时候开始取的——迟到多久由它算，不再拿 iframe 的 load 当证据
-  const fetchStartedAtRef = useRef(0);
-  /** 直链 iframe 是否已经露给用户看过（遮罩到点即为真）。异步回调读它，不读 state */
-  const exposedDirectRef = useRef(false);
+  /**
+   * 直链是什么时候露给访客的（0 = 还没露出）。迟到多久由**它**算，不是由「开始取正文」算。
+   *
+   * 合并了原来的 `fetchStartedAtRef` + `exposedDirectRef` 两个 ref：时间戳本身就带
+   * 「有没有露出」的信息，两个状态各存一份正是上一版把起算点搞错的温床。
+   * 异步回调读 ref 不读 state——回调闭包里的 state 是发起那一刻的旧值。
+   */
+  const directExposedAtRef = useRef(0);
   /** 取回原文失败的原因；非空时仍回退直链 iframe，但角标把原因显式说出来（不静默吞） */
   const [embeddedHtmlError, setEmbeddedHtmlError] = useState<string | null>(null);
   /**
@@ -387,12 +396,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     setDirectFallbackFor(null);
     // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
     // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
-    exposedDirectRef.current = false;
-    fetchStartedAtRef.current = Date.now();
+    directExposedAtRef.current = 0;
     // 到点转直链：此时才第一次向托管域名发文档请求（pending 期间一次都没发过）。
     const fallbackTimer = window.setTimeout(() => {
       if (!alive) return;
-      exposedDirectRef.current = true;
+      directExposedAtRef.current = Date.now();
       setDirectFallbackFor(site.siteUrl);
     }, DIRECT_FALLBACK_TIMEOUT_MS);
     getShareSiteContent(token, site.id, password || undefined)
@@ -415,9 +423,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           // 换成按已过时间判：这几秒里用户还没来得及攒下什么，宁可换文档也要把内容显示出来；
           // 拖到很久之后才回来，人多半已经在用了，才保他的现场。两种误判的代价不对等——
           // 丢错了是「什么都看不到」，换错了只是「滚动位置没了」。
-          const elapsed = Date.now() - fetchStartedAtRef.current;
+          // 还没露出直链（exposedAt === 0）就一律直接换上——那时访客看的是「准备中」，
+          // 没有任何现场可保。露出之后才按「露出至今多久」判。
+          const exposedAt = directExposedAtRef.current;
+          const shownFor = exposedAt > 0 ? Date.now() - exposedAt : 0;
           const ready = { siteUrl: site.siteUrl, html: withPreviewBase(res.data.html, site.siteUrl) };
-          if (exposedDirectRef.current && elapsed > LATE_SWAP_GUARD_MS) {
+          if (exposedAt > 0 && shownFor > LATE_SWAP_GUARD_MS) {
             // 迟到了：不自动换（他可能已经滚到一半），但留着并给出口。
             // 直接 return 会让「直链白屏 + 原文迟到」变成一片永远的白。
             setLateHtml(ready);
