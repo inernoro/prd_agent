@@ -271,8 +271,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       setDownloadNote({ text: plan.reason, tone: 'error' });
       return;
     }
-    if (plan.kind === 'asset') {
-      // 独立资产（PDF 等）本来就是一份可下载的文件，交给浏览器自己处理
+    if (plan.kind === 'open') {
+      // 独立资产（PDF 等）只能在新窗口打开，由浏览器内联显示、用户自己另存——
+      // 跨域的 a[download] 会被忽略，而 fetch 到 Blob 又受制于按域名配的 CORS 白名单
+      // （预览域名不在里面）。按钮文案对这一档也是「打开源文件」，不宣称下载。
       window.open(plan.url, '_blank', 'noopener');
       setDownloadNote(null);
       return;
@@ -733,7 +735,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     const downloadPlan = planSourceDownload(site);
     const downloadHint =
       downloadPlan.kind === 'unavailable' ? downloadPlan.reason
-        : downloadPlan.kind === 'asset' ? `下载源文件（${downloadPlan.fileName}）`
+        : downloadPlan.kind === 'open' ? '在新窗口打开源文件，可在浏览器里另存'
         : downloadPlan.partial ? `下载入口文件 ${downloadPlan.fileName}（本站共 ${downloadPlan.fileCount} 个文件）`
         : `下载源文件（${downloadPlan.fileName}）`;
     return (
@@ -805,16 +807,23 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
                   存下来的常常不是那一份。
                   为什么限登录：源文件就是这份内容的全部，门槛与「保存到我的托管」保持一致。 */}
-              {isAuthenticated && (
+              {/* 取不到源文件的那一档（视频包装站等）**不渲染按钮**：摆一个点了才知道
+                  不行的控件，等于把「能不能做」的判断推给用户去试一次；触屏上连 title
+                  提示都看不到（Codex 第一轮 P2）。没得选就别假装能选。 */}
+              {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
                 <button
                   className="share-topbar-btn"
                   onClick={handleDownloadSource}
                   disabled={downloading}
                   title={downloadHint}
-                  aria-label="下载源文件"
+                  aria-label={downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件'}
                 >
-                  {downloading ? <MapSpinner size={isMobile ? 15 : 13} /> : <FileDown size={isMobile ? 15 : 13} />}
-                  {!isMobile && (downloading ? '取源文件…' : '下载源文件')}
+                  {downloading
+                    ? <MapSpinner size={isMobile ? 15 : 13} />
+                    : downloadPlan.kind === 'open'
+                      ? <ExternalLink size={isMobile ? 15 : 13} />
+                      : <FileDown size={isMobile ? 15 : 13} />}
+                  {!isMobile && (downloading ? '取源文件…' : downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件')}
                 </button>
               )}
               <span className="share-topbar-divider" />

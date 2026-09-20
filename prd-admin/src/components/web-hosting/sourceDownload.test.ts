@@ -30,7 +30,16 @@ describe('源文件形态判定', () => {
     expect(note).toContain('其余 8');
   });
 
-  it('PDF 包装站：源文件是那份 PDF，不是壳子 HTML', () => {
+  /**
+   * PDF 这一档只能「打开」，不能「下载」——而且必须在**类型上**就说清楚。
+   *
+   * Codex 第一轮 P2：原先它返回 `kind: 'asset'` 且带一个 fileName，界面却只是
+   * window.open，fileName 从头到尾没被用过，于是「下载源文件」这个按钮对 PDF 站名不副实。
+   * 真要落盘就得 fetch 到 Blob，而托管域名的 CORS 是逐个域名配的白名单——生产在里面、
+   * 分支预览域名不在（2026-09-20 实测），做出来就是「生产能用、预览不能用」。
+   * 所以这一档老实叫 open，且**不带 fileName**：算了却用不上的值就是下一次误解的起点。
+   */
+  it('PDF 包装站：只能在新窗口打开，不带 fileName', () => {
     const plan = planSourceDownload({
       title: '宝洁中国全域粉销实践',
       entryFile: 'index.html',
@@ -38,11 +47,8 @@ describe('源文件形态判定', () => {
       wrappedAssetType: 'pdf',
       pdfAssetUrl: 'https://i.example.net/data/x/宝洁.pdf?v=123',
     });
-    expect(plan).toEqual({
-      kind: 'asset',
-      url: 'https://i.example.net/data/x/宝洁.pdf?v=123',
-      fileName: '宝洁中国全域粉销实践.pdf',
-    });
+    expect(plan).toEqual({ kind: 'open', url: 'https://i.example.net/data/x/宝洁.pdf?v=123' });
+    expect(plan).not.toHaveProperty('fileName');
   });
 
   it('视频包装站：拿不到就说拿不到，不给一个点了会报错的按钮', () => {
@@ -96,6 +102,22 @@ describe('下载源文件的取法', () => {
     expect(page).toContain('saveTextAsFile');
     // 取正文用的是已有的同源代理端点，不另开一套
     expect(page).toContain('getShareSiteContent');
+  });
+
+  /**
+   * 取不到源文件时不许摆一个可点的按钮（Codex 第一轮 P2）。
+   *
+   * 原先 disabled 只看 downloading，于是视频包装站上那个按钮看着能用，点下去才弹一句
+   * 「取不到」；触屏上连 title 提示都露不出来。判据钉在渲染条件上：unavailable 一档
+   * 根本不渲染。
+   */
+  it('unavailable 一档不渲染按钮，不靠点一次来告诉用户不行', () => {
+    expect(page).toMatch(/downloadPlan\.kind !== 'unavailable' && \(/);
+  });
+
+  it('PDF 一档的按钮文案是「打开」不是「下载」', () => {
+    // 它做的就是 window.open，文案必须跟着实情走，不宣称一个做不到的动作
+    expect(page).toMatch(/downloadPlan\.kind === 'open' \? '打开源文件'/);
   });
 
   /**

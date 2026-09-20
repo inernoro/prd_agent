@@ -17,8 +17,16 @@ export interface SourceDownloadSite {
 }
 
 export type SourceDownloadPlan =
-  /** 源文件是一份独立资产（PDF 等），直接取它的地址 */
-  | { kind: 'asset'; url: string; fileName: string }
+  /**
+   * 源文件是一份独立资产（PDF 等），只能**在新窗口打开**，由浏览器内联显示、用户自己另存。
+   *
+   * 为什么不是「下载」：跨域的 a[download] 会被浏览器忽略；想真的落盘就得 fetch 到
+   * Blob，而托管域名的 CORS 是**逐个域名配的白名单**——生产 map.ebcone.net 在里面，
+   * 分支预览域名不在（2026-09-20 实测）。那样做出来就是「生产能用、预览不能用」，
+   * 而预览正是验收的地方。所以这一档老老实实叫「打开」，按钮文案也跟着改，
+   * 不宣称一个它做不到的动作（no-rootless-tree）。
+   */
+  | { kind: 'open'; url: string }
   /**
    * 源文件是入口 HTML，走服务端同源代理取回。
    * partial=true 表示这个站点还有别的文件（图片 / CSS / JS），下到的只是入口那一份。
@@ -77,11 +85,7 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
   const wrapped = (site.wrappedAssetType ?? '').trim().toLowerCase();
   if (wrapped && !HTML_READABLE_WRAPPERS.has(wrapped)) {
     if (site.pdfAssetUrl) {
-      return {
-        kind: 'asset',
-        url: site.pdfAssetUrl,
-        fileName: `${base}${extensionOf(site.pdfAssetUrl) || '.pdf'}`,
-      };
+      return { kind: 'open', url: site.pdfAssetUrl };
     }
     // 视频这类目前没有把资产地址透到分享数据里。说清现状，不要给一个点了会报错的按钮。
     return {
@@ -92,11 +96,7 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
 
   // 2) 存量 PDF 包装站可能 wrappedAssetType 为空但资产地址在，按资产处理
   if (site.pdfAssetUrl) {
-    return {
-      kind: 'asset',
-      url: site.pdfAssetUrl,
-      fileName: `${base}${extensionOf(site.pdfAssetUrl) || '.pdf'}`,
-    };
+    return { kind: 'open', url: site.pdfAssetUrl };
   }
 
   // 3) 普通 HTML 站
