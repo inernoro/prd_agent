@@ -681,6 +681,10 @@ export class HttpLogStore {
     if (method === 'GET' && (path === '/api/http-logs' || path === '/api/server-events')) {
       return false;
     }
+    // 自检 P95 的原始测量不能再被轮询抽样丢掉：共享的 1:10 计数器会让
+    // master/forwarder 交替记录时长期抽不到 master。只保留这个指标端点的
+    // 成功样本，其余 GET 仍抽样，写入背压上限仍然生效。
+    if (method === 'GET' && record.layer === 'master' && path === '/api/branches') return true;
     // 成功的 GET 读请求(轮询/控制面读取/静态资源)按 1:10 采样(2026-07-21 写放大
     // 治理):dashboard 每 10s 一轮 × 多端点 × forwarder/master 两层,每请求一条
     // Mongo 文档的全量落库既是写放大也是背压源。语义敏感的记录全保留:所有
