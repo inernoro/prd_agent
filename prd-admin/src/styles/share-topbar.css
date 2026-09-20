@@ -163,6 +163,15 @@
   color: var(--accent-fg-error);
 }
 
+/* 原始报错降级成附注：排障仍然用得上，但不抢主句的位置（external-cause-first） */
+.share-topbar-note-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
 .share-topbar-note button {
   margin-left: auto;
   flex-shrink: 0;

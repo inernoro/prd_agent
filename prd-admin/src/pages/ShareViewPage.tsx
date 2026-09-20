@@ -26,6 +26,7 @@ import type { PreviewSource } from '@/components/web-hosting/previewHtml';
 import {
   planSourceDownload,
   describeDownloadResult,
+  describeDownloadFailure,
   saveTextAsFile,
 } from '@/components/web-hosting/sourceDownload';
 
@@ -182,7 +183,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
    * 下载之后要不要多说一句：多文件站下到的只是入口那一份，失败了要说清为什么。
    * 不做成一闪而过的 toast——它是结论，用户得来得及读完。
    */
-  const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error' } | null>(null);
+  const [downloadNote, setDownloadNote] = useState<{ text: string; tone: 'info' | 'error'; detail?: string } | null>(null);
   // 评论抽屉：由顶栏「评论 N」按钮打开（PPT/全屏页无滚动条，评论不能放底部）
   const [showComments, setShowComments] = useState(false);
   /** 提问坞现在是哪一态。只用来让底部的浮层互相让位，不参与别的判断 */
@@ -285,10 +286,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     const res = await getShareSiteContent(token, site.id, password || undefined);
     setDownloading(false);
     if (!res.success || !res.data?.html) {
-      setDownloadNote({
-        text: res.error?.message || '取源文件失败，请稍后再试或找分享者要原始文件。',
-        tone: 'error',
-      });
+      // 后端那句是协议口径的（「站点内容读取失败（HTTP 404）」），不能原样端给访客：
+      // 第一句要人话 + 下一步，原文降级成附注（external-cause-first）
+      const failure = describeDownloadFailure(res.error?.message);
+      setDownloadNote({ text: failure.text, detail: failure.detail, tone: 'error' });
       return;
     }
     saveTextAsFile(res.data.html, plan.fileName);
@@ -807,14 +808,18 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   存档、二次编辑）此前没有任何入口——只能右键另存，而托管内容在独立域名，
                   存下来的常常不是那一份。
                   为什么限登录：源文件就是这份内容的全部，门槛与「保存到我的托管」保持一致。 */}
-              {/* 取不到源文件的那一档（视频包装站等）**不渲染按钮**：摆一个点了才知道
-                  不行的控件，等于把「能不能做」的判断推给用户去试一次；触屏上连 title
-                  提示都看不到（Codex 第一轮 P2）。没得选就别假装能选。 */}
-              {isAuthenticated && downloadPlan.kind !== 'unavailable' && (
+              {/* 取不到源文件的那一档（视频包装站、超过代理上限的大站）走 aria-disabled：
+                  **灰着**，交互前就看得出不可用（Codex 第一轮 P2）；但仍然可点，点了把原因
+                  摆进下面那条说明里——触屏上 title 露不出来，而这一档恰恰有替代路径要告诉他
+                  （去找分享者要 / 用「新窗口打开」另存）。
+                  一开始改成了「干脆不渲染」，那样 reason 就再没人看得到：算出来却送不到用户
+                  眼前，是形状 2（链路只建一半）。用原生 disabled 也不行——它连点击都不触发。 */}
+              {isAuthenticated && (
                 <button
                   className="share-topbar-btn"
                   onClick={handleDownloadSource}
                   disabled={downloading}
+                  aria-disabled={downloadPlan.kind === 'unavailable' || undefined}
                   title={downloadHint}
                   aria-label={downloadPlan.kind === 'open' ? '打开源文件' : '下载源文件'}
                 >
@@ -862,7 +867,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               className={`share-topbar-note surface-tone-dark${downloadNote.tone === 'error' ? ' share-topbar-note--error' : ''}`}
               role="status"
             >
-              <span>{downloadNote.text}</span>
+              <span>
+                {downloadNote.text}
+                {downloadNote.detail && (
+                  <span className="share-topbar-note-detail">{downloadNote.detail}</span>
+                )}
+              </span>
               <button onClick={() => setDownloadNote(null)} title="知道了" aria-label="关闭说明">
                 <X size={14} />
               </button>

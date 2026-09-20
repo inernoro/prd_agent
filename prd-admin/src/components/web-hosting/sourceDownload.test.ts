@@ -3,8 +3,10 @@ import { readFileSync } from 'node:fs';
 import {
   planSourceDownload,
   describeDownloadResult,
+  describeDownloadFailure,
   sanitizeFileBaseName,
   extensionOf,
+  SOURCE_PROXY_MAX_BYTES,
 } from './sourceDownload';
 
 describe('源文件形态判定', () => {
@@ -59,6 +61,41 @@ describe('源文件形态判定', () => {
   });
 
   /**
+   * 超过代理上限的单文件站，按下去必然失败（Codex 第二轮 P2）。
+   *
+   * 取正文那条路由读满 2MB 就断，而托管上传允许到 500MB——两个数字差两个量级。
+   * 与其让用户点一次换一个后端报错，不如在按下之前就判出来并说清替代路径。
+   */
+  it('单文件站超过代理上限：不宣称能下，直接说清并给替代路径', () => {
+    const plan = planSourceDownload({
+      title: '巨型单页', entryFile: 'index.html', fileCount: 1,
+      totalSize: SOURCE_PROXY_MAX_BYTES + 1,
+    });
+    expect(plan.kind).toBe('unavailable');
+    if (plan.kind !== 'unavailable') throw new Error('unreachable');
+    expect(plan.reason).toContain('2MB');
+    expect(plan.reason, '只说不行不够，要给下一步').toContain('新窗口打开');
+  });
+
+  it('刚好压线的不拦', () => {
+    expect(planSourceDownload({
+      title: 't', entryFile: 'index.html', fileCount: 1, totalSize: SOURCE_PROXY_MAX_BYTES,
+    }).kind).toBe('html');
+  });
+
+  /**
+   * 多文件站**不能**用 totalSize 拦。
+   *
+   * 它的 totalSize 是所有文件之和，入口那一份可能只有几十 KB；拿总和去拦会把本来
+   * 下得动的站点误伤掉——判据比它该管的范围宽，同样是形状 1。
+   */
+  it('多文件站的总和再大也不拦，入口那一份可能很小', () => {
+    expect(planSourceDownload({
+      title: 't', entryFile: 'index.html', fileCount: 30, totalSize: 400 * 1024 * 1024,
+    }).kind).toBe('html');
+  });
+
+  /**
    * 判据分裂守卫（predicate-and-wiring-discipline 形状 3）。
    *
    * 「哪些包装类型的壳子本身就是正文」这件事，后端 WebPagesController 的
@@ -105,14 +142,22 @@ describe('下载源文件的取法', () => {
   });
 
   /**
-   * 取不到源文件时不许摆一个可点的按钮（Codex 第一轮 P2）。
+   * 取不到源文件时，按钮要在**交互前**就看得出不可用（Codex 第一轮 P2）。
    *
    * 原先 disabled 只看 downloading，于是视频包装站上那个按钮看着能用，点下去才弹一句
-   * 「取不到」；触屏上连 title 提示都露不出来。判据钉在渲染条件上：unavailable 一档
-   * 根本不渲染。
+   * 「取不到」；触屏上连 title 提示都露不出来。
+   *
+   * 中间一版改成「干脆不渲染」，但那样 `reason` 就再没人看得到——而这一档恰恰有替代路径
+   * 要告诉用户（找分享者要 / 用「新窗口打开」另存）。算出来却送不到眼前是形状 2。
+   * 定版是 aria-disabled：灰着（交互前可见），仍可点（点了把原因摆进说明条，触屏也能拿到）。
+   * 原生 disabled 不行，它连点击都不触发。
    */
-  it('unavailable 一档不渲染按钮，不靠点一次来告诉用户不行', () => {
-    expect(page).toMatch(/downloadPlan\.kind !== 'unavailable' && \(/);
+  it('unavailable 一档灰着但仍可点，原因送得到用户眼前', () => {
+    expect(page).toMatch(/aria-disabled=\{downloadPlan\.kind === 'unavailable'/);
+    // 不许退回原生 disabled 把这一档钉死——那样 reason 又送不出去了。
+    // 负向后顾不能省：`aria-disabled=` 里本身就含 `disabled=`，第一版正则把自己误伤成红
+    // （形状 1 的又一例：判据比它该管的范围宽）。
+    expect(page).not.toMatch(/(?<!aria-)disabled=\{[^}]*downloadPlan\.kind === 'unavailable'/);
   });
 
   it('PDF 一档的按钮文案是「打开」不是「下载」', () => {
@@ -138,6 +183,65 @@ describe('下载源文件的取法', () => {
       not.toMatch(/createElement\(\s*['"]a['"]\s*\)/);
     expect(codeOnly, '直接给元素赋 download，绕过了统一出口').not.toMatch(/\.download\s*=/);
     expect(codeOnly, 'JSX 上的 download 属性同理').not.toMatch(/\sdownload(=|\s|\/?>)/);
+  });
+});
+
+/**
+ * 失败文案必须是人话（external-cause-first）。
+ *
+ * Codex 第二轮 P2：后端那条路由的报错是协议口径的（`站点内容读取失败（HTTP 404）`），
+ * 原样端给访客等于把「这什么意思、我该怎么办」的推导工作转嫁给他。
+ */
+describe('失败文案', () => {
+  it('超限：说清为什么 + 去哪儿', () => {
+    const out = describeDownloadFailure('站点入口文件超过 2MB，不支持读取');
+    expect(out.text).toContain('新窗口打开');
+    expect(out.text).not.toContain('2MB，不支持读取');
+  });
+
+  it('404：说的是「文件不在了」，不是一个 HTTP 码', () => {
+    const out = describeDownloadFailure('站点内容读取失败（HTTP 404）');
+    expect(out.text).toContain('分享者');
+    expect(out.text).not.toMatch(/HTTP\s*404/);
+  });
+
+  it('原始报错不丢，降级成附注给排障用', () => {
+    const raw = '站点内容读取失败（HTTP 502）';
+    expect(describeDownloadFailure(raw).detail).toBe(raw);
+  });
+
+  it('认不出来的报错也给人话兜底，并保留原文', () => {
+    const out = describeDownloadFailure('something weird');
+    expect(out.text).toContain('稍后再试');
+    expect(out.detail).toBe('something weird');
+  });
+
+  it('后端没给 message 时不渲染空附注', () => {
+    expect(describeDownloadFailure(undefined).detail).toBeUndefined();
+    expect(describeDownloadFailure('   ').detail).toBeUndefined();
+  });
+
+  it('每条规则都要有真实样本命中，不留永不生效的死规则', () => {
+    // 覆盖守卫：三条规则各自对应一句后端真实会返回的文案
+    const samples = [
+      '站点入口文件超过 2MB，不支持读取',
+      '站点内容读取失败（HTTP 404）',
+      '站点内容读取失败（HTTP 502）',
+    ];
+    const texts = new Set(samples.map((s) => describeDownloadFailure(s).text));
+    expect(texts.size, '有规则没被任何样本命中，或两条规则产出了同一句话').toBe(3);
+  });
+});
+
+describe('代理上限必须与后端一致', () => {
+  it('SOURCE_PROXY_MAX_BYTES 跟得上后端的 maxBytes', () => {
+    const controller = readFileSync(
+      new URL('../../../../prd-api/src/PrdAgent.Api/Controllers/Api/WebPagesController.cs', import.meta.url),
+      'utf8',
+    );
+    const m = /const long maxBytes\s*=\s*([0-9]+)L?\s*\*\s*1024\s*\*\s*1024/.exec(controller);
+    expect(m, '后端那个上限改写法了，判据要跟着改').not.toBeNull();
+    expect(SOURCE_PROXY_MAX_BYTES).toBe(Number(m![1]) * 1024 * 1024);
   });
 });
 

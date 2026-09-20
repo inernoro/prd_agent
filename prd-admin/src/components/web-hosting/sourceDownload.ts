@@ -12,9 +12,22 @@ export interface SourceDownloadSite {
   title?: string;
   entryFile?: string;
   fileCount?: number;
+  totalSize?: number;
   pdfAssetUrl?: string;
   wrappedAssetType?: string | null;
 }
+
+/**
+ * 取正文那条同源代理的字节上限。
+ *
+ * SSOT 在后端 `WebPagesController.FetchSiteHtmlResultAsync` 的 `maxBytes`（它是匿名可达的
+ * 路由，读满就断，防的是「一次请求分配几百 MB」）。而托管上传允许到 500MB——两个数字差了
+ * 两个量级，于是入口 HTML 超过 2MB 的单文件站，「下载源文件」**必然失败**（Codex 第二轮 P2）。
+ *
+ * 前端抄这个数字是为了在**按下去之前**就判出来，而不是让用户点一次换一个后端报错。
+ * 抄一份就有漂移风险，所以配了守卫读后端源码比对（见 sourceDownload.test.ts）。
+ */
+export const SOURCE_PROXY_MAX_BYTES = 2 * 1024 * 1024;
 
 export type SourceDownloadPlan =
   /**
@@ -101,6 +114,19 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
 
   // 3) 普通 HTML 站
   const fileCount = site.fileCount ?? 1;
+
+  // 单文件站的 totalSize 就是入口 HTML 的大小，超过代理上限就直说，别让人点一次才知道。
+  // 多文件站不能这样判：它的 totalSize 是所有文件之和，入口那一份可能远小于上限，
+  // 拿总和去拦会把本来下得动的站点误伤掉（形状 1：判据比该管的范围宽也是错）。
+  const totalSize = site.totalSize ?? 0;
+  if (fileCount === 1 && totalSize > SOURCE_PROXY_MAX_BYTES) {
+    return {
+      kind: 'unavailable',
+      reason: `这份源文件 ${formatBytes(totalSize)}，超过服务端取回通道的 2MB 上限。`
+        + '可以用顶栏的「新窗口打开」，在浏览器里另存。',
+    };
+  }
+
   const ext = extensionOf(site.entryFile) || '.html';
   return {
     kind: 'html',
@@ -108,6 +134,12 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
     partial: fileCount > 1,
     fileCount,
   };
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 /**
@@ -143,4 +175,41 @@ export function saveTextAsFile(text: string, fileName: string, mime = 'text/html
     // 立刻 revoke 会让部分浏览器来不及开始下载；一拍之后再回收
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
+}
+
+/**
+ * 取源文件失败时给用户看什么。
+ *
+ * 后端那条路由的报错是**协议口径**的（`站点内容读取失败（HTTP 404）`、
+ * `站点入口文件超过 2MB，不支持读取`）。把它原样端给访客，等于把「这是什么意思、
+ * 我该怎么办」的推导工作转嫁给他——正是 external-cause-first 要治的那种文案：
+ * 第一句必须是人话的外因 + 要不要紧 + 下一步，技术细节下沉成附注。
+ *
+ * 匹配用的是**一张表**而不是一串 if：新增一条就加一行，且每行都有守卫盯着
+ * （`.claude/rules/external-cause-first.md` 第四节：能用状态就用状态，状态拿不到才关键字匹配；
+ * 这里拿不到结构化状态——后端给的就是一句话，所以走匹配，但必须是数据形态）。
+ */
+const FAILURE_COPY: ReadonlyArray<{ match: RegExp; text: string }> = [
+  {
+    match: /超过\s*2\s*MB|不支持读取/,
+    text: '这份源文件太大，服务端的取回通道装不下。用顶栏的「新窗口打开」，在浏览器里另存即可。',
+  },
+  {
+    match: /HTTP\s*40[34]|不存在|NOT_FOUND/i,
+    text: '源文件已经不在托管上了，多半是分享者删掉或重新上传过。让他把链接重发一次。',
+  },
+  {
+    match: /HTTP\s*5\d\d|超时|timeout/i,
+    text: '取源文件超时了，多半是这会儿网络慢。过一会儿再点一次；一直不行就找分享者要原始文件。',
+  },
+];
+
+/** 失败提示：主句给人话，原始报错留作附注（排在后面，排障仍然用得上） */
+export function describeDownloadFailure(message?: string | null): { text: string; detail?: string } {
+  const raw = (message ?? '').trim();
+  const hit = FAILURE_COPY.find((rule) => rule.match.test(raw));
+  return {
+    text: hit?.text ?? '取源文件失败了，稍后再试一次；一直不行就找分享者要原始文件。',
+    detail: raw || undefined,
+  };
 }
