@@ -268,6 +268,8 @@ describe('GitHubWebhookDispatcher', () => {
       expect(findSkipMarker('feat: x\n\nskip-checks: true')).toBe('skip-checks: true');
       expect(findSkipMarker('feat: x\n\nSkip-Checks: TRUE')).toBe('skip-checks: true');
       expect(findSkipMarker('feat: x\r\n\r\nSigned-off-by: a <a@b.c>\r\nskip-checks: true\r\n')).toBe('skip-checks: true');
+      // GitHub：已有其它 trailer 时 skip-checks 必须是最后一条，放前面不算
+      expect(findSkipMarker('feat: x\n\nskip-checks: true\nSigned-off-by: a <a@b.c>')).toBeNull();
       // 不是结尾 trailer 块里的行不算：正文里提到、后面还跟着散文、值不是 true、只有标题一段
       expect(findSkipMarker('feat: mention skip-checks: true in docs')).toBeNull();
       expect(findSkipMarker('docs: explain the option\n\nskip-checks: true\nadditional prose')).toBeNull();

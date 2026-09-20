@@ -51,7 +51,23 @@ function softDot() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+/**
+ * 构建是事务性的：中途任何一步抛错（PMREM、后期链路……）都先把已经建出来的 renderer 与已登记的
+ * GPU 资源释放掉再把错误抛出去，否则失败一次就永久漏一套 WebGL 上下文 + 缓冲。
+ */
 function buildScene(canvas) {
+  const created = { renderer: null, disposables: [], composer: null };
+  try {
+    return buildSceneInto(canvas, created);
+  } catch (err) {
+    if (created.composer) { try { created.composer.dispose(); } catch { /* 半成品 */ } }
+    created.disposables.forEach((d) => { try { d.dispose(); } catch { /* 半成品 */ } });
+    if (created.renderer) { try { created.renderer.dispose(); created.renderer.forceContextLoss(); } catch { /* 半成品 */ } }
+    throw err;
+  }
+}
+
+function buildSceneInto(canvas, created) {
   const ACCENT = new THREE.Color('hsl(24, 100%, 60%)');
   const ACCENT_HOT = new THREE.Color('#ffb070');
   const OK = new THREE.Color('hsl(152, 62%, 56%)');
@@ -59,6 +75,7 @@ function buildScene(canvas) {
   const narrow = window.innerWidth < 900;
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false, depth: true });
+  created.renderer = renderer;
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, narrow ? 1.5 : 2));
   renderer.setClearColor(BG, 1);
   // 不设 toneMapping / exposure：场景经合成器渲染到离屏缓冲，three 只在直出画布时做色调映射，设了也不生效
@@ -68,7 +85,7 @@ function buildScene(canvas) {
   scene.fog = new THREE.FogExp2(BG.getHex(), 0.025);
   const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 260);
 
-  const disposables = [];
+  const disposables = created.disposables;
   const track = (obj) => { disposables.push(obj); return obj; };
 
   // 环境反射：金属与清漆没有它就是死的
@@ -222,6 +239,7 @@ function buildScene(canvas) {
 
   // ── 后期：Bloom（HalfFloat 帧缓冲，让 emissive > 1 真的发光）+ SMAA ──
   const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType });
+  created.composer = composer;
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new BloomEffect({ intensity: 0.85, luminanceThreshold: 0.82, luminanceSmoothing: 0.2, mipmapBlur: true, radius: 0.4 });
   composer.addPass(new EffectPass(camera, bloom));

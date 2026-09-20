@@ -336,8 +336,11 @@ export function findSkipMarker(message: string | null | undefined): string | nul
   for (const marker of SKIP_MARKERS) {
     if (lower.includes(marker)) return marker;
   }
-  // GitHub 还认 git trailer `skip-checks: true`——必须真的在结尾 trailer 块里
-  if (commitTrailers(message).some((t) => t.token === 'skip-checks' && t.value === 'true')) return 'skip-checks: true';
+  // GitHub 还认 git trailer `skip-checks: true`——必须在结尾 trailer 块里，且是最后一条
+  // （文档原话：If you already have other trailers in your commit message, skip-checks should be last）
+  const trailers = commitTrailers(message);
+  const last = trailers[trailers.length - 1];
+  if (last && last.token === 'skip-checks' && last.value === 'true') return 'skip-checks: true';
   return null;
 }
 
