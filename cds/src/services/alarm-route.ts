@@ -135,6 +135,7 @@ export function alarmTransportFingerprint(c: Pick<AlarmChannelConfig, 'kind' | '
 
 /** 一条要发出去的事。已经过分类，协议层只认它，不认 uptime 的原始事件。 */
 export interface AlarmEvent {
+  targetId?: string;
   kind: AlarmEventKind;
   projectId: string;
   targetName: string;
@@ -197,6 +198,12 @@ export interface AlarmMessage {
  */
 export function renderAlarmMessage(event: AlarmEvent, opts: { boardUrl?: string } = {}): AlarmMessage {
   const where = event.projectId ? `项目 ${event.projectId}` : '未归属项目';
+  if (event.projectId === 'cds-self-monitor') {
+    const recovered = event.kind.endsWith('-recovered');
+    return { title: `${event.targetName} ${recovered ? '已稳定恢复' : '指标异常'}`,
+      body: recovered ? '该指标已连续稳定 10 分钟，无需处理。' : `CDS 自检发现异常，需要检查；不等同于业务不可用。${event.message}`,
+      level: recovered ? 'passive' : 'active', ...(opts.boardUrl ? { url: opts.boardUrl } : {}) };
+  }
   if (event.kind === 'business-recovered' || event.kind === 'infra-recovered') {
     return {
       title: `${event.targetName} 恢复了`,

@@ -19,6 +19,8 @@ export interface UptimeSample {
   t: number;
   /** 该次探测是否判定为存活 */
   up: boolean;
+  /** 明确无观测样本；不计可用率、不推动故障或恢复。 */
+  noData?: boolean;
   /** 响应耗时（毫秒）。探测未发出时为 0。 */
   ms: number;
   /** HTTP 状态码（HTTP 探测才有） */

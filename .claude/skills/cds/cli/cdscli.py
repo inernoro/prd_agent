@@ -9217,6 +9217,10 @@ def cmd_monitor_list(args: argparse.Namespace) -> None:
     ok({"monitors": monitors})
 
 
+def cmd_monitor_notifications(args: argparse.Namespace) -> None:
+    ok(_call("GET", f"/api/cds-system/alarm-deliveries?hours={args.hours}"))
+
+
 def cmd_monitor_observations(args: argparse.Namespace) -> None:
     data = _call("GET", f"/api/uptime/monitors/{urllib.parse.quote(args.id)}/observations")
     ok(data)
@@ -9475,6 +9479,9 @@ def _build_parser() -> argparse.ArgumentParser:
     monl.add_argument("--functional-only", action="store_true", help="只看功能监控")
     monl.set_defaults(func=cmd_monitor_list)
 
+    monh = mon.add_parser("notifications", help="通知发送历史与按目标、通道、小时统计（管理员）")
+    monh.add_argument("--hours", type=int, choices=[1, 24, 168], default=24)
+    monh.set_defaults(func=cmd_monitor_notifications)
     mono = mon.add_parser("observations", help="看一条功能监控的历史观测证据（判据逐条、产物地址）")
     mono.add_argument("id")
     mono.set_defaults(func=cmd_monitor_observations)

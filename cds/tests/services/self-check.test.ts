@@ -51,6 +51,7 @@ function healthyDeps(overrides: Partial<SelfCheckDeps> = {}): SelfCheckDeps {
       { status: 'running', startedAt: iso(-3 * HOUR), finishedAt: iso(-3 * HOUR + 5 * MIN) },
       { status: 'building', startedAt: iso(-5 * MIN) },
     ],
+    unresolvedWebhookDispatches: () => 0,
     webhookDeliveries: () => [
       { receivedAt: iso(-10 * MIN), signatureValid: true, dispatchAction: 'deploy' },
       // 两天前的坏签名不在 24 小时窗口里，不该算进来。
@@ -61,7 +62,7 @@ function healthyDeps(overrides: Partial<SelfCheckDeps> = {}): SelfCheckDeps {
     processStartedAt: () => NOW - 2 * HOUR,
     diskUsage: () => ({ totalBytes: 100, freeBytes: 60 }),
     dockerPing: async () => ({ ok: true, ms: 120, detail: '27.1.1' }),
-    httpStats: async () => ({ requests: 400, serverErrors: 2, branchesP95Ms: 380 }),
+    httpStats: async () => ({ requests: 400, serverErrors: 2, branchesP95Ms: 380, branchesRequests: 10 }),
     liveAlarmChannels: () => 1,
     selfStatus: () => ({ ready: true, bundleStale: false, headSha: 'abc1234', currentBranch: 'main' }),
     storeBackend: () => 'mongo-split',
@@ -88,7 +89,7 @@ describe('协议一致性：自检文档喂给 CDS 自己的解析器', () => {
       'host.docker-ping-ms',
       'prober.since-last-cycle-seconds',
       'self.bundle-stale',
-      'webhook.dispatch-errors-24h',
+      'webhook.dispatch-unresolved',
       'webhook.signature-failures-24h',
     ]);
     for (const m of monitors) {
@@ -185,13 +186,13 @@ describe('部署 / 构建 / 页面', () => {
   });
 
   it('近 30 分钟没人打开过分支列表：P95 为 null、warn，样本量 0', async () => {
-    const doc = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 0, serverErrors: 0, branchesP95Ms: null }) }));
+    const doc = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 0, serverErrors: 0, branchesP95Ms: null, branchesRequests: 0 }) }));
     expect(doc.checks['api.branches-p95-ms']).toMatchObject({ observedValue: null, status: 'warn' });
     expect(doc.checks['api.requests-30m'].observedValue).toBe(0);
   });
 
   it('P95 超 1500ms 或 5xx 超 5% 都 fail', async () => {
-    const doc = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 100, serverErrors: 9, branchesP95Ms: 2200 }) }));
+    const doc = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 100, serverErrors: 9, branchesP95Ms: 2200, branchesRequests: 10 }) }));
     expect(doc.checks['api.branches-p95-ms'].status).toBe('fail');
     expect(doc.checks['api.error-rate-30m']).toMatchObject({ observedValue: 9, status: 'fail' });
   });
@@ -253,7 +254,8 @@ describe('接入 / 通知 / 自身', () => {
     const doc = await buildSelfCheck(healthyDeps());
     expect(doc.checks['webhook.signature-failures-24h']).toMatchObject({ observedValue: 0, status: 'pass' });
     const bad = await buildSelfCheck(healthyDeps({
-      webhookDeliveries: () => [{ receivedAt: iso(-MIN), signatureValid: false, dispatchAction: 'ignored' }],
+      unresolvedWebhookDispatches: () => 0,
+    webhookDeliveries: () => [{ receivedAt: iso(-MIN), signatureValid: false, dispatchAction: 'ignored' }],
     }));
     expect(bad.checks['webhook.signature-failures-24h']).toMatchObject({ observedValue: 1, status: 'fail' });
     const { monitors } = discoverMonitors(bad, URL_);
@@ -262,9 +264,10 @@ describe('接入 / 通知 / 自身', () => {
 
   it('派发失败的 webhook 单独一条', async () => {
     const doc = await buildSelfCheck(healthyDeps({
-      webhookDeliveries: () => [{ receivedAt: iso(-MIN), signatureValid: true, dispatchAction: 'error' }],
+      unresolvedWebhookDispatches: () => 0,
+    webhookDeliveries: () => [{ receivedAt: iso(-MIN), signatureValid: true, dispatchAction: 'error' }],
     }));
-    expect(doc.checks['webhook.dispatch-errors-24h']).toMatchObject({ observedValue: 1, status: 'fail' });
+    expect(doc.checks['webhook.dispatch-errors-24h']).toMatchObject({ observedValue: 1, status: 'pass' });
     expect(doc.checks['webhook.signature-failures-24h'].status).toBe('pass');
   });
 
@@ -284,10 +287,10 @@ describe('接入 / 通知 / 自身', () => {
     expect(unknown.releaseId).toBeUndefined();
   });
 
-  it('刚重启、自身状态缓存还没算完：宽限期内写 0 + warn 不响铃；过了宽限还不知道才 fail', async () => {
+  it('刚重启、自身状态缓存还没算完：宽限期内写 null + warn 不响铃；过了宽限还不知道才 fail', async () => {
     const notReady = () => ({ ready: false, bundleStale: false, headSha: '', currentBranch: '' });
     const young = await buildSelfCheck(healthyDeps({ selfStatus: notReady, processStartedAt: () => NOW - 30_000 }));
-    expect(young.checks['self.bundle-stale']).toMatchObject({ observedValue: 0, status: 'warn' });
+    expect(young.checks['self.bundle-stale']).toMatchObject({ observedValue: null, status: 'warn' });
     expect(young.checks['self.bundle-stale'].output).toContain('还没算完');
     expect(young.releaseId).toBeUndefined();
     const old = await buildSelfCheck(healthyDeps({ selfStatus: notReady, processStartedAt: () => NOW - SELF_STATUS_GRACE_MS - 1000 }));
@@ -417,4 +420,26 @@ describe('接线守卫：删掉任何一根线都不会有别的测试变红', (
     expect(strip).toContain("data?.builtin || []).includes(url)");
     expect(strip).not.toContain('new URL(');
   });
+});
+
+ describe('通知噪音回归：精确样本与有界更新宽限', () => {
+ it('总请求很多但分支请求为零，P95 使用独立样本计数', async () => {
+   const doc = await buildSelfCheck(healthyDeps({ httpStats: async () => ({ requests: 100, serverErrors: 0, branchesP95Ms: null, branchesRequests: 0 }) }));
+   expect(doc.checks['api.branches-p95-ms']['cds:monitor']?.sampleComponentId).toBe('api.branches-requests-30m');
+   expect(doc.checks['api.branches-requests-30m'].observedValue).toBe(0);
+ });
+ it('历史失败不持续报警，当前未解决失败才报警', async () => {
+   const doc = await buildSelfCheck(healthyDeps({ unresolvedWebhookDispatches: () => 2 }));
+   expect(doc.checks['webhook.dispatch-unresolved']).toMatchObject({ observedValue: 2, status: 'fail' });
+   expect(doc.checks['webhook.dispatch-errors-24h']['cds:monitor']).toBeUndefined();
+ });
+ it('更新中先等待，超过 10 分钟仍不匹配则失败', async () => {
+   const self = { ready: true, bundleStale: true, headSha: 'abc', currentBranch: 'main', updateStartedAt: iso(-5 * MIN) };
+   const grace = await buildSelfCheck(healthyDeps({ selfStatus: () => self }));
+   expect(grace.checks['self.bundle-stale']).toMatchObject({ observedValue: null, status: 'warn' });
+   expect(grace.checks['self.bundle-samples'].observedValue).toBe(0);
+   self.updateStartedAt = iso(-11 * MIN);
+   const overdue = await buildSelfCheck(healthyDeps({ selfStatus: () => self }));
+   expect(overdue.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
+ });
 });

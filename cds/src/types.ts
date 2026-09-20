@@ -1079,6 +1079,8 @@ export interface BranchEntry {
   lastDeployDispatchStatus?: 'dispatching' | 'accepted' | 'failed' | 'interrupted';
   /** Failure reason when the deploy dispatch itself failed before deployment started. */
   lastDeployDispatchError?: string;
+  /** 自更新入口明确返回 503 后的持久化补发；最多 3 次/30 分钟。 */
+  maintenanceDeferredDeploy?: { commitSha: string; createdAt: string; attempts: number; claimed?: boolean };
   /**
    * 2026-06-23：本轮 webhook 部署派发的**首次**派发时间（ISO）。与
    * lastDeployDispatchAt 不同——后者每次 reconciler 重试都会被刷新成最新
