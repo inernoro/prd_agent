@@ -326,8 +326,9 @@ export default function BranchlineScene({ rootRef }) {
 
     let raf = 0; let prog = 0; let railOn = -1; let sized = false; let hidden = document.hidden; let last = 0;
 
-    const onResize = () => { sized = false; };
-    const onVis = () => { hidden = document.hidden; if (!hidden && !raf) raf = requestAnimationFrame(frame); };
+    const schedule = () => { if (!raf && !hidden) raf = requestAnimationFrame(frame); };
+    const onResize = () => { sized = false; schedule(); };
+    const onVis = () => { hidden = document.hidden; last = 0; schedule(); };
 
     function frame(now) {
       raf = 0;
@@ -335,31 +336,43 @@ export default function BranchlineScene({ rootRef }) {
       const rect = root.getBoundingClientRect();
       const vh = window.innerHeight;
       const inView = rect.bottom > 0 && rect.top < vh;
-      if (inView) {
-        if (!sized) { built.resize(window.innerWidth, vh); sized = true; }
-        const target = clamp01(-rect.top / Math.max(1, rect.height - vh));
-        // 按时间插值而不是按帧：低帧率设备（软渲染约 2–3fps）上按帧插值要十几秒才跟上
-        const dt = last ? Math.min(100, now - last) : 16; last = now;
-        prog += (target - prog) * (reduced ? 1 : 1 - Math.exp(-dt / 140));
-        const p = prog;
-        for (let i = 0; i < copies.length; i++) {
-          const w = weight(p, i, 0.14);
-          copies[i].style.opacity = (0.06 + 0.94 * w).toFixed(3);
-          copies[i].style.transform = `translateY(${((1 - w) * 1.4).toFixed(2)}rem)`;
-        }
-        const nearest = Math.round(p * SEGMENTS);
-        if (nearest !== railOn) { railOn = nearest; rails.forEach((a, i) => a.classList.toggle('is-on', i === nearest)); }
-        built.render(p, now * 0.001, dt / 1000);
+      // 离屏就真的停：不再重排帧。留在 hero 或页脚时一帧都不跑，由下面的 IntersectionObserver 叫醒
+      if (!inView) { last = 0; return; }
+      if (!sized) { built.resize(window.innerWidth, vh); sized = true; }
+      const target = clamp01(-rect.top / Math.max(1, rect.height - vh));
+      // 按时间插值而不是按帧：低帧率设备（软渲染约 2–3fps）上按帧插值要十几秒才跟上
+      const dt = last ? Math.min(100, now - last) : 16; last = now;
+      prog += (target - prog) * (reduced ? 1 : 1 - Math.exp(-dt / 140));
+      const p = prog;
+      for (let i = 0; i < copies.length; i++) {
+        const w = weight(p, i, 0.14);
+        copies[i].style.opacity = (0.06 + 0.94 * w).toFixed(3);
+        copies[i].style.transform = `translateY(${((1 - w) * 1.4).toFixed(2)}rem)`;
       }
+      const nearest = Math.round(p * SEGMENTS);
+      if (nearest !== railOn) { railOn = nearest; rails.forEach((a, i) => a.classList.toggle('is-on', i === nearest)); }
+      // reduced-motion：时钟冻结在 0，镜头呼吸、珠子脉动、星尘漂移、模块自转、域名牌浮动全部静止，只剩滚动本身驱动的变化
+      built.render(p, reduced ? 0 : now * 0.001, dt / 1000);
       raf = requestAnimationFrame(frame);
     }
 
+    // 只用它当「进入视口」的门铃；不带 rootMargin（2026-09-09 首页死机的根因就是它被转成 rem）
+    const io = typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) schedule(); })
+      : null;
+    if (io) io.observe(root);
+    // 没有 IntersectionObserver 的环境退回滚动事件叫醒；帧循环自己会在离屏时停下
+    const onScroll = io ? null : () => schedule();
+    if (onScroll) window.addEventListener('scroll', onScroll, { passive: true });
+
     window.addEventListener('resize', onResize, { passive: true });
     document.addEventListener('visibilitychange', onVis);
-    raf = requestAnimationFrame(frame);
+    schedule();
 
     return () => {
       if (raf) cancelAnimationFrame(raf);
+      if (io) io.disconnect();
+      if (onScroll) window.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVis);
       built.dispose();

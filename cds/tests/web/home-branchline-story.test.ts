@@ -43,6 +43,10 @@ describe('首页 Branchline 叙事区', () => {
     expect(scene).toContain('built.dispose()');
     expect(scene).toContain('renderer.dispose()');
     expect(scene).toContain("matchMedia('(prefers-reduced-motion: reduce)')");
+    // Codex 2026-09-20 两条 P2：离屏时不许再排帧；reduced-motion 下时钟必须冻结，不只是关掉滚动插值
+    expect(scene, '离屏的那一帧必须直接 return，不能再 requestAnimationFrame').toMatch(/if \(!inView\) \{[^}]*return; \}/);
+    expect(scene, '离屏后要有门铃把循环叫醒').toContain('new IntersectionObserver(');
+    expect(scene, 'reduced-motion 下传给 render 的时钟要冻结').toMatch(/built\.render\(p, reduced \? 0 : now \* 0\.001/);
   });
 
   it('叙事区的类名在 HomePage 里只出现在叙事区（2026-09-18 撞车事故：cdsh-stage 与 hero 实况板列同名，hero 多出一块整屏黑）', () => {
