@@ -2111,3 +2111,18 @@ PATCH 写入了新正文与新缓存，回填的重命名就会把旧字节盖�
 
 **做完算数的判据**：在预览实例上对一条镜像分支发 DELETE / 重部署 / 改 env，三条都被
 拒并带说明；镜像刷新后本地演示分支的改动仍在、镜像分支原样。
+
+## 「哪个项目在托管预览实例」只看基线构建档与项目 env（2026-09-20）
+
+来源 PR #1553 第四轮 Codex review（P2）。镜像导出侧剔除托管项目用的是 `profileHostsPreviewInstance`
+（基线构建档 env + 项目级 env），而部署侧写镜像时看的是 `resolveEffectiveProfile` 之后的构建档：
+`CDS_PREVIEW_INSTANCE` 若只由某个部署模式、分支的 `profileOverrides.env` 或分支级自定义 env 给出，
+部署会写镜像，导出侧却判它不是托管项目，于是 `cds-self` 自己与它的分支会被导进子实例。
+
+这条谓词在同一个 PR 里已经被要求扩宽三次（构建档 env → 项目 env → 分支级有效构建档），按协作规则
+§5.5 熔断：不再往谓词里加输入源。现实配置（`cds-compose.selfhost.yml`）把开关写在构建档 env 里，
+已覆盖；剩下的三种来源属于「项目 / 分支两级有效构建档」这个更大的判定，`resolveEffectiveProfile`
+目前是路由闭包里的函数，导出侧拿不到。正解是把「分支的有效构建档」抽成服务层 SSOT，两侧同用。
+
+**做完算数的判据**：只在分支 `profileOverrides.env` 里写 `CDS_PREVIEW_INSTANCE=1` 部署预览实例，
+镜像里不含托管项目及其分支。

@@ -195,24 +195,26 @@ function seedCoreDemoData(state: StateService): boolean {
   };
   state.addProject(project);
 
+  // 演示构建档的 id 走保留前缀：addBuildProfile 按全局 id 唯一，父实例若真有一条叫 demo-api 的构建档，
+  // 镜像播种时会撞上演示项目那条被跳过、每次重启都缺（Codex P2）
   const profiles: BuildProfile[] = [
     {
-      id: 'demo-api',
+      id: 'preview-demo-api',
       projectId: project.id,
       name: 'api（演示）',
       dockerImage: 'node:20-alpine',
       workDir: '.',
-      command: 'echo demo-api',
+      command: 'echo preview-demo-api',
       containerPort: 5000,
       pathPrefixes: ['/api/'],
     },
     {
-      id: 'demo-web',
+      id: 'preview-demo-web',
       projectId: project.id,
       name: 'web（演示）',
       dockerImage: 'node:20-alpine',
       workDir: '.',
-      command: 'echo demo-web',
+      command: 'echo preview-demo-web',
       containerPort: 5173,
     },
   ];
@@ -268,8 +270,8 @@ function demoBranches(projectId: string): BranchEntry[] {
       lastAccessedAt: minutesAgoIso(6),
       notes: '演示数据：展示「运行中」状态的分支卡片，无真实容器。',
       services: {
-        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-sample', hostPort: 10101, status: 'running' },
-        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-sample', hostPort: 10102, status: 'running' },
+        'preview-demo-api': { profileId: 'preview-demo-api', containerName: 'cds-demo-api-sample', hostPort: 10101, status: 'running' },
+        'preview-demo-web': { profileId: 'preview-demo-web', containerName: 'cds-demo-web-sample', hostPort: 10102, status: 'running' },
       },
     },
     {
@@ -282,8 +284,8 @@ function demoBranches(projectId: string): BranchEntry[] {
       createdAt: minutesAgoIso(90),
       notes: '演示数据：展示「错误」状态与错误信息展示。',
       services: {
-        'demo-api': {
-          profileId: 'demo-api',
+        'preview-demo-api': {
+          profileId: 'preview-demo-api',
           containerName: 'cds-demo-api-error',
           hostPort: 10103,
           status: 'error',
@@ -311,7 +313,7 @@ function demoBranches(projectId: string): BranchEntry[] {
       lastAccessedAt: minutesAgoIso(1),
       notes: '演示数据：构建中状态，用于查看进度与排队 UI。',
       services: {
-        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-building', hostPort: 10105, status: 'building' },
+        'preview-demo-api': { profileId: 'preview-demo-api', containerName: 'cds-demo-api-building', hostPort: 10105, status: 'building' },
       },
     },
     {
@@ -324,7 +326,7 @@ function demoBranches(projectId: string): BranchEntry[] {
       lastAccessedAt: minutesAgoIso(240),
       notes: '演示数据：被调度器按 LRU 停掉后回到空闲的冷分支。',
       services: {
-        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-stopped', hostPort: 10106, status: 'stopped' },
+        'preview-demo-web': { profileId: 'preview-demo-web', containerName: 'cds-demo-web-stopped', hostPort: 10106, status: 'stopped' },
       },
     },
   ];
