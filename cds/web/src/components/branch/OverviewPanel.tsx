@@ -1447,8 +1447,11 @@ export function OverviewPanel({
   const cpuTotals = Array.from({ length: sampleCount }, (_, i) => cpuSeries.reduce((n, sv) => n + (sv.values[i] ?? 0), 0));
   const memTotals = Array.from({ length: sampleCount }, (_, i) => memSeries.reduce((n, sv) => n + (sv.values[i] ?? 0), 0));
   // 没历史可画时，合计退回实时快照（只算在跑的）；两者都没有就如实写「—」
-  const liveCpuTotal = anyRunning && liveStats ? services.filter((sv) => sv.status === 'running').reduce((n, sv) => n + (liveStats[sv.profileId]?.cpuPercent ?? 0), 0) : undefined;
-  const liveMemTotal = anyRunning && liveStats ? services.filter((sv) => sv.status === 'running').reduce((n, sv) => n + (liveStats[sv.profileId]?.memUsedBytes ?? 0), 0) : undefined;
+  // 「有实时快照」要看在跑的服务里有没有一个真的采到了，不是 liveStats 这个对象存不存在——
+  // 空对象会把合计算成 0，而 0 和「没测到」是两回事（演示分支就是这么被写成 0.0% 的）。
+  const liveRunning = anyRunning && liveStats ? services.filter((sv) => sv.status === 'running' && liveStats[sv.profileId]) : [];
+  const liveCpuTotal = liveRunning.length > 0 ? liveRunning.reduce((n, sv) => n + (liveStats![sv.profileId].cpuPercent), 0) : undefined;
+  const liveMemTotal = liveRunning.length > 0 ? liveRunning.reduce((n, sv) => n + (liveStats![sv.profileId].memUsedBytes), 0) : undefined;
   const cpuTileValue = hasPlot ? `${cpuTotalNow.toFixed(1)}%` : liveCpuTotal != null ? `${liveCpuTotal.toFixed(1)}%` : '—';
   const memTileValue = hasPlot ? formatBytesShort(memTotalNow) : liveMemTotal != null ? formatBytesShort(liveMemTotal) : '—';
   const topOf = (series: StackedSeries[], fmt: (v: number) => string): string => series
@@ -1464,7 +1467,7 @@ export function OverviewPanel({
   return (
     <div className="flex flex-col gap-3" data-testid="overview-command-deck">
       {/* 1. 指标砖 —— 六块等高，每块一个数、一句来路、一条走势（方向 A「指挥台」，2026-09-18 用户拍板） */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 min-[1920px]:grid-cols-6" data-testid="kpi-tiles">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3" data-testid="kpi-tiles">
         <KpiTile
           label="状态"
           size="text"
@@ -1485,8 +1488,8 @@ export function OverviewPanel({
         />
         <KpiTile
           label="已运行"
-          value={uptime ?? <span className="text-[1.3rem] text-muted-foreground">{transitioning ? '正在部署' : '未运行'}</span>}
-          sub={uptime ? (now - new Date(lastReadyAt as string).getTime() < 60_000 ? '刚就绪 · 满 1 分钟改按分钟计' : '自容器就绪起算') : copy.entryLabel.replace(/^\s*·\s*/, '')}
+          value={uptime ?? <span className="text-[1.3rem] text-muted-foreground">{transitioning ? '正在部署' : running ? '—' : '未运行'}</span>}
+          sub={uptime ? (now - new Date(lastReadyAt as string).getTime() < 60_000 ? '刚就绪 · 满 1 分钟改按分钟计' : '自容器就绪起算') : running ? '就绪时刻没有记录' : copy.entryLabel.replace(/^\s*·\s*/, '')}
           testId="kpi-uptime"
         />
         <KpiTile
@@ -1550,9 +1553,11 @@ export function OverviewPanel({
          * 闸门只看「有没有画得出来的历史」，**不看实时快照回来没有**（2026-09-02 真人验收：
          * 「打开之后卡了很长时间」——曾经写 `!metricsReady || !hasPlot`，拿着历史干等 docker stats）。
          */
-        services.length === 0 ? (
-          <section className="rounded-xl border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-8 text-center text-sm text-muted-foreground">
-            {copy.skeletonNote}
+        services.length === 0 || (!anyRunning && !transitioning) ? (
+          /* 没有 service，或分支根本没在跑（未运行 / 已停止）：一行说清为什么没有曲线。
+             此前停机分支也画一张 11rem 高的空骨架，整屏一半是占位（2026-09-20 用户：「很丑」）。 */
+          <section className="rounded-xl border border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-4 text-sm text-muted-foreground" data-testid="metrics-note">
+            <span className="mr-2 font-bold text-foreground">CPU 占用</span>{copy.skeletonNote}
           </section>
         ) : (
           <MetricsSkeleton

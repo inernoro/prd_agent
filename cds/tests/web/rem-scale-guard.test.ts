@@ -27,8 +27,6 @@ const ALLOW: Array<{ file: string; needle: string; why: string }> = [
   { file: 'pages/StatusPage.tsx', needle: "'(max-width: 767px)'", why: '媒体查询字符串：断点读不到根字号，和 CSS 断点一样保持 px' },
   { file: 'pages/HomePage.tsx', needle: "rootMargin: '0px 0px -40px 0px'", why: 'IntersectionObserver 的 rootMargin 是 JS API 参数不是 CSS，规范只接受 px 与 %，写 rem 会直接抛构造异常' },
   { file: 'components/BranchDetailDrawer.tsx', needle: "'-9999px'", why: '把 textarea 挪出视口以便 execCommand(copy) 的哨兵常量，不是设计尺寸，不该跟根字号缩' },
-  { file: 'components/branch/OverviewPanel.tsx', needle: 'min-[1920px]', why: '指标砖「六块并排」的视口断点：断点读不到根字号，和 CSS 断点一样保持 px' },
-  { file: 'components/branch/BranchDrawerSkeleton.tsx', needle: 'min-[1920px]', why: '同上：骨架与本体同一条断点' },
 ];
 
 /** 整个文件按画布单位工作的组件：几何是 px 常量或量出来的容器宽度，内容也必须是同一套单位，

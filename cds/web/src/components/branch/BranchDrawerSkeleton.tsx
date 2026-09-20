@@ -47,7 +47,7 @@ export function BranchDrawerSkeleton({ status }: { /** 父组件经 SSE 透传�
 
       <div className="flex flex-col gap-3 p-5">
         {/* 1. 六块指标砖：与 KpiTile 同一副外壳（标签 / 大数 / 副标题 + 走势位） */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 min-[1920px]:grid-cols-6">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
           {KPI_LABELS.map((label, i) => (
             <section key={label} className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-[1.3rem] py-4">
               <span className="text-[0.8125rem] font-bold uppercase tracking-[0.1em] text-muted-foreground">{label}</span>

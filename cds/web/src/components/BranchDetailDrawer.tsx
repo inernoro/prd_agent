@@ -111,6 +111,8 @@ interface BranchDetailData {
     title: string;
     pendingPublish?: boolean;
   };
+  /** 播种端的来路说明；以「演示数据」开头即为预览实例的演示分支（isDemoBranch） */
+  notes?: string;
 }
 
 interface BuildProfileOverride {
@@ -543,6 +545,15 @@ export function branchNoticeVisible(branch: Pick<BranchDetailData, 'status' | 'l
   const stoppedNote = Boolean(branch.lastStoppedAt) && !['running', 'building', 'starting', 'restarting'].includes(branch.status);
   const idleNote = branch.status === 'idle' || branch.status === 'stopped';
   return stoppedNote || Boolean(failureReason) || idleNote;
+}
+
+/**
+ * 预览实例的演示分支：没有真实容器，「构建中」永远不会变成「运行中」。
+ * 判据与播种端同一个标记词（notes 以「演示数据」开头，preview-instance-seed 的守卫扫的就是它），
+ * 不另发明一个字段——否则播种端改了标记这里就静默失效。
+ */
+function isDemoBranch(branch: Pick<BranchDetailData, 'notes'>): boolean {
+  return typeof branch.notes === 'string' && branch.notes.startsWith('演示数据');
 }
 
 function statusLabel(s: string): string {
@@ -2214,6 +2225,13 @@ export function BranchDetailDrawer({
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
                 {/* 2026-07-25 用户拍板：状态条并入标题行（不重要信息丢弃，不再单独占一格） */}
                 <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.625rem] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                {isDemoBranch(branch) ? (
+                  <span
+                    className="shrink-0 rounded border border-warn/40 bg-warn-soft px-1.5 py-0.5 text-[0.625rem] text-warn"
+                    title={branch.notes}
+                    data-testid="drawer-demo-badge"
+                  >演示数据 · 不会真的{branch.status === 'building' || branch.status === 'starting' ? '构建' : '运行'}</span>
+                ) : null}
                 {branch.mirror ? (
                   <span
                     className="shrink-0 rounded border border-info/40 bg-info-soft px-1.5 py-0.5 text-[0.625rem] text-info"

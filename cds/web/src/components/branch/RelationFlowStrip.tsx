@@ -189,12 +189,12 @@ function Connector({ links, leftRows, rightRows, dashedFrom, width: CONN_W = 48 
   );
 }
 
-function Chip({ chip, width, index }: { chip: FlowChip; width: number; index: number }): JSX.Element {
+function Chip({ chip, index }: { chip: FlowChip; index: number }): JSX.Element {
   const ring = chip.problem === 'bad' ? 'hsl(var(--bad) / .8)' : chip.problem === 'warn' ? 'hsl(var(--warn) / .75)' : 'hsl(var(--hairline))';
   return (
     <div
-      className="cds-relation-chip-in flex items-center gap-2.5 rounded-[0.75rem] bg-background pl-2.5 pr-3 shadow-[0_1px_2px_rgb(0_0_0/.25)] transition-colors duration-150"
-      style={{ width, height: ROW_H, border: `1.5px ${chip.inferred ? 'dashed' : 'solid'} ${ring}`, animationDelay: `${index * 40}ms` }}
+      className="cds-relation-chip-in flex w-full items-center gap-2.5 rounded-[0.75rem] bg-background pl-2.5 pr-3 shadow-[0_1px_2px_rgb(0_0_0/.25)] transition-colors duration-150"
+      style={{ height: ROW_H, border: `1.5px ${chip.inferred ? 'dashed' : 'solid'} ${ring}`, animationDelay: `${index * 40}ms` }}
       data-node={chip.id}
       data-kind={chip.kind}
       data-problem={chip.problem}
@@ -212,10 +212,15 @@ function Chip({ chip, width, index }: { chip: FlowChip; width: number; index: nu
   );
 }
 
+/**
+ * 一列 chip。宽度是「基准宽 width，容器有富余时按比例长到 1.6 倍」：宽抽屉里流向条撑满整条，
+ * 不再两侧各留一大片点阵空白（2026-09-20 用户截图：三枚 chip 缩在中间，左右各空 200px）。
+ * 装不下时不收缩（flex-shrink 0），由外层横向滚动接住——连接器几何仍按列高逐像素对齐。
+ */
 function Column({ chips, width, offset = 0 }: { chips: FlowChip[]; width: number; offset?: number }): JSX.Element {
   return (
-    <div className="flex shrink-0 flex-col justify-center" style={{ gap: ROW_GAP }}>
-      {chips.map((c, i) => <Chip key={c.id} chip={c} width={width} index={offset + i} />)}
+    <div className="flex min-w-0 flex-col justify-center" style={{ gap: ROW_GAP, flex: `1 1 ${width}px`, minWidth: width, maxWidth: Math.round(width * 1.6) }}>
+      {chips.map((c, i) => <Chip key={c.id} chip={c} index={offset + i} />)}
     </div>
   );
 }
@@ -259,8 +264,9 @@ export function RelationFlowStrip({ model, className }: { model: FlowModel; clas
       data-testid="relation-strip"
       data-narrow={narrow ? 'true' : undefined}
     >
-      {/* 内层 w-max + mx-auto：装得下就居中，装不下就横向滚动——justify-center 配 overflow 会把左端裁掉、还滚不回来 */}
-      <div className="mx-auto flex w-max items-center">
+      {/* 内层 w-full + min-w-max：装得下就按比例撑满（列会长到 1.6 倍基准宽），装不下就保持 max-content 横向滚动——
+          justify-center 配 overflow 会把左端裁掉、还滚不回来，所以居中靠 mx-auto 而不是 justify */}
+      <div className="mx-auto flex w-full min-w-max items-center justify-center">
         <Column chips={[model.entry]} width={w.entry} />
         <Connector links={[{ from: 0, to: 0, kind: 'prefix' }]} leftRows={1} rightRows={model.shells.length} width={w.conn} />
         <Column chips={model.shells} width={w.shell} offset={1} />
