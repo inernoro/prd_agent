@@ -30,6 +30,7 @@
 | 方法 | 路径 | 鉴权 |
 |------|------|------|
 | GET | `/gw/healthz` | 匿名 |
+| GET | `/gw/readyz` | 匿名；真实校验控制台 Mongo 持久层 |
 | POST | `/gw/auth/login` | 匿名 |
 | GET | `/gw/logs` | JWT |
 | GET | `/gw/logs/meta` | JWT |
@@ -37,7 +38,7 @@
 | GET | `/gw/logs/sessions` | JWT |
 | GET | `/gw/logs/{id}` | JWT |
 
-除 `/gw/healthz` 外，业务端点返回 `{ success, data, error }` 信封，JSON 字段 camelCase。
+除 `/gw/healthz`、`/gw/readyz` 外，业务端点返回 `{ success, data, error }` 信封，JSON 字段 camelCase。
 
 ## 本地运行
 

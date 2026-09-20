@@ -532,7 +532,8 @@ export function parseDfAvailableBytes(dfOutput: string): number | null {
  * 事后删残骸也来不及。逐目标复查保护的是**后面**的目标，救不了正在写的这一个。
  *
  * `ulimit -f` 是 POSIX shell 自带的硬上限：超过就给写进程 SIGXFSZ，写失败、命令
- * 非零退出，我们既有的失败路径顺手把残骸删掉。单位是 512 字节块，所以要换算。
+ * 非零退出，我们既有的失败路径顺手把残骸删掉。Linux 以 512 字节为块，macOS 的
+ * `/bin/sh` 以 1024 字节为块；构造命令时必须按宿主换算，否则 macOS 会放宽成两倍。
  *
  * 留出 `reserveBytes` 不用满：压缩临时缓冲、日志、别的进程都还要写盘，把可用空间
  * 掐到零和写满没有区别。
@@ -544,10 +545,14 @@ export function buildSizeCappedCommand(
   cmd: string,
   freeBytes: number,
   reserveBytes: number = DEFAULT_MIN_FREE_BYTES,
+  platform: NodeJS.Platform = process.platform,
 ): { command: string; capBytes: number } | null {
   const capBytes = Math.floor(freeBytes - reserveBytes);
   if (!Number.isFinite(capBytes) || capBytes <= 0) return null;
-  const blocks = Math.max(1, Math.floor(capBytes / 512));
+  const blockBytes = platform === 'darwin' ? 1024 : 512;
+  const blocks = Math.floor(capBytes / blockBytes);
+  // shell 的最小粒度已经大于可用额度时，不能伪装成“已限制”后继续写入。
+  if (blocks < 1) return null;
   // `ulimit` 失败不能连累导出：分号而不是 &&，配 2>/dev/null 吞掉不支持时的噪音。
   return { command: `ulimit -f ${blocks} 2>/dev/null; ${cmd}`, capBytes };
 }

@@ -336,7 +336,8 @@ services:
       # 「向我提问」两个调用方一并切到 HTTP 权威：模型池配置在 llmgw 那边，
       # 留在 inproc 会去查 MAP 自己的 model_groups —— 那张表在网关剥离之后就是空的，
       # 结果是 [ModelResolver] 未找到可用模型（无池且 legacy 未命中），访客看到「回答失败了」。
-      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent"
+      # HTML PPT 的大纲和页级生成同样由 MAP 选模，但必须经独立 LLMGW 记录模型、调用方和 runId。
+      LlmGateway__HttpAppCallerAllowlist: "transcript-agent.transcribe::asr,prd-agent-web.web-hosting.ask::chat,prd-agent-web.web-hosting.ask-openers::intent,md-to-ppt-agent.outline::chat,md-to-ppt-agent.html-generate::chat"
       # 逻辑模型永远交给独立 Gateway Serving；旧模型仍按 inproc 兼容。
       LlmGateway__LogicalModelsRequireHttp: "true"
       # redis 跑 --aclfile，只给地址会 NOAUTH 崩在启动阶段。StackExchange.Redis 不吃 redis:// URI，
@@ -455,7 +456,7 @@ services:
       LLMGW_ADMIN_ENV_AUTHORITY: "${LLMGW_ADMIN_ENV_AUTHORITY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/healthz"
+      cds.readiness-path: "/gw/readyz"
 
   # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
   # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
@@ -497,7 +498,14 @@ services:
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY}"
     labels:
       # 只做容器内部就绪检查，不声明 cds.subdomain/path-prefix，避免 CDS 生成独立 Web 预览。
-      cds.readiness-path: "/gw/v1/healthz"
+      #
+      # 这条声明必须指向**匿名且脱敏**的那条就绪路由，不能指向 readyz：
+      # CDS 的 HTTP 就绪探针是匿名 GET 且把一切 < 500 当就绪（container.ts 的 probeHttp），
+      # 而 readyz 带密钥门 —— 声明成 readyz 的话 401 会被当成「就绪」，依赖状态一次都不会
+      # 被评估，等价于只探了「HTTP 端口起来了」。
+      # healthz/ready 与 readyz 判据同源（同一个就绪探针），区别只在端出多少：
+      # 它只用状态码表态（200 / 503），正文没有组件名、耗时与摘要；要明细仍然走带密钥的 readyz。
+      cds.readiness-path: "/gw/v1/healthz/ready"
 
   # 独立 LLM 网关前端控制台 llmgw-web。默认 CDS 源码模式由 Vite 承载当前分支，
   # /gw 与四协议入口分别反代到 console API 和 serving；express 模式仍使用 CI 的不可变 nginx 镜像。
@@ -555,6 +563,14 @@ services:
       test: mongosh --eval "db.runCommand({ping:1})" --quiet
       interval: 10s
       retries: 3
+
+  # 索引目录不进部署链路（Codex P1，2026-09-15）。曾在这里放过一个 mongodb-indexes 一次性容器，
+  # 两处都错：一是 CDS 的 compose 解析把「挂了相对路径源码」当成应用服务，于是给它 /app 工作目录、
+  # 合成 8080 端口，再等一个 mongosh 永远不会开的 TCP 监听——脚本挂载路径也随之失效，任何一次
+  # 重新导入都会让这个服务失败并连坐拖住 API；二是它本身违反 no-auto-index：索引由 DBA 跑
+  # scripts/mongodb-indexes.js 手动建，正是为了避开「索引冲突导致应用启动失败」这一类事故，
+  # 而那一版恰恰把 API 启动挂到了它的成功退出上。清单与验证步骤见
+  # doc/guide.platform.mongodb-indexes.md。
 
   redis:
     image: redis:7-alpine

@@ -350,6 +350,74 @@ public class GatewayWhitelistPublishingTests
         Assert.DoesNotContain("PinnedPlatformId = pinnedPlatformId", endpoints);
     }
 
+    /// <summary>
+    /// pin 的两个面各自成立：兼容面（/v1/*、/v1beta/*）一概拒绝，gw-native 面（/gw/v1/*）按内部
+    /// 调度语义读取。
+    ///
+    /// 这条守卫由一次合并事故催生。上面那条给六个兼容入口加「拒绝客户端自带 pin」时，顺手删掉了
+    /// 取值函数；而同期另一条分支正在新开第七个入口 /gw/v1/responses，它调的正是那个函数。两边
+    /// 改的行不重叠，git 文本合并零冲突、零告警，一直到编译才炸（CS0103）。
+    ///
+    /// 所以这里钉的不是「有几处拒绝」——数量判据挡不住「新开一个入口忘了拒」，也分不清新入口
+    /// 属于哪个面。钉的是两件类型表达不了的事：
+    /// 一、兼容面的任何一条路由都不许**读取** pin 去用（读了就是绕过上面那条禁令）；
+    /// 二、别名清单只有一份。拆成两份的话，下次加一个别名必然只改得到其中一边，而漏掉的那边
+    ///     不会红——正是 predicate-and-wiring-discipline 形状 3。
+    /// </summary>
+    [Fact]
+    public void Pin的兼容面与内部面各自成立且别名清单只有一份()
+    {
+        var endpoints = Serving;
+
+        // 别名清单只有一份：取值只在这一个函数里，拒绝那一支复用它而不是另抄一遍
+        Assert.Equal(1, Regex.Matches(
+            endpoints,
+            @"private static \(string\? PinnedPlatformId, string\? PinnedModelId\) ReadDeclaredPinnedTarget").Count);
+        Assert.Contains("var (pinnedPlatformId, pinnedModelId) = ReadDeclaredPinnedTarget(http, body);", endpoints);
+
+        // 按路由把源码切成段，逐段判它属于哪个面
+        var routes = Regex.Split(endpoints, @"(?=app\.MapPost\("")")
+            .Where(segment => segment.StartsWith("app.MapPost(\"", StringComparison.Ordinal))
+            .Select(segment => new
+            {
+                Path = Regex.Match(segment, @"app\.MapPost\(""([^""]+)""").Groups[1].Value,
+                Body = segment,
+            })
+            .ToList();
+        Assert.Contains(routes, route => route.Path == "/gw/v1/responses");
+
+        foreach (var route in routes)
+        {
+            // gw-native 是内部路，按 pin 路由是它的既定语义
+            if (route.Path.StartsWith("/gw/", StringComparison.Ordinal)) continue;
+
+            // 兼容面一律不许读 pin 去用。读了就等于绕过「客户端自带 pin 一概拒绝」那条禁令，
+            // 而绕过它不会让任何既有断言变红——上面那条数的是拒绝处数，不看有没有人偷偷读。
+            Assert.DoesNotContain("ReadDeclaredPinnedTarget", route.Body);
+        }
+
+        // gw-native 那条原生 Responses 入口确实按 pin 路由：MAP 侧代理会先剥掉运行时自带的 pin，
+        // 再按自己冻结的快照盖上去，所以这条读的是服务端的值，不是客户端的。
+        var native = routes.Single(route => route.Path == "/gw/v1/responses").Body;
+        Assert.Contains("ReadDeclaredPinnedTarget(http, nativeBody)", native);
+
+        // chat 那一份实现同时挂在两个面上（兼容 /v1/chat/completions 与内部 /gw/v1/chat/completions）。
+        // 共用实现是对的——抄第二份，下次只会改到其中一边——但它必须真的按面分叉：
+        // 读 pin 只能发生在 nativeSurface 那一支，拒绝只能发生在另一支。
+        // 把那个 if 拆掉（两面都读，或两面都拒），下面任一条就会红。
+        Assert.Contains("/gw/v1/chat/completions", endpoints);
+        Assert.Contains("nativeSurface: true", endpoints);
+        Assert.Contains("nativeSurface: false", endpoints);
+        Assert.Contains(
+            "if (nativeSurface)",
+            endpoints);
+        var chatPin = Regex.Match(
+            endpoints,
+            @"if \(nativeSurface\)\s*\{[^}]*ReadDeclaredPinnedTarget\(http, body\);\s*\}\s*else if \(RejectClientSuppliedPinnedTarget\(http, body\) is \{ \} pinRejection\)");
+        Assert.True(chatPin.Success,
+            "chat 的两面实现必须在同一个 if/else 上分叉：native 读 pin，兼容面拒 pin");
+    }
+
     [Fact]
     public void 对外清单按线路逐条报价且非美金不当美金报()
     {

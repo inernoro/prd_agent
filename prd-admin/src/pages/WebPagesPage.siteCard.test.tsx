@@ -53,6 +53,7 @@ function renderSiteCard(
       onQrCode={vi.fn()}
       onTransferToLibrary={vi.fn()}
       onReplaceFile={vi.fn()}
+      onAiEdit={vi.fn()}
     />,
   );
 }
@@ -68,6 +69,28 @@ describe('WebPagesPage SiteCard', () => {
     // 低频配置不常驻（它们在菜单里，菜单未展开时不渲染）
     expect(html).not.toContain('aria-label="发布到公开页"');
     expect(html).not.toContain('aria-label="转存到知识库"');
+  });
+
+  it('卡片恢复原信息层高度，不追加微调与版本常驻按钮', () => {
+    const html = renderSiteCard();
+
+    expect(html).not.toContain('data-site-version-actions');
+    expect(html).not.toContain('帮我修改');
+    expect(html).not.toContain('版本记录');
+    expect(html).toContain('height:140px');
+    expect(html).toContain('padding:10px 11px 11px');
+  });
+
+  it('修改只出现在原更多菜单，点击调用原面板回调且遵守编辑权限', () => {
+    const onAiEdit = vi.fn();
+    const args = { site: baseSite, caps: ownerCaps, onEdit: vi.fn(), onQrCode: vi.fn(), onTogglePublic: vi.fn(), onTransferToLibrary: vi.fn(), onDelete: vi.fn(), onAiEdit };
+    const actions = buildCardActionLayers(args);
+    expect(actions.hover.map((action) => action.label)).not.toContain('帮我修改');
+    expect(actions.menu.filter((action) => action.label === '帮我修改')).toHaveLength(1);
+    actions.menu.find((action) => action.label === '帮我修改')!.onClick();
+    expect(onAiEdit).toHaveBeenCalledTimes(1);
+    expect(actions.menu.map((action) => action.label)).not.toContain('版本记录');
+    expect(buildCardActionLayers({ ...args, caps: { ...ownerCaps, canEdit: false } }).menu.map((action) => action.label)).not.toContain('帮我修改');
   });
 
   it('hover 层不显形时不可点', () => {
@@ -176,6 +199,19 @@ describe('WebPagesPage SiteCard', () => {
     // 条数收进 title——不能因为卡片小就把这个状态整个丢掉
     expect(html).toContain('已分享');
     expect(html).toContain('已分享 1 条链接');
+    expect(html).not.toContain('帮我修改');
+    expect(html).not.toContain('版本记录');
+    expect(html).toContain('height:92px');
+    expect(html).toContain('padding:8px 9px 9px');
+  });
+
+  it('中卡和大卡在触屏上提供常驻更多设置入口', () => {
+    for (const size of ['medium', 'large'] satisfies SiteCardSize[]) {
+      const html = renderSiteCard(baseSite, ownerCaps, false, size);
+      expect(html).toContain('hidden [@media(hover:none)]:block');
+      expect(html).toContain('aria-label="更多设置"');
+      expect(html).toContain('[@media(hover:none)]:hidden');
+    }
   });
 
   it('小卡的 kebab 压在缩略图上，不在正文里占一行（下巴）', () => {
@@ -225,6 +261,7 @@ describe('WebPagesPage SiteCard', () => {
     expect(html).toContain('aria-label="分享"');
     expect(html).not.toContain('aria-label="编辑信息"');
     expect(html).not.toContain('aria-label="替换内容"');
+    expect(html).not.toContain('data-site-version-actions="true"');
   });
 
   it('团队 viewer 不能拖动别人的站点触发错误投放高亮', () => {

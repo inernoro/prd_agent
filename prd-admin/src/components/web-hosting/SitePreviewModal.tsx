@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { shouldCloseOnEscape } from '@/lib/escapeLayering';
 import { createPortal } from 'react-dom';
-import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2 } from 'lucide-react';
+import { X, ExternalLink, FileWarning, History, MessageSquare, MessageCircleQuestion, Settings2, WandSparkles } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
 import { setSiteCommentsEnabled } from '../../services/real/webPages';
@@ -10,6 +11,7 @@ import AskConfigDrawer from './ask/AskConfigDrawer';
 import { resolveSitePreviewSource, supportsNativePdfViewer } from './sitePreviewSource';
 import { DIRECT_PREVIEW_SANDBOX, SRCDOC_PREVIEW_SANDBOX } from './previewHtml';
 import { useSitePreviewHtml } from './useSitePreviewHtml';
+import SiteEditPanel from './SiteEditPanel';
 
 /** 多久之后提示「加载较慢」。只影响提示，不影响是否判定失败。 */
 const SLOW_HINT_MS = 8000;
@@ -27,22 +29,41 @@ interface Props {
   onCommentsEnabledChange?: (siteId: string, enabled: boolean) => void;
   /** 提问开关同理：只改弹窗内的 state，关掉再打开会从 stale site.askEnabled 退回旧值 */
   onAskEnabledChange?: (siteId: string, enabled: boolean) => void;
+  /** 页面内容发布后回填父级站点 SSOT，使预览与卡片立即切到新版本。 */
+  onSiteChange?: (site: HostedSite) => void;
   /** 是否可改「允许访客评论」开关（仅 owner/editor）。viewer 角色只读评论、不显示开关 */
   canToggleComments?: boolean;
+  /** 卡片可直接打开修改面板，避免用户必须先预览、再猜“帮我修改”在哪里。 */
+  initialPanel?: 'none' | 'edit';
+  /** 卡片的“版本记录”入口直接把修改面板定位到历史区。 */
+  initialEditSection?: 'compose' | 'history';
 }
 
 /**
  * 站点预览模态框 —— 在 iframe 中加载站点入口 URL，右侧可展开评论面板
  * 遵循 frontend-modal.md 三硬约束: inline style 高度 + createPortal + min-h-0
  */
-export default function SitePreviewModal({ site, onClose, onCommentsEnabledChange, onAskEnabledChange, canToggleComments = true }: Props) {
+export default function SitePreviewModal({
+  site,
+  onClose,
+  onCommentsEnabledChange,
+  onAskEnabledChange,
+  onSiteChange,
+  canToggleComments = true,
+  initialPanel = 'none',
+  initialEditSection = 'compose',
+}: Props) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   const [loading, setLoading] = useState(true);
   /** 只在 iframe 真的 onError 时为 true —— 不由超时推断（见下方 effect 注释） */
   const [errored, setErrored] = useState(false);
   /** 加载偏慢：只挂一条角标提示，不遮挡已经绘制出来的内容 */
   const [slow, setSlow] = useState(false);
   // 右侧面板同一时刻只开一个：评论与提问互斥，两个都塞进来会把 iframe 挤成窄条
-  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask'>('none');
+  const [rightPanel, setRightPanel] = useState<'none' | 'comments' | 'ask' | 'edit'>(initialPanel);
+  const [editSection, setEditSection] = useState<'compose' | 'history'>(initialEditSection);
   const showComments = rightPanel === 'comments';
   const setShowComments = (next: boolean | ((v: boolean) => boolean)) => {
     const want = typeof next === 'function' ? next(rightPanel === 'comments') : next;
@@ -52,6 +73,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   const [showAskConfig, setShowAskConfig] = useState(false);
   /** 提问面板打开过至少一次；之后常驻挂载，切走只藏不卸（见渲染处注释） */
   const [askEverOpened, setAskEverOpened] = useState(false);
+  const [editEverOpened, setEditEverOpened] = useState(initialPanel === 'edit');
   /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
   // 三态：undefined = owner 从没表过态（默认开），true = 明确开，false = 明确关。
   // 曾经写的是 === true，于是「没表过态」被当成关——默认全开的口径下这会让
@@ -84,11 +106,18 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
     if (srcDoc) { setRenderMode('srcdoc'); return; }
     if (!htmlLoading) setRenderMode('direct');
   }, [renderMode, srcDoc, htmlLoading]);
-  useEffect(() => {
-    const timer = setTimeout(() => setRenderMode((m) => (m === 'waiting' ? 'direct' : m)), SRCDOC_WAIT_MS);
-    return () => clearTimeout(timer);
-  }, []);
   const useSrcDoc = renderMode === 'srcdoc';
+
+  // 发布新版本后 siteUrl 的版本指纹会变化。预览组件不卸载，因此必须显式重开
+  // srcDoc/direct 的一次性判定，否则 iframe 会继续停在发布前的旧内容。
+  useEffect(() => {
+    setRenderMode('waiting');
+    setLoading(true);
+    setErrored(false);
+    setSlow(false);
+    const timer = window.setTimeout(() => setRenderMode((mode) => (mode === 'waiting' ? 'direct' : mode)), SRCDOC_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [site.siteUrl]);
 
   const focusPreviewFrame = () => {
     const frame = iframeRef.current;
@@ -100,12 +129,51 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   };
 
   useEffect(() => {
+    const previouslyFocused = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const dialog = dialogRef.current;
+    window.requestAnimationFrame(() => {
+      const preferred = dialog?.querySelector<HTMLElement>('[data-dialog-initial-focus="true"]');
+      (preferred ?? dialog)?.focus();
+    });
+
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      // 本 PR 把 SiteEditPanel 放进了这个预览浮层，它自己会开知识选择、回滚、驳回等
+      // Radix 弹窗，那些弹窗按 Escape 时已在捕获阶段处理掉了。判据与 ShareSiteEditDock 共用。
+      if (shouldCloseOnEscape(e)) {
+        closeRef.current();
+        return;
+      }
+      if (e.key !== 'Tab' || !dialog) return;
+
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), summary, [href], [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getClientRects().length > 0);
+      if (focusable.length === 0) {
+        e.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (document.activeElement === dialog) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [onClose]);
+    return () => {
+      window.removeEventListener('keydown', handleKey);
+      previouslyFocused?.focus();
+    };
+  }, []);
 
   // 加载慢 ≠ 加载失败。
   //
@@ -118,7 +186,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   useEffect(() => {
     const timer = setTimeout(() => setSlow(true), SLOW_HINT_MS);
     return () => clearTimeout(timer);
-  }, []);
+  }, [site.siteUrl]);
 
   const handleOpenExternal = () => {
     // 与 iframe 同源同 URL：PDF 站在新窗口里也直接给原始 PDF，和 ShareViewPage 顶栏一致
@@ -140,24 +208,41 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
 
   const modal = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-sm p-1 sm:p-4"
       onClick={onClose}
     >
       <div
-        className="relative flex flex-col rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="site-preview-dialog-title"
+        tabIndex={-1}
+        className="relative flex flex-col rounded-xl border border-token-subtle bg-token-card text-token-primary shadow-2xl"
         style={{ width: '90vw', height: '90vh', maxWidth: '1400px' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-token-subtle shrink-0">
-          <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
-            <p className="text-xs text-token-muted truncate">{site.siteUrl}</p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
+        <div className="flex shrink-0 flex-col gap-2 border-b border-token-subtle px-3 py-2 sm:flex-row sm:items-center sm:gap-3 sm:px-4 sm:py-3">
+          <div className="flex min-w-0 w-full flex-1 items-center gap-2 sm:w-auto">
+            <div className="min-w-0 flex-1">
+            <h3 id="site-preview-dialog-title" className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
+            <p className="hidden text-xs text-token-muted truncate sm:block">{site.siteUrl}</p>
+            </div>
             <button
+              type="button"
+              onClick={onClose}
+              className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:hidden"
+              title="关闭"
+              aria-label="关闭"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <div className="flex w-full shrink-0 items-center gap-2 overflow-x-auto pb-0.5 sm:w-auto sm:overflow-visible sm:pb-0">
+            <button
+              type="button"
               onClick={() => setShowComments((v) => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+              className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                 showComments ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
               }`}
             >
@@ -166,11 +251,12 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             </button>
             {askEnabled && (
               <button
+                type="button"
                 onClick={() => {
                   setAskEverOpened(true);
                   setRightPanel((p) => (p === 'ask' ? 'none' : 'ask'));
                 }}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
+                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                   rightPanel === 'ask' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
                 }`}
               >
@@ -178,26 +264,66 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                 提问
               </button>
             )}
+            {canToggleComments && !site.wrappedAssetType && (
+              <button
+                type="button"
+                onClick={() => {
+                  const shouldOpen = rightPanel !== 'edit' || editSection !== 'compose';
+                  setEditEverOpened(true);
+                  setEditSection('compose');
+                  setRightPanel(shouldOpen ? 'edit' : 'none');
+                }}
+                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  rightPanel === 'edit' && editSection === 'compose' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
+                }`}
+                aria-pressed={rightPanel === 'edit' && editSection === 'compose'}
+              >
+                <WandSparkles className="w-3.5 h-3.5" />
+                帮我修改
+              </button>
+            )}
+            {canToggleComments && !site.wrappedAssetType && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditEverOpened(true);
+                  setEditSection('history');
+                  setRightPanel('edit');
+                }}
+                className={`flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                  rightPanel === 'edit' && editSection === 'history' ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
+                }`}
+                aria-pressed={rightPanel === 'edit' && editSection === 'history'}
+              >
+                <History className="h-3.5 w-3.5" />
+                版本记录
+              </button>
+            )}
             {canToggleComments && (
               <button
+                type="button"
                 onClick={() => setShowAskConfig(true)}
-                className="flex items-center justify-center w-8 h-8 rounded-lg bg-token-nested hover-bg-soft text-token-secondary transition-colors"
+                className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
                 title="提问设置"
+                aria-label="提问设置"
               >
                 <Settings2 className="w-4 h-4" />
               </button>
             )}
             <button
+              type="button"
               onClick={handleOpenExternal}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft text-token-secondary text-xs transition-colors"
+              className="flex min-h-11 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg bg-token-nested px-3 text-xs text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               新窗口打开
             </button>
             <button
+              type="button"
               onClick={onClose}
-              className="flex items-center justify-center w-8 h-8 rounded-lg bg-token-nested hover-bg-soft text-token-secondary transition-colors"
+              className="hidden min-h-11 min-w-11 shrink-0 items-center justify-center rounded-lg bg-token-nested text-token-secondary transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 sm:inline-flex"
               title="关闭"
+              aria-label="关闭"
             >
               <X className="w-4 h-4" />
             </button>
@@ -205,19 +331,19 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
         </div>
 
         {/* 主体：iframe + 可选评论面板 */}
-        <div className="flex-1 min-h-0 flex">
+        <div className="relative flex-1 min-h-0 flex overflow-hidden">
           {/* iframe 容器（底色用面板深色，避免站点白底加载瞬间在暗色后台里突兀闪白） */}
-          <div className="flex-1 min-w-0 relative bg-[#0f1014]">
+          <div className="flex-1 min-w-0 relative bg-token-nested">
             {/* loading 遮罩只在「还没到慢提示阈值」时盖住——超过阈值就让位给 iframe，
                 因为此时页面大概率已经画出来了，只是 load 事件还没来。 */}
             {loading && !slow && (
-              <div className="absolute inset-0 flex items-center justify-center bg-[#0f1014]">
+              <div className="absolute inset-0 flex items-center justify-center bg-token-nested">
                 <MapSectionLoader text="正在加载站点…" />
               </div>
             )}
             {/* 真失败（onError）才铺满遮罩 */}
             {errored && (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f1014] gap-3">
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-token-nested gap-3">
                 <FileWarning className="w-12 h-12 text-amber-400/70" />
                 <p className="text-sm text-token-secondary">站点加载失败</p>
                 <button
@@ -230,7 +356,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             )}
             {/* 加载慢：角标提示，不遮挡内容。措辞只说「较慢」，不谎报「失败」。 */}
             {loading && slow && !errored && (
-              <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg bg-black/70 px-3 py-1.5 text-[12px] text-token-secondary backdrop-blur-sm">
+              <div className="absolute left-3 bottom-3 z-10 flex items-center gap-2 rounded-lg border border-token-subtle bg-token-card px-3 py-1.5 text-[12px] text-token-secondary shadow-lg backdrop-blur-sm">
                 <MapSpinner size={14} />
                 <span>加载较慢，内容可能仍在陆续显示</span>
                 <button onClick={handleOpenExternal} className="text-blue-400 hover:text-blue-300">
@@ -250,7 +376,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
                 // 修复"超时已置 errored，但站点随后加载成功，错误遮罩却一直盖住"（Cursor medium）
                 setLoading(false);
                 setErrored(false);
-                focusPreviewFrame();
+                if (rightPanel === 'none') focusPreviewFrame();
               }}
               onError={() => {
                 setLoading(false);
@@ -269,7 +395,7 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
           {/* 评论面板 */}
           {showComments && (
             <aside
-              className="w-[360px] shrink-0 border-l border-token-subtle flex flex-col min-h-0 bg-[#0f1014]"
+              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col bg-token-card sm:static sm:inset-auto sm:z-auto sm:w-[360px] sm:shrink-0 sm:border-l sm:border-token-subtle"
             >
               {/* 允许评论开关：仅 owner/editor 显示（viewer 无权改，显示了点不动反而困惑） */}
               {canToggleComments && (
@@ -319,13 +445,29 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
               流式输出中途切走还会让那次请求无人认领地跑完。 */}
           {askEverOpened && (
             <aside
-              className="w-[380px] shrink-0 border-l border-token-subtle flex flex-col min-h-0"
+              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[380px] sm:shrink-0 sm:border-l sm:border-token-subtle"
               style={{
-                background: 'var(--panel-solid, var(--bg-elevated))',
+                background: 'var(--bg-elevated)',
                 display: rightPanel === 'ask' ? 'flex' : 'none',
               }}
             >
               <AskPanelInline siteId={site.id} title={site.title} />
+            </aside>
+          )}
+
+          {editEverOpened && (
+            <aside
+              className="absolute inset-0 z-20 flex w-full min-h-0 flex-col sm:static sm:inset-auto sm:z-auto sm:w-[440px] sm:shrink-0 sm:border-l sm:border-token-subtle"
+              style={{
+                background: 'var(--bg-elevated)',
+                display: rightPanel === 'edit' ? 'flex' : 'none',
+              }}
+            >
+              <SiteEditPanel
+                site={site}
+                focusSection={editSection}
+                onPublished={(updated) => onSiteChange?.(updated)}
+              />
             </aside>
           )}
         </div>

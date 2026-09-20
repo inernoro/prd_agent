@@ -35,6 +35,9 @@
   <!-- 数据驱动矩阵 cell 目录（scripts/gen-gw-matrix-report.py 生成，B/C 层 [Theory] 读它真跑） -->
   <ItemGroup>
     <None Include="Gateway/fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\..\scripts\fixtures\opendesign-task-v1.json"
+          Link="Fixtures\opendesign-task-v1.json"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

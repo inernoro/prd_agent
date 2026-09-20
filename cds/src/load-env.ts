@@ -1,7 +1,7 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { warnLegacyCdsEnvKeys } from './config/known-env-keys.js';
 import { scrubParentSecretsFromEnv } from './services/preview-instance.js';
+import { cdsEnvFileCandidates } from './services/env-file.js';
 
 /**
  * `.cds.env` self-loader —— 在 Node 启动最早期把磁盘上的 env 注入 process.env。
@@ -32,11 +32,8 @@ import { scrubParentSecretsFromEnv } from './services/preview-instance.js';
  * 显式注入的非空值仍然有最高优先级，self-loader 不动它们。
  */
 
-function loadCdsEnvFile(): void {
-  const candidates = [
-    path.resolve(process.cwd(), '.cds.env'),
-    path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '.cds.env'),
-  ];
+export function loadCdsEnvFile(): void {
+  const candidates = cdsEnvFileCandidates();
   for (const envPath of candidates) {
     try {
       if (!fs.existsSync(envPath)) continue;
@@ -50,6 +47,9 @@ function loadCdsEnvFile(): void {
         const m = line.match(lineRe);
         if (!m) continue;
         const key = m[1];
+        // CDS_ENV_FILE is a startup-only selector. Loading it from the file
+        // it selects would create two configuration authorities on restart.
+        if (key === 'CDS_ENV_FILE') continue;
         const raw = m[2] ?? m[3] ?? m[4] ?? '';
         const value = (m[2] !== undefined)
           ? raw.replace(/\\(.)/g, '$1')

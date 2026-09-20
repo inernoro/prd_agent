@@ -43,7 +43,7 @@ export default function AskPanel({
   source, title, welcome, openingQuestions, allowAnonymous, onClose, isMobile, embedded, hidden,
 }: Props) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
-  const { messages, status, phaseMessage, model, gateError, isBusy, ask } = useAskStream(source);
+  const { messages, status, phaseMessage, elapsedSeconds, model, gateError, isBusy, ask, cancel } = useAskStream(source);
   const [draft, setDraft] = useState('');
 
   // 几种「问不了」各有各的下一步，判定收在 resolveAskRefusal 里（有守卫）
@@ -190,6 +190,8 @@ export default function AskPanel({
         }}
         isBusy={isBusy}
         phaseMessage={phaseMessage}
+        elapsedSeconds={elapsedSeconds}
+        onCancel={cancel}
       />
 
       {/* 输入区。
