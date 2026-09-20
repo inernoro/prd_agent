@@ -51,6 +51,10 @@ const WEB_PROTOTYPE_TEMPLATE_PATCH = [
   `-e 's|<button class="btn btn-primary">\\[REPLACE\\] Primary CTA</button>|<a class="btn btn-primary" href="#content">[REPLACE] Primary CTA</a>|g'`,
   `-e 's|<button class="btn btn-secondary">\\[REPLACE\\] Secondary</button>|<a class="btn btn-secondary" href="#footer">[REPLACE] Secondary</a>|g'`,
   `-e 's|href="#"|href="#content"|g'`,
+  // 模板页脚那个 contact@example.com 会被「事实必须来自 MAP 来源」那道闸拒掉：
+  // 占位邮箱不在任何知识来源里，模型又照例留着不动（实测第六条 run 就死在它上面）。
+  // 占位联系方式没有任何合法取值，所以是删掉而不是换一个。
+  `-e 's|\\[REPLACE\\] tagline · contact@example\\.com|[REPLACE] tagline · [REPLACE] contact|g'`,
   '"$f"; done',
   `&& for f in ${WEB_PROTOTYPE_LAYOUT_FILES.join(' ')}; do sed -i -e 's|href="#"|href="#content"|g' "$f"; done`,
 ].join(' ');
@@ -65,6 +69,13 @@ const WEB_PROTOTYPE_TEMPLATE_PATCH = [
  */
 const WEB_PROTOTYPE_TEMPLATE_ASSERT = [
   ...WEB_PROTOTYPE_TEMPLATE_FILES.map((file) => `! grep -qE 'href="#"|href=""|<button' ${file}`),
+  // 邮箱与日期在模板里没有任何合法取值——它们只可能是占位，而占位一定过不了
+  // 「事实必须来自 MAP 来源」那道闸。写成通用判据而不是逐个点名，上游哪天再加一个
+  // 占位邮箱/日期，会在这里当场炸，而不是等用户的生成失败才发现。
+  // （URL 不在此列：模板里出现 CDN 链接是合理的，一刀切会在上游升级时误伤。）
+  ...WEB_PROTOTYPE_TEMPLATE_FILES.map((file) => (
+    `! grep -qiE '[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|(19|20)[0-9]{2}[-/.][0-9]{1,2}' ${file}`
+  )),
   // 这一条整体是**一个** shell 命令：循环体里不能再被 ' && ' 切开，否则拼出 `do && for`
   // 这种语法错误，而语法错误会让整条 assert 失败——看起来像「模板没改对」，其实是判据自己坏了。
   `for f in ${WEB_PROTOTYPE_TEMPLATE_FILES.join(' ')}; do `

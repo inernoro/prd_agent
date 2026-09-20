@@ -1028,8 +1028,12 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('<a class="btn btn-primary" href="#content">[REPLACE] CTA</a>');
     // 命令是 shell-quote 过的，单引号在字符串里长成 '"'"'，所以这里只断言不含单引号的片段。
     expect(preparedDesignTemplate?.command).toContain('href="#"|href=""|<button');
-    // 两份 HTML 模板各要一条自证，少一条就有一份没被守住。
+    // 模板页脚那个占位邮箱同样过不了「事实必须来自 MAP 来源」那道闸，实测死在它上面。
+    // 断言里带着反斜杠：这一处的 `\[REPLACE\]` 曾被 JS 模板字面量吃掉一层，sed 静默不命中。
+    expect(preparedDesignTemplate?.command).toContain('\\[REPLACE\\] tagline · contact@example\\.com');
+    // 两份 HTML 模板各要一条「空链接/裸按钮」自证 + 一条「邮箱/日期」自证，少一条就有一份没被守住。
     expect(preparedDesignTemplate?.command.match(/! grep -qE/g)?.length).toBe(2);
+    expect(preparedDesignTemplate?.command.match(/! grep -qiE/g)?.length).toBe(2);
     // 片段自证：每个 href="#x" 都要在同一份文件里找到真的 id="x"。判据必须排除 data-od-id，
     // 否则它自己会被那个子串骗过去（第一版就这么错过一次，把空链接换成了不存在的片段）。
     expect(preparedDesignTemplate?.command).toContain('grep -qE "(^|[[:space:]])id=\\"$frag\\"" "$f" || exit 1');
