@@ -14,7 +14,7 @@
  */
 import { readFileSync } from 'node:fs';
 import type { StateService } from './state.js';
-import type { BranchEntry, BuildProfile, Project } from '../types.js';
+import type { BranchEntry, BuildProfile, InfraService, Project } from '../types.js';
 import type { PreviewMirrorFile } from './preview-mirror.js';
 
 export const PREVIEW_DEMO_PROJECT_ID = 'preview-demo';
@@ -77,15 +77,12 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
     if (r.createdBy === 'preview-instance-seed' && snapshotTitles.has(r.title)) { state.deleteAcceptanceReport(r.id); changed = true; }
   }
 
-  // 2. 同一份镜像已播过：不动
+  // 2. 同一份镜像已经**完整**播过：不动。判据逐集合核对（项目 / 分支 / 构建配置 / 基础设施 / 部署 run /
+  //    报告 / 日志），只数项目与分支会把「构建配置那条插失败了」当成已播完，之后每次重启都在这里返回、
+  //    缺的永远补不上（Codex P2）
   const stampedProjects = state.getProjects().filter((p) => p.mirror);
   const stampedBranches = state.getAllBranches().filter((b) => b.mirror);
-  const sameCapture = stampedProjects.length > 0
-    && stampedProjects.every((p) => p.mirror?.capturedAt === mirror.capturedAt)
-    && stampedBranches.every((b) => b.mirror?.capturedAt === mirror.capturedAt)
-    && stampedProjects.length === mirror.projects.length
-    && stampedBranches.length === mirror.branches.length;
-  if (sameCapture) return changed;
+  if (mirrorFullySeeded(state, mirror, stampedProjects, stampedBranches)) return changed;
 
   // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志；部署 run 要单独删——
   //    removeBranch / removeProject 不动 run 账本，留着会让同 id 的新 run 被「已存在」跳过、
@@ -111,6 +108,12 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
   for (const profile of mirror.buildProfiles) {
     if (!projectIds.has(profile.projectId)) continue;
     try { state.addBuildProfile({ ...profile } as BuildProfile); } catch (err) { warn(`构建配置 ${profile.id}`, err); }
+  }
+  // 项目级基础设施跟着项目走（removeProject 级联删，换镜像时随项目退场）；子实例上没有对应容器，
+  // 只是让服务表与关系图画得出「共享基础设施」
+  for (const svc of mirror.infraServices ?? []) {
+    if (!projectIds.has(svc.projectId)) continue;
+    try { state.addInfraService({ ...svc, env: { ...(svc.env ?? {}) } } as InfraService); } catch (err) { warn(`基础设施 ${svc.id}`, err); }
   }
   const branchIds = new Set<string>();
   for (const b of mirror.branches) {
@@ -144,6 +147,33 @@ export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMi
         createdAt: r.createdAt,
       });
     } catch (err) { warn(`报告「${r.title}」`, err); }
+  }
+  return true;
+}
+
+/** 同一份镜像是否已经一条不缺地在库里：capturedAt 相同，且每个集合的条数都对得上。 */
+function mirrorFullySeeded(
+  state: StateService,
+  mirror: PreviewMirrorFile,
+  stampedProjects: Project[],
+  stampedBranches: BranchEntry[],
+): boolean {
+  if (stampedProjects.length === 0) return false;
+  if (!stampedProjects.every((p) => p.mirror?.capturedAt === mirror.capturedAt)) return false;
+  if (!stampedBranches.every((b) => b.mirror?.capturedAt === mirror.capturedAt)) return false;
+  if (stampedProjects.length !== mirror.projects.length || stampedBranches.length !== mirror.branches.length) return false;
+  const projectIds = new Set(stampedProjects.map((p) => p.id));
+  const branchIds = new Set(stampedBranches.map((b) => b.id));
+  const expectedProfiles = mirror.buildProfiles.filter((p) => projectIds.has(p.projectId)).length;
+  if (state.getBuildProfiles().filter((p) => projectIds.has(p.projectId)).length !== expectedProfiles) return false;
+  const expectedInfra = (mirror.infraServices ?? []).filter((s) => projectIds.has(s.projectId)).length;
+  if (state.getInfraServices().filter((s) => projectIds.has(s.projectId)).length !== expectedInfra) return false;
+  const expectedRuns = (mirror.deploymentRuns ?? []).filter((r) => branchIds.has(r.branchId)).length;
+  if (state.getDeploymentRuns().filter((r) => branchIds.has(r.branchId)).length !== expectedRuns) return false;
+  const expectedReports = (mirror.reports ?? []).length;
+  if (state.listAcceptanceReports(null).filter((r) => r.createdBy === PREVIEW_MIRROR_CREATED_BY).length !== expectedReports) return false;
+  for (const b of stampedBranches) {
+    if (state.getLogs(b.id).length !== (mirror.logs?.[b.id] ?? []).length) return false;
   }
   return true;
 }

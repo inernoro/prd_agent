@@ -30,6 +30,7 @@ import type {
   BranchEntry,
   BuildProfile,
   DeploymentRun,
+  InfraService,
   OperationLog,
   PreviewMirrorTag,
   Project,
@@ -73,6 +74,12 @@ export interface PreviewMirrorFile {
   logs: Record<string, OperationLog[]>;
   /** 容器名 → 指标点位 */
   metrics: Record<string, MirrorMetricPoint[]>;
+  /**
+   * 镜像项目的项目级基础设施（Mongo / Redis …，脱敏后）。子实例的服务表与关系流向条只从自己库里的
+   * infraServices 读共享基础设施，不带这一份就永远画「共享基础设施 无」、少掉全部服务到基础设施的边（Codex P2）。
+   * 可选：旧版镜像文件没有它也照读。
+   */
+  infraServices?: InfraService[];
 }
 
 /* ------------------------------------------------------------------ 脱敏 */
@@ -275,6 +282,9 @@ export function buildPreviewMirror(state: StateService, opts: BuildPreviewMirror
     reports,
     logs,
     metrics,
+    infraServices: state.getInfraServices()
+      .filter((svc) => projectIds.has(svc.projectId) && svc.scope !== 'system')
+      .map((svc) => deepRedactForMirror(svc)),
   };
 }
 

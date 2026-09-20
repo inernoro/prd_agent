@@ -18,7 +18,7 @@ import {
 } from '../../src/services/preview-mirror.js';
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
 import { recordContainerSample, __resetContainerMetricsHistory } from '../../src/services/container-metrics-history.js';
-import type { BranchEntry, BuildProfile, Project } from '../../src/types.js';
+import type { BranchEntry, BuildProfile, InfraService, Project } from '../../src/types.js';
 
 const SRC = path.resolve(__dirname, '../../src');
 let tmp: string;
@@ -138,6 +138,35 @@ describe('只读 + 幂等（子实例播种）', () => {
     // 演示项目仍在，快照项目一个都没有
     expect(child.getProject(PREVIEW_DEMO_PROJECT_ID)).toBeTruthy();
     expect(child.getProjects().some((p) => p.id.startsWith('snap-'))).toBe(false);
+  });
+  it('镜像带项目级基础设施：脱敏后随项目播下，服务表与关系图才画得出「共享基础设施」；换镜像随项目退场（Codex P2）', () => {
+    const parent = parentState();
+    const now = new Date().toISOString();
+    parent.addInfraService({ id: 'mongodb', projectId: 'map', name: 'MongoDB', dockerImage: 'mongo:7', containerPort: 27017, hostPort: 43017, containerName: 'c-map-mongodb', status: 'running', volumes: [], env: { MONGO_INITDB_ROOT_PASSWORD: 'hunter2', MONGO_INITDB_DATABASE: 'app' }, createdAt: now } as InfraService);
+    const m1 = buildPreviewMirror(parent, { nowMs: Date.parse('2026-09-20T10:00:00Z') });
+    expect(m1.infraServices?.map((s) => s.id)).toEqual(['mongodb']);
+    expect(m1.infraServices?.[0].env.MONGO_INITDB_ROOT_PASSWORD).toBe('***');
+    expect(m1.infraServices?.[0].env.MONGO_INITDB_DATABASE).toBe('app');
+    expect(findMirrorLeaks(m1)).toEqual([]);
+    const child = freshState('child-infra');
+    expect(seedPreviewInstanceMirror(child, m1)).toBe(true);
+    expect(child.getInfraServicesForProject('map').map((s) => s.id)).toEqual(['mongodb']);
+    parent.removeInfraService('mongodb', 'map');
+    const m2 = buildPreviewMirror(parent, { nowMs: Date.parse('2026-09-20T11:00:00Z') });
+    expect(seedPreviewInstanceMirror(child, m2)).toBe(true);
+    expect(child.getInfraServicesForProject('map')).toEqual([]);
+  });
+  it('幂等判据逐集合核对：上次播种漏了一条构建配置，同一份镜像再启动会补齐，而不是按项目 / 分支条数当成已播完（Codex P2）', () => {
+    const parent = parentState();
+    const m = buildPreviewMirror(parent, { nowMs: Date.parse('2026-09-20T10:00:00Z') });
+    const child = freshState('child-partial');
+    expect(seedPreviewInstanceMirror(child, m)).toBe(true);
+    expect(seedPreviewInstanceMirror(child, m)).toBe(false);
+    child.removeBuildProfile('api');
+    expect(child.getBuildProfiles().some((p) => p.id === 'api')).toBe(false);
+    expect(seedPreviewInstanceMirror(child, m)).toBe(true);
+    expect(child.getBuildProfiles().some((p) => p.id === 'api')).toBe(true);
+    expect(seedPreviewInstanceMirror(child, m)).toBe(false);
   });
   it('同一份镜像重复启动不动库；新镜像整体替换，镜像里消失的分支也消失', () => {
     const parent = parentState();
