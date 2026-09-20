@@ -1414,3 +1414,61 @@ placeholderSamples: [REPLACE] Page title · brand / [REPLACE] Brand /
 - 跟随与投影：`prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs`
   的 `ProjectClaimedCdsEventAsync` / `FollowCdsStreamWithRetryAsync`
 - 单一消费者：`prd-api/src/PrdAgent.Api/Services/InfraAgentRuntimeWorker.cs`
+
+## 真正的根因：模型的产物和 CDS 收的文件根本不是同一个东西（2026-09-20，已定案）
+
+### 证据（镜像里的技能契约原文，不是推断）
+
+web-prototype 技能 `SKILL.md` 的 Step 1 与 Output contract：
+
+> Do not write a project-root HTML draft with **file-write** before emitting the final `<artifact>`.
+> The live-artifact output is the canonical HTML file for this generation turn; an extra
+> `index.html` … can be stranded beside it as an orphan.
+>
+> ```
+> <artifact identifier="kebab-case-slug" type="text/html" title="Human Title">
+> ```
+> OpenDesign derives the canonical HTML artifact from this identifier.
+> **Do not also write another root HTML file for the same generation turn.**
+
+也就是说：**技能明令禁止模型写 `/workspace/index.html`**，要求它把整张页面放在消息里的
+`<artifact>` 块交给 OpenDesign，由 OpenDesign 存成 live artifact。而 CDS 的收件动作读的
+正是 `/workspace/index.html`。两条通道从来没有接上过。
+
+核对 CDS 这一侧：整个运行时只向 OpenDesign 发过四种请求——`/api/import/folder`、
+建 run、轮询 run、取消 run，**一次都没有向它要过产物**；跑完直接读磁盘。
+OpenDesign 自己是有取件口的（`/api/live-artifacts/:artifactId`、
+`/api/projects/:id/export/html`），只是没人调。
+
+### 这条结论推翻了上一节的读法
+
+上一节把「残留 13 个占位」读成「模型粘了版式、只剩外壳没填」。**错了。**
+质量闸里 `[REPLACE]` 那条排在 `untouched starter template` 前面，所以先报的是占位；
+那 13 个其实就是**整张未动的模板**。三种起始页三次失败，共同点不是「外壳没填」，
+而是**模型一次都没写过 index.html**——每一次 CDS 收上来的都是自己种下去的那张种子：
+
+| 起始页 | 报出来的失败 | 真实情况 |
+|---|---|---|
+| 整张模板 | 残留 13 个 `[REPLACE]` | 种子原样 |
+| 空白骨架 | 闸门全过、交出空页 | 种子原样（当时还没有这道闸） |
+| 只留结构与槽位 | `untouched starter template` | 种子原样 |
+
+模型每次都真的做出了页面（14–19 次模型调用、各阶段耗时真实），
+**是 CDS 把它扔了，然后把种子当成产物发了出去。**
+
+### 下一步
+
+把取件接上：生成 run 结束后按 identifier 向 OpenDesign 取 live artifact 的 HTML
+（或走项目的 HTML 导出），写进 `/workspace/index.html`，再走既有的质量闸与收件。
+取不到就当场失败并说清楚，不许把种子当产物交出去——那正是
+`predicate-and-wiring-discipline.md` 形状 2（链路只建一半）与「比失败更糟的那种成功」。
+
+起始页那一版改动**仍然保留**：它把「种子里带样例文案」这个独立缺陷修掉了，
+并且正是它让这次失败以 `untouched starter template` 的形态当场暴露出来，
+而不是继续伪装成「模型漏填占位」。
+
+### 实现来源
+
+- 技能契约：镜像内 `/app/plugins/_official/examples/web-prototype/SKILL.md`
+- CDS 侧只建 run 不取件：`cds/src/services/agent-workspace-session-runtime.ts` 的 `execute`
+- OpenDesign 取件口：daemon 的 `/api/live-artifacts/:artifactId`、`/api/projects/:id/export/html`
