@@ -764,8 +764,12 @@ public class DesignArtifactProviderCatalogTests
             }
         });
 
-        Assert.Equal("OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试", error.Message);
-        Assert.DoesNotContain("remote diagnostic details", error.Message);
+        // 这两条断言原本要求这句话保持不透明，并把用户指向 CDS 会话日志——而 CDS 的 agent 会话
+        // 是内存态，失败后随即销毁，点进去只会拿到 session_not_found；原因明明就在 LastError 里。
+        // 改成断言真正被保护的性质：远端原因要交到用户手上，且这句话不再指向那个死胡同。
+        Assert.Contains("remote diagnostic details", error.Message);
+        Assert.DoesNotContain("会话日志", error.Message);
+        Assert.Contains("下一步：", error.Message);
         sessions.Verify(service => service.GetAsync(
             "user-1",
             remoteSession.Id,

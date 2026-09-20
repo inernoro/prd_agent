@@ -2450,6 +2450,8 @@ export class AgentWorkspaceSessionRuntime {
         ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
         : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
       'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
+      'Those reference files demonstrate two shapes the publication gate always rejects: anchors written as href="#" or href="" (template topnav, layouts.md "View all"), and bare enabled buttons with no declarative behavior ([REPLACE] CTA). They are layout sketches, not permitted markup. Copy their layout, never those two shapes.',
+      'Every anchor you emit must point somewhere real: an absolute URL taken from the MAP sources, or href="#section-id" where that id exists on this page. Make the navigation actually jump to your own sections. A label that is not meant to navigate is not an anchor at all - render it as span, li, or heading text. Every enabled button must either drive a real popover via popovertarget, or be rewritten as an anchor to one of your own sections; a caption that does nothing is plain text. None of this counts as removing a requested control, because the template never requested them - the rule about not removing controls protects what the MAP instruction asked for, not boilerplate you copied from the sketch.',
       editingExistingPage
         ? 'A starting /workspace/index.html already exists; it is the exact current published page and must remain the starting point. The generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.'
         : 'This is a new page. Create /workspace/index.html from the MAP task and knowledge sources; the generic template is reference material only and its sample identity or copy must not appear in the deliverable.',
@@ -3432,13 +3434,13 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
   if (message === 'index.html contains a link without a target') {
     return {
       code: 'link_without_target',
-      instruction: 'Remove or convert every visible link that has no target.',
+      instruction: 'Every anchor needs a real destination. Give each one an absolute URL from the MAP sources, or href="#section-id" pointing at an id that exists on this page. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. The web-prototype template is the usual source of these; its markup is a sketch, not permitted output.',
     };
   }
   if (message === 'index.html contains an empty link target') {
     return {
       code: 'empty_link_target',
-      instruction: 'Remove or correct every link with an empty target.',
+      instruction: 'href="#" and href="" are rejected without exception, including in the topnav and footer. Point each anchor at a real destination instead: an absolute URL from the MAP sources, or href="#section-id" where that id exists on this page, so the navigation actually jumps to your own sections. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. You most likely copied these from the web-prototype template or layouts.md; those files are layout sketches, not permitted markup, and rewriting them here is not removing a requested control.',
     };
   }
   if (message === 'index.html contains a malformed fragment target') {
@@ -3472,7 +3474,7 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
   if (message === 'index.html contains an enabled button without provable declarative behavior') {
     return {
       code: 'inert_enabled_button',
-      instruction: 'Repair each enabled button to perform the requested behavior. Do not remove or disable requested controls to silence this gate. If the current publication policy cannot support that behavior, report the incompatibility instead of degrading the deliverable.',
+      instruction: 'Repair each enabled button to perform the requested behavior: drive a real popover via popovertarget, or rewrite it as an anchor to one of your own sections. Do not remove or disable a control the MAP instruction actually asked for; a bare [REPLACE] CTA copied from the web-prototype template was never requested, so turning that one into an anchor or plain text is the correct repair, not a degradation. If the current publication policy cannot support a requested behavior, report the incompatibility instead of degrading the deliverable.',
     };
   }
   if (message === 'index.html violates a visible text occurrence constraint') {

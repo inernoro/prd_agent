@@ -478,7 +478,8 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                 run.UserId,
                 session.Id,
                 new SendInfraAgentMessageRequest(DesignArtifactPromptBuilder.BuildRemoteEnvelope(run)),
-                ct) ?? throw new InvalidOperationException("CDS 未能接收 OpenDesign 远程任务");
+                ct) ?? throw new InvalidOperationException(
+                    OpenDesignFailureMessage.Describe(OpenDesignFailureStage.Dispatch, remoteReason: null));
 
             while (DateTime.UtcNow < deadline)
             {
@@ -511,12 +512,13 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                                 yield return new DesignArtifactExecutorChunk("thinking", thinking);
                             break;
                         case InfraAgentEventTypes.Error:
+                            var remoteError = ReadPayloadString(item.PayloadJson, "message");
                             _logger.LogWarning(
                                 "OpenDesign 远程执行返回错误 session={SessionId} message={RemoteMessage}",
                                 session.Id,
-                                ReadPayloadString(item.PayloadJson, "message") ?? "unknown");
+                                remoteError ?? "unknown");
                             throw new InvalidOperationException(
-                                "OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试");
+                                OpenDesignFailureMessage.Describe(OpenDesignFailureStage.RemoteRun, remoteError));
                         case InfraAgentEventTypes.Done:
                             var package = await _workspaceBroker.ReadResultAsync(run.Id, CancellationToken.None);
                             completedTurnObserved = true;
@@ -575,8 +577,9 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                             "OpenDesign 远程会话在终态事件到达前已失败 session={SessionId} lastError={RemoteMessage}",
                             session.Id,
                             latestSession.LastError ?? "unknown");
-                        throw new InvalidOperationException(
-                            "OpenDesign 远程执行失败，请在 CDS 会话日志中查看原因后重试");
+                        throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                            OpenDesignFailureStage.RemoteSessionEnded,
+                            latestSession.LastError));
                     }
                     if (latestSession?.Status == InfraAgentSessionStatuses.Stopped)
                     {
@@ -588,7 +591,9 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                 await Task.Delay(250, ct);
             }
 
-            throw new InvalidOperationException("OpenDesign 在 15 分钟内没有完成，请检查 CDS 会话日志后重试");
+            throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                OpenDesignFailureStage.Deadline(RunTimeout),
+                remoteReason: null));
         }
         finally
         {
@@ -657,7 +662,9 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
     {
         var remaining = deadline - DateTime.UtcNow;
         if (remaining <= TimeSpan.Zero)
-            throw new InvalidOperationException("OpenDesign 启动等待已超时，请检查 CDS 会话日志后重试");
+            throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                OpenDesignFailureStage.StartupDeadline,
+                remoteReason: null));
         using var timeout = new CancellationTokenSource(remaining);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
         try
@@ -687,14 +694,18 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                         && !string.IsNullOrWhiteSpace(current.CdsSessionId))
                         return current;
                     if (current.Status != InfraAgentSessionStatuses.Creating)
-                        throw new InvalidOperationException("OpenDesign 远程会话未能就绪，请检查 CDS 会话日志后重试");
+                        throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                            OpenDesignFailureStage.StartupFailed,
+                            current.LastError));
                 }
                 await Task.Delay(pollDelay ?? TimeSpan.FromSeconds(1), linked.Token);
             }
         }
         catch (OperationCanceledException) when (timeout.IsCancellationRequested && !ct.IsCancellationRequested)
         {
-            throw new InvalidOperationException("OpenDesign 启动等待已超时，请检查 CDS 会话日志后重试");
+            throw new InvalidOperationException(OpenDesignFailureMessage.Describe(
+                OpenDesignFailureStage.StartupDeadline,
+                remoteReason: null));
         }
     }
 

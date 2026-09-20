@@ -3471,3 +3471,43 @@ describe('AgentWorkspaceSessionRuntime', () => {
     )).toContain('content:"→"');
   });
 });
+
+/**
+ * 2026-09-20：OpenDesign 连续五轮全数失败在 `index.html contains an empty link target`。
+ * 根因不在模型：它被指名要读的参考素材本身就示范了闸门必拒的两种写法——
+ * template.html 的 topnav 是三个 `<a href="#">`、`[REPLACE] CTA` 是三个裸 button，
+ * layouts.md 还有一个 `href="#"`。而当时的修复指令只说「移除或修正」，同一份提示词
+ * 另一句又说「不许为了过闸删控件」，于是模型无路可走，四轮修复全部原地打转。
+ *
+ * 守的不是措辞，是那条真正缺失的性质：**拒绝类指令必须给出一个通得过闸门的替代写法**，
+ * 只说不许做什么等于没说。红绿闭环：把替代写法从指令里删掉，这三条会红。
+ */
+describe('quality repair instructions must name a gate-passing alternative', () => {
+  const reason = (message: string) => classifyQualityRepairReason(
+    new AgentWorkspaceRuntimeError('design_output_quality_rejected', message, false),
+  );
+
+  it('tells the model where an anchor may point instead of only banning empty targets', () => {
+    for (const message of [
+      'index.html contains an empty link target',
+      'index.html contains a link without a target',
+    ]) {
+      const instruction = reason(message)?.instruction ?? '';
+      // 闸门接受的两种落点，指令里必须至少点名可解析的页内锚点。
+      expect(instruction).toContain('#section-id');
+      // 不该导航的标签有一条明确出路，而不是「删掉」这一个选项。
+      expect(instruction).toMatch(/span|heading/);
+    }
+  });
+
+  it('tells the model how an enabled button can pass instead of only banning inert ones', () => {
+    const instruction = reason('index.html contains an enabled button without provable declarative behavior')?.instruction ?? '';
+    // popovertarget 是闸门明写的放行条件，指令必须把它交给模型。
+    expect(instruction).toContain('popovertarget');
+  });
+
+  it('marks the shipped reference material as the likely source so the model stops copying it', () => {
+    const instruction = reason('index.html contains an empty link target')?.instruction ?? '';
+    expect(instruction).toContain('web-prototype');
+  });
+});
