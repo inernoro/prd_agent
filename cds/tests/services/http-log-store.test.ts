@@ -272,3 +272,20 @@ describe('redactBodyText：CDS 自己签发的凭据明文不许进日志', () =
     expect(out).not.toContain('[redacted]');
   });
 });
+
+
+it('P95 原始样本不被其它轮询占走抽样槽，其余 GET 继续抽样', async () => {
+  const docs: any[] = [];
+  const store = new HttpLogStore({ uri: 'mongodb://unused' });
+  (store as any).collection = { insertOne: async (doc: unknown) => { docs.push(doc); }, countDocuments: async () => docs.length };
+  const record = (path: string, requestId: string, layer: 'master' | 'forwarder' = 'master') => store.record({
+    layer, requestId, method: 'GET', path, status: 200, durationMs: 72, outcome: 'ok', request: {}, response: {},
+  });
+  for (let i = 0; i < 10; i++) {
+    record('/api/branches?projectId=test', `p95-${i}`);
+    record('/api/projects', `poll-${i}`, 'forwarder');
+  }
+  await store.flush();
+  expect(docs.filter(r => r.requestId.startsWith('p95-'))).toHaveLength(10);
+  expect(docs.filter(r => r.requestId.startsWith('poll-'))).toHaveLength(1);
+});
