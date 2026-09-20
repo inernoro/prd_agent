@@ -351,7 +351,7 @@
 
 **主要改动面**（按去重后的文件数）：主系统后端 164 · 主系统前端 132 · 部署平台测试 86 · changelog 碎片 57 · 部署平台前端 49 · 部署平台后端与脚本 39 · 规则与技能 39 · 模型网关前端 30 · 文档 29 · 模型网关后端 27 · 脚本 13 · 端到端测试 5。
 
-**技术明细引用**：本周新增两条工程规则 `cds-first-verification.md`（验证的权威位置）与 `durable-payload-storage.md`（账在哪，货就在哪）；新增设计文档 [design.platform.llm-gateway.model-architecture.md](./design.platform.llm-gateway.model-architecture.md)、[design.platform.active-tasks.md](./design.platform.active-tasks.md)，活看板 [plan.platform.llm-gateway.model-consolidation.md](./plan.platform.llm-gateway.model-consolidation.md)，索引指南 [guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md)。各能力的逐条改动见 [CHANGELOG.md](../CHANGELOG.md) `[未发布]` 段下 **2026-09-14 至 2026-09-20** 的日期块——本周的 changelog 碎片已由本次归档合并进去并随之删除，不要再去 `changelogs/` 原路径找。
+**技术明细引用**：本周新增两条工程规则 `cds-first-verification.md`（验证的权威位置）与 `durable-payload-storage.md`（账在哪，货就在哪）；新增设计文档 [design.platform.llm-gateway.model-architecture.md](./design.platform.llm-gateway.model-architecture.md)、[design.platform.active-tasks.md](./design.platform.active-tasks.md)，活看板 [plan.platform.llm-gateway.model-consolidation.md](./plan.platform.llm-gateway.model-consolidation.md)，索引指南 [guide.platform.mongodb-indexes.md](./guide.platform.mongodb-indexes.md)。各能力的逐条改动见 [CHANGELOG.md](../CHANGELOG.md) `[未发布]` 段下 **2026-09-14 至 2026-09-20** 的日期块——本周的 changelog 碎片已由本次归档合并进去并随之删除（26 个），不要再去 `changelogs/` 原路径找；只有本次周报自己那一条碎片按惯例留着，下一期归档时收。
 
 ### 合并后必须做的两件运维动作（来自 PR 的「后续事项」，不做会出问题）
 

@@ -14,6 +14,7 @@
 |------|------|------|
 | fix | cds | 预览镜像的脱敏与零泄漏自检认同一组 URL 形状：只有用户名段（`amqp://user@host`）与只有密码段（`redis://:pass@host`）都归一为打码，父实例不再因为自检误判而「本次不写」，子实例拿得到镜像 |
 | fix | cds | 父实例写预览镜像的结果（已写入 / 自检拦下 / worktree 不在本机）同时记进部署控制台，cdscli 触发 + 轮询模式下也能排障 |
+| chore | doc | 熵清理：D1-D5/D7 均无欠账，D6 登记 5 条历史 changelog（CDS 分支关系面板改版、CDS 首页滚动叙事、分享页下载源文件、上一轮熵清理自身、预览镜像 URL 脱敏），补 design.web-hosting.md 分享页下载源文件章节与 plan.cds.service-relations.md 指挥台布局演进章节 |
 
 ### 2026-09-19
 
