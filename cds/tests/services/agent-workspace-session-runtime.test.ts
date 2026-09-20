@@ -1017,10 +1017,26 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
     expect(fs.readFileSync(path.join(shell.workspaceDir, 'index.html'))).toEqual(fs.readFileSync(path.join(shell.workspaceDir, 'current/index.html')));
-    // 起始页是改好之后的模板拷贝：OpenDesign 的 import 要一张有结构的页面（给空白骨架
-    // 它就产出空白），`[REPLACE]` 槽位要留着（清空之后模型以为页面已完成，一字未改就交回）。
-    expect(preparedDesignTemplate?.command).toContain('cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html; fi');
+    // 起始页从改好之后的模板拷贝来（OpenDesign 的 import 要一张有结构的页面，给空白骨架
+    // 它就产出空白），但只留结构与槽位：页首导航、模板自带的示例 hero、页脚整段删掉，
+    // `<title>` 用 MAP 任务的标题填上。2026-09-20 第十三条 run 的闸门明细证明这是必须的——
+    // 整张模板照搬时模型只干「把版式粘进 <main>」这一件事，14 个占位残留 13 个，
+    // 而它粘进来的版式本身一个占位都没有，残留全部来自起始页自带的外壳。
+    expect(preparedDesignTemplate?.command).toContain('.od-skills/web-prototype/assets/template.html\\", \\"utf8\\")');
+    expect(preparedDesignTemplate?.command).toContain('class=\\"topnav\\"');
+    expect(preparedDesignTemplate?.command).toContain('class=\\"section hero\\"');
+    expect(preparedDesignTemplate?.command).toContain('class=\\"pagefoot\\"');
+    expect(preparedDesignTemplate?.command).toContain('/workspace/brief/task.json\\", \\"utf8\\")');
+    expect(preparedDesignTemplate?.command).toContain('fs.writeFileSync(\\"/workspace/index.html\\"');
+    // 种完当场自断言：三块有一块没删、标题槽没填上、成品里还剩 `[REPLACE]`，一律当场失败，
+    // 不许静默种下一张仍然违规的起始页（`predicate-and-wiring-discipline.md` 形状 8）。
+    expect(preparedDesignTemplate?.command).toContain('template block not found: ');
+    expect(preparedDesignTemplate?.command).toContain('carries no title');
+    expect(preparedDesignTemplate?.command).toContain('placeholders remain in the seeded page');
+    expect(preparedDesignTemplate?.command).toContain('paste marker missing');
+    // 起始页绝不能直接引原始来源——那份没打过补丁。
     expect(preparedDesignTemplate?.command).not.toContain('cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html');
+    expect(preparedDesignTemplate?.command).not.toContain('cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html');
     // 模板改写与它的自证必须都在这一条命令里；少了自证，上游换措辞时 sed 会静默不命中。
     expect(preparedDesignTemplate?.command).toContain('<a href="#hero">[REPLACE] Link 1</a>');
     expect(preparedDesignTemplate?.command).toContain('id="hero" data-od-id="hero"');

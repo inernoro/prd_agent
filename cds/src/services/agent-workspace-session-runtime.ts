@@ -25,21 +25,58 @@ const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-pr
  * 导航真的跳到自己的章节，CTA 是一个有去处的锚点。改的是 CDS 的拷贝，上游镜像不动。
  */
 /**
- * 新建页面的起始页：从改好之后的模板拷贝来，再把 `[REPLACE] xxx` 占位文本清空。
+ * 新建页面的起始页：从改好之后的模板拷贝来，但**只留结构与槽位，不留样例文案**——
+ * 页首导航、模板自带的示例 hero、页脚三块整段删掉，`<title>` 用 MAP 任务的标题填上。
  *
  * 为什么仍然用模板：OpenDesign 的 import 要的是一张有结构的页面。给它一张空白骨架，
  * 它就产出空白——2026-09-20 第八条 run 实测：六个文件收上来了、index.html 一字未动、
  * 所有闸门都「通过」，用户拿到一张空页。那是比失败更糟的一种成功。
  *
- * 为什么占位文案要留着：试过清空（第九条 run），模型看见一张「看上去已经完成」的页面，
- * 一字未改就交了回来——`[REPLACE] xxx` 对它是「这里要填」的信号，删掉等于把信号也删了。
+ * 为什么不能整张模板照搬：模板 `<main>` 里那段注释写的是「把版式粘到这里」，模型就**只**
+ * 干这一件事——2026-09-20 第十三条 run 的闸门明细：`placeholderCount: 13`，14 个占位残留
+ * 13 个，连 hero 的大标题、副标题都原封不动，而它粘进来的版式一个占位都没有
+ * （`references/layouts.md` 实测零个 `[REPLACE]`）。也就是说残留**全部**来自起始页自带的
+ * 外壳，不是模型漏填。四轮修复也压不住：模型认为外壳不归它管，它按模板的指示办事。
  *
- * 那 MAP 拒收残留 `[REPLACE]` 怎么办：把同一条判据前移到 CDS 的质量闸（见下方
- * `unreplaced template placeholders`），让质量修复回路（4 轮，带条数与样本）先收拾干净。
- * 此前 CDS 这边根本不查，模型漏几个就直接撞上 MAP 的硬拒，一次生成全废（第七条 run）。
+ * 更要命的是这和系统提示词直接打架——提示词说「模板只是参考材料，它的样例身份与文案不得
+ * 出现在交付物里」，而交付物文件本身就是那张模板。初始状态和指令互相矛盾时，改初始状态。
+ *
+ * 为什么空掉占位文案的老做法也不行：试过（第九条 run），模型看见一张「看上去已经完成」的
+ * 页面，一字未改就交了回来。本次的差别在于外壳整块拿掉——`<main>` 里只剩那段「粘到这里」
+ * 的指示注释，页面不是「看上去已完成」，是「明摆着还没写」。而它一字不动地交回来也不再
+ * 可能蒙混过关：指示注释留在页面里就会撞上 `untouched starter template` 那道闸。
+ *
+ * 种完当场自断言（`predicate-and-wiring-discipline.md` 形状 8）：三块有一块没删掉、标题槽
+ * 没填上、或成品里还剩任何 `[REPLACE]`，一律当场失败——不许静默种下一张仍然违规的起始页。
  */
+const NEW_PAGE_SEED_SCRIPT = [
+  'import fs from "node:fs";',
+  'const fail = (m) => { throw new Error("new page seed: " + m); };',
+  'let html = fs.readFileSync("/workspace/.od-skills/web-prototype/assets/template.html", "utf8");',
+  'const blocks = [',
+  '  ["topnav", /[ \\t]*<header class="topnav"[\\s\\S]*?<\\/header>\\n?/],',
+  '  ["sample hero", /[ \\t]*<section class="section hero"[\\s\\S]*?<\\/section>\\n?/],',
+  '  ["footer", /[ \\t]*<footer class="pagefoot"[\\s\\S]*?<\\/footer>\\n?/],',
+  '];',
+  'for (const block of blocks) {',
+  '  if (!block[1].test(html)) fail("template block not found: " + block[0]);',
+  '  html = html.replace(block[1], "");',
+  '}',
+  'const task = JSON.parse(fs.readFileSync("/workspace/brief/task.json", "utf8"));',
+  'const title = typeof task.title === "string" ? task.title.trim() : "";',
+  'if (!title) fail("brief/task.json carries no title");',
+  'const titleSlot = /<title>\\[REPLACE\\][^<]*<\\/title>/;',
+  'if (!titleSlot.test(html)) fail("template title slot not found");',
+  'const escaped = title.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");',
+  'html = html.replace(titleSlot, "<title>" + escaped + "</title>");',
+  'if (/\\[\\s*REPLACE\\s*\\]/i.test(html)) fail("placeholders remain in the seeded page");',
+  'if (!html.includes("PASTE LAYOUTS FROM references/layouts.md HERE")) fail("paste marker missing");',
+  'if (!/<main id="content">/.test(html)) fail("main landmark missing");',
+  'fs.writeFileSync("/workspace/index.html", html);',
+].join(' ');
+
 const NEW_PAGE_SEED = 'if [ ! -f /workspace/index.html ]; then '
-  + 'cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html; fi';
+  + `node --input-type=module -e ${JSON.stringify(NEW_PAGE_SEED_SCRIPT)}; fi`;
 
 const WEB_PROTOTYPE_TEMPLATE_FILES = [
   '/app/design-templates/web-prototype/assets/template.html',
@@ -2295,12 +2332,9 @@ export class AgentWorkspaceSessionRuntime {
           // （`predicate-and-wiring-discipline.md` 形状 8：不成立的证据当成证据）。
           WEB_PROTOTYPE_TEMPLATE_ASSERT,
           // 起始页从**改好之后**的那份拷贝来，不从原始来源来——否则又把违规模板发回去。
-          // 起始页仍从改好之后的模板拷贝来——OpenDesign 的 import 要的是一张有结构的页面，
-          // 给空白骨架它就产出空白（实测第八条 run：六个文件收上来了，index.html 一字未动，
-          // 所有闸门都"通过"，用户拿到一张空页。比失败更糟的那种成功）。
-          // 但模板通篇 `[REPLACE] xxx`，MAP 落库前一律拒收——所以起始页里把这些占位文本清空：
-          // 结构与样式全留着（模型有槽可填），漏填一处渲染成空元素，而不是渲染成 `[REPLACE]`
-          // 也不是整条 run 失败。参考拷贝 .od-skills 保持原样，模型仍看得出哪里是槽。
+          // 并且只留结构与槽位：页首导航、模板自带的示例 hero、页脚整段删掉，`<title>` 用
+          // MAP 任务的标题填上。详细理由与实测证据见 NEW_PAGE_SEED 的注释。
+          // 参考拷贝 .od-skills 保持完整（已打过补丁），模型照样看得到版式长什么样。
           NEW_PAGE_SEED,
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',

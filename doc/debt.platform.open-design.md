@@ -1242,9 +1242,8 @@ CDS 在最后一轮修复之后**当场就失败了**，只是这条结论没走
 
 ### 丢在哪一段
 
-不是发射：`cds/src/routes/remote-hosts.ts` 的失败回调在写日志行**之前**就
-`pushCdsAgentEvent(session, 'error', runtimeError)` 了，而日志行确实出现了，
-说明那段代码跑到了。是**投递**：MAP 侧在终态错误到达前就停止导入该会话的事件，
+不是发射：CDS 侧那个失败回调在写日志行**之前**就把 error 事件推进会话了，
+而日志行确实出现了，说明那段代码跑到了。是**投递**：MAP 侧在终态错误到达前就停止导入该会话的事件，
 `ListPersistedEventsAsync` 从此再也取不到新事件，执行器只能空转到自己的 15 分钟上限。
 
 嫌疑落在 MAP 的跟随终止条件上（`CdsEventProjectionResult` 的 `EndFollow`）：
@@ -1260,6 +1259,9 @@ CDS 在最后一轮修复之后**当场就失败了**，只是这条结论没走
 
 比对这两条 run 在 MAP 侧的事件导入记录，找出跟随在哪一个事件上终止、两者为何不同。
 **不要动 15 分钟这个值**：它不是病因，只是这个病的症状显示器。
+
+> 这一段的结论已被后面「十三条 run 之后找到的真根因」那一节接管：产品层的真问题不在
+> 这条链路上，而这条链路本身仍未定案。从那一节的「仍未定案」往下读，不要从这里往下查。
 
 ### 验收判据（不变）
 
@@ -1331,3 +1333,84 @@ CDS 在最后一轮修复之后**当场就失败了**，只是这条结论没走
 - `cds/src/services/agent-workspace-session-runtime.ts`（出口中继那一段）
 - `prd-api/src/PrdAgent.Api/Controllers/Api/MdToPptController.cs`
 - `prd-admin/src/components/web-hosting/SiteGenerateDialog.tsx`
+
+## 十三条 run 之后找到的真根因：起始页把「参考材料」当成了交付物（2026-09-20）
+
+### 证据（不是推断）
+
+第十三条 run 的质量闸明细，取自 CDS `GET /api/server-events` 的
+`agent-workspace-session.execute.failed` 记录：
+
+```
+placeholderCount: 13
+placeholderSamples: [REPLACE] Page title · brand / [REPLACE] Brand /
+  Link 1 / Link 2 / Link 3 / CTA / Eyebrow /
+  [REPLACE] One sharp sentence about what this is. /
+  [REPLACE] One subhead sentence — concrete value, /
+  Primary CTA / Secondary / [REPLACE] Brand · [REPLACE] Year
+```
+
+模板一共 14 个占位，残留 13 个，连示例 hero 的大标题与副标题都原封不动。
+而 `references/layouts.md` 实测**零个** `[REPLACE]`——也就是说模型粘进来的版式是干净的，
+残留**全部**来自起始页自带的外壳，不是模型漏填。
+
+### 根因
+
+模板 `<main>` 里那段注释写的就是「把版式粘到这里」。模型严格照办：它粘版式，不动外壳。
+四轮修复也压不住，因为在它看来外壳不归它管。
+
+更要命的是这与系统提示词直接打架——提示词说「模板只是参考材料，它的样例身份与文案不得
+出现在交付物里」，而交付物文件本身就是那张模板。**初始状态和指令互相矛盾时，改初始状态。**
+
+这一族缺陷此前从两个方向各踩过一次，两次的共同点都是「交付物 = 起始页原样」：
+空白骨架起始页 → 交回空页（第八条 run，比失败更糟的那种成功）；整张模板起始页 → 交回模板。
+
+### 修法
+
+起始页仍从**打过补丁的**模板拷贝来（import 要一张有结构的页面），但只留结构与槽位：
+页首导航、模板自带的示例 hero、页脚三块整段删掉，`<title>` 用 `brief/task.json` 的标题
+填上并做 HTML 转义。种完当场自断言：三块有一块没删、标题槽没填上、成品里还剩任何
+`[REPLACE]`、粘贴标记或 `<main>` 地标丢了，一律当场失败（形状 8：不许静默种下一张
+仍然违规的起始页）。
+
+一字不动地交回来也不再可能蒙混过关：`<main>` 里只剩那段「粘到这里」的指示注释，
+它留在页面里就会撞上 `untouched starter template` 那道闸。
+
+对着钉住 digest 的真实镜像跑过红绿闭环：正例 `[REPLACE]` 从 14 降到 0、标题填上并转义、
+粘贴标记与样式都在、导航与页脚已删；三条反例分别报出
+`template block not found: topnav` / `carries no title` / `placeholders remain in the seeded page`。
+
+### 这一轮被证伪的两条假设（记下来，免得再走一遍）
+
+1. **权限说**：怀疑起始页被 root 种下、Codex 以另一个 uid 写不进去。实测镜像默认用户
+   就是 `uid=1001(open-design)`，与 `containerUid` 一致，`docker exec` 与 Codex 同一身份。
+   **不成立。**
+2. **模型没动过 index.html**：`untouched starter template` 那道闸没响，说明粘贴标记已被
+   替换掉，模型确实改过文件。**不成立**——它改了，只是只改 `<main>`。
+
+### 仍未定案：终态错误事件偶尔一条都不导入
+
+三条 run 在 CDS 侧判失败后 5 秒就推了错误事件，MAP 一条都没导入，空等 536–682 秒到
+执行器自己的 15 分钟上限，用户看到的是「远端没有回传原因」。这一条**尚未定案**，
+已经误判过四次，不再猜。目前掌握的结构性事实，供下一手参考：
+
+- `InfraAgentRuntimeWorker` 是**单一顺序消费者**（`Channel` + 一个 `await foreach`），
+  每个作业在跟随 SSE 直到终态期间独占它，上限是 `session.TimeoutSeconds`（默认 900 秒）。
+  一条长的 OpenDesign 轮次会把同进程里其余所有 infra-agent 轮次堵在队列里。
+- 队列是**进程内内存**队列，MAP 一重启，已入队未执行的作业直接消失。
+- 但 `ListPersistedEventsAsync` 里有一条独立的补偿导入（执行器每 250ms 就会打到它），
+  所以上面两条都不足以单独解释「500 秒一条都没导入」。**这一点削弱了饿死假设，
+  不要把它当成结论。**
+- 下一手该做的是让静默不再静默：事件投影里有 6 个分支会在**不写任何状态**的情况下
+  终止跟随（`EndFollow: true` 且 `SessionStatus = null`）。给这些分支各加一条带
+  sessionId / 事件类型 / seq / 原因的日志，再跑一次就知道是哪一条
+  （`degradation-must-alarm.md`：有降级的地方必须有铃）。
+
+### 实现来源
+
+- 起始页与它的自断言：`cds/src/services/agent-workspace-session-runtime.ts` 的
+  `NEW_PAGE_SEED_SCRIPT` / `NEW_PAGE_SEED`
+- 覆盖守卫：`cds/tests/services/agent-workspace-session-runtime.test.ts`
+- 跟随与投影：`prd-api/src/PrdAgent.Infrastructure/Services/InfraAgentSessions/InfraAgentSessionService.cs`
+  的 `ProjectClaimedCdsEventAsync` / `FollowCdsStreamWithRetryAsync`
+- 单一消费者：`prd-api/src/PrdAgent.Api/Services/InfraAgentRuntimeWorker.cs`
