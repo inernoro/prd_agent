@@ -1815,7 +1815,7 @@
 .cdsh-story-stage { position: sticky; top: 0; height: 100vh; overflow: hidden; background: var(--cdsh-bg); }
 .cdsh-scene { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .cdsh-story-vignette { position: absolute; inset: 0; pointer-events: none;
-  background: radial-gradient(120% 90% at 50% 40%, transparent 40%, rgba(18, 15, 23, 0.55) 100%); }
+  background: radial-gradient(120% 90% at 50% 42%, transparent 30%, rgba(18, 15, 23, 0.78) 100%); }
 .cdsh-chapters { position: relative; z-index: 2; margin-top: -100vh; }
 .cdsh-ch { min-height: 100vh; position: relative; }
 .cdsh-ch-pin { position: sticky; top: 0; min-height: 100vh; display: flex; align-items: center; padding: 0 clamp(1rem, 6vw, 6rem); }
@@ -1871,7 +1871,7 @@
 /* 舞台顶部：从 hero 的底色渐入，过渡拉到半屏；再叠一层极淡的同款六边形纹理让两段共用一种材质语言 */
 .cdsh-story-stage::before { content: ''; position: absolute; inset: 0 0 auto 0; height: 46vh; z-index: 1; pointer-events: none;
   background: linear-gradient(var(--cdsh-bg) 0%, rgba(18, 15, 23, 0.86) 34%, transparent 100%); }
-.cdsh-story-stage::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0.05;
+.cdsh-story-stage::after { content: ''; position: absolute; inset: 0; z-index: 1; pointer-events: none; opacity: 0.028;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='68' height='118' viewBox='0 0 68 118'><g fill='none' stroke='white' stroke-width='1'><path d='M34 2 66 20v36L34 74 2 56V20z'/><path d='M34 61 66 79v36L34 133 2 115V79z'/><path d='M0 -18 32 0v36L0 54'/><path d='M68 -18 36 0v36l32 18'/></g></svg>");
   background-size: 4.25rem 7.375rem;
   -webkit-mask-image: linear-gradient(180deg, #000 0%, rgba(0,0,0,0.6) 30%, transparent 70%);

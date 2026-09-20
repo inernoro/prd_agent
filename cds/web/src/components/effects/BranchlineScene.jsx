@@ -65,12 +65,11 @@ function buildScene(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: false, powerPreference: 'high-performance', stencil: false, depth: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, narrow ? 1.5 : 2));
   renderer.setClearColor(BG, 1);
-  renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 0.98;
+  // 不设 toneMapping / exposure：场景经合成器渲染到离屏缓冲，three 只在直出画布时做色调映射，设了也不生效
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(BG.getHex(), 0.021);
+  scene.fog = new THREE.FogExp2(BG.getHex(), 0.025);
   const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 260);
 
   const disposables = [];
@@ -81,13 +80,13 @@ function buildScene(canvas) {
   const envTex = track(pmrem.fromScene(new RoomEnvironment(), 0.04).texture);
   pmrem.dispose();
   scene.environment = envTex;
-  scene.environmentIntensity = 0.55;
+  scene.environmentIntensity = 0.42;
 
   // 灯：暖主光跟着镜头，冷轮廓光从后上方把边缘切出来
-  scene.add(new THREE.HemisphereLight(0x4a3a5c, 0x120f17, 0.32));
+  scene.add(new THREE.HemisphereLight(0x3a2f4a, 0x0a080d, 0.22));
   const key = new THREE.PointLight(0xffb27a, 18, 60, 1.6);
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x8a7cff, 1.2);
+  const rim = new THREE.DirectionalLight(0x8a7cff, 0.9);
   rim.position.set(-6, 10, -8);
   scene.add(rim);
 
@@ -123,9 +122,9 @@ function buildScene(canvas) {
     const m = track(new THREE.PointsMaterial({ map: dot, color: 0xffd6b8, size, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true }));
     const p = new THREE.Points(g, m); scene.add(p); return p;
   }
-  // 星尘要少、要暗：2400 颗白点叠辉光会把整个背景抬成灰雾（第三版验收截图就是）
-  dust(1500, [170, 80, 90], 0.34, 0.12);
-  const motes = dust(200, [120, 40, 50], 0.6, 0.11);
+  // 星尘要少、要暗：叠着辉光会把背景抬成雾
+  dust(900, [170, 80, 90], 0.3, 0.09);
+  const motes = dust(140, [120, 40, 50], 0.55, 0.1);
 
   // ── Push：脉冲彗星（头 + 三节尾巴）──
   const pulseMat = track(new THREE.MeshBasicMaterial({ color: 0xffffff }));
@@ -143,7 +142,7 @@ function buildScene(canvas) {
   const coreGeo = track(new THREE.BoxGeometry(0.3, 0.3, 0.3));
   function module(color) {
     const g = new THREE.Group();
-    const body = new THREE.Mesh(modGeo, track(new THREE.MeshPhysicalMaterial({ color: 0x1a1522, metalness: 0.78, roughness: 0.26, clearcoat: 0.7, clearcoatRoughness: 0.18, envMapIntensity: 1.6 })));
+    const body = new THREE.Mesh(modGeo, track(new THREE.MeshPhysicalMaterial({ color: 0x1a1522, metalness: 0.8, roughness: 0.24, clearcoat: 0.7, clearcoatRoughness: 0.18, envMapIntensity: 1.4 })));
     const frame = new THREE.LineSegments(edgeGeo, track(new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.85 })));
     const core = new THREE.Mesh(coreGeo, track(new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 2.8, roughness: 1 })));
     g.add(body, frame, core);
@@ -213,7 +212,7 @@ function buildScene(canvas) {
     const off = new THREE.Vector3(0, (k % 2 ? 1 : -1) * (2.5 + k * 0.9), (k < 4 ? 1 : -1) * (5 + k * 1.6));
     const cpts = pts.map((p, i) => p.clone().add(off).add(new THREE.Vector3(0, Math.sin(i * 0.5 + k) * 0.8, 0)));
     const cc = new THREE.CatmullRomCurve3(cpts, false, 'catmullrom', 0.5);
-    const m = track(new THREE.MeshStandardMaterial({ color: 0x6f6a7c, emissive: 0x9a92b0, emissiveIntensity: 0.35, roughness: 0.5, transparent: true, opacity: 0 }));
+    const m = track(new THREE.MeshStandardMaterial({ color: 0x4a3f66, emissive: 0x8a78c0, emissiveIntensity: 0.55, roughness: 0.5, transparent: true, opacity: 0 }));
     cluster.add(new THREE.Mesh(track(new THREE.TubeGeometry(cc, 300, 0.05, 12, false)), m)); clusterMats.push(m);
     for (let j = 0; j < 2; j++) {
       const bm = track(new THREE.MeshStandardMaterial({ color: j ? OK : ACCENT, emissive: j ? OK : ACCENT, emissiveIntensity: 1.6, roughness: 0.4, transparent: true, opacity: 0 }));
@@ -226,9 +225,14 @@ function buildScene(canvas) {
   // ── 后期：Bloom（HalfFloat 帧缓冲，让 emissive > 1 真的发光）+ SMAA ──
   const composer = new EffectComposer(renderer, { frameBufferType: THREE.HalfFloatType });
   composer.addPass(new RenderPass(scene, camera));
-  const bloom = new BloomEffect({ intensity: 0.95, luminanceThreshold: 0.74, luminanceSmoothing: 0.25, mipmapBlur: true, radius: 0.52 });
+  const bloom = new BloomEffect({ intensity: 0.85, luminanceThreshold: 0.82, luminanceSmoothing: 0.2, mipmapBlur: true, radius: 0.4 });
   composer.addPass(new EffectPass(camera, bloom));
-  composer.addPass(new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.MEDIUM })));
+  const finalPass = new EffectPass(camera, new SMAAEffect({ preset: SMAAPreset.MEDIUM }));
+  composer.addPass(finalPass);
+  // three 0.184 直出画布时自己做 sRGB 编码，postprocessing 6.39 的末端 EffectPass 默认再编码一次：
+  // 暗部被整体抬亮——清屏色 #120f17 出来是 #4a4256、中灰 #808080 出来是 #bcbcbc，整屏灰蒙蒙。
+  // 前六版把雾、环境光、半球光、星尘、辉光半径逐个压暗都没用，消融到最后只有这一处是根因。
+  finalPass.fullscreenMaterial.encodeOutput = false;
 
   const camPos = new THREE.Vector3(); const look = new THREE.Vector3(); const tmp = new THREE.Vector3();
   const up = new THREE.Vector3(0, 1, 0); const side = new THREE.Vector3(); const over = new THREE.Vector3();

@@ -230,6 +230,61 @@ describe('GitHubWebhookDispatcher', () => {
       expect(stateService.findBranchByProjectAndName('p1', 'dependabot/npm_and_yarn/react-19')).toBeUndefined();
     });
 
+    it('skips a push whose head commit message carries [skip ci], even from a human account', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      // 2026-09-18 真实形状：发布工作流用人类账号推一次性归档分支，提交信息写 [skip ci]
+      const result = await d.handle('push', {
+        ref: 'refs/heads/chore/archive-changelogs-35330217990',
+        before: '0000000000000000000000000000000000000000',
+        after: '038fcd2cd15ed1001c4b6e0e40822c942b86e0e0',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        head_commit: { id: '038fcd2cd15ed1001c4b6e0e40822c942b86e0e0', message: 'chore: archive changelogs after production release [skip ci]' },
+        sender: { login: 'miduo4960', type: 'User' },
+      });
+
+      expect(result.action).toBe('ignored-skip-marker');
+      expect(result.message).toContain('[skip ci]');
+      expect(result.deployRequest).toBeUndefined();
+      expect(worktree.createdWorktrees).toHaveLength(0);
+      expect(stateService.findBranchByProjectAndName('p1', 'chore/archive-changelogs-35330217990')).toBeUndefined();
+    });
+
+    it('only honours the skip marker on the head commit, not on earlier commits in the push', async () => {
+      stateService.addProject({
+        id: 'p1',
+        slug: 'proj',
+        name: 'Proj',
+        kind: 'git',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        githubRepoFullName: 'octocat/repo',
+        githubInstallationId: 42,
+      });
+      const d = buildDispatcher();
+
+      const result = await d.handle('push', {
+        ref: 'refs/heads/feature/x',
+        after: 'abc123def456789012345678901234567890aaaa',
+        repository: { id: 1, full_name: 'octocat/repo' },
+        head_commit: { id: 'abc123def456789012345678901234567890aaaa', message: 'feat: real change' },
+        commits: [{ id: '111', modified: ['a.ts'] }, { id: 'abc123def456789012345678901234567890aaaa', modified: ['b.ts'] }],
+        sender: { login: 'someone', type: 'User' },
+      });
+
+      expect(result.action).not.toBe('ignored-skip-marker');
+    });
+
     it('filters Bot sender type even when the login has no bot suffix', async () => {
       stateService.addProject({
         id: 'p1',

@@ -369,6 +369,31 @@ heatState 打回 hot 并留痕；本批只用 `branches/:id/stop` 把这两条�
    流量不均匀，突发落在窗口外会被摊进来、落在窗口内又会被摊薄，那时只能作定性参考。
 2. **部署次数超过 200 会被接口上限截断**，度量尺会把数字标成 `≥N` 并注明；带 `≥` 的数字只能当下界看。
 
+**减总量第二刀（2026-09-20，用户拍板「把那 30 个 mytapd 归档分支的部署停掉，看看该类情况如何避免」）**
+
+**外因**：myTapd 项目的发布工作流每次发版之后，都用人类账号 `miduo4960` 推一条一次性分支
+`chore/archive-changelogs-<GitHub Actions run id>`，提交信息写着 `chore: archive changelogs after production release [skip ci]`。
+CDS 对已 link 的仓库是 push 即部署，而机器人过滤只认 `sender.type === 'Bot'` 或 `[bot]` 后缀的账号，
+这条推送两样都不沾，于是**每发一次版就多一条永远没人看的预览**：09-14 到 09-18 四天建了 30 条，
+每条都要排一次构建（09-16 用户看到构建队列 51 条里 30 条是它）。它不是 bug，是两套自动化互不知情：
+项目侧已经在提交里明说了「不要跑 CI」，CDS 没读那句话。
+
+**处置**：09-20 复查时队列已空（30 条都排完了），残留 23 条 idle / error 分支记录逐条
+`DELETE /api/branches/:id` 清掉（不占容器，但占 worktree 与列表）。
+
+**根治（本批落地）**：webhook 分发器新增出口 `ignored-skip-marker`——head commit 的提交信息含
+`[skip ci]` / `[ci skip]` / `[no ci]` / `[skip cds]` / `[cds skip]` 任一标记，在建 worktree、写版本元数据、
+派发构建之前短路，与机器人过滤同一层级。口径对齐 GitHub Actions：只看 head commit，不看 push 里的中间提交。
+守卫：`tests/services/github-webhook-dispatcher.test.ts` 两条（人类账号 + `[skip ci]` 不建分支；标记只认 head commit）。
+
+**仍欠**：
+
+- P3 项目侧那条工作流仍会每次发版推一条分支到 GitHub（只是 CDS 不再理它）；分支本身会在远端堆积，
+  该由 myTapd 仓库改成不推分支或推完即删，CDS 管不到。
+- P3 没有「按分支名 glob 忽略」的项目级配置。这次靠 `[skip ci]` 够用，但下一次若是某个没写标记的
+  一次性分支模式（`release-please--*`、`renovate/*` 之类），又得回到这里；真要做就是项目设置里一个
+  分支名忽略表，属新契约，不在本批。
+
 ## 相关
 - `cds/.claude/rules/` / `no-auto-index.md` — 索引由 DBA 手动建
 - 主仓 `CLAUDE.md` 规则 #11 / CDS 自部署

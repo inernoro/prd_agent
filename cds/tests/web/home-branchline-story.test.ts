@@ -64,3 +64,11 @@ describe('首页 Branchline 叙事区', () => {
     expect(css, '蜂窝层要压在舞台之上').toMatch(/\.cdsh-bg\s*\{[^}]*z-index: 1;/);
   });
 });
+
+// three 0.184 直出画布时自己做 sRGB 编码；postprocessing 末端 EffectPass 默认再编码一次，暗部整体抬灰。
+// 这条只能在真 WebGL 里量出来（中灰 #808080 出来是 #bcbcbc），单测量不了，只能钉住修法本身。
+it('branchline scene disables the final pass output encoding (three already encodes)', () => {
+  expect(scene).toMatch(/finalPass\.fullscreenMaterial\.encodeOutput = false/);
+  // 色调映射在离屏合成路径里不生效，留着只会误导下一个人以为它在起作用
+  expect(scene).not.toMatch(/toneMapping\s*=/);
+});
