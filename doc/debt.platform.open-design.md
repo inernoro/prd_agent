@@ -1219,10 +1219,10 @@ CDS 侧闸门全绿）。剩下的问题是**时间**：质量修复回路最多
 它们其实多半可修（少写几个锚点、拆浅嵌套），但本 PR 的单一目标不含它们，
 也没有一条真实 run 命中过，按 AGENTS.md 5.5 记 B 类。
 
-**已经不会再多出第五条**：`cds/tests/services/agent-workspace-session-runtime.test.ts`
-的「every quality rejection must reach the repair loop」扫源码断言——凡是
-`design_output_quality_rejected` 能抛出的字面量消息都必须分得出类，上面四条是显式豁免表，
-表里每一条还必须真的能被抛出来（防死规则）。**新增消息一律不许进那张表。**
+**已经不会再多出第五条**：运行时测试里那条「every quality rejection must reach the repair loop」
+扫源码断言——凡是 `design_output_quality_rejected` 能抛出的字面量消息都必须分得出类，
+上面四条是显式豁免表，表里每一条还必须真的能被抛出来（防死规则）。
+**新增消息一律不许进那张表。**
 
 这条守卫正是 Codex 在 `3b97d8a` 上报的那条 P1 的一般形式：我加「起始页原样交回」判据时
 只加了闸门没加分类条目，第九条 run 实测当场失败、零修复。逐条补条目治不住下一次，扫源码可以。
@@ -1231,6 +1231,7 @@ CDS 侧闸门全绿）。剩下的问题是**时间**：质量修复回路最多
 
 - 闸门与分类器：`cds/src/services/agent-workspace-session-runtime.ts` 的
   `createArtifactQualityGate` 与 `classifyQualityRepairReason`
+- 覆盖守卫：`cds/tests/services/agent-workspace-session-runtime.test.ts`
 
 ## Codex 在 2026-09-20 这一轮报出的五条未处理 findings（B 类，待作者拍板）
 
@@ -1239,13 +1240,21 @@ CDS 侧闸门全绿）。剩下的问题是**时间**：质量修复回路最多
 单一目标上，且没有一条被今天的十条真实 run 命中。按 AGENTS.md 5.5 记 B 类，逐条列在这里，
 由作者决定是否在本 PR 展开——**不以「清空所有机器评论」为完成标准**。
 
-| # | 评论 | 位置 | 说的是什么 |
+| # | 评论 | 哪一块 | 说的是什么 |
 |---|---|---|---|
-| P1 | 4056653107 | `cds/src/services/sealed-storage-bootstrap.ts:84` | 初始化会改写 `env.CDS_SECRET_KEY`，于是随后的 GET status 从「当前环境」推出 `restartRequired: false`，而旧明文凭据与备份尚未封存。应改成进程启动时上闩、直到重启才落。 |
-| P1 | 4056739749 | `prd-admin/src/components/web-hosting/siteEditPreview.ts:72` | 预览沙箱给文档不透明来源，外链模块（`<script type="module" src="assets/app.js">`）的取数按跨域走、不带路径作用域的预览 cookie，于是多文件应用在预览里渲染成空白。要在不破坏隔离的前提下换一种授权方式。 |
-| P1 | 4056791340 | `cds/src/services/agent-workspace-session-runtime.ts:829` | MAP 在发完响应头之后中断 SSE 时，`pipe()` 不会关下游，`upstream.on('error')` 也接不到这类响应体故障，容器端要挂到 90 秒 socket 超时。应在 `aborted`/`error` 上 destroy 而不是 end。（今天撞到的 MAP 重启窗口故障与此同源） |
-| P2 | 4056681712 | `prd-api/.../MdToPptController.cs:805` | `RepairCoverage` 改绑定时会给已推送过的页面补发 `page` 事件，前端按事件数累加，8 页报成 10 页。应用 `done` 事件里已有的 `pages`。 |
-| P2 | 4056697512 | `prd-admin/.../SiteGenerateDialog.tsx:264` | 会话存储里的旧 run 在另一个知识入口/团队分组下被盲目恢复，表单显示错来源，完成时还可能把旧产物挪进当前分组。应把启动上下文随 runId 一起存取。 |
+| P1 | 4056653107 | 封存存储的启动自检 | 初始化会改写进程里的主密钥环境变量，于是随后的状态查询从「当前环境」推出「无需重启」，而旧明文凭据与备份尚未封存。应改成进程启动时上闩、直到重启才落。 |
+| P1 | 4056739749 | 网页托管的编辑预览沙箱 | 沙箱给文档不透明来源，外链模块的取数按跨域走、不带路径作用域的预览 cookie，于是多文件应用在预览里渲染成空白。要在不破坏隔离的前提下换一种授权方式。 |
+| P1 | 4056791340 | 容器出口的模型请求中继 | MAP 发完响应头之后中断 SSE 时，管道不会关下游，错误回调也接不到这类响应体故障，容器端要挂到 90 秒 socket 超时。应在中断与错误上直接销毁而不是正常收尾。（2026-09-20 撞到的 MAP 重启窗口故障与此同源） |
+| P2 | 4056681712 | MD 转 PPT 的大纲推送 | 补齐来源绑定时会给已推送过的页面补发页面事件，前端按事件数累加，8 页报成 10 页。应用终态事件里已有的页数。 |
+| P2 | 4056697512 | 网页生成弹窗的 run 恢复 | 会话存储里的旧 run 在另一个知识入口或团队分组下被盲目恢复，表单显示错来源，完成时还可能把旧产物挪进当前分组。应把启动上下文随 runId 一起存取。 |
 
 判据一致：这五条都要么需要新的状态/契约（进程级闩、预览资源授权机制、启动上下文持久化），
 要么改的是与本 PR 目标无关的另一条链路。真要展开，建议按 P1 三条单开一个 PR。
+
+### 实现来源
+
+- `cds/src/services/sealed-storage-bootstrap.ts`
+- `prd-admin/src/components/web-hosting/siteEditPreview.ts`
+- `cds/src/services/agent-workspace-session-runtime.ts`（出口中继那一段）
+- `prd-api/src/PrdAgent.Api/Controllers/Api/MdToPptController.cs`
+- `prd-admin/src/components/web-hosting/SiteGenerateDialog.tsx`
