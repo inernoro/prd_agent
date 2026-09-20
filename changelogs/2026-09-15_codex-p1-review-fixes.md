@@ -176,3 +176,5 @@
 | test | llmgw | 新增两分面守卫：兼容面（/v1/*）任何路由都不许读取 pin 去用，gw-native（/gw/v1/*）按内部调度语义读；数量判据挡不住「新开一个入口忘了拒」，也分不清新入口属于哪个面。红绿闭环：把某个兼容入口改成读 pin，守卫当场变红 |
 | fix | llmgw | chat 入口按两个面分叉：/v1/chat/completions 维持兼容面（客户端自带 pin 一律拒），新增 /gw/v1/chat/completions 走 gw-native 面（按内部调度语义读 pin）。两面共用同一份实现、只在一个 if 上分叉，不抄第二份 handler；MAP 的设计运行时代理改指后者——它送的 pin 是自己冻结的快照，运行时自带的那份在同一个方法里已先被剥掉 |
 | test | llmgw | 两分面守卫补上 chat 那一份：共用实现必须真的按 nativeSurface 分叉，读 pin 只在 native 一支、拒绝只在兼容一支。红绿闭环：把那个 if 拆成「两面都读」，守卫当场变红 |
+| fix | prd-api | 设计执行器的模型配置从物理模型名 `gpt-4.1` 改成对外模型标识 `default-chat-curated`：合并 #1546（网关模型收敛）之后点名解析只认对外目录里的标识，写物理名网关回 404 MODEL_NOT_FOUND，而这条配置直连与 OpenDesign 共用，两条路一起哑 |
+| test | prd-api | 新增守卫：设计执行器配置的模型不得写成厂商物理模型名（gpt- / claude- / gemini- 等前缀表，另配一条样本覆盖守卫防死规则）。红绿闭环：退回 gpt-4.1 当场变红 |
