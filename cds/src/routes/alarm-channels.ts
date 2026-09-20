@@ -23,6 +23,8 @@ import crypto from 'node:crypto';
 // 项目作用域判定只许有一份：这里直接用 uptime 路由那一个，不复制一条同款单行。
 import { assertUnscopedAdmin } from '../services/unscoped-admin-guard.js';
 
+import { ALARM_HISTORY_SOURCE, summarizeAlarmDeliveries } from '../services/alarm-delivery-history.js';
+import type { ServerEventLogSink } from '../services/server-event-log-store.js';
 import { AlarmLedger, type AlarmChannelStatusView } from '../services/alarm-channel.js';
 import { BARK_LEVELS, drillEvent, sendAlarm } from '../services/alarm-dispatch.js';
 import {
@@ -40,6 +42,7 @@ export interface AlarmChannelRoutesDeps {
   upsert: (channel: AlarmChannelConfig) => void;
   remove: (id: string) => boolean;
   ledger: AlarmLedger;
+  history?: ServerEventLogSink | null;
   /** 面板深链，进通知正文。拿不到就不放——编一个点不开的地址比没有更糟。 */
   boardUrl?: () => string | undefined;
 }
@@ -259,6 +262,29 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     });
   });
 
+  router.get('/cds-system/alarm-deliveries', async (req, res) => {
+    if (denySystemAccess(req, res)) return;
+    if (!deps.history?.findRecent) {
+      res.status(503).json({ error: 'history_unavailable', message: '通知历史尚未启用，请检查服务器事件日志存储。' });
+      return;
+    }
+    const hours = Number(req.query.hours ?? 24);
+    if (![1, 24, 168].includes(hours)) {
+      res.status(400).json({ error: 'invalid_range', message: '查询范围仅支持 1、24 或 168 小时。' });
+      return;
+    }
+    const since = new Date(Date.now() - hours * 3600000).toISOString();
+    try {
+      const events = await deps.history.findRecent({ source: ALARM_HISTORY_SOURCE, since, limit: 1000 });
+      res.json({ ...summarizeAlarmDeliveries(events), since, generatedAt: new Date().toISOString(),
+        truncated: events.length >= 1000,
+        note: '仅统计记录启用后保留的发送尝试；成功表示推送服务已接受，不代表手机已展示。达到上限时为部分统计。',
+      });
+    } catch {
+      res.status(503).json({ error: 'history_unavailable', message: '通知历史暂时读取失败，请稍后重试。' });
+    }
+  });
+
   const write = (req: Request, res: Response, id?: string): void => {
     if (denySystemAccess(req, res)) return;
     const previous = id ? deps.list().find((c) => c.id === id) : undefined;
@@ -299,7 +325,7 @@ export function registerAlarmChannelRoutes(router: Router, deps: AlarmChannelRou
     if (!channel) { res.status(404).json({ error: '通道不存在' }); return; }
     const now = Date.now();
     const boardUrl = deps.boardUrl?.();
-    const result = await sendAlarm(channel, drillEvent(now), boardUrl ? { boardUrl } : {});
+    const result = await sendAlarm(channel, drillEvent(now), { boardUrl, history: deps.history, deliveryKind: 'drill' });
     deps.ledger.record(channel.id, result, 'drill', now);
     res.json({ ...result, status: deps.ledger.view(channel, channelConfigured(channel)) });
   });

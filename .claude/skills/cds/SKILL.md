@@ -147,6 +147,8 @@ python3 <当前项目技能根>/cds/cli/cdscli.py monitor add \
 不会被截断（`16:9` 是完整的）。刻意不做表达式——自由文本判据一开口，下一轮就会被
 要求加同义词和嵌套。
 
+查通知发送记录：`cdscli monitor notifications --hours 24`（也支持 1 / 168 小时，仅管理员）。按目标、通道、事件类型、小时统计，演练单列；`truncated=true` 时是部分统计。成功表示推送服务已接受，不能当作手机已展示；旧版未留记录的历史不可回填。
+
 看历史证据：`cdscli monitor observations <id>`；只看功能监控：`monitor list --functional-only`。
 规则 SSOT 是 `.claude/rules/degradation-must-alarm.md`。
 

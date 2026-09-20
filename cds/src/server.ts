@@ -989,6 +989,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /http-logs/slow': '查看慢 HTTP 请求排行',
     'GET /perf/overview': '查看性能概览',
     'GET /server-events': '查看服务器/容器事件日志',
+    'GET /cds-system/alarm-deliveries': '查看通知记录',
     'GET /config-snapshots': '列出配置快照',
     'POST /config-snapshots': '手动保存配置快照',
     'GET /destructive-ops': '列出破坏性操作',

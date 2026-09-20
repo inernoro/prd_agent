@@ -741,9 +741,9 @@ export function readSampleCount(
   const raw = kind === 'health-json'
     ? findHealthCheck(doc, source)?.observedValue
     : readPath(doc, source);
-  if (raw === undefined || raw === null || raw === '') return undefined;
+  if ((typeof raw !== 'number' && typeof raw !== 'string') || String(raw).trim() === '') return undefined;
   const n = Number(raw);
-  return Number.isFinite(n) ? n : undefined;
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
 }
 
 /**
@@ -929,6 +929,14 @@ async function httpProbe(
           }],
           ...(sampleCount === undefined ? {} : { sampleCount }),
         };
+      }
+      if (observation?.sampleCount === 0) {
+        // 只接受明确的 0 和真实存在的 check；缺字段/采集失败不能伪装成没流量。
+        const doc = JSON.parse(body);
+        if (findHealthCheck(doc, monitor.healthComponentId || '')) {
+          return { up: false, noData: true, ms: Date.now() - startedAt, code,
+            err: '当前窗口没有观测样本，保持上一条有效结论', observation };
+        }
       }
       if (!verdict.ok) {
         // 判据不成立时 HTTP 往往仍是 200——「接口通但结论是坏的」正是这类探测的存在意义。

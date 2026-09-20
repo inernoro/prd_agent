@@ -21,7 +21,9 @@
  * JSON 转义。一律当纯文本塞，第一条带引号的错误信息就会把 body 变成非法 JSON，
  * 而那时通道会以「400」的形式失败——排查的人会以为是对方接口的问题。
  */
-import { MapNotifier } from './map-notifier.js';
+import { withAlarmDeliveryHistory } from './alarm-delivery-history.js';
+import type { ServerEventLogSink } from './server-event-log-store.js';
+import { MapNotifier, buildNotificationPayload } from './map-notifier.js';
 import { alarmPlaceholders, renderAlarmMessage } from './alarm-route.js';
 import type { AlarmChannelConfig, AlarmEvent, AlarmMessage } from './alarm-route.js';
 
@@ -103,7 +105,24 @@ async function httpSend(
 export async function sendAlarm(
   channel: AlarmChannelConfig,
   event: AlarmEvent,
-  opts: { boardUrl?: string; timeoutMs?: number } = {},
+  opts: { boardUrl?: string; timeoutMs?: number; history?: ServerEventLogSink | null; deliveryKind?: 'alert' | 'drill' } = {},
+): Promise<AlarmDeliveryResult> {
+  const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
+  const mapPayload = channel.kind === 'map' ? buildNotificationPayload({
+    type: event.kind.endsWith('-recovered') ? 'uptime.target.recovered' : 'uptime.target.down',
+    targetId: event.targetName, targetName: event.targetName, projectId: event.projectId,
+    message: event.message, consecutiveFailures: event.consecutiveFailures, detectedAt: event.detectedAt,
+  }) : null;
+  return withAlarmDeliveryHistory(opts.history, {
+    channelId: channel.id, channelName: channel.name, channelKind: channel.kind,
+    kind: opts.deliveryKind ?? 'alert', eventKind: event.kind, projectId: event.projectId,
+    targetId: event.targetId, targetName: event.targetName, detectedAt: event.detectedAt,
+    title: mapPayload?.title ?? message.title, body: mapPayload?.message ?? message.body,
+  }, () => sendAlarmTransport(channel, event, opts));
+}
+
+async function sendAlarmTransport(
+  channel: AlarmChannelConfig, event: AlarmEvent, opts: { boardUrl?: string; timeoutMs?: number },
 ): Promise<AlarmDeliveryResult> {
   const message = renderAlarmMessage(event, opts.boardUrl ? { boardUrl: opts.boardUrl } : {});
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
