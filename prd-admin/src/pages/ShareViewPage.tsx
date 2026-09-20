@@ -20,6 +20,7 @@ import {
   canUseSrcDocPreview,
   hasFetchableHtml,
   resolvePreviewSource,
+  stripInjectedTelemetry,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
 import type { PreviewSource } from '@/components/web-hosting/previewHtml';
@@ -301,7 +302,13 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
       setDownloadNote({ text: failure.text, detail: failure.detail, tone: 'error' });
       return;
     }
-    saveTextAsFile(res.data.html, plan.fileName);
+    // 取回来的是「托管域名对外服务的那一份」，不是存进对象存储的那一份：托管域名前面挂着
+    // CDN，它会往每一份 HTML 里塞一条 cloudflareinsights 的 beacon（见 previewHtml.ts 的
+    // stripInjectedTelemetry）。那段脚本不是分享者写的，下载下来只会变成一条跟着文件跑的
+    // 第三方请求，所以落盘前按同一份判据剥掉——预览与下载共用一个出口，不另起判据。
+    // 仍然剥不掉的差异（上传时注入的翻页垫片、路径重写、后端剥掉的 UTF-8 BOM）要拿存储
+    // 原字节才能避免，那需要一个专用的流式下载端点，已记进 PR 的后续事项。
+    saveTextAsFile(stripInjectedTelemetry(res.data.html), plan.fileName);
     const note = describeDownloadResult(plan);
     setDownloadNote(note ? { text: note, tone: 'info' } : null);
   }, [token, data, password]);

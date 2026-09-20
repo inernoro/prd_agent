@@ -170,6 +170,21 @@ describe('下载源文件的取法', () => {
     expect(page).not.toMatch(/(?<!aria-)disabled=\{[^}]*downloadPlan\.kind === 'unavailable'/);
   });
 
+  /**
+   * 落盘前必须剥掉 CDN 在传输途中注入的遥测（Codex 第五轮 P2）。
+   *
+   * 取正文走的是托管域名对外服务的那一份，而托管域名前面挂着 CDN，它会往每一份 HTML 里
+   * 塞一条 cloudflareinsights 的 beacon（previewHtml.ts 的 stripInjectedTelemetry 就是为它
+   * 写的，2026-08-25 每日验收抓到过：自己传的 200 字节纯 HTML 取回来 9336 字节）。
+   * 那段脚本不是分享者写的，跟着下载文件跑出去就是一条第三方请求。
+   *
+   * 预览已经剥了，下载没剥 = 同一件事两个口径（形状 3）。这里钉的是「共用同一个判据」，
+   * 不是「文案里有没有 beacon 几个字」——真去删掉那个调用，这条会红。
+   */
+  it('落盘前剥掉传输途中注入的遥测，与预览共用同一判据', () => {
+    expect(page).toMatch(/saveTextAsFile\(\s*stripInjectedTelemetry\(/);
+  });
+
   it('PDF 一档的按钮文案是「打开」不是「下载」', () => {
     // 它做的就是 window.open，文案必须跟着实情走，不宣称一个做不到的动作
     expect(page).toMatch(/downloadPlan\.kind === 'open' \? '打开源文件'/);
