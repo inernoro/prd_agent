@@ -398,9 +398,17 @@ export function ReleaseConsolePage(): JSX.Element {
 
   const shown = run || historyRun || row?.latestRun;
   const shownLogs = (run || historyRun) ? logs : (shown?.logs || []);
-  const progress = resolveReleaseSteps(shown);
   const failed = shown ? isReleaseFailed(shown.status) : false;
   const running = Boolean(shown && !isReleaseTerminal(shown.status));
+  // release.log 通过独立 SSE 更新 shownLogs；合并后再解析，当前活动才会随每行输出立即变化。
+  const progress = resolveReleaseSteps(shown ? { ...shown, logs: shownLogs } : shown);
+  const completedStepCount = progress.steps.filter((step) => step.state === 'done').length;
+  const runningStepFraction = running && typeof progress.currentActivityPercent === 'number'
+    ? progress.currentActivityPercent / 100
+    : 0;
+  const progressPercent = progress.steps.length > 0
+    ? Math.round(((completedStepCount + runningStepFraction) / progress.steps.length) * 100)
+    : 0;
   // 现在看的这条是不是环境当前那一版。判据在 lib/releaseConsoleState，页面只负责渲染。
   const shownIsCurrent = isShownRunCurrent({
     shownReleaseId: shown?.releaseId,
@@ -930,14 +938,15 @@ export function ReleaseConsolePage(): JSX.Element {
                       className={`cds-progress-fill h-full rounded ${running ? 'cds-progress-fill--running' : ''} ${
                         failed ? 'bg-bad' : running ? 'bg-primary' : 'bg-ok'
                       }`}
-                      style={{ width: `${progress.steps.length ? Math.round((progress.steps.filter((s) => s.state === 'done').length / progress.steps.length) * 100) : 0}%` }}
+                      style={{ width: `${progressPercent}%` }}
                     />
                   </div>
                   {/* 参考稿这一行只有两个值：左边步数、右边耗时。别再往里塞日期——
                       塞了就换行，换行就把 banner 顶高，就是「头大」。 */}
                   <div className="mt-2 flex items-center justify-between gap-4 cds-ident text-[0.6875rem] text-muted-foreground">
                     <span className="truncate">
-                      {progress.steps.filter((s) => s.state === 'done').length}/{progress.steps.length || 0} 步骤
+                      {completedStepCount}/{progress.steps.length || 0} 步骤
+                      {running && progress.currentActivity ? ` · ${progress.currentActivity}` : ''}
                     </span>
                     <span className="shrink-0">
                       {etaText || (shown ? formatDuration(shown.startedAt, shown.finishedAt) || '进行中' : '未开始')}
@@ -1143,10 +1152,22 @@ export function ReleaseConsolePage(): JSX.Element {
                             {stepDetails.get(step.id)?.command}
                           </span>
                         ) : null}
+                        {(step.state === 'running' || step.state === 'failed') && step.activity ? (
+                          <span className={`mt-1 block break-words text-[0.7188rem] ${step.state === 'failed' ? 'text-bad' : 'text-primary'}`}>
+                            {step.activity}
+                          </span>
+                        ) : null}
+                        {step.state === 'running' && typeof step.activityPercent === 'number' ? (
+                          <span className="mt-1.5 block h-1 overflow-hidden rounded bg-[hsl(var(--surface-sunken))]">
+                            <span className="block h-full rounded bg-primary transition-[width] duration-300" style={{ width: `${step.activityPercent}%` }} />
+                          </span>
+                        ) : null}
                       </span>
-                      {/* 未执行的步骤给短横，不编一个预估值 */}
+                      {/* 运行中显示已用时并每秒刷新；未执行步骤给短横，不编预估值。 */}
                       <span className="mt-0.5 shrink-0 cds-ident text-xs text-muted-foreground">
-                        {typeof stepDetails.get(step.id)?.durationMs === 'number'
+                        {step.state === 'running' && step.startedAt
+                          ? formatDuration(step.startedAt, new Date(nowMs).toISOString()) || '1s'
+                          : typeof stepDetails.get(step.id)?.durationMs === 'number'
                           ? `${Math.max(1, Math.round((stepDetails.get(step.id)?.durationMs || 0) / 1000))}s`
                           : '-'}
                       </span>

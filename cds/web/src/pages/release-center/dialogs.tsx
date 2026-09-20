@@ -218,7 +218,12 @@ export function ReleaseLogDialog({
                   : step.state === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-info" />
                     : <Circle className="h-4 w-4 text-muted-foreground" />}
               <span className="shrink-0 font-mono text-xs text-muted-foreground">{index + 1}/{progress.total}</span>
-              <span className="min-w-0 truncate font-medium">{step.label}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{step.label}</span>
+                {step.state === 'running' && step.activity ? (
+                  <span className="mt-0.5 block break-words text-xs text-primary">{step.activity}</span>
+                ) : null}
+              </span>
             </div>
           ))}
         </div>

@@ -1740,7 +1740,9 @@ export class ReleaseService {
         signal: controller.signal,
         onOutput: (level, chunk) => {
           if (!releaseId) return;
-          for (const line of chunk.split(/\r?\n/).filter(Boolean)) {
+          // curl / docker pull 等工具用回车覆盖同一行刷新进度。只按换行拆会把几十次刷新
+          // 粘成一条不可读日志，前端也无法提取当前百分比；回车和换行都视为输出边界。
+          for (const line of chunk.split(/[\r\n]+/).filter(Boolean)) {
             this.emitLog(releaseId, level, line.slice(0, 1000), logPhase);
           }
         },
