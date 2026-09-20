@@ -3540,3 +3540,60 @@ describe('output preflight fallback must carry a real diagnostic', () => {
     }
   });
 });
+
+/**
+ * 2026-09-20 实测：加强提示词之后模型照样产出 href="#"，四轮修复仍然全灭。
+ * 真正缺的不是措辞而是信息——闸门撞上第一个空链接就抛，既不说有几个、也不说在哪，
+ * 模型每一轮都在盲修。缺失锚点那条早就收齐了再报（带 ordinals），空链接没有，
+ * 是同一个函数里的不对称。这里守住对称：整篇收齐、带位置、带条数。
+ * 红绿闭环：把 brokenAnchors 改回「撞上就抛」，这几条会红。
+ */
+describe('broken anchors must be reported together with their positions', () => {
+  const page = (body: string) => `<!doctype html><html><body>${body}</body></html>`;
+  const reject = (body: string) => {
+    try {
+      createArtifactQualityGate('', [], '')(Buffer.from(page(body)));
+    } catch (error) {
+      return error as InstanceType<typeof AgentWorkspaceRuntimeError>;
+    }
+    throw new Error('expected the quality gate to reject this page');
+  };
+
+  it('counts every empty anchor in the page, not just the first one', () => {
+    const error = reject('<p>真实内容段落，用于通过可见内容检查。</p>'
+      + '<a href="#">一</a><a href="">二</a><a href="#">三</a>');
+
+    expect(error.message).toBe('index.html contains an empty link target');
+    expect(error.details?.brokenLinkCount).toBe(3);
+    expect(error.details?.brokenLinkOrdinals).toEqual([1, 2, 3]);
+  });
+
+  it('keeps document-order precedence between the two anchor faults', () => {
+    const missingFirst = reject('<p>真实内容段落，用于通过可见内容检查。</p><a>一</a><a href="#">二</a>');
+    expect(missingFirst.message).toBe('index.html contains a link without a target');
+    expect(missingFirst.details?.brokenLinkOrdinals).toEqual([1]);
+
+    const emptyFirst = reject('<p>真实内容段落，用于通过可见内容检查。</p><a href="#">一</a><a>二</a>');
+    expect(emptyFirst.message).toBe('index.html contains an empty link target');
+    expect(emptyFirst.details?.brokenLinkOrdinals).toEqual([1]);
+  });
+
+  it('hands those positions to the model in the repair instruction', () => {
+    const error = reject('<p>真实内容段落，用于通过可见内容检查。</p><a href="#">一</a><a href="">二</a>');
+    const instruction = classifyQualityRepairReason(error)?.instruction ?? '';
+
+    expect(instruction).toContain('2 such anchor(s)');
+    expect(instruction).toContain('position(s) 1, 2');
+    // 位置是补充信息，替代写法仍然要在。
+    expect(instruction).toContain('#section-id');
+  });
+
+  it('falls back to the position-free wording when the gate gave no details', () => {
+    const bare = new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected', 'index.html contains an empty link target', false);
+    const instruction = classifyQualityRepairReason(bare)?.instruction ?? '';
+
+    expect(instruction).not.toContain('position(s)');
+    expect(instruction).toContain('#section-id');
+  });
+});

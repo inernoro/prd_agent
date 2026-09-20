@@ -3419,6 +3419,22 @@ export function summarizeOutputPreflightDiagnostic(diagnostic: string): string {
   return flattened.length <= limit ? flattened : `...${flattened.slice(-limit)}`;
 }
 
+/** 空链接/无目标链接的位置提示。序号与总数由闸门给出，缺了就退回不带位置的说法，不编。 */
+function brokenAnchorLocationHint(details: Record<string, unknown> | undefined): string {
+  const count = typeof details?.brokenLinkCount === 'number'
+    && Number.isSafeInteger(details.brokenLinkCount)
+    && details.brokenLinkCount > 0
+    ? details.brokenLinkCount
+    : undefined;
+  const ordinals = Array.isArray(details?.brokenLinkOrdinals)
+    ? details.brokenLinkOrdinals.filter((value): value is number => (
+      typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    )).slice(0, 24)
+    : [];
+  if (count === undefined || ordinals.length === 0) return '';
+  return ` There are ${count} such anchor(s); they are at document-order anchor position(s) ${ordinals.join(', ')} (counting every <a> element from the top of the file).`;
+}
+
 export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
   const { message } = error;
   if (message === 'index.html contains a measured claim with unresolved source context'
@@ -3451,13 +3467,13 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
   if (message === 'index.html contains a link without a target') {
     return {
       code: 'link_without_target',
-      instruction: 'Every anchor needs a real destination. Give each one an absolute URL from the MAP sources, or href="#section-id" pointing at an id that exists on this page. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. The web-prototype template is the usual source of these; its markup is a sketch, not permitted output.',
+      instruction: `${brokenAnchorLocationHint(error.details)}Every anchor needs a real destination. Give each one an absolute URL from the MAP sources, or href="#section-id" pointing at an id that exists on this page. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. The web-prototype template is the usual source of these; its markup is a sketch, not permitted output.`.trim(),
     };
   }
   if (message === 'index.html contains an empty link target') {
     return {
       code: 'empty_link_target',
-      instruction: 'href="#" and href="" are rejected without exception, including in the topnav and footer. Point each anchor at a real destination instead: an absolute URL from the MAP sources, or href="#section-id" where that id exists on this page, so the navigation actually jumps to your own sections. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. You most likely copied these from the web-prototype template or layouts.md; those files are layout sketches, not permitted markup, and rewriting them here is not removing a requested control.',
+      instruction: `${brokenAnchorLocationHint(error.details)}href="#" and href="" are rejected without exception, including in the topnav and footer. Point each anchor at a real destination instead: an absolute URL from the MAP sources, or href="#section-id" where that id exists on this page, so the navigation actually jumps to your own sections. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. You most likely copied these from the web-prototype template or layouts.md; those files are layout sketches, not permitted markup, and rewriting them here is not removing a requested control.`.trim(),
     };
   }
   if (message === 'index.html contains a malformed fragment target') {
@@ -4243,6 +4259,11 @@ function validateArtifactQuality(
     }
   }
   const missingFragments = new Map<string, number[]>();
+  // 空链接此前是「撞上第一个就抛」，而且什么都不告诉模型：既没有位置也没有条数。
+  // 于是四轮修复全是盲修——2026-09-20 实测连着两条 run 都这么死的。改成和缺失锚点
+  // 同一套口径：整篇收齐，抛的时候带上文档序号与总数。抛哪一条消息仍按文档顺序的
+  // 第一条决定，precedence 逐字不变。
+  const brokenAnchors: Array<{ ordinal: number; kind: 'missing' | 'empty' }> = [];
   let anchorOrdinal = 0;
   let retainedMissingLinkOrdinals = 0;
   for (const tag of iterateHtmlTags(html)) {
@@ -4260,11 +4281,13 @@ function validateArtifactQuality(
     anchorOrdinal += 1;
     const href = readHtmlAttribute(tag.attributes, 'href');
     if (href === undefined) {
-      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a link without a target');
+      if (brokenAnchors.length < maxMissingLinkOrdinals) brokenAnchors.push({ ordinal: anchorOrdinal, kind: 'missing' });
+      continue;
     }
     const normalized = href?.trim() ?? '';
     if (!normalized || normalized === '#') {
-      throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains an empty link target');
+      if (brokenAnchors.length < maxMissingLinkOrdinals) brokenAnchors.push({ ordinal: anchorOrdinal, kind: 'empty' });
+      continue;
     }
     if (normalized.startsWith('#')) {
       let fragment: string;
@@ -4288,6 +4311,19 @@ function validateArtifactQuality(
         }
       }
     }
+  }
+  if (brokenAnchors.length > 0) {
+    // 抛哪一条按文档顺序的第一条决定（与逐个抛时完全一致），报的序号只列同一类的。
+    const kind = brokenAnchors[0].kind;
+    const ordinals = brokenAnchors.filter((entry) => entry.kind === kind).map((entry) => entry.ordinal);
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      kind === 'missing'
+        ? 'index.html contains a link without a target'
+        : 'index.html contains an empty link target',
+      false,
+      { brokenLinkCount: ordinals.length, brokenLinkOrdinals: ordinals.slice(0, 24) },
+    );
   }
   if (missingFragments.size > 0) {
     const normalizedFragments = Array.from(missingFragments.keys()).sort();
