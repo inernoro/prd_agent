@@ -463,3 +463,47 @@ export const SRCDOC_PREVIEW_SANDBOX = 'allow-scripts allow-popups allow-forms';
 
 /** 直链 iframe 的 sandbox 组合。直链文档来自托管域名，本就与 MAP 不同源，给 same-origin 不会泄漏 MAP 凭据。 */
 export const DIRECT_PREVIEW_SANDBOX = 'allow-scripts allow-same-origin allow-popups allow-forms';
+
+/** iframe 这一刻该拿什么当内容源。 */
+export type PreviewSource =
+  /** 还在等正文：iframe **不给任何 src**，只显示准备中的提示 */
+  | 'pending'
+  /** 正文已取回且可内联：srcDoc 渲染，浏览器不为这份内容发任何跨域请求 */
+  | 'srcdoc'
+  /** 只能直链：包装资产站、正文取不回来、或内容不适合内联 */
+  | 'direct';
+
+/**
+ * 为什么 pending 阶段必须**空着** iframe，而不是先挂上直链再等正文。
+ *
+ * 2026-09-18 的真实事故：一份 599KB 的托管 HTML 分享给客户，对方在某 App 的内置浏览器里
+ * 打开，弹出「Download：(null) File Size：599KB」。那份响应实测是 text/html、没有
+ * Content-Disposition，弹窗来自那个 WebView 对**跨域 HTML 文档请求**的下载拦截。
+ *
+ * 而当时的写法是 `src={inlineHtml ? undefined : site.siteUrl}`：首帧 inlineHtml 必然为
+ * null，于是**每一次打开分享页都先向托管域名发一次直链请求**，之后才切成 srcDoc。
+ * 那一次请求就是被拦下来的那一次——在桌面浏览器上它只是「闪一下白」，没人注意得到。
+ *
+ * 所以判据改成：不知道该用哪条路时就什么都不发。代价是需要直链的那一档（包装站除外）
+ * 要多等一个来回；收益是绝大多数普通 HTML 站根本不再产生那次跨域文档请求。
+ *
+ * 三条既有的不变量都没有动：
+ *  - 包装资产站（PDF/视频）一开始就知道只能直链，立刻直链，不必空等；
+ *  - 正文取不回来、或取回了但不能内联，立刻转直链；
+ *  - 等待有上限（waitedOut），代理挂掉不会让人永远停在准备中。
+ */
+export function resolvePreviewSource(state: {
+  /** 这个站点有没有可取回的正文（hasFetchableHtml 的结果）。false = 包装站，注定直链 */
+  fetchable: boolean;
+  /** 已取回且可内联的正文；null 表示还没有 */
+  inlineHtml: string | null;
+  /** 取正文这一趟已经有结论了（失败，或取回了但不能内联） */
+  settled: boolean;
+  /** 等待已超时，不能再让人干等 */
+  waitedOut: boolean;
+}): PreviewSource {
+  if (!state.fetchable) return 'direct';
+  if (state.inlineHtml) return 'srcdoc';
+  if (state.settled || state.waitedOut) return 'direct';
+  return 'pending';
+}

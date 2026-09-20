@@ -19,8 +19,10 @@ import {
   SRCDOC_PREVIEW_SANDBOX,
   canUseSrcDocPreview,
   hasFetchableHtml,
+  resolvePreviewSource,
   withPreviewBase,
 } from '@/components/web-hosting/previewHtml';
+import type { PreviewSource } from '@/components/web-hosting/previewHtml';
 import {
   planSourceDownload,
   describeDownloadResult,
@@ -86,19 +88,30 @@ function fmtSize(b: number) {
 }
 
 /**
- * 取回原文期间，那层「正在准备预览...」的白色遮罩最多盖多久。
+ * 等正文最多等多久，到点就转直链。
  *
- * 遮罩本身是为了避免「先闪一下直链 iframe、再跳成 srcDoc」的跳变，但它是**不透明全屏**的：
- * 底下的直链 iframe 其实一直在加载，代理慢或不可达时，一个本来能正常显示的页面会被白屏
- * 盖住整个 HTTP 超时。这正是本 PR 要修的那个毛病（超时不等于坏了，别拿遮罩盖住已经画出来
- * 的页面）——在自己新加的遮罩上重犯一次就说不过去了。所以给它一个短窗口，到点必让位。
+ * 这个常量替代了原来那个 1500ms 的「遮罩让位」窗口，两者要解决的问题不是同一个：
+ *
+ * 旧写法里 iframe 首帧就挂着直链地址，遮罩只是盖在它上面，所以 1.5s 让位是对的——
+ * 底下那一页已经加载了 1.5 秒，多半画好了。但**那次直链请求本身**正是 2026-09-18
+ * 事故的来源（某 App 的内置浏览器把它当成下载，弹「Download：(null) 599KB」）。
+ * 现在 pending 期间 iframe 是空的，没有「底下那一页」可以露出来，让位也就无从谈起。
+ *
+ * 于是窗口的语义变成「等正文的耐心上限」：到点说明代理慢或不可达，此时才挂直链。
+ * 取值 6 秒——服务端代理自己的超时是 20 秒，而正常一趟 1~3 秒；定太短会把大量本来
+ * 一两秒就能内联的页面推去发那次跨域请求，定太长会让真出问题时干等。
  */
-export const PREVIEW_MASK_TIMEOUT_MS = 1500;
+export const DIRECT_FALLBACK_TIMEOUT_MS = 6000;
 /**
  * 迟到多久之后就不再换文档了。
  *
- * 遮罩 1.5s 让位之后，这几秒里访客还没来得及攒下滚动位置/输入/翻页，此时原文回来照换，
- * 优先把内容显示出来（直链白屏时这是唯一的救场机会）。超过这个时长才保他的现场。
+ * 只对「已经转成直链」的那一档有意义：访客眼前已经是直链页面，这时原文姗姗来迟，
+ * 换成 srcDoc 就是换一个文档——滚动位置、输入、PPT 翻到第几页全部清零。
+ * 窗口之内他还没来得及攒下什么，宁可换文档也要把内容显示出来（直链白屏时这是唯一的
+ * 救场机会）；超过了才保他的现场，把原文留在手里并给一个看得见的出口。
+ *
+ * 与 DIRECT_FALLBACK_TIMEOUT_MS 取值相同不是巧合：转直链之后才谈得上「迟到」，
+ * 所以这一档的计时起点天然落在那个窗口之后。
  */
 export const LATE_SWAP_GUARD_MS = 6000;
 
@@ -119,16 +132,18 @@ const OVERLAY_CHIP: React.CSSProperties = {
 };
 
 /**
- * 该不该用遮罩盖住直链 iframe。抽成纯函数是为了能被测到「加载永远不结束时遮罩必须让位」。
+ * 该不该显示「正在准备预览」。
  *
- * 三个条件缺一不可：确实在取原文、还没拿到可用的 srcDoc、短窗口没到点。
+ * 判据整个收敛到 resolvePreviewSource 之后，这里只剩一句话：**pending 才遮**。
+ * 原先它是三个条件的与（在取 / 没 srcDoc / 窗口没到点），因为那时遮罩盖的是一个
+ * 已经在加载的直链 iframe，要小心别把能看的页面盖住；现在 pending 期间 iframe 本来
+ * 就是空的，遮罩不是「盖住什么」，而是这一刻唯一的内容。
+ *
+ * 原来那条不变量（loading 永不结束时不能永远遮着）没有丢，只是挪了位置：
+ * resolvePreviewSource 的 waitedOut 到点就转 direct，pending 自然结束。
  */
-export function shouldMaskDirectPreview(opts: {
-  loading: boolean;
-  hasSrcDoc: boolean;
-  maskExpired: boolean;
-}): boolean {
-  return opts.loading && !opts.hasSrcDoc && !opts.maskExpired;
+export function shouldMaskDirectPreview(opts: { source: PreviewSource }): boolean {
+  return opts.source === 'pending';
 }
 
 interface ShareViewPageProps {
@@ -175,9 +190,20 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   // 顶栏按钮上展示的评论数。初始拉一次，抽屉打开后由 CommentsSection 的 onCountChange 接管实时同步
   const [commentCount, setCommentCount] = useState<number | null>(null);
   const [embeddedHtml, setEmbeddedHtml] = useState<{ siteUrl: string; html: string } | null>(null);
-  const [embeddedHtmlLoading, setEmbeddedHtmlLoading] = useState(false);
-  /** 遮罩的短窗口是否已到点。到点后不再遮挡底下的直链 iframe，见 PREVIEW_MASK_TIMEOUT_MS */
-  const [previewMaskExpired, setPreviewMaskExpired] = useState(false);
+  /**
+   * 取正文这一趟走到哪了 —— **必须带上它说的是哪个 siteUrl**。
+   *
+   * 两个坑叠在一起：
+   * ① 不能用 loading 布尔。effect 要等一次渲染之后才跑，而 `loading=false` 在「还没开始」
+   *    与「已经结束」上读起来一模一样；首帧把前者读成后者，resolvePreviewSource 就判 direct，
+   *    那正好是这次要消灭的那一次跨域请求。
+   * ② 光有三态还不够。换密码重进、data 刷新时 effect 同样晚一帧，那一帧读到的是**上一趟**
+   *    的 settled，于是又判一次 direct、又发一次请求——判据漏掉了「重新开始」这个状态
+   *    （predicate-and-wiring-discipline 形状 1）。带上 siteUrl 之后，对不上就一律当没开始。
+   */
+  const [previewFetch, setPreviewFetch] = useState<{ siteUrl: string; settled: boolean } | null>(null);
+  /** 等正文超时的那个 siteUrl。带 URL 同理：上一趟的超时不许污染下一趟 */
+  const [directFallbackFor, setDirectFallbackFor] = useState<string | null>(null);
   /** 直链 iframe 是否**真的加载出了内容**（有真实 src 且 load 事件到过）。
    *  丢弃迟到 srcDoc 的前提是「用户已经在用底下那一页」——如果底下那页压根没加载
    *  （站点没有入口地址、或直链本身就白屏），丢掉迟到的 srcDoc 等于让用户一直盯着空白。 */
@@ -340,10 +366,12 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
   useEffect(() => {
     const site = data?.sites.length === 1 ? data.sites[0] : null;
     if (!site || !token || !hasFetchableHtml(site)) {
+      // 包装资产站（PDF/视频）注定走直链，没有可等的正文——直接落到 settled，
+      // 让 resolvePreviewSource 立刻给 direct，不要让这类站点白等一个超时窗口。
       setEmbeddedHtml(null);
       setEmbeddedHtmlError(null);
-      setEmbeddedHtmlLoading(false);
-      setPreviewMaskExpired(false);
+      setPreviewFetch(site ? { siteUrl: site.siteUrl, settled: true } : null);
+      setDirectFallbackFor(null);
       return;
     }
 
@@ -352,27 +380,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     setIsDeck(false);
     setEmbeddedHtmlError(null);
     setLateHtml(null);
-    setEmbeddedHtmlLoading(true);
-    // 遮罩只挡一小会儿。到点后即便原文还没回来，也把底下的直链 iframe 露出来——
-    // 它多半已经把页面画好了，继续盖着就是拿「可能更好的预览」换「确定看不见」。
-    setPreviewMaskExpired(false);
+    setPreviewFetch({ siteUrl: site.siteUrl, settled: false });
+    setDirectFallbackFor(null);
     // 同一个「到点了」要被两处读：渲染读 state，异步回调读 ref。
     // 回调闭包里的 state 是发起那一刻的旧值，永远看不到超时后的 true。
     exposedDirectRef.current = false;
     fetchStartedAtRef.current = Date.now();
-    const maskTimer = window.setTimeout(() => {
+    // 到点转直链：此时才第一次向托管域名发文档请求（pending 期间一次都没发过）。
+    const fallbackTimer = window.setTimeout(() => {
       if (!alive) return;
       exposedDirectRef.current = true;
-      setPreviewMaskExpired(true);
-    }, PREVIEW_MASK_TIMEOUT_MS);
+      setDirectFallbackFor(site.siteUrl);
+    }, DIRECT_FALLBACK_TIMEOUT_MS);
     getShareSiteContent(token, site.id, password || undefined)
       .then((res) => {
         if (!alive) return;
         if (res.success && res.data?.html) {
           // 「是不是幻灯片」必须在这里就判掉，不能等 embeddedHtml。
-          // 下面那条早退（遮罩已让位就丢弃原文）会让 embeddedHtml 永远是 null，
-          // 于是 deck 邀请条在「原文回得比 1.5s 慢」的每一次都静默消失——
-          // 判据挂在一个会被丢弃的中间产物上，正是形状 2（链路只建到一半）。
+          // 下面那条早退（已经转直链就不自动换）会让 embeddedHtml 停在 null，
+          // 于是 deck 邀请条在「原文回得比那个窗口慢」的每一次都静默消失——
+          // 判据挂在一个可能被搁置的中间产物上，正是形状 2（链路只建到一半）。
           setIsDeck(detectSlideDeck(res.data.html));
           // 丢弃迟到原文的理由，从头到尾只有一个：**用户已经在这一页上攒下了状态**
           // （滚到哪、输了什么、PPT 翻到第几页），换 srcDoc 等于换一个文档，全部清零。
@@ -404,10 +431,10 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         if (alive) setEmbeddedHtmlError('未能取回网页原文，已回退直接加载');
       })
       .finally(() => {
-        if (alive) setEmbeddedHtmlLoading(false);
+        if (alive) setPreviewFetch({ siteUrl: site.siteUrl, settled: true });
       });
 
-    return () => { alive = false; window.clearTimeout(maskTimer); };
+    return () => { alive = false; window.clearTimeout(fallbackTimer); };
   }, [data, token, password]);
 
   const handlePasswordSubmit = async (e: React.FormEvent) => {
@@ -689,6 +716,18 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     // 模块脚本因缺 CORS 被拦，整页白屏。判据见 canUseSrcDocPreview。
     const fetchedHtml = embeddedHtml?.siteUrl === site.siteUrl ? embeddedHtml.html : null;
     const iframeHtml = fetchedHtml && canUseSrcDocPreview(fetchedHtml) ? fetchedHtml : null;
+    /**
+     * 这一刻 iframe 该拿什么当内容源。pending 时**什么都不给**——不知道走哪条路之前
+     * 不向托管域名发文档请求，那一次请求正是 2026-09-18 弹窗事故的来源。
+     * 判据本体在 previewHtml.ts 的 resolvePreviewSource（那里有完整缘由）。
+     */
+    const previewSource = resolvePreviewSource({
+      fetchable: hasFetchableHtml(site),
+      inlineHtml: iframeHtml,
+      // 对不上 siteUrl 就当这一趟还没开始，绝不拿上一趟的结论去判 direct
+      settled: previewFetch?.siteUrl === site.siteUrl && previewFetch.settled,
+      waitedOut: directFallbackFor === site.siteUrl,
+    });
     // 按钮的提示语在**按下之前**就说清会拿到什么：多文件站下到的只是入口那一份，
     // 包装站根本不是网页。点一次换一个报错是最差的那种交代方式。
     const downloadPlan = planSourceDownload(site);
@@ -822,17 +861,20 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           )}
         </div>
         <div style={{ position: 'relative', minHeight: 0, background: '#fff' }}>
-          {/* Iframe
-              普通 HTML 托管页优先走 srcDoc：COS 直链在 Chrome iframe 中可能只绘制空白，
-              但同一 HTML 下载后可正常打开。srcDoc 注入 base 后保留相对资源路径，同时不加
-              allow-same-origin，避免用户上传 HTML 获得 MAP 同源能力。
-              PDF 壳子仍保留 siteUrl 路径：它需要以 COS 文档源加载同目录 PDF。 */}
+          {/* Iframe —— 三态，由 resolvePreviewSource 决定，**不再有「先挂直链再说」这一档**。
+              普通 HTML 托管页优先走 srcDoc：直链 iframe 在 Chrome 里可能只绘制空白，
+              而在某些 App 的内置浏览器里那次跨域文档请求会被当成下载（2026-09-18 事故）。
+              srcDoc 注入 base 后保留相对资源路径，同时不加 allow-same-origin，
+              避免用户上传 HTML 获得 MAP 同源能力。
+              PDF 壳子仍走 siteUrl：它需要以托管域名为文档源才加载得到同目录那份 PDF。 */}
           <iframe
-            src={iframeHtml ? undefined : site.siteUrl}
-            srcDoc={iframeHtml || undefined}
+            // siteUrl 为空时必须给 undefined 而不是 ''：空串在 HTML 里是「相对当前文档」，
+            // iframe 会把分享页自己再加载一遍。下面那块空态提示正是为这种站点准备的。
+            src={previewSource === 'direct' && site.siteUrl ? site.siteUrl : undefined}
+            srcDoc={previewSource === 'srcdoc' ? iframeHtml || undefined : undefined}
             title={site.title}
             style={{ border: 'none', width: '100%', height: '100%', minHeight: 0, display: 'block', background: '#fff' }}
-            sandbox={iframeHtml ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX}
+            sandbox={previewSource === 'srcdoc' ? SRCDOC_PREVIEW_SANDBOX : DIRECT_PREVIEW_SANDBOX}
             // 全屏权限归 `allow`（Permissions Policy）管，**不是** sandbox 的取值。
             // 这里原先写的 `allow-fullscreen` 不是合法 sandbox flag，Chrome 会报
             // "Error while parsing the 'sandbox' attribute: 'allow-fullscreen' is an
@@ -859,25 +901,26 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               </div>
             </div>
           )}
-          {/* 遮罩是为了避免「先闪直链、再跳 srcDoc」的跳变，但它不透明且全屏：代理慢或不可达时
-              会把底下那个其实已经渲染好的直链页面白屏盖住整个 HTTP 超时。所以只挡一小会儿，
-              到点让位——判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
-          {shouldMaskDirectPreview({
-            loading: embeddedHtmlLoading,
-            hasSrcDoc: !!iframeHtml,
-            maskExpired: previewMaskExpired,
-          }) && (
+          {/* 准备中：这一刻 iframe 是空的（还没决定走 srcDoc 还是直链，就不向托管域名
+              发任何请求），所以这块不是「盖住什么」，而是这一刻屏幕上唯一的内容。
+              等待有上限——DIRECT_FALLBACK_TIMEOUT_MS 到点即转直链，不会永远停在这里。
+              判据抽在 shouldMaskDirectPreview，守卫见 ShareViewPage.preview.test.ts。 */}
+          {shouldMaskDirectPreview({ source: previewSource }) && (
             <div style={{
               position: 'absolute',
               inset: 0,
               display: 'flex',
+              flexDirection: 'column',
               alignItems: 'center',
               justifyContent: 'center',
+              gap: 12,
               background: '#fff',
               color: '#475569',
               fontSize: 14,
             }}>
-              正在准备预览...
+              {/* 静止的「加载中」超过 2 秒就是体验缺陷（CLAUDE.md §6），这一段最长可到 6 秒 */}
+              <MapSpinner size={22} />
+              <div>正在取回网页原文…</div>
             </div>
           )}
           {/* 幻灯片邀请条：这是一套 deck，告诉访客键盘能翻页，几秒后自己淡出不挡内容 */}
@@ -899,7 +942,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             </button>
           )}
 
-          {embeddedHtmlError && !iframeHtml && !embeddedHtmlLoading && (
+          {embeddedHtmlError && !iframeHtml && previewSource !== 'pending' && (
             <div style={{ ...OVERLAY_CHIP, left: 12, bottom: 12, maxWidth: 'min(420px, calc(100% - 24px))' }}>
               {embeddedHtmlError}
             </div>

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import { hasFetchableHtml, canUseSrcDocPreview, preserveSrcDocFragmentLinks, withPreviewBase } from './previewHtml';
+import { hasFetchableHtml, canUseSrcDocPreview, preserveSrcDocFragmentLinks, resolvePreviewSource, withPreviewBase } from './previewHtml';
 
 /**
  * 「这个站点走 srcDoc 还是直链」的判据。
@@ -230,5 +230,49 @@ describe('srcDoc 页内锚点', () => {
     expect(out).toContain('href="#script-fake"');
     expect(out).toContain('href="#comment-fake"');
     expect(out).toContain('href="about:srcdoc#real"');
+  });
+});
+
+/**
+ * 预览源三态判定。
+ *
+ * 核心不变量：**不知道该走哪条路时什么都不发**（pending 期间 iframe 空着）。
+ * 2026-09-18 事故的根因就是旧写法在首帧无条件挂了直链地址。
+ */
+describe('resolvePreviewSource', () => {
+  const base = { fetchable: true, inlineHtml: null, settled: false, waitedOut: false };
+
+  it('还在等正文：pending，不给 iframe 任何 src', () => {
+    expect(resolvePreviewSource(base)).toBe('pending');
+  });
+
+  it('拿到可内联的正文：srcdoc', () => {
+    expect(resolvePreviewSource({ ...base, inlineHtml: '<html>x</html>' })).toBe('srcdoc');
+  });
+
+  it('包装资产站一开始就知道只能直链，不必空等一个超时窗口', () => {
+    expect(resolvePreviewSource({ ...base, fetchable: false })).toBe('direct');
+  });
+
+  it('取正文有结论了但没有可内联的正文（失败 / 打包型 SPA）：转直链', () => {
+    expect(resolvePreviewSource({ ...base, settled: true })).toBe('direct');
+  });
+
+  it('等超时了必须转直链 —— 代理挂掉不能让人永远停在准备中', () => {
+    expect(resolvePreviewSource({ ...base, waitedOut: true })).toBe('direct');
+  });
+
+  it('正文已经到手时，超时不该把它挤掉', () => {
+    expect(resolvePreviewSource({ ...base, inlineHtml: '<html>x</html>', waitedOut: true })).toBe('srcdoc');
+  });
+
+  it('无论哪一档，pending 都不会在「已有结论」之后出现', () => {
+    for (const settled of [true, false]) {
+      for (const waitedOut of [true, false]) {
+        const out = resolvePreviewSource({ ...base, settled, waitedOut });
+        if (settled || waitedOut) expect(out).toBe('direct');
+        else expect(out).toBe('pending');
+      }
+    }
   });
 });

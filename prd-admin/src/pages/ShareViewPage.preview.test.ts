@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { shouldMaskDirectPreview, PREVIEW_MASK_TIMEOUT_MS } from './ShareViewPage';
+import { shouldMaskDirectPreview, DIRECT_FALLBACK_TIMEOUT_MS } from './ShareViewPage';
 // 判据本体已抽到 web-hosting/previewHtml.ts，让缩略图、站内大预览、分享页共用同一份
 // （原先只长在分享页里，卡片缩略图另走一套，于是同一个「空白」在列表页复发）。
 import { canUseSrcDocPreview, hasFetchableHtml, withPreviewBase } from '@/components/web-hosting/previewHtml';
@@ -178,34 +178,72 @@ describe('canUseSrcDocPreview', () => {
 });
 
 /**
- * 加载遮罩必须限时让位。
+ * 准备期不能变成无期。
  *
- * 由 PR #1351 第二轮 review 抓出：那层「正在准备预览...」是不透明全屏遮罩，而底下的直链
- * iframe 一直在正常加载。代理慢或不可达时，一个本来能显示的页面会被白屏盖住整个 HTTP 超时——
- * 这正是本 PR 立意要修的毛病（超时不等于坏了，别盖住已经画出来的页面），却在新加的遮罩上
- * 又犯了一次。核心断言：loading 永不结束时，遮罩不能永远盖着。
+ * 由 PR #1351 第二轮 review 立下：那层「正在准备预览」是不透明全屏，loading 永不结束时
+ * 不能永远盖着。2026-09-18 这条契约换了实现但**没有放松**——pending 期间 iframe 是空的
+ * （不向托管域名发文档请求，那一次请求正是某 App 弹「Download：(null)」的来源），
+ * 所以「让位」不再是露出底下已加载的直链，而是到点**才开始**走直链。
+ * 判据整个收敛进 resolvePreviewSource，这里只剩「pending 才遮」。
  */
 describe('shouldMaskDirectPreview', () => {
-  it('刚开始取原文时遮一下，避免先闪直链再跳 srcDoc 的跳变', () => {
-    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: false, maskExpired: false })).toBe(true);
+  it('还在等正文时显示准备中', () => {
+    expect(shouldMaskDirectPreview({ source: 'pending' })).toBe(true);
   });
 
-  it('短窗口到点后必须让位 —— 即使原文始终没回来', () => {
-    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: false, maskExpired: true })).toBe(false);
+  it('转成直链之后必须让位 —— 这一档正是「原文始终没回来」', () => {
+    expect(shouldMaskDirectPreview({ source: 'direct' })).toBe(false);
   });
 
   it('已经拿到 srcDoc 就不再需要遮罩', () => {
-    expect(shouldMaskDirectPreview({ loading: true, hasSrcDoc: true, maskExpired: false })).toBe(false);
+    expect(shouldMaskDirectPreview({ source: 'srcdoc' })).toBe(false);
   });
 
-  it('没在加载就不该有遮罩', () => {
-    expect(shouldMaskDirectPreview({ loading: false, hasSrcDoc: false, maskExpired: false })).toBe(false);
+  it('等待窗口必须短于任何合理的 HTTP 超时，否则等于没限', () => {
+    expect(DIRECT_FALLBACK_TIMEOUT_MS).toBeGreaterThan(0);
+    // 服务端代理自己的超时以十秒计，转直链必须远早于它
+    expect(DIRECT_FALLBACK_TIMEOUT_MS).toBeLessThanOrEqual(10000);
+  });
+});
+
+/**
+ * 首帧不许向托管域名发文档请求（2026-09-18 事故的正题）。
+ *
+ * 旧写法 `src={iframeHtml ? undefined : site.siteUrl}`：首帧 iframeHtml 必然为 null，
+ * 于是**每一次打开分享页都先发一次跨域直链请求**，之后才切 srcDoc。桌面浏览器上它只是
+ * 闪一下白，没人注意；而某 App 的内置浏览器把那次 text/html 响应当成下载，弹出
+ * 「Download：(null) File Size：599KB」——599KB 正是那份 HTML 注入翻页垫片后的大小。
+ *
+ * 这条退化删掉之后不会有任何单测变红（它是 JSX 里的一个三元），所以按源码守住。
+ */
+describe('预览源接线', () => {
+  const source = stripComments(fs.readFileSync(SHARE_VIEW, 'utf8'));
+
+  it('iframe 的 src 由 previewSource 决定，不再是「有没有 srcDoc」的三元', () => {
+    expect(source).toContain('resolvePreviewSource');
+    // 钉「src 由 previewSource 决定」，不钉整句字面量——否则给空 siteUrl 加一道防护
+    // 这类正当改动也会把守卫打红，而它要防的其实只有「回到首帧无条件挂直链」那一种
+    expect(source).toMatch(/src=\{previewSource === 'direct'/);
+    // 这正是被替换掉的那个写法，不许回来
+    expect(source, '首帧又会发一次跨域直链请求').not.toMatch(/src=\{iframeHtml \? undefined : site\.siteUrl\}/);
+    expect(source).not.toMatch(/src=\{[^}]*\?\s*undefined\s*:\s*site\.siteUrl\}/);
   });
 
-  it('遮罩窗口必须短于任何合理的 HTTP 超时，否则等于没限', () => {
-    expect(PREVIEW_MASK_TIMEOUT_MS).toBeGreaterThan(0);
-    // 5s 是个宽松上界：真实代理超时以十秒计，遮罩必须远早于它让位
-    expect(PREVIEW_MASK_TIMEOUT_MS).toBeLessThanOrEqual(5000);
+  /**
+   * 「取到哪一步了」必须带上它说的是哪个 siteUrl。
+   *
+   * 两个坑叠在一起，缺一条都会让那次跨域请求回来：
+   * ① 布尔的 loading=false 在「还没开始」与「已经结束」上读起来一样，effect 又总晚一帧，
+   *    首帧把前者读成后者就判 direct；
+   * ② 就算改成三态，换密码重进 / data 刷新时那一帧读到的仍是**上一趟**的 settled，
+   *    照样判一次 direct。对不上 siteUrl 就当没开始，这两种都堵死（形状 1）。
+   */
+  it('取正文的进度必须按 siteUrl 归属，不能是一个全局布尔', () => {
+    expect(source).toContain('previewFetch');
+    expect(source).toMatch(/settled:\s*previewFetch\?\.siteUrl === site\.siteUrl/);
+    expect(source).toMatch(/waitedOut:\s*directFallbackFor === site\.siteUrl/);
+    // 退回裸布尔就等于把上一趟的结论泄给下一趟
+    expect(source).not.toMatch(/useState<boolean>\(false\);\s*\n\s*const \[directFallback\]/);
   });
 });
 
