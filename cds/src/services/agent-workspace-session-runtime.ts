@@ -31,20 +31,15 @@ const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-pr
  * 它就产出空白——2026-09-20 第八条 run 实测：六个文件收上来了、index.html 一字未动、
  * 所有闸门都「通过」，用户拿到一张空页。那是比失败更糟的一种成功。
  *
- * 为什么要清空占位文本：模板通篇 `[REPLACE] xxx`，而 MAP 落库前
- * （`EnsureNoUnresolvedTemplatePlaceholders`）拒收任何残留的 `[REPLACE]`，模型总会漏几个
- * ——第七条 run 就死在这里。清空之后结构与样式全在（模型有槽可填），漏填一处渲染成空元素，
- * 既不是 `[REPLACE]` 也不是整条 run 失败。参考拷贝 .od-skills 保持原样，模型仍看得出哪里是槽。
+ * 为什么占位文案要留着：试过清空（第九条 run），模型看见一张「看上去已经完成」的页面，
+ * 一字未改就交了回来——`[REPLACE] xxx` 对它是「这里要填」的信号，删掉等于把信号也删了。
  *
- * 末尾那条 grep 是自证：清不干净就让整个准备步骤失败，而不是把带 `[REPLACE]` 的起始页发出去。
+ * 那 MAP 拒收残留 `[REPLACE]` 怎么办：把同一条判据前移到 CDS 的质量闸（见下方
+ * `unreplaced template placeholders`），让质量修复回路（4 轮，带条数与样本）先收拾干净。
+ * 此前 CDS 这边根本不查，模型漏几个就直接撞上 MAP 的硬拒，一次生成全废（第七条 run）。
  */
-const NEW_PAGE_SEED = [
-  'if [ ! -f /workspace/index.html ]; then',
-  'cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html &&',
-  `sed -i 's|\\[REPLACE\\][^<]*||g' /workspace/index.html &&`,
-  `! grep -qiE '\\[ *replace *\\]' /workspace/index.html;`,
-  'fi',
-].join(' ');
+const NEW_PAGE_SEED = 'if [ ! -f /workspace/index.html ]; then '
+  + 'cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html; fi';
 
 const WEB_PROTOTYPE_TEMPLATE_FILES = [
   '/app/design-templates/web-prototype/assets/template.html',
@@ -3594,6 +3589,32 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
       instruction: 'Remove every visible placeholder or unfinished-content marker.',
     };
   }
+  if (message === 'index.html still contains unreplaced template placeholders') {
+    const rawCount = error.details?.placeholderCount;
+    const count = typeof rawCount === 'number' && Number.isSafeInteger(rawCount) && rawCount > 0
+      ? rawCount
+      : undefined;
+    const rawSamples = error.details?.placeholderSamples;
+    // 样本来自模型自己的产物，可能夹着注入尝试：只收形如 `[REPLACE] 短文本` 的片段，逐条限长。
+    const samples = Array.isArray(rawSamples)
+      ? rawSamples
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.replace(/\s+/g, ' ').trim().slice(0, 48))
+        .filter((value) => /^\[\s*replace\s*\]/i.test(value))
+        .slice(0, 12)
+      : [];
+    const head = count === undefined || samples.length === 0
+      ? ''
+      : `There are ${count} unreplaced placeholder(s) left, for example: ${samples.join(' | ')}. `;
+    return {
+      code: 'unreplaced_template_placeholder',
+      instruction: `${head}Every [REPLACE] marker is a slot you must fill with real copy taken from the MAP task `
+        + 'and the knowledge sources. Replace the whole marker including the word REPLACE and its brackets; '
+        + 'never leave one behind, and do not just delete the slot element instead of filling it. '
+        + 'Search the entire file for the marker before you finish - the publication gate rejects the page '
+        + 'if a single one remains.',
+    };
+  }
   if (message === 'index.html contains a link without a target') {
     return {
       code: 'link_without_target',
@@ -4352,6 +4373,21 @@ function validateArtifactQuality(
   // （2026-09-20 第八条 run 实测，比失败更糟的那种成功）。
   // 判据取模板正文里那段「把版式粘到这里」的指示注释：真做过的页面会把 <main> 的内容整段换掉，
   // 它留不下来；留着就是确证「起始页原样交回」。比「可见文字少于 N 个字」准，也不会误伤小页面。
+  // MAP 落库前会拒收任何残留的 `[REPLACE]`（HostedSiteRevision 的
+  // EnsureNoUnresolvedTemplatePlaceholders）。同一条判据前移到这里，模型才有 4 轮修复机会
+  // 把漏掉的槽填掉；此前 CDS 不查，漏几个就直接撞上 MAP 的硬拒，一次生成全废。
+  // 口径与 MAP 一致：先去掉注释与 <style>，再找 `[ replace ]`。
+  const sentinelMarkup = html.replace(/<!--[\s\S]*?-->|<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '');
+  const sentinels = [...sentinelMarkup.matchAll(/\[\s*replace\s*\][^<\n]{0,40}/gi)]
+    .map((match) => match[0].trim());
+  if (sentinels.length > 0) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html still contains unreplaced template placeholders',
+      false,
+      { placeholderCount: sentinels.length, placeholderSamples: sentinels.slice(0, 12) },
+    );
+  }
   if (html.includes(TEMPLATE_UNTOUCHED_MARKER)) {
     throw new AgentWorkspaceRuntimeError(
       'design_output_quality_rejected',
