@@ -214,8 +214,12 @@ CASES = [
     # ── 守卫自己的 CI 接线 ─────────────────────────────────────────
     ("R6-CI未接线", "被测文件从 CI path filter 摘掉", CI,
      lambda t: t.replace("              - '.claude/rules/report-design-system.md'\n", "", 1)),
+    # 摘掉的必须是**覆盖守卫脚本的全部 glob**，不是其中一条。
+    # 2026-09-17 加了更宽的 'scripts/**' 之后，只摘 test_*.py 那条守卫照样被覆盖、照样判绿，
+    # 于是这条自测反过来红了——它测的是「摘掉之后会不会红」，摘得不干净就什么都没测到。
     ("R20-守卫自己未接线", "守卫脚本自己的 glob 从 CI path filter 摘掉", CI,
-     lambda t: t.replace("              - 'scripts/tests/test_*.py'\n", "", 1)),
+     lambda t: t.replace("              - 'scripts/tests/test_*.py'\n", "", 1)
+                .replace("              - 'scripts/**'\n", "", 1)),
 ]
 
 

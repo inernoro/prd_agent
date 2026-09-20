@@ -96,6 +96,29 @@ for (const target of SERVING_PATHS) {
   }
 }
 
+/**
+ * 客户端路径不许自带 `/gw` 前缀。
+ *
+ * 由来：2026-09-16 两个新方法写成 apiRequest('/gw/models/…')，而 API_BASE 本身已经是
+ * `/gw` 或 `/llmgw/gw`——拼出来是 `/gw/gw/models/…`，服务端没有这条路由，打开模型价格
+ * 抽屉与保存价格双双 404。tsc 绿、lint 绿、构建绿，只有真的点那个按钮才看得见。
+ *
+ * 判据只认 apiRequest 的第一个参数（路径），所以 API_BASE 自己的定义、注释里的
+ * `/gw/*` 说明都不会误伤。
+ */
+const apiClient = fs.readFileSync(path.join(ROOT, 'src/lib/api.ts'), 'utf8');
+const doublePrefixed = [];
+for (const match of apiClient.matchAll(/apiRequest<[^>]*>\(\s*([`'"])(\/gw\/[^`'"]*)\1/g)) {
+  const line = apiClient.slice(0, match.index).split('\n').length;
+  doublePrefixed.push(`lib/api.ts:${line}  ${match[2]}  ← API_BASE 已含 /gw，这里会拼成 /gw${match[2]}`);
+}
+if (doublePrefixed.length) {
+  console.error('挂载点覆盖守卫未通过：客户端路径自带了 /gw 前缀\n');
+  for (const line of doublePrefixed) console.error(`  ${line}`);
+  console.error('\n路径写成相对 API_BASE 的形式（`/models/...`），与邻近的方法一致。');
+  process.exit(1);
+}
+
 if (misrouted.length) {
   console.error('挂载点覆盖守卫未通过：下面这些路径被转到了错误的上游\n');
   for (const line of misrouted) console.error(`  ${line}`);

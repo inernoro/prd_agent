@@ -509,14 +509,27 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
 
     private async Task EnsureOfferingIdentityIndexAsync(CancellationToken ct)
     {
+        /*
+          线路的身份里必须带上「打给上游的是哪一个模型」。
+
+          一个兑换所底下挂着多个别名，同一个对外模型完全可能同时指向其中好几个
+          （UpstreamModelId 决定真正调的是哪一个），它们是**不同的**线路。身份只到
+          TargetId 为止的话，第二条别名插入时撞 E11000——搬迁半途而废，而且重跑还是同样的结果，
+          那条线路就永久丢了（形状 1：判据比它该管的范围窄，「同一个目标的不同别名」这种
+          输入让它给出相反答案）。
+
+          往唯一索引里**加**一个字段只会让约束更松，不会让现存数据冲突，所以升级不需要预清理。
+        */
         const string legacyIndexName = "uniq_llmgw_offering_tenant_logical_target";
-        const string versionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v2";
+        const string legacyVersionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v2";
+        const string versionAwareIndexName = "uniq_llmgw_offering_tenant_logical_target_v3";
         string[] expectedKeys =
         [
             "TenantId",
             "LogicalModelId",
             "TargetKind",
             "TargetId",
+            "UpstreamModelId",
             "SupersededByOfferingId",
         ];
         var collection = _data.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
@@ -542,17 +555,53 @@ public sealed class LlmGatewayDatabaseInitializer : IHostedService
             return;
         }
 
-        await DropIndexIfPresentAsync(collection, legacyIndexName, ct);
-        await collection.Indexes.CreateOneAsync(new CreateIndexModel<BsonDocument>(
-            Builders<BsonDocument>.IndexKeys
-                .Ascending("TenantId")
-                .Ascending("LogicalModelId")
-                .Ascending("TargetKind")
-                .Ascending("TargetId")
-                .Ascending("SupersededByOfferingId"),
-            new CreateIndexOptions { Name = versionAwareIndexName, Unique = true }), cancellationToken: ct);
-        _logger.LogInformation(
-            "[LlmGatewayData] Offering 唯一索引升级为版本感知结构 index={Index}",
+        /*
+          有旧版身份索引在跑时，**启动时不动它**。
+
+          丢掉一条正在生效的唯一索引再同步重建，在大集合上可能阻塞写入、甚至让进程起不来；
+          而两次操作之间但凡失败一次，线路身份就完全失去保护。`no-auto-index` 规则明确禁止
+          在启动逻辑里做这种事，理由正是这个。
+          所以这里只做两件事：全新库（一条等价索引都没有）直接建对的那条；已有旧版的
+          如实报出来并给出该跑的那条命令，交给 DBA 在低峰期做（见
+          doc/guide.platform.mongodb-indexes.md）。在那之前旧索引继续生效——
+          它比新的更严，后果是「同一个兑换所的第二条别名建不出来」，会如实报错而不是静默走偏。
+        */
+        var legacy = indexes.FirstOrDefault(x =>
+            x.GetValue("name", "").AsString == legacyIndexName
+            || x.GetValue("name", "").AsString == legacyVersionAwareIndexName);
+        if (legacy is not null)
+        {
+            _logger.LogWarning(
+                "[LlmGatewayData] 线路身份唯一索引还是旧版 {Index}，它不认 UpstreamModelId："
+                + "同一个兑换所下的第二条别名会撞 E11000（搬迁会在那里半途停下并报错）。"
+                + "这一步不在启动时做——丢一条正在生效的唯一索引再重建会阻塞写入。"
+                + "请 DBA 在低峰期执行：db.llmgw_model_offerings.dropIndex(\"{Index}\") 然后按 "
+                + "doc/guide.platform.mongodb-indexes.md 里 {Expected} 那一条建新索引",
+                legacy.GetValue("name", "").AsString,
+                legacy.GetValue("name", "").AsString,
+                versionAwareIndexName);
+            return;
+        }
+
+        /*
+          一条等价索引都没有（全新库，或索引被人删了）。这里同样**只报不建**。
+
+          上一版在这条分支上建了索引，理由是「全新库没有存量、建它不阻塞」。那个理由站不住：
+          no-auto-index 禁的不是「危险的那几次建索引」，是「启动路径上建索引」这件事本身——
+          判据要是留着「什么时候算安全」的口子，下一个人照着这条分支再加一条就又是合规的，
+          而它真正的代价（副本集里滚动启动各建各的、建失败让进程起不来、以及最要命的
+          「库其实不新、只是索引被误删了」）恰好都出现在被判成安全的那一侧。
+          所以这里不再区分新库旧库：缺就如实报出来，附上该跑的命令，交给 DBA。
+
+          没有这条索引期间线路身份没有唯一约束，两次并发创建可能各插一条同身份线路。
+          创建端点会在撞键时翻成 409（见 console-api 的线路创建），没有索引时撞不上键，
+          于是退化成「后写的那条赢」——不丢数据，但需要人去看一眼，故报 Warning 不是 Information。
+        */
+        _logger.LogWarning(
+            "[LlmGatewayData] 线路身份唯一索引 {Expected} 不存在，线路身份当前没有唯一约束："
+            + "两次并发创建同身份线路都会插进去。启动不建索引（no-auto-index），"
+            + "请 DBA 按 doc/guide.platform.mongodb-indexes.md 里 {Expected} 那一条建索引",
+            versionAwareIndexName,
             versionAwareIndexName);
     }
 

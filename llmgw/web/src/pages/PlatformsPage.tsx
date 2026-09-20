@@ -2,12 +2,14 @@
 // 密钥明文只随创建/轮换请求发送，永不回显；列表最多展示头尾打码的指纹（keyFingerprint），
 // 用来分辨同名同 URL 的两条上游是哪一把——指纹仅在具备 config:write 时由服务端下发。
 import { Fragment, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
-import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
-import type { CreatePlatformRequest, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
+import { bulkRotateApiKeys, claimPlatformToGateway, createPlatform, deletePlatform, deletePlatformApiKey, getLogicalModels, getModels, getPlatforms, getProviderPresets, getUpstreamModels, importUpstreamModels, rotatePlatformApiKey, setPlatformEnabled, testPlatformConnection, updatePlatform } from '@/lib/api';
+import type { CreatePlatformRequest, LogicalModelItem, ModelItem, PlatformItem, PlatformTestResult, ProviderPresetItem, UpdatePlatformRequest, UpstreamModelsData } from '@/lib/types';
+import { ProviderModelsPanel, collectProviderModels, summarizeProviderModels } from '@/components/ProviderModelsPanel';
 import { Chip, SectionLoader, Button, ReadOnlyNotice, InlineAlert } from '@/components/ui';
 import { ProviderPresetPicker, TestResultBar, UpstreamModelPicker, keyPrefixWarning } from '@/components/ProviderSetup';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
+import { ImageGenContractsSection } from '@/components/ImageGenContractsSection';
+import { ModelCatalogSection } from '@/components/ModelCatalogSection';
 import { RowActions } from '@/components/RowActions';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
@@ -46,6 +48,11 @@ export function PlatformsPage() {
   // 接完之后的两件交代：能不能通、上游有哪些模型
   const [testResult, setTestResult] = useState<Record<string, PlatformTestResult>>({});
   const [discovery, setDiscovery] = useState<{ platformId: string; data: UpstreamModelsData } | null>(null);
+  // 这个上游名下有哪些模型、登记了没有。模型本来就属于上游（PlatformId 必填），
+  // 展开上游就该看到——而「哪些没登记」在此之前只能靠在两个页面之间来回对照才看得出。
+  const [ownedModels, setOwnedModels] = useState<ModelItem[]>([]);
+  const [logicalModels, setLogicalModels] = useState<LogicalModelItem[]>([]);
+  const [expandedModelsFor, setExpandedModelsFor] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -60,10 +67,16 @@ export function PlatformsPage() {
     getProviderPresets().then((res) => {
       if (alive && res.success) setPresets(res.data.items);
     });
+    // 名下模型与登记状态是锦上添花，拉不到不该让整页报错——那一列留空即可
+    getModels().then((res) => { if (alive && res.success) setOwnedModels(res.data.items); });
+    getLogicalModels().then((res) => { if (alive && res.success) setLogicalModels(res.data.items); });
     return () => {
       alive = false;
     };
   }, []);
+
+  /** 某个上游名下的模型 + 登记状态。判据是「有没有线路指向它」，不是名字像不像。 */
+  const ownedRows = (platformId: string) => collectProviderModels(platformId, ownedModels, logicalModels);
 
   /** 选中预设 = 一次性填好所有系统知道的字段，用户只剩密钥要填。 */
   function applyPreset(next: ProviderPresetItem | null) {
@@ -161,10 +174,29 @@ export function PlatformsPage() {
     // 池同步失败时后端会如实回传：模型入库了但池路由选不到，不能报成全绿
     const blocked = res.data.blockedOutsideCatalog?.length ?? 0;
     const skippedExisting = res.data.skipped - blocked;
-    const base = `已导入 ${res.data.created} 个模型${skippedExisting > 0 ? `，跳过 ${skippedExisting} 个已存在的` : ''}`;
-    // 池同步失败与「被名录拦下」都要如实说，且都带可执行的下一步——后端的 message 已经写好了。
-    setToast(res.data.message ? `${base}。${res.data.message}` : base);
+    // 白名单登记是这次导入真正的终点：只说「导入了 N 个模型」，用户不知道调用方现在能不能调到。
+    const whitelisted = res.data.whitelistedPublicIds?.length ?? 0;
+    const linked = res.data.linkedToExistingCount ?? 0;
+    const published = [
+      whitelisted > 0 ? `${whitelisted} 个登上白名单` : '',
+      linked > 0 ? `${linked} 条挂到已有模型名下作为新线路` : '',
+    ].filter(Boolean).join('，');
+    const base = `已导入 ${res.data.created} 个模型${skippedExisting > 0 ? `，跳过 ${skippedExisting} 个已存在的` : ''}`
+      + (published ? `；${published}，调用方现在可以按公开模型名直接调` : '');
+    // 池同步失败、名录拦下、白名单登记失败都要如实说，且都带可执行的下一步——后端的 message 已经写好了。
+    const notes = [res.data.message, res.data.whitelistMessage].filter(Boolean).join(' ');
+    setToast(notes ? `${base}。${notes}` : base);
     setDiscovery(null);
+    // 导入完必须重新拉一次：不拉的话「名下模型」那一列还停在导入前的「2 个没登记」，
+    // 用户刚登记完却看到没变，会以为这次登记没生效。
+    void refreshOwnedModels();
+  }
+
+  /** 重新拉「名下模型 + 登记状态」。拉不到只让这一列留空，不打断主流程。 */
+  async function refreshOwnedModels() {
+    const [models, logical] = await Promise.all([getModels(), getLogicalModels()]);
+    if (models.success) setOwnedModels(models.data.items);
+    if (logical.success) setLogicalModels(logical.data.items);
   }
 
   async function toggle(p: PlatformItem) {
@@ -348,9 +380,7 @@ export function PlatformsPage() {
           <p>
             选平台、填密钥即可接入；这里存的是供应方密钥，不是业务应用用的 <code>gwk_</code> 接入密钥。
           </p>
-          <div style={{ marginTop: 6, ...HINT_TEXT }}>
-            fal.ai 等原生接口不走这里，图片分层请到 <Link className="lg-text-link" to="/exchanges#image-layering">Exchange 一键接入</Link>。
-          </div>
+
         </div>
         {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
           {showCreate ? '收起配置' : '添加 Provider'}
@@ -462,6 +492,9 @@ export function PlatformsPage() {
             busy={busyId === discovery.platformId}
             onImport={(selected) => void runImport(discovery.platformId, selected)}
             onCancel={() => setDiscovery(null)}
+            /* 补登完重新拉一次：那一行当场从「名录外」翻成「名录内」，
+               证明补登真的生效了，而不是让人自己去别处确认。 */
+            onRegistered={() => void openDiscovery(items.find((x) => x.id === discovery.platformId)!)}
           />
         </section>
       ) : null}
@@ -486,10 +519,11 @@ export function PlatformsPage() {
         <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
+              {/* 主表只摆要拿来做决定的东西。接口类型、API 地址、并发都是选完平台就定下来的
+                  实现细节：用户读它们做不出任何决定，却占掉半张表的宽度。三项在「查看接口」
+                  预览里一个不少（minimal-user-input：有正确默认值的字段不摆在主路径上）。 */}
               <th style={th}>平台</th>
-              <th style={th}>类型</th>
-              <th style={th}>API URL</th>
-              <th style={th}>并发</th>
+              <th style={th}>名下模型</th>
               <th style={th}>配置来源</th>
               <th style={th}>状态</th>
               <th style={th}>密钥</th>
@@ -543,9 +577,22 @@ export function PlatformsPage() {
                       />
                     </div>
                   </td>
-                  <td style={td}>{p.platformType || '—'}</td>
-                  <td style={{ ...td, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
-                  <td style={td}>{p.maxConcurrency || '—'}</td>
+                  <td style={td}>
+                    {/* 一句话结论而不是一个数字：「3 个模型」读不出该不该管，
+                        「2 个没登记」读得出——没登记的模型调用方按名字请求找不到它。 */}
+                    <button
+                      type="button"
+                      onClick={() => setExpandedModelsFor((x) => (x === p.id ? null : p.id))}
+                      style={{
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left',
+                        fontSize: 'var(--fs-secondary)',
+                        color: ownedRows(p.id).some((x) => x.publicIds.length === 0) ? 'var(--warn)' : 'var(--text-secondary)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {summarizeProviderModels(ownedRows(p.id))}
+                    </button>
+                  </td>
                   <td style={td}>
                     {p.authority === 'llm_gateway' ? (
                       <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={p.claimedAt ? `导入于 ${p.claimedAt}` : undefined} />
@@ -633,10 +680,24 @@ export function PlatformsPage() {
                     </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
                   </td>
                 </tr>
+                {expandedModelsFor === p.id ? (
+                  <tr>
+                    {/* 名下模型占满整行：这是「模型属于上游」这件事的落地位置，
+                        窄列里塞不下「登记为哪几个公开名」这句结论 */}
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={6}>
+                      <ProviderModelsPanel
+                        rows={ownedRows(p.id)}
+                        onRegister={canWrite && p.authority === 'llm_gateway' && p.hasKey && p.platformType !== 'claude'
+                          ? () => void openDiscovery(p)
+                          : undefined}
+                      />
+                    </td>
+                  </tr>
+                ) : null}
                 {editId === p.id ? (
                   <tr>
                     {/* 编辑表单占满整行：塞进窄窄的操作列会把指纹和按钮一起挤到换行 */}
-                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={8}>
+                    <td style={{ ...td, background: 'var(--bg-elevated)' }} colSpan={6}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                         <span style={{ ...HINT_TEXT, marginRight: 4 }}>编辑上游</span>
                           <input
@@ -646,36 +707,6 @@ export function PlatformsPage() {
                             placeholder="名称"
                             style={{ ...inputStyle, width: 150 }}
                           />
-                          <select
-                            aria-label="接口类型"
-                            value={editDraft.platformType ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
-                            style={inputStyle}>
-                            {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
-                                用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
-                            {editDraft.platformType
-                              && !['openai', 'claude'].includes(editDraft.platformType) ? (
-                                <option value={editDraft.platformType}>
-                                  {editDraft.platformType}（存量类型）
-                                </option>
-                              ) : null}
-                            <option value="openai">openai</option>
-                            <option value="claude">claude</option>
-                          </select>
-                          <input
-                            aria-label="API 地址"
-                            value={editDraft.apiUrl ?? ''}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
-                            placeholder="https://…"
-                            style={{ ...inputStyle, width: 240 }}
-                          />
-                          <input
-                            aria-label="并发"
-                            type="number"
-                            value={editDraft.maxConcurrency ?? 0}
-                            onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
-                            style={{ ...inputStyle, width: 80 }}
-                          />
                           <input
                             aria-label="备注"
                             value={editDraft.remark ?? ''}
@@ -683,6 +714,44 @@ export function PlatformsPage() {
                             placeholder="备注"
                             style={{ ...inputStyle, width: 160 }}
                           />
+                          {/* 接口类型、API 地址、并发收进折叠区：接上游时是选平台带出来的，
+                              改它们是例外不是常规。默认露在外面的话，每次只想改个备注
+                              都要从一排输入框里认出哪个是备注（minimal-user-input）。 */}
+                          <details style={{ width: '100%' }}>
+                            <summary style={advancedSummaryStyle}>高级：接口类型、API 地址、并发（换了上游地址或要调并发时才动）</summary>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+                              <select
+                                aria-label="接口类型"
+                                value={editDraft.platformType ?? ''}
+                                onChange={(e) => setEditDraft((v) => ({ ...v, platformType: e.target.value }))}
+                                style={inputStyle}>
+                                {/* 存量类型（openrouter / google 等）先如实列出来，否则选择器显示为空，
+                                    用户看不出这条上游现在到底是什么类型，随手一点就把协议改了。 */}
+                                {editDraft.platformType
+                                  && !['openai', 'claude'].includes(editDraft.platformType) ? (
+                                    <option value={editDraft.platformType}>
+                                      {editDraft.platformType}（存量类型）
+                                    </option>
+                                  ) : null}
+                                <option value="openai">openai</option>
+                                <option value="claude">claude</option>
+                              </select>
+                              <input
+                                aria-label="API 地址"
+                                value={editDraft.apiUrl ?? ''}
+                                onChange={(e) => setEditDraft((v) => ({ ...v, apiUrl: e.target.value }))}
+                                placeholder="https://…"
+                                style={{ ...inputStyle, width: 240 }}
+                              />
+                              <input
+                                aria-label="并发"
+                                type="number"
+                                value={editDraft.maxConcurrency ?? 0}
+                                onChange={(e) => setEditDraft((v) => ({ ...v, maxConcurrency: Number(e.target.value) }))}
+                                style={{ ...inputStyle, width: 80 }}
+                              />
+                            </div>
+                          </details>
                           <Button size="sm" variant="primary" disabled={busyId === p.id} onClick={() => void saveEdit(p)}>
                             保存
                           </Button>
@@ -700,6 +769,14 @@ export function PlatformsPage() {
         </table>
       </div>
       )}
+
+      {/* 第三段：模型名录。放这一页是因为发现「系统不认识这个模型」的时机就是在上游清单里；
+          名录的键是模型标识而不是上游（同一个模型在哪个平台上都是同一个模型）。 */}
+      <ModelCatalogSection canWrite={canWrite} />
+
+      {/* 第四段：生图契约。放这一页是因为配它的时机就是「刚接了个上游、里面有新生图模型」；
+          匹配键是模型名而不是上游，所以它不挂在某个 Provider 下面。 */}
+      <ImageGenContractsSection canWrite={canWrite} />
     </div>
   );
 }

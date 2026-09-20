@@ -8,13 +8,31 @@ public sealed class LlmCostEvidenceTests
     [Fact]
     public void PriceSnapshotHash_IsStableAndKeepsUnknownDistinctFromZero()
     {
-        var first = LlmCostEvidence.BuildPriceSnapshotHash(1.5m, 2m, null, "usd");
-        var repeated = LlmCostEvidence.BuildPriceSnapshotHash(1.50m, 2.0m, null, "USD");
-        var zero = LlmCostEvidence.BuildPriceSnapshotHash(0m, 2m, null, "USD");
+        var first = LlmCostEvidence.BuildPriceSnapshotHash(1.5m, 2m, null, null, null, "usd");
+        var repeated = LlmCostEvidence.BuildPriceSnapshotHash(1.50m, 2.0m, null, null, null, "USD");
+        var zero = LlmCostEvidence.BuildPriceSnapshotHash(0m, 2m, null, null, null, "USD");
 
         Assert.Equal(first, repeated);
         Assert.NotEqual(first, zero);
-        Assert.Null(LlmCostEvidence.BuildPriceSnapshotHash(null, null, null, null));
+        Assert.Null(LlmCostEvidence.BuildPriceSnapshotHash(null, null, null, null, null, null));
+    }
+
+    /// <summary>
+    /// 缓存两档价必须进指纹。漏掉的话，「按缓存价算」与「按全价算」这两次口径不同的计价
+    /// 会得到同一个快照，事后谁都无法复算出当时那笔账是怎么来的。
+    /// </summary>
+    [Fact]
+    public void PriceSnapshotHash_ChangesWhenCachePricesChange()
+    {
+        var noCachePrice = LlmCostEvidence.BuildPriceSnapshotHash(2.5m, 10m, null, null, null, "USD");
+        var withCacheRead = LlmCostEvidence.BuildPriceSnapshotHash(2.5m, 10m, 0.625m, null, null, "USD");
+        var withCacheWrite = LlmCostEvidence.BuildPriceSnapshotHash(2.5m, 10m, null, 3.75m, null, "USD");
+        var withBoth = LlmCostEvidence.BuildPriceSnapshotHash(2.5m, 10m, 0.625m, 3.75m, null, "USD");
+
+        Assert.NotEqual(noCachePrice, withCacheRead);
+        Assert.NotEqual(noCachePrice, withCacheWrite);
+        Assert.NotEqual(withCacheRead, withCacheWrite);
+        Assert.NotEqual(withCacheRead, withBoth);
     }
 
     [Fact]

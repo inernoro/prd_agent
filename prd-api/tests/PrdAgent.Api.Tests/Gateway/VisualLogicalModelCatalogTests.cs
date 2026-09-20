@@ -55,6 +55,11 @@ public sealed class VisualLogicalModelCatalogTests
                     new ModelGroupItem { PlatformId = "provider", ModelId = "gpt-image-2", HealthStatus = ModelHealthStatus.Healthy },
                 ],
             });
+            // 这条测试的不变量是「不该被这个调用方选到的模型，既不出现在清单里、也解析不出来」。
+            //
+            // 旧架构靠模型池表达它：池里没有的物理模型选不到。池退场之后，「谁能选什么」
+            // 由对外模型的放行名单回答，所以 outside 换成**没有放行给这个调用方**——
+            // 同一个不变量，换了它在新架构里的表达方式，不是把判据放宽。
             foreach (var (id, upstream, order) in new[] { ("image1", "gpt-image-1", 20), ("image2", "gpt-image-2", 10), ("outside", "outside-model", 0) })
             {
                 await Insert("llmgw_models", new LLMModel
@@ -66,7 +71,8 @@ public sealed class VisualLogicalModelCatalogTests
                     Id = id, PublicId = id, PublicIdNormalized = id, Name = id, ModelType = "generation",
                     Description = id + " 的业务用途",
                     Capabilities = ["image_generation", "text2img", "img2img", "vision_generation"],
-                    AllowedAppCallerCodes = [caller], DisplayOrder = order,
+                    AllowedAppCallerCodes = id == "outside" ? ["someone-else.agent::generation"] : [caller],
+                    DisplayOrder = order,
                 });
                 await Insert("llmgw_model_offerings", new GatewayModelOffering
                 {
@@ -88,6 +94,7 @@ public sealed class VisualLogicalModelCatalogTests
                 Assert.Equal(choice.Code, resolved.LogicalModelPublicId);
                 Assert.Equal(choice.Code == "image1" ? "gpt-image-1" : "gpt-image-2", resolved.ActualModel);
             }
+            // 没放行给这个调用方的模型：点名也选不到。
             var outside = await resolver.ResolveAsync(caller, "generation", "outside");
             Assert.False(outside.Success);
 

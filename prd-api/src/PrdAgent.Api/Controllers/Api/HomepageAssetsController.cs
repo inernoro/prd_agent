@@ -118,7 +118,8 @@ public class HomepageAssetsController : ControllerBase
     private static HomepageAssetDto ToDto(HomepageAsset x) => new()
     {
         Slot = x.Slot,
-        Url = x.Url,
+        // 带版本：同 slot 重生成写的是同一个对象 key，不换 URL 的话管理员刷不出新图
+        Url = HomepageAssetUrl.Versioned(x),
         Mime = x.Mime,
         SizeBytes = x.SizeBytes,
         UpdatedAt = x.UpdatedAt,
@@ -425,7 +426,7 @@ public class LandingPreviewAssetsController : ControllerBase
         // 只给 slot 与 url：提示词、体积、上传者都是内部信息，公网面不该带
         var map = list
             .Where(x => !string.IsNullOrWhiteSpace(x.Url))
-            .ToDictionary(x => x.Slot, x => x.Url);
+            .ToDictionary(x => x.Slot, HomepageAssetUrl.Versioned);
         return Ok(ApiResponse<Dictionary<string, string>>.Ok(map));
     }
 }
@@ -478,7 +479,7 @@ public class HomepageAssetsPublicController : ControllerBase
             x => new HomepageAssetDto
             {
                 Slot = x.Slot,
-                Url = x.Url,
+                Url = HomepageAssetUrl.Versioned(x),
                 Mime = x.Mime,
                 SizeBytes = x.SizeBytes,
                 UpdatedAt = x.UpdatedAt

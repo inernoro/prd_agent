@@ -21,13 +21,51 @@ public static class ImageGenModelAdapterRegistry
     private static readonly Regex SizeRegex = new(@"^\s*(\d+)\s*[xX×＊*]\s*(\d+)\s*$", RegexOptions.Compiled);
 
     /// <summary>
-    /// 根据模型名匹配适配配置（纯粹基于模型名，不检查平台）
+    /// 控制台里配的那份契约（<c>llmgw_imagegen_model_configs</c>）的内存快照。
+    ///
+    /// 静态可变状态，因为这个注册表的 18 个调用点全是静态方法、拿不到 DI 容器；
+    /// 改成实例要动 18 处，收益只有「看起来更规范」。所以走**整表原子替换**：
+    /// 刷新器算好一份新列表后一次性赋值，读侧永远看到某一版完整的表，
+    /// 不会读到改了一半的中间态。绝不就地改这个列表。
+    /// </summary>
+    private static volatile IReadOnlyList<ImageGenModelAdapterConfig> _overrides = [];
+
+    /// <summary>
+    /// 换上一份新的覆盖表。只由 <c>ImageGenModelConfigSyncWorker</c> 调用。
+    ///
+    /// 传空列表 = 回到纯代码内置那 26 条，这也是库里一行都没有时的状态——
+    /// 所以这套机制是纯增量的：不配任何东西，行为与 2026-09-16 之前逐字节相同。
+    /// </summary>
+    public static void ReplaceOverrides(IReadOnlyList<ImageGenModelAdapterConfig>? configs)
+        => _overrides = configs is null ? [] : [.. configs];
+
+    /// <summary>当前生效的覆盖条数。控制台与自检端点用它回答「我配的那条到底生效没有」。</summary>
+    public static int OverrideCount => _overrides.Count;
+
+    /// <summary>
+    /// 根据模型名匹配适配配置（纯粹基于模型名，不检查平台）。
+    ///
+    /// **这是全链路唯一的判定入口**，合并规则收在这里面：先走控制台配的覆盖表，
+    /// 没命中才回落到代码内置的那 26 条。谁都不许绕过它去直接遍历
+    /// <c>ImageGenModelConfigs.Configs</c>——那样同一个问题就有了两个答案
+    /// （predicate-and-wiring-discipline 形状 3），守卫
+    /// `ImageGenConfigOverrideGuardTests` 钉住这一条。
     /// </summary>
     public static ImageGenModelAdapterConfig? TryMatch(string? modelName)
     {
         if (string.IsNullOrWhiteSpace(modelName)) return null;
 
         var name = modelName.Trim().ToLowerInvariant();
+
+        // 覆盖表优先。它已经由刷新器按 MatchOrder、再按模式长度降序排好，
+        // 这里只按顺序取第一个命中的，与代码表用的是同一个 MatchPattern。
+        foreach (var config in _overrides)
+        {
+            if (MatchPattern(config.ModelIdPattern, name))
+            {
+                return config;
+            }
+        }
 
         foreach (var config in ImageGenModelConfigs.Configs)
         {
@@ -61,41 +99,55 @@ public static class ImageGenModelAdapterRegistry
             };
         }
 
-        var result = new SizeAdaptationResult();
         var allSizes = GetAllSizesFromConfig(config);
         var allRatios = GetAllRatiosFromConfig(config);
 
         // 解析请求尺寸
         if (!TryParseSize(requestedSize, out var reqW, out var reqH))
         {
-            // 无法解析：使用默认尺寸
+            /*
+              请求没给尺寸、或者给了一个读不出来的值，退回默认尺寸——但**不能就此返回**。
+
+              默认值是「白名单第一条，没有就 1024x1024」，它未必落在这份契约声明的范围里：
+              一个只配了范围（没有白名单尺寸）的契约，最大边写 768、像素上限写 40 万，
+              这条路径照样会发出 1024x1024。声明在那儿，运行时并不遵守它，而且不报错
+              （形状 8：不成立的证据——契约看上去生效了，实际只在「请求带了尺寸」那条路上生效）。
+
+              所以默认值也要走同一条规整路径，与带尺寸的请求一字不差。
+            */
             var defaultSize = allSizes.FirstOrDefault() ?? "1024x1024";
-            TryParseSize(defaultSize, out var dw, out var dh);
-            result.Size = defaultSize;
-            result.Width = dw;
-            result.Height = dh;
-            result.AspectRatio = DetectAspectRatio(dw, dh, allRatios);
-            result.Resolution = DetectResolution(dw, dh);
-            result.SizeAdjusted = true;
-            return result;
+            if (!TryParseSize(defaultSize, out reqW, out reqH))
+            {
+                reqW = 1024;
+                reqH = 1024;
+            }
+
+            var normalized = NormalizeByConstraint(config, reqW, reqH, allSizes, allRatios);
+            // 用户本来就没给尺寸，这一项恒为真：规整结果碰巧等于默认值也是「替他定的」。
+            normalized.SizeAdjusted = true;
+            return normalized;
         }
 
-        switch (config.SizeConstraintType)
-        {
-            case SizeConstraintTypes.Whitelist:
-                return NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios);
-
-            case SizeConstraintTypes.Range:
-                return NormalizeSizeRange(config, reqW, reqH, allRatios);
-
-            case SizeConstraintTypes.AspectRatio:
-                return NormalizeSizeAspectRatio(config, reqW, reqH, allSizes, allRatios);
-
-            default:
-                // 回退到白名单模式
-                return NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios);
-        }
+        return NormalizeByConstraint(config, reqW, reqH, allSizes, allRatios);
     }
+
+    /// <summary>
+    /// 按契约声明的约束类型规整一对宽高。带尺寸的请求与退回默认值的请求都走这里，
+    /// 两条路不许各走各的——分开写就会出现「契约只对其中一条路生效」。
+    /// </summary>
+    private static SizeAdaptationResult NormalizeByConstraint(
+        ImageGenModelAdapterConfig config,
+        int reqW,
+        int reqH,
+        List<string> allSizes,
+        List<string> allRatios)
+        => config.SizeConstraintType switch
+        {
+            SizeConstraintTypes.Range => NormalizeSizeRange(config, reqW, reqH, allRatios),
+            SizeConstraintTypes.AspectRatio => NormalizeSizeAspectRatio(config, reqW, reqH, allSizes, allRatios),
+            // 白名单是默认，认不出来的约束类型也退回它。
+            _ => NormalizeSizeWhitelist(config, reqW, reqH, allSizes, allRatios),
+        };
 
     /// <summary>
     /// 白名单模式：选择最接近的尺寸
@@ -177,35 +229,12 @@ public static class ImageGenModelAdapterRegistry
     {
         var result = new SizeAdaptationResult();
 
-        var w = reqW;
-        var h = reqH;
+        // 除数是边长的最小刻度：没声明就是 1。一旦声明，套边界与像素压缩全程都按它对齐——
+        // 两件事各做各的再互相纠正，就会出现「对齐把边界推翻、边界又把对齐推翻」。
+        var step = config.MustBeDivisibleBy is int declared && declared > 1 ? declared : 1;
 
-        // 应用范围限制
-        if (config.MinWidth.HasValue) w = Math.Max(w, config.MinWidth.Value);
-        if (config.MaxWidth.HasValue) w = Math.Min(w, config.MaxWidth.Value);
-        if (config.MinHeight.HasValue) h = Math.Max(h, config.MinHeight.Value);
-        if (config.MaxHeight.HasValue) h = Math.Min(h, config.MaxHeight.Value);
-
-        // 应用像素总量限制
-        if (config.MaxPixels.HasValue && (long)w * h > config.MaxPixels.Value)
-        {
-            var scale = Math.Sqrt((double)config.MaxPixels.Value / ((long)w * h));
-            w = (int)(w * scale);
-            h = (int)(h * scale);
-        }
-
-        // 应用整除要求
-        if (config.MustBeDivisibleBy.HasValue && config.MustBeDivisibleBy.Value > 1)
-        {
-            var div = config.MustBeDivisibleBy.Value;
-            w = (w / div) * div;
-            h = (h / div) * div;
-            // 确保不小于最小值
-            if (config.MinWidth.HasValue && w < config.MinWidth.Value)
-                w = ((config.MinWidth.Value + div - 1) / div) * div;
-            if (config.MinHeight.HasValue && h < config.MinHeight.Value)
-                h = ((config.MinHeight.Value + div - 1) / div) * div;
-        }
+        var (w, h) = ClampSidesToBounds(config, reqW, reqH, step);
+        (w, h) = FitPixelBudget(config, w, h, step);
 
         result.Size = $"{w}x{h}";
         result.Width = w;
@@ -217,6 +246,86 @@ public static class ImageGenModelAdapterRegistry
 
         return result;
     }
+
+    /// <summary>两条边各自套一遍「最小/最大/整除」，不涉及像素总量。</summary>
+    private static (int Width, int Height) ClampSidesToBounds(ImageGenModelAdapterConfig config, int w, int h, int step)
+        => (ClampSide(w, config.MinWidth, config.MaxWidth, step),
+            ClampSide(h, config.MinHeight, config.MaxHeight, step));
+
+    /// <summary>
+    /// 单边取值：先夹进 [min, max]，再对齐到刻度。
+    /// 对齐是向下取整，所以要兜两头——掉到最小值以下向上补一格，补过头越过最大值就退回去。
+    /// </summary>
+    private static int ClampSide(int value, int? min, int? max, int step)
+    {
+        if (min.HasValue) value = Math.Max(value, min.Value);
+        if (max.HasValue) value = Math.Min(value, max.Value);
+        if (step <= 1) return Math.Max(1, value);
+
+        var aligned = value / step * step;
+        if (min.HasValue && aligned < min.Value) aligned = CeilToStep(min.Value, step);
+        // 请求边小于除数时向下取整会把边抹成 0，发出去的 WxH 里带 0 一定报错，至少给一格。
+        if (aligned <= 0) aligned = step;
+        // 向上补格可能越过最大值，退到不超过它的最大刻度；最大值本身不足一格时仍保一格。
+        if (max.HasValue && aligned > max.Value) aligned = Math.Max(step, max.Value / step * step);
+        return aligned;
+    }
+
+    /// <summary>
+    /// 把尺寸压进像素总量预算。
+    ///
+    /// 只做「等比缩放 + 重新套边界」是不够的：缩放按长宽比走、不认识最小边长，套边界认最小边长、
+    /// 不认识像素上限。两步各自正确，合起来却能把上限重新顶破——minHeight=512、上限 1M、
+    /// 请求 4096x512 时，缩放得到 2896x362，套回最小高 512 之后是 148 万像素，比上限还多四成
+    /// （形状 1：判据只覆盖了「等比缩放」这一种输入，换成「缩放后被最小值顶回来」就给出相反答案）。
+    ///
+    /// 所以两条边要一起解：被最小值顶住的那条钉死，剩下的超额由还能动的那条独自消化。
+    /// </summary>
+    private static (int Width, int Height) FitPixelBudget(ImageGenModelAdapterConfig config, int w, int h, int step)
+    {
+        if (config.MaxPixels is not long budget || budget <= 0) return (w, h);
+        if ((long)w * h <= budget) return (w, h);
+
+        var scale = Math.Sqrt(budget / (double)((long)w * h));
+        (w, h) = ClampSidesToBounds(
+            config,
+            Math.Max(1, (int)(w * scale)),
+            Math.Max(1, (int)(h * scale)),
+            step);
+        if ((long)w * h <= budget) return (w, h);
+
+        var floorW = LowerBoundSide(config.MinWidth, step);
+        var floorH = LowerBoundSide(config.MinHeight, step);
+        h = ShrinkSide(h, floorH, AllowedSide(budget, w), step);
+        if ((long)w * h > budget) w = ShrinkSide(w, floorW, AllowedSide(budget, h), step);
+
+        // 仍然超标只有一种可能：契约自己的最小宽 x 最小高就越过了像素上限。写入侧已经拦过这种
+        // 契约，这里只兜底——保最小边长，因为上游对低于最小边长通常直接报错，而超出像素上限
+        // 多半只是被裁或降质。
+        return (w, h);
+    }
+
+    /// <summary>在另一条边已经定死的前提下，这条边最多能到多少（按预算整除，再压回 int 值域）。</summary>
+    private static int AllowedSide(long budget, int otherSide)
+        => (int)Math.Min(int.MaxValue, budget / Math.Max(1, otherSide));
+
+    /// <summary>这条边无论如何都不能低于的值（最小值对齐到刻度之后）。</summary>
+    private static int LowerBoundSide(int? min, int step)
+    {
+        var floor = Math.Max(1, min ?? 1);
+        return step <= 1 ? floor : Math.Max(step, CeilToStep(floor, step));
+    }
+
+    /// <summary>把一条边压到 allowed 以内，但不越过它的下限，并保持刻度对齐。</summary>
+    private static int ShrinkSide(int value, int floor, int allowed, int step)
+    {
+        if (allowed >= value) return value;
+        var target = Math.Max(floor, allowed);
+        if (step > 1) target = Math.Max(floor, target / step * step);
+        return Math.Min(value, Math.Max(1, target));
+    }
+
+    private static int CeilToStep(int value, int step) => (value + step - 1) / step * step;
 
     /// <summary>
     /// 比例模式：只返回比例和分辨率档位
@@ -281,6 +390,22 @@ public static class ImageGenModelAdapterRegistry
         SizeAdaptationResult sizeResult,
         Dictionary<string, object> targetParams)
     {
+        // 声明了「这个模型没有尺寸概念」就一个尺寸参数都不发。
+        //
+        // 短路放在这里而不是写入侧：SizesNotApplicable 与 SizeParamFormat / SizeConstraintType
+        // 是三个独立字段，写入侧要拦就得穷举它们的组合，漏一种就又回到「界面说没有尺寸、
+        // 实际发了 1024x1024」——而那个值还是 NormalizeSize 在白名单为空时兜出来的默认值，
+        // 上游可能直接拒掉（形状 3：同一个不变量散在多处各自判，不如收在唯一的出口）。
+        if (config.SizesNotApplicable)
+        {
+            targetParams.Remove("size");
+            targetParams.Remove("width");
+            targetParams.Remove("height");
+            targetParams.Remove("aspect_ratio");
+            targetParams.Remove("resolution");
+            return;
+        }
+
         switch (config.SizeParamFormat)
         {
             case SizeParamFormats.WxH:

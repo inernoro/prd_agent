@@ -1,0 +1,966 @@
+/**
+ * 任务台样式 —— 一个列表，照「提醒事项」的心智：每行一个圆圈，点一下就完事。
+ *
+ * 两端不是一套样式放大缩小：
+ * - 桌面（指针精确 + ≥1024px）：左边一条 source list、行高压到 38px、行上的操作 hover 才出来、
+ *   浮层贴着顶边落下、按钮右对齐。
+ * - 手机：单栏、命中区 44px（圆圈视觉仍是 22px，靠伪元素把可点范围撑开）、浮层从底边升起。
+ * hover 一律关在 @media (hover:hover) 里 —— 不然 iOS 上点过一次圆圈它会一直放大着不回去。
+ *
+ * 字号一律 rem：系统字号调大时整屏跟着放大，而不是把标题截成「修复周报弹窗样…」。
+ * 颜色一律走 token，双主题由 tokens.css 负责，这里只消费。
+ */
+
+.atb-page {
+  display: flex;
+  justify-content: center;
+  padding: 40px 20px 48px;
+  min-height: 100%;
+  box-sizing: border-box;
+}
+
+/*
+ * 带左栏的外壳。用两条**定宽**轨道，不是 flex 居中。
+ *
+ * flex 居中的问题是：整组的宽度由内容列决定，而三个视图的内容列宽度不一样
+ * （我的任务 640、大家在做什么 720），于是每切一次视图，被居中的那一组整体左右平移，
+ * 左栏跟着晃 —— 用户看到的就是「导航一摇一摆」。轨道定宽之后整组宽度恒定，左栏一动不动。
+ *
+ * scrollbar-gutter 治的是同一个病的另一半：短页面没滚动条、长页面有，
+ * 一切换又平移 15px。永远留出滚动条的位置。
+ */
+.atb-shell {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 680px);
+  justify-content: center;
+  gap: 32px;
+  padding: 40px 20px 48px;
+  min-height: 100%;
+  box-sizing: border-box;
+  scrollbar-gutter: stable;
+}
+
+/* 桌面左栏：macOS 上提醒事项 / 邮件 / 备忘录都有，装的是这里的三个路由 */
+.atb-sidebar {
+  width: 190px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 52px;
+}
+
+.atb-source {
+  text-align: left;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: none;
+  background: none;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.atb-source--on {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* 内容居中收窄：留白本身是设计，塞满宽屏只会让人读得更累 */
+.atb-col {
+  width: 100%;
+  max-width: 640px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.atb-col--wide { max-width: 720px; }
+
+/* 在外壳里宽度由轨道决定，--wide 不再生效，免得又把整组宽度弄成两个值 */
+.atb-shell .atb-col,
+.atb-shell .atb-col--wide { max-width: none; }
+
+.atb-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.atb-title {
+  font-size: 1.75rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.atb-sub { font-size: 0.9375rem; color: var(--text-muted); }
+
+.atb-group { display: flex; flex-direction: column; gap: 9px; }
+
+.atb-group__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.atb-group-label {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  padding-left: 4px;
+}
+
+/* 手机端的分段控件：没有左栏的位置，横着摆一条 */
+.atb-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--bg-input);
+}
+
+.atb-seg__item {
+  flex: 1;
+  height: 30px;
+  border: none;
+  border-radius: 7px;
+  background: none;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.atb-seg__item--on {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* 分组列表：一张圆角卡，内部靠发丝线分隔 */
+.atb-list {
+  background: var(--bg-elevated);
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+/* 分隔线从文字左缘开始，不贯穿圆圈 —— 邮件、设置、提醒事项都是这么画的 */
+.atb-list > * + * { position: relative; }
+
+.atb-list > * + *::before {
+  content: '';
+  position: absolute;
+  left: 54px;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--border-faint);
+}
+
+/* 带头像的行（团队 / 匿名看板）左缘更靠右：18 padding + 34 头像 + 14 间距 */
+.atb-list > .atb-row--person + *::before,
+.atb-list > * + .atb-row--person::before { left: 66px; }
+
+.atb-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 18px;
+  min-height: 52px;
+  background: none;
+  border: none;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  font-family: inherit;
+}
+
+.atb-row--now { min-height: 62px; }
+.atb-row--person { min-height: 60px; }
+.atb-row--adding { align-items: flex-start; padding-top: 10px; padding-bottom: 12px; }
+
+/* 乐观完成：点下去那一刻就划掉、淡下去，不等网络 */
+.atb-row--going .atb-row__title { text-decoration: line-through; }
+.atb-row--going { opacity: 0.45; transition: opacity 260ms ease; }
+
+.atb-row__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+}
+
+.atb-row__line { display: flex; align-items: baseline; gap: 9px; min-width: 0; }
+
+.atb-row__title {
+  font-size: 1rem;
+  color: var(--text-primary);
+  min-width: 0;
+  /* 字号调大时换行，不截断 —— 提醒事项的标题也是换行的 */
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.atb-row__title--now { font-weight: 600; }
+.atb-row__title--quiet { color: var(--text-muted); }
+
+/*
+ * 来源标签和模型给的理由是两段各自独立的话，紧挨着会连读成
+ * 「蒋云峰 提的提到了具体的文档内容」（2026-09-16 验收读图发现）。
+ * 用 inline-flex + gap 隔开，不往文案里塞分隔符 —— 少一段时也不会留下孤零零的点。
+ */
+.atb-row__sub { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 6px; font-size: 0.875rem; color: var(--text-muted); }
+.atb-row__sub--alert { color: var(--accent-primary); }
+
+.atb-tag { font-size: 0.8125rem; color: var(--text-muted); flex-shrink: 0; }
+
+/* 行尾操作：桌面上 hover 或键盘聚焦才出来，平时行是干净的（macOS 提醒事项的做法） */
+.atb-rowact { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
+
+/* 圆圈：所有行都只有一个意思 —— 做完了。视觉 22px，命中区靠伪元素撑到 44px。 */
+.atb-circle {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2px solid var(--border-default);
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.atb-circle::before {
+  content: '';
+  position: absolute;
+  inset: -11px;
+  border-radius: 50%;
+}
+
+.atb-circle:disabled { cursor: default; transform: none; }
+.atb-circle:focus-visible { outline: none; box-shadow: var(--ring-focus); }
+
+/* 正在做的那条：实心，中间留一个小孔 */
+.atb-circle--now {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+}
+
+.atb-circle--now::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bg-elevated);
+}
+
+.atb-circle--filled {
+  border-color: var(--accent-primary);
+  background: var(--accent-primary);
+}
+
+.atb-circle--done {
+  border-color: transparent;
+  background: var(--bg-tertiary);
+  cursor: default;
+}
+
+.atb-circle--ghost { border: none; color: var(--text-muted); cursor: pointer; }
+
+.atb-link {
+  font-size: 0.9375rem;
+  color: var(--accent-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-family: inherit;
+  padding: 0;
+}
+
+.atb-link--quiet { color: var(--text-muted); }
+.atb-link:disabled { opacity: 0.4; cursor: default; }
+
+/* 行内新增：一条真的输入行，回车提交之后接着敲下一条 */
+.atb-inline-input {
+  background: none;
+  border: none;
+  outline: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 1rem;
+  color: var(--text-primary);
+  width: 100%;
+}
+
+/* 做完的：标题淡一档，下面挂那句「做成了什么样」 */
+.atb-done-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 14px 18px;
+}
+
+.atb-done-row__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+
+.atb-done-row__line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.atb-done-row__title {
+  font-size: 1rem;
+  color: var(--text-secondary);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.atb-done-row__note {
+  font-size: 0.875rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+.atb-when { font-size: 0.8125rem; color: var(--text-muted); flex-shrink: 0; }
+
+/* 团队：一人一行 */
+.atb-avatar {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--bg-tertiary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.atb-avatar--alert { background: rgba(var(--accent-primary-rgb), 0.18); color: var(--accent-gold-2); }
+
+.atb-stack { font-size: 0.9375rem; color: var(--text-muted); flex-shrink: 0; }
+.atb-stack--alert { color: var(--accent-primary); }
+
+.atb-pill {
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 10px;
+  background: rgba(var(--accent-primary-rgb), 0.16);
+  color: var(--accent-gold-2);
+  font-size: 0.9375rem;
+  flex-shrink: 0;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+/* 空态：一行状态陈述，不教操作 —— 新建入口就在下面两厘米处 */
+.atb-empty {
+  padding: 48px 20px;
+  text-align: center;
+  font-size: 1.0625rem;
+  color: var(--text-muted);
+}
+
+/* 刚做完那条：补一句或者反悔。贴在内容底下，不遮任何东西。 */
+.atb-undo {
+  position: sticky;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-glass-panel);
+}
+
+.atb-undo__body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.atb-undo__title { font-size: 0.8125rem; color: var(--text-muted); }
+
+.atb-undo__input {
+  background: none;
+  border: none;
+  outline: none;
+  padding: 0;
+  font-family: inherit;
+  font-size: 0.9375rem;
+  color: var(--text-primary);
+  width: 100%;
+}
+
+/* ── 浮层 ───────────────────────────────────
+   桌面：贴着顶边落下，按钮右对齐（次要在左、默认在右）。
+   手机：从底边升起，顶部一条 grabber，导航栏左取消右完成。 */
+.atb-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: var(--modal-overlay);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 100;
+  padding: 10vh 24px 24px;
+}
+
+.atb-sheet-backdrop--bottom { align-items: flex-end; padding: 0; }
+
+.atb-sheet {
+  /* 460 而不是 420：候选任务标题动辄二十几个字，420 下大半要换行或被裁 */
+  width: min(460px, 100%);
+  background: var(--bg-elevated);
+  border-radius: 14px;
+  box-shadow: var(--shadow-glass-panel);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  outline: none;
+}
+
+.atb-sheet--bottom {
+  width: 100%;
+  border-radius: 20px 20px 0 0;
+  padding: 8px 18px calc(18px + env(safe-area-inset-bottom, 0px));
+  gap: 12px;
+}
+
+.atb-sheet__body { display: flex; flex-direction: column; gap: 14px; }
+
+/*
+ * 浮层里的说明字：模型名、跳过了哪几条、某项设置意味着什么。
+ *
+ * 这个类名此前有六处在用而样式一直不存在 —— 类名写了、规则没写，页面照常渲染，
+ * 只是那几行字跟正文一样大一样黑，挤成一团。CSS 不进 tsc/lint/vitest 的判据，
+ * 所以这种「引用了一个不存在的类」从头到尾不会红，只有人真看那一屏才发现。
+ * 行高松一档：它经常是一整句话，不是一个标签。
+ */
+.atb-sheet__hint {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--text-muted);
+  margin-top: -4px;
+}
+
+.atb-grabber {
+  width: 36px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border-default);
+  align-self: center;
+  margin-bottom: 4px;
+}
+
+.atb-navbar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+
+.atb-navbar__title { font-size: 1.0625rem; font-weight: 600; color: var(--text-primary); }
+
+.atb-navbtn {
+  background: none;
+  border: none;
+  font-family: inherit;
+  font-size: 1.0625rem;
+  color: var(--accent-primary);
+  cursor: pointer;
+  padding: 6px 0;
+  justify-self: start;
+}
+
+.atb-navbtn--go { font-weight: 600; justify-self: end; }
+.atb-navbtn:disabled { opacity: 0.4; cursor: default; }
+
+.atb-sheet__title {
+  font-size: 1.1875rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: var(--text-primary);
+}
+
+.atb-input {
+  background: var(--bg-input);
+  border: none;
+  border-radius: 12px;
+  padding: 13px 14px;
+  font-size: 1rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  font-family: inherit;
+  outline: none;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.atb-input:focus-visible { box-shadow: var(--ring-focus); }
+
+textarea.atb-input { min-height: 78px; resize: vertical; }
+
+select.atb-input { cursor: pointer; }
+
+.atb-btn {
+  height: 38px;
+  padding: 0 18px;
+  border-radius: 9px;
+  background: var(--accent-primary-solid);
+  color: var(--accent-on-solid);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.atb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.atb-btn--quiet {
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-weight: 400;
+}
+
+/* macOS 的 sheet 按钮右对齐、宽度按文字，不是等宽双按钮（那是 Material 的写法） */
+.atb-actions { display: flex; gap: 10px; justify-content: flex-end; }
+
+/* macOS 的复选框在标签左侧 */
+.atb-check {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* ── 时间 ─────────────────────────────────── */
+.atb-duepick { display: flex; flex-direction: column; gap: 10px; }
+.atb-chips { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.atb-chip {
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 17px;
+  background: var(--bg-input);
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.atb-chip--on { background: rgba(var(--accent-primary-rgb), 0.18); color: var(--accent-gold-2); }
+
+/* 自绘月历：看得见「周五是几号」「本周还剩几天」 */
+.atb-cal {
+  border-radius: 12px;
+  background: var(--bg-input);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.atb-cal__head { display: flex; align-items: center; justify-content: space-between; }
+
+.atb-cal__month { font-size: 0.875rem; color: var(--text-secondary); }
+
+.atb-cal__nav {
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.atb-cal__grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+
+.atb-cal__wd {
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding-bottom: 4px;
+}
+
+.atb-cal__day {
+  aspect-ratio: 1;
+  min-height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.atb-cal__day--out { color: var(--text-muted); opacity: 0.5; }
+.atb-cal__day--today { box-shadow: inset 0 0 0 1px var(--border-default); }
+.atb-cal__day--on { background: var(--accent-primary-solid); color: var(--accent-on-solid); font-weight: 600; }
+
+/* 行尾的时间标签。过期不只换颜色 —— 前面还有一个感叹号，色觉不同的人也看得出来。 */
+.atb-due {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.atb-due--overdue { color: var(--accent-primary); }
+
+.atb-due__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  color: var(--accent-on-solid);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* 认出时间时的那一枚胶囊。像邮件的收件人 token，所见即所得，不用一句话解释机制。 */
+.atb-detected { display: flex; align-items: center; gap: 10px; }
+
+.atb-token {
+  padding: 3px 9px;
+  border-radius: 11px;
+  background: rgba(var(--accent-primary-rgb), 0.18);
+  color: var(--accent-gold-2);
+  font-size: 0.8125rem;
+}
+
+/* 标题右边的一小撮动作 */
+.atb-headact { display: flex; align-items: baseline; gap: 14px; flex-shrink: 0; }
+
+/* 点行进去改这条。是个按钮，但看起来就是那一行。 */
+.atb-row__open {
+  background: none;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  align-items: flex-start;
+}
+
+/* 拖着排：拖起来的那行浮一点，其余行让位 */
+.atb-row--dragging {
+  position: relative;
+  z-index: 2;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-glass-panel);
+  border-radius: 10px;
+  cursor: grabbing;
+}
+
+/* 收件箱横幅：有建议才出现，没建议一个像素都不占 */
+.atb-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-radius: 14px;
+  border: none;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  font-family: inherit;
+  cursor: pointer;
+  background: rgba(var(--accent-primary-rgb), 0.12);
+}
+
+.atb-banner__icon { color: var(--accent-primary); flex-shrink: 0; }
+.atb-banner__text { flex: 1; font-size: 0.9375rem; color: var(--text-primary); }
+
+/* AI 拆出来的候选：勾选框是方圆角，和「做完了」的圆圈刻意长得不一样 —— 
+   一个是「要不要」，一个是「做完没」，两件事不该共用一个符号。 */
+.atb-check-circle {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  border: 2px solid var(--border-default);
+  background: transparent;
+  color: var(--accent-on-solid);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.atb-check-circle::before { content: ''; position: absolute; inset: -11px; border-radius: 10px; }
+
+.atb-check-circle--on {
+  border-color: var(--accent-primary-solid);
+  background: var(--accent-primary-solid);
+}
+
+.atb-check-circle--ghost { border-style: dashed; cursor: default; }
+
+.atb-draft { align-items: flex-start; padding-top: 4px; padding-bottom: 4px; }
+/* 候选行的标题：可换行、看得全。
+   上一版是 input + min-width:0 + ellipsis，那是修错了方向 —— input 天生单行，
+   压缩之后只会把尾巴裁掉，而这一屏的用途恰恰是「让人看清楚再决定要不要」。
+   现在是自适应高度的 textarea（见 DraftTaskList），这里只负责让它长得像一行文字。 */
+.atb-draft .atb-row__body { min-width: 0; }
+
+.atb-inline-input--wrap {
+  resize: none;
+  overflow: hidden;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.atb-draft--off { opacity: 0.45; }
+.atb-draft--off .atb-inline-input { text-decoration: line-through; }
+
+/* 流式还没吐完时垫一行，别让人以为没了 */
+.atb-skeleton {
+  display: block;
+  height: 1rem;
+  width: 60%;
+  border-radius: 6px;
+  background: var(--bg-input);
+  animation: atb-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes atb-pulse { 0%, 100% { opacity: 0.45; } 50% { opacity: 0.9; } }
+
+/* 建议正文可以是一整段，不截断 */
+.atb-suggest__text {
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+/* 浮层里的一组：一行小标题 + 内容 */
+.atb-field { display: flex; flex-direction: column; gap: 8px; }
+.atb-field__label { font-size: 0.8125rem; color: var(--text-muted); }
+
+/* ── 新人指引：一屏三行，只出现一次 ───────── */
+.atb-welcome { display: flex; flex-direction: column; gap: 18px; padding: 4px 0 8px; }
+.atb-welcome__row { display: flex; gap: 14px; align-items: flex-start; }
+.atb-welcome__icon { color: var(--accent-primary); flex-shrink: 0; margin-top: 2px; }
+.atb-welcome__text { display: flex; flex-direction: column; gap: 3px; }
+.atb-welcome__title { font-size: 0.9375rem; font-weight: 600; color: var(--text-primary); }
+.atb-welcome__body { font-size: 0.875rem; line-height: 1.45; color: var(--text-muted); }
+
+/* ── 两端分化 ─────────────────────────────── */
+
+/* 鼠标在的地方才有 hover。手机上留 :active 做按压反馈。 */
+@media (hover: hover) and (pointer: fine) {
+  .atb-circle:hover { transform: scale(1.12); }
+  .atb-circle:disabled:hover { transform: none; }
+  .atb-link:hover { color: var(--accent-gold-2); }
+  .atb-link--quiet:hover { color: var(--text-secondary); }
+  .atb-chip:hover { background: var(--bg-input-hover); }
+  .atb-source:hover { background: var(--bg-card); }
+  .atb-cal__day:hover { background: var(--bg-input-hover); }
+  .atb-cal__day--on:hover { background: var(--accent-primary-solid); }
+  .atb-row--add:hover { background: var(--bg-card); }
+}
+
+.atb-circle:active { transform: scale(0.92); }
+.atb-row--add:active { background: var(--bg-tertiary); }
+.atb-chip:active { background: var(--bg-input-hover); }
+
+/* 桌面：行高压到 38px，一屏装得下两倍的行；行尾操作 hover 才出来 */
+@media (pointer: fine) and (min-width: 1024px) {
+  .atb-row { min-height: 38px; }
+  .atb-row--now { min-height: 46px; }
+  .atb-row--person { min-height: 48px; }
+  .atb-row__body { padding: 7px 0; }
+  .atb-done-row { padding: 10px 18px; }
+
+  .atb-rowact { opacity: 0; transition: opacity 120ms ease; }
+  .atb-row:hover .atb-rowact,
+  .atb-row:focus-within .atb-rowact { opacity: 1; }
+  /* 浮层里那些行的操作是主路径，不藏 */
+  .atb-draft .atb-rowact { opacity: 1; }
+}
+
+/* 手机：不需要左栏，单栏铺开；命中区靠圆圈的伪元素撑到 44px（视觉仍是 22px） */
+@media (max-width: 767px) {
+  .atb-page,
+  .atb-shell { padding: 20px 14px 32px; gap: 0; }
+  .atb-shell { grid-template-columns: minmax(0, 1fr); }
+  .atb-title { font-size: 1.5rem; }
+  .atb-row { padding: 0 15px; gap: 12px; min-height: 56px; }
+  .atb-done-row { padding: 13px 15px; gap: 12px; }
+  .atb-list > * + *::before { left: 49px; }
+  .atb-undo { bottom: calc(12px + env(safe-area-inset-bottom, 0px)); }
+
+  /*
+   * 手机端行上不摆操作 —— 2026-09-16 真机验收实测：390px 上一行塞「圆圈 + 标题 + 日期
+   * + 开始/提前/删除」，那三个按钮横占约 190px，标题只剩 150px，五条里四条被腰斩成
+   * 「解决同一个项目部署为多个项…」。桌面端它们是悬停才出来的，手机端没有悬停，
+   * 当时写成常驻，于是把这一屏最该看清的东西挤没了。
+   * 现在收进「点行进入」的详情浮层；正在做那行只留「卡住了」，它高频且唯一。
+   */
+  .atb-rowact:not(.atb-rowact--now) { display: none; }
+  .atb-rowact--now .atb-link--quiet { display: none; }
+  .atb-row__title { -webkit-line-clamp: 2; line-clamp: 2; }
+
+  /* 底部 TabBar 会压住列表最后一行（实测「实现网页托管能提问并产生内容」被盖住）*/
+  .atb-shell { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+
+  /*
+   * 光有 padding 只救了「手动滚到底」。浏览器自己发起的滚动（聚焦某个输入框、
+   * scrollIntoView、锚点跳转）对齐的是滚动口底边，不认那 96px，于是目标行正好停在
+   * TabBar 底下 —— 2026-09-16 验收实测：滚动容器停在 3043/3139，末行底边 664 贴着
+   * 视口底，而 TabBar 顶边在 608，压掉 56px。scroll-margin 是专门告诉浏览器
+   * 「滚到这个元素时下面要留多少」的那个属性。
+   */
+  .atb-row,
+  .atb-done-row { scroll-margin-bottom: calc(72px + env(safe-area-inset-bottom, 0px)); }
+}
+
+/* 详情浮层里的那一排操作：手机端是唯一入口，桌面端是行尾按钮的等价路径 */
+.atb-rowops {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding-top: 4px;
+}
+
+/* 关掉动效偏好：过渡全部去掉，状态直接切换 */
+@media (prefers-reduced-motion: reduce) {
+  .atb-circle,
+  .atb-chip,
+  .atb-source,
+  .atb-rowact,
+  .atb-row--going { transition: none; }
+  .atb-circle:hover,
+  .atb-circle:active { transform: none; }
+  .atb-skeleton { animation: none; }
+}
+
+/*
+ * 债务区：任务台的下半屏。
+ *
+ * 默认折起来 —— 它是「欠着的」不是「今天要做的」，天天摊开在队列底下只会变成背景噪音。
+ * 展开之后每行的重量刻意比任务行轻（标识小一号、正文灰一档）：这一屏的主角是上面的队列。
+ */
+.atb-debts { margin-top: 6px; }
+
+.atb-debts__head { align-items: center; flex-wrap: wrap; }
+
+.atb-debts__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.atb-debts__toggle:hover { color: var(--text-primary); }
+
+.atb-debts__caret { font-size: 0.6875rem; line-height: 1; }
+
+.atb-debts__count {
+  font-size: 0.75rem;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.atb-debts__headline { flex: 1; font-size: 0.8125rem; color: var(--text-muted); }
+
+.atb-debt-row { align-items: flex-start; padding-top: 10px; padding-bottom: 10px; }
+
+.atb-debt-row__title {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-primary);
+  font-size: 0.9375rem;
+  line-height: 1.45;
+}
+.atb-debt-row__title:hover { color: var(--accent-primary); }
+
+/* 稳定标识：等宽 + 小一号，它是给人对回台账用的，不是标题的一部分 */
+.atb-debt-row__key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-right: 8px;
+}
+
+.atb-debt-row__detail {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+.atb-debt-row__detail p { margin: 0; }
+
+.atb-debt-row__label {
+  display: inline-block;
+  min-width: 4.5em;
+  color: var(--text-primary);
+  opacity: 0.75;
+}
+
+.atb-debt-row__src { font-size: 0.8125rem; opacity: 0.85; }
+.atb-debt-row__src code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.atb-link--on { color: var(--accent-primary); }
+
+@media (max-width: 767px) {
+  /* 手机端债务行的操作跟任务行一个待遇：不常驻，免得把标题挤没 */
+  .atb-debt-row { flex-direction: column; gap: 8px; }
+  .atb-debt-row .atb-rowact { display: flex; }
+  .atb-debts__headline { width: 100%; }
+}

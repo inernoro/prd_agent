@@ -28,6 +28,8 @@ interface EndpointOutcome {
 interface EndpointsPayload {
   endpoints: string[];
   lastRun: { at: string; endpoints: EndpointOutcome[] } | null;
+  /** 服务端认定的内置端点（CDS 监控自己的那条）。判定只在服务端一处，前端只认名单。 */
+  builtin?: string[];
 }
 
 export function DiscoveryStrip({ projectId, onChanged }: {
@@ -140,10 +142,17 @@ export function DiscoveryStrip({ projectId, onChanged }: {
 
       {(data?.endpoints || []).map((url) => {
         const o = outcomeOf(url);
+        // 内置的那条是 CDS 自己：代码初始化插进来的，拔了下次启动又回来——所以不给「拔掉」。
+        const builtin = (data?.builtin || []).includes(url);
         return (
           <div key={url} className="flex flex-wrap items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-1.5">
             <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', o?.reachable ? 'bg-ok' : 'bg-destructive')} />
             <span className="min-w-0 flex-1 truncate font-mono text-[0.6875rem] text-foreground">{url}</span>
+            {builtin ? (
+              <span className="shrink-0 rounded border border-primary/40 bg-primary-soft px-1 font-mono text-[0.625rem] leading-4 text-primary-ink" title="CDS 监控自己的端点，启动时由代码自动插入；搬到别的机器上也会自己长出来">
+                内置 · CDS 自身
+              </span>
+            ) : null}
             {o ? (
               <span className={cn('shrink-0 text-[0.6875rem]', o.reachable ? 'text-muted-foreground' : 'text-destructive')}>
                 {o.reachable
@@ -151,15 +160,17 @@ export function DiscoveryStrip({ projectId, onChanged }: {
                   : `${o.err || '打不通'}${o.heldBecauseUnreachable ? ' · 已登记的监控保持不动' : ''}`}
               </span>
             ) : null}
-            <button
-              type="button"
-              onClick={() => void unplug(url)}
-              disabled={busy}
-              title="拔掉这个端点，它名下的监控当场下线"
-              className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-destructive disabled:opacity-60"
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
+            {builtin ? null : (
+              <button
+                type="button"
+                onClick={() => void unplug(url)}
+                disabled={busy}
+                title="拔掉这个端点，它名下的监控当场下线"
+                className="shrink-0 rounded p-0.5 text-muted-foreground transition-colors hover:text-destructive disabled:opacity-60"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
           </div>
         );
       })}

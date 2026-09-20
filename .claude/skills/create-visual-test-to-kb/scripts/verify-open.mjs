@@ -25,7 +25,18 @@ const maxAttempts = Math.max(1, parseInt(process.env.VERIFY_OPEN_MAX_ATTEMPTS ||
 const retryDelayMs = Math.max(0, parseInt(process.env.VERIFY_OPEN_RETRY_DELAY_MS || '10000', 10) || 10000);
 const settleTimeoutMs = Math.max(5000, parseInt(process.env.VERIFY_OPEN_SETTLE_TIMEOUT_MS || '25000', 10) || 25000);
 
-const browser = await chromium.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+// 与 harness.launch 同一套 env 口子：镜像预装的 Chromium 版本常与 playwright 包要求的
+// 对不上，受限沙箱里又跑不了 `npx playwright install`，没有这个口子整条自查就走不下去。
+// ACC_BROWSER_PROXY 同理：出口代理环境下不配代理连不上 CDS。
+const browser = await chromium.launch({
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    ...(process.env.ACC_BROWSER_ARGS ? process.env.ACC_BROWSER_ARGS.split(/\s+/).filter(Boolean) : []),
+  ],
+  ...(process.env.ACC_BROWSER_EXECUTABLE ? { executablePath: process.env.ACC_BROWSER_EXECUTABLE } : {}),
+  ...(process.env.ACC_BROWSER_PROXY ? { proxy: { server: process.env.ACC_BROWSER_PROXY } } : {}),
+});
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ignoreHTTPSErrors: true });
 // CDS 登录态深链的安全回退：匿名分享不适合内部报告时，允许调用方仅通过环境变量
 // 注入 CDS access key。密钥不写入 URL、日志或报告。

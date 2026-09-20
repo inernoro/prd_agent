@@ -216,6 +216,95 @@ public static class McpBuiltinTools
                 new() { Name = "entryId", In = "path", Required = true, Description = "文档条目 id" },
             },
         },
+        // ── 任务台（scope active-tasks:use / :manage）──
+        new McpToolDef
+        {
+            Name = "map_tasks_mine",
+            Description = "读「我」的任务台：此刻在做什么（做了多久、卡在等谁）、队列里还堆着几件、最近结了哪些案（含每件「做成了什么样」的那句话）。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "GET",
+            PathTemplate = "/api/open/tasks/mine",
+            WritesData = false,
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_add",
+            Description = "往「我」的队列尾部加一件任务。适合把缺陷、PR、告警变成一条待办；带上 sourceUrl 人接手时点得开。不会打断手上正在做的那件。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/mine",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "title", In = "body", Required = true, Description = "要做的是什么，一句话" },
+                new() { Name = "note", In = "body", Description = "补充说明，可选" },
+                new() { Name = "sourceUrl", In = "body", Description = "来源链接（缺陷/PR/告警地址），可选" },
+                new() { Name = "dueAt", In = "body", Description = "什么时候要，ISO 8601 时间，可选。不确定就别填——大多数任务不该有时间要求" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_team",
+            Description = "读全员此刻在做什么、谁卡住了在等谁、每人队列里堆了多少件，以及最近结案的那几条。需要管理档。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
+            Method = "GET",
+            PathTemplate = "/api/open/tasks/team",
+            WritesData = false,
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_assign",
+            Description = "派一件给别人，排到他的队尾，不打断他手上那件；任务上会带派活人的名字。userId 先用 map_tasks_team 拿。需要管理档。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksManage,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/assign",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "userId", In = "body", Required = true, Description = "派给谁，取自 map_tasks_team 的 people[].userId" },
+                new() { Name = "title", In = "body", Required = true, Description = "要做的是什么，一句话" },
+                new() { Name = "note", In = "body", Description = "为什么派这件，可选" },
+                new() { Name = "sourceUrl", In = "body", Description = "来源链接，可选" },
+                new() { Name = "dueAt", In = "body", Description = "什么时候要，ISO 8601 时间，可选" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_tasks_suggest",
+            Description = "给某人提一条建议。和 map_tasks_assign 的区别：派活直接进对方队列（要管理档），建议提了什么都不会发生，由对方自己决定要不要吸取成任务，所以只要 use 档。想提醒别人一件事、又不想替他排队，用这个。userId 先用 map_tasks_team 拿。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/suggest",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "userId", In = "body", Required = true, Description = "提给谁，取自 map_tasks_team 的 people[].userId" },
+                new() { Name = "text", In = "body", Required = true, Description = "建议内容。不用写成任务的样子——吸取那一步会把它整理成可以动手做的事" },
+                new() { Name = "sourceUrl", In = "body", Description = "来源链接（缺陷/PR/告警地址），可选" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_debt_list",
+            Description = "读工程债务台账：还欠着什么、谁认领了、哪几条已经转成任务了。债务正文来自仓库的 doc/debt.*.md，认领人与状态来自任务台。mineOnly=true 只看我认领的。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "GET",
+            PathTemplate = "/api/open/tasks/debts",
+            WritesData = false,
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "mineOnly", In = "query", Type = "boolean", Description = "只看我认领的那几条，默认 false" },
+            },
+        },
+        new McpToolDef
+        {
+            Name = "map_debt_sync",
+            Description = "把仓库里 doc/debt.*.md 的债务台账推到任务台，按 key 幂等（重复推同一条只更新不新建）。key 形如 platform.active-tasks#15 —— 台账文件名去掉 debt. 前缀和 .md，加表格里的编号。**只覆盖正文**（标题/现状/补的条件）；谁认领了、转成了哪条任务一律不动，所以反复跑不会抹掉认领记录。改完 debt 文档顺手跑一次即可。",
+            RequiredScope = McpCapabilityCatalog.ScopeTasksUse,
+            Method = "POST",
+            PathTemplate = "/api/open/tasks/debts/sync",
+            Params = new List<McpToolParam>
+            {
+                new() { Name = "items", In = "body", Required = true, Type = "array", Description = "债务条目数组，每项 {key, title, status?, closeCondition?, sourcePath?}。key 必须是「模块#编号」格式" },
+            },
+        },
         // ── 视觉创作（scope visual-agent:use）──
         new McpToolDef
         {

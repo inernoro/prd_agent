@@ -12,6 +12,7 @@
  * （见 seedPreviewInstanceDemoData 的注释）。已有真实数据（例如挂了外部 mongo
  * 的实例）一律不碰。
  */
+import { readFileSync } from 'node:fs';
 import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile, Project } from '../types.js';
 import type { PreviewMirrorFile } from './preview-mirror.js';
@@ -418,8 +419,6 @@ function seedDemoExtras(state: StateService): boolean {
       换算成绝对时刻。存绝对日期的话，几个月后 90 天窗口会把整批数据甩到窗外，
       页面又变回空的——演示数据会自己腐烂，而且没人会发现。 */
 
-import snapshot from './preview-demo-snapshot.json' with { type: 'json' };
-
 /** 快照项目的 id 前缀。补播只认它，真实项目一律不碰。 */
 const SNAPSHOT_PREFIX = 'snap-';
 
@@ -442,6 +441,23 @@ interface SnapReport {
   defectCounts: Record<string, number> | null;
   createdAgo: number | null;
 }
+
+interface PreviewDemoSnapshot {
+  capturedAt: string;
+  projects: Array<{ id: string; name: string }>;
+  branches: SnapBranch[];
+  reports: SnapReport[];
+}
+
+/*
+ * 不用 JSON ESM import：生产环境的 TypeScript 编译曾把 `with { type: 'json' }`
+ * 从输出里剥掉，Node 22 启动时因此直接报 ERR_IMPORT_ATTRIBUTE_MISSING。
+ * 这个相对路径从 src/services 与 dist/services 出发都会落到同一个源 JSON，
+ * 所以运行不依赖 tsc 是否复制非 TypeScript 资产。
+ */
+const snapshot = JSON.parse(
+  readFileSync(new URL('../../src/services/preview-demo-snapshot.json', import.meta.url), 'utf8'),
+) as PreviewDemoSnapshot;
 
 const daysAgoIso = (base: number, days: number | null): string | null =>
   days == null ? null : new Date(base - days * 86_400_000).toISOString();

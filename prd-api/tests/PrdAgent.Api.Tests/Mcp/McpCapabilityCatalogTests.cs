@@ -250,14 +250,42 @@ public class McpCapabilityCatalogTests
     }
 
     [Fact]
-    public void PermissionCheckedScopes_CoverTheNewlyAddedScopesOnly()
+    public void PermissionCheckedScopes_CoverNewScopesAndExcludeLegacyOnes()
     {
-        // 新 scope 从第一天就带校验（签发取交集 + 鉴权二次核对）；老 scope 不纳入
+        // 新 scope 从第一天就带校验（签发取交集 + 鉴权二次核对）
         McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeVisualUse);
         McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeLiteraryUse);
         McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeWebPagesRead);
         McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeWebPagesWrite);
-        McpCapabilityCatalog.PermissionCheckedScopes.Count.ShouldBe(4);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeTasksUse);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldContain(McpCapabilityCatalog.ScopeTasksManage);
+
+        // 这条才是这个守卫真正要拦的事：带存量密钥的老 scope 一旦被纳入，
+        // 鉴权就会开始查权限位交集，已经在跑的接入当场调不动。
+        // 原来这里写的是 Count.ShouldBe(4) —— 那断言的是「当时有几个」，
+        // 每加一个新 scope 都得改一次测试，而真正的不变量反而没被表达出来。
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeMarketplaceRead);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeMarketplaceWrite);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeDocStoreRead);
+        McpCapabilityCatalog.PermissionCheckedScopes.ShouldNotContain(McpCapabilityCatalog.ScopeDocStoreWrite);
+    }
+
+    [Fact]
+    public void PermissionCheckedScopes_MapToRealPermissionKeys()
+    {
+        // 这个集合里的 scope，鉴权时会把冒号换成点去比对后台权限位。
+        // 权限目录里没有对应 key 的 scope 一旦混进来，谁都签不出密钥（连 root 都不行）。
+        var permissionKeys = AdminPermissionCatalog.All
+            .Select(p => p.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var scope in McpCapabilityCatalog.PermissionCheckedScopes)
+        {
+            var permission = scope.Replace(':', '.');
+            permissionKeys.ShouldContain(
+                permission,
+                $"scope「{scope}」会被映射成权限位「{permission}」，但权限目录里没有这个 key");
+        }
     }
 
     // ── 工具接线：每块能力的工具都指向真实存在的开放接口路径前缀 ──

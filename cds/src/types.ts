@@ -2461,6 +2461,23 @@ export interface CdsState {
    */
   githubAppWhitelist?: GithubAppWhitelistSettings;
   /**
+   * 告警通知通道凭据（见 AlarmNotifyConfig）。
+   *
+   * 放进持久化状态而不是只读 `.cds.env`：MapNotifier 读的是守护进程自己的
+   * process.env，那份只能从宿主的 `.cds.env` 来，于是「把铃接上」变成必须登主机的事——
+   * 而这条链最常见的失败恰恰是**根本没人去接**。设置里配了就用设置，没配才回落 env。
+   */
+  alarmNotify?: AlarmNotifyConfig;
+  /**
+   * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
+   *
+   * 与上面那条 alarmNotify 的关系：alarmNotify 是单一的 MAP 站内通知通道，先于
+   * 本表存在；本表是多通道（Bark / Webhook / MAP），一条事件可以同时进几条。
+   * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
+   * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
+   */
+  alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
+  /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
    * 项目的容器。SSH 凭据通过 sealToken（infra/secret-seal.ts）加密存储。
    *
@@ -4666,6 +4683,28 @@ export interface CdsConfig {
    */
   githubApp?: GitHubAppConfig;
   /**
+   * 告警通知通道（MAP 站内通知）的凭据。
+   *
+   * 为什么要能在设置里配，而不是只读 `.cds.env`：MapNotifier 读的是 CDS **守护进程
+   * 自己的** process.env，那份只能从宿主上的 `.cds.env` 来。于是「把铃接上」变成
+   * 一件必须登主机的事——而这条链最常见的失败恰恰就是**根本没人去接**。
+   * 参照同一份设置里早已存在的 githubApp.privateKey：私钥进 CDS 设置是既有姿势，
+   * 不是新开的安全口子。
+   *
+   * 解析顺序：设置里配了就用设置，没配才回落 env。四项缺任何一项都算没配，
+   * 那时铃是哑的，面板上必须直说。
+   */
+  alarmNotify?: AlarmNotifyConfig;
+  /**
+   * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
+   *
+   * 与上面那条 alarmNotify 的关系：alarmNotify 是单一的 MAP 站内通知通道，先于
+   * 本表存在；本表是多通道（Bark / Webhook / MAP），一条事件可以同时进几条。
+   * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
+   * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
+   */
+  alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
+  /**
    * Public base URL of this CDS install (e.g. "https://cds.example.com").
    * Used as the `details_url` in GitHub check runs and for the
    * GitHub App install-callback redirect. Falls back to the
@@ -4694,6 +4733,20 @@ export interface GitHubAppConfig {
   webhookSecret: string;
   /** Lowercase App slug, used only for `https://github.com/apps/<slug>/installations/new` links. */
   appSlug?: string;
+}
+
+/**
+ * 告警通知通道凭据。与 MAP 的 StableSmokeAuthentication 对齐：
+ * MAP 侧只存公钥，私钥只留在 CDS、从不过网络。
+ */
+export interface AlarmNotifyConfig {
+  /** 完整端点，例如 https://map.example.com/api/dashboard/notifications/events */
+  endpoint: string;
+  keyId: string;
+  /** 必须与 MAP 配置里该 keyId 条目的 Username 一致——它进签名载荷。 */
+  username: string;
+  /** PKCS#8 私钥 PEM。**只写不读**：任何读接口都不许把它回显出去。 */
+  privateKey: string;
 }
 
 /** Shell execution result */

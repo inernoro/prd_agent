@@ -153,6 +153,15 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>(
 builder.Services.AddScoped<PrdAgent.Api.Services.HomepageAssetCopier>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
+// 生图模型契约的覆盖表刷新器：让「上游出了新生图模型」不再等于「改代码 + 发一次版」。
+builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
+    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
+    sp.GetRequiredService<IConfiguration>(),
+    hostRole: "prd-api",
+    // MAP 这一侧只服务自己那个租户（LlmGateway:InternalTenantId），
+    // 所以它配的契约可以安全地装进进程全局表。
+    tenancy: PrdAgent.Infrastructure.LLM.ImageGenContractHostTenancy.SingleTenant,
+    sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
@@ -1823,6 +1832,12 @@ static async Task<IResult> DeepHealth(
                         severity = "P0",
                         observeMode = "passive",
                         sampleComponentId = "api.requests",
+                        // 自称生产：跑在分支预览上时 CDS 会按地址判成分支预览并压过这句自称，
+                        // 所以写 production 不会让临时分支混进负责人的第一屏。
+                        environment = "production",
+                        // 对外只出业务名与红绿，不出地址、判据、日志——所以这条可以公开。
+                        publicVisible = true,
+                        publicName = "MAP 后端",
                     },
                 },
             },
@@ -1883,6 +1898,9 @@ static async Task<IResult> DeepHealth(
                         intervalSeconds = 21600,
                         failuresToAlarm = 2,
                         severity = "P2",
+                        environment = "production",
+                        // 「有没有人在用」是内部判据，对外说它没有意义，不公开。
+                        publicVisible = false,
                     },
                 },
             },
@@ -1909,6 +1927,9 @@ static async Task<IResult> DeepHealth(
                         intervalSeconds = 300,
                         failuresToAlarm = 2,
                         severity = "P1",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 数据库",
                     },
                 },
             },

@@ -154,4 +154,34 @@ public sealed class RawGatewayUsageParserTests
         Assert.Null(result.ProviderReportedCost);
         Assert.False(result.HasReportedUsage);
     }
+
+    /// <summary>
+    /// Responses 那套接口把缓存明细挂在 input_tokens_details 下，不是 prompt_tokens_details。
+    ///
+    /// 只认后者的话，走 Responses 的调用拿不到缓存这一截，而 input_tokens 里**含着**它——
+    /// 每个命中缓存的 token 都按输入全价收，账与预算一起虚高。这是行为断言，不是扫源码：
+    /// 判据换个等价写法（改常量、改读取顺序）也得给出同一个答案。
+    /// </summary>
+    [Theory]
+    [InlineData("input_tokens_details")]
+    [InlineData("inputTokensDetails")]
+    [InlineData("prompt_tokens_details")]
+    [InlineData("promptTokensDetails")]
+    public void Parse_ReadsCachedTokensFromEitherUsageDetailShape(string detailsField)
+    {
+        var response = $$"""
+        {
+          "usage": {
+            "input_tokens": 1000,
+            "output_tokens": 20,
+            "{{detailsField}}": { "cached_tokens": 800 }
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(1000, result.InputTokens);
+        Assert.Equal(800, result.CacheReadInputTokens);
+    }
 }

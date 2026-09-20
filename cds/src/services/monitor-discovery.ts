@@ -30,6 +30,15 @@
  */
 
 import { ASSERT_OPS, type AssertOp } from './monitor-assertions.js';
+import type { MonitorEnvironment } from './monitor-environment.js';
+
+/**
+ * 服务**可以自称**的环境。
+ *
+ * 刻意不含 `preview`：分支预览是 CDS 从地址推出来的结构性事实，
+ * 不需要、也不该由服务自己声明。放开它只会多一条能被写错的路。
+ */
+export const DECLARABLE_ENVIRONMENTS: ReadonlyArray<MonitorEnvironment> = ['production', 'staging', 'other'];
 
 /** 自描述段挂在 check 对象上的键名。 */
 export const DISCOVERY_KEY = 'cds:monitor';
@@ -62,6 +71,15 @@ export interface DiscoveredMonitor {
   /** 被动观测时，样本量取哪条 check 的 observedValue */
   sampleComponentId?: string;
   observeMode: 'active' | 'passive';
+  /**
+   * 服务自报它属于哪个环境。
+   *
+   * **这是一句自称，不是事实**：地址指着一条分支预览的监控，无论它自称什么都算
+   * 分支预览（结构性证据压过声明，见 monitor-environment.ts）。少了那条压制，
+   * 一条临时分支的自检端点只要写上 production，就能混进项目负责人的第一屏。
+   * 所以这个字段只在**拿不到结构性证据**时才生效。
+   */
+  environment?: MonitorEnvironment;
   publicVisible: boolean;
   publicName?: string;
 }
@@ -177,6 +195,18 @@ export function discoverMonitors(doc: unknown, endpointUrl: string): DiscoveryRe
       reject(`severity 只能是 P0 / P1 / P2，收到「${severity}」`); continue;
     }
 
+    // 写坏的环境名一律拒，不落默认值：默认成 production 会把一条写错的声明
+    // 直接推到项目负责人的第一屏；默认成 other 又会让它从该在的那一格里消失。
+    const rawEnv = str(spec.environment);
+    let environment: MonitorEnvironment | undefined;
+    if (rawEnv) {
+      if (!DECLARABLE_ENVIRONMENTS.includes(rawEnv as MonitorEnvironment)) {
+        reject(`environment 只能是 ${DECLARABLE_ENVIRONMENTS.join(' / ')} 之一，收到「${rawEnv}」`);
+        continue;
+      }
+      environment = rawEnv as MonitorEnvironment;
+    }
+
     const sampleComponentId = str(spec.sampleComponentId) || undefined;
     // 被动观测必须给样本量来源：读不到样本量时零流量与全部成功长得一模一样，
     // 那条监控会永远绿着（degradation-must-alarm 的「假绿」）。
@@ -199,6 +229,7 @@ export function discoverMonitors(doc: unknown, endpointUrl: string): DiscoveryRe
       severity,
       ...(sampleComponentId ? { sampleComponentId } : {}),
       observeMode,
+      ...(environment ? { environment } : {}),
       publicVisible: spec.publicVisible === true,
       ...(str(spec.publicName) ? { publicName: str(spec.publicName).slice(0, MAX_NAME_LENGTH) } : {}),
     });

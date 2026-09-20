@@ -5,7 +5,6 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { bulkUpdateGatewayAppCallers, deleteAppCaller, getGatewayAppCallers, getPools, updateGatewayAppCaller } from '@/lib/api';
 import type { GatewayAppCaller, GatewayAppCallersData, ModelPool } from '@/lib/types';
 import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
-import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
@@ -322,7 +321,7 @@ export function AppCallersPage() {
   return (
     <div className="lg-app-caller-page">
       <header className="lg-app-caller-header">
-        <div><h1>appCaller</h1><p>查看每类业务为什么调用、会走哪个模型池，以及预算和速率由谁负责。</p></div>
+        <div><h1>appCaller</h1><p>查看每类业务为什么调用、会走哪个模型，以及预算和速率由谁负责。</p></div>
         <span>共 {data.total} 个</span>
       </header>
       <div className="lg-app-caller-toolbar">
@@ -455,12 +454,20 @@ function FilterSelect({ label, value, options, onChange, style }: { label: strin
   );
 }
 
+/*
+  模型池绑定已退役——这里只剩「你以前配过什么」的只读回执，外加一句下一步。
+
+  为什么不是直接删掉：库里还留着 AllowedModelPoolIds / DefaultModelPoolId / AllowCrossPoolFallback
+  这几个字段，运维需要看得见自己当初配的是什么，才对得上「为什么这个调用方现在走的是别的模型」。
+  为什么不能留着可编辑：解析器已经不读这几个字段了，保存成功却什么都不改变——
+  一次成功的保存变成静默空操作，而页面还写着「下一条请求生效」（Codex P1，2026-09-16）。
+
+  文案按 external-cause-first：第一句说清这是谁的哪个配置不再生效、于是现在按什么走，
+  要不要紧写进人读的那句话里，下一步是可执行的动作，不是一句「请知悉」。
+*/
 function ModelPoolContractFields({
   compatiblePools,
   draft,
-  selectStyle,
-  canWrite,
-  onDraft,
 }: {
   compatiblePools: ModelPool[];
   draft: Draft;
@@ -469,42 +476,21 @@ function ModelPoolContractFields({
   onDraft: (patch: Partial<Draft>) => void;
 }) {
   const selectedPools = compatiblePools.filter((pool) => draft.allowedModelPoolIds.includes(pool.id));
+  const defaultPool = compatiblePools.find((pool) => pool.id === draft.defaultModelPoolId);
+  const hasLegacyBinding = draft.allowedModelPoolIds.length > 0 || Boolean(draft.defaultModelPoolId);
+  const poolNames = selectedPools.length
+    ? selectedPools.map((pool) => pool.name || pool.code || pool.id).join('、')
+    : draft.allowedModelPoolIds.join('、');
+
   return (
-    <>
-      <label>选池
-        <select
-          multiple
-          size={Math.min(5, Math.max(2, compatiblePools.length))}
-          disabled={!canWrite}
-          value={draft.allowedModelPoolIds}
-          onChange={(event) => {
-            const allowedModelPoolIds = Array.from(event.currentTarget.selectedOptions, (option) => option.value);
-            const defaultModelPoolId = allowedModelPoolIds.includes(draft.defaultModelPoolId)
-              ? draft.defaultModelPoolId
-              : (allowedModelPoolIds[0] || '');
-            onDraft({
-              allowedModelPoolIds,
-              defaultModelPoolId,
-              allowCrossPoolFallback: allowedModelPoolIds.length > 1 ? draft.allowCrossPoolFallback : false,
-              modelPolicy: allowedModelPoolIds.length ? 'pool' : draft.modelPolicy,
-            });
-          }}
-          style={{ ...selectStyle, height: 'auto', minHeight: 72 }}
-        >
-          {compatiblePools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name || pool.code || pool.id}</option>)}
-        </select>
-      </label>
-      <label>默认池
-        <select disabled={!canWrite || selectedPools.length === 0} value={draft.defaultModelPoolId} onChange={(event) => onDraft({ defaultModelPoolId: event.target.value })} style={selectStyle}>
-          <option value="">未设置</option>
-          {selectedPools.map((pool) => <option key={pool.id} value={pool.id}>{pool.name || pool.code || pool.id}</option>)}
-        </select>
-      </label>
-      <label style={{ display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-        <input type="checkbox" disabled={!canWrite || selectedPools.length < 2} checked={draft.allowCrossPoolFallback} onChange={(event) => onDraft({ allowCrossPoolFallback: event.target.checked })} />
-        跨池回退
-      </label>
-    </>
+    <div className="lg-app-caller-retired-pool">
+      <strong>模型池绑定已退役，这几项不再影响路由</strong>
+      <p>
+        这个调用方的池绑定{hasLegacyBinding ? `（${poolNames || '未记录名称'}${defaultPool ? `，默认 ${defaultPool.name || defaultPool.code || defaultPool.id}` : ''}）` : '已清空'}
+        不再影响路由：现在按「对外模型」走，先看有没有模型认领它，没有就用该用途的默认模型。
+        要固定走某个模型，去「模型」页把它的「指定调用方」加上这个 appCaller。
+      </p>
+    </div>
   );
 }
 
@@ -539,8 +525,6 @@ function AppCallerRow({
 }) {
   const chip = statusChip(item.status);
   const compatiblePools = pools.filter((p) => !item.requestType || p.modelType.toLowerCase() === item.requestType.toLowerCase());
-  const selectedPool = compatiblePools.find((pool) => pool.id === draft.defaultModelPoolId);
-  const selectedPoolCount = draft.allowedModelPoolIds.length;
   const observedPolicy = [item.lastObservedModelPolicy, item.lastObservedModelPoolId].filter(Boolean).join(' / ');
   const observedParameter = item.lastObservedParameterPolicy ? `参数 ${item.lastObservedParameterPolicy}` : '';
   const observedIngressProtocols = item.observedIngressProtocols?.length ? item.observedIngressProtocols : (item.ingressProtocol ? [item.ingressProtocol] : []);
@@ -553,14 +537,14 @@ function AppCallerRow({
         <td style={td}><div className="lg-app-caller-identity"><code>{item.appCallerCode}</code><span>{item.title || '未填写标题'} · {item.sourceSystem || '未知来源'}</span></div></td>
         <td style={td}><Chip label={chip.label} color={chip.color} bg={chip.bg} /></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{requestTypeLabelForTable(item.requestType)}</strong><span>{observedIngressProtocols.join('、') || '未观察到协议'}</span></div></td>
-        <td style={td}><div className="lg-app-caller-stack"><strong>{selectedPool?.name || item.modelPoolId || '未绑定模型池'}{selectedPoolCount > 1 ? ` 等 ${selectedPoolCount} 个` : ''}</strong><span>{modelPolicyLabel(item.modelPolicy || 'auto')} · {item.allowCrossPoolFallback ? '跨池开' : '跨池关'} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
+        <td style={td}><div className="lg-app-caller-stack"><strong>按对外模型</strong><span>{modelPolicyLabel(item.modelPolicy || 'auto')} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</span>{routeDrift || parameterDrift ? <span className="lg-app-caller-warning">配置与最近请求不一致</span> : null}</div></td>
         <td style={td}><div className="lg-app-caller-stack"><strong>{item.owner || '未指定负责人'}</strong><span>{formatGovernanceSummary(item)}</span></div></td>
         <td style={td}><div className="lg-app-caller-recent"><TraceLinks item={item} /><span>{item.totalSeen} 次 · {fmtTime(item.lastSeenAt)}</span></div></td>
         <td style={td}><div className="lg-app-caller-row-actions"><Button size="sm" variant="ghost" onClick={onToggle}>{expanded ? '收起' : canWrite ? '配置' : '查看'}</Button>{canManagePromptPolicy && ['chat', 'vision'].includes(item.requestType.toLowerCase()) ? <Link to={`/app-callers/${encodeURIComponent(item.id)}/prompt-policy`}>提示词策略</Link> : null}</div></td>
       </tr>
       {expanded ? <tr className="lg-app-caller-expanded-row"><td colSpan={7}>
         <div className="lg-app-caller-editor">
-          <div className="lg-app-caller-editor-heading"><div><strong>{canWrite ? '配置路由与治理' : '路由与治理详情'}</strong><span>复杂配置集中在当前 appCaller 内，不影响列表阅读。保存后下一条请求生效。</span></div>{selectedPool ? <EntityPreviewDrawer buttonLabel="预览模型池" kicker="appCaller 关联的模型池" title={selectedPool.name || selectedPool.code || selectedPool.id} summary={`“${item.appCallerCode}”会从这个池的可用成员中选择实际上游。`} status={[{ label: poolHealthLabel(selectedPool.health), tone: selectedPool.health === 'healthy' ? 'good' : 'warning' }, { label: selectedPool.isDefaultForType ? `${selectedPool.modelType} 默认池` : '专用模型池' }, { label: `${selectedPool.models.length} 个模型成员` }]} sections={[{ title: '路由角色', fields: [{ label: '模型类型', value: selectedPool.modelType || '未配置' }, { label: '选择策略', value: poolStrategyLabel(selectedPool.strategyType) }, { label: '池优先级', value: selectedPool.priority }, { label: '绑定 appCaller', value: `${selectedPool.boundAppCallerCount ?? 0} 个` }] }, { title: '候选模型', description: '按优先级展示前六个成员。', fields: selectedPool.models.slice().sort((a, b) => a.priority - b.priority).slice(0, 6).map((model) => ({ label: model.modelId, value: `${model.healthStatusLabel || '状态未知'} · 优先级 ${model.priority}${model.protocol ? ` · ${model.protocol}` : ''}` })) }, { title: '最近运行', fields: [{ label: '近 7 天请求', value: selectedPool.recentRequests ?? 0 }, { label: '成功率', value: selectedPool.recentSuccessRatePercent == null ? '暂无数据' : `${selectedPool.recentSuccessRatePercent}%` }, { label: '健康成员', value: `${selectedPool.healthyMembers ?? 0} 个` }, { label: '不可用成员', value: `${selectedPool.unavailableMembers ?? 0} 个` }] }]} /> : null}</div>
+          <div className="lg-app-caller-editor-heading"><div><strong>{canWrite ? '配置路由与治理' : '路由与治理详情'}</strong><span>配置集中在当前 appCaller 内，保存后下一条请求生效。</span></div></div>
           <div className="lg-app-caller-editor-grid">
             <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</select></label>
             <ModelPoolContractFields compatiblePools={compatiblePools} draft={draft} selectStyle={selectStyle} canWrite={canWrite} onDraft={onDraft} />
@@ -608,7 +592,6 @@ function AppCallerMobileCard({
 }) {
   const chip = statusChip(item.status);
   const compatiblePools = pools.filter((pool) => !item.requestType || pool.modelType.toLowerCase() === item.requestType.toLowerCase());
-  const selectedPool = compatiblePools.find((pool) => pool.id === draft.defaultModelPoolId);
   const observedIngressProtocols = item.observedIngressProtocols?.length ? item.observedIngressProtocols : (item.ingressProtocol ? [item.ingressProtocol] : []);
   const routeDrift = Boolean(item.lastObservedModelPolicy && item.lastObservedModelPolicy !== item.modelPolicy)
     || Boolean(item.lastObservedModelPoolId && !draft.allowedModelPoolIds.includes(item.lastObservedModelPoolId))
@@ -621,7 +604,7 @@ function AppCallerMobileCard({
       </div>
       <dl className="lg-app-caller-mobile-facts">
         <div><dt>调用方式</dt><dd>{requestTypeLabelForTable(item.requestType)}<small>{observedIngressProtocols.join('、') || '未观察到协议'}</small></dd></div>
-        <div><dt>当前路由</dt><dd>{selectedPool?.name || item.modelPoolId || '未绑定模型池'}{draft.allowedModelPoolIds.length > 1 ? ` 等 ${draft.allowedModelPoolIds.length} 个` : ''}<small>{modelPolicyLabel(item.modelPolicy || 'auto')} · {draft.allowCrossPoolFallback ? '跨池开' : '跨池关'} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</small>{routeDrift ? <small className="lg-app-caller-warning">配置与最近请求不一致</small> : null}</dd></div>
+        <div><dt>当前路由</dt><dd>按对外模型<small>{modelPolicyLabel(item.modelPolicy || 'auto')} · {parameterPolicyLabel(item.parameterPolicy || 'default-drop')}</small>{routeDrift ? <small className="lg-app-caller-warning">配置与最近请求不一致</small> : null}</dd></div>
         <div><dt>治理</dt><dd>{item.owner || '未指定负责人'}<small>{formatGovernanceSummary(item)}</small></dd></div>
         <div><dt>最近请求</dt><dd><TraceLinks item={item} /><small>{item.totalSeen} 次 · {fmtTime(item.lastSeenAt)}</small></dd></div>
       </dl>
@@ -631,7 +614,6 @@ function AppCallerMobileCard({
       </div>
       {expanded ? <div className="lg-app-caller-mobile-editor">
         <div><strong>{canWrite ? '配置路由与治理' : '路由与治理详情'}</strong><span>保存后从下一条请求开始生效。</span></div>
-        {selectedPool ? <div className="lg-app-caller-mobile-pool"><span>当前模型池</span><strong>{selectedPool.name || selectedPool.code || selectedPool.id}</strong><small>{poolHealthLabel(selectedPool.health)} · {selectedPool.models.length} 个模型成员</small></div> : null}
         <div className="lg-app-caller-editor-grid">
           <label>状态<select disabled={!canWrite} value={draft.status} onChange={(e) => onDraft({ status: e.target.value })} style={selectStyle}>{STATUSES.map((x) => <option key={x} value={x}>{statusLabel(x)}</option>)}</select></label>
           <ModelPoolContractFields compatiblePools={compatiblePools} draft={draft} selectStyle={selectStyle} canWrite={canWrite} onDraft={onDraft} />
@@ -694,13 +676,7 @@ function formatGovernanceSummary(item: GatewayAppCaller) {
   return parts.join(' · ');
 }
 
-function poolHealthLabel(value: ModelPool['health']) {
-  return ({ healthy: '运行健康', degraded: '部分模型异常', unavailable: '无可用模型', empty: '尚未配置模型' } as Record<ModelPool['health'], string>)[value] ?? '状态未知';
-}
 
-function poolStrategyLabel(value: number) {
-  return ({ 0: '优先级', 1: '轮询', 2: '加权', 3: '最少连接', 4: '随机', 5: '故障转移' } as Record<number, string>)[value] || `策略 ${value}`;
-}
 
 function parseNonNegativeNumber(value: string): number {
   const trimmed = value.trim();

@@ -54,6 +54,9 @@
   <ItemGroup>
     <!-- 官方技能目录（scripts/bundle-official-skills.mjs 生成），内嵌供 OfficialSkillCatalog 读取 -->
     <EmbeddedResource Include="OfficialSkills/official-skills.generated.json" />
+    <!-- 藏书阁精读稿的上下文：书单 + 相关规则的导读与事故。
+         由 prd-admin 的 bookshelfContext.test.ts 生成，那侧有守卫钉住它与源头一致。 -->
+    <EmbeddedResource Include="Resources/bookshelf-context.json" />
   </ItemGroup>
 
 </Project>

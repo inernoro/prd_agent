@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
   availabilityOfBuckets,
   buildMonitorHeadline,
+  proberLiveness,
   mergeBuckets,
   overallAvailability24h,
   overallAvgLatency24h,
@@ -125,6 +126,22 @@ describe('buildMonitorHeadline 第一屏结论', () => {
     const stalled = buildMonitorHeadline({ ...s, prober: { lastCycleAt: NOW - 10 * MIN, lastCycleDurationMs: 1000, lastCycleProbed: 2, lastCycleTargets: 2, stalled: true, userViewEnabled: true } }, [], NOW);
     expect(stalled.tone).toBe('warn');
     expect(stalled.title).toBe('监测本身停了');
+  });
+
+  it('第一轮从没跑完：prober.stalled 判不出来、cycle.stale 判得出来，头条照样说停了（Codex #1543 P1）', () => {
+    const s = summaryOf([target({ name: 'a' })]);
+    const neverFinished = {
+      prober: { lastCycleAt: null, lastCycleDurationMs: null, lastCycleProbed: 0, lastCycleTargets: 0, stalled: false, userViewEnabled: true },
+      cycle: { ok: false, running: true, lastCycleAt: null, sinceLastCycleMs: null, stale: true, watchdogResets: 0, probeDeadlineHits: 0 },
+    };
+    expect(proberLiveness(neverFinished)).toEqual({ stalled: true, lastCycleAt: null });
+    const h = buildMonitorHeadline({ ...s, ...neverFinished }, [], NOW);
+    expect(h.title).toBe('监测本身停了');
+    expect(h.detail).toContain('第一轮一直没有跑完');
+    // 两个字段都没下发 = 不知道，不许兜成「没停」
+    expect(proberLiveness({})).toBeNull();
+    // 只有 prober 且健康 → 没停
+    expect(proberLiveness({ prober: { ...neverFinished.prober, lastCycleAt: NOW, stalled: false } })?.stalled).toBe(false);
   });
 
   it('没有目标 / 监控关闭：直说，不凑句子', () => {

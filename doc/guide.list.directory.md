@@ -112,6 +112,7 @@
 - [开放接口（OpenAI 兼容对外网关）技术设计 · 设计](./design.open-platform.open-api.md) `design.open-platform.open-api`
 - [开放平台功能概要 · 设计](./design.open-platform.md) `design.open-platform`
 - [Page Agent Bridge 设计（编码 Agent 浏览器之眼） · 设计](./design.page-agent.bridge.md) `design.page-agent.bridge`
+- [活动任务清单 · 设计](./design.platform.active-tasks.md) `design.platform.active-tasks`
 - [账户数据共享 · 设计](./design.platform.account-data-sharing.md) `design.platform.account-data-sharing`
 - [MAP 核心业务稳定基线 · 设计](./design.platform.core-business-stability.md) `design.platform.core-business-stability`
 - [跨 MAP 实例数据同步（动态授权） · 设计](./design.platform.cross-instance-data-sync.md) `design.platform.cross-instance-data-sync`
@@ -123,6 +124,7 @@
 - [GitHub 基础设施层 · 设计](./design.platform.github-infrastructure.md) `design.platform.github-infrastructure`
 - [图片引用日志与消息持久化 · 设计](./design.platform.image-ref-and-persistence.md) `design.platform.image-ref-and-persistence`
 - [LLM Gateway 全量迁移与生产发布复盘 · 设计](./design.platform.llm-gateway.migration-retrospective.md) `design.platform.llm-gateway.migration-retrospective`
+- [网关模型架构：一个名字、一条路、一份账 · 设计](./design.platform.llm-gateway.model-architecture.md) `design.platform.llm-gateway.model-architecture`
 - [LLM 网关物理独立设计 · 设计](./design.platform.llm-gateway.physical-isolation.md) `design.platform.llm-gateway.physical-isolation`
 - [LLM Gateway 图片生成重构 · 设计](./design.platform.llm-gateway.refactor.md) `design.platform.llm-gateway.refactor`
 - [LLM 网关与模型池统一 · 设计](./design.platform.llm-gateway.unification.md) `design.platform.llm-gateway.unification`
@@ -139,6 +141,8 @@
 - [CLI Agent 工作空间 · 设计](./design.platform.workspace.md) `design.platform.workspace`
 - [PR Review V2 设计（OAuth 最小可审查工作台） · 设计](./design.pr-review.v2.md) `design.pr-review.v2`
 - [头像沉浸式编辑器 · 设计](./design.prd-agent.avatar-editor.md) `design.prd-agent.avatar-editor`
+- [公共藏书阁 · 精读稿 · 设计](./design.prd-agent.bookshelf-digest.md) `design.prd-agent.bookshelf-digest`
+- [公共藏书阁 · 结业考 · 判定口径](./design.prd-agent.bookshelf.exam.md) `design.prd-agent.bookshelf.exam`
 - [文档再加工智能体调用路由 · 设计](./design.prd-agent.reprocess-chat-routing.md) `design.prd-agent.reprocess-chat-routing`
 - [产品管理智能体（product-agent）设计文档 · 设计](./design.product-agent.md) `design.product-agent`
 - [AI 周报系统市场调研 · 设计](./design.report-agent.ai-systems.md) `design.report-agent.ai-systems`
@@ -207,6 +211,7 @@
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
 - [海鲜市场（配置市场）使用 · 指南](./guide.marketplace.md) `guide.marketplace`
 - [开放平台 Open API · 指南](./guide.open-platform.open-api.md) `guide.open-platform.open-api`
+- [活动任务清单 · 指南](./guide.platform.active-tasks.md) `guide.platform.active-tasks`
 - [Agent 开发入门 · 指南](./guide.platform.agent-onboarding.md) `guide.platform.agent-onboarding`
 - [PRD Agent 开发文档 · 指南](./guide.platform.development-guide.md) `guide.platform.development-guide`
 - [Playwright E2E 测试 · 指南](./guide.platform.e2e-tests.md) `guide.platform.e2e-tests`
@@ -289,9 +294,11 @@
 - [前端移动端适配 · 计划](./plan.frontend.mobile-adaptation.md) `plan.frontend.mobile-adaptation`
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
 - [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
+- [关键业务监控 · 计划](./plan.platform.business-monitoring.md) `plan.platform.business-monitoring`
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`
 - [LLM Gateway 外部平台化与控制台体验收口 · 计划](./plan.platform.llm-gateway.external-platform.md) `plan.platform.llm-gateway.external-platform`
 - [LLM 网关旧路径物理退场 · 计划](./plan.platform.llm-gateway.full-cutover.md) `plan.platform.llm-gateway.full-cutover`
+- [网关模型概念收敛（池并进模型、上游降一级） · 计划](./plan.platform.llm-gateway.model-consolidation.md) `plan.platform.llm-gateway.model-consolidation`
 - [LLM Gateway 故障隔离与恢复 · 计划](./plan.platform.llm-gateway.resilience.md) `plan.platform.llm-gateway.resilience`
 - [模型路由能力契约治理 · 状态看板](./plan.platform.llm-routing.capability-contract.md) `plan.platform.llm-routing.capability-contract`
 - [MCP 智能体接入台 · 计划](./plan.platform.mcp-agent-console.md) `plan.platform.mcp-agent-console`
@@ -327,6 +334,7 @@
 - [文档可读性 · 债务台账](./debt.doc.readability.md) `debt.doc.readability`
 - [前端 · 债务台账](./debt.frontend.md) `debt.frontend`
 - [Agent 规则作用域 · 债务台账](./debt.platform.agent-rule-scope.md) `debt.platform.agent-rule-scope`
+- [活动任务清单 · 债务台账](./debt.platform.active-tasks.md) `debt.platform.active-tasks`
 - [知识库 · 债务台账](./debt.knowledge-base.md) `debt.knowledge-base`
 - [跨 MAP 实例数据同步 · 债务台账](./debt.platform.cross-instance-data-sync.md) `debt.platform.cross-instance-data-sync`
 - [向量模型供应商 · 债务台账](./debt.platform.embedding-provider.md) `debt.platform.embedding-provider`
