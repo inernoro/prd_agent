@@ -89,17 +89,29 @@ export interface PreviewMirrorFile {
  * `scheme://user:pass@host/...` 保留 scheme 与主机名（服务关系图靠主机名推基础设施连线），
  * 其余敏感值一律 `***`。不敏感的值原样保留（前缀、端口、开关这类才是图和面板要读的）。
  */
+/**
+ * URL 里的 userinfo 段一律归一：`user:pass@` / `:pass@` / `user:@` → `***:***@`，只有用户名段（GitHub PAT
+ * 就是 `https://ghp_xxx@host` 这种形状）→ `***@`。脱敏与自检（findMirrorLeaks）认的是同一组形状——
+ * 2026-09-20 实机抓到：自检收紧到「任何 userinfo 都算凭据」之后，脱敏侧没把 `amqp://user@host` 与
+ * `redis://:pass@host` 归一，父实例每次部署都「自检发现泄露，本次不写」，子实例永远拿不到镜像。
+ */
+export function redactUrlUserinfo(value: string): string {
+  // userinfo 只能出现在 authority 段：碰到 / ? # 就停，`https://example.com?email=a@b` 里的 @ 不是凭据（Codex P2）
+  return value.replace(/([a-z][a-z0-9+.-]*:\/\/)([^\s"'@/?#]*)@/gi, (_m, scheme: string, userinfo: string) =>
+    `${scheme}${userinfo.includes(':') ? '***:***' : '***'}@`);
+}
+
 export function redactEnvForMirror(env: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!env) return env;
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(env)) {
     const value = typeof v === 'string' ? v : String(v ?? '');
     if (looksLikeUrlWithCredentials(value)) {
-      out[k] = value.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]+@/i, '$1***:***@');
+      out[k] = redactUrlUserinfo(value);
     } else if (isSensitiveKey(k) || looksLikeSecretBearingValue(value)) {
       out[k] = '***';
     } else {
-      out[k] = value;
+      out[k] = redactUrlUserinfo(value);
     }
   }
   return out;
@@ -112,10 +124,7 @@ export function redactEnvForMirror(env: Record<string, string> | undefined): Rec
 function redactStringForMirror(value: string): string {
   // 先过通用打码，再归一 URL 里的凭据：通用打码会把 user:pass 写成 `***:***[masked]***`，
   // 自检认的形状是 `***:***@`，顺序反了自检就会把自己打的码当成泄露
-  return maskSecrets(value)
-      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s"'@/]+:[^\s"'@/]+@/gi, '$1***:***@')
-      // 只有用户名段的 URL 凭据（https://ghp_xxx@github.com/…，GitHub PAT 就是这么放的；Codex P1）
-      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s"'@/:]+@/gi, '$1***@')
+  return redactUrlUserinfo(maskSecrets(value))
       // 参数里的凭据：--api-token=xxx / --password xxx / TOKEN=xxx（等号、冒号、空格三种写法）
       .replace(/(\b[a-z][a-z0-9_-]*(?:token|password|passwd|pwd|secret|api[-_]?key|access[-_]?key|private[-_]?key)\s*[=:]\s*)[^\s"']+/gi, '$1***')
       .replace(/(--?[a-z][a-z0-9-]*(?:token|password|passwd|pwd|secret|key)\s+)[^\s"'-][^\s"']*/gi, '$1***');
@@ -328,7 +337,7 @@ export function findMirrorLeaks(mirror: PreviewMirrorFile): string[] {
   if (/"(agentKeys|globalAgentKeys|principals|userCredentials|projectGrants|customEnv|githubCredentialUserId|statusPageToken)"\s*:/.test(text)) leaks.push('carries-credential-collections');
   // URL 的 userinfo 段无论 user:pass 还是只有 user（PAT 形式）都算凭据；自己打的码（***:***@ / ***@）先剥掉
   const stripped = text.replace(/:\/\/\*\*\*(?::\*\*\*)?@/g, '://');
-  if (/[a-z][a-z0-9+.-]*:\/\/[^\s"@/]+@/i.test(stripped)) leaks.push('url-with-inline-credentials');
+  if (/[a-z][a-z0-9+.-]*:\/\/[^\s"@/?#]+@/i.test(stripped)) leaks.push('url-with-inline-credentials');
   return leaks;
 }
 

@@ -14,6 +14,7 @@ import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backin
 import {
   buildPreviewMirror, deepRedactForMirror, findMirrorLeaks, isHostingProject, readPreviewMirror, redactEnvForMirror, registerLoadedPreviewMirror,
   replayPreviewMirrorSeries, writePreviewMirror, __resetLoadedPreviewMirror, loadedPreviewMirrorSummary,
+  redactUrlUserinfo,
   type PreviewMirrorFile,
 } from '../../src/services/preview-mirror.js';
 import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
@@ -115,6 +116,28 @@ describe('脱敏（不带凭据）', () => {
     expect(findMirrorLeaks(m)).toEqual([]);
     const raw = { version: 1, capturedAt: 'x', source: { kind: 'parent-cds', label: 'p' }, projects: [{ gitRepoUrl: 'https://ghp_abcDEF123456@github.com/acme/repo.git' }], buildProfiles: [], branches: [], deploymentRuns: [], reports: [], logs: {}, metrics: {} } as unknown as PreviewMirrorFile;
     expect(findMirrorLeaks(raw)).toContain('url-with-inline-credentials');
+  });
+
+  it('只有用户名段 / 只有密码段的 URL（amqp://user@host、redis://:pass@host）脱敏与自检认同一组形状，父实例不会因为自检误判而不写（2026-09-20 实机）', () => {
+    const parent = parentState();
+    const now = new Date().toISOString();
+    parent.addBuildProfile({ id: 'worker', projectId: 'map', name: 'worker', dockerImage: 'node:20', workDir: '.', containerPort: 5100, command: 'redis-cli -u redis://:s3cretpw@redis:6379/0 ping', env: { AMQP_URL: 'amqp://guest@rabbit:5672', REDIS_URL: 'redis://:s3cretpw@redis:6379/0', PUBLIC_URL: 'https://example.com/path' } } as BuildProfile);
+    parent.addBranch({ id: 'map-w', projectId: 'map', branch: 'feat/w', worktreePath: '/srv/wt/map-w', status: 'idle', createdAt: now, services: {} } as unknown as BranchEntry);
+    const m = buildPreviewMirror(parent, { nowMs: Date.now() });
+    const text = JSON.stringify(m);
+    expect(text).not.toContain('s3cretpw');
+    const worker = m.buildProfiles.find((p) => p.id === 'worker')!;
+    expect(worker.env?.AMQP_URL).toBe('amqp://***@rabbit:5672');
+    expect(worker.env?.REDIS_URL).toBe('redis://***:***@redis:6379/0');
+    expect(worker.env?.PUBLIC_URL).toBe('https://example.com/path');
+    // query / fragment 里的 @ 不是 userinfo：公开 URL 原样保留，自检也不判红（Codex P2）
+    expect(redactUrlUserinfo('https://example.com?email=a@b')).toBe('https://example.com?email=a@b');
+    expect(redactUrlUserinfo('https://example.com/#u@v')).toBe('https://example.com/#u@v');
+    expect(redactUrlUserinfo('https://ghp_x@example.com?email=a@b')).toBe('https://***@example.com?email=a@b');
+    const publicOnly = { ...m, buildProfiles: [{ env: { CALLBACK: 'https://example.com?email=a@b', ANCHOR: 'https://example.com/#u@v' } }] } as unknown as PreviewMirrorFile;
+    expect(findMirrorLeaks(publicOnly)).toEqual([]);
+    expect(String(worker.command)).toContain('redis://***:***@redis:6379/0');
+    expect(findMirrorLeaks(m)).toEqual([]);
   });
 
   it('自检能抓到内联凭据的 URL', () => {
