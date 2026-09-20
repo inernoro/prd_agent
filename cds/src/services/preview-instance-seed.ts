@@ -53,9 +53,17 @@ export function seedPreviewInstanceDemoData(state: StateService, mirror?: Previe
 
 export const PREVIEW_MIRROR_CREATED_BY = 'preview-mirror';
 
+/**
+ * 库里有真实数据（既非演示、非快照、也不带 mirror 标记的项目）时镜像整份不播。
+ * 摘要与指标回放的登记也要看这一个判据（Codex P2）：不播却登记，/api/instance-mode 会说
+ * 「已镜像 N 个项目」，同名容器还会回放一份从没落库的快照的指标。
+ */
+export function previewMirrorBlockedByRealData(state: StateService): boolean {
+  return state.getProjects().some((p) => p.id !== PREVIEW_DEMO_PROJECT_ID && !isSnapshotProjectId(p.id) && !p.mirror);
+}
+
 export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMirrorFile): boolean {
-  const foreign = state.getProjects().some((p) => p.id !== PREVIEW_DEMO_PROJECT_ID && !isSnapshotProjectId(p.id) && !p.mirror);
-  if (foreign) return false;
+  if (previewMirrorBlockedByRealData(state)) return false;
   let changed = false;
 
   // 1. 静态快照退役：只退快照播下的那批（项目按 snap- 前缀，报告按标题在快照里），

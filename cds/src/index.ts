@@ -109,7 +109,7 @@ import { reconcileSelfUpdateOutcome } from './services/self-update-outcome.js';
 import { resolveStateBootstrapMode, seedStateFromJsonIfAllowed } from './services/state-bootstrap.js';
 import { shouldPruneDeletedBranchStartupResidue } from './services/startup-reconcile.js';
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
-import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
+import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
 import { readPreviewMirror, registerLoadedPreviewMirror } from './services/preview-mirror.js';
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { CheckRunRunner } from './services/check-run-runner.js';
@@ -2446,12 +2446,16 @@ if (isPreviewInstance()) {
     } catch (err) {
       console.warn(`  [preview-instance] 父实例镜像读取失败，退回演示快照: ${(err as Error).message}`);
     }
-    if (mirror) {
+    const seeded = seedPreviewInstanceDemoData(stateService, mirror);
+    if (seeded) console.log(mirror ? '  [preview-instance] 已按父实例镜像播种（只读，本实例无容器）' : '  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
+    // 摘要与指标回放只在镜像真的被播种策略接纳之后登记（Codex P2）：库里挂着真实项目时镜像一条不播，
+    // 这时再登记会让实例模式端点谎报「已镜像」、同名容器回放一份没落库的指标
+    if (mirror && previewMirrorBlockedByRealData(stateService)) {
+      console.warn('  [preview-instance] 库里有非演示、非镜像的真实项目，父实例镜像未播种、也不登记摘要与指标');
+    } else if (mirror) {
       const summary = registerLoadedPreviewMirror(mirror);
       console.log(`  [preview-instance] 已装入父实例镜像：采集于 ${summary.capturedAt}，${summary.projects} 个项目 / ${summary.branches} 条分支（${summary.runningBranches} 条采集时在运行）/ ${summary.containersWithMetrics} 个容器有指标`);
     }
-    const seeded = seedPreviewInstanceDemoData(stateService, mirror);
-    if (seeded) console.log(mirror ? '  [preview-instance] 已按父实例镜像播种（只读，本实例无容器）' : '  [preview-instance] 已生成演示项目与示例分支（仅用于 UI 验收）');
   } catch (err) {
     console.warn(`  [preview-instance] 演示数据 seed 失败: ${(err as Error).message}`);
   }

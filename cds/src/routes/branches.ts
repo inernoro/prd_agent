@@ -128,7 +128,7 @@ import { computeBundleFreshness } from '../services/bundle-freshness.js';
 import { waitForFlushWithTimeout, type BoundedFlushResult } from '../services/bounded-flush.js';
 import { readBundledCdsCliVersion } from '../services/cdscli-version.js';
 import { shouldTryCdsPrebuilt } from '../services/cds-prebuilt.js';
-import { isPreviewInstance } from '../services/preview-instance.js';
+import { isPreviewInstance, profileHostsPreviewInstance } from '../services/preview-instance.js';
 import { buildPreviewMirror, findMirrorLeaks, replayPreviewMirrorSeries, writePreviewMirror } from '../services/preview-mirror.js';
 import { computeCdsInstanceId } from '../services/orphan-container-reaper.js';
 import { fetchCdsPrebuilt } from '../services/cds-prebuilt-runtime.js';
@@ -13452,7 +13452,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
             // 立刻让位（finally 会释放刚拿到的槽），不为已取消的部署跑构建。
             assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
             const mergedEnv = getMergedEnv(entry.projectId, entry.id);
-            maybeWritePreviewMirror(entry, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
+            maybeWritePreviewMirror(entry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
             await archiveBranchContainerLogs({
               stateService,
               containerService,
@@ -14476,7 +14476,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         assertBranchOperationCurrent(branchOperationLease, `after-build-slot-${profile.id}`);
         const mergedEnv = getMergedEnv(entry.projectId, entry.id);
-        maybeWritePreviewMirror(entry, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
+        maybeWritePreviewMirror(entry, effectiveProfile, mergedEnv, (line) => sendSSE(res, 'log', { profileId: profile.id, chunk: line }));
         await archiveBranchContainerLogs({
           stateService,
           containerService,
@@ -15849,13 +15849,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // SSOT for GET /api/branches and the subdomain-alias responses.
   /**
    * 部署 CDS 预览实例分支时，把本实例的脱敏镜像写进它的 worktree（CDS 托管 CDS，2026-09-16）。
-   * 判据看这次部署真正生效的 env（mergedEnv.CDS_PREVIEW_INSTANCE），与子实例自己的判定同源。
+   * 判据与镜像导出侧的 isHostingProject 同一个谓词（profileHostsPreviewInstance）：构建档 env 优先、
+   * 项目 / 分支 env 兜底。selfhost compose 把 CDS_PREVIEW_INSTANCE 写在构建档 env 里，而 getMergedEnv
+   * 只合 CDS 派生值与项目 / 分支自定义 env，不含构建档 env——只看 mergedEnv 标准配置下一次都不会写（Codex P1）。
    * 只写文件、不改本实例任何状态；失败只记一行日志，不让部署因此失败。
    * 子实例自己（isPreviewInstance()）不导出——它手里的本来就是镜像，再导一层只会套娃。
    */
-  function maybeWritePreviewMirror(entry: BranchEntry, mergedEnv: Record<string, string>, emit: (line: string) => void): void {
+  function maybeWritePreviewMirror(entry: BranchEntry, profile: { env?: Record<string, string> } | null | undefined, mergedEnv: Record<string, string>, emit: (line: string) => void): void {
     if (isPreviewInstance()) return;
-    if (!isPreviewInstance({ CDS_PREVIEW_INSTANCE: mergedEnv.CDS_PREVIEW_INSTANCE ?? '' } as NodeJS.ProcessEnv)) return;
+    if (!profileHostsPreviewInstance(profile, mergedEnv)) return;
     try {
       if (!entry.worktreePath || !fs.existsSync(entry.worktreePath)) {
         emit('── 预览实例镜像：worktree 不在本机（远程执行器），本次不写 ──\n');

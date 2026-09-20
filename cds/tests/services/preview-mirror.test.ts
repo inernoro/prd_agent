@@ -16,7 +16,7 @@ import {
   replayPreviewMirrorSeries, writePreviewMirror, __resetLoadedPreviewMirror, loadedPreviewMirrorSummary,
   type PreviewMirrorFile,
 } from '../../src/services/preview-mirror.js';
-import { seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
+import { previewMirrorBlockedByRealData, seedPreviewInstanceDemoData, seedPreviewInstanceMirror, PREVIEW_DEMO_PROJECT_ID } from '../../src/services/preview-instance-seed.js';
 import { recordContainerSample, __resetContainerMetricsHistory } from '../../src/services/container-metrics-history.js';
 import type { BranchEntry, BuildProfile, Project } from '../../src/types.js';
 
@@ -104,6 +104,19 @@ describe('脱敏（不带凭据）', () => {
     expect(buildPreviewMirror(parent, { nowMs: Date.now() }).projects.map((p) => p.id)).not.toContain('host2');
   });
 
+  it('项目 gitRepoUrl 里只有用户名段的 PAT（https://ghp_xxx@host）也打码，自检也认得这种形状（Codex P1）', () => {
+    const parent = parentState();
+    const now = new Date().toISOString();
+    parent.addProject({ id: 'pat', slug: 'pat', name: 'PAT', kind: 'git', gitRepoUrl: 'https://ghp_abcDEF123456@github.com/acme/repo.git', createdAt: now, updatedAt: now } as Project);
+    const m = buildPreviewMirror(parent, { nowMs: Date.now() });
+    const exported = m.projects.find((p) => p.id === 'pat');
+    expect(exported?.gitRepoUrl).toBe('https://***@github.com/acme/repo.git');
+    expect(JSON.stringify(m)).not.toContain('ghp_abcDEF123456');
+    expect(findMirrorLeaks(m)).toEqual([]);
+    const raw = { version: 1, capturedAt: 'x', source: { kind: 'parent-cds', label: 'p' }, projects: [{ gitRepoUrl: 'https://ghp_abcDEF123456@github.com/acme/repo.git' }], buildProfiles: [], branches: [], deploymentRuns: [], reports: [], logs: {}, metrics: {} } as unknown as PreviewMirrorFile;
+    expect(findMirrorLeaks(raw)).toContain('url-with-inline-credentials');
+  });
+
   it('自检能抓到内联凭据的 URL', () => {
     const m = { version: 1, capturedAt: 'x', source: { kind: 'parent-cds', label: 'p' }, projects: [], buildProfiles: [{ env: { X: 'redis://a:b@h' } }], branches: [], deploymentRuns: [], reports: [], logs: {}, metrics: {} } as unknown as PreviewMirrorFile;
     expect(findMirrorLeaks(m)).toContain('url-with-inline-credentials');
@@ -164,6 +177,9 @@ describe('只读 + 幂等（子实例播种）', () => {
     const m = buildPreviewMirror(parentState(), { nowMs: Date.now() });
     expect(seedPreviewInstanceMirror(child, m)).toBe(false);
     expect(child.getProject('map')).toBeUndefined();
+    // 启动侧靠同一个判据决定登不登记摘要与指标（Codex P2）
+    expect(previewMirrorBlockedByRealData(child)).toBe(true);
+    expect(previewMirrorBlockedByRealData(freshState('child3-empty'))).toBe(false);
   });
   it('写盘与读盘：落在 <worktree>/.cds/preview-mirror.json，版本不认识就抛', () => {
     const m = buildPreviewMirror(parentState(), { nowMs: Date.now() });
@@ -211,9 +227,13 @@ describe('接线守卫', () => {
   const read = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8');
   it('两个部署点都会在拿到 mergedEnv 之后写镜像；子实例自己不导出', () => {
     const src = read('routes/branches.ts');
-    expect((src.match(/maybeWritePreviewMirror\(entry, mergedEnv,/g) ?? []).length).toBe(2);
+    expect((src.match(/maybeWritePreviewMirror\(entry, effectiveProfile, mergedEnv,/g) ?? []).length).toBe(2);
     const fn = src.slice(src.indexOf('function maybeWritePreviewMirror'), src.indexOf('function computeBranchWebEntries'));
     expect(fn).toContain('if (isPreviewInstance()) return;');
+    // 写不写镜像看构建档 env + 项目 / 分支 env 的同一个谓词：selfhost compose 把开关写在构建档 env 里，
+    // 只看 mergedEnv 标准配置下一次都不会写（Codex P1）
+    expect(fn).toContain('if (!profileHostsPreviewInstance(profile, mergedEnv)) return;');
+    expect(fn).not.toContain('mergedEnv.CDS_PREVIEW_INSTANCE');
     expect(fn).toContain('findMirrorLeaks(mirror)');
     expect(fn).toContain('writePreviewMirror(entry.worktreePath, mirror)');
   });
@@ -224,6 +244,13 @@ describe('接线守卫', () => {
     expect(index).toContain('readPreviewMirror(config.repoRoot)');
     expect(index).toContain('registerLoadedPreviewMirror(mirror)');
     expect(index).toContain('seedPreviewInstanceDemoData(stateService, mirror)');
+    // 先播种、再按接纳与否登记摘要与指标（Codex P2）：登记不许排在播种之前，也不许无条件登记
+    const seedAt = index.indexOf('seedPreviewInstanceDemoData(stateService, mirror)');
+    const gateAt = index.indexOf('previewMirrorBlockedByRealData(stateService)');
+    const registerAt = index.indexOf('registerLoadedPreviewMirror(mirror)');
+    expect(seedAt).toBeGreaterThan(0);
+    expect(gateAt).toBeGreaterThan(seedAt);
+    expect(registerAt).toBeGreaterThan(gateAt);
     const server = read('server.ts');
     expect(server).toContain("mirror: isPreviewInstance() ? loadedPreviewMirrorSummary() : null");
   });

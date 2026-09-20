@@ -107,6 +107,8 @@ function redactStringForMirror(value: string): string {
   // 自检认的形状是 `***:***@`，顺序反了自检就会把自己打的码当成泄露
   return maskSecrets(value)
       .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s"'@/]+:[^\s"'@/]+@/gi, '$1***:***@')
+      // 只有用户名段的 URL 凭据（https://ghp_xxx@github.com/…，GitHub PAT 就是这么放的；Codex P1）
+      .replace(/([a-z][a-z0-9+.-]*:\/\/)[^\s"'@/:]+@/gi, '$1***@')
       // 参数里的凭据：--api-token=xxx / --password xxx / TOKEN=xxx（等号、冒号、空格三种写法）
       .replace(/(\b[a-z][a-z0-9_-]*(?:token|password|passwd|pwd|secret|api[-_]?key|access[-_]?key|private[-_]?key)\s*[=:]\s*)[^\s"']+/gi, '$1***')
       .replace(/(--?[a-z][a-z0-9-]*(?:token|password|passwd|pwd|secret|key)\s+)[^\s"'-][^\s"']*/gi, '$1***');
@@ -145,7 +147,11 @@ const PROJECT_KEYS: ReadonlyArray<keyof Project> = [
   'cloneStatus', 'dockerNetwork', 'createdAt', 'updatedAt',
 ];
 
-/** 项目按白名单拷：凭据 / 授权 / Agent Key / 状态页 token 这些字段根本不进镜像。 */
+/**
+ * 项目按白名单拷：凭据 / 授权 / Agent Key / 状态页 token 这些字段根本不进镜像。
+ * 白名单里的字符串照样过深度脱敏——`gitRepoUrl` 可以被存成 `https://ghp_xxx@host/repo.git`
+ * 这种带 PAT 的形式（Codex P1），白名单只管「哪些字段」，管不了「字段里装了什么」。
+ */
 function redactProject(project: Project, tag: PreviewMirrorTag): Project {
   const out: Partial<Project> = {};
   for (const k of PROJECT_KEYS) {
@@ -153,7 +159,7 @@ function redactProject(project: Project, tag: PreviewMirrorTag): Project {
     if (v !== undefined) (out as Record<string, unknown>)[k] = v;
   }
   if (project.managedProfiles) out.managedProfiles = project.managedProfiles.map(redactProfile);
-  return { ...(out as Project), mirror: tag };
+  return { ...deepRedactForMirror(out as Project), mirror: tag };
 }
 
 /** 分支：标量字段全拷，嵌套结构逐个处理，重的 / 带 env 的 / 副本集的不带或脱敏。 */
@@ -298,7 +304,9 @@ export function findMirrorLeaks(mirror: PreviewMirrorFile): string[] {
   const text = JSON.stringify(mirror);
   const leaks: string[] = [];
   if (/"(agentKeys|globalAgentKeys|principals|userCredentials|projectGrants|customEnv|githubCredentialUserId|statusPageToken)"\s*:/.test(text)) leaks.push('carries-credential-collections');
-  if (/[a-z][a-z0-9+.-]*:\/\/[^\s"@/]+:[^\s"@/]+@/i.test(text.replace(/:\/\/\*\*\*:\*\*\*@/g, '://x@'))) leaks.push('url-with-inline-credentials');
+  // URL 的 userinfo 段无论 user:pass 还是只有 user（PAT 形式）都算凭据；自己打的码（***:***@ / ***@）先剥掉
+  const stripped = text.replace(/:\/\/\*\*\*(?::\*\*\*)?@/g, '://');
+  if (/[a-z][a-z0-9+.-]*:\/\/[^\s"@/]+@/i.test(stripped)) leaks.push('url-with-inline-credentials');
   return leaks;
 }
 
