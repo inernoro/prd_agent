@@ -47,6 +47,7 @@ describe('首页 Branchline 叙事区', () => {
     expect(scene, '离屏的那一帧必须直接 return，不能再 requestAnimationFrame').toMatch(/if \(!inView\) \{[^}]*return; \}/);
     expect(scene, '离屏后要有门铃把循环叫醒').toContain('new IntersectionObserver(');
     expect(scene, 'reduced-motion 下传给 render 的时钟要冻结').toMatch(/built\.render\(p, reduced \? 0 : now \* 0\.001/);
+    expect(scene, 'reduced-motion 下画完一帧就停，不许按刷新率重绘相同画面').toMatch(/if \(!reduced\) raf = requestAnimationFrame\(frame\);/);
   });
 
   it('叙事区的类名在 HomePage 里只出现在叙事区（2026-09-18 撞车事故：cdsh-stage 与 hero 实况板列同名，hero 多出一块整屏黑）', () => {

@@ -353,7 +353,9 @@ export default function BranchlineScene({ rootRef }) {
       if (nearest !== railOn) { railOn = nearest; rails.forEach((a, i) => a.classList.toggle('is-on', i === nearest)); }
       // reduced-motion：时钟冻结在 0，镜头呼吸、珠子脉动、星尘漂移、模块自转、域名牌浮动全部静止，只剩滚动本身驱动的变化
       built.render(p, reduced ? 0 : now * 0.001, dt / 1000);
-      raf = requestAnimationFrame(frame);
+      // reduced-motion 下时钟冻住、进度不插值，下一帧和这一帧一模一样，没必要再按刷新率重绘：
+      // 画完这帧就停，等滚动 / 缩放 / 可见性 / 进入视口的门铃再画一帧
+      if (!reduced) raf = requestAnimationFrame(frame);
     }
 
     // 只用它当「进入视口」的门铃；不带 rootMargin（2026-09-09 首页死机的根因就是它被转成 rem）
@@ -361,8 +363,8 @@ export default function BranchlineScene({ rootRef }) {
       ? new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) schedule(); })
       : null;
     if (io) io.observe(root);
-    // 没有 IntersectionObserver 的环境退回滚动事件叫醒；帧循环自己会在离屏时停下
-    const onScroll = io ? null : () => schedule();
+    // 滚动叫醒：reduced-motion 下每次滚动都要重画一帧；没有 IntersectionObserver 的环境也靠它进场
+    const onScroll = (reduced || !io) ? () => schedule() : null;
     if (onScroll) window.addEventListener('scroll', onScroll, { passive: true });
 
     window.addEventListener('resize', onResize, { passive: true });
