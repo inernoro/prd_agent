@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolveReleaseSteps, type ReleaseRunLike } from '../../web/src/lib/releaseSteps.js';
+import { parseReleaseActivity, resolveReleaseSteps, type ReleaseRunLike } from '../../web/src/lib/releaseSteps.js';
 
 /**
  * 发布步骤条前端渲染源的回归。
@@ -18,6 +18,9 @@ describe('resolveReleaseSteps 直读后端步骤快照', () => {
   it('步骤、当前序号与标题全部来自 run.progress', () => {
     const view = resolveReleaseSteps(run({
       status: 'running',
+      logs: [
+        { level: 'info', phase: 'deploy', at: '2026-09-20T13:45:00.000Z', message: 'Warming api image...' },
+      ],
       progress: {
         planId: 'p1:ssh-script',
         currentStepId: 'deploy',
@@ -33,6 +36,8 @@ describe('resolveReleaseSteps 直读后端步骤快照', () => {
     expect(view.total).toBe(4);
     expect(view.currentIndex).toBe(3);
     expect(view.currentLabel).toBe('执行项目发布命令');
+    expect(view.currentActivity).toBe('正在预热 api 镜像');
+    expect(view.currentActivityAt).toBe('2026-09-20T13:45:00.000Z');
     expect(view.degraded).toBe(false);
     expect(view.steps.map((step) => step.label)).toEqual([
       '连接目标', '进入站点目录', '执行项目发布命令', '验证最终入口',
@@ -107,7 +112,29 @@ describe('存量 run 优雅退化', () => {
 
   it('run 为空时返回空视图，调用方无需自己判空', () => {
     expect(resolveReleaseSteps(null)).toEqual({
-      steps: [], currentIndex: 0, total: 0, currentLabel: '', degraded: false,
+      steps: [], currentIndex: 0, total: 0, currentLabel: '', currentActivity: '', degraded: false,
     });
+  });
+});
+
+describe('发布活动提炼', () => {
+  it('把 curl 进度噪声压成传输百分比', () => {
+    expect(parseReleaseActivity(' 89 1514k   89 1352k    0     0  1843k      0 --:--:-- --:--:-- --:--:--')).toEqual({
+      label: '正在传输文件 89%',
+      percent: 89,
+    });
+  });
+
+  it('支持脚本主动输出结构化进度标记', () => {
+    expect(parseReleaseActivity('::cds-progress::{"label":"正在切换服务","percent":80}')).toEqual({
+      label: '正在切换服务',
+      percent: 80,
+    });
+  });
+
+  it('忽略环境变量与 curl 表头，但保留通用人类可读输出', () => {
+    expect(parseReleaseActivity('export SECRET=value')).toBeNull();
+    expect(parseReleaseActivity('% Total    % Received % Xferd')).toBeNull();
+    expect(parseReleaseActivity('Running database migrations')).toEqual({ label: 'Running database migrations' });
   });
 });

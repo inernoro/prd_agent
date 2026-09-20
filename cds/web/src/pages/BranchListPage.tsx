@@ -4813,8 +4813,11 @@ function ReleaseRunStepList({
           }`}
         >
           <ReleaseStepIcon state={step.state} />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="font-medium">{step.label}</div>
+            {step.state === 'running' && step.activity ? (
+              <div className="mt-0.5 break-words text-xs text-primary">{step.activity}</div>
+            ) : null}
           </div>
         </div>
       ))}
