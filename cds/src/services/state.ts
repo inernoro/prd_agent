@@ -48,7 +48,7 @@ import { deriveInfraCredentialEnv } from './infra-credential-env.js';
 import { resolveEnvTemplates, resolveCommandTemplate } from './compose-parser.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
-const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
+export const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
 /* 定时任务运行记录：按任务各留 120 条（每 5 分钟的任务约 10 小时，日任务约 4 个月），
    全局 5000 条兜底防状态文件无限膨胀。 */
 const SCHEDULED_JOB_RUNS_PER_JOB = 120;
@@ -1462,6 +1462,20 @@ export class StateService {
       { kind: 'branches', id: run.branchId },
     ]);
     return run;
+  }
+
+  /**
+   * 删掉某条分支名下全部部署 run。
+   *
+   * removeBranch / removeProject 不动 run 账本（主实例上 run 是审计证据，分支没了也要留），
+   * 但预览实例换镜像时旧镜像的分支整体退场，run 若留着，同 id 的新 run 会被「已存在」跳过，
+   * 旧记录一直挂在重建出来的项目下（Codex P2）。删除检测靠 id 集，单实体 hint 足够覆盖。
+   */
+  removeDeploymentRunsForBranch(branchId: string): number {
+    const ids = Object.values(this.state.deploymentRuns || {}).filter((run) => run.branchId === branchId).map((run) => run.id);
+    for (const id of ids) delete this.state.deploymentRuns?.[id];
+    if (ids.length > 0) this.save([{ kind: 'deploymentRuns', id: ids[0] }]);
+    return ids.length;
   }
 
   getDeploymentRun(id: string): DeploymentRun | undefined {

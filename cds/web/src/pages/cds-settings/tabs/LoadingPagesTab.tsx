@@ -4,7 +4,8 @@ import { AlertCircle, ExternalLink, GitBranch, Home, Monitor, RefreshCw, ServerC
 import { Button } from '@/components/ui/button';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
-import { BranchDetailLoadingSkeleton, Section } from '@/pages/cds-settings/components';
+import { Section } from '@/pages/cds-settings/components';
+import { BranchDrawerSkeleton } from '@/components/branch/BranchDrawerSkeleton';
 import { PreviewPreparingSurface } from '@/pages/PreviewPreparingPage';
 import { cn } from '@/lib/utils';
 
@@ -334,7 +335,7 @@ export function LoadingPagesTab(): JSX.Element {
                 className="block h-full w-full border-0 bg-transparent"
               />
             ) : page.id === 'branch-detail-loading' ? (
-              <BranchDetailLoadingSkeleton className="h-full min-h-0" />
+              <div className="h-full min-h-0 overflow-y-auto"><BranchDrawerSkeleton status="idle" /></div>
             ) : page.id === 'preview-preparing' ? (
               <PreviewPreparingSurface
                 branch="preview-handoff"

@@ -26,6 +26,23 @@ export function isPreviewInstance(env: NodeJS.ProcessEnv = process.env): boolean
 }
 
 /**
+ * 「这条构建配置起的是不是一个 CDS 预览实例」——父实例侧的判定。
+ *
+ * 父实例在两处需要知道：forwarder 注入徽章时（渲染「CDS 托管 CDS」变体），以及部署时
+ * （把脱敏镜像写进子实例的 worktree）。判据与子实例自己的 isPreviewInstance 同源：
+ * 都看 CDS_PREVIEW_INSTANCE 的取值，只是这里读的是 compose 声明进 profile.env 或
+ * 项目环境变量里的那份，而不是进程 env。
+ */
+export function profileHostsPreviewInstance(
+  profile: { env?: Record<string, string> } | null | undefined,
+  projectEnv?: Record<string, string> | null,
+): boolean {
+  const fromProfile = profile?.env?.CDS_PREVIEW_INSTANCE;
+  const fromProject = projectEnv?.CDS_PREVIEW_INSTANCE;
+  return isPreviewInstance({ CDS_PREVIEW_INSTANCE: fromProfile ?? fromProject ?? '' } as NodeJS.ProcessEnv);
+}
+
+/**
  * 预览实例里禁止执行的宿主操作二进制。判定按「每个 shell 片段的首个命令 token」，
  * 兼容 sudo / env / VAR=x 前缀。真正的安全底座是容器根本不挂 docker.sock —— 本
  * 拦截只负责把失败变成一句用户看得懂的话。

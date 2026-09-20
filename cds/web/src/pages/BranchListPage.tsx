@@ -38,6 +38,7 @@ import {
 } from 'lucide-react';
 
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
+import { BranchListSkeleton } from '@/components/skeletons/PageSkeletons';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
 import { buildProjectGroups } from '@/lib/replicaGroups';
@@ -77,7 +78,6 @@ import {
 import { githubPullRequestUrl } from '@/lib/github-urls';
 import { statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, MetricTile } from '@/pages/cds-settings/components';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 interface ProjectSummary {
@@ -127,50 +127,7 @@ const APP_CHIP_FOLD_THRESHOLD = 3;
 const EMPTY_RESOURCES: BranchResource[] = [];
 const EMPTY_ACTIVITY: ActivityEvent[] = [];
 
-/** 分支列表加载骨架:逐张镜像真实 BranchCard(min-h-244 + 头/身/尾三段),
- *  跑在 cds-branch-card-grid 上,加载完成时与真数据无缝接管。顶部一行品牌 loader
- *  说明"在加载什么"。取代旧的几行横条通用骨架(用户反馈"骨架不对")。 */
-const BRANCH_SKELETON_TITLE_WIDTHS = ['52%', '38%', '60%', '44%', '56%', '46%'] as const;
-
-function BranchListSkeleton(): JSX.Element {
-  return (
-    <div aria-busy="true" aria-live="polite">
-      <div className="mb-4 flex items-center">
-        <CdsLogoLoader
-          label="加载项目与本地分支列表"
-          size="sm"
-          mineral="iris"
-          className="text-[0.8125rem] font-medium text-muted-foreground"
-        />
-      </div>
-      <div className="cds-branch-card-grid">
-        {BRANCH_SKELETON_TITLE_WIDTHS.map((width, index) => (
-          <article
-            key={index}
-            className="flex min-h-[15.25rem] flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]"
-          >
-            {/* 头部:分支名 + 状态徽标 */}
-            <div className="flex items-center justify-between gap-3 px-5 pt-5">
-              <div className="cds-loading-skeleton-line h-4" style={{ width }} />
-              <div className="cds-loading-skeleton-line h-5 w-14 shrink-0 rounded-full" />
-            </div>
-            {/* 身体:几行元信息 */}
-            <div className="flex flex-1 flex-col gap-2.5 px-5 py-5">
-              <div className="cds-loading-skeleton-line h-3 w-1/2" style={{ animationDelay: '0.1s' }} />
-              <div className="cds-loading-skeleton-line h-3 w-3/4" style={{ animationDelay: '0.18s' }} />
-              <div className="cds-loading-skeleton-line h-3 w-2/5" style={{ animationDelay: '0.26s' }} />
-            </div>
-            {/* 尾部:操作条 */}
-            <div className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3">
-              <div className="cds-loading-skeleton-line h-3 w-24" />
-              <div className="cds-loading-skeleton-line h-7 w-20 rounded-md" />
-            </div>
-          </article>
-        ))}
-      </div>
-    </div>
-  );
-}
+// BranchListSkeleton 的 SSOT 在 @/components/skeletons/PageSkeletons（路由切换骨架与本页数据骨架共用同一副）。
 
 /* 基础容器托盘里的短名:托盘空间金贵,MongoDB → Mongo 这种通行缩写不损失辨识。 */
 const INFRA_RUNTIME_SHORT_NAME: Record<string, string> = {
@@ -199,6 +156,8 @@ interface BranchSummary {
   id: string;
   projectId: string;
   branch: string;
+  /** 父实例镜像来的只读分支（预览实例专用）：状态是采集时刻的状态，本实例上没有容器 */
+  mirror?: { capturedAt: string; source: string; previewUrl?: string; subject?: string };
   status: 'idle' | 'building' | 'starting' | 'running' | 'restarting' | 'stopping' | 'error';
   services: Record<string, ServiceState>;
   resources?: BranchResource[];
@@ -3596,6 +3555,8 @@ export function BranchListPage(): JSX.Element {
             if (state.status !== 'ok' || !detailDrawerBranchId) return '';
             const target = state.branches.find((b) => b.id === detailDrawerBranchId);
             if (!target) return '';
+            // 父实例镜像来的分支：地址是父实例算好的，本实例的域名推不出它
+            if (target.mirror?.previewUrl) return target.mirror.previewUrl;
             if (state.previewMode === 'simple') return simplePreviewUrl(state.config);
             return multiPreviewUrl(target, state.config);
           })()}
@@ -5550,6 +5511,13 @@ const BranchCard = memo(function BranchCard({
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-warn" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
+              {branch.mirror ? (
+                <span
+                  className="shrink-0 rounded border border-info/40 bg-info-soft px-1 text-[0.5625rem] font-semibold leading-4 text-info"
+                  title={`父实例镜像：状态是采集时刻（${new Date(branch.mirror.capturedAt).toLocaleString('zh-CN', { hour12: false })}）的状态，本实例上没有对应容器，只读`}
+                  data-testid="branch-mirror-badge"
+                >镜像</span>
+              ) : null}
               {/* PR 徽章 2026-08-05 收进右上角 ... 菜单：它挤占标题宽度，而标题
                   （分支名）才是这张卡最需要看清的东西。入口见 BranchMoreMenu。 */}
               {isAiOperated ? (

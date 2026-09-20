@@ -14,7 +14,8 @@
  */
 import { readFileSync } from 'node:fs';
 import type { StateService } from './state.js';
-import type { BranchEntry, BuildProfile, Project } from '../types.js';
+import type { BranchEntry, BuildProfile, InfraService, Project } from '../types.js';
+import type { PreviewMirrorFile } from './preview-mirror.js';
 
 export const PREVIEW_DEMO_PROJECT_ID = 'preview-demo';
 
@@ -31,12 +32,150 @@ function minutesAgoIso(minutes: number): string {
  * 活动日志）和补播（缺的演示分支 / 定时任务 / 验收报告）各自判各自的，
  * 补播还要按 id 逐条比对，不能只判「这一类有没有」。
  */
-export function seedPreviewInstanceDemoData(state: StateService): boolean {
+export function seedPreviewInstanceDemoData(state: StateService, mirror?: PreviewMirrorFile | null): boolean {
   const core = seedCoreDemoData(state);
   const extras = seedDemoExtras(state);
-  const snap = seedPreviewInstanceSnapshot(state);
-  if (core || extras || snap) state.save();
-  return core || extras || snap;
+  // 父实例镜像在手时静态形状快照退役：镜像是真实数据的脱敏副本，快照只是它的替身
+  const snap = mirror ? false : seedPreviewInstanceSnapshot(state);
+  const mirrored = mirror ? seedPreviewInstanceMirror(state, mirror) : false;
+  if (core || extras || snap || mirrored) state.save();
+  return core || extras || snap || mirrored;
+}
+
+/* ============================ 父实例镜像 ============================
+   2026-09-16。SSOT 与三条底线见 services/preview-mirror.ts 头注释。
+
+   幂等规则：
+   - 同一份镜像（capturedAt 相同）已播过 → 一条不动；
+   - 新镜像 → 先把旧镜像播下的条目整体删掉（项目级联分支 / 构建配置 / 日志），再按新镜像加，
+     镜像里消失的条目自然不再出现；
+   - 库里出现既不是演示、不是快照、也不带 mirror 标记的项目 → 说明挂着真实数据，一条不播。 */
+
+export const PREVIEW_MIRROR_CREATED_BY = 'preview-mirror';
+
+/**
+ * 库里有真实数据（既非演示、非快照、也不带 mirror 标记的项目）时镜像整份不播。
+ * 摘要与指标回放的登记也要看这一个判据（Codex P2）：不播却登记，/api/instance-mode 会说
+ * 「已镜像 N 个项目」，同名容器还会回放一份从没落库的快照的指标。
+ */
+export function previewMirrorBlockedByRealData(state: StateService): boolean {
+  return state.getProjects().some((p) => p.id !== PREVIEW_DEMO_PROJECT_ID && !isSnapshotProjectId(p.id) && !p.mirror);
+}
+
+export function seedPreviewInstanceMirror(state: StateService, mirror: PreviewMirrorFile): boolean {
+  if (previewMirrorBlockedByRealData(state)) return false;
+  let changed = false;
+
+  // 1. 静态快照退役：只退快照播下的那批（项目按 snap- 前缀，报告按标题在快照里），
+  //    演示项目自己的三份报告不动——它们和快照共用 createdBy，按 createdBy 删会把演示报告
+  //    每次启动删一遍、补播再加一遍（实机验到：重启后报告清零、日志每次都说「已播种」）。
+  const snapshotTitles = new Set((snapshot.reports as Array<{ title: string }>).map((r) => r.title));
+  for (const p of state.getProjects()) {
+    if (isSnapshotProjectId(p.id)) { state.removeProject(p.id); changed = true; }
+  }
+  for (const r of state.listAcceptanceReports(null)) {
+    if (r.createdBy === 'preview-instance-seed' && snapshotTitles.has(r.title)) { state.deleteAcceptanceReport(r.id); changed = true; }
+  }
+
+  // 2. 同一份镜像已经**完整**播过：不动。判据逐集合核对（项目 / 分支 / 构建配置 / 基础设施 / 部署 run /
+  //    报告 / 日志），只数项目与分支会把「构建配置那条插失败了」当成已播完，之后每次重启都在这里返回、
+  //    缺的永远补不上（Codex P2）
+  const stampedProjects = state.getProjects().filter((p) => p.mirror);
+  const stampedBranches = state.getAllBranches().filter((b) => b.mirror);
+  if (mirrorFullySeeded(state, mirror, stampedProjects, stampedBranches)) return changed;
+
+  // 3. 旧镜像整体退场（项目级联分支 / 构建配置 / 日志；部署 run 要单独删——
+  //    removeBranch / removeProject 不动 run 账本，留着会让同 id 的新 run 被「已存在」跳过、
+  //    旧记录一直挂在重建出来的项目下，Codex P2）
+  for (const b of stampedBranches) state.removeDeploymentRunsForBranch(b.id);
+  for (const p of stampedProjects) state.removeProject(p.id);
+  for (const b of state.getAllBranches()) if (b.mirror) { state.removeDeploymentRunsForBranch(b.id); state.removeBranch(b.id); }
+  for (const r of state.listAcceptanceReports(null)) {
+    if (r.createdBy === PREVIEW_MIRROR_CREATED_BY) state.deleteAcceptanceReport(r.id);
+  }
+
+  // 4. 按新镜像加。单条失败只记日志不中断：一条怪配置不该让整份镜像消失
+  const warn = (what: string, err: unknown): void => console.warn(`  [preview-mirror] ${what}: ${(err as Error).message}`);
+  const existingSlugs = new Set(state.getProjects().map((p) => p.slug));
+  for (const p of mirror.projects) {
+    try {
+      const slug = existingSlugs.has(p.slug) ? `${p.slug}-mirror` : p.slug;
+      state.addProject({ ...p, slug, legacyFlag: undefined } as Project);
+      existingSlugs.add(slug);
+    } catch (err) { warn(`项目 ${p.id}`, err); }
+  }
+  const projectIds = new Set(state.getProjects().filter((p) => p.mirror).map((p) => p.id));
+  for (const profile of mirror.buildProfiles) {
+    if (!projectIds.has(profile.projectId)) continue;
+    try { state.addBuildProfile({ ...profile } as BuildProfile); } catch (err) { warn(`构建配置 ${profile.id}`, err); }
+  }
+  // 项目级基础设施跟着项目走（removeProject 级联删，换镜像时随项目退场）；子实例上没有对应容器，
+  // 只是让服务表与关系图画得出「共享基础设施」
+  for (const svc of mirror.infraServices ?? []) {
+    if (!projectIds.has(svc.projectId)) continue;
+    try { state.addInfraService({ ...svc, env: { ...(svc.env ?? {}) } } as InfraService); } catch (err) { warn(`基础设施 ${svc.id}`, err); }
+  }
+  const branchIds = new Set<string>();
+  for (const b of mirror.branches) {
+    if (!projectIds.has(b.projectId)) continue;
+    try {
+      state.addBranch({ ...b } as BranchEntry);
+      branchIds.add(b.id);
+      for (const log of mirror.logs?.[b.id] ?? []) state.appendLog(b.id, log);
+    } catch (err) { warn(`分支 ${b.id}`, err); }
+  }
+  for (const run of mirror.deploymentRuns ?? []) {
+    if (!branchIds.has(run.branchId) || state.getDeploymentRun(run.id)) continue;
+    try { state.addDeploymentRun(run); } catch (err) { warn(`部署 run ${run.id}`, err); }
+  }
+  const origin = `镜像自${mirror.source?.label || '父实例'}（采集于 ${mirror.capturedAt}）：只读，本实例上没有对应容器。`;
+  for (const r of mirror.reports ?? []) {
+    try {
+      state.createAcceptanceReport({
+        title: r.title,
+        format: r.format,
+        content: r.format === 'md' ? `# ${r.title}\n\n${origin}\n\n本页只保留标题、结论与归档时刻；原始正文不在镜像内。` : `<h1>${r.title}</h1><p>${origin}</p><p>本页只保留标题、结论与归档时刻；原始正文不在镜像内。</p>`,
+        projectId: r.projectId ?? null,
+        branchId: r.branchId && branchIds.has(r.branchId) ? r.branchId : null,
+        branch: r.branch ?? null,
+        commitSha: r.commitSha ?? null,
+        prNumber: r.prNumber ?? null,
+        verdict: r.verdict ?? null,
+        tier: r.tier ?? null,
+        defectCounts: r.defectCounts ?? null,
+        createdBy: PREVIEW_MIRROR_CREATED_BY,
+        createdAt: r.createdAt,
+      });
+    } catch (err) { warn(`报告「${r.title}」`, err); }
+  }
+  return true;
+}
+
+/** 同一份镜像是否已经一条不缺地在库里：capturedAt 相同，且每个集合的条数都对得上。 */
+function mirrorFullySeeded(
+  state: StateService,
+  mirror: PreviewMirrorFile,
+  stampedProjects: Project[],
+  stampedBranches: BranchEntry[],
+): boolean {
+  if (stampedProjects.length === 0) return false;
+  if (!stampedProjects.every((p) => p.mirror?.capturedAt === mirror.capturedAt)) return false;
+  if (!stampedBranches.every((b) => b.mirror?.capturedAt === mirror.capturedAt)) return false;
+  if (stampedProjects.length !== mirror.projects.length || stampedBranches.length !== mirror.branches.length) return false;
+  const projectIds = new Set(stampedProjects.map((p) => p.id));
+  const branchIds = new Set(stampedBranches.map((b) => b.id));
+  const expectedProfiles = mirror.buildProfiles.filter((p) => projectIds.has(p.projectId)).length;
+  if (state.getBuildProfiles().filter((p) => projectIds.has(p.projectId)).length !== expectedProfiles) return false;
+  const expectedInfra = (mirror.infraServices ?? []).filter((s) => projectIds.has(s.projectId)).length;
+  if (state.getInfraServices().filter((s) => projectIds.has(s.projectId)).length !== expectedInfra) return false;
+  const expectedRuns = (mirror.deploymentRuns ?? []).filter((r) => branchIds.has(r.branchId)).length;
+  if (state.getDeploymentRuns().filter((r) => branchIds.has(r.branchId)).length !== expectedRuns) return false;
+  const expectedReports = (mirror.reports ?? []).length;
+  if (state.listAcceptanceReports(null).filter((r) => r.createdBy === PREVIEW_MIRROR_CREATED_BY).length !== expectedReports) return false;
+  for (const b of stampedBranches) {
+    if (state.getLogs(b.id).length !== (mirror.logs?.[b.id] ?? []).length) return false;
+  }
+  return true;
 }
 
 /** 首播：项目 + 构建配置 + 分支 + 活动日志。只在完全空库时执行。 */
@@ -56,24 +195,26 @@ function seedCoreDemoData(state: StateService): boolean {
   };
   state.addProject(project);
 
+  // 演示构建档的 id 走保留前缀：addBuildProfile 按全局 id 唯一，父实例若真有一条叫 demo-api 的构建档，
+  // 镜像播种时会撞上演示项目那条被跳过、每次重启都缺（Codex P2）
   const profiles: BuildProfile[] = [
     {
-      id: 'demo-api',
+      id: 'preview-demo-api',
       projectId: project.id,
       name: 'api（演示）',
       dockerImage: 'node:20-alpine',
       workDir: '.',
-      command: 'echo demo-api',
+      command: 'echo preview-demo-api',
       containerPort: 5000,
       pathPrefixes: ['/api/'],
     },
     {
-      id: 'demo-web',
+      id: 'preview-demo-web',
       projectId: project.id,
       name: 'web（演示）',
       dockerImage: 'node:20-alpine',
       workDir: '.',
-      command: 'echo demo-web',
+      command: 'echo preview-demo-web',
       containerPort: 5173,
     },
   ];
@@ -129,8 +270,8 @@ function demoBranches(projectId: string): BranchEntry[] {
       lastAccessedAt: minutesAgoIso(6),
       notes: '演示数据：展示「运行中」状态的分支卡片，无真实容器。',
       services: {
-        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-sample', hostPort: 10101, status: 'running' },
-        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-sample', hostPort: 10102, status: 'running' },
+        'preview-demo-api': { profileId: 'preview-demo-api', containerName: 'cds-demo-api-sample', hostPort: 10101, status: 'running' },
+        'preview-demo-web': { profileId: 'preview-demo-web', containerName: 'cds-demo-web-sample', hostPort: 10102, status: 'running' },
       },
     },
     {
@@ -143,8 +284,8 @@ function demoBranches(projectId: string): BranchEntry[] {
       createdAt: minutesAgoIso(90),
       notes: '演示数据：展示「错误」状态与错误信息展示。',
       services: {
-        'demo-api': {
-          profileId: 'demo-api',
+        'preview-demo-api': {
+          profileId: 'preview-demo-api',
           containerName: 'cds-demo-api-error',
           hostPort: 10103,
           status: 'error',
@@ -172,7 +313,7 @@ function demoBranches(projectId: string): BranchEntry[] {
       lastAccessedAt: minutesAgoIso(1),
       notes: '演示数据：构建中状态，用于查看进度与排队 UI。',
       services: {
-        'demo-api': { profileId: 'demo-api', containerName: 'cds-demo-api-building', hostPort: 10105, status: 'building' },
+        'preview-demo-api': { profileId: 'preview-demo-api', containerName: 'cds-demo-api-building', hostPort: 10105, status: 'building' },
       },
     },
     {
@@ -185,7 +326,7 @@ function demoBranches(projectId: string): BranchEntry[] {
       lastAccessedAt: minutesAgoIso(240),
       notes: '演示数据：被调度器按 LRU 停掉后回到空闲的冷分支。',
       services: {
-        'demo-web': { profileId: 'demo-web', containerName: 'cds-demo-web-stopped', hostPort: 10106, status: 'stopped' },
+        'preview-demo-web': { profileId: 'preview-demo-web', containerName: 'cds-demo-web-stopped', hostPort: 10106, status: 'stopped' },
       },
     },
   ];

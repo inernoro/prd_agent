@@ -699,6 +699,24 @@ export async function updateTicketSsoConfig(input: Omit<TicketSsoConfig, 'hasCli
 export interface CdsInstanceMode {
   /** true = 预览实例（CDS 托管 CDS 的分支预览），宿主/docker 操作已禁用。 */
   previewInstance: boolean;
+  /** 预览实例装入的父实例数据镜像摘要；生产实例恒为 null / 缺席。 */
+  mirror?: PreviewMirrorSummary | null;
+}
+
+/** 父实例镜像摘要（services/preview-mirror.ts 的 LoadedPreviewMirrorSummary）。 */
+export interface PreviewMirrorSummary {
+  capturedAt: string;
+  label: string;
+  projects: number;
+  branches: number;
+  runningBranches: number;
+  containersWithMetrics: number;
+}
+
+export function formatMirrorCapturedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 /** 实例模式探针（公开）。预览实例时 Shell 顶部渲染提示条。 */

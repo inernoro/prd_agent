@@ -5,6 +5,7 @@ import { StateService } from './state.js';
 import type { WorktreeService } from './worktree.js';
 import type { SchedulerService } from './scheduler.js';
 import { buildWidgetScript } from '../widget-script.js';
+import { profileHostsPreviewInstance } from './preview-instance.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { isAutoWakeEligible } from './branch-wake-eligibility.js';
@@ -2628,11 +2629,19 @@ ${shouldAutoRefresh ? `;(function(){
           const badgeSha = (modeLabel === '极速'
             ? (entry?.ciTargetSha || entry?.githubCommitSha)
             : (entry?.githubCommitSha || entry?.ciTargetSha)) || '';
+          // 托管态：这条分支起的是 CDS 预览实例（CDS 托管 CDS），徽章换成深绿的
+          // 「CDS 托管 CDS」变体，子实例侦测到它就不再画自己的橙 pill。判据看 profile.env
+          // 里 compose 声明的 CDS_PREVIEW_INSTANCE（cds-compose.selfhost.yml），
+          // 与子实例自己的判定同源（preview-instance.ts）。
+          const hostedCds = this.stateService.getBuildProfiles()
+            .filter((p) => p.projectId === entry?.projectId)
+            .some((p) => profileHostsPreviewInstance(p, this.stateService.getCustomEnv(entry?.projectId)));
           const widget = buildWidgetScript(
             branchCtx.branchId,
             branchCtx.branchName,
             badgeSha,
             modeLabel,
+            hostedCds,
           );
 
           // Inject before </body> if present, otherwise append

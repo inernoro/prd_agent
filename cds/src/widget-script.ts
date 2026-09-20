@@ -15,6 +15,15 @@ export function buildWidgetScript(
   // （极速/源码），保证首屏即可见；下面的 /api/branches 拉取会再刷新一次。
   initialSha = '',
   initialModeLabel = '',
+  /**
+   * 托管态（2026-09-16）：这条分支起的是一个 CDS 预览实例（CDS 托管 CDS）。
+   * 徽章改深绿严肃配色，首段固定写「CDS 托管 CDS」，末尾提示部署 / docker 已禁用；
+   * 展开面板不再给「更新 / 全量更新」按钮——那是对父实例发的部署命令，子实例由父实例
+   * 按分支部署，推新 commit 即重建。原先这句话由子实例自己在页面底部画一条橙 pill，
+   * 与本徽章并排两条（用户 2026-09-16：「这两个可以结合一下」）；合并后子实例侦测到
+   * 本徽章存在就不再画自己的那条。
+   */
+  hostedCds = false,
 ): string {
   // Escape for safe embedding in <script> tag
   const safeId = branchId.replace(/['"<>&]/g, '');
@@ -33,6 +42,7 @@ export function buildWidgetScript(
   var API='/_cds/api';
   var BRIDGE_ENABLED=${bridgeEnabled ? 'true' : 'false'};
   var DEPLOY_MODE_LABEL='${safeMode}';
+  var HOSTED_CDS=${hostedCds ? 'true' : 'false'};
 
   // ── Styles ──
   var css=document.createElement('style');
@@ -58,6 +68,11 @@ export function buildWidgetScript(
     #cds-widget .cds-badge.is-syncing::before{opacity:1;background:linear-gradient(120deg,transparent 0%,rgba(255,255,255,0.1) 42%,transparent 72%);animation:cds-sync-sweep 1.7s ease-in-out infinite}
     #cds-widget .cds-badge.is-sync-success{background:rgba(19,41,28,0.95);border-color:rgba(63,185,80,0.45)}
     #cds-widget .cds-badge.is-sync-error{background:rgba(52,23,27,0.95);border-color:rgba(248,81,73,0.45)}
+    #cds-widget .cds-badge.is-hosted-cds{background:rgba(12,46,30,0.96);border-color:rgba(74,222,128,0.34);box-shadow:0 2px 10px rgba(0,0,0,0.35),inset 0 1px 0 rgba(255,255,255,0.05)}
+    #cds-widget .cds-badge.is-hosted-cds .cds-sha{background:rgba(74,222,128,0.14);border-color:rgba(74,222,128,0.32);color:#dcfce7}
+    #cds-widget .cds-hosted-label{font-size:10px;font-weight:700;letter-spacing:0.06em;padding:2px 6px;border-radius:4px;background:rgba(74,222,128,0.16);border:1px solid rgba(74,222,128,0.34);color:#bbf7d0;white-space:nowrap}
+    #cds-widget .cds-hosted-note{font-size:10px;color:#86efac;opacity:0.85;white-space:nowrap}
+    #cds-widget .cds-hosted-panel-note{margin-top:2px;padding:6px 8px;border-radius:6px;background:rgba(74,222,128,0.08);border:1px solid rgba(74,222,128,0.22);font-size:10px;line-height:1.5;color:#bbf7d0}
     #cds-widget .cds-badge-main{position:relative;z-index:1;display:flex;align-items:center;gap:6px}
     #cds-widget .cds-badge--compact{padding:0;width:36px;height:36px;border-radius:18px;align-items:center;justify-content:center;cursor:pointer}
     #cds-widget .cds-badge--compact button{display:flex;align-items:center;justify-content:center;width:36px;height:36px;margin:0;padding:0;border:none;background:transparent;color:#e2e8f0;cursor:pointer}
@@ -605,8 +620,16 @@ export function buildWidgetScript(
         if(commitSha)h+='<span class="cds-commit-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
         h+='</div>';
         if(commitMsg)h+='<div class="cds-commit-msg" title="'+commitMsg.replace(/"/g,'&quot;')+'">'+commitMsg+'</div>';
+        if(HOSTED_CDS){
+          h+='<div class="cds-hosted-panel-note">这是 CDS 托管的 CDS 预览实例：由父实例按分支部署，推送新 commit 即自动重建；实例内的部署 / docker 操作已禁用。</div>';
+          h+='<div style="display:flex;flex-direction:column;gap:4px;margin-top:6px">';
+          for(var hi=0;hi<profiles.length;hi++){
+            h+='<div class="cds-deploy-row"><button class="cds-log-btn" data-log-profile="'+profiles[hi].id+'" title="查看 '+profiles[hi].name+' 日志" style="width:auto;padding:0 8px;gap:6px">'+ICON_LOG+' '+profiles[hi].name+' 日志</button></div>';
+          }
+          h+='</div>';
+        }
         // Deploy mode selectors
-        for(var mi=0;mi<profiles.length;mi++){
+        for(var mi=0;mi<profiles.length&&!HOSTED_CDS;mi++){
           var mp=profiles[mi];
           if(mp.deployModes&&Object.keys(mp.deployModes).length>0){
             var modes=mp.deployModes;
@@ -625,7 +648,7 @@ export function buildWidgetScript(
           }
         }
         h+='<div style="display:flex;flex-direction:column;gap:4px">';
-        for(var i=0;i<profiles.length;i++){
+        for(var i=0;i<profiles.length&&!HOSTED_CDS;i++){
           var p=profiles[i];
           var modeTag='';
           if(p.activeDeployMode&&p.deployModes&&p.deployModes[p.activeDeployMode]){
@@ -639,7 +662,7 @@ export function buildWidgetScript(
           h+='<button class="cds-log-btn" data-log-profile="'+p.id+'" title="查看 '+p.name+' 日志">'+ICON_LOG+'</button>';
           h+='</div>';
         }
-        if(profiles.length>1){
+        if(profiles.length>1&&!HOSTED_CDS){
           var isAll=deploying&&deployProfileId===null;
           h+='<button class="cds-deploy-btn full" data-profile="__all__"'+(deploying?' disabled':'')+' style="opacity:'+(deploying&&deployProfileId!==null?'0.5':'1')+'">';
           h+=(isAll?'<span class="cds-spinner"></span>':ICON_REFRESH);
@@ -680,6 +703,7 @@ export function buildWidgetScript(
 
     // Badge
     var badgeClass='cds-badge';
+    if(HOSTED_CDS)badgeClass+=' is-hosted-cds';
     if(syncState.visible){
       if(syncState.phase==='syncing')badgeClass+=' is-syncing';
       else if(syncState.phase==='done')badgeClass+=' is-sync-success';
@@ -688,10 +712,12 @@ export function buildWidgetScript(
     h+='<div class="'+badgeClass+'" onmousedown="return false">';
     h+='<div class="cds-badge-main">';
     h+='<span class="cds-badge-icon">'+(syncState.visible&&syncState.phase==='syncing'?ICON_REFRESH:ICON_BRANCH)+'</span>';
+    if(HOSTED_CDS)h+='<span class="cds-hosted-label">CDS 托管 CDS</span>';
     // 版本信息放最前（紧跟图标），避免被很长的分支名挤到看不见；sha / 模式各自配色。
     if(commitSha)h+='<span class="cds-sha" title="'+commitSha+'">'+shortSha(commitSha)+'</span>';
     if(DEPLOY_MODE_LABEL)h+='<span class="cds-mode'+(DEPLOY_MODE_LABEL==='极速'?' fast':' source')+'">'+DEPLOY_MODE_LABEL+'</span>';
     h+='<span class="cds-branch">'+BRANCH_NAME+'</span>';
+    if(HOSTED_CDS)h+='<span class="cds-hosted-note">部署 / docker 已禁用</span>';
     if(syncState.visible){
       var syncChipClass='cds-sync-chip'+(syncState.phase==='done'?' done':syncState.phase==='error'?' error':'');
       h+='<span class="'+syncChipClass+'" title="'+syncLabelText().replace(/"/g,'&quot;')+'">';
