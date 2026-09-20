@@ -10,6 +10,7 @@ import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
   MAP_DESIGN_WORKSPACE_SCHEMA,
+  NEW_PAGE_SKELETON_BASE64,
   OPEN_DESIGN_CODEX_VERSION,
   OPEN_DESIGN_IMAGE,
   buildOpenDesignCodexConfig,
@@ -1017,11 +1018,14 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
     expect(fs.readFileSync(path.join(shell.workspaceDir, 'index.html'))).toEqual(fs.readFileSync(path.join(shell.workspaceDir, 'current/index.html')));
-    // 起始页必须从**改好之后**的那份拷贝来。直接从上游来源 cp 就等于把一张
-    // 带 href="#" 与裸 button 的违规模板发回去当起始页——2026-09-20 五条 run
-    // 稳定死在锚点 1,2,3（模板 topnav 那三条）就是这么来的。
-    expect(preparedDesignTemplate?.command).toContain('if [ ! -f /workspace/index.html ]; then cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html; fi');
-    expect(preparedDesignTemplate?.command).not.toContain('cp /app/plugins/_official/examples/web-prototype/assets/template.html /workspace/index.html');
+    // 新建页面的起始页必须是空白骨架，不能是模板——模板通篇 `[REPLACE]`，MAP 落库前
+    // 一律拒收残留的 `[REPLACE]`，而同一份提示词还明说「模板的样例文案不得出现在产物里」。
+    // 2026-09-20 七条 run 的每一次失败都能追到起始页自带的模板内容。
+    expect(preparedDesignTemplate?.command).toContain('if [ ! -f /workspace/index.html ]; then echo ');
+    expect(preparedDesignTemplate?.command).toContain('base64 -d > /workspace/index.html; fi');
+    expect(preparedDesignTemplate?.command).not.toContain('template.html /workspace/index.html');
+    // 骨架本身不许带占位符，否则等于换个地方重犯。
+    expect(Buffer.from(NEW_PAGE_SKELETON_BASE64, 'base64').toString('utf8')).not.toMatch(/\[\s*replace\s*\]/i);
     // 模板改写与它的自证必须都在这一条命令里；少了自证，上游换措辞时 sed 会静默不命中。
     expect(preparedDesignTemplate?.command).toContain('<a href="#hero">[REPLACE] Link 1</a>');
     expect(preparedDesignTemplate?.command).toContain('id="hero" data-od-id="hero"');
