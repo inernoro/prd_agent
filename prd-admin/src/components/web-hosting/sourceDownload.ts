@@ -12,7 +12,8 @@ export interface SourceDownloadSite {
   title?: string;
   entryFile?: string;
   fileCount?: number;
-  totalSize?: number;
+  /** 入口文件**自己**的字节数（后端 SharedSiteInfo.EntrySize）。取不到时为 0 / undefined */
+  entrySize?: number;
   pdfAssetUrl?: string;
   wrappedAssetType?: string | null;
 }
@@ -115,14 +116,24 @@ export function planSourceDownload(site: SourceDownloadSite): SourceDownloadPlan
   // 3) 普通 HTML 站
   const fileCount = site.fileCount ?? 1;
 
-  // 单文件站的 totalSize 就是入口 HTML 的大小，超过代理上限就直说，别让人点一次才知道。
-  // 多文件站不能这样判：它的 totalSize 是所有文件之和，入口那一份可能远小于上限，
-  // 拿总和去拦会把本来下得动的站点误伤掉（形状 1：判据比该管的范围宽也是错）。
-  const totalSize = site.totalSize ?? 0;
-  if (fileCount === 1 && totalSize > SOURCE_PROXY_MAX_BYTES) {
+  /*
+   * 拿**入口文件自己的**大小判，不拿 totalSize。
+   *
+   * 上一版用 totalSize 近似，于是只能对单文件站成立——多文件站的 totalSize 是所有文件之和，
+   * 入口那份可能只有几十 KB，拿总和去拦会误伤。可那个特例又把「多文件站里入口 HTML 本身
+   * 超过 2MB」的一类漏掉了：按钮看着能用，点下去必然被代理拒（Codex 第四轮 P2）。
+   *
+   * 正解不是在近似值上继续打补丁，而是让后端把真正该判的那个数给出来
+   * （SharedSiteInfo.EntrySize）。换成它之后，判据对单文件站和多文件站是同一条，特例消失。
+   *
+   * 后端取不到入口条目时给 0：那就不拦，失败时仍有受控文案兜底——宁可多给一次尝试，
+   * 也不要凭一个不知道的数去拦掉本来下得动的站点。
+   */
+  const entrySize = site.entrySize ?? 0;
+  if (entrySize > SOURCE_PROXY_MAX_BYTES) {
     return {
       kind: 'unavailable',
-      reason: `这份源文件 ${formatBytes(totalSize)}，超过服务端取回通道的 2MB 上限。`
+      reason: `这份源文件 ${formatBytes(entrySize)}，超过服务端取回通道的 2MB 上限。`
         + '可以用顶栏的「新窗口打开」，在浏览器里另存。',
     };
   }
@@ -204,12 +215,25 @@ const FAILURE_COPY: ReadonlyArray<{ match: RegExp; text: string }> = [
   },
 ];
 
-/** 失败提示：主句给人话，原始报错留作附注（排在后面，排障仍然用得上） */
+/**
+ * 失败提示。
+ *
+ * detail（原始报错）**只在认不出这条错误时**才带上，这是两条要求折中出来的：
+ *
+ * - `external-cause-first` 要求内因别删掉、只是下沉——排障要用；
+ * - 但这里的读者是分享链接的**外部访客**（客户、合作方），不是运维。认得出来的错误已经
+ *   有了受控文案，再把 `HTTP 404` 摆给他，增量信息为零、观感是「这系统在冒内部细节」
+ *   （Codex 第四轮 P2）。
+ *
+ * 认不出来的时候情况反过来：受控文案只能给一句通用的「稍后再试」，此时原文是他唯一能
+ * 转述给分享者/支持的线索，删掉等于让他两手空空。所以那一档保留。
+ */
 export function describeDownloadFailure(message?: string | null): { text: string; detail?: string } {
   const raw = (message ?? '').trim();
   const hit = FAILURE_COPY.find((rule) => rule.match.test(raw));
+  if (hit) return { text: hit.text };
   return {
-    text: hit?.text ?? '取源文件失败了，稍后再试一次；一直不行就找分享者要原始文件。',
+    text: '取源文件失败了，稍后再试一次；一直不行就找分享者要原始文件。',
     detail: raw || undefined,
   };
 }

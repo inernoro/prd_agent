@@ -66,10 +66,10 @@ describe('源文件形态判定', () => {
    * 取正文那条路由读满 2MB 就断，而托管上传允许到 500MB——两个数字差两个量级。
    * 与其让用户点一次换一个后端报错，不如在按下之前就判出来并说清替代路径。
    */
-  it('单文件站超过代理上限：不宣称能下，直接说清并给替代路径', () => {
+  it('入口文件超过代理上限：不宣称能下，直接说清并给替代路径', () => {
     const plan = planSourceDownload({
       title: '巨型单页', entryFile: 'index.html', fileCount: 1,
-      totalSize: SOURCE_PROXY_MAX_BYTES + 1,
+      entrySize: SOURCE_PROXY_MAX_BYTES + 1,
     });
     expect(plan.kind).toBe('unavailable');
     if (plan.kind !== 'unavailable') throw new Error('unreachable');
@@ -79,20 +79,30 @@ describe('源文件形态判定', () => {
 
   it('刚好压线的不拦', () => {
     expect(planSourceDownload({
-      title: 't', entryFile: 'index.html', fileCount: 1, totalSize: SOURCE_PROXY_MAX_BYTES,
+      title: 't', entryFile: 'index.html', fileCount: 1, entrySize: SOURCE_PROXY_MAX_BYTES,
     }).kind).toBe('html');
   });
 
   /**
-   * 多文件站**不能**用 totalSize 拦。
+   * 判据认的是**入口文件自己**的大小，与站点有几个文件无关。
    *
-   * 它的 totalSize 是所有文件之和，入口那一份可能只有几十 KB；拿总和去拦会把本来
-   * 下得动的站点误伤掉——判据比它该管的范围宽，同样是形状 1。
+   * 上一版拿 totalSize 近似，只好写成「只对单文件站判」；那个特例又把「多文件站里入口
+   * 本身超 2MB」漏掉了（Codex 第四轮 P2）。换成后端给的 entrySize 之后，两种站点同一条判据。
    */
-  it('多文件站的总和再大也不拦，入口那一份可能很小', () => {
+  it('多文件站里入口自己超限，同样要拦', () => {
     expect(planSourceDownload({
-      title: 't', entryFile: 'index.html', fileCount: 30, totalSize: 400 * 1024 * 1024,
+      title: 't', entryFile: 'index.html', fileCount: 30, entrySize: SOURCE_PROXY_MAX_BYTES + 1,
+    }).kind).toBe('unavailable');
+  });
+
+  it('入口不大就不拦，哪怕整站几百 MB（判据只认入口那一份）', () => {
+    expect(planSourceDownload({
+      title: 't', entryFile: 'index.html', fileCount: 30, entrySize: 50 * 1024,
     }).kind).toBe('html');
+  });
+
+  it('后端给不出入口大小（0）时不拦——不凭一个不知道的数拦掉本来下得动的站点', () => {
+    expect(planSourceDownload({ title: 't', entryFile: 'index.html', fileCount: 1 }).kind).toBe('html');
   });
 
   /**
@@ -205,12 +215,19 @@ describe('失败文案', () => {
     expect(out.text).not.toMatch(/HTTP\s*404/);
   });
 
-  it('原始报错不丢，降级成附注给排障用', () => {
-    const raw = '站点内容读取失败（HTTP 502）';
-    expect(describeDownloadFailure(raw).detail).toBe(raw);
+  /**
+   * 认得出来的错误**不带**原始报错。
+   *
+   * 读者是分享链接的外部访客，不是运维：受控文案已经说清了怎么回事，再摆一句
+   * `HTTP 404` 增量为零（Codex 第四轮 P2）。认不出来的那一档反过来——见下一条。
+   */
+  it('认得出来的错误不把 HTTP 细节带给访客', () => {
+    expect(describeDownloadFailure('站点内容读取失败（HTTP 404）').detail).toBeUndefined();
+    expect(describeDownloadFailure('站点内容读取失败（HTTP 502）').detail).toBeUndefined();
+    expect(describeDownloadFailure('站点入口文件超过 2MB，不支持读取').detail).toBeUndefined();
   });
 
-  it('认不出来的报错也给人话兜底，并保留原文', () => {
+  it('认不出来时保留原文——那是访客唯一能转述给分享者的线索', () => {
     const out = describeDownloadFailure('something weird');
     expect(out.text).toContain('稍后再试');
     expect(out.detail).toBe('something weird');
