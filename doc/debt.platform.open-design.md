@@ -1204,3 +1204,30 @@ CDS 侧闸门全绿）。剩下的问题是**时间**：质量修复回路最多
 - 超时：`cds/src/services/agent-workspace-session-runtime.ts` 的执行截止与
   `prd-api/src/PrdAgent.Api/Services/DesignArtifactExecutor.cs` 的 `RunTimeout`
 - 修复轮次：同上文件的 `MAX_QUALITY_REPAIR_ATTEMPTS`
+
+## 四条资源上限类拒绝没有修复条目（2026-09-20，B 类）
+
+质量闸能抛出的消息里有四条走不到修复回路——`classifyQualityRepairReason` 没有对应条目，
+执行器直接重抛，四轮修复一次都不跑：
+
+- `index.html contains too much visible text to validate safely`
+- `index.html contains too many fragment targets to validate safely`
+- `index.html contains too many missing fragment targets to report safely`
+- `index.html exceeds the supported HTML nesting depth`
+
+四条都是「页面大到校验不动」，与「这里有个缺陷，去改」不是一类，所以现状是硬失败。
+它们其实多半可修（少写几个锚点、拆浅嵌套），但本 PR 的单一目标不含它们，
+也没有一条真实 run 命中过，按 AGENTS.md 5.5 记 B 类。
+
+**已经不会再多出第五条**：`cds/tests/services/agent-workspace-session-runtime.test.ts`
+的「every quality rejection must reach the repair loop」扫源码断言——凡是
+`design_output_quality_rejected` 能抛出的字面量消息都必须分得出类，上面四条是显式豁免表，
+表里每一条还必须真的能被抛出来（防死规则）。**新增消息一律不许进那张表。**
+
+这条守卫正是 Codex 在 `3b97d8a` 上报的那条 P1 的一般形式：我加「起始页原样交回」判据时
+只加了闸门没加分类条目，第九条 run 实测当场失败、零修复。逐条补条目治不住下一次，扫源码可以。
+
+### 实现来源
+
+- 闸门与分类器：`cds/src/services/agent-workspace-session-runtime.ts` 的
+  `createArtifactQualityGate` 与 `classifyQualityRepairReason`

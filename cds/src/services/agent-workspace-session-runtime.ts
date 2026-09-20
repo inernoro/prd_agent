@@ -2558,7 +2558,7 @@ export class AgentWorkspaceSessionRuntime {
         : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
       'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
       'Those reference files demonstrate two shapes the publication gate always rejects: anchors written as href="#" or href="" (template topnav, layouts.md "View all"), and bare enabled buttons with no declarative behavior ([REPLACE] CTA). They are layout sketches, not permitted markup. Copy their layout, never those two shapes.',
-      'Every anchor you emit must point somewhere real: an absolute URL taken from the MAP sources, or href="#section-id" where that id exists on this page. Make the navigation actually jump to your own sections. A label that is not meant to navigate is not an anchor at all - render it as span, li, or heading text. Every enabled button must either drive a real popover via popovertarget, or be rewritten as an anchor to one of your own sections; a caption that does nothing is plain text. None of this counts as removing a requested control, because the template never requested them - the rule about not removing controls protects what the MAP instruction asked for, not boilerplate you copied from the sketch.',
+      'Every anchor you emit must point at a fragment of this same page: href="#section-id" where that id exists here. That is the only link target the publication policy accepts - an absolute or relative URL fails the package validator instead, and that failure gets no repair pass. Make the navigation actually jump to your own sections. A label that is not meant to navigate is not an anchor at all - render it as span, li, or heading text. Every enabled button must either drive a real popover via popovertarget, or be rewritten as an anchor to one of your own sections; a caption that does nothing is plain text. None of this counts as removing a requested control, because the template never requested them - the rule about not removing controls protects what the MAP instruction asked for, not boilerplate you copied from the sketch.',
       editingExistingPage
         ? 'A starting /workspace/index.html already exists; it is the exact current published page and must remain the starting point. The generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.'
         : 'This is a new page. Create /workspace/index.html from the MAP task and knowledge sources; the generic template is reference material only and its sample identity or copy must not appear in the deliverable.',
@@ -3615,16 +3615,25 @@ export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): 
         + 'if a single one remains.',
     };
   }
+  if (message === 'index.html is still the untouched starter template') {
+    return {
+      code: 'untouched_starter_template',
+      instruction: 'You returned the starter template unchanged: its layout-instruction comment is still inside <main>, '
+        + 'so no real page was produced. Build the actual page now from the MAP task in /workspace/brief/task.json and the '
+        + 'knowledge sources - replace the entire contents of <main> with real sections and copy, and fill every remaining '
+        + 'slot in the header and footer. Keep the template only as a layout and styling reference.',
+    };
+  }
   if (message === 'index.html contains a link without a target') {
     return {
       code: 'link_without_target',
-      instruction: `${brokenAnchorLocationHint(error.details)}Every anchor needs a real destination. Give each one an absolute URL from the MAP sources, or href="#section-id" pointing at an id that exists on this page. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. The web-prototype template is the usual source of these; its markup is a sketch, not permitted output.`.trim(),
+      instruction: `${brokenAnchorLocationHint(error.details)}Every anchor needs a real destination, and the publication policy accepts exactly one kind: href="#section-id" pointing at an id that exists on this page. An absolute or relative URL fails the package validator instead, with no repair pass. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. The web-prototype template is the usual source of these; its markup is a sketch, not permitted output.`.trim(),
     };
   }
   if (message === 'index.html contains an empty link target') {
     return {
       code: 'empty_link_target',
-      instruction: `${brokenAnchorLocationHint(error.details)}href="#" and href="" are rejected without exception, including in the topnav and footer. Point each anchor at a real destination instead: an absolute URL from the MAP sources, or href="#section-id" where that id exists on this page, so the navigation actually jumps to your own sections. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. You most likely copied these from the web-prototype template or layouts.md; those files are layout sketches, not permitted markup, and rewriting them here is not removing a requested control.`.trim(),
+      instruction: `${brokenAnchorLocationHint(error.details)}href="#" and href="" are rejected without exception, including in the topnav and footer. Point each anchor at a fragment of this same page instead: href="#section-id" where that id exists here, so the navigation actually jumps to your own sections. That is the only link target the publication policy accepts - an absolute or relative URL fails the package validator, with no repair pass. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. You most likely copied these from the web-prototype template or layouts.md; those files are layout sketches, not permitted markup, and rewriting them here is not removing a requested control.`.trim(),
     };
   }
   if (message === 'index.html contains a malformed fragment target') {

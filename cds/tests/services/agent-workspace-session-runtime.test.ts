@@ -3741,3 +3741,49 @@ describe('unreplaced template placeholders are caught where the repair loop can 
     expect(instruction.length).toBeLessThan(700);
   });
 });
+
+/**
+ * Codex 在 `3b97d8a` 上报的那条 P1 的一般形式：质量闸抛了一条消息，`classifyQualityRepairReason`
+ * 没有对应条目，执行器就直接重抛——四轮修复一次都不会跑。我加「起始页原样交回」时正好犯了这个
+ * （第九条 run 实测当场失败、零修复）。逐条补条目治不住下一次，所以这里扫源码：
+ * 凡是 `design_output_quality_rejected` 能抛出的字面量消息，都必须分得出类。
+ * 判据只认字面量——带模板插值的消息（例如带数量的那几条）由它们自己的用例覆盖。
+ */
+describe('every quality rejection must reach the repair loop', () => {
+  it('has a classifier entry for each literal rejection message the gate can throw', () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, '../../src/services/agent-workspace-session-runtime.ts'),
+      'utf8',
+    );
+    const messages = [...source.matchAll(
+      /AgentWorkspaceRuntimeError\(\s*'design_output_quality_rejected',\s*'([^']+)'/g,
+    )].map((match) => match[1]);
+
+    // 扫到的条数掉到个位数就说明正则失配了，那种"全绿"比没有守卫更糟。
+    expect(messages.length).toBeGreaterThan(8);
+
+    // 显式豁免，不是「顺手放过」：这三条是资源上限类拒绝（页面大到校验不动），
+    // 与「这里有个缺陷，去改」不是一类。它们早于本次改动就没有修复条目，
+    // 本 PR 的单一目标不含它们，按 AGENTS.md 5.5 记 B 类，去向见
+    // doc/debt.platform.open-design.md。新增消息一律不许进这张表——那正是本守卫要防的。
+    const knownTerminalLimits = [
+      'index.html contains too much visible text to validate safely',
+      'index.html contains too many fragment targets to validate safely',
+      'index.html contains too many missing fragment targets to report safely',
+      'index.html exceeds the supported HTML nesting depth',
+    ];
+    const unclassified = [...new Set(messages)]
+      .filter((message) => !knownTerminalLimits.includes(message))
+      .filter((message) => (
+        classifyQualityRepairReason(
+          new AgentWorkspaceRuntimeError('design_output_quality_rejected', message, false),
+        ) === undefined
+      ));
+
+    expect(unclassified).toEqual([]);
+    // 豁免表里的每一条都必须还真的能被抛出来，否则它就是一条永不生效的死规则。
+    for (const exempted of knownTerminalLimits) {
+      expect(messages).toContain(exempted);
+    }
+  });
+});
