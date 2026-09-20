@@ -318,8 +318,14 @@ export default function BranchlineScene({ rootRef }) {
     const root = rootRef && rootRef.current;
     if (!canvas || !root) return undefined;
 
-    let built;
-    try { built = buildScene(canvas); } catch { return undefined; } // 无 WebGL：退化成纯文字长页
+    // 构建推迟到叙事区第一次进入视口：停在 hero 的访客不为 renderer、PMREM、几何体、HalfFloat 后期缓冲买单
+    let built = null; let buildFailed = false;
+    const ensureBuilt = () => {
+      if (built) return true;
+      if (buildFailed) return false;
+      try { built = buildScene(canvas); } catch { buildFailed = true; } // 无 WebGL：退化成纯文字长页
+      return Boolean(built);
+    };
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     const copies = Array.from(root.querySelectorAll('[data-cdsh-chapter]'));
     const rails = Array.from(root.querySelectorAll('[data-cdsh-rail]'));
@@ -338,6 +344,7 @@ export default function BranchlineScene({ rootRef }) {
       const inView = rect.bottom > 0 && rect.top < vh;
       // 离屏就真的停：不再重排帧。留在 hero 或页脚时一帧都不跑，由下面的 IntersectionObserver 叫醒
       if (!inView) { last = 0; return; }
+      if (!ensureBuilt()) return;
       if (!sized) { built.resize(window.innerWidth, vh); sized = true; }
       const target = clamp01(-rect.top / Math.max(1, rect.height - vh));
       // 按时间插值而不是按帧：低帧率设备（软渲染约 2–3fps）上按帧插值要十几秒才跟上
@@ -377,7 +384,7 @@ export default function BranchlineScene({ rootRef }) {
       if (onScroll) window.removeEventListener('scroll', onScroll);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVis);
-      built.dispose();
+      if (built) built.dispose();
     };
   }, [rootRef]);
 

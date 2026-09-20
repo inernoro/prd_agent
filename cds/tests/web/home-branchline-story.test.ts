@@ -19,7 +19,10 @@ const css = fs.readFileSync(path.join(WEB, 'pages/HomePage.css'), 'utf-8');
 
 describe('首页 Branchline 叙事区', () => {
   it('HomePage 挂了叙事区，五章齐全，顶栏锚点仍有落点', () => {
-    expect(home).toContain("from '@/components/effects/BranchlineScene'");
+    // Codex 2026-09-20 P2：three + postprocessing 不进首页主链路，滚到叙事区才下载
+    expect(home, '场景必须 lazy 动态引入').toMatch(/lazy\(\(\) => import\('@\/components\/effects\/BranchlineScene'\)\)/);
+    expect(home, '不许再静态引入').not.toMatch(/^import .*BranchlineScene/m);
+    expect(home, '场景组件要等叙事区进入视口才挂载，否则 lazy 只是拆包不省下载').toMatch(/armed \? <BranchlineScene rootRef=\{rootRef\} \/> : null/);
     expect(home).toContain('<BranchlineStory onEnter={openAccessMode} />');
     const ids = [...home.matchAll(/^\s+id: '([a-z]+)', rail: '0(\d) /gm)].map((m) => m[1]);
     expect(ids).toEqual(['workflow', 'features', 'preview', 'observability', 'ship']);
@@ -45,6 +48,7 @@ describe('首页 Branchline 叙事区', () => {
     expect(scene).toContain("matchMedia('(prefers-reduced-motion: reduce)')");
     // Codex 2026-09-20 两条 P2：离屏时不许再排帧；reduced-motion 下时钟必须冻结，不只是关掉滚动插值
     expect(scene, '离屏的那一帧必须直接 return，不能再 requestAnimationFrame').toMatch(/if \(!inView\) \{[^}]*return; \}/);
+    expect(scene, 'WebGL 构建必须发生在 inView 判定之后，停在 hero 的访客不建场景').toMatch(/if \(!inView\) \{[^}]*return; \}\s*\n\s*if \(!ensureBuilt\(\)\) return;/);
     expect(scene, '离屏后要有门铃把循环叫醒').toContain('new IntersectionObserver(');
     expect(scene, 'reduced-motion 下传给 render 的时钟要冻结').toMatch(/built\.render\(p, reduced \? 0 : now \* 0\.001/);
     expect(scene, 'reduced-motion 下画完一帧就停，不许按刷新率重绘相同画面').toMatch(/if \(!reduced\) raf = requestAnimationFrame\(frame\);/);

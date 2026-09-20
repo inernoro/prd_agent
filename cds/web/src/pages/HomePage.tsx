@@ -12,10 +12,11 @@
  * 品牌橙只用于"活着的东西"(状态点/数据流/光束);所有滚动显现与打字动效
  * 在 prefers-reduced-motion 下降级为静态。
  */
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import ShapeGrid from '@/components/effects/ShapeGrid';
-import BranchlineScene from '@/components/effects/BranchlineScene';
+// 叙事场景（three + postprocessing，约 690 kB）不进首页主链路：滚到叙事区才下载；场景自己再等进入视口才建 WebGL
+const BranchlineScene = lazy(() => import('@/components/effects/BranchlineScene'));
 import { CdsGem } from '@/components/brand/CdsGem';
 import { fetchSessionAuthed } from '@/lib/api';
 import './HomePage.css';
@@ -136,10 +137,21 @@ const STORY: Array<{
 
 function BranchlineStory({ onEnter }: { onEnter: () => void }): JSX.Element {
   const rootRef = useRef<HTMLDivElement>(null);
+  // 叙事区第一次进入视口才挂载场景：lazy 只拆包，挂载即下载；停在 hero 的访客连那 690 kB 都不该下
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof IntersectionObserver !== 'function') { setArmed(true); return undefined; }
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) { setArmed(true); io.disconnect(); }
+    });
+    io.observe(root);
+    return () => io.disconnect();
+  }, []);
   return (
     <div className="cdsh-story" ref={rootRef}>
       <div className="cdsh-story-stage">
-        <BranchlineScene rootRef={rootRef} />
+        <Suspense fallback={null}>{armed ? <BranchlineScene rootRef={rootRef} /> : null}</Suspense>
         <div className="cdsh-story-vignette" aria-hidden />
         <nav className="cdsh-rail" aria-label="章节">
           {STORY.map((c, i) => (
