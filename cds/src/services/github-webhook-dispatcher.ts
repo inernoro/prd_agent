@@ -175,6 +175,8 @@ export interface WebhookDispatchResult {
     | 'ignored-auto-deploy-off'
     | 'ignored-project-paused'
     | 'ignored-bot-push'
+    // head commit 的提交信息带 [skip ci] 一类标记：推送者明说了不要自动化
+    | 'ignored-skip-marker'
     // 一仓多项目：该项目声明了构建输入范围，而本次改动一条都没落进去
     | 'ignored-out-of-scope'
     | 'ignored-doc-only'
@@ -299,6 +301,49 @@ export interface GitHubPushEvent {
  * GitHub 的 bot 账号通常同时带 type=Bot 与 `[bot]` login；两种信号都接收，
  * 兼容 webhook fixture、旧 GitHub Enterprise 和字段不完整的代理转发。
  */
+/**
+ * 提交信息里的「跳过 CI」标记。GitHub Actions / GitLab / CircleCI 都认这几种写法；
+ * 推这种提交的人已经明确说了「这次不要跑自动化」，CDS 建预览属于同一类自动化。
+ *
+ * 只看 head_commit（这次 push 落地的那个提交）——中间提交的标记不算，和 GitHub Actions 口径一致。
+ * 真实事故（2026-09-14 ~ 09-18）：myTapd 的发布工作流每次发版后用人类账号推一条
+ * `chore/archive-changelogs-<run id>` 分支，提交信息写着 `[skip ci]`。机器人过滤只认
+ * `[bot]` 账号，于是四天里建了 30 条一次性分支、每条都排队构建，把构建队列堵到 51 条。
+ */
+const SKIP_MARKERS = ['[skip ci]', '[ci skip]', '[no ci]', '[skip actions]', '[actions skip]', '[skip cds]', '[cds skip]'] as const;
+/** git trailer 行的形状：`Token: value`，token 只许字母数字和连字符（git interpret-trailers 的口径）。 */
+const TRAILER_LINE = /^[A-Za-z0-9-]+:\s*\S.*$/;
+
+/**
+ * 提交信息的 trailer 段：最后一个段落（空行分隔），且段落里每一行都是 `Token: value`。
+ * 正文里某一行碰巧长得像 trailer 不算——GitHub 也只认结尾的 trailer 块。
+ */
+function commitTrailers(message: string): Array<{ token: string; value: string }> {
+  const paragraphs = message.replace(/\r\n?/g, '\n').trimEnd().split(/\n\s*\n/);
+  const last = paragraphs[paragraphs.length - 1] ?? '';
+  const lines = last.split('\n').map((l) => l.trim()).filter(Boolean);
+  // 单段落的提交信息只有标题，没有 trailer 段
+  if (paragraphs.length < 2 || lines.length === 0 || !lines.every((l) => TRAILER_LINE.test(l))) return [];
+  return lines.map((l) => {
+    const i = l.indexOf(':');
+    return { token: l.slice(0, i).trim().toLowerCase(), value: l.slice(i + 1).trim().toLowerCase() };
+  });
+}
+
+export function findSkipMarker(message: string | null | undefined): string | null {
+  if (typeof message !== 'string' || !message) return null;
+  const lower = message.toLowerCase();
+  for (const marker of SKIP_MARKERS) {
+    if (lower.includes(marker)) return marker;
+  }
+  // GitHub 还认 git trailer `skip-checks: true`——必须在结尾 trailer 块里，且是最后一条
+  // （文档原话：If you already have other trailers in your commit message, skip-checks should be last）
+  const trailers = commitTrailers(message);
+  const last = trailers[trailers.length - 1];
+  if (last && last.token === 'skip-checks' && last.value === 'true') return 'skip-checks: true';
+  return null;
+}
+
 export function isGitHubBotSender(sender: GitHubPushEvent['sender']): boolean {
   if (!sender) return false;
   if (sender.type?.toLowerCase() === 'bot') return true;
@@ -1446,6 +1491,18 @@ export class GitHubWebhookDispatcher {
         action: 'ignored-bot-push',
         message: `Project '${project.name}' 已过滤机器人账号 '${senderLogin}' 的 push，不创建 CDS 版本。`,
       };
+    }
+
+    // 提交信息带 [skip ci] 一类标记：与机器人过滤同一层级、同一理由——推送者已经
+    // 声明这次不要自动化，在建 worktree / 写版本元数据 / 派发构建之前短路。
+    {
+      const skipMarker = findSkipMarker(event.head_commit?.message);
+      if (skipMarker) {
+        return {
+          action: 'ignored-skip-marker',
+          message: `Project '${project.name}' 的分支 '${branchName}' 提交信息带 ${skipMarker}，按推送者要求不创建 CDS 预览。`,
+        };
+      }
     }
 
     // 发布中心「自动发布规则」（design_handoff_release_center §4）。
