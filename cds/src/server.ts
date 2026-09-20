@@ -1963,6 +1963,12 @@ export function createServer(deps: ServerDeps): express.Express {
   //     解析器；不跳过的话截图附件会在 body-parser 阶段就被全局 100kb 上限 413 掉，
   //     且响应是 HTML 不是 JSON，前端只能显示一段读不懂的报错。
   // rawBody 仅签名校验类路由（GitHub webhook）需要，上述两个路径都不需要。
+  // 转发给 MAP 的模型请求路径。只认这两条终点，不用裸前缀——`/api/design-artifacts/` 下
+  // 还有用户自己的接口，那些该照常解析。
+  const isDesignRuntimeModelProxyPath = (requestPath: string): boolean =>
+    requestPath.startsWith('/api/design-artifacts/runtime/')
+    && (requestPath.endsWith('/llm/v1/chat/completions') || requestPath.endsWith('/llm/v1/responses'));
+
   const globalJsonParser = express.json({
     verify: (req, _res, buf) => {
       (req as { rawBody?: Buffer }).rawBody = buf;
@@ -1972,6 +1978,11 @@ export function createServer(deps: ServerDeps): express.Express {
     if (isSealedStorageRequest(req)) return next();
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
     if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
+    //   - OpenDesign 运行时的模型代理：这条根本不是 CDS 自己的接口，是**转发**给 MAP 的
+    //     请求体，CDS 没有任何理由去解析它。而它随对话增长——2026-09-20 实测第 14 次模型
+    //     调用时撞上 100kb 上限，容器拿到一个 HTML 的 413（栈里是 raw-body），
+    //     错误文案读起来像模型出错，实际是转发层把自己的解析上限套在了别人的请求上。
+    if (isDesignRuntimeModelProxyPath(req.path)) return next();
     return globalJsonParser(req, res, next);
   });
 

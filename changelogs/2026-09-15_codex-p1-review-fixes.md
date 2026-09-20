@@ -201,3 +201,5 @@
 | security | prd-api | OpenDesign 运行时数据面的请求体不再落进共享日志表：`workspace/result` 的 body 是 `files[].contentBase64`——刚生成的整页 HTML 与由知识库推导出的正文，而这条路由是 `[AllowAnonymous]`、落库挂匿名身份，apirequestlogs 又是同项目所有分支预览共用的那张表（`cross-project-isolation.md` 通道 4），等于把一个用户的私人产物摊给所有分支。按既有的 `/api/open/` `/api/mcp` 同一套口径收进凭据路径清单；用户侧的 `design-artifacts/runs` 仍照常记录 |
 | fix | prd-api | 运行时的模型代理两条路由改为始终按流式放行：中间件此前只看请求 `Accept` 判流式，而容器里的 SDK 常常带 `application/json` 或 `*/*`、只在 body 里写 `stream`。判错的代价不是少一条日志，是响应被换成 MemoryStream 全量缓冲、CDS 一个字节都收不到，撞上它自己 90 秒的中继空闲超时——一次健康的长生成被掐断，现象看起来还像「模型很慢」。这很可能就是第十条 run 那次 15 分钟超时的根因之一 |
 | test | prd-api | 新增四组守卫（复用既有的反射探针，不抄第二份判据）：数据面三条路由的 body 必须被挡、用户侧接口仍照常记录、模型代理两条必须判成流式、同前缀的非模型路由不许被顺手收走。红绿闭环：撤掉两处改动，三条当场变红 |
+| fix | cds | CDS 不再用自己的全局 JSON 解析器去解一条只负责转发的请求：OpenDesign 的模型调用随对话增长，实测第 14 次撞上 `express.json()` 默认的 100kb 上限，容器拿到一个 HTML 的 413（栈里是 raw-body），错误文案读起来像模型出错。同一个洞此前已以「验收报告正文」「快捷提 bug 的截图附件」两种形态出现过，同一处注释里写着同一句诊断——这是第三次。按既有先例加进跳过清单，只认 `/llm/v1/chat/completions` 与 `/llm/v1/responses` 两条终点，用户自己的 design-artifacts 接口照常解析 |
+| test | cds | 新增守卫：跳过清单里必须有模型代理这一条，且匹配范围只覆盖那两条终点、不得用裸前缀把用户接口一起收走。判据选「在跳过清单里」而不是「上限调到多大」——CDS 没有理由解析它只转发的东西，调大上限只是把下一次 413 推后。红绿闭环：删掉那行当场变红 |
