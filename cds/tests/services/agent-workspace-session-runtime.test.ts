@@ -10,7 +10,6 @@ import {
   AgentWorkspaceRuntimeError,
   AgentWorkspaceSessionRuntime,
   MAP_DESIGN_WORKSPACE_SCHEMA,
-  NEW_PAGE_SKELETON_BASE64,
   OPEN_DESIGN_CODEX_VERSION,
   OPEN_DESIGN_IMAGE,
   buildOpenDesignCodexConfig,
@@ -1018,14 +1017,14 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/layouts.md');
     expect(preparedDesignTemplate?.command).toContain('/workspace/.od-skills/web-prototype/references/checklist.md');
     expect(fs.readFileSync(path.join(shell.workspaceDir, 'index.html'))).toEqual(fs.readFileSync(path.join(shell.workspaceDir, 'current/index.html')));
-    // 新建页面的起始页必须是空白骨架，不能是模板——模板通篇 `[REPLACE]`，MAP 落库前
-    // 一律拒收残留的 `[REPLACE]`，而同一份提示词还明说「模板的样例文案不得出现在产物里」。
-    // 2026-09-20 七条 run 的每一次失败都能追到起始页自带的模板内容。
-    expect(preparedDesignTemplate?.command).toContain('if [ ! -f /workspace/index.html ]; then echo ');
-    expect(preparedDesignTemplate?.command).toContain('base64 -d > /workspace/index.html; fi');
-    expect(preparedDesignTemplate?.command).not.toContain('template.html /workspace/index.html');
-    // 骨架本身不许带占位符，否则等于换个地方重犯。
-    expect(Buffer.from(NEW_PAGE_SKELETON_BASE64, 'base64').toString('utf8')).not.toMatch(/\[\s*replace\s*\]/i);
+    // 起始页仍是模板（OpenDesign 的 import 要一张有结构的页面，给空白骨架它就产出空白），
+    // 但必须先清空 `[REPLACE] xxx` 占位文案——MAP 落库前一律拒收残留的 `[REPLACE]`。
+    expect(preparedDesignTemplate?.command).toContain('cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html');
+    expect(preparedDesignTemplate?.command).toContain('[REPLACE]');
+    // 清不干净就让准备步骤失败，而不是把带占位符的起始页发出去。
+    // 命令是 shell-quote 过的，单引号会长成 '"'"'，所以只断言不含单引号的片段。
+    expect(preparedDesignTemplate?.command).toContain('[ *replace *\\]');
+    expect(preparedDesignTemplate?.command).toContain('/workspace/index.html; fi');
     // 模板改写与它的自证必须都在这一条命令里；少了自证，上游换措辞时 sed 会静默不命中。
     expect(preparedDesignTemplate?.command).toContain('<a href="#hero">[REPLACE] Link 1</a>');
     expect(preparedDesignTemplate?.command).toContain('id="hero" data-od-id="hero"');
@@ -1037,7 +1036,8 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(preparedDesignTemplate?.command).toContain('\\[REPLACE\\] tagline · contact@example\\.com');
     // 两份 HTML 模板各要一条「空链接/裸按钮」自证 + 一条「邮箱/日期」自证，少一条就有一份没被守住。
     expect(preparedDesignTemplate?.command.match(/! grep -qE/g)?.length).toBe(2);
-    expect(preparedDesignTemplate?.command.match(/! grep -qiE/g)?.length).toBe(2);
+    // 三条：两份模板各一条「邮箱/日期」，外加起始页那条「清不干净就失败」。
+    expect(preparedDesignTemplate?.command.match(/! grep -qiE/g)?.length).toBe(3);
     // 片段自证：每个 href="#x" 都要在同一份文件里找到真的 id="x"。判据必须排除 data-od-id，
     // 否则它自己会被那个子串骗过去（第一版就这么错过一次，把空链接换成了不存在的片段）。
     expect(preparedDesignTemplate?.command).toContain('grep -qE "(^|[[:space:]])id=\\"$frag\\"" "$f" || exit 1');
@@ -3673,5 +3673,31 @@ describe('inert buttons must be reported together with their positions', () => {
     expect(reject(`${text}<button disabled>a</button><button disabled>b</button>`
       + `<button disabled>c</button><a href="#">链接</a><button>坏</button>`).message)
       .toBe('index.html contains an empty link target');
+  });
+});
+
+/**
+ * 2026-09-20 第八条 run：起始页换成空白骨架之后，模型一字未改地交了回来——
+ * 六个文件收上来、所有闸门"通过"、进度 100、用户拿到一张空页。比失败更糟的那种成功。
+ * 判据取模板正文里那段「把版式粘到这里」的指示注释：真做过的页面会把 <main> 整段换掉，
+ * 它留不下来。比「可见文字少于 N 个字」准，也不会误伤本就很小的页面。
+ * 红绿闭环：把这条判据删掉，第一条会红。
+ */
+describe('an untouched starter template is not a deliverable', () => {
+  const gate = () => createArtifactQualityGate('', [], '');
+
+  it('rejects a page that still carries the template layout instruction', () => {
+    const untouched = '<!doctype html><html><body><p>真实内容段落。</p>'
+      + '<main id="content"><!-- PASTE LAYOUTS FROM references/layouts.md HERE. --></main></body></html>';
+
+    expect(() => gate()(Buffer.from(untouched)))
+      .toThrow('index.html is still the untouched starter template');
+  });
+
+  it('leaves a page that replaced the template body alone', () => {
+    const real = '<!doctype html><html><body><main id="content">'
+      + '<h1>码安全与性能架构提升</h1><p>真实内容段落。</p></main></body></html>';
+
+    expect(() => gate()(Buffer.from(real))).not.toThrow();
   });
 });

@@ -25,16 +25,26 @@ const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-pr
  * 导航真的跳到自己的章节，CTA 是一个有去处的锚点。改的是 CDS 的拷贝，上游镜像不动。
  */
 /**
- * 新建页面时放进工作区的空白起始页（base64 免去 shell 引号地狱）。
+ * 新建页面的起始页：从改好之后的模板拷贝来，再把 `[REPLACE] xxx` 占位文本清空。
  *
- * 原本这里放的是模板本身，而模板通篇是 `[REPLACE] xxx` ——MAP 落库前会拒收任何
- * 残留的 `[REPLACE]`，模型又总会漏掉几个。同一份提示词还明说「新建页面时模板只是参考，
- * 它的样例身份与文案不得出现在产物里」：一边这么说，一边把那张样例页直接铺成起始页，
- * 自相矛盾。所以新建页面给一张空白骨架，模板留在 .od-skills 里当参考。
+ * 为什么仍然用模板：OpenDesign 的 import 要的是一张有结构的页面。给它一张空白骨架，
+ * 它就产出空白——2026-09-20 第八条 run 实测：六个文件收上来了、index.html 一字未动、
+ * 所有闸门都「通过」，用户拿到一张空页。那是比失败更糟的一种成功。
  *
- * 不是「干脆不建这个文件」：留一个合法的空文件，任何依赖它存在的步骤照旧成立。
+ * 为什么要清空占位文本：模板通篇 `[REPLACE] xxx`，而 MAP 落库前
+ * （`EnsureNoUnresolvedTemplatePlaceholders`）拒收任何残留的 `[REPLACE]`，模型总会漏几个
+ * ——第七条 run 就死在这里。清空之后结构与样式全在（模型有槽可填），漏填一处渲染成空元素，
+ * 既不是 `[REPLACE]` 也不是整条 run 失败。参考拷贝 .od-skills 保持原样，模型仍看得出哪里是槽。
+ *
+ * 末尾那条 grep 是自证：清不干净就让整个准备步骤失败，而不是把带 `[REPLACE]` 的起始页发出去。
  */
-export const NEW_PAGE_SKELETON_BASE64 = 'PCFkb2N0eXBlIGh0bWw+CjxodG1sIGxhbmc9InpoLUNOIj4KPGhlYWQ+CjxtZXRhIGNoYXJzZXQ9InV0Zi04Ij4KPG1ldGEgbmFtZT0idmlld3BvcnQiIGNvbnRlbnQ9IndpZHRoPWRldmljZS13aWR0aCwgaW5pdGlhbC1zY2FsZT0xIj4KPC9oZWFkPgo8Ym9keT4KPG1haW4gaWQ9ImNvbnRlbnQiPjwvbWFpbj4KPC9ib2R5Pgo8L2h0bWw+Cg==';
+const NEW_PAGE_SEED = [
+  'if [ ! -f /workspace/index.html ]; then',
+  'cp /workspace/.od-skills/web-prototype/assets/template.html /workspace/index.html &&',
+  `sed -i 's|\\[REPLACE\\][^<]*||g' /workspace/index.html &&`,
+  `! grep -qiE '\\[ *replace *\\]' /workspace/index.html;`,
+  'fi',
+].join(' ');
 
 const WEB_PROTOTYPE_TEMPLATE_FILES = [
   '/app/design-templates/web-prototype/assets/template.html',
@@ -301,6 +311,11 @@ const MAX_RUNTIME_DIAGNOSTIC_BYTES = 2 * 1024;
 // allowing OpenDesign enough passes to converge instead of failing a valid task after
 // only two repairs.
 const MAX_QUALITY_REPAIR_ATTEMPTS = 4;
+
+/** 模板 <main> 里那段「把版式粘到这里」的指示注释。留在交付页面里 = 起始页原样交回。 */
+const TEMPLATE_UNTOUCHED_MARKER = 'PASTE LAYOUTS FROM references/layouts.md HERE';
+
+
 const MAX_OUTPUT_FILE_COUNT = 100;
 const MAX_WORKSPACE_FILE_COUNT = 1024;
 const MAX_WORKSPACE_NODE_COUNT = 2048;
@@ -2285,7 +2300,13 @@ export class AgentWorkspaceSessionRuntime {
           // （`predicate-and-wiring-discipline.md` 形状 8：不成立的证据当成证据）。
           WEB_PROTOTYPE_TEMPLATE_ASSERT,
           // 起始页从**改好之后**的那份拷贝来，不从原始来源来——否则又把违规模板发回去。
-          `if [ ! -f /workspace/index.html ]; then echo ${NEW_PAGE_SKELETON_BASE64} | base64 -d > /workspace/index.html; fi`,
+          // 起始页仍从改好之后的模板拷贝来——OpenDesign 的 import 要的是一张有结构的页面，
+          // 给空白骨架它就产出空白（实测第八条 run：六个文件收上来了，index.html 一字未动，
+          // 所有闸门都"通过"，用户拿到一张空页。比失败更糟的那种成功）。
+          // 但模板通篇 `[REPLACE] xxx`，MAP 落库前一律拒收——所以起始页里把这些占位文本清空：
+          // 结构与样式全留着（模型有槽可填），漏填一处渲染成空元素，而不是渲染成 `[REPLACE]`
+          // 也不是整条 run 失败。参考拷贝 .od-skills 保持原样，模型仍看得出哪里是槽。
+          NEW_PAGE_SEED,
           'test -f /app/design-templates/web-prototype/SKILL.md',
           'test -f /app/design-templates/web-prototype/assets/template.html',
           'test -f /app/design-templates/web-prototype/references/layouts.md',
@@ -4325,6 +4346,17 @@ function validateArtifactQuality(
   }
   if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visible)) {
     throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains visible placeholder or unfinished content');
+  }
+  // 起始页是一张清空了占位文案的模板，模型一字未改地交回来时，它的可见文字只剩一个版权符号，
+  // 「有没有可见内容」那条判据放它过去，于是整条链路全绿、用户拿到一张空页
+  // （2026-09-20 第八条 run 实测，比失败更糟的那种成功）。
+  // 判据取模板正文里那段「把版式粘到这里」的指示注释：真做过的页面会把 <main> 的内容整段换掉，
+  // 它留不下来；留着就是确证「起始页原样交回」。比「可见文字少于 N 个字」准，也不会误伤小页面。
+  if (html.includes(TEMPLATE_UNTOUCHED_MARKER)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html is still the untouched starter template',
+    );
   }
   for (const [index, constraint] of visibleTextOccurrenceConstraints.entries()) {
     const actualOccurrences = countLiteralOccurrences(visible, constraint.text);
