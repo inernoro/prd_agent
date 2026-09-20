@@ -138,6 +138,9 @@ CLAUDE.md / AGENTS.md §0 禁止任何 emoji。但仓库**存量语料**里仍�
 
 - `.claude/skills/**/SKILL.md` 及其 `reference/*.md`：用 emoji 作状态/分级标记（对勾、叉号、警告三角、灯泡、红/绿圆点、实心星、空心方框 等）。
 - `doc/**/*.md`：约 2600+ 处既有 emoji（含语义状态标记），散在 130+ 文件。
+- `CHANGELOG.md`：**38 行**历史条目带 emoji 或符号（对勾、垃圾桶、警告三角、命令键、箭头、三角标 等）。这些行由历次周报归档脚本从当期碎片原样搬入，**碎片侧没有 emoji 闸**。其中一行的内容恰好是「部署日志去 emoji」而自己带着警告三角。
+  - **复发点**：每次周报归档都会有 Codex 把这 38 行报成「本次归档新引入」——因为归档在 `[未发布]` 段顶部插入上千行，把既有行整体下移，diff 视图里的新行号被读成新增。2026-W38 的 PR #1555 连报两轮，实测只扫「新增行」的 emoji 数为 **0**，main 与分支的 emoji 行数同为 **38**。
+  - **治本**：给周报归档脚本加一道 emoji 闸（归档时拒收带 emoji 的碎片行），并单独排一次存量 38 行的替换。两件都不该夹在周报 PR 里做。
 
 下游放大点：`scripts/bundle-official-skills.mjs` 把官方白名单技能的 SKILL.md 正文打包进
 `prd-api/src/PrdAgent.Api/OfficialSkills/official-skills.generated.json`，该 JSON 由 API 下发给
@@ -820,6 +823,39 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 
 ---
 
+## 缺陷统计两个端点口径不一致（2026-09-20）
+
+**一句话**：同一批缺陷，两个端点给出的数互相矛盾，导致「积压 33」大于「未关 32」这种不可能的组合。
+
+**欠什么**：两处统计对「已软删」的处理不一致——
+
+| 端点 | 取数的地方 | 有没有排除已软删 |
+|---|---|---|
+| 缺陷台账统计 | 缺陷智能体控制器的统计总览 | **有**——查询条件里显式要求「未删除」 |
+| 团队洞察积压 | 经营洞察控制器的团队洞察，取「未关状态」那一段 | **无**——只按状态筛，不看删除标记 |
+
+（两处的文件与函数名见文末「实现来源」。）
+
+于是状态仍为「未关」的软删缺陷会被算进积压，而不会被算进未关总数，两个数就对不上了。
+
+**怎么发现的**：2026-W38 周报把两个数并排放进质量闸，Codex review 指出「子集比全集大，不可能」。
+周报侧当期的处理是**按各自口径原样列出并标明差异**，没有去调和数字——调和要改后端，属扩范围。
+
+**影响**：只影响读数与判断，不影响数据本身。但「积压」这个数会被系统性高估（高估量 = 状态未关的软删缺陷数），
+任何拿它做人力或流程决策的地方都偏保守。
+
+**偿还方案**（二选一，倾向后者）：
+
+1. 给 `ExecutiveController` 的 `openDefects` 补上同样的 `IsDeleted == false` 过滤；
+2. 更彻底：把「什么算一条未关缺陷」收敛成**唯一判定源**，两处共用——否则下一个新增的统计入口还会各写一遍
+   （`predicate-and-wiring-discipline.md` 形状 3）。
+
+**完成判据**：同一时刻调两个端点，「停留超 7 天的积压数」必须 ≤「未关总数」；并补一条守卫钉住这个不变量。
+
+**负责人**：未指派（发现于 2026-W38 周报，PR #1555）。
+
+---
+
 ## 已结清（供回溯）
 
 下列条目台账里已自己标记为解决/交付，移到文末只为让上文只剩未还的账；内容原样保留。
@@ -846,3 +882,8 @@ PR 都会被它拦。该 job 是路径过滤的，多数 PR 会 skip，聚合的
 | 关联文件 | `prd-admin/src/pages/WebPagesPage.tsx::ShareDialog`、`prd-admin/src/pages/report-agent/components/ShareTeamWeekDialog.tsx` |
 | 相关 | `cds/src/services/preview-slug.ts`（slug 计算 SSOT含 v1/v2/v3 沿革） |
 | 相关 | `cds/tests/services/preview-entrypoints.test.ts`（入口表守卫含 67 字符现场用例） |
+
+### 缺陷统计口径不一致（2026-09-20 条目）的实现来源
+
+- 有过滤的一侧：`prd-api/src/PrdAgent.Api/Controllers/Api/DefectAgentController.cs` 的 `GetStatsOverview`
+- 无过滤的一侧：`prd-api/src/PrdAgent.Api/Controllers/Api/ExecutiveController.cs` 的 `GetTeamInsights`（`openDefects`）
