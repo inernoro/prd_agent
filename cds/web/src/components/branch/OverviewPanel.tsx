@@ -1510,7 +1510,9 @@ export function OverviewPanel({
           label="入口"
           value={<>{entries.length}<span className="text-[1.125rem] text-muted-foreground"> 个</span></>}
           sub={primaryEntry
-            ? <a href={primaryEntry.url} target="_blank" rel="noreferrer" className={`font-mono ${entriesReachable ? 'text-ok hover:underline' : 'text-muted-foreground hover:text-foreground'}`} title={primaryEntry.url}>{entryHost}</a>
+            /* 入口的绿灯与顶部结论同源（entriesReachable / copy.entryLabel 都出自同一张状态表），
+               链接旁边把「服务已就绪 / 未就绪，暂不可达」写出来，不让一个绿链接和「还有服务没起来」互相打脸 */
+            ? <><a href={primaryEntry.url} target="_blank" rel="noreferrer" className={`font-mono ${entriesReachable ? 'text-ok hover:underline' : 'text-muted-foreground hover:text-foreground'}`} title={primaryEntry.url}>{entryHost}</a><span className="ml-1.5">· {copy.entryLabel.replace(/^\s*·\s*/, '')}</span></>
             : copy.entryLabel.replace(/^\s*·\s*/, '') || '没有入口'}
           action={onConfigureEntries ? (
             <button type="button" className="inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-[0.75rem] text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground" onClick={onConfigureEntries} title="手动配置入口（新增子域入口 / 改名 / 改落地路径）">
