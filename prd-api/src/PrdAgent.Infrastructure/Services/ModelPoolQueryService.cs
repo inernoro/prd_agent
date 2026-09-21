@@ -13,17 +13,17 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class ModelPoolQueryService : IModelPoolQueryService
 {
-    private readonly IModelResolver _modelResolver;
+    private readonly ILlmGateway _gateway;
 
-    public ModelPoolQueryService(IModelResolver modelResolver)
+    public ModelPoolQueryService(ILlmGateway gateway)
     {
-        _modelResolver = modelResolver;
+        _gateway = gateway;
     }
 
     public async Task<List<ModelPoolForAppResult>> GetModelPoolsAsync(
         string? appCallerCode, string modelType, CancellationToken ct = default)
     {
-        var available = await _modelResolver.GetAvailablePoolsAsync(
+        var available = await _gateway.GetAvailablePoolsAsync(
             appCallerCode?.Trim() ?? string.Empty,
             modelType,
             ct);

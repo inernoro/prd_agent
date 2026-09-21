@@ -227,7 +227,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.I
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
-// 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
+// 业务模型目录适配器：必须跟随下方活动 ILlmGateway 的 inproc/http/shadow 路由。
 builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
 // 模型池故障通知与自动探活

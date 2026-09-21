@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
@@ -9,7 +10,7 @@ public class ModelPoolQueryServiceTests
     [Fact]
     public async Task GetModelPoolsAsync_UsesRuntimeCatalogAndPreservesPublicId()
     {
-        var resolver = new StubResolver
+        var gateway = new StubGateway
         {
             Pools =
             [
@@ -36,13 +37,13 @@ public class ModelPoolQueryServiceTests
                 },
             ],
         };
-        var service = new ModelPoolQueryService(resolver);
+        var service = new ModelPoolQueryService(gateway);
 
         var result = await service.GetModelPoolsAsync("literary-agent.content::chat", "chat");
 
         var model = Assert.Single(result);
-        Assert.Equal("literary-agent.content::chat", resolver.AppCallerCode);
-        Assert.Equal("chat", resolver.ModelType);
+        Assert.Equal("literary-agent.content::chat", gateway.AppCallerCode);
+        Assert.Equal("chat", gateway.ModelType);
         Assert.Equal("deepseek-ai-deepseek-v4-flash", model.Code);
         Assert.Equal("deepseek-ai-deepseek-v4-flash", Assert.Single(model.Models).ModelId);
         Assert.Equal("deepseek-ai/DeepSeek-V4-Flash", model.Name);
@@ -52,7 +53,7 @@ public class ModelPoolQueryServiceTests
     [Fact]
     public async Task GetModelPoolsAsync_PutsRuntimeDefaultFirst()
     {
-        var resolver = new StubResolver
+        var gateway = new StubGateway
         {
             Pools =
             [
@@ -60,7 +61,7 @@ public class ModelPoolQueryServiceTests
                 CreatePool("runtime-default", priority: 50, isDefault: true),
             ],
         };
-        var service = new ModelPoolQueryService(resolver);
+        var service = new ModelPoolQueryService(gateway);
 
         var result = await service.GetModelPoolsAsync("literary-agent.content::chat", "chat");
 
@@ -70,7 +71,7 @@ public class ModelPoolQueryServiceTests
     [Fact]
     public async Task GetModelPoolsAsync_WithoutCallerPreservesDefaultOnlyContract()
     {
-        var resolver = new StubResolver
+        var gateway = new StubGateway
         {
             Pools =
             [
@@ -78,13 +79,28 @@ public class ModelPoolQueryServiceTests
                 CreatePool("unrestricted-extra", priority: 10, isDefault: false),
             ],
         };
-        var service = new ModelPoolQueryService(resolver);
+        var service = new ModelPoolQueryService(gateway);
 
         var result = await service.GetModelPoolsAsync(null, "generation");
 
         var model = Assert.Single(result);
         Assert.Equal("runtime-default", model.Code);
-        Assert.Equal(string.Empty, resolver.AppCallerCode);
+        Assert.Equal(string.Empty, gateway.AppCallerCode);
+    }
+
+    [Fact]
+    public async Task GetModelPoolsAsync_DoesNotHideAuthoritativeGatewayFailureAsEmptyCatalog()
+    {
+        var gateway = new StubGateway
+        {
+            CatalogError = new InvalidOperationException("serving unavailable"),
+        };
+        var service = new ModelPoolQueryService(gateway);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            service.GetModelPoolsAsync("literary-agent.content::chat", "chat"));
+
+        Assert.Equal("serving unavailable", error.Message);
     }
 
     private static AvailableModelPool CreatePool(string publicId, int priority, bool isDefault)
@@ -107,11 +123,12 @@ public class ModelPoolQueryServiceTests
             ],
         };
 
-    private sealed class StubResolver : IModelResolver
+    private sealed class StubGateway : ILlmGateway
     {
         public List<AvailableModelPool> Pools { get; init; } = [];
         public string? AppCallerCode { get; private set; }
         public string? ModelType { get; private set; }
+        public Exception? CatalogError { get; init; }
 
         public Task<List<AvailableModelPool>> GetAvailablePoolsAsync(
             string appCallerCode,
@@ -120,10 +137,12 @@ public class ModelPoolQueryServiceTests
         {
             AppCallerCode = appCallerCode;
             ModelType = modelType;
+            if (CatalogError is not null)
+                throw CatalogError;
             return Task.FromResult(Pools);
         }
 
-        public Task<ModelResolutionResult> ResolveAsync(
+        public Task<GatewayModelResolution> ResolveModelAsync(
             string appCallerCode,
             string modelType,
             string? expectedModel = null,
@@ -132,13 +151,32 @@ public class ModelPoolQueryServiceTests
             CancellationToken ct = default)
             => throw new NotSupportedException();
 
-        public Task RecordSuccessAsync(ModelResolutionResult resolution, CancellationToken ct = default)
-            => Task.CompletedTask;
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
 
-        public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
-            => Task.CompletedTask;
+        public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
+            GatewayRequest request,
+            [EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
 
-        public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
-            => Task.CompletedTask;
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(
+            GatewayRawRequest request,
+            GatewayModelResolution resolution,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public PrdAgent.Core.Interfaces.ILLMClient CreateClient(
+            string appCallerCode,
+            string modelType,
+            int maxTokens = 4096,
+            double temperature = 0.2,
+            bool includeThinking = false,
+            string? expectedModel = null,
+            string? pinnedPlatformId = null,
+            string? pinnedModelId = null)
+            => throw new NotSupportedException();
     }
 }

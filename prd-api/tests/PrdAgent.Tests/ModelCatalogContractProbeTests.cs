@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -12,8 +13,8 @@ public class ModelCatalogContractProbeTests
     public async Task CheckAsync_PassesWhenEverySelectorUsesResolvablePublicId()
     {
         var catalog = new FakeCatalog(useDisplayNameAsMemberId: false);
-        var resolver = new FakeResolver();
-        var probe = new ModelCatalogContractProbe(catalog, resolver);
+        var gateway = new FakeGateway();
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
 
         var result = await probe.CheckAsync();
 
@@ -21,67 +22,67 @@ public class ModelCatalogContractProbeTests
         Assert.Equal(5, result.TargetCount);
         Assert.Equal(5, result.CatalogEntryCount);
         Assert.Empty(result.Failures);
-        Assert.Equal(5, resolver.CatalogCalls.Count);
-        Assert.Empty(resolver.ResolveCalls);
+        Assert.Equal(5, gateway.CatalogCalls.Count);
+        Assert.Empty(gateway.ResolveCalls);
     }
 
     [Fact]
     public async Task CheckAsync_FailsWhenSelectorLeaksDisplayNameInsteadOfPublicId()
     {
         var catalog = new FakeCatalog(useDisplayNameAsMemberId: true);
-        var resolver = new FakeResolver();
-        var probe = new ModelCatalogContractProbe(catalog, resolver);
+        var gateway = new FakeGateway();
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
 
         var result = await probe.CheckAsync();
 
         Assert.Equal(5, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":IDENTIFIER_DRIFT", failure));
-        Assert.Equal(5, resolver.CatalogCalls.Count);
-        Assert.Empty(resolver.ResolveCalls);
+        Assert.Equal(5, gateway.CatalogCalls.Count);
+        Assert.Empty(gateway.ResolveCalls);
     }
 
     [Fact]
     public async Task CheckAsync_FailsWhenCatalogDefaultDiffersFromRuntimeDefault()
     {
         var catalog = new FakeCatalog(useDisplayNameAsMemberId: false);
-        var resolver = new FakeResolver(automaticPublicId: "different-default");
-        var probe = new ModelCatalogContractProbe(catalog, resolver);
+        var gateway = new FakeGateway(automaticPublicId: "different-default");
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
 
         var result = await probe.CheckAsync();
 
         Assert.Equal(5, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":DEFAULT_RUNTIME_MISMATCH", failure));
-        Assert.Empty(resolver.ResolveCalls);
+        Assert.Empty(gateway.ResolveCalls);
     }
 
     [Fact]
     public async Task CheckAsync_FailsWhenEveryBusinessCatalogIsEmpty()
     {
         var catalog = new FakeCatalog(useDisplayNameAsMemberId: false, returnEmpty: true);
-        var resolver = new FakeResolver();
-        var probe = new ModelCatalogContractProbe(catalog, resolver);
+        var gateway = new FakeGateway();
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
 
         var result = await probe.CheckAsync();
 
         Assert.Equal(5, result.FailureCount);
         Assert.Equal(0, result.CatalogEntryCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":CATALOG_EMPTY", failure));
-        Assert.Empty(resolver.ResolveCalls);
+        Assert.Empty(gateway.ResolveCalls);
     }
 
     [Fact]
     public async Task CheckAsync_FailsButKeepsCatalogVisibleWhenModelIsUnavailable()
     {
         var catalog = new FakeCatalog(useDisplayNameAsMemberId: false, healthStatus: "Unavailable");
-        var resolver = new FakeResolver(healthStatus: "Unavailable");
-        var probe = new ModelCatalogContractProbe(catalog, resolver);
+        var gateway = new FakeGateway(healthStatus: "Unavailable");
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
 
         var result = await probe.CheckAsync();
 
         Assert.Equal(5, result.CatalogEntryCount);
         Assert.Equal(5, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":MODEL_UNAVAILABLE", failure));
-        Assert.Empty(resolver.ResolveCalls);
+        Assert.Empty(gateway.ResolveCalls);
     }
 
     private sealed class FakeCatalog(
@@ -125,14 +126,14 @@ public class ModelCatalogContractProbeTests
         }
     }
 
-    private sealed class FakeResolver(
+    private sealed class FakeGateway(
         string? automaticPublicId = null,
-        string healthStatus = "Healthy") : IModelResolver
+        string healthStatus = "Healthy") : ILlmGateway
     {
         public List<(string AppCallerCode, string? ExpectedModel)> ResolveCalls { get; } = [];
         public List<string> CatalogCalls { get; } = [];
 
-        public Task<ModelResolutionResult> ResolveAsync(
+        public Task<GatewayModelResolution> ResolveModelAsync(
             string appCallerCode,
             string modelType,
             string? expectedModel = null,
@@ -142,7 +143,7 @@ public class ModelCatalogContractProbeTests
         {
             ResolveCalls.Add((appCallerCode, expectedModel));
             var publicId = expectedModel ?? automaticPublicId ?? PublicId(appCallerCode);
-            return Task.FromResult(new ModelResolutionResult
+            return Task.FromResult(new GatewayModelResolution
             {
                 Success = true,
                 LogicalModelPublicId = publicId,
@@ -190,14 +191,33 @@ public class ModelCatalogContractProbeTests
                 ],
             };
 
-        public Task RecordSuccessAsync(ModelResolutionResult resolution, CancellationToken ct = default)
-            => Task.CompletedTask;
+        public Task<GatewayResponse> SendAsync(GatewayRequest request, CancellationToken ct = default)
+            => throw new NotSupportedException();
 
-        public Task RecordFailureAsync(ModelResolutionResult resolution, CancellationToken ct = default)
-            => Task.CompletedTask;
+        public async IAsyncEnumerable<GatewayStreamChunk> StreamAsync(
+            GatewayRequest request,
+            [EnumeratorCancellation] CancellationToken ct = default)
+        {
+            await Task.CompletedTask;
+            yield break;
+        }
 
-        public Task RecordUnavailableAsync(ModelResolutionResult resolution, CancellationToken ct = default)
-            => Task.CompletedTask;
+        public Task<GatewayRawResponse> SendRawWithResolutionAsync(
+            GatewayRawRequest request,
+            GatewayModelResolution resolution,
+            CancellationToken ct = default)
+            => throw new NotSupportedException();
+
+        public PrdAgent.Core.Interfaces.ILLMClient CreateClient(
+            string appCallerCode,
+            string modelType,
+            int maxTokens = 4096,
+            double temperature = 0.2,
+            bool includeThinking = false,
+            string? expectedModel = null,
+            string? pinnedPlatformId = null,
+            string? pinnedModelId = null)
+            => throw new NotSupportedException();
     }
 
     private static string PublicId(string? appCallerCode)

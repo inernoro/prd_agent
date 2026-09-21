@@ -11,8 +11,8 @@ using PrdAgent.Core.Models.AgentUniverse;
 using PrdAgent.Core.Models.Toolbox;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
-using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Core.LlmGateway;
 
 namespace PrdAgent.Api.Controllers.Api;
@@ -150,14 +150,17 @@ public class AgentUniverseController : ControllerBase
                 });
             }
 
-            // 尺寸：取首个（最高优先级）模型在适配器注册表里的真实尺寸列表
+            // 尺寸：逻辑 PublicId 不能直接匹配物理模型适配器。先让当前权威网关解析，
+            // 再使用解析结果里的实际模型与参数能力生成尺寸列表。
             var primaryModel = modelIds.FirstOrDefault();
             var sizes = new List<string>();
             if (!string.IsNullOrWhiteSpace(primaryModel))
             {
-                var cfg = ImageGenModelAdapterRegistry.TryMatch(primaryModel);
-                if (cfg != null)
-                    sizes = ImageGenModelAdapterRegistry.GetAllSizesFromConfig(cfg).Distinct().ToList();
+                sizes = await ReadImageSizesAsync(
+                    _gateway,
+                    AppCallerRegistry.AiToolbox.Agents.VisualGeneration,
+                    primaryModel,
+                    ct);
             }
             if (sizes.Count >= 2)
             {
@@ -172,6 +175,32 @@ public class AgentUniverseController : ControllerBase
         }
 
         return Ok(ApiResponse<object>.Ok(new { parameters }));
+    }
+
+    internal static async Task<List<string>> ReadImageSizesAsync(
+        ILlmGateway gateway,
+        string appCallerCode,
+        string logicalModelPublicId,
+        CancellationToken ct = default)
+    {
+        var resolution = await gateway.ResolveRequiredLogicalModelAsync(
+            appCallerCode,
+            ModelTypes.ImageGen,
+            logicalModelPublicId,
+            ct);
+        if (!resolution.Success)
+            return [];
+
+        var capabilities = GatewayImageModelCatalog.Describe(resolution);
+        if (capabilities is null || capabilities.SizesNotApplicable)
+            return [];
+
+        return capabilities.SizesByResolution.Values
+            .SelectMany(options => options)
+            .Select(option => option.Size)
+            .Where(size => !string.IsNullOrWhiteSpace(size))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
     }
 
     /// <summary>

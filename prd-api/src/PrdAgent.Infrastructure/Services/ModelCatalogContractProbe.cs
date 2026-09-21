@@ -23,12 +23,12 @@ public sealed class ModelCatalogContractProbe
     ];
 
     private readonly IModelPoolQueryService _catalog;
-    private readonly IModelResolver _resolver;
+    private readonly ILlmGateway _gateway;
 
-    public ModelCatalogContractProbe(IModelPoolQueryService catalog, IModelResolver resolver)
+    public ModelCatalogContractProbe(IModelPoolQueryService catalog, ILlmGateway gateway)
     {
         _catalog = catalog;
-        _resolver = resolver;
+        _gateway = gateway;
     }
 
     public async Task<ModelCatalogContractProbeResult> CheckAsync(CancellationToken ct = default)
@@ -51,7 +51,7 @@ public sealed class ModelCatalogContractProbe
                 // ResolveAsync 在半开线路上会认领恢复租约，不适合只读健康探针。
                 // GetAvailablePoolsAsync 内部同样经过真实 Offering 构建、调用方场景和名录门，
                 // 但不会占用半开租约；不可用项仍保留健康态，供这里把故障计入监控。
-                var runtimePools = await _resolver.GetAvailablePoolsAsync(
+                var runtimePools = await _gateway.GetAvailablePoolsAsync(
                     target.AppCallerCode,
                     target.ModelType,
                     ct);
