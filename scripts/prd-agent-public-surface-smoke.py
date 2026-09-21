@@ -345,7 +345,7 @@ def probe_gateway_once(
         "gateway-native-no-key": "gw/v1/send",
         "gateway-openai-no-key": "v1/chat/completions",
         "gateway-claude-no-key": "v1/messages",
-        "gateway-gemini-no-key": "v1beta/models/gateway-auto:generateContent",
+        "gateway-gemini-no-key": "v1beta/models/auto:generateContent",
     }
     for name, relative_path in protocol_paths.items():
         result = request_check(
