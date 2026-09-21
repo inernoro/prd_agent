@@ -1632,3 +1632,19 @@ json-event-stream 代理从未被告知「你的 `<artifact>` 会被丢掉」。
 
 - 发车前置检查：`.claude/skills/cds/cli/cdscli.py` 的 `self status`（读 `restartStatus` / `pidStartedAt`）
 - 重启时序：CDS 事件 `self-update.deploy-drain.completed`
+
+### 更正一条（2026-09-21）：我们的 systemPrompt 是被读的，只是排在技能提示之前
+
+上一节说 `routes/runs.js` 一次都没读 `systemPrompt`——那个文件里确实没有，但它把
+请求体整体（去掉几个敏感键后）转给了 `startChatRun`，后者在解构里就有 `systemPrompt`，
+拼装时以 `clientSystemPrompt` 那一段进入最终提示。所以提示词**是能到模型的**。
+
+真正要紧的是拼装顺序：`daemonSystemPrompt → clientSystemPrompt（我们的）→ userRequest
+→ skillPrompt（技能，最后）`。技能的 Output contract 是最后一句，而它明令「把整页包在
+`<artifact>` 里交、不要写根目录 HTML」。我们在前面说「写文件」，技能在后面说「别写」，
+模型听了后者——这与「换提示词毫无效果」的实测一致。但这仍是推断：
+下一跑起失败现场会带上 run 事件摘要（`runTranscriptDigest`），以那份记录为准。
+
+另外 `startChatRun` 的解构里还有每次 run 可传的 `skillId`（`run.skillId = skillId`）。
+若事件摘要证实模型确在交 `<artifact>` 文本，绕开技能那句的候选路径就在这里，
+但在拿到摘要之前不动它。

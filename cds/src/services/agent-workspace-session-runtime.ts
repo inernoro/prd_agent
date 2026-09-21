@@ -2687,6 +2687,8 @@ export class AgentWorkspaceSessionRuntime {
               deliverableValid: runOutcome.deliverableValid,
               deliverableValidation: runOutcome.deliverableValidation || null,
               deliverableEntryFile: deliverableEntryFile || null,
+              // 模型这一轮到底干了什么——没有这份记录，「没有 index.html」永远只能靠猜。
+              runTranscriptDigest: await this.captureRunTranscriptDigest(handle, [runId, finalRunId], executionDeadline),
             },
           );
         }
@@ -3397,6 +3399,59 @@ export class AgentWorkspaceSessionRuntime {
     }
   }
 
+  /**
+   * 失败取证用：把这一轮 OpenDesign run 的事件流拉回来压成一份有界摘要。
+   * 这是整条链路缺了很久的第一手记录——「模型这 15 分钟到底干了什么、说了什么、
+   * 调了哪些工具、写了哪些路径」。没有它，每次失败都只能猜（2026-09-20 我连猜了四次）。
+   *
+   * 取证失败绝不顶替原始故障：拿不到就返回 `{ available: false, reason }`。
+   * 内容先过 runtimeDiagnosticPreview（去掉 daemon 令牌与转移令牌、脱敏、截断）。
+   */
+  private async captureRunTranscriptDigest(
+    handle: RuntimeHandle,
+    runIds: string[],
+    executionDeadline: number,
+  ): Promise<Record<string, unknown>> {
+    const digests: Record<string, unknown>[] = [];
+    for (const runId of [...new Set(runIds.filter(Boolean))].slice(0, 3)) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(
+          () => controller.abort(),
+          Math.max(3_000, Math.min(this.remainingExecutionMs(executionDeadline), 20_000)),
+        );
+        let raw = '';
+        try {
+          const response = await this.fetchImpl(
+            `${handle.daemonBaseUrl}/api/runs/${encodeURIComponent(runId)}/events`,
+            { headers: { Authorization: `Bearer ${handle.daemonApiToken}`, Accept: 'text/event-stream' }, signal: controller.signal },
+          );
+          if (response.status !== 200) {
+            digests.push({ runId, available: false, reason: `HTTP ${response.status}` });
+            continue;
+          }
+          raw = (await readResponseLimited(response, MAX_PACKAGE_OVERHEAD_BYTES)).toString('utf8');
+        } finally {
+          clearTimeout(timer);
+        }
+        digests.push({ runId, available: true, ...summarizeRunEventStream(raw) });
+      } catch (error) {
+        digests.push({
+          runId,
+          available: false,
+          reason: error instanceof Error && error.name === 'AbortError' ? 'timed out' : 'fetch failed',
+        });
+      }
+    }
+    // 句柄上按设计不留转移令牌（transfer 是 Omit<..., 'transferToken'>），这里只需遮 daemon 令牌；
+    // runtimeDiagnosticPreview 内部还会再跑一遍通用脱敏。
+    const secrets = [handle.daemonApiToken].filter(
+      (value): value is string => typeof value === 'string' && value.length > 0,
+    );
+    // 整体再过一遍脱敏与截断：摘要里的文本片段来自模型输出，可能夹着任何东西。
+    return JSON.parse(runtimeDiagnosticPreview(JSON.stringify(digests), secrets).slice(0, 12_000) || '[]');
+  }
+
   private async waitForRun(
     handle: RuntimeHandle,
     runId: string,
@@ -3638,6 +3693,74 @@ export class AgentWorkspaceSessionRuntime {
       );
     }
   }
+}
+
+/**
+ * 把 OpenDesign 的 SSE 事件流（`id:` / `event:` / `data:` 帧）压成一份有界摘要：
+ * 各类事件计数、agent 事件的类型计数、用到的工具名与它们碰过的路径、最后一段模型文本、
+ * 错误信息、stdout/stderr 尾巴。只做统计与截尾，不做判断——判断留给读的人。
+ */
+export function summarizeRunEventStream(raw: string): Record<string, unknown> {
+  const records: Array<{ event: string; data: unknown }> = [];
+  for (const frame of raw.split(/\n\n+/)) {
+    let event = '';
+    const dataLines: string[] = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event: ')) event = line.slice(7).trim();
+      else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+    }
+    if (!event || dataLines.length === 0) continue;
+    try {
+      records.push({ event, data: JSON.parse(dataLines.join('\n')) });
+    } catch {
+      records.push({ event, data: { unparsed: dataLines.join('\n').slice(0, 200) } });
+    }
+  }
+  const eventCounts: Record<string, number> = {};
+  const agentTypeCounts: Record<string, number> = {};
+  const toolNames: Record<string, number> = {};
+  const touchedPaths = new Set<string>();
+  const errors: string[] = [];
+  let textTail = '';
+  let stdoutTail = '';
+  let stderrTail = '';
+  const str = (value: unknown): string => (typeof value === 'string' ? value : '');
+  for (const { event, data } of records) {
+    eventCounts[event] = (eventCounts[event] || 0) + 1;
+    const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+    if (event === 'agent') {
+      const type = str(record.type) || 'unknown';
+      agentTypeCounts[type] = (agentTypeCounts[type] || 0) + 1;
+      if (type === 'text_delta') textTail = (textTail + str(record.delta)).slice(-1_200);
+      if (type === 'tool_use' || type === 'tool_result' || type === 'artifact') {
+        const name = str(record.name) || str(record.tool) || str(record.toolName) || type;
+        toolNames[name] = (toolNames[name] || 0) + 1;
+        const input = record.input && typeof record.input === 'object' ? (record.input as Record<string, unknown>) : {};
+        for (const candidate of [record.path, input.file_path, input.path, input.filePath]) {
+          const value = str(candidate);
+          if (value) touchedPaths.add(value.slice(0, 200));
+        }
+      }
+      if (type === 'error') errors.push(str(record.message).slice(0, 300));
+    } else if (event === 'error') {
+      errors.push((str(record.message) || str(record.error) || JSON.stringify(record)).slice(0, 300));
+    } else if (event === 'stdout') {
+      stdoutTail = (stdoutTail + str(record.chunk)).slice(-600);
+    } else if (event === 'stderr') {
+      stderrTail = (stderrTail + str(record.chunk)).slice(-600);
+    }
+  }
+  return {
+    eventCount: records.length,
+    eventCounts,
+    agentTypeCounts,
+    toolNames,
+    touchedPaths: [...touchedPaths].slice(0, 30),
+    errors: errors.slice(0, 10),
+    textTail,
+    stdoutTail,
+    stderrTail,
+  };
 }
 
 export function canAcceptUntrackedWorkspaceEdit(

@@ -18,6 +18,7 @@ import {
   canAcceptUntrackedWorkspaceEdit,
   classifyQualityRepairReason,
   summarizeOutputPreflightDiagnostic,
+  summarizeRunEventStream,
   computePublicArtifactRevision,
   createArtifactQualityGate,
   hardenSelfContainedHtml,
@@ -3577,6 +3578,50 @@ describe('quality repair instructions must name a gate-passing alternative', () 
  * 排查当场断掉——和上一层「请在 CDS 会话日志中查看原因」是同一种病，只是低一层。
  * 红绿闭环：把摘要从错误文案里拿掉，这三条会红。
  */
+describe('run transcript digest（失败取证）', () => {
+  const frames = [
+    'id: 1\nevent: start\ndata: {"runId":"r1"}',
+    'id: 2\nevent: agent\ndata: {"type":"text_delta","delta":"I will read the seed first. "}',
+    'id: 3\nevent: agent\ndata: {"type":"tool_use","name":"apply_patch","input":{"file_path":"/workspace/index.html"}}',
+    'id: 4\nevent: agent\ndata: {"type":"tool_use","name":"shell","input":{"path":"/workspace/.od-skills/web-prototype/SKILL.md"}}',
+    'id: 5\nevent: agent\ndata: {"type":"text_delta","delta":"<artifact identifier=\\"code-security\\" type=\\"text/html\\">"}',
+    'id: 6\nevent: stdout\ndata: {"chunk":"codex exec started\\n"}',
+    'id: 7\nevent: error\ndata: {"message":"upstream 502 from model proxy"}',
+    'id: 8\nevent: agent\ndata: not-json-at-all',
+  ].join('\n\n') + '\n\n';
+
+  it('压成有界摘要：事件计数、工具名、碰过的路径、最后一段文本、错误', () => {
+    const digest = summarizeRunEventStream(frames) as any;
+    expect(digest.eventCount).toBe(8);
+    expect(digest.eventCounts).toEqual({ start: 1, agent: 5, stdout: 1, error: 1 });
+    expect(digest.agentTypeCounts.text_delta).toBe(2);
+    expect(digest.agentTypeCounts.tool_use).toBe(2);
+    expect(digest.toolNames).toEqual({ apply_patch: 1, shell: 1 });
+    expect(digest.touchedPaths).toEqual(['/workspace/index.html', '/workspace/.od-skills/web-prototype/SKILL.md']);
+    // 这一条就是判「模型有没有在交 <artifact> 文本」的直接证据
+    expect(digest.textTail).toContain('<artifact identifier="code-security"');
+    expect(digest.errors).toEqual(['upstream 502 from model proxy']);
+    expect(digest.stdoutTail).toContain('codex exec started');
+    // 解析不了的 data 帧不许让整份取证炸掉——它只是被记成 unknown
+    expect(digest.agentTypeCounts.unknown).toBe(1);
+  });
+
+  it('文本尾巴与路径清单都有上限，长流不会撑爆失败详情', () => {
+    const long = Array.from({ length: 200 }, (_, i) => (
+      `event: agent\ndata: {"type":"text_delta","delta":"${'x'.repeat(100)}"}\n\n`
+      + `event: agent\ndata: {"type":"tool_use","name":"write","input":{"path":"/workspace/f${i}.html"}}\n\n`
+    )).join('');
+    const digest = summarizeRunEventStream(long) as any;
+    expect(digest.textTail.length).toBeLessThanOrEqual(1200);
+    expect(digest.touchedPaths.length).toBeLessThanOrEqual(30);
+    expect(digest.toolNames.write).toBe(200);
+  });
+
+  it('空流给出零计数而不是抛错', () => {
+    expect((summarizeRunEventStream('') as any).eventCount).toBe(0);
+  });
+});
+
 describe('output preflight fallback must carry a real diagnostic', () => {
   it('keeps the tail of a long diagnostic and bounds it', () => {
     const summary = summarizeOutputPreflightDiagnostic(`${'x'.repeat(5000)} ENOSPC: no space left on device`);
