@@ -56,16 +56,8 @@ type BusinessModelPool = {
   models: Array<{
     modelId: string;
     platformId: string;
+    healthStatus?: string;
   }>;
-};
-
-type ResolverDebugResult = {
-  liveResolverOutput?: {
-    success?: boolean;
-    resolutionType?: string;
-    expectedModel?: string;
-  } | null;
-  liveResolverError?: string | null;
 };
 
 type AuthSession = {
@@ -2131,8 +2123,6 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       { endpoint: '/api/literary-agent/config/models/text2img', appCallerCode: 'literary-agent.illustration.text2img::generation', modelType: 'generation' },
       { endpoint: '/api/literary-agent/config/models/img2img', appCallerCode: 'literary-agent.illustration.img2img::generation', modelType: 'generation' },
     ];
-    const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
-
     for (const target of targets) {
       const pools = await readEnvelope<BusinessModelPool[]>(await request.get(
         target.endpoint,
@@ -2146,21 +2136,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         expect(pool.models).toHaveLength(1);
         expect(pool.models[0]?.modelId).toBe(pool.code);
         expect(pool.models[0]?.platformId).toBe('logical-model');
-
-        if (!production) {
-          const resolved = await request.post('/api/debug/resolver/test', {
-            data: {
-              appCallerCode: target.appCallerCode,
-              modelType: target.modelType,
-              expectedModel: pool.code,
-            },
-          });
-          const body = await resolved.json() as ResolverDebugResult;
-          expect(resolved.ok(), body.liveResolverError || `${pool.code} 解析请求失败`).toBe(true);
-          expect(body.liveResolverOutput?.success, body.liveResolverError || `${pool.code} 无法执行`).toBe(true);
-          expect(body.liveResolverOutput?.resolutionType).toBe('LogicalModel');
-          expect(body.liveResolverOutput?.expectedModel).toBe(pool.code);
-        }
+        expect(['Healthy', 'Degraded']).toContain(pool.models[0]?.healthStatus);
       }
     }
 

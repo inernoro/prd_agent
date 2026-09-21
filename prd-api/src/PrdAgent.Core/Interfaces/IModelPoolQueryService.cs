@@ -8,7 +8,7 @@ namespace PrdAgent.Core.Interfaces;
 public interface IModelPoolQueryService
 {
     /// <summary>
-    /// 根据 appCallerCode 与 modelType 查询运行时真正可解析的对外模型列表。
+    /// 根据 appCallerCode 与 modelType 查询运行时对外模型目录；暂不可用项保留并下发健康状态。
     /// </summary>
     /// <param name="appCallerCode">应用标识（如 visual-agent.image.text2img::generation），可为 null</param>
     /// <param name="modelType">模型类型（如 generation、chat、intent、vision）</param>

@@ -5,11 +5,11 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 业务模型选择器与运行时可执行目录的一致性探针。
+/// 业务模型选择器与运行时目录、当前可用性的一致性探针。
 ///
 /// 选择器曾从退场的 MAP 模型池读取成员展示名，而执行链路只接受 LLM Gateway
 /// 的稳定 PublicId。两边各自“有数据”却无法串起来，因此这里直接验证完整契约：
-/// 目录非空、默认项唯一、下发标识存在于运行时的无副作用可执行目录。
+/// 目录非空、默认项唯一、下发标识存在于运行时目录且至少有可用线路。
 /// </summary>
 public sealed class ModelCatalogContractProbe
 {
@@ -50,7 +50,7 @@ public sealed class ModelCatalogContractProbe
 
                 // ResolveAsync 在半开线路上会认领恢复租约，不适合只读健康探针。
                 // GetAvailablePoolsAsync 内部同样经过真实 Offering 构建、调用方场景和名录门，
-                // 但不会占用半开租约；用它作为运行时可执行目录做双向合同检查。
+                // 但不会占用半开租约；不可用项仍保留健康态，供这里把故障计入监控。
                 var runtimePools = await _resolver.GetAvailablePoolsAsync(
                     target.AppCallerCode,
                     target.ModelType,
@@ -98,6 +98,11 @@ public sealed class ModelCatalogContractProbe
                     {
                         failures.Add($"{target.Label}:SELECTED_MODEL_UNRESOLVED");
                     }
+                    else if (!string.Equals(member.HealthStatus, "Healthy", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(member.HealthStatus, "Degraded", StringComparison.OrdinalIgnoreCase))
+                    {
+                        failures.Add($"{target.Label}:MODEL_UNAVAILABLE");
+                    }
                 }
 
                 var runtimeDefaults = runtimePools.Where(pool => pool.IsDefault).ToArray();
@@ -122,7 +127,7 @@ public sealed class ModelCatalogContractProbe
 
         var distinctFailures = failures.Distinct(StringComparer.Ordinal).ToArray();
         var output = distinctFailures.Length == 0
-            ? $"{Targets.Length} 个业务选择器、{catalogEntries} 个对外模型均与运行时可执行目录一致"
+            ? $"{Targets.Length} 个业务选择器、{catalogEntries} 个对外模型均与运行时目录一致且当前可用"
             : $"业务模型目录有 {distinctFailures.Length} 处契约失配：{string.Join("、", distinctFailures.Take(5))}";
         return new ModelCatalogContractProbeResult(
             distinctFailures.Length,

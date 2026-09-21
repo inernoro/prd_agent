@@ -67,6 +67,26 @@ public class ModelPoolQueryServiceTests
         Assert.Equal(["runtime-default", "first-by-display-order"], result.Select(x => x.Code));
     }
 
+    [Fact]
+    public async Task GetModelPoolsAsync_WithoutCallerPreservesDefaultOnlyContract()
+    {
+        var resolver = new StubResolver
+        {
+            Pools =
+            [
+                CreatePool("runtime-default", priority: 50, isDefault: true),
+                CreatePool("unrestricted-extra", priority: 10, isDefault: false),
+            ],
+        };
+        var service = new ModelPoolQueryService(resolver);
+
+        var result = await service.GetModelPoolsAsync(null, "generation");
+
+        var model = Assert.Single(result);
+        Assert.Equal("runtime-default", model.Code);
+        Assert.Equal(string.Empty, resolver.AppCallerCode);
+    }
+
     private static AvailableModelPool CreatePool(string publicId, int priority, bool isDefault)
         => new()
         {

@@ -98,6 +98,18 @@ public sealed class VisualLogicalModelCatalogTests
             var outside = await resolver.ResolveAsync(caller, "generation", "outside");
             Assert.False(outside.Success);
 
+            await gateway.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings")
+                .UpdateManyAsync(
+                    FilterDefinition<GatewayModelOffering>.Empty,
+                    Builders<GatewayModelOffering>.Update
+                        .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow));
+            var unavailableCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.Equal(new[] { "image2", "image1" }, unavailableCatalog.Select(x => x.Code));
+            Assert.All(unavailableCatalog, item =>
+                Assert.Equal("Unavailable", Assert.Single(item.Models).HealthStatus));
+            Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
+
             await gateway.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models")
                 .UpdateManyAsync(FilterDefinition<GatewayLogicalModel>.Empty, Builders<GatewayLogicalModel>.Update.Set(x => x.Enabled, false));
             Assert.Empty(await resolver.GetAvailablePoolsAsync(caller, "generation"));

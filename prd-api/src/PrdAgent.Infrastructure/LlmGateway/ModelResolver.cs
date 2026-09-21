@@ -1041,17 +1041,18 @@ public class ModelResolver : IModelResolver
         var nowUtc = DateTime.UtcNow;
         var halfOpenCutoff = nowUtc.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
             _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
-        var offerings = (await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
+        var enabledOfferings = await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayModelOffering>.Filter.In(x => x.LogicalModelId, ids),
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true)))
-            .ToListAsync(ct))
+            .ToListAsync(ct);
+        var routableOfferings = enabledOfferings
             .Where(x => x.HealthStatus != ModelHealthStatus.Unavailable
                 || GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
                     x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt,
                     nowUtc, halfOpenCutoff))
             .ToList();
-        var offeringsByLogicalModel = offerings
+        var routableOfferingsByLogicalModel = routableOfferings
             .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
         var result = new List<AvailableModelPool>();
@@ -1063,13 +1064,12 @@ public class ModelResolver : IModelResolver
                 && GatewayCapabilityIds.IsOperationOnly(logical.PublicId, logical.Capabilities))
                 continue;
 
-            if (!offeringsByLogicalModel.TryGetValue(logical.Id, out var logicalOfferings))
-                continue;
-
             // “启用且健康”只是控制面状态，不代表 Offering 指向的 Exchange、模型和平台仍然存在。
-            // 选择器只能展示在当前租户与 appCaller 下至少能完整解析一个上游的逻辑模型，避免用户
-            // 选中后才得到“模型不可用”。这里复用实际解析构建器，保证目录与执行链路采用同一规则。
+            // 目录必须保留暂时不可用的逻辑模型并把真实健康态下发，避免线路冷却期间整个选择器
+            // 被清空、控制面也失去恢复入口。能否执行仍复用实际解析构建器与名录门判定；前端根据
+            // HealthStatus 禁用不可用项，深度健康检查则把它计为运行时故障。
             var hasResolvableOffering = false;
+            var logicalOfferings = routableOfferingsByLogicalModel.GetValueOrDefault(logical.Id) ?? [];
             foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
@@ -1089,9 +1089,6 @@ public class ModelResolver : IModelResolver
                 hasResolvableOffering = true;
                 break;
             }
-            if (!hasResolvableOffering)
-                continue;
-
             result.Add(new AvailableModelPool
             {
                 Id = logical.Id,
@@ -1114,8 +1111,8 @@ public class ModelResolver : IModelResolver
                         PlatformId = "logical-model",
                         PlatformName = "LLM Gateway",
                         Priority = 1,
-                        HealthStatus = "Healthy",
-                        HealthScore = 100,
+                        HealthStatus = hasResolvableOffering ? "Healthy" : "Unavailable",
+                        HealthScore = hasResolvableOffering ? 100 : 0,
                     }
                 ],
             });

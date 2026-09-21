@@ -69,7 +69,25 @@ public class ModelCatalogContractProbeTests
         Assert.Empty(resolver.ResolveCalls);
     }
 
-    private sealed class FakeCatalog(bool useDisplayNameAsMemberId, bool returnEmpty = false) : IModelPoolQueryService
+    [Fact]
+    public async Task CheckAsync_FailsButKeepsCatalogVisibleWhenModelIsUnavailable()
+    {
+        var catalog = new FakeCatalog(useDisplayNameAsMemberId: false, healthStatus: "Unavailable");
+        var resolver = new FakeResolver(healthStatus: "Unavailable");
+        var probe = new ModelCatalogContractProbe(catalog, resolver);
+
+        var result = await probe.CheckAsync();
+
+        Assert.Equal(5, result.CatalogEntryCount);
+        Assert.Equal(5, result.FailureCount);
+        Assert.All(result.Failures, failure => Assert.EndsWith(":MODEL_UNAVAILABLE", failure));
+        Assert.Empty(resolver.ResolveCalls);
+    }
+
+    private sealed class FakeCatalog(
+        bool useDisplayNameAsMemberId,
+        bool returnEmpty = false,
+        string healthStatus = "Healthy") : IModelPoolQueryService
     {
         public Task<List<ModelPoolForAppResult>> GetModelPoolsAsync(
             string? appCallerCode,
@@ -99,7 +117,7 @@ public class ModelCatalogContractProbeTests
                         {
                             ModelId = useDisplayNameAsMemberId ? "provider/Display-Name" : publicId,
                             PlatformId = "logical-model",
-                            HealthStatus = "Healthy",
+                            HealthStatus = healthStatus,
                         },
                     ],
                 },
@@ -107,7 +125,9 @@ public class ModelCatalogContractProbeTests
         }
     }
 
-    private sealed class FakeResolver(string? automaticPublicId = null) : IModelResolver
+    private sealed class FakeResolver(
+        string? automaticPublicId = null,
+        string healthStatus = "Healthy") : IModelResolver
     {
         public List<(string AppCallerCode, string? ExpectedModel)> ResolveCalls { get; } = [];
         public List<string> CatalogCalls { get; } = [];
@@ -142,16 +162,16 @@ public class ModelCatalogContractProbeTests
             var runtimeDefault = automaticPublicId ?? catalogPublicId;
             var pools = new List<AvailableModelPool>
             {
-                CreateRuntimePool(catalogPublicId, isDefault: runtimeDefault == catalogPublicId),
+                CreateRuntimePool(catalogPublicId, isDefault: runtimeDefault == catalogPublicId, healthStatus),
             };
             if (!string.Equals(runtimeDefault, catalogPublicId, StringComparison.Ordinal))
             {
-                pools.Add(CreateRuntimePool(runtimeDefault, isDefault: true));
+                pools.Add(CreateRuntimePool(runtimeDefault, isDefault: true, healthStatus));
             }
             return Task.FromResult(pools);
         }
 
-        private static AvailableModelPool CreateRuntimePool(string publicId, bool isDefault)
+        private static AvailableModelPool CreateRuntimePool(string publicId, bool isDefault, string healthStatus)
             => new()
             {
                 Id = $"logical-{publicId}",
@@ -165,7 +185,7 @@ public class ModelCatalogContractProbeTests
                     {
                         ModelId = publicId,
                         PlatformId = "logical-model",
-                        HealthStatus = "Healthy",
+                        HealthStatus = healthStatus,
                     },
                 ],
             };

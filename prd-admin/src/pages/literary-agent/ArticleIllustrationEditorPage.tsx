@@ -81,7 +81,7 @@ import { cn } from '@/lib/cn';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem, CreateImageGenRunInput } from '@/services/contracts/imageGen';
-import { reloadReferenceImageScenario } from './referenceImageModelCatalog';
+import { mutateReferenceImageScenario } from './referenceImageModelCatalog';
 
 // 3 个状态：0=upload, 1=editing, 2=markersGenerated
 type WorkflowPhase = 0 | 1 | 2;
@@ -4619,15 +4619,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   onClick={async () => {
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = config.isActive
-                                        ? await deactivateReferenceImageConfig({ id: config.id })
-                                        : await activateReferenceImageConfig({ id: config.id });
-                                      if (res.success) {
-                                        await reloadReferenceImageScenario(
-                                          loadReferenceImageConfigs,
-                                          reloadImageGenPools,
-                                        );
-                                      }
+                                      await mutateReferenceImageScenario(
+                                        () => config.isActive
+                                          ? deactivateReferenceImageConfig({ id: config.id })
+                                          : activateReferenceImageConfig({ id: config.id }),
+                                        loadReferenceImageConfigs,
+                                        reloadImageGenPools,
+                                      );
                                     } finally {
                                       setReferenceImageSaving(false);
                                     }
@@ -4676,14 +4674,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = await deleteReferenceImageConfig({ id: config.id });
+                                      const res = config.isActive
+                                        ? await mutateReferenceImageScenario(
+                                          () => deleteReferenceImageConfig({ id: config.id }),
+                                          loadReferenceImageConfigs,
+                                          reloadImageGenPools,
+                                        )
+                                        : await deleteReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        if (config.isActive) {
-                                          await reloadReferenceImageScenario(
-                                            loadReferenceImageConfigs,
-                                            reloadImageGenPools,
-                                          );
-                                        } else {
+                                        if (!config.isActive) {
                                           await loadReferenceImageConfigs();
                                         }
                                         toast.success('已删除');

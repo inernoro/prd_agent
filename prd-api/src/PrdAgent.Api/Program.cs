@@ -2066,7 +2066,7 @@ static async Task<IResult> DeepHealth(
                     ["output"] = modelCatalogResult.Output,
                     ["cds:monitor"] = new
                     {
-                        name = "MAP 业务模型目录与运行时可执行目录一致性",
+                        name = "MAP 业务模型目录与运行时可用性一致性",
                         field = "observedValue",
                         op = "eq",
                         value = 0,

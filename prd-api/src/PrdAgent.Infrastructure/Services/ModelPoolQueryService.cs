@@ -27,6 +27,10 @@ public class ModelPoolQueryService : IModelPoolQueryService
             appCallerCode?.Trim() ?? string.Empty,
             modelType,
             ct);
+        if (string.IsNullOrWhiteSpace(appCallerCode))
+        {
+            available = available.Where(pool => pool.IsDefault).ToList();
+        }
         return available
             .Select(pool => MapToResult(pool, modelType))
             .OrderByDescending(pool => pool.IsDefault)
