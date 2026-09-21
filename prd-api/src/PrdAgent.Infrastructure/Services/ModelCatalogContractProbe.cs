@@ -9,7 +9,7 @@ namespace PrdAgent.Infrastructure.Services;
 ///
 /// 选择器曾从退场的 MAP 模型池读取成员展示名，而执行链路只接受 LLM Gateway
 /// 的稳定 PublicId。两边各自“有数据”却无法串起来，因此这里直接验证完整契约：
-/// 目录非空、默认项唯一、下发标识可被运行时按原值解析。
+/// 目录非空、默认项唯一、下发标识存在于运行时的无副作用可执行目录。
 /// </summary>
 public sealed class ModelCatalogContractProbe
 {
@@ -48,6 +48,22 @@ public sealed class ModelCatalogContractProbe
                     continue;
                 }
 
+                // ResolveAsync 在半开线路上会认领恢复租约，不适合只读健康探针。
+                // GetAvailablePoolsAsync 内部同样经过真实 Offering 构建、调用方场景和名录门，
+                // 但不会占用半开租约；用它作为运行时可执行目录做双向合同检查。
+                var runtimePools = await _resolver.GetAvailablePoolsAsync(
+                    target.AppCallerCode,
+                    target.ModelType,
+                    ct);
+                var runtimeByPublicId = runtimePools
+                    .Where(pool => !string.IsNullOrWhiteSpace(pool.Code))
+                    .GroupBy(pool => pool.Code.Trim(), StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+                if (runtimeByPublicId.Count == 0)
+                {
+                    failures.Add($"{target.Label}:RUNTIME_CATALOG_EMPTY");
+                }
+
                 var duplicateCodes = pools
                     .Where(pool => !string.IsNullOrWhiteSpace(pool.Code))
                     .GroupBy(pool => pool.Code.Trim(), StringComparer.OrdinalIgnoreCase)
@@ -78,31 +94,21 @@ public sealed class ModelCatalogContractProbe
                         continue;
                     }
 
-                    var selected = await _resolver.ResolveAsync(
-                        target.AppCallerCode,
-                        target.ModelType,
-                        publicId,
-                        ct: ct);
-                    if (!selected.Success
-                        || !string.Equals(selected.LogicalModelPublicId, publicId, StringComparison.Ordinal))
+                    if (!runtimeByPublicId.ContainsKey(publicId))
                     {
                         failures.Add($"{target.Label}:SELECTED_MODEL_UNRESOLVED");
                     }
                 }
 
-                var automatic = await _resolver.ResolveAsync(
-                    target.AppCallerCode,
-                    target.ModelType,
-                    expectedModel: null,
-                    ct: ct);
-                if (!automatic.Success || string.IsNullOrWhiteSpace(automatic.LogicalModelPublicId))
+                var runtimeDefaults = runtimePools.Where(pool => pool.IsDefault).ToArray();
+                if (runtimeDefaults.Length != 1)
                 {
-                    failures.Add($"{target.Label}:AUTOMATIC_MODEL_UNRESOLVED");
+                    failures.Add($"{target.Label}:RUNTIME_DEFAULT_COUNT_{runtimeDefaults.Length}");
                 }
                 else if (defaults.Length == 1
                     && !string.Equals(
                         defaults[0].Code?.Trim(),
-                        automatic.LogicalModelPublicId,
+                        runtimeDefaults[0].Code?.Trim(),
                         StringComparison.Ordinal))
                 {
                     failures.Add($"{target.Label}:DEFAULT_RUNTIME_MISMATCH");

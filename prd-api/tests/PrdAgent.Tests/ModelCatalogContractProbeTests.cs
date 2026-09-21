@@ -21,7 +21,8 @@ public class ModelCatalogContractProbeTests
         Assert.Equal(5, result.TargetCount);
         Assert.Equal(5, result.CatalogEntryCount);
         Assert.Empty(result.Failures);
-        Assert.Equal(10, resolver.ResolveCalls.Count);
+        Assert.Equal(5, resolver.CatalogCalls.Count);
+        Assert.Empty(resolver.ResolveCalls);
     }
 
     [Fact]
@@ -35,8 +36,8 @@ public class ModelCatalogContractProbeTests
 
         Assert.Equal(5, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":IDENTIFIER_DRIFT", failure));
-        Assert.Equal(5, resolver.ResolveCalls.Count);
-        Assert.All(resolver.ResolveCalls, call => Assert.Null(call.ExpectedModel));
+        Assert.Equal(5, resolver.CatalogCalls.Count);
+        Assert.Empty(resolver.ResolveCalls);
     }
 
     [Fact]
@@ -50,6 +51,7 @@ public class ModelCatalogContractProbeTests
 
         Assert.Equal(5, result.FailureCount);
         Assert.All(result.Failures, failure => Assert.EndsWith(":DEFAULT_RUNTIME_MISMATCH", failure));
+        Assert.Empty(resolver.ResolveCalls);
     }
 
     [Fact]
@@ -108,6 +110,7 @@ public class ModelCatalogContractProbeTests
     private sealed class FakeResolver(string? automaticPublicId = null) : IModelResolver
     {
         public List<(string AppCallerCode, string? ExpectedModel)> ResolveCalls { get; } = [];
+        public List<string> CatalogCalls { get; } = [];
 
         public Task<ModelResolutionResult> ResolveAsync(
             string appCallerCode,
@@ -133,7 +136,39 @@ public class ModelCatalogContractProbeTests
             string appCallerCode,
             string modelType,
             CancellationToken ct = default)
-            => Task.FromResult(new List<AvailableModelPool>());
+        {
+            CatalogCalls.Add(appCallerCode);
+            var catalogPublicId = PublicId(appCallerCode);
+            var runtimeDefault = automaticPublicId ?? catalogPublicId;
+            var pools = new List<AvailableModelPool>
+            {
+                CreateRuntimePool(catalogPublicId, isDefault: runtimeDefault == catalogPublicId),
+            };
+            if (!string.Equals(runtimeDefault, catalogPublicId, StringComparison.Ordinal))
+            {
+                pools.Add(CreateRuntimePool(runtimeDefault, isDefault: true));
+            }
+            return Task.FromResult(pools);
+        }
+
+        private static AvailableModelPool CreateRuntimePool(string publicId, bool isDefault)
+            => new()
+            {
+                Id = $"logical-{publicId}",
+                Name = publicId,
+                Code = publicId,
+                ResolutionType = "LogicalModel",
+                IsDefault = isDefault,
+                Models =
+                [
+                    new PoolModelInfo
+                    {
+                        ModelId = publicId,
+                        PlatformId = "logical-model",
+                        HealthStatus = "Healthy",
+                    },
+                ],
+            };
 
         public Task RecordSuccessAsync(ModelResolutionResult resolution, CancellationToken ct = default)
             => Task.CompletedTask;
