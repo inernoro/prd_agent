@@ -68,6 +68,41 @@ public class DeploymentAuthorityTests
     }
 
     [Fact]
+    public void ModelLeaderboardSync_OnlyProductionOrCdsMainRuns()
+    {
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new())).ShouldBeTrue();
+
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "main",
+        })).ShouldBeTrue();
+
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "codex/fix-production-dashboard-parity",
+        })).ShouldBeFalse();
+
+        // 缺少平台注入的真实分支名时必须关闭，不能把缺失值当授权。
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ModelLeaderboardSync_ExplicitSharedStateOptOutIsAVeto()
+    {
+        DeploymentAuthority.CanRunModelLeaderboardSync(Build(new()
+        {
+            ["CDS_PROJECT_ID"] = "50bf3eac3d02",
+            ["Changelog:GitHubBranch"] = "main",
+            ["PlatformKeyIntegrity:ManageGlobalNotification"] = "false",
+        })).ShouldBeFalse();
+    }
+
+    [Fact]
     public void HasOptedOutOfSharedState_OnlyExplicitFalseCounts()
     {
         // 这条判据是「退出共享状态归属」的唯一来源，三个消费方共用（密文轮换、周期任务、

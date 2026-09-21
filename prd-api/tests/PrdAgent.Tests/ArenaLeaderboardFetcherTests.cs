@@ -488,6 +488,21 @@ public class ArenaLeaderboardFetcherTests
         Assert.Contains("public static string[] Boards => ModelLeaderboardCatalog.Keys;", source);
     }
 
+    [Fact]
+    public void Worker必须使用榜单专属同步权威判据()
+    {
+        var worker = Path.Combine(
+            LocateRepoRoot(),
+            "prd-api", "src", "PrdAgent.Api", "Services", "ModelLeaderboard",
+            "ModelLeaderboardSyncWorker.cs");
+
+        Assert.True(File.Exists(worker), $"找不到 {worker}——本守卫的前提不成立，请核对路径");
+
+        var source = File.ReadAllText(worker);
+        Assert.Contains("DeploymentAuthority.CanRunModelLeaderboardSync(_configuration)", source);
+        Assert.DoesNotContain("DeploymentAuthority.CanRunSharedScheduledWork(_configuration)", source);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
