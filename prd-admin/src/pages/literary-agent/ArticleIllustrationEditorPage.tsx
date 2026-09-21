@@ -81,6 +81,7 @@ import { cn } from '@/lib/cn';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem, CreateImageGenRunInput } from '@/services/contracts/imageGen';
+import { reloadReferenceImageScenario } from './referenceImageModelCatalog';
 
 // 3 个状态：0=upload, 1=editing, 2=markersGenerated
 type WorkflowPhase = 0 | 1 | 2;
@@ -4622,10 +4623,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                         ? await deactivateReferenceImageConfig({ id: config.id })
                                         : await activateReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        await Promise.all([
-                                          loadReferenceImageConfigs(),
-                                          reloadImageGenPools(),
-                                        ]);
+                                        await reloadReferenceImageScenario(
+                                          loadReferenceImageConfigs,
+                                          reloadImageGenPools,
+                                        );
                                       }
                                     } finally {
                                       setReferenceImageSaving(false);
@@ -4677,10 +4678,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     try {
                                       const res = await deleteReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        await Promise.all([
-                                          loadReferenceImageConfigs(),
-                                          config.isActive ? reloadImageGenPools() : Promise.resolve(),
-                                        ]);
+                                        if (config.isActive) {
+                                          await reloadReferenceImageScenario(
+                                            loadReferenceImageConfigs,
+                                            reloadImageGenPools,
+                                          );
+                                        } else {
+                                          await loadReferenceImageConfigs();
+                                        }
                                         toast.success('已删除');
                                       } else {
                                         toast.error('删除失败', res.error?.message || '未知错误');

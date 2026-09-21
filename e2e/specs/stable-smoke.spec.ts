@@ -2124,20 +2124,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[LIT-011][GW-010][REG-model-catalog-identity-001] 五个业务模型目录与运行时保持闭环', async ({ page, request }) => {
+  test('[LIT-011][GW-010][REG-model-catalog-identity-001] 核心目录健康与文学运行时保持闭环', async ({ page, request }) => {
     const token = await loginAndReadToken(page, request, '/literary-agent');
     const targets = [
-      { appCallerCode: 'literary-agent.content::chat', modelType: 'chat' },
-      { appCallerCode: 'literary-agent.illustration.text2img::generation', modelType: 'generation' },
-      { appCallerCode: 'literary-agent.illustration.img2img::generation', modelType: 'generation' },
-      { appCallerCode: 'video-agent.videogen::video-gen', modelType: 'video-gen' },
-      { appCallerCode: 'ai-toolbox.agent.visual::generation', modelType: 'generation' },
+      { endpoint: '/api/literary-agent/config/models/chat', appCallerCode: 'literary-agent.content::chat', modelType: 'chat' },
+      { endpoint: '/api/literary-agent/config/models/text2img', appCallerCode: 'literary-agent.illustration.text2img::generation', modelType: 'generation' },
+      { endpoint: '/api/literary-agent/config/models/img2img', appCallerCode: 'literary-agent.illustration.img2img::generation', modelType: 'generation' },
     ];
     const production = requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production';
 
     for (const target of targets) {
       const pools = await readEnvelope<BusinessModelPool[]>(await request.get(
-        `/api/mds/model-groups/for-app?appCallerCode=${encodeURIComponent(target.appCallerCode)}&modelType=${encodeURIComponent(target.modelType)}`,
+        target.endpoint,
         { headers: authHeaders(token) },
       ));
       expect(pools.length, `${target.appCallerCode} 的业务模型目录为空`).toBeGreaterThan(0);
@@ -2168,12 +2166,19 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
     const deep = await request.get('/api/healthz/deep');
     const deepBody = await deep.json() as {
-      checks?: Record<string, Array<{ observedValue?: number; status?: string }>>;
+      checks?: Record<string, Array<{
+        observedValue?: number;
+        status?: string;
+        targetCount?: number;
+        catalogEntryCount?: number;
+      }>>;
     };
     const contractCheck = deepBody.checks?.['model-catalog:selector-runtime-contract']?.[0];
     expect(deep.ok()).toBe(true);
     expect(contractCheck?.status).toBe('pass');
     expect(contractCheck?.observedValue).toBe(0);
+    expect(contractCheck?.targetCount).toBe(5);
+    expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
   });
 
   test('[LIT-002][LIT-005][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {

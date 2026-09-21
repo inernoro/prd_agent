@@ -2059,6 +2059,8 @@ static async Task<IResult> DeepHealth(
                     ["componentType"] = "service",
                     ["observedValue"] = modelCatalogResult.FailureCount,
                     ["observedUnit"] = "count",
+                    ["targetCount"] = modelCatalogResult.TargetCount,
+                    ["catalogEntryCount"] = modelCatalogResult.CatalogEntryCount,
                     ["status"] = modelCatalogResult.FailureCount == 0 ? "pass" : "fail",
                     ["time"] = now.ToString("o"),
                     ["output"] = modelCatalogResult.Output,
