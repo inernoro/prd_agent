@@ -45,9 +45,7 @@ public static class GatewayImageModelCatalog
         {
             if (model.ResolutionType != "LogicalModel"
                 || GatewayCapabilityIds.IsOperationOnly(model.Code, model.Capabilities)) continue;
-            var resolved = await gateway.ResolveRequiredLogicalModelAsync(appCallerCode, ModelTypes.ImageGen, model.Code, ct);
-            if (!resolved.Success) continue;
-            var capabilities = Describe(resolved);
+            var capabilities = Describe(model);
             if (capabilities is null) continue;
             // 排序不是默认；默认模型由调用方业务配置决定。
             catalog.Add(new GatewayImageModel
@@ -62,6 +60,28 @@ public static class GatewayImageModelCatalog
             });
         }
         return catalog;
+    }
+
+    /// <summary>
+    /// 从权威目录随条目下发的实际模型能力快照读取图片参数。
+    /// 这是纯读取路径，不能再次 Resolve；否则一次打开选择器就可能认领半开线路租约。
+    /// </summary>
+    public static ImageGenAdapterInfo? Describe(AvailableModelPool model)
+    {
+        var member = model.Models.FirstOrDefault(item =>
+            !string.IsNullOrWhiteSpace(item.ActualModelId)
+            && !string.Equals(item.HealthStatus, "Unavailable", StringComparison.OrdinalIgnoreCase));
+        if (member is null) return null;
+
+        return Describe(new GatewayModelResolution
+        {
+            Success = true,
+            ResolutionType = model.ResolutionType,
+            LogicalModelPublicId = model.Code,
+            ActualModel = member.ActualModelId!,
+            ActualPlatformId = member.ActualPlatformId ?? string.Empty,
+            ParameterCapabilities = member.ParameterCapabilities,
+        });
     }
 
     public static ImageGenAdapterInfo? Describe(GatewayModelResolution resolution)

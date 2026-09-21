@@ -1068,7 +1068,7 @@ public class ModelResolver : IModelResolver
             // 目录必须保留暂时不可用的逻辑模型并把真实健康态下发，避免线路冷却期间整个选择器
             // 被清空、控制面也失去恢复入口。能否执行仍复用实际解析构建器与名录门判定；前端根据
             // HealthStatus 禁用不可用项，深度健康检查则把它计为运行时故障。
-            var hasResolvableOffering = false;
+            ModelResolutionResult? catalogResolution = null;
             var logicalOfferings = routableOfferingsByLogicalModel.GetValueOrDefault(logical.Id) ?? [];
             foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
             {
@@ -1086,7 +1086,7 @@ public class ModelResolver : IModelResolver
                 {
                     continue;
                 }
-                hasResolvableOffering = true;
+                catalogResolution = candidate;
                 break;
             }
             result.Add(new AvailableModelPool
@@ -1111,8 +1111,11 @@ public class ModelResolver : IModelResolver
                         PlatformId = "logical-model",
                         PlatformName = "LLM Gateway",
                         Priority = 1,
-                        HealthStatus = hasResolvableOffering ? "Healthy" : "Unavailable",
-                        HealthScore = hasResolvableOffering ? 100 : 0,
+                        HealthStatus = catalogResolution is not null ? "Healthy" : "Unavailable",
+                        HealthScore = catalogResolution is not null ? 100 : 0,
+                        ActualModelId = catalogResolution?.ActualModel,
+                        ActualPlatformId = catalogResolution?.ActualPlatformId,
+                        ParameterCapabilities = catalogResolution?.ParameterCapabilities,
                     }
                 ],
             });

@@ -1,5 +1,6 @@
 using System.Runtime.CompilerServices;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
 
@@ -85,7 +86,7 @@ public class ModelPoolQueryServiceTests
 
         var model = Assert.Single(result);
         Assert.Equal("runtime-default", model.Code);
-        Assert.Equal(string.Empty, gateway.AppCallerCode);
+        Assert.Equal(AppCallerRegistry.System.HealthProbe.Generation, gateway.AppCallerCode);
     }
 
     [Fact]
@@ -135,6 +136,8 @@ public class ModelPoolQueryServiceTests
             string modelType,
             CancellationToken ct = default)
         {
+            if (string.IsNullOrWhiteSpace(appCallerCode))
+                throw new InvalidOperationException("真实网关拒绝空 appCallerCode");
             AppCallerCode = appCallerCode;
             ModelType = modelType;
             if (CatalogError is not null)

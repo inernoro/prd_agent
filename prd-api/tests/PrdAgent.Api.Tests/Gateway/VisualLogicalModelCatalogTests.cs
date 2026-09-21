@@ -87,6 +87,8 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.True(catalog[0].IsDefault);
             Assert.Equal("image2 的业务用途", catalog[0].Description);
             Assert.False(catalog[1].IsDefault);
+            Assert.Equal("gpt-image-2", Assert.Single(catalog[0].Models).ActualModelId);
+            Assert.Equal("gpt-image-1", Assert.Single(catalog[1].Models).ActualModelId);
             foreach (var choice in catalog)
             {
                 var resolved = await resolver.ResolveAsync(caller, "generation", choice.Code);
@@ -98,7 +100,21 @@ public sealed class VisualLogicalModelCatalogTests
             var outside = await resolver.ResolveAsync(caller, "generation", "outside");
             Assert.False(outside.Success);
 
-            await gateway.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings")
+            // 目录与参数面板属于只读路径：即使线路已进入可半开探测窗口，也只能读取
+            // 解析能力快照，不能抢占真正业务请求需要的恢复租约。
+            var offerings = gateway.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            await offerings.UpdateOneAsync(
+                x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1))
+                    .Unset(x => x.HalfOpenLeaseUntil));
+            var halfOpenCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.Equal("gpt-image-2", Assert.Single(halfOpenCatalog[0].Models).ActualModelId);
+            var afterCatalogRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Null(afterCatalogRead.HalfOpenLeaseUntil);
+
+            await offerings
                 .UpdateManyAsync(
                     FilterDefinition<GatewayModelOffering>.Empty,
                     Builders<GatewayModelOffering>.Update

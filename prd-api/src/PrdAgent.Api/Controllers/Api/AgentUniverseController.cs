@@ -183,15 +183,15 @@ public class AgentUniverseController : ControllerBase
         string logicalModelPublicId,
         CancellationToken ct = default)
     {
-        var resolution = await gateway.ResolveRequiredLogicalModelAsync(
-            appCallerCode,
-            ModelTypes.ImageGen,
-            logicalModelPublicId,
-            ct);
-        if (!resolution.Success)
+        var model = (await gateway.GetAvailablePoolsAsync(appCallerCode, ModelTypes.ImageGen, ct))
+            .FirstOrDefault(item => string.Equals(
+                item.Code?.Trim(),
+                logicalModelPublicId?.Trim(),
+                StringComparison.Ordinal));
+        if (model is null)
             return [];
 
-        var capabilities = GatewayImageModelCatalog.Describe(resolution);
+        var capabilities = GatewayImageModelCatalog.Describe(model);
         if (capabilities is null || capabilities.SizesNotApplicable)
             return [];
 

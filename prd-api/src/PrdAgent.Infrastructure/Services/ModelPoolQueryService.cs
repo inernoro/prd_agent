@@ -23,8 +23,12 @@ public class ModelPoolQueryService : IModelPoolQueryService
     public async Task<List<ModelPoolForAppResult>> GetModelPoolsAsync(
         string? appCallerCode, string modelType, CancellationToken ct = default)
     {
+        var requestedCaller = appCallerCode?.Trim();
+        var catalogCaller = string.IsNullOrWhiteSpace(requestedCaller)
+            ? ResolveRegisteredCatalogCaller(modelType)
+            : requestedCaller;
         var available = await _gateway.GetAvailablePoolsAsync(
-            appCallerCode?.Trim() ?? string.Empty,
+            catalogCaller,
             modelType,
             ct);
         if (string.IsNullOrWhiteSpace(appCallerCode))
@@ -37,6 +41,28 @@ public class ModelPoolQueryService : IModelPoolQueryService
             .ThenBy(pool => pool.Priority)
             .ThenBy(pool => pool.Code, StringComparer.Ordinal)
             .ToList();
+    }
+
+    internal static string ResolveRegisteredCatalogCaller(string modelType)
+    {
+        var systemCatalogCaller = modelType switch
+        {
+            ModelTypes.Chat => AppCallerRegistry.System.HealthProbe.Chat,
+            ModelTypes.Intent => AppCallerRegistry.System.HealthProbe.Intent,
+            ModelTypes.Vision => AppCallerRegistry.System.HealthProbe.Vision,
+            ModelTypes.ImageGen => AppCallerRegistry.System.HealthProbe.Generation,
+            _ => null,
+        };
+        if (systemCatalogCaller is not null)
+            return systemCatalogCaller;
+
+        var caller = AppCallerRegistrationService.GetAllDefinitions()
+            .Where(definition => definition.ModelTypes.Contains(modelType, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(definition => definition.Priority)
+            .ThenBy(definition => definition.AppCode, StringComparer.Ordinal)
+            .Select(definition => definition.AppCode)
+            .FirstOrDefault();
+        return caller ?? throw new InvalidOperationException($"没有注册支持 {modelType} 的目录调用方。");
     }
 
     internal static ModelPoolForAppResult MapToResult(AvailableModelPool pool, string modelType)
