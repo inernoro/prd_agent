@@ -1799,7 +1799,7 @@ static async Task<IResult> DeepHealth(
         leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
     }
 
-    // 默认生图路由预检：这里不调上游、不花生图费用，但会用与真实同步生图相同的
+    // 生图路由预检：这里不调生图上游、不花生图费用，但会用与真实同步生图相同的
     // 场景身份和逻辑模型进入调度器。它专门抓“目录里能选，点生成却被白名单拒绝”：
     // 普通 /health 会绿、Mongo 会绿、模型目录也会绿，只有按真实 appCaller 解析才能提前看出契约断了。
     var visualImageRouteFailures = 1;
@@ -1807,26 +1807,63 @@ static async Task<IResult> DeepHealth(
     try
     {
         var policy = await visualModels.ReadAsync(cancellationToken);
-        var defaultModel = policy.DefaultModelId?.Trim();
-        if (string.IsNullOrWhiteSpace(defaultModel))
+        var openModels = policy.Models
+            .Select(x => x.ModelId?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var defaultModel = policy.DefaultModelId?.Trim() ?? string.Empty;
+        if (openModels.Count == 0 || string.IsNullOrWhiteSpace(defaultModel))
         {
-            visualImageRouteOutput = "视觉创作没有配置默认生图模型";
+            visualImageRouteOutput = "视觉创作没有配置开放模型或默认生图模型";
         }
         else
         {
-            var appCaller = PrdAgent.Api.Controllers.Api.ImageGenController.ResolveGenerateAppCallerCode(
-                isLayering: false,
-                imageCount: 0,
-                hasLegacyReference: false);
-            var resolution = await modelResolver.ResolveAsync(
-                appCaller,
-                PrdAgent.Core.Models.ModelTypes.ImageGen,
-                defaultModel,
-                ct: cancellationToken);
-            visualImageRouteFailures = resolution.Success ? 0 : 1;
-            visualImageRouteOutput = resolution.Success
-                ? $"默认生图模型 {defaultModel} 可按文生图场景正常解析"
-                : $"默认生图模型 {defaultModel} 无法按文生图场景解析（{resolution.FailureCode ?? "UNCLASSIFIED"}）";
+            var failures = new List<string>();
+            var coveredModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var checkedRoutes = 0;
+            foreach (var appCaller in PrdAgent.Api.Services.VisualModelPolicyService.AppCallers)
+            {
+                var catalog = await visualModels.DiscoverAsync(appCaller, cancellationToken);
+                foreach (var model in catalog
+                    .Select(x => x.Model.Code)
+                    .Where(openModels.Contains)
+                    .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    coveredModels.Add(model);
+                    checkedRoutes++;
+                    var resolution = await modelResolver.ResolveAsync(
+                        appCaller,
+                        PrdAgent.Core.Models.ModelTypes.ImageGen,
+                        model,
+                        ct: cancellationToken);
+                    if (!resolution.Success)
+                    {
+                        failures.Add($"{model}:{resolution.FailureCode ?? "UNCLASSIFIED"}");
+                    }
+                }
+            }
+
+            foreach (var missing in openModels.Except(coveredModels, StringComparer.OrdinalIgnoreCase))
+            {
+                failures.Add($"{missing}:NOT_IN_SCENARIO_CATALOG");
+            }
+
+            var textCatalog = await visualModels.DiscoverAsync(
+                PrdAgent.Api.Controllers.Api.ImageGenController.ResolveGenerateAppCallerCode(
+                    isLayering: false,
+                    imageCount: 0,
+                    hasLegacyReference: false),
+                cancellationToken);
+            if (!textCatalog.Any(x => string.Equals(x.Model.Code, defaultModel, StringComparison.OrdinalIgnoreCase)))
+            {
+                failures.Add($"{defaultModel}:DEFAULT_NOT_TEXT2IMG");
+            }
+
+            visualImageRouteFailures = failures.Count;
+            visualImageRouteOutput = failures.Count == 0
+                ? $"{openModels.Count} 个开放模型的 {checkedRoutes} 条生图场景路由均可解析"
+                : $"生图场景路由有 {failures.Count} 处失配：{string.Join("、", failures.Take(5))}";
         }
     }
     catch (Exception ex)
@@ -1954,7 +1991,7 @@ static async Task<IResult> DeepHealth(
                     ["output"] = visualImageRouteOutput,
                     ["cds:monitor"] = new
                     {
-                        name = "MAP 默认生图模型路由",
+                        name = "MAP 生图模型场景路由",
                         field = "observedValue",
                         op = "eq",
                         value = 0,
