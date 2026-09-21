@@ -1,3 +1,4 @@
+using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -14,9 +15,9 @@ public sealed class VisualModelPolicyTests
         Models = [new() { ModelId = "image2", DisplayName = "GPT Image 2" }, new() { ModelId = "image1", DisplayName = "GPT Image 1" }],
     };
 
-    private static GatewayImageModel Model(string id) => new()
+    private static GatewayImageModel Model(string id, bool isDefault = true) => new()
     {
-        Model = new AvailableModelPool { Id = "id-" + id, Code = id, Name = id, IsDefault = true, Models = [new PoolModelInfo { ModelId = id }] },
+        Model = new AvailableModelPool { Id = "id-" + id, Code = id, Name = id, IsDefault = isDefault, Models = [new PoolModelInfo { ModelId = id }] },
     };
 
     [Fact]
@@ -48,6 +49,88 @@ public sealed class VisualModelPolicyTests
 
     [Fact]
     public void MissingPolicyDoesNotInventDefault() => Assert.Null(new VisualModelPolicy().Select(null));
+
+    [Fact]
+    public void MissingStoredPolicyBootstrapsOnlyGatewayDefaultTextModel()
+    {
+        var now = new DateTime(2026, 9, 21, 8, 0, 0, DateTimeKind.Utc);
+        var nonDefault = Model("image1", false);
+        var gatewayDefault = new GatewayImageModel
+        {
+            Model = new AvailableModelPool
+            {
+                Id = "id-image2",
+                Code = "image2",
+                Name = "GPT Image 2",
+                Description = "生产生图健康目录",
+                IsDefault = true,
+            },
+        };
+
+        var policy = VisualModelPolicyService.BuildBootstrapPolicy([nonDefault, gatewayDefault], now);
+
+        Assert.NotNull(policy);
+        Assert.Equal(1, policy.Revision);
+        Assert.Equal("image2", policy.DefaultModelId);
+        var opened = Assert.Single(policy.Models);
+        Assert.Equal("image2", opened.ModelId);
+        Assert.Equal("GPT Image 2", opened.DisplayName);
+        Assert.Equal("生产生图健康目录", opened.Description);
+        Assert.Equal(now, policy.UpdatedAt);
+        Assert.Equal(VisualModelPolicyService.BootstrapActor, policy.UpdatedBy);
+    }
+
+    [Fact]
+    public void MissingStoredPolicyWithoutExplicitGatewayDefaultUsesStableFirstItem()
+    {
+        var policy = VisualModelPolicyService.BuildBootstrapPolicy(
+            [Model("image2", false), Model("new-later-model", false)],
+            DateTime.UtcNow);
+
+        Assert.NotNull(policy);
+        Assert.Equal("image2", policy.DefaultModelId);
+        Assert.Single(policy.Models);
+    }
+
+    [Fact]
+    public void MissingStoredPolicyWaitsWhenTextModelCatalogIsEmpty()
+        => Assert.Null(VisualModelPolicyService.BuildBootstrapPolicy([], DateTime.UtcNow));
+
+    [Fact]
+    public async Task GatewayCatalogPreservesDefaultAndDedicatedMarkersForBootstrap()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway
+            .Setup(x => x.GetAvailablePoolsAsync("visual-agent.image.text2img::generation", ModelTypes.ImageGen, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(
+            [
+                new AvailableModelPool
+                {
+                    Id = "logical-image2",
+                    Code = "image2",
+                    Name = "GPT Image 2",
+                    ResolutionType = "LogicalModel",
+                    IsDefault = true,
+                    IsDedicated = true,
+                }
+            ]);
+        gateway
+            .Setup(x => x.ResolveRequiredLogicalModelAsync(
+                "visual-agent.image.text2img::generation",
+                ModelTypes.ImageGen,
+                "image2",
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayModelResolution { Success = true, ActualModel = "gpt-image-1" });
+
+        var catalog = await GatewayImageModelCatalog.ReadAsync(
+            gateway.Object,
+            "visual-agent.image.text2img::generation",
+            CancellationToken.None);
+
+        var model = Assert.Single(catalog).Model;
+        Assert.True(model.IsDefault);
+        Assert.True(model.IsDedicated);
+    }
 
     [Fact]
     public void InvalidDefaultAndDuplicateEntriesAreRejected()

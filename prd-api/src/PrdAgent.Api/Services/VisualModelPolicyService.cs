@@ -15,8 +15,13 @@ public interface IVisualModelPolicyService
     Task<string?> SaveAsync(VisualModelPolicy proposed, string userId, CancellationToken ct);
 }
 
-public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayClient gateway) : IVisualModelPolicyService
+public sealed class VisualModelPolicyService(
+    MongoDbContext db,
+    HttpLlmGatewayClient gateway,
+    ILogger<VisualModelPolicyService> logger) : IVisualModelPolicyService
 {
+    internal const string BootstrapActor = "system:visual-model-policy-bootstrap";
+
     public static readonly string[] AppCallers =
     [
         AppCallerRegistry.VisualAgent.Image.Text2Img,
@@ -25,8 +30,86 @@ public sealed class VisualModelPolicyService(MongoDbContext db, HttpLlmGatewayCl
     ];
 
     public async Task<VisualModelPolicy> ReadAsync(CancellationToken ct)
-        => (await db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct))?.VisualModelPolicy
-           ?? new VisualModelPolicy();
+    {
+        var stored = (await db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(ct))?.VisualModelPolicy;
+        if (stored is not null) return stored;
+
+        // 旧版本没有这份业务开放策略，升级后若继续把 null 当成「明确不开放」，视觉创作会在
+        // 网关目录完全健康时突然变成空列表。这里只迁移一次：从文生图目录选网关标记的默认项
+        // （没有标记时取稳定排序的第一项），写入后新模型仍不会自动开放。
+        VisualModelPolicy? bootstrap;
+        try
+        {
+            bootstrap = BuildBootstrapPolicy(
+                await DiscoverAsync(AppCallers[0], ct),
+                DateTime.UtcNow);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+        {
+            logger.LogWarning(ex,
+                "视觉创作开放策略尚未初始化，且当前读不到网关文生图目录；保留空策略并等待下次读取重试");
+            return new VisualModelPolicy();
+        }
+
+        if (bootstrap is null)
+        {
+            logger.LogWarning("视觉创作开放策略尚未初始化，网关当前没有可迁移的文生图模型；等待目录就绪后重试");
+            return new VisualModelPolicy();
+        }
+
+        await db.AppSettings.UpdateOneAsync(
+            x => x.Id == "global",
+            Builders<AppSettings>.Update.SetOnInsert(x => x.Id, "global"),
+            new UpdateOptions { IsUpsert = true },
+            CancellationToken.None);
+        var result = await db.AppSettings.UpdateOneAsync(
+            x => x.Id == "global" && x.VisualModelPolicy == null,
+            Builders<AppSettings>.Update
+                .Set(x => x.VisualModelPolicy, bootstrap)
+                .Set(x => x.UpdatedAt, bootstrap.UpdatedAt ?? DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        if (result.ModifiedCount == 1)
+        {
+            logger.LogWarning(
+                "检测到升级前缺少视觉创作开放策略，已一次性开放网关默认文生图模型 {ModelId}；后续新增模型仍需管理员显式开放",
+                bootstrap.DefaultModelId);
+            return bootstrap;
+        }
+
+        // 多实例或管理员可能在上面两次写之间先完成配置；永远以数据库里的胜出版本为准。
+        return (await db.AppSettings.Find(x => x.Id == "global").FirstOrDefaultAsync(CancellationToken.None))?.VisualModelPolicy
+               ?? new VisualModelPolicy();
+    }
+
+    internal static VisualModelPolicy? BuildBootstrapPolicy(
+        IEnumerable<GatewayImageModel> textToImageCatalog,
+        DateTime now)
+    {
+        var candidates = textToImageCatalog
+            .Where(x => !string.IsNullOrWhiteSpace(x.Model.Code))
+            .GroupBy(x => x.Model.Code, StringComparer.Ordinal)
+            .Select(group => group.FirstOrDefault(x => x.Model.IsDefault) ?? group.First())
+            .ToList();
+        var selected = candidates.FirstOrDefault(x => x.Model.IsDefault) ?? candidates.FirstOrDefault();
+        if (selected is null) return null;
+
+        return new VisualModelPolicy
+        {
+            Revision = 1,
+            DefaultModelId = selected.Model.Code,
+            Models =
+            [
+                new VisualModelEntry
+                {
+                    ModelId = selected.Model.Code,
+                    DisplayName = selected.Model.Name,
+                    Description = selected.Model.Description,
+                }
+            ],
+            UpdatedAt = now,
+            UpdatedBy = BootstrapActor,
+        };
+    }
 
     public async Task<List<GatewayImageModel>> DiscoverAsync(string? appCaller, CancellationToken ct)
     {

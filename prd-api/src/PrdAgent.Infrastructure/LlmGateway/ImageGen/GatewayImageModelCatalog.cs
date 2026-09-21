@@ -56,6 +56,7 @@ public static class GatewayImageModelCatalog
                 {
                     Id = model.Id, Name = model.Name, Code = model.Code, Description = model.Description,
                     Priority = model.Priority, ResolutionType = model.ResolutionType,
+                    IsDedicated = model.IsDedicated, IsDefault = model.IsDefault,
                     Capabilities = model.Capabilities, Models = model.Models,
                 },
                 ImageCapabilities = capabilities,
