@@ -1225,6 +1225,7 @@ public class ModelResolver : IModelResolver
             return ModelResolutionResult.NotFound(expectedModel,
                 $"逻辑模型不支持当前 appCaller 场景: model={logical.PublicId}, appCaller={appCallerCode}, "
                 + $"capabilities=[{string.Join(",", logical.Capabilities)}], "
+                + $"allowedAppCallers=[{string.Join(",", logical.AllowedAppCallerCodes)}], "
                 + $"required={GatewayCapabilityContract.RequiredScenarioCapability(appCallerCode) ?? "(无)"}",
                 GatewayRouteFailure.LogicalModelCapabilityMismatch,
                 "logical-model-capability",
