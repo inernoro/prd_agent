@@ -1070,7 +1070,15 @@ public class ModelResolver : IModelResolver
             // HealthStatus 禁用不可用项，深度健康检查则把它计为运行时故障。
             ModelResolutionResult? catalogResolution = null;
             var logicalOfferings = routableOfferingsByLogicalModel.GetValueOrDefault(logical.Id) ?? [];
-            foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
+            // 常规队列会有意排除 Unavailable；但 logicalOfferings 已经用同一半开判据筛出
+            // “冷却结束且未被认领”的恢复候选。目录是只读路径，不能抢租约，也不能再把这些候选
+            // 丢掉，否则只剩半开线路时会发布一个没有能力快照的假空目录，真实请求也无从触发恢复。
+            var catalogOfferings = OrderLogicalOfferings(logical, logicalOfferings)
+                .Concat(logicalOfferings
+                    .Where(x => x.HealthStatus == ModelHealthStatus.Unavailable)
+                    .OrderBy(x => x.Priority)
+                    .ThenBy(x => x.Id, StringComparer.Ordinal));
+            foreach (var offering in catalogOfferings)
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
                 if (candidate is null || !IsLogicalOfferingAllowed(candidate, allowedGroups)) continue;

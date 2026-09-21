@@ -5675,9 +5675,10 @@ public class GatewayDataDomainGuardTests
         var catalog = resolver[catalogStart..resolveStart];
 
         Assert.Contains("OrderLogicalOfferings(logical, logicalOfferings)", catalog);
+        Assert.Contains("x.HealthStatus == ModelHealthStatus.Unavailable", catalog);
         Assert.Contains("TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct)", catalog);
-        Assert.Contains("HealthStatus = hasResolvableOffering ? \"Healthy\" : \"Unavailable\"", catalog);
-        Assert.DoesNotContain("if (!hasResolvableOffering)\n                continue;", catalog);
+        Assert.Contains("HealthStatus = catalogResolution is not null ? \"Healthy\" : \"Unavailable\"", catalog);
+        Assert.DoesNotContain("if (catalogResolution is null)\n                continue;", catalog);
         Assert.DoesNotContain("availableIds.Contains", catalog);
     }
 
