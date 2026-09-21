@@ -1690,6 +1690,7 @@ static IResult HealthCheck()
 static async Task<IResult> DeepHealth(
     PrdAgent.Api.Middleware.ApiFaultTracker faults,
     PrdAgent.Infrastructure.Database.MongoDbContext db,
+    PrdAgent.Infrastructure.Database.LlmGatewayDataContext gatewayDb,
     PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
     PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
     CancellationToken cancellationToken)
@@ -1871,9 +1872,47 @@ static async Task<IResult> DeepHealth(
         visualImageRouteOutput = $"默认生图路由预检失败：{ex.GetType().Name}";
     }
 
+    // 生图真实调用结果：路由预检只能证明「现在能解析」，不能证明上一笔真实请求有没有
+    // 被上游或网关拒绝。过去只盯未处理异常，而模型不开放、能力不匹配、上游 4xx/5xx
+    // 都会被业务层转成结构化失败，进程没有抛异常，监控因此永远绿。
+    //
+    // 这里读取网关已经脱敏的请求日志，只看最近 6 小时内 MAP 三个生图场景的最终状态。
+    // 判据用「最新连续失败数」而不是窗口失败总数：故障后成功一次即表示链路已经恢复，
+    // CDS 会留下故障/恢复事件；旧失败不会让红灯再挂 6 小时。
+    var visualImageRecentRequests = 0;
+    var visualImageConsecutiveFailures = -1;
+    string visualImageOutcomeOutput;
+    try
+    {
+        var imageCallers = PrdAgent.Api.Services.VisualModelPolicyService.AppCallers;
+        var since = now.AddMinutes(-faults.WindowMinutes);
+        var filter = MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.And(
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Gte(x => x.StartedAt, since),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.In(x => x.AppCallerCode, imageCallers),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Ne(x => x.Status, "running"));
+        var outcomes = await gatewayDb.LlmRequestLogs
+            .Find(filter)
+            .SortByDescending(x => x.StartedAt)
+            .Limit(20)
+            .Project(x => new { x.Status })
+            .ToListAsync(cancellationToken);
+        visualImageRecentRequests = outcomes.Count;
+        visualImageConsecutiveFailures = outcomes.TakeWhile(x => x.Status != "succeeded").Count();
+        visualImageOutcomeOutput = outcomes.Count == 0
+            ? $"最近 {faults.WindowMinutes} 分钟没有生图真实调用，无法用真实结果证明链路可用"
+            : visualImageConsecutiveFailures == 0
+                ? $"最近一笔生图真实调用成功；窗口内采样 {outcomes.Count} 笔"
+                : $"最近连续 {visualImageConsecutiveFailures} 笔生图真实调用失败；详情见网关调用日志";
+    }
+    catch (Exception ex)
+    {
+        visualImageOutcomeOutput = $"读取生图真实调用结果失败：{ex.GetType().Name}";
+    }
+
     var payload = new Dictionary<string, object?>
     {
-        ["status"] = faultCount == 0 && mongoMs >= 0 && visualImageRouteFailures == 0 ? "pass" : "fail",
+        ["status"] = faultCount == 0 && mongoMs >= 0 && visualImageRouteFailures == 0
+            && visualImageConsecutiveFailures == 0 ? "pass" : "fail",
         ["version"] = "1",
         ["serviceId"] = "prd-api",
         ["description"] = "MAP 后端深度自检",
@@ -2001,6 +2040,63 @@ static async Task<IResult> DeepHealth(
                         environment = "production",
                         publicVisible = true,
                         publicName = "MAP 生图模型",
+                    },
+                },
+            },
+            ["visual-image:recent-outcomes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.recent-outcomes",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageConsecutiveFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageConsecutiveFailures == 0
+                        ? (visualImageRecentRequests > 0 ? "pass" : "warn")
+                        : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageOutcomeOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用结果",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图真实调用",
+                    },
+                },
+            },
+            ["visual-image:requests"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.requests",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRecentRequests,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRecentRequests > 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRecentRequests > 0
+                        ? $"最近 {faults.WindowMinutes} 分钟采样到 {visualImageRecentRequests} 笔生图真实调用"
+                        : $"最近 {faults.WindowMinutes} 分钟没有生图真实调用",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用数",
+                        field = "observedValue",
+                        op = "gt",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 2,
+                        severity = "P2",
+                        environment = "production",
+                        publicVisible = false,
                     },
                 },
             },
