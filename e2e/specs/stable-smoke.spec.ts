@@ -49,6 +49,17 @@ type ApiEnvelope<T> = {
   error?: { code?: string; message?: string };
 };
 
+type BusinessModelPool = {
+  code: string;
+  isDefault?: boolean;
+  resolutionType?: string;
+  models: Array<{
+    modelId: string;
+    platformId: string;
+    healthStatus?: string;
+  }>;
+};
+
 type AuthSession = {
   accessToken: string;
   refreshToken: string;
@@ -2105,6 +2116,47 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[LIT-011][GW-010][REG-model-catalog-identity-001] 核心目录健康与文学运行时保持闭环', async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const targets = [
+      { endpoint: '/api/literary-agent/config/models/chat', appCallerCode: 'literary-agent.content::chat', modelType: 'chat' },
+      { endpoint: '/api/literary-agent/config/models/text2img', appCallerCode: 'literary-agent.illustration.text2img::generation', modelType: 'generation' },
+      { endpoint: '/api/literary-agent/config/models/img2img', appCallerCode: 'literary-agent.illustration.img2img::generation', modelType: 'generation' },
+    ];
+    for (const target of targets) {
+      const pools = await readEnvelope<BusinessModelPool[]>(await request.get(
+        target.endpoint,
+        { headers: authHeaders(token) },
+      ));
+      expect(pools.length, `${target.appCallerCode} 的业务模型目录为空`).toBeGreaterThan(0);
+      expect(pools.filter((pool) => pool.isDefault).length, `${target.appCallerCode} 默认模型数量异常`).toBe(1);
+      for (const pool of pools) {
+        expect(pool.code, `${target.appCallerCode} 缺少稳定 PublicId`).not.toBe('');
+        expect(pool.resolutionType).toBe('LogicalModel');
+        expect(pool.models).toHaveLength(1);
+        expect(pool.models[0]?.modelId).toBe(pool.code);
+        expect(pool.models[0]?.platformId).toBe('logical-model');
+        expect(['Healthy', 'Degraded']).toContain(pool.models[0]?.healthStatus);
+      }
+    }
+
+    const deep = await request.get('/api/healthz/deep');
+    const deepBody = await deep.json() as {
+      checks?: Record<string, Array<{
+        observedValue?: number;
+        status?: string;
+        targetCount?: number;
+        catalogEntryCount?: number;
+      }>>;
+    };
+    const contractCheck = deepBody.checks?.['model-catalog:selector-runtime-contract']?.[0];
+    expect(deep.ok()).toBe(true);
+    expect(contractCheck?.status).toBe('pass');
+    expect(contractCheck?.observedValue).toBe(0);
+    expect(contractCheck?.targetCount).toBe(5);
+    expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
+  });
+
   test('[LIT-002][LIT-005][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/literary-agent');
@@ -2112,6 +2164,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const article = '清晨，城市公园里的蓝色长椅刚被阳光照亮。\n\n一位读者翻开书本，远处的树叶在微风中轻轻摇动。';
     let workspaceId = '';
     try {
+      const chatPools = await readEnvelope<BusinessModelPool[]>(await page.request.get(
+        '/api/literary-agent/config/models/chat',
+        { headers: authHeaders(token) },
+      ));
+      const defaultChatPool = chatPools.find((pool) => pool.isDefault);
+      expect(defaultChatPool?.code, '文学创作对话目录必须有唯一默认 PublicId').toBeTruthy();
       const created = await readEnvelope<{ workspace: { id: string } }>(
         await page.request.post('/api/literary-agent/workspaces', {
           headers: authHeaders(token),
@@ -2123,7 +2181,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: authHeaders(token),
         data: { title, articleContent: article },
       }));
-      const streamed = await page.evaluate(async ({ id, accessToken, content }) => {
+      const streamed = await page.evaluate(async ({ id, accessToken, content, modelId }) => {
         const startedAt = performance.now();
         const response = await fetch(`/api/visual-agent/image-master/workspaces/${id}/article/generate-markers`, {
           method: 'POST',
@@ -2137,6 +2195,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             articleContent: content,
             userInstruction: '只插入一处配图标记，保持原文不变',
             insertionMode: 'anchor',
+            modelId,
           }),
         });
         if (!response.ok || !response.body) {
@@ -2160,13 +2219,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           }
         }
         return { ok: true, firstChunkMs, firstVisibleProgressMs, chunkCount, text };
-      }, { id: workspaceId, accessToken: token, content: article });
+      }, { id: workspaceId, accessToken: token, content: article, modelId: defaultChatPool!.code });
       expect(streamed.ok, streamed.text).toBe(true);
       expect(streamed.firstChunkMs).toBeGreaterThanOrEqual(0);
       expect(streamed.firstVisibleProgressMs, '文学创作必须在两秒内出现用户可见进度，心跳不计入').toBeGreaterThanOrEqual(0);
       expect(streamed.firstVisibleProgressMs).toBeLessThan(2_000);
       expect(streamed.chunkCount).toBeGreaterThan(1);
-      expect(streamed.text).toMatch(/(?:delta|done|complete|marker)/i);
+      expect(streamed.text).toContain('"type":"done"');
+      expect(streamed.text).not.toContain('"type":"error"');
 
       const detail = await readEnvelope<{ workspace: { articleContent?: string; articleContentWithMarkers?: string } }>(
         await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }),

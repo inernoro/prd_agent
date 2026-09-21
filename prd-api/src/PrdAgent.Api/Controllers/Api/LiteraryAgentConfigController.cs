@@ -76,32 +76,15 @@ public class LiteraryAgentConfigController : ControllerBase
     #region 模型查询（无参数，内部硬编码 appCallerCode）
 
     /// <summary>
-    /// 获取文学创作所有生图场景的模型池列表（文生图 + 图生图，合并去重）
-    /// 与视觉创作一致，用户从统一列表中选择模型池
+    /// 获取当前文学配图场景的模型目录。
+    ///
+    /// 文生图与图生图可以开放不同的逻辑模型，不能把两个目录合并后让前端任选；
+    /// 否则有参考图时可能把仅支持文生图的 PublicId 提交给图生图运行时。
+    /// 该旧入口与 models/image-gen 保持同一场景判据。
     /// </summary>
     [HttpGet("models")]
     public async Task<IActionResult> GetModels(CancellationToken ct)
-    {
-        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img };
-        const string modelType = "generation";
-
-        var seen = new HashSet<string>();
-        var merged = new List<ModelPoolForAppResult>();
-
-        foreach (var code in codes)
-        {
-            var pools = await _modelPoolQuery.GetModelPoolsAsync(code, modelType, ct);
-            foreach (var pool in pools)
-            {
-                if (seen.Add(pool.Id))
-                {
-                    merged.Add(pool);
-                }
-            }
-        }
-
-        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));
-    }
+        => await GetImageGenModels(ct);
 
     /// <summary>
     /// 获取文学创作"对话/标记生成"可用的模型池列表
@@ -924,4 +907,3 @@ public class UpdateLiteraryAgentConfigRequest
     public string? ReferenceImageSha256 { get; set; }
     public string? ReferenceImageUrl { get; set; }
 }
-

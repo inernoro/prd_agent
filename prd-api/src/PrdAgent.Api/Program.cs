@@ -237,6 +237,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ModelCatalogContractProbe>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
@@ -1693,6 +1694,7 @@ static async Task<IResult> DeepHealth(
     PrdAgent.Infrastructure.Database.LlmGatewayDataContext gatewayDb,
     PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
     PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
+    PrdAgent.Infrastructure.Services.ModelCatalogContractProbe modelCatalogContract,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
@@ -1872,6 +1874,11 @@ static async Task<IResult> DeepHealth(
         visualImageRouteOutput = $"默认生图路由预检失败：{ex.GetType().Name}";
     }
 
+    // 业务选择器与执行链路必须使用同一个稳定模型身份。只看“目录非空”会漏掉最危险的
+    // 情况：页面展示旧模型池成员名，但运行时只接受 LLM Gateway PublicId。该探针对所有
+    // 仍消费 IModelPoolQueryService 的核心入口执行同一份目录 -> 默认 -> 指定模型闭环。
+    var modelCatalogResult = await modelCatalogContract.CheckAsync(cancellationToken);
+
     // 生图真实调用结果：路由预检只能证明「现在能解析」，不能证明上一笔真实请求有没有
     // 被上游或网关拒绝。过去只盯未处理异常，而模型不开放、能力不匹配、上游 4xx/5xx
     // 都会被业务层转成结构化失败，进程没有抛异常，监控因此永远绿。
@@ -1912,6 +1919,7 @@ static async Task<IResult> DeepHealth(
     var payload = new Dictionary<string, object?>
     {
         ["status"] = faultCount == 0 && mongoMs >= 0 && visualImageRouteFailures == 0
+            && modelCatalogResult.FailureCount == 0
             && visualImageConsecutiveFailures == 0 ? "pass" : "fail",
         ["version"] = "1",
         ["serviceId"] = "prd-api",
@@ -2040,6 +2048,32 @@ static async Task<IResult> DeepHealth(
                         environment = "production",
                         publicVisible = true,
                         publicName = "MAP 生图模型",
+                    },
+                },
+            },
+            ["model-catalog:selector-runtime-contract"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-catalog.selector-runtime-contract",
+                    ["componentType"] = "service",
+                    ["observedValue"] = modelCatalogResult.FailureCount,
+                    ["observedUnit"] = "count",
+                    ["targetCount"] = modelCatalogResult.TargetCount,
+                    ["catalogEntryCount"] = modelCatalogResult.CatalogEntryCount,
+                    ["status"] = modelCatalogResult.FailureCount == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = modelCatalogResult.Output,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 业务模型目录与运行时可用性一致性",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 业务模型目录",
                     },
                 },
             },

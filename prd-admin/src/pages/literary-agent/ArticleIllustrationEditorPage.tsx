@@ -81,6 +81,7 @@ import { cn } from '@/lib/cn';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem, CreateImageGenRunInput } from '@/services/contracts/imageGen';
+import { mutateReferenceImageScenario } from './referenceImageModelCatalog';
 
 // 3 个状态：0=upload, 1=editing, 2=markersGenerated
 type WorkflowPhase = 0 | 1 | 2;
@@ -581,6 +582,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
   const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
+
+  const reloadImageGenPools = useCallback(async () => {
+    setImageGenModelError(null);
+    setModelsLoading(true);
+    try {
+      const res = await getLiteraryAgentModels();
+      if (res.success && res.data) {
+        setImageGenPools(res.data);
+      } else {
+        setImageGenPools([]);
+        setImageGenModelError('加载模型池失败');
+      }
+    } catch {
+      setImageGenPools([]);
+      setImageGenModelError('加载模型池失败');
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
 
   // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
   const effectiveModel = useMemo<PoolModel | null>(() => {
@@ -4599,12 +4619,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   onClick={async () => {
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = config.isActive
-                                        ? await deactivateReferenceImageConfig({ id: config.id })
-                                        : await activateReferenceImageConfig({ id: config.id });
-                                      if (res.success) {
-                                        await loadReferenceImageConfigs();
-                                      }
+                                      await mutateReferenceImageScenario(
+                                        () => config.isActive
+                                          ? deactivateReferenceImageConfig({ id: config.id })
+                                          : activateReferenceImageConfig({ id: config.id }),
+                                        loadReferenceImageConfigs,
+                                        reloadImageGenPools,
+                                      );
                                     } finally {
                                       setReferenceImageSaving(false);
                                     }
@@ -4653,9 +4674,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = await deleteReferenceImageConfig({ id: config.id });
+                                      const res = config.isActive
+                                        ? await mutateReferenceImageScenario(
+                                          () => deleteReferenceImageConfig({ id: config.id }),
+                                          loadReferenceImageConfigs,
+                                          reloadImageGenPools,
+                                        )
+                                        : await deleteReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        await loadReferenceImageConfigs();
+                                        if (!config.isActive) {
+                                          await loadReferenceImageConfigs();
+                                        }
                                         toast.success('已删除');
                                       } else {
                                         toast.error('删除失败', res.error?.message || '未知错误');
