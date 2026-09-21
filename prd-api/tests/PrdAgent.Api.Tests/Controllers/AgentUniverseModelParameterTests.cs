@@ -18,7 +18,7 @@ public sealed class AgentUniverseModelParameterTests
         var sizes = await AgentUniverseController.ReadImageSizesAsync(
             gateway,
             "ai-toolbox.agent.visual::generation",
-            "image2");
+            "default-generation");
 
         Assert.Equal("ai-toolbox.agent.visual::generation", gateway.AppCallerCode);
         Assert.Equal(0, gateway.ResolveCalls);
@@ -39,7 +39,7 @@ public sealed class AgentUniverseModelParameterTests
             CancellationToken.None);
 
         var model = Assert.Single(catalog);
-        Assert.Equal("image2", model.Model.Code);
+        Assert.Equal("default-generation", model.Model.Code);
         Assert.True(model.ImageCapabilities?.Matched);
         Assert.Equal(0, gateway.ResolveCalls);
         Assert.Equal(leaseBefore, gateway.HalfOpenLeaseUntil);
@@ -75,17 +75,17 @@ public sealed class AgentUniverseModelParameterTests
                 new()
                 {
                     Id = "logical-image2",
-                    Code = "image2",
-                    Name = "Image 2",
+                    Code = "default-generation",
+                    Name = "默认生图",
                     ResolutionType = "LogicalModel",
                     Models =
                     [
                         new PoolModelInfo
                         {
-                            ModelId = "image2",
+                            ModelId = "default-generation",
                             PlatformId = "logical-model",
                             HealthStatus = "Healthy",
-                            ActualModelId = "gpt-image-2",
+                            ActualModelId = "chatgpt-image-latest",
                             ActualPlatformId = "openai",
                         },
                     ],

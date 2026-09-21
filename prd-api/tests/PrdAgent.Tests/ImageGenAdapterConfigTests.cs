@@ -35,6 +35,20 @@ public class ImageGenAdapterConfigTests
         Assert.Equal("gpt-image-2-all*", ImageGenModelAdapterRegistry.TryMatch("gpt-image-2-all")?.ModelIdPattern);
     }
 
+    [Fact]
+    public void ChatGptImageLatest_UsesTheSameConcreteImageSizeContract()
+    {
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo("chatgpt-image-latest");
+
+        Assert.NotNull(info);
+        Assert.True(info.Matched);
+        Assert.Equal(new[] { "1024x1024", "1024x1536", "1536x1024" },
+            info.SizesByResolution["1k"].Select(x => x.Size));
+        Assert.Equal(SizeParamFormats.WxH, info.SizeParamFormat);
+        Assert.False(info.SizesNotApplicable);
+        Assert.False(ImageGenModelAdapterRegistry.SupportsResponseFormat("chatgpt-image-latest"));
+    }
+
     [Theory]
     [InlineData("1024x1024")]
     [InlineData("1024x1536")]
