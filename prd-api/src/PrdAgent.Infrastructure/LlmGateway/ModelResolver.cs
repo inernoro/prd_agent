@@ -1023,6 +1023,12 @@ public class ModelResolver : IModelResolver
             .ToListAsync(ct);
         if (logicalModels.Count == 0)
             return [];
+        var callerDefaultLogicalId = logicalModels
+            .FirstOrDefault(x => x.DefaultForAppCallerCodes.Any(code =>
+                string.Equals(code, appCallerCode, StringComparison.OrdinalIgnoreCase)))
+            ?.Id;
+        var defaultLogicalId = callerDefaultLogicalId
+            ?? logicalModels.FirstOrDefault(x => x.IsDefaultForType)?.Id;
         var ids = logicalModels.Select(x => x.Id).ToList();
         // 「不可用」不等于「这次调不通」：解析在挑常规队列之前会先试着认领一条已摘掉、
         // 过了冷却（或被人工点过恢复）的线路做半开试探。把这一档一并排除掉，选择器里
@@ -1095,8 +1101,10 @@ public class ModelResolver : IModelResolver
                 Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
                 IsDedicated = logical.AllowedAppCallerCodes.Count > 0,
-                // 管理端 DisplayOrder 决定默认业务模型，前端不猜型号或池成员。
-                IsDefault = UsesVisualLogicalModelCatalog(appCallerCode) && result.Count == 0,
+                // 默认项必须与运行时“不点名模型”的两层选择保持一致：先调用方默认，
+                // 再用途默认。视觉目录的存量行为仍在没有显式默认时取第一项。
+                IsDefault = string.Equals(logical.Id, defaultLogicalId, StringComparison.Ordinal)
+                    || (defaultLogicalId is null && UsesVisualLogicalModelCatalog(appCallerCode) && result.Count == 0),
                 Capabilities = logical.Capabilities?.ToList() ?? [],
                 Models =
                 [
@@ -1143,6 +1151,7 @@ public class ModelResolver : IModelResolver
                     // 池退场把它们整条打断了。见 GatewayLogicalModel.MigratedFromPoolIds。
                     Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.MigratedFromPoolIds, key))))
             .FirstOrDefaultAsync(ct);
+
         if (logical is null)
             return null;
 
