@@ -197,6 +197,9 @@ public class AvailableModelPool
     /// </summary>
     public bool IsDefault { get; init; }
 
+    /// <summary>是否为该模型类型的全局默认项，不受调用方专属默认覆盖。</summary>
+    public bool IsDefaultForType { get; init; }
+
     /// <summary>
     /// 池内模型列表
     /// </summary>
@@ -254,4 +257,16 @@ public class PoolModelInfo
     /// 健康评分（0-100）
     /// </summary>
     public int HealthScore { get; init; } = 100;
+
+    /// <summary>
+    /// 目录生成时已通过名录门校验的实际模型快照。业务侧只读能力展示使用该值，
+    /// 不得为了读元信息再次执行路由解析并认领半开线路。
+    /// </summary>
+    public string? ActualModelId { get; init; }
+
+    /// <summary>实际平台快照；仅用于能力说明，不用于业务侧钉死路由。</summary>
+    public string? ActualPlatformId { get; init; }
+
+    /// <summary>实际模型的参数能力快照；只读目录与真正发送共用同一解析结果来源。</summary>
+    public Dictionary<string, bool>? ParameterCapabilities { get; init; }
 }
