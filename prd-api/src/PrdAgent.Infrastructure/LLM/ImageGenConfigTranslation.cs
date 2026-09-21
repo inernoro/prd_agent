@@ -120,7 +120,7 @@ public static class ImageGenConfigTranslation
     private static SizeOption? ParseSizeOption(string? raw)
     {
         if (string.IsNullOrWhiteSpace(raw)) return null;
-        var parts = raw.Trim().Split(['x', 'X', '×', '*'], StringSplitOptions.RemoveEmptyEntries);
+        var parts = raw.Trim().Split(new[] { 'x', 'X', '×', '*' }, StringSplitOptions.RemoveEmptyEntries);
         if (parts.Length != 2) return null;
         if (!int.TryParse(parts[0].Trim(), out var w) || !int.TryParse(parts[1].Trim(), out var h)) return null;
         if (w <= 0 || h <= 0) return null;
