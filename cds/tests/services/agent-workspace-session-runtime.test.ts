@@ -1007,6 +1007,19 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.envFiles[0]?.mode).toBe(0o600);
     expect(shell.envFiles[0]?.content).not.toContain('transfer-token');
     expect(shell.envFiles[0]?.content).not.toContain('model-secret');
+    // Codex 自带的 workspace-write 沙箱要在容器内再开一层 user namespace，而这个容器
+    // cap-drop ALL + no-new-privileges、非特权，那层开不出来，每条文件系统命令在执行前就失败
+    // （2026-09-21 run 事件摘要里模型原话「bwrap: No permissions to create a new namespace」，
+    // 此前十八条 run 零产出的真正原因）。用 OpenDesign 自己的运维开关关掉那层多余的沙箱——
+    // 容器本身就是隔离边界，所以下面同时钉住：这个开关在、容器的隔离参数一个都没被放开。
+    expect(shell.envFiles[0]?.content).toMatch(/^OD_CODEX_SANDBOX=danger-full-access$/m);
+    const sessionCreate = shell.calls.find((call) => call.command.startsWith('docker create '))?.command || '';
+    expect(sessionCreate).toContain('--cap-drop ALL');
+    expect(sessionCreate).toContain('--security-opt no-new-privileges:true');
+    expect(sessionCreate).toContain('--read-only');
+    expect(sessionCreate).not.toContain('--privileged');
+    expect(sessionCreate).not.toContain('--cap-add');
+    expect(sessionCreate).not.toContain('seccomp=unconfined');
     expect(fs.existsSync(shell.envFiles[0]?.path || '')).toBe(false);
     const preparedDesignTemplate = shell.calls.find((call) => (
       call.command.startsWith('docker exec ') && call.command.includes('design-templates/web-prototype')

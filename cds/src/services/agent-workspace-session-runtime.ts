@@ -2204,6 +2204,15 @@ export class AgentWorkspaceSessionRuntime {
         `OD_API_TOKEN=${daemonApiToken}`,
         'OD_SANDBOX_MODE=1',
         'OD_SANDBOX_IMPORT_ALLOWED_ROOTS=/workspace',
+        // Codex 在 Linux 上默认以 workspace-write 沙箱运行，底层用 bubblewrap 在容器内再开一层
+        // user namespace。这个会话容器 cap-drop ALL + no-new-privileges、非特权，那层 namespace
+        // 开不出来，于是每条文件系统命令在执行前就失败——模型读不到任务书、写不出页面，
+        // 只能在回复里反复报「bwrap: No permissions to create a new namespace」
+        // （2026-09-21 run 事件摘要里的原话；此前十八条 run 零产出的真正原因）。
+        // 容器本身就是隔离边界（只读 rootfs、cap-drop ALL、egress-only、每会话独立卷），
+        // Codex 再套一层既多余又起不来。用 OpenDesign 自己的运维开关关掉它：
+        // codexNeedsDangerFullAccessSandbox() 读这个值，注释写的正是「unprivileged Linux containers」。
+        'OD_CODEX_SANDBOX=danger-full-access',
         // The real MAP ticket belongs only to the egress relay. Codex's
         // provider-specific env_key receives this session-local placeholder.
         `MAP_CODEX_MODEL_TOKEN=${egressClientToken}`,

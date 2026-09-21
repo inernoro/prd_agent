@@ -1648,3 +1648,59 @@ json-event-stream 代理从未被告知「你的 `<artifact>` 会被丢掉」。
 另外 `startChatRun` 的解构里还有每次 run 可传的 `skillId`（`run.skillId = skillId`）。
 若事件摘要证实模型确在交 `<artifact>` 文本，绕开技能那句的候选路径就在这里，
 但在拿到摘要之前不动它。
+
+## 定案（2026-09-21，模型原话为证）：Codex 的自带沙箱在 CDS 容器里起不来，一个文件都读写不了
+
+失败现场第一次带上了 run 事件摘要（`runTranscriptDigest`），模型最后一段话原文：
+
+> Unable to create `/workspace/index.html`: every filesystem command fails before execution
+> because the sandbox cannot create its required namespace
+> (`bwrap: No permissions to create a new namespace`). No files were modified.
+
+终审那一轮同样：`I couldn't perform or correct the review because the filesystem runner still
+fails before every command … /workspace/index.html, brief/task.json, and the knowledge source
+could not be read or modified.`
+
+摘要里 `toolNames` 只有 `Bash` / `TodoWrite`、`touchedPaths` 为空、`errors` 为空——
+工具调用发出了、在执行前就被沙箱拒了，OpenDesign 不把这当错误。
+
+### 机制
+
+Codex 在 Linux 上以 `--sandbox workspace-write` 运行，底层用 bubblewrap（`bwrap`）在**容器内
+再开一层 user namespace**。CDS 的会话容器按安全策略 `--cap-drop ALL --security-opt
+no-new-privileges:true`、非特权，unprivileged userns 创建被拒。于是每条文件系统命令在
+执行前失败：模型读不到任务书、知识源、模板，写不出页面，只能在回复里反复报告——
+而这段话 OpenDesign 不当产物、CDS 此前也不抓，外面只看到「零产出」。
+
+### 至此作废的全部归因（按时间）
+
+1. 模型漏填占位 —— 那是整张未动的模板
+2. 产物在 live artifact 里 —— 取错了库
+3. 种子劫持了交付判定 —— 劫持属实并已修，但不是成因
+4. 技能要交 `<artifact>` 文本、json-event-stream 通道把它丢了 —— 通道行为属实，
+   但模型根本没走到产出那一步
+
+它们共同的错误是：**都在推断模型做了什么，而没有去拿模型自己说了什么。**
+取证那一步补上之后，一跑定案。
+
+### 修法方向
+
+CDS 容器本身就是隔离边界（只读 rootfs、cap-drop ALL、egress-only 网络、每会话独立卷），
+Codex 在里面再套一层沙箱既多余又起不来。正解是让 Codex 在这个运行时里以
+`danger-full-access` 运行（不开自己的沙箱），而不是给容器加 `SYS_ADMIN` 或放开 seccomp
+去成全那层多余的沙箱。具体开关见后续提交。
+
+### 实现来源
+
+- 取证：`cds/src/services/agent-workspace-session-runtime.ts` 的 `captureRunTranscriptDigest`
+- Codex 沙箱参数：镜像内 `/app/apps/daemon/dist/runtimes/defs/codex.js`（`buildArgs` 的 `sandboxArgs`）
+- 容器安全策略：同文件 `docker create` 那段
+
+### 开关（2026-09-21）
+
+OpenDesign 的 `codexNeedsDangerFullAccessSandbox()` 读 `OD_CODEX_SANDBOX`，等于
+`danger-full-access` 时 Codex 以不开自带沙箱的方式运行；源码注释写的正是
+「deployments where Codex cannot create its workspace-write sandbox, for example unprivileged
+Linux containers」。CDS 把它写进会话容器 env。安全边界不变：容器仍是只读 rootfs、
+cap-drop ALL、no-new-privileges、egress-only、每会话独立卷——只是不再让 Codex 在里面
+徒劳地再套一层。
