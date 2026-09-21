@@ -1704,3 +1704,54 @@ OpenDesign 的 `codexNeedsDangerFullAccessSandbox()` 读 `OD_CODEX_SANDBOX`，�
 Linux containers」。CDS 把它写进会话容器 env。安全边界不变：容器仍是只读 rootfs、
 cap-drop ALL、no-new-privileges、egress-only、每会话独立卷——只是不再让 Codex 在里面
 徒劳地再套一层。
+
+## 首次跑通（2026-09-21 19:50 UTC，run `dd4cd1794c5e44b2ba15591b7312596c`）
+
+会话容器加上 `OD_CODEX_SANDBOX=danger-full-access` 之后的第一跑，OpenDesign 路径
+（MAP → CDS 容器 → Codex → map-egress → llmgw）第一次交出合格网页：
+
+| 项 | 值 |
+|---|---|
+| 状态 | `Done` / progress 100 / 「设计产物已完成」 |
+| 耗时 | 19:41:35 → 19:50:30，约 9 分钟 |
+| 模型调用 | 34 次 |
+| 站点 | `7d47c244882d072cc0548f7bfbb718a1`，revision `baseline_…_639256170292440000` |
+| 页面 | 22858 字节，5 个 `<section>`，标题「码安全与性能架构提升 · 宣讲」 |
+| 闸门断言 | `[REPLACE]` 残留 0；空链接 0；模板粘贴标记无；可见正文 1512 字，内容全部来自知识源 |
+
+真实页面地址（对象存储直链）：
+`https://cfi.miduo.org/data/web-hosting/sites/7d47c244882d072cc0548f7bfbb718a1/.generated/19f4a28e46254ec1810e025208cf20da/index.html`
+
+至此本功能从「十八条 run 零产出」到「一跑成功」，中间真正起作用的是**一行环境变量**；
+之前所有起始页与提示词层面的改动都不是成因，但其中三项仍然保留为正确的收件契约
+（不种 index.html、按 `deliverableEntryFile` 收件、失败带现场与 run 事件摘要）——
+正是最后那项把根因逼了出来。
+
+### 实现来源
+
+- 开关与守卫：`cds/src/services/agent-workspace-session-runtime.ts`（会话 env）、
+  `cds/tests/services/agent-workspace-session-runtime.test.ts`
+- 取证：同文件 `captureRunTranscriptDigest` / `summarizeRunEventStream`
+
+## 同一篇知识源两条路对比（2026-09-21，用户原始要求之一）
+
+知识源：`码安全与性能架构提升-宣讲稿.md`（entry `77f9f143…`）；同一条指令、同一个标题。
+
+| 指标 | OpenDesign + Codex（run `dd4cd179…`） | 直连 map-gateway（run `c8608fd9…`） |
+|---|---|---|
+| 耗时 | 约 9 分钟 | 约 50 秒 |
+| 模型调用 | 34 次（生成 + 终审 + 修复回路） | 1 次流式（MAP 记 0，计数口径不同） |
+| 页面体积 | 22858 字节 | 17750 字节 |
+| 可见正文 | 1512 字 | 1650 字 |
+| 章节 / h2 / h3 | 5 / 4 / 9 | 4 / 4 / 14 |
+| 站内锚点 | 9 | 4 |
+| 表格 / 折叠 | 2 / 1 | 0 / 0 |
+| CSS 体积 / 变量 | 12753 字节 / 27 个 | 9504 字节 / 14 个 |
+| 占位残留 / 空链接 | 0 / 0 | 0 / 0 |
+
+读法：两条路都从同一篇稿子提炼出「问题 → 方案 → 收益」三段；OpenDesign 版多出两张
+「今天 · 明文存储 vs 升级后 · 指纹 + 密文」对照表和一个可展开的校验顺序，结构更像设计稿；
+直连版正文略多、层级更碎（h3 多 5 个）、耗时只有前者的十分之一。
+差别是「有没有设计系统与多轮自审」的差别，不是「能不能生成」的差别——后者今天之前一直是 0。
+
+站点：OpenDesign `7d47c244882d072cc0548f7bfbb718a1`；直连 `58b4e6815d7d40eeafffda0a433cdb24`。
