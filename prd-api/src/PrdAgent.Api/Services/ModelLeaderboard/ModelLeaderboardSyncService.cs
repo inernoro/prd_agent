@@ -92,7 +92,9 @@ public class ModelLeaderboardSyncService
     public async Task<List<BoardResult>> SyncAllAsync(CancellationToken ct, string? onlyBoard = null)
     {
         var http = _httpClientFactory.CreateClient(ModelLeaderboardSyncWorker.HttpClientName);
-        var fetcher = new ArenaLeaderboardFetcher(http);
+        var fetcher = new ArenaLeaderboardFetcher(
+            http,
+            _configuration["ModelLeaderboard:SnapshotMirrorBaseUrl"]);
         var sourceLabel = DeploymentAuthority.DescribeSource(_configuration);
 
         var targets = string.IsNullOrWhiteSpace(onlyBoard)
@@ -176,6 +178,8 @@ public class ModelLeaderboardSyncService
             candidates, x => x.DeploymentSlug, x => x.FetchedAt, scope);
 
         var parsed = await fetcher.FetchAsync(board, ct);
+        // 镜像恢复必须保留源快照的抓取时间，不能拿复制时间冒充数据更新时间。
+        fetchedAt = parsed.SourceFetchedAt ?? fetchedAt;
         var entries = parsed.Entries;
 
         // 写用 _id 过滤，不用 Board。

@@ -23,15 +23,18 @@ namespace PrdAgent.Api.Controllers.Api;
 public class MobileDashboardController : ControllerBase
 {
     private readonly MongoDbContext _db;
+    private readonly MongoDbContext _gatewayDb;
     private readonly ILogger<MobileDashboardController> _logger;
     private readonly IEnumerable<IAssetProvider> _assetProviders;
 
     public MobileDashboardController(
         MongoDbContext db,
+        LlmGatewayDataContext gatewayData,
         ILogger<MobileDashboardController> logger,
         IEnumerable<IAssetProvider> assetProviders)
     {
         _db = db;
+        _gatewayDb = gatewayData.Context;
         _logger = logger;
         _assetProviders = assetProviders;
     }
@@ -177,11 +180,35 @@ public class MobileDashboardController : ControllerBase
         // Token 使用量 + AI 调用次数（LLM 请求日志,一次查询两用）
         var tokenFilter = Builders<LlmRequestLog>.Filter.Eq(l => l.UserId, userId)
                         & Builders<LlmRequestLog>.Filter.Gte(l => l.StartedAt, since);
-        var tokenAgg = await _db.LlmRequestLogs
+        var legacyTokenTask = _db.LlmRequestLogs
             .Find(tokenFilter)
-            .Project(l => new { l.StartedAt, input = l.InputTokens ?? 0, output = l.OutputTokens ?? 0 })
+            .Project(l => new LlmUsagePoint
+            {
+                Id = l.Id,
+                RequestId = l.RequestId,
+                StartedAt = l.StartedAt,
+                Input = l.InputTokens ?? 0,
+                Output = l.OutputTokens ?? 0,
+            })
             .ToListAsync();
-        var totalTokens = tokenAgg.Sum(t => (long)t.input + t.output);
+        var gatewayTokenTask = _gatewayDb.LlmRequestLogs
+            .Find(tokenFilter)
+            .Project(l => new LlmUsagePoint
+            {
+                Id = l.Id,
+                RequestId = l.RequestId,
+                StartedAt = l.StartedAt,
+                Input = l.InputTokens ?? 0,
+                Output = l.OutputTokens ?? 0,
+            })
+            .ToListAsync();
+        await Task.WhenAll(legacyTokenTask, gatewayTokenTask);
+
+        // llmgw 独立部署后，请求日志的权威库是 llm_gateway；迁移前以及少量进程内调用
+        // 仍可能留在 MAP 主库。两边都读并按请求标识去重，避免正式环境首页恒为 0，
+        // 也避免同一条日志在迁移双写期间被统计两次。gateway 放前面，冲突时采用权威记录。
+        var tokenAgg = MergeLlmUsage(gatewayTokenTask.Result, legacyTokenTask.Result);
+        var totalTokens = tokenAgg.Sum(t => (long)t.Input + t.Output);
 
         // 缺陷提报（当前高频使用的模块;会话/消息是桌面 PRD 解读时代口径,保留字段兼容但前端已换指标）
         var defectTimes = await _db.DefectReports
@@ -195,7 +222,7 @@ public class MobileDashboardController : ControllerBase
         var imageGensByDay = imageGenTimes.GroupBy(x => LocalDay(x.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
         var aiCallsByDay = tokenAgg.GroupBy(x => LocalDay(x.StartedAt)).ToDictionary(g => g.Key, g => g.Count());
         var defectsByDay = defectTimes.GroupBy(x => LocalDay(x.CreatedAt)).ToDictionary(g => g.Key, g => g.Count());
-        var tokensByDay = tokenAgg.GroupBy(x => LocalDay(x.StartedAt)).ToDictionary(g => g.Key, g => g.Sum(t => (long)t.input + t.output));
+        var tokensByDay = tokenAgg.GroupBy(x => LocalDay(x.StartedAt)).ToDictionary(g => g.Key, g => g.Sum(t => (long)t.Input + t.Output));
 
         var daily = Enumerable.Range(0, days)
             .Select(i =>
@@ -225,6 +252,35 @@ public class MobileDashboardController : ControllerBase
             totalTokens,
             daily,
         }));
+    }
+
+    internal sealed class LlmUsagePoint
+    {
+        public string Id { get; init; } = string.Empty;
+        public string RequestId { get; init; } = string.Empty;
+        public DateTime StartedAt { get; init; }
+        public int Input { get; init; }
+        public int Output { get; init; }
+    }
+
+    internal static List<LlmUsagePoint> MergeLlmUsage(
+        IEnumerable<LlmUsagePoint> gateway,
+        IEnumerable<LlmUsagePoint> legacy)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var merged = new List<LlmUsagePoint>();
+
+        foreach (var item in gateway.Concat(legacy))
+        {
+            var key = !string.IsNullOrWhiteSpace(item.RequestId)
+                ? $"request:{item.RequestId}"
+                : !string.IsNullOrWhiteSpace(item.Id)
+                    ? $"document:{item.Id}"
+                    : $"anonymous:{item.StartedAt.Ticks}:{item.Input}:{item.Output}:{merged.Count}";
+            if (seen.Add(key)) merged.Add(item);
+        }
+
+        return merged;
     }
 
     // ─────────────────────────────────────────

@@ -97,6 +97,8 @@ services:
       - MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}
       # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
+      # 正式机若无法直连 arena.ai，可从另一套 CDS 的公开快照端点恢复；为空时仍走源站。
+      - ModelLeaderboard__SnapshotMirrorBaseUrl=${MODEL_LEADERBOARD_SNAPSHOT_MIRROR_BASE_URL:-}
       # 稳定冒烟身份全部由部署环境注入，仓库不携带正式域名或固定公钥。
       - StableSmokeAuthentication__NotificationTargetUsername=${STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME:-}
       - StableSmokeAuthentication__Keys__0__KeyId=${STABLE_SMOKE_KEY_ID:-}

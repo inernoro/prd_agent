@@ -195,6 +195,30 @@ public class ModelLeaderboardController : ControllerBase
     }
 
     /// <summary>
+    /// 给受出口网络限制的同项目正式部署提供公开快照。只返回 arena.ai 的公开榜单数据，
+    /// 不含用户、调用量、成本或部署标识；正式部署复制后仍执行相同的完整性校验。
+    /// </summary>
+    [AllowAnonymous]
+    [HttpGet("public-snapshot/{board}")]
+    public async Task<IActionResult> PublicSnapshot(string board, CancellationToken ct = default)
+    {
+        var info = ModelLeaderboardCatalog.Find(board);
+        if (info is null) return NotFound();
+
+        var snapshot = await LoadVisibleSnapshotAsync(info.Key, ct);
+        if (snapshot is null) return NotFound();
+
+        return Ok(new
+        {
+            kind = string.IsNullOrEmpty(snapshot.Kind) ? info.Kind : snapshot.Kind,
+            fetchedAt = snapshot.FetchedAt,
+            totalSessions = snapshot.TotalSessions,
+            totalVotes = snapshot.TotalVotes,
+            entries = snapshot.Entries,
+        });
+    }
+
+    /// <summary>
     /// 读一个榜里「本部署该看的那一份」快照。
     ///
     /// Get 与 Top 共用这一个：两边各写一遍「按榜过滤 + 作用域过滤 + 挑选」的话，
