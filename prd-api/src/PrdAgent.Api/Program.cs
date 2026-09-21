@@ -1690,6 +1690,8 @@ static IResult HealthCheck()
 static async Task<IResult> DeepHealth(
     PrdAgent.Api.Middleware.ApiFaultTracker faults,
     PrdAgent.Infrastructure.Database.MongoDbContext db,
+    PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
+    PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
@@ -1797,9 +1799,44 @@ static async Task<IResult> DeepHealth(
         leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
     }
 
+    // 默认生图路由预检：这里不调上游、不花生图费用，但会用与真实同步生图相同的
+    // 场景身份和逻辑模型进入调度器。它专门抓“目录里能选，点生成却被白名单拒绝”：
+    // 普通 /health 会绿、Mongo 会绿、模型目录也会绿，只有按真实 appCaller 解析才能提前看出契约断了。
+    var visualImageRouteFailures = 1;
+    string visualImageRouteOutput;
+    try
+    {
+        var policy = await visualModels.ReadAsync(cancellationToken);
+        var defaultModel = policy.DefaultModelId?.Trim();
+        if (string.IsNullOrWhiteSpace(defaultModel))
+        {
+            visualImageRouteOutput = "视觉创作没有配置默认生图模型";
+        }
+        else
+        {
+            var appCaller = PrdAgent.Api.Controllers.Api.ImageGenController.ResolveGenerateAppCallerCode(
+                isLayering: false,
+                imageCount: 0,
+                hasLegacyReference: false);
+            var resolution = await modelResolver.ResolveAsync(
+                appCaller,
+                PrdAgent.Core.Models.ModelTypes.ImageGen,
+                defaultModel,
+                ct: cancellationToken);
+            visualImageRouteFailures = resolution.Success ? 0 : 1;
+            visualImageRouteOutput = resolution.Success
+                ? $"默认生图模型 {defaultModel} 可按文生图场景正常解析"
+                : $"默认生图模型 {defaultModel} 无法按文生图场景解析（{resolution.FailureCode ?? "UNCLASSIFIED"}）";
+        }
+    }
+    catch (Exception ex)
+    {
+        visualImageRouteOutput = $"默认生图路由预检失败：{ex.GetType().Name}";
+    }
+
     var payload = new Dictionary<string, object?>
     {
-        ["status"] = faultCount == 0 && mongoMs >= 0 ? "pass" : "fail",
+        ["status"] = faultCount == 0 && mongoMs >= 0 && visualImageRouteFailures == 0 ? "pass" : "fail",
         ["version"] = "1",
         ["serviceId"] = "prd-api",
         ["description"] = "MAP 后端深度自检",
@@ -1901,6 +1938,32 @@ static async Task<IResult> DeepHealth(
                         environment = "production",
                         // 「有没有人在用」是内部判据，对外说它没有意义，不公开。
                         publicVisible = false,
+                    },
+                },
+            },
+            ["visual-image:default-route"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.default-route",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRouteFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRouteFailures == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRouteOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 默认生图模型路由",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图模型",
                     },
                 },
             },
