@@ -1614,3 +1614,21 @@ json-event-stream 代理从未被告知「你的 `<artifact>` 会被丢掉」。
 - Codex 定义：镜像内 `/app/apps/daemon/dist/runtimes/defs/codex.js`
 - json-event-stream 的 artifact 处理：镜像内 `/app/apps/daemon/dist/runtimes/json-event-stream.js`
 - 产物计数：镜像内 `/app/apps/daemon/dist/services/run-analytics-lifecycle.js`
+
+## 操作教训：自更新的重启比分支切换晚几分钟落地（2026-09-21）
+
+`cdscli self update`（含 `--transition-intent release` 强制切换）的时序是：先切分支——
+`self status` 立刻显示新 head——再等在途部署全部落地（本次事件 `self-update.deploy-drain.completed`
+写明等了 252 秒），然后才真正重启 CDS。重启会清空全部内存态 agent 会话。
+
+本次验证跑在 `06:57:16` 发车，CDS 在 `06:58:36` 完成重启（`pidStartedAt`），跑于 `06:59:04`
+以「CDS 会话已丢失」死掉。**不是别人切走的，是我自己那次切换的延迟重启。**
+
+发车判据从此改为两条同时成立：`self status` 的 `currentBranch`/`headSha` 是目标值，
+**且** `restartStatus === 'completed'`、`restartWait === null`。只看前者会重演。
+跑的过程中同样不得 push：push 触发分支预览重部署，MAP 的 api 容器重启会丢掉正在轮询的 run。
+
+### 实现来源
+
+- 发车前置检查：`.claude/skills/cds/cli/cdscli.py` 的 `self status`（读 `restartStatus` / `pidStartedAt`）
+- 重启时序：CDS 事件 `self-update.deploy-drain.completed`
