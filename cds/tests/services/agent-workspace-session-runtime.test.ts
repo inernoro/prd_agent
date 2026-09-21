@@ -19,6 +19,7 @@ import {
   classifyQualityRepairReason,
   summarizeOutputPreflightDiagnostic,
   summarizeRunEventStream,
+  redactDigestLeaves,
   computePublicArtifactRevision,
   createArtifactQualityGate,
   hardenSelfContainedHtml,
@@ -3615,6 +3616,22 @@ describe('run transcript digest（失败取证）', () => {
     expect(digest.textTail.length).toBeLessThanOrEqual(1200);
     expect(digest.touchedPaths.length).toBeLessThanOrEqual(30);
     expect(digest.toolNames.write).toBe(200);
+  });
+
+  it('脱敏逐叶子做、不走 JSON 往返：控制字符、令牌、超长文本都不会让取证抛错', () => {
+    const token = 'od-token-8f3a9c2d7b';
+    const digest = summarizeRunEventStream(
+      `event: agent\ndata: {"type":"text_delta","delta":"hello \\u0007 bell ${token} ${'y'.repeat(5000)}"}\n\n`
+      + `event: error\ndata: {"message":"Authorization: Bearer ${token}"}\n\n`,
+    );
+    const redacted = redactDigestLeaves([{ runId: 'r1', available: true, ...digest }], [token]) as any[];
+    const text = JSON.stringify(redacted);
+    // 2026-09-21 第一版在这里 JSON.parse 一段被截断+脱敏过的字符串，炸出
+    // 「Bad control character in string literal in JSON at position 1982」，把真失败顶替掉了。
+    expect(() => JSON.parse(text)).not.toThrow();
+    expect(text).not.toContain(token);
+    expect(redacted[0].textTail.length).toBeLessThanOrEqual(1500);
+    expect(redacted[0].errors[0]).not.toContain(token);
   });
 
   it('空流给出零计数而不是抛错', () => {

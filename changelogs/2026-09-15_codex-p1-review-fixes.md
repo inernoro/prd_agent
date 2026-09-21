@@ -216,3 +216,5 @@
 | fix | cds | 「没有 index.html」的失败现场再带上一份 run 事件摘要（`runTranscriptDigest`）：从 OpenDesign 的 `/api/runs/:id/events` 把这一轮的 SSE 拉回来，压成各类事件计数、agent 事件类型计数、用到的工具名与碰过的路径、最后一段模型文本、错误、stdout/stderr 尾巴。这是整条链路缺了一路的第一手记录——「模型这 15 分钟到底干了什么」——没有它每次失败都只能猜（2026-09-20 连猜四次）。取证失败不顶替原始故障（返回 `available:false` + 原因）；内容过 daemon 令牌遮蔽与通用脱敏并整体截断到 12KB |
 | test | cds | `summarizeRunEventStream` 单测三条：计数/工具名/路径/文本尾/错误的提取（含一帧解析不了的 data 只记成 unknown、不炸），长流的文本与路径上限，空流零计数不抛错 |
 | docs | cds | 台账更正：`systemPrompt` 其实被 `startChatRun` 读了（以 `clientSystemPrompt` 段进入拼装），我上一条「一次都没读」说错了。真正要紧的是拼装顺序 `daemonSystemPrompt → clientSystemPrompt → userRequest → skillPrompt`——技能那句「交 `<artifact>`、别写根目录 HTML」是最后一句。这仍是推断，以下一跑的事件摘要为准 |
+| fix | cds | run 事件摘要的脱敏改为逐字符串叶子做、不再 JSON 往返，整个取证包进 try/catch。第一版把摘要 stringify → 脱敏 → 截断到 12KB → parse，截断切在字符串中间、脱敏改了字节，parse 抛「Bad control character in string literal in JSON at position 1982」，还把原本的「没有 index.html」那条真失败顶替成了这句解析报错——正是「取证失败不得顶替原始故障」要防的形状。现在任何一步炸了都只回 `available:false` + 原因 |
+| test | cds | 回归守卫：含控制字符、daemon 令牌、超长文本的事件流，脱敏后 `JSON.stringify` 再 `parse` 不抛、令牌不残留、文本叶子不超 1500 字 |

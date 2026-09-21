@@ -3412,44 +3412,49 @@ export class AgentWorkspaceSessionRuntime {
     runIds: string[],
     executionDeadline: number,
   ): Promise<Record<string, unknown>> {
-    const digests: Record<string, unknown>[] = [];
-    for (const runId of [...new Set(runIds.filter(Boolean))].slice(0, 3)) {
-      try {
-        const controller = new AbortController();
-        const timer = setTimeout(
-          () => controller.abort(),
-          Math.max(3_000, Math.min(this.remainingExecutionMs(executionDeadline), 20_000)),
-        );
-        let raw = '';
+    // 取证绝不能顶替原始故障：这里任何一步炸了，都只回一个「取证不可用 + 原因」。
+    // 2026-09-21 第一版把摘要 JSON.stringify → 脱敏 → 截断 → JSON.parse，截断切在字符串中间、
+    // 脱敏改了字节，parse 抛错，把「没有 index.html」那条真失败顶替成了一句解析报错。
+    try {
+      const digests: Record<string, unknown>[] = [];
+      for (const runId of [...new Set(runIds.filter(Boolean))].slice(0, 3)) {
         try {
-          const response = await this.fetchImpl(
-            `${handle.daemonBaseUrl}/api/runs/${encodeURIComponent(runId)}/events`,
-            { headers: { Authorization: `Bearer ${handle.daemonApiToken}`, Accept: 'text/event-stream' }, signal: controller.signal },
+          const controller = new AbortController();
+          const timer = setTimeout(
+            () => controller.abort(),
+            Math.max(3_000, Math.min(this.remainingExecutionMs(executionDeadline), 20_000)),
           );
-          if (response.status !== 200) {
-            digests.push({ runId, available: false, reason: `HTTP ${response.status}` });
-            continue;
+          let raw = '';
+          try {
+            const response = await this.fetchImpl(
+              `${handle.daemonBaseUrl}/api/runs/${encodeURIComponent(runId)}/events`,
+              { headers: { Authorization: `Bearer ${handle.daemonApiToken}`, Accept: 'text/event-stream' }, signal: controller.signal },
+            );
+            if (response.status !== 200) {
+              digests.push({ runId, available: false, reason: `HTTP ${response.status}` });
+              continue;
+            }
+            raw = (await readResponseLimited(response, MAX_PACKAGE_OVERHEAD_BYTES)).toString('utf8');
+          } finally {
+            clearTimeout(timer);
           }
-          raw = (await readResponseLimited(response, MAX_PACKAGE_OVERHEAD_BYTES)).toString('utf8');
-        } finally {
-          clearTimeout(timer);
+          digests.push({ runId, available: true, ...summarizeRunEventStream(raw) });
+        } catch (error) {
+          digests.push({
+            runId,
+            available: false,
+            reason: error instanceof Error && error.name === 'AbortError' ? 'timed out' : 'fetch failed',
+          });
         }
-        digests.push({ runId, available: true, ...summarizeRunEventStream(raw) });
-      } catch (error) {
-        digests.push({
-          runId,
-          available: false,
-          reason: error instanceof Error && error.name === 'AbortError' ? 'timed out' : 'fetch failed',
-        });
       }
+      // 句柄上按设计不留转移令牌，这里遮 daemon 令牌；脱敏逐个字符串叶子做，不走 JSON 往返。
+      return { runs: redactDigestLeaves(digests, [handle.daemonApiToken]) as unknown[] };
+    } catch (error) {
+      return {
+        available: false,
+        reason: error instanceof Error ? error.message.slice(0, 200) : 'capture failed',
+      };
     }
-    // 句柄上按设计不留转移令牌（transfer 是 Omit<..., 'transferToken'>），这里只需遮 daemon 令牌；
-    // runtimeDiagnosticPreview 内部还会再跑一遍通用脱敏。
-    const secrets = [handle.daemonApiToken].filter(
-      (value): value is string => typeof value === 'string' && value.length > 0,
-    );
-    // 整体再过一遍脱敏与截断：摘要里的文本片段来自模型输出，可能夹着任何东西。
-    return JSON.parse(runtimeDiagnosticPreview(JSON.stringify(digests), secrets).slice(0, 12_000) || '[]');
   }
 
   private async waitForRun(
@@ -3700,6 +3705,25 @@ export class AgentWorkspaceSessionRuntime {
  * 各类事件计数、agent 事件的类型计数、用到的工具名与它们碰过的路径、最后一段模型文本、
  * 错误信息、stdout/stderr 尾巴。只做统计与截尾，不做判断——判断留给读的人。
  */
+/**
+ * 对摘要里的每个字符串叶子做脱敏与截断，结构原样保留。不做 JSON 往返：
+ * 截断会切在字符串中间、脱敏会改字节，再 parse 必炸——第一版就是这么把真失败顶替掉的。
+ */
+export function redactDigestLeaves(value: unknown, secrets: Array<string | undefined>, depth = 0): unknown {
+  const excluded = secrets.filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (depth > 6) return '[depth]';
+  if (typeof value === 'string') return runtimeDiagnosticPreview(value, excluded).slice(0, 1_500);
+  if (Array.isArray(value)) return value.slice(0, 40).map((item) => redactDigestLeaves(item, secrets, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 40)) {
+      out[key.slice(0, 80)] = redactDigestLeaves(item, secrets, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
 export function summarizeRunEventStream(raw: string): Record<string, unknown> {
   const records: Array<{ event: string; data: unknown }> = [];
   for (const frame of raw.split(/\n\n+/)) {
