@@ -1,14 +1,14 @@
 namespace PrdAgent.Core.Interfaces;
 
 /// <summary>
-/// 模型池查询服务 — 三级互斥解析（专属池 > 默认池 > 传统配置）
-/// 供各应用 Controller 在自己的路由下暴露模型列表，而非直接调用管理端点。
+/// 业务模型目录兼容接口。
+/// 供旧 Controller 在自己的路由下暴露模型列表；返回 DTO 沿用“模型池”命名，数据权威已是
+/// LLM Gateway 对外逻辑模型目录。
 /// </summary>
 public interface IModelPoolQueryService
 {
     /// <summary>
-    /// 根据 appCallerCode 与 modelType 查询可用模型池列表。
-    /// 返回结果按照优先级互斥：专属池 > 默认池 > 传统配置。
+    /// 根据 appCallerCode 与 modelType 查询运行时真正可解析的对外模型列表。
     /// </summary>
     /// <param name="appCallerCode">应用标识（如 visual-agent.image.text2img::generation），可为 null</param>
     /// <param name="modelType">模型类型（如 generation、chat、intent、vision）</param>
