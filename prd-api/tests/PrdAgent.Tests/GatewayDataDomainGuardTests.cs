@@ -5660,7 +5660,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void LogicalModelCatalog_OnlyPublishesOfferingsThatTheExecutionResolverCanBuild()
+    public void LogicalModelCatalog_PreservesUnavailableEntriesAndPublishesTheirRuntimeHealth()
     {
         var resolver = ReadRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
@@ -5676,7 +5676,8 @@ public class GatewayDataDomainGuardTests
 
         Assert.Contains("OrderLogicalOfferings(logical, logicalOfferings)", catalog);
         Assert.Contains("TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct)", catalog);
-        Assert.Contains("if (!hasResolvableOffering)", catalog);
+        Assert.Contains("HealthStatus = hasResolvableOffering ? \"Healthy\" : \"Unavailable\"", catalog);
+        Assert.DoesNotContain("if (!hasResolvableOffering)\n                continue;", catalog);
         Assert.DoesNotContain("availableIds.Contains", catalog);
     }
 
