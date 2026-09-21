@@ -582,6 +582,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
   const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
 
+  const reloadImageGenPools = useCallback(async () => {
+    setImageGenModelError(null);
+    setModelsLoading(true);
+    try {
+      const res = await getLiteraryAgentModels();
+      if (res.success && res.data) {
+        setImageGenPools(res.data);
+      } else {
+        setImageGenPools([]);
+        setImageGenModelError('加载模型池失败');
+      }
+    } catch {
+      setImageGenPools([]);
+      setImageGenModelError('加载模型池失败');
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
+
   // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
   const effectiveModel = useMemo<PoolModel | null>(() => {
     const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
@@ -4603,7 +4622,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                         ? await deactivateReferenceImageConfig({ id: config.id })
                                         : await activateReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        await loadReferenceImageConfigs();
+                                        await Promise.all([
+                                          loadReferenceImageConfigs(),
+                                          reloadImageGenPools(),
+                                        ]);
                                       }
                                     } finally {
                                       setReferenceImageSaving(false);
@@ -4655,7 +4677,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     try {
                                       const res = await deleteReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        await loadReferenceImageConfigs();
+                                        await Promise.all([
+                                          loadReferenceImageConfigs(),
+                                          config.isActive ? reloadImageGenPools() : Promise.resolve(),
+                                        ]);
                                         toast.success('已删除');
                                       } else {
                                         toast.error('删除失败', res.error?.message || '未知错误');

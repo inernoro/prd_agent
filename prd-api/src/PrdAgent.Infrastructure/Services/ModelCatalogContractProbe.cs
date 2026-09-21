@@ -5,7 +5,7 @@ using PrdAgent.Core.Models;
 namespace PrdAgent.Infrastructure.Services;
 
 /// <summary>
-/// 业务模型选择器与运行时解析器的一致性探针。
+/// 业务模型选择器与运行时可执行目录的一致性探针。
 ///
 /// 选择器曾从退场的 MAP 模型池读取成员展示名，而执行链路只接受 LLM Gateway
 /// 的稳定 PublicId。两边各自“有数据”却无法串起来，因此这里直接验证完整契约：
@@ -122,7 +122,7 @@ public sealed class ModelCatalogContractProbe
 
         var distinctFailures = failures.Distinct(StringComparer.Ordinal).ToArray();
         var output = distinctFailures.Length == 0
-            ? $"{Targets.Length} 个业务选择器、{catalogEntries} 个对外模型均与运行时解析一致"
+            ? $"{Targets.Length} 个业务选择器、{catalogEntries} 个对外模型均与运行时可执行目录一致"
             : $"业务模型目录有 {distinctFailures.Length} 处契约失配：{string.Join("、", distinctFailures.Take(5))}";
         return new ModelCatalogContractProbeResult(
             distinctFailures.Length,
