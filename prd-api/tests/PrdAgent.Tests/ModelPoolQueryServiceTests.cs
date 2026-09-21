@@ -76,8 +76,9 @@ public class ModelPoolQueryServiceTests
         {
             Pools =
             [
-                CreatePool("runtime-default", priority: 50, isDefault: true),
-                CreatePool("unrestricted-extra", priority: 10, isDefault: false),
+                CreatePool("probe-caller-default", priority: 5, isDefault: true, isDefaultForType: false),
+                CreatePool("global-default", priority: 50, isDefault: false, isDefaultForType: true),
+                CreatePool("unrestricted-extra", priority: 10, isDefault: false, isDefaultForType: false),
             ],
         };
         var service = new ModelPoolQueryService(gateway);
@@ -85,7 +86,7 @@ public class ModelPoolQueryServiceTests
         var result = await service.GetModelPoolsAsync(null, "generation");
 
         var model = Assert.Single(result);
-        Assert.Equal("runtime-default", model.Code);
+        Assert.Equal("global-default", model.Code);
         Assert.Equal(AppCallerRegistry.System.HealthProbe.Generation, gateway.AppCallerCode);
     }
 
@@ -104,7 +105,11 @@ public class ModelPoolQueryServiceTests
         Assert.Equal("serving unavailable", error.Message);
     }
 
-    private static AvailableModelPool CreatePool(string publicId, int priority, bool isDefault)
+    private static AvailableModelPool CreatePool(
+        string publicId,
+        int priority,
+        bool isDefault,
+        bool? isDefaultForType = null)
         => new()
         {
             Id = $"logical-{publicId}",
@@ -113,6 +118,7 @@ public class ModelPoolQueryServiceTests
             Priority = priority,
             ResolutionType = "LogicalModel",
             IsDefault = isDefault,
+            IsDefaultForType = isDefaultForType ?? isDefault,
             Models =
             [
                 new PoolModelInfo

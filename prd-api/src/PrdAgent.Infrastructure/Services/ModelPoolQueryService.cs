@@ -33,7 +33,7 @@ public class ModelPoolQueryService : IModelPoolQueryService
             ct);
         if (string.IsNullOrWhiteSpace(appCallerCode))
         {
-            available = available.Where(pool => pool.IsDefault).ToList();
+            available = available.Where(pool => pool.IsDefaultForType).ToList();
         }
         return available
             .Select(pool => MapToResult(pool, modelType))
@@ -74,7 +74,7 @@ public class ModelPoolQueryService : IModelPoolQueryService
             Code = pool.Code,
             Priority = pool.Priority,
             ModelType = modelType,
-            IsDefaultForType = pool.IsDefault,
+            IsDefaultForType = pool.IsDefaultForType,
             Description = pool.Description,
             Models = pool.Models.Select(model => new ModelPoolModelItem
             {

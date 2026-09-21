@@ -1069,6 +1069,7 @@ public class ModelResolver : IModelResolver
             // 被清空、控制面也失去恢复入口。能否执行仍复用实际解析构建器与名录门判定；前端根据
             // HealthStatus 禁用不可用项，深度健康检查则把它计为运行时故障。
             ModelResolutionResult? catalogResolution = null;
+            GatewayModelOffering? catalogOffering = null;
             var logicalOfferings = routableOfferingsByLogicalModel.GetValueOrDefault(logical.Id) ?? [];
             // 常规队列会有意排除 Unavailable；但 logicalOfferings 已经用同一半开判据筛出
             // “冷却结束且未被认领”的恢复候选。目录是只读路径，不能抢租约，也不能再把这些候选
@@ -1095,6 +1096,7 @@ public class ModelResolver : IModelResolver
                     continue;
                 }
                 catalogResolution = candidate;
+                catalogOffering = offering;
                 break;
             }
             result.Add(new AvailableModelPool
@@ -1110,6 +1112,7 @@ public class ModelResolver : IModelResolver
                 // 再用途默认。视觉目录的存量行为仍在没有显式默认时取第一项。
                 IsDefault = string.Equals(logical.Id, defaultLogicalId, StringComparison.Ordinal)
                     || (defaultLogicalId is null && UsesVisualLogicalModelCatalog(appCallerCode) && result.Count == 0),
+                IsDefaultForType = logical.IsDefaultForType,
                 Capabilities = logical.Capabilities?.ToList() ?? [],
                 Models =
                 [
@@ -1119,8 +1122,13 @@ public class ModelResolver : IModelResolver
                         PlatformId = "logical-model",
                         PlatformName = "LLM Gateway",
                         Priority = 1,
-                        HealthStatus = catalogResolution is not null ? "Healthy" : "Unavailable",
-                        HealthScore = catalogResolution is not null ? 100 : 0,
+                        HealthStatus = catalogOffering?.HealthStatus.ToString() ?? "Unavailable",
+                        HealthScore = catalogOffering?.HealthStatus switch
+                        {
+                            ModelHealthStatus.Healthy => 100,
+                            ModelHealthStatus.Degraded => 50,
+                            _ => 0,
+                        },
                         ActualModelId = catalogResolution?.ActualModel,
                         ActualPlatformId = catalogResolution?.ActualPlatformId,
                         ParameterCapabilities = catalogResolution?.ParameterCapabilities,

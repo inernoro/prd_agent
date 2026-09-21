@@ -110,9 +110,16 @@ public sealed class VisualLogicalModelCatalogTests
                     .Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1))
                     .Unset(x => x.HalfOpenLeaseUntil));
             var halfOpenCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
-            Assert.Equal("gpt-image-2", Assert.Single(halfOpenCatalog[0].Models).ActualModelId);
+            var halfOpenMember = Assert.Single(halfOpenCatalog[0].Models);
+            Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
+            Assert.Equal("Unavailable", halfOpenMember.HealthStatus);
+            Assert.Equal(0, halfOpenMember.HealthScore);
             var afterCatalogRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
             Assert.Null(afterCatalogRead.HalfOpenLeaseUntil);
+            var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
+            var afterRecoveryAttempt = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
 
             await offerings
                 .UpdateManyAsync(

@@ -84,7 +84,7 @@ public sealed class AgentUniverseModelParameterTests
                         {
                             ModelId = "default-generation",
                             PlatformId = "logical-model",
-                            HealthStatus = "Healthy",
+                            HealthStatus = "Unavailable",
                             ActualModelId = "chatgpt-image-latest",
                             ActualPlatformId = "openai",
                         },

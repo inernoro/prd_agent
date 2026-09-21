@@ -69,8 +69,7 @@ public static class GatewayImageModelCatalog
     public static ImageGenAdapterInfo? Describe(AvailableModelPool model)
     {
         var member = model.Models.FirstOrDefault(item =>
-            !string.IsNullOrWhiteSpace(item.ActualModelId)
-            && !string.Equals(item.HealthStatus, "Unavailable", StringComparison.OrdinalIgnoreCase));
+            !string.IsNullOrWhiteSpace(item.ActualModelId));
         if (member is null) return null;
 
         return Describe(new GatewayModelResolution

@@ -197,6 +197,9 @@ public class AvailableModelPool
     /// </summary>
     public bool IsDefault { get; init; }
 
+    /// <summary>是否为该模型类型的全局默认项，不受调用方专属默认覆盖。</summary>
+    public bool IsDefaultForType { get; init; }
+
     /// <summary>
     /// 池内模型列表
     /// </summary>

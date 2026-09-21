@@ -5677,7 +5677,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("OrderLogicalOfferings(logical, logicalOfferings)", catalog);
         Assert.Contains("x.HealthStatus == ModelHealthStatus.Unavailable", catalog);
         Assert.Contains("TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct)", catalog);
-        Assert.Contains("HealthStatus = catalogResolution is not null ? \"Healthy\" : \"Unavailable\"", catalog);
+        Assert.Contains("HealthStatus = catalogOffering?.HealthStatus.ToString() ?? \"Unavailable\"", catalog);
         Assert.DoesNotContain("if (catalogResolution is null)\n                continue;", catalog);
         Assert.DoesNotContain("availableIds.Contains", catalog);
     }
