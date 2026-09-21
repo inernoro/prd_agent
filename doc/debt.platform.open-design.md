@@ -1573,3 +1573,44 @@ artifact）。判据是**那次 run 的最终消息里到底有没有 `<artifact
   `listWorkspaceRootEntries` 与 `design_output_missing` 那处 details
 - OpenDesign 的判定：镜像内 `/app/apps/daemon/dist/run-deliverable-validation.js`
 - 技能输出契约：镜像内 `/app/plugins/_official/examples/web-prototype/SKILL.md`
+
+## 零产出的成因定案：技能的输出契约与 Codex 运行时的持久化路径互斥（2026-09-21）
+
+### 三条代码事实（都在钉住 digest 的镜像里，读代码得到，不是推断）
+
+1. stdout 里 `<artifact>` 文本的抽取与落盘，**只在 `(def.streamFormat ?? 'plain') === 'plain'` 时执行**
+   （daemon 的 run 收尾逻辑）。
+2. Codex 的运行时定义是 **`streamFormat: 'json-event-stream'`**、`eventParser: 'codex'`。
+3. json-event-stream 路径对 `<artifact>` 文本只做「检测到文件写入工具时抑制回显」，**从不落盘**；
+   这条路径的产物计数来自项目目录的文件 diff（`diff.touched`）或文件写入工具事件。
+
+而 web-prototype 技能明令：把整页包在 `<artifact>` 里交出来，**不要写根目录 HTML**。
+Codex 照办 → 只交了文本 → 这条通道把文本丢掉 → 零文件、`artifactCount = 0` → `no_artifact`。
+这就是 8–21 次模型调用却零产出的全部原因。沙箱不是障碍：Linux 上 Codex 以
+`--sandbox workspace-write` 运行，可以写文件。
+
+### 修法（本仓库范围内）
+
+CDS 发给 OpenDesign 的系统提示词是我们的。新建页面那条改为：明确要求把成品**写到
+`/workspace/index.html`**，并明说「不要照技能那条去交 `<artifact>` 文本，这条运行时会丢掉它」。
+上一版恰好把提示词对齐成了技能契约（要求交 `<artifact>`、不要写根目录 HTML），方向反了，
+本次改回；守卫已改为「必须要求写文件、不得要求只交 artifact 文本」，红绿闭环验过。
+
+配合之前两项保留的修正，链路现在是自洽的：不种 index.html（不再劫持交付判定）→ Codex 写出
+`/workspace/index.html` → OpenDesign 的 `inferredEntry` 认它为交付文件 → CDS 直接收件；
+若 OpenDesign 指名了别的文件，`promoteDeliverableEntry` 会搬过来。
+
+### 对上游的一条说明（不在本仓库修）
+
+技能与 Codex 运行时的这处互斥属于 OpenDesign 自身：技能是给 plain-stream 代理写的，
+json-event-stream 代理从未被告知「你的 `<artifact>` 会被丢掉」。本仓库用提示词绕开它，
+但正解是上游让 json-event-stream 也抽取 `<artifact>`，或在技能里按运行时分叉说明。
+
+### 实现来源
+
+- 提示词与守卫：`cds/src/services/agent-workspace-session-runtime.ts`、
+  `cds/tests/services/agent-workspace-session-runtime.test.ts`
+- 抽取门禁：镜像内 `/app/apps/daemon/dist/server.js`（run 收尾处 `streamFormat` 判断）
+- Codex 定义：镜像内 `/app/apps/daemon/dist/runtimes/defs/codex.js`
+- json-event-stream 的 artifact 处理：镜像内 `/app/apps/daemon/dist/runtimes/json-event-stream.js`
+- 产物计数：镜像内 `/app/apps/daemon/dist/services/run-analytics-lifecycle.js`

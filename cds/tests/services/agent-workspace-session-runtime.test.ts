@@ -1416,6 +1416,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
     const requests: string[] = [];
     let committedPackage: any;
     let runCreates = 0;
+    let firstRunBody: any;
     const authorAssets = new Map<string, Buffer>([
       ['assets/app.css', Buffer.from('body { color: #123456; }\n')],
       ['assets/app.js', Buffer.from('export const label = "公开交互";\n')],
@@ -1447,6 +1448,7 @@ describe('AgentWorkspaceSessionRuntime', () => {
         }
         if (url.pathname === '/api/runs' && init?.method === 'POST') {
           runCreates += 1;
+          if (runCreates === 1) firstRunBody = JSON.parse(typeof init?.body === 'string' ? init.body : '{}');
           fs.writeFileSync(
             path.join(shell.workspaceDir, 'index.html'),
             '<!doctype html><html><body><main>Product facts</main></body></html>',
@@ -1504,6 +1506,15 @@ describe('AgentWorkspaceSessionRuntime', () => {
 
     expect(result.openDesignRunId).toBe('od-generate-review');
     expect(runCreates).toBe(2);
+    // 提示词契约守卫。web-prototype 技能要模型把整页包在 <artifact> 里、不要写根目录 HTML，
+    // 可 OpenDesign 对 Codex 用的是 json-event-stream：<artifact> 文本只在 streamFormat 为
+    // plain 时才被抽取落盘，这条通道上它被直接丢掉，产物计数只认文件写入。2026-09-20 的
+    // 十七条 run 零产出，根因就是模型照技能办了。所以新建页面的系统提示词必须明确要求
+    // 把成品写到 /workspace/index.html，且不得反过来要求它只交 <artifact> 文本。
+    expect(firstRunBody?.systemPrompt).toContain('WRITE the finished HTML to /workspace/index.html');
+    expect(firstRunBody?.systemPrompt).toContain('artifact text is discarded');
+    expect(firstRunBody?.systemPrompt).not.toContain('emit it once inside <artifact');
+    expect(firstRunBody?.systemPrompt).not.toContain('Do not write a root HTML file yourself');
     expect(requests).toContain('/api/runs/od-generate-build');
     expect(requests).toContain('/api/runs/od-generate-review');
     expect(requests).toContain('/commit');
