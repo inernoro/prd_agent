@@ -62,21 +62,24 @@ public static class AskAccessPolicy
     /// <summary>
     /// 这个站点现在开不开提问。**唯一判定源**，所有「要不要给提问入口」的地方都走它。
     ///
-    /// 口径 2026-08-29 起翻转为「默认全开，除非明确拒绝」（用户决定）。所以
-    /// <see cref="WebPage.AskEnabled"/> 是可空的三态，不是 bool：
+    /// 口径 2026-09-22 临时热修复为「系统默认关闭，用户个人默认可覆盖」。
+    /// <see cref="WebPage.AskEnabled"/> 仍是可空三态：
     /// <list type="bullet">
-    /// <item>null —— owner 从没表过态（含所有存量站点、所有新上传）：<b>开</b></item>
+    /// <item>null —— 站点没单独表过态：读取 owner 的个人默认；个人也没设置则<b>关</b></item>
     /// <item>true —— 明确打开：开</item>
-    /// <item>false —— 明确关掉：关，默认值不得把它顶回去</item>
+    /// <item>false —— 明确关掉：关，个人默认不得把它顶回去</item>
     /// </list>
-    /// 之所以不把存量数据一把刷成 true：那样会连「owner 当初特意关掉的站点」一起打开，
-    /// 而这两种状态在 bool 里长得一模一样。改成三态之后，「没表过态」和「说过不要」
-    /// 才第一次区分得开。
+    /// 优先级是：站点单独设置 &gt; owner 个人默认 &gt; 系统默认关闭。这样用户能在全局设置
+    /// 决定所有未单独配置站点的默认行为，同时保留某个站点明确开关的能力。
     ///
     /// 形态不支持（视频站）永远压过默认值：开关打得开、每个访客吃 422 是耍用户。
     /// </summary>
-    public static bool IsAskOn(bool? askEnabled, string? wrappedAssetType)
-        => UnsupportedReason(wrappedAssetType) == null && (askEnabled ?? true);
+    public static bool IsAskOn(
+        bool? askEnabled,
+        string? wrappedAssetType,
+        bool? ownerDefaultEnabled = null)
+        => UnsupportedReason(wrappedAssetType) == null
+           && (askEnabled ?? ownerDefaultEnabled ?? false);
 
     /// <summary>
     /// 这一次失败该不该退配额。三个条件缺一不可，抽出来是为了**可测**——

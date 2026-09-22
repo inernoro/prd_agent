@@ -86,6 +86,8 @@ export type UserPreferences = {
   defaultNavOrder: string[];
   defaultNavHidden: string[];
   themeConfig?: ThemeConfigResponse;
+  /** 未单独配置站点开关时，网页托管「向我提问」是否默认开启；系统默认 false */
+  webPageAskEnabled: boolean;
   visualAgentPreferences?: VisualAgentPreferences;
   literaryAgentPreferences?: LiteraryAgentPreferences;
   agentSwitcherPreferences?: AgentSwitcherPreferences;
@@ -102,6 +104,8 @@ export type UpdateNavLayoutContract = (payload: {
 }) => Promise<ApiResponse<void>>;
 
 export type UpdateThemeConfigContract = (themeConfig: ThemeConfig) => Promise<ApiResponse<void>>;
+
+export type UpdateWebPageAskPreferenceContract = (enabled: boolean) => Promise<ApiResponse<void>>;
 
 export type UpdateVisualAgentPreferencesContract = (prefs: VisualAgentPreferences) => Promise<ApiResponse<void>>;
 

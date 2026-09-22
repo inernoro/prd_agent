@@ -47,6 +47,7 @@ export const THEME_ACCEPTANCE_TARGETS: readonly ThemeAcceptanceTarget[] = [
   settingsTarget('account'),
   settingsTarget('skin'),
   settingsTarget('nav-order'),
+  settingsTarget('web-pages'),
   settingsTarget('assets'),
   settingsTarget('system-imagery'),
   settingsTarget('authz'),

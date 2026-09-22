@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { X, ExternalLink, FileWarning, MessageSquare, MessageCircleQuestion, Settings2 } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import type { HostedSite } from '../../services/real/webPages';
-import { setSiteCommentsEnabled } from '../../services/real/webPages';
+import { getSiteAskConfig, setSiteCommentsEnabled } from '../../services/real/webPages';
 import CommentsSection from './CommentsSection';
 import AskPanelInline from './ask/AskPanelInline';
 import AskConfigDrawer from './ask/AskConfigDrawer';
@@ -53,13 +53,21 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
   /** 提问面板打开过至少一次；之后常驻挂载，切走只藏不卸（见渲染处注释） */
   const [askEverOpened, setAskEverOpened] = useState(false);
   /** 站点提问开关的本地镜像：配置抽屉保存后即时回填，不必等父级刷新列表 */
-  // 三态：undefined = owner 从没表过态（默认开），true = 明确开，false = 明确关。
-  // 曾经写的是 === true，于是「没表过态」被当成关——默认全开的口径下这会让
-  // 弹窗里的开关和阅读页的真实状态对不上。
-  const [askEnabled, setAskEnabled] = useState(site.askEnabled !== false);
+  // 三态：站点未表态时先按系统默认关闭展示，再读取 owner 自己的全局默认。
+  // 站点明确设置过 true / false 时优先，不让个人默认覆盖单站点选择。
+  const [askEnabled, setAskEnabled] = useState(site.askEnabled === true);
   const [commentsEnabled, setCommentsEnabled] = useState(site.commentsEnabled !== false);
   const [togglingComments, setTogglingComments] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    if (site.askEnabled != null) return;
+    let alive = true;
+    void getSiteAskConfig(site.id).then((res) => {
+      if (alive && res.success) setAskEnabled(res.data.enabled);
+    });
+    return () => { alive = false; };
+  }, [site.askEnabled, site.id]);
   // 能不能把 PDF 直接丢给浏览器原生阅读器，问的是**浏览器有没有这个能力**，
   // 既不是弹窗多大，也不是视口宽度——768px 断点会把 iPad、横屏手机、平板 WebView
   // 一并算成桌面，它们照样白屏。判据见 supportsNativePdfViewer。

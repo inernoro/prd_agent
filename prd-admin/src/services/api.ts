@@ -333,6 +333,7 @@ export const api = {
       navHidden: () => '/api/dashboard/user-preferences/nav-hidden',
       navLayout: () => '/api/dashboard/user-preferences/nav-layout',
       theme: () => '/api/dashboard/user-preferences/theme',
+      webPageAsk: () => '/api/dashboard/user-preferences/web-page-ask',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',

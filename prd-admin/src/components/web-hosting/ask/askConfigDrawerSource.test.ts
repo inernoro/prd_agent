@@ -25,4 +25,10 @@ describe('提问配置抽屉的来源标签', () => {
   it('必须消费后端回的 questionsSource', () => {
     expect(src).toContain("res.data?.questionsSource === 'manual'");
   });
+
+  it('没有拨动开关时必须保留站点继承关系', () => {
+    expect(src).toContain('const [enabledDirty, setEnabledDirty] = useState(false)');
+    expect(src).toContain('...(enabledDirty ? { enabled } : {})');
+    expect(src).toContain('setEnabledDirty(true)');
+  });
 });

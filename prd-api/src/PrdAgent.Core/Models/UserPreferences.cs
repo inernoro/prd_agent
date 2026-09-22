@@ -37,6 +37,12 @@ public class UserPreferences
     public ThemeConfig? ThemeConfig { get; set; }
 
     /// <summary>
+    /// 网页托管「向我提问」的个人默认值。
+    /// null 表示沿用系统默认（当前为关闭）；站点单独设置过 AskEnabled 时仍以站点设置为准。
+    /// </summary>
+    public bool? WebPageAskEnabled { get; set; }
+
+    /// <summary>
     /// 转录词云的个人词典。默认继承系统级（AppSettings.TranscriptLexicon），
     /// 这里只放自己额外要保住的词。
     /// </summary>

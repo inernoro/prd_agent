@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using System.Security.Claims;
@@ -57,6 +58,7 @@ public class UserPreferencesController : ControllerBase
             defaultNavOrder = defaultNav?.NavOrder ?? new List<string>(),
             defaultNavHidden = defaultNav?.NavHidden ?? new List<string>(),
             themeConfig = prefs?.ThemeConfig,
+            webPageAskEnabled = prefs?.WebPageAskEnabled ?? false,
             visualAgentPreferences = prefs?.VisualAgentPreferences,
             literaryAgentPreferences = prefs?.LiteraryAgentPreferences,
             agentSwitcherPreferences = prefs?.AgentSwitcherPreferences,
@@ -397,6 +399,27 @@ public class UserPreferencesController : ControllerBase
     }
 
     /// <summary>
+    /// 更新网页托管「向我提问」的个人默认值。
+    /// 只影响没有单独配置过提问开关的站点；站点级明确开关优先。
+    /// </summary>
+    [HttpPut("web-page-ask")]
+    public async Task<IActionResult> UpdateWebPageAskPreference([FromBody] UpdateWebPageAskPreferenceRequest request)
+    {
+        var userId = this.GetRequiredUserId();
+
+        var update = Builders<UserPreferences>.Update
+            .Set(x => x.WebPageAskEnabled, request.Enabled)
+            .Set(x => x.UpdatedAt, DateTime.UtcNow);
+
+        await _db.UserPreferences.UpdateOneAsync(
+            x => x.UserId == userId,
+            update,
+            new UpdateOptions { IsUpsert = true });
+
+        return Ok(ApiResponse<object>.Ok(new { enabled = request.Enabled }));
+    }
+
+    /// <summary>
     /// 更新视觉代理偏好
     /// </summary>
     [HttpPut("visual-agent")]
@@ -470,6 +493,11 @@ public class UpdateNavLayoutRequest
 public class UpdateThemeConfigRequest
 {
     public ThemeConfig? ThemeConfig { get; set; }
+}
+
+public class UpdateWebPageAskPreferenceRequest
+{
+    public bool Enabled { get; set; }
 }
 
 public class UpdateVisualAgentPreferencesRequest

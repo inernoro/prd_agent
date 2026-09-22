@@ -71,6 +71,31 @@ public sealed class AskConfigQuestionWriteTests
     }
 
     [Fact]
+    public async Task 未提交开关时_必须保留站点继承全局设置的状态()
+    {
+        await using var fixture = await AskConfigMongoFixture.CreateAsync();
+        var site = await SeedAsync(fixture, questions: new List<string> { "系统写的第一题" }, source: "auto");
+        await fixture.Db.HostedSites.UpdateOneAsync(
+            s => s.Id == site.Id,
+            Builders<HostedSite>.Update.Unset(s => s.AskEnabled));
+        var service = Build(fixture);
+
+        var updated = await service.SetAskConfigAsync(site.Id, site.OwnerUserId, new AskConfigUpdate
+        {
+            Enabled = null,
+            Welcome = "只改欢迎语",
+            AllowAnonymous = false,
+            DailyLimit = 0,
+        });
+
+        updated.ShouldNotBeNull();
+        updated.AskEnabled.ShouldBeNull();
+        var stored = await fixture.Db.HostedSites.Find(s => s.Id == site.Id).SingleAsync();
+        stored.AskEnabled.ShouldBeNull();
+        stored.AskWelcome.ShouldBe("只改欢迎语");
+    }
+
+    [Fact]
     public async Task 原样提交同一份题库_不算动过手()
     {
         // 只改别的开关、把面板上原样回显的那份又提交一遍，不该把站点钉成 manual——
