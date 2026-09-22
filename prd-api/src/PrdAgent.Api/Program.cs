@@ -1695,11 +1695,33 @@ static async Task<IResult> DeepHealth(
     PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
     PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
     PrdAgent.Infrastructure.Services.ModelCatalogContractProbe modelCatalogContract,
+    IHostEnvironment hostEnvironment,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
     var faultCount = faults.CountWithinWindow();
     var requests = faults.RequestsWithinWindow();
+    var deploymentIdentity = ReadBuildIdentity();
+    // 开发机直接 dotnet run 时可能没有部署目标；生产环境必须同时取得两端并严格对账。
+    // 预览和正式容器都以 Production 启动，因此缺证据同样会被挡住。
+    var deploymentIdentityFailures = deploymentIdentity.Match switch
+    {
+        BuildIdentity.MatchState.Match => 0,
+        BuildIdentity.MatchState.Mismatch => 1,
+        _ => hostEnvironment.IsProduction() ? 1 : 0,
+    };
+    var deploymentIdentityOutput = deploymentIdentity.Match switch
+    {
+        BuildIdentity.MatchState.Match =>
+            $"运行二进制与部署目标一致（{ShortCommit(deploymentIdentity.ActualCommit)}）",
+        BuildIdentity.MatchState.Mismatch =>
+            BuildIdentity.DescribeMismatch(
+                deploymentIdentity.Match,
+                deploymentIdentity.ActualCommit,
+                deploymentIdentity.DeclaredCommit)
+            ?? "运行二进制与部署目标不一致",
+        _ => "无法取得运行二进制或部署目标的 commit，不能证明当前运行版本正确",
+    };
 
     // Mongo 往返：这是「后端还能不能干活」最便宜的那条真链路。
     // 探不通时把耗时记成 -1 而不是 0——0 会被判据读成「快得惊人」，是个假绿。
@@ -1918,7 +1940,8 @@ static async Task<IResult> DeepHealth(
 
     var payload = new Dictionary<string, object?>
     {
-        ["status"] = faultCount == 0 && mongoMs >= 0 && visualImageRouteFailures == 0
+        ["status"] = faultCount == 0 && mongoMs >= 0 && deploymentIdentityFailures == 0
+            && visualImageRouteFailures == 0
             && modelCatalogResult.FailureCount == 0
             && visualImageConsecutiveFailures == 0 ? "pass" : "fail",
         ["version"] = "1",
@@ -2022,6 +2045,37 @@ static async Task<IResult> DeepHealth(
                         environment = "production",
                         // 「有没有人在用」是内部判据，对外说它没有意义，不公开。
                         publicVisible = false,
+                    },
+                },
+            },
+            ["deployment:version-match"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "deployment.version-match",
+                    ["componentType"] = "system",
+                    ["observedValue"] = deploymentIdentityFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = deploymentIdentity.Match == BuildIdentity.MatchState.Unknown
+                        && deploymentIdentityFailures == 0
+                            ? "warn"
+                            : deploymentIdentityFailures == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = deploymentIdentityOutput,
+                    ["actualCommit"] = ShortCommit(deploymentIdentity.ActualCommit),
+                    ["expectedCommit"] = ShortCommit(deploymentIdentity.DeclaredCommit),
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 运行版本与发布目标一致性",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 发布版本",
                     },
                 },
             },
@@ -2196,36 +2250,54 @@ static async Task<IResult> AssetStorageReadiness(
 
 static IResult VersionInfo(IHostEnvironment env)
 {
-    var informationalVersion = Assembly.GetExecutingAssembly()
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-        ?? "unknown";
-
-    // 实际值：编译期由 -p:SourceRevisionId 烤进程序集，运行时改不了
-    var actualCommit = BuildIdentity.ParseBakedCommit(informationalVersion);
-    // 期待值：部署时注入的环境变量，声明「本次希望跑哪个 commit」，可被平台改写
-    var declaredCommit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
-    var match = BuildIdentity.Compare(actualCommit, declaredCommit);
+    var identity = ReadBuildIdentity();
     var buildTime = FirstEnv("BUILD_TIME", "BUILD_TIME_UTC", "CDS_BUILD_TIME", "VERCEL_GIT_COMMIT_DATE");
 
     // commit 字段保持向后兼容，但优先给实际值 —— 一个值没法自证，对账结论看 commitMatch
-    var effective = actualCommit ?? declaredCommit;
+    var effective = identity.ActualCommit ?? identity.DeclaredCommit;
 
     return Results.Ok(new
     {
         app = "prd-agent",
         service = "prd-api",
-        version = informationalVersion,
+        version = identity.InformationalVersion,
         commit = effective,
         shortCommit = ShortCommit(effective),
-        actualCommit,
-        expectedCommit = declaredCommit,
-        commitMatch = BuildIdentity.ToWireValue(match),
-        commitWarning = BuildIdentity.DescribeMismatch(match, actualCommit, declaredCommit),
+        actualCommit = identity.ActualCommit,
+        expectedCommit = identity.DeclaredCommit,
+        commitMatch = BuildIdentity.ToWireValue(identity.Match),
+        commitWarning = BuildIdentity.DescribeMismatch(
+            identity.Match,
+            identity.ActualCommit,
+            identity.DeclaredCommit),
         buildTimeUtc = buildTime,
         environment = env.EnvironmentName,
         serverTimeUtc = DateTime.UtcNow,
     });
+}
+
+static (string InformationalVersion, string? ActualCommit, string? DeclaredCommit, BuildIdentity.MatchState Match)
+    ReadBuildIdentity()
+{
+    var informationalVersion = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "unknown";
+
+    // 实际值由编译写进程序集，期待值由部署平台注入；两者必须独立取得才能对账。
+    var actualCommit = BuildIdentity.ParseBakedCommit(informationalVersion);
+    var declaredCommit = FirstEnv(
+        "GIT_COMMIT",
+        "COMMIT_SHA",
+        "GITHUB_SHA",
+        "SOURCE_VERSION",
+        "CDS_COMMIT_SHA",
+        "VERCEL_GIT_COMMIT_SHA");
+    return (
+        informationalVersion,
+        actualCommit,
+        declaredCommit,
+        BuildIdentity.Compare(actualCommit, declaredCommit));
 }
 
 static string? FirstEnv(params string[] names)

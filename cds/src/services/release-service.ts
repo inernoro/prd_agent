@@ -608,7 +608,10 @@ export class ReleaseService {
         });
       } else if (canProbeTarget) {
         try {
-          await probeHealthcheck(target.ssh.healthcheckUrl);
+          // 发布前只确认目标仍可达。旧版本的业务状态或版本对账失败，可能正是本次发布
+          // 要修复的内容，不能在动作发生前把修复动作本身挡死。发布后的强制探针仍执行
+          // 完整语义校验，失败会触发回滚。
+          await probeHealthcheck(target.ssh.healthcheckUrl, 8_000, false);
           push({ id: 'healthcheck', label: '上线地址可访问', status: 'pass', message: target.ssh.healthcheckUrl, blocking: false });
         } catch (err) {
           push({ id: 'healthcheck', label: '上线地址可访问', status: 'fail', message: (err as Error).message, blocking: true });
@@ -1932,8 +1935,8 @@ export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawC
   return `cd ${shellQuote(ssh.appPath || '.')} && export ${renderedEnv} && ${rawCommand}`;
 }
 
-async function probeHealthcheck(url: string, timeoutMs = 8_000): Promise<void> {
-  const result = await probeHealthcheckStatus(url, timeoutMs);
+async function probeHealthcheck(url: string, timeoutMs = 8_000, semantic = true): Promise<void> {
+  const result = await probeHealthcheckStatus(url, timeoutMs, { semantic });
   if (result.status !== 'healthy') throw new Error(result.message || 'healthcheck failed');
 }
 
@@ -2013,7 +2016,11 @@ async function fetchSurfaceResource(
   }
 }
 
-export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Promise<ReleaseHealthProbe> {
+export async function probeHealthcheckStatus(
+  url: string,
+  timeoutMs = 8_000,
+  options: { semantic?: boolean } = {},
+): Promise<ReleaseHealthProbe> {
   const checkedAt = new Date().toISOString();
   let parsed: URL;
   try {
@@ -2029,9 +2036,15 @@ export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Pr
   const timer = global.setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { method: 'GET', signal: ctrl.signal });
-    await res.arrayBuffer().catch(() => undefined);
+    const body = await res.text().catch(() => '');
     const responseTimeMs = Date.now() - started;
     if (!res.ok) return { status: 'failed', url, checkedAt, responseTimeMs, message: `healthcheck HTTP ${res.status}` };
+    const semanticFailure = options.semantic === false
+      ? null
+      : healthResponseSemanticFailure(body, res.headers.get('content-type') || '');
+    if (semanticFailure) {
+      return { status: 'failed', url, checkedAt, responseTimeMs, message: semanticFailure };
+    }
     return { status: 'healthy', url, checkedAt, responseTimeMs };
   } catch (err) {
     return {
@@ -2044,6 +2057,44 @@ export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Pr
   } finally {
     global.clearTimeout(timer);
   }
+}
+
+/**
+ * HTTP 200 只表示“端点回答了”，不能表示发布内容正确。
+ *
+ * 支持自描述健康端点的两个通用信号：
+ *  - `commitMatch`：服务自己把二进制内 commit 与部署目标 commit 对账；
+ *  - `status`：health+json 常见的 pass/healthy 与 fail/unhealthy 状态。
+ *
+ * 字段不存在时保持兼容；字段存在就必须尊重，避免发布系统把“200 + 明文报错”记成成功。
+ */
+export function healthResponseSemanticFailure(body: string, contentType: string): string | null {
+  const text = (body || '').trim();
+  const looksJson = contentType.toLowerCase().includes('json') || text.startsWith('{');
+  if (!text || !looksJson) return null;
+  let payload: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    payload = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  if (typeof payload.commitMatch === 'string') {
+    const match = payload.commitMatch.trim().toLowerCase();
+    if (match !== 'match') {
+      return `healthcheck 运行版本对账失败: commitMatch=${match || 'empty'}`;
+    }
+  }
+
+  if (typeof payload.status === 'string') {
+    const status = payload.status.trim().toLowerCase();
+    if (['fail', 'failed', 'unhealthy', 'down', 'error'].includes(status)) {
+      return `healthcheck 业务状态失败: status=${status}`;
+    }
+  }
+  return null;
 }
 
 /**

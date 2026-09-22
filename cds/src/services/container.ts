@@ -7,7 +7,13 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
-import { collectReuseCandidates, targetShaOf, normalizeBuildScope, type ReuseCandidate } from './prebuilt-reuse.js';
+import {
+  collectReuseCandidates,
+  targetShaOf,
+  normalizeBuildScope,
+  proveFallbackImage,
+  type ReuseCandidate,
+} from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
@@ -1256,6 +1262,8 @@ export class ContainerService {
         return tag === '' || tag.endsWith('-'); // tag 被空串替换成 :sha-/:branch-
       };
       const primary = (profile.dockerImage || '').trim();
+      const targetSha = targetShaOf(primary);
+      const buildScope = normalizeBuildScope(profile.buildScope);
       const fallbackList = normalizeFallbackImages(profile.fallbackImage);
       const candidates: Array<{ image: string; kind: 'primary' | 'fallback' }> = [];
       const seen = new Set<string>();
@@ -1299,7 +1307,81 @@ export class ContainerService {
           // 会在 CDS 宿主机执行。这里单引号兜底关掉注入面(入口另有镜像引用白名单作边界防御)。
           const pull = await this.shell.exec(`docker pull ${this.shellQuote(cand.image)}`);
           if (pull.stdout) onOutput?.(pull.stdout + '\n');
-          if (pull.exitCode === 0) { pulledImage = cand.image; break; }
+          if (pull.exitCode === 0 && cand.kind === 'primary') {
+            pulledImage = cand.image;
+            break;
+          }
+          if (pull.exitCode === 0) {
+            // 浮动 tag 只证明“拉到了一个镜像”，不证明它属于本次提交。读取 CI 写入的
+            // OCI revision，再用 Git 判断该组件从镜像版本到目标版本是否完全没变。
+            // 无标签、无构建范围、无法比较或确有变化都拒绝，最终走源码构建。
+            const inspect = await this.shell.exec(
+              `docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ${this.shellQuote(cand.image)}`,
+            );
+            const proof = await proveFallbackImage({
+              revision: inspect.exitCode === 0 ? inspect.stdout : null,
+              targetSha,
+              buildScope,
+              isComponentUnchangedSince: context.isComponentUnchangedSince,
+            });
+            if (proof.accepted) {
+              pulledImage = cand.image;
+              const proofText = proof.reason === 'exact-target'
+                ? `镜像 revision 与目标提交一致（${proof.revision!.slice(0, 7)}）`
+                : `组件构建输入在 ${proof.revision!.slice(0, 7)}..${proof.targetSha!.slice(0, 7)} 间无差异`;
+              onOutput?.(`── 回退镜像内容校验通过: ${proofText} ──\n`);
+              this.recordContainerEvent({
+                severity: 'info',
+                source: 'cds-container-service',
+                action: 'app.pull.fallback-provenance-accepted',
+                message: `fallback image provenance accepted: ${cand.image}`,
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: profile.id,
+                requestId: context.requestId ?? undefined,
+                operationId: context.operationId ?? undefined,
+                details: {
+                  image: cand.image,
+                  revision: proof.revision,
+                  targetSha: proof.targetSha,
+                  buildScope,
+                  proof: proof.reason,
+                },
+              });
+              break;
+            }
+            const rejectionText = {
+              'missing-revision': '镜像没有完整的源码 revision 标签',
+              'missing-target': '本次部署没有可核对的目标 commit',
+              'missing-build-scope': '项目没有声明与 CI 一致的组件构建范围',
+              'missing-comparator': '当前部署链路无法执行组件差异比较',
+              'component-changed-or-unverifiable': '组件已有变化或 Git 无法完成差异比较',
+              'exact-target': '镜像 revision 与目标提交一致',
+              'component-unchanged': '组件构建输入没有变化',
+            }[proof.reason];
+            lastDetail = `回退镜像 ${cand.image} 无法证明与目标提交等价：${rejectionText}`;
+            const hasNext = i < candidates.length - 1;
+            onOutput?.(`── ${lastDetail}${hasNext ? `，继续尝试 ${candidates[i + 1].image}` : '，不运行该镜像'} ──\n`);
+            this.recordContainerEvent({
+              severity: 'warn',
+              source: 'cds-container-service',
+              action: 'app.pull.fallback-provenance-rejected',
+              message: `fallback image provenance rejected: ${cand.image}`,
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: profile.id,
+              requestId: context.requestId ?? undefined,
+              operationId: context.operationId ?? undefined,
+              details: {
+                image: cand.image,
+                revision: proof.revision,
+                targetSha: proof.targetSha,
+                buildScope,
+                reason: proof.reason,
+              },
+            });
+            continue;
+          }
           lastDetail = (pull.stderr || pull.stdout || '').trim();
           const hasNext = i < candidates.length - 1;
           onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
@@ -1327,8 +1409,6 @@ export class ContainerService {
       // 本 PR 的止损点在真实配置下**一次都不会触发**（Codex PR #1275 三轮 P1）。
       // 未声明 buildScope 一律不复用（fail-closed）：范围声明得太窄会把旧镜像当新
       // 代码发出去，比多编译一次危险得多。
-      const targetSha = targetShaOf(primary);
-      const buildScope = normalizeBuildScope(profile.buildScope);
       if (!pulledImage && targetSha && !buildScope) {
         onOutput?.('── 该组件未声明 CI 构建范围（buildScope），不做「无变更复用上一版镜像」判断，按原路径继续 ──\n');
       }

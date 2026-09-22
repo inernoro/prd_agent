@@ -142,6 +142,72 @@ export function normalizeBuildScope(scope: readonly string[] | undefined | null)
   return out.length > 0 ? [...new Set(out)] : null;
 }
 
+/** OCI 镜像的源码 revision 标签只接受完整 commit SHA。 */
+export function normalizeImageRevision(value: string | undefined | null): string | null {
+  const normalized = (value || '').trim().toLowerCase();
+  return /^[0-9a-f]{40}$/.test(normalized) ? normalized : null;
+}
+
+export type FallbackImageProofReason =
+  | 'exact-target'
+  | 'component-unchanged'
+  | 'missing-revision'
+  | 'missing-target'
+  | 'missing-build-scope'
+  | 'missing-comparator'
+  | 'component-changed-or-unverifiable';
+
+export interface ProveFallbackImageInput {
+  /** 镜像 OCI label `org.opencontainers.image.revision` 的原始值。 */
+  revision?: string | null;
+  /** 本次部署点名的 commit SHA。 */
+  targetSha?: string | null;
+  /** 与 CI path-filter 一致的组件构建输入范围。 */
+  buildScope?: readonly string[] | null;
+  /** 比较镜像 revision 与目标 revision 之间该组件是否无变化。 */
+  isComponentUnchangedSince?: (
+    fromSha: string,
+    toSha: string,
+    scopePaths: readonly string[],
+  ) => Promise<boolean>;
+}
+
+export interface FallbackImageProof {
+  accepted: boolean;
+  reason: FallbackImageProofReason;
+  revision: string | null;
+  targetSha: string | null;
+}
+
+/**
+ * 证明浮动回退镜像与目标提交等价。
+ *
+ * `branch-*` / `latest` 只说明发布通道，不说明里面是哪份源码。只有两种情况能运行：
+ *  1. 镜像标签里的 revision 就是目标提交；
+ *  2. revision 较旧，但 Git 能证明该组件的全部构建输入到目标提交之间没有变化。
+ *
+ * 任何信息缺失、比较失败或组件有变化都拒绝。调用方应继续尝试其他候选，最终回退
+ * 源码构建，而不是把“镜像拉到了”误当成“镜像内容正确”。
+ */
+export async function proveFallbackImage(input: ProveFallbackImageInput): Promise<FallbackImageProof> {
+  const revision = normalizeImageRevision(input.revision);
+  const targetSha = normalizeImageRevision(input.targetSha);
+  if (!revision) return { accepted: false, reason: 'missing-revision', revision, targetSha };
+  if (!targetSha) return { accepted: false, reason: 'missing-target', revision, targetSha };
+  if (revision === targetSha) return { accepted: true, reason: 'exact-target', revision, targetSha };
+  if (!input.buildScope || input.buildScope.length === 0) {
+    return { accepted: false, reason: 'missing-build-scope', revision, targetSha };
+  }
+  if (!input.isComponentUnchangedSince) {
+    return { accepted: false, reason: 'missing-comparator', revision, targetSha };
+  }
+  const unchanged = await input.isComponentUnchangedSince(revision, targetSha, input.buildScope)
+    .catch(() => false);
+  return unchanged
+    ? { accepted: true, reason: 'component-unchanged', revision, targetSha }
+    : { accepted: false, reason: 'component-changed-or-unverifiable', revision, targetSha };
+}
+
 /**
  * 选出第一个「与本次代码等价」的候选。全部不等价（或没有候选）返回 null，
  * 调用方照旧走源码编译——本模块只做减法，绝不改变「实在不行就重编」的兜底。

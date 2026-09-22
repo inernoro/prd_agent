@@ -166,6 +166,56 @@ describe('ContainerService', () => {
       expect(runtime.deployedImage).toBe('cds-managed/p1-api:sha-1234567890abcdef1234567890abcdef12345678');
     });
 
+    it('rejects a pulled floating fallback image when its source revision changed and uses source build', async () => {
+      const targetSha = 'a'.repeat(40);
+      const staleSha = 'b'.repeat(40);
+      const fallbackImage = 'ghcr.io/acme/api:branch-main';
+      mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker ps/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker pull (.+)/, (match) => ({
+        stdout: match[1].includes(`sha-${targetSha}`) ? '' : 'pulled',
+        stderr: match[1].includes(`sha-${targetSha}`) ? 'not found' : '',
+        exitCode: match[1].includes(`sha-${targetSha}`) ? 1 : 0,
+      }));
+      mock.addResponsePattern(/docker image inspect --format/, () => ({ stdout: `${staleSha}\n`, stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
+      mock.addResponsePattern(/docker run/, () => ({ stdout: 'source-runtime', stderr: '', exitCode: 0 }));
+
+      const sourceProfile = makeProfile({
+        dockerImage: 'node:20-alpine',
+        command: 'node server.js',
+        activeDeployMode: 'source',
+      });
+      const runtime = makeService();
+      const outputs: string[] = [];
+
+      await service.runService(
+        { ...makeEntry(), githubCommitSha: targetSha },
+        makeProfile({
+          dockerImage: `ghcr.io/acme/api:sha-${targetSha}`,
+          command: '',
+          prebuiltImage: true,
+          fallbackImage,
+          buildScope: ['prd-api/**'],
+          sourceFallbackProfile: sourceProfile,
+        }),
+        runtime,
+        (chunk) => outputs.push(chunk),
+        undefined,
+        {
+          isComponentUnchangedSince: async () => false,
+          onSourceCompileFallback: async () => {},
+        },
+      );
+
+      expect(mock.commands.some((command) => command.includes('org.opencontainers.image.revision'))).toBe(true);
+      expect(outputs.join('')).toContain('无法证明与目标提交等价');
+      const runCommand = mock.commands.find((command) => command.includes('docker run -d'));
+      expect(runCommand).toContain("'node:20-alpine'");
+      expect(runCommand).not.toContain(fallbackImage);
+      expect(runtime.deployedImage).toBe('node:20-alpine');
+    });
+
     it('uses platform commit metadata instead of project env overrides', async () => {
       mock.addResponsePattern(/docker network inspect/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker rm -f/, () => ({ stdout: '', stderr: '', exitCode: 0 }));

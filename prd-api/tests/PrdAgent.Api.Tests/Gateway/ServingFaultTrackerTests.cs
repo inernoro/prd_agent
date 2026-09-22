@@ -184,6 +184,7 @@ public sealed class ServingFaultTrackerTests
     // （predicate-and-wiring-discipline 形状 1：判据比它该管的范围宽）。
     private const string UnhandledCheckMarker = "[\"serving:unhandled-exceptions\"] = new object[]";
     private const string RequestsCheckMarker = "[\"serving:requests\"] = new object[]";
+    private const string DeploymentVersionCheckMarker = "[\"deployment:version-match\"] = new object[]";
     private const string ImageOutcomeCheckMarker = "[\"visual-image:recent-outcomes\"] = new object[]";
     private const string ImageRequestsCheckMarker = "[\"visual-image:requests\"] = new object[]";
     private const string DatabaseCheckMarker = "[\"db:roundtrip\"] = new object[]";
@@ -287,5 +288,28 @@ public sealed class ServingFaultTrackerTests
             customMessage: "零连续失败必须带真实样本量，否则零调用也会被误判为健康");
         requests.ShouldContain("[\"componentId\"] = \"visual-image.requests\"");
         requests.ShouldContain("[\"cds:monitor\"]");
+    }
+
+    [Fact]
+    public void MAP深度自检必须把运行二进制与发布目标不一致判为P0()
+    {
+        var program = File.ReadAllText(
+            Path.Combine(RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Program.cs"));
+        var deployment = CheckBlock(
+            program,
+            DeploymentVersionCheckMarker,
+            "[\"visual-image:default-route\"] = new object[]");
+
+        program.ShouldContain(
+            "var deploymentIdentity = ReadBuildIdentity();",
+            customMessage: "深度自检必须读取程序集内实际 commit 与部署注入的目标 commit");
+        program.ShouldContain(
+            "&& deploymentIdentityFailures == 0",
+            customMessage: "版本对账失败必须让深度自检整体失败，不能只显示一行提示");
+        deployment.ShouldContain("[\"componentId\"] = \"deployment.version-match\"");
+        deployment.ShouldContain("[\"cds:monitor\"]");
+        deployment.ShouldContain("severity = \"P0\"");
+        deployment.ShouldContain("failuresToAlarm = 1");
+        deployment.ShouldContain("publicVisible = true");
     }
 }
