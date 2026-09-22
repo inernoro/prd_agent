@@ -1,6 +1,7 @@
 using PrdAgent.Core.Models;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway;
+using System.Text.Json;
 
 namespace PrdAgent.Infrastructure.LLM;
 
@@ -40,10 +41,20 @@ internal static class ImageGenerationUserError
             _ => Unavailable()
         };
 
-    internal static Result MissingImage()
-        => new(
+    internal static Result MissingImage(string? diagnostic = null)
+    {
+        var text = diagnostic ?? string.Empty;
+        if (HasFinishReason(text, "IMAGE_RECITATION"))
+        {
+            return new Result(
+                ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
+                "模型没有根据这次描述和参考图生成图片，请调整需求，或更换你有权使用的参考图后重试。");
+        }
+
+        return new Result(
             ErrorCodes.IMAGE_GEN_UNAVAILABLE,
             "生图服务已响应，但没有返回可用图片，请重试。若持续出现，请联系管理员。");
+    }
 
     internal static Result ModelUnavailable()
         => new(
@@ -116,6 +127,31 @@ internal static class ImageGenerationUserError
         => new(
             ErrorCodes.IMAGE_GEN_UNAVAILABLE,
             "当前生图服务暂时不可用，请稍后重试。若持续出现，请联系管理员。");
+
+    private static bool HasFinishReason(string diagnostic, string expected)
+    {
+        if (string.IsNullOrWhiteSpace(diagnostic)) return false;
+
+        try
+        {
+            using var document = JsonDocument.Parse(diagnostic);
+            if (!document.RootElement.TryGetProperty("candidates", out var candidates)
+                || candidates.ValueKind != JsonValueKind.Array
+                || candidates.GetArrayLength() == 0)
+            {
+                return false;
+            }
+
+            var first = candidates[0];
+            return first.TryGetProperty("finishReason", out var finishReason)
+                && finishReason.ValueKind == JsonValueKind.String
+                && string.Equals(finishReason.GetString(), expected, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     internal static bool IsContentSafetyDenial(string? diagnostic)
         => ContainsAny(
