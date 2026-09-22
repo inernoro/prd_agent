@@ -920,6 +920,7 @@ public static class GatewayHttpEndpoints
             if (string.IsNullOrWhiteSpace(requestedModel)
                 || string.Equals(requestedModel, "auto", StringComparison.OrdinalIgnoreCase))
             {
+                requestedModel = null;
                 var bodyModel = ReadString(body, "model");
                 if (!string.IsNullOrWhiteSpace(bodyModel)) requestedModel = bodyModel.Trim();
             }
