@@ -949,9 +949,28 @@ public class ImageGenRunWorker : BackgroundService
             ? ImageGenRunStatus.Cancelled
             : (final.Failed > 0 ? ImageGenRunStatus.Failed : ImageGenRunStatus.Completed);
 
+        ImageGenRunItem? firstErrorItem = null;
+        if (nextStatus == ImageGenRunStatus.Failed)
+        {
+            firstErrorItem = await _db.ImageGenRunItems
+                .Find(x => x.RunId == run.Id && x.Status == ImageGenRunItemStatus.Error)
+                .SortBy(x => x.ItemIndex)
+                .ThenBy(x => x.ImageIndex)
+                .FirstOrDefaultAsync(ct);
+        }
+        var terminalFailure = ResolveTerminalFailure(nextStatus, firstErrorItem);
+
+        var terminalUpdate = Builders<ImageGenRun>.Update
+            .Set(x => x.Status, nextStatus)
+            .Set(x => x.EndedAt, DateTime.UtcNow);
+        if (terminalFailure.ErrorCode != null)
+            terminalUpdate = terminalUpdate.Set(x => x.ErrorCode, terminalFailure.ErrorCode);
+        if (terminalFailure.ErrorMessage != null)
+            terminalUpdate = terminalUpdate.Set(x => x.ErrorMessage, terminalFailure.ErrorMessage);
+
         await _db.ImageGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
-            Builders<ImageGenRun>.Update.Set(x => x.Status, nextStatus).Set(x => x.EndedAt, DateTime.UtcNow),
+            terminalUpdate,
             cancellationToken: ct);
 
         await AppendEventAsync(run, "run", new
@@ -962,6 +981,8 @@ public class ImageGenRunWorker : BackgroundService
             done = final.Done,
             failed = final.Failed,
             status = nextStatus.ToString(),
+            errorCode = terminalFailure.ErrorCode,
+            errorMessage = terminalFailure.ErrorMessage,
             endedAt = DateTime.UtcNow
         }, ct);
 
@@ -984,6 +1005,17 @@ public class ImageGenRunWorker : BackgroundService
             await TryMarkWorkspaceCanvasErrorAsync(run, errMsg, ct);
         }
     }
+
+    internal readonly record struct TerminalFailure(string? ErrorCode, string? ErrorMessage);
+
+    internal static TerminalFailure ResolveTerminalFailure(
+        ImageGenRunStatus status,
+        ImageGenRunItem? firstErrorItem)
+        => status == ImageGenRunStatus.Failed
+            ? new TerminalFailure(
+                string.IsNullOrWhiteSpace(firstErrorItem?.ErrorCode) ? ErrorCodes.LLM_ERROR : firstErrorItem.ErrorCode,
+                string.IsNullOrWhiteSpace(firstErrorItem?.ErrorMessage) ? "生图失败，请重试。" : firstErrorItem.ErrorMessage)
+            : new TerminalFailure(null, null);
 
     private static string ResolveSize(ImageGenRun run, ImageGenRunPlanItem planItem)
     {

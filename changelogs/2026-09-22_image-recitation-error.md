@@ -3,3 +3,4 @@
 | fix | prd-api | 在标准生图响应归一化边界保留请求拒绝语义，避免文学图生图回退为服务故障 |
 | test | prd-api | 补充 canonical 生图边界的 IMAGE_RECITATION 贯穿回归测试 |
 | fix | prd-api | 保留 canonical 请求拒绝错误在 MAP 生图消费者中的稳定语义，并补齐未知无图与服务故障反例 |
+| fix | prd-api | 将首个失败图片的稳定错误码与脱敏文案汇总到 run 终态和 runDone 事件，避免轮询与 SSE 结论分裂 |

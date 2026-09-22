@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LLM;
@@ -107,6 +108,42 @@ public sealed class CanonicalImageBoundaryTests
         Assert.Contains("有权使用的参考图", consumed.Message);
         Assert.DoesNotContain("IMAGE_RECITATION", consumed.Message, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("provider secret detail", consumed.Message, StringComparison.OrdinalIgnoreCase);
+
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(
+            ImageGenRunStatus.Failed,
+            new ImageGenRunItem
+            {
+                Status = ImageGenRunItemStatus.Error,
+                ErrorCode = consumed.Code,
+                ErrorMessage = consumed.Message,
+            });
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, terminal.ErrorCode);
+        Assert.Equal(consumed.Message, terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void CompletedRunDoesNotCopyStaleItemFailure()
+    {
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(
+            ImageGenRunStatus.Completed,
+            new ImageGenRunItem
+            {
+                Status = ImageGenRunItemStatus.Error,
+                ErrorCode = ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
+                ErrorMessage = "旧错误",
+            });
+
+        Assert.Null(terminal.ErrorCode);
+        Assert.Null(terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void FailedRunWithoutItemReasonGetsStableFallback()
+    {
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(ImageGenRunStatus.Failed, null);
+
+        Assert.Equal(ErrorCodes.LLM_ERROR, terminal.ErrorCode);
+        Assert.Equal("生图失败，请重试。", terminal.ErrorMessage);
     }
 
     [Fact]
