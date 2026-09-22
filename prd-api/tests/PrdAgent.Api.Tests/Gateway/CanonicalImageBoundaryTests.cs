@@ -64,6 +64,28 @@ public sealed class CanonicalImageBoundaryTests
         => Assert.False(GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse { Success = true, StatusCode = 200, Content = wire }).Success);
 
     [Fact]
+    public void GoogleImageRecitationPreservesRequestRejectedAcrossCanonicalBoundary()
+    {
+        const string wire = """
+            {"candidates":[{"content":{"parts":null},"finishReason":"IMAGE_RECITATION","finishMessage":"provider detail"}]}
+            """;
+
+        var response = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = wire,
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, response.ErrorCode);
+        Assert.Contains("调整需求", response.ErrorMessage);
+        Assert.Contains("有权使用的参考图", response.ErrorMessage);
+        Assert.DoesNotContain("IMAGE_RECITATION", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider detail", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void NormalizedImagePreservesActualExecutionAndRequestedLogicalIdentity()
     {
         var resolution = new GatewayModelResolution
