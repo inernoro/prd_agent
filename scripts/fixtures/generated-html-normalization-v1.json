@@ -1,0 +1,36 @@
+{
+  "schemaVersion": "generated-html-normalization-v1",
+  "csp": "default-src 'none'; base-uri 'none'; connect-src 'none'; form-action 'none'; img-src data:; font-src data:; media-src data:; style-src 'unsafe-inline'; script-src 'none'; object-src 'none'; frame-src 'none'; child-src 'none'; worker-src 'none'; manifest-src 'none'",
+  "vectors": [
+    {
+      "name": "trailing-newline",
+      "input": "<!doctype html><html><head><title>x</title></head><body>x</body></html>\n",
+      "normalized": "<!doctype html><html><head><title>x</title></head><body>x</body></html>",
+      "hardenedSha256": "db6467d3cd3bd140a21b1a22a6ba9ad9d01bdbdfaf5d272fe29495290146a087"
+    },
+    {
+      "name": "leading-whitespace",
+      "input": " \t\n<!doctype html><html><head><title>x</title></head><body>x</body></html>",
+      "normalized": "<!doctype html><html><head><title>x</title></head><body>x</body></html>",
+      "hardenedSha256": "db6467d3cd3bd140a21b1a22a6ba9ad9d01bdbdfaf5d272fe29495290146a087"
+    },
+    {
+      "name": "crlf",
+      "input": "<!doctype html>\r\n<html>\r\n<head><title>x</title></head>\r\n<body>x</body>\r\n</html>\r\n",
+      "normalized": "<!doctype html>\n<html>\n<head><title>x</title></head>\n<body>x</body>\n</html>",
+      "hardenedSha256": "b87e4721b4802f6c672f1f6ba78c6324d8eb2c96c931107cdb900a00d8bee2c7"
+    },
+    {
+      "name": "utf8-bom",
+      "input": "﻿<!doctype html><html><head><title>x</title></head><body>x</body></html>",
+      "normalized": "<!doctype html><html><head><title>x</title></head><body>x</body></html>",
+      "hardenedSha256": "db6467d3cd3bd140a21b1a22a6ba9ad9d01bdbdfaf5d272fe29495290146a087"
+    },
+    {
+      "name": "head-insertion-position",
+      "input": "\r\n<!doctype html><html lang=\"zh-CN\">\r\n<head data-zone=\"main\">\r\n<title>x</title></head><body>x</body></html>\r\n",
+      "normalized": "<!doctype html><html lang=\"zh-CN\">\n<head data-zone=\"main\">\n<title>x</title></head><body>x</body></html>",
+      "hardenedSha256": "02042754018140b3ff79144b765f573efee01c289f737a57d07e52fb80ada0f5"
+    }
+  ]
+}

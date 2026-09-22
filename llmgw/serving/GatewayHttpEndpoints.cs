@@ -64,7 +64,15 @@ public static class GatewayHttpEndpoints
                                        // （探测令牌绝不发给外部地址，见 uptime-custom-monitor 的 httpProbe），
                                        // 要鉴权它就永远打不进来。代价是可控的——这个端点只回计数与窗口，
                                        // 不含任何异常文本、路径或堆栈，泄漏面就是「这个网关最近崩没崩过」。
-                                       && !path.Equals("/gw/v1/healthz/deep", StringComparison.OrdinalIgnoreCase);
+                                       && !path.Equals("/gw/v1/healthz/deep", StringComparison.OrdinalIgnoreCase)
+                                       // 脱敏就绪（CDS 容器就绪门控打的就是这条）：同样匿名，同样只因为
+                                       // 带密钥就永远打不进来——CDS 的 HTTP 就绪探针是匿名 GET 且把一切
+                                       // < 500 当就绪，所以把带密钥门的 readyz 声明成就绪路径，等于让 401
+                                       // 冒充「就绪」，依赖状态一次都不会被评估。
+                                       // 代价与 healthz/deep 同一口径：这条只用状态码表态（200 / 503），
+                                       // 正文只有 status / commit / time，**不含组件名、耗时与摘要**，
+                                       // 泄漏面就是「这个网关此刻能不能干活」。要明细仍然只能走 readyz。
+                                       && !path.Equals("/gw/v1/healthz/ready", StringComparison.OrdinalIgnoreCase);
             var protectedCompatPath =
                 IsOpenAiCompatibleProtectedPath(path)
                 || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
@@ -222,6 +230,27 @@ public static class GatewayHttpEndpoints
             time = DateTime.UtcNow.ToString("o"),
         }, jsonOpts), "application/json"));
 
+        // 脱敏就绪：与 readyz 判据完全同源（同一个 IGatewayServingReadinessProbe），
+        // 区别只在**端出多少**——这里只有一个状态码加三个字段，readyz 才给逐组件明细。
+        // 探针自带缓存（LlmGateway:Readiness:CacheSeconds，默认 10 秒）与单飞锁，
+        // 所以匿名可达不构成打穿依赖的放大面：一个缓存窗口内最多真探一次。
+        app.MapGet("/gw/v1/healthz/ready", async (
+            HttpContext http,
+            [Microsoft.AspNetCore.Mvc.FromServices] IServiceProvider services) =>
+        {
+            var probe = services.GetService<IGatewayServingReadinessProbe>();
+            var ready = probe != null && (await probe.CheckAsync(http.RequestAborted)).Ready;
+            return Results.Content(
+                JsonSerializer.Serialize(new
+                {
+                    status = ready ? "ready" : "not-ready",
+                    commit = gitCommit,
+                    time = DateTime.UtcNow.ToString("o"),
+                }, jsonOpts),
+                "application/json",
+                statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+        });
+
         // 深度自检：把「最近有没有崩过」端出成 IETF draft-inadarei-api-health-check
         // 的 application/health+json，供 CDS 的 health-json 探针按结构化判据判定
         // （componentId=serving.unhandled-exceptions，断言 observedValue == 0）。
@@ -371,6 +400,132 @@ public static class GatewayHttpEndpoints
                 Total: cases.Count,
                 Passed: passed,
                 Cases: cases), jsonOpts);
+        });
+
+        // 原生无状态 Responses：只装配既有治理与核心传输，不改旧兼容入口。
+        app.MapPost("/gw/v1/responses", async (
+            HttpContext http,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor,
+            IServiceProvider services) =>
+        {
+            var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+            if (PrdAgent.Infrastructure.LlmGateway.LlmGateway.ValidateNativeResponsesBody(body) is { } invalid)
+            {
+                await WriteCompatErrorAsync(http, invalid.ErrorMessage!, "invalid_request_error", invalid.ErrorCode, invalid.StatusCode);
+                return;
+            }
+            var nativeBody = body!;
+            var requestId = TrackGatewayRequestId(http);
+            var stream = ReadBool(nativeBody, "stream");
+            var model = ReadString(nativeBody, "model");
+            var pool = ResolveCompatModelPoolId(http, nativeBody);
+            // gw-native 是内部路：MAP 侧代理先剥掉运行时自带的 pin，再按自己冻结的快照盖上去。
+            // 兼容入口（/v1/*）一律拒绝客户端自带 pin（见 RejectClientSuppliedPinnedTarget），
+            // 那条禁令按 gw-native / 兼容两分面划界，不覆盖这一条。
+            var (platform, pinnedModel) = ReadDeclaredPinnedTarget(http, nativeBody);
+            var policy = ResolveCompatModelPolicy(http, nativeBody, model, platform, pinnedModel);
+            var strict = ReadProviderRequireParameters(nativeBody);
+            var runId = ResolveCompatRunId(http, nativeBody);
+            StripGatewayRoutingFields(nativeBody);
+            // provider 是本网关的路由信封，不属于原生 OpenAI JSON；未知选项不可悄悄丢弃。
+            if (nativeBody["provider"] is JsonObject provider)
+            {
+                provider.Remove("require_parameters");
+                if (provider.Count != 0)
+                {
+                    await WriteCompatErrorAsync(http, "原生通道不支持该 provider 选项", "invalid_request_error", "NATIVE_PROVIDER_OPTION_UNSUPPORTED", 400);
+                    return;
+                }
+                nativeBody.Remove("provider");
+            }
+            // 图片属于输入能力，不改变已冻结的业务调用方类型；核心能力门会单独校验视觉支持。
+            var requestType = ModelTypes.Chat;
+            var ingress = new GatewayIngressRequest
+            {
+                RequestId = requestId,
+                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "map",
+                IngressProtocol = "gw-native",
+                AppCallerCode = ResolveVerifiedAppCaller(http, string.Empty),
+                RequestType = requestType,
+                ExpectedModel = policy == "pool" && !string.IsNullOrWhiteSpace(pool) ? pool : model,
+                ModelPoolId = pool,
+                ModelPolicy = policy,
+                PinnedPlatformId = platform,
+                PinnedModelId = pinnedModel,
+                ParameterPolicy = strict ? "strict-require" : "default-drop",
+                RequestBody = nativeBody,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId, RunId = runId,
+                    SessionId = ResolveHeader(http, "X-Gateway-Session-Id"),
+                    UserId = ResolveHeader(http, "X-Gateway-User-Id"),
+                    GatewayTransport = GatewayTransports.Http,
+                },
+            };
+            if (string.IsNullOrWhiteSpace(ingress.AppCallerCode))
+            {
+                await WriteCompatErrorAsync(http, "原生通道需要已授权调用方", "invalid_request_error", "APP_CALLER_REQUIRED", 400);
+                return;
+            }
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
+            // 既有提示词治理只会生成 Chat messages；有启用策略时明确拒绝，不能绕过或偷偷转换。
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
+            if (!promptPolicy.Success || !string.IsNullOrWhiteSpace(promptPolicy.Request.Context?.PromptPolicyId))
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage ?? "当前提示词策略未支持原生 Responses", "invalid_request_error",
+                    promptPolicy.ErrorCode ?? "NATIVE_RESPONSES_PROMPT_POLICY_UNSUPPORTED", 400);
+                return;
+            }
+            var request = ApplyVerifiedRawRequestContext(http, new GatewayRawRequest
+            {
+                AppCallerCode = ingress.AppCallerCode, ModelType = requestType,
+                EndpointPath = "/v1/responses", RequestBody = nativeBody,
+                Context = ingress.Context,
+                TimeoutSeconds = 900,
+            }, ingress);
+            using var scope = OpenContextScope(accessor, request.Context, request.ModelType, request.AppCallerCode);
+            await RunWithRequestCancellationAsync(http, services, request.AppCallerCode, requestId, async token =>
+            {
+                var resolution = await gateway.ResolveModelAsync(request.AppCallerCode, request.ModelType,
+                    request.ExpectedModel, request.PinnedPlatformId, request.PinnedModelId, token);
+                var disconnected = false;
+                var outcome = await gateway.SendNativeResponsesWithResolutionAsync(request, resolution, async (chunk, _) =>
+                {
+                    if (disconnected) return;
+                    try
+                    {
+                        if (!http.Response.HasStarted)
+                        {
+                            http.Response.StatusCode = chunk.StatusCode;
+                            http.Response.ContentType = chunk.ContentType;
+                            http.Response.Headers.CacheControl = "no-store";
+                            http.Response.Headers["X-Accel-Buffering"] = "no";
+                        }
+                        if (!chunk.Data.IsEmpty)
+                        {
+                            await http.Response.Body.WriteAsync(chunk.Data, http.RequestAborted);
+                            await http.Response.Body.FlushAsync(http.RequestAborted);
+                        }
+                    }
+                    catch (IOException) { disconnected = true; }
+                    catch (OperationCanceledException) when (http.RequestAborted.IsCancellationRequested) { disconnected = true; }
+                    catch (ObjectDisposedException) { disconnected = true; }
+                }, token);
+                http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] = outcome.StatusCode;
+                if (!outcome.Success && outcome.ErrorCode is "NATIVE_RESPONSES_OUTCOME_UNKNOWN" or "NATIVE_RESPONSES_TRANSPORT_FAILED" or "NATIVE_RESPONSES_TIMEOUT" or "GATEWAY_REQUEST_CANCELLED")
+                    http.Items[GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey] = true;
+                if (!outcome.Success && !disconnected)
+                {
+                    if (!http.Response.HasStarted)
+                        await WriteCompatErrorAsync(http, outcome.ErrorMessage ?? "原生请求失败", "api_error", outcome.ErrorCode, outcome.StatusCode);
+                    else if (http.Response.StatusCode is >= 200 and < 300)
+                        // 只有「看起来成功」的那种才需要补救。上游非 2xx 是原样透传的，状态码
+                        // 自己已经说了实话，把它中断只会让调用方少看到上游的错误体。
+                        await TerminateStartedNativeResponseAsync(http, outcome);
+                }
+            });
         });
 
         // OpenAI Responses 兼容入口。外部仍按 OpenAI 心智传 input / instructions，
@@ -694,92 +849,23 @@ public static class GatewayHttpEndpoints
 
         // OpenAI-compatible M2M 入口。用于 claude-sdk-sidecar 的 legacy/openai-compatible
         // 工具循环：sidecar 继续负责多轮 tool calls，模型请求统一穿过 llmgw-serve。
-        app.MapPost("/v1/chat/completions", async (
+        // 同一份 chat 实现挂两个面。
+        // /v1/chat/completions 是对外兼容面：客户端自带的 pin 一律拒（见 RejectClientSuppliedPinnedTarget）。
+        // /gw/v1/chat/completions 是内部 gw-native 面：MAP 的设计运行时代理会先剥掉运行时自带的
+        // pin，再盖上自己冻结的快照，所以这一面读到的是**服务端**的值，不是客户端的。
+        // 两面共用一份实现而不是抄第二份 handler——抄一份，下次只会改到其中一边。
+        app.MapPost("/v1/chat/completions", (
             HttpContext http,
             PrdAgent.Core.LlmGateway.ILlmGateway gateway,
             ILLMRequestContextAccessor accessor,
             IServiceProvider services) =>
-        {
-            var requestId = TrackGatewayRequestId(http);
-            var appCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.PageAgent.Generate);
-            var userId = ResolveHeader(http, "X-Gateway-User-Id");
-
-            var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
-            if (body == null)
-            {
-                http.Response.StatusCode = StatusCodes.Status400BadRequest;
-                http.Response.ContentType = "application/json";
-                await http.Response.WriteAsync(JsonSerializer.Serialize(new
-                {
-                    error = new { message = "请求体必须是合法 JSON object", type = "invalid_request_error", code = "invalid_json" }
-                }, SnakeJson));
-                return;
-            }
-
-            var requestedModel = ReadString(body, "model");
-            var runId = ResolveCompatRunId(http, body);
-            var modelPoolId = ResolveCompatModelPoolId(http, body);
-            // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
-            if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
-            {
-                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
-                return;
-            }
-            // pin 已在上面被拒，这里恒为「没有 pin」——不留两个恒 null 的中间变量当死枝。
-            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, null, null);
-            var stream = ReadBool(body, "stream");
-            body.Remove("model");
-            StripGatewayRoutingFields(body);
-            var droppedParameters = FindDroppedParameters(
-                body,
-                "messages", "max_tokens", "temperature", "top_p", "stream",
-                "tools", "tool_choice", "response_format", "metadata", "reasoning", "logprobs", "top_logprobs", "parallel_tool_calls",
-                "provider", "model_policy", "modelPolicy", "model_pool_id", "modelPoolId",
-                "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId");
-
-            var ingress = new GatewayIngressRequest
-            {
-                RequestId = requestId,
-                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
-                IngressProtocol = "openai-compatible",
-                AppCallerCode = appCallerCode,
-                AppCallerTitle = ResolveHeader(http, "X-OpenRouter-Title") ?? ResolveHeader(http, "X-Gateway-App-Title"),
-                RequestType = ModelTypes.Chat,
-                ModelPolicy = modelPolicy,
-                ModelPoolId = modelPoolId,
-                ParameterPolicy = ReadProviderRequireParameters(body) ? "strict-require" : "default-drop",
-                ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
-                PinnedPlatformId = null,
-                PinnedModelId = null,
-                RequestBody = body,
-                DroppedParameters = droppedParameters,
-                Context = new GatewayRequestContext
-                {
-                    RequestId = requestId,
-                    RunId = runId,
-                    UserId = userId,
-                    QuestionText = ExtractQuestionText(body),
-                    GatewayTransport = GatewayTransports.Http,
-                }
-            };
-
-            if (await TryRejectStrictDroppedParametersAsync(http, ingress))
-                return;
-
-            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
-            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
-            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream), CancellationToken.None);
-            if (!promptPolicy.Success)
-            {
-                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
-                return;
-            }
-            var gatewayRequest = promptPolicy.Request;
-            using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
-            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
-                ? StreamOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
-                : SendOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
-        });
+            HandleOpenAiChatCompletionsAsync(http, gateway, accessor, services, nativeSurface: false));
+        app.MapPost("/gw/v1/chat/completions", (
+            HttpContext http,
+            PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+            ILLMRequestContextAccessor accessor,
+            IServiceProvider services) =>
+            HandleOpenAiChatCompletionsAsync(http, gateway, accessor, services, nativeSurface: true));
 
         // Claude-compatible 入口：接收 Anthropic Messages 形状，统一转成 GW IR 后进入同一个 router。
         app.MapPost("/v1/messages", async (
@@ -2193,6 +2279,8 @@ public static class GatewayHttpEndpoints
 
     private static bool ShouldInspectAuthorizationBody(string path)
         => path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/responses", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/send", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/resolve", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/gw/v1/raw", StringComparison.OrdinalIgnoreCase)
@@ -2459,7 +2547,129 @@ public static class GatewayHttpEndpoints
     /// 内部那条路（/gw/v1/*，IngressProtocol=gw-native）不受影响：它的 pin 由 MAP 侧
     /// 带着已验证的 appCaller 传进来，不是外部可写的字段。
     /// </summary>
-    private static string? RejectClientSuppliedPinnedTarget(
+
+    /// <summary>
+    /// OpenAI chat 形状的统一实现，挂在两个面上（见两处 MapPost 注册）。
+    ///
+    /// <paramref name="nativeSurface"/> 是这两个面**唯一**的分叉点：
+    /// 兼容面（/v1/*）拒绝客户端自带的 pin，gw-native 面（/gw/v1/*）按内部调度语义读它。
+    /// 其余一切逐字相同——不复制第二份 handler，是因为复制出来的那份下次不会被一起改。
+    /// </summary>
+    private static async Task HandleOpenAiChatCompletionsAsync(
+        HttpContext http,
+        PrdAgent.Core.LlmGateway.ILlmGateway gateway,
+        ILLMRequestContextAccessor accessor,
+        IServiceProvider services,
+        bool nativeSurface)
+    {
+            var requestId = TrackGatewayRequestId(http);
+            var appCallerCode = ResolveVerifiedAppCaller(http, AppCallerRegistry.PageAgent.Generate);
+            var userId = ResolveHeader(http, "X-Gateway-User-Id");
+
+            // 已经通过 Key 鉴权的内部输出合同；缺省保留旧行为，不推断模型内部推理。
+            var includeThinking = true;
+            if (http.Request.Headers.TryGetValue("X-Gateway-Include-Thinking", out var thinkingHeader))
+            {
+                if (thinkingHeader.Count != 1 || thinkingHeader[0] is not ("true" or "false"))
+                {
+                    await WriteCompatErrorAsync(http, "思考输出选项无效，请检查请求设置",
+                        "invalid_request_error", "invalid_include_thinking", 400);
+                    return;
+                }
+                includeThinking = thinkingHeader[0] == "true";
+            }
+
+            var body = await ReadJsonBodyAsync(http.Request, CancellationToken.None);
+            if (body == null)
+            {
+                http.Response.StatusCode = StatusCodes.Status400BadRequest;
+                http.Response.ContentType = "application/json";
+                await http.Response.WriteAsync(JsonSerializer.Serialize(new
+                {
+                    error = new { message = "请求体必须是合法 JSON object", type = "invalid_request_error", code = "invalid_json" }
+                }, SnakeJson));
+                return;
+            }
+
+            var requestedModel = ReadString(body, "model");
+            var runId = ResolveCompatRunId(http, body);
+            var modelPoolId = ResolveCompatModelPoolId(http, body);
+            // 两个面在这里分叉，也只在这里分叉。
+            string? surfacePinPlatform = null;
+            string? surfacePinModel = null;
+            if (nativeSurface)
+            {
+                // gw-native：调用方是 MAP 自己的设计运行时代理，pin 来自它冻结的快照。
+                (surfacePinPlatform, surfacePinModel) = ReadDeclaredPinnedTarget(http, body);
+            }
+            else if (RejectClientSuppliedPinnedTarget(http, body) is { } pinRejection)
+            {
+                // 兼容面：外部请求不接受自带的 pin（越过白名单授权直取上游）。当场拒，不静默忽略。
+                await WriteCompatErrorAsync(http, pinRejection, "invalid_request_error", "pinned_target_not_allowed", 400);
+                return;
+            }
+            var modelPolicy = ResolveCompatModelPolicy(http, body, requestedModel, surfacePinPlatform, surfacePinModel);
+            var stream = ReadBool(body, "stream");
+            body.Remove("model");
+            StripGatewayRoutingFields(body);
+            var droppedParameters = FindDroppedParameters(
+                body,
+                "messages", "max_tokens", "max_completion_tokens", "n", "temperature", "top_p", "reasoning_effort", "stream",
+                "tools", "tool_choice", "response_format", "metadata", "reasoning", "logprobs", "top_logprobs", "parallel_tool_calls",
+                "provider", "model_policy", "modelPolicy", "model_pool_id", "modelPoolId",
+                "pinned_platform_id", "pinnedPlatformId", "pinned_model_id", "pinnedModelId");
+
+            var ingress = new GatewayIngressRequest
+            {
+                RequestId = requestId,
+                SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? (nativeSurface ? "map" : "external"),
+                IngressProtocol = nativeSurface ? "gw-native" : "openai-compatible",
+                AppCallerCode = appCallerCode,
+                AppCallerTitle = ResolveHeader(http, "X-OpenRouter-Title") ?? ResolveHeader(http, "X-Gateway-App-Title"),
+                RequestType = ModelTypes.Chat,
+                ModelPolicy = modelPolicy,
+                ModelPoolId = modelPoolId,
+                ParameterPolicy = ReadProviderRequireParameters(body) ? "strict-require" : "default-drop",
+                ExpectedModel = string.IsNullOrWhiteSpace(requestedModel) ? null : requestedModel,
+                PinnedPlatformId = surfacePinPlatform,
+                PinnedModelId = surfacePinModel,
+                RequestBody = body,
+                DroppedParameters = droppedParameters,
+                Context = new GatewayRequestContext
+                {
+                    RequestId = requestId,
+                    RunId = runId,
+                    UserId = userId,
+                    QuestionText = ExtractQuestionText(body),
+                    GatewayTransport = GatewayTransports.Http,
+                }
+            };
+
+            if (await TryRejectStrictDroppedParametersAsync(http, ingress))
+                return;
+
+            var governance = await RecordAndCheckAppCallerGovernanceAsync(http, services, ingress, CancellationToken.None);
+            if (await TryWriteGovernanceErrorAsync(http, governance)) return;
+            var promptPolicy = await GatewayPromptPolicyApplier.ApplyAsync(services, ingress.ToGatewayRequest(stream, includeThinking: includeThinking), CancellationToken.None);
+            if (!promptPolicy.Success)
+            {
+                await WriteCompatErrorAsync(http, promptPolicy.ErrorMessage!, "invalid_request_error", promptPolicy.ErrorCode, 400);
+                return;
+            }
+            var gatewayRequest = promptPolicy.Request;
+            using var _ = OpenContextScope(accessor, gatewayRequest.Context, gatewayRequest.ModelType, gatewayRequest.AppCallerCode);
+            await RunWithRequestCancellationAsync(http, services, ingress.AppCallerCode, requestId, token => stream
+                ? StreamOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token)
+                : SendOpenAiCompatibleAsync(http, gateway, gatewayRequest, requestId, requestedModel, token));
+    }
+
+    /// <summary>
+    /// 读出请求里声明的 pin 目标。**读出来不等于可以用**：兼容入口（/v1/*）读它是为了当场
+    /// 拒绝（见 <see cref="RejectClientSuppliedPinnedTarget(HttpContext, JsonObject)"/>），
+    /// 只有 gw-native（/gw/v1/*）那条内部路才真的按它路由。两边共用这一份别名清单——
+    /// 拆成两份的话，下次加一个别名必然只改得到其中一边，而漏掉的那边不会红。
+    /// </summary>
+    private static (string? PinnedPlatformId, string? PinnedModelId) ReadDeclaredPinnedTarget(
         HttpContext http,
         JsonObject body)
     {
@@ -2484,6 +2694,15 @@ public static class GatewayHttpEndpoints
                 ReadString(provider, "pinnedModelId"));
         }
 
+        return (pinnedPlatformId, pinnedModelId);
+    }
+
+    /// <summary>兼容入口用：读出客户端自带的 pin，带了就给一句拒绝理由，没带返回 null。</summary>
+    private static string? RejectClientSuppliedPinnedTarget(
+        HttpContext http,
+        JsonObject body)
+    {
+        var (pinnedPlatformId, pinnedModelId) = ReadDeclaredPinnedTarget(http, body);
         return DescribeRejectedPin(pinnedPlatformId, pinnedModelId);
     }
 
@@ -3910,6 +4129,38 @@ public static class GatewayHttpEndpoints
         return trimmed.StartsWith("models/", StringComparison.OrdinalIgnoreCase)
             ? trimmed["models/".Length..]
             : trimmed;
+    }
+
+    /// <summary>
+    /// 已经发出 200 之后才判定失败时的可观测终止（Codex P1，2026-09-15）。流式响应收不回状态码，
+    /// 若就此干净收尾，调用方读到的是一段完整成功的流——内部账目记了失败，外部一无所知
+    /// （判据与接线纪律 形状 10）。这里先补一个 error 事件说清原因，再中断连接：分块传输下
+    /// 正常 EOF 与被截断在客户端看来一样，只有中断能让对方确定地读到一次传输失败。
+    /// </summary>
+    private static async Task TerminateStartedNativeResponseAsync(HttpContext http, GatewayRawResponse outcome)
+    {
+        try
+        {
+            if ((http.Response.ContentType ?? string.Empty).StartsWith("text/event-stream", StringComparison.OrdinalIgnoreCase))
+            {
+                var payload = JsonSerializer.Serialize(new
+                {
+                    type = "error",
+                    error = new
+                    {
+                        type = "api_error",
+                        code = outcome.ErrorCode,
+                        message = outcome.ErrorMessage ?? "上游未返回完整成功结果",
+                    },
+                }, SnakeJson);
+                await http.Response.WriteAsync($"event: error\ndata: {payload}\n\n", http.RequestAborted);
+                await http.Response.Body.FlushAsync(http.RequestAborted);
+            }
+        }
+        catch (IOException) { }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+        http.Abort();
     }
 
     private static async Task WriteCompatErrorAsync(

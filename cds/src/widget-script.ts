@@ -100,7 +100,11 @@ export function buildWidgetScript(
     #cds-widget .cds-commit-msg{font-size:10px;color:#8b949e;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
     #cds-widget button{display:flex;align-items:center;justify-content:center;padding:2px;border-radius:4px;border:none;background:transparent;color:inherit;cursor:pointer;opacity:0.6}
     #cds-widget button:hover{opacity:1}
+    #cds-widget button:focus-visible{outline:2px solid #93c5fd;outline-offset:2px;opacity:1}
     #cds-widget .cds-panel{margin-bottom:4px;padding:10px 12px;border-radius:8px;background:rgba(22,27,34,0.95);backdrop-filter:blur(12px);border:1px solid rgba(63,185,80,0.3);box-shadow:0 4px 16px rgba(0,0,0,0.4);min-width:260px;width:max-content;max-width:min(480px,calc(100vw - 40px));overflow:hidden}
+    #cds-widget .cds-panel-header{display:flex;min-height:36px;align-items:center;justify-content:space-between;gap:12px;margin:-6px -6px 8px;padding:2px 2px 8px 6px;border-bottom:1px solid rgba(148,163,184,0.16)}
+    #cds-widget .cds-panel-title{font-size:11px;font-weight:600;color:#f8fafc}
+    #cds-widget .cds-panel-close{width:36px;height:36px;flex-shrink:0;border:1px solid rgba(148,163,184,0.22);background:rgba(255,255,255,0.04)}
     #cds-widget .cds-sync-panel{margin-bottom:8px;padding:7px 8px 8px;border-radius:7px;background:rgba(255,255,255,0.03);border:1px solid rgba(148,163,184,0.16)}
     #cds-widget .cds-sync-panel.done{background:rgba(63,185,80,0.06);border-color:rgba(63,185,80,0.26)}
     #cds-widget .cds-sync-panel.error{background:rgba(248,81,73,0.06);border-color:rgba(248,81,73,0.26)}
@@ -132,6 +136,21 @@ export function buildWidgetScript(
     #cds-widget .cds-mode-select{font-size:10px;padding:2px 4px;border-radius:4px;border:1px solid #30363d;background:#161b22;color:#c9d1d9;cursor:pointer;flex:1;min-width:0}
     #cds-widget .cds-mode-select:hover{border-color:#58a6ff}
     #cds-widget .cds-mode-select:focus{outline:none;border-color:#58a6ff}
+    @media (max-width:640px){
+      #cds-widget{max-width:calc(100vw - 24px)}
+      #cds-widget .cds-badge{max-width:calc(100vw - 24px);padding:4px 6px}
+      #cds-widget .cds-badge:not(.is-expanded){width:44px;height:44px;min-width:44px;max-width:44px;padding:0;border-radius:12px}
+      #cds-widget .cds-badge:not(.is-expanded) .cds-badge-main{width:100%;height:100%;justify-content:center;gap:0}
+      #cds-widget .cds-badge:not(.is-expanded) .cds-badge-main>:not(button[data-action="toggle"]){display:none}
+      #cds-widget .cds-badge:not(.is-expanded) button[data-action="toggle"]{width:44px;height:44px;padding:0;opacity:1}
+      #cds-widget .cds-branch,#cds-widget .cds-mode{display:none}
+      #cds-widget .cds-panel{width:calc(100vw - 24px);min-width:min(260px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100vh - 176px);overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain}
+      #cds-widget .cds-panel-header{position:sticky;top:-10px;z-index:2;background:rgba(22,27,34,0.98)}
+      #cds-widget .cds-panel-close{width:44px;height:44px}
+      #cds-widget button{min-width:44px;min-height:44px}
+      #cds-widget .cds-deploy-btn{min-width:0}
+      #cds-widget .cds-mode-select{min-height:44px}
+    }
     #cds-widget .cds-spinner{display:inline-block;width:11px;height:11px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:cds-spin .8s linear infinite;flex-shrink:0}
     #cds-widget .cds-step{display:flex;align-items:center;gap:4px;font-size:10px;color:#8b949e}
     #cds-widget .cds-step.done{color:#3fb950}
@@ -233,7 +252,7 @@ export function buildWidgetScript(
       aiLastSeen=0;aiOccupant=null;
       updateAiOverlay();
     }).catch(function(err){
-      if(btn){btn.disabled=false;btn.textContent='✕ 结束';}
+      if(btn){btn.disabled=false;btn.innerHTML=ICON_X+' 结束';}
       console.error('[cds-widget] end-session failed:',err);
     });
   }
@@ -262,7 +281,7 @@ export function buildWidgetScript(
         });
       }
       var label='AI 操控中'+(aiOccupant!=='AI'?' · '+aiOccupant:'');
-      aiBadgeEl.innerHTML='<span class="cds-ai-badge-dot"></span><span>'+label+'</span><button class="cds-ai-badge-stop" title="结束 AI 对本页的操控">✕ 结束</button>';
+      aiBadgeEl.innerHTML='<span class="cds-ai-badge-dot"></span><span>'+label+'</span><button class="cds-ai-badge-stop" title="结束 AI 对本页的操控">'+ICON_X+' 结束</button>';
     }else{
       if(aiOverlay){aiOverlay.remove();aiOverlay=null;}
       if(aiBadgeEl){aiBadgeEl.remove();aiBadgeEl=null;}
@@ -536,8 +555,9 @@ export function buildWidgetScript(
   var widgetWasDragged=false;
 
   function setWidgetPosition(x,y){
-    var widgetWidth=Math.max(180,root.offsetWidth||0);
-    var widgetHeight=Math.max(50,root.offsetHeight||0);
+    var compactMobile=window.innerWidth<=640&&!expanded;
+    var widgetWidth=Math.max(compactMobile?44:180,root.offsetWidth||0);
+    var widgetHeight=Math.max(compactMobile?44:50,root.offsetHeight||0);
     var maxX=Math.max(0,window.innerWidth-widgetWidth);
     var maxY=Math.max(0,window.innerHeight-widgetHeight);
     pos.x=Math.max(0,Math.min(maxX,x));
@@ -592,7 +612,8 @@ export function buildWidgetScript(
 
     // Panel
     if(expanded){
-      h+='<div class="cds-panel">';
+      h+='<div class="cds-panel" id="cds-widget-panel" role="region" aria-label="CDS 分支诊断">';
+      h+='<div class="cds-panel-header"><span class="cds-panel-title">CDS 分支诊断</span><button class="cds-panel-close" data-action="close-panel" title="关闭 CDS 诊断面板" aria-label="关闭 CDS 诊断面板">'+ICON_X+'</button></div>';
       if(!profiles.length && !branchStatus){
         h+='<div style="color:#8b949e;font-size:11px;padding:4px 0"><span class="cds-spinner"></span> 加载中...</div>';
       }else if(!branchStatus){
@@ -678,8 +699,8 @@ export function buildWidgetScript(
             var sc=s.status==='done'?'done':s.status==='error'?'error':'';
             h+='<div class="cds-step '+sc+'">';
             if(s.status==='running')h+='<span class="cds-spinner" style="width:9px;height:9px;border-width:1.5px"></span>';
-            else if(s.status==='done')h+='<span>✓</span>';
-            else if(s.status==='error')h+='<span>✗</span>';
+            else if(s.status==='done')h+='<span>完成</span>';
+            else if(s.status==='error')h+='<span>错误</span>';
             h+='<span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+s.title+'</span></div>';
           }
           h+='</div>';
@@ -703,6 +724,7 @@ export function buildWidgetScript(
 
     // Badge
     var badgeClass='cds-badge';
+    if(expanded)badgeClass+=' is-expanded';
     if(HOSTED_CDS)badgeClass+=' is-hosted-cds';
     if(syncState.visible){
       if(syncState.phase==='syncing')badgeClass+=' is-syncing';
@@ -730,15 +752,14 @@ export function buildWidgetScript(
     // 分支自定义标签照常显示；不再显示默认的「CDS」泛标签——部署类型已由前面的
     // 极速/发布 chip 表达（用户 2026-06-24：分支标改为极速或发布标）。
     if(branchTags.length){for(var ti=0;ti<branchTags.length;ti++){h+='<span class="cds-tag">'+branchTags[ti]+'</span>';}}
-    h+='<button data-action="toggle" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
-    h+='<button data-action="dismiss">'+ICON_X+'</button>';
+    h+='<button data-action="toggle" aria-expanded="'+expanded+'" aria-controls="cds-widget-panel" aria-label="'+(expanded?'收起 CDS 诊断面板':'展开 CDS 诊断面板')+'" title="'+(expanded?'收起':'展开更新面板')+'">'+(expanded?ICON_DOWN:ICON_UP)+'</button>';
+    h+='<button data-action="dismiss" aria-label="关闭 CDS 调试工具" title="关闭 CDS 调试工具">'+ICON_X+'</button>';
     h+='</div>';
     if(syncState.visible)h+='<span class="cds-sync-rail"><span style="width:'+Math.max(0,Math.min(100,Math.round(syncState.progress)))+'%"></span></span>';
     h+='</div>';
 
     root.innerHTML=h;
-    root.style.left=pos.x+'px';
-    root.style.bottom=pos.y+'px';
+    setWidgetPosition(pos.x,pos.y);
 
     // Attach drag to badge bar
     var badge=root.querySelector('.cds-badge');
@@ -806,6 +827,15 @@ export function buildWidgetScript(
     if(!btn)return;
     var action=btn.getAttribute('data-action');
     if(action==='dismiss'){root.remove();return;}
+    // 两侧各加了一个独立动作，语义不冲突，都保留。
+    // close-panel 是本分支的面板关闭钮；收起之后照 main 的新约定安排手机端重新收成徽章，
+    // 否则同样是「收起」，走 toggle 会收、走关闭钮不会收，两条路各行其是。
+    if(action==='close-panel'){
+      expanded=false;
+      render();
+      scheduleMobileCompact(8000);
+      return;
+    }
     if(action==='expand-compact'){
       compact=false;
       render();
@@ -1138,10 +1168,10 @@ export function buildWidgetScript(
       var iconCls='ops-step-icon '+s.status;
       var textCls='ops-step-text '+s.status;
       var icon='';
-      if(s.status==='pending')icon='○';
-      else if(s.status==='running')icon='◎';
-      else if(s.status==='done')icon='✓';
-      else if(s.status==='error')icon='✗';
+      if(s.status==='pending')icon='待';
+      else if(s.status==='running')icon='中';
+      else if(s.status==='done')icon='成';
+      else if(s.status==='error')icon='错';
       h+='<div class="ops-step">';
       h+='<span class="'+iconCls+'">'+icon+'</span>';
       h+='<div><div class="'+textCls+'">'+s.description+'</div>';
@@ -1600,7 +1630,7 @@ export function buildWidgetScript(
         // Check for end-session signal
         if(cmd.params&&cmd.params.__end_session){
           updateOpsStep(cmd.id,'done',cmd.params.summary||'');
-          addOpsStep('end','snapshot','✅ AI 操作完成');
+          addOpsStep('end','snapshot','AI 操作完成');
           updateOpsStep('end','done','');
           // Fully clean up cursor and highlight
           if(aiCursorEl){aiCursorEl.remove();aiCursorEl=null;}
@@ -1788,7 +1818,7 @@ export function buildWidgetScript(
           bridgeHandshakeRequest=null;
           panel.remove();
           if(d&&d.success){
-            showHandshakeToast('✓ 已授权 AI 操作此页面','#60a5fa');
+            showHandshakeToast('已授权 AI 操作此页面','#60a5fa');
             setTimeout(bridgeCheckActivation,300);
           }
         })

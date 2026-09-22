@@ -81,7 +81,48 @@ public class ActivityActionRegistryGuardTests
         var keys = ActivityActionRegistry.Modules.Select(m => m.Key).ToList();
         Assert.Equal(keys.Count, keys.Distinct(StringComparer.Ordinal).Count());
 
-        var registered = ActivityActionRegistry.Actions.Values.Select(d => d.Module).Distinct().ToHashSet(StringComparer.Ordinal);
+        var registered = ActivityActionRegistry.Actions.Values
+            .Concat(ActivityActionRegistry.DomainActions.Values)
+            .Select(d => d.Module)
+            .Distinct()
+            .ToHashSet(StringComparer.Ordinal);
         Assert.Equal(registered, keys.ToHashSet(StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void DomainActions_ShouldBeSeparatedFromControllerActionRegistry()
+    {
+        Assert.Empty(ActivityActionRegistry.Actions.Keys.Intersect(
+            ActivityActionRegistry.DomainActions.Keys,
+            StringComparer.Ordinal));
+        var definition = Assert.Contains(
+            ActivityActionRegistry.GeneratedSitePublished,
+            ActivityActionRegistry.DomainActions);
+        Assert.Equal("web-pages", definition.Module);
+        Assert.Equal("网页托管", definition.ModuleLabel);
+        Assert.Equal("生成并发布了网页", definition.ActionLabel);
+        Assert.Null(definition.TargetRouteKey);
+        Assert.Null(definition.TitleDb);
+    }
+
+    [Fact]
+    public void HostedSiteVersionMutations_ShouldAllBeRegisteredAgainstSiteTitle()
+    {
+        var expected = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["HostedSiteEdits.PublishRevision"] = "发布了网页版本",
+            ["HostedSiteEdits.RollbackRevision"] = "回退了网页版本",
+            ["HostedSiteEdits.RejectRevision"] = "拒绝了网页草稿",
+        };
+
+        foreach (var (key, actionLabel) in expected)
+        {
+            var definition = Assert.Contains(key, ActivityActionRegistry.Actions);
+            Assert.Equal("web-pages", definition.Module);
+            Assert.Equal("网页托管", definition.ModuleLabel);
+            Assert.Equal(actionLabel, definition.ActionLabel);
+            Assert.Equal("siteId", definition.TargetRouteKey);
+            Assert.NotNull(definition.TitleDb);
+        }
     }
 }

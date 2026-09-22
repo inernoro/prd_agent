@@ -31,6 +31,7 @@
 - [海鲜市场产品规格 · 规格](./spec.marketplace.md) `spec.marketplace`
 - [应用注册中心协议 · 规格](./spec.platform.app-registry.md) `spec.platform.app-registry`
 - [LLM 网关测试矩阵 · 规格](./spec.platform.llm-gateway.test-matrix.md) `spec.platform.llm-gateway.test-matrix`
+- [四大场景密封验收清单 · 规格](./spec.platform.open-design.sealed-acceptance.md) `spec.platform.open-design.sealed-acceptance`
 - [监控自发现协议 · 规格](./spec.platform.monitor-discovery.md) `spec.platform.monitor-discovery`
 - [统一短链系统 · 规格](./spec.platform.short-links.md) `spec.platform.short-links`
 - [PRD Agent 产品需求文档 · 规格](./spec.prd.md) `spec.prd`
@@ -163,6 +164,7 @@
 - [多图视觉生成 · 设计](./design.visual-agent.multi-image-vision-api.md) `design.visual-agent.multi-image-vision-api`
 - [Visual Agent (视觉创作) · 设计](./design.visual-agent.md) `design.visual-agent`
 - [网页托管与分享 · 设计](./design.web-hosting.md) `design.web-hosting`
+- [知识驱动设计生成体系 · 设计](./design.platform.design-generation.md) `design.platform.design-generation`
 - [工作流自动配置 (Workflow Auto-Config) · 设计](./design.workflow-agent.auto-config.md) `design.workflow-agent.auto-config`
 - [工作流引擎 · 设计](./design.workflow-agent.engine.md) `design.workflow-agent.engine`
 
@@ -293,6 +295,10 @@
 - [前端 Apple 设计系统迁移 · 计划](./plan.frontend.apple-design-migration.md) `plan.frontend.apple-design-migration`
 - [前端移动端适配 · 计划](./plan.frontend.mobile-adaptation.md) `plan.frontend.mobile-adaptation`
 - [MD 转 PPT 对话工作台收尾 · 计划](./plan.md-to-ppt.chat-redesign.md) `plan.md-to-ppt.chat-redesign`
+- [知识驱动设计生成体系 · 计划](./plan.platform.design-generation.md) `plan.platform.design-generation`
+- [OpenDesign 六步实施计划](./plan.platform.open-design.md) `plan.platform.open-design`
+- [OpenDesign 接入 · 债务台账](./debt.platform.open-design.md) `debt.platform.open-design`
+- [OpenDesign 内核与能力边界](./design.platform.open-design.kernel.md) `design.platform.open-design.kernel`
 - [MAP 核心业务稳定基线落地 · 计划](./plan.platform.core-business-stability.md) `plan.platform.core-business-stability`
 - [关键业务监控 · 计划](./plan.platform.business-monitoring.md) `plan.platform.business-monitoring`
 - [LLM Gateway 模型网关权威教程 · 计划](./plan.platform.llm-gateway.authoritative-tutorial.md) `plan.platform.llm-gateway.authoritative-tutorial`

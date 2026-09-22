@@ -58,6 +58,19 @@ public interface ILlmGateway : Core.Interfaces.LlmGateway.ILlmGateway
         CancellationToken ct = default);
 
     /// <summary>
+    /// 原生、无服务端上下文的 Responses 传输；发送阶段只消费既有解析结果。
+    /// 回调必须立即消费字节；它不是 Chat chunk，也不得重组为兼容事件。
+    /// 未实现的网关明确拒绝，不得回退到 Chat 或直连上游。
+    /// </summary>
+    Task<GatewayRawResponse> SendNativeResponsesWithResolutionAsync(
+        GatewayRawRequest request,
+        GatewayModelResolution resolution,
+        Func<GatewayNativeResponseChunk, CancellationToken, Task> write,
+        CancellationToken ct = default)
+        => Task.FromResult(GatewayRawResponse.Fail(
+            "NATIVE_RESPONSES_UNSUPPORTED", "当前网关未提供原生 Responses 通道", 501));
+
+    /// <summary>
     /// 使用调用方提供的临时上游 profile 做连通性测试。该方法只用于内部 M2M，
     /// 使用户保存的 runtime profile 测试也通过 llmgw-serve 触达上游，而不是 MAP 进程直连。
     /// </summary>

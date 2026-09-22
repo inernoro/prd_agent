@@ -291,6 +291,18 @@ describe('结论可读', () => {
 
 /** 接线守卫：判定写好没人调用，表现和「一切正常」一模一样。 */
 describe('自动备份真的被启动了', () => {
+  it('Mongo/Redis 每目标先耐久登记 automatic-backup，且 finally 必定结束作业', () => {
+    const start = SRC.indexOf('function startInfraAutoBackup(');
+    const end = SRC.indexOf('\nasync function certificateStatus', start);
+    const code = SRC.slice(start, end);
+    const begin = code.indexOf('await stateService.beginInfraMaintenanceJob({');
+    const firstMongoIo = code.indexOf("if (t.kind === 'mongo')", begin + 1);
+    expect(begin).toBeGreaterThan(0);
+    expect(firstMongoIo).toBeGreaterThan(begin);
+    expect(code).toContain("kind: 'automatic-backup'");
+    expect(code).toContain('infra_maintenance.credential_rotation_in_progress');
+    expect(code).toMatch(/finally\s*\{[\s\S]*await stateService\.finishInfraMaintenanceJob\(/);
+  });
   const SRC = fs.readFileSync(path.resolve(process.cwd(), 'src/index.ts'), 'utf8');
   const CODE = SRC.split('\n')
     .filter((l) => {
@@ -438,21 +450,15 @@ describe('首轮实跑暴露的缺陷', () => {
     expect(buildMysqlDumpScript()).toContain('--single-transaction');
   });
 
-  /**
-   * 凭据必须在**容器内部**展开：不进宿主命令行（因而不进 CDS 日志与宿主 ps），
-   * 也不依赖 CDS 台账里那份 env——台账看不到 compose 导入 / 手工起的容器的真实
-   * 凭据，照台账取会在有认证的库上静默失败。
-   */
+  /** 轮换后的权威凭据来自 state，口令经 stdin config 送入，不进入任一侧 argv。 */
   it('备份命令不把凭据插进宿主命令行', () => {
     // 判据要盯「从台账取凭据」这个动作本身，别用 `-p ${shq(` 这种形状去猜——
     // 它会把 `mkdir -p ${shq(dir)}` 一起匹配上（判据太宽，今天已经栽过同款）。
-    expect(CODE).not.toMatch(/const pw = env\./);
-    expect(CODE).not.toMatch(/MONGO_INITDB_ROOT_PASSWORD \|\| env\./);
-    // TS 源码里 `$` 写成 `${'$'}` 转义。断言必须针对**渲染出来的 shell 文本**，
-    // 不是源码字面量——直接扫源码就是在读一个和运行时不同的值（今天栽过同款）。
-    const SHELL = CODE.replace(/\$\{'\$'\}/g, '$');
+    expect(CODE).toContain('stateService.getInfraServiceForProjectAndId(t.projectId, t.id)');
+    expect(CODE).toContain('--config=/dev/stdin');
+    expect(CODE).toContain('commandStdin = `password: ${JSON.stringify(password)}');
+    expect(CODE).not.toMatch(/mongodump[^\n]+(?:-p|--password)[= ]/);
     expect(buildMysqlDumpScript()).toMatch(/export MYSQL_PWD="\$CDS_(ROOT|APP)_PW"/);
-    expect(SHELL).toMatch(/\$\{MONGO_INITDB_ROOT_PASSWORD:-/);
   });
 });
 
@@ -1319,13 +1325,16 @@ describe('redis 快照路径判据只有一份', () => {
  * 救不了正在写的这一个。
  */
 describe('单次导出有写入上限', () => {
-  it('上限 = 可用空间减去保留余量，换算成 512 字节块', () => {
+  it('上限 = 可用空间减去保留余量，并按宿主 shell 的块大小换算', () => {
     const free = 10 * 1024 ** 3;                 // 10 GiB 可用
-    const capped = buildSizeCappedCommand('echo hi', free, 2 * 1024 ** 3);
-    expect(capped).not.toBeNull();
-    expect(capped!.capBytes).toBe(8 * 1024 ** 3); // 留 2 GiB
-    expect(capped!.command).toContain(`ulimit -f ${(8 * 1024 ** 3) / 512}`);
-    expect(capped!.command).toContain('echo hi');
+    const linux = buildSizeCappedCommand('echo hi', free, 2 * 1024 ** 3, 'linux');
+    const macos = buildSizeCappedCommand('echo hi', free, 2 * 1024 ** 3, 'darwin');
+    expect(linux).not.toBeNull();
+    expect(macos).not.toBeNull();
+    expect(linux!.capBytes).toBe(8 * 1024 ** 3); // 留 2 GiB
+    expect(linux!.command).toContain(`ulimit -f ${(8 * 1024 ** 3) / 512}`);
+    expect(macos!.command).toContain(`ulimit -f ${(8 * 1024 ** 3) / 1024}`);
+    expect(linux!.command).toContain('echo hi');
   });
 
   it('余量都不够时返回 null，让调用方跳过而不是硬写', () => {
@@ -1349,7 +1358,7 @@ describe('单次导出有写入上限', () => {
   it('拿真 shell 跑：超过上限的写入被中断，不会写出完整文件', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-ulimit-'));
     const out = path.join(dir, 'big.bin');
-    // cap 传 1 KiB + reserve 0 → ulimit -f 2 块（1024 字节）
+    // cap 传 1 KiB + reserve 0；块数由当前宿主 shell 的实际单位决定。
     const c = buildSizeCappedCommand(`yes ABCDEFGH | head -c 204800 > ${out}`, 1024, 0)!;
     let failed = false;
     try {
@@ -1358,6 +1367,11 @@ describe('单次导出有写入上限', () => {
     expect(failed).toBe(true);
     // 写出来的部分不超过上限（内核在 1 KiB 处就把它砍了）
     expect(fs.statSync(out).size).toBeLessThanOrEqual(1024);
+  });
+
+  it('额度小于 shell 最小文件块时拒绝构造虚假的安全上限', () => {
+    expect(buildSizeCappedCommand('echo unsafe', 511, 0, 'linux')).toBeNull();
+    expect(buildSizeCappedCommand('echo unsafe', 1023, 0, 'darwin')).toBeNull();
   });
 
   /** 接线守卫：算出来的上限要真的套在导出命令上，不是算完扔掉。 */

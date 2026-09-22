@@ -1284,6 +1284,23 @@ export const api = {
     askStreamByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/stream`,
     // 剩余额度旁路：与提问走同一套门禁与同一个计数桶，但只读不加一
     askQuotaByShare: (token: string) => `/api/web-pages/shares/view/${token}/ask/quota`,
+    editRuns: (siteId: string) => `/api/web-pages/${siteId}/edits/runs`,
+    editRunById: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}`,
+    cancelEditRun: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/cancel`,
+    editRunStream: (siteId: string, runId: string) => `/api/web-pages/${siteId}/edits/runs/${runId}/stream`,
+    revisions: (siteId: string) => `/api/web-pages/${siteId}/edits/revisions`,
+    revisionPreview: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/preview`,
+    revisionPreviewAccess: '/api/hosted-site-preview-access',
+    publishRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/publish`,
+    rollbackRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/rollback`,
+    rejectRevision: (siteId: string, revisionId: string) => `/api/web-pages/${siteId}/edits/revisions/${revisionId}/reject`,
+  },
+  designArtifacts: {
+    runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    runs: () => '/api/design-artifacts/runs',
+    byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
+    cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,
+    stream: (runId: string) => `/api/design-artifacts/runs/${runId}/stream`,
   },
   // ============ Short Video Materials 短视频素材解析 ============
   shortVideoMaterials: {

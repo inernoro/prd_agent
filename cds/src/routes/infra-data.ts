@@ -25,6 +25,10 @@ import type { IShellExecutor, InfraService } from '../types.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from '../services/preview-instance.js';
 import { getActiveInfraLifecycleWatcher } from '../services/infra-lifecycle-watcher.js';
 import { resolveEnvTemplates } from '../services/compose-parser.js';
+import {
+  buildSecureMongoDockerInvocation,
+  buildSecureRedisDockerInvocation,
+} from '../services/secure-database-cli.js';
 
 export interface InfraDataRouterDeps {
   stateService: StateService;
@@ -131,18 +135,28 @@ export function buildInfraDataExec(
     // Connect to the app's configured database (not admin) so query/schema/init-sql
     // operate on the user's own data. The root user still authenticates via admin.
     const dbName = svc.dbName || env.MONGO_INITDB_DATABASE || 'app';
-    const uri = user
-      ? `mongodb://${user}:${pw}@localhost:27017/${dbName}?authSource=admin`
-      : `mongodb://localhost:27017/${dbName}`;
-    const argv = ['exec', '-i', c, 'mongosh', uri, '--quiet'];
-    return { kind, argv, stdin: body, secretValues: [pw].filter(Boolean) };
+    const args = [
+      '--host', 'localhost', '--port', '27017', dbName, '--quiet',
+      ...(user ? ['--username', user, '--authenticationDatabase', 'admin'] : []),
+    ];
+    const invocation = buildSecureMongoDockerInvocation(c, 'mongosh', args, pw);
+    return {
+      kind,
+      argv: invocation.argv,
+      stdin: `${invocation.stdinPrefix}${body}`,
+      secretValues: [pw].filter(Boolean),
+    };
   }
   if (kind === 'redis') {
-    // Honour requirepass: read the password from common env keys and pass -a.
-    // --no-auth-warning keeps the "insecure -a" notice out of the returned output.
+    // REDISCLI_AUTH 在容器内由 stdin 解码，不进入 docker argv / 进度日志。
     const pw = env.REDIS_PASSWORD || env.REDIS_PASS || env.REDISCLI_AUTH || '';
-    const argv = ['exec', '-i', c, 'redis-cli', ...(pw ? ['-a', pw, '--no-auth-warning'] : [])];
-    return { kind, argv, stdin: body, secretValues: [pw].filter(Boolean) };
+    const invocation = buildSecureRedisDockerInvocation(c, [], pw);
+    return {
+      kind,
+      argv: invocation.argv,
+      stdin: `${invocation.stdinPrefix}${body}`,
+      secretValues: [pw].filter(Boolean),
+    };
   }
   // clickhouse
   const user = env.CLICKHOUSE_USER || 'default';
@@ -252,20 +266,42 @@ export function createInfraDataRouter(deps: InfraDataRouterDeps): Router {
       res.status(400).json({ error: (err as Error).message });
       return;
     }
-    const r = await runDockerExec(plan.argv, plan.stdin);
-    if (action === 'init-sql' && r.code === 0) {
-      stateService.recordDestructiveOp({
-        type: 'purge-database',
-        summary: `对 ${svc.id} 执行初始化 SQL（${plan.kind}）`,
+    const trackedRuntime = plan.kind === 'mongo' ? 'mongodb' : plan.kind === 'redis' ? 'redis' : 'other';
+    let job: Awaited<ReturnType<StateService['beginInfraMaintenanceJob']>>;
+    try {
+      job = await stateService.beginInfraMaintenanceJob({
+        projectId: svc.projectId,
+        serviceId: svc.id,
+        runtime: trackedRuntime,
+        kind: action === 'query' ? 'data-query' : action === 'schema' ? 'data-schema' : 'data-init',
       });
+    } catch (error) {
+      const rotating = (error as Error).message === 'infra_maintenance.credential_rotation_in_progress';
+      res.status(rotating ? 409 : 500).json({
+        error: rotating ? '基础设施正在轮换凭据，请等待轮换完成后再执行数据操作。' : '无法登记数据操作，未执行任何命令。',
+      });
+      return;
     }
-    res.json({
-      kind: plan.kind,
-      exitCode: r.code,
-      truncated: r.truncated,
-      output: maskSecretValues(r.stdout, plan.secretValues),
-      error: r.code === 0 ? null : maskSecretValues(r.stderr, plan.secretValues),
-    });
+    let completed = false;
+    try {
+      const r = await runDockerExec(plan.argv, plan.stdin);
+      if (action === 'init-sql' && r.code === 0) {
+        stateService.recordDestructiveOp({
+          type: 'purge-database',
+          summary: `对 ${svc.id} 执行初始化 SQL（${plan.kind}）`,
+        });
+      }
+      completed = r.code === 0;
+      res.json({
+        kind: plan.kind,
+        exitCode: r.code,
+        truncated: r.truncated,
+        output: maskSecretValues(r.stdout, plan.secretValues),
+        error: r.code === 0 ? null : maskSecretValues(r.stderr, plan.secretValues),
+      });
+    } finally {
+      await stateService.finishInfraMaintenanceJob(job.id, completed ? 'completed' : 'failed');
+    }
   }
 
   // 生命周期取证（doc/debt.cds.md「CDS 复制集模式工程债务」 #17）：oom/die/kill/start 事件回看，

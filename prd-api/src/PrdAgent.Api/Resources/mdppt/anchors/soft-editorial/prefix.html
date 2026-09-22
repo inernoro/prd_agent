@@ -736,6 +736,46 @@
   .s-matrix .pill.no   { background: var(--pink); }
   .s-matrix .pill.note { background: rgba(255,255,255,0.6); border: 1px solid rgba(42,36,27,.18); color: var(--ink-soft); font-style: italic; font-family: "Cormorant Garamond", serif; font-weight: 400; }
 
+  /* Semantic source table: variable rows/columns, isolated from the authored matrix. */
+  .s-table {
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+    padding: 140px 80px 130px;
+  }
+  .s-table .table-heading { flex: 0 0 auto; }
+  .s-table .table-heading h2 {
+    font-family: "Cormorant Garamond", "Garamond", serif;
+    font-size: 76px;
+    font-weight: 500;
+    line-height: 1.1;
+    color: var(--ink);
+  }
+  .s-table .table-heading p { margin-top: 24px; font-size: 30px; line-height: 1.5; color: var(--ink-soft); }
+  .s-table .table-viewport {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border-radius: 24px;
+    background: var(--paper-2);
+  }
+  .s-table .table-viewport:focus-visible { outline: 4px solid var(--ink); outline-offset: 6px; }
+  .s-table table { width: 100%; border-collapse: collapse; table-layout: auto; color: var(--ink); }
+  .s-table caption { padding: 20px 28px; text-align: left; font-size: 28px; color: var(--ink-soft); }
+  .s-table th, .s-table td {
+    padding: 28px;
+    text-align: left;
+    vertical-align: top;
+    font-size: 34px;
+    line-height: 1.5;
+    overflow-wrap: anywhere;
+    border-bottom: 1px solid var(--ink-soft);
+  }
+  .s-table thead { background: var(--lemon); }
+  .s-table th { font-weight: 600; }
+  .s-table tbody tr:last-child td { border-bottom: 0; }
+
   /* ============== 9. DESIGN SYSTEM ========================== */
   .s-system .wrap {
     position: absolute;
@@ -798,4 +838,3 @@
 <deck-stage width="1920" height="1080">
 
   <!-- 1. COVER -->
-  

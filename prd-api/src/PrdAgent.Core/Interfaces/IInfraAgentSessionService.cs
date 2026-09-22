@@ -1,10 +1,16 @@
 using PrdAgent.Core.Models;
+using System.Text.Json.Serialization;
 
 namespace PrdAgent.Core.Interfaces;
 
 public interface IInfraAgentSessionService
 {
     Task<List<InfraAgentSessionView>> ListAsync(string userId, int limit, CancellationToken ct);
+
+    Task<List<InfraAgentRuntimeProviderView>> ListRuntimeProvidersAsync(
+        string userId,
+        string connectionId,
+        CancellationToken ct);
 
     Task<InfraAgentSlaDashboardView> GetSlaDashboardAsync(string userId, int days, CancellationToken ct);
 
@@ -18,6 +24,17 @@ public interface IInfraAgentSessionService
 
     Task<InfraAgentSessionView?> GetAsync(string userId, string id, CancellationToken ct);
 
+    /// <summary>原子认领一个尚未发送消息的预热会话，并把领域根 Run 绑定为 TraceId。</summary>
+    Task<InfraAgentSessionView?> ClaimPrewarmedAsync(
+        string userId,
+        string id,
+        string expectedProfileId,
+        string rootRunId,
+        CancellationToken ct);
+
+    /// <summary>回收已经到期且从未被领域 Run 认领的预热会话；失败项保留并在下一轮重试。</summary>
+    Task<int> RecoverExpiredPrewarmsAsync(CancellationToken ct);
+
     Task<InfraAgentSessionView?> SendMessageAsync(string userId, string id, SendInfraAgentMessageRequest request, CancellationToken ct);
 
     /// <summary>
@@ -27,7 +44,21 @@ public interface IInfraAgentSessionService
     /// </summary>
     Task<bool> InjectWorkspaceFilesAsync(string userId, string id, IReadOnlyList<InfraAgentWorkspaceFileInput> files, CancellationToken ct);
 
-    Task RunRuntimeJobAsync(string userId, string id, string content, CancellationToken ct);
+    Task RunRuntimeJobAsync(string userId, string id, string messageId, string content, CancellationToken ct);
+
+    /// <summary>
+    /// Persistently records that a completed one-shot session must be reclaimed.
+    /// The background cleanup worker owns remote stop retries so artifact delivery never waits on CDS cleanup.
+    /// </summary>
+    Task<InfraAgentSessionView?> ScheduleStopAsync(
+        string userId,
+        string id,
+        string expectedCdsSessionId,
+        string expectedMessageId,
+        CancellationToken ct);
+
+    /// <summary>Reclaims a bounded batch of persisted cleanup requests whose stop lease is available.</summary>
+    Task<int> RecoverPendingStopsAsync(CancellationToken ct);
 
     Task<InfraAgentSessionView?> StopAsync(string userId, string id, CancellationToken ct);
 
@@ -51,6 +82,17 @@ public interface IInfraAgentSessionService
 
     Task<List<InfraAgentEventView>> ListEventsAsync(string userId, string sessionId, long afterSeq, int limit, CancellationToken ct);
 
+    /// <summary>
+    /// 只读取已经由后台 runtime worker 落库的事件，不再主动连接 CDS SSE。
+    /// 供同属服务器权威任务的上层 worker 消费，避免多个读取者并发抢占同一远程流。
+    /// </summary>
+    Task<List<InfraAgentEventView>> ListPersistedEventsAsync(
+        string userId,
+        string sessionId,
+        long afterSeq,
+        int limit,
+        CancellationToken ct);
+
     Task<List<InfraAgentMessageView>> ListMessagesAsync(string userId, string sessionId, int limit, CancellationToken ct);
 
     Task<string?> GetLogsAsync(string userId, string sessionId, CancellationToken ct);
@@ -68,6 +110,7 @@ public interface IInfraAgentRuntimeJobQueue
 public sealed record InfraAgentRuntimeJob(
     string UserId,
     string SessionId,
+    string MessageId,
     string Content,
     DateTime EnqueuedAt
 );
@@ -87,12 +130,41 @@ public record CreateInfraAgentSessionRequest(
     string? WorkspaceRoot = null,
     string? GitRepository = null,
     string? GitRef = null,
-    string? ClientApp = null
+    string? ClientApp = null,
+    string? WorkloadKind = null,
+    string? IsolationMode = null,
+    string? PrewarmKey = null,
+    DateTime? PrewarmExpiresAt = null,
+    int? AutoCleanupMinutes = null
 );
 
 public record StartInfraAgentSessionRequest(
     string? Runtime,
-    string? Model
+    string? Model,
+    InfraAgentManagedLaunchRequest? ManagedLaunch = null
+);
+
+/// <summary>
+/// MAP 为单次 CDS 会话计算好的启动参数。该对象只在 Create/Start 调用栈内存在，
+/// model key 与 transfer token 均不得写入 InfraAgentSession 或运行日志。
+/// </summary>
+public sealed record InfraAgentManagedLaunchRequest(
+    string ModelBaseUrl,
+    string ModelProtocol,
+    string ModelApiKey,
+    InfraAgentWorkspaceTransferRequest WorkspaceTransfer
+);
+
+public sealed record InfraAgentWorkspaceTransferRequest(
+    [property: JsonPropertyName("schemaVersion")] string SchemaVersion,
+    [property: JsonPropertyName("inputPackageUrl")] string InputPackageUrl,
+    [property: JsonPropertyName("inputSha256")] string InputSha256,
+    [property: JsonPropertyName("resultCommitUrl")] string ResultCommitUrl,
+    [property: JsonPropertyName("transferToken")] string TransferToken,
+    [property: JsonPropertyName("baseRevision")] string BaseRevision,
+    [property: JsonPropertyName("maxInputBytes")] long MaxInputBytes,
+    [property: JsonPropertyName("maxOutputBytes")] long MaxOutputBytes,
+    [property: JsonPropertyName("allowedOutputPaths")] IReadOnlyList<string> AllowedOutputPaths
 );
 
 public record SendInfraAgentMessageRequest(
@@ -166,7 +238,29 @@ public record InfraAgentSessionView(
     DateTime? StartedAt,
     DateTime? StoppedAt,
     string? RuntimeProfileId = null,
-    string? ModelBaseUrl = null
+    string? ModelBaseUrl = null,
+    string WorkloadKind = "general",
+    string IsolationMode = "shared-runtime"
+);
+
+public record InfraAgentRuntimeProviderView(
+    string Id,
+    string Label,
+    string AdapterKind,
+    string ExecutionOwner,
+    string ImplementationStatus,
+    bool ProductEligible,
+    IReadOnlyList<string> WorkloadKinds,
+    IReadOnlyList<string> SupportedIsolationModes,
+    string RequiredIsolationMode,
+    string RuntimeProtocol,
+    bool Configured,
+    bool Healthy,
+    bool Selectable,
+    string IsolationOwnedBy,
+    bool ResourcePolicyEnforcedPerSession,
+    string? Reason,
+    bool VerificationPending = false
 );
 
 public record InfraAgentEventView(
@@ -176,7 +270,9 @@ public record InfraAgentEventView(
     string TraceId,
     string Type,
     string PayloadJson,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? CdsSourceSessionId = null,
+    long? CdsSeq = null
 );
 
 public record InfraAgentMessageView(
@@ -185,7 +281,9 @@ public record InfraAgentMessageView(
     string Role,
     string Content,
     string Status,
-    DateTime CreatedAt
+    DateTime CreatedAt,
+    string? CdsSourceSessionId = null,
+    string? ReplyToMessageId = null
 );
 
 public record InfraAgentSlaDashboardView(
@@ -434,12 +532,14 @@ public static class InfraAgentSessionErrorCodes
     public const string SessionNotFound = "session_not_found";
     public const string TokenUnavailable = "token_unavailable";
     public const string CdsRequestFailed = "cds_request_failed";
+    public const string SessionCreationPending = "session_creation_pending";
     public const string MessageContentRequired = "message_content_required";
     public const string HookFailed = "hook_failed";
     public const string RuntimeProfileInvalid = "runtime_profile_invalid";
     public const string RuntimeProfileIncompatible = "runtime_profile_incompatible";
     public const string RuntimeUnavailable = "runtime_unavailable";
     public const string SessionStillRunning = "session_still_running";
+    public const string MessageDispatchPending = "message_dispatch_pending";
     public const string ManualTakeoverEnabled = "manual_takeover_enabled";
     public const string ManualTakeoverRequired = "manual_takeover_required";
 }
@@ -449,10 +549,25 @@ public class InfraAgentSessionException : Exception
     public string ErrorCode { get; }
     public int HttpStatus { get; }
 
-    public InfraAgentSessionException(string errorCode, string message, int httpStatus = 400)
+    /// <summary>
+    /// CDS 那一侧真正返回的状态码；不是转发 CDS 响应时为 null。
+    ///
+    /// 单独留一个字段而不是让调用方去解析 Message：状态码在抛出点本来就是个数字，
+    /// 拼进句子之后再匹配关键字，等于把已有的状态降级成自由文本
+    ///（`external-cause-first.md` 第四节）。而 HttpStatus 恒为 502，分不出「路由不存在」
+    /// 与「连不上」——前者要升级 CDS，后者要修连接，给用户的下一步完全不同。
+    /// </summary>
+    public int? UpstreamStatus { get; }
+
+    public InfraAgentSessionException(
+        string errorCode,
+        string message,
+        int httpStatus = 400,
+        int? upstreamStatus = null)
         : base(message)
     {
         ErrorCode = errorCode;
         HttpStatus = httpStatus;
+        UpstreamStatus = upstreamStatus;
     }
 }

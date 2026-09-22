@@ -1,0 +1,5043 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
+
+import type { ExecResult, IShellExecutor } from '../types.js';
+import { computeCdsInstanceId } from './orphan-container-reaper.js';
+import { maskSecrets } from './secret-masker.js';
+import { EGRESS_HEALTH_EXEC_TIMEOUT_MS, EGRESS_HEALTH_PROBE_SCRIPT, EGRESS_PROXY_PORT } from './agent-egress-health.js';
+
+export const MAP_DESIGN_WORKSPACE_SCHEMA = 'map-design-workspace-v1';
+const PUBLIC_ARTIFACT_MANIFEST_SCHEMA = 'map-design-artifact-public-manifest-v2';
+export const OPEN_DESIGN_IMAGE = 'ghcr.io/inernoro/prd_agent/opendesign-runtime@sha256:59da2b7c6b810c9e6748cf60e9e753c70e358ba913382b095f7912fbc1d4d584';
+export const OPEN_DESIGN_CODEX_VERSION = '0.143.0';
+// OpenDesign 0.21.1 sandbox-mode.ts owns this isolated per-session CODEX_HOME.
+const OPEN_DESIGN_CODEX_HOME = '/app/.od/sandbox/agent-home/.codex';
+const OPEN_DESIGN_WEB_PROTOTYPE_SKILL = 'web-prototype';
+const OPEN_DESIGN_WEB_PROTOTYPE_SOURCE = '/app/plugins/_official/examples/web-prototype';
+
+/**
+ * CDS 自己那几份 web-prototype 拷贝要改的地方。上游模板（0.21.1）示范的是发布闸必拒的
+ * 两种写法，而新建页面时它还就是起始页——不改，模型每次都从一张违规的页面开始编辑。
+ *
+ * 落点用的是模板本来就带的 id（topnav / content / hero / footer），所以改完仍然自洽：
+ * 导航真的跳到自己的章节，CTA 是一个有去处的锚点。改的是 CDS 的拷贝，上游镜像不动。
+ */
+/**
+ * 新建页面**不种** `/workspace/index.html`（NEW_PAGE_NO_SEED_NOTE）。
+ *
+ * OpenDesign 判定「这一轮交付的是哪个文件」时，第一条就是认根目录的 index.html：
+ * `const rootIndex = files.find((f) => path(f) === "index.html"); if (rootIndex) return rootIndex;`
+ * 所以只要我们先种了一张 index.html，它就被认成交付物，而模型按 slug 命名的那份真成品
+ * 被晾在一边——技能里那句「Do not also write another root HTML file for the same
+ * generation turn ... can be stranded beside it as an orphan」说的正是这件事。
+ *
+ * 这解释了 2026-09-20 那十六条 run 为什么失败得一模一样：整张模板、空白骨架、只留结构与
+ * 槽位，三种种子换了个遍，收上来的永远是种子本身。不是模型不写，是**种子的存在劫持了
+ * 交付判定**，模型真做出来的页面从来没被看见过。
+ *
+ * 所以这里什么都不种。模型按技能的契约把成品包在 `<artifact>` 里交出去，OpenDesign 在
+ * run 状态的 `deliverableEntryFile` 里指名它，CDS 收件前按那个名字搬成 index.html
+ * （见 DELIVERABLE_ENTRY_PATH）。模型什么都没产出时根本不会有 index.html，
+ * 收件那一步会以 `design_output_missing` 如实失败——比交回一张种子诚实得多。
+ *
+ * 模板仍然完整地放在 `/workspace/.od-skills/web-prototype/assets/template.html` 供它照抄
+ * （且已打过补丁：导航锚点、CTA、占位邮箱都改成通得过发布闸的写法）。
+ */
+
+/**
+ * OpenDesign 自己认定的交付文件，不是 `index.html`（DELIVERABLE_ENTRY_NOTE）。
+ *
+ * web-prototype 技能要求模型「选一个 kebab-case 的 slug，把成品包在 `<artifact>` 里交出去」，
+ * 并明令禁止它再写一份根目录 HTML。OpenDesign 于是把成品存成项目里以 slug 命名的那个文件，
+ * 并在 run 状态的 `deliverableEntryFile` 里指名它；而 CDS 的收件一直写死读
+ * `/workspace/index.html`。两边对不上，收上来的就永远是别的东西。
+ *
+ * 判据用它自己给的那个字段——同一个 daemon 的 `validateRunDeliverable` 算出来、
+ * 并且校验过可读。不去猜「根目录下那个不叫 index 的 html」，也不去读它的内部目录结构：
+ * 猜法会在它换约定时静默取错，契约字段会当场不匹配。
+ */
+const DELIVERABLE_ENTRY_PATH = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*\.html$/;
+
+/** 把 OpenDesign 指名的交付文件搬到 `index.html`，后续收件与质量闸一律不变。 */
+const promoteDeliverableEntryScript = (entryFile: string): string => [
+  'import fs from "node:fs";',
+  `const entry = ${JSON.stringify(entryFile)};`,
+  'const from = "/workspace/" + entry;',
+  'if (!fs.existsSync(from)) throw new Error("deliverable entry missing: " + entry);',
+  'const html = fs.readFileSync(from, "utf8");',
+  'if (!/<html[\\s>]/i.test(html)) throw new Error("deliverable entry is not an HTML document: " + entry);',
+  'fs.writeFileSync("/workspace/index.html", html);',
+  'console.log("deliverable-entry:" + entry + " bytes:" + html.length);',
+].join(' ');
+
+const WEB_PROTOTYPE_TEMPLATE_FILES = [
+  '/app/design-templates/web-prototype/assets/template.html',
+  '/workspace/.od-skills/web-prototype/assets/template.html',
+];
+
+const WEB_PROTOTYPE_LAYOUT_FILES = [
+  '/app/design-templates/web-prototype/references/layouts.md',
+  '/workspace/.od-skills/web-prototype/references/layouts.md',
+];
+
+/**
+ * 模板里真正的 `id` 只有 `<main id="content">` 一个；hero 与 footer 挂的是 `data-od-id`，
+ * 闸门收锚点只认 `id` / `name`，不认它。所以先补两个真 id，导航才有地方可去——
+ * 否则「空链接」只会换成「锚点指向不存在的片段」，等于没修。
+ * （第一版就这么写错过：grep `id="hero"` 命中的其实是 `data-od-id="hero"` 的子串。）
+ */
+const WEB_PROTOTYPE_TEMPLATE_PATCH = [
+  `for f in ${WEB_PROTOTYPE_TEMPLATE_FILES.join(' ')}; do sed -i`,
+  `-e 's|<section class="section hero" data-od-id="hero">|<section class="section hero" id="hero" data-od-id="hero">|g'`,
+  `-e 's|<footer class="pagefoot" data-od-id="footer">|<footer class="pagefoot" id="footer" data-od-id="footer">|g'`,
+  `-e 's|<a href="#">\\[REPLACE\\] Link 1</a>|<a href="#hero">[REPLACE] Link 1</a>|g'`,
+  `-e 's|<a href="#">\\[REPLACE\\] Link 2</a>|<a href="#content">[REPLACE] Link 2</a>|g'`,
+  `-e 's|<a href="#">\\[REPLACE\\] Link 3</a>|<a href="#footer">[REPLACE] Link 3</a>|g'`,
+  `-e 's|<button class="btn btn-primary">\\[REPLACE\\] CTA</button>|<a class="btn btn-primary" href="#content">[REPLACE] CTA</a>|g'`,
+  `-e 's|<button class="btn btn-primary">\\[REPLACE\\] Primary CTA</button>|<a class="btn btn-primary" href="#content">[REPLACE] Primary CTA</a>|g'`,
+  `-e 's|<button class="btn btn-secondary">\\[REPLACE\\] Secondary</button>|<a class="btn btn-secondary" href="#footer">[REPLACE] Secondary</a>|g'`,
+  `-e 's|href="#"|href="#content"|g'`,
+  // 模板页脚那个 contact@example.com 会被「事实必须来自 MAP 来源」那道闸拒掉：
+  // 占位邮箱不在任何知识来源里，模型又照例留着不动（实测第六条 run 就死在它上面）。
+  // 占位联系方式没有任何合法取值，所以是删掉而不是换一个。
+  `-e 's|\\[REPLACE\\] tagline · contact@example\\.com|[REPLACE] tagline · [REPLACE] contact|g'`,
+  '"$f"; done',
+  `&& for f in ${WEB_PROTOTYPE_LAYOUT_FILES.join(' ')}; do sed -i -e 's|href="#"|href="#content"|g' "$f"; done`,
+].join(' ');
+
+/**
+ * 改完当场自证三件事，缺一即让准备步骤失败——上游哪天换了措辞、sed 一条都没命中时
+ * 必须在这里炸，而不是静默发回一张仍然违规的起始页，等四轮质量修复全灭才被发现
+ * （`predicate-and-wiring-discipline.md` 形状 8）。
+ *
+ * 第三条是这次真正吃过亏的那条：每个 `href="#x"` 都得能在同一份文件里找到一个**真的**
+ * `id="x"`。判据必须把 `data-od-id="x"` 排除掉，否则它自己就会被那个子串骗过去。
+ */
+const WEB_PROTOTYPE_TEMPLATE_ASSERT = [
+  ...WEB_PROTOTYPE_TEMPLATE_FILES.map((file) => `! grep -qE 'href="#"|href=""|<button' ${file}`),
+  // 邮箱与日期在模板里没有任何合法取值——它们只可能是占位，而占位一定过不了
+  // 「事实必须来自 MAP 来源」那道闸。写成通用判据而不是逐个点名，上游哪天再加一个
+  // 占位邮箱/日期，会在这里当场炸，而不是等用户的生成失败才发现。
+  // （URL 不在此列：模板里出现 CDN 链接是合理的，一刀切会在上游升级时误伤。）
+  ...WEB_PROTOTYPE_TEMPLATE_FILES.map((file) => (
+    `! grep -qiE '[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}|(19|20)[0-9]{2}[-/.][0-9]{1,2}' ${file}`
+  )),
+  // 这一条整体是**一个** shell 命令：循环体里不能再被 ' && ' 切开，否则拼出 `do && for`
+  // 这种语法错误，而语法错误会让整条 assert 失败——看起来像「模板没改对」，其实是判据自己坏了。
+  `for f in ${WEB_PROTOTYPE_TEMPLATE_FILES.join(' ')}; do `
+    + `for frag in $(grep -o 'href="#[^"]*"' "$f" | sed 's|href="#||; s|"||'); do `
+    + `grep -qE "(^|[[:space:]])id=\\"$frag\\"" "$f" || exit 1; `
+    + 'done; done',
+].join(' && ');
+
+
+export function buildOpenDesignCodexConfig(baseUrl: string, model: string): string {
+  return [
+    `model = ${JSON.stringify(model)}`,
+    'model_provider = "map"',
+    'approval_policy = "never"',
+    'check_for_update_on_startup = false',
+    'cli_auth_credentials_store = "file"',
+    'web_search = "disabled"',
+    '',
+    '[model_providers.map]',
+    'name = "MAP design runtime"',
+    `base_url = ${JSON.stringify(baseUrl)}`,
+    'env_key = "MAP_CODEX_MODEL_TOKEN"',
+    'wire_api = "responses"',
+    'requires_openai_auth = false',
+    // Codex 0.143.0 HTTP requests carry full local history with store:false.
+    // previous_response_id is exclusive to its WebSocket incremental path.
+    'supports_websockets = false',
+    '',
+  ].join('\n');
+}
+
+export interface AgentWorkspaceResourcePolicy {
+  cpuCores: number;
+  memoryMb: number;
+  timeoutSeconds: number;
+  networkPolicy: 'restricted' | 'egress-only' | 'open';
+  autoCleanupMinutes: number;
+}
+
+export interface WorkspaceTransferRequest {
+  schemaVersion: typeof MAP_DESIGN_WORKSPACE_SCHEMA;
+  inputPackageUrl: string;
+  resultCommitUrl: string;
+  transferToken: string;
+  inputSha256: string;
+  baseRevision: string;
+  maxInputBytes: number;
+  maxOutputBytes: number;
+  allowedOutputPaths: string[];
+}
+
+export interface OpenDesignModelAuthority {
+  baseUrl: string;
+  protocol: 'openai';
+  apiKey: string;
+  model: string;
+}
+
+export interface WorkspacePackageFile {
+  path: string;
+  contentBase64: string;
+  sha256: string;
+  size: number;
+  mediaType: string;
+}
+
+interface WorkspacePackage {
+  schemaVersion: typeof MAP_DESIGN_WORKSPACE_SCHEMA;
+  runId: string;
+  baseRevision: string;
+  files: WorkspacePackageFile[];
+}
+
+interface ParsedWorkspacePackage {
+  runId: string;
+  files: Array<{ path: string; bytes: Buffer; sha256: string; mediaType: string }>;
+}
+
+interface VisibleTextOccurrenceConstraint {
+  text: string;
+  minOccurrences: number;
+  maxOccurrences: number;
+}
+
+const MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA = 'map-design-artifact-quality-v1';
+
+interface RuntimeHandle {
+  kind: 'active';
+  sessionId: string;
+  mapRunId: string;
+  hostRoot: string;
+  workspaceDir: string;
+  outputDir: string;
+  dataDir: string;
+  containerName: string;
+  egressContainerName?: string;
+  networkName: string;
+  workspaceVolumeName: string;
+  dataVolumeName: string;
+  inputFiles: Array<{ path: string; sha256: string; size: number }>;
+  daemonBaseUrl: string;
+  daemonApiToken: string;
+  egressClientToken: string;
+  transfer: Omit<WorkspaceTransferRequest, 'transferToken'>;
+  policy: AgentWorkspaceResourcePolicy;
+  activeRunId?: string;
+  ttlTimer: NodeJS.Timeout;
+  onCleanupSettled: (error?: unknown) => void;
+}
+
+interface PartialCleanupHandle {
+  kind: 'partial-cleanup';
+  sessionId: string;
+  hostRoot?: string;
+  containerNames: string[];
+  networkName?: string;
+  volumeNames: string[];
+  onCleanupSettled: (error?: unknown) => void;
+}
+
+interface CreatingRuntimeHandle {
+  kind: 'creating';
+  sessionId: string;
+  cancelRequested: boolean;
+  abortController: AbortController;
+  settled: Promise<void>;
+  resolveSettled: () => void;
+  onCleanupSettled: (error?: unknown) => void;
+}
+
+type ManagedRuntimeHandle = RuntimeHandle | PartialCleanupHandle | CreatingRuntimeHandle;
+
+export interface AgentWorkspaceSessionRuntimeOptions {
+  rootDir?: string;
+  instanceId?: string;
+  image?: string;
+  daemonPort?: number;
+  fetchImpl?: typeof fetch;
+  pollIntervalMs?: number;
+  capabilityCacheMs?: number;
+  capabilityNegativeCacheMs?: number;
+  capabilityMaxStaleMs?: number;
+  containerUid?: number;
+  containerGid?: number;
+  autoPullImage?: boolean;
+  cleanupRetryBaseMs?: number;
+  cleanupRetryMaxMs?: number;
+}
+
+export interface AgentWorkspaceRuntimeCapability {
+  available: boolean;
+  resourcePolicyEnforcedPerSession: boolean;
+  reason: string | null;
+  verificationPending?: boolean;
+}
+
+interface CapabilitySnapshot {
+  value: AgentWorkspaceRuntimeCapability;
+  freshUntil: number;
+  staleUntil: number;
+}
+
+interface CapabilityProbeResult {
+  value: AgentWorkspaceRuntimeCapability;
+  imageId: string | null;
+}
+
+export interface AgentWorkspaceCreateResult {
+  hostRoot: string;
+  workspaceDir: string;
+  containerName: string;
+  networkName: string;
+  daemonBaseUrl: string;
+  inputFileCount: number;
+}
+
+export interface AgentWorkspaceExecuteResult {
+  artifactRef: string;
+  resultSha256: string;
+  files: Array<Pick<WorkspacePackageFile, 'path' | 'sha256' | 'size' | 'mediaType'>>;
+  openDesignRunId: string;
+}
+
+export class AgentWorkspaceRuntimeError extends Error {
+  constructor(
+    public readonly code: string,
+    message: string,
+    public readonly retryable = false,
+    public readonly details?: Record<string, unknown>,
+  ) {
+    super(message);
+    this.name = 'AgentWorkspaceRuntimeError';
+  }
+}
+
+type StageReporter = (stage: string, detail?: Record<string, unknown>) => void;
+
+interface OpenDesignRunOutcome {
+  deliverableValid: boolean;
+  deliverableValidation?: string;
+  /** OpenDesign 自己认定的这一轮交付文件（相对工作区根）。见 DELIVERABLE_ENTRY_NOTE。 */
+  deliverableEntryFile?: string;
+}
+
+const SHA256_RE = /^[a-f0-9]{64}$/;
+const SESSION_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$/;
+const MAX_PACKAGE_OVERHEAD_BYTES = 2 * 1024 * 1024;
+const MAX_COMMIT_RESPONSE_BYTES = 1024 * 1024;
+const MAX_RUNTIME_DIAGNOSTIC_BYTES = 2 * 1024;
+// A real design run commonly exposes a different deterministic violation after each
+// repair (for example: unsupported facts, then broken fragments, then inert buttons).
+// Keep the repair loop bounded by this cap and the execution deadline, while
+// allowing OpenDesign enough passes to converge instead of failing a valid task after
+// only two repairs.
+const MAX_QUALITY_REPAIR_ATTEMPTS = 4;
+
+/** 模板 <main> 里那段「把版式粘到这里」的指示注释。留在交付页面里 = 起始页原样交回。 */
+const TEMPLATE_UNTOUCHED_MARKER = 'PASTE LAYOUTS FROM references/layouts.md HERE';
+
+
+const MAX_OUTPUT_FILE_COUNT = 100;
+const MAX_WORKSPACE_FILE_COUNT = 1024;
+const MAX_WORKSPACE_NODE_COUNT = 2048;
+const MAX_WORKSPACE_DIRECTORY_DEPTH = 16;
+const MIN_WORKSPACE_STORAGE_BYTES = 64 * 1024 * 1024;
+const WORKSPACE_STORAGE_HEADROOM_BYTES = 32 * 1024 * 1024;
+const DATA_STORAGE_LIMIT_BYTES = 128 * 1024 * 1024;
+const WORKSPACE_STORAGE_INODE_LIMIT = 4096;
+const DATA_STORAGE_INODE_LIMIT = 4096;
+const STORAGE_CAPABILITY_PROBE_BYTES = 1024 * 1024;
+const STORAGE_CAPABILITY_PROBE_INODES = 64;
+const DEFAULT_CLEANUP_RETRY_BASE_MS = 1000;
+const DEFAULT_CLEANUP_RETRY_MAX_MS = 30_000;
+const ARTIFACT_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "img-src data:",
+  "font-src data:",
+  "media-src data:",
+  "style-src 'unsafe-inline'",
+  "script-src 'none'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'none'",
+  "manifest-src 'none'",
+].join('; ');
+const VERIFIED_PACKAGE_ARTIFACT_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "connect-src 'none'",
+  "form-action 'none'",
+  "img-src 'self' data: blob:",
+  "font-src 'self' data:",
+  "media-src 'self' data: blob:",
+  "style-src 'self' 'unsafe-inline'",
+  "script-src 'self' 'unsafe-inline'",
+  "object-src 'none'",
+  "frame-src 'none'",
+  "child-src 'none'",
+  "worker-src 'self' blob:",
+  "manifest-src 'none'",
+].join('; ');
+const DOCUMENT_ROOT_RE = /^\uFEFF?\s*(?:<!doctype\s+html\s*>\s*)?(?:<!--[\s\S]*?-->\s*)*<html(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
+const DOCUMENT_HEAD_RE = /^\s*(?:<!--[\s\S]*?-->\s*)*<head(?:\s+[A-Za-z_:][A-Za-z0-9_.:-]*(?:\s*=\s*(?:"[^"<>]*"|'[^'<>]*'|[^\s"'\x60=<>]+))?)*\s*>/i;
+const IGNORED_RUNTIME_OUTPUT_PATHS = ['index.html.artifact.json'] as const;
+const CDS_GENERATED_ARTIFACT_PATHS = [
+  'assets/accessibility-static-report.json',
+  'assets/design-tokens.json',
+  'assets/page-outline.json',
+  'assets/provenance.json',
+] as const;
+
+function jsonArtifactFile(path: string, value: unknown): WorkspacePackageFile {
+  const bytes = Buffer.from(`${JSON.stringify(value, null, 2)}\n`);
+  return {
+    path,
+    contentBase64: bytes.toString('base64'),
+    sha256: sha256(bytes),
+    size: bytes.byteLength,
+    mediaType: 'application/json; charset=utf-8',
+  };
+}
+
+function compareOrdinal(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+export function computePublicArtifactRevision(files: readonly WorkspacePackageFile[]): string {
+  const canonical = [...files]
+    .sort((left, right) => compareOrdinal(left.path, right.path))
+    .flatMap((file) => [file.path, file.sha256, String(file.size), file.mediaType])
+    .map((value) => `${Buffer.byteLength(value, 'utf8')}:${value}`)
+    .join('');
+  return sha256(Buffer.from(canonical, 'utf8'));
+}
+
+function buildPublicArtifactManifest(files: readonly WorkspacePackageFile[]): WorkspacePackageFile {
+  const listedFiles = [...files]
+    .sort((left, right) => compareOrdinal(left.path, right.path))
+    .map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
+      path: filePath,
+      sha256: fileSha,
+      size,
+      mediaType,
+    }));
+  const manifestBytes = Buffer.from(JSON.stringify({
+    schemaVersion: PUBLIC_ARTIFACT_MANIFEST_SCHEMA,
+    artifactRevision: computePublicArtifactRevision(files),
+    entryFile: 'index.html',
+    files: listedFiles,
+  }));
+  return {
+    path: 'manifest.json',
+    contentBase64: manifestBytes.toString('base64'),
+    sha256: sha256(manifestBytes),
+    size: manifestBytes.byteLength,
+    mediaType: 'application/json; charset=utf-8',
+  };
+}
+
+const MAX_OUTLINE_HEADINGS = 256;
+const MAX_HEADING_TEXT_CHARS = 2_048;
+const MAX_CSS_DERIVATION_CHARS = 512 * 1024;
+const MAX_HTML_NESTING_DEPTH = 2_048;
+
+type DerivedHeading = { level: number; text: string; id?: string };
+
+function appendBounded(current: string, next: string, limit: number): string {
+  if (current.length >= limit || !next) return current;
+  return current + next.slice(0, limit - current.length);
+}
+
+
+function normalizeDerivedText(value: string, maxLength: number): string {
+  return decodeHtmlText(value).replace(/\s+/g, ' ').trim().slice(0, maxLength);
+}
+
+/**
+ * Build public deterministic side files only after the final HTML has passed
+ * CDS hardening. Values come from the publishable document or a non-identifying
+ * count; private source ids, object keys, credentials and source hashes never
+ * cross this boundary.
+ */
+export function buildGeneratedArtifactFiles(
+  hardenedHtml: string,
+  authorAssetPaths: readonly string[] = [],
+): WorkspacePackageFile[] {
+  const headings: DerivedHeading[] = [];
+  const customProperties = new Map<string, string>();
+  const colors = new Set<string>();
+  const fontFamilies = new Set<string>();
+  const breakpoints = new Set<number>();
+  const landmarks: Record<string, number> = { header: 0, nav: 0, main: 0, aside: 0, footer: 0 };
+  const stack: Array<{
+    name: string;
+    suppressed: boolean;
+    heading?: { level: number; id?: string; text: string };
+    title?: { text: string };
+    styleStart?: number;
+  }> = [];
+  let activeHeading: typeof stack[number]['heading'];
+  let activeTitle: typeof stack[number]['title'];
+  let documentTitle = '';
+  let suppressedDepth = 0;
+  let htmlLanguage = '';
+  let headingCount = 0;
+  let h1Count = 0;
+  let imageCount = 0;
+  let missingImageAltCount = 0;
+  let linkCount = 0;
+  let buttonCount = 0;
+  let cssCharsRemaining = MAX_CSS_DERIVATION_CHARS;
+  let cursor = 0;
+
+  const processCss = (rawCss: string): void => {
+    if (cssCharsRemaining <= 0) return;
+    const css = rawCss.slice(0, cssCharsRemaining).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    cssCharsRemaining -= Math.min(rawCss.length, cssCharsRemaining);
+    if (customProperties.size < 256) {
+      for (const match of css.matchAll(/(--[a-z0-9_-]+)\s*:\s*([^;}{]+)/gi)) {
+        const key = match[1].toLowerCase();
+        if (!customProperties.has(key) && customProperties.size >= 256) break;
+        customProperties.set(key, match[2].trim().slice(0, 240));
+      }
+    }
+    if (colors.size < 256) {
+      for (const match of css.matchAll(/#[0-9a-f]{3,8}\b|(?:rgb|hsl)a?\([^)]{1,120}\)/gi)) {
+        colors.add(match[0].toLowerCase().replace(/\s+/g, ' '));
+        if (colors.size >= 256) break;
+      }
+    }
+    if (fontFamilies.size < 64) {
+      for (const match of css.matchAll(/font-family\s*:\s*([^;}{]+)/gi)) {
+        fontFamilies.add(match[1].trim().replace(/\s+/g, ' ').slice(0, 240));
+        if (fontFamilies.size >= 64) break;
+      }
+    }
+    if (breakpoints.size < 64) {
+      for (const match of css.matchAll(/@media[^{}]*\((?:min|max)-width\s*:\s*(\d+)px\)/gi)) {
+        breakpoints.add(Number.parseInt(match[1], 10));
+        if (breakpoints.size >= 64) break;
+      }
+    }
+  };
+
+  for (const tag of iterateHtmlTags(hardenedHtml)) {
+    const text = hardenedHtml.slice(cursor, tag.start);
+    if (activeTitle) activeTitle.text = appendBounded(activeTitle.text, text, MAX_HEADING_TEXT_CHARS);
+    if (activeHeading && suppressedDepth === 0) {
+      activeHeading.text = appendBounded(activeHeading.text, text, MAX_HEADING_TEXT_CHARS);
+    }
+    cursor = tag.end;
+    const name = tag.name.toLowerCase();
+    if (tag.isClosing) {
+      for (let index = stack.length - 1; index >= 0; index -= 1) {
+        const frame = stack.pop()!;
+        if (frame.suppressed) suppressedDepth -= 1;
+        if (frame.styleStart !== undefined) processCss(hardenedHtml.slice(frame.styleStart, tag.start));
+        if (frame.heading) {
+          const normalizedText = normalizeDerivedText(frame.heading.text, 240);
+          if (normalizedText && headings.length < MAX_OUTLINE_HEADINGS) {
+            headings.push({
+              level: frame.heading.level,
+              text: normalizedText,
+              ...(frame.heading.id ? { id: frame.heading.id } : {}),
+            });
+          }
+          if (activeHeading === frame.heading) activeHeading = undefined;
+        }
+        if (frame.title) {
+          if (!documentTitle) documentTitle = normalizeDerivedText(frame.title.text, 240);
+          if (activeTitle === frame.title) activeTitle = undefined;
+        }
+        if (frame.name === name) break;
+      }
+      continue;
+    }
+
+    const needsAttributes = name === 'html'
+      || name === 'img'
+      || /^h[1-6]$/.test(name)
+      || /(?:^|\s)(?:hidden|aria-hidden|style)(?:\s|=|$)/i.test(tag.attributes);
+    const attributes = needsAttributes ? parseHtmlAttributes(tag.attributes) : new Map<string, string>();
+    if (name === 'html' && !htmlLanguage) {
+      htmlLanguage = decodeHtmlText(attributes.get('lang') || '').trim().slice(0, 80);
+    }
+    const inlineStyle = attributes.get('style') || '';
+    const suppressed = ['head', 'template', 'noscript', 'script', 'style'].includes(name)
+      || attributes.has('hidden')
+      || (attributes.get('aria-hidden') || '').trim().toLowerCase() === 'true'
+      || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(inlineStyle);
+    const visible = suppressedDepth === 0 && !suppressed;
+    let heading: typeof activeHeading;
+    let titleFrame: typeof activeTitle;
+    if (visible && /^h[1-6]$/.test(name)) {
+      const level = Number.parseInt(name[1], 10);
+      headingCount += 1;
+      if (level === 1) h1Count += 1;
+      heading = {
+        level,
+        text: '',
+        ...(attributes.get('id') ? { id: decodeHtmlText(attributes.get('id') || '').slice(0, 160) } : {}),
+      };
+      activeHeading = heading;
+    }
+    if (name === 'title' && !activeTitle) {
+      titleFrame = { text: '' };
+      activeTitle = titleFrame;
+    }
+    if (visible) {
+      if (name === 'img') {
+        imageCount += 1;
+        if (!attributes.has('alt')) missingImageAltCount += 1;
+      } else if (name === 'a') linkCount += 1;
+      else if (name === 'button') buttonCount += 1;
+      if (Object.hasOwn(landmarks, name)) landmarks[name] += 1;
+    }
+    const voidElement = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(name);
+    if (!tag.isSelfClosing && !voidElement) {
+      if (stack.length >= MAX_HTML_NESTING_DEPTH) {
+        throw new AgentWorkspaceRuntimeError(
+          'design_output_quality_rejected',
+          'index.html exceeds the supported HTML nesting depth',
+        );
+      }
+      stack.push({
+        name,
+        suppressed,
+        ...(heading ? { heading } : {}),
+        ...(titleFrame ? { title: titleFrame } : {}),
+        ...(name === 'style' ? { styleStart: tag.end } : {}),
+      });
+      if (suppressed) suppressedDepth += 1;
+    }
+  }
+  const title = documentTitle || normalizeDerivedText(activeTitle?.text || '', 240);
+
+  return [
+    jsonArtifactFile('assets/page-outline.json', {
+      schemaVersion: 'map-page-outline-v1',
+      title,
+      headings,
+    }),
+    jsonArtifactFile('assets/design-tokens.json', {
+      schemaVersion: 'map-design-tokens-v1',
+      customProperties: Object.fromEntries([...customProperties.entries()].sort(([left], [right]) => left.localeCompare(right))),
+      colors: [...colors].sort(),
+      fontFamilies: [...fontFamilies].sort(),
+      responsiveBreakpointsPx: [...breakpoints].sort((left, right) => left - right),
+    }),
+    jsonArtifactFile('assets/accessibility-static-report.json', {
+      schemaVersion: 'map-accessibility-static-report-v1',
+      document: {
+        hasLanguage: htmlLanguage.length > 0,
+        language: htmlLanguage || null,
+        hasTitle: title.length > 0,
+        headingCount,
+        hasSingleH1: h1Count === 1,
+      },
+      images: {
+        count: imageCount,
+        missingAltCount: missingImageAltCount,
+      },
+      controls: {
+        linkCount,
+        buttonCount,
+      },
+      landmarks,
+      scope: 'static-structure-only',
+    }),
+    jsonArtifactFile('assets/provenance.json', {
+      schemaVersion: 'map-artifact-provenance-v1',
+      producer: 'cds-open-design-runtime',
+      derivationStage: 'post-security-hardening',
+      publicInput: authorAssetPaths.length ? 'hardened-index-html-and-author-assets' : 'hardened-index-html',
+      publishedFiles: ['index.html', ...authorAssetPaths, ...CDS_GENERATED_ARTIFACT_PATHS, 'manifest.json'].sort(compareOrdinal),
+      privacy: authorAssetPaths.length
+        ? 'author-assets-preserved-publication-review-required'
+        : 'public-html-only-no-private-source-metadata',
+    }),
+  ].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+export function buildGeneratedPublicArtifactPackage(
+  hardenedHtml: string,
+  collectedFiles: readonly WorkspacePackageFile[],
+): WorkspacePackageFile[] {
+  const authorAssets = validatePublicArtifactFiles(collectedFiles, true)
+    .filter((file) => file.path !== 'index.html');
+  const indexBytes = Buffer.from(hardenedHtml);
+  const indexFile: WorkspacePackageFile = {
+    path: 'index.html',
+    contentBase64: indexBytes.toString('base64'),
+    sha256: sha256(indexBytes),
+    size: indexBytes.byteLength,
+    mediaType: 'text/html; charset=utf-8',
+  };
+  const publicFiles = [indexFile, ...authorAssets, ...buildGeneratedArtifactFiles(hardenedHtml, authorAssets.map((file) => file.path))]
+    .sort((left, right) => compareOrdinal(left.path, right.path));
+  assertPublicArtifactFileCount(publicFiles.length + 1);
+  return [...publicFiles, buildPublicArtifactManifest(publicFiles)]
+    .sort((left, right) => compareOrdinal(left.path, right.path));
+}
+
+// This script runs in a one-shot read-only exporter while the OpenDesign
+// container is paused. It validates the frozen workspace and copies only
+// allowlisted regular output files to the host bind mount. Private inputs and
+// runtime files therefore never cross the Docker boundary.
+const OUTPUT_PREFLIGHT_SCRIPT = String.raw`
+const fs = require('node:fs');
+const path = require('node:path');
+const crypto = require('node:crypto');
+const config = JSON.parse(Buffer.from(process.env.CDS_OUTPUT_PREFLIGHT_CONFIG || '', 'base64').toString('utf8'));
+const root = '/workspace';
+const outputRoot = '/cds-output';
+const inputFiles = new Map(config.inputFiles.map((file) => [file.path, file]));
+const seenInputs = new Set();
+const ignoredRuntimePaths = new Set(config.ignoredRuntimePaths);
+const allowed = (relative) => config.allowedOutputPaths.some((pattern) => {
+  if (pattern.endsWith('/**')) {
+    const prefix = pattern.slice(0, -3);
+    return relative === prefix || relative.startsWith(prefix + '/');
+  }
+  return relative === pattern;
+});
+let fileCount = 0;
+let totalBytes = 0;
+let workspaceFileCount = 0;
+let nodeCount = 0;
+const fail = (code, relative = '') => {
+  const encodedPath = relative ? ':' + Buffer.from(relative, 'utf8').toString('base64url') : '';
+  process.stderr.write('CDS_OUTPUT_PREFLIGHT:' + code + encodedPath);
+  process.exit(1);
+};
+const walk = (directory) => {
+  for (const name of fs.readdirSync(directory)) {
+    const absolute = path.join(directory, name);
+    const relative = path.relative(root, absolute).split(path.sep).join('/');
+    nodeCount += 1;
+    if (nodeCount > config.maxNodeCount) fail('node_count');
+    if (relative.split('/').length > config.maxDirectoryDepth) fail('directory_depth');
+    const stat = fs.lstatSync(absolute);
+    if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) fail('special_file', relative);
+    if (stat.isDirectory()) { walk(absolute); continue; }
+    workspaceFileCount += 1;
+    if (workspaceFileCount > config.maxWorkspaceFileCount) fail('workspace_file_count');
+    if (allowed(relative)) {
+      fileCount += 1;
+      totalBytes += stat.size;
+      if (fileCount > config.maxFileCount) fail('file_count');
+      if (totalBytes > config.maxOutputBytes) fail('total_bytes');
+      const target = path.join(outputRoot, ...relative.split('/'));
+      const targetRelative = path.relative(outputRoot, target);
+      if (targetRelative.startsWith('..') || path.isAbsolute(targetRelative)) fail('path_not_allowed', relative);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      const bytes = fs.readFileSync(absolute);
+      if (bytes.length !== stat.size) fail('file_changed', relative);
+      fs.writeFileSync(target, bytes, { flag: 'wx' });
+      continue;
+    }
+    const input = inputFiles.get(relative);
+    if (input) {
+      const bytes = fs.readFileSync(absolute);
+      const digest = crypto.createHash('sha256').update(bytes).digest('hex');
+      if (bytes.length !== input.size || digest !== input.sha256) fail('input_changed', relative);
+      seenInputs.add(relative);
+      continue;
+    }
+    if (ignoredRuntimePaths.has(relative) || relative.startsWith('.od-skills/')) continue;
+    fail('path_not_allowed', relative);
+  }
+};
+walk(root);
+for (const inputPath of inputFiles.keys()) if (!seenInputs.has(inputPath)) fail('input_changed', inputPath);
+`;
+
+// OpenDesign never receives a routable egress network. This narrow relay is
+// the only container attached to both the internal session network and Docker's
+// outbound bridge. It pins one MAP origin/path, rejects redirects, and resolves
+// DNS itself so private, loopback, link-local, and metadata ranges fail closed.
+const EGRESS_PROXY_SCRIPT = String.raw`
+const http = require('node:http');
+const https = require('node:https');
+const dns = require('node:dns');
+const net = require('node:net');
+const crypto = require('node:crypto');
+const target = new URL(process.env.TARGET_ORIGIN);
+const prefix = process.env.TARGET_PATH_PREFIX || '/';
+const mapModelTicket = process.env.MAP_MODEL_TICKET || '';
+const relayClientToken = process.env.RELAY_CLIENT_TOKEN || '';
+const requestStarts = [];
+const maxRequestsPerMinute = 240;
+const deniedAddresses = new net.BlockList();
+for (const [address, prefix, type] of [
+  ['0.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['100.64.0.0', 10, 'ipv4'],
+  ['127.0.0.0', 8, 'ipv4'], ['169.254.0.0', 16, 'ipv4'], ['172.16.0.0', 12, 'ipv4'],
+  ['192.0.0.0', 24, 'ipv4'], ['192.0.2.0', 24, 'ipv4'], ['192.168.0.0', 16, 'ipv4'],
+  ['192.88.99.0', 24, 'ipv4'], ['198.18.0.0', 15, 'ipv4'], ['198.51.100.0', 24, 'ipv4'],
+  ['203.0.113.0', 24, 'ipv4'], ['224.0.0.0', 4, 'ipv4'], ['240.0.0.0', 4, 'ipv4'],
+  ['::', 128, 'ipv6'], ['::1', 128, 'ipv6'],
+  ['64:ff9b::', 96, 'ipv6'], ['64:ff9b:1::', 48, 'ipv6'], ['100::', 64, 'ipv6'],
+  ['2001:10::', 28, 'ipv6'], ['2001:20::', 28, 'ipv6'], ['2001:db8::', 32, 'ipv6'],
+  ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6'], ['fec0::', 10, 'ipv6'], ['ff00::', 8, 'ipv6'],
+]) deniedAddresses.addSubnet(address, prefix, type);
+function authorized(value) {
+  if (!relayClientToken || typeof value !== 'string') return false;
+  const actual = Buffer.from(value, 'utf8');
+  const expected = Buffer.from('Bearer ' + relayClientToken, 'utf8');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+function loopback(address) {
+  const value = String(address || '').toLowerCase().split('%')[0];
+  return value === '127.0.0.1' || value === '::1' || value === '::ffff:127.0.0.1';
+}
+function blocked(address) {
+  const value = String(address || '').toLowerCase().split('%')[0];
+  const family = net.isIP(value);
+  if (family === 4) return deniedAddresses.check(value, 'ipv4');
+  if (family === 6) {
+    if (value.startsWith('::ffff:') && net.isIP(value.slice(7)) === 4) return blocked(value.slice(7));
+    return deniedAddresses.check(value, 'ipv6');
+  }
+  return true;
+}
+function admitted() {
+  const cutoff = Date.now() - 60000;
+  while (requestStarts.length && requestStarts[0] < cutoff) requestStarts.shift();
+  if (requestStarts.length >= maxRequestsPerMinute) return false;
+  requestStarts.push(Date.now());
+  return true;
+}
+function pathAllowed(raw) {
+  try {
+    const pathname = new URL(raw, 'http://relay.invalid').pathname;
+    return prefix === '/' || pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : prefix + '/');
+  } catch { return false; }
+}
+const server = http.createServer((req, res) => {
+  if (req.url === '/__health') {
+    res.writeHead(loopback(req.socket && req.socket.remoteAddress) ? (mapModelTicket && relayClientToken ? 204 : 503) : 403);
+    res.end(); return;
+  }
+  if (!authorized(req.headers.authorization)) { res.writeHead(401); res.end(); return; }
+  if (!admitted()) { res.writeHead(429, { 'retry-after': '60' }); res.end(); return; }
+  if ((req.method !== 'GET' && req.method !== 'POST') || !pathAllowed(req.url || '/')) {
+    res.writeHead(403); res.end(); return;
+  }
+  dns.lookup(target.hostname, { all: true, verbatim: true }, (lookupError, addresses) => {
+    if (lookupError || !addresses.length || addresses.some((entry) => blocked(entry.address))) {
+      res.writeHead(502); res.end(); return;
+    }
+    const selected = addresses[0];
+    const headers = { ...req.headers, host: target.host };
+    for (const name of [
+      'authorization', 'proxy-authorization', 'x-api-key', 'api-key', 'apikey',
+      'openai-api-key', 'anthropic-api-key', 'x-goog-api-key', 'x-auth-token',
+      'x-access-token', 'cookie', 'set-cookie', 'connection', 'proxy-connection',
+      'upgrade', 'forwarded', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
+    ]) delete headers[name];
+    headers.authorization = 'Bearer ' + mapModelTicket;
+    const transport = target.protocol === 'https:' ? https : http;
+    const upstream = transport.request({
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || undefined,
+      method: req.method,
+      path: req.url,
+      headers,
+      lookup: (_hostname, options, callback) => {
+        if (options && typeof options === 'object' && options.all) {
+          callback(null, [selected]);
+          return;
+        }
+        callback(null, selected.address, selected.family);
+      },
+    }, (upstreamResponse) => {
+      if ((upstreamResponse.statusCode || 0) >= 300 && (upstreamResponse.statusCode || 0) < 400) {
+        upstreamResponse.resume(); res.writeHead(502); res.end(); return;
+      }
+      const responseHeaders = { ...upstreamResponse.headers };
+      delete responseHeaders.location;
+      res.writeHead(upstreamResponse.statusCode || 502, responseHeaders);
+      upstreamResponse.pipe(res);
+    });
+    upstream.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    upstream.setTimeout?.(90000, () => upstream.destroy());
+    req.pipe(upstream);
+  });
+});
+server.maxConnections = 16;
+server.headersTimeout = 10000;
+server.requestTimeout = 900000;
+server.keepAliveTimeout = 5000;
+server.on('connection', (socket) => socket.setTimeout(90000, () => socket.destroy()));
+server.on('connect', (_req, socket) => socket.destroy());
+server.on('upgrade', (_req, socket) => socket.destroy());
+server.listen(Number(process.env.PROXY_PORT || '8787'), '0.0.0.0');
+`;
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+function sha256(bytes: Uint8Array | string): string {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+function runtimeDiagnosticPreview(value: string, excludedValues: string[]): string {
+  let safe = value.replaceAll('\0', '');
+  for (const excluded of excludedValues) {
+    if (excluded) safe = safe.split(excluded).join('***[masked]***');
+  }
+  safe = maskSecrets(safe, { mask: true });
+  const bytes = Buffer.from(safe, 'utf8');
+  if (bytes.length <= MAX_RUNTIME_DIAGNOSTIC_BYTES) return safe;
+
+  const suffix = `\n[cds runtime diagnostic truncated: original ${bytes.length} bytes]`;
+  const textBudget = Math.max(0, MAX_RUNTIME_DIAGNOSTIC_BYTES - Buffer.byteLength(suffix, 'utf8'));
+  let preview = bytes.subarray(0, textBudget).toString('utf8');
+  while (Buffer.byteLength(preview, 'utf8') > textBudget) preview = preview.slice(0, -1);
+  return `${preview}${suffix}`;
+}
+
+function outputPreflightRejectedPath(diagnostic: string, code: string): Record<string, unknown> {
+  const match = diagnostic.match(new RegExp(`CDS_OUTPUT_PREFLIGHT:${code}:([A-Za-z0-9_-]{1,512})`));
+  if (!match) return { stage: 'output_preflight' };
+  try {
+    const relative = Buffer.from(match[1], 'base64url').toString('utf8');
+    normalizeRelativePath(relative);
+    return { stage: 'output_preflight', rejectedPath: relative.slice(0, 240) };
+  } catch {
+    return { stage: 'output_preflight' };
+  }
+}
+
+function normalizeSha(value: unknown, field: string): string {
+  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  if (!SHA256_RE.test(normalized)) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', `${field} must be a SHA-256 hex digest`);
+  }
+  return normalized;
+}
+
+function boundedInteger(value: unknown, field: string, min: number, max: number): number {
+  if (!Number.isInteger(value) || Number(value) < min || Number(value) > max) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      `${field} must be an integer in [${min}, ${max}]`,
+    );
+  }
+  return Number(value);
+}
+
+function validateTransferUrl(value: unknown, field: string): URL {
+  let parsed: URL;
+  try {
+    parsed = new URL(typeof value === 'string' ? value : '');
+  } catch {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', `${field} must be an absolute HTTP URL`);
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', `${field} must use HTTP or HTTPS`);
+  }
+  if (parsed.username || parsed.password || parsed.hash || parsed.search) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      `${field} cannot contain credentials, query parameters, or fragments`,
+    );
+  }
+  if (
+    parsed.protocol === 'http:'
+    && parsed.hostname !== '127.0.0.1'
+    && parsed.hostname !== 'localhost'
+    && process.env.CDS_AGENT_WORKSPACE_ALLOW_HTTP_TRANSFER !== '1'
+  ) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', `${field} must use HTTPS outside local tests`);
+  }
+  return parsed;
+}
+
+export function normalizeAgentWorkspaceModelBaseUrl(value: unknown): string {
+  return validateTransferUrl(value, 'modelBaseUrl').toString();
+}
+
+export function normalizeWorkspaceTransfer(value: unknown): WorkspaceTransferRequest {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_required', 'workspaceTransfer is required for OpenDesign');
+  }
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== MAP_DESIGN_WORKSPACE_SCHEMA) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      `workspaceTransfer.schemaVersion must be ${MAP_DESIGN_WORKSPACE_SCHEMA}`,
+    );
+  }
+  const inputPackageUrl = validateTransferUrl(record.inputPackageUrl, 'workspaceTransfer.inputPackageUrl');
+  const resultCommitUrl = validateTransferUrl(record.resultCommitUrl, 'workspaceTransfer.resultCommitUrl');
+  if (inputPackageUrl.origin !== resultCommitUrl.origin) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_origin_mismatch',
+      'workspace transfer download and commit URLs must share one MAP origin',
+    );
+  }
+  const transferToken = typeof record.transferToken === 'string' ? record.transferToken.trim() : '';
+  if (!transferToken || transferToken.length > 8192) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspaceTransfer.transferToken is required');
+  }
+  const baseRevision = typeof record.baseRevision === 'string' ? record.baseRevision.trim() : '';
+  if (!baseRevision || baseRevision.length > 256) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspaceTransfer.baseRevision is required');
+  }
+  const rawAllowlist = Array.isArray(record.allowedOutputPaths) ? record.allowedOutputPaths : [];
+  const allowedOutputPaths = rawAllowlist
+    .filter((item): item is string => typeof item === 'string')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  if (allowedOutputPaths.length === 0 || allowedOutputPaths.length > 64) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      'workspaceTransfer.allowedOutputPaths must contain 1 to 64 paths',
+    );
+  }
+  for (const pattern of allowedOutputPaths) validateOutputPattern(pattern);
+  if (!allowedOutputPaths.includes('index.html') || !allowedOutputPaths.includes('manifest.json')) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      'workspaceTransfer.allowedOutputPaths must include index.html and manifest.json',
+    );
+  }
+  return {
+    schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+    inputPackageUrl: inputPackageUrl.toString(),
+    resultCommitUrl: resultCommitUrl.toString(),
+    transferToken,
+    inputSha256: normalizeSha(record.inputSha256, 'workspaceTransfer.inputSha256'),
+    baseRevision,
+    maxInputBytes: boundedInteger(record.maxInputBytes, 'workspaceTransfer.maxInputBytes', 1, 64 * 1024 * 1024),
+    maxOutputBytes: boundedInteger(record.maxOutputBytes, 'workspaceTransfer.maxOutputBytes', 1, 128 * 1024 * 1024),
+    allowedOutputPaths: [...new Set(allowedOutputPaths)],
+  };
+}
+
+function validateOutputPattern(pattern: string): void {
+  const suffix = pattern.endsWith('/**') ? pattern.slice(0, -3) : pattern;
+  const normalized = normalizeRelativePath(suffix, 'allowed output pattern');
+  if (normalized !== suffix) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', `invalid allowed output pattern: ${pattern}`);
+  }
+  if (pattern.includes('*') && !pattern.endsWith('/**')) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_transfer_invalid',
+      `only exact paths and directory/** patterns are supported: ${pattern}`,
+    );
+  }
+}
+
+function normalizeRelativePath(value: unknown, label = 'file path'): string {
+  if (
+    typeof value !== 'string'
+    || !value.trim()
+    || value !== value.trim()
+    || value.length > 512
+    || value.includes('\\')
+    || /[\u0000-\u001f\u007f]/.test(value)
+  ) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `${label} must be a bounded POSIX relative path`);
+  }
+  const trimmed = value.trim();
+  const normalized = path.posix.normalize(trimmed);
+  if (
+    path.posix.isAbsolute(trimmed)
+    || normalized === '.'
+    || normalized === '..'
+    || normalized.startsWith('../')
+    || normalized.includes('/../')
+    || normalized !== trimmed
+    || trimmed.includes('\0')
+  ) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `${label} escapes the workspace: ${trimmed}`);
+  }
+  return normalized;
+}
+
+async function readResponseLimited(response: Response, maxBytes: number): Promise<Buffer> {
+  const length = Number(response.headers.get('content-length') || '0');
+  if (Number.isFinite(length) && length > maxBytes) {
+    throw new AgentWorkspaceRuntimeError('workspace_transfer_too_large', `response exceeds ${maxBytes} bytes`);
+  }
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new AgentWorkspaceRuntimeError('workspace_transfer_too_large', `response exceeds ${maxBytes} bytes`);
+      }
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
+}
+
+function decodeBase64(value: unknown, filePath: string): Buffer {
+  if (typeof value !== 'string') {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `invalid contentBase64 for ${filePath}`);
+  }
+  const bytes = Buffer.from(value, 'base64');
+  if (bytes.toString('base64') !== value) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `non-canonical contentBase64 for ${filePath}`);
+  }
+  return bytes;
+}
+
+function parseWorkspacePackage(bytes: Buffer, transfer: WorkspaceTransferRequest): ParsedWorkspacePackage {
+  if (sha256(bytes) !== transfer.inputSha256) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_hash_mismatch', 'workspace input package SHA-256 does not match');
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString('utf8'));
+  } catch {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'workspace input package is not valid JSON');
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'workspace input package must be an object');
+  }
+  const pkg = parsed as Partial<WorkspacePackage>;
+  if (pkg.schemaVersion !== MAP_DESIGN_WORKSPACE_SCHEMA || pkg.baseRevision !== transfer.baseRevision) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_revision_mismatch',
+      'workspace input package schema or base revision does not match the transfer contract',
+    );
+  }
+  const runId = typeof pkg.runId === 'string' ? pkg.runId.trim() : '';
+  if (!SESSION_ID_RE.test(runId)) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'workspace input package runId is missing or invalid');
+  }
+  if (!Array.isArray(pkg.files) || pkg.files.length === 0 || pkg.files.length > 512) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'workspace input package must contain 1 to 512 files');
+  }
+  const seen = new Set<string>();
+  let total = 0;
+  const files = pkg.files.map((file) => {
+    if (!file || typeof file !== 'object') {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'workspace file entry must be an object');
+    }
+    const relativePath = normalizeRelativePath(file.path);
+    if (seen.has(relativePath)) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `duplicate workspace file path: ${relativePath}`);
+    }
+    seen.add(relativePath);
+    const content = decodeBase64(file.contentBase64, relativePath);
+    const expectedSize = boundedInteger(file.size, `files[${relativePath}].size`, 0, transfer.maxInputBytes);
+    if (content.byteLength !== expectedSize) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `size mismatch for ${relativePath}`);
+    }
+    const expectedSha = normalizeSha(file.sha256, `files[${relativePath}].sha256`);
+    if (sha256(content) !== expectedSha) {
+      throw new AgentWorkspaceRuntimeError('workspace_package_hash_mismatch', `SHA-256 mismatch for ${relativePath}`);
+    }
+    total += content.byteLength;
+    if (total > transfer.maxInputBytes) {
+      throw new AgentWorkspaceRuntimeError('workspace_transfer_too_large', 'workspace input files exceed maxInputBytes');
+    }
+    const mediaType = typeof file.mediaType === 'string' && file.mediaType.trim()
+      ? file.mediaType.trim().slice(0, 200)
+      : 'application/octet-stream';
+    return { path: relativePath, bytes: content, sha256: expectedSha, mediaType };
+  });
+  validateDesignTaskContract(runId, transfer.baseRevision, files);
+  return { runId, files };
+}
+
+function validateDesignTaskContract(
+  runId: string,
+  baseRevision: string,
+  files: ParsedWorkspacePackage['files'],
+): void {
+  const taskFile = files.find((file) => file.path === 'brief/task.json');
+  if (!taskFile) {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'workspace input package must contain brief/task.json');
+  }
+  let task: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(taskFile.bytes.toString('utf8')) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('not an object');
+    task = parsed as Record<string, unknown>;
+  } catch {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
+  }
+  const quality = task.qualityContract;
+  if (
+    task.schemaVersion !== MAP_DESIGN_WORKSPACE_SCHEMA
+    || task.runId !== runId
+    || task.baseRevision !== baseRevision
+    || !quality
+    || typeof quality !== 'object'
+    || Array.isArray(quality)
+    || (quality as Record<string, unknown>).schemaVersion !== MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_quality_contract_unsupported',
+      `brief/task.json must use ${MAP_DESIGN_ARTIFACT_QUALITY_SCHEMA} and match the workspace identity`,
+    );
+  }
+  const contract = quality as Record<string, unknown>;
+  for (const [field, expected] of [
+    ['measuredClaimsRequireSource', true],
+    ['sensitiveFactsRequireSource', true],
+    ['contextBoundMetricsReviewRequired', true],
+    ['visibleDraftMarkersAllowed', false],
+    ['emptyOrMissingFragmentTargetsAllowed', false],
+    ['inertEnabledButtonsAllowed', false],
+    ['finalReviewRequired', true],
+  ] as const) {
+    if (contract[field] !== expected) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_quality_contract_unsupported',
+        `brief/task.json qualityContract.${field} is unsupported`,
+      );
+    }
+  }
+  parseVisibleTextOccurrenceConstraints(contract.visibleTextOccurrenceConstraints);
+  const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
+  const hasKnowledge = files.some((file) => file.path.startsWith('knowledge/'));
+  const responseContract = task.responseContract;
+  const input = task.input;
+  const inputContract = input && typeof input === 'object' && !Array.isArray(input)
+    ? input as Record<string, unknown>
+    : undefined;
+  const userSupplied = inputContract?.userSupplied;
+  const userSuppliedContract = userSupplied && typeof userSupplied === 'object' && !Array.isArray(userSupplied)
+    ? userSupplied as Record<string, unknown>
+    : undefined;
+  const serverKnowledge = inputContract?.serverKnowledge;
+  const serverKnowledgeContract = serverKnowledge && typeof serverKnowledge === 'object' && !Array.isArray(serverKnowledge)
+    ? serverKnowledge as Record<string, unknown>
+    : undefined;
+  const currentHtml = inputContract?.currentHtml;
+  const currentHtmlContract = currentHtml && typeof currentHtml === 'object' && !Array.isArray(currentHtml)
+    ? currentHtml as Record<string, unknown>
+    : undefined;
+  if (
+    typeof task.title !== 'string'
+    || !task.title.trim()
+    || typeof userSuppliedContract?.instruction !== 'string'
+    || !userSuppliedContract.instruction.trim()
+    || userSuppliedContract.authority !== 'user-supplied'
+    || serverKnowledgeContract?.authority !== 'server-authoritative-snapshot'
+    || !Array.isArray(serverKnowledgeContract.references)
+    || contract.userSuppliedInputsAreFactualProvenance !== false
+    || (hasCurrentPage
+      ? currentHtmlContract?.authority !== 'server-owned-current-artifact'
+      : currentHtml !== null)
+    || !responseContract
+    || typeof responseContract !== 'object'
+    || Array.isArray(responseContract)
+    || (responseContract as Record<string, unknown>).requiredFile !== 'index.html'
+    || (responseContract as Record<string, unknown>).manifestFile !== 'manifest.json'
+    || (responseContract as Record<string, unknown>).writeback !== 'external'
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json input authority, title, and responseContract are incomplete',
+    );
+  }
+  const expectedSources = [
+    ...(hasKnowledge ? ['server-knowledge'] : []),
+    ...(hasCurrentPage ? ['server-current-visible-content'] : []),
+  ];
+  if (
+    !Array.isArray(contract.factualSources)
+    || contract.factualSources.length !== expectedSources.length
+    || contract.factualSources.some((value, index) => value !== expectedSources[index])
+  ) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_quality_contract_unsupported',
+      'brief/task.json qualityContract.factualSources does not match the operation',
+    );
+  }
+  if ((task.operation === 'edit') !== hasCurrentPage || (task.operation !== 'edit' && task.operation !== 'generate')) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_package_invalid',
+      'brief/task.json operation does not match the presence of current/index.html',
+    );
+  }
+}
+
+function isAllowedOutput(relativePath: string, patterns: readonly string[]): boolean {
+  return patterns.some((pattern) => {
+    if (pattern.endsWith('/**')) {
+      const prefix = pattern.slice(0, -3);
+      return relativePath === prefix || relativePath.startsWith(`${prefix}/`);
+    }
+    return relativePath === pattern;
+  });
+}
+
+function mediaTypeForFile(filePath: string): string {
+  const extension = path.extname(filePath).toLowerCase();
+  if (extension === '.html') return 'text/html; charset=utf-8';
+  if (extension === '.css') return 'text/css; charset=utf-8';
+  if (extension === '.js' || extension === '.mjs') return 'text/javascript; charset=utf-8';
+  if (extension === '.json') return 'application/json; charset=utf-8';
+  if (extension === '.svg') return 'image/svg+xml';
+  if (extension === '.png') return 'image/png';
+  if (extension === '.jpg' || extension === '.jpeg') return 'image/jpeg';
+  if (extension === '.webp') return 'image/webp';
+  if (extension === '.gif') return 'image/gif';
+  if (extension === '.ico') return 'image/x-icon';
+  if (extension === '.woff') return 'font/woff';
+  if (extension === '.woff2') return 'font/woff2';
+  if (extension === '.ttf') return 'font/ttf';
+  if (extension === '.otf') return 'font/otf';
+  return 'application/octet-stream';
+}
+
+function assertPublicArtifactFileCount(fileCount: number): void {
+  if (fileCount > MAX_OUTPUT_FILE_COUNT) {
+    throw new AgentWorkspaceRuntimeError('design_output_too_many_files', `Public output exceeds the ${MAX_OUTPUT_FILE_COUNT}-file limit`);
+  }
+}
+
+// Mirrors Core DesignArtifactPublicPath; workspace/private paths keep their
+// separate, existing transport contract.
+function assertPublicArtifactPath(filePath: string): void {
+  normalizeRelativePath(filePath);
+  if (filePath.length > 240 || filePath.normalize('NFC') !== filePath
+    || /[%?#:\u0000-\u001f\u007f-\u009f]/.test(filePath)
+    || filePath.split('/').some((segment) => /[ .]$/.test(segment)
+      || /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i.test(segment.split('.')[0]))) {
+    throw new AgentWorkspaceRuntimeError('design_output_invalid', `invalid public output path: ${filePath}`);
+  }
+}
+
+function validatePublicJson(text: string): void {
+  // Keep BOM visible (and rejected by JSON.parse) and match MAP's 64-level
+  // JsonDocument limit without rewriting or recursively walking the payload.
+  JSON.parse(text);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (const character of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === '\\') escaped = true;
+      else if (character === '"') inString = false;
+    } else if (character === '"') inString = true;
+    else if (character === '[' || character === '{') {
+      depth += 1;
+      if (depth > 64) throw new Error('JSON depth exceeds 64');
+    } else if (character === ']' || character === '}') depth -= 1;
+  }
+}
+
+// This is the byte-preservation boundary. Script execution is granted later only
+// when index.html references a file in this exact validated package.
+function validatePublicArtifactFiles(
+  files: readonly WorkspacePackageFile[],
+  rejectGeneratedPaths = false,
+): WorkspacePackageFile[] {
+  const seen = new Set<string>(rejectGeneratedPaths ? CDS_GENERATED_ARTIFACT_PATHS.map((filePath) => filePath.toUpperCase()) : []);
+  const validated = files.filter((file) => file.path !== 'manifest.json').map((file) => {
+    assertPublicArtifactPath(file.path);
+    const identity = file.path.toUpperCase();
+    if (rejectGeneratedPaths && CDS_GENERATED_ARTIFACT_PATHS.some((reserved) => reserved.toUpperCase() === identity)) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `public output path is reserved for CDS metadata: ${file.path}`);
+    }
+    if (seen.has(identity)) throw new AgentWorkspaceRuntimeError('design_output_invalid', `duplicate public output: ${file.path}`);
+    seen.add(identity);
+    if (file.path !== 'index.html'
+      && (!file.path.startsWith('assets/') || !/\.(?:css|js|mjs|png|jpe?g|gif|webp|ico|woff2?|ttf|otf|json)$/i.test(file.path))) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `unsupported public output type: ${file.path}`);
+    }
+    let bytes: Buffer;
+    try {
+      bytes = decodeBase64(file.contentBase64, file.path);
+    } catch {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `invalid public output bytes: ${file.path}`);
+    }
+    if (bytes.byteLength === 0 || bytes.byteLength !== file.size || sha256(bytes) !== file.sha256 || file.mediaType !== mediaTypeForFile(file.path)) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', `public output integrity mismatch: ${file.path}`);
+    }
+    if (/\.(?:html|css|js|mjs|json)$/i.test(file.path)) {
+      try {
+        const text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+        if (path.extname(file.path).toLowerCase() === '.json') validatePublicJson(text);
+      } catch {
+        throw new AgentWorkspaceRuntimeError('design_output_invalid', `public text output is not valid UTF-8 or JSON: ${file.path}`);
+      }
+    }
+    return { ...file };
+  });
+  for (const identity of seen) {
+    for (let separator = identity.indexOf('/'); separator >= 0; separator = identity.indexOf('/', separator + 1)) {
+      if (seen.has(identity.slice(0, separator))) {
+        throw new AgentWorkspaceRuntimeError('design_output_invalid', 'public output file and directory paths conflict');
+      }
+    }
+  }
+  return validated;
+}
+
+// Start edits from the verified public snapshot, not from a second merge at commit.
+// A deleted working-copy file must stay deleted; frozen current/ inputs are never exported.
+function prepareCurrentArtifactSeeds(
+  inputFiles: ParsedWorkspacePackage['files'],
+  transfer: WorkspaceTransferRequest,
+): WorkspacePackageFile[] {
+  const currentFiles = inputFiles.filter((file) => file.path.startsWith('current/'));
+  if (currentFiles.length === 0) return [];
+  try {
+    const currentEntry = currentFiles.find((file) => file.path === 'current/index.html');
+    if (!currentEntry) throw new Error('current entry is missing');
+    // These are format-compatibility checks, not proof of producer identity or authorization.
+    // An arbitrary uploaded file with the same reserved name must not silently disappear.
+    const knownReports = new Map(buildGeneratedArtifactFiles('')
+      .map((file) => [file.path, JSON.parse(Buffer.from(file.contentBase64, 'base64').toString('utf8')) as Record<string, unknown>]));
+    for (const file of currentFiles) {
+      const publicPath = file.path.slice('current/'.length);
+      const reportShape = knownReports.get(publicPath);
+      if (publicPath !== 'manifest.json' && !reportShape) continue;
+      const record = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(file.bytes));
+      if (!record || typeof record !== 'object' || Array.isArray(record)) throw new Error('unknown reserved file format');
+      if (publicPath === 'manifest.json') {
+        if (record.schemaVersion !== PUBLIC_ARTIFACT_MANIFEST_SCHEMA || record.entryFile !== 'index.html'
+          || Object.keys(record).sort().join(',') !== 'artifactRevision,entryFile,files,schemaVersion'
+          || !Array.isArray(record.files) || !record.files.length || record.files.length >= MAX_OUTPUT_FILE_COUNT
+          || !record.files.every((item: unknown) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return false;
+            const listed = item as Record<string, unknown>;
+            return Object.keys(listed).sort().join(',') === 'mediaType,path,sha256,size'
+              && typeof listed.path === 'string' && typeof listed.mediaType === 'string'
+              && typeof listed.sha256 === 'string' && /^[a-f0-9]{64}$/.test(listed.sha256)
+              && typeof listed.size === 'number' && Number.isSafeInteger(listed.size) && listed.size > 0;
+          })
+          || record.artifactRevision !== computePublicArtifactRevision(record.files)) throw new Error('unknown reserved manifest format');
+        // Do not compare the old entry hash to normalized current/index.html:
+        // MAP may have removed the trusted system CSP envelope from that input.
+      } else if (record.schemaVersion !== reportShape!.schemaVersion
+        || Object.keys(record).sort().join(',') !== Object.keys(reportShape!).sort().join(',')
+        || publicPath === 'assets/provenance.json' && (record.producer !== reportShape!.producer || record.derivationStage !== reportShape!.derivationStage)) {
+        throw new Error('unknown reserved report format');
+      }
+    }
+    const candidates = currentFiles.map((file) => {
+      const publicPath = file.path.slice('current/'.length);
+      const expectedMime = mediaTypeForFile(publicPath);
+      // Stored sites may use a MIME without charset or the equivalent JS MIME.
+      // Normalize that declaration only; never re-encode the original bytes.
+      const [baseMime, ...parameters] = file.mediaType.split(';').map((part) => part.trim().toLowerCase());
+      const expectedBase = expectedMime.split(';')[0];
+      if (!(baseMime === expectedBase || expectedBase === 'text/javascript' && baseMime === 'application/javascript')
+        || parameters.length > 1 || parameters.some((parameter) => !/^charset\s*=\s*(?:utf-8|"utf-8")$/.test(parameter))) {
+        throw new Error('current resource MIME is incompatible with its file type');
+      }
+      return {
+        path: publicPath, contentBase64: file.bytes.toString('base64'), sha256: file.sha256,
+        size: file.bytes.byteLength, mediaType: expectedMime,
+      };
+    });
+    const validated = validatePublicArtifactFiles(candidates);
+    if (!validated.some((file) => file.path === 'index.html')) throw new Error('current entry is missing');
+    // Old derived reports describe the previous revision and must not masquerade
+    // as authored resources. Exact known paths only; case aliases remain invalid.
+    const seeds = validated.filter((file) => !CDS_GENERATED_ARTIFACT_PATHS.some((reportPath) => file.path === reportPath));
+    validatePublicArtifactFiles(seeds, true);
+    for (const seed of seeds) {
+      if (!isAllowedOutput(seed.path, transfer.allowedOutputPaths)) throw new Error('current resource is outside the authorized output paths');
+      if (inputFiles.some((file) => file.path === seed.path)) throw new Error('editable copy conflicts with a frozen input');
+    }
+    assertPublicArtifactFileCount(seeds.length + 1);
+    if (seeds.reduce((total, file) => total + file.size, 0) > transfer.maxOutputBytes) throw new Error('current resources exceed the output size limit');
+    return seeds;
+  } catch {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_current_artifact_unsupported',
+      'Current site cannot be copied intact into the authorized public workspace; check its paths, file types, and size',
+    );
+  }
+}
+
+function publicTransfer(transfer: WorkspaceTransferRequest): Omit<WorkspaceTransferRequest, 'transferToken'> {
+  const { transferToken: _token, ...safe } = transfer;
+  return safe;
+}
+
+export class AgentWorkspaceSessionRuntime {
+  private readonly rootDir: string;
+  private readonly instanceRootDir: string;
+  private readonly instanceId: string;
+  private readonly instanceNameScope: string;
+  private readonly image: string;
+  private readonly daemonPort: number;
+  private readonly fetchImpl: typeof fetch;
+
+  /**
+   * 伙伴侧（MAP）传输的唯一出口。会话创建时把 inputPackageUrl / resultCommitUrl 钉在
+   * partner origin 上，但 fetch 默认会跟随 3xx——跟过去的那一跳不再受钉定约束，
+   * 等于把 CDS 变成一个可被伙伴端指挥的内网请求器。所以这里一律 redirect: 'manual'
+   * 并把 3xx 判成失败：要换地址就重新签一次会话，不能靠一个 Location 头临时改道。
+   */
+  private async fetchPartnerTransfer(url: string, init: RequestInit, field: string): Promise<Response> {
+    const response = await this.fetchImpl(url, { ...init, redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_transfer_redirect_rejected',
+        `${field} responded with HTTP ${response.status}; redirects are not followed because the target origin is pinned at session creation`,
+        false,
+      );
+    }
+    return response;
+  }
+  private readonly pollIntervalMs: number;
+  private readonly capabilityCacheMs: number;
+  private readonly capabilityNegativeCacheMs: number;
+  private readonly capabilityMaxStaleMs: number;
+  private readonly containerUid: number;
+  private readonly containerGid: number;
+  private readonly autoPullImage: boolean;
+  private readonly cleanupRetryBaseMs: number;
+  private readonly cleanupRetryMaxMs: number;
+  private readonly handles = new Map<string, ManagedRuntimeHandle>();
+  private readonly cleanupRetryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly cleanupRetryAttempts = new Map<string, number>();
+  private readonly cleanupInFlight = new Map<string, Promise<void>>();
+  private capabilityCache: CapabilitySnapshot | null = null;
+  private capabilityRefresh: Promise<CapabilityProbeResult> | null = null;
+  private capabilityRetryAfter = 0;
+  private capabilityRefreshError: string | null = null;
+  private readonly runtimeValidationByImageId = new Map<string, boolean>();
+  private hardStoragePolicyValidated = false;
+  private hardStoragePolicyFailureCode: string | null = null;
+  private hardStoragePolicyDiagnostic: string | null = null;
+  private imagePreparation: Promise<void> | null = null;
+  private imagePreparationAttemptedAt = 0;
+  private imagePreparationError: string | null = null;
+  private bootstrapPreparation: Promise<void> | null = null;
+  private bootstrapAttempted = false;
+  private bootstrapError: string | null = null;
+
+  constructor(
+    private readonly shell: IShellExecutor,
+    options: AgentWorkspaceSessionRuntimeOptions = {},
+  ) {
+    this.rootDir = path.resolve(options.rootDir || process.env.CDS_AGENT_WORKSPACE_ROOT || '/tmp/cds-agent-workspaces');
+    const configuredInstanceId = options.instanceId
+      || computeCdsInstanceId(process.env.CDS_REPO_ROOT || path.resolve(process.cwd(), '..'));
+    this.instanceId = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(configuredInstanceId)
+      ? configuredInstanceId
+      : sha256(configuredInstanceId).slice(0, 12);
+    this.instanceNameScope = sha256(this.instanceId).slice(0, 8);
+    this.instanceRootDir = path.join(this.rootDir, this.instanceNameScope);
+    this.image = options.image || process.env.CDS_OPEN_DESIGN_IMAGE || OPEN_DESIGN_IMAGE;
+    this.daemonPort = options.daemonPort || 7456;
+    this.fetchImpl = options.fetchImpl || fetch;
+    this.pollIntervalMs = Math.max(5, options.pollIntervalMs || 750);
+    this.capabilityCacheMs = Math.max(0, options.capabilityCacheMs ?? 30_000);
+    this.capabilityNegativeCacheMs = Math.max(0, options.capabilityNegativeCacheMs ?? 5_000);
+    this.capabilityMaxStaleMs = Math.max(
+      this.capabilityCacheMs,
+      options.capabilityMaxStaleMs ?? 120_000,
+    );
+    this.containerUid = options.containerUid ?? 1001;
+    this.containerGid = options.containerGid ?? 1001;
+    this.autoPullImage = options.autoPullImage ?? process.env.CDS_OPEN_DESIGN_AUTO_PULL !== '0';
+    this.cleanupRetryBaseMs = Math.max(1, options.cleanupRetryBaseMs ?? DEFAULT_CLEANUP_RETRY_BASE_MS);
+    this.cleanupRetryMaxMs = Math.max(
+      this.cleanupRetryBaseMs,
+      options.cleanupRetryMaxMs ?? DEFAULT_CLEANUP_RETRY_MAX_MS,
+    );
+  }
+
+  /**
+   * Process-start barrier for the runtime. In-memory session handles cannot be
+   * restored safely after a CDS restart, so daemon resources bearing both the
+   * agent-session and this CDS instance label are reclaimed before the provider
+   * becomes selectable. Legacy unlabeled resources are deliberately left for
+   * operator reconciliation because shared-host ownership cannot be proven.
+   */
+  async bootstrap(): Promise<void> {
+    if (this.bootstrapPreparation) return this.bootstrapPreparation;
+    this.bootstrapAttempted = true;
+    const preparation = (async () => {
+      await this.recoverOrphans();
+      await this.prepareImage();
+      await this.refreshCapability().catch(() => undefined);
+    })()
+      .then(() => { this.bootstrapError = null; })
+      .catch((error) => {
+        this.bootstrapError = error instanceof Error ? error.message : 'Agent workspace bootstrap failed';
+      })
+      .finally(() => {
+        this.bootstrapPreparation = null;
+      });
+    this.bootstrapPreparation = preparation;
+    return preparation;
+  }
+
+  /**
+   * Await the same startup recovery barrier and surface an incomplete orphan cleanup.
+   * bootstrap() intentionally keeps capability probing non-throwing; control-plane
+   * reconciliation needs the stronger contract before it can close persisted ledgers.
+   */
+  async bootstrapAndVerify(): Promise<void> {
+    await this.bootstrap();
+    if (this.bootstrapError) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_orphan_cleanup_failed',
+        this.bootstrapError,
+        true,
+      );
+    }
+  }
+
+  async recoverOrphans(): Promise<void> {
+    if (this.handles.size > 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_recovery_conflict',
+        'Agent workspace recovery cannot run while managed sessions are active',
+      );
+    }
+    const failures: string[] = [];
+    const removeLabeled = async (
+      listCommand: string,
+      remove: (identifier: string) => Promise<void>,
+      kind: string,
+    ): Promise<void> => {
+      const listed = await this.shell.exec(listCommand, { timeout: 30_000 });
+      if (listed.exitCode !== 0) {
+        failures.push(`${kind} listing failed`);
+        return;
+      }
+      const identifiers = listed.stdout.split(/\s+/).map((value) => value.trim()).filter(Boolean);
+      for (const identifier of identifiers) {
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,255}$/.test(identifier)) {
+          failures.push(`${kind} returned an unsafe identifier`);
+          continue;
+        }
+        await remove(identifier).catch(() => failures.push(`${kind} ${identifier} cleanup failed`));
+      }
+    };
+
+    await removeLabeled(
+      `docker ps -aq --filter ${shellQuote('label=cds.type=agent-session')} --filter ${shellQuote(`label=cds.instance=${this.instanceId}`)}`,
+      (identifier) => this.removeContainer(identifier),
+      'container',
+    );
+    await removeLabeled(
+      `docker network ls -q --filter ${shellQuote('label=cds.type=agent-session')} --filter ${shellQuote(`label=cds.instance=${this.instanceId}`)}`,
+      (identifier) => this.removeNetwork(identifier),
+      'network',
+    );
+    await removeLabeled(
+      `docker volume ls -q --filter ${shellQuote('label=cds.type=agent-session')} --filter ${shellQuote(`label=cds.instance=${this.instanceId}`)}`,
+      (identifier) => this.removeVolume(identifier),
+      'volume',
+    );
+
+    try {
+      if (fs.existsSync(this.instanceRootDir)) {
+        for (const entry of fs.readdirSync(this.instanceRootDir, { withFileTypes: true })) {
+          if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+          const target = path.resolve(this.instanceRootDir, entry.name);
+          if (path.dirname(target) !== this.instanceRootDir) {
+            failures.push('workspace cleanup resolved outside the configured root');
+            continue;
+          }
+          fs.rmSync(target, { recursive: true, force: true });
+        }
+        fs.rmdirSync(this.instanceRootDir);
+      }
+    } catch {
+      failures.push('workspace directory cleanup failed');
+    }
+    if (failures.length > 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_orphan_cleanup_failed',
+        'Stale Agent workspace resources could not be fully reclaimed',
+        true,
+        { failures },
+      );
+    }
+  }
+
+  async prepareImage(): Promise<void> {
+    if (!this.autoPullImage) return;
+    if (this.imagePreparation) return this.imagePreparation;
+    if (this.imagePreparationError && Date.now() - this.imagePreparationAttemptedAt < 60_000) return;
+    this.imagePreparationAttemptedAt = Date.now();
+    const preparation = (async () => {
+      const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000 });
+      if (docker.exitCode !== 0 || !docker.stdout.trim()) {
+        throw new Error('Docker daemon is unavailable');
+      }
+      const installed = await this.shell.exec(
+        `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+        { timeout: 10_000 },
+      );
+      if (installed.exitCode === 0 && installed.stdout.trim()) return;
+      const pulled = await this.shell.exec(`docker pull ${shellQuote(this.image)}`, { timeout: 600_000 });
+      if (pulled.exitCode !== 0) throw new Error(classifyImagePullFailure(pulled.stdout, pulled.stderr));
+      const verified = await this.shell.exec(
+        `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+        { timeout: 10_000 },
+      );
+      if (verified.exitCode !== 0 || !verified.stdout.trim()) {
+        throw new Error('runtime image is still unavailable after pull');
+      }
+    })()
+      .then(() => { this.imagePreparationError = null; })
+      .catch((error) => {
+        this.imagePreparationError = error instanceof Error ? error.message : 'runtime image preparation failed';
+      })
+      .finally(() => {
+        this.imagePreparation = null;
+      });
+    this.imagePreparation = preparation;
+    return preparation;
+  }
+
+  /**
+   * 默认供 Provider 目录读取：只返回内存快照并在后台刷新，绝不等待最长 45 秒的 Docker 冷探针。
+   * force 只供会话创建安全门使用：等待同一个去重刷新，并在探针异常时从严返回不可用。
+   */
+  async capability(force = false): Promise<AgentWorkspaceRuntimeCapability> {
+    const now = Date.now();
+    if (this.bootstrapPreparation) {
+      return {
+        available: false,
+        resourcePolicyEnforcedPerSession: false,
+        reason: 'Agent workspace startup recovery is still running',
+      };
+    }
+    if (this.bootstrapAttempted && this.bootstrapError) {
+      return {
+        available: false,
+        resourcePolicyEnforcedPerSession: false,
+        reason: `Agent workspace startup recovery failed: ${this.bootstrapError}`,
+      };
+    }
+    if (force) {
+      try {
+        return (await this.refreshCapability()).value;
+      } catch {
+        return this.failedCapabilitySnapshot();
+      }
+    }
+    if (this.capabilityCache && this.capabilityCache.freshUntil > now) {
+      return this.capabilityCache.value;
+    }
+    if (now >= this.capabilityRetryAfter) void this.refreshCapability().catch(() => undefined);
+    if (this.capabilityCache && this.capabilityCache.staleUntil > now) {
+      return this.capabilityCache.value;
+    }
+    return this.pendingCapabilitySnapshot();
+  }
+
+  private refreshCapability(): Promise<CapabilityProbeResult> {
+    if (this.capabilityRefresh) return this.capabilityRefresh;
+    const refresh = this.probeCapability()
+      .then((result) => {
+        const now = Date.now();
+        const freshFor = result.value.available
+          ? this.capabilityCacheMs
+          : this.capabilityNegativeCacheMs;
+        this.capabilityCache = {
+          value: result.value,
+          freshUntil: now + freshFor,
+          staleUntil: now + this.capabilityMaxStaleMs,
+        };
+        this.capabilityRetryAfter = now + freshFor;
+        this.capabilityRefreshError = null;
+        return result;
+      })
+      .catch((error) => {
+        const now = Date.now();
+        this.capabilityRefreshError = error instanceof Error
+          ? error.message
+          : 'Docker capability probe failed';
+        this.capabilityRetryAfter = now + this.capabilityNegativeCacheMs;
+        if (!this.capabilityCache || this.capabilityCache.staleUntil <= now) {
+          this.capabilityCache = {
+            value: this.failedCapabilitySnapshot(),
+            freshUntil: this.capabilityRetryAfter,
+            staleUntil: this.capabilityRetryAfter,
+          };
+        }
+        throw error;
+      })
+      .finally(() => {
+        this.capabilityRefresh = null;
+      });
+    this.capabilityRefresh = refresh;
+    return refresh;
+  }
+
+  private async probeCapability(): Promise<CapabilityProbeResult> {
+    const docker = await this.shell.exec("docker version --format '{{.Server.Version}}'", { timeout: 5000 });
+    if (docker.exitCode !== 0 || !docker.stdout.trim()) {
+      return {
+        imageId: null,
+        value: {
+          available: false,
+          resourcePolicyEnforcedPerSession: false,
+          reason: 'Docker daemon is unavailable; dedicated Agent workspace containers cannot be enforced',
+        },
+      };
+    }
+
+    const image = await this.shell.exec(
+      `docker image inspect ${shellQuote(this.image)} --format ${shellQuote('{{.Id}}')}`,
+      { timeout: 10_000 },
+    );
+    const imageId = image.exitCode === 0 ? image.stdout.trim() : '';
+    if (!imageId) {
+      if (this.autoPullImage) {
+        void this.prepareImage().then(() => {
+          if (!this.imagePreparationError) void this.refreshCapability().catch(() => undefined);
+        });
+      }
+      return {
+        imageId: null,
+        value: {
+          available: false,
+          resourcePolicyEnforcedPerSession: false,
+          reason: !this.autoPullImage
+            ? `OpenDesign image ${this.image} is not installed on this CDS node`
+            : this.imagePreparationError
+              ? `OpenDesign image ${this.image} could not be prepared on this CDS node: ${this.imagePreparationError}`
+              : `OpenDesign image ${this.image} is being prepared on this CDS node`,
+        },
+      };
+    }
+
+    let runtimeAvailable = this.runtimeValidationByImageId.get(imageId);
+    if (runtimeAvailable === undefined) {
+      const runtimeValidation = await this.shell.exec([
+        'docker run --rm',
+        '--pull never',
+        '--read-only',
+        '--network none',
+        '--security-opt no-new-privileges:true',
+        '--cap-drop ALL',
+        '--pids-limit 64',
+        '--memory 128m',
+        '--cpus 0.25',
+        '--entrypoint /bin/sh',
+        shellQuote(this.image),
+        '-lc',
+        shellQuote([
+          `test "$(codex --version)" = "codex-cli ${OPEN_DESIGN_CODEX_VERSION}"`,
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/SKILL.md`,
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/assets/template.html`,
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/references/layouts.md`,
+          `test -f ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/references/checklist.md`,
+        ].join(' && ')),
+      ].join(' '), { timeout: 30_000 });
+      runtimeAvailable = runtimeValidation.exitCode === 0;
+      this.runtimeValidationByImageId.clear();
+      this.runtimeValidationByImageId.set(imageId, runtimeAvailable);
+    }
+
+    if (runtimeAvailable && !this.hardStoragePolicyValidated) {
+      this.hardStoragePolicyValidated = await this.probeHardStoragePolicy();
+    }
+
+    return {
+      imageId,
+      value: runtimeAvailable && this.hardStoragePolicyValidated
+        ? { available: true, resourcePolicyEnforcedPerSession: true, reason: null }
+        : !runtimeAvailable
+          ? {
+            available: false,
+            resourcePolicyEnforcedPerSession: false,
+            reason: `OpenDesign image ${this.image} does not contain the required Codex CLI ${OPEN_DESIGN_CODEX_VERSION} and web prototype resources`,
+          }
+          : {
+              available: false,
+              resourcePolicyEnforcedPerSession: false,
+              reason: `Docker node cannot enforce and verify hard per-session Agent workspace storage limits (${this.hardStoragePolicyFailureCode || 'unknown'}${this.hardStoragePolicyDiagnostic ? `; ${this.hardStoragePolicyDiagnostic}` : ''})`,
+            },
+    };
+  }
+
+  private async probeHardStoragePolicy(): Promise<boolean> {
+    const volumeName = `cds-od-storage-probe-${this.instanceNameScope}`;
+    const sessionLabel = `capability-${this.instanceNameScope}`;
+    let created = false;
+    let verified = false;
+    let removed = false;
+    this.hardStoragePolicyFailureCode = null;
+    this.hardStoragePolicyDiagnostic = null;
+    try {
+      // Treat the name as allocated before Docker replies: a timed-out create
+      // can still have succeeded in the daemon and therefore must be removed.
+      created = true;
+      const volume = await this.shell.exec(
+        this.limitedVolumeCreateCommand(
+          volumeName,
+          STORAGE_CAPABILITY_PROBE_BYTES,
+          STORAGE_CAPABILITY_PROBE_INODES,
+          sessionLabel,
+        ),
+        { timeout: 30_000 },
+      );
+      if (volume.exitCode === 0) {
+        const validation = await this.shell.exec([
+          'docker run --rm',
+          '--pull never',
+          '--network none',
+          '--read-only',
+          '--security-opt no-new-privileges:true',
+          '--cap-drop ALL',
+          // The probe volume is intentionally mode=0700 and owned by root.
+          // Production sessions separately initialize their volume ownership;
+          // this probe verifies the daemon's byte/inode enforcement itself.
+          '--user 0:0',
+          '--pids-limit 32',
+          '--memory 64m',
+          '--cpus 0.1',
+          `--mount ${shellQuote(`type=volume,src=${volumeName},dst=/cds-storage-probe,volume-nocopy`)}`,
+          `--tmpfs ${shellQuote(`/cds-direct-storage-probe:rw,noexec,nosuid,size=${STORAGE_CAPABILITY_PROBE_BYTES},nr_inodes=${STORAGE_CAPABILITY_PROBE_INODES},mode=0700`)}`,
+          '--entrypoint /bin/sh',
+          shellQuote(this.image),
+          '-lc',
+          // POSIX shells may terminate when a redirection on the special `:`
+          // builtin fails. Keep that expected ENOSPC inside a subshell so the
+          // parent can observe it, break the loop, and finish the probe.
+          shellQuote('set -u; command -v dd >/dev/null 2>&1 || exit 10; stage=20; for root in /cds-storage-probe /cds-direct-storage-probe; do dd if=/dev/zero of="$root/within-limit" bs=524288 count=1 2>/dev/null || exit $((stage + 1)); if dd if=/dev/zero of="$root/over-limit" bs=1048576 count=2 2>/dev/null; then exit $((stage + 2)); fi; rm -f "$root/within-limit" "$root/over-limit" || exit $((stage + 3)); created=0; while [ "$created" -lt 128 ]; do if ( : > "$root/inode-limit-$created" ) 2>/dev/null; then created=$((created + 1)); else break; fi; done; test "$created" -lt 128 || exit $((stage + 4)); rm -f "$root"/inode-limit-* || exit $((stage + 5)); stage=30; done; exit 0'),
+        ].join(' '), { timeout: 30_000 });
+        verified = validation.exitCode === 0;
+        if (!verified) {
+          const diagnostic = `${validation.stderr}\n${validation.stdout}`.toLowerCase();
+          const category = diagnostic.includes('permission denied')
+            ? 'permission_denied'
+            : diagnostic.includes('operation not permitted')
+              ? 'operation_not_permitted'
+              : diagnostic.includes('invalid argument') || diagnostic.includes('invalid mount')
+                ? 'invalid_mount'
+                : diagnostic.includes('unknown flag') || diagnostic.includes('unknown option')
+                  ? 'unsupported_option'
+                  : diagnostic.includes('no space left')
+                    ? 'no_space'
+                    : diagnostic.includes('read-only')
+                      ? 'read_only'
+                      : diagnostic.length > 0
+                        ? 'docker_or_shell_error'
+                        : 'no_diagnostic';
+          this.hardStoragePolicyFailureCode = `validation_exit_${validation.exitCode}_${category}`;
+          this.hardStoragePolicyDiagnostic = runtimeDiagnosticPreview(
+            `${validation.stderr}\n${validation.stdout}`,
+            [volumeName, this.image],
+          ).trim().replace(/\s+/g, ' ').slice(0, 240) || null;
+        }
+      } else {
+        this.hardStoragePolicyFailureCode = `volume_create_exit_${volume.exitCode}`;
+      }
+    } catch {
+      verified = false;
+      this.hardStoragePolicyFailureCode = 'probe_exception';
+    } finally {
+      if (created) {
+        await this.removeVolume(volumeName)
+          .then(() => { removed = true; })
+          .catch(() => { removed = false; });
+      }
+    }
+    if (!removed) this.hardStoragePolicyFailureCode = 'volume_remove_failed';
+    return verified && removed;
+  }
+
+  private limitedVolumeCreateCommand(
+    volumeName: string,
+    maxBytes: number,
+    maxInodes: number,
+    sessionId: string,
+  ): string {
+    return [
+      'docker volume create',
+      '--driver local',
+      '--opt type=tmpfs',
+      '--opt device=tmpfs',
+      `--opt ${shellQuote(`o=size=${maxBytes},nr_inodes=${maxInodes},mode=0700`)}`,
+      '--label cds.managed=true',
+      '--label cds.type=agent-session',
+      `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+      `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
+      shellQuote(volumeName),
+    ].join(' ');
+  }
+
+  private pendingCapabilitySnapshot(): AgentWorkspaceRuntimeCapability {
+    return {
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: this.capabilityRefreshError
+        ? 'Docker capability probe failed; dedicated Agent workspace containers remain disabled'
+        : 'OpenDesign capability verification is running on this CDS node',
+      ...(this.capabilityRefreshError ? {} : { verificationPending: true }),
+    };
+  }
+
+  private failedCapabilitySnapshot(): AgentWorkspaceRuntimeCapability {
+    return {
+      available: false,
+      resourcePolicyEnforcedPerSession: false,
+      reason: 'Docker capability probe failed; dedicated Agent workspace containers remain disabled',
+    };
+  }
+
+  async create(
+    sessionId: string,
+    rawTransfer: unknown,
+    policy: AgentWorkspaceResourcePolicy,
+    onStage: StageReporter = () => undefined,
+    onExpired: (error?: unknown) => void = () => undefined,
+  ): Promise<AgentWorkspaceCreateResult> {
+    if (!SESSION_ID_RE.test(sessionId)) {
+      throw new AgentWorkspaceRuntimeError('workspace_session_invalid', 'session id is not safe for container allocation');
+    }
+    if (this.handles.has(sessionId)) {
+      throw new AgentWorkspaceRuntimeError('workspace_session_conflict', 'workspace session already exists');
+    }
+    if (policy.networkPolicy !== 'egress-only') {
+      throw new AgentWorkspaceRuntimeError(
+        'resource_policy_not_enforced',
+        'OpenDesign requires the egress-only network policy',
+      );
+    }
+    if (policy.autoCleanupMinutes * 60 < policy.timeoutSeconds + 120) {
+      throw new AgentWorkspaceRuntimeError(
+        'resource_policy_not_enforced',
+        'OpenDesign auto-cleanup must leave at least two minutes for result validation and commit',
+      );
+    }
+    let resolveSettled!: () => void;
+    const settled = new Promise<void>((resolve) => { resolveSettled = resolve; });
+    const creatingHandle: CreatingRuntimeHandle = {
+      kind: 'creating',
+      sessionId,
+      cancelRequested: false,
+      abortController: new AbortController(),
+      settled,
+      resolveSettled,
+      onCleanupSettled: onExpired,
+    };
+    // Register synchronously, before the capability probe or any filesystem / Docker side effect.
+    // stop() can now mark creation cancelled and wait until the create path has fully cleaned up.
+    this.handles.set(sessionId, creatingHandle);
+    try {
+      const capability = await this.capability(true);
+      if (!capability.available || !capability.resourcePolicyEnforcedPerSession) {
+        throw new AgentWorkspaceRuntimeError('workspace_runtime_unavailable', capability.reason || 'workspace runtime unavailable', true);
+      }
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_creation_cancelled',
+          'OpenDesign workspace creation was cancelled before allocation',
+          false,
+        );
+      }
+      const transfer = normalizeWorkspaceTransfer(rawTransfer);
+      fs.mkdirSync(this.instanceRootDir, { recursive: true, mode: 0o700 });
+      const hostRoot = fs.mkdtempSync(path.join(this.instanceRootDir, `${sessionId}-`));
+      const workspaceDir = path.join(hostRoot, 'workspace');
+      const outputDir = path.join(hostRoot, 'output');
+      const dataDir = path.join(hostRoot, 'data');
+      const suffix = sha256(sessionId).slice(0, 16);
+      const containerName = `cds-od-${this.instanceNameScope}-${suffix}`;
+      const storageKeeperName = `${containerName}-storage`;
+      const networkName = `cds-od-net-${this.instanceNameScope}-${suffix}`;
+      const workspaceVolumeName = `cds-od-ws-${this.instanceNameScope}-${suffix}`;
+      const dataVolumeName = `cds-od-data-${this.instanceNameScope}-${suffix}`;
+      let containerCreated = false;
+      let storageKeeperCreated = false;
+      let networkCreated = false;
+      const createdVolumes: string[] = [];
+      try {
+      fs.mkdirSync(workspaceDir, { recursive: true, mode: 0o755 });
+      fs.mkdirSync(outputDir, { recursive: true, mode: 0o750 });
+      fs.mkdirSync(dataDir, { recursive: true, mode: 0o750 });
+      onStage('workspace_downloading');
+      const response = await this.fetchPartnerTransfer(transfer.inputPackageUrl, {
+        headers: { Authorization: `Bearer ${transfer.transferToken}`, Accept: 'application/json' },
+        signal: AbortSignal.any([
+          creatingHandle.abortController.signal,
+          AbortSignal.timeout(Math.min(policy.timeoutSeconds * 1000, 60_000)),
+        ]),
+      }, 'workspaceTransfer.inputPackageUrl');
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_creation_cancelled',
+          'OpenDesign workspace creation was cancelled during input transfer',
+          false,
+        );
+      }
+      if (!response.ok) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_download_failed',
+          `MAP workspace download failed with status ${response.status}`,
+          response.status >= 500,
+        );
+      }
+      const packageBytes = await readResponseLimited(
+        response,
+        Math.ceil(transfer.maxInputBytes * 1.5) + MAX_PACKAGE_OVERHEAD_BYTES,
+      );
+      const workspacePackage = parseWorkspacePackage(packageBytes, transfer);
+      const files = workspacePackage.files;
+      const editableSeeds = prepareCurrentArtifactSeeds(files, transfer);
+      for (const file of files) {
+        const target = path.join(workspaceDir, ...file.path.split('/'));
+        const relative = path.relative(workspaceDir, target);
+        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+          throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `workspace path escaped root: ${file.path}`);
+        }
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
+        fs.writeFileSync(target, file.bytes, { mode: 0o644, flag: 'wx' });
+      }
+      for (const file of editableSeeds) {
+        const target = path.join(workspaceDir, ...file.path.split('/'));
+        fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o755 });
+        fs.writeFileSync(target, Buffer.from(file.contentBase64, 'base64'), { mode: 0o644, flag: 'wx' });
+      }
+      this.chownForContainer(hostRoot);
+      onStage('workspace_materialized', { fileCount: files.length });
+
+      // Docker 命令超时或返回非零时也可能已经创建了具名资源。名称由 session 派生且
+      // 归当前 runtime 独占，因此从发起命令起就按“可能存在”登记，失败收尾会用
+      // No-such 幂等删除确认，而不是假定非零退出等于零残留。
+      networkCreated = true;
+      const network = await this.shell.exec(
+        `docker network create --internal --label cds.managed=true --label cds.type=agent-session --label ${shellQuote(`cds.instance=${this.instanceId}`)} --label ${shellQuote(`cds.agent.session=${sessionId}`)} ${shellQuote(networkName)}`,
+        { timeout: 30_000 },
+      );
+      if (network.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_network_create_failed', 'could not create isolated Agent network', true);
+      }
+      const workspaceStorageLimitBytes = Math.max(
+        MIN_WORKSPACE_STORAGE_BYTES,
+        transfer.maxInputBytes + transfer.maxOutputBytes + WORKSPACE_STORAGE_HEADROOM_BYTES,
+      );
+      for (const [volumeName, maxBytes, maxInodes] of [
+        [workspaceVolumeName, workspaceStorageLimitBytes, WORKSPACE_STORAGE_INODE_LIMIT],
+        [dataVolumeName, DATA_STORAGE_LIMIT_BYTES, DATA_STORAGE_INODE_LIMIT],
+      ] as const) {
+        createdVolumes.push(volumeName);
+        const volume = await this.shell.exec(
+          this.limitedVolumeCreateCommand(volumeName, maxBytes, maxInodes, sessionId),
+          { timeout: 30_000 },
+        );
+        if (volume.exitCode !== 0) {
+          throw new AgentWorkspaceRuntimeError('workspace_volume_create_failed', 'could not create Agent workspace volume', true);
+        }
+      }
+      // A local-driver tmpfs volume is unmounted when its last consumer exits.
+      // Copying into a stopped container and then running a short init helper
+      // can therefore lose both bytes and ownership before the real container
+      // starts. Keep both mounts alive across copy, chown and startup; once the
+      // main container is running it becomes the volume consumer and this
+      // helper can be removed without remounting the tmpfs.
+      storageKeeperCreated = true;
+      const storageKeeper = await this.shell.exec([
+        'docker run --detach',
+        '--pull never',
+        `--name ${shellQuote(storageKeeperName)}`,
+        '--restart no',
+        '--network none',
+        '--read-only',
+        '--security-opt no-new-privileges:true',
+        '--cap-drop ALL',
+        '--user 0:0',
+        '--pids-limit 16',
+        '--memory 32m',
+        '--cpus 0.05',
+        `--label ${shellQuote('cds.managed=true')}`,
+        `--label ${shellQuote('cds.type=agent-session')}`,
+        `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+        `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
+        `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace,volume-nocopy`)}`,
+        `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od,volume-nocopy`)}`,
+        '--entrypoint /bin/sh',
+        shellQuote(this.image),
+        '-c',
+        shellQuote('while :; do sleep 300; done'),
+      ].join(' '), { timeout: 30_000 });
+      if (storageKeeper.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_volume_keeper_start_failed',
+          'Agent workspace storage mount could not be held during initialization',
+          true,
+          {
+            stage: 'docker_volume_keeper',
+            exitCode: storageKeeper.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(storageKeeper.stderr, [storageKeeperName]),
+            stdoutPreview: runtimeDiagnosticPreview(storageKeeper.stdout, [storageKeeperName]),
+          },
+        );
+      }
+      const daemonApiToken = crypto.randomBytes(32).toString('hex');
+      const egressClientToken = `cds-placeholder-${crypto.randomBytes(32).toString('base64url')}`;
+      const env = [
+        'NODE_ENV=production',
+        'OD_BIND_HOST=0.0.0.0',
+        `OD_PORT=${this.daemonPort}`,
+        `OD_WEB_PORT=${this.daemonPort}`,
+        'OD_DATA_DIR=/app/.od',
+        `OD_API_TOKEN=${daemonApiToken}`,
+        'OD_SANDBOX_MODE=1',
+        'OD_SANDBOX_IMPORT_ALLOWED_ROOTS=/workspace',
+        // Codex 在 Linux 上默认以 workspace-write 沙箱运行，底层用 bubblewrap 在容器内再开一层
+        // user namespace。这个会话容器 cap-drop ALL + no-new-privileges、非特权，那层 namespace
+        // 开不出来，于是每条文件系统命令在执行前就失败——模型读不到任务书、写不出页面，
+        // 只能在回复里反复报「bwrap: No permissions to create a new namespace」
+        // （2026-09-21 run 事件摘要里的原话；此前十八条 run 零产出的真正原因）。
+        // 容器本身就是隔离边界（只读 rootfs、cap-drop ALL、egress-only、每会话独立卷），
+        // Codex 再套一层既多余又起不来。用 OpenDesign 自己的运维开关关掉它：
+        // codexNeedsDangerFullAccessSandbox() 读这个值，注释写的正是「unprivileged Linux containers」。
+        'OD_CODEX_SANDBOX=danger-full-access',
+        // The real MAP ticket belongs only to the egress relay. Codex's
+        // provider-specific env_key receives this session-local placeholder.
+        `MAP_CODEX_MODEL_TOKEN=${egressClientToken}`,
+      ].join('\n') + '\n';
+      const envFilePath = path.join(hostRoot, `.docker-env-${crypto.randomBytes(8).toString('hex')}`);
+      fs.writeFileSync(envFilePath, env, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+      const command = [
+        'docker create',
+        '--pull never',
+        `--name ${shellQuote(containerName)}`,
+        '--restart no',
+        '--read-only',
+        '--security-opt no-new-privileges:true',
+        '--cap-drop ALL',
+        `--cpus ${shellQuote(String(policy.cpuCores))}`,
+        `--memory ${shellQuote(`${policy.memoryMb}m`)}`,
+        '--pids-limit 256',
+        '--stop-timeout 10',
+        '--log-opt max-size=20m',
+        '--log-opt max-file=2',
+        '--tmpfs /tmp:rw,noexec,nosuid,size=128m,nr_inodes=2048',
+        `--tmpfs ${shellQuote(`/app/design-templates:rw,noexec,nosuid,size=8m,nr_inodes=512,uid=${this.containerUid},gid=${this.containerGid},mode=0755`)}`,
+        `--network ${shellQuote(networkName)}`,
+        `--label ${shellQuote('cds.managed=true')}`,
+        `--label ${shellQuote('cds.type=agent-session')}`,
+        `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+        `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
+        `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace,volume-nocopy`)}`,
+        `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od,volume-nocopy`)}`,
+        `--env-file ${shellQuote(envFilePath)}`,
+        shellQuote(this.image),
+      ].join(' ');
+      onStage('container_starting', { image: this.image });
+      let started: ExecResult;
+      containerCreated = true;
+      try {
+        started = await this.shell.exec(command, { timeout: 120_000 });
+      } finally {
+        fs.rmSync(envFilePath, { force: true });
+      }
+      if (started.exitCode !== 0) {
+        const excludedDiagnosticValues = [daemonApiToken, transfer.transferToken, command];
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_container_create_failed',
+          'OpenDesign container failed to be created',
+          true,
+          {
+            stage: 'docker_create',
+            exitCode: started.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(started.stderr, excludedDiagnosticValues),
+            stdoutPreview: runtimeDiagnosticPreview(started.stdout, excludedDiagnosticValues),
+          },
+        );
+      }
+      // Match CDS project validation's established sibling-container pattern:
+      // docker cp streams from the control-plane filesystem through the Docker
+      // API, so no control-container /tmp path is misinterpreted as a daemon
+      // host bind source.
+      const copied = await this.shell.exec(
+        `docker cp ${shellQuote(`${workspaceDir}/.`)} ${shellQuote(`${containerName}:/workspace/`)}`,
+        { timeout: 90_000 },
+      );
+      if (copied.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_copy_failed', 'workspace files could not be copied into the Agent volume', true);
+      }
+      const initialized = await this.shell.exec([
+        'docker run --rm',
+        '--pull never',
+        '--network none',
+        '--read-only',
+        '--security-opt no-new-privileges:true',
+        '--cap-drop ALL',
+        '--cap-add CHOWN',
+        '--user 0:0',
+        `--label ${shellQuote('cds.managed=true')}`,
+        `--label ${shellQuote('cds.type=agent-session')}`,
+        `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+        `--label ${shellQuote(`cds.agent.session=${sessionId}`)}`,
+        `--mount ${shellQuote(`type=volume,src=${workspaceVolumeName},dst=/workspace,volume-nocopy`)}`,
+        `--mount ${shellQuote(`type=volume,src=${dataVolumeName},dst=/app/.od,volume-nocopy`)}`,
+        '--entrypoint /bin/sh',
+        shellQuote(this.image),
+        '-c',
+        shellQuote(`chown ${this.containerUid}:${this.containerGid} /workspace /app/.od`),
+      ].join(' '), { timeout: 90_000 });
+      if (initialized.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_volume_init_failed',
+          'Agent workspace volume ownership could not be initialized',
+          true,
+          {
+            stage: 'docker_volume_init',
+            exitCode: initialized.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(initialized.stderr, []),
+            stdoutPreview: runtimeDiagnosticPreview(initialized.stdout, []),
+          },
+        );
+      }
+      const startedContainer = await this.shell.exec(`docker start ${shellQuote(containerName)}`, { timeout: 30_000 });
+      if (startedContainer.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_container_start_failed', 'OpenDesign container failed to start', true);
+      }
+      await this.removeContainer(storageKeeperName);
+      storageKeeperCreated = false;
+      const preparedDesignTemplate = await this.shell.exec([
+        'docker exec',
+        shellQuote(containerName),
+        '/bin/sh -lc',
+        shellQuote([
+          'mkdir -p /app/design-templates/web-prototype',
+          'mkdir -p /workspace/.od-skills/web-prototype',
+          `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /app/design-templates/web-prototype/`,
+          `cp -a ${OPEN_DESIGN_WEB_PROTOTYPE_SOURCE}/. /workspace/.od-skills/web-prototype/`,
+          // 上游模板示范的恰恰是发布闸必拒的两种写法：topnav 三个 `href="#"`、三个裸 CTA
+          // 按钮。而新建页面时它还**就是那张起始页**，模型在它上面改，导航整条留着不动——
+          // 2026-09-20 实测五条 run，失败的锚点序号稳定是 1,2,3，正是那三条导航。
+          // 光靠提示词说「别抄」压不住（试过一轮，照抄）。这里把 CDS 自己那几份拷贝改对：
+          // 导航指向模板本来就有的 #hero/#content/#footer，CTA 改成同样落点的锚点。
+          // 模板从此示范的是通得过闸门的写法，模型照抄也对。
+          WEB_PROTOTYPE_TEMPLATE_PATCH,
+          // 上游换了模板、sed 一条都没命中时必须当场失败，而不是静默放过一张仍然违规的起始页
+          // （`predicate-and-wiring-discipline.md` 形状 8：不成立的证据当成证据）。
+          WEB_PROTOTYPE_TEMPLATE_ASSERT,
+          // 新建页面刻意不种 index.html：种了就会被 OpenDesign 认成交付物，
+          // 把模型真做出来的那份晾成孤儿（见 NEW_PAGE_NO_SEED_NOTE）。
+          'test -f /app/design-templates/web-prototype/SKILL.md',
+          'test -f /app/design-templates/web-prototype/assets/template.html',
+          'test -f /app/design-templates/web-prototype/references/layouts.md',
+          'test -f /app/design-templates/web-prototype/references/checklist.md',
+          'test -f /workspace/.od-skills/web-prototype/assets/template.html',
+          'test -f /workspace/.od-skills/web-prototype/references/layouts.md',
+          'test -f /workspace/.od-skills/web-prototype/references/checklist.md',
+          // 编辑路径的 index.html 由输入包带来，缺了就是传输坏了，必须当场发现；
+          // 新建路径本来就没有，不在这里断言它存在。
+          '{ [ ! -f /workspace/current/index.html ] || test -f /workspace/index.html; }',
+        ].join(' && ')),
+      ].join(' '), { timeout: 30_000 });
+      if (preparedDesignTemplate.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_design_template_init_failed',
+          'OpenDesign web prototype resources could not be prepared',
+          false,
+          {
+            stage: 'design_template_init',
+            exitCode: preparedDesignTemplate.exitCode,
+            stderrPreview: runtimeDiagnosticPreview(preparedDesignTemplate.stderr, []),
+            stdoutPreview: runtimeDiagnosticPreview(preparedDesignTemplate.stdout, []),
+          },
+        );
+      }
+      const address = await this.shell.exec(
+        `docker inspect --format ${shellQuote(`{{with index .NetworkSettings.Networks "${networkName}"}}{{.IPAddress}}{{end}}`)} ${shellQuote(containerName)}`,
+        { timeout: 5000 },
+      );
+      const containerIp = address.exitCode === 0 ? address.stdout.trim() : '';
+      if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(containerIp)) {
+        throw new AgentWorkspaceRuntimeError('workspace_container_address_failed', 'OpenDesign container has no isolated network address', true);
+      }
+      const daemonBaseUrl = `http://${containerIp}:${this.daemonPort}`;
+      await this.waitForHealth(daemonBaseUrl, daemonApiToken, policy.timeoutSeconds);
+      if (creatingHandle.cancelRequested) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_creation_cancelled',
+          'OpenDesign workspace creation was cancelled before readiness',
+          false,
+        );
+      }
+      const ttlTimer = setTimeout(() => {
+        void this.stop(sessionId, 'ttl_expired')
+          .then(() => onExpired())
+          .catch((error) => onExpired(error));
+      }, Math.max(1, policy.autoCleanupMinutes) * 60_000);
+      ttlTimer.unref();
+      this.handles.set(sessionId, {
+        kind: 'active',
+        sessionId,
+        mapRunId: workspacePackage.runId,
+        hostRoot,
+        workspaceDir,
+        outputDir,
+        dataDir,
+        containerName,
+        networkName,
+        workspaceVolumeName,
+        dataVolumeName,
+        inputFiles: files.map((file) => ({ path: file.path, sha256: file.sha256, size: file.bytes.byteLength })),
+        daemonBaseUrl,
+        daemonApiToken,
+        egressClientToken,
+        transfer: publicTransfer(transfer),
+        policy,
+        ttlTimer,
+        onCleanupSettled: onExpired,
+      });
+      onStage('container_ready');
+      return {
+        hostRoot,
+        workspaceDir,
+        containerName,
+        networkName,
+        daemonBaseUrl,
+        inputFileCount: files.length,
+      };
+      } catch (error) {
+      const cleanupErrors: string[] = [];
+      const remainingContainerNames = new Set([
+        ...(containerCreated ? [containerName] : []),
+        ...(storageKeeperCreated ? [storageKeeperName] : []),
+      ]);
+      let remainingNetworkName = networkCreated ? networkName : undefined;
+      const remainingVolumeNames = new Set(createdVolumes);
+      let remainingHostRoot: string | undefined = hostRoot;
+      for (const allocatedContainerName of [...remainingContainerNames]) {
+        await this.removeContainer(allocatedContainerName)
+          .then(() => { remainingContainerNames.delete(allocatedContainerName); })
+          .catch((cleanupError) => {
+            cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+          });
+      }
+      if (networkCreated) {
+        await this.removeNetwork(networkName)
+          .then(() => { remainingNetworkName = undefined; })
+          .catch((cleanupError) => {
+            cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+          });
+      }
+      for (const volumeName of [...createdVolumes].reverse()) {
+        await this.removeVolume(volumeName)
+          .then(() => { remainingVolumeNames.delete(volumeName); })
+          .catch((cleanupError) => {
+            cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+          });
+      }
+      try {
+        fs.rmSync(hostRoot, { recursive: true, force: true });
+        remainingHostRoot = undefined;
+      } catch (cleanupError) {
+        cleanupErrors.push(cleanupError instanceof Error ? cleanupError.message : String(cleanupError));
+      }
+      this.removeInstanceRootIfEmpty();
+      if (cleanupErrors.length > 0) {
+        this.handles.set(sessionId, {
+          kind: 'partial-cleanup',
+          sessionId,
+          ...(remainingHostRoot ? { hostRoot: remainingHostRoot } : {}),
+          containerNames: [...remainingContainerNames],
+          ...(remainingNetworkName ? { networkName: remainingNetworkName } : {}),
+          volumeNames: [...remainingVolumeNames],
+          onCleanupSettled: onExpired,
+        });
+        this.scheduleCleanupRetry(sessionId);
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_cleanup_failed',
+          'OpenDesign session creation failed and allocated resources could not be fully cleaned',
+          true,
+          {
+            originalCode: error instanceof AgentWorkspaceRuntimeError ? error.code : null,
+            cleanupErrors,
+          },
+        );
+      }
+      throw error;
+      }
+    } finally {
+      if (this.handles.get(sessionId) === creatingHandle) {
+        this.handles.delete(sessionId);
+      }
+      creatingHandle.resolveSettled();
+    }
+  }
+
+  async execute(
+    sessionId: string,
+    instruction: string,
+    model: OpenDesignModelAuthority,
+    transferToken: string,
+    signal?: AbortSignal,
+    onStage: StageReporter = () => undefined,
+  ): Promise<AgentWorkspaceExecuteResult> {
+    const handle = this.handles.get(sessionId);
+    if (!handle) {
+      throw new AgentWorkspaceRuntimeError('workspace_session_not_found', 'OpenDesign workspace session does not exist');
+    }
+    if (handle.kind === 'creating') {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_session_creating',
+        'OpenDesign workspace session is still being created',
+        true,
+      );
+    }
+    if (handle.kind === 'partial-cleanup') {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_cleanup_pending',
+        'OpenDesign workspace session cannot execute while resource cleanup is pending',
+        true,
+      );
+    }
+    const executionDeadline = Date.now() + Math.max(1, handle.policy.timeoutSeconds) * 1000;
+    if (handle.activeRunId) {
+      throw new AgentWorkspaceRuntimeError('workspace_session_busy', 'OpenDesign workspace session already has an active run');
+    }
+    if (!instruction.trim() || instruction.length > 12_000) {
+      throw new AgentWorkspaceRuntimeError('design_instruction_invalid', 'design instruction must contain 1 to 12000 characters');
+    }
+    this.validateModelAuthority(model, handle.transfer.inputPackageUrl);
+    if (!transferToken || transferToken.length > 8192) {
+      throw new AgentWorkspaceRuntimeError('workspace_transfer_invalid', 'workspace transfer token is missing');
+    }
+    onStage('open_design_importing');
+    const imported = await this.odJson(handle, '/api/import/folder', {
+      method: 'POST',
+      body: {
+        baseDir: '/workspace',
+        name: `MAP design ${sessionId.slice(-12)}`,
+        skillId: OPEN_DESIGN_WEB_PROTOTYPE_SKILL,
+        orchestratorWorkspace: {
+          kind: 'scratch',
+          sourceLabel: 'MAP design workspace',
+          sourceRef: sessionId,
+          baseRevision: handle.transfer.baseRevision,
+          writeback: 'external',
+        },
+      },
+      signal: this.signalForDeadline(executionDeadline, signal),
+    });
+    const project = imported.project as Record<string, unknown> | undefined;
+    const projectId = typeof project?.id === 'string' ? project.id : '';
+    const conversationId = typeof imported.conversationId === 'string' ? imported.conversationId : '';
+    if (!projectId || !conversationId) {
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import returned no project identity');
+    }
+    if (project?.skillId !== OPEN_DESIGN_WEB_PROTOTYPE_SKILL) {
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign folder import did not retain the required web prototype skill');
+    }
+    const proxiedModelBaseUrl = await this.startEgressProxy(
+      handle,
+      model.baseUrl,
+      model.apiKey,
+      handle.egressClientToken,
+    );
+    // Include nested originals from the verified MAP package, not only top-level
+    // text snapshots or files the generator might have added to the directory.
+    const knowledgeFiles = handle.inputFiles
+      .filter((file) => file.path.startsWith('knowledge/'))
+      .map((file) => `/workspace/${file.path}`)
+      .sort();
+    const currentIndexPath = path.join(handle.workspaceDir, 'current', 'index.html');
+    const editingExistingPage = fs.existsSync(currentIndexPath);
+    // One execution owns its frozen evidence and repair-retention state. Neither
+    // a later model edit nor another session can redefine the facts being checked.
+    const checkArtifactQuality = createArtifactQualityGate(
+      collectArtifactQualityEvidence(handle.workspaceDir),
+      collectVisibleTextOccurrenceConstraints(handle.workspaceDir),
+      collectArtifactQualityEvidence(handle.workspaceDir, false),
+    );
+    try {
+    const codexConfig = buildOpenDesignCodexConfig(proxiedModelBaseUrl, model.model);
+    const configured = await this.shell.exec([
+      'docker exec',
+      shellQuote(handle.containerName),
+      'node -e',
+      shellQuote([
+        "const fs = require('node:fs');",
+        `const home = ${JSON.stringify(OPEN_DESIGN_CODEX_HOME)};`,
+        'fs.mkdirSync(home, { recursive: true, mode: 0o700 });',
+        'if (fs.realpathSync(home) !== home) throw new Error("Codex home must remain session-local");',
+        `fs.writeFileSync(home + '/config.toml', Buffer.from(${JSON.stringify(Buffer.from(codexConfig).toString('base64'))}, 'base64'), { mode: 0o600, flag: fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_NOFOLLOW });`,
+      ].join('\n')),
+    ].join(' '), { timeout: Math.min(this.remainingExecutionMs(executionDeadline), 10_000) });
+    if (configured.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_codex_config_failed',
+        'OpenDesign could not prepare its session-scoped MAP model configuration',
+      );
+    }
+    const systemPrompt = [
+      'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
+      'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Correct visible placeholders, empty links, missing fragment targets, and nonfunctional buttons while preserving all requested behavior. Do not remove or disable requested controls to silence a validation gate; if the publication policy cannot support their behavior, report the incompatibility.',
+      knowledgeFiles.length > 0
+        ? `Read every knowledge source before editing: ${knowledgeFiles.join(', ')}. Use those files as the only source for factual claims and product copy.`
+        : 'This task has no knowledge source files. Do not invent factual claims or metrics.',
+      'The active web-prototype skill side files are rooted at /workspace/.od-skills/web-prototype. Read /workspace/.od-skills/web-prototype/assets/template.html, /workspace/.od-skills/web-prototype/references/layouts.md, and /workspace/.od-skills/web-prototype/references/checklist.md by these exact paths; do not resolve them as /workspace/assets or /workspace/references.',
+      'Those reference files demonstrate two shapes the publication gate always rejects: anchors written as href="#" or href="" (template topnav, layouts.md "View all"), and bare enabled buttons with no declarative behavior ([REPLACE] CTA). They are layout sketches, not permitted markup. Copy their layout, never those two shapes.',
+      'Every anchor you emit must point at a fragment of this same page: href="#section-id" where that id exists here. That is the only link target the publication policy accepts - an absolute or relative URL fails the package validator instead, and that failure gets no repair pass. Make the navigation actually jump to your own sections. A label that is not meant to navigate is not an anchor at all - render it as span, li, or heading text. Every enabled button must either drive a real popover via popovertarget, or be rewritten as an anchor to one of your own sections; a caption that does nothing is plain text. None of this counts as removing a requested control, because the template never requested them - the rule about not removing controls protects what the MAP instruction asked for, not boilerplate you copied from the sketch.',
+      editingExistingPage
+        ? 'A starting /workspace/index.html already exists; it is the exact current published page and must remain the starting point. The generic template is reference material only. Never replace the product identity with OpenDesign or copy generic template copy into the deliverable.'
+        : 'This is a new page and /workspace/index.html does not exist yet. On this runtime the deliverable is a FILE: compose the page from the seed and the layout library, then WRITE the finished HTML to /workspace/index.html with your file tools (create the file). Do not follow the skill\'s instruction to emit the page inside <artifact> tags instead of writing it - on this runtime artifact text is discarded and counts as no output; a page that only appears in your reply is a failed run. The generic template is reference material only; its sample identity or copy must not appear in the deliverable.',
+      editingExistingPage
+        ? 'Modify index.html with small targeted edit operations; never replace the whole document with one write operation. The user instruction has priority over example text. Complete every requested change and do not stop after one replacement. Then reread task.json and index.html. Remove every unresolved placeholder and verify every visible-language and content constraint before claiming completion.'
+        : 'Build a complete responsive page and write it to /workspace/index.html, then reread task.json, every knowledge file, and the file you wrote. Remove every unresolved placeholder and verify every visible-language, source accuracy, navigation, control, and content constraint before finishing; confirm the file exists on disk with your file tools.',
+      'Keep the final webpage in index.html and public resources under assets/. Preserve existing scripts, resources, and interactions unless the user explicitly requests their removal. Never delete scripts or assets to silence a validation gate. The current publication execution policy may reject interactive HTML; report that incompatibility rather than degrading the requested deliverable. Frozen current/ files are reference originals; modify only their editable copies. System reports and manifest.json are rebuilt by CDS and must not be authored.',
+      'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
+    ].join(' ');
+    const buildRunBody = (message: string) => ({
+      projectId,
+      conversationId,
+      agentId: 'codex',
+      model: model.model,
+      message,
+      systemPrompt,
+    });
+    onStage('open_design_run_starting', { projectId });
+    const run = await this.odJson(handle, '/api/runs', {
+      method: 'POST',
+      body: buildRunBody(instruction.trim()),
+      signal: this.signalForDeadline(executionDeadline, signal),
+      acceptedStatuses: [200, 202],
+    });
+    const runId = typeof run.runId === 'string'
+      ? run.runId
+      : typeof run.id === 'string'
+        ? run.id
+        : '';
+    if (!runId) {
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign run creation returned no run id');
+    }
+    handle.activeRunId = runId;
+    try {
+      let finalRunId = runId;
+      let runOutcome = await this.waitForRun(handle, runId, executionDeadline, signal, onStage);
+      // 交付文件由 OpenDesign 指名，一轮里只有产出的那几次会带上它——终审与修复常报
+      // no_artifact（它们没新建产物），那不等于上一轮指名的文件失效。所以只往前记，不清空。
+      let deliverableEntryFile = runOutcome.deliverableEntryFile;
+      if (Date.now() >= executionDeadline) {
+        throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+      }
+      const review = await this.odJson(handle, '/api/runs', {
+        method: 'POST',
+        body: buildRunBody([
+          'Perform a strict final review of /workspace/index.html against every constraint and the qualityContract in /workspace/brief/task.json.',
+          'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims. Correct every proven mismatch in the file before stopping.',
+          editingExistingPage
+            ? 'Use only the smallest targeted edit operations needed. Never use broad or global string replacement. Never alter CSS values, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.'
+            : 'For this newly generated page, correct every unsupported element. Do not retain sample copy, fake actions, missing targets, invented measured claims, or incomplete sections merely to preserve the first draft. Never remove or disable requested functionality to bypass a platform limitation; report that incompatibility instead.',
+          'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder, inert control, broken fragment, or unsupported claim is absent. Do not satisfy this review by removing requested functionality; report incompatible publication requirements instead.',
+        ].join(' ')),
+        signal: this.signalForDeadline(executionDeadline, signal),
+        acceptedStatuses: [200, 202],
+      });
+      finalRunId = typeof review.runId === 'string'
+        ? review.runId
+        : typeof review.id === 'string'
+          ? review.id
+          : '';
+      if (!finalRunId) {
+        throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
+      }
+      handle.activeRunId = finalRunId;
+      onStage('open_design_reviewing', { runId: finalRunId });
+      runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
+      deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+      let collectedFiles: WorkspacePackageFile[] = [];
+      let indexFile: WorkspacePackageFile | undefined;
+      let hardenedHtml = '';
+      for (let qualityRepairAttempt = 0; ; qualityRepairAttempt += 1) {
+        onStage('workspace_collecting');
+        this.assertExecutionDeadline(executionDeadline);
+        // 成品未必叫 index.html：OpenDesign 在 run 状态里指名了这一轮的交付文件，
+        // 按它指的搬（见 DELIVERABLE_ENTRY_PATH）。没指名就什么都不做。
+        await this.promoteDeliverableEntry(handle, deliverableEntryFile, executionDeadline, onStage);
+        this.assertExecutionDeadline(executionDeadline);
+        await this.copyOutputsFromContainer(handle, executionDeadline);
+        this.assertExecutionDeadline(executionDeadline);
+        collectedFiles = this.collectOutputs(handle);
+        this.assertExecutionDeadline(executionDeadline);
+        indexFile = collectedFiles.find((file) => file.path === 'index.html');
+        if (!indexFile) {
+          // 「没有 index.html」有好几种完全不同的成因：模型一个文件都没产出、产出了但
+          // OpenDesign 没指名、指名了但名字不在允许的输出路径里……只报一句「没有」，
+          // 读的人无从下手（`external-cause-first.md`：把内因当结论交出去）。
+          // 所以把这一刻的现场一起交出来：收到了哪些文件、工作区根目录实际有什么、
+          // OpenDesign 自己怎么判的。
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_missing',
+            'OpenDesign completed without index.html',
+            false,
+            {
+              stage: 'collect_outputs',
+              collectedPaths: collectedFiles.map((file) => file.path).slice(0, 40),
+              workspaceRootEntries: await this.listWorkspaceRootEntries(handle, executionDeadline),
+              deliverableValid: runOutcome.deliverableValid,
+              deliverableValidation: runOutcome.deliverableValidation || null,
+              deliverableEntryFile: deliverableEntryFile || null,
+              // 模型这一轮到底干了什么——没有这份记录，「没有 index.html」永远只能靠猜。
+              runTranscriptDigest: await this.captureRunTranscriptDigest(handle, [runId, finalRunId], executionDeadline),
+            },
+          );
+        }
+        const outputHtml = Buffer.from(indexFile.contentBase64, 'base64');
+        const currentHtml = fs.existsSync(currentIndexPath) ? fs.readFileSync(currentIndexPath) : undefined;
+        if (
+          !runOutcome.deliverableValid
+          && !canAcceptUntrackedWorkspaceEdit(runOutcome.deliverableValidation, currentHtml, outputHtml)
+        ) {
+          throw new AgentWorkspaceRuntimeError(
+            'open_design_deliverable_invalid',
+            runOutcome.deliverableValidation || 'OpenDesign rejected its final deliverable',
+          );
+        }
+        try {
+          hardenedHtml = checkArtifactQuality(
+            outputHtml.toString('utf8'),
+            collectedFiles.map((file) => file.path),
+          );
+          break;
+        } catch (error) {
+          if (
+            !(error instanceof AgentWorkspaceRuntimeError)
+            || error.code !== 'design_output_quality_rejected'
+            || qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS
+          ) {
+            throw error;
+          }
+          if (Date.now() >= executionDeadline) {
+            throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+          }
+          const repairReason = classifyQualityRepairReason(error);
+          if (!repairReason) throw error;
+          const preserveMeasuredFacts = repairReason.code === 'measured_claim_context_unresolved'
+            || repairReason.code === 'retained_measured_claim_missing';
+          const repair = await this.odJson(handle, '/api/runs', {
+            method: 'POST',
+            body: buildRunBody([
+              'The deterministic CDS publication gate rejected /workspace/index.html after your final review.',
+              `The controlled rejection reason is ${repairReason.code}: ${repairReason.instruction}`,
+              preserveMeasuredFacts
+                ? `Read the frozen factual sources by these exact paths: ${[...knowledgeFiles, ...(editingExistingPage ? ['/workspace/current/index.html'] : [])].join(', ') || '/workspace/brief/task.json'}. Restore the original source wording with its subject and quantity together in visible text. Do not delete or change sourced quantities to silence this gate; preserve every other supported fact, valid structure, visual quality, and task constraint.`
+                : 'Fix exactly this proven quality violation in /workspace/index.html. Inspect the whole file and correct every occurrence of the same violation while preserving requested functionality, supported facts, valid structure, visual quality, and all other task constraints.',
+              'Do not merely explain the change. Save the corrected file, reread it, and stop only after the violation is absent.',
+            ].join(' ')),
+            signal: this.signalForDeadline(executionDeadline, signal),
+            acceptedStatuses: [200, 202],
+          });
+          finalRunId = typeof repair.runId === 'string'
+            ? repair.runId
+            : typeof repair.id === 'string'
+              ? repair.id
+              : '';
+          if (!finalRunId) {
+            throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign quality repair run returned no run id');
+          }
+          handle.activeRunId = finalRunId;
+          onStage('open_design_quality_repairing', {
+            runId: finalRunId,
+            attempt: qualityRepairAttempt + 1,
+          });
+          runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
+          deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+        }
+      }
+      const hardenedBytes = Buffer.from(hardenedHtml);
+      indexFile!.contentBase64 = hardenedBytes.toString('base64');
+      indexFile!.sha256 = sha256(hardenedBytes);
+      indexFile!.size = hardenedBytes.byteLength;
+      // Keep validated author assets byte-for-byte. CDS alone produces its
+      // reserved metadata and manifest; no author manifest is trusted.
+      collectedFiles = validatePublicArtifactFiles(collectedFiles, true);
+      const files = CDS_GENERATED_ARTIFACT_PATHS.every((reportPath) => isAllowedOutput(reportPath, handle.transfer.allowedOutputPaths))
+        ? buildGeneratedPublicArtifactPackage(hardenedHtml, collectedFiles)
+        : [...collectedFiles, buildPublicArtifactManifest(collectedFiles)]
+            .sort((left, right) => compareOrdinal(left.path, right.path));
+      assertPublicArtifactFileCount(files.length);
+      const totalOutputBytes = files.reduce((total, file) => total + file.size, 0);
+      if (totalOutputBytes > handle.transfer.maxOutputBytes) {
+        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output and CDS manifest exceed maxOutputBytes');
+      }
+      const commitBody = {
+        schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+        sessionId,
+        runId: handle.mapRunId,
+        baseRevision: handle.transfer.baseRevision,
+        files,
+      };
+      const serialized = JSON.stringify(commitBody);
+      if (Buffer.byteLength(serialized, 'utf8') > handle.transfer.maxOutputBytes) {
+        throw new AgentWorkspaceRuntimeError('design_output_too_large', 'Serialized public output exceeds maxOutputBytes');
+      }
+      this.assertExecutionDeadline(executionDeadline);
+      onStage('workspace_committing', { fileCount: files.length });
+      const commitDeadline = Math.min(
+        executionDeadline,
+        Date.now() + Math.min(handle.policy.timeoutSeconds * 1000, 60_000),
+      );
+      const commitResponse = await this.fetchPartnerTransfer(handle.transfer.resultCommitUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${transferToken}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: serialized,
+        signal: this.signalForDeadline(commitDeadline, signal),
+      }, 'workspaceTransfer.resultCommitUrl');
+      const commitBytes = await readResponseLimited(commitResponse, MAX_COMMIT_RESPONSE_BYTES);
+      this.assertExecutionDeadline(executionDeadline);
+      let commit: Record<string, unknown> = {};
+      try {
+        commit = commitBytes.length ? JSON.parse(commitBytes.toString('utf8')) as Record<string, unknown> : {};
+      } catch {
+        throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned invalid JSON');
+      }
+      if (!commitResponse.ok) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_commit_failed',
+          typeof commit.message === 'string'
+            ? commit.message
+            : `MAP result commit failed with status ${commitResponse.status}`,
+          commitResponse.status >= 500,
+        );
+      }
+      const artifactRef = typeof commit.artifactRef === 'string' ? commit.artifactRef : '';
+      if (!artifactRef) {
+        throw new AgentWorkspaceRuntimeError('workspace_commit_invalid_response', 'MAP result commit returned no artifactRef');
+      }
+      const resultSha256 = typeof commit.resultSha256 === 'string'
+        ? commit.resultSha256.toLowerCase()
+        : '';
+      if (!SHA256_RE.test(resultSha256)) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_commit_invalid_response',
+          'MAP result commit returned no valid resultSha256',
+        );
+      }
+      return {
+        artifactRef,
+        resultSha256,
+        files: files.map(({ path: filePath, sha256: fileSha, size, mediaType }) => ({
+          path: filePath,
+          sha256: fileSha,
+          size,
+          mediaType,
+        })),
+        openDesignRunId: finalRunId,
+      };
+    } finally {
+      handle.activeRunId = undefined;
+    }
+    } finally {
+      if (this.handles.get(sessionId)?.kind === 'active') {
+        await this.stopEgressProxy(handle);
+      }
+    }
+  }
+
+  async stop(sessionId: string, reason = 'requested'): Promise<void> {
+    return this.runManagedCleanup(sessionId, reason, false);
+  }
+
+  private async runManagedCleanup(
+    sessionId: string,
+    reason: string,
+    notifyOnSuccess: boolean,
+  ): Promise<void> {
+    const pendingTimer = this.cleanupRetryTimers.get(sessionId);
+    if (pendingTimer) {
+      clearTimeout(pendingTimer);
+      this.cleanupRetryTimers.delete(sessionId);
+    }
+    const handle = this.handles.get(sessionId);
+    const onCleanupSettled = handle?.onCleanupSettled;
+    let cleanup = this.cleanupInFlight.get(sessionId);
+    if (!cleanup) {
+      cleanup = this.stopOnce(sessionId, reason).finally(() => {
+        if (this.cleanupInFlight.get(sessionId) === cleanup) {
+          this.cleanupInFlight.delete(sessionId);
+        }
+      });
+      this.cleanupInFlight.set(sessionId, cleanup);
+    }
+    try {
+      await cleanup;
+      this.cleanupRetryAttempts.delete(sessionId);
+      if (notifyOnSuccess && !this.handles.has(sessionId)) onCleanupSettled?.();
+    } catch (error) {
+      if (this.handles.has(sessionId)) this.scheduleCleanupRetry(sessionId);
+      throw error;
+    }
+  }
+
+  private scheduleCleanupRetry(sessionId: string): void {
+    if (!this.handles.has(sessionId) || this.cleanupRetryTimers.has(sessionId)) return;
+    const attempt = (this.cleanupRetryAttempts.get(sessionId) || 0) + 1;
+    this.cleanupRetryAttempts.set(sessionId, attempt);
+    const exponent = Math.min(attempt - 1, 20);
+    const retryMs = Math.min(this.cleanupRetryMaxMs, this.cleanupRetryBaseMs * (2 ** exponent));
+    const timer = setTimeout(() => {
+      this.cleanupRetryTimers.delete(sessionId);
+      void this.runManagedCleanup(sessionId, 'cleanup_janitor_retry', true).catch(() => undefined);
+    }, retryMs);
+    timer.unref();
+    this.cleanupRetryTimers.set(sessionId, timer);
+  }
+
+  private async stopOnce(sessionId: string, _reason: string): Promise<void> {
+    const handle = this.handles.get(sessionId);
+    if (!handle) return;
+    if (handle.kind === 'creating') {
+      handle.cancelRequested = true;
+      handle.abortController.abort();
+      await handle.settled;
+      const settledHandle = this.handles.get(sessionId);
+      if (!settledHandle) return;
+      if (settledHandle === handle) {
+        this.handles.delete(sessionId);
+        return;
+      }
+      await this.stopOnce(sessionId, _reason);
+      return;
+    }
+    if (handle.kind === 'partial-cleanup') {
+      const cleanupErrors: string[] = [];
+      for (const containerName of [...handle.containerNames]) {
+        await this.removeContainer(containerName)
+          .then(() => {
+            handle.containerNames = handle.containerNames.filter((candidate) => candidate !== containerName);
+          })
+          .catch((error) => cleanupErrors.push(error instanceof Error ? error.message : String(error)));
+      }
+      if (handle.networkName) {
+        await this.removeNetwork(handle.networkName)
+          .then(() => { handle.networkName = undefined; })
+          .catch((error) => cleanupErrors.push(error instanceof Error ? error.message : String(error)));
+      }
+      for (const volumeName of [...handle.volumeNames]) {
+        await this.removeVolume(volumeName)
+          .then(() => {
+            handle.volumeNames = handle.volumeNames.filter((candidate) => candidate !== volumeName);
+          })
+          .catch((error) => cleanupErrors.push(error instanceof Error ? error.message : String(error)));
+      }
+      if (handle.hostRoot) {
+        try {
+          fs.rmSync(handle.hostRoot, { recursive: true, force: true });
+          handle.hostRoot = undefined;
+        } catch (error) {
+          cleanupErrors.push(error instanceof Error ? error.message : String(error));
+        }
+      }
+      this.removeInstanceRootIfEmpty();
+      if (cleanupErrors.length > 0) {
+        throw new AgentWorkspaceRuntimeError(
+          'workspace_cleanup_failed',
+          'OpenDesign session resources could not be fully cleaned',
+          true,
+          { cleanupErrors },
+        );
+      }
+      this.handles.delete(sessionId);
+      return;
+    }
+    clearTimeout(handle.ttlTimer);
+    if (handle.activeRunId) {
+      await this.odJson(handle, `/api/runs/${encodeURIComponent(handle.activeRunId)}/cancel`, {
+        method: 'POST',
+        body: {},
+        acceptedStatuses: [200, 202, 404, 409],
+      }).catch(() => undefined);
+    }
+    handle.activeRunId = undefined;
+    handle.daemonApiToken = '';
+    handle.egressClientToken = '';
+    const cleanupErrors: string[] = [];
+    if (handle.egressContainerName) {
+      await this.removeContainer(handle.egressContainerName)
+        .then(() => { handle.egressContainerName = undefined; })
+        .catch((error) => {
+          cleanupErrors.push(error instanceof Error ? error.message : String(error));
+        });
+    }
+    await this.removeContainer(handle.containerName).catch((error) => {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+    });
+    await this.removeNetwork(handle.networkName).catch((error) => {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+    });
+    for (const volumeName of [handle.workspaceVolumeName, handle.dataVolumeName]) {
+      await this.removeVolume(volumeName).catch((error) => {
+        cleanupErrors.push(error instanceof Error ? error.message : String(error));
+      });
+    }
+    try { fs.rmSync(handle.hostRoot, { recursive: true, force: true }); } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+    }
+    this.removeInstanceRootIfEmpty();
+    if (cleanupErrors.length > 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_cleanup_failed',
+        'OpenDesign session resources could not be fully cleaned',
+        true,
+        { cleanupErrors },
+      );
+    }
+    this.handles.delete(sessionId);
+  }
+
+  has(sessionId: string): boolean {
+    return this.handles.has(sessionId);
+  }
+
+  private validateModelAuthority(model: OpenDesignModelAuthority, inputPackageUrl: string): void {
+    if (model.protocol !== 'openai' || !model.apiKey || !model.model.trim()) {
+      throw new AgentWorkspaceRuntimeError(
+        'model_authority_invalid',
+        'OpenDesign requires a run-scoped MAP OpenAI-compatible base URL, API key, and model',
+      );
+    }
+    const parsed = new URL(normalizeAgentWorkspaceModelBaseUrl(model.baseUrl));
+    if (parsed.origin !== new URL(inputPackageUrl).origin) {
+      throw new AgentWorkspaceRuntimeError(
+        'model_authority_origin_mismatch',
+        'modelBaseUrl and workspace transfer URLs must share one MAP origin',
+      );
+    }
+  }
+
+  private chownForContainer(hostRoot: string): void {
+    const visit = (target: string): void => {
+      try { fs.chownSync(target, this.containerUid, this.containerGid); } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'EPERM' && code !== 'EINVAL' && code !== 'ENOSYS') throw error;
+      }
+      if (!fs.lstatSync(target).isDirectory()) return;
+      for (const name of fs.readdirSync(target)) visit(path.join(target, name));
+    };
+    visit(hostRoot);
+  }
+
+  private removeInstanceRootIfEmpty(): void {
+    try {
+      if (fs.existsSync(this.instanceRootDir) && fs.readdirSync(this.instanceRootDir).length === 0) {
+        fs.rmdirSync(this.instanceRootDir);
+      }
+    } catch {
+      // Best effort only; session-owned children have already been removed.
+    }
+  }
+
+  private async startEgressProxy(
+    handle: RuntimeHandle,
+    modelBaseUrl: string,
+    mapModelTicket: string,
+    relayClientToken: string,
+  ): Promise<string> {
+    await this.stopEgressProxy(handle);
+    if (!mapModelTicket || /[\0\r\n]/.test(mapModelTicket) || !relayClientToken || /[\0\r\n]/.test(relayClientToken)) {
+      throw new AgentWorkspaceRuntimeError(
+        'model_authority_invalid',
+        'MAP model ticket is missing or malformed',
+      );
+    }
+    const target = validateTransferUrl(modelBaseUrl, 'modelBaseUrl');
+    const suffix = sha256(`${handle.sessionId}:${target.origin}:${target.pathname}`).slice(0, 16);
+    const containerName = `cds-od-egress-${suffix}`;
+    const env = [
+      `TARGET_ORIGIN=${target.origin}`,
+      `TARGET_PATH_PREFIX=${target.pathname}`,
+      `PROXY_PORT=${EGRESS_PROXY_PORT}`,
+      `MAP_MODEL_TICKET=${mapModelTicket}`,
+      `RELAY_CLIENT_TOKEN=${relayClientToken}`,
+      `CDS_EGRESS_PROXY_SCRIPT=${Buffer.from(EGRESS_PROXY_SCRIPT).toString('base64')}`,
+    ].join('\n') + '\n';
+    const envFilePath = path.join(handle.hostRoot, `.docker-env-${crypto.randomBytes(8).toString('hex')}`);
+    fs.writeFileSync(envFilePath, env, { encoding: 'utf8', mode: 0o600, flag: 'wx' });
+    const command = [
+      'docker run --detach',
+      '--pull never',
+      `--name ${shellQuote(containerName)}`,
+      '--restart no',
+      '--read-only',
+      '--network bridge',
+      '--security-opt no-new-privileges:true',
+      '--cap-drop ALL',
+      '--pids-limit 64',
+      '--memory 128m',
+      '--cpus 0.25',
+      '--tmpfs /tmp:rw,noexec,nosuid,size=16m,nr_inodes=256',
+      `--label ${shellQuote('cds.managed=true')}`,
+      `--label ${shellQuote('cds.type=agent-session')}`,
+      `--label ${shellQuote(`cds.instance=${this.instanceId}`)}`,
+      `--label ${shellQuote(`cds.agent.session=${handle.sessionId}`)}`,
+      `--env-file ${shellQuote(envFilePath)}`,
+      '--entrypoint node',
+      shellQuote(this.image),
+      '-e',
+      shellQuote("eval(Buffer.from(process.env.CDS_EGRESS_PROXY_SCRIPT, 'base64').toString('utf8'))"),
+    ].join(' ');
+    // A Docker CLI timeout or non-zero exit does not prove that the daemon did
+    // not create the named container. Register the cleanup target before the
+    // command so every failure path removes it or retains a retry descriptor.
+    handle.egressContainerName = containerName;
+    let started: ExecResult | undefined;
+    let startFailed = false;
+    try {
+      started = await this.shell.exec(command, { timeout: 30_000 });
+      startFailed = started.exitCode !== 0;
+    } catch {
+      startFailed = true;
+    } finally {
+      fs.rmSync(envFilePath, { force: true });
+    }
+    if (startFailed || !started) {
+      await this.failEgressAndCleanup(
+        handle,
+        'MAP-only egress relay could not be started; OpenDesign remains network-isolated',
+      );
+    }
+    const connected = await this.shell.exec(
+      `docker network connect --alias map-egress ${shellQuote(handle.networkName)} ${shellQuote(containerName)}`,
+      { timeout: 30_000 },
+    );
+    if (connected.exitCode !== 0) {
+      await this.failEgressAndCleanup(
+        handle,
+        'MAP-only egress relay could not join the isolated Agent network',
+      );
+    }
+    let ready = false;
+    try {
+      const probe = await this.shell.exec(
+        `docker exec ${shellQuote(containerName)} node -e ${shellQuote(EGRESS_HEALTH_PROBE_SCRIPT)}`,
+        { timeout: EGRESS_HEALTH_EXEC_TIMEOUT_MS },
+      );
+      ready = probe.exitCode === 0;
+    } catch {
+      // A timed-out Docker CLI can leave its exec process alive. Do not spawn
+      // more probes; the failure path removes this session's relay container.
+    }
+    if (!ready) {
+      await this.failEgressAndCleanup(
+        handle,
+        'MAP-only egress relay did not become ready; OpenDesign remains network-isolated',
+      );
+    }
+    const basePath = target.pathname === '/' ? '' : target.pathname.replace(/\/$/, '');
+    return `http://map-egress:${EGRESS_PROXY_PORT}${basePath}`;
+  }
+
+  private async failEgressAndCleanup(handle: RuntimeHandle, message: string): Promise<never> {
+    try {
+      await this.stopEgressProxy(handle);
+    } catch (cleanupError) {
+      this.retainActiveHandleForPartialCleanup(handle);
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_cleanup_failed',
+        'MAP-only egress relay failed and allocated session resources could not be fully cleaned',
+        true,
+        {
+          cleanupErrors: [cleanupError instanceof Error ? cleanupError.message : String(cleanupError)],
+        },
+      );
+    }
+    throw new AgentWorkspaceRuntimeError('workspace_egress_unavailable', message, true);
+  }
+
+  private retainActiveHandleForPartialCleanup(handle: RuntimeHandle): void {
+    clearTimeout(handle.ttlTimer);
+    handle.activeRunId = undefined;
+    handle.daemonApiToken = '';
+    handle.egressClientToken = '';
+    this.handles.set(handle.sessionId, {
+      kind: 'partial-cleanup',
+      sessionId: handle.sessionId,
+      hostRoot: handle.hostRoot,
+      containerNames: [...new Set([
+        ...(handle.egressContainerName ? [handle.egressContainerName] : []),
+        handle.containerName,
+      ])],
+      networkName: handle.networkName,
+      volumeNames: [handle.workspaceVolumeName, handle.dataVolumeName],
+      onCleanupSettled: handle.onCleanupSettled,
+    });
+    this.scheduleCleanupRetry(handle.sessionId);
+  }
+
+  private async stopEgressProxy(handle: RuntimeHandle): Promise<void> {
+    if (!handle.egressContainerName) return;
+    const containerName = handle.egressContainerName;
+    await this.removeContainer(containerName);
+    handle.egressContainerName = undefined;
+  }
+
+  private async copyOutputsFromContainer(handle: RuntimeHandle, executionDeadline: number): Promise<void> {
+    fs.rmSync(handle.outputDir, { recursive: true, force: true });
+    fs.mkdirSync(handle.outputDir, { recursive: true, mode: 0o700 });
+    // 重建目录会丢失会话初始化时的属主；导出容器仍以非 root 用户写入此绑定目录。
+    this.chownForContainer(handle.outputDir);
+    const paused = await this.shell.exec(
+      `docker pause ${shellQuote(handle.containerName)}`,
+      { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) },
+    );
+    if (paused.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError('workspace_copy_failed', 'OpenDesign workspace could not be frozen for export', true);
+    }
+    try {
+      await this.validateOutputsInContainer(handle, executionDeadline);
+    } finally {
+      const resumed = await this.shell.exec(`docker unpause ${shellQuote(handle.containerName)}`, { timeout: 30_000 });
+      if (resumed.exitCode !== 0) {
+        throw new AgentWorkspaceRuntimeError('workspace_copy_failed', 'OpenDesign workspace could not resume after export', true);
+      }
+    }
+  }
+
+  private async validateOutputsInContainer(handle: RuntimeHandle, executionDeadline: number): Promise<void> {
+    const config = Buffer.from(JSON.stringify({
+      allowedOutputPaths: handle.transfer.allowedOutputPaths,
+      inputFiles: handle.inputFiles,
+      ignoredRuntimePaths: [...IGNORED_RUNTIME_OUTPUT_PATHS],
+      maxFileCount: MAX_OUTPUT_FILE_COUNT,
+      maxWorkspaceFileCount: MAX_WORKSPACE_FILE_COUNT,
+      maxNodeCount: MAX_WORKSPACE_NODE_COUNT,
+      maxDirectoryDepth: MAX_WORKSPACE_DIRECTORY_DEPTH,
+      maxOutputBytes: handle.transfer.maxOutputBytes,
+    })).toString('base64');
+    const validation = await this.shell.exec([
+      'docker run --rm --network none --read-only',
+      `--label ${shellQuote('cds.managed=true')}`,
+      `--label ${shellQuote('cds.type=agent-output-export')}`,
+      `--mount ${shellQuote(`type=volume,src=${handle.workspaceVolumeName},dst=/workspace,readonly`)}`,
+      `--mount ${shellQuote(`type=bind,src=${handle.outputDir},dst=/cds-output`)}`,
+      `--env ${shellQuote('CDS_OUTPUT_PREFLIGHT=1')}`,
+      `--env ${shellQuote(`CDS_OUTPUT_PREFLIGHT_CONFIG=${config}`)}`,
+      '--entrypoint node',
+      // 用这次会话真正在跑的那个镜像，不是编译进来的默认值。能力探测、准备、主会话
+      // 全走 this.image；导出这一步却退回默认镜像，于是「配置的镜像验过了、能跑」
+      // 与「导出时拉的是另一个镜像」可以同时成立——离线节点上表现为整轮跑完、只在
+      // 导出那一刻失败，而失败原因指向一个与本次运行无关的镜像。
+      shellQuote(this.image),
+      '-e',
+      shellQuote(OUTPUT_PREFLIGHT_SCRIPT),
+    ].join(' '), { timeout: Math.min(30_000, this.remainingExecutionMs(executionDeadline)) });
+    this.assertExecutionDeadline(executionDeadline);
+    if (validation.exitCode === 0) return;
+    const diagnostic = `${validation.stdout}\n${validation.stderr}`;
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:total_bytes')) {
+      throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxOutputBytes');
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:file_count')) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_too_many_files',
+        `OpenDesign output exceeds the ${MAX_OUTPUT_FILE_COUNT}-file limit`,
+      );
+    }
+    if (
+      diagnostic.includes('CDS_OUTPUT_PREFLIGHT:workspace_file_count')
+      || diagnostic.includes('CDS_OUTPUT_PREFLIGHT:node_count')
+    ) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_too_many_files',
+        'OpenDesign workspace exceeds the bounded file or node limit',
+      );
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:directory_depth')) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_invalid',
+        `OpenDesign workspace exceeds the ${MAX_WORKSPACE_DIRECTORY_DEPTH}-level directory depth limit`,
+      );
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:special_file')) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_invalid',
+        'OpenDesign output contains a special file or symbolic link',
+        false,
+        outputPreflightRejectedPath(diagnostic, 'special_file'),
+      );
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:path_not_allowed')) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_invalid',
+        'OpenDesign output contains a path outside the transfer allowlist',
+        false,
+        outputPreflightRejectedPath(diagnostic, 'path_not_allowed'),
+      );
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:input_changed')) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_input_changed',
+        'OpenDesign modified a frozen MAP input; the result was rejected',
+      );
+    }
+    if (diagnostic.includes('CDS_OUTPUT_PREFLIGHT:file_changed')) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_invalid',
+        'OpenDesign output changed while it was being exported',
+      );
+    }
+    // 这是兜底分支：上面每个已知标记都没命中。此前它把 validation 的 stdout/stderr 整个丢掉，
+    // 只留一句「could not be validated」——真实原因（预检脚本自己的报错、docker 起不来、
+    // 30 秒超时被杀）全在那两个流里，谁也看不到。2026-09-20 实跑撞上一次，排查从这里断掉。
+    // 诊断里可能夹着凭据，所以只带一段有界摘要，出容器时还会再过一次 sanitize。
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_output_validation_failed',
+      `OpenDesign output could not be validated inside the managed workspace before transfer (exit ${validation.exitCode}): ${summarizeOutputPreflightDiagnostic(diagnostic)}`,
+      true,
+    );
+  }
+
+  private async waitForHealth(baseUrl: string, token: string, timeoutSeconds: number): Promise<void> {
+    const deadline = Date.now() + Math.min(Math.max(timeoutSeconds, 10), 180) * 1000;
+    let last = 'connection pending';
+    while (Date.now() < deadline) {
+      try {
+        const response = await this.fetchImpl(`${baseUrl}/api/health`, {
+          headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(3000),
+        });
+        if (response.ok) return;
+        last = `HTTP ${response.status}`;
+      } catch (error) {
+        last = error instanceof Error ? error.message : String(error);
+      }
+      await delay(this.pollIntervalMs);
+    }
+    throw new AgentWorkspaceRuntimeError('open_design_not_ready', `OpenDesign health check timed out: ${last}`, true);
+  }
+
+  /**
+   * 把 OpenDesign 指名的交付文件（`deliverableEntryFile`）搬成 `/workspace/index.html`。
+   * 理由与判据见 DELIVERABLE_ENTRY_PATH 那段注释。
+   *
+   * 它没指名、或指名的就是 `index.html` 时什么都不做——那是模型直接改了根页面的情形
+   * （编辑路径的提示词要求的正是这个）。指名了却搬不动才算故障：文件不在、不是 HTML
+   * 文档、或路径形状不对，一律当场失败，不许把种子当成产物交出去
+   * （`predicate-and-wiring-discipline.md` 形状 10：降级可以，静默不行）。
+   */
+  private async promoteDeliverableEntry(
+    handle: RuntimeHandle,
+    entryFile: string | undefined,
+    executionDeadline: number,
+    onStage: StageReporter,
+  ): Promise<void> {
+    if (!entryFile || entryFile === 'index.html') {
+      onStage('deliverable_entry_resolved', { entryFile: entryFile || null, promoted: false });
+      return;
+    }
+    if (!DELIVERABLE_ENTRY_PATH.test(entryFile)) {
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_deliverable_entry_invalid',
+        'OpenDesign named a deliverable entry file that is not a workspace-relative .html path',
+        false,
+        { stage: 'deliverable_entry', entryFile },
+      );
+    }
+    const promoted = await this.shell.exec([
+      'docker exec',
+      shellQuote(handle.containerName),
+      'node --input-type=module -e',
+      shellQuote(promoteDeliverableEntryScript(entryFile)),
+    ].join(' '), { timeout: Math.max(5_000, Math.min(this.remainingExecutionMs(executionDeadline), 30_000)) });
+    if (promoted.exitCode !== 0) {
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_deliverable_entry_unreadable',
+        'OpenDesign named a deliverable entry file that could not be read back as the page',
+        true,
+        {
+          stage: 'deliverable_entry',
+          entryFile,
+          exitCode: promoted.exitCode,
+          stderrPreview: runtimeDiagnosticPreview(promoted.stderr, []),
+          stdoutPreview: runtimeDiagnosticPreview(promoted.stdout, []),
+        },
+      );
+    }
+    const marker = /deliverable-entry:(\S+) bytes:(\d+)/.exec(promoted.stdout || '');
+    onStage('deliverable_entry_resolved', {
+      entryFile,
+      promoted: true,
+      bytes: marker ? Number(marker[2]) : null,
+    });
+  }
+
+  /**
+   * 失败取证用：工作区根目录实际有哪些条目。只在「没有 index.html」那条路径上调，
+   * 用来分清「模型一个文件都没产出」与「产出了但没被认成交付物」——这两件事的下一步
+   * 完全不同，压成一句「没有 index.html」等于把诊断工作转嫁给读的人。
+   */
+  private async listWorkspaceRootEntries(
+    handle: RuntimeHandle,
+    executionDeadline: number,
+  ): Promise<string[]> {
+    try {
+      const listed = await this.shell.exec([
+        'docker exec',
+        shellQuote(handle.containerName),
+        '/bin/sh -lc',
+        shellQuote('ls -1A /workspace 2>/dev/null | head -40'),
+      ].join(' '), { timeout: Math.max(3_000, Math.min(this.remainingExecutionMs(executionDeadline), 15_000)) });
+      if (listed.exitCode !== 0) return ['<listing failed>'];
+      return (listed.stdout || '').split('\n').map((line) => line.trim()).filter(Boolean).slice(0, 40);
+    } catch {
+      // 取证失败不能把原始故障顶替掉——原始故障才是要报的那个。
+      return ['<listing unavailable>'];
+    }
+  }
+
+  /**
+   * 失败取证用：把这一轮 OpenDesign run 的事件流拉回来压成一份有界摘要。
+   * 这是整条链路缺了很久的第一手记录——「模型这 15 分钟到底干了什么、说了什么、
+   * 调了哪些工具、写了哪些路径」。没有它，每次失败都只能猜（2026-09-20 我连猜了四次）。
+   *
+   * 取证失败绝不顶替原始故障：拿不到就返回 `{ available: false, reason }`。
+   * 内容先过 runtimeDiagnosticPreview（去掉 daemon 令牌与转移令牌、脱敏、截断）。
+   */
+  private async captureRunTranscriptDigest(
+    handle: RuntimeHandle,
+    runIds: string[],
+    executionDeadline: number,
+  ): Promise<Record<string, unknown>> {
+    // 取证绝不能顶替原始故障：这里任何一步炸了，都只回一个「取证不可用 + 原因」。
+    // 2026-09-21 第一版把摘要 JSON.stringify → 脱敏 → 截断 → JSON.parse，截断切在字符串中间、
+    // 脱敏改了字节，parse 抛错，把「没有 index.html」那条真失败顶替成了一句解析报错。
+    try {
+      const digests: Record<string, unknown>[] = [];
+      for (const runId of [...new Set(runIds.filter(Boolean))].slice(0, 3)) {
+        try {
+          const controller = new AbortController();
+          const timer = setTimeout(
+            () => controller.abort(),
+            Math.max(3_000, Math.min(this.remainingExecutionMs(executionDeadline), 20_000)),
+          );
+          let raw = '';
+          try {
+            const response = await this.fetchImpl(
+              `${handle.daemonBaseUrl}/api/runs/${encodeURIComponent(runId)}/events`,
+              { headers: { Authorization: `Bearer ${handle.daemonApiToken}`, Accept: 'text/event-stream' }, signal: controller.signal },
+            );
+            if (response.status !== 200) {
+              digests.push({ runId, available: false, reason: `HTTP ${response.status}` });
+              continue;
+            }
+            raw = (await readResponseLimited(response, MAX_PACKAGE_OVERHEAD_BYTES)).toString('utf8');
+          } finally {
+            clearTimeout(timer);
+          }
+          digests.push({ runId, available: true, ...summarizeRunEventStream(raw) });
+        } catch (error) {
+          digests.push({
+            runId,
+            available: false,
+            reason: error instanceof Error && error.name === 'AbortError' ? 'timed out' : 'fetch failed',
+          });
+        }
+      }
+      // 句柄上按设计不留转移令牌，这里遮 daemon 令牌；脱敏逐个字符串叶子做，不走 JSON 往返。
+      return { runs: redactDigestLeaves(digests, [handle.daemonApiToken]) as unknown[] };
+    } catch (error) {
+      return {
+        available: false,
+        reason: error instanceof Error ? error.message.slice(0, 200) : 'capture failed',
+      };
+    }
+  }
+
+  private async waitForRun(
+    handle: RuntimeHandle,
+    runId: string,
+    deadline: number,
+    signal: AbortSignal | undefined,
+    onStage: StageReporter,
+  ): Promise<OpenDesignRunOutcome> {
+    const startedAt = Date.now();
+    let lastStatus = '';
+    let lastProgressAt = 0;
+    while (Date.now() < deadline) {
+      if (signal?.aborted) {
+        await this.cancelRun(handle, runId);
+        throw new AgentWorkspaceRuntimeError('open_design_run_cancelled', 'OpenDesign run was cancelled');
+      }
+      const deadlineSignal = this.signalForDeadline(deadline, signal);
+      let status: Record<string, unknown>;
+      try {
+        status = await this.odJson(handle, `/api/runs/${encodeURIComponent(runId)}`, {
+          method: 'GET',
+          signal: deadlineSignal,
+        });
+      } catch (error) {
+        if (signal?.aborted) {
+          await this.cancelRun(handle, runId);
+          throw new AgentWorkspaceRuntimeError('open_design_run_cancelled', 'OpenDesign run was cancelled');
+        }
+        if (deadlineSignal.aborted || Date.now() >= deadline) {
+          await this.cancelRun(handle, runId);
+          throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+        }
+        throw error;
+      }
+      const value = typeof status.status === 'string' ? status.status : '';
+      const now = Date.now();
+      if (value && (value !== lastStatus || now - lastProgressAt >= 3_000)) {
+        lastStatus = value;
+        lastProgressAt = now;
+        onStage('open_design_running', {
+          status: value,
+          runId,
+          elapsedSeconds: Math.max(0, Math.floor((now - startedAt) / 1000)),
+        });
+      }
+      if (value === 'succeeded') {
+        return {
+          deliverableValid: status.deliverableValid !== false,
+          deliverableValidation: typeof status.deliverableValidation === 'string'
+            ? status.deliverableValidation
+            : undefined,
+          deliverableEntryFile: typeof status.deliverableEntryFile === 'string'
+            ? status.deliverableEntryFile
+            : undefined,
+        };
+      }
+      if (value === 'failed' || value === 'canceled') {
+        throw new AgentWorkspaceRuntimeError(
+          value === 'failed' ? 'open_design_run_failed' : 'open_design_run_cancelled',
+          typeof status.error === 'string' ? status.error : `OpenDesign run ended with status ${value}`,
+        );
+      }
+      await delay(this.pollIntervalMs, undefined, { signal: deadlineSignal }).catch((error) => {
+        if (deadlineSignal.aborted) return;
+        throw error;
+      });
+    }
+    await this.cancelRun(handle, runId);
+    throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+  }
+
+  private collectOutputs(handle: RuntimeHandle): WorkspacePackageFile[] {
+    const results: WorkspacePackageFile[] = [];
+    let total = 0;
+    const walk = (directory: string): void => {
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const absolute = path.join(directory, entry.name);
+        const relative = path.relative(handle.outputDir, absolute).split(path.sep).join('/');
+        normalizeRelativePath(relative);
+        const stat = fs.lstatSync(absolute);
+        if (stat.isSymbolicLink()) {
+          throw new AgentWorkspaceRuntimeError('design_output_invalid', `symbolic links are not allowed: ${relative}`);
+        }
+        if (stat.isDirectory()) {
+          walk(absolute);
+          continue;
+        }
+        if (!stat.isFile()) {
+          throw new AgentWorkspaceRuntimeError('design_output_invalid', `special files are not allowed: ${relative}`);
+        }
+        if (
+          relative === 'manifest.json'
+          || !isAllowedOutput(relative, handle.transfer.allowedOutputPaths)
+        ) continue;
+        if (results.length >= MAX_OUTPUT_FILE_COUNT - 1) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_too_many_files',
+            `OpenDesign output exceeds the ${MAX_OUTPUT_FILE_COUNT}-file limit`,
+          );
+        }
+        total += stat.size;
+        if (total > handle.transfer.maxOutputBytes) {
+          throw new AgentWorkspaceRuntimeError('design_output_too_large', 'OpenDesign output exceeds maxOutputBytes');
+        }
+        const bytes = fs.readFileSync(absolute);
+        results.push({
+          path: relative,
+          contentBase64: bytes.toString('base64'),
+          sha256: sha256(bytes),
+          size: bytes.byteLength,
+          mediaType: mediaTypeForFile(relative),
+        });
+      }
+    };
+    walk(handle.outputDir);
+    return results.sort((left, right) => left.path.localeCompare(right.path));
+  }
+
+  private async odJson(
+    handle: RuntimeHandle,
+    apiPath: string,
+    options: {
+      method: 'GET' | 'POST';
+      body?: Record<string, unknown>;
+      signal?: AbortSignal;
+      acceptedStatuses?: number[];
+    },
+  ): Promise<Record<string, unknown>> {
+    const response = await this.fetchImpl(`${handle.daemonBaseUrl}${apiPath}`, {
+      method: options.method,
+      headers: {
+        Authorization: `Bearer ${handle.daemonApiToken}`,
+        Accept: 'application/json',
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      ...(options.body ? { body: JSON.stringify(options.body) } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+    });
+    const bytes = await readResponseLimited(response, MAX_PACKAGE_OVERHEAD_BYTES);
+    let body: Record<string, unknown> = {};
+    try {
+      body = bytes.length ? JSON.parse(bytes.toString('utf8')) as Record<string, unknown> : {};
+    } catch {
+      throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', `OpenDesign ${apiPath} returned invalid JSON`);
+    }
+    const accepted = options.acceptedStatuses || [200];
+    if (!accepted.includes(response.status)) {
+      const nestedError = body.error && typeof body.error === 'object'
+        ? body.error as Record<string, unknown>
+        : null;
+      const message = typeof nestedError?.message === 'string'
+        ? nestedError.message
+        : typeof body.message === 'string'
+          ? body.message
+          : `OpenDesign ${apiPath} failed with status ${response.status}`;
+      throw new AgentWorkspaceRuntimeError(
+        'open_design_request_failed',
+        message,
+        response.status >= 500,
+        { status: response.status, upstreamCode: nestedError?.code || null },
+      );
+    }
+    return body;
+  }
+
+  private signalForDeadline(deadline: number, signal?: AbortSignal): AbortSignal {
+    const deadlineSignal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
+    return signal ? AbortSignal.any([signal, deadlineSignal]) : deadlineSignal;
+  }
+
+  private remainingExecutionMs(deadline: number): number {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
+    }
+    return remaining;
+  }
+
+  private assertExecutionDeadline(deadline: number): void {
+    this.remainingExecutionMs(deadline);
+  }
+
+  private async cancelRun(handle: RuntimeHandle, runId: string): Promise<void> {
+    await this.odJson(handle, `/api/runs/${encodeURIComponent(runId)}/cancel`, {
+      method: 'POST',
+      body: {},
+      signal: AbortSignal.timeout(3_000),
+      acceptedStatuses: [200, 202, 404, 409],
+    }).catch(() => undefined);
+  }
+
+  private async removeContainer(containerName: string): Promise<void> {
+    // Some Docker daemon/storage combinations can leave `rm -f` waiting while
+    // the process is still alive. An explicit bounded kill first makes cleanup
+    // deterministic; rm remains authoritative and idempotent for stopped or
+    // already absent containers.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const kill = await this.shell.exec(
+        `docker kill ${shellQuote(containerName)}`,
+        { timeout: 10_000 },
+      ).catch(() => ({ stdout: '', stderr: 'process error', exitCode: 1 }));
+      const killOutput = `${kill.stderr}\n${kill.stdout}`;
+      const killReachedTerminalState = kill.exitCode === 0
+        || /No such container|is not running/i.test(killOutput);
+      const removal = await this.shell.exec(
+        `docker rm -f ${shellQuote(containerName)}`,
+        { timeout: 10_000 },
+      ).catch(() => ({ stdout: '', stderr: 'process error', exitCode: 1 }));
+      const removalOutput = `${removal.stderr}\n${removal.stdout}`;
+      if (removal.exitCode === 0 || /No such container/i.test(removalOutput)) return;
+      if (attempt === 0) {
+        await delay(killReachedTerminalState ? 100 : 250);
+      }
+    }
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_container_cleanup_failed',
+      'OpenDesign session container could not be removed',
+      true,
+    );
+  }
+
+  private async removeNetwork(networkName: string): Promise<void> {
+    const result = await this.shell.exec(`docker network rm ${shellQuote(networkName)}`, { timeout: 30_000 });
+    if (result.exitCode !== 0 && !/No such network/i.test(`${result.stderr}\n${result.stdout}`)) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_network_cleanup_failed',
+        'OpenDesign session network could not be removed',
+        true,
+      );
+    }
+  }
+
+  private async removeVolume(volumeName: string): Promise<void> {
+    const result = await this.shell.exec(`docker volume rm ${shellQuote(volumeName)}`, { timeout: 30_000 });
+    if (result.exitCode !== 0 && !/No such volume/i.test(`${result.stderr}\n${result.stdout}`)) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_volume_cleanup_failed',
+        'OpenDesign session volume could not be removed',
+        true,
+      );
+    }
+  }
+}
+
+/**
+ * 把 OpenDesign 的 SSE 事件流（`id:` / `event:` / `data:` 帧）压成一份有界摘要：
+ * 各类事件计数、agent 事件的类型计数、用到的工具名与它们碰过的路径、最后一段模型文本、
+ * 错误信息、stdout/stderr 尾巴。只做统计与截尾，不做判断——判断留给读的人。
+ */
+/**
+ * 对摘要里的每个字符串叶子做脱敏与截断，结构原样保留。不做 JSON 往返：
+ * 截断会切在字符串中间、脱敏会改字节，再 parse 必炸——第一版就是这么把真失败顶替掉的。
+ */
+export function redactDigestLeaves(value: unknown, secrets: Array<string | undefined>, depth = 0): unknown {
+  const excluded = secrets.filter((s): s is string => typeof s === 'string' && s.length > 0);
+  if (depth > 6) return '[depth]';
+  if (typeof value === 'string') return runtimeDiagnosticPreview(value, excluded).slice(0, 1_500);
+  if (Array.isArray(value)) return value.slice(0, 40).map((item) => redactDigestLeaves(item, secrets, depth + 1));
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value as Record<string, unknown>).slice(0, 40)) {
+      out[key.slice(0, 80)] = redactDigestLeaves(item, secrets, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
+export function summarizeRunEventStream(raw: string): Record<string, unknown> {
+  const records: Array<{ event: string; data: unknown }> = [];
+  for (const frame of raw.split(/\n\n+/)) {
+    let event = '';
+    const dataLines: string[] = [];
+    for (const line of frame.split('\n')) {
+      if (line.startsWith('event: ')) event = line.slice(7).trim();
+      else if (line.startsWith('data: ')) dataLines.push(line.slice(6));
+    }
+    if (!event || dataLines.length === 0) continue;
+    try {
+      records.push({ event, data: JSON.parse(dataLines.join('\n')) });
+    } catch {
+      records.push({ event, data: { unparsed: dataLines.join('\n').slice(0, 200) } });
+    }
+  }
+  const eventCounts: Record<string, number> = {};
+  const agentTypeCounts: Record<string, number> = {};
+  const toolNames: Record<string, number> = {};
+  const touchedPaths = new Set<string>();
+  const errors: string[] = [];
+  let textTail = '';
+  let stdoutTail = '';
+  let stderrTail = '';
+  const str = (value: unknown): string => (typeof value === 'string' ? value : '');
+  for (const { event, data } of records) {
+    eventCounts[event] = (eventCounts[event] || 0) + 1;
+    const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : {};
+    if (event === 'agent') {
+      const type = str(record.type) || 'unknown';
+      agentTypeCounts[type] = (agentTypeCounts[type] || 0) + 1;
+      if (type === 'text_delta') textTail = (textTail + str(record.delta)).slice(-1_200);
+      if (type === 'tool_use' || type === 'tool_result' || type === 'artifact') {
+        const name = str(record.name) || str(record.tool) || str(record.toolName) || type;
+        toolNames[name] = (toolNames[name] || 0) + 1;
+        const input = record.input && typeof record.input === 'object' ? (record.input as Record<string, unknown>) : {};
+        for (const candidate of [record.path, input.file_path, input.path, input.filePath]) {
+          const value = str(candidate);
+          if (value) touchedPaths.add(value.slice(0, 200));
+        }
+      }
+      if (type === 'error') errors.push(str(record.message).slice(0, 300));
+    } else if (event === 'error') {
+      errors.push((str(record.message) || str(record.error) || JSON.stringify(record)).slice(0, 300));
+    } else if (event === 'stdout') {
+      stdoutTail = (stdoutTail + str(record.chunk)).slice(-600);
+    } else if (event === 'stderr') {
+      stderrTail = (stderrTail + str(record.chunk)).slice(-600);
+    }
+  }
+  return {
+    eventCount: records.length,
+    eventCounts,
+    agentTypeCounts,
+    toolNames,
+    touchedPaths: [...touchedPaths].slice(0, 30),
+    errors: errors.slice(0, 10),
+    textTail,
+    stdoutTail,
+    stderrTail,
+  };
+}
+
+export function canAcceptUntrackedWorkspaceEdit(
+  deliverableValidation: string | undefined,
+  currentHtml: Buffer | undefined,
+  outputHtml: Buffer,
+): boolean {
+  return deliverableValidation === 'no_artifact'
+    && outputHtml.length > 0
+    && (currentHtml === undefined || !currentHtml.equals(outputHtml));
+}
+
+/**
+ * 输出预检兜底分支的诊断摘要。诊断是预检容器的 stdout+stderr，可能很长、可能带凭据，
+ * 也可能整个是空的（进程被超时杀掉时就什么都没有）。三条规矩：
+ * 压成一行、有界截断、空的时候明说空，不拿一句像模像样的话去顶替「不知道」。
+ */
+export function summarizeOutputPreflightDiagnostic(diagnostic: string): string {
+  const flattened = diagnostic.replace(/\s+/g, ' ').trim();
+  if (!flattened) return 'the preflight produced no diagnostic output (it was most likely killed by the 30s timeout)';
+  const limit = 400;
+  // 报错通常写在最后，截尾比截头有用。
+  return flattened.length <= limit ? flattened : `...${flattened.slice(-limit)}`;
+}
+
+/**
+ * 「有几个、在哪」的位置提示，锚点与按钮共用一份。序号与总数由闸门给出，
+ * 缺了就退回不带位置的说法（`no-rootless-tree`：不编）。
+ */
+function brokenElementLocationHint(
+  details: Record<string, unknown> | undefined,
+  countKey: string,
+  ordinalsKey: string,
+  // 人读的词（anchor / button）与标签名（a / button）是两回事：共用一个会写出
+  // 「2 such a(s)」这种句子。分开传，模型读到的仍是它数得出来的那个东西。
+  noun: string,
+  tagName: string,
+): string {
+  const rawCount = details?.[countKey];
+  const count = typeof rawCount === 'number' && Number.isSafeInteger(rawCount) && rawCount > 0
+    ? rawCount
+    : undefined;
+  const rawOrdinals = details?.[ordinalsKey];
+  const ordinals = Array.isArray(rawOrdinals)
+    ? rawOrdinals.filter((value): value is number => (
+      typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    )).slice(0, 24)
+    : [];
+  if (count === undefined || ordinals.length === 0) return '';
+  return ` There are ${count} such ${noun}(s); they are at document-order ${noun} position(s) `
+    + `${ordinals.join(', ')} (counting every <${tagName}> element from the top of the file).`;
+}
+
+const brokenAnchorLocationHint = (details: Record<string, unknown> | undefined): string =>
+  brokenElementLocationHint(details, 'brokenLinkCount', 'brokenLinkOrdinals', 'anchor', 'a');
+
+const inertButtonLocationHint = (details: Record<string, unknown> | undefined): string =>
+  brokenElementLocationHint(details, 'inertButtonCount', 'inertButtonOrdinals', 'button', 'button');
+
+export function classifyQualityRepairReason(error: AgentWorkspaceRuntimeError): { code: string; instruction: string } | undefined {
+  const { message } = error;
+  if (message === 'index.html contains a measured claim with unresolved source context'
+    || message === 'index.html dropped a retained source-backed measured claim') {
+    const missing = message === 'index.html dropped a retained source-backed measured claim';
+    const token = controlledMeasuredClaimToken(error.details?.measuredClaimToken);
+    return {
+      code: missing ? 'retained_measured_claim_missing' : 'measured_claim_context_unresolved',
+      instruction: `${token ? `The source-backed quantity ${token}` : 'A source-backed quantity'} ${missing ? 'is no longer visibly retained' : 'has a value present in the sources, but its subject cannot be aligned confidently'}. Do not delete or change the quantity. Read the frozen factual sources and restore the original source wording, keeping the subject and quantity together in visible text.`,
+    };
+  }
+  if (message === 'index.html contains no explicit body element') {
+    return {
+      code: 'missing_body',
+      instruction: 'Create one explicit body element containing the complete visible page.',
+    };
+  }
+  if (message === 'index.html contains no visible content') {
+    return {
+      code: 'no_visible_content',
+      instruction: 'Create a complete page with meaningful visible content grounded in the MAP task and knowledge sources.',
+    };
+  }
+  if (message === 'index.html contains visible placeholder or unfinished content') {
+    return {
+      code: 'visible_placeholder',
+      instruction: 'Remove every visible placeholder or unfinished-content marker.',
+    };
+  }
+  if (message === 'index.html still contains unreplaced template placeholders') {
+    const rawCount = error.details?.placeholderCount;
+    const count = typeof rawCount === 'number' && Number.isSafeInteger(rawCount) && rawCount > 0
+      ? rawCount
+      : undefined;
+    const rawSamples = error.details?.placeholderSamples;
+    // 样本来自模型自己的产物，可能夹着注入尝试：只收形如 `[REPLACE] 短文本` 的片段，逐条限长。
+    const samples = Array.isArray(rawSamples)
+      ? rawSamples
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.replace(/\s+/g, ' ').trim().slice(0, 48))
+        .filter((value) => /^\[\s*replace\s*\]/i.test(value))
+        .slice(0, 12)
+      : [];
+    const head = count === undefined || samples.length === 0
+      ? ''
+      : `There are ${count} unreplaced placeholder(s) left, for example: ${samples.join(' | ')}. `;
+    return {
+      code: 'unreplaced_template_placeholder',
+      instruction: `${head}Every [REPLACE] marker is a slot you must fill with real copy taken from the MAP task `
+        + 'and the knowledge sources. Replace the whole marker including the word REPLACE and its brackets; '
+        + 'never leave one behind, and do not just delete the slot element instead of filling it. '
+        + 'Search the entire file for the marker before you finish - the publication gate rejects the page '
+        + 'if a single one remains.',
+    };
+  }
+  if (message === 'index.html is still the untouched starter template') {
+    return {
+      code: 'untouched_starter_template',
+      instruction: 'You returned the starter template unchanged: its layout-instruction comment is still inside <main>, '
+        + 'so no real page was produced. Build the actual page now from the MAP task in /workspace/brief/task.json and the '
+        + 'knowledge sources - replace the entire contents of <main> with real sections and copy, and fill every remaining '
+        + 'slot in the header and footer. Keep the template only as a layout and styling reference.',
+    };
+  }
+  if (message === 'index.html contains a link without a target') {
+    return {
+      code: 'link_without_target',
+      instruction: `${brokenAnchorLocationHint(error.details)}Every anchor needs a real destination, and the publication policy accepts exactly one kind: href="#section-id" pointing at an id that exists on this page. An absolute or relative URL fails the package validator instead, with no repair pass. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. The web-prototype template is the usual source of these; its markup is a sketch, not permitted output.`.trim(),
+    };
+  }
+  if (message === 'index.html contains an empty link target') {
+    return {
+      code: 'empty_link_target',
+      instruction: `${brokenAnchorLocationHint(error.details)}href="#" and href="" are rejected without exception, including in the topnav and footer. Point each anchor at a fragment of this same page instead: href="#section-id" where that id exists here, so the navigation actually jumps to your own sections. That is the only link target the publication policy accepts - an absolute or relative URL fails the package validator, with no repair pass. A label that is not meant to navigate must stop being an anchor: render it as span, li, or heading text. You most likely copied these from the web-prototype template or layouts.md; those files are layout sketches, not permitted markup, and rewriting them here is not removing a requested control.`.trim(),
+    };
+  }
+  if (message === 'index.html contains a malformed fragment target') {
+    return {
+      code: 'malformed_fragment_target',
+      instruction: 'Remove or correct every malformed in-page fragment link.',
+    };
+  }
+  if (
+    message.startsWith('index.html contains a missing fragment target:')
+    || message.startsWith('index.html contains missing fragment targets:')
+    || /^index\.html contains [1-9]\d* missing fragment target\(s\)$/.test(message)
+  ) {
+    const count = typeof error.details?.missingFragmentCount === 'number'
+      && Number.isSafeInteger(error.details.missingFragmentCount)
+      && error.details.missingFragmentCount > 0
+      ? error.details.missingFragmentCount
+      : undefined;
+    const ordinals = Array.isArray(error.details?.missingLinkOrdinals)
+      ? error.details.missingLinkOrdinals.filter((value): value is number => (
+        typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+      )).slice(0, 24)
+      : [];
+    return {
+      code: 'missing_fragment_target',
+      instruction: count !== undefined && ordinals.length > 0
+        ? `There are ${count} missing fragment link target(s). Correct or remove the affected anchor element(s) at document-order position(s) ${ordinals.join(', ')}, then inspect every other fragment link against existing element ids.`
+        : 'Remove or correct every in-page link whose fragment does not match an existing element id.',
+    };
+  }
+  if (message === 'index.html contains an enabled button without provable declarative behavior') {
+    return {
+      code: 'inert_enabled_button',
+      instruction: `${inertButtonLocationHint(error.details)}Repair each enabled button to perform the requested behavior: drive a real popover via popovertarget, or rewrite it as an anchor to one of your own sections. Do not remove or disable a control the MAP instruction actually asked for; a bare [REPLACE] CTA copied from the web-prototype template was never requested, so turning that one into an anchor or plain text is the correct repair, not a degradation. If the current publication policy cannot support a requested behavior, report the incompatibility instead of degrading the deliverable.`.trim(),
+    };
+  }
+  if (message === 'index.html violates a visible text occurrence constraint') {
+    const ordinal = typeof error.details?.constraintOrdinal === 'number'
+      && Number.isSafeInteger(error.details.constraintOrdinal)
+      && error.details.constraintOrdinal > 0
+      ? error.details.constraintOrdinal
+      : undefined;
+    return {
+      code: 'visible_text_occurrence',
+      instruction: ordinal === undefined
+        ? 'Read qualityContract.visibleTextOccurrenceConstraints in task.json and make every constrained visible text appear exactly the required number of times.'
+        : `Read qualityContract.visibleTextOccurrenceConstraints in task.json. Make constraint number ${ordinal} appear exactly once in visible page content, removing duplicate rendered elements while preserving the requested insertion.`,
+    };
+  }
+  if (message === 'index.html contains CSS-generated textual content') {
+    return {
+      code: 'css_generated_text',
+      instruction: 'Move every readable pseudo-element or CSS-generated string into an ordinary visible HTML text node. CSS content may contain decorative symbols only.',
+    };
+  }
+  if (message.startsWith('index.html contains an unsupported measured claim:')) {
+    const ordinal = typeof error.details?.measuredClaimOrdinal === 'number'
+      && Number.isSafeInteger(error.details.measuredClaimOrdinal)
+      && error.details.measuredClaimOrdinal > 0
+      ? error.details.measuredClaimOrdinal
+      : undefined;
+    const token = controlledMeasuredClaimToken(error.details?.measuredClaimToken);
+    return {
+      code: 'unsupported_measured_claim',
+      instruction: ordinal !== undefined && token !== undefined
+        ? `Visible measured claim number ${ordinal} in document order has unsupported normalized token ${token}. Remove that exact claim or rewrite it using only a value supported for the same subject by the MAP knowledge sources, then inspect every other measured claim.`
+        : 'Remove every measured claim that is not supported by the MAP knowledge sources.',
+    };
+  }
+  if (message.startsWith('index.html contains an unsupported date, contact, or URL:')) {
+    return {
+      code: 'unsupported_fact',
+      instruction: 'Remove every date, contact detail, or URL that is not supported by the MAP knowledge sources.',
+    };
+  }
+  return undefined;
+}
+
+/** Version 1 canonical bytes shared with HostedSiteRevisionRules.NormalizeGeneratedHtml. */
+export function normalizeGeneratedHtml(raw: string): string {
+  const trimHtmlWhitespace = (value: string) => value.replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
+  let value = String(raw ?? '').replace(/\r\n?/g, '\n');
+  if (value.startsWith('\uFEFF')) value = value.slice(1);
+  value = trimHtmlWhitespace(value);
+  if (!value.startsWith('```')) return value;
+  const firstLine = value.indexOf('\n');
+  if (firstLine >= 0) value = value.slice(firstLine + 1);
+  const closing = value.lastIndexOf('```');
+  if (closing >= 0) value = value.slice(0, closing);
+  return trimHtmlWhitespace(value);
+}
+
+export function hardenSelfContainedHtml(
+  rawHtml: string,
+  evidenceText = '',
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
+): string {
+  return hardenHtmlWithFactRetention(rawHtml, evidenceText, visibleTextOccurrenceConstraints);
+}
+
+export function hardenVerifiedPackageHtml(
+  rawHtml: string,
+  packagePaths: readonly string[],
+  evidenceText = '',
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
+): string {
+  return hardenHtmlWithFactRetention(
+    rawHtml,
+    evidenceText,
+    visibleTextOccurrenceConstraints,
+    undefined,
+    packagePaths,
+  );
+}
+
+interface RetainedMeasuredFact {
+  token: string;
+  candidates: readonly MeasuredClaimContext[];
+}
+
+interface MeasuredFactRetentionState {
+  facts: Map<string, RetainedMeasuredFact>;
+  supportedClaims: MeasuredClaimIndex;
+  authoritativeClaims: MeasuredClaimIndex;
+}
+
+/** Retains only source-backed quantities already presented during this execution,
+ * not every number in a knowledge base. Source bindings cannot be replaced by a
+ * repaired page, model-authored attributes, or state from another execution. */
+export function createArtifactQualityGate(
+  evidenceText: string,
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[] = [],
+  authoritativeEvidenceText = evidenceText,
+): (rawHtml: string, packagePaths?: readonly string[]) => string {
+  const retention: MeasuredFactRetentionState = {
+    facts: new Map(),
+    supportedClaims: indexMeasuredClaims(measuredClaimContexts(evidenceText)),
+    authoritativeClaims: indexMeasuredClaims(measuredClaimContexts(authoritativeEvidenceText)),
+  };
+  const constraints = visibleTextOccurrenceConstraints.map((constraint) => ({ ...constraint }));
+  return (rawHtml, packagePaths) => hardenHtmlWithFactRetention(
+    rawHtml,
+    evidenceText,
+    constraints,
+    retention,
+    packagePaths,
+  );
+}
+
+function hardenHtmlWithFactRetention(
+  rawHtml: string,
+  evidenceText: string,
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
+  retention?: MeasuredFactRetentionState,
+  packagePaths?: readonly string[],
+): string {
+  let html = normalizeGeneratedHtml(rawHtml);
+  if (!DOCUMENT_ROOT_RE.test(html)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_invalid',
+      'index.html must contain an explicit html root element so the security policy can be injected',
+    );
+  }
+  const verifiedPackagePaths = packagePaths === undefined
+    ? undefined
+    : validateVerifiedPackagePaths(packagePaths);
+  html = convertRelativeKnowledgeAnchors(html);
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.isClosing) continue;
+    const name = tag.name.toLowerCase();
+    if (verifiedPackagePaths === undefined && name === 'script') {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html contains executable script; the OpenDesign MVP accepts declarative HTML and CSS only',
+      );
+    }
+    if (/^(?:animate|set|animatemotion|animatetransform)$/i.test(name)) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html contains a disallowed SVG animation primitive',
+      );
+    }
+    const attributes = parseHtmlAttributes(tag.attributes);
+    for (const attribute of ['src', 'href', 'poster', 'background']) {
+      const rawValue = attributes.get(attribute);
+      if (rawValue === undefined) continue;
+      const value = decodeHtmlText(rawValue ?? '').trim();
+      if (!value || value.startsWith('#')) continue;
+      if (verifiedPackagePaths !== undefined) {
+        assertVerifiedPackageReference(name, attribute, value, verifiedPackagePaths);
+      } else {
+        if (value.startsWith('data:') && name !== 'a' && name !== 'area') continue;
+        throw new AgentWorkspaceRuntimeError(
+          'design_output_not_self_contained',
+          `index.html references a non-inline resource from <${name}>`,
+        );
+      }
+    }
+    if (
+      [...attributes.keys()].some((attribute) => (
+        ['srcset', 'srcdoc', 'ping', 'formaction', 'xlink:href'].includes(attribute)
+        || (verifiedPackagePaths === undefined && attribute.startsWith('on'))
+      ))
+      || (verifiedPackagePaths === undefined
+        ? /^(?:applet|base|iframe|frame|object|embed|form)$/i.test(name)
+        : /^(?:applet|base|iframe|frame|object|embed)$/i.test(name))
+      || (name === 'meta' && attributes.has('http-equiv'))
+    ) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_not_self_contained',
+        'index.html contains an embedded navigation or document primitive',
+      );
+    }
+  }
+  if (/@import\s+(?:url\s*\()?/i.test(html)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html CSS contains a disallowed @import',
+    );
+  }
+  for (const match of html.matchAll(/url\(\s*(["']?)(.*?)\1\s*\)/gi)) {
+    const value = match[2].trim();
+    if (!value || value.startsWith('data:') || value.startsWith('#')) continue;
+    if (verifiedPackagePaths !== undefined && resolveVerifiedPackagePath(value, verifiedPackagePaths)) continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html CSS references a non-inline resource',
+    );
+  }
+  validateCssGeneratedContent(html);
+  validateArtifactQuality(
+    html,
+    evidenceText,
+    visibleTextOccurrenceConstraints,
+    retention,
+    verifiedPackagePaths !== undefined,
+  );
+
+  const cspMeta = `<meta http-equiv="Content-Security-Policy" content="${verifiedPackagePaths === undefined ? ARTIFACT_CSP : VERIFIED_PACKAGE_ARTIFACT_CSP}">`;
+  const root = html.match(DOCUMENT_ROOT_RE);
+  const head = html.slice(root![0].length).match(DOCUMENT_HEAD_RE);
+  if (head) {
+    const insertionIndex = root![0].length + head[0].length;
+    return `${html.slice(0, insertionIndex)}${cspMeta}${html.slice(insertionIndex)}`;
+  }
+  return html.replace(DOCUMENT_ROOT_RE, (documentRoot) => `${documentRoot}<head>${cspMeta}</head>`);
+}
+
+function validateVerifiedPackagePaths(packagePaths: readonly string[]): ReadonlySet<string> {
+  const paths = new Set<string>();
+  for (const candidate of packagePaths) {
+    try {
+      assertPublicArtifactPath(candidate);
+    } catch {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', 'verified package contains an invalid path');
+    }
+    if (paths.has(candidate)) {
+      throw new AgentWorkspaceRuntimeError('design_output_invalid', 'verified package contains a duplicate path');
+    }
+    paths.add(candidate);
+  }
+  if (!paths.has('index.html')) {
+    throw new AgentWorkspaceRuntimeError('design_output_missing', 'verified package has no index.html');
+  }
+  return paths;
+}
+
+function assertVerifiedPackageReference(
+  tagName: string,
+  attribute: string,
+  rawValue: string,
+  packagePaths: ReadonlySet<string>,
+): void {
+  const value = rawValue.trim();
+  if (tagName === 'a' || tagName === 'area') {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html links may only target a fragment in the current document',
+    );
+  }
+  if (value.toLowerCase().startsWith('data:')) {
+    if (attribute === 'src' && tagName !== 'script') return;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      'index.html embeds an executable data resource in a disallowed position',
+    );
+  }
+  if (!resolveVerifiedPackagePath(value, packagePaths)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_not_self_contained',
+      `index.html references a resource outside the verified package from <${tagName}>`,
+    );
+  }
+}
+
+function resolveVerifiedPackagePath(rawValue: string, packagePaths: ReadonlySet<string>): string | undefined {
+  let value = rawValue.trim();
+  if (!value || value.startsWith('/') || value.includes('\\')) return undefined;
+  const suffix = value.search(/[?#]/);
+  if (suffix >= 0) value = value.slice(0, suffix);
+  while (value.startsWith('./')) value = value.slice(2);
+  try {
+    value = decodeURIComponent(value);
+    assertPublicArtifactPath(value);
+  } catch {
+    return undefined;
+  }
+  return value.startsWith('assets/') && packagePaths.has(value) ? value : undefined;
+}
+
+function extractVisibleHtmlText(html: string): string {
+  return decodeHtmlText(extractVisibleTextFromMarkup(html))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function decodeHtmlText(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_match, hex: string) => String.fromCodePoint(Number.parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_match, decimal: string) => String.fromCodePoint(Number.parseInt(decimal, 10)))
+    .replace(/&(?:nbsp|#160);/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&apos;|&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&');
+}
+
+function readHtmlAttribute(attributes: string, name: string): string | undefined {
+  const value = parseHtmlAttributes(attributes).get(name.toLowerCase());
+  return value === undefined ? undefined : decodeHtmlText(value ?? '');
+}
+
+function hasHtmlAttribute(attributes: string, name: string): boolean {
+  return parseHtmlAttributes(attributes).has(name.toLowerCase());
+}
+
+interface HtmlTagToken {
+  name: string;
+  attributes: string;
+  start: number;
+  end: number;
+  isClosing: boolean;
+  isSelfClosing: boolean;
+  isComment?: boolean;
+}
+
+function* iterateHtmlTags(html: string): Generator<HtmlTagToken> {
+  let rawTextElement = '';
+  for (let index = 0; index < html.length; index += 1) {
+    if (html[index] !== '<' || index + 1 >= html.length) continue;
+    if (!rawTextElement && html.startsWith('<!--', index)) {
+      const commentEnd = html.indexOf('-->', index + 4);
+      const end = commentEnd < 0 ? html.length : commentEnd + 3;
+      yield {
+        name: '!comment',
+        attributes: '',
+        start: index,
+        end,
+        isClosing: false,
+        isSelfClosing: true,
+        isComment: true,
+      };
+      index = end - 1;
+      continue;
+    }
+    let cursor = index + 1;
+    const isClosing = html[cursor] === '/';
+    if (isClosing) cursor += 1;
+    if (!/[A-Za-z]/.test(html[cursor] ?? '')) continue;
+    const nameStart = cursor;
+    while (cursor < html.length && /[A-Za-z0-9:-]/.test(html[cursor])) cursor += 1;
+    const name = html.slice(nameStart, cursor);
+    if (rawTextElement && (!isClosing || name.toLowerCase() !== rawTextElement)) continue;
+    const attributesStart = cursor;
+    let quote: string | undefined;
+    while (cursor < html.length) {
+      const current = html[cursor];
+      if (quote) {
+        if (current === quote) quote = undefined;
+      } else if (current === '"' || current === "'") {
+        quote = current;
+      } else if (current === '>') {
+        const attributes = html.slice(attributesStart, cursor);
+        const token = {
+          name,
+          attributes,
+          start: index,
+          end: cursor + 1,
+          isClosing,
+          isSelfClosing: attributes.trimEnd().endsWith('/'),
+        };
+        yield token;
+        if (isClosing && name.toLowerCase() === rawTextElement) rawTextElement = '';
+        else if (!isClosing && !token.isSelfClosing && /^(?:script|style|textarea|title)$/i.test(name)) {
+          rawTextElement = name.toLowerCase();
+        }
+        index = cursor;
+        break;
+      }
+      cursor += 1;
+    }
+  }
+}
+
+function extractVisibleTextFromMarkup(html: string): string {
+  const maxVisibleTextCharacters = 2 * 1024 * 1024;
+  const stack: Array<{ name: string; suppressed: boolean }> = [];
+  let suppressedDepth = 0;
+  let cursor = 0;
+  let result = '';
+  const appendVisibleText = (value: string): void => {
+    if (result.length + value.length > maxVisibleTextCharacters) {
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        'index.html contains too much visible text to validate safely',
+      );
+    }
+    result += value;
+  };
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.start > cursor && suppressedDepth === 0) appendVisibleText(html.slice(cursor, tag.start));
+    const block = /^(?:address|article|aside|blockquote|dd|div|dl|dt|figcaption|figure|footer|h[1-6]|header|li|main|nav|ol|p|section|table|tbody|td|tfoot|th|thead|tr|ul)$/i.test(tag.name);
+    if (tag.isClosing) {
+      for (let index = stack.length - 1; index >= 0; index -= 1) {
+        const frame = stack[index];
+        stack.splice(index, 1);
+        if (frame.suppressed) suppressedDepth -= 1;
+        if (frame.name.toLowerCase() === tag.name.toLowerCase()) break;
+      }
+      if (block && suppressedDepth === 0) appendVisibleText('。');
+    } else {
+      if (block && suppressedDepth === 0) appendVisibleText('。');
+      const style = readHtmlAttribute(tag.attributes, 'style') ?? '';
+      const suppressed = /^(?:head|script|style|template|noscript)$/i.test(tag.name)
+        || hasHtmlAttribute(tag.attributes, 'hidden')
+        || readHtmlAttribute(tag.attributes, 'aria-hidden')?.trim().toLowerCase() === 'true'
+        || /(?:^|;)\s*(?:display\s*:\s*none|visibility\s*:\s*hidden)\s*(?:!important\s*)?(?:;|$)/i.test(style);
+      // A visible line break is a text boundary, unlike inline spans within a quantity.
+      if (suppressedDepth === 0 && !suppressed && tag.name.toLowerCase() === 'br') appendVisibleText('。');
+      if (suppressedDepth === 0 && !suppressed && tag.name.toLowerCase() === 'input') {
+        const type = (readHtmlAttribute(tag.attributes, 'type') ?? 'text').trim().toLowerCase();
+        if (!['hidden', 'checkbox', 'radio', 'file', 'color', 'range'].includes(type)) {
+          const value = readHtmlAttribute(tag.attributes, 'value')?.trim();
+          const placeholder = readHtmlAttribute(tag.attributes, 'placeholder')?.trim();
+          if (value) appendVisibleText(` ${value} `);
+          else if (placeholder) appendVisibleText(` ${placeholder} `);
+        }
+      }
+      const voidElement = /^(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)$/i.test(tag.name);
+      if (!tag.isSelfClosing && !voidElement) {
+        if (stack.length >= MAX_HTML_NESTING_DEPTH) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_quality_rejected',
+            'index.html exceeds the supported HTML nesting depth',
+          );
+        }
+        stack.push({ name: tag.name, suppressed });
+        if (suppressed) suppressedDepth += 1;
+      }
+    }
+    cursor = tag.end;
+  }
+  if (cursor < html.length && suppressedDepth === 0) appendVisibleText(html.slice(cursor));
+  return result;
+}
+
+function validateCssGeneratedContent(html: string): void {
+  let styleContentStart: number | undefined;
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.name.toLowerCase() !== 'style') continue;
+    if (!tag.isClosing) {
+      if (!tag.isSelfClosing) styleContentStart = tag.end;
+      continue;
+    }
+    if (styleContentStart === undefined) continue;
+    const css = html.slice(styleContentStart, tag.start).replace(/\/\*[\s\S]*?\*\//g, ' ');
+    styleContentStart = undefined;
+    for (const match of css.matchAll(/(?:^|[;{])\s*content\s*:\s*([^;}]+)/gi)) {
+      const value = match[1].trim();
+      if (/^(?:none|normal|["']\s*["'])$/i.test(value)) continue;
+      const quoted = value.match(/^(["'])([\s\S]*)\1$/);
+      if (quoted && !/[A-Za-z0-9\\\u3400-\u9fff]/u.test(quoted[2])) continue;
+      throw new AgentWorkspaceRuntimeError(
+        'design_output_quality_rejected',
+        'index.html contains CSS-generated textual content',
+      );
+    }
+  }
+}
+
+function parseHtmlAttributes(attributes: string): Map<string, string | undefined> {
+  const parsed = new Map<string, string | undefined>();
+  let index = 0;
+  while (index < attributes.length) {
+    while (index < attributes.length && (/\s/.test(attributes[index]) || attributes[index] === '/')) index += 1;
+    const nameStart = index;
+    while (index < attributes.length && !/[\s=>]/.test(attributes[index])) index += 1;
+    if (index === nameStart) {
+      index += 1;
+      continue;
+    }
+    const attributeName = attributes.slice(nameStart, index).toLowerCase();
+    while (index < attributes.length && /\s/.test(attributes[index])) index += 1;
+    let value: string | undefined;
+    if (attributes[index] === '=') {
+      index += 1;
+      while (index < attributes.length && /\s/.test(attributes[index])) index += 1;
+      const quote = attributes[index] === '"' || attributes[index] === "'" ? attributes[index] : undefined;
+      if (quote) {
+        index += 1;
+        const valueStart = index;
+        while (index < attributes.length && attributes[index] !== quote) index += 1;
+        value = attributes.slice(valueStart, index);
+        if (index < attributes.length) index += 1;
+      } else {
+        const valueStart = index;
+        while (index < attributes.length && !/[\s>]/.test(attributes[index])) index += 1;
+        value = attributes.slice(valueStart, index);
+      }
+    }
+    if (!parsed.has(attributeName)) parsed.set(attributeName, value);
+  }
+  return parsed;
+}
+
+interface MeasuredClaimContext {
+  token: string;
+  context: string;
+  requiresContext: boolean;
+  isStructural: boolean;
+  entityKeys: Set<string>;
+}
+
+interface MeasuredClaimIndex {
+  byToken: Map<string, MeasuredClaimContext[]>;
+  ids: Map<MeasuredClaimContext, number>;
+}
+
+function measuredClaimIdentity(claim: MeasuredClaimContext): string {
+  return JSON.stringify([claim.token.toLowerCase(), claim.context, claim.requiresContext,
+    claim.isStructural, [...claim.entityKeys].sort()]);
+}
+
+function indexMeasuredClaims(claims: readonly MeasuredClaimContext[]): MeasuredClaimIndex {
+  const byToken = new Map<string, MeasuredClaimContext[]>();
+  const ids = new Map<MeasuredClaimContext, number>();
+  const identities = new Set<string>();
+  for (const [ordinal, claim] of claims.entries()) {
+    const identity = measuredClaimIdentity(claim);
+    // Exact predicate-equivalent repetitions do not create different source
+    // bindings. Keep the first frozen ordinal, never merge distinct contexts.
+    if (identities.has(identity)) continue;
+    identities.add(identity);
+    ids.set(claim, ordinal);
+    const token = claim.token.toLowerCase();
+    const candidates = byToken.get(token) ?? [];
+    candidates.push(claim);
+    byToken.set(token, candidates);
+  }
+  return { byToken, ids };
+}
+
+function measuredClaimContexts(text: string): MeasuredClaimContext[] {
+  const claims: MeasuredClaimContext[] = [];
+  // Clock minutes are not standalone quantities: splitting "19:00 周六" at ':'
+  // must not invent "0周". Mask only complete clock digits before segmentation,
+  // retaining delimiters/offsets and using this same lexical boundary for both
+  // source evidence and visible text. This does not establish clock fact support.
+  const quantityText = text.replace(
+    /(?<![\d:：])(?:[01]?\d|2[0-3])[:：][0-5]\d(?!\d|[:：]\d)/g,
+    (clock) => clock.replace(/\d/g, ' '),
+  );
+  for (const segment of quantityText.split(/[\r\n。！？!?；;，,：:]+/)) {
+    const segmentClaims: Array<MeasuredClaimContext & { offset: number; patternOrder: number }> = [];
+    const patterns = [
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
+      { regex: /([￥¥$])\s*(\d+(?:[.,]\d+)*)/gi, numberIndex: 2, unitIndex: 1 },
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
+    ];
+    for (const [patternOrder, pattern] of patterns.entries()) {
+      for (const match of segment.matchAll(pattern.regex)) {
+        const rawNumber = match[pattern.numberIndex];
+        const parsed = Number(rawNumber.replaceAll(',', ''));
+        const number = Number.isFinite(parsed) ? String(parsed) : rawNumber;
+        const rawUnit = match[pattern.unitIndex];
+        const requiresContext = isCountUnit(rawUnit);
+        const entityKeys = extractClaimEntityKeys(segment, rawUnit);
+        const unit = normalizeClaimUnit(rawUnit, entityKeys);
+        segmentClaims.push({
+          token: `${number}|${unit}`,
+          context: normalizeClaimContext(segment),
+          requiresContext,
+          isStructural: requiresContext && isStructuralCount(segment),
+          entityKeys,
+          offset: match.index ?? 0,
+          patternOrder,
+        });
+      }
+    }
+    segmentClaims.sort((left, right) => left.offset - right.offset || left.patternOrder - right.patternOrder);
+    for (const { offset: _offset, patternOrder: _patternOrder, ...claim } of segmentClaims) claims.push(claim);
+  }
+  return claims;
+}
+
+const CONTROLLED_MEASURED_CLAIM_UNITS = new Set([
+  '%', '分钟', '小时', '天', '周', '月', '年', '万字', 'KB', 'MB', 'GB', 'CNY', 'USD',
+  '个', '条', '次', '字', '项', '例', '份', '种', '类', '层', '步',
+  'PERSON', 'ARTICLE', 'ORGANIZATION', 'SECTION', 'PAGE', 'PROJECT', 'CUSTOMER', 'USER',
+  'CONSUMER', 'READER', 'EMPLOYEE', 'CASE', 'MODULE', 'CATEGORY', 'OPERATION', 'COLUMN',
+]);
+
+function controlledMeasuredClaimToken(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length > 48) return undefined;
+  const match = /^(?:0|[1-9]\d*)(?:\.\d+)?(.+)$/.exec(value);
+  return match && CONTROLLED_MEASURED_CLAIM_UNITS.has(match[1]) ? value : undefined;
+}
+
+function normalizeClaimContext(value: string): string {
+  return value.replace(
+    /\d+(?:[.,]\d+)*|%|％|￥|¥|\$|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB|个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页|大约|约|只需|总共|预计|可达|达到|需要|耗时|时长|total|approximately|about|around/gi,
+    '',
+  );
+}
+
+function claimContextTokens(value: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const word of value.matchAll(/[A-Za-z][A-Za-z0-9_-]{2,}/g)) tokens.add(word[0].toLowerCase());
+  const chinese = [...value].filter((character) => /[\u4e00-\u9fff]/.test(character)).join('');
+  for (let index = 0; index + 1 < chinese.length; index += 1) tokens.add(chinese.slice(index, index + 2));
+  return tokens;
+}
+
+function hasClaimContextOverlap(
+  left: string,
+  right: string,
+  requiresContext: boolean,
+  leftEntities: Set<string>,
+  rightEntities: Set<string>,
+): boolean {
+  if (!requiresContext) return true;
+  const comparableLeftEntities = new Set([...leftEntities].filter((key) => key !== 'PERSON'));
+  const comparableRightEntities = new Set([...rightEntities].filter((key) => key !== 'PERSON'));
+  if (requiresContext && comparableLeftEntities.size > 0 && comparableRightEntities.size > 0) {
+    return [...comparableRightEntities].some((key) => comparableLeftEntities.has(key));
+  }
+  const leftTokens = claimContextTokens(left);
+  if (leftTokens.size === 0) return !requiresContext;
+  const rightTokens = claimContextTokens(right);
+  if (rightTokens.size === 0) return false;
+  const overlap = [...rightTokens].filter((token) => leftTokens.has(token)).length;
+  return Math.min(leftTokens.size, rightTokens.size) <= 1 ? overlap === 1 : overlap >= 2;
+}
+
+function hasExplicitClaimEntityConflict(left: MeasuredClaimContext, right: MeasuredClaimContext): boolean {
+  const leftEntities = [...left.entityKeys].filter((key) => key !== 'PERSON');
+  const rightEntities = [...right.entityKeys].filter((key) => key !== 'PERSON');
+  return leftEntities.length > 0 && rightEntities.length > 0
+    && !leftEntities.some((key) => rightEntities.includes(key));
+}
+
+function alignsMeasuredClaim(source: MeasuredClaimContext, visible: MeasuredClaimContext): boolean {
+  return source.token.toLowerCase() === visible.token.toLowerCase()
+    && hasClaimContextOverlap(source.context, visible.context, visible.requiresContext, source.entityKeys, visible.entityKeys);
+}
+
+function normalizeClaimUnit(value: string, entityKeys: Set<string>): string {
+  if (value === '％') return '%';
+  if (value === '￥' || value === '¥' || value === '元' || value === '人民币') return 'CNY';
+  if (value === '$' || value === '美元') return 'USD';
+  if (value === '人' || value === '位' || (value === '个' && ['CUSTOMER', 'USER', 'CONSUMER', 'READER', 'EMPLOYEE'].some((key) => entityKeys.has(key)))) return 'PERSON';
+  if (value === '篇' || (value === '个' && entityKeys.has('ARTICLE'))) return 'ARTICLE';
+  if (value === '家' || (value === '个' && entityKeys.has('ORGANIZATION'))) return 'ORGANIZATION';
+  if (value === '章' || value === '节' || (value === '个' && entityKeys.has('SECTION'))) return 'SECTION';
+  if (value === '页') return 'PAGE';
+  if (value === '个' && entityKeys.size === 1) return [...entityKeys][0];
+  return value.toUpperCase();
+}
+
+function isCountUnit(unit: string): boolean {
+  return new Set(['个', '条', '次', '篇', '字', '人', '位', '家', '项', '例', '份', '种', '类', '层', '步', '章', '节', '页']).has(unit);
+}
+
+function isStructuralCount(segment: string): boolean {
+  return /(?:第\s*\d+\s*(?:步|章|节)(?:\b|。|，|,|：|:|$))|(?:(?:本文|本页|下文|以下|使用方式|操作流程|阅读路径|页面内容)[^\r\n。！？!?；;]{0,16}(?:分为|包括|包含|共有)\s*\d+(?:[.,]\d+)*\s*(?:个|条|项|种|类|层|步|章|节)?\s*(?:步骤|阶段|部分|章节|要点|原则|方式|层级|类别|模块|区块|栏目|操作)(?:\b|。|，|,|：|:|$))/i.test(segment);
+}
+
+function extractClaimEntityKeys(segment: string, unit: string): Set<string> {
+  const keys = new Set<string>();
+  for (const [key, pattern] of [
+    ['PROJECT', /项目/],
+    ['CUSTOMER', /客户/],
+    ['USER', /用户/],
+    ['CONSUMER', /消费者/],
+    ['READER', /读者/],
+    ['EMPLOYEE', /员工|成员/],
+    ['CASE', /案例|样例/],
+    ['ARTICLE', /文章|文档|知识|内容/],
+    ['MODULE', /模块|功能/],
+    ['CATEGORY', /类别|分类|种类/],
+    ['OPERATION', /操作|流程|步骤/],
+    ['SECTION', /章节|章|节/],
+    ['COLUMN', /栏目|专栏/],
+    ['ORGANIZATION', /企业|公司|机构|商家/],
+  ] as const) {
+    if (pattern.test(segment)) keys.add(key);
+  }
+  if (unit === '人' || unit === '位') keys.add('PERSON');
+  if (unit === '篇') keys.add('ARTICLE');
+  if (unit === '章' || unit === '节') keys.add('SECTION');
+  if (unit === '家') keys.add('ORGANIZATION');
+  if (unit === '页') keys.add('PAGE');
+  return keys;
+}
+
+function validateArtifactQuality(
+  html: string,
+  evidenceText: string,
+  visibleTextOccurrenceConstraints: readonly VisibleTextOccurrenceConstraint[],
+  retention?: MeasuredFactRetentionState,
+  allowScriptedControls = false,
+): void {
+  let bodyContentStart: number | undefined;
+  let bodyContentEnd: number | undefined;
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.name.toLowerCase() !== 'body') continue;
+    if (!tag.isClosing && bodyContentStart === undefined) bodyContentStart = tag.end;
+    else if (tag.isClosing && bodyContentStart !== undefined) {
+      bodyContentEnd = tag.start;
+      break;
+    }
+  }
+  if (bodyContentStart === undefined || bodyContentEnd === undefined) {
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no explicit body element');
+  }
+  const visible = extractVisibleHtmlText(html.slice(bodyContentStart, bodyContentEnd));
+  if (!visible) {
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains no visible content');
+  }
+  if (/(?:图|图片|图示|插图|截图|内容|文案|数据|此处|位置)\s*(?:仍|仅|为|是|[:：·—-])?\s*占位|占位\s*(?:图|图片|图示|插图|截图|内容|文案|数据|[:：·—-])|待\s*(?:补充|替换|填写|完善)|\blorem\s+ipsum\b|\b(?:todo|tbd)\b/i.test(visible)) {
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains visible placeholder or unfinished content');
+  }
+  // 起始页是一张清空了占位文案的模板，模型一字未改地交回来时，它的可见文字只剩一个版权符号，
+  // 「有没有可见内容」那条判据放它过去，于是整条链路全绿、用户拿到一张空页
+  // （2026-09-20 第八条 run 实测，比失败更糟的那种成功）。
+  // 判据取模板正文里那段「把版式粘到这里」的指示注释：真做过的页面会把 <main> 的内容整段换掉，
+  // 它留不下来；留着就是确证「起始页原样交回」。比「可见文字少于 N 个字」准，也不会误伤小页面。
+  // MAP 落库前会拒收任何残留的 `[REPLACE]`（HostedSiteRevision 的
+  // EnsureNoUnresolvedTemplatePlaceholders）。同一条判据前移到这里，模型才有 4 轮修复机会
+  // 把漏掉的槽填掉；此前 CDS 不查，漏几个就直接撞上 MAP 的硬拒，一次生成全废。
+  // 口径与 MAP 一致：先去掉注释与 <style>，再找 `[ replace ]`。
+  const sentinelMarkup = html.replace(/<!--[\s\S]*?-->|<style\b[^>]*>[\s\S]*?<\/style\s*>/gi, '');
+  const sentinels = [...sentinelMarkup.matchAll(/\[\s*replace\s*\][^<\n]{0,40}/gi)]
+    .map((match) => match[0].trim());
+  if (sentinels.length > 0) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html still contains unreplaced template placeholders',
+      false,
+      { placeholderCount: sentinels.length, placeholderSamples: sentinels.slice(0, 12) },
+    );
+  }
+  if (html.includes(TEMPLATE_UNTOUCHED_MARKER)) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html is still the untouched starter template',
+    );
+  }
+  for (const [index, constraint] of visibleTextOccurrenceConstraints.entries()) {
+    const actualOccurrences = countLiteralOccurrences(visible, constraint.text);
+    if (
+      actualOccurrences >= constraint.minOccurrences
+      && actualOccurrences <= constraint.maxOccurrences
+    ) continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html violates a visible text occurrence constraint',
+      false,
+      {
+        qualityViolationFingerprint: crypto.createHash('sha256').update(constraint.text).digest('hex'),
+        constraintOrdinal: index + 1,
+        actualOccurrences,
+        minOccurrences: constraint.minOccurrences,
+        maxOccurrences: constraint.maxOccurrences,
+      },
+    );
+  }
+
+  const maxQualityTargets = 4_096;
+  const maxMissingLinkOrdinals = 256;
+  const targets = new Set<string>();
+  const popoverTargets = new Set<string>();
+  let hasScript = false;
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.isClosing) continue;
+    if (tag.name.toLowerCase() === 'script') hasScript = true;
+    const attributes = tag.attributes;
+    const target = decodeHtmlText((readHtmlAttribute(attributes, 'id') ?? readHtmlAttribute(attributes, 'name') ?? '').trim());
+    if (target) {
+      targets.add(target);
+      if (hasHtmlAttribute(attributes, 'popover')) popoverTargets.add(target);
+      if (targets.size > maxQualityTargets) {
+        throw new AgentWorkspaceRuntimeError(
+          'design_output_quality_rejected',
+          'index.html contains too many fragment targets to validate safely',
+        );
+      }
+    }
+  }
+  const missingFragments = new Map<string, number[]>();
+  // 空链接此前是「撞上第一个就抛」，而且什么都不告诉模型：既没有位置也没有条数。
+  // 于是四轮修复全是盲修——2026-09-20 实测连着两条 run 都这么死的。改成和缺失锚点
+  // 同一套口径：整篇收齐，抛的时候带上文档序号与总数。抛哪一条消息仍按文档顺序的
+  // 第一条决定，precedence 逐字不变。
+  const brokenAnchors: Array<{ ordinal: number; kind: 'missing' | 'empty' }> = [];
+  // 按钮同理：此前也是撞上第一个就抛、不说位置不说条数。2026-09-20 实测空链接那条修好之后
+  // 立刻撞上这条，模型同样是盲修。收齐再报，口径与锚点一致。
+  const inertButtons: number[] = [];
+  let buttonOrdinal = 0;
+  let anchorOrdinal = 0;
+  // precedence 必须按**文档顺序**判，不能拿「第 N 个按钮」去比「第 N 个锚点」——
+  // 那是两条各自独立的计数，比出来的先后与页面里的先后无关。共用一条位置序列决定谁先报，
+  // 报给模型的仍是各自的同类序号（模型数的是「第几个 <a>」「第几个 <button>」）。
+  let documentPosition = 0;
+  let firstInertButtonPosition = Number.POSITIVE_INFINITY;
+  let firstBrokenAnchorPosition = Number.POSITIVE_INFINITY;
+  let retainedMissingLinkOrdinals = 0;
+  for (const tag of iterateHtmlTags(html)) {
+    if (tag.isClosing) continue;
+    documentPosition += 1;
+    const tagName = tag.name.toLowerCase();
+    if (tagName === 'button') {
+      const attributes = tag.attributes;
+      buttonOrdinal += 1;
+      if (hasHtmlAttribute(attributes, 'disabled')) continue;
+      const popoverTarget = readHtmlAttribute(attributes, 'popovertarget')?.trim();
+      if (popoverTarget && popoverTargets.has(popoverTarget)) continue;
+      if (allowScriptedControls && hasScript) continue;
+      if (inertButtons.length < maxMissingLinkOrdinals) inertButtons.push(buttonOrdinal);
+      firstInertButtonPosition = Math.min(firstInertButtonPosition, documentPosition);
+      continue;
+    }
+    if (tagName !== 'a') continue;
+    anchorOrdinal += 1;
+    const href = readHtmlAttribute(tag.attributes, 'href');
+    if (href === undefined) {
+      if (brokenAnchors.length < maxMissingLinkOrdinals) brokenAnchors.push({ ordinal: anchorOrdinal, kind: 'missing' });
+      firstBrokenAnchorPosition = Math.min(firstBrokenAnchorPosition, documentPosition);
+      continue;
+    }
+    const normalized = href?.trim() ?? '';
+    if (!normalized || normalized === '#') {
+      if (brokenAnchors.length < maxMissingLinkOrdinals) brokenAnchors.push({ ordinal: anchorOrdinal, kind: 'empty' });
+      firstBrokenAnchorPosition = Math.min(firstBrokenAnchorPosition, documentPosition);
+      continue;
+    }
+    if (normalized.startsWith('#')) {
+      let fragment: string;
+      try {
+        fragment = decodeURIComponent(normalized.slice(1));
+      } catch {
+        throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', 'index.html contains a malformed fragment target');
+      }
+      if (!fragment || !targets.has(fragment)) {
+        const ordinals = missingFragments.get(fragment) ?? [];
+        if (retainedMissingLinkOrdinals < maxMissingLinkOrdinals) {
+          ordinals.push(anchorOrdinal);
+          retainedMissingLinkOrdinals += 1;
+        }
+        missingFragments.set(fragment, ordinals);
+        if (missingFragments.size > maxQualityTargets) {
+          throw new AgentWorkspaceRuntimeError(
+            'design_output_quality_rejected',
+            'index.html contains too many missing fragment targets to report safely',
+          );
+        }
+      }
+    }
+  }
+  // 逐个抛的年代，谁在标签流里先出现谁先抛。这里按同一条位置序列还原那个顺序。
+  if (inertButtons.length > 0 && firstInertButtonPosition <= firstBrokenAnchorPosition) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html contains an enabled button without provable declarative behavior',
+      false,
+      { inertButtonCount: inertButtons.length, inertButtonOrdinals: inertButtons.slice(0, 24) },
+    );
+  }
+  if (brokenAnchors.length > 0) {
+    // 抛哪一条按文档顺序的第一条决定（与逐个抛时完全一致），报的序号只列同一类的。
+    const kind = brokenAnchors[0].kind;
+    const ordinals = brokenAnchors.filter((entry) => entry.kind === kind).map((entry) => entry.ordinal);
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      kind === 'missing'
+        ? 'index.html contains a link without a target'
+        : 'index.html contains an empty link target',
+      false,
+      { brokenLinkCount: ordinals.length, brokenLinkOrdinals: ordinals.slice(0, 24) },
+    );
+  }
+  if (inertButtons.length > 0) {
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html contains an enabled button without provable declarative behavior',
+      false,
+      { inertButtonCount: inertButtons.length, inertButtonOrdinals: inertButtons.slice(0, 24) },
+    );
+  }
+  if (missingFragments.size > 0) {
+    const normalizedFragments = Array.from(missingFragments.keys()).sort();
+    const missingLinkOrdinals = Array.from(missingFragments.values()).flat().sort((left, right) => left - right);
+    const qualityViolationFingerprint = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(normalizedFragments))
+      .digest('hex');
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      `index.html contains ${missingFragments.size} missing fragment target(s)`,
+      false,
+      {
+        qualityViolationFingerprint,
+        missingFragmentCount: missingFragments.size,
+        missingLinkOrdinals,
+      },
+    );
+  }
+
+  const supportedClaims = retention?.supportedClaims ?? indexMeasuredClaims(measuredClaimContexts(evidenceText));
+  const authoritativeClaims = retention?.authoritativeClaims ?? supportedClaims;
+  const retainedFacts = retention?.facts;
+  const visibleClaims = measuredClaimContexts(visible);
+  const analysis = new Map<string, { claim: MeasuredClaimContext; ordinal: number;
+    sourceCandidates: MeasuredClaimContext[]; aligned: boolean; binding: MeasuredClaimContext[] }>();
+  for (const [ordinal, claim] of visibleClaims.entries()) {
+    const identity = measuredClaimIdentity(claim);
+    if (analysis.has(identity)) continue;
+    const token = claim.token.toLowerCase();
+    const candidates = (supportedClaims.byToken.get(token) ?? [])
+      .filter((candidate) => !hasExplicitClaimEntityConflict(candidate, claim));
+    const aligned = candidates.some((candidate) => alignsMeasuredClaim(candidate, claim));
+    const sourceCandidates = (authoritativeClaims.byToken.get(token) ?? [])
+      .filter((candidate) => !hasExplicitClaimEntityConflict(candidate, claim));
+    const sourceAligned = sourceCandidates.filter((candidate) => alignsMeasuredClaim(candidate, claim));
+    analysis.set(identity, { claim, ordinal, sourceCandidates, aligned,
+      binding: sourceAligned.length > 0 ? sourceAligned : sourceCandidates });
+  }
+  // Capture all eligible claims before reporting the first failure, so one repair
+  // cannot silently erase a later fact. An invented value never becomes required.
+  const analyzedClaims = [...analysis.values()];
+  for (const { claim, sourceCandidates, binding } of analyzedClaims) {
+    if (claim.isStructural || sourceCandidates.length === 0 || !retainedFacts) continue;
+    const key = `${claim.token.toLowerCase()}:${binding.map((candidate) => authoritativeClaims.ids.get(candidate)).join(',')}`;
+    if (!retainedFacts.has(key)) retainedFacts.set(key, { token: claim.token, candidates: binding });
+  }
+  for (const { ordinal, claim, sourceCandidates, aligned } of analyzedClaims) {
+    if (claim.isStructural || aligned) continue;
+    const [number, unit] = claim.token.split('|');
+    const measuredClaimToken = `${number}${unit}`;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      sourceCandidates.length > 0
+        ? 'index.html contains a measured claim with unresolved source context'
+        : `index.html contains an unsupported measured claim: ${measuredClaimToken}`,
+      false,
+      {
+        measuredClaimOrdinal: ordinal + 1,
+        measuredClaimToken,
+      },
+    );
+  }
+  for (const retained of retainedFacts?.values() ?? []) {
+    if (analyzedClaims.some(({ claim }) => !claim.isStructural
+      && retained.candidates.some((candidate) => alignsMeasuredClaim(candidate, claim)))) continue;
+    throw new AgentWorkspaceRuntimeError(
+      'design_output_quality_rejected',
+      'index.html dropped a retained source-backed measured claim',
+      false,
+      { measuredClaimToken: retained.token.replace('|', '') },
+    );
+  }
+  const supportedFacts = sensitiveFacts(evidenceText);
+  for (const fact of sensitiveFacts(visible)) {
+    if (supportedFacts.has(fact)) continue;
+    throw new AgentWorkspaceRuntimeError('design_output_quality_rejected', `index.html contains an unsupported date, contact, or URL: ${fact}`);
+  }
+}
+
+function sensitiveFacts(text: string): Set<string> {
+  const facts = new Set<string>();
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"']+|\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\b(?:19|20)\d{2}[-/.]\d{1,2}(?:[-/.]\d{1,2})?\b|(?<!\d)(?:\+?86[-\s]?)?1[3-9]\d{9}(?!\d)|(?<!\d)0\d{2,3}-?\d{7,8}(?!\d)/gi)) {
+    facts.add(match[0].replace(/[.,;:，。；：)\]}>`]+$/g, '').toLowerCase());
+  }
+  return facts;
+}
+
+function collectArtifactQualityEvidence(workspaceDir: string, includeUserSuppliedTask = true): string {
+  const evidence: string[] = [];
+  const taskPath = path.join(workspaceDir, 'brief', 'task.json');
+  if (includeUserSuppliedTask && fs.existsSync(taskPath)) {
+    try {
+      const task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
+      for (const key of ['title', 'instruction']) {
+        if (typeof task[key] === 'string') evidence.push(task[key] as string);
+      }
+    } catch {
+      throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
+    }
+  }
+  const knowledgeDir = path.join(workspaceDir, 'knowledge');
+  if (fs.existsSync(knowledgeDir)) {
+    for (const entry of fs.readdirSync(knowledgeDir, { withFileTypes: true }).filter((item) => item.isFile())) {
+      evidence.push(fs.readFileSync(path.join(knowledgeDir, entry.name), 'utf8'));
+    }
+  }
+  const currentPath = path.join(workspaceDir, 'current', 'index.html');
+  if (fs.existsSync(currentPath)) evidence.push(extractVisibleHtmlText(fs.readFileSync(currentPath, 'utf8')));
+  return evidence.join('\n');
+}
+
+function collectVisibleTextOccurrenceConstraints(workspaceDir: string): VisibleTextOccurrenceConstraint[] {
+  const taskPath = path.join(workspaceDir, 'brief', 'task.json');
+  if (!fs.existsSync(taskPath)) return [];
+  try {
+    const task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
+    const quality = task.qualityContract;
+    if (!quality || typeof quality !== 'object' || Array.isArray(quality)) {
+      throw new Error('quality contract missing');
+    }
+    return parseVisibleTextOccurrenceConstraints(
+      (quality as Record<string, unknown>).visibleTextOccurrenceConstraints,
+    );
+  } catch (error) {
+    if (error instanceof AgentWorkspaceRuntimeError) throw error;
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
+  }
+}
+
+function parseVisibleTextOccurrenceConstraints(value: unknown): VisibleTextOccurrenceConstraint[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 12) {
+    throw new AgentWorkspaceRuntimeError(
+      'workspace_quality_contract_unsupported',
+      'brief/task.json qualityContract.visibleTextOccurrenceConstraints is unsupported',
+    );
+  }
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_quality_contract_unsupported',
+        'brief/task.json qualityContract.visibleTextOccurrenceConstraints is unsupported',
+      );
+    }
+    const rule = item as Record<string, unknown>;
+    const text = typeof rule.text === 'string' ? rule.text.trim().replace(/\s+/g, ' ') : '';
+    if (
+      text.length < 4
+      || text.length > 200
+      || rule.minOccurrences !== 1
+      || rule.maxOccurrences !== 1
+      || seen.has(text)
+    ) {
+      throw new AgentWorkspaceRuntimeError(
+        'workspace_quality_contract_unsupported',
+        'brief/task.json qualityContract.visibleTextOccurrenceConstraints is unsupported',
+      );
+    }
+    seen.add(text);
+    return { text, minOccurrences: 1, maxOccurrences: 1 };
+  });
+}
+
+function countLiteralOccurrences(haystack: string, needle: string): number {
+  let count = 0;
+  let cursor = 0;
+  while (cursor <= haystack.length - needle.length) {
+    const index = haystack.indexOf(needle, cursor);
+    if (index < 0) break;
+    count += 1;
+    cursor = index + needle.length;
+  }
+  return count;
+}
+
+function convertRelativeKnowledgeAnchors(html: string): string {
+  const quoted = /<a\b[^>]*\bhref\s*=\s*(["'])(\.\/[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_.:-]+)?)\1[^>]*>([\s\S]*?)<\/a\s*>/gi;
+  const unquoted = /<a\b[^>]*\bhref\s*=\s*(\.\/[A-Za-z0-9_./-]+(?:#[A-Za-z0-9_.:-]+)?)[^\s"'`=<>]*[^>]*>([\s\S]*?)<\/a\s*>/gi;
+  const replace = (_match: string, value: string, body: string): string => {
+    if (/(?:^|\/)\.\.(?:\/|$)/.test(value)) return _match;
+    return `<span data-cds-source-reference="${value}">${body}</span>`;
+  };
+  return html
+    .replace(quoted, (_match, _quote: string, value: string, body: string) => replace(_match, value, body))
+    .replace(unquoted, (_match, value: string, body: string) => replace(_match, value, body));
+}
+
+function classifyImagePullFailure(stdout: string, stderr: string): string {
+  const output = `${stdout}\n${stderr}`.toLowerCase();
+  if (/unauthorized|denied|authentication required|credential/.test(output)) {
+    return 'runtime image registry authentication failed';
+  }
+  if (/no matching manifest|unsupported platform|does not match the specified platform/.test(output)) {
+    return 'runtime image does not support this CDS node architecture';
+  }
+  if (/no space left|insufficient disk|disk quota/.test(output)) {
+    return 'runtime image pull failed because CDS node storage is exhausted';
+  }
+  if (/timeout|timed out|connection reset|temporary failure|network is unreachable|no such host/.test(output)) {
+    return 'runtime image pull failed because the registry is temporarily unreachable';
+  }
+  return 'runtime image pull failed';
+}

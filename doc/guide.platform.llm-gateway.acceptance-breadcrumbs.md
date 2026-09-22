@@ -51,8 +51,7 @@ serving 影子比对读端点。本文档把每一屏拆成**自动化工具（P
 
 ## 2. 测试覆盖矩阵摘要（A/B/C/D 四层 + shadow）
 
-事实来源：[doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（设计 SSOT）+ [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（约 284 行全量报告，
-`scripts/gen-gw-matrix-report.py` 自动生成）。本节只给摘要，不复制全文。
+事实来源：[doc/spec.platform.llm-gateway.test-matrix.md](./spec.platform.llm-gateway.test-matrix.md)（设计 SSOT）+ [doc/report.gw-test-matrix.md](./report.gw-test-matrix.md)（由矩阵报告生成器自动生成的全量报告）。本节只给摘要，不复制全文。
 
 | 层 | 测什么 | 跑在哪 | CI 测试类 | 规模 |
 |----|--------|--------|-----------|------|

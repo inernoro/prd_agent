@@ -264,6 +264,15 @@ var httpAllowlist = (builder.Configuration["LlmGateway:HttpAppCallerAllowlist"] 
 // 提交前失败，也会绕过控制台中已配置的 video-gen 默认池。
 httpAllowlist.Add(AppCallerRegistry.VideoAgent.VideoGen.Generate);
 httpAllowlist.Add(AppCallerRegistry.VisualAgent.VideoGen.Generate);
+// HTML PPT 是 MAP 内置的模型型能力，不依赖 Agent 文件工具；其模型选择、成本和 runId
+// 必须统一进入独立 LLMGW。这里像视频调用方一样设为代码级不变量，避免部署器
+// 对 compose 环境的覆盖或遗漏让请求静默退回 MAP 进程内直连。
+httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.Outline);
+httpAllowlist.Add(AppCallerRegistry.MdToPptAgent.Generation.HtmlGenerate);
+// 网页生成与微调同样必须进入独立 LLMGW；不能因部署白名单遗漏而写回 MAP 旧日志域，
+// 否则产物已经发布，按 Run 关联的网关证据却为空。
+httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.GenerateHtml);
+httpAllowlist.Add(AppCallerRegistry.Admin.WebHosting.EditHtml);
 var shadowFullSampleAllowlist = (builder.Configuration["LlmGateway:ShadowFullSampleAppCallerAllowlist"] ?? string.Empty)
     .Split(new[] { ',', ';', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .Where(x => !string.IsNullOrWhiteSpace(x))
@@ -347,7 +356,14 @@ builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Inf
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.PrdDocumentAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.VideoAssetProvider>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAssetProvider, PrdAgent.Infrastructure.Services.Assets.WebPageAssetProvider>();
-builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService, PrdAgent.Infrastructure.Services.HostedSiteService>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.HostedSiteService>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteService>(sp =>
+    sp.GetRequiredService<PrdAgent.Infrastructure.Services.HostedSiteService>());
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteRevisionService, PrdAgent.Infrastructure.Services.HostedSiteRevisionService>();
+builder.Services.AddSingleton<PrdAgent.Api.Services.HostedSitePreviewAccessService>();
+// 预览 iframe 的可嵌入来源与 CORS 信任来源同源同表（见 HostedSitePreviewEmbedOptions 注释）。
+builder.Services.AddSingleton(
+    PrdAgent.Api.Controllers.Api.HostedSitePreviewEmbedOptions.FromConfiguration(builder.Configuration));
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IHostedSiteOptimizationService, PrdAgent.Infrastructure.Services.HostedSiteOptimizationService>();
 // 文本向量化：走网关的 embedding 通路（换供应商 = 加一行平台配置，不动代码）
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IEmbeddingService, PrdAgent.Infrastructure.Services.EmbeddingService>();
@@ -364,6 +380,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IUploadProgressService, P
 // 团队（跨应用协作单位：网页托管 + 知识库共用）+ 团队活动日志
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamService, PrdAgent.Infrastructure.Services.TeamService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ITeamActivityService, PrdAgent.Infrastructure.Services.TeamActivityService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IActivityActionRecorder, PrdAgent.Api.Services.ActivityActionRecorder>();
 // 网页访客痕迹审计 + 自定义分类自动生成
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.ISiteViewEventService, PrdAgent.Infrastructure.Services.SiteViewEventService>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IWebFolderService, PrdAgent.Infrastructure.Services.WebFolderService>();
@@ -406,6 +423,37 @@ builder.Services.AddHostedService(sp => sp.GetRequiredService<PrdAgent.Api.Servi
 
 // 对话 Run 后台任务执行器（断线不影响服务端闭环）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ChatRunWorker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
+    sp.GetRequiredService<PrdAgent.Api.Services.MapGatewayDesignArtifactExecutor>());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactWorkspaceBroker,
+    PrdAgent.Api.Services.DesignArtifactWorkspaceBroker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignKnowledgeSnapshotResolver,
+    PrdAgent.Api.Services.DesignKnowledgeSnapshotResolver>();
+builder.Services.AddScoped<PrdAgent.Core.Interfaces.IDesignArtifactLifecycleService,
+    PrdAgent.Infrastructure.Services.DesignArtifactLifecycleService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactCancellationCoordinator,
+    PrdAgent.Api.Services.DesignArtifactCancellationCoordinator>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IWebPageDesignArtifactLifecycleAdapter,
+    PrdAgent.Api.Services.WebPageDesignArtifactLifecycleAdapter>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptDesignArtifactAdapter,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactAdapter>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptDesignArtifactRecoveryWorker>();
+builder.Services.AddScoped<PrdAgent.Api.Services.MdToPpt.IHtmlPptPublishCoordinator,
+    PrdAgent.Api.Services.MdToPpt.HtmlPptPublishCoordinator>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.MdToPpt.HtmlPptPublishRecoveryWorker>();
+builder.Services.AddHttpClient("DesignArtifactRuntimeProxy", client =>
+{
+    client.Timeout = Timeout.InfiniteTimeSpan;
+});
+builder.Services.AddScoped<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactExecutor>(sp =>
+    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderProbe>(sp =>
+    sp.GetRequiredService<PrdAgent.Api.Services.OpenDesignRemoteArtifactExecutor>());
+builder.Services.AddSingleton<PrdAgent.Api.Services.IDesignArtifactProviderDefinitionSource, PrdAgent.Api.Services.BuiltInDesignArtifactProviderDefinitionSource>();
+builder.Services.AddScoped<PrdAgent.Api.Services.IDesignArtifactProviderCatalog, PrdAgent.Api.Services.DesignArtifactProviderCatalog>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteEditRunWorker>();
 
 // 工作流后台执行器（DAG 拓扑排序 → 逐节点推进）
 builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowRunWorker>();
@@ -418,6 +466,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.WorkflowScheduleWorker>(
 
 // 一次性回填存量 PDF 包装站的 WrappedAssetType marker（PR #612）
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteBackfillService>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteDeletionCleanupService>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.HostedSiteOptimizationCleanupService>();
 
 // 一次性清理：删除已移除催办 Worker 留下的存量提醒通知（pm-reminder / defect-escalation），让噪音立即归零
@@ -729,6 +778,7 @@ builder.Services.AddSingleton<IAssetStorageRuntimeInfo>(sp =>
     sp.GetRequiredService<IAssetStorage>() as IAssetStorageRuntimeInfo
     ?? throw new InvalidOperationException("IAssetStorage 实现未暴露运行时提供商信息"));
 builder.Services.AddSingleton<AssetStorageReadinessProbe>();
+builder.Services.AddSingleton<ApplicationReadinessProbe>();
 builder.Services.AddHttpClient("AssetStorageReadiness", client =>
 {
     client.Timeout = TimeSpan.FromSeconds(20);
@@ -1366,6 +1416,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IInfraAgentRuntimeJobQueue,
     PrdAgent.Infrastructure.Services.InfraAgentSessions.InMemoryInfraAgentRuntimeJobQueue>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentRuntimeWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.InfraAgentSessionCleanupWorker>();
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IInfraConnectionService,
     PrdAgent.Infrastructure.Services.InfraConnections.InfraConnectionService>();
 // CDS 验收报告导入：复用「系统互联」CDS 全局连接，把 CDS 报告增量同步进知识库（一次鉴权，无握手）。
@@ -1635,8 +1686,11 @@ app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
-app.MapGet("/health/ready", AssetStorageReadiness);
-app.MapGet("/api/health/ready", AssetStorageReadiness);
+// 就绪分工（本分支）：/health/ready 回「应用整体就绪」，对象存储单独挂 /health/assets/ready，
+// 免得存储抖一下就把整个应用判成未就绪。主干新增的深度自检按原样保留。
+app.MapGet("/health/ready", ApplicationReadiness);
+app.MapGet("/api/health/ready", ApplicationReadiness);
+app.MapGet("/health/assets/ready", AssetStorageReadiness);
 // 深度自检（2026-09-11，监控自发现协议 doc/spec.platform.monitor-discovery.md）。
 //
 // 与 /health 的分工：那个回「进程还活着」，这个**真把关键链路走一遍**，逐项给定量结论，
@@ -2245,6 +2299,30 @@ static async Task<IResult> AssetStorageReadiness(
     return TypedResults.Json(
         result,
         AppJsonContext.Default.AssetStorageReadinessResponse,
+        statusCode: statusCode);
+}
+
+static async Task<IResult> ApplicationReadiness(
+    ApplicationReadinessProbe probe,
+    HttpContext context,
+    CancellationToken cancellationToken,
+    bool force = false)
+{
+    if (force && !AssetStorageReadinessProbe.CanForceProbe(
+            context.Connection.RemoteIpAddress))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+
+    var result = await probe.CheckAsync(
+        force: force,
+        cancellationToken: cancellationToken);
+    var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
+        ? StatusCodes.Status200OK
+        : StatusCodes.Status503ServiceUnavailable;
+    return TypedResults.Json(
+        result,
+        AppJsonContext.Default.ApplicationReadinessResponse,
         statusCode: statusCode);
 }
 

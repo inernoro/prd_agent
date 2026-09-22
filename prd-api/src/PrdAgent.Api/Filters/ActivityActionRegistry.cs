@@ -31,6 +31,8 @@ public sealed record ActivityActionDef(
 /// </summary>
 public static class ActivityActionRegistry
 {
+    public const string GeneratedSitePublished = "DesignArtifact.GeneratedSitePublished";
+
     // ── TitleDb 查询委托 ──
 
     private static readonly Func<MongoDbContext, string, Task<string?>> DocEntryTitle =
@@ -107,6 +109,9 @@ public static class ActivityActionRegistry
             ["WebPages.CreateFromContent"] = new("web-pages", "网页托管", "发布了站点", TitleArgs: new[] { "req.Title" }),
             ["WebPages.Update"] = new("web-pages", "网页托管", "更新了站点", "id", TitleDb: HostedSiteTitle),
             ["WebPages.Delete"] = new("web-pages", "网页托管", "删除了站点", "id", TitleDb: HostedSiteTitle),
+            ["HostedSiteEdits.PublishRevision"] = new("web-pages", "网页托管", "发布了网页版本", "siteId", TitleDb: HostedSiteTitle),
+            ["HostedSiteEdits.RollbackRevision"] = new("web-pages", "网页托管", "回退了网页版本", "siteId", TitleDb: HostedSiteTitle),
+            ["HostedSiteEdits.RejectRevision"] = new("web-pages", "网页托管", "拒绝了网页草稿", "siteId", TitleDb: HostedSiteTitle),
 
             // ── 系统管理 users ──
             ["Users.UpdatePassword"] = new("system", "系统管理", "修改了用户密码", "userId", TitleDb: UserTitle),
@@ -115,8 +120,19 @@ public static class ActivityActionRegistry
             ["Users.InitializeUsers"] = new("system", "系统管理", "重新初始化了用户库"),
         };
 
+    /// <summary>
+    /// 后台完成后才成立的领域事实。它们不参与 Controller.Action 反射守卫，
+    /// 只能通过 IActivityActionRecorder 以幂等键写入。
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, ActivityActionDef> DomainActions =
+        new Dictionary<string, ActivityActionDef>(StringComparer.Ordinal)
+        {
+            [GeneratedSitePublished] = new("web-pages", "网页托管", "生成并发布了网页"),
+        };
+
     /// <summary>导出去重后的模块清单（前端筛选下拉用，避免前后端模块清单漂移）</summary>
     public static IReadOnlyList<(string Key, string Label)> Modules { get; } = Actions.Values
+        .Concat(DomainActions.Values)
         .Select(d => (d.Module, d.ModuleLabel))
         .Distinct()
         .ToList();
