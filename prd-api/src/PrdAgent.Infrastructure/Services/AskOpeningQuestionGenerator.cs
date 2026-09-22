@@ -71,15 +71,13 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
     /// 绝大多数无谓的 Task）、真正执行前的复查（入队到执行之间 owner 可能刚好改了配置）、
     /// 以及单测。三处各写一遍就是 predicate-and-wiring-discipline 形状 3。
     /// </summary>
-    public static bool NeedsGeneration(HostedSite site)
+    public static bool NeedsGeneration(HostedSite site, bool? ownerDefaultAskEnabled = null)
     {
         // 提问没开就不生成。判据走 IsAskOn，与「阅读页给不给提问入口」同一个来源——
         // 两处若各判各的，就会出现「访客看得见提问坞、却永远没有开场问题」这种半截状态。
         //
-        // 口径 2026-08-29 翻转为默认全开之后，这条的代价随之变了：以前只有 owner 显式
-        // 打开的站点才生成，现在每个支持提问的上传都会跑一次模型。这是默认全开的必然
-        // 成本，不是意外——要收窄就收窄 IsAskOn，别在这里单独加一层判据。
-        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType)) return false;
+        // owner 的个人默认只在站点没单独表态时参与；两处共用 IsAskOn，避免入口关着却仍烧模型。
+        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType, ownerDefaultAskEnabled)) return false;
         // owner 动过手就永不覆盖：他改的几句被静默冲掉是最难查的一类缺陷。
         // 「算不算他动过手」的判据在 AskOpeningQuestions.ResolveSource 一处——读端点回给
         // 面板的标签走的也是它，两边必须给同一个答案。
@@ -97,7 +95,7 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
     ///
     /// 冷却表原先只在「后来生成成功」时才删条目。模型长时间不可用时每个站点都会进表，
     /// 而那些之后再没被访问、或者已经被删掉的站点，条目就永远留着——这是个单例服务，
-    /// 于是它随时间单调增长。默认全开之后进表的站点更多，涨得更快。
+    /// 于是它随时间单调增长。站点量上来之后进表会持续增多，必须主动回收。
     /// 读的时候顺便扫一遍过期项，成本和条目数同阶，且只在真的有过期项时才动表。
     /// </summary>
     private bool InCooldown(string siteId)
@@ -119,9 +117,9 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         return false;
     }
 
-    public void QueueEnsure(HostedSite site)
+    public void QueueEnsure(HostedSite site, bool? ownerDefaultAskEnabled = null)
     {
-        if (!NeedsGeneration(site)) return;
+        if (!NeedsGeneration(site, ownerDefaultAskEnabled)) return;
         if (InCooldown(site.Id)) return;
         if (!_inFlight.TryAdd(site.Id, 0)) return;
 
@@ -177,7 +175,11 @@ public class AskOpeningQuestionGenerator : IAskOpeningQuestionGenerator
         // 重新读一遍而不是用入队时那份：入队到执行之间 owner 可能刚好关了提问、
         // 或者自己填了几条题。拿旧快照判断就会把他刚写的覆盖掉。
         var site = await db.HostedSites.Find(s => s.Id == siteId).FirstOrDefaultAsync(ct);
-        if (site == null || !NeedsGeneration(site)) return AskOpenerOutcome.Skipped;
+        if (site == null) return AskOpenerOutcome.Skipped;
+        var ownerPreferences = await db.UserPreferences
+            .Find(p => p.UserId == site.OwnerUserId)
+            .FirstOrDefaultAsync(ct);
+        if (!NeedsGeneration(site, ownerPreferences?.WebPageAskEnabled)) return AskOpenerOutcome.Skipped;
 
         var version = site.ContentVersion == default ? site.CreatedAt : site.ContentVersion;
 

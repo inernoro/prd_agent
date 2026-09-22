@@ -132,8 +132,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const body = (
     // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
     // 两者又是并列的 portal（都挂 body）。80 < 100 意味着抽屉永远被弹窗盖住点不到，
-    // 而这里是唯一能改提问开关的地方——提问现在默认开着，盖住它就等于
-    // owner 想关也关不掉（还在持续烧额度），比打不开更糟。
+    // 而这里是单站点提问开关的入口，盖住它就等于 owner 无法覆盖自己的全局默认。
     <div style={{ position: 'fixed', inset: 0, zIndex: 110 }}>
       <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'var(--overlay-scrim, rgba(0,0,0,0.45))' }} />
       <aside

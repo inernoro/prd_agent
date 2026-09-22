@@ -17,7 +17,7 @@ public interface IAskOpeningQuestionGenerator
     /// 挂在那儿等就是把成本转嫁给正在等页面的人。所以这里只入队：同一个站点同时只跑一次，
     /// 失败只记日志、不冒泡——题库是增值，没有它提问照样能用。
     /// </summary>
-    void QueueEnsure(HostedSite site);
+    void QueueEnsure(HostedSite site, bool? ownerDefaultAskEnabled = null);
 
     /// <summary>
     /// 同步跑一次并返回这次的结局。给 owner 手点的「重新生成」用（他明确要的，所以等得起）。

@@ -57,10 +57,10 @@ export interface HostedSite {
   commentsEnabled?: boolean;
   /**
    * 是否开放「向我提问」。**三态**，别当 boolean 用：
-   * null / 缺字段 = owner 从没表过态（含全部存量站点与新上传）→ 视为**开**；
+   * null / 缺字段 = 站点没单独表过态（含全部存量站点与新上传）→ 读取 owner 个人默认；
    * true = 明确打开；false = 明确关掉。
-   * 所以判断一律用 `!== false`，写 `=== true` 会把「没表过态」误判成关。
-   * 后端唯一判定源是 AskAccessPolicy.IsAskOn（还要叠加形态是否支持）。
+   * 个人也没设置时走系统默认关闭。后端唯一判定源是 AskAccessPolicy.IsAskOn
+   * （还要叠加形态是否支持），前端不得只看这个字段猜有效值。
    */
   askEnabled?: boolean | null;
   /** 站点级开场问题题库（分享时可从中挑几条） */

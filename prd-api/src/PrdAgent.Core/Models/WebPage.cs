@@ -138,15 +138,14 @@ public class HostedSite
     // ── 向我提问（访客对着这个页面问 AI） ──
 
     /// <summary>
-    /// 是否开放「向我提问」。默认 **false** —— 与 CommentsEnabled 刻意相反。
+    /// 是否开放「向我提问」。
     ///
-    /// 三态，不是 bool：null = owner 从没表过态（含存量站点与新上传），
+    /// 三态，不是 bool：null = 站点从没单独表过态（含存量站点与新上传），
     /// true = 明确打开，false = 明确关掉。
     ///
-    /// 口径 2026-08-29 起是「默认全开，除非明确拒绝」（用户决定），所以 null 视为开。
-    /// 之所以留成可空而不是把存量刷成 true：bool 里「没表过态」和「特意关掉」长得
-    /// 一模一样，一把刷会把 owner 关过的站点也打开。判定一律走
-    /// <see cref="AskAccessPolicy.IsAskOn"/>，不要在别处自己 ?? true。
+    /// null 时读取 owner 的个人默认，个人也没设置则按系统临时默认关闭。之所以留成可空：
+    /// bool 里「没表过态」和「特意关掉」长得一模一样，会让个人默认无从生效。判定一律走
+    /// <see cref="AskAccessPolicy.IsAskOn"/>，不要在别处自己兜底。
     /// </summary>
     public bool? AskEnabled { get; set; }
 

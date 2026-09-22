@@ -249,7 +249,7 @@ public class AskOpeningQuestionWiringTests
     public void owner_打开设置面板时也兜一次_并且有重新生成的入口()
     {
         var ctrl = ReadSrc(Path.Combine("src", "PrdAgent.Api", "Controllers", "Api", "WebPageAskController.cs"));
-        Assert.Contains("_askOpeners.QueueEnsure(site)", ctrl);
+        Assert.Contains("_askOpeners.QueueEnsure(site, ownerDefaultAskEnabled)", ctrl);
         Assert.Contains("ask/questions/regenerate", ctrl);
         Assert.Contains("_askOpeners.EnsureAsync(", ctrl);
         // 来源必须透出去：自动填的值不能是黑箱（minimal-user-input 第 3 条）
@@ -373,7 +373,7 @@ public class AskOpeningQuestionWiringTests
         Assert.Equal(2, Regex.Matches(ctrl, @"CanMaintainAskAsync\(siteId, this\.GetRequiredUserId\(\)\)").Count);
 
         // 排队那处必须是「有权才排」，不是排完再说
-        Assert.Contains("if (await _siteService.CanMaintainAskAsync(siteId, this.GetRequiredUserId()))\n            _askOpeners.QueueEnsure(site);", ctrl.Replace("\r\n", "\n"));
+        Assert.Contains("if (await _siteService.CanMaintainAskAsync(siteId, this.GetRequiredUserId()))\n            _askOpeners.QueueEnsure(site, ownerDefaultAskEnabled);", ctrl.Replace("\r\n", "\n"));
         // 重新生成那处必须在任何写库之前就挡下
         var regenAt = ctrl.IndexOf("public async Task<IActionResult> RegenerateAskQuestions", StringComparison.Ordinal);
         Assert.True(regenAt > 0);

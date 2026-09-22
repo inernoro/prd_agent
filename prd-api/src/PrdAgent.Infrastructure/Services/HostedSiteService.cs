@@ -1591,15 +1591,24 @@ public class HostedSiteService : IHostedSiteService
         var askSite = !isCollection && sites.Count == 1
             ? rawSites.FirstOrDefault(s => s.Id == sites[0].Id)
             : null;
+        var askOwnerPreferences = askSite is null
+            ? null
+            : await _db.UserPreferences
+                .Find(p => p.UserId == askSite.OwnerUserId)
+                .FirstOrDefaultAsync(ct);
         var exposeAsk = !isCollection
             && AskAccessPolicy.ShouldExposeAskOnShare(
                 sites.Count,
-                askSite is not null && AskAccessPolicy.IsAskOn(askSite.AskEnabled, askSite.WrappedAssetType));
+                askSite is not null && AskAccessPolicy.IsAskOn(
+                    askSite.AskEnabled,
+                    askSite.WrappedAssetType,
+                    askOwnerPreferences?.WebPageAskEnabled));
 
         // 兜底一次：本功能上线之前就已经开着提问的站点，既不会走「刚开启」也不会走「刚重传」，
         // 光靠那两个钩子它们永远是空题库。这里排一次，第一个访客看不到词条、下一个就有了。
         // 不会按访客数烧钱：生成器自己按站点去重，且算过一版正文就盖戳不再重算。
-        if (exposeAsk && askSite != null) _askOpeners.QueueEnsure(askSite);
+        if (exposeAsk && askSite != null)
+            _askOpeners.QueueEnsure(askSite, askOwnerPreferences?.WebPageAskEnabled);
 
         return new ShareViewResult
         {

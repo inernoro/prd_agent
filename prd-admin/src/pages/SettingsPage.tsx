@@ -15,6 +15,7 @@ import { UserNavOverview } from '@/pages/settings/UserNavOverview';
 import { ShortLinksAdminSettings } from '@/pages/settings/ShortLinksAdminSettings';
 import { PeerNodesSettings } from '@/pages/settings/PeerNodesSettings';
 import SystemImagerySettings from '@/pages/settings/SystemImagerySettings';
+import { WebPagePreferencesSettings } from '@/pages/settings/WebPagePreferencesSettings';
 import { InfraServicesPage } from '@/pages/infra-services';
 import { useNavOrderStore } from '@/stores/navOrderStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -37,6 +38,7 @@ import {
   Link2,
   Server,
   Globe,
+  MessageCircleQuestion,
 } from 'lucide-react';
 
 function SkinSettings() {
@@ -319,6 +321,7 @@ export default function SettingsPage() {
       { key: 'account', label: '账户管理', icon: <UserCircle2 size={14} /> },
       { key: 'skin', label: '皮肤设置', icon: <Palette size={14} /> },
       { key: 'nav-order', label: '导航顺序', icon: <ListOrdered size={14} /> },
+      { key: 'web-pages', label: '网页托管', icon: <MessageCircleQuestion size={14} /> },
     ];
 
     const hasPerm = (perm: string) => isRoot || perms.includes(perm) || perms.includes('super');
@@ -378,6 +381,7 @@ export default function SettingsPage() {
         {visibleTab === 'account' && <AccountSettings />}
         {visibleTab === 'skin' && <SkinSettings />}
         {visibleTab === 'nav-order' && <NavOrderSettings />}
+        {visibleTab === 'web-pages' && <WebPagePreferencesSettings />}
         {visibleTab === 'assets' && <AssetsManagePage />}
         {visibleTab === 'system-imagery' && <SystemImagerySettings />}
         {visibleTab === 'authz' && <AuthzPage />}

@@ -52,6 +52,24 @@ public class WebPageAskController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>
+    /// 解析站点 owner 的个人提问默认值。团队 editor 打开配置或站内提问时，
+    /// 不能读取 editor 自己的偏好，否则同一个站点会因访问者不同得到不同开关状态。
+    /// </summary>
+    private async Task<bool?> GetOwnerAskDefaultAsync(HostedSite site)
+    {
+        var preferences = await _db.UserPreferences
+            .Find(p => p.UserId == site.OwnerUserId)
+            .FirstOrDefaultAsync(HttpContext.RequestAborted);
+        return preferences?.WebPageAskEnabled;
+    }
+
+    private async Task<bool> IsAskOnAsync(HostedSite site)
+        => AskAccessPolicy.IsAskOn(
+            site.AskEnabled,
+            site.WrappedAssetType,
+            await GetOwnerAskDefaultAsync(site));
+
     // ──────────────────────────────────────────────
     // 配置：owner / editor 维护站点的提问开关与题库
     // ──────────────────────────────────────────────
@@ -70,13 +88,14 @@ public class WebPageAskController : ControllerBase
         // 但只对能写的人兜。GetByIdAsync 答的是「看不看得见」，对任一共享团队的成员
         // （含 viewer）都放行；排队生成却是一次写库 + 一次算在 owner 头上的模型调用。
         // 拿可见性当写权限，viewer 打开这一屏就能替 owner 烧钱并改掉他的题库。
+        var ownerDefaultAskEnabled = await GetOwnerAskDefaultAsync(site);
         if (await _siteService.CanMaintainAskAsync(siteId, this.GetRequiredUserId()))
-            _askOpeners.QueueEnsure(site);
+            _askOpeners.QueueEnsure(site, ownerDefaultAskEnabled);
 
         return Ok(ApiResponse<object>.Ok(new
         {
             siteId = site.Id,
-            enabled = AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType),
+            enabled = AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType, ownerDefaultAskEnabled),
             welcome = site.AskWelcome,
             suggestedQuestions = site.AskSuggestedQuestions ?? new List<string>(),
             // 这批题是系统读正文写的还是 owner 自己写的。自动填的值必须看得出来、可改、
@@ -134,7 +153,7 @@ public class WebPageAskController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             siteId = site.Id,
-            enabled = AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType),
+            enabled = await IsAskOnAsync(site),
             welcome = site.AskWelcome,
             suggestedQuestions = site.AskSuggestedQuestions,
             allowAnonymous = site.AskAllowAnonymous,
@@ -353,7 +372,7 @@ public class WebPageAskController : ControllerBase
             await WriteJsonErrorAsync(404, ErrorCodes.NOT_FOUND, "站点不存在或无权访问");
             return;
         }
-        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType))
+        if (!await IsAskOnAsync(site))
         {
             await WriteJsonErrorAsync(403, "ASK_DISABLED", "这个页面没有开启提问");
             return;
@@ -387,7 +406,7 @@ public class WebPageAskController : ControllerBase
             return StatusCode(403, ApiResponse<object>.Fail("ASK_DISABLED", "合集分享暂不支持提问"));
 
         var site = resolved.Site!;
-        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType))
+        if (!await IsAskOnAsync(site))
             return StatusCode(403, ApiResponse<object>.Fail("ASK_DISABLED", "这个页面没有开启提问"));
         if (viewerUserId == null && !site.AskAllowAnonymous)
             return StatusCode(401, ApiResponse<object>.Fail(ErrorCodes.UNAUTHORIZED, "这个页面需要登录后才能提问"));
@@ -442,7 +461,7 @@ public class WebPageAskController : ControllerBase
         }
 
         var site = resolved.Site!;
-        if (!AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType))
+        if (!await IsAskOnAsync(site))
         {
             await WriteJsonErrorAsync(403, "ASK_DISABLED", "这个页面没有开启提问");
             return;

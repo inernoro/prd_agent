@@ -273,6 +273,7 @@ import type {
   UpdateNavLayoutContract,
   UpdateThemeConfigContract,
   UpdateVisualAgentPreferencesContract,
+  UpdateWebPageAskPreferenceContract,
   UpdateLiteraryAgentPreferencesContract,
   UpdateAgentSwitcherPreferencesContract,
   UpdateHomeLauncherPreferencesContract,
@@ -603,6 +604,7 @@ import {
   updateNavLayoutReal,
   updateThemeConfigReal,
   updateVisualAgentPreferencesReal,
+  updateWebPageAskPreferenceReal,
   updateLiteraryAgentPreferencesReal,
   updateAgentSwitcherPreferencesReal,
   updateHomeLauncherPreferencesReal,
@@ -1381,6 +1383,7 @@ export const getUserPreferences: GetUserPreferencesContract = withAuth(getUserPr
 export const updateNavLayout: UpdateNavLayoutContract = withAuth(updateNavLayoutReal);
 export const updateThemeConfig: UpdateThemeConfigContract = withAuth(updateThemeConfigReal);
 export const updateVisualAgentPreferences: UpdateVisualAgentPreferencesContract = withAuth(updateVisualAgentPreferencesReal);
+export const updateWebPageAskPreference: UpdateWebPageAskPreferenceContract = withAuth(updateWebPageAskPreferenceReal);
 export const updateLiteraryAgentPreferences: UpdateLiteraryAgentPreferencesContract = withAuth(updateLiteraryAgentPreferencesReal);
 export const updateAgentSwitcherPreferences: UpdateAgentSwitcherPreferencesContract = withAuth(updateAgentSwitcherPreferencesReal);
 export const updateHomeLauncherPreferences: UpdateHomeLauncherPreferencesContract = withAuth(updateHomeLauncherPreferencesReal);

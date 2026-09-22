@@ -7,6 +7,7 @@ import type {
   GetUserPreferencesContract,
   UpdateNavLayoutContract,
   UpdateThemeConfigContract,
+  UpdateWebPageAskPreferenceContract,
   UpdateVisualAgentPreferencesContract,
   UpdateLiteraryAgentPreferencesContract,
   UpdateAgentSwitcherPreferencesContract,
@@ -42,7 +43,7 @@ export const getUserPreferencesReal: GetUserPreferencesContract = async (): Prom
 };
 
 async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
-  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; navLayoutSynced?: boolean; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
+  const res = await apiRequest<{ navOrder: string[]; navHidden: string[]; navLayoutSynced?: boolean; defaultNavOrder?: string[]; defaultNavHidden?: string[]; themeConfig?: ThemeConfigResponse; webPageAskEnabled?: boolean; visualAgentPreferences?: VisualAgentPreferences; literaryAgentPreferences?: LiteraryAgentPreferences; agentSwitcherPreferences?: AgentSwitcherPreferences; homeLauncherPreferences?: HomeLauncherPreferences; documentStorePinnedIds?: string[] }>(
     api.dashboard.userPreferences.get()
   );
   if (!res.success) return res as unknown as ApiResponse<UserPreferences>;
@@ -53,6 +54,7 @@ async function doGetUserPreferences(): Promise<ApiResponse<UserPreferences>> {
     defaultNavOrder: res.data.defaultNavOrder ?? [],
     defaultNavHidden: res.data.defaultNavHidden ?? [],
     themeConfig: res.data.themeConfig,
+    webPageAskEnabled: res.data.webPageAskEnabled === true,
     visualAgentPreferences: res.data.visualAgentPreferences,
     literaryAgentPreferences: res.data.literaryAgentPreferences,
     agentSwitcherPreferences: res.data.agentSwitcherPreferences,
@@ -127,6 +129,17 @@ export const updateThemeConfigReal: UpdateThemeConfigContract = async (
   const res = await apiRequest<void>(api.dashboard.userPreferences.theme(), {
     method: 'PUT',
     body: { themeConfig },
+  });
+  if (!res.success) return res;
+  return ok(undefined);
+};
+
+export const updateWebPageAskPreferenceReal: UpdateWebPageAskPreferenceContract = async (
+  enabled: boolean
+): Promise<ApiResponse<void>> => {
+  const res = await apiRequest<void>(api.dashboard.userPreferences.webPageAsk(), {
+    method: 'PUT',
+    body: { enabled },
   });
   if (!res.success) return res;
   return ok(undefined);

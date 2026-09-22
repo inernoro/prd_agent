@@ -3349,11 +3349,8 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               </Button>
             </div>
 
-            {/* 提问的默认态要在这里说清楚：用户刚上传完、还记得这个站点，
-                等他去预览里自己发现就晚了。
-                口径 2026-08-29 起是「默认全开」，所以这段话的重点从「怎么打开」
-                变成「它已经开着、会花钱、想关去哪关」——照旧写「默认关闭」等于
-                让在意花钱的人放着不管。视频站另说：形态不支持时压过默认全开。 */}
+            {/* 提问的默认态要在这里说清楚：系统临时默认关闭；用户可以在全局设置里改
+                自己的默认，也可以在站点的提问设置里单独覆盖。 */}
             <div
               className="flex items-start gap-2.5 rounded-xl p-3 text-xs leading-relaxed"
               style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
@@ -3361,9 +3358,9 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               <MessageCircleQuestion size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
               {isAskSupported(created) ? (
                 <span>
-                  这个站点的「向我提问」<span style={{ color: 'var(--text-primary)' }}>默认已经开着</span>
-                  ，分享出去之后访客就能问（每次提问都会消耗模型额度）。不想开的话，在卡片菜单的
-                  <span style={{ color: 'var(--text-primary)' }}>「提问设置」</span>里关掉。
+                  这个站点的「向我提问」<span style={{ color: 'var(--text-primary)' }}>默认关闭</span>。
+                  你可以在<span style={{ color: 'var(--text-primary)' }}>设置 → 网页托管</span>里修改自己的全局默认，
+                  或在卡片菜单的<span style={{ color: 'var(--text-primary)' }}>「提问设置」</span>里只打开这个站点。
                 </span>
               ) : (
                 <span>
