@@ -16,6 +16,8 @@ export interface SubmissionItem {
   viewCount: number;
   likedByMe: boolean;
   createdAt: string;
+  /** 排序与列表展示使用的最近有效内容时间；旧后端缺失时回退 createdAt。 */
+  activityAt?: string;
 }
 
 export async function listPublicSubmissions(params?: {
