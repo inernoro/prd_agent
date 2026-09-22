@@ -27,7 +27,7 @@ set -eu
 #   - PRD_AGENT_REUSE_EXISTING_STATIC_DIST=1：复用现有 deploy/web/dist，不下载 prd-admin zip；仅用于后端/GW-only shadow 部署
 #   - PRD_AGENT_API_IMAGE：覆盖后端镜像（默认按 REPO + 发布 ref 组装，并优先走 get.miduo.org 镜像代理）
 #   - PRD_AGENT_LLMGW_IMAGE：覆盖独立 LLM 网关镜像（默认按 REPO + 发布 ref 组装；compose 已含 llmgw service，随 up 一起拉起）
-#   - API_PULL_TIMEOUT_SECONDS：后端镜像拉取超时时间，默认 30 秒
+#   - API_PULL_TIMEOUT_SECONDS：发布镜像拉取总超时时间，默认 180 秒
 #   - SKIP_API_PULL=1：跳过后端镜像拉取，仅更新静态站点并重建 compose
 #   - REPO：覆盖 GitHub 仓库 owner/repo（默认尝试从 git remote 推断；推断失败则回退 inernoro/prd_agent）
 #   - DIST_URL：直接指定静态 zip 下载地址（完全跳过 Release/Pages 逻辑）
@@ -1670,7 +1670,11 @@ else
   echo "  llmgw: $PRD_AGENT_LLMGW_IMAGE"
   echo "  llmgw-serve: $PRD_AGENT_LLMGW_SERVE_IMAGE"
   echo "  llmgw-web: $PRD_AGENT_LLMGW_WEB_IMAGE"
-  pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-30}"
+  # fast.sh 的单镜像预热预算已经按生产机带宽校准为 180 秒；权威发布拉取不能
+  # 反而沿用 30 秒，否则大镜像层持续下载时仍会被固定时限误杀。这里保持同一
+  # 默认值，调用方仍可按目标环境显式覆盖，但不可变发布的失败语义不变。
+  pull_timeout_seconds="${API_PULL_TIMEOUT_SECONDS:-180}"
+  echo "Release image pull timeout budget: ${pull_timeout_seconds}s"
   if command -v timeout >/dev/null 2>&1; then
     if [ -f "$compose_dotenv_file" ]; then
       pull_command="$COMPOSE --env-file $compose_dotenv_file"
