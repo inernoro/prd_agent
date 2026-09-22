@@ -19,9 +19,14 @@ def default_seconds(source: str, variable: str) -> int:
 
 
 class ReleaseImagePullTimeoutContractTests(unittest.TestCase):
-    def test_authoritative_pull_budget_matches_calibrated_warmup_budget(self) -> None:
+    def test_authoritative_pull_budget_matches_calibrated_total_budget(self) -> None:
         self.assertEqual(default_seconds(FAST, "FAST_PULL_TIMEOUT_SECONDS"), 180)
+        self.assertEqual(default_seconds(FAST, "FAST_PULL_TOTAL_TIMEOUT_SECONDS"), 420)
         self.assertEqual(
+            default_seconds(EXEC_DEP, "API_PULL_TIMEOUT_SECONDS"),
+            default_seconds(FAST, "FAST_PULL_TOTAL_TIMEOUT_SECONDS"),
+        )
+        self.assertGreater(
             default_seconds(EXEC_DEP, "API_PULL_TIMEOUT_SECONDS"),
             default_seconds(FAST, "FAST_PULL_TIMEOUT_SECONDS"),
         )
