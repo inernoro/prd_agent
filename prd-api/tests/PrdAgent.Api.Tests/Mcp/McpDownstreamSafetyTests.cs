@@ -351,6 +351,15 @@ public class McpDownstreamSafetyTests
         nextStep.ShouldContain("原样重试不会改变结果");
     }
 
+    [Fact]
+    public void 生图限流不能断言一定是图片数量过多()
+    {
+        var nextStep = VisualOpenApiController.RunFailureNextStep(ErrorCodes.RATE_LIMITED);
+        nextStep.ShouldContain("等待片刻");
+        nextStep.ShouldContain("如果一次请求多张图");
+        nextStep.ShouldNotContain("这次要的图太多");
+    }
+
     /// <summary>
     /// 这条路上的 errorMessage 有一支直接来自 `ex.Message`（worker 兜底那次），
     /// 原样回出去就是把内部细节递给外部调用方 —— 必须和接入台那条路走同一道脱敏。

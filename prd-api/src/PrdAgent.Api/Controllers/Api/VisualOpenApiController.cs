@@ -325,7 +325,7 @@ public class VisualOpenApiController : ControllerBase
         ErrorCodes.INVALID_FORMAT =>
             "请求本身不合法，重试多少次都是同一个结果。按上面这句话改掉参数再发起一次。",
         ErrorCodes.RATE_LIMITED =>
-            "这次要的图太多了。拆成几次、每次少要几张再发起。",
+            "当前请求受到限流，请等待片刻再发起；如果一次请求多张图，也可以拆成几次、每次少要几张。",
         "WORKER_STOPPED" =>
             "服务端在这次生成中途重启了，和你的参数无关。原样重新发起一次即可。",
         _ => "重新发起一次；一直是这个错就把 runId 和时间告诉管理员。",
