@@ -703,3 +703,8 @@ processed:
   - 2026-09-20_weekly-w38.md
   - 2026-09-21_model-catalog-identifier-drift.md
   - 2026-09-21_修复正式环境首页数据源.md
+  - 2026-09-20_cds-notification-history.md
+  - 2026-09-21_entropy-cleanup.md
+  - 2026-09-21_gallery-ranking-freshness.md
+  - 2026-09-22_cds-service-dns.md
+  - 2026-09-22_gemini_canary_auto_route.md
