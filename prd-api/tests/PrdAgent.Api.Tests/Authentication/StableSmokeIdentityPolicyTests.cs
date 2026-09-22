@@ -129,6 +129,21 @@ public sealed class StableSmokeIdentityPolicyTests
     }
 
     [Fact]
+    public void ProductionFederationTemplate_ShouldStayReadOnlyAndOutsideLocalRunnerSection()
+    {
+        var template = File.ReadAllText(LocateRepositoryFile(".env.template"));
+        var localRunnerSection = template[template.IndexOf(
+            "# --- Stable Smoke: copy names into untracked .env.stable-smoke.local ---",
+            StringComparison.Ordinal)..];
+
+        Assert.Contains("服务器部署 .env / Secret Store", template);
+        Assert.Contains("# STABLE_SMOKE_FEDERATION_ROLE=viewer", template);
+        Assert.DoesNotContain("# STABLE_SMOKE_FEDERATION_ROLE=admin", template);
+        Assert.DoesNotContain("STABLE_SMOKE_FEDERATION_ENABLED", localRunnerSection);
+        Assert.DoesNotContain("STABLE_SMOKE_FEDERATION_ROLE", localRunnerSection);
+    }
+
+    [Fact]
     public void E2eFixture_ShouldMirrorBackendPolicy()
     {
         var fixturePath = LocateRepositoryFile(Path.Combine("e2e", "fixtures", "stable-smoke-required-permissions.json"));
