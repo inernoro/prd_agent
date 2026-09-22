@@ -187,6 +187,7 @@ public sealed class ServingFaultTrackerTests
     private const string DeploymentVersionCheckMarker = "[\"deployment:version-match\"] = new object[]";
     private const string ImageOutcomeCheckMarker = "[\"visual-image:recent-outcomes\"] = new object[]";
     private const string ImageRequestsCheckMarker = "[\"visual-image:requests\"] = new object[]";
+    private const string ImageLatencyCheckMarker = "[\"visual-image:latency\"] = new object[]";
     private const string DatabaseCheckMarker = "[\"db:roundtrip\"] = new object[]";
 
     /// <summary>取端点源码里某一条 check 的声明块（到下一条 check 开始为止）。</summary>
@@ -268,12 +269,13 @@ public sealed class ServingFaultTrackerTests
     }
 
     [Fact]
-    public void MAP深度自检必须监控生图真实结果并携带样本量()
+    public void MAP深度自检必须监控生图真实结果样本量与响应耗时()
     {
         var program = File.ReadAllText(
             Path.Combine(RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Program.cs"));
         var outcomes = CheckBlock(program, ImageOutcomeCheckMarker, ImageRequestsCheckMarker);
-        var requests = CheckBlock(program, ImageRequestsCheckMarker, DatabaseCheckMarker);
+        var requests = CheckBlock(program, ImageRequestsCheckMarker, ImageLatencyCheckMarker);
+        var latency = CheckBlock(program, ImageLatencyCheckMarker, DatabaseCheckMarker);
 
         program.ShouldContain(
             "gatewayDb.LlmRequestLogs",
@@ -288,6 +290,12 @@ public sealed class ServingFaultTrackerTests
             customMessage: "零连续失败必须带真实样本量，否则零调用也会被误判为健康");
         requests.ShouldContain("[\"componentId\"] = \"visual-image.requests\"");
         requests.ShouldContain("[\"cds:monitor\"]");
+        latency.ShouldContain("[\"componentId\"] = \"visual-image.latency\"");
+        latency.ShouldContain("value = visualImageLatencyBudgetMs");
+        latency.ShouldContain("severity = \"P1\"");
+        latency.ShouldContain(
+            "sampleComponentId = \"visual-image.requests\"",
+            customMessage: "响应耗时必须带真实样本量，不能把没有成功调用误报成性能正常");
     }
 
     [Fact]

@@ -1,4 +1,4 @@
-import { devices, expect, test, type APIRequestContext, type Page, type Response, type TestInfo } from '@playwright/test';
+import { devices, expect, test, type APIRequestContext, type APIResponse, type Page, type Response, type TestInfo } from '@playwright/test';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -751,6 +751,20 @@ async function waitForImageRun(page: Page, token: string, runId: string, timeout
     await new Promise((resolveWait) => setTimeout(resolveWait, 1_500));
   }
   throw new Error(`图片生成等待超时，请检查任务 ${runId} 的运行状态`);
+}
+
+async function expectDeleteSucceeded(response: APIResponse | Response, context: string) {
+  const raw = await response.text();
+  let body: ApiEnvelope<{ deleted: boolean }> | undefined;
+  try {
+    body = JSON.parse(raw) as ApiEnvelope<{ deleted: boolean }>;
+  } catch {
+    // 下面的统一断言会带上原始响应，避免 JSON 解析异常掩盖服务端状态。
+  }
+  const diagnostic = `${context}：HTTP ${response.status()}；${body?.error?.code || 'NO_ERROR_CODE'}；${body?.error?.message || raw || '空响应'}`;
+  expect(response.ok(), diagnostic).toBe(true);
+  expect(body?.success, diagnostic).toBe(true);
+  expect(body?.data?.deleted, diagnostic).toBe(true);
 }
 
 async function loginGateway(request: APIRequestContext) {
@@ -3754,7 +3768,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除移动端工作区 ${workspace.id} 失败`);
       await context.close();
     }
   });
@@ -3785,12 +3799,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-mobile-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除移动端参考图工作区 ${workspace.id} 失败`);
     }
   });
 
   test('[CORE-004][GW-005][GW-008][VIS-002][VIS-005][VIS-007][VIS-010][REG-visual-policy-001] 业务默认模型真实产物、网关路由日志、SSE 恢复、进度布局与清理', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
-    test.setTimeout(240_000);
+    // 生产生图 HTTP 契约允许最长 600 秒。测试总时限额外保留页面验证、审计查询与清理余量，
+    // 避免上游仍在合法执行时先由 Playwright 误杀，再把取消/删除冲突误报成模型故障。
+    test.setTimeout(720_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
     const { workspace } = await createVisualWorkspace(page, token, 'single-image');
     const generationPrompt = '一枚放在纯白背景上的蓝色陶瓷杯，产品摄影，柔和自然光，不要文字';
@@ -3803,6 +3819,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(pool, 'MAP 未配置业务默认，禁止用第一个可用模型替代').toBeTruthy();
       expect(pool!.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')), '默认型号不可用').toBe(true);
 
+      const generationStartedAt = Date.now();
       const create = await page.request.post(`/api/visual-agent/image-master/workspaces/${workspace.id}/image-gen/runs`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-run` },
         data: {
@@ -3863,7 +3880,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect(progress.locator('.gen-dev__arc'), '等待态必须有画框进度描边').toHaveCount(1);
       await testInfo.attach('single-image-progress', { body: await page.screenshot(), contentType: 'image/png' });
 
-      const completed = await waitForImageRun(page, token, runId);
+      const completed = await waitForImageRun(page, token, runId, 600_000);
+      await testInfo.attach('single-image-latency', {
+        body: JSON.stringify({ runId, elapsedMs: Date.now() - generationStartedAt }),
+        contentType: 'application/json',
+      });
       expect(completed.statuses.length, '轮询必须至少读取到一次有效任务状态').toBeGreaterThanOrEqual(1);
       await assertImageArtifact(page, completed.detail);
       const artifactResult = await readEnvelope<{ items: UploadArtifactItem[] }>(await page.request.get(
@@ -3972,7 +3993,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-single-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除真实生图工作区 ${workspace.id} 失败`);
       expect((await page.request.get(`/api/visual-agent/image-master/workspaces/${workspace.id}/detail`, { headers: authHeaders(token) })).status()).toBe(404);
       if (runId) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
@@ -4063,7 +4084,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-ratio-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除画幅矩阵工作区 ${workspace.id} 失败`);
       if (runId) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
@@ -4155,7 +4176,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除参考图工作区 ${workspace.id} 失败`);
       if (runId) expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
     }
   });
@@ -4426,7 +4447,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-multi-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除多图工作区 ${workspace.id} 失败`);
       for (const runId of runIds) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }
@@ -4515,10 +4536,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       await expect.poll(() => deleteResponses.length, { timeout: 30_000 }).toBe(2);
       page.off('response', captureDeleteResponse);
       for (const response of deleteResponses) {
-        const body = await response.json() as ApiEnvelope<{ deleted: boolean }>;
-        expect(response.ok(), body.error?.message || '多图资产删除失败').toBe(true);
-        expect(body.success, body.error?.message || '多图资产删除失败').toBe(true);
-        expect(body.data.deleted).toBe(true);
+        await expectDeleteSucceeded(response, '多图资产删除失败');
       }
       expect(deleteResponses.map((response) => new URL(response.url()).pathname).sort()).toEqual(
         deletedAssets.map((asset) => `/api/visual-agent/image-master/workspaces/${workspace.id}/assets/${asset.id}`).sort(),
@@ -4565,10 +4583,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-reorder-delete` },
       });
-      const deleteBody = await deleted.json() as ApiEnvelope<{ deleted: boolean }>;
-      expect(deleted.ok(), deleteBody.error?.message || '多图验收项目清理失败').toBe(true);
-      expect(deleteBody.success, deleteBody.error?.message || '多图验收项目清理失败').toBe(true);
-      expect(deleteBody.data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `多图验收项目 ${workspace.id} 清理失败`);
     }
   });
 
@@ -4601,7 +4616,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-boundaries-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除多图边界工作区 ${workspace.id} 失败`);
     }
   });
 
@@ -4673,7 +4688,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-readable-error-delete`,
         },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除可读错误工作区 ${workspace.id} 失败`);
       if (runId) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
           headers: authHeaders(token),
@@ -4749,7 +4764,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
         headers: { ...authHeaders(token), 'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-broken-ref-delete` },
       });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
+      await expectDeleteSucceeded(deleted, `删除失效引用工作区 ${workspace.id} 失败`);
       if (runId) {
         expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, { headers: authHeaders(token) })).status()).toBe(404);
       }

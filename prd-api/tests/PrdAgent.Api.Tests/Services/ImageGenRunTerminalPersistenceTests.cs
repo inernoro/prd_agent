@@ -18,6 +18,29 @@ namespace PrdAgent.Api.Tests.Services;
 public sealed class ImageGenRunTerminalPersistenceTests
 {
     [Fact]
+    public async Task CancellationWatcherPropagatesPersistedRequestToUpstreamToken()
+    {
+        await using var fixture = await MongoFixture.CreateAsync();
+        var run = NewRun(ImageGenRunStatus.Running, failed: 0);
+        run.CancelRequested = false;
+        await fixture.Db.ImageGenRuns.InsertOneAsync(run);
+
+        using var upstreamCancellation = new CancellationTokenSource();
+        var watch = fixture.Worker.WatchRunCancellationAsync(
+            run.Id,
+            upstreamCancellation,
+            CancellationToken.None,
+            TimeSpan.FromMilliseconds(10));
+
+        await fixture.Db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            Builders<ImageGenRun>.Update.Set(x => x.CancelRequested, true));
+
+        await watch.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(upstreamCancellation.IsCancellationRequested);
+    }
+
+    [Fact]
     public async Task RejectedItemPersistsSameReasonToRunAndRunDoneEvent()
     {
         await using var fixture = await MongoFixture.CreateAsync();

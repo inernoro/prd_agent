@@ -367,6 +367,13 @@ public class ImageGenRunWorker : BackgroundService
         var sem = new SemaphoreSlim(maxConc, maxConc);
         var tasks = new List<Task>();
 
+        // CancelRequested 是持久化控制面，真正发给上游的请求还需要一枚可取消的令牌。
+        // 过去取消接口只改 Mongo 标记，已经进入 GenerateUnifiedAsync 的请求会继续占用最长
+        // 600 秒，工作区也因此无法删除。轮询标记并取消 linked token，让同一契约同时覆盖
+        // 单实例、滚动发布和将来多副本部署。
+        using var upstreamCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var cancellationWatch = WatchRunCancellationAsync(run.Id, upstreamCancellation, ct);
+
         using var scope = _scopeFactory.CreateScope();
         var imageClient = scope.ServiceProvider.GetRequiredService<IImageGenerationClient>();
         var assetStorage = scope.ServiceProvider.GetRequiredService<IAssetStorage>();
@@ -408,7 +415,7 @@ public class ImageGenRunWorker : BackgroundService
 
                 tasks.Add(Task.Run(async () =>
                 {
-                    await sem.WaitAsync(ct);
+                    await sem.WaitAsync(upstreamCancellation.Token);
                     try
                     {
                         // 用户取消：不再继续派发新的生成（已派发的请求尽量跑完）
@@ -769,7 +776,7 @@ public class ImageGenRunWorker : BackgroundService
                             n: layerCount,
                             size: reqSize,
                             responseFormat: run.ResponseFormat,
-                            ct,
+                            upstreamCancellation.Token,
                             appCallerCode,
                             images: allImages.Count > 0 ? allImages : null,
                             modelId: requestedModelId,
@@ -936,9 +943,14 @@ public class ImageGenRunWorker : BackgroundService
         {
             await Task.WhenAll(tasks);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (upstreamCancellation.IsCancellationRequested)
         {
-            // ignore：worker stop
+            // 用户取消或 worker stop；下面统一持久化终态。
+        }
+        finally
+        {
+            upstreamCancellation.Cancel();
+            await cancellationWatch;
         }
 
         var final = await _db.ImageGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(ct);
@@ -1050,6 +1062,28 @@ public class ImageGenRunWorker : BackgroundService
             .Project(x => new { x.CancelRequested })
             .FirstOrDefaultAsync(ct);
         return cur?.CancelRequested == true;
+    }
+
+    internal async Task WatchRunCancellationAsync(
+        string runId,
+        CancellationTokenSource upstreamCancellation,
+        CancellationToken stoppingToken,
+        TimeSpan? pollInterval = null)
+    {
+        using var timer = new PeriodicTimer(pollInterval ?? TimeSpan.FromMilliseconds(500));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(upstreamCancellation.Token))
+            {
+                if (!await IsCancelRequestedAsync(runId, stoppingToken)) continue;
+                upstreamCancellation.Cancel();
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (upstreamCancellation.IsCancellationRequested)
+        {
+            // 正常收尾或取消命中。
+        }
     }
 
     private async Task AppendEventAsync(ImageGenRun run, string eventName, object payload, CancellationToken ct)

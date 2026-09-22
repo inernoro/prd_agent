@@ -1910,7 +1910,10 @@ static async Task<IResult> DeepHealth(
     // CDS 会留下故障/恢复事件；旧失败不会让红灯再挂 6 小时。
     var visualImageRecentRequests = 0;
     var visualImageConsecutiveFailures = -1;
+    const long visualImageLatencyBudgetMs = 180_000;
+    long visualImageLatestSuccessDurationMs = 0;
     string visualImageOutcomeOutput;
+    string visualImageLatencyOutput;
     try
     {
         var imageCallers = PrdAgent.Api.Services.VisualModelPolicyService.AppCallers;
@@ -1923,19 +1926,27 @@ static async Task<IResult> DeepHealth(
             .Find(filter)
             .SortByDescending(x => x.StartedAt)
             .Limit(20)
-            .Project(x => new { x.Status })
+            .Project(x => new { x.Status, x.DurationMs })
             .ToListAsync(cancellationToken);
         visualImageRecentRequests = outcomes.Count;
         visualImageConsecutiveFailures = outcomes.TakeWhile(x => x.Status != "succeeded").Count();
+        var latestSuccess = outcomes.FirstOrDefault(x => x.Status == "succeeded");
+        visualImageLatestSuccessDurationMs = Math.Max(0, latestSuccess?.DurationMs ?? 0);
         visualImageOutcomeOutput = outcomes.Count == 0
             ? $"最近 {faults.WindowMinutes} 分钟没有生图真实调用，无法用真实结果证明链路可用"
             : visualImageConsecutiveFailures == 0
                 ? $"最近一笔生图真实调用成功；窗口内采样 {outcomes.Count} 笔"
                 : $"最近连续 {visualImageConsecutiveFailures} 笔生图真实调用失败；详情见网关调用日志";
+        visualImageLatencyOutput = latestSuccess == null
+            ? $"最近 {faults.WindowMinutes} 分钟没有成功的生图调用，无法评估响应耗时"
+            : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs
+                ? $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，处于 180000ms 体验预算内"
+                : $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，超过 180000ms 体验预算；详情见网关调用日志";
     }
     catch (Exception ex)
     {
         visualImageOutcomeOutput = $"读取生图真实调用结果失败：{ex.GetType().Name}";
+        visualImageLatencyOutput = $"读取生图响应耗时失败：{ex.GetType().Name}";
     }
 
     var payload = new Dictionary<string, object?>
@@ -2185,6 +2196,36 @@ static async Task<IResult> DeepHealth(
                         severity = "P2",
                         environment = "production",
                         publicVisible = false,
+                    },
+                },
+            },
+            ["visual-image:latency"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.latency",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageLatestSuccessDurationMs,
+                    ["observedUnit"] = "ms",
+                    ["status"] = visualImageLatestSuccessDurationMs == 0
+                        ? "warn"
+                        : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageLatencyOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图最近成功响应耗时",
+                        field = "observedValue",
+                        op = "lte",
+                        value = visualImageLatencyBudgetMs,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P1",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图响应耗时",
                     },
                 },
             },
