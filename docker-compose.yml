@@ -307,6 +307,11 @@ services:
       - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}
       - LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}
       - LLMGW_ADMIN_ENV_AUTHORITY=${LLMGW_ADMIN_ENV_AUTHORITY:-}
+      # 网关巡检联邦登录与 MAP 的签名身份共用用户名，但默认关闭；正式环境需显式启用并限定名单。
+      - StableSmokeFederation__Enabled=${STABLE_SMOKE_FEDERATION_ENABLED:-false}
+      - StableSmokeFederation__AllowedUsernames=${STABLE_SMOKE_FEDERATION_ALLOWED_USERS:-}
+      - StableSmokeFederation__Role=${STABLE_SMOKE_FEDERATION_ROLE:-viewer}
+      - StableSmokeFederation__SessionMinutes=${STABLE_SMOKE_FEDERATION_SESSION_MINUTES:-15}
       # 正式环境的 MAP 返回入口必须由部署环境注入，不能由前端按域名格式猜测。
       - LLMGW_MAP_HOME_URL=${LLMGW_MAP_HOME_URL:?must set LLMGW_MAP_HOME_URL in production (authoritative MAP home URL)}
     read_only: true

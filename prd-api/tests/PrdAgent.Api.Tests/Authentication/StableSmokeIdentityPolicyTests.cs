@@ -116,6 +116,18 @@ public sealed class StableSmokeIdentityPolicyTests
         Assert.Contains(expectedLine, compose);
     }
 
+    [Theory]
+    [InlineData("docker-compose.yml")]
+    [InlineData("docker-compose.dev.yml")]
+    public void GatewayDeployments_ShouldWireStableSmokeFederationExplicitly(string composeFile)
+    {
+        var compose = File.ReadAllText(LocateRepositoryFile(composeFile));
+        Assert.Contains("StableSmokeFederation__Enabled=${STABLE_SMOKE_FEDERATION_ENABLED:-false}", compose);
+        Assert.Contains("StableSmokeFederation__AllowedUsernames=${STABLE_SMOKE_FEDERATION_ALLOWED_USERS:-}", compose);
+        Assert.Contains("StableSmokeFederation__Role=${STABLE_SMOKE_FEDERATION_ROLE:-viewer}", compose);
+        Assert.Contains("StableSmokeFederation__SessionMinutes=${STABLE_SMOKE_FEDERATION_SESSION_MINUTES:-15}", compose);
+    }
+
     [Fact]
     public void E2eFixture_ShouldMirrorBackendPolicy()
     {

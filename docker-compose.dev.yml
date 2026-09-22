@@ -195,6 +195,10 @@ services:
       # 网关自身鉴权密钥：独立于 api 的 JWT_SECRET（跨服务隔离）
       - LlmGwJwt__Secret=${LLMGW_JWT_SECRET:-YourLlmGwJwtSecretForLocalDev2026!}
       - LlmGwJwt__Issuer=prdagent-llmgw
+      - StableSmokeFederation__Enabled=${STABLE_SMOKE_FEDERATION_ENABLED:-false}
+      - StableSmokeFederation__AllowedUsernames=${STABLE_SMOKE_FEDERATION_ALLOWED_USERS:-}
+      - StableSmokeFederation__Role=${STABLE_SMOKE_FEDERATION_ROLE:-viewer}
+      - StableSmokeFederation__SessionMinutes=${STABLE_SMOKE_FEDERATION_SESSION_MINUTES:-15}
     read_only: true
     tmpfs:
       - /tmp
