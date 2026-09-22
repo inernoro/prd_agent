@@ -243,6 +243,7 @@ public class AskOpeningQuestionWiringTests
         // 三处：开启提问、重新上传换了正文、分享页兜底（存量站点走不到前两处）
         Assert.Equal(3, Regex.Matches(svc, @"_askOpeners\.QueueEnsure\(").Count);
         Assert.Contains("SetAskConfigAsync", svc);
+        Assert.Contains("_askOpeners.QueueEnsure(reloaded, askOwnerPreferences?.WebPageAskEnabled)", svc);
     }
 
     [Fact]

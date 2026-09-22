@@ -2128,8 +2128,8 @@ export default function WebPagesPage() {
           onClose={() => setAskConfigSite(null)}
           onSaved={(cfg) => {
             // 与评论开关同一处理：回填列表，避免关掉再开退回旧值
-            setSites((prev) => prev.map((x) => (x.id === askConfigSite.id ? { ...x, askEnabled: cfg.enabled } : x)));
-            setAskConfigSite((prev) => (prev ? { ...prev, askEnabled: cfg.enabled } : prev));
+            setSites((prev) => prev.map((x) => (x.id === askConfigSite.id ? { ...x, askEnabled: cfg.siteEnabled } : x)));
+            setAskConfigSite((prev) => (prev ? { ...prev, askEnabled: cfg.siteEnabled } : prev));
           }}
         />
       )}
@@ -3038,6 +3038,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
   // 用户点了「转到后台」→ 本窗关掉但 XHR 不中断，完成后由页面 toast + 刷新兜底
   const backgroundedRef = useRef(false);
   const [created, setCreated] = useState<HostedSite | null>(null);
+  const [createdAskState, setCreatedAskState] = useState<'loading' | 'enabled' | 'disabled' | 'unknown'>('loading');
   const [optimization, setOptimization] = useState<HostedSiteOptimizationReviewResult | null>(null);
   const [optimizationPreview, setOptimizationPreview] = useState<HostedSiteOptimizationPreviewResult | null>(null);
   const [optimizationBusy, setOptimizationBusy] = useState<'preview' | 'original' | 'optimized' | null>(null);
@@ -3085,7 +3086,15 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
       onSaved(saved, false);
       return;
     }
+    setCreatedAskState('loading');
     setCreated(saved);
+    void getSiteAskConfig(saved.id).then((res) => {
+      if (!res.success || !res.data) {
+        setCreatedAskState('unknown');
+        return;
+      }
+      setCreatedAskState(res.data.enabled ? 'enabled' : 'disabled');
+    }).catch(() => setCreatedAskState('unknown'));
     onSaved(saved, true, true);
   }, [file?.name, isEdit, onSaved]);
 
@@ -3358,9 +3367,12 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               <MessageCircleQuestion size={14} className="mt-0.5 shrink-0" style={{ color: 'var(--text-muted)' }} />
               {isAskSupported(created) ? (
                 <span>
-                  这个站点的「向我提问」<span style={{ color: 'var(--text-primary)' }}>默认关闭</span>。
-                  你可以在<span style={{ color: 'var(--text-primary)' }}>设置 → 网页托管</span>里修改自己的全局默认，
-                  或在卡片菜单的<span style={{ color: 'var(--text-primary)' }}>「提问设置」</span>里只打开这个站点。
+                  {createdAskState === 'loading' && <><MapSpinner size={12} className="mr-1" />正在确认这个站点的提问设置。</>}
+                  {createdAskState === 'enabled' && <>按照你的设置，这个站点的「向我提问」<span style={{ color: 'var(--text-primary)' }}>当前已打开</span>。</>}
+                  {createdAskState === 'disabled' && <>按照你的设置，这个站点的「向我提问」<span style={{ color: 'var(--text-primary)' }}>当前已关闭</span>。</>}
+                  {createdAskState === 'unknown' && <>暂时无法确认这个站点当前是否开放提问。</>}
+                  {' '}你可以在<span style={{ color: 'var(--text-primary)' }}>设置 → 网页托管</span>里修改个人全局默认，
+                  或在卡片菜单的<span style={{ color: 'var(--text-primary)' }}>「提问设置」</span>里单独覆盖这个站点。
                 </span>
               ) : (
                 <span>
@@ -3386,6 +3398,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, onShareSite, initia
               <Button variant="secondary" style={{ justifyContent: 'center' }} onClick={() => {
                 // 再传一个：清空表单回到待选态，省掉「关窗 → 再点上传」两步
                 setCreated(null);
+                setCreatedAskState('loading');
                 setFile(null);
                 setTitle('');
                 setDescription('');

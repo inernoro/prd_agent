@@ -24,6 +24,8 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
   const [error, setError] = useState<string | null>(null);
 
   const [enabled, setEnabled] = useState(false);
+  /** 用户是否真的拨动过开关；没动就不落站点覆盖，继续继承个人全局设置。 */
+  const [enabledDirty, setEnabledDirty] = useState(false);
   const [welcome, setWelcome] = useState('');
   const [allowAnonymous, setAllowAnonymous] = useState(false);
   const [dailyLimit, setDailyLimit] = useState(0);
@@ -55,6 +57,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
       if (!alive) return;
       if (res.success && res.data) {
         setEnabled(res.data.enabled);
+        setEnabledDirty(false);
         setWelcome(res.data.welcome ?? '');
         setAllowAnonymous(res.data.allowAnonymous);
         setDailyLimit(res.data.dailyLimit ?? 0);
@@ -114,7 +117,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     setSaving(true);
     setError(null);
     const res = await updateSiteAskConfig(siteId, {
-      enabled,
+      ...(enabledDirty ? { enabled } : {}),
       welcome: welcome.trim() || null,
       ...(questionsDirty ? { suggestedQuestions: questions } : {}),
       allowAnonymous,
@@ -127,7 +130,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
     }
     onSaved?.(res.data);
     onClose();
-  }, [allowAnonymous, dailyLimit, enabled, onClose, onSaved, questions, questionsDirty, siteId, welcome]);
+  }, [allowAnonymous, dailyLimit, enabled, enabledDirty, onClose, onSaved, questions, questionsDirty, siteId, welcome]);
 
   const body = (
     // z-index 必须高于 SitePreviewModal 的 z-[100]：本抽屉唯一的入口就在那个弹窗的顶栏里，
@@ -161,7 +164,7 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: 16, display: 'flex', flexDirection: 'column', gap: 18 }}>
             <Row
               label="开放提问"
-              hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。默认是开着的；每次提问都会消耗模型额度，不想让访客问就在这里关掉。"
+              hint="访客可以对着这个页面向 AI 提问，回答只依据页面内容。未单独设置时继承“设置 → 网页托管”里的个人默认；系统默认关闭。"
             >
               {/* 只挡「关 → 开」，永远保留「开 → 关」这条退路。
                   两个方向一起挡会造成一种没法自救的状态：HTML 站重传成视频之后形态变成不支持，
@@ -170,7 +173,10 @@ export default function AskConfigDrawer({ siteId, siteTitle, onClose, onSaved }:
                   后端 PUT 也只拒绝「开」，两边判据一致。 */}
               <Toggle
                 checked={enabled}
-                onChange={setEnabled}
+                onChange={(next) => {
+                  setEnabled(next);
+                  setEnabledDirty(true);
+                }}
                 disabled={!!unsupportedReason && !enabled}
               />
             </Row>

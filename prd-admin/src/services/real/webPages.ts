@@ -1206,7 +1206,10 @@ export async function deleteSiteComment(commentId: string): Promise<ApiResponse<
 /** 站点提问配置（owner 视角） */
 export interface SiteAskConfig {
   siteId: string;
+  /** 叠加站点形态、站点覆盖与 owner 全局默认后的当前有效值 */
   enabled: boolean;
+  /** 站点自己的三态：null = 未覆盖，继续继承 owner 全局默认 */
+  siteEnabled: boolean | null;
   welcome?: string | null;
   /** 站点级题库；分享时可从中挑几条 */
   suggestedQuestions: string[];
@@ -1241,7 +1244,8 @@ export async function getSiteAskConfig(siteId: string): Promise<ApiResponse<Site
 export async function updateSiteAskConfig(
   siteId: string,
   config: {
-    enabled: boolean;
+    /** 只在用户真的拨动开关时传；省略 = 保留站点原来的继承/覆盖关系 */
+    enabled?: boolean;
     welcome?: string | null;
     /**
      * 只在用户**真的编辑过题库**时才传。省略（undefined）= 「这次不动题库」。
