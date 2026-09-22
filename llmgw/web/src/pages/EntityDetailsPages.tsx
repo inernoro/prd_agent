@@ -627,7 +627,21 @@ export function AppCallerDetailsPage() {
           description: 'App 自己不维护上游连接，只声明模型策略；具体 Provider 选择由 Gateway 完成。',
           content: <Facts items={[
             { label: '模型策略', value: app.modelPolicy || 'auto' },
-            { label: '模型池', value: pool ? <Link to={`/pools?focus=${encodeURIComponent(pool.id)}`}>{pool.name || pool.code || pool.id}</Link> : app.modelPoolId || '未绑定' },
+            // 池已退场：这个字段是存量回执，不是可点进去的对象。
+            // 原先它链到池页并带一个 focus 参数，而那条路由整条 302 到对外模型列表、参数被丢掉——
+            // 点过去看不到这个池，也看不到这条绑定（第 71 轮 review）。
+            // 所以只把值原样摆出来，并说清它现在不参与路由、该去哪儿改。
+            {
+              label: '模型池（存量绑定）',
+              value: (
+                <span>
+                  {pool ? (pool.name || pool.code || pool.id) : (app.modelPoolId || '未绑定')}
+                  <span style={{ opacity: 0.7 }}>
+                    {' '}· 池已退场，这条绑定不参与路由；要改这个调用方落到哪个模型，去对外模型页设认领或用途默认
+                  </span>
+                </span>
+              ),
+            },
             { label: '参数策略', value: app.parameterPolicy || 'default-drop' },
             { label: '模型池健康', value: pool?.health || '未解析' },
             { label: '健康成员', value: pool ? `${pool.healthyMembers} / ${pool.models.length}` : '未解析' },

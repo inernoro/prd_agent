@@ -8,11 +8,12 @@ import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
+import { pageSkeletonForPath } from '@/components/skeletons/PageSkeletons';
 import {
   requestAgentAccess,
   resolveAgentPageContext,
 } from '@/lib/agent-onboarding';
-import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
+import { apiUrl, fetchInstanceMode, formatMirrorCapturedAt, isChildPreviewCdsInstance, type PreviewMirrorSummary } from '@/lib/api';
 import { applyThemeMode, runThemeTransition, useTheme } from '@/lib/theme';
 import { UI_SCALE_PRESETS, useUiScale } from '@/lib/uiScale';
 import { cn } from '@/lib/utils';
@@ -188,6 +189,7 @@ export function ConsoleLayout(): JSX.Element {
  * (artifact-is-experience: the wait state is the product's own silhouette).
  */
 function ConsoleRouteFallback(): JSX.Element {
+  const { pathname } = useLocation();
   return (
     <>
       <header className="cds-topbar" aria-hidden>
@@ -197,14 +199,13 @@ function ConsoleRouteFallback(): JSX.Element {
         <div className="cds-loading-skeleton-line h-4 w-44 max-w-[40vw]" />
       </header>
       <main className="cds-main">
-        <div className="cds-workspace flex flex-col gap-4" role="status" aria-label="页面加载中">
-          <div className="cds-loading-skeleton-line h-7 w-64 max-w-[60vw]" />
-          <div className="cds-loading-skeleton-line h-4 w-96 max-w-full" />
-          <div className="mt-2 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-            {Array.from({ length: 6 }, (_, i) => (
-              <div key={i} className="cds-loading-skeleton-panel h-40 rounded-[0.625rem]" />
-            ))}
-          </div>
+        {/*
+          骨架按路由形状选，且与页面自己等数据时画的是同一个组件（PageSkeletons）：
+          chunk 到了、页面挂上、开始等数据——这三步之间轮廓不变，用户只看到一副骨架被填上。
+          此前这里是固定的「标题 + 六块方块」，页面挂上后再换成卡片网格，就是被反馈的「两幅骨架」。
+        */}
+        <div className="cds-workspace cds-workspace--fluid" role="status" aria-label="页面加载中">
+          {pageSkeletonForPath(pathname)}
         </div>
       </main>
     </>
@@ -259,13 +260,29 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   // 立即生效、无探针竞态），仍用 /api/instance-mode 探针确认；探针失败按「非预览
   // 实例」处理，不打扰生产。
   const [previewInstance, setPreviewInstance] = useState(isChildPreviewCdsInstance());
+  const [mirrorSummary, setMirrorSummary] = useState<PreviewMirrorSummary | null>(null);
   useEffect(() => {
     let cancelled = false;
     fetchInstanceMode()
-      .then((mode) => { if (!cancelled) setPreviewInstance(Boolean(mode.previewInstance)); })
+      .then((mode) => { if (!cancelled) { setPreviewInstance(Boolean(mode.previewInstance)); setMirrorSummary(mode.mirror ?? null); } })
       .catch(() => { /* 老后端无此端点 / 网络抖动 → 视为生产实例 */ });
     return () => { cancelled = true; };
   }, []);
+  // 父实例经 forwarder 注入的徽章（#cds-widget）在托管态已经写着「CDS 托管 CDS · 部署 / docker
+  // 已禁用」，再画一条自己的 pill 就是底部两条并排（用户 2026-09-16：「这两个可以结合一下」）。
+  // 徽章脚本在 </body> 前注入、异步建节点，所以用 MutationObserver 盯 20 秒，出现即让位；
+  // 直连端口、没有父徽章时保留自己的 pill 兜底。
+  const [hostWidgetPresent, setHostWidgetPresent] = useState(false);
+  useEffect(() => {
+    if (!previewInstance || typeof document === 'undefined') return undefined;
+    const check = () => Boolean(document.getElementById('cds-widget'));
+    if (check()) { setHostWidgetPresent(true); return undefined; }
+    if (typeof MutationObserver === 'undefined') return undefined;
+    const mo = new MutationObserver(() => { if (check()) { setHostWidgetPresent(true); mo.disconnect(); } });
+    mo.observe(document.body, { childList: true });
+    const stop = window.setTimeout(() => mo.disconnect(), 20_000);
+    return () => { mo.disconnect(); window.clearTimeout(stop); };
+  }, [previewInstance]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       const isAccel = event.metaKey || event.ctrlKey;
@@ -368,12 +385,13 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
           位置说明:顶部居中会遮住 TopBar 的快速部署输入框（真机截图实证），
           底部两侧有全局消息栈，底部居中保留给实例身份提示。
           遵守 mobile-layout-fallback:限宽 + truncate，不用 whitespace-nowrap 溢出。 */}
-      {previewInstance && (
-        <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2">
-          <div className="flex min-w-0 items-center gap-2 rounded-full border border-border bg-card px-3 py-1 shadow-sm">
-            <span className="h-2 w-2 shrink-0 rounded-full bg-warn" aria-hidden />
-            <span className="truncate text-xs text-muted-foreground">
-              CDS 预览实例 — 仅用于验收 CDS 自身改动，部署 / docker 操作已禁用
+      {previewInstance && !hostWidgetPresent && (
+        <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2" data-testid="preview-instance-pill">
+          <div className="flex min-w-0 items-center gap-2 rounded-full border border-ok/40 bg-ok-soft px-3 py-1 shadow-sm">
+            <span className="h-2 w-2 shrink-0 rounded-full bg-ok" aria-hidden />
+            <span className="truncate text-xs text-ok">
+              CDS 托管 CDS · 预览实例，只用于验收 CDS 自身改动；部署 / docker 操作已禁用
+              {mirrorSummary ? ` · 数据镜像自${mirrorSummary.label}，采集于 ${formatMirrorCapturedAt(mirrorSummary.capturedAt)}` : ''}
             </span>
           </div>
         </div>
@@ -982,12 +1000,18 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
           {center}
         </div>
       ) : null}
-      {/* 桌面端:动作按钮平铺。 */}
-      {right ? <div className="cds-topbar-actions hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
+      {/* 桌面端:动作按钮平铺，**永远贴右**。
+          `ml-auto` 不能省：left 槽在桌面端是 md:flex-none（不撑开），没有 center 的页面
+          就没有任何东西把动作推到右边，于是「刷新 / 添加 XX」会紧挨着面包屑堆在左上角。
+          用户 2026-09-14 原话：「添加按钮要在右侧，主动操作按钮都在右上角哦，不要堆积在
+          左上角，这是用户心智问题」——左上是「我在哪」，右上是「我要做什么」，
+          两者挤在一起，读者每次都得重新分辨哪个是标题哪个是按钮。
+          有 center 的页面 center 自己 md:flex-1 会吃掉空白，这里的 ml-auto 无副作用。 */}
+      {right ? <div className="cds-topbar-actions ml-auto hidden shrink-0 items-center gap-2 md:flex">{right}</div> : null}
       {/* 手机端:动作收进 ⋮ 溢出菜单,点开是竖向 action sheet —— 真正的移动端形态,
           而非把一排 PC 工具栏按钮硬塞进窄屏。 */}
       {right ? (
-        <div className="md:hidden">
+        <div className="ml-auto md:hidden">
           <button
             ref={kebabRef}
             type="button"

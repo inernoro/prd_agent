@@ -26,6 +26,7 @@ import type { CreateModelRequest, ImageSizeControlMode, ImageSizeFieldFormat, Mo
 import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
 import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
+import { ModelPricingDrawer, PRICE_SOURCE_LABELS } from '@/components/ModelPricingDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useDialogs } from '@/components/ConfirmDialog';
 import { useAuth } from '@/lib/auth';
@@ -47,6 +48,7 @@ export function ModelsPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [keyEditId, setKeyEditId] = useState<string | null>(null);
+  const [editModel, setEditModel] = useState<ModelItem | null>(null);
   const [keyValue, setKeyValue] = useState('');
   const [bulkKeyValue, setBulkKeyValue] = useState('');
   const [bulkOnlyMissing, setBulkOnlyMissing] = useState(true);
@@ -142,7 +144,15 @@ export function ModelsPage() {
     const poolMessage = res.data.modelsAppended > 0
       ? `已加入 ${res.data.modelsAppended} 个匹配的默认池`
       : '没有匹配用途的默认池被改动';
-    setToast(`模型「${res.data.item.name || res.data.item.modelName}」已保存；${poolMessage}`);
+    // 「保存成功」不等于「能调通」：调用方按公开模型名请求，找的是对外模型 + 线路。
+    // 没登上白名单时必须当场说出口，否则用户拿着一个库里看得见、界面报成功、
+    // 实际调不通的模型去排查，而他没做错任何事。
+    const whitelistMessage = res.data.whitelistMessage
+      ? `；${res.data.whitelistMessage}`
+      : res.data.publicId
+        ? `；已登上白名单，公开模型名 ${res.data.publicId}${res.data.linkedToExistingPublicId ? '（挂到了已有的公开名下，多一条线路）' : ''}`
+        : '';
+    setToast(`模型「${res.data.item.name || res.data.item.modelName}」已保存；${poolMessage}${whitelistMessage}`);
   }
 
   function toggleCreateCapability(code: string) {
@@ -678,7 +688,9 @@ export function ModelsPage() {
                           </div>
                         ) : null}
                       </td>
-                      <td style={{ ...td, whiteSpace: 'nowrap' }}>{formatModelPrice(m)}</td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        <ModelPriceCell model={m} canWrite={canWrite} onEdit={() => setEditModel(m)} />
+                      </td>
                       <td style={td}>
                         {m.authority === 'llm_gateway' ? (
                           <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `导入于 ${m.claimedAt}` : undefined} />
@@ -689,7 +701,7 @@ export function ModelsPage() {
                       <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
                       <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
                       <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal }}>
+                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'nowrap' }}>
                           {keyEditId === m.id ? (
                             <>
                               <input
@@ -711,6 +723,9 @@ export function ModelsPage() {
                             <>
                               {m.authority === 'llm_gateway' ? (
                                 <>
+                                  <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => setEditModel(m)}>
+                                    编辑
+                                  </Button>
                                   <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => { setKeyEditId(m.id); setKeyValue(''); }}>
                                     更新密钥
                                   </Button>
@@ -745,7 +760,104 @@ export function ModelsPage() {
           </div>
         )}
       </PageBody>
+      {editModel ? (
+        <ModelPricingDrawer
+          model={editModel}
+          onClose={() => setEditModel(null)}
+          onSaved={(updated) => {
+            setItems((prev) => (prev ? prev.map((x) => (x.id === updated.id ? updated : x)) : prev));
+            setEditModel(null);
+          }}
+        />
+      ) : null}
     </PageShell>
+  );
+}
+
+/**
+ * 价格单元格。金额之外必须同时给出来源与观测时间——说不出从哪来、什么时候的价格，
+ * 过一阵子谁都不知道还能不能信，而报表照算，没人会去核对。
+ *
+ * 缺价不是「零成本」，是「这条模型的调用没计上钱」，所以它在这里是一条要行动的提示，
+ * 而不是一个安静的破折号。
+ */
+/**
+ * 「不计入限额」到底因为什么——币种不对，还是价配了一半。
+ *
+ * 这两件事要分开说：原先一律写「价格不是美金口径」，于是一个币种明明是 USD、只是缺了输出价的
+ * 模型，管理员照着这句话去改币种，改完还是不计入，而真正缺的那一项从头到尾没人提
+ * （第 60 轮 review；external-cause-first：给读的人一个他能处置的结论，不是一个笼统的名词）。
+ *
+ * 完整性判据与计价侧同源：有按次价就够（那时 token 价一分不叠），否则输入与输出都要有。
+ */
+function unbillableReason(model: {
+  priceCurrency?: string | null;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  pricePerCall?: number | null;
+}): string {
+  const currency = (model.priceCurrency ?? '').trim().toUpperCase();
+  if (currency !== 'USD') {
+    return currency.length > 0
+      ? `价格记的是 ${currency}，不是美金口径，这条模型的调用不会计入用量与限额。去把它换算成美金再填一次`
+      : '这份价格没有登记币种，无从判断是不是美金口径，所以不计入用量与限额。补上币种再看';
+  }
+
+  if (model.pricePerCall != null) return '按次价已配齐，却仍判为不计入——这多半是别的字段有问题，去看这条模型的完整价格配置';
+
+  const missing: string[] = [];
+  if (model.inputPricePerMillion == null) missing.push('输入价');
+  if (model.outputPricePerMillion == null) missing.push('输出价');
+  if (missing.length > 0) {
+    return `币种是美金，但价格只配了一半（缺${missing.join('与')}）。缺一项整笔就算不出钱，`
+      + '所以这条模型的调用不计入用量与限额。把缺的那一项补上即可';
+  }
+
+  return '这条模型的调用不会计入用量与限额，而价格看上去是配齐的——去看它的完整价格配置';
+}
+
+function ModelPriceCell({ model, canWrite, onEdit }: { model: ModelItem; canWrite: boolean; onEdit: () => void }) {
+  const hasPrice = model.inputPricePerMillion != null
+    || model.outputPricePerMillion != null
+    || model.pricePerCall != null;
+
+  if (!hasPrice) {
+    return (
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'nowrap' }}>
+        <Chip label="未定价" color="var(--warn)" bg="var(--warn-bg)" title="这条模型的调用不会计入成本与限额" />
+        {canWrite ? <Button size="sm" variant="ghost" onClick={onEdit}>补价格</Button> : null}
+      </span>
+    );
+  }
+
+  const source = model.priceSource ? PRICE_SOURCE_LABELS[model.priceSource] : undefined;
+  const amounts: string[] = [];
+  if (model.inputPricePerMillion != null) amounts.push(String(model.inputPricePerMillion));
+  if (model.outputPricePerMillion != null) amounts.push(String(model.outputPricePerMillion));
+
+  return (
+    <span style={{ display: 'inline-flex', flexDirection: 'column', gap: 2 }}>
+      <span>
+        {model.priceCurrency || '币种未知'} {amounts.join(' / ')}
+        {amounts.length > 0 ? <span style={{ color: 'var(--text-muted)' }}> 每百万</span> : null}
+        {model.pricePerCall != null ? <span style={{ color: 'var(--text-muted)' }}>{` · 每次 ${model.pricePerCall}`}</span> : null}
+      </span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.tight, flexWrap: 'nowrap' }}>
+        {source
+          ? <Chip
+              label={model.priceStale && model.priceAgeDays != null ? `${source.label} · ${model.priceAgeDays} 天未复核` : source.label}
+              color={model.priceStale ? 'var(--warn)' : source.color}
+              bg={model.priceStale ? 'var(--warn-bg)' : source.bg}
+            />
+          : <Chip label="来源不明" color="var(--warn)" bg="var(--warn-bg)" title="这份价格说不出从哪来，无从判断是否可信" />}
+        {model.priceBillable === false
+          ? <Chip label="不计入限额" color="var(--warn)" bg="var(--warn-bg)" title={unbillableReason(model)} />
+          : null}
+        {model.cachedInputPricePerMillion != null
+          ? <span style={{ color: 'var(--ok)', fontSize: 'var(--fs-caption)' }}>{`缓存读 ${model.cachedInputPricePerMillion}`}</span>
+          : null}
+      </span>
+    </span>
   );
 }
 

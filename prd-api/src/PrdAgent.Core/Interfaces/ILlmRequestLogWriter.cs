@@ -79,8 +79,16 @@ public record LlmLogStart(
     string? ModelPoolId = null,
     decimal? InputPricePerMillion = null,
     decimal? OutputPricePerMillion = null,
+    /// <summary>缓存命中输入单价快照。</summary>
+    decimal? CachedInputPricePerMillion = null,
+    /// <summary>写入缓存输入单价快照。</summary>
+    decimal? CacheWritePricePerMillion = null,
     decimal? PricePerCall = null,
     string? PriceCurrency = null,
+    /// <summary>价格来源：upstream / admin / migrated。</summary>
+    string? PriceSource = null,
+    /// <summary>价格观测时间。</summary>
+    DateTime? PriceObservedAt = null,
     /// <summary>产生本条请求日志的发布 commit；为空时写入器从 GIT_COMMIT 兜底。</summary>
     string? ReleaseCommit = null,
     /// <summary>MAP 业务运行 ID，用于把 GW 请求日志反查到业务 run。</summary>
@@ -127,10 +135,18 @@ public record LlmLogDone(
     string? FinishReason = null,
     decimal? EstimatedInputCost = null,
     decimal? EstimatedOutputCost = null,
+    /// <summary>缓存命中输入部分的成本。</summary>
+    decimal? EstimatedCacheReadCost = null,
+    /// <summary>写入缓存部分的成本（Anthropic 一类协议）。</summary>
+    decimal? EstimatedCacheWriteCost = null,
     decimal? EstimatedCallCost = null,
     decimal? EstimatedCost = null,
     string? EstimatedCostCurrency = null,
     decimal? EstimatedCostUsd = null,
+    /// <summary>这次调用算没算出钱：priced / unpriced / stale_currency / no_usage。</summary>
+    string? CostStatus = null,
+    /// <summary>算不出钱时的人话原因。</summary>
+    string? CostUnpricedReason = null,
     List<LlmProviderAttempt>? ProviderAttempts = null,
     string? Provider = null,
     string? Model = null,

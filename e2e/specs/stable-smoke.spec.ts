@@ -24,6 +24,18 @@ const speechFixture = Buffer.from(readFileSync(
   resolve(specDir, '../fixtures/stable-smoke-speech.m4a.b64'),
   'utf8',
 ).trim(), 'base64');
+// 巡检身份必须持有的管理权限；SSOT 是后端 StableSmokeIdentityPolicy，由跨语言契约测试钉死两边一致。
+const identityPermissionPolicy = JSON.parse(readFileSync(
+  resolve(specDir, '../fixtures/stable-smoke-required-permissions.json'),
+  'utf8',
+)) as { superPermission: string; requiredPermissions: string[] };
+const requiredIdentityPermissions = identityPermissionPolicy.requiredPermissions;
+// 与后端 StableSmokeIdentityPolicy.MissingPermissions 同口径：持有 super 的账号视为矩阵权限齐全。
+const missingIdentityPermissions = (effective: string[]) => (
+  effective.includes(identityPermissionPolicy.superPermission)
+    ? []
+    : requiredIdentityPermissions.filter((permission) => !effective.includes(permission))
+);
 
 type TicketResponse = {
   success: boolean;
@@ -35,6 +47,17 @@ type ApiEnvelope<T> = {
   success: boolean;
   data: T;
   error?: { code?: string; message?: string };
+};
+
+type BusinessModelPool = {
+  code: string;
+  isDefault?: boolean;
+  resolutionType?: string;
+  models: Array<{
+    modelId: string;
+    platformId: string;
+    healthStatus?: string;
+  }>;
 };
 
 type AuthSession = {
@@ -265,12 +288,210 @@ type UploadArtifactItem = {
 type GatewayOffering = {
   id: string;
   targetId: string;
+  targetKind?: string;
   protocol?: string | null;
   endpointPath?: string | null;
+  upstreamModelId?: string | null;
   enabled: boolean;
   priority: number;
   healthStatus?: number;
+  notes?: string | null;
 };
+
+type GatewayUpstreamModel = {
+  id: string;
+  name?: string | null;
+  platformId?: string | null;
+  protocol?: string | null;
+  enabled?: boolean;
+};
+
+/** 多图引用只能走这些保留参考图语义的图片协议；聊天协议会把图片当文本丢掉（REG-multi-image-001）。 */
+const referencePreservingImageProtocols = ['openrouter-image', 'openai', 'openai-compatible'];
+const gatewayFailoverBackupNote = 'stable-smoke-failover-backup';
+// GW-007 故障注入写进 Offering 的 Endpoint 前缀：机读标记，也是硬中断后识别「上一轮遗留注入态」的唯一依据。
+// 注入路径自带原值：`stable-smoke-<kind>-failure/<时间戳>[-<序号>]~<base64url(原 Endpoint)>`，
+// 硬中断后不需要任何外部记录就能把它精确还原（网关只要求相对路径、无控制字符、无反斜杠、不超过 500 字符）。
+const gatewayInjectedEndpointPattern = /^stable-smoke-(?:primary|all)-failure\//;
+const isGatewayInjectedEndpoint = (offering: GatewayOffering) => gatewayInjectedEndpointPattern.test(offering.endpointPath || '');
+// 只认本夹具写入的精确格式（标记开头、紧跟冒号），管理员在别的 Offering 备注里顺带提到这串字也不会被当成夹具。
+const isGatewayFailoverBackup = (offering: GatewayOffering) => (offering.notes || '').trimStart().startsWith(`${gatewayFailoverBackupNote}:`);
+// 网关对 Endpoint 的上限是 500 字符：原值经 base64url 放大后装不下时退回不带原值的旧格式，
+// 硬中断后只能靠相同路由契约的捐出方还原（或人工处理），但故障注入本身照常执行，不会因为路径太长而验不了切换。
+const gatewayEndpointPathLimit = 500;
+const buildGatewayInjectedEndpoint = (kind: 'primary' | 'all', originalEndpointPath: string, index?: number) => {
+  const stem = `stable-smoke-${kind}-failure/${Date.now()}${index === undefined ? '' : `-${index}`}`;
+  const embedded = `${stem}~${Buffer.from(originalEndpointPath, 'utf8').toString('base64url')}`;
+  return embedded.length <= gatewayEndpointPathLimit ? embedded : stem;
+};
+const decodeGatewayInjectedEndpoint = (endpointPath: string): string | null => {
+  const match = /^stable-smoke-(?:primary|all)-failure\/[^~]*~([A-Za-z0-9_-]*)$/.exec(endpointPath);
+  return match ? Buffer.from(match[1], 'base64url').toString('utf8') : null;
+};
+const sameGatewayRoutingContract = (left: GatewayOffering, right: GatewayOffering) => (
+  left.targetId === right.targetId
+  && (left.targetKind || 'model') === (right.targetKind || 'model')
+  && (left.protocol || '') === (right.protocol || '')
+  && (left.upstreamModelId || '') === (right.upstreamModelId || '')
+);
+
+type GatewayFixtureRecovery = {
+  logicalId: string;
+  offeringId: string;
+  targetId: string;
+  from: string;
+  to: string;
+  /** embedded：从注入路径自带的原值还原；donor：按完全相同路由契约的另一条 Offering 还原；unrecoverable：两者都没有，未改动，需人工处理。 */
+  source: 'embedded' | 'donor' | 'unrecoverable';
+};
+
+/**
+ * GW-007 遗留注入态自愈（issue #1536）。
+ * 全路故障注入之后 worker 若被硬杀，主路与带标记的备用 Offering 都会带着 `stable-smoke-*-failure/` Endpoint
+ * 留在网关上：健康仍为 0 时下一轮会把坏 Endpoint 记成基线，健康到 2 时又会在补备用时与既有 targetId 撞车。
+ * 这里在选择 / 补备用之前先扫一遍，按优先级还原：
+ *   1. 注入路径自带的原值（本 PR 起的注入格式，精确还原，主路与备用都适用）；
+ *   2. 路由契约（targetKind / targetId / protocol / upstreamModelId）完全相同的另一条未注入 Offering 的 Endpoint；
+ *   3. 都没有：不写任何猜测值（网关每次更新都会生成新的不可变版本，写错就永久替换了原契约），
+ *      标记 unrecoverable 交给调用方失败并报出需要人工处理的记录。
+ * 更新 Endpoint 会让网关把健康计数清零（GW-006 的判据），所以恢复后它重新成为可用上游。
+ * 只改注入态的记录，其它 Offering 一字不碰；重复执行是幂等的。
+ */
+async function recoverInjectedGatewayOfferings(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+  items: GatewayLogicalModel[],
+): Promise<GatewayFixtureRecovery[]> {
+  const recovered: GatewayFixtureRecovery[] = [];
+  for (const item of items) {
+    for (const offering of item.offerings) {
+      if (!isGatewayInjectedEndpoint(offering)) continue;
+      const from = offering.endpointPath || '';
+      const embedded = decodeGatewayInjectedEndpoint(from);
+      const donor = embedded === null
+        ? items
+          .flatMap((other) => other.offerings.filter((candidate) => (
+            candidate.id !== offering.id
+            && !isGatewayInjectedEndpoint(candidate)
+            && sameGatewayRoutingContract(candidate, offering)
+          )))
+          .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0]
+        : undefined;
+      const source: GatewayFixtureRecovery['source'] = embedded !== null ? 'embedded' : donor ? 'donor' : 'unrecoverable';
+      if (source === 'unrecoverable') {
+        recovered.push({ logicalId: item.id, offeringId: offering.id, targetId: offering.targetId, from, to: '', source });
+        continue;
+      }
+      const endpointPath = embedded !== null ? embedded : (donor!.endpointPath || '');
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${item.id}/offerings/${offering.id}`, {
+        headers: gateway.headers,
+        data: { endpointPath, priority: offering.priority },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `恢复遗留注入态 Offering ${offering.id} 失败`).toBe(true);
+      expect(body.data.endpointPath || '').toBe(endpointPath);
+      recovered.push({ logicalId: item.id, offeringId: offering.id, targetId: offering.targetId, from, to: endpointPath, source });
+      Object.assign(offering, body.data);
+    }
+  }
+  return recovered;
+}
+
+const describeGatewayRecovery = (items: GatewayFixtureRecovery[]) => items
+  .map((item) => `${item.logicalId}/${item.offeringId}: ${item.from} -> ${item.to || '(协议默认)'} [${item.source}]`)
+  .join('; ');
+
+/** 把传入的（读取时只取启用中的）逻辑模型上仍在启用的带标记备用停掉（GW-007 之外它们只能是停用），返回处理过的记录描述。 */
+async function disableStrayGatewayBackups(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+  items: GatewayLogicalModel[],
+): Promise<string[]> {
+  const handled: string[] = [];
+  for (const item of items) {
+    for (const offering of item.offerings) {
+      if (!offering.enabled || !isGatewayFailoverBackup(offering)) continue;
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${item.id}/offerings/${offering.id}/enabled`, {
+        headers: gateway.headers,
+        data: { enabled: false },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `停用遗留备用 Offering ${offering.id} 失败`).toBe(true);
+      Object.assign(offering, body.data);
+      handled.push(`${item.id}/${offering.id}`);
+    }
+  }
+  return handled;
+}
+
+type GatewayUpstreamIndex = { upstreamIds: Set<string>; upstreamById: Map<string, GatewayUpstreamModel> };
+
+async function readGatewayUpstreamIndex(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+): Promise<GatewayUpstreamIndex> {
+  const response = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers });
+  const body = await response.json() as ApiEnvelope<{ items: GatewayUpstreamModel[] }>;
+  expect(response.ok(), body.error?.message || '无法读取网关模型目录').toBe(true);
+  return {
+    upstreamIds: new Set(body.data.items.map((item) => item.id)),
+    upstreamById: new Map(body.data.items.map((item) => [item.id, item])),
+  };
+}
+
+const isLiveGatewayUpstream = (offering: GatewayOffering, index: GatewayUpstreamIndex) => (
+  offering.enabled
+  && offering.healthStatus !== 2
+  && index.upstreamIds.has(offering.targetId)
+);
+
+/**
+ * 给只有单上游的逻辑模型补一条带标记的备用 Offering：从同类型其它逻辑模型挑一条在用的真实上游
+ * （优先同平台），照抄它的路由契约创建，priority 比主路低 10，正常流量不会走到它。创建即启用；
+ * 找不到捐出方返回 undefined。GW-007 与自愈回归用例共用这一份，谁先跑到谁建，另一方复用。
+ */
+async function provisionTaggedFailoverBackup(
+  request: APIRequestContext,
+  gateway: { baseUrl: string; headers: Record<string, string> },
+  items: GatewayLogicalModel[],
+  index: GatewayUpstreamIndex,
+  preferred: GatewayLogicalModel,
+  primary: GatewayOffering,
+): Promise<GatewayOffering | undefined> {
+  const primaryPlatform = index.upstreamById.get(primary.targetId)?.platformId || '';
+  // 逻辑模型上已经绑过的上游（含停用、未打标记的）都不能再挑：网关对未被替代的同 target 记录判重复。
+  const usedTargets = new Set(preferred.offerings.map((offering) => offering.targetId));
+  const donor = items
+    .filter((item) => item.enabled && item.modelType === preferred.modelType && item.id !== preferred.id)
+    .flatMap((item) => item.offerings.filter((offering) => isLiveGatewayUpstream(offering, index)))
+    .filter((offering) => {
+      if (usedTargets.has(offering.targetId)) return false;
+      usedTargets.add(offering.targetId);
+      return true;
+    })
+    .sort((left, right) => (
+      Number((index.upstreamById.get(right.targetId)?.platformId || '') === primaryPlatform)
+      - Number((index.upstreamById.get(left.targetId)?.platformId || '') === primaryPlatform)
+    ))[0];
+  if (!donor) return undefined;
+  const created = await request.post(`${gateway.baseUrl}/gw/logical-models/${preferred.id}/offerings`, {
+    headers: gateway.headers,
+    data: {
+      targetKind: donor.targetKind || 'model',
+      targetId: donor.targetId,
+      // 路由契约照抄捐出方：它在自己的逻辑模型上就是这么跑通的。
+      protocol: donor.protocol || undefined,
+      endpointPath: donor.endpointPath || undefined,
+      upstreamModelId: donor.upstreamModelId || undefined,
+      priority: primary.priority + 10,
+      weight: 100,
+      notes: `${gatewayFailoverBackupNote}: 稳定冒烟 GW-007 备用上游，验收后停用，可复用`,
+    },
+  });
+  const createdBody = await created.json() as ApiEnvelope<GatewayOffering>;
+  expect(created.ok(), createdBody.error?.message || `为 ${preferred.publicId} 创建备用 Offering 失败`).toBe(true);
+  return createdBody.data;
+}
 
 type GatewayLogicalModel = {
   id: string;
@@ -534,6 +755,11 @@ async function waitForImageRun(page: Page, token: string, runId: string, timeout
 
 async function loginGateway(request: APIRequestContext) {
   const baseUrl = requiredEnv('STABLE_SMOKE_GW_BASE_URL');
+  // 本地排障用：已经拿到的控制台会话令牌直接复用（例如 MAP 管理员一键登录换来的），不再走签名或口令。
+  const presetToken = process.env.STABLE_SMOKE_GW_TOKEN?.trim();
+  if (presetToken) {
+    return { baseUrl, headers: { Authorization: `Bearer ${presetToken}` } };
+  }
   const signingKeyId = process.env.STABLE_SMOKE_SIGNING_KEY_ID?.trim();
   const signingPrivateKey = process.env.STABLE_SMOKE_SIGNING_PRIVATE_KEY?.trim();
   if (signingKeyId && signingPrivateKey) {
@@ -848,13 +1074,29 @@ async function openModule(
   testInfo: TestInfo,
 ) {
   const errors: string[] = [];
+  const failedImages: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
   page.on('console', (message) => {
     if (message.type() === 'error' && !/favicon|ResizeObserver/i.test(message.text())) {
       errors.push(message.text());
     }
   });
+  // 图片资源加载失败在控制台里不是 error，只能从网络层与 <img> 自身的解码结果判断。
+  // 2026-09-14：首页默认头像（对象存储上 3 MB 的 nohead.png）加载失败两次，旧判据一条都没抓到。
+  page.on('requestfailed', (failed) => {
+    if (failed.resourceType() !== 'image') return;
+    const reason = failed.failure()?.errorText || 'failed';
+    if (/ERR_ABORTED/i.test(reason)) return;
+    failedImages.push(`${failed.url()} (${reason})`);
+  });
+  // 404 / 5xx 是「完成的响应」而不是 requestfailed，图片照样是碎的，必须单独记下来。
+  page.on('response', (response) => {
+    if (response.request().resourceType() !== 'image') return;
+    const status = response.status();
+    if (status >= 400) failedImages.push(`${response.url()} (HTTP ${status})`);
+  });
 
+  await applySandboxHostStubs(page);
   const loginUrl = await issueTicket(request, module.path);
   await page.goto(loginUrl, { waitUntil: 'domcontentloaded' });
   await page.waitForURL((url) => url.pathname.startsWith(module.path), { timeout: 30_000 });
@@ -863,12 +1105,86 @@ async function openModule(
   await page.waitForTimeout(800);
   await dismissBlockingTutorial(page);
   expect(errors, `${module.label} 页面出现前端运行错误`).toEqual([]);
+  await expectNoBrokenImages(page, module.label, failedImages);
 
   const screenshot = await page.screenshot({ fullPage: true });
   await testInfo.attach(`${module.key}-${testInfo.project.name}`, {
     body: screenshot,
     contentType: 'image/png',
   });
+}
+
+/**
+ * 页面上的每一张图都必须真的解出来：网络层没有失败请求，DOM 里没有 complete 却 0 宽的 <img>。
+ * 等待上限 8 秒——默认头像这类静态资源超过这个时间还没到，本身就是要报出来的问题。
+ */
+async function expectNoBrokenImages(page: Page, label: string, failedImages: string[]) {
+  // 懒加载且还没滚进视口的图片浏览器根本不会去取，不算「没加载完」；
+  // SVG 没有固有尺寸时 naturalWidth 也可能是 0，不能只拿它当碎图判据——改问浏览器 decode() 有没有成功。
+  const readImageState = () => page.evaluate(async () => {
+    const inViewport = (image: HTMLImageElement) => {
+      const rect = image.getBoundingClientRect();
+      return rect.bottom >= 0 && rect.right >= 0 && rect.top <= window.innerHeight && rect.left <= window.innerWidth;
+    };
+    const isSvg = (image: HTMLImageElement) => /\.svg(?:[?#].*)?$|^data:image\/svg/i.test(image.currentSrc || image.src || '');
+    const pending = Array.from(document.images)
+      .filter((image) => !image.complete && (image.loading !== 'lazy' || inViewport(image)))
+      .map((image) => image.currentSrc || image.src);
+    const broken: string[] = [];
+    for (const image of Array.from(document.images)) {
+      if (!image.complete || image.naturalWidth !== 0 || (image.getAttribute('src') || '').length === 0) continue;
+      const source = image.currentSrc || image.src;
+      if (!isSvg(image)) {
+        broken.push(source);
+        continue;
+      }
+      try {
+        await image.decode();
+      } catch {
+        broken.push(source);
+      }
+    }
+    return { pending, broken };
+  });
+  await expect.poll(
+    async () => (await readImageState()).pending.length,
+    { message: `${label} 页面图片在 8 秒内全部结束加载`, timeout: 8_000 },
+  ).toBe(0).catch(() => undefined);
+  const { broken: brokenImages, pending: stillLoading } = await readImageState();
+  expect(
+    [...failedImages, ...brokenImages.map((url) => `${url} (浏览器解码为 0 宽，页面上是碎图)`), ...stillLoading.map((url) => `${url} (8 秒后仍未加载完成)`)],
+    `${label} 页面存在加载失败的图片资源`,
+  ).toEqual([]);
+}
+
+/**
+ * CDS 反代注入的分支小部件不是产品的一部分。手机视口下旧版小部件是一整条徽章，正好压在录音面板的
+ * 「暂停录音」「结束录音并转成文字」上（2026-09-15 复测：点击被 #cds-widget 拦截）。录音旅程验的是产品，
+ * 先把它关掉；新版小部件会自己收成圆钮，移动端入口用例单独验它。
+ */
+async function dismissCdsPreviewWidget(page: Page) {
+  const dismiss = page.locator('#cds-widget button[data-action="dismiss"]');
+  if (await dismiss.count()) {
+    await dismiss.first().click({ force: true }).catch(() => undefined);
+    await expect(page.locator('#cds-widget')).toHaveCount(0);
+  }
+}
+
+/**
+ * 沙箱排障用：出口代理会重新终结 TLS，浏览器信任库里没有那张 CA 时，页面里第三方绝对外链
+ * （如 Cloudflare 注入的 beacon 脚本）会报 ERR_CERT_AUTHORITY_INVALID，把与被测功能无关的噪音
+ * 记成「前端运行错误」。设置 STABLE_SMOKE_STUB_HOSTS=host1,host2 后，这些域名的请求由空响应代替。
+ * 正式巡检不设置该变量，任何外链失败照旧计入。
+ */
+async function applySandboxHostStubs(page: Page) {
+  const hosts = (process.env.STABLE_SMOKE_STUB_HOSTS || '').split(',').map((item) => item.trim()).filter(Boolean);
+  for (const host of hosts) {
+    await page.route((url) => url.hostname === host, (route) => route.fulfill({
+      status: 200,
+      contentType: route.request().resourceType() === 'script' ? 'application/javascript' : 'text/plain',
+      body: '',
+    }));
+  }
 }
 
 async function dismissBlockingTutorial(page: Page) {
@@ -884,6 +1200,7 @@ async function openQuickRecord(page: Page, request: APIRequestContext) {
   const token = await loginAndReadToken(page, request, '/document-store');
   await page.goto('/document-store?quickRecord=1', { waitUntil: 'domcontentloaded' });
   await dismissBlockingTutorial(page);
+  await dismissCdsPreviewWidget(page);
   return token;
 }
 
@@ -1374,6 +1691,24 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[CORE-003][REG-auth-identity-permissions-001] 巡检身份持有矩阵所需的全部管理权限', async ({ page, request }) => {
+    // 2026-09-14：自动开号只给了 Agent 体验者角色，录音、文件、短视频、会话权限四个模块三十余项
+    // 在业务动作之前就被权限中间件挡成「无权限」。这里先把外因说清楚，后面的旅程才有资格失败。
+    const token = await loginAndReadToken(page, request, '/');
+    const me = await readEnvelope<{
+      username: string;
+      systemRoleKey?: string | null;
+      effectivePermissions: string[];
+    }>(await page.request.get('/api/authz/me', { headers: authHeaders(token) }));
+    const missing = missingIdentityPermissions(me.effectivePermissions);
+    expect(
+      missing,
+      `巡检账号 ${me.username}（系统角色 ${me.systemRoleKey || '无'}）缺少矩阵所需权限：${missing.join('、')}。`
+      + '外因：账号由签名认证自动开号时只带了 Agent 体验者角色；修复后的后端会在下一次签名认证时按 StableSmokeIdentityPolicy 补齐，'
+      + '若仍缺失，说明部署的后端版本早于该修复，或该部署把 ManagePermissions 显式关闭了。',
+    ).toEqual([]);
+  });
+
   test('[CORE-002][CORE-003] 合成会话刷新恢复且受限用户入口和直达均被隔离', { tag: '@cleanup' }, async ({ page, request }) => {
     const adminToken = await loginAndReadToken(page, request, '/');
     const allowed = await page.request.get('/api/authz/me', { headers: authHeaders(adminToken) });
@@ -1781,6 +2116,47 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
+  test('[LIT-011][GW-010][REG-model-catalog-identity-001] 核心目录健康与文学运行时保持闭环', async ({ page, request }) => {
+    const token = await loginAndReadToken(page, request, '/literary-agent');
+    const targets = [
+      { endpoint: '/api/literary-agent/config/models/chat', appCallerCode: 'literary-agent.content::chat', modelType: 'chat' },
+      { endpoint: '/api/literary-agent/config/models/text2img', appCallerCode: 'literary-agent.illustration.text2img::generation', modelType: 'generation' },
+      { endpoint: '/api/literary-agent/config/models/img2img', appCallerCode: 'literary-agent.illustration.img2img::generation', modelType: 'generation' },
+    ];
+    for (const target of targets) {
+      const pools = await readEnvelope<BusinessModelPool[]>(await request.get(
+        target.endpoint,
+        { headers: authHeaders(token) },
+      ));
+      expect(pools.length, `${target.appCallerCode} 的业务模型目录为空`).toBeGreaterThan(0);
+      expect(pools.filter((pool) => pool.isDefault).length, `${target.appCallerCode} 默认模型数量异常`).toBe(1);
+      for (const pool of pools) {
+        expect(pool.code, `${target.appCallerCode} 缺少稳定 PublicId`).not.toBe('');
+        expect(pool.resolutionType).toBe('LogicalModel');
+        expect(pool.models).toHaveLength(1);
+        expect(pool.models[0]?.modelId).toBe(pool.code);
+        expect(pool.models[0]?.platformId).toBe('logical-model');
+        expect(['Healthy', 'Degraded']).toContain(pool.models[0]?.healthStatus);
+      }
+    }
+
+    const deep = await request.get('/api/healthz/deep');
+    const deepBody = await deep.json() as {
+      checks?: Record<string, Array<{
+        observedValue?: number;
+        status?: string;
+        targetCount?: number;
+        catalogEntryCount?: number;
+      }>>;
+    };
+    const contractCheck = deepBody.checks?.['model-catalog:selector-runtime-contract']?.[0];
+    expect(deep.ok()).toBe(true);
+    expect(contractCheck?.status).toBe('pass');
+    expect(contractCheck?.observedValue).toBe(0);
+    expect(contractCheck?.targetCount).toBe(5);
+    expect(contractCheck?.catalogEntryCount).toBeGreaterThanOrEqual(5);
+  });
+
   test('[LIT-002][LIT-005][LIT-010] 文学配图标记流式生成、保存恢复与清理', { tag: '@cleanup' }, async ({ page, request }) => {
     test.setTimeout(240_000);
     const token = await loginAndReadToken(page, request, '/literary-agent');
@@ -1788,6 +2164,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     const article = '清晨，城市公园里的蓝色长椅刚被阳光照亮。\n\n一位读者翻开书本，远处的树叶在微风中轻轻摇动。';
     let workspaceId = '';
     try {
+      const chatPools = await readEnvelope<BusinessModelPool[]>(await page.request.get(
+        '/api/literary-agent/config/models/chat',
+        { headers: authHeaders(token) },
+      ));
+      const defaultChatPool = chatPools.find((pool) => pool.isDefault);
+      expect(defaultChatPool?.code, '文学创作对话目录必须有唯一默认 PublicId').toBeTruthy();
       const created = await readEnvelope<{ workspace: { id: string } }>(
         await page.request.post('/api/literary-agent/workspaces', {
           headers: authHeaders(token),
@@ -1799,7 +2181,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         headers: authHeaders(token),
         data: { title, articleContent: article },
       }));
-      const streamed = await page.evaluate(async ({ id, accessToken, content }) => {
+      const streamed = await page.evaluate(async ({ id, accessToken, content, modelId }) => {
         const startedAt = performance.now();
         const response = await fetch(`/api/visual-agent/image-master/workspaces/${id}/article/generate-markers`, {
           method: 'POST',
@@ -1813,6 +2195,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
             articleContent: content,
             userInstruction: '只插入一处配图标记，保持原文不变',
             insertionMode: 'anchor',
+            modelId,
           }),
         });
         if (!response.ok || !response.body) {
@@ -1836,13 +2219,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           }
         }
         return { ok: true, firstChunkMs, firstVisibleProgressMs, chunkCount, text };
-      }, { id: workspaceId, accessToken: token, content: article });
+      }, { id: workspaceId, accessToken: token, content: article, modelId: defaultChatPool!.code });
       expect(streamed.ok, streamed.text).toBe(true);
       expect(streamed.firstChunkMs).toBeGreaterThanOrEqual(0);
       expect(streamed.firstVisibleProgressMs, '文学创作必须在两秒内出现用户可见进度，心跳不计入').toBeGreaterThanOrEqual(0);
       expect(streamed.firstVisibleProgressMs).toBeLessThan(2_000);
       expect(streamed.chunkCount).toBeGreaterThan(1);
-      expect(streamed.text).toMatch(/(?:delta|done|complete|marker)/i);
+      expect(streamed.text).toContain('"type":"done"');
+      expect(streamed.text).not.toContain('"type":"error"');
 
       const detail = await readEnvelope<{ workspace: { articleContent?: string; articleContentWithMarkers?: string } }>(
         await page.request.get(`/api/literary-agent/workspaces/${workspaceId}/detail`, { headers: authHeaders(token) }),
@@ -2591,25 +2975,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         await route.continue();
       });
       await page.goto(`/document-store?store=${encodeURIComponent(storeId)}&quickRecord=1`, { waitUntil: 'domcontentloaded' });
-      await expect(page.getByText('录音中', { exact: true }), '进入快捷录音后必须自动开始').toBeVisible({ timeout: 20_000 });
+      await dismissCdsPreviewWidget(page);
+      const recordingState = page.getByTestId('recording-state');
+      await expect(recordingState, '进入快捷录音后必须自动开始').toHaveAttribute('data-state', 'recording', { timeout: 20_000 });
       const destination = page.locator('select:visible').filter({
         has: page.locator(`option[value="${storeId}"]`),
       }).first();
       await expect(destination).toBeVisible();
       if (await destination.inputValue() !== storeId) await destination.selectOption(storeId);
       await expect(destination).toHaveValue(storeId);
-      const timer = page.getByText(/^\d{2}:\d{2}$/).first();
+      const timer = page.getByTestId('recording-elapsed');
       await expect(timer).toBeVisible();
+      await expect(timer).toHaveText(/^\d{2}:\d{2}$/);
       await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe('00:00');
 
       await page.getByRole('button', { name: '暂停录音' }).click();
-      await expect(page.getByText('已暂停', { exact: true })).toBeVisible();
+      await expect(recordingState).toHaveAttribute('data-state', 'paused');
       const pausedAt = await timer.textContent();
       await page.waitForTimeout(1_200);
       expect(await timer.textContent(), '暂停期间计时不得继续增长').toBe(pausedAt);
 
       await page.getByRole('button', { name: '继续录音' }).click();
-      await expect(page.getByText('录音中', { exact: true })).toBeVisible();
+      await expect(recordingState).toHaveAttribute('data-state', 'recording');
       await expect.poll(() => timer.textContent(), { timeout: 5_000 }).not.toBe(pausedAt);
 
       const completionPromise = page.waitForResponse((response) => (
@@ -2673,12 +3060,12 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openQuickRecord(page, request);
 
-    await expect(page.getByText('录音中', { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByTestId('recording-state')).toHaveAttribute('data-state', 'recording', { timeout: 20_000 });
     await page.waitForTimeout(1_500);
     await page.getByRole('button', { name: '结束录音并转成文字' }).click();
     await expect(page.getByText('整段录音几乎没有检测到声音，转录很可能失败。请确认麦克风没有静音。')).toBeVisible();
     await page.getByRole('button', { name: '放弃本次录音' }).click();
-    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+    await expect(page.getByTestId('recording-state'), '放弃后录音面板必须关闭').toBeHidden();
   });
 
   test('[REC-008] 浏览器不支持录音时直接提供上传音频兜底', async ({ page, request }) => {
@@ -2688,9 +3075,11 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openQuickRecord(page, request);
     await expect(page.getByText('当前浏览器不支持录音', { exact: true })).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByRole('button', { name: /上传音频文件/ })).toBeVisible();
+    const uploadFallback = page.getByTestId('recording-unavailable-upload');
+    await expect(uploadFallback, '不支持录音时必须给上传音频兜底').toBeVisible();
+    await expect(uploadFallback).toHaveText(/上传/);
     await page.getByRole('button', { name: '取消录音' }).click();
-    await expect(page.getByText('快捷录音', { exact: true })).toBeHidden();
+    await expect(uploadFallback, '取消后录音面板必须关闭').toBeHidden();
   });
 
   test('[VIS-001][REG-visual-policy-001] 单图模型目录有唯一业务默认且不暴露池', async ({ page, request }) => {
@@ -2861,7 +3250,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     }
   });
 
-  test('[CORE-006][GW-007] CDS 主路故障切换、全路故障提示与 requestId 日志可追踪', { tag: '@cleanup' }, async ({ page, request }) => {
+  test('[CORE-006][GW-007][REG-gateway-failover-fixture-001] CDS 主路故障切换、全路故障提示与 requestId 日志可追踪', { tag: '@cleanup' }, async ({ page, request }, testInfo) => {
     test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不主动注入网关故障，只在发布门禁观察自然切换');
     test.setTimeout(360_000);
     const token = await loginAndReadToken(page, request, '/visual-agent');
@@ -2871,12 +3260,28 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     });
     const logicalBody = await logicalResponse.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
     expect(logicalResponse.ok(), logicalBody.error?.message || '无法读取网关逻辑模型').toBe(true);
-    const upstreamResponse = await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, {
-      headers: gateway.headers,
-    });
-    const upstreamBody = await upstreamResponse.json() as ApiEnvelope<{ items: Array<{ id: string }> }>;
-    expect(upstreamResponse.ok(), upstreamBody.error?.message || '无法读取网关模型目录').toBe(true);
-    const upstreamIds = new Set(upstreamBody.data.items.map((item) => item.id));
+    // 带标记备用在一轮 GW-007 之外只能是停用：不论挂在哪个逻辑模型上（包括本轮不会选中的），
+    // 启用着的一律先停掉，否则上一轮夭折留下的备用会一直参与 CDS 真实流量的路由。
+    // 隔离排在自愈之前：自愈要发多次网关请求，任何一次失败（selfheal10 就遇到过共享 Mongo 断连）
+    // 都不能让带着注入态的备用继续在线。
+    const straySummary = await disableStrayGatewayBackups(request, gateway, logicalBody.data.items);
+    if (straySummary.length > 0) {
+      testInfo.annotations.push({ type: 'gateway-fixture-stray-backup', description: straySummary.join('; ') });
+      console.warn(`[GW-007] 发现上一轮遗留的已启用备用并已停用：${straySummary.join('; ')}`);
+    }
+    // 上一轮硬中断遗留的注入态自愈，再做任何判定（issue #1536）；发现了就写进报告，不静默。
+    const leftovers = await recoverInjectedGatewayOfferings(request, gateway, logicalBody.data.items);
+    if (leftovers.length > 0) {
+      const summary = describeGatewayRecovery(leftovers);
+      testInfo.annotations.push({ type: 'gateway-fixture-recovery', description: summary });
+      console.warn(`[GW-007] 发现上一轮遗留的网关注入态：${summary}`);
+    }
+    expect(
+      leftovers.filter((item) => item.source === 'unrecoverable'),
+      '上一轮遗留的注入态既没有自带原值、也找不到相同路由契约的捐出方，不能猜着写：请人工恢复这些 Offering 的 Endpoint 后再跑',
+    ).toEqual([]);
+    const upstreamIndex = await readGatewayUpstreamIndex(request, gateway);
+    const { upstreamIds, upstreamById } = upstreamIndex;
 
     const pools = await readEnvelope<ImageModelPool[]>(
       await page.request.get('/api/visual-agent/image-gen/models/text2img', { headers: authHeaders(token) }),
@@ -2886,41 +3291,44 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
         .filter((pool) => pool.models.some((model) => !/unhealthy|disabled/i.test(model.healthStatus || '')))
         .map((pool) => pool.code),
     );
-    const logical = logicalBody.data.items.find((item) => (
-      item.enabled
-      && availableCodes.has(item.publicId)
-      && item.offerings.filter((offering) => (
-        offering.enabled
-        && offering.healthStatus !== 2
-        && upstreamIds.has(offering.targetId)
-      )).length >= 2
-      && new Set(item.offerings
-        .filter((offering) => (
-          offering.enabled
-          && offering.healthStatus !== 2
-          && upstreamIds.has(offering.targetId)
-        ))
-        .map((offering) => offering.targetId)).size >= 2
-    ));
-    expect(
-      logical,
-      'CDS 需要至少一个带两个不同、真实存在且未被隔离上游的文生图逻辑模型，才能执行故障切换验收',
-    ).toBeTruthy();
-    const offerings = logical!.offerings
-      .filter((offering) => (
-        offering.enabled
-        && offering.healthStatus !== 2
-        && upstreamIds.has(offering.targetId)
-      ))
-      .sort((left, right) => left.priority - right.priority);
-    const originals = new Map(offerings.map((offering) => [offering, {
-      endpointPath: offering.endpointPath || '',
-      priority: offering.priority,
-    }]));
-    const originalStrategy = logical!.routingStrategy;
-    const { workspace } = await createVisualWorkspace(page, token, 'gateway-failover');
+    const liveUpstream = (offering: GatewayOffering) => isLiveGatewayUpstream(offering, upstreamIndex);
+    const isFailoverBackup = isGatewayFailoverBackup;
+    const distinctUpstreams = (item: GatewayLogicalModel) => new Set(item.offerings.filter(liveUpstream).map((offering) => offering.targetId));
+    const describeLogical = (item: GatewayLogicalModel) => (
+      `${item.publicId}[${item.offerings.filter(liveUpstream).map((offering) => upstreamById.get(offering.targetId)?.name || offering.targetId).join(' / ') || '无可用上游'}]`
+    );
+    const candidates = logicalBody.data.items
+      .filter((item) => item.enabled && availableCodes.has(item.publicId))
+      .sort((left, right) => (
+        Number(Boolean(pools.find((pool) => pool.code === right.publicId)?.isDefault))
+        - Number(Boolean(pools.find((pool) => pool.code === left.publicId)?.isDefault))
+      ));
+    expect(candidates.length, 'CDS 没有任何业务开放且可用的文生图逻辑模型，无法执行故障切换验收').toBeGreaterThan(0);
+
+    // 双上游判据。矩阵要求「主路故障后备用上游成功」，但 CDS 的业务逻辑模型（image1 / image2）各自只挂一个真实上游，
+    // 2026-09-14 那一轮因此直接判「没有两个可用上游」而未执行。没有第二个上游就没有故障切换可验，
+    // 所以这里给业务默认逻辑模型临时挂一个同类型逻辑模型已经在用的真实上游作为备用（priority 更低，
+    // 正常流量不会走到它），验完即停用。控制台没有删除 Offering 的接口，只能启停：停用后的记录带固定 Notes 标记，
+    // 下一轮复用同一条，不会越积越多；上一轮若中途夭折留下已启用的标记记录，本轮也认领并在结束时停用。
+    // 备用上游照抄「捐出」它的那条 Offering 的路由契约（协议 / Endpoint / 上游模型名），不能拿主路的协议去配别人的上游。
+    let logical: GatewayLogicalModel | undefined;
+    let provisionedBackup: GatewayOffering | undefined;
+    let offerings: GatewayOffering[] = [];
+    const originals = new Map<GatewayOffering, { endpointPath: string; priority: number }>();
+    let originalStrategy = '';
+    let workspaceId = '';
     const runIds: string[] = [];
 
+    const toggleOffering = async (logicalId: string, offeringId: string, enabled: boolean) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${logicalId}/offerings/${offeringId}/enabled`, {
+        headers: gateway.headers,
+        data: { enabled },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `备用 Offering ${offeringId} ${enabled ? '启用' : '停用'}失败`).toBe(true);
+      expect(body.data.enabled).toBe(enabled);
+      return body.data;
+    };
     const updateOffering = async (offering: GatewayOffering, endpointPath: string, priority = offering.priority) => {
       const response = await request.put(
         `${gateway.baseUrl}/gw/logical-models/${logical!.id}/offerings/${offering.id}`,
@@ -2946,14 +3354,14 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const response = await page.request.post('/api/visual-agent/image-gen/runs', {
         headers: {
           ...authHeaders(token),
-          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-${suffix}`,
+          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspaceId}-${suffix}`,
         },
         data: {
           platformId: 'logical-model',
           modelId: logical!.publicId,
           responseFormat: 'url',
           maxConcurrency: 1,
-          workspaceId: workspace.id,
+          workspaceId,
           appKey: 'visual-agent',
           items: [{
             prompt: '一枚放在纯白背景上的蓝色圆形徽章，产品摄影，不要文字',
@@ -2967,13 +3375,60 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       return run.runId;
     };
 
+    // 清理作用域从启用 / 创建备用上游之前就开始：中间任何一步失败，finally 都能把备用停回去。
     try {
+      logical = candidates.find((item) => distinctUpstreams(item).size >= 2);
+      if (logical) {
+        // 开始前已把所有启用着的带标记备用停掉，这里通常为空；留着只为防御同名标记被人手工启用的情形。
+        provisionedBackup = logical.offerings.find((offering) => offering.enabled && isFailoverBackup(offering));
+      } else {
+        const preferred = candidates[0];
+        const primary = preferred.offerings.filter(liveUpstream).sort((left, right) => left.priority - right.priority)[0];
+        expect(primary, `${preferred.publicId} 没有可用的主路上游，无法补双上游夹具`).toBeTruthy();
+        // 带标记的备用不论启停都复用：已启用却不健康（上一轮遗留、上游真的坏了）的也先认领，
+        // 后面的双上游断言会把「备用不健康」说清楚，而不是走创建路径与既有 targetId 撞车。
+        const taggedBackup = preferred.offerings.find((offering) => (
+          offering.targetId !== primary!.targetId
+          && upstreamIds.has(offering.targetId)
+          && isFailoverBackup(offering)
+        ));
+        if (taggedBackup) {
+          // 先登记归属再等待启用：网关启用成功但响应丢失 / 断言失败时，finally 照样能停掉它。
+          provisionedBackup = taggedBackup;
+          if (!taggedBackup.enabled) provisionedBackup = await toggleOffering(preferred.id, taggedBackup.id, true);
+        } else {
+          provisionedBackup = await provisionTaggedFailoverBackup(request, gateway, logicalBody.data.items, upstreamIndex, preferred, primary!);
+          expect(
+            provisionedBackup,
+            `无法为 ${preferred.publicId} 补第二个真实上游：同类型逻辑模型没有其它可用上游。`
+            + `候选：${candidates.map(describeLogical).join('、')}`,
+          ).toBeTruthy();
+        }
+        preferred.offerings = [
+          ...preferred.offerings.filter((offering) => offering.id !== provisionedBackup!.id),
+          provisionedBackup!,
+        ];
+        logical = preferred;
+      }
+      expect(
+        distinctUpstreams(logical!).size,
+        `故障切换需要两个不同的真实上游，当前：${describeLogical(logical!)}`,
+      ).toBeGreaterThanOrEqual(2);
+      offerings = logical!.offerings
+        .filter(liveUpstream)
+        .sort((left, right) => left.priority - right.priority);
+      for (const offering of offerings) {
+        originals.set(offering, { endpointPath: offering.endpointPath || '', priority: offering.priority });
+      }
+      originalStrategy = logical!.routingStrategy;
+      workspaceId = (await createVisualWorkspace(page, token, 'gateway-failover')).workspace.id;
+
       await updateStrategy('priority');
       for (const [index, offering] of offerings.entries()) {
         await updateOffering(offering, originals.get(offering)!.endpointPath, (index + 1) * 10);
         offering.priority = (index + 1) * 10;
       }
-      await updateOffering(offerings[0], `stable-smoke-primary-failure/${Date.now()}`, offerings[0].priority);
+      await updateOffering(offerings[0], buildGatewayInjectedEndpoint('primary', originals.get(offerings[0])!.endpointPath), offerings[0].priority);
       const failoverRunId = await createProbeRun('primary-failure');
       const failoverResult = await waitForImageRun(page, token, failoverRunId, 240_000);
       expect(failoverResult.detail.run.status).toBe('Completed');
@@ -2991,7 +3446,7 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
 
       await updateOffering(offerings[0], originals.get(offerings[0])!.endpointPath, offerings[0].priority);
       for (const [index, offering] of offerings.entries()) {
-        await updateOffering(offering, `stable-smoke-all-failure/${Date.now()}-${index}`, offering.priority);
+        await updateOffering(offering, buildGatewayInjectedEndpoint('all', originals.get(offering)!.endpointPath, index), offering.priority);
       }
       const failedRunId = await createProbeRun('all-failure');
       const failedResult = await waitForImageRun(page, token, failedRunId, 240_000);
@@ -3018,23 +3473,216 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
           originals.get(offering)!.priority,
         )
       )));
-      const strategyRestore = await Promise.allSettled([updateStrategy(originalStrategy)]);
-      const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspace.id}`, {
-        headers: {
-          ...authHeaders(token),
-          'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspace.id}-gateway-failover-delete`,
-        },
-      });
-      expect((await deleted.json() as ApiEnvelope<{ deleted: boolean }>).data.deleted).toBe(true);
-      for (const runId of runIds) {
-        expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
-          headers: authHeaders(token),
-        })).status()).toBe(404);
-      }
+      const strategyRestore = originalStrategy ? await Promise.allSettled([updateStrategy(originalStrategy)]) : [];
+      // 停用临时备用：不再攒 id——网关每次改路由都会换 id，先按当前列表把所有逻辑模型上启用着的带标记备用
+      // （含本轮 owner 上的那条，以及创建请求响应不确定时没登记到的那条）按当前 id 停掉，再自愈注入态；
+      // 停用状态随新版本延续，自愈之后不需要再追新 id。隔离排在自愈之前：自愈请求失败也不能让备用在线。
+      const backupRestore = await Promise.allSettled([(async () => {
+        const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
+        const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+        expect(response.ok(), body.error?.message || '清理阶段无法重新读取网关逻辑模型').toBe(true);
+        await disableStrayGatewayBackups(request, gateway, body.data.items);
+        // 主路与备用的 Endpoint 已按 originals 复原；这里再按注入前缀扫一遍，把本轮没登记到的注入态也恢复。
+        const leftoverAfterRun = await recoverInjectedGatewayOfferings(request, gateway, body.data.items);
+        const unrecoverable = leftoverAfterRun.filter((item) => item.source === 'unrecoverable');
+        if (unrecoverable.length > 0) {
+          throw new Error(`清理阶段仍有无法还原的注入态 Offering，需要人工恢复 Endpoint：${describeGatewayRecovery(unrecoverable)}`);
+        }
+      })()]);
+      // 工作区与探针 run 的清理也走 allSettled：它们失败时要把服务端的错误原文带出来（此前是 data 为 null
+      // 直接抛 TypeError，把服务端的 409 原因和前面真正的断言失败一起遮住了），并且不能挡住网关复原结果的核对。
+      const workspaceCleanup = await Promise.allSettled([(async () => {
+        if (!workspaceId) return;
+        const deleted = await page.request.delete(`/api/visual-agent/image-master/workspaces/${workspaceId}`, {
+          headers: {
+            ...authHeaders(token),
+            'Idempotency-Key': `${requiredEnv('STABLE_SMOKE_RUN_ID')}-${workspaceId}-gateway-failover-delete`,
+          },
+        });
+        const envelope = await deleted.json() as ApiEnvelope<{ deleted: boolean }>;
+        expect(
+          envelope.data?.deleted,
+          `清理故障切换工作区失败：HTTP ${deleted.status()} ${envelope.error?.message || ''}`,
+        ).toBe(true);
+        for (const runId of runIds) {
+          expect((await page.request.get(`/api/visual-agent/image-gen/runs/${runId}`, {
+            headers: authHeaders(token),
+          })).status()).toBe(404);
+        }
+      })()]);
       expect(
-        [...restoreResults, ...strategyRestore].filter((result) => result.status === 'rejected'),
-        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint',
+        [...restoreResults, ...strategyRestore, ...backupRestore, ...workspaceCleanup]
+          .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+          .map((result) => String(result.reason?.message || result.reason)),
+        '网关故障注入结束后所有 Offering 都必须恢复原 Endpoint，临时备用上游必须停用，工作区与探针 run 必须删除',
       ).toEqual([]);
+    }
+  });
+
+  test('[REG-gateway-failover-fixture-002] 上一轮硬中断遗留的注入态在下一轮开始前自愈', { tag: '@cleanup' }, async ({ request }) => {
+    test.skip(requiredEnv('STABLE_SMOKE_ENVIRONMENT') === 'production', '正式环境不主动修改网关路由配置');
+    // issue #1536：人为构造「带标记备用已启用 + Endpoint 停在注入态」的遗留状态，断言自愈把 Endpoint
+    // 恢复成捐出方契约、健康计数清零，且重复执行不再有任何改动。
+    // 网关的 Offering 每次更新都会生成新版本（旧记录标记 SupersededByOfferingId，再改旧 id 会 409），
+    // 所以这里始终以「逻辑模型 + 标记 + targetId」重新定位当前版本，不拿进入前的 id 一路用到底。
+    const gateway = await loginGateway(request);
+    const readLogical = async () => {
+      const response = await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers });
+      const body = await response.json() as ApiEnvelope<{ items: GatewayLogicalModel[] }>;
+      expect(response.ok(), body.error?.message || '无法读取网关逻辑模型').toBe(true);
+      return body.data.items;
+    };
+    let owner: GatewayLogicalModel | undefined;
+    let backup: GatewayOffering | undefined;
+    const put = async (offeringId: string, data: Record<string, unknown>) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${offeringId}`, {
+        headers: gateway.headers,
+        data,
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `Offering ${offeringId} 更新失败`).toBe(true);
+      return body.data;
+    };
+    const setEnabled = async (offeringId: string, enabled: boolean) => {
+      const response = await request.put(`${gateway.baseUrl}/gw/logical-models/${owner!.id}/offerings/${offeringId}/enabled`, {
+        headers: gateway.headers,
+        data: { enabled },
+      });
+      const body = await response.json() as ApiEnvelope<GatewayOffering>;
+      expect(response.ok(), body.error?.message || `Offering ${offeringId} ${enabled ? '启用' : '停用'}失败`).toBe(true);
+      return body.data;
+    };
+    // 从补备用开始就进入清理作用域：创建成功但响应丢失、或紧接着的停用请求失败时，外层 finally 也要把
+    // 所有逻辑模型上启用着的带标记备用停掉，不让刚建的备用带着启用态留在 CDS 路由里。
+    try {
+      const index = await readGatewayUpstreamIndex(request, gateway);
+      // 进入时不看备用是否干净，一律先把所有逻辑模型上的注入态自愈、把启用着的带标记备用停掉，再选备用、取快照：
+      // 上一轮若只在主路注入之后就夭折，备用是干净的而主路不是，后面的「恰好只处理这一条」断言会被主路的遗留搅掉。
+      // 隔离排在自愈之前：自愈的网关请求失败也不能让备用带着注入态继续在线。
+      await disableStrayGatewayBackups(request, gateway, await readLogical());
+      const pre = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+      expect(
+        pre.filter((item) => item.source === 'unrecoverable'),
+        '进入用例时网关上有无法还原的注入态，请先人工恢复这些 Offering 的 Endpoint 再跑',
+      ).toEqual([]);
+      let items = await readLogical();
+      owner = items.find((item) => item.offerings.some(isGatewayFailoverBackup));
+      backup = owner?.offerings.find(isGatewayFailoverBackup);
+      if (!owner || !backup) {
+        // 干净的网关（业务逻辑模型本来就有双上游、GW-007 从未补过备用）：本用例自己造一条带标记备用，
+        // 与 GW-007 共用同一份创建逻辑，造完立刻停用；不依赖别的用例先跑，也不跳过。
+        const candidates = items
+          .filter((item) => item.enabled && item.offerings.some((offering) => isLiveGatewayUpstream(offering, index)))
+          .sort((left, right) => left.publicId.localeCompare(right.publicId));
+        let created: GatewayOffering | undefined;
+        for (const candidate of candidates) {
+          const primary = candidate.offerings
+            .filter((offering) => isLiveGatewayUpstream(offering, index))
+            .sort((left, right) => left.priority - right.priority)[0];
+          created = await provisionTaggedFailoverBackup(request, gateway, items, index, candidate, primary);
+          if (created) {
+            owner = candidate;
+            break;
+          }
+        }
+        expect(created, '没有任何逻辑模型能从同类型逻辑模型借到第二个真实上游，无法构造带标记备用').toBeTruthy();
+        await setEnabled(created!.id, false);
+        items = await readLogical();
+        backup = items.find((item) => item.id === owner!.id)?.offerings.find(isGatewayFailoverBackup);
+        expect(backup, '刚创建的带标记备用必须能在逻辑模型上读回').toBeTruthy();
+      }
+      expect(isGatewayInjectedEndpoint(backup!), '自愈之后备用 Offering 不应再是注入态').toBe(false);
+      // 路由契约完全相同的捐出方在有的环境里存在、有的不存在（CDS 上备用是 openai 协议、捐出方是协议默认），
+      // 旧格式注入路径的两种结局都要验：有捐出方就按它还原，没有就必须原样不动并标记 unrecoverable。
+      const donor = items
+        .flatMap((item) => item.offerings.filter((offering) => offering.id !== backup!.id && sameGatewayRoutingContract(offering, backup!)))
+        .sort((left, right) => Number(right.enabled) - Number(left.enabled))[0];
+      // 带标记备用在 GW-007 之外的干净状态永远是「停用」：进入时若是启用的，那只能是上一轮夭折留下的，结束时一并停掉。
+      const original = { endpointPath: backup!.endpointPath || '', priority: backup!.priority };
+      const readBackup = async () => {
+        const current = (await readLogical()).find((item) => item.id === owner!.id)?.offerings
+          .find((offering) => isGatewayFailoverBackup(offering) && offering.targetId === backup!.targetId);
+        expect(current, '带标记备用 Offering 必须始终留在逻辑模型上').toBeTruthy();
+        return current!;
+      };
+
+      const poison = async (injectedEndpointPath: string) => {
+        // 模拟 worker 在全路故障注入之后被硬杀：备用启用、Endpoint 停在注入态。
+        const current = await readBackup();
+        const poisoned = await put(current.id, { endpointPath: injectedEndpointPath, priority: original.priority });
+        expect(isGatewayInjectedEndpoint(poisoned)).toBe(true);
+        await setEnabled(poisoned.id, true);
+      };
+      const recoverOnce = async () => {
+        const recovered = await recoverInjectedGatewayOfferings(request, gateway, await readLogical());
+        expect(
+          recovered.map((item) => `${item.logicalId}:${item.targetId}`),
+          '自愈必须恰好处理这条遗留备用，不碰其它 Offering',
+        ).toEqual([`${owner!.id}:${backup!.targetId}`]);
+        return recovered[0];
+      };
+
+      // 注入路径构造器本身的边界：短路径（含多字节）可逆，超过网关 500 字符上限时退回不带原值的旧格式。
+      expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('all', 'v1/图片/generations?x=1', 2))).toBe('v1/图片/generations?x=1');
+      expect(decodeGatewayInjectedEndpoint(buildGatewayInjectedEndpoint('primary', ''))).toBe('');
+      const longInjected = buildGatewayInjectedEndpoint('all', 'a'.repeat(480), 3);
+      expect(longInjected.length).toBeLessThanOrEqual(gatewayEndpointPathLimit);
+      expect(gatewayInjectedEndpointPattern.test(longInjected)).toBe(true);
+      expect(decodeGatewayInjectedEndpoint(longInjected)).toBeNull();
+
+      try {
+        // 情形一：本 PR 起的注入格式自带原值，精确还原，不依赖任何别的 Offering。
+        // 原 Endpoint 长到装不进 500 字符时构造器会退回不带原值的格式，那就按情形二的结局断言。
+        const embeddedPath = buildGatewayInjectedEndpoint('all', original.endpointPath, 0);
+        const embeddable = decodeGatewayInjectedEndpoint(embeddedPath) !== null;
+        await poison(embeddedPath);
+        const embedded = await recoverOnce();
+        const afterEmbedded = await readBackup();
+        if (embeddable) {
+          expect(embedded.source).toBe('embedded');
+          expect(embedded.to).toBe(original.endpointPath);
+          expect(isGatewayInjectedEndpoint(afterEmbedded)).toBe(false);
+          expect(afterEmbedded.endpointPath || '').toBe(original.endpointPath);
+          expect(afterEmbedded.healthStatus ?? 0, 'Endpoint 恢复后健康计数必须清零，否则健康到 2 的备用仍会被排除').toBe(0);
+          expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+        } else if (donor) {
+          expect(embedded.source).toBe('donor');
+          expect(afterEmbedded.endpointPath || '').toBe(donor.endpointPath || '');
+        } else {
+          expect(embedded.source).toBe('unrecoverable');
+          expect(afterEmbedded.endpointPath || '').toBe(embeddedPath);
+        }
+
+        // 情形二：旧格式注入路径不带原值。有路由契约完全相同的捐出方就按它还原；没有就一个字都不许改。
+        const legacyEndpoint = `stable-smoke-all-failure/leftover-${Date.now()}`;
+        await poison(legacyEndpoint);
+        const legacy = await recoverOnce();
+        const afterLegacy = await readBackup();
+        if (donor) {
+          expect(legacy.source).toBe('donor');
+          expect(legacy.to).toBe(donor.endpointPath || '');
+          expect(afterLegacy.endpointPath || '').toBe(donor.endpointPath || '');
+          expect(await recoverInjectedGatewayOfferings(request, gateway, await readLogical()), '自愈必须幂等').toEqual([]);
+        } else {
+          expect(legacy.source, '没有相同路由契约的捐出方时不能拿别的 Endpoint 顶上').toBe('unrecoverable');
+          expect(afterLegacy.endpointPath || '', 'unrecoverable 的记录必须原样不动').toBe(legacyEndpoint);
+          expect(afterLegacy.enabled, 'unrecoverable 的记录连启停状态都不动，交给人工处理').toBe(true);
+        }
+      } finally {
+        // 顺序恢复并逐步取新版本 id：同一条 Offering 的两次写不并发，也不拿旧 id 去改已被替代的版本。
+        const restore = await Promise.allSettled([(async () => {
+          // 快照在自愈之后才取，这里再守一道：任何情况下都不许把注入态写回网关。
+          if (gatewayInjectedEndpointPattern.test(original.endpointPath)) {
+            throw new Error(`快照里的 Endpoint 仍是注入态，拒绝写回：${original.endpointPath}`);
+          }
+          const latest = await readBackup();
+          const restored = await put(latest.id, { endpointPath: original.endpointPath, priority: original.priority });
+          await setEnabled(restored.id, false);
+        })()]);
+        expect(restore.filter((result) => result.status === 'rejected'), '用例结束必须把备用 Offering 恢复到进入前的状态').toEqual([]);
+      }
+    } finally {
+      await disableStrayGatewayBackups(request, gateway, await readLogical());
     }
   });
 
@@ -3062,6 +3710,21 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
     await openModule(page, request, module, testInfo);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(1);
+
+    // CDS 预览小部件在手机上必须收成紧凑圆钮：2026-09-14 移动首页底部被整条分支徽章压住。
+    // 小部件由 CDS 反代注入，改动要等 CDS 自更新后才生效；这里按它暴露的布局态判定，不猜。
+    const widget = page.locator('#cds-widget');
+    if (await widget.count()) {
+      await expect(
+        widget,
+        'CDS 预览小部件在手机上应在 4 秒后收成紧凑态（data-cds-layout=compact）；仍是整条徽章说明 CDS 尚未自更新到含移动端紧凑态的版本',
+      ).toHaveAttribute('data-cds-layout', 'compact', { timeout: 10_000 });
+      const box = await widget.boundingBox();
+      expect(box, '紧凑态小部件必须可见').not.toBeNull();
+      expect(box!.width, '紧凑态小部件宽度不得超过 48px').toBeLessThanOrEqual(48);
+      expect(box!.height, '紧凑态小部件高度不得超过 48px').toBeLessThanOrEqual(48);
+      await testInfo.attach('mobile-home-compact-widget', { body: await page.screenshot(), contentType: 'image/png' });
+    }
   });
 
   test('[VIS-009][REG-visual-policy-001] 真实触控手机使用业务默认及授权尺寸', { tag: '@cleanup' }, async ({ browser, request }, testInfo) => {
@@ -3234,6 +3897,18 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const downloadButton = page.getByTitle('下载图片').first();
       await expect(downloadButton, '选中生成图后必须出现真实下载操作').toBeVisible();
       const canvasSource = await generatedImage.getAttribute('src');
+      // 浏览器给用户存盘用的名字来自产品写在 <a download> 上的属性；Chromium 在 downloadWillBegin
+      // 阶段对 blob 链接只回报占位名 "download"（2026-09-15 用 141 版实测，blob / data 链接皆如此），
+      // 所以文件名判据直接读产品写的属性，CDP 的建议名只在它给出真实值时才参与比对。
+      await page.evaluate(() => {
+        const bucket: Array<{ download: string; href: string }> = [];
+        (window as unknown as { __stsmkDownloads: typeof bucket }).__stsmkDownloads = bucket;
+        const nativeClick = HTMLAnchorElement.prototype.click;
+        HTMLAnchorElement.prototype.click = function patchedClick(this: HTMLAnchorElement) {
+          bucket.push({ download: this.download, href: this.href.slice(0, 32) });
+          return nativeClick.call(this);
+        };
+      });
       const observedDownloadRequests: string[] = [];
       const recordDownloadRequest = (request: { method(): string; url(): string }) => {
         if (request.method() === 'GET') observedDownloadRequests.push(request.url());
@@ -3266,8 +3941,16 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       expect(downloadedBytes.byteLength).toBeGreaterThan(512);
       const downloadedMime = detectImageMime(downloadedBytes);
       const expectedExtension = extensionForImageMime(downloadedMime);
-      expect(download.suggestedFilename()).toContain('蓝色陶瓷杯');
-      expect(download.suggestedFilename().toLowerCase().endsWith(expectedExtension)).toBe(true);
+      const anchorDownloads = await page.evaluate(() => (
+        (window as unknown as { __stsmkDownloads?: Array<{ download: string; href: string }> }).__stsmkDownloads || []
+      ));
+      expect(anchorDownloads.length, '下载必须通过带 download 属性的同源链接触发').toBeGreaterThan(0);
+      const savedName = anchorDownloads.at(-1)!.download;
+      expect(savedName, '存盘文件名必须带提示词主体').toContain('蓝色陶瓷杯');
+      expect(savedName.toLowerCase().endsWith(expectedExtension), `存盘扩展名必须与实际 MIME 一致：${savedName} / ${downloadedMime}`).toBe(true);
+      if (download.suggestedFilename() !== 'download') {
+        expect(download.suggestedFilename()).toBe(savedName);
+      }
       expect(generatedArtifacts.some((artifact) => artifact.mime === downloadedMime)).toBe(true);
       const downloadedDimensions = await decodeDownloadedImageDimensions(page, downloadedBytes, downloadedMime);
       const requestedDimensions = String(completed.detail.items[0].requestedSize || '').split('x').map(Number);
@@ -3506,14 +4189,33 @@ test.describe('稳定冒烟：双环境合成登录与模块入口', () => {
       const logicalModels = await readEnvelope<{ items: GatewayLogicalModel[] }>(
         await request.get(`${gateway.baseUrl}/gw/logical-models?enabled=true`, { headers: gateway.headers }),
       );
-      const dedicatedLogical = logicalModels.items.find((item) => (
-        item.enabled
-        && healthyPoolCodes.has(item.publicId)
-        && item.offerings
+      const upstreamModels = await readEnvelope<{ items: GatewayUpstreamModel[] }>(
+        await request.get(`${gateway.baseUrl}/gw/models?enabled=true`, { headers: gateway.headers }),
+      );
+      const upstreamById = new Map(upstreamModels.items.map((item) => [item.id, item]));
+      // 主路协议：Offering 没显式声明时继承上游模型的协议。
+      const primaryProtocol = (item: GatewayLogicalModel) => {
+        const primary = item.offerings
           .filter((offering) => offering.enabled)
-          .sort((left, right) => left.priority - right.priority)[0]?.protocol === 'openrouter-image'
-      ));
-      expect(dedicatedLogical, '没有配置以 openrouter-image 为主路的可用多图逻辑模型').toBeTruthy();
+          .sort((left, right) => left.priority - right.priority)[0];
+        if (!primary) return '';
+        return (primary.protocol || upstreamById.get(primary.targetId)?.protocol || '').toLowerCase();
+      };
+      // 业务默认池排最前：2026-08-31 起 MAP 只开放 image1 / image2 两个 OpenAI 图片模型，
+      // 多图旅程要验的是「业务默认模型带着参考图真实生成」，不再限定必须是 OpenRouter 主路；
+      // 协议只要能把 input_references 或 image[] 原样送到上游即可，具体线上契约在 assertWireReferences 里逐条核。
+      const businessCandidates = logicalModels.items
+        .filter((item) => item.enabled && healthyPoolCodes.has(item.publicId))
+        .sort((left, right) => (
+          Number(Boolean(pools.find((pool) => pool.code === right.publicId)?.isDefault))
+          - Number(Boolean(pools.find((pool) => pool.code === left.publicId)?.isDefault))
+        ));
+      const dedicatedLogical = businessCandidates.find((item) => referencePreservingImageProtocols.includes(primaryProtocol(item)));
+      expect(
+        dedicatedLogical,
+        `业务开放的多图逻辑模型里没有一个主路走图片协议（${referencePreservingImageProtocols.join(' / ')}）。`
+        + `候选：${businessCandidates.map((item) => `${item.publicId}=${primaryProtocol(item) || '未知协议'}`).join('、') || '无'}`,
+      ).toBeTruthy();
       const pool = pools.find((item) => item.code === dedicatedLogical!.publicId);
       expect(pool, 'OpenRouter 多图逻辑模型未进入业务模型目录').toBeTruthy();
 

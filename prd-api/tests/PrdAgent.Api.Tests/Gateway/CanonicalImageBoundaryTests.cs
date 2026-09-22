@@ -2,8 +2,10 @@ using System.Net;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using Xunit;
@@ -62,6 +64,118 @@ public sealed class CanonicalImageBoundaryTests
     [InlineData("invalid-json")]
     public void Http200WithoutImageIsNotSuccess(string wire)
         => Assert.False(GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse { Success = true, StatusCode = 200, Content = wire }).Success);
+
+    [Fact]
+    public void GoogleImageRecitationPreservesRequestRejectedAcrossCanonicalBoundary()
+    {
+        const string wire = """
+            {"candidates":[{"content":{"parts":null},"finishReason":"IMAGE_RECITATION","finishMessage":"provider detail"}]}
+            """;
+
+        var response = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = wire,
+        });
+
+        Assert.False(response.Success);
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, response.ErrorCode);
+        Assert.Contains("调整需求", response.ErrorMessage);
+        Assert.Contains("有权使用的参考图", response.ErrorMessage);
+        Assert.DoesNotContain("IMAGE_RECITATION", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider detail", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GoogleImageRecitationPreservesRequestRejectedThroughMapConsumer()
+    {
+        const string wire = """
+            {"candidates":[{"content":{"parts":null},"finishReason":"IMAGE_RECITATION","finishMessage":"provider secret detail"}]}
+            """;
+
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = wire,
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.False(normalized.Success);
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, consumed.Code);
+        Assert.Contains("调整需求", consumed.Message);
+        Assert.Contains("有权使用的参考图", consumed.Message);
+        Assert.DoesNotContain("IMAGE_RECITATION", consumed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider secret detail", consumed.Message, StringComparison.OrdinalIgnoreCase);
+
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(
+            ImageGenRunStatus.Failed,
+            new ImageGenRunItem
+            {
+                Status = ImageGenRunItemStatus.Error,
+                ErrorCode = consumed.Code,
+                ErrorMessage = consumed.Message,
+            });
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, terminal.ErrorCode);
+        Assert.Equal(consumed.Message, terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void CompletedRunDoesNotCopyStaleItemFailure()
+    {
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(
+            ImageGenRunStatus.Completed,
+            new ImageGenRunItem
+            {
+                Status = ImageGenRunItemStatus.Error,
+                ErrorCode = ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
+                ErrorMessage = "旧错误",
+            });
+
+        Assert.Null(terminal.ErrorCode);
+        Assert.Null(terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void FailedRunWithoutItemReasonGetsStableFallback()
+    {
+        var terminal = ImageGenRunWorker.ResolveTerminalFailure(ImageGenRunStatus.Failed, null);
+
+        Assert.Equal(ErrorCodes.LLM_ERROR, terminal.ErrorCode);
+        Assert.Equal("生图失败，请重试。", terminal.ErrorMessage);
+    }
+
+    [Fact]
+    public void UnknownMissingImageRemainsUnavailableThroughMapConsumer()
+    {
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = "{\"candidates\":[{\"finishReason\":\"UNKNOWN\"}]}",
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, consumed.Code);
+        Assert.Contains("暂时不可用", consumed.Message);
+    }
+
+    [Fact]
+    public void UpstreamServiceFailureRemainsUnavailableThroughMapConsumer()
+    {
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = false,
+            StatusCode = 500,
+            ErrorCode = "PROVIDER_INTERNAL",
+            ErrorMessage = "provider secret detail",
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, consumed.Code);
+        Assert.DoesNotContain("provider secret detail", consumed.Message, StringComparison.OrdinalIgnoreCase);
+    }
 
     [Fact]
     public void NormalizedImagePreservesActualExecutionAndRequestedLogicalIdentity()

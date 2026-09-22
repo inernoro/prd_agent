@@ -1,0 +1,669 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>周报-2026-W38-本周纵深</title>
+<style>
+  :root {
+    --paper: #f7f1e8; --paper-2: #fffdf8;
+    --ink: #211d18; --ink-2: rgba(33,29,24,0.74); --ink-3: rgba(33,29,24,0.48);
+    --line: rgba(33,29,24,0.14); --line-2: rgba(33,29,24,0.30);
+    --indigo: #4f46e5; --indigo-soft: rgba(79,70,229,0.08);
+    --terra: #c05b3c; --green: #1a7f37; --amber: #9a6700; --red: #b42318;
+    --serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
+    --sans: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink); font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    background-image:
+      radial-gradient(ellipse 80% 40% at 50% -6%, rgba(79,70,229,0.05), transparent),
+      repeating-linear-gradient(0deg, rgba(33,29,24,0.016) 0 1px, transparent 1px 3px);
+  }
+  .paper { max-width: 980px; margin: 0 auto; padding: 26px 34px 60px; }
+  @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
+  a { color: var(--indigo); text-decoration: none; border-bottom: 1px solid rgba(79,70,229,0.35); }
+  a:hover { border-bottom-color: var(--indigo); }
+
+  /* 刊头 */
+  .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 3px solid var(--ink); position: relative; }
+  .masthead::after { content: ""; position: absolute; left: 0; right: 0; bottom: -7px; height: 1px; background: var(--ink); }
+  /* 刊徽水印（衬字板式）：垫在右侧 mono 小字背后，只做刊物区分，不承载信息。
+     日报=月亮 / 周报=地球 / 月报=太阳 / 验收=北极星 / 巡检=彗星，见 .claude/rules/report-design-system.md。
+     right 负值不会撑出横向滚动条：.paper 左右 padding 都大于这里的偏移量。 */
+  .emblem { position: absolute; top: -14px; right: -8px; width: 92px; height: 92px;
+            color: var(--indigo); opacity: 0.13; z-index: 0; pointer-events: none; }
+  .emblem svg { display: block; width: 100%; height: 100%; }
+  .masthead .t, .masthead .r, .masthead .stamp { position: relative; z-index: 1; }
+  @media (max-width: 640px) { .emblem { width: 70px; height: 70px; top: -8px; right: -4px; } }
+  .stamp { width: 46px; height: 46px; flex-shrink: 0; background: var(--indigo); color: #f2f1ff; border-radius: 4px;
+    display: grid; place-items: center; font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    box-shadow: 3px 3px 0 rgba(33,29,24,0.82); }
+  .masthead .t b { font-family: var(--serif); font-size: 25px; font-weight: 700; letter-spacing: 0.02em; display: block; }
+  .masthead .t span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.34em; }
+  .masthead .r { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.14em; line-height: 1.9; }
+  .dateline { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 13px 0 9px;
+    border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em; }
+  .dateline b { color: var(--indigo); font-weight: 600; }
+  .baseline { padding: 8px 0; border-bottom: 1px solid var(--line); font-family: var(--mono);
+    font-size: 10px; color: var(--ink-3); letter-spacing: 0.06em; line-height: 1.8; }
+
+  /* 封面 */
+  .cover { margin-top: 30px; }
+  .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.22em; color: var(--indigo); margin-bottom: 10px; }
+  .cover h1 { font-family: var(--serif); font-size: clamp(25px, 4vw, 38px); font-weight: 650; line-height: 1.34; text-wrap: balance; }
+  .cover h1 em { font-style: normal; position: relative; white-space: nowrap; }
+  .cover h1 em::after { content: ""; position: absolute; left: -1%; right: -1%; bottom: 7%; height: 0.3em; background: rgba(79,70,229,0.16); z-index: -1; transform: skewX(-8deg); }
+  .standfirst { margin-top: 14px; font-family: var(--serif); font-size: 16.5px; line-height: 1.85; color: var(--ink-2); }
+  .cover-facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .cover-facts span { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--ink-2);
+    border: 1px solid var(--line-2); border-radius: 2px; padding: 4px 9px; background: var(--paper-2); }
+  .cover-facts span b { color: var(--indigo); font-weight: 700; }
+
+  /* 栏目头 */
+  .col-head { display: flex; align-items: baseline; gap: 12px; margin: 42px 0 6px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
+  .col-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
+  .col-head span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--ink-3); }
+  .col-head .w { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--indigo); letter-spacing: 0.1em; }
+  .lede { margin-top: 12px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); }
+  .lede b { color: var(--ink); font-weight: 600; }
+
+  /* 质量闸 */
+  .gate-hero { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+  @media (max-width: 760px) { .gate-hero { grid-template-columns: repeat(2, 1fr); } }
+  .gate-hero > div { border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2);
+    box-shadow: 4px 4px 0 rgba(33,29,24,0.10); padding: 13px 14px; }
+  .gate-hero .k { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em; color: var(--ink-3); }
+  .gate-hero .v { font-family: var(--serif); font-size: 30px; font-weight: 700; line-height: 1.2; margin-top: 5px; }
+  .gate-hero .d { font-size: 11.5px; color: var(--ink-3); line-height: 1.7; margin-top: 3px; }
+  .gate-hero .up { color: var(--green); font-family: var(--mono); font-size: 11px; }
+  .gate-hero .down { color: var(--terra); font-family: var(--mono); font-size: 11px; }
+  .gate-hero .flat { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
+  .gate-hero .good .v { color: var(--green); }
+  .gate-hero .warn .v { color: var(--amber); }
+
+  table.tb { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  table.tb th, table.tb td { padding: 9px 10px; text-align: left; border-bottom: 1px dotted var(--line); font-size: 12.5px; line-height: 1.75; vertical-align: top; }
+  table.tb th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); font-weight: 400; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  table.tb tr:last-child td { border-bottom: none; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--paper-2); margin-top: 12px; }
+  .table-scroll table.tb { min-width: 620px; }
+
+  .vd { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; border-radius: 2px; padding: 2px 7px; white-space: nowrap; display: inline-block; }
+  .vd-pass { background: var(--green); color: #f2fff5; }
+  .vd-cond { border: 1px solid var(--amber); color: var(--amber); background: var(--paper-2); }
+  .vd-fail { background: var(--red); color: #fff5f4; }
+  /* 证据空白（本周未验收 / 修复后未复验）：既不是通过也不是未通过，用虚线框与灰调区分 */
+  .vd-warn { border: 1px dashed var(--line-2); color: var(--ink-2); background: var(--paper); }
+
+  /* 采用度五态：复用 verdict 三色，不引入新色板。
+     zero / not-collected / no-signal 三者必须长得不一样——它们都不是「没人用」。 */
+  .ad { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; border-radius: 2px; padding: 2px 7px; white-space: nowrap; display: inline-block; }
+  .ad-used { background: var(--green); color: #f2fff5; }
+  .ad-zero { background: var(--red); color: #fff5f4; }
+  .ad-none { border: 1px dashed var(--ink-3); color: var(--ink-3); background: var(--paper-2); }
+  .ad-blind { border: 1px solid var(--amber); color: var(--amber); background: var(--paper-2); }
+
+  .callout { margin-top: 16px; padding: 13px 16px; border-left: 3px solid var(--red); background: rgba(180,35,24,0.06);
+    font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+  .callout b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--red); display: block; margin-bottom: 4px; }
+
+  /* 业务能力卡 */
+  .cap { padding: 20px 0 14px; border-bottom: 1px solid var(--line); }
+  .cap:last-of-type { border-bottom: none; }
+  .cap h3 { font-family: var(--serif); font-size: clamp(18px, 2.4vw, 23px); font-weight: 650; line-height: 1.45; }
+  .cap .who { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .cap .who span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-2);
+    border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 9px; background: var(--paper-2); }
+  .cap dl { margin-top: 12px; }
+  .cap dt { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--indigo); margin-top: 9px; }
+  .cap dd { font-size: 13.5px; line-height: 1.9; color: var(--ink-2); margin-top: 2px; }
+  .cap .ev { margin-top: 12px; padding: 10px 14px; border-left: 3px solid var(--indigo); background: var(--indigo-soft);
+    font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+  .cap .ev b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; color: var(--indigo); display: block; margin-bottom: 3px; }
+  .cap .src { margin-top: 9px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); line-height: 1.8; }
+
+  /* 一周脉络 */
+  .day { display: grid; grid-template-columns: 110px 1fr; }
+  @media (max-width: 640px) { .day { grid-template-columns: 76px 1fr; } }
+  .day .dhead { padding: 15px 14px 15px 0; text-align: right; border-right: 2px solid var(--line-2); position: relative; }
+  .day .dhead::after { content: ""; position: absolute; right: -5px; top: 21px; width: 8px; height: 8px;
+    background: var(--paper); border: 2px solid var(--indigo); border-radius: 50%; }
+  .day.heavy .dhead::after { background: var(--indigo); }
+  .day .dhead b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; display: block; }
+  .day .dhead span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.08em; display: block; margin-top: 3px; }
+  .day .dhead i { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--indigo);
+    border: 1px solid var(--indigo); border-radius: 999px; padding: 1px 8px; display: inline-block; margin-top: 6px; }
+  .day .dbody { padding: 13px 0 13px 20px; border-bottom: 1px dotted var(--line); }
+  .day:last-child .dbody { border-bottom: none; }
+  .day .dbody p { font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+  .day .dbody p b { color: var(--ink); font-weight: 600; }
+  .day .dbody .lk { margin-top: 5px; font-size: 12px; }
+
+  /* 落地对照 */
+  .ledger { list-style: none; }
+  .ledger li { display: grid; grid-template-columns: 92px 1fr; gap: 14px; padding: 12px 0; border-bottom: 1px dotted var(--line); align-items: start; }
+  .ledger li:last-child { border-bottom: none; }
+  .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-align: center; border-radius: 2px; padding: 3px 0; margin-top: 3px; }
+  .tag.done { background: var(--indigo); color: #f2f1ff; }
+  .tag.part { border: 1px solid var(--indigo); color: var(--indigo); background: var(--paper-2); }
+  .tag.todo { border: 1px solid var(--red); color: var(--red); background: var(--paper-2); }
+  .ledger p { font-size: 13px; line-height: 1.85; color: var(--ink-2); }
+  .ledger p b { color: var(--ink); font-weight: 600; }
+
+  /* 下周优先级 */
+  .prio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
+  @media (max-width: 760px) { .prio { grid-template-columns: 1fr; } }
+  .prio > div { border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 4px 4px 0 rgba(33,29,24,0.10); }
+  .prio .ph { display: flex; align-items: baseline; gap: 10px; padding: 10px 14px; border-bottom: 1.5px solid var(--ink); }
+  .prio .ph b { font-family: var(--serif); font-size: 15px; font-weight: 700; }
+  .prio .ph span { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.18em; color: var(--ink-3); }
+  .prio > div:first-child .ph { background: var(--indigo); }
+  .prio > div:first-child .ph b, .prio > div:first-child .ph span { color: #f2f1ff; }
+  .prio ul { list-style: none; padding: 6px 14px 10px; }
+  .prio li { padding: 8px 0; font-size: 12.5px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
+  .prio li:last-child { border-bottom: none; }
+  .prio li b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+
+  .appendix-note { margin-top: 10px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
+  .stat-row { display: flex; margin-top: 34px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: rgba(255,253,248,0.6); }
+  .stat-row div { flex: 1; padding: 14px 6px; text-align: center; border-right: 1px solid var(--line); }
+  .stat-row div:last-child { border-right: none; }
+  .stat-row b { font-family: var(--serif); font-size: 22px; font-weight: 700; display: block; }
+  .stat-row span { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
+  @media (max-width: 640px) { .stat-row { flex-wrap: wrap; } .stat-row div { flex: 1 1 33%; border-bottom: 1px solid var(--line); } }
+  .colophon { margin-top: 26px; padding-top: 12px; border-top: 3px solid var(--ink); display: flex;
+    justify-content: space-between; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3); }
+
+  /* 证据图契约（report-design-system.md §1.6）：IMG 占位由 publish.py 展开成裸
+     <figure><img><figcaption></figure>，不带 class、可出现在正文任何位置，所以尺寸规则
+     必须无作用域——挂在某个容器下的规则在容器外一条都不生效，截图会按原始物理像素平铺。
+     （CSS 注释里不能写占位的字面写法：它不会被剥掉，发布闸会当成未替换的占位拒发）
+     publish.py 发布闸 + scripts/tests/test_report_evidence_figure.py 共同钉住。 */
+  figure { margin: 14px 0 4px; }
+  figure img { width: 100%; max-width: 100%; height: auto; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
+  figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
+  figcaption::before { content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--indigo); border: 1px solid var(--indigo); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em; }
+</style>
+</head>
+<body>
+<div class="paper">
+
+  <header class="masthead">
+    <div class="emblem"><svg viewBox="0 0 120 120" fill="none" data-emblem="earth" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs><clipPath id="emb-earth-c"><circle cx="60" cy="60" r="44"/></clipPath></defs><circle cx="60" cy="60" r="44" fill="currentColor" fill-opacity="0.08"/><g clip-path="url(#emb-earth-c)"><g fill="currentColor" fill-opacity="0.42"><path d="M34 26 q16 -4 20 8 q4 12 -6 16 q-4 14 -14 12 q-12 -4 -10 -18 q0 -14 10 -18 z"/><path d="M40 68 q12 -2 12 10 q0 16 -8 26 q-10 6 -12 -6 q-2 -20 8 -30 z"/><path d="M70 30 q22 -6 30 8 q8 14 -4 22 q-6 16 -22 12 q-14 -6 -12 -22 q0 -16 8 -20 z"/><path d="M84 78 q14 -4 16 8 q0 12 -12 14 q-12 0 -12 -10 q0 -10 8 -12 z"/></g><path d="M16 60 H104" stroke="currentColor" stroke-width="1.8" opacity="0.45"/></g><circle cx="60" cy="60" r="44" stroke="currentColor" stroke-width="3"/></svg></div>
+    <div class="stamp">MAP</div>
+    <div class="t"><b>米多智能体周刊</b><span>MIDUO AGENT WEEKLY</span></div>
+    <div class="r">一周纵深读本<br>周报智能体 · 自动编印</div>
+  </header>
+  <div class="dateline">
+    <span>2026 年第 <b>38</b> 周 · 09-14 至 09-20 · 总第 <b>W38</b> 期</span>
+    <span>功能验收通过率 <b>20.0%</b> · 正式发布成功 <b>1</b>/5 次 · PR 收口 <b>25</b> 个</span>
+  </div>
+  <div class="baseline">
+    统计基线 origin/main @ 403ab4d（采集 2026-09-20 20:10 UTC）· 数据来源六源齐全：git 主干 + 日报知识库(7 篇) + 验收中心(7 份) + 缺陷台账 + 正式发布台账(/api/releases/runs) + 团队洞察 + 采用度<br>
+    口径：仅主干、按提交日期文本过滤；PR 以本周实际落地主干的 merge/squash 提交日期为准（不信 GitHub mergedAt），25 个逐一在主干上定位到落地提交。#1526 #1527 GitHub 标 09-13 合并、主干落地 09-14，按口径归入本周（W37 统计截止 #1525，两边不重不漏）。浅克隆闸在统计前判红并已 unshallow 到 12961 个提交，本刊数字不是下限
+  </div>
+
+  <section class="cover">
+    <div class="kicker">封面故事 · COVER STORY</div>
+    <h1>提交量翻了一倍多、几乎全部走 PR，落地数与产出却在降；<em>而 09-17 那条到期线的默认期，自己到了。</em></h1>
+    <p class="standfirst">
+      本周主干吞下 <b>341 个提交</b>（上周 150 的 2.3 倍；不是新高，W36 有 471 个），其中 <b>340 个走了 PR，只有 1 个直推主干</b>——上周这个数字是 32（历期周报里只有 W37 记过这个口径，所以能比的只有上周）。
+      <b>但别把提交数读成产能</b>：同一周落地 PR 从 28 降到 25，团队洞察口径的产出从 522 件降到 94 件；而 341 里有 141 个来自同一个 PR 的评审往返（#1546 跑了 81 轮），那是改动的反复程度，不是交付物的件数。
+      真正往好里走的是流程那一条。而<b>验收只发生在 7 天中的 2 天</b>：09-14 六份、09-16 一份，此后四天零验收，那四天落地的正包括本周体量最大的一条改动（#1546，144 文件）。
+      改得更多、更规范，验得更少。
+</p>
+    <div class="cover-facts">
+      <span>提交活动 <b>341</b>（上周 150）</span>
+      <span>直推主干 <b>1</b>（上周 32）</span>
+      <span>验收 <b>7</b> 份 · 只覆盖 2 天</span>
+      <span>认证豁免 <b>默认期已过</b>（影响未核）</span>
+    </div>
+  </section>
+
+  <div class="col-head"><h2>质量闸</h2><span>QUALITY GATE</span><span class="w">先看这个</span></div>
+  <p class="lede">这一节回答：<b>这周做完的东西，验没验过？能不能放心用？</b></p>
+  <div class="gate-hero">
+    <div class="warn">
+      <div class="k">功能验收通过率</div>
+      <div class="v">20.0%</div>
+      <div class="d">本周新建报告的比率，非本周代码质量分 <span class="up">上周 0.0%</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">整体通过率</div>
+      <div class="v">28.6%</div>
+      <div class="d">7 份中通过 2 <span class="up">上周 0.0%</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">正式发布成功率</div>
+      <div class="v">20.0%</div>
+      <div class="d">5 次尝试成功 1 <span class="up">三周来第一次有成功</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">未关缺陷</div>
+      <div class="v">32</div>
+      <div class="d">总 168 <span class="flat">与上周逐字持平</span></div>
+    </div>
+  </div>
+
+  <p class="lede" style="margin-top:20px">
+    <b>先说清一件事：20% 不是「本周代码的质量分」。</b>它是本周<b>新建</b>的 5 份功能验收里的通过比率，而这 5 份中有一对是同日同标题的重复归档、唯一那份「通过」（OpenDesign）来自不在本周 25 个 PR 里的分支。
+    <b>真正与本周落地改动挂得上钩的验收只有 2 份</b>：#1544 任务台（功能验收，有条件通过），以及 09-14 那份知识库私有仓目录同步的缺陷复测（通过）。后者要加一句限定：它跑在分支 09-14 的状态上，而 #1528 / #1534 都是 09-15 才落地，<b>#1534 那批后续修复没有被它覆盖</b>。无论怎么算，<b>25 个落地 PR 里至少 23 个没有任何归档验收</b>——这个数比通过率更说明问题。
+    两个数字都从上周的 0 回到了有——但样本只有 7 份，而且<b>分布比数值更要紧</b>：7 份全部落在 09-14 与 09-16 两天。
+  </p>
+
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>验收类别</th><th>份数</th><th>通过</th><th>有条件</th><th>未通过</th><th>怎么读</th></tr>
+      <tr><td>功能验收</td><td>5</td><td>1</td><td>2</td><td>2</td><td>含一对同日同标题的重复归档，实际覆盖 4 件事</td></tr>
+      <tr><td>每日巡检</td><td>1</td><td>0</td><td>1</td><td>0</td><td>只有 09-14 一份，此后六天零巡检<b>报告</b>（不等于巡检没跑）</td></tr>
+      <tr><td>缺陷复测</td><td>1</td><td>1</td><td>0</td><td>0</td><td>私有仓目录同步复测通过</td></tr>
+    </table>
+  </div>
+
+  <div class="col-head" style="margin-top:30px"><h2>未通过与有条件通过</h2><span>NOT PASSED</span><span class="w">5 条 · 逐条给下一步</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>结论</th><th>验收项</th><th>影响</th><th>下一步</th></tr>
+      <tr><td><span class="vd vd-fail">未通过</span></td><td>核心业务稳定冒烟失败取证 · 09-14（2 份，同日重复归档）</td><td>发布前预检未通过，连续第六周</td><td>九项根因已在 09-15/09-16 修完，<b>修完之后没有再跑一次</b>——下周补一次出结论的完整冒烟</td></tr>
+      <tr><td><span class="vd vd-cond">有条件</span></td><td>任务台（活动任务清单）· 09-16</td><td>能用，但没进左侧导航、仍带在建标记</td><td>补一对卡片插画后注册进百宝箱并摘掉标记</td></tr>
+      <tr><td><span class="vd vd-cond">有条件</span></td><td>HTML 幻灯片视觉修复 · 改前改后对照 · 09-14</td><td>视觉回归有保留意见</td><td>随下一轮页面改动一并确认</td></tr>
+      <tr><td><span class="vd vd-cond">有条件</span></td><td>每日巡检 · 全量变更 · 09-14</td><td>全站扫描有已知瑕疵但不阻断</td><td>归入巡检待办；<b>更要紧的是此后六天没有任何一份巡检报告</b>——本刊只能证明报告没有，证不了巡检本身没跑</td></tr>
+    </table>
+  </div>
+
+  <div class="callout">
+    <b>本周最该注意的一条：09-17 到期线的默认期越过了，而线上实际影响没人查过</b>
+    不是「又拖了一周」，是<b>默认期自己到了</b>。此后每一条新跑起来的部署平台构建检查都会撞红——有一条测试用例断言「门禁上线前登记的存量库能启动」，而这件事只在豁免窗口内成立，那条用例走的是真实时钟。（两条流水线都只有 push / pull_request / 手动触发，没有定时器，所以是<b>随各自触发陆续</b>变红，不是零点同时。）
+    处置是让用例自己钉住豁免窗口。这个处置是对的，但它<b>只解决了 CI</b>。
+    <b>线上那一半是未知，不是已知的坏。</b>门禁实际读的是运行时逃生阀 CDS_INFRA_AUTH_GRACE_UNTIL，代码里的默认值是 2026-09-17；运维显式设一个更晚的日期就仍然放行。那个值在部署平台自己的进程环境里，<b>没有接口能读到</b>，所以本刊只能确定「默认期已过」，不能断言「库已经起不来」——把未知说成已坏，和把已坏说成没事，是同一种错。
+    这条在 W35 排 P1、W36 升 P0、W37 再排 P0。下周要做的不是再排一次优先级，是先把状态看清楚——逃生阀现在是什么值、哪几台库受影响、有没有已经起不来的、要不要设、设到哪天。
+  </div>
+
+  <div class="callout">
+    <b>第二条：验收只覆盖了七天里的两天，而 09-17 起的四天一份都没有</b>
+    7 份验收落在 09-14（6 份）与 09-16（1 份）。09-16 落地 133 个提交、09-17 落地 63 个（两天占全周 57%），而 09-16 只有一份功能验收，<b>09-17 至 09-20 四天零验收</b>——其中 09-17 就有 63 个提交。
+    <b>那四天里落地的改动——包括本周体量最大的一条（#1546，144 文件）与指挥台那一批（#1553 / #1554）——在验收中心里没有任何一条记录。</b>
+    需要说清楚的是：这不等于没验过，但两批的证据强度<b>不一样</b>——#1546 自带四组部署实测冒烟与预览域名真人路径验收；指挥台那批（#1553 / #1554）带的是部署平台全量 8124 条测试通过，外加线上实测复现并修掉「父实例因自检误判而不写镜像」，<b>没有预览域名真人取证</b>。两批的证据都写在 PR 里，<b>但都没有归档成独立的验收结论</b>，所以第三个人核不了，也进不了通过率。
+  </div>
+
+  <div class="col-head"><h2>本周做成了什么</h2><span>WHAT SHIPPED</span><span class="w">按「谁能多做什么」写</span></div>
+
+  <article class="cap">
+    <h3>1. 配一个模型，从在五个页面之间跳变成填两个地方；上游出新模型不用再改代码发版</h3>
+    <div class="who"><span>平台运维</span><span>模型运营</span><span>未来外部接入方</span></div>
+    <dl>
+      <dt>以前</dt><dd>「模型池 / 逻辑模型 / 模型 / 上游 / 兑换所」五个入口，其中「模型池」和「白名单」说的本来就是同一件事——一个说「这几个模型可以互相顶替」，另一个说「这几个名字可以对外被点」。生图尺寸契约与模型名录写死在代码里，上游出一个新模型就得改代码、编译、发版。</dd>
+      <dt>现在</dt><dd>收敛成「模型」与「上游」两个入口；模型名录与生图契约搬进数据库，在控制台就地补登，<b>同一次请求周期内重拉即生效，实测 737 毫秒，零重启零发版</b>。删掉 11 个写入端点、一个 2225 行的管理页，主解析流程从 767 行缩到 88 行。</dd>
+      <dt>意味着</dt><dd>上游厂商发新模型，运营自己在界面上补一条就能用，不再排研发与发版。这是模型网关能被单独接出去卖的前提之一。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-warn">本周未验收（验收中心无独立报告）</span> — 作者侧四组部署实测冒烟全过、81 轮自动评审收敛到零新发现，但没有归档成第三个人能核的结论</div>
+    <p class="src">技术出处：#1546（144 文件 / 141 提交 / +27558 −9637）</p>
+    <p class="src">用量口径：none:平台能力</p>
+  </article>
+
+  <article class="cap">
+    <h3>2. 一屏看见每个人现在在做什么、团队欠着什么</h3>
+    <div class="who"><span>团队全员</span><span>管理者</span><span>外部 Agent</span></div>
+    <dl>
+      <dt>以前</dt><dd>「谁在做什么」靠问；「我们欠着什么」躺在 45 份文档台账里没人读。</dd>
+      <dt>现在</dt><dd>任务台上半屏是每个人<b>此刻</b>在做的那一条（下面排队，做完补一句「做成了什么样」），下半屏是从文档台账同步进来的债务（<b>111 条已接进来</b>，可认领、可一键转成自己的活）。配套开放接口与七个 MCP 工具，外部 Agent 能自己读队列。匿名对外看板<b>默认整个关闭</b>。</dd>
+      <dt>意味着</dt><dd>管理者不用逐个问进度；欠着的事第一次有了可认领的入口，而不是只存在于文档里。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-cond">有条件通过 · 09-16 功能验收（L2，桌面 + 手机双主题取证）</span> — 已知边界 21 条已入账</div>
+    <p class="src">技术出处：#1544（64 文件 / 44 提交 / +10452）</p>
+    <p class="src">用量口径：route:/active-tasks</p>
+  </article>
+
+  <article class="cap">
+    <h3>3. 连一次自己的 GitHub，文档目录每天自动同步进知识库（含私有仓）</h3>
+    <div class="who"><span>任何登录用户</span></div>
+    <dl>
+      <dt>以前</dt><dd>知识库要么手动上传，要么只能拉公开仓；私有仓会<b>静默失败</b>——解不出用户凭据时代码悄悄退回匿名请求，而 GitHub 对无权访问的私有仓返回 404，和「目录根本不存在」分不开。</dd>
+      <dt>现在</dt><dd>连一次账号 → 系统扫出有权限的仓库目录 → 递归预勾全部 doc/docs 目录 → 一步开启每日同步。解不出凭据时<b>阻断并说清楚</b>，不再静默退回匿名。</dd>
+      <dt>意味着</dt><dd>文档不用再人肉搬运，私有仓也能进；出问题时能看到原因，不再是等了五分钟拿到零篇文档。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-pass">通过 · 09-14 缺陷复测（私有仓实拉 53 篇文档，P0/P1/P2/P3 全零）</span> — 本刊这八条能力里唯一一条拿到「通过」背书的，<b>但只覆盖到一半</b>：复测跑在分支 09-14 的状态上，而 #1528 / #1534 都是 09-15 才落地，#1534 那批后续修复没被验过（本周另一份「通过」是 09-14 的 OpenDesign 四个 MVP 场景，不在本周落地的 25 个 PR 里）</div>
+    <p class="src">技术出处：#1528 #1534</p>
+    <p class="src">用量口径：route:/document-store</p>
+  </article>
+
+  <article class="cap">
+    <h3>4. 公共藏书阁从一张书单变成能读的精读稿；散落的生图入口收进系统配图中心</h3>
+    <div class="who"><span>内部团队（新人成长路径）</span></div>
+    <dl>
+      <dt>以前</dt><dd>藏书阁只有书名，点进去没内容。</dd>
+      <dt>现在</dt><dd>第一个点进这本书的人触发按需生成精读稿（核心论点 / 怎么用在我们身上 / 我们在哪条规则上栽过），写完落库，之后所有人读同一篇。并发首写做了保护，第二个人不会白烧一篇。</dd>
+      <dt>意味着</dt><dd>内部知识从「有一张书单」变成「有内容可读」，新人上手有了实际材料。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-warn">本周未验收（验收中心无独立报告）</span> — 24 轮评审、65 条发现、最后一轮零新发现；三条 P1 边界留作后续</div>
+    <p class="src">技术出处：#1542</p>
+    <p class="src">用量口径：route:/bookshelf</p>
+  </article>
+
+  <article class="cap">
+    <h3>5. 首页右上角从「教程中心」换成模型排行榜，11 个维度可筛、筛出来的视图能分享</h3>
+    <div class="who"><span>全体用户</span><span>对外展示</span></div>
+    <dl>
+      <dt>以前</dt><dd>想知道「现在哪个模型强」得自己去外站查。</dd>
+      <dt>现在</dt><dd>数据取自公开竞技榜，后端每天自动同步一次落库，页面只读库；11 个维度筛选，维度写在网址上可直接分享。写库前三条判据（条目下限 / 厂商覆盖率 / 形状与目录一致）任一不成立就整份拒绝、保留旧快照。</dd>
+      <dt>意味着</dt><dd>选型讨论有了一个大家都能打开的共同参照，不用各自截图。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-warn">本周未验收（验收中心无独立报告）</span> — 快照按分支隔离，自检端点新增陈旧度检查</div>
+    <p class="src">技术出处：#1538</p>
+    <p class="src">用量口径：route:/model-leaderboard</p>
+  </article>
+
+  <article class="cap">
+    <h3>6. 验收报告首页变成跨项目流水线总览；报告正文搬进对象存储</h3>
+    <div class="who"><span>所有看验收的人</span></div>
+    <dl>
+      <dt>以前</dt><dd>验收首页回答不了「现在整体什么状态」。更糟的是——报告的元数据在数据库、正文却写在容器本地盘，<b>容器一重建正文全丢而目录还在，列表 23 份报告点开全是 404</b>。</dd>
+      <dt>现在</dt><dd>首页是跨项目流水线总览（改动 / 没起预览 / 待验收 / 已验完 + 结论三档 + 项目分布 + 三张走向折线）；正文改存对象存储，本地盘降级为读缓存，写入顺序改为先正文后元数据；<b>已配置</b>对象存储却没收下正文时当场报错、不退回本地盘。「生效结论」收敛到唯一边界：带阻断缺陷的「通过」一律按未通过算。</dd>
+      <dt>意味着</dt><dd>验收证据从「今天点得开、明天变 404」变成长期可查——<b>但只对此后新写的报告正文成立</b>。本刊附录 A 的 7 条里有 6 条创建于 09-14，早于 #1532 落地的 09-16；系统把没有对象键的旧报告单独归为「历史非持久」一档，而本次没有做存量回填，所以那 6 条是否已经耐得住容器重建，<b>本刊核不到</b>。另一半边界是实例：没配对象存储的实例照旧只写本地盘（会如实标成 local，不是静默退化），重建同样会丢。日报深链与 GitHub PR 链接走的是另外的存储，与这次改动无关。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-warn">本周未验收（验收中心无独立报告）</span> — 同批新增工程规则「账在哪，货就在哪」</div>
+    <p class="src">技术出处：#1532</p>
+    <p class="src">用量口径：none:平台能力</p>
+  </article>
+
+  <article class="cap">
+    <h3>7. 部署平台三件：铃真的响、预览实例有真数据、分支详情变成指挥台</h3>
+    <div class="who"><span>用部署平台的所有人</span></div>
+    <dl>
+      <dt>以前</dt><dd>告警能不能送到人，面板上看不出来；预览实例是空壳，进去什么都没有；分支详情总览回答不了「这条分支现在到底行不行」。</dd>
+      <dt>现在</dt><dd>系统设置新增通知通道页签，「出事了有没有人被通知」变成面板上看得见的事——一条坏一条通着会说清「仍有几条通着」，一条都不通才说「没人会收到」；对外状态页有未知项时结论是「暂无数据」而不是「全部正常」。预览实例按父实例<b>脱敏镜像</b>播种真实数据，密码不出现、主机名保留。分支详情总览改为「指挥台」：六块等高指标砖、关系流向条、CPU 图与服务表，390px 窄屏不再把状态挤成竖排。</dd>
+      <dt>意味着</dt><dd>「系统坏了没人知道」这条线本周补上了最后一段：铃响不响本身也被看着了。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-warn">本周未验收（验收中心无独立报告）</span> — 部署平台全量 8124 条测试通过、零失败；线上实测复现并修掉「父实例因自检误判而不写镜像」</div>
+    <p class="src">技术出处：#1543 #1553 #1554</p>
+    <p class="src">用量口径：none:基础设施</p>
+  </article>
+
+  <article class="cap">
+    <h3>8. 发布前那道预检自己坏了，本周修了根因；同一周也出现了三周来第一次发布成功</h3>
+    <div class="who"><span>发布流程</span><span>所有等发布的人</span></div>
+    <dl>
+      <dt>以前</dt><dd>核心业务稳定冒烟连续多周未通过（W37 的记法是到本周为止「连续第六周」），没人说得清卡在第几步。</dd>
+      <dt>现在</dt><dd>九项失败逐条定位到根因并补永久回归——图片健康判定把 404/5xx 当成「请求失败」漏掉了、SVG 一刀切豁免零宽度、巡检身份预检与后端权限口径不一致；另修掉「上一轮硬中断会在网关里留下注入态」，现在每轮开始前先自愈。</dd>
+      <dt>意味着</dt><dd>那九项失败第一次有了根因与永久回归，而不是每周重报一次同样的红；注入态自愈之后，下一轮冒烟不会从一开始就脏。</dd>
+      <dt>同一周的另一件事（与上面无因果关系）</dt><dd>本周出现了三周来第一次正式发布成功，但同一天五次尝试里四次失败，「能发出去」和「发得稳」还是两件事。<b>它与上面那批修复只是同一周发生，因果没有证据</b>——修复落在 09-15 / 09-16，那次成功发布在 09-20，中间没有跑过一次完整冒烟，那 4 次失败也没有任何书面原因。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b><span class="vd vd-warn">修复后未复验</span> — 09-14 那两份失败取证拍在修复之前；修完没有再跑一次完整冒烟出结论</div>
+    <p class="src">技术出处：#1535 #1537</p>
+    <p class="src">用量口径：none:研发流程</p>
+  </article>
+
+  <article class="cap">
+    <h3>地基工作</h3>
+    <dl>
+      <dt>对外门面两修</dt><dd>首页第二屏起改为滚动驱动的 3D 叙事（五章），并查清了「灰蒙蒙」的根因——清屏值被按屏幕口径预编码了一次、末端又编码一次。访客第一次滚动才下载三维库（约 690 kB 不进首页主链路），关闭动效偏好时冻帧只画一张。分享页首帧不再无条件发跨域请求——那一下被某些 App 内置浏览器判成下载，弹「Download：(null)」；同时补上「下载源文件」入口。</dd>
+      <dt>推送风暴治理</dt><dd>提交信息带跳过标记时不建预览、不排构建，治掉某个归档分支四天堆 30 条预览。</dd>
+      <dt>零散修复</dt><dd>额度告警补齐环境与模型信息；任务树手机端布局裁切。</dd>
+      <dt>工程规则与例行</dt><dd>新增两条规则（验证的权威位置、账在哪货就在哪）；每日熵减 6 次；W37 周报与 31 个 changelog 碎片归档。</dd>
+    </dl>
+    <p class="src">技术出处：#1526 #1527 #1529 #1531 #1539 #1541 #1547 #1548 #1549 #1550 #1551 #1552</p>
+  </article>
+
+  <div class="col-head"><h2>团队与用量</h2><span>WHO &amp; USAGE</span><span class="w">谁在做 · 有没有人用</span></div>
+  <p class="lede">
+    这一节回答前面几节答不上来的三件事：<b>谁做的、团队健不健康、AI 花了多少钱</b>。首句取自团队洞察的规则判定，不是模型写的。
+  </p>
+  <div class="gate-hero">
+    <div class="warn">
+      <div class="k">有痕迹的人</div>
+      <div class="v">34 / 70</div>
+      <div class="d">窗口内有产出或模型调用</div>
+    </div>
+    <div class="warn">
+      <div class="k">本期产出</div>
+      <div class="v">94</div>
+      <div class="d">文档 58 + 站点 28 + 出图 5 + 周报 3 求和 <span class="up">上一等长窗口 522</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">产出集中度</div>
+      <div class="v">98%</div>
+      <div class="d">前 3 人占比 <span class="flat">其余 31 人合计 2%</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">AI 成本</div>
+      <div class="v">不可用</div>
+      <div class="d">101 次调用对应的模型未配单价 <span class="flat">不是 0 元</span></div>
+    </div>
+  </div>
+  <p class="lede" style="margin-top:16px">
+    模型调用 101 次、成功率 <b>100%</b>（0 次失败）。缺陷中位解决时长本窗口无数据——没有任何缺陷被标记为已解决。
+  </p>
+
+  <div class="col-head" style="margin-top:30px"><h2>需要关注的</h2><span>ATTENTION</span><span class="w">规则判定 · 不是感觉</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>程度</th><th>事项</th><th>证据</th><th>建议动作</th></tr>
+      <tr><td><span class="vd vd-fail">严重</span></td><td>5 人合计 33 个缺陷停留超 7 天（人数与条数与上周一致，五个「最久」各自正好 +7 天；口径见下方说明）</td><td>余瑞鹏 15 个（最久 174 天）、管理员 14 个（最久 235 天）、魏喜胜 2 个（181 天）、张世博 1 个（131 天）、陈凯婷 1 个（178 天）</td><td>先看这些缺陷是否都卡在同一个环节（验收 / 复现 / 无人认领），再决定是加人还是改流程</td></tr>
+    </table>
+  </div>
+  <p class="lede">
+    <b>这两个缺陷数字对不上，而且这本身是一条发现。</b>质量闸里的「未关 32」与这里的「停留超 7 天 33」放在一起是不可能的——子集不会比全集大。
+    两者来自两个不同的端点，过滤条件不一致：缺陷台账那条<b>排除了已软删的记录</b>，团队洞察那条<b>没有排除</b>，于是状态仍是「未关」的软删缺陷被算进了积压。
+    所以本周的 33 里至少有 1 条是软删记录，真实积压 ≤ 32。本刊不去调和这两个数，而是按各自口径原样列出并标明差异——调和它们要改后端，已列为后续事项。
+  </p>
+
+  <div class="col-head" style="margin-top:30px"><h2>上线 → 采用</h2><span>ADOPTION</span><span class="w">前几周说上线的，这周有人用吗</span></div>
+  <p class="lede">
+    <b>五种状态不许混写。</b>「本周 0」是该口径在自己的单位上读到 0——<b>但只有当埋点覆盖了目标人群时，它才等于「真的没人用」</b>（本期就有一条不满足：对外首页，见下）；「无信号」是这条能力本就不在产品内产生用量（平台工具、研发流程、基础设施）；「无采集」是信号源那时还没开始记录。
+    后两种都<b>不是</b>没人用。本次回溯 W34–W37，<b>每一周都带了用量口径标签</b>，无「无采集」也无标签写错。
+  </p>
+  <p class="lede">
+    <b>先说清分母，因为这两个数不一样。</b>窗口里有 <b>31 条能力条目</b>，但一条能力可以声明不止一个用量口径（「访客提问」就同时挂了模型调用与页面路由两个），所以口径总数是 <b>33</b>。
+    下表按<b>口径</b>计数，18 + 6 + 9 = 33 对得上；它<b>不是</b>对 31 条能力的划分。
+  </p>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>状态</th><th>口径数</th><th>含义</th></tr>
+      <tr><td><span class="ad ad-none">无信号</span></td><td>18</td><td>作者声明本就不产生产品内用量（平台能力 / 基础设施 / 研发流程）</td></tr>
+      <tr><td><span class="ad ad-used">有读数</span></td><td>6</td><td>上线站点 28 个、视觉创作 41 次调用、网页托管 9 人天/2 人、知识库划词改写 8 人天/2 人</td></tr>
+      <tr><td><span class="ad ad-zero">本周 0</span></td><td>9<br><span style="font-size:11px">其中 1 个是盲区</span></td><td>在<b>各自单位</b>上读到 0——<b>7 个页面路由</b>（零活跃人天）：外部 AI 助手接入台、授权健康中心、对外首页、跨环境数据搬运（2）、录音交付页、用户管理；<b>2 个模型调用</b>（零次调用）：访客提问、录音交付。<b>其中「对外首页」不能算没人用</b>，见下</td></tr>
+      <tr><td colspan="3">合计 <b>33</b> 个口径，分布在 <b>31</b> 条能力条目上（2 条各带两个口径）</td></tr>
+    </table>
+  </div>
+  <p class="lede">
+    按<b>能力条目</b>看是另一组数（31 条）：18 条无信号、5 条全部口径有读数、7 条全部口径为零、<b>1 条两者都占</b>——就是「访客提问」那一条：它挂的两个口径一个有读数（网页托管管理页 9 个活跃人天 / 2 人）、一个为零（访客提问的模型调用 0 次）。
+  </p>
+  <p class="lede">
+    <b>但这两个数不能相减着读。</b>前者数的是<b>登录用户在网页托管管理页</b>的活跃人天，后者数的是<b>访客在公开分享页上真的问出一句话</b>触发的模型调用 —— 不同人群、不同页面。
+    那 2 个人很可能只是在管理自己的托管页，从没到过访客那一屏。所以只能说「管理侧有人用、访客提问侧本周零调用」，<b>说不出「人到了却没问」这个漏斗结论</b>；要得出那个结论，得先给访客那一屏本身埋一个路由口径，现在没有。
+  </p>
+  <p class="lede">
+    <b>「对外首页」那条是量不到，不是没人来。</b>行为埋点只对登录用户生效（App.tsx 里 <code>if (isAuthenticated) trackRouteChange(...)</code>，且 behaviorTracker 的 push 对未登录直接 return），而对外首页面向的恰恰是<b>没登录的访客</b>。
+    所以「两周读数为 0」只说明没有已登录用户在那个路由上产生事件，<b>说不了外部访客来没来</b>——W35 把它改成产品演示、本周又重做成 3D 叙事，这两次改动的效果目前<b>没有任何口径能衡量</b>。这是采用度这张表本身的盲区，不是那条能力的成绩。
+    W37 的 P2 是「对这 9 个 0 逐条给一个判断」，<b>本周零动作，所以这张表与上周同形</b>，已连续两周。
+  </p>
+
+  <div class="col-head"><h2>一周脉络</h2><span>THE WEEK</span><span class="w">每天挂当天日报</span></div>
+  <div>
+    <div class="day">
+      <div class="dhead"><b>周一</b><span>09-14</span><i>46 提交</i></div>
+      <div class="dbody"><p>模型网关「调用全貌」落地——把架构落到模型自己身上；主系统补齐额度告警的环境与模型信息</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/2SVdp4DVo1Hv?entry=d65eea3cc0d7435dba30ef3f8729e95d" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
+    </div>
+    <div class="day heavy">
+      <div class="dhead"><b>周二</b><span>09-15</span><i>75 提交</i></div>
+      <div class="dbody"><p><b>稳定冒烟九项失败逐条修根因</b>（15 个提交）；模型网关开始「删壳」；任务台起步</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/Cq042T8fhni6?entry=131c894895584b099f4d11cd380fa5c1" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
+    </div>
+    <div class="day heavy">
+      <div class="dhead"><b>周三</b><span>09-16</span><i>133 提交</i></div>
+      <div class="dbody"><p><b>全周峰值</b>。模型网关评审 33 个提交、藏书阁 20 个、部署平台 18 个、任务台 14 个四线并进；模型排行榜与验收首页当天落地</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/k4PgizE30Y5s?entry=58f581207f304d2ab8002029e2c1377e" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
+    </div>
+    <div class="day heavy">
+      <div class="dhead"><b>周四</b><span>09-17</span><i>63 提交</i></div>
+      <div class="dbody"><p>几乎全部是模型网关评审第 74–81 轮（52 个提交）；任务台与藏书阁收口合并</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/f4Ql4kJKJjPY?entry=c5644369fd3b44eead43415760771fbb" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
+    </div>
+    <div class="day">
+      <div class="dhead"><b>周五</b><span>09-18</span><i>5 提交</i></div>
+      <div class="dbody"><p>模型网关合并落地；<b>到期线撞上 CI</b>——把存量豁免用例从真实时钟上摘下来</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/VqPQ6mBI1Q5n?entry=bce15454e27346aea910c874cdd40ff6" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
+    </div>
+    <div class="day">
+      <div class="dhead"><b>周六</b><span>09-19</span><i>1 提交</i></div>
+      <div class="dbody"><p>只有每日熵减</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/zNYjmUMiUqN0?entry=7816b188652c4561ab049d8279db904e" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
+    </div>
+    <div class="day">
+      <div class="dhead"><b>周日</b><span>09-20</span><i>18 提交</i></div>
+      <div class="dbody"><p>部署平台预览镜像收口；首页 3D 叙事与分享页两个 PR 落地；<b>当天 5 次正式发布尝试</b></p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/eDmr8bGIiNUx?entry=d440926be9224507899471591ed13ed6" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
+    </div>
+  </div>
+  <p class="appendix-note">本周日报逐日齐全，7 天无缺。本周形状是「前四天冲刺、后三天收口」：09-14 至 09-17 四天占 317 个提交（93%），09-18、09-19 两天骤降到个位数（5 和 1），09-20 又回到 18。</p>
+
+  <div class="col-head"><h2>上周说要做的，做到了吗</h2><span>FOLLOW-UP</span><span class="w">对照 W37 优先级</span></div>
+  <ul class="ledger">
+    <li><span class="tag part">部分</span><p><b>P0 · 09-17 到期线给一份写着日期的文字结论</b> —— 拿到了文字，但不是要的那份。要的是三选一的决定（逐库切换时间 / 显式推迟到某日 / 决定停机），拿到的是一句「默认期已到、本次没延长」的事实陈述。逃生阀当前是什么值、线上两台配置库怎么办，仍无一行结论。<b>连续第四周</b>。</p></li>
+    <li><span class="tag todo">未启动</span><p><b>P1 · 给 W37 七条能力补第一份功能验收</b> —— 本周 5 份功能验收，监控自发现与公开状态页各零份。</p></li>
+    <li><span class="tag part">部分</span><p><b>P1 · 核心业务稳定冒烟给一句结论</b> —— 达成一半，而且是更难的那一半：九项失败逐条修到根因并补永久回归（连续六周来第一次有实质修复提交）。给的是修复不是结论，修完没有再跑一次。</p></li>
+    <li><span class="tag todo">未启动</span><p><b>P2 · 对读数为 0 的 9 个能力口径逐条给判断</b> —— 无相关提交、无文档，采用度表与上周同形。</p></li>
+    <li><span class="tag todo">未启动</span><p><b>P2 · 验收归档补去重</b> —— 09-14 两份同日同标题的冒烟失败取证仍是两条。</p></li>
+    <li><span class="tag part">达成</span><p><b>P2 · 周报自己的数字要对账</b> —— 本期执行：附录 A 行数 = 验收份数 7；附录 B 行数 = PR 数 25；340 + 1 = 341 三处交叉可数。</p></li>
+  </ul>
+  <p class="lede">
+    <b>六条：一条达成、两条部分、三条未启动</b>。与 W37（零条达成、一条部分、四条未启动）相比是<b>略好而非持平</b>；但唯一完整达成的那条是周报自查自己的数字，剩下那五条（产品与流程上的）没有一条完整达成，其中 P0 已连续第四周。但本周的数据第一次动摇了 W37 那个诊断（「写代码的会做，做决定的不会做」）：
+    稳定冒烟这条连着几周没动的事本周动了——因为它恰好<b>变成了一件可以写代码的事</b>；而 09-17 那条也不是没发生，它自己发生了：默认期 09-17 00:00 UTC 到，<b>约 31 小时后</b>（09-18 06:44 UTC）有人处置了 CI 那一半然后停下，线上那一半既没修也没查。
+    <b>模式要改写成：能被红灯逼出来的会做，红灯之外的不会做。</b>下周的 P0 因此不再要一份文字，而要一个能变红的判据。
+  </p>
+
+  <div class="col-head"><h2>下周打算做什么</h2><span>NEXT WEEK</span></div>
+  <div class="prio">
+    <div>
+      <div class="ph"><b>P0 必须做</b><span>MUST</span></div>
+      <ul>
+        <li><b>查清 09-17 到期的实际后果，并给存量库一个能变红的判据</b>两件事：① 一份清单，列出受门禁影响的每一台存量库当前是「还在跑 / 已经起不来 / 已迁移」，线上两台配置库单独一行；② 给「无认证存量库」加一条会红的检查——不是文档、不是待办，是一个跑得起来、状态不对就报出来的判据。默认期已过而实际状态无人知晓，此时追问「什么时候决定」没有意义——先得看得见。清单里要含逃生阀当前值，它今天没有任何接口能读</li>
+      </ul>
+    </div>
+    <div>
+      <div class="ph"><b>P1 应该做</b><span>SHOULD</span></div>
+      <ul>
+        <li><b>给本周体量最大、且没有归档验收的改动补上结论</b>按落地 diff 排序取前两条：#1546 网关模型概念收敛（144 文件）、#1532 验收报告首页重做（98 文件）。本周 25 个落地 PR 里只有 2 个有归档验收，其余 23 个没有；无验收的前四位是 144 / 98 / 90 / 84 个文件。作者侧自测大多做了，差的只是归档成第三个人能核的结论</li>
+        <li><b>稳定冒烟修完之后跑一次出结论的完整冒烟</b>结论是通过 / 有条件通过 / 未通过三者之一，不是失败取证。现在的状态是「大概修好了，没人验过」</li>
+        <li><b>查清 09-20 那四次发布失败</b>一句书面原因 + 是不是同一个原因。三周来第一次发出去，也第一次看到 80% 的失败率</li>
+      </ul>
+    </div>
+    <div>
+      <div class="ph"><b>P2 可以做</b><span>COULD</span></div>
+      <ul>
+        <li><b>查清为什么六天没有巡检报告，并定位断在哪一段</b>先分清压根没跑 / 跑了中途失败 / 跑完归档失败三种可能（本刊只能证明「没有报告」，证明不了巡检本身没跑）。定位之后要么修好要么明说它已经不跑了——一个没人发现已经断了的例行检查，比没有这个检查更糟</li>
+        <li><b>对读数为 0 的 9 个能力口径逐条给判断</b>连续第二周原样顺延；再顺延一周就该考虑它本身是不是一条假需求</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="col-head"><h2>术语表</h2><span>GLOSSARY</span><span class="w">本刊出现的内部说法</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>内部代号</th><th>说人话</th></tr>
+      <tr><td>主系统 / MAP</td><td>本产品主系统</td></tr>
+      <tr><td>部署平台 / CDS</td><td>把代码自动变成可访问在线环境的平台，同时托管这些环境用的数据库</td></tr>
+      <tr><td>模型网关 / LLM Gateway</td><td>统一管理所有 AI 大模型调用的中枢，对外可独立接入或售卖</td></tr>
+      <tr><td>模型池 / 白名单</td><td>网关里两个说的其实是同一件事的概念：前者说「这几个模型可以互相顶替」，后者说「这几个名字可以对外被点」。本周合并成一个</td></tr>
+      <tr><td>上游 / Provider</td><td>提供模型的外部厂商及其接口地址</td></tr>
+      <tr><td>模型名录</td><td>系统认识哪些模型标识、各自什么用途的对照表；以前写死在代码里，本周搬进数据库</td></tr>
+      <tr><td>生图契约</td><td>一个生图模型能接受哪些尺寸、比例、参数的规定</td></tr>
+      <tr><td>PR</td><td>一次代码改动的提交单元，是本刊统计「做了多少事」的基本颗粒</td></tr>
+      <tr><td>门禁</td><td>卡在某个动作前面的强制检查，不满足条件就拒绝</td></tr>
+      <tr><td>认证门禁 / 存量豁免</td><td>强制要求数据库必须设口令才允许启动；门禁上线前就存在的库暂时放行，但会到期（本次是 2026-09-17，已到期）</td></tr>
+      <tr><td>逃生阀</td><td>一个配置开关，设了它就能临时绕过某道门禁</td></tr>
+      <tr><td>判据</td><td>判断「算通过还是不通过」的那条具体规则</td></tr>
+      <tr><td>通过 / 有条件通过 / 未通过</td><td>验收后给出的三档判定</td></tr>
+      <tr><td>功能验收 / 每日巡检 / 缺陷复测</td><td>三类例行检验；功能验收专门验「这个新东西做得对不对」</td></tr>
+      <tr><td>归档</td><td>把一次验收的结论与截图存进验收中心，让第三个人能核</td></tr>
+      <tr><td>分支预览</td><td>每推一次代码就自动起一套完整环境，有独立网址可以打开看</td></tr>
+      <tr><td>脱敏</td><td>把数据里的密码、密钥等敏感片段抹掉再交出去</td></tr>
+      <tr><td>幂等</td><td>同一个动作重复做多次，结果和做一次一样</td></tr>
+      <tr><td>不可变版本</td><td>内容固定、可原样重新部署与回滚的版本快照；<b>分支预览部署也会产生</b>，故不能当「线上发布次数」看</td></tr>
+      <tr><td>正式发布台账</td><td>真正发到生产的发布记录，本刊「正式发布」数字的唯一来源，与上面的部署版本是两回事</td></tr>
+      <tr><td>冒烟</td><td>发布前的快速自动检查，确认基本功能没坏</td></tr>
+      <tr><td>债务台账</td><td>明确知道但当期不修的问题清单</td></tr>
+      <tr><td>熵减</td><td>文档与台账的定期清理对账</td></tr>
+      <tr><td>活跃人天</td><td>用量单位：同一个人同一天访问同一个页面只算一次</td></tr>
+      <tr><td>浅克隆</td><td>只拉了一部分历史的代码副本；在它上面做统计会安静地少算</td></tr>
+    </table>
+  </div>
+
+  <div class="col-head"><h2>附录 A · 本周验收报告</h2><span>ACCEPTANCE</span><span class="w">7 份 · 全量</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>日期</th><th>结论</th><th>类别</th><th>验收项</th><th>PR</th><th>报告</th></tr>
+      <tr><td>09-14</td><td><span class="vd vd-cond">有条件</span></td><td>功能验收</td><td>HTML 幻灯片视觉修复 · 改前改后对照</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=e92028ee7e404cbd9742de8a90456c06&report=231ef4daf7754d2e8980411fc1fce73c" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>09-14</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>OpenDesign 四个 MVP 场景 · 预览域名验收</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=e92028ee7e404cbd9742de8a90456c06&report=4e32ef8bbe1240499f99b5a6139495db" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>09-14</td><td><span class="vd vd-fail">未通过</span></td><td>功能验收</td><td>核心业务稳定冒烟失败取证</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=e5a9f42a570d4c93969c7a8e3d3e4eb3&report=c52f7ee05482477e84d9aa29fb862c60" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>09-14</td><td><span class="vd vd-fail">未通过</span></td><td>功能验收</td><td>核心业务稳定冒烟失败取证（重复归档）</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=e5a9f42a570d4c93969c7a8e3d3e4eb3&report=0bcef7907b8a4774af87dfdb815c1801" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>09-14</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>全量变更</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=4cfa174ded6940569002acf9370efb5f&report=578e04dea13e44f8aff0b1ae83e934ae" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>09-14</td><td><span class="vd vd-pass">通过</span></td><td>缺陷复测</td><td>知识库 / GitHub 私有仓目录同步</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=0864ccf0981547eb8af54b4470634dd7&report=97105d54be19450fa67b682fee77006b" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>09-16</td><td><span class="vd vd-cond">有条件</span></td><td>功能验收</td><td>任务台（活动任务清单）</td><td>#1544</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ee61b760eb50491fbdd1350621eace05&report=f7d2222e3b594a9abe4a9f2ef643a1c1" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+    </table>
+  </div>
+  <p class="appendix-note">7 行 = 头部「验收 7 份」。日期分布：09-14 六份、09-16 一份，其余五天为零。去掉一对重复归档后，本周实际覆盖 6 件事。深链需登录部署平台。</p>
+
+  <div class="col-head"><h2>附录 B · 本周落地 PR</h2><span>APPENDIX</span><span class="w">25 个 · 全量</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>落地日</th><th>PR</th><th>标题</th><th>分类</th></tr>
+      <tr><td>09-14</td><td><a href="https://github.com/inernoro/prd_agent/pull/1526" target="_blank" rel="noopener noreferrer">#1526</a></td><td>2026-W37 周报 + 归档 31 个 changelog 碎片，并修主干红灯</td><td>文档</td></tr>
+      <tr><td>09-14</td><td><a href="https://github.com/inernoro/prd_agent/pull/1527" target="_blank" rel="noopener noreferrer">#1527</a></td><td>每日熵减计划 W38 — D6 历史 changelog 收尾</td><td>熵减</td></tr>
+      <tr><td>09-15</td><td><a href="https://github.com/inernoro/prd_agent/pull/1528" target="_blank" rel="noopener noreferrer">#1528</a></td><td>知识库：GitHub 登录后勾选目录一键同步（默认预勾全部 doc/docs）</td><td>能力 3</td></tr>
+      <tr><td>09-15</td><td><a href="https://github.com/inernoro/prd_agent/pull/1529" target="_blank" rel="noopener noreferrer">#1529</a></td><td>补齐额度告警的环境与模型信息</td><td>地基</td></tr>
+      <tr><td>09-15</td><td><a href="https://github.com/inernoro/prd_agent/pull/1530" target="_blank" rel="noopener noreferrer">#1530</a></td><td>每日熵减计划 W38 — D6 历史 changelog 收尾（无新增章节）</td><td>熵减</td></tr>
+      <tr><td>09-15</td><td><a href="https://github.com/inernoro/prd_agent/pull/1531" target="_blank" rel="noopener noreferrer">#1531</a></td><td>修复任务树手机端布局裁切</td><td>地基</td></tr>
+      <tr><td>09-15</td><td><a href="https://github.com/inernoro/prd_agent/pull/1534" target="_blank" rel="noopener noreferrer">#1534</a></td><td>补掉 GitHub 目录同步对抗审查发现的边界</td><td>能力 3</td></tr>
+      <tr><td>09-15</td><td><a href="https://github.com/inernoro/prd_agent/pull/1535" target="_blank" rel="noopener noreferrer">#1535</a></td><td>修复 48 小时稳定冒烟九项失败的根因并补永久回归</td><td>能力 8</td></tr>
+      <tr><td>09-16</td><td><a href="https://github.com/inernoro/prd_agent/pull/1532" target="_blank" rel="noopener noreferrer">#1532</a></td><td>验收报告首页重做为跨项目流水线总览 + 走向折线</td><td>能力 6</td></tr>
+      <tr><td>09-16</td><td><a href="https://github.com/inernoro/prd_agent/pull/1537" target="_blank" rel="noopener noreferrer">#1537</a></td><td>稳定冒烟 GW-007 开始前自愈上一轮硬中断遗留的注入态</td><td>能力 8</td></tr>
+      <tr><td>09-16</td><td><a href="https://github.com/inernoro/prd_agent/pull/1538" target="_blank" rel="noopener noreferrer">#1538</a></td><td>首页教程中心改为模型排行榜，支持按 11 个维度筛选</td><td>能力 5</td></tr>
+      <tr><td>09-16</td><td><a href="https://github.com/inernoro/prd_agent/pull/1539" target="_blank" rel="noopener noreferrer">#1539</a></td><td>验证的权威位置——把参照系从「本地有没有 SDK」换掉</td><td>地基</td></tr>
+      <tr><td>09-16</td><td><a href="https://github.com/inernoro/prd_agent/pull/1541" target="_blank" rel="noopener noreferrer">#1541</a></td><td>每日熵减计划 W38 — D6 补登记 5 条历史 changelog</td><td>熵减</td></tr>
+      <tr><td>09-16</td><td><a href="https://github.com/inernoro/prd_agent/pull/1543" target="_blank" rel="noopener noreferrer">#1543</a></td><td>关键业务监控闭环——自发现、通知、脉搏墙、自更新重启可见</td><td>能力 7</td></tr>
+      <tr><td>09-17</td><td><a href="https://github.com/inernoro/prd_agent/pull/1542" target="_blank" rel="noopener noreferrer">#1542</a></td><td>公共藏书阁精读稿 + 系统配图中心</td><td>能力 4</td></tr>
+      <tr><td>09-17</td><td><a href="https://github.com/inernoro/prd_agent/pull/1544" target="_blank" rel="noopener noreferrer">#1544</a></td><td>任务台 —— 上半屏我在做什么，下半屏我们欠着什么</td><td>能力 2</td></tr>
+      <tr><td>09-17</td><td><a href="https://github.com/inernoro/prd_agent/pull/1547" target="_blank" rel="noopener noreferrer">#1547</a></td><td>每日熵减计划 W38 — D6 补 5 条历史 changelog</td><td>熵减</td></tr>
+      <tr><td>09-18</td><td><a href="https://github.com/inernoro/prd_agent/pull/1546" target="_blank" rel="noopener noreferrer">#1546</a></td><td>网关模型概念收敛——五个入口收成两个，模型知识从代码搬进数据</td><td>能力 1</td></tr>
+      <tr><td>09-18</td><td><a href="https://github.com/inernoro/prd_agent/pull/1548" target="_blank" rel="noopener noreferrer">#1548</a></td><td>每日熵减计划 W38 — D6 登记 5 条历史 changelog</td><td>熵减</td></tr>
+      <tr><td>09-19</td><td><a href="https://github.com/inernoro/prd_agent/pull/1549" target="_blank" rel="noopener noreferrer">#1549</a></td><td>每日熵减计划 W38 — D6 登记 2 条历史 changelog</td><td>熵减</td></tr>
+      <tr><td>09-20</td><td><a href="https://github.com/inernoro/prd_agent/pull/1550" target="_blank" rel="noopener noreferrer">#1550</a></td><td>每日熵减计划 W38 — D6 登记 1 条历史 changelog</td><td>熵减</td></tr>
+      <tr><td>09-20</td><td><a href="https://github.com/inernoro/prd_agent/pull/1551" target="_blank" rel="noopener noreferrer">#1551</a></td><td>分享页首帧不再发跨域直链请求，并新增下载源文件</td><td>地基</td></tr>
+      <tr><td>09-20</td><td><a href="https://github.com/inernoro/prd_agent/pull/1552" target="_blank" rel="noopener noreferrer">#1552</a></td><td>首页第二屏起改为滚动 3D 叙事、去灰根因修复；带跳过标记不建预览</td><td>地基</td></tr>
+      <tr><td>09-20</td><td><a href="https://github.com/inernoro/prd_agent/pull/1553" target="_blank" rel="noopener noreferrer">#1553</a></td><td>预览实例数据镜像、分支详情「指挥台」总览与关系流向条</td><td>能力 7</td></tr>
+      <tr><td>09-20</td><td><a href="https://github.com/inernoro/prd_agent/pull/1554" target="_blank" rel="noopener noreferrer">#1554</a></td><td>预览镜像脱敏与自检认同一组 URL 形状，父实例不再因自检误判而不写镜像</td><td>能力 7</td></tr>
+    </table>
+  </div>
+  <p class="appendix-note">25 行 = 头部「PR 收口 25 个」。这张表覆盖本周 341 个提交里的 340 个；另有 1 个提交未经 PR 直接落主干（09-16 efeec80，修复预览快照导致的启动失败）。上周这个数字是 32/150（21%），本周是 1/341（0.3%）。</p>
+
+  <div class="col-head"><h2>附录 C · 工程数据</h2><span>FOR ENGINEERS</span><span class="w">技术读者向</span></div>
+  <div class="stat-row">
+    <div><b>341</b><span>主干提交</span></div>
+    <div><b>25</b><span>PR 收口</span></div>
+    <div><b>679</b><span>文件变更</span></div>
+    <div><b>+96k</b><span>新增行</span></div>
+    <div><b>7</b><span>验收报告</span></div>
+    <div><b>1</b><span>正式发布成功</span></div>
+  </div>
+  <p class="appendix-note">
+    提交类型：fix 202 / feat 38 / docs 37 / merge 19 / test 14 / polish 8 / refactor 6 / security 3 / rule 1 / chore 1 / 无标准前缀 12。
+    署名：Claude 293 · InerNoro 48。净增 +96396 / −12384 行。单 PR 最大规模 #1546：144 文件 / 141 提交 / 81 轮自动评审。
+    逐日提交：09-14 46 · 09-15 75 · 09-16 133 · 09-17 63 · 09-18 5 · 09-19 1 · 09-20 18。
+    主要改动面（去重文件数）：主系统后端 164 · 主系统前端 132 · 部署平台测试 86 · changelog 碎片 57 · 部署平台前端 49 · 部署平台后端与脚本 39 · 规则与技能 39 · 模型网关前端 30 · 文档 29 · 模型网关后端 27 · 脚本 13 · 端到端测试 5。
+    正式发布：5 次终态 run，成功 1 / 失败 4（口径为正式发布台账，含失败重试）；另有 99 个分支预览部署版本，不计入正式发布。
+    <b>合并后必须做的两件运维动作</b>：① 对模型网关库跑一次 scripts/mongodb-indexes.js（#1546 把启动时的索引创建改成只查不建，那五条唯一约束现在只能由脚本建出来）；② 正式环境配一次网关数据面（每种用途的默认、旗舰梯队、必要的名录补登）。
+  </p>
+
+  <footer class="colophon">
+    <span>米多智能体周刊 · 数据来自 git 主干 + 日报 + 验收中心 + 缺陷台账 + 正式发布台账 + 团队洞察 + 采用度</span>
+    <span>MAP WEEKLY · 2026-W38 · 09-14/09-20</span>
+  </footer>
+</div>
+</body>
+</html>

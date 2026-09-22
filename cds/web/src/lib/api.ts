@@ -257,6 +257,203 @@ export async function listReports(projectId?: string, folderId?: string): Promis
 }
 
 /** List report folders for a project scope (omit projectId for global/CDS-self). */
+// ── 验收主页聚合（结论优先，2026-09-08）──
+// 类型与 cds/src/services/acceptance-overview.ts 的导出一一对应；后端是 SSOT。
+
+export type ReportKind =
+  | '功能验收' | '每日验收' | 'PR验收' | 'Commit验收' | '分支验收' | '缺陷复测' | '视觉回归' | '发布验收' | '规范演练' | '其他';
+
+export interface OverviewReportRef {
+  id: string;
+  title: string;
+  kind: ReportKind;
+  target: string;
+  targetDate: string | null;
+  verdict: ReportVerdict | null;
+  tier: string | null;
+  defectCounts: Record<string, number> | null;
+  projectId: string | null;
+  branch: string | null;
+  commitSha: string | null;
+  prNumber: number | null;
+  createdAt: string;
+  shared: boolean;
+  version: number;
+  supersedes: string[];
+}
+
+export interface OverviewCluster {
+  id: string;
+  verdict: 'fail' | 'conditional' | 'conflict';
+  target: string;
+  projectId: string | null;
+  kinds: ReportKind[];
+  count: number;
+  /** 未通过份数（口径冲突簇里两种结论都真实存在，条形按此拆段）。 */
+  failCount: number;
+  /** 有条件份数。 */
+  conditionalCount: number;
+  reportIds: string[];
+  latestReportId: string;
+  latestCreatedAt: string;
+  defectCounts: Record<string, number>;
+  streakWindows: number;
+}
+
+export interface OverviewDay {
+  date: string;
+  reports: Array<{ id: string; verdict: ReportVerdict | null }>;
+  worst: ReportVerdict | null;
+}
+
+export type MergeCoverageStatus = 'verified' | 'conditional' | 'failed' | 'unverified';
+
+export interface OverviewMergeItem {
+  branch: string;
+  projectId: string;
+  prNumber: number | null;
+  prUrl: string | null;
+  mergeCommitSha: string | null;
+  mergedAt: string;
+  status: MergeCoverageStatus;
+  reportIds: string[];
+}
+
+export interface ReportsOverview {
+  window: { from: string; to: string; days: number; previousFrom: string };
+  headline: {
+    status: 'broken' | 'ok' | 'untested';
+    statusLabel: string;
+    sentence: string;
+    supports: Array<{ kind: 'new' | 'coverage' | 'decision'; text: string; anchor: 'clusters' | 'coverage' | 'ledger' }>;
+  };
+  releaseGate: { state: 'blocked' | 'open' | 'unknown'; reason: string; latest: OverviewReportRef | null; lastPass: OverviewReportRef | null };
+  totals: {
+    archived: number; folded: number; counted: number; pass: number; conditional: number; fail: number; undetermined: number;
+    previous: { counted: number; pass: number; conditional: number; fail: number; undetermined: number };
+  };
+  passRate: { kind: ReportKind; numerator: number; denominator: number; rate: number | null; previous: { numerator: number; denominator: number; rate: number | null } };
+  kinds: Array<{ kind: ReportKind; count: number }>;
+  clusters: OverviewCluster[];
+  daily: OverviewDay[];
+  mergeCoverage: { items: OverviewMergeItem[]; counts: Record<MergeCoverageStatus, number> };
+  reports: OverviewReportRef[];
+  /** 被取代的早期版本；台账「展开被取代版本」时用它拿服务端解析出的 kind。 */
+  supersededReports: OverviewReportRef[];
+}
+
+/** 验收主页聚合；days 为时间窗天数，时区偏移取浏览器本地。 */
+/** 验收流水线总览（跨项目，一行一个项目）。首页给老板 / 观察者 / 架构师看的那一屏。 */
+export type ChangeStage = 'created' | 'deployed' | 'accepted' | 'merged';
+export type LeakKind =
+  | 'deployed-not-accepted' | 'merged-not-accepted' | 'merged-while-failing'
+  | 'report-missing-change-key';
+
+export interface PipelineFunnel {
+  changes: number;
+  deployed: number;
+  accepted: number;
+  merged: number;
+  /** 三档计数，不给通过率（分母失真且规范未定义）。 */
+  pass: number;
+  conditional: number;
+  fail: number;
+  undetermined: number;
+}
+
+export interface PipelineLeak {
+  kind: LeakKind;
+  subject: string;
+  /** null = 无主报告（报告自己没记项目），不是「所有项目」。 */
+  projectId: string | null;
+  reportIds: string[];
+}
+
+export interface PipelineProjectRow {
+  projectId: string;
+  projectName: string;
+  funnel: PipelineFunnel;
+  leaks: Record<LeakKind, number>;
+  missingKinds: ReportKind[];
+  /** 记了标识却挂不到现存改动的报告数：它验的分支已被回收，无从核对——是背景说明，不是漏。 */
+  staleReports: number;
+  inFlight: number;
+  lastActivityAt: string | null;
+  githubLinked: boolean;
+}
+
+export interface PipelineOverview {
+  generatedAt: string;
+  recentDays: number | null;
+  total: PipelineFunnel;
+  totalLeaks: Record<LeakKind, number>;
+  projects: PipelineProjectRow[];
+  staleReports: number;
+  leaks: PipelineLeak[];
+}
+
+/**
+ * 验收流水线的日序列（走向）。与 PipelineOverview 同一次请求返回。
+ *
+ * 每条数组长度都恒等于 days.length，没有数据的那天是 0 而不是缺项——
+ * 缺项会让折线在空白日直接连线，把 41 个没人验收的日子画成一条平滑的斜坡。
+ */
+export interface PipelineSeries {
+  days: string[];
+  changes: number[];
+  pass: number[];
+  conditional: number[];
+  fail: number[];
+  /** 有报告但结论字段为空。不是第四种结论。 */
+  undetermined: number[];
+  projects: Array<{
+    projectId: string | null; projectName: string; counts: number[]; total: number;
+    /** 见下方同名字段；旧后端没有这个字段。 */
+    leadIn?: number[];
+  }>;
+  otherProjects: { count: number; total: number };
+  /**
+   * 显示窗口**之前**那几天，只为把滚动均值的头几天算准——先在「预热 + 显示」上滚动，
+   * 再裁掉预热段。没有它的话开头几天只有 1~6 个样本，而图上每点都标着 7 日均。
+   * 裁多少由它自己的长度决定，前端不假设是几天。旧后端不返回它，那时按 0 天预热走，
+   * 行为与从前一致（少几天样本，但不会崩）。
+   */
+  leadIn?: {
+    days: string[];
+    changes: number[];
+    pass: number[];
+    conditional: number[];
+    fail: number[];
+    undetermined: number[];
+  };
+  lastDayPartial: boolean;
+  /** 后端明说这份序列没有部署这一环，页面照实交代，不要自己补一条。 */
+  deployNote: 'no-deploy-history';
+}
+
+export async function fetchReportsPipeline(
+  input: { recentDays?: number | null; seriesDays?: number } = {},
+): Promise<{ pipeline: PipelineOverview; series: PipelineSeries | null }> {
+  const params = new URLSearchParams();
+  if (input.recentDays) params.set('recentDays', String(input.recentDays));
+  if (input.seriesDays) params.set('seriesDays', String(input.seriesDays));
+  const qs = params.toString();
+  const res = await apiRequest<{ pipeline: PipelineOverview; series?: PipelineSeries }>(
+    `/api/reports/pipeline${qs ? `?${qs}` : ''}`,
+  );
+  // series 允许缺失：旧后端不返回它，那时页面只画存量，不画走向，也不能崩。
+  return { pipeline: res.pipeline, series: res.series ?? null };
+}
+
+export async function fetchReportsOverview(input: { projectId?: string; days?: number } = {}): Promise<ReportsOverview> {
+  const params = new URLSearchParams();
+  if (input.projectId) params.set('projectId', input.projectId);
+  if (input.days) params.set('days', String(input.days));
+  params.set('tzOffset', String(new Date().getTimezoneOffset()));
+  const res = await apiRequest<{ overview: ReportsOverview }>(`/api/reports/overview?${params.toString()}`);
+  return res.overview;
+}
+
 export async function listReportFolders(projectId?: string): Promise<ReportFolder[]> {
   const qs = projectId ? `?projectId=${encodeURIComponent(projectId)}` : '';
   const res = await apiRequest<{ folders: ReportFolder[] }>(`/api/report-folders${qs}`);
@@ -392,7 +589,15 @@ export async function fetchReportRaw(id: string): Promise<string> {
   const url = apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
   const res = await fetch(url, { credentials: 'include' });
   if (!res.ok) {
-    throwApiError('GET', url, res, undefined, res.headers.get('x-cds-request-id') || undefined);
+    // 必须先把错误体读出来再抛：这里以前传的是 undefined，于是服务端明明回了
+    //「报告正文已丢失，原因是 …」，用户看到的却是「服务拒绝了请求，但没有返回
+    // 可读错误原因 (HTTP 404)」——最需要原因的那一屏恰好把原因扔了。
+    let parsed: unknown;
+    try {
+      const text = await res.text();
+      try { parsed = JSON.parse(text); } catch { parsed = text; }
+    } catch { /* 连体都读不出来时退回原行为 */ }
+    throwApiError('GET', url, res, parsed, res.headers.get('x-cds-request-id') || undefined);
   }
   return res.text();
 }
@@ -494,6 +699,24 @@ export async function updateTicketSsoConfig(input: Omit<TicketSsoConfig, 'hasCli
 export interface CdsInstanceMode {
   /** true = 预览实例（CDS 托管 CDS 的分支预览），宿主/docker 操作已禁用。 */
   previewInstance: boolean;
+  /** 预览实例装入的父实例数据镜像摘要；生产实例恒为 null / 缺席。 */
+  mirror?: PreviewMirrorSummary | null;
+}
+
+/** 父实例镜像摘要（services/preview-mirror.ts 的 LoadedPreviewMirrorSummary）。 */
+export interface PreviewMirrorSummary {
+  capturedAt: string;
+  label: string;
+  projects: number;
+  branches: number;
+  runningBranches: number;
+  containersWithMetrics: number;
+}
+
+export function formatMirrorCapturedAt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString('zh-CN', { hour12: false, month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 /** 实例模式探针（公开）。预览实例时 Shell 顶部渲染提示条。 */

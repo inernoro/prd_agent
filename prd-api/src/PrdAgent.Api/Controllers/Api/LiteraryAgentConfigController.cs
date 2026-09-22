@@ -76,32 +76,15 @@ public class LiteraryAgentConfigController : ControllerBase
     #region 模型查询（无参数，内部硬编码 appCallerCode）
 
     /// <summary>
-    /// 获取文学创作所有生图场景的模型池列表（文生图 + 图生图，合并去重）
-    /// 与视觉创作一致，用户从统一列表中选择模型池
+    /// 获取当前文学配图场景的模型目录。
+    ///
+    /// 文生图与图生图可以开放不同的逻辑模型，不能把两个目录合并后让前端任选；
+    /// 否则有参考图时可能把仅支持文生图的 PublicId 提交给图生图运行时。
+    /// 该旧入口与 models/image-gen 保持同一场景判据。
     /// </summary>
     [HttpGet("models")]
     public async Task<IActionResult> GetModels(CancellationToken ct)
-    {
-        var codes = new[] { AppCallerCodes.Text2Img, AppCallerCodes.Img2Img };
-        const string modelType = "generation";
-
-        var seen = new HashSet<string>();
-        var merged = new List<ModelPoolForAppResult>();
-
-        foreach (var code in codes)
-        {
-            var pools = await _modelPoolQuery.GetModelPoolsAsync(code, modelType, ct);
-            foreach (var pool in pools)
-            {
-                if (seen.Add(pool.Id))
-                {
-                    merged.Add(pool);
-                }
-            }
-        }
-
-        return Ok(ApiResponse<List<ModelPoolForAppResult>>.Ok(merged));
-    }
+        => await GetImageGenModels(ct);
 
     /// <summary>
     /// 获取文学创作"对话/标记生成"可用的模型池列表
@@ -327,18 +310,12 @@ public class LiteraryAgentConfigController : ControllerBase
         var adminId = GetAdminId();
 
         var config = await _db.ReferenceImageConfigs
-            .Find(x => x.Id == id && x.AppKey == AppKey)
+            .Find(x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId)
             .FirstOrDefaultAsync(ct);
 
         if (config == null)
         {
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
-        }
-
-        // 只有创建者可以编辑
-        if (config.CreatedByAdminId != adminId)
-        {
-            return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限编辑此配置"));
         }
 
         if (!string.IsNullOrWhiteSpace(request.Name))
@@ -363,7 +340,10 @@ public class LiteraryAgentConfigController : ControllerBase
 
         config.UpdatedAt = DateTime.UtcNow;
 
-        await _db.ReferenceImageConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.ReplaceOneAsync(
+            x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
+            config,
+            cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -378,8 +358,9 @@ public class LiteraryAgentConfigController : ControllerBase
         [FromForm] IFormFile file,
         CancellationToken ct)
     {
+        var adminId = GetAdminId();
         var config = await _db.ReferenceImageConfigs
-            .Find(x => x.Id == id && x.AppKey == AppKey)
+            .Find(x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId)
             .FirstOrDefaultAsync(ct);
 
         if (config == null)
@@ -437,7 +418,10 @@ public class LiteraryAgentConfigController : ControllerBase
         config.ImageUrl = stored.Url;
         config.UpdatedAt = DateTime.UtcNow;
 
-        await _db.ReferenceImageConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.ReplaceOneAsync(
+            x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
+            config,
+            cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -448,8 +432,9 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpDelete("reference-images/{id}")]
     public async Task<IActionResult> DeleteReferenceImage(string id, CancellationToken ct)
     {
+        var adminId = GetAdminId();
         var config = await _db.ReferenceImageConfigs
-            .Find(x => x.Id == id && x.AppKey == AppKey)
+            .Find(x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId)
             .FirstOrDefaultAsync(ct);
 
         if (config == null)
@@ -457,7 +442,9 @@ public class LiteraryAgentConfigController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
         }
 
-        await _db.ReferenceImageConfigs.DeleteOneAsync(x => x.Id == id, ct);
+        await _db.ReferenceImageConfigs.DeleteOneAsync(
+            x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
+            ct);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -468,8 +455,9 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpPost("reference-images/{id}/activate")]
     public async Task<IActionResult> ActivateReferenceImage(string id, CancellationToken ct)
     {
+        var adminId = GetAdminId();
         var config = await _db.ReferenceImageConfigs
-            .Find(x => x.Id == id && x.AppKey == AppKey)
+            .Find(x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId)
             .FirstOrDefaultAsync(ct);
 
         if (config == null)
@@ -477,16 +465,19 @@ public class LiteraryAgentConfigController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
         }
 
-        // 先取消所有其他配置的激活状态
+        // 只取消当前用户的其他激活配置，不能影响同一应用下的其他用户。
         await _db.ReferenceImageConfigs.UpdateManyAsync(
-            x => x.AppKey == AppKey && x.IsActive,
+            x => x.AppKey == AppKey && x.CreatedByAdminId == adminId && x.IsActive,
             Builders<ReferenceImageConfig>.Update.Set(x => x.IsActive, false),
             cancellationToken: ct);
 
         // 激活当前配置
         config.IsActive = true;
         config.UpdatedAt = DateTime.UtcNow;
-        await _db.ReferenceImageConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.ReplaceOneAsync(
+            x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
+            config,
+            cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -497,8 +488,9 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpPost("reference-images/{id}/deactivate")]
     public async Task<IActionResult> DeactivateReferenceImage(string id, CancellationToken ct)
     {
+        var adminId = GetAdminId();
         var config = await _db.ReferenceImageConfigs
-            .Find(x => x.Id == id && x.AppKey == AppKey)
+            .Find(x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId)
             .FirstOrDefaultAsync(ct);
 
         if (config == null)
@@ -508,7 +500,10 @@ public class LiteraryAgentConfigController : ControllerBase
 
         config.IsActive = false;
         config.UpdatedAt = DateTime.UtcNow;
-        await _db.ReferenceImageConfigs.ReplaceOneAsync(x => x.Id == id, config, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.ReplaceOneAsync(
+            x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
+            config,
+            cancellationToken: ct);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -519,8 +514,9 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpGet("reference-images/active")]
     public async Task<IActionResult> GetActiveReferenceImage(CancellationToken ct)
     {
+        var adminId = GetAdminId();
         var config = await _db.ReferenceImageConfigs
-            .Find(x => x.AppKey == AppKey && x.IsActive)
+            .Find(x => x.AppKey == AppKey && x.CreatedByAdminId == adminId && x.IsActive)
             .FirstOrDefaultAsync(ct);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
@@ -648,9 +644,9 @@ public class LiteraryAgentConfigController : ControllerBase
 
         var now = DateTime.UtcNow;
 
-        // 先取消所有其他配置的激活状态
+        // 旧入口也必须保持用户隔离，只切换当前用户的配置。
         await _db.ReferenceImageConfigs.UpdateManyAsync(
-            x => x.AppKey == AppKey && x.IsActive,
+            x => x.AppKey == AppKey && x.CreatedByAdminId == adminId && x.IsActive,
             Builders<ReferenceImageConfig>.Update.Set(x => x.IsActive, false),
             cancellationToken: ct);
 
@@ -695,9 +691,10 @@ public class LiteraryAgentConfigController : ControllerBase
     [HttpDelete("reference-image")]
     public async Task<IActionResult> ClearReferenceImage(CancellationToken ct)
     {
-        // 取消所有配置的激活状态
+        var adminId = GetAdminId();
+        // 兼容旧入口时也只取消当前用户的配置。
         await _db.ReferenceImageConfigs.UpdateManyAsync(
-            x => x.AppKey == AppKey && x.IsActive,
+            x => x.AppKey == AppKey && x.CreatedByAdminId == adminId && x.IsActive,
             Builders<ReferenceImageConfig>.Update.Set(x => x.IsActive, false),
             cancellationToken: ct);
 
@@ -924,4 +921,3 @@ public class UpdateLiteraryAgentConfigRequest
     public string? ReferenceImageSha256 { get; set; }
     public string? ReferenceImageUrl { get; set; }
 }
-

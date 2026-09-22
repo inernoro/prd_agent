@@ -30,6 +30,11 @@ public static class ImageGenModelConfigs
         BuildOpenRouterGptImage2Config(),
         BuildOpenAiGptImageConfig("gpt-image-2*", "GPT Image 2", "2026-08-14",
             "https://platform.openai.com/docs/api-reference/images/create"),
+        // OpenAI 的滚动别名与 gpt-image-1 使用同一套图片尺寸协议。
+        // 该别名会出现在网关 default-generation 的实际 Offering 中；漏掉它会让目录模型可用，
+        // 但 Agent 参数页误判为“没有尺寸能力”。
+        BuildOpenAiGptImageConfig("chatgpt-image-latest", "ChatGPT Image", "2026-09-22",
+            "https://platform.openai.com/docs/guides/image-generation"),
         // 精确匹配当前默认模型，不覆盖 1.5 或其他兼容平台的独立策略。
         BuildOpenAiGptImageConfig("gpt-image-1", "GPT Image 1", "2026-08-31",
             "https://developers.openai.com/api/docs/models/gpt-image-1"),

@@ -55,6 +55,11 @@ public sealed class VisualLogicalModelCatalogTests
                     new ModelGroupItem { PlatformId = "provider", ModelId = "gpt-image-2", HealthStatus = ModelHealthStatus.Healthy },
                 ],
             });
+            // 这条测试的不变量是「不该被这个调用方选到的模型，既不出现在清单里、也解析不出来」。
+            //
+            // 旧架构靠模型池表达它：池里没有的物理模型选不到。池退场之后，「谁能选什么」
+            // 由对外模型的放行名单回答，所以 outside 换成**没有放行给这个调用方**——
+            // 同一个不变量，换了它在新架构里的表达方式，不是把判据放宽。
             foreach (var (id, upstream, order) in new[] { ("image1", "gpt-image-1", 20), ("image2", "gpt-image-2", 10), ("outside", "outside-model", 0) })
             {
                 await Insert("llmgw_models", new LLMModel
@@ -66,7 +71,8 @@ public sealed class VisualLogicalModelCatalogTests
                     Id = id, PublicId = id, PublicIdNormalized = id, Name = id, ModelType = "generation",
                     Description = id + " 的业务用途",
                     Capabilities = ["image_generation", "text2img", "img2img", "vision_generation"],
-                    AllowedAppCallerCodes = [caller], DisplayOrder = order,
+                    AllowedAppCallerCodes = id == "outside" ? ["someone-else.agent::generation"] : [caller],
+                    DisplayOrder = order,
                 });
                 await Insert("llmgw_model_offerings", new GatewayModelOffering
                 {
@@ -81,6 +87,8 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.True(catalog[0].IsDefault);
             Assert.Equal("image2 的业务用途", catalog[0].Description);
             Assert.False(catalog[1].IsDefault);
+            Assert.Equal("gpt-image-2", Assert.Single(catalog[0].Models).ActualModelId);
+            Assert.Equal("gpt-image-1", Assert.Single(catalog[1].Models).ActualModelId);
             foreach (var choice in catalog)
             {
                 var resolved = await resolver.ResolveAsync(caller, "generation", choice.Code);
@@ -88,8 +96,42 @@ public sealed class VisualLogicalModelCatalogTests
                 Assert.Equal(choice.Code, resolved.LogicalModelPublicId);
                 Assert.Equal(choice.Code == "image1" ? "gpt-image-1" : "gpt-image-2", resolved.ActualModel);
             }
+            // 没放行给这个调用方的模型：点名也选不到。
             var outside = await resolver.ResolveAsync(caller, "generation", "outside");
             Assert.False(outside.Success);
+
+            // 目录与参数面板属于只读路径：即使线路已进入可半开探测窗口，也只能读取
+            // 解析能力快照，不能抢占真正业务请求需要的恢复租约。
+            var offerings = gateway.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            await offerings.UpdateOneAsync(
+                x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1))
+                    .Unset(x => x.HalfOpenLeaseUntil));
+            var halfOpenCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            var halfOpenMember = Assert.Single(halfOpenCatalog[0].Models);
+            Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
+            Assert.Equal("Unavailable", halfOpenMember.HealthStatus);
+            Assert.Equal(0, halfOpenMember.HealthScore);
+            var afterCatalogRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Null(afterCatalogRead.HalfOpenLeaseUntil);
+            var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
+            var afterRecoveryAttempt = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
+
+            await offerings
+                .UpdateManyAsync(
+                    FilterDefinition<GatewayModelOffering>.Empty,
+                    Builders<GatewayModelOffering>.Update
+                        .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow));
+            var unavailableCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.Equal(new[] { "image2", "image1" }, unavailableCatalog.Select(x => x.Code));
+            Assert.All(unavailableCatalog, item =>
+                Assert.Equal("Unavailable", Assert.Single(item.Models).HealthStatus));
+            Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
 
             await gateway.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models")
                 .UpdateManyAsync(FilterDefinition<GatewayLogicalModel>.Empty, Builders<GatewayLogicalModel>.Update.Set(x => x.Enabled, false));

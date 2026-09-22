@@ -29,6 +29,10 @@ public sealed class ModelCatalogGateBehaviorTests
 {
     private const string Caller = "catalog-gate-test.chat::chat";
     private const string PoolId = "catalog-gate-pool";
+    private const string LogicalModelId = "catalog-gate-logical";
+    /// <summary>两条物理模型文档的 _id，线路按 id 指向它们（与 SeedAsync 里的命名同一套）。</summary>
+    private const string CatalogModelId = "catalog-gate-gpt-4o";
+    private const string OutsideModelId = "catalog-gate-some-vendor-experimental-model-x";
     private const string PlatformId = "catalog-gate-platform";
     /// <summary>名录内：内置名录第一条就是它，走「查名录」那一支放行。</summary>
     private const string CatalogModel = "gpt-4o";
@@ -36,6 +40,9 @@ public sealed class ModelCatalogGateBehaviorTests
     private const string OutsideModel = "some-vendor/experimental-model-x";
     /// <summary>旧形态兑换所：别名只在 ModelAlias 里，没有 Models 数组，也就没有地方盖逐条标记。</summary>
     private const string LegacyExchangeId = "gw-exchange-catalog-gate-legacy";
+    /// <summary>旧形态兑换所挂在自己的对外模型下，由自己的调用方认领——否则它会顶替被测线路。</summary>
+    private const string LegacyCaller = "catalog-gate-legacy.chat::chat";
+    private const string LegacyLogicalModelId = "catalog-gate-logical-legacy";
     private const string LegacyAlias = "some-vendor/legacy-exchange-model";
 
     [Fact]
@@ -140,36 +147,29 @@ public sealed class ModelCatalogGateBehaviorTests
 
         try
         {
-            // 池里两个成员：优先级高的那个是名录外未放行（要被拦），低的那个在名录内（该顶上来）。
+            // 两条线路：顺位在前的那条是名录外未放行（要被拦），在后的那条在名录内（该顶上来）。
+            // Seed 默认把名录内那条排在前面，这里把顺位对调，让被拦的成为主选。
             await SeedAsync(gatewayData.Database, configuration);
-            await gatewayData.Database.GetCollection<BsonDocument>("llmgw_model_pools").UpdateOneAsync(
-                Builders<BsonDocument>.Filter.Eq("_id", PoolId),
-                Builders<BsonDocument>.Update.Set("Models", new BsonArray
-                {
-                    new BsonDocument
-                    {
-                        { "ModelId", OutsideModel }, { "PlatformId", PlatformId }, { "Priority", 1 },
-                        { "HealthStatus", 0 }, { "IsMain", true },
-                    },
-                    new BsonDocument
-                    {
-                        { "ModelId", CatalogModel }, { "PlatformId", PlatformId }, { "Priority", 2 },
-                        { "HealthStatus", 0 }, { "IsMain", false },
-                    },
-                }));
+            var offerings = gatewayData.Database.GetCollection<BsonDocument>("llmgw_model_offerings");
+            await offerings.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", "catalog-gate-offering-out"),
+                Builders<BsonDocument>.Update.Set("Priority", 10));
+            await offerings.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", "catalog-gate-offering-in"),
+                Builders<BsonDocument>.Update.Set("Priority", 20));
 
             var resolver = new ModelResolver(
                 mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
-            // 不钉成员：走池调度，主选会是优先级最高的那个（名录外未放行）。
+            // 不点名：走对外模型的顺位，主选是排在最前的那条（名录外未放行）。
             var routed = await resolver.ResolveAsync(Caller, ModelTypes.Chat);
 
             routed.FailureCode.ShouldNotBe(
                 GatewayRouteFailure.ModelNotInCatalog,
-                "池里还有过门的成员，却让整条请求失败——一个成员的问题被放大成整条 appCaller 不可用");
+                "这条模型下还有过门的线路，却让整条请求失败——一个成员的问题被放大成整条 appCaller 不可用");
             routed.Success.ShouldBeTrue(routed.ErrorMessage);
             routed.ActualModel.ShouldBe(
                 CatalogModel,
-                "顶上来的必须是过门的那个成员，不能把被拦下的那个原样放出去");
+                "顶上来的必须是过门的那条线路，不能把被拦下的那个原样放出去");
         }
         finally
         {
@@ -290,9 +290,10 @@ public sealed class ModelCatalogGateBehaviorTests
                 mapData, configuration, NullLogger<ModelResolver>.Instance, gatewayData);
 
             // 兑换所声明了它，但条目上没有放行标记 → 必须被这道门拦下并点名错误码。
-            var blocked = await resolver.ResolveAsync(
-                Caller, ModelTypes.Chat,
-                expectedModel: exchangeAlias, pinnedPlatformId: exchangeId, pinnedModelId: exchangeAlias);
+            // 走对外模型那条线路（池退场后兑换所只剩这个入口），不再用 pinned 参数：
+            // pinned 会先查 llmgw_platforms，而兑换所不在那张表里，于是在名录门之前
+            // 就以「平台不存在」失败——那条用例会变成一条测不到门的绿灯（形状 4b）。
+            var blocked = await resolver.ResolveAsync(Caller, ModelTypes.Chat);
             blocked.Success.ShouldBeFalse("兑换所里没盖过放行标记的别名不该被解析出来");
             blocked.FailureCode.ShouldBe(
                 GatewayRouteFailure.ModelNotInCatalog,
@@ -305,9 +306,7 @@ public sealed class ModelCatalogGateBehaviorTests
                 Builders<BsonDocument>.Filter.Eq("_id", exchangeId),
                 Builders<BsonDocument>.Update.Set("Models.0.AllowedOutsideCatalog", true));
 
-            var afterStamp = await resolver.ResolveAsync(
-                Caller, ModelTypes.Chat,
-                expectedModel: exchangeAlias, pinnedPlatformId: exchangeId, pinnedModelId: exchangeAlias);
+            var afterStamp = await resolver.ResolveAsync(Caller, ModelTypes.Chat);
             afterStamp.FailureCode.ShouldNotBe(
                 GatewayRouteFailure.ModelNotInCatalog,
                 "盖过放行标记之后，名录门不该再拦它——拦的依据必须是标记本身");
@@ -316,11 +315,11 @@ public sealed class ModelCatalogGateBehaviorTests
             // 解析器用 GetEffectiveModels() 选得出它，这道门若只读 Models 数组就会判它
             // 「没声明过」而拦下——存量兑换所在 enforce 档下当场全断。它们是逐条放行落地
             // **之前**由管理员声明的，与名录门上线前已入库的模型同一处境，必须放行。
-            var legacyBlocked = await resolver.ResolveAsync(
-                Caller, ModelTypes.Chat,
-                expectedModel: LegacyAlias, pinnedPlatformId: LegacyExchangeId, pinnedModelId: LegacyAlias);
-            legacyBlocked.FailureCode.ShouldNotBe(
-                GatewayRouteFailure.ModelNotInCatalog,
+            // 走它自己的调用方 → 它自己的对外模型 → 只有这一条候选，放行与否只能由这道门决定。
+            var legacy = await resolver.ResolveAsync(LegacyCaller, ModelTypes.Chat);
+            legacy.Success.ShouldBeTrue(legacy.ErrorMessage);
+            legacy.ActualModel.ShouldBe(
+                LegacyAlias,
                 "旧形态兑换所的别名不该被这道门拦下：它没有地方盖逐条标记，而它确实是管理员声明过的");
         }
         finally
@@ -347,30 +346,71 @@ public sealed class ModelCatalogGateBehaviorTests
                 Status = "configured",
                 ModelPoolId = PoolId,
             });
+        await database.GetCollection<GatewayAppCallerRecord>("llmgw_app_callers")
+            .InsertOneAsync(new GatewayAppCallerRecord
+            {
+                TenantId = GatewayTenantDefaults.InternalTenantId,
+                AppCallerCode = LegacyCaller,
+                RequestType = ModelTypes.Chat,
+                Status = "configured",
+            });
 
-        var pool = new ModelGroup
+        // 两个对外模型，各挂一条指向兑换所的线路（新旧两种兑换所形态各一个）。
+        //
+        // 这里原本建的是模型池，靠池成员的 PlatformId 指到兑换所。池退场后兑换所的入口
+        // 只剩「对外模型挂一条 TargetKind=exchange 的线路」，所以构造跟着换——
+        // 要验的事没变：兑换所里没盖过放行标记的别名，名录门必须拦下并点名是它拦的。
+        await InsertAsync(database, "llmgw_logical_models", new GatewayLogicalModel
         {
-            Id = PoolId,
-            Name = "兑换所用例池",
-            Code = "catalog-gate-exchange",
+            Id = LogicalModelId,
+            PublicId = "catalog-gate-exchange",
+            PublicIdNormalized = "catalog-gate-exchange",
+            Name = "名录门兑换所用例",
             ModelType = ModelTypes.Chat,
-            Models =
-            [
-                new ModelGroupItem
-                {
-                    PlatformId = exchangeId, ModelId = alias,
-                    Priority = 0, HealthStatus = ModelHealthStatus.Healthy,
-                },
-                new ModelGroupItem
-                {
-                    PlatformId = LegacyExchangeId, ModelId = LegacyAlias,
-                    Priority = 1, HealthStatus = ModelHealthStatus.Healthy,
-                },
-            ],
-        };
-        var poolDocument = pool.ToBsonDocument();
-        poolDocument["TenantId"] = GatewayTenantDefaults.InternalTenantId;
-        await database.GetCollection<BsonDocument>("llmgw_model_pools").InsertOneAsync(poolDocument);
+            Capabilities = ["chat"],
+            IsDefaultForType = true,
+            Enabled = true,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-exchange-offering",
+            LogicalModelId = LogicalModelId,
+            TargetId = exchangeId,
+            TargetKind = "exchange",
+            UpstreamModelId = alias,
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 10,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
+        // 旧形态兑换所必须挂在**另一个**对外模型下，由另一个调用方认领。
+        // 第一版把两条线路挂在同一个对外模型上，结果是：新形态那条确实被名录门拦了，
+        // 而旧形态这条按设计放行、顺位顶了上来，整条解析成功——用例断言的「被拦下」于是判假，
+        // 我一度据此写了「名录门在线路路径上漏了兑换所」的结论，那个结论不成立。
+        // 拆开之后两条断言各自只剩一条候选，各测各的（形状 4b：候选还有别人时，断言测不到被测项）。
+        await InsertAsync(database, "llmgw_logical_models", new GatewayLogicalModel
+        {
+            Id = LegacyLogicalModelId,
+            PublicId = "catalog-gate-exchange-legacy",
+            PublicIdNormalized = "catalog-gate-exchange-legacy",
+            Name = "名录门旧形态兑换所用例",
+            ModelType = ModelTypes.Chat,
+            Capabilities = ["chat"],
+            DefaultForAppCallerCodes = [LegacyCaller],
+            Enabled = true,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-legacy-offering",
+            LogicalModelId = LegacyLogicalModelId,
+            TargetId = LegacyExchangeId,
+            TargetKind = "exchange",
+            UpstreamModelId = LegacyAlias,
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 10,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
 
         // TargetUrl 与可解密的 TargetApiKeyEncrypted 是**必填**：缺任一项，解析在名录门之前
         // 就以 OfferingUnresolvable 失败了，这条用例会变成一条测不到门的绿灯（形状 4b）。
@@ -446,29 +486,42 @@ public sealed class ModelCatalogGateBehaviorTests
                 ModelPoolId = PoolId,
             });
 
-        var pool = new ModelGroup
+        // 一个对外模型 + 两条线路：名录内的顺位在前，名录外未放行的在后。
+        // 这里原本建的是模型池；池退场后，「一条链上混进一个过不了名录门的成员」
+        // 换成「一个对外模型下挂着一条过不了门的线路」——要防的事没变。
+        await InsertAsync(database, "llmgw_logical_models", new GatewayLogicalModel
         {
-            Id = PoolId,
-            Name = "名录门用例池",
-            Code = "catalog-gate",
+            Id = LogicalModelId,
+            PublicId = "catalog-gate",
+            PublicIdNormalized = "catalog-gate",
+            Name = "名录门用例",
             ModelType = ModelTypes.Chat,
-            Models =
-            [
-                new ModelGroupItem
-                {
-                    PlatformId = PlatformId, ModelId = CatalogModel,
-                    Priority = 0, HealthStatus = ModelHealthStatus.Healthy,
-                },
-                new ModelGroupItem
-                {
-                    PlatformId = PlatformId, ModelId = OutsideModel,
-                    Priority = 1, HealthStatus = ModelHealthStatus.Healthy,
-                },
-            ],
-        };
-        var poolDocument = pool.ToBsonDocument();
-        poolDocument["TenantId"] = GatewayTenantDefaults.InternalTenantId;
-        await database.GetCollection<BsonDocument>("llmgw_model_pools").InsertOneAsync(poolDocument);
+            Capabilities = ["chat"],
+            IsDefaultForType = true,
+            Enabled = true,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-offering-in",
+            LogicalModelId = LogicalModelId,
+            TargetId = CatalogModelId,
+            TargetKind = "model",
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 10,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
+        await InsertAsync(database, "llmgw_model_offerings", new GatewayModelOffering
+        {
+            Id = "catalog-gate-offering-out",
+            LogicalModelId = LogicalModelId,
+            TargetId = OutsideModelId,
+            TargetKind = "model",
+            Protocol = "openai",
+            Enabled = true,
+            Priority = 20,
+            HealthStatus = ModelHealthStatus.Healthy,
+        });
 
         var encryptedKey = ApiKeyCryptoKeyRing.Encrypt("sk-catalog-gate-test", configuration);
         await InsertAsync(database, "llmgw_platforms", new LLMPlatform

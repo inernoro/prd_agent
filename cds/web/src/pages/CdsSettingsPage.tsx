@@ -1,25 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
-import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
-import {
-  Activity,
-  Boxes,
-  Database,
-  Github,
-  History,
-  KeyRound,
-  Monitor,
-  Network,
-  Plug,
-  Save,
-  ServerCog,
-  Settings,
-  ShieldAlert,
-  ShieldCheck,
-  TerminalSquare,
-  Timer,
-  Users,
-  Wrench,
-} from 'lucide-react';
+import { LoadingBlock } from '@/pages/cds-settings/components';
+import { Activity, BellRing, Boxes, Database, Github, History, KeyRound, Monitor, Network, Plug, Save, ServerCog, Settings, ShieldAlert, ShieldCheck, TerminalSquare, Timer, Users, Wrench } from 'lucide-react';
 
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
@@ -35,6 +16,7 @@ const UsersTab = lazy(() => import('@/pages/cds-settings/tabs/UsersTab').then((m
 const ActivityTab = lazy(() => import('@/pages/cds-settings/tabs/ActivityTab').then((m) => ({ default: m.ActivityTab })));
 const ClusterTab = lazy(() => import('@/pages/cds-settings/tabs/ClusterTab').then((m) => ({ default: m.ClusterTab })));
 const ConnectionsTab = lazy(() => import('@/pages/cds-settings/tabs/ConnectionsTab').then((m) => ({ default: m.ConnectionsTab })));
+const AlarmNotifyTab = lazy(() => import('@/pages/cds-settings/tabs/AlarmNotifyTab').then((m) => ({ default: m.AlarmNotifyTab })));
 const ConfigSnapshotsTab = lazy(() => import('@/pages/cds-settings/tabs/ConfigSnapshotsTab').then((m) => ({ default: m.ConfigSnapshotsTab })));
 const GitHubAppTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubAppTab').then((m) => ({ default: m.GitHubAppTab })));
 const GitHubAppWhitelistTab = lazy(() => import('@/pages/cds-settings/tabs/GitHubAppWhitelistTab').then((m) => ({ default: m.GitHubAppWhitelistTab })));
@@ -72,6 +54,7 @@ type TabValue =
   | 'cluster'
   | 'remote-hosts'
   | 'connections'
+  | 'alarm-notify'
   | 'global-vars'
   | 'loading-pages'
   | 'snapshots'
@@ -119,6 +102,7 @@ const tabGroups: TabGroup[] = [
       { value: 'github', label: 'GitHub 集成', icon: Github },
       { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },
       { value: 'connections', label: '外部接入', icon: Plug },
+      { value: 'alarm-notify', label: '通知通道', icon: BellRing },
     ],
   },
   {
@@ -287,12 +271,9 @@ function getInitialTab(): TabValue {
 }
 
 function SettingsTabFallback(): JSX.Element {
-  // 2026-05-28:用品牌 loader 替换裸"加载设置..." 文本,跟 CDS 视觉调性一致。
-  return (
-    <div className="flex min-h-[12.5rem] items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-4">
-      <CdsLogoLoader size="lg" inline={false} label={<span className="text-sm text-muted-foreground">加载设置…</span>} />
-    </div>
-  );
+  // 页签 chunk 未到时画的骨架，与页签自己等数据时的 LoadingBlock 是同一副横条：
+  // 之前这里是居中的品牌 logo，页签挂上后再换成横条——两段等待两副骨架（2026-09-17 用户反馈）。
+  return <LoadingBlock label="加载设置" />;
 }
 
 export function CdsSettingsPage(): JSX.Element {
@@ -453,6 +434,9 @@ export function CdsSettingsPage(): JSX.Element {
                 </TabsContent>
                 <TabsContent value="connections">
                   {activeTab === 'connections' ? <ConnectionsTab onToast={setToast} /> : null}
+                </TabsContent>
+                <TabsContent value="alarm-notify">
+                  {activeTab === 'alarm-notify' ? <AlarmNotifyTab /> : null}
                 </TabsContent>
                 <TabsContent value="global-vars">
                   {activeTab === 'global-vars' ? <GlobalVarsTab onToast={setToast} /> : null}

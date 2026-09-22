@@ -278,6 +278,12 @@ var modelGroups = mapDatabase.GetCollection<BsonDocument>("model_groups");
 var platforms = mapDatabase.GetCollection<BsonDocument>("llmplatforms");
 var models = mapDatabase.GetCollection<BsonDocument>("llmmodels");
 var modelExchanges = mapDatabase.GetCollection<BsonDocument>("model_exchanges");
+// 删线路前要问一句「还有没有在途任务等着它」，那批任务在 MAP 库里（见 OfferingReferencePolicy）。
+var videoGenRuns = mapDatabase.GetCollection<BsonDocument>(OfferingReferencePolicy.VideoRunCollectionName);
+// 走 videogen-direct 提交的任务不进 run 表，它的 OfferingId 只落在这张归属表里。
+// 删线路的在途闸两张表都要查，只查一张等于对其中一类任务完全不设防（第 74 轮 review）。
+var directVideoJobOwnerships = mapDatabase.GetCollection<BsonDocument>(
+    OfferingReferencePolicy.DirectVideoOwnershipCollectionName);
 var shadows = gatewayDatabase.GetCollection<BsonDocument>("llmshadow_comparisons");
 var gwAppCallers = gatewayDatabase.GetCollection<BsonDocument>("llmgw_app_callers");
 var promptPolicies = gatewayDatabase.GetCollection<BsonDocument>("llmgw_prompt_policies");
@@ -336,6 +342,40 @@ await recoveryOperations.Indexes.CreateManyAsync(new[]
         Builders<GatewayRecoveryOperation>.IndexKeys.Ascending(x => x.TenantId).Descending(x => x.CreatedAt),
         new CreateIndexOptions { Name = "idx_llmgw_recovery_tenant_created" }),
 });
+/*
+  「同租户同用途最多一个默认」升成库级不变量。
+
+  端点里的「先清旧默认、再置新的」在单个请求内是对的，但两个管理员同时改时，
+  两边都能清完各自看到的旧默认、再各自置上自己那个——两次写都成功，库里于是有两个默认，
+  而不点名的请求解析到哪个全看排序，两个人的界面都显示「已生效」。
+  应用层补不了这个洞：Mongo 没有跨文档的原子性可用，任何「查一下有没有别人」都在竞态窗口里。
+
+  部分唯一索引把它变成 DB 层的事：第二个写直接撞 E11000，端点如实回 409。
+  存量里已经有两个默认时建不出来——那不是崩溃的理由，如实报出来让人去清理，
+  在那之前端点仍按老样子工作（degradation-must-alarm：降级要响铃，不许静默）。
+*/
+await IndexAdvisory.ReportIfMissingAsync(
+    gwLogicalModels,
+    "uniq_llmgw_logical_default_per_type",
+    "两个管理员同时把不同模型设成同一个用途的默认时，两次写都会成功，库里于是有两个默认，"
+    + "而不点名的请求解析到哪个全看排序，两个人的界面都显示「已生效」");
+
+/*
+  认领也是同一类不变量：同用途下一个调用方最多被一个模型认领，而端点里的
+  「先摘别人、再置自己」同样挡不住两个管理员同时改。
+
+  认领存在数组里，所以走**多键**唯一索引：数组的每个元素各生成一个键
+  (TenantId, ModelType, 某个调用方 code)，跨文档唯一——正好是要的那条不变量。
+
+  部分过滤器判的是「数组里至少有一个字符串元素」：空数组在多键索引里会被记成
+  undefined，那样所有「一个都没认领」的模型会互相撞车，索引根本建不起来。
+*/
+await IndexAdvisory.ReportIfMissingAsync(
+    gwLogicalModels,
+    "uniq_llmgw_logical_claim_per_type",
+    "两个管理员同时把同一个调用方认领到不同模型时，两次写都会成功，那个调用方于是被两条模型"
+    + "同时认领着，解析到哪个全看排序");
+
 await GatewayRecoveryOperations.RepairExpiredAsync(gatewayDatabase);
 await TenantOwnerAuthority.BackfillAsync(tenants, memberships);
 await users.Indexes.CreateOneAsync(new CreateIndexModel<LlmGwUser>(
@@ -2797,6 +2837,11 @@ app.MapGet("/gw/logs/summary", async (
         .Include("OutputTokens")
         .Include("InputPricePerMillion")
         .Include("OutputPricePerMillion")
+        .Include("CachedInputPricePerMillion")
+        .Include("CacheReadInputTokens")
+        .Include("EstimatedCacheReadCost")
+        .Include("CostStatus")
+        .Include("CostUnpricedReason")
         .Include("EstimatedCost")
         .Include("EstimatedCostCurrency")
         .Include("EstimatedCostUsd")
@@ -2822,16 +2867,50 @@ app.MapGet("/gw/logs/summary", async (
     var internalStatusQueries = physicalAttempts.LongCount(IsProviderPollAttempt);
 
     var durations = docs.Select(d => d.AsNullableLong("DurationMs")).Where(d => d is > 0).Select(d => d!.Value).ToList();
-    var pricedDocs = docs
+    // 「这次调用算没算出钱」由写入时的 CostStatus 直接回答，不再在这里按价格字段反推一遍。
+    // 反推是判据分裂的温床：写入侧改了口径、统计侧还按老规矩算，两边各自正确、合起来对不上。
+    // 存量日志没有这个字段，才回退到旧的反推口径。
+    var classified = docs
         .Select(d => new
         {
             Amount = d.AsNullableDecimal("EstimatedCost"),
             Currency = NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
             Usd = d.AsNullableDecimal("EstimatedCostUsd"),
-            Complete = (d.AsNullableInt("InputTokens") is not > 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
-                && (d.AsNullableInt("OutputTokens") is not > 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null),
+            Status = ResolveLogCostStatus(d),
+            Reason = d.AsNullableString("CostUnpricedReason"),
+            Model = d.AsNullableString("Model"),
+            Provider = d.AsNullableString("Provider"),
+            CacheReadTokens = d.AsNullableInt("CacheReadInputTokens") ?? 0,
+            CacheReadCost = d.AsNullableDecimal("EstimatedCacheReadCost"),
+            InputPrice = d.AsNullableDecimal("InputPricePerMillion"),
         })
-        .Where(x => x.Amount is not null && x.Currency is not null && x.Complete)
+        .ToList();
+
+    var pricedDocs = classified
+        .Where(x => x.Status == GatewayCostStatusNames.Priced && x.Amount is not null && x.Currency is not null)
+        .ToList();
+
+    // 缓存省了多少：同样这批 token 如果按输入全价算要花多少，减去实际按缓存价算出来的。
+    // 两者都拿不到就不出这个数，不猜。
+    var cacheSavings = classified
+        .Where(x => x.Status == GatewayCostStatusNames.Priced && x.CacheReadTokens > 0
+                    && x.CacheReadCost is not null && x.InputPrice is not null)
+        .Sum(x => Math.Max(0m, x.CacheReadTokens * x.InputPrice!.Value / 1_000_000m - x.CacheReadCost!.Value));
+
+    var topUnpriced = classified
+        .Where(x => x.Status is GatewayCostStatusNames.Unpriced or GatewayCostStatusNames.StaleCurrency)
+        .GroupBy(x => (Model: x.Model ?? "unknown", x.Provider, x.Status))
+        .Select(g => new UnpricedModelBucket
+        {
+            Model = g.Key.Model,
+            Provider = g.Key.Provider,
+            Status = g.Key.Status,
+            Requests = g.LongCount(),
+            Reason = g.Select(x => x.Reason).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)),
+        })
+        .OrderByDescending(x => x.Requests)
+        .ThenBy(x => x.Model, StringComparer.Ordinal)
+        .Take(10)
         .ToList();
     var estimatedCosts = pricedDocs
         .GroupBy(x => x.Currency!, StringComparer.Ordinal)
@@ -2861,6 +2940,11 @@ app.MapGet("/gw/logs/summary", async (
         PricedRequests = pricedDocs.Count,
         UnknownCostRequests = docs.Count - pricedDocs.Count,
         PriceCoveragePercent = docs.Count == 0 ? 0m : Math.Round(pricedDocs.Count * 100m / docs.Count, 1, MidpointRounding.AwayFromZero),
+        CacheSavingsUsd = cacheSavings > 0 ? Math.Round(cacheSavings, 6, MidpointRounding.AwayFromZero) : null,
+        UnpricedRequests = classified.LongCount(x => x.Status == GatewayCostStatusNames.Unpriced),
+        StaleCurrencyRequests = classified.LongCount(x => x.Status == GatewayCostStatusNames.StaleCurrency),
+        NoUsageRequests = classified.LongCount(x => x.Status == GatewayCostStatusNames.NoUsage),
+        TopUnpricedModels = topUnpriced,
         EstimatedCosts = estimatedCosts,
         AverageDurationMs = durations.Count == 0 ? null : (long)Math.Round(durations.Average()),
         TransportDistribution = BuildBucket(docs, "GatewayTransport", fallbackKey: "unknown"),
@@ -2901,6 +2985,11 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
         .Include("OutputTokens")
         .Include("InputPricePerMillion")
         .Include("OutputPricePerMillion")
+        .Include("CachedInputPricePerMillion")
+        .Include("CacheReadInputTokens")
+        .Include("EstimatedCacheReadCost")
+        .Include("CostStatus")
+        .Include("CostUnpricedReason")
         .Include("EstimatedCost")
         .Include("EstimatedCostCurrency")
         .Include("EstimatedCostUsd")
@@ -2936,15 +3025,15 @@ app.MapGet("/gw/overview", async (HttpContext http, string? from, string? to) =>
         .Select(d => d!.Value)
         .OrderBy(d => d)
         .ToList();
+    // 与上面那段同源：算没算出钱一律读 CostStatus，存量日志才回退反推。
     var pricedDocs = docs
         .Select(d => new
         {
             Amount = d.AsNullableDecimal("EstimatedCost"),
             Currency = NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
-            Complete = (d.AsNullableInt("InputTokens") is not > 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
-                && (d.AsNullableInt("OutputTokens") is not > 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null),
+            Status = ResolveLogCostStatus(d),
         })
-        .Where(x => x.Amount is not null && x.Currency is not null && x.Complete)
+        .Where(x => x.Status == GatewayCostStatusNames.Priced && x.Amount is not null && x.Currency is not null)
         .ToList();
     var estimatedCosts = pricedDocs
         .GroupBy(x => x.Currency!, StringComparer.Ordinal)
@@ -3293,37 +3382,6 @@ app.MapGet("/gw/pool-types", async (HttpContext http) =>
     return Json(ApiEnvelope<PoolTypesData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
-// 程序池类型初始化遵循“有则增加，无则不变”：只补缺失类型、缺失默认池和兼容的新成员。
-app.MapPost("/gw/pool-types/ensure", async (HttpContext http) =>
-{
-    var tenantId = TenantAccess.GetRequired(http).TenantId;
-    var ensured = await EnsureGatewayModelPoolTypesAsync(
-        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenantId, internalTenantId, appendModels: true);
-    var data = await BuildPoolTypesDataAsync(gwModelPoolTypes, gwModelPools, gwPlatforms, gwModels, gwModelExchanges, tenantId);
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool_type.ensure_defaults",
-        targetType: "llmgw_model_pool_type",
-        targetId: "all",
-        targetName: "program pool types",
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "typesCreated", ensured.TypesCreated },
-            { "poolsCreated", ensured.PoolsCreated },
-            { "modelsAppended", ensured.ModelsAppended },
-            { "appendOnly", true },
-        });
-    return Json(ApiEnvelope<EnsurePoolTypesResult>.Ok(new EnsurePoolTypesResult
-    {
-        TypesCreated = ensured.TypesCreated,
-        PoolsCreated = ensured.PoolsCreated,
-        ModelsAppended = ensured.ModelsAppended,
-        Types = data,
-    }), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
 
 // ── 池成员可解析性：建索引 + 归一 ───────────────────────────────────────────────
 //
@@ -3401,10 +3459,6 @@ async Task<PoolResolutionIndex> BuildPoolResolutionIndexAsync(HttpContext http)
         platformIds, modelDocs, exchangeDocs,
         existingPlatformIds, existingModels, existingExchanges);
 }
-
-/// <summary>建一次索引、映射一个池并归一。变更端点用它替代裸 MapPool。</summary>
-async Task<PoolItem> MapPoolResolvedAsync(HttpContext http, BsonDocument doc)
-    => ApplyPoolMemberResolution(MapPool(doc), await BuildPoolResolutionIndexAsync(http));
 
 app.MapGet("/gw/pools", async (HttpContext http, string? modelType, int? sinceHours) =>
 {
@@ -3617,6 +3671,942 @@ app.MapGet("/gw/logical-models/capability-audit", async (HttpContext http) =>
 }).RequireAuthorization("LogsRead");
 
 // 逻辑模型目录：调用方只看到 PublicId；Offerings 展示实际 Provider/Endpoint 供运维维护。
+// ───────────────── 模型名录补登：让系统「认识」上游新出的模型，不用改代码 ─────────────────
+//
+// 名录回答的是「这个模型是什么」：算哪几种用途、能不能吃图、出品方是谁、有哪些等价写法。
+// 它此前只有写死在 ModelCatalog.cs 里的二十来条。实测线上两个上游共 573 个模型，
+// 落在名录里的只有 27 个——其余 95% 走关键词猜测，其中一百多个连一条用途都猜不出来，
+// 导进来就是「哑」模型：模型池选型时不参与任何用途匹配。
+//
+// 于是「上游出了个新模型」在此之前等于「改那个文件、重编、发一次版」。补登让它变成
+// 在导入那一屏填一次。合并规则只有一条，且只在 ModelCatalog.Find 里实现：
+// **同一个标识，补登的赢；补登里没有的，回落到代码内置那张表。**
+//
+// 与生图契约那份的区别：那份跨进程（console-api 写、prd-api 读）只能轮询、最长 60 秒生效；
+// 这份只有 console-api 自己读，所以端点每次现查现传，**改完立刻生效**。
+var gwCatalogEntries = gatewayDatabase.GetCollection<BsonDocument>("llmgw_model_catalog_entries");
+
+/*
+  补登的键空间也升成库级不变量。
+
+  端点里的「先查一遍有没有人占了这个键、再写」在单个请求里是对的，两个管理员同时补登同一个
+  标识时却都能查空、都写成功——库里于是有两条补登抢同一个键，而运行时按哪条算全看排序，
+  两个人的界面都显示「已保存」。应用层补不了这个洞：任何「查一下有没有别人」都在竞态窗口里。
+
+  规范标识与等价写法共用一个键空间，所以走**多键**唯一索引：Keys 数组的每个元素各生成一个
+  (TenantId, 某个键)，跨文档唯一——正好是要的那条不变量。部分过滤器判「数组里至少有一个
+  字符串元素」，否则空数组在多键索引里记成 undefined，所有空补登会互相撞车。
+
+  存量文档没有 Keys 字段，先按 CanonicalId + Aliases 补齐再建索引；补不齐或建不出来都如实
+  报出来，端点仍按老样子工作（degradation-must-alarm：降级要响铃，不许静默）。
+*/
+try
+{
+    var legacyEntries = await gwCatalogEntries
+        .Find(Builders<BsonDocument>.Filter.Exists("Keys", false))
+        .ToListAsync();
+    foreach (var legacy in legacyEntries)
+    {
+        var legacyKeys = new[] { legacy.GetStringOrEmpty("CanonicalId") }
+            .Concat(GetStringArray(legacy, "Aliases"))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        await gwCatalogEntries.UpdateOneAsync(
+            Builders<BsonDocument>.Filter.Eq("_id", legacy.GetStringOrEmpty("_id")),
+            Builders<BsonDocument>.Update.Set("Keys", new BsonArray(legacyKeys)));
+    }
+
+}
+catch (MongoException ex)
+{
+    Console.WriteLine(
+        "[llmgw] 给存量补登补 Keys 字段时失败（" + ex.Message + "）："
+        + "缺 Keys 的那几条补登不受唯一索引保护，两条补登可以抢同一个标识。"
+        + "先确认控制台连得上网关库，再重启一次补齐");
+}
+
+await IndexAdvisory.ReportIfMissingAsync(
+    gwCatalogEntries,
+    "uniq_llmgw_catalog_entry_key",
+    "两个管理员同时给同一个标识（或它的等价写法）补登时，两条都会存进去，"
+    + "上游清单那一屏取到哪条全看排序，而两个人的界面都显示「已保存」");
+
+// 读补登表并建成索引。上游清单那一屏每次都现查，所以补完刷新页面就能看见。
+async Task<ModelCatalog.CatalogOverrides> LoadCatalogOverridesAsync(HttpContext http)
+{
+    var docs = await gwCatalogEntries
+        .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("Enabled", true)))
+        .ToListAsync();
+    return ModelCatalog.CatalogOverrides.From(docs.Select(ToCatalogModel).Where(x => x is not null)!);
+}
+
+static CatalogModel? ToCatalogModel(BsonDocument d)
+{
+    var canonical = d.GetStringOrEmpty("CanonicalId");
+    if (canonical.Length == 0) return null;
+    return new CatalogModel(
+        canonical,
+        d.GetStringOrEmpty("DisplayName"),
+        d.GetStringOrEmpty("Vendor"),
+        GetStringArray(d, "Capabilities"),
+        d.AsNullableBool("AcceptsImageInput") ?? false,
+        d.AsNullableBool("RequiresImageInput") ?? false,
+        GetStringArray(d, "Aliases"));
+}
+
+app.MapGet("/gw/catalog-entries", async (HttpContext http) =>
+{
+    var docs = await gwCatalogEntries.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty))
+        .ToListAsync();
+    var items = docs
+        .OrderBy(d => d.GetStringOrEmpty("CanonicalId"), StringComparer.Ordinal)
+        .Select(MapCatalogEntry)
+        .ToList();
+    return Json(ApiEnvelope<CatalogEntriesData>.Ok(new CatalogEntriesData
+    {
+        Items = items,
+        Total = items.Count,
+        // 内置那张表的条数与内容：让人知道「补登 0 条不等于系统什么都不认识」，
+        // 也让「照这条补一份」有个模板可抄。它直接来自代码，不是另抄的一份。
+        BuiltinCount = ModelCatalog.All.Count,
+        Builtin = ModelCatalog.All.Select(x => new CatalogEntryItem
+        {
+            CanonicalId = x.CanonicalId,
+            DisplayName = x.DisplayName,
+            Vendor = x.Vendor,
+            Capabilities = [.. x.Capabilities],
+            AcceptsImageInput = x.AcceptsImageInput,
+            RequiresImageInput = x.RequiresImageInput,
+            Aliases = [.. x.Aliases ?? []],
+        }).ToList(),
+        // 控制台只让填这些用途名；与运行时的能力词表同源（守卫钉住）。
+        KnownCapabilities = [.. LogicalModelCapabilityPolicy.CanonicalCapabilities.OrderBy(x => x, StringComparer.Ordinal)],
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/catalog-entries", async (HttpContext http, [FromBody] UpsertCatalogEntryRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateCatalogEntry(body);
+    if (error is not null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var canonical = body.CanonicalId!.Trim().ToLowerInvariant();
+    var conflict = await FindCatalogKeyConflictAsync(gwCatalogEntries, http, body, excludeId: null);
+    if (conflict is not null)
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail("ENTRY_EXISTS", conflict), jsonOptions, 409);
+
+    var doc = BuildCatalogEntryDocument(body, tenantId, existing: null);
+    try
+    {
+        await gwCatalogEntries.InsertOneAsync(doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        // 上面查过一遍没人占，写的时候还是撞上了：说明在这几毫秒里另一个管理员补登了同一个键。
+        // 索引挡住了，端点就得如实说是冲突，而不是把它变成 500。
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail(
+            "ENTRY_EXISTS",
+            "这个标识刚刚被另一条补登占用了——规范标识与等价写法共用同一个键空间。刷新一下看看那条，别再加一条"),
+            jsonOptions, 409);
+    }
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "catalog_entry.create", targetType: "llmgw_model_catalog_entry",
+        targetId: doc.GetStringOrEmpty("_id"), targetName: canonical, success: true, reason: null,
+        changes: new BsonDocument { { "canonicalId", canonical }, { "capabilities", new BsonArray(body.Capabilities ?? []) } });
+    return Json(ApiEnvelope<CatalogEntryItem>.Ok(MapCatalogEntry(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/catalog-entries/{id}", async (HttpContext http, string id, [FromBody] UpsertCatalogEntryRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateCatalogEntry(body);
+    if (error is not null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwCatalogEntries.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<CatalogEntryItem>.Fail("NOT_FOUND", "这条补登不存在"), jsonOptions, 404);
+
+    // 与新建同一份判据：改名或加别名同样可能撞上别人的键空间。
+    var conflict = await FindCatalogKeyConflictAsync(gwCatalogEntries, http, body, excludeId: id);
+    if (conflict is not null)
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail("ENTRY_EXISTS", conflict), jsonOptions, 409);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var doc = BuildCatalogEntryDocument(body, tenantId, existing);
+    try
+    {
+        await gwCatalogEntries.ReplaceOneAsync(filter, doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<CatalogEntryItem>.Fail(
+            "ENTRY_EXISTS",
+            "这个标识刚刚被另一条补登占用了——规范标识与等价写法共用同一个键空间。刷新一下看看那条，改那一条"),
+            jsonOptions, 409);
+    }
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "catalog_entry.update", targetType: "llmgw_model_catalog_entry",
+        targetId: id, targetName: doc.GetStringOrEmpty("CanonicalId"), success: true, reason: null,
+        changes: new BsonDocument { { "canonicalId", doc.GetStringOrEmpty("CanonicalId") } });
+    return Json(ApiEnvelope<CatalogEntryItem>.Ok(MapCatalogEntry(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapDelete("/gw/catalog-entries/{id}", async (HttpContext http, string id) =>
+{
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwCatalogEntries.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "这条补登不存在"), jsonOptions, 404);
+    await gwCatalogEntries.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "catalog_entry.delete", targetType: "llmgw_model_catalog_entry",
+        targetId: id, targetName: existing.GetStringOrEmpty("CanonicalId"), success: true, reason: null,
+        changes: new BsonDocument { { "canonicalId", existing.GetStringOrEmpty("CanonicalId") } });
+    return Json(ApiEnvelope<object>.Ok(new { deleted = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+/// <summary>
+/// 「指定调用方」必须落在授权名单里——名单非空时。
+///
+/// 这两个字段刻意分工：授权名单回答「能不能点名我」，指定调用方回答「不点名时是不是我」。
+/// 但后者是前者的子集：解析时先过 SupportsAppCallerScenario（看授权名单），过不了就直接
+/// 返回 null，**而且不再回落到用途默认**——于是那个调用方的不点名请求整条失败。
+///
+/// 写入侧不拦的话，界面会说「不点名的请求现在会用这个模型」，运行时却一次都落不到，
+/// 而且是静默的（形状 8：写入侧接受了一份在运行条件下根本不成立的配置，
+/// 还让它看起来像生效了）。
+///
+/// 名单为空 = 对所有调用方开放，此时任何认领都成立，不需要校验。
+/// </summary>
+static string? ValidateClaimsWithinAllowlist(
+    IReadOnlyCollection<string> allowedAppCallerCodes,
+    IReadOnlyCollection<string> claims)
+{
+    if (allowedAppCallerCodes.Count == 0 || claims.Count == 0) return null;
+    var allowed = allowedAppCallerCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    var outside = claims.Where(x => !allowed.Contains(x)).ToList();
+    return outside.Count == 0
+        ? null
+        : $"调用方 {string.Join("、", outside)} 不在这个模型的授权名单里，不能把它设成「指定调用方」——"
+          + "解析时会先被授权名单拒掉，那些请求一次都落不到这里。"
+          + "要么把它加进授权名单，要么把授权名单清空（清空 = 对所有调用方开放）。";
+}
+
+/// <summary>
+/// 生图契约的模式冲突检查：同一租户下同一个模式只许有一条。
+///
+/// 两条同模式的行进了库，同步 worker 会把它们装进同一张按模式索引的表，
+/// 谁赢取决于剩下那些排序键——而它们可能完全一样，于是取决于 Mongo 返回顺序。
+/// 生图尺寸和参数翻译因此会在两套配置之间无规律地跳。
+///
+/// create 与 update 共用这一份：只在 create 那边查等于留了一扇后门，
+/// 把 A 的模式改成 B 占着的那个照样进得去（predicate-and-wiring-discipline 形状 3）。
+/// </summary>
+static async Task<string?> FindImageGenPatternConflictAsync(
+    IMongoCollection<BsonDocument> configs,
+    HttpContext http,
+    string pattern,
+    string? excludeId)
+{
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("ModelIdPattern", pattern));
+    if (!string.IsNullOrEmpty(excludeId))
+        filter &= Builders<BsonDocument>.Filter.Ne("_id", excludeId);
+    var dup = await configs.Find(filter).FirstOrDefaultAsync();
+    return dup is null
+        ? null
+        : $"已经有一条 {pattern} 的契约，去改它而不是再加一条";
+}
+
+/// <summary>
+/// 补登的标识冲突检查：规范标识与等价写法是**同一个键空间**。
+///
+/// 查重只看 CanonicalId 是不够的：别名同样是查找键（<see cref="ModelCatalog.CatalogOverrides"/>
+/// 用它们建索引），两条补登各自的别名撞上时，索引按 Mongo 返回顺序覆盖——
+/// 同一个模型今天认出 A 的用途、明天认出 B 的，而且不报任何错。
+/// 更新端点原本一条都不查，等于留了一扇后门。
+/// </summary>
+static async Task<string?> FindCatalogKeyConflictAsync(
+    IMongoCollection<BsonDocument> entries,
+    HttpContext http,
+    UpsertCatalogEntryRequest body,
+    string? excludeId)
+{
+    var keys = new HashSet<string>(CatalogEntryKeys(body), StringComparer.OrdinalIgnoreCase);
+
+    var docs = await entries.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty)).ToListAsync();
+    foreach (var doc in docs)
+    {
+        var docId = doc.GetStringOrEmpty("_id");
+        if (!string.IsNullOrEmpty(excludeId) && string.Equals(docId, excludeId, StringComparison.Ordinal)) continue;
+        var taken = new List<string> { doc.GetStringOrEmpty("CanonicalId") };
+        taken.AddRange(GetStringArray(doc, "Aliases"));
+        foreach (var key in taken)
+        {
+            if (key.Length > 0 && keys.Contains(key))
+                return $"标识「{key}」已经被补登 {doc.GetStringOrEmpty("CanonicalId")} 占用了——" +
+                       "规范标识与等价写法共用同一个键空间，同一个键只能属于一条补登。去改那一条，别再加一条";
+        }
+    }
+
+    // 自己这条里面也不许重（canonicalId 与自己的某个别名同名，索引会自己盖自己）
+    var own = new List<string> { body.CanonicalId!.Trim().ToLowerInvariant() };
+    own.AddRange((body.Aliases ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()));
+    if (own.Count != own.Distinct(StringComparer.OrdinalIgnoreCase).Count())
+        return "规范标识与等价写法里有重复的项，去掉重复的再保存";
+
+    return null;
+}
+
+/// <summary>
+/// 补登的写入校验。
+///
+/// 最要紧的一条是用途名：填了一个运行时不认的词，这条补登看着生效了、模型照样选不中，
+/// 而且不会有任何东西报错——「填了没用」是这套东西最难查的坏法。所以当场拒。
+/// </summary>
+static string? ValidateCatalogEntry(UpsertCatalogEntryRequest body)
+{
+    var canonical = (body.CanonicalId ?? string.Empty).Trim();
+    if (canonical.Length == 0) return "模型标识不能为空";
+    if (canonical.Length > 200) return "模型标识过长";
+    if (canonical.Contains('*')) return "名录是白名单，不支持通配符——每个模型逐条登记，别名写进「等价写法」";
+
+    var caps = (body.Capabilities ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).ToList();
+    if (caps.Count == 0) return "至少要填一种用途，否则这条补登不解决任何问题（模型仍然不参与用途匹配）";
+    var unknown = caps.Where(c => !LogicalModelCapabilityPolicy.CanonicalCapabilities.Contains(c.Trim().ToLowerInvariant())).ToList();
+    if (unknown.Count > 0)
+        return $"这些用途运行时不认：{string.Join("、", unknown)}。可用的是：{string.Join(" / ", LogicalModelCapabilityPolicy.CanonicalCapabilities.OrderBy(x => x, StringComparer.Ordinal))}";
+
+    if (body.RequiresImageInput == true && body.AcceptsImageInput != true)
+        return "勾了「必须给图才能调」就得同时勾「能接收图片输入」——不然这条登记自相矛盾";
+
+    foreach (var alias in body.Aliases ?? [])
+    {
+        if (string.IsNullOrWhiteSpace(alias)) continue;
+        if (alias.Contains('*')) return $"等价写法不支持通配符：{alias}";
+    }
+    return null;
+}
+
+/// <summary>
+/// 一条补登占用的全部键：规范标识 + 每个等价写法，统一小写去重。
+///
+/// 读检查与落库必须用同一份口径，否则「查的时候按 A 算、存的时候按 B 算」，
+/// 索引盖住的键和端点判过的键不是一批（形状 3：同一个判据分裂成两份各自漂移）。
+/// </summary>
+static List<string> CatalogEntryKeys(UpsertCatalogEntryRequest body)
+    => new[] { body.CanonicalId ?? string.Empty }
+        .Concat(body.Aliases ?? [])
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim().ToLowerInvariant())
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+
+static BsonDocument BuildCatalogEntryDocument(UpsertCatalogEntryRequest body, string tenantId, BsonDocument? existing)
+    => new()
+    {
+        { "_id", existing?.GetStringOrEmpty("_id") ?? Guid.NewGuid().ToString("N") },
+        { "TenantId", tenantId },
+        { "CanonicalId", body.CanonicalId!.Trim().ToLowerInvariant() },
+        { "DisplayName", (body.DisplayName ?? body.CanonicalId!).Trim() },
+        { "Vendor", (body.Vendor ?? string.Empty).Trim().ToLowerInvariant() },
+        { "Capabilities", new BsonArray((body.Capabilities ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()).Distinct()) },
+        { "AcceptsImageInput", body.AcceptsImageInput ?? false },
+        { "RequiresImageInput", body.RequiresImageInput ?? false },
+        { "Aliases", new BsonArray((body.Aliases ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim().ToLowerInvariant()).Distinct()) },
+        // 规范标识与等价写法共用一个键空间，这里把它们合成一个数组落库，好让唯一索引能一次盖住两者。
+        // 不落这一份，索引就只能盖住 CanonicalId，别名撞车照样能两条一起写进去。
+        { "Keys", new BsonArray(CatalogEntryKeys(body)) },
+        { "Notes", (BsonValue?)body.Notes ?? BsonNull.Value },
+        { "Enabled", body.Enabled ?? true },
+        { "CreatedAt", existing?.AsNullableUtcDateTime("CreatedAt") ?? DateTime.UtcNow },
+        { "UpdatedAt", DateTime.UtcNow },
+    };
+
+static CatalogEntryItem MapCatalogEntry(BsonDocument d) => new()
+{
+    Id = d.GetStringOrEmpty("_id"),
+    CanonicalId = d.GetStringOrEmpty("CanonicalId"),
+    DisplayName = d.GetStringOrEmpty("DisplayName"),
+    Vendor = d.GetStringOrEmpty("Vendor"),
+    Capabilities = GetStringArray(d, "Capabilities"),
+    AcceptsImageInput = d.AsNullableBool("AcceptsImageInput") ?? false,
+    RequiresImageInput = d.AsNullableBool("RequiresImageInput") ?? false,
+    Aliases = GetStringArray(d, "Aliases"),
+    Notes = d.AsNullableString("Notes"),
+    Enabled = d.AsNullableBool("Enabled") ?? true,
+    UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+};
+
+// ───────────────────── 生图模型契约：配在这里，不用改代码不用发版 ─────────────────────
+//
+// 此前这份契约（尺寸档位、参数格式、重命名映射、能不能图生图）写死在
+// prd-api 的 ImageGenModelConfigs.cs 里，26 条、777 行。上游每出一个新生图模型，
+// 就要改那个文件、重新编译、走一次发布——「上游动一下、我们发一次版」。
+//
+// 现在它是数据。合并规则只有一条，且只在 ImageGenModelAdapterRegistry.TryMatch 里实现：
+// **同一个匹配模式，这里配的赢；这里没有的，回落到代码内置那 26 条。**
+// 所以这套东西是纯增量的：库里一行都没有时，生图行为与 2026-09-16 之前逐字节相同。
+//
+// 生效不是即时的：prd-api 每 60 秒刷一次覆盖表，所以保存后最长 60 秒生效。
+// 这个代价要写在界面上，不能让人保存完盯着屏幕猜（expectation-management）。
+var gwImageModelConfigs = gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_model_configs");
+
+/*
+  生图契约的模式也是同一类不变量：同租户下一个匹配模式最多一条契约。
+
+  端点里的「先查有没有同模式」拦不住两个管理员同时建：两边都查完、都没看到对方，
+  然后各插一条。同步器会把两条都装进那张按模式索引的表，TryMatch 取先返回的那一条——
+  生图的尺寸与参数翻译于是每次刷新可能不一样，而两个人的界面都显示保存成功。
+*/
+await IndexAdvisory.ReportIfMissingAsync(
+    gwImageModelConfigs,
+    "uniq_llmgw_imagegen_tenant_pattern",
+    "两个管理员同时给同一个匹配模式建契约时，两条都会存进去，同步器把两条都装进那张按模式索引的表，"
+    + "TryMatch 取先返回的那一条——生图的尺寸与参数翻译于是每次刷新可能不一样");
+
+
+app.MapGet("/gw/imagegen-configs", async (HttpContext http) =>
+{
+    var docs = await gwImageModelConfigs.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty))
+        .ToListAsync();
+    var items = docs
+        .OrderBy(d => d.AsNullableInt("MatchOrder") ?? 100)
+        .ThenByDescending(d => d.GetStringOrEmpty("ModelIdPattern").Length)
+        .Select(MapImageGenConfig)
+        .ToList();
+    // 代码内置那份由 prd-api 启动时发布进来（llmgw_imagegen_builtin_catalog）。
+    // 控制台不另抄一份：抄的那份改了代码不会跟着改，而且不会有任何东西变红。
+    var builtinDoc = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_builtin_catalog")
+        .Find(Builders<BsonDocument>.Filter.Eq("_id", "builtin")).FirstOrDefaultAsync();
+    var builtin = builtinDoc?.TryGetValue("Items", out var rawItems) == true && rawItems is BsonArray arr
+        ? arr.OfType<BsonDocument>().Select(MapImageGenConfig).ToList()
+        : [];
+
+    // prd-api 上一轮同步拉到了什么。没有这一段，界面只能说「最长 60 秒生效」然后让人
+    // 盯着屏幕猜；有了它，那一屏能说出一句可核对的话：服务端几点同步的、认到哪几条。
+    // 按租户取：同步状态一租户一行（prd-api 侧以 `prd-api::{tenantId}` 为键）。
+    // 取全局那一行的话，共用网关库的另一个租户的同步时间会显示成你的，
+    // 于是「我配的那条生效了没有」这句可核对的话变成了一句假话。
+    var syncTenantId = TenantAccess.GetRequired(http).TenantId;
+    // 逐个消费进程读，不是读一行。
+    //
+    // 生图契约是**进程全局**的注册表，prd-api 与 llmgw-serving 各跑一份同步器。
+    // 读单行（或取最新那行）等于让健康的那个进程替失败的那个作答：一个同步不上、
+    // 另一个照常写，界面报「刚同步过、N 条生效」，而走失败那个进程的请求还在用旧契约——
+    // 降级被另一半的成功盖住，没有任何地方会响（degradation-must-alarm）。
+    //
+    // 汇总口径因此取**最保守**的那一端：时间取最旧（有一个没同步过就为空），
+    // 模式取交集（只有每个进程都认到的才算真生效）。逐进程明细另外给，
+    // 界面要能答「是哪个进程没跟上」。
+    const string prdApiHostRole = "prd-api";
+    const string servingHostRole = "llmgw-serving";
+    const int refreshSeconds = 60;
+    // 多久没回写就算「没跟上」。取刷新周期的 5 倍：一次网络抖动不该报警，
+    // 而一个停掉的 Worker 五分钟内必须现形。
+    const int staleAfterSeconds = refreshSeconds * 5;
+    /*
+      prd-api 那个同步器注册成**单租户**：它只为内部租户写状态行。
+
+      于是对其它租户来说 `prd-api::{tenantId}` 这一行永远不存在——把它算进期望值，
+      那一屏就永远显示 prd-api「从没回写过」，汇总也永远到不了 current：一个好好的进程
+      被报成停了，而人照着这句话去查根本查不到东西（no-rootless-tree：不编一个不存在的根）。
+
+      所以按「这个进程服不服务这个租户」筛，而不是写死两个。筛掉的那一个不是悄悄消失：
+      它照样列在逐进程明细里，状态是显式的 not-applicable，界面据此既不报警也不当它就绪。
+    */
+    bool SyncHostAppliesToTenant(string role)
+        => !string.Equals(role, prdApiHostRole, StringComparison.Ordinal)
+           || string.Equals(syncTenantId, internalTenantId, StringComparison.Ordinal);
+
+    var expectedSyncHosts = new[] { prdApiHostRole, servingHostRole };
+    var syncDocs = await gatewayDatabase.GetCollection<BsonDocument>("llmgw_imagegen_sync_status")
+        .Find(Builders<BsonDocument>.Filter.In("_id", expectedSyncHosts.Select(role => $"{role}::{syncTenantId}")))
+        .ToListAsync();
+    var syncByHost = syncDocs.ToDictionary(
+        x => x.AsNullableString("HostRole") ?? x.GetStringOrEmpty("_id"),
+        x => x,
+        StringComparer.Ordinal);
+
+    List<string> PatternsOf(BsonDocument doc)
+        => doc.TryGetValue("Patterns", out var raw) && raw is BsonArray arr
+            ? [.. arr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
+            : [];
+
+    // 各个进程**应该**装到哪一版。
+    //
+    // 只比模式名答不出「我刚改的那条生效了没有」：改尺寸档位时模式名一个字都不变。
+    // 所以两边各自从同一批行算一个「条数 : 最后修改时间」的版本号来比——
+    // 这个值要和 ImageGenModelConfigSyncWorker 里算的那个逐字对齐（同一个定义，两处求值）。
+    var versionSource = await gwImageModelConfigs
+        .Find(Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("Enabled", true),
+            Builders<BsonDocument>.Filter.In("TenantId", new[] { syncTenantId, string.Empty })))
+        .ToListAsync();
+    string VersionOf(IEnumerable<BsonDocument> rows)
+    {
+        var usable = rows.Where(x => !string.IsNullOrWhiteSpace(x.GetStringOrEmpty("ModelIdPattern"))).ToList();
+        if (usable.Count == 0) return "0:0";
+        var newest = usable.Max(x => x.AsNullableUtcDateTime("UpdatedAt") ?? DateTime.MinValue);
+        return $"{usable.Count}:{newest.Ticks}";
+    }
+    // 单租户进程装「本租户 + 平台级」，多租户进程只装平台级——期望值因此不是同一个。
+    var expectedForSingleTenant = VersionOf(versionSource);
+    var expectedForMultiTenant = VersionOf(versionSource.Where(x => x.GetStringOrEmpty("TenantId").Length == 0));
+
+    var now = DateTime.UtcNow;
+    var syncHosts = expectedSyncHosts.Select(role =>
+    {
+        syncByHost.TryGetValue(role, out var doc);
+        var tenancy = doc?.AsNullableString("HostTenancy");
+        var syncedAt = doc?.AsNullableUtcDateTime("SyncedAt");
+        // 五态，按「它管不管这个租户 → 还活着吗 → 装的是不是这一版」的顺序判。
+        // 合成一个 bool 会让「停了半天的进程」和「刚好慢一拍的进程」显示成同一句话。
+        var state =
+            !SyncHostAppliesToTenant(role) ? "not-applicable"
+            : doc is null || syncedAt is null ? "never"
+            : (now - syncedAt.Value).TotalSeconds > staleAfterSeconds ? "stale"
+            // 认不出它是哪种进程（旧构建写的状态行还没有这个字段）→ 不替它担保，
+            // 按「没装到这一版」报，等它下一轮写出新字段自然转正（no-rootless-tree：不编）。
+            : tenancy is null ? "behind"
+            : doc.AsNullableString("ContentVersion")
+                != (string.Equals(tenancy, "MultiTenant", StringComparison.Ordinal)
+                    ? expectedForMultiTenant
+                    : expectedForSingleTenant) ? "behind"
+            : "current";
+        return new ImageGenSyncHost
+        {
+            HostRole = role,
+            SyncedAt = syncedAt.ToIso(),
+            OverrideCount = doc is null ? 0 : (int)(doc.AsNullableInt("OverrideCount") ?? 0),
+            HostTenancy = tenancy,
+            SkippedTenantScopedCount = doc is null ? 0 : (int)(doc.AsNullableInt("SkippedTenantScopedCount") ?? 0),
+            UnusablePatterns = doc?.GetValue("UnusablePatterns", BsonNull.Value) is BsonArray unusableArr
+                ? unusableArr.OfType<BsonString>().Select(x => x.AsString).ToList()
+                : [],
+            SyncState = state,
+        };
+    }).ToList();
+
+    // 汇总只看「会装本租户契约的那些进程」（单租户进程）。
+    //
+    // 多租户进程一条带租户的契约都不装，把它算进交集的话交集恒为空，
+    // 这一屏就永远显示「0 条已生效」——一句永远不会兑现的话，比不说更糟。
+    // 它自己的状态照样逐进程列出来，跳过的原因另有一句专门的说明。
+    // 同理，不服务这个租户的进程也不进汇总：它不装本租户的契约，让它替这句话背书就是胡说。
+    var tenantCarryingHosts = syncHosts
+        .Where(x => !string.Equals(x.SyncState, "not-applicable", StringComparison.Ordinal))
+        .Where(x => !string.Equals(x.HostTenancy, "MultiTenant", StringComparison.Ordinal))
+        .ToList();
+    var carriersCurrent = tenantCarryingHosts.Count > 0
+        && tenantCarryingHosts.All(x => string.Equals(x.SyncState, "current", StringComparison.Ordinal));
+    // 取最旧那一个的时间：汇总这句话只能由跟得最慢的那个进程来背书。
+    // 比的是时间不是字符串——ISO 文本的字典序在格式有出入时会给出错的先后。
+    var aggregateSyncedAt = carriersCurrent
+        ? tenantCarryingHosts
+            .Select(x => syncByHost[x.HostRole].AsNullableUtcDateTime("SyncedAt"))
+            .Min()
+            .ToIso()
+        : null;
+    var aggregatePatterns = carriersCurrent
+        ? tenantCarryingHosts
+            .Select(x => PatternsOf(syncByHost[x.HostRole]))
+            .Aggregate((a, b) => [.. a.Intersect(b, StringComparer.Ordinal)])
+        : [];
+
+    return Json(ApiEnvelope<ImageGenConfigsData>.Ok(new ImageGenConfigsData
+    {
+        Items = items,
+        Total = items.Count,
+        BuiltinCount = builtin.Count,
+        Builtin = builtin,
+        BuiltinPublishedAt = builtinDoc?.AsNullableUtcDateTime("PublishedAt").ToIso(),
+        RefreshSeconds = refreshSeconds,
+        StaleAfterSeconds = staleAfterSeconds,
+        SyncedAt = aggregateSyncedAt,
+        SyncedPatterns = aggregatePatterns,
+        SyncHosts = syncHosts,
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+app.MapPost("/gw/imagegen-configs", async (HttpContext http, [FromBody] UpsertImageGenConfigRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateImageGenConfig(body);
+    if (error is not null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var pattern = body.ModelIdPattern!.Trim().ToLowerInvariant();
+
+    var dupMessage = await FindImageGenPatternConflictAsync(gwImageModelConfigs, http, pattern, excludeId: null);
+    if (dupMessage is not null)
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS", dupMessage), jsonOptions, 409);
+
+    var doc = BuildImageGenConfigDocument(body, tenantId, http, existing: null);
+    try
+    {
+        await gwImageModelConfigs.InsertOneAsync(doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        // 上面那次查重与这次插入之间，别人插了同一个模式。库级唯一索引兜住了，
+        // 这里把它翻成与查重同一个回答——不要报成「保存失败」，那会让人反复重试。
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS",
+            $"已经有一条 {pattern} 的契约（刚刚由别人建的），去改它而不是再加一条"), jsonOptions, 409);
+    }
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "imagegen_config.create", targetType: "llmgw_imagegen_model_config",
+        targetId: doc.GetStringOrEmpty("_id"), targetName: pattern, success: true, reason: null,
+        changes: new BsonDocument { { "modelIdPattern", pattern } });
+    return Json(ApiEnvelope<ImageGenConfigItem>.Ok(MapImageGenConfig(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapPut("/gw/imagegen-configs/{id}", async (HttpContext http, string id, [FromBody] UpsertImageGenConfigRequest? body) =>
+{
+    if (body is null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+    var error = ValidateImageGenConfig(body);
+    if (error is not null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("INVALID_INPUT", error), jsonOptions, 400);
+
+    var pattern = body.ModelIdPattern!.Trim().ToLowerInvariant();
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwImageModelConfigs.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<ImageGenConfigItem>.Fail("NOT_FOUND", "这条契约不存在"), jsonOptions, 404);
+
+    // 更新端点原本一条都不查，等于留了一扇后门：把 A 的模式改成 B 已经占着的那个，
+    // 库里就出现两条同模式的行，同步 worker 装进同一张按模式索引的表，
+    // 谁赢取决于 Mongo 返回顺序——生图尺寸和参数翻译因此每次部署可能不一样。
+    var conflict = await FindImageGenPatternConflictAsync(gwImageModelConfigs, http, pattern, excludeId: id);
+    if (conflict is not null)
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS", conflict), jsonOptions, 409);
+
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var doc = BuildImageGenConfigDocument(body, tenantId, http, existing);
+    try
+    {
+        await gwImageModelConfigs.ReplaceOneAsync(filter, doc);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<ImageGenConfigItem>.Fail("PATTERN_EXISTS",
+            $"已经有一条 {pattern} 的契约（刚刚由别人建的），去改它而不是把这条改成同一个模式"), jsonOptions, 409);
+    }
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "imagegen_config.update", targetType: "llmgw_imagegen_model_config",
+        targetId: id, targetName: doc.GetStringOrEmpty("ModelIdPattern"), success: true, reason: null,
+        changes: new BsonDocument { { "modelIdPattern", doc.GetStringOrEmpty("ModelIdPattern") } });
+    return Json(ApiEnvelope<ImageGenConfigItem>.Ok(MapImageGenConfig(doc)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+app.MapDelete("/gw/imagegen-configs/{id}", async (HttpContext http, string id) =>
+{
+    var filter = Builders<BsonDocument>.Filter.And(
+        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Empty),
+        Builders<BsonDocument>.Filter.Eq("_id", id));
+    var existing = await gwImageModelConfigs.Find(filter).FirstOrDefaultAsync();
+    if (existing is null) return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "这条契约不存在"), jsonOptions, 404);
+    await gwImageModelConfigs.DeleteOneAsync(filter);
+    await WriteOperationAuditAsync(operationAudits, http,
+        action: "imagegen_config.delete", targetType: "llmgw_imagegen_model_config",
+        targetId: id, targetName: existing.GetStringOrEmpty("ModelIdPattern"), success: true, reason: null,
+        changes: new BsonDocument { { "modelIdPattern", existing.GetStringOrEmpty("ModelIdPattern") } });
+    return Json(ApiEnvelope<object>.Ok(new { deleted = true }), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+/// <summary>
+/// 契约的写入校验。这几条都是「填错了不会当场报错、只会在某次生图时悄悄给出错尺寸」的那种，
+/// 所以拦在写入侧——运行时再发现就晚了。
+/// </summary>
+static string? ValidateImageGenConfig(UpsertImageGenConfigRequest body)
+{
+    var pattern = (body.ModelIdPattern ?? string.Empty).Trim();
+    if (pattern.Length == 0) return "模型匹配模式不能为空";
+    if (pattern.Length > 200) return "模型匹配模式过长";
+    /*
+      通配符：要么一个都没有，要么**只有结尾那一个**。
+
+      上一版只看最后一个字符，于是 `nano**` 与 `nano*banana*` 都存得进去。前者运行时按
+      TrimEnd('*') 归一之后等价于 `nano*`，却是唯一索引眼里的另一条模式——两条契约匹配同一批
+      模型，谁生效看排序，而界面上它们看着是两条不同的规则（悄悄遮住别人）。后者中间那个星号
+      被当成普通字符，这条契约通常一个模型都匹配不上，保存成功、永远不生效
+      （第 59 轮 review；形状 1：判据只覆盖了最直观的那一种输入）。
+    */
+    var starCount = pattern.Count(ch => ch == '*');
+    if (starCount > 1 || (starCount == 1 && !pattern.EndsWith('*')))
+        return "通配符只能有一个、且只能放在结尾，如 nano-banana*";
+
+    var format = (body.SizeParamFormat ?? "WxH").Trim();
+    if (!ImageGenConfigVocabulary.SizeParamFormats.Contains(format))
+        return $"尺寸参数格式只支持：{string.Join(" / ", ImageGenConfigVocabulary.SizeParamFormats)}";
+
+    var constraint = (body.SizeConstraintType ?? "whitelist").Trim();
+    if (!ImageGenConfigVocabulary.SizeConstraintTypes.Contains(constraint))
+        return $"尺寸约束类型只支持：{string.Join(" / ", ImageGenConfigVocabulary.SizeConstraintTypes)}";
+
+    // 「没有选尺寸这件事」与「配了尺寸档位」不能同时成立：编几个假尺寸出来，
+    // 选择器会展示这个模型根本不接受的选项。
+    var hasSizes = body.SizesByResolution?.Any(kv => kv.Value?.Count > 0) == true;
+    if (body.SizesNotApplicable == true && hasSizes)
+        return "既然勾了「这个模型没有选尺寸这件事」，就不能再配尺寸档位";
+
+    // 比例模式的比例是从尺寸档位里推出来的，所以它同样必须有尺寸档位。
+    //
+    // 一行都不填时 NormalizeSizeAspectRatio 既选不出比例、也选不出尺寸，兜底回 1024x1024
+    // 与 1:1——请求 1536x1024 会被静默改写成一个**比例都不对**的方图。这是白名单与范围
+    // 那两条的第三个同族成员，前两轮各补了一个，这一个没扫到（形状 6：修完要横扫同类）。
+    if (string.Equals(constraint, "aspect_ratio", StringComparison.OrdinalIgnoreCase)
+        && body.SizesNotApplicable != true
+        && !hasSizes)
+    {
+        return "比例模式的可选比例是从尺寸档位里推出来的，至少要配一个尺寸档位；"
+            + "这个模型如果没有选尺寸这件事，就勾上「这个模型没有选尺寸这件事」";
+    }
+
+    // 白名单模式必须至少有一个尺寸，否则这条契约等于「把 1024x1024 钉死」。
+    //
+    // 白名单是表单默认档，尺寸一个都不填照样能存。存进去之后它**压过**代码内置那条契约，
+    // 而 NormalizeSizeWhitelist 没有候选，兜底直接吐 1024x1024——匹配到的上游未必支持它。
+    // 界面显示「已配好白名单」，实际是把所有请求都改写成了同一个写死的尺寸，
+    // 而且不报错（形状 8：一份不成立的声明被当成了「已经配好」的证明）。
+    // 这条与下面范围模式那条是同一族，上一轮只补了范围那一半。
+    if (string.Equals(constraint, "whitelist", StringComparison.OrdinalIgnoreCase)
+        && body.SizesNotApplicable != true
+        && !hasSizes)
+    {
+        return "白名单模式至少要配一个尺寸档位；这个模型如果没有选尺寸这件事，就勾上「这个模型没有选尺寸这件事」，"
+            + "或者改用范围 / 比例约束";
+    }
+
+    // 范围模式必须至少有一项边界，否则这条契约保存成功却什么都不约束。
+    //
+    // NormalizeSizeRange 只在这几个字段有值时才动尺寸；一个都不填就等于原样把用户要的
+    // 尺寸发给上游——界面显示「已按范围约束」，实际没有任何约束，被上游拒时看不出是
+    // 这里没配（形状 8：一份不成立的声明被当成了「已经配好」的证明）。
+    // 拦在写入侧，不指望界面记得填：契约也可能从别的写入方进来。
+    if (string.Equals((body.SizeConstraintType ?? string.Empty).Trim(), "range", StringComparison.OrdinalIgnoreCase)
+        && body.SizesNotApplicable != true)
+    {
+        // 「填了」不等于「起作用」。
+        //
+        // minWidth=0 与 Math.Max 之后完全等价于没填；mustBeDivisibleBy 要大于 1 运行时才理它
+        // （0 和 1 都被跳过）；而 maxWidth=0 更糟——它不是没约束，是把请求夹成 0x0 发出去。
+        // 只判「有没有值」的话，这三种写法都能存进来，而那条「至少填一项」的承诺变成空话
+        // （形状 8：一份不成立的声明被当成已经配好的证明）。所以判的是**有效**边界。
+        if (body.MinWidth is <= 0 || body.MaxWidth is <= 0 || body.MinHeight is <= 0 || body.MaxHeight is <= 0)
+            return "范围模式的宽高边界必须大于 0：填 0 等于没填（最小值），或者把请求夹成 0x0（最大值）";
+        if (body.MaxPixels is <= 0)
+            return "范围模式的最大像素总量必须大于 0";
+        if (body.MustBeDivisibleBy is { } divisor && divisor <= 1)
+            return "边长整除必须大于 1：填 0 或 1 时运行时会直接跳过这一项，等于没配";
+        if (body.MinWidth is { } minW && body.MaxWidth is { } maxW && minW > maxW)
+            return "范围模式的最小宽不能大于最大宽";
+        if (body.MinHeight is { } minH && body.MaxHeight is { } maxH && minH > maxH)
+            return "范围模式的最小高不能大于最大高";
+
+        /*
+          几项单独看都合法，合起来可能一个尺寸都不成立。
+
+          两种真实形态：
+            · 整除与最大值打架——最小宽 1000、整除 512，向上取整到 1024 就超了最大宽 1020；
+            · 最小边长与像素总量打架——1024x1024 起步却限 262144 像素，运行时先套最小值
+              再按像素缩放，缩出来的 512x512 反过来违反了刚刚套上的最小值。
+          都属于「保存时说没问题、运行时给出一个不满足自己契约的尺寸」，而没有任何地方会报错。
+
+          判据是构造一个最小可行尺寸：各边取「不小于最小值的最小合法值」（带整除就向上取整到
+          整除的倍数），它超出最大值或像素上限，就说明这套约束无解。
+        */
+        var effectiveDivisor = body.MustBeDivisibleBy ?? 1;
+        static long SmallestSide(int? min, int divisorValue)
+        {
+            var floor = min is { } m && m > 0 ? m : divisorValue;
+            if (divisorValue <= 1) return floor;
+            return ((floor + divisorValue - 1) / divisorValue) * (long)divisorValue;
+        }
+        // 只配整除、不配最小值：运行时 (side / divisor) * divisor 是**向下取整**，
+        // 比除数小的边长会被抹成 0——除数 512 撞上 1024x256 的请求，发出去的是 1024x0。
+        // 没有最小值把它托住，所以这种组合不许保存。
+        // 两个轴都要有最小值托底，只给一个不够：
+        // 运行时对宽高各做一次向下取整，没被托住的那一个轴照样会被抹成 0——
+        // 最小宽 512、整除 512、不配最小高，遇到 1024x256 发出去的是 1024x0。
+        // 上一版写成「两个都没配才拦」，等于只拦住了两个轴同时出问题的那一种（形状 1）。
+        if (body.MustBeDivisibleBy is not null
+            && (body.MinWidth is null || body.MinHeight is null))
+        {
+            return "配了「边长必须整除」就必须同时给出最小宽和最小高：运行时对宽高各做一次向下取整，"
+                + "没有最小值托底的那一个轴，比整除值小的边长会被抹成 0"
+                + "（例如整除 512、不配最小高，遇到 256 的高发出去就是 0）。"
+                + "补齐两个最小值，或改用白名单尺寸";
+        }
+
+        var smallestWidth = SmallestSide(body.MinWidth, effectiveDivisor);
+        var smallestHeight = SmallestSide(body.MinHeight, effectiveDivisor);
+        if (body.MaxWidth is { } widthCap && smallestWidth > widthCap)
+            return $"这套范围无解：宽最小只能取到 {smallestWidth}（受最小宽与整除约束），已经超过最大宽 {widthCap}";
+        if (body.MaxHeight is { } heightCap && smallestHeight > heightCap)
+            return $"这套范围无解：高最小只能取到 {smallestHeight}（受最小高与整除约束），已经超过最大高 {heightCap}";
+        if (body.MaxPixels is { } pixelCap && smallestWidth * smallestHeight > pixelCap)
+        {
+            return $"这套范围无解：最小可行尺寸是 {smallestWidth}x{smallestHeight}，"
+                + $"共 {smallestWidth * smallestHeight} 像素，已经超过最大像素总量 {pixelCap}。"
+                + "运行时会先套最小值再按像素缩放，缩完反而违反最小值，而没有任何地方会报错";
+        }
+        if (body.MinWidth is null && body.MaxWidth is null
+            && body.MinHeight is null && body.MaxHeight is null
+            && body.MaxPixels is null && body.MustBeDivisibleBy is null)
+        {
+            return "范围模式至少要填一项边界（最小/最大宽高、最大像素总量、边长整除），"
+                + "否则这条契约什么都不约束，尺寸会原样发给上游";
+        }
+    }
+
+    foreach (var (bucket, list) in body.SizesByResolution ?? [])
+    {
+        if (!ImageGenConfigVocabulary.ResolutionBuckets.Contains(bucket))
+            return $"分辨率档位只支持：{string.Join(" / ", ImageGenConfigVocabulary.ResolutionBuckets)}（收到 {bucket}）";
+        foreach (var size in list ?? [])
+        {
+            if (!ImageGenConfigVocabulary.SizePattern.IsMatch(size ?? string.Empty))
+                return $"尺寸要写成「宽x高」，如 1024x1024（收到 {size}）";
+        }
+    }
+
+    /*
+      参数改名的键只许**不分大小写**地各出现一次。
+
+      运行时那张表是 OrdinalIgnoreCase 的（ImageGenConfigTranslation.ToAdapterConfig），
+      同时写进 model 与 MODEL 的话，字典构造当场抛重复键——而同步器的兜底是「这一轮没拉到
+      就沿用上一版」，于是这一条契约与**其余每一条正确的契约**从此都不再生效，每 60 秒重演一次，
+      界面上只看得到一个不再前进的同步时间（第 66 轮 review）。
+
+      这里当场拒掉：控制面比运行时严一档，写不进去就不会有那一轮。
+    */
+    var renameKeySeen = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    foreach (var (from, _) in body.ParamRenames ?? [])
+    {
+        var key = (from ?? string.Empty).Trim();
+        if (key.Length == 0) continue;
+        if (renameKeySeen.TryGetValue(key, out var earlier) && !string.Equals(earlier, key, StringComparison.Ordinal))
+        {
+            return $"参数改名的键「{earlier}」与「{key}」只有大小写之差，运行时把它们当同一个键，"
+                + "两条一起存会让这张表整体装不进去（连带其它契约一起失效）。请只保留其中一条";
+        }
+        renameKeySeen[key] = key;
+    }
+    return null;
+}
+
+static BsonDocument BuildImageGenConfigDocument(
+    UpsertImageGenConfigRequest body, string tenantId, HttpContext http, BsonDocument? existing)
+{
+    var sizes = new BsonDocument();
+    foreach (var (bucket, list) in body.SizesByResolution ?? [])
+        sizes[bucket] = new BsonArray((list ?? []).Select(x => x.Trim()));
+
+    var renames = new BsonDocument();
+    foreach (var (from, to) in body.ParamRenames ?? [])
+    {
+        if (string.IsNullOrWhiteSpace(from) || string.IsNullOrWhiteSpace(to)) continue;
+        renames[from.Trim()] = to.Trim();
+    }
+
+    var doc = new BsonDocument
+    {
+        { "_id", existing?.GetStringOrEmpty("_id") ?? Guid.NewGuid().ToString("N") },
+        { "TenantId", tenantId },
+        { "ModelIdPattern", body.ModelIdPattern!.Trim().ToLowerInvariant() },
+        { "MatchOrder", body.MatchOrder ?? 100 },
+        { "Enabled", body.Enabled ?? true },
+        { "DisplayName", body.DisplayName ?? string.Empty },
+        { "Provider", body.Provider ?? string.Empty },
+        { "PlatformType", (BsonValue?)body.PlatformType ?? BsonNull.Value },
+        { "OfficialDocUrl", (BsonValue?)body.OfficialDocUrl ?? BsonNull.Value },
+        { "SizeConstraintType", (body.SizeConstraintType ?? "whitelist").Trim() },
+        { "SizeConstraintDescription", body.SizeConstraintDescription ?? string.Empty },
+        { "SizesByResolution", sizes },
+        { "SizesNotApplicable", body.SizesNotApplicable ?? false },
+        { "SizeParamFormat", (body.SizeParamFormat ?? "WxH").Trim() },
+        { "InjectSizePrompt", body.InjectSizePrompt ?? false },
+        { "MustBeDivisibleBy", (BsonValue?)body.MustBeDivisibleBy ?? BsonNull.Value },
+        { "MaxWidth", (BsonValue?)body.MaxWidth ?? BsonNull.Value },
+        { "MaxHeight", (BsonValue?)body.MaxHeight ?? BsonNull.Value },
+        { "MinWidth", (BsonValue?)body.MinWidth ?? BsonNull.Value },
+        { "MinHeight", (BsonValue?)body.MinHeight ?? BsonNull.Value },
+        { "MaxPixels", (BsonValue?)body.MaxPixels ?? BsonNull.Value },
+        { "ParamRenames", renames },
+        { "RequiresResolutionParam", body.RequiresResolutionParam ?? false },
+        { "SupportsImageToImage", body.SupportsImageToImage ?? false },
+        { "SupportsInpainting", body.SupportsInpainting ?? false },
+        { "SupportsResponseFormat", body.SupportsResponseFormat ?? true },
+        { "Notes", new BsonArray((body.Notes ?? []).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim())) },
+        { "CreatedAt", existing?.AsNullableUtcDateTime("CreatedAt") ?? DateTime.UtcNow },
+        { "UpdatedAt", DateTime.UtcNow },
+        // 「谁最后改的」问的是人，不是租户。写租户 id 的话，同一个租户里所有管理员产出的
+        // 归属一模一样，这个字段等于没有——而它存在的唯一理由就是回答这个问题。
+        { "UpdatedBy", TenantAccess.GetRequired(http).UserId },
+    };
+    return doc;
+}
+
+static ImageGenConfigItem MapImageGenConfig(BsonDocument d)
+{
+    var sizes = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+    if (d.TryGetValue("SizesByResolution", out var raw) && raw is BsonDocument bucketDoc)
+    {
+        foreach (var element in bucketDoc)
+        {
+            sizes[element.Name] = element.Value is BsonArray arr
+                ? [.. arr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
+                : [];
+        }
+    }
+    var renames = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    if (d.TryGetValue("ParamRenames", out var rawRenames) && rawRenames is BsonDocument renameDoc)
+    {
+        foreach (var element in renameDoc)
+            renames[element.Name] = element.Value.IsString ? element.Value.AsString : string.Empty;
+    }
+    return new ImageGenConfigItem
+    {
+        Id = d.GetStringOrEmpty("_id"),
+        ModelIdPattern = d.GetStringOrEmpty("ModelIdPattern"),
+        MatchOrder = d.AsNullableInt("MatchOrder") ?? 100,
+        Enabled = d.AsNullableBool("Enabled") ?? true,
+        DisplayName = d.GetStringOrEmpty("DisplayName"),
+        Provider = d.GetStringOrEmpty("Provider"),
+        PlatformType = d.AsNullableString("PlatformType"),
+        OfficialDocUrl = d.AsNullableString("OfficialDocUrl"),
+        SizeConstraintType = d.GetStringOrEmpty("SizeConstraintType"),
+        SizeConstraintDescription = d.GetStringOrEmpty("SizeConstraintDescription"),
+        SizesByResolution = sizes,
+        SizesNotApplicable = d.AsNullableBool("SizesNotApplicable") ?? false,
+        SizeParamFormat = d.GetStringOrEmpty("SizeParamFormat"),
+        InjectSizePrompt = d.AsNullableBool("InjectSizePrompt") ?? false,
+        MustBeDivisibleBy = d.AsNullableInt("MustBeDivisibleBy"),
+        MaxWidth = d.AsNullableInt("MaxWidth"),
+        MaxHeight = d.AsNullableInt("MaxHeight"),
+        MinWidth = d.AsNullableInt("MinWidth"),
+        MinHeight = d.AsNullableInt("MinHeight"),
+        MaxPixels = d.AsNullableLong("MaxPixels"),
+        ParamRenames = renames,
+        RequiresResolutionParam = d.AsNullableBool("RequiresResolutionParam") ?? false,
+        SupportsImageToImage = d.AsNullableBool("SupportsImageToImage") ?? false,
+        SupportsInpainting = d.AsNullableBool("SupportsInpainting") ?? false,
+        SupportsResponseFormat = d.AsNullableBool("SupportsResponseFormat") ?? true,
+        Notes = d.TryGetValue("Notes", out var notes) && notes is BsonArray noteArr
+            ? [.. noteArr.Select(x => x.IsString ? x.AsString : string.Empty).Where(x => x.Length > 0)]
+            : [],
+        UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
+    };
+}
+
 app.MapGet("/gw/logical-models", async (HttpContext http, string? modelType, bool? enabled) =>
 {
     var fb = Builders<BsonDocument>.Filter;
@@ -3644,6 +4634,1647 @@ app.MapGet("/gw/logical-models", async (HttpContext http, string? modelType, boo
     return Json(ApiEnvelope<LogicalModelsData>.Ok(data), jsonOptions);
 }).RequireAuthorization("LogsRead");
 
+// 逻辑模型的近 N 天用量：按天卷起来，给列表里那条趋势线用。
+//
+// 为什么单开一个端点而不是复用 /gw/logs/summary：那个回的是整段窗口的标量汇总，
+// 画不出「每天多少」；而列表要在一屏里给十来个模型各一条曲线，逐个模型打一次汇总
+// 是 N+1。这里一次聚合把全部逻辑模型的日桶取回来。
+//
+// 花费只累加 CostStatus=priced 的那部分，缺价的单独计数——把算不出钱的当零成本加进去，
+// 会让这条曲线看起来很省钱，而那正是缺价治理要避免的假象。
+app.MapGet("/gw/logical-models/usage", async (HttpContext http, int? days) =>
+{
+    var window = Math.Clamp(days ?? 30, 1, 90);
+    var toUtc = DateTime.UtcNow;
+    var fromUtc = toUtc.Date.AddDays(-(window - 1));
+
+    var fb = Builders<BsonDocument>.Filter;
+    var filter = TenantAccess.FilterTeamScope(http, fb.And(
+        fb.Gte("StartedAt", fromUtc),
+        fb.Lte("StartedAt", toUtc),
+        fb.Ne("LogicalModelPublicId", BsonNull.Value),
+        fb.Exists("LogicalModelPublicId"),
+        // 只数业务调用。异步模型（视频、长任务）的 status / download / cancel 三种控制操作
+        // 带着同一个 LogicalModelPublicId 落日志，不滤掉的话一次用户生成会被数成好几次调用，
+        // 模型页那条 30 天曲线于是虚高。判据与逻辑模型日志、总览两处用的是同一份
+        // （BuildBusinessOperationFilter），不在这里另写一套（第 70 轮 review，形状 3）。
+        BuildBusinessOperationFilter()));
+
+    var group = new BsonDocument("$group", new BsonDocument
+    {
+        { "_id", new BsonDocument
+            {
+                { "publicId", "$LogicalModelPublicId" },
+                { "day", new BsonDocument("$dateToString", new BsonDocument
+                    {
+                        { "format", "%Y-%m-%d" },
+                        { "date", "$StartedAt" },
+                    }) },
+            }
+        },
+        { "calls", new BsonDocument("$sum", 1) },
+        { "tokens", new BsonDocument("$sum", new BsonDocument("$add", new BsonArray
+            {
+                new BsonDocument("$ifNull", new BsonArray { "$InputTokens", 0 }),
+                new BsonDocument("$ifNull", new BsonArray { "$OutputTokens", 0 }),
+            })) },
+        { "usd", LogCostAggregation.UsdSum() },
+        // 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
+        //
+        // stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——
+        // 它和 unpriced 一样不进 USD 合计、不进预算。只数字面的 unpriced 会让这一屏
+        // 报「0 笔未计价」，而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外，
+        // 于是成本看起来偏低、而缺价治理这件事看起来已经做完了（形状 1：判据比它该管的范围窄）。
+        // 判据取值与 GatewayCostStatusNames 那张表同源，见 2861 行那处过滤——那里两种都算。
+        { "unpriced", LogCostAggregation.UnpricedCount() },
+    });
+
+    var pipeline = new EmptyPipelineDefinition<BsonDocument>()
+        .Match(filter)
+        .AppendStage<BsonDocument, BsonDocument, BsonDocument>(group);
+    var rows = await logs.Aggregate(pipeline).ToListAsync();
+
+    var dayKeys = Enumerable.Range(0, window)
+        .Select(offset => fromUtc.AddDays(offset).ToString("yyyy-MM-dd"))
+        .ToList();
+    var dayIndex = dayKeys
+        .Select((key, index) => (key, index))
+        .ToDictionary(x => x.key, x => x.index, StringComparer.Ordinal);
+
+    var byModel = new Dictionary<string, LogicalModelUsageItem>(StringComparer.Ordinal);
+    foreach (var row in rows)
+    {
+        if (!row.TryGetValue("_id", out var idValue) || !idValue.IsBsonDocument) continue;
+        var id = idValue.AsBsonDocument;
+        var publicId = id.GetStringOrEmpty("publicId");
+        if (publicId.Length == 0) continue;
+
+        if (!byModel.TryGetValue(publicId, out var item))
+        {
+            item = new LogicalModelUsageItem
+            {
+                PublicId = publicId,
+                Days = dayKeys,
+                DailyCalls = new long[window],
+            };
+            byModel[publicId] = item;
+        }
+
+        var calls = row.AsNullableLong("calls") ?? 0;
+        item.TotalCalls += calls;
+        item.TotalTokens += row.AsNullableLong("tokens") ?? 0;
+        item.TotalCostUsd += row.AsNullableDecimal("usd") ?? 0m;
+        item.UnpricedCalls += row.AsNullableLong("unpriced") ?? 0;
+        if (dayIndex.TryGetValue(id.GetStringOrEmpty("day"), out var slot))
+            item.DailyCalls[slot] += calls;
+    }
+
+    return Json(ApiEnvelope<LogicalModelUsageData>.Ok(new LogicalModelUsageData
+    {
+        Days = window,
+        From = fromUtc,
+        To = toUtc,
+        Items = byModel.Values.OrderByDescending(x => x.TotalCalls).ToList(),
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+/*
+  把存量模型池搬成模型：池的 Code 成公开名、成员成线路、IsDefaultForType 成默认标记。
+
+  三条刻意的设计：
+
+  1. **默认试运行**。不带 apply=true 时只算不写，把「会建哪些、会跳过哪些、为什么跳」
+     整份计划回给人看。搬迁只跑一次，跑错了拿回来的是脏数据，不该由一次手滑决定。
+  2. **只读旧表，写新表**。llmgw_model_pools 一个字节都不动，回退就是把新建的删掉。
+  3. **可重复跑**。同名公开模型已存在就只补线路，同一条线路（同 targetId）已存在就跳过。
+     搬到一半失败、或者新增了池要补搬，直接再跑一次即可，不会重复建。
+*/
+// 参数名在方法里叫 scopeModelType 是为了避开循环里的同名局部变量；
+// 对外的 query key 仍然是 modelType——错误信息里让人加的就是它，两者必须一致。
+app.MapPost("/gw/pools/migrate-to-models", async (
+    HttpContext http,
+    bool? apply,
+    [FromQuery(Name = "modelType")] string? scopeModelType) =>
+{
+    var dryRun = apply != true;
+    // 超过上限时的那句「请先按 modelType 分批」得真的做得到。
+    //
+    // 上一版只有 apply 一个参数，池多于上限的租户于是永远收到 TOO_MANY——
+    // 而池路由已经删了，那个租户**再也没有办法**把存量搬过来。
+    // 一句做不到的下一步比没有下一步更糟：它让人以为路是通的。
+    var modelTypeFilter = (scopeModelType ?? string.Empty).Trim();
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+    var fb = Builders<BsonDocument>.Filter;
+    var result = new PoolMigrationResult { DryRun = dryRun };
+
+    /*
+      池的来源有两个域，搬迁必须都扫。
+
+      只读的 GET /gw/pools 对内部租户是把 MAP 的 model_groups 与网关自己的 llmgw_model_pools
+      并起来的——因为运行时（池退场之前）两边都认。搬迁只读网关那一张表的话，MAP 原生的池
+      一个都不会被搬；而池分支已经从解析路上删掉，那些池所承载的路由**直接消失**，
+      搬迁报告却显示「全部搬完」（形状 1：判据比它该管的范围窄，这里窄在少看了一个数据域）。
+
+      合并口径与只读端点逐字一致：同 _id 时网关表赢。
+    */
+    var poolScopeFilter = modelTypeFilter.Length > 0
+        ? fb.Eq("ModelType", modelTypeFilter)
+        : fb.Empty;
+    var gatewayPools = await gwModelPools.Find(TenantAccess.Filter(http, poolScopeFilter)).ToListAsync();
+    var gatewayPoolIds = gatewayPools
+        .Select(d => d.GetStringOrEmpty("_id"))
+        .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.Ordinal);
+    var mapPools = tenantId == internalTenantId
+        ? (await modelGroups.Find(poolScopeFilter).ToListAsync())
+            .Where(d => !gatewayPoolIds.Contains(d.GetStringOrEmpty("_id")))
+            .ToList()
+        : new List<BsonDocument>();
+    var mapPoolIds = mapPools.Select(d => d.GetStringOrEmpty("_id")).ToHashSet(StringComparer.Ordinal);
+    var pools = gatewayPools.Concat(mapPools).ToList();
+
+    /*
+      调用方对池的专属绑定写在**调用方那一侧**（ModelPoolId / DefaultModelPoolId），
+      而新解析器只看模型这一侧的认领（DefaultForAppCallerCodes）。
+
+      不转的话，一个绑了专属池的调用方在池退场后，不点名的请求会落到用途默认上——
+      换了一个模型、而且没有任何提示。这正是这次搬迁要防的那种静默改变。
+    */
+    var poolBoundCallers = await gwAppCallers
+        .Find(TenantAccess.Filter(http, fb.Empty))
+        .Project(Builders<BsonDocument>.Projection
+            .Include("AppCallerCode")
+            .Include("RequestType")
+            .Include("ModelPoolId")
+            .Include("DefaultModelPoolId")
+            .Include("AllowedModelPoolIds"))
+        .ToListAsync();
+
+    /*
+      授权边界也要搬，而且它和「默认绑定」不是一回事。
+
+      旧世界里 AllowedModelPoolIds 非空 = 这个调用方**只能用这几个池**，是一道硬边界。
+      新世界的对应物在模型那一侧（AllowedAppCallerCodes：谁能用这个模型）。
+      搬迁此前只写了空名单——空 = 对所有调用方开放，于是一个原本被限制在池 A 的调用方，
+      搬完就能点名调用从池 B 搬过来的模型。边界不是变松了，是没了。
+
+      翻译方向相反（一个挂在调用方、一个挂在模型），所以只能按当前这批调用方算一次：
+      允许用池 P 的 = 没设限制的所有人 + 显式把 P 写进自己名单的人。
+      这会把名单**冻结在此刻**——以后新增的调用方不在里面、需要人工加。代价要说出口，
+      不能让人以为它会自动跟着变（no-rootless-tree：不假装有一个会自己更新的根）。
+
+      没有任何调用方设过限制时不写名单：那才是今天的真实行为，凭空造一份名单
+      等于用「更严」替换「没限制」，同样是改行为。
+    */
+    /*
+      而且这份翻译必须**按用途分开算**。
+
+      一个调用方在不同用途下是不同的记录，各有各的池限制。全租户一锅算的话，
+      它那条「对话没设限制」的记录会让它进到一个**生图**池搬过来的模型的授权名单里，
+      而它那条生图记录其实把自己限制在别的池上——边界不是搬过去了，是被搬宽了
+      （形状 1：判据比它该管的范围窄，「同一个调用方有多条用途记录」这种输入让它给出相反答案）。
+      所以按用途索引，翻译某个池时只看与这个池同用途的那些记录。
+    */
+    string CallerRequestType(BsonDocument caller)
+        => caller.AsNullableString("RequestType")?.Trim() is { Length: > 0 } rt ? rt : string.Empty;
+
+    var restrictedCallersByType = poolBoundCallers
+        .Where(d => GetStringArray(d, "AllowedModelPoolIds").Count > 0)
+        .GroupBy(CallerRequestType, StringComparer.Ordinal)
+        .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.Ordinal);
+    var unrestrictedCallerCodesByType = poolBoundCallers
+        .Where(d => GetStringArray(d, "AllowedModelPoolIds").Count == 0)
+        .GroupBy(CallerRequestType, StringComparer.Ordinal)
+        .ToDictionary(
+            g => g.Key,
+            g => g.Select(d => d.GetStringOrEmpty("AppCallerCode")).Where(x => x.Length > 0).ToList(),
+            StringComparer.Ordinal);
+    // 本轮已经规划出去的认领：同一个调用方在同一个用途下只能被一个模型认领，
+    // dry-run 要和 apply 说同一件事（与上面标识、默认那两张本轮索引同一个道理）。
+    // 键是 appCaller 码，所以按身份规则比（不分大小写）：按字节的话本轮规划里
+    // Foo 与 foo 会被当成两个调用方，dry-run 说得通、apply 撞唯一索引。
+    var plannedClaims = new Dictionary<string, string>(AppCallerIdentityPolicy.Comparer);
+    // 兑换所成员要照搬成 TargetKind=exchange 的线路，先把启用的兑换所取出来一次，
+    // 不在每个成员上重查（一个池几十个成员，逐个打库没必要）。
+    var enabledExchangesForMigration = await gwModelExchanges
+        .Find(TenantAccess.Filter(http, fb.Eq("Enabled", true)))
+        .ToListAsync();
+    // 判「这条线路现在承接得了流量吗」要用到物理模型挂的那个 Provider，同样先取一次。
+    var platformsForMigration = (await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync())
+        .Where(x => x.GetStringOrEmpty("_id").Length > 0)
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), x => x, StringComparer.Ordinal);
+    if (pools.Count > PoolMigrationPlanner.MaxBatch)
+    {
+        var availableTypes = pools
+            .Select(x => x.AsNullableString("ModelType") ?? string.Empty)
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(x => x, StringComparer.Ordinal)
+            .ToList();
+        return Json(ApiEnvelope<PoolMigrationResult>.Fail("TOO_MANY",
+            $"这一批有 {pools.Count} 个池，一次最多搬 {PoolMigrationPlanner.MaxBatch} 个。"
+            + $"加 ?modelType=<用途> 分批搬，当前这批涉及的用途有：{string.Join("、", availableTypes)}"
+            + (modelTypeFilter.Length > 0
+                ? $"（你已经筛了 {modelTypeFilter}，这个用途本身就超了上限——先在模型池页把不再需要的池停用或删掉）"
+                : string.Empty)), jsonOptions, 400);
+    }
+    result.PoolsScanned = pools.Count;
+
+    /*
+      dry-run 必须把「本次已经规划过的行」也算进来，否则预览与实际不符。
+
+      两个池共用同一个规范化 Code 是旧模型允许的。dry-run 只查已持久化的对外模型，
+      而它自己从不插入，于是第二个池照样被报成「新建一个模型」；apply 那一趟里第一个已经
+      插进去了，第二个走的是复用、线路去重、甚至跨用途拒绝——预览说的和真写的是两回事。
+      而 dry-run 的全部价值就是让人在写之前看清会发生什么（形状 5 的近亲：
+      判据取的是「变更前」的状态，而这次变更自己会改变它）。
+
+      所以在循环里维护一份「本轮已规划」的索引，查已存在时先问它。
+    */
+    var plannedByNormalizedPublicId = new Dictionary<string, BsonDocument>(StringComparer.Ordinal);
+    var plannedDefaultByModelType = new Dictionary<string, string>(StringComparer.Ordinal);
+    // 已规划的线路：{logicalId}::{targetKind}::{targetId}。dry-run 不插库，
+    // 不记的话同一条线路会被两个池各报一次「新建」，而 apply 时第二次会被去重。
+    var plannedOfferingKeys = new HashSet<string>(StringComparer.Ordinal);
+
+    foreach (var pool in pools)
+    {
+        var poolId = pool.GetStringOrEmpty("_id");
+        var poolName = pool.AsNullableString("Name") ?? poolId;
+        var skip = PoolMigrationPlanner.SkipReason(pool);
+        if (skip is not null)
+        {
+            result.Skipped.Add(new PoolMigrationSkip { PoolId = poolId, PoolName = poolName, Reason = skip });
+            continue;
+        }
+
+        var publicId = PoolMigrationPlanner.ToPublicId(pool);
+        var normalized = publicId.ToLowerInvariant();
+        var modelType = pool.AsNullableString("ModelType") ?? "chat";
+        /*
+          「建成了几条线路」与「其中几条现在承接得了流量」是两回事。
+
+          池成员可能指着一个已停用的物理模型、或者它挂的 Provider 不在了/被停用了。那种成员照样
+          搬成线路（拓扑要留着，模型页上会标出它为什么不可用），但它一条流量都接不了。
+          零线路那道闸若数的是前者，一个「每条线路的上游都不可用」的模型就躲过了它，
+          带着用途默认与认领留在库里，而运行时把每一条都拒掉（第 55 轮 review）。
+          所以闸门数的是后者，判据与新建线路那道闸同一份（OfferingTargetEligibility）。
+        */
+        var usableRouteCount = 0;
+        var entry = new PoolMigrationEntry
+        {
+            PoolId = poolId,
+            PoolName = poolName,
+            PublicId = publicId,
+            ModelType = modelType,
+            RoutingStrategy = PoolMigrationPlanner.ToRoutingStrategy(pool),
+            IsDefaultForType = PoolMigrationPlanner.IsDefaultForType(pool),
+            FromMapDomain = mapPoolIds.Contains(poolId),
+        };
+
+        // 这个池的授权名单：只看与它**同用途**的那些调用方记录，
+        // 而且只有当那一档里确实有人设过池级限制时才写，否则保持「对所有人开放」。
+        var restrictedSameType = restrictedCallersByType.GetValueOrDefault(modelType) ?? [];
+        var unrestrictedSameType = unrestrictedCallerCodesByType.GetValueOrDefault(modelType) ?? [];
+        var poolAllowlist = restrictedSameType.Count == 0
+            ? new List<string>()
+            : unrestrictedSameType
+                .Concat(restrictedSameType
+                    .Where(d => GetStringArray(d, "AllowedModelPoolIds").Contains(poolId, StringComparer.Ordinal))
+                    .Select(d => d.GetStringOrEmpty("AppCallerCode")))
+                .Where(x => x.Length > 0)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+
+        // 这个池被哪些调用方绑成了专属/默认。两个字段都要认：
+        // ModelPoolId 是专属绑定，DefaultModelPoolId 是「不点名时用它」，
+        // 对新解析器而言它们是同一件事——不点名的请求该落到这个模型上。
+        var boundCallerCodes = poolBoundCallers
+            .Where(d => string.Equals(d.AsNullableString("ModelPoolId"), poolId, StringComparison.Ordinal)
+                || string.Equals(d.AsNullableString("DefaultModelPoolId"), poolId, StringComparison.Ordinal))
+            .Select(d => d.GetStringOrEmpty("AppCallerCode"))
+            .Where(x => x.Length > 0)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        var existing = await gwLogicalModels.Find(fb.And(
+            fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized))).FirstOrDefaultAsync();
+        // 本轮已经规划过同一个标识时，按「它已经在了」处理——dry-run 才能和 apply 说同一件事。
+        if (existing is null && plannedByNormalizedPublicId.TryGetValue(normalized, out var plannedExisting))
+            existing = plannedExisting;
+
+        // 复用同名模型之前必须核对用途：标识撞上不等于是同一个东西。
+        //
+        // 只按 PublicIdNormalized 找的话，一个叫 default-chat 的 generation 模型会被当成
+        // 这个 chat 池的搬迁目标，池的物理线路就挂到了那个不相干的模型上；而运行时按
+        // ModelType 查目录，原用途的请求根本解析不到它——搬迁报「已关联」，实际两头落空。
+        if (existing is not null
+            && !string.Equals(existing.GetStringOrEmpty("ModelType"), modelType, StringComparison.Ordinal))
+        {
+            result.Skipped.Add(new PoolMigrationSkip
+            {
+                PoolId = poolId,
+                PoolName = poolName,
+                Reason = $"标识「{publicId}」已经被一个 {existing.GetStringOrEmpty("ModelType")} 用途的模型占着，"
+                    + $"而这个池是 {modelType}——标识撞上不代表是同一个东西，这个池整个没搬。"
+                    + "先把池改名或把那个模型改名，再重跑搬迁",
+            });
+            continue;
+        }
+
+        /*
+          「一个人都不许用」不能被翻译成「谁都能用」。
+
+          poolAllowlist 的空集有两种来源，而落库之后长得一模一样：
+            · 这一档里没人设过池级限制 → 本来就对所有人开放（restrictedSameType 为空）；
+            · 设过限制，但没有任何调用方获准用这个池 → **一个人都不许用**。
+          后者算出来也是空集，而 AllowedAppCallerCodes 为空在运行时的含义是「对所有调用方开放」。
+          照直写下去，一个谁都调不到的池会在搬迁之后变成整个租户都能调——一次静默的授权放大。
+
+          所以这一档不搬：报出来，等人给它一份显式名单再重跑。搬迁是幂等的，重跑不会重复建。
+          （复用已有模型那条路不受影响：那条路本来就不动已有名单。）
+        */
+        /*
+          这道门不分新建与复用。
+
+          上一版只在 existing is null 时判，于是撞上「同标识的对外模型已经存在」就整个绕过去：
+          搬迁保留那个模型原有的授权名单，却把这个「谁都没被授权」的池的成员当线路挂上去——
+          一批原本谁都够不到的上游，一下子对所有获准使用那个模型的调用方开放
+          （那个模型名单为空时就是全租户）。比新建那条路更糟，因为它连一行新记录都不留。
+        */
+        if (restrictedSameType.Count > 0 && poolAllowlist.Count == 0)
+        {
+            result.Skipped.Add(new PoolMigrationSkip
+            {
+                PoolId = poolId,
+                PoolName = poolName,
+                Reason = $"这个池在 {modelType} 这一档里一个调用方都没被授权使用（同用途的调用方都设了池级限制，"
+                    + "而它们的名单里都没有这个池）。这种「谁都不许用」落到对外模型上会变成「谁都能用」——"
+                    + "空的授权名单在运行时就是对所有调用方开放。所以这个池没有搬。"
+                    + "确认它该授权给谁：去 appCaller 页把这个池加进某个调用方的名单，再重跑一次搬迁",
+            });
+            continue;
+        }
+
+        var logicalId = existing?.GetStringOrEmpty("_id") ?? $"gw-logical-{Guid.NewGuid():N}";
+        entry.CreatedNewModel = existing is null;
+
+        /*
+          这个模型搬完之后实际生效的授权名单。新建走池翻译过来的那份，复用走它自己那份——
+          复用时搬迁**刻意不动**已有名单（可能是人工调过的），所以那份就是最终值。
+
+          认领要按这份名单过一遍，否则会写出一个自相矛盾的模型：名单里没有这个调用方，
+          认领里却有它。运行时第一层按认领挑中它，第二步 SupportsAppCallerScenario 按名单
+          把它拒掉，而且**不会**回头去试用途默认——这个调用方原本还能走池，搬完直接断流。
+          报成功的搬迁把流量搬没了，比不转更糟。
+        */
+        var effectiveAllowlist = existing is null
+            ? poolAllowlist
+            : existing.AsStringList("AllowedAppCallerCodes") ?? [];
+
+        /*
+          认领唯一性：同一个用途下，一个调用方最多被一个模型认领。
+
+          这条不变量在创建/更新端点有互斥，搬迁是直接写库，所以在这里把同一条规则再走一遍
+          （判据分裂成两份各自漂移，正是这项工程要消灭的形状）。被别人占着的不硬抢，
+          如实报出来——抢了的话，那个调用方的流量会从别人那里被夺过来，比不转更糟。
+        */
+        var claimsToTransfer = new List<string>();
+        foreach (var code in boundCallerCodes)
+        {
+            var plannedKey = $"{modelType}::{code}";
+            string? holder = null;
+            if (plannedClaims.TryGetValue(plannedKey, out var plannedHolderId)
+                && !string.Equals(plannedHolderId, logicalId, StringComparison.Ordinal))
+            {
+                holder = plannedHolderId;
+            }
+            else
+            {
+                // 认领比对一律走 appCaller 身份规则（不分大小写），与运行时那一句同一份：
+                // 这里按字节查的话，「已经被别人认领了」会漏判，搬迁带过来的认领与对手的
+                // 认领同时存在，而运行时只认得其中一个（第 76 轮 review）。
+                var rival = await gwLogicalModels.Find(
+                    fb.And(
+                        fb.Eq("TenantId", tenantId),
+                        fb.Eq("ModelType", modelType),
+                        fb.AnyEq("DefaultForAppCallerCodes", code),
+                        fb.Ne("_id", logicalId)),
+                    new FindOptions { Collation = AppCallerIdentityPolicy.Collation }).FirstOrDefaultAsync();
+                if (rival is not null) holder = rival.AsNullableString("PublicId") ?? rival.GetStringOrEmpty("_id");
+            }
+
+            if (holder is not null)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"调用方「{code}」绑着这个池，但同用途下它已经被模型「{holder}」认领了，"
+                        + "认领没有转过来。池退场后这个调用方不点名的请求会落到那个模型上——"
+                        + "确认哪一个才是它该用的，然后在模型白名单页手动改认领",
+                });
+                continue;
+            }
+
+            // 授权名单的比对按 appCaller 身份走（不分大小写），与运行时那一侧
+            // （GatewayCapabilityContract.SupportsAppCallerScenario 用 OrdinalIgnoreCase）一致。
+            // 按字节比的话：名单里写的是 Foo、绑池的调用方是 foo 时，这里判它「不在名单里」
+            // 而跳过认领转移，可运行时明明认它——池退场之后这个调用方悄悄落到用途默认，
+            // 而搬迁报告说的是「授权名单里没有它」，一句会把人带偏的假话（第 80 轮 review）。
+            if (effectiveAllowlist.Count > 0 && !effectiveAllowlist.Contains(code, AppCallerIdentityPolicy.Comparer))
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"调用方「{code}」绑着这个池，但它映射到的对外模型「{publicId}」的授权名单里没有它，"
+                        + "认领没有转过来。转了的话不点名的请求会挑中这个模型、再被授权名单拒掉，"
+                        + "而且不会回落到用途默认——那是断流。"
+                        + "确认这道边界该是什么样：要么在白名单页把这个调用方加进授权名单，要么给它另指一个模型",
+                });
+                continue;
+            }
+
+            claimsToTransfer.Add(code);
+            plannedClaims[plannedKey] = logicalId;
+        }
+        entry.ClaimedAppCallerCodes = claimsToTransfer;
+
+        /*
+          同用途最多一个默认——这条不变量在 PUT 端点有互斥，搬迁是直接 Insert，绕过了它。
+          判据分裂成两份各自漂移，正是这一整项工程要消灭的形状，所以这里把同一条规则再走一遍。
+
+          存量里一个用途标了两个默认（直接写库、历史数据）是有可能的。第二个降级成普通模型
+          并如实报出来，不能静默塞进去——两个默认之后，请求解析到哪个全看排序运气。
+        */
+        if (entry.IsDefaultForType)
+        {
+            var defaultTaken = await gwLogicalModels.Find(fb.And(
+                fb.Eq("TenantId", tenantId),
+                fb.Eq("ModelType", modelType),
+                fb.Eq("IsDefaultForType", true),
+                fb.Ne("_id", logicalId))).FirstOrDefaultAsync();
+            // 本轮已经有别的池把这个用途的默认占了，也算占了——否则 dry-run 会说两个池都能当默认，
+            // 而 apply 那一趟第二个必然被降级。
+            string? plannedHolder = null;
+            if (defaultTaken is null
+                && plannedDefaultByModelType.TryGetValue(modelType, out var plannedDefaultId)
+                && !string.Equals(plannedDefaultId, logicalId, StringComparison.Ordinal))
+            {
+                plannedHolder = plannedByNormalizedPublicId.Values
+                    .FirstOrDefault(x => string.Equals(x.GetStringOrEmpty("_id"), plannedDefaultId, StringComparison.Ordinal))
+                    ?.AsNullableString("PublicId") ?? plannedDefaultId;
+            }
+            if (defaultTaken is not null || plannedHolder is not null)
+            {
+                var holder = plannedHolder
+                    ?? defaultTaken!.AsNullableString("PublicId")
+                    ?? defaultTaken!.GetStringOrEmpty("_id");
+                entry.IsDefaultForType = false;
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"{modelType} 用途的默认已经是「{holder}」，这个池的兜底标记没搬（同用途只能有一个默认）；"
+                        + "线路照常搬，确认要换兜底就去模型页把默认改到它身上",
+                });
+            }
+        }
+
+        var now = DateTime.UtcNow;
+        // 并发撞上同一个公开名时，这一趟不算「建了一个模型」——它挂到了别人刚建的那条上。
+        var linkedByRace = false;
+        if (existing is null)
+        {
+            if (!dryRun)
+            {
+                // 「同用途唯一默认」现在是库级约束（部分唯一索引）。上面那道预检拦得住
+                // 本轮与已持久化的冲突，拦不住另一个人在这一瞬也设了默认——那时插入会撞
+                // E11000。一次并发不该让整趟搬迁 500：降级成非默认再插一次，并如实报出来。
+                var document = new BsonDocument
+                {
+                    { "_id", logicalId }, { "TenantId", tenantId },
+                    { "PublicId", publicId }, { "PublicIdNormalized", normalized },
+                    { "Name", poolName }, { "ModelType", modelType },
+                    // 能力必须从池成员的快照里取。传 null 进去得到的是空集合，而空能力的模型
+                    // 能力门一律不放行——搬迁报成功、调用方却调不到它，请求默默回落到池。
+                    { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy
+                        .NormalizeDetailed(modelType, PoolMigrationPlanner.CollectCapabilities(pool)).Persisted) },
+                    // 写入即打契约版本，与 create / update 两条路一致。
+                    // 漏掉它的话，capability-audit 会把每一条刚搬过来的模型都算成「未版本化」，
+                    // 一次成功的搬迁当场把发布闸判成不干净，而且要等控制台重启跑迁移才消。
+                    { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
+                    // 授权边界：租户里有人设过池级限制时把它翻译过来，没人设过就留空
+                    //（留空 = 对所有调用方开放，与「谁都没被限制」的今天一致）。
+                    // 见上面 restrictedCallers 那段：翻译会把名单冻结在此刻，代价已写在报告里。
+                    { "AllowedAppCallerCodes", new BsonArray(poolAllowlist) },
+                    // 但「谁不点名时落到这里」必须转过来。那是池的专属绑定
+                    //（调用方那一侧的 ModelPoolId / DefaultModelPoolId），
+                    // 而新解析器只看模型这一侧的认领——不转的话，那些调用方在池退场后
+                    // 会静默改用用途默认，换了一个模型。
+                    { "DefaultForAppCallerCodes", new BsonArray(claimsToTransfer) },
+                    { "RoutingStrategy", entry.RoutingStrategy },
+                    { "Enabled", true },
+                    { "IsDefaultForType", entry.IsDefaultForType },
+                    // 记住来源：`model_policy=pool` 契约还活着，那些请求带的是池文档 ID
+                    // 而不是这里的 PublicId。不记的话它们在池退场后一律解析不到。
+                    { "MigratedFromPoolIds", new BsonArray(new[] { poolId }) },
+                    { "DisplayOrder", pool.AsNullableInt("Priority") ?? 100 },
+                    { "Description", $"由模型池「{poolName}」搬迁而来" },
+                    { "CreatedAt", now }, { "UpdatedAt", now },
+                };
+                /*
+                  「另一个搬迁请求抢先建好了同名模型，认下它」这一段有**两个**入口：
+                  第一次插入撞上公开名索引，以及认领撞车重试时又撞上公开名索引。
+                  两处各写一遍必然漂移，所以收在这里，返回值告诉调用方接下来怎么走。
+                */
+                async Task<string> TryLinkToRaceWinnerAsync()
+                {
+                    var winner = await gwLogicalModels
+                        .Find(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("PublicIdNormalized", normalized)))
+                        .FirstOrDefaultAsync();
+                    if (winner is null) return "missing";
+
+                    // 认下对方之前要复核用途：正常那条「已存在同名模型」的路会查，
+                    // 这条恢复路不查的话，会把一个生图池的线路挂到一个对话模型下面——
+                    // 原来那个用途一条路都没搬到，而赢家收了一批它根本用不了的上游。
+                    var winnerType = winner.AsNullableString("ModelType") ?? string.Empty;
+                    if (!string.Equals(winnerType, modelType, StringComparison.Ordinal))
+                    {
+                        result.Skipped.Add(new PoolMigrationSkip
+                        {
+                            PoolId = poolId,
+                            PoolName = poolName,
+                            Reason = $"另一个搬迁请求在同一瞬间用「{publicId}」建了一个 {winnerType} 模型，"
+                                + $"而这个池是 {modelType}——同名不同用途不能合成一条，这个池没搬。"
+                                + "给它换一个对外标识再搬",
+                        });
+                        return "cross-type";
+                    }
+
+                    logicalId = winner.GetStringOrEmpty("_id");
+                    linkedByRace = true;
+                    entry.CreatedNewModel = false;
+                    entry.IsDefaultForType = winner.AsNullableBool("IsDefaultForType") ?? false;
+                    entry.ClaimedAppCallerCodes = GetStringArray(winner, "DefaultForAppCallerCodes");
+                    // 把这个池的 id 也记进去。不记的话，还带着 model_policy=pool 的存量客户端
+                    // 拿这个池的文档 ID 来点名时查不到任何模型，一律 MODEL_NOT_FOUND——
+                    // 正常那条「已存在同名模型」的路是会记的，这条恢复路漏了就是同一个洞。
+                    await gwModelOfferings.Database
+                        .GetCollection<BsonDocument>("llmgw_logical_models")
+                        .UpdateOneAsync(
+                            fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                            Builders<BsonDocument>.Update
+                                .AddToSet("MigratedFromPoolIds", poolId)
+                                .Set("UpdatedAt", DateTime.UtcNow));
+                    result.Skipped.Add(new PoolMigrationSkip
+                    {
+                        PoolId = poolId,
+                        PoolName = poolName,
+                        Reason = $"另一个搬迁请求在同一瞬间已经把「{publicId}」建好了，这个池的线路直接挂到那一条上，"
+                            + "没有重复建模型。确认那条模型的默认与认领是不是你要的",
+                    });
+                    return "linked";
+                }
+
+                try
+                {
+                    await gwLogicalModels.InsertOneAsync(document);
+                }
+                catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                {
+                    /*
+                      两条唯一索引都可能在这里撞上，处置不一样，所以必须先看是哪一条：
+                        · 默认那条 → 去掉默认标记重插，这个池搬成普通模型；
+                        · 认领那条 → 去掉被抢走的那几个认领重插。
+                      上一版把所有 duplicate key 都当成默认冲突，于是认领撞车时带着**同一份认领数组**
+                      重插，必然再抛一次——一次可报告的并发冲突变成 500，而前面几个池可能已经搬完了。
+                    */
+                    var message = ex.WriteError?.Message ?? ex.Message;
+                    if (message.Contains("uniq_llmgw_logical_model_tenant_public_id", StringComparison.Ordinal))
+                    {
+                        /*
+                          公开名撞车：另一个搬迁请求在这一瞬把同一个池搬完了。
+
+                          这一档**不能重插**——重插带着同一个公开名，必然再抛一次，
+                          而这一趟前面几个池可能已经搬好了，一次可报告的并发变成 500 加半批产物。
+                          正确的做法是认下对方那一条：把 logicalId 换成它的，后面的线路照常挂上去，
+                          等价于走「已存在同名模型」那条路。上一版把这种撞车当成默认冲突处理，
+                          只清了默认标记就重插，于是必炸（形状 1：判据只认了两种索引，
+                          第三种落进 else 得到一个与它无关的处置）。
+                        */
+                        var linked = await TryLinkToRaceWinnerAsync();
+                        // 读不回赢家（它又被删了？）就把原异常抛出去：这时既没建成也认不下谁，
+                        // 编一个结论比报错更糟（no-rootless-tree）。
+                        if (string.Equals(linked, "missing", StringComparison.Ordinal)) throw;
+                        if (string.Equals(linked, "cross-type", StringComparison.Ordinal)) continue;
+                    }
+                    else if (message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal))
+                    {
+                        /*
+                          认领撞车：这个池绑着的调用方里，**有的**在这一瞬被别的模型认领走了。
+
+                          撞车的通常只是其中一个，而索引不会告诉你是哪一个（多键唯一索引只说撞了）。
+                          上一版因此把整份认领清空重插——于是没被抢的那几个调用方也一起失去了接得住
+                          它们的模型，池退场后它们会静默改用用途默认，换了一个模型没人知道。
+                          一次影响一个调用方的并发，被放大成影响这个池的全部调用方（第 53 轮 review）。
+
+                          所以回去读一遍现在谁认领着这几个 code，只去掉真被占走的那几个，其余照带。
+                          读回来之后仍可能再撞（又有人在这几毫秒里认领了），那时才退回清空——
+                          那是最后一道兜底，不是第一反应。两种情况报出来的话不一样：说清哪几个没带上。
+                        */
+                        // 同上：占用判定按身份不按字节，否则「已被占」会漏判。
+                        var takenCodes = new HashSet<string>(AppCallerIdentityPolicy.Comparer);
+                        try
+                        {
+                            var holders = await gwLogicalModels
+                                .Find(
+                                    fb.And(
+                                        fb.Eq("TenantId", tenantId),
+                                        fb.Eq("ModelType", modelType),
+                                        fb.AnyIn("DefaultForAppCallerCodes", claimsToTransfer)),
+                                    new FindOptions { Collation = AppCallerIdentityPolicy.Collation })
+                                .ToListAsync();
+                            foreach (var holder in holders)
+                            {
+                                foreach (var code in GetStringArray(holder, "DefaultForAppCallerCodes"))
+                                {
+                                    if (claimsToTransfer.Contains(code, AppCallerIdentityPolicy.Comparer))
+                                        takenCodes.Add(code);
+                                }
+                            }
+                        }
+                        catch (MongoException)
+                        {
+                            // 读不回来就当全被占了：宁可少带认领（去白名单页补得回来），
+                            // 也不要带着一份猜出来的认领再撞一次，把并发冲突变成 500。
+                            takenCodes.UnionWith(claimsToTransfer);
+                        }
+
+                        var keptClaims = claimsToTransfer
+                            .Where(code => !takenCodes.Contains(code))
+                            .ToList();
+                        document["DefaultForAppCallerCodes"] = new BsonArray(keptClaims);
+                        try
+                        {
+                            await gwLogicalModels.InsertOneAsync(document);
+                        }
+                        catch (MongoWriteException retry)
+                            when (retry.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                        {
+                            /*
+                              重试也撞了——**先看撞的是哪一条**，两种的处置相反。
+
+                              上一版把重试的撞键一律当成又一次认领撞车：清空认领、拿**同一个公开名**
+                              再插一次。可这几毫秒里另一个搬迁完全可能把这个公开名建掉，那时第二次插入
+                              必然再抛，而它在 try 外面——异常一路出去变成 500，而这一趟前面几个池
+                              可能已经搬好了（第 70 轮 review；与外层那次分流是同一个形状，
+                              外层已经按索引名分开了，重试这一档漏在外面）。
+                            */
+                            var retryMessage = retry.WriteError?.Message ?? retry.Message;
+                            if (retryMessage.Contains("uniq_llmgw_logical_model_tenant_public_id", StringComparison.Ordinal))
+                            {
+                                var relinked = await TryLinkToRaceWinnerAsync();
+                                if (string.Equals(relinked, "missing", StringComparison.Ordinal)) throw;
+                                if (string.Equals(relinked, "cross-type", StringComparison.Ordinal)) continue;
+                                // 认下了赢家：这个池的线路挂到它名下，认领一个都没带过来。
+                                keptClaims = [];
+                            }
+                            else
+                            {
+                                keptClaims = [];
+                                document["DefaultForAppCallerCodes"] = new BsonArray();
+                                try
+                                {
+                                    await gwLogicalModels.InsertOneAsync(document);
+                                }
+                                catch (MongoWriteException last)
+                                    when (last.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                                {
+                                    // 清空认领之后还撞，只可能是公开名被抢了。再认一次赢家；
+                                    // 认不下就报这个池没搬，而不是让异常把整趟搬迁变成 500。
+                                    var lastLinked = await TryLinkToRaceWinnerAsync();
+                                    if (!string.Equals(lastLinked, "linked", StringComparison.Ordinal)) continue;
+                                }
+                            }
+                        }
+
+                        entry.ClaimedAppCallerCodes = keptClaims;
+                        var lostClaims = claimsToTransfer
+                            .Where(code => !keptClaims.Contains(code, AppCallerIdentityPolicy.Comparer))
+                            .ToList();
+                        result.Skipped.Add(new PoolMigrationSkip
+                        {
+                            PoolId = poolId,
+                            PoolName = poolName,
+                            Reason = "搬迁进行期间，绑着这个池的调用方里有"
+                                + $"{lostClaims.Count} 个被别的模型认领了（{string.Join("、", lostClaims.Take(5))}"
+                                + (lostClaims.Count > 5 ? " 等" : string.Empty)
+                                + $"），这个池搬过来时没有带上它们；其余 {keptClaims.Count} 个照常带过来了。"
+                                + "确认那几个调用方该归谁，再去白名单页改",
+                        });
+                    }
+                    else
+                    {
+                        document["IsDefaultForType"] = false;
+                        await gwLogicalModels.InsertOneAsync(document);
+                        entry.IsDefaultForType = false;
+                        result.Skipped.Add(new PoolMigrationSkip
+                        {
+                            PoolId = poolId,
+                            PoolName = poolName,
+                            Reason = $"这个池是 {modelType} 的默认，但搬迁进行期间这个用途的默认被别人占了，"
+                                + "所以它搬成了普通模型。确认哪一个才该当默认，再去白名单页改",
+                        });
+                    }
+                }
+            }
+            if (linkedByRace) result.LinkedToExisting++;
+            else result.ModelsCreated++;
+        }
+        else
+        {
+            /*
+              已有同名模型时顺手修一件事：能力为空。
+
+              空能力从来不是一个合法状态——能力门一律不放行，这个模型的存在只会让调用方
+              以为它能用。搬迁第一版就产出过一批这样的模型（传 null 进能力归一得到空集合），
+              光靠「重跑不会重复建」修不回来，只能在这里补。
+
+              只补空的，不动已经有能力的：那些可能是人工调过的，搬迁没有资格覆盖。
+            */
+            var existingCaps = existing.GetValue("Capabilities", BsonNull.Value);
+            var isEmpty = !existingCaps.IsBsonArray || existingCaps.AsBsonArray.Count == 0;
+            if (isEmpty)
+            {
+                var repaired = LogicalModelCapabilityPolicy
+                    .NormalizeDetailed(modelType, PoolMigrationPlanner.CollectCapabilities(pool)).Persisted;
+                if (repaired.Count > 0)
+                {
+                    if (!dryRun)
+                    {
+                        await gwLogicalModels.UpdateOneAsync(
+                            fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                            Builders<BsonDocument>.Update
+                                .Set("Capabilities", new BsonArray(repaired))
+                                // 补了能力就得同时补版本，否则这条修复自己又留下一个未版本化文档。
+                                .Set(LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion)
+                                .Set("UpdatedAt", DateTime.UtcNow));
+                    }
+                    entry.RepairedCapabilities = true;
+                }
+            }
+            // 复用已有模型时也要把这个池 id 并进来源里：它同样会收到带池 ID 的请求。
+            // AddToSet 而不是 Set——一个模型可能被多个同 Code 的池先后搬过来。
+            //
+            // 兜底标记也要搬。一个**默认**池映射到已存在的对外模型时，这里不设 IsDefaultForType
+            // 的话，池退场后不点名的请求就不会落到它——那条流量原本是池在接的，搬完反而接不住了
+            // （要么整个失败，要么落到另一个用途默认上，换了模型）。
+            //
+            // entry.IsDefaultForType 走到这里时已经过了上面那道同用途唯一性检查：
+            // 被别人占着就已经降级成 false 并如实报进 Skipped，所以这里直接用它是安全的。
+            var reuseUpdate = Builders<BsonDocument>.Update
+                .AddToSet("MigratedFromPoolIds", poolId)
+                .Set("UpdatedAt", DateTime.UtcNow);
+            if (entry.IsDefaultForType)
+                reuseUpdate = reuseUpdate.Set("IsDefaultForType", true);
+            // 认领同样要搬。AddToSetEach 而不是 Set——这个模型可能已经认领了别的调用方，
+            // 覆盖过去会把它们悄悄摘掉。
+            if (claimsToTransfer.Count > 0)
+                reuseUpdate = reuseUpdate.AddToSetEach("DefaultForAppCallerCodes", claimsToTransfer);
+            /*
+              复用已有模型时**不动**它的授权名单：那个模型可能是别人建的、名单也可能是人工调过的，
+              搬迁没有资格替它收紧或放宽。但只要两边不一致就必须报出来——
+              上一版只报了「已有名单为空」这一种，那只是不一致里最显眼的一个特例（形状 1）。
+
+              两边都非空且不相等时，两个方向的偏差同时存在，而且都不会有任何提示：
+                · 已有名单里、池名单外的调用方 → 能够到这个池搬过来的线路（越权）；
+                · 池名单里、已有名单外的调用方 → 够不到它本来有权用的上游（失权）。
+              所以判的是「相等与否」，不是「空与否」。
+            */
+            var existingAllowlist = existing?.AsStringList("AllowedAppCallerCodes") ?? [];
+            var allowlistMatches = poolAllowlist.Count == existingAllowlist.Count
+                && poolAllowlist.All(x => existingAllowlist.Contains(x, StringComparer.Ordinal));
+            if (poolAllowlist.Count > 0 && !allowlistMatches)
+            {
+                var extra = existingAllowlist.Where(x => !poolAllowlist.Contains(x, StringComparer.Ordinal)).ToList();
+                var missing = poolAllowlist.Where(x => !existingAllowlist.Contains(x, StringComparer.Ordinal)).ToList();
+                var detail = existingAllowlist.Count == 0
+                    ? "它当前对所有调用方开放"
+                    : $"两边名单不一致：{(extra.Count > 0 ? $"多出 {string.Join("、", extra)}（这些调用方将能用到本池的线路）" : string.Empty)}"
+                      + $"{(extra.Count > 0 && missing.Count > 0 ? "；" : string.Empty)}"
+                      + $"{(missing.Count > 0 ? $"缺少 {string.Join("、", missing)}（这些调用方将用不到它们本来有权用的上游）" : string.Empty)}";
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"这个池有池级授权限制，但它映射到的对外模型「{publicId}」已经存在，{detail}。"
+                        + "搬迁没有改它的授权名单（那可能是人工调过的），线路照常挂上去了。"
+                        + "确认这道边界该是什么样，再去白名单页手动设",
+                });
+            }
+            if (!dryRun)
+            {
+                await gwLogicalModels.UpdateOneAsync(
+                    fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                    reuseUpdate);
+            }
+            result.LinkedToExisting++;
+        }
+
+        // 记进本轮索引：下一个池若撞上同一个标识或同一个用途默认，dry-run 要和 apply 说同一件事。
+        plannedByNormalizedPublicId[normalized] = new BsonDocument
+        {
+            { "_id", logicalId },
+            { "PublicId", publicId },
+            { "PublicIdNormalized", normalized },
+            { "ModelType", modelType },
+            { "IsDefaultForType", entry.IsDefaultForType },
+            // 名单也要记进本轮索引：下一个池若撞上同一个标识，认领该不该转得按同一份名单判，
+            // 否则 dry-run 与 apply 在「第二个池」上会说两件事。
+            { "AllowedAppCallerCodes", new BsonArray(effectiveAllowlist) },
+        };
+        if (entry.IsDefaultForType)
+            plannedDefaultByModelType[modelType] = logicalId;
+
+        var members = pool.GetValue("Models", BsonNull.Value) is { IsBsonArray: true } arr
+            ? arr.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument).ToList()
+            : new List<BsonDocument>();
+        foreach (var member in members)
+        {
+            var memberModelId = member.AsNullableString("ModelId") ?? string.Empty;
+            var memberPlatformId = member.AsNullableString("PlatformId") ?? string.Empty;
+            if (memberModelId.Length == 0) continue;
+
+            // 池成员记的是「模型名 + 平台 id」，Offering 指的是物理模型文档的 _id，要换算一次。
+            // 换不出来说明这个成员指向的模型已经不在库里了，跳过并报出来——搬一条指向空气的
+            // 线路，只会让这个模型在真调用时才炸。
+            // 成员的 ModelId 可能对应物理文档的三种字段之一：早期入库的模型没有 ModelName，
+            // 供给侧当时是从 Name 或 _id 取的标识写进池成员的。只查 ModelName 会把那些
+            // 完全合法的成员报成「找不到」，搬过去的模型于是少线路——池退役之后就再也没有
+            // 别的路能接住它们了（形状 1：判据比它该管的范围窄）。
+            // 先看它是不是兑换所成员。两种合法写法：PlatformId 直接写兑换所 _id，
+            // 或写成 __exchange__ 由中继按模型名匹配（判据与 IsResolvablePoolMemberKey 同源）。
+            //
+            // 漏掉这一支的后果不是少一条线路，是**整个池搬成零线路**：一个纯 Exchange 的池
+            // 里每个成员都被报成「模型库里找不到」，搬过去的对外模型一条线路都没有，
+            // 而池路由此时已经删了——那些流量再也没有别的路可走。
+            // 上一轮把「成员按三种标识匹配」补上时只扫了物理模型这一族，兑换所这一族没跟着扫。
+            BsonDocument? memberExchange = null;
+            if (memberPlatformId.Length > 0)
+            {
+                memberExchange = string.Equals(memberPlatformId, "__exchange__", StringComparison.Ordinal)
+                    ? enabledExchangesForMigration.FirstOrDefault(x => GatewayExchangeSupportsModel(x, memberModelId))
+                    : enabledExchangesForMigration.FirstOrDefault(x =>
+                        string.Equals(x.GetStringOrEmpty("_id"), memberPlatformId, StringComparison.Ordinal)
+                        && GatewayExchangeSupportsModel(x, memberModelId));
+            }
+
+            if (memberExchange is not null)
+            {
+                var exchangeId = memberExchange.GetStringOrEmpty("_id");
+                /*
+                  去重键必须带上**打给兑换所的那个模型标识**，不能只到兑换所为止。
+
+                  一个兑换所底下挂着多个别名，池里也常常同时放着好几个（claude-3-opus 与
+                  claude-3-sonnet 都走同一个中继）。线路真正调的是哪一个由 UpstreamModelId
+                  决定，所以它们是**不同的**线路；键只到兑换所的话，第一个成员占住键，
+                  后面每一个别名都被静默 continue 掉——不报错、不进 Skipped，
+                  而池路由已经删了，那些别名搬完就此消失（形状 1：判据比它该管的范围窄，
+                  「同一个兑换所的不同别名」这种输入让它给出了相反答案）。
+                */
+                var exchangeRouteKey = $"{logicalId}::exchange::{exchangeId}::{memberModelId}";
+                var existingExchangeRoute = await gwModelOfferings.Find(fb.And(
+                    fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                    fb.Eq("TargetKind", "exchange"), fb.Eq("TargetId", exchangeId),
+                    // 与两个写入端点同一份判据：库里那条没写 UpstreamModelId 的线路，
+                    // 运行时回落到的正是兑换所主别名——它与本成员同名时就是同一条上游，
+                    // 逐字比会漏掉它、再建一条，同一个上游拿两份权重。
+                    OfferingIdentityPolicy.SameUpstreamFilter("exchange", memberExchange, memberModelId)))
+                    .FirstOrDefaultAsync();
+                if (plannedOfferingKeys.Contains(exchangeRouteKey) || existingExchangeRoute is not null)
+                {
+                    /*
+                      这条线路上一趟已经建过了，不重复建——但它照样要算进「有几条能接流量」。
+
+                      不算的话，上一趟因为上游坏了被停用的模型，这一趟即使上游修好了也数出零，
+                      于是那个「把它放回来」的分支永远不触发，上一轮许下的恢复路径还是走不通
+                      （第 57 轮 review：修复本身依赖一个数不全的计数器）。
+                    */
+                    if (existingExchangeRoute is not null
+                        && MigrationExistingRouteCountsAsUsable(
+                            existingExchangeRoute,
+                            OfferingTargetEligibility.Evaluate(
+                                "exchange", memberExchange, null, memberModelId)))
+                    {
+                        usableRouteCount++;
+                    }
+
+                    continue;
+                }
+
+                plannedOfferingKeys.Add(exchangeRouteKey);
+
+                var lostExchangePrices = DescribeLostMemberPrices(member, null);
+                if (lostExchangePrices.Count > 0)
+                {
+                    result.Skipped.Add(new PoolMigrationSkip
+                    {
+                        PoolId = poolId, PoolName = poolName,
+                        Reason = $"成员「{memberModelId}」（兑换所）在池里配了自己的价格（{string.Join("、", lostExchangePrices)}），"
+                            + "而线路没有价格字段、兑换所也没有物理模型可回落——搬过来之后这条线路会被判成未计价，"
+                            + "不进用量汇总也不参与限额。线路本身照常建好了，价格要另行安排",
+                    });
+                }
+
+                if (DescribeLostMemberMaxTokens(member, null) is { Length: > 0 } lostExchangeCap)
+                {
+                    result.Skipped.Add(new PoolMigrationSkip
+                    {
+                        PoolId = poolId, PoolName = poolName,
+                        Reason = $"成员「{memberModelId}」（兑换所）：{lostExchangeCap}。线路没有输出上限这个字段，"
+                            + "搬过来之后这条限制不再生效。线路本身照常建好了，上限要另行安排",
+                    });
+                }
+
+                var carriedExchangeHealth = PoolMigrationPlanner.CarryHealthStatus(member, now);
+                if (carriedExchangeHealth != 0) entry.CarriedUnhealthyRoutes++;
+                if (!dryRun)
+                {
+                    await gwModelOfferings.InsertOneAsync(new BsonDocument
+                    {
+                        { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
+                        { "LogicalModelId", logicalId }, { "TargetKind", "exchange" }, { "TargetId", exchangeId },
+                        { "UpstreamModelId", memberModelId },
+                        { "Protocol", member.AsNullableString("Protocol") is { Length: > 0 } ep ? ep : BsonNull.Value },
+                        { "EndpointPath", BsonNull.Value },
+                        { "Priority", PoolMigrationPlanner.MemberPriority(member) },
+                        { "Weight", member.AsNullableInt("Weight") ?? 100 },
+                        { "Enabled", true },
+                        { "HealthStatus", carriedExchangeHealth },
+                        { "ConsecutiveFailures", carriedExchangeHealth != 0 ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
+                        { "ConsecutiveSuccesses", 0 },
+                        { "LastFailedAt", carriedExchangeHealth != 0 && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } elf
+                            ? elf : BsonNull.Value },
+                        { "MaxConcurrency", member.AsNullableInt("MaxConcurrency") is { } emc && emc > 0 ? emc : BsonNull.Value },
+                        { "RateLimitPerMinute", BsonNull.Value },
+                        { "Notes", BsonNull.Value },
+                        { "CreatedAt", now }, { "UpdatedAt", now },
+                    });
+                }
+                entry.RouteCount++;
+                result.RoutesCreated++;
+                /*
+                  上游够格还不够：池成员近期的不可用是**照搬**过来的（CarryHealthStatus），
+                  而运行时把熔断态的线路整条跳过。只判上游的话，一个「成员全在熔断里」的池
+                  搬过来仍然数出有可用线路，模型带着默认与认领留在库里，池退场之后每一个请求
+                  都当场失败（第 57 轮 review：判据比它该管的范围窄）。
+                */
+                if (MigrationRouteCountsAsUsable(
+                        carriedExchangeHealth,
+                        enabled: true,
+                        OfferingTargetEligibility.Evaluate("exchange", memberExchange, null, memberModelId)))
+                {
+                    usableRouteCount++;
+                }
+
+                continue;
+            }
+
+            var physical = await gwModels.Find(fb.And(
+                fb.Eq("TenantId", tenantId),
+                fb.Or(
+                    fb.Eq("ModelName", memberModelId),
+                    fb.Eq("Name", memberModelId),
+                    fb.Eq("_id", memberModelId)),
+                memberPlatformId.Length > 0 ? fb.Eq("PlatformId", memberPlatformId) : fb.Empty)).FirstOrDefaultAsync();
+            if (physical is null)
+            {
+                /*
+                  查不到不代表这个成员不存在——它可能还在 MAP 域（`models` 集合）里。
+
+                  线路只能指向网关自己的模型文档：解析器查的是 llmgw_models，
+                  拿一个 MAP 文档的 _id 建线路，运行时一条都解析不到（建了等于没建）。
+                  所以这里不自动把它搬进网关——那要连密钥一起复制，是个该由人点头的动作。
+                  能做也必须做的是**说清楚**：这个成员在哪、为什么没搬、下一步点哪儿。
+                  报成「模型库里找不到」是假话，而且那句话没有下一步。
+                */
+                var mapNative = tenantId == internalTenantId
+                    ? await models.Find(Builders<BsonDocument>.Filter.And(
+                        Builders<BsonDocument>.Filter.Or(
+                            Builders<BsonDocument>.Filter.Eq("ModelName", memberModelId),
+                            Builders<BsonDocument>.Filter.Eq("Name", memberModelId),
+                            Builders<BsonDocument>.Filter.Eq("_id", memberModelId)),
+                        memberPlatformId.Length > 0
+                            ? Builders<BsonDocument>.Filter.Eq("PlatformId", memberPlatformId)
+                            : Builders<BsonDocument>.Filter.Empty)).FirstOrDefaultAsync()
+                    : null;
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId, PoolName = poolName,
+                    Reason = mapNative is not null
+                        ? $"成员「{memberModelId}」还在 MAP 域，没有认领进网关——线路只能指向网关自己的模型，"
+                          + "所以这条没搬。先在「模型」页把它认领进网关，再重跑一次搬迁（已搬的不会重复建）"
+                        : $"成员「{memberModelId}」在模型库里找不到对应记录，这条线路没搬",
+                });
+                continue;
+            }
+
+            var physicalId = physical.GetStringOrEmpty("_id");
+            // 上游调用名取物理文档登记的 ModelName，不沿用池成员记的那个标识。
+            // 放宽匹配之后两者可能不是一回事（成员记的是 Name 或 _id），
+            // 照抄过去就是拿一个上游不认识的名字去调它。
+            var upstreamModelId = physical.AsNullableString("ModelName") is { Length: > 0 } registered
+                ? registered
+                : memberModelId;
+            var modelRouteKey = $"{logicalId}::model::{physicalId}";
+            var existingModelRoute = await gwModelOfferings.Find(fb.And(
+                fb.Eq("TenantId", tenantId), fb.Eq("LogicalModelId", logicalId),
+                fb.Eq("TargetKind", "model"), fb.Eq("TargetId", physicalId))).FirstOrDefaultAsync();
+            if (plannedOfferingKeys.Contains(modelRouteKey) || existingModelRoute is not null)
+            {
+                // 同上：已经存在的那条也要算进「有几条能接流量」，否则重跑搬迁数出来永远是零。
+                if (existingModelRoute is not null)
+                {
+                    platformsForMigration.TryGetValue(
+                        physical.AsNullableString("PlatformId") ?? string.Empty, out var existingPlatform);
+                    if (MigrationExistingRouteCountsAsUsable(
+                            existingModelRoute,
+                            OfferingTargetEligibility.Evaluate(
+                                "model", physical, existingPlatform, existingModelRoute.AsNullableString("UpstreamModelId"))))
+                    {
+                        usableRouteCount++;
+                    }
+                }
+
+                continue;
+            }
+
+            plannedOfferingKeys.Add(modelRouteKey);
+
+            var lostPrices = DescribeLostMemberPrices(member, physical);
+            if (lostPrices.Count > 0)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId, PoolName = poolName,
+                    Reason = $"成员「{memberModelId}」在池里配了自己的价格（{string.Join("、", lostPrices)}），"
+                        + $"与模型「{upstreamModelId}」文档上的价格不一致。搬过来之后计价只看模型文档，"
+                        + "这几项会按模型文档的值算（没配就判成未计价）。线路本身照常建好了，"
+                        + "要保持原价就去模型页把这几个值填到那个模型上",
+                });
+            }
+
+            if (DescribeLostMemberMaxTokens(member, physical) is { Length: > 0 } lostCap)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId, PoolName = poolName,
+                    Reason = $"成员「{memberModelId}」：{lostCap}。线路没有输出上限这个字段，走线路解析时取的是"
+                        + "物理模型上的那个，搬过来之后成员原本的上限不再生效。线路本身照常建好了，"
+                        + "要么把这个值配到物理模型上，要么接受它改用模型的上限",
+                });
+            }
+
+            var carriedHealth = PoolMigrationPlanner.CarryHealthStatus(member, now);
+            if (carriedHealth != 0) entry.CarriedUnhealthyRoutes++;
+            if (!dryRun)
+            {
+                await gwModelOfferings.InsertOneAsync(new BsonDocument
+                {
+                    { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
+                    { "LogicalModelId", logicalId }, { "TargetKind", "model" }, { "TargetId", physicalId },
+                    { "UpstreamModelId", upstreamModelId },
+                    { "Protocol", member.AsNullableString("Protocol") is { Length: > 0 } mp ? mp : BsonNull.Value },
+                    { "EndpointPath", BsonNull.Value },
+                    { "Priority", PoolMigrationPlanner.MemberPriority(member) },
+                    { "Weight", member.AsNullableInt("Weight") ?? 100 },
+                    { "Enabled", true },
+                    // 近期的不可用照搬，陈年旧账重置成健康。两头都不对：全搬会让新路径带着
+                    // 一个早就过期的判断少一条候选；全不搬会让新路径去用一个池正在主动避开的
+                    // 上游。判据见 PoolMigrationPlanner.CarryHealthStatus（降级那一档同样照搬）。
+                    { "HealthStatus", carriedHealth },
+                    { "ConsecutiveFailures", carriedHealth != 0 ? member.AsNullableInt("ConsecutiveFailures") ?? 1 : 0 },
+                    { "ConsecutiveSuccesses", 0 },
+                    { "LastFailedAt", carriedHealth != 0 && member.GetValue("LastFailedAt", BsonNull.Value) is { IsValidDateTime: true } lf
+                        ? lf : BsonNull.Value },
+                    { "MaxConcurrency", member.AsNullableInt("MaxConcurrency") is { } mc && mc > 0 ? mc : BsonNull.Value },
+                    { "RateLimitPerMinute", BsonNull.Value },
+                    { "Notes", BsonNull.Value },
+                    { "CreatedAt", now }, { "UpdatedAt", now },
+                });
+            }
+            entry.RouteCount++;
+            result.RoutesCreated++;
+            platformsForMigration.TryGetValue(
+                physical.AsNullableString("PlatformId") ?? string.Empty, out var memberPlatform);
+            // 同上：照搬过来的熔断态会让运行时把这条线路整条跳过，它不算「能接流量」。
+            if (MigrationRouteCountsAsUsable(
+                    carriedHealth,
+                    enabled: true,
+                    OfferingTargetEligibility.Evaluate("model", physical, memberPlatform, upstreamModelId)))
+            {
+                usableRouteCount++;
+            }
+        }
+
+        /*
+          一条线路都没建成的池，不许把「接流量」这个身份带过来。
+
+          成员全被跳过是有可能的：只存在于 MAP 模型集合里、指向一个已经不在的物理模型、
+          或者别的过不了关的原因。而模型文档是在这之前插入的，那一刻还不知道最终会有几条线路，
+          于是一个 Enabled、带着认领、可能还带着用途默认、却**一条线路都没有**的模型留在库里。
+          解析器挑不点名的请求时会选中它，然后回 OfferingUnresolvable——搬迁之前还走得通的那些
+          调用方，搬完立刻断掉；如果它还成了用途默认，断的是整个用途（第 54 轮 review）。
+          这是本 PR 一直在修的那个形状的又一例：存得进去、跑不起来。
+
+          所以在这里回头看一眼真实结果：零线路就把身份摘掉并停用。留着这条模型不删，是因为
+          它记着 MigratedFromPoolIds——`model_policy=pool` 的存量客户端拿池 ID 点名时还要靠它
+          查得到；删掉等于把那条路也断了。停用的模型不会被解析器选中，也不会接不点名的请求。
+        */
+        // 只管**这一趟新建的**那种模型。复用既有同名模型时那条模型本来就有自己的线路与身份，
+        // 这一趟没给它加上线路不等于它没有线路——照着停用它会把一条好好在跑的模型打掉。
+        // 撞车认领到别人那条的情形（linkedByRace）同理，更不能动。
+        if (!dryRun && usableRouteCount == 0 && entry.CreatedNewModel && !linkedByRace
+            && logicalId is { Length: > 0 })
+        {
+            var hadDefault = entry.IsDefaultForType;
+            var hadRoles = hadDefault || entry.ClaimedAppCallerCodes.Count > 0;
+            await gwLogicalModels.UpdateOneAsync(
+                fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", logicalId)),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", false)
+                    .Set("IsDefaultForType", false)
+                    .Set("DefaultForAppCallerCodes", new BsonArray())
+                    // 盖一个「这是搬迁停的」的戳，下一趟搬迁据此把它放回来（见下面那个分支）。
+                    // 没有这个戳的话，重跑搬迁分不清「搬迁停的」与「管理员刻意停的」，
+                    // 只能二选一：要么永远不放回来（我们上一版许下的修复路径其实走不通），
+                    // 要么一律放回来（把管理员刚关掉的模型又打开）。
+                    .Set("DisabledByMigrationAt", DateTime.UtcNow)
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            var lostRoles = entry.ClaimedAppCallerCodes;
+            entry.IsDefaultForType = false;
+            entry.ClaimedAppCallerCodes = [];
+            result.Skipped.Add(new PoolMigrationSkip
+            {
+                PoolId = poolId,
+                PoolName = poolName,
+                Reason = $"这个池的成员一条都没能建成线路，所以搬过来的模型「{publicId}」是停用的，"
+                    + (hadRoles
+                        ? $"而且没有带上它原本要接的流量（{(hadDefault ? "这个用途的默认；" : string.Empty)}"
+                          + $"{lostRoles.Count} 个调用方的认领）——带过来的话，那些请求会落到一个没有上游的模型上，"
+                          + "当场失败。"
+                        : string.Empty)
+                    + "先去上游页确认这些成员指向的物理模型还在不在、启没启用，再重跑一次搬迁——"
+                    + "上游修好之后这一趟会把它自动启用回来",
+            });
+        }
+        /*
+          上一趟因为零可用线路被搬迁停掉的模型，这一趟有能用的线路了就放回来。
+
+          不放回来的话，上面那句「修好上游再重跑一次搬迁」是一句走不通的话：重跑时这条模型
+          已经存在，不走新建那一支，而复用那一支只会补默认与认领，从不碰 Enabled——
+          于是它永久停在停用状态，除非有人手动去点一次。许下一个自己不兑现的修复路径，
+          比不许更糟（第 56 轮 review；expectation-management：说到要做到）。
+
+          只放回**带着搬迁那个戳**的：管理员刻意停掉的模型没有这个戳，重跑搬迁不会把它打开。
+          戳在有人手动改过启用状态时就清掉（见 logical-models/{id}/enabled 端点），
+          所以「先被搬迁停掉、后被管理员手动开过又关掉」的那条也不会被这里误开。
+        */
+        else if (!dryRun && usableRouteCount > 0 && logicalId is { Length: > 0 })
+        {
+            var revived = await gwLogicalModels.UpdateOneAsync(
+                fb.And(
+                    fb.Eq("TenantId", tenantId),
+                    fb.Eq("_id", logicalId),
+                    fb.Eq("Enabled", false),
+                    fb.Exists("DisabledByMigrationAt")),
+                Builders<BsonDocument>.Update
+                    .Set("Enabled", true)
+                    .Unset("DisabledByMigrationAt")
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            if (revived.ModifiedCount > 0)
+            {
+                result.Skipped.Add(new PoolMigrationSkip
+                {
+                    PoolId = poolId,
+                    PoolName = poolName,
+                    Reason = $"模型「{publicId}」上一次搬迁时因为一条可用线路都没有被停用了，"
+                        + "这一次它有能用的线路了，已经自动启用回来。"
+                        + "它的默认与认领没有一起恢复——那是当时刻意摘掉的，去白名单页确认该给谁",
+                });
+            }
+        }
+
+        result.Entries.Add(entry);
+    }
+
+    if (!dryRun)
+    {
+        await WriteOperationAuditAsync(operationAudits, http,
+            action: "pool.migrate-to-models", targetType: "llmgw_model_pool", targetId: "(batch)",
+            targetName: null, success: true, reason: null,
+            changes: new BsonDocument
+            {
+                { "poolsScanned", result.PoolsScanned },
+                { "modelsCreated", result.ModelsCreated },
+                { "routesCreated", result.RoutesCreated },
+                { "linkedToExisting", result.LinkedToExisting },
+                { "skipped", result.Skipped.Count },
+            });
+    }
+
+    return Json(ApiEnvelope<PoolMigrationResult>.Ok(result), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
+// 调用全貌：点名这个模型之后会发生什么，用**当前真实状态**回答。
+//
+// 为什么值得单开一个端点：列表能告诉人「有几条线路」，告诉不了人「现在发一个请求会落到谁」。
+// 而后者才是人要的那份心安——尤其在「只给 appCallerCode、不点名模型」这条路上，
+// 调用方连自己会用到哪个模型都不知道，这一屏就是唯一能说清的地方。
+//
+// 推演判据用 CallTracePlanner，它与运行时 GatewayRouteSelection 由行为对照测试逐条钉死。
+// 按权重分配时不指名道姓（运行时 seed 由 requestId 派生，说「会落到 A」就是编的），只给比例。
+app.MapGet("/gw/logical-models/{id}/call-trace", async (HttpContext http, string id, int? days) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var logical = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync();
+    if (logical is null) return Json(ApiEnvelope<CallTraceData>.Fail("NOT_FOUND", "对外模型不存在"), jsonOptions, 404);
+
+    var offeringDocs = await gwModelOfferings.Find(TenantAccess.Filter(http, fb.Eq("LogicalModelId", id))).ToListAsync();
+    var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
+    var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
+    var platformDocs = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
+    var item = MapLogicalModel(logical, offeringDocs, modelDocs, exchangeDocs, platformDocs);
+
+    // TargetUsable 必须带上，否则这里算出的结论会和 MapLogicalModel 已经算好的
+    // SkipReason 打架——同一屏给两个互相矛盾的答案，比不给还糟。
+    var candidates = item.Offerings
+        .Select(x => new CallTracePlanner.RouteCandidate(
+            x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled, x.TargetUsable))
+        .ToList();
+    var weighted = CallTracePlanner.IsWeighted(item.RoutingStrategy);
+    var nameById = item.Offerings.ToDictionary(
+        x => x.Id,
+        x => x.ProviderName is { Length: > 0 } p ? $"{p} 的 {x.UpstreamModelId ?? x.TargetName}" : x.TargetName,
+        StringComparer.Ordinal);
+    /*
+      半开试探：运行时在挑常规队列**之前**先试着认领一条已摘掉的线路放到发送队列首位
+      （ModelResolver.TryClaimHalfOpenOfferingAsync）。推演那一侧把不可用线路整个排除，
+      所以不补这一句，面板就会指着一条健康线路说「下一跳是它」，而那次请求先打的是另一条。
+      面板的全部意义就是回答这一句（第 75 轮 review）。
+
+      判据放在 CallTracePlanner.IsHalfOpenProbeCandidate，与运行时的认领过滤器逐条对齐，
+      由行为对照测试钉死。这里只负责把三个只存在于库文档、没进 DTO 的时间字段读出来。
+
+      冷却秒数用镜像的默认值：运行时那边可以由 LlmGateway:CircuitBreaker:HalfOpenAfterSeconds
+      改，console-api 读不到那份配置。改过配置的部署这一句的**条数**可能偏多或偏少，
+      但它本来就只说「可能」，不说一定是谁——这一档误差不会把结论说反。
+    */
+    var nowUtc = DateTime.UtcNow;
+    var halfOpenProbeIds = offeringDocs
+        .Where(doc => CallTracePlanner.IsHalfOpenProbeCandidate(
+            healthStatus: doc.AsNullableInt("HealthStatus") ?? 0,
+            enabled: doc.AsNullableBool("Enabled") ?? true,
+            halfOpenLeaseUntil: doc.AsNullableUtcDateTime("HalfOpenLeaseUntil"),
+            manualRecoveryAt: doc.AsNullableUtcDateTime("ManualRecoveryAt"),
+            lastFailedAt: doc.AsNullableUtcDateTime("LastFailedAt"),
+            nowUtc: nowUtc))
+        .Select(doc => doc.GetStringOrEmpty("_id"))
+        .Where(routeId => routeId.Length > 0)
+        .ToHashSet(StringComparer.Ordinal);
+    var halfOpenProbeLabels = halfOpenProbeIds
+        .Select(routeId => nameById.TryGetValue(routeId, out var label) ? label : routeId)
+        .OrderBy(x => x, StringComparer.Ordinal)
+        .ToList();
+    var conclusionCore = CallTracePlanner.Conclusion(candidates, weighted,
+        routeId => nameById.TryGetValue(routeId, out var label) ? label : routeId,
+        halfOpenProbeLabels);
+
+    // 不点名那条路：本用途现在的默认是谁。不是自己就把对方点出来——
+    // 「我不是默认」这句话没有下一步，「现在的默认是 X」才有。
+    // 三个条件与运行时 TryResolveDefaultLogicalModelAsync **逐条对齐**，一条都不能少：
+    //   Enabled==true —— 停用的默认会被运行时跳过并回落到池，这里漏掉就会把一个
+    //                     根本不生效的模型报成「现在的默认」；
+    //   DisplayOrder/PublicId 排序 —— 存量数据里万一有两个默认（直接写库 / 并发写入），
+    //                     不排序就是看 Mongo 心情，面板与实际会指向不同的模型。
+    // 这是一次 Mongo 查询不是纯函数，没法进 CallTracePlanner 的行为对照，
+    // 所以由 GatewayDataDomainGuardTests 钉住这两个条件还在。
+    var defaultDoc = await gwLogicalModels.Find(TenantAccess.Filter(http, fb.And(
+            fb.Eq("Enabled", true),
+            fb.Eq("ModelType", item.ModelType),
+            fb.Eq("IsDefaultForType", true))))
+        .Sort(Builders<BsonDocument>.Sort.Ascending("DisplayOrder").Ascending("PublicId"))
+        .FirstOrDefaultAsync();
+    var defaultPublicId = defaultDoc?.GetStringOrEmpty("PublicId");
+
+    // 「会落到它」要三件事同时成立：是本用途的默认、自己启用着、而且真有一条线路能接。
+    // 少最后一条就会出现这种谎：面板说不点名会落到它，实际所有线路都被摘了，
+    // 运行时当场解析失败——人照着面板去查，查的是一条根本没走的路。
+    var hasEligibleRoute = candidates.Any(x => CallTracePlanner.SkipReason(x) is null);
+
+    // 不点名时落到谁，是**两层**：先看有没有模型认领了这个调用方，没有才回落到用途默认。
+    // 面板必须把两层都算进去，否则又会出现「面板说不落到它、运行时落到它」那种假话。
+    var sameTypeDocs = await gwLogicalModels
+        .Find(TenantAccess.Filter(http, fb.And(fb.Eq("Enabled", true), fb.Eq("ModelType", item.ModelType))))
+        .Project(Builders<BsonDocument>.Projection
+            .Include("PublicId").Include("DefaultForAppCallerCodes").Include("IsDefaultForType"))
+        .ToListAsync();
+    // 这个调用方被哪个模型认领了（同用途下最多一个，写入侧保证）。
+    // 同样按身份规则：按字节的话，认领登记成 Foo 而调用方列表里是 foo 时，
+    // 面板会说「没人认领它」，而运行时明明认得——面板与运行时各说一套。
+    var claimedBy = new Dictionary<string, string>(AppCallerIdentityPolicy.Comparer);
+    foreach (var doc in sameTypeDocs)
+    {
+        var owner = doc.GetStringOrEmpty("PublicId");
+        foreach (var code in GetStringArray(doc, "DefaultForAppCallerCodes"))
+            if (!string.IsNullOrWhiteSpace(code)) claimedBy.TryAdd(code, owner);
+    }
+    var myClaims = item.DefaultForAppCallerCodes;
+
+    // 模型这一侧：它有没有资格接住不点名的请求——要么是用途默认，要么认领了人。
+    var servesUnnamed = (item.IsDefaultForType || myClaims.Count > 0) && item.Enabled && hasEligibleRoute;
+
+    // 这句话的主语：逐个调用方算一遍。
+    //
+    // 上面那三个条件全是**模型这一侧**的。运行时还有**调用方这一侧**的一道门
+    // （ModelResolver 里那句 `!StrictPoolContract || 目录例外`）：调用方一旦配了专属池，
+    // 对外模型这一档整个被跳过，不点名的请求落在它自己的池上，跟这个模型没关系。
+    // 2026-09-15 之前面板只判前一半，于是那句「不点名会落到它」没有主语——
+    // 对配了专属池的调用方就是一句假话，而冒烟只跑了一个调用方，没抓到（形状 1）。
+    var callerDocs = await gwAppCallers
+        .Find(TenantAccess.Filter(http, fb.Eq("RequestType", item.ModelType)))
+        .Project(Builders<BsonDocument>.Projection
+            .Include("AppCallerCode").Include("Status"))
+        .ToListAsync();
+    var unnamedCallers = callerDocs
+        .Select(d => new
+        {
+            Code = d.GetStringOrEmpty("AppCallerCode"),
+            Status = d.AsNullableString("Status"),
+        })
+        .Where(x => x.Code.Length > 0)
+        // 同一个 appCallerCode 在同一用途下可能有多条记录（历史写入），去重后按代码排序，
+        // 免得同一屏每次刷新顺序都不一样。
+        .GroupBy(x => x.Code, StringComparer.Ordinal)
+        .Select(g => g.First())
+        .OrderBy(x => x.Code, StringComparer.Ordinal)
+        .Select(x =>
+        {
+            var reach = CallTracePlanner.Reach(new CallTracePlanner.CallerBinding(
+                x.Code, CallTracePlanner.AllowsTraffic(x.Status)));
+            // 这个调用方走到目录之后，落到的是不是**这个**模型：
+            //   认领了它 → 是（只要这个模型启用着且有能接的线路）
+            //   被别人认领 → 不是，且说得出是谁
+            //   没人认领 → 看这个模型是不是用途默认
+            var mine = myClaims.Contains(x.Code, AppCallerIdentityPolicy.Comparer);
+            var claimedElsewhere = !mine && claimedBy.TryGetValue(x.Code, out var owner);
+            // 运行时在选中模型之后还要过一道「这个模型服不服务这个调用方」（授权名单 + 场景能力）。
+            // 面板不判的话，它会指着一条运行时必拒的路说「会落到这里」——排障的人照着它去查，
+            // 查的是一条根本走不到的路。判据走控制台这一侧的镜像，与权威侧逐条比对钉住。
+            var serves = LogicalModelCapabilityPolicy.SupportsAppCallerScenario(
+                item.Capabilities, item.AllowedAppCallerCodes, x.Code);
+            var usable = item.Enabled && hasEligibleRoute && serves;
+            var landsHere = reach == CallTracePlanner.CallerReach.UsesModelCatalog
+                && usable
+                && (mine || (!claimedElsewhere && item.IsDefaultForType));
+            var verdict = reach != CallTracePlanner.CallerReach.UsesModelCatalog
+                ? CallTracePlanner.UnnamedVerdict(reach, servesUnnamed)
+                : mine
+                    ? (usable
+                        ? "这个模型点名认领了它，不点名会落到这里"
+                        : serves
+                            ? "这个模型认领了它，但自己停用或没有能接的线路——请求会解析失败"
+                            : "这个模型认领了它，但它的授权名单或能力不覆盖这个调用方——请求会被拒")
+                    : claimedElsewhere
+                        ? $"它被 {claimedBy[x.Code]} 认领了，不点名走那边"
+                        : !serves && item.IsDefaultForType
+                            ? "它是这个用途的默认，但这个模型的授权名单或能力不覆盖这个调用方——请求会被拒"
+                            : CallTracePlanner.UnnamedVerdict(reach, servesUnnamed);
+            return new CallTraceUnnamedCaller
+            {
+                AppCallerCode = x.Code,
+                Reach = reach.ToString(),
+                ReachesThisModel = landsHere,
+                Verdict = verdict,
+            };
+        })
+        .ToList();
+    var reachingCount = unnamedCallers.Count(x => x.ReachesThisModel);
+
+    // 结论那一句同样需要主语，而且**点名与不点名都需要**。
+    //
+    // 2026-09-16 之前这里还数着「配了专属池」的调用方，说它们「点名与不点名都走不到这里」。
+    // 模型池退场后那句话变成了假的：运行时不再看 AllowedModelPoolIds，点名照样落到这里。
+    // 实证——`document-store.transcribe-summary::chat` 名下还留着那个历史字段，面板说它
+    // 走不到 default-chat，真打一次点名却落到了 default-chat 的队首。
+    // 现在走不到这张目录的只剩一种人：状态未放行的。
+    var outsiderCount = unnamedCallers.Count(x => !string.Equals(
+        x.Reach, nameof(CallTracePlanner.CallerReach.UsesModelCatalog), StringComparison.Ordinal));
+    var conclusion = outsiderCount == 0
+        ? conclusionCore
+        : $"{conclusionCore}这句话对放行中的 {unnamedCallers.Count - outsiderCount} 个调用方成立；"
+          + $"另外 {outsiderCount} 个当前未放行，请求根本发不出去。";
+
+    var unnamedSummary = servesUnnamed
+        ? unnamedCallers.Count == 0
+            ? $"它是 {item.ModelType} 这个用途的默认，但这个用途下还没有登记任何调用方——现在没有人会不点名地落到它。"
+            : reachingCount == unnamedCallers.Count
+                ? $"这个用途下 {unnamedCallers.Count} 个调用方不点名时都会落到它。"
+                : reachingCount == 0
+                    ? $"它够格接不点名的请求，但这个用途下 {unnamedCallers.Count} 个调用方没有一个会落到它（{DescribeMissReasons(unnamedCallers)}）。"
+                    : $"这个用途下 {unnamedCallers.Count} 个调用方里，{reachingCount} 个不点名时会落到它；其余 {unnamedCallers.Count - reachingCount} 个走的是别的路（{DescribeMissReasons(unnamedCallers)}）。"
+        // 这三句此前都写着「回落到模型池」。模型池路由已经退场，ResolveCoreAsync 里没有那条分支了：
+        // 解析不到就是结构化失败（AppCallerPoolUnbound / no-logical-model），不会再落到任何池。
+        // 让面板指着一条走不到的路，运维会照它去排查一条不存在的链路——比不说更糟。
+        : item.IsDefaultForType && !item.Enabled
+            ? $"它被标成了 {item.ModelType} 的默认，但自己是停用的——运行时会跳过它，这个用途的不点名请求会解析失败。先启用它，或改设别的模型为默认。"
+            : item.IsDefaultForType && !hasEligibleRoute
+                ? $"它是 {item.ModelType} 的默认，但一条能接的线路都没有——不点名的请求会当场解析失败。先把上面那些线路修好。"
+                : defaultPublicId is { Length: > 0 }
+                    ? $"不点名时不会落到它；{item.ModelType} 这个用途现在的默认是 {defaultPublicId}。"
+                    : $"不点名时不会落到它，而且 {item.ModelType} 这个用途现在没有启用的默认——这类请求会当场解析失败。给这个用途设一个默认模型，或让某个模型认领那些调用方。";
+
+    var openToAll = item.AllowedAppCallerCodes.Count == 0;
+    var gateSummary = !item.Enabled
+        ? "这个模型是停用的，点名它会被当场拒绝。"
+        : openToAll
+            ? "没有配授权名单，所有调用方都能点名它。"
+            : $"只有名单里这 {item.AllowedAppCallerCodes.Count} 个调用方能点名它，别人点名会被拒。";
+
+    var share = weighted
+        ? CallTracePlanner.WeightShare(candidates).ToDictionary(x => x.Id, x => x.Percent, StringComparer.Ordinal)
+        : new Dictionary<string, double>(StringComparer.Ordinal);
+    var modelById = modelDocs.Where(x => x.GetStringOrEmpty("_id").Length > 0)
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var offeringById = offeringDocs.Where(x => x.GetStringOrEmpty("_id").Length > 0)
+        .ToDictionary(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal);
+    var extras = item.Offerings.Select(route => new CallTraceRouteExtra
+    {
+        OfferingId = route.Id,
+        WeightPercent = share.TryGetValue(route.Id, out var percent) ? percent : null,
+        PriceSummary = DescribeRoutePrice(route, modelById),
+        LastFailedAt = offeringById.TryGetValue(route.Id, out var doc)
+            ? doc.AsNullableUtcDateTime("LastFailedAt").ToIso()
+            : null,
+        // 逐条透出，而不是只在结论那句话里提一嘴：冒烟脚本要拿它去判「运行时落到这条
+        // 已摘掉的线路」算不算对得上（不透出的话脚本只能把它判成不一致，报一个假失败）。
+        HalfOpenProbe = halfOpenProbeIds.Contains(route.Id),
+    }).ToList();
+
+    var window = Math.Clamp(days ?? 30, 1, 90);
+    var ledger = await BuildCallTraceLedgerAsync(logs, http, item.PublicId, window);
+
+    // 判定流程图：与架构文档第 3 节那张静态图同构，但每条岔路带上这个模型此刻的状态。
+    //
+    // 三档状态（走 / 可能走 / 走不到）是刻意的：同一个模型对不同调用方、点名与不点名
+    // 走的根本不是同一条路，硬画成一条确定路径就是在编。前端只负责按状态上色，
+    // 一句判断都不做——画出来的图最容易被人当真，它错了比列表错了更糟。
+    string StateOf(bool certain, bool possible) => certain ? "taken" : possible ? "possible" : "blocked";
+    var usesCatalogCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.UsesModelCatalog));
+    var rejectedCount = unnamedCallers.Count(x => x.Reach == nameof(CallTracePlanner.CallerReach.TrafficRejected));
+    var eligibleCount = candidates.Count(x => CallTracePlanner.SkipReason(x) is null);
+    var queue = CallTracePlanner.Queue(candidates, weighted, 0);
+    var headLabel = queue.Count > 0 && nameById.TryGetValue(queue[0].Id, out var headName) ? headName : null;
+    var protocols = item.Offerings
+        .Where(x => CallTracePlanner.SkipReason(new CallTracePlanner.RouteCandidate(
+            x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled, x.TargetUsable)) is null)
+        .Select(x => string.IsNullOrWhiteSpace(x.Protocol) ? "跟着目标模型走" : x.Protocol!)
+        .Distinct(StringComparer.Ordinal)
+        .OrderBy(x => x, StringComparer.Ordinal)
+        .ToList();
+
+    var flow = new List<CallTraceFlowNode>
+    {
+        new()
+        {
+            Id = "caller-reach",
+            Question = "这个调用方放行吗",
+            Branches =
+            [
+                new() { Label = "放行", Outcome = "认这张目录，继续往下走", State = StateOf(false, usesCatalogCount > 0),
+                        Note = unnamedCallers.Count == 0 ? "这个用途还没登记调用方" : $"{usesCatalogCount} 个调用方" },
+                new() { Label = "状态未放行", Outcome = "拒绝：请求发不出去",
+                        State = StateOf(false, rejectedCount > 0), Note = rejectedCount > 0 ? $"{rejectedCount} 个调用方" : null },
+            ],
+        },
+        new()
+        {
+            Id = "named",
+            Question = "点名了吗",
+            Branches =
+            [
+                new() { Label = $"点名 {item.PublicId}", Outcome = "走目录闸", State = "possible" },
+                new()
+                {
+                    Label = "没点名",
+                    Outcome = servesUnnamed
+                        ? "它是这个用途的默认，落到它"
+                        : defaultPublicId is { Length: > 0 }
+                            ? $"落到这个用途现在的默认 {defaultPublicId}"
+                            : "这个用途没有启用的默认，请求当场解析失败",
+                    State = StateOf(false, servesUnnamed),
+                    Note = servesUnnamed && reachingCount > 0 ? $"{reachingCount} 个调用方会这样落到它" : null,
+                },
+            ],
+        },
+        new()
+        {
+            Id = "gate",
+            Question = "过目录闸：在不在表里 · 授权了吗 · 启用了吗",
+            Branches =
+            [
+                new() { Label = "通过", Outcome = "按能力筛出候选线路", State = StateOf(item.Enabled, item.Enabled), Note = gateSummary },
+                new() { Label = "不满足", Outcome = "当场拒绝，并说清是哪一条不满足", State = StateOf(!item.Enabled, true) },
+            ],
+        },
+        new()
+        {
+            Id = "eligible",
+            Question = "还有线路参与吗（停用 / 熔断的先剔掉）",
+            Branches =
+            [
+                new() { Label = $"有 {eligibleCount} 条", Outcome = "排队：健康优先 → 顺位 → 标识",
+                        State = StateOf(hasEligibleRoute, hasEligibleRoute), Note = $"共 {candidates.Count} 条线路" },
+                new() { Label = "一条都没有", Outcome = "拒绝：全被停用或摘掉",
+                        State = StateOf(!hasEligibleRoute, !hasEligibleRoute) },
+            ],
+        },
+        new()
+        {
+            Id = "pick",
+            Question = weighted ? "按权重分配" : "按顺位挑一条",
+            Branches = weighted
+                ?
+                [
+                    new() { Label = "分到各条线路", Outcome = "落点由请求本身派生，只给比例不指名",
+                            State = StateOf(hasEligibleRoute, hasEligibleRoute), Note = $"{eligibleCount} 条参与分配" },
+                ]
+                :
+                [
+                    new() { Label = "队首", Outcome = headLabel is { Length: > 0 } ? $"落到 {headLabel}" : "没有队首",
+                            State = StateOf(headLabel is { Length: > 0 }, hasEligibleRoute) },
+                    new() { Label = "队首失败", Outcome = eligibleCount > 1 ? $"往下换，还有 {eligibleCount - 1} 条后备" : "没有后备，这次调用失败",
+                            State = "possible" },
+                ],
+        },
+        new()
+        {
+            Id = "adapter",
+            Question = "",
+            Branches =
+            [
+                new() { Label = "翻译成这家上游的方言", Outcome = "全链路唯一按上游分叉的地方，分叉键是协议不是模型名",
+                        State = StateOf(protocols.Count > 0, true),
+                        Note = protocols.Count > 0 ? string.Join(" · ", protocols) : "没有参与的线路，谈不上协议" },
+            ],
+        },
+        new()
+        {
+            Id = "ledger",
+            Question = "",
+            Branches =
+            [
+                new() { Label = "记账", Outcome = "点名的名字 · 实际线路 · 上游 · token · 耗时 · 成本",
+                        State = "taken", Note = $"近 {window} 天 {ledger.Calls} 次" },
+            ],
+        },
+    };
+
+    return Json(ApiEnvelope<CallTraceData>.Ok(new CallTraceData
+    {
+        PublicId = item.PublicId,
+        Name = item.Name,
+        ModelType = item.ModelType,
+        Enabled = item.Enabled,
+        IsDefaultForType = item.IsDefaultForType,
+        RoutingStrategy = item.RoutingStrategy,
+        Conclusion = conclusion,
+        Gate = new CallTraceGate
+        {
+            Enabled = item.Enabled,
+            OpenToAllCallers = openToAll,
+            AllowedAppCallerCodes = item.AllowedAppCallerCodes,
+            Summary = gateSummary,
+        },
+        Unnamed = new CallTraceUnnamed
+        {
+            ServesUnnamed = servesUnnamed,
+            CurrentDefaultPublicId = defaultPublicId is { Length: > 0 } ? defaultPublicId : null,
+            CurrentDefaultName = defaultDoc?.AsNullableString("Name"),
+            Summary = unnamedSummary,
+            Callers = unnamedCallers,
+            CallerCount = unnamedCallers.Count,
+            ReachingCallerCount = reachingCount,
+        },
+        Routes = item.Offerings,
+        RouteExtras = extras,
+        Ledger = ledger,
+        Flow = flow,
+    }), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
 app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogicalModelRequest? body) =>
 {
     var publicId = body?.PublicId?.Trim() ?? string.Empty;
@@ -3666,6 +6297,43 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
             Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalized))).AnyAsync())
         return Json(ApiEnvelope<LogicalModelItem>.Fail("DUPLICATE_LOGICAL_MODEL", "当前租户已存在相同模型标识"), jsonOptions, 409);
 
+    // 认领唯一性：同一用途下一个调用方最多被一个模型认领。
+    //
+    // 更新端点会顶替旧的认领者并把「摘掉了谁」如实回报，创建端点原本一条都不查——
+    // 于是两个模型同时认领同一个调用方，运行时按 DisplayOrder / PublicId 排序取第一个，
+    // 刚建的这个可能根本不控制流量，而界面显示它认领成功了（形状 3：同一个不变量，
+    // 两条写入路径给出两个结果）。
+    //
+    // 这里选拒绝而不是顶替：更新是显式编辑那个模型的认领列表，顶替是用户的意图；
+    // 创建只是新增一个模型，没有「把别人的抢过来」这层意思，悄悄抢走是最大的惊讶。
+    // 去重与下面的比对都走 appCaller 身份规则（不分大小写），不走字节：
+    // 运行时认领查询带的是那份 collation，控制面按字节判就比运行时松——
+    // 同一个身份会被两个模型同时认领成功，而界面两边都显示认领成功（第 76 轮 review）。
+    var declaredClaims = AppCallerIdentityPolicy.NormalizeClaims(body?.DefaultForAppCallerCodes);
+    var createdAllowlist = (body?.AllowedAppCallerCodes ?? new())
+        .Select(x => x.Trim()).Where(x => x.Length > 0).ToList();
+    if (ValidateClaimsWithinAllowlist(createdAllowlist, declaredClaims) is { } claimOutsideAllowlist)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", claimOutsideAllowlist), jsonOptions, 400);
+    if (declaredClaims.Count > 0)
+    {
+        var rival = await gwLogicalModels.Find(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                Builders<BsonDocument>.Filter.Eq("ModelType", modelType),
+                Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", declaredClaims))),
+            new FindOptions { Collation = AppCallerIdentityPolicy.Collation }).FirstOrDefaultAsync();
+        if (rival is not null)
+        {
+            var taken = rival.AsStringList("DefaultForAppCallerCodes")
+                .Where(x => declaredClaims.Contains(x, AppCallerIdentityPolicy.Comparer)).ToList();
+            var rivalName = rival.AsNullableString("PublicId") ?? rival.GetStringOrEmpty("_id");
+            return Json(ApiEnvelope<LogicalModelItem>.Fail(
+                "CLAIM_TAKEN",
+                $"调用方 {string.Join("、", taken)} 已经被模型 {rivalName} 认领了——同一个用途下一个调用方只能被一个模型认领。" +
+                "先建这个模型（不填指定调用方），再去编辑它的指定调用方，那条路会如实告诉你摘掉了谁"),
+                jsonOptions, 409);
+        }
+    }
+
     var now = DateTime.UtcNow;
     var id = $"gw-logical-{Guid.NewGuid():N}";
     var capabilityNormalization = LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, body?.Capabilities);
@@ -3677,12 +6345,35 @@ app.MapPost("/gw/logical-models", async (HttpContext http, [FromBody] CreateLogi
         { "Name", name }, { "ModelType", modelType }, { "Capabilities", new BsonArray(capabilities) },
         // 写入即打契约版本：没有版本的文档一律被迁移当成存量重算，避免新写入的数据也要靠迁移兜底。
         { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
-        { "AllowedAppCallerCodes", new BsonArray(appCallers) }, { "RoutingStrategy", strategy },
+        { "AllowedAppCallerCodes", new BsonArray(appCallers) },
+        { "DefaultForAppCallerCodes", new BsonArray(declaredClaims) },
+        { "RoutingStrategy", strategy },
         { "Enabled", true }, { "DisplayOrder", Math.Clamp(body?.DisplayOrder ?? 100, 0, 10000) },
         { "Description", string.IsNullOrWhiteSpace(body?.Description) ? BsonNull.Value : body.Description.Trim() },
         { "CreatedAt", now }, { "UpdatedAt", now },
     };
-    await gwLogicalModels.InsertOneAsync(document);
+    /*
+      并发创建撞上唯一索引要翻成 409，不能漏成 500。
+
+      两个人同时建同用途、同认领（或同标识）的模型时，两边的「有没有人占着」查询都能在
+      对方插入之前通过——真正拦住的是唯一索引。不接这个异常的话，输的那一方拿到 500：
+      同一件事，不撞车时给的是说得出下一步的 409（先建、再去编辑认领），撞车时给的却是
+      一句「服务器错误」。判据一样，回复不一样，这是外因没说清（external-cause-first）。
+    */
+    try
+    {
+        await gwLogicalModels.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
+        return Json(ApiEnvelope<LogicalModelItem>.Fail(
+            claimRace ? "CLAIM_TAKEN" : "PUBLIC_ID_TAKEN",
+            claimRace
+                ? "这几个调用方里有一个刚刚被另一个模型认领了（同一个用途下一个调用方只能被一个模型认领）。"
+                  + "先建这个模型（不填指定调用方），再去编辑它的指定调用方，那条路会如实告诉你摘掉了谁"
+                : "这个公开模型名刚刚被另一个人用掉了。换一个标识再试。"), jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.create", "llmgw_logical_model", id, name, true, null,
         new BsonDocument { { "publicId", publicId }, { "modelType", modelType }, { "routingStrategy", strategy } });
     return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(
@@ -3702,10 +6393,247 @@ app.MapDelete("/gw/logical-models/{id}", async (HttpContext http, string id) =>
     if (doc is null)
         return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail("NOT_FOUND", $"逻辑模型不存在：{id}"), jsonOptions, 404);
 
+    /*
+      还在接流量的模型不许直接删。
+
+      池退场之后，不点名的请求全靠这两样接住：这个用途的默认模型，以及点名认领了某几个
+      调用方的模型。删掉前者，那个用途一个默认都不剩，所有不点名的请求当场解析失败；
+      删掉后者更隐蔽——被认领的调用方不会报错，它们会**悄悄改走用途默认**，换了个模型
+      还没人知道（2026-09-15 盘线上数据就见过这个形状：document-store 那条用的是自己池里的
+      gpt-4.1-mini，而 chat 的全局默认是 gpt-3.5-turbo，两者的产出不是一回事）。
+
+      而确认框只说了「会一起删掉 N 条线路」，一个字都没提这件事。所以拦在这里：
+      先把默认或认领转给另一条模型，再回来删。转移的入口就在同一个模型的编辑里
+      （PUT 支持把 IsDefaultForType 置 false、把认领改到别人名下），不是死路。
+    */
+    var blockingRoles = new List<string>();
+    if (doc.AsNullableBool("IsDefaultForType") == true)
+        blockingRoles.Add($"它是「{doc.AsNullableString("ModelType") ?? "这个用途"}」的默认模型");
+    var activeClaims = GetStringArray(doc, "DefaultForAppCallerCodes");
+    if (activeClaims.Count > 0)
+        blockingRoles.Add($"它认领着 {activeClaims.Count} 个调用方（{string.Join("、", activeClaims.Take(5))}"
+            + (activeClaims.Count > 5 ? " 等" : string.Empty) + "）");
+    if (blockingRoles.Count > 0)
+    {
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_STILL_CATCHES_TRAFFIC",
+            $"这条模型还在接不点名的请求：{string.Join("；", blockingRoles)}。"
+            + "直接删会让那些请求当场失败，或者悄悄换成另一个模型。"
+            + "先在模型编辑里把默认与认领转给别的模型，再回来删"),
+            jsonOptions, 409);
+    }
+
+    /*
+      还有在途任务等着取结果的线路，也不许删。
+
+      线路是逻辑模型的从属子项，删模型会把它名下的线路一起删掉；而视频任务提交成功后
+      会把当时那条线路的 id 写进任务文档，轮询与下载都靠它精确回到同一个上游。删掉之后
+      那个任务在下一次轮询时找不到线路，一个已经被上游受理、甚至已经计费的任务就这么坏了，
+      而操作者只是删了一条「看起来没人用」的模型——没有任何地方会提示这件事。
+
+      所以先把它名下的线路列出来，去问在途任务有没有引用。判据在 OfferingReferencePolicy，
+      两种引用形态（direct 写在任务根、storyboard 逐镜写）都要查，漏一种等于没查。
+
+      两条已知边界，都是有意接受的：
+      其一，这是一次读，挡不住「读完到删之间刚好又提交了一个任务」的竞态——真正不漏的做法是
+      线路软删除（留墓碑到引用的任务跑完），那要改动每一处列线路的查询，属于另一件事，已记入
+      doc/debt.platform.llm-gateway.md。这道闸把绝大多数误删挡在门外，不声称它是原子的。
+      其二，任务库是同项目所有分支预览共用的（cross-project-isolation 通道 4），兄弟分支的
+      在途任务同样会拦住这次删除。方向是对的那一边：宁可多拦一次让人去看看。
+    */
+    // 整份读回来，不只是 id：下面那道在途闸要 id，而级联删除失败时的补偿要把子文档原样放回去。
+    // 一个对外模型底下的线路是个位数，多读这一次不值得为省它而留两份查询。
+    var childOfferings = await gwModelOfferings
+        .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id)))
+        .ToListAsync();
+    var childOfferingIds = childOfferings
+        .Select(x => x.GetStringOrEmpty("_id"))
+        .Where(x => x.Length > 0)
+        .ToList();
+    var inFlightFilter = OfferingReferencePolicy.BuildInFlightVideoRunFilter(childOfferingIds);
+    var inFlightCount = inFlightFilter is null ? 0 : await videoGenRuns.CountDocumentsAsync(inFlightFilter);
+    // 两类任务分开数，因为它们存在两张表里、判据也不同（一个看状态，一个看保留期与撤销）。
+    // 合成一个数字会让「等它跑完」这句话对直连任务说不通——那类任务等的是保留期到，不是跑完。
+    var directJobFilter = OfferingReferencePolicy.BuildLiveDirectVideoJobFilter(childOfferingIds, DateTime.UtcNow);
+    var directJobCount = directJobFilter is null ? 0 : await directVideoJobOwnerships.CountDocumentsAsync(directJobFilter);
+    if (inFlightCount > 0 || directJobCount > 0)
+    {
+        var reasons = new List<string>();
+        if (inFlightCount > 0) reasons.Add($"{inFlightCount} 个没跑完的视频任务");
+        if (directJobCount > 0) reasons.Add($"{directJobCount} 个还在保留期内的直连视频任务");
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_HAS_INFLIGHT_JOBS",
+            $"它名下的线路还有{string.Join("、", reasons)}在用。"
+            + "现在删，那些任务下一次去取结果时会找不到上游而失败（有的已经计费了）。"
+            + (inFlightCount > 0 ? "等没跑完的那些跑完或取消" : string.Empty)
+            + (inFlightCount > 0 && directJobCount > 0 ? "，并且" : string.Empty)
+            + (directJobCount > 0 ? "等直连任务过了 7 天保留期" : string.Empty)
+            + "之后再删"),
+            jsonOptions, 409);
+    }
+
+    /*
+      上面那一读只是为了给人一句能看懂的拒绝理由，它挡不住竞态：读完到删之间，
+      另一个管理员完全可能刚把这条模型设成用途默认、或者把一个调用方的认领转给它。
+      所以真正的闸在删除语句的谓词上——**删的时候**再判一次「它没在接不点名的请求」，
+      没删到就说明状态在这几毫秒里变了，如实回冲突。
+
+      顺序也要对：先条件删模型，删成了才删它名下的线路。反过来做的话，一次被拒绝的删除
+      已经把线路删光了——拒绝还带着破坏，比不拒绝更糟。
+    */
+    var deleteFilter = Builders<BsonDocument>.Filter.And(
+        filter,
+        Builders<BsonDocument>.Filter.Ne("IsDefaultForType", true),
+        Builders<BsonDocument>.Filter.Or(
+            Builders<BsonDocument>.Filter.Exists("DefaultForAppCallerCodes", false),
+            Builders<BsonDocument>.Filter.Size("DefaultForAppCallerCodes", 0)));
+    var deleted = await gwLogicalModels.DeleteOneAsync(deleteFilter);
+    if (deleted.DeletedCount == 0)
+    {
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_STILL_CATCHES_TRAFFIC",
+            "这条模型在刚才这一瞬被设成了默认、或者被某个调用方认领了，所以没有删。"
+            + "刷新一下看看它现在接着什么，先把默认与认领转给别的模型，再回来删"),
+            jsonOptions, 409);
+    }
+
+    /*
+      删到一半失败了，要把库放回删之前的样子——父和子都放。
+
+      这两条删除不是一个事务（跨文档，而且这里也不该假设部署一定是副本集）。中间那一下超时
+      或主从切换，结果是：对外模型没了，它名下的线路要么全在、要么删了一部分。两种都不会有人
+      发现——线路只在自己的对外模型底下列出，剩下的那些一屏都不出现，直到有人去数集合大小。
+
+      所以补偿要两步都做，而且顺序是先父后子（父在，子才有归属）。子按 _id 逐条 upsert：
+      删掉的那些回来，没删掉的原样不动，这个动作重复执行结果一样——因为超时这一类失败**本身
+      就是结果未知的**，不能靠「猜它删没删」来决定补偿做什么。上一版只放回了父，然后告诉
+      操作者「库里没有留下半截状态」，而在删了一部分的那种失败里这句话是假的：模型回来了，
+      它的线路少了几条，路由从此变了样却没人知道（第 53 轮 review 指出）。
+
+      补偿自己也可能失败（同一次库故障）。那时如实说清哪一半没回来，并把模型标识给出来
+      让人能去查——不许吞掉，也不许含混成一句「操作失败」（no-rootless-tree、
+      external-cause-first：给读的人一个他能处置的结论）。
+
+      还有一条补偿也管不着的缝：删父与删子之间有人新建了一条线路（创建端点校验父存在，
+      那一刻父还在）。它删完之后才落库，于是成为孤儿。彻底堵死要靠墓碑，已记入
+      doc/debt.platform.llm-gateway.md 的 2026-09-17-offering-delete-has-no-tombstone。
+    */
     var offeringFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id));
-    var offeringCount = (int)await gwModelOfferings.CountDocumentsAsync(offeringFilter);
-    await gwModelOfferings.DeleteManyAsync(offeringFilter);
-    await gwLogicalModels.DeleteOneAsync(filter);
+    var offeringCount = childOfferings.Count;
+    try
+    {
+        await gwModelOfferings.DeleteManyAsync(offeringFilter);
+    }
+    catch (MongoException cascadeFailure)
+    {
+        var parentRestored = false;
+        var childrenRestored = 0;
+        var restoreErrors = new List<string>();
+        try
+        {
+            await gwLogicalModels.InsertOneAsync(doc);
+            parentRestored = true;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            /*
+              撞键不等于「原来那一条还在」。
+
+              公开名上也有唯一索引，所以另一个管理员在这几毫秒里用同一个公开名新建了一条模型时，
+              撞的是**那一条**、_id 完全不同。把它当成「原模型已恢复」，接着按原 _id 把线路放回去，
+              结果是一批挂在一个不存在的父下面的孤儿，藏在那条替身模型后面，而回复还说「全都放回去了」
+              （第 55 轮 review）。所以回去按 _id 查一眼，不拿撞键本身当证据
+              （形状 8：不成立的证据当成了证明）。
+            */
+            try
+            {
+                parentRestored = await gwLogicalModels
+                    .Find(Builders<BsonDocument>.Filter.Eq("_id", id))
+                    .AnyAsync();
+                if (!parentRestored)
+                {
+                    restoreErrors.Add(
+                        "模型没能放回去：它原来的公开名在这期间被另一条新建的模型占用了"
+                        + $"（{ex.WriteError?.Message ?? ex.Message}）");
+                }
+            }
+            catch (MongoException probeFailure)
+            {
+                restoreErrors.Add($"模型放回去没有，查不出来：{probeFailure.Message}");
+            }
+        }
+        catch (MongoException ex)
+        {
+            restoreErrors.Add($"模型本身没能放回去：{ex.Message}");
+        }
+
+        /*
+          父没放回去就**不放子**。
+
+          放回去的话，造出来的正好是上面那道撞键复核要防的东西：一批挂在一个不存在的父下面的
+          孤儿，而且它们不会出现在任何一屏上（第 57 轮 review）。父不在时把子留在删除状态，
+          库里少了东西是看得见的；放一批看不见的孤儿进去，没人会发现。
+          两种都不好，但前者可查、后者不可查。
+        */
+        if (parentRestored)
+        {
+            foreach (var child in childOfferings)
+            {
+                try
+                {
+                    await gwModelOfferings.ReplaceOneAsync(
+                        Builders<BsonDocument>.Filter.Eq("_id", child.GetStringOrEmpty("_id")),
+                        child,
+                        new ReplaceOptions { IsUpsert = true });
+                    childrenRestored++;
+                }
+                catch (MongoException ex)
+                {
+                    restoreErrors.Add($"线路 {child.GetStringOrEmpty("_id")} 没能放回去：{ex.Message}");
+                }
+            }
+        }
+        else if (childOfferings.Count > 0)
+        {
+            restoreErrors.Add(
+                $"它名下那 {childOfferings.Count} 条线路没有放回去——模型本身都不在了，"
+                + "放回去只会造出一批谁也看不见的孤儿");
+        }
+
+        var fullyRestored = parentRestored && childrenRestored == childOfferings.Count;
+        await WriteOperationAuditAsync(
+            operationAudits, http,
+            action: "logical-model.delete", targetType: "llmgw_logical_model", targetId: id,
+            targetName: doc.AsNullableString("Name"), success: false,
+            reason: (fullyRestored ? "cascade-failed-restored: " : "cascade-failed-partial-restore: ")
+                + cascadeFailure.Message,
+            changes: new BsonDocument
+            {
+                { "publicId", ToBsonAuditValue(doc.AsNullableString("PublicId")) },
+                { "parentRestored", parentRestored },
+                { "offeringsRestored", childrenRestored },
+                { "offeringsBefore", childOfferings.Count },
+            });
+
+        if (fullyRestored)
+        {
+            return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+                "MODEL_DELETE_ROLLED_BACK",
+                $"删它名下的线路时失败了（{cascadeFailure.Message}）。已经把这条模型和它的 "
+                + $"{childOfferings.Count} 条线路都放回去，库回到了删之前的样子。"
+                + "刷新一下会看到它还在，稍后重试删除"),
+                jsonOptions, 503);
+        }
+
+        return Json(ApiEnvelope<LogicalModelDeleteResult>.Fail(
+            "MODEL_DELETE_LEFT_ORPHANS",
+            $"删它名下的线路时失败了（{cascadeFailure.Message}），而且没能把库放回删之前的样子："
+            + string.Join("；", restoreErrors)
+            + $"。现在的状态是：模型{(parentRestored ? "在" : "不在")}，"
+            + $"它原有的 {childOfferings.Count} 条线路放回了 {childrenRestored} 条。"
+            + $"模型标识是 {id}，请 DBA 按它核对 llmgw_logical_models 与 llmgw_model_offerings"),
+            jsonOptions, 500);
+    }
 
     await WriteOperationAuditAsync(
         operationAudits, http,
@@ -3756,6 +6684,19 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
     if (body.AllowedAppCallerCodes is not null)
     {
         var appCallers = body.AllowedAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+
+        // 校验要按「改完之后的值」判，不是按这次提交的那一个字段判。
+        //
+        // 两个字段可以分开改：这次只收窄授权名单、认领沿用库里的旧值时，组合照样可能不成立。
+        // 只看本次请求里的字段就会放过它——而放过的后果是那个调用方的不点名请求整条静默失败。
+        var claimsAfterUpdate = body.DefaultForAppCallerCodes is not null
+            ? body.DefaultForAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
+            : (await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+                .Project(Builders<BsonDocument>.Projection.Include("DefaultForAppCallerCodes"))
+                .FirstOrDefaultAsync())?.AsStringList("DefaultForAppCallerCodes") ?? [];
+        if (ValidateClaimsWithinAllowlist(appCallers, claimsAfterUpdate) is { } allowlistConflict)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", allowlistConflict), jsonOptions, 400);
+
         updates.Add(Builders<BsonDocument>.Update.Set("AllowedAppCallerCodes", new BsonArray(appCallers)));
     }
     if (body.DisplayOrder is not null)
@@ -3764,17 +6705,262 @@ app.MapPut("/gw/logical-models/{id}", async (HttpContext http, string id, [FromB
         updates.Add(string.IsNullOrWhiteSpace(body.Description)
             ? Builders<BsonDocument>.Update.Unset("Description")
             : Builders<BsonDocument>.Update.Set("Description", body.Description.Trim()));
-    if (updates.Count == 0)
-        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
-    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
-    var updated = await gwLogicalModels.FindOneAndUpdateAsync(
-        TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
-        Builders<BsonDocument>.Update.Combine(updates),
-        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
-    if (updated is null)
+    // 「这个用途没点名时用它」——同租户同用途最多一个默认。
+    //
+    // 顺序是判据：**先把同用途的旧默认清掉，再置新的**。反过来会出现一瞬间两个默认，
+    // 恰好落在那一瞬的请求解析到哪个全看运气。清掉谁要回给用户，不能让兜底模型悄悄换人。
+    /*
+      纯判断全部走在**任何一次位移之前**。
+
+      位移（把别人的用途默认清掉、把别人手上的认领摘掉）是会改变线上路由的写操作，
+      而位移之后的每一个 early return 都必须自己记得补偿——漏一个，那个用途就此没有默认，
+      所有不点名的请求当场开始失败，而操作者只看到一句 400。本轮被报回来的正是这种漏：
+      「认领超出授权名单」那条 400 排在清掉旧默认之后。
+
+      与其给每个 early return 补一次补偿（下一个新增的分支又会漏），不如让位移之前
+      一个 return 都不剩：能纯判的在这里判完，后面只剩真写库失败那一档，那一档已经有 catch。
+    */
+    var currentModel = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)))
+        .FirstOrDefaultAsync();
+    if (currentModel is null)
         return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", "逻辑模型不存在"), jsonOptions, 404);
+
+    // 与创建那一侧同一份身份规则，理由见那里：控制面不许比运行时松。
+    var normalizedClaims = body.DefaultForAppCallerCodes is null
+        ? null
+        : AppCallerIdentityPolicy.NormalizeClaims(body.DefaultForAppCallerCodes);
+    if (normalizedClaims is not null)
+    {
+        // 按**改完之后**的授权名单判：这次只改认领、名单沿用库里旧值时也要成立。
+        var allowlistAfterUpdate = body.AllowedAppCallerCodes is not null
+            ? body.AllowedAppCallerCodes.Select(x => x.Trim()).Where(x => x.Length > 0).ToList()
+            : currentModel.AsStringList("AllowedAppCallerCodes");
+        if (ValidateClaimsWithinAllowlist(allowlistAfterUpdate, normalizedClaims) is { } claimConflict)
+            return Json(ApiEnvelope<LogicalModelItem>.Fail("CLAIM_OUTSIDE_ALLOWLIST", claimConflict), jsonOptions, 400);
+    }
+
+    /*
+      「一个字段都没给」也要在位移之前判掉。
+
+      这两个位移块只要 body 里给了对应字段就一定会往 updates 里加一条，所以位移之后
+      updates 不可能是空的——但那是一条靠推演成立的性质，下一个人加个分支就不成立了。
+      与其把它留在后面当一条「碰巧到不了」的 return，不如在这里显式判完：
+      位移之前一个 return 都不剩，这条不变量就不依赖任何推演。
+    */
+    if (updates.Count == 0 && body.IsDefaultForType is null && body.DefaultForAppCallerCodes is null)
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
+
+    var displacedDefaults = new List<string>();
+    // 被清掉默认标记的那些模型 id。与认领那本账一样，最终写入没成功就要还回去。
+    var defaultRollbacks = new List<string>();
+    if (body.IsDefaultForType == true)
+    {
+        var modelType = currentModel.GetStringOrEmpty("ModelType");
+        var sameTypeDefaults = await gwLogicalModels.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+            Builders<BsonDocument>.Filter.Eq("ModelType", modelType),
+            Builders<BsonDocument>.Filter.Eq("IsDefaultForType", true),
+            Builders<BsonDocument>.Filter.Ne("_id", id)))).ToListAsync();
+        foreach (var other in sameTypeDefaults)
+        {
+            displacedDefaults.Add(other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id"));
+            // 记进回滚账本：最终写入失败时要还回去。不还的话这个用途会**一个默认都不剩**，
+            // 所有不点名的请求当场解析失败——而操作者看到的只是一句「没找到」或「保存失败」，
+            // 完全不会想到自己刚刚把这个用途的兜底拆了。
+            defaultRollbacks.Add(other.GetStringOrEmpty("_id"));
+            await gwLogicalModels.UpdateOneAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", other.GetStringOrEmpty("_id")),
+                Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", DateTime.UtcNow));
+        }
+    }
+    if (body.IsDefaultForType is not null)
+        updates.Add(Builders<BsonDocument>.Update.Set("IsDefaultForType", body.IsDefaultForType.Value));
+
+    // 「对这些调用方而言我是默认」——同用途下一个调用方最多被一个模型认领。
+    //
+    // 不变量的维护顺序与上面那段一样：**先把别人手上的同名调用方摘掉，再置新的**。
+    // 反过来会出现一瞬间两个模型都认领同一个调用方，那一瞬的请求落到谁全看运气。
+    // 摘掉了谁要如实回给用户——这同样是会改变线上行为的动作，不能悄悄换人。
+    var displacedClaims = new List<string>();
+    /*
+      摘认领的回滚账本：(对手 id, 这次从它身上摘走的那几个码)。
+
+      记「摘走了哪几个」而不是「摘之前/之后的整份值」，是因为位移这一步必须是**原子的加减**
+      而不是整份覆盖：整份覆盖的过滤器只认 _id，在「读出 before」与「写回 kept」之间，
+      另一个管理员给同一个对手模型加了别的认领的话，那一笔会被这份读旧了的数组盖掉——
+      两次保存都报成功，而第二个调用方悄悄丢了它的模型、掉回用途默认
+      （第 69 轮 review；形状 1 的并发形态：判据看的是一份已经过期的值）。
+
+      $pullAll 只减这几个、$addToSet 只加回这几个，中间别人加的一律不受影响，
+      也就不需要「值还是我写的那个」这种条件——那个条件本来就只是在为整份覆盖擦屁股。
+    */
+    var claimRollbacks = new List<(string RivalId, List<string> Taken)>();
+    if (normalizedClaims is not null)
+    {
+        // 名单与认领的相容性上面已经判过（位移之前），这里只做位移。
+        var claims = normalizedClaims;
+        var claimType = currentModel.GetStringOrEmpty("ModelType");
+
+        if (claims.Count > 0)
+        {
+            var rivals = await gwLogicalModels.Find(
+                TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("ModelType", claimType),
+                    Builders<BsonDocument>.Filter.AnyIn("DefaultForAppCallerCodes", claims),
+                    Builders<BsonDocument>.Filter.Ne("_id", id))),
+                new FindOptions { Collation = AppCallerIdentityPolicy.Collation }).ToListAsync();
+            foreach (var other in rivals)
+            {
+                var before = other.AsStringList("DefaultForAppCallerCodes");
+                var taken = before.Where(x => claims.Contains(x, AppCallerIdentityPolicy.Comparer)).ToList();
+                if (taken.Count == 0) continue;
+                var rivalId = other.AsNullableString("PublicId") ?? other.GetStringOrEmpty("_id");
+                foreach (var code in taken) displacedClaims.Add($"{code} 原本由 {rivalId} 认领");
+                // 摘走了哪几个要记下来：下面那次最终写入可能因为并发冲突失败，
+                // 那时这几个必须加回去，否则一次**被拒绝的保存**照样改了线上路由——
+                // 那几个调用方从「由对手模型接住」掉成「走用途默认」，而操作者看到的是失败。
+                claimRollbacks.Add((other.GetStringOrEmpty("_id"), taken));
+                await gwLogicalModels.UpdateOneAsync(
+                    Builders<BsonDocument>.Filter.Eq("_id", other.GetStringOrEmpty("_id")),
+                    Builders<BsonDocument>.Update
+                        .PullAll("DefaultForAppCallerCodes", taken)
+                        .Set("UpdatedAt", DateTime.UtcNow));
+            }
+        }
+        updates.Add(Builders<BsonDocument>.Update.Set("DefaultForAppCallerCodes", new BsonArray(claims)));
+    }
+
+    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", DateTime.UtcNow));
+
+    /*
+      位移的补偿收在这一个函数里，**所有**失败路径都走它，不是只有并发冲突那一条。
+
+      这段代码的形状是「先把别人的默认/认领摘掉，再置自己」。摘和置是两次写，
+      中间任何原因导致置失败——并发撞唯一索引、目标模型刚被别人删掉（404）、
+      连接抖动（异常）——摘掉的那些就留在了库里。后果按摘的是什么分两种：
+        · 摘的是认领 → 那几个调用方从「由对手模型接住」掉成「走用途默认」；
+        · 摘的是默认 → 这个用途**一个默认都不剩**，所有不点名的请求当场解析失败。
+      两种都是「一次失败的保存改了线上路由」，而操作者只看到一句失败。
+
+      默认要不要还，取决于失败原因：撞唯一索引说明已经有赢家占着，还回去会再撞一次；
+      其余失败没有赢家，必须还。认领两种情况都要还。
+    */
+    var compensationWarnings = new List<string>();
+
+    /*
+      还原动作本身也会撞唯一索引，而且**这正是它最常被调用的那一刻**。
+
+      两个管理员同时把同一个调用方的认领从 A 移到各自的模型上：输的那一方走进撞车分支，
+      而它要还回去的那份认领，此刻已经归赢家了。还原的 UpdateOne 于是撞上认领唯一索引，
+      异常从补偿函数里抛出去、越过外面那个 catch，本该是一句说得清的 409 变成一句
+      「服务器错误」（第 67 轮 review；与 external-cause-first 同一个病：把内因当结论交出去）。
+
+      撞键在这里不是故障，是结论：那个位子已经有人了，不该还、也还不回去。按「没能还原」
+      记一条告警走原路返回即可——告警文案说的本来就是「它们在这期间被别人改过」。
+    */
+    async Task<bool> TryRestoreAsync(FilterDefinition<BsonDocument> filter, UpdateDefinition<BsonDocument> update)
+    {
+        try
+        {
+            var restored = await gwLogicalModels.UpdateOneAsync(filter, update);
+            return restored.ModifiedCount > 0;
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return false;
+        }
+        catch (MongoCommandException ex) when (ex.Code == 11000)
+        {
+            return false;
+        }
+    }
+
+    async Task CompensateAsync(bool restoreDefaults)
+    {
+        foreach (var rollback in claimRollbacks)
+        {
+            // 只把这次摘走的那几个加回去，不覆盖整份值——期间别人给这个对手加的认领要留着。
+            // 加不回去只有一种原因：那几个码已经归别人了（认领唯一索引会拦），
+            // 那时不该还也还不回去，记一条告警即可。
+            var restored = await TryRestoreAsync(
+                Builders<BsonDocument>.Filter.Eq("_id", rollback.RivalId),
+                Builders<BsonDocument>.Update
+                    .AddToSetEach("DefaultForAppCallerCodes", rollback.Taken)
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            if (!restored) compensationWarnings.Add($"{rollback.RivalId}（调用方认领）");
+        }
+        if (!restoreDefaults) return;
+        foreach (var rivalId in defaultRollbacks)
+        {
+            var restored = await TryRestoreAsync(
+                Builders<BsonDocument>.Filter.And(
+                    Builders<BsonDocument>.Filter.Eq("_id", rivalId),
+                    Builders<BsonDocument>.Filter.Eq("IsDefaultForType", false)),
+                Builders<BsonDocument>.Update
+                    .Set("IsDefaultForType", true)
+                    .Set("UpdatedAt", DateTime.UtcNow));
+            if (!restored) compensationWarnings.Add($"{rivalId}（用途默认）");
+        }
+    }
+
+    string WithCompensationNote(string message)
+        => compensationWarnings.Count == 0
+            ? message
+            : message + $" 另外：这次没保存成功，但有 {compensationWarnings.Count} 处位移没能还原"
+                + $"（{string.Join("、", compensationWarnings)}），它们在这期间被别人改过。去这几个模型上核对一下。";
+
+    BsonDocument? updated;
+    try
+    {
+        updated = await gwLogicalModels.FindOneAndUpdateAsync(
+            TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id)),
+            Builders<BsonDocument>.Update.Combine(updates),
+            new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
+    }
+    catch (MongoCommandException ex) when (ex.Code == 11000)
+    {
+        /*
+          撞上唯一索引：另一个人在这一瞬抢先了。但**先要分清撞的是哪一条**，
+          因为「摘掉的用途默认要不要还回去」在两种撞车下答案相反：
+
+            · 撞的是用途默认那条索引 → 有人赢了那个位子，还回去会再撞一次，不还；
+            · 撞的是调用方认领那条索引 → 用途默认这一档**根本没有赢家**，
+              而这次请求已经把原来的默认摘掉了。不还的话，这个用途就此没有默认，
+              所有不点名的请求当场开始失败——一次被拒绝的保存，顺手弄坏了一整个用途。
+
+          上一版是先补偿再判 claimRace，等于对两种撞车用同一个答案（形状 1：
+          判据比它该管的范围窄，两种输入被压成一种）。
+        */
+        var claimRace = ex.Message.Contains("uniq_llmgw_logical_claim_per_type", StringComparison.Ordinal);
+        await CompensateAsync(restoreDefaults: claimRace);
+        var conflictMessage = claimRace
+            ? "这几个调用方里有一个刚刚被另一个模型认领了。刷新看一眼它现在归谁，确认之后再改。"
+            : "这个用途刚刚被另一个人设了默认模型。刷新看一眼当前默认是谁，确认之后再改。";
+        return Json(ApiEnvelope<LogicalModelItem>.Fail(
+            claimRace ? "CLAIM_CONFLICT" : "DEFAULT_CONFLICT", WithCompensationNote(conflictMessage)), jsonOptions, 409);
+    }
+    catch
+    {
+        // 别的失败（连接抖动、写入被拒）同样不能把摘掉的东西留在库里。
+        // 补偿完把原异常抛出去，不吞——吞掉等于把一次真实故障变成一句无从排查的沉默。
+        await CompensateAsync(restoreDefaults: true);
+        throw;
+    }
+    if (updated is null)
+    {
+        // 目标在这中间被别人删了。这时「摘掉的默认」必须还回去：没有赢家，
+        // 不还的话这个用途就此没有默认，而返回的只是一句「模型不存在」。
+        await CompensateAsync(restoreDefaults: true);
+        return Json(ApiEnvelope<LogicalModelItem>.Fail("NOT_FOUND", WithCompensationNote("逻辑模型不存在")), jsonOptions, 404);
+    }
     await WriteOperationAuditAsync(operationAudits, http, "logical-model.update", "llmgw_logical_model", id, updated.GetStringOrEmpty("Name"), true, null,
-        new BsonDocument { { "fieldCount", updates.Count - 1 } });
+        new BsonDocument
+        {
+            { "fieldCount", updates.Count - 1 },
+            // 换兜底模型是会改变线上行为的动作：日后排查「什么时候开始默认走它了」要查得到人
+            { "isDefaultForType", body.IsDefaultForType.HasValue ? body.IsDefaultForType.Value : BsonNull.Value },
+            { "displacedDefaults", new BsonArray(displacedDefaults) },
+            { "displacedClaims", new BsonArray(displacedClaims) },
+        });
     var offerings = await gwModelOfferings.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("LogicalModelId", id))).ToListAsync();
     var modelDocs = await gwModels.Find(TenantAccess.Filter(http)).ToListAsync();
     var exchangeDocs = await gwModelExchanges.Find(TenantAccess.Filter(http)).ToListAsync();
@@ -3796,41 +6982,74 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
     var target = targetKind == "model"
         ? await gwModels.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync()
         : await gwModelExchanges.Find(TenantAccess.Filter(http, fb.Eq("_id", targetId))).FirstOrDefaultAsync();
-    if (target is null)
-        return Json(ApiEnvelope<ModelOfferingItem>.Fail("TARGET_NOT_FOUND", "上游目标不存在或不属于当前租户"), jsonOptions, 404);
-    if (target.AsNullableBool("Enabled") == false)
-        return Json(ApiEnvelope<ModelOfferingItem>.Fail("TARGET_DISABLED", "上游目标已停用"), jsonOptions, 409);
     if (body?.MaxConcurrency is < 1 or > 10000)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_MAX_CONCURRENCY", "最大并发必须为 1 到 10000"), jsonOptions, 400);
     if (body?.RateLimitPerMinute is < 1 or > 1000000)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_RATE_LIMIT", "每分钟速率必须为 1 到 1000000"), jsonOptions, 400);
     if (!IsSafeOfferingEndpointPath(body?.EndpointPath))
         return Json(ApiEnvelope<ModelOfferingItem>.Fail("INVALID_ENDPOINT_PATH", "Endpoint path 必须是相对路径，且不能包含控制字符或反斜杠"), jsonOptions, 400);
-    var targetPlatform = targetKind == "model" && !string.IsNullOrWhiteSpace(target.AsNullableString("PlatformId"))
-        ? await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", target.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
+    var targetPlatform = targetKind == "model" && !string.IsNullOrWhiteSpace(target?.AsNullableString("PlatformId"))
+        ? await gwPlatforms.Find(TenantAccess.Filter(http, fb.Eq("_id", target!.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
         : null;
+    /*
+      上游目标够不够格承接流量，判据在 OfferingTargetEligibility：目标在不在、启不启用、
+      物理模型挂的 Provider 在不在启不启用、兑换所那条别名声明没声明。四条都对着运行时解析，
+      不判的话会出现「存得进去、跑不起来」——接口回 201、界面上多出一条线路，而它一条流量
+      都承接不了。**启用**一条早先停用的线路走的是另一个端点，它判的是同一件事，所以这几条
+      判据收在一处，两个入口共用（第 51 轮 review：启用那一侧原先只判了 ASR 契约）。
+    */
+    var createTargetRejection = OfferingTargetEligibility.Evaluate(
+        targetKind, target, targetPlatform, body?.UpstreamModelId);
+    if (createTargetRejection is { } createRejection)
+    {
+        return Json(
+            ApiEnvelope<ModelOfferingItem>.Fail(createRejection.Code, createRejection.Message),
+            jsonOptions,
+            createRejection.Code == "TARGET_NOT_FOUND" ? 404 : 409);
+    }
+    // 上面那道闸判的第一条就是「目标不在」，走到这里 eligibleTarget 必有值；给编译器一个凭据，
+    // 而不是在这里再写一遍 null 判断（同一个判断第二份就是下一次漂移的起点）。
+    var eligibleTarget = target!;
     var createAsrContractError = AsrOfferingContractPolicy.Validate(
         logical.GetStringOrEmpty("ModelType"),
         targetKind,
         AsrOfferingContractPolicy.ResolvePhysicalModel(
             body?.UpstreamModelId,
-            target.AsNullableString("ModelName"),
-            target.AsNullableString("ModelId")),
+            eligibleTarget.AsNullableString("ModelName"),
+            eligibleTarget.AsNullableString("ModelId")),
         body?.EndpointPath,
-        body?.Protocol ?? target.AsNullableString("Protocol"),
+        body?.Protocol ?? eligibleTarget.AsNullableString("Protocol"),
         targetPlatform?.AsNullableString("PlatformType"));
     if (createAsrContractError is not null)
         return Json(ApiEnvelope<ModelOfferingItem>.Fail(
             AsrOfferingContractPolicy.ErrorCode,
             createAsrContractError), jsonOptions, 409);
+    /*
+      判重的身份必须与唯一索引 uniq_llmgw_offering_tenant_logical_target_v3 逐字相同。
+
+      那个索引里带着 UpstreamModelId——因为一个兑换所底下挂着多个别名时，同一个对外模型
+      完全可能同时指向其中好几个，那是合法拓扑。这里少一个字段就比索引更严：
+      同样的拓扑走搬迁建得出来、走这个端点却回 DUPLICATE_OFFERING（判据分裂）。
+
+      **但只按原值比又比索引松**：没写 UpstreamModelId 的线路运行时会回落到目标的名字，
+      于是「不写」与「写上同名」是同一个上游、两个身份。判重按运行时打出去的那个名字比
+      （OfferingIdentityPolicy），控制面因此比索引严一档——控制面可以比运行时严，
+      绝不能比它松（第 66 轮 review）。
+    */
+    var createUpstreamModelId = string.IsNullOrWhiteSpace(body?.UpstreamModelId)
+        ? BsonNull.Value
+        : (BsonValue)body.UpstreamModelId.Trim();
     var duplicate = fb.And(
         fb.Eq("TenantId", tenantId),
         fb.Eq("LogicalModelId", id),
         fb.Eq("TargetKind", targetKind),
         fb.Eq("TargetId", targetId),
+        OfferingIdentityPolicy.SameUpstreamFilter(targetKind, eligibleTarget, body?.UpstreamModelId),
         fb.Not(fb.Exists("SupersededByOfferingId")));
     if (await gwModelOfferings.Find(duplicate).AnyAsync())
-        return Json(ApiEnvelope<ModelOfferingItem>.Fail("DUPLICATE_OFFERING", "该上游已绑定到此逻辑模型"), jsonOptions, 409);
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "DUPLICATE_OFFERING",
+            "这条上游（含指定的上游模型）已经绑定到此逻辑模型"), jsonOptions, 409);
 
     var now = DateTime.UtcNow;
     var offeringId = $"gw-offering-{Guid.NewGuid():N}";
@@ -3838,7 +7057,7 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
     {
         { "_id", offeringId }, { "TenantId", tenantId }, { "LogicalModelId", id },
         { "TargetKind", targetKind }, { "TargetId", targetId },
-        { "UpstreamModelId", string.IsNullOrWhiteSpace(body?.UpstreamModelId) ? BsonNull.Value : body.UpstreamModelId.Trim() },
+        { "UpstreamModelId", createUpstreamModelId },
         { "Protocol", string.IsNullOrWhiteSpace(body?.Protocol) ? BsonNull.Value : body.Protocol.Trim().ToLowerInvariant() },
         { "EndpointPath", string.IsNullOrWhiteSpace(body?.EndpointPath) ? BsonNull.Value : body.EndpointPath.Trim() },
         { "Priority", Math.Clamp(body?.Priority ?? 100, 0, 10000) }, { "Weight", Math.Clamp(body?.Weight ?? 100, 1, 10000) },
@@ -3848,17 +7067,84 @@ app.MapPost("/gw/logical-models/{id}/offerings", async (HttpContext http, string
         { "Notes", string.IsNullOrWhiteSpace(body?.Notes) ? BsonNull.Value : body.Notes.Trim() },
         { "CreatedAt", now }, { "UpdatedAt", now },
     };
-    await gwModelOfferings.InsertOneAsync(document);
+    /*
+      并发创建撞上线路身份唯一索引要翻成 409，不能漏成 500。
+
+      上面那句判重挡不住竞态：两个人同时给同一个对外模型挂同一条上游（含同一个上游模型）时，
+      两边的判重查询都能在对方插入之前通过，真正拦住的是唯一索引
+      uniq_llmgw_offering_tenant_logical_target_v3。不接这个异常的话，输的那一方拿到 500——
+      同一件事，不撞车时给的是说得出下一步的 409，撞车时给的却是一句「服务器错误」
+      （external-cause-first：内因当结论交出去，读的人无法处置）。
+
+      这条路径不只在并发下走得到：身份索引从 v2 升到 v3 要 DBA 手动做（no-auto-index，
+      见 LlmGatewayDatabaseInitializer 的警告），在那之前旧索引比新的更严——同一个兑换所下的
+      第二条别名会在这里撞键，而它其实是合法拓扑。所以这里的提示要把这种情况一并说出来。
+    */
+    try
+    {
+        await gwModelOfferings.InsertOneAsync(document);
+    }
+    catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+    {
+        return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+            "DUPLICATE_OFFERING",
+            "这条上游（含指定的上游模型）刚刚已经被绑定到此逻辑模型了。"
+            + "刷新一下看看现在挂着哪几条；如果列表里并没有同样的一条，"
+            + "那就是线路身份唯一索引还停在旧版（它不认上游模型，所以同一个兑换所下的第二条别名会撞），"
+            + "让 DBA 按 doc/guide.platform.mongodb-indexes.md 升到 v3 之后再试"),
+            jsonOptions, 409);
+    }
     await WriteOperationAuditAsync(operationAudits, http, "model-offering.create", "llmgw_model_offering", offeringId, targetId, true, null,
         new BsonDocument { { "logicalModelId", id }, { "targetKind", targetKind }, { "targetId", targetId } });
     var platformsForMap = await gwPlatforms.Find(TenantAccess.Filter(http)).ToListAsync();
     var item = MapLogicalModel(
         logical,
         new List<BsonDocument> { document },
-        targetKind == "model" ? new List<BsonDocument> { target } : new List<BsonDocument>(),
-        targetKind == "exchange" ? new List<BsonDocument> { target } : new List<BsonDocument>(),
+        targetKind == "model" ? new List<BsonDocument> { eligibleTarget } : new List<BsonDocument>(),
+        targetKind == "exchange" ? new List<BsonDocument> { eligibleTarget } : new List<BsonDocument>(),
         platformsForMap).Offerings.Single();
     return Json(ApiEnvelope<ModelOfferingItem>.Ok(item), jsonOptions, 201);
+}).RequireAuthorization("ConfigWrite");
+
+// 手动恢复一条上游线路：与模型池成员的 recover 同一语义——不直接放回健康，只授予进入
+// 半开的资格，由下一条真实业务请求负责验证，不额外发付费探测。
+// 没有这个入口之前，被隔离的 Offering 只能靠「去改一次平台密钥」这种副作用来复活。
+app.MapPost("/gw/logical-models/{logicalId}/offerings/{offeringId}/recover", async (HttpContext http, string logicalId, string offeringId) =>
+{
+    var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("_id", offeringId),
+        Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+    var existing = await gwModelOfferings.Find(filter).FirstOrDefaultAsync();
+    if (existing is null)
+        return Json(ApiEnvelope<object>.Fail("NOT_FOUND", "Offering 不存在"), jsonOptions, 404);
+
+    var previousHealthStatus = existing.AsNullableInt("HealthStatus") ?? 0;
+    var now = DateTime.UtcNow;
+    await gwModelOfferings.UpdateOneAsync(
+        filter,
+        Builders<BsonDocument>.Update
+            .Set("HealthStatus", 2)
+            .Set("ConsecutiveSuccesses", 0)
+            .Set("ManualRecoveryAt", now)
+            .Unset("HalfOpenLeaseUntil")
+            .Set("UpdatedAt", now));
+
+    await WriteOperationAuditAsync(
+        operationAudits, http,
+        action: "model-offering.recover",
+        targetType: "llmgw_model_offering",
+        targetId: offeringId,
+        targetName: existing.AsNullableString("UpstreamModelId") ?? existing.AsNullableString("TargetId"),
+        success: true,
+        reason: "manual-half-open",
+        changes: new BsonDocument
+        {
+            { "logicalModelId", logicalId },
+            { "fromHealthStatus", previousHealthStatus },
+            { "toHealthStatus", 2 },
+        });
+
+    return Json(ApiEnvelope<object>.Ok(new { offeringId, halfOpenPending = true }), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpContext http, string logicalId, string offeringId, [FromBody] UpdateModelOfferingRequest? body) =>
@@ -3917,6 +7203,20 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         return Json(ApiEnvelope<ModelOfferingItem>.Fail(
             AsrOfferingContractPolicy.ErrorCode,
             updateAsrContractError), jsonOptions, 409);
+    // 改到上游别名时与创建同一道门：判据同一份，两个入口不许一严一松。
+    if (targetKind == "exchange" && target is not null && body.UpstreamModelId is not null)
+    {
+        var updatedAlias = ExchangeAliasPolicy.EffectiveAlias(target, body.UpstreamModelId);
+        if (!ExchangeAliasPolicy.Declares(target, updatedAlias))
+        {
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "EXCHANGE_ALIAS_NOT_DECLARED",
+                updatedAlias.Length == 0
+                    ? "这个兑换所没有主别名，所以必须指定「上游模型」；清空它的话运行时会把这条线路整条跳过。"
+                    : $"兑换所里没有启用着的别名「{updatedAlias}」（不存在，或被单独停用了）。"
+                      + "去兑换所页确认这条别名的拼写与开关，再回来保存。"), jsonOptions, 409);
+        }
+    }
     var updates = new List<UpdateDefinition<BsonDocument>>();
     if (body.UpstreamModelId is not null) updates.Add(SetOrUnset("UpstreamModelId", body.UpstreamModelId));
     if (body.Protocol is not null) updates.Add(SetOrUnset("Protocol", body.Protocol.ToLowerInvariant()));
@@ -3957,6 +7257,68 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
         replacement["UpdatedAt"] = now;
         replacement.Remove("SupersededAt");
 
+        // 这条替身将来是启用还是停用，跟着原线路走。下面那道资格闸与最后的晋升都要用它。
+        var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
+
+        /*
+          换上游之前先复检「这条线路指着的目标现在还承接得了流量吗」——与新建、启用同一道闸。
+
+          新建那个端点判了、启用那个端点判了（第 51 轮补的），**改路由这个端点没判**。
+          于是一条在跑的线路，它的目标模型早已被删、Provider 早已被停之后，改一下它的
+          上游模型名或协议，就会造出一条**启用着**的替身并晋升上去：接口回 200、界面上它是
+          启用的，而运行时解析立刻把它整条丢掉。又是「存得进去、跑不起来」，只是换了第三个
+          入口进来（第 79 轮 review；OfferingTargetEligibility 的类注释写的就是这件事，
+          而它自己漏掉了这一处）。
+
+          只在替身会被启用时判：停用的线路本来就不承接流量，拦它等于比运行时还严，
+          而且会把「先改好配置、回头再启用」这条正常路堵死（启用那一步会替我们判）。
+          放在所有写之前：这是纯查询，判完后面才不需要为它准备一条回滚路径。
+        */
+        if (replacementEnabled)
+        {
+            var replacementUpstreamForGate = replacement.GetValue("UpstreamModelId", BsonNull.Value);
+            var editTargetRejection = OfferingTargetEligibility.Evaluate(
+                targetKind,
+                target,
+                targetPlatform,
+                replacementUpstreamForGate.IsString ? replacementUpstreamForGate.AsString : null);
+            if (editTargetRejection is { } editRejection)
+            {
+                return Json(
+                    ApiEnvelope<ModelOfferingItem>.Fail(editRejection.Code, editRejection.Message),
+                    jsonOptions,
+                    editRejection.Code == "TARGET_NOT_FOUND" ? 404 : 409);
+            }
+        }
+
+        /*
+          先确认「换成这个上游之后，它的身份不会和另一条在跑的线路撞车」，再动任何一次写。
+
+          线路身份（唯一索引 v3）= 租户 + 对外模型 + 目标类型 + 目标 + 实际上游模型。
+          两条在跑的线路本来各用各的 UpstreamModelId，把其中一条改成另一条的值，
+          晋升那一步 Unset SupersededByOfferingId 时才会撞上索引——而那时原线路已经被退休、
+          替身还挂着 staging 标记，异常从 UpdateOneAsync 抛出去，直接越过下面那段回滚：
+          原线路停用、替身悬空，用户拿到一句 500。
+          所以判在最前面：这条是纯查询，位移之前判完，后面才不需要为它准备一条回滚路径。
+        */
+        var replacementUpstreamModelId = replacement.GetValue("UpstreamModelId", BsonNull.Value);
+        var identityRival = await gwModelOfferings.Find(TenantAccess.Filter(http, fb.And(
+            fb.Eq("LogicalModelId", logicalId),
+            fb.Eq("TargetKind", targetKind),
+            fb.Eq("TargetId", targetId),
+            // 与创建那一侧同一份判据：按运行时实际打出去的名字比，不按原值逐字比。
+            OfferingIdentityPolicy.SameUpstreamFilter(
+                targetKind, target, replacementUpstreamModelId.IsString ? replacementUpstreamModelId.AsString : null),
+            fb.Ne("_id", offeringId),
+            fb.Not(fb.Exists("SupersededByOfferingId"))))).FirstOrDefaultAsync();
+        if (identityRival is not null)
+        {
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "DUPLICATE_OFFERING",
+                "这个对外模型下已经有另一条线路指向同一个上游（含指定的上游模型），"
+                + "改成这个值会和它撞车。先把那一条删掉或改掉，再回来改这一条。"), jsonOptions, 409);
+        }
+
         await gwModelOfferings.InsertOneAsync(replacement);
         var retirementFilter = fb.And(filter, fb.Not(fb.Exists("SupersededByOfferingId")));
         var retired = await gwModelOfferings.FindOneAndUpdateAsync(
@@ -3976,17 +7338,55 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                 "该 Offering 已被其他管理员更新，请刷新后重试"), jsonOptions, 409);
         }
 
-        var replacementEnabled = existing.AsNullableBool("Enabled") ?? true;
-        var promoted = await gwModelOfferings.UpdateOneAsync(
-            TenantAccess.Filter(http, fb.And(
-                fb.Eq("_id", replacementId),
-                fb.Eq("SupersededByOfferingId", stagingMarker))),
-            Builders<BsonDocument>.Update
-                .Unset("SupersededByOfferingId")
-                .Set("Enabled", replacementEnabled)
-                .Set("UpdatedAt", DateTime.UtcNow));
-        if (promoted.ModifiedCount != 1)
+        // 晋升失败的回滚只写一次：把原线路复活、把悬空的替身删掉。
+        // 上一版只在 ModifiedCount != 1 这一条路上回滚，而撞唯一索引时异常从 UpdateOneAsync
+        // 抛出去，压根到不了那里——原线路停用、替身悬空，两样都留在库里。
+        async Task RollbackPromotionAsync()
         {
+            /*
+              顺序是**先删替身、再复活原线路**，反过来会在最需要它的那一种失败上自己撞死。
+
+              超时这类失败的结果是未知的：服务端可能已经晋升成功，替身此刻是活的、而且
+              （只改协议或 Endpoint 时）它与原线路的 v3 身份完全相同——上游模型没变。
+              这时若先去 Unset 原线路的 SupersededByOfferingId，等于要让两条同身份的线路
+              同时活着，唯一索引当场拒掉：回滚自己抛异常，被外面接住报成
+              OFFERING_PROMOTION_LEFT_PARTIAL，于是接口告诉管理员「改动没生效」，
+              而实际上那次改动正活着（第 79 轮 review）。
+
+              先处理替身就没有这个歧义：两种情形处理完之后身份都空了出来，
+              复活原线路必然能过索引。「成功与否殊途同归」这句话要成立，就得是这个顺序。
+              至于「处理」是删还是退休，见下面那段——那是第 80 轮补的另一半。
+            */
+            /*
+              第一步分两种情形，判据是**它还挂不挂着 staging 标记**，不需要先读一次：
+
+                - 还挂着 → 晋升那一句没生效过，这条替身从没进过调度，不可能有谁记下它的 id，
+                  直接删掉最干净；
+                - 挂不住了（条件删的 DeletedCount 为 0）→ 说明标记已被 Unset，它当过活的路由。
+                  **这时绝不能删**：晋升成功到客户端看到超时之间，已受理的异步任务
+                  （视频那一类）可能已经把这个 offeringId 持久化下来，删了之后
+                  ResolveOfferingAsync 再也查不回来，一次已经付费的任务就轮询不到、下载不了
+                  ——而那恰恰是整个「换线路生成新 id」机制存在的理由（第 80 轮 review 的 P1，
+                  正是上一轮我自己改出来的：把撞索引换成了丢单）。
+                  所以退休而不是删：停用 + 标成被原线路取代，它离开调度、但按 id 仍查得回来。
+
+              两种情形都让替身退出 v3 身份（那个索引把 SupersededByOfferingId 也算进键里），
+              所以下一步复活原线路必然过得了索引。
+            */
+            var removedStaging = await gwModelOfferings.DeleteOneAsync(
+                TenantAccess.Filter(http, fb.And(
+                    fb.Eq("_id", replacementId),
+                    fb.Eq("SupersededByOfferingId", stagingMarker))));
+            if (removedStaging.DeletedCount == 0)
+            {
+                await gwModelOfferings.UpdateOneAsync(
+                    TenantAccess.Filter(http, fb.Eq("_id", replacementId)),
+                    Builders<BsonDocument>.Update
+                        .Set("Enabled", false)
+                        .Set("SupersededByOfferingId", offeringId)
+                        .Set("SupersededAt", DateTime.UtcNow)
+                        .Set("UpdatedAt", DateTime.UtcNow));
+            }
             await gwModelOfferings.UpdateOneAsync(
                 TenantAccess.Filter(http, fb.And(
                     fb.Eq("_id", offeringId),
@@ -3996,8 +7396,66 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}", async (HttpC
                     .Unset("SupersededByOfferingId")
                     .Unset("SupersededAt")
                     .Set("UpdatedAt", DateTime.UtcNow));
-            await gwModelOfferings.DeleteOneAsync(
-                TenantAccess.Filter(http, fb.Eq("_id", replacementId)));
+        }
+
+        UpdateResult promoted;
+        try
+        {
+            promoted = await gwModelOfferings.UpdateOneAsync(
+                TenantAccess.Filter(http, fb.And(
+                    fb.Eq("_id", replacementId),
+                    fb.Eq("SupersededByOfferingId", stagingMarker))),
+                Builders<BsonDocument>.Update
+                    .Unset("SupersededByOfferingId")
+                    .Set("Enabled", replacementEnabled)
+                    .Set("UpdatedAt", DateTime.UtcNow));
+        }
+        catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 上面那道纯查询之后、这一步之前，有人新建了一条同身份的线路。回滚，如实说撞了谁。
+            await RollbackPromotionAsync();
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "DUPLICATE_OFFERING",
+                "就在这几毫秒里，这个对外模型下多了一条指向同一个上游（含指定的上游模型）的线路，"
+                + "改动没有生效，原线路已经恢复。刷新看一眼现在有哪些线路，再决定怎么改。"), jsonOptions, 409);
+        }
+        catch (MongoException ex)
+        {
+            /*
+              撞键之外的失败（超时、主从切换、连接断开）同样要回滚。
+
+              上一版只接了撞键那一种，于是一次超时会带着原线路停用、替身悬空一起留在库里——
+              这个对外模型从此一条可用线路都没有，而操作者拿到的是一句 500。
+              「只有想得到的那种失败才回滚」正是判据太窄（形状 1）：真实失败里最常见的那种
+              恰好不在名单上。
+
+              超时这一类失败的结果是**未知的**（服务端可能已经写成功）。回滚不去猜：它是条件更新
+              ——原线路仍带着指向这个替身的标记才复活——所以晋升真的成功了也照样回到改之前的样子，
+              成功与否两种情形殊途同归。
+            */
+            try
+            {
+                await RollbackPromotionAsync();
+            }
+            catch (MongoException rollbackFailure)
+            {
+                return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                    "OFFERING_PROMOTION_LEFT_PARTIAL",
+                    $"新路由没能接管流量（{ex.Message}），回滚也失败了（{rollbackFailure.Message}）。"
+                    + $"回滚是先处理替身再复活原线路，所以替身 {replacementId} 可能已经删掉或退休、"
+                    + $"而原线路 {offeringId} 还停用着——这个对外模型现在可能一条可用线路都没有。"
+                    + "刷新看一眼，手动把原线路启用回来"),
+                    jsonOptions, 500);
+            }
+
+            return Json(ApiEnvelope<ModelOfferingItem>.Fail(
+                "OFFERING_PROMOTION_FAILED",
+                $"新路由没能接管流量（{ex.Message}），原线路已经恢复，改动没有生效。稍后重试"),
+                jsonOptions, 503);
+        }
+        if (promoted.ModifiedCount != 1)
+        {
+            await RollbackPromotionAsync();
             return Json(ApiEnvelope<ModelOfferingItem>.Fail(
                 "OFFERING_PROMOTION_FAILED",
                 "新路由未能接管流量，原 Offering 已恢复，请重试"), jsonOptions, 503);
@@ -4081,7 +7539,12 @@ app.MapPut("/gw/logical-models/{id}/enabled", async (HttpContext http, string id
         }
     }
     var updated = await gwLogicalModels.FindOneAndUpdateAsync(filter,
-        Builders<BsonDocument>.Update.Set("Enabled", enabled).Set("UpdatedAt", DateTime.UtcNow),
+        Builders<BsonDocument>.Update
+            .Set("Enabled", enabled)
+            // 人手动碰过启用状态，就把「这是搬迁停的」那个戳清掉：从这一刻起这条模型的开关
+            // 归人管，重跑搬迁不该再替他改（见搬迁端点里那个复活分支）。
+            .Unset("DisabledByMigrationAt")
+            .Set("UpdatedAt", DateTime.UtcNow),
         new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
     return Json(ApiEnvelope<LogicalModelItem>.Ok(MapLogicalModel(
         updated,
@@ -4111,6 +7574,20 @@ app.MapPut("/gw/logical-models/{logicalId}/offerings/{offeringId}/enabled", asyn
         var platform = targetKind == "model" && !string.IsNullOrWhiteSpace(target?.AsNullableString("PlatformId"))
             ? await gwPlatforms.Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", target!.AsNullableString("PlatformId")))).FirstOrDefaultAsync()
             : null;
+        /*
+          重新打开一条停用的线路，和新建一条线路要过同一道资格闸（判据见 OfferingTargetEligibility）。
+          原先这里只判 ASR 契约，于是指着已删模型、已停 Provider、已关别名的那条线路可以被重新
+          打开——接口回 200、界面上它是启用的，而运行时会把它整条丢掉。
+        */
+        var enableRejection = OfferingTargetEligibility.Evaluate(
+            targetKind, target, platform, existing.AsNullableString("UpstreamModelId"));
+        if (enableRejection is { } rejection)
+        {
+            return Json(
+                ApiEnvelope<ModelOfferingItem>.Fail(rejection.Code, rejection.Message),
+                jsonOptions,
+                rejection.Code == "TARGET_NOT_FOUND" ? 404 : 409);
+        }
         var contractError = ValidateAsrOfferingContract(logical, existing, target, platform);
         if (contractError is not null)
             return Json(ApiEnvelope<ModelOfferingItem>.Fail(
@@ -4413,26 +7890,49 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
     var gwPlatformIds = IdSet(gwPlatformDocs);
     var gwModelIds = IdSet(gwModelDocs);
     var gwExchangeIds = IdSet(gwExchangeDocs);
-    var usableGwPoolIds = new HashSet<string>(StringComparer.Ordinal);
-    foreach (var pool in gwPoolDocs)
-    {
-        var poolId = pool.GetStringOrEmpty("_id");
-        if (poolId.Length > 0 && await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
-        {
-            usableGwPoolIds.Add(poolId);
-        }
-    }
-
     var activeAppCallers = appCallerDocs
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))
         .ToList();
-    var activeWithGatewayPool = activeAppCallers.Count(d =>
-        AllReferencedModelPoolsExist(d, gwPoolIds));
-    var activeWithUsableGatewayPool = activeAppCallers.Count(d =>
-        AllReferencedModelPoolsExist(d, gwPoolIds)
-        && IsAppCallerUsable(d, usableGwPoolIds));
-    var activeMissingGatewayPool = activeAppCallers.Count - activeWithGatewayPool;
-    var activeBoundPoolWithoutUsableMember = activeWithGatewayPool - activeWithUsableGatewayPool;
+
+    /*
+      「这个 active 调用方有没有人接得住」——判据是**对外模型**，不是池绑定。
+
+      池路由退场之后，配对的调用方根本没有池绑定，而 AllReferencedModelPoolsExist 对
+      「一条池引用都没有」返回 false：于是一份完全正确的配置会被这份报告判成
+      activeMissingGatewayPool > 0、status=blocked，而 scripts/llmgw-release-gate.py 读的
+      正是这两个字段——这一刀砍完池，发布反而被自己的报告挡住了。反向也一样坏：
+      一个还留着健康池字段、却没有任何对外模型接得住的调用方会被判成就绪。
+
+      所以这里与发布闸那份用同一个 FindUnnamedCatcherAsync（它又与运行时
+      TryResolveDefaultLogicalModelAsync 逐层对齐）。两处各写一套正是形状 3。
+
+      DTO 的字段名保持不变：scripts/llmgw-release-gate.py 与 llmgw-rollout-ledger.py
+      按名读它们，改名等于同一轮里再断一条线。含义已随判据改写，注释与文案同步说明。
+    */
+    var reportTenantId = TenantAccess.GetRequired(http).TenantId;
+    var activeWithCatcher = 0;
+    var activeWithoutCatcherDocs = new List<BsonDocument>();
+    foreach (var caller in activeAppCallers)
+    {
+        var catcher = await FindUnnamedCatcherAsync(
+            gwLogicalModels,
+            gwModelOfferings,
+            gwModels,
+            gwPlatforms,
+            gwModelExchanges,
+            gwMigrations,
+            reportTenantId,
+            caller.AsNullableString("RequestType"),
+            caller.AsNullableString("AppCallerCode"));
+        if (catcher is null) activeWithoutCatcherDocs.Add(caller);
+        else activeWithCatcher++;
+    }
+    var activeWithGatewayPool = activeWithCatcher;
+    // 「接得住」这份判据里已经要求那条对外模型真有一条启用且解析得出来的线路，
+    // 所以「绑定了但成员不可用」这一档在新判据下不再是一个独立状态，恒为 0。
+    var activeWithUsableGatewayPool = activeWithCatcher;
+    var activeMissingGatewayPool = activeWithoutCatcherDocs.Count;
+    var activeBoundPoolWithoutUsableMember = 0;
     var discovered = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var configured = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "configured", StringComparison.OrdinalIgnoreCase));
     var disabled = appCallerDocs.Count(d => string.Equals(d.AsNullableString("Status") ?? string.Empty, "disabled", StringComparison.OrdinalIgnoreCase));
@@ -4477,28 +7977,18 @@ app.MapGet("/gw/config-authority/report", async (HttpContext http) =>
     AddMapOnlyGaps(mapPlatformDocs, gwPlatformIds, "platform", d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     AddMapOnlyGaps(mapModelDocs, gwModelIds, "model", d => d.AsNullableString("ModelName") ?? d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
     AddMapOnlyGaps(mapExchangeDocs, gwExchangeIds, "exchange", d => d.AsNullableString("Name") ?? d.GetStringOrEmpty("_id"));
-    gaps.AddRange(activeAppCallers
-        .Where(d => !AllReferencedModelPoolsExist(d, gwPoolIds))
+    // 缺口也换成同一个判据：报「没绑池」会把人指向一个已经 302 走了的页面，
+    // 而真正要做的是给这个调用方找一个接得住的对外模型。
+    gaps.AddRange(activeWithoutCatcherDocs
         .Take(30)
         .Select(d => new ConfigAuthorityGapItem
         {
             ObjectType = "appCaller",
             Id = d.GetStringOrEmpty("_id"),
             Name = d.AsNullableString("AppCallerCode") ?? d.GetStringOrEmpty("_id"),
-            Status = "active-missing-gw-pool",
-            Detail = "active appCaller 未绑定有效 GW 模型池；删除 MAP fallback 前必须修复。",
-        }));
-    gaps.AddRange(activeAppCallers
-        .Where(d => AllReferencedModelPoolsExist(d, gwPoolIds)
-            && !IsAppCallerUsable(d, usableGwPoolIds))
-        .Take(30)
-        .Select(d => new ConfigAuthorityGapItem
-        {
-            ObjectType = "appCaller",
-            Id = d.GetStringOrEmpty("_id"),
-            Name = d.AsNullableString("AppCallerCode") ?? d.GetStringOrEmpty("_id"),
-            Status = "gw-pool-without-usable-member",
-            Detail = "active appCaller 已绑定 GW 模型池，但该池没有可解析、非 unavailable 的成员；MAP fallback 退场前必须修复。",
+            Status = "active-appcaller-without-catcher",
+            Detail = "active appCaller 没有对外模型接得住（没人认领它，这个用途的默认也接不住）："
+                + "去「模型」页把某个模型的「指定调用方」加上它，或给这个用途设一个默认模型。",
         }));
 
     var summary = new ConfigAuthoritySummary
@@ -4601,20 +8091,6 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         if (string.IsNullOrWhiteSpace(observed)) return false;
         return !string.Equals(configured, observed, StringComparison.Ordinal);
     }
-    static bool HasUsablePoolMember(BsonDocument pool, HashSet<string> enabledPlatformIds, List<BsonDocument> enabledModels, List<BsonDocument> enabledExchanges)
-    {
-        var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-        return modelsArr
-            .Where(x => x.IsBsonDocument)
-            .Select(x => x.AsBsonDocument)
-            .Any(member => IsResolvablePoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges));
-    }
-    // 这里原本抄了一份和 IsResolvableGatewayPoolMember 一模一样的判定（连中继匹配都抄了一遍）。
-    // 两份口径必然各自漂移：池健康统计说这成员是活的、默认池校验说它是死的，谁也说不清哪个对。
-    // 收敛成一个入口，下面这两个只是薄转发。
-    static bool IsResolvablePoolMember(BsonDocument member, HashSet<string> enabledPlatformIds, List<BsonDocument> enabledModels, List<BsonDocument> enabledExchanges)
-        => IsResolvableGatewayPoolMember(member, enabledPlatformIds, enabledModels, enabledExchanges);
-
     var gwPoolIds = IdSet(gwPoolDocs);
     var activeAppCallers = appCallerDocs
         .Where(d => string.Equals(d.AsNullableString("Status") ?? "discovered", "active", StringComparison.OrdinalIgnoreCase))
@@ -4624,8 +8100,33 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .Where(x => !string.IsNullOrWhiteSpace(x))
         .Select(x => x!)
         .ToHashSet(StringComparer.Ordinal);
-    var activeMissingGatewayPool = activeAppCallers.Count(d =>
-        !AllReferencedModelPoolsExist(d, gwPoolIds));
+    // 「有没有人接得住这个 active 调用方」——判据换成对外模型，不再看池绑定。
+    //
+    // 池退场之后，正确配置的调用方（走 DefaultForAppCallerCodes / IsDefaultForType）根本没有
+    // 池绑定，而带着残留绑定的那几个指向的池文档已经被删——旧判据把它们判成 blocked，
+    // 并让人去 /pools 修，可那个页面现在 302 到对外模型页、写端点全删了：
+    // 一个配对的调用方能卡住发布，而且没有任何可执行的修复动作（形状 5 的近亲：
+    // 判据守的是一个已经不存在的状态，于是它只会误伤，不会拦住任何真问题）。
+    //
+    // 复用 FindUnnamedCatcherAsync：那份判据与运行时 TryResolveDefaultLogicalModelAsync
+    // 逐层对齐（先看谁认领、再看用途默认，两层都要求启用且真有一条启用的线路），
+    // 不在这里另写一套（形状 3）。
+    var activeAppCallersWithoutCatcher = 0;
+    foreach (var caller in activeAppCallers)
+    {
+        var catcher = await FindUnnamedCatcherAsync(
+            gwLogicalModels,
+            gwModelOfferings,
+            gwModels,
+            gwPlatforms,
+            gwModelExchanges,
+            gwMigrations,
+            TenantAccess.GetRequired(http).TenantId,
+            caller.AsNullableString("RequestType"),
+            caller.AsNullableString("AppCallerCode"));
+        if (catcher is null) activeAppCallersWithoutCatcher++;
+    }
+    var activeMissingGatewayPool = activeAppCallersWithoutCatcher;
     var discoveredAppCallers = appCallerDocs.Count(d =>
         string.Equals(d.AsNullableString("Status") ?? "discovered", "discovered", StringComparison.OrdinalIgnoreCase));
     var governedAppCallers = appCallerDocs.Where(IsGovernedAppCaller).ToList();
@@ -4641,18 +8142,10 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         .ToHashSet(StringComparer.Ordinal);
     var enabledGwModels = gwModelDocs.Where(d => d.AsNullableBool("Enabled") ?? true).ToList();
     var enabledGwExchanges = gwExchangeDocs.Where(d => d.AsNullableBool("Enabled") ?? true).ToList();
-    var activeBoundPoolIds = activeAppCallers
-        .SelectMany(GetReferencedModelPoolIds)
-        .Where(gwPoolIds.Contains)
-        .ToHashSet(StringComparer.Ordinal);
-    var activeBoundPools = gwPoolDocs.Where(d => activeBoundPoolIds.Contains(d.GetStringOrEmpty("_id"))).ToList();
-    var usablePoolIds = activeBoundPools
-        .Where(pool => HasUsablePoolMember(pool, enabledGwPlatformIds, enabledGwModels, enabledGwExchanges))
-        .Select(pool => pool.GetStringOrEmpty("_id"))
-        .ToHashSet(StringComparer.Ordinal);
-    var activeBoundPoolWithoutUsableMember = activeAppCallers.Count(d =>
-        AllReferencedModelPoolsExist(d, gwPoolIds)
-        && !IsAppCallerUsable(d, usablePoolIds));
+    // 「线路可用性」这一条已经被上面那个判据吸收了：FindUnnamedCatcherAsync 认一个模型的前提
+    // 就是它至少有一条启用的线路。再单独判一次池成员可用性，守的是一个已经不存在的对象，
+    // 而且两条判据会各自漂移（形状 3）。这里恒 0，对应的 gate 下面改成如实说明它已退场。
+    var activeBoundPoolWithoutUsableMember = 0;
     var mapFallbackObjectsRemaining =
         MapOnlyCount(mapPoolDocs, gwPoolIds)
         + MapOnlyCount(mapPlatformDocs, IdSet(gwPlatformDocs))
@@ -4833,7 +8326,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         {
             "config_authority_objects" => new()
             {
-                Link("模型池", "/pools"),
+                Link("对外模型", "/logical-models"),
                 Link("平台", "/platforms"),
                 Link("模型", "/models"),
                 Link("Exchange", "/exchanges"),
@@ -4847,7 +8340,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             {
                 Link("active 调用方", "/app-callers?status=active"),
                 Link("discovered 调用方", "/app-callers?status=discovered"),
-                Link("模型池", "/pools"),
+                Link("对外模型", "/logical-models"),
             },
             "appcaller_policy_drift" => new() { Link("漂移调用方", "/app-callers?drift=any") },
             "appcaller_ingress_registry_coverage" => new()
@@ -4855,11 +8348,11 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                 Link("协议覆盖", "/?protocolCoverage=1"),
                 Link("调用方", "/app-callers"),
             },
-            "gateway_pool_member_readiness" => new() { Link("检查模型池", "/pools") },
+            "gateway_pool_member_readiness" => new() { Link("检查对外模型的线路", "/logical-models") },
             "active_appcaller_map_fallback_exit" => new()
             {
                 Link("active 调用方", "/app-callers?status=active"),
-                Link("模型池", "/pools"),
+                Link("对外模型", "/logical-models"),
                 Link("平台密钥", "/platforms"),
             },
             "gateway_key_integrity" => new()
@@ -4952,14 +8445,17 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
 
     AddGate(
         "active_appcaller_pool_binding",
-        "active appCaller GW 池绑定",
+        "active appCaller 有对外模型接得住",
         activeMissingGatewayPool == 0 && discoveredAppCallers == 0 ? "pass" : "blocked",
         activeMissingGatewayPool > 0 || discoveredAppCallers > 0,
         activeMissingGatewayPool == 0 && discoveredAppCallers == 0
-            ? "active appCaller 均已绑定有效 GW 模型池，且无 discovered 调用方等待治理。"
-            : $"{activeMissingGatewayPool} 个 active 未绑定有效 GW 池，{discoveredAppCallers} 个 discovered 调用方尚未治理。",
-        $"/gw/config-authority/report activeMissingGatewayPool={activeMissingGatewayPool}; discoveredAppCallers={discoveredAppCallers}",
-        activeMissingGatewayPool == 0 && discoveredAppCallers == 0 ? "可进入 MAP fallback 退场复核。" : "在 /app-callers 治理调用方状态与模型池绑定。",
+            ? "每个 active appCaller 都有对外模型接得住，且无 discovered 调用方等待治理。"
+            : $"{activeMissingGatewayPool} 个 active 调用方没有对外模型接得住（没人认领它，这个用途的默认也接不住），"
+              + $"{discoveredAppCallers} 个 discovered 调用方尚未治理。",
+        $"/gw/config-authority/report activeWithoutCatcher={activeMissingGatewayPool}; discoveredAppCallers={discoveredAppCallers}",
+        activeMissingGatewayPool == 0 && discoveredAppCallers == 0
+            ? "可进入 MAP fallback 退场复核。"
+            : "去「模型」页把某个模型的「指定调用方」加上它，或给这个用途设一个默认模型；discovered 调用方在 /app-callers 治理。",
         new Dictionary<string, string>
         {
             ["activeAppCallers"] = activeAppCallers.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -5004,20 +8500,23 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
             ["missingIngressProtocols"] = string.Join(",", missingRegistryProtocols),
         });
 
+    // 这一条已随模型池退场：它守的「绑定的池有没有可用成员」现在没有对象了，
+    // 而它真正关心的事——「接得住这个调用方的那个模型有没有一条能用的线路」——
+    // 已经被上面那条判据吸收（FindUnnamedCatcherAsync 认一个模型的前提就是它有启用的线路）。
+    // 保留这个 id 是为了不破坏消费这份报告的存量脚本，但它不再 blocking，也不再指向已删的页面。
     AddGate(
         "gateway_pool_member_readiness",
-        "GW 池成员可用性",
-        activeBoundPoolWithoutUsableMember == 0 ? "pass" : "blocked",
-        activeBoundPoolWithoutUsableMember > 0,
-        activeBoundPoolWithoutUsableMember == 0
-            ? $"active appCaller 绑定的 {activeBoundPools.Count} 个 GW 池均有可解析成员。"
-            : $"{activeBoundPoolWithoutUsableMember} 个 active appCaller 绑定的 GW 池没有可解析、非 unavailable 成员。",
-        $"/gw/pools activeBoundPools={activeBoundPools.Count}; withoutUsableMember={activeBoundPoolWithoutUsableMember}; enabledPlatforms={enabledGwPlatformIds.Count}; enabledModels={enabledGwModels.Count}; enabledExchanges={enabledGwExchanges.Count}",
-        activeBoundPoolWithoutUsableMember == 0 ? "保持池成员健康。" : "在 /pools 为相关 GW 池补充 enabled 模型或 Exchange，并确认 HealthStatus 不是 Unavailable。",
+        "GW 池成员可用性（已随模型池退场）",
+        "pass",
+        false,
+        "模型池路由已退场，这条判据不再有对象；线路可用性已并入「active appCaller 有对外模型接得住」那一条。",
+        "/logical-models 线路可用性已并入 active_appcaller_pool_binding",
+        "无需处理。要看某个模型的线路健康，去「模型」页打开它的调用全貌。",
         new Dictionary<string, string>
         {
-            ["activeBoundPools"] = activeBoundPools.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
-            ["withoutUsableMember"] = activeBoundPoolWithoutUsableMember.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            // 只留仍然成立的那几个计数；池相关的字段跟着判据一起退场，
+            // 留着会让读报告的人以为这条还在按池判。
+            ["retired"] = "model-pool-routing",
             ["enabledPlatforms"] = enabledGwPlatformIds.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["enabledModels"] = enabledGwModels.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
             ["enabledExchanges"] = enabledGwExchanges.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
@@ -5030,7 +8529,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         !activeAppCallerMapFallbackExitReady && !activeAppCallerMapFallbackCutoverPrerequisitesReady,
         activeAppCallerMapFallbackExitReady
             ? httpFullLedgerEvidence.Ready
-                ? "当前运行态已禁止 active appCaller 使用 MAP 配置兜底，且 active 调用方绑定的 GW 池可用。"
+                ? "当前运行态已禁止 active appCaller 使用 MAP 配置兜底，且每个 active 调用方都有接得住的对外模型。"
                 : "active appCaller MAP fallback 退场前置条件已满足；http-full 阶段会开启运行态 fail-closed 开关。"
             : activeAppCallerMapFallbackCutoverPrerequisitesReady
             ? "active appCaller MAP fallback 退场前置条件已满足；等待 http-full 阶段开启运行态 fail-closed 开关。"
@@ -5042,7 +8541,13 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
                 : "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
             : activeAppCallerMapFallbackCutoverPrerequisitesReady
             ? "进入 http-full 阶段时由发布脚本开启 DisableMapConfigFallbackForActiveAppCallers。"
-            : "先完成 MAP-only 配置认领、active appCaller 绑池和池成员健康复核，再在 full-http 发布进程中启用 DisableMapConfigFallbackForActiveAppCallers。",
+            // 前置条件早就改判「有没有对外模型接得住」（FindUnnamedCatcherAsync），
+            // 而这句处置还停在池的世界里——池路由与它的写入界面都已退场，照着做满足不了这道闸
+            // （第 64 轮 review：又一句走不通的下一步）。
+            : "先完成 MAP-only 配置认领，再给这几个 active 调用方找到接得住的对外模型："
+              + "要么在白名单页把某条模型的「认领」加上这个调用方，要么给这个用途设一个可用的默认模型"
+              + "（那条模型得启用、且至少有一条现在能接流量的线路）。都齐了再在 full-http 发布进程中"
+              + "启用 DisableMapConfigFallbackForActiveAppCallers。",
         new Dictionary<string, string>
         {
             ["disableMapConfigFallbackForActiveAppCallers"] = disableMapFallbackForActiveAppCallers ? "true" : "false",
@@ -5455,7 +8960,11 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
                     Id = appCallerId,
                     Name = appCallerCode,
                     Status = "gw-pool-without-usable-member",
-                    Detail = $"active appCaller 当前绑定的 GW 模型池 {currentPoolId} 没有可解析成员；请先在 /pools 补齐 enabled 模型或 Exchange。",
+                    // 下一步不许指向 /pools：那个地址现在无条件重定向到对外模型列表，
+                    // 写端点也全删了，照着做走不通（第 71 轮 review）。
+                    Detail = $"active appCaller 的存量池绑定 {currentPoolId} 指向一个没有可解析成员的池。"
+                        + "池已退场、这条绑定不参与路由，不用去修它；"
+                        + "要让这个调用方被接住，去对外模型页给它设一条认领，或给这个用途设一个默认模型。",
                 });
                 continue;
             }
@@ -5545,7 +9054,15 @@ app.MapPost("/gw/config-authority/bind-active-app-callers", async (HttpContext h
                 Id = appCallerId,
                 Name = appCallerCode,
                 Status = "bound-to-gw-default-pool",
-                Detail = $"已绑定 requestType={requestType} 的 GW 默认池 {defaultPool.Name}，路由策略保留或补齐为 {targetModelPolicy}。",
+                // 池退场之后这条写入**不再影响路由**：解析器把 ModelPoolId /
+                // AllowedModelPoolIds / DefaultModelPoolId 当成残留字段，一个都不读。
+                // 保留这个端点是为了让还在调它的存量脚本拿到可读的回执，而不是 404；
+                // 但它报出来的话必须说清「这不是修复」，否则又是一次静默空操作
+                //（第 71 轮 review）。真正的修复在对外模型那一侧。
+                Detail = $"已写入 requestType={requestType} 的 GW 默认池 {defaultPool.Name} 作为存量字段"
+                    + $"（路由策略保留或补齐为 {targetModelPolicy}）。**这不会改变路由**：池已退场，"
+                    + "解析器不读这几个字段。要让这个调用方被接住，去对外模型页给它设一条认领，"
+                    + "或给这个用途设一个默认模型。",
             });
         }
         else
@@ -5843,6 +9360,18 @@ static bool AppCallerAcceptsTraffic(string? status)
 ///
 /// 归属团队不接受调用方传入：系统内部的消耗按系统团队记，跟当前是谁点的按钮无关。
 /// </summary>
+// 选中的池，下一次系统调用真的解析得到吗。
+//
+// 判据与运行时 TryResolveLogicalModelAsync 那一支逐条同源：本租户 + 启用 + 用途对得上
+// + MigratedFromPoolIds 里有这个池 ID。保存端点与取用路径共用这一份——两边各判各的话，
+// 存得进去、跑不起来，而页面两处都说正常。
+async Task<bool> SystemPoolResolvableAsync(string tenantId, string poolId)
+    => await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+        Builders<BsonDocument>.Filter.Eq("ModelType", "chat"),
+        Builders<BsonDocument>.Filter.AnyEq("MigratedFromPoolIds", poolId))).AnyAsync();
+
 async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolId, string Model, string Error)>
     EnsureSystemGatewayAccessAsync(string tenantId, string actorUsername)
 {
@@ -5878,6 +9407,23 @@ async Task<(bool Ok, string BaseUrl, string Key, string AppCaller, string? PoolI
             return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
                 "系统级模型池已经不可用了（被删除，或已不是对话类）。去「服务网关设置」重新选一个对话池——"
                 + "在那之前系统功能不会去跑默认池冒充你的选择。");
+        /*
+          「池文档还在」只证明它还在池表里，不证明**解析得到它**。
+
+          池路由已经退场：这条请求带的 model_policy=pool + 池文档 ID 会被顶进 expectedModel，
+          而解析器认池 ID 的唯一一条路是「某个对外模型的 MigratedFromPoolIds 里有它」。
+          没搬过的池在那条路上查不到，又因为 expectedModel 非空而跳过两层默认，
+          直接 MODEL_NOT_FOUND（或对内部租户静默落到不相干的 legacy 兜底）——
+          设置页写着这个池、就绪也显示正常，而 Quickstart 每一次都失败。
+        */
+        if (!await SystemPoolResolvableAsync(tenantId, poolId))
+            return (false, baseUrl, "", SystemIntentDraftAppCaller, null, model,
+                "系统级选中的这个模型池还没有搬成对外模型，解析不到它（池路由已经退场，"
+                + "认池 ID 的唯一一条路是它已经搬迁过）。"
+                + "去「服务网关设置」改选「指定模型」——那一栏列的就是能解析到的对外模型，选完即刻生效。"
+                + "在那之前系统功能不会拿别的模型冒充你的选择。"
+                + "（这个池要继续用的话得先搬成对外模型，而控制台目前没有这个入口，"
+                + "只有接口 POST /gw/pools/migrate-to-models，已记台账。）");
     }
     if (string.Equals(modelSource, "model", StringComparison.Ordinal))
     {
@@ -6493,6 +10039,16 @@ app.MapPut("/gw/system-settings", async (HttpContext http, [FromBody] UpdateSyst
             return Json(ApiEnvelope<object>.Fail(
                 "MODEL_POOL_NOT_FOUND",
                 "指定的模型池在当前租户下不可用（不存在或不是对话类）。回到「服务网关设置」重选一个。"), jsonOptions, 404);
+        // 池在不在只是第一层。池路由退场之后，认池 ID 的唯一一条路是它已经搬成了对外模型
+        // （MigratedFromPoolIds）；没搬过的池存得进去、页面显示正常，而每一次系统调用都
+        // MODEL_NOT_FOUND。判据与取用时、与运行时同一处，不许这里松那里紧。
+        if (!await SystemPoolResolvableAsync(tenant.TenantId, modelGroupId))
+            return Json(ApiEnvelope<object>.Fail(
+                "MODEL_POOL_NOT_MIGRATED",
+                "这个模型池还没有搬成对外模型，选了也解析不到（池路由已经退场）。"
+                + "改选「指定模型」——那一栏列的就是能解析到的对外模型。"
+                + "（这个池要继续用的话得先搬成对外模型，而控制台目前没有这个入口，"
+                + "只有接口 POST /gw/pools/migrate-to-models，已记台账。）"), jsonOptions, 409);
     }
     if (modelSource == "model")
     {
@@ -7350,13 +10906,17 @@ app.MapPut("/gw/app-callers/{id}", async (HttpContext http, string id, [FromBody
         gwPlatforms,
         gwModels,
         gwModelExchanges,
+        gwLogicalModels,
+        gwModelOfferings,
+        gwMigrations,
         TenantAccess.GetRequired(http).TenantId,
         effectiveStatus,
         effectiveModelPoolId,
         effectiveModelPolicy,
         doc.GetStringOrEmpty("RequestType"),
         effectiveAllowedModelPoolIds,
-        effectiveDefaultModelPoolId);
+        effectiveDefaultModelPoolId,
+        doc.AsNullableString("AppCallerCode"));
     if (activeConfigError is not null)
     {
         return Json(ApiEnvelope<GatewayAppCallerItem>.Fail("INVALID_INPUT", activeConfigError), jsonOptions, 400);
@@ -7729,6 +11289,9 @@ app.MapPost("/gw/app-callers/bulk-governance", async (HttpContext http, [FromBod
         gwPlatforms,
         gwModels,
         gwModelExchanges,
+        gwLogicalModels,
+        gwModelOfferings,
+        gwMigrations,
         TenantAccess.GetRequired(http).TenantId,
         filter,
         targetStatus,
@@ -9654,9 +13217,41 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         return Json(ApiEnvelope<UpstreamModelsData>.Fail("UPSTREAM_SHAPE",
             "上游返回里没有 data 数组，这个地址可能不是 OpenAI 兼容的模型列表接口"), jsonOptions, 502);
 
-    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
+    var existingDocs = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync();
+    var existing = existingDocs
         .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
         .Where(x => x.Length > 0)
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /*
+      「已导入」不等于「已登记」。
+
+      能力认不出来的模型会被导入成物理模型、但不登白名单（认不出用途就不猜，见
+      GatewayWhitelistPublishing.TryResolveModelType）。此时服务端给的下一步是
+      「去模型页补能力，再重新导入一次」——可这一屏把「已导入」的行整个禁选了，
+      那句话于是没法照做，用户只能手工去建对外模型和线路。
+      自己给出的下一步必须走得通，所以这里把两件事分开报。
+
+      判据是「有没有线路指向这个物理模型」，不是「有没有同名的对外模型」：
+      同名可能是别人建的，而真正决定它能不能被调到的是那条线路。
+    */
+    var existingIdByName = existingDocs
+        .Where(m => (m.AsNullableString("ModelName") ?? string.Empty).Length > 0)
+        .GroupBy(m => m.AsNullableString("ModelName")!, StringComparer.OrdinalIgnoreCase)
+        .ToDictionary(g => g.Key, g => g.First().GetStringOrEmpty("_id"), StringComparer.OrdinalIgnoreCase);
+    var publishedTargetIds = existingIdByName.Count == 0
+        ? new HashSet<string>(StringComparer.Ordinal)
+        : (await gwModelOfferings.Find(TenantAccess.Filter(http, fb.And(
+                fb.Eq("TargetKind", "model"),
+                fb.In("TargetId", existingIdByName.Values.Where(x => x.Length > 0)))))
+            .Project(Builders<BsonDocument>.Projection.Include("TargetId"))
+            .ToListAsync())
+            .Select(x => x.GetStringOrEmpty("TargetId"))
+            .Where(x => x.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+    var publishedNames = existingIdByName
+        .Where(kv => publishedTargetIds.Contains(kv.Value))
+        .Select(kv => kv.Key)
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     // 8MB 的字节上限管不住**条目数**：几十万个 {"id":"x"} 这样的小对象照样塞得进那个预算，
@@ -9667,6 +13262,8 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
     // 而不是让他以为这就是全部（no silent caps）。
     var truncatedFrom = dataArray.Count > MaxDiscoveredModels ? dataArray.Count : (int?)null;
 
+    // 补登的那批现查现用：补完刷新这一屏就能看见「已登记」，不用等任何缓存。
+    var catalogOverrides = await LoadCatalogOverridesAsync(http);
     var items = new List<UpstreamModelItem>();
     foreach (var node in dataArray.Take(MaxDiscoveredModels))
     {
@@ -9679,8 +13276,8 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
         var declared = (obj["capabilities"] as System.Text.Json.Nodes.JsonArray)?
             .Select(n => (n as System.Text.Json.Nodes.JsonValue)?.ToString() ?? string.Empty)
             .Where(x => x.Length > 0).ToList();
-        var resolved = ModelCatalog.ResolveCapabilities(modelId, declared);
-        var catalogEntry = ModelCatalog.Find(modelId);
+        var resolved = ModelCatalog.ResolveCapabilities(modelId, declared, catalogOverrides);
+        var catalogEntry = ModelCatalog.Find(modelId, catalogOverrides);
         items.Add(new UpstreamModelItem
         {
             ModelId = modelId,
@@ -9698,6 +13295,7 @@ app.MapGet("/gw/platforms/{id}/upstream-models", async (HttpContext http, string
             PriceCurrency = pricing?.Currency,
             PriceSource = pricing is null ? null : "upstream",
             AlreadyImported = existing.Contains(modelId),
+            AlreadyPublished = publishedNames.Contains(modelId),
         });
     }
 
@@ -9739,10 +13337,61 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             "PLATFORM_DISABLED", "Provider 已停用，请先启用后再导入模型"), jsonOptions, 409);
 
     var tenantId = TenantAccess.GetRequired(http).TenantId;
-    var existing = (await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync())
-        .Select(m => m.AsNullableString("ModelName") ?? string.Empty)
-        .Where(x => x.Length > 0)
-        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    /*
+      名录门的判据必须和上游清单那一屏**同源**。
+
+      不同源的后果是这轮 Codex 抓到的那一条：管理员在清单里就地补登了一个模型，
+      刷新后那一行显示「名录内」，于是他不会去勾「放行名录外」，前端提交
+      allowOutsideCatalog:false——而这里若只查内置的 38 条，它立刻被拒，
+      用户看到的是「刚登记好的模型导不进来」，而且没有任何东西变红
+      （predicate-and-wiring-discipline 形状 3：同一个判断分裂成两份各自漂移）。
+    */
+    var importCatalogOverrides = await LoadCatalogOverridesAsync(http);
+    // 取整份文档而不只是名字：下面「已存在就跳过」那一支要看它的能力是不是空的。
+    var existingDocs = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("PlatformId", id))).ToListAsync();
+    var existingByName = new Dictionary<string, BsonDocument>(StringComparer.OrdinalIgnoreCase);
+    foreach (var doc in existingDocs)
+    {
+        var name = doc.AsNullableString("ModelName") ?? string.Empty;
+        if (name.Length > 0) existingByName.TryAdd(name, doc);
+    }
+
+    // 用途怎么算出来：名录 > 上游声明 > 猜，用户勾过的最优先。新建与「补空」两条路共用，
+    // 各写一份的话补出来的能力与新建出来的会是两套（形状 3）。
+    /*
+      推导用途，并**如实带上它是哪来的**。
+
+      来源此前被丢掉了，落库一律盖 "inferred"——于是名录明明登记过的事实，在库里也写着
+      「这是猜的」。而「是不是猜的」正是下面那条修复分支唯一能依据的判据：补登名录之后
+      重新导入，只有分得清「原来那份是猜的」才敢覆盖，分不清就只能连空的都不敢动
+      （第 72 轮 review）。
+    */
+    (List<string> Codes, string Source) DeriveCapabilities(ImportUpstreamModelEntry entry, string modelId)
+    {
+        var (raw, source) = entry.Capabilities is { } declared
+            ? (declared, ModelCatalog.SourceUpstream)
+            : ModelCatalog.ResolveCapabilities(modelId, null, importCatalogOverrides) is var resolved
+                ? (resolved.Capabilities.ToList(), resolved.Source)
+                : ([], ModelCatalog.SourceGuess);
+        var codes = raw
+            // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
+            // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
+            // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
+            .Where(c => GatewayConfigurationProvisioning.IsSupportedCapabilityCode(c))
+            .Select(c => c.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return (codes, source);
+    }
+
+    List<string> DeriveCapabilityCodes(ImportUpstreamModelEntry entry, string modelId)
+        => DeriveCapabilities(entry, modelId).Codes;
+
+    /// <summary>落库时的来源标记：名录与上游声明都是事实，只有关键词匹配才是猜的。</summary>
+    static string StoredCapabilitySource(string resolvedSource)
+        => string.Equals(resolvedSource, ModelCatalog.SourceGuess, StringComparison.Ordinal)
+            ? "inferred"
+            : resolvedSource;
 
     /*
       价格与币种在**动第一次库之前**全批校验完。
@@ -9774,10 +13423,66 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
     foreach (var entry in entries)
     {
         var modelId = entry.ModelId!.Trim();
-        if (existing.Contains(modelId))
+        if (existingByName.TryGetValue(modelId, out var existingModel))
         {
             result.Skipped++;
             result.SkippedModelIds.Add(modelId);
+
+            /*
+              能力为空的存量模型，在这里把名录算出来的用途补上。
+
+              「补登名录之后重新导入」是这条路上唯一写明的恢复动作（白名单那条提示就是
+              这么告诉用户的）。可这一支原来只记一笔 Skipped 就走，物理文档的空能力原样留着；
+              下面发布白名单时重新读的就是那份空能力，于是照样拒登——用户照着提示做了一遍，
+              什么都没变，而且没有任何地方告诉他为什么（形状 2：恢复路只建了一半）。
+
+              只补空的，不动已经有能力的：那些可能是人在模型页勾过的，导入没有资格覆盖。
+            */
+            /*
+              只补空的还不够：**猜出来的那一份也要让位给事实**。
+
+              名录这套机制存在的理由就是纠正按名字猜错的用途，而错得最多的恰恰不是「空」，
+              是「猜了一个错的」。上一版只修空数组，于是补登名录之后重新导入一次——用户照着
+              提示做完，库里那份猜错的用途原样留着，发布白名单时读的还是它，路由一点没变
+              （第 72 轮 review；上一轮补的是同一条恢复路的另一半，形状 1：判据只认了
+              「空」这一种输入）。
+
+              覆盖的边界靠**来源**划：每一条都标着 inferred 才动它（那是关键词匹配的产物），
+              只要有一条来自名录、上游声明或人在模型页勾过，就一个字都不改——导入没有资格
+              覆盖人写的东西。新的那份也必须真的是事实（名录或上游声明），拿一个猜的换另一个
+              猜的没有意义。
+            */
+            var storedCaps = existingModel.GetValue("Capabilities", BsonNull.Value);
+            var storedCapDocs = storedCaps.IsBsonArray
+                ? storedCaps.AsBsonArray.OfType<BsonDocument>().ToList()
+                : [];
+            var hasStoredCaps = storedCapDocs.Count > 0;
+            var allStoredAreGuesses = hasStoredCaps && storedCapDocs.All(c =>
+                string.Equals(c.GetStringOrEmpty("Source"), "inferred", StringComparison.OrdinalIgnoreCase));
+            var (repairedCaps, repairedSource) = DeriveCapabilities(entry, modelId);
+            var repairedIsFact = !string.Equals(repairedSource, ModelCatalog.SourceGuess, StringComparison.Ordinal);
+            var storedCodes = storedCapDocs
+                .Select(c => c.GetStringOrEmpty("Type").Trim().ToLowerInvariant())
+                .Where(x => x.Length > 0)
+                .ToHashSet(StringComparer.Ordinal);
+            var shouldRepair = repairedCaps.Count > 0
+                && (!hasStoredCaps
+                    || (allStoredAreGuesses && repairedIsFact && !storedCodes.SetEquals(repairedCaps)));
+            if (shouldRepair)
+            {
+                await gwModels.UpdateOneAsync(
+                    TenantAccess.Filter(http, fb.Eq("_id", existingModel.GetStringOrEmpty("_id"))),
+                    Builders<BsonDocument>.Update
+                        .Set("Capabilities", new BsonArray(repairedCaps.Select(c => new BsonDocument
+                        {
+                            { "Type", c },
+                            // 来源如实写：名录登记过的事实不该在库里写成「这是猜的」，
+                            // 否则下一次修复就再也分不清哪一份可以覆盖。
+                            { "Source", StoredCapabilitySource(repairedSource) },
+                            { "Value", true },
+                        })))
+                        .Set("UpdatedAt", now));
+            }
             continue;
         }
 
@@ -9796,7 +13501,8 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         // 拦在这里而不是拦在请求时，是因为请求只会打到池成员——进不了库就进不了池，
         // 「不允许请求白名单之外的模型」这件事由此成立，且用户在导入那一刻就知道，
         // 而不是等某次真实调用炸了才发现。
-        if (!ModelCatalog.Contains(modelId) && !entry.AllowOutsideCatalog)
+        var catalogEntry = ModelCatalog.Find(modelId, importCatalogOverrides);
+        if (catalogEntry is null && !entry.AllowOutsideCatalog)
         {
             result.Skipped++;
             result.BlockedOutsideCatalog.Add(modelId);
@@ -9804,14 +13510,9 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         }
 
         // 与发现端点同源：名录 > 上游声明 > 猜。用户在界面上勾过的用途仍然最优先。
-        var caps = (entry.Capabilities ?? ModelCatalog.ResolveCapabilities(modelId, null).Capabilities.ToList())
-            // 注意校验的是**存储层能力名**（image_generation / video_generation ...），
-            // 不是用途名（generation / video-gen ...）——InferCapabilities 产出的就是前者。
-            // 用错词汇表会把生图与视频模型的用途整批静默丢掉。
-            .Where(c => GatewayConfigurationProvisioning.IsSupportedCapabilityCode(c))
-            .Select(c => c.Trim().ToLowerInvariant())
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+        // 补登也必须喂进来——否则补登登记的用途白登记了，模型导进来用途还是猜的。
+        // 判据与上面「补空」那一支共用同一个函数。
+        var (caps, capsSource) = DeriveCapabilities(entry, modelId);
 
         var doc = new BsonDocument
         {
@@ -9834,9 +13535,11 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             { "Capabilities", new BsonArray(caps.Select(c => new BsonDocument
                 {
                     { "Type", c },
-                    // source=inferred 让界面能区分「系统推断的」和「用户勾的」，
-                    // 对应 minimal-user-input.md 的第 3 条：自动填的值必须可见可改。
-                    { "Source", "inferred" },
+                    // 来源让界面能区分「名录登记的事实 / 上游自己声明的 / 系统按名字猜的 /
+                    // 用户勾的」，对应 minimal-user-input.md 第 3 条：自动填的值必须可见可改。
+                    // **只有关键词匹配才写 inferred**：把名录登记过的事实也写成 inferred，
+                    // 会让「补登之后重新导入」那条恢复路再也分不清哪一份可以覆盖（第 72 轮 review）。
+                    { "Source", StoredCapabilitySource(capsSource) },
                     { "Value", true },
                 })) },
         };
@@ -9847,17 +13550,32 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
           否则运行时分不清「管理员显式放行的名录外模型」与「有人直接写库塞进来的」——
           两者在库里长得一模一样，那道门就只能一刀切，要么放过所有、要么拦死所有。
         */
+        //
+        // 判据是「在不在**内置**名录里」，不是「在不在名录里」——这一处刻意不带补登：
+        // 数据面那道门（ModelResolver.JudgeAsync）只认内置名录 + 这枚戳，它读不到
+        // 补登表（那是 console-api 自己的）。靠补登才算数的模型不盖戳的话，导进来了、
+        // 也进了池，第一次真实请求才被拦下——库里看得见、池里也在、就是调不通。
         if (!ModelCatalog.Contains(modelId))
         {
             doc["AllowedOutsideCatalog"] = true;
             doc["AllowedOutsideCatalogBy"] = TenantAccess.GetRequired(http).Username;
             doc["AllowedOutsideCatalogAt"] = now;
+            // 依据要分得清：补登是「已经登记过这个模型是什么」，勾放行是「明知没登记也要用」。
+            // 排障时「这个模型当初怎么进来的」得答得上来。
+            doc["AllowedOutsideCatalogReason"] = catalogEntry is not null ? "catalog-entry" : "admin-override";
         }
 
         if (entry.InputPricePerMillion is not null) doc["InputPricePerMillion"] = entry.InputPricePerMillion.Value;
         if (entry.OutputPricePerMillion is not null) doc["OutputPricePerMillion"] = entry.OutputPricePerMillion.Value;
         if (entry.PricePerCall is not null) doc["PricePerCall"] = entry.PricePerCall.Value;
         if (!string.IsNullOrWhiteSpace(entry.PriceCurrency)) doc["PriceCurrency"] = entry.PriceCurrency;
+        // 价格带进来就必须同时带上「从哪来、什么时候的」。上游清单给的价是 upstream，
+        // 观测时间就是这次导入的时刻——没有这两样，三十天后没人说得清这个数还能不能信。
+        if (PricingPolicy.HasAnyPrice(entry.InputPricePerMillion, entry.OutputPricePerMillion, entry.PricePerCall))
+        {
+            doc["PriceSource"] = PricingPolicy.SourceUpstream;
+            doc["PriceObservedAt"] = now;
+        }
 
         try
         {
@@ -9868,10 +13586,10 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
             // 并发导入撞上唯一索引：对方已经建好了，按「已存在」计，不算失败
             result.Skipped++;
             result.SkippedModelIds.Add(modelId);
-            existing.Add(modelId);
+            existingByName.TryAdd(modelId, doc);
             continue;
         }
-        existing.Add(modelId);
+        existingByName.TryAdd(modelId, doc);
         result.Created++;
         result.CreatedModelIds.Add(modelId);
     }
@@ -9898,8 +13616,100 @@ app.MapPost("/gw/platforms/{id}/models/import", async (HttpContext http, string 
         catch
         {
             result.PoolSyncFailed = true;
-            result.Message = "模型已导入，但默认模型池同步失败，这批模型暂时不会被池路由选中；可在「模型池」页面手动补齐或稍后重试导入。";
+            // 池不在解析与计费链路上了，这里只剩回滚备份的意义——别把它说成「这批模型选不中」，
+            // 那句话会让人以为线上出了问题（第 61 轮 review：文案指向一个不存在的页面，
+            // 而且把一件不影响线上的事说成了影响线上）。
+            result.Message = "模型已导入，线上调用不受影响；只是旧模型池那份回滚备份没写进去。"
+                + "池不在解析与计费链路上，稍后重试导入即可补上。";
         }
+    }
+
+    /*
+      登上白名单：建公开模型名 + 挂一条上游线路。
+
+      不做这一步的后果是「批量登记只做了一半」——模型躺在 llmgw_models 里，调用方按公开
+      模型名请求却找不到它，用户得再去白名单页把同一个模型手工建两遍（建逻辑模型、挂 Offering）。
+      「模型」与「白名单」分成两页的代价就体现在这里，所以默认就替他做掉。
+
+      同名已存在时**不新建公开名，只多挂一条线路**：这正是「一个模型允许多个来源」的自然入口，
+      从另一个 Provider 再导一次 gpt-4o，得到的是 gpt-4o 的第二条线路，而不是第二个 gpt-4o。
+    */
+    /*
+      发布范围是「这次请求点名的模型现在都在库里」，不是「这次新建了几个」。
+
+      写成 Created > 0 的后果，我自己的失败文案就踩过一次（见上面那段池同步的注释），
+      这里又踩了第二次：白名单发布抛异常时响应告诉用户「稍后重试导入」——可重试时
+      那些模型全部命中 Skipped、Created 归零，这个块整个被跳过，缺失的对外模型与线路
+      永远补不回来。又是一句用户照做也没用的话。
+
+      对已存在的模型重跑一遍是安全的：下面按 PublicIdNormalized 查已有对外模型，
+      线路也逐条判重，整段本来就是幂等的。
+    */
+    var publishTargets = result.CreatedModelIds
+        .Concat(result.SkippedModelIds)
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    // 认不出用途、因此没登上白名单的那几个。必须点名报出来：
+    // 这条路正是「管理员放行名录外模型」的出口，而名录外模型的能力往往是空的。
+    // 不说的话，用户看到「导入成功 N 个」，那几个却既不在白名单里、也没人告诉他为什么。
+    var unknownTypeSkips = new List<string>();
+    if ((body?.PublishToWhitelist ?? true) && publishTargets.Count > 0)
+    {
+        try
+        {
+            // 同名判据走共享的那一份，不在这里再拼一次。
+            //
+            // 上面判「已存在」用的是大小写不敏感的集合，所以换个大小写重试时，那些模型会被
+            // 判成 Skipped 并把**提交的拼写**放进 publishTargets；而库里存的是首次导入的拼写。
+            // 原先这里拼的是 In(规范化名) || In(原样名)：前一支对存量文档无效（那个字段是后加的，
+            // 唯一索引也是 partial 的），后一支按字节比——两支都落空，模型既没登上白名单，
+            // 响应还告诉用户「稍后重试导入」，而重试永远走不到（第 76 轮 review）。
+            // 同一个坑此前已在运行时单查（第 63 轮）与预取（第 68 轮）各填过一次，
+            // 所以这次不再写第四份，直接用镜像过来的共享谓词。
+            var createdDocs = await gwModels.Find(TenantAccess.Filter(http, fb.And(
+                fb.Eq("PlatformId", id),
+                CatalogGatePolicy.SameNameBatchFilter(publishTargets)))).ToListAsync();
+
+            foreach (var model in createdDocs)
+            {
+                // 发布规则（公开名怎么算、用途怎么判、跨用途怎么拒、线路排在第几）
+                // 全在这一个函数里。单模型新增走的是同一个函数，两个入口不会各自漂移。
+                var published = await PublishGatewayModelToWhitelistAsync(
+                    gwLogicalModels, gwModelOfferings, model, tenantId, now, importCatalogOverrides);
+                if (published is not { } outcome) continue;
+                if (outcome.BlockedMessage is { Length: > 0 } blocked)
+                {
+                    // 两种没登上要分开说，下一步不一样：
+                    // 撞用途 → 改名或去白名单页决定这条线路挂给谁；
+                    // 认不出用途 → 去模型管理给它标能力再登记。
+                    if (string.Equals(outcome.BlockedKind, "cross-type", StringComparison.Ordinal))
+                        result.CrossTypePublicIdConflicts.Add(blocked);
+                    else
+                        unknownTypeSkips.Add(blocked);
+                    continue;
+                }
+                if (outcome.CreatedLogical) result.WhitelistedPublicIds.Add(outcome.PublicId);
+                else if (outcome.LinkedToExisting) result.LinkedToExistingCount++;
+            }
+        }
+        catch (Exception ex)
+        {
+            // 模型本身已入库，只是没登上名单——如实说，不报全绿。
+            result.WhitelistMessage = $"模型已导入，但登记白名单失败（{ex.GetType().Name}）："
+                + "这批模型暂时不在白名单里，调用方按公开模型名请求会找不到它们。"
+                + "可以在「模型白名单」页手动添加，或稍后重新导入（已存在的模型会被跳过，只补名单）。";
+        }
+    }
+
+    if (unknownTypeSkips.Count > 0 && result.WhitelistMessage is null)
+    {
+        result.WhitelistMessage = $"有 {unknownTypeSkips.Count} 个模型没能登上白名单，因为认不出它们是哪种用途："
+            + $"{string.Join("、", unknownTypeSkips.Take(5))}"
+            + (unknownTypeSkips.Count > 5 ? " 等" : string.Empty)
+            + "。模型本身已经导入，只是不在白名单里，调用方按公开模型名请求会找不到它们。"
+            + "认不出用途就兜底当对话模型的话，它们会被列进对话默认面、被普通对话调用方选中并按对话契约调走，"
+            + "而这些上游可能是生图或视频。去「模型」页给它们勾上能力，再重新导入一次即可补上名单。";
     }
 
     // 被白名单拦下的要给可执行的下一步，不能只报一个数字。
@@ -9955,12 +13765,12 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
     if (platform.AsNullableBool("Enabled") == false)
         return Json(ApiEnvelope<CreateModelResult>.Fail("PLATFORM_DISABLED", "Provider 已停用，请先启用后再添加模型"), jsonOptions, 409);
 
+    // 同名判据走共享谓词。这里原来手抄了一份一模一样的（规范化名 OR 忽略大小写的原样名），
+    // 行为是对的，但它是第四份——同一个判断多一份就多一次漂移的机会，而漂了不会有人发现。
     var duplicateFilter = fb.And(
         fb.Eq("TenantId", tenantId),
         fb.Eq("PlatformId", draft.PlatformId),
-        fb.Or(
-            fb.Eq("ModelNameNormalized", draft.ModelNameNormalized),
-            fb.Regex("ModelName", new BsonRegularExpression($"^{System.Text.RegularExpressions.Regex.Escape(draft.ModelName)}$", "i"))));
+        CatalogGatePolicy.SameNameFilter(draft.ModelName));
     if (await gwModels.Find(duplicateFilter).AnyAsync())
         return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
 
@@ -10002,7 +13812,19 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
         return Json(ApiEnvelope<CreateModelResult>.Fail("DUPLICATE_MODEL", "当前 Provider 已存在相同上游模型"), jsonOptions, 409);
     }
 
-    (int TypesCreated, int PoolsCreated, int ModelsAppended) ensured;
+    /*
+      旧模型池同步失败，不许把模型一起赔进去。
+
+      池路由已经退场：线上解析走的是对外模型 + 线路，这几个池只剩回滚备份的用途。
+      而上一版在这里失败时会把刚插入的模型删掉、回 500——一次写「回滚备份」失败，
+      挡住了一条本来完全能跑的模型的创建（第 61 轮 review）。轻重反了：
+      备份写不进去是可以稍后补的，模型建不出来是当场就挡住人的。
+
+      改成尽力而为：失败就记下来，照常往下走建白名单与线路，并把这件事如实写进响应，
+      不谎报全绿（与下面「登白名单失败也不回滚」同一口径）。
+    */
+    (int TypesCreated, int PoolsCreated, int ModelsAppended) ensured = default;
+    string? poolSyncMessage = null;
     try
     {
         ensured = await EnsureGatewayModelPoolTypesAsync(
@@ -10016,10 +13838,55 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
             internalTenantId,
             appendModels: true);
     }
-    catch
+    catch (Exception poolSyncFailure)
     {
-        await gwModels.DeleteOneAsync(fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", id)));
-        return Json(ApiEnvelope<CreateModelResult>.Fail("MODEL_POOL_SYNC_FAILED", "默认模型池同步失败，模型未保存，请稍后重试"), jsonOptions, 500);
+        poolSyncMessage = $"模型已保存，线上调用不受影响；只是旧模型池那份回滚备份没写进去（{poolSyncFailure.Message}）。"
+            + "池不在计费与解析链路上，这条可以稍后再补";
+    }
+
+    /*
+      登上白名单：建公开模型名 + 挂一条上游线路。批量导入一直这么做，这条手工新增的路
+      此前只同步进托管默认池就收工——而池路由已经删了，调用方按公开模型名请求找的是
+      对外模型 + 线路。结果是「保存成功」之后模型在库里、在池里，就是调不通，
+      要管理员再去白名单页把同一个模型手工建两遍（形状 2：链路只建了一半，而且不会红）。
+
+      失败不回滚已插入的模型：模型本身是有效配置，删掉反而更糟。如实降级——
+      照常返回创建结果，但把「没登上名单、去哪补」写进响应，不谎报全绿。
+    */
+    string? publicId = null;
+    string? whitelistMessage = null;
+    var linkedToExistingLogical = false;
+    try
+    {
+        var published = await PublishGatewayModelToWhitelistAsync(
+            gwLogicalModels, gwModelOfferings, document, tenantId, now,
+            await LoadCatalogOverridesAsync(http));
+        if (published is { } outcome)
+        {
+            publicId = outcome.PublicId;
+            linkedToExistingLogical = outcome.LinkedToExisting;
+            if (outcome.BlockedMessage is { Length: > 0 } blocked)
+            {
+                publicId = null;
+                whitelistMessage = string.Equals(outcome.BlockedKind, "cross-type", StringComparison.Ordinal)
+                    ? $"模型已保存，但没能登上白名单：{blocked}。"
+                      + "把一条别的用途的线路挂到同名对外模型底下，运行时会按那条模型的用途发请求、契约整个错位，"
+                      + "所以这里拒绝挂靠。改个模型名，或去「模型白名单」页手动决定这条线路挂给谁。"
+                    : $"模型已保存，但没能登上白名单：{blocked}。"
+                      + "认不出用途就兜底当对话模型的话，它会被列进对话默认面、被普通对话调用方选中并按对话契约调走，"
+                      + "而这个上游可能是生图或视频。去「模型」页给它勾上能力，再登记白名单。";
+            }
+        }
+        else
+        {
+            whitelistMessage = "模型已保存，但算不出可用的公开模型名，没能登上白名单；"
+                + "调用方按公开模型名请求会找不到它，可在「模型白名单」页手动添加。";
+        }
+    }
+    catch (Exception ex)
+    {
+        whitelistMessage = $"模型已保存，但登记白名单失败（{ex.GetType().Name}）："
+            + "调用方按公开模型名请求会找不到它，可在「模型白名单」页手动添加。";
     }
 
     await WriteOperationAuditAsync(
@@ -10042,6 +13909,9 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
             { "priceCurrency", ToBsonAuditValue(draft.PriceCurrency) },
             { "hasDedicatedKey", encryptedApiKey is not null },
             { "modelsAppended", ensured.ModelsAppended },
+            { "poolSyncDegraded", poolSyncMessage is { Length: > 0 } },
+            // 登没登上白名单要能查得到：调不通时第一个要排除的就是「它有没有公开名」。
+            { "publicId", publicId is { Length: > 0 } ? publicId : BsonNull.Value },
         });
     return Json(ApiEnvelope<CreateModelResult>.Ok(new CreateModelResult
     {
@@ -10049,6 +13919,13 @@ app.MapPost("/gw/models", async (HttpContext http, [FromBody] CreateModelRequest
         PoolTypesCreated = ensured.TypesCreated,
         PoolsCreated = ensured.PoolsCreated,
         ModelsAppended = ensured.ModelsAppended,
+        PublicId = publicId,
+        LinkedToExistingPublicId = linkedToExistingLogical,
+        // 两件事都可能降级，都要如实说。谁也不掩盖谁：登白名单失败是「调不通」，
+        // 池备份失败是「回滚那天会少一份」，严重度不同，读的人要分得开。
+        WhitelistMessage = whitelistMessage is { Length: > 0 } && poolSyncMessage is { Length: > 0 }
+            ? $"{whitelistMessage}\n另外：{poolSyncMessage}"
+            : whitelistMessage ?? poolSyncMessage,
     }), jsonOptions, 201);
 }).RequireAuthorization("ConfigWrite");
 
@@ -10103,6 +13980,257 @@ app.MapPut("/gw/platforms/{id}/enabled", async (HttpContext http, string id, Tog
 }).RequireAuthorization("ConfigWrite");
 
 // 模型启用/停用
+// 这条模型被哪些模型池引用，各自是继承档案价还是用了自己的覆盖价。
+//
+// 改价之前必须先看清会影响谁：真正参与计费的是池成员里的那份价格，只改模型档案而不同步，
+// 线上会继续按旧价跑，而两处单独看都没错——这是最难被发现的一种漂移。
+app.MapGet("/gw/models/{id}/pool-usage", async (HttpContext http, string id) =>
+{
+    var fb = Builders<BsonDocument>.Filter;
+    var modelDoc = await gwModels.Find(TenantAccess.Filter(http, fb.Eq("_id", id))).FirstOrDefaultAsync()
+        ?? await models.Find(fb.Eq("_id", id)).FirstOrDefaultAsync();
+    if (modelDoc is null)
+        return Json(ApiEnvelope<ModelPoolUsageData>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+
+    var modelName = modelDoc.GetStringOrEmpty("ModelName");
+    var platformId = modelDoc.AsNullableString("PlatformId");
+    var pools = await gwModelPools.Find(TenantAccess.Filter(http, fb.Empty)).ToListAsync();
+    var data = new ModelPoolUsageData();
+
+    foreach (var pool in pools)
+    {
+        if (!pool.TryGetValue("Models", out var membersValue) || !membersValue.IsBsonArray) continue;
+        foreach (var memberValue in membersValue.AsBsonArray)
+        {
+            if (!memberValue.IsBsonDocument) continue;
+            var member = memberValue.AsBsonDocument;
+            if (!IsSamePoolMember(member, id, modelName, platformId)) continue;
+
+            var inherits = PoolMemberPriceMatchesModel(member, modelDoc);
+            data.Pools.Add(new ModelPoolUsageItem
+            {
+                PoolId = pool.GetStringOrEmpty("_id"),
+                PoolName = pool.AsNullableString("Name") ?? pool.GetStringOrEmpty("_id"),
+                ModelType = pool.AsNullableString("ModelType"),
+                Inherits = inherits,
+                InputPricePerMillion = member.AsNullableDecimal("InputPricePerMillion"),
+                OutputPricePerMillion = member.AsNullableDecimal("OutputPricePerMillion"),
+                CachedInputPricePerMillion = member.AsNullableDecimal("CachedInputPricePerMillion"),
+                CacheWritePricePerMillion = member.AsNullableDecimal("CacheWritePricePerMillion"),
+                PricePerCall = member.AsNullableDecimal("PricePerCall"),
+                PriceCurrency = PricingPolicy.NormalizeCurrency(member.AsNullableString("PriceCurrency")),
+                PriceSource = PricingPolicy.NormalizeSource(member.AsNullableString("PriceSource")),
+                PriceObservedAt = member.AsNullableUtcDateTime("PriceObservedAt").ToIso(),
+                PriceUpdatedBy = member.AsNullableString("PriceUpdatedBy"),
+                Managed = IsManagedAppendOnlyPool(pool),
+            });
+            break;
+        }
+    }
+
+    data.InheritingCount = data.Pools.Count(x => x.Inherits);
+    data.OverridingCount = data.Pools.Count(x => !x.Inherits);
+    return Json(ApiEnvelope<ModelPoolUsageData>.Ok(data), jsonOptions);
+}).RequireAuthorization("LogsRead");
+
+// 改一条已有模型。此前这个端点根本不存在：模型建完就只能删了重建，而重建会丢掉池成员绑定，
+// 于是没人敢动，价格就那么一直空着或一直旧着。
+//
+// 价格改动会连带做三件事：把来源记成「人工录入」、把观测时间刷成此刻、按 syncPoolIds 同步到池成员。
+// 不在 syncPoolIds 里的池保留它自己的覆盖价，并在 pool-usage 里显示为「覆盖」。
+app.MapPut("/gw/models/{id}", async (HttpContext http, string id, [FromBody] UpdateModelRequest? body) =>
+{
+    if (body is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
+
+    foreach (var (price, label) in new (decimal?, string)[]
+             {
+                 (body.InputPricePerMillion, "输入单价"),
+                 (body.OutputPricePerMillion, "输出单价"),
+                 (body.CachedInputPricePerMillion, "缓存读单价"),
+                 (body.CacheWritePricePerMillion, "缓存写单价"),
+                 (body.PricePerCall, "每次调用费用"),
+             })
+    {
+        if (!PricingPolicy.IsValidPrice(price))
+            return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", $"{label}不能为负数"), jsonOptions, 400);
+    }
+
+    var clearPricing = body.ClearPricing == true;
+    var requestedCurrency = PricingPolicy.NormalizeCurrency(body.PriceCurrency);
+    var hasPriceInput = body.InputPricePerMillion is not null
+        || body.OutputPricePerMillion is not null
+        || body.CachedInputPricePerMillion is not null
+        || body.CacheWritePricePerMillion is not null
+        || body.PricePerCall is not null;
+
+    if (!clearPricing && hasPriceInput && requestedCurrency is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "填了价格就必须声明币种，计价口径是 USD"), jsonOptions, 400);
+
+    var fb = Builders<BsonDocument>.Filter;
+    var sourceFilter = fb.Eq("_id", id);
+    var filter = TenantAccess.Filter(http, sourceFilter);
+    var doc = await gwModels.Find(filter).FirstOrDefaultAsync();
+    var targetModels = gwModels;
+    var targetAuthority = "llm_gateway";
+    if (doc is null)
+    {
+        if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
+            return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+        doc = await models.Find(sourceFilter).FirstOrDefaultAsync();
+        targetModels = models;
+        targetAuthority = "map";
+        filter = sourceFilter;
+    }
+    if (doc is null)
+        return Json(ApiEnvelope<ModelItem>.Fail("NOT_FOUND", $"模型不存在：{id}"), jsonOptions, 404);
+
+    var now = DateTime.UtcNow;
+    var actor = http.User.FindFirst(System.Security.Claims.ClaimTypes.Name)?.Value
+        ?? http.User.Identity?.Name
+        ?? "unknown";
+    var update = Builders<BsonDocument>.Update.Set("UpdatedAt", now);
+    var changes = new BsonDocument();
+
+    if (!string.IsNullOrWhiteSpace(body.Name) && body.Name.Trim() != doc.AsNullableString("Name"))
+    {
+        update = update.Set("Name", body.Name.Trim());
+        changes.Add("name", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableString("Name")) },
+            { "to", body.Name.Trim() },
+        });
+    }
+
+    if (body.Protocol is not null)
+    {
+        var protocol = body.Protocol.Trim();
+        if (protocol.Length == 0)
+        {
+            update = update.Unset("Protocol");
+            changes.Add("protocol", new BsonDocument
+            {
+                { "from", ToBsonAuditValue(doc.AsNullableString("Protocol")) },
+                { "to", BsonNull.Value },
+            });
+        }
+        else if (protocol != doc.AsNullableString("Protocol"))
+        {
+            update = update.Set("Protocol", protocol);
+            changes.Add("protocol", new BsonDocument
+            {
+                { "from", ToBsonAuditValue(doc.AsNullableString("Protocol")) },
+                { "to", protocol },
+            });
+        }
+    }
+
+    if (body.ClearMaxTokens == true)
+    {
+        // 显式清空：改回「不限制」。没有这一支的话，界面上那句「留空表示不限制」
+        // 兑现不了——清空发出去是个被省略的字段，服务端分不清它和「这次没动」。
+        update = update.Unset("MaxTokens");
+        changes.Add("maxTokens", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableInt("MaxTokens")) },
+            { "to", BsonNull.Value },
+        });
+    }
+    else if (body.MaxTokens is int maxTokens)
+    {
+        if (maxTokens <= 0)
+            return Json(ApiEnvelope<ModelItem>.Fail("INVALID_INPUT", "最大输出 token 必须大于 0"), jsonOptions, 400);
+        update = update.Set("MaxTokens", maxTokens);
+        changes.Add("maxTokens", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableInt("MaxTokens")) },
+            { "to", maxTokens },
+        });
+    }
+
+    if (body.Remark is not null)
+    {
+        var remark = body.Remark.Trim();
+        update = remark.Length == 0 ? update.Unset("Remark") : update.Set("Remark", remark);
+        changes.Add("remark", new BsonDocument
+        {
+            { "from", ToBsonAuditValue(doc.AsNullableString("Remark")) },
+            { "to", remark.Length == 0 ? BsonNull.Value : remark },
+        });
+    }
+
+    var pricingTouched = clearPricing || hasPriceInput;
+    if (clearPricing)
+    {
+        update = update
+            .Unset("InputPricePerMillion").Unset("OutputPricePerMillion")
+            .Unset("CachedInputPricePerMillion").Unset("CacheWritePricePerMillion")
+            .Unset("PricePerCall").Unset("PriceCurrency")
+            .Unset("PriceSource").Unset("PriceObservedAt").Unset("PriceUpdatedBy");
+        changes.Add("pricing", new BsonDocument { { "cleared", true } });
+    }
+    else if (hasPriceInput)
+    {
+        update = SetOrUnsetDecimal(update, "InputPricePerMillion", body.InputPricePerMillion);
+        update = SetOrUnsetDecimal(update, "OutputPricePerMillion", body.OutputPricePerMillion);
+        update = SetOrUnsetDecimal(update, "CachedInputPricePerMillion", body.CachedInputPricePerMillion);
+        update = SetOrUnsetDecimal(update, "CacheWritePricePerMillion", body.CacheWritePricePerMillion);
+        update = SetOrUnsetDecimal(update, "PricePerCall", body.PricePerCall);
+        update = update
+            // 走到这里 requestedCurrency 必然非空：上面已经拒绝过「填了价格却没声明币种」。
+            .Set("PriceCurrency", requestedCurrency!)
+            // 人改过的价格，来源就是人工——不许沿用上一次的 upstream，否则来源会撒谎。
+            .Set("PriceSource", PricingPolicy.SourceAdmin)
+            .Set("PriceObservedAt", now)
+            .Set("PriceUpdatedBy", actor);
+        changes.Add("pricing", new BsonDocument
+        {
+            { "inputFrom", ToBsonAuditValue(doc.AsNullableDecimal("InputPricePerMillion")) },
+            { "inputTo", ToBsonAuditValue(body.InputPricePerMillion) },
+            { "outputFrom", ToBsonAuditValue(doc.AsNullableDecimal("OutputPricePerMillion")) },
+            { "outputTo", ToBsonAuditValue(body.OutputPricePerMillion) },
+            { "cachedInputTo", ToBsonAuditValue(body.CachedInputPricePerMillion) },
+            { "cacheWriteTo", ToBsonAuditValue(body.CacheWritePricePerMillion) },
+            { "perCallTo", ToBsonAuditValue(body.PricePerCall) },
+            { "currencyFrom", ToBsonAuditValue(doc.AsNullableString("PriceCurrency")) },
+            { "currencyTo", requestedCurrency },
+        });
+    }
+
+    await targetModels.UpdateOneAsync(filter, update);
+    var fresh = await targetModels.Find(filter).FirstOrDefaultAsync() ?? doc;
+
+    var syncedPools = new List<string>();
+    var skippedPools = new List<string>();
+    if (pricingTouched && body.SyncPoolIds is { Count: > 0 })
+    {
+        (syncedPools, skippedPools) = await SyncPoolMemberPricingAsync(
+            gwModelPools, http, fresh, id, body.SyncPoolIds, actor, now);
+    }
+
+    if (syncedPools.Count > 0 || skippedPools.Count > 0)
+    {
+        changes.Add("poolSync", new BsonDocument
+        {
+            { "synced", new BsonArray(syncedPools) },
+            { "skipped", new BsonArray(skippedPools) },
+        });
+    }
+
+    await WriteOperationAuditAsync(
+        operationAudits,
+        http,
+        action: "model.update",
+        targetType: targetAuthority == "llm_gateway" ? "llmgw_model" : "llmmodel",
+        targetId: id,
+        targetName: doc.AsNullableString("ModelName") ?? doc.AsNullableString("Name"),
+        success: true,
+        reason: null,
+        changes: changes);
+
+    return Json(ApiEnvelope<ModelItem>.Ok(MapModel(fresh)), jsonOptions);
+}).RequireAuthorization("ConfigWrite");
+
 app.MapPut("/gw/models/{id}/enabled", async (HttpContext http, string id, ToggleEnabledRequest body) =>
 {
     // 缺 enabled 字段一律拒绝，避免默认 false 误关模型。
@@ -11398,1282 +15526,6 @@ app.MapPost("/gw/api-keys/bulk-rotate", async (HttpContext http, [FromBody] Bulk
         });
 
     return Json(ApiEnvelope<BulkRotateApiKeysResult>.Ok(result), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 模型池新建：直接创建 GW 权威池，不再要求先去 MAP 创建再认领。
-app.MapPost("/gw/pools", async (HttpContext http, [FromBody] CreatePoolRequest body) =>
-{
-    if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
-    var name = (body.Name ?? string.Empty).Trim();
-    var code = (body.Code ?? string.Empty).Trim();
-    var modelType = (body.ModelType ?? string.Empty).Trim().ToLowerInvariant();
-    var description = (body.Description ?? string.Empty).Trim();
-    if (name.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "name 不能为空"), jsonOptions, 400);
-    if (name.Length > 120) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "name 最多 120 字符"), jsonOptions, 400);
-    if (modelType.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 不能为空"), jsonOptions, 400);
-    if (modelType.Length > 80) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 最多 80 字符"), jsonOptions, 400);
-    if (code.Length == 0) code = name;
-    if (code.Length > 120) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "code 最多 120 字符"), jsonOptions, 400);
-    if (description.Length > 1000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "description 最多 1000 字符"), jsonOptions, 400);
-    if (body.Priority is < 1 or > 100000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "priority 必须在 1 到 100000 之间"), jsonOptions, 400);
-    if (body.StrategyType is < 0 or > 5) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "strategyType 仅支持 0 到 5"), jsonOptions, 400);
-    if (body.IsDefaultForType == true)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "DEFAULT_POINTER_REQUIRED",
-            "请先创建特殊模型池并添加可用成员，再使用“设为默认”；默认池只能通过原子默认指针切换。"), jsonOptions, 409);
-    }
-
-    var now = DateTime.UtcNow;
-    var doc = new BsonDocument
-    {
-        ["_id"] = Guid.NewGuid().ToString("N"),
-        ["TenantId"] = TenantAccess.GetRequired(http).TenantId,
-        ["Name"] = name,
-        ["Code"] = code,
-        ["Priority"] = body.Priority ?? 50,
-        ["ModelType"] = modelType,
-        ["IsDefaultForType"] = false,
-        ["StrategyType"] = body.StrategyType ?? 0,
-        ["Models"] = new BsonArray(),
-        ["SourceCollection"] = "llmgw_model_pools",
-        ["Authority"] = "llm_gateway",
-        ["ClaimedAt"] = now,
-        ["CreatedAt"] = now,
-        ["UpdatedAt"] = now,
-        ["Version"] = 1L,
-    };
-    if (description.Length > 0) doc["Description"] = description;
-
-    await gwModelPools.InsertOneAsync(doc);
-
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.create_gateway",
-        targetType: "llmgw_model_pool",
-        targetId: doc.GetStringOrEmpty("_id"),
-        targetName: name,
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "modelType", modelType },
-            { "authority", "llm_gateway" },
-            { "isDefaultForType", false },
-        });
-
-    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, doc)), jsonOptions, 201);
-}).RequireAuthorization("ConfigWrite");
-
-// 模型池属性编辑：只允许写 GW 权威池。MAP 来源池必须先认领，避免把目标权威又写回旧集合。
-// 删除模型池。两类阻挡语义不同，所以分开报：
-//   - 它是某个类型的当前默认池 → 删了那个类型就没有默认可用，必须先改指别的池
-//   - 还有 appCaller 绑着它    → 那些调用方会失去路由目标
-app.MapDelete("/gw/pools/{id}", async (HttpContext http, string id) =>
-{
-    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
-    var filter = TenantAccess.Filter(http, sourceFilter);
-    var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    // MAP 遗留池清理：GW 里没有这条，就去 MAP 的 model_groups 找。
-    //
-    // 为什么必须能删：平台/模型的删除阻挡清单**会数** MAP 侧的引用
-    //（CollectPlatformDeleteBlockersAsync / CollectModelDeleteBlockersAsync 都扫 modelGroups），
-    // 但删除历来只写 GW 集合。于是出现「看得见、清不掉」——网关报着一串 MAP 遗留池挡路，
-    // 而网关自己没有任何端点能扫掉它们；MAP 那边的模型管理写接口又已整体退场（410）。
-    // 那不是保护，是死锁：debris 只能一直堆着，上游永远删不干净。
-    // 补这条 MAP 分支，等于让「谁数得出来，谁就扫得掉」重新成立。
-    var isMapLegacy = false;
-    if (doc is null)
-    {
-        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
-            doc = await modelGroups.Find(sourceFilter).FirstOrDefaultAsync();
-        if (doc is null)
-            return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("NOT_GW_AUTHORITY", "只能删除已认领到 GW 的模型池；MAP 来源请先认领"), jsonOptions, 409);
-        isMapLegacy = true;
-    }
-
-    var blockers = new PoolDeleteBlockers
-    {
-        IsCurrentDefault = await IsCurrentDefaultPoolAsync(gwModelPoolTypes, doc),
-        AppCallers = (await gwAppCallers
-                .Find(TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Or(
-                    Builders<BsonDocument>.Filter.Eq("ModelPoolId", id),
-                    Builders<BsonDocument>.Filter.Eq("DefaultModelPoolId", id),
-                    Builders<BsonDocument>.Filter.AnyEq("AllowedModelPoolIds", id))))
-                .ToListAsync())
-            .Select(d => d.AsNullableString("Code") ?? d.GetStringOrEmpty("_id"))
-            .Where(x => !string.IsNullOrWhiteSpace(x))
-            .Distinct(StringComparer.Ordinal)
-            .ToList(),
-    };
-    if (blockers.TotalCount > 0)
-    {
-        var parts = new List<string>();
-        if (blockers.IsCurrentDefault) parts.Add($"它还是 {doc.AsNullableString("ModelType")} 类型的当前默认池，先把默认改指别的池");
-        if (blockers.AppCallers.Count > 0)
-            parts.Add($"还有 {blockers.AppCallers.Count} 个 appCaller 绑着它（{string.Join("、", blockers.AppCallers.Take(5))}{(blockers.AppCallers.Count > 5 ? " 等" : "")}）");
-        return Json(ApiEnvelope<PoolDeleteBlockers>.Fail("POOL_IN_USE", string.Join("；", parts), blockers), jsonOptions, 409);
-    }
-
-    if (isMapLegacy) await modelGroups.DeleteOneAsync(sourceFilter);
-    else await gwModelPools.DeleteOneAsync(filter);
-    await WriteOperationAuditAsync(
-        operationAudits, http,
-        action: "pool.delete",
-        targetType: isMapLegacy ? "map_model_group" : "llmgw_model_pool",
-        targetId: id,
-        targetName: doc.AsNullableString("Name"), success: true, reason: null,
-        changes: new BsonDocument
-        {
-            { "name", ToBsonAuditValue(doc.AsNullableString("Name")) },
-            { "modelType", ToBsonAuditValue(doc.AsNullableString("ModelType")) },
-            { "memberCount", doc.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray.Count : 0 },
-            // 审计必须能分清扫的是哪一侧：MAP 遗留池删掉就再也回不来（MAP 写接口已退场）
-            { "authority", isMapLegacy ? "map" : "llm_gateway" },
-        });
-    return Json(ApiEnvelope<PoolDeleteBlockers>.Ok(new PoolDeleteBlockers()), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-app.MapPut("/gw/pools/{id}", async (HttpContext http, string id, [FromBody] UpdatePoolRequest body) =>
-{
-    if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
-
-    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
-    var filter = TenantAccess.Filter(http, sourceFilter);
-    var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    if (doc is null)
-    {
-        var mapDoc = TenantAccess.GetRequired(http).TenantId == internalTenantId
-            ? await modelGroups.Find(sourceFilter).FirstOrDefaultAsync()
-            : null;
-        if (mapDoc is not null)
-        {
-            return Json(ApiEnvelope<PoolItem>.Fail("MAP_POOL_NOT_CLAIMED", "请先将模型池导入为平台配置，再编辑模型池属性"), jsonOptions, 409);
-        }
-        return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
-    }
-    if (body.IsDefaultForType is not null)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "DEFAULT_POINTER_REQUIRED",
-            "isDefaultForType 不能通过通用编辑修改；请使用“设为默认”进行原子切换。"), jsonOptions, 409);
-    }
-    if (body.ModelType is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, doc))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "DEFAULT_POOL_TYPE_IMMUTABLE",
-            "当前默认池不能修改 modelType；请先将同类型的另一个可用池设为默认。"), jsonOptions, 409);
-    }
-    var managedAppendOnly = IsManagedAppendOnlyPool(doc);
-    if (managedAppendOnly && (body.Code is not null || body.ModelType is not null))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "MANAGED_POOL_IMMUTABLE",
-            "平台托管默认池的 code 和 modelType 不可修改；可编辑名称、说明和调度策略。"), jsonOptions, 409);
-    }
-
-    var updates = new List<UpdateDefinition<BsonDocument>>();
-    var changes = new BsonDocument();
-    void AddChange(string field, object? from, object? to) =>
-        changes[field] = new BsonDocument { { "from", ToBsonAuditValue(from) }, { "to", ToBsonAuditValue(to) } };
-
-    if (body.Name is not null)
-    {
-        var name = body.Name.Trim();
-        if (name.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "name 不能为空"), jsonOptions, 400);
-        if (name.Length > 120) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "name 最多 120 字符"), jsonOptions, 400);
-        updates.Add(Builders<BsonDocument>.Update.Set("Name", name));
-        AddChange("name", doc.AsNullableString("Name"), name);
-    }
-    if (body.Code is not null)
-    {
-        var code = body.Code.Trim();
-        if (code.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "code 不能为空"), jsonOptions, 400);
-        if (code.Length > 120) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "code 最多 120 字符"), jsonOptions, 400);
-        updates.Add(Builders<BsonDocument>.Update.Set("Code", code));
-        AddChange("code", doc.AsNullableString("Code"), code);
-    }
-    if (body.ModelType is not null)
-    {
-        var modelType = body.ModelType.Trim().ToLowerInvariant();
-        if (modelType.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 不能为空"), jsonOptions, 400);
-        if (modelType.Length > 80) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelType 最多 80 字符"), jsonOptions, 400);
-        updates.Add(Builders<BsonDocument>.Update.Set("ModelType", modelType));
-        AddChange("modelType", doc.AsNullableString("ModelType"), modelType);
-    }
-    if (body.Priority is not null)
-    {
-        if (body.Priority is < 1 or > 100000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "priority 必须在 1 到 100000 之间"), jsonOptions, 400);
-        updates.Add(Builders<BsonDocument>.Update.Set("Priority", body.Priority.Value));
-        AddChange("priority", doc.AsNullableInt("Priority"), body.Priority.Value);
-    }
-    if (body.StrategyType is not null)
-    {
-        if (body.StrategyType is < 0 or > 5) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "strategyType 仅支持 0 到 5"), jsonOptions, 400);
-        updates.Add(Builders<BsonDocument>.Update.Set("StrategyType", body.StrategyType.Value));
-        AddChange("strategyType", doc.AsNullableInt("StrategyType"), body.StrategyType.Value);
-    }
-    if (body.Description is not null)
-    {
-        var description = body.Description.Trim();
-        if (description.Length > 1000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "description 最多 1000 字符"), jsonOptions, 400);
-        if (description.Length == 0)
-        {
-            updates.Add(Builders<BsonDocument>.Update.Unset("Description"));
-            AddChange("description", doc.AsNullableString("Description"), null);
-        }
-        else
-        {
-            updates.Add(Builders<BsonDocument>.Update.Set("Description", description));
-            AddChange("description", doc.AsNullableString("Description"), description);
-        }
-    }
-    if (updates.Count == 0)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "没有可更新字段"), jsonOptions, 400);
-    }
-
-    var now = DateTime.UtcNow;
-    updates.Add(Builders<BsonDocument>.Update.Set("UpdatedAt", now));
-
-    var updateResult = await gwModelPools.UpdateOneAsync(
-        Builders<BsonDocument>.Filter.And(
-            filter,
-            PoolVersionGuard(Builders<BsonDocument>.Filter, doc),
-            PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
-        Builders<BsonDocument>.Update.Combine(updates.Append(Builders<BsonDocument>.Update.Inc("Version", 1))));
-    if (updateResult.ModifiedCount != 1)
-        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试属性编辑。"), jsonOptions, 409);
-
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.update_gateway",
-        targetType: "llmgw_model_pool",
-        targetId: id,
-        targetName: body.Name?.Trim() ?? doc.AsNullableString("Name"),
-        success: true,
-        reason: null,
-        changes: changes);
-
-    var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 批量认领 MAP 模型池：把 MAP model_groups 复制到 llm_gateway，自有池默认不覆盖。
-app.MapPost("/gw/pools/bulk-claim", async (HttpContext http, [FromBody] BulkClaimPoolsRequest? body) =>
-{
-    if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
-        return Json(ApiEnvelope<BulkClaimPoolsResult>.Fail("INTERNAL_GOVERNANCE_ONLY", "仅内部租户可认领 MAP 模型池"), jsonOptions, 403);
-    var modelType = (body?.ModelType ?? string.Empty).Trim();
-    var overwrite = body?.Overwrite == true;
-    var fb = Builders<BsonDocument>.Filter;
-    var mapFilter = modelType.Length == 0 ? fb.Empty : fb.Eq("ModelType", modelType);
-    var mapDocs = await modelGroups.Find(mapFilter).Sort(Builders<BsonDocument>.Sort.Ascending("Priority")).ToListAsync();
-    var now = DateTime.UtcNow;
-    var claimed = 0;
-    var skipped = 0;
-    var changedItems = new List<PoolItem>();
-    // 索引按需建一次、整批复用。它扫的是上游/模型/中继三张表（内部租户还要各扫 GW 与 MAP 两侧，
-    // 共 12 次集合读），而认领池并不会改动这三张表——每认领一个池重建一次，
-    // 认领 13 个池就是 156 次读，全部读出同一份内容。
-    PoolResolutionIndex? resolutionIndex = null;
-
-    foreach (var source in mapDocs)
-    {
-        var id = source.GetStringOrEmpty("_id");
-        if (id.Length == 0)
-        {
-            skipped++;
-            continue;
-        }
-        var filter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-        var exists = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-        if (exists is not null && IsManagedAppendOnlyPool(exists))
-        {
-            skipped++;
-            continue;
-        }
-        if (exists is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, exists))
-        {
-            skipped++;
-            continue;
-        }
-        if (exists is not null && !overwrite)
-        {
-            skipped++;
-            continue;
-        }
-
-        var claimedDoc = new BsonDocument(source);
-        claimedDoc["TenantId"] = internalTenantId;
-        claimedDoc["SourceCollection"] = "model_groups";
-        claimedDoc["Authority"] = "llm_gateway";
-        claimedDoc["ClaimedAt"] = exists?.AsNullableUtcDateTime("ClaimedAt") ?? now;
-        claimedDoc["UpdatedAt"] = now;
-        claimedDoc["Version"] = (exists?.AsNullableLong("Version") ?? 0) + 1;
-        if (exists is null)
-        {
-            await gwModelPools.ReplaceOneAsync(filter, claimedDoc, new ReplaceOptions { IsUpsert = true });
-        }
-        else
-        {
-            var replaceResult = await gwModelPools.ReplaceOneAsync(
-                Builders<BsonDocument>.Filter.And(
-                    filter,
-                    PoolVersionGuard(Builders<BsonDocument>.Filter, exists),
-                    PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
-                claimedDoc);
-            if (replaceResult.ModifiedCount != 1)
-            {
-                skipped++;
-                continue;
-            }
-        }
-        claimed++;
-        resolutionIndex ??= await BuildPoolResolutionIndexAsync(http);
-        changedItems.Add(ApplyPoolMemberResolution(MapPool(claimedDoc), resolutionIndex));
-    }
-
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.bulk_claim_to_gateway",
-        targetType: "llmgw_model_pool",
-        targetId: modelType.Length == 0 ? "all" : modelType,
-        targetName: modelType.Length == 0 ? "all model pools" : modelType,
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "modelType", modelType },
-            { "overwrite", overwrite },
-            { "claimed", claimed },
-            { "skipped", skipped },
-            { "authority", "llm_gateway" },
-        });
-
-    return Json(ApiEnvelope<BulkClaimPoolsResult>.Ok(new BulkClaimPoolsResult
-    {
-        Claimed = claimed,
-        Skipped = skipped,
-        Items = changedItems,
-    }), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 历史价格币种批量校准：只写 GW 权威池，默认仅补已有价格但 PriceCurrency 为空的成员。
-app.MapPost("/gw/pools/price-currency/bulk-calibrate", async (HttpContext http, [FromBody] BulkCalibratePoolPriceCurrencyRequest? body) =>
-{
-    if (body is null) return Json(ApiEnvelope<BulkCalibratePoolPriceCurrencyResult>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
-    var targetCurrency = NormalizePriceCurrency(body.TargetCurrency);
-    if (targetCurrency is null)
-    {
-        return Json(ApiEnvelope<BulkCalibratePoolPriceCurrencyResult>.Fail("INVALID_INPUT", "targetCurrency 仅支持 CNY 或 USD"), jsonOptions, 400);
-    }
-
-    var modelType = (body.ModelType ?? string.Empty).Trim().ToLowerInvariant();
-    var onlyMissing = body.OnlyMissing != false;
-    var includeMembersWithoutPrice = body.IncludeMembersWithoutPrice == true;
-    var fb = Builders<BsonDocument>.Filter;
-    var poolFilter = TenantAccess.Filter(http, modelType.Length == 0 ? fb.Empty : fb.Eq("ModelType", modelType));
-    var poolDocs = await gwModelPools.Find(poolFilter).ToListAsync();
-    var touchedPools = 0;
-    var matchedMembers = 0;
-    var updatedMembers = 0;
-    var now = DateTime.UtcNow;
-
-    foreach (var poolDoc in poolDocs)
-    {
-        if (IsManagedAppendOnlyPool(poolDoc)) continue;
-        if (!poolDoc.TryGetValue("Models", out var modelsValue) || !modelsValue.IsBsonArray)
-        {
-            continue;
-        }
-
-        var modelsArray = modelsValue.AsBsonArray;
-        var poolChanged = false;
-        foreach (var memberValue in modelsArray)
-        {
-            if (!memberValue.IsBsonDocument) continue;
-            var member = memberValue.AsBsonDocument;
-            var existingCurrency = member.AsNullableString("PriceCurrency");
-            if (onlyMissing && !string.IsNullOrWhiteSpace(existingCurrency)) continue;
-
-            var hasPrice = member.AsNullableDecimal("InputPricePerMillion") is not null
-                || member.AsNullableDecimal("OutputPricePerMillion") is not null
-                || member.AsNullableDecimal("PricePerCall") is not null;
-            if (!includeMembersWithoutPrice && !hasPrice) continue;
-
-            matchedMembers++;
-            if (string.Equals(existingCurrency, targetCurrency, StringComparison.OrdinalIgnoreCase)) continue;
-            member["PriceCurrency"] = targetCurrency;
-            updatedMembers++;
-            poolChanged = true;
-        }
-
-        if (!poolChanged) continue;
-        touchedPools++;
-        await gwModelPools.UpdateOneAsync(
-            Builders<BsonDocument>.Filter.And(
-                Builders<BsonDocument>.Filter.Eq("TenantId", TenantAccess.GetRequired(http).TenantId),
-                Builders<BsonDocument>.Filter.Eq("_id", poolDoc.GetStringOrEmpty("_id"))),
-            Builders<BsonDocument>.Update
-                .Set("Models", modelsArray)
-                .Set("UpdatedAt", now)
-                .Inc("Version", 1));
-    }
-
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.bulk_calibrate_price_currency",
-        targetType: "llmgw_model_pool",
-        targetId: modelType.Length == 0 ? "all" : modelType,
-        targetName: modelType.Length == 0 ? "all model pools" : modelType,
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "modelType", modelType },
-            { "targetCurrency", targetCurrency },
-            { "onlyMissing", onlyMissing },
-            { "includeMembersWithoutPrice", includeMembersWithoutPrice },
-            { "scannedPools", poolDocs.Count },
-            { "touchedPools", touchedPools },
-            { "matchedMembers", matchedMembers },
-            { "updatedMembers", updatedMembers },
-        });
-
-    return Json(ApiEnvelope<BulkCalibratePoolPriceCurrencyResult>.Ok(new BulkCalibratePoolPriceCurrencyResult
-    {
-        ScannedPools = poolDocs.Count,
-        TouchedPools = touchedPools,
-        MatchedMembers = matchedMembers,
-        UpdatedMembers = updatedMembers,
-        TargetCurrency = targetCurrency,
-    }), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 模型池成员批量导入：从 GW 模型优先、MAP 模型兜底读取候选，只写 GW 权威池。
-app.MapPost("/gw/pools/{id}/models/bulk-import", async (HttpContext http, string id, [FromBody] BulkImportPoolModelsRequest? body) =>
-{
-    body ??= new BulkImportPoolModelsRequest();
-    var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-    var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    if (pool is null) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再批量导入成员"), jsonOptions, 409);
-    var managedAppendOnly = IsManagedAppendOnlyPool(pool);
-    if (managedAppendOnly && body.OverwriteExisting == true)
-    {
-        return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail(
-            "APPEND_ONLY_POOL",
-            "平台托管默认池只允许追加兼容且未存在的模型，不允许覆盖已有成员。"), jsonOptions, 409);
-    }
-
-    var capabilityFilter = (body.CapabilityFilter ?? "compatible").Trim().ToLowerInvariant();
-    if (managedAppendOnly) capabilityFilter = "compatible";
-    var allowedFilters = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    {
-        "compatible", "all", "vision", "image", "function_calling", "parallel_tool_calls",
-        "parameter_capabilities", "thinking", "structured_output", "logprobs", "prompt_cache",
-    };
-    if (!allowedFilters.Contains(capabilityFilter))
-    {
-        return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", "capabilityFilter 不支持"), jsonOptions, 400);
-    }
-
-    var maxCount = body.MaxCount ?? 200;
-    if (maxCount is < 1 or > 500) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", "maxCount 必须在 1 到 500 之间"), jsonOptions, 400);
-    var priorityStep = body.PriorityStep ?? 10;
-    if (priorityStep is < 1 or > 1000) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", "priorityStep 必须在 1 到 1000 之间"), jsonOptions, 400);
-    if (body.StartPriority is < 1 or > 100000) return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", "startPriority 必须在 1 到 100000 之间"), jsonOptions, 400);
-
-    var platformId = (body.PlatformId ?? string.Empty).Trim();
-    var modelFb = Builders<BsonDocument>.Filter;
-    var sourceFilters = new List<FilterDefinition<BsonDocument>>();
-    if (platformId.Length > 0) sourceFilters.Add(modelFb.Eq("PlatformId", platformId));
-    if (managedAppendOnly || body.EnabledOnly != false) sourceFilters.Add(modelFb.Ne("Enabled", false));
-    var sourceFilter = sourceFilters.Count == 0 ? modelFb.Empty : modelFb.And(sourceFilters);
-    var tenantSourceFilter = TenantAccess.Filter(http, sourceFilter);
-    var gwModelDocs = await gwModels.Find(tenantSourceFilter).ToListAsync();
-    var mapModelDocs = TenantAccess.GetRequired(http).TenantId == internalTenantId
-        ? await models.Find(sourceFilter).ToListAsync()
-        : new List<BsonDocument>();
-    var enabledPlatformIds = new HashSet<string>(StringComparer.Ordinal);
-    if (managedAppendOnly)
-    {
-        enabledPlatformIds.UnionWith((await gwPlatforms.Find(TenantAccess.Filter(http, modelFb.Ne("Enabled", false)))
-                .Project(Builders<BsonDocument>.Projection.Include("_id"))
-                .ToListAsync())
-            .Select(platform => platform.GetStringOrEmpty("_id"))
-            .Where(id => id.Length > 0));
-        if (TenantAccess.GetRequired(http).TenantId == internalTenantId)
-        {
-            enabledPlatformIds.UnionWith((await platforms.Find(modelFb.Ne("Enabled", false))
-                    .Project(Builders<BsonDocument>.Projection.Include("_id"))
-                    .ToListAsync())
-                .Select(platform => platform.GetStringOrEmpty("_id"))
-                .Where(id => id.Length > 0));
-        }
-    }
-
-    var byKey = new Dictionary<string, BsonDocument>(StringComparer.Ordinal);
-    foreach (var modelDoc in gwModelDocs.Concat(mapModelDocs))
-    {
-        var modelId = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id");
-        var resolvedPlatformId = modelDoc.GetStringOrEmpty("PlatformId");
-        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(resolvedPlatformId)) continue;
-        var key = $"{resolvedPlatformId}\n{modelId}";
-        if (!byKey.ContainsKey(key)) byKey[key] = modelDoc;
-    }
-
-    var poolModelType = pool.GetStringOrEmpty("ModelType");
-    var matchedDocs = byKey.Values
-        .Where(modelDoc => managedAppendOnly
-            ? enabledPlatformIds.Contains(modelDoc.GetStringOrEmpty("PlatformId"))
-              && GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, poolModelType)
-            : DoesModelMatchBulkImportFilter(modelDoc, poolModelType, capabilityFilter))
-        .OrderBy(modelDoc => modelDoc.AsNullableInt("Priority") ?? 100000)
-        .ThenBy(modelDoc => modelDoc.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
-        .ThenBy(modelDoc => modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id"), StringComparer.Ordinal)
-        .Take(maxCount)
-        .ToList();
-
-    var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-    var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
-    var existingByKey = members
-        .Where(m => !string.IsNullOrWhiteSpace(m.GetStringOrEmpty("ModelId")) && !string.IsNullOrWhiteSpace(m.GetStringOrEmpty("PlatformId")))
-        .ToDictionary(m => $"{m.GetStringOrEmpty("PlatformId")}\n{m.GetStringOrEmpty("ModelId")}", m => m, StringComparer.Ordinal);
-    var nextPriority = body.StartPriority ?? ((members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max()) + priorityStep);
-    var imported = 0;
-    var updated = 0;
-    var appendedMembers = new List<BsonDocument>();
-    var skippedExisting = 0;
-    var skippedInvalid = byKey.Count - gwModelDocs.Concat(mapModelDocs).Count(modelDoc =>
-    {
-        var modelId = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id");
-        return !string.IsNullOrWhiteSpace(modelId) && !string.IsNullOrWhiteSpace(modelDoc.GetStringOrEmpty("PlatformId"));
-    });
-
-    foreach (var modelDoc in matchedDocs)
-    {
-        var modelId = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id");
-        var resolvedPlatformId = modelDoc.GetStringOrEmpty("PlatformId");
-        if (string.IsNullOrWhiteSpace(modelId) || string.IsNullOrWhiteSpace(resolvedPlatformId))
-        {
-            skippedInvalid++;
-            continue;
-        }
-
-        var key = $"{resolvedPlatformId}\n{modelId}";
-        existingByKey.TryGetValue(key, out var existing);
-        if (existing is not null && body.OverwriteExisting != true)
-        {
-            skippedExisting++;
-            continue;
-        }
-
-        var priority = existing?.AsNullableInt("Priority") ?? nextPriority;
-        if (existing is null) nextPriority += priorityStep;
-        var member = BuildPoolMemberFromModel(modelDoc, modelId, resolvedPlatformId, priority, existing);
-        existingByKey[key] = member;
-        if (existing is null)
-        {
-            imported++;
-            appendedMembers.Add(member);
-        }
-        else updated++;
-    }
-
-    var nextMembers = managedAppendOnly
-        ? members.Concat(appendedMembers).ToList()
-        : existingByKey.Values
-            .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
-            .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
-            .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
-            .ToList();
-
-    if (imported > 0 || updated > 0)
-    {
-        if (managedAppendOnly)
-        {
-            imported = 0;
-            foreach (var appended in appendedMembers)
-            {
-                var appendFilter = new BsonDocument
-                {
-                    { "TenantId", TenantAccess.GetRequired(http).TenantId },
-                    { "_id", id },
-                    { "ManagedByRegistry", true },
-                    { "AppendOnly", true },
-                    { "DefaultSwitchPendingUntil", new BsonDocument("$not", new BsonDocument("$gt", DateTime.UtcNow)) },
-                    { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
-                        {
-                            { "ModelId", appended.GetStringOrEmpty("ModelId") },
-                            { "PlatformId", appended.GetStringOrEmpty("PlatformId") },
-                        })) },
-                };
-                var appendResult = await gwModelPools.UpdateOneAsync(
-                    appendFilter,
-                    Builders<BsonDocument>.Update.Push("Models", appended).Set("UpdatedAt", DateTime.UtcNow).Inc("Version", 1));
-                if (appendResult.ModifiedCount == 1) imported++;
-                else skippedExisting++;
-            }
-        }
-        else
-        {
-            var validationError = await ValidateDefaultGatewayPoolMembersAsync(
-                gwModelPoolTypes,
-                gwPlatforms,
-                gwModels,
-                gwModelExchanges,
-                pool,
-                new BsonArray(nextMembers));
-            if (validationError is not null)
-            {
-                return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
-            }
-
-            var writeResult = await gwModelPools.UpdateOneAsync(
-                Builders<BsonDocument>.Filter.And(
-                    poolFilter,
-                    PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
-                    PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
-                .Set("Models", new BsonArray(nextMembers))
-                .Set("UpdatedAt", DateTime.UtcNow)
-                .Inc("Version", 1));
-            if (writeResult.ModifiedCount != 1)
-                return Json(ApiEnvelope<BulkImportPoolModelsResult>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试批量导入。"), jsonOptions, 409);
-        }
-    }
-
-    var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    var result = new BulkImportPoolModelsResult
-    {
-        ScannedModels = byKey.Count,
-        MatchedModels = matchedDocs.Count,
-        Imported = imported,
-        Updated = updated,
-        SkippedExisting = skippedExisting,
-        SkippedInvalid = Math.Max(0, skippedInvalid),
-        CapabilityFilter = capabilityFilter,
-        Pool = await MapPoolResolvedAsync(http, fresh),
-    };
-
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.models.bulk_import",
-        targetType: "llmgw_model_pool",
-        targetId: id,
-        targetName: pool.AsNullableString("Name") ?? pool.AsNullableString("Code"),
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "platformId", platformId },
-            { "enabledOnly", body.EnabledOnly != false },
-            { "capabilityFilter", capabilityFilter },
-            { "overwriteExisting", body.OverwriteExisting == true },
-            { "maxCount", maxCount },
-            { "imported", imported },
-            { "updated", updated },
-            { "skippedExisting", skippedExisting },
-            { "authority", "llm_gateway" },
-        });
-
-    return Json(ApiEnvelope<BulkImportPoolModelsResult>.Ok(result), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 模型池成员 upsert：只允许写已认领到 GW 的池，避免继续把模型池权威写回 MAP。
-app.MapPut("/gw/pools/{id}/models", async (HttpContext http, string id, [FromBody] UpsertPoolModelRequest body) =>
-{
-    var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-    var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
-    var managedAppendOnly = IsManagedAppendOnlyPool(pool);
-    if (body is null) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "请求体不能为空"), jsonOptions, 400);
-    if (GatewayConfigurationProvisioning.ContainsImageSizeControlCapability(
-            body.Capabilities?.Select(capability => capability?.Type) ?? []))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "INVALID_INPUT",
-            "图片尺寸能力只能在模型高级配置中维护，不能写入模型池成员"), jsonOptions, 400);
-    }
-
-    var modelId = (body.ModelId ?? string.Empty).Trim();
-    var platformId = (body.PlatformId ?? string.Empty).Trim();
-    if (modelId.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelId 不能为空"), jsonOptions, 400);
-    if (modelId.Length > 300) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelId 长度超出限制"), jsonOptions, 400);
-    if (platformId.Length > 200) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "platformId 长度超出限制"), jsonOptions, 400);
-    if (body.Priority is < 1 or > 100000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "priority 必须在 1 到 100000 之间"), jsonOptions, 400);
-    if (body.MaxTokens is < 1 or > 1000000) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "maxTokens 必须在 1 到 1000000 之间"), jsonOptions, 400);
-    if (body.InputPricePerMillion is < 0 || body.OutputPricePerMillion is < 0 || body.PricePerCall is < 0)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "价格字段不能为负数"), jsonOptions, 400);
-    }
-    var priceCurrency = NormalizePriceCurrency(body.PriceCurrency);
-    if (priceCurrency is null && !string.IsNullOrWhiteSpace(body.PriceCurrency))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "priceCurrency 仅支持 CNY 或 USD"), jsonOptions, 400);
-    }
-
-    var modelFb = Builders<BsonDocument>.Filter;
-    var modelFilters = new List<FilterDefinition<BsonDocument>>
-    {
-        modelFb.Or(
-            modelFb.Eq("_id", modelId),
-            modelFb.Eq("ModelName", modelId),
-            modelFb.Eq("Name", modelId))
-    };
-    if (platformId.Length > 0) modelFilters.Add(modelFb.Eq("PlatformId", platformId));
-    var modelFilter = modelFilters.Count == 1 ? modelFilters[0] : modelFb.And(modelFilters);
-    var modelDoc = await gwModels.Find(TenantAccess.Filter(http, modelFilter)).FirstOrDefaultAsync()
-                   ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
-                       ? await models.Find(modelFilter).FirstOrDefaultAsync()
-                       : null);
-    BsonDocument? exchangeDoc = null;
-    if (modelDoc is null && platformId.Length > 0)
-    {
-        exchangeDoc = await gwModelExchanges.Find(TenantAccess.Filter(http, modelFb.And(
-            modelFb.Eq("_id", platformId),
-            modelFb.Ne("Enabled", false)))).FirstOrDefaultAsync();
-        var exchangeModels = exchangeDoc is not null
-                             && exchangeDoc.TryGetValue("Models", out var exchangeModelsValue)
-                             && exchangeModelsValue.IsBsonArray
-            ? exchangeModelsValue.AsBsonArray.Where(item => item.IsBsonDocument).Select(item => item.AsBsonDocument)
-            : Enumerable.Empty<BsonDocument>();
-        var exchangeModel = exchangeModels.FirstOrDefault(item =>
-            string.Equals(item.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
-            && item.AsNullableBool("Enabled") != false);
-        if (exchangeModel is not null)
-            modelDoc = GatewayConfigurationProvisioning.BuildExchangePoolModelDocument(platformId, exchangeModel);
-    }
-    if (modelDoc is null)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型或 Exchange 映射不存在、已停用或平台不匹配：{modelId}"), jsonOptions, 400);
-    }
-    if (managedAppendOnly && modelDoc.AsNullableBool("Enabled") == false)
-        return Json(ApiEnvelope<PoolItem>.Fail("MODEL_DISABLED", "停用模型不能加入平台托管默认池。"), jsonOptions, 409);
-    if (managedAppendOnly)
-        modelId = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name") ?? modelDoc.GetStringOrEmpty("_id");
-
-    var resolvedPlatformId = platformId.Length > 0 ? platformId : modelDoc.GetStringOrEmpty("PlatformId");
-    if (resolvedPlatformId.Length == 0)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"模型缺少 PlatformId：{modelId}"), jsonOptions, 400);
-    }
-
-    if (exchangeDoc is null)
-    {
-        var platformFilter = Builders<BsonDocument>.Filter.Eq("_id", resolvedPlatformId);
-        var platformDoc = await gwPlatforms.Find(TenantAccess.Filter(http, platformFilter)).FirstOrDefaultAsync()
-                          ?? (TenantAccess.GetRequired(http).TenantId == internalTenantId
-                              ? await platforms.Find(platformFilter).FirstOrDefaultAsync()
-                              : null);
-        if (platformDoc is null)
-        {
-            return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", $"平台不存在：{resolvedPlatformId}"), jsonOptions, 400);
-        }
-        if (managedAppendOnly && platformDoc.AsNullableBool("Enabled") == false)
-            return Json(ApiEnvelope<PoolItem>.Fail("PLATFORM_DISABLED", "停用平台的模型不能加入平台托管默认池。"), jsonOptions, 409);
-    }
-
-    var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-    var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
-    var existing = members.FirstOrDefault(m =>
-        string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
-        string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal));
-    var wasExisting = existing is not null;
-    if (managedAppendOnly && wasExisting)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "APPEND_ONLY_POOL",
-            "平台托管默认池中的已有成员不可覆盖或重排；如需特殊配置，请创建专用模型池。"), jsonOptions, 409);
-    }
-    if (managedAppendOnly && !GatewayModelPoolTypeRegistry.IsCompatible(modelDoc, pool.GetStringOrEmpty("ModelType")))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "INCOMPATIBLE_MODEL_TYPE",
-            $"模型与程序池类型 {pool.GetStringOrEmpty("ModelType")} 不兼容。"), jsonOptions, 409);
-    }
-    var member = existing is not null ? new BsonDocument(existing) : new BsonDocument();
-    // 运维显式重新声明这条成员，就是在说「按这份配置重新算」，健康位必须跟着归零。
-    //
-    // 此前只有全新成员才给 0，existing 会把陈旧的 HealthStatus 原样带过来。
-    // 后果不是「保留了历史」，而是死锁：默认池的成员全部掉成 Unavailable 之后，
-    // 「必须留一个可用成员」那条守卫会把删除、覆盖、重新声明**全部**挡下——
-    // 唯一能救回池子的动作被池子当前的坏状态挡在门外，重试多少次都是同一个结果。
-    // 健康位本就该由真实调用重新算出来，这里归零不丢任何真信息。
-    member["HealthStatus"] = 0;
-    member["ConsecutiveFailures"] = 0;
-    member["ConsecutiveSuccesses"] = 0;
-    member["ModelId"] = modelId;
-    member["PlatformId"] = resolvedPlatformId;
-    member["Priority"] = managedAppendOnly
-        ? members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max() + 10
-        : body.Priority ?? (existing?.AsNullableInt("Priority") ?? members.Count + 1);
-
-    var protocol = body.Protocol?.Trim();
-    if (string.IsNullOrWhiteSpace(protocol)) member.Remove("Protocol");
-    else
-    {
-        if (protocol.Length > 80) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "protocol 长度超出限制"), jsonOptions, 400);
-        member["Protocol"] = protocol;
-    }
-
-    if (body.EnablePromptCache is bool enablePromptCache) member["EnablePromptCache"] = enablePromptCache;
-    else member.Remove("EnablePromptCache");
-    if (body.MaxTokens is int maxTokens) member["MaxTokens"] = maxTokens;
-    else member.Remove("MaxTokens");
-    if (body.InputPricePerMillion is decimal inputPrice) member["InputPricePerMillion"] = new BsonDecimal128(inputPrice);
-    else member.Remove("InputPricePerMillion");
-    if (body.OutputPricePerMillion is decimal outputPrice) member["OutputPricePerMillion"] = new BsonDecimal128(outputPrice);
-    else member.Remove("OutputPricePerMillion");
-    if (body.PricePerCall is decimal pricePerCall) member["PricePerCall"] = new BsonDecimal128(pricePerCall);
-    else member.Remove("PricePerCall");
-    if (priceCurrency is not null) member["PriceCurrency"] = priceCurrency;
-    else member.Remove("PriceCurrency");
-    member["IsMain"] = modelDoc.AsNullableBool("IsMain") ?? false;
-    member["IsIntent"] = modelDoc.AsNullableBool("IsIntent") ?? false;
-    member["IsVision"] = modelDoc.AsNullableBool("IsVision") ?? false;
-    member["IsImageGen"] = modelDoc.AsNullableBool("IsImageGen") ?? false;
-    var capabilityDocs = modelDoc.TryGetValue("Capabilities", out var capsValue) && capsValue.IsBsonArray
-        ? capsValue.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList()
-        : new List<BsonDocument>();
-    if (body.Capabilities is { Count: > 0 })
-    {
-        var byType = capabilityDocs
-            .Where(c => !string.IsNullOrWhiteSpace(c.AsNullableString("Type")))
-            .ToDictionary(c => c.AsNullableString("Type")!, c => new BsonDocument(c), StringComparer.OrdinalIgnoreCase);
-        foreach (var capability in body.Capabilities)
-        {
-            if (capability is null) continue;
-            var type = capability.Type.Trim();
-            var source = string.IsNullOrWhiteSpace(capability.Source) ? "user" : capability.Source.Trim();
-            if (type.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "capability.type 不能为空"), jsonOptions, 400);
-            if (type.Length > 120) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "capability.type 长度超出限制"), jsonOptions, 400);
-            if (source.Length > 40) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "capability.source 长度超出限制"), jsonOptions, 400);
-            byType[type] = new BsonDocument
-            {
-                ["Type"] = type,
-                ["Source"] = source,
-                ["Value"] = capability.Value,
-                ["UpdatedAt"] = DateTime.UtcNow,
-            };
-        }
-        capabilityDocs = byType
-            .OrderBy(kv => kv.Key, StringComparer.OrdinalIgnoreCase)
-            .Select(kv => kv.Value)
-            .ToList();
-    }
-    if (capabilityDocs.Count > 0) member["Capabilities"] = new BsonArray(capabilityDocs);
-    else member.Remove("Capabilities");
-
-    if (managedAppendOnly)
-    {
-        member = BuildPoolMemberFromModel(
-            modelDoc,
-            modelId,
-            resolvedPlatformId,
-            members.Select(m => m.AsNullableInt("Priority") ?? 0).DefaultIfEmpty(0).Max() + 10,
-            existing: null);
-    }
-
-    members = managedAppendOnly
-        ? members.Append(member).ToList()
-        : members
-            .Where(m => !(string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal) &&
-                          string.Equals(m.GetStringOrEmpty("PlatformId"), resolvedPlatformId, StringComparison.Ordinal)))
-            .Append(member)
-            .OrderBy(m => m.AsNullableInt("Priority") ?? 100000)
-            .ThenBy(m => m.GetStringOrEmpty("PlatformId"), StringComparer.Ordinal)
-            .ThenBy(m => m.GetStringOrEmpty("ModelId"), StringComparer.Ordinal)
-            .ToList();
-
-    if (managedAppendOnly)
-    {
-        var appendFilter = new BsonDocument
-        {
-            { "TenantId", TenantAccess.GetRequired(http).TenantId },
-            { "_id", id },
-            { "ManagedByRegistry", true },
-            { "AppendOnly", true },
-            { "DefaultSwitchPendingUntil", new BsonDocument("$not", new BsonDocument("$gt", DateTime.UtcNow)) },
-            { "Models", new BsonDocument("$not", new BsonDocument("$elemMatch", new BsonDocument
-                {
-                    { "ModelId", modelId },
-                    { "PlatformId", resolvedPlatformId },
-                })) },
-        };
-        var appendResult = await gwModelPools.UpdateOneAsync(
-            appendFilter,
-            Builders<BsonDocument>.Update.Push("Models", member).Set("UpdatedAt", DateTime.UtcNow).Inc("Version", 1));
-        if (appendResult.ModifiedCount != 1)
-            return Json(ApiEnvelope<PoolItem>.Fail("APPEND_ONLY_POOL", "该模型已存在，未覆盖已有成员。"), jsonOptions, 409);
-    }
-    else
-    {
-        var nextModels = new BsonArray(members);
-        var validationError = await ValidateDefaultGatewayPoolMembersAsync(
-            gwModelPoolTypes,
-            gwPlatforms,
-            gwModels,
-            gwModelExchanges,
-            pool,
-            nextModels);
-        if (validationError is not null)
-        {
-            return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
-        }
-
-        var writeResult = await gwModelPools.UpdateOneAsync(
-            Builders<BsonDocument>.Filter.And(
-                poolFilter,
-                PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
-                PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
-            .Set("Models", nextModels)
-            .Set("UpdatedAt", DateTime.UtcNow)
-            .Inc("Version", 1));
-        if (writeResult.ModifiedCount != 1)
-            return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试成员更新。"), jsonOptions, 409);
-    }
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: wasExisting ? "pool.model.update" : "pool.model.add",
-        targetType: "llmgw_model_pool",
-        targetId: id,
-        targetName: pool.AsNullableString("Name") ?? pool.AsNullableString("Code"),
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "modelId", modelId },
-            { "platformId", resolvedPlatformId },
-            { "priority", member.AsNullableInt("Priority") ?? 0 },
-            { "wasExisting", wasExisting },
-            { "authority", "llm_gateway" },
-        });
-
-    var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 手动恢复保持成员不可用，只授予进入原子半开的资格；下一条真实业务请求负责验证，不发送额外付费探测。
-app.MapPost("/gw/pools/{id}/models/recover", async (HttpContext http, string id, [FromBody] RecoverPoolModelRequest? body) =>
-{
-    var modelId = body?.ModelId?.Trim() ?? string.Empty;
-    var platformId = body?.PlatformId?.Trim() ?? string.Empty;
-    if (modelId.Length == 0 || platformId.Length == 0)
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelId 和 platformId 不能为空"), jsonOptions, 400);
-
-    var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-    var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    if (pool is null)
-        return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再恢复池成员"), jsonOptions, 409);
-
-    var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-    var members = modelsArr.Where(value => value.IsBsonDocument).Select(value => new BsonDocument(value.AsBsonDocument)).ToList();
-    var member = members.FirstOrDefault(value =>
-        string.Equals(value.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
-        && string.Equals(value.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal));
-    if (member is null)
-        return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池成员不存在：{modelId}"), jsonOptions, 404);
-
-    var previousHealthStatus = member.AsNullableInt("HealthStatus") ?? 0;
-    member["HealthStatus"] = 2;
-    member["ConsecutiveSuccesses"] = 0;
-    member["ManualRecoveryAt"] = DateTime.UtcNow;
-    var writeResult = await gwModelPools.UpdateOneAsync(
-        Builders<BsonDocument>.Filter.And(
-            poolFilter,
-            PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
-            PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)),
-        Builders<BsonDocument>.Update
-            .Set("Models", new BsonArray(members))
-            .Set("UpdatedAt", DateTime.UtcNow)
-            .Inc("Version", 1));
-    if (writeResult.ModifiedCount != 1)
-        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试恢复"), jsonOptions, 409);
-
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.model.recover",
-        targetType: "llmgw_model_pool",
-        targetId: id,
-        targetName: pool.AsNullableString("Name") ?? pool.AsNullableString("Code"),
-        success: true,
-        reason: "manual-half-open",
-        changes: new BsonDocument
-        {
-            { "modelId", modelId },
-            { "platformId", platformId },
-            { "fromHealthStatus", previousHealthStatus },
-            { "toHealthStatus", 2 },
-        });
-
-    var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 模型池成员删除：只允许从 GW 权威池删除；MAP 来源池必须先认领。
-app.MapDelete("/gw/pools/{id}/models", async (HttpContext http, string id, string modelId, string? platformId) =>
-{
-    var normalizedModelId = (modelId ?? string.Empty).Trim();
-    var normalizedPlatformId = (platformId ?? string.Empty).Trim();
-    if (normalizedModelId.Length == 0) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "modelId 不能为空"), jsonOptions, 400);
-
-    var poolFilter = TenantAccess.Filter(http, Builders<BsonDocument>.Filter.Eq("_id", id));
-    var pool = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    if (pool is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_GW_AUTHORITY", "请先将模型池导入为平台配置，再管理池成员"), jsonOptions, 409);
-    if (IsManagedAppendOnlyPool(pool))
-    {
-        // append-only 是为了防「手滑摘掉一个还在服务的成员」，不是为了把**指向已删上游的死成员**钉死。
-        // 后者是纯 debris：那条上游没了，成员按 (modelId, platformId) 永远解析不到，
-        // 留着只会让平台删除的阻挡清单一直挂着一条谁也清不掉的引用。
-        //
-        // 判据与池列表下发的 Removable 是**同一个函数**——控制台显示的那个按钮，
-        // 就是这里放行的那个条件，不存在「按钮亮着但点下去 409」。
-        // platformId 可省略（按模型名删），那样可能一次覆盖多个成员，必须全死才放行；
-        // 逐个成员走的仍是池列表下发 Removable 的同一个原语。
-        var resolutionIndex = await BuildPoolResolutionIndexAsync(http);
-        if (!AreAllTargetedPoolMembersDead(pool, normalizedModelId, normalizedPlatformId, resolutionIndex))
-        {
-            return Json(ApiEnvelope<PoolItem>.Fail(
-                "APPEND_ONLY_POOL",
-                "平台托管默认池不允许删除成员；如需特殊化，请创建专用模型池。"), jsonOptions, 409);
-        }
-    }
-
-    var modelsArr = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-    var members = modelsArr.Where(x => x.IsBsonDocument).Select(x => new BsonDocument(x.AsBsonDocument)).ToList();
-    var removed = members.Where(m =>
-        string.Equals(m.GetStringOrEmpty("ModelId"), normalizedModelId, StringComparison.Ordinal) &&
-        (normalizedPlatformId.Length == 0 || string.Equals(m.GetStringOrEmpty("PlatformId"), normalizedPlatformId, StringComparison.Ordinal))).ToList();
-    if (removed.Count == 0)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池成员不存在：{normalizedModelId}"), jsonOptions, 404);
-    }
-
-    members = members.Except(removed).ToList();
-    var nextModels = new BsonArray(members);
-    var validationError = await ValidateDefaultGatewayPoolMembersAsync(
-        gwModelPoolTypes,
-        gwPlatforms,
-        gwModels,
-        gwModelExchanges,
-        pool,
-        nextModels);
-    if (validationError is not null)
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", validationError), jsonOptions, 400);
-    }
-
-    var deleteResult = await gwModelPools.UpdateOneAsync(
-        Builders<BsonDocument>.Filter.And(
-            poolFilter,
-            PoolVersionGuard(Builders<BsonDocument>.Filter, pool),
-            PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, DateTime.UtcNow)), Builders<BsonDocument>.Update
-        .Set("Models", nextModels)
-        .Set("UpdatedAt", DateTime.UtcNow)
-        .Inc("Version", 1));
-    if (deleteResult.ModifiedCount != 1)
-        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试删除。"), jsonOptions, 409);
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.model.remove",
-        targetType: "llmgw_model_pool",
-        targetId: id,
-        targetName: pool.AsNullableString("Name") ?? pool.AsNullableString("Code"),
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "modelId", normalizedModelId },
-            { "platformId", normalizedPlatformId },
-            { "removedCount", removed.Count },
-            { "authority", "llm_gateway" },
-        });
-
-    var fresh = await gwModelPools.Find(poolFilter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 模型池默认标记：单文档原子更新类型注册表中的 DefaultPoolId。
-// IsDefaultForType 只保留为历史兼容镜像，控制台与运行时均以 DefaultPoolId 为权威。
-app.MapPut("/gw/pools/{id}/default", async (HttpContext http, string id, ToggleDefaultRequest body) =>
-{
-    // 缺 isDefault 字段一律拒绝。
-    if (body?.IsDefault is not bool isDefault) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "缺少 isDefault 字段（true/false）"), jsonOptions, 400);
-    // 本端点只支持「把某池设为默认」（isDefault=true）。不支持直接取消默认——否则一次调用就能把某 ModelType
-    // 的唯一默认池清空，导致 MAP 调度该类型零默认（Bugbot Medium）。要切换默认：把另一个池设为默认即可，
-    // 同类型互斥会自动取消原默认，全程始终有且仅有一个默认。
-    if (!isDefault) return Json(ApiEnvelope<PoolItem>.Fail("INVALID_INPUT", "不支持直接取消默认；如需切换，请把另一个同类型池设为默认（原默认会自动取消）"), jsonOptions, 400);
-    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
-    var filter = TenantAccess.Filter(http, sourceFilter);
-    var doc = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    if (doc is null)
-    {
-        var mapDoc = TenantAccess.GetRequired(http).TenantId == internalTenantId
-            ? await modelGroups.Find(sourceFilter).FirstOrDefaultAsync()
-            : null;
-        if (mapDoc is not null)
-            return Json(ApiEnvelope<PoolItem>.Fail("MAP_POOL_NOT_CLAIMED", "请先将模型池导入为平台配置，再设为默认"), jsonOptions, 409);
-        return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
-    }
-    var modelType = doc.GetStringOrEmpty("ModelType");
-    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, doc))
-    {
-        return Json(ApiEnvelope<PoolItem>.Fail(
-            "INVALID_INPUT",
-            "默认模型池必须至少包含一个可用成员；请先添加可用模型。"),
-            jsonOptions,
-            400);
-    }
-    var tenantId = TenantAccess.GetRequired(http).TenantId;
-    await EnsureGatewayModelPoolTypesAsync(
-        gwModelPoolTypes, gwModelPools, gwModels, gwPlatforms, models, platforms, tenantId, internalTenantId, appendModels: false);
-    var fb = Builders<BsonDocument>.Filter;
-    var now = DateTime.UtcNow;
-    var reserveResult = await gwModelPools.UpdateOneAsync(
-        fb.And(filter, PoolVersionGuard(fb, doc), PoolNotSwitchingGuard(fb, now)),
-        Builders<BsonDocument>.Update
-            .Set("DefaultSwitchPendingUntil", now.AddSeconds(30))
-            .Set("UpdatedAt", now)
-            .Inc("Version", 1));
-    if (reserveResult.ModifiedCount != 1)
-        return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试设为默认。"), jsonOptions, 409);
-    var typeFilter = fb.And(fb.Eq("TenantId", tenantId), fb.Eq("Code", modelType));
-    var beforeType = await gwModelPoolTypes.Find(typeFilter).FirstOrDefaultAsync();
-    var updatedType = await gwModelPoolTypes.FindOneAndUpdateAsync(
-        typeFilter,
-        Builders<BsonDocument>.Update
-            .Set("DefaultPoolId", id)
-            .Set("UpdatedAt", now)
-            .Inc("Version", 1),
-        new FindOneAndUpdateOptions<BsonDocument> { ReturnDocument = ReturnDocument.After });
-    if (updatedType is null)
-    {
-        await gwModelPools.UpdateOneAsync(filter, Builders<BsonDocument>.Update.Unset("DefaultSwitchPendingUntil").Inc("Version", 1));
-        return Json(ApiEnvelope<PoolItem>.Fail("POOL_TYPE_NOT_REGISTERED", $"程序池类型未注册：{modelType}"), jsonOptions, 409);
-    }
-
-    // 兼容镜像依据原子指针重建；即使并发交错，权威读取也只认类型文档中的单一指针。
-    await gwModelPools.UpdateManyAsync(
-        fb.And(fb.Eq("TenantId", tenantId), fb.Eq("ModelType", modelType)),
-        Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now));
-    var authoritativePoolId = updatedType.GetStringOrEmpty("DefaultPoolId");
-    await gwModelPools.UpdateOneAsync(
-        fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", authoritativePoolId)),
-        Builders<BsonDocument>.Update
-            .Set("IsDefaultForType", true)
-            .Set("UpdatedAt", now)
-            .Unset("DefaultSwitchPendingUntil")
-            .Inc("Version", 1));
-    // MAP 遗留默认位一并退役。
-    //
-    // model_groups 没有 TenantId，也不再有任何写入口（MAP 模型管理写接口整体退场）。
-    // 它的 IsDefaultForType 一旦为真就再也清不掉：删除阻挡清单会永远报「这是当前默认池」，
-    // 而唯一的解法「先把默认改指别的池」在遗留侧根本不存在——那个池成了死胡同。
-    // 所以「GW 池接管这个类型的默认位」必须同时落到遗留侧，这就是那条缺失的迁移路径。
-    //
-    // 连带的运行时后果要说清楚：ModelResolver 第三步（回退默认池）只读 model_groups。
-    // 清零之后，既没进 GW appCaller 注册表、也没有专属绑定的调用方不再命中这个遗留池，
-    // 按 llm-gateway 规则既定的优先级降到第四步的传统配置（IsMain / IsIntent / ...）。
-    // 这正是「接管默认位」该有的语义——在此之前控制台说默认是 A、解析器却仍在发 B，
-    // 那才是真正的不一致。
-    var retiredLegacyDefaults = tenantId == internalTenantId
-        ? (await modelGroups.UpdateManyAsync(
-            fb.And(fb.Eq("ModelType", modelType), fb.Eq("IsDefaultForType", true), fb.Ne("_id", id)),
-            Builders<BsonDocument>.Update.Set("IsDefaultForType", false).Set("UpdatedAt", now))).ModifiedCount
-        : 0;
-
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.set_default",
-        targetType: "llmgw_model_pool",
-        targetId: id,
-        targetName: doc.AsNullableString("Name") ?? doc.AsNullableString("Code"),
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "defaultPoolId", new BsonDocument { { "from", beforeType?.AsNullableString("DefaultPoolId") ?? string.Empty }, { "to", id } } },
-            { "modelType", modelType },
-            { "authority", "llm_gateway" },
-            { "typeVersion", updatedType.AsNullableLong("Version") ?? 0 },
-            { "retiredLegacyDefaults", retiredLegacyDefaults },
-        });
-    var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    var item = await MapPoolResolvedAsync(http, fresh);
-    item.IsDefaultForType = string.Equals(authoritativePoolId, id, StringComparison.Ordinal);
-    return Json(ApiEnvelope<PoolItem>.Ok(item), jsonOptions);
-}).RequireAuthorization("ConfigWrite");
-
-// 模型池认领：把 MAP 现有 model_groups 池复制到 GW 自有 llm_gateway.llmgw_model_pools。
-// 这是模型池权威迁移的兼容切片：先双写/覆盖 GW 副本，resolver 命中 active appCaller 时优先读 GW 副本；
-// 不删除 MAP 原池，回滚只需删除 GW 副本或把 appCaller 状态改回 configured/discovered。
-app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
-{
-    if (TenantAccess.GetRequired(http).TenantId != internalTenantId)
-        return Json(ApiEnvelope<PoolItem>.Fail("INTERNAL_GOVERNANCE_ONLY", "仅内部租户可认领 MAP 模型池"), jsonOptions, 403);
-    var sourceFilter = Builders<BsonDocument>.Filter.Eq("_id", id);
-    var filter = TenantAccess.Filter(http, sourceFilter);
-    var source = await modelGroups.Find(sourceFilter).FirstOrDefaultAsync();
-    if (source is null) return Json(ApiEnvelope<PoolItem>.Fail("NOT_FOUND", $"模型池不存在：{id}"), jsonOptions, 404);
-
-    var now = DateTime.UtcNow;
-    var before = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    if (before is not null && IsManagedAppendOnlyPool(before))
-        return Json(ApiEnvelope<PoolItem>.Fail("APPEND_ONLY_POOL", "平台托管默认池不能被历史 MAP 池覆盖。"), jsonOptions, 409);
-    if (before is not null && await IsCurrentDefaultPoolAsync(gwModelPoolTypes, before))
-        return Json(ApiEnvelope<PoolItem>.Fail("DEFAULT_POOL_CLAIM_BLOCKED", "当前默认池不能被历史 MAP 池覆盖；请先切换默认池。"), jsonOptions, 409);
-    var claimed = new BsonDocument(source);
-    claimed["TenantId"] = internalTenantId;
-    claimed["SourceCollection"] = "model_groups";
-    claimed["Authority"] = "llm_gateway";
-    claimed["ClaimedAt"] = now;
-    claimed["UpdatedAt"] = now;
-    claimed["Version"] = (before?.AsNullableLong("Version") ?? 0) + 1;
-
-    if (before is null)
-    {
-        await gwModelPools.ReplaceOneAsync(filter, claimed, new ReplaceOptions { IsUpsert = true });
-    }
-    else
-    {
-        var replaceResult = await gwModelPools.ReplaceOneAsync(
-            Builders<BsonDocument>.Filter.And(
-                filter,
-                PoolVersionGuard(Builders<BsonDocument>.Filter, before),
-                PoolNotSwitchingGuard(Builders<BsonDocument>.Filter, now)),
-            claimed);
-        if (replaceResult.ModifiedCount != 1)
-            return Json(ApiEnvelope<PoolItem>.Fail("POOL_CONCURRENTLY_MODIFIED", "模型池正在变更，请重试认领。"), jsonOptions, 409);
-    }
-    await WriteOperationAuditAsync(
-        operationAudits,
-        http,
-        action: "pool.claim_to_gateway",
-        targetType: "llmgw_model_pool",
-        targetId: id,
-        targetName: source.AsNullableString("Name") ?? source.AsNullableString("Code"),
-        success: true,
-        reason: null,
-        changes: new BsonDocument
-        {
-            { "sourceCollection", "model_groups" },
-            { "authority", "llm_gateway" },
-            { "wasExistingGatewayPool", before is not null },
-            { "modelType", source.AsNullableString("ModelType") ?? string.Empty },
-        });
-
-    var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
-    return Json(ApiEnvelope<PoolItem>.Ok(await MapPoolResolvedAsync(http, fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
 // ───────────────────── 快捷提 bug（Ctrl+B 全局面板，2026-07-27）─────────────────────
@@ -14163,6 +17015,16 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     PriceCurrency = d.AsNullableString("PriceCurrency"),
     EstimatedInputCost = d.AsNullableDecimal("EstimatedInputCost"),
     EstimatedOutputCost = d.AsNullableDecimal("EstimatedOutputCost"),
+    EstimatedCacheReadCost = d.AsNullableDecimal("EstimatedCacheReadCost"),
+    EstimatedCacheWriteCost = d.AsNullableDecimal("EstimatedCacheWriteCost"),
+    CachedInputPricePerMillion = d.AsNullableDecimal("CachedInputPricePerMillion"),
+    CacheWritePricePerMillion = d.AsNullableDecimal("CacheWritePricePerMillion"),
+    PriceSource = PricingPolicy.NormalizeSource(d.AsNullableString("PriceSource")),
+    PriceObservedAt = d.AsNullableUtcDateTime("PriceObservedAt").ToIso(),
+    // 算没算出钱与算不出的原因，跟金额一起给出来。只给一个空金额，用户没法知道
+    // 是这次没花钱、还是这条模型压根没配价——后者才是他要去处理的事。
+    CostStatus = ResolveLogCostStatus(d),
+    CostUnpricedReason = d.AsNullableString("CostUnpricedReason"),
     EstimatedCallCost = d.AsNullableDecimal("EstimatedCallCost"),
     EstimatedCost = d.AsNullableDecimal("EstimatedCost"),
     EstimatedCostCurrency = d.AsNullableString("EstimatedCostCurrency"),
@@ -14488,6 +17350,149 @@ static string? NormalizePriceCurrency(string? currency)
     return normalized is "CNY" or "USD" ? normalized : null;
 }
 
+/// <summary>
+/// 这条池成员指的是不是这条模型。池成员存的 ModelId 是**模型名**不是文档 id（见 BuildPoolMemberFromModel
+/// 的调用点），而不同入口写进去的可能是 ModelName、Name 或 _id 三者之一，所以三个都认。
+/// 只认一个，换条路建出来的成员就会被漏掉，改价时静默不同步。
+/// </summary>
+static bool IsSamePoolMember(BsonDocument member, string modelDocId, string? modelName, string? platformId)
+{
+    var memberModelId = member.AsNullableString("ModelId");
+    if (string.IsNullOrWhiteSpace(memberModelId)) return false;
+
+    var matchesModel = string.Equals(memberModelId, modelDocId, StringComparison.OrdinalIgnoreCase)
+        || (!string.IsNullOrWhiteSpace(modelName)
+            && string.Equals(memberModelId, modelName, StringComparison.OrdinalIgnoreCase));
+    if (!matchesModel) return false;
+
+    var memberPlatformId = member.AsNullableString("PlatformId");
+    // 成员或模型任一没有平台信息时不拿平台当否决条件——存量数据缺字段是常态，
+    // 拿缺失当「不匹配」会让这些成员永远同步不到新价格。
+    if (string.IsNullOrWhiteSpace(memberPlatformId) || string.IsNullOrWhiteSpace(platformId)) return true;
+    return string.Equals(memberPlatformId, platformId, StringComparison.OrdinalIgnoreCase);
+}
+
+/// <summary>
+/// 池成员的价格是不是跟模型档案完全一致（即「继承」）。任何一档不同就是覆盖，
+/// 界面上要如实标出来，而不是假装两边同源。
+/// </summary>
+static bool PoolMemberPriceMatchesModel(BsonDocument member, BsonDocument modelDoc)
+{
+    foreach (var field in new[]
+             {
+                 "InputPricePerMillion", "OutputPricePerMillion",
+                 "CachedInputPricePerMillion", "CacheWritePricePerMillion", "PricePerCall",
+             })
+    {
+        if (member.AsNullableDecimal(field) != modelDoc.AsNullableDecimal(field)) return false;
+    }
+
+    return string.Equals(
+        PricingPolicy.NormalizeCurrency(member.AsNullableString("PriceCurrency")),
+        PricingPolicy.NormalizeCurrency(modelDoc.AsNullableString("PriceCurrency")),
+        StringComparison.Ordinal);
+}
+
+/// <summary>价格字段：有值就写，没值就删——留着上一次的旧数字比没有数字更糟。</summary>
+static UpdateDefinition<BsonDocument> SetOrUnsetDecimal(
+    UpdateDefinition<BsonDocument> update, string field, decimal? value)
+    => value is decimal actual ? update.Set(field, new BsonDecimal128(actual)) : update.Unset(field);
+
+/// <summary>
+/// 把模型档案上的价格同步进指定的几个模型池成员。
+///
+/// 这一步是「价格只有一处真相」的落点：调度读的是池成员里的价格，档案改了不同步，
+/// 线上就会继续按旧价计费。托管的只追加池不接受从这里改价，如实跳过并报出来。
+/// </summary>
+static async Task<(List<string> Synced, List<string> Skipped)> SyncPoolMemberPricingAsync(
+    IMongoCollection<BsonDocument> pools,
+    HttpContext http,
+    BsonDocument modelDoc,
+    string modelDocId,
+    IEnumerable<string> poolIds,
+    string actor,
+    DateTime now)
+{
+    var synced = new List<string>();
+    var skipped = new List<string>();
+    var wanted = poolIds
+        .Where(x => !string.IsNullOrWhiteSpace(x))
+        .Select(x => x.Trim())
+        .Distinct(StringComparer.Ordinal)
+        .ToList();
+    if (wanted.Count == 0) return (synced, skipped);
+
+    var modelName = modelDoc.AsNullableString("ModelName") ?? modelDoc.AsNullableString("Name");
+    var platformId = modelDoc.AsNullableString("PlatformId");
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantId = TenantAccess.GetRequired(http).TenantId;
+
+    foreach (var poolId in wanted)
+    {
+        var pool = await pools.Find(TenantAccess.Filter(http, fb.Eq("_id", poolId))).FirstOrDefaultAsync();
+        if (pool is null) { skipped.Add(poolId); continue; }
+        if (IsManagedAppendOnlyPool(pool)) { skipped.Add(poolId); continue; }
+        if (!pool.TryGetValue("Models", out var membersValue) || !membersValue.IsBsonArray)
+        {
+            skipped.Add(poolId);
+            continue;
+        }
+
+        var membersArray = membersValue.AsBsonArray;
+        var changed = false;
+        foreach (var memberValue in membersArray)
+        {
+            if (!memberValue.IsBsonDocument) continue;
+            var member = memberValue.AsBsonDocument;
+            if (!IsSamePoolMember(member, modelDocId, modelName, platformId)) continue;
+
+            ApplyModelPricingToMember(member, modelDoc, actor, now);
+            changed = true;
+            break;
+        }
+
+        if (!changed) { skipped.Add(poolId); continue; }
+
+        await pools.UpdateOneAsync(
+            fb.And(fb.Eq("TenantId", tenantId), fb.Eq("_id", poolId)),
+            Builders<BsonDocument>.Update
+                .Set("Models", membersArray)
+                .Set("UpdatedAt", now)
+                .Inc("Version", 1));
+        synced.Add(poolId);
+    }
+
+    return (synced, skipped);
+}
+
+/// <summary>把模型档案的五档价格连同来源、观测时间、操作者一起盖到池成员上。</summary>
+static void ApplyModelPricingToMember(BsonDocument member, BsonDocument modelDoc, string actor, DateTime now)
+{
+    foreach (var field in new[]
+             {
+                 "InputPricePerMillion", "OutputPricePerMillion",
+                 "CachedInputPricePerMillion", "CacheWritePricePerMillion", "PricePerCall",
+             })
+    {
+        if (modelDoc.AsNullableDecimal(field) is decimal value) member[field] = new BsonDecimal128(value);
+        else member.Remove(field);
+    }
+
+    if (PricingPolicy.NormalizeCurrency(modelDoc.AsNullableString("PriceCurrency")) is string currency)
+        member["PriceCurrency"] = currency;
+    else member.Remove("PriceCurrency");
+
+    if (PricingPolicy.NormalizeSource(modelDoc.AsNullableString("PriceSource")) is string source)
+        member["PriceSource"] = source;
+    else member.Remove("PriceSource");
+
+    if (modelDoc.AsNullableUtcDateTime("PriceObservedAt") is DateTime observedAt) member["PriceObservedAt"] = observedAt;
+    else member.Remove("PriceObservedAt");
+
+    member["PriceUpdatedBy"] = actor;
+    member["PriceSyncedAt"] = now;
+}
+
 static BsonDocument BuildPoolMemberFromModel(BsonDocument modelDoc, string modelId, string platformId, int priority, BsonDocument? existing)
 {
     var member = existing is not null ? new BsonDocument(existing) : new BsonDocument();
@@ -14517,10 +17522,21 @@ static BsonDocument BuildPoolMemberFromModel(BsonDocument modelDoc, string model
     else member.Remove("InputPricePerMillion");
     if (modelDoc.AsNullableDecimal("OutputPricePerMillion") is decimal outputPrice) member["OutputPricePerMillion"] = new BsonDecimal128(outputPrice);
     else member.Remove("OutputPricePerMillion");
+    if (modelDoc.AsNullableDecimal("CachedInputPricePerMillion") is decimal cachedInputPrice) member["CachedInputPricePerMillion"] = new BsonDecimal128(cachedInputPrice);
+    else member.Remove("CachedInputPricePerMillion");
+    if (modelDoc.AsNullableDecimal("CacheWritePricePerMillion") is decimal cacheWritePrice) member["CacheWritePricePerMillion"] = new BsonDecimal128(cacheWritePrice);
+    else member.Remove("CacheWritePricePerMillion");
     if (modelDoc.AsNullableDecimal("PricePerCall") is decimal pricePerCall) member["PricePerCall"] = new BsonDecimal128(pricePerCall);
     else member.Remove("PricePerCall");
     if (NormalizePriceCurrency(modelDoc.AsNullableString("PriceCurrency")) is string priceCurrency) member["PriceCurrency"] = priceCurrency;
     else member.Remove("PriceCurrency");
+    // 来源与观测时间跟着价格一起走。只复制数字不复制来源，池里那份就成了「说不出从哪来」的价格。
+    if (PricingPolicy.NormalizeSource(modelDoc.AsNullableString("PriceSource")) is string priceSource) member["PriceSource"] = priceSource;
+    else member.Remove("PriceSource");
+    if (modelDoc.AsNullableUtcDateTime("PriceObservedAt") is DateTime priceObservedAt) member["PriceObservedAt"] = priceObservedAt;
+    else member.Remove("PriceObservedAt");
+    if (modelDoc.AsNullableString("PriceUpdatedBy") is string priceUpdatedBy) member["PriceUpdatedBy"] = priceUpdatedBy;
+    else member.Remove("PriceUpdatedBy");
 
     member["IsMain"] = modelDoc.AsNullableBool("IsMain") ?? false;
     member["IsIntent"] = modelDoc.AsNullableBool("IsIntent") ?? false;
@@ -14532,55 +17548,6 @@ static BsonDocument BuildPoolMemberFromModel(BsonDocument modelDoc, string model
     if (capabilityDocs.Count > 0) member["Capabilities"] = new BsonArray(capabilityDocs);
     else member.Remove("Capabilities");
     return member;
-}
-
-static bool DoesModelMatchBulkImportFilter(BsonDocument modelDoc, string poolModelType, string capabilityFilter)
-{
-    if (capabilityFilter == "all") return true;
-    if (capabilityFilter == "compatible") return IsModelCompatibleWithPool(modelDoc, poolModelType);
-    if (capabilityFilter == "vision") return modelDoc.AsNullableBool("IsVision") == true || ModelHasCapability(modelDoc, "vision", "image_input", "multimodal");
-    if (capabilityFilter == "image") return modelDoc.AsNullableBool("IsImageGen") == true || ModelHasCapability(modelDoc, "image_generation", "text_to_image", "image");
-    if (capabilityFilter == "function_calling") return ModelHasCapability(modelDoc, "function_calling", "tool_calling", "tools");
-    if (capabilityFilter == "parallel_tool_calls") return ModelHasCapability(modelDoc, "parallel_tool_calls", "parallel_tools", "parallel_function_calling");
-    if (capabilityFilter == "parameter_capabilities") return ModelHasParameterCapability(modelDoc);
-    if (capabilityFilter == "thinking") return ModelHasCapability(modelDoc, "thinking", "reasoning");
-    if (capabilityFilter == "structured_output") return ModelHasCapability(modelDoc, "structured_output", "json_schema", "json_mode", "response_format");
-    if (capabilityFilter == "logprobs") return ModelHasCapability(modelDoc, "logprobs", "top_logprobs", "token_logprobs");
-    if (capabilityFilter == "prompt_cache") return modelDoc.AsNullableBool("EnablePromptCache") == true || ModelHasCapability(modelDoc, "prompt_cache", "prompt_caching");
-    return false;
-}
-
-static bool IsModelCompatibleWithPool(BsonDocument modelDoc, string poolModelType)
-{
-    var type = (poolModelType ?? string.Empty).ToLowerInvariant();
-    if (type.Contains("vision")) return modelDoc.AsNullableBool("IsVision") == true || ModelHasCapability(modelDoc, "vision", "image_input", "multimodal");
-    if (type.Contains("image") || type.Contains("generation")) return modelDoc.AsNullableBool("IsImageGen") == true || ModelHasCapability(modelDoc, "image_generation", "text_to_image", "image");
-    // intent 判据只有一份：注册表的 IsIntentCapable。此处曾抄过一份只认布尔位的拷贝，
-    // 与注册表分别演进，导致同一个模型在 PUT 池成员与 bulk-import 两条路上判据不一致。
-    if (type.Contains("intent")) return GatewayModelPoolTypeRegistry.IsIntentCapable(modelDoc);
-    if (type.Contains("chat") || type.Contains("code")) return modelDoc.AsNullableBool("IsMain") == true || modelDoc.AsNullableBool("IsIntent") == true || modelDoc.AsNullableBool("IsImageGen") != true;
-    if (type.Contains("asr") || type.Contains("speech")) return ModelHasCapability(modelDoc, "asr", "speech_to_text", "audio");
-    if (type.Contains("video")) return ModelHasCapability(modelDoc, "video_generation", "video");
-    return true;
-}
-
-static bool ModelHasCapability(BsonDocument modelDoc, params string[] types)
-{
-    var wanted = types.Select(x => x.ToLowerInvariant()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-    var capsArr = modelDoc.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray ? cv.AsBsonArray : new BsonArray();
-    return capsArr
-        .Where(x => x.IsBsonDocument)
-        .Select(x => x.AsBsonDocument)
-        .Any(c => c.AsNullableBool("Value") == true && wanted.Contains(c.GetStringOrEmpty("Type")));
-}
-
-static bool ModelHasParameterCapability(BsonDocument modelDoc)
-{
-    var capsArr = modelDoc.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray ? cv.AsBsonArray : new BsonArray();
-    return capsArr
-        .Where(x => x.IsBsonDocument)
-        .Select(x => x.AsBsonDocument.GetStringOrEmpty("Type"))
-        .Any(type => type.StartsWith("parameter:", StringComparison.OrdinalIgnoreCase));
 }
 
 /// <summary>
@@ -14676,31 +17643,6 @@ static bool IsDeadPoolMember(string modelId, string platformId, PoolResolutionIn
     return true;
 }
 
-/// <summary>
-/// 这次删除请求覆盖到的**所有**成员是不是都已经死了。
-///
-/// <c>platformId</c> 是可选的：只给 modelId 时按模型名删，可能一次匹配到多个成员
-///（同一个模型名挂在不同上游上）。此时必须**全都**是死成员才放行——只要还有一个活的，
-/// 这次删除就会顺带把它也摘掉。目标为空同样拒绝（判不准就保护）。
-///
-/// 逐个成员的判定复用 <see cref="IsDeadPoolMember"/>，与池列表下发 Removable 用的是同一个原语，
-/// 所以「控制台按钮亮着」和「删除端点放行」不可能分歧。
-/// </summary>
-static bool AreAllTargetedPoolMembersDead(
-    BsonDocument pool, string modelId, string platformId, PoolResolutionIndex index)
-{
-    var membersValue = pool.TryGetValue("Models", out var mv) && mv.IsBsonArray ? mv.AsBsonArray : new BsonArray();
-    var targets = membersValue
-        .Where(x => x.IsBsonDocument)
-        .Select(x => x.AsBsonDocument)
-        .Where(m => string.Equals(m.GetStringOrEmpty("ModelId"), modelId, StringComparison.Ordinal)
-                    && (platformId.Length == 0
-                        || string.Equals(m.GetStringOrEmpty("PlatformId"), platformId, StringComparison.Ordinal)))
-        .ToList();
-    if (targets.Count == 0) return false;
-    return targets.All(m => IsDeadPoolMember(m.GetStringOrEmpty("ModelId"), m.GetStringOrEmpty("PlatformId"), index));
-}
-
 static bool IsManagedAppendOnlyPool(BsonDocument pool)
     => pool.AsNullableBool("ManagedByRegistry") == true
        && pool.AsNullableBool("AppendOnly") == true
@@ -14745,6 +17687,213 @@ static async Task<bool> IsCurrentDefaultPoolAsync(
     return type is null
         ? pool.AsNullableBool("IsDefaultForType") == true
         : string.Equals(type.AsNullableString("DefaultPoolId"), poolId, StringComparison.Ordinal);
+}
+
+/// <summary>
+/// 把一个上游模型登上白名单：没有同名公开模型就建一个，再给它挂一条指向这个上游的线路。
+///
+/// 为什么必须有这一步：池路由已经删了，调用方按**公开模型名**请求，找的是对外模型 + 线路。
+/// 只把模型写进 llmgw_models、再同步进托管默认池，得到的是一个库里看得见、界面报成功、
+/// 却怎么也调不通的模型——链路只建了一半，而且不会有任何东西变红
+/// （predicate-and-wiring-discipline 形状 2）。
+///
+/// 为什么抽成一个函数：批量导入与单模型新增是同一件事的两个入口。各写一份的话，
+/// 下一次改发布规则（用途判定、跨用途冲突、线路优先级）只会改到其中一份，
+/// 而另一份继续按旧规矩发布，谁赢取决于用户从哪个入口进来（形状 3：判据分裂各自漂移）。
+///
+/// 同名已存在时**不新建公开名，只多挂一条线路**：这正是「一个模型允许多个来源」的自然入口。
+/// 同名但用途不同则拒绝挂靠并把冲突交回调用方说明——把一条生图线路挂到 chat 模型底下，
+/// 运行时会按那条模型的用途发请求，请求契约整个错位。
+/// </summary>
+/// <returns>
+/// 模型名或公开名算不出来时回 null（这条跳过）；否则给出公开名、是不是新建的、
+/// 是不是挂到了已有的公开名，以及没登上时的原因。原因分两种，调用方要分开说：
+/// <c>cross-type</c> 公开名撞上了别的用途，<c>unknown-type</c> 认不出它是哪种用途。
+/// </returns>
+/// <summary>
+/// 池成员身上自带的价格覆盖，与目标模型文档上的价格比一比，列出**会丢掉**的那几项。
+///
+/// 为什么会丢：池路由按池成员计价，而线路（Offering）没有价格字段——搬过来之后
+/// 计价只看物理模型文档。成员上配过、模型文档上没有或不一样的，搬完就变了：
+/// 要么按另一个价收，要么整条判成未计价而掉出用量与预算。
+/// 兑换所成员更彻底——它根本没有物理模型文档可回落，成员价一丢就是未计价。
+///
+/// 给线路加一层价格覆盖是另一套语义（新增字段 + 解析优先级），不在这一刀里做；
+/// 这里要做的是**不让它悄悄发生**：逐条列出来，说清值是多少、该填到哪儿去。
+/// </summary>
+/// <summary>
+/// 成员自己配的输出上限（MaxTokens）会不会在搬迁里丢掉，丢了就返回一句人话。
+///
+/// 线路（Offering）没有这个字段：走线路解析时输出上限取的是**物理模型**上的那个。
+/// 所以成员上配过一个不一样的值时，搬过去之后那条限制就不存在了——请求可能超过成员
+/// 原本的上限，或者继承一个完全不同的全局上限，而这件事不会有任何地方报错。
+/// 给线路加价格/上限覆盖层是新语义（§5.5 的 B 类），这里先如实报出来，与价格丢失同一口径。
+/// </summary>
+/// <summary>
+/// 搬迁时这条线路算不算「现在能接流量」。
+///
+/// 三个条件缺一不可，逐条对着运行时那一侧：线路自己启用着、健康档不是熔断
+/// （GatewayRouteSelection 把熔断态整条跳过）、上游够格（目标在且启用、Provider 可用、
+/// 兑换所别名声明过）。少判任何一条，「一条能接流量的线路都没有」这道闸就会漏放，
+/// 而漏放的后果是模型带着用途默认与认领留在库里，池退场后每个请求当场失败。
+/// </summary>
+static bool MigrationRouteCountsAsUsable(
+    int healthStatus,
+    bool enabled,
+    OfferingTargetEligibility.Rejection? targetRejection)
+    => enabled
+        && healthStatus != CallTracePlanner.HealthUnavailable
+        && targetRejection is null;
+
+/// <summary>库里已经有的那条线路，读它自己的启用与健康档再判。
+/// （顶层局部函数不能重载，所以换个名字，不是两套判据——它就是上面那个。）</summary>
+static bool MigrationExistingRouteCountsAsUsable(
+    BsonDocument offering,
+    OfferingTargetEligibility.Rejection? targetRejection)
+    => MigrationRouteCountsAsUsable(
+        offering.AsNullableInt("HealthStatus") ?? 0,
+        // 与运行时同口径：缺 Enabled 字段的线路运行时一条都查不到，这里也不算它能接流量。
+        offering.AsNullableBool("Enabled") == true,
+        targetRejection);
+
+static string? DescribeLostMemberMaxTokens(BsonDocument member, BsonDocument? physical)
+{
+    var memberValue = member.GetValue("MaxTokens", BsonNull.Value);
+    if (memberValue.IsBsonNull) return null;
+    var physicalValue = physical?.GetValue("MaxTokens", BsonNull.Value) ?? BsonNull.Value;
+    // 目标模型上已经是同一个值就不算丢——搬完行为不变，报出来只是噪音。
+    if (!physicalValue.IsBsonNull && physicalValue.Equals(memberValue)) return null;
+    return physicalValue.IsBsonNull
+        ? $"成员自己配了输出上限 {memberValue}，而目标模型没有配"
+        : $"成员自己配了输出上限 {memberValue}，而目标模型配的是 {physicalValue}";
+}
+
+static List<string> DescribeLostMemberPrices(BsonDocument member, BsonDocument? physical)
+{
+    var fields = new (string Field, string Label)[]
+    {
+        ("InputPricePerMillion", "输入单价"),
+        ("OutputPricePerMillion", "输出单价"),
+        ("CachedInputPricePerMillion", "缓存读单价"),
+        ("CacheWritePricePerMillion", "缓存写单价"),
+        ("PricePerCall", "每次调用固定费"),
+    };
+    var lost = new List<string>();
+    foreach (var (field, label) in fields)
+    {
+        var memberValue = member.GetValue(field, BsonNull.Value);
+        if (memberValue.IsBsonNull) continue;
+        var physicalValue = physical?.GetValue(field, BsonNull.Value) ?? BsonNull.Value;
+        // 目标模型上已经是同一个值就不算丢——那种情况搬完计价结果不变，报出来只是噪音。
+        if (!physicalValue.IsBsonNull && physicalValue.Equals(memberValue)) continue;
+        lost.Add($"{label} {memberValue}");
+    }
+    return lost;
+}
+
+static async Task<(string PublicId, bool CreatedLogical, bool LinkedToExisting, string? BlockedKind, string? BlockedMessage)?>
+    PublishGatewayModelToWhitelistAsync(
+        IMongoCollection<BsonDocument> logicalModels,
+        IMongoCollection<BsonDocument> offerings,
+        BsonDocument model,
+        string tenantId,
+        DateTime now,
+        // 补登表要一路传进来：公开名是否收敛到名录的规范标识由它与内置名录一起决定。
+        // 两个入口（批量导入、手工新增）必须传同一份，否则同一个上游名在两条路上算出
+        // 两个公开名——而白名单的全部意义就是让它们合成一条。
+        ModelCatalog.CatalogOverrides? catalogOverrides)
+{
+    var modelName = model.GetStringOrEmpty("ModelName");
+    if (modelName.Length == 0) return null;
+
+    var publicId = GatewayWhitelistPublishing.ToPublicId(modelName, catalogOverrides);
+    if (publicId.Length == 0) return null;
+    var normalizedPublicId = publicId.ToLowerInvariant();
+
+    var logical = await logicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("PublicIdNormalized", normalizedPublicId))).FirstOrDefaultAsync();
+
+    var capabilityCodes = (model.TryGetValue("Capabilities", out var capsValue) && capsValue.IsBsonArray
+            ? capsValue.AsBsonArray.Where(x => x.IsBsonDocument).Select(x => x.AsBsonDocument.GetStringOrEmpty("Type"))
+            : Enumerable.Empty<string>())
+        .Where(x => x.Length > 0)
+        .ToList();
+    var modelType = GatewayWhitelistPublishing.TryResolveModelType(capabilityCodes);
+    if (modelType is null)
+    {
+        // 一个模态都认不出来就不登白名单。兜底成 chat 的话，这个上游会被列进对话默认面、
+        // 被普通对话调用方选中、按对话契约调走——而它可能是生图或视频。
+        // 物理模型已经入库，不动它；这里把「为什么没登上、下一步做什么」交回调用方说出口。
+        return (publicId, false, false, "unknown-type",
+            $"{publicId}（认不出它是哪种用途：这个模型没有可识别的能力声明）");
+    }
+
+    string logicalId;
+    var createdLogical = false;
+    var linkedToExisting = false;
+    if (logical is null)
+    {
+        logicalId = $"gw-logical-{Guid.NewGuid():N}";
+        await logicalModels.InsertOneAsync(new BsonDocument
+        {
+            { "_id", logicalId }, { "TenantId", tenantId },
+            { "PublicId", publicId }, { "PublicIdNormalized", normalizedPublicId },
+            { "Name", publicId }, { "ModelType", modelType },
+            { "Capabilities", new BsonArray(LogicalModelCapabilityPolicy.NormalizeDetailed(modelType, capabilityCodes).Persisted) },
+            // 能力口径的版本戳。漏了它，capability-audit 会把这条算成「未迁移」——
+            // 而迁移只在控制台启动时跑一次，于是启动后第一次成功发布就把发布门禁弄红，
+            // 得重启控制台才恢复。
+            { LogicalModelCapabilityPolicy.SchemaVersionField, LogicalModelCapabilityPolicy.SchemaVersion },
+            // 授权范围刻意留空 = 当前租户全部 appCaller 可用。
+            // 这一步不替用户决定「谁能用」：收紧是治理动作，要有人明确拍板。
+            { "AllowedAppCallerCodes", new BsonArray() },
+            { "RoutingStrategy", "priority" }, { "Enabled", true }, { "DisplayOrder", 100 },
+            { "CreatedAt", now }, { "UpdatedAt", now },
+        });
+        createdLogical = true;
+    }
+    else
+    {
+        var existingType = logical.GetStringOrEmpty("ModelType");
+        if (!string.Equals(existingType, modelType, StringComparison.OrdinalIgnoreCase))
+        {
+            return (publicId, false, false, "cross-type",
+                $"{publicId}（已存在的是「{existingType}」用途，这次是「{modelType}」用途）");
+        }
+        logicalId = logical.GetStringOrEmpty("_id");
+        linkedToExisting = true;
+    }
+
+    var modelId = model.GetStringOrEmpty("_id");
+    var duplicate = await offerings.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId),
+        Builders<BsonDocument>.Filter.Eq("TargetKind", "model"),
+        Builders<BsonDocument>.Filter.Eq("TargetId", modelId))).AnyAsync();
+    if (duplicate) return (publicId, createdLogical, linkedToExisting, null, null);
+
+    // 后来的线路排在已有线路之后：先登记的那条继续扛流量，新增不该悄悄改变谁是主路。
+    var existingRoutes = (int)await offerings.CountDocumentsAsync(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("LogicalModelId", logicalId)));
+
+    await offerings.InsertOneAsync(new BsonDocument
+    {
+        { "_id", $"gw-offering-{Guid.NewGuid():N}" }, { "TenantId", tenantId },
+        { "LogicalModelId", logicalId }, { "TargetKind", "model" }, { "TargetId", modelId },
+        { "UpstreamModelId", modelName },
+        { "Protocol", model.AsNullableString("Protocol") is { Length: > 0 } p ? p : BsonNull.Value },
+        { "EndpointPath", BsonNull.Value },
+        { "Priority", 100 + existingRoutes * 10 }, { "Weight", 100 },
+        { "Enabled", true }, { "HealthStatus", 0 },
+        { "ConsecutiveFailures", 0 }, { "ConsecutiveSuccesses", 0 },
+        { "MaxConcurrency", BsonNull.Value }, { "RateLimitPerMinute", BsonNull.Value },
+        { "Notes", BsonNull.Value },
+        { "CreatedAt", now }, { "UpdatedAt", now },
+    });
+
+    return (publicId, createdLogical, linkedToExisting, null, null);
 }
 
 static async Task<(int TypesCreated, int PoolsCreated, int ModelsAppended)> EnsureGatewayModelPoolTypesAsync(
@@ -15205,6 +18354,13 @@ static PlatformItem MapPlatform(BsonDocument d, IConfiguration? keyConfig = null
 
 static ModelItem MapModel(BsonDocument d)
 {
+    var now = DateTime.UtcNow;
+    var priceObservedAt = d.AsNullableUtcDateTime("PriceObservedAt");
+    var inputPrice = d.AsNullableDecimal("InputPricePerMillion");
+    var outputPrice = d.AsNullableDecimal("OutputPricePerMillion");
+    var pricePerCall = d.AsNullableDecimal("PricePerCall");
+    var priceCurrency = PricingPolicy.NormalizeCurrency(d.AsNullableString("PriceCurrency"));
+    var hasAnyPrice = PricingPolicy.HasAnyPrice(inputPrice, outputPrice, pricePerCall);
     var capsArr = d.TryGetValue("Capabilities", out var cv) && cv.IsBsonArray ? cv.AsBsonArray : new BsonArray();
     var caps = capsArr.Where(c => c.IsBsonDocument).Select(c => c.AsBsonDocument).Select(c => new ModelCapabilityItem
     {
@@ -15245,10 +18401,19 @@ static ModelItem MapModel(BsonDocument d)
         Capabilities = caps,
         ImageSizeControlMode = imageSizeControl.Mode,
         ImageSizeFieldFormat = imageSizeControl.FieldFormat,
-        InputPricePerMillion = d.AsNullableDecimal("InputPricePerMillion"),
-        OutputPricePerMillion = d.AsNullableDecimal("OutputPricePerMillion"),
-        PricePerCall = d.AsNullableDecimal("PricePerCall"),
-        PriceCurrency = d.AsNullableString("PriceCurrency"),
+        InputPricePerMillion = inputPrice,
+        OutputPricePerMillion = outputPrice,
+        CachedInputPricePerMillion = d.AsNullableDecimal("CachedInputPricePerMillion"),
+        CacheWritePricePerMillion = d.AsNullableDecimal("CacheWritePricePerMillion"),
+        PricePerCall = pricePerCall,
+        PriceCurrency = priceCurrency,
+        PriceSource = PricingPolicy.NormalizeSource(d.AsNullableString("PriceSource")),
+        PriceObservedAt = priceObservedAt.ToIso(),
+        PriceUpdatedBy = d.AsNullableString("PriceUpdatedBy"),
+        // 没配价的模型不叫「陈旧」，叫「没配」——两件事分开报，否则缺价会被淹在陈旧里。
+        PriceStale = hasAnyPrice && PricingPolicy.IsStale(priceObservedAt, now),
+        PriceAgeDays = PricingPolicy.AgeInDays(priceObservedAt, now),
+        PriceBillable = PricingPolicy.IsBillable(inputPrice, outputPrice, pricePerCall, priceCurrency),
         CreatedAt = d.AsNullableUtcDateTime("CreatedAt").ToIso(),
         UpdatedAt = d.AsNullableUtcDateTime("UpdatedAt").ToIso(),
     };
@@ -15428,6 +18593,86 @@ static void ApplyModelOfferingUpdate(BsonDocument document, UpdateModelOfferingR
     }
 }
 
+/// <summary>
+/// 线路单价一句话。价格挂在**物理模型**上而不是对外模型上——同一个名字走不同上游本来就不同价，
+/// 强行统一就是在账上撒谎。登记不全时返回 null，由面板如实说「单价未登记」，绝不补零。
+/// </summary>
+static string? DescribeRoutePrice(ModelOfferingItem route, IReadOnlyDictionary<string, BsonDocument> modelById)
+{
+    if (!string.Equals(route.TargetKind, "model", StringComparison.OrdinalIgnoreCase)) return null;
+    if (!modelById.TryGetValue(route.TargetId, out var model)) return null;
+    // 缺币种不当 USD。
+    //
+    // 这里原先写着 `?? "USD"`——存量模型只有数字没有币种时，面板照样给它贴上 USD。
+    // 而记账那一侧对同一份数据判的是 stale_currency（不计入任何成本），存量归一又把
+    // 缺币种当 CNY：同一个数字在三个地方有三种读法，面板给的还是最不该错的那一种，
+    // 因为运维会照着它算账。
+    //
+    // 这是上一轮修 /v1/models 时该一起扫掉的同类（形状 6 的自查第三条：修完要横扫同类，
+    // 同一个取值口径在别处还有没有）。当时只改了那一处，于是同一个病在这里原样留着。
+    var currency = model.AsNullableString("PriceCurrency")?.Trim();
+    var hasCurrency = !string.IsNullOrEmpty(currency);
+    string Money(decimal value) => hasCurrency ? $"{currency} {value}" : $"{value}（币种未登记）";
+
+    var perCall = model.AsNullableDecimal("PricePerCall");
+    if (perCall is not null) return $"{Money(perCall.Value)} / 次";
+    var input = model.AsNullableDecimal("InputPricePerMillion");
+    var output = model.AsNullableDecimal("OutputPricePerMillion");
+    if (input is null && output is null) return null;
+    var inputText = input is null ? "未登记" : Money(input.Value);
+    var outputText = output is null ? "未登记" : Money(output.Value);
+    return $"入 {inputText} / 出 {outputText} 每百万 token";
+}
+
+/// <summary>
+/// 这个对外模型近 N 天的账。只累加算出了钱的那部分，算不出的单独计数——
+/// 把它们当零成本加进去会让这一屏看起来很省钱，而那正是缺价治理要避免的假象。
+/// </summary>
+static async Task<CallTraceLedger> BuildCallTraceLedgerAsync(
+    IMongoCollection<BsonDocument> logs,
+    HttpContext http,
+    string publicId,
+    int windowDays)
+{
+    var ledger = new CallTraceLedger { WindowDays = windowDays };
+    if (string.IsNullOrWhiteSpace(publicId)) return ledger;
+
+    var fb = Builders<BsonDocument>.Filter;
+    var toUtc = DateTime.UtcNow;
+    var fromUtc = toUtc.Date.AddDays(-(windowDays - 1));
+    var filter = TenantAccess.FilterTeamScope(http, fb.And(
+        fb.Gte("StartedAt", fromUtc),
+        fb.Lte("StartedAt", toUtc),
+        fb.Eq("LogicalModelPublicId", publicId)));
+
+    var group = new BsonDocument("$group", new BsonDocument
+    {
+        { "_id", BsonNull.Value },
+        { "calls", new BsonDocument("$sum", 1) },
+        { "usd", LogCostAggregation.UsdSum() },
+        // 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
+        //
+        // stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——
+        // 它和 unpriced 一样不进 USD 合计、不进预算。只数字面的 unpriced 会让这一屏
+        // 报「0 笔未计价」，而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外，
+        // 于是成本看起来偏低、而缺价治理这件事看起来已经做完了（形状 1：判据比它该管的范围窄）。
+        // 判据取值与 GatewayCostStatusNames 那张表同源，见 2861 行那处过滤——那里两种都算。
+        { "unpriced", LogCostAggregation.UnpricedCount() },
+        { "lastAt", new BsonDocument("$max", "$StartedAt") },
+    });
+    var pipeline = new EmptyPipelineDefinition<BsonDocument>()
+        .Match(filter)
+        .AppendStage<BsonDocument, BsonDocument, BsonDocument>(group);
+    var row = await logs.Aggregate(pipeline).FirstOrDefaultAsync();
+    if (row is null) return ledger;
+
+    ledger.Calls = row.AsNullableLong("calls") ?? 0;
+    ledger.CostUsd = row.AsNullableDecimal("usd") ?? 0m;
+    ledger.UnpricedCalls = row.AsNullableLong("unpriced") ?? 0;
+    ledger.LastCallAt = row.AsNullableUtcDateTime("lastAt").ToIso();
+    return ledger;
+}
+
 static LogicalModelItem MapLogicalModel(
     BsonDocument logical,
     IReadOnlyCollection<BsonDocument> offeringDocs,
@@ -15484,6 +18729,64 @@ static LogicalModelItem MapLogicalModel(
                 Notes = x.AsNullableString("Notes"),
             };
         }).ToList();
+
+    // 排队名次与跳过原因由服务端算好下发。判据只有一份（CallTracePlanner，与运行时
+    // GatewayRouteSelection 逐条对照），前端不再自己判——它此前那份
+    // 「enabled && healthStatus === 0」会把「降级但仍在承接」的线路显示成「没有主」，
+    // 而运行时照样在用它。
+    var strategy = logical.AsNullableString("RoutingStrategy") ?? "priority";
+
+    // 目标是否可用 = 那个物理模型（或兑换所）启用着，且它所属的上游也启用着。
+    // 运行时在按 Offering 查目标时用 requireEnabled 过滤掉不可用的；这里必须算出同一个答案，
+    // 否则面板会把一条指向已停用模型的线路报成「会落到它」——2026-09-14 就这么错过一次，
+    // 线上 default-chat 的队首 chat-latest 物理模型是停用的，而面板照样指着它。
+    bool TargetUsable(ModelOfferingItem offering)
+    {
+        if (string.Equals(offering.TargetKind, "exchange", StringComparison.OrdinalIgnoreCase))
+        {
+            /*
+              兑换所启用着还不够，要判到**别名**那一层。
+
+              运行时按 GatewayCatalogGate.ExchangeDeclares 判：这个兑换所声明过这条别名、
+              而且那一条是启用着的。只判「兑换所整体启用着」的话，一条指向已被摘掉或单独停用的
+              别名的线路会拿到一个正的排队名次，Quickstart 与调用全貌都说「会落到它」，
+              而真调用当场就被拒（第 62 轮 review）。判据用镜像类，不在这儿现写一份近似。
+            */
+            return exchangeById.TryGetValue(offering.TargetId, out var exchange)
+                && exchange.AsNullableBool("Enabled") == true
+                && ExchangeAliasPolicy.Declares(
+                    exchange,
+                    ExchangeAliasPolicy.EffectiveAlias(exchange, offering.UpstreamModelId));
+        }
+        // 判的是 `== true` 而不是「不等于 false」：缺字段的文档运行时那条查询一条都匹配不上，
+        // 控制面认它就会报出一个运行时用不了的队首（第 58 轮定的口径，这里同样适用）。
+        if (!modelById.TryGetValue(offering.TargetId, out var target)) return false;
+        if (target.AsNullableBool("Enabled") != true) return false;
+        var platformId = target.AsNullableString("PlatformId");
+        if (string.IsNullOrWhiteSpace(platformId)) return false;
+        return platformById.TryGetValue(platformId, out var platform)
+            && platform.AsNullableBool("Enabled") == true;
+    }
+
+    var candidates = offerings
+        .Select(x => new CallTracePlanner.RouteCandidate(
+            x.Id, x.Priority, x.Weight, x.HealthStatus, x.Enabled, TargetUsable(x)))
+        .ToList();
+    // seed 固定 0：面板是给人看的静态推演，不能每刷新一次换一个答案。
+    // 运行时那边的 seed 由 requestId 派生，所以按权重分配时面板不指名道姓，只给比例。
+    var queue = CallTracePlanner.Queue(candidates, CallTracePlanner.IsWeighted(strategy), 0);
+    var positionById = queue
+        .Select((x, index) => (x.Id, Position: index + 1))
+        .ToDictionary(x => x.Id, x => x.Position, StringComparer.Ordinal);
+    var candidateById = candidates.ToDictionary(x => x.Id, StringComparer.Ordinal);
+    foreach (var offering in offerings)
+    {
+        var candidate = candidateById[offering.Id];
+        offering.TargetUsable = candidate.TargetUsable;
+        offering.SkipReason = CallTracePlanner.SkipReason(candidate);
+        offering.QueuePosition = positionById.TryGetValue(offering.Id, out var position) ? position : 0;
+    }
+
     return new LogicalModelItem
     {
         Id = logicalId,
@@ -15494,6 +18797,9 @@ static LogicalModelItem MapLogicalModel(
         AllowedAppCallerCodes = logical.AsStringList("AllowedAppCallerCodes"),
         RoutingStrategy = logical.AsNullableString("RoutingStrategy") ?? "priority",
         Enabled = logical.AsNullableBool("Enabled") ?? true,
+        // 存量文档没有这个字段，缺失一律按「不是默认」——不能猜，猜错就是悄悄换掉兜底模型
+        IsDefaultForType = logical.AsNullableBool("IsDefaultForType") ?? false,
+        DefaultForAppCallerCodes = logical.AsStringList("DefaultForAppCallerCodes"),
         DisplayOrder = logical.AsNullableInt("DisplayOrder") ?? 100,
         Description = logical.AsNullableString("Description"),
         CreatedAt = logical.AsNullableUtcDateTime("CreatedAt").ToIso(),
@@ -15913,6 +19219,9 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> gwModels,
     IMongoCollection<BsonDocument> gwModelExchanges,
+    IMongoCollection<BsonDocument> gwLogicalModels,
+    IMongoCollection<BsonDocument> gwModelOfferings,
+    IMongoCollection<BsonDocument> gwMigrations,
     string tenantId,
     FilterDefinition<BsonDocument> filter,
     string? targetStatus,
@@ -15937,11 +19246,17 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
             gwPlatforms,
             gwModels,
             gwModelExchanges,
+            gwLogicalModels,
+            gwModelOfferings,
+            gwMigrations,
             tenantId,
             effectiveStatus,
             effectiveModelPoolId,
             effectiveModelPolicy,
-            doc.GetStringOrEmpty("RequestType"));
+            doc.GetStringOrEmpty("RequestType"),
+            allowedModelPoolIds: GetStringArray(doc, "AllowedModelPoolIds"),
+            defaultModelPoolId: doc.AsNullableString("DefaultModelPoolId"),
+            appCallerCode: doc.AsNullableString("AppCallerCode"));
         if (error is not null)
         {
             var code = doc.AsNullableString("AppCallerCode") ?? doc.GetStringOrEmpty("_id");
@@ -15951,18 +19266,266 @@ static async Task<string?> ValidateBulkActiveGatewayAppCallerConfigAsync(
     return null;
 }
 
+/// <summary>
+/// 「其余那些为什么没落到它」——按真实构成如实说，不写死成某几种。
+///
+/// 上一版这句话写死了「配了专属池或未放行」。断流之后原因变成了「被别的模型认领了」，
+/// 那句总结就开始说不准——逐调用方那一栏是对的，总结却在撒一个小谎。
+/// 判据要么来自数据，要么就别下结论（形状 1：判据比它该管的范围窄）。
+///
+/// 2026-09-16 模型池退场，「配了专属池」这一档跟着消失：运行时不再看 AllowedModelPoolIds，
+/// 只要放行就认这张目录。剩下三种真实原因——被别的模型认领、未放行、这个用途的默认不是它。
+/// </summary>
+static string DescribeMissReasons(IReadOnlyList<CallTraceUnnamedCaller> callers)
+{
+    var parts = new List<string>();
+    var rejected = callers.Count(x => string.Equals(x.Reach, nameof(CallTracePlanner.CallerReach.TrafficRejected), StringComparison.Ordinal));
+    var claimed = callers.Count(x => !x.ReachesThisModel && x.Verdict.Contains("认领了", StringComparison.Ordinal));
+    var other = callers.Count(x => !x.ReachesThisModel) - rejected - claimed;
+    if (claimed > 0) parts.Add($"{claimed} 个被别的模型认领");
+    if (rejected > 0) parts.Add($"{rejected} 个未放行");
+    if (other > 0) parts.Add($"{other} 个这个用途的默认不是它");
+    return parts.Count == 0 ? "没有别人" : string.Join("、", parts);
+}
+
+/// <summary>
+/// 不点名的请求，这个用途下有没有对外模型接得住这个调用方；接得住就回它的 PublicId。
+///
+/// 判据与运行时 <c>TryResolveDefaultLogicalModelAsync</c> **两层逐条对齐**：
+///   1. 有没有模型认领了这个调用方（DefaultForAppCallerCodes）
+///   2. 没有，才看这个用途标了默认的那个
+///
+/// 「有一条线路」这件事同样要按运行时的口径判，不能只看 Offering 的 Enabled 开关。
+/// 运行时还会拒掉：健康档是 Unavailable 的、目标模型或它的平台已停用或压根不在了的、
+/// 以及这个对外模型的授权名单不含该调用方的。只看 Enabled 的后果是**闸门放行、请求全灭**——
+/// 发布门禁说「都有人接」，而每一条真实请求回 MODEL_NOT_FOUND，
+/// 那比没有闸门更糟：它让人以为这件事已经验过了（形状 8：拿一份不成立的证据当成证明）。
+///
+/// 为什么这个判据必须在写入侧也有一份：把调用方改成 active 却没人接得住，它不会当场报错，
+/// 而是等到第一个真实请求才静默失败。守卫钉住两边的顺序一致。
+/// </summary>
+static async Task<string?> FindUnnamedCatcherAsync(
+    IMongoCollection<BsonDocument> gwLogicalModels,
+    IMongoCollection<BsonDocument> gwModelOfferings,
+    IMongoCollection<BsonDocument> gwModels,
+    IMongoCollection<BsonDocument> gwPlatforms,
+    IMongoCollection<BsonDocument> gwModelExchanges,
+    IMongoCollection<BsonDocument> gwMigrations,
+    string tenantId,
+    string? requestType,
+    string? appCallerCode)
+{
+    if (string.IsNullOrWhiteSpace(requestType)) return null;
+    var fb = Builders<BsonDocument>.Filter;
+    var tenantFilter = fb.Eq("TenantId", tenantId);
+    var basics = fb.And(tenantFilter, fb.Eq("Enabled", true), fb.Eq("ModelType", requestType));
+
+    // 目标可用性要查三张表，但一次调用里只查一遍——候选模型通常不止一个，
+    // 逐个去打库会把一次发布门禁变成几十次往返。
+    HashSet<string>? enabledPlatformIds = null;
+    Dictionary<string, BsonDocument>? enabledModelById = null;
+    Dictionary<string, BsonDocument>? enabledExchangeById = null;
+
+    /*
+      名录门这道闸也要判。
+
+      运行时在解析出口上还有一道 ApplyCatalogGateAsync：名录外、又没盖放行标记的模型
+      一律回 MODEL_NOT_IN_CATALOG。这道闸不判的话，一条「模型启用、平台启用」但过不了
+      名录门的线路会被算成可用——发布闸放行，而经这条线路的每一次请求都失败。
+
+      「要不要拦」的权威判据是两半：配置没降到 observe，且控制台那几条补标记迁移都跑完了。
+      控制台读不到数据面进程的配置（那是另一个容器的 IConfiguration），所以这里只能判后一半。
+      差别只在「有人用 observe 降过档」这一种紧急情况下出现，而那时这道闸会比运行时严
+      （报「没人接得住」）——宁可这样，也不能反过来放行一条必失败的线路。
+    */
+    bool? catalogGateEnforces = null;
+    async Task<bool> CatalogGateEnforcesAsync()
+        => catalogGateEnforces ??= await CatalogGatePolicy.EnforcesAsync(gwMigrations);
+
+    async Task EnsureTargetsLoadedAsync()
+    {
+        /*
+          启用判据要与运行时**逐字**相同：`Enabled == true`，不是「不等于 false」。
+
+          两者只在一种输入上分道扬镳：文档里压根没有 Enabled 这个字段（存量数据、直接写库）。
+          `Ne("Enabled", false)` 认它，而运行时那条 `Eq(x => x.Enabled, true)` 在服务端匹配，
+          缺字段的文档一条都匹配不上。于是这道闸说「这个调用方有人接得住」，而每一个请求都解析
+          不到——控制面替数据面打了包票，包票是假的（第 58 轮 review；形状 1：判据比它该管的
+          范围窄，「缺字段」这一种输入让两边给出相反答案）。
+          这里跟紧的一侧是运行时：控制面可以比运行时严，绝不能比它松。
+        */
+        if (enabledPlatformIds is not null) return;
+        enabledPlatformIds = (await gwPlatforms.Find(fb.And(tenantFilter, fb.Eq("Enabled", true)))
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync())
+            .Select(x => x.GetStringOrEmpty("_id"))
+            .Where(x => x.Length > 0)
+            .ToHashSet(StringComparer.Ordinal);
+        // 取整份模型文档：名录门要判它的模型名与放行标记，不只是平台 id。
+        enabledModelById = (await gwModels.Find(fb.And(tenantFilter, fb.Eq("Enabled", true)))
+                .Project(Builders<BsonDocument>.Projection
+                    .Include("_id").Include("PlatformId").Include("ModelName")
+                    .Include("ModelNameNormalized").Include("AllowedOutsideCatalog"))
+                .ToListAsync())
+            .Where(x => x.GetStringOrEmpty("_id").Length > 0)
+            .GroupBy(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+        // 取整份兑换所文档而不只是 id：下面要判到**别名**那一层，
+        // 只判「兑换所启用着」会把一条别名已被摘掉或单独停用的线路算成可用。
+        enabledExchangeById = (await gwModelExchanges.Find(fb.And(tenantFilter, fb.Eq("Enabled", true)))
+                .Project(Builders<BsonDocument>.Projection
+                    .Include("_id").Include("ModelAlias").Include("ModelAliases").Include("Models"))
+                .ToListAsync())
+            .Where(x => x.GetStringOrEmpty("_id").Length > 0)
+            .GroupBy(x => x.GetStringOrEmpty("_id"), StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.Ordinal);
+    }
+
+    async Task<bool> HasRuntimeUsableRouteAsync(string logicalId)
+    {
+        var offerings = await gwModelOfferings.Find(fb.And(
+            tenantFilter,
+            fb.Eq("LogicalModelId", logicalId),
+            fb.Eq("Enabled", true),
+            // 健康档 2 = Unavailable。运行时会跳过它，闸门也必须跳过——
+            // 全部线路都是 Unavailable 的模型接不住任何请求。
+            fb.Ne("HealthStatus", 2))).ToListAsync();
+        if (offerings.Count == 0) return false;
+
+        await EnsureTargetsLoadedAsync();
+        foreach (var offering in offerings)
+        {
+            var targetId = offering.GetStringOrEmpty("TargetId");
+            if (targetId.Length == 0) continue;
+            if (string.Equals(offering.AsNullableString("TargetKind"), "exchange", StringComparison.OrdinalIgnoreCase))
+            {
+                /*
+                  判到**别名**那一层，不是只判兑换所文档启用。
+
+                  线路打给上游的是哪一个别名由 UpstreamModelId 决定（没写就回落到主别名）。
+                  管理员把一条别名从兑换所里摘掉、或单独停掉之后，兑换所照样启用着，
+                  而运行时按 ExchangeDeclares 把这条线路整条跳过。只判 id 的话，
+                  这道闸会说「有能用的线路」，而那个调用方一条路都走不通——闸门替一条
+                  不存在的路作了保。判据与写入侧、与运行时同一份（ExchangeAliasPolicy）。
+                */
+                if (!enabledExchangeById!.TryGetValue(targetId, out var exchange)) continue;
+                var exchangeAlias = ExchangeAliasPolicy.EffectiveAlias(
+                    exchange, offering.AsNullableString("UpstreamModelId"));
+                if (CatalogGatePolicy.ExchangeRoutePasses(
+                        exchange,
+                        offering.AsNullableString("UpstreamModelId"),
+                        await CatalogGateEnforcesAsync()))
+                {
+                    return true;
+                }
+                continue;
+            }
+            // 目标模型在不在、启用没有，以及它挂的平台启用没有——运行时这三样缺一条都解析不出来。
+            if (!enabledModelById!.TryGetValue(targetId, out var targetModel)) continue;
+            var targetPlatformId = targetModel.GetStringOrEmpty("PlatformId");
+            if (targetPlatformId.Length == 0 || !enabledPlatformIds!.Contains(targetPlatformId)) continue;
+            // 名录门判的是这条线路**实际打出去的那个名字**（UpstreamModelId 覆盖之后），
+            // 不是目标文档自己的名字——与对外清单、就绪探针、运行时同一个取值口径。
+            var effectiveUpstream = offering.AsNullableString("UpstreamModelId") is { Length: > 0 } overridden
+                ? overridden.Trim()
+                : targetModel.GetStringOrEmpty("ModelName");
+            var gateEnforces = await CatalogGateEnforcesAsync();
+            // 名录内零额外开销；只有名录外的才多一次带索引的读，与运行时同一个顺序。
+            // 同名判据走共享谓词，不在这里拼第四份：原样名那一支按字节比的话，存量文档
+            // （没有 ModelNameNormalized 的那种）库里存着 `Foo`、线路覆盖成 `foo` 时两支都查不到，
+            // PhysicalRoutePasses 把空结果读成「管不着」放行，于是这道闸给一条运行时会拒的线路发了证
+            // ——而运行时用的正是同一个判据的另一份，按不分大小写查得到、判 MODEL_NOT_IN_CATALOG。
+            // 闸说能接、运行时每次都拒（第 78 轮 review；形状 3 的第四次同一处）。
+            var sameName = !gateEnforces || ModelCatalog.Contains(effectiveUpstream)
+                ? []
+                : await gwModels.Find(fb.And(
+                    tenantFilter,
+                    fb.Eq("PlatformId", targetPlatformId),
+                    CatalogGatePolicy.SameNameFilter(effectiveUpstream))).ToListAsync();
+            if (CatalogGatePolicy.PhysicalRoutePasses(effectiveUpstream, sameName, gateEnforces))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /*
+      这个模型接不接得住这个调用方——**授权名单与场景能力是同一道门**。
+
+      运行时走的是 ResolveFromLogicalModelAsync 里那句 SupportsAppCallerScenario：
+      它先看授权名单，再看这个调用方要的场景能力（text2img / img2img / vision_generation …）
+      模型具不具备。这道闸原来只判了前一半，于是一个只会文生图的模型会被判成
+      「接得住图生图调用方」，发布闸放行，而运行时对那个调用方的每一次请求都回能力不匹配。
+
+      判据走控制台这一侧的镜像（LogicalModelCapabilityPolicy，与权威实现有逐条对照守卫），
+      不在这里再写一份近似。
+    */
+    // 空 code 也原样交给它判，不在外面加一道自己的门：运行时就是这么判的
+    // （名单非空 → 拒；名单为空且没有场景要求 → 放行）。在这里额外拦一手就比运行时窄了。
+    static bool AllowsCaller(BsonDocument logical, string? code)
+        => LogicalModelCapabilityPolicy.SupportsAppCallerScenario(
+            GetStringArray(logical, "Capabilities"),
+            GetStringArray(logical, "AllowedAppCallerCodes"),
+            code ?? string.Empty);
+
+    /*
+      挑选与「这一条能不能用」的顺序不能颠倒，这道闸和运行时、和 serving 就绪探针同序。
+
+      运行时是：先按认领选出**那一条**，再去解析它；解析不出来就如实失败，
+      **不会**回头去试用途默认（TryResolveDefaultLogicalModelAsync 里第二层写的是
+      `logical ??=`——只在第一层一条都没查到时才走，而不是在第一层那条不可用时才走）。
+
+      上一版这里是「一边挑一边筛」：认领了这个调用方、但授权不通或线路全挂的模型被跳过，
+      循环接着去试用途默认，于是一个「认领坏了 + 默认健康」的调用方在这道闸上判绿——
+      而它真实的不点名请求每一次都失败。闸门替另一条根本不会走的路作了保。
+    */
+    // 认领那一层的过滤器由调用方拼好传进来，所以 collation 只能挂在这里。
+    // 不挂的话这道闸按字节比，而运行时（ModelResolver）按身份规则比：认领登记成 Foo、
+    // 调用方是 foo 时，闸挑的是用途默认、运行时挑的是认领它的那个模型——两边选中不同的模型，
+    // 闸于是替一条根本不会走的路作了保（第 78 轮 review）。
+    // 用途默认那一层不含字符串比较，多带一个 collation 无副作用，共用一个入口更不容易漏。
+    async Task<BsonDocument?> FirstAsync(FilterDefinition<BsonDocument> filter)
+        => await gwLogicalModels.Find(filter, new FindOptions { Collation = AppCallerIdentityPolicy.Collation })
+            .Sort(Builders<BsonDocument>.Sort.Ascending("DisplayOrder").Ascending("PublicId"))
+            .FirstOrDefaultAsync();
+
+    async Task<string?> NameIfUsableAsync(BsonDocument doc)
+    {
+        if (!AllowsCaller(doc, appCallerCode)) return null;
+        if (!await HasRuntimeUsableRouteAsync(doc.GetStringOrEmpty("_id"))) return null;
+        return doc.AsNullableString("PublicId") ?? doc.GetStringOrEmpty("_id");
+    }
+
+    // 第一层：谁认领了它。认领是排他的——挑中之后成败就看它自己，不再往下找。
+    if (!string.IsNullOrWhiteSpace(appCallerCode))
+    {
+        var claimed = await FirstAsync(
+            fb.And(basics, fb.AnyEq("DefaultForAppCallerCodes", appCallerCode)));
+        if (claimed is not null) return await NameIfUsableAsync(claimed);
+    }
+
+    // 第二层：这个用途的默认。只有「一条认领都没有」时才走到这里。
+    var typeDefault = await FirstAsync(fb.And(basics, fb.Eq("IsDefaultForType", true)));
+    return typeDefault is null ? null : await NameIfUsableAsync(typeDefault);
+}
+
 static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     IMongoCollection<BsonDocument> gwModelPools,
     IMongoCollection<BsonDocument> gwPlatforms,
     IMongoCollection<BsonDocument> gwModels,
     IMongoCollection<BsonDocument> gwModelExchanges,
+    IMongoCollection<BsonDocument> gwLogicalModels,
+    IMongoCollection<BsonDocument> gwModelOfferings,
+    IMongoCollection<BsonDocument> gwMigrations,
     string tenantId,
     string? status,
     string? modelPoolId,
     string? modelPolicy,
     string? requestType,
     IReadOnlyList<string>? allowedModelPoolIds = null,
-    string? defaultModelPoolId = null)
+    string? defaultModelPoolId = null,
+    string? appCallerCode = null)
 {
     if (!string.Equals(status, "active", StringComparison.OrdinalIgnoreCase))
     {
@@ -15973,6 +19536,28 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     if (normalizedModelPolicy is not ("auto" or "pool" or "pinned"))
     {
         return "active appCaller 必须使用 modelPolicy=auto/pool/pinned；auto 使用调用方默认池，pool 使用指定池，pinned 保留精确模型意图。";
+    }
+
+    /*
+      「谁接得住不点名的请求」**无条件**要判，不看调用方身上还留着什么池字段。
+
+      原来的写法是：有残留池绑定就整个跳过这道判断，转而去校验那个池。而运行时早就不读
+      ModelPoolId / AllowedModelPoolIds / DefaultModelPoolId 了，于是这个分支两头都错——
+      一个健康的旧池能替一个「其实没有对外模型接得住」的调用方背书（假绿）；
+      一个已被删掉的旧池又会拦住与它无关的治理改动（误伤），而它指的那个 /pools 页面
+      现在 302 到对外模型页、写端点全删了，那条错误信息给不出任何可执行的下一步。
+
+      判据换成真正在跑的那一条：不点名的请求得有人接得住（认领 → 用途默认，两层都要求
+      启用、授权放行、且真有一条运行时可用的线路）。
+    */
+    var catcher = await FindUnnamedCatcherAsync(
+        gwLogicalModels, gwModelOfferings, gwModels, gwPlatforms, gwModelExchanges, gwMigrations,
+        tenantId, requestType, appCallerCode);
+    if (catcher is null)
+    {
+        return $"active appCaller 在 {requestType} 这个用途下没有对外模型接得住它："
+            + "要么在模型页给某个对外模型「指定调用方」认领它，要么给这个用途设一个默认模型"
+            + "（它得启用、授权放行、并且至少有一条健康的线路指向启用的上游）。";
     }
 
     var strictPoolIds = (allowedModelPoolIds ?? [])
@@ -15988,67 +19573,35 @@ static async Task<string?> ValidateActiveGatewayAppCallerConfigAsync(
     }
     if (string.IsNullOrWhiteSpace(effectivePoolId))
     {
-        return "active appCaller 必须绑定 llm_gateway.llmgw_model_pools 中的 GW 权威模型池。";
+        return null;
     }
 
-    var pool = await gwModelPools
-        .Find(Builders<BsonDocument>.Filter.And(
-            Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
-            Builders<BsonDocument>.Filter.Eq("_id", effectivePoolId)))
-        .FirstOrDefaultAsync();
-    if (pool is null)
+    /*
+      还带着池绑定的调用方，点名发的是**池 ID**（model_policy=pool 那套契约还在外面活着）。
+      池路由已经删了，那条请求现在靠「对外模型记住了自己是从哪个池搬来的」接住
+      （MigratedFromPoolIds）。所以这里要校验的不再是那个池文档本身，而是它的后继——
+      去查已经不参与解析的旧池，只能得出一个与真实行为无关的结论。
+    */
+    var successor = await gwLogicalModels.Find(Builders<BsonDocument>.Filter.And(
+        Builders<BsonDocument>.Filter.Eq("TenantId", tenantId),
+        Builders<BsonDocument>.Filter.Eq("Enabled", true),
+        Builders<BsonDocument>.Filter.AnyEq("MigratedFromPoolIds", effectivePoolId))).FirstOrDefaultAsync();
+    if (successor is null)
     {
-        return $"active appCaller 绑定的模型池 {effectivePoolId} 不是 GW 权威模型池；请先在 /pools 认领或创建。";
+        return $"active appCaller 还绑着模型池 {effectivePoolId}，但没有任何对外模型记着它是从这个池搬来的："
+            + "池路由已经退场，按池 ID 点名的请求会解析不到。先跑一次 POST /gw/pools/migrate-to-models "
+            + "把这个池搬成对外模型，或把这个调用方改成不点名（由认领或用途默认接住）。";
     }
 
-    var poolType = pool.AsNullableString("ModelType");
-    if (!string.IsNullOrWhiteSpace(poolType)
+    var successorType = successor.AsNullableString("ModelType");
+    if (!string.IsNullOrWhiteSpace(successorType)
         && !string.IsNullOrWhiteSpace(requestType)
-        && !string.Equals(poolType, requestType, StringComparison.OrdinalIgnoreCase))
+        && !string.Equals(successorType, requestType, StringComparison.OrdinalIgnoreCase))
     {
-        return $"active appCaller 绑定的 GW 模型池类型 {poolType} 与调用类型 {requestType} 不一致。";
-    }
-
-    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
-    {
-        return $"active appCaller 默认使用的 GW 模型池 {effectivePoolId} 没有可解析、非 unavailable 的成员；请先在 /pools 补齐 enabled 模型或 Exchange。";
+        return $"active appCaller 绑定的池搬迁成的对外模型是 {successorType} 用途，与调用类型 {requestType} 不一致。";
     }
 
     return null;
-}
-
-static async Task<string?> ValidateDefaultGatewayPoolMembersAsync(
-    IMongoCollection<BsonDocument> gwModelPoolTypes,
-    IMongoCollection<BsonDocument> gwPlatforms,
-    IMongoCollection<BsonDocument> gwModels,
-    IMongoCollection<BsonDocument> gwModelExchanges,
-    BsonDocument pool,
-    BsonArray nextModels)
-{
-    if (!await IsCurrentDefaultPoolAsync(gwModelPoolTypes, pool))
-    {
-        return null;
-    }
-
-    var nextPool = new BsonDocument(pool)
-    {
-        ["Models"] = nextModels,
-    };
-    if (await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, nextPool))
-    {
-        return null;
-    }
-
-    // 池子在改动之前就已经零可用成员时，这条守卫拦不住任何损害——损害早就发生了，
-    // 它只会把「唯一能修好它的那次改动」一起挡在门外，形成谁也解不开的死锁
-    // （判据取的是变更前的状态，却用来 gate 那个会改变该状态的变更）。
-    // 所以只在「本次改动确实把一个原本可用的默认池弄成不可用」时才拒绝。
-    if (!await HasUsableGatewayPoolMemberAsync(gwPlatforms, gwModels, gwModelExchanges, pool))
-    {
-        return null;
-    }
-
-    return "默认模型池必须保留至少一个可用成员；请先添加可用模型，再删除或覆盖现有成员。";
 }
 
 static async Task<bool> HasUsableGatewayPoolMemberAsync(
@@ -16262,46 +19815,6 @@ static List<string> GetStringArray(BsonDocument d, string field)
         .Select(x => x.AsString)
         .Distinct(StringComparer.Ordinal)
         .ToList();
-}
-
-static List<string> GetReferencedModelPoolIds(BsonDocument d)
-{
-    var ids = new List<string>();
-    void Add(string? value)
-    {
-        if (!string.IsNullOrWhiteSpace(value) && !ids.Contains(value, StringComparer.Ordinal))
-            ids.Add(value);
-    }
-
-    Add(d.AsNullableString("ModelPoolId"));
-    Add(d.AsNullableString("DefaultModelPoolId"));
-    foreach (var id in GetStringArray(d, "AllowedModelPoolIds")) Add(id);
-    return ids;
-}
-
-static bool AllReferencedModelPoolsExist(BsonDocument d, HashSet<string> gatewayPoolIds)
-{
-    var references = GetReferencedModelPoolIds(d);
-    return references.Count > 0 && references.All(gatewayPoolIds.Contains);
-}
-
-static bool IsAppCallerUsable(BsonDocument d, HashSet<string> usablePoolIds)
-{
-    var references = GetReferencedModelPoolIds(d);
-    if (references.Count == 0) return false;
-
-    var defaultPoolId = d.AsNullableString("DefaultModelPoolId")
-        ?? d.AsNullableString("ModelPoolId");
-    if (string.IsNullOrWhiteSpace(defaultPoolId))
-        return references.Any(usablePoolIds.Contains);
-
-    // 默认关闭跨池回退：默认池不可用时，即使次选池健康，也不能把
-    // “可发布/可用”报告成 true，因为真实请求仍只会命中默认池。
-    if (usablePoolIds.Contains(defaultPoolId)) return true;
-    var allowCrossPoolFallback = d.AsNullableBool("AllowCrossPoolFallback") ?? false;
-    return allowCrossPoolFallback
-        && references.Any(poolId => !string.Equals(poolId, defaultPoolId, StringComparison.Ordinal)
-                                    && usablePoolIds.Contains(poolId));
 }
 
 static OperationAuditItem MapOperationAudit(BsonDocument d)
@@ -16831,4 +20344,155 @@ static async Task RunGatewayRecoveryLoopAsync(
     catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
     {
     }
+}
+
+/// <summary>
+/// 这条日志算没算出钱。新日志直接读 CostStatus；2026-09 之前的存量日志没有这个字段，
+/// 才按「有 token 就得有对应单价」反推一遍，口径与当时的写入侧一致。
+/// </summary>
+static string ResolveLogCostStatus(BsonDocument d)
+{
+    var status = d.AsNullableString("CostStatus")?.Trim().ToLowerInvariant();
+    if (status is GatewayCostStatusNames.Priced
+        or GatewayCostStatusNames.Unpriced
+        or GatewayCostStatusNames.StaleCurrency
+        or GatewayCostStatusNames.NoUsage)
+    {
+        return status;
+    }
+
+    var inputTokens = d.AsNullableInt("InputTokens") ?? 0;
+    var outputTokens = d.AsNullableInt("OutputTokens") ?? 0;
+    if (inputTokens <= 0 && outputTokens <= 0 && d.AsNullableDecimal("EstimatedCost") is null)
+    {
+        return GatewayCostStatusNames.NoUsage;
+    }
+
+    var complete = (inputTokens <= 0 || d.AsNullableDecimal("InputPricePerMillion") is not null)
+        && (outputTokens <= 0 || d.AsNullableDecimal("OutputPricePerMillion") is not null);
+    if (!complete || d.AsNullableDecimal("EstimatedCost") is null)
+    {
+        return GatewayCostStatusNames.Unpriced;
+    }
+
+    /*
+      非美金的存量行一律算「口径待迁移」，不算已计价。
+
+      NormalizePriceCurrency 认 CNY 与 USD 两种（它的用途是校验入参），拿它当
+      「算没算出美金」的判据就会把一条 CNY 的存量行标成 priced——而计价器把一切非美金
+      判成 stale_currency、聚合那一侧又因为 EstimatedCostUsd 为空把同一行算进 unpriced。
+      同一行三处三个说法，摘要于是虚报覆盖率（形状 3：判据分裂各自漂移）。
+      这套账只认美金，判据也只认美金。
+    */
+    return string.Equals(
+        NormalizePriceCurrency(d.AsNullableString("EstimatedCostCurrency")),
+        GatewayCostStatusNames.BillingCurrency,
+        StringComparison.Ordinal)
+        ? GatewayCostStatusNames.Priced
+        : GatewayCostStatusNames.StaleCurrency;
+}
+
+/// <summary>
+/// 网关写进日志的成本状态取值。console-api 是独立工程、引用不到网关那份常量，
+/// 只能在这里复述一份；两边漂移会让统计口径和写入口径对不上，所以由
+/// <c>GatewayCostStatusMirrorGuardTests</c> 从源码上钉住。
+/// </summary>
+static class GatewayCostStatusNames
+{
+    /// <summary>这套账只认这一种币种，与 GatewayCostCalculator.BillingCurrency 同值（镜像守卫钉住）。</summary>
+    public const string BillingCurrency = "USD";
+
+    public const string Priced = "priced";
+    public const string Unpriced = "unpriced";
+    public const string StaleCurrency = "stale_currency";
+    public const string NoUsage = "no_usage";
+}
+
+/// <summary>
+/// 聚合侧的「这条调用算没算出钱」。它是 <see cref="ResolveLogCostStatus"/> 在 Mongo 表达式里的镜像。
+///
+/// 为什么非要镜像不可：2026-09 之前的存量日志没有 CostStatus 字段，而聚合里写
+/// `$eq CostStatus priced` 时 Mongo 对缺字段判 false——那批**算出过钱**的日志于是一律记 0，
+/// 模型卡与账本在上线当天就把历史花费报少了一截。`/gw/logs/summary` 那条路早就用
+/// ResolveLogCostStatus 回填了，两条路各判各的（形状 3：同一个判据分裂成两份然后各自漂移）。
+///
+/// 两个表达式都从这里取，调用点不许自己拼。
+/// </summary>
+static class LogCostAggregation
+{
+    /// <summary>显式判定为「算不出钱」的那几种状态：它们一律不进美金合计。</summary>
+    private static BsonArray NotPricedStatuses => new()
+    {
+        GatewayCostStatusNames.Unpriced,
+        GatewayCostStatusNames.StaleCurrency,
+        GatewayCostStatusNames.NoUsage,
+    };
+
+    /// <summary>这一档是不是存量日志（四种已知状态之外，含缺字段）。</summary>
+    private static BsonDocument IsLegacy => new("$not", new BsonArray
+    {
+        new BsonDocument("$in", new BsonArray
+        {
+            "$CostStatus",
+            new BsonArray
+            {
+                GatewayCostStatusNames.Priced,
+                GatewayCostStatusNames.Unpriced,
+                GatewayCostStatusNames.StaleCurrency,
+                GatewayCostStatusNames.NoUsage,
+            },
+        }),
+    });
+
+    /// <summary>
+    /// 累加进美金合计的那一部分。显式非计价的排除，其余按写入时算出的 EstimatedCostUsd 累加——
+    /// 那个字段本来就只在判定为已计价时才会有值（见 GatewayCostCalculator），存量日志同理。
+    /// </summary>
+    public static BsonDocument UsdSum() => new("$sum", new BsonDocument("$cond", new BsonArray
+    {
+        new BsonDocument("$in", new BsonArray { "$CostStatus", NotPricedStatuses }),
+        0,
+        new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", 0 }),
+    }));
+
+    /// <summary>
+    /// 「算不出钱的那些」= unpriced + stale_currency，两种都要数。
+    ///
+    /// stale_currency 的定义就是「有数字但币种过期或缺失，一律不计入成本」——它和 unpriced
+    /// 一样不进 USD 合计、不进预算。只数字面的 unpriced 会让这一屏报「0 笔未计价」，
+    /// 而实际有一批存量 CNY / 缺币种的流量正被静悄悄排除在外。
+    /// 存量日志按 ResolveLogCostStatus 的同一条口径回退：有用量、却没算出钱的，算未计价。
+    /// </summary>
+    public static BsonDocument UnpricedCount() => new("$sum", new BsonDocument("$cond", new BsonArray
+    {
+        new BsonDocument("$in", new BsonArray
+        {
+            "$CostStatus",
+            new BsonArray { GatewayCostStatusNames.Unpriced, GatewayCostStatusNames.StaleCurrency },
+        }),
+        1,
+        new BsonDocument("$cond", new BsonArray
+        {
+            new BsonDocument("$and", new BsonArray
+            {
+                IsLegacy,
+                new BsonDocument("$gt", new BsonArray
+                {
+                    new BsonDocument("$add", new BsonArray
+                    {
+                        new BsonDocument("$ifNull", new BsonArray { "$InputTokens", 0 }),
+                        new BsonDocument("$ifNull", new BsonArray { "$OutputTokens", 0 }),
+                    }),
+                    0,
+                }),
+                new BsonDocument("$eq", new BsonArray
+                {
+                    new BsonDocument("$ifNull", new BsonArray { "$EstimatedCostUsd", BsonNull.Value }),
+                    BsonNull.Value,
+                }),
+            }),
+            1,
+            0,
+        }),
+    }));
 }

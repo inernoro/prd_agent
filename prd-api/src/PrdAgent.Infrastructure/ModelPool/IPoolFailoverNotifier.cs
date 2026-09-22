@@ -31,5 +31,5 @@ public interface IPoolFailoverNotifier
     /// 通知大模型平台额度用尽 / key 被限额（OpenRouter "Key limit exceeded" 等）。
     /// 主动站内告警，提醒尽快充值或更换 API Key——避免额度不足时各功能静默失败、用户无从知晓。去重。
     /// </summary>
-    Task NotifyQuotaExceededAsync(string platformName, string message, CancellationToken ct = default);
+    Task NotifyQuotaExceededAsync(string? platformName, string? modelName, CancellationToken ct = default);
 }

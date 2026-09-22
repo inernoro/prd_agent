@@ -1,4 +1,5 @@
 import express from 'express';
+import { describeRestartWait, getRestartWait, resolveRestartStatus } from './services/self-restart-wait.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -123,6 +124,7 @@ import type { ServerEventLogSink, ServerEventCategory, ServerEventSeverity } fro
 import type { BranchOperationCoordinator } from './services/branch-operation-coordinator.js';
 import { computeBundleFreshness } from './services/bundle-freshness.js';
 import { isPreviewInstance } from './services/preview-instance.js';
+import { loadedPreviewMirrorSummary } from './services/preview-mirror.js';
 import { readBundledCdsCliVersion } from './services/cdscli-version.js';
 import {
   recommendSelfUpdateTargetBranch,
@@ -782,6 +784,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /uptime/monitors': '列出自定义监控',
     'POST /uptime/monitors': '新增自定义监控',
     'POST /uptime/monitors/test': '试探自定义监控',
+    'GET /cds-system/alarm-channels': '列出通知通道',
+    'POST /cds-system/alarm-channels': '新增通知通道',
     // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
     'POST /bug-reports': '提交缺陷反馈',
     'GET /bug-reports': '列出缺陷反馈',
@@ -885,6 +889,8 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /build-profiles/bulk-set-modes': '批量设置部署命令',
     'GET /export-config': '导出配置',
     'GET /reports': '列出验收报告',
+    'GET /reports/overview': '验收主页聚合',
+      'GET /reports/pipeline': '验收流水线总览',
     'POST /reports': '创建验收报告',
     'POST /reports/assets': '上传验收截图',
     'GET /report-folders': '列出报告文件夹',
@@ -977,6 +983,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /me': '获取当前用户',
     'GET /status': '获取系统状态',
     'GET /healthz': '健康检查',
+    'GET /self-check': 'CDS 自检',
     'GET /host-stats': '获取主机状态',
     'GET /cds-system/perf-health': '运维健康观测',
     'GET /state-stream': '订阅状态流',
@@ -1079,6 +1086,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/uptime\/targets\/(.+)\/probe$/, '立即探测目标'],
     [/^PUT \/uptime\/monitors\/[^/]+$/, '修改自定义监控'],
     [/^DELETE \/uptime\/monitors\/[^/]+$/, '删除自定义监控'],
+    [/^POST \/cds-system\/alarm-channels\/[^/]+\/drill$/, '演练通知通道'],
+    [/^PUT \/cds-system\/alarm-channels\/[^/]+$/, '修改通知通道'],
+    [/^DELETE \/cds-system\/alarm-channels\/[^/]+$/, '删除通知通道'],
     // 站内信：read-all 是静态路径（上面 staticMap 已覆盖），这里只需 :id 那条。
     // segment-safe `[^/]+`，别用贪婪 `(.+)`（PR #522 的教训：会跨 `/` 截胡）。
     [/^POST \/notices\/[^/]+\/dismiss$/, '忽略站内信'],
@@ -1460,6 +1470,9 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 载荷由 public-status-board 白名单构造。只放行读取，不放行开关。
   // 与 middleware/github-auth.ts 的 PUBLIC_PATHS 保持同步。
   if (method === 'GET' && /^\/api\/public\/status\/[a-f0-9]{32}$/.test(path)) return true;
+  // CDS 自检（2026-09-16）：CDS 用监控自发现协议监控自己，探测器从本机回环打这条。
+  // 出参只有数字与结论，不含地址、凭据、持有者身份。与 github-auth.ts PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/self-check') return true;
   return false;
 }
 
@@ -1720,6 +1733,15 @@ export function createServer(deps: ServerDeps): express.Express {
         })
       : undefined,
   );
+  {
+    // 启动收尸：上一个进程留下的在途 run 一律收掉，不等 15 分钟心跳阈值。
+    const startedIso = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT;
+    const startedAt = startedIso ? new Date(startedIso) : new Date();
+    const orphaned = deploymentRunService.reconcileOrphanedByRestart(startedAt);
+    if (orphaned.length > 0) {
+      console.warn(`[deployment-run] 启动收尸：${orphaned.length} 个被上一次重启打断的 run 已收敛为失败 (${orphaned.map((r) => r.id).join(', ')})`);
+    }
+  }
   deploymentRunService.reconcileInterrupted();
   // 周期收割（2026-07-16 队列堵死复盘）：此前 reconcileInterrupted 只在启动时
   // 跑一次，重启前心跳仍新鲜的 run 会在重启后永远卡在 building（观测到 24h+
@@ -2376,7 +2398,8 @@ export function createServer(deps: ServerDeps): express.Express {
   // ── 实例模式（公开，登录前后都可读）──
   // 预览实例（CDS 托管 CDS）时前端据此渲染顶部提示，避免用户把演示实例当生产。
   app.get('/api/instance-mode', (_req, res) => {
-    res.json({ previewInstance: isPreviewInstance() });
+    // mirror：预览实例装入的父实例镜像摘要（采集时刻 / 来源 / 条数），生产实例恒为 null。
+    res.json({ previewInstance: isPreviewInstance(), mirror: isPreviewInstance() ? loadedPreviewMirrorSummary() : null });
   });
 
   // ── AI pairing endpoints (before auth, some are public) ──
@@ -3408,17 +3431,27 @@ export function createServer(deps: ServerDeps): express.Express {
       }
       const pidStartedAt = (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT || null;
       const lastUpdate = history[0] || null;
-      // 与 branches.ts computeSelfStatusSnapshot 的判定保持一致：重启"已确认" =
-      // 当前进程的启动时刻晚于本次更新的开始时刻（pidStartedAt >= update.ts）。
-      // web-only 更新无需重启 → not_required，不再因 pidStartedAt 恒真而误报 completed。
-      const updateMs = lastUpdate?.ts ? Date.parse(lastUpdate.ts) : Number.NaN;
-      const pidMs = pidStartedAt ? Date.parse(pidStartedAt) : Number.NaN;
-      const restartStatus =
-        lastUpdate?.status === 'success' && lastUpdate.updateMode !== 'web-only'
-          ? (Number.isFinite(pidMs) && Number.isFinite(updateMs) && pidMs >= updateMs ? 'completed' : 'incomplete')
-          : lastUpdate?.status === 'deferred'
-            ? 'pending'
-            : 'not_required';
+      // 判定只在 self-restart-wait.ts 一处：这里是 cdscli 与维护页真正打的那个 /api/self-status，
+      // 以前自己比 pid 与更新时刻，排空等待期间会说 incomplete 而不是 pending，也没有 restartWait
+      // （Codex #1543 P2）。
+      const restartWaitState = getRestartWait();
+      const restartWait = restartWaitState
+        ? {
+            phase: restartWaitState.phase,
+            source: restartWaitState.source,
+            waitedMs: restartWaitState.waitedMs,
+            timeoutMs: restartWaitState.timeoutMs,
+            pendingRuns: restartWaitState.pendingRuns,
+            message: describeRestartWait(restartWaitState),
+          }
+        : null;
+      const restartStatus = resolveRestartStatus({
+        activeSelfUpdate: deps.stateService.getActiveSelfUpdate(),
+        restartWait: restartWaitState,
+        lastSelfUpdate: lastUpdate as { status?: string; updateMode?: string; ts?: string; noOp?: boolean } | null,
+        daemonReadyAt: deps.stateService.getState().daemonReadyAt || null,
+        pidStartedAt,
+      });
 
       res.json({
         currentBranch,
@@ -3435,6 +3468,7 @@ export function createServer(deps: ServerDeps): express.Express {
         runningPid: process.pid,
         pidStartedAt,
         restartStatus,
+        restartWait,
         lastSelfUpdate: lastUpdate,
         selfUpdateHistory: history,
         webBuildSha,

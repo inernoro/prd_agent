@@ -184,6 +184,9 @@ public sealed class ServingFaultTrackerTests
     // （predicate-and-wiring-discipline 形状 1：判据比它该管的范围宽）。
     private const string UnhandledCheckMarker = "[\"serving:unhandled-exceptions\"] = new object[]";
     private const string RequestsCheckMarker = "[\"serving:requests\"] = new object[]";
+    private const string ImageOutcomeCheckMarker = "[\"visual-image:recent-outcomes\"] = new object[]";
+    private const string ImageRequestsCheckMarker = "[\"visual-image:requests\"] = new object[]";
+    private const string DatabaseCheckMarker = "[\"db:roundtrip\"] = new object[]";
 
     /// <summary>取端点源码里某一条 check 的声明块（到下一条 check 开始为止）。</summary>
     private static string CheckBlock(string source, string startMarker, string? nextMarker)
@@ -261,5 +264,28 @@ public sealed class ServingFaultTrackerTests
         endpoints.ShouldContain(
             "!path.Equals(\"/gw/v1/healthz/deep\", StringComparison.OrdinalIgnoreCase)",
             customMessage: "深度自检必须留在免鉴权名单里，否则 CDS 探针打不进来");
+    }
+
+    [Fact]
+    public void MAP深度自检必须监控生图真实结果并携带样本量()
+    {
+        var program = File.ReadAllText(
+            Path.Combine(RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Program.cs"));
+        var outcomes = CheckBlock(program, ImageOutcomeCheckMarker, ImageRequestsCheckMarker);
+        var requests = CheckBlock(program, ImageRequestsCheckMarker, DatabaseCheckMarker);
+
+        program.ShouldContain(
+            "gatewayDb.LlmRequestLogs",
+            customMessage: "生图结果不能再用进程异常代替，必须读取网关已落库的真实调用结果");
+        program.ShouldContain(
+            "VisualModelPolicyService.AppCallers",
+            customMessage: "真实结果必须只统计与 MAP 生图路由相同的三个调用场景");
+        outcomes.ShouldContain("[\"componentId\"] = \"visual-image.recent-outcomes\"");
+        outcomes.ShouldContain("[\"cds:monitor\"]");
+        outcomes.ShouldContain(
+            "sampleComponentId = \"visual-image.requests\"",
+            customMessage: "零连续失败必须带真实样本量，否则零调用也会被误判为健康");
+        requests.ShouldContain("[\"componentId\"] = \"visual-image.requests\"");
+        requests.ShouldContain("[\"cds:monitor\"]");
     }
 }

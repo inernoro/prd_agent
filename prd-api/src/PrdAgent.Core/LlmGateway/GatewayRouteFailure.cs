@@ -96,8 +96,8 @@ public static class GatewayRouteFailure
     public static string AdminHint(string? failureCode)
         => failureCode switch
         {
-            RouteConfigIncompatible => "核对该 appCaller 的 AllowedModelPoolIds 与本次请求指定的模型池是否一致。",
-            AppCallerPoolUnbound => "在 GW 控制台为该 appCaller 绑定模型池，或激活对应的 requestType 默认池。",
+            RouteConfigIncompatible => "核对该 appCaller 的授权名单与本次请求点名的对外模型是否一致（模型页的授权调用方一栏）。",
+            AppCallerPoolUnbound => "在 GW 控制台让一个对外模型接住它：把它加进某个模型的「指定调用方」，或给这个 requestType 设一个默认模型。",
             ModelPoolEmpty => "该模型池没有成员，补充成员或改绑到有成员的池。",
             ModelPoolAllUnavailable => "池内成员全部熔断，检查上游可用性与半开恢复窗口。",
             LogicalModelCapabilityMismatch =>
@@ -109,7 +109,7 @@ public static class GatewayRouteFailure
             GatewayConfigUnavailable => "网关配置面不可读，先恢复配置数据库连通性，再复查路由。",
             ModelNotInCatalog =>
                 "选中的模型不在内置名录里，也没有被管理员显式放行——正常从控制台导入的模型不会出现这种状态，"
-                + "先确认它是怎么进库的（直接写库？旧数据？），再决定是从池里移除，还是到 Provider 页重新导入并显式放行。",
+                + "先确认它是怎么进库的（直接写库？旧数据？），再决定是把这条线路从模型上摘掉，还是到上游页补登名录并显式放行。",
             _ => "未分类的路由失败，请补充错误码分类后再处理。",
         };
 

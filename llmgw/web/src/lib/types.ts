@@ -186,8 +186,19 @@ export type LlmLogDetail = {
   outputImageCapturedAt?: string | null;
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
+  cachedInputPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
   pricePerCall?: number | null;
   priceCurrency?: string | null;
+  /** 价格来源：upstream / admin / migrated。 */
+  priceSource?: string | null;
+  priceObservedAt?: string | null;
+  /** 这次到底算没算出钱：priced / unpriced / stale_currency / no_usage。 */
+  costStatus?: string | null;
+  /** 算不出钱时的人话原因。 */
+  costUnpricedReason?: string | null;
+  estimatedCacheReadCost?: number | null;
+  estimatedCacheWriteCost?: number | null;
   estimatedInputCost?: number | null;
   estimatedOutputCost?: number | null;
   estimatedCallCost?: number | null;
@@ -311,6 +322,14 @@ export type LogsMeta = {
   operations: string[];
 };
 
+/** 一条缺价模型漏掉了多少次调用，以及为什么算不出钱。 */
+export type UnpricedModelBucket = {
+  model: string;
+  provider?: string | null;
+  requests: number;
+  status: 'unpriced' | 'stale_currency';
+  reason?: string | null;
+};
 export type LogsBucketItem = {
   key: string;
   count: number;
@@ -333,6 +352,16 @@ export type LogsSummaryData = {
   pricedRequests: number;
   unknownCostRequests: number;
   priceCoveragePercent: number;
+  /** 缓存命中省下的钱（按输入全价与缓存价的差额算）。没有缓存命中时为 null。 */
+  cacheSavingsUsd?: number | null;
+  /** 有用量但模型没配价，这些调用没计上钱。 */
+  unpricedRequests?: number;
+  /** 模型价格不是美金口径，不敢记账。 */
+  staleCurrencyRequests?: number;
+  /** 上游没返回 token 用量，无从计价。 */
+  noUsageRequests?: number;
+  /** 按漏掉的调用次数排的缺价模型清单。 */
+  topUnpricedModels?: UnpricedModelBucket[];
   estimatedCosts: { currency: string; amount: number; requests: number }[];
   averageDurationMs?: number | null;
   transportDistribution: LogsBucketItem[];
@@ -735,6 +764,8 @@ export type UpstreamModelItem = {
   priceCurrency?: string | null;
   priceSource?: string | null;
   alreadyImported: boolean;
+  /** 已登上白名单：有线路指向它，调用方按公开模型名请求找得到。与「已导入」是两件事 */
+  alreadyPublished: boolean;
   /** 用途来源：catalog = 内置名录查到的、upstream = 上游声明的、guess = 按标识猜的。 */
   capabilitySource: string;
   /** 是否在内置名录里。不在名录的要显式放行才准导入。 */
@@ -744,6 +775,50 @@ export type UpstreamModelItem = {
   acceptsImageInput: boolean;
   requiresImageInput: boolean;
 };
+/**
+ * 模型名录里的一条登记：这个模型「是什么」（算哪几种用途、能不能吃图）。
+ *
+ * 代码内置那张表只有二十来条，上游一出新模型就得改代码发版。补登让同一件事
+ * 变成在控制台填一次——同一个标识补登的赢，补登里没有的回落到内置那张表。
+ */
+export type CatalogEntryItem = {
+  /** 内置那份没有 id（它不可编辑，只能「照这条建一份」）。 */
+  id?: string;
+  canonicalId: string;
+  displayName: string;
+  vendor: string;
+  capabilities: string[];
+  acceptsImageInput: boolean;
+  requiresImageInput: boolean;
+  /** 等价写法：厂商前缀、日期快照、各网关的改名。命中任一即认作同一个模型。 */
+  aliases: string[];
+  notes?: string | null;
+  enabled?: boolean;
+  updatedAt?: string | null;
+};
+
+export type CatalogEntriesData = {
+  items: CatalogEntryItem[];
+  total: number;
+  /** 代码内置那张表。补登 0 条不等于系统什么都不认识。 */
+  builtinCount: number;
+  builtin: CatalogEntryItem[];
+  /** 运行时真正认的那几种用途。界面只让从这里挑，填别的当场拒。 */
+  knownCapabilities: string[];
+};
+
+export type UpsertCatalogEntryRequest = {
+  canonicalId?: string;
+  displayName?: string;
+  vendor?: string;
+  capabilities?: string[];
+  acceptsImageInput?: boolean;
+  requiresImageInput?: boolean;
+  aliases?: string[];
+  notes?: string | null;
+  enabled?: boolean;
+};
+
 export type UpstreamModelsData = {
   probedUrl: string;
   total: number;
@@ -777,6 +852,12 @@ export type ImportUpstreamModelsResult = {
   /** 模型已入库但没进默认池：池路由选不到它们，必须如实告知 */
   poolSyncFailed?: boolean;
   message?: string;
+  /** 这次新登上白名单的公开模型名。 */
+  whitelistedPublicIds?: string[];
+  /** 挂到已有公开模型名下的线路数——「一个模型多个来源」就是这么长出来的。 */
+  linkedToExistingCount?: number;
+  /** 白名单登记失败的原因。模型已入库、只是没登上名单，不许报成全绿。 */
+  whitelistMessage?: string | null;
 };
 
 // ── 模型（无密钥，仅 hasKey）──
@@ -807,10 +888,68 @@ export type ModelItem = {
   imageSizeControlMode?: ImageSizeControlMode;
   imageSizeFieldFormat?: ImageSizeFieldFormat | null;
   inputPricePerMillion?: number | null; outputPricePerMillion?: number | null;
+  /** 缓存命中输入单价。null 表示没配——计价时按输入全价算，不当免费。 */
+  cachedInputPricePerMillion?: number | null;
+  /** 写入缓存输入单价，Anthropic 一类按溢价收费的协议才用得上。 */
+  cacheWritePricePerMillion?: number | null;
   pricePerCall?: number | null; priceCurrency?: 'CNY' | 'USD' | null;
+  /** 价格来源：upstream 上游返回 / admin 人工录入 / migrated 由历史价换算。null 表示没有来源可考。 */
+  priceSource?: PriceSource | null;
+  priceObservedAt?: string | null;
+  priceUpdatedBy?: string | null;
+  /** 价格已到复核期（超过 30 天没看过，或压根没有观测时间）。 */
+  priceStale?: boolean;
+  priceAgeDays?: number | null;
+  /** 这份价格能不能用来记账：有价且币种是美金。false 的模型调用不会计入用量与限额。 */
+  priceBillable?: boolean;
   createdAt?: string | null; updatedAt?: string | null;
 };
+export type PriceSource = 'upstream' | 'admin' | 'migrated';
 export type ModelsData = { items: ModelItem[]; total: number };
+
+/** 一条模型被某个模型池引用的情况：继承档案价，还是用了自己的覆盖价。 */
+export type ModelPoolUsageItem = {
+  poolId: string;
+  poolName: string;
+  modelType?: string | null;
+  inherits: boolean;
+  inputPricePerMillion?: number | null;
+  outputPricePerMillion?: number | null;
+  cachedInputPricePerMillion?: number | null;
+  cacheWritePricePerMillion?: number | null;
+  pricePerCall?: number | null;
+  priceCurrency?: 'CNY' | 'USD' | null;
+  priceSource?: PriceSource | null;
+  priceObservedAt?: string | null;
+  priceUpdatedBy?: string | null;
+  /** 托管的只追加池，不接受从模型页改价。 */
+  managed: boolean;
+};
+export type ModelPoolUsageData = {
+  pools: ModelPoolUsageItem[];
+  inheritingCount: number;
+  overridingCount: number;
+};
+/**
+ * 改一条已有模型。真正参与计费的是模型池成员里的那份价格，所以改价时要一并交代
+ * 哪些池跟着改（syncPoolIds）；不在表里的池保留它自己的覆盖价。
+ */
+export type UpdateModelRequest = {
+  name?: string;
+  protocol?: string;
+  maxTokens?: number;
+  remark?: string;
+  inputPricePerMillion?: number;
+  outputPricePerMillion?: number;
+  cachedInputPricePerMillion?: number;
+  cacheWritePricePerMillion?: number;
+  pricePerCall?: number;
+  priceCurrency?: 'USD';
+  clearPricing?: boolean;
+  /** true 表示清掉最大输出 token 限制（改回不限制）；不能靠传 null，JSON 会把它省掉。 */
+  clearMaxTokens?: boolean;
+  syncPoolIds?: string[];
+};
 export type CreateModelRequest = {
   platformId: string;
   name?: string;
@@ -826,6 +965,8 @@ export type CreateModelRequest = {
   maxTokens?: number;
   inputPricePerMillion?: number;
   outputPricePerMillion?: number;
+  cachedInputPricePerMillion?: number;
+  cacheWritePricePerMillion?: number;
   pricePerCall?: number;
   priceCurrency?: 'CNY' | 'USD';
   remark?: string;
@@ -841,6 +982,12 @@ export type CreateModelResult = {
   poolTypesCreated: number;
   poolsCreated: number;
   modelsAppended: number;
+  /** 登上白名单后的公开模型名——调用方按它请求。为空表示没登上，模型在库里但调不通 */
+  publicId?: string | null;
+  /** 公开名已存在，这次是给它多挂了一条线路，不是新建了一个对外模型 */
+  linkedToExistingPublicId: boolean;
+  /** 没登上白名单时的原因与下一步；为空表示登上了 */
+  whitelistMessage?: string | null;
 };
 
 export type ModelOfferingItem = {
@@ -862,6 +1009,88 @@ export type ModelOfferingItem = {
   maxConcurrency?: number | null;
   rateLimitPerMinute?: number | null;
   notes?: string | null;
+  /** 为什么不参与这次排队；null 表示参与。服务端按唯一判据算好，前端不再自己判。 */
+  skipReason?: string | null;
+  /**
+   * 它指向的上游模型与所属 Provider 都还启用着吗。
+   * 分「熔断」与「上游被停用」两种状态要用它，而不是去匹配 skipReason 那句中文——
+   * 匹配文案的话，文案一改判据就悄悄失灵（用状态，不用渲染好的句子）。
+   */
+  targetUsable?: boolean;
+  /** 排队名次，1 就是这次会落到的那一条；0 表示不参与。 */
+  queuePosition: number;
+};
+
+/** 「不点名时会不会落到这个模型」在某一个调用方身上的答案。 */
+export type CallTraceUnnamedCaller = {
+  appCallerCode: string;
+  /** UsesModelCatalog 认对外模型目录 / TrafficRejected 不放行 */
+  reach: 'UsesModelCatalog' | 'TrafficRejected';
+  reachesThisModel: boolean;
+  verdict: string;
+};
+
+/** 判定流程图上的一条岔路。状态由后端下发，前端不推断。 */
+export type CallTraceFlowBranch = {
+  label: string;
+  outcome: string;
+  /** taken 确定走这支 / possible 取决于请求或调用方 / blocked 当前走不到 */
+  state: 'taken' | 'possible' | 'blocked';
+  note?: string | null;
+};
+
+/** 判定流程图上的一个节点；question 为空表示顺序节点，不分叉。 */
+export type CallTraceFlowNode = {
+  id: string;
+  question: string;
+  branches: CallTraceFlowBranch[];
+};
+
+/** 一个对外模型的调用全貌：点名它之后会发生什么，用当前真实状态回答。 */
+export type CallTraceData = {
+  publicId: string;
+  name: string;
+  modelType: string;
+  enabled: boolean;
+  isDefaultForType: boolean;
+  routingStrategy: string;
+  /** 第一屏那句结论。 */
+  conclusion: string;
+  gate: { enabled: boolean; openToAllCallers: boolean; allowedAppCallerCodes: string[]; summary: string };
+  unnamed: {
+    /** 模型这一侧的条件（是本用途的默认、启用着、有一条能接的线路）。不是「会落到它」的完整答案。 */
+    servesUnnamed: boolean;
+    currentDefaultPublicId?: string | null;
+    currentDefaultName?: string | null;
+    summary: string;
+    /** 这句话的主语：逐个调用方的结论。后端算好下发，前端不推断。 */
+    callers: CallTraceUnnamedCaller[];
+    callerCount: number;
+    reachingCallerCount: number;
+  };
+  routes: ModelOfferingItem[];
+  /** 判定流程图：架构文档第 3 节那张图，按这个模型此刻的状态点亮。 */
+  flow: CallTraceFlowNode[];
+  routeExtras: Array<{
+    offeringId: string;
+    weightPercent?: number | null;
+    priceSummary?: string | null;
+    lastFailedAt?: string | null;
+    /**
+     * 这条已摘掉的线路，下一条请求有没有可能被拿去做半开试探。
+     *
+     * 运行时在挑常规队列之前会先试着认领一条不可用线路顶到队首，所以「不参与」不等于
+     * 「这次一定用不到它」——不标出来，面板就在指着队首说「下一跳是它」而实际先打了别处。
+     */
+    halfOpenProbe?: boolean;
+  }>;
+  ledger: {
+    windowDays: number;
+    calls: number;
+    costUsd: number;
+    unpricedCalls: number;
+    lastCallAt?: string | null;
+  };
 };
 export type LogicalModelItem = {
   id: string;
@@ -872,6 +1101,13 @@ export type LogicalModelItem = {
   allowedAppCallerCodes: string[];
   routingStrategy: 'priority' | 'weighted';
   enabled: boolean;
+  /** 这个用途没点名模型时用它。同租户同用途最多一个——原来的「模型池默认池」就是它。 */
+  isDefaultForType: boolean;
+  /**
+   * 「对这些调用方而言，我是默认」——不点名时优先于 isDefaultForType。
+   * 授权名单回答「能不能点名我」，这一份回答「不点名时是不是我」，是两件事。
+   */
+  defaultForAppCallerCodes: string[];
   displayOrder: number;
   description?: string | null;
   createdAt?: string | null;
@@ -879,17 +1115,43 @@ export type LogicalModelItem = {
   offerings: ModelOfferingItem[];
 };
 export type LogicalModelsData = { items: LogicalModelItem[]; total: number };
+
+/** 逻辑模型近 N 天用量。白名单列表的趋势线与花费列都读它。 */
+export type LogicalModelUsageItem = {
+  publicId: string;
+  /** 日期刻度，与 dailyCalls 一一对应。 */
+  days: string[];
+  /** 每天的调用次数，没调用的那天是 0 而不是缺项——曲线才不会把空档画成连线。 */
+  dailyCalls: number[];
+  totalCalls: number;
+  totalTokens: number;
+  /** 只累加算得出钱的部分，缺价的不按零成本混进来。 */
+  totalCostUsd: number;
+  /** 缺价调用次数。大于零要在列表上标出来，否则花费会看着莫名其妙地低。 */
+  unpricedCalls: number;
+};
+export type LogicalModelUsageData = {
+  days: number;
+  from: string;
+  to: string;
+  items: LogicalModelUsageItem[];
+};
 export type CreateLogicalModelRequest = {
   publicId: string;
   name: string;
   modelType: string;
   capabilities: string[];
   allowedAppCallerCodes: string[];
+  /** 「对这些调用方而言我是默认」，不点名时优先于用途默认。 */
+  defaultForAppCallerCodes?: string[];
   routingStrategy: 'priority' | 'weighted';
   displayOrder?: number;
   description?: string;
 };
-export type UpdateLogicalModelRequest = Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>;
+export type UpdateLogicalModelRequest =
+  Partial<Omit<CreateLogicalModelRequest, 'publicId' | 'modelType'>>
+  /** 设为 true 会顶掉同用途原来的那个默认，接口会把顶掉了谁回给你。 */
+  & { isDefaultForType?: boolean };
 export type CreateModelOfferingRequest = {
   targetKind: 'model' | 'exchange';
   targetId: string;
@@ -1458,3 +1720,82 @@ export type SystemGatewayTestResult = {
   servedModel?: string;
   message: string;
 };
+
+// ── 生图模型契约（配在控制台，不用改代码不用发版）──────────────────────────────
+//
+// 这份契约（尺寸档位、参数格式、重命名映射）此前写死在 prd-api 的 ImageGenModelConfigs.cs 里，
+// 上游每出一个新生图模型就要改代码、发一次版。现在它是数据：这里配的赢，没配的回落到代码内置那份。
+
+export interface ImageGenConfigItem {
+  id: string;
+  /** 模型名匹配模式，通配符只能放结尾，如 nano-banana* */
+  modelIdPattern: string;
+  /** 匹配顺序，小的先匹配；同序时模式长的先匹配（长的更具体） */
+  matchOrder: number;
+  enabled: boolean;
+  displayName: string;
+  provider: string;
+  platformType?: string | null;
+  officialDocUrl?: string | null;
+  sizeConstraintType: string;
+  sizeConstraintDescription: string;
+  /** 键是 1k / 2k / 4k，值是该档位下的尺寸，写成「宽x高」 */
+  sizesByResolution: Record<string, string[]>;
+  /** 这个模型压根没有「选尺寸」这件事；勾了它就不能再配尺寸档位 */
+  sizesNotApplicable: boolean;
+  sizeParamFormat: string;
+  injectSizePrompt: boolean;
+  mustBeDivisibleBy?: number | null;
+  maxWidth?: number | null;
+  maxHeight?: number | null;
+  minWidth?: number | null;
+  minHeight?: number | null;
+  maxPixels?: number | null;
+  paramRenames: Record<string, string>;
+  requiresResolutionParam: boolean;
+  supportsImageToImage: boolean;
+  supportsInpainting: boolean;
+  supportsResponseFormat: boolean;
+  notes: string[];
+  updatedAt?: string | null;
+}
+
+export interface ImageGenConfigsData {
+  items: ImageGenConfigItem[];
+  total: number;
+  /** 代码内置的条数。配 0 条不等于没有契约 */
+  builtinCount: number;
+  /** 内置那份的完整内容，由 prd-api 启动时发布；用来显示与「照这条建一份」 */
+  builtin: ImageGenConfigItem[];
+  builtinPublishedAt?: string | null;
+  /** 改完多久生效。界面要如实写出来，别让人保存完盯着屏幕猜 */
+  refreshSeconds: number;
+  /** 一个进程多久没回写就判「没跟上」。停掉的 Worker 的陈年状态行不能替现在作答 */
+  staleAfterSeconds: number;
+  /** 承载本租户契约的那些进程里**最旧**的同步时间；有任一个没跟上时为空 */
+  syncedAt?: string | null;
+  /** 那些进程都认到的模式（交集）。只报数字答不出「生效的是不是我刚改的那条」 */
+  syncedPatterns: string[];
+  /** 逐个消费进程的同步状态——界面要能答「是哪个进程没跟上」 */
+  syncHosts: ImageGenSyncHost[];
+}
+
+/** 一个消费进程的同步状态。生图契约是进程全局的注册表，prd-api 与 llmgw-serving 各跑一份。 */
+export type ImageGenSyncHost = {
+  hostRole: string;
+  syncedAt?: string | null;
+  overrideCount: number;
+  /** 这个进程服务几个租户：SingleTenant / MultiTenant。 */
+  hostTenancy?: string | null;
+  /** 它因为「服务多个租户」跳过了几条带租户的契约。大于 0 必须显示，否则「生效 0 条」无处可查。 */
+  skippedTenantScopedCount: number;
+  /** 它这一轮翻不过去、因而没装上的契约（模式名）。与「按租户跳过」的下一步不同，要分开说。 */
+  unusablePatterns?: string[];
+  /**
+   * 跟上了没有，由服务端判好：never 从没回写过 / stale 太久没动（Worker 多半停了）
+   * / behind 还活着但装的不是当前这一版 / current 装的就是当前这一版。
+   */
+  syncState: 'never' | 'stale' | 'behind' | 'current' | string;
+};
+
+export type UpsertImageGenConfigRequest = Partial<Omit<ImageGenConfigItem, 'id' | 'updatedAt'>>;

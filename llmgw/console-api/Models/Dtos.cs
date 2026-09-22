@@ -270,6 +270,22 @@ public sealed class LlmLogDetail
     public decimal? EstimatedCallCost { get; set; }
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
+    /// <summary>缓存命中输入部分的成本。</summary>
+    public decimal? EstimatedCacheReadCost { get; set; }
+    /// <summary>写入缓存部分的成本（Anthropic 一类协议）。</summary>
+    public decimal? EstimatedCacheWriteCost { get; set; }
+    /// <summary>缓存命中输入单价快照。</summary>
+    public decimal? CachedInputPricePerMillion { get; set; }
+    /// <summary>写入缓存输入单价快照。</summary>
+    public decimal? CacheWritePricePerMillion { get; set; }
+    /// <summary>价格来源：upstream / admin / migrated。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>价格观测时间（ISO）。</summary>
+    public string? PriceObservedAt { get; set; }
+    /// <summary>这次到底算没算出钱：priced / unpriced / stale_currency / no_usage。</summary>
+    public string? CostStatus { get; set; }
+    /// <summary>算不出钱时的人话原因，直接给用户看。</summary>
+    public string? CostUnpricedReason { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
     public string? PriceSnapshotHash { get; set; }
     public string? ProviderRequestId { get; set; }
@@ -412,6 +428,16 @@ public sealed class LogsSummaryData
     public long PricedRequests { get; set; }
     public long UnknownCostRequests { get; set; }
     public decimal PriceCoveragePercent { get; set; }
+    /// <summary>缓存命中省下的钱（按输入全价与缓存价的差额算）。没有缓存命中时为 null。</summary>
+    public decimal? CacheSavingsUsd { get; set; }
+    /// <summary>有用量但模型没配价，这次调用没计上钱。</summary>
+    public long UnpricedRequests { get; set; }
+    /// <summary>模型价格不是美金口径，不敢记账。</summary>
+    public long StaleCurrencyRequests { get; set; }
+    /// <summary>上游没返回 token 用量，无从计价。</summary>
+    public long NoUsageRequests { get; set; }
+    /// <summary>按「漏掉的调用次数」排的缺价模型清单，直接告诉用户该去给谁补价。</summary>
+    public List<UnpricedModelBucket> TopUnpricedModels { get; set; } = new();
     public List<EstimatedCostBucket> EstimatedCosts { get; set; } = new();
     public long? AverageDurationMs { get; set; }
     public List<LogsBucketItem> TransportDistribution { get; set; } = new();
@@ -419,6 +445,18 @@ public sealed class LogsSummaryData
     public List<LogsBucketItem> SourceSystemDistribution { get; set; } = new();
     public List<LogsBucketItem> IngressProtocolDistribution { get; set; } = new();
     public List<LogsBucketItem> ModelPolicyDistribution { get; set; } = new();
+}
+
+/// <summary>一条缺价模型漏掉了多少次调用，以及为什么算不出钱。</summary>
+public sealed class UnpricedModelBucket
+{
+    public string Model { get; set; } = string.Empty;
+    public string? Provider { get; set; }
+    public long Requests { get; set; }
+    /// <summary>unpriced / stale_currency，决定该去补价还是去换算币种。</summary>
+    public string Status { get; set; } = string.Empty;
+    /// <summary>直接给人看的一句原因。</summary>
+    public string? Reason { get; set; }
 }
 
 public sealed class EstimatedCostBucket
@@ -485,6 +523,8 @@ public sealed class LegacyKeyCutoverUpdateRequest
     public string? Status { get; set; }
     public DateTime? DeadlineAt { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }
+    /// <summary>「对这些调用方而言我是默认」；不传表示不改。</summary>
+    public List<string>? DefaultForAppCallerCodes { get; set; }
     public List<string>? SuccessorServiceKeyIds { get; set; }
     public long RequiredSuccessorObservations { get; set; } = 1;
 }
@@ -610,7 +650,6 @@ public sealed class SessionsData
 // ── 配置写请求（网关配置面第二刀，可写）──
 // 字段用 nullable：缺字段/空 body 时为 null，处理器拒绝（避免默认 false 误关平台/模型/默认池）。
 public sealed class ToggleEnabledRequest { public bool? Enabled { get; set; } }
-public sealed class ToggleDefaultRequest { public bool? IsDefault { get; set; } }
 public sealed class RotateApiKeyRequest { public string? ApiKey { get; set; } }
 public sealed class BulkRotateApiKeysRequest
 {
@@ -630,37 +669,6 @@ public sealed class BulkRotateApiKeysResult
     public long SkippedCount { get; set; }
     public string FilterSummary { get; set; } = "";
 }
-public sealed class CreatePoolRequest
-{
-    public string? Name { get; set; }
-    public string? Code { get; set; }
-    public string? ModelType { get; set; }
-    public int? Priority { get; set; }
-    public bool? IsDefaultForType { get; set; }
-    public int? StrategyType { get; set; }
-    public string? Description { get; set; }
-}
-public sealed class UpdatePoolRequest
-{
-    public string? Name { get; set; }
-    public string? Code { get; set; }
-    public string? ModelType { get; set; }
-    public int? Priority { get; set; }
-    public bool? IsDefaultForType { get; set; }
-    public int? StrategyType { get; set; }
-    public string? Description { get; set; }
-}
-public sealed class BulkClaimPoolsRequest
-{
-    public string? ModelType { get; set; }
-    public bool? Overwrite { get; set; }
-}
-public sealed class BulkClaimPoolsResult
-{
-    public int Claimed { get; set; }
-    public int Skipped { get; set; }
-    public List<PoolItem> Items { get; set; } = new();
-}
 public sealed class PoolTypesData
 {
     public List<PoolTypeItem> Items { get; set; } = new();
@@ -678,49 +686,6 @@ public sealed class PoolTypeItem
     public int ModelCount { get; set; }
     public bool Ready { get; set; }
     public long Version { get; set; }
-}
-public sealed class EnsurePoolTypesResult
-{
-    public int TypesCreated { get; set; }
-    public int PoolsCreated { get; set; }
-    public int ModelsAppended { get; set; }
-    public PoolTypesData Types { get; set; } = new();
-}
-public sealed class BulkCalibratePoolPriceCurrencyRequest
-{
-    public string? ModelType { get; set; }
-    public string? TargetCurrency { get; set; }
-    public bool? OnlyMissing { get; set; }
-    public bool? IncludeMembersWithoutPrice { get; set; }
-}
-public sealed class BulkCalibratePoolPriceCurrencyResult
-{
-    public int ScannedPools { get; set; }
-    public int TouchedPools { get; set; }
-    public int MatchedMembers { get; set; }
-    public int UpdatedMembers { get; set; }
-    public string TargetCurrency { get; set; } = "";
-}
-public sealed class BulkImportPoolModelsRequest
-{
-    public string? PlatformId { get; set; }
-    public bool? EnabledOnly { get; set; }
-    public string? CapabilityFilter { get; set; }
-    public bool? OverwriteExisting { get; set; }
-    public int? MaxCount { get; set; }
-    public int? StartPriority { get; set; }
-    public int? PriorityStep { get; set; }
-}
-public sealed class BulkImportPoolModelsResult
-{
-    public int ScannedModels { get; set; }
-    public int MatchedModels { get; set; }
-    public int Imported { get; set; }
-    public int Updated { get; set; }
-    public int SkippedExisting { get; set; }
-    public int SkippedInvalid { get; set; }
-    public string CapabilityFilter { get; set; } = "";
-    public PoolItem? Pool { get; set; }
 }
 public sealed class BulkUpdateModelCapabilitiesRequest
 {
@@ -763,25 +728,6 @@ public sealed class BindActiveAppCallerPoolsResult
     public int Skipped { get; set; }
     public int MissingDefaultPool { get; set; }
     public List<ConfigAuthorityGapItem> Items { get; set; } = new();
-}
-public sealed class UpsertPoolModelRequest
-{
-    public string? ModelId { get; set; }
-    public string? PlatformId { get; set; }
-    public int? Priority { get; set; }
-    public string? Protocol { get; set; }
-    public bool? EnablePromptCache { get; set; }
-    public int? MaxTokens { get; set; }
-    public decimal? InputPricePerMillion { get; set; }
-    public decimal? OutputPricePerMillion { get; set; }
-    public decimal? PricePerCall { get; set; }
-    public string? PriceCurrency { get; set; }
-    public List<ModelCapabilityItem>? Capabilities { get; set; }
-}
-public sealed class RecoverPoolModelRequest
-{
-    public string? ModelId { get; set; }
-    public string? PlatformId { get; set; }
 }
 public sealed class UpdateGatewayAppCallerRequest
 {
@@ -1163,8 +1109,24 @@ public sealed class ModelItem
     public string? ImageSizeFieldFormat { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
+    /// <summary>缓存命中输入单价。null 表示没配，计价时按输入全价算，不当免费。</summary>
+    public decimal? CachedInputPricePerMillion { get; set; }
+    /// <summary>写入缓存输入单价，Anthropic 一类按溢价收费的协议才用得上。</summary>
+    public decimal? CacheWritePricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
+    /// <summary>价格来源：upstream / admin / migrated；null 表示这份价格没有来源可考。</summary>
+    public string? PriceSource { get; set; }
+    /// <summary>价格观测时间（ISO）。</summary>
+    public string? PriceObservedAt { get; set; }
+    /// <summary>最后一次改价的人。</summary>
+    public string? PriceUpdatedBy { get; set; }
+    /// <summary>价格是否已到复核期（超过 30 天，或压根没有观测时间）。</summary>
+    public bool PriceStale { get; set; }
+    /// <summary>距上次观测过了多少天；没有观测时间为 null。</summary>
+    public int? PriceAgeDays { get; set; }
+    /// <summary>这份价格能不能用来记账：有价且币种是美金。</summary>
+    public bool PriceBillable { get; set; }
     public string? CreatedAt { get; set; } public string? UpdatedAt { get; set; }
 }
 public sealed class CreateModelRequest
@@ -1183,10 +1145,74 @@ public sealed class CreateModelRequest
     public int? MaxTokens { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? CacheWritePricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
     public string? PriceCurrency { get; set; }
     public string? Remark { get; set; }
 }
+
+/// <summary>
+/// 改一条已有模型。价格四档 + 币种一起提交，服务端据此重算来源与观测时间。
+///
+/// <see cref="SyncPoolIds"/> 是这次改动要一并更新的模型池：真正参与计费的是池成员里的那份价格，
+/// 只改模型档案而不同步，线上会继续按旧价跑——而两处单独看都没错，这正是最难发现的一种漂移。
+/// </summary>
+public sealed class UpdateModelRequest
+{
+    public string? Name { get; set; }
+    public string? Protocol { get; set; }
+    public int? MaxTokens { get; set; }
+    public string? Remark { get; set; }
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? CacheWritePricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    /// <summary>true 表示清空这条模型的全部价格字段。</summary>
+    public bool? ClearPricing { get; set; }
+    /// <summary>
+    /// true 表示清掉这条模型的最大输出 token 限制（改回「不限制」）。
+    ///
+    /// 为什么不能靠传 null：MaxTokens 本身就是可空的，而 JSON 序列化会把 undefined/null
+    /// 整个省掉，服务端只在收到整数时才更新——于是「清空」与「这次没动它」在线上完全
+    /// 分不开，旧限制永远留着，而界面写着「留空表示不限制」。同 ClearPricing 的处境。
+    /// </summary>
+    public bool? ClearMaxTokens { get; set; }
+    /// <summary>保存后要把新价格同步过去的模型池 ID；不在表里的池保留它自己的覆盖价。</summary>
+    public List<string>? SyncPoolIds { get; set; }
+}
+
+/// <summary>一条模型被某个模型池引用的情况：继承档案价，还是用了自己的覆盖价。</summary>
+public sealed class ModelPoolUsageItem
+{
+    public string PoolId { get; set; } = "";
+    public string PoolName { get; set; } = "";
+    public string? ModelType { get; set; }
+    /// <summary>true 表示这个池成员的价格与模型档案一致（继承）。</summary>
+    public bool Inherits { get; set; }
+    /// <summary>池成员上实际生效的价格，覆盖时与档案价不同。</summary>
+    public decimal? InputPricePerMillion { get; set; }
+    public decimal? OutputPricePerMillion { get; set; }
+    public decimal? CachedInputPricePerMillion { get; set; }
+    public decimal? CacheWritePricePerMillion { get; set; }
+    public decimal? PricePerCall { get; set; }
+    public string? PriceCurrency { get; set; }
+    public string? PriceSource { get; set; }
+    public string? PriceObservedAt { get; set; }
+    public string? PriceUpdatedBy { get; set; }
+    /// <summary>这个池是不是只读的托管池（托管池不接受从这里改价）。</summary>
+    public bool Managed { get; set; }
+}
+
+public sealed class ModelPoolUsageData
+{
+    public List<ModelPoolUsageItem> Pools { get; set; } = new();
+    public int InheritingCount { get; set; }
+    public int OverridingCount { get; set; }
+}
+
 public sealed class UpdateModelImageSizeControlRequest
 {
     public string? Mode { get; set; }
@@ -1198,6 +1224,18 @@ public sealed class CreateModelResult
     public int PoolTypesCreated { get; set; }
     public int PoolsCreated { get; set; }
     public int ModelsAppended { get; set; }
+
+    /// <summary>
+    /// 这个模型登上白名单后的公开模型名——调用方就是按它来请求的。
+    /// 为空表示没登上（原因见 <see cref="WhitelistMessage"/>），此时模型在库里但调不通。
+    /// </summary>
+    public string? PublicId { get; set; }
+
+    /// <summary>公开名已存在，这次是给它多挂了一条线路，而不是新建了一个对外模型。</summary>
+    public bool LinkedToExistingPublicId { get; set; }
+
+    /// <summary>没登上白名单时的原因与下一步。为空表示登上了，不要拿它当成功标志的反面来用。</summary>
+    public string? WhitelistMessage { get; set; }
 }
 
 // ── 逻辑模型与上游 Offering ──
@@ -1219,6 +1257,97 @@ public sealed class CapabilityAuditFinding
     public List<string> UnknownCapabilities { get; set; } = new();
 }
 
+/// <summary>逻辑模型近 N 天用量，供白名单列表里那条趋势线与花费列使用。</summary>
+/// <summary>把存量模型池搬成模型（公开名 + 上游线路）的结果。</summary>
+public sealed class PoolMigrationResult
+{
+    /// <summary>试运行：只算不写。默认就是试运行——搬迁只该在人看过计划之后才真发生。</summary>
+    public bool DryRun { get; set; }
+
+    public int PoolsScanned { get; set; }
+    public int ModelsCreated { get; set; }
+    public int RoutesCreated { get; set; }
+
+    /// <summary>已经有同名公开模型、这次只给它补线路的池。</summary>
+    public int LinkedToExisting { get; set; }
+
+    public List<PoolMigrationEntry> Entries { get; set; } = new();
+
+    /// <summary>没搬的池与原因。静默跳过等于让人以为都搬完了。</summary>
+    public List<PoolMigrationSkip> Skipped { get; set; } = new();
+}
+
+public sealed class PoolMigrationEntry
+{
+    public string PoolId { get; set; } = "";
+    public string PoolName { get; set; } = "";
+    public string PublicId { get; set; } = "";
+    public string ModelType { get; set; } = "";
+    public string RoutingStrategy { get; set; } = "priority";
+    public bool IsDefaultForType { get; set; }
+    public int RouteCount { get; set; }
+
+    /// <summary>这次是新建了公开名，还是挂到了已有的同名模型下。</summary>
+    public bool CreatedNewModel { get; set; }
+
+    /// <summary>已有模型的能力原本是空的（能力门不放行），这次补上了。</summary>
+    public bool RepairedCapabilities { get; set; }
+
+    /// <summary>
+    /// 把近期的非健康状态（降级或熔断）一起搬过来的线路数。陈年旧账重置成健康，不算在内。
+    /// 名字里不再只说「不可用」：降级那一档同样会被搬，而挑选判据把健康排在降级之前，
+    /// 少搬它等于让一个正在失败的成员在切换那一刻重新拿到主流量。
+    /// </summary>
+    public int CarriedUnhealthyRoutes { get; set; }
+
+    /// <summary>
+    /// 从「调用方反向绑定这个池」转过来的认领。
+    ///
+    /// 池的专属绑定写在调用方那一侧（<c>ModelPoolId</c> / <c>DefaultModelPoolId</c>），
+    /// 而新解析器只看模型这一侧的认领。不转的话，这些调用方不点名的请求在池退场后
+    /// 会落到用途默认上——换了一个模型，而且没有任何提示。
+    /// </summary>
+    public List<string> ClaimedAppCallerCodes { get; set; } = new();
+
+    /// <summary>这个池来自 MAP 域（<c>model_groups</c>）而不是网关自己的池表。</summary>
+    public bool FromMapDomain { get; set; }
+}
+
+public sealed class PoolMigrationSkip
+{
+    public string PoolId { get; set; } = "";
+    public string PoolName { get; set; } = "";
+    public string Reason { get; set; } = "";
+}
+
+public sealed class LogicalModelUsageData
+{
+    public int Days { get; set; }
+    public DateTime From { get; set; }
+    public DateTime To { get; set; }
+    public List<LogicalModelUsageItem> Items { get; set; } = new();
+}
+
+public sealed class LogicalModelUsageItem
+{
+    public string PublicId { get; set; } = "";
+
+    /// <summary>日期刻度（yyyy-MM-dd），与 <see cref="DailyCalls"/> 一一对应。</summary>
+    public List<string> Days { get; set; } = new();
+
+    /// <summary>每天的调用次数，没有调用的那天是 0（不是缺项）——曲线才不会把空档画成连线。</summary>
+    public long[] DailyCalls { get; set; } = Array.Empty<long>();
+
+    public long TotalCalls { get; set; }
+    public long TotalTokens { get; set; }
+
+    /// <summary>只累加 CostStatus=priced 的花费。算不出钱的不按零成本混进来。</summary>
+    public decimal TotalCostUsd { get; set; }
+
+    /// <summary>缺价调用次数。大于零时列表上要标出来，否则花费会看着莫名其妙地低。</summary>
+    public long UnpricedCalls { get; set; }
+}
+
 public sealed class LogicalModelsData { public List<LogicalModelItem> Items { get; set; } = new(); public long Total { get; set; } }
 public sealed class LogicalModelItem
 {
@@ -1230,6 +1359,16 @@ public sealed class LogicalModelItem
     public List<string> AllowedAppCallerCodes { get; set; } = new();
     public string RoutingStrategy { get; set; } = "priority";
     public bool Enabled { get; set; }
+
+    /// <summary>这个用途没点名模型时用它。同租户同用途最多一个。</summary>
+    public bool IsDefaultForType { get; set; }
+
+    /// <summary>
+    /// 「对这些调用方而言，我是默认」——不点名时优先于 IsDefaultForType。
+    /// 授权名单回答「能不能点名我」，这一份回答「不点名时是不是我」，刻意分开两个字段。
+    /// </summary>
+    public List<string> DefaultForAppCallerCodes { get; set; } = new();
+
     public int DisplayOrder { get; set; }
     public string? Description { get; set; }
     public string? CreatedAt { get; set; }
@@ -1256,7 +1395,180 @@ public sealed class ModelOfferingItem
     public int? MaxConcurrency { get; set; }
     public int? RateLimitPerMinute { get; set; }
     public string? Notes { get; set; }
+
+    /// <summary>
+    /// 这条线路为什么不参与这次排队；null 表示参与。服务端按唯一判据算好，前端不再自己判——
+    /// 前端曾经自己算过一份（enabled &amp;&amp; healthStatus === 0），把「降级但仍在用」的线路
+    /// 显示成「没有主」，而运行时照样在用它。
+    /// </summary>
+    public string? SkipReason { get; set; }
+
+    /// <summary>排队名次，1 就是这次会落到的那一条；0 表示不参与。</summary>
+    public int QueuePosition { get; set; }
+
+    /// <summary>
+    /// 它指向的上游模型与所属上游都还启用着吗。运行时按 Offering 查目标时会过滤掉不可用的，
+    /// 所以这一条不算进来，面板就会把一条指向已停用模型的线路报成「会落到它」。
+    /// </summary>
+    public bool TargetUsable { get; set; } = true;
 }
+/// <summary>一个对外模型的「调用全貌」：点名它之后会发生什么，用当前真实状态回答。</summary>
+public sealed class CallTraceData
+{
+    public string PublicId { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string ModelType { get; set; } = "";
+    public bool Enabled { get; set; }
+    public bool IsDefaultForType { get; set; }
+    public string RoutingStrategy { get; set; } = "priority";
+
+    /// <summary>第一屏那句结论：现在发一个请求会落到谁，或者为什么调不通。</summary>
+    public string Conclusion { get; set; } = "";
+    public CallTraceGate Gate { get; set; } = new();
+    public CallTraceUnnamed Unnamed { get; set; } = new();
+    public List<ModelOfferingItem> Routes { get; set; } = new();
+    public List<CallTraceRouteExtra> RouteExtras { get; set; } = new();
+    public CallTraceLedger Ledger { get; set; } = new();
+
+    /// <summary>
+    /// 判定流程图：每个菱形一个节点，每条岔路带当前状态（走 / 可能走 / 走不到）。
+    ///
+    /// 与 doc/design.platform.llm-gateway.model-architecture.md 第 3 节那张图同构——
+    /// 那张是静态的，这份是这个模型此刻的样子。
+    /// </summary>
+    public List<CallTraceFlowNode> Flow { get; set; } = new();
+}
+
+/// <summary>目录闸：谁能点名它。</summary>
+public sealed class CallTraceGate
+{
+    public bool Enabled { get; set; }
+
+    /// <summary>没配授权名单 = 所有调用方都能点名它。</summary>
+    public bool OpenToAllCallers { get; set; }
+    public List<string> AllowedAppCallerCodes { get; set; } = new();
+    public string Summary { get; set; } = "";
+}
+
+/// <summary>「只给 appCallerCode、不点名模型」那条路会不会落到它。</summary>
+public sealed class CallTraceUnnamed
+{
+    /// <summary>
+    /// 模型这一侧的条件成不成立：是本用途的默认、自己启用着、而且真有一条线路能接。
+    ///
+    /// 注意它**不是**「会落到它」的完整答案——那句话还要看是谁在调。
+    /// 2026-09-15 之前面板只有这一半，于是那句结论没有主语：配了专属池的调用方
+    /// 在运行时根本走不到对外模型这一档，面板却照样说「会落到它」。
+    /// </summary>
+    public bool ServesUnnamed { get; set; }
+
+    /// <summary>这个用途现在的默认是谁；没有默认时为 null。</summary>
+    public string? CurrentDefaultPublicId { get; set; }
+    public string? CurrentDefaultName { get; set; }
+    public string Summary { get; set; } = "";
+
+    /// <summary>
+    /// 逐个调用方的结论——这句话的主语。
+    ///
+    /// 按本用途登记的调用方逐条算：认对外模型目录的才可能落到这里，
+    /// 配了专属池的走自己的池，状态不放行的请求根本发不出去。
+    /// </summary>
+    public List<CallTraceUnnamedCaller> Callers { get; set; } = new();
+
+    /// <summary>这个用途登记了几个调用方；0 表示还没有人按这个用途调过。</summary>
+    public int CallerCount { get; set; }
+
+    /// <summary>其中有几个不点名时会落到这个模型。</summary>
+    public int ReachingCallerCount { get; set; }
+}
+
+/// <summary>「不点名时会不会落到这个模型」在某一个调用方身上的答案。</summary>
+public sealed class CallTraceUnnamedCaller
+{
+    public string AppCallerCode { get; set; } = "";
+
+    /// <summary>UsesModelCatalog / TrafficRejected。</summary>
+    public string Reach { get; set; } = "";
+
+    /// <summary>不点名时会不会落到这个模型（调用方与模型两侧条件都成立才为真）。</summary>
+    public bool ReachesThisModel { get; set; }
+
+    /// <summary>一句人话结论，由后端下发，前端不另行推断。</summary>
+    public string Verdict { get; set; } = "";
+}
+
+/// <summary>
+/// 判定流程图上的一个节点。
+///
+/// 为什么流程图的每一支也由后端下发状态：前端一旦自己判「这支走不走」，就是第二份判据
+/// （形状 3）——而画出来的那张图恰恰是最容易被人当真的东西，它错了比列表错了更糟。
+/// </summary>
+public sealed class CallTraceFlowNode
+{
+    public string Id { get; set; } = "";
+
+    /// <summary>菱形里的问题；顺序节点（不分叉）留空。</summary>
+    public string Question { get; set; } = "";
+
+    public List<CallTraceFlowBranch> Branches { get; set; } = new();
+}
+
+/// <summary>判定流程图上的一条岔路。</summary>
+public sealed class CallTraceFlowBranch
+{
+    /// <summary>这一支的条件。</summary>
+    public string Label { get; set; } = "";
+
+    /// <summary>走这一支会怎样。</summary>
+    public string Outcome { get; set; } = "";
+
+    /// <summary>
+    /// taken   —— 当前状态下确定会走这一支；
+    /// possible —— 取决于请求本身或调用方，可能走；
+    /// blocked —— 当前状态下走不到。
+    ///
+    /// 有 possible 这一档是刻意的：同一个模型对不同调用方、点名与不点名走的不是同一条路，
+    /// 硬画成一条确定路径就是在编（按权重时尤其明显）。
+    /// </summary>
+    public string State { get; set; } = "";
+
+    /// <summary>一句补充，例如「3 个调用方」。没有就留 null。</summary>
+    public string? Note { get; set; }
+}
+
+/// <summary>线路上那些只有全貌面板要用的附加值，按 OfferingId 对上。</summary>
+public sealed class CallTraceRouteExtra
+{
+    public string OfferingId { get; set; } = "";
+
+    /// <summary>按权重分配时这条线路分到的比例；按顺位时为 null。</summary>
+    public double? WeightPercent { get; set; }
+
+    /// <summary>单价一句话；登记不全时为 null，面板如实说「单价未登记」。</summary>
+    public string? PriceSummary { get; set; }
+    public string? LastFailedAt { get; set; }
+
+    /// <summary>
+    /// 这条已被摘掉的线路，下一条请求有没有可能被拿去做半开试探。
+    ///
+    /// 运行时在挑常规队列之前会先试着认领一条不可用线路顶到队首，所以「被跳过」不等于
+    /// 「这次一定用不到它」。判据见 CallTracePlanner.IsHalfOpenProbeCandidate。
+    /// </summary>
+    public bool HalfOpenProbe { get; set; }
+}
+
+/// <summary>账本：近 N 天这个模型花了多少。</summary>
+public sealed class CallTraceLedger
+{
+    public int WindowDays { get; set; }
+    public long Calls { get; set; }
+    public decimal CostUsd { get; set; }
+
+    /// <summary>算不出钱的调用数。把它们当零成本加进去就是在账上撒谎，所以单独计。</summary>
+    public long UnpricedCalls { get; set; }
+    public string? LastCallAt { get; set; }
+}
+
 public sealed class CreateLogicalModelRequest
 {
     public string? PublicId { get; set; }
@@ -1264,6 +1576,9 @@ public sealed class CreateLogicalModelRequest
     public string? ModelType { get; set; }
     public List<string> Capabilities { get; set; } = new();
     public List<string> AllowedAppCallerCodes { get; set; } = new();
+
+    /// <summary>「对这些调用方而言我是默认」——不点名时优先于用途默认。</summary>
+    public List<string> DefaultForAppCallerCodes { get; set; } = new();
     public string? RoutingStrategy { get; set; }
     public int? DisplayOrder { get; set; }
     public string? Description { get; set; }
@@ -1273,9 +1588,14 @@ public sealed class UpdateLogicalModelRequest
     public string? Name { get; set; }
     public List<string>? Capabilities { get; set; }
     public List<string>? AllowedAppCallerCodes { get; set; }
+    /// <summary>「对这些调用方而言我是默认」；不传表示不改。</summary>
+    public List<string>? DefaultForAppCallerCodes { get; set; }
     public string? RoutingStrategy { get; set; }
     public int? DisplayOrder { get; set; }
     public string? Description { get; set; }
+
+    /// <summary>设为/取消「这个用途的默认」。设为 true 时会顶掉同用途原来的那个默认。</summary>
+    public bool? IsDefaultForType { get; set; }
 }
 public sealed class CreateModelOfferingRequest
 {
@@ -1824,6 +2144,14 @@ public sealed class UpstreamModelItem
     public string? PriceSource { get; set; }
     /// <summary>该模型标识是否已经在本租户登记过，避免重复导入。</summary>
     public bool AlreadyImported { get; set; }
+
+    /// <summary>
+    /// 已经登上白名单：有线路指向这个物理模型，调用方按公开模型名请求找得到它。
+    ///
+    /// 与 <see cref="AlreadyImported"/> 分开报，因为能力认不出来的模型会被导入成物理模型、
+    /// 却不登白名单。两件事混成一个「已导入」，那条「补能力后重新导入」的下一步就走不通了。
+    /// </summary>
+    public bool AlreadyPublished { get; set; }
 }
 
 public sealed class UpstreamModelsData
@@ -1853,6 +2181,16 @@ public sealed class UpstreamModelsData
 public sealed class ImportUpstreamModelsRequest
 {
     public List<ImportUpstreamModelEntry>? Models { get; set; }
+
+    /// <summary>
+    /// 导入的同时把模型登上白名单（建逻辑模型 + 挂一条上游线路）。默认开。
+    ///
+    /// 关掉之前想清楚：不登记的话，导入只在 llmgw_models 里留下一条物理模型记录，
+    /// 调用方按公开模型名请求时压根找不到它——用户点完「导入 N 个」看到成功提示，
+    /// 白名单里却什么都没多，还得再去另一页把同一个模型手工建两遍。
+    /// 这正是「模型」与「白名单」分成两页的实际代价，默认开就是为了不让用户承担它。
+    /// </summary>
+    public bool? PublishToWhitelist { get; set; }
 }
 
 public sealed class ImportUpstreamModelEntry
@@ -1889,9 +2227,279 @@ public sealed class ImportUpstreamModelsResult
     /// </summary>
     public List<string> BlockedOutsideCatalog { get; set; } = new();
 
+    /// <summary>
+    /// 公开名撞上了一条**别的用途**的已有对外模型，因此没挂线路的那些。
+    ///
+    /// 与「已存在」分开列：已存在是正常的幂等结果，这个是要人去处理的冲突——
+    /// 挂过去会让运行时按那条模型的用途走（一条生图线路被当成 chat 发出去），
+    /// 而导入这边还会报「已挂到已有模型」。
+    /// </summary>
+    public List<string> CrossTypePublicIdConflicts { get; set; } = new();
+
     /// <summary>默认模型池同步是否失败。true 时模型已入库但不会被池路由选中，前端必须如实告知而不是报全绿。</summary>
     public bool PoolSyncFailed { get; set; }
 
+    /// <summary>这次新登上白名单的公开模型名。</summary>
+    public List<string> WhitelistedPublicIds { get; set; } = new();
+
+    /// <summary>
+    /// 挂到已有公开模型名下的线路数。
+    ///
+    /// 这是「一个模型多个来源」的自然入口：白名单里已经有 gpt-4o 了，再从另一个 Provider
+    /// 导一次同名模型，不新建一个公开名，而是给它多挂一条线路。
+    /// </summary>
+    public int LinkedToExistingCount { get; set; }
+
+    /// <summary>白名单登记失败时的原因。模型本身已入库，只是没登上名单——不许报成全绿。</summary>
+    public string? WhitelistMessage { get; set; }
+
     /// <summary>需要额外告诉用户的话（目前只有池同步失败时非空）。</summary>
     public string? Message { get; set; }
+}
+
+// ── 生图模型契约（可在控制台里改，不用改代码不用发版）──────────────────────────
+//
+// 这几个词表是**写入侧与运行时的共同约定**：控制台只让填这些值，prd-api 那边
+// ImageGenModelAdapterConfig 也只认这些值。写死在两边各一份就是判据分裂（形状 3），
+// 所以这里是唯一的一份，`ImageGenConfigOverrideGuardTests` 逐项比对它与 prd-api 侧
+// SizeParamFormats / SizeConstraintTypes 常量类，改一边忘另一边会红。
+
+/// <summary>控制台这一侧允许填的值。改这里之前先看那条守卫。</summary>
+public static class ImageGenConfigVocabulary
+{
+    public static readonly IReadOnlySet<string> SizeParamFormats =
+        new HashSet<string>(StringComparer.Ordinal) { "WxH", "{width,height}", "aspect_ratio", "none" };
+
+    public static readonly IReadOnlySet<string> SizeConstraintTypes =
+        new HashSet<string>(StringComparer.Ordinal) { "whitelist", "range", "aspect_ratio", "adaptive" };
+
+    public static readonly IReadOnlySet<string> ResolutionBuckets =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "1k", "2k", "4k" };
+
+    /// <summary>
+    /// 尺寸只认「宽x高」，且两条边都必须是正数。
+    ///
+    /// 写成 1024*1024 或 1024 x 1024 拦下来，`00x00` / `00x1024` 同样拦下来：
+    /// 运行时解析只收正数，一个全是零边长的白名单会被整个判成「解析不出来」，
+    /// 于是兜底回 1024x1024——契约上写着那几档，实际一档都不生效，而且不报错
+    /// （形状 8：一份不成立的声明被当成了「已经配好」的证明）。
+    /// 首位不许是 0，长度仍限制在 5 位以内。
+    /// </summary>
+    public static readonly System.Text.RegularExpressions.Regex SizePattern =
+        new(@"^[1-9]\d{1,4}x[1-9]\d{1,4}$", System.Text.RegularExpressions.RegexOptions.Compiled);
+}
+
+public sealed class ImageGenConfigsData
+{
+    public List<ImageGenConfigItem> Items { get; set; } = new();
+    public int Total { get; set; }
+
+    /// <summary>
+    /// 代码内置的契约（prd-api 启动时发布进 `llmgw_imagegen_builtin_catalog`）。
+    ///
+    /// 这里刻意**不手抄一份**：我第一版抄了，抄成 26 条、内容还对不上真表的 19 条——
+    /// 手抄的清单就是 no-rootless-tree 说的那种「看起来有根、根是硬编码快照」。
+    /// 现在它由运行时发布，代码改了它自动跟着改。
+    ///
+    /// 有了它，控制台能回答两件事：「这个模型是不是已经有内置契约」，
+    /// 以及「照着内置那条改一份」——比让人从零填二十个字段现实得多。
+    /// </summary>
+    public int BuiltinCount { get; set; }
+
+    public List<ImageGenConfigItem> Builtin { get; set; } = new();
+
+    /// <summary>内置快照是什么时候发布的。太旧说明 prd-api 没起来或版本对不上。</summary>
+    public string? BuiltinPublishedAt { get; set; }
+
+    /// <summary>改完多久生效。界面上要如实写出来，别让人保存完盯着屏幕猜。</summary>
+    public int RefreshSeconds { get; set; }
+
+    /// <summary>
+    /// 一个进程多久没回写就判「没跟上」。
+    ///
+    /// 有这道判据，一个停掉的 Worker 才会现形：它上一次回写的那行状态会一直躺在库里，
+    /// 只看「有没有这一行」的话，界面会永远拿它那次陈年的成功替现在作答。
+    /// </summary>
+    public int StaleAfterSeconds { get; set; }
+
+    /// <summary>
+    /// 上一轮同步的时间，取**所有消费进程里最旧的那个**。
+    ///
+    /// 取最新的那个会撒谎：两个进程各有一份进程全局的注册表（prd-api 与 llmgw-serving），
+    /// 一个同步不上、另一个照常写时，取最新就等于让健康的那个替失败的那个作答——
+    /// 界面报「刚同步过」，而走失败那个进程的请求还在用旧契约。
+    /// 取最旧的，这一屏说的就是「所有进程都至少同步到了这个时刻」。
+    /// 有任何一个进程从没同步过时为空。
+    /// </summary>
+    public string? SyncedAt { get; set; }
+
+    /// <summary>
+    /// 上一轮真正生效的那几个模式。只报数字答不出「生效的是不是我刚改的那条」，
+    /// 所以逐条列出来，让界面能对着自己刚填的模式打勾。
+    /// 多进程时取**交集**：只有每个进程都认到的那几条才算真生效。
+    /// </summary>
+    public List<string> SyncedPatterns { get; set; } = new();
+
+    /// <summary>
+    /// 逐个消费进程的同步状态。界面要能答「是哪个进程没跟上」，而不只是一个汇总时间。
+    /// </summary>
+    public List<ImageGenSyncHost> SyncHosts { get; set; } = new();
+}
+
+/// <summary>一个消费进程的同步状态。</summary>
+public sealed class ImageGenSyncHost
+{
+    /// <summary>进程角色：prd-api / llmgw-serving。</summary>
+    public string HostRole { get; set; } = string.Empty;
+
+    /// <summary>它上一轮同步的时间。空 = 这个进程还没拉过，走它的请求仍用代码内置那份。</summary>
+    public string? SyncedAt { get; set; }
+
+    /// <summary>它这一轮认到几条覆盖。</summary>
+    public int OverrideCount { get; set; }
+
+    /// <summary>
+    /// 这个进程服务几个租户：SingleTenant / MultiTenant。
+    ///
+    /// 多租户进程（llmgw-serving）只装平台级契约，带租户的一条都不装——那张覆盖表是
+    /// 进程全局的、没有租户维度，装进去会让一个租户配的尺寸改写另一个租户的请求。
+    /// </summary>
+    public string? HostTenancy { get; set; }
+
+    /// <summary>
+    /// 它这一轮**翻不过去**、因而没装上的契约（模式名）。
+    ///
+    /// 与「按租户跳过」分开报：两者的下一步完全不同——那个要等注册表补上租户维度，
+    /// 这个要去把那条契约本身改掉（多半是参数改名的键只差大小写）。压成一个数字，
+    /// 读的人没法行动（external-cause-first：要不要紧 + 下一步必须说出口）。
+    /// </summary>
+    public List<string> UnusablePatterns { get; set; } = new();
+
+    /// <summary>
+    /// 它因为「服务多个租户」跳过了几条带租户的契约。
+    ///
+    /// 大于 0 就必须显示出来：没有这个数字，界面只会说「生效 0 条」，
+    /// 而「为什么是 0」无处可查。
+    /// </summary>
+    public int SkippedTenantScopedCount { get; set; }
+
+    /// <summary>
+    /// 这个进程跟上了没有，四取一：
+    /// <c>never</c> 从没回写过 / <c>stale</c> 有回写但已经太久没动（Worker 多半停了或读不到库）
+    /// / <c>behind</c> 还活着但装的不是当前这一版 / <c>current</c> 装的就是当前这一版。
+    ///
+    /// 判断收在服务端一处算好，前端只负责把它说成人话——
+    /// 让前端拿时间戳和版本号自己再判一次，就是同一个判据的第二份实现。
+    /// </summary>
+    public string SyncState { get; set; } = "never";
+}
+
+public sealed class ImageGenConfigItem
+{
+    public string Id { get; set; } = "";
+    public string ModelIdPattern { get; set; } = "";
+    public int MatchOrder { get; set; }
+    public bool Enabled { get; set; }
+    public string DisplayName { get; set; } = "";
+    public string Provider { get; set; } = "";
+    public string? PlatformType { get; set; }
+    public string? OfficialDocUrl { get; set; }
+    public string SizeConstraintType { get; set; } = "";
+    public string SizeConstraintDescription { get; set; } = "";
+    public Dictionary<string, List<string>> SizesByResolution { get; set; } = new();
+    public bool SizesNotApplicable { get; set; }
+    public string SizeParamFormat { get; set; } = "";
+    public bool InjectSizePrompt { get; set; }
+    public int? MustBeDivisibleBy { get; set; }
+    public int? MaxWidth { get; set; }
+    public int? MaxHeight { get; set; }
+    public int? MinWidth { get; set; }
+    public int? MinHeight { get; set; }
+    public long? MaxPixels { get; set; }
+    public Dictionary<string, string> ParamRenames { get; set; } = new();
+    public bool RequiresResolutionParam { get; set; }
+    public bool SupportsImageToImage { get; set; }
+    public bool SupportsInpainting { get; set; }
+    public bool SupportsResponseFormat { get; set; }
+    public List<string> Notes { get; set; } = new();
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class UpsertImageGenConfigRequest
+{
+    public string? ModelIdPattern { get; set; }
+    public int? MatchOrder { get; set; }
+    public bool? Enabled { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Provider { get; set; }
+    public string? PlatformType { get; set; }
+    public string? OfficialDocUrl { get; set; }
+    public string? SizeConstraintType { get; set; }
+    public string? SizeConstraintDescription { get; set; }
+    public Dictionary<string, List<string>>? SizesByResolution { get; set; }
+    public bool? SizesNotApplicable { get; set; }
+    public string? SizeParamFormat { get; set; }
+    public bool? InjectSizePrompt { get; set; }
+    public int? MustBeDivisibleBy { get; set; }
+    public int? MaxWidth { get; set; }
+    public int? MaxHeight { get; set; }
+    public int? MinWidth { get; set; }
+    public int? MinHeight { get; set; }
+    public long? MaxPixels { get; set; }
+    public Dictionary<string, string>? ParamRenames { get; set; }
+    public bool? RequiresResolutionParam { get; set; }
+    public bool? SupportsImageToImage { get; set; }
+    public bool? SupportsInpainting { get; set; }
+    public bool? SupportsResponseFormat { get; set; }
+    public List<string>? Notes { get; set; }
+}
+
+// ── 模型名录补登（让系统「认识」上游新出的模型，不用改代码）──────────────────────
+//
+// 名录回答「这个模型是什么」：算哪几种用途、能不能吃图、出品方是谁、有哪些等价写法。
+// 内置那张表只有二十来条，而线上两个上游共 573 个模型——其余 95% 走关键词猜测，
+// 一百多个连一条用途都猜不出来，导进来就是「哑」模型，不参与任何用途匹配。
+
+public sealed class CatalogEntriesData
+{
+    public List<CatalogEntryItem> Items { get; set; } = new();
+    public int Total { get; set; }
+
+    /// <summary>代码内置那张表。补登 0 条不等于系统什么都不认识，也给「照这条补一份」当模板。</summary>
+    public int BuiltinCount { get; set; }
+    public List<CatalogEntryItem> Builtin { get; set; } = new();
+
+    /// <summary>
+    /// 运行时真正认的那几种用途。界面只让从这里挑——填一个运行时不认的词，
+    /// 这条补登看着生效了、模型照样选不中，而且不会有任何东西报错。
+    /// </summary>
+    public List<string> KnownCapabilities { get; set; } = new();
+}
+
+public sealed class CatalogEntryItem
+{
+    public string Id { get; set; } = "";
+    public string CanonicalId { get; set; } = "";
+    public string DisplayName { get; set; } = "";
+    public string Vendor { get; set; } = "";
+    public List<string> Capabilities { get; set; } = new();
+    public bool AcceptsImageInput { get; set; }
+    public bool RequiresImageInput { get; set; }
+    public List<string> Aliases { get; set; } = new();
+    public string? Notes { get; set; }
+    public bool Enabled { get; set; } = true;
+    public string? UpdatedAt { get; set; }
+}
+
+public sealed class UpsertCatalogEntryRequest
+{
+    public string? CanonicalId { get; set; }
+    public string? DisplayName { get; set; }
+    public string? Vendor { get; set; }
+    public List<string>? Capabilities { get; set; }
+    public bool? AcceptsImageInput { get; set; }
+    public bool? RequiresImageInput { get; set; }
+    public List<string>? Aliases { get; set; }
+    public string? Notes { get; set; }
+    public bool? Enabled { get; set; }
 }

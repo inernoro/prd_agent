@@ -1,0 +1,198 @@
+/**
+ * 分享页顶栏（ShareViewPage 单站点视图）。
+ *
+ * 为什么单独一个文件：这条顶栏永远浮在「访客上传的任意网页」之上，所以它钉死深色
+ * （容器带 .surface-tone-dark，token 取暗岛那一档），与文档主题无关。
+ * 原来四个按钮各写一套内联 style、各自一个亮蓝，既没有 hover、也不走 token——
+ * 颜色一散，顶栏就会比它托着的内容还抢眼。规矩收在这里：
+ * 一屏只有一个实心主操作，其余一律安静，全部走 token。
+ */
+
+.share-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 8px 16px;
+  background: var(--panel-solid);
+  /* saturate 让底下页面的颜色透上来时不发灰 */
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* 标题区必须可收缩，否则手机端它会把右侧按钮挤扁 */
+.share-topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.share-topbar-title > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 主操作与其余动作之间的一道细线：让「保存」在视觉上自成一档，不靠颜色喊 */
+.share-topbar-divider {
+  width: 1px;
+  height: 18px;
+  margin: 0 2px;
+  background: var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.share-topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease,
+    transform 120ms ease;
+}
+
+.share-topbar-btn:hover:not(:disabled):not([aria-disabled='true']) {
+  background: var(--button-secondary-bg-hover);
+  border-color: var(--button-secondary-border);
+  color: var(--text-primary);
+}
+
+.share-topbar-btn:active:not(:disabled):not([aria-disabled='true']) {
+  transform: translateY(1px);
+}
+
+.share-topbar-btn:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+
+.share-topbar-btn:disabled,
+.share-topbar-btn[aria-disabled='true'] {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 一屏只有一个：实心主操作走品牌色，不用亮蓝 */
+.share-topbar-btn--primary {
+  background: var(--button-primary-bg);
+  border-color: transparent;
+  color: var(--fg-on-bright-fill);
+  font-weight: 500;
+}
+
+.share-topbar-btn--primary:hover:not(:disabled) {
+  background: var(--button-primary-bg-hover);
+  border-color: transparent;
+  color: var(--fg-on-bright-fill);
+}
+
+/* 结果反馈：成功与「早就有了」是两种不同的结论，不能同色 */
+.share-topbar-btn--success {
+  color: var(--accent-fg-success);
+  background: var(--bg-secondary);
+}
+
+.share-topbar-btn--warning {
+  color: var(--accent-fg-warning);
+  background: var(--bg-secondary);
+}
+
+/* 手机端：只留图标，靠 aria-label 与 title 表达语义，避免四个按钮互相挤压 */
+@media (max-width: 767px) {
+  .share-topbar {
+    padding: 6px 10px;
+    gap: 6px;
+  }
+
+  .share-topbar-actions {
+    gap: 2px;
+  }
+
+  .share-topbar-btn {
+    padding: 7px 8px;
+  }
+
+  .share-topbar-title {
+    font-size: 13px;
+  }
+}
+
+/* 顶栏下方的一行说明（下载完成后的补充说明等）。
+   它是结论不是装饰，所以占一行、给够对比度，不做成一闪而过的 toast。 */
+.share-topbar-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px;
+  /* 必须是**不透明**底：--bg-secondary 那一族在暗岛里是半透明白，它假设自己压在深色上。
+     这一条会落在顶栏与托管内容之间，托管内容是访客上传的任意网页（常见是白底），
+     半透明白压上去就是浅底近白字、几乎读不出来。自带底色才不看父级脸色。 */
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.share-topbar-note--error {
+  color: var(--accent-fg-error);
+}
+
+/* 原始报错降级成附注：排障仍然用得上，但不抢主句的位置（external-cause-first） */
+.share-topbar-note-detail {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+
+.share-topbar-note button {
+  margin-left: auto;
+  flex-shrink: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  line-height: 0;
+}
+
+.share-topbar-note button:hover {
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share-topbar-btn {
+    transition: none;
+  }
+
+  .share-topbar-btn:active:not(:disabled) {
+    transform: none;
+  }
+}

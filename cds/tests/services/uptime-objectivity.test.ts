@@ -236,6 +236,23 @@ describe('覆盖面与探测器健康', () => {
     expect(p.stalled).toBe(true);
   });
 
+  it('prober：第一轮从来没跑完也算 stalled——按启动时刻判，不等 lastCycleAt（Codex #1543 P1）', () => {
+    let now = MIN;
+    const svc = makeMonitor({ branches: [branch()], userViewProbe: async () => ({ up: true, ms: 1 }), now: () => now });
+    svc.start();
+    try {
+      expect(svc.getSummary(10).prober.stalled).toBe(false);
+      // 首轮卡住：一直没有 runCycle 完成，时间过了停摆阈值（intervalMs*3 与 60s 取大）
+      now = MIN * 5;
+      const s = svc.getSummary(10);
+      expect(s.cycle.stale).toBe(true);
+      expect(s.prober.lastCycleAt).toBeNull();
+      expect(s.prober.stalled).toBe(true);
+    } finally {
+      svc.stop();
+    }
+  });
+
   it('history 附最近原始采样，最新在前', async () => {
     let now = 0;
     const svc = makeMonitor({ branches: [branch()], userViewProbe: async () => ({ up: true, ms: 1 }), now: () => now });

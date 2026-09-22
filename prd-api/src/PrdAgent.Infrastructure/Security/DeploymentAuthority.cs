@@ -157,6 +157,21 @@ public static class DeploymentAuthority
             : null;
 
     /// <summary>
+    /// 这个部署是否**显式退出了共享状态归属**（`ManageGlobalNotification=false`）。
+    ///
+    /// 它是一票否决的总开关：standby / canary 用它宣告「我不拥有任何共享状态」。
+    /// 抽成一个具名判据，是因为它此前在 <see cref="CanRotateSharedCiphertext"/> 与
+    /// <see cref="CanRunSharedScheduledWork"/> 里各写了一遍，而第三个消费方
+    /// （榜单的手动同步入口）又要用它——同一判断抄成三份必然漂
+    /// （predicate-and-wiring-discipline 形状 3）。
+    ///
+    /// 注意它与「是不是权威部署」不是一回事：<see cref="IsAuthoritativeDeployment"/> 里
+    /// 显式 true / false 都算数；这里只认 false，因为软开关只能收紧、不能放宽。
+    /// </summary>
+    public static bool HasOptedOutOfSharedState(IConfiguration configuration)
+        => bool.TryParse(configuration[ManageGlobalNotificationKey], out var forced) && !forced;
+
+    /// <summary>
     /// 当前部署是否有权**改写共享库存量密文**（rotation 层，把 legacy 密文重加密到 primary）。
     /// 与通知授权**独立且更严**，同时满足两条才允许：
     /// 1. 未被显式关停共享状态归属——`ManageGlobalNotification=false` 是「我不拥有任何共享状态」的
@@ -171,9 +186,7 @@ public static class DeploymentAuthority
     public static bool CanRotateSharedCiphertext(IConfiguration configuration)
     {
         // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决，连密文都不动。
-        var explicitFlag = configuration[ManageGlobalNotificationKey];
-        if (bool.TryParse(explicitFlag, out var forced) && !forced)
-            return false;
+        if (HasOptedOutOfSharedState(configuration)) return false;
 
         // 条件 2：rotation 只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
         return !IsCdsBranchPreview(configuration);
@@ -199,12 +212,35 @@ public static class DeploymentAuthority
     public static bool CanRunSharedScheduledWork(IConfiguration configuration)
     {
         // 条件 1：显式 false = 退出所有共享状态归属 → 一票否决。
-        var explicitFlag = configuration[ManageGlobalNotificationKey];
-        if (bool.TryParse(explicitFlag, out var forced) && !forced)
-            return false;
+        if (HasOptedOutOfSharedState(configuration)) return false;
 
         // 条件 2：只认生产（无 CDS 分支预览标记）；true 开关不额外为 preview 放宽。
         return !IsCdsBranchPreview(configuration);
+    }
+
+    /// <summary>
+    /// 当前部署是否负责刷新模型排行榜公开快照。
+    ///
+    /// 排行榜与其它共享周期任务的网络条件不同：正式机可能无法直连 arena.ai，CDS main
+    /// 却可以通过只读网页代理抓取，并把自己的分支作用域快照公开给正式机镜像。因此它需要
+    /// 一个比 <see cref="CanRunSharedScheduledWork"/> 更精确的单任务权威：
+    /// 1. 正式环境仍然允许运行；
+    /// 2. CDS 里只允许真实 Git 分支名为 main 的那一个部署运行；
+    /// 3. 显式退出共享状态归属仍然一票否决。
+    ///
+    /// 这里不放宽通用周期任务总闸，避免 CDS main 顺带获得报告导入等其它共享写权限。
+    /// 分支名来自 CDS 平台注入的 VITE_GIT_BRANCH，并经 cds-compose 映射到
+    /// Changelog:GitHubBranch；功能分支不会因 compose 默认值而冒充 main。
+    /// </summary>
+    public static bool CanRunModelLeaderboardSync(IConfiguration configuration)
+    {
+        if (HasOptedOutOfSharedState(configuration)) return false;
+        if (!IsCdsBranchPreview(configuration)) return true;
+
+        return string.Equals(
+            ReadFirst(configuration, GitHubBranchKey),
+            "main",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

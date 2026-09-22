@@ -200,15 +200,28 @@ describe('ContainerService 多项目网络隔离', () => {
       expect(mock.commands.some((command) => command.includes('docker start'))).toBe(false);
     });
 
-    it('门禁上线前登记的存量库：限期放行，不至于把平台停掉', async () => {
+    it('门禁上线前登记的存量库：豁免窗口内限期放行，不至于把平台停掉', async () => {
       // 2026-08-18 的教训：一刀切让五个项目十几个存量库全部起不来，
       // 连主分支预览都部署失败，而那些库本身活得好好的。
-      const service = new ContainerService(mock, makeConfig());
-      okDockerStubs(mock);
+      //
+      // 这里要测的是「豁免窗口内，存量放行」，所以窗口必须由用例自己钉住，
+      // 不能靠今天恰好还没过默认到期日（2026-09-17）——那样这条用例是一颗时间炸弹：
+      // 写下时是绿的，到期那天全仓 CI 一起变红，而被测行为一个字都没改。
+      // 钉的是生产同一个逃生阀 CDS_INFRA_AUTH_GRACE_UNTIL，不是测试专用后门。
+      // 「过期之后照样拦」由 infra-auth-legacy-exemption.test.ts 单独把关，不在这条。
+      const prevGrace = process.env.CDS_INFRA_AUTH_GRACE_UNTIL;
+      process.env.CDS_INFRA_AUTH_GRACE_UNTIL = '2099-01-01T00:00:00.000Z';
+      try {
+        const service = new ContainerService(mock, makeConfig());
+        okDockerStubs(mock);
 
-      await expect(service.startInfraService(
-        makeInfraService('proj-a', { env: {}, createdAt: '2026-04-30T00:00:00Z' }),
-      )).resolves.not.toThrow();
+        await expect(service.startInfraService(
+          makeInfraService('proj-a', { env: {}, createdAt: '2026-04-30T00:00:00Z' }),
+        )).resolves.not.toThrow();
+      } finally {
+        if (prevGrace === undefined) delete process.env.CDS_INFRA_AUTH_GRACE_UNTIL;
+        else process.env.CDS_INFRA_AUTH_GRACE_UNTIL = prevGrace;
+      }
     });
 
     it('infra 容器跟随 service.projectId 选 network', async () => {

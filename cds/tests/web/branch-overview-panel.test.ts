@@ -1334,10 +1334,17 @@ describe('只有一帧历史的服务，合计里照样算它', () => {
     return html.slice(at, at + 240);
   };
 
+  /** CPU 指标砖那一块：合计大数住在这里（方向 A 指挥台，2026-09-18），不再是判断句里的一段字 */
+  const cpuTile = (html: string): string => {
+    const at = html.indexOf('data-testid="kpi-cpu"');
+    expect(at, 'CPU 指标砖没渲染出来').toBeGreaterThan(-1);
+    return html.slice(at, at + 600);
+  };
+
   it('/metrics 没回来时，那一帧照样算（其他 = 7.00，合计 17.0%）', () => {
     const html = render(undefined);
     expect(otherLegend(html), 'web 那 1 帧被当成 0').toContain('7.00');
-    expect(html, '顶部大数跟着少报').toContain('CPU 合计 17.0%');
+    expect(cpuTile(html), '顶部大数跟着少报').toContain('17.0%');
   });
 
   it('实时快照在手上时优先用快照（其他 = 9.00，合计 19.0%）', () => {
@@ -1346,7 +1353,7 @@ describe('只有一帧历史的服务，合计里照样算它', () => {
       web: { cpuPercent: 9, memUsedBytes: 100 },
     });
     expect(otherLegend(html)).toContain('9.00');
-    expect(html).toContain('CPU 合计 19.0%');
+    expect(cpuTile(html)).toContain('19.0%');
   });
 });
 

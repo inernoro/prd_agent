@@ -16,14 +16,27 @@ describe('迟到原文的取舍判据', () => {
     expect(page).not.toMatch(/onLoad=\{\(\) => \{\s*\n[^}]*directLoaded/);
   });
 
-  it('改成按已过时间判——它才真的对应「用户攒了多少状态」', () => {
+  /**
+   * 2026-09-20 起算点改了（Codex 第三轮 P2），不变量没改。
+   *
+   * 原先按「开始取正文至今多久」判，而 LATE_SWAP_GUARD_MS 与 DIRECT_FALLBACK_TIMEOUT_MS
+   * 同为 6000：fallback 一触发，已过时间就已经 ≥ 门槛，于是**任何**回来的正文都被判成
+   * 迟到、不自动换——哪怕直链才刚开始加载、访客一秒状态都没攒下。宽限期实际是 0，
+   * 与设计意图正好相反。改成从「直链露出那一刻」起算。
+   */
+  it('按时间判，且起算点是直链露出的那一刻', () => {
     expect(page).toContain('LATE_SWAP_GUARD_MS');
-    expect(page).toMatch(/elapsed > LATE_SWAP_GUARD_MS/);
-    expect(page).toContain('fetchStartedAtRef');
+    expect(page).toMatch(/shownFor > LATE_SWAP_GUARD_MS/);
+    expect(page).toContain('directExposedAtRef');
+    // 退回按「开始取正文」起算，就是那个宽限期为 0 的写法。
+    // 钉 `.current` 而不是光钉名字：注释里会提到这个旧名字（说明为什么不再用它），
+    // 光钉名字连那段注释一起误伤——判据比它该管的范围宽。
+    expect(page).not.toMatch(/fetchStartedAtRef\.current/);
   });
 
   it('每次重新取原文都要重置起点，否则第二次进来一开始就算成迟到', () => {
-    expect(page).toContain('fetchStartedAtRef.current = Date.now();');
+    // 新形态下「起点」是那个时间戳 ref，重置成 0 表示「这一趟还没露出直链」
+    expect(page).toContain('directExposedAtRef.current = 0;');
   });
 });
 
@@ -77,9 +90,10 @@ describe('迟到的原文不许被丢掉', () => {
     expect(page).toContain('setLateHtml');
     // 迟到分支里必须是「存起来」而不是空手 return
     const branch = page.slice(
-      page.indexOf('if (exposedDirectRef.current && elapsed > LATE_SWAP_GUARD_MS)'),
+      page.indexOf('if (exposedAt > 0 && shownFor > LATE_SWAP_GUARD_MS)'),
       page.indexOf('setEmbeddedHtml(ready)'),
     );
+    expect(branch, '定位失败：迟到分支的写法变了，这条守卫要跟着改').not.toBe('');
     expect(branch).toContain('setLateHtml(ready)');
     // 出口必须真的渲染出来，否则留着也没人点得到（形状 2：链路只建一半）
     expect(page).toMatch(/lateHtml && !iframeHtml/);

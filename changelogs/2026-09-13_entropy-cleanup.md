@@ -1,1 +1,0 @@
-| chore | doc | 熵清理：D1-D5/D7 无欠账，D6 处理 3 条历史 changelog（监控自发现协议、监控中心第一屏空态修复、上一轮 entropy-cleanup 均已由既有 spec.platform.monitor-discovery.md / debt.cds.md 覆盖或属常规修复，manifest 补登记，无需追加新章节），D5 codebase-snapshot（2026-05-31）仍过期，留人工审查 |

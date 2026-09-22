@@ -1,3 +1,4 @@
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Services;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
@@ -8,6 +9,23 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class ImageGenLogicalModelRoutingTests
 {
+    [Theory]
+    [InlineData(false, 0, false, "visual-agent.image.text2img::generation")]
+    [InlineData(false, 0, true, "visual-agent.image.img2img::generation")]
+    [InlineData(false, 1, false, "visual-agent.image.img2img::generation")]
+    [InlineData(false, 2, false, "visual-agent.image.vision::generation")]
+    [InlineData(true, 3, true, "visual-agent.image.layering::generation")]
+    public void SynchronousGenerate_UsesTheSameScenarioCallerAsTheSelectableCatalog(
+        bool isLayering,
+        int imageCount,
+        bool hasLegacyReference,
+        string expected)
+    {
+        Assert.Equal(
+            expected,
+            ImageGenController.ResolveGenerateAppCallerCode(isLayering, imageCount, hasLegacyReference));
+    }
+
     [Theory]
     [InlineData("image2", "legacy", "ignored", "ignored", "image2")]
     [InlineData(null, "logical-model", "image2", null, "image2")]

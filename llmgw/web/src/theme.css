@@ -6929,6 +6929,31 @@ a:focus-visible {
   color: var(--warn) !important;
 }
 
+/* 模型池绑定退役后的只读回执：它横跨整个编辑区，不是一个可填的字段。 */
+.lg-app-caller-retired-pool {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+}
+
+.lg-app-caller-retired-pool strong {
+  color: var(--text-primary);
+  font-size: var(--fs-body);
+  font-weight: 600;
+}
+
+.lg-app-caller-retired-pool p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+  line-height: 1.6;
+}
+
 .lg-app-caller-row-actions {
   gap: 8px;
   white-space: nowrap;

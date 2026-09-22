@@ -1151,7 +1151,7 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
-    public async Task OpenAiCompatibleEndpoint_PreservesPinnedTargetHeaders()
+    public async Task OpenAiCompatibleEndpoint_RejectsClientSuppliedPinnedTargetHeaders()
     {
         var gateway = new EchoingGateway();
         await using var app = BuildHostWithGateway(gateway);
@@ -1173,14 +1173,20 @@ public class GatewayKeyGateContractTests
 
             var resp = await client.SendAsync(req);
 
-            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
-            gateway.LastRequest.ShouldNotBeNull();
-            gateway.LastRequest.ExpectedModel.ShouldBeNull();
-            gateway.LastRequest.PinnedPlatformId.ShouldBe("plat-openrouter");
-            gateway.LastRequest.PinnedModelId.ShouldBe("anthropic/claude-sonnet-4");
-            gateway.LastRequest.Context.ShouldNotBeNull();
-            gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
-            AssertRoutingContext(gateway.LastRequest.Context, "openai-compatible", "pinned");
+            // 兼容入口一律拒绝客户端自带的 pin，不再原样往下传。
+            //
+            // 这两个字段绕过对外模型目录，按内部 id 直取上游。池退场之前，池成员检查恰好是
+            // 它的调用方边界；池删掉之后那道边界跟着没了，而 pinned 解析只验「平台与模型在本租户
+            // 启用」——一把绑定某个 appCaller 的服务密钥，只要知道内部 id 就能调本租户任何
+            // 启用的物理模型，越过它自己的授权名单。
+            //
+            // 这条用例原本断言「保留并透传」，把那个边界缺口逐字锁住了：谁修谁的 CI 红。
+            resp.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            var body = await resp.Content.ReadAsStringAsync();
+            body.ShouldContain(
+                "pinned_target_not_allowed",
+                customMessage: "拒绝要给专属错误码，对方才定位得到是哪个字段不被接受");
+            gateway.LastRequest.ShouldBeNull("被拒的请求不该走到网关");
         }
         finally
         {
@@ -1767,7 +1773,7 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
-    public async Task OpenAiImagesCompatibleEndpoint_PreservesPinnedTargetProviderMetadata()
+    public async Task OpenAiImagesCompatibleEndpoint_RejectsClientSuppliedPinnedTarget()
     {
         var gateway = new EchoingGateway();
         await using var app = BuildHostWithGateway(gateway);
@@ -1792,19 +1798,10 @@ public class GatewayKeyGateContractTests
 
             var resp = await client.SendAsync(req);
 
-            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
-            gateway.LastRawRequest.ShouldNotBeNull();
-            gateway.LastRawRequest.PinnedPlatformId.ShouldBe("plat-image");
-            gateway.LastRawRequest.PinnedModelId.ShouldBe("openai/gpt-image-1");
-            gateway.LastRawRequest.Context.ShouldNotBeNull();
-            gateway.LastRawRequest.Context!.ModelPolicy.ShouldBe("pinned");
-            gateway.LastResolvePinnedPlatformId.ShouldBe("plat-image");
-            gateway.LastResolvePinnedModelId.ShouldBe("openai/gpt-image-1");
-            var upstreamBody = gateway.LastRawRequest.RequestBody!.ToJsonString();
-            upstreamBody.ShouldNotContain("model_policy");
-            upstreamBody.ShouldNotContain("pinned_platform_id");
-            upstreamBody.ShouldNotContain("pinned_model_id");
-            upstreamBody.ShouldContain("prompt");
+            // 生图入口同样不接受客户端自带的 pin，见 OpenAiCompatibleEndpoint 那条的完整说明。
+            resp.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await resp.Content.ReadAsStringAsync()).ShouldContain("pinned_target_not_allowed");
+            gateway.LastRawRequest.ShouldBeNull("被拒的请求不该走到网关");
         }
         finally
         {
@@ -1862,7 +1859,7 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
-    public async Task OpenAiImageEditsCompatibleEndpoint_PreservesPinnedTargetMultipartFields()
+    public async Task OpenAiImageEditsCompatibleEndpoint_RejectsClientSuppliedPinnedTarget()
     {
         var gateway = new EchoingGateway();
         await using var app = BuildHostWithGateway(gateway);
@@ -1886,14 +1883,10 @@ public class GatewayKeyGateContractTests
 
             var resp = await client.SendAsync(req);
 
-            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
-            gateway.LastRawRequest.ShouldNotBeNull();
-            gateway.LastRawRequest.PinnedPlatformId.ShouldBe("plat-image-edit");
-            gateway.LastRawRequest.PinnedModelId.ShouldBe("openai/gpt-image-edit");
-            gateway.LastRawRequest.Context.ShouldNotBeNull();
-            gateway.LastRawRequest.Context!.ModelPolicy.ShouldBe("pinned");
-            gateway.LastResolvePinnedPlatformId.ShouldBe("plat-image-edit");
-            gateway.LastResolvePinnedModelId.ShouldBe("openai/gpt-image-edit");
+            // multipart 那条路同理：pin 藏在表单字段里也一样要拒。
+            resp.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await resp.Content.ReadAsStringAsync()).ShouldContain("pinned_target_not_allowed");
+            gateway.LastRawRequest.ShouldBeNull("被拒的请求不该走到网关");
         }
         finally
         {
@@ -1985,7 +1978,7 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
-    public async Task ClaudeCompatibleEndpoint_PreservesPinnedTargetHeaders()
+    public async Task ClaudeCompatibleEndpoint_RejectsClientSuppliedPinnedTargetHeaders()
     {
         var gateway = new EchoingGateway();
         await using var app = BuildHostWithGateway(gateway);
@@ -2008,14 +2001,12 @@ public class GatewayKeyGateContractTests
 
             var resp = await client.SendAsync(req);
 
-            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
-            gateway.LastRequest.ShouldNotBeNull();
-            gateway.LastRequest.ExpectedModel.ShouldBeNull();
-            gateway.LastRequest.PinnedPlatformId.ShouldBe("plat-anthropic");
-            gateway.LastRequest.PinnedModelId.ShouldBe("claude-3-7-sonnet-latest");
-            gateway.LastRequest.Context.ShouldNotBeNull();
-            gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
-            AssertRoutingContext(gateway.LastRequest.Context, "claude-compatible", "pinned");
+            // 同 OpenAI 那条：claude-compatible 入口同样不接受客户端自带的 pin。
+            // 六个兼容入口少堵一个就是留了一扇后门，而它不会红。
+            resp.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            var body = await resp.Content.ReadAsStringAsync();
+            body.ShouldContain("pinned_target_not_allowed", customMessage: "拒绝要给专属错误码");
+            gateway.LastRequest.ShouldBeNull("被拒的请求不该走到网关");
         }
         finally
         {
@@ -2329,6 +2320,76 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task GeminiCompatibleEndpoint_AutoRoute_PreservesConcreteBodyModel()
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1beta/models/auto:generateContent")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "provider/gemini-picked",
+                    model_policy = "pinned",
+                    contents = new[] { new { role = "user", parts = new[] { new { text = "hi" } } } },
+                }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.ExpectedModel.ShouldBe("provider/gemini-picked");
+            gateway.LastRequest.Context.ShouldNotBeNull();
+            gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GeminiCompatibleEndpoint_AutoRoute_DoesNotPinLiteralAutoModel()
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1beta/models/auto:generateContent")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "auto",
+                    model_policy = "auto",
+                    contents = new[] { new { role = "user", parts = new[] { new { text = "hi" } } } },
+                    generationConfig = new { maxOutputTokens = 8 },
+                }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+            req.Headers.Add("X-Gateway-Model-Policy", "auto");
+
+            var resp = await client.SendAsync(req);
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.ExpectedModel.ShouldBeNull();
+            gateway.LastRequest.Context.ShouldNotBeNull();
+            gateway.LastRequest.Context!.ModelPolicy.ShouldBe("auto");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task GeminiCompatibleEndpoint_WithInlineImage_UsesVisionRequestType()
     {
         var gateway = new EchoingGateway();
@@ -2474,7 +2535,7 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
-    public async Task GeminiCompatibleEndpoint_PreservesPinnedTargetProviderMetadata()
+    public async Task GeminiCompatibleEndpoint_RejectsClientSuppliedPinnedTarget()
     {
         var gateway = new EchoingGateway();
         await using var app = BuildHostWithGateway(gateway);
@@ -2499,14 +2560,10 @@ public class GatewayKeyGateContractTests
 
             var resp = await client.SendAsync(req);
 
-            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
-            gateway.LastRequest.ShouldNotBeNull();
-            gateway.LastRequest.ExpectedModel.ShouldBe("gemini-2.5-pro");
-            gateway.LastRequest.PinnedPlatformId.ShouldBe("plat-google");
-            gateway.LastRequest.PinnedModelId.ShouldBe("gemini-2.5-pro");
-            gateway.LastRequest.Context.ShouldNotBeNull();
-            gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
-            AssertRoutingContext(gateway.LastRequest.Context, "gemini-compatible", "pinned");
+            // gemini-compatible 入口同理。六个兼容入口逐个都要拒，少一个就是一扇后门。
+            resp.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            (await resp.Content.ReadAsStringAsync()).ShouldContain("pinned_target_not_allowed");
+            gateway.LastRequest.ShouldBeNull("被拒的请求不该走到网关");
         }
         finally
         {

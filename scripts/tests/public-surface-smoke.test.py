@@ -73,8 +73,8 @@ GATEWAY_RESPONSES = {
     ("POST", "https://gateway.example.test/v1/messages"): MODULE.HttpResult(
         "https://gateway.example.test/v1/messages", 401, "application/json", GATEWAY_UNAUTHORIZED
     ),
-    ("POST", "https://gateway.example.test/v1beta/models/gateway-auto:generateContent"): MODULE.HttpResult(
-        "https://gateway.example.test/v1beta/models/gateway-auto:generateContent",
+    ("POST", "https://gateway.example.test/v1beta/models/auto:generateContent"): MODULE.HttpResult(
+        "https://gateway.example.test/v1beta/models/auto:generateContent",
         401,
         "application/json",
         GATEWAY_UNAUTHORIZED,

@@ -1,5 +1,7 @@
 using System.Text.Json.Nodes;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LLM.Adapters;
 
 namespace PrdAgent.Infrastructure.LlmGateway.ImageGen;
@@ -29,7 +31,13 @@ public static class GatewayImageResponseNormalizer
                             var imageUrl = item?["image_url"];
                             Add(data, null, imageUrl is JsonObject obj ? obj["url"]?.GetValue<string>() : imageUrl?.GetValue<string>(), null, null);
                         }
-            if (data.Count == 0) return Failure(response, "IMAGE_GEN_MISSING_IMAGE", "生图服务未返回图片，请稍后重试。");
+            if (data.Count == 0)
+            {
+                var missingImage = ImageGenerationUserError.MissingImage(response.Content);
+                if (missingImage.Code == ErrorCodes.IMAGE_GEN_REQUEST_REJECTED)
+                    return Failure(response, missingImage.Code, missingImage.Message);
+                return Failure(response, "IMAGE_GEN_MISSING_IMAGE", "生图服务未返回图片，请稍后重试。");
+            }
             return new GatewayRawResponse
             {
                 Success = true, StatusCode = response.StatusCode, ContentType = "application/json",

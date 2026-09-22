@@ -70,6 +70,16 @@ public static class AdminPermissionCatalog
     public const string ChatAgentUse = "chat-agent.use";
 
     /// <summary>
+    /// 活动任务清单权限：维护自己的「此刻在做什么 / 备用任务 / 历史」
+    /// </summary>
+    public const string ActiveTasksUse = "active-tasks.use";
+
+    /// <summary>
+    /// 活动任务清单管理权限：看全员此刻、委派任务、配置匿名可见粒度
+    /// </summary>
+    public const string ActiveTasksManage = "active-tasks.manage";
+
+    /// <summary>
     /// 缺陷管理 Agent 权限：提交和查看缺陷
     /// </summary>
     public const string DefectAgentUse = "defect-agent.use";
@@ -387,6 +397,8 @@ public static class AdminPermissionCatalog
         new(VisualAgentUse, "视觉创作智能体", "高级视觉创作工作区"),
         new(LiteraryAgentUse, "文学创作智能体", "文章配图智能生成"),
         new(ChatAgentUse, "通用对话智能体", "打开就能聊的多轮对话入口"),
+        new(ActiveTasksUse, "活动任务清单", "维护自己的此刻在做什么/备用任务/历史"),
+        new(ActiveTasksManage, "活动任务清单-管理", "看全员此刻、委派任务、配置匿名可见粒度"),
         new(DefectAgentUse, "缺陷管理智能体", "提交和查看缺陷"),
         new(DefectAgentManage, "缺陷管理智能体-管理", "设置模板、指派、项目/Webhook管理"),
         new(TapdBugAgentUse, "TAPD 缺陷自动提报智能体", "整理并创建 TAPD 缺陷"),

@@ -48,6 +48,7 @@ jobs:
       llmgw: ${{ steps.filter.outputs.llmgw }}
       llmgw_web: ${{ steps.filter.outputs.llmgw_web }}
       llmgw_serve: ${{ steps.filter.outputs.llmgw_serve }}
+      same_as_main: ${{ steps.main_equivalence.outputs.value }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -82,11 +83,31 @@ jobs:
               - 'prd-api/**'
               - '.github/workflows/branch-image.yml'
 
+      # 一个提交先推 feature、随后又快进 main 时，feature workflow 执行期间看到的
+      # merge-base 可能已经等于 HEAD，paths-filter 因而返回“零改动”。这不能代表镜像
+      # 已由本次 feature run 构建；若继续把该 run 的 success 当作产物就绪，CDS 会在
+      # main 镜像尚未完成时退回陈旧 branch-* 标签，形成“记录是新提交、容器是旧代码”。
+      # 这种重合提交直接补齐全部不可变镜像与 feature 移动标签，消除竞态窗口。
+      - name: Detect feature commit already on main
+        id: main_equivalence
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+            echo "value=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags --depth=1 origin main
+          if [[ "$(git rev-parse HEAD)" == "$(git rev-parse origin/main)" ]]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
   api-image:
     name: Build prd-api image
     needs: changes
     # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
-    if: ${{ needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.api == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -140,7 +161,7 @@ jobs:
     name: Build prd-admin image
     needs: changes
     # main 始终构建（回退镜像源 + 自身 sha 镜像必须存在，见文件头注释）；其它分支按 path-filter。
-    if: ${{ needs.changes.outputs.admin == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.admin == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -186,7 +207,7 @@ jobs:
   llmgw-image:
     name: Build LLM Gateway console API image
     needs: changes
-    if: ${{ needs.changes.outputs.llmgw == 'true' || needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.llmgw == 'true' || needs.changes.outputs.api == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -252,7 +273,7 @@ jobs:
   llmgw-web-image:
     name: Build LLM Gateway web image
     needs: changes
-    if: ${{ needs.changes.outputs.llmgw_web == 'true' || needs.changes.outputs.api == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.llmgw_web == 'true' || needs.changes.outputs.api == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -309,7 +330,7 @@ jobs:
   llmgw-serve-image:
     name: Build LLM Gateway serving image
     needs: changes
-    if: ${{ needs.changes.outputs.api == 'true' || needs.changes.outputs.llmgw_serve == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ needs.changes.outputs.api == 'true' || needs.changes.outputs.llmgw_serve == 'true' || needs.changes.outputs.same_as_main == 'true' || github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read

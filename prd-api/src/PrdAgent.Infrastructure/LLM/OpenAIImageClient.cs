@@ -283,7 +283,7 @@ public class OpenAIImageClient : IImageGenerationClient
         {
             var root = JsonNode.Parse(response.Content ?? "")?.AsObject();
             var outputs = root?["data"] as JsonArray;
-            if (outputs is null || outputs.Count == 0) return UserFailure(ImageGenerationUserError.MissingImage());
+            if (outputs is null || outputs.Count == 0) return UserFailure(ImageGenerationUserError.MissingImage(response.Content));
             var watermark = await TryGetWatermarkConfigAsync(TryResolveAppKeyFromAppCallerCode(appCallerCode) ?? "", ct);
             var results = new List<ImageGenImage>();
             string? actualSize = null;
@@ -1119,7 +1119,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 if (googleImages.Count == 0)
                 {
                     _logger.LogWarning("[Google] 响应中未找到图片数据。Body length={Len}", body.Length);
-                    return UserFailure(ImageGenerationUserError.MissingImage());
+                    return UserFailure(ImageGenerationUserError.MissingImage(body));
                 }
 
                 var googleGenImages = new List<ImageGenImage>();
@@ -1347,7 +1347,7 @@ public class OpenAIImageClient : IImageGenerationClient
 
             // OpenRouter 与标准 data[] 两条解析都没拿到图：统一在此判失败（替代原 OpenRouter 分支的早退，Bugbot review）
             if (images.Count == 0)
-                return UserFailure(ImageGenerationUserError.MissingImage());
+                return UserFailure(ImageGenerationUserError.MissingImage(body));
 
             // 兼容：若下游只返回 url（或你希望统一给前端 base64），则后端自动下载转成 dataURL/base64
             // 强约束：不把 base64 写入 Mongo；输出统一 re-host 到 COS（返回稳定 URL）
@@ -1840,7 +1840,7 @@ public class OpenAIImageClient : IImageGenerationClient
                 if (googleImgResults.Count == 0)
                 {
                     _logger.LogWarning("[Google] 多图响应中未找到图片数据");
-                    return UserFailure(ImageGenerationUserError.MissingImage());
+                    return UserFailure(ImageGenerationUserError.MissingImage(respBody));
                 }
 
                 var images = new List<ImageGenImage>();
@@ -2112,7 +2112,7 @@ public class OpenAIImageClient : IImageGenerationClient
                         ? "(无)"
                         : (visionTextFallback.Length > 200 ? visionTextFallback[..200] + "..." : visionTextFallback));
                 // Gateway 已处理日志
-                return UserFailure(ImageGenerationUserError.MissingImage());
+                return UserFailure(ImageGenerationUserError.MissingImage(respBody));
             }
 
             var images = new List<ImageGenImage>();

@@ -153,6 +153,15 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AdminNotificationEventService>(
 builder.Services.AddScoped<PrdAgent.Api.Services.HomepageAssetCopier>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.AdminPushNotificationWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.LlmGatewayIncidentWatchdog>();
+// 生图模型契约的覆盖表刷新器：让「上游出了新生图模型」不再等于「改代码 + 发一次版」。
+builder.Services.AddHostedService(sp => new PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker(
+    sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PrdAgent.Infrastructure.LLM.ImageGenModelConfigSyncWorker>>(),
+    sp.GetRequiredService<IConfiguration>(),
+    hostRole: "prd-api",
+    // MAP 这一侧只服务自己那个租户（LlmGateway:InternalTenantId），
+    // 所以它配的契约可以安全地装进进程全局表。
+    tenancy: PrdAgent.Infrastructure.LLM.ImageGenContractHostTenancy.SingleTenant,
+    sp.GetService<PrdAgent.Infrastructure.Database.LlmGatewayDataContext>()));
 
 // 系统级跨节点互传（Peer Sync）—— 详见 doc/design.platform.peer-sync.md
 builder.Services.AddSingleton<PrdAgent.Core.Interfaces.IPeerNodeService,
@@ -218,7 +227,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.I
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
-// 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
+// 业务模型目录适配器：必须跟随下方活动 ILlmGateway 的 inproc/http/shadow 路由。
 builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
 // 模型池故障通知与自动探活
@@ -228,6 +237,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ModelCatalogContractProbe>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
@@ -466,6 +476,21 @@ builder.Services.AddHttpClient("AiNews", c =>
 builder.Services.AddScoped<PrdAgent.Core.Interfaces.IAiNewsService, PrdAgent.Infrastructure.Services.AiNewsService>();
 // 后台每 4 分钟预热「AI 大事」缓存，让用户访问路径永不同步等外网（卡顿排查 2026-06-03）。
 builder.Services.AddHostedService<PrdAgent.Infrastructure.Services.AiNewsCacheWarmer>();
+
+// 模型排行榜：每天把 arena.ai 的公开榜单同步进本地库，页面只读库不打外站。
+// 超时给到 30 秒：榜单页是服务端渲染的大页面（agent 榜约 1.8MB、text 榜约 5.4MB），
+// 按 AiNews 那 8 秒配会稳定超时。出站仍走 SafeOutboundHttpHandler，不绕开 SSRF 防护。
+builder.Services.AddHttpClient(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker.HttpClientName, c =>
+{
+    c.Timeout = TimeSpan.FromSeconds(30);
+    c.DefaultRequestHeaders.UserAgent.ParseAdd("PrdAgent-ModelLeaderboard/1.0");
+})
+    .ConfigurePrimaryHttpMessageHandler(sp =>
+        sp.GetRequiredService<PrdAgent.Infrastructure.Services.ISafeOutboundHttpHandlerFactory>().CreateHandler());
+// 同步逻辑的唯一实现，周期 Worker 与管理员手动端点共用，避免两份各自漂移。
+builder.Services.AddScoped<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncService>();
+// 只在权威部署上跑：快照是共享库里的全局单行状态，多个分支预览同时写会互相覆盖。
+builder.Services.AddHostedService<PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardSyncWorker>();
 
 // 知识库 Agent 后台执行器（字幕生成 + 文档再加工，ASR/vision 统一走 ILlmGateway）
 builder.Services.AddHttpClient("DocStoreAgent");
@@ -1470,6 +1495,9 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubOAuthService,
     PrdAgent.Infrastructure.GitHub.GitHubOAuthService>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.IGitHubClient,
     PrdAgent.Infrastructure.GitHub.GitHubPrClient>();
+// per-user GitHub 连接的唯一判定源（连接状态 / token 解密 / 仓库·分支·目录读取）。
+// 知识库 GitHub 同步、共用连接中心 /api/github/* 都走它，避免各应用再抄一份 Device Flow。
+builder.Services.AddScoped<PrdAgent.Infrastructure.GitHub.GitHubUserConnectionService>();
 
 // PR Review V2（pr-review）业务层服务 —— 消费上面的 GitHub 基础设施
 builder.Services.AddScoped<PrdAgent.Api.Services.PrReview.PrAlignmentService>();
@@ -1663,6 +1691,10 @@ static IResult HealthCheck()
 static async Task<IResult> DeepHealth(
     PrdAgent.Api.Middleware.ApiFaultTracker faults,
     PrdAgent.Infrastructure.Database.MongoDbContext db,
+    PrdAgent.Infrastructure.Database.LlmGatewayDataContext gatewayDb,
+    PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
+    PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
+    PrdAgent.Infrastructure.Services.ModelCatalogContractProbe modelCatalogContract,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
@@ -1687,9 +1719,208 @@ static async Task<IResult> DeepHealth(
         mongoOutput = $"Mongo 探不通：{ex.GetType().Name}";
     }
 
+    // 榜单快照的陈旧度。这是「同步链路还活着吗」唯一不靠人去点就能读到的信号：
+    // 抓取失败时 SyncService 刻意保留旧快照（宁可旧也不写空），读端点照样 200，
+    // 页面上只有一个需要人打开才看得见的 stale 标签——降级把一次持续失败翻译成了一次
+    // 表面成功（degradation-must-alarm.md）。所以这里对**症状**（数据多旧）而不是
+    // 原因（哪次抓取失败）暴露一条机读判据。
+    //
+    // 两条命门（都是 Codex 在 PR #1538 指出的，两条都会让这个 check 变成一盏永远不亮的灯）：
+    //
+    // 1. **哨兵值必须判失败**。第一版在「一条快照都没有」时把值设成 -1，注释还写着
+    //    「判据会判失败」——而判据是 `lte 48`，-1 当然小于 48，于是同步从来没跑起来过的
+    //    部署会永远绿。哨兵值要选在判据的**失败侧**，不能凭直觉挑一个「看起来异常」的数。
+    //    这里统一用 UnhealthySentinel（远大于阈值），任何取不到数的分支都走它。
+    //
+    // 2. **要看覆盖，不只看最旧的那条**。每个榜的失败是各自 catch 的，成功的照写。
+    //    于是「十一个榜里只有一个同步成功」会让这条查询拿到一份很新的快照而判绿，
+    //    另外十个维度在页面上永远空着却无人告警。所以先比对目录里声明的榜是否都在库里，
+    //    缺了就直接判失败——覆盖不全比数据旧更严重。
+    const double leaderboardUnhealthySentinel = 9999;
+    double leaderboardStaleHours;
+    string leaderboardOutput;
+    try
+    {
+        // 只看「本部署该看的那些」：分支预览与权威部署各写各的文档
+        // （PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope），
+        // 自检要判的是**页面上实际显示的那份**陈不陈旧，不是库里所有部署的文档。
+        var snapshots = await db.ModelLeaderboardSnapshots
+            .Find(PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.VisibleFilter())
+            .Project(x => new { x.Board, x.FetchedAt, x.DeploymentSlug })
+            .ToListAsync(cancellationToken);
+
+        var storedBoards = snapshots
+            .Select(x => x.Board)
+            .Where(b => !string.IsNullOrWhiteSpace(b))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var missingBoards = PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardCatalog.Keys
+            .Where(k => !storedBoards.Contains(k))
+            .ToArray();
+
+        if (snapshots.Count == 0)
+        {
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = "一个榜单快照都没有——周期同步从来没成功跑完过，"
+                + "整个模型排行榜页面是空的；去看容器日志里 ModelLeaderboardSync 的告警";
+        }
+        else if (missingBoards.Length > 0)
+        {
+            leaderboardStaleHours = leaderboardUnhealthySentinel;
+            leaderboardOutput = $"缺 {missingBoards.Length} 个榜的快照（{string.Join("、", missingBoards)}）——"
+                + "这些维度在页面上是空的；去看容器日志里这几个榜的同步告警";
+        }
+        else
+        {
+            // 每个榜取**它自己最新的那份**，再在这些里面挑最旧的。
+            //
+            // 不能直接对全量文档取最旧（Codex 在 PR #1538 指出）：首次写的并发窗口
+            // （已在本 PR 修掉，但可能已经在库里留下残留）会让同一个榜有两条文档，
+            // 而同步只更新其中一条、从不删另一条。覆盖判断用的是集合、不受影响，
+            // 但陈旧度会一直盯着那条永远不再更新的孤儿，48 小时后这条 check 就永久告警，
+            // 而实际上每个榜都在正常同步——一条永远响的铃和一条永远不响的铃同样没用。
+            // 挑「哪一份是这个榜当前生效的」用与三个读取点同一个函数，不再各写一遍排序。
+            // 一条都挑不出来时 First() 会抛，被外层 catch 接住落到失败侧哨兵——
+            // 这正是想要的：读不出「页面在显示哪一份」就不能判绿。
+            var oldest = snapshots
+                .GroupBy(x => x.Board, StringComparer.OrdinalIgnoreCase)
+                .Select(g => PrdAgent.Api.Services.ModelLeaderboard.ModelLeaderboardScope.PickVisible(
+                    g.ToList(), x => x.DeploymentSlug, x => x.FetchedAt))
+                .Where(x => x is not null)
+                .OrderBy(x => x!.FetchedAt)
+                .First()!;
+            leaderboardStaleHours = Math.Round((now - oldest.FetchedAt).TotalHours, 1);
+            leaderboardOutput = leaderboardStaleHours <= 48
+                ? $"{storedBoards.Count} 个榜都有快照，最旧的一份是 {leaderboardStaleHours} 小时前的（{oldest.Board}）"
+                : $"最旧的榜单快照已经 {leaderboardStaleHours} 小时没更新（{oldest.Board}）——"
+                  + "同步大概率连着失败了，去看容器日志里 ModelLeaderboardSync 的告警";
+        }
+    }
+    catch (Exception ex)
+    {
+        // 读不到就是读不到，不能判绿（同上：哨兵必须在失败侧）
+        leaderboardStaleHours = leaderboardUnhealthySentinel;
+        leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
+    }
+
+    // 生图路由预检：这里不调生图上游、不花生图费用，但会用与真实同步生图相同的
+    // 场景身份和逻辑模型进入调度器。它专门抓“目录里能选，点生成却被白名单拒绝”：
+    // 普通 /health 会绿、Mongo 会绿、模型目录也会绿，只有按真实 appCaller 解析才能提前看出契约断了。
+    var visualImageRouteFailures = 1;
+    string visualImageRouteOutput;
+    try
+    {
+        var policy = await visualModels.ReadAsync(cancellationToken);
+        var openModels = policy.Models
+            .Select(x => x.ModelId?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var defaultModel = policy.DefaultModelId?.Trim() ?? string.Empty;
+        if (openModels.Count == 0 || string.IsNullOrWhiteSpace(defaultModel))
+        {
+            visualImageRouteOutput = "视觉创作没有配置开放模型或默认生图模型";
+        }
+        else
+        {
+            var failures = new List<string>();
+            var coveredModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var checkedRoutes = 0;
+            foreach (var appCaller in PrdAgent.Api.Services.VisualModelPolicyService.AppCallers)
+            {
+                var catalog = await visualModels.DiscoverAsync(appCaller, cancellationToken);
+                foreach (var model in catalog
+                    .Select(x => x.Model.Code)
+                    .Where(openModels.Contains)
+                    .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    coveredModels.Add(model);
+                    checkedRoutes++;
+                    var resolution = await modelResolver.ResolveAsync(
+                        appCaller,
+                        PrdAgent.Core.Models.ModelTypes.ImageGen,
+                        model,
+                        ct: cancellationToken);
+                    if (!resolution.Success)
+                    {
+                        failures.Add($"{model}:{resolution.FailureCode ?? "UNCLASSIFIED"}");
+                    }
+                }
+            }
+
+            foreach (var missing in openModels.Except(coveredModels, StringComparer.OrdinalIgnoreCase))
+            {
+                failures.Add($"{missing}:NOT_IN_SCENARIO_CATALOG");
+            }
+
+            var textCatalog = await visualModels.DiscoverAsync(
+                PrdAgent.Api.Controllers.Api.ImageGenController.ResolveGenerateAppCallerCode(
+                    isLayering: false,
+                    imageCount: 0,
+                    hasLegacyReference: false),
+                cancellationToken);
+            if (!textCatalog.Any(x => string.Equals(x.Model.Code, defaultModel, StringComparison.OrdinalIgnoreCase)))
+            {
+                failures.Add($"{defaultModel}:DEFAULT_NOT_TEXT2IMG");
+            }
+
+            visualImageRouteFailures = failures.Count;
+            visualImageRouteOutput = failures.Count == 0
+                ? $"{openModels.Count} 个开放模型的 {checkedRoutes} 条生图场景路由均可解析"
+                : $"生图场景路由有 {failures.Count} 处失配：{string.Join("、", failures.Take(5))}";
+        }
+    }
+    catch (Exception ex)
+    {
+        visualImageRouteOutput = $"默认生图路由预检失败：{ex.GetType().Name}";
+    }
+
+    // 业务选择器与执行链路必须使用同一个稳定模型身份。只看“目录非空”会漏掉最危险的
+    // 情况：页面展示旧模型池成员名，但运行时只接受 LLM Gateway PublicId。该探针对所有
+    // 仍消费 IModelPoolQueryService 的核心入口执行同一份目录 -> 默认 -> 指定模型闭环。
+    var modelCatalogResult = await modelCatalogContract.CheckAsync(cancellationToken);
+
+    // 生图真实调用结果：路由预检只能证明「现在能解析」，不能证明上一笔真实请求有没有
+    // 被上游或网关拒绝。过去只盯未处理异常，而模型不开放、能力不匹配、上游 4xx/5xx
+    // 都会被业务层转成结构化失败，进程没有抛异常，监控因此永远绿。
+    //
+    // 这里读取网关已经脱敏的请求日志，只看最近 6 小时内 MAP 三个生图场景的最终状态。
+    // 判据用「最新连续失败数」而不是窗口失败总数：故障后成功一次即表示链路已经恢复，
+    // CDS 会留下故障/恢复事件；旧失败不会让红灯再挂 6 小时。
+    var visualImageRecentRequests = 0;
+    var visualImageConsecutiveFailures = -1;
+    string visualImageOutcomeOutput;
+    try
+    {
+        var imageCallers = PrdAgent.Api.Services.VisualModelPolicyService.AppCallers;
+        var since = now.AddMinutes(-faults.WindowMinutes);
+        var filter = MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.And(
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Gte(x => x.StartedAt, since),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.In(x => x.AppCallerCode, imageCallers),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Ne(x => x.Status, "running"));
+        var outcomes = await gatewayDb.LlmRequestLogs
+            .Find(filter)
+            .SortByDescending(x => x.StartedAt)
+            .Limit(20)
+            .Project(x => new { x.Status })
+            .ToListAsync(cancellationToken);
+        visualImageRecentRequests = outcomes.Count;
+        visualImageConsecutiveFailures = outcomes.TakeWhile(x => x.Status != "succeeded").Count();
+        visualImageOutcomeOutput = outcomes.Count == 0
+            ? $"最近 {faults.WindowMinutes} 分钟没有生图真实调用，无法用真实结果证明链路可用"
+            : visualImageConsecutiveFailures == 0
+                ? $"最近一笔生图真实调用成功；窗口内采样 {outcomes.Count} 笔"
+                : $"最近连续 {visualImageConsecutiveFailures} 笔生图真实调用失败；详情见网关调用日志";
+    }
+    catch (Exception ex)
+    {
+        visualImageOutcomeOutput = $"读取生图真实调用结果失败：{ex.GetType().Name}";
+    }
+
     var payload = new Dictionary<string, object?>
     {
-        ["status"] = faultCount == 0 && mongoMs >= 0 ? "pass" : "fail",
+        ["status"] = faultCount == 0 && mongoMs >= 0 && visualImageRouteFailures == 0
+            && modelCatalogResult.FailureCount == 0
+            && visualImageConsecutiveFailures == 0 ? "pass" : "fail",
         ["version"] = "1",
         ["serviceId"] = "prd-api",
         ["description"] = "MAP 后端深度自检",
@@ -1722,6 +1953,47 @@ static async Task<IResult> DeepHealth(
                         severity = "P0",
                         observeMode = "passive",
                         sampleComponentId = "api.requests",
+                        // 自称生产：跑在分支预览上时 CDS 会按地址判成分支预览并压过这句自称，
+                        // 所以写 production 不会让临时分支混进负责人的第一屏。
+                        environment = "production",
+                        // 对外只出业务名与红绿，不出地址、判据、日志——所以这条可以公开。
+                        publicVisible = true,
+                        publicName = "MAP 后端",
+                    },
+                },
+            },
+            ["model-leaderboard:staleness"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-leaderboard.staleness",
+                    ["componentType"] = "datastore",
+                    ["observedValue"] = leaderboardStaleHours,
+                    ["observedUnit"] = "h",
+                    // 与下面 cds:monitor 的 op/value 同一个判据，两处不许各写一遍：
+                    // 拿不到数的分支已经把值置成远大于阈值的哨兵，这里不必再判一次「是不是 -1」
+                    ["status"] = leaderboardStaleHours <= 48 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = leaderboardOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "模型榜快照陈旧度",
+                        field = "observedValue",
+                        // 同步是每天一轮，容忍连着两轮失败（48 小时）再响——与页面上 stale
+                        // 标签同一个阈值，两处不许各定一个
+                        op = "lte",
+                        value = 48,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 1,
+                        severity = "P2",
+                        // 不设 observeMode：这条是**主动读一次状态**，走默认的 active。
+                        //
+                        // 第一版照抄了上面那条未处理异常的 passive + sampleComponentId，但那两条的
+                        // 形状根本不同：那条判的是「窗口内出了几次异常」，要配一个**另一条 check**
+                        // 给出的请求量才有意义，所以 sampleComponentId 指向 api.requests。
+                        // 这条我却让它指向自己，于是 CDS 会把「快照多旧」同时当成判据值和样本量——
+                        // 刚同步完那一刻值是 0，面板上会显示「0 次真实调用」而拒绝判绿；平时显示
+                        // 12.4，又像是 12 次请求（Codex 在 PR #1538 指出）。
                     },
                 },
             },
@@ -1747,6 +2019,118 @@ static async Task<IResult> DeepHealth(
                         intervalSeconds = 21600,
                         failuresToAlarm = 2,
                         severity = "P2",
+                        environment = "production",
+                        // 「有没有人在用」是内部判据，对外说它没有意义，不公开。
+                        publicVisible = false,
+                    },
+                },
+            },
+            ["visual-image:default-route"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.default-route",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRouteFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRouteFailures == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRouteOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图模型场景路由",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图模型",
+                    },
+                },
+            },
+            ["model-catalog:selector-runtime-contract"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-catalog.selector-runtime-contract",
+                    ["componentType"] = "service",
+                    ["observedValue"] = modelCatalogResult.FailureCount,
+                    ["observedUnit"] = "count",
+                    ["targetCount"] = modelCatalogResult.TargetCount,
+                    ["catalogEntryCount"] = modelCatalogResult.CatalogEntryCount,
+                    ["status"] = modelCatalogResult.FailureCount == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = modelCatalogResult.Output,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 业务模型目录与运行时可用性一致性",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 业务模型目录",
+                    },
+                },
+            },
+            ["visual-image:recent-outcomes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.recent-outcomes",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageConsecutiveFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageConsecutiveFailures == 0
+                        ? (visualImageRecentRequests > 0 ? "pass" : "warn")
+                        : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageOutcomeOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用结果",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图真实调用",
+                    },
+                },
+            },
+            ["visual-image:requests"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.requests",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRecentRequests,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRecentRequests > 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRecentRequests > 0
+                        ? $"最近 {faults.WindowMinutes} 分钟采样到 {visualImageRecentRequests} 笔生图真实调用"
+                        : $"最近 {faults.WindowMinutes} 分钟没有生图真实调用",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用数",
+                        field = "observedValue",
+                        op = "gt",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 2,
+                        severity = "P2",
+                        environment = "production",
+                        publicVisible = false,
                     },
                 },
             },
@@ -1773,6 +2157,9 @@ static async Task<IResult> DeepHealth(
                         intervalSeconds = 300,
                         failuresToAlarm = 2,
                         severity = "P1",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 数据库",
                     },
                 },
             },

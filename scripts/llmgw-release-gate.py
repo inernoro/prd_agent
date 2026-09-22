@@ -401,11 +401,16 @@ def _config_authority_check(
     if map_remaining != 0:
         failures.append(f"MAP fallback 对象未清零: mapFallbackObjectsRemaining={map_remaining}")
     if not active_ready:
-        failures.append("active appCaller 尚未全部绑定有效 GW 模型池")
+        failures.append("active appCaller 尚未全部有对外模型接得住（没人认领它，这个用途的默认也接不住）")
     if active_missing != 0:
-        failures.append(f"active appCaller 缺 GW 池: activeMissingGatewayPool={active_missing}")
+        failures.append(
+            "active appCaller 没有对外模型接得住: "
+            f"activeMissingGatewayPool={active_missing}（字段名沿用旧称，判据已是对外模型；"
+            "去「模型」页把某个模型的「指定调用方」加上它，或给这个用途设一个默认模型）")
     if active_without_usable != 0:
-        failures.append(f"active appCaller 绑定的 GW 池不可用: activeBoundPoolWithoutUsableMember={active_without_usable}")
+        failures.append(
+            "配置权威报告回了一个非零的 activeBoundPoolWithoutUsableMember="
+            f"{active_without_usable}：池退场后这一档恒为 0，非零说明控制台版本比本脚本旧，先对齐版本")
 
     result["failures"] = failures
     result["ok"] = not failures
@@ -872,7 +877,7 @@ def main() -> int:
     parser.add_argument("--health-interval", type=float, default=float(os.environ.get("LLMGW_GATE_HEALTH_INTERVAL_SECONDS", "0")),
                         help="healthz 多次采样间隔秒数，默认 0")
     parser.add_argument("--require-config-authority", action="store_true",
-                        help="要求 GW 控制台配置权威报告 ready：MAP fallback 对象清零且 active appCaller 均绑定 GW 池")
+                        help="要求 GW 控制台配置权威报告 ready：MAP fallback 对象清零且每个 active appCaller 都有对外模型接得住")
     parser.add_argument("--require-runtime-gates", action="store_true",
                         help="要求 GW 控制台 /runtime-gates readyForHttpFull=true；用于 http-full 部署后最终放行")
     parser.add_argument("--allow-pending-http-full-ledger", action="store_true",

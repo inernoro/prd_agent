@@ -102,6 +102,27 @@ public class ImageGenController : ControllerBase
         return def != null && def.ModelTypes.Contains(ModelTypes.ImageGen);
     }
 
+    /// <summary>
+    /// 同步生图接口必须使用与模型目录相同的具体场景身份。
+    ///
+    /// 模型目录按 Text2Img / Img2Img / VisionGen 三个 appCaller 合并展示；如果提交时改用
+    /// 旧的通用 ImageGen.Generate，带显式白名单的逻辑模型会出现“目录能选、提交即拒绝”。
+    /// </summary>
+    internal static string ResolveGenerateAppCallerCode(bool isLayering, int imageCount, bool hasLegacyReference)
+    {
+        if (isLayering) return VisualAgent.Image.Layering;
+
+        var referenceCount = Math.Max(0, imageCount);
+        if (referenceCount == 0 && hasLegacyReference) referenceCount = 1;
+
+        return referenceCount switch
+        {
+            > 1 => VisualAgent.Image.VisionGen,
+            1 => VisualAgent.Image.Img2Img,
+            _ => VisualAgent.Image.Text2Img,
+        };
+    }
+
     #region 模型池查询（硬编码 appCallerCode，应用身份隔离）
 
     /// <summary>
@@ -894,13 +915,25 @@ public class ImageGenController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.CONTENT_EMPTY, "prompt 不能为空"));
         }
 
+        // 先归一参考图输入，再按真实场景选 appCaller。模型解析与最终发送必须使用同一个身份。
+        var images = request?.Images?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
+        var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
+        var initImageUrl = (request?.InitImageUrl ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageUrl)) initImageUrl = null;
+        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
+        var hasLegacyReference = !string.IsNullOrWhiteSpace(initImageBase64)
+                                 || !string.IsNullOrWhiteSpace(initImageUrl)
+                                 || !string.IsNullOrWhiteSpace(initImageAssetSha256);
+        var appCallerCode = ResolveGenerateAppCallerCode(isLayering, images.Count, hasLegacyReference);
+
         var modelId = (request?.ModelId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelId)) modelId = null;
         var platformId = (request?.PlatformId ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(platformId)) platformId = null;
         var modelName = (request?.ModelName ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(modelName)) modelName = null;
-        var appCallerCode = isLayering ? VisualAgent.Image.Layering : VisualAgent.ImageGen.Generate;
         var requiredLogicalModelPublicId = isLayering ? ImageLayeringCapabilityId : null;
         GatewayModelResolution? resolved = null;
         if (isLayering)
@@ -927,21 +960,8 @@ public class ImageGenController : ControllerBase
 
         var size = string.IsNullOrWhiteSpace(request?.Size) ? "1024x1024" : request!.Size!.Trim();
         var responseFormat = string.IsNullOrWhiteSpace(request?.ResponseFormat) ? "b64_json" : request!.ResponseFormat!.Trim();
-        // 统一参考图列表：优先使用 Images 字段，兼容旧的 InitImageBase64/Url/Sha256
-        var images = request?.Images?.Where(x => !string.IsNullOrWhiteSpace(x)).ToList() ?? new List<string>();
-
-        var initImageBase64 = (request?.InitImageBase64 ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(initImageBase64)) initImageBase64 = null;
-        var initImageUrl = (request?.InitImageUrl ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(initImageUrl)) initImageUrl = null;
-        var initImageAssetSha256 = (request?.InitImageAssetSha256 ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(initImageAssetSha256)) initImageAssetSha256 = null;
-
         // 说明：即使后续因"Volces 降级"或其它原因把 initImageBase64 清空，也希望日志能追溯"用户是否提供过参考图"
-        var initImageProvided = images.Count > 0
-                                || !string.IsNullOrWhiteSpace(initImageBase64)
-                                || !string.IsNullOrWhiteSpace(initImageUrl)
-                                || !string.IsNullOrWhiteSpace(initImageAssetSha256);
+        var initImageProvided = images.Count > 0 || hasLegacyReference;
         if (isLayering && !initImageProvided)
         {
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "图片分层必须提供一张输入图片"));

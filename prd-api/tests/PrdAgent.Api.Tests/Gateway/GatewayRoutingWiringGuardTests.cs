@@ -77,7 +77,11 @@ public sealed class GatewayRoutingWiringGuardTests
         }
 
         // 判据不是恒真：扫错文件或 Resolver 被掏空时这里会红。
-        total.ShouldBeGreaterThan(20, "Resolver 里的失败返回点数量异常，守卫可能没扫到真实文件");
+        //
+        // 阈值原本是 20，按删池之前 3702 行的 Resolver 定的。2026-09-15 删掉模型池那一整套
+        // 分支之后 Resolver 只剩 2297 行，失败返回点自然少了——这是**该少**，不是被掏空。
+        // 阈值跟着降到 12：它防的是「扫错文件 / 整个文件被清空」，不是「不许变瘦」。
+        total.ShouldBeGreaterThan(12, "Resolver 里的失败返回点数量异常，守卫可能没扫到真实文件");
     }
 
     [Fact]

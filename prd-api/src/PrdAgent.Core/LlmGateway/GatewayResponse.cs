@@ -83,14 +83,19 @@ public class GatewayResponse
     /// </summary>
     public string? LogId { get; init; }
 
-    public static GatewayResponse Fail(string errorCode, string errorMessage, int statusCode = 500)
+    public static GatewayResponse Fail(
+        string errorCode,
+        string errorMessage,
+        int statusCode = 500,
+        GatewayModelResolution? resolution = null)
     {
         return new GatewayResponse
         {
             Success = false,
             ErrorCode = errorCode,
             ErrorMessage = errorMessage,
-            StatusCode = statusCode
+            StatusCode = statusCode,
+            Resolution = resolution,
         };
     }
 
@@ -282,11 +287,28 @@ public class GatewayModelResolution
     /// <summary>输出 Token 单价快照（币种由 PriceCurrency 指定，单位为每百万 Token）。</summary>
     public decimal? OutputPricePerMillion { get; init; }
 
+    /// <summary>
+    /// 缓存命中输入 Token 单价快照（每百万 Token）。null 表示没配，计价时按输入全价算。
+    ///
+    /// 这个字段必须跟着解析结果一路传到计价那一步：部分入口（调用方先 resolve、再把结果递进来）
+    /// 只拿得到这份摘要，摘要里少一档价，那条路径上的缓存计价就等于没接上。
+    /// </summary>
+    public decimal? CachedInputPricePerMillion { get; init; }
+
+    /// <summary>写入缓存输入 Token 单价快照（每百万 Token）。理由同上。</summary>
+    public decimal? CacheWritePricePerMillion { get; init; }
+
     /// <summary>每次调用固定费用快照（币种由 PriceCurrency 指定）。</summary>
     public decimal? PricePerCall { get; init; }
 
-    /// <summary>价格币种。当前 MAP 模型池价格字段历史语义为 CNY；未来可迁移为 USD 或显式币种。</summary>
+    /// <summary>价格币种。计价口径是 USD；非 USD 的存量价格不记账，判为 stale_currency。</summary>
     public string? PriceCurrency { get; init; }
+
+    /// <summary>价格来源：upstream / admin / migrated。空表示这份价格没有来源可考。</summary>
+    public string? PriceSource { get; init; }
+
+    /// <summary>价格观测时间，写进请求日志，用于事后判断这笔账是按多久以前的价算的。</summary>
+    public DateTime? PriceObservedAt { get; init; }
 
     /// <summary>
     /// 是否匹配期望（ExpectedModel == ActualModel）
@@ -495,8 +517,17 @@ public class GatewayStreamChunk
     public static GatewayStreamChunk Thinking(string content) => new() { Type = GatewayChunkType.Thinking, Content = content };
     public static GatewayStreamChunk Start(GatewayModelResolution resolution) => new() { Type = GatewayChunkType.Start, Resolution = resolution };
     public static GatewayStreamChunk Done(string? finishReason, GatewayTokenUsage? usage) => new() { Type = GatewayChunkType.Done, FinishReason = finishReason, TokenUsage = usage };
-    public static GatewayStreamChunk Fail(string error, string? errorCode = null)
-        => new() { Type = GatewayChunkType.Error, Error = error, ErrorCode = errorCode };
+    public static GatewayStreamChunk Fail(
+        string error,
+        string? errorCode = null,
+        GatewayModelResolution? resolution = null)
+        => new()
+        {
+            Type = GatewayChunkType.Error,
+            Error = error,
+            ErrorCode = errorCode,
+            Resolution = resolution,
+        };
     public static GatewayStreamChunk ToolCallChunk(JsonArray delta) => new() { Type = GatewayChunkType.ToolCall, ToolCallDelta = delta };
 }
 

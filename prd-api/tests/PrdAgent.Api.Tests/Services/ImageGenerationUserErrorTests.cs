@@ -47,6 +47,33 @@ public class ImageGenerationUserErrorTests
     }
 
     [Fact]
+    public void MissingImage_WhenProviderReturnsImageRecitation_ShouldAskForRequestAdjustment()
+    {
+        const string diagnostic = """
+            {"candidates":[{"content":{"parts":null},"finishReason":"IMAGE_RECITATION"}]}
+            """;
+        var result = ImageGenerationUserError.MissingImage(diagnostic);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, result.Code);
+        Assert.Contains("调整需求", result.Message);
+        Assert.Contains("有权使用的参考图", result.Message);
+        Assert.DoesNotContain("Google", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("IMAGE_RECITATION", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("IMAGE_RECITATION")]
+    [InlineData("Unable to show the generated image. The model could not generate the image based on the prompt provided.")]
+    [InlineData("{\"finishReason\":\"IMAGE_RECITATION\"}")]
+    public void MissingImage_WhenRecitationIsNotAStructuredCandidateReason_ShouldKeepGenericFallback(string diagnostic)
+    {
+        var result = ImageGenerationUserError.MissingImage(diagnostic);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, result.Code);
+        Assert.Contains("没有返回可用图片", result.Message);
+    }
+
+    [Fact]
     public void FromGateway_ShouldPreserveQuotaCodeAndAdministratorRecoveryAction()
     {
         var result = ImageGenerationUserError.FromGateway(new GatewayRawResponse

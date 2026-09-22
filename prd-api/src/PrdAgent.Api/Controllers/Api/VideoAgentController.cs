@@ -77,52 +77,25 @@ public class VideoAgentController : ControllerBase
             AppCallerRegistry.VideoAgent.VideoGen.Generate,
             ModelTypes.VideoGen,
             ct);
-        var poolItems = pools.SelectMany(pool => pool.Models)
-            .OrderBy(item => item.Priority)
-            .GroupBy(item => item.ModelId, StringComparer.OrdinalIgnoreCase)
+        var result = pools
+            .Where(pool => pool.Models.Count > 0)
+            .GroupBy(pool => pool.Code, StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
+            .Select(pool => BuildVideoModelOption(
+                pool.Code,
+                pool.Name,
+                pool.Models.OrderBy(item => item.Priority).First().HealthStatus))
             .ToList();
-        if (poolItems.Count == 0)
-        {
-            // 直出模式允许显式指定 OpenRouter 视频模型。旧版 MDS 尚未同步视频目录时，
-            // 保留已在 LLMGW 注册的 Seedance 2.5 入口，避免配置完成后页面仍无模型可选。
-            var seedance = BuildVideoModelOption(
-                "bytedance/seedance-2.5",
-                "bytedance/seedance-2.5",
-                "Seedance 2.5",
-                "Healthy",
-                null);
-            return Ok(ApiResponse<List<VideoModelOption>>.Ok([seedance]));
-        }
-
-        var modelIds = poolItems.Select(item => item.ModelId).ToList();
-        var models = await _db.LLMModels.Find(model =>
-                modelIds.Contains(model.Id) || modelIds.Contains(model.ModelName))
-            .ToListAsync(ct);
-        var groupIds = pools.Select(pool => pool.Id).ToList();
-        var groups = await _db.ModelGroups.Find(group => groupIds.Contains(group.Id)).ToListAsync(ct);
-
-        var result = poolItems.Select(item =>
-        {
-            var config = models.FirstOrDefault(model =>
-                string.Equals(model.Id, item.ModelId, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(model.ModelName, item.ModelId, StringComparison.OrdinalIgnoreCase));
-            var pricing = groups.SelectMany(group => group.Models)
-                .FirstOrDefault(model => string.Equals(model.ModelId, item.ModelId, StringComparison.OrdinalIgnoreCase));
-            return BuildVideoModelOption(item.ModelId, config?.ModelName, config?.Name, item.HealthStatus, pricing);
-        }).ToList();
 
         return Ok(ApiResponse<List<VideoModelOption>>.Ok(result));
     }
 
     private static VideoModelOption BuildVideoModelOption(
         string id,
-        string? providerModelName,
         string? displayName,
-        string healthStatus,
-        ModelGroupItem? pricing)
+        string healthStatus)
     {
-        var key = $"{id} {providerModelName}".ToLowerInvariant();
+        var key = $"{id} {displayName}".ToLowerInvariant();
         var isSeedance25 = key.Contains("seedance-2.5");
         var isSeedance2X = key.Contains("seedance-2");
         var isSeedance15 = key.Contains("seedance-1-5") || key.Contains("seedance-1.5");
@@ -145,8 +118,8 @@ public class VideoAgentController : ControllerBase
                     ? ["720p", "1080p"]
                     : ["720p"],
             Durations = VideoModelCapabilities.GetSupportedDurations(key).ToList(),
-            PricePerCall = pricing?.PricePerCall,
-            PriceCurrency = pricing?.PriceCurrency,
+            PricePerCall = null,
+            PriceCurrency = null,
         };
     }
 

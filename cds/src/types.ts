@@ -880,7 +880,22 @@ export interface ProfileReplicaSet {
 }
 
 /** Branch entry — simplified for CDS */
+/**
+ * 预览实例数据镜像的来源标记（CDS 托管 CDS，2026-09-16）。
+ * 带这个字段的项目 / 分支是父实例脱敏后搬进子实例的只读数据：状态是采集时刻的状态，
+ * 本实例上没有对应容器。SSOT 见 services/preview-mirror.ts。
+ */
+export interface PreviewMirrorTag {
+  capturedAt: string;
+  source: 'parent-cds';
+  previewUrl?: string;
+  previewUrls?: string[];
+  subject?: string;
+}
+
 export interface BranchEntry {
+  /** 父实例镜像来的只读分支（预览实例专用），生产实例永远没有这个字段 */
+  mirror?: PreviewMirrorTag;
   id: string;
   /**
    * 删除进行中标记（Codex 第十六轮 P1）：删除路由在遍历快照台账/拆容器之前
@@ -2446,6 +2461,23 @@ export interface CdsState {
    */
   githubAppWhitelist?: GithubAppWhitelistSettings;
   /**
+   * 告警通知通道凭据（见 AlarmNotifyConfig）。
+   *
+   * 放进持久化状态而不是只读 `.cds.env`：MapNotifier 读的是守护进程自己的
+   * process.env，那份只能从宿主的 `.cds.env` 来，于是「把铃接上」变成必须登主机的事——
+   * 而这条链最常见的失败恰恰是**根本没人去接**。设置里配了就用设置，没配才回落 env。
+   */
+  alarmNotify?: AlarmNotifyConfig;
+  /**
+   * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
+   *
+   * 与上面那条 alarmNotify 的关系：alarmNotify 是单一的 MAP 站内通知通道，先于
+   * 本表存在；本表是多通道（Bark / Webhook / MAP），一条事件可以同时进几条。
+   * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
+   * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
+   */
+  alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
+  /**
    * 远程 SSH 主机登记表（2026-05-06）。系统级 —— 一台主机可承载多个 shared-service
    * 项目的容器。SSH 凭据通过 sealToken（infra/secret-seal.ts）加密存储。
    *
@@ -2718,8 +2750,21 @@ export interface PeerPairingCode {
  * 存储位置，可选地通过 projectId 关联到某个项目以便过滤）。
  */
 export interface AcceptanceReportMeta {
-  /** 稳定 ID（用于磁盘文件名 `<id>.<ext>` 与路由 `:id`）。 */
+  /** 稳定 ID（用于对象键 / 本地缓存文件名 `<id>.<ext>` 与路由 `:id`）。 */
   id: string;
+  /**
+   * 正文在对象存储里的键（2026-09-10）。
+   *
+   * 元数据在 Mongo、正文在容器本地盘，曾经让整批报告在容器重建后变成点不开的
+   * 幽灵台账。现在正文进对象存储，本地盘只当读缓存，这个键是正文的唯一权威地址。
+   *
+   * 为 null 有两种含义，**必须靠 storage 区分**，不能只看这一个字段：
+   *   - storage='local'  → 归档时没配对象存储，正文只在本地，重建即失
+   *   - 历史报告（两者都缺）→ 本次改动之前归档的，正文多半已经不在了
+   */
+  objectKey?: string | null;
+  /** 正文实际落在哪一层。缺省视为历史数据（本地盘，且很可能已丢）。 */
+  storage?: 'object' | 'local';
   /** 报告标题（用户填写，列表/详情展示）。 */
   title: string;
   /** 报告格式：'html' 原样渲染，'md' 转 HTML 后渲染。 */
@@ -2732,7 +2777,7 @@ export interface AcceptanceReportMeta {
   folderId?: string | null;
   /** 正文字节数（UTF-8）。 */
   sizeBytes: number;
-  /** 验收结论：pass 通过 / conditional 有条件通过 / fail 不通过；未判定为 null。 */
+  /** 验收结论：pass 通过 / conditional 原则性通过 / fail 不通过；未判定为 null。 */
   verdict?: 'pass' | 'conditional' | 'fail' | null;
   /** 验收档位（如 P0 冒烟 / 视觉回归 / 完整验收等，自由文本，用于看板分组）；可空。 */
   tier?: string | null;
@@ -3514,6 +3559,8 @@ export interface ManagedProjectSpec {
 }
 
 export interface Project {
+  /** 父实例镜像来的只读项目（预览实例专用） */
+  mirror?: PreviewMirrorTag;
   /**
    * 监控自发现的端点清单（「插上」的那几个口）。
    *
@@ -4636,6 +4683,28 @@ export interface CdsConfig {
    */
   githubApp?: GitHubAppConfig;
   /**
+   * 告警通知通道（MAP 站内通知）的凭据。
+   *
+   * 为什么要能在设置里配，而不是只读 `.cds.env`：MapNotifier 读的是 CDS **守护进程
+   * 自己的** process.env，那份只能从宿主上的 `.cds.env` 来。于是「把铃接上」变成
+   * 一件必须登主机的事——而这条链最常见的失败恰恰就是**根本没人去接**。
+   * 参照同一份设置里早已存在的 githubApp.privateKey：私钥进 CDS 设置是既有姿势，
+   * 不是新开的安全口子。
+   *
+   * 解析顺序：设置里配了就用设置，没配才回落 env。四项缺任何一项都算没配，
+   * 那时铃是哑的，面板上必须直说。
+   */
+  alarmNotify?: AlarmNotifyConfig;
+  /**
+   * 通知通道表（2026-09-15）。「哪些出问题通知谁」的落点。
+   *
+   * 与上面那条 alarmNotify 的关系：alarmNotify 是单一的 MAP 站内通知通道，先于
+   * 本表存在；本表是多通道（Bark / Webhook / MAP），一条事件可以同时进几条。
+   * 两者并存而不是替换——存量那条还在工作，删掉它等于让已经接好的铃在升级那天哑掉。
+   * 判定与协议分别在 services/alarm-route.ts 与 services/alarm-dispatch.ts。
+   */
+  alarmChannels?: import('./services/alarm-route.js').AlarmChannelConfig[];
+  /**
    * Public base URL of this CDS install (e.g. "https://cds.example.com").
    * Used as the `details_url` in GitHub check runs and for the
    * GitHub App install-callback redirect. Falls back to the
@@ -4664,6 +4733,20 @@ export interface GitHubAppConfig {
   webhookSecret: string;
   /** Lowercase App slug, used only for `https://github.com/apps/<slug>/installations/new` links. */
   appSlug?: string;
+}
+
+/**
+ * 告警通知通道凭据。与 MAP 的 StableSmokeAuthentication 对齐：
+ * MAP 侧只存公钥，私钥只留在 CDS、从不过网络。
+ */
+export interface AlarmNotifyConfig {
+  /** 完整端点，例如 https://map.example.com/api/dashboard/notifications/events */
+  endpoint: string;
+  keyId: string;
+  /** 必须与 MAP 配置里该 keyId 条目的 Username 一致——它进签名载荷。 */
+  username: string;
+  /** PKCS#8 私钥 PEM。**只写不读**：任何读接口都不许把它回显出去。 */
+  privateKey: string;
 }
 
 /** Shell execution result */
