@@ -27,6 +27,7 @@
  *     半夜没人访问时它们显示「没人用过」，不显示「一切正常」。
  *   - **阈值是常量，写在最上面**，一处改全局动；不散在各条 check 里。
  */
+import type { selfStatusCache } from './self-status-cache.js';
 import { SELF_CHECK_PATH } from './self-check-path.js';
 
 export { SELF_CHECK_PATH };
@@ -75,6 +76,29 @@ const HALF_HOUR_MS = 30 * 60 * 1000;
 /** 部署的非终态：还在往前走的那几档。 */
 const DEPLOY_IN_FLIGHT = new Set(['pending', 'queued', 'preparing', 'building', 'starting', 'verifying']);
 
+export interface SelfCheckRuntimeStatus {
+  ready: boolean;
+  bundleStale: boolean;
+  headSha: string;
+  currentBranch: string;
+  updateStartedAt?: string;
+}
+
+/** 监控自己刷新本机只读快照，不能依赖有人打开页面触发缓存。 */
+export async function readSelfCheckRuntimeStatus(
+  cache: Pick<typeof selfStatusCache, 'readSnapshotWithFallback'>,
+): Promise<SelfCheckRuntimeStatus> {
+  const snap = await cache.readSnapshotWithFallback({ maxAgeMs: 60_000 });
+  const active = snap.activeSelfUpdate as { startedAt?: string } | null;
+  return {
+    ready: snap.lastRefreshAt !== null && !snap.degraded?.degraded,
+    bundleStale: snap.bundleStale,
+    headSha: snap.headSha,
+    currentBranch: snap.currentBranch,
+    updateStartedAt: active?.startedAt,
+  };
+}
+
 export interface SelfCheckDeps {
   now: () => number;
   deploymentRuns: () => ReadonlyArray<{ status: string; startedAt: string; finishedAt?: string; heartbeatAt?: string; updatedAt?: string }>;
@@ -96,7 +120,7 @@ export interface SelfCheckDeps {
   /** 真的会响的通知通道数（与面板同一份判定）。 */
   liveAlarmChannels: () => number;
   /** `ready=false` 表示自身状态缓存还没算过一次——刚起来的进程会有几十秒这样。 */
-  selfStatus: () => { ready: boolean; bundleStale: boolean; headSha: string; currentBranch: string; updateStartedAt?: string } | null;
+  selfStatus: () => SelfCheckRuntimeStatus | null | Promise<SelfCheckRuntimeStatus | null>;
   storeBackend: () => string;
 }
 
@@ -384,7 +408,7 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   ));
 
   // ── 自身 ───────────────────────────────────────────────────────────
-  const self = deps.selfStatus();
+  const self = await deps.selfStatus();
   // 缓存还没算过一次 + 进程还在宽限期内 → 「还不知道」，不响铃；过了宽限还不知道才算真拿不到。
   const selfWarming = Boolean(self && !self.ready && processAgeSec !== null && processAgeSec * 1000 < SELF_STATUS_GRACE_MS);
   const selfKnown = Boolean(self && self.ready);

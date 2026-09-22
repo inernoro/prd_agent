@@ -148,7 +148,7 @@ import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-r
 import { sendAlarm } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
-import { buildSelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { buildSelfCheck, readSelfCheckRuntimeStatus, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
 import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from './services/self-status-cache.js';
 import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
@@ -6218,13 +6218,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),
       alarmChannel.snapshot(),
     ),
-    selfStatus: () => {
-      const snap = selfStatusCache.getSnapshot();
-      // lastRefreshAt 为空 = 缓存还没算过一次（刚起来的进程），此时 bundleStale 是默认值不是结论。
-      const active = snap.activeSelfUpdate as { startedAt?: string } | null;
-      return { ready: snap.lastRefreshAt !== null, bundleStale: snap.bundleStale, headSha: snap.headSha, currentBranch: snap.currentBranch,
-        updateStartedAt: active?.startedAt };
-    },
+    selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache),
     storeBackend: () => stateService.getBackingStore().kind,
   };
   // 13 条监控各自打一次这个端点，一轮就是 13 次 docker version + 13 次 Mongo 查询。
