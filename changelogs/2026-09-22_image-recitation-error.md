@@ -1,2 +1,4 @@
 | fix | prd-api | 区分生图无图片与描述或参考图被模型拒绝，返回可操作的调整提示 |
 | test | prd-api | 补充结构化 IMAGE_RECITATION 的正向归类与自由文本反向回归测试 |
+| fix | prd-api | 在标准生图响应归一化边界保留请求拒绝语义，避免文学图生图回退为服务故障 |
+| test | prd-api | 补充 canonical 生图边界的 IMAGE_RECITATION 贯穿回归测试 |
