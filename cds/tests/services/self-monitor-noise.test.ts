@@ -30,12 +30,12 @@ describe('零采样与真实故障的边界', () => {
     expect(await probe()).not.toHaveProperty('noData');
   });
 
-  it('真实探测台账跨重启保留通知状态：无样本不计可用率、不恢复，连续健康 10 分钟仅向收到故障的通道恢复', async () => {
+  it.each(['cds-self-monitor', 'prd-agent'])('%s 真实探测台账跨重启保留通知状态：无样本不计可用率、不恢复，连续健康 10 分钟仅向收到故障的通道恢复', async (projectId) => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'alarm-noise-'));
     const monitor: UptimeCustomMonitor = { id: 'm', name: '首屏', kind: 'http', url: 'https://example.test',
-      enabled: true, projectId: 'cds-self-monitor', createdAt: '', updatedAt: '', intervalSeconds: 300 };
+      enabled: true, projectId, createdAt: '', updatedAt: '', intervalSeconds: 300 };
     let at = 100 * MIN;
-    let outcome = { up: false, ms: 1, noData: false };
+    let outcome = { up: true, ms: 1, noData: false };
     const alerts: Array<{ type: string; data: any }> = [];
     const create = () => new UptimeMonitorService({
       state: { getAllBranches: () => [], getProject: () => undefined, getUptimeMonitors: () => [monitor] },
@@ -47,13 +47,16 @@ describe('零采样与真实故障的边界', () => {
     try {
       let svc = create();
       await svc.probeNow('monitor@m');
+      expect(alerts).toHaveLength(0); // 新增 MAP 监控首次健康不能伪造恢复。
+      outcome.up = false;
+      await svc.probeNow('monitor@m');
       expect(alerts).toHaveLength(1);
       svc.markAlarmDelivered('monitor@m', 'phone', new Date(at).toISOString());
       svc = create();
       at += 5 * MIN; outcome = { up: false, noData: true, ms: 1 };
       expect(await svc.probeNow('monitor@m')).toMatchObject({ status: 'down', sample: { noData: true } });
       const disk = JSON.parse(fs.readFileSync(path.join(dir, 'uptime.json'), 'utf8'));
-      expect(disk.targets[0].samples).toHaveLength(1);
+      expect(disk.targets[0].samples).toHaveLength(2);
       expect(alerts).toHaveLength(1);
       outcome = { up: true, noData: false, ms: 1 };
       for (let i = 0; i < 3; i++) { at += 5 * MIN; await svc.probeNow('monitor@m'); }
