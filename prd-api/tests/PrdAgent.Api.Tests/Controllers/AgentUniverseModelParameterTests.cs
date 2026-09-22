@@ -87,6 +87,16 @@ public sealed class AgentUniverseModelParameterTests
                             HealthStatus = "Unavailable",
                             ActualModelId = "chatgpt-image-latest",
                             ActualPlatformId = "openai",
+                            // 目录读取只消费网关下发的能力快照，不再根据物理模型名本地推导。
+                            ImageCapabilities = new GatewayImageCapabilitiesSnapshot
+                            {
+                                SizeConstraintType = "whitelist",
+                                SizeParamFormat = "WxH",
+                                SizesByResolution = new Dictionary<string, List<string>>
+                                {
+                                    ["standard"] = ["1024x1024", "1536x1024", "1024x1536"],
+                                },
+                            },
                         },
                     ],
                 },

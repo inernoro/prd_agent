@@ -16,11 +16,12 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { discoverMonitors } from '../../src/services/monitor-discovery.js';
 import {
   buildSelfCheck,
+  readSelfCheckRuntimeStatus,
   DOCKER_UNREACHABLE_MS,
   DOCKER_PING_MAX_MS,
   PROBER_STALE_AFTER_SECONDS,
@@ -36,6 +37,7 @@ import {
   selfCheckUrl,
   type SelfMonitoringState,
 } from '../../src/services/self-monitoring-bootstrap.js';
+import { selfStatusCache } from '../../src/services/self-status-cache.js';
 import type { Project } from '../../src/types.js';
 
 const NOW = Date.parse('2026-09-16T10:00:00Z');
@@ -442,4 +444,43 @@ describe('接线守卫：删掉任何一根线都不会有别的测试变红', (
    const overdue = await buildSelfCheck(healthyDeps({ selfStatus: () => self }));
    expect(overdue.checks['self.bundle-stale']).toMatchObject({ observedValue: 1, status: 'fail' });
  });
+});
+
+
+describe('无人打开页面时的产物监控', () => {
+  it('冷缓存主动读取本机版本，过期后刷新，刷新失败不沿用旧健康值', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    selfStatusCache._resetForTests();
+    let stale = false;
+    let broken = false;
+    const compute = vi.fn(async ({ skipFetch }: { skipFetch: boolean }) => {
+      expect(skipFetch).toBe(true);
+      if (broken) throw new Error('本机版本读取失败');
+      return { headSha: 'abc1234', currentBranch: 'main', bundleStale: stale, activeSelfUpdate: null } as any;
+    });
+    selfStatusCache.init({ computeSnapshot: compute, scanRemoteBranches: async () => [] });
+    const deps = healthyDeps({ selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache) });
+    const bundle = async () => (await buildSelfCheck(deps)).checks['self.bundle-stale'];
+    try {
+      expect(await bundle()).toMatchObject({ observedValue: 0, status: 'pass' });
+      await bundle();
+      expect(compute).toHaveBeenCalledTimes(1);
+      stale = true;
+      vi.setSystemTime(NOW + 61_000);
+      expect(await bundle()).toMatchObject({ observedValue: 1, status: 'fail' });
+      stale = false; broken = true;
+      vi.setSystemTime(NOW + 122_000);
+      expect(await readSelfCheckRuntimeStatus(selfStatusCache)).toMatchObject({ ready: false });
+      expect(await bundle()).toMatchObject({ observedValue: 1, status: 'fail' });
+    } finally {
+      selfStatusCache._resetForTests();
+      vi.useRealTimers();
+    }
+  });
+
+  it('生产自检接入主动读取函数', () => {
+    const source = readFileSync(fileURLToPath(new URL('../../src/index.ts', import.meta.url)), 'utf8');
+    expect(source).toContain('selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache)');
+  });
 });
