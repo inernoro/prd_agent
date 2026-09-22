@@ -69,18 +69,60 @@ public static class GatewayImageModelCatalog
     public static ImageGenAdapterInfo? Describe(AvailableModelPool model)
     {
         var member = model.Models.FirstOrDefault(item =>
-            !string.IsNullOrWhiteSpace(item.ActualModelId));
-        if (member is null) return null;
+            item.ImageCapabilities is not null);
+        var snapshot = member?.ImageCapabilities;
+        if (snapshot is null) return null;
 
-        return Describe(new GatewayModelResolution
+        var sizes = new Dictionary<string, List<SizeOption>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (bucket, rawSizes) in snapshot.SizesByResolution)
         {
-            Success = true,
-            ResolutionType = model.ResolutionType,
-            LogicalModelPublicId = model.Code,
-            ActualModel = member.ActualModelId!,
-            ActualPlatformId = member.ActualPlatformId ?? string.Empty,
-            ParameterCapabilities = member.ParameterCapabilities,
-        });
+            sizes[bucket] = rawSizes
+                .Select(ParseSizeOption)
+                .Where(option => option is not null)
+                .Cast<SizeOption>()
+                .DistinctBy(option => option.Size, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        return new ImageGenAdapterInfo
+        {
+            Matched = true,
+            AdapterName = model.Code,
+            DisplayName = model.Name,
+            SizeConstraintType = snapshot.SizeConstraintType,
+            SizeConstraintDescription = snapshot.SizeConstraintDescription,
+            SizesByResolution = sizes,
+            SizeParamFormat = snapshot.SizeParamFormat,
+            SizesNotApplicable = snapshot.SizesNotApplicable,
+            MustBeDivisibleBy = snapshot.MustBeDivisibleBy,
+            MaxWidth = snapshot.MaxWidth,
+            MaxHeight = snapshot.MaxHeight,
+            MinWidth = snapshot.MinWidth,
+            MinHeight = snapshot.MinHeight,
+            MaxPixels = snapshot.MaxPixels,
+            Notes = [.. snapshot.Notes],
+            SupportsImageToImage = snapshot.SupportsImageToImage,
+            SupportsInpainting = snapshot.SupportsInpainting,
+            IsAdaptive = snapshot.IsAdaptive,
+        };
+    }
+
+    private static SizeOption? ParseSizeOption(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var parts = raw.Trim().Split(['x', 'X', '×', '*'], StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2
+            || !int.TryParse(parts[0].Trim(), out var width)
+            || !int.TryParse(parts[1].Trim(), out var height)
+            || width <= 0 || height <= 0) return null;
+        var divisor = GreatestCommonDivisor(width, height);
+        return new SizeOption($"{width}x{height}", $"{width / divisor}:{height / divisor}");
+    }
+
+    private static int GreatestCommonDivisor(int left, int right)
+    {
+        while (right != 0) (left, right) = (right, left % right);
+        return left == 0 ? 1 : left;
     }
 
     public static ImageGenAdapterInfo? Describe(GatewayModelResolution resolution)

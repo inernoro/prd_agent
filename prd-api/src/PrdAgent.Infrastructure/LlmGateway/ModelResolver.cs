@@ -10,6 +10,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Infrastructure.LLM;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -1132,12 +1133,45 @@ public class ModelResolver : IModelResolver
                         ActualModelId = catalogResolution?.ActualModel,
                         ActualPlatformId = catalogResolution?.ActualPlatformId,
                         ParameterCapabilities = catalogResolution?.ParameterCapabilities,
+                        ImageCapabilities = BuildImageCapabilitiesSnapshot(catalogResolution?.ActualModel),
                     }
                 ],
             });
         }
 
         return result;
+    }
+
+    private static GatewayImageCapabilitiesSnapshot? BuildImageCapabilitiesSnapshot(string? actualModel)
+    {
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo(actualModel ?? string.Empty);
+        if (info?.Matched != true) return null;
+
+        return new GatewayImageCapabilitiesSnapshot
+        {
+            SizeConstraintType = info.SizeConstraintType,
+            SizeConstraintDescription = info.SizeConstraintDescription,
+            SizesByResolution = info.SizesByResolution.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value
+                    .Select(option => option.Size?.Trim() ?? string.Empty)
+                    .Where(size => size.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                StringComparer.OrdinalIgnoreCase),
+            SizeParamFormat = info.SizeParamFormat,
+            SizesNotApplicable = info.SizesNotApplicable,
+            MustBeDivisibleBy = info.MustBeDivisibleBy,
+            MaxWidth = info.MaxWidth,
+            MaxHeight = info.MaxHeight,
+            MinWidth = info.MinWidth,
+            MinHeight = info.MinHeight,
+            MaxPixels = info.MaxPixels,
+            Notes = [.. info.Notes],
+            SupportsImageToImage = info.SupportsImageToImage,
+            SupportsInpainting = info.SupportsInpainting,
+            IsAdaptive = info.IsAdaptive,
+        };
     }
 
     private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync(

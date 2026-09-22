@@ -269,4 +269,33 @@ public class PoolModelInfo
 
     /// <summary>实际模型的参数能力快照；只读目录与真正发送共用同一解析结果来源。</summary>
     public Dictionary<string, bool>? ParameterCapabilities { get; init; }
+
+    /// <summary>
+    /// LLMGW 在生成目录时固化的图片能力快照。
+    /// MAP 只消费这份公开契约，不得再根据 <see cref="ActualModelId"/> 猜模型类型或查本地型号表。
+    /// </summary>
+    public GatewayImageCapabilitiesSnapshot? ImageCapabilities { get; init; }
+}
+
+/// <summary>
+/// LLMGW 对外发布的图片能力快照。尺寸只保存原始宽高，比例由 MAP 通用计算，
+/// 因此这里不包含任何供应商或具体模型名称。
+/// </summary>
+public sealed class GatewayImageCapabilitiesSnapshot
+{
+    public string SizeConstraintType { get; init; } = string.Empty;
+    public string SizeConstraintDescription { get; init; } = string.Empty;
+    public Dictionary<string, List<string>> SizesByResolution { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public string SizeParamFormat { get; init; } = string.Empty;
+    public bool SizesNotApplicable { get; init; }
+    public int? MustBeDivisibleBy { get; init; }
+    public int? MaxWidth { get; init; }
+    public int? MaxHeight { get; init; }
+    public int? MinWidth { get; init; }
+    public int? MinHeight { get; init; }
+    public long? MaxPixels { get; init; }
+    public List<string> Notes { get; init; } = [];
+    public bool SupportsImageToImage { get; init; }
+    public bool SupportsInpainting { get; init; }
+    public bool IsAdaptive { get; init; }
 }
