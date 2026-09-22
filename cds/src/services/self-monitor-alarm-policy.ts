@@ -1,4 +1,4 @@
-/** CDS 自监控的通知节奏；状态随目标台账持久化，重启不重置冷却期。 */
+/** 业务监控（含 CDS 自监控）的通知节奏；状态随目标台账持久化，重启不重置冷却期。 */
 export interface SelfMonitorAlarmState {
   lastDownAttemptAt?: number;
   healthySince?: number;
@@ -24,7 +24,7 @@ export function decideSelfMonitorAlarm(
     state.acceptedChannels = [];
     return { emit: 'down' };
   }
-  if (!input.up || !state.open) return {};
+  if (!input.up || !state.open) return previousAt === undefined && input.up ? { reason: 'initial-healthy' } : {};
   // 停机/采样中断不能充当持续健康的证据。
   if (previousAt === undefined || input.at - previousAt > Math.max(input.intervalMs * 1.5, 60_000)) state.healthySince = undefined;
   state.healthySince ??= input.at;

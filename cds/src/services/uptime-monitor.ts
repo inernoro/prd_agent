@@ -1714,7 +1714,7 @@ export class UptimeMonitorService {
     if (!record) return;
     const sample = options.allowDegrade ? this.maybeDegrade(target, record, rawSample) : rawSample;
     if (sample.noData) {
-      if (!record.lastSample?.noData && target.projectId === 'cds-self-monitor') this.deps.onAlarmSuppressed?.({
+      if (!record.lastSample?.noData && target.source === 'custom') this.deps.onAlarmSuppressed?.({
         targetId: target.id, targetName: target.name, projectId: target.projectId, reason: 'no-data', at: sample.t,
       });
       record.lastSample = sample;
@@ -1752,9 +1752,9 @@ export class UptimeMonitorService {
       cause,
     }, MAX_INCIDENTS_PER_TARGET);
     if (next.transition === 'to-down') this.attachReleaseAttribution(target, record, sample.t);
-    // 状态翻转才外发：去抖已经在 nextDebounceState 做过，走到这里就是「真掉线 / 真恢复」，
-    // 不会每轮探测都响一次。排除名单里的目标不算故障，不打扰人。
-    if (target.projectId === 'cds-self-monitor' && !record.excluded) {
+    // 所有业务监控共享持久化通知节奏；首次探测成功不等于从故障恢复。
+    // 可用性与事件照常记录，通知只在真实故障及持续恢复后发送。
+    if (target.source === 'custom' && !record.excluded) {
       const decision = decideSelfMonitorAlarm(record.notification ??= {}, {
         at: sample.t, up: sample.up, down: next.status === 'down', intervalMs: target.intervalMs ?? this.deps.config.intervalMs,
       });
@@ -1794,7 +1794,7 @@ export class UptimeMonitorService {
     try {
       this.deps.onAlert(type, {
         targetId: target.id,
-        ...(type === 'uptime.target.recovered' && target.projectId === 'cds-self-monitor'
+        ...(type === 'uptime.target.recovered' && target.source === 'custom'
           ? { recoveryChannelIds: [...(record.notification?.acceptedChannels ?? [])] } : {}),
         projectId: target.projectId,
         branchId: target.branchId,
