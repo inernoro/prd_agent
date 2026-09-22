@@ -19,4 +19,10 @@ describe('WebPagesPage upload feedback contract', () => {
     expect(handleSave).toContain("error instanceof Error ? error.message : '网络异常，请稍后重试'");
     expect(handleSave).toContain('} finally {\n      setSaving(false);');
   });
+
+  it('上传完成后读取有效提问状态，不把个人已开启的站点说成默认关闭', () => {
+    expect(source).toContain('getSiteAskConfig(saved.id)');
+    expect(source).toContain("setCreatedAskState(res.data.enabled ? 'enabled' : 'disabled')");
+    expect(source).not.toContain('这个站点的「向我提问」<span style={{ color: \'var(--text-primary)\' }}>默认关闭</span>');
+  });
 });

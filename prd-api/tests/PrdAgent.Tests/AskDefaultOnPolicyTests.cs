@@ -6,20 +6,22 @@ using Xunit;
 namespace PrdAgent.Tests;
 
 /// <summary>
-/// 「提问默认全开，除非明确拒绝」的判据守卫（用户口径，2026-08-29）。
-///
-/// 这条口径是翻转过来的：原先 AskEnabled 是 bool、默认 false，owner 必须显式打开。
-/// 翻转时最容易写错的不是「默认开」，而是**把存量一把刷成开**——那样会连 owner 当初
-/// 特意关掉的站点一起打开，而在 bool 里这两种状态长得一模一样。所以字段改成三态，
-/// 这里钉住三态各自的答案；任何一处退回 `?? false` 或 `=== true`，对应用例就变红。
+/// 「系统默认关闭、个人默认可覆盖、站点设置优先」的判据守卫（临时热修复口径，2026-09-22）。
 /// </summary>
 public class AskDefaultOnPolicyTests
 {
     [Fact]
-    public void 从没表过态的站点默认开()
+    public void 站点和个人都没表态时系统默认关闭()
     {
-        // 存量站点在 Mongo 里压根没有这个字段，反序列化后就是 null
-        Assert.True(AskAccessPolicy.IsAskOn(null, wrappedAssetType: null));
+        Assert.False(AskAccessPolicy.IsAskOn(null, wrappedAssetType: null));
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void 个人默认覆盖系统默认(bool ownerDefault, bool expected)
+    {
+        Assert.Equal(expected, AskAccessPolicy.IsAskOn(null, "html", ownerDefault));
     }
 
     [Fact]
@@ -32,7 +34,13 @@ public class AskDefaultOnPolicyTests
     [Fact]
     public void 明确关掉的站点不许被默认值顶开()
     {
-        Assert.False(AskAccessPolicy.IsAskOn(false, null));
+        Assert.False(AskAccessPolicy.IsAskOn(false, null, ownerDefaultEnabled: true));
+    }
+
+    [Fact]
+    public void 站点明确打开优先于个人默认关闭()
+    {
+        Assert.True(AskAccessPolicy.IsAskOn(true, null, ownerDefaultEnabled: false));
     }
 
     /// <summary>形态不支持压过默认值：开关打得开、每个访客吃 422 是耍用户。</summary>
@@ -46,18 +54,18 @@ public class AskDefaultOnPolicyTests
     [Fact]
     public void 非视频形态不受影响()
     {
-        Assert.True(AskAccessPolicy.IsAskOn(null, "pdf"));
-        Assert.True(AskAccessPolicy.IsAskOn(null, "html"));
+        Assert.True(AskAccessPolicy.IsAskOn(null, "pdf", ownerDefaultEnabled: true));
+        Assert.True(AskAccessPolicy.IsAskOn(null, "html", ownerDefaultEnabled: true));
     }
 
     /// <summary>
     /// 分享侧的暴露判定要吃 IsAskOn 的结果：合集仍然一律不开放，
-    /// 但单站点分享在「没表过态」时应当暴露入口——这正是用户看到「没有向我提问」的那条路径。
+    /// 单站点分享在 owner 个人默认开启时才暴露入口。
     /// </summary>
     [Fact]
-    public void 单站点分享在没表过态时也暴露提问入口()
+    public void 单站点分享跟随owner个人默认()
     {
-        var on = AskAccessPolicy.IsAskOn(null, "html");
+        var on = AskAccessPolicy.IsAskOn(null, "html", ownerDefaultEnabled: true);
         Assert.True(AskAccessPolicy.ShouldExposeAskOnShare(sharedSiteCount: 1, siteAskEnabled: on));
         Assert.False(AskAccessPolicy.ShouldExposeAskOnShare(sharedSiteCount: 3, siteAskEnabled: on));
     }
@@ -78,13 +86,13 @@ public class AskDefaultOnPolicyTests
         Assert.False(AskOpeningQuestionGenerator.NeedsGeneration(site));
     }
 
-    /// <summary>反面：没表过态的支持形态，入口开着，生成这一关也得放行。</summary>
+    /// <summary>个人默认开启后，没表过态的支持形态要进入生成流程。</summary>
     [Fact]
-    public void 没表过态的支持形态会进入生成流程()
+    public void 个人默认开启的支持形态会进入生成流程()
     {
         var site = new HostedSite { AskEnabled = null, WrappedAssetType = "html" };
-        Assert.True(AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType));
-        Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(site));
+        Assert.True(AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType, ownerDefaultEnabled: true));
+        Assert.True(AskOpeningQuestionGenerator.NeedsGeneration(site, ownerDefaultAskEnabled: true));
     }
 
     /// <summary>
@@ -104,8 +112,8 @@ public class AskDefaultOnPolicyTests
         Assert.False(AskAccessPolicy.IsAskOn(null, "video"));
         Assert.False(AskAccessPolicy.IsAskOn(true, "video"));
 
-        // 换回支持的形态后，没表过态就该恢复成开——这正是被 false 覆盖掉的那件事
-        Assert.True(AskAccessPolicy.IsAskOn(null, "html"));
+        // 换回支持的形态后，owner 的个人默认仍能重新生效
+        Assert.True(AskAccessPolicy.IsAskOn(null, "html", ownerDefaultEnabled: true));
 
         // 源码：全仓不许再出现「把不支持写成 owner 拒绝」的那一笔。
         //

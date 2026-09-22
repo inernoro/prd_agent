@@ -15,6 +15,12 @@ import AskWidget from '@/components/web-hosting/ask/AskWidget';
 import type { AskDockState } from '@/components/web-hosting/ask/askDockGeometry';
 import { useIsMobile } from '@/hooks/useBreakpoint';
 import {
+  getNativeFullscreenElement,
+  subscribeNativeFullscreen,
+  tryEnterNativeFullscreen,
+  tryExitNativeFullscreen,
+} from '@/components/web-hosting/shareFullscreen';
+import {
   DIRECT_PREVIEW_SANDBOX,
   SRCDOC_PREVIEW_SANDBOX,
   canUseSrcDocPreview,
@@ -350,22 +356,34 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
-  // 全屏演示：对单站点视图容器 requestFullscreen，全屏时隐藏 MAP 顶栏（Esc / 系统手势退出由
-  // fullscreenchange 同步回 state）。iframe 另加 allowFullScreen，让 deck 自带的全屏按钮也能用。
+  // 全屏演示：优先请求浏览器原生全屏。iPhone WebKit 不支持普通元素 requestFullscreen，
+  // 此时降级为页面级沉浸模式：固定铺满可视视口并隐藏 MAP 顶栏，同时提供退出按钮。
   const singleViewRef = useRef<HTMLDivElement>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [nativeFullscreen, setNativeFullscreen] = useState(false);
+  const [pageFullscreen, setPageFullscreen] = useState(false);
+  const isFullscreen = nativeFullscreen || pageFullscreen;
   useEffect(() => {
-    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', onFsChange);
-    return () => document.removeEventListener('fullscreenchange', onFsChange);
+    const onFsChange = () => setNativeFullscreen(!!getNativeFullscreenElement());
+    return subscribeNativeFullscreen(onFsChange);
   }, []);
-  const togglePresentFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen?.();
-    } else {
-      singleViewRef.current?.requestFullscreen?.().catch(() => {});
+  useEffect(() => {
+    if (!pageFullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = previousOverflow; };
+  }, [pageFullscreen]);
+  const togglePresentFullscreen = useCallback(async () => {
+    if (pageFullscreen) {
+      setPageFullscreen(false);
+      return;
     }
-  }, []);
+    if (getNativeFullscreenElement()) {
+      await tryExitNativeFullscreen();
+      return;
+    }
+    const target = singleViewRef.current;
+    if (!target || !await tryEnterNativeFullscreen(target)) setPageFullscreen(true);
+  }, [pageFullscreen]);
 
   // 顶栏「评论 N」初始计数：单站点分享 + token 就绪后拉一次（抽屉打开后由 onCountChange 接管）
   useEffect(() => {
@@ -783,8 +801,11 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         ref={singleViewRef}
         style={{
           width: '100vw',
-          height: '100vh',
+          height: pageFullscreen ? '100dvh' : '100vh',
           minHeight: 0,
+          position: pageFullscreen ? 'fixed' : 'relative',
+          inset: pageFullscreen ? 0 : undefined,
+          zIndex: pageFullscreen ? 2147483000 : undefined,
           display: 'grid',
           gridTemplateRows: isFullscreen ? 'minmax(0, 1fr)' : 'auto minmax(0, 1fr)',
           background: '#0a0a0a',
@@ -915,6 +936,31 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
           )}
         </div>
         <div style={{ position: 'relative', minHeight: 0, background: '#fff' }}>
+          {pageFullscreen && (
+            <button
+              type="button"
+              onClick={() => setPageFullscreen(false)}
+              title="退出全屏"
+              aria-label="退出全屏"
+              className="border border-token-subtle"
+              style={{
+                position: 'absolute',
+                zIndex: 20,
+                top: 'max(10px, env(safe-area-inset-top))',
+                right: 'max(10px, env(safe-area-inset-right))',
+                width: 38,
+                height: 38,
+                display: 'grid',
+                placeItems: 'center',
+                borderRadius: 10,
+                background: 'var(--panel-solid)',
+                color: 'var(--text-primary)',
+                boxShadow: '0 6px 18px rgba(0,0,0,0.24)',
+              }}
+            >
+              <Minimize size={17} />
+            </button>
+          )}
           {/* Iframe —— 三态，由 resolvePreviewSource 决定，**不再有「先挂直链再说」这一档**。
               普通 HTML 托管页优先走 srcDoc：直链 iframe 在 Chrome 里可能只绘制空白，
               而在某些 App 的内置浏览器里那次跨域文档请求会被当成下载（2026-09-18 事故）。

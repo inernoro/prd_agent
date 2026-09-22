@@ -13,25 +13,19 @@ describe('提问支持形态', () => {
     expect(isAskSupported({})).toBe(true);
   });
 
-  it('前端不许用 === true 判提问开关（三态会把「没表过态」误判成关）', () => {
-    // askEnabled 是三态：null / 缺字段 = 没表过态 = 开。写 `askEnabled === true`
-    // 会把全部存量站点和新上传判成「关」，默认全开当场失效——而这正是这个字段
-    // 从 bool 改成 bool? 之前的老写法，最容易被顺手写回去。
+  it('前端不许再把未表态直接视为开启', () => {
+    // null / 缺字段现在要继续读取 owner 个人默认，不能用旧口径 !== false 直接打开。
     const files = ['SitePreviewModal.tsx', 'ask/AskConfigDrawer.tsx'];
     for (const f of files) {
       const src = readFileSync(resolve(__dirname, f), 'utf-8');
-      expect(src, `${f} 里出现了 askEnabled === true`).not.toMatch(/askEnabled\s*===\s*true/);
+      expect(src, `${f} 仍把未表态直接视为开启`).not.toMatch(/askEnabled\s*!==\s*false/);
     }
   });
 
-  it('上传完成提示不许再说提问默认关闭', () => {
-    // 默认全开之后这句话是假的，而且关乎花钱：在意模型消耗的人读到「默认关着」
-    // 就不会去关，实际上访客一进来就能问。判据只认「默认」与「关」同时出现在
-    // 描述提问的那句话里。
+  it('上传完成提示必须说明系统默认关闭与个人设置入口', () => {
     const page = readFileSync(resolve(__dirname, '../../pages/WebPagesPage.tsx'), 'utf-8');
-    expect(page).not.toMatch(/「向我提问」[^<]*默认[^<]*关/);
-    const drawer = readFileSync(resolve(__dirname, 'ask/AskConfigDrawer.tsx'), 'utf-8');
-    expect(drawer).not.toMatch(/hint="[^"]*默认关闭/);
+    expect(page).toContain('默认关闭');
+    expect(page).toContain('设置 → 网页托管');
   });
 
   it('前端这份清单必须与后端 UnsupportedReason 一字不差', () => {
