@@ -320,6 +320,8 @@ public class VisualOpenApiController : ControllerBase
     {
         "VISUAL_MODEL_NOT_ALLOWED" =>
             "可用模型变了（被下架或改了策略）。这次的 run 不用再查了，重新发起一次即可 —— 服务端会挑当前允许的默认模型。",
+        ErrorCodes.IMAGE_GEN_REQUEST_REJECTED =>
+            "原样重试不会改变结果。请调整描述或图片尺寸；使用了参考图时，改用你有权使用且内容更清晰的图片后再发起。",
         ErrorCodes.INVALID_FORMAT =>
             "请求本身不合法，重试多少次都是同一个结果。按上面这句话改掉参数再发起一次。",
         ErrorCodes.RATE_LIMITED =>

@@ -342,6 +342,15 @@ public class McpDownstreamSafetyTests
             .ShouldNotBe(VisualOpenApiController.RunFailureNextStep("WORKER_STOPPED"));
     }
 
+    [Fact]
+    public void 生图请求被拒绝不能指引原样重试()
+    {
+        var nextStep = VisualOpenApiController.RunFailureNextStep(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED);
+        nextStep.ShouldContain("调整描述");
+        nextStep.ShouldContain("参考图");
+        nextStep.ShouldContain("原样重试不会改变结果");
+    }
+
     /// <summary>
     /// 这条路上的 errorMessage 有一支直接来自 `ex.Message`（worker 兜底那次），
     /// 原样回出去就是把内部细节递给外部调用方 —— 必须和接入台那条路走同一道脱敏。
