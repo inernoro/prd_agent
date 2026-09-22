@@ -320,10 +320,12 @@ public class VisualOpenApiController : ControllerBase
     {
         "VISUAL_MODEL_NOT_ALLOWED" =>
             "可用模型变了（被下架或改了策略）。这次的 run 不用再查了，重新发起一次即可 —— 服务端会挑当前允许的默认模型。",
+        ErrorCodes.IMAGE_GEN_REQUEST_REJECTED =>
+            "原样重试不会改变结果。请调整描述或图片尺寸；使用了参考图时，改用你有权使用且内容更清晰的图片后再发起。",
         ErrorCodes.INVALID_FORMAT =>
             "请求本身不合法，重试多少次都是同一个结果。按上面这句话改掉参数再发起一次。",
         ErrorCodes.RATE_LIMITED =>
-            "这次要的图太多了。拆成几次、每次少要几张再发起。",
+            "当前请求受到限流，请等待片刻再发起；如果一次请求多张图，也可以拆成几次、每次少要几张。",
         "WORKER_STOPPED" =>
             "服务端在这次生成中途重启了，和你的参数无关。原样重新发起一次即可。",
         _ => "重新发起一次；一直是这个错就把 runId 和时间告诉管理员。",

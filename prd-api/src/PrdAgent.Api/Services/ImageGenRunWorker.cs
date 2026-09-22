@@ -949,21 +949,7 @@ public class ImageGenRunWorker : BackgroundService
             ? ImageGenRunStatus.Cancelled
             : (final.Failed > 0 ? ImageGenRunStatus.Failed : ImageGenRunStatus.Completed);
 
-        await _db.ImageGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
-            Builders<ImageGenRun>.Update.Set(x => x.Status, nextStatus).Set(x => x.EndedAt, DateTime.UtcNow),
-            cancellationToken: ct);
-
-        await AppendEventAsync(run, "run", new
-        {
-            type = "runDone",
-            runId = run.Id,
-            total = final.Total,
-            done = final.Done,
-            failed = final.Failed,
-            status = nextStatus.ToString(),
-            endedAt = DateTime.UtcNow
-        }, ct);
+        await PersistTerminalStateAsync(run, final, nextStatus, ct);
 
         // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
         // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
@@ -983,6 +969,70 @@ public class ImageGenRunWorker : BackgroundService
                 : (string.IsNullOrWhiteSpace(errItem?.ErrorMessage) ? "生成失败" : errItem!.ErrorMessage!);
             await TryMarkWorkspaceCanvasErrorAsync(run, errMsg, ct);
         }
+    }
+
+    internal readonly record struct TerminalFailure(string? ErrorCode, string? ErrorMessage);
+
+    internal static TerminalFailure ResolveTerminalFailure(
+        ImageGenRunStatus status,
+        ImageGenRunItem? firstErrorItem)
+        => status == ImageGenRunStatus.Failed
+            ? new TerminalFailure(
+                string.IsNullOrWhiteSpace(firstErrorItem?.ErrorCode) ? ErrorCodes.LLM_ERROR : firstErrorItem.ErrorCode,
+                string.IsNullOrWhiteSpace(firstErrorItem?.ErrorMessage) ? "生图失败，请重试。" : firstErrorItem.ErrorMessage)
+            : new TerminalFailure(null, null);
+
+    internal async Task PersistTerminalStateAsync(
+        ImageGenRun run,
+        ImageGenRun final,
+        ImageGenRunStatus nextStatus,
+        CancellationToken ct)
+    {
+        ImageGenRunItem? firstErrorItem = null;
+        if (nextStatus == ImageGenRunStatus.Failed)
+        {
+            firstErrorItem = await _db.ImageGenRunItems
+                .Find(x => x.RunId == run.Id && x.Status == ImageGenRunItemStatus.Error)
+                .SortBy(x => x.ItemIndex)
+                .ThenBy(x => x.ImageIndex)
+                .FirstOrDefaultAsync(ct);
+        }
+        var terminalFailure = ResolveTerminalFailure(nextStatus, firstErrorItem);
+        var endedAt = DateTime.UtcNow;
+
+        var terminalUpdate = Builders<ImageGenRun>.Update
+            .Set(x => x.Status, nextStatus)
+            .Set(x => x.EndedAt, endedAt);
+        if (terminalFailure.ErrorCode != null)
+        {
+            terminalUpdate = terminalUpdate
+                .Set(x => x.ErrorCode, terminalFailure.ErrorCode)
+                .Set(x => x.ErrorMessage, terminalFailure.ErrorMessage);
+        }
+        else
+        {
+            terminalUpdate = terminalUpdate
+                .Unset(x => x.ErrorCode)
+                .Unset(x => x.ErrorMessage);
+        }
+
+        await _db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            terminalUpdate,
+            cancellationToken: ct);
+
+        await AppendEventAsync(run, "run", new
+        {
+            type = "runDone",
+            runId = run.Id,
+            total = final.Total,
+            done = final.Done,
+            failed = final.Failed,
+            status = nextStatus.ToString(),
+            errorCode = terminalFailure.ErrorCode,
+            errorMessage = terminalFailure.ErrorMessage,
+            endedAt
+        }, ct);
     }
 
     private static string ResolveSize(ImageGenRun run, ImageGenRunPlanItem planItem)
