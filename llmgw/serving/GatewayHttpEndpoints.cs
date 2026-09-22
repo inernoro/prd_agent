@@ -922,7 +922,11 @@ public static class GatewayHttpEndpoints
             {
                 requestedModel = null;
                 var bodyModel = ReadString(body, "model");
-                if (!string.IsNullOrWhiteSpace(bodyModel)) requestedModel = bodyModel.Trim();
+                if (!string.IsNullOrWhiteSpace(bodyModel)
+                    && !string.Equals(bodyModel.Trim(), "auto", StringComparison.OrdinalIgnoreCase))
+                {
+                    requestedModel = bodyModel.Trim();
+                }
             }
             var modelPoolId = ResolveCompatModelPoolId(http, body);
             // 外部请求不接受自带的 pin（越过白名单授权直取上游）。带了就当场拒，不静默忽略。
