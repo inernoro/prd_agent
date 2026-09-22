@@ -28,6 +28,14 @@ internal static class ImageGenerationUserError
                 GatewayQuotaAlertPolicy.UserReadableQuotaMessage);
         }
 
+        if (string.Equals(
+                response.ErrorCode,
+                ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return RequestRejected();
+        }
+
         return Classify(response.StatusCode, response.ErrorMessage ?? response.Content);
     }
 
@@ -46,9 +54,7 @@ internal static class ImageGenerationUserError
         var text = diagnostic ?? string.Empty;
         if (HasFinishReason(text, "IMAGE_RECITATION"))
         {
-            return new Result(
-                ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
-                "模型没有根据这次描述和参考图生成图片，请调整需求，或更换你有权使用的参考图后重试。");
+            return RequestRejected();
         }
 
         return new Result(
@@ -127,6 +133,11 @@ internal static class ImageGenerationUserError
         => new(
             ErrorCodes.IMAGE_GEN_UNAVAILABLE,
             "当前生图服务暂时不可用，请稍后重试。若持续出现，请联系管理员。");
+
+    private static Result RequestRejected()
+        => new(
+            ErrorCodes.IMAGE_GEN_REQUEST_REJECTED,
+            "模型没有根据这次描述和参考图生成图片，请调整需求，或更换你有权使用的参考图后重试。");
 
     private static bool HasFinishReason(string diagnostic, string expected)
     {

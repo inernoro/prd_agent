@@ -2,3 +2,4 @@
 | test | prd-api | 补充结构化 IMAGE_RECITATION 的正向归类与自由文本反向回归测试 |
 | fix | prd-api | 在标准生图响应归一化边界保留请求拒绝语义，避免文学图生图回退为服务故障 |
 | test | prd-api | 补充 canonical 生图边界的 IMAGE_RECITATION 贯穿回归测试 |
+| fix | prd-api | 保留 canonical 请求拒绝错误在 MAP 生图消费者中的稳定语义，并补齐未知无图与服务故障反例 |

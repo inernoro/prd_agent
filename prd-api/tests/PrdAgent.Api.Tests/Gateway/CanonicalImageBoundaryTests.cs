@@ -4,6 +4,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using Xunit;
@@ -83,6 +84,60 @@ public sealed class CanonicalImageBoundaryTests
         Assert.Contains("有权使用的参考图", response.ErrorMessage);
         Assert.DoesNotContain("IMAGE_RECITATION", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("provider detail", response.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void GoogleImageRecitationPreservesRequestRejectedThroughMapConsumer()
+    {
+        const string wire = """
+            {"candidates":[{"content":{"parts":null},"finishReason":"IMAGE_RECITATION","finishMessage":"provider secret detail"}]}
+            """;
+
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = wire,
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.False(normalized.Success);
+        Assert.Equal(ErrorCodes.IMAGE_GEN_REQUEST_REJECTED, consumed.Code);
+        Assert.Contains("调整需求", consumed.Message);
+        Assert.Contains("有权使用的参考图", consumed.Message);
+        Assert.DoesNotContain("IMAGE_RECITATION", consumed.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("provider secret detail", consumed.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void UnknownMissingImageRemainsUnavailableThroughMapConsumer()
+    {
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = true,
+            StatusCode = 200,
+            Content = "{\"candidates\":[{\"finishReason\":\"UNKNOWN\"}]}",
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, consumed.Code);
+        Assert.Contains("暂时不可用", consumed.Message);
+    }
+
+    [Fact]
+    public void UpstreamServiceFailureRemainsUnavailableThroughMapConsumer()
+    {
+        var normalized = GatewayImageResponseNormalizer.Normalize(new GatewayRawResponse
+        {
+            Success = false,
+            StatusCode = 500,
+            ErrorCode = "PROVIDER_INTERNAL",
+            ErrorMessage = "provider secret detail",
+        });
+        var consumed = ImageGenerationUserError.FromGateway(normalized);
+
+        Assert.Equal(ErrorCodes.IMAGE_GEN_UNAVAILABLE, consumed.Code);
+        Assert.DoesNotContain("provider secret detail", consumed.Message, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
