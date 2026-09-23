@@ -55,6 +55,7 @@ import {
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
+import { buildLiteraryModelOptions, type LiteraryModelOption } from './literaryModelOptions';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
@@ -559,39 +560,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelPrefReady, setModelPrefReady] = useState(false);
 
   // 生图模型池 → 可选择列表
-  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
-  const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
-    const seenActualModels = new Set<string>();
-    return pools
-      .filter((g) => g.models && g.models.length > 0)
-      .map((g) => {
-        const first = g.models[0]!;
-        return {
-          poolId: g.id,
-          id: `pool_${g.id}`,
-          name: g.code || g.name,
-          modelName: g.code || first.modelId,
-          actualModelId: first.actualModelId || first.modelId,
-          platformId: first.platformId,
-          actualPlatformId: first.actualPlatformId || first.platformId,
-          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
-          isDedicated: g.isDedicated,
-          isDefault: g.isDefault,
-        };
-      })
-      .filter((m) => m.enabled)
-      // 两个逻辑 PublicId 指向同一物理模型时只展示排序靠前的稳定入口。
-      // 目录已把调用方默认排在前面，因此 gpt-image-2 会盖住旧的 gpt-image-2-all 暴露项。
-      .filter((m) => {
-        const identity = `${m.actualPlatformId}:${m.actualModelId}`;
-        if (seenActualModels.has(identity)) return false;
-        seenActualModels.add(identity);
-        return true;
-      });
-  }, []);
+  type PoolModel = LiteraryModelOption;
 
-  const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
-  const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
+  const enabledImageModels = useMemo(() => buildLiteraryModelOptions(imageGenPools), [imageGenPools]);
+  const enabledChatModels = useMemo(() => buildLiteraryModelOptions(chatPools), [chatPools]);
 
   const reloadImageGenPools = useCallback(async () => {
     setImageGenModelError(null);
@@ -866,7 +838,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedModel({
               id: 'auto-resolved',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
@@ -898,7 +870,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedChatModel({
               id: 'auto-resolved-chat',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
@@ -2646,7 +2618,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
+                                      {m.isDefault && (
+                                        <span className="shrink-0 rounded px-1 py-0.5 text-[9px]" style={{ color: 'var(--text-muted)', background: 'var(--surface-muted)' }}>
+                                          默认模型
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
                                     background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
@@ -2727,7 +2706,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
+                                      {m.isDefault && (
+                                        <span className="shrink-0 rounded px-1 py-0.5 text-[9px]" style={{ color: 'var(--text-muted)', background: 'var(--surface-muted)' }}>
+                                          默认模型
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
                                     background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',

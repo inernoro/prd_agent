@@ -30,8 +30,11 @@ describe('MCP 文学配图模型模式接线', () => {
 
   it('文学页面保留逻辑模型作为请求身份，并用实际线路做去重', () => {
     const page = read('pages/literary-agent/ArticleIllustrationEditorPage.tsx');
-    expect(page).toContain('actualPlatformId: first.actualPlatformId || first.platformId');
-    expect(page).toContain('`${m.actualPlatformId}:${m.actualModelId}`');
+    const options = read('pages/literary-agent/literaryModelOptions.ts');
+    expect(options).toContain('actualPlatformId: first.actualPlatformId || first.platformId');
+    expect(options).toContain('`${model.actualPlatformId}:${model.actualModelId}`');
+    expect(options).toContain('name: displayModelId');
+    expect(options).toContain('modelName: pool.code || first.modelId');
     expect(page).toContain('modelId: effectiveModel.modelName');
     expect(page).toContain('modelId: effectiveChatModel?.modelName');
     expect(page).not.toContain('modelId: effectiveModel.actualModelId');
