@@ -522,6 +522,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
 // 接入台（MCP）：用量闸门 + 调用记录
 builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.McpUsageService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.ILiteraryMcpModelSelectionService,
+    PrdAgent.Api.Services.Mcp.LiteraryMcpModelSelectionService>();
 // 网关回环续跳的自证令牌：每进程一份，随进程生灭，不落库
 builder.Services.AddSingleton<PrdAgent.Api.Services.Mcp.McpLoopbackSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();

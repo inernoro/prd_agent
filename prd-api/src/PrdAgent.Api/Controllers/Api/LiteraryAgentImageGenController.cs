@@ -9,6 +9,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using static PrdAgent.Core.Models.AppCallerRegistry;
 using PrdAgent.Core.LlmGateway;
 
@@ -91,6 +92,59 @@ public class LiteraryAgentImageGenController : ControllerBase
             _logger.LogWarning(ex, "[LiteraryAgent] 预解析生图模型失败: {AppCallerCode}", appCallerCode);
             return Ok(ApiResponse<object>.Ok(new { resolved = false }));
         }
+    }
+
+    /// <summary>
+    /// 获取当前文学配图场景下逻辑模型的图片能力。不能复用视觉创作的同名端点：
+    /// 两个应用的允许目录不同，拿视觉白名单校验文学模型会把合法模型错误拒绝为 400。
+    /// </summary>
+    [HttpGet("adapter-info")]
+    public async Task<IActionResult> GetAdapterInfo([FromQuery] string modelId, CancellationToken ct)
+    {
+        var requested = modelId?.Trim();
+        if (string.IsNullOrWhiteSpace(requested))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "modelId 不能为空"));
+
+        var adminId = GetAdminId();
+        var hasReference = await _db.ReferenceImageConfigs
+            .Find(x => x.AppKey == AppKey && x.IsActive && x.CreatedByAdminId == adminId
+                && x.ImageSha256 != null && x.ImageSha256 != string.Empty)
+            .AnyAsync(ct);
+        if (!hasReference)
+        {
+            var legacy = await _db.LiteraryAgentConfigs.Find(x => x.Id == AppKey).FirstOrDefaultAsync(ct);
+            hasReference = !string.IsNullOrWhiteSpace(legacy?.ReferenceImageSha256);
+        }
+
+        var appCallerCode = hasReference
+            ? LiteraryAgent.Illustration.Img2Img
+            : LiteraryAgent.Illustration.Text2Img;
+        var item = (await GatewayImageModelCatalog.ReadAsync(_gateway, appCallerCode, ct))
+            .FirstOrDefault(x => string.Equals(x.Model.Code, requested, StringComparison.Ordinal));
+        var info = item?.ImageCapabilities;
+        if (info is null)
+            return BadRequest(ApiResponse<object>.Fail("LITERARY_MODEL_CAPABILITIES_UNAVAILABLE",
+                "该模型未开放给当前文学配图场景，或能力信息暂不可用，请刷新后重新选择。"));
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            matched = info.Matched,
+            modelId = requested,
+            adapterName = info.AdapterName,
+            displayName = item!.Model.Code,
+            info.Provider,
+            info.OfficialDocUrl,
+            info.LastUpdated,
+            sizeConstraint = new { type = info.SizeConstraintType, description = info.SizeConstraintDescription },
+            info.SizesByResolution,
+            info.SizeParamFormat,
+            info.SizesNotApplicable,
+            sizeControl = new { source = "llmgw" },
+            limitations = new { info.MustBeDivisibleBy, info.MaxWidth, info.MaxHeight, info.MinWidth, info.MinHeight, info.MaxPixels, info.Notes },
+            info.SupportsImageToImage,
+            info.SupportsInpainting,
+            info.IsAdaptive,
+        }));
     }
 
     /// <summary>

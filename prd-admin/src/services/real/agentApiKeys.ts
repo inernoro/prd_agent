@@ -38,6 +38,8 @@ export const updateAgentApiKeyReal: UpdateAgentApiKeyContract = async (input) =>
       mcpDailyImageQuota: input.mcpDailyImageQuota,
       mcpDailyWriteQuota: input.mcpDailyWriteQuota,
       mcpRateLimitPerMin: input.mcpRateLimitPerMin,
+      mcpLiteraryImageModelMode: input.mcpLiteraryImageModelMode,
+      mcpLiteraryImageModelPublicId: input.mcpLiteraryImageModelPublicId,
     },
   });
 };

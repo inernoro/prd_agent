@@ -42,7 +42,7 @@ import {
   getUserPreferences,
   updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
-  getVisualAgentAdapterInfo,
+  getLiteraryAgentAdapterInfo,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
@@ -547,8 +547,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelsLoading, setModelsLoading] = useState(true);
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
   // 无专属模型池时，通过预解析得到的自动调度模型（仅供显示，生成时由 Worker 自行 resolve）
-  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
-  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
+  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string } | null>(null);
+  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string } | null>(null);
 
   // 模型偏好（按账号持久化到数据库）
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -559,8 +559,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelPrefReady, setModelPrefReady] = useState(false);
 
   // 生图模型池 → 可选择列表
-  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
+  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
   const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
+    const seenActualModels = new Set<string>();
     return pools
       .filter((g) => g.models && g.models.length > 0)
       .map((g) => {
@@ -568,16 +569,25 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         return {
           poolId: g.id,
           id: `pool_${g.id}`,
-          name: g.name,
+          name: g.code || g.name,
           modelName: g.code || first.modelId,
-          actualModelId: first.modelId,
+          actualModelId: first.actualModelId || first.modelId,
           platformId: first.platformId,
+          actualPlatformId: first.actualPlatformId || first.platformId,
           enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
           isDedicated: g.isDedicated,
           isDefault: g.isDefault,
         };
       })
-      .filter((m) => m.enabled);
+      .filter((m) => m.enabled)
+      // 两个逻辑 PublicId 指向同一物理模型时只展示排序靠前的稳定入口。
+      // 目录已把调用方默认排在前面，因此 gpt-image-2 会盖住旧的 gpt-image-2-all 暴露项。
+      .filter((m) => {
+        const identity = `${m.actualPlatformId}:${m.actualModelId}`;
+        if (seenActualModels.has(identity)) return false;
+        seenActualModels.add(identity);
+        return true;
+      });
   }, []);
 
   const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
@@ -860,6 +870,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
+              actualPlatformId: res.platform || '',
             });
           } else {
             setImageGenModelError('未找到可用的生图模型（请绑定专属模型池或配置默认模型）');
@@ -891,6 +902,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
+              actualPlatformId: res.platform || '',
             });
           } else {
             setAutoResolvedChatModel(null);
@@ -912,7 +924,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
   useEffect(() => {
-    const modelName = effectiveModel?.actualModelId || imageGenModel?.modelName;
+    const modelName = effectiveModel?.modelName || imageGenModel?.modelName;
     if (!modelName) {
       setSizesByResolutionForPicker(defaultSizesByResolution);
       setCurrentModelSizesNotApplicable(false);
@@ -921,7 +933,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     let cancelled = false;
     void (async () => {
       try {
-        const res = await getVisualAgentAdapterInfo(modelName);
+        const res = await getLiteraryAgentAdapterInfo(modelName);
         if (cancelled) return;
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
@@ -946,7 +958,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     })();
     return () => { cancelled = true; };
-  }, [effectiveModel?.actualModelId, imageGenModel?.modelName, defaultSizesByResolution]);
+  }, [effectiveModel?.modelName, imageGenModel?.modelName, defaultSizesByResolution]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1410,7 +1422,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
         insertionMode: 'anchor',
-        modelId: effectiveChatModel?.actualModelId,
+        modelId: effectiveChatModel?.modelName,
       });
 
       let fullText = '';
@@ -1802,7 +1814,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       workspaceId,
       appKey: 'literary-agent',
       articleMarkerIndex: markerIndex,
-      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.actualModelId } : {}),
+      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.modelName } : {}),
     };
     const created = await createLiteraryAgentImageGenRun({
       input: runInput,

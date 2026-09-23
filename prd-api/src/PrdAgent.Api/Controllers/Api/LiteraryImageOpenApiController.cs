@@ -17,7 +17,9 @@ namespace PrdAgent.Api.Controllers.Api;
 [Route("api/open/literary")]
 [Authorize(AuthenticationSchemes = "ApiKey")]
 [RequireScope(McpCapabilityCatalog.ScopeLiteraryUse)]
-public class LiteraryImageOpenApiController(MongoDbContext db) : ControllerBase
+public class LiteraryImageOpenApiController(
+    MongoDbContext db,
+    ILiteraryMcpModelSelectionService modelSelection) : ControllerBase
 {
     private string UserId => User.FindFirst("boundUserId")?.Value
         ?? throw new UnauthorizedAccessException("Missing boundUserId claim");
@@ -65,12 +67,26 @@ public class LiteraryImageOpenApiController(MongoDbContext db) : ControllerBase
         }
         var effectivePrompt = sha != null && !string.IsNullOrWhiteSpace(reference?.Prompt)
             ? $"{reference.Prompt}\n\n{prompt}" : prompt;
+        var appCallerCode = sha == null
+            ? LiteraryAgent.Illustration.Text2Img
+            : LiteraryAgent.Illustration.Img2Img;
+        var keyId = McpIdempotency.KeyIdOf(User);
+        if (keyId == "unknown")
+            return Unauthorized(ApiResponse<object>.Fail("MODEL_KEY_NOT_FOUND", "当前请求没有可识别的 MCP 客户端配置，请重新连接客户端。"));
+        var selectedModel = await modelSelection.ResolveForRunAsync(userId, keyId, appCallerCode, ct);
+        if (!selectedModel.Success || string.IsNullOrWhiteSpace(selectedModel.LogicalModelPublicId))
+            return Conflict(ApiResponse<object>.Fail(selectedModel.ErrorCode ?? "MODEL_UNAVAILABLE",
+                selectedModel.ErrorMessage ?? "当前没有可用的文学配图模型。"));
         var run = new ImageGenRun
         {
             Id = McpIdempotency.Fingerprint("literary-run", idem)!,
             OwnerAdminId = userId, WorkspaceId = ws.Id,
             AppKey = "literary-agent",
-            AppCallerCode = sha == null ? LiteraryAgent.Illustration.Text2Img : LiteraryAgent.Illustration.Img2Img,
+            AppCallerCode = appCallerCode,
+            PlatformId = "logical-model",
+            ModelId = selectedModel.LogicalModelPublicId,
+            LogicalModelPublicId = selectedModel.LogicalModelPublicId,
+            ModelResolutionType = PrdAgent.Core.Models.ModelResolutionType.LogicalModel,
             InitImageAssetSha256 = sha,
             ArticleMarkerIndex = marker.Index, ArticleWorkflowVersion = req.WorkflowVersion,
             Status = ImageGenRunStatus.ScopedQueued, DeploymentSlug = DeploymentScope.Current,

@@ -166,6 +166,8 @@ export type GetActiveReferenceImageConfigContract = () => Promise<ApiResponse<{
 export interface LiteraryAgentModelPoolItem {
   modelId: string;
   platformId: string;
+  actualModelId?: string | null;
+  actualPlatformId?: string | null;
   priority: number;
   healthStatus: string;
 }
