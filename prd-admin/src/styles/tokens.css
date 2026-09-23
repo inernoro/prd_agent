@@ -1476,3 +1476,25 @@ html, body {
 html[data-perf-mode="performance"] .app-aurora {
   animation: none !important;
 }
+
+/* 生图等待态（GenDevelopLoader）的「跟随主题」档。
+   上面 --gen-wait-* 一族故意恒为暗色，因为视觉创作画布舞台被钉死成暗色。
+   但同一个组件也用在会翻浅色的普通页面上（文学创作的配图卡片与正文占位，
+   调用方传 tone="adaptive"），那里若沿用暗色档就是「纸面上浮一块黑砖」。
+   所以只在带 .gen-dev--adaptive 的实例上、浅色主题下覆盖这一族；画布上的实例不受影响。 */
+[data-theme="light"] .gen-dev--adaptive {
+  --gen-wait-veil: rgba(26, 26, 31, 0.03);
+  --gen-wait-surface: repeating-linear-gradient(45deg,
+    rgba(26, 26, 31, 0.035) 0 6px,
+    transparent 6px 13px);
+  --gen-wait-core: radial-gradient(58% 44% at 50% 52%, rgba(166, 75, 53, 0.08) 0%, rgba(217, 119, 87, 0.04) 45%, transparent 72%);
+  --gen-wait-develop: linear-gradient(108deg, transparent 0%, rgba(253, 251, 248, 0.05) 18%, rgba(253, 251, 248, 0.7) 50%, rgba(253, 251, 248, 0.05) 82%, transparent 100%);
+  --gen-wait-scrim: linear-gradient(to top, rgba(248, 245, 239, 0.94) 0%, rgba(248, 245, 239, 0.5) 55%, transparent 100%);
+  --gen-wait-text: var(--text-primary);
+  --gen-wait-text-dim: var(--text-secondary);
+  --gen-wait-dot: rgba(26, 26, 31, 0.28);
+  --gen-wait-progress: #A64B35;
+  --gen-wait-progress-halo: rgba(166, 75, 53, 0.16);
+  --gen-wait-progress-over: #b45309;
+  --gen-wait-head: #D97757;
+}

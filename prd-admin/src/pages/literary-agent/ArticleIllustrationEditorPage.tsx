@@ -74,7 +74,8 @@ import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor
 import { useDebounce } from '@/hooks/useDebounce';
 import { createSubmission, checkSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { IllustrationDevelopingPlaceholder, ratioFromSize } from './IllustrationDevelopingPlaceholder';
+import { GenDevelopLoader } from '@/components/ui/GenDevelopLoader';
+import { recordGenDurationMs } from '@/lib/genTiming';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
@@ -161,6 +162,17 @@ type MarkerRunItem = {
   assetUrl?: string | null;
   errorMessage?: string | null;
 };
+
+/** "1024x1536" → 宽高比；解析不出按 1:1。 */
+function ratioFromSize(size?: string | null): number {
+  const [w, h] = String(size || '').split(/[xX×]/).map(Number);
+  return w > 0 && h > 0 ? w / h : 1;
+}
+/** "1024x1536" → "1024 × 1536"（生图等待态底边那行的尺寸段） */
+function sizeLabelOf(size?: string | null): string {
+  const [w, h] = String(size || '1024x1024').split(/[xX×]/).map(Number);
+  return w > 0 && h > 0 ? `${w} × ${h}` : '1024 × 1024';
+}
 
 const PRD_MD_STYLE = `
   .prd-md { font-size: 14px; line-height: 1.72; color: var(--text-secondary); white-space: normal; word-break: break-word; }
@@ -306,8 +318,12 @@ const PRD_MD_STYLE = `
 
   /* 正文里的「配图 N 生成中」占位：与正文图片同宽（跟随显示尺寸滑杆） */
   .prd-md .prd-md-gen-slot {
+    position: relative;
+    overflow: hidden;
     max-width: var(--img-display-size, 50%);
     margin: 10px auto;
+    border-radius: 10px;
+    border: 1px solid var(--border-subtle);
   }
 
   /* 配图卡片：prompt 文字底部浮层（默认半可见，hover 全可见） */
@@ -690,8 +706,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   };
   useEffect(() => {
     const running = new Set(markerRunItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
-    for (const k of Array.from(runStartedAtRef.current.keys())) {
-      if (!running.has(k)) runStartedAtRef.current.delete(k);
+    for (const [k, startedAt] of Array.from(runStartedAtRef.current.entries())) {
+      if (running.has(k)) continue;
+      // 真实出图耗时喂给共享的耗时预估（与视觉创作同一份滑动平均），下次「还需约 Ns」更准
+      if (markerRunItems.find((x) => x.markerIndex === k)?.status === 'done') recordGenDurationMs(Date.now() - startedAt);
+      runStartedAtRef.current.delete(k);
     }
   }, [markerRunItems]);
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
@@ -2683,8 +2702,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 type="button"
                                 className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
                                 style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-subtle)',
+                                  background: picked ? 'rgba(250,204,21,0.06)' : 'var(--nested-block-bg)',
                                 }}
                                 onClick={() => { setChatModelPrefId(m.id); setChatModelPrefOpen(false); }}
                               >
@@ -2693,9 +2712,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
                                   </div>
                                   <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'var(--bg-input-hover)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-default)',
+                                    color: picked ? 'var(--accent-fg-amber)' : 'var(--text-muted)',
                                   }}><Check size={12} /></span>
                                 </div>
                               </button>
@@ -2764,8 +2783,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 type="button"
                                 className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
                                 style={{
-                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                                  background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
+                                  border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-subtle)',
+                                  background: picked ? 'rgba(250,204,21,0.06)' : 'var(--nested-block-bg)',
                                 }}
                                 onClick={() => { setImageModelPrefId(m.id); setImageModelPrefOpen(false); }}
                               >
@@ -2774,9 +2793,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
                                   </div>
                                   <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
-                                    background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
-                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.10)',
-                                    color: picked ? 'rgba(250,204,21,0.95)' : 'rgba(255,255,255,0.28)',
+                                    background: picked ? 'rgba(250,204,21,0.18)' : 'var(--bg-input-hover)',
+                                    border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid var(--border-default)',
+                                    color: picked ? 'var(--accent-fg-amber)' : 'var(--text-muted)',
                                   }}><Check size={12} /></span>
                                 </div>
                               </button>
@@ -3030,12 +3049,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 aspectRatio: '1 / 1',
                                 maxWidth: 360,
                                 margin: '12px auto',
-                                background: 'rgba(255,255,255,0.03)',
+                                background: 'var(--nested-block-bg)',
                                 border: '1px dashed rgba(52,211,153,0.3)',
                                 borderRadius: 8,
                               }}
                             >
-                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(52,211,153,0.6)' }}>
+                              <div className="flex flex-col items-center gap-1.5" style={{ color: 'var(--accent-fg-emerald)' }}>
                                 <ImageIcon size={28} />
                                 <span className="text-[11px]">配图占位</span>
                               </div>
@@ -3134,12 +3153,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   aspectRatio: '1 / 1',
                                   maxWidth: 360,
                                   margin: '12px auto',
-                                  background: 'rgba(255,255,255,0.03)',
+                                  background: 'var(--nested-block-bg)',
                                   border: '1px dashed rgba(147,197,253,0.3)',
                                   borderRadius: 8,
                                 }}
                               >
-                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'rgba(147,197,253,0.55)' }}>
+                                <div className="flex flex-col items-center gap-1.5" style={{ color: 'var(--accent-fg-blue)' }}>
                                   <ImageIcon size={28} />
                                   <span className="text-[11px]">配图占位（1:1）</span>
                                 </div>
@@ -3179,7 +3198,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       />
                       <span
                         className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(168, 85, 247, 0.85)' }}
+                        style={{ color: 'var(--accent-fg-violet)' }}
                       >
                         Thinking
                       </span>
@@ -3189,7 +3208,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       style={{
                         background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.08) 0%, rgba(99, 102, 241, 0.06) 100%)',
                         border: '1px solid rgba(168, 85, 247, 0.15)',
-                        color: 'rgba(255, 255, 255, 0.7)',
+                        color: 'var(--text-secondary)',
                       }}
                     >
                       <StreamingText
@@ -3262,8 +3281,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     className="sticky top-2 float-right z-10 flex items-center gap-0.5 rounded-lg px-1.5 py-1"
                     style={{
                       ...glassFloatingButton,
-                      background: 'rgba(0,0,0,0.55)',
-                      border: '1px solid rgba(255,255,255,0.1)',
+                      background: 'var(--overlay-panel-solid)',
+                      border: '1px solid var(--border-subtle)',
                     }}
                   >
                     <ImageIcon size={11} style={{ color: 'var(--text-muted)', marginRight: 2 }} />
@@ -3275,7 +3294,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         className="px-1.5 py-0.5 text-[10px] rounded transition-colors"
                         style={{
                           background: imageDisplaySize === size ? 'rgba(147, 197, 253, 0.2)' : 'transparent',
-                          color: imageDisplaySize === size ? '#93C5FD' : 'rgba(255,255,255,0.45)',
+                          color: imageDisplaySize === size ? 'var(--accent-fg-blue)' : 'var(--text-muted)',
                           border: imageDisplaySize === size ? '1px solid rgba(147, 197, 253, 0.3)' : '1px solid transparent',
                           fontVariantNumeric: 'tabular-nums',
                         }}
@@ -3297,14 +3316,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   >
                     <summary
                       className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-[11px] font-semibold tracking-wide uppercase"
-                      style={{ color: 'rgba(168, 85, 247, 0.7)' }}
+                      style={{ color: 'var(--accent-fg-violet)' }}
                     >
                       Thinking
                     </summary>
                     <div
                       className="px-3 py-2 text-[12px] leading-relaxed prd-md"
                       style={{
-                        color: 'rgba(255, 255, 255, 0.6)',
+                        color: 'var(--text-muted)',
                         maxHeight: 200,
                         overflowY: 'auto',
                         borderTop: '1px solid rgba(168, 85, 247, 0.1)',
@@ -3335,13 +3354,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         const slot = node?.properties?.dataGenSlot;
                         if (slot == null) return <div {...props}>{children}</div>;
                         const slotIdx = Number(slot);
+                        const genSize = String(node?.properties?.dataGenSize ?? '');
                         const markerIndex = markers[slotIdx]?.index ?? slotIdx;
                         return (
-                          <div className="prd-md-gen-slot">
-                            <IllustrationDevelopingPlaceholder
-                              ratio={ratioFromSize(String(node?.properties?.dataGenSize ?? ''))}
-                              label={`配图 ${slotIdx + 1} 生成中`}
-                              startedAt={getRunStartedAt(markerIndex)}
+                          <div
+                            className="prd-md-gen-slot"
+                            role="status"
+                            aria-label={`配图 ${slotIdx + 1} 生成中`}
+                            style={{ aspectRatio: String(ratioFromSize(genSize)) }}
+                          >
+                            <GenDevelopLoader
+                              tone="adaptive"
+                              createdAt={getRunStartedAt(markerIndex)}
+                              sizeLabel={`配图 ${slotIdx + 1} · ${sizeLabelOf(genSize)}`}
                             />
                           </div>
                         );
@@ -3497,7 +3522,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       配图位置策略
                     </div>
                     <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
+                      选择「尊重用户锚点」时，可在文章里用 <code style={{ background: 'var(--bg-input-hover)', padding: '0 4px', borderRadius: 4 }}>[IMG]</code> 标出需要配图的位置。
                     </div>
                     <div className="space-y-1.5">
                       {POSITION_STRATEGY_OPTIONS.map((opt) => {
@@ -3508,8 +3533,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             type="button"
                             className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
                             style={{
-                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
-                              background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
+                              border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid var(--border-subtle)',
+                              background: picked ? 'rgba(52,211,153,0.06)' : 'var(--nested-block-bg)',
                             }}
                             onClick={() => {
                               setPositionStrategy(opt.value);
@@ -3793,12 +3818,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>解析尺寸…</span>
                             </>
                           ) : (
-                            <div className="absolute" style={{ inset: '6px 6px 0' }}>
-                              <IllustrationDevelopingPlaceholder
-                                fill
-                                ratio={ratioFromSize(it.planItem?.size)}
-                                label={`配图 ${idx + 1} 生成中`}
-                                startedAt={getRunStartedAt(it.markerIndex)}
+                            <div className="absolute overflow-hidden" style={{ inset: '6px 6px 0', borderRadius: 8 }}>
+                              <GenDevelopLoader
+                                tone="adaptive"
+                                createdAt={getRunStartedAt(it.markerIndex)}
+                                sizeLabel={sizeLabelOf(it.planItem?.size)}
                               />
                             </div>
                           )}
@@ -3903,19 +3927,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         </div>
                       ) : null}
 
-                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑 */}
-                      <div
-                        className="marker-card-prompt-overlay"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingMarkerIdx(it.markerIndex);
-                        }}
-                        title="点击编辑提示词"
-                      >
-                        <div className="marker-card-prompt-text">
-                          {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                      {/* prompt 文字浮层：默认半可见，hover 全可见，点击编辑。
+                          生成中收起：否则会盖住等待态底边的「阶段 · 还需约 Ns」 */}
+                      {it.status !== 'running' && (
+                        <div
+                          className="marker-card-prompt-overlay"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditingMarkerIdx(it.markerIndex);
+                          }}
+                          title="点击编辑提示词"
+                        >
+                          <div className="marker-card-prompt-text">
+                            {it.draftText || it.markerText || '（暂无提示词，点击编辑）'}
+                          </div>
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* 操作按钮栏（图片下方独立行） */}
