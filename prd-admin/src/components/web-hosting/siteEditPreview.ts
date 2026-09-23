@@ -32,6 +32,22 @@ export function displayedDesignRuntime(
     ?? capabilities.find((item) => item.enabled);
 }
 
+/**
+ * 追加一段执行器叙述。远端每隔几秒推一句「正在修改共享工作区，已运行 N 秒」，
+ * 直接拼接会让同一句话刷满整个框、把真正有内容的分析挤出去；只差数字的同一句
+ * 改为原地替换最后一句，其余照常追加。
+ */
+export function appendRunNarration(previous: string, text: string, maxChars: number): string {
+  const shape = (value: string) => value.replace(/\d+/g, '#').trim();
+  const sentences = previous.split(/(?<=[。！？\n])/);
+  const last = sentences[sentences.length - 1] ?? '';
+  if (last.trim() && shape(last) === shape(text)) {
+    sentences[sentences.length - 1] = text;
+    return sentences.join('').slice(-maxChars);
+  }
+  return `${previous}${text}`.slice(-maxChars);
+}
+
 export function activeSiteEditRunStorageKey(siteId: string) {
   return `web-hosting-edit-active-run-v1:${siteId}`;
 }

@@ -295,6 +295,8 @@ public static class DataSyncScope
         }),
         new DataSyncGroup("hosting", "网页托管", new[]
         {
+            // 网页生成设置（风格预设、三段提示词、默认执行器）：团队级配置，没有任何凭据字段。
+            new DataSyncCollection("design_generation_settings", System.Array.Empty<string>()),
             new DataSyncCollection("hosted_site_comments", new[] { "ShareToken" }),
             // HostedSite 上没有任何令牌字段——分享令牌在 web_page_share_links，那个集合整个不导出。
             // 这里原本登记了一个并不存在的 "Token"，是一次空转的脱敏，由「登记的脱敏字段必须真实存在」查出。

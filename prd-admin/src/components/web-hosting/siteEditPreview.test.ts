@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
+  appendRunNarration,
   AI_STREAM_PREVIEW_CSP,
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
@@ -163,5 +164,25 @@ describe('网页微调任务恢复', () => {
     expect(runningGenerationActivity('正在读取知识', 23))
       .toBe('当前步骤：正在读取知识。已运行 23 秒，任务仍在继续，页面会自动更新。');
     expect(runningGenerationActivity('', -4)).toContain('已运行 0 秒');
+  });
+});
+
+describe('执行器叙述合并', () => {
+  it('只差数字的状态句原地替换，不刷屏', () => {
+    let text = '';
+    for (const n of [0, 3, 6, 9]) text = appendRunNarration(text, `OpenDesign 正在修改共享工作区，已运行 ${n} 秒。`, 500);
+    expect(text).toBe('OpenDesign 正在修改共享工作区，已运行 9 秒。');
+  });
+
+  it('内容不同的句子照常追加，模型流式分片也照常拼接', () => {
+    let text = appendRunNarration('', '读取任务书。', 500);
+    text = appendRunNarration(text, 'OpenDesign 正在修改共享工作区，已运行 3 秒。', 500);
+    text = appendRunNarration(text, '首屏标题改为短句', 500);
+    text = appendRunNarration(text, '，其余保持不变。', 500);
+    expect(text).toBe('读取任务书。OpenDesign 正在修改共享工作区，已运行 3 秒。首屏标题改为短句，其余保持不变。');
+  });
+
+  it('保留长度上限', () => {
+    expect(appendRunNarration('a'.repeat(10), 'bcd', 5)).toBe('aabcd');
   });
 });

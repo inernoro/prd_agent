@@ -274,6 +274,32 @@ public class HostedSiteRevisionRulesTests
     }
 
     [Fact]
+    public void ValidateGeneratedContentQuality_TreatsCountedMonthsAsDuration()
+    {
+        // 2026-09-23 预览验收：素材写「现在做 1 个月」，页面改写成「改造只要 1 个月就能落地」，
+        // 被当成「1 个（计数）」且上下文对不上而拒收。「个月」是时长，和「1 个月」同一件事。
+        HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+            "<!doctype html><html><body><p>改造只要 1 个月就能落地。</p></body></html>",
+            "我们当前码量级处于早期窗口期:同样的改造,现在做 1 个月,明年做 3 个月,后年做 1 年。");
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>改造只要 2 个月就能落地。</p></body></html>",
+                "现在做 1 个月,明年做 3 个月。"));
+        Assert.Contains("未支持的数值陈述", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ValidateGeneratedContentQuality_UnsupportedClaimMessageQuotesTheSentence()
+    {
+        var error = Assert.Throws<InvalidOperationException>(() =>
+            HostedSiteRevisionRules.ValidateGeneratedContentQuality(
+                "<!doctype html><html><body><p>首批覆盖 12 个城市的门店</p></body></html>",
+                "首批覆盖华东门店。"));
+        Assert.Contains("12个", error.Message, StringComparison.Ordinal);
+        Assert.Contains("「首批覆盖 12 个城市的门店」", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ValidateGeneratedContentQuality_RejectsCountReassignedToDifferentEntity()
     {
         foreach (var (output, evidence) in new[]

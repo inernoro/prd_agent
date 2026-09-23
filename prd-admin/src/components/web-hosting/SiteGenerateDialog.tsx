@@ -36,6 +36,7 @@ import {
 import {
   AI_STREAM_PREVIEW_SANDBOX,
   DESIGN_PREVIEW_EVENT_SANDBOX,
+  appendRunNarration,
   chooseDesignRuntime,
   designPreviewEventDocument,
   displayedDesignRuntime,
@@ -779,7 +780,7 @@ export default function SiteGenerateDialog({
             return;
           }
           if (item.kind === 'thinking') {
-            setThinking((previous) => `${previous}${item.text}`.slice(-600));
+            setThinking((previous) => appendRunNarration(previous, item.text, 600));
             return;
           }
           if (item.kind === 'preview') {

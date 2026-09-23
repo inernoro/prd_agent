@@ -27,6 +27,7 @@ import {
   DESIGN_PREVIEW_EVENT_SANDBOX,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
   activeSiteEditRunStorageKey,
+  appendRunNarration,
   canPublishRevision,
   chooseDesignRuntime,
   designPreviewEventDocument,
@@ -625,7 +626,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             return;
           }
           if (event.event === 'thinking' && typeof data.text === 'string') {
-            setThinking((prev) => `${prev}${data.text}`.slice(-500));
+            const narration = data.text;
+            setThinking((prev) => appendRunNarration(prev, narration, 500));
             return;
           }
           if (event.event === 'preview' && typeof data.html === 'string' && data.html.trim()) {

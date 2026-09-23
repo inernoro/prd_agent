@@ -289,6 +289,7 @@ public sealed class AdminPermissionMiddleware
                     || string.Equals(operationPath, "llm/v1/models", StringComparison.OrdinalIgnoreCase)))
                || (HttpMethods.IsPost(context.Request.Method)
                    && (string.Equals(operationPath, "workspace/result", StringComparison.OrdinalIgnoreCase)
+                       || string.Equals(operationPath, "workspace/preview", StringComparison.OrdinalIgnoreCase)
                        || string.Equals(operationPath, "llm/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
                        || string.Equals(operationPath, "llm/v1/responses", StringComparison.OrdinalIgnoreCase)));
     }

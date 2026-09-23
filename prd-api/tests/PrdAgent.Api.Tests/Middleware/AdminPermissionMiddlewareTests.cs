@@ -58,6 +58,7 @@ public class AdminPermissionMiddlewareTests
     [Theory]
     [InlineData("GET", "/api/design-artifacts/runtime/run-1/workspace/input")]
     [InlineData("POST", "/api/design-artifacts/runtime/run-1/workspace/result")]
+    [InlineData("POST", "/api/design-artifacts/runtime/run-1/workspace/preview")]
     [InlineData("GET", "/api/design-artifacts/runtime/run-1/llm/v1/models")]
     [InlineData("POST", "/api/design-artifacts/runtime/run-1/llm/v1/chat/completions")]
     // OpenDesign 的 Codex 运行时是 wire_api = "responses"，漏掉这条等于每次真实模型调用先吃 401。

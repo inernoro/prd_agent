@@ -471,7 +471,7 @@ public static class HostedSiteRevisionRules
             {
                 var parts = claim.Token.Split('|', 2);
                 throw new InvalidOperationException(
-                    $"生成页面包含知识与指令未支持的数值陈述：{parts[0]}{parts[1]}。已停止保存，请删除或改回来源中的准确数值。");
+                    $"生成页面包含知识与指令未支持的数值陈述：{parts[0]}{parts[1]}（原句「{claim.Excerpt}」）。已停止保存，请删除或改回来源中的准确数值。");
             }
         }
     }
@@ -481,7 +481,15 @@ public static class HostedSiteRevisionRules
         string Context,
         bool RequiresContext,
         bool IsStructural,
-        HashSet<string> EntityKeys);
+        HashSet<string> EntityKeys,
+        string Excerpt);
+
+    /// <summary>拒收时引用的原句：只说「1个」读者不知道去改哪一句。</summary>
+    private static string ClaimExcerpt(string segment)
+    {
+        var trimmed = segment.Trim();
+        return trimmed.Length <= 40 ? trimmed : trimmed[..40] + "…";
+    }
 
     private static List<MeasuredClaimContext> ExtractMeasuredClaimContexts(string text)
     {
@@ -490,9 +498,10 @@ public static class HostedSiteRevisionRules
         {
             var patterns = new[]
             {
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])",
+                // 「1 个月」「2 个小时」是时长，和「1 月」「2 小时」同一件事，不能当成「1 个（计数）」。
+                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(?<unit>%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])",
                 @"(?<unit>￥|¥|\$)\s*(?<number>\d+(?:[.,]\d+)*)",
-                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])",
+                @"(?<![A-Za-z0-9_])(?<number>\d+(?:[.,]\d+)*)\s*(?<unit>个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])(?!\s*(?:月|小时))",
             };
             foreach (var pattern in patterns)
             {
@@ -514,7 +523,8 @@ public static class HostedSiteRevisionRules
                         NormalizeClaimContext(segment),
                         requiresContext,
                         requiresContext && IsStructuralCount(segment),
-                        entityKeys));
+                        entityKeys,
+                        ClaimExcerpt(segment)));
                 }
             }
         }
