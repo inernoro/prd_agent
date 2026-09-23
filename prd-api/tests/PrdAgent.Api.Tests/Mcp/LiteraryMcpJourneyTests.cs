@@ -57,6 +57,7 @@ public class LiteraryMcpJourneyTests
             var request = new LiteraryImageOpenApiController.GenerateRequest { MarkerIndex = 1, WorkflowVersion = 1, ClientRequestId = "image-1" };
             // 仅隔离测试数据库拒绝入队写入，真实复现认领成功但 InsertOne 失败。
             var database = new MongoClient(connection).GetDatabase(name);
+            await database.CreateCollectionAsync("image_gen_runs");
             await database.RunCommandAsync<BsonDocument>(new BsonDocument
             {
                 { "collMod", "image_gen_runs" },
