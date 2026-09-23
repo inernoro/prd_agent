@@ -177,6 +177,7 @@ jobs:
       INPUT_REPO: ${{ github.event.inputs.repo || 'inernoro/prd_agent' }}
       INPUT_MAP_BASE: ${{ github.event.inputs.map_base || '' }}
       DEFAULT_MAP_BASE: ${{ vars.PRD_AGENT_PROD_BASE || '' }}
+      PRD_AGENT_PUBLIC_BASE_URL: ${{ vars.PRD_AGENT_PUBLIC_BASE_URL || vars.PRD_AGENT_PROD_BASE || '' }}
       INPUT_GW_BASE: ${{ github.event.inputs.gw_base || '' }}
       DEFAULT_GW_BASE: ${{ vars.LLMGW_PROD_GATE_BASE || '' }}
       DEFAULT_CONSOLE_BASE: ${{ vars.LLMGW_PROD_CONSOLE_BASE || '' }}
