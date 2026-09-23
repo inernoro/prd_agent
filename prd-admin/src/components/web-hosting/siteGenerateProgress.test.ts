@@ -67,7 +67,8 @@ describe('SiteGenerateDialog generation progress contract', () => {
     const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), 'utf8');
     expect(source).toContain('cancelDesignArtifactRun(activeRunId)');
     expect(source).toContain("onClick={() => void stopGeneration()}");
-    expect(source).toContain("'停止生成'");
+    // 设计稿 Progress（2026-09-23）把按钮文案定为「取消生成」。
+    expect(source).toContain("'取消生成'");
     expect(source).toContain('abortRef.current?.abort();');
     expect(source).not.toContain('return () => {\n      void stopGeneration()');
   });

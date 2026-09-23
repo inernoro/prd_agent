@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   AI_STREAM_PREVIEW_CSP,
   AI_STREAM_PREVIEW_SANDBOX,
+  DESIGN_PREVIEW_EVENT_SANDBOX,
   activeSiteEditRunStorageKey,
   buildStrictAiPreviewDocument,
   buildStrictAiPreviewParserInput,
@@ -37,8 +38,16 @@ describe('AI 流式网页严格预览', () => {
 
   it('严格 sandbox 不授予脚本、表单、弹窗、模态框或同源权限', () => {
     expect(AI_STREAM_PREVIEW_SANDBOX).toBe('');
-    expect(generateDialogSource).toContain('sandbox={AI_STREAM_PREVIEW_SANDBOX}');
-    expect(editPanelSource).toContain('sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}');
+    // 直连流的 delta 预览走严格 sandbox；只有服务端 preview 事件（执行器写出的整页）才放开脚本。
+    expect(generateDialogSource).toContain('applyPreviewHtml(html, AI_STREAM_PREVIEW_SANDBOX)');
+    expect(generateDialogSource).toContain('applyPreviewHtml(html, DESIGN_PREVIEW_EVENT_SANDBOX)');
+    expect(generateDialogSource).toContain('sandbox={sandbox}');
+    expect(editPanelSource).toContain('sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : previewFromEvent ? DESIGN_PREVIEW_EVENT_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).toBe('allow-scripts');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-same-origin');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-forms');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-popups');
+    expect(DESIGN_PREVIEW_EVENT_SANDBOX).not.toContain('allow-top-navigation');
     expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).toContain('allow-scripts');
     expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).not.toContain('allow-same-origin');
     expect(VERIFIED_PACKAGE_PREVIEW_SANDBOX).not.toContain('allow-popups');

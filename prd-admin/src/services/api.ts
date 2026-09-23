@@ -1296,6 +1296,8 @@ export const api = {
   },
   designArtifacts: {
     runtimeCapabilities: () => '/api/design-artifacts/runtime-capabilities',
+    // 网页生成设置：默认执行器、自查强度、风格预设、三段提示词（GET 读 / PUT 部分保存）
+    generationSettings: () => '/api/design-artifacts/generation-settings',
     runs: () => '/api/design-artifacts/runs',
     byId: (runId: string) => `/api/design-artifacts/runs/${runId}`,
     cancel: (runId: string) => `/api/design-artifacts/runs/${runId}/cancel`,

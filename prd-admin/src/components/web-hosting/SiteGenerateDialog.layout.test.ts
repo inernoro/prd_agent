@@ -4,59 +4,78 @@ import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), 'utf8');
 
-describe('SiteGenerateDialog responsive layout contract', () => {
-  it('keeps critical modal height inline and every grid branch shrinkable', () => {
-    expect(source).toContain("width: 'min(1080px, calc(100vw - 16px))'");
+/**
+ * 分步生成弹窗（设计稿 Source / Options / Progress / Done，2026-09-23）的结构契约。
+ * 只守「类型与测试之外看不出来」的几件事：弹窗尺寸走 inline、四步都接上了、
+ * 只交素材身份不交正文、等待期主视觉是产物骨架而不是转圈。
+ */
+describe('SiteGenerateDialog 分步布局契约', () => {
+  it('弹窗关键尺寸走 inline style，窄屏不溢出', () => {
+    expect(source).toContain("width: 'min(960px, calc(100vw - 16px))'");
     expect(source).toContain("maxWidth: 'calc(100vw - 16px)'");
-    expect(source).toContain("height: 'min(760px, calc(100vh - 24px))'");
+    expect(source).toContain("height: 'min(780px, calc(100vh - 24px))'");
     expect(source).not.toContain('contentClassName="h-[');
-    expect(source.match(/min-w-0/g)?.length ?? 0).toBeGreaterThanOrEqual(3);
+    expect(source.match(/min-w-0/g)?.length ?? 0).toBeGreaterThanOrEqual(6);
   });
 
-  // 共享 Dialog 的标题块用什么 flex 属性，归 2026-09-01 的「控制台形态」那一版所有，
-  // 不该由网页托管这个调用方用字面量断言钉死（判据与接线纪律 形状 4a：断言实现的字面存在，
-  // 谁改谁的 CI 红）。这里只守本组件自己的契约：标题与说明不许把关闭按钮挤出容器。
-  it('keeps its own dialog title short enough not to crowd the shared header', () => {
-    const title = source.match(/title="([^"]+)"/)?.[1];
-    // companion：正则没匹到就判红，否则这条断言会对着空串永远绿（形状 4b）。
-    expect(title, '没在源码里找到弹窗标题').toBeTruthy();
-    expect(title!.length, '标题过长会在窄屏把关闭按钮挤出容器').toBeLessThanOrEqual(12);
+  it('四个步骤都接进了渲染（选素材 / 写要求 / 生成中 / 完成）', () => {
+    for (const step of ['source', 'options', 'running', 'done']) {
+      expect(source, `步骤 ${step} 没有渲染入口`).toContain(`{step === '${step}' && `);
+    }
+    expect(source).toContain("const STEP_LABELS = ['选素材', '写要求', '生成'] as const;");
   });
 
-  it('keeps the primary action visible while mobile configuration scrolls and hides an empty preview', () => {
-    expect(source).toContain('sticky bottom-0 z-10');
-    expect(source).toContain("generating || previewHtml || completedSite ? 'flex' : 'hidden lg:flex'");
+  it('选素材有两个页签：就地知识浏览器 + 直接上传（拖拽 / 选择 / 粘贴文字）', () => {
+    expect(source).toContain('<KnowledgeInlineBrowser');
+    expect(source).toContain("['knowledge', '引用知识库'");
+    expect(source).toContain("['upload', '直接上传'");
+    expect(source).toContain("useDesignAttachmentUploads('document', MAX_GENERATE_ATTACHMENTS)");
+    expect(source).toContain('onDrop={(event) => {');
+    expect(source).toContain('PASTED_TEXT_FILE_NAME');
   });
 
-  it('uses an opaque themed surface for waiting while preserving the generated page canvas', () => {
-    expect(source).toContain('className="surface-reading flex h-full items-center justify-center text-crisp"');
-    expect(source).toContain('className="h-full w-full bg-white"');
-    expect(source).not.toContain('className="relative min-h-0 flex-1 bg-white"');
-  });
-
-  it('submits only knowledge identities and never truncates or uploads browser-fetched content', () => {
+  it('只提交素材身份：知识是 entryId/storeId，上传是附件 id；不在浏览器里读正文', () => {
     expect(source).not.toContain('getDocumentContent');
     expect(source).not.toContain('.slice(0, 20_000)');
     expect(source).toContain('entryId: entry.entryId');
     expect(source).toContain('storeId: entry.storeId');
-    expect(source).toContain('<KnowledgeEntryPicker');
+    expect(source).toContain('attachmentIds: uploads.readyIds');
+    expect(source).toContain('styleId: selectedStyleId');
   });
 
-  it('gives the saved result controls their own themed surface over arbitrary generated content', () => {
-    const completionPanel = source.slice(source.indexOf('{completedSite && ('));
-    expect(completionPanel).toContain('className="surface-reading absolute bottom-4 right-4');
-    expect(completionPanel).not.toContain('bg-token-elevated');
-    expect(completionPanel).toContain('已保存到网页托管');
-    expect(completionPanel).toContain('打开网页');
+  it('写要求一步：预设 chips、风格网格、执行器两张卡、标题与文件夹', () => {
+    expect(source).toContain('PRESET_REQUESTS.map');
+    expect(source).toContain('role="radiogroup" aria-label="风格"');
+    expect(source).toContain('role="radiogroup" aria-label="设计执行器"');
+    expect(source).toContain('id="design-site-title"');
+    expect(source).toContain('id="design-site-folder"');
+    // 默认执行器不可用时要写明原因，不许悄悄换掉。
+    expect(source).toContain('runtimeFallbackNotice(capabilities, settingsDefaultRuntime, enabledRuntime?.id)');
   });
 
-  it('updates visible elapsed time every second during a long remote generation', () => {
+  it('生成中：每秒更新用时、阶段列表来自 phase 事件、有心跳、右侧实时预览', () => {
     expect(source).toContain('window.setInterval');
-    expect(source).toContain('runningGenerationActivity(phase, elapsedSeconds)');
-    expect(source).toContain("generating ? '任务运行中'");
-    expect(source).toContain('animate-pulse');
-    expect(source).toContain('aria-valuenow={generating ? undefined : progress}');
+    expect(source).toContain('formatGenerationClock(elapsedSeconds)');
+    expect(source).toContain('remainingEstimateText(activeRunRuntime, elapsedSeconds)');
+    expect(source).toContain('appendGenerationStage(current, item.message, Date.now())');
+    expect(source).toContain('最近一次回应');
+    expect(source).toContain('实时预览（第一版写出后出现）');
     expect(source).toContain('className="sr-only">{phase}</span>');
-    expect(source).toContain('<span aria-hidden="true">');
+  });
+
+  it('等待期占位是产物形状的骨架，iframe 保留生成页面的白底画布', () => {
+    expect(source).toContain('<PageSkeleton');
+    expect(source).toContain('className="surface-reading flex h-full flex-col gap-2.5 p-5 text-crisp"');
+    expect(source).toContain('className="h-full w-full bg-white"');
+  });
+
+  it('完成页：预览 + 打开网页 / 复制链接 / 帮我修改 / 再出一版，并写明风格与提示词版本', () => {
+    const done = source.slice(source.indexOf('const doneStep = ('));
+    expect(done).toContain('已保存到网页托管');
+    expect(done).toContain('打开网页');
+    expect(done).toContain('复制链接');
+    expect(done).toContain('帮我修改');
+    expect(done).toContain('再出一版对比');
+    expect(source).toContain('const provenance = runProvenanceText(runInfo);');
   });
 });

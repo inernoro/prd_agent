@@ -67,6 +67,69 @@ export function canPublishRevision(item: Pick<HostedSiteRevision, 'isCurrent' | 
 
 export const AI_STREAM_PREVIEW_SANDBOX = '';
 
+/**
+ * 服务端 preview 事件推来的是执行器写出的整页正文（含它自己的脚本与交互）。
+ * 只给 allow-scripts：没有 allow-same-origin，srcdoc 文档是不透明源，脚本碰不到本站的
+ * 存储与 DOM；也不给表单、弹窗、顶层导航。网络再用 CSP 收一道（见 designPreviewEventDocument）。
+ */
+export const DESIGN_PREVIEW_EVENT_SANDBOX = 'allow-scripts';
+
+/** preview 事件文档的 CSP：放行页面自带的脚本、样式、图片与字体，禁止发请求、提交表单和嵌套页面。 */
+export const DESIGN_PREVIEW_EVENT_CSP = [
+  "connect-src 'none';",
+  "form-action 'none';",
+  "frame-src 'none';",
+  "child-src 'none';",
+  "worker-src 'none';",
+  "object-src 'none';",
+  "base-uri 'none';",
+].join(' ');
+
+/**
+ * 把 preview 事件的整页正文包成可以放进 srcdoc 的文档：CSP meta 必须是 head 里的第一个节点，
+ * 排在页面自己的任何节点之前，否则解析到它之前的资源已经发出去了。
+ */
+export function designPreviewEventDocument(html: string): string {
+  const raw = html.trim();
+  if (!raw) return '';
+  const meta = `<meta http-equiv="Content-Security-Policy" content="${DESIGN_PREVIEW_EVENT_CSP}">`;
+  const headOpen = /<head(?:\s[^>]*)?>/iu.exec(raw);
+  if (headOpen && headOpen.index !== undefined) {
+    const at = headOpen.index + headOpen[0].length;
+    return `${raw.slice(0, at)}${meta}${raw.slice(at)}`;
+  }
+  const htmlOpen = /<html(?:\s[^>]*)?>/iu.exec(raw);
+  if (htmlOpen && htmlOpen.index !== undefined) {
+    const at = htmlOpen.index + htmlOpen[0].length;
+    return `${raw.slice(0, at)}<head>${meta}</head>${raw.slice(at)}`;
+  }
+  return `<!doctype html><html><head>${meta}</head><body>${raw}</body></html>`;
+}
+
+/** preview 事件按 revision 单调推进：断线重连会重放旧事件，旧的不许把新页面盖回去。 */
+export function isNewerPreviewRevision(revision: number, latest: number): boolean {
+  return revision >= latest;
+}
+
+/**
+ * 设置里的默认执行器不可用时，界面要说清为什么换了一个——不能悄悄换掉（形状 10：静默降级）。
+ * 默认执行器可用、或已经选中它时返回空串。
+ */
+export function runtimeFallbackNotice(
+  capabilities: readonly Pick<DesignRuntimeCapability, 'id' | 'label' | 'enabled' | 'reason'>[],
+  defaultRuntime: string | null | undefined,
+  chosenRuntime: string | null | undefined,
+): string {
+  if (!defaultRuntime || defaultRuntime === chosenRuntime) return '';
+  const preferred = capabilities.find((item) => item.id === defaultRuntime);
+  if (!preferred || preferred.enabled) return '';
+  const chosen = capabilities.find((item) => item.id === chosenRuntime);
+  const reason = preferred.reason?.trim() || '未启用';
+  return chosen
+    ? `默认的「${preferred.label}」暂不可用（${reason}），本次改用「${chosen.label}」。`
+    : `默认的「${preferred.label}」暂不可用（${reason}），当前也没有其它可用执行器。`;
+}
+
 // Verified multi-file packages are served from a short-lived, opaque-origin route.
 // Keep this narrower than the ordinary hosted-site direct preview.
 export const VERIFIED_PACKAGE_PREVIEW_SANDBOX = 'allow-scripts allow-forms allow-modals allow-downloads';

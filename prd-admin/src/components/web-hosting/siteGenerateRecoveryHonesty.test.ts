@@ -22,8 +22,10 @@ describe('生成任务恢复不到时，不许承诺表单里还留着东西', (
     expect(dialog).toMatch(/setSelectedKnowledge\(initialSource\s*\?/);
   });
 
-  it('生成按钮确实卡着「有知识 + 有要求」', () => {
-    expect(dialog).toMatch(/disabled=\{[^}]*!instruction\.trim\(\)[^}]*selectedKnowledge\.length === 0/);
+  it('生成按钮确实卡着「有素材 + 有要求」', () => {
+    // 素材 = 知识引用或已上传完的文件，两者任一即可（2026-09-23 新增直接上传）。
+    expect(dialog).toContain('const hasSources = selectedKnowledge.length > 0 || uploads.readyIds.length > 0;');
+    expect(dialog).toMatch(/disabled=\{[^}]*!instruction\.trim\(\)[^}]*!hasSources/);
   });
 
   it('NOT_FOUND 那句话按 initialSource 分两种说法，且不再承诺「直接重新生成」', () => {

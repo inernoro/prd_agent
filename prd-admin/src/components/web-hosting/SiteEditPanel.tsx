@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertTriangle, Check, Clock3, Eye, History, RefreshCw, RotateCcw, Send, Server, ShieldCheck, Square, WandSparkles, X } from 'lucide-react';
+import { AlertTriangle, Check, Clock3, Eye, History, ImagePlus, RefreshCw, RotateCcw, Send, Server, ShieldCheck, Square, WandSparkles, X } from 'lucide-react';
 import { MapSpinner, MapSectionLoader } from '@/components/ui/VideoLoader';
 import KnowledgeEntryPicker, { type KnowledgeEntrySelection } from '@/components/knowledge/KnowledgeEntryPicker';
 import { toast } from '@/lib/toast';
@@ -24,19 +24,29 @@ import {
 } from '@/services/real/webPages';
 import {
   AI_STREAM_PREVIEW_SANDBOX,
+  DESIGN_PREVIEW_EVENT_SANDBOX,
   VERIFIED_PACKAGE_PREVIEW_SANDBOX,
   activeSiteEditRunStorageKey,
   canPublishRevision,
   chooseDesignRuntime,
+  designPreviewEventDocument,
   isLatestPreviewRequest,
+  isNewerPreviewRevision,
   displayedDesignRuntime,
   elapsedSecondsSince,
   previewableAiStreamHtml,
   revisionChangeSummary,
   revisionLabel,
   runningGenerationActivity,
+  runtimeFallbackNotice,
 } from './siteEditPreview';
-import { GATEWAY_PLATFORM_FALLBACK, resolveRunModelBadge } from './siteGenerateProgress';
+import { GATEWAY_PLATFORM_FALLBACK, resolveRunModelBadge, runProvenanceText } from './siteGenerateProgress';
+import {
+  DESIGN_ATTACHMENT_ACCEPT,
+  MAX_EDIT_SCREENSHOTS,
+  screenshotRuntimeSupported,
+  useDesignAttachmentUploads,
+} from './designAttachments';
 
 interface Props {
   site: HostedSite;
@@ -153,7 +163,15 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const [selectedKnowledge, setSelectedKnowledge] = useState<KnowledgeEntrySelection[]>([]);
   const [loadingKnowledge, setLoadingKnowledge] = useState(true);
   const [capabilities, setCapabilities] = useState<DesignRuntimeCapability[]>([]);
-  const [selectedRuntime, setSelectedRuntime] = useState('map-gateway');
+  const [selectedRuntime, setSelectedRuntime] = useState('open-design');
+  const [defaultRuntime, setDefaultRuntime] = useState<string | null>(null);
+  // 「附上截图」：用户圈出问题的图片，随修改任务一起交给执行器（最多 3 张）。
+  const screenshots = useDesignAttachmentUploads('image', MAX_EDIT_SCREENSHOTS);
+  const screenshotInputRef = useRef<HTMLInputElement | null>(null);
+  // 预览来自服务端 preview 事件（执行器写出的整页，允许脚本）还是来自直连流的 delta（严格清洗、不许脚本）。
+  const [previewFromEvent, setPreviewFromEvent] = useState(false);
+  const previewRevisionRef = useRef(-1);
+  const [runInfo, setRunInfo] = useState<{ styleName?: string | null; promptFingerprint?: string | null } | null>(null);
   const [recoveringRunId, setRecoveringRunId] = useState<string | null>(null);
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [stopRequested, setStopRequested] = useState(false);
@@ -224,6 +242,14 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const activeRuntimeFact = activeRuntime
     ? `当前使用：${activeRuntime.label}；执行归属：${activeRuntime.executionOwner === 'cds-remote-agent' ? 'CDS Remote Agent' : 'MAP'}；隔离边界：${activeRuntime.isolationMode === 'session-container' ? '会话级容器' : 'MAP 服务进程'}；产物范围：声明式 HTML 与内联 CSS，不执行脚本。`
     : '当前没有可用执行器，请根据下方原因完成配置。';
+  const runtimeFallback = runtimeFallbackNotice(capabilities, defaultRuntime, selectedRuntime);
+  // 截图参考只有精细设计（OpenDesign）能用：快速修改带截图后端会 400，所以这里直接置灰并说清原因。
+  const selectedEditRuntimeId = (enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0])?.id;
+  const screenshotsSupported = screenshotRuntimeSupported(selectedEditRuntimeId);
+  const addScreenshots = (files: File[]) => {
+    const rejected = screenshots.addFiles(files);
+    if (rejected.length > 0) toast.error('有截图没有加入', rejected.join('；'));
+  };
   const generationStageIndex = previewHtml && !generating
     ? GENERATION_STAGES.length - 1
     : GENERATION_STAGES.reduce(
@@ -257,6 +283,8 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       if (runtimes.success) {
         const supported = runtimes.data.runtimes.filter((item) => item.operations.includes('edit'));
         setCapabilities(supported);
+        // 默认值由「网页生成设置」决定（服务端写进 defaultRuntime）；不可用时回落并在界面上写明原因。
+        setDefaultRuntime(runtimes.data.defaultRuntime);
         const runtimeId = chooseDesignRuntime(
           supported,
           runtimes.data.defaultRuntime,
@@ -329,6 +357,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       return;
     }
     setRecoveryNotice((current) => current?.action === 'preview' ? null : current);
+    setPreviewFromEvent(false);
     setPreviewHtml(result.data.html);
     setPreviewUrl(access.data.available ? access.data.previewUrl || null : null);
     setPreviewExpiresAt(access.data.available ? access.data.expiresAt || null : null);
@@ -425,6 +454,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       setProgress(siteEditDisplayProgress('incomplete', result.data.progress));
       setActiveRunRuntime(result.data.runtime);
       setResolvedModel(resolveRunModelBadge(result.data));
+      setRunInfo({ styleName: result.data.styleName, promptFingerprint: result.data.promptFingerprint });
       setRunStartedAtMs(Date.parse(result.data.createdAt));
       const status = result.data.status.toLowerCase();
       if (status === 'done' && result.data.artifactRevisionId) {
@@ -473,6 +503,10 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const generate = async () => {
     const text = instruction.trim();
     if (!text || generating) return;
+    if (screenshots.busy) {
+      toast.info('截图还在上传', '等缩略图显示「可以用」后再生成');
+      return;
+    }
     const requestRuntime = enabledRuntimes.find((item) => item.id === selectedRuntime) ?? enabledRuntimes[0];
     if (!requestRuntime) {
       setRecoveryNotice({
@@ -498,6 +532,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     setDraftRevisionStatus(null);
     setThinking('');
     setPreviewHtml('');
+    setPreviewFromEvent(false);
+    previewRevisionRef.current = -1;
+    setRunInfo(null);
     setPreviewUrl(null);
     setPreviewedRevision(null);
     setRecoveryNotice(null);
@@ -524,7 +561,10 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
       entryId: entry.entryId,
       storeId: entry.storeId,
     }));
-    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, requestRuntime.id);
+    const created = await createHostedSiteEditRun(site.id, text, knowledgeReferences, requestRuntime.id, {
+      // 只有精细设计收截图；换成快速修改时已加的截图保留在面板上，但不随这次请求提交。
+      screenshotAttachmentIds: screenshotRuntimeSupported(requestRuntime.id) ? screenshots.readyIds : [],
+    });
     if (!created.success) {
       setGenerating(false);
       if (created.error?.code === 'RUNTIME_NOT_READY') beginRuntimeRecovery(requestRuntime.id);
@@ -541,6 +581,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
     }
     setActiveRunRuntime(created.data.runtime);
     setActiveRunId(created.data.runId);
+    setRunInfo({ styleName: created.data.styleName, promptFingerprint: created.data.promptFingerprint });
     try { sessionStorage.setItem(activeSiteEditRunStorageKey(site.id), created.data.runId); } catch { /* ignore unavailable storage */ }
 
     let reachedTerminal = false;
@@ -577,8 +618,23 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
             setThinking((prev) => `${prev}${data.text}`.slice(-500));
             return;
           }
+          if (event.event === 'preview' && typeof data.html === 'string' && data.html.trim()) {
+            // OpenDesign 写出或更新页面时推整页正文：整页替换，旧 revision（断线重放）丢弃。
+            const revision = typeof data.revision === 'number' ? data.revision : 0;
+            if (!isNewerPreviewRevision(revision, previewRevisionRef.current)) return;
+            previewRevisionRef.current = revision;
+            const html = designPreviewEventDocument(data.html);
+            if (html) {
+              setPreviewUrl(null);
+              setPreviewFromEvent(true);
+              setPreviewHtml(html);
+            }
+            return;
+          }
           if (event.event === 'delta' && typeof data.text === 'string') {
             streamRef.current += data.text;
+            // 已有 preview 事件时以它为准，delta 只是模型原文。
+            if (previewRevisionRef.current >= 0) return;
             const now = Date.now();
             if (now - lastPaintAtRef.current >= 250) {
               const html = previewableAiStreamHtml(streamRef.current);
@@ -1093,6 +1149,11 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
               ))}
             </select>
           )}
+          {runtimeFallback && (
+            <p className="mt-2 rounded-lg px-2.5 py-2 text-[11px] leading-relaxed" style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}>
+              {runtimeFallback}
+            </p>
+          )}
           {capabilities.length > 0 && (
             <details className="group mt-3 rounded-lg border border-token-subtle bg-token-nested text-[10px] leading-relaxed text-token-muted">
               <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-2.5 py-2 font-medium text-token-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500">
@@ -1135,6 +1196,82 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
               compact
             />
           </div>
+          <div className="mt-3 rounded-lg border border-token-subtle bg-token-nested p-2.5">
+            <div className="flex items-center justify-between gap-2 text-[11px] text-token-primary">
+              <span className="flex items-center gap-1.5 font-medium"><ImagePlus size={13} />附上截图</span>
+              <span className="text-token-muted">{screenshots.items.length}/{MAX_EDIT_SCREENSHOTS}</span>
+            </div>
+            <p className="mt-1 text-[10px] leading-relaxed text-token-muted">
+              {screenshotsSupported
+                ? '把有问题的地方截图圈出来，执行器会对照截图修改；也可以直接在这里粘贴截图。'
+                : '截图需要精细设计（OpenDesign）：当前是快速修改，截图不会随这次修改提交。在上方切换执行器后可用。'}
+            </p>
+            <div
+              className="mt-2 flex flex-wrap gap-2"
+              style={{ opacity: screenshotsSupported ? 1 : 0.5 }}
+              onPaste={(event) => {
+                if (!screenshotsSupported) return;
+                const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+                if (files.length === 0) return;
+                event.preventDefault();
+                addScreenshots(files);
+              }}
+            >
+              {screenshots.items.map((item) => (
+                <div
+                  key={item.key}
+                  className="relative h-16 w-24 overflow-hidden rounded-md border border-token-subtle bg-token-card"
+                  title={item.status === 'failed' ? item.error : item.fileName}
+                >
+                  {item.thumbnailUrl && <img src={item.thumbnailUrl} alt={item.fileName} className="h-full w-full object-cover" />}
+                  {item.status !== 'ready' && (
+                    <span
+                      className="absolute inset-x-0 bottom-0 px-1 py-0.5 text-center text-[10px]"
+                      style={{
+                        background: 'var(--scrim-badge-bg)',
+                        color: item.status === 'failed' ? 'var(--semantic-danger-text)' : 'var(--text-primary)',
+                      }}
+                    >
+                      {item.status === 'uploading' ? `${item.progress}%` : item.status === 'reading' ? '保存中' : '失败'}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`删除截图 ${item.fileName}`}
+                    disabled={generating}
+                    onClick={() => screenshots.remove(item.key)}
+                    className="absolute right-0.5 top-0.5 flex h-5 w-5 items-center justify-center rounded-full disabled:opacity-40"
+                    style={{ background: 'var(--scrim-badge-bg)', color: 'var(--text-primary)' }}
+                  >
+                    <X size={11} />
+                  </button>
+                </div>
+              ))}
+              {screenshots.items.length < MAX_EDIT_SCREENSHOTS && (
+                <button
+                  type="button"
+                  disabled={generating || !screenshotsSupported}
+                  title={screenshotsSupported ? undefined : '截图需要精细设计'}
+                  onClick={() => screenshotInputRef.current?.click()}
+                  className="flex h-16 w-24 flex-col items-center justify-center gap-1 rounded-md border border-dashed border-token-subtle text-[10px] text-token-muted transition-colors hover-bg-soft disabled:opacity-50"
+                >
+                  <ImagePlus size={15} />
+                  添加截图
+                </button>
+              )}
+              <input
+                ref={screenshotInputRef}
+                type="file"
+                multiple
+                accept={DESIGN_ATTACHMENT_ACCEPT.image}
+                className="hidden"
+                onChange={(event) => {
+                  addScreenshots(Array.from(event.target.files ?? []));
+                  event.target.value = '';
+                }}
+              />
+            </div>
+          </div>
           {generating ? (
             <button
               type="button"
@@ -1175,6 +1312,9 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
                       {/* ai-model-visibility：换了模型结果就会不同，所以摆在这一块最上面，不藏进折叠区。 */}
                       <span aria-hidden="true">●</span> {resolvedModel.model} · {resolvedModel.platform}
                     </p>
+                  )}
+                  {runProvenanceText(runInfo) && (
+                    <p className="mt-1 text-[11px] text-token-muted">{runProvenanceText(runInfo)}</p>
                   )}
                   <p aria-hidden="true" className="mt-1 text-[11px] leading-relaxed text-token-muted">
                     {generating ? runningGenerationActivity(phase, elapsedSeconds) : phase}
@@ -1318,7 +1458,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
               <iframe
                 src={previewUrl || undefined}
                 srcDoc={previewUrl ? undefined : previewHtml}
-                sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}
+                sandbox={previewUrl ? VERIFIED_PACKAGE_PREVIEW_SANDBOX : previewFromEvent ? DESIGN_PREVIEW_EVENT_SANDBOX : AI_STREAM_PREVIEW_SANDBOX}
                 referrerPolicy="no-referrer"
                 title={previewedRevision ? `${revisionLabel(previewedRevision)}预览` : '修改草稿预览'}
                 className="h-64 w-full bg-white"

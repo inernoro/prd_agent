@@ -14,6 +14,7 @@ import {
   cancelSiteOptimization,
   reuploadSite,
   listSites,
+  getSite,
   updateSite,
   deleteSite,
   batchDeleteSites,
@@ -94,7 +95,9 @@ import type { DocumentStore } from '@/services/contracts/documentStore';
 import { ShareDock, useDockDrag, DOCK_EVENTS, type DockDropDetail } from '@/components/share-dock';
 import { MobileBottomSheet } from '@/components/mobile/MobileBottomSheet';
 import { MobileFab } from '@/components/mobile/MobileFab';
-import SiteGenerateDialog, { type SiteGenerateSource } from '@/components/web-hosting/SiteGenerateDialog';
+import SiteGenerateDialog, { type SiteGenerateSource, type SiteGenerateSourceTab } from '@/components/web-hosting/SiteGenerateDialog';
+import GenerateSiteMenu from '@/components/web-hosting/GenerateSiteMenu';
+import GenerationSettingsDrawer from '@/components/web-hosting/GenerationSettingsDrawer';
 import { parseDesignArtifactLaunch } from '@/lib/designArtifactLaunch';
 import { useLocation } from 'react-router-dom';
 import { createWebFolder, listWebFolders, type WebFolder } from '@/services/real/webFolders';
@@ -434,6 +437,9 @@ export default function WebPagesPage() {
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [showGenerateDialog, setShowGenerateDialog] = useState(false);
   const [generateSource, setGenerateSource] = useState<SiteGenerateSource | null>(null);
+  // 「生成网页」下拉选了哪一项：决定生成弹窗落在「引用知识库」还是「直接上传」页签。
+  const [generateTab, setGenerateTab] = useState<SiteGenerateSourceTab>('knowledge');
+  const [showGenerationSettings, setShowGenerationSettings] = useState(false);
   const consumedLaunchRef = useRef('');
   const [editItem, setEditItem] = useState<HostedSite | null>(null);
   const [pendingExternalFile, setPendingExternalFile] = useState<File | null>(null);
@@ -443,6 +449,13 @@ export default function WebPagesPage() {
     uploadDialogSpaceRef.current = currentSpace;
     setEditItem(null);
     setShowUploadDialog(true);
+  };
+  // 顶部「生成网页」主入口：与上传弹窗同一个空间快照口径（分组归属用它判定）。
+  const openGenerateDialog = (tab: SiteGenerateSourceTab) => {
+    uploadDialogSpaceRef.current = currentSpace;
+    setGenerateSource(null);
+    setGenerateTab(tab);
+    setShowGenerateDialog(true);
   };
 
   /**
@@ -1391,8 +1404,13 @@ export default function WebPagesPage() {
                     跟顶栏的语境切换（资产库 / 分享）不是一类动作。
                     「从个人空间添加」只留左栏底部那一处，不在两个地方各摆一遍。 */}
                 {(currentSpace.kind !== 'team' || canEditInWebHosting(myWebHostingRole)) && (
-                  <div className="ml-auto shrink-0">
-                    <Button data-tour-id="webpages-upload-primary" size="sm" variant="primary" onClick={openCreateUploadDialog}>
+                  <div className="ml-auto flex shrink-0 items-center gap-2">
+                    {/* 设计稿 Main：「生成网页」是主操作，下拉选素材来源，旁边齿轮进设置；「上传网页」退为次操作。 */}
+                    <GenerateSiteMenu
+                      onChoose={openGenerateDialog}
+                      onOpenSettings={() => setShowGenerationSettings(true)}
+                    />
+                    <Button data-tour-id="webpages-upload-primary" size="sm" variant="secondary" onClick={openCreateUploadDialog}>
                       <Upload size={14} className="mr-1" /> 上传网页
                     </Button>
                   </div>
@@ -2048,6 +2066,7 @@ export default function WebPagesPage() {
             setShowUploadDialog(false);
             setPendingExternalFile(null);
             setGenerateSource(null);
+            setGenerateTab('knowledge');
             setShowGenerateDialog(true);
           }}
           onClose={() => { setShowUploadDialog(false); setEditItem(null); setPendingExternalFile(null); }}
@@ -2086,6 +2105,25 @@ export default function WebPagesPage() {
             void loadMeta();
           })();
         }}
+        initialTab={generateTab}
+        folders={uploadFolderOptions}
+        onOpenSettings={() => setShowGenerationSettings(true)}
+        onEditSite={(siteId) => {
+          void (async () => {
+            const result = await getSite(siteId);
+            if (!result.success) {
+              toast.error('打开修改面板失败', result.error?.message || '网页已生成，可在列表里点「帮我修改」');
+              return;
+            }
+            setShowGenerateDialog(false);
+            openSiteEditor(result.data, 'compose');
+          })();
+        }}
+      />
+
+      <GenerationSettingsDrawer
+        open={showGenerationSettings}
+        onClose={() => setShowGenerationSettings(false)}
       />
 
       {/* 拖文件替换网页 — 二次确认 */}

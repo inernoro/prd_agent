@@ -161,6 +161,13 @@ export interface DesignArtifactRunSummary {
    */
   destinationApplyError?: string | null;
   linkedRunId?: string | null;
+  /** 本次运行冻结的风格预设（发起时从网页生成设置读取，之后改设置不影响这一轮）。 */
+  styleId?: string | null;
+  styleName?: string | null;
+  designSystemId?: string | null;
+  /** 三段提示词拼接后的指纹，用来追溯「这一轮用的是哪一版提示词」。 */
+  promptFingerprint?: string | null;
+  reviewMode?: DesignReviewMode | null;
   resolvedModel?: string | null;
   resolvedPlatform?: string | null;
   error?: string | null;
@@ -175,6 +182,53 @@ export interface DesignArtifactRunSummary {
     title: string;
     contentHash: string;
   }>;
+}
+
+// ─── 网页生成设置（管理员可改，每次运行冻结进任务书） ───
+
+export type DesignGenerationRuntime = 'open-design' | 'map-gateway';
+export type DesignReviewMode = 'off' | 'light' | 'strict';
+
+export interface DesignGenerationStyle {
+  id: string;
+  name: string;
+  description: string;
+  /** 对应 OpenDesign 的设计系统编号。 */
+  designSystemId: string;
+  /** 三个 #hex 色块，用于在选择卡片上直观展示风格。 */
+  swatches: string[];
+  enabled: boolean;
+  isDefault: boolean;
+  builtIn: boolean;
+}
+
+export interface DesignGenerationPrompt {
+  value: string;
+  isDefault: boolean;
+  defaultValue: string;
+}
+
+export type DesignPromptKind = 'generate' | 'edit' | 'review';
+
+export interface DesignGenerationSettings {
+  defaultRuntime: DesignGenerationRuntime;
+  reviewMode: DesignReviewMode;
+  styles: DesignGenerationStyle[];
+  prompts: Record<DesignPromptKind, DesignGenerationPrompt>;
+  /** 平台契约全文：发布闸门的硬规矩，只读。 */
+  platformContract: string;
+  promptFingerprint: string;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  canEdit: boolean;
+}
+
+export interface DesignGenerationSettingsUpdate {
+  defaultRuntime?: DesignGenerationRuntime;
+  reviewMode?: DesignReviewMode;
+  styles?: Array<Omit<DesignGenerationStyle, 'builtIn'>>;
+  /** 传空字符串表示恢复默认。 */
+  prompts?: Partial<Record<DesignPromptKind, string>>;
 }
 
 export interface HostedSiteOptimizationAnalysis {
@@ -1415,6 +1469,20 @@ export async function getDesignRuntimeCapabilities(): Promise<ApiResponse<{
   return apiRequest(api.designArtifacts.runtimeCapabilities());
 }
 
+export async function getDesignGenerationSettings(): Promise<ApiResponse<DesignGenerationSettings>> {
+  return apiRequest(api.designArtifacts.generationSettings());
+}
+
+/** 部分保存：只提交改过的字段。apiRequest 会自己序列化，这里传原始对象。 */
+export async function updateDesignGenerationSettings(
+  patch: DesignGenerationSettingsUpdate,
+): Promise<ApiResponse<DesignGenerationSettings>> {
+  return apiRequest(api.designArtifacts.generationSettings(), {
+    method: 'PUT',
+    body: patch,
+  });
+}
+
 /**
  * 创建 Run 前向服务端取得当前权威内容哈希。这里只传来源身份，正文始终由服务端读取；
  * 创建接口会再读一次并比较哈希，封住预检与入队之间的变更窗口。
@@ -1445,22 +1513,31 @@ export async function createDesignArtifactRun(input: {
    * 把站点生成完，但它会留在个人空间；换个标签页恢复也重建不出原来的目标。个人空间传空。
    */
   destinationTeamId?: string | null;
+  /** 知识库引用（0–3 篇）；与 attachmentIds 至少有一种，两者可同时存在。 */
   knowledgeReferences: DesignKnowledgeReferenceInput[];
+  /** 生成弹窗里选的风格预设；不传则由服务端用设置里的默认风格。 */
+  styleId?: string | null;
+  /** 直接上传的文件（POST /api/v1/attachments 返回的 id），最多 5 个。 */
+  attachmentIds?: string[];
 }): Promise<ApiResponse<DesignArtifactRunSummary>> {
   const resolved = await resolveDesignKnowledgeReferences(input.knowledgeReferences);
   if (!resolved.success) return resolved;
+  const { styleId, attachmentIds, runtime, ...rest } = input;
   return apiRequest(api.designArtifacts.runs(), {
     method: 'POST',
     body: {
       artifactType: 'web-page',
       operation: 'generate',
-      ...input,
+      ...rest,
       knowledgeReferences: resolved.data.items.map(({ entryId, storeId, contentHash }) => ({
         entryId,
         storeId,
         contentHash,
       })),
-      runtime: input.runtime || 'map-gateway',
+      // 不传执行器时交给服务端按「网页生成设置」的默认值决定，前端不再写死一个默认。
+      ...(runtime ? { runtime } : {}),
+      ...(styleId ? { styleId } : {}),
+      ...(attachmentIds && attachmentIds.length > 0 ? { attachmentIds } : {}),
     },
   });
 }
@@ -1497,14 +1574,25 @@ export async function streamDesignArtifactRun(input: {
     throw new Error(result.errorMessage || '网页生成进度连接中断');
 }
 
+export interface HostedSiteEditRunExtras {
+  /** 「附上截图」：用户圈出问题的图片附件，最多 3 张。 */
+  screenshotAttachmentIds?: string[];
+  /** 补充资料附件。 */
+  attachmentIds?: string[];
+}
+
 export async function createHostedSiteEditRun(
   siteId: string,
   instruction: string,
   knowledgeReferences: DesignKnowledgeReferenceInput[] = [],
   runtime = 'map-gateway',
-): Promise<ApiResponse<{ runId: string; status: string; runtime: string }>> {
+  extras: HostedSiteEditRunExtras = {},
+): Promise<ApiResponse<Pick<DesignArtifactRunSummary, 'runId' | 'status' | 'runtime'>
+  & Partial<Pick<DesignArtifactRunSummary, 'styleName' | 'promptFingerprint' | 'reviewMode'>>>> {
   const resolved = await resolveDesignKnowledgeReferences(knowledgeReferences);
   if (!resolved.success) return resolved;
+  const screenshots = extras.screenshotAttachmentIds?.filter(Boolean) ?? [];
+  const attachments = extras.attachmentIds?.filter(Boolean) ?? [];
   return apiRequest(api.webPages.editRuns(siteId), {
     method: 'POST',
     body: {
@@ -1515,6 +1603,8 @@ export async function createHostedSiteEditRun(
         storeId,
         contentHash,
       })),
+      ...(screenshots.length > 0 ? { screenshotAttachmentIds: screenshots } : {}),
+      ...(attachments.length > 0 ? { attachmentIds: attachments } : {}),
     },
   });
 }

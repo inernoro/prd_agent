@@ -6,6 +6,8 @@ export type SiteGenerationProgressEvent =
   | { kind: 'model'; model: string; platform: string }
   | { kind: 'thinking'; text: string }
   | { kind: 'delta'; text: string }
+  /** OpenDesign 写出或更新页面文件时推一次整页正文；revision 单调递增，旧的丢弃。 */
+  | { kind: 'preview'; html: string; revision: number }
   | { kind: 'done'; siteId: string; siteUrl?: string; destinationApplyError?: string }
   | { kind: 'cancelled'; message: string }
   | { kind: 'error'; message: string }
@@ -59,6 +61,13 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
     return { kind: 'thinking', text: data.text };
   if (event.event === 'delta' && typeof data.text === 'string')
     return { kind: 'delta', text: data.text };
+  if (event.event === 'preview' && typeof data.html === 'string' && data.html.trim()) {
+    return {
+      kind: 'preview',
+      html: data.html,
+      revision: typeof data.revision === 'number' && Number.isFinite(data.revision) ? data.revision : 0,
+    };
+  }
   if (event.event === 'done' && typeof data.siteId === 'string') {
     return {
       kind: 'done',
@@ -84,4 +93,94 @@ export function parseSiteGenerationProgressEvent(event: SseEvent): SiteGeneratio
     };
   }
   return { kind: 'unknown' };
+}
+
+// ─── 生成中的阶段列表 ───
+
+export interface GenerationStage {
+  /** 去掉「· 已运行 X」这类随时间变化的尾巴后的阶段名，用来判断是不是同一步。 */
+  label: string;
+  /** 这一步最近一次的完整说明（含轮次等细节）。 */
+  detail: string;
+  startedAtMs: number;
+  /** 下一步开始的时刻；仍在进行中为 null。 */
+  endedAtMs: number | null;
+}
+
+/**
+ * 服务端的阶段文案会带上随时间变化的尾巴（「OpenDesign 正在设计并写出页面 · 已运行 3 分 05 秒」），
+ * 直接拿整句判断「换阶段没有」，每秒都会冒出一行新阶段。这里只取「 · 」之前那一段当阶段名。
+ */
+export function generationStageLabel(message: string): string {
+  const trimmed = message.trim();
+  const cut = trimmed.indexOf(' · ');
+  return (cut > 0 ? trimmed.slice(0, cut) : trimmed).trim();
+}
+
+/** 收到一条 phase 消息后更新阶段列表：同名只刷新说明，换名则结束上一步、开新的一步。 */
+export function appendGenerationStage(
+  stages: readonly GenerationStage[],
+  message: string | undefined,
+  nowMs: number,
+): GenerationStage[] {
+  if (!message || !message.trim()) return [...stages];
+  const label = generationStageLabel(message);
+  if (!label) return [...stages];
+  const last = stages[stages.length - 1];
+  if (last && last.label === label) {
+    if (last.detail === message.trim()) return [...stages];
+    return [...stages.slice(0, -1), { ...last, detail: message.trim() }];
+  }
+  const closed = last && last.endedAtMs == null
+    ? [...stages.slice(0, -1), { ...last, endedAtMs: nowMs }]
+    : [...stages];
+  return [...closed, { label, detail: message.trim(), startedAtMs: nowMs, endedAtMs: null }];
+}
+
+/** 终态时把仍在进行的那一步收口，免得完成页上还挂着一个转圈的阶段。 */
+export function closeGenerationStages(stages: readonly GenerationStage[], nowMs: number): GenerationStage[] {
+  return stages.map((stage) => (stage.endedAtMs == null ? { ...stage, endedAtMs: nowMs } : stage));
+}
+
+/** mm:ss；超过一小时用 h:mm:ss。 */
+export function formatGenerationClock(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = seconds % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
+
+/**
+ * 两种执行器的「通常耗时」。这是产品文案里承诺给用户的量级（快速约 1 分钟、精细 9–12 分钟），
+ * 不是按历史运行算出来的中位数——所以界面上必须写明「按通常耗时估算」，不许冒充实测。
+ */
+export const TYPICAL_RUNTIME_MINUTES: Record<string, { min: number; max: number }> = {
+  'map-gateway': { min: 1, max: 2 },
+  'open-design': { min: 9, max: 12 },
+};
+
+export function remainingEstimateText(runtimeId: string | null | undefined, elapsedSeconds: number): string {
+  const typical = runtimeId ? TYPICAL_RUNTIME_MINUTES[runtimeId] : undefined;
+  if (!typical) return '正在积累耗时数据，暂不预估剩余时间';
+  const elapsedMinutes = elapsedSeconds / 60;
+  const low = Math.max(0, Math.ceil(typical.min - elapsedMinutes));
+  const high = Math.max(0, Math.ceil(typical.max - elapsedMinutes));
+  if (high <= 0) return `已超过通常耗时（${typical.min}–${typical.max} 分钟），任务仍在继续`;
+  if (low <= 0) return `按通常耗时估算，预计还需不到 ${high} 分钟`;
+  return `按通常耗时估算，预计还需 ${low}–${high} 分钟`;
+}
+
+/** 「风格：编辑风格 · 提示词版本 1a2b3c4d」；两项都没有就不出这句。 */
+export function runProvenanceText(run: {
+  styleName?: string | null;
+  promptFingerprint?: string | null;
+} | null | undefined): string {
+  if (!run) return '';
+  const parts: string[] = [];
+  if (run.styleName?.trim()) parts.push(`风格：${run.styleName.trim()}`);
+  if (run.promptFingerprint?.trim()) parts.push(`提示词版本 ${run.promptFingerprint.trim().slice(0, 8)}`);
+  return parts.join(' · ');
 }
