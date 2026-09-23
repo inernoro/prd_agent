@@ -181,6 +181,8 @@ public class ImageGenRun
     /// Worker 完成/失败时会自动回填 ArticleIllustrationMarker.Status。
     /// </summary>
     public int? ArticleMarkerIndex { get; set; }
+    /// <summary>指定时仅向同一版配图流程回填，防止旧任务污染已经改稿的新流程。</summary>
+    public int? ArticleWorkflowVersion { get; set; }
 
     /// <summary>
     /// 可选：周报海报场景下，关联的海报 ID。Worker 完成时会回填对应页面 ImageUrl。
