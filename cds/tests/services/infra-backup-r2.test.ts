@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -6,6 +7,7 @@ import {
   downloadAndVerifyR2Backup,
   r2BackupConfigFromEnv,
   uploadAndVerifyR2Backup,
+  uploadAndVerifyR2Object,
 } from '../../src/services/infra-backup-r2.js';
 
 const created: string[] = [];
@@ -157,5 +159,53 @@ describe('R2 离机备份', () => {
     })).rejects.toThrow('checksum');
     expect(fs.readFileSync(file, 'utf8')).toBe('known-good');
     expect(fs.readdirSync(os.tmpdir()).some((name) => name.startsWith(`cds-r2-download-bad-${process.pid}.bin.tmp-`))).toBe(false);
+  });
+
+  describe('内存对象上传（验收报告 / 审计日志）', () => {
+    const config = {
+      endpoint: 'https://storage.invalid', bucket: 'reports', prefix: 'cds',
+      accessKeyId: 'access-id', secretAccessKey: 'secret-key',
+    };
+    const html = Buffer.from('<!doctype html><title>验收报告</title>'.repeat(40));
+    const sha = crypto.createHash('sha256').update(html).digest('hex');
+
+    // 模拟边缘节点：请求没声明 identity 时，文本对象按压缩后的长度回应。
+    function edgeLikeFetch(seen: Array<{ method: string; headers: Headers }>) {
+      return async (_input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const headers = new Headers(init?.headers);
+        seen.push({ method: String(init?.method), headers });
+        if (init?.method === 'PUT') return new Response('', { status: 200 });
+        const identity = headers.get('accept-encoding') === 'identity';
+        return new Response(null, {
+          status: 200,
+          headers: identity
+            ? { 'content-length': String(html.byteLength), 'x-amz-meta-sha256': sha }
+            : { 'content-length': '97', 'content-encoding': 'gzip', 'x-amz-meta-sha256': sha },
+        });
+      };
+    }
+
+    it('回读校验声明不压缩，文本对象的长度按原始字节比对', async () => {
+      const seen: Array<{ method: string; headers: Headers }> = [];
+      const out = await uploadAndVerifyR2Object({
+        config, objectKey: 'cds-acceptance-reports/p/r.html', body: html,
+        contentType: 'text/html; charset=utf-8', fetchImpl: edgeLikeFetch(seen) as typeof fetch,
+      });
+      expect(out).toEqual({ objectKey: 'cds-acceptance-reports/p/r.html', bytes: html.byteLength, sha256: sha });
+      const head = seen.find((c) => c.method === 'HEAD');
+      expect(head?.headers.get('accept-encoding')).toBe('identity');
+      // 这个头不能进签名：边缘可能改写它，签进去会变成签名不匹配。
+      expect(head?.headers.get('authorization')).not.toContain('accept-encoding');
+    });
+
+    it('长度与 checksum 分开报，读的人知道该去查传输层还是对象本身', async () => {
+      const fetchImpl = async (_i: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        if (init?.method === 'PUT') return new Response('', { status: 200 });
+        return new Response(null, { status: 200, headers: { 'content-length': '97', 'content-encoding': 'gzip' } });
+      };
+      await expect(uploadAndVerifyR2Object({
+        config, objectKey: 'k.html', body: html, fetchImpl: fetchImpl as typeof fetch,
+      })).rejects.toThrow(`长度不一致：本地 ${html.byteLength} 字节，远端回应 97 字节（content-encoding=gzip）；远端没有返回 sha256 元数据`);
+    });
   });
 });

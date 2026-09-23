@@ -134,19 +134,38 @@ export async function uploadAndVerifyR2Object(opts: {
   if (!put.ok) throw await r2HttpFailure('离机对象上传失败', put);
   const head = await fetchImpl(url, {
     method: 'HEAD',
-    headers: signedHeaders({
-      config: opts.config,
-      method: 'HEAD',
-      url,
-      payloadHash: crypto.createHash('sha256').update('').digest('hex'),
-      now: new Date(now.getTime() + 1),
-    }),
+    headers: {
+      ...signedHeaders({
+        config: opts.config,
+        method: 'HEAD',
+        url,
+        payloadHash: crypto.createHash('sha256').update('').digest('hex'),
+        now: new Date(now.getTime() + 1),
+      }),
+      // 回读比的是「存进去的字节数」。fetch 默认带 gzip/br 协商，文本类对象（报告 HTML、
+      // 审计 JSON）经过边缘时可能按压缩后的形态回应，长度就不再是原始字节数——二进制备份
+      // 不受影响，所以备份自检一直是绿的，而报告入库从 2026-09-16 起全部失败。
+      // 不纳入签名：边缘节点可能改写这个头，签进去反而会变成签名不匹配。
+      'accept-encoding': 'identity',
+    },
   });
   if (!head.ok) throw await r2HttpFailure('离机对象回读校验失败', head);
-  const bytes = Number(head.headers.get('content-length') || '0');
+  const lengthHeader = head.headers.get('content-length');
+  const bytes = Number(lengthHeader || '0');
   const remoteSha256 = String(head.headers.get('x-amz-meta-sha256') || '').trim().toLowerCase();
   if (bytes !== opts.body.byteLength || remoteSha256 !== sha256) {
-    throw new Error('离机对象大小或 checksum 与本地产物不一致');
+    // 两项分开报：长度不对多半是传输层改写了回应，checksum 缺失或不对才是对象本身有问题，
+    // 下一步去查的地方完全不同。
+    const encoding = head.headers.get('content-encoding');
+    const parts = [
+      bytes !== opts.body.byteLength
+        ? `长度不一致：本地 ${opts.body.byteLength} 字节，远端回应 ${lengthHeader === null ? '未给出长度' : `${lengthHeader} 字节`}${encoding ? `（content-encoding=${encoding}）` : ''}`
+        : '',
+      remoteSha256 !== sha256
+        ? (remoteSha256 ? '远端 sha256 元数据与本地不一致' : '远端没有返回 sha256 元数据')
+        : '',
+    ].filter(Boolean).join('；');
+    throw new Error(`离机对象大小或 checksum 与本地产物不一致：${parts}`);
   }
   return { objectKey: opts.objectKey, bytes, sha256 };
 }
