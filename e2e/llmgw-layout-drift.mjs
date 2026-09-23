@@ -134,14 +134,35 @@ const LOGICAL_MODELS = [
   row({
     id: 'lm1', publicId: 'gw-chat-standard', name: '标准对话', modelType: 'chat',
     capabilities: ['tools', 'streaming'], allowedAppCallerCodes: ['demo.chat::chat'],
-    routingStrategy: 'priority', displayOrder: 1, description: '对外暴露的标准对话模型',
+    routingStrategy: 'priority', isDefaultForType: true, defaultForAppCallerCodes: ['demo.chat::chat'],
+    displayOrder: 1, description: '对外暴露的标准对话模型',
     offerings: [offering({}), offering({ id: 'of2', targetKind: 'exchange', targetId: 'ex1', targetName: '教程转换器', priority: 20, healthStatus: 1 })],
   }),
   row({
     id: 'lm2', publicId: 'gw-vision-standard', name: '标准视觉', modelType: 'vision',
     capabilities: ['vision'], allowedAppCallerCodes: [], routingStrategy: 'weighted',
-    displayOrder: 2, description: null, offerings: [offering({ id: 'of3', logicalModelId: 'lm2', targetId: 'm3', targetName: 'demo-vision' })],
+    isDefaultForType: false, defaultForAppCallerCodes: [], displayOrder: 2, description: null,
+    offerings: [offering({ id: 'of3', logicalModelId: 'lm2', targetId: 'm3', targetName: 'demo-vision' })],
   }),
+  ...Array.from({ length: 24 }, (_, index) => row({
+    id: `lm-${index + 3}`,
+    publicId: `gw-image-${index + 3}`,
+    name: `图片模型 ${index + 3}`,
+    modelType: 'generation',
+    capabilities: ['image_generation'],
+    allowedAppCallerCodes: [],
+    routingStrategy: 'priority',
+    isDefaultForType: false,
+    defaultForAppCallerCodes: [],
+    displayOrder: index + 3,
+    description: null,
+    offerings: [offering({
+      id: `of-${index + 4}`,
+      logicalModelId: `lm-${index + 3}`,
+      targetId: 'm1',
+      targetName: 'demo-image',
+    })],
+  })),
 ];
 const LIST = { items: [], total: 2, page: 1, pageSize: 20 };
 const STUBS = {
@@ -156,6 +177,7 @@ const STUBS = {
   // 趋势图是基准页自身的一部分，空 points 会让它整块不渲染 —— 基准就不再代表真实版面。
   '/logs/timeseries': { items: Array.from({ length: 14 }, (_, i) => ({ date: `2026-07-${String(i + 1).padStart(2, '0')}`, count: 3 + ((i * 7) % 11) })) },
   '/service-keys': [row({ id: 'k1', name: 'runtime-key', keyPrefix: 'gwk_demo', teamId: null, createdByUsername: 'demo', sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime', appCallerCodes: ['demo.chat::chat'], ingressProtocols: ['openai'], scopes: ['chat'], allowedCidrs: [] })],
+  '/organization': { tenant: { id: 't1', name: '演示租户', slug: 'demo', status: 'active', isInternal: true }, teams: [], members: [] },
   '/audits': { ...LIST, items: [row({ id: 'a1', action: 'pool.update', targetType: 'pool', targetId: 'pool-1', actorUsername: 'demo', success: true, summary: '更新模型池优先级', detail: null })] },
   '/app-callers': { ...LIST, items: APP_CALLERS, statuses: ['active', 'pending'], sourceSystems: ['map', 'external'], ingressProtocols: ['openai', 'anthropic'], requestTypes: ['chat', 'vision'] },
   '/pools': { ...LIST, items: POOLS, pools: POOLS },
@@ -167,6 +189,10 @@ const STUBS = {
     total: 2, ready: 1, waiting: 1,
   },
   '/parameter-capabilities/meta': { items: [], templates: [] },
+  '/imagegen-configs': {
+    items: [], total: 0, builtinCount: 0, builtin: [], refreshSeconds: 60,
+    staleAfterSeconds: 180, syncedAt: nowIso, syncedPatterns: [], syncHosts: [],
+  },
   '/logical-models': { items: LOGICAL_MODELS, total: LOGICAL_MODELS.length },
   // 白名单列表那条趋势线的数据源。桩里必须给真值：给空会让页面走「暂无用量」分支，
   // 于是量到的版式是降级态的，而不是用户真正看到的那一屏（判据对着错的东西跑）。
@@ -240,6 +266,7 @@ const measure = () => {
   const h1 = document.querySelector('h1');
   const main = document.querySelector('.lg-console-content');
   const vh = window.innerHeight;
+  if (!main) return { 页面骨架存在: false };
 
   // 页头是否被塞进一个带边框/底色的卡片里（请求记录页的标题是裸露在页面上的）
   let headingBoxed = false;
@@ -311,6 +338,7 @@ const measure = () => {
   const controls = [...document.querySelectorAll('select, input:not([type=checkbox]):not([type=radio])')]
     .filter((el) => el.offsetParent !== null && el.getBoundingClientRect().height > 0);
   return {
+    页面骨架存在: true,
     标题字号: h1 ? num(getComputedStyle(h1).fontSize) : null,
     标题被卡片包住: headingBoxed,
     内容底部空隙: bottomGap,
@@ -340,6 +368,13 @@ if (!fs.existsSync(path.join(DIST, 'index.html'))) {
 }
 const browser = await chromium.launch(CHROMIUM_PATH ? { executablePath: CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+let activeProbe = '登录';
+const runtimeErrors = [];
+page.on('pageerror', (error) => {
+  const detail = `${activeProbe}: ${error.stack || error.message}`;
+  runtimeErrors.push(detail);
+  console.error(`页面运行错误：${detail}`);
+});
 const base = `http://localhost:${PORT}/llmgw`;
 await page.goto(`${base}/logs`);
 await page.waitForSelector('#llmgw-username');
@@ -352,10 +387,86 @@ const ROUTES = ['/logs', '/platforms', '/models', '/service-keys', '/audits', '/
 const data = {};
 const idleFetches = {};
 for (const route of ROUTES) {
+  activeProbe = route;
   await page.goto(`${base}${route}`);
   await page.waitForTimeout(800);
   data[route] = await page.evaluate(measure);
+  if (!data[route].页面骨架存在) console.error(`${route} 缺少 .lg-console-content，实际地址 ${page.url()}`);
 }
+
+// 模型目录真实会有二十多行。列表卡片若保留 flex 默认 shrink=1，会被 PageBody 压到
+// 视口剩余高度，但自身 overflow:hidden，结果是卡片内容被裁掉且外层也没有可滚动高度。
+// PageBody 滚动，页头固定，末行确实能进入可视区。桌面浅色、桌面深色与手机宽度
+// 用同一条行为断言，主题或断点不能悄悄换掉滚动归属。
+async function probeLogicalModelScroll(label, viewport, theme) {
+  activeProbe = `/logical-models-scroll-${label}`;
+  await page.setViewportSize(viewport);
+  await page.goto(`${base}/logical-models`);
+  await page.waitForSelector('.lg-logical-model-list');
+  await page.evaluate((nextTheme) => document.documentElement.setAttribute('data-theme', nextTheme), theme);
+  await page.waitForTimeout(300);
+  return await page.evaluate(async () => {
+    const body = document.querySelector('.lg-page-body');
+    const list = document.querySelector('.lg-logical-model-list');
+    const header = document.querySelector('.lg-page-heading');
+    if (!body || !list || !header) return { 可验证: false, 原因: '缺少页面骨架或模型列表' };
+
+    const headerTop = Math.round(header.getBoundingClientRect().top);
+    const initialHeight = Math.round(list.getBoundingClientRect().height);
+    const initial = {
+      外层可滚动: body.scrollHeight > body.clientHeight + 1,
+      列表未裁切: list.scrollHeight <= list.clientHeight + 1,
+      列表flexShrink: getComputedStyle(list).flexShrink,
+    };
+
+    const expand = [...list.querySelectorAll('button')].find((button) => button.textContent?.trim() === '展开');
+    expand?.click();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const expanded = {
+      高度增长: list.getBoundingClientRect().height > initialHeight,
+      列表未裁切: list.scrollHeight <= list.clientHeight + 1,
+    };
+
+    const notice = document.createElement('div');
+    notice.textContent = '配置已保存';
+    notice.setAttribute('data-layout-probe', 'notice');
+    Object.assign(notice.style, {
+      minHeight: '44px',
+      flexShrink: '0',
+      border: '1px solid var(--ok)',
+      borderRadius: 'var(--radius-sm)',
+    });
+    body.insertBefore(notice, list);
+
+    const last = list.lastElementChild;
+    last?.scrollIntoView({ block: 'end' });
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const bodyRect = body.getBoundingClientRect();
+    const lastRect = last?.getBoundingClientRect();
+    return {
+      可验证: true,
+      initial,
+      expanded,
+      提示出现后外层滚动: body.scrollTop > 0,
+      末行可见: Boolean(lastRect && lastRect.bottom <= bodyRect.bottom + 1 && lastRect.top >= bodyRect.top - 1),
+      页头固定: Math.round(header.getBoundingClientRect().top) === headerTop,
+      外层scrollTop: Math.round(body.scrollTop),
+      外层clientHeight: Math.round(body.clientHeight),
+      外层scrollHeight: Math.round(body.scrollHeight),
+    };
+  });
+}
+
+const logicalModelScroll = {};
+for (const [label, viewport, theme] of [
+  ['桌面浅色', { width: 1440, height: 900 }, 'light'],
+  ['桌面深色', { width: 1440, height: 900 }, 'dark'],
+  ['手机浅色', { width: 390, height: 844 }, 'light'],
+]) {
+  logicalModelScroll[label] = await probeLogicalModelScroll(label, viewport, theme);
+}
+await page.setViewportSize({ width: 1440, height: 900 });
+activeProbe = '/exchanges';
 await page.goto(`${base}/exchanges#image-layering`);
 await page.waitForSelector('[data-testid="exchange-list"]');
 const exchangeLayout = await page.evaluate(() => {
@@ -508,6 +619,7 @@ let drift = 0;
 for (const [route, m] of Object.entries(data)) {
   if (route === '/logs') continue;
   const diffs = [];
+  if (!m.页面骨架存在) diffs.push('页面骨架 .lg-console-content 缺失');
   for (const k of KEYS) {
     const a = baseline[k];
     const b = m[k];
@@ -574,6 +686,32 @@ if (!scrollKeep.可滚动) {
     + '\n  多半是 LogTable 又被挪回 LogsView 函数体内：组件类型每次渲染都变，React 会整棵重挂。',
   );
   drift += 1;
+}
+
+console.log('模型目录滚动契约:', JSON.stringify(logicalModelScroll));
+for (const [label, result] of Object.entries(logicalModelScroll)) {
+  if (!result.可验证) {
+    console.error(`${label}无法验证模型目录滚动：${result.原因}`);
+    drift += 1;
+    continue;
+  }
+  const failed = [];
+  if (!result.initial.外层可滚动) failed.push('初始长列表没有让 PageBody 可滚动');
+  if (!result.initial.列表未裁切) failed.push('初始列表内容被自身裁切');
+  if (result.initial.列表flexShrink !== '0') failed.push(`列表 flex-shrink=${result.initial.列表flexShrink}`);
+  if (!result.expanded.高度增长 || !result.expanded.列表未裁切) failed.push('展开后列表没有随内容增高');
+  if (!result.提示出现后外层滚动) failed.push('成功提示出现后 PageBody 仍不能滚动');
+  if (!result.末行可见) failed.push('无法滚到最后一个模型');
+  if (!result.页头固定) failed.push('滚动时页头发生位移');
+  if (failed.length) {
+    console.error(`${label}模型目录滚动契约失败：${failed.join('；')}`);
+    drift += failed.length;
+  }
+}
+
+if (runtimeErrors.length > 0) {
+  console.error(`页面运行错误共 ${runtimeErrors.length} 条，不能用残缺页面声明布局通过。`);
+  drift += runtimeErrors.length;
 }
 
 console.log('侧栏页脚:', JSON.stringify(sidebarFooter));
