@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Mcp;
@@ -54,6 +55,22 @@ public class LiteraryMcpJourneyTests
             Assert.Empty(beforeRun.ArticleWorkflow!.AssetIdByMarkerIndex);
             Assert.All(beforeRun.ArticleWorkflow.Markers, m => Assert.Equal("idle", m.Status));
             var request = new LiteraryImageOpenApiController.GenerateRequest { MarkerIndex = 1, WorkflowVersion = 1, ClientRequestId = "image-1" };
+            // 仅隔离测试数据库拒绝入队写入，真实复现认领成功但 InsertOne 失败。
+            var database = new MongoClient(connection).GetDatabase(name);
+            await database.RunCommandAsync<BsonDocument>(new BsonDocument
+            {
+                { "collMod", "image_gen_runs" },
+                { "validator", new BsonDocument("acceptanceRejectInsert", true) },
+            });
+            await Assert.ThrowsAsync<MongoWriteException>(() => images.Generate(id, request, CancellationToken.None));
+            var rejected = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            Assert.Equal("error", rejected.ArticleWorkflow!.Markers[1].Status);
+            Assert.Contains("重新生成", rejected.ArticleWorkflow.Markers[1].ErrorMessage);
+            Assert.Equal(0, await db.ImageGenRuns.CountDocumentsAsync(x => x.WorkspaceId == id));
+            await database.RunCommandAsync<BsonDocument>(new BsonDocument
+            {
+                { "collMod", "image_gen_runs" }, { "validator", new BsonDocument() },
+            });
             var jobs = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => images.Generate(id, request, CancellationToken.None)));
             var runId = Data(jobs[0]).GetProperty("runId").GetString()!;
             Assert.All(jobs, job => Assert.Equal(runId, Data(job).GetProperty("runId").GetString()));
@@ -67,6 +84,7 @@ public class LiteraryMcpJourneyTests
             await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
                 Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.1.status", "done"));
             Assert.True(await images.ClaimWorkflowAsync(beforeRun, run));
+            await images.CompensateMissingRunAsync(run);
             Assert.Equal("done", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[1].Status);
             Assert.IsType<ConflictObjectResult>(await images.Generate(id, new() { MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = "image-1" }, CancellationToken.None));
             Assert.IsType<ConflictObjectResult>(await images.Generate(id, new() { MarkerIndex = 0, WorkflowVersion = 9, ClientRequestId = "image-stale" }, CancellationToken.None));
