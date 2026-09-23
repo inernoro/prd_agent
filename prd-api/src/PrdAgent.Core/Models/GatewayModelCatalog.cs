@@ -64,6 +64,9 @@ public static class GatewayModelCatalog
         // 图片编辑：没有原图就无从编辑起，界面必须先要图再放行发送。
         new("gpt-image-1", "GPT Image 1", "openai", ["image_generation", "text2img", "img2img"],
             AcceptsImageInput: true, Aliases: ["openai/gpt-image-1"]),
+        new("gpt-image-2.5-sunburst", "GPT Image 2.5 Sunburst", "openai", ["image_generation", "text2img", "img2img"],
+            AcceptsImageInput: true,
+            Aliases: ["openai/gpt-image-2.5-sunburst", "gpt-image-2.5-sunburst-2026-09-08"]),
         new("whisper-1", "Whisper", "openai", ["asr"], Aliases: ["openai/whisper-1"]),
 
         // ── Anthropic ────────────────────────────────────────────────────────
