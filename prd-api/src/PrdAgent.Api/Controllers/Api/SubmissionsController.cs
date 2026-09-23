@@ -8,6 +8,7 @@ using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using System.Security.Claims;
 using PrdAgent.Api.Extensions;
+using PrdAgent.Api.Services;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -767,6 +768,10 @@ public class SubmissionsController : ControllerBase
             (request.ContentType != "visual" && request.ContentType != "literary"))
             return BadRequest(ApiResponse<object>.Fail("INVALID_CONTENT_TYPE", "contentType 必须为 visual 或 literary"));
 
+        var trigger = LiteraryWorkspacePublicationPolicy.NormalizeTrigger(request.Trigger);
+        if (!LiteraryWorkspacePublicationPolicy.IsKnownTrigger(trigger))
+            return BadRequest(ApiResponse<object>.Fail("INVALID_SUBMISSION_TRIGGER", "trigger 必须为 manual 或 auto"));
+
         // 视觉创作：从 ImageAsset 创建投稿
         if (request.ContentType == "visual")
         {
@@ -824,6 +829,16 @@ public class SubmissionsController : ControllerBase
             return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "工作区不存在"));
         if (workspace.OwnerUserId != userId)
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能投稿自己的作品"));
+        var suppressAutoSubmit = await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+            _db,
+            workspace,
+            CancellationToken.None);
+        if (suppressAutoSubmit && !LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                "AUTO_SUBMISSION_DISABLED",
+                "该私有工作区禁止自动投稿；如需公开，请点击“投稿当前”确认"));
+        }
 
         // 查重（按 workspaceId）
         var existingWs = await _db.Submissions
@@ -1579,6 +1594,7 @@ public class SubmissionsController : ControllerBase
 public class CreateSubmissionRequest
 {
     public string ContentType { get; set; } = string.Empty;
+    public string? Trigger { get; set; }
     public string? Title { get; set; }
     public string? ImageAssetId { get; set; }
     public string? WorkspaceId { get; set; }

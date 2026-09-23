@@ -8,7 +8,7 @@ public class GeneratedImageReferenceCleanupContractTests
     public void ImageCleanup_MustCheckEveryPersistedShaReferenceBeforePhysicalDeletion()
     {
         var controller = File.ReadAllText(LocateRepoFile(
-            "prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
+            "prd-api/src/PrdAgent.Api/Services/ImageMasterWorkspaceDeletionService.cs"));
 
         Assert.Contains("TryDeleteUnreferencedGeneratedImageAsync", controller);
         Assert.Contains("item => item.Sha256", controller);

@@ -127,6 +127,7 @@ export async function getSubmissionDetail(id: string) {
 
 export async function createSubmission(body: {
   contentType: string;
+  trigger?: 'manual' | 'auto';
   title?: string;
   imageAssetId?: string;
   workspaceId?: string;

@@ -94,8 +94,13 @@ public class ImageMasterWorkspace
     /// <summary>是否公开到作品广场（文学创作投稿 = 公开 workspace）</summary>
     public bool IsPublic { get; set; }
 
+    /// <summary>
+    /// 禁止生成完成后自动投稿。MCP 创建的工作区默认开启，避免网页端的全局自动投稿偏好
+    /// 越过工作区的私有意图；用户仍可在界面中明确点击“投稿当前”进行公开。
+    /// </summary>
+    public bool SuppressAutoSubmit { get; set; }
+
     /// <summary>首次公开时间</summary>
     public DateTime? PublishedAt { get; set; }
 }
-
 
