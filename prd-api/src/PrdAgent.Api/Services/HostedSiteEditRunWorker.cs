@@ -445,6 +445,9 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                 // Client-authored title/instruction are generation requests, not evidence
                 // that can substantiate measured or sensitive claims.
                 string.Join("\n", run.KnowledgeReferences.Select(item => $"{item.Title}\n{item.Content}")),
+                // 直接上传的文档同样是用户交来的事实来源，页面引用其中的数字必须能在证据里找到。
+                string.Join("\n", (run.UploadedSources ?? new List<DesignUploadedSource>())
+                    .Select(item => $"{item.FileName}\n{item.Content}")),
                 editable == null ? string.Empty : HostedSiteRevisionRules.ExtractVisibleText(editable.Html),
             }.Where(value => !string.IsNullOrWhiteSpace(value)));
 

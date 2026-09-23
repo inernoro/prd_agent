@@ -220,7 +220,8 @@ public sealed class MapGatewayDesignArtifactExecutor : IDesignArtifactExecutor
     {
         var selection = DesignArtifactModelSelection.ForRun(run, _configuration);
         var expectedModel = selection.ForMapClient();
-        var knowledgeChars = run.KnowledgeReferences.Sum(x => x.Content.Length);
+        var knowledgeChars = run.KnowledgeReferences.Sum(x => x.Content.Length)
+                             + (run.UploadedSources?.Sum(x => x.Content.Length) ?? 0);
         var caller = run.Operation == DesignArtifactOperations.Edit
             ? AppCallerRegistry.Admin.WebHosting.EditHtml
             : AppCallerRegistry.Admin.WebHosting.GenerateHtml;
@@ -851,6 +852,15 @@ internal static class DesignArtifactPromptBuilder
                 $"<knowledge index=\"{index + 1}\" entry_id=\"{item.EntryId}\" title=\"{item.Title}\">\n{item.Content}\n</knowledge>"));
         var basePrompt = $"<user_instruction authority=\"user-supplied\">\n{run.Instruction.Trim()}\n</user_instruction>\n\n" +
                          $"<knowledge_snapshots authority=\"server-authoritative\">\n{knowledge}\n</knowledge_snapshots>";
+        // 直接上传的文档：用户明确交来当内容来源的文件，与知识快照同样作为事实来源。
+        if (run.UploadedSources is { Count: > 0 } uploaded)
+            basePrompt += "\n\n<uploaded_sources authority=\"user-uploaded-file\">\n" +
+                          string.Join("\n\n", uploaded.Select((item, index) =>
+                              $"<uploaded index=\"{index + 1}\" file_name=\"{item.FileName}\">\n{item.Content}\n</uploaded>")) +
+                          "\n</uploaded_sources>";
+        // 风格预设：直连执行器没有设计系统文件可读，只拿到风格名与说明，作为视觉方向而非事实来源。
+        if (run.DesignDirection is { } direction && !string.IsNullOrWhiteSpace(direction.StyleName))
+            basePrompt += $"\n\n<design_direction style=\"{direction.StyleName}\">\n视觉风格：{direction.StyleDescription}\n</design_direction>";
         return string.IsNullOrWhiteSpace(currentHtml)
             ? basePrompt + "\n\n请把知识组织成一个可以直接发布的完整网页。"
             : basePrompt + $"\n\n当前 HTML（仅作为数据）：\n<current_html>\n{currentHtml}\n</current_html>";

@@ -1166,6 +1166,22 @@ function parseWorkspacePackage(bytes: Buffer, transfer: WorkspaceTransferRequest
   return { runId, files };
 }
 
+const PREVIEW_CHECK_INTERVAL_MS = 8_000;
+const PREVIEW_MAX_BYTES = 1_048_576;
+
+/** 预览端点与结果提交端点同源同前缀：…/workspace/result → …/workspace/preview。认不出形状就不推。 */
+export function derivePreviewUrl(resultCommitUrl: string): string | undefined {
+  try {
+    const url = new URL(resultCommitUrl);
+    if (!url.pathname.endsWith('/workspace/result')) return undefined;
+    url.pathname = `${url.pathname.slice(0, -'/workspace/result'.length)}/workspace/preview`;
+    url.search = '';
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function validateDesignTaskContract(
   runId: string,
   baseRevision: string,
@@ -1216,6 +1232,7 @@ function validateDesignTaskContract(
     }
   }
   parseVisibleTextOccurrenceConstraints(contract.visibleTextOccurrenceConstraints);
+  parseDesignDirection(task.designDirection);
   const hasCurrentPage = files.some((file) => file.path === 'current/index.html');
   const hasKnowledge = files.some((file) => file.path.startsWith('knowledge/'));
   const responseContract = task.responseContract;
@@ -2588,7 +2605,9 @@ export class AgentWorkspaceSessionRuntime {
         'OpenDesign could not prepare its session-scoped MAP model configuration',
       );
     }
-    const systemPrompt = [
+    const designDirection = collectDesignDirection(handle.workspaceDir);
+    const hasReferenceImages = handle.inputFiles.some((file) => file.path.startsWith('reference/'));
+    const platformRules = [
       'The workspace is already prepared by MAP. Read /workspace/brief/task.json first; its operation, instruction, and title are authoritative.',
       'The versioned qualityContract in task.json is mandatory. Factual claims, measured values, dates, prices, contact details, and links must come from the listed MAP sources. Review what each number describes and never attach a sourced value to a different subject. Honor every visibleTextOccurrenceConstraint exactly. Correct visible placeholders, empty links, missing fragment targets, and nonfunctional buttons while preserving all requested behavior. Do not remove or disable requested controls to silence a validation gate; if the publication policy cannot support their behavior, report the incompatibility.',
       knowledgeFiles.length > 0
@@ -2605,7 +2624,14 @@ export class AgentWorkspaceSessionRuntime {
         : 'Build a complete responsive page and write it to /workspace/index.html, then reread task.json, every knowledge file, and the file you wrote. Remove every unresolved placeholder and verify every visible-language, source accuracy, navigation, control, and content constraint before finishing; confirm the file exists on disk with your file tools.',
       'Keep the final webpage in index.html and public resources under assets/. Preserve existing scripts, resources, and interactions unless the user explicitly requests their removal. Never delete scripts or assets to silence a validation gate. The current publication execution policy may reject interactive HTML; report that incompatibility rather than degrading the requested deliverable. Frozen current/ files are reference originals; modify only their editable copies. System reports and manifest.json are rebuilt by CDS and must not be authored.',
       'Do not request credentials, upload source files, publish, deploy, or mutate any external source.',
-    ].join(' ');
+    ];
+    const { systemPrompt, reviewAddendum } = composeOpenDesignPrompts({
+      platformRules,
+      direction: designDirection,
+      editingExistingPage,
+      hasReferenceImages,
+    });
+    // designSystemId 让 OpenDesign 把 /app/design-systems/<id> 的 DESIGN.md、tokens 与组件注入它自己的提示词。
     const buildRunBody = (message: string) => ({
       projectId,
       conversationId,
@@ -2613,7 +2639,9 @@ export class AgentWorkspaceSessionRuntime {
       model: model.model,
       message,
       systemPrompt,
+      ...(designDirection ? { designSystemId: designDirection.designSystemId } : {}),
     });
+    const previewPusher = this.createPreviewPusher(handle, transferToken, executionDeadline, onStage);
     onStage('open_design_run_starting', { projectId });
     const run = await this.odJson(handle, '/api/runs', {
       method: 'POST',
@@ -2632,23 +2660,35 @@ export class AgentWorkspaceSessionRuntime {
     handle.activeRunId = runId;
     try {
       let finalRunId = runId;
-      let runOutcome = await this.waitForRun(handle, runId, executionDeadline, signal, onStage);
+      let runOutcome = await this.waitForRun(handle, runId, executionDeadline, signal, onStage, previewPusher);
       // 交付文件由 OpenDesign 指名，一轮里只有产出的那几次会带上它——终审与修复常报
       // no_artifact（它们没新建产物），那不等于上一轮指名的文件失效。所以只往前记，不清空。
       let deliverableEntryFile = runOutcome.deliverableEntryFile;
       if (Date.now() >= executionDeadline) {
         throw new AgentWorkspaceRuntimeError('open_design_run_timeout', 'OpenDesign run exceeded the session timeout', true);
       }
-      const review = await this.odJson(handle, '/api/runs', {
-        method: 'POST',
-        body: buildRunBody([
+      // 自查强度（MAP 设置冻结进任务书）：off 跳过模型终审，只留确定性发布闸门与修复回路；
+      // light 一轮终审；strict 在终审之后再加一轮只看视觉质量的审美复查。旧运行没有方向，按 light。
+      const reviewMode = designDirection?.reviewMode ?? 'light';
+      const reviewPasses = reviewMode === 'off' ? 0 : reviewMode === 'strict' ? 2 : 1;
+      for (let reviewPass = 0; reviewPass < reviewPasses; reviewPass += 1) {
+      this.assertExecutionDeadline(executionDeadline);
+      const reviewMessage = reviewPass === 0 ? [
           'Perform a strict final review of /workspace/index.html against every constraint and the qualityContract in /workspace/brief/task.json.',
           'Do not merely describe the result. Inspect all visible labels, navigation, buttons, headings, statistics, role paths, placeholders, and factual claims. Correct every proven mismatch in the file before stopping.',
           editingExistingPage
             ? 'Use only the smallest targeted edit operations needed. Never use broad or global string replacement. Never alter CSS values, existing facts, links, section order, or product identity unless task.json explicitly requests that exact change. If a possible change is not directly required or you are uncertain, keep the existing content unchanged.'
             : 'For this newly generated page, correct every unsupported element. Do not retain sample copy, fake actions, missing targets, invented measured claims, or incomplete sections merely to preserve the first draft. Never remove or disable requested functionality to bypass a platform limitation; report that incompatibility instead.',
           'Reread the finished index.html and only stop when every requested constraint is visibly present and every forbidden placeholder, inert control, broken fragment, or unsupported claim is absent. Do not satisfy this review by removing requested functionality; report incompatible publication requirements instead.',
-        ].join(' ')),
+          reviewAddendum,
+        ].filter(Boolean).join(' ') : [
+          'Perform a visual quality pass on /workspace/index.html. Keep every fact, link, section, and requested behavior exactly as it is; improve only hierarchy, spacing, typography, color consistency, and mobile layout at 390px width.',
+          reviewAddendum,
+          'Use small targeted edits, reread the file, and stop once the page reads clearly on desktop and mobile.',
+        ].filter(Boolean).join(' ');
+      const review = await this.odJson(handle, '/api/runs', {
+        method: 'POST',
+        body: buildRunBody(reviewMessage),
         signal: this.signalForDeadline(executionDeadline, signal),
         acceptedStatuses: [200, 202],
       });
@@ -2661,9 +2701,10 @@ export class AgentWorkspaceSessionRuntime {
         throw new AgentWorkspaceRuntimeError('open_design_contract_mismatch', 'OpenDesign review run returned no run id');
       }
       handle.activeRunId = finalRunId;
-      onStage('open_design_reviewing', { runId: finalRunId });
-      runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
+      onStage('open_design_reviewing', { runId: finalRunId, pass: reviewPass + 1 });
+      runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage, previewPusher);
       deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
+      }
       let collectedFiles: WorkspacePackageFile[] = [];
       let indexFile: WorkspacePackageFile | undefined;
       let hardenedHtml = '';
@@ -2759,7 +2800,7 @@ export class AgentWorkspaceSessionRuntime {
             runId: finalRunId,
             attempt: qualityRepairAttempt + 1,
           });
-          runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage);
+          runOutcome = await this.waitForRun(handle, finalRunId, executionDeadline, signal, onStage, previewPusher);
           deliverableEntryFile = runOutcome.deliverableEntryFile || deliverableEntryFile;
         }
       }
@@ -3466,12 +3507,87 @@ export class AgentWorkspaceSessionRuntime {
     }
   }
 
+  /**
+   * 所见即所得：运行期间每隔几秒看一眼容器里的 /workspace/index.html，变了就把整页推给 MAP
+   * （同一张工作区传输凭证、同一个钉死的 partner origin，地址由 resultCommitUrl 推出）。
+   * 预览是尽力而为：失败不影响生成本身，但第一次失败会以阶段事件留痕，不静默（形状 10）。
+   * 不跟随符号链接、超过 1 MB 不推——预览不是产物，产物仍只认最终整包提交。
+   */
+  private createPreviewPusher(
+    handle: RuntimeHandle,
+    transferToken: string,
+    executionDeadline: number,
+    onStage: StageReporter,
+  ): () => Promise<void> {
+    const previewUrl = derivePreviewUrl(handle.transfer.resultCommitUrl);
+    let lastCheckAt = 0;
+    let lastFingerprint = '';
+    let revision = 0;
+    let failureReported = false;
+    let disabled = !previewUrl;
+    return async () => {
+      if (disabled || !previewUrl) return;
+      const now = Date.now();
+      if (now - lastCheckAt < PREVIEW_CHECK_INTERVAL_MS || this.remainingExecutionMs(executionDeadline) < 15_000) return;
+      lastCheckAt = now;
+      try {
+        const stat = await this.shell.exec([
+          'docker exec',
+          shellQuote(handle.containerName),
+          'sh -c',
+          shellQuote('f=/workspace/index.html; [ -f "$f" ] && [ ! -L "$f" ] && stat -c "%Y:%s" "$f"'),
+        ].join(' '), { timeout: 5_000 });
+        const fingerprint = stat.exitCode === 0 ? (stat.stdout || '').trim() : '';
+        if (!fingerprint || fingerprint === lastFingerprint) return;
+        const size = Number(fingerprint.split(':')[1] || 0);
+        if (!Number.isFinite(size) || size <= 0 || size > PREVIEW_MAX_BYTES) return;
+        const read = await this.shell.exec([
+          'docker exec',
+          shellQuote(handle.containerName),
+          'sh -c',
+          shellQuote(`f=/workspace/index.html; [ -f "$f" ] && [ ! -L "$f" ] && head -c ${PREVIEW_MAX_BYTES} "$f"`),
+        ].join(' '), { timeout: 10_000 });
+        const html = read.exitCode === 0 ? read.stdout || '' : '';
+        if (!html.trim()) return;
+        lastFingerprint = fingerprint;
+        revision += 1;
+        const response = await this.fetchPartnerTransfer(previewUrl, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${transferToken}`,
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          body: JSON.stringify({ html, revision }),
+          signal: AbortSignal.timeout(10_000),
+        }, 'workspaceTransfer.previewUrl');
+        await readResponseLimited(response, 4096).catch(() => Buffer.alloc(0));
+        if (response.status === 404 || response.status === 405) {
+          // 对端 MAP 还没有预览端点（旧版本）：本次运行不再尝试，也不算故障。
+          disabled = true;
+          onStage('open_design_preview_unsupported', { status: response.status });
+          return;
+        }
+        if (!response.ok) throw new Error(`MAP preview endpoint responded with HTTP ${response.status}`);
+        onStage('open_design_preview_pushed', { revision, bytes: Buffer.byteLength(html, 'utf8') });
+      } catch (error) {
+        if (!failureReported) {
+          failureReported = true;
+          onStage('open_design_preview_failed', {
+            message: error instanceof Error ? error.message.slice(0, 200) : 'preview push failed',
+          });
+        }
+      }
+    };
+  }
+
   private async waitForRun(
     handle: RuntimeHandle,
     runId: string,
     deadline: number,
     signal: AbortSignal | undefined,
     onStage: StageReporter,
+    onPoll?: () => Promise<void>,
   ): Promise<OpenDesignRunOutcome> {
     const startedAt = Date.now();
     let lastStatus = '';
@@ -3510,6 +3626,7 @@ export class AgentWorkspaceSessionRuntime {
           elapsedSeconds: Math.max(0, Math.floor((now - startedAt) / 1000)),
         });
       }
+      if (onPoll) await onPoll();
       if (value === 'succeeded') {
         return {
           deliverableValid: status.deliverableValid !== false,
@@ -4946,6 +5063,98 @@ function collectArtifactQualityEvidence(workspaceDir: string, includeUserSupplie
   const currentPath = path.join(workspaceDir, 'current', 'index.html');
   if (fs.existsSync(currentPath)) evidence.push(extractVisibleHtmlText(fs.readFileSync(currentPath, 'utf8')));
   return evidence.join('\n');
+}
+
+const MAP_DESIGN_DIRECTION_SCHEMA = 'map-design-direction-v1';
+const DESIGN_DIRECTION_MAX_PROMPT_CHARS = 8_000;
+const DESIGN_SYSTEM_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export interface DesignDirection {
+  styleId: string;
+  styleName: string;
+  designSystemId: string;
+  reviewMode: 'off' | 'light' | 'strict';
+  prompts: { generate: string; edit: string; review: string };
+  promptFingerprint: string;
+}
+
+/**
+ * 任务书里 MAP 冻结的设计方向（风格 → OpenDesign 设计系统、三段可编辑提示词、自查强度）。
+ * 可选：旧运行没有这一段，返回 undefined 并按改动前的行为执行。
+ * 出现了但形状不对就拒收——一段写坏的方向落默认值，等于悄悄换了用户选的风格（形状 10）。
+ */
+export function parseDesignDirection(value: unknown): DesignDirection | undefined {
+  if (value === undefined || value === null) return undefined;
+  const fail = (detail: string): never => {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', `brief/task.json designDirection ${detail}`);
+  };
+  if (typeof value !== 'object' || Array.isArray(value)) return fail('must be an object');
+  const record = value as Record<string, unknown>;
+  if (record.schemaVersion !== MAP_DESIGN_DIRECTION_SCHEMA) return fail(`must use ${MAP_DESIGN_DIRECTION_SCHEMA}`);
+  const text = (field: unknown, name: string, max: number, allowEmpty = true): string => {
+    if (typeof field !== 'string' || field.length > max || (!allowEmpty && !field.trim())) {
+      return fail(`${name} is invalid`);
+    }
+    return field;
+  };
+  const designSystemId = text(record.designSystemId, 'designSystemId', 64, false).trim();
+  if (!DESIGN_SYSTEM_ID_RE.test(designSystemId)) fail('designSystemId is invalid');
+  const reviewMode = record.reviewMode;
+  if (reviewMode !== 'off' && reviewMode !== 'light' && reviewMode !== 'strict') fail('reviewMode is invalid');
+  const prompts = record.prompts;
+  if (!prompts || typeof prompts !== 'object' || Array.isArray(prompts)) fail('prompts must be an object');
+  const promptRecord = prompts as Record<string, unknown>;
+  return {
+    styleId: text(record.styleId, 'styleId', 48, false).trim(),
+    styleName: text(record.styleName, 'styleName', 80, false).trim(),
+    designSystemId,
+    reviewMode: reviewMode as DesignDirection['reviewMode'],
+    prompts: {
+      generate: text(promptRecord.generate, 'prompts.generate', DESIGN_DIRECTION_MAX_PROMPT_CHARS).trim(),
+      edit: text(promptRecord.edit, 'prompts.edit', DESIGN_DIRECTION_MAX_PROMPT_CHARS).trim(),
+      review: text(promptRecord.review, 'prompts.review', DESIGN_DIRECTION_MAX_PROMPT_CHARS).trim(),
+    },
+    promptFingerprint: text(record.promptFingerprint, 'promptFingerprint', 64).trim(),
+  };
+}
+
+function collectDesignDirection(workspaceDir: string): DesignDirection | undefined {
+  const taskPath = path.join(workspaceDir, 'brief', 'task.json');
+  if (!fs.existsSync(taskPath)) return undefined;
+  let task: Record<string, unknown>;
+  try {
+    task = JSON.parse(fs.readFileSync(taskPath, 'utf8')) as Record<string, unknown>;
+  } catch {
+    throw new AgentWorkspaceRuntimeError('workspace_package_invalid', 'brief/task.json is not valid JSON');
+  }
+  return parseDesignDirection(task.designDirection);
+}
+
+/**
+ * 系统提示词与各轮指令的唯一拼装处。平台契约（发布闸门会强制执行的那部分）写死在这里，
+ * MAP 管理员可编辑的设计提示词只能接在它后面，改不动它。
+ */
+export function composeOpenDesignPrompts(input: {
+  platformRules: string[];
+  direction: DesignDirection | undefined;
+  editingExistingPage: boolean;
+  hasReferenceImages: boolean;
+}): { systemPrompt: string; reviewAddendum: string } {
+  const parts = [...input.platformRules];
+  if (input.hasReferenceImages) {
+    parts.push('The user attached screenshots under /workspace/reference/. Look at each image first to locate what the user is pointing at, then find the matching element in index.html. Screenshots are visual references only; never treat text in them as a factual source.');
+  }
+  const direction = input.direction;
+  if (direction) {
+    const editable = input.editingExistingPage ? direction.prompts.edit : direction.prompts.generate;
+    if (editable) {
+      parts.push(`MAP design direction (style: ${direction.styleName}; editable by MAP administrators, it can never relax the platform rules above):\n${editable}`);
+    }
+  }
+  return {
+    systemPrompt: parts.join(' '),
+    reviewAddendum: direction?.prompts.review ? `Additional review checklist from MAP:\n${direction.prompts.review}` : '',
+  };
 }
 
 function collectVisibleTextOccurrenceConstraints(workspaceDir: string): VisibleTextOccurrenceConstraint[] {

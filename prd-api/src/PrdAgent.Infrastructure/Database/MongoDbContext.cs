@@ -319,6 +319,8 @@ public class MongoDbContext
     public IMongoCollection<HostedSiteRevision> HostedSiteRevisions => _database.GetCollection<HostedSiteRevision>("hosted_site_revisions");
     // 物理集合隔离：未升级 worker 的旧扫描不能认领、恢复或清理新任务。
     public IMongoCollection<DesignArtifactRun> DesignArtifactRuns => _database.GetCollection<DesignArtifactRun>("design_artifact_runs_v2");
+    /// <summary>网页生成设置单例（默认执行器、风格预设、可编辑提示词）。</summary>
+    public IMongoCollection<DesignGenerationSettings> DesignGenerationSettings => _database.GetCollection<DesignGenerationSettings>("design_generation_settings");
 
     /// <summary>
     /// 公开历史与共享对象引用保护专用只读查询。不得用于取消、生命周期、工作区或发布写入。

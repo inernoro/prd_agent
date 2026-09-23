@@ -21,7 +21,10 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
     private const int MaxProxyRequestBytes = 1_048_576;
     private const int DefaultProxyTimeoutSeconds = 900;
     private const int DefaultProxyIdleTimeoutSeconds = 90;
+    internal const int MaxPreviewHtmlBytes = 1_048_576;
+    private static readonly TimeSpan PreviewEventTtl = TimeSpan.FromHours(24);
     private readonly IDesignArtifactWorkspaceBroker _broker;
+    private readonly PrdAgent.Core.Interfaces.IRunEventStore? _events;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IConfiguration _configuration;
     private readonly ILogger<DesignArtifactRuntimeController> _logger;
@@ -30,8 +33,10 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
         IDesignArtifactWorkspaceBroker broker,
         IHttpClientFactory httpClientFactory,
         IConfiguration configuration,
-        ILogger<DesignArtifactRuntimeController> logger)
+        ILogger<DesignArtifactRuntimeController> logger,
+        PrdAgent.Core.Interfaces.IRunEventStore? events = null)
     {
+        _events = events;
         _broker = broker;
         _httpClientFactory = httpClientFactory;
         _configuration = configuration;
@@ -67,6 +72,50 @@ public sealed class DesignArtifactRuntimeController : ControllerBase
                 files = result.Files,
                 idempotent = result.Idempotent,
             });
+        }
+        catch (Exception ex)
+        {
+            return MapRuntimeError(ex, runId);
+        }
+    }
+
+    /// <summary>
+    /// OpenDesign 运行期间的实时预览：CDS 发现 /workspace/index.html 变了就把整页推来，
+    /// 这里只写进 Redis 事件流（生成流与修改流都会转给前端），不进 Mongo，也不当产物——
+    /// 最终产物仍然只认 workspace/result 那一次整包提交与两道校验。
+    /// </summary>
+    [HttpPost("workspace/preview")]
+    [RequestSizeLimit(MaxPreviewHtmlBytes + 4096)]
+    public async Task<IActionResult> PushWorkspacePreview(string runId, CancellationToken ct)
+    {
+        try
+        {
+            await _broker.ValidatePreviewAsync(runId, ReadBearerToken(), ct);
+            var bytes = await ReadBoundedBodyAsync(Request, MaxPreviewHtmlBytes + 4096, ct);
+            using var document = JsonDocument.Parse(bytes);
+            var html = document.RootElement.TryGetProperty("html", out var htmlElement) && htmlElement.ValueKind == JsonValueKind.String
+                ? htmlElement.GetString() ?? string.Empty
+                : string.Empty;
+            var revision = document.RootElement.TryGetProperty("revision", out var revisionElement)
+                           && revisionElement.TryGetInt32(out var parsedRevision)
+                ? parsedRevision
+                : 0;
+            if (html.Length == 0 || Encoding.UTF8.GetByteCount(html) > MaxPreviewHtmlBytes)
+                return BadRequest(new { error = "preview_invalid", message = "预览内容为空或超过 1 MB" });
+            if (_events == null)
+                return StatusCode(503, new { error = "preview_unavailable", message = "事件流未配置" });
+            await _events.AppendEventAsync(
+                PrdAgent.Core.Models.RunKinds.DesignArtifact,
+                runId,
+                "preview",
+                new { html, revision },
+                PreviewEventTtl,
+                CancellationToken.None);
+            return Ok(new { accepted = true, revision });
+        }
+        catch (JsonException)
+        {
+            return BadRequest(new { error = "preview_invalid", message = "预览内容不是合法 JSON" });
         }
         catch (Exception ex)
         {

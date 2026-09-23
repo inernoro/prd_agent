@@ -33,6 +33,7 @@ public sealed class HostedSiteEditsController : ControllerBase
     private readonly IWebPageDesignArtifactLifecycleAdapter _publicLifecycle;
     private readonly IDesignArtifactCancellationCoordinator _cancellation;
     private readonly IConfiguration _configuration;
+    private readonly IDesignGenerationSettingsService? _generationSettings;
 
     public HostedSiteEditsController(
         IHostedSiteService sites,
@@ -45,7 +46,8 @@ public sealed class HostedSiteEditsController : ControllerBase
         IDesignKnowledgeSnapshotResolver knowledgeSnapshots,
         IWebPageDesignArtifactLifecycleAdapter publicLifecycle,
         IDesignArtifactCancellationCoordinator cancellation,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IDesignGenerationSettingsService? generationSettings = null)
     {
         _sites = sites;
         _revisions = revisions;
@@ -58,7 +60,14 @@ public sealed class HostedSiteEditsController : ControllerBase
         _publicLifecycle = publicLifecycle;
         _cancellation = cancellation;
         _configuration = configuration;
+        _generationSettings = generationSettings;
     }
+
+    /// <summary>默认执行器读网页生成设置（内置默认 open-design）；未注入设置服务的构造（单测）保留旧默认直连。</summary>
+    private async Task<string> ResolveDefaultRuntimeAsync()
+        => _generationSettings == null
+            ? HostedSiteEditRuntimes.MapGateway
+            : (await _generationSettings.GetAsync(CancellationToken.None)).DefaultRuntime;
 
     [HttpGet("runtime-capabilities")]
     public async Task<IActionResult> RuntimeCapabilities()
@@ -69,7 +78,7 @@ public sealed class HostedSiteEditsController : ControllerBase
             .ToList();
         return Ok(ApiResponse<object>.Ok(new
         {
-            defaultRuntime = HostedSiteEditRuntimes.MapGateway,
+            defaultRuntime = await ResolveDefaultRuntimeAsync(),
             runtimes = runtimes.Select(ToPublicCapability).ToList(),
         }));
     }
@@ -101,8 +110,34 @@ public sealed class HostedSiteEditsController : ControllerBase
         if (knowledgeReferences.Count > 3)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "首版一次最多引用 3 篇知识"));
         var runtime = string.IsNullOrWhiteSpace(request.Runtime)
-            ? HostedSiteEditRuntimes.MapGateway
+            ? await ResolveDefaultRuntimeAsync()
             : request.Runtime.Trim().ToLowerInvariant();
+        var runsInWorkspace = runtime is DesignArtifactRuntimes.OpenDesign or DesignArtifactRuntimes.Codex;
+        List<DesignUploadedSource> uploadedSources;
+        List<DesignReferenceImage> referenceImages;
+        DesignArtifactDesignDirection? designDirection = null;
+        try
+        {
+            uploadedSources = await DesignRunInputAttachments.ResolveSourcesAsync(
+                _db, userId, request.AttachmentIds, CancellationToken.None);
+            referenceImages = await DesignRunInputAttachments.ResolveImagesAsync(
+                _db, userId, request.ScreenshotAttachmentIds, CancellationToken.None);
+            if (_generationSettings != null)
+                designDirection = await _generationSettings.FreezeAsync(null, CancellationToken.None);
+        }
+        catch (DesignRunInputException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        catch (DesignGenerationSettingsException ex)
+        {
+            return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        // 直连执行器是一次纯文本调用，截图递不进去；静默丢掉会让用户以为模型看过了图。
+        if (referenceImages.Count > 0 && !runsInWorkspace)
+            return BadRequest(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "截图参考需要用精细设计（OpenDesign）执行器，快速修改只接受文字描述"));
         var capability = await _providers.FindAsync(userId, runtime, CancellationToken.None);
         if (capability == null)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "不支持的页面修改运行时"));
@@ -118,7 +153,10 @@ public sealed class HostedSiteEditsController : ControllerBase
         try
         {
             editable = await _sites.GetEditableEntryHtmlAsync(siteId, userId, CancellationToken.None);
-            ValidateEditInputCompatibility(editable);
+            // 单 HTML、无脚本只是直连执行器的限制：它把整页当一段文本改写，只能按声明式规则加固。
+            // OpenDesign 拿到的是整站文件，产物按「整包校验」放行包内脚本与资源（CDS 与 MAP 两道闸都认包清单），
+            // 所以带脚本、多文件的网页走它可以改。
+            if (!runsInWorkspace) ValidateEditInputCompatibility(editable);
         }
         catch (KeyNotFoundException)
         {
@@ -180,7 +218,10 @@ public sealed class HostedSiteEditsController : ControllerBase
             TargetSiteId = siteId,
             KnowledgeReferences = snapshots.ToList(),
             KnowledgeOriginals = originals,
-            InputAuthority = snapshots.Count > 0
+            UploadedSources = uploadedSources.Count > 0 ? uploadedSources : null,
+            ReferenceImages = referenceImages.Count > 0 ? referenceImages : null,
+            DesignDirection = designDirection,
+            InputAuthority = snapshots.Count > 0 || uploadedSources.Count > 0
                 ? DesignArtifactInputAuthorities.MixedUserAndServerKnowledge
                 : DesignArtifactInputAuthorities.UserSupplied,
             UserSuppliedContentHash = System.Convert.ToHexString(
@@ -250,7 +291,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         if (!HostedSiteContentShapeRules.IsSelfContainedHtml(editable.Site) && !isMarkdownWrapper)
         {
             throw new InvalidOperationException(
-                "当前站点包含 ZIP 或多文件资源；首版 AI 微调只支持单个声明式、自包含 HTML，请先把 CSS、图片等资源内嵌到入口 HTML 后再试");
+                "当前站点包含 ZIP 或多文件资源；快速修改只支持单个声明式、自包含 HTML。多文件或带脚本的网页请改用「精细设计（OpenDesign）」修改");
         }
 
         var normalized = DesignArtifactWorkspaceContract.NormalizeCurrentHtmlForRemoteEditing(editable.Html);
@@ -262,7 +303,7 @@ public sealed class HostedSiteEditsController : ControllerBase
         catch (InvalidOperationException ex)
         {
             throw new InvalidOperationException(
-                $"当前站点无法进入首版 AI 微调：仅支持声明式、自包含 HTML，请先移除脚本、外链、相对资源或嵌入能力后再试。{ex.Message}");
+                $"快速修改仅支持声明式、自包含 HTML；这个页面含脚本、外链或嵌入能力，请改用「精细设计（OpenDesign）」修改。{ex.Message}");
         }
     }
 
@@ -729,6 +770,12 @@ public sealed class HostedSiteEditsController : ControllerBase
         run.CancelRequestedAt,
         run.CancelledAt,
         run.CreatedAt,
+        styleId = run.DesignDirection?.StyleId,
+        styleName = run.DesignDirection?.StyleName,
+        promptFingerprint = run.DesignDirection?.PromptFingerprint,
+        reviewMode = run.DesignDirection?.ReviewMode,
+        uploadedSources = run.UploadedSources?.Select(item => new { item.AttachmentId, item.FileName, item.ContentHash }),
+        referenceImages = run.ReferenceImages?.Select(item => new { item.AttachmentId, item.FileName, item.MimeType, item.Size }),
         knowledgeReferences = run.KnowledgeReferences.Select(item => new
         {
             item.EntryId,
@@ -771,6 +818,12 @@ public sealed class CreateHostedSiteEditRunRequest
     public string? Instruction { get; set; }
     public string? Runtime { get; set; }
     public List<HostedSiteKnowledgeReference>? KnowledgeReferences { get; set; }
+
+    /// <summary>截图（附件编号，最多 3 张，仅 OpenDesign）：放进工作区 reference/ 作视觉参考。</summary>
+    public List<string>? ScreenshotAttachmentIds { get; set; }
+
+    /// <summary>补充资料（附件编号，最多 5 个）：作为事实来源。</summary>
+    public List<string>? AttachmentIds { get; set; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; set; }

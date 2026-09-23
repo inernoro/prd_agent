@@ -17,6 +17,9 @@ import {
   buildGeneratedPublicArtifactPackage,
   canAcceptUntrackedWorkspaceEdit,
   classifyQualityRepairReason,
+  composeOpenDesignPrompts,
+  derivePreviewUrl,
+  parseDesignDirection,
   summarizeOutputPreflightDiagnostic,
   summarizeRunEventStream,
   redactDigestLeaves,
@@ -220,6 +223,17 @@ class RecordingShell implements IShellExecutor {
       }
       return result('container-id\n');
     }
+    // 实时预览：runtime 在容器里 stat / head 成品页，这里用宿主侧的工作区副本回答。
+    if (command.startsWith('docker exec ') && command.includes('stat -c') && this.workspaceDir) {
+      const index = path.join(this.workspaceDir, 'index.html');
+      if (!fs.existsSync(index)) return result('', '', 1);
+      const stat = fs.statSync(index);
+      return result(`${Math.floor(stat.mtimeMs)}:${stat.size}\n`);
+    }
+    if (command.startsWith('docker exec ') && command.includes('head -c') && this.workspaceDir) {
+      const index = path.join(this.workspaceDir, 'index.html');
+      return fs.existsSync(index) ? result(fs.readFileSync(index, 'utf8')) : result('', '', 1);
+    }
     if (command.startsWith('docker cp ')) {
       const inbound = command.match(/^docker cp '([^']+)\/\.' 'cds-od-[^']+:\/workspace\/'$/);
       if (inbound) this.workspaceDir = inbound[1];
@@ -310,7 +324,13 @@ class RecordingShell implements IShellExecutor {
 
 function buildPackage(
   files: Array<{ path: string; content: string | Buffer; mediaType: string }>,
-  options: { injectDefaultTask?: boolean; runId?: string; baseRevision?: string; instruction?: string } = {},
+  options: {
+    injectDefaultTask?: boolean;
+    runId?: string;
+    baseRevision?: string;
+    instruction?: string;
+    taskExtras?: Record<string, unknown>;
+  } = {},
 ) {
   const runId = options.runId ?? 'map-run-1';
   const baseRevision = options.baseRevision ?? 'rev-1';
@@ -366,6 +386,7 @@ function buildPackage(
               finalReviewRequired: true,
               visibleTextOccurrenceConstraints: [],
             },
+            ...(options.taskExtras ?? {}),
           }),
           mediaType: 'application/json',
         },
@@ -1421,6 +1442,180 @@ describe('AgentWorkspaceSessionRuntime', () => {
     expect(shell.calls.filter((call) => (
       call.command.startsWith('docker volume rm ') && !call.command.includes('storage-probe')
     ))).toHaveLength(2);
+  });
+
+  // 网页生成设置冻结进任务书的设计方向（2026-09-23）：风格要真的到 OpenDesign（designSystemId），
+  // 可编辑提示词只能接在平台契约之后，自查强度要真的改变终审轮数，运行中要把页面推给 MAP 做实时预览。
+  // 红绿闭环：把 buildRunBody 里的 designSystemId 去掉、或把 reviewPasses 恒定为 1、或让 onPoll 不调，
+  // 下面对应断言会红。
+  it('applies the frozen MAP design direction: design system, editable prompt, strict review, live preview', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const direction = {
+      schemaVersion: 'map-design-direction-v1',
+      styleId: 'kami',
+      styleName: '纸感',
+      styleDescription: '纸张质感',
+      designSystemId: 'kami',
+      reviewMode: 'strict',
+      prompts: { generate: 'EDITABLE-GENERATE-MARKER', edit: 'EDITABLE-EDIT-MARKER', review: 'EDITABLE-REVIEW-MARKER' },
+      promptFingerprint: 'abc123def456',
+    };
+    const workspacePackage = buildPackage([
+      { path: 'knowledge/source.md', content: 'Product facts', mediaType: 'text/markdown' },
+      { path: 'reference/screenshot-01.png', content: Buffer.from([137, 80, 78, 71]), mediaType: 'image/png' },
+    ], { taskExtras: { designDirection: direction } });
+    const runBodies: any[] = [];
+    const previews: any[] = [];
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      instanceId: 'instance-direction',
+      daemonPort: 7456,
+      pollIntervalMs: 1,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+        if (url.pathname.endsWith('/workspace/input')) return new Response(workspacePackage.serialized, { status: 200 });
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+        if (url.pathname === '/api/import/folder') {
+          return Response.json({ project: { id: 'od-dir-project', skillId: 'web-prototype' }, conversationId: 'od-dir-conv' });
+        }
+        if (url.pathname === '/api/runs' && init?.method === 'POST') {
+          runBodies.push(JSON.parse(typeof init?.body === 'string' ? init.body : '{}'));
+          fs.writeFileSync(
+            path.join(shell.workspaceDir, 'index.html'),
+            `<!doctype html><html><body><main>Product facts ${runBodies.length}</main></body></html>`,
+          );
+          return Response.json({ runId: `od-dir-${runBodies.length}` }, { status: 202 });
+        }
+        if (url.pathname.startsWith('/api/runs/od-dir-')) {
+          return Response.json({ status: 'succeeded', deliverableValid: true, deliverableEntryFile: 'index.html' });
+        }
+        if (url.pathname.endsWith('/workspace/preview')) {
+          expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer transfer-token');
+          previews.push(JSON.parse(typeof init?.body === 'string' ? init.body : '{}'));
+          return Response.json({ accepted: true });
+        }
+        if (url.pathname.endsWith('/workspace/result')) {
+          const body = typeof init?.body === 'string' ? init.body : '';
+          return Response.json({ artifactRef: 'artifact:direction', resultSha256: digest(body) });
+        }
+        if (url.pathname.endsWith('/cancel')) return Response.json({});
+        return new Response('', { status: 404 });
+      },
+    });
+    await runtime.create('session-direction', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/workspace/input',
+      resultCommitUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/workspace/result',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 6 * 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+    }, { cpuCores: 1, memoryMb: 768, timeoutSeconds: 60, networkPolicy: 'egress-only', autoCleanupMinutes: 5 });
+
+    const stages: string[] = [];
+    await runtime.execute('session-direction', 'Build the page.', {
+      baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+      protocol: 'openai',
+      apiKey: 'model-secret',
+      model: 'map-managed',
+    }, 'transfer-token', undefined, (reason) => { stages.push(reason); });
+
+    // 首轮 + 严格自查两轮 = 3 次 /api/runs；每一次都带着选中的设计系统。
+    expect(runBodies).toHaveLength(3);
+    expect(runBodies.every((body) => body.designSystemId === 'kami')).toBe(true);
+    const systemPrompt: string = runBodies[0].systemPrompt;
+    // 平台契约在前，可编辑提示词在后；新建页面用创作提示词而不是修改提示词。
+    expect(systemPrompt.indexOf('WRITE the finished HTML to /workspace/index.html')).toBeLessThan(
+      systemPrompt.indexOf('EDITABLE-GENERATE-MARKER'),
+    );
+    expect(systemPrompt).not.toContain('EDITABLE-EDIT-MARKER');
+    expect(systemPrompt).toContain('/workspace/reference/');
+    expect(runBodies[1].message).toContain('EDITABLE-REVIEW-MARKER');
+    expect(runBodies[2].message).toContain('visual quality pass');
+    // 实时预览：至少推过一次页面正文，版本号递增。
+    expect(previews.length).toBeGreaterThanOrEqual(1);
+    expect(previews[0].html).toContain('Product facts');
+    expect(previews.map((item) => item.revision)).toEqual(previews.map((_, index) => index + 1));
+    expect(stages).toContain('open_design_preview_pushed');
+  });
+
+  it('skips the model review entirely when the MAP review mode is off', async () => {
+    rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-agent-workspace-test-'));
+    const workspacePackage = buildPackage([
+      { path: 'knowledge/source.md', content: 'Product facts', mediaType: 'text/markdown' },
+    ], {
+      taskExtras: {
+        designDirection: {
+          schemaVersion: 'map-design-direction-v1',
+          styleId: 'minimal',
+          styleName: '极简',
+          styleDescription: '',
+          designSystemId: 'minimal',
+          reviewMode: 'off',
+          prompts: { generate: '', edit: '', review: '' },
+          promptFingerprint: 'fff',
+        },
+      },
+    });
+    let runCreates = 0;
+    const shell = new RecordingShell();
+    const runtime = new AgentWorkspaceSessionRuntime(shell, {
+      rootDir,
+      instanceId: 'instance-review-off',
+      daemonPort: 7456,
+      pollIntervalMs: 1,
+      capabilityCacheMs: 0,
+      containerUid: process.getuid?.() ?? 1001,
+      containerGid: process.getgid?.() ?? 1001,
+      fetchImpl: async (input, init) => {
+        const url = new URL(typeof input === 'string' ? input : input instanceof URL ? input : input.url);
+        if (url.pathname === '/input') return new Response(workspacePackage.serialized, { status: 200 });
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+        if (url.pathname === '/api/import/folder') {
+          return Response.json({ project: { id: 'od-off-project', skillId: 'web-prototype' }, conversationId: 'od-off-conv' });
+        }
+        if (url.pathname === '/api/runs' && init?.method === 'POST') {
+          runCreates += 1;
+          fs.writeFileSync(path.join(shell.workspaceDir, 'index.html'), '<!doctype html><html><body><main>Product facts</main></body></html>');
+          return Response.json({ runId: 'od-off-build' }, { status: 202 });
+        }
+        if (url.pathname === '/api/runs/od-off-build') {
+          return Response.json({ status: 'succeeded', deliverableValid: true, deliverableEntryFile: 'index.html' });
+        }
+        if (url.pathname === '/commit') {
+          const body = typeof init?.body === 'string' ? init.body : '';
+          return Response.json({ artifactRef: 'artifact:off', resultSha256: digest(body) });
+        }
+        return new Response('', { status: 404 });
+      },
+    });
+    await runtime.create('session-review-off', {
+      schemaVersion: MAP_DESIGN_WORKSPACE_SCHEMA,
+      inputPackageUrl: 'https://map.example.test/input',
+      resultCommitUrl: 'https://map.example.test/commit',
+      transferToken: 'transfer-token',
+      inputSha256: workspacePackage.sha256,
+      baseRevision: 'rev-1',
+      maxInputBytes: 1024 * 1024,
+      maxOutputBytes: 6 * 1024 * 1024,
+      allowedOutputPaths: ['index.html', 'manifest.json', 'assets/**'],
+    }, { cpuCores: 1, memoryMb: 768, timeoutSeconds: 30, networkPolicy: 'egress-only', autoCleanupMinutes: 5 });
+
+    const result = await runtime.execute('session-review-off', 'Build the page.', {
+      baseUrl: 'https://map.example.test/api/design-artifacts/runtime/run-1/llm/v1',
+      protocol: 'openai',
+      apiKey: 'model-secret',
+      model: 'map-managed',
+    }, 'transfer-token');
+
+    expect(runCreates).toBe(1);
+    expect(result.openDesignRunId).toBe('od-off-build');
   });
 
   it('runs generate without a current page and returns the distinct final review run', async () => {
@@ -3911,5 +4106,74 @@ describe('every quality rejection must reach the repair loop', () => {
     expect(repairEntry).toContain('qualityRepairAttempt >= MAX_QUALITY_REPAIR_ATTEMPTS');
     // 条件里出现第四个 `||` 就说明多了一条内容判据，必须回来重新审。
     expect((repairEntry.slice(0, repairEntry.indexOf('throw error;')).match(/\|\|/g) ?? []).length).toBe(2);
+  });
+});
+
+
+describe('MAP design direction contract', () => {
+  const valid = {
+    schemaVersion: 'map-design-direction-v1',
+    styleId: 'editorial',
+    styleName: '编辑刊物',
+    designSystemId: 'editorial',
+    reviewMode: 'light',
+    prompts: { generate: 'g', edit: 'e', review: 'r' },
+    promptFingerprint: '0123456789ab',
+  };
+
+  it('treats a missing direction as a legacy run', () => {
+    expect(parseDesignDirection(undefined)).toBeUndefined();
+    expect(parseDesignDirection(null)).toBeUndefined();
+  });
+
+  it('rejects a malformed direction instead of silently falling back to defaults', () => {
+    expect(parseDesignDirection(valid)?.designSystemId).toBe('editorial');
+    for (const broken of [
+      { ...valid, schemaVersion: 'v0' },
+      { ...valid, designSystemId: '../../etc' },
+      { ...valid, reviewMode: 'extreme' },
+      { ...valid, prompts: 'not-an-object' },
+      { ...valid, prompts: { ...valid.prompts, generate: 'x'.repeat(8_001) } },
+    ]) {
+      expect(() => parseDesignDirection(broken)).toThrow(AgentWorkspaceRuntimeError);
+    }
+  });
+
+  it('keeps platform rules ahead of the editable prompt and picks the edit prompt for existing pages', () => {
+    const direction = parseDesignDirection(valid)!;
+    const edit = composeOpenDesignPrompts({
+      platformRules: ['PLATFORM-RULE'],
+      direction,
+      editingExistingPage: true,
+      hasReferenceImages: false,
+    });
+    expect(edit.systemPrompt.startsWith('PLATFORM-RULE')).toBe(true);
+    expect(edit.systemPrompt).toContain('\ne');
+    expect(edit.systemPrompt).not.toContain('reference/');
+    expect(edit.reviewAddendum).toContain('r');
+    const legacy = composeOpenDesignPrompts({
+      platformRules: ['PLATFORM-RULE'],
+      direction: undefined,
+      editingExistingPage: false,
+      hasReferenceImages: true,
+    });
+    expect(legacy.systemPrompt).toContain('/workspace/reference/');
+    expect(legacy.reviewAddendum).toBe('');
+  });
+
+  it('accepts the shared C# task fixture that carries a frozen design direction', () => {
+    const task = JSON.parse(fs.readFileSync(path.resolve('../scripts/fixtures/opendesign-task-v1-direction.json'), 'utf8'));
+    const direction = parseDesignDirection(task.designDirection)!;
+    expect(direction.designSystemId).toBe('minimal');
+    expect(direction.reviewMode).toBe('light');
+    expect(direction.prompts.generate.length).toBeGreaterThan(0);
+    expect(direction.promptFingerprint).toMatch(/^[0-9a-f]{12}$/);
+  });
+
+  it('derives the preview endpoint only from the MAP result endpoint shape', () => {
+    expect(derivePreviewUrl('https://map.example.test/api/design-artifacts/runtime/r1/workspace/result'))
+      .toBe('https://map.example.test/api/design-artifacts/runtime/r1/workspace/preview');
+    expect(derivePreviewUrl('https://map.example.test/commit')).toBeUndefined();
+    expect(derivePreviewUrl('not a url')).toBeUndefined();
   });
 });
