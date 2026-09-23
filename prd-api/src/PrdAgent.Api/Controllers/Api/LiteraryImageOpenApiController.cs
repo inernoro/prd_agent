@@ -90,6 +90,12 @@ public class LiteraryImageOpenApiController(MongoDbContext db) : ControllerBase
             if (previous == null) throw;
             return Replay(previous, workspaceId, req);
         }
+        catch
+        {
+            // 写入报错可能只是确认丢失；已有任务或并发重试成功时不能误报失败。
+            await CompensateMissingRunAsync(run);
+            throw;
+        }
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = "queued", total = 1,
             hint = "每 5 秒调用 map_literary_get_image_run 查询；完成后用 map_literary_get_workspace 的 format=illustrated 读取图文稿。" }));
     }
@@ -103,6 +109,7 @@ public class LiteraryImageOpenApiController(MongoDbContext db) : ControllerBase
                 filter.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == run.ArticleMarkerIndex)),
             Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].runId", run.Id)
                 .Set("articleWorkflow.markers.$[target].status", "running")
+                .Set("articleWorkflow.markers.$[target].errorMessage", (string?)null)
                 .Set("articleWorkflow.updatedAt", DateTime.UtcNow),
             new UpdateOptions { ArrayFilters = new[]
             {
@@ -110,10 +117,34 @@ public class LiteraryImageOpenApiController(MongoDbContext db) : ControllerBase
                 new BsonDocumentArrayFilterDefinition<BsonDocument>(new BsonDocument
                 {
                     { "target.index", run.ArticleMarkerIndex!.Value },
-                    { "target.runId", new BsonDocument("$ne", run.Id) },
+                    { "$or", new BsonArray
+                        {
+                            new BsonDocument("target.runId", new BsonDocument("$ne", run.Id)),
+                            new BsonDocument("target.status", "error"),
+                        } },
                 }),
             } }, CancellationToken.None);
         return result.MatchedCount != 0;
+    }
+
+    internal async Task CompensateMissingRunAsync(ImageGenRun run)
+    {
+        if (await db.ImageGenRuns.Find(x => x.Id == run.Id).AnyAsync(CancellationToken.None)) return;
+        await db.ImageMasterWorkspaces.UpdateOneAsync(
+            x => x.Id == run.WorkspaceId && x.OwnerUserId == run.OwnerAdminId
+                && x.ArticleWorkflow!.Version == run.ArticleWorkflowVersion,
+            Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].status", "error")
+                .Set("articleWorkflow.markers.$[target].errorMessage", "配图任务未能保存，请重新生成；MCP 重试请保持相同 clientRequestId。")
+                .Set("articleWorkflow.updatedAt", DateTime.UtcNow),
+            new UpdateOptions { ArrayFilters = new[]
+            {
+                new BsonDocumentArrayFilterDefinition<BsonDocument>(new BsonDocument
+                {
+                    { "target.index", run.ArticleMarkerIndex!.Value },
+                    { "target.runId", run.Id },
+                    { "target.status", "running" },
+                }),
+            } }, CancellationToken.None);
     }
 
     private IActionResult Replay(ImageGenRun previous, string workspaceId, GenerateRequest req)
