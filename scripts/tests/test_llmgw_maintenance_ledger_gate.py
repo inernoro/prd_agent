@@ -12,6 +12,7 @@ from types import SimpleNamespace
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 MODULE_PATH = SCRIPTS_DIR / "llmgw-rollout-ledger.py"
 EXEC_DEP_PATH = SCRIPTS_DIR.parent / "exec_dep.sh"
+PROD_STAGE_WORKFLOW_PATH = SCRIPTS_DIR.parent / ".github" / "workflows" / "llmgw-prod-stage.yml"
 SPEC = importlib.util.spec_from_file_location("llmgw_rollout_ledger", MODULE_PATH)
 assert SPEC and SPEC.loader
 LEDGER = importlib.util.module_from_spec(SPEC)
@@ -343,6 +344,16 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                     keywords,
                     f"{function_name} 未传递维护发布 shadow skip 契约",
                 )
+
+    def test_maintenance_workflow_always_restores_requested_production_baseline(self) -> None:
+        source = PROD_STAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
+        restore_step = source.split("- name: Restore trusted production maintenance evidence", 1)[1].split(
+            "- name: Run production stage", 1
+        )[0]
+        self.assertIn("python3 scripts/llmgw-prod-evidence-restore.py", restore_step)
+        self.assertIn("--commit \"${{ github.event.inputs.maintenance_from_commit }}\"", restore_step)
+        self.assertNotIn('if [ ! -s "$ledger" ]', restore_step)
+        self.assertNotIn("Rollout ledger restored from the requested GitHub Actions artifact.", restore_step)
 
 
 if __name__ == "__main__":
