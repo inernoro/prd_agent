@@ -22,6 +22,24 @@ public class GeneratedImageReferenceCleanupContractTests
             controller.Split("_assetStorage.DeleteByShaAsync", StringSplitOptions.None).Length - 1);
     }
 
+    [Fact]
+    public void ReferenceImageWriters_MustShareShaLeaseWithPhysicalCleanup()
+    {
+        var configController = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentConfigController.cs"));
+        var dataTransferController = File.ReadAllText(LocateRepoFile(
+            "prd-api/src/PrdAgent.Api/Controllers/Api/DataTransferController.cs"));
+
+        Assert.Contains("SHA256.HashData(bytes)", configController);
+        Assert.True(
+            configController.Split("VideoAssetMutationLease.AcquireAsync", StringSplitOptions.None).Length - 1 >= 5,
+            "创建、替换、删除、旧上传和 Fork 都必须与物理清理共用 SHA 租约");
+        Assert.Contains("$\"generated-image:{assetSha256}\"", configController);
+        Assert.Contains("x.ImageSha256 == source.ImageSha256", configController);
+        Assert.Contains("VideoAssetMutationLease.AcquireAsync", dataTransferController);
+        Assert.Contains("r.ImageSha256 == source.ImageSha256", dataTransferController);
+    }
+
     private static string LocateRepoFile(string relativePath)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

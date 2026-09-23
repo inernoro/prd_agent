@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using SixLabors.ImageSharp;
 using System.Security.Claims;
@@ -273,10 +274,18 @@ public class LiteraryAgentConfigController : ControllerBase
 
         var mime = string.IsNullOrWhiteSpace(format.DefaultMimeType) ? "image/png" : format.DefaultMimeType;
 
-        // 保存到 COS（使用 VisualAgent 域名，与 Worker 读取保持一致）
+        var assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+
+        // 保存对象与登记引用必须持有同一把 SHA 租约，避免并发清理在两步之间删掉对象。
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("参考图片存储摘要校验失败");
 
         var now = DateTime.UtcNow;
         var config = new ReferenceImageConfig
@@ -409,10 +418,18 @@ public class LiteraryAgentConfigController : ControllerBase
 
         var mime = string.IsNullOrWhiteSpace(format.DefaultMimeType) ? "image/png" : format.DefaultMimeType;
 
-        // 保存到 COS（使用 VisualAgent 域名，与 Worker 读取保持一致）
+        var assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+
+        // 保存对象与替换引用必须持有同一把 SHA 租约。
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("参考图片存储摘要校验失败");
 
         config.ImageSha256 = stored.Sha256;
         config.ImageUrl = stored.Url;
@@ -442,6 +459,10 @@ public class LiteraryAgentConfigController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
         }
 
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{config.ImageSha256}",
+            ct);
         await _db.ReferenceImageConfigs.DeleteOneAsync(
             x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
             ct);
@@ -637,10 +658,18 @@ public class LiteraryAgentConfigController : ControllerBase
 
         var mime = string.IsNullOrWhiteSpace(format.DefaultMimeType) ? "image/png" : format.DefaultMimeType;
 
-        // 保存到 COS（使用 VisualAgent 域名，与 Worker 读取保持一致）
+        var assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+
+        // 保存对象与登记引用必须持有同一把 SHA 租约。
         var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("参考图片存储摘要校验失败");
 
         var now = DateTime.UtcNow;
 
@@ -843,6 +872,16 @@ public class LiteraryAgentConfigController : ControllerBase
         var source = await _db.ReferenceImageConfigs.Find(x => x.Id == id && x.AppKey == AppKey && x.IsPublic).FirstOrDefaultAsync(ct);
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在或未公开"));
+
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{source.ImageSha256}",
+            ct);
+        source = await _db.ReferenceImageConfigs
+            .Find(x => x.Id == id && x.AppKey == AppKey && x.IsPublic && x.ImageSha256 == source.ImageSha256)
+            .FirstOrDefaultAsync(ct);
+        if (source == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在或已变更"));
 
         // 获取原作者信息
         var sourceOwner = source.CreatedByAdminId != null

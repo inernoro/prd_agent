@@ -183,6 +183,30 @@ public class LiteraryMcpJourneyTests
         try
         {
             var assetStorage = new Mock<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
+            var concurrentReferenceSha = new string('d', 64);
+            Task<bool> cleanupTask;
+            await using (var writerLease = await VideoAssetMutationLease.AcquireAsync(
+                             db,
+                             $"generated-image:{concurrentReferenceSha}",
+                             CancellationToken.None))
+            {
+                var deletionService = new ImageMasterWorkspaceDeletionService(
+                    db,
+                    assetStorage.Object,
+                    NullLogger.Instance);
+                cleanupTask = deletionService.TryDeleteUnreferencedGeneratedImageAsync(
+                    concurrentReferenceSha,
+                    CancellationToken.None);
+                await Task.Delay(150);
+                Assert.False(cleanupTask.IsCompleted, cleanupTask.Exception?.ToString());
+                await db.ReferenceImageConfigs.InsertOneAsync(new ReferenceImageConfig
+                {
+                    AppKey = "literary-agent",
+                    CreatedByAdminId = "writer",
+                    ImageSha256 = concurrentReferenceSha,
+                });
+            }
+            Assert.False(await cleanupTask);
             await db.Users.InsertOneAsync(new User
             {
                 UserId = "writer",

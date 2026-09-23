@@ -543,6 +543,14 @@ public class DataTransferController : ControllerBase
             {
                 var source = await _db.ReferenceImageConfigs.Find(r => r.Id == item.SourceId).FirstOrDefaultAsync(ct)
                              ?? throw new InvalidOperationException($"Ref image config not found: {item.SourceId}");
+                await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+                    _db,
+                    $"generated-image:{source.ImageSha256}",
+                    ct);
+                source = await _db.ReferenceImageConfigs
+                    .Find(r => r.Id == item.SourceId && r.ImageSha256 == source.ImageSha256)
+                    .FirstOrDefaultAsync(ct)
+                    ?? throw new InvalidOperationException($"Ref image config changed during transfer: {item.SourceId}");
                 var senderUser = await _db.Users.Find(u => u.UserId == source.CreatedByAdminId).FirstOrDefaultAsync(ct);
                 var now = DateTime.UtcNow;
                 var forked = new ReferenceImageConfig
