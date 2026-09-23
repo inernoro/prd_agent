@@ -203,4 +203,9 @@ describe('网页微调执行器事实接线', () => {
     expect(source).toContain('<KnowledgeEntryPicker');
     expect(knowledgePickerSource).toContain('aria-pressed={selected}');
   });
+
+  it('开始执行后把首屏之外的进度区带进视野，而不是只留一个停止按钮', () => {
+    expect(source).toContain('ref={progressRef}');
+    expect(source).toMatch(/if \(!generating\) return;[\s\S]{0,200}progressRef\.current\?\.scrollIntoView/);
+  });
 });

@@ -953,6 +953,130 @@ public class DesignArtifactProviderCatalogTests
         Assert.Equal(0, calls);
     }
 
+    [Fact]
+    public async Task StartupRetriesWithFreshSessionWhenNodeWasVerifying()
+    {
+        // 2026-09-23 预览环境实测：上一个设计会话结束后 CDS 节点做能力自检，新会话被拒，
+        // 用户只看到「设计任务执行失败」。自检结束后换新会话就能起来。
+        var first = BuildSession() with { Id = "session-a" };
+        var second = BuildSession() with { Id = "session-b" };
+        var started = new List<string>();
+        var discarded = new List<string>();
+        var replaced = new List<string>();
+        var providerReads = 0;
+        var ready = await OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+            first,
+            (candidate, _) =>
+            {
+                started.Add(candidate.Id);
+                if (candidate.Id == "session-a")
+                    throw new InfraAgentSessionException(
+                        InfraAgentSessionErrorCodes.CdsRequestFailed,
+                        "OpenDesign capability verification is running on this CDS node",
+                        502);
+                return Task.FromResult(candidate);
+            },
+            _ => Task.FromResult<InfraAgentRuntimeProviderView?>(
+                BuildProvider(verificationPending: ++providerReads == 1)),
+            _ => Task.FromResult(second),
+            failed => { discarded.Add(failed.Id); return Task.CompletedTask; },
+            replacement => replaced.Add(replacement.Id),
+            DateTime.UtcNow.AddSeconds(5),
+            CancellationToken.None,
+            pollDelay: TimeSpan.Zero);
+
+        Assert.Same(second, ready);
+        Assert.Equal(["session-a", "session-b"], started);
+        Assert.Equal(["session-a"], discarded);
+        Assert.Equal(["session-b"], replaced);
+        Assert.Equal(2, providerReads);
+    }
+
+    [Fact]
+    public async Task StartupDoesNotRetryWhenRuntimeIsReallyUnavailable()
+    {
+        var creates = 0;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+                BuildSession(),
+                (_, _) => throw new InfraAgentSessionException(
+                    InfraAgentSessionErrorCodes.CdsRequestFailed, "docker unavailable", 502),
+                _ => Task.FromResult<InfraAgentRuntimeProviderView?>(BuildProvider(healthy: false)),
+                _ => { creates++; return Task.FromResult(BuildSession()); },
+                _ => Task.CompletedTask,
+                _ => { },
+                DateTime.UtcNow.AddSeconds(5),
+                CancellationToken.None,
+                pollDelay: TimeSpan.Zero));
+        Assert.Equal(0, creates);
+        Assert.Contains("远端会话没能进入可用状态", error.Message);
+        Assert.Contains("docker unavailable", error.Message);
+    }
+
+    [Fact]
+    public async Task StartupRetryIsBoundedAndExplainsTheVerifyingNode()
+    {
+        var starts = 0;
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+                BuildSession(),
+                (_, _) =>
+                {
+                    starts++;
+                    throw new InfraAgentSessionException(
+                        InfraAgentSessionErrorCodes.CdsRequestFailed, "verification is running", 502);
+                },
+                _ => Task.FromResult<InfraAgentRuntimeProviderView?>(BuildProvider()),
+                _ => Task.FromResult(BuildSession()),
+                _ => Task.CompletedTask,
+                _ => { },
+                DateTime.UtcNow.AddSeconds(5),
+                CancellationToken.None,
+                maxAttempts: 3,
+                pollDelay: TimeSpan.Zero));
+        Assert.Equal(3, starts);
+        Assert.Contains("正在做能力自检", error.Message);
+    }
+
+    [Fact]
+    public async Task StartupRetryPassesThroughNonCdsFailures()
+    {
+        var reads = 0;
+        await Assert.ThrowsAsync<DesignArtifactExecutionCancelledException>(() =>
+            OpenDesignRemoteArtifactExecutor.StartWithTransientRuntimeRetryAsync(
+                BuildSession(),
+                (_, _) => throw new DesignArtifactExecutionCancelledException("stopped"),
+                _ => { reads++; return Task.FromResult<InfraAgentRuntimeProviderView?>(BuildProvider()); },
+                _ => Task.FromResult(BuildSession()),
+                _ => Task.CompletedTask,
+                _ => { },
+                DateTime.UtcNow.AddSeconds(5),
+                CancellationToken.None,
+                pollDelay: TimeSpan.Zero));
+        Assert.Equal(0, reads);
+    }
+
+    private static InfraAgentRuntimeProviderView BuildProvider(
+        bool verificationPending = false,
+        bool healthy = true) => new(
+        InfraAgentRuntimes.OpenDesign,
+        "OpenDesign",
+        "cds-managed",
+        "cds",
+        "ready",
+        true,
+        [InfraAgentWorkloadKinds.DesignArtifact],
+        [InfraAgentIsolationModes.SessionContainer],
+        InfraAgentIsolationModes.SessionContainer,
+        "cds-design-artifact-events-v1",
+        Configured: true,
+        Healthy: healthy,
+        Selectable: healthy,
+        IsolationOwnedBy: "cds",
+        ResourcePolicyEnforcedPerSession: true,
+        Reason: null,
+        VerificationPending: verificationPending);
+
     private static InfraConnectionPublicView BuildConnection(
         string id = "connection-1",
         string partnerId = "cds-1",

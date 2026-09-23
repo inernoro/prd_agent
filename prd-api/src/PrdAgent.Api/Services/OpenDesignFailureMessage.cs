@@ -49,6 +49,11 @@ internal sealed record OpenDesignFailureStage
         "远端会话没能进入可用状态",
         "按上面这条原因处理后重新发起");
 
+    /// <summary>共享 CDS 节点在上一个会话结束后会做一次能力自检，自检期间新会话会被拒绝。</summary>
+    internal static readonly OpenDesignFailureStage RuntimeVerifying = new(
+        "CDS 执行节点刚结束上一个设计任务、正在做能力自检，已自动换新会话重试仍未就绪",
+        "等一两分钟后按原要求重试；反复出现说明节点自检卡住，需要管理员查看 CDS 节点");
+
     internal static readonly OpenDesignFailureStage StartupDeadline = new(
         "远端会话在超时前一直没有就绪",
         "重新发起一次；持续超时说明 CDS 侧当前起不出容器，需要管理员检查远程执行器");

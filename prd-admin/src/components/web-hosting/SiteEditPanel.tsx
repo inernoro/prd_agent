@@ -185,6 +185,16 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
   const abortRef = useRef<AbortController | null>(null);
   const composeRef = useRef<HTMLDivElement | null>(null);
   const historyRef = useRef<HTMLDivElement | null>(null);
+  const progressRef = useRef<HTMLElement | null>(null);
+  // 点了「生成修改草稿」之后，进度区在表单下方、首屏之外；不带过去，用户看到的只有一个「停止生成」按钮，
+  // 以为什么都没发生。开始执行时把进度区滚进视野。
+  useEffect(() => {
+    if (!generating) return;
+    const frame = requestAnimationFrame(() => {
+      progressRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [generating]);
   const rollbackConfirmRef = useRef<HTMLButtonElement | null>(null);
   const rollbackReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const rejectReasonRef = useRef<HTMLTextAreaElement | null>(null);
@@ -1297,6 +1307,7 @@ export default function SiteEditPanel({ site, onPublished, focusSection = 'compo
 
         {(generating || previewHtml) && (
           <section
+            ref={progressRef}
             aria-label="AI 修改进度"
             className="border-b border-token-subtle p-3 sm:p-4"
           >
