@@ -36,6 +36,25 @@ public class ImageGenAdapterConfigTests
     }
 
     [Fact]
+    public void GptImage25Sunburst_UsesItsExactOfficialContractBeforeTheBroadImage2Rule()
+    {
+        var config = ImageGenModelAdapterRegistry.TryMatch("gpt-image-2.5-sunburst");
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo("gpt-image-2.5-sunburst");
+
+        Assert.NotNull(config);
+        Assert.NotNull(info);
+        Assert.Equal("gpt-image-2.5-sunburst", config.ModelIdPattern);
+        Assert.Equal("GPT Image 2.5 Sunburst", config.DisplayName);
+        Assert.Equal("https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst", config.OfficialDocUrl);
+        Assert.Equal(new[] { "1024x1024", "1024x1536", "1536x1024" },
+            info.SizesByResolution["1k"].Select(x => x.Size));
+        Assert.Equal(SizeParamFormats.WxH, config.SizeParamFormat);
+        Assert.True(config.SupportsImageToImage);
+        Assert.True(config.SupportsInpainting);
+        Assert.False(config.SupportsResponseFormat);
+    }
+
+    [Fact]
     public void ChatGptImageLatest_UsesTheSameConcreteImageSizeContract()
     {
         var info = ImageGenModelAdapterRegistry.GetAdapterInfo("chatgpt-image-latest");
