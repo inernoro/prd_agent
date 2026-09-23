@@ -3,19 +3,60 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Mcp;
 using PrdAgent.Api.Services.Mcp;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Services;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.Services;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Mcp;
 
 public class LiteraryMcpJourneyTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SupersededFailureCannotChangeCurrentMarker(bool hasPreviousImage)
+    {
+        var connection = Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION") ?? "mongodb://127.0.0.1:27017";
+        var name = $"literary_mcp_failure_{Guid.NewGuid():N}";
+        var db = new MongoDbContext(connection, name);
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var worker = new ImageGenRunWorker(db, services.GetRequiredService<IServiceScopeFactory>(),
+            new InMemoryRunEventStore(), NullLogger<ImageGenRunWorker>.Instance,
+            new LLMRequestContextAccessor(), new ConfigurationBuilder().Build());
+        try
+        {
+            var workspace = new ImageMasterWorkspace
+            {
+                OwnerUserId = "writer",
+                ArticleWorkflow = new() { Version = 1, Markers = new() { new() { Status = "running", RunId = "new-run", AssetId = hasPreviousImage ? "prior-asset" : null } } },
+            };
+            await db.ImageMasterWorkspaces.InsertOneAsync(workspace);
+            var run = new ImageGenRun { Id = "old-run", WorkspaceId = workspace.Id, ArticleMarkerIndex = 0, ArticleWorkflowVersion = 1 };
+            await worker.TryPatchArticleMarkerAsync(run, "error", "旧任务失败", null, null, CancellationToken.None);
+            var marker = (await db.ImageMasterWorkspaces.Find(x => x.Id == workspace.Id).SingleAsync()).ArticleWorkflow!.Markers[0];
+            Assert.Equal("running", marker.Status);
+            Assert.Equal("new-run", marker.RunId);
+            Assert.Null(marker.ErrorMessage);
+            run.Id = "new-run";
+            await worker.TryPatchArticleMarkerAsync(run, "error", "当前任务失败", null, null, CancellationToken.None);
+            marker = (await db.ImageMasterWorkspaces.Find(x => x.Id == workspace.Id).SingleAsync()).ArticleWorkflow!.Markers[0];
+            Assert.Equal(hasPreviousImage ? "done" : "error", marker.Status);
+            Assert.Equal(hasPreviousImage ? null : "当前任务失败", marker.ErrorMessage);
+        }
+        finally { await new MongoClient(connection).DropDatabaseAsync(name); }
+    }
+
     [Fact]
     public async Task CreateGenerateReplayReadAndMoveAreOwnedAndVersioned()
     {

@@ -1786,7 +1786,7 @@ public class ImageGenRunWorker : BackgroundService
     ///   - marker 显示字段（Status/Url/AssetId/ImageRunAt）：尽力乐观锁 RMW，门控同一时间戳；
     ///     done 仅当 run.CreatedAt 更新才覆盖，error 在已有成功图时不写（兼容 ImageRunAt 出现前的存量成功 marker）。
     /// </summary>
-    private async Task TryPatchArticleMarkerAsync(
+    internal async Task TryPatchArticleMarkerAsync(
         ImageGenRun run,
         string status,
         string? errorMessage,
@@ -1889,6 +1889,10 @@ public class ImageGenRunWorker : BackgroundService
             return;
         }
 
+        // 版本化 MCP 重生成会替换 RunId；旧任务失败不能覆盖当前任务的显示状态。
+        var failureFilter = run.ArticleWorkflowVersion.HasValue
+            ? F.And(workspaceFilter, F.Eq($"{mPath}.runId", run.Id))
+            : workspaceFilter;
         // 失败分支
         var hasSuccessImage = authoritativeSuccessAt.HasValue
             || marker.ImageRunAt.HasValue
@@ -1900,7 +1904,7 @@ public class ImageGenRunWorker : BackgroundService
             // 失败但已有成功图：把因重生成而被置为 running 的 marker 恢复为 done（保留旧图），不写错误、不动图片字段，
             // 否则 marker 会卡在 running（Bugbot：regen fail leaves marker running）。
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                workspaceFilter,
+                failureFilter,
                 U.Combine(
                     U.Set($"{mPath}.status", "done"),
                     U.Set($"{mPath}.errorMessage", (string?)null),
@@ -1921,7 +1925,7 @@ public class ImageGenRunWorker : BackgroundService
         };
         if (!string.IsNullOrWhiteSpace(errorMessage)) errUpdates.Add(U.Set($"{mPath}.errorMessage", errorMessage));
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
-            F.And(workspaceFilter, F.Exists(stampPath, false)),
+            F.And(failureFilter, F.Exists(stampPath, false)),
             U.Combine(errUpdates),
             cancellationToken: ct);
     }
