@@ -13,6 +13,7 @@ public sealed class OpenAIImageResponseFormatTests
     [InlineData("gpt-image-1.5")]
     [InlineData("gpt-image-2")]
     [InlineData("gpt-image-2-2026-04-21")]
+    [InlineData("gpt-image-2.5-sunburst")]
     [InlineData("gpt-image-2-all")]
     [InlineData("chatgpt-image-latest")]
     public void GptImage_GenerationAndEdit_OmitUnsupportedResponseFormat(string model)
