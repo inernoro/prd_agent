@@ -149,6 +149,28 @@ public class AgentApiKey
 
     /// <summary>每分钟工具调用次数上限；null=系统默认 60。</summary>
     public int? McpRateLimitPerMin { get; set; }
+
+    /// <summary>
+    /// 文学配图的模型选择方式。存量文档没有该字段时反序列化为 0，必须等价于跟随用户面板，
+    /// 不能静默钉到某个历史默认模型。
+    /// </summary>
+    public McpLiteraryImageModelMode McpLiteraryImageModelMode { get; set; } = McpLiteraryImageModelMode.FollowUserPanel;
+
+    /// <summary>
+    /// 固定模式使用的逻辑模型 PublicId。只在 <see cref="McpLiteraryImageModelMode.Fixed"/> 下生效；
+    /// 不保存物理模型名，避免上游迁移后密钥配置失效。
+    /// </summary>
+    public string? McpLiteraryImageModelPublicId { get; set; }
+}
+
+/// <summary>MCP 文学配图按密钥选择模型的方式。</summary>
+public enum McpLiteraryImageModelMode
+{
+    /// <summary>读取密钥绑定用户的文学配图偏好；用户未选择时走当时的动态默认。</summary>
+    FollowUserPanel = 0,
+
+    /// <summary>始终使用密钥保存的逻辑模型 PublicId；不可用时明确失败，禁止回退。</summary>
+    Fixed = 1,
 }
 
 /// <summary>

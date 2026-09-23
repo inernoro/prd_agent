@@ -66,7 +66,7 @@ public class LiteraryMcpJourneyTests
         try
         {
             var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
-            var images = WithUser(new LiteraryImageOpenApiController(db), "writer");
+            var images = WithUser(new LiteraryImageOpenApiController(db, new FixedModelSelection()), "writer");
             Assert.IsType<BadRequestObjectResult>(await images.Move("missing", new() { FolderName = new string('夹', 81) }));
             Assert.IsType<BadRequestObjectResult>(await images.Generate("missing", new()
             {
@@ -134,6 +134,7 @@ public class LiteraryMcpJourneyTests
             Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, run.AppCallerCode);
             Assert.Equal(1, run.ArticleWorkflowVersion);
             Assert.Equal(1, run.Total);
+            Assert.Equal("gpt-image-2", run.LogicalModelPublicId);
             // 并发重试读不到 run 的极短窗口，也不能覆盖同一 run 的终态显示。
             await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
                 Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.1.status", "done"));
@@ -142,7 +143,7 @@ public class LiteraryMcpJourneyTests
             Assert.Equal("done", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[1].Status);
             Assert.IsType<ConflictObjectResult>(await images.Generate(id, new() { MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = "image-1" }, CancellationToken.None));
             Assert.IsType<ConflictObjectResult>(await images.Generate(id, new() { MarkerIndex = 0, WorkflowVersion = 9, ClientRequestId = "image-stale" }, CancellationToken.None));
-            var other = WithUser(new LiteraryImageOpenApiController(db), "other");
+            var other = WithUser(new LiteraryImageOpenApiController(db, new FixedModelSelection()), "other");
             Assert.IsType<NotFoundObjectResult>(await other.Generate(id, request, CancellationToken.None));
             Assert.IsType<NotFoundObjectResult>(await other.GetRun(runId, CancellationToken.None));
             Assert.IsType<NotFoundObjectResult>(await other.Move(id, new() { FolderName = "别人的文件夹" }));
@@ -200,4 +201,14 @@ public class LiteraryMcpJourneyTests
 
     private static JsonElement Data(IActionResult result) => JsonSerializer.SerializeToElement(
         Assert.IsType<ApiResponse<object>>(Assert.IsType<OkObjectResult>(result).Value).Data);
+
+    private sealed class FixedModelSelection : ILiteraryMcpModelSelectionService
+    {
+        public Task<LiteraryMcpModelSelection> ResolveForRunAsync(
+            string ownerUserId, string agentApiKeyId, string appCallerCode, CancellationToken ct)
+            => Task.FromResult(LiteraryMcpModelSelection.Selected("gpt-image-2"));
+
+        public Task<LiteraryMcpModelSelection> ValidateFixedModelAsync(string logicalModelPublicId, CancellationToken ct)
+            => Task.FromResult(LiteraryMcpModelSelection.Selected(logicalModelPublicId));
+    }
 }

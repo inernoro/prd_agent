@@ -567,8 +567,8 @@ export function ClientRow({
           <button
             type="button"
             onClick={onEditQuota}
-            aria-label="调整这台客户端的每日上限"
-            title="调整这台客户端的每日上限"
+            aria-label="调整这台客户端的用量与模型设置"
+            title="调整这台客户端的用量与模型设置"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] sm:h-8 sm:w-auto sm:gap-1.5 sm:px-2.5"
             style={{
               background: 'var(--bg-sunken)',
@@ -577,7 +577,7 @@ export function ClientRow({
             }}
           >
             <Sliders size={13} aria-hidden />
-            <span className="hidden text-[12px] font-medium sm:inline">调整上限</span>
+            <span className="hidden text-[12px] font-medium sm:inline">客户端设置</span>
           </button>
 
           {/* 钥匙泄露、或者这台客户端不用了，得能在**这里**当场断掉。

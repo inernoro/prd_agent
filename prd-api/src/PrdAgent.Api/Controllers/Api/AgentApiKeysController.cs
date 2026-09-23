@@ -4,6 +4,7 @@ using MongoDB.Driver;
 using PrdAgent.Api.Controllers; // OpenApiController.ScopeCall（位于父命名空间，显式 using 让跨命名空间引用更清晰）
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Mcp;
+using PrdAgent.Api.Services.Mcp;
 using PrdAgent.Core.Helpers;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -50,12 +51,18 @@ public class AgentApiKeysController : ControllerBase
     private readonly IAgentApiKeyService _keyService;
     private readonly MongoDbContext _db;
     private readonly IAdminPermissionService _permissions;
+    private readonly ILiteraryMcpModelSelectionService _literaryModels;
 
-    public AgentApiKeysController(IAgentApiKeyService keyService, MongoDbContext db, IAdminPermissionService permissions)
+    public AgentApiKeysController(
+        IAgentApiKeyService keyService,
+        MongoDbContext db,
+        IAdminPermissionService permissions,
+        ILiteraryMcpModelSelectionService literaryModels)
     {
         _keyService = keyService;
         _db = db;
         _permissions = permissions;
+        _literaryModels = literaryModels;
     }
 
     /// <summary>
@@ -249,6 +256,12 @@ public class AgentApiKeysController : ControllerBase
         public int? McpDailyWriteQuota { get; set; }
         public int? McpRateLimitPerMin { get; set; }
 
+        /// <summary>follow-user-panel 或 fixed；null 表示本次不改。</summary>
+        public string? McpLiteraryImageModelMode { get; set; }
+
+        /// <summary>固定模式使用的逻辑模型 PublicId。</summary>
+        public string? McpLiteraryImageModelPublicId { get; set; }
+
         /// <summary>
         /// 显式切换能力范围模式。null = 不显式切，但**存了 scopes 就自动钉成 manual**
         /// （存清单那一刻就是「动过高级设置」那一刻）。
@@ -352,10 +365,45 @@ public class AgentApiKeysController : ControllerBase
         if (req.McpRateLimitPerMin is < 1 or > 600)
             return BadRequest(ApiResponse<object>.Fail("INVALID_QUOTA", "每分钟调用上限需在 1-600 之间"));
 
+        AgentApiKeyLiteraryImageModelPatch? literaryImageModelPatch = null;
+        if (req.McpLiteraryImageModelMode != null)
+        {
+            McpLiteraryImageModelMode mode;
+            if (string.Equals(req.McpLiteraryImageModelMode, "follow-user-panel", StringComparison.OrdinalIgnoreCase))
+            {
+                mode = McpLiteraryImageModelMode.FollowUserPanel;
+            }
+            else if (string.Equals(req.McpLiteraryImageModelMode, "fixed", StringComparison.OrdinalIgnoreCase))
+            {
+                mode = McpLiteraryImageModelMode.Fixed;
+            }
+            else
+            {
+                return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_MODE",
+                    "文学配图模型模式只认 follow-user-panel 或 fixed。"));
+            }
+
+            var publicId = req.McpLiteraryImageModelPublicId?.Trim();
+            if (mode == McpLiteraryImageModelMode.Fixed)
+            {
+                var validation = await _literaryModels.ValidateFixedModelAsync(publicId ?? string.Empty, ct);
+                if (!validation.Success)
+                    return Conflict(ApiResponse<object>.Fail(validation.ErrorCode ?? "MODEL_UNAVAILABLE",
+                        validation.ErrorMessage ?? "固定模型当前不可用。"));
+            }
+            literaryImageModelPatch = new AgentApiKeyLiteraryImageModelPatch(mode, publicId);
+        }
+        else if (req.McpLiteraryImageModelPublicId != null)
+        {
+            return BadRequest(ApiResponse<object>.Fail("INVALID_MODEL_MODE",
+                "更新固定模型时必须同时传 mcpLiteraryImageModelMode=fixed。"));
+        }
+
         await _keyService.UpdateMetadataAsync(
             id, req.Name, req.Description, req.Scopes, req.IsActive, ct,
             new AgentApiKeyQuotaPatch(req.McpDailyImageQuota, req.McpDailyWriteQuota, req.McpRateLimitPerMin),
-            explicitScopeMode);
+            explicitScopeMode,
+            literaryImageModelPatch);
 
         var reloaded = await _keyService.GetByIdAsync(id, ct);
         return Ok(ApiResponse<object>.Ok(new { item = reloaded == null ? null : ToDto(reloaded, ownedPermissions) }));
@@ -444,6 +492,10 @@ public class AgentApiKeysController : ControllerBase
             // 这件事已经在两处投影上各漏过一次。
             scopes = McpCapabilityCatalog.EffectiveScopesForKey(k, ownedPermissions, now),
             scopeMode = k.ScopeMode == AgentApiKeyScopeMode.Auto ? "auto" : "manual",
+            mcpLiteraryImageModelMode = k.McpLiteraryImageModelMode == McpLiteraryImageModelMode.Fixed
+                ? "fixed"
+                : "follow-user-panel",
+            mcpLiteraryImageModelPublicId = k.McpLiteraryImageModelPublicId,
             k.IsActive,
             k.CreatedAt,
             expiresAt = k.ExpiresAt,

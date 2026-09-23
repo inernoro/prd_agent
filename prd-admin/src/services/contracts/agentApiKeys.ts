@@ -30,6 +30,9 @@ export interface AgentApiKeyDto {
   scopes: string[];
   /** auto = 能力跟着主人的权限走，不存清单；manual = 按存的这份清单钉死 */
   scopeMode: 'auto' | 'manual';
+  /** 跟随用户面板，或由这把密钥固定一个文学配图逻辑模型 */
+  mcpLiteraryImageModelMode: 'follow-user-panel' | 'fixed';
+  mcpLiteraryImageModelPublicId?: string | null;
   isActive: boolean;
   createdAt: string;
   expiresAt?: string | null;
@@ -81,6 +84,8 @@ export type UpdateAgentApiKeyContract = (input: {
   mcpDailyWriteQuota?: number;
   /** 接入台配额上限（每分钟调用次数，1-600） */
   mcpRateLimitPerMin?: number;
+  mcpLiteraryImageModelMode?: 'follow-user-panel' | 'fixed';
+  mcpLiteraryImageModelPublicId?: string;
 }) => Promise<ApiResponse<{ item: AgentApiKeyDto | null }>>;
 
 export type RenewAgentApiKeyContract = (input: {
