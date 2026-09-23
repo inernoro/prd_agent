@@ -20,6 +20,15 @@ public static class ImageGenModelConfigs
     /// </summary>
     public static readonly List<ImageGenModelAdapterConfig> Configs = new()
     {
+        // ===== GPT Image 2.5 Sunburst =====
+        // 必须排在 gpt-image-2* 之前。Sunburst 是独立的官方模型标识，不应只靠
+        // “长得像 GPT Image 2”落入宽泛规则；这样目录、能力说明和请求契约才能逐项核对。
+        BuildOpenAiGptImageConfig(
+            "gpt-image-2.5-sunburst",
+            "GPT Image 2.5 Sunburst",
+            "2026-09-23",
+            "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst"),
+
         // ===== GPT Image 2（自适应模型：尺寸由 prompt 描述决定）=====
         // 同一能力可由 OpenAI 兼容图片端点或 OpenRouter chat/completions 承载。
         // 两种协议都不发送 size，尺寸/比例统一写进 prompt 最前面。
