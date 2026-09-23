@@ -1,4 +1,4 @@
-| ops | prd-api | 生图目录探针新增重复展示名与真实型号名漂移告警 |
-| test | prd-api | 覆盖迁移别名重复进入业务选择器的回归场景 |
+| ops | prd-api | 生图目录探针新增重复展示名与重复物理线路告警 |
+| test | prd-api | 覆盖迁移别名重复指向同一上游线路的回归场景 |
 | fix | prd-api | 补齐 Gemini 3.1 Flash Image 正式型号及存量 preview 型号的官方尺寸能力契约 |
 | test | prd-api | 验证 Gemini 3.1 Flash Image 稳定与 preview 型号匹配同一能力目录 |

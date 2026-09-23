@@ -1,4 +1,5 @@
 using PrdAgent.Infrastructure.LLM;
+using PrdAgent.Infrastructure.LLM.Adapters;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -21,6 +22,8 @@ public class ImageGenModelAdapterTests
     [InlineData("nano-banana", "nano-banana*", "Gemini Nano-Banana")]
     [InlineData("gemini-3.1-flash-image", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
     [InlineData("gemini-3.1-flash-image-preview", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
+    [InlineData("google/gemini-3.1-flash-image", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
+    [InlineData("google/gemini-3.1-flash-image-preview", "gemini-3.1-flash-image*", "Gemini 3.1 Flash Image")]
     [InlineData("jimeng-ai-4.0", "jimeng*", "即梦 AI")]
     [InlineData("qwen-image-gen", "qwen-image*", "通义万相 qwen-image")]
     [InlineData("grok-2-image", "grok-2-image*", "Grok-2 Image")]
@@ -46,6 +49,19 @@ public class ImageGenModelAdapterTests
         Assert.Contains(config.SizesByResolution["2k"], x => x.Size == "2048x2048");
         Assert.Contains(config.SizesByResolution["4k"], x => x.Size == "4096x4096");
         Assert.True(config.SupportsImageToImage);
+    }
+
+    [Theory]
+    [InlineData("512x512", "0.5K")]
+    [InlineData("256x1024", "0.5K")]
+    [InlineData("512x2048", "1K")]
+    [InlineData("1024x4096", "2K")]
+    [InlineData("2048x8192", "4K")]
+    public void Gemini31FlashImage_PreservesOfficialResolutionTier(string size, string expectedTier)
+    {
+        var (_, tier) = GooglePlatformAdapter.ParseSizeToGoogleParams(size);
+
+        Assert.Equal(expectedTier, tier);
     }
 
     [Theory]

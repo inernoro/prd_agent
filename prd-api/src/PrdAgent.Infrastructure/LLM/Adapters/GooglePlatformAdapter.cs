@@ -105,7 +105,7 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
     /// <param name="modelName">模型名称（部分代理需要 body 中也包含 model 字段）</param>
     /// <param name="prompt">文本提示</param>
     /// <param name="aspectRatio">宽高比（如 16:9、1:1）</param>
-    /// <param name="imageSize">图片尺寸级别（1K、2K、4K）</param>
+    /// <param name="imageSize">图片尺寸级别（0.5K、1K、2K、4K）</param>
     /// <param name="images">参考图列表（data URI 或 raw base64），null/空 表示文生图</param>
     /// <param name="maskBase64">可选局部重绘蒙版（data URI 或 raw base64），白色=重绘，黑色=保持</param>
     public static JsonObject BuildGoogleRequestBody(
@@ -303,14 +303,17 @@ public class GooglePlatformAdapter : IImageGenPlatformAdapter
     }
 
     /// <summary>
-    /// 根据像素尺寸映射到 Google 的 imageSize 级别
+    /// 根据总像素数映射到 Google 的 imageSize 级别。
+    /// 不能按最长边判断：同一档位的 1:4、1:8 尺寸最长边会跨到下一档。
+    /// 阈值取相邻标准档位像素数的几何中点，既保留任意 WxH 输入，也能精确覆盖官方尺寸表。
     /// </summary>
     private static string MapToImageSizeLabel(int w, int h)
     {
-        var maxDim = Math.Max(w, h);
-        if (maxDim >= 3840) return "4K";
-        if (maxDim >= 1920) return "2K";
-        return "1K";
+        var pixels = (long)w * h;
+        if (pixels < 512L * 1024) return "0.5K";
+        if (pixels < 2L * 1024 * 1024) return "1K";
+        if (pixels < 8L * 1024 * 1024) return "2K";
+        return "4K";
     }
 
     // ──────────────────────────────────────────────
