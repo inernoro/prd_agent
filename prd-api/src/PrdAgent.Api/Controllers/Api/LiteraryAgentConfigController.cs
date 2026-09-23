@@ -281,7 +281,7 @@ public class LiteraryAgentConfigController : ControllerBase
             ct);
 
         // 保存对象与登记引用必须持有同一把 SHA 租约，避免并发清理在两步之间删掉对象。
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
         if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
@@ -302,7 +302,7 @@ public class LiteraryAgentConfigController : ControllerBase
             UpdatedAt = now
         };
 
-        await _db.ReferenceImageConfigs.InsertOneAsync(config, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.InsertOneAsync(config, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -425,7 +425,7 @@ public class LiteraryAgentConfigController : ControllerBase
             ct);
 
         // 保存对象与替换引用必须持有同一把 SHA 租约。
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
         if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
@@ -438,7 +438,7 @@ public class LiteraryAgentConfigController : ControllerBase
         await _db.ReferenceImageConfigs.ReplaceOneAsync(
             x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
             config,
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -465,7 +465,7 @@ public class LiteraryAgentConfigController : ControllerBase
             ct);
         await _db.ReferenceImageConfigs.DeleteOneAsync(
             x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
-            ct);
+            CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -665,7 +665,7 @@ public class LiteraryAgentConfigController : ControllerBase
             ct);
 
         // 保存对象与登记引用必须持有同一把 SHA 租约。
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
         if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
@@ -677,7 +677,7 @@ public class LiteraryAgentConfigController : ControllerBase
         await _db.ReferenceImageConfigs.UpdateManyAsync(
             x => x.AppKey == AppKey && x.CreatedByAdminId == adminId && x.IsActive,
             Builders<ReferenceImageConfig>.Update.Set(x => x.IsActive, false),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         // 创建新配置并激活
         var newConfig = new ReferenceImageConfig
@@ -694,7 +694,7 @@ public class LiteraryAgentConfigController : ControllerBase
             UpdatedAt = now
         };
 
-        await _db.ReferenceImageConfigs.InsertOneAsync(newConfig, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.InsertOneAsync(newConfig, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -879,7 +879,7 @@ public class LiteraryAgentConfigController : ControllerBase
             ct);
         source = await _db.ReferenceImageConfigs
             .Find(x => x.Id == id && x.AppKey == AppKey && x.IsPublic && x.ImageSha256 == source.ImageSha256)
-            .FirstOrDefaultAsync(ct);
+            .FirstOrDefaultAsync(CancellationToken.None);
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在或已变更"));
 
@@ -915,13 +915,13 @@ public class LiteraryAgentConfigController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        await _db.ReferenceImageConfigs.InsertOneAsync(forked, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.InsertOneAsync(forked, cancellationToken: CancellationToken.None);
 
         // 更新原配置的 ForkCount
         await _db.ReferenceImageConfigs.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReferenceImageConfig>.Update.Inc(x => x.ForkCount, 1),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         // 记录下载日志
         var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
@@ -941,7 +941,7 @@ public class LiteraryAgentConfigController : ControllerBase
             AppKey = AppKey,
             CreatedAt = DateTime.UtcNow
         };
-        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: ct);
+        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { config = forked }));
     }

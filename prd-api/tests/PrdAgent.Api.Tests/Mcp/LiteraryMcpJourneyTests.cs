@@ -239,6 +239,24 @@ public class LiteraryMcpJourneyTests
                 Url = "https://example.test/private-cover.png",
             });
 
+            await db.ImageMasterWorkspaces.UpdateOneAsync(
+                x => x.Id == workspaceId,
+                Builders<ImageMasterWorkspace>.Update.Set(x => x.SuppressAutoSubmit, false));
+            var cloneAudit = new McpCallLog
+            {
+                OwnerUserId = "writer",
+                ToolName = "map_literary_create_workspace",
+                Status = "success",
+                ArtifactKind = "workspace",
+                ArtifactId = workspaceId,
+            };
+            await db.McpCallLogs.InsertOneAsync(cloneAudit);
+            var sourceBeforeClone = await db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId).SingleAsync();
+            Assert.True(await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+                db,
+                sourceBeforeClone,
+                CancellationToken.None));
+
             var cloneResult = await new WorkspaceCloneService(
                 db,
                 NullLogger<WorkspaceCloneService>.Instance).CloneAsync(
@@ -250,6 +268,7 @@ public class LiteraryMcpJourneyTests
                 .SingleAsync();
             Assert.True(clonedWorkspace.SuppressAutoSubmit);
             Assert.False(clonedWorkspace.IsPublic);
+            await db.McpCallLogs.DeleteOneAsync(x => x.Id == cloneAudit.Id);
 
             var normalWorkspace = new ImageMasterWorkspace
             {

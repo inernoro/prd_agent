@@ -1817,6 +1817,7 @@ public class GatewayDataDomainGuardTests
         var visualController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
         var literaryController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentWorkspaceController.cs");
         var submissionsController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/SubmissionsController.cs");
+        var dataTransferController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/DataTransferController.cs");
         var helperStart = deletionService.IndexOf("public async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
         var imageAssetCheck = deletionService.IndexOf("_db.ImageAssets.CountDocumentsAsync(imageAssetFilter", helperStart, StringComparison.Ordinal);
         var uploadArtifactCheck = deletionService.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
@@ -1854,6 +1855,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("protectedWorkspaces++;", submissionsController);
         Assert.Contains("ResolveProtectedWorkspaceIdsAsync", submissionsController);
         Assert.Contains("protectedAssets++;", submissionsController);
+        var transferPolicy = dataTransferController.IndexOf("LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync", StringComparison.Ordinal);
+        var transferClone = dataTransferController.IndexOf("_cloneService.CloneAsync", transferPolicy, StringComparison.Ordinal);
+        Assert.True(transferPolicy >= 0 && transferClone > transferPolicy, "账户迁移必须先回填存量私有标记再克隆工作区");
     }
 
     [Fact]
