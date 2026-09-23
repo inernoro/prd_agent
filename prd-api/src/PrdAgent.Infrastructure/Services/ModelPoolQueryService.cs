@@ -80,6 +80,8 @@ public class ModelPoolQueryService : IModelPoolQueryService
             {
                 ModelId = model.ModelId,
                 PlatformId = model.PlatformId,
+                ActualModelId = model.ActualModelId,
+                ActualPlatformId = model.ActualPlatformId,
                 Priority = model.Priority,
                 HealthStatus = model.HealthStatus,
             }).ToList(),

@@ -55,6 +55,10 @@ public class ModelPoolModelItem
 {
     public string ModelId { get; set; } = string.Empty;
     public string PlatformId { get; set; } = string.Empty;
+    /// <summary>目录生成时固化的实际供应商型号；只用于诊断同一物理线路被多个逻辑模型重复暴露。</summary>
+    public string? ActualModelId { get; set; }
+    /// <summary>实际供应商平台快照；与 <see cref="ActualModelId"/> 组成物理线路身份。</summary>
+    public string? ActualPlatformId { get; set; }
     public int Priority { get; set; }
     public string HealthStatus { get; set; } = "Healthy";
 }
