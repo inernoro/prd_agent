@@ -55,7 +55,7 @@ import {
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
-import { buildLiteraryModelOptions, type LiteraryModelOption } from './literaryModelOptions';
+import { buildLiteraryModelOptions, selectLiteraryModelOption, type LiteraryModelOption } from './literaryModelOptions';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
@@ -584,10 +584,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
   }, []);
 
-  // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
+  // 有效选中模型（用户偏好优先，其次是网关显式默认；无可选池时回退到预解析的自动模型）
   const effectiveModel = useMemo<PoolModel | null>(() => {
-    const byId = imageModelPrefId ? enabledImageModels.find((m) => m.id === imageModelPrefId) : null;
-    const fromPool = byId ?? enabledImageModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledImageModels, imageModelPrefId);
     if (fromPool) return fromPool;
     // 无可选池时，显示预解析的自动调度模型（isAutoResolved=true 标记，生成时不传 platformId/modelId）
     if (autoResolvedModel) return { ...autoResolvedModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
@@ -595,8 +594,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   }, [enabledImageModels, imageModelPrefId, autoResolvedModel]);
 
   const effectiveChatModel = useMemo<PoolModel | null>(() => {
-    const byId = chatModelPrefId ? enabledChatModels.find((m) => m.id === chatModelPrefId) : null;
-    const fromPool = byId ?? enabledChatModels[0] ?? null;
+    const fromPool = selectLiteraryModelOption(enabledChatModels, chatModelPrefId);
     if (fromPool) return fromPool;
     if (autoResolvedChatModel) return { ...autoResolvedChatModel, poolId: 'auto', enabled: true, isDedicated: false, isDefault: true, isAutoResolved: true };
     return null;
