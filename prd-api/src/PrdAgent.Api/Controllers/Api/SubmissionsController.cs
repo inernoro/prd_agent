@@ -1250,9 +1250,18 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaces = 0;
         foreach (var ws in workspaces)
         {
             if (existingWsIds.Contains(ws.Id)) continue;
+            if (await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+                    _db,
+                    ws,
+                    CancellationToken.None))
+            {
+                protectedWorkspaces++;
+                continue;
+            }
 
             // 获取封面图
             var coverUrl = "";
@@ -1313,6 +1322,7 @@ public class SubmissionsController : ControllerBase
             userId,
             totalWorkspaces = workspaces.Count,
             alreadySubmitted = existingWsIds.Count,
+            protectedWorkspaces,
             newlySubmitted = newSubmissions.Count,
         }));
     }

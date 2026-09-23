@@ -520,7 +520,7 @@ public class ImageMasterController : ControllerBase
             }
         }
 
-        var deletion = await _workspaceDeletion.DeleteAsync(wid, ct);
+        var deletion = await _workspaceDeletion.DeleteAsync(wid, CancellationToken.None);
         if (deletion.HasActiveGeneration)
         {
             return Conflict(ApiResponse<object>.Fail(

@@ -183,6 +183,12 @@ public class LiteraryMcpJourneyTests
         try
         {
             var assetStorage = new Mock<PrdAgent.Infrastructure.Services.AssetStorage.IAssetStorage>();
+            await db.Users.InsertOneAsync(new User
+            {
+                UserId = "writer",
+                Username = "writer",
+                DisplayName = "Writer",
+            });
             var openApi = WithUser(new LiteraryOpenApiController(db), "writer");
             var created = Data(await openApi.CreateWorkspace(new()
             {
@@ -194,8 +200,17 @@ public class LiteraryMcpJourneyTests
             var workspace = await db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId).SingleAsync();
             Assert.True(workspace.SuppressAutoSubmit);
             Assert.False(workspace.IsPublic);
+            await db.ImageAssets.InsertOneAsync(new ImageAsset
+            {
+                OwnerUserId = "writer",
+                WorkspaceId = workspaceId,
+                Url = "https://example.test/private-cover.png",
+            });
 
             var submissions = WithAdminUser(new SubmissionsController(db, null!), "writer");
+            var migration = Data(await submissions.MigrateLiterarySubmissions("writer"));
+            Assert.Equal(1, migration.GetProperty("protectedWorkspaces").GetInt32());
+            Assert.Equal(0, migration.GetProperty("newlySubmitted").GetInt32());
             var legacyClientResult = await submissions.CreateSubmission(new()
             {
                 ContentType = "literary",
@@ -213,8 +228,11 @@ public class LiteraryMcpJourneyTests
                 OwnerUserId = "writer",
                 ToolName = "map_literary_create_workspace",
                 Status = "success",
-                ArtifactKind = "workspace",
-                ArtifactId = workspaceId,
+                KeyId = "legacy-direct-key",
+                HttpStatus = 200,
+                ArgumentsPreview = "直连 POST /api/open/literary/workspaces",
+                CreatedAt = workspace.CreatedAt.AddMilliseconds(-10),
+                DurationMs = 100,
             });
             var workspaceApi = WithAdminUser(
                 new LiteraryAgentWorkspaceController(db, assetStorage.Object, NullLogger<LiteraryAgentWorkspaceController>.Instance),
@@ -222,9 +240,49 @@ public class LiteraryMcpJourneyTests
             Assert.IsType<OkObjectResult>(await workspaceApi.GetWorkspaceDetail(workspaceId));
             Assert.True((await db.ImageMasterWorkspaces.Find(x => x.Id == workspaceId).SingleAsync()).SuppressAutoSubmit);
 
+            var ambiguousAt = DateTime.UtcNow;
+            var ambiguousFirst = new ImageMasterWorkspace
+            {
+                OwnerUserId = "ambiguous",
+                ScenarioType = "article-illustration",
+                CreatedAt = ambiguousAt,
+            };
+            var ambiguousSecond = new ImageMasterWorkspace
+            {
+                OwnerUserId = "ambiguous",
+                ScenarioType = "article-illustration",
+                CreatedAt = ambiguousAt.AddMilliseconds(10),
+            };
+            await db.ImageMasterWorkspaces.InsertManyAsync([ambiguousFirst, ambiguousSecond]);
+            await db.McpCallLogs.InsertOneAsync(new McpCallLog
+            {
+                OwnerUserId = "ambiguous",
+                ToolName = "map_literary_create_workspace",
+                Status = "success",
+                KeyId = "ambiguous-direct-key",
+                HttpStatus = 200,
+                ArgumentsPreview = "直连 POST /api/open/literary/workspaces",
+                CreatedAt = ambiguousAt.AddMilliseconds(-10),
+                DurationMs = 100,
+            });
+            Assert.False(await LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(
+                db,
+                ambiguousFirst,
+                CancellationToken.None));
+            Assert.False((await db.ImageMasterWorkspaces.Find(x => x.Id == ambiguousFirst.Id).SingleAsync()).SuppressAutoSubmit);
+
+            await db.McpCallLogs.DeleteOneAsync(x => x.KeyId == "legacy-direct-key");
             await db.ImageMasterWorkspaces.UpdateOneAsync(
                 x => x.Id == workspaceId,
                 Builders<ImageMasterWorkspace>.Update.Set(x => x.SuppressAutoSubmit, false));
+            await db.McpCallLogs.InsertOneAsync(new McpCallLog
+            {
+                OwnerUserId = "writer",
+                ToolName = "map_literary_create_workspace",
+                Status = "success",
+                ArtifactKind = "workspace",
+                ArtifactId = workspaceId,
+            });
             var autoResult = await submissions.CreateSubmission(new()
             {
                 ContentType = "literary",
@@ -283,6 +341,31 @@ public class LiteraryMcpJourneyTests
                 WorkspaceId = otherWorkspace.Id,
                 Sha256 = sharedSha,
             });
+            var referenceConfigSha = new string('b', 64);
+            await db.ImageAssets.InsertOneAsync(new ImageAsset
+            {
+                OwnerUserId = "writer",
+                WorkspaceId = workspaceId,
+                Sha256 = referenceConfigSha,
+            });
+            await db.ReferenceImageConfigs.InsertOneAsync(new ReferenceImageConfig
+            {
+                AppKey = "literary-agent",
+                CreatedByAdminId = "writer",
+                ImageSha256 = referenceConfigSha,
+            });
+            var legacyConfigSha = new string('c', 64);
+            await db.ImageAssets.InsertOneAsync(new ImageAsset
+            {
+                OwnerUserId = "writer",
+                WorkspaceId = workspaceId,
+                Sha256 = legacyConfigSha,
+            });
+            await db.LiteraryAgentConfigs.InsertOneAsync(new LiteraryAgentConfig
+            {
+                Id = "literary-agent",
+                ReferenceImageSha256 = legacyConfigSha,
+            });
             await db.ImageMasterMessages.InsertOneAsync(new ImageMasterMessage
             {
                 OwnerUserId = "writer",
@@ -320,6 +403,8 @@ public class LiteraryMcpJourneyTests
             Assert.Equal(0, await db.UserRecentOpens.CountDocumentsAsync(x => x.EntityId == workspaceId));
             Assert.Equal(1, await db.ImageMasterWorkspaces.CountDocumentsAsync(x => x.Id == otherWorkspace.Id));
             Assert.Equal(1, await db.ImageAssets.CountDocumentsAsync(x => x.WorkspaceId == otherWorkspace.Id && x.Sha256 == sharedSha));
+            Assert.Equal(1, await db.ReferenceImageConfigs.CountDocumentsAsync(x => x.ImageSha256 == referenceConfigSha));
+            Assert.Equal(1, await db.LiteraryAgentConfigs.CountDocumentsAsync(x => x.ReferenceImageSha256 == legacyConfigSha));
             assetStorage.Verify(
                 x => x.DeleteByShaAsync(
                     It.IsAny<string>(),

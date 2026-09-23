@@ -46,15 +46,19 @@ public sealed class ImageMasterWorkspaceDeletionService
             return new ImageMasterWorkspaceDeletionResult(false, true);
         }
 
+        // 所有会阻止删除的检查已经完成。此后必须由服务端接管生命周期，不能让浏览器断线
+        // 在多集合级联中途取消，留下“工作区仍可见但内容已删一半”的状态。
+        var mutationToken = CancellationToken.None;
+
         var imageRunIds = imageRuns.Select(x => x.Id).ToArray();
         var submissions = await _db.Submissions
             .Find(x => x.WorkspaceId == workspaceId)
             .Project(x => x.Id)
-            .ToListAsync(ct);
+            .ToListAsync(mutationToken);
 
         var assets = await _db.ImageAssets
             .Find(x => x.WorkspaceId == workspaceId)
-            .ToListAsync(ct);
+            .ToListAsync(mutationToken);
         var cleanupShas = new HashSet<string>(StringComparer.Ordinal);
         foreach (var asset in assets)
         {
@@ -73,40 +77,40 @@ public sealed class ImageMasterWorkspaceDeletionService
                     new BsonRegularExpression($"^{Regex.Escape(runId)}-\\d+-\\d+$")))
                 .ToArray();
             var runArtifactFilter = Builders<UploadArtifact>.Filter.Or(artifactFilters);
-            runArtifacts = (await _db.UploadArtifacts.Find(runArtifactFilter).ToListAsync(ct)).ToArray();
+            runArtifacts = (await _db.UploadArtifacts.Find(runArtifactFilter).ToListAsync(mutationToken)).ToArray();
             runItems = (await _db.ImageGenRunItems
                 .Find(x => imageRunIds.Contains(x.RunId))
-                .ToListAsync(ct)).ToArray();
+                .ToListAsync(mutationToken)).ToArray();
             foreach (var artifact in runArtifacts) AddCleanupSha(cleanupShas, artifact.Sha256);
             foreach (var item in runItems) AddCleanupSha(cleanupShas, item.DisplaySha256);
         }
 
         // 先解除全部数据库引用，再开始物理对象回收。这样回收失败最多留下孤儿对象，
         // 不会出现仍可见的数据库记录指向已删除对象。
-        await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == workspaceId, ct);
-        await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == workspaceId, ct);
-        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == workspaceId, ct);
+        await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == workspaceId, mutationToken);
+        await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == workspaceId, mutationToken);
+        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == workspaceId, mutationToken);
 
         if (submissions.Count > 0)
         {
-            await _db.SubmissionLikes.DeleteManyAsync(x => submissions.Contains(x.SubmissionId), ct);
-            await _db.Submissions.DeleteManyAsync(x => submissions.Contains(x.Id), ct);
+            await _db.SubmissionLikes.DeleteManyAsync(x => submissions.Contains(x.SubmissionId), mutationToken);
+            await _db.Submissions.DeleteManyAsync(x => submissions.Contains(x.Id), mutationToken);
         }
 
         if (imageRunIds.Length > 0)
         {
             var runArtifactIds = runArtifacts.Select(x => x.Id).ToArray();
             if (runArtifactIds.Length > 0)
-                await _db.UploadArtifacts.DeleteManyAsync(x => runArtifactIds.Contains(x.Id), ct);
-            await _db.ImageGenRunItems.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
-            await _db.ImageGenRunEvents.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), ct);
-            await _db.ImageGenRuns.DeleteManyAsync(x => imageRunIds.Contains(x.Id), ct);
+                await _db.UploadArtifacts.DeleteManyAsync(x => runArtifactIds.Contains(x.Id), mutationToken);
+            await _db.ImageGenRunItems.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), mutationToken);
+            await _db.ImageGenRunEvents.DeleteManyAsync(x => imageRunIds.Contains(x.RunId), mutationToken);
+            await _db.ImageGenRuns.DeleteManyAsync(x => imageRunIds.Contains(x.Id), mutationToken);
         }
 
         var recentOpenFilter = Builders<UserRecentOpen>.Filter.Eq(x => x.EntityId, workspaceId)
             & Builders<UserRecentOpen>.Filter.In(x => x.AgentKey, ["visual-agent", "literary-agent"]);
-        await _db.UserRecentOpens.DeleteManyAsync(recentOpenFilter, ct);
-        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == workspaceId, ct);
+        await _db.UserRecentOpens.DeleteManyAsync(recentOpenFilter, mutationToken);
+        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == workspaceId, mutationToken);
 
         foreach (var sha in cleanupShas)
         {
@@ -165,6 +169,21 @@ public sealed class ImageMasterWorkspaceDeletionService
             Builders<ImageGenRun>.Filter.Eq("ImageRefs.AssetSha256", sha));
         if (await _db.ImageGenRuns.CountDocumentsAsync(runFilter, cancellationToken: ct) > 0)
             return false;
+
+        var upperSha = sha.ToUpperInvariant();
+        if (await _db.ReferenceImageConfigs.CountDocumentsAsync(
+                item => item.ImageSha256 == sha || item.ImageSha256 == upperSha,
+                cancellationToken: ct) > 0)
+        {
+            return false;
+        }
+
+        if (await _db.LiteraryAgentConfigs.CountDocumentsAsync(
+                item => item.ReferenceImageSha256 == sha || item.ReferenceImageSha256 == upperSha,
+                cancellationToken: ct) > 0)
+        {
+            return false;
+        }
 
         await _assetStorage.DeleteByShaAsync(
             sha,

@@ -1816,10 +1816,13 @@ public class GatewayDataDomainGuardTests
         var deletionService = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageMasterWorkspaceDeletionService.cs");
         var visualController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
         var literaryController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentWorkspaceController.cs");
+        var submissionsController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/SubmissionsController.cs");
         var helperStart = deletionService.IndexOf("public async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
         var imageAssetCheck = deletionService.IndexOf("_db.ImageAssets.CountDocumentsAsync(imageAssetFilter", helperStart, StringComparison.Ordinal);
         var uploadArtifactCheck = deletionService.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
         var imageRunCheck = deletionService.IndexOf("_db.ImageGenRuns.CountDocumentsAsync(runFilter", helperStart, StringComparison.Ordinal);
+        var referenceConfigCheck = deletionService.IndexOf("_db.ReferenceImageConfigs.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
+        var legacyConfigCheck = deletionService.IndexOf("_db.LiteraryAgentConfigs.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
         var helperDeleteObject = deletionService.IndexOf("await _assetStorage.DeleteByShaAsync(", helperStart, StringComparison.Ordinal);
         var collectArtifacts = deletionService.IndexOf("runArtifacts = (await _db.UploadArtifacts.Find", StringComparison.Ordinal);
         var deleteAssetRecords = deletionService.IndexOf("await _db.ImageAssets.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
@@ -1832,7 +1835,9 @@ public class GatewayDataDomainGuardTests
         Assert.True(imageAssetCheck > helperStart, "删除对象前必须检查图片资产引用");
         Assert.True(uploadArtifactCheck > imageAssetCheck, "删除对象前必须检查其他上传产物引用");
         Assert.True(imageRunCheck > uploadArtifactCheck, "删除对象前必须检查其他生图任务引用");
-        Assert.True(helperDeleteObject > imageRunCheck, "全部引用检查通过后才能删除底层对象");
+        Assert.True(referenceConfigCheck > imageRunCheck, "删除对象前必须检查文学参考图配置引用");
+        Assert.True(legacyConfigCheck > referenceConfigCheck, "删除对象前必须检查旧版文学参考图引用");
+        Assert.True(helperDeleteObject > legacyConfigCheck, "全部引用检查通过后才能删除底层对象");
         Assert.True(collectArtifacts >= 0, "工作区删除必须先按 runId 收集生成产物");
         Assert.True(deleteAssetRecords > collectArtifacts, "收集归属完成后才能删除资产记录");
         Assert.True(deleteArtifactRecords > deleteAssetRecords, "必须先解除资产引用再解除产物引用");
@@ -1842,6 +1847,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains(".Find(x => x.WorkspaceId == workspaceId)", deletionService);
         Assert.Contains("ImageMasterWorkspaceDeletionService(db, assetStorage, logger)", visualController);
         Assert.Contains("ImageMasterWorkspaceDeletionService(db, assetStorage, logger)", literaryController);
+        Assert.Contains("var mutationToken = CancellationToken.None;", deletionService);
+        Assert.Contains("DeleteAsync(wid, CancellationToken.None)", visualController);
+        Assert.Contains("DeleteAsync(ws.Id, CancellationToken.None)", literaryController);
+        Assert.Contains("var protectedWorkspaces = 0;", submissionsController);
+        Assert.Contains("protectedWorkspaces++;", submissionsController);
     }
 
     [Fact]

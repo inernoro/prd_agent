@@ -245,7 +245,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // Only owner can delete
         if (ws.OwnerUserId != adminId) return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以删除"));
 
-        var deletion = await _workspaceDeletion.DeleteAsync(ws.Id, ct);
+        var deletion = await _workspaceDeletion.DeleteAsync(ws.Id, CancellationToken.None);
         if (deletion.HasActiveGeneration)
         {
             return Conflict(ApiResponse<object>.Fail(
