@@ -70,6 +70,13 @@ describe('source-backed measured fact preservation', () => {
     expect(() => check(document('<p>共设24个阅读座位，其中6个靠窗座位。</p><p>每场最多12人。</p>'))).not.toThrow();
   });
 
+  it('treats counted months as a duration, the same way MAP does', () => {
+    // 2026-09-23 预览验收：素材「现在做 1 个月」被改写成「只要 1 个月」，「1 个」被当成计数拒收。
+    expect(() => createArtifactQualityGate('现在做 1 个月。')(document('<p>改造只要 1 个月就能落地。</p>'))).not.toThrow();
+    const invented = capture(() => createArtifactQualityGate('现在做 1 个月。')(document('<p>改造只要 2 个月就能落地。</p>')));
+    expect(classifyQualityRepairReason(invented)?.code).toBe('unsupported_measured_claim');
+  });
+
   it('does not drift same-valued facts to another supported entity or share retention across gates', () => {
     const evidence = '客户数为8人。读者数为8人。';
     const check = createArtifactQualityGate(evidence);

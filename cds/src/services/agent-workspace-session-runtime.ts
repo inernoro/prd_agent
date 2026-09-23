@@ -4620,9 +4620,10 @@ function measuredClaimContexts(text: string): MeasuredClaimContext[] {
   for (const segment of quantityText.split(/[\r\n。！？!?；;，,：:]+/)) {
     const segmentClaims: Array<MeasuredClaimContext & { offset: number; patternOrder: number }> = [];
     const patterns = [
-      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
+      // 「1 个月」「2 个小时」是时长，与 MAP 的 HostedSiteRevisionRules 同口径，不当成「1 个（计数）」。
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(?:个\s*(?=月|小时))?(%|％|分钟|小时|天|周|月|年|万字|元|美元|人民币|KB|MB|GB)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
       { regex: /([￥¥$])\s*(\d+(?:[.,]\d+)*)/gi, numberIndex: 2, unitIndex: 1 },
-      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])/gi, numberIndex: 1, unitIndex: 2 },
+      { regex: /(?<![A-Za-z0-9_])(\d+(?:[.,]\d+)*)\s*(个|条|次|篇|字|人|位|家|项|例|份|种|类|层|步|章|节|页)(?![A-Za-z])(?!\s*(?:月|小时))/gi, numberIndex: 1, unitIndex: 2 },
     ];
     for (const [patternOrder, pattern] of patterns.entries()) {
       for (const match of segment.matchAll(pattern.regex)) {
