@@ -128,7 +128,8 @@ public class AgentApiKeyService : IAgentApiKeyService
         bool? isActive,
         CancellationToken ct = default,
         AgentApiKeyQuotaPatch? quota = null,
-        AgentApiKeyScopeMode? scopeMode = null)
+        AgentApiKeyScopeMode? scopeMode = null,
+        AgentApiKeyLiteraryImageModelPatch? literaryImageModel = null)
     {
         var updates = new List<UpdateDefinition<AgentApiKey>>();
         if (name != null) updates.Add(Builders<AgentApiKey>.Update.Set(k => k.Name, name.Trim()));
@@ -163,6 +164,18 @@ public class AgentApiKeyService : IAgentApiKeyService
                 updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpDailyWriteQuota, wr));
             if (quota.RateLimitPerMin is { } rate)
                 updates.Add(Builders<AgentApiKey>.Update.Set(k => k.McpRateLimitPerMin, rate));
+        }
+
+        if (literaryImageModel is { } modelPatch)
+        {
+            updates.Add(Builders<AgentApiKey>.Update.Set(
+                k => k.McpLiteraryImageModelMode,
+                modelPatch.Mode));
+            updates.Add(Builders<AgentApiKey>.Update.Set(
+                k => k.McpLiteraryImageModelPublicId,
+                modelPatch.Mode == McpLiteraryImageModelMode.Fixed
+                    ? modelPatch.LogicalModelPublicId?.Trim()
+                    : null));
         }
 
         if (updates.Count == 0) return true;

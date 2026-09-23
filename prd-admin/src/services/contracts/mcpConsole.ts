@@ -41,6 +41,9 @@ export interface McpClientDto {
   scopes: string[];
   /** auto = 跟着主人的权限走，平台新增的能力自动进来；manual = 按当初存的清单钉死 */
   scopeMode: 'auto' | 'manual';
+  /** 文学配图模型与网页偏好的关系；存量后端缺省按跟随处理 */
+  mcpLiteraryImageModelMode?: 'follow-user-panel' | 'fixed';
+  mcpLiteraryImageModelPublicId?: string | null;
   /**
    * 你自己有、但没开给这台客户端的能力。只有手动模式才可能非空 ——
    * 这正是「用户知道、钥匙没权限」：告诉他还能给什么，但不替他给。
