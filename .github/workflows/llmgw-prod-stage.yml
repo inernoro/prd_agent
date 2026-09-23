@@ -250,16 +250,16 @@ jobs:
           target=".llmgw-release-evidence"
           ledger="$target/rollout-ledger.jsonl"
           mkdir -p "$target"
-          if [ ! -s "$ledger" ]; then
-            python3 scripts/llmgw-prod-evidence-restore.py \
-              --source "$PRODUCTION_EVIDENCE_SOURCE" \
-              --target "$target" \
-              --commit "${{ github.event.inputs.maintenance_from_commit }}" \
-              --require-owner-uid 0 \
-              --json-out "$target/production-evidence-restore.json"
-          else
-            echo "Rollout ledger restored from the requested GitHub Actions artifact."
-          fi
+          # The requested Actions artifact may predate the current production
+          # baseline. Production is the authority for maintenance releases, so
+          # always replace the restored ledger with the trusted server copy for
+          # the exact maintenance_from_commit before auditing it.
+          python3 scripts/llmgw-prod-evidence-restore.py \
+            --source "$PRODUCTION_EVIDENCE_SOURCE" \
+            --target "$target" \
+            --commit "${{ github.event.inputs.maintenance_from_commit }}" \
+            --require-owner-uid 0 \
+            --json-out "$target/production-evidence-restore.json"
           python3 scripts/llmgw-rollout-ledger.py maintenance-baseline \
             --ledger "$ledger" \
             --commit "${{ github.event.inputs.maintenance_from_commit }}" \
