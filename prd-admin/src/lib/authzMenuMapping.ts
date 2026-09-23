@@ -114,6 +114,12 @@ export const menuList: MenuDef[] = [
     permissions: ['authz.manage'],
   },
   {
+    appKey: 'llm-gateway',
+    label: '模型网关',
+    icon: 'Cpu',
+    permissions: ['llm-gateway.access'],
+  },
+  {
     appKey: 'review-agent',
     label: '产品评审智能体',
     icon: 'ClipboardCheck',
@@ -281,6 +287,9 @@ export const allPermissions: PermissionDef[] = [
 
   // 权限管理
   { key: 'authz.manage', label: '权限管理', description: '管理系统角色和用户权限', category: 'manage' },
+
+  // 模型网关
+  { key: 'llm-gateway.access', label: '模型网关', description: '进入独立模型网关控制台', category: 'access' },
 
   // 技能管理
   { key: 'skills.read', label: '技能 - 读', description: '查看技能配置', category: 'read' },

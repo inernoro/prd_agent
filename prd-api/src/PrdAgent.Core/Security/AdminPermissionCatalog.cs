@@ -15,6 +15,9 @@ public static class AdminPermissionCatalog
     /// <summary>权限管理权限</summary>
     public const string AuthzManage = "authz.manage";
 
+    /// <summary>进入独立模型网关控制台的权限</summary>
+    public const string LlmGatewayAccess = "llm-gateway.access";
+
     public const string UsersRead = "users.read";
     public const string UsersWrite = "users.write";
 
@@ -393,6 +396,7 @@ public static class AdminPermissionCatalog
     {
         new(Access, "后台访问", "允许进入管理后台"),
         new(AuthzManage, "权限管理", "管理系统角色/用户权限"),
+        new(LlmGatewayAccess, "模型网关", "进入独立模型网关控制台"),
         new(PrdAgentUse, "PRD 解读智能体", "PRD 智能解读与问答"),
         new(VisualAgentUse, "视觉创作智能体", "高级视觉创作工作区"),
         new(LiteraryAgentUse, "文学创作智能体", "文章配图智能生成"),

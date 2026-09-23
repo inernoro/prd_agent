@@ -8,7 +8,9 @@ using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Authentication;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Deployment;
 using PrdAgent.Infrastructure.Security;
@@ -29,15 +31,18 @@ public sealed class LlmGatewaySsoController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly LlmGatewayDataContext _gatewayData;
     private readonly IConfiguration _configuration;
+    private readonly IAdminPermissionService _permissionService;
 
     public LlmGatewaySsoController(
         MongoDbContext db,
         LlmGatewayDataContext gatewayData,
-        IConfiguration configuration)
+        IConfiguration configuration,
+        IAdminPermissionService permissionService)
     {
         _db = db;
         _gatewayData = gatewayData;
         _configuration = configuration;
+        _permissionService = permissionService;
     }
 
     [HttpPost("ticket")]
@@ -67,13 +72,18 @@ public sealed class LlmGatewaySsoController : ControllerBase
             user = await _db.Users.Find(x => x.UserId == userId).FirstOrDefaultAsync(ct);
         }
 
-        if (!isRoot && (user is null
-                        || user.Status != UserStatus.Active
-                        || user.UserType != UserType.Human
-                        || user.Role != UserRole.ADMIN))
+        IReadOnlyList<string> effectivePermissions = Array.Empty<string>();
+        if (!isRoot && user is not null && user.Status == UserStatus.Active && user.UserType == UserType.Human)
+        {
+            effectivePermissions = await _permissionService.GetEffectivePermissionsAsync(user.UserId, false, ct);
+        }
+
+        if (!isRoot && !LlmGatewayConsoleAccessPolicy.CanEnter(user, effectivePermissions))
         {
             return StatusCode(StatusCodes.Status403Forbidden,
-                ApiResponse<object>.Fail("MAP_ADMIN_REQUIRED", "只有 MAP 管理员可以直接进入模型网关"));
+                ApiResponse<object>.Fail(
+                    "LLM_GATEWAY_ACCESS_REQUIRED",
+                    "当前账号没有模型网关权限，请让管理员在用户管理的后台权限中授予“模型网关”权限"));
         }
 
         var effectiveUserId = isRoot ? "root" : user!.UserId;
