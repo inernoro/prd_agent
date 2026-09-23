@@ -70,8 +70,8 @@ public class LiteraryImageOpenApiController(
         var appCallerCode = sha == null
             ? LiteraryAgent.Illustration.Text2Img
             : LiteraryAgent.Illustration.Img2Img;
-        var keyId = User.FindFirst("agentApiKeyId")?.Value;
-        if (string.IsNullOrWhiteSpace(keyId))
+        var keyId = McpIdempotency.KeyIdOf(User);
+        if (keyId == "unknown")
             return Unauthorized(ApiResponse<object>.Fail("MODEL_KEY_NOT_FOUND", "当前请求没有可识别的 MCP 客户端配置，请重新连接客户端。"));
         var selectedModel = await modelSelection.ResolveForRunAsync(userId, keyId, appCallerCode, ct);
         if (!selectedModel.Success || string.IsNullOrWhiteSpace(selectedModel.LogicalModelPublicId))
