@@ -202,6 +202,87 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
             baseline = json.loads((directory / "baseline.json").read_text(encoding="utf-8"))
             self.assertEqual("pass", baseline["verdict"])
 
+    def test_maintenance_baseline_audit_accepts_inherited_scoped_shadow_skip(self) -> None:
+        inherited_commit = "b" * 40
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 0,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            stage_path = directory / "stage.json"
+            stage_path.write_text(json.dumps({
+                "verdict": "pass",
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "mode": "http",
+                "disableMapConfigFallbackForActiveAppCallers": True,
+                "failures": [],
+                "shadowEvidenceCommit": COMMIT,
+            }), encoding="utf-8")
+            gate_path = self.write_gate(directory, payload)
+            ledger_path = directory / "ledger.jsonl"
+            ledger_path.write_text(json.dumps({
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "recordedAt": "2026-07-13T00:00:00Z",
+                "evidenceJson": str(stage_path),
+                "releaseGateJson": gate_path,
+                "maintenanceBaselineCommit": inherited_commit,
+            }) + "\n", encoding="utf-8")
+            result = LEDGER.maintenance_baseline(SimpleNamespace(
+                commit=COMMIT,
+                ledger=str(ledger_path),
+                json_out=str(directory / "baseline.json"),
+            ))
+            self.assertEqual(0, result)
+            baseline = json.loads((directory / "baseline.json").read_text(encoding="utf-8"))
+            self.assertEqual("pass", baseline["verdict"])
+
+    def test_maintenance_baseline_audit_rejects_shadow_skip_without_lineage(self) -> None:
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 0,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            stage_path = directory / "stage.json"
+            stage_path.write_text(json.dumps({
+                "verdict": "pass",
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "mode": "http",
+                "disableMapConfigFallbackForActiveAppCallers": True,
+                "failures": [],
+                "shadowEvidenceCommit": COMMIT,
+            }), encoding="utf-8")
+            gate_path = self.write_gate(directory, payload)
+            ledger_path = directory / "ledger.jsonl"
+            ledger_path.write_text(json.dumps({
+                "stage": "http-full",
+                "status": "success",
+                "commit": COMMIT,
+                "recordedAt": "2026-07-13T00:00:00Z",
+                "evidenceJson": str(stage_path),
+                "releaseGateJson": gate_path,
+            }) + "\n", encoding="utf-8")
+            result = LEDGER.maintenance_baseline(SimpleNamespace(
+                commit=COMMIT,
+                ledger=str(ledger_path),
+                json_out=str(directory / "baseline.json"),
+            ))
+            self.assertEqual(1, result)
+
+
     def test_maintenance_release_inherits_provider_audit_but_video_asr_canary_does_not(self) -> None:
         source = EXEC_DEP_PATH.read_text(encoding="utf-8")
         self.assertIn(

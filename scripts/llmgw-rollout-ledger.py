@@ -1654,6 +1654,7 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
     if not target:
         failures.append(f"missing http-full success baseline for commit={commit}")
     else:
+        maintenance_baseline_commit = _normalize_commit(target.get("maintenanceBaselineCommit"))
         evidence_path = str(target.get("evidenceJson") or "")
         release_gate_path = str(target.get("releaseGateJson") or "")
         try:
@@ -1676,7 +1677,17 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
             if _normalize_commit(release_gate.get("shadowReleaseCommit") or release_gate.get("expectedCommit")) != shadow_evidence_commit:
                 failures.append("maintenance baseline release gate commit mismatch")
             shadow_checks = release_gate.get("shadowChecks") or []
-            if not isinstance(shadow_checks, list) or not shadow_checks:
+            thresholds = release_gate.get("thresholds") or {}
+            maintenance_shadow_skip = (
+                bool(maintenance_baseline_commit)
+                and isinstance(shadow_checks, list)
+                and not shadow_checks
+                and isinstance(thresholds, dict)
+                and bool(thresholds.get("skipGlobalCells"))
+                and thresholds.get("minTotal") == 0
+                and thresholds.get("minPerApp") == 0
+            )
+            if not isinstance(shadow_checks, list) or (not shadow_checks and not maintenance_shadow_skip):
                 failures.append("maintenance baseline release gate has no shadow checks")
             else:
                 for item in shadow_checks:
@@ -1694,6 +1705,7 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
                 require_config_authority=True,
                 allow_skipped_runtime_gates=True,
                 allow_skipped_config_authority=True,
+                allow_skipped_shadow_checks=bool(maintenance_baseline_commit),
             )
         except (SystemExit, TypeError, ValueError) as exc:
             failures.append(str(exc))
