@@ -155,7 +155,7 @@ function WorkspaceCard({
       className="group cursor-pointer select-none"
     >
       <div
-        className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        className="surface-tone-dark relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: '3/2',
           background: hasCover ? '#0a0a0f' : getCardGradient(ws.id),

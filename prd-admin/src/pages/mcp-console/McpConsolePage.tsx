@@ -439,7 +439,7 @@ export default function McpConsolePage() {
  *   - **说明**：它能做什么 —— 无边框、图标 + 文字、统一 24px，不可点；
  *   - **动作**：断开 / 调整上限 —— 32px、有边框，中间隔一道竖线。
  */
-function ClientRow({
+export function ClientRow({
   client,
   capabilities,
   onRevoke,
@@ -473,8 +473,9 @@ function ClientRow({
 
   return (
     <div
-      className="flex shrink-0 overflow-hidden rounded-[13px]"
+      className="flex overflow-hidden rounded-[13px]"
       style={{
+        flexShrink: 0,
         background: 'var(--bg-card)',
         border: '1px solid var(--border-subtle)',
         opacity: client.isActive ? 1 : 0.7,
