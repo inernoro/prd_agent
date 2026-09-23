@@ -1813,18 +1813,20 @@ public class GatewayDataDomainGuardTests
     [Fact]
     public void WorkspaceDeletion_RemovesAllReferencesBeforePhysicalObjectCleanup()
     {
-        var controller = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
-        var helperStart = controller.IndexOf("private async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
-        var imageAssetCheck = controller.IndexOf("_db.ImageAssets.CountDocumentsAsync(imageAssetFilter", helperStart, StringComparison.Ordinal);
-        var uploadArtifactCheck = controller.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(artifactFilter", helperStart, StringComparison.Ordinal);
-        var imageRunCheck = controller.IndexOf("_db.ImageGenRuns.CountDocumentsAsync(runFilter", helperStart, StringComparison.Ordinal);
-        var helperDeleteObject = controller.IndexOf("await _assetStorage.DeleteByShaAsync(", helperStart, StringComparison.Ordinal);
-        var collectArtifacts = controller.IndexOf("runArtifacts = (await _db.UploadArtifacts.Find", StringComparison.Ordinal);
-        var deleteAssetRecords = controller.IndexOf("await _db.ImageAssets.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
-        var deleteArtifactRecords = controller.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", deleteAssetRecords, StringComparison.Ordinal);
-        var deleteRun = controller.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", deleteArtifactRecords, StringComparison.Ordinal);
-        var deleteWorkspace = controller.IndexOf("await _db.ImageMasterWorkspaces.DeleteOneAsync", deleteRun, StringComparison.Ordinal);
-        var workspaceDeleteObject = controller.IndexOf("await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None)", deleteWorkspace, StringComparison.Ordinal);
+        var deletionService = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/ImageMasterWorkspaceDeletionService.cs");
+        var visualController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs");
+        var literaryController = ReadRepoFile("prd-api/src/PrdAgent.Api/Controllers/Api/LiteraryAgentWorkspaceController.cs");
+        var helperStart = deletionService.IndexOf("public async Task<bool> TryDeleteUnreferencedGeneratedImageAsync", StringComparison.Ordinal);
+        var imageAssetCheck = deletionService.IndexOf("_db.ImageAssets.CountDocumentsAsync(imageAssetFilter", helperStart, StringComparison.Ordinal);
+        var uploadArtifactCheck = deletionService.IndexOf("_db.UploadArtifacts.CountDocumentsAsync(", helperStart, StringComparison.Ordinal);
+        var imageRunCheck = deletionService.IndexOf("_db.ImageGenRuns.CountDocumentsAsync(runFilter", helperStart, StringComparison.Ordinal);
+        var helperDeleteObject = deletionService.IndexOf("await _assetStorage.DeleteByShaAsync(", helperStart, StringComparison.Ordinal);
+        var collectArtifacts = deletionService.IndexOf("runArtifacts = (await _db.UploadArtifacts.Find", StringComparison.Ordinal);
+        var deleteAssetRecords = deletionService.IndexOf("await _db.ImageAssets.DeleteManyAsync", collectArtifacts, StringComparison.Ordinal);
+        var deleteArtifactRecords = deletionService.IndexOf("await _db.UploadArtifacts.DeleteManyAsync", deleteAssetRecords, StringComparison.Ordinal);
+        var deleteRun = deletionService.IndexOf("await _db.ImageGenRuns.DeleteManyAsync", deleteArtifactRecords, StringComparison.Ordinal);
+        var deleteWorkspace = deletionService.IndexOf("await _db.ImageMasterWorkspaces.DeleteOneAsync", deleteRun, StringComparison.Ordinal);
+        var workspaceDeleteObject = deletionService.IndexOf("await TryDeleteUnreferencedGeneratedImageAsync(sha, CancellationToken.None)", deleteWorkspace, StringComparison.Ordinal);
 
         Assert.True(helperStart >= 0, "底层对象删除必须复用统一的引用检查入口");
         Assert.True(imageAssetCheck > helperStart, "删除对象前必须检查图片资产引用");
@@ -1837,7 +1839,9 @@ public class GatewayDataDomainGuardTests
         Assert.True(deleteRun > deleteArtifactRecords, "必须在底层对象回收前解除任务归属");
         Assert.True(deleteWorkspace > deleteRun, "工作区记录必须在任务归属解除后删除");
         Assert.True(workspaceDeleteObject > deleteWorkspace, "全部数据库引用解除后才能通过统一入口回收底层对象");
-        Assert.Contains(".Find(x => x.WorkspaceId == wid)", controller);
+        Assert.Contains(".Find(x => x.WorkspaceId == workspaceId)", deletionService);
+        Assert.Contains("ImageMasterWorkspaceDeletionService(db, assetStorage, logger)", visualController);
+        Assert.Contains("ImageMasterWorkspaceDeletionService(db, assetStorage, logger)", literaryController);
     }
 
     [Fact]
