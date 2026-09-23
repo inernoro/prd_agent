@@ -27,4 +27,14 @@ describe('MCP 文学配图模型模式接线', () => {
     expect(page).toContain('getLiteraryAgentAdapterInfo');
     expect(page).not.toContain('getVisualAgentAdapterInfo');
   });
+
+  it('文学页面保留逻辑模型作为请求身份，并用实际线路做去重', () => {
+    const page = read('pages/literary-agent/ArticleIllustrationEditorPage.tsx');
+    expect(page).toContain('actualPlatformId: first.actualPlatformId || first.platformId');
+    expect(page).toContain('`${m.actualPlatformId}:${m.actualModelId}`');
+    expect(page).toContain('modelId: effectiveModel.modelName');
+    expect(page).toContain('modelId: effectiveChatModel?.modelName');
+    expect(page).not.toContain('modelId: effectiveModel.actualModelId');
+    expect(page).not.toContain('modelId: effectiveChatModel?.actualModelId');
+  });
 });
