@@ -3129,23 +3129,24 @@ public class ImageMasterController : ControllerBase
             var snapshotAt = wf.UpdatedAt;
             if (ws.ScenarioType != "article-illustration") return;
 
+            var recovered = PrdAgent.Core.Services.LiteraryMcpWorkflow.RecoverVersionedAssets(ws, assets);
             var hasMapping = wf.AssetIdByMarkerIndex?.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ?? false;
-            if (hasMapping) return;
+            if (hasMapping && !recovered) return;
             if (assets.Count == 0) return;
-            if (!wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
+            if (!recovered && !wf.Markers.Any(m => string.IsNullOrEmpty(m.Status) || m.Status == "idle")) return;
 
             var markerCount = wf.Markers.Count;
             var candidateAssets = assets
-                .Where(a => !a.ArticleWorkflowVersion.HasValue)
+                .Where(a => !hasMapping && !a.ArticleWorkflowVersion.HasValue)
                 .OrderByDescending(a => a.CreatedAt)
                 .Take(markerCount)
                 .OrderBy(a => a.CreatedAt)
                 .ToList();
 
-            if (candidateAssets.Count == 0) return;
+            if (candidateAssets.Count == 0 && !recovered) return;
 
             wf.AssetIdByMarkerIndex ??= new Dictionary<string, string>(StringComparer.Ordinal);
-            var needUpdate = false;
+            var needUpdate = recovered;
 
             for (var i = 0; i < Math.Min(wf.Markers.Count, candidateAssets.Count); i++)
             {

@@ -106,9 +106,12 @@ public class LiteraryOpenApiController : ControllerBase
         var full = ws.ArticleContent ?? string.Empty;
         if (format == "illustrated" && ws.ArticleContentWithMarkers != null)
         {
+            var assetIds = ws.ArticleWorkflow?.AssetIdByMarkerIndex?.Values.ToList() ?? new List<string>();
+            var version = ws.ArticleWorkflow?.Version;
+            var assets = await _db.ImageAssets.Find(x => x.WorkspaceId == ws.Id
+                && (assetIds.Contains(x.Id) || (version.HasValue && x.ArticleWorkflowVersion == version.Value))).ToListAsync(ct);
+            LiteraryMcpWorkflow.RecoverVersionedAssets(ws, assets);
             var mapping = ws.ArticleWorkflow?.AssetIdByMarkerIndex ?? new Dictionary<string, string>();
-            var assetIds = mapping.Values.ToList();
-            var assets = await _db.ImageAssets.Find(x => assetIds.Contains(x.Id) && x.WorkspaceId == ws.Id).ToListAsync(ct);
             var urls = new Dictionary<int, string>();
             foreach (var (index, id) in mapping)
             {

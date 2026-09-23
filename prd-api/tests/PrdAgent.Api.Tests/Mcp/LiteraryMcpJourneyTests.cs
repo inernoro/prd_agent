@@ -89,12 +89,24 @@ public class LiteraryMcpJourneyTests
                 OwnerUserId = "writer", WorkspaceId = id, ArticleWorkflowVersion = 1,
                 ArticleInsertionIndex = 1, Url = "https://example.test/second.png",
             });
+            await db.ImageAssets.InsertOneAsync(new()
+            {
+                OwnerUserId = "writer", WorkspaceId = id, ArticleWorkflowVersion = 0,
+                ArticleInsertionIndex = 0, Url = "https://example.test/stale.png",
+            });
+            // 无需先打开网页：只读图文导出也能精确恢复已保存但未写指针的当前版本资产。
+            var recoveredRead = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None, "illustrated"));
+            Assert.Contains("![配图 2](<https://example.test/second.png>)", recoveredRead.GetProperty("content").GetString());
+            Assert.DoesNotContain("stale.png", recoveredRead.GetProperty("content").GetString());
+            Assert.Empty((await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.AssetIdByMarkerIndex);
             var ui = WithUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
             ui.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "writer") }, "Bearer"));
             Assert.IsType<OkObjectResult>(await ui.GetWorkspaceDetail(id));
             var beforeRun = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
-            Assert.Empty(beforeRun.ArticleWorkflow!.AssetIdByMarkerIndex);
-            Assert.All(beforeRun.ArticleWorkflow.Markers, m => Assert.Equal("idle", m.Status));
+            Assert.Single(beforeRun.ArticleWorkflow!.AssetIdByMarkerIndex);
+            Assert.True(beforeRun.ArticleWorkflow.AssetIdByMarkerIndex.ContainsKey("1"));
+            Assert.Equal("idle", beforeRun.ArticleWorkflow.Markers[0].Status);
+            Assert.Equal("done", beforeRun.ArticleWorkflow.Markers[1].Status);
             var request = new LiteraryImageOpenApiController.GenerateRequest { MarkerIndex = 1, WorkflowVersion = 1, ClientRequestId = "image-1" };
             // 仅隔离测试数据库拒绝入队写入，真实复现认领成功但 InsertOne 失败。
             var database = new MongoClient(connection).GetDatabase(name);
