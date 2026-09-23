@@ -11,7 +11,10 @@ const source = readFileSync(path.resolve(__dirname, 'SiteGenerateDialog.tsx'), '
  */
 describe('SiteGenerateDialog 分步布局契约', () => {
   it('弹窗关键尺寸走 inline style，窄屏不溢出', () => {
-    expect(source).toContain("width: 'min(960px, calc(100vw - 16px))'");
+    expect(source).toContain("'min(960px, calc(100vw - 16px))'");
+    // 生成中与完成两步以预览为主，放宽到 1280，且预览占弹性列（2026-09-23 用户：右侧页面太窄）。
+    expect(source).toContain("previewSteps ? 'min(1280px, calc(100vw - 16px))'");
+    expect(source).toContain('lg:grid-cols-[400px_minmax(0,1fr)]');
     expect(source).toContain("maxWidth: 'calc(100vw - 16px)'");
     expect(source).toContain("height: 'min(780px, calc(100vh - 24px))'");
     expect(source).not.toContain('contentClassName="h-[');

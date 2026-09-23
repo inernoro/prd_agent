@@ -165,6 +165,7 @@
 - [多图视觉生成 · 设计](./design.visual-agent.multi-image-vision-api.md) `design.visual-agent.multi-image-vision-api`
 - [Visual Agent (视觉创作) · 设计](./design.visual-agent.md) `design.visual-agent`
 - [网页托管与分享 · 设计](./design.web-hosting.md) `design.web-hosting`
+- [设计执行服务独立部署 · 设计](./design.platform.design-runtime.md) `design.platform.design-runtime`
 - [知识驱动设计生成体系 · 设计](./design.platform.design-generation.md) `design.platform.design-generation`
 - [工作流自动配置 (Workflow Auto-Config) · 设计](./design.workflow-agent.auto-config.md) `design.workflow-agent.auto-config`
 - [工作流引擎 · 设计](./design.workflow-agent.engine.md) `design.workflow-agent.engine`

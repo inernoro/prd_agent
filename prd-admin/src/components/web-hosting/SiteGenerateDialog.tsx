@@ -26,6 +26,7 @@ import {
   getDesignArtifactRun,
   getDesignGenerationSettings,
   getDesignRuntimeCapabilities,
+  getSite,
   getSiteContent,
   streamDesignArtifactRun,
   updateSite,
@@ -616,6 +617,21 @@ export default function SiteGenerateDialog({
       recovery.abort();
     };
   }, [open, recoverActiveRun]);
+
+  // 完成事件只带站点编号时（精细设计的完成事件就是这样），查一次站点把网址补上，
+  // 否则完成页没有「打开网页」「复制链接」，用户只能关掉弹窗去列表里找。
+  useEffect(() => {
+    if (step !== 'done' || !completedSite || completedSite.url) return;
+    let active = true;
+    const siteId = completedSite.id;
+    void getSite(siteId).then((result) => {
+      if (!active || !result.success || !result.data?.siteUrl) return;
+      setCompletedSite((current) => (current && current.id === siteId && !current.url
+        ? { ...current, url: result.data.siteUrl }
+        : current));
+    });
+    return () => { active = false; };
+  }, [completedSite, step]);
 
   // 完成页没有预览时（刷新后恢复、或流里一次都没拿到整页），读一次已保存的正文补上。
   useEffect(() => {
@@ -1254,7 +1270,7 @@ export default function SiteGenerateDialog({
 
   const runningStep = (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
-      <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-5 lg:grid-cols-[400px_minmax(0,1fr)]">
         <div className="flex min-h-0 min-w-0 flex-col gap-3.5" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
           <div className="flex flex-wrap items-end gap-4">
             <span className="text-[44px] font-bold leading-none tabular-nums text-token-primary">{formatGenerationClock(elapsedSeconds)}</span>
@@ -1380,6 +1396,8 @@ export default function SiteGenerateDialog({
     </div>
   );
 
+  const previewSteps = step === 'running' || step === 'done';
+
   return (
     <Dialog
       open={open}
@@ -1387,10 +1405,11 @@ export default function SiteGenerateDialog({
       title={dialogTitle}
       // 步骤条居中摆在标题栏里；窄于 lg 时会和标题挤在一起，改由正文顶部那一行显示。
       titleCenter={<span className="hidden lg:block"><Stepper step={step} /></span>}
-      maxWidth={960}
+      // 生成中与完成两步的主角是网页预览，弹窗放宽到 1280，让预览有网页该有的宽度。
+      maxWidth={previewSteps ? 1280 : 960}
       contentClassName="sm:p-2"
       contentStyle={{
-        width: 'min(960px, calc(100vw - 16px))',
+        width: previewSteps ? 'min(1280px, calc(100vw - 16px))' : 'min(960px, calc(100vw - 16px))',
         maxWidth: 'calc(100vw - 16px)',
         height: 'min(780px, calc(100vh - 24px))',
       }}

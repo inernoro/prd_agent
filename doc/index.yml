@@ -122,6 +122,7 @@ docs:
   design.platform.exec-bt-deployment: "CDS 部署架构与冲突分析 · 设计"
   design.platform.external-authorization: "外部授权中心 · 设计"
   design.platform.generation-snapshot: "生成快照 · 设计"
+  design.platform.design-runtime: "设计执行服务独立部署 · 设计"
   design.platform.design-generation: "知识驱动设计生成体系 · 设计"
   design.platform.github-infrastructure: "GitHub 基础设施层 · 设计"
   design.platform.image-ref-and-persistence: "图片引用日志与消息持久化 · 设计"
