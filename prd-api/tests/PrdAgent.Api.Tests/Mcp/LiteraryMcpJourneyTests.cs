@@ -207,12 +207,20 @@ public class LiteraryMcpJourneyTests
                 });
             }
             Assert.False(await cleanupTask);
-            await db.Users.InsertOneAsync(new User
-            {
-                UserId = "writer",
-                Username = "writer",
-                DisplayName = "Writer",
-            });
+            await db.Users.InsertManyAsync([
+                new User
+                {
+                    UserId = "writer",
+                    Username = "writer",
+                    DisplayName = "Writer",
+                },
+                new User
+                {
+                    UserId = "recipient",
+                    Username = "recipient",
+                    DisplayName = "Recipient",
+                },
+            ]);
             var openApi = WithUser(new LiteraryOpenApiController(db), "writer");
             var created = Data(await openApi.CreateWorkspace(new()
             {
@@ -231,10 +239,25 @@ public class LiteraryMcpJourneyTests
                 Url = "https://example.test/private-cover.png",
             });
 
+            var cloneResult = await new WorkspaceCloneService(
+                db,
+                NullLogger<WorkspaceCloneService>.Instance).CloneAsync(
+                workspaceId,
+                "recipient",
+                CancellationToken.None);
+            var clonedWorkspace = await db.ImageMasterWorkspaces
+                .Find(x => x.Id == cloneResult.NewWorkspaceId)
+                .SingleAsync();
+            Assert.True(clonedWorkspace.SuppressAutoSubmit);
+            Assert.False(clonedWorkspace.IsPublic);
+
             var submissions = WithAdminUser(new SubmissionsController(db, null!), "writer");
             var migration = Data(await submissions.MigrateLiterarySubmissions("writer"));
             Assert.Equal(1, migration.GetProperty("protectedWorkspaces").GetInt32());
             Assert.Equal(0, migration.GetProperty("newlySubmitted").GetInt32());
+            var recipientMigration = Data(await submissions.MigrateLiterarySubmissions("recipient"));
+            Assert.Equal(1, recipientMigration.GetProperty("protectedWorkspaces").GetInt32());
+            Assert.Equal(0, recipientMigration.GetProperty("newlySubmitted").GetInt32());
             var legacyClientResult = await submissions.CreateSubmission(new()
             {
                 ContentType = "literary",
@@ -426,6 +449,7 @@ public class LiteraryMcpJourneyTests
             Assert.Equal(0, await db.UploadArtifacts.CountDocumentsAsync(x => x.RequestId == $"{runId}-0-0"));
             Assert.Equal(0, await db.UserRecentOpens.CountDocumentsAsync(x => x.EntityId == workspaceId));
             Assert.Equal(1, await db.ImageMasterWorkspaces.CountDocumentsAsync(x => x.Id == otherWorkspace.Id));
+            Assert.Equal(1, await db.ImageMasterWorkspaces.CountDocumentsAsync(x => x.Id == cloneResult.NewWorkspaceId && x.SuppressAutoSubmit));
             Assert.Equal(1, await db.ImageAssets.CountDocumentsAsync(x => x.WorkspaceId == otherWorkspace.Id && x.Sha256 == sharedSha));
             Assert.Equal(1, await db.ReferenceImageConfigs.CountDocumentsAsync(x => x.ImageSha256 == referenceConfigSha));
             Assert.Equal(1, await db.LiteraryAgentConfigs.CountDocumentsAsync(x => x.ReferenceImageSha256 == legacyConfigSha));
