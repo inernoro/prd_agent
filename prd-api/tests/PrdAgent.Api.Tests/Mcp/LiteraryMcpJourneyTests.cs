@@ -251,13 +251,58 @@ public class LiteraryMcpJourneyTests
             Assert.True(clonedWorkspace.SuppressAutoSubmit);
             Assert.False(clonedWorkspace.IsPublic);
 
+            var normalWorkspace = new ImageMasterWorkspace
+            {
+                OwnerUserId = "writer",
+                ScenarioType = "visual-creation",
+                Title = "普通视觉工作区",
+            };
+            await db.ImageMasterWorkspaces.InsertOneAsync(normalWorkspace);
+            var normalAutoAsset = new ImageAsset
+            {
+                OwnerUserId = "writer",
+                WorkspaceId = normalWorkspace.Id,
+                Url = "https://example.test/normal-auto.png",
+            };
+            var normalMigrationAsset = new ImageAsset
+            {
+                OwnerUserId = "writer",
+                WorkspaceId = normalWorkspace.Id,
+                Url = "https://example.test/normal-migration.png",
+            };
+            await db.ImageAssets.InsertManyAsync([normalAutoAsset, normalMigrationAsset]);
+
             var submissions = WithAdminUser(new SubmissionsController(db, null!), "writer");
+            var protectedAsset = await db.ImageAssets.Find(x => x.WorkspaceId == workspaceId).SingleAsync();
+            var visualAutoResult = await submissions.CreateSubmission(new()
+            {
+                ContentType = "visual",
+                ImageAssetId = protectedAsset.Id,
+                Trigger = "auto",
+            });
+            Assert.IsType<ConflictObjectResult>(visualAutoResult);
+            var autoSubmitResult = Data(await submissions.AutoSubmit(new()
+            {
+                ImageAssetIds = [protectedAsset.Id, normalAutoAsset.Id],
+            }));
+            Assert.Equal(1, autoSubmitResult.GetProperty("submitted").GetInt32());
+            Assert.Equal(1, autoSubmitResult.GetProperty("protectedAssets").GetInt32());
+            Assert.Equal(1, await db.Submissions.CountDocumentsAsync(x => x.ImageAssetId == normalAutoAsset.Id));
+            Assert.Equal(0, await db.Submissions.CountDocumentsAsync(x => x.ImageAssetId == protectedAsset.Id));
+            var visualMigration = Data(await submissions.MigrateUserSubmissions("writer"));
+            Assert.Equal(1, visualMigration.GetProperty("protectedAssets").GetInt32());
+            Assert.Equal(1, visualMigration.GetProperty("newlySubmitted").GetInt32());
+            Assert.Equal(1, await db.Submissions.CountDocumentsAsync(x => x.ImageAssetId == normalMigrationAsset.Id));
+            Assert.Equal(0, await db.Submissions.CountDocumentsAsync(x => x.ImageAssetId == protectedAsset.Id));
             var migration = Data(await submissions.MigrateLiterarySubmissions("writer"));
             Assert.Equal(1, migration.GetProperty("protectedWorkspaces").GetInt32());
             Assert.Equal(0, migration.GetProperty("newlySubmitted").GetInt32());
             var recipientMigration = Data(await submissions.MigrateLiterarySubmissions("recipient"));
             Assert.Equal(1, recipientMigration.GetProperty("protectedWorkspaces").GetInt32());
             Assert.Equal(0, recipientMigration.GetProperty("newlySubmitted").GetInt32());
+            var recipientVisualMigration = Data(await submissions.MigrateUserSubmissions("recipient"));
+            Assert.Equal(1, recipientVisualMigration.GetProperty("protectedAssets").GetInt32());
+            Assert.Equal(0, recipientVisualMigration.GetProperty("newlySubmitted").GetInt32());
             var legacyClientResult = await submissions.CreateSubmission(new()
             {
                 ContentType = "literary",

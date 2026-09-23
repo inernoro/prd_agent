@@ -20,6 +20,8 @@ public static class LiteraryWorkspacePublicationPolicy
         ImageMasterWorkspace workspace,
         CancellationToken ct)
     {
+        if (!string.Equals(workspace.ScenarioType, "article-illustration", StringComparison.Ordinal))
+            return false;
         if (workspace.SuppressAutoSubmit) return true;
 
         var hasMcpArtifact = await db.McpCallLogs.CountDocumentsAsync(
@@ -41,6 +43,30 @@ public static class LiteraryWorkspacePublicationPolicy
             cancellationToken: CancellationToken.None);
         workspace.SuppressAutoSubmit = true;
         return true;
+    }
+
+    public static async Task<HashSet<string>> ResolveProtectedWorkspaceIdsAsync(
+        MongoDbContext db,
+        IEnumerable<string?> workspaceIds,
+        CancellationToken ct)
+    {
+        var ids = workspaceIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Select(id => id!)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (ids.Length == 0) return [];
+
+        var workspaces = await db.ImageMasterWorkspaces
+            .Find(x => ids.Contains(x.Id))
+            .ToListAsync(ct);
+        var protectedIds = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var workspace in workspaces)
+        {
+            if (await ResolveSuppressAutoSubmitAsync(db, workspace, ct))
+                protectedIds.Add(workspace.Id);
+        }
+        return protectedIds;
     }
 
     public static string NormalizeTrigger(string? trigger)

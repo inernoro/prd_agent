@@ -1852,6 +1852,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("DeleteAsync(ws.Id, CancellationToken.None)", literaryController);
         Assert.Contains("var protectedWorkspaces = 0;", submissionsController);
         Assert.Contains("protectedWorkspaces++;", submissionsController);
+        Assert.Contains("ResolveProtectedWorkspaceIdsAsync", submissionsController);
+        Assert.Contains("protectedAssets++;", submissionsController);
     }
 
     [Fact]

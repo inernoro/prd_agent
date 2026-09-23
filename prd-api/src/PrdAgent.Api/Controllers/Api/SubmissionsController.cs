@@ -783,6 +783,18 @@ public class SubmissionsController : ControllerBase
                 return NotFound(ApiResponse<object>.Fail("IMAGE_NOT_FOUND", "图片不存在"));
             if (asset.OwnerUserId != userId)
                 return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "只能投稿自己的作品"));
+            var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+                _db,
+                [asset.WorkspaceId],
+                CancellationToken.None);
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId)
+                && !LiteraryWorkspacePublicationPolicy.IsExplicitManualTrigger(trigger))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    "AUTO_SUBMISSION_DISABLED",
+                    "该私有工作区禁止自动投稿；如需公开，请明确选择手动投稿"));
+            }
 
             // 查重
             var existing = await _db.Submissions
@@ -1054,11 +1066,22 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+            _db,
+            assets.Select(x => x.WorkspaceId),
+            CancellationToken.None);
+        var protectedAssets = 0;
         // 按 WorkspaceId 分组构建快照，避免重复查询
         var snapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId))
+            {
+                protectedAssets++;
+                continue;
+            }
 
             GenerationSnapshot? snapshot = null;
             if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
@@ -1091,7 +1114,7 @@ public class SubmissionsController : ControllerBase
         if (newSubmissions.Count > 0)
             await _db.Submissions.InsertManyAsync(newSubmissions);
 
-        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count }));
+        return Ok(ApiResponse<object>.Ok(new { submitted = newSubmissions.Count, protectedAssets }));
     }
 
     /// <summary>
@@ -1172,11 +1195,22 @@ public class SubmissionsController : ControllerBase
             .ToHashSet();
 
         var newSubmissions = new List<Submission>();
+        var protectedWorkspaceIds = await LiteraryWorkspacePublicationPolicy.ResolveProtectedWorkspaceIdsAsync(
+            _db,
+            assets.Select(x => x.WorkspaceId),
+            CancellationToken.None);
+        var protectedAssets = 0;
         var migrateSnapshotCache = new Dictionary<string, GenerationSnapshot?>();
         foreach (var asset in assets)
         {
             if (existingAssetIds.Contains(asset.Id)) continue;
             if (string.IsNullOrWhiteSpace(asset.Url)) continue;
+            if (!string.IsNullOrWhiteSpace(asset.WorkspaceId)
+                && protectedWorkspaceIds.Contains(asset.WorkspaceId))
+            {
+                protectedAssets++;
+                continue;
+            }
 
             GenerationSnapshot? snapshot = null;
             if (!string.IsNullOrWhiteSpace(asset.WorkspaceId))
@@ -1216,6 +1250,7 @@ public class SubmissionsController : ControllerBase
             userId,
             totalAssets = assets.Count,
             alreadySubmitted = existingAssetIds.Count,
+            protectedAssets,
             newlySubmitted = newSubmissions.Count,
         }));
     }
