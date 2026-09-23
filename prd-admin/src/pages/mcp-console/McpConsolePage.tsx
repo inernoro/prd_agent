@@ -32,6 +32,7 @@ import { grantableTool, grantableToolCount } from './scopePlan';
 import { clientSignal, tierLabel } from './signalEncoding';
 import { CapabilityDot, SignalLegend } from './SignalDots';
 import { quotaFillPercent } from './quotaMeter';
+import { secureSameSiteEndpoint } from './endpointUrl';
 
 /**
  * 智能体接入台。
@@ -80,7 +81,7 @@ export default function McpConsolePage() {
       return;
     }
     setLoadError(null);
-    setOverview(res.data);
+    setOverview({ ...res.data, endpointUrl: secureSameSiteEndpoint(res.data.endpointUrl, window.location.origin) });
     setLoading(false);
   }, []);
 
@@ -438,7 +439,7 @@ export default function McpConsolePage() {
  *   - **说明**：它能做什么 —— 无边框、图标 + 文字、统一 24px，不可点；
  *   - **动作**：断开 / 调整上限 —— 32px、有边框，中间隔一道竖线。
  */
-function ClientRow({
+export function ClientRow({
   client,
   capabilities,
   onRevoke,
@@ -474,6 +475,7 @@ function ClientRow({
     <div
       className="flex overflow-hidden rounded-[13px]"
       style={{
+        flexShrink: 0,
         background: 'var(--bg-card)',
         border: '1px solid var(--border-subtle)',
         opacity: client.isActive ? 1 : 0.7,

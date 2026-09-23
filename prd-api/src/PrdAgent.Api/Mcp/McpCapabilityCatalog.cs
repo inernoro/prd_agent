@@ -91,7 +91,7 @@ public static class McpCapabilityCatalog
         {
             Key = "literary",
             Title = "文学创作",
-            Summary = "开工作区、续写、改稿，产出留在你的文学创作空间。",
+            Summary = "开工作区、续写、改稿、按标记配图并归档到文件夹；产出留在你的文学创作空间，不自动公开发布。",
             WriteScope = ScopeLiteraryUse,
             WriteNeedsApproval = true,
         },

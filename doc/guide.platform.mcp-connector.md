@@ -1,8 +1,8 @@
 # MAP MCP 连接器接入 · 指南
 
-> **版本**：v1.0 | **日期**：2026-06-16 | **状态**：已落地
+> **版本**：v1.1 | **日期**：2026-09-23 | **状态**：已落地
 
-**一句话**：把本平台当成连接器挂进外部智能体：填一个地址加一个密钥，就能调用内置的五个工具。
+**一句话**：把本平台接入外部智能体，用按能力授权的密钥完成资料检索、文学图文创作和私有归档。
 **谁该读**：要在外部智能体里用本平台能力的人。
 **读完能做什么**：三步接入并用命令行验证工具确实可调。
 
@@ -25,9 +25,10 @@ MAP 现在是一个 **MCP（Model Context Protocol）连接器**——和 GitHub
 
 ### 第 1 步：生成 sk-ak 密钥
 
-登录 MAP → 海鲜市场右上角「接入 AI」→ 生成一把 `sk-ak-*` 密钥，按需勾选 scope：
+登录 MAP → 百宝箱 → 智能体接入 → 连接新客户端，按需勾选能力；也可从海鲜市场右上角「接入 AI」创建市场专用密钥：
 - `marketplace.skills:read` —— 用海鲜市场工具
 - `document-store:read` —— 用知识库工具
+- `literary-agent:use` —— 建稿、改稿、文学配图及私有文件夹归档
 
 明文密钥只显示一次，复制好。
 
@@ -40,7 +41,9 @@ MAP 现在是一个 **MCP（Model Context Protocol）连接器**——和 GitHub
 
 对 Claude 说「搜一下海鲜市场关于 X 的技能」或「列一下我的知识库 / 读某篇文档」，它会自动调对应工具。
 
-## 内置工具（5 个）
+## 常用读取工具
+
+完整工具清单以接入台和当前密钥实际能看到的列表为准，不是固定五项。
 
 | 工具 | 作用 | 所需 scope |
 |------|------|-----------|
@@ -58,7 +61,7 @@ MAP 现在是一个 **MCP（Model Context Protocol）连接器**——和 GitHub
 KEY="sk-ak-你的密钥"
 URL="https://<域名>/api/mcp"
 
-# 列工具（应返回 5 个）
+# 列当前密钥有权使用的工具
 curl -s "$URL" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | python3 -m json.tool
 
@@ -70,6 +73,15 @@ curl -s "$URL" -H "Authorization: Bearer $KEY" -H "Content-Type: application/jso
 curl -s "$URL" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"knowledge_base_list_stores","arguments":{}}}' | python3 -m json.tool
 ```
+
+## 从文章到配图与私有文件夹
+
+1. 让智能体先写文章，并明确哪些段落需要什么画面。建稿时选择带配图标记的正文，可以同时指定文件夹；单篇最多四个标记。
+2. 智能体读取稿件确认配图位置后，每个标记发起一次生图。服务端使用文学创作模型和当前用户的参考图配置，不要求智能体猜模型名称。
+3. 生图在服务端继续运行。智能体查询任务到完成或失败；重试同一次请求不会重复生成。稿件修改后，旧任务不能回填新版本。
+4. 完成后读取图文 Markdown，或从「文学创作」打开原工作区查看。移动到文件夹会连文章和配图一起归档，不会额外建空白文章，也不等于公开发布。
+
+目前新建带标记文章可全程自动完成；已有文章改稿后重新规划配图仍可在页面完成。文件夹是文章分组，页面的「新建文件夹和文章」会明确说明同时创建文章。MCP 不负责外部社交平台投稿或客户端本地目录写入。
 
 ## 共享其他 Agent / appName 的功能（动态工具）
 
