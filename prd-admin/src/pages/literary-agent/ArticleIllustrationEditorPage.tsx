@@ -74,7 +74,7 @@ import { extractMarkers, type ArticleMarker } from '@/lib/articleMarkerExtractor
 import { useDebounce } from '@/hooks/useDebounce';
 import { createSubmission, checkSubmission } from '@/services/real/submissions';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
-import { PrdPetalBreathingLoader } from '@/components/ui/PrdPetalBreathingLoader';
+import { IllustrationDevelopingPlaceholder, ratioFromSize } from './IllustrationDevelopingPlaceholder';
 import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/cn';
@@ -183,7 +183,7 @@ const PRD_MD_STYLE = `
   .prd-md .prd-md-marker {
     background: rgba(245, 158, 11, 0.22);
     border: 1px solid rgba(245, 158, 11, 0.32);
-    color: rgba(255,255,255,0.92);
+    color: var(--text-primary);
     padding: 0 4px;
     border-radius: 6px;
   }
@@ -195,7 +195,7 @@ const PRD_MD_STYLE = `
   .prd-md .prd-md-marker-new {
     background: rgba(245, 158, 11, 0.55);
     border: 1px solid rgba(245, 158, 11, 0.5);
-    color: rgba(255,255,255,0.95);
+    color: var(--text-primary);
     padding: 0 4px;
     border-radius: 6px;
     animation: marker-insert-glow 1.2s ease-out forwards;
@@ -281,6 +281,33 @@ const PRD_MD_STYLE = `
         0 0 12px rgba(99, 102, 241, 0.3),
         0 0 28px rgba(168, 85, 247, 0.12);
     }
+  }
+
+  /* 配图卡片图片区：暗色沿用深底衬图；浅色改纸面嵌块，避免「白底浮灰卡」 */
+  .marker-card-wrap { background: rgba(0,0,0,0.22); }
+  [data-theme="light"] .marker-card-wrap { background: var(--nested-block-bg); }
+  .marker-card-topbar { background: linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%); }
+  .marker-card-title { color: rgba(255,255,255,0.85); }
+
+  /* 状态徽标：实心面板底 + 双写语义前景，浮在图片上或浅色空态下都能读清 */
+  .marker-status { background: var(--panel-solid); border: 1px solid var(--border-default); color: var(--text-secondary); }
+  .marker-status--done { color: var(--accent-fg-success); }
+  .marker-status--error { color: var(--accent-fg-error); }
+  .marker-status--busy { color: var(--accent-fg-amber); }
+
+  /* 浅色主题 + 还没有图：浮层不再压深色渐变，文字改深色，整张卡保持纸面干净 */
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-topbar { background: transparent; }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-title { color: var(--text-secondary); }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-prompt-overlay {
+    background: linear-gradient(to top, var(--panel-solid) 0%, color-mix(in srgb, var(--panel-solid) 80%, transparent) 65%, transparent 100%);
+    opacity: 1;
+  }
+  [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-prompt-text { color: var(--text-secondary); }
+
+  /* 正文里的「配图 N 生成中」占位：与正文图片同宽（跟随显示尺寸滑杆） */
+  .prd-md .prd-md-gen-slot {
+    max-width: var(--img-display-size, 50%);
+    margin: 10px auto;
   }
 
   /* 配图卡片：prompt 文字底部浮层（默认半可见，hover 全可见） */
@@ -650,6 +677,23 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 右侧每条配图的运行状态（逐条 parse + gen）
   const [markerRunItems, setMarkerRunItems] = useState<MarkerRunItem[]>([]);
+  // 每个配图进入「生成中」的时刻：正文占位与右侧卡片共用，重渲染/重挂载不重置「已等待」计时
+  const runStartedAtRef = useRef(new Map<number, number>());
+  const getRunStartedAt = (markerIndex: number): number => {
+    const map = runStartedAtRef.current;
+    let t = map.get(markerIndex);
+    if (t == null) {
+      t = Date.now();
+      map.set(markerIndex, t);
+    }
+    return t;
+  };
+  useEffect(() => {
+    const running = new Set(markerRunItems.filter((x) => x.status === 'running').map((x) => x.markerIndex));
+    for (const k of Array.from(runStartedAtRef.current.keys())) {
+      if (!running.has(k)) runStartedAtRef.current.delete(k);
+    }
+  }, [markerRunItems]);
   const [markerRunItemsRestored, setMarkerRunItemsRestored] = useState(false); // 标记是否已从后端恢复
 
   const genAbortRef = useRef<AbortController | null>(null);
@@ -1596,7 +1640,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           patches.push({
             start: m.startPos,
             end: m.endPos,
-            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n> 配图 ${i + 1} 生成中...`,
+            replacement: `<span data-marker-idx="${i}">[插图] : ${m.text}</span>\n\n<div data-gen-slot="${i}" data-gen-size="${String(it?.planItem?.size || '1024x1024').replace(/[^0-9xX×]/g, '')}"></div>\n\n`,
           });
           continue;
         }
@@ -3286,6 +3330,22 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       h1: ({ node: _node, children, ...props }) => <h1 {...props}>{highlightChildren(children)}</h1>,
                       h2: ({ node: _node, children, ...props }) => <h2 {...props}>{highlightChildren(children)}</h2>,
                       h3: ({ node: _node, children, ...props }) => <h3 {...props}>{highlightChildren(children)}</h3>,
+                      // 「配图 N 生成中」占位：buildPreviewMarkdownWithImages 输出的 <div data-gen-slot>，渲染成显影画框
+                      div: ({ node, children, ...props }) => {
+                        const slot = node?.properties?.dataGenSlot;
+                        if (slot == null) return <div {...props}>{children}</div>;
+                        const slotIdx = Number(slot);
+                        const markerIndex = markers[slotIdx]?.index ?? slotIdx;
+                        return (
+                          <div className="prd-md-gen-slot">
+                            <IllustrationDevelopingPlaceholder
+                              ratio={ratioFromSize(String(node?.properties?.dataGenSize ?? ''))}
+                              label={`配图 ${slotIdx + 1} 生成中`}
+                              startedAt={getRunStartedAt(markerIndex)}
+                            />
+                          </div>
+                        );
+                      },
                       // 正文配图：点击打开可缩放灯箱（放大/缩小/拖拽预览），不管比例尺多大都可预览
                       img: ({ node: _node, src, alt, style: _style, ...props }) => (
                         <img
@@ -3704,10 +3764,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     {/* ─── 图片区（所有控件 + prompt 文字浮在图片上）─── */}
                     <div
                       className="marker-card-wrap relative group"
+                      data-has-image={canShow ? 'true' : 'false'}
                       style={{
                         aspectRatio: '4 / 3',
                         padding: '6px 6px 0',
-                        background: 'rgba(0,0,0,0.22)',
                         cursor: canShow ? 'pointer' : 'default',
                       }}
                       onClick={() => {
@@ -3729,12 +3789,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2">
                           {it.status === 'parsing' ? (
                             <>
-                              <MapSpinner size={28} color="rgba(250, 204, 21, 0.7)" />
-                              <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.5)' }}>解析尺寸…</span>
+                              <MapSpinner size={28} />
+                              <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>解析尺寸…</span>
                             </>
                           ) : (
-                            <div style={{ width: '100%', height: '100%', maxWidth: 120, maxHeight: 120, aspectRatio: '1' }}>
-                              <PrdPetalBreathingLoader fill />
+                            <div className="absolute" style={{ inset: '6px 6px 0' }}>
+                              <IllustrationDevelopingPlaceholder
+                                fill
+                                ratio={ratioFromSize(it.planItem?.size)}
+                                label={`配图 ${idx + 1} 生成中`}
+                                startedAt={getRunStartedAt(it.markerIndex)}
+                              />
                             </div>
                           )}
                         </div>
@@ -3776,11 +3841,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
                       {/* 浮层：顶部 - 标签 + 尺寸 + 状态 */}
                       <div
-                        className="absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1.5"
-                        style={{ background: 'linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%)' }}
+                        className="marker-card-topbar absolute top-0 left-0 right-0 flex items-center justify-between px-2 py-1.5"
+                        style={{ zIndex: 3 }}
                         onClick={(e) => e.stopPropagation()}
                       >
-                        <span className="text-[11px] font-medium" style={{ color: 'rgba(255,255,255,0.85)' }}>
+                        <span className="marker-card-title text-[11px] font-medium">
                           配图 {idx + 1}
                         </span>
                         <div className="flex items-center gap-1.5">
@@ -3805,33 +3870,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                             />
                           )}
                           <div
-                            className="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                            style={{
-                              background:
-                                it.status === 'done'
-                                  ? 'rgba(34, 197, 94, 0.18)'
-                                  : it.status === 'error'
-                                    ? 'rgba(239, 68, 68, 0.18)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? 'rgba(250, 204, 21, 0.18)'
-                                      : 'rgba(255,255,255,0.1)',
-                              border:
-                                it.status === 'done'
-                                  ? '1px solid rgba(34, 197, 94, 0.35)'
-                                  : it.status === 'error'
-                                    ? '1px solid rgba(239, 68, 68, 0.35)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? '1px solid rgba(250, 204, 21, 0.3)'
-                                      : '1px solid rgba(255,255,255,0.2)',
-                              color:
-                                it.status === 'done'
-                                  ? 'rgba(34, 197, 94, 0.95)'
-                                  : it.status === 'error'
-                                    ? 'rgba(239, 68, 68, 0.95)'
-                                    : it.status === 'running' || it.status === 'parsing'
-                                      ? 'rgba(250, 204, 21, 0.95)'
-                                      : 'rgba(255,255,255,0.7)',
-                            }}
+                            className={`marker-status text-[11px] px-2 py-0.5 rounded-full font-semibold marker-status--${
+                              it.status === 'done'
+                                ? 'done'
+                                : it.status === 'error'
+                                  ? 'error'
+                                  : it.status === 'running' || it.status === 'parsing'
+                                    ? 'busy'
+                                    : 'idle'
+                            }`}
                             title={it.errorMessage || ''}
                           >
                             {statusLabel}
