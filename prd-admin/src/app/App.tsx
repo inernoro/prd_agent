@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { useAuthStore } from '@/stores/authStore';
 import { initializeTheme } from '@/stores/themeStore';
@@ -17,6 +17,8 @@ import { SuspenseVideoLoader } from '@/components/ui/VideoLoader';
 import { RequireAuth, RequirePermission } from '@/app/RouteGuards';
 import { NAV_REGISTRY } from '@/app/navRegistry';
 import { initBehaviorTracker, trackRouteChange } from '@/lib/behaviorTracker';
+import { installAuthzAutoRefresh } from '@/lib/authzAutoRefresh';
+import type { UserRole } from '@/types/admin';
 
 /**
  * BehaviorTrackerMount — 行为信号采集（行为洞察面板的数据来源）。
@@ -154,9 +156,47 @@ export default function App() {
   const setIsRoot = useAuthStore((s) => s.setIsRoot);
   const setCdnBaseUrl = useAuthStore((s) => s.setCdnBaseUrl);
   const setPermFingerprint = useAuthStore((s) => s.setPermFingerprint);
+  const patchUser = useAuthStore((s) => s.patchUser);
+  const currentUserId = useAuthStore((s) => s.user?.userId);
   const setMenuCatalog = useAuthStore((s) => s.setMenuCatalog);
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const logout = useAuthStore((s) => s.logout);
+  const authzRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const lastSyncedUserIdRef = useRef<string | null>(null);
+
+  const refreshCurrentAuthz = useCallback(() => {
+    if (authzRefreshInFlightRef.current) return authzRefreshInFlightRef.current;
+
+    const request = (async () => {
+      const res = await getAdminAuthzMe();
+      if (!res.success) {
+        // 仅 UNAUTHORIZED 才注销；网络中断/服务不可用不应导致注销。
+        // apiClient 已在 401 响应时处理了 logout+跳转，这里只作兜底。
+        const code = res.error?.code;
+        if (!code || code === 'UNAUTHORIZED') logout();
+        return;
+      }
+
+      // 每次都覆盖权限快照。用户级 allow/deny 不改变全局权限指纹，若只在
+      // permissionsLoaded=false 时写入，管理员刚授予的权限会一直卡到下次登录。
+      setPermissions(res.data.effectivePermissions || []);
+      setIsRoot(res.data.isRoot ?? false);
+      setPermissionsLoaded(true);
+      patchUser({
+        displayName: res.data.displayName,
+        role: res.data.role as UserRole,
+        systemRoleKey: res.data.systemRoleKey,
+      });
+      if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
+      if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
+      lastSyncedUserIdRef.current = res.data.userId;
+    })().finally(() => {
+      authzRefreshInFlightRef.current = null;
+    });
+
+    authzRefreshInFlightRef.current = request;
+    return request;
+  }, [logout, patchUser, setCdnBaseUrl, setIsRoot, setPermFingerprint, setPermissions, setPermissionsLoaded]);
 
   // 初始化主题（应用启动时立即执行）
   useEffect(() => {
@@ -173,30 +213,22 @@ export default function App() {
     if (isAuthenticated && !tipsLoaded) void loadTips();
   }, [isAuthenticated, tipsLoaded, loadTips]);
 
-  // 刷新/回到主页时补齐权限（避免"持久化 token 但 permissions 为空"导致误判）
-  // cdnBaseUrl 每次都刷新（后端切换存储 Provider 后域名会变）
+  // 首次进入、切换账号或权限指纹使缓存失效时，立即刷新完整权限快照。
+  useEffect(() => {
+    if (!isAuthenticated || !currentUserId) {
+      lastSyncedUserIdRef.current = null;
+      return;
+    }
+    if (lastSyncedUserIdRef.current !== currentUserId || !permissionsLoaded) {
+      void refreshCurrentAuthz();
+    }
+  }, [currentUserId, isAuthenticated, permissionsLoaded, refreshCurrentAuthz]);
+
+  // 个人权限变更后当前会话自动生效：重新聚焦立即刷新，持续停留时最多等待 30 秒。
   useEffect(() => {
     if (!isAuthenticated) return;
-    (async () => {
-      const res = await getAdminAuthzMe();
-      if (!res.success) {
-        // 仅 UNAUTHORIZED 才注销；网络中断/服务不可用不应导致注销
-        // apiClient 已在 401 响应时处理了 logout+跳转，这里只作兜底
-        const code = res.error?.code;
-        if (!code || code === 'UNAUTHORIZED') {
-          logout();
-        }
-        return;
-      }
-      if (!permissionsLoaded) {
-        setPermissions(res.data.effectivePermissions || []);
-        setIsRoot(res.data.isRoot ?? false);
-        setPermissionsLoaded(true);
-      }
-      if (res.data.cdnBaseUrl) setCdnBaseUrl(res.data.cdnBaseUrl);
-      if (res.data.permissionFingerprint) setPermFingerprint(res.data.permissionFingerprint);
-    })();
-  }, [isAuthenticated, permissionsLoaded, setPermissions, setPermissionsLoaded, setIsRoot, setCdnBaseUrl, setPermFingerprint, logout]);
+    return installAuthzAutoRefresh({ refresh: refreshCurrentAuthz });
+  }, [isAuthenticated, refreshCurrentAuthz]);
 
   // 加载菜单目录
   useEffect(() => {

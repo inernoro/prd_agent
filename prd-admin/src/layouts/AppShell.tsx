@@ -90,6 +90,7 @@ import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/d
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 import { canOpenLlmGateway } from '@/lib/llmGatewayAccess';
+import { resolveAdminIdentityLabel } from '@/lib/adminIdentityLabel';
 import { toast } from '@/lib/toast';
 import { MapBrandMark } from '@/components/ui/MapBrandMark';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
@@ -1212,7 +1213,7 @@ export default function AppShell() {
                 {user?.displayName || 'Admin'}
               </div>
               <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+                {resolveAdminIdentityLabel(user, isRoot)}
               </div>
             </div>
           </div>
@@ -1618,7 +1619,7 @@ export default function AppShell() {
                         {user?.displayName || 'Admin'}
                       </div>
                       <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+                        {resolveAdminIdentityLabel(user, isRoot)}
                       </div>
                     </div>
                   </div>
