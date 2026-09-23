@@ -1771,7 +1771,8 @@ public class GatewayDataDomainGuardTests
     {
         var editor = ReadRepoFile("prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx");
 
-        Assert.Contains("getVisualAgentAdapterInfo,", editor);
+        Assert.Contains("getLiteraryAgentAdapterInfo,", editor);
+        Assert.DoesNotContain("getVisualAgentAdapterInfo,", editor);
         Assert.Contains("const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable]", editor);
         Assert.Contains("setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);", editor);
         Assert.Equal(2, editor.Split("!currentModelSizesNotApplicable && (", StringSplitOptions.None).Length - 1);
