@@ -6,6 +6,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using SixLabors.ImageSharp;
 using System.Security.Claims;
@@ -273,10 +274,18 @@ public class LiteraryAgentConfigController : ControllerBase
 
         var mime = string.IsNullOrWhiteSpace(format.DefaultMimeType) ? "image/png" : format.DefaultMimeType;
 
-        // 保存到 COS（使用 VisualAgent 域名，与 Worker 读取保持一致）
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
+        var assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+
+        // 保存对象与登记引用必须持有同一把 SHA 租约，避免并发清理在两步之间删掉对象。
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("参考图片存储摘要校验失败");
 
         var now = DateTime.UtcNow;
         var config = new ReferenceImageConfig
@@ -293,7 +302,7 @@ public class LiteraryAgentConfigController : ControllerBase
             UpdatedAt = now
         };
 
-        await _db.ReferenceImageConfigs.InsertOneAsync(config, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.InsertOneAsync(config, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -409,10 +418,18 @@ public class LiteraryAgentConfigController : ControllerBase
 
         var mime = string.IsNullOrWhiteSpace(format.DefaultMimeType) ? "image/png" : format.DefaultMimeType;
 
-        // 保存到 COS（使用 VisualAgent 域名，与 Worker 读取保持一致）
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
+        var assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+
+        // 保存对象与替换引用必须持有同一把 SHA 租约。
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("参考图片存储摘要校验失败");
 
         config.ImageSha256 = stored.Sha256;
         config.ImageUrl = stored.Url;
@@ -421,7 +438,7 @@ public class LiteraryAgentConfigController : ControllerBase
         await _db.ReferenceImageConfigs.ReplaceOneAsync(
             x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
             config,
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { config }));
     }
@@ -442,9 +459,13 @@ public class LiteraryAgentConfigController : ControllerBase
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在"));
         }
 
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{config.ImageSha256}",
+            ct);
         await _db.ReferenceImageConfigs.DeleteOneAsync(
             x => x.Id == id && x.AppKey == AppKey && x.CreatedByAdminId == adminId,
-            ct);
+            CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -637,10 +658,18 @@ public class LiteraryAgentConfigController : ControllerBase
 
         var mime = string.IsNullOrWhiteSpace(format.DefaultMimeType) ? "image/png" : format.DefaultMimeType;
 
-        // 保存到 COS（使用 VisualAgent 域名，与 Worker 读取保持一致）
-        var stored = await _assetStorage.SaveAsync(bytes, mime, ct,
+        var assetSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)).ToLowerInvariant();
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{assetSha256}",
+            ct);
+
+        // 保存对象与登记引用必须持有同一把 SHA 租约。
+        var stored = await _assetStorage.SaveAsync(bytes, mime, CancellationToken.None,
             domain: AppDomainPaths.DomainVisualAgent,
             type: AppDomainPaths.TypeImg);
+        if (!string.Equals(stored.Sha256, assetSha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("参考图片存储摘要校验失败");
 
         var now = DateTime.UtcNow;
 
@@ -648,7 +677,7 @@ public class LiteraryAgentConfigController : ControllerBase
         await _db.ReferenceImageConfigs.UpdateManyAsync(
             x => x.AppKey == AppKey && x.CreatedByAdminId == adminId && x.IsActive,
             Builders<ReferenceImageConfig>.Update.Set(x => x.IsActive, false),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         // 创建新配置并激活
         var newConfig = new ReferenceImageConfig
@@ -665,7 +694,7 @@ public class LiteraryAgentConfigController : ControllerBase
             UpdatedAt = now
         };
 
-        await _db.ReferenceImageConfigs.InsertOneAsync(newConfig, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.InsertOneAsync(newConfig, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -844,6 +873,16 @@ public class LiteraryAgentConfigController : ControllerBase
         if (source == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在或未公开"));
 
+        await using var assetLease = await VideoAssetMutationLease.AcquireAsync(
+            _db,
+            $"generated-image:{source.ImageSha256}",
+            ct);
+        source = await _db.ReferenceImageConfigs
+            .Find(x => x.Id == id && x.AppKey == AppKey && x.IsPublic && x.ImageSha256 == source.ImageSha256)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (source == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "配置不存在或已变更"));
+
         // 获取原作者信息
         var sourceOwner = source.CreatedByAdminId != null
             ? await _db.Users.Find(u => u.UserId == source.CreatedByAdminId).FirstOrDefaultAsync(ct)
@@ -876,13 +915,13 @@ public class LiteraryAgentConfigController : ControllerBase
             UpdatedAt = DateTime.UtcNow
         };
 
-        await _db.ReferenceImageConfigs.InsertOneAsync(forked, cancellationToken: ct);
+        await _db.ReferenceImageConfigs.InsertOneAsync(forked, cancellationToken: CancellationToken.None);
 
         // 更新原配置的 ForkCount
         await _db.ReferenceImageConfigs.UpdateOneAsync(
             x => x.Id == id,
             Builders<ReferenceImageConfig>.Update.Inc(x => x.ForkCount, 1),
-            cancellationToken: ct);
+            cancellationToken: CancellationToken.None);
 
         // 记录下载日志
         var currentUser = await _db.Users.Find(u => u.UserId == userId).FirstOrDefaultAsync(ct);
@@ -902,7 +941,7 @@ public class LiteraryAgentConfigController : ControllerBase
             AppKey = AppKey,
             CreatedAt = DateTime.UtcNow
         };
-        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: ct);
+        await _db.MarketplaceForkLogs.InsertOneAsync(forkLog, cancellationToken: CancellationToken.None);
 
         return Ok(ApiResponse<object>.Ok(new { config = forked }));
     }

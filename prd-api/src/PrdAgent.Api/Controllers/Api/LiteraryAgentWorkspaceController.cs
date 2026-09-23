@@ -27,6 +27,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
     private readonly MongoDbContext _db;
     private readonly IAssetStorage _assetStorage;
     private readonly ILogger<LiteraryAgentWorkspaceController> _logger;
+    private readonly Services.ImageMasterWorkspaceDeletionService _workspaceDeletion;
 
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
@@ -35,6 +36,7 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         _db = db;
         _assetStorage = assetStorage;
         _logger = logger;
+        _workspaceDeletion = new Services.ImageMasterWorkspaceDeletionService(db, assetStorage, logger);
     }
 
     private string GetAdminId()
@@ -243,11 +245,13 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         // Only owner can delete
         if (ws.OwnerUserId != adminId) return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "只有创建者可以删除"));
 
-        await _db.ImageMasterWorkspaces.DeleteOneAsync(x => x.Id == ws.Id, ct);
-        // Clean up related data
-        await _db.ImageAssets.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
-        await _db.ImageMasterMessages.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
-        await _db.ImageMasterCanvases.DeleteManyAsync(x => x.WorkspaceId == ws.Id, ct);
+        var deletion = await _workspaceDeletion.DeleteAsync(ws.Id, CancellationToken.None);
+        if (deletion.HasActiveGeneration)
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.WORKSPACE_GENERATION_ACTIVE,
+                "该项目仍有图片正在生成，请先取消任务并等待状态结束后再删除"));
+        }
 
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
@@ -266,6 +270,8 @@ public class LiteraryAgentWorkspaceController : ControllerBase
         var ws = await GetWorkspaceIfAllowedAsync(id, adminId, ct);
         if (ws == null) return NotFound(ApiResponse<object>.Fail("WORKSPACE_NOT_FOUND", "Workspace 不存在"));
         if (ws.OwnerUserId == "__FORBIDDEN__") return StatusCode(403, ApiResponse<object>.Fail(ErrorCodes.PERMISSION_DENIED, "无权限"));
+
+        await Services.LiteraryWorkspacePublicationPolicy.ResolveSuppressAutoSubmitAsync(_db, ws, ct);
 
         // Update lastOpenedAt + 每用户「最近打开」台账（首页继续上次）
         await _db.ImageMasterWorkspaces.UpdateOneAsync(

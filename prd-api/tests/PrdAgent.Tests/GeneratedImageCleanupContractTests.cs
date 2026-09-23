@@ -68,7 +68,7 @@ public class GeneratedImageCleanupContractTests
         var writer = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/LLM/OpenAIImageClient.cs"));
         var cleanup = File.ReadAllText(LocateRepoFile(
-            "prd-api/src/PrdAgent.Api/Controllers/Api/ImageMasterController.cs"));
+            "prd-api/src/PrdAgent.Api/Services/ImageMasterWorkspaceDeletionService.cs"));
         var avatarCleanup = File.ReadAllText(LocateRepoFile(
             "prd-api/src/PrdAgent.Api/Services/ProfileAvatarGenerationCleanupService.cs"));
 

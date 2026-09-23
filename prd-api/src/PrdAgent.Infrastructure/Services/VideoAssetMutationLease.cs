@@ -57,6 +57,11 @@ public static class VideoAssetMutationLease
             {
                 // 现有未过期租约占用相同 _id；等待持有者释放或租约过期。
             }
+            catch (MongoCommandException ex) when (ex.Code == 11000)
+            {
+                // findAndModify + upsert 的重复键由部分 MongoDB 驱动版本包装为命令异常。
+                // 语义仍然是租约正在被占用，必须等待，不能把正常竞争暴露成业务失败。
+            }
 
             await Task.Delay(RetryInterval, ct);
         }
