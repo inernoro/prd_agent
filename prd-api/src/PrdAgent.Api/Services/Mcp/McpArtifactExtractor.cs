@@ -44,7 +44,8 @@ public static class McpArtifactExtractor
         // 于是那次成功的调用被判成 image-run 且无 url —— 接入台把它显示成
         // 「还没出结果」，而且**永远**不会变，因为压根没有轮询会给它一个地址。
         // 其余工具的 runId 记成中性的 "run"：身份还在（归并照旧），但不触发那条等产物的判据。
-        var isVisualTool = toolName.StartsWith("map_visual_", StringComparison.OrdinalIgnoreCase);
+        var isVisualTool = toolName.StartsWith("map_visual_", StringComparison.OrdinalIgnoreCase)
+            || toolName is "map_literary_generate_image" or "map_literary_get_image_run";
 
         string? kind = null, id = null;
         foreach (var (key, k) in IdKeys)

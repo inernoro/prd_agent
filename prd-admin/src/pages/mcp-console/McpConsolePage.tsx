@@ -32,6 +32,7 @@ import { grantableTool, grantableToolCount } from './scopePlan';
 import { clientSignal, tierLabel } from './signalEncoding';
 import { CapabilityDot, SignalLegend } from './SignalDots';
 import { quotaFillPercent } from './quotaMeter';
+import { secureSameSiteEndpoint } from './endpointUrl';
 
 /**
  * 智能体接入台。
@@ -80,7 +81,7 @@ export default function McpConsolePage() {
       return;
     }
     setLoadError(null);
-    setOverview(res.data);
+    setOverview({ ...res.data, endpointUrl: secureSameSiteEndpoint(res.data.endpointUrl, window.location.origin) });
     setLoading(false);
   }, []);
 
@@ -472,7 +473,7 @@ function ClientRow({
 
   return (
     <div
-      className="flex overflow-hidden rounded-[13px]"
+      className="flex shrink-0 overflow-hidden rounded-[13px]"
       style={{
         background: 'var(--bg-card)',
         border: '1px solid var(--border-subtle)',

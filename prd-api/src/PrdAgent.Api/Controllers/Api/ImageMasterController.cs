@@ -3096,7 +3096,8 @@ public class ImageMasterController : ControllerBase
             if (needUpdate)
             {
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == wf.UpdatedAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, now),
@@ -3130,6 +3131,7 @@ public class ImageMasterController : ControllerBase
 
             var markerCount = wf.Markers.Count;
             var candidateAssets = assets
+                .Where(a => !a.ArticleWorkflowVersion.HasValue)
                 .OrderByDescending(a => a.CreatedAt)
                 .Take(markerCount)
                 .OrderBy(a => a.CreatedAt)

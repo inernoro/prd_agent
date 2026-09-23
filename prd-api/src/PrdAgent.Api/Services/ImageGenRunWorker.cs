@@ -1557,6 +1557,7 @@ public class ImageGenRunWorker : BackgroundService
             OriginalUrl = assetUrl,
             OriginalSha256 = assetSha256,
             ArticleInsertionIndex = run.ArticleMarkerIndex,
+            ArticleWorkflowVersion = run.ArticleWorkflowVersion,
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
 
@@ -1799,6 +1800,9 @@ public class ImageGenRunWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(wid)) return;
 
         var markerIndex = run.ArticleMarkerIndex.Value;
+        var workspaceFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid);
+        if (run.ArticleWorkflowVersion.HasValue)
+            workspaceFilter &= Builders<ImageMasterWorkspace>.Filter.Eq(x => x.ArticleWorkflow!.Version, run.ArticleWorkflowVersion.Value);
         var isDone = status == "done";
         var key = markerIndex.ToString();
         // 权威成功时间戳的字段路径（第 1 步指针写入与第 2 步显示门控共用，避免重复声明导致 CS0136）
@@ -1808,7 +1812,7 @@ public class ImageGenRunWorker : BackgroundService
         if (isDone && !string.IsNullOrWhiteSpace(assetId))
         {
             var pointerFilter = Builders<ImageMasterWorkspace>.Filter.And(
-                Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                workspaceFilter,
                 Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null),
                 Builders<ImageMasterWorkspace>.Filter.Or(
                     Builders<ImageMasterWorkspace>.Filter.Exists(stampPath, false),
@@ -1822,14 +1826,14 @@ public class ImageGenRunWorker : BackgroundService
             // DoneImageCount 重算（读取最新字典）。并发完成时各 task 读到的快照新旧不一，
             // 用"仅当新值更大才写"的单调门控（Lt 过滤）防止陈旧的较小计数最后落地把数值压低；
             // 生图过程中指针只增不减，单调最大即收敛到真实值。
-            var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+            var latest = await _db.ImageMasterWorkspaces.Find(workspaceFilter).FirstOrDefaultAsync(ct);
             if (latest?.ArticleWorkflow?.AssetIdByMarkerIndex != null)
             {
                 var doneCount = latest.ArticleWorkflow.AssetIdByMarkerIndex.Values
                     .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
                     Builders<ImageMasterWorkspace>.Filter.And(
-                        Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                        workspaceFilter,
                         Builders<ImageMasterWorkspace>.Filter.Lt(x => x.ArticleWorkflow!.DoneImageCount, doneCount)),
                     Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow!.DoneImageCount, doneCount),
                     cancellationToken: ct);
@@ -1840,7 +1844,7 @@ public class ImageGenRunWorker : BackgroundService
         //    否则并发下用陈旧快照整体回写会抹掉其它 run 在第 1 步原子写入的
         //    AssetIdByMarkerIndex / AssetRunAtByMarkerIndex（High：跨 marker 互相覆盖）。
         //    先读一次用于门控评估（display 为尽力而为，指针已在第 1 步可靠写入；这里轻微 TOCTOU 可接受）。
-        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        var ws = await _db.ImageMasterWorkspaces.Find(workspaceFilter).FirstOrDefaultAsync(ct);
         if (ws == null) return;
         var wf = ws.ArticleWorkflow;
         if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count) return;
@@ -1869,7 +1873,7 @@ public class ImageGenRunWorker : BackgroundService
             // 原子门控：写入 filter 携带权威时间戳守卫，仅当本 run 仍是最新成功（无严格更新的指针）才落地，
             // 否则陈旧 run 通过内存门控后仍可能后落地覆盖更新 run 的 display（Codex/Bugbot：stale 覆盖 newer）。
             var doneFilter = F.And(
-                F.Eq(x => x.Id, wid),
+                workspaceFilter,
                 F.Or(F.Exists(stampPath, false), F.Lte(stampPath, run.CreatedAt)));
             var doneUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
             {
@@ -1896,7 +1900,7 @@ public class ImageGenRunWorker : BackgroundService
             // 失败但已有成功图：把因重生成而被置为 running 的 marker 恢复为 done（保留旧图），不写错误、不动图片字段，
             // 否则 marker 会卡在 running（Bugbot：regen fail leaves marker running）。
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                F.Eq(x => x.Id, wid),
+                workspaceFilter,
                 U.Combine(
                     U.Set($"{mPath}.status", "done"),
                     U.Set($"{mPath}.errorMessage", (string?)null),
@@ -1917,7 +1921,7 @@ public class ImageGenRunWorker : BackgroundService
         };
         if (!string.IsNullOrWhiteSpace(errorMessage)) errUpdates.Add(U.Set($"{mPath}.errorMessage", errorMessage));
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
-            F.And(F.Eq(x => x.Id, wid), F.Exists(stampPath, false)),
+            F.And(workspaceFilter, F.Exists(stampPath, false)),
             U.Combine(errUpdates),
             cancellationToken: ct);
     }
