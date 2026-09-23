@@ -58,7 +58,7 @@ import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentC
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
-import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Settings, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, Check } from 'lucide-react';
+import { Wand2, Download, Sparkles, FileText, Plus, Trash2, Edit2, Upload, Copy, DownloadCloud, MapPin, Image as ImageIcon, CheckCircle2, Pencil, Globe, User, TrendingUp, Clock, Search, GitFork, Send, Share2, ArrowLeft, Check, ChevronDown, SlidersHorizontal } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { ReferenceImageConfig } from '@/services/contracts/literaryAgentConfig';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
@@ -162,6 +162,16 @@ type MarkerRunItem = {
   assetUrl?: string | null;
   errorMessage?: string | null;
 };
+
+/** 生成设置项的两行文字：上面是「这是什么」，下面是当前值 */
+function SettingText({ k, v }: { k: string; v: string }) {
+  return (
+    <span className="min-w-0 flex-1 flex flex-col">
+      <span className="lit-setting-key">{k}</span>
+      <span className="lit-setting-val">{v}</span>
+    </span>
+  );
+}
 
 /** "1024x1536" → 宽高比；解析不出按 1:1。 */
 function ratioFromSize(size?: string | null): number {
@@ -301,11 +311,15 @@ const PRD_MD_STYLE = `
   .marker-card-topbar { background: linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%); }
   .marker-card-title { color: rgba(255,255,255,0.85); }
 
-  /* 状态徽标：实心面板底 + 双写语义前景，浮在图片上或浅色空态下都能读清 */
-  .marker-status { background: var(--panel-solid); border: 1px solid var(--border-default); color: var(--text-secondary); }
+  /* 状态标签：无边框，圆点 + 字（与按钮、设置项区分）。浮在图片上，所以垫一层实心面板底保证可读 */
+  .marker-status { display: inline-flex; align-items: center; gap: 5px; background: var(--panel-solid); border: none; color: var(--text-secondary); }
+  .marker-status::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
   .marker-status--done { color: var(--accent-fg-success); }
   .marker-status--error { color: var(--accent-fg-error); }
   .marker-status--busy { color: var(--accent-fg-amber); }
+  .marker-status--busy::before { animation: lit-status-pulse 1.2s ease-in-out infinite; }
+  .marker-status--parsed { color: var(--accent-fg-info); }
+  @keyframes lit-status-pulse { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
 
   /* 浅色主题 + 还没有图：浮层不再压深色渐变，文字改深色，整张卡保持纸面干净 */
   [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-topbar { background: transparent; }
@@ -315,6 +329,31 @@ const PRD_MD_STYLE = `
     opacity: 1;
   }
   [data-theme="light"] .marker-card-wrap[data-has-image="false"] .marker-card-prompt-text { color: var(--text-secondary); }
+
+  /* AI 输出面板里识别出的 [插图] 行 */
+  .lit-output-marker {
+    margin: 4px 0; padding: 4px 8px; border-radius: 6px;
+    background: rgba(245, 158, 11, 0.14); border-left: 3px solid rgba(245, 158, 11, 0.7);
+    color: var(--text-primary);
+  }
+
+  /* 忙碌主按钮底边的不定进度条 */
+  .lit-busy-bar--indeterminate { animation: lit-busy-slide 1.4s ease-in-out infinite; }
+  @keyframes lit-busy-slide { 0% { left: -36%; } 100% { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .lit-busy-bar--indeterminate { animation: none; left: 0; width: 100% !important; } }
+
+  /* 生成设置：可切换的设置项 = 输入框底 + 小标题 + 当前值 + 下拉箭头（与按钮、状态标签三种长相分开） */
+  .lit-setting {
+    display: flex; align-items: center; gap: 6px; min-width: 0; height: 36px; padding: 0 8px;
+    border-radius: 9px; text-align: left; cursor: pointer;
+    background: var(--bg-input); border: 1px solid var(--border-default);
+    transition: border-color .15s ease, background .15s ease;
+  }
+  .lit-setting:hover { border-color: var(--border-focus, var(--accent-primary)); background: var(--bg-input-hover); }
+  .lit-setting:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 1px; }
+  .lit-setting-key { font-size: 10px; line-height: 1.15; color: var(--text-muted); }
+  .lit-setting-val { font-size: 12px; line-height: 1.25; font-weight: 600; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lit-setting[data-set="true"] .lit-setting-val { color: var(--text-primary); }
 
   /* 正文里的「配图 N 生成中」占位：与正文图片同宽（跟随显示尺寸滑杆） */
   .prd-md .prd-md-gen-slot {
@@ -2522,6 +2561,16 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   const activeButton = buttonConfig.find((btn) => btn.show);
 
+  // 忙碌主按钮的进度文案：标记流式中报「已识别 N 处」（不定进度），批量生图报「已完成 X/Y」（确定进度）
+  const busyProgress: { text: string; ratio: number | null } = (() => {
+    if (markerStreaming) return { text: `正在生成配图标记 · 已识别 ${markerRunItems.length} 处`, ratio: null };
+    const total = markerRunItems.length;
+    const done = markerRunItems.filter((x) => x.status === 'done').length;
+    return total > 0
+      ? { text: `正在生图 · 已完成 ${done}/${total}`, ratio: done / total }
+      : { text: '正在生图…', ratio: null };
+  })();
+
   // 左侧统一作为"预览面板"：上传时渲染原文；AI 流式生成时直接渲染带标记版本
   const leftPreviewMarkdown =
     phase === 2 // MarkersGenerated
@@ -2571,9 +2620,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     { key: 2, label: '配图标记' },
   ];
 
-  const configPillBaseClass =
-    'flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover-bg-soft min-w-0 flex-1';
-  const configPillTextClass = 'text-[11px] truncate';
 
   const handleStepClick = async (stepKey: number) => {
     const targetPhase = stepKey as WorkflowPhase;
@@ -3223,42 +3269,56 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   </div>
                 )}
 
-                {/* Raw LLM 输出区域 */}
-                {rawMarkerOutput && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span
-                        className="inline-block w-2 h-2 rounded-full"
-                        style={{
-                          background: 'rgba(99, 102, 241, 0.8)',
-                          animation: 'pulse 1.5s ease-in-out infinite',
-                        }}
-                      />
-                      <span
-                        className="text-[11px] font-semibold tracking-wide uppercase"
-                        style={{ color: 'rgba(99, 102, 241, 0.85)' }}
-                      >
-                        Output
-                      </span>
-                    </div>
-                    <pre
-                      className="rounded-xl px-3 py-2 text-[11px] leading-relaxed whitespace-pre-wrap break-all font-mono"
-                      style={{
-                        background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.08) 0%, rgba(34, 197, 94, 0.06) 100%)',
-                        border: '1px solid rgba(99, 102, 241, 0.15)',
-                        color: 'rgba(147, 197, 253, 0.75)',
-                        margin: 0,
-                      }}
+                {/* Raw LLM 输出区域：正文走主题正文色，识别出的每条 [插图] 单独高亮 */}
+                {rawMarkerOutput && (() => {
+                  const lines = rawMarkerOutput.split('\n');
+                  const tail = lines.pop() ?? '';
+                  const isMarkerLine = (l: string) => /^\s*\[插图\]/.test(l);
+                  return (
+                    <div
+                      className="rounded-[12px] overflow-hidden"
+                      style={{ border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
+                      data-testid="literary-ai-output"
                     >
-                      <StreamingText
-                        text={rawMarkerOutput}
-                        streaming={markerStreaming}
-                        mode="blur"
-                        cursorContent={<MapCursor size={12} />}
-                      />
-                    </pre>
-                  </div>
-                )}
+                      <div
+                        className="flex items-center gap-2 px-3 h-8"
+                        style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}
+                      >
+                        <span
+                          className="inline-block w-2 h-2 rounded-full shrink-0"
+                          style={{
+                            background: 'var(--accent-fg-violet)',
+                            animation: markerStreaming ? 'pulse 1.5s ease-in-out infinite' : undefined,
+                          }}
+                        />
+                        <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>AI 输出</span>
+                        <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          · {markerStreaming ? '正在识别配图位置' : '识别完成'} · 已识别 {markerRunItems.length} 处
+                        </span>
+                      </div>
+                      <div
+                        className="px-3 py-2 text-[12px] leading-[1.7] whitespace-pre-wrap break-all font-mono"
+                        style={{ color: 'var(--text-secondary)' }}
+                      >
+                        {lines.map((l, i) =>
+                          isMarkerLine(l) ? (
+                            <div key={i} className="lit-output-marker">{l}</div>
+                          ) : (
+                            <div key={i}>{l || '\u00a0'}</div>
+                          ),
+                        )}
+                        <div className={isMarkerLine(tail) ? 'lit-output-marker' : undefined}>
+                          <StreamingText
+                            text={tail}
+                            streaming={markerStreaming}
+                            mode="blur"
+                            cursorContent={<MapCursor size={12} />}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
 
                 {/* 空状态：等待 LLM 响应 */}
                 {!thinkingContent && !rawMarkerOutput && (
@@ -3416,49 +3476,73 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               markerRunItems.every(x => x.status === 'done')
             }
           />
-          {activeButton && (
+          {activeButton && (isBusy ? (
+            // 生成中：保持实心主色 + 实时进度，不走 disabled 的 50% 透明（那样读不出在干什么）
+            <Button
+              variant="primary"
+              className="w-full relative overflow-hidden"
+              aria-disabled
+              aria-busy
+              data-testid="literary-busy-button"
+              style={{ cursor: 'progress' }}
+              onClick={() => {}}
+            >
+              <MapSpinner size={14} color="currentColor" />
+              {busyProgress.text}
+              <span
+                aria-hidden
+                className={`absolute left-0 bottom-0 h-[3px]${busyProgress.ratio == null ? ' lit-busy-bar--indeterminate' : ''}`}
+                style={{
+                  width: busyProgress.ratio == null ? '36%' : `${Math.max(6, busyProgress.ratio * 100)}%`,
+                  background: 'currentColor',
+                  opacity: 0.55,
+                  transition: 'width 0.6s ease-out',
+                }}
+              />
+            </Button>
+          ) : (
             <Button
               variant="primary"
               className="w-full"
               onClick={() => void activeButton.action()}
-              disabled={isBusy || activeButton.disabled}
+              disabled={activeButton.disabled}
             >
               <activeButton.icon size={16} />
-              {isBusy ? '生成中...' : activeButton.label}
+              {activeButton.label}
             </Button>
-          )}
+          ))}
 
-          {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
-          <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
-            <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+          {/* 生成设置：标题行（右侧「全部配置」按钮）+ 2×2 设置项 */}
+          <div className="mt-3 pt-3 border-t" style={{ borderColor: 'var(--border-subtle)' }}>
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>生成设置</span>
+              <Button size="sm" variant="secondary" onClick={() => setPromptPreviewOpen(true)} title="打开全部配置">
+                <SlidersHorizontal size={13} />
+                全部配置
+              </Button>
+            </div>
 
-            {/* 三个配置项 */}
-            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+            <div className="grid grid-cols-2 gap-1.5">
               {/* 提示词 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: selectedPrompt ? 'rgba(147, 197, 253, 0.08)' : 'var(--nested-block-bg)',
-                  border: selectedPrompt ? '1px solid rgba(147, 197, 253, 0.15)' : '1px solid var(--border-subtle)'
-                }}
+              <button
+                type="button"
+                className="lit-setting"
+                data-set={selectedPrompt ? 'true' : 'false'}
                 onClick={() => {
                   if (selectedPrompt) handleEditPrompt(selectedPrompt);
                   else setPromptPreviewOpen(true);
                 }}
                 title={selectedPrompt?.title || '系统推断风格（点击自定义）'}
               >
-                <FileText size={12} style={{ color: selectedPrompt ? '#93C5FD' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: selectedPrompt ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {selectedPrompt?.title || '自动风格'}
-                </span>
-              </div>
+                <FileText size={14} style={{ color: 'var(--accent-fg-blue)', flexShrink: 0 }} />
+                <SettingText k="提示词" v={selectedPrompt?.title || '自动风格'} />
+                <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              </button>
               {/* 风格图 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
-                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)'
-                }}
+              <button
+                type="button"
+                className="lit-setting"
+                data-set={referenceImageConfigs.find(c => c.isActive) ? 'true' : 'false'}
                 onClick={() => {
                   const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
                   if (activeRefConfig) {
@@ -3470,45 +3554,38 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 }}
                 title={referenceImageConfigs.find(c => c.isActive)?.name || '未选择风格图'}
               >
-                <ImageIcon size={12} style={{ color: referenceImageConfigs.find(c => c.isActive) ? '#C084FC' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: referenceImageConfigs.find(c => c.isActive) ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {referenceImageConfigs.find(c => c.isActive)?.name || '风格图'}
-                </span>
-              </div>
+                <ImageIcon size={14} style={{ color: 'var(--accent-fg-violet)', flexShrink: 0 }} />
+                <SettingText k="风格图" v={referenceImageConfigs.find(c => c.isActive)?.name || '未选择'} />
+                <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              </button>
               {/* 水印 */}
-              <div
-                className={configPillBaseClass}
-                style={{
-                  background: watermarkStatus.enabled ? 'rgba(251, 191, 36, 0.08)' : 'var(--nested-block-bg)',
-                  border: watermarkStatus.enabled ? '1px solid rgba(251, 191, 36, 0.15)' : '1px solid var(--border-subtle)'
-                }}
+              <button
+                type="button"
+                className="lit-setting"
+                data-set={watermarkStatus.enabled ? 'true' : 'false'}
                 onClick={() => {
                   setPendingWatermarkEdit(true);
                   setPromptPreviewOpen(true);
                 }}
                 title={watermarkStatus.enabled ? (watermarkStatus.name || '已启用水印') : '未启用水印'}
               >
-                <Sparkles size={12} style={{ color: watermarkStatus.enabled ? '#FBBF24' : '#9CA3AF', flexShrink: 0 }} />
-                <span className={configPillTextClass} style={{ color: watermarkStatus.enabled ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                  {watermarkStatus.enabled ? (watermarkStatus.name || '水印') : '水印'}
-                </span>
-              </div>
+                <Sparkles size={14} style={{ color: 'var(--accent-fg-amber)', flexShrink: 0 }} />
+                <SettingText k="水印" v={watermarkStatus.enabled ? (watermarkStatus.name || '已启用') : '未启用'} />
+                <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+              </button>
               {/* 位置策略（Phase 1） */}
               <DropdownMenu.Root open={positionStrategyOpen} onOpenChange={setPositionStrategyOpen}>
                 <DropdownMenu.Trigger asChild>
-                  <div
-                    className={configPillBaseClass}
-                    style={{
-                      background: positionStrategy !== 'auto' ? 'rgba(52, 211, 153, 0.08)' : 'var(--nested-block-bg)',
-                      border: positionStrategy !== 'auto' ? '1px solid rgba(52, 211, 153, 0.15)' : '1px solid var(--border-subtle)',
-                    }}
+                  <button
+                    type="button"
+                    className="lit-setting"
+                    data-set={positionStrategy !== 'auto' ? 'true' : 'false'}
                     title="配图位置策略：控制 AI 在哪些段落插入配图标记"
                   >
-                    <MapPin size={12} style={{ color: positionStrategy !== 'auto' ? '#34D399' : '#9CA3AF', flexShrink: 0 }} />
-                    <span className={configPillTextClass} style={{ color: positionStrategy !== 'auto' ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                      {POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'}
-                    </span>
-                  </div>
+                    <MapPin size={14} style={{ color: 'var(--accent-fg-emerald)', flexShrink: 0 }} />
+                    <SettingText k="配图位置" v={POSITION_STRATEGY_OPTIONS.find(o => o.value === positionStrategy)?.label ?? '自动'} />
+                    <ChevronDown size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                  </button>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content
@@ -3562,17 +3639,6 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             </div>
-
-            {/* 配置按钮 */}
-            <button
-              type="button"
-              className="text-[11px] px-2.5 py-1 rounded-md hover-bg-soft transition-colors flex-shrink-0 border"
-              style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
-              onClick={() => setPromptPreviewOpen(true)}
-              title="打开全部配置"
-            >
-              配置
-            </button>
           </div>
         </PanelCard>
 
@@ -3901,7 +3967,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   ? 'error'
                                   : it.status === 'running' || it.status === 'parsing'
                                     ? 'busy'
-                                    : 'idle'
+                                    : it.status === 'parsed'
+                                      ? 'parsed'
+                                      : 'idle'
                             }`}
                             title={it.errorMessage || ''}
                           >
