@@ -210,13 +210,25 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
                     continue;
                 }
 
+                // OpenDesign 的阶段事件：进度只增不减（生命周期服务拒收倒退），
+                // 文案后面挂上已调用模型的次数，让用户看得到「还在动」。
+                if (chunk.Type == "phase" && chunk.Progress.HasValue && !string.IsNullOrWhiteSpace(chunk.Content))
+                {
+                    var calls = await ReadRuntimeModelCallCountAsync(db, runId, CancellationToken.None);
+                    var phaseText = calls > 0 ? $"{chunk.Content} · 已调用模型 {calls} 次" : chunk.Content;
+                    await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
+                        Math.Max(run.Progress, chunk.Progress.Value), phaseText);
+                    continue;
+                }
+
                 if (chunk.Type == "delta" && !string.IsNullOrEmpty(chunk.Content))
                 {
                     output.Append(chunk.Content);
                     if (!sawFirstText)
                     {
                         sawFirstText = true;
-                        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection, 36, "页面已经开始生成");
+                        await UpdatePhaseAsync(db, run, leaseOwner, publicLifecycle, projection,
+                            Math.Max(run.Progress, 36), "页面已经开始生成");
                     }
                     await projection.WriteAsync(() => _events.AppendEventAsync(
                         RunKinds.DesignArtifact,
@@ -466,6 +478,18 @@ public sealed class HostedSiteEditRunWorker : BackgroundService
             CancellationToken.None);
         await foreach (var chunk in executor.ExecuteAsync(run, currentHtml, ct))
             yield return chunk;
+    }
+
+    private static async Task<int> ReadRuntimeModelCallCountAsync(
+        MongoDbContext db,
+        string runId,
+        CancellationToken ct)
+    {
+        var count = await db.DesignArtifactRuns
+            .Find(item => item.Id == runId)
+            .Project(item => item.RuntimeModelCallCount)
+            .FirstOrDefaultAsync(ct);
+        return Math.Max(0, count);
     }
 
     private async Task UpdatePhaseAsync(

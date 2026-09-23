@@ -13,7 +13,8 @@ public sealed record DesignArtifactExecutorChunk(
     string Type,
     string Content,
     IReadOnlyList<DesignWorkspaceFile>? VerifiedFiles = null,
-    DesignArtifactResolvedModel? ResolvedModel = null);
+    DesignArtifactResolvedModel? ResolvedModel = null,
+    int? Progress = null);
 
 /// <summary>
 /// 本次生成实际用到的模型与平台（Codex P1，2026-09-15）。用户会因为「换了个模型」直接感到
@@ -481,6 +482,10 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                 ct) ?? throw new InvalidOperationException(
                     OpenDesignFailureMessage.Describe(OpenDesignFailureStage.Dispatch, remoteReason: null));
 
+            // CDS 运行期间约每 3 秒发一条阶段事件（status），此前这里不认它，run 的进度整段停在 18%。
+            var stageProgress = new OpenDesignStageProgress(
+                run.Operation == DesignArtifactOperations.Edit,
+                run.Progress);
             while (DateTime.UtcNow < deadline)
             {
                 var events = await _sessions.ListPersistedEventsAsync(
@@ -499,6 +504,19 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
                     afterSeq = Math.Max(afterSeq, item.Seq);
                     switch (item.Type)
                     {
+                        case InfraAgentEventTypes.Status:
+                            var stageUpdate = stageProgress.Observe(
+                                ReadPayloadString(item.PayloadJson, "reason"),
+                                ReadPayloadInt(item.PayloadJson, "elapsedSeconds"),
+                                ReadPayloadInt(item.PayloadJson, "attempt"));
+                            if (stageUpdate != null)
+                            {
+                                yield return new DesignArtifactExecutorChunk(
+                                    "phase",
+                                    stageUpdate.Phase,
+                                    Progress: stageUpdate.Progress);
+                            }
+                            break;
                         case InfraAgentEventTypes.TextDelta:
                             var text = ReadPayloadString(item.PayloadJson, "text");
                             if (!string.IsNullOrEmpty(text))
@@ -764,6 +782,23 @@ public sealed class OpenDesignRemoteArtifactExecutor : IDesignArtifactExecutor, 
     private sealed record CdsConnectionSelection(
         InfraConnectionPublicView? Connection,
         string? Reason);
+
+    internal static int? ReadPayloadInt(string payloadJson, string field)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(payloadJson);
+            return doc.RootElement.TryGetProperty(field, out var value)
+                   && value.ValueKind == JsonValueKind.Number
+                   && value.TryGetInt32(out var number)
+                ? number
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
 
     internal static string? ReadPayloadString(string payloadJson, string field)
     {
