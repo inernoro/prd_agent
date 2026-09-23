@@ -427,7 +427,10 @@ export function LogicalModelsPage() {
         ) : null}
 
         {items !== null && items.length > 0 ? (
-          <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <Card
+            className="lg-logical-model-list"
+            style={{ padding: 0, overflow: 'hidden', flexShrink: 0 }}
+          >
             <div style={{ ...ROW_GRID, ...ROW_HEAD }}>
               <span style={COL_CAP}>模型</span>
               <span style={COL_CAP}>上游线路与单价</span>
@@ -875,4 +878,3 @@ function formatCount(value: number): string {
   if (value >= 10000) return `${(value / 10000).toFixed(1)} 万`;
   return value.toLocaleString('en-US');
 }
-
