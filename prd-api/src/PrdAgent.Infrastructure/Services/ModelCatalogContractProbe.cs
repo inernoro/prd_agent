@@ -10,6 +10,8 @@ namespace PrdAgent.Infrastructure.Services;
 /// 选择器曾从退场的 MAP 模型池读取成员展示名，而执行链路只接受 LLM Gateway
 /// 的稳定 PublicId。两边各自“有数据”却无法串起来，因此这里直接验证完整契约：
 /// 目录非空、默认项唯一、下发标识存在于运行时目录且至少有可用线路。
+/// 生图目录还必须使用真实型号作为展示名，且同一个选择器里不能出现重名项；
+/// 否则迁移生成的别名会把同一个上游重复摆给用户，目录数量正常也发现不了。
 /// </summary>
 public sealed class ModelCatalogContractProbe
 {
@@ -73,6 +75,26 @@ public sealed class ModelCatalogContractProbe
                 if (duplicateCodes.Length > 0)
                 {
                     failures.Add($"{target.Label}:DUPLICATE_PUBLIC_ID");
+                }
+
+                var duplicateNames = pools
+                    .Where(pool => !string.IsNullOrWhiteSpace(pool.Name))
+                    .GroupBy(pool => pool.Name.Trim(), StringComparer.OrdinalIgnoreCase)
+                    .Where(group => group.Count() > 1)
+                    .Select(group => group.Key)
+                    .ToArray();
+                if (duplicateNames.Length > 0)
+                {
+                    failures.Add($"{target.Label}:DUPLICATE_DISPLAY_NAME");
+                }
+
+                if (string.Equals(target.ModelType, ModelTypes.ImageGen, StringComparison.Ordinal)
+                    && pools.Any(pool => !string.Equals(
+                        pool.Name?.Trim(),
+                        pool.Code?.Trim(),
+                        StringComparison.Ordinal)))
+                {
+                    failures.Add($"{target.Label}:NON_CANONICAL_DISPLAY_NAME");
                 }
 
                 var defaults = pools.Where(pool => pool.IsDefault).ToArray();
