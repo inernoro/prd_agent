@@ -15,6 +15,8 @@ export type AuthUser = {
   role: UserRole;
   userType?: 'Human' | 'Bot' | string;
   botKind?: 'PM' | 'DEV' | 'QA' | string;
+  /** 后台系统角色，与 PM/DEV/QA 等业务角色相互独立。 */
+  systemRoleKey?: string | null;
   avatarFileName?: string | null;
   /** 服务端下发的完整头像 URL（优先使用） */
   avatarUrl?: string | null;
