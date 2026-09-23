@@ -85,10 +85,51 @@ public class ModelCatalogContractProbeTests
         Assert.Empty(gateway.ResolveCalls);
     }
 
+    [Fact]
+    public async Task CheckAsync_AllowsFriendlyDisplayNamesThatDifferFromStableIds()
+    {
+        var catalog = new FakeCatalog(useDisplayNameAsMemberId: false, displayNameDrift: true);
+        var gateway = new FakeGateway();
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
+
+        var result = await probe.CheckAsync();
+
+        Assert.Equal(0, result.FailureCount);
+    }
+
+    [Fact]
+    public async Task CheckAsync_FailsWhenSelectorContainsDuplicateDisplayNames()
+    {
+        var catalog = new FakeCatalog(useDisplayNameAsMemberId: false, duplicateDisplayNames: true);
+        var gateway = new FakeGateway(includeSecondary: true);
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
+
+        var result = await probe.CheckAsync();
+
+        Assert.Equal(5, result.FailureCount);
+        Assert.Equal(5, result.Failures.Count(failure => failure.EndsWith(":DUPLICATE_DISPLAY_NAME")));
+    }
+
+    [Fact]
+    public async Task CheckAsync_FailsWhenAliasesShareTheSamePhysicalOffering()
+    {
+        var catalog = new FakeCatalog(useDisplayNameAsMemberId: false, duplicatePhysicalOffering: true);
+        var gateway = new FakeGateway(includeSecondary: true);
+        var probe = new ModelCatalogContractProbe(catalog, gateway);
+
+        var result = await probe.CheckAsync();
+
+        Assert.Equal(5, result.FailureCount);
+        Assert.All(result.Failures, failure => Assert.EndsWith(":DUPLICATE_PHYSICAL_OFFERING", failure));
+    }
+
     private sealed class FakeCatalog(
         bool useDisplayNameAsMemberId,
         bool returnEmpty = false,
-        string healthStatus = "Healthy") : IModelPoolQueryService
+        string healthStatus = "Healthy",
+        bool displayNameDrift = false,
+        bool duplicateDisplayNames = false,
+        bool duplicatePhysicalOffering = false) : IModelPoolQueryService
     {
         public Task<List<ModelPoolForAppResult>> GetModelPoolsAsync(
             string? appCallerCode,
@@ -101,12 +142,12 @@ public class ModelCatalogContractProbeTests
             }
 
             var publicId = PublicId(appCallerCode);
-            return Task.FromResult<List<ModelPoolForAppResult>>(
-            [
+            var pools = new List<ModelPoolForAppResult>
+            {
                 new()
                 {
                     Id = $"logical-{publicId}",
-                    Name = "对外展示名",
+                    Name = displayNameDrift || duplicateDisplayNames ? "营销别名" : publicId,
                     Code = publicId,
                     ModelType = modelType,
                     IsDefault = true,
@@ -118,17 +159,47 @@ public class ModelCatalogContractProbeTests
                         {
                             ModelId = useDisplayNameAsMemberId ? "provider/Display-Name" : publicId,
                             PlatformId = "logical-model",
+                            ActualModelId = $"actual-{publicId}",
+                            ActualPlatformId = "provider-primary",
                             HealthStatus = healthStatus,
                         },
                     ],
                 },
-            ]);
+            };
+            if (duplicateDisplayNames || duplicatePhysicalOffering)
+            {
+                pools.Add(new ModelPoolForAppResult
+                {
+                    Id = $"logical-{publicId}-secondary",
+                    Name = duplicateDisplayNames ? "营销别名" : "另一个官方展示名",
+                    Code = $"{publicId}-secondary",
+                    ModelType = modelType,
+                    IsDefault = false,
+                    IsDefaultForType = false,
+                    ResolutionType = "LogicalModel",
+                    Models =
+                    [
+                        new()
+                        {
+                            ModelId = $"{publicId}-secondary",
+                            PlatformId = "logical-model",
+                            ActualModelId = duplicatePhysicalOffering
+                                ? $"actual-{publicId}"
+                                : $"actual-{publicId}-secondary",
+                            ActualPlatformId = "provider-primary",
+                            HealthStatus = healthStatus,
+                        },
+                    ],
+                });
+            }
+            return Task.FromResult(pools);
         }
     }
 
     private sealed class FakeGateway(
         string? automaticPublicId = null,
-        string healthStatus = "Healthy") : ILlmGateway
+        string healthStatus = "Healthy",
+        bool includeSecondary = false) : ILlmGateway
     {
         public List<(string AppCallerCode, string? ExpectedModel)> ResolveCalls { get; } = [];
         public List<string> CatalogCalls { get; } = [];
@@ -165,6 +236,10 @@ public class ModelCatalogContractProbeTests
             {
                 CreateRuntimePool(catalogPublicId, isDefault: runtimeDefault == catalogPublicId, healthStatus),
             };
+            if (includeSecondary)
+            {
+                pools.Add(CreateRuntimePool($"{catalogPublicId}-secondary", isDefault: false, healthStatus));
+            }
             if (!string.Equals(runtimeDefault, catalogPublicId, StringComparison.Ordinal))
             {
                 pools.Add(CreateRuntimePool(runtimeDefault, isDefault: true, healthStatus));
