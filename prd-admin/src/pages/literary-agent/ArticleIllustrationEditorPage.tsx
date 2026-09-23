@@ -42,7 +42,7 @@ import {
   getUserPreferences,
   updateLiteraryAgentPreferences,
   optimizeLiteraryPrompt,
-  getVisualAgentAdapterInfo,
+  getLiteraryAgentAdapterInfo,
   // 海鲜市场 API
   publishLiteraryPrompt,
   unpublishLiteraryPrompt,
@@ -55,6 +55,7 @@ import {
   uploadLiteraryAgentWorkspaceAssetReal as uploadVisualAgentWorkspaceAsset,
 } from '@/services/real/literaryAgentConfig';
 import type { LiteraryAgentModelPool } from '@/services/contracts/literaryAgentConfig';
+import { buildLiteraryModelOptions, type LiteraryModelOption } from './literaryModelOptions';
 import { ImageSizePicker } from '@/components/ui/ImageSizePicker';
 import { BatchSizePicker } from '@/components/ui/BatchSizePicker';
 import { ASPECT_OPTIONS, type SizesByResolution } from '@/lib/imageAspectOptions';
@@ -81,6 +82,7 @@ import { cn } from '@/lib/cn';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 import type { Model } from '@/types/admin';
 import type { ImageGenPlanItem, CreateImageGenRunInput } from '@/services/contracts/imageGen';
+import { mutateReferenceImageScenario } from './referenceImageModelCatalog';
 
 // 3 个状态：0=upload, 1=editing, 2=markersGenerated
 type WorkflowPhase = 0 | 1 | 2;
@@ -546,8 +548,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelsLoading, setModelsLoading] = useState(true);
   const [imageGenModelError, setImageGenModelError] = useState<string | null>(null);
   // 无专属模型池时，通过预解析得到的自动调度模型（仅供显示，生成时由 Worker 自行 resolve）
-  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
-  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string } | null>(null);
+  const [autoResolvedModel, setAutoResolvedModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string } | null>(null);
+  const [autoResolvedChatModel, setAutoResolvedChatModel] = useState<{ id: string; name: string; modelName: string; actualModelId: string; platformId: string; actualPlatformId: string } | null>(null);
 
   // 模型偏好（按账号持久化到数据库）
   const userId = useAuthStore((s) => s.user?.userId ?? '');
@@ -558,29 +560,29 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [modelPrefReady, setModelPrefReady] = useState(false);
 
   // 生图模型池 → 可选择列表
-  type PoolModel = { poolId: string; id: string; name: string; modelName: string; actualModelId: string; platformId: string; enabled: boolean; isDedicated: boolean; isDefault: boolean; isAutoResolved?: boolean };
-  const toPoolModels = useCallback((pools: LiteraryAgentModelPool[]): PoolModel[] => {
-    return pools
-      .filter((g) => g.models && g.models.length > 0)
-      .map((g) => {
-        const first = g.models[0]!;
-        return {
-          poolId: g.id,
-          id: `pool_${g.id}`,
-          name: g.name,
-          modelName: g.code || first.modelId,
-          actualModelId: first.modelId,
-          platformId: first.platformId,
-          enabled: g.models.some((m) => m.healthStatus === 'Healthy' || m.healthStatus === 'Degraded'),
-          isDedicated: g.isDedicated,
-          isDefault: g.isDefault,
-        };
-      })
-      .filter((m) => m.enabled);
-  }, []);
+  type PoolModel = LiteraryModelOption;
 
-  const enabledImageModels = useMemo(() => toPoolModels(imageGenPools), [imageGenPools, toPoolModels]);
-  const enabledChatModels = useMemo(() => toPoolModels(chatPools), [chatPools, toPoolModels]);
+  const enabledImageModels = useMemo(() => buildLiteraryModelOptions(imageGenPools), [imageGenPools]);
+  const enabledChatModels = useMemo(() => buildLiteraryModelOptions(chatPools), [chatPools]);
+
+  const reloadImageGenPools = useCallback(async () => {
+    setImageGenModelError(null);
+    setModelsLoading(true);
+    try {
+      const res = await getLiteraryAgentModels();
+      if (res.success && res.data) {
+        setImageGenPools(res.data);
+      } else {
+        setImageGenPools([]);
+        setImageGenModelError('加载模型池失败');
+      }
+    } catch {
+      setImageGenPools([]);
+      setImageGenModelError('加载模型池失败');
+    } finally {
+      setModelsLoading(false);
+    }
+  }, []);
 
   // 有效选中模型（无 auto 概念，默认选第一个；无可选池时回退到预解析的自动模型）
   const effectiveModel = useMemo<PoolModel | null>(() => {
@@ -836,10 +838,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedModel({
               id: 'auto-resolved',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
+              actualPlatformId: res.platform || '',
             });
           } else {
             setImageGenModelError('未找到可用的生图模型（请绑定专属模型池或配置默认模型）');
@@ -867,10 +870,11 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           if (res.resolved && res.model) {
             setAutoResolvedChatModel({
               id: 'auto-resolved-chat',
-              name: res.poolName || res.model,
+              name: res.model,
               modelName: res.model,
               actualModelId: res.model,
               platformId: res.platform || '',
+              actualPlatformId: res.platform || '',
             });
           } else {
             setAutoResolvedChatModel(null);
@@ -892,7 +896,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 从后端获取生图模型的尺寸选项（按分辨率分组，与视觉创作一致）
   useEffect(() => {
-    const modelName = effectiveModel?.actualModelId || imageGenModel?.modelName;
+    const modelName = effectiveModel?.modelName || imageGenModel?.modelName;
     if (!modelName) {
       setSizesByResolutionForPicker(defaultSizesByResolution);
       setCurrentModelSizesNotApplicable(false);
@@ -901,7 +905,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     let cancelled = false;
     void (async () => {
       try {
-        const res = await getVisualAgentAdapterInfo(modelName);
+        const res = await getLiteraryAgentAdapterInfo(modelName);
         if (cancelled) return;
         if (res.success && res.data?.matched && res.data.sizesByResolution) {
           const data = res.data.sizesByResolution;
@@ -926,7 +930,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       }
     })();
     return () => { cancelled = true; };
-  }, [effectiveModel?.actualModelId, imageGenModel?.modelName, defaultSizesByResolution]);
+  }, [effectiveModel?.modelName, imageGenModel?.modelName, defaultSizesByResolution]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1390,7 +1394,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         userInstruction: systemPrompt,
         idempotencyKey: `gen-markers-${Date.now()}`,
         insertionMode: 'anchor',
-        modelId: effectiveChatModel?.actualModelId,
+        modelId: effectiveChatModel?.modelName,
       });
 
       let fullText = '';
@@ -1782,7 +1786,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       workspaceId,
       appKey: 'literary-agent',
       articleMarkerIndex: markerIndex,
-      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.actualModelId } : {}),
+      ...(effectiveModel && !effectiveModel.isAutoResolved ? { platformId: effectiveModel.platformId, modelId: effectiveModel.modelName } : {}),
     };
     const created = await createLiteraryAgentImageGenRun({
       input: runInput,
@@ -2614,7 +2618,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
+                                      {m.isDefault && (
+                                        <span className="shrink-0 rounded px-1 py-0.5 text-[9px]" style={{ color: 'var(--text-muted)', background: 'var(--surface-muted)' }}>
+                                          默认模型
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
                                     background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
@@ -2695,7 +2706,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               >
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="min-w-0">
-                                    <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name || m.modelName}</div>
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>{m.name}</div>
+                                      {m.isDefault && (
+                                        <span className="shrink-0 rounded px-1 py-0.5 text-[9px]" style={{ color: 'var(--text-muted)', background: 'var(--surface-muted)' }}>
+                                          默认模型
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   <span className="shrink-0 inline-flex items-center justify-center h-5 w-5 rounded-full" style={{
                                     background: picked ? 'rgba(250,204,21,0.18)' : 'rgba(255,255,255,0.04)',
@@ -4599,12 +4617,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                   onClick={async () => {
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = config.isActive
-                                        ? await deactivateReferenceImageConfig({ id: config.id })
-                                        : await activateReferenceImageConfig({ id: config.id });
-                                      if (res.success) {
-                                        await loadReferenceImageConfigs();
-                                      }
+                                      await mutateReferenceImageScenario(
+                                        () => config.isActive
+                                          ? deactivateReferenceImageConfig({ id: config.id })
+                                          : activateReferenceImageConfig({ id: config.id }),
+                                        loadReferenceImageConfigs,
+                                        reloadImageGenPools,
+                                      );
                                     } finally {
                                       setReferenceImageSaving(false);
                                     }
@@ -4653,9 +4672,17 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     }
                                     setReferenceImageSaving(true);
                                     try {
-                                      const res = await deleteReferenceImageConfig({ id: config.id });
+                                      const res = config.isActive
+                                        ? await mutateReferenceImageScenario(
+                                          () => deleteReferenceImageConfig({ id: config.id }),
+                                          loadReferenceImageConfigs,
+                                          reloadImageGenPools,
+                                        )
+                                        : await deleteReferenceImageConfig({ id: config.id });
                                       if (res.success) {
-                                        await loadReferenceImageConfigs();
+                                        if (!config.isActive) {
+                                          await loadReferenceImageConfigs();
+                                        }
                                         toast.success('已删除');
                                       } else {
                                         toast.error('删除失败', res.error?.message || '未知错误');

@@ -184,6 +184,11 @@ public sealed class ServingFaultTrackerTests
     // （predicate-and-wiring-discipline 形状 1：判据比它该管的范围宽）。
     private const string UnhandledCheckMarker = "[\"serving:unhandled-exceptions\"] = new object[]";
     private const string RequestsCheckMarker = "[\"serving:requests\"] = new object[]";
+    private const string DeploymentVersionCheckMarker = "[\"deployment:version-match\"] = new object[]";
+    private const string ImageOutcomeCheckMarker = "[\"visual-image:recent-outcomes\"] = new object[]";
+    private const string ImageRequestsCheckMarker = "[\"visual-image:requests\"] = new object[]";
+    private const string ImageLatencyCheckMarker = "[\"visual-image:latency\"] = new object[]";
+    private const string DatabaseCheckMarker = "[\"db:roundtrip\"] = new object[]";
 
     /// <summary>取端点源码里某一条 check 的声明块（到下一条 check 开始为止）。</summary>
     private static string CheckBlock(string source, string startMarker, string? nextMarker)
@@ -261,5 +266,58 @@ public sealed class ServingFaultTrackerTests
         endpoints.ShouldContain(
             "!path.Equals(\"/gw/v1/healthz/deep\", StringComparison.OrdinalIgnoreCase)",
             customMessage: "深度自检必须留在免鉴权名单里，否则 CDS 探针打不进来");
+    }
+
+    [Fact]
+    public void MAP深度自检必须监控生图真实结果样本量与响应耗时()
+    {
+        var program = File.ReadAllText(
+            Path.Combine(RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Program.cs"));
+        var outcomes = CheckBlock(program, ImageOutcomeCheckMarker, ImageRequestsCheckMarker);
+        var requests = CheckBlock(program, ImageRequestsCheckMarker, ImageLatencyCheckMarker);
+        var latency = CheckBlock(program, ImageLatencyCheckMarker, DatabaseCheckMarker);
+
+        program.ShouldContain(
+            "gatewayDb.LlmRequestLogs",
+            customMessage: "生图结果不能再用进程异常代替，必须读取网关已落库的真实调用结果");
+        program.ShouldContain(
+            "VisualModelPolicyService.AppCallers",
+            customMessage: "真实结果必须只统计与 MAP 生图路由相同的三个调用场景");
+        outcomes.ShouldContain("[\"componentId\"] = \"visual-image.recent-outcomes\"");
+        outcomes.ShouldContain("[\"cds:monitor\"]");
+        outcomes.ShouldContain(
+            "sampleComponentId = \"visual-image.requests\"",
+            customMessage: "零连续失败必须带真实样本量，否则零调用也会被误判为健康");
+        requests.ShouldContain("[\"componentId\"] = \"visual-image.requests\"");
+        requests.ShouldContain("[\"cds:monitor\"]");
+        latency.ShouldContain("[\"componentId\"] = \"visual-image.latency\"");
+        latency.ShouldContain("value = visualImageLatencyBudgetMs");
+        latency.ShouldContain("severity = \"P1\"");
+        latency.ShouldContain(
+            "sampleComponentId = \"visual-image.requests\"",
+            customMessage: "响应耗时必须带真实样本量，不能把没有成功调用误报成性能正常");
+    }
+
+    [Fact]
+    public void MAP深度自检必须把运行二进制与发布目标不一致判为P0()
+    {
+        var program = File.ReadAllText(
+            Path.Combine(RepoRoot(), "prd-api", "src", "PrdAgent.Api", "Program.cs"));
+        var deployment = CheckBlock(
+            program,
+            DeploymentVersionCheckMarker,
+            "[\"visual-image:default-route\"] = new object[]");
+
+        program.ShouldContain(
+            "var deploymentIdentity = ReadBuildIdentity();",
+            customMessage: "深度自检必须读取程序集内实际 commit 与部署注入的目标 commit");
+        program.ShouldContain(
+            "&& deploymentIdentityFailures == 0",
+            customMessage: "版本对账失败必须让深度自检整体失败，不能只显示一行提示");
+        deployment.ShouldContain("[\"componentId\"] = \"deployment.version-match\"");
+        deployment.ShouldContain("[\"cds:monitor\"]");
+        deployment.ShouldContain("severity = \"P0\"");
+        deployment.ShouldContain("failuresToAlarm = 1");
+        deployment.ShouldContain("publicVisible = true");
     }
 }

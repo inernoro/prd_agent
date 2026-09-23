@@ -97,6 +97,8 @@ services:
       - MAP_INITIAL_ADMIN_PASSWORD=${MAP_INITIAL_ADMIN_PASSWORD:-}
       # Webhook 通知中「查看详情」链接的前端基地址（如 https://example.com）
       - App__FrontendBaseUrl=${FRONTEND_BASE_URL:-}
+      # 正式机若无法直连 arena.ai，可从另一套 CDS 的公开快照端点恢复；为空时仍走源站。
+      - ModelLeaderboard__SnapshotMirrorBaseUrl=${MODEL_LEADERBOARD_SNAPSHOT_MIRROR_BASE_URL:-}
       # 稳定冒烟身份全部由部署环境注入，仓库不携带正式域名或固定公钥。
       - StableSmokeAuthentication__NotificationTargetUsername=${STABLE_SMOKE_NOTIFICATION_TARGET_USERNAME:-}
       - StableSmokeAuthentication__Keys__0__KeyId=${STABLE_SMOKE_KEY_ID:-}
@@ -305,6 +307,11 @@ services:
       - LLMGW_ADMIN_PASSWORD=${LLMGW_ADMIN_PASSWORD:-}
       - LLMGW_ADMIN_FORCE_RESET=${LLMGW_ADMIN_FORCE_RESET:-}
       - LLMGW_ADMIN_ENV_AUTHORITY=${LLMGW_ADMIN_ENV_AUTHORITY:-}
+      # 网关巡检联邦登录与 MAP 的签名身份共用用户名，但默认关闭；正式环境需显式启用并限定名单。
+      - StableSmokeFederation__Enabled=${STABLE_SMOKE_FEDERATION_ENABLED:-false}
+      - StableSmokeFederation__AllowedUsernames=${STABLE_SMOKE_FEDERATION_ALLOWED_USERS:-}
+      - StableSmokeFederation__Role=${STABLE_SMOKE_FEDERATION_ROLE:-viewer}
+      - StableSmokeFederation__SessionMinutes=${STABLE_SMOKE_FEDERATION_SESSION_MINUTES:-15}
       # 正式环境的 MAP 返回入口必须由部署环境注入，不能由前端按域名格式猜测。
       - LLMGW_MAP_HOME_URL=${LLMGW_MAP_HOME_URL:?must set LLMGW_MAP_HOME_URL in production (authoritative MAP home URL)}
     read_only: true

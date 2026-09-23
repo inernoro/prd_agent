@@ -240,6 +240,13 @@ export const getLiteraryAgentAllModelsReal: GetLiteraryAgentAllModelsContract = 
   );
 };
 
+/** 文学配图必须按文学目录查询能力，不能借用视觉创作的模型白名单。 */
+export async function getLiteraryAgentAdapterInfoReal(modelId: string) {
+  return await apiRequest<import('../contracts/models').ModelAdapterInfo>(
+    api.literaryAgent.imageGen.adapterInfo(modelId),
+  );
+}
+
 export const getLiteraryAgentMainModelReal: GetLiteraryAgentMainModelContract = async () => {
   return await apiRequest<{ model: import('../contracts/literaryAgentConfig').LiteraryAgentMainModel | null }>(
     api.literaryAgent.config.modelsMain(),

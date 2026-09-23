@@ -26,6 +26,8 @@ public class ImageAsset
 
     /// <summary>文章配图场景：该图片在文章中的插入位置索引(0-based)</summary>
     public int? ArticleInsertionIndex { get; set; }
+    /// <summary>明确绑定配图流程的版本；这种资产不能参与旧数据的位置猜测回填。</summary>
+    public int? ArticleWorkflowVersion { get; set; }
 
     /// <summary>文章配图场景：原始提示词标记文本(如"温馨的咖啡厅场景")</summary>
     public string? OriginalMarkerText { get; set; }

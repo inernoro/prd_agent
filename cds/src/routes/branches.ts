@@ -15975,9 +15975,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * 只写文件、不改本实例任何状态；失败只记一行日志，不让部署因此失败。
    * 子实例自己（isPreviewInstance()）不导出——它手里的本来就是镜像，再导一层只会套娃。
    */
-  function maybeWritePreviewMirror(entry: BranchEntry, profile: { env?: Record<string, string> } | null | undefined, mergedEnv: Record<string, string>, emit: (line: string) => void): void {
+  function maybeWritePreviewMirror(entry: BranchEntry, profile: { env?: Record<string, string> } | null | undefined, mergedEnv: Record<string, string>, emitToStream: (line: string) => void): void {
     if (isPreviewInstance()) return;
     if (!profileHostsPreviewInstance(profile, mergedEnv)) return;
+    // 写没写、为什么没写，除了推给部署流，也记到父实例的部署控制台：cdscli 走的是触发 + 轮询，
+    // 收不到流里的 log 事件，出问题时只有这里能查（2026-09-20 实机排障时就是缺这一行）
+    const emit = (line: string): void => { emitToStream(line); logDeploy(entry.id, line.trim()); };
     try {
       if (!entry.worktreePath || !fs.existsSync(entry.worktreePath)) {
         emit('── 预览实例镜像：worktree 不在本机（远程执行器），本次不写 ──\n');

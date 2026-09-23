@@ -47,6 +47,11 @@ jobs:
               # 守卫读的是 console-api 的源码。不登记的话，只改 console-api 的 PR 会跳过这道闸——
               # 而判据漂移正好就发生在只改一边的时候（形状 7：守卫自己没接上线）。
               - 'llmgw/console-api/**'
+              # StableSmokeIdentityPolicyTests 会直接读取部署模板与两份 Compose，校验正式巡检
+              # 联邦身份保持只读且变量真正进入容器。只改这些输入也必须运行 server-build。
+              - '.env.template'
+              - 'docker-compose.yml'
+              - 'docker-compose.dev.yml'
               # 官方技能目录新鲜度自测跑在 server-build 里，它的输入是这三处。
               # 不登记的话，「只改技能不改 prd-api」的 PR 会整个跳过这道闸 ——
               # 而那恰好就是这道闸要防的场景（改了技能忘重新生成，分发旧内容）。

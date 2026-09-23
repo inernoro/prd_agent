@@ -52,7 +52,9 @@ const filters = yaml.load(
 /** 从 job 的 `if:` 里取出它引用的全部 `needs.changes.outputs.<name>`。 */
 function referencedFilters(condition: string): string[] {
   const out = new Set<string>();
-  for (const m of condition.matchAll(/needs\.changes\.outputs\.([a-z_]+)/g)) out.add(m[1]);
+  for (const m of condition.matchAll(/needs\.changes\.outputs\.([a-z_]+)/g)) {
+    if (filters[m[1]]) out.add(m[1]);
+  }
   return [...out];
 }
 
@@ -96,6 +98,14 @@ describe('cds-compose 的 buildScope 与 branch-image.yml 的构建触发条件�
       expect(scope).not.toContain('.');
       expect(scope).not.toContain('./');
       expect(scope).not.toContain('**');
+    }
+  });
+
+  it('feature 与 main 指向同一提交时全部镜像仍会构建，避免成功工作流回退陈旧 branch 标签', () => {
+    expect((jobs.changes as unknown as { outputs?: Record<string, string> }).outputs?.same_as_main)
+      .toContain('main_equivalence.outputs.value');
+    for (const jobId of Object.keys(JOB_TO_SERVICE)) {
+      expect(jobs[jobId]?.if, jobId).toContain("needs.changes.outputs.same_as_main == 'true'");
     }
   });
 });

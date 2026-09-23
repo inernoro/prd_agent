@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using PrdAgent.Core.Models;
 
@@ -44,6 +45,12 @@ public class ArenaLeaderboardFetcher
 {
     /// <summary>榜单根地址。分榜路径拼在它后面。</summary>
     public const string BaseUrl = "https://arena.ai/leaderboard";
+
+    /// <summary>
+    /// 服务器出口被 arena.ai 的防护拒绝时，使用只读网页代理取同一份公开 HTML。
+    /// 代理请求显式要求 HTML，后续仍走完全相同的解析与完整性校验，不接受代理转换后的文本。
+    /// </summary>
+    public const string FallbackBaseUrl = "https://r.jina.ai/https://arena.ai/leaderboard";
 
     /// <summary>
     /// 一份可信快照的最少条目数。
@@ -123,10 +130,12 @@ public class ArenaLeaderboardFetcher
     private static readonly Regex ContextRegex = new(@">([\d.]+[KM])<", RegexOptions.Compiled);
 
     private readonly HttpClient _http;
+    private readonly string? _snapshotMirrorBaseUrl;
 
-    public ArenaLeaderboardFetcher(HttpClient http)
+    public ArenaLeaderboardFetcher(HttpClient http, string? snapshotMirrorBaseUrl = null)
     {
         _http = http;
+        _snapshotMirrorBaseUrl = snapshotMirrorBaseUrl?.Trim().TrimEnd('/');
     }
 
     /// <summary>拼出某个分榜的地址。</summary>
@@ -137,7 +146,8 @@ public class ArenaLeaderboardFetcher
         string Kind,
         List<ModelLeaderboardEntry> Entries,
         long? TotalSessions,
-        long? TotalVotes);
+        long? TotalVotes,
+        DateTime? SourceFetchedAt = null);
 
     /// <summary>
     /// 抓取并解析一个分榜。
@@ -146,13 +156,90 @@ public class ArenaLeaderboardFetcher
     public async Task<ParseResult> FetchAsync(string board, CancellationToken ct)
     {
         var url = BuildUrl(board);
-        using var response = await _http.GetAsync(url, ct);
-        response.EnsureSuccessStatusCode();
-        var html = await response.Content.ReadAsStringAsync(ct);
+        try
+        {
+            return await FetchAndParseHtmlAsync(url, board, useHtmlProxyHeader: false, ct);
+        }
+        catch (Exception ex) when (IsRecoverableSourceFailure(ex, ct))
+        {
+            if (!string.IsNullOrWhiteSpace(_snapshotMirrorBaseUrl))
+            {
+                try
+                {
+                    return await FetchMirrorSnapshotAsync(board, ct);
+                }
+                catch (Exception mirrorEx) when (IsRecoverableSourceFailure(mirrorEx, ct))
+                {
+                    // 镜像不可用时继续尝试通用 HTML 代理。最终失败由调用方保留旧快照并告警。
+                }
+            }
 
+            return await FetchAndParseHtmlAsync(
+                BuildFallbackUrl(board), board, useHtmlProxyHeader: true, ct);
+        }
+    }
+
+    private async Task<ParseResult> FetchAndParseHtmlAsync(
+        string url,
+        string board,
+        bool useHtmlProxyHeader,
+        CancellationToken ct)
+    {
+        var html = await FetchHtmlAsync(url, useHtmlProxyHeader, ct);
         var result = Parse(html);
         EnsureUsable(url, board, result);
         return result;
+    }
+
+    private async Task<ParseResult> FetchMirrorSnapshotAsync(string board, CancellationToken ct)
+    {
+        var url = $"{_snapshotMirrorBaseUrl}/{Uri.EscapeDataString(board)}";
+        using var response = await _http.GetAsync(url, ct);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(ct);
+        var snapshot = await JsonSerializer.DeserializeAsync<MirrorSnapshot>(
+            stream,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web),
+            ct);
+        if (snapshot is null)
+            throw new InvalidOperationException($"排行榜镜像 {url} 没有返回快照。");
+
+        var result = new ParseResult(
+            snapshot.Kind,
+            snapshot.Entries,
+            snapshot.TotalSessions,
+            snapshot.TotalVotes,
+            snapshot.FetchedAt);
+        EnsureUsable(url, board, result);
+        return result;
+    }
+
+    private static bool IsRecoverableSourceFailure(Exception ex, CancellationToken ct)
+        => ex is HttpRequestException
+           or TimeoutException
+           or InvalidOperationException
+           || ex is TaskCanceledException && !ct.IsCancellationRequested;
+
+    private sealed class MirrorSnapshot
+    {
+        public string Kind { get; init; } = BoardKind.Agent;
+        public DateTime FetchedAt { get; init; }
+        public long? TotalSessions { get; init; }
+        public long? TotalVotes { get; init; }
+        public List<ModelLeaderboardEntry> Entries { get; init; } = new();
+    }
+
+    public static string BuildFallbackUrl(string board) => $"{FallbackBaseUrl}/{board}";
+
+    private async Task<string> FetchHtmlAsync(string url, bool useHtmlProxyHeader, CancellationToken ct)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        if (useHtmlProxyHeader)
+            request.Headers.TryAddWithoutValidation("X-Return-Format", "html");
+
+        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync(ct);
     }
 
     /// <summary>

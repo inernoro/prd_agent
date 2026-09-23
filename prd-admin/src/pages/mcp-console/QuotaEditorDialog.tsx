@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Dialog } from '@/components/ui/Dialog';
-import { updateAgentApiKey } from '@/services';
+import { getLiteraryAgentAllModels, updateAgentApiKey } from '@/services';
 import type { McpClientDto } from '@/services/contracts/mcpConsole';
 import { toast } from '@/lib/toast';
 
@@ -30,6 +30,10 @@ export function QuotaEditorDialog({
   const [image, setImage] = useState('');
   const [write, setWrite] = useState('');
   const [rate, setRate] = useState('');
+  const [modelMode, setModelMode] = useState<'follow-user-panel' | 'fixed'>('follow-user-panel');
+  const [fixedModel, setFixedModel] = useState('');
+  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -37,7 +41,28 @@ export function QuotaEditorDialog({
     setImage(String(client.dailyImageQuota));
     setWrite(String(client.dailyWriteQuota));
     setRate(String(client.rateLimitPerMin));
+    setModelMode(client.mcpLiteraryImageModelMode === 'fixed' ? 'fixed' : 'follow-user-panel');
+    setFixedModel(client.mcpLiteraryImageModelPublicId || '');
   }, [client]);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setModelsLoading(true);
+    void getLiteraryAgentAllModels()
+      .then((res) => {
+        if (cancelled || !res.success || !res.data) return;
+        const text = new Set(res.data.text2img.pools.map((pool) => pool.code).filter(Boolean));
+        const both = res.data.img2img.pools
+          .map((pool) => pool.code)
+          .filter((code) => code && text.has(code));
+        setModelOptions(Array.from(new Set(both)));
+      })
+      .finally(() => {
+        if (!cancelled) setModelsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [open]);
 
   const save = async () => {
     if (!client) return;
@@ -57,9 +82,18 @@ export function QuotaEditorDialog({
         return;
       }
     }
+    if (modelMode === 'fixed' && !fixedModel) {
+      toast.error('请选择模型', '固定模式必须选择一个文生图与图生图都可用的模型');
+      return;
+    }
 
     setSaving(true);
-    const res = await updateAgentApiKey({ id: client.keyId, ...parsed });
+    const res = await updateAgentApiKey({
+      id: client.keyId,
+      ...parsed,
+      mcpLiteraryImageModelMode: modelMode,
+      mcpLiteraryImageModelPublicId: modelMode === 'fixed' ? fixedModel : undefined,
+    });
     setSaving(false);
     if (!res.success) {
       toast.error('保存失败', res.error?.message);
@@ -74,7 +108,7 @@ export function QuotaEditorDialog({
     <Dialog
       open={open}
       onOpenChange={onOpenChange}
-      title="调整用量上限"
+      title="调整客户端设置"
       description={client ? `这把钥匙：${client.name}（${client.keyPrefix}…）` : undefined}
       maxWidth={440}
       content={
@@ -87,6 +121,54 @@ export function QuotaEditorDialog({
           <QuotaField label={LIMITS.image.label} hint="1-500" value={image} onChange={setImage} />
           <QuotaField label={LIMITS.write.label} hint="1-2000" value={write} onChange={setWrite} />
           <QuotaField label={LIMITS.rate.label} hint="1-600" value={rate} onChange={setRate} />
+
+          <div className="mt-1 flex flex-col gap-2 border-t pt-3" style={{ borderColor: 'var(--border-subtle)' }}>
+            <span className="text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              文学配图模型
+            </span>
+            <label className="flex items-start gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              <input
+                type="radio"
+                checked={modelMode === 'follow-user-panel'}
+                onChange={() => setModelMode('follow-user-panel')}
+              />
+              <span>
+                跟随用户面板
+                <span className="block text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  使用这把密钥绑定用户在文学创作中的选择；用户没选时使用当时的系统默认。
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-2 text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+              <input
+                type="radio"
+                checked={modelMode === 'fixed'}
+                onChange={() => setModelMode('fixed')}
+              />
+              <span className="flex min-w-0 flex-1 flex-col gap-1.5">
+                固定模型
+                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  网页切换模型不会影响这台客户端；模型不可用时明确失败，不会静默换模型。
+                </span>
+                {modelMode === 'fixed' && (
+                  <select
+                    value={fixedModel}
+                    disabled={modelsLoading}
+                    onChange={(e) => setFixedModel(e.target.value)}
+                    className="h-9 rounded-[9px] px-2.5 text-[12px]"
+                    style={{
+                      background: 'var(--bg-input)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-primary)',
+                    }}
+                  >
+                    <option value="">{modelsLoading ? '正在读取模型目录' : '选择模型'}</option>
+                    {modelOptions.map((model) => <option key={model} value={model}>{model}</option>)}
+                  </select>
+                )}
+              </span>
+            </label>
+          </div>
 
           <div className="flex justify-end gap-2 pt-1">
             <button

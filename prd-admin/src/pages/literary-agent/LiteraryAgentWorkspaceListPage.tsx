@@ -155,7 +155,7 @@ function WorkspaceCard({
       className="group cursor-pointer select-none"
     >
       <div
-        className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        className="surface-tone-dark relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
         style={{
           aspectRatio: '3/2',
           background: hasCover ? '#0a0a0f' : getCardGradient(ws.id),
@@ -365,25 +365,32 @@ export default function LiteraryAgentWorkspaceListPage() {
 
   const onCreateFolder = async () => {
     const name = await systemDialog.prompt({
-      title: '新建文件夹',
-      message: '请输入文件夹名称',
+      title: '新建文件夹和文章',
+      message: '文件夹用于整理文章。创建后会在其中新建一篇同名文章，并进入编辑；如需整理已有文章，请在文章菜单中选择移动到文件夹。',
       placeholder: '我的文件夹',
-      confirmText: '创建',
+      confirmText: '创建并写文章',
       cancelText: '取消',
     });
     if (!name) return;
     const res = await createLiteraryAgentWorkspace({
-      title: '未命名',
+      title: name,
       scenarioType: 'article-illustration',
       idempotencyKey: `create-literary-folder-${Date.now()}`,
     });
     if (res.success && res.data?.workspace?.id) {
-      await updateLiteraryAgentWorkspace({
+      const moved = await updateLiteraryAgentWorkspace({
         id: res.data.workspace.id,
         folderName: name,
         idempotencyKey: `set-folder-${res.data.workspace.id}-${Date.now()}`,
       });
       await reload();
+      if (!moved.success) {
+        toast.error(moved.error?.message || '文章已创建，但未能移入文件夹。可在文章菜单中重新移动。');
+        return;
+      }
+      navigate(`/literary-agent/${res.data.workspace.id}`);
+    } else {
+      toast.error(res.error?.message || '未能创建文章，请重试。');
     }
   };
 
@@ -487,7 +494,7 @@ export default function LiteraryAgentWorkspaceListPage() {
   const handleContainerContextMenu = (e: React.MouseEvent) => {
     contextMenu.show(e, [
       { key: 'new-article', label: '新建文章', icon: <Plus size={12} />, onClick: () => void onCreate() },
-      { key: 'new-folder', label: '新建文件夹', icon: <FolderPlus size={12} />, onClick: () => void onCreateFolder() },
+      { key: 'new-folder', label: '新建文件夹和文章', icon: <FolderPlus size={12} />, onClick: () => void onCreateFolder() },
     ]);
   };
 
@@ -712,8 +719,9 @@ export default function LiteraryAgentWorkspaceListPage() {
         actions={
           <>
             {viewModeToggle}
-            <Button data-tour-id="literary-create-folder" variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
+            <Button data-tour-id="literary-create-folder" title="新建文件夹和文章" aria-label="新建文件夹和文章" variant="secondary" size="sm" onClick={() => void onCreateFolder()} disabled={loading}>
               <FolderPlus size={14} />
+              <span className="hidden sm:inline">新建文件夹和文章</span>
             </Button>
             <Button data-tour-id="literary-create" variant="primary" size="sm" onClick={() => void onCreate()} disabled={loading}>
               <Plus size={14} />

@@ -227,8 +227,12 @@ public class SubmissionsController : ControllerBase
         var total = await _db.Submissions.CountDocumentsAsync(filter);
 
         // 热度排序（带时间衰减），公式权威定义见 PrdAgent.Core.Helpers.GalleryRanking。
-        // ageHours = max(0, (refNow - CreatedAt) / 3600000ms)
-        // hot      = (LikeCount*LikeWeight + ViewCount) / pow(ageHours + 2, Gravity)
+        // 文学作品是持续更新的 workspace，activityAt 取投稿记录与 workspace 的最近更新时间；
+        // 单张视觉作品创建后不变，仍按 CreatedAt，避免同 workspace 新出图时把旧图一起顶上来。
+        // ageHours  = max(0, (refNow - activityAt) / 3600000ms)
+        // freshness = ExposureBaseline / pow(ageHours / FreshnessScaleHours + 2, Gravity)
+        // engagement = (LikeCount*LikeWeight + ViewCount) / pow(ageHours + 2, Gravity)
+        // hot       = freshness + engagement
         // 末尾按 _id desc 做稳定且唯一的 tiebreaker。
         //
         // refNow 不直接用 $$NOW：偏移分页（$skip/$limit）下，第 1 页与第 2 页若不是
@@ -239,44 +243,7 @@ public class SubmissionsController : ControllerBase
             _db.Submissions.DocumentSerializer,
             _db.Submissions.Settings.SerializerRegistry));
 
-        var refNowExpr = new BsonDocument("$dateTrunc", new BsonDocument
-        {
-            { "date", "$$NOW" },
-            { "unit", "minute" },
-            { "binSize", 10 },
-        });
-
-        var ageHoursExpr = new BsonDocument("$max", new BsonArray
-        {
-            0.0,
-            new BsonDocument("$divide", new BsonArray
-            {
-                new BsonDocument("$subtract", new BsonArray { refNowExpr, "$CreatedAt" }),
-                3600000.0,
-            }),
-        });
-
-        var pipeline = new[]
-        {
-            new BsonDocument("$match", matchDoc),
-            new BsonDocument("$set", new BsonDocument("_hot", new BsonDocument("$divide", new BsonArray
-            {
-                new BsonDocument("$add", new BsonArray
-                {
-                    new BsonDocument("$multiply", new BsonArray { "$LikeCount", GalleryRanking.LikeWeight }),
-                    "$ViewCount",
-                }),
-                new BsonDocument("$pow", new BsonArray
-                {
-                    new BsonDocument("$add", new BsonArray { ageHoursExpr, 2.0 }),
-                    GalleryRanking.Gravity,
-                }),
-            }))),
-            new BsonDocument("$sort", new BsonDocument { { "_hot", -1 }, { "_id", -1 } }),
-            new BsonDocument("$skip", skip),
-            new BsonDocument("$limit", limit),
-            new BsonDocument("$unset", "_hot"),
-        };
+        var pipeline = BuildPublicRankingPipeline(matchDoc, skip, limit);
 
         var items = await _db.Submissions
             .Aggregate<Submission>(pipeline)
@@ -339,10 +306,111 @@ public class SubmissionsController : ControllerBase
                 x.ViewCount,
                 likedByMe = likedSet.Contains(x.Id),
                 x.CreatedAt,
+                activityAt = x.UpdatedAt,
             };
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = result }));
+    }
+
+    /// <summary>
+    /// 构建公开作品的排序管道。独立成纯函数，确保热度公式、更新时间来源与分页稳定性
+    /// 可以在不连接 MongoDB 的情况下做契约回归测试。
+    /// </summary>
+    internal static BsonDocument[] BuildPublicRankingPipeline(BsonDocument matchDoc, int skip, int limit)
+    {
+        ArgumentNullException.ThrowIfNull(matchDoc);
+
+        var refNowExpr = new BsonDocument("$dateTrunc", new BsonDocument
+        {
+            { "date", "$$NOW" },
+            { "unit", "minute" },
+            { "binSize", 10 },
+        });
+
+        var workspaceUpdatedAtExpr = new BsonDocument("$arrayElemAt", new BsonArray
+        {
+            "$_rankingWorkspace.UpdatedAt",
+            0,
+        });
+        var literaryActivityAtExpr = new BsonDocument("$max", new BsonArray
+        {
+            "$CreatedAt",
+            new BsonDocument("$ifNull", new BsonArray { "$UpdatedAt", "$CreatedAt" }),
+            new BsonDocument("$ifNull", new BsonArray { workspaceUpdatedAtExpr, "$CreatedAt" }),
+        });
+        var activityAtExpr = new BsonDocument("$cond", new BsonArray
+        {
+            new BsonDocument("$eq", new BsonArray { "$ContentType", "literary" }),
+            literaryActivityAtExpr,
+            "$CreatedAt",
+        });
+
+        var ageHoursExpr = new BsonDocument("$max", new BsonArray
+        {
+            0.0,
+            new BsonDocument("$divide", new BsonArray
+            {
+                new BsonDocument("$subtract", new BsonArray { refNowExpr, "$_activityAt" }),
+                3600000.0,
+            }),
+        });
+
+        return new[]
+        {
+            new BsonDocument("$match", matchDoc),
+            new BsonDocument("$lookup", new BsonDocument
+            {
+                { "from", "image_master_workspaces" },
+                { "localField", "WorkspaceId" },
+                { "foreignField", "_id" },
+                { "as", "_rankingWorkspace" },
+            }),
+            new BsonDocument("$set", new BsonDocument("_activityAt", activityAtExpr)),
+            new BsonDocument("$set", new BsonDocument("_hot", new BsonDocument("$add", new BsonArray
+            {
+                new BsonDocument("$divide", new BsonArray
+                {
+                    GalleryRanking.ExposureBaseline,
+                    new BsonDocument("$pow", new BsonArray
+                    {
+                        new BsonDocument("$add", new BsonArray
+                        {
+                            new BsonDocument("$divide", new BsonArray
+                            {
+                                ageHoursExpr,
+                                GalleryRanking.FreshnessScaleHours,
+                            }),
+                            2.0,
+                        }),
+                        GalleryRanking.Gravity,
+                    }),
+                }),
+                new BsonDocument("$divide", new BsonArray
+                {
+                    new BsonDocument("$add", new BsonArray
+                    {
+                        new BsonDocument("$multiply", new BsonArray
+                        {
+                            new BsonDocument("$ifNull", new BsonArray { "$LikeCount", 0 }),
+                            GalleryRanking.LikeWeight,
+                        }),
+                        new BsonDocument("$ifNull", new BsonArray { "$ViewCount", 0 }),
+                    }),
+                    new BsonDocument("$pow", new BsonArray
+                    {
+                        new BsonDocument("$add", new BsonArray { ageHoursExpr, 2.0 }),
+                        GalleryRanking.Gravity,
+                    }),
+                }),
+            }))),
+            new BsonDocument("$sort", new BsonDocument { { "_hot", -1 }, { "_id", -1 } }),
+            new BsonDocument("$skip", skip),
+            new BsonDocument("$limit", limit),
+            // 把有效更新时间写回只读结果，供列表显示；数据库中的 Submission.UpdatedAt 不变。
+            new BsonDocument("$set", new BsonDocument("UpdatedAt", "$_activityAt")),
+            new BsonDocument("$unset", new BsonArray { "_hot", "_activityAt", "_rankingWorkspace" }),
+        };
     }
 
     /// <summary>

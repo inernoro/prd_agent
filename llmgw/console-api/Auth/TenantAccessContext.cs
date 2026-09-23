@@ -15,7 +15,8 @@ public sealed record TenantAccessContext(
     string MembershipId,
     long MembershipVersion,
     string Role,
-    IReadOnlyList<string> TeamIds);
+    IReadOnlyList<string> TeamIds,
+    string? ExternalUserId = null);
 
 public static class LlmGwPermissions
 {
@@ -74,8 +75,24 @@ public static class TenantAccess
         if (access.Role is LlmGwTenantRoles.Owner or LlmGwTenantRoles.Admin or LlmGwTenantRoles.Billing)
             return Builders<BsonDocument>.Filter.And(tenantFilter, filter);
 
-        var teamFilter = Builders<BsonDocument>.Filter.In("TeamId", access.TeamIds);
-        return Builders<BsonDocument>.Filter.And(tenantFilter, teamFilter, filter);
+        // 低权限账号除了团队数据，还必须能读取自己的调用记录。MAP 联邦账号在网关里有独立的
+        // user id，而调用日志沿用 MAP user id；只按 TeamId 会让没有团队的 viewer 永远查不到
+        // 自己刚产生的日志，真实调用成功后仍无法完成审计闭环。
+        var scopes = new List<FilterDefinition<BsonDocument>>();
+        if (access.TeamIds.Count > 0)
+            scopes.Add(Builders<BsonDocument>.Filter.In("TeamId", access.TeamIds));
+
+        var ownUserIds = new[] { access.UserId, access.ExternalUserId }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (ownUserIds.Length > 0)
+            scopes.Add(Builders<BsonDocument>.Filter.In("UserId", ownUserIds));
+
+        var scopeFilter = scopes.Count == 1
+            ? scopes[0]
+            : Builders<BsonDocument>.Filter.Or(scopes);
+        return Builders<BsonDocument>.Filter.And(tenantFilter, scopeFilter, filter);
     }
 
     public static bool HasPermission(ClaimsPrincipal user, string permission)
@@ -143,6 +160,19 @@ public static class TenantAccess
             membership.Id,
             membership.Version,
             membership.Role,
-            activeTeamIds);
+            activeTeamIds,
+            ResolveExternalUserId(user));
+    }
+
+    private static string? ResolveExternalUserId(LlmGwUser user)
+    {
+        if (user.IdentityProvider is not ("map" or StableSmokeFederation.IdentityProvider)
+            || string.IsNullOrWhiteSpace(user.ExternalSubjectId))
+            return null;
+
+        var separator = user.ExternalSubjectId.IndexOf(':');
+        if (separator <= 0 || separator == user.ExternalSubjectId.Length - 1)
+            return null;
+        return user.ExternalSubjectId[(separator + 1)..].Trim() is { Length: > 0 } value ? value : null;
     }
 }

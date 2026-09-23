@@ -219,6 +219,31 @@ public static class DeploymentAuthority
     }
 
     /// <summary>
+    /// 当前部署是否负责刷新模型排行榜公开快照。
+    ///
+    /// 排行榜与其它共享周期任务的网络条件不同：正式机可能无法直连 arena.ai，CDS main
+    /// 却可以通过只读网页代理抓取，并把自己的分支作用域快照公开给正式机镜像。因此它需要
+    /// 一个比 <see cref="CanRunSharedScheduledWork"/> 更精确的单任务权威：
+    /// 1. 正式环境仍然允许运行；
+    /// 2. CDS 里只允许真实 Git 分支名为 main 的那一个部署运行；
+    /// 3. 显式退出共享状态归属仍然一票否决。
+    ///
+    /// 这里不放宽通用周期任务总闸，避免 CDS main 顺带获得报告导入等其它共享写权限。
+    /// 分支名来自 CDS 平台注入的 VITE_GIT_BRANCH，并经 cds-compose 映射到
+    /// Changelog:GitHubBranch；功能分支不会因 compose 默认值而冒充 main。
+    /// </summary>
+    public static bool CanRunModelLeaderboardSync(IConfiguration configuration)
+    {
+        if (HasOptedOutOfSharedState(configuration)) return false;
+        if (!IsCdsBranchPreview(configuration)) return true;
+
+        return string.Equals(
+            ReadFirst(configuration, GitHubBranchKey),
+            "main",
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
     /// 产出短来源标签（host@sha·branch），写进告警文案，便于一眼看出是「哪个容器、哪个构建」在喊，
     /// 旧容器的喊叫不再冒充无名的全局事故。
     /// </summary>

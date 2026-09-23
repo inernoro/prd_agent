@@ -129,7 +129,7 @@ x-cds-deploy-modes:
         ASPNETCORE_ENVIRONMENT: Production
         ASPNETCORE_URLS: "http://+:8080"
         # ClaudeSdkExecutor 自调回调端口跟随容器端口（源码模式 5000 → 极速版 8080）。
-        ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:8080"
+        ClaudeSdkExecutor__CallbackBaseUrl: "http://api:8080"
   admin:
     dev:
       label: "开发模式 (Vite HMR)"
@@ -254,8 +254,8 @@ x-cds-deploy-modes:
         pnpm install --frozen-lockfile &&
         pnpm exec vite --host 0.0.0.0 --port 8100
       env:
-        LLMGW_PROXY_TARGET: "http://llmgw-prd-agent:8090"
-        LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve-prd-agent:8091"
+        LLMGW_PROXY_TARGET: "http://llmgw:8090"
+        LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve:8091"
     express:
       label: "极速版（CI 预构建）"
       image: "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:sha-${CDS_COMMIT_SHA}"
@@ -346,9 +346,10 @@ services:
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT},user=${CDS_REDIS_USER},password=${CDS_REDIS_PASSWORD}"
       # 网关跨进程：把 LlmGateway:Mode 切 http/shadow（profile override）时，HttpLlmGatewayClient 需要
       # 与 llmgw-serve 同一把 M2M key + serving 地址，否则 X-Gateway-Key 为空 → serving 401（Cursor Bugbot）。
-      # Mode 默认 inproc，不切就不会用到这两项；切了即就位。serving 地址用 profile-id 网络别名。
+      # Mode 默认 inproc，不切就不会用到这两项；切了即就位。服务间地址使用 CDS 实际注入的
+      # Compose 服务别名，不能把会随项目配置变化的 profile id 当成容器 DNS 名。
       LlmGwServe__ApiKey: "${LLMGW_SERVE_API_KEY:-llmgw-serve-cds-preview-internal-4d8b1e3a}"
-      LlmGateway__ServeBaseUrl: "http://llmgw-serve-prd-agent:8091"
+      LlmGateway__ServeBaseUrl: "http://llmgw-serve:8091"
       LlmGateway__DisableMapConfigFallbackForRegisteredAppCallers: "false"
       LlmGateway__DisableMapConfigFallbackForActiveAppCallers: "false"
       LlmGateway__Readiness__RequireAssetProbe: "false"
@@ -360,7 +361,7 @@ services:
       # Jwt__Secret 由全局 x-cds-env.JWT_SECRET 自动注入，不在此声明
       Jwt__Issuer: prdagent
       ClaudeSdkExecutor__Enabled: "true"
-      ClaudeSdkExecutor__CallbackBaseUrl: "http://api-prd-agent:5000"
+      ClaudeSdkExecutor__CallbackBaseUrl: "http://api:5000"
       # CDS Agent runtime 必须来自 shared-service discovery 或显式外部 sidecar。
       # 禁止把 claude-agent-sdk runtime 写成本应用分支 service，否则 main/业务分支会被 runtime 污染。
       ClaudeSdkExecutor__CdsDiscovery__EnablePairedInfraConnections: "true"
@@ -529,8 +530,8 @@ services:
       llmgw: { condition: service_started }
       llmgw-serve: { condition: service_started }
     environment:
-      LLMGW_PROXY_TARGET: "http://llmgw-prd-agent:8090"
-      LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve-prd-agent:8091"
+      LLMGW_PROXY_TARGET: "http://llmgw:8090"
+      LLMGW_SERVING_PROXY_TARGET: "http://llmgw-serve:8091"
     labels:
       # 显式清理存量 CDS profile 可能遗留的 prebuiltImage=true；源码模式必须挂载当前 worktree。
       cds.prebuilt-image: "false"

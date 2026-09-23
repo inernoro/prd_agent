@@ -20,6 +20,15 @@ public static class ImageGenModelConfigs
     /// </summary>
     public static readonly List<ImageGenModelAdapterConfig> Configs = new()
     {
+        // ===== GPT Image 2.5 Sunburst =====
+        // 必须排在 gpt-image-2* 之前。Sunburst 是独立的官方模型标识，不应只靠
+        // “长得像 GPT Image 2”落入宽泛规则；这样目录、能力说明和请求契约才能逐项核对。
+        BuildOpenAiGptImageConfig(
+            "gpt-image-2.5-sunburst",
+            "GPT Image 2.5 Sunburst",
+            "2026-09-23",
+            "https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst"),
+
         // ===== GPT Image 2（自适应模型：尺寸由 prompt 描述决定）=====
         // 同一能力可由 OpenAI 兼容图片端点或 OpenRouter chat/completions 承载。
         // 两种协议都不发送 size，尺寸/比例统一写进 prompt 最前面。
@@ -30,6 +39,11 @@ public static class ImageGenModelConfigs
         BuildOpenRouterGptImage2Config(),
         BuildOpenAiGptImageConfig("gpt-image-2*", "GPT Image 2", "2026-08-14",
             "https://platform.openai.com/docs/api-reference/images/create"),
+        // OpenAI 的滚动别名与 gpt-image-1 使用同一套图片尺寸协议。
+        // 该别名会出现在网关 default-generation 的实际 Offering 中；漏掉它会让目录模型可用，
+        // 但 Agent 参数页误判为“没有尺寸能力”。
+        BuildOpenAiGptImageConfig("chatgpt-image-latest", "ChatGPT Image", "2026-09-22",
+            "https://platform.openai.com/docs/guides/image-generation"),
         // 精确匹配当前默认模型，不覆盖 1.5 或其他兼容平台的独立策略。
         BuildOpenAiGptImageConfig("gpt-image-1", "GPT Image 1", "2026-08-31",
             "https://developers.openai.com/api/docs/models/gpt-image-1"),
@@ -167,6 +181,64 @@ public static class ImageGenModelConfigs
             MinWidth = 768,
             MinHeight = 672,
             Notes = new List<string> { "支持 1K, 2K, 4K 三个档位", "4K 分辨率可能导致响应超时" },
+            SupportsImageToImage = true,
+            SupportsInpainting = true,
+        },
+
+        // ===== Gemini 3.1 Flash Image =====
+        // 官方稳定型号为 gemini-3.1-flash-image；生产存量上游仍可能带 -preview 后缀。
+        // 使用前缀匹配让两者共享能力契约，但目录仍展示实际上游型号，避免伪装成已迁稳定版。
+        new ImageGenModelAdapterConfig
+        {
+            ModelIdPattern = "gemini-3.1-flash-image*",
+            DisplayName = "Gemini 3.1 Flash Image",
+            Provider = "Google",
+            OfficialDocUrl = "https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-image",
+            LastUpdated = "2026-09-23",
+            SizeConstraintType = SizeConstraintTypes.Whitelist,
+            SizeConstraintDescription = "支持 512/1K/2K/4K 分辨率档位及官方宽高比",
+            SizesByResolution = new Dictionary<string, List<SizeOption>>
+            {
+                ["1k"] = new()
+                {
+                    new("512x512", "1:1"), new("256x1024", "1:4"), new("192x1536", "1:8"),
+                    new("424x632", "2:3"), new("632x424", "3:2"), new("448x600", "3:4"),
+                    new("1024x256", "4:1"), new("600x448", "4:3"), new("464x576", "4:5"),
+                    new("576x464", "5:4"), new("1536x192", "8:1"), new("384x688", "9:16"),
+                    new("688x384", "16:9"), new("792x168", "21:9"),
+                    new("1024x1024", "1:1"), new("512x2048", "1:4"), new("384x3072", "1:8"),
+                    new("848x1264", "2:3"), new("1264x848", "3:2"), new("896x1200", "3:4"),
+                    new("2048x512", "4:1"), new("1200x896", "4:3"), new("928x1152", "4:5"),
+                    new("1152x928", "5:4"), new("3072x384", "8:1"), new("768x1376", "9:16"),
+                    new("1376x768", "16:9"), new("1584x672", "21:9"),
+                },
+                ["2k"] = new()
+                {
+                    new("2048x2048", "1:1"), new("1024x4096", "1:4"), new("768x6144", "1:8"),
+                    new("1696x2528", "2:3"), new("2528x1696", "3:2"), new("1792x2400", "3:4"),
+                    new("4096x1024", "4:1"), new("2400x1792", "4:3"), new("1856x2304", "4:5"),
+                    new("2304x1856", "5:4"), new("6144x768", "8:1"), new("1536x2752", "9:16"),
+                    new("2752x1536", "16:9"), new("3168x1344", "21:9"),
+                },
+                ["4k"] = new()
+                {
+                    new("4096x4096", "1:1"), new("2048x8192", "1:4"), new("1536x12288", "1:8"),
+                    new("3392x5056", "2:3"), new("5056x3392", "3:2"), new("3584x4800", "3:4"),
+                    new("8192x2048", "4:1"), new("4800x3584", "4:3"), new("3712x4608", "4:5"),
+                    new("4608x3712", "5:4"), new("12288x1536", "8:1"), new("3072x5504", "9:16"),
+                    new("5504x3072", "16:9"), new("6336x2688", "21:9"),
+                },
+            },
+            SizeParamFormat = SizeParamFormats.WxH,
+            MaxWidth = 12288,
+            MaxHeight = 12288,
+            MinWidth = 192,
+            MinHeight = 168,
+            Notes = new List<string>
+            {
+                "官方稳定型号为 gemini-3.1-flash-image",
+                "当前兼容 -preview 存量上游；迁移稳定型号前必须完成真实生成验证",
+            },
             SupportsImageToImage = true,
             SupportsInpainting = true,
         },

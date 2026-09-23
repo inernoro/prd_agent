@@ -1,4 +1,7 @@
 using System.Linq;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
 using PrdAgent.Api.Services.ModelLeaderboard;
 using PrdAgent.Core.Models;
 using Xunit;
@@ -33,6 +36,54 @@ public class ArenaLeaderboardFetcherTests
 </tbody></table>
 <span>1,587,202<!-- --> <!-- -->sessions</span>
 """;
+
+    [Fact]
+    public async Task FetchAsync_源站拒绝时通过只读代理获取原始Html()
+    {
+        var handler = new RecordingHandler(RealFixture + RealFixture + RealFixture);
+        var fetcher = new ArenaLeaderboardFetcher(new HttpClient(handler));
+
+        var result = await fetcher.FetchAsync("agent", CancellationToken.None);
+
+        Assert.Equal(6, result.Entries.Count);
+        Assert.Equal(
+            new[]
+            {
+                "https://arena.ai/leaderboard/agent",
+                "https://r.jina.ai/https://arena.ai/leaderboard/agent",
+            },
+            handler.Requests.Select(x => x.Url));
+        Assert.Null(handler.Requests[0].ReturnFormat);
+        Assert.Equal("html", handler.Requests[1].ReturnFormat);
+    }
+
+    [Fact]
+    public async Task FetchAsync_配置快照镜像时优先从远程Cds恢复并保留抓取时间()
+    {
+        var parsed = Padded(ArenaLeaderboardFetcher.Parse(RealFixture));
+        var fetchedAt = new DateTime(2026, 9, 15, 8, 30, 0, DateTimeKind.Utc);
+        var mirrorJson = JsonSerializer.Serialize(new
+        {
+            kind = parsed.Kind,
+            fetchedAt,
+            totalSessions = parsed.TotalSessions,
+            totalVotes = parsed.TotalVotes,
+            entries = parsed.Entries,
+        });
+        var handler = new RecordingHandler("unused", mirrorJson);
+        var fetcher = new ArenaLeaderboardFetcher(
+            new HttpClient(handler),
+            "https://main-prd-agent.miduo.org/api/model-leaderboard/public-snapshot/");
+
+        var result = await fetcher.FetchAsync("agent", CancellationToken.None);
+
+        Assert.Equal(fetchedAt, result.SourceFetchedAt);
+        Assert.Equal(ArenaLeaderboardFetcher.MinimumEntries, result.Entries.Count);
+        Assert.Equal(
+            "https://main-prd-agent.miduo.org/api/model-leaderboard/public-snapshot/agent",
+            handler.Requests[1].Url);
+        Assert.Equal(2, handler.Requests.Count);
+    }
 
     [Fact]
     public void Parse_只认模型行不把表头算进去()
@@ -437,6 +488,21 @@ public class ArenaLeaderboardFetcherTests
         Assert.Contains("public static string[] Boards => ModelLeaderboardCatalog.Keys;", source);
     }
 
+    [Fact]
+    public void Worker必须使用榜单专属同步权威判据()
+    {
+        var worker = Path.Combine(
+            LocateRepoRoot(),
+            "prd-api", "src", "PrdAgent.Api", "Services", "ModelLeaderboard",
+            "ModelLeaderboardSyncWorker.cs");
+
+        Assert.True(File.Exists(worker), $"找不到 {worker}——本守卫的前提不成立，请核对路径");
+
+        var source = File.ReadAllText(worker);
+        Assert.Contains("DeploymentAuthority.CanRunModelLeaderboardSync(_configuration)", source);
+        Assert.DoesNotContain("DeploymentAuthority.CanRunSharedScheduledWork(_configuration)", source);
+    }
+
     private static string LocateRepoRoot()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
@@ -707,5 +773,31 @@ public class ArenaLeaderboardFetcherTests
         while (entries.Count < ArenaLeaderboardFetcher.MinimumEntries)
             entries.Add(entries[entries.Count % r.Entries.Count]);
         return r with { Entries = entries };
+    }
+
+    private sealed class RecordingHandler(string fallbackHtml, string? mirrorJson = null) : HttpMessageHandler
+    {
+        public List<(string Url, string? ReturnFormat)> Requests { get; } = new();
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var returnFormat = request.Headers.TryGetValues("X-Return-Format", out var values)
+                ? values.Single()
+                : null;
+            Requests.Add((request.RequestUri!.ToString(), returnFormat));
+
+            if (Requests.Count == 1)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Forbidden));
+
+            var content = mirrorJson is not null && request.RequestUri!.Host == "main-prd-agent.miduo.org"
+                ? mirrorJson
+                : fallbackHtml;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(content),
+            });
+        }
     }
 }

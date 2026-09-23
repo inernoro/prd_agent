@@ -367,6 +367,13 @@ public class ImageGenRunWorker : BackgroundService
         var sem = new SemaphoreSlim(maxConc, maxConc);
         var tasks = new List<Task>();
 
+        // CancelRequested 是持久化控制面，真正发给上游的请求还需要一枚可取消的令牌。
+        // 过去取消接口只改 Mongo 标记，已经进入 GenerateUnifiedAsync 的请求会继续占用最长
+        // 600 秒，工作区也因此无法删除。轮询标记并取消 linked token，让同一契约同时覆盖
+        // 单实例、滚动发布和将来多副本部署。
+        using var upstreamCancellation = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var cancellationWatch = WatchRunCancellationAsync(run.Id, upstreamCancellation, ct);
+
         using var scope = _scopeFactory.CreateScope();
         var imageClient = scope.ServiceProvider.GetRequiredService<IImageGenerationClient>();
         var assetStorage = scope.ServiceProvider.GetRequiredService<IAssetStorage>();
@@ -408,7 +415,7 @@ public class ImageGenRunWorker : BackgroundService
 
                 tasks.Add(Task.Run(async () =>
                 {
-                    await sem.WaitAsync(ct);
+                    await sem.WaitAsync(upstreamCancellation.Token);
                     try
                     {
                         // 用户取消：不再继续派发新的生成（已派发的请求尽量跑完）
@@ -769,7 +776,7 @@ public class ImageGenRunWorker : BackgroundService
                             n: layerCount,
                             size: reqSize,
                             responseFormat: run.ResponseFormat,
-                            ct,
+                            upstreamCancellation.Token,
                             appCallerCode,
                             images: allImages.Count > 0 ? allImages : null,
                             modelId: requestedModelId,
@@ -936,9 +943,14 @@ public class ImageGenRunWorker : BackgroundService
         {
             await Task.WhenAll(tasks);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (upstreamCancellation.IsCancellationRequested)
         {
-            // ignore：worker stop
+            // 用户取消或 worker stop；下面统一持久化终态。
+        }
+        finally
+        {
+            upstreamCancellation.Cancel();
+            await cancellationWatch;
         }
 
         var final = await _db.ImageGenRuns.Find(x => x.Id == run.Id).FirstOrDefaultAsync(ct);
@@ -949,21 +961,7 @@ public class ImageGenRunWorker : BackgroundService
             ? ImageGenRunStatus.Cancelled
             : (final.Failed > 0 ? ImageGenRunStatus.Failed : ImageGenRunStatus.Completed);
 
-        await _db.ImageGenRuns.UpdateOneAsync(
-            x => x.Id == run.Id,
-            Builders<ImageGenRun>.Update.Set(x => x.Status, nextStatus).Set(x => x.EndedAt, DateTime.UtcNow),
-            cancellationToken: ct);
-
-        await AppendEventAsync(run, "run", new
-        {
-            type = "runDone",
-            runId = run.Id,
-            total = final.Total,
-            done = final.Done,
-            failed = final.Failed,
-            status = nextStatus.ToString(),
-            endedAt = DateTime.UtcNow
-        }, ct);
+        await PersistTerminalStateAsync(run, final, nextStatus, ct);
 
         // 兜底：失败/取消时把对应画布占位从 running 翻成 error（成功路径已由 TryPatchWorkspaceCanvasAsync 回填）。
         // 否则后端失败但画布元素永远停在 running，前端"预计 1024×1024"占位永久转圈，且看门狗/对账之外没有第二道闸。
@@ -985,6 +983,70 @@ public class ImageGenRunWorker : BackgroundService
         }
     }
 
+    internal readonly record struct TerminalFailure(string? ErrorCode, string? ErrorMessage);
+
+    internal static TerminalFailure ResolveTerminalFailure(
+        ImageGenRunStatus status,
+        ImageGenRunItem? firstErrorItem)
+        => status == ImageGenRunStatus.Failed
+            ? new TerminalFailure(
+                string.IsNullOrWhiteSpace(firstErrorItem?.ErrorCode) ? ErrorCodes.LLM_ERROR : firstErrorItem.ErrorCode,
+                string.IsNullOrWhiteSpace(firstErrorItem?.ErrorMessage) ? "生图失败，请重试。" : firstErrorItem.ErrorMessage)
+            : new TerminalFailure(null, null);
+
+    internal async Task PersistTerminalStateAsync(
+        ImageGenRun run,
+        ImageGenRun final,
+        ImageGenRunStatus nextStatus,
+        CancellationToken ct)
+    {
+        ImageGenRunItem? firstErrorItem = null;
+        if (nextStatus == ImageGenRunStatus.Failed)
+        {
+            firstErrorItem = await _db.ImageGenRunItems
+                .Find(x => x.RunId == run.Id && x.Status == ImageGenRunItemStatus.Error)
+                .SortBy(x => x.ItemIndex)
+                .ThenBy(x => x.ImageIndex)
+                .FirstOrDefaultAsync(ct);
+        }
+        var terminalFailure = ResolveTerminalFailure(nextStatus, firstErrorItem);
+        var endedAt = DateTime.UtcNow;
+
+        var terminalUpdate = Builders<ImageGenRun>.Update
+            .Set(x => x.Status, nextStatus)
+            .Set(x => x.EndedAt, endedAt);
+        if (terminalFailure.ErrorCode != null)
+        {
+            terminalUpdate = terminalUpdate
+                .Set(x => x.ErrorCode, terminalFailure.ErrorCode)
+                .Set(x => x.ErrorMessage, terminalFailure.ErrorMessage);
+        }
+        else
+        {
+            terminalUpdate = terminalUpdate
+                .Unset(x => x.ErrorCode)
+                .Unset(x => x.ErrorMessage);
+        }
+
+        await _db.ImageGenRuns.UpdateOneAsync(
+            x => x.Id == run.Id,
+            terminalUpdate,
+            cancellationToken: ct);
+
+        await AppendEventAsync(run, "run", new
+        {
+            type = "runDone",
+            runId = run.Id,
+            total = final.Total,
+            done = final.Done,
+            failed = final.Failed,
+            status = nextStatus.ToString(),
+            errorCode = terminalFailure.ErrorCode,
+            errorMessage = terminalFailure.ErrorMessage,
+            endedAt
+        }, ct);
+    }
+
     private static string ResolveSize(ImageGenRun run, ImageGenRunPlanItem planItem)
     {
         var s = (planItem.Size ?? string.Empty).Trim();
@@ -1000,6 +1062,28 @@ public class ImageGenRunWorker : BackgroundService
             .Project(x => new { x.CancelRequested })
             .FirstOrDefaultAsync(ct);
         return cur?.CancelRequested == true;
+    }
+
+    internal async Task WatchRunCancellationAsync(
+        string runId,
+        CancellationTokenSource upstreamCancellation,
+        CancellationToken stoppingToken,
+        TimeSpan? pollInterval = null)
+    {
+        using var timer = new PeriodicTimer(pollInterval ?? TimeSpan.FromMilliseconds(500));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(upstreamCancellation.Token))
+            {
+                if (!await IsCancelRequestedAsync(runId, stoppingToken)) continue;
+                upstreamCancellation.Cancel();
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (upstreamCancellation.IsCancellationRequested)
+        {
+            // 正常收尾或取消命中。
+        }
     }
 
     private async Task AppendEventAsync(ImageGenRun run, string eventName, object payload, CancellationToken ct)
@@ -1473,6 +1557,7 @@ public class ImageGenRunWorker : BackgroundService
             OriginalUrl = assetUrl,
             OriginalSha256 = assetSha256,
             ArticleInsertionIndex = run.ArticleMarkerIndex,
+            ArticleWorkflowVersion = run.ArticleWorkflowVersion,
         };
         if (asset.Prompt != null && asset.Prompt.Length > 300) asset.Prompt = asset.Prompt[..300].Trim();
 
@@ -1701,7 +1786,7 @@ public class ImageGenRunWorker : BackgroundService
     ///   - marker 显示字段（Status/Url/AssetId/ImageRunAt）：尽力乐观锁 RMW，门控同一时间戳；
     ///     done 仅当 run.CreatedAt 更新才覆盖，error 在已有成功图时不写（兼容 ImageRunAt 出现前的存量成功 marker）。
     /// </summary>
-    private async Task TryPatchArticleMarkerAsync(
+    internal async Task TryPatchArticleMarkerAsync(
         ImageGenRun run,
         string status,
         string? errorMessage,
@@ -1715,6 +1800,9 @@ public class ImageGenRunWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(wid)) return;
 
         var markerIndex = run.ArticleMarkerIndex.Value;
+        var workspaceFilter = Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid);
+        if (run.ArticleWorkflowVersion.HasValue)
+            workspaceFilter &= Builders<ImageMasterWorkspace>.Filter.Eq(x => x.ArticleWorkflow!.Version, run.ArticleWorkflowVersion.Value);
         var isDone = status == "done";
         var key = markerIndex.ToString();
         // 权威成功时间戳的字段路径（第 1 步指针写入与第 2 步显示门控共用，避免重复声明导致 CS0136）
@@ -1724,7 +1812,7 @@ public class ImageGenRunWorker : BackgroundService
         if (isDone && !string.IsNullOrWhiteSpace(assetId))
         {
             var pointerFilter = Builders<ImageMasterWorkspace>.Filter.And(
-                Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                workspaceFilter,
                 Builders<ImageMasterWorkspace>.Filter.Ne(x => x.ArticleWorkflow, null),
                 Builders<ImageMasterWorkspace>.Filter.Or(
                     Builders<ImageMasterWorkspace>.Filter.Exists(stampPath, false),
@@ -1738,14 +1826,14 @@ public class ImageGenRunWorker : BackgroundService
             // DoneImageCount 重算（读取最新字典）。并发完成时各 task 读到的快照新旧不一，
             // 用"仅当新值更大才写"的单调门控（Lt 过滤）防止陈旧的较小计数最后落地把数值压低；
             // 生图过程中指针只增不减，单调最大即收敛到真实值。
-            var latest = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+            var latest = await _db.ImageMasterWorkspaces.Find(workspaceFilter).FirstOrDefaultAsync(ct);
             if (latest?.ArticleWorkflow?.AssetIdByMarkerIndex != null)
             {
                 var doneCount = latest.ArticleWorkflow.AssetIdByMarkerIndex.Values
                     .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
                     Builders<ImageMasterWorkspace>.Filter.And(
-                        Builders<ImageMasterWorkspace>.Filter.Eq(x => x.Id, wid),
+                        workspaceFilter,
                         Builders<ImageMasterWorkspace>.Filter.Lt(x => x.ArticleWorkflow!.DoneImageCount, doneCount)),
                     Builders<ImageMasterWorkspace>.Update.Set(x => x.ArticleWorkflow!.DoneImageCount, doneCount),
                     cancellationToken: ct);
@@ -1756,7 +1844,7 @@ public class ImageGenRunWorker : BackgroundService
         //    否则并发下用陈旧快照整体回写会抹掉其它 run 在第 1 步原子写入的
         //    AssetIdByMarkerIndex / AssetRunAtByMarkerIndex（High：跨 marker 互相覆盖）。
         //    先读一次用于门控评估（display 为尽力而为，指针已在第 1 步可靠写入；这里轻微 TOCTOU 可接受）。
-        var ws = await _db.ImageMasterWorkspaces.Find(x => x.Id == wid).FirstOrDefaultAsync(ct);
+        var ws = await _db.ImageMasterWorkspaces.Find(workspaceFilter).FirstOrDefaultAsync(ct);
         if (ws == null) return;
         var wf = ws.ArticleWorkflow;
         if (wf == null || wf.Markers == null || markerIndex < 0 || markerIndex >= wf.Markers.Count) return;
@@ -1785,7 +1873,7 @@ public class ImageGenRunWorker : BackgroundService
             // 原子门控：写入 filter 携带权威时间戳守卫，仅当本 run 仍是最新成功（无严格更新的指针）才落地，
             // 否则陈旧 run 通过内存门控后仍可能后落地覆盖更新 run 的 display（Codex/Bugbot：stale 覆盖 newer）。
             var doneFilter = F.And(
-                F.Eq(x => x.Id, wid),
+                workspaceFilter,
                 F.Or(F.Exists(stampPath, false), F.Lte(stampPath, run.CreatedAt)));
             var doneUpdates = new List<UpdateDefinition<ImageMasterWorkspace>>
             {
@@ -1801,6 +1889,10 @@ public class ImageGenRunWorker : BackgroundService
             return;
         }
 
+        // 版本化 MCP 重生成会替换 RunId；旧任务失败不能覆盖当前任务的显示状态。
+        var failureFilter = run.ArticleWorkflowVersion.HasValue
+            ? F.And(workspaceFilter, F.Eq($"{mPath}.runId", run.Id))
+            : workspaceFilter;
         // 失败分支
         var hasSuccessImage = authoritativeSuccessAt.HasValue
             || marker.ImageRunAt.HasValue
@@ -1812,7 +1904,7 @@ public class ImageGenRunWorker : BackgroundService
             // 失败但已有成功图：把因重生成而被置为 running 的 marker 恢复为 done（保留旧图），不写错误、不动图片字段，
             // 否则 marker 会卡在 running（Bugbot：regen fail leaves marker running）。
             await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                F.Eq(x => x.Id, wid),
+                failureFilter,
                 U.Combine(
                     U.Set($"{mPath}.status", "done"),
                     U.Set($"{mPath}.errorMessage", (string?)null),
@@ -1833,7 +1925,7 @@ public class ImageGenRunWorker : BackgroundService
         };
         if (!string.IsNullOrWhiteSpace(errorMessage)) errUpdates.Add(U.Set($"{mPath}.errorMessage", errorMessage));
         await _db.ImageMasterWorkspaces.UpdateOneAsync(
-            F.And(F.Eq(x => x.Id, wid), F.Exists(stampPath, false)),
+            F.And(failureFilter, F.Exists(stampPath, false)),
             U.Combine(errUpdates),
             cancellationToken: ct);
     }

@@ -89,6 +89,8 @@ import { useChangelogStore, selectUnreadCount } from '@/stores/changelogStore';
 import { FLOATING_DOCK_COLLAPSED_KEY, FLOATING_DOCK_EVENT } from '@/components/daily-tips/TipsDrawer';
 import { getSidebarMenuItems } from '@/lib/adminMenuCatalog';
 import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
+import { canOpenLlmGateway } from '@/lib/llmGatewayAccess';
+import { resolveAdminIdentityLabel } from '@/lib/adminIdentityLabel';
 import { toast } from '@/lib/toast';
 import { MapBrandMark } from '@/components/ui/MapBrandMark';
 import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
@@ -203,6 +205,7 @@ export default function AppShell() {
   const menuCatalogLoaded = useAuthStore((s) => s.menuCatalogLoaded);
   const permissions = useAuthStore((s) => s.permissions);
   const isRoot = useAuthStore((s) => s.isRoot);
+  const hasLlmGatewayAccess = canOpenLlmGateway(permissions, isRoot);
   const canAiEditAvatar = isRoot || permissions.includes('super') || permissions.includes('visual-agent.use');
   const collapsed = useLayoutStore((s) => s.navCollapsed);
   const fullBleedMain = useLayoutStore((s) => s.fullBleedMain);
@@ -676,7 +679,7 @@ export default function AppShell() {
   );
 
   const resolveLlmGatewayHref = useCallback(async (returnTo?: string) => {
-    if (gatewayOpening || user?.role !== 'ADMIN') return null;
+    if (gatewayOpening || !hasLlmGatewayAccess) return null;
     setGatewayOpening(true);
     try {
       const result = await createLlmGatewaySsoTicket();
@@ -693,7 +696,7 @@ export default function AppShell() {
     } finally {
       setGatewayOpening(false);
     }
-  }, [gatewayOpening, user?.role]);
+  }, [gatewayOpening, hasLlmGatewayAccess]);
   const openLlmGateway = useCallback(async (returnTo?: string) => {
     const href = await resolveLlmGatewayHref(returnTo);
     if (href) window.location.assign(href);
@@ -1210,7 +1213,7 @@ export default function AppShell() {
                 {user?.displayName || 'Admin'}
               </div>
               <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
-                {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+                {resolveAdminIdentityLabel(user, isRoot)}
               </div>
             </div>
           </div>
@@ -1275,7 +1278,7 @@ export default function AppShell() {
                 <span className="ml-auto text-[10px]" style={{ color: 'var(--text-muted)' }}>{it.hint}</span>
               </button>
             ))}
-            {user?.role === 'ADMIN' && (
+            {hasLlmGatewayAccess && (
               <button
                 type="button"
                 disabled={gatewayOpening}
@@ -1616,7 +1619,7 @@ export default function AppShell() {
                         {user?.displayName || 'Admin'}
                       </div>
                       <div className="text-[11px] truncate mt-0.5" style={{ color: 'var(--text-muted)' }}>
-                        {user?.role === 'ADMIN' ? '系统管理员' : user?.role || ''}
+                        {resolveAdminIdentityLabel(user, isRoot)}
                       </div>
                     </div>
                   </div>
@@ -1764,7 +1767,7 @@ export default function AppShell() {
                   </span>
                 </DropdownMenu.Item>
 
-                {user?.role === 'ADMIN' && (
+                {hasLlmGatewayAccess && (
                   <DropdownMenu.Item
                     className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover-bg-soft focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
                     style={{ color: 'var(--text-secondary)' }}

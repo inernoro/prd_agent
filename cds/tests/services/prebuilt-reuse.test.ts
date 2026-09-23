@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage, targetShaOf,
-  normalizeBuildScope,
+  normalizeBuildScope, normalizeImageRevision, proveFallbackImage,
 } from '../../src/services/prebuilt-reuse.js';
 
 const SHA_A = 'a'.repeat(40);
@@ -183,5 +183,54 @@ describe('CI 构建范围（buildScope）的规整与拒绝', () => {
     expect(normalizeBuildScope([])).toBeNull();
     expect(normalizeBuildScope(['', '   '])).toBeNull();
     expect(normalizeBuildScope('prd-api/**' as unknown as string[])).toBeNull();
+  });
+});
+
+describe('浮动回退镜像的源码归属证明', () => {
+  it('OCI revision 必须是完整 commit SHA', () => {
+    expect(normalizeImageRevision(` ${SHA_A.toUpperCase()}\n`)).toBe(SHA_A);
+    expect(normalizeImageRevision('abc1234')).toBeNull();
+    expect(normalizeImageRevision('<no value>')).toBeNull();
+  });
+
+  it('revision 正好等于目标提交时直接接受', async () => {
+    const proof = await proveFallbackImage({ revision: SHA_A, targetSha: SHA_A });
+    expect(proof).toMatchObject({ accepted: true, reason: 'exact-target' });
+  });
+
+  it('旧 revision 只有在完整构建范围无差异时才接受', async () => {
+    const calls: unknown[][] = [];
+    const proof = await proveFallbackImage({
+      revision: SHA_B,
+      targetSha: SHA_A,
+      buildScope: ['prd-api/**', 'Directory.Packages.props'],
+      isComponentUnchangedSince: async (...args) => { calls.push(args); return true; },
+    });
+    expect(proof).toMatchObject({ accepted: true, reason: 'component-unchanged' });
+    expect(calls).toEqual([[SHA_B, SHA_A, ['prd-api/**', 'Directory.Packages.props']]]);
+  });
+
+  it('缺 revision、缺范围、缺比较器或组件已变化时一律拒绝', async () => {
+    await expect(proveFallbackImage({ revision: null, targetSha: SHA_A }))
+      .resolves.toMatchObject({ accepted: false, reason: 'missing-revision' });
+    await expect(proveFallbackImage({ revision: SHA_B, targetSha: SHA_A }))
+      .resolves.toMatchObject({ accepted: false, reason: 'missing-build-scope' });
+    await expect(proveFallbackImage({ revision: SHA_B, targetSha: SHA_A, buildScope: ['prd-api/**'] }))
+      .resolves.toMatchObject({ accepted: false, reason: 'missing-comparator' });
+    await expect(proveFallbackImage({
+      revision: SHA_B,
+      targetSha: SHA_A,
+      buildScope: ['prd-api/**'],
+      isComponentUnchangedSince: async () => false,
+    })).resolves.toMatchObject({ accepted: false, reason: 'component-changed-or-unverifiable' });
+  });
+
+  it('Git 比较抛错时按无法证明处理，不能静默运行旧镜像', async () => {
+    await expect(proveFallbackImage({
+      revision: SHA_B,
+      targetSha: SHA_A,
+      buildScope: ['prd-api/**'],
+      isComponentUnchangedSince: async () => { throw new Error('git history missing'); },
+    })).resolves.toMatchObject({ accepted: false, reason: 'component-changed-or-unverifiable' });
   });
 });

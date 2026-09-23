@@ -116,6 +116,33 @@ public sealed class StableSmokeIdentityPolicyTests
         Assert.Contains(expectedLine, compose);
     }
 
+    [Theory]
+    [InlineData("docker-compose.yml")]
+    [InlineData("docker-compose.dev.yml")]
+    public void GatewayDeployments_ShouldWireStableSmokeFederationExplicitly(string composeFile)
+    {
+        var compose = File.ReadAllText(LocateRepositoryFile(composeFile));
+        Assert.Contains("StableSmokeFederation__Enabled=${STABLE_SMOKE_FEDERATION_ENABLED:-false}", compose);
+        Assert.Contains("StableSmokeFederation__AllowedUsernames=${STABLE_SMOKE_FEDERATION_ALLOWED_USERS:-}", compose);
+        Assert.Contains("StableSmokeFederation__Role=${STABLE_SMOKE_FEDERATION_ROLE:-viewer}", compose);
+        Assert.Contains("StableSmokeFederation__SessionMinutes=${STABLE_SMOKE_FEDERATION_SESSION_MINUTES:-15}", compose);
+    }
+
+    [Fact]
+    public void ProductionFederationTemplate_ShouldStayReadOnlyAndOutsideLocalRunnerSection()
+    {
+        var template = File.ReadAllText(LocateRepositoryFile(".env.template"));
+        var localRunnerSection = template[template.IndexOf(
+            "# --- Stable Smoke: copy names into untracked .env.stable-smoke.local ---",
+            StringComparison.Ordinal)..];
+
+        Assert.Contains("服务器部署 .env / Secret Store", template);
+        Assert.Contains("# STABLE_SMOKE_FEDERATION_ROLE=viewer", template);
+        Assert.DoesNotContain("# STABLE_SMOKE_FEDERATION_ROLE=admin", template);
+        Assert.DoesNotContain("STABLE_SMOKE_FEDERATION_ENABLED", localRunnerSection);
+        Assert.DoesNotContain("STABLE_SMOKE_FEDERATION_ROLE", localRunnerSection);
+    }
+
     [Fact]
     public void E2eFixture_ShouldMirrorBackendPolicy()
     {

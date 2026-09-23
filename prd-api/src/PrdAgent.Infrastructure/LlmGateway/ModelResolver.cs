@@ -10,6 +10,7 @@ using PrdAgent.Core.Interfaces;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Security;
 using PrdAgent.Core.LlmGateway;
+using PrdAgent.Infrastructure.LLM;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
 
@@ -1023,6 +1024,12 @@ public class ModelResolver : IModelResolver
             .ToListAsync(ct);
         if (logicalModels.Count == 0)
             return [];
+        var callerDefaultLogicalId = logicalModels
+            .FirstOrDefault(x => x.DefaultForAppCallerCodes.Any(code =>
+                string.Equals(code, appCallerCode, StringComparison.OrdinalIgnoreCase)))
+            ?.Id;
+        var defaultLogicalId = callerDefaultLogicalId
+            ?? logicalModels.FirstOrDefault(x => x.IsDefaultForType)?.Id;
         var ids = logicalModels.Select(x => x.Id).ToList();
         // 「不可用」不等于「这次调不通」：解析在挑常规队列之前会先试着认领一条已摘掉、
         // 过了冷却（或被人工点过恢复）的线路做半开试探。把这一档一并排除掉，选择器里
@@ -1035,17 +1042,18 @@ public class ModelResolver : IModelResolver
         var nowUtc = DateTime.UtcNow;
         var halfOpenCutoff = nowUtc.AddSeconds(-GatewayCircuitBreakerPolicy.ResolveHalfOpenAfterSeconds(
             _config.GetValue<int?>(GatewayCircuitBreakerPolicy.HalfOpenAfterSecondsKey)));
-        var offerings = (await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
+        var enabledOfferings = await offeringCollection.Find(Builders<GatewayModelOffering>.Filter.And(
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.TenantId, CurrentTenantId),
                 Builders<GatewayModelOffering>.Filter.In(x => x.LogicalModelId, ids),
                 Builders<GatewayModelOffering>.Filter.Eq(x => x.Enabled, true)))
-            .ToListAsync(ct))
+            .ToListAsync(ct);
+        var routableOfferings = enabledOfferings
             .Where(x => x.HealthStatus != ModelHealthStatus.Unavailable
                 || GatewayCircuitBreakerPolicy.IsHalfOpenEligible(
                     x.HealthStatus, x.HalfOpenLeaseUntil, x.ManualRecoveryAt, x.LastFailedAt,
                     nowUtc, halfOpenCutoff))
             .ToList();
-        var offeringsByLogicalModel = offerings
+        var routableOfferingsByLogicalModel = routableOfferings
             .GroupBy(x => x.LogicalModelId, StringComparer.Ordinal)
             .ToDictionary(x => x.Key, x => x.ToList(), StringComparer.Ordinal);
         var result = new List<AvailableModelPool>();
@@ -1057,14 +1065,22 @@ public class ModelResolver : IModelResolver
                 && GatewayCapabilityIds.IsOperationOnly(logical.PublicId, logical.Capabilities))
                 continue;
 
-            if (!offeringsByLogicalModel.TryGetValue(logical.Id, out var logicalOfferings))
-                continue;
-
             // “启用且健康”只是控制面状态，不代表 Offering 指向的 Exchange、模型和平台仍然存在。
-            // 选择器只能展示在当前租户与 appCaller 下至少能完整解析一个上游的逻辑模型，避免用户
-            // 选中后才得到“模型不可用”。这里复用实际解析构建器，保证目录与执行链路采用同一规则。
-            var hasResolvableOffering = false;
-            foreach (var offering in OrderLogicalOfferings(logical, logicalOfferings))
+            // 目录必须保留暂时不可用的逻辑模型并把真实健康态下发，避免线路冷却期间整个选择器
+            // 被清空、控制面也失去恢复入口。能否执行仍复用实际解析构建器与名录门判定；前端根据
+            // HealthStatus 禁用不可用项，深度健康检查则把它计为运行时故障。
+            ModelResolutionResult? catalogResolution = null;
+            GatewayModelOffering? catalogOffering = null;
+            var logicalOfferings = routableOfferingsByLogicalModel.GetValueOrDefault(logical.Id) ?? [];
+            // 常规队列会有意排除 Unavailable；但 logicalOfferings 已经用同一半开判据筛出
+            // “冷却结束且未被认领”的恢复候选。目录是只读路径，不能抢租约，也不能再把这些候选
+            // 丢掉，否则只剩半开线路时会发布一个没有能力快照的假空目录，真实请求也无从触发恢复。
+            var catalogOfferings = OrderLogicalOfferings(logical, logicalOfferings)
+                .Concat(logicalOfferings
+                    .Where(x => x.HealthStatus == ModelHealthStatus.Unavailable)
+                    .OrderBy(x => x.Priority)
+                    .ThenBy(x => x.Id, StringComparer.Ordinal));
+            foreach (var offering in catalogOfferings)
             {
                 var candidate = await TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct);
                 if (candidate is null || !IsLogicalOfferingAllowed(candidate, allowedGroups)) continue;
@@ -1080,12 +1096,10 @@ public class ModelResolver : IModelResolver
                 {
                     continue;
                 }
-                hasResolvableOffering = true;
+                catalogResolution = candidate;
+                catalogOffering = offering;
                 break;
             }
-            if (!hasResolvableOffering)
-                continue;
-
             result.Add(new AvailableModelPool
             {
                 Id = logical.Id,
@@ -1095,8 +1109,11 @@ public class ModelResolver : IModelResolver
                 Priority = logical.DisplayOrder,
                 ResolutionType = "LogicalModel",
                 IsDedicated = logical.AllowedAppCallerCodes.Count > 0,
-                // 管理端 DisplayOrder 决定默认业务模型，前端不猜型号或池成员。
-                IsDefault = UsesVisualLogicalModelCatalog(appCallerCode) && result.Count == 0,
+                // 默认项必须与运行时“不点名模型”的两层选择保持一致：先调用方默认，
+                // 再用途默认。视觉目录的存量行为仍在没有显式默认时取第一项。
+                IsDefault = string.Equals(logical.Id, defaultLogicalId, StringComparison.Ordinal)
+                    || (defaultLogicalId is null && UsesVisualLogicalModelCatalog(appCallerCode) && result.Count == 0),
+                IsDefaultForType = logical.IsDefaultForType,
                 Capabilities = logical.Capabilities?.ToList() ?? [],
                 Models =
                 [
@@ -1106,14 +1123,55 @@ public class ModelResolver : IModelResolver
                         PlatformId = "logical-model",
                         PlatformName = "LLM Gateway",
                         Priority = 1,
-                        HealthStatus = "Healthy",
-                        HealthScore = 100,
+                        HealthStatus = catalogOffering?.HealthStatus.ToString() ?? "Unavailable",
+                        HealthScore = catalogOffering?.HealthStatus switch
+                        {
+                            ModelHealthStatus.Healthy => 100,
+                            ModelHealthStatus.Degraded => 50,
+                            _ => 0,
+                        },
+                        ActualModelId = catalogResolution?.ActualModel,
+                        ActualPlatformId = catalogResolution?.ActualPlatformId,
+                        ParameterCapabilities = catalogResolution?.ParameterCapabilities,
+                        ImageCapabilities = BuildImageCapabilitiesSnapshot(catalogResolution?.ActualModel),
                     }
                 ],
             });
         }
 
         return result;
+    }
+
+    private static GatewayImageCapabilitiesSnapshot? BuildImageCapabilitiesSnapshot(string? actualModel)
+    {
+        var info = ImageGenModelAdapterRegistry.GetAdapterInfo(actualModel ?? string.Empty);
+        if (info?.Matched != true) return null;
+
+        return new GatewayImageCapabilitiesSnapshot
+        {
+            SizeConstraintType = info.SizeConstraintType,
+            SizeConstraintDescription = info.SizeConstraintDescription,
+            SizesByResolution = info.SizesByResolution.ToDictionary(
+                pair => pair.Key,
+                pair => pair.Value
+                    .Select(option => option.Size?.Trim() ?? string.Empty)
+                    .Where(size => size.Length > 0)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList(),
+                StringComparer.OrdinalIgnoreCase),
+            SizeParamFormat = info.SizeParamFormat,
+            SizesNotApplicable = info.SizesNotApplicable,
+            MustBeDivisibleBy = info.MustBeDivisibleBy,
+            MaxWidth = info.MaxWidth,
+            MaxHeight = info.MaxHeight,
+            MinWidth = info.MinWidth,
+            MinHeight = info.MinHeight,
+            MaxPixels = info.MaxPixels,
+            Notes = [.. info.Notes],
+            SupportsImageToImage = info.SupportsImageToImage,
+            SupportsInpainting = info.SupportsInpainting,
+            IsAdaptive = info.IsAdaptive,
+        };
     }
 
     private async Task<ModelResolutionResult?> TryResolveLogicalModelAsync(
@@ -1143,6 +1201,7 @@ public class ModelResolver : IModelResolver
                     // 池退场把它们整条打断了。见 GatewayLogicalModel.MigratedFromPoolIds。
                     Builders<GatewayLogicalModel>.Filter.AnyEq(x => x.MigratedFromPoolIds, key))))
             .FirstOrDefaultAsync(ct);
+
         if (logical is null)
             return null;
 
@@ -1225,6 +1284,7 @@ public class ModelResolver : IModelResolver
             return ModelResolutionResult.NotFound(expectedModel,
                 $"逻辑模型不支持当前 appCaller 场景: model={logical.PublicId}, appCaller={appCallerCode}, "
                 + $"capabilities=[{string.Join(",", logical.Capabilities)}], "
+                + $"allowedAppCallers=[{string.Join(",", logical.AllowedAppCallerCodes)}], "
                 + $"required={GatewayCapabilityContract.RequiredScenarioCapability(appCallerCode) ?? "(无)"}",
                 GatewayRouteFailure.LogicalModelCapabilityMismatch,
                 "logical-model-capability",

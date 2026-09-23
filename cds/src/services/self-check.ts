@@ -27,6 +27,7 @@
  *     半夜没人访问时它们显示「没人用过」，不显示「一切正常」。
  *   - **阈值是常量，写在最上面**，一处改全局动；不散在各条 check 里。
  */
+import type { selfStatusCache } from './self-status-cache.js';
 import { SELF_CHECK_PATH } from './self-check-path.js';
 
 export { SELF_CHECK_PATH };
@@ -75,9 +76,33 @@ const HALF_HOUR_MS = 30 * 60 * 1000;
 /** 部署的非终态：还在往前走的那几档。 */
 const DEPLOY_IN_FLIGHT = new Set(['pending', 'queued', 'preparing', 'building', 'starting', 'verifying']);
 
+export interface SelfCheckRuntimeStatus {
+  ready: boolean;
+  bundleStale: boolean;
+  headSha: string;
+  currentBranch: string;
+  updateStartedAt?: string;
+}
+
+/** 监控自己刷新本机只读快照，不能依赖有人打开页面触发缓存。 */
+export async function readSelfCheckRuntimeStatus(
+  cache: Pick<typeof selfStatusCache, 'readSnapshotWithFallback'>,
+): Promise<SelfCheckRuntimeStatus> {
+  const snap = await cache.readSnapshotWithFallback({ maxAgeMs: 60_000 });
+  const active = snap.activeSelfUpdate as { startedAt?: string } | null;
+  return {
+    ready: snap.lastRefreshAt !== null && !snap.degraded?.degraded,
+    bundleStale: snap.bundleStale,
+    headSha: snap.headSha,
+    currentBranch: snap.currentBranch,
+    updateStartedAt: active?.startedAt,
+  };
+}
+
 export interface SelfCheckDeps {
   now: () => number;
   deploymentRuns: () => ReadonlyArray<{ status: string; startedAt: string; finishedAt?: string; heartbeatAt?: string; updatedAt?: string }>;
+  unresolvedWebhookDispatches: () => number;
   webhookDeliveries: (limit: number) => ReadonlyArray<{ receivedAt: string; signatureValid: boolean; dispatchAction: string }>;
   buildGate: () => { active: number; queued: number; max: number; waiters: ReadonlyArray<{ enqueuedAt: string }> };
   /**
@@ -91,11 +116,11 @@ export interface SelfCheckDeps {
   diskUsage: () => { totalBytes: number; freeBytes: number } | null;
   dockerPing: () => Promise<{ ok: boolean; ms: number; detail?: string }>;
   /** 最近一段时间主进程的请求统计。没有日志存储时返回 null。 */
-  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null } | null>;
+  httpStats: (sinceMs: number) => Promise<{ requests: number; serverErrors: number; branchesP95Ms: number | null; branchesRequests: number } | null>;
   /** 真的会响的通知通道数（与面板同一份判定）。 */
   liveAlarmChannels: () => number;
   /** `ready=false` 表示自身状态缓存还没算过一次——刚起来的进程会有几十秒这样。 */
-  selfStatus: () => { ready: boolean; bundleStale: boolean; headSha: string; currentBranch: string } | null;
+  selfStatus: () => SelfCheckRuntimeStatus | null | Promise<SelfCheckRuntimeStatus | null>;
   storeBackend: () => string;
 }
 
@@ -251,7 +276,12 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   checks.push({
     componentId: 'api.requests-30m', componentType: 'http',
     observedValue: http ? requests : null, observedUnit: 'count', status: http ? 'pass' : 'warn', time,
-    output: http ? '近 30 分钟主进程收到的请求数（下面两条的样本量）' : '这个实例没接 HTTP 日志存储，读不到请求统计',
+    output: http ? '近 30 分钟主进程收到的请求数（接口错误率的样本量）' : '这个实例没接 HTTP 日志存储，读不到请求统计',
+  });
+  checks.push({
+    componentId: 'api.branches-requests-30m', componentType: 'http',
+    observedValue: http?.branchesRequests ?? null, observedUnit: 'count', status: http ? 'pass' : 'warn', time,
+    output: http ? '近 30 分钟分支列表接口的有效耗时样本数' : '读不到分支接口采样，不能按零流量处理',
   });
   const p95 = http?.branchesP95Ms ?? null;
   checks.push(monitored(
@@ -259,9 +289,9 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
       componentId: 'api.branches-p95-ms', componentType: 'http',
       observedValue: p95, observedUnit: 'ms',
       status: p95 === null ? 'warn' : p95 <= API_P95_MAX_MS ? 'pass' : 'fail',
-      output: p95 === null ? '近 30 分钟没人打开过分支列表' : `分支列表接口 P95 ${p95}ms —— 它是首屏最重的一次请求`,
+      output: p95 === null ? (http ? '近 30 分钟没有分支列表耗时样本' : 'HTTP 日志不可用，无法判断接口耗时') : `分支列表接口 P95 ${p95}ms —— 它是首屏最重的一次请求`,
     },
-    { name: 'CDS · 首屏接口 P95', op: 'lte', value: API_P95_MAX_MS, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'api.requests-30m' },
+    { name: 'CDS · 首屏接口 P95', op: 'lte', value: API_P95_MAX_MS, failuresToAlarm: 2, severity: 'P1', observeMode: 'passive', sampleComponentId: 'api.branches-requests-30m' },
     time,
   ));
   const errorRate = !http || requests === 0 ? 0 : Math.round((http.serverErrors / requests) * 100);
@@ -320,12 +350,17 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
     { name: 'CDS · Webhook 签名', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P0' },
     time,
   ));
-  checks.push(monitored(
-    {
+  checks.push({
       componentId: 'webhook.dispatch-errors-24h', componentType: 'github',
       observedValue: dispatchErrors, observedUnit: 'count',
-      status: dispatchErrors === 0 ? 'pass' : 'fail',
-      output: dispatchErrors === 0 ? '近 24 小时没有派发失败的 webhook' : `${dispatchErrors} 条 webhook 收到了但派发失败 —— push 了没部署，就是它`,
+      status: 'pass',
+      output: `近 24 小时有 ${dispatchErrors} 条历史派发失败；是否仍需处理见当前未解决项`, time,
+  });
+  const unresolvedDispatches = deps.unresolvedWebhookDispatches();
+  checks.push(monitored({
+    componentId: 'webhook.dispatch-unresolved', componentType: 'github',
+    observedValue: unresolvedDispatches, observedUnit: 'count', status: unresolvedDispatches ? 'fail' : 'pass',
+    output: unresolvedDispatches ? `${unresolvedDispatches} 条分支部署派发尚未解决，请检查部署记录后重试` : '当前没有尚未解决的派发失败（历史失败保留供复盘）',
     },
     { name: 'CDS · Webhook 派发', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1' },
     time,
@@ -373,21 +408,28 @@ export async function buildSelfCheck(deps: SelfCheckDeps): Promise<SelfCheckDoc>
   ));
 
   // ── 自身 ───────────────────────────────────────────────────────────
-  const self = deps.selfStatus();
+  const self = await deps.selfStatus();
   // 缓存还没算过一次 + 进程还在宽限期内 → 「还不知道」，不响铃；过了宽限还不知道才算真拿不到。
   const selfWarming = Boolean(self && !self.ready && processAgeSec !== null && processAgeSec * 1000 < SELF_STATUS_GRACE_MS);
   const selfKnown = Boolean(self && self.ready);
+  const updateAge = now - Date.parse(self?.updateStartedAt ?? '');
+  const selfUpdating = updateAge >= 0 && updateAge < 10 * 60_000;
+  const bundleObservable = !selfWarming && !selfUpdating;
+  checks.push({ componentId: 'self.bundle-samples', componentType: 'self',
+    observedValue: bundleObservable ? 1 : 0, observedUnit: 'count', status: bundleObservable ? 'pass' : 'warn', time,
+    output: bundleObservable ? '已过启动或自更新宽限期' : '启动或自更新中，暂不判定产物版本',
+  });
   checks.push(monitored(
     {
       componentId: 'self.bundle-stale', componentType: 'self',
       // 布尔写成 0/1：协议里期望值是字符串比较，数字最不容易被两边解读成不同的东西。
-      observedValue: selfKnown ? (self!.bundleStale ? 1 : 0) : selfWarming ? 0 : 1, observedUnit: 'flag',
-      status: selfKnown ? (self!.bundleStale ? 'fail' : 'pass') : selfWarming ? 'warn' : 'fail',
-      output: selfKnown
+      observedValue: !bundleObservable ? null : selfKnown ? (self!.bundleStale ? 1 : 0) : 1, observedUnit: 'flag',
+      status: !bundleObservable ? 'warn' : selfKnown ? (self!.bundleStale ? 'fail' : 'pass') : 'fail',
+      output: selfUpdating ? '自更新中，最多等待 10 分钟再检查前端产物' : selfKnown
         ? (self!.bundleStale ? `前端产物落后于代码 ${self!.headSha}（${self!.currentBranch}）—— 页面跑的是旧版` : `前端产物与 ${self!.headSha} 一致`)
         : selfWarming ? `进程刚起 ${processAgeSec} 秒，自身状态还没算完` : '拿不到自身状态',
     },
-    { name: 'CDS · 前端产物落后', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1' },
+    { name: 'CDS · 前端产物落后', op: 'eq', value: 0, failuresToAlarm: 1, severity: 'P1', observeMode: 'passive', sampleComponentId: 'self.bundle-samples' },
     time,
   ));
   checks.push({

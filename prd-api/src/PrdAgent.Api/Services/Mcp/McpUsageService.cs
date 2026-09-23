@@ -109,7 +109,7 @@ public sealed class McpUsageService
         !string.Equals(tool.Method, "GET", StringComparison.OrdinalIgnoreCase);
 
     public static bool IsImageTool(McpToolDef tool) =>
-        string.Equals(tool.Name, "map_visual_generate_image", StringComparison.Ordinal);
+        tool.Name is "map_visual_generate_image" or "map_literary_generate_image";
 
     public static DateTime TodayStartUtc() => DateTime.UtcNow.Date;
 

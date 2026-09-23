@@ -6,6 +6,7 @@ using PrdAgent.Core.LlmGateway;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.ImageGen;
 using PrdAgent.Infrastructure.Security;
 using Xunit;
 
@@ -13,6 +14,67 @@ namespace PrdAgent.Api.Tests.Gateway;
 
 public sealed class VisualLogicalModelCatalogTests
 {
+    [Fact]
+    public void MapCatalog_UsesGatewayCapabilitySnapshot_WithoutKnowingUpstreamModelName()
+    {
+        var model = new AvailableModelPool
+        {
+            Id = "dynamic",
+            Code = "dynamic-public-id",
+            Name = "动态模型",
+            ResolutionType = "LogicalModel",
+            Models =
+            [
+                new PoolModelInfo
+                {
+                    ModelId = "dynamic-public-id",
+                    PlatformId = "logical-model",
+                    ActualModelId = "a-model-map-has-never-seen",
+                    ImageCapabilities = new GatewayImageCapabilitiesSnapshot
+                    {
+                        SizeConstraintType = "whitelist",
+                        SizeParamFormat = "WxH",
+                        SizesByResolution = new Dictionary<string, List<string>>
+                        {
+                            ["custom"] = ["1024x1024", "1536x1024", "bad-size"],
+                        },
+                        SupportsImageToImage = true,
+                    },
+                },
+            ],
+        };
+
+        var info = GatewayImageModelCatalog.Describe(model);
+
+        Assert.NotNull(info);
+        Assert.True(info.SupportsImageToImage);
+        Assert.Equal(new[] { "1024x1024", "1536x1024" }, info.SizesByResolution["custom"].Select(x => x.Size));
+        Assert.Equal(new[] { "1:1", "3:2" }, info.SizesByResolution["custom"].Select(x => x.AspectRatio));
+    }
+
+    [Fact]
+    public void MapCatalog_DoesNotInferCapabilitiesFromActualModelName()
+    {
+        var model = new AvailableModelPool
+        {
+            Id = "legacy",
+            Code = "legacy-public-id",
+            Name = "旧目录项",
+            ResolutionType = "LogicalModel",
+            Models =
+            [
+                new PoolModelInfo
+                {
+                    ModelId = "legacy-public-id",
+                    PlatformId = "logical-model",
+                    ActualModelId = "gpt-image-1",
+                },
+            ],
+        };
+
+        Assert.Null(GatewayImageModelCatalog.Describe(model));
+    }
+
     [Theory]
     [InlineData(AppCallerRegistry.VisualAgent.Image.Text2Img)]
     [InlineData(AppCallerRegistry.VisualAgent.Image.Img2Img)]
@@ -87,6 +149,9 @@ public sealed class VisualLogicalModelCatalogTests
             Assert.True(catalog[0].IsDefault);
             Assert.Equal("image2 的业务用途", catalog[0].Description);
             Assert.False(catalog[1].IsDefault);
+            Assert.Equal("gpt-image-2", Assert.Single(catalog[0].Models).ActualModelId);
+            Assert.Equal("gpt-image-1", Assert.Single(catalog[1].Models).ActualModelId);
+            Assert.All(catalog, item => Assert.NotNull(Assert.Single(item.Models).ImageCapabilities));
             foreach (var choice in catalog)
             {
                 var resolved = await resolver.ResolveAsync(caller, "generation", choice.Code);
@@ -97,6 +162,39 @@ public sealed class VisualLogicalModelCatalogTests
             // 没放行给这个调用方的模型：点名也选不到。
             var outside = await resolver.ResolveAsync(caller, "generation", "outside");
             Assert.False(outside.Success);
+
+            // 目录与参数面板属于只读路径：即使线路已进入可半开探测窗口，也只能读取
+            // 解析能力快照，不能抢占真正业务请求需要的恢复租约。
+            var offerings = gateway.Database.GetCollection<GatewayModelOffering>("llmgw_model_offerings");
+            await offerings.UpdateOneAsync(
+                x => x.Id == "image2-offering",
+                Builders<GatewayModelOffering>.Update
+                    .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                    .Set(x => x.LastFailedAt, DateTime.UtcNow.AddHours(-1))
+                    .Unset(x => x.HalfOpenLeaseUntil));
+            var halfOpenCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            var halfOpenMember = Assert.Single(halfOpenCatalog[0].Models);
+            Assert.Equal("gpt-image-2", halfOpenMember.ActualModelId);
+            Assert.Equal("Unavailable", halfOpenMember.HealthStatus);
+            Assert.Equal(0, halfOpenMember.HealthScore);
+            var afterCatalogRead = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.Null(afterCatalogRead.HalfOpenLeaseUntil);
+            var recoveryAttempt = await resolver.ResolveAsync(caller, "generation", "image2");
+            Assert.True(recoveryAttempt.Success, recoveryAttempt.ErrorMessage);
+            var afterRecoveryAttempt = await offerings.Find(x => x.Id == "image2-offering").SingleAsync();
+            Assert.NotNull(afterRecoveryAttempt.HalfOpenLeaseUntil);
+
+            await offerings
+                .UpdateManyAsync(
+                    FilterDefinition<GatewayModelOffering>.Empty,
+                    Builders<GatewayModelOffering>.Update
+                        .Set(x => x.HealthStatus, ModelHealthStatus.Unavailable)
+                        .Set(x => x.LastFailedAt, DateTime.UtcNow));
+            var unavailableCatalog = await resolver.GetAvailablePoolsAsync(caller, "generation");
+            Assert.Equal(new[] { "image2", "image1" }, unavailableCatalog.Select(x => x.Code));
+            Assert.All(unavailableCatalog, item =>
+                Assert.Equal("Unavailable", Assert.Single(item.Models).HealthStatus));
+            Assert.False((await resolver.ResolveAsync(caller, "generation", "image2")).Success);
 
             await gateway.Database.GetCollection<GatewayLogicalModel>("llmgw_logical_models")
                 .UpdateManyAsync(FilterDefinition<GatewayLogicalModel>.Empty, Builders<GatewayLogicalModel>.Update.Set(x => x.Enabled, false));

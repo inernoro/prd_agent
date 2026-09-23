@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Settings2, ArrowUp, ArrowDown, Loader2 } from 'lucide-react';
+import { Settings2, ArrowUp, ArrowDown } from 'lucide-react';
 import { Button } from '@/components/design/Button';
 import { Dialog } from '@/components/ui/Dialog';
-import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { MapSectionLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { useAuthStore } from '@/stores/authStore';
 import {
   getVisualModelPolicy, getVisualModelCatalog, saveVisualModelPolicy,
+  visualModelSizeSummary,
   type VisualModelPolicy, type VisualModelCatalogEntry,
 } from '@/services/real/visualModelPolicy';
 
@@ -58,7 +59,10 @@ export function VisualModelSettings() {
           <section className="space-y-2" aria-label="开放模型">
             <h3 className="text-sm font-semibold">开放模型</h3>
             {catalog.length === 0 && <p className="text-sm">网关尚未提供可用生图模型，请先完成网关接入后刷新。</p>}
-            {catalog.map(({ model, imageCapabilities }) => <label key={model.code}
+            {catalog.map((entry) => {
+              const { model, imageCapabilities } = entry;
+              const sizeSummary = visualModelSizeSummary(entry);
+              return <label key={model.code}
               className="flex items-start gap-3 rounded-lg p-3" style={{ border: '1px solid var(--border-default)' }}>
               <input type="checkbox" className="mt-1" aria-label={`开放 ${model.name}`}
                 checked={policy.models.some(x => x.modelId === model.code)}
@@ -70,8 +74,10 @@ export function VisualModelSettings() {
               <span className="min-w-0"><span className="font-medium">{model.name}</span>
                 <span className="block text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>
                   {imageCapabilities?.supportsImageToImage ? '支持参考图' : '文生图'} · {model.code}
-                </span></span>
-            </label>)}
+                </span>
+                {sizeSummary && <span className="block text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>尺寸：{sizeSummary}</span>}
+              </span>
+            </label>})}
           </section>
           <section className="space-y-3" aria-label="默认模型与展示顺序">
             <h3 className="text-sm font-semibold">默认模型与展示顺序</h3>
@@ -99,7 +105,7 @@ export function VisualModelSettings() {
         </> : null}
         <div className="flex justify-end gap-2">
           <Button variant="secondary" disabled={loading || saving} onClick={() => void load()}>刷新目录</Button>
-          <Button disabled={loading || saving || !policy?.defaultModelId} onClick={() => void save()}>{saving && <Loader2 size={16} className="animate-spin" />}{saving ? '正在保存…' : '保存模型配置'}</Button>
+          <Button disabled={loading || saving || !policy?.defaultModelId} onClick={() => void save()}>{saving && <MapSpinner size={16} />}{saving ? '正在保存…' : '保存模型配置'}</Button>
         </div>
       </div>} />
   </>;

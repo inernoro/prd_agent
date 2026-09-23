@@ -227,7 +227,7 @@ builder.Services.AddSingleton<PrdAgent.Core.Interfaces.ISkillService, PrdAgent.I
 // 模型用途选择（主模型/意图模型/图片识别/图片生成）
 builder.Services.AddScoped<IModelDomainService, ModelDomainService>();
 
-// 模型池查询服务（三级互斥解析：专属池 > 默认池 > 传统配置）
+// 业务模型目录适配器：必须跟随下方活动 ILlmGateway 的 inproc/http/shadow 路由。
 builder.Services.AddScoped<IModelPoolQueryService, ModelPoolQueryService>();
 
 // 模型池故障通知与自动探活
@@ -237,6 +237,7 @@ builder.Services.AddHostedService<PrdAgent.Api.Services.PlatformKeyIntegrityWork
 
 // 模型调度执行器
 builder.Services.AddScoped<PrdAgent.Core.LlmGateway.IModelResolver, PrdAgent.Infrastructure.LlmGateway.ModelResolver>();
+builder.Services.AddScoped<PrdAgent.Infrastructure.Services.ModelCatalogContractProbe>();
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.GatewayProviderConcurrencyCoordinator>();
 
 // LLM Gateway 统一守门员（所有大模型调用必须通过此接口）。
@@ -572,6 +573,8 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
 // 接入台（MCP）：用量闸门 + 调用记录
 builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.McpUsageService>();
+builder.Services.AddScoped<PrdAgent.Api.Services.Mcp.ILiteraryMcpModelSelectionService,
+    PrdAgent.Api.Services.Mcp.LiteraryMcpModelSelectionService>();
 // 网关回环续跳的自证令牌：每进程一份，随进程生灭，不落库
 builder.Services.AddSingleton<PrdAgent.Api.Services.Mcp.McpLoopbackSignal>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
@@ -1746,11 +1749,37 @@ static IResult HealthCheck()
 static async Task<IResult> DeepHealth(
     PrdAgent.Api.Middleware.ApiFaultTracker faults,
     PrdAgent.Infrastructure.Database.MongoDbContext db,
+    PrdAgent.Infrastructure.Database.LlmGatewayDataContext gatewayDb,
+    PrdAgent.Api.Services.IVisualModelPolicyService visualModels,
+    PrdAgent.Core.LlmGateway.IModelResolver modelResolver,
+    PrdAgent.Infrastructure.Services.ModelCatalogContractProbe modelCatalogContract,
+    IHostEnvironment hostEnvironment,
     CancellationToken cancellationToken)
 {
     var now = DateTime.UtcNow;
     var faultCount = faults.CountWithinWindow();
     var requests = faults.RequestsWithinWindow();
+    var deploymentIdentity = ReadBuildIdentity();
+    // 开发机直接 dotnet run 时可能没有部署目标；生产环境必须同时取得两端并严格对账。
+    // 预览和正式容器都以 Production 启动，因此缺证据同样会被挡住。
+    var deploymentIdentityFailures = deploymentIdentity.Match switch
+    {
+        BuildIdentity.MatchState.Match => 0,
+        BuildIdentity.MatchState.Mismatch => 1,
+        _ => hostEnvironment.IsProduction() ? 1 : 0,
+    };
+    var deploymentIdentityOutput = deploymentIdentity.Match switch
+    {
+        BuildIdentity.MatchState.Match =>
+            $"运行二进制与部署目标一致（{ShortCommit(deploymentIdentity.ActualCommit)}）",
+        BuildIdentity.MatchState.Mismatch =>
+            BuildIdentity.DescribeMismatch(
+                deploymentIdentity.Match,
+                deploymentIdentity.ActualCommit,
+                deploymentIdentity.DeclaredCommit)
+            ?? "运行二进制与部署目标不一致",
+        _ => "无法取得运行二进制或部署目标的 commit，不能证明当前运行版本正确",
+    };
 
     // Mongo 往返：这是「后端还能不能干活」最便宜的那条真链路。
     // 探不通时把耗时记成 -1 而不是 0——0 会被判据读成「快得惊人」，是个假绿。
@@ -1853,9 +1882,137 @@ static async Task<IResult> DeepHealth(
         leaderboardOutput = $"读榜单快照失败：{ex.GetType().Name}";
     }
 
+    // 生图路由预检：这里不调生图上游、不花生图费用，但会用与真实同步生图相同的
+    // 场景身份和逻辑模型进入调度器。它专门抓“目录里能选，点生成却被白名单拒绝”：
+    // 普通 /health 会绿、Mongo 会绿、模型目录也会绿，只有按真实 appCaller 解析才能提前看出契约断了。
+    var visualImageRouteFailures = 1;
+    string visualImageRouteOutput;
+    try
+    {
+        var policy = await visualModels.ReadAsync(cancellationToken);
+        var openModels = policy.Models
+            .Select(x => x.ModelId?.Trim())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var defaultModel = policy.DefaultModelId?.Trim() ?? string.Empty;
+        if (openModels.Count == 0 || string.IsNullOrWhiteSpace(defaultModel))
+        {
+            visualImageRouteOutput = "视觉创作没有配置开放模型或默认生图模型";
+        }
+        else
+        {
+            var failures = new List<string>();
+            var coveredModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var checkedRoutes = 0;
+            foreach (var appCaller in PrdAgent.Api.Services.VisualModelPolicyService.AppCallers)
+            {
+                var catalog = await visualModels.DiscoverAsync(appCaller, cancellationToken);
+                foreach (var model in catalog
+                    .Select(x => x.Model.Code)
+                    .Where(openModels.Contains)
+                    .Distinct(StringComparer.OrdinalIgnoreCase))
+                {
+                    coveredModels.Add(model);
+                    checkedRoutes++;
+                    var resolution = await modelResolver.ResolveAsync(
+                        appCaller,
+                        PrdAgent.Core.Models.ModelTypes.ImageGen,
+                        model,
+                        ct: cancellationToken);
+                    if (!resolution.Success)
+                    {
+                        failures.Add($"{model}:{resolution.FailureCode ?? "UNCLASSIFIED"}");
+                    }
+                }
+            }
+
+            foreach (var missing in openModels.Except(coveredModels, StringComparer.OrdinalIgnoreCase))
+            {
+                failures.Add($"{missing}:NOT_IN_SCENARIO_CATALOG");
+            }
+
+            var textCatalog = await visualModels.DiscoverAsync(
+                PrdAgent.Api.Controllers.Api.ImageGenController.ResolveGenerateAppCallerCode(
+                    isLayering: false,
+                    imageCount: 0,
+                    hasLegacyReference: false),
+                cancellationToken);
+            if (!textCatalog.Any(x => string.Equals(x.Model.Code, defaultModel, StringComparison.OrdinalIgnoreCase)))
+            {
+                failures.Add($"{defaultModel}:DEFAULT_NOT_TEXT2IMG");
+            }
+
+            visualImageRouteFailures = failures.Count;
+            visualImageRouteOutput = failures.Count == 0
+                ? $"{openModels.Count} 个开放模型的 {checkedRoutes} 条生图场景路由均可解析"
+                : $"生图场景路由有 {failures.Count} 处失配：{string.Join("、", failures.Take(5))}";
+        }
+    }
+    catch (Exception ex)
+    {
+        visualImageRouteOutput = $"默认生图路由预检失败：{ex.GetType().Name}";
+    }
+
+    // 业务选择器与执行链路必须使用同一个稳定模型身份。只看“目录非空”会漏掉最危险的
+    // 情况：页面展示旧模型池成员名，但运行时只接受 LLM Gateway PublicId。该探针对所有
+    // 仍消费 IModelPoolQueryService 的核心入口执行同一份目录 -> 默认 -> 指定模型闭环。
+    var modelCatalogResult = await modelCatalogContract.CheckAsync(cancellationToken);
+
+    // 生图真实调用结果：路由预检只能证明「现在能解析」，不能证明上一笔真实请求有没有
+    // 被上游或网关拒绝。过去只盯未处理异常，而模型不开放、能力不匹配、上游 4xx/5xx
+    // 都会被业务层转成结构化失败，进程没有抛异常，监控因此永远绿。
+    //
+    // 这里读取网关已经脱敏的请求日志，只看最近 6 小时内 MAP 三个生图场景的最终状态。
+    // 判据用「最新连续失败数」而不是窗口失败总数：故障后成功一次即表示链路已经恢复，
+    // CDS 会留下故障/恢复事件；旧失败不会让红灯再挂 6 小时。
+    var visualImageRecentRequests = 0;
+    var visualImageConsecutiveFailures = -1;
+    const long visualImageLatencyBudgetMs = 180_000;
+    long visualImageLatestSuccessDurationMs = 0;
+    string visualImageOutcomeOutput;
+    string visualImageLatencyOutput;
+    try
+    {
+        var imageCallers = PrdAgent.Api.Services.VisualModelPolicyService.AppCallers;
+        var since = now.AddMinutes(-faults.WindowMinutes);
+        var filter = MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.And(
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Gte(x => x.StartedAt, since),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.In(x => x.AppCallerCode, imageCallers),
+            MongoDB.Driver.Builders<PrdAgent.Core.Models.LlmRequestLog>.Filter.Ne(x => x.Status, "running"));
+        var outcomes = await gatewayDb.LlmRequestLogs
+            .Find(filter)
+            .SortByDescending(x => x.StartedAt)
+            .Limit(20)
+            .Project(x => new { x.Status, x.DurationMs })
+            .ToListAsync(cancellationToken);
+        visualImageRecentRequests = outcomes.Count;
+        visualImageConsecutiveFailures = outcomes.TakeWhile(x => x.Status != "succeeded").Count();
+        var latestSuccess = outcomes.FirstOrDefault(x => x.Status == "succeeded");
+        visualImageLatestSuccessDurationMs = Math.Max(0, latestSuccess?.DurationMs ?? 0);
+        visualImageOutcomeOutput = outcomes.Count == 0
+            ? $"最近 {faults.WindowMinutes} 分钟没有生图真实调用，无法用真实结果证明链路可用"
+            : visualImageConsecutiveFailures == 0
+                ? $"最近一笔生图真实调用成功；窗口内采样 {outcomes.Count} 笔"
+                : $"最近连续 {visualImageConsecutiveFailures} 笔生图真实调用失败；详情见网关调用日志";
+        visualImageLatencyOutput = latestSuccess == null
+            ? $"最近 {faults.WindowMinutes} 分钟没有成功的生图调用，无法评估响应耗时"
+            : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs
+                ? $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，处于 180000ms 体验预算内"
+                : $"最近一笔成功生图耗时 {visualImageLatestSuccessDurationMs}ms，超过 180000ms 体验预算；详情见网关调用日志";
+    }
+    catch (Exception ex)
+    {
+        visualImageOutcomeOutput = $"读取生图真实调用结果失败：{ex.GetType().Name}";
+        visualImageLatencyOutput = $"读取生图响应耗时失败：{ex.GetType().Name}";
+    }
+
     var payload = new Dictionary<string, object?>
     {
-        ["status"] = faultCount == 0 && mongoMs >= 0 ? "pass" : "fail",
+        ["status"] = faultCount == 0 && mongoMs >= 0 && deploymentIdentityFailures == 0
+            && visualImageRouteFailures == 0
+            && modelCatalogResult.FailureCount == 0
+            && visualImageConsecutiveFailures == 0 ? "pass" : "fail",
         ["version"] = "1",
         ["serviceId"] = "prd-api",
         ["description"] = "MAP 后端深度自检",
@@ -1960,6 +2117,176 @@ static async Task<IResult> DeepHealth(
                     },
                 },
             },
+            ["deployment:version-match"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "deployment.version-match",
+                    ["componentType"] = "system",
+                    ["observedValue"] = deploymentIdentityFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = deploymentIdentity.Match == BuildIdentity.MatchState.Unknown
+                        && deploymentIdentityFailures == 0
+                            ? "warn"
+                            : deploymentIdentityFailures == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = deploymentIdentityOutput,
+                    ["actualCommit"] = ShortCommit(deploymentIdentity.ActualCommit),
+                    ["expectedCommit"] = ShortCommit(deploymentIdentity.DeclaredCommit),
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 运行版本与发布目标一致性",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 发布版本",
+                    },
+                },
+            },
+            ["visual-image:default-route"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.default-route",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRouteFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRouteFailures == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRouteOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图模型场景路由",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图模型",
+                    },
+                },
+            },
+            ["model-catalog:selector-runtime-contract"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "model-catalog.selector-runtime-contract",
+                    ["componentType"] = "service",
+                    ["observedValue"] = modelCatalogResult.FailureCount,
+                    ["observedUnit"] = "count",
+                    ["targetCount"] = modelCatalogResult.TargetCount,
+                    ["catalogEntryCount"] = modelCatalogResult.CatalogEntryCount,
+                    ["status"] = modelCatalogResult.FailureCount == 0 ? "pass" : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = modelCatalogResult.Output,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 业务模型目录与运行时可用性一致性",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 业务模型目录",
+                    },
+                },
+            },
+            ["visual-image:recent-outcomes"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.recent-outcomes",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageConsecutiveFailures,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageConsecutiveFailures == 0
+                        ? (visualImageRecentRequests > 0 ? "pass" : "warn")
+                        : "fail",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageOutcomeOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用结果",
+                        field = "observedValue",
+                        op = "eq",
+                        value = 0,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P0",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图真实调用",
+                    },
+                },
+            },
+            ["visual-image:requests"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.requests",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageRecentRequests,
+                    ["observedUnit"] = "count",
+                    ["status"] = visualImageRecentRequests > 0 ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageRecentRequests > 0
+                        ? $"最近 {faults.WindowMinutes} 分钟采样到 {visualImageRecentRequests} 笔生图真实调用"
+                        : $"最近 {faults.WindowMinutes} 分钟没有生图真实调用",
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图近期真实调用数",
+                        field = "observedValue",
+                        op = "gt",
+                        value = 0,
+                        intervalSeconds = 21600,
+                        failuresToAlarm = 2,
+                        severity = "P2",
+                        environment = "production",
+                        publicVisible = false,
+                    },
+                },
+            },
+            ["visual-image:latency"] = new object[]
+            {
+                new Dictionary<string, object?>
+                {
+                    ["componentId"] = "visual-image.latency",
+                    ["componentType"] = "service",
+                    ["observedValue"] = visualImageLatestSuccessDurationMs,
+                    ["observedUnit"] = "ms",
+                    ["status"] = visualImageLatestSuccessDurationMs == 0
+                        ? "warn"
+                        : visualImageLatestSuccessDurationMs <= visualImageLatencyBudgetMs ? "pass" : "warn",
+                    ["time"] = now.ToString("o"),
+                    ["output"] = visualImageLatencyOutput,
+                    ["cds:monitor"] = new
+                    {
+                        name = "MAP 生图最近成功响应耗时",
+                        field = "observedValue",
+                        op = "lte",
+                        value = visualImageLatencyBudgetMs,
+                        intervalSeconds = 300,
+                        failuresToAlarm = 1,
+                        severity = "P1",
+                        observeMode = "passive",
+                        sampleComponentId = "visual-image.requests",
+                        environment = "production",
+                        publicVisible = true,
+                        publicName = "MAP 生图响应耗时",
+                    },
+                },
+            },
             ["db:roundtrip"] = new object[]
             {
                 new Dictionary<string, object?>
@@ -2046,36 +2373,54 @@ static async Task<IResult> ApplicationReadiness(
 
 static IResult VersionInfo(IHostEnvironment env)
 {
-    var informationalVersion = Assembly.GetExecutingAssembly()
-        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
-        ?? "unknown";
-
-    // 实际值：编译期由 -p:SourceRevisionId 烤进程序集，运行时改不了
-    var actualCommit = BuildIdentity.ParseBakedCommit(informationalVersion);
-    // 期待值：部署时注入的环境变量，声明「本次希望跑哪个 commit」，可被平台改写
-    var declaredCommit = FirstEnv("GIT_COMMIT", "COMMIT_SHA", "GITHUB_SHA", "SOURCE_VERSION", "CDS_COMMIT_SHA", "VERCEL_GIT_COMMIT_SHA");
-    var match = BuildIdentity.Compare(actualCommit, declaredCommit);
+    var identity = ReadBuildIdentity();
     var buildTime = FirstEnv("BUILD_TIME", "BUILD_TIME_UTC", "CDS_BUILD_TIME", "VERCEL_GIT_COMMIT_DATE");
 
     // commit 字段保持向后兼容，但优先给实际值 —— 一个值没法自证，对账结论看 commitMatch
-    var effective = actualCommit ?? declaredCommit;
+    var effective = identity.ActualCommit ?? identity.DeclaredCommit;
 
     return Results.Ok(new
     {
         app = "prd-agent",
         service = "prd-api",
-        version = informationalVersion,
+        version = identity.InformationalVersion,
         commit = effective,
         shortCommit = ShortCommit(effective),
-        actualCommit,
-        expectedCommit = declaredCommit,
-        commitMatch = BuildIdentity.ToWireValue(match),
-        commitWarning = BuildIdentity.DescribeMismatch(match, actualCommit, declaredCommit),
+        actualCommit = identity.ActualCommit,
+        expectedCommit = identity.DeclaredCommit,
+        commitMatch = BuildIdentity.ToWireValue(identity.Match),
+        commitWarning = BuildIdentity.DescribeMismatch(
+            identity.Match,
+            identity.ActualCommit,
+            identity.DeclaredCommit),
         buildTimeUtc = buildTime,
         environment = env.EnvironmentName,
         serverTimeUtc = DateTime.UtcNow,
     });
+}
+
+static (string InformationalVersion, string? ActualCommit, string? DeclaredCommit, BuildIdentity.MatchState Match)
+    ReadBuildIdentity()
+{
+    var informationalVersion = Assembly.GetExecutingAssembly()
+        .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+        ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+        ?? "unknown";
+
+    // 实际值由编译写进程序集，期待值由部署平台注入；两者必须独立取得才能对账。
+    var actualCommit = BuildIdentity.ParseBakedCommit(informationalVersion);
+    var declaredCommit = FirstEnv(
+        "GIT_COMMIT",
+        "COMMIT_SHA",
+        "GITHUB_SHA",
+        "SOURCE_VERSION",
+        "CDS_COMMIT_SHA",
+        "VERCEL_GIT_COMMIT_SHA");
+    return (
+        informationalVersion,
+        actualCommit,
+        declaredCommit,
+        BuildIdentity.Compare(actualCommit, declaredCommit));
 }
 
 static string? FirstEnv(params string[] names)

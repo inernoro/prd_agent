@@ -131,14 +131,10 @@ public class AskOpeningQuestionsTests
 
     /// <summary>
     /// 新建站点的提问态必须是 null——「没表过态」，不是 false。
-    ///
-    /// 这条曾经断言 <c>Assert.False(site.AskEnabled)</c>，钉的是「提问默认关」那版产品决定。
-    /// 2026-08-29 用户把口径翻成「默认全开，除非明确拒绝」，于是字段改成三态：
-    /// null = 没表过态（默认开）、true = 明确开、false = 明确关。
-    ///
-    /// 现在要守的不再是「默认值是关」，而是**别给它写初始化器**：
+    /// 现在系统默认关闭，但仍需保留三态，才能让用户个人默认在未单独配置的站点上生效。
+    /// 别给它写初始化器：
     /// 写 <c>= true</c> 会让「没表过态」和「明确打开」再也分不开，
-    /// 写 <c>= false</c> 会让每个新站点都变成「明确拒绝」、默认全开当场失效。
+    /// 写 <c>= false</c> 会让每个新站点都变成「明确拒绝」，个人默认再也无法生效。
     /// 两种写法都会让这条变红。开不开的答案一律问 <see cref="AskAccessPolicy.IsAskOn"/>。
     /// </summary>
     [Fact]
@@ -147,8 +143,8 @@ public class AskOpeningQuestionsTests
         var site = new HostedSite();
 
         Assert.Null(site.AskEnabled);
-        // 没表过态即视为开——这是默认全开口径的落点
-        Assert.True(AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType));
+        // 站点与个人都没表态时走系统默认关闭
+        Assert.False(AskAccessPolicy.IsAskOn(site.AskEnabled, site.WrappedAssetType));
         Assert.True(site.CommentsEnabled);
         Assert.False(site.AskAllowAnonymous);
     }

@@ -333,6 +333,7 @@ export const api = {
       navHidden: () => '/api/dashboard/user-preferences/nav-hidden',
       navLayout: () => '/api/dashboard/user-preferences/nav-layout',
       theme: () => '/api/dashboard/user-preferences/theme',
+      webPageAsk: () => '/api/dashboard/user-preferences/web-page-ask',
       visualAgent: () => '/api/dashboard/user-preferences/visual-agent',
       literaryAgent: () => '/api/dashboard/user-preferences/literary-agent',
       agentSwitcher: () => '/api/dashboard/user-preferences/agent-switcher',
@@ -599,6 +600,7 @@ export const api = {
     imageGen: {
       resolveModel: () => '/api/literary-agent/image-gen/resolve-model',
       resolveChatModel: () => '/api/literary-agent/image-gen/resolve-chat-model',
+      adapterInfo: (modelId: string) => `/api/literary-agent/image-gen/adapter-info?modelId=${encodeURIComponent(modelId)}`,
       runs: {
         create: () => '/api/literary-agent/image-gen/runs',
         byId: (runId: string) => `/api/literary-agent/image-gen/runs/${runId}`,

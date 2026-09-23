@@ -1792,7 +1792,8 @@ public class GatewayDataDomainGuardTests
     {
         var editor = ReadRepoFile("prd-admin/src/pages/literary-agent/ArticleIllustrationEditorPage.tsx");
 
-        Assert.Contains("getVisualAgentAdapterInfo,", editor);
+        Assert.Contains("getLiteraryAgentAdapterInfo,", editor);
+        Assert.DoesNotContain("getVisualAgentAdapterInfo,", editor);
         Assert.Contains("const [currentModelSizesNotApplicable, setCurrentModelSizesNotApplicable]", editor);
         Assert.Contains("setCurrentModelSizesNotApplicable(res.data.sizesNotApplicable === true);", editor);
         Assert.Equal(2, editor.Split("!currentModelSizesNotApplicable && (", StringSplitOptions.None).Length - 1);
@@ -5696,7 +5697,7 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
-    public void LogicalModelCatalog_OnlyPublishesOfferingsThatTheExecutionResolverCanBuild()
+    public void LogicalModelCatalog_PreservesUnavailableEntriesAndPublishesTheirRuntimeHealth()
     {
         var resolver = ReadRepoFile(
             "prd-api/src/PrdAgent.Infrastructure/LlmGateway/ModelResolver.cs");
@@ -5711,8 +5712,10 @@ public class GatewayDataDomainGuardTests
         var catalog = resolver[catalogStart..resolveStart];
 
         Assert.Contains("OrderLogicalOfferings(logical, logicalOfferings)", catalog);
+        Assert.Contains("x.HealthStatus == ModelHealthStatus.Unavailable", catalog);
         Assert.Contains("TryBuildLogicalOfferingResolutionAsync(logical, offering, logical.PublicId, ct)", catalog);
-        Assert.Contains("if (!hasResolvableOffering)", catalog);
+        Assert.Contains("HealthStatus = catalogOffering?.HealthStatus.ToString() ?? \"Unavailable\"", catalog);
+        Assert.DoesNotContain("if (catalogResolution is null)\n                continue;", catalog);
         Assert.DoesNotContain("availableIds.Contains", catalog);
     }
 

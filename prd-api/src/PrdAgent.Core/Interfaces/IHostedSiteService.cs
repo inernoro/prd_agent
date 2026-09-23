@@ -406,8 +406,8 @@ public record HostedSiteEditableEntry(
 /// <summary>站点「向我提问」配置的写入入参（owner 在提问设置抽屉里改的那几项）。</summary>
 public class AskConfigUpdate
 {
-    /// <summary>是否开放提问</summary>
-    public bool Enabled { get; set; }
+    /// <summary>是否开放提问；null 表示本次不改站点自己的三态配置。</summary>
+    public bool? Enabled { get; set; }
 
     /// <summary>面板欢迎语（空则前端用站点标题兜底）</summary>
     public string? Welcome { get; set; }

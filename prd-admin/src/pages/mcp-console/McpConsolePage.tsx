@@ -32,6 +32,7 @@ import { grantableTool, grantableToolCount } from './scopePlan';
 import { clientSignal, tierLabel } from './signalEncoding';
 import { CapabilityDot, SignalLegend } from './SignalDots';
 import { quotaFillPercent } from './quotaMeter';
+import { secureSameSiteEndpoint } from './endpointUrl';
 
 /**
  * 智能体接入台。
@@ -80,7 +81,7 @@ export default function McpConsolePage() {
       return;
     }
     setLoadError(null);
-    setOverview(res.data);
+    setOverview({ ...res.data, endpointUrl: secureSameSiteEndpoint(res.data.endpointUrl, window.location.origin) });
     setLoading(false);
   }, []);
 
@@ -438,7 +439,7 @@ export default function McpConsolePage() {
  *   - **说明**：它能做什么 —— 无边框、图标 + 文字、统一 24px，不可点；
  *   - **动作**：断开 / 调整上限 —— 32px、有边框，中间隔一道竖线。
  */
-function ClientRow({
+export function ClientRow({
   client,
   capabilities,
   onRevoke,
@@ -474,6 +475,7 @@ function ClientRow({
     <div
       className="flex overflow-hidden rounded-[13px]"
       style={{
+        flexShrink: 0,
         background: 'var(--bg-card)',
         border: '1px solid var(--border-subtle)',
         opacity: client.isActive ? 1 : 0.7,
@@ -565,8 +567,8 @@ function ClientRow({
           <button
             type="button"
             onClick={onEditQuota}
-            aria-label="调整这台客户端的每日上限"
-            title="调整这台客户端的每日上限"
+            aria-label="调整这台客户端的用量与模型设置"
+            title="调整这台客户端的用量与模型设置"
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-[9px] sm:h-8 sm:w-auto sm:gap-1.5 sm:px-2.5"
             style={{
               background: 'var(--bg-sunken)',
@@ -575,7 +577,7 @@ function ClientRow({
             }}
           >
             <Sliders size={13} aria-hidden />
-            <span className="hidden text-[12px] font-medium sm:inline">调整上限</span>
+            <span className="hidden text-[12px] font-medium sm:inline">客户端设置</span>
           </button>
 
           {/* 钥匙泄露、或者这台客户端不用了，得能在**这里**当场断掉。

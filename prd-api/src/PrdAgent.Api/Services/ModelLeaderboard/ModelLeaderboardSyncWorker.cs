@@ -11,12 +11,14 @@ namespace PrdAgent.Api.Services.ModelLeaderboard;
 ///
 /// ## 三条刻意的边界
 ///
-/// 1. **只在权威部署上跑**。同一个 CDS 项目下所有分支预览共用一个 Mongo
+/// 1. **只在榜单同步权威部署上跑**。同一个 CDS 项目下所有分支预览共用一个 Mongo
 ///    （见 .claude/rules/cross-project-isolation.md 通道 4），而榜单快照是共享库里的
 ///    全局单行状态——每个榜单一条文档，谁都能覆盖。不加这道闸，N 个分支预览会同时对
 ///    arena.ai 发请求并互相覆盖同一批文档：既是对外站的自我 DDoS，也让「这份数据是哪个
-///    构建写的」变得不可追。判据用 <see cref="DeploymentAuthority.CanRunSharedScheduledWork"/>，
-///    与 CdsReportImportWorker 同口径。
+///    构建写的」变得不可追。判据用
+///    <see cref="DeploymentAuthority.CanRunModelLeaderboardSync"/>：正式环境与 CDS main 可跑，
+///    功能分支仍禁用。这样正式机无法直连源站时，main 可以产出公开镜像供正式机读取，且不会
+///    放宽其它共享周期任务。
 ///
 /// 2. **抓失败就保留旧快照**。外站改版、超时、限流都会让某一轮失败。这时候绝不写库——
 ///    宁可让页面显示「数据截至 9 月 12 日」，也不要用空榜覆盖掉昨天的好数据。
@@ -67,10 +69,10 @@ public class ModelLeaderboardSyncWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!DeploymentAuthority.CanRunSharedScheduledWork(_configuration))
+        if (!DeploymentAuthority.CanRunModelLeaderboardSync(_configuration))
         {
             _logger.LogInformation(
-                "模型榜同步：本容器是 CDS 分支预览，不对共享库跑周期同步（读取不受影响，页面照常显示已有快照）。");
+                "模型榜同步：本容器不是榜单同步权威，不跑周期同步（读取不受影响，页面照常显示已有快照）。");
             return;
         }
 

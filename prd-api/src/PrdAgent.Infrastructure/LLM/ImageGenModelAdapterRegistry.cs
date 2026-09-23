@@ -56,12 +56,13 @@ public static class ImageGenModelAdapterRegistry
         if (string.IsNullOrWhiteSpace(modelName)) return null;
 
         var name = modelName.Trim().ToLowerInvariant();
+        var matchNames = GetMatchNames(name);
 
         // 覆盖表优先。它已经由刷新器按 MatchOrder、再按模式长度降序排好，
         // 这里只按顺序取第一个命中的，与代码表用的是同一个 MatchPattern。
         foreach (var config in _overrides)
         {
-            if (MatchPattern(config.ModelIdPattern, name))
+            if (matchNames.Any(candidate => MatchPattern(config.ModelIdPattern, candidate)))
             {
                 return config;
             }
@@ -69,13 +70,25 @@ public static class ImageGenModelAdapterRegistry
 
         foreach (var config in ImageGenModelConfigs.Configs)
         {
-            if (MatchPattern(config.ModelIdPattern, name))
+            if (matchNames.Any(candidate => MatchPattern(config.ModelIdPattern, candidate)))
             {
                 return config;
             }
         }
 
         return null;
+    }
+
+    private static IReadOnlyList<string> GetMatchNames(string name)
+    {
+        const string GooglePrefix = "google/";
+        if (name.StartsWith(GooglePrefix, StringComparison.OrdinalIgnoreCase)
+            && name.Length > GooglePrefix.Length)
+        {
+            return [name, name[GooglePrefix.Length..]];
+        }
+
+        return [name];
     }
 
     /// <summary>

@@ -2969,6 +2969,76 @@ public class GatewayKeyGateContractTests
     }
 
     [Fact]
+    public async Task GeminiCompatibleEndpoint_AutoRoute_PreservesConcreteBodyModel()
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1beta/models/auto:generateContent")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "provider/gemini-picked",
+                    model_policy = "pinned",
+                    contents = new[] { new { role = "user", parts = new[] { new { text = "hi" } } } },
+                }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+
+            var resp = await client.SendAsync(req);
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.ExpectedModel.ShouldBe("provider/gemini-picked");
+            gateway.LastRequest.Context.ShouldNotBeNull();
+            gateway.LastRequest.Context!.ModelPolicy.ShouldBe("pinned");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task GeminiCompatibleEndpoint_AutoRoute_DoesNotPinLiteralAutoModel()
+    {
+        var gateway = new EchoingGateway();
+        await using var app = BuildHostWithGateway(gateway);
+        await app.StartAsync();
+        try
+        {
+            var client = app.GetTestClient();
+            var req = new HttpRequestMessage(HttpMethod.Post, "/v1beta/models/auto:generateContent")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model = "auto",
+                    model_policy = "auto",
+                    contents = new[] { new { role = "user", parts = new[] { new { text = "hi" } } } },
+                    generationConfig = new { maxOutputTokens = 8 },
+                }),
+            };
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", GatewayKey);
+            req.Headers.Add("X-Gateway-Model-Policy", "auto");
+
+            var resp = await client.SendAsync(req);
+
+            resp.StatusCode.ShouldBe(HttpStatusCode.OK);
+            gateway.LastRequest.ShouldNotBeNull();
+            gateway.LastRequest.ExpectedModel.ShouldBeNull();
+            gateway.LastRequest.Context.ShouldNotBeNull();
+            gateway.LastRequest.Context!.ModelPolicy.ShouldBe("auto");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
     public async Task GeminiCompatibleEndpoint_WithInlineImage_UsesVisionRequestType()
     {
         var gateway = new EchoingGateway();

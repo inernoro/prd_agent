@@ -853,10 +853,14 @@ public class HostedSiteService : IHostedSiteService
         catch (Exception ex) { _logger.LogWarning(ex, "重传已切换到不可变对象，旧文件将由持久清理器重试: siteId={SiteId}", siteId); }
 
         var reloaded = (await _db.HostedSites.Find(x => x.Id == siteId).FirstOrDefaultAsync(ct))!;
+        var askOwnerPreferences = await _db.UserPreferences
+            .Find(p => p.UserId == reloaded.OwnerUserId)
+            .FirstOrDefaultAsync(ct);
 
         // 正文换了，旧那批开场问题就是对着旧内容写的。ContentVersion 变了 →
         // NeedsGeneration 自然成立 → 重算一批。owner 手写过的（source=manual）不动。
-        _askOpeners.QueueEnsure(reloaded);
+        // 站点没单独表态时必须带上 owner 默认；否则个人全局开启的站点会被前置判据误判为关闭。
+        _askOpeners.QueueEnsure(reloaded, askOwnerPreferences?.WebPageAskEnabled);
 
         return AttachDerivedFields(reloaded)!;
     }
@@ -3071,15 +3075,24 @@ public class HostedSiteService : IHostedSiteService
         var askSite = !isCollection && sites.Count == 1
             ? rawSites.FirstOrDefault(s => s.Id == sites[0].Id)
             : null;
+        var askOwnerPreferences = askSite is null
+            ? null
+            : await _db.UserPreferences
+                .Find(p => p.UserId == askSite.OwnerUserId)
+                .FirstOrDefaultAsync(ct);
         var exposeAsk = !isCollection
             && AskAccessPolicy.ShouldExposeAskOnShare(
                 sites.Count,
-                askSite is not null && AskAccessPolicy.IsAskOn(askSite.AskEnabled, askSite.WrappedAssetType));
+                askSite is not null && AskAccessPolicy.IsAskOn(
+                    askSite.AskEnabled,
+                    askSite.WrappedAssetType,
+                    askOwnerPreferences?.WebPageAskEnabled));
 
         // 兜底一次：本功能上线之前就已经开着提问的站点，既不会走「刚开启」也不会走「刚重传」，
         // 光靠那两个钩子它们永远是空题库。这里排一次，第一个访客看不到词条、下一个就有了。
         // 不会按访客数烧钱：生成器自己按站点去重，且算过一版正文就盖戳不再重算。
-        if (exposeAsk && askSite != null) _askOpeners.QueueEnsure(askSite);
+        if (exposeAsk && askSite != null)
+            _askOpeners.QueueEnsure(askSite, askOwnerPreferences?.WebPageAskEnabled);
 
         return new ShareViewResult
         {
@@ -4976,13 +4989,14 @@ public class HostedSiteService : IHostedSiteService
             : AskAccessPolicy.TrimWelcome(update.Welcome);
 
         var updateDef = Builders<HostedSite>.Update
-            .Set(s => s.AskEnabled, update.Enabled)
             .Set(s => s.AskWelcome, welcome)
             .Set(s => s.AskAllowAnonymous, update.AllowAnonymous)
             .Set(s => s.AskDailyLimit, dailyLimit)
             .Set(s => s.AskConfigUpdatedAt, DateTime.UtcNow)
             .Set(s => s.AskConfigUpdatedBy, userId)
             .Set(s => s.UpdatedAt, DateTime.UtcNow);
+        if (update.Enabled.HasValue)
+            updateDef = updateDef.Set(s => s.AskEnabled, update.Enabled.Value);
         if (questions != null)
         {
             updateDef = updateDef
@@ -4992,7 +5006,8 @@ public class HostedSiteService : IHostedSiteService
 
         await _db.HostedSites.UpdateOneAsync(s => s.Id == siteId, updateDef, cancellationToken: ct);
 
-        site.AskEnabled = update.Enabled;
+        if (update.Enabled.HasValue)
+            site.AskEnabled = update.Enabled.Value;
         site.AskWelcome = welcome;
         if (questions != null)
         {
@@ -5006,7 +5021,12 @@ public class HostedSiteService : IHostedSiteService
 
         // 打开提问的那一刻才排生成：AskEnabled 默认关闭，给每个上传都跑一遍模型是纯浪费。
         // 排队立刻返回，owner 不用为这几句题多等；他下次打开设置面板就能看见。
-        _askOpeners.QueueEnsure(site);
+        var ownerDefaultAskEnabled = update.Enabled.HasValue
+            ? null
+            : (await _db.UserPreferences
+                .Find(p => p.UserId == site.OwnerUserId)
+                .FirstOrDefaultAsync(ct))?.WebPageAskEnabled;
+        _askOpeners.QueueEnsure(site, ownerDefaultAskEnabled);
 
         return AttachDerivedFields(site);
     }

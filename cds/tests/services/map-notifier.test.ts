@@ -201,7 +201,10 @@ describe('接线守卫', () => {
     // 2026-09-14 通知器从启动时定死改成现解析（凭据改完不必重启），
     // 写死 `mapNotifier?.send` 的旧判据当场变红——它锁的是实现写法不是行为
     // （predicate-and-wiring-discipline 形状 4a）。
-    expect(block).toMatch(/(mapNotifier|resolveMapNotifier\(\))\??\.send\(/);
+    expect(block).toContain('sendLegacyAlarm(');
+    const sender = indexSource.slice(indexSource.indexOf('const sendLegacyAlarm'), indexSource.indexOf('const alarmBoardUrl'));
+    expect(sender).toContain('resolveMapNotifier()');
+    expect(sender).toContain('notifier.send(alert)');
   });
 
   it('未配置凭据时必须把「不会有人被通知」印出来，不许静默禁用', () => {

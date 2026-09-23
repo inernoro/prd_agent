@@ -1,3 +1,6 @@
+import { resumeMaintenanceDeploys, unresolvedWebhookDispatches } from './services/webhook-maintenance-retry.js';
+import { isSelfUpdateDraining } from './services/deploy-drain.js';
+import { defaultLocalhostDeploy } from './routes/github-webhook.js';
 import http from 'node:http';
 import { redactHostedSitePreviewLog } from './services/hosted-site-preview-log-policy.js';
 import os from 'node:os';
@@ -138,13 +141,14 @@ import { parseCsv } from './util/parse-csv.js';
 import type { BranchEntry } from './types.js';
 import { combinedOutput } from './types.js';
 import { backfillReportReadScope } from './services/connection/pairing-service.js';
-import { MapNotifier, mapNotifierConfigFromEnv } from './services/map-notifier.js';
+import { withAlarmDeliveryHistory } from './services/alarm-delivery-history.js';
+import { MapNotifier, mapNotifierConfigFromEnv, buildNotificationPayload, type MapNotifierAlert } from './services/map-notifier.js';
 import { AlarmLedger, countLiveAlarmChannels } from './services/alarm-channel.js';
 import { channelConfigured, classifyAlert, routeAlarm } from './services/alarm-route.js';
 import { sendAlarm } from './services/alarm-dispatch.js';
 import { registerAlarmChannelRoutes } from './routes/alarm-channels.js';
 import { AlarmChannel, missingAlarmEnvKeys } from './services/alarm-channel.js';
-import { buildSelfCheck, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
+import { buildSelfCheck, readSelfCheckRuntimeStatus, SELF_CHECK_PATH, type SelfCheckDeps } from './services/self-check.js';
 import { ensureSelfMonitoring } from './services/self-monitoring-bootstrap.js';
 import { selfStatusCache } from './services/self-status-cache.js';
 import { selfCheckAuth, SELF_CHECK_HEADER } from './services/self-check-auth.js';
@@ -1536,6 +1540,11 @@ function startStaleDeployDispatchReconciler(
       // action/source，否则卡死收敛的异常被误记成 `branch.deploy-dispatch.reconcile.failed`
       // +「stale webhook dispatch」文案，排障时张冠李戴（Bugbot Low）。
       if (isMaster) {
+        void resumeMaintenanceDeploys(state, {
+          draining: () => isSelfUpdateDraining(Date.now()), dispatch: defaultLocalhostDeploy(config, state),
+          record: (branchId, message) => store?.record({ category: 'system', severity: 'info', source: 'webhook-maintenance-retry',
+            action: 'webhook.maintenance-retry', branchId, message }),
+        }).catch(() => console.warn('[webhook] 自更新补发记录持久化失败，停止本轮补发'));
         try {
           const reconciled = reconcileStaleDeployDispatches(state, {
             source: 'deploy-dispatch-reconciler.interval',
@@ -5935,6 +5944,16 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       if (channel) stateService.upsertAlarmChannel({ ...channel, lastDelivery: last });
     },
   });
+  const sendLegacyAlarm = (alert: MapNotifierAlert, kind: 'alert' | 'drill') => {
+    const notifier = resolveMapNotifier();
+    if (!notifier) return undefined;
+    const payload = buildNotificationPayload(alert);
+    return withAlarmDeliveryHistory(activeServerEventLogStore, {
+      channelId: 'legacy-map', channelName: 'MAP 站内通知（存量通道）', channelKind: 'map', kind,
+      eventKind: alert.type, projectId: alert.projectId ?? '', targetId: alert.targetId,
+      targetName: alert.targetName, detectedAt: alert.detectedAt, title: payload.title, body: payload.message,
+    }, () => notifier.send(alert));
+  };
   const alarmBoardUrl = (): string | undefined => {
     const base = (config.publicBaseUrl || '').trim().replace(/\/+$/, '');
     // 拿不到就不放。一条点不开的地址比没有地址更糟——它会让人以为自己点错了。
@@ -6009,12 +6028,17 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     // 掉线/恢复上总线。少了这一行，生产健康掉线只会躺在 incidents 台账里，
     // 没人盯着状态页就等于没发生——服务端站内信账本正是订阅总线拿到它的。
     // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
+    onAlarmSuppressed: (data) => activeServerEventLogStore?.record({
+      category: 'system', severity: 'info', source: 'alarm-delivery', action: 'alarm.suppressed', status: 'suppressed',
+      operationId: crypto.randomUUID(), projectId: data.projectId, message: `${data.targetName}：通知已合并（${data.reason}）`,
+      details: { kind: 'policy', targetId: data.targetId, targetName: data.targetName, reason: data.reason, detectedAt: new Date(data.at).toISOString() },
+    }),
     onAlert: (type, data) => {
       cdsEventsBus.publish(type, data);
       // 第二个出口：站内通知。不 await——探测轮次不该被一次通知投递拖住；
       // 也不重试——上游已经去抖，只在真翻转时调一次，重试会把一次翻转变成多条通知。
       // 投递失败只留日志（MapNotifier 内部已把异常转成结果值，这里的 catch 是兜底）。
-      void resolveMapNotifier()?.send({
+      if (!data.recoveryChannelIds || data.recoveryChannelIds.includes('legacy-map')) void sendLegacyAlarm({
         type,
         targetId: data.targetId,
         targetName: data.targetName,
@@ -6024,9 +6048,12 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         message: data.message,
         consecutiveFailures: data.consecutiveFailures,
         detectedAt: data.detectedAt,
-      })
+      }, 'alert')
         // 每一次投递都记账：面板上「铃通不通」这句话的唯一数据源。
-        .then((r) => alarmChannel.record(r, 'alert', Date.now()))
+        ?.then((r) => {
+          alarmChannel.record(r, 'alert', Date.now());
+          if (r.ok && type === 'uptime.target.down') uptimeMonitor.markAlarmDelivered(data.targetId, 'legacy-map', data.detectedAt);
+        })
         .catch((err) => {
           const reason = `未捕获的投递异常: ${(err as Error).message}`;
           alarmChannel.record({ ok: false, reason }, 'alert', Date.now());
@@ -6037,6 +6064,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 同样不 await、不重试——理由与上面那条一致（探测轮次不该被投递拖住；
       // 上游已去抖，重试会把一次翻转变成多条通知）。
       const event = {
+        targetId: data.targetId,
         kind: classifyAlert(type, data.source),
         projectId: data.projectId,
         targetName: data.targetName,
@@ -6047,9 +6075,11 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       };
       const boardUrl = alarmBoardUrl();
       for (const channel of routeAlarm(stateService.listAlarmChannels(), event)) {
-        void sendAlarm(channel, event, boardUrl ? { boardUrl } : {})
+        if (data.recoveryChannelIds && !data.recoveryChannelIds.includes(channel.id)) continue;
+        void sendAlarm(channel, event, { boardUrl, history: activeServerEventLogStore })
           .then((r) => {
             alarmLedger.record(channel.id, r, 'alert', Date.now());
+            if (r.ok && type === 'uptime.target.down') uptimeMonitor.markAlarmDelivered(data.targetId, channel.id, data.detectedAt);
             if (!r.ok) console.warn(`[alarm] 通道「${channel.name}」投递失败: ${r.reason ?? '原因不明'}`);
           })
           .catch((err) => {
@@ -6135,6 +6165,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   const selfCheckDeps: SelfCheckDeps = {
     now: () => Date.now(),
     deploymentRuns: () => stateService.getDeploymentRuns(),
+    unresolvedWebhookDispatches: () => unresolvedWebhookDispatches(stateService.getAllBranches()),
     webhookDeliveries: (limit) => stateService.getGithubWebhookDeliveries(limit),
     buildGate: () => buildGateStatus(),
     cycleHealth: () => {
@@ -6179,6 +6210,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         requests: rows.length,
         serverErrors: rows.filter((r) => r.status >= 500).length,
         branchesP95Ms: p95,
+        branchesRequests: branches.length,
       };
     },
     // 按投递台账判「真的会响」：最近一次投递失败的通道不算活，只看配齐了不够。
@@ -6186,11 +6218,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       stateService.listAlarmChannels().map((c) => alarmLedger.view(c, channelConfigured(c))),
       alarmChannel.snapshot(),
     ),
-    selfStatus: () => {
-      const snap = selfStatusCache.getSnapshot();
-      // lastRefreshAt 为空 = 缓存还没算过一次（刚起来的进程），此时 bundleStale 是默认值不是结论。
-      return { ready: snap.lastRefreshAt !== null, bundleStale: snap.bundleStale, headSha: snap.headSha, currentBranch: snap.currentBranch };
-    },
+    selfStatus: () => readSelfCheckRuntimeStatus(selfStatusCache),
     storeBackend: () => stateService.getBackingStore().kind,
   };
   // 13 条监控各自打一次这个端点，一轮就是 13 次 docker version + 13 次 Mongo 查询。
@@ -6279,14 +6307,14 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         alarmChannel.record({ ok: false, reason }, 'drill', Date.now());
         return { ok: false, reason };
       }
-      const result = await notifier.send({
+      const result = await sendLegacyAlarm({
         type: 'uptime.target.recovered',
         targetId: 'drill',
         targetName: '通知通道演练',
         message: note || '这是一次人工演练，用来确认「出问题时铃会响」。看到它说明通道是通的。',
         consecutiveFailures: 0,
         detectedAt: new Date().toISOString(),
-      });
+      }, 'drill') ?? { ok: false, reason: '通知通道配置已变化，请重试。' };
       alarmChannel.record(result, 'drill', Date.now());
       return result;
     },
@@ -6306,6 +6334,7 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       upsert: (channel) => stateService.upsertAlarmChannel(channel),
       remove: (id: string) => stateService.removeAlarmChannel(id),
       ledger: alarmLedger,
+      history: activeServerEventLogStore,
       boardUrl: alarmBoardUrl,
     });
     return r;

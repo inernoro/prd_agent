@@ -79,6 +79,22 @@ public sealed class ModelCatalogGuardTests
     }
 
     [Fact]
+    public void GptImage25Sunburst_IsAnOfficialImageGenerationAndEditingModel()
+    {
+        var current = ModelCatalog.Find("gpt-image-2.5-sunburst");
+        var snapshot = ModelCatalog.Find("gpt-image-2.5-sunburst-2026-09-08");
+
+        current.ShouldNotBeNull();
+        current!.DisplayName.ShouldBe("GPT Image 2.5 Sunburst");
+        current.Vendor.ShouldBe("openai");
+        current.Capabilities.ShouldBe(["image_generation", "text2img", "img2img"]);
+        current.AcceptsImageInput.ShouldBeTrue();
+        snapshot.ShouldBe(current);
+        ModelCatalog.Find("gpt-image-2.5-flare").ShouldBeNull(
+            "本次只接入用户指定的 Sunburst，不能顺手把 Flare 当成同一个模型放行");
+    }
+
+    [Fact]
     public void UnknownModel_IsNotGuessedIntoTheCatalog()
     {
         // 名录是白名单：「看着像」不等于「就是它」。模糊匹配一旦放进来，
