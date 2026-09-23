@@ -2,6 +2,7 @@ using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging.Abstractions;
 using MongoDB.Driver;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Api.Mcp;
@@ -24,6 +25,11 @@ public class LiteraryMcpJourneyTests
         {
             var drafts = WithUser(new LiteraryOpenApiController(db), "writer");
             var images = WithUser(new LiteraryImageOpenApiController(db), "writer");
+            Assert.IsType<BadRequestObjectResult>(await images.Move("missing", new() { FolderName = new string('夹', 81) }));
+            Assert.IsType<BadRequestObjectResult>(await images.Generate("missing", new()
+            {
+                MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = new string('k', 201),
+            }, CancellationToken.None));
             var created = Data(await drafts.CreateWorkspace(new()
             {
                 Title = "验收文章", MarkedContent = "第一段。\n[插图]: 书店\n第二段。\n[插图]: 茶杯\n",
@@ -35,6 +41,18 @@ public class LiteraryMcpJourneyTests
             var read = Data(await drafts.GetWorkspace(id, 0, 0, CancellationToken.None));
             Assert.Equal(2, read.GetProperty("illustrations").GetArrayLength());
             Assert.Equal("初稿", read.GetProperty("folderName").GetString());
+            // 真实文学详情接口不能把先落库的第二张/旧版图猜填到第一个标记。
+            await db.ImageAssets.InsertOneAsync(new()
+            {
+                OwnerUserId = "writer", WorkspaceId = id, ArticleWorkflowVersion = 1,
+                ArticleInsertionIndex = 1, Url = "https://example.test/second.png",
+            });
+            var ui = WithUser(new LiteraryAgentWorkspaceController(db, null!, NullLogger<LiteraryAgentWorkspaceController>.Instance), "writer");
+            ui.HttpContext.User = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("sub", "writer") }, "Bearer"));
+            Assert.IsType<OkObjectResult>(await ui.GetWorkspaceDetail(id));
+            var beforeRun = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            Assert.Empty(beforeRun.ArticleWorkflow!.AssetIdByMarkerIndex);
+            Assert.All(beforeRun.ArticleWorkflow.Markers, m => Assert.Equal("idle", m.Status));
             var request = new LiteraryImageOpenApiController.GenerateRequest { MarkerIndex = 1, WorkflowVersion = 1, ClientRequestId = "image-1" };
             var jobs = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => images.Generate(id, request, CancellationToken.None)));
             var runId = Data(jobs[0]).GetProperty("runId").GetString()!;
@@ -45,6 +63,11 @@ public class LiteraryMcpJourneyTests
             Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Text2Img, run.AppCallerCode);
             Assert.Equal(1, run.ArticleWorkflowVersion);
             Assert.Equal(1, run.Total);
+            // 并发重试读不到 run 的极短窗口，也不能覆盖同一 run 的终态显示。
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.1.status", "done"));
+            Assert.True(await images.ClaimWorkflowAsync(beforeRun, run));
+            Assert.Equal("done", (await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync()).ArticleWorkflow!.Markers[1].Status);
             Assert.IsType<ConflictObjectResult>(await images.Generate(id, new() { MarkerIndex = 0, WorkflowVersion = 1, ClientRequestId = "image-1" }, CancellationToken.None));
             Assert.IsType<ConflictObjectResult>(await images.Generate(id, new() { MarkerIndex = 0, WorkflowVersion = 9, ClientRequestId = "image-stale" }, CancellationToken.None));
             var other = WithUser(new LiteraryImageOpenApiController(db), "other");
@@ -67,6 +90,12 @@ public class LiteraryMcpJourneyTests
             var refRun = await db.ImageGenRuns.Find(x => x.Id == refId).SingleAsync();
             Assert.Equal(AppCallerRegistry.LiteraryAgent.Illustration.Img2Img, refRun.AppCallerCode);
             Assert.StartsWith("水彩风格", refRun.Items[0].Prompt);
+            // 精确复现初读与认领间改版：认领失败，不发布任何可执行任务。
+            var snapshot = await db.ImageMasterWorkspaces.Find(x => x.Id == id).SingleAsync();
+            await db.ImageMasterWorkspaces.UpdateOneAsync(x => x.Id == id,
+                Builders<ImageMasterWorkspace>.Update.Inc(x => x.ArticleWorkflow!.Version, 1));
+            Assert.False(await images.ClaimWorkflowAsync(snapshot, refRun));
+            Assert.Equal(2, await db.ImageGenRuns.CountDocumentsAsync(x => x.WorkspaceId == id));
         }
         finally { await new MongoClient(connection).DropDatabaseAsync(name); }
     }

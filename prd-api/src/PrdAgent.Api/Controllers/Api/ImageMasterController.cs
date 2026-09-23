@@ -2990,6 +2990,7 @@ public class ImageMasterController : ControllerBase
         {
             var wf = ws.ArticleWorkflow;
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            var snapshotAt = wf.UpdatedAt;
 
             var now = DateTime.UtcNow;
             var needUpdate = false;
@@ -3029,8 +3030,10 @@ public class ImageMasterController : ControllerBase
             if (runningMarkers.Count == 0)
             {
                 // 只有 parsing 超时的更新
+                wf.UpdatedAt = now;
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, now),
@@ -3095,9 +3098,10 @@ public class ImageMasterController : ControllerBase
             // 如果有状态变更，更新数据库
             if (needUpdate)
             {
+                wf.UpdatedAt = now;
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
                     x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
-                        && x.ArticleWorkflow.UpdatedAt == wf.UpdatedAt,
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, now),
@@ -3122,6 +3126,7 @@ public class ImageMasterController : ControllerBase
         {
             var wf = ws.ArticleWorkflow;
             if (wf?.Markers == null || wf.Markers.Count == 0) return;
+            var snapshotAt = wf.UpdatedAt;
             if (ws.ScenarioType != "article-illustration") return;
 
             var hasMapping = wf.AssetIdByMarkerIndex?.Values.Any(v => !string.IsNullOrWhiteSpace(v)) ?? false;
@@ -3160,9 +3165,11 @@ public class ImageMasterController : ControllerBase
             {
                 wf.DoneImageCount = wf.AssetIdByMarkerIndex.Values
                     .Where(v => !string.IsNullOrWhiteSpace(v)).Distinct().Count();
+                wf.UpdatedAt = DateTime.UtcNow;
 
                 await _db.ImageMasterWorkspaces.UpdateOneAsync(
-                    x => x.Id == ws.Id,
+                    x => x.Id == ws.Id && x.ArticleWorkflow!.Version == wf.Version
+                        && x.ArticleWorkflow.UpdatedAt == snapshotAt,
                     Builders<ImageMasterWorkspace>.Update
                         .Set(x => x.ArticleWorkflow, wf)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow),

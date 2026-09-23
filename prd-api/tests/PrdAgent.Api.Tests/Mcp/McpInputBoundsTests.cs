@@ -28,6 +28,8 @@ public class McpInputBoundsTests
     {
         /// <summary>走 McpInputBounds 的字节上限。</summary>
         Metadata,
+        /// <summary>已有领域规则限定的短名称（文学文件夹最多 80 字），不覆盖正文。</summary>
+        OwnMetadataCap,
         /// <summary>内容类字段，有自己更大的专属上限（HTML 4MB / 正文 20 万字）。</summary>
         OwnContentCap,
         /// <summary>有限形状：枚举值或正则，不当自由文本存。</summary>
@@ -60,7 +62,12 @@ public class McpInputBoundsTests
 
         ["CreateWorkspaceRequest.Title"] = Bound.Metadata,
         ["CreateWorkspaceRequest.Content"] = Bound.OwnContentCap,
+        ["CreateWorkspaceRequest.MarkedContent"] = Bound.OwnContentCap,
+        ["CreateWorkspaceRequest.FolderName"] = Bound.OwnMetadataCap,
         ["CreateWorkspaceRequest.ClientRequestId"] = Bound.Hashed,
+
+        ["GenerateRequest.ClientRequestId"] = Bound.Hashed,
+        ["MoveRequest.FolderName"] = Bound.OwnMetadataCap,
 
         ["WriteContentRequest.Content"] = Bound.OwnContentCap,
         ["WriteContentRequest.Mode"] = Bound.FiniteShape,
@@ -98,6 +105,7 @@ public class McpInputBoundsTests
     {
         ["CreateEntryRequest.Content"] = ContentKind.Create,
         ["CreateWorkspaceRequest.Content"] = ContentKind.Create,
+        ["CreateWorkspaceRequest.MarkedContent"] = ContentKind.Create,
         ["PublishPageRequest.HtmlContent"] = ContentKind.Create,
         ["GenerateImageRequest.Prompt"] = ContentKind.Create,
         ["UpdateEntryContentRequest.Content"] = ContentKind.Overwrite,

@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
 using PrdAgent.Api.Extensions;
@@ -78,6 +79,10 @@ public class LiteraryImageOpenApiController(MongoDbContext db) : ControllerBase
             Items = new() { new() { Prompt = effectivePrompt, DisplayPrompt = prompt, Count = 1, Size = "1024x1024" } },
             CreatedAt = DateTime.UtcNow,
         };
+        // 先在同一个原子写中认领当前版本，再让 Worker 看见任务。
+        // 页面在查读后改版时必须拒绝，不能先消费生图额度再发现已无法回填。
+        if (!await ClaimWorkflowAsync(ws, run))
+            return Conflict(ApiResponse<object>.Fail("WORKSPACE_CONTENT_CHANGED", "正文或配图方案已变化，请重新读取工作区后再生成。"));
         try { await db.ImageGenRuns.InsertOneAsync(run, cancellationToken: CancellationToken.None); }
         catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
@@ -85,18 +90,30 @@ public class LiteraryImageOpenApiController(MongoDbContext db) : ControllerBase
             if (previous == null) throw;
             return Replay(previous, workspaceId, req);
         }
-        // 不把任务生成后的显示状态写成全量 workflow，避免覆盖并发完成的其它配图。
-        var filter = Builders<ImageMasterWorkspace>.Filter;
-        var stampPath = $"articleWorkflow.assetRunAtByMarkerIndex.{marker.Index}";
-        await db.ImageMasterWorkspaces.UpdateOneAsync(
-            filter.And(filter.Eq(x => x.Id, ws.Id), filter.Eq(x => x.OwnerUserId, userId),
-                filter.Eq(x => x.ArticleWorkflow!.Version, req.WorkflowVersion.Value),
-                filter.Or(filter.Exists(stampPath, false), filter.Lt(stampPath, run.CreatedAt))),
-            Builders<ImageMasterWorkspace>.Update.Set($"articleWorkflow.markers.{marker.Index}.runId", run.Id)
-                .Set($"articleWorkflow.markers.{marker.Index}.status", "running"),
-            cancellationToken: CancellationToken.None);
         return Ok(ApiResponse<object>.Ok(new { runId = run.Id, status = "queued", total = 1,
             hint = "每 5 秒调用 map_literary_get_image_run 查询；完成后用 map_literary_get_workspace 的 format=illustrated 读取图文稿。" }));
+    }
+
+    internal async Task<bool> ClaimWorkflowAsync(ImageMasterWorkspace ws, ImageGenRun run)
+    {
+        var filter = Builders<ImageMasterWorkspace>.Filter;
+        var result = await db.ImageMasterWorkspaces.UpdateOneAsync(
+            filter.And(filter.Eq(x => x.Id, ws.Id), filter.Eq(x => x.OwnerUserId, run.OwnerAdminId),
+                filter.Eq(x => x.ArticleWorkflow!.Version, run.ArticleWorkflowVersion),
+                filter.ElemMatch(x => x.ArticleWorkflow!.Markers, m => m.Index == run.ArticleMarkerIndex)),
+            Builders<ImageMasterWorkspace>.Update.Set("articleWorkflow.markers.$[target].runId", run.Id)
+                .Set("articleWorkflow.markers.$[target].status", "running")
+                .Set("articleWorkflow.updatedAt", DateTime.UtcNow),
+            new UpdateOptions { ArrayFilters = new[]
+            {
+                // 同一幂等请求并发到达时，不把已经成功或失败的同一任务改回 running。
+                new BsonDocumentArrayFilterDefinition<BsonDocument>(new BsonDocument
+                {
+                    { "target.index", run.ArticleMarkerIndex!.Value },
+                    { "target.runId", new BsonDocument("$ne", run.Id) },
+                }),
+            } }, CancellationToken.None);
+        return result.MatchedCount != 0;
     }
 
     private IActionResult Replay(ImageGenRun previous, string workspaceId, GenerateRequest req)
