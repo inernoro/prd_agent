@@ -345,15 +345,16 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                     f"{function_name} 未传递维护发布 shadow skip 契约",
                 )
 
-    def test_maintenance_workflow_always_restores_requested_production_baseline(self) -> None:
+    def test_maintenance_workflow_selects_only_a_source_with_the_requested_baseline(self) -> None:
         source = PROD_STAGE_WORKFLOW_PATH.read_text(encoding="utf-8")
         restore_step = source.split("- name: Restore trusted production maintenance evidence", 1)[1].split(
             "- name: Run production stage", 1
         )[0]
+        self.assertIn('if [ -s "$ledger" ] && python3 scripts/llmgw-rollout-ledger.py maintenance-baseline', restore_step)
+        self.assertGreaterEqual(restore_step.count("--commit \"${{ github.event.inputs.maintenance_from_commit }}\""), 3)
         self.assertIn("python3 scripts/llmgw-prod-evidence-restore.py", restore_step)
-        self.assertIn("--commit \"${{ github.event.inputs.maintenance_from_commit }}\"", restore_step)
         self.assertNotIn('if [ ! -s "$ledger" ]', restore_step)
-        self.assertNotIn("Rollout ledger restored from the requested GitHub Actions artifact.", restore_step)
+        self.assertIn("Maintenance baseline verified from the requested GitHub Actions artifact.", restore_step)
 
 
 if __name__ == "__main__":
