@@ -18,6 +18,7 @@ import {
   deleteSite,
   batchDeleteSites,
   setSiteVisibility,
+  getSitesPrivateSources,
   listSiteFolders,
   listSiteTags,
   createSiteShareLink,
@@ -38,6 +39,7 @@ import {
 } from '@/services';
 import type { HostedSite, HostedSiteOptimizationReviewResult, HostedSiteOptimizationPreviewResult, ShareLinkItem, TagCount, ShareViewLogItem, SiteOwnerCard, WebPageGroup } from '@/services/real/webPages';
 import { getSiteAskConfig } from '@/services/real/webPages';
+import { runWithPrivateSourceGate } from '@/components/web-hosting/privateSourceConfirm';
 import { resolveShareAskSelection, addAskPick, toggleAskPick, ASK_MAX_DISPLAY } from '@/components/web-hosting/ask/askTypes';
 import type { WebHostingRole, TeamListItem } from '@/services/real/teams';
 import {
@@ -679,8 +681,16 @@ export default function WebPagesPage() {
       }
       return;
     }
-    if (!confirm(`将「${site.title}」设为公开？\n\n任何人都能在你的个人公开页（/u/${username ?? '...'}）看到此站点。`)) return;
-    const res = await setSiteVisibility(site.id, 'public');
+    // 引用了私有资料时由确认层逐条列出资料并说明后果；没有时仍是原来那句确认。
+    const gated = await runWithPrivateSourceGate({
+      inspect: () => getSitesPrivateSources([site.id]),
+      run: (fingerprint) => setSiteVisibility(site.id, 'public', fingerprint),
+      actionLabel: '设为公开',
+      confirmWithoutPrivateSources: () =>
+        confirm(`将「${site.title}」设为公开？\n\n任何人都能在你的个人公开页（/u/${username ?? '...'}）看到此站点。`),
+    });
+    if (gated.status !== 'done') return;
+    const res = gated.res;
     if (res.success) {
       setSites(prev => prev.map(s => s.id === site.id ? res.data : s));
     } else {
@@ -1504,7 +1514,13 @@ export default function WebPagesPage() {
                 // 快速分享的两个选项（无密码 / 有密码）都应产出「永久 + 对大家可见」的链接，
                 // 区别仅在密码。这里必须显式传 visibility:'public'——否则后端兜底成 owner-only（仅我可见），
                 // 快速分享就会错误地显示「仅我可见」。expiresInDays:0 = 永久。
-                const share = await createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public' });
+                const gated = await runWithPrivateSourceGate({
+                  inspect: () => getSitesPrivateSources([site.id]),
+                  run: (fingerprint) => createSiteShareLink({ siteId: site.id, shareType: 'single', expiresInDays: 0, password: pwd, visibility: 'public', confirmedPrivateSourceFingerprint: fingerprint }),
+                  actionLabel: '生成分享',
+                });
+                if (gated.status !== 'done') throw new Error('已取消分享：本页引用的私有资料没有对外发出');
+                const share = gated.res;
                 if (share.success && share.data) {
                   loadShares();
                   return {
@@ -4088,23 +4104,38 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated, site, existingShareC
     // 用户+站点/合集+访问级别 去重（不依赖任何前端分页列表，账号链接再多也不失效），
     // 并把有效期刷新为本次所选窗口。前端只发指令、用返回值展示。
     try {
-      const res = await createSiteShareLink({
-        siteId: siteId || undefined,
-        siteIds: isCollection ? siteIds : undefined,
-        shareType: isCollection ? 'collection' : 'single',
-        password: pwd,
-        expiresInDays,
-        // 用户在面板中显式新建（PR 2026-05-28）：跳过服务端复用，每次都换新 token
-        forceNew: true,
-        visibility,
-        // 数字短链按需分配（2026-06-11）：只有用户在高级选项里主动选「数字短链」才生成
-        // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
-        // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
-        allocateShortLink: isShort,
-        // 三态：没动过就整个字段不传（继承站点题库），动过才传数组（空数组=这条链接不显示）。
-        // 判定收在 resolveShareAskSelection 里，有守卫盯着，别在这儿就地写三元。
-        askSuggestedQuestions: resolveShareAskSelection(askTouched, askPicked),
+      // 对外档位（登录可见 / 公开）且本页引用了私有资料时，先让作者在确认层里确认。
+      const targetSiteIds = isCollection ? (siteIds ?? []) : (siteId ? [siteId] : []);
+      const external = visibility !== 'owner-only' && targetSiteIds.length > 0;
+      const gated = await runWithPrivateSourceGate({
+        inspect: external
+          ? () => getSitesPrivateSources(targetSiteIds)
+          : async () => ({ success: true as const, data: { requiresConfirmation: false, items: [] }, error: null }),
+        run: (fingerprint) => createSiteShareLink({
+          siteId: siteId || undefined,
+          siteIds: isCollection ? siteIds : undefined,
+          shareType: isCollection ? 'collection' : 'single',
+          password: pwd,
+          expiresInDays,
+          // 用户在面板中显式新建（PR 2026-05-28）：跳过服务端复用，每次都换新 token
+          forceNew: true,
+          visibility,
+          // 数字短链按需分配（2026-06-11）：只有用户在高级选项里主动选「数字短链」才生成
+          // /s/{seq}，否则后端不写 short_links，只发不可枚举的 /s/wp/{token} 长链——
+          // 杜绝「用户没选短链却拿到数字链」+「管理员短链页冒出几百条」。
+          allocateShortLink: isShort,
+          // 三态：没动过就整个字段不传（继承站点题库），动过才传数组（空数组=这条链接不显示）。
+          // 判定收在 resolveShareAskSelection 里，有守卫盯着，别在这儿就地写三元。
+          askSuggestedQuestions: resolveShareAskSelection(askTouched, askPicked),
+          confirmedPrivateSourceFingerprint: fingerprint,
+        }),
+        actionLabel: '生成分享链接',
       });
+      if (gated.status !== 'done') {
+        toast.info('没有生成分享链接', '本页引用的私有资料没有对外发出');
+        return;
+      }
+      const res = gated.res;
       if (res.success) {
         onCreated?.();
         // 复用已有带密码链接时，后端返回的是既有密码（可能与本次输入不同），以它为准

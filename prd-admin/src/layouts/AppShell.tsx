@@ -65,6 +65,7 @@ import { resolveMobileDrawerUtilities } from '@/lib/mobileDrawerUtilities';
 import { getShortLabel } from '@/lib/shortLabel';
 import { useBreakpoint } from '@/hooks/useBreakpoint';
 import { SystemDialogHost } from '@/components/ui/SystemDialogHost';
+import { PrivateSourceConfirmHost } from '@/components/web-hosting/PrivateSourceConfirmHost';
 import { InlinePageLoader, MapSpinner } from '@/components/ui/VideoLoader';
 import { AvatarEditDialog } from '@/components/ui/AvatarEditDialog';
 import { Dialog } from '@/components/ui/Dialog';
@@ -850,6 +851,8 @@ export default function AppShell() {
       }}
     >
       <SystemDialogHost />
+      {/* 网页托管发布 / 分享前的私有资料确认层（全局唯一宿主） */}
+      <PrivateSourceConfirmHost />
       <GlobalDefectSubmitDialog />
       {/* TipsDrawer 已上移到 App 根挂载(全局唯一,跨路由不卸载),此处不再渲染 */}
       {/* 移动端顶栏已有 Bell 按钮，隐藏右下浮球避免和 MobileTabBar "+" 重叠 */}
