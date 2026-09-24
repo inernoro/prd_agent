@@ -38,6 +38,51 @@ interface EntryRow {
   meta: string;
 }
 
+const STORE_MAX_PAGES = 10;
+
+type StorePageResult =
+  | { success: true; data: { items: DocumentStoreWithPreview[]; total: number } }
+  | { success: false; error?: { message?: string } | null };
+
+/**
+ * 一个范围（我的 / 团队）的知识库翻页取全：只取第一页时，第 41 个以后的库和里面的稿子
+ * 永远选不到，而这里没有搜索也没有「加载更多」（Codex P2）。上限 STORE_MAX_PAGES 页，
+ * 超过就如实说「只列出前 N 个」。
+ */
+export async function collectStorePages(
+  fetchPage: (page: number) => Promise<StorePageResult>,
+  maxPages = STORE_MAX_PAGES,
+): Promise<{ ok: true; items: DocumentStoreWithPreview[]; truncated: boolean } | { ok: false; message: string }> {
+  const items: DocumentStoreWithPreview[] = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const result = await fetchPage(page);
+    if (!result.success) {
+      if (page === 1) return { ok: false, message: result.error?.message || '读取失败' };
+      // 后几页失败：已经拿到的照常给，但标成不完整，不假装是全部。
+      return { ok: true, items, truncated: true };
+    }
+    items.push(...result.data.items);
+    if (result.data.items.length === 0 || items.length >= result.data.total) return { ok: true, items, truncated: false };
+  }
+  return { ok: true, items, truncated: true };
+}
+
+/**
+ * 两个范围各自成败的合并口径：全失败才算错误；一半失败时保留成功的那一半，
+ * 但必须说清缺了哪一半——当成完整列表，用户会拿着缺一半的知识去生成还不知道（Codex P2）。
+ */
+export function describeStoreLoad(
+  mine: Awaited<ReturnType<typeof collectStorePages>>,
+  team: Awaited<ReturnType<typeof collectStorePages>>,
+): { error: string | null; warning: string | null } {
+  if (!mine.ok && !team.ok) return { error: mine.message || '知识库暂时无法读取，请重试', warning: null };
+  const missing = [!mine.ok ? '我的知识库' : null, !team.ok ? '团队共享的知识库' : null].filter(Boolean);
+  const truncated = (mine.ok && mine.truncated) || (team.ok && team.truncated);
+  if (missing.length > 0) return { error: null, warning: `${missing.join('、')}这次没读出来，下面的列表不完整` };
+  if (truncated) return { error: null, warning: '知识库太多，只列出了一部分；找不到的稿子可以在「最近使用」里搜' };
+  return { error: null, warning: null };
+}
+
 function formatDay(value?: string) {
   if (!value) return '';
   const date = new Date(value);
@@ -56,6 +101,8 @@ export default function KnowledgeInlineBrowser({
   const [stores, setStores] = useState<DocumentStoreWithPreview[]>([]);
   const [storesLoading, setStoresLoading] = useState(true);
   const [storesError, setStoresError] = useState<string | null>(null);
+  const [storesWarning, setStoresWarning] = useState<string | null>(null);
+  const [storesAttempt, setStoresAttempt] = useState(0);
   const [activeStoreId, setActiveStoreId] = useState<string>(RECENT_KEY);
   const [keywordInput, setKeywordInput] = useState('');
   const [keyword, setKeyword] = useState('');
@@ -73,22 +120,23 @@ export default function KnowledgeInlineBrowser({
     let active = true;
     setStoresLoading(true);
     void Promise.all([
-      listDocumentStoresWithPreview(1, STORE_PAGE_SIZE, { scope: 'mine' }),
-      listDocumentStoresWithPreview(1, STORE_PAGE_SIZE, { scope: 'team' }),
+      collectStorePages((page) => listDocumentStoresWithPreview(page, STORE_PAGE_SIZE, { scope: 'mine' })),
+      collectStorePages((page) => listDocumentStoresWithPreview(page, STORE_PAGE_SIZE, { scope: 'team' })),
     ]).then(([mine, team]) => {
       if (!active) return;
       const merged = new Map<string, DocumentStoreWithPreview>();
       [mine, team].forEach((result) => {
-        if (result.success) result.data.items.forEach((store) => merged.set(store.id, store));
+        if (result.ok) result.items.forEach((store) => merged.set(store.id, store));
       });
       setStores(Array.from(merged.values()));
-      setStoresError(!mine.success && !team.success
-        ? (mine.error?.message || '知识库暂时无法读取，请重试')
-        : null);
+      const outcome = describeStoreLoad(mine, team);
+      setStoresError(outcome.error);
+      setStoresWarning(outcome.warning);
+      if (outcome.warning) console.warn('[KnowledgeInlineBrowser] 知识库列表不完整：', outcome.warning);
       setStoresLoading(false);
     });
     return () => { active = false; };
-  }, []);
+  }, [storesAttempt]);
 
   const activeStore = stores.find((store) => store.id === activeStoreId) ?? null;
 
@@ -193,11 +241,22 @@ export default function KnowledgeInlineBrowser({
       >
         <div className="px-2 pb-1.5 pt-1 text-[12px] tracking-wide text-token-muted">我能看到的知识库</div>
         {storeButton(RECENT_KEY, '最近使用', loadingRecent ? null : recentEntries.length, <Clock3 size={13} className="shrink-0" />)}
+        {!storesLoading && (storesError || storesWarning) && (
+          <div
+            className="mx-1 mb-1.5 flex items-start gap-2 rounded-lg px-2.5 py-2 text-[12px]"
+            style={storesError
+              ? { background: 'var(--semantic-danger-soft)', color: 'var(--semantic-danger-text)' }
+              : { background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)' }}
+            role="status"
+            data-store-load={storesError ? 'failed' : 'partial'}
+          >
+            <span className="min-w-0 flex-1">{storesError || storesWarning}</span>
+            <button type="button" className="shrink-0 underline" onClick={() => setStoresAttempt((value) => value + 1)}>重试</button>
+          </div>
+        )}
         {storesLoading ? (
           <MapSectionLoader text="正在读取知识库" />
-        ) : storesError ? (
-          <p className="px-2 py-2 text-[12px]" style={{ color: 'var(--semantic-danger-text)' }}>{storesError}</p>
-        ) : stores.length === 0 ? (
+        ) : storesError ? null : stores.length === 0 ? (
           <p className="px-2 py-2 text-[12px] text-token-muted">还没有可引用的知识库，可改用「直接上传」。</p>
         ) : (
           stores.map((store) => storeButton(store.id, store.name, store.documentCount))

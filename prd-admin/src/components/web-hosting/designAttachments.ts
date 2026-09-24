@@ -11,6 +11,8 @@ import { uploadAttachment } from '@/services/real/aiToolbox';
  */
 
 export const DESIGN_ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024;
+/** 截图与服务端 DesignRunInputAttachments.MaxReferenceImageBytes 同一口径：超过就在选文件时拦下，不等传完再被 400。 */
+export const DESIGN_SCREENSHOT_MAX_BYTES = 5 * 1024 * 1024;
 export const MAX_GENERATE_ATTACHMENTS = 5;
 export const MAX_EDIT_SCREENSHOTS = 3;
 
@@ -31,7 +33,8 @@ export interface DesignAttachmentItem {
 }
 
 const DOCUMENT_EXTENSIONS = ['.doc', '.docx', '.pdf', '.md', '.markdown', '.txt', '.html', '.htm'];
-const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.gif', '.webp'];
+// 与服务端参考图白名单一致（PNG、JPEG、WebP）：GIF 传得上去，建修改任务时会被拒。
+const IMAGE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.webp'];
 
 export const DESIGN_ATTACHMENT_ACCEPT: Record<DesignAttachmentKind, string> = {
   document: DOCUMENT_EXTENSIONS.join(','),
@@ -66,8 +69,11 @@ export function validateDesignAttachment(
   const allowed = kind === 'image' ? IMAGE_EXTENSIONS : DOCUMENT_EXTENSIONS;
   if (!allowed.includes(extensionOf(file.name))) {
     return kind === 'image'
-      ? `「${file.name}」不是图片，只支持 PNG、JPG、GIF、WebP`
+      ? `「${file.name}」不是支持的截图格式，只支持 PNG、JPG、WebP`
       : `「${file.name}」格式不支持，只支持 Word、PDF、Markdown、TXT、HTML`;
+  }
+  if (kind === 'image' && file.size > DESIGN_SCREENSHOT_MAX_BYTES) {
+    return `「${file.name}」超过 5 MB，请压缩后再传`;
   }
   if (file.size > DESIGN_ATTACHMENT_MAX_BYTES) {
     return `「${file.name}」超过 20 MB，请压缩或拆分后再传`;
