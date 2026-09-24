@@ -313,7 +313,7 @@ export default function DailyPostPage() {
         />
         {data.feed.length === 0 ? (
           <div style={{ border: `1px dashed ${LINE_2}`, padding: 14, fontSize: 13, color: INK_2, background: PAPER_2 }}>
-            使用知识库、周报、生图或缺陷后，你的足迹会登上这一版。
+            生成配图、创作文章或提交缺陷后，你的足迹会登上这一版。
           </div>
         ) : (
           <div style={{ borderTop: `2px solid ${INK}` }}>
